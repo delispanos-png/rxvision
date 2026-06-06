@@ -1,0 +1,118 @@
+name: rxvision
+
+services:
+  mongo:
+    image: mongo:7
+    restart: unless-stopped
+    command: ["--replSet", "rs0", "--bind_ip_all"]
+    volumes: ["mongo_data:/data/db"]
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  mongo-init:
+    image: mongo:7
+    depends_on:
+      mongo:
+        condition: service_healthy
+    restart: "no"
+    entrypoint: >
+      bash -c 'mongosh --host mongo --quiet --eval "try { rs.status().ok } catch(e) { rs.initiate({_id:\"rs0\",members:[{_id:0,host:\"mongo:27017\"}]}) }"'
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes: ["redis_data:/data"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  vault:
+    image: hashicorp/vault:1.17
+    restart: unless-stopped
+    cap_add: ["IPC_LOCK"]
+    command: ["vault", "server", "-config=/vault/config/vault.hcl"]
+    volumes:
+      - "./infra/docker/vault/vault.hcl:/vault/config/vault.hcl:ro"
+      - "vault_data:/vault/data"
+    environment:
+      VAULT_ADDR: "http://127.0.0.1:8200"
+
+  api:
+    build: ./backend
+    restart: unless-stopped
+    env_file: .env
+    depends_on:
+      mongo:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2
+    expose: ["8000"]
+
+  worker:
+    build: ./backend
+    restart: unless-stopped
+    env_file: .env
+    depends_on: [redis, mongo]
+    command: celery -A app.workers.celery_app worker -l info --concurrency 2
+
+  beat:
+    build: ./backend
+    restart: unless-stopped
+    env_file: .env
+    depends_on: [redis, mongo]
+    command: celery -A app.workers.celery_app beat -l info --schedule /tmp/celerybeat-schedule
+
+  web:
+    build:
+      context: ./frontend
+      target: runner
+      args:
+        NEXT_PUBLIC_API_BASE: "/api/v1"
+    restart: unless-stopped
+    env_file: .env
+    depends_on: [api]
+    expose: ["3000"]
+
+  caddy:
+    # Stock image is enough while CADDY_TLS=internal. To enable Let's Encrypt via
+    # Cloudflare DNS-01 after the NS cutover, build infra/docker/Caddy.Dockerfile
+    # (custom build with caddy-dns/cloudflare) and swap this back to `build:`.
+    image: caddy:2-alpine
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - "./infra/docker/Caddyfile:/etc/caddy/Caddyfile:ro"
+      - "caddy_data:/data"
+      - "caddy_config:/config"
+    depends_on: [web, api]
+
+  # Web UI to see/manage Docker (containers, images, volumes, networks) — the same
+  # data the empty VS Code panel was trying to show. Protected by its own admin login
+  # (set on first visit). Mounts the Docker socket = full host control, so keep its
+  # password strong and consider firewalling :9000 to your IP.
+  portainer:
+    image: portainer/portainer-ce:2.21.4
+    restart: unless-stopped
+    command: -H unix:///var/run/docker.sock
+    ports:
+      - "9000:9000"
+    volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock"
+      - "portainer_data:/data"
+
+volumes:
+  mongo_data:
+  redis_data:
+  vault_data:
+  caddy_data:
+  caddy_config:
+  portainer_data:

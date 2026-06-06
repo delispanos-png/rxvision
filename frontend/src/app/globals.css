@@ -1,0 +1,23 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    -webkit-font-smoothing: antialiased;
+  }
+  body {
+    @apply bg-canvas text-slate-900 font-sans;
+  }
+}
+
+@layer components {
+  .rx-card {
+    @apply rounded-2xl border border-slate-200/70 bg-white shadow-card;
+  }
+  .rx-label {
+    @apply text-[11px] font-semibold uppercase tracking-wider text-slate-400;
+  }
+}

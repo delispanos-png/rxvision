@@ -1,0 +1,81 @@
+"""Auth/RBAC/tenant dependencies used by routers."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from fastapi import Depends, HTTPException, Request, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+
+from app.core.security import decode_token
+
+_bearer = HTTPBearer(auto_error=True)
+
+
+@dataclass
+class TenantContext:
+    tenant_id: str
+    user_id: str
+    roles: list[str]
+    modules: dict[str, str]          # module_key -> enabled|trial|locked
+    permissions: set[str]            # resolved from roles (filled by middleware/service)
+
+
+@dataclass
+class PlatformContext:
+    """A CloudOn platform admin — no tenant, manages the whole platform."""
+
+    admin_id: str
+    email: str
+
+
+async def get_platform_admin(
+    creds: HTTPAuthorizationCredentials = Depends(_bearer),
+) -> PlatformContext:
+    """Gate for the back-office: requires a platform-admin token (`padmin`), NOT a
+    tenant `owner`. A tenant token (no `padmin`) is rejected here."""
+    try:
+        claims = decode_token(creds.credentials)
+    except ValueError:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid_token")
+    if claims.get("scope") != "access" or not claims.get("padmin"):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "platform_admin_required")
+    return PlatformContext(admin_id=claims["sub"], email=claims.get("email", ""))
+
+
+async def get_current_context(
+    request: Request,
+    creds: HTTPAuthorizationCredentials = Depends(_bearer),
+) -> TenantContext:
+    try:
+        claims = decode_token(creds.credentials)
+    except ValueError:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid_token")
+    if claims.get("scope") != "access":
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "wrong_token_scope")
+
+    ctx = TenantContext(
+        tenant_id=claims["tid"],
+        user_id=claims["sub"],
+        roles=claims.get("roles", []),
+        modules=claims.get("modules", {}),
+        permissions=set(claims.get("perms", [])),
+    )
+    request.state.tenant = ctx
+    return ctx
+
+
+def require(permission: str, module: str | None = None):
+    """Dependency factory: enforce permission AND (optionally) module access."""
+
+    async def _dep(ctx: TenantContext = Depends(get_current_context)) -> TenantContext:
+        if module is not None and ctx.modules.get(module, "locked") == "locked":
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN,
+                detail={"error": "module_locked", "module": module},
+            )
+        if permission not in ctx.permissions and "*" not in ctx.permissions:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "insufficient_permissions")
+        return ctx
+
+    return _dep

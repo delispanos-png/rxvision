@@ -1,0 +1,11 @@
+# Overlay that swaps Caddy to the custom build (caddy-dns/cloudflare) for publicly
+# trusted Let's Encrypt certs via DNS-01 — works behind the Cloudflare proxy.
+# Apply AFTER the registrar NS cutover:
+#   docker compose -f docker-compose.prod.yml -f infra/compose.tls.yml up -d caddy
+# Requires in .env:  CADDY_TLS=dns cloudflare {env.CF_API_TOKEN}   and   CF_API_TOKEN=<token>
+services:
+  caddy:
+    image: rxvision-caddy:dns
+    build:
+      context: ./infra/docker
+      dockerfile: Caddy.Dockerfile

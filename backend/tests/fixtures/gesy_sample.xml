@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gesy_executions>
+  <execution external_id="CY-RX-0001" executed_at="2026-06-01T10:30:00Z" patient_share="450">
+    <fund code="GESY" name="ΓΕΣΥ"/>
+    <patient national_id="0011223344" sex="F" birth_year="1959" area="Λευκωσία"/>
+    <doctor name="Dr A. Georgiou" specialty="Παθολόγος"/>
+    <diagnoses>
+      <icd10>E11.9</icd10>
+      <icd10>I10</icd10>
+    </diagnoses>
+    <repeat current="1" total="3"/>
+    <items>
+      <item barcode="5290000000001" name="Glucophage 850mg" substance="Metformin"
+            quantity="2" retail_price="420" wholesale_price="310" category="normal" executed="true"/>
+      <item barcode="5290000000002" name="Concor 5mg" substance="Bisoprolol"
+            quantity="1" retail_price="510" wholesale_price="360" category="normal" executed="true"/>
+    </items>
+  </execution>
+  <execution external_id="CY-RX-0002" executed_at="2026-06-02T09:15:00Z">
+    <fund code="GESY" name="ΓΕΣΥ"/>
+    <patient national_id="0055667788" sex="M" birth_year="1972" area="Λεμεσός"/>
+    <doctor name="Dr M. Christodoulou" specialty="Καρδιολόγος"/>
+    <diagnoses>
+      <icd10>I10</icd10>
+    </diagnoses>
+    <repeat current="1" total="1"/>
+    <items>
+      <item barcode="5290000000003" name="Atoris 20mg" substance="Atorvastatin"
+            quantity="1" retail_price="760" wholesale_price="540" category="normal" executed="true"/>
+    </items>
+  </execution>
+</gesy_executions>

@@ -1,0 +1,51 @@
+"""Doctor analytics router — list, per-doctor stats, new patients."""
+
+from __future__ import annotations
+
+from datetime import datetime
+
+from fastapi import APIRouter, Depends, Query
+
+from app.core.deps import TenantContext, require
+from app.repositories.doctors import DoctorExecutionsRepository, DoctorRepository
+
+router = APIRouter()
+
+_MODULE = "doctor_analytics"
+
+
+@router.get("")
+async def list_doctors(
+    search: str | None = None,
+    page: int = 1,
+    page_size: int = 50,
+    ctx: TenantContext = Depends(require("doctors:read", module=_MODULE)),
+):
+    repo = DoctorRepository(tenant_id=ctx.tenant_id)
+    items = await repo.list_doctors(search=search, skip=(page - 1) * page_size,
+                                    limit=page_size)
+    return {"page": page, "page_size": page_size, "items": items}
+
+
+@router.get("/{doctor_id}/stats")
+async def doctor_stats(
+    doctor_id: str,
+    date_from: datetime = Query(...),
+    date_to: datetime = Query(...),
+    ctx: TenantContext = Depends(require("doctors:read", module=_MODULE)),
+):
+    repo = DoctorExecutionsRepository(tenant_id=ctx.tenant_id)
+    return await repo.stats(doctor_id=doctor_id, date_from=date_from, date_to=date_to)
+
+
+@router.get("/{doctor_id}/new-patients")
+async def doctor_new_patients(
+    doctor_id: str,
+    date_from: datetime = Query(...),
+    date_to: datetime = Query(...),
+    ctx: TenantContext = Depends(require("doctors:read", module=_MODULE)),
+):
+    repo = DoctorExecutionsRepository(tenant_id=ctx.tenant_id)
+    items = await repo.new_patients(doctor_id=doctor_id, date_from=date_from,
+                                    date_to=date_to)
+    return {"doctor_id": doctor_id, "count": len(items), "items": items}

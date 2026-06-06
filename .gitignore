@@ -1,0 +1,21 @@
+# secrets — NEVER commit
+.env
+.env.*
+!.env.example
+secrets/
+
+# python
+__pycache__/
+*.pyc
+.venv/
+
+# node / next
+node_modules/
+.next/
+frontend/public/sw.js
+frontend/public/workbox-*.js
+
+# misc
+*.log
+.DS_Store
+backups/

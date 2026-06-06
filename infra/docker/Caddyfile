@@ -1,0 +1,50 @@
+# RxVision — Caddy reverse proxy
+#
+# Routing:
+#   app.rxvision.gr         -> Next.js PWA (web:3000), /api/* -> FastAPI (api:8000)
+#   adminpanel.rxvision.gr  -> same web, root rewritten to /admin, /api/* -> api
+#
+# TLS: controlled by {$CADDY_TLS} (default "internal" = self-signed origin cert).
+#   - Works behind Cloudflare in "Full" SSL mode immediately.
+#   - To get a publicly-trusted cert behind Cloudflare proxy AFTER you switch the
+#     registrar nameservers to Cloudflare, set in .env:
+#         CADDY_TLS=dns cloudflare {env.CF_API_TOKEN}
+#     (this image is built with the caddy-dns/cloudflare plugin) and set CF_API_TOKEN.
+
+{
+	email admin@rxvision.gr
+}
+
+(api_and_app) {
+	# API first (same-origin -> no CORS), everything else to the web app.
+	handle /api/* {
+		reverse_proxy api:8000
+	}
+	handle /health {
+		reverse_proxy api:8000
+	}
+	handle {
+		reverse_proxy web:3000
+	}
+}
+
+app.rxvision.gr {
+	tls {$CADDY_TLS}
+	import api_and_app
+}
+
+adminpanel.rxvision.gr {
+	tls {$CADDY_TLS}
+	# Land the back-office on /admin by default.
+	@root path /
+	rewrite @root /admin
+	import api_and_app
+}
+
+# Preview access BEFORE the DNS/NS cutover, over plain HTTP on :80 (no cert warning):
+#   - open  http://157.180.26.98        (app)  ·  http://157.180.26.98/admin (back-office)
+#   - or VS Code "Ports" → forward 80 → http://localhost
+# Same-origin /api works. Remove this block once the domains are live.
+http://localhost, http://157.180.26.98 {
+	import api_and_app
+}
