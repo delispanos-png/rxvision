@@ -6,7 +6,6 @@ import { useQuery } from "@tanstack/react-query";
 import { Bell, Globe, KeyRound, LogOut, Menu, Settings, User } from "lucide-react";
 import { api, queryKeys } from "@/lib/apiClient";
 import { useNavStore } from "@/store/navStore";
-import { InstallButton } from "@/components/pwa/InstallButton";
 
 type Me = {
   roles?: string[];
@@ -71,7 +70,6 @@ export function Topbar() {
       >
         <Menu className="h-5 w-5" />
       </button>
-      <InstallButton />
       <button className="hidden items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm font-medium text-slate-500 hover:bg-white sm:flex">
         <Globe className="h-4 w-4" /> EL
       </button>
