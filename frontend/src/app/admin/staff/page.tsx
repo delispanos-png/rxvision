@@ -67,6 +67,19 @@ export default function StaffPage() {
     );
     refresh();
   }
+  async function sendCreds(s: Staff) {
+    if (!(await appConfirm(`Δημιουργία νέου προσωρινού κωδικού για «${s.email}» και αποστολή με email;\n(Ο προηγούμενος κωδικός παύει να ισχύει.)`, { title: "Αποστολή credentials", confirmText: "Δημιουργία & αποστολή" }))) return;
+    try {
+      const r = await adminApi<{ email: string; temp_password: string; emailed: boolean }>(
+        `/admin/staff/${s.id}/send-credentials`, { method: "POST" });
+      setNotice(
+        r.emailed
+          ? `Στάλθηκε email με τα στοιχεία πρόσβασης στο ${r.email}.`
+          : `Το email ΔΕΝ στάλθηκε (έλεγξε SMTP). Προσωρινός κωδικός για ${r.email}: ${r.temp_password}`
+      );
+      refresh();
+    } catch (e) { setNotice(e instanceof ApiError ? `Σφάλμα: ${JSON.stringify(e.problem)}` : "Σφάλμα."); }
+  }
   async function toggle(s: Staff) {
     const next = s.status === "suspended" ? "active" : "suspended";
     try {
@@ -106,6 +119,7 @@ export default function StaffPage() {
         <div className="flex justify-end gap-2">
           <button onClick={() => setEditing(r)} className="rounded-md border border-slate-300 px-2 py-1 text-xs hover:bg-slate-50">Επεξεργασία</button>
           <button onClick={() => resetPw(r)} className="rounded-md border border-slate-300 px-2 py-1 text-xs hover:bg-slate-50">Reset κωδικού</button>
+          <button onClick={() => sendCreds(r)} className="rounded-md border border-brand-300 bg-brand-50 px-2 py-1 text-xs text-brand-700 hover:bg-brand-100">Αποστολή credentials</button>
           <button onClick={() => toggle(r)} className="rounded-md border border-slate-300 px-2 py-1 text-xs hover:bg-slate-50">
             {r.status === "suspended" ? "Ενεργοποίηση" : "Αναστολή"}
           </button>

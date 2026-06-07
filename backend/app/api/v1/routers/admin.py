@@ -610,6 +610,37 @@ async def reset_staff_password(admin_id: str, body: ResetPwIn,
     return {"id": admin_id, "temp_password": None if body.password else temp}
 
 
+@router.post("/staff/{admin_id}/send-credentials")
+async def send_staff_credentials(admin_id: str, ctx: PlatformContext = Depends(get_platform_admin)):
+    """Issue a NEW temporary password for a staff member and email it to them.
+    Returns the password too, so it can be relayed manually if email fails."""
+    db = shared_db()
+    admin = await db["platform_admins"].find_one({"_id": _oid(admin_id)})
+    if not admin:
+        raise HTTPException(http_status.HTTP_404_NOT_FOUND, "not_found")
+    temp = "Rx-" + secrets.token_urlsafe(8)
+    await db["platform_admins"].update_one(
+        {"_id": admin["_id"]},
+        {"$set": {"password_hash": hash_password(temp),
+                  "updated_at": datetime.now(tz=timezone.utc)},
+         "$inc": {"refresh_token_version": 1}})  # revoke existing sessions
+    html = (f"<p>Γεια σας {admin.get('full_name','')},</p>"
+            f"<p>Τα στοιχεία πρόσβασής σας στην κονσόλα διαχείρισης RxVision:</p>"
+            f"<p><b>Διεύθυνση:</b> https://adminpanel.rxvision.gr<br/>"
+            f"<b>Email:</b> {admin['email']}<br/>"
+            f"<b>Προσωρινός κωδικός:</b> {temp}</p>"
+            f"<p>Συνιστούμε να τον αλλάξετε μετά τη σύνδεση.</p>")
+    try:
+        await mailer.send_email(admin["email"], "RxVision — Στοιχεία πρόσβασης (Console)", html)
+        emailed = True
+    except Exception:  # noqa: BLE001 — SMTP may fail; admin still gets the password back
+        emailed = False
+    await db["audit_logs"].insert_one({
+        "tenant_id": None, "action": "admin_send_staff_credentials", "by": ctx.email,
+        "to": admin["email"], "emailed": emailed, "at": datetime.now(tz=timezone.utc)})
+    return {"id": admin_id, "email": admin["email"], "temp_password": temp, "emailed": emailed}
+
+
 @router.patch("/staff/{admin_id}/status")
 async def set_staff_status(admin_id: str, body: StatusIn,
                            ctx: PlatformContext = Depends(get_platform_admin)):
