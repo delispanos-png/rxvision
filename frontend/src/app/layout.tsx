@@ -8,7 +8,7 @@ export const metadata: Metadata = {
   description: "Στατιστική ανάλυση εκτελέσεων συνταγών φαρμακείου",
   manifest: "/manifest.webmanifest",
   appleWebApp: { capable: true, title: "RxVision", statusBarStyle: "default" },
-  icons: { apple: "/icons/apple-touch-icon.png" },
+  icons: { icon: "/favicon.ico", apple: "/icons/apple-touch-icon.png" },
 };
 
 export const viewport: Viewport = {

@@ -8,6 +8,7 @@ import {
   Server, Wrench, BarChart3, CreditCard, Receipt, LogOut, PlugZap, Network, Menu, X,
 } from "lucide-react";
 import { adminApi, adminTokens, ApiError } from "@/lib/adminClient";
+import { LogoMark } from "@/components/brand/Logo";
 
 // CloudOn console navigation. `href` = built (routable); otherwise "σύντομα".
 const NAV = [
@@ -61,8 +62,8 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       {/* sidebar: slide-over drawer on mobile, static on desktop */}
       <aside className={`fixed inset-y-0 left-0 z-40 flex w-64 shrink-0 flex-col border-r border-slate-200 bg-white transition-transform duration-200 md:static md:w-60 md:translate-x-0 ${mobileOpen ? "translate-x-0" : "-translate-x-full"}`}>
         <div className="flex items-center gap-2 px-5 py-4 font-bold text-slate-900">
-          <span className="grid h-7 w-7 place-items-center rounded-md bg-indigo-500 text-xs text-white">Cl</span>
-          CloudOn Admin
+          <LogoMark className="h-7 w-7" />
+          RxVision Admin
           <button onClick={() => setMobileOpen(false)} className="ml-auto md:hidden" aria-label="Κλείσιμο">
             <X className="h-5 w-5 text-slate-400" />
           </button>

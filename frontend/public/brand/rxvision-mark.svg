@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" fill="none">
+  <defs>
+    <linearGradient id="rxg" x1="120" y1="120" x2="900" y2="900" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#4f63f0"/>
+      <stop offset="1" stop-color="#a64ee6"/>
+    </linearGradient>
+  </defs>
+  <g stroke="url(#rxg)" stroke-width="112" stroke-linecap="round" stroke-linejoin="round">
+    <!-- R: stem -->
+    <path d="M236 196 V716"/>
+    <!-- R: bowl (top + right semicircle back toward stem) -->
+    <path d="M236 196 H430 A150 150 0 0 1 430 496 H312"/>
+    <!-- x: NW→SE diagonal (R leg flows into it) -->
+    <path d="M360 470 L800 884"/>
+    <!-- x: SW→NE diagonal -->
+    <path d="M438 884 L772 548"/>
+  </g>
+  <!-- bar chart, ascending -->
+  <g fill="url(#rxg)">
+    <rect x="598" y="436" width="56" height="112" rx="26"/>
+    <rect x="676" y="344" width="56" height="204" rx="26"/>
+    <rect x="754" y="300" width="56" height="248" rx="26"/>
+    <rect x="832" y="196" width="56" height="352" rx="26"/>
+  </g>
+</svg>

@@ -5,6 +5,7 @@ import { useForm } from "react-hook-form";
 import { useRouter } from "next/navigation";
 import { z } from "zod";
 import { api, ApiError } from "@/lib/apiClient";
+import { Logo } from "@/components/brand/Logo";
 
 const schema = z.object({
   email: z.string().email("Μη έγκυρο email"),
@@ -78,6 +79,9 @@ export default function LoginPage() {
 
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+      <div className="mb-5 flex justify-center">
+        <Logo markClassName="h-10 w-10" subtitle={false} />
+      </div>
       <h1 className="mb-1 text-lg font-bold text-slate-900">Σύνδεση</h1>
       <p className="mb-5 text-sm text-slate-500">Στατιστική ανάλυση εκτελέσεων συνταγών</p>
 
@@ -88,7 +92,7 @@ export default function LoginPage() {
             type="email"
             autoComplete="email"
             {...register("email")}
-            className="w-full rounded-lg border border-slate-300 px-3 py-2 focus:border-teal-600 focus:outline-none"
+            className="w-full rounded-lg border border-slate-300 px-3 py-2 focus:border-brand-500 focus:outline-none"
           />
           {errors.email && <p className="mt-1 text-xs text-red-600">{errors.email.message}</p>}
         </div>
@@ -99,7 +103,7 @@ export default function LoginPage() {
             type="password"
             autoComplete="current-password"
             {...register("password")}
-            className="w-full rounded-lg border border-slate-300 px-3 py-2 focus:border-teal-600 focus:outline-none"
+            className="w-full rounded-lg border border-slate-300 px-3 py-2 focus:border-brand-500 focus:outline-none"
           />
           {errors.password && <p className="mt-1 text-xs text-red-600">{errors.password.message}</p>}
         </div>
@@ -109,7 +113,7 @@ export default function LoginPage() {
         )}
 
         <div className="text-right">
-          <a href="/forgot-password" className="text-sm text-teal-700 hover:underline">
+          <a href="/forgot-password" className="text-sm text-brand-600 hover:underline">
             Ξέχασα τον κωδικό;
           </a>
         </div>
@@ -117,7 +121,7 @@ export default function LoginPage() {
         <button
           type="submit"
           disabled={isSubmitting}
-          className="w-full rounded-lg bg-teal-700 px-4 py-2 font-medium text-white hover:bg-teal-800 disabled:opacity-50"
+          className="w-full rounded-lg bg-brand-600 px-4 py-2 font-medium text-white hover:bg-brand-700 disabled:opacity-50"
         >
           {isSubmitting ? "Σύνδεση…" : "Σύνδεση"}
         </button>
@@ -125,12 +129,12 @@ export default function LoginPage() {
 
       <div className="mt-4 space-y-1 text-center text-sm text-slate-500">
         <div>
-          <a href="/register" className="text-teal-700 hover:underline">
+          <a href="/register" className="text-brand-600 hover:underline">
             Νέο φαρμακείο; Εγγραφή
           </a>
         </div>
         <div>
-          <a href="/pricing" className="text-teal-700 hover:underline">
+          <a href="/pricing" className="text-brand-600 hover:underline">
             Δείτε τα πλάνα
           </a>
         </div>

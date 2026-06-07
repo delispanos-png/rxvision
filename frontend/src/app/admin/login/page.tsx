@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { adminTokens } from "@/lib/adminClient";
+import { LogoMark } from "@/components/brand/Logo";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8000/api/v1";
 
@@ -41,8 +42,8 @@ export default function AdminLoginPage() {
     <div className="grid min-h-screen place-items-center px-4">
       <form onSubmit={submit} className="w-full max-w-sm rounded-2xl bg-white p-8 shadow-xl">
         <div className="mb-6 flex items-center gap-2 font-semibold text-slate-900">
-          <span className="grid h-8 w-8 place-items-center rounded-md bg-indigo-500 text-sm font-bold text-white">Cl</span>
-          CloudOn <span className="text-slate-400">· Console</span>
+          <LogoMark className="h-8 w-8" />
+          RxVision <span className="text-slate-400">· Console</span>
         </div>
         <h1 className="mb-1 text-lg font-bold text-slate-900">Σύνδεση διαχειριστή πλατφόρμας</h1>
         <p className="mb-6 text-sm text-slate-500">Πρόσβαση μόνο για CloudOn — όχι για φαρμακεία.</p>

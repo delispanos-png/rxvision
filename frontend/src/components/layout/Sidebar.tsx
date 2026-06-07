@@ -4,6 +4,7 @@ import { useEffect } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useNavStore } from "@/store/navStore";
+import { Logo } from "@/components/brand/Logo";
 import {
   Activity,
   BarChart3,
@@ -59,16 +60,8 @@ export function Sidebar() {
       {open && <div className="fixed inset-0 z-30 bg-black/40 md:hidden" onClick={() => setOpen(false)} />}
       <aside className={`fixed inset-y-0 left-0 z-40 flex w-64 shrink-0 flex-col border-r border-slate-200/70 bg-white transition-transform duration-200 md:static md:translate-x-0 ${open ? "translate-x-0" : "-translate-x-full"}`}>
       {/* brand */}
-      <div className="flex h-16 items-center gap-2.5 px-5">
-        <span className="grid h-9 w-9 place-items-center rounded-xl bg-gradient-to-br from-brand-500 to-brand-700 text-sm font-bold text-white shadow-card">
-          Rx
-        </span>
-        <div className="leading-tight">
-          <div className="text-[15px] font-bold tracking-tight text-slate-900">RxVision</div>
-          <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">
-            Pharmacy Analytics
-          </div>
-        </div>
+      <div className="flex h-16 items-center px-5">
+        <Logo markClassName="h-9 w-9" />
       </div>
 
       <nav className="flex-1 space-y-6 overflow-y-auto px-3 py-4">
