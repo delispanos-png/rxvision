@@ -10,7 +10,7 @@ from app.core.deps import TenantContext, require
 from app.core.security import hash_password
 from app.repositories.base import jsonsafe
 from app.repositories.users import RoleRepository, UserRepository
-from app.schemas.users import RoleCreate, RoleUpdate, UserCreate, UserUpdate
+from app.schemas.users import RoleCreate, ResetPasswordIn, RoleUpdate, UserCreate, UserUpdate
 from app.services import mailer
 from app.services.rbac_seed import PERMISSIONS
 
@@ -112,15 +112,47 @@ async def update_user(
     body: UserUpdate,
     ctx: TenantContext = Depends(require(_PERM)),
 ):
+    if body.status == "suspended" and user_id == ctx.user_id:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail={"error": "cannot_suspend_self"})
     repo = UserRepository(tenant_id=ctx.tenant_id)
     user = await repo.update(user_id, body.model_dump(exclude_none=True))
     if user is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "user_not_found")
-    return user
+    return _shape_user(user, await _role_names(ctx.tenant_id))
+
+
+@router.post("/users/{user_id}/reset-password")
+async def reset_user_password(
+    user_id: str,
+    body: ResetPasswordIn,
+    ctx: TenantContext = Depends(require(_PERM)),
+):
+    repo = UserRepository(tenant_id=ctx.tenant_id)
+    user = await repo.get(user_id)
+    if user is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "user_not_found")
+    temp_password = body.password or ("Rx-" + secrets.token_urlsafe(9))
+    await repo.set_password(user_id, hash_password(temp_password))
+
+    emailed = False
+    if not body.password:  # auto-generated → email it to the user
+        try:
+            await mailer.send_email(
+                user["email"], "RxVision — επαναφορά κωδικού",
+                _welcome_email(user.get("full_name", ""), user["email"], temp_password))
+            emailed = True
+        except Exception:  # noqa: BLE001
+            emailed = False
+    out = {"id": user_id, "credentials_emailed": emailed}
+    if not emailed and not body.password:
+        out["temporary_password"] = temp_password
+    return out
 
 
 @router.delete("/users/{user_id}", status_code=204)
 async def delete_user(user_id: str, ctx: TenantContext = Depends(require(_PERM))):
+    if user_id == ctx.user_id:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail={"error": "cannot_delete_self"})
     await UserRepository(tenant_id=ctx.tenant_id).delete(user_id)
 
 

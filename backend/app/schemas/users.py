@@ -21,6 +21,11 @@ class UserUpdate(BaseModel):
     status: str | None = None  # active|suspended
 
 
+class ResetPasswordIn(BaseModel):
+    # None → server generates a random temp password and emails it; else set this one.
+    password: str | None = Field(None, min_length=8)
+
+
 class RoleCreate(BaseModel):
     key: str = Field(..., min_length=1)
     name: str = Field(..., min_length=1)

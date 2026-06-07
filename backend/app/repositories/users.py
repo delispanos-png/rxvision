@@ -7,9 +7,22 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+from bson import ObjectId
+from bson.errors import InvalidId
+
 from app.repositories.base import BaseRepository
 
 _PUBLIC_PROJECTION = {"password_hash": 0, "refresh_token_version": 0}
+
+
+def _as_oid(value):
+    """Coerce a string id (from a URL) into an ObjectId; None if malformed."""
+    if isinstance(value, ObjectId):
+        return value
+    try:
+        return ObjectId(str(value))
+    except (InvalidId, TypeError):
+        return None
 
 
 class UserRepository(BaseRepository):
@@ -20,7 +33,10 @@ class UserRepository(BaseRepository):
         return await cursor.sort([("created_at", -1)]).skip(skip).limit(limit).to_list(length=limit)
 
     async def get(self, user_id) -> dict | None:
-        return await self._coll.find_one(self._scope({"_id": user_id}), _PUBLIC_PROJECTION)
+        oid = _as_oid(user_id)
+        if oid is None:
+            return None
+        return await self._coll.find_one(self._scope({"_id": oid}), _PUBLIC_PROJECTION)
 
     async def create(self, doc: dict) -> dict:
         now = datetime.now(tz=timezone.utc)
@@ -31,12 +47,29 @@ class UserRepository(BaseRepository):
         return await self.get(user_id)
 
     async def update(self, user_id, fields: dict) -> dict | None:
+        oid = _as_oid(user_id)
+        if oid is None:
+            return None
         fields = {**fields, "updated_at": datetime.now(tz=timezone.utc)}
-        await self.update_one({"_id": user_id}, {"$set": fields})
-        return await self.get(user_id)
+        await self.update_one({"_id": oid}, {"$set": fields})
+        return await self.get(oid)
+
+    async def set_password(self, user_id, password_hash: str) -> bool:
+        """Set password and revoke existing sessions (bump refresh_token_version)."""
+        oid = _as_oid(user_id)
+        if oid is None:
+            return False
+        res = await self.update_one(
+            {"_id": oid},
+            {"$set": {"password_hash": password_hash,
+                      "updated_at": datetime.now(tz=timezone.utc)},
+             "$inc": {"refresh_token_version": 1}})
+        return res.matched_count > 0
 
     async def delete(self, user_id) -> None:
-        await self.delete_many({"_id": user_id})
+        oid = _as_oid(user_id)
+        if oid is not None:
+            await self.delete_many({"_id": oid})
 
 
 class RoleRepository(BaseRepository):
