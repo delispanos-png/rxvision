@@ -14,7 +14,7 @@ from datetime import datetime, timedelta, timezone
 
 from bson import ObjectId
 from fastapi import APIRouter, Depends, HTTPException, Request, status as http_status
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 
 from app.core.db import shared_db
 from app.core.deps import PlatformContext, get_platform_admin
@@ -132,7 +132,8 @@ class StaffIn(BaseModel):
 
 
 class ResetPwIn(BaseModel):
-    password: str | None = None
+    # None → server generates a random temp password; else set this exact one.
+    password: str | None = Field(None, min_length=8)
 
 
 class StaffEditIn(BaseModel):

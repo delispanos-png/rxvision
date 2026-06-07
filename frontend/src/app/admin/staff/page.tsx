@@ -45,9 +45,24 @@ export default function StaffPage() {
   const refresh = () => qc.invalidateQueries({ queryKey: ["admin", "staff"] });
 
   async function resetPw(s: Staff) {
-    if (!confirm(`Reset κωδικού για «${s.email}»; (θα αποσυνδεθεί)`)) return;
-    const r = await adminApi<{ temp_password: string | null }>(`/admin/staff/${s.id}/reset-password`, { method: "POST", body: JSON.stringify({}) });
-    setNotice(`Νέος προσωρινός κωδικός για ${s.email}: ${r.temp_password}`);
+    const pw = prompt(
+      `Νέος κωδικός για «${s.email}».\n\nΓράψε τον κωδικό που θέλεις (τουλάχιστον 8 χαρακτήρες),\nή άφησέ το ΚΕΝΟ για αυτόματο τυχαίο κωδικό.\n\n(Ο χρήστης θα αποσυνδεθεί.)`
+    );
+    if (pw === null) return; // cancelled
+    const chosen = pw.trim();
+    if (chosen && chosen.length < 8) {
+      setNotice("Ο κωδικός πρέπει να έχει τουλάχιστον 8 χαρακτήρες.");
+      return;
+    }
+    const r = await adminApi<{ temp_password: string | null }>(
+      `/admin/staff/${s.id}/reset-password`,
+      { method: "POST", body: JSON.stringify(chosen ? { password: chosen } : {}) }
+    );
+    setNotice(
+      r.temp_password
+        ? `Νέος προσωρινός κωδικός για ${s.email}: ${r.temp_password}`
+        : `Ο κωδικός για ${s.email} ορίστηκε. (Ο χρήστης αποσυνδέθηκε.)`
+    );
     refresh();
   }
   async function toggle(s: Staff) {
