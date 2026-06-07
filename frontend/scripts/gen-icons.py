@@ -17,7 +17,7 @@ from pathlib import Path
 from PIL import Image
 
 ROOT = Path(__file__).resolve().parents[1]
-SRC = ROOT / "public" / "brand" / "source.png"
+SRC = ROOT / "public" / "brand" / "RxVision-Logo.png"
 ICONS = ROOT / "public" / "icons"
 BRAND = ROOT / "public" / "brand"
 WHITE = (255, 255, 255, 255)

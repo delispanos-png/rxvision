@@ -3,7 +3,7 @@
 
 export function LogoMark({ className = "h-9 w-9" }: { className?: string }) {
   // eslint-disable-next-line @next/next/no-img-element
-  return <img src="/brand/rxvision-mark.svg" alt="RxVision" className={className} />;
+  return <img src="/brand/rxvision-mark.png" alt="RxVision" className={className} />;
 }
 
 export function Logo({
