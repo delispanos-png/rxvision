@@ -2,17 +2,55 @@
 
 from __future__ import annotations
 
+import secrets
+
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.core.deps import TenantContext, require
 from app.core.security import hash_password
+from app.repositories.base import jsonsafe
 from app.repositories.users import RoleRepository, UserRepository
 from app.schemas.users import RoleCreate, RoleUpdate, UserCreate, UserUpdate
+from app.services import mailer
 from app.services.rbac_seed import PERMISSIONS
 
 router = APIRouter()
 
 _PERM = "users:manage"
+_LOGIN_URL = "https://app.rxvision.gr/login"
+
+
+async def _role_names(tenant_id: str) -> dict[str, str]:
+    roles = await RoleRepository(tenant_id=tenant_id).list_roles(skip=0, limit=200)
+    return {r["_id"]: r["name"] for r in roles}
+
+
+def _shape_user(u: dict, role_names: dict[str, str]) -> dict:
+    """Frontend-friendly shape: id / role names / active flag (hides internals)."""
+    u = jsonsafe(u)
+    return {
+        "id": u.get("_id") or u.get("id"),
+        "email": u.get("email"),
+        "full_name": u.get("full_name", ""),
+        "role_ids": u.get("role_ids", []),
+        "roles": [role_names.get(rid, rid) for rid in u.get("role_ids", [])],
+        "active": u.get("status", "active") == "active",
+    }
+
+
+def _welcome_email(full_name: str, email: str, password: str) -> str:
+    return (
+        f"<div style='font-family:system-ui,Arial,sans-serif;color:#0f172a'>"
+        f"<h2 style='color:#4f46e5'>Καλώς ήρθατε στο RxVision</h2>"
+        f"<p>Γεια σας {full_name},</p>"
+        f"<p>Δημιουργήθηκε λογαριασμός για εσάς. Τα στοιχεία πρόσβασης:</p>"
+        f"<p><b>Email:</b> {email}<br><b>Προσωρινός κωδικός:</b> "
+        f"<code style='background:#f1f5f9;padding:2px 6px;border-radius:4px'>{password}</code></p>"
+        f"<p><a href='{_LOGIN_URL}' style='display:inline-block;background:#4f46e5;color:#fff;"
+        f"padding:10px 18px;border-radius:8px;text-decoration:none'>Σύνδεση</a></p>"
+        f"<p style='color:#64748b;font-size:13px'>Για την ασφάλειά σας, αλλάξτε τον κωδικό μετά "
+        f"την πρώτη σύνδεση.</p></div>"
+    )
 
 
 # ── Users ──────────────────────────────────────────────────
@@ -24,7 +62,9 @@ async def list_users(
 ):
     repo = UserRepository(tenant_id=ctx.tenant_id)
     items = await repo.list_users(skip=(page - 1) * page_size, limit=page_size)
-    return {"page": page, "page_size": page_size, "items": items}
+    names = await _role_names(ctx.tenant_id)
+    return {"page": page, "page_size": page_size,
+            "items": [_shape_user(u, names) for u in items]}
 
 
 @router.get("/users/{user_id}")
@@ -32,14 +72,38 @@ async def get_user(user_id: str, ctx: TenantContext = Depends(require(_PERM))):
     user = await UserRepository(tenant_id=ctx.tenant_id).get(user_id)
     if user is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "user_not_found")
-    return user
+    return _shape_user(user, await _role_names(ctx.tenant_id))
 
 
 @router.post("/users", status_code=201)
 async def create_user(body: UserCreate, ctx: TenantContext = Depends(require(_PERM))):
+    repo = UserRepository(tenant_id=ctx.tenant_id)
+    # one account per email within a tenant
+    if await repo._coll.find_one(repo._scope({"email": str(body.email)})):
+        raise HTTPException(status.HTTP_409_CONFLICT, detail={"error": "email_exists"})
+
+    temp_password = body.password or ("Rx-" + secrets.token_urlsafe(9))
     doc = body.model_dump(exclude={"password"})
-    doc["password_hash"] = hash_password(body.password)
-    return await UserRepository(tenant_id=ctx.tenant_id).create(doc)
+    doc["email"] = str(body.email)
+    doc["password_hash"] = hash_password(temp_password)
+    user = await repo.create(doc)
+
+    shaped = _shape_user(user, await _role_names(ctx.tenant_id))
+    # email the credentials when we generated them (best-effort; SMTP may be unset)
+    emailed = False
+    if not body.password:
+        try:
+            await mailer.send_email(
+                str(body.email), "RxVision — τα στοιχεία πρόσβασής σας",
+                _welcome_email(body.full_name, str(body.email), temp_password))
+            emailed = True
+        except Exception:  # noqa: BLE001
+            emailed = False
+    shaped["credentials_emailed"] = emailed
+    if not emailed and not body.password:
+        # SMTP not available → hand the password back once so the owner can deliver it
+        shaped["temporary_password"] = temp_password
+    return shaped
 
 
 @router.patch("/users/{user_id}")

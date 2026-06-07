@@ -7,7 +7,8 @@ import { ModuleGuard } from "@/components/layout/ModuleGuard";
 import { DataTable, type Column } from "@/components/tables/DataTable";
 
 type User = { id: string; email: string; full_name: string; roles: string[]; active: boolean };
-type Role = { id: string; name: string };
+type Role = { _id?: string; id?: string; name: string };
+type CreateResult = User & { credentials_emailed?: boolean; temporary_password?: string };
 
 export default function UsersSettingsPage() {
   const qc = useQueryClient();
@@ -25,15 +26,29 @@ export default function UsersSettingsPage() {
   });
 
   const create = useMutation({
-    mutationFn: (body: { email: string; full_name: string; role: string }) =>
-      api<User>(`/users`, { method: "POST", body: JSON.stringify(body) }),
-    onSuccess: () => {
+    mutationFn: (body: { email: string; full_name: string; role_ids: string[] }) =>
+      api<CreateResult>(`/users`, { method: "POST", body: JSON.stringify(body) }),
+    onSuccess: (res) => {
       qc.invalidateQueries({ queryKey: queryKeys.users() });
       setEmail("");
       setFullName("");
       setRole("");
+      if (res?.temporary_password) {
+        alert(
+          `Ο χρήστης δημιουργήθηκε.\n\nΠροσωρινός κωδικός (δώσ' τον στον χρήστη — δεν θα ξαναεμφανιστεί):\n${res.temporary_password}`
+        );
+      } else {
+        alert("Ο χρήστης δημιουργήθηκε. Στάλθηκε email με τα στοιχεία πρόσβασης.");
+      }
     },
-    onError: (e) => alert(e instanceof ApiError ? `Σφάλμα (${e.status})` : "Αποτυχία δημιουργίας"),
+    onError: (e) =>
+      alert(
+        e instanceof ApiError && (e.problem as any)?.detail?.error === "email_exists"
+          ? "Υπάρχει ήδη χρήστης με αυτό το email."
+          : e instanceof ApiError
+            ? `Σφάλμα (${e.status})`
+            : "Αποτυχία δημιουργίας"
+      ),
   });
 
   const columns: Column<User>[] = [
@@ -55,7 +70,7 @@ export default function UsersSettingsPage() {
           className="flex flex-wrap items-end gap-3"
           onSubmit={(e) => {
             e.preventDefault();
-            create.mutate({ email, full_name: fullName, role });
+            create.mutate({ email, full_name: fullName, role_ids: role ? [role] : [] });
           }}
         >
           <label className="text-sm">
@@ -64,7 +79,7 @@ export default function UsersSettingsPage() {
               value={fullName}
               onChange={(e) => setFullName(e.target.value)}
               required
-              className="rounded-lg border border-slate-300 px-3 py-2 focus:border-teal-600 focus:outline-none"
+              className="rounded-lg border border-slate-300 px-3 py-2 focus:border-brand-400 focus:outline-none"
             />
           </label>
           <label className="text-sm">
@@ -74,7 +89,7 @@ export default function UsersSettingsPage() {
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required
-              className="rounded-lg border border-slate-300 px-3 py-2 focus:border-teal-600 focus:outline-none"
+              className="rounded-lg border border-slate-300 px-3 py-2 focus:border-brand-400 focus:outline-none"
             />
           </label>
           <label className="text-sm">
@@ -83,20 +98,23 @@ export default function UsersSettingsPage() {
               value={role}
               onChange={(e) => setRole(e.target.value)}
               required
-              className="rounded-lg border border-slate-300 px-3 py-2 focus:border-teal-600 focus:outline-none"
+              className="rounded-lg border border-slate-300 px-3 py-2 focus:border-brand-400 focus:outline-none"
             >
               <option value="">—</option>
-              {(roles.data?.items ?? []).map((r) => (
-                <option key={r.id} value={r.name}>
-                  {r.name}
-                </option>
-              ))}
+              {(roles.data?.items ?? []).map((r) => {
+                const rid = r._id ?? r.id ?? "";
+                return (
+                  <option key={rid} value={rid}>
+                    {r.name}
+                  </option>
+                );
+              })}
             </select>
           </label>
           <button
             type="submit"
             disabled={create.isPending}
-            className="rounded-lg bg-teal-700 px-4 py-2 text-sm font-medium text-white hover:bg-teal-800 disabled:opacity-50"
+            className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
           >
             {create.isPending ? "Αποθήκευση…" : "Προσθήκη"}
           </button>

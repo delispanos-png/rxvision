@@ -7,7 +7,8 @@ from pydantic import BaseModel, EmailStr, Field
 
 class UserCreate(BaseModel):
     email: EmailStr
-    password: str = Field(..., min_length=8)
+    # Optional: if omitted, a temporary password is generated and emailed to the user.
+    password: str | None = Field(None, min_length=8)
     full_name: str = Field(..., min_length=1)
     role_ids: list[str] = Field(default_factory=list)
     pharmacy_ids: list[str] = Field(default_factory=list)
