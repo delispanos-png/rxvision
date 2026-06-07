@@ -1,5 +1,6 @@
 "use client";
 
+import { appConfirm, appPrompt } from "@/store/dialogStore";
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { adminApi, ApiError } from "@/lib/adminClient";
@@ -45,8 +46,9 @@ export default function StaffPage() {
   const refresh = () => qc.invalidateQueries({ queryKey: ["admin", "staff"] });
 
   async function resetPw(s: Staff) {
-    const pw = prompt(
-      `Νέος κωδικός για «${s.email}».\n\nΓράψε τον κωδικό που θέλεις (τουλάχιστον 8 χαρακτήρες),\nή άφησέ το ΚΕΝΟ για αυτόματο τυχαίο κωδικό.\n\n(Ο χρήστης θα αποσυνδεθεί.)`
+    const pw = await appPrompt(
+      "Γράψε τον κωδικό που θέλεις (τουλάχιστον 8 χαρακτήρες),\nή άφησέ το ΚΕΝΟ για αυτόματο τυχαίο κωδικό.\n\n(Ο χρήστης θα αποσυνδεθεί.)",
+      { title: `Νέος κωδικός για «${s.email}»`, placeholder: "Νέος κωδικός (ή κενό)", confirmText: "Αλλαγή κωδικού" }
     );
     if (pw === null) return; // cancelled
     const chosen = pw.trim();
@@ -73,7 +75,7 @@ export default function StaffPage() {
     } catch (e) { setNotice(e instanceof ApiError ? `Δεν επιτρέπεται: ${JSON.stringify(e.problem)}` : "Σφάλμα."); }
   }
   async function remove(s: Staff) {
-    if (!confirm(`Διαγραφή του «${s.email}»;`)) return;
+    if (!(await appConfirm(`Διαγραφή του «${s.email}»;`, { title: "Διαγραφή", danger: true, confirmText: "Διαγραφή" }))) return;
     try {
       await adminApi(`/admin/staff/${s.id}`, { method: "DELETE" });
       refresh();

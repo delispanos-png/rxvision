@@ -1,5 +1,6 @@
 "use client";
 
+import { appConfirm } from "@/store/dialogStore";
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { adminApi, ApiError } from "@/lib/adminClient";
@@ -38,8 +39,8 @@ export default function Invoices() {
       setNotice(`Σφάλμα: ${m}`);
     }
   }
-  const transmit = (i: Invoice) => { if (confirm(`Διαβίβαση του ${i.full_number} στην ΑΑΔΕ; Μετά δεν τροποποιείται/διαγράφεται.`)) act(() => adminApi(`/admin/invoices/${i.id}/transmit`, { method: "POST" }), "Διαβιβάστηκε στην ΑΑΔΕ ✓"); };
-  const del = (i: Invoice) => { if (confirm(`Διαγραφή του παραστατικού ${i.full_number};`)) act(() => adminApi(`/admin/invoices/${i.id}`, { method: "DELETE" }), "Διαγράφηκε."); };
+  const transmit = async (i: Invoice) => { if (await appConfirm(`Διαβίβαση του ${i.full_number} στην ΑΑΔΕ; Μετά δεν τροποποιείται/διαγράφεται.`, { title: "Διαβίβαση στην ΑΑΔΕ", confirmText: "Διαβίβαση" })) act(() => adminApi(`/admin/invoices/${i.id}/transmit`, { method: "POST" }), "Διαβιβάστηκε στην ΑΑΔΕ ✓"); };
+  const del = async (i: Invoice) => { if (await appConfirm(`Διαγραφή του παραστατικού ${i.full_number};`, { title: "Διαγραφή παραστατικού", danger: true, confirmText: "Διαγραφή" })) act(() => adminApi(`/admin/invoices/${i.id}`, { method: "DELETE" }), "Διαγράφηκε."); };
 
   const columns: Column<Invoice>[] = [
     { key: "full_number", header: "Αρ.", render: (r) => <span className="font-medium">{r.doc_type} {r.full_number}</span> },

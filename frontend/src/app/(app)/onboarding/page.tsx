@@ -1,5 +1,6 @@
 "use client";
 
+import { appAlert } from "@/store/dialogStore";
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
@@ -51,13 +52,13 @@ export default function OnboardingPage() {
       }),
     onSuccess: () => setCredsSaved(true),
     onError: (e) =>
-      alert(e instanceof ApiError ? `Σφάλμα (${e.status})` : "Αποτυχία αποθήκευσης"),
+      appAlert(e instanceof ApiError ? `Σφάλμα (${e.status})` : "Αποτυχία αποθήκευσης"),
   });
 
   const triggerSync = useMutation({
     mutationFn: () => api<SyncStats>("/ingestion/hdika/sync", { method: "POST" }),
     onSuccess: (data) => setSyncStats(data),
-    onError: (e) => alert(e instanceof ApiError ? `Σφάλμα (${e.status})` : "Αποτυχία συγχρονισμού"),
+    onError: (e) => appAlert(e instanceof ApiError ? `Σφάλμα (${e.status})` : "Αποτυχία συγχρονισμού"),
   });
 
   if (me.isLoading || tenant.isLoading) {

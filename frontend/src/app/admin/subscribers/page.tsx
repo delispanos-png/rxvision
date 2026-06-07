@@ -1,5 +1,6 @@
 "use client";
 
+import { appConfirm } from "@/store/dialogStore";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -30,7 +31,7 @@ export default function SubscribersPage() {
 
   async function toggleStatus(t: Tenant) {
     const next = t.status === "suspended" ? "active" : "suspended";
-    if (!confirm(`Αλλαγή κατάστασης «${t.name}» σε ${next};`)) return;
+    if (!(await appConfirm(`Αλλαγή κατάστασης «${t.name}» σε ${next};`, { title: "Αλλαγή κατάστασης", confirmText: "Αλλαγή" }))) return;
     await adminApi(`/admin/tenants/${t.id}/status`, { method: "PATCH", body: JSON.stringify({ status: next }) });
     qc.invalidateQueries({ queryKey: ["admin", "tenants"] });
   }

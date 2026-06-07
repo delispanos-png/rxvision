@@ -5,6 +5,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, queryKeys, ApiError } from "@/lib/apiClient";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
 import { DataTable, type Column } from "@/components/tables/DataTable";
+import { appAlert, appConfirm, appPrompt } from "@/store/dialogStore";
 
 type User = {
   id: string;
@@ -50,55 +51,61 @@ export default function UsersSettingsPage() {
     onSuccess: (res) => {
       refresh();
       setEmail(""); setFullName(""); setRole("");
-      alert(
+      appAlert(
         res?.temporary_password
           ? `Ο χρήστης δημιουργήθηκε.\n\nΠροσωρινός κωδικός (δώσ' τον στον χρήστη — δεν θα ξαναεμφανιστεί):\n${res.temporary_password}`
           : "Ο χρήστης δημιουργήθηκε. Στάλθηκε email με τα στοιχεία πρόσβασης."
       );
     },
-    onError: (e) => alert(errText(e, "Αποτυχία δημιουργίας")),
+    onError: (e) => appAlert(errText(e, "Αποτυχία δημιουργίας")),
   });
 
   const update = useMutation({
     mutationFn: (v: { id: string; full_name: string; role_ids: string[] }) =>
       api<User>(`/users/${v.id}`, { method: "PATCH", body: JSON.stringify({ full_name: v.full_name, role_ids: v.role_ids }) }),
     onSuccess: () => { refresh(); setEditing(null); },
-    onError: (e) => alert(errText(e, "Αποτυχία αποθήκευσης")),
+    onError: (e) => appAlert(errText(e, "Αποτυχία αποθήκευσης")),
   });
 
   const setStatus = useMutation({
     mutationFn: (v: { id: string; status: "active" | "suspended" }) =>
       api<User>(`/users/${v.id}`, { method: "PATCH", body: JSON.stringify({ status: v.status }) }),
     onSuccess: refresh,
-    onError: (e) => alert(errText(e, "Αποτυχία αλλαγής κατάστασης")),
+    onError: (e) => appAlert(errText(e, "Αποτυχία αλλαγής κατάστασης")),
   });
 
   const remove = useMutation({
     mutationFn: (id: string) => api<void>(`/users/${id}`, { method: "DELETE" }),
     onSuccess: refresh,
-    onError: (e) => alert(errText(e, "Αποτυχία διαγραφής")),
+    onError: (e) => appAlert(errText(e, "Αποτυχία διαγραφής")),
   });
 
   const resetPw = useMutation({
     mutationFn: (v: { id: string; password?: string }) =>
       api<ResetResult>(`/users/${v.id}/reset-password`, { method: "POST", body: JSON.stringify(v.password ? { password: v.password } : {}) }),
     onSuccess: (res) =>
-      alert(
+      appAlert(
         res?.temporary_password
           ? `Νέος προσωρινός κωδικός (δώσ' τον στον χρήστη — δεν θα ξαναεμφανιστεί):\n${res.temporary_password}`
           : "Ο κωδικός άλλαξε. Στάλθηκε email στον χρήστη."
       ),
-    onError: (e) => alert(errText(e, "Αποτυχία επαναφοράς κωδικού")),
+    onError: (e) => appAlert(errText(e, "Αποτυχία επαναφοράς κωδικού")),
   });
 
-  function onReset(u: User) {
-    const pw = prompt(
-      `Νέος κωδικός για «${u.email}».\n\nΓράψε τον κωδικό που θέλεις (τουλάχιστον 8 χαρακτήρες),\nή άφησέ το ΚΕΝΟ για αυτόματο τυχαίο κωδικό που θα σταλεί με email.`
+  async function onReset(u: User) {
+    const pw = await appPrompt(
+      "Γράψε τον κωδικό που θέλεις (τουλάχιστον 8 χαρακτήρες),\nή άφησέ το ΚΕΝΟ για αυτόματο τυχαίο κωδικό που θα σταλεί με email.",
+      { title: `Νέος κωδικός για «${u.email}»`, placeholder: "Νέος κωδικός (ή κενό)", confirmText: "Αλλαγή κωδικού" }
     );
     if (pw === null) return;
     const chosen = pw.trim();
-    if (chosen && chosen.length < 8) { alert("Ο κωδικός πρέπει να έχει τουλάχιστον 8 χαρακτήρες."); return; }
+    if (chosen && chosen.length < 8) { appAlert("Ο κωδικός πρέπει να έχει τουλάχιστον 8 χαρακτήρες."); return; }
     resetPw.mutate({ id: u.id, password: chosen || undefined });
+  }
+
+  async function onDelete(u: User) {
+    if (await appConfirm(`Διαγραφή του χρήστη «${u.email}»;`, { title: "Διαγραφή χρήστη", danger: true, confirmText: "Διαγραφή" }))
+      remove.mutate(u.id);
   }
 
   const columns: Column<User>[] = [
@@ -126,7 +133,7 @@ export default function UsersSettingsPage() {
             <button
               className={`${btn} border-rose-200 text-rose-600 hover:bg-rose-50 ${self ? "cursor-not-allowed opacity-40" : ""}`}
               disabled={self}
-              onClick={() => { if (confirm(`Διαγραφή του χρήστη «${r.email}»;`)) remove.mutate(r.id); }}
+              onClick={() => onDelete(r)}
             >
               Διαγραφή
             </button>

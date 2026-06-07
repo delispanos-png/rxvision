@@ -1,5 +1,6 @@
 "use client";
 
+import { appConfirm } from "@/store/dialogStore";
 import { useState } from "react";
 import { useParams } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -25,7 +26,7 @@ export default function ContentPage() {
     refresh();
   }
   async function remove(p: Post) {
-    if (!confirm(`Διαγραφή «${p.title}»;`)) return;
+    if (!(await appConfirm(`Διαγραφή «${p.title}»;`, { title: "Διαγραφή", danger: true, confirmText: "Διαγραφή" }))) return;
     await adminApi(`/admin/posts/${p.id}`, { method: "DELETE" });
     refresh();
   }

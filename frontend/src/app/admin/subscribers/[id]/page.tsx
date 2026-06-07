@@ -1,5 +1,6 @@
 "use client";
 
+import { appConfirm } from "@/store/dialogStore";
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
@@ -64,7 +65,7 @@ export default function TenantCardPage() {
   }
 
   async function sendCreds(email: string) {
-    if (!confirm(`Δημιουργία ΝΕΟΥ προσωρινού κωδικού για ${email} και αποστολή στον πελάτη;\n(Ο προηγούμενος κωδικός παύει να ισχύει.)`)) return;
+    if (!(await appConfirm(`Δημιουργία ΝΕΟΥ προσωρινού κωδικού για ${email} και αποστολή στον πελάτη;\n(Ο προηγούμενος κωδικός παύει να ισχύει.)`, { title: "Νέος κωδικός πελάτη", confirmText: "Δημιουργία & αποστολή" }))) return;
     setBusy(true); setNotice(null); setSentCreds(null);
     try {
       const r = await adminApi<{ email: string; temp_password: string; emailed: boolean }>(
@@ -211,9 +212,9 @@ export default function TenantCardPage() {
         <div className="flex flex-wrap gap-2">
           <button disabled={busy} onClick={() => act(() => adminApi(`/admin/tenants/${encodeURIComponent(id)}/status`, { method: "PATCH", body: JSON.stringify({ status: t.status === "suspended" ? "active" : "suspended" }) }), "Έγινε ✓")}
             className="rounded-lg border border-slate-300 px-4 py-2 text-sm hover:bg-slate-50">{t.status === "suspended" ? "Ενεργοποίηση" : "Αναστολή"}</button>
-          <button disabled={busy || s.status === "cancelled"} onClick={() => { if (confirm("Ακύρωση συνδρομής; Ο πελάτης δεν θα μπορεί να μπει.")) act(() => adminApi(`/admin/tenants/${encodeURIComponent(id)}/cancel`, { method: "POST" }), "Συνδρομή ακυρώθηκε."); }}
+          <button disabled={busy || s.status === "cancelled"} onClick={async () => { if (await appConfirm("Ακύρωση συνδρομής; Ο πελάτης δεν θα μπορεί να μπει.", { title: "Ακύρωση συνδρομής", danger: true, confirmText: "Ακύρωση συνδρομής" })) act(() => adminApi(`/admin/tenants/${encodeURIComponent(id)}/cancel`, { method: "POST" }), "Συνδρομή ακυρώθηκε."); }}
             className="rounded-lg border border-amber-300 px-4 py-2 text-sm text-amber-700 hover:bg-amber-50 disabled:opacity-50">Ακύρωση συνδρομής</button>
-          <button disabled={busy} onClick={() => { if (confirm(`ΟΡΙΣΤΙΚΗ ΔΙΑΓΡΑΦΗ του «${t.name}» και ΟΛΩΝ των δεδομένων του. Δεν αναιρείται. Συνέχεια;`)) act(async () => { await adminApi(`/admin/tenants/${encodeURIComponent(id)}`, { method: "DELETE" }); router.push("/admin/subscribers"); }, "Διαγράφηκε."); }}
+          <button disabled={busy} onClick={async () => { if (await appConfirm(`ΟΡΙΣΤΙΚΗ ΔΙΑΓΡΑΦΗ του «${t.name}» και ΟΛΩΝ των δεδομένων του. Δεν αναιρείται. Συνέχεια;`, { title: "Οριστική διαγραφή πελάτη", danger: true, confirmText: "Διαγραφή πελάτη" })) act(async () => { await adminApi(`/admin/tenants/${encodeURIComponent(id)}`, { method: "DELETE" }); router.push("/admin/subscribers"); }, "Διαγράφηκε."); }}
             className="rounded-lg border border-red-300 px-4 py-2 text-sm text-red-700 hover:bg-red-50">Διαγραφή πελάτη</button>
         </div>
         <p className="mt-2 text-xs text-slate-400">Σημ.: για πελάτες Noeton, η συνδρομή ελέγχεται από τη Noeton — ο επόμενος συγχρονισμός μπορεί να επαναφέρει αλλαγές κατάστασης.</p>

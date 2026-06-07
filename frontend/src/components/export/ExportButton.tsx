@@ -1,5 +1,6 @@
 "use client";
 
+import { appAlert } from "@/store/dialogStore";
 import { useState } from "react";
 import { api } from "@/lib/apiClient";
 
@@ -38,10 +39,10 @@ export function ExportButton({
       if (url && typeof window !== "undefined") {
         window.open(url, "_blank");
       } else {
-        alert("Η εξαγωγή ξεκίνησε. Θα ειδοποιηθείτε όταν είναι έτοιμη.");
+        appAlert("Η εξαγωγή ξεκίνησε. Θα ειδοποιηθείτε όταν είναι έτοιμη.");
       }
     } catch {
-      alert("Η εξαγωγή απέτυχε.");
+      appAlert("Η εξαγωγή απέτυχε.");
     } finally {
       setBusy(null);
       setOpen(false);

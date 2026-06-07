@@ -1,5 +1,6 @@
 "use client";
 
+import { appPrompt } from "@/store/dialogStore";
 import { useEffect, useImperativeHandle, forwardRef } from "react";
 import { useEditor, EditorContent, type Editor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
@@ -54,9 +55,9 @@ function ToolbarBtn({
 function Toolbar({ editor }: { editor: Editor }) {
   const sep = <span className="mx-1 h-5 w-px bg-slate-200" />;
 
-  function setLink() {
+  async function setLink() {
     const prev = editor.getAttributes("link").href as string | undefined;
-    const url = window.prompt("Διεύθυνση συνδέσμου (URL):", prev ?? "");
+    const url = await appPrompt("Διεύθυνση συνδέσμου (URL):", { title: "Σύνδεσμος", defaultValue: prev ?? "", placeholder: "https://…" });
     if (url === null) return; // cancelled
     if (url === "") {
       editor.chain().focus().extendMarkRange("link").unsetLink().run();
@@ -65,8 +66,8 @@ function Toolbar({ editor }: { editor: Editor }) {
     editor.chain().focus().extendMarkRange("link").setLink({ href: url }).run();
   }
 
-  function addImage() {
-    const url = window.prompt("Διεύθυνση εικόνας (URL):", "");
+  async function addImage() {
+    const url = await appPrompt("Διεύθυνση εικόνας (URL):", { title: "Εικόνα", placeholder: "https://…" });
     if (url) editor.chain().focus().setImage({ src: url }).run();
   }
 

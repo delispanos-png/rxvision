@@ -1,5 +1,6 @@
 "use client";
 
+import { appAlert } from "@/store/dialogStore";
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, Lock, Receipt, Wallet } from "lucide-react";
@@ -52,7 +53,7 @@ export default function ClosingPage() {
   const lock = useMutation({
     mutationFn: () => api<{ locked: boolean }>(`/closing/${period}/lock`, { method: "POST" }),
     onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.closingControl(period) }),
-    onError: (e) => alert(e instanceof ApiError ? `Αποτυχία κλειδώματος (${e.status})` : "Αποτυχία κλειδώματος"),
+    onError: (e) => appAlert(e instanceof ApiError ? `Αποτυχία κλειδώματος (${e.status})` : "Αποτυχία κλειδώματος"),
   });
 
   const checks = control.data?.checks ?? [];

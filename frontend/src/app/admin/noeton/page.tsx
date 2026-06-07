@@ -1,5 +1,6 @@
 "use client";
 
+import { appConfirm } from "@/store/dialogStore";
 import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { adminApi, ApiError } from "@/lib/adminClient";
@@ -29,7 +30,7 @@ export default function NoetonPage() {
     finally { setBusy(false); }
   }
   async function generate() {
-    if (data?.has_inbound_key && !confirm("Υπάρχουν ήδη κλειδιά. Επαναδημιουργία θα τα αντικαταστήσει (πρέπει να ξαναμπούν στη Noeton). Συνέχεια;")) return;
+    if (data?.has_inbound_key && !(await appConfirm("Υπάρχουν ήδη κλειδιά. Επαναδημιουργία θα τα αντικαταστήσει (πρέπει να ξαναμπούν στη Noeton). Συνέχεια;", { title: "Επαναδημιουργία κλειδιών", danger: true, confirmText: "Επαναδημιουργία" }))) return;
     setBusy(true); setNotice(null);
     try {
       const r = await adminApi<{ inbound_key: string; webhook_secret: string }>("/admin/noeton/generate-keys", { method: "POST" });

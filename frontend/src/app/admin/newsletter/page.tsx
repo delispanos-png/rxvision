@@ -1,5 +1,6 @@
 "use client";
 
+import { appConfirm } from "@/store/dialogStore";
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2, Monitor, Smartphone, Send, Mail } from "lucide-react";
@@ -154,7 +155,7 @@ export default function NewsletterPage() {
 
   async function send() {
     const count = recipients.data?.count ?? 0;
-    if (!confirm(`Αποστολή σε ${fmtNum(count)} παραλήπτες;`)) return;
+    if (!(await appConfirm(`Αποστολή σε ${fmtNum(count)} παραλήπτες;`, { title: "Αποστολή newsletter", confirmText: "Αποστολή" }))) return;
     setSendBusy(true);
     setNotice(null);
     try {

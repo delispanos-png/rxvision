@@ -1,5 +1,6 @@
 "use client";
 
+import { appAlert } from "@/store/dialogStore";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, queryKeys, ApiError } from "@/lib/apiClient";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
@@ -47,7 +48,7 @@ export default function ModulesSettingsPage() {
         body: JSON.stringify({ modules: { [body.module]: body.state } }),
       }),
     onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.tenantModules() }),
-    onError: (e) => alert(e instanceof ApiError ? `Σφάλμα (${e.status})` : "Αποτυχία ενημέρωσης"),
+    onError: (e) => appAlert(e instanceof ApiError ? `Σφάλμα (${e.status})` : "Αποτυχία ενημέρωσης"),
   });
 
   const entries = Object.entries(data?.modules ?? {});

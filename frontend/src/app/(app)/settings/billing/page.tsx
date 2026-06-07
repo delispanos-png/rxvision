@@ -1,5 +1,6 @@
 "use client";
 
+import { appAlert } from "@/store/dialogStore";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { api, queryKeys, ApiError } from "@/lib/apiClient";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
@@ -34,7 +35,7 @@ export default function BillingSettingsPage() {
     onSuccess: (r) => {
       if (r.url && typeof window !== "undefined") window.location.href = r.url;
     },
-    onError: (e) => alert(e instanceof ApiError ? `Σφάλμα (${e.status})` : "Αποτυχία"),
+    onError: (e) => appAlert(e instanceof ApiError ? `Σφάλμα (${e.status})` : "Αποτυχία"),
   });
 
   const s = subscription.data;
