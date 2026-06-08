@@ -232,9 +232,11 @@ class HdikaClient:
         start = since.date() if since else end
         if (end - start).days > _MAX_BACKFILL_DAYS:        # safety cap for huge backfills
             start = end - timedelta(days=_MAX_BACKFILL_DAYS)
-        summaries = self._prescription_index(start, end)
         day = start
         while day <= end:
+            # repeat info for THIS day only — interleaved so a big backfill streams
+            # results immediately instead of waiting on one huge upfront sweep.
+            summaries = self._prescription_index(day, day)
             page = 0
             while True:
                 params = {"size": _PAGE_SIZE, "page": page,
