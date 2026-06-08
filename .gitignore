@@ -3,6 +3,7 @@
 .env.*
 !.env.example
 secrets/
+infra/docker/vault/tls/
 
 # python
 __pycache__/
