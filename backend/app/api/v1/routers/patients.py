@@ -36,7 +36,7 @@ async def retention(
 @router.get("/list")
 async def per_patient(
     sort: Literal["value", "claimed", "profit", "rx"] = "value",
-    limit: int = 100,
+    limit: int = Query(100, ge=1, le=500),
     date_from: datetime = Query(...),
     date_to: datetime = Query(...),
     ctx: TenantContext = Depends(require("patients:read", module=_MODULE)),

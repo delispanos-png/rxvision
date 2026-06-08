@@ -6,6 +6,7 @@ Pipelines translate ANALYTICS.md §3, §7, §8. They intentionally omit the lead
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 
 from app.repositories.base import BaseRepository
@@ -17,7 +18,9 @@ class DoctorRepository(BaseRepository):
     async def list_doctors(self, *, search: str | None, skip: int, limit: int) -> list[dict]:
         query: dict = {}
         if search:
-            query["full_name"] = {"$regex": search, "$options": "i"}
+            # Escape user input: a raw $regex lets an authenticated user submit a
+            # catastrophic-backtracking pattern → CPU DoS on the shared Mongo (H3).
+            query["full_name"] = {"$regex": re.escape(search.strip()), "$options": "i"}
         return await self.find(query, sort=[("full_name", 1)], skip=skip, limit=limit)
 
     async def get(self, doctor_id) -> dict | None:

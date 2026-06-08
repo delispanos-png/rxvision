@@ -20,8 +20,8 @@ async def list_prescriptions(
     fund_id: str | None = None,
     doctor_id: str | None = None,
     icd10: str | None = None,
-    page: int = 1,
-    page_size: int = 50,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=500),
     ctx: TenantContext = Depends(require("prescriptions:read", module="prescription_analytics")),
 ):
     repo = PrescriptionRepository(tenant_id=ctx.tenant_id)
@@ -53,7 +53,7 @@ async def aggregate(
 
 @router.get("/unexecuted")
 async def unexecuted(
-    limit: int = 50,
+    limit: int = Query(50, ge=1, le=500),
     date_from: datetime = Query(...),
     date_to: datetime = Query(...),
     ctx: TenantContext = Depends(require("prescriptions:read", module="prescription_analytics")),

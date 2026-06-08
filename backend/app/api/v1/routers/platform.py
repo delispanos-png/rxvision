@@ -11,6 +11,7 @@ from pydantic import BaseModel, EmailStr
 
 from app.core.db import shared_db
 from app.core.deps import PlatformContext, get_platform_admin
+from app.core.ratelimit import rate_limit
 from app.services.platform_auth import PlatformAuthService
 
 router = APIRouter()
@@ -39,7 +40,8 @@ class TokenOut(BaseModel):
     expires_in: int
 
 
-@router.post("/auth/login", response_model=TokenOut)
+@router.post("/auth/login", response_model=TokenOut,
+             dependencies=[Depends(rate_limit("platform_login", limit=10, window_seconds=300))])
 async def login(body: LoginIn):
     tokens = await PlatformAuthService().login(body.email, body.password)
     if tokens is None:

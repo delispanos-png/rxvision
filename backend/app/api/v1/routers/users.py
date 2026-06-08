@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import secrets
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.core.deps import TenantContext, require
 from app.core.security import hash_password
@@ -56,8 +56,8 @@ def _welcome_email(full_name: str, email: str, password: str) -> str:
 # ── Users ──────────────────────────────────────────────────
 @router.get("/users")
 async def list_users(
-    page: int = 1,
-    page_size: int = 50,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=500),
     ctx: TenantContext = Depends(require(_PERM)),
 ):
     repo = UserRepository(tenant_id=ctx.tenant_id)
@@ -159,8 +159,8 @@ async def delete_user(user_id: str, ctx: TenantContext = Depends(require(_PERM))
 # ── Roles ──────────────────────────────────────────────────
 @router.get("/roles")
 async def list_roles(
-    page: int = 1,
-    page_size: int = 50,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=500),
     ctx: TenantContext = Depends(require(_PERM)),
 ):
     repo = RoleRepository(tenant_id=ctx.tenant_id)

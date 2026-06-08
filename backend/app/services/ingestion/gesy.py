@@ -47,9 +47,20 @@ def _int(value: str | None, default: int = 0) -> int:
         return default
 
 
+# Hardened parser: the upload is user-controlled, so disable DTD/entity/network
+# resolution to prevent XXE, SSRF and billion-laughs expansion (M1).
+_SAFE_PARSER = etree.XMLParser(
+    resolve_entities=False,
+    no_network=True,
+    load_dtd=False,
+    dtd_validation=False,
+    huge_tree=False,
+)
+
+
 def parse_gesy_xml(data: bytes) -> list[CanonicalExecution]:
     """Parse ΓΕΣΥ XML bytes into canonical executions. Raises on malformed XML."""
-    root = etree.fromstring(data)  # noqa: S320 — trusted, size-limited upload
+    root = etree.fromstring(data, parser=_SAFE_PARSER)
     out: list[CanonicalExecution] = []
     for ex_el in root.findall("execution"):
         fund_el = ex_el.find("fund")

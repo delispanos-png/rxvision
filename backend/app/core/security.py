@@ -13,6 +13,11 @@ from app.core.config import settings
 
 _ph = PasswordHasher()
 
+# Audience claims give the two identity classes distinct, verified domains — a token
+# minted for one is rejected when presented to the other (combined with separate keys). (H1)
+AUD_TENANT = "rxvision/tenant"
+AUD_PLATFORM = "rxvision/platform"
+
 
 def hash_password(raw: str) -> str:
     return _ph.hash(raw)
@@ -29,6 +34,18 @@ def _now() -> datetime:
     return datetime.now(tz=timezone.utc)
 
 
+def verify_totp(secret: str, code: str) -> bool:
+    """Verify a TOTP code against the user's secret (±1 step for clock skew).
+    Lazy import keeps pyotp optional at module-import time."""
+    if not secret or not code:
+        return False
+    try:
+        import pyotp
+        return pyotp.TOTP(secret).verify(code.strip(), valid_window=1)
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def create_access_token(*, user_id: str, tenant_id: str, roles: list[str],
                         modules: dict[str, str], permissions: list[str] | None = None) -> str:
     payload = {
@@ -38,6 +55,7 @@ def create_access_token(*, user_id: str, tenant_id: str, roles: list[str],
         "modules": modules,
         "perms": permissions or [],
         "scope": "access",
+        "aud": AUD_TENANT,
         "iat": _now(),
         "exp": _now() + timedelta(seconds=settings.ACCESS_TOKEN_TTL_SECONDS),
         "jti": str(uuid.uuid4()),
@@ -51,6 +69,7 @@ def create_refresh_token(*, user_id: str, tenant_id: str, version: int) -> str:
         "tid": tenant_id,
         "ver": version,            # bumped on logout / password change to revoke
         "scope": "refresh",
+        "aud": AUD_TENANT,
         "iat": _now(),
         "exp": _now() + timedelta(seconds=settings.REFRESH_TOKEN_TTL_SECONDS),
         "jti": str(uuid.uuid4()),
@@ -65,11 +84,12 @@ def create_platform_token(*, admin_id: str, email: str) -> str:
         "email": email,
         "padmin": True,
         "scope": "access",
+        "aud": AUD_PLATFORM,
         "iat": _now(),
         "exp": _now() + timedelta(seconds=settings.ACCESS_TOKEN_TTL_SECONDS),
         "jti": str(uuid.uuid4()),
     }
-    return jwt.encode(payload, settings.JWT_SECRET, algorithm=settings.JWT_ALG)
+    return jwt.encode(payload, settings.JWT_PLATFORM_SECRET, algorithm=settings.JWT_ALG)
 
 
 def create_platform_refresh_token(*, admin_id: str, version: int) -> str:
@@ -78,15 +98,28 @@ def create_platform_refresh_token(*, admin_id: str, version: int) -> str:
         "ver": version,
         "padmin": True,
         "scope": "refresh",
+        "aud": AUD_PLATFORM,
         "iat": _now(),
         "exp": _now() + timedelta(seconds=settings.REFRESH_TOKEN_TTL_SECONDS),
         "jti": str(uuid.uuid4()),
     }
-    return jwt.encode(payload, settings.JWT_SECRET, algorithm=settings.JWT_ALG)
+    return jwt.encode(payload, settings.JWT_PLATFORM_SECRET, algorithm=settings.JWT_ALG)
 
 
 def decode_token(token: str) -> dict:
+    """Decode a TENANT token (signed with JWT_SECRET, audience rxvision/tenant)."""
     try:
-        return jwt.decode(token, settings.JWT_SECRET, algorithms=[settings.JWT_ALG])
+        return jwt.decode(token, settings.JWT_SECRET, algorithms=[settings.JWT_ALG],
+                          audience=AUD_TENANT)
+    except JWTError as exc:  # noqa: BLE001
+        raise ValueError("invalid_token") from exc
+
+
+def decode_platform_token(token: str) -> dict:
+    """Decode a PLATFORM-admin token (signed with JWT_PLATFORM_SECRET, audience
+    rxvision/platform). A tenant token fails here on both key and audience."""
+    try:
+        return jwt.decode(token, settings.JWT_PLATFORM_SECRET, algorithms=[settings.JWT_ALG],
+                          audience=AUD_PLATFORM)
     except JWTError as exc:  # noqa: BLE001
         raise ValueError("invalid_token") from exc

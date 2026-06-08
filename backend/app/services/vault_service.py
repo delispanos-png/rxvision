@@ -33,21 +33,45 @@ class VaultService:
 
     def _connect(self) -> None:
         if not settings.VAULT_ADDR or not settings.VAULT_TOKEN:
-            logger.warning("Vault not configured — using in-memory dev secret store.")
-            # Seed dev fallbacks so the app is usable without Vault.
-            self._dev_store["app/jwt"] = {"secret": settings.JWT_SECRET}
-            self._dev_store["app/pepper"] = {"global": settings.ANONYMIZATION_GLOBAL_PEPPER}
+            self._degrade("Vault not configured")
             return
         try:
             import hvac  # imported lazily so dev without the dep still works
 
-            self._client = hvac.Client(url=settings.VAULT_ADDR, token=settings.VAULT_TOKEN)
+            # verify: path to the CA cert for Vault's self-signed HTTPS listener,
+            # or True (system CAs) when VAULT_CACERT is unset.
+            self._client = hvac.Client(
+                url=settings.VAULT_ADDR,
+                token=settings.VAULT_TOKEN,
+                verify=settings.VAULT_CACERT or True,
+            )
             if not self._client.is_authenticated():
-                logger.error("Vault auth failed — falling back to dev store.")
                 self._client = None
+                self._degrade("Vault auth failed")
         except Exception as exc:  # noqa: BLE001
-            logger.error("Vault init error (%s) — falling back to dev store.", exc)
             self._client = None
+            self._degrade(f"Vault init error ({exc})")
+
+    def _degrade(self, reason: str) -> None:
+        """Handle an unavailable Vault. In PRODUCTION we never fall back to an in-memory
+        store seeded from env defaults — that silently defeats secrets management (C2);
+        assert_ready() will refuse to boot. In dev we seed a usable in-memory store."""
+        if settings.is_production:
+            logger.error("Vault unavailable in production: %s", reason)
+            return
+        logger.warning("%s — using in-memory dev secret store (DEV ONLY).", reason)
+        self._dev_store["app/jwt"] = {"secret": settings.JWT_SECRET}
+        self._dev_store["app/pepper"] = {"global": settings.ANONYMIZATION_GLOBAL_PEPPER}
+
+    def assert_ready(self) -> None:
+        """Fail fast at startup: in production a reachable, authenticated Vault is
+        mandatory. Without it we must NOT serve with an in-memory fallback (C2)."""
+        if settings.is_production and self._client is None:
+            raise RuntimeError(
+                "Vault is required in production but is not available. Set VAULT_ADDR/"
+                "VAULT_TOKEN, ensure Vault is reachable and UNSEALED, then restart. "
+                "Refusing to start with an in-memory secret store."
+            )
 
     # ── public API ─────────────────────────────────────────
     def set_secret(self, path: str, data: dict[str, Any]) -> None:
