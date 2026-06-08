@@ -31,6 +31,32 @@ def _num(v):
         return None
 
 
+def _substance_name(active_substances) -> str:
+    """Pull the human substance name(s) out of the nested activeSubstances structure:
+    {activeSubstance:{activeSubstance:{description: 'ATORVASTATIN…'}}} (dict or list)."""
+    names: list[str] = []
+
+    def walk(node):
+        if isinstance(node, list):
+            for n in node:
+                walk(n)
+        elif isinstance(node, dict):
+            desc = node.get("description")
+            if desc and "activeSubstance" not in node:
+                names.append(str(desc).strip())
+            for k in ("activeSubstance", "activeSubstances"):
+                if k in node:
+                    walk(node[k])
+
+    walk(active_substances)
+    seen, out = set(), []
+    for n in names:
+        if n and n not in seen:
+            seen.add(n)
+            out.append(n)
+    return ", ".join(out)
+
+
 async def refresh_catalog(db, client) -> int:
     """Page masterdata/medicines → upsert into global `medicine_catalog` (keyed by eofCode).
     Logs every retail-price change vs the previous snapshot into `price_changes` (powers the
@@ -77,6 +103,7 @@ async def refresh_catalog(db, client) -> int:
                 "atc": r.get("atcCode"),
                 "drug_category": r.get("drugCategoryId"),
                 "active_substances": r.get("activeSubstances"),
+                "substance_name": _substance_name(r.get("activeSubstances")),
                 "vendor_update_date": r.get("updateDate"),
                 "updated_at": now,
             }}, upsert=True))

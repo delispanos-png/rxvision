@@ -6,7 +6,7 @@ import { ArrowLeft } from "lucide-react";
 import { api } from "@/lib/apiClient";
 import { PanelCard } from "@/components/ui/Card";
 
-type Med = { name: string | null; barcode: string | null; substance: string | null; category: string | null; times: number; value: number };
+type Med = { name: string | null; barcode: string | null; substance: string | null; atc: string | null; category: string | null; times: number; value: number };
 type Icd = { code: string; count: number; title?: string | null };
 
 // ATC level-1 therapeutic classes (WHO) → Greek names
@@ -89,7 +89,7 @@ export default function PatientDetailPage() {
           {(() => {
             const byAtc = new Map<string, number>();
             for (const m of d.medicines) {
-              const k = (m.substance || "?").slice(0, 1).toUpperCase();
+              const k = (m.atc || "?").slice(0, 1).toUpperCase();
               byAtc.set(k, (byAtc.get(k) || 0) + m.times);
             }
             const rows = [...byAtc.entries()].sort((a, b) => b[1] - a[1]);
@@ -112,7 +112,7 @@ export default function PatientDetailPage() {
             <thead>
               <tr className="border-b border-slate-100 text-left text-xs text-slate-400">
                 <th className="py-2">Σκεύασμα</th>
-                <th>Δραστική (ATC)</th>
+                <th>Δραστική ουσία</th>
                 <th className="text-right">Φορές</th>
                 <th className="text-right">Αξία</th>
               </tr>

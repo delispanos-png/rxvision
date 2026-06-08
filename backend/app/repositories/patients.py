@@ -138,9 +138,14 @@ class PatientExecutionsRepository(BaseRepository):
             {"$lookup": {"from": "products", "localField": "_id",
                          "foreignField": "_id", "as": "p"}},
             {"$set": {"name": {"$first": "$p.name"}, "barcode": {"$first": "$p.barcode"},
-                      "substance": {"$first": "$p.substance"}}},
+                      "_atc": {"$first": "$p.substance"}}},
+            # join the price catalog by barcode for the human substance name + ATC code
+            {"$lookup": {"from": "medicine_catalog", "localField": "barcode",
+                         "foreignField": "barcode", "as": "mc"}},
+            {"$set": {"substance": {"$first": "$mc.substance_name"},
+                      "atc": {"$ifNull": [{"$first": "$mc.atc"}, "$_atc"]}}},
             {"$sort": {"times": -1}},
-            {"$project": {"_id": 0, "name": 1, "barcode": 1, "substance": 1,
+            {"$project": {"_id": 0, "name": 1, "barcode": 1, "substance": 1, "atc": 1,
                           "category": 1, "times": 1, "value": 1}},
         ])
         totals = await self.aggregate([
