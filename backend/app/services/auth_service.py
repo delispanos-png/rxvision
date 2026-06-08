@@ -97,8 +97,9 @@ class AuthService:
             (tenant or {}).get("modules", {}),
         )
 
-        # permissions: union of the user's roles
-        role_ids = user.get("role_ids", [])
+        # permissions: union of the user's roles. role_ids may be stored as strings
+        # (created via the API) — coerce to ObjectId so the $in actually matches.
+        role_ids = [_as_object_id(r) for r in (user.get("role_ids") or [])]
         roles: list[str] = []
         perms: set[str] = set()
         async for role in db["roles"].find({"_id": {"$in": role_ids}}):

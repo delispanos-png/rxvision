@@ -38,11 +38,18 @@ class UserRepository(BaseRepository):
             return None
         return await self._coll.find_one(self._scope({"_id": oid}), _PUBLIC_PROJECTION)
 
+    @staticmethod
+    def _coerce_roles(doc: dict) -> dict:
+        """role_ids must be ObjectId so role/permission lookups ($in) match."""
+        if doc.get("role_ids"):
+            doc["role_ids"] = [_as_oid(r) or r for r in doc["role_ids"]]
+        return doc
+
     async def create(self, doc: dict) -> dict:
         now = datetime.now(tz=timezone.utc)
-        doc = {**doc, "status": doc.get("status", "active"),
+        doc = self._coerce_roles({**doc, "status": doc.get("status", "active"),
                "mfa_enabled": False, "refresh_token_version": 0,
-               "created_at": now, "updated_at": now}
+               "created_at": now, "updated_at": now})
         user_id = await self.insert_one(doc)
         return await self.get(user_id)
 
@@ -50,7 +57,7 @@ class UserRepository(BaseRepository):
         oid = _as_oid(user_id)
         if oid is None:
             return None
-        fields = {**fields, "updated_at": datetime.now(tz=timezone.utc)}
+        fields = self._coerce_roles({**fields, "updated_at": datetime.now(tz=timezone.utc)})
         await self.update_one({"_id": oid}, {"$set": fields})
         return await self.get(oid)
 
