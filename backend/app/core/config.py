@@ -23,6 +23,10 @@ class Settings(BaseSettings):
     # aren't computed against a 0 cost (which made gross_profit == amount_claimed). Such
     # items are flagged wholesale_source="estimated". Set to 0 to disable estimation.
     WHOLESALE_FALLBACK_MARGIN_PCT: float = 25.0
+    # SSRF guard: optional comma-separated host suffixes the tenant-supplied ΗΔΙΚΑ base_url
+    # must match (e.g. "e-prescription.gr"). Empty = allow any PUBLIC host (private/loopback
+    # IPs are always blocked). See app/utils/net.assert_safe_outbound_url (M2).
+    IDIKA_ALLOWED_HOST_SUFFIXES: str = ""
 
     REDIS_URL: str = "redis://redis:6379/0"
     CELERY_BROKER_URL: str = "redis://redis:6379/1"
@@ -45,6 +49,10 @@ class Settings(BaseSettings):
     @property
     def cors_origins(self) -> list[str]:
         return [o.strip() for o in self.CORS_ORIGINS.split(",") if o.strip()]
+
+    @property
+    def idika_allowed_host_suffixes(self) -> list[str]:
+        return [s.strip() for s in self.IDIKA_ALLOWED_HOST_SUFFIXES.split(",") if s.strip()]
 
     @property
     def is_production(self) -> bool:

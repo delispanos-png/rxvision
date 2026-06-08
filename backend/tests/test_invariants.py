@@ -535,3 +535,17 @@ async def test_effective_wholesale_resolution_priority(monkeypatch):
     # 4) unknown → estimate from retail (1000 * (1 - 0.25) = 750); never 0/100%-margin
     eng.db = _DB(None)
     assert await eng._effective_wholesale(item(1000, 0)) == (750, "estimated")
+
+
+# ── M2: SSRF guard for outbound (ΗΔΙΚΑ base_url) ───────────
+def test_ssrf_guard_blocks_internal_allows_public():
+    from app.utils.net import UnsafeUrlError, assert_safe_outbound_url
+
+    assert_safe_outbound_url("https://8.8.8.8/pharmapiv2")  # public IP literal → ok
+    for bad in ["http://127.0.0.1:8200", "http://169.254.169.254/latest/meta-data",
+                "http://10.0.0.5/", "http://192.168.1.1/", "https://[::1]/", "ftp://8.8.8.8/"]:
+        with pytest.raises(UnsafeUrlError):
+            assert_safe_outbound_url(bad)
+    # host off the allow-list is rejected even if public
+    with pytest.raises(UnsafeUrlError):
+        assert_safe_outbound_url("https://8.8.8.8/", allowed_host_suffixes=["e-prescription.gr"])
