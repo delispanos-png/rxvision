@@ -68,6 +68,10 @@ class IngestionEngine:
             except Exception as exc:  # noqa: BLE001
                 stats["invalid"] += 1
                 errors.append({"external_id": ex.external_id, "errors": [f"persist: {exc}"]})
+            # live progress so the UI can show a progress bar while the sync runs
+            if stats["fetched"] % 20 == 0:
+                await self.db["sync_jobs"].update_one(
+                    {"_id": job_id}, {"$set": {"stats": stats}})
 
         status = "success" if not errors else "partial"
         await self.db["sync_jobs"].update_one(

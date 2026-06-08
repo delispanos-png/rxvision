@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { DateInput } from "@/components/ui/DateInput";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { CheckCircle2, Link2, Loader2, PlugZap, RefreshCw, ShieldCheck, XCircle } from "lucide-react";
@@ -53,7 +53,26 @@ export default function IngestionSettingsPage() {
   const qc = useQueryClient();
   const tenant = useQuery({ queryKey: ["tenant"], queryFn: () => api<Tenant>("/tenant"), retry: false });
   const cfg = useQuery({ queryKey: ["hdika-config"], queryFn: () => api<Config>("/ingestion/credentials/hdika"), retry: false });
-  const jobs = useQuery({ queryKey: ["ingestion-jobs"], queryFn: () => api<{ items: any[] }>("/ingestion/jobs"), retry: false });
+  const [syncing, setSyncing] = useState(false);
+  const syncStartRef = useRef(0);
+  const jobs = useQuery({
+    queryKey: ["ingestion-jobs"],
+    queryFn: () => api<{ items: any[] }>("/ingestion/jobs"),
+    retry: false,
+    refetchInterval: syncing ? 1500 : false,
+  });
+  const latestJob = jobs.data?.items?.[0];
+  const jobRunning = latestJob?.status === "running";
+
+  // stop polling once our queued sync has finished
+  useEffect(() => {
+    if (!syncing || !latestJob) return;
+    const started = latestJob.started_at ? new Date(latestJob.started_at).getTime() : 0;
+    if (latestJob.status !== "running" && started >= syncStartRef.current - 4000) {
+      setSyncing(false);
+      qc.invalidateQueries({ queryKey: ["hdika-config"] });
+    }
+  }, [latestJob?.status, latestJob?._id, syncing, qc]);
 
   const country = (tenant.data?.country || "GR").toUpperCase();
   const c = cfg.data;
@@ -107,7 +126,11 @@ export default function IngestionSettingsPage() {
   });
   const sync = useMutation({
     mutationFn: () => api<SyncRes>("/ingestion/hdika/sync", { method: "POST" }),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["ingestion-jobs"] }); qc.invalidateQueries({ queryKey: ["hdika-config"] }); },
+    onSuccess: () => {
+      syncStartRef.current = Date.now();
+      setSyncing(true);
+      qc.invalidateQueries({ queryKey: ["ingestion-jobs"] });
+    },
   });
 
   if (country === "CY") {
@@ -146,17 +169,41 @@ export default function IngestionSettingsPage() {
           className="inline-flex items-center gap-1.5 rounded-lg border border-brand-300 bg-brand-50 px-3 py-2 text-sm font-medium text-brand-700 hover:bg-brand-100">
           {discover.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Link2 className="h-4 w-4" />} Σύνδεση & άντληση στοιχείων
         </button>
-        <button onClick={() => sync.mutate()} disabled={sync.isPending || !c?.configured}
+        <button onClick={() => sync.mutate()} disabled={syncing || sync.isPending || !c?.configured}
           className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-3 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-40">
-          {sync.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />} Συγχρονισμός τώρα
+          {(syncing || sync.isPending) ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />} Συγχρονισμός τώρα
         </button>
       </div>
 
-      {(test.data || sync.data) && (
-        <div className={`rx-card p-3 text-sm ${(test.data?.ok ?? true) ? "text-emerald-700" : "text-rose-700"}`}>
+      {/* live sync progress */}
+      {syncing && (
+        <div className="rx-card p-4">
+          <div className="mb-2 flex items-center justify-between text-sm">
+            <span className="inline-flex items-center gap-1.5 font-medium text-slate-700">
+              <Loader2 className="h-4 w-4 animate-spin text-brand-600" />
+              {jobRunning ? "Συγχρονισμός σε εξέλιξη…" : "Εκκίνηση συγχρονισμού…"}
+            </span>
+            <span className="text-slate-500">{(latestJob?.stats?.fetched ?? 0)} συνταγές · {(latestJob?.stats?.inserted ?? 0)} νέες</span>
+          </div>
+          <div className="h-2 w-full overflow-hidden rounded-full bg-slate-200">
+            <div className="h-full w-full animate-pulse rounded-full bg-brand-500" />
+          </div>
+        </div>
+      )}
+
+      {test.data && (
+        <div className={`rx-card p-3 text-sm ${test.data.ok ? "text-emerald-700" : "text-rose-700"}`}>
           <span className="inline-flex items-center gap-1.5">
-            {(test.data?.ok ?? true) ? <CheckCircle2 className="h-4 w-4" /> : <XCircle className="h-4 w-4" />}
-            {test.data?.message ?? (sync.data ? `Sync ${sync.data.status}: ${JSON.stringify(sync.data.stats)}` : "")}
+            {test.data.ok ? <CheckCircle2 className="h-4 w-4" /> : <XCircle className="h-4 w-4" />}
+            {test.data.message}
+          </span>
+        </div>
+      )}
+      {!syncing && latestJob && latestJob.type === "incremental" && latestJob.status !== "running" && (
+        <div className="rx-card p-3 text-sm text-emerald-700">
+          <span className="inline-flex items-center gap-1.5">
+            <CheckCircle2 className="h-4 w-4" />
+            Ο συγχρονισμός ολοκληρώθηκε — {latestJob.stats?.inserted ?? 0} νέες, {latestJob.stats?.updated ?? 0} ενημερώσεις, {latestJob.stats?.fetched ?? 0} σύνολο.
           </span>
         </div>
       )}

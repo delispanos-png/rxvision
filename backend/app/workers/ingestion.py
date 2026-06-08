@@ -69,7 +69,22 @@ def hdika_incremental_sync(self, tenant_id: str) -> dict:
     async def _run() -> dict:
         client, db = _fresh_db()
         try:
-            creds = vault.get_secret(f"tenants/{tenant_id}/hdika")
+            creds = dict(vault.get_secret(f"tenants/{tenant_id}/hdika") or {})
+            # merge platform ΗΔΙΚΑ config (production base_url; shared sandbox in test)
+            plat = await db["platform_settings"].find_one({"_id": "idika"})
+            if plat:
+                env = plat.get("active_environment", "test")
+                envcfg = plat.get(env) or {}
+                if envcfg.get("base_url"):
+                    creds["base_url"] = envcfg["base_url"]
+                creds["environment"] = env
+                if env == "test":
+                    for src, dst in (("integrator_username", "username"),
+                                     ("integrator_password", "password"),
+                                     ("api_key", "api_key"), ("pharmacy_id", "pharmacy_id")):
+                        if envcfg.get(src):
+                            creds[dst] = envcfg[src]
+            creds.setdefault("throttle", 0.1)        # gentle on ΗΔΙΚΑ
             since = await _watermark(db, tenant_id)
             records = HdikaAdapter(creds).fetch(since=since)
             job = await IngestionEngine(tenant_id, db=db).ingest(

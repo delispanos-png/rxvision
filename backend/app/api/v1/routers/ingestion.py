@@ -207,13 +207,12 @@ async def discover_hdika_pharmacy(
 async def trigger_hdika_sync(
     ctx: TenantContext = Depends(require("ingestion:run", module=_MODULE)),
 ):
-    """Run an ΗΔΙΚΑ incremental sync now (inline). Idempotent via natural key + hash."""
+    """Queue an ΗΔΙΚΑ incremental sync on the worker (non-blocking) so the UI can poll
+    /ingestion/jobs for live progress. Idempotent via natural key + hash."""
     assert_source_allowed(await _tenant_country(ctx.tenant_id), "HDIKA")
-    creds = await _effective_hdika_creds(ctx.tenant_id)  # tenant + platform integrator config
-    since = await _last_watermark(ctx.tenant_id, "HDIKA")
-    records = HdikaAdapter(creds).fetch(since=since)
-    return await IngestionEngine(ctx.tenant_id).ingest(
-        source="HDIKA", job_type="incremental", records=records)
+    from app.workers.ingestion import hdika_incremental_sync
+    hdika_incremental_sync.delay(ctx.tenant_id)
+    return {"status": "queued"}
 
 
 # ── ΓΕΣΥ (Cyprus) — step 2, gated to CY tenants ────────────
