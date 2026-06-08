@@ -1,7 +1,15 @@
 # Project State — RxVision
 
 > Living snapshot for session continuity. Update at the end of each work session.
-> Last updated: **2026-06-07**.
+> Last updated: **2026-06-08**.
+
+## ✅ Status (2026-06-08, end of day)
+**All quick-wins work is MERGED into `main` (`9bb5f25`) and LIVE-VALIDATED.** PR #1 merged.
+The full stack was brought up via Docker and proven: Mongo (--auth + keyFile + replica set),
+Redis (requirepass), api connected with auth, `mongo-init {ok:1}`, seed = 1000 execs through the
+engine, **smoke 32/32 endpoints PASS** (tenant + platform-admin). CVE bump Next→14.2.35. So #7/#8
+(previously static-only) are now proven live. Next priorities: §🟠 below — verify ΗΔΙΚΑ mapping vs
+real spec; GDPR retention/export (needs a policy decision). Older sections below are historical.
 
 ## Backlog sweep (2026-06-08) — done vs deferred
 **Cleared this session (all CI-green on `quick-wins`, pushed):**
