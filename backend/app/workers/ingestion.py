@@ -86,9 +86,11 @@ def hdika_incremental_sync(self, tenant_id: str) -> dict:
                             creds[dst] = envcfg[src]
             creds.setdefault("throttle", 0.1)        # gentle on ΗΔΙΚΑ
             since = await _watermark(db, tenant_id)
+            now = datetime.now(tz=timezone.utc)
             records = HdikaAdapter(creds).fetch(since=since)
             job = await IngestionEngine(tenant_id, db=db).ingest(
-                source="HDIKA", job_type="incremental", records=records)
+                source="HDIKA", job_type="incremental", records=records,
+                window=(since, now))
             return {"tenant_id": tenant_id, "status": job["status"], "stats": job["stats"]}
         finally:
             client.close()

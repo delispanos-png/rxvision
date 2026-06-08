@@ -46,13 +46,21 @@ class IngestionEngine:
         self.pepper = vault.tenant_pepper(tenant_id)
 
     async def ingest(self, *, source: str, job_type: str,
-                     records: Iterable[CanonicalExecution]) -> dict:
+                     records: Iterable[CanonicalExecution],
+                     window: tuple | None = None) -> dict:
         stats = {"fetched": 0, "inserted": 0, "updated": 0, "duplicates": 0, "invalid": 0}
         errors: list[dict] = []
         job_id = ObjectId()
+        # window = (start, end) date range being ingested → enables a real % progress bar
+        span = None
+        if window and window[0] and window[1]:
+            span = abs((window[1] - window[0]).total_seconds()) or None
+        first_cursor: object = None
         await self.db["sync_jobs"].insert_one({
             "_id": job_id, "tenant_id": self.tenant_id, "source": source, "type": job_type,
             "status": "running", "cursor": {}, "stats": stats, "attempts": 1,
+            "progress": 0.0, "cursor_date": None,
+            "window": ({"start": window[0], "end": window[1]} if window else None),
             "error": None, "started_at": _now(), "finished_at": None,
         })
 
@@ -69,16 +77,23 @@ class IngestionEngine:
             except Exception as exc:  # noqa: BLE001
                 stats["invalid"] += 1
                 errors.append({"external_id": ex.external_id, "errors": [f"persist: {exc}"]})
-            # live progress so the UI can show a progress bar while the sync runs
+            # live progress so the UI can show a REAL % progress bar while it runs
+            if first_cursor is None and getattr(ex, "executed_at", None):
+                first_cursor = ex.executed_at
             if stats["fetched"] % 20 == 0:
-                await self.db["sync_jobs"].update_one(
-                    {"_id": job_id}, {"$set": {"stats": stats}})
+                upd = {"stats": stats}
+                cur = getattr(ex, "executed_at", None)
+                if cur is not None:
+                    upd["cursor_date"] = cur
+                    if span and first_cursor is not None:
+                        upd["progress"] = min(1.0, abs((cur - first_cursor).total_seconds()) / span)
+                await self.db["sync_jobs"].update_one({"_id": job_id}, {"$set": upd})
 
         status = "success" if not errors else "partial"
         await self.db["sync_jobs"].update_one(
             {"_id": job_id},
             {"$set": {"status": status, "stats": stats, "errors": errors[:200],
-                      "finished_at": _now()}},
+                      "progress": 1.0, "finished_at": _now()}},
         )
         job = await self.db["sync_jobs"].find_one({"_id": job_id})
         job["_id"] = str(job["_id"])

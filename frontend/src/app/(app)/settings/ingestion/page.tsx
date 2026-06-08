@@ -178,23 +178,31 @@ export default function IngestionSettingsPage() {
         </button>
       </div>
 
-      {/* live sync progress — shows whenever a sync/backfill job is running */}
-      {showProgress && (
-        <div className="rx-card p-4">
-          <div className="mb-2 flex items-center justify-between text-sm">
-            <span className="inline-flex items-center gap-1.5 font-medium text-slate-700">
-              <Loader2 className="h-4 w-4 animate-spin text-brand-600" />
-              {jobRunning
-                ? (latestJob?.type === "backfill" ? "Ιστορική άντληση σε εξέλιξη…" : "Συγχρονισμός σε εξέλιξη…")
-                : "Εκκίνηση συγχρονισμού…"}
-            </span>
-            <span className="text-slate-500">{(latestJob?.stats?.fetched ?? 0)} συνταγές · {(latestJob?.stats?.inserted ?? 0)} νέες · {(latestJob?.stats?.updated ?? 0)} ενημ.</span>
+      {/* live sync progress — real % bar driven by how much of the date range is done */}
+      {showProgress && (() => {
+        const pct = Math.max(0, Math.min(100, Math.round((latestJob?.progress ?? 0) * 100)));
+        const known = typeof latestJob?.progress === "number" && latestJob.progress > 0;
+        return (
+          <div className="rx-card p-4">
+            <div className="mb-2 flex items-center justify-between text-sm">
+              <span className="inline-flex items-center gap-1.5 font-medium text-slate-700">
+                <Loader2 className="h-4 w-4 animate-spin text-brand-600" />
+                {jobRunning
+                  ? (latestJob?.type === "backfill" ? "Ιστορική άντληση σε εξέλιξη…" : "Συγχρονισμός σε εξέλιξη…")
+                  : "Εκκίνηση συγχρονισμού…"}
+                {known && <span className="ml-1 font-bold text-brand-700">{pct}%</span>}
+              </span>
+              <span className="text-slate-500">{(latestJob?.stats?.fetched ?? 0)} συνταγές · {(latestJob?.stats?.inserted ?? 0)} νέες · {(latestJob?.stats?.updated ?? 0)} ενημ.</span>
+            </div>
+            <div className="h-2.5 w-full overflow-hidden rounded-full bg-slate-200">
+              <div
+                className={`h-full rounded-full bg-brand-500 transition-[width] duration-700 ease-out ${known ? "" : "w-1/3 animate-pulse"}`}
+                style={known ? { width: `${pct}%` } : undefined}
+              />
+            </div>
           </div>
-          <div className="h-2 w-full overflow-hidden rounded-full bg-slate-200">
-            <div className="h-full w-full animate-pulse rounded-full bg-brand-500" />
-          </div>
-        </div>
-      )}
+        );
+      })()}
 
       {test.data && (
         <div className={`rx-card p-3 text-sm ${test.data.ok ? "text-emerald-700" : "text-rose-700"}`}>
