@@ -13,8 +13,12 @@ provisional until live-validated.)* See `docs/audit-summary.md` (top-20) +
 ## Git
 
 - Default branch: `main` @ `f0f494e` ("Branding: use the official RxVision logo PNG everywhere").
-- **Active working branch: `quick-wins`** (branched off `main`, **not committed, not pushed**).
-- The 5 analysis reports + the AI operating system (`docs/ai/`, `scripts/ai/`) live on the working tree.
+- **Active working branch: `quick-wins`** — now **committed in 7 clean commits** (infra ·
+  backend security · backend T-06 · frontend responsive · frontend build gates · docs · gitignore),
+  **NOT pushed** (push only on explicit request; `origin/main` unchanged at `f0f494e`).
+- Everything (security, T-06, responsive A–D, both build gates, audit reports, AI OS) is on
+  `quick-wins`. Static-validated only — a live `docker compose up` + `pytest` + browser pass
+  is the outstanding gate before merge.
 
 ## How to work here (AI Tech Lead)
 

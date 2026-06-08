@@ -5,7 +5,8 @@
 > (how to resume). Updated: **2026-06-07**.
 
 ## Where we are
-- Branch **`quick-wins`** (off `main` @ `f0f494e`). **Uncommitted, not pushed** (by agreement).
+- Branch **`quick-wins`** (off `main` @ `f0f494e`). **Committed in 7 clean commits, NOT pushed**
+  (push only on explicit request).
 - A large body of security/quality work is implemented but **static-checked only** — no
   Docker/pip/pytest in the authoring environment.
 - A complete audit (architecture, tech-stack, tech-debt, security, responsive, UI/UX) and
