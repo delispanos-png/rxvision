@@ -21,6 +21,7 @@ Transient failures raise ConnectionError/TimeoutError so the Celery task retries
 
 from __future__ import annotations
 
+import time
 import xml.etree.ElementTree as ET
 from collections.abc import Iterator
 from datetime import datetime, timezone
@@ -102,6 +103,7 @@ class HdikaClient:
         self.api_key = c.get("api_key", "")                       # APPLICATION key
         self.pharmacy_id = c.get("pharmacy_id") or c.get("pharmacy_code")
         self.catalog = catalog or {}     # eofCode → price/cost (Δελτίο Τιμών) for per-med analysis
+        self.throttle = float(c.get("throttle") or 0)   # seconds to pause after each call (be gentle on ΗΔΙΚΑ)
         self.skipped_days = 0           # days skipped due to transient gateway errors
         headers = {"Accept": "application/xml"}
         if self.api_key:
@@ -193,6 +195,8 @@ class HdikaClient:
             params = {"pharmacyId": self.pharmacy_id} if self.pharmacy_id else {}
             r = self._client.get(self._url(f"/api/v1/prescriptions/get/{barcode}"),
                                  params=params, headers={"Accept": "application/x-hl7"})
+            if self.throttle:
+                time.sleep(self.throttle)
             if r.status_code == 200 and r.text.lstrip().startswith("<?xml"):
                 return parse_cda(r.text)
         except Exception:  # noqa: BLE001
@@ -325,6 +329,8 @@ class HdikaClient:
     def _get_xml(self, path: str, params: dict) -> ET.Element:
         try:
             r = self._client.get(self._url(path), params=params)
+            if self.throttle:
+                time.sleep(self.throttle)
             gw = _gateway_message(r.text)
             if gw:                   # gateway HTML (e.g. lockout) even with HTTP 200
                 raise PermissionError(gw)

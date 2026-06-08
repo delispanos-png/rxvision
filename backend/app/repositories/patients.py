@@ -121,7 +121,10 @@ class PatientExecutionsRepository(BaseRepository):
             {"$unwind": "$icd10"},
             {"$group": {"_id": "$icd10", "count": {"$sum": 1}}},
             {"$sort": {"count": -1}},
-            {"$project": {"_id": 0, "code": "$_id", "count": 1}},
+            {"$lookup": {"from": "icd10_codes", "localField": "_id",
+                         "foreignField": "_id", "as": "c"}},
+            {"$set": {"title": {"$first": "$c.title_el"}}},
+            {"$project": {"_id": 0, "code": "$_id", "count": 1, "title": 1}},
         ])
         # medicines (therapeutic items) this patient received, with spend
         meds = await self.aggregate([

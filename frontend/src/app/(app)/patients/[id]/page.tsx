@@ -7,7 +7,17 @@ import { api } from "@/lib/apiClient";
 import { PanelCard } from "@/components/ui/Card";
 
 type Med = { name: string | null; barcode: string | null; substance: string | null; category: string | null; times: number; value: number };
-type Icd = { code: string; count: number };
+type Icd = { code: string; count: number; title?: string | null };
+
+// ATC level-1 therapeutic classes (WHO) → Greek names
+const ATC_L1: Record<string, string> = {
+  A: "Πεπτικό σύστημα & μεταβολισμός", B: "Αίμα & αιμοποιητικά όργανα",
+  C: "Καρδιαγγειακό σύστημα", D: "Δερματολογικά",
+  G: "Ουροποιογεννητικό & ορμόνες φύλου", H: "Ορμονικά σκευάσματα (συστηματικά)",
+  J: "Αντιλοιμώδη (συστηματικά)", L: "Αντινεοπλασματικά & ανοσορυθμιστικά",
+  M: "Μυοσκελετικό σύστημα", N: "Νευρικό σύστημα", P: "Αντιπαρασιτικά",
+  R: "Αναπνευστικό σύστημα", S: "Αισθητήρια όργανα", V: "Διάφορα",
+};
 type Detail = {
   patient_id: string; full_name: string | null; amka: string | null;
   sex: string | null; age_group: string | null; birth_year: number | null; area: string | null;
@@ -67,8 +77,8 @@ export default function PatientDetailPage() {
           {d.icd10.length === 0 ? <div className="text-sm text-slate-400">—</div> : (
             <div className="flex flex-wrap gap-2">
               {d.icd10.map((x) => (
-                <span key={x.code} className="rounded-lg bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-700">
-                  {x.code} <span className="text-slate-400">×{x.count}</span>
+                <span key={x.code} title={x.title || ""} className="rounded-lg bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-700">
+                  <b>{x.code}</b>{x.title ? ` — ${x.title}` : ""} <span className="text-slate-400">×{x.count}</span>
                 </span>
               ))}
             </div>
@@ -79,7 +89,7 @@ export default function PatientDetailPage() {
           {(() => {
             const byAtc = new Map<string, number>();
             for (const m of d.medicines) {
-              const k = (m.substance || "—").slice(0, 3);
+              const k = (m.substance || "?").slice(0, 1).toUpperCase();
               byAtc.set(k, (byAtc.get(k) || 0) + m.times);
             }
             const rows = [...byAtc.entries()].sort((a, b) => b[1] - a[1]);
@@ -87,7 +97,7 @@ export default function PatientDetailPage() {
               <div className="flex flex-wrap gap-2">
                 {rows.map(([k, n]) => (
                   <span key={k} className="rounded-lg bg-violet-50 px-2.5 py-1 text-xs font-medium text-violet-700">
-                    {k} <span className="text-violet-400">×{n}</span>
+                    {ATC_L1[k] || k} <span className="text-violet-400">×{n}</span>
                   </span>
                 ))}
               </div>
