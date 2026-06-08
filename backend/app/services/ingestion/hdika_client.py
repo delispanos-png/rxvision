@@ -34,6 +34,7 @@ from app.services.ingestion.canonical import (
     CanonicalItem,
     CanonicalPatient,
 )
+from app.services.ingestion.hdika_cda import parse_cda
 
 _PAGE_SIZE = 100                  # ΗΔΙΚΑ rejects size>~150 with HTTP 400; 100 is safe
 _MAX_BACKFILL_DAYS = 400          # cap day-by-day backfill (search is per-day)
@@ -181,41 +182,31 @@ class HdikaClient:
         last = str(data.get("lastPage", data.get("last", ""))).lower() == "true"
         return last or n < _PAGE_SIZE
 
-    def _prescription_index(self, start, end) -> dict:
-        """barcode → prescription summary (patient AMKA, drug category, dates) for the
-        range, from /prescriptions/search. ΗΔΙΚΑ's bulk views don't return per-medicine
-        lines / doctor / ICD-10 (only PDF or at execution time), so this is the richest
-        retrievable layer; we merge it with execution amounts by barcode."""
-        idx: dict = {}
-        page = 0
-        while True:
-            params = {"size": _PAGE_SIZE, "page": page,
-                      "from": start.isoformat(), "to": end.isoformat()}
-            if self.pharmacy_id:
-                params["pharmacyId"] = self.pharmacy_id
-            try:
-                data = _to_dict(self._get_xml("/api/v1/prescriptions/search", params))
-            except Exception:  # noqa: BLE001 — enrichment is best-effort
-                break
-            rows = self._rows(data)
-            for r in rows:
-                if isinstance(r, dict) and _first(r, "barcode"):
-                    idx[str(_first(r, "barcode"))] = r
-            if self._is_last(data, len(rows)):
-                break
-            page += 1
-        return idx
+    def _fetch_cda(self, barcode: str) -> dict:
+        """Full prescription (doctor / ICD-10 / medicines / patient) as HL7 CDA from
+        /prescriptions/get/{barcode} (Accept: application/x-hl7). Best-effort: returns {}
+        on any error so a missing detail never aborts the run."""
+        if not barcode:
+            return {}
+        try:
+            params = {"pharmacyId": self.pharmacy_id} if self.pharmacy_id else {}
+            r = self._client.get(self._url(f"/api/v1/prescriptions/get/{barcode}"),
+                                 params=params, headers={"Accept": "application/x-hl7"})
+            if r.status_code == 200 and r.text.lstrip().startswith("<?xml"):
+                return parse_cda(r.text)
+        except Exception:  # noqa: BLE001
+            pass
+        return {}
 
     def iter_executions(self, since: datetime | None) -> Iterator[CanonicalExecution]:
         """Yield canonical executions from `since`→today. Driver = prescription-execution
-        /search (per executionDate, paged) for amounts/fund; enriched by barcode from
-        /prescriptions/search for patient (AMKA) + drug category."""
+        /search (per executionDate, paged) for amounts/fund; each row is enriched by its
+        barcode via the full HL7 CDA (doctor, ICD-10, medicines, patient)."""
         from datetime import timedelta
         end = datetime.now(tz=timezone.utc).date()
         start = since.date() if since else end
         if (end - start).days > _MAX_BACKFILL_DAYS:        # safety cap for huge backfills
             start = end - timedelta(days=_MAX_BACKFILL_DAYS)
-        summaries = self._prescription_index(start, end)
         day = start
         while day <= end:
             page = 0
@@ -234,51 +225,64 @@ class HdikaClient:
                     if isinstance(raw, dict):
                         presc = raw.get("prescription") if isinstance(raw.get("prescription"), dict) else {}
                         bc = str(_first(presc, "barcode") or _first(raw, "barcode", default=""))
-                        yield self._map_merged(raw, summaries.get(bc, {}))
+                        yield self._map_full(raw, self._fetch_cda(bc))
                 if self._is_last(data, len(records)):
                     break
                 page += 1
             day += timedelta(days=1)
 
     @staticmethod
-    def _map_merged(ex: dict, summary: dict) -> CanonicalExecution:
-        """Merge an execution row (amounts/fund) with its prescription summary (patient/
-        category) → CanonicalExecution. Doctor/ICD-10/per-medicine lines are NOT exposed
-        by ΗΔΙΚΑ bulk retrieval, so a single prescription-level line item carries the value."""
+    def _map_full(ex: dict, cda: dict) -> CanonicalExecution:
+        """Combine an execution row (amounts/fund, from execution-search) with the full
+        CDA (patient/doctor/ICD-10/medicines) → a complete CanonicalExecution.
+
+        Per-medicine prices are not in the CDA (they need getExecutionWithCalcs), so the
+        prescription total rides the first medicine line — prescription-level revenue is
+        exact; the per-line revenue split is approximate (a documented v1 limitation)."""
         presc = ex.get("prescription") if isinstance(ex.get("prescription"), dict) else {}
         barcode = str(_first(presc, "barcode") or _first(ex, "barcode", default=""))
-        fund_d = presc.get("socialInsuranceDTO") or summary.get("socialInsurance") or {}
-        if not isinstance(fund_d, dict):
-            fund_d = {}
-        pinfo = summary.get("patientInfo") if isinstance(summary.get("patientInfo"), dict) else {}
-        amka = str(_first(pinfo, "amka", "identificationNo", default=""))
+        fund_d = presc.get("socialInsuranceDTO") if isinstance(presc.get("socialInsuranceDTO"), dict) else {}
         total = _eur_cents(_first(ex, "totalValue", "payableAmount", default=0))
         share = _eur_cents(_first(ex, "participationValue", default=0))
-        dcat = summary.get("drugCategory")
-        cat_name = dcat.get("name") if isinstance(dcat, dict) else (dcat or None)
-        narcotic = str(summary.get("medicineDrug", "")).lower() == "true"
-        item = CanonicalItem(
-            barcode=barcode or "rx",
-            name=cat_name or "Συνταγή (ΗΔΙΚΑ)",
-            quantity=1,
-            retail_price=total,
-            category="narcotic" if narcotic else "normal",
-            is_executed=True,
-        )
+
+        cda_pat = cda.get("patient") or {}
+        cda_doc = cda.get("doctor") or {}
+        meds = cda.get("medicines") or []
+        sex = (cda_pat.get("sex") or "U")
+        sex = "M" if sex.startswith("M") else "F" if sex.startswith("F") else "U"
+
+        # one item per real medicine; first line carries the prescription total
+        items: list[CanonicalItem] = []
+        for n, m in enumerate(meds):
+            items.append(CanonicalItem(
+                barcode=str(m.get("code") or f"{barcode}-{n}"),
+                name=m.get("name") or "Φάρμακο",
+                quantity=1,
+                retail_price=total if n == 0 else 0,
+                is_executed=True,
+            ))
+        if not items:  # CDA unavailable → keep a prescription-level line so revenue/validation hold
+            items = [CanonicalItem(barcode=barcode or "rx", name="Συνταγή (ΗΔΙΚΑ)",
+                                   quantity=1, retail_price=total, is_executed=True)]
+
+        fund_name = _first(fund_d, "name") or cda_pat.get("fund_name") or "ΕΟΠΥΥ"
+        fund_code = str(_first(fund_d, "shortName", "id", default="") or cda_pat.get("fund_code") or "EOPYY")
         return CanonicalExecution(
             source="HDIKA",
             external_id=barcode,
             executed_at=_parse_dt(_first(ex, "executionDate", "executed_at")),
             patient=CanonicalPatient(
-                national_id=amka or barcode,   # never empty (validator) — barcode is a last resort
-                area=_first(pinfo, "country", default="unknown")),
-            doctor=CanonicalDoctor(full_name="Άγνωστος"),   # not in ΗΔΙΚΑ bulk retrieval
-            fund=CanonicalFund(code=str(_first(fund_d, "shortName", "id", default="EOPYY")),
-                               name=_first(fund_d, "name", default="ΕΟΠΥΥ")),
-            items=[item],
-            icd10=[],                                        # not in ΗΔΙΚΑ bulk retrieval
+                national_id=str(cda_pat.get("amka") or barcode),  # never empty (validator)
+                sex=sex,
+                birth_year=cda_pat.get("birth_year"),
+                area=cda_pat.get("city") or "unknown"),
+            doctor=CanonicalDoctor(full_name=cda_doc.get("name") or "Άγνωστος",
+                                   specialty=cda_doc.get("specialty")),
+            fund=CanonicalFund(code=fund_code, name=fund_name),
+            items=items,
+            icd10=[d["code"] for d in cda.get("icd10", []) if d.get("code")],
             repeat_current=1,
-            repeat_total=int(_first(summary, "executions", default=1) or 1),
+            repeat_total=1,
             patient_share=share,
         )
 
