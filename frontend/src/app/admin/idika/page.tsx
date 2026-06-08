@@ -4,12 +4,17 @@ import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { adminApi, ApiError } from "@/lib/adminClient";
 
-type EnvCfg = { base_url: string; has_api_key: boolean };
+type EnvCfg = {
+  base_url: string;
+  has_api_key: boolean;
+  integrator_username: string;
+  has_integrator_password: boolean;
+};
 type Idika = { active_environment: string; doctor_ip: string | null; test: EnvCfg; production: EnvCfg };
 
 const DEFAULTS: Record<string, string> = {
   test: "https://testeps.e-prescription.gr/pharmapiv2",
-  production: "https://eps.e-prescription.gr/pharmapiv2",
+  production: "https://eps.e-prescription.gr/pharmacistapi",
 };
 
 export default function IdikaConfigPage() {
@@ -17,10 +22,14 @@ export default function IdikaConfigPage() {
 
   const [activeEnv, setActiveEnv] = useState("test");
   const [doctorIp, setDoctorIp] = useState("");
-  const [testUrl, setTestUrl] = useState(DEFAULTS.test);
-  const [prodUrl, setProdUrl] = useState(DEFAULTS.production);
-  const [testKey, setTestKey] = useState("");
-  const [prodKey, setProdKey] = useState("");
+  // per-env: base url, api key, integrator username, integrator password
+  const [f, setF] = useState({
+    testUrl: DEFAULTS.test, prodUrl: DEFAULTS.production,
+    testKey: "", prodKey: "",
+    testUser: "", prodUser: "",
+    testPass: "", prodPass: "",
+  });
+  const set = (k: string, v: string) => setF((s) => ({ ...s, [k]: v }));
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -28,8 +37,13 @@ export default function IdikaConfigPage() {
     if (!data) return;
     setActiveEnv(data.active_environment ?? "test");
     setDoctorIp(data.doctor_ip ?? "");
-    setTestUrl(data.test?.base_url || DEFAULTS.test);
-    setProdUrl(data.production?.base_url || DEFAULTS.production);
+    setF((s) => ({
+      ...s,
+      testUrl: data.test?.base_url || DEFAULTS.test,
+      prodUrl: data.production?.base_url || DEFAULTS.production,
+      testUser: data.test?.integrator_username || "",
+      prodUser: data.production?.integrator_username || "",
+    }));
   }, [data]);
 
   async function save() {
@@ -39,11 +53,19 @@ export default function IdikaConfigPage() {
         method: "PUT",
         body: JSON.stringify({
           active_environment: activeEnv, doctor_ip: doctorIp,
-          test: { base_url: testUrl, ...(testKey ? { api_key: testKey } : {}) },
-          production: { base_url: prodUrl, ...(prodKey ? { api_key: prodKey } : {}) },
+          test: {
+            base_url: f.testUrl, integrator_username: f.testUser,
+            ...(f.testKey ? { api_key: f.testKey } : {}),
+            ...(f.testPass ? { integrator_password: f.testPass } : {}),
+          },
+          production: {
+            base_url: f.prodUrl, integrator_username: f.prodUser,
+            ...(f.prodKey ? { api_key: f.prodKey } : {}),
+            ...(f.prodPass ? { integrator_password: f.prodPass } : {}),
+          },
         }),
       });
-      setNotice("Αποθηκεύτηκε ✓"); setTestKey(""); setProdKey("");
+      setNotice("Αποθηκεύτηκε ✓"); set("testKey", ""); set("prodKey", ""); set("testPass", ""); set("prodPass", "");
     } catch (e) {
       setNotice(e instanceof ApiError ? `Σφάλμα: ${JSON.stringify(e.problem)}` : "Σφάλμα.");
     } finally { setBusy(false); }
@@ -54,12 +76,38 @@ export default function IdikaConfigPage() {
     <span className="mb-1 inline-flex items-center gap-1 text-xs font-medium text-emerald-600">✓ Αποθηκευμένο (κρυπτογραφημένο)</span>
   ) : null;
 
+  function EnvBlock({ title, env }: { title: string; env: "test" | "prod" }) {
+    const cfg = env === "test" ? data?.test : data?.production;
+    const urlK = `${env}Url`, keyK = `${env}Key`, userK = `${env}User`, passK = `${env}Pass`;
+    return (
+      <div className="rounded-lg border border-slate-200 p-4">
+        <div className="mb-3 text-sm font-semibold text-slate-700">{title}</div>
+        <label className="mb-3 block text-sm"><span className="mb-1 block text-slate-600">Base URL</span>
+          <input className={inp} value={(f as any)[urlK]} onChange={(e) => set(urlK, e.target.value)} /></label>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <label className="block text-sm"><span className="mb-1 block text-slate-600">Integrator username</span>
+            <input className={inp} value={(f as any)[userK]} onChange={(e) => set(userK, e.target.value)}
+              placeholder="π.χ. foreignoffice_tst" /></label>
+          <label className="block text-sm"><span className="mb-1 block text-slate-600">Integrator password</span>
+            <SavedBadge on={!!cfg?.has_integrator_password} />
+            <input type="password" className={inp} value={(f as any)[passK]} onChange={(e) => set(passK, e.target.value)}
+              placeholder={cfg?.has_integrator_password ? "•••••••• (κενό = αμετάβλητο)" : "κωδικός integrator"} /></label>
+        </div>
+        <label className="mt-3 block text-sm"><span className="mb-1 block text-slate-600">Application API Key</span>
+          <SavedBadge on={!!cfg?.has_api_key} />
+          <input type="password" className={inp} value={(f as any)[keyK]} onChange={(e) => set(keyK, e.target.value)}
+            placeholder={cfg?.has_api_key ? "•••••••• (κενό = αμετάβλητο)" : "application access api key"} /></label>
+      </div>
+    );
+  }
+
   return (
     <div className="max-w-3xl">
       <h1 className="mb-2 text-xl font-bold text-slate-900">Διασύνδεση ΗΔΙΚΑ (integrator)</h1>
       <p className="mb-6 text-sm text-slate-500">
-        Παράμετροι σε επίπεδο πλατφόρμας — κοινές για όλα τα φαρμακεία. Το κάθε φαρμακείο βάζει μόνο το δικό του
-        username/password· το <b>application API key</b> και τα endpoints είναι του CloudOn.
+        Παράμετροι σε επίπεδο πλατφόρμας — κοινές για όλα τα φαρμακεία. Το <b>Basic auth (integrator username/password)</b>,
+        το <b>application API key</b> και τα endpoints είναι του CloudOn. Κάθε φαρμακείο ορίζει μόνο το δικό του
+        <b> pharmacy_id</b> (στις ρυθμίσεις του φαρμακείου).
       </p>
       {notice && <div className="mb-4 rounded-lg bg-slate-100 px-4 py-2 text-sm text-slate-700">{notice}</div>}
 
@@ -77,25 +125,8 @@ export default function IdikaConfigPage() {
           <p className="mt-1 text-xs text-slate-400">Όλα τα φαρμακεία χρησιμοποιούν αυτό το περιβάλλον.</p>
         </div>
 
-        <div className="rounded-lg border border-slate-200 p-4">
-          <div className="mb-3 text-sm font-semibold text-slate-700">Δοκιμαστικό (test)</div>
-          <label className="mb-3 block text-sm"><span className="mb-1 block text-slate-600">Base URL</span>
-            <input className={inp} value={testUrl} onChange={(e) => setTestUrl(e.target.value)} /></label>
-          <label className="block text-sm"><span className="mb-1 block text-slate-600">Application API Key</span>
-            <SavedBadge on={!!data?.test?.has_api_key} />
-            <input type="password" className={inp} value={testKey} onChange={(e) => setTestKey(e.target.value)}
-              placeholder={data?.test?.has_api_key ? "•••••••• (αποθηκευμένο — κενό για να μην αλλάξει)" : "application access api key"} /></label>
-        </div>
-
-        <div className="rounded-lg border border-slate-200 p-4">
-          <div className="mb-3 text-sm font-semibold text-slate-700">Παραγωγή (production)</div>
-          <label className="mb-3 block text-sm"><span className="mb-1 block text-slate-600">Base URL</span>
-            <input className={inp} value={prodUrl} onChange={(e) => setProdUrl(e.target.value)} /></label>
-          <label className="block text-sm"><span className="mb-1 block text-slate-600">Application API Key</span>
-            <SavedBadge on={!!data?.production?.has_api_key} />
-            <input type="password" className={inp} value={prodKey} onChange={(e) => setProdKey(e.target.value)}
-              placeholder={data?.production?.has_api_key ? "•••••••• (αποθηκευμένο — κενό για να μην αλλάξει)" : "application access api key"} /></label>
-        </div>
+        <EnvBlock title="Δοκιμαστικό (test)" env="test" />
+        <EnvBlock title="Παραγωγή (production)" env="prod" />
 
         <label className="block text-sm"><span className="mb-1 block text-slate-600">X-DOCTOR-IP (αν απαιτείται)</span>
           <input className={inp} value={doctorIp} onChange={(e) => setDoctorIp(e.target.value)} placeholder="π.χ. 157.180.26.98" /></label>
