@@ -147,6 +147,13 @@
       use `lib/formatters` (dedup), breadcrumbs, password show/hide toggles, ingestion
       test-without-silent-save. (Color tokens / chart a11y / chart contrast already done in T-15.)
 
+- [~] **Responsive QA test** — 2026-06-08: real-browser pass (Playwright+Chromium via the
+      playwright Docker image vs `next dev`). **31 routes (19 tenant/auth + 12 admin) × 6
+      widths = 186 overflow checks, ALL clean** after 2 fixes: `/orders`@320 (header button
+      group → `w-full flex-wrap`) and `/admin/noeton`@320/390 (long URL `<code>` → `break-all`).
+      See `responsive-qa-results.md`. ⏳ Remaining QA: data-dense pages (need seeded backend),
+      axe/Lighthouse a11y/perf. (2 fixes + report uncommitted, pending the rebase batch.)
+
 ### Audit status
 - [x] Full audit complete — 2026-06-07. Reports in repo root + `docs/audit-summary.md`
       (scores + top-20) + `docs/execution-roadmap.md`. *(D-020)*

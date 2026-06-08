@@ -62,7 +62,7 @@ export default function OrdersPage() {
           <h1 className="text-2xl font-bold tracking-tight text-slate-900">Προτάσεις παραγγελίας</h1>
           <p className="mt-1 text-sm text-slate-500">Αυτόματες προτάσεις αναπλήρωσης αποθέματος</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:justify-end">
           <button
             type="button"
             onClick={() => recompute.mutate()}
