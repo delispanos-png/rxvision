@@ -77,6 +77,12 @@ async def _effective_hdika_creds(tenant_id: str) -> dict:
             creds["base_url"] = envcfg["base_url"]
         if plat.get("doctor_ip"):
             creds["doctor_ip"] = plat["doctor_ip"]
+        # Per ΗΔΙΚΑ spec, HTTP Basic auth is the INTEGRATOR (CloudOn) account — platform-level,
+        # NOT the pharmacy's e-prescription login. The pharmacy is addressed via pharmacy_id.
+        if envcfg.get("integrator_username"):
+            creds["username"] = envcfg["integrator_username"]
+        if envcfg.get("integrator_password"):
+            creds["password"] = envcfg["integrator_password"]
         creds["environment"] = env
     return creds
 

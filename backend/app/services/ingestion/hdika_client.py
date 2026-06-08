@@ -35,7 +35,7 @@ from app.services.ingestion.canonical import (
     CanonicalPatient,
 )
 
-_PAGE_SIZE = 200
+_PAGE_SIZE = 100                  # ΗΔΙΚΑ rejects size>~150 with HTTP 400; 100 is safe
 _MAX_BACKFILL_DAYS = 400          # cap day-by-day backfill (search is per-day)
 _TIMEOUT = httpx.Timeout(30.0, connect=10.0)
 
@@ -190,7 +190,11 @@ class HdikaClient:
                 except Exception:  # noqa: BLE001 — one bad day must not abort the backfill
                     self.skipped_days += 1
                     break
-                records = _as_list(_first(data, "contents", "content", "items", default=[]))
+                contents = _first(data, "contents", "content", "items", default=[])
+                # Spring Page wraps repeated rows as <contents><item>…</item></contents>
+                if isinstance(contents, dict) and "item" in contents:
+                    contents = contents["item"]
+                records = _as_list(contents)
                 for raw in records:
                     if isinstance(raw, dict):
                         yield self.map_raw(raw)
