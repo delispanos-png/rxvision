@@ -53,9 +53,9 @@
 - [x] AI Tech Lead persistent working environment (`docs/ai/` + `scripts/ai/`) — 2026-06-07 (D-016)
 - [ ] Add lockfiles (`uv.lock`/`poetry.lock`, `package-lock.json`); switch Docker
       to `npm ci` + locked pip install for reproducible builds.
-- [ ] Push `quick-wins` branch and confirm CI is green.
+- [x] Push `quick-wins` + CI green — 2026-06-08 (PR #1; ruff·pytest + tsc·lint·build pass).
 - [ ] **Validate #7/#8 with a live `docker compose up`** (checklist in project-state.md) —
-      no Docker in the authoring env, so DB-auth + Vault-TLS are static-checked only.
+      CI doesn't spin up the full stack, so DB-auth + Vault-TLS are still un-smoke-tested.
 
 ## P1 — Data correctness (analytics must be trustworthy)
 
@@ -140,13 +140,9 @@
       `eslint.ignoreDuringBuilds:false`. `npm run build` passes with BOTH type+lint gates.
       Side effect: `frontend/package-lock.json` was generated — regenerate cleanly with a
       fresh `npm install` before relying on it (it came from a partial `--no-save` install).
-- [ ] **T-11 (Phase B)** `SelectFilter` min-width, chart mobile legibility (heatmap/bar),
-      KPI `md:` grid step + responsive value text, `break-all` on code/JSON, touch targets.
-- [ ] **T-12 (Phase C)** Remove dead UI (`/pricing`, lang switcher, bell) + 404/error pages
-      + mount InstallButton; stop leaking `JSON.stringify(problem)`; toast system; password
-      toggles; ingestion test-without-silent-save.
-- [ ] **T-13 (Phase D)** Consistency/a11y: StatusBadge, formatters, color tokens, contrast,
-      aria-live/labels, breadcrumbs, react-hook-form standardization.
+- [ ] **T-13 (Phase D leftovers)** Consistency/a11y not yet done: shared `<StatusBadge>` +
+      use `lib/formatters` (dedup), breadcrumbs, password show/hide toggles, ingestion
+      test-without-silent-save. (Color tokens / chart a11y / chart contrast already done in T-15.)
 
 ### Audit status
 - [x] Full audit complete — 2026-06-07. Reports in repo root + `docs/audit-summary.md`
