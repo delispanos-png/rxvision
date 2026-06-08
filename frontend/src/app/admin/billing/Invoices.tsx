@@ -1,6 +1,7 @@
 "use client";
 
 import { appConfirm } from "@/store/dialogStore";
+import { DateInput } from "@/components/ui/DateInput";
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { adminApi, ApiError } from "@/lib/adminClient";
@@ -131,7 +132,7 @@ function InvoiceModal({ modal, tenants, onClose, onDone }:
           <label className="block text-sm"><span className="mb-1 block text-slate-600">Σειρά</span>
             <input disabled={view} value={form.series} onChange={(e) => setForm({ ...form, series: e.target.value })} className={inp} /></label>
           <label className="block text-sm"><span className="mb-1 block text-slate-600">Ημ/νία</span>
-            <input type="date" disabled={view} value={form.issue_date} onChange={(e) => setForm({ ...form, issue_date: e.target.value })} className={inp} /></label>
+            <DateInput disabled={view} value={form.issue_date} onChange={(v) => setForm({ ...form, issue_date: v })} /></label>
           <label className="block text-sm"><span className="mb-1 block text-slate-600">ΦΠΑ %</span>
             <input type="number" step="any" disabled={view} value={form.vat_rate} onChange={(e) => setForm({ ...form, vat_rate: e.target.value })} className={inp} /></label>
           <label className="col-span-2 block text-sm"><span className="mb-1 block text-slate-600">Περιγραφή</span>

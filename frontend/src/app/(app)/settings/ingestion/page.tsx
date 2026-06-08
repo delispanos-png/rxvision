@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { DateInput } from "@/components/ui/DateInput";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { CheckCircle2, Link2, Loader2, PlugZap, RefreshCw, ShieldCheck, XCircle } from "lucide-react";
 import { api } from "@/lib/apiClient";
@@ -250,7 +251,7 @@ export default function IngestionSettingsPage() {
               </select>
             </Field>
             <Field label="Συχνότητα (λεπτά)"><input type="number" min={5} max={1440} className={inputCls} value={f.sync_interval_minutes} onChange={(e) => set("sync_interval_minutes", Number(e.target.value))} /></Field>
-            <Field label="Άντληση ιστορικού από" hint="αρχή σύμβασης ΕΟΠΥΥ"><input type="date" className={inputCls} value={f.history_from?.slice(0, 10) || ""} onChange={(e) => set("history_from", e.target.value)} /></Field>
+            <Field label="Άντληση ιστορικού από" hint="αρχή σύμβασης ΕΟΠΥΥ"><DateInput value={f.history_from?.slice(0, 10) || ""} onChange={(v) => set("history_from", v)} /></Field>
           </div>
         </PanelCard>
 

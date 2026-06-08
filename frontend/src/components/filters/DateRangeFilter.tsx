@@ -1,6 +1,7 @@
 "use client";
 
 import { useUiStore } from "@/store/uiStore";
+import { DateInput } from "@/components/ui/DateInput";
 
 /** From/to date inputs bound to the global Zustand filter store. */
 export function DateRangeFilter() {
@@ -10,21 +11,11 @@ export function DateRangeFilter() {
     <div className="flex flex-wrap items-end gap-3">
       <label className="text-sm">
         <span className="mb-1 block text-slate-500">Από</span>
-        <input
-          type="date"
-          value={dateFrom}
-          onChange={(e) => setDateRange(e.target.value, dateTo)}
-          className="rounded-lg border border-slate-300 px-3 py-2 text-slate-900 focus:border-teal-600 focus:outline-none"
-        />
+        <DateInput value={dateFrom} onChange={(v) => setDateRange(v, dateTo)} />
       </label>
       <label className="text-sm">
         <span className="mb-1 block text-slate-500">Έως</span>
-        <input
-          type="date"
-          value={dateTo}
-          onChange={(e) => setDateRange(dateFrom, e.target.value)}
-          className="rounded-lg border border-slate-300 px-3 py-2 text-slate-900 focus:border-teal-600 focus:outline-none"
-        />
+        <DateInput value={dateTo} onChange={(v) => setDateRange(dateFrom, v)} />
       </label>
     </div>
   );

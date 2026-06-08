@@ -7,6 +7,7 @@ import { api } from "@/lib/apiClient";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
 import { KpiCard } from "@/components/kpi/KpiCard";
 import { PanelCard } from "@/components/ui/Card";
+import { DateInput } from "@/components/ui/DateInput";
 import { LineChart } from "@/components/charts/LineChart";
 import { DonutChart } from "@/components/charts/DonutChart";
 import { BarChart } from "@/components/charts/BarChart";
@@ -63,12 +64,10 @@ export default function DashboardPage() {
         </div>
         <div className="flex items-end gap-2">
           <label className="text-xs text-slate-500">Από
-            <input type="date" value={fromD} onChange={(e) => setFromD(e.target.value)}
-              className="mt-1 block rounded-lg border border-slate-300 px-2 py-1.5 text-sm text-slate-800 focus:border-brand-400 focus:outline-none" />
+            <DateInput value={fromD} onChange={setFromD} className="mt-1" />
           </label>
           <label className="text-xs text-slate-500">Έως
-            <input type="date" value={toD} onChange={(e) => setToD(e.target.value)}
-              className="mt-1 block rounded-lg border border-slate-300 px-2 py-1.5 text-sm text-slate-800 focus:border-brand-400 focus:outline-none" />
+            <DateInput value={toD} onChange={setToD} className="mt-1" />
           </label>
         </div>
       </div>
