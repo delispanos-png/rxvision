@@ -44,7 +44,10 @@
 - [ ] **T-08** MFA enrollment flow — generate per-user `mfa_secret` (store in Vault),
       QR/provisioning URI, verify-on-enable, disable, recovery codes. T-05 only added
       the *verification* path; no user can self-enable MFA yet (UI still says "σύντομα").
-- [ ] SSRF allow-list / private-IP filtering on tenant-supplied ΗΔΙΚΑ `base_url`. *(M2)*
+- [~] **M2** SSRF allow-list / private-IP filtering on tenant-supplied ΗΔΙΚΑ `base_url`.
+      **PAUSED 2026-06-08** — `backend/app/utils/net.py` guard built (uncommitted, not wired);
+      wiring touches `ingestion.py` which the concurrent ΗΔΙΚΑ agent owns. Finish after rebase
+      onto the new `main`. *(see project-state §Active concurrency)*
 - [ ] Audit logging for PHI reads + failed logins; WORM/append-only audit store. *(M5)*
 
 ## P0 — Tooling / quality gate

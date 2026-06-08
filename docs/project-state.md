@@ -3,6 +3,15 @@
 > Living snapshot for session continuity. Update at the end of each work session.
 > Last updated: **2026-06-07**.
 
+## ⚠️ Active concurrency (2026-06-08)
+**A second agent is actively building the ΗΔΙΚΑ integration** and has pushed to `origin/main`
+(`f0f494e → a7e6284`: HL7 CDA, per-pharmacy identity, integrator auth, ingestion/auth fixes).
+**We are PAUSED** to let it land. Rules while paused: do **not** touch the ΗΔΙΚΑ/ingestion lane
+(`services/ingestion/hdika_client.py`, `api/v1/routers/ingestion.py`, `routers/admin.py`,
+`hdika_cda.py`, `frontend/.../admin/idika`); do **not** rebase/force-push into the moving `main`.
+PR #1 base has moved → quick-wins needs a rebase onto `origin/main` (conflicts: `hdika_client.py`,
+`ingestion.py`) once the other agent is idle. Full plan: journal 2026-06-07 §Session 24.
+
 ## Audit snapshot (2026-06-07)
 Full audit complete (docs only). Scores: **overall 64** · arch 78 · security 68* · code 60
 · maintainability 62 · scalability 55 · responsive 62 · UX 64 (a11y 45). *(\*security
