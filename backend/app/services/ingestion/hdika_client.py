@@ -272,7 +272,12 @@ class HdikaClient:
         barcode = str(_first(presc, "barcode") or _first(ex, "barcode", default=""))
         fund_d = presc.get("socialInsuranceDTO") if isinstance(presc.get("socialInsuranceDTO"), dict) else {}
         total = _eur_cents(_first(ex, "totalValue", "payableAmount", default=0))
-        share = _eur_cents(_first(ex, "participationValue", default=0))
+        # ΠΛΗΡΩΤΕΟ ΑΠΟ ΑΣΦ/ΝΟ = co-pay (participationValue) + the retail−reference excess the
+        # patient covers (totalDifference). ΗΔΙΚΑ keeps these separate; the fund pays the rest,
+        # so amount_claimed = total − share = ΠΛΗΡΩΤΕΟ ΑΠΟ ΤΑΜΕΙΟ. (Earlier we missed totalDifference.)
+        share = (_eur_cents(_first(ex, "participationValue", default=0))
+                 + _eur_cents(_first(ex, "totalDifference", default=0))
+                 + _eur_cents(_first(ex, "supplementalDifferenceAmt", default=0)))
         exec_no = int(float(_first(ex, "executionNo", default=1) or 1))
         repeat_total = max(int(float(_first(summary, "executions", default=1) or 1)), exec_no, 1)
 

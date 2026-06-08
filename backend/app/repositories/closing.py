@@ -45,7 +45,7 @@ class ClosingRepository(BaseRepository):
             }},
             {"$project": {"_id": 0, "executions": 1, "value": 1, "claimed": 1,
                           "cost": 1, "cancelled": 1, "partial": 1, "with_unexecuted": 1,
-                          "gross_profit": {"$subtract": ["$claimed", "$cost"]}}},
+                          "gross_profit": {"$subtract": ["$value", "$cost"]}}},  # retail − wholesale
         ]
         rows = await self.aggregate(pipeline)
         result = rows[0] if rows else {

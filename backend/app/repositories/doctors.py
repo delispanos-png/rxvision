@@ -72,7 +72,7 @@ class DoctorExecutionsRepository(BaseRepository):
                 "cost": {"$sum": "$wholesale_cost"},
                 "patients": {"$addToSet": "$patient_ref"},
             }},
-            {"$set": {"profit": {"$subtract": ["$claimed", "$cost"]},
+            {"$set": {"profit": {"$subtract": ["$value", "$cost"]},  # retail − wholesale
                       "distinct_patients": {"$size": "$patients"}}},
             {"$set": {"margin_pct": {"$cond": [
                 {"$gt": ["$claimed", 0]},

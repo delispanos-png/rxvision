@@ -65,16 +65,18 @@ class ProfitabilitySnapshotRepository(BaseRepository):
         pipeline = [
             {"$match": {"executed_at": {"$gte": start, "$lt": end}}},
             {"$group": {"_id": None, "rx_count": {"$sum": 1},
+                        "amount_total": {"$sum": "$amount_total"},
                         "amount_claimed": {"$sum": "$amount_claimed"},
                         "wholesale_cost": {"$sum": "$wholesale_cost"}}},
-            {"$set": {"gross_profit": {"$subtract": ["$amount_claimed", "$wholesale_cost"]}}},
+            # margin = retail − wholesale (revenue is the full retail, not the fund share)
+            {"$set": {"gross_profit": {"$subtract": ["$amount_total", "$wholesale_cost"]}}},
             {"$set": {"margin_pct": {"$cond": [
-                {"$gt": ["$amount_claimed", 0]},
-                {"$multiply": [{"$divide": ["$gross_profit", "$amount_claimed"]}, 100]},
+                {"$gt": ["$amount_total", 0]},
+                {"$multiply": [{"$divide": ["$gross_profit", "$amount_total"]}, 100]},
                 0,
             ]}}},
-            {"$project": {"_id": 0, "period": period, "rx_count": 1, "amount_claimed": 1,
-                          "wholesale_cost": 1, "gross_profit": 1, "margin_pct": 1}},
+            {"$project": {"_id": 0, "period": period, "rx_count": 1, "amount_total": 1,
+                          "amount_claimed": 1, "wholesale_cost": 1, "gross_profit": 1, "margin_pct": 1}},
         ]
         rows = await execs.aggregate(pipeline)
         return rows[0] if rows else {

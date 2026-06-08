@@ -85,7 +85,7 @@ class PatientExecutionsRepository(BaseRepository):
                 "active_since": {"$min": "$executed_at"},
                 "last_seen": {"$max": "$executed_at"},
             }},
-            {"$set": {"profit": {"$subtract": ["$claimed", "$cost"]}}},
+            {"$set": {"profit": {"$subtract": ["$value", "$cost"]}}},  # retail − wholesale
             {"$sort": {sort_field: -1}},
             {"$limit": limit},
             # join anonymized profile (no PII): pseudo_id + demographics + lifecycle

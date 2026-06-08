@@ -23,7 +23,7 @@ class Icd10Repository(BaseRepository):
                 "claimed": {"$sum": "$amount_claimed"},
                 "cost": {"$sum": "$wholesale_cost"},
             }},
-            {"$set": {"profit": {"$subtract": ["$claimed", "$cost"]}}},
+            {"$set": {"profit": {"$subtract": ["$value", "$cost"]}}},  # retail − wholesale
             {"$sort": {sort_field: -1}},
             {"$limit": limit},
             {"$lookup": {"from": "icd10_codes", "localField": "_id",
@@ -58,7 +58,7 @@ class Icd10Repository(BaseRepository):
                 "cost": {"$sum": "$wholesale_cost"},
                 "codes": {"$addToSet": "$icd10"},
             }},
-            {"$set": {"profit": {"$subtract": ["$claimed", "$cost"]},
+            {"$set": {"profit": {"$subtract": ["$value", "$cost"]},  # retail − wholesale
                       "code_count": {"$size": "$codes"}}},
             {"$sort": {sort_field: -1}},
             {"$limit": limit},

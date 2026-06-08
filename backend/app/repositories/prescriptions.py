@@ -101,7 +101,9 @@ class PrescriptionRepository(BaseRepository):
             }},
             {"$project": {
                 "_id": 0, "executions": 1, "value": 1, "claimed": 1,
-                "gross_profit": {"$subtract": ["$claimed", "$cost"]},
+                # gross margin = retail − wholesale (the pharmacy collects full retail
+                # from patient+fund); NOT claimed−cost (claimed is only the fund share).
+                "gross_profit": {"$subtract": ["$value", "$cost"]},
                 "patient_count": {"$size": "$patients"},
             }},
         ]
