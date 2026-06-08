@@ -22,7 +22,13 @@ type Prescription = {
   amount_total: number; // cents
   amount_claimed: number; // cents
   has_unexecuted_substances: boolean;
+  patient_name?: string | null;
+  amka?: string | null;
+  fund_name?: string | null;
+  status?: string | null;
 };
+
+const STATUS_EL: Record<string, string> = { executed: "Εκτελεσμένη", partial: "Μερικώς", cancelled: "Ακυρωμένη" };
 
 type UnexecutedRow = {
   product_id: string;
@@ -36,17 +42,20 @@ type UnexecutedRow = {
 const columns: Column<Prescription>[] = [
   { key: "executed_at", header: "Ημ/νία", render: (r) => fmtDate(r.executed_at) },
   { key: "external_id", header: "Κωδικός" },
-  { key: "source", header: "Πηγή" },
+  { key: "patient_name", header: "Ασθενής", render: (r) => r.patient_name || "—" },
+  { key: "amka", header: "ΑΜΚΑ", hideOnMobile: true, render: (r) => r.amka || "—" },
+  { key: "fund_name", header: "Ταμείο", hideOnMobile: true, render: (r) => r.fund_name || "—" },
+  {
+    key: "status", header: "Κατάσταση", hideOnMobile: true,
+    render: (r) => (
+      <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${r.has_unexecuted_substances ? "bg-amber-100 text-amber-700" : "bg-emerald-100 text-emerald-700"}`}>
+        {r.has_unexecuted_substances ? "Μερικώς" : STATUS_EL[r.status || "executed"] || "Εκτελεσμένη"}
+      </span>
+    ),
+  },
   { key: "icd10", header: "ICD-10", hideOnMobile: true, render: (r) => (r.icd10 ?? []).join(", ") },
   { key: "amount_total", header: "Αξία", align: "right", render: (r) => fmtEur(r.amount_total) },
-  { key: "amount_claimed", header: "Αιτούμενα", align: "right", render: (r) => fmtEur(r.amount_claimed) },
-  {
-    key: "has_unexecuted_substances",
-    header: "Ανεκτέλεστα",
-    align: "center",
-    render: (r) =>
-      r.has_unexecuted_substances ? <span className="text-amber-600">●</span> : <span className="text-slate-300">—</span>,
-  },
+  { key: "amount_claimed", header: "Από ταμείο", align: "right", render: (r) => fmtEur(r.amount_claimed) },
 ];
 
 const unexecutedColumns: Column<UnexecutedRow>[] = [

@@ -24,7 +24,9 @@ export function BarChart({
 
   const option = {
     color: PALETTE,
-    grid: { ...BASE_GRID, left: horizontal ? 120 : BASE_GRID.left },
+    // containLabel lets ECharts reserve exactly the space the (long Greek) category
+    // labels need, so horizontal-bar names are never clipped on the left.
+    grid: { ...BASE_GRID, left: horizontal ? 8 : BASE_GRID.left, containLabel: true },
     tooltip: { trigger: "axis", axisPointer: { type: "shadow" } },
     xAxis: horizontal ? val : cat,
     yAxis: horizontal ? { ...cat, inverse: true } : val,

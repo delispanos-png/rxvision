@@ -88,6 +88,28 @@ class PrescriptionRepository(BaseRepository):
         }
         return jsonsafe(out)
 
+    async def list_executions(self, query: dict, skip: int, limit: int) -> list[dict]:
+        """Executions list enriched like the ΗΔΙΚΑ portal: patient name/AMKA, fund,
+        status + execution case, ICD-10 and amounts."""
+        pipeline = [
+            {"$match": query},
+            {"$sort": {"executed_at": -1}},
+            {"$skip": skip},
+            {"$limit": limit},
+            {"$lookup": {"from": "patients_anonymized", "localField": "patient_ref",
+                         "foreignField": "_id", "as": "p"}},
+            {"$lookup": {"from": "insurance_funds", "localField": "fund_id",
+                         "foreignField": "_id", "as": "f"}},
+            {"$set": {"patient_name": {"$first": "$p.full_name"},
+                      "amka": {"$first": "$p.amka"},
+                      "fund_name": {"$first": "$f.name"}}},
+            {"$project": {"_id": 0, "external_id": 1, "executed_at": 1, "source": 1,
+                          "icd10": 1, "amount_total": 1, "amount_claimed": 1,
+                          "status": 1, "has_unexecuted_substances": 1,
+                          "patient_name": 1, "amka": 1, "fund_name": 1}},
+        ]
+        return await self.aggregate(pipeline)
+
     async def dashboard_summary(self, date_from: datetime, date_to: datetime) -> dict:
         pipeline = [
             {"$match": {"executed_at": {"$gte": date_from, "$lt": date_to}}},

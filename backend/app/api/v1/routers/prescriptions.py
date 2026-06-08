@@ -46,8 +46,7 @@ async def list_prescriptions(
         query["doctor_id"] = doctor_id
     if icd10:
         query["icd10"] = icd10
-    items = await repo.find(query, sort=[("executed_at", -1)],
-                            skip=(page - 1) * page_size, limit=page_size)
+    items = await repo.list_executions(query, skip=(page - 1) * page_size, limit=page_size)
     return {"page": page, "page_size": page_size, "items": items}
 
 
