@@ -31,8 +31,9 @@ _ANCHOR = datetime(2026, 5, 1, 8, 0, tzinfo=timezone.utc)  # fixed → reproduci
 class HdikaAdapter:
     """Pluggable adapter. Real impl: HTTP client against creds.endpoint."""
 
-    def __init__(self, credentials: dict | None = None) -> None:
+    def __init__(self, credentials: dict | None = None, catalog: dict | None = None) -> None:
         self.credentials = credentials or {}
+        self.catalog = catalog or {}     # eofCode → price/cost map for per-medicine analysis
 
     def fetch(self, *, since: datetime | None = None, count: int = 20):
         """Yield canonical executions newer than `since`.
@@ -56,7 +57,7 @@ class HdikaAdapter:
         official ΗΔΙΚΑ spec lands)."""
         from app.services.ingestion.hdika_client import HdikaClient
 
-        client = HdikaClient(self.credentials)
+        client = HdikaClient(self.credentials, catalog=self.catalog)
         try:
             yield from client.iter_executions(since)
         finally:

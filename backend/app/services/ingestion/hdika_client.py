@@ -93,7 +93,7 @@ def _as_list(v) -> list:
 
 
 class HdikaClient:
-    def __init__(self, credentials: dict) -> None:
+    def __init__(self, credentials: dict, catalog: dict | None = None) -> None:
         c = credentials or {}
         self.c = c
         self.base = (c.get("base_url") or c.get("live_endpoint") or "").rstrip("/")
@@ -101,6 +101,7 @@ class HdikaClient:
         self.password = c.get("password", "")
         self.api_key = c.get("api_key", "")                       # APPLICATION key
         self.pharmacy_id = c.get("pharmacy_id") or c.get("pharmacy_code")
+        self.catalog = catalog or {}     # eofCode → price/cost (Δελτίο Τιμών) for per-med analysis
         self.skipped_days = 0           # days skipped due to transient gateway errors
         headers = {"Accept": "application/xml"}
         if self.api_key:
@@ -198,15 +199,40 @@ class HdikaClient:
             pass
         return {}
 
+    def _prescription_index(self, start, end) -> dict:
+        """barcode → prescription summary (executions=total repeats, expiryDate) from
+        /prescriptions/search over the range. Cheap (one paged sweep) and gives the
+        repeat structure (single vs 3-/6-month recurring)."""
+        idx: dict = {}
+        page = 0
+        while True:
+            params = {"size": _PAGE_SIZE, "page": page,
+                      "from": start.isoformat(), "to": end.isoformat()}
+            if self.pharmacy_id:
+                params["pharmacyId"] = self.pharmacy_id
+            try:
+                data = _to_dict(self._get_xml("/api/v1/prescriptions/search", params))
+            except Exception:  # noqa: BLE001 — repeat enrichment is best-effort
+                break
+            rows = self._rows(data)
+            for r in rows:
+                if isinstance(r, dict) and _first(r, "barcode"):
+                    idx[str(_first(r, "barcode"))] = r
+            if self._is_last(data, len(rows)):
+                break
+            page += 1
+        return idx
+
     def iter_executions(self, since: datetime | None) -> Iterator[CanonicalExecution]:
         """Yield canonical executions from `since`→today. Driver = prescription-execution
-        /search (per executionDate, paged) for amounts/fund; each row is enriched by its
-        barcode via the full HL7 CDA (doctor, ICD-10, medicines, patient)."""
+        /search (amounts/fund, executionNo); enriched per barcode by the full HL7 CDA
+        (doctor, ICD-10, medicines, patient) and by /prescriptions/search (repeat info)."""
         from datetime import timedelta
         end = datetime.now(tz=timezone.utc).date()
         start = since.date() if since else end
         if (end - start).days > _MAX_BACKFILL_DAYS:        # safety cap for huge backfills
             start = end - timedelta(days=_MAX_BACKFILL_DAYS)
+        summaries = self._prescription_index(start, end)
         day = start
         while day <= end:
             page = 0
@@ -225,25 +251,24 @@ class HdikaClient:
                     if isinstance(raw, dict):
                         presc = raw.get("prescription") if isinstance(raw.get("prescription"), dict) else {}
                         bc = str(_first(presc, "barcode") or _first(raw, "barcode", default=""))
-                        yield self._map_full(raw, self._fetch_cda(bc))
+                        yield self._map_full(raw, self._fetch_cda(bc), summaries.get(bc, {}))
                 if self._is_last(data, len(records)):
                     break
                 page += 1
             day += timedelta(days=1)
 
-    @staticmethod
-    def _map_full(ex: dict, cda: dict) -> CanonicalExecution:
-        """Combine an execution row (amounts/fund, from execution-search) with the full
-        CDA (patient/doctor/ICD-10/medicines) → a complete CanonicalExecution.
-
-        Per-medicine prices are not in the CDA (they need getExecutionWithCalcs), so the
-        prescription total rides the first medicine line — prescription-level revenue is
-        exact; the per-line revenue split is approximate (a documented v1 limitation)."""
+    def _map_full(self, ex: dict, cda: dict, summary: dict | None = None) -> CanonicalExecution:
+        """Execution row (amounts/fund/executionNo) + full CDA (patient/doctor/ICD-10/
+        medicines) + repeat summary → a complete CanonicalExecution. Each medicine is a
+        real line priced from the catalog (retail + wholesale → margin)."""
+        summary = summary or {}
         presc = ex.get("prescription") if isinstance(ex.get("prescription"), dict) else {}
         barcode = str(_first(presc, "barcode") or _first(ex, "barcode", default=""))
         fund_d = presc.get("socialInsuranceDTO") if isinstance(presc.get("socialInsuranceDTO"), dict) else {}
         total = _eur_cents(_first(ex, "totalValue", "payableAmount", default=0))
         share = _eur_cents(_first(ex, "participationValue", default=0))
+        exec_no = int(float(_first(ex, "executionNo", default=1) or 1))
+        repeat_total = max(int(float(_first(summary, "executions", default=1) or 1)), exec_no, 1)
 
         cda_pat = cda.get("patient") or {}
         cda_doc = cda.get("doctor") or {}
@@ -251,19 +276,27 @@ class HdikaClient:
         sex = (cda_pat.get("sex") or "U")
         sex = "M" if sex.startswith("M") else "F" if sex.startswith("F") else "U"
 
-        # one item per real medicine; first line carries the prescription total
+        # one priced line per medicine (retail + wholesale from the Δελτίο Τιμών catalog)
         items: list[CanonicalItem] = []
         for n, m in enumerate(meds):
+            eof = str(m.get("code") or "")
+            cat = self.catalog.get(eof) or {}
+            qty = int(m.get("quantity") or 1)
             items.append(CanonicalItem(
-                barcode=str(m.get("code") or f"{barcode}-{n}"),
-                name=m.get("name") or "Φάρμακο",
-                quantity=1,
-                retail_price=total if n == 0 else 0,
+                barcode=str(cat.get("barcode") or eof or f"{barcode}-{n}"),
+                name=cat.get("name") or m.get("name") or "Φάρμακο",
+                substance=cat.get("atc"),
+                quantity=qty,
+                retail_price=int(cat.get("retail_cents") or 0),
+                wholesale_price=int(cat.get("wholesale_cents") or 0),
+                category="narcotic" if cat.get("narcotic") else "normal",
                 is_executed=True,
             ))
-        if not items:  # CDA unavailable → keep a prescription-level line so revenue/validation hold
+        if not items:                                   # CDA missing → prescription-level line
             items = [CanonicalItem(barcode=barcode or "rx", name="Συνταγή (ΗΔΙΚΑ)",
                                    quantity=1, retail_price=total, is_executed=True)]
+        elif sum(i.retail_price * i.quantity for i in items) == 0 and total > 0:
+            items[0].retail_price = total               # catalog miss → keep revenue on line 1
 
         fund_name = _first(fund_d, "name") or cda_pat.get("fund_name") or "ΕΟΠΥΥ"
         fund_code = str(_first(fund_d, "shortName", "id", default="") or cda_pat.get("fund_code") or "EOPYY")
@@ -281,8 +314,8 @@ class HdikaClient:
             fund=CanonicalFund(code=fund_code, name=fund_name),
             items=items,
             icd10=[d["code"] for d in cda.get("icd10", []) if d.get("code")],
-            repeat_current=1,
-            repeat_total=1,
+            repeat_current=min(exec_no, repeat_total),
+            repeat_total=repeat_total,
             patient_share=share,
         )
 
