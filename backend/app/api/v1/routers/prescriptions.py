@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from typing import Literal
 
@@ -34,6 +35,7 @@ async def list_prescriptions(
     fund_id: str | None = None,
     doctor_id: str | None = None,
     icd10: str | None = None,
+    barcode: str | None = None,
     page: int = 1,
     page_size: int = 50,
     ctx: TenantContext = Depends(require("prescriptions:read", module="prescription_analytics")),
@@ -46,6 +48,11 @@ async def list_prescriptions(
         query["doctor_id"] = doctor_id
     if icd10:
         query["icd10"] = icd10
+    if barcode and barcode.strip():
+        # search by prescription barcode (prefix match); ignore the date window so a
+        # known barcode is found regardless of the selected period.
+        query.pop("executed_at", None)
+        query["external_id"] = {"$regex": "^" + re.escape(barcode.strip())}
     items = await repo.list_executions(query, skip=(page - 1) * page_size, limit=page_size)
     return {"page": page, "page_size": page_size, "items": items}
 

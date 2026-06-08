@@ -1,8 +1,9 @@
 "use client";
 
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
-import { Receipt, Wallet, Pill, AlertTriangle } from "lucide-react";
+import { Receipt, Wallet, Pill, AlertTriangle, Search } from "lucide-react";
 import { api } from "@/lib/apiClient";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
 import { useUiStore, filtersToQuery } from "@/store/uiStore";
@@ -69,10 +70,13 @@ export default function PrescriptionsPage() {
   const router = useRouter();
   const filters = useUiStore();
   const q = filtersToQuery(filters);
+  const [barcode, setBarcode] = useState("");
+  const bc = barcode.trim();
+  const listQs = bc ? `${q}&barcode=${encodeURIComponent(bc)}` : q;
 
   const list = useQuery({
-    queryKey: ["prescriptions", "list", q],
-    queryFn: () => api<{ items: Prescription[] }>(`/prescriptions?${q}&page=1&page_size=50`),
+    queryKey: ["prescriptions", "list", listQs],
+    queryFn: () => api<{ items: Prescription[] }>(`/prescriptions?${listQs}&page=1&page_size=50`),
   });
 
   const unexecuted = useQuery({
@@ -101,8 +105,25 @@ export default function PrescriptionsPage() {
         <ExportButton path="/prescriptions" query={`?${q}`} />
       </div>
 
-      <div className="mb-4">
+      <div className="mb-4 flex flex-wrap items-end gap-3">
         <DateRangeFilter />
+        <label className="text-sm">
+          <span className="mb-1 block text-slate-500">Αναζήτηση barcode</span>
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            <input
+              value={barcode}
+              onChange={(e) => setBarcode(e.target.value)}
+              placeholder="π.χ. 2606022236114"
+              inputMode="numeric"
+              className="w-56 rounded-lg border border-slate-300 py-2 pl-8 pr-8 text-sm text-slate-900 focus:border-brand-500 focus:outline-none"
+            />
+            {bc && (
+              <button onClick={() => setBarcode("")} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600" title="Καθαρισμός">×</button>
+            )}
+          </div>
+        </label>
+        {bc && <span className="pb-2 text-xs text-slate-400">Αναζήτηση σε όλη την περίοδο</span>}
       </div>
 
       <div className="space-y-4">
