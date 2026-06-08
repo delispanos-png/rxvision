@@ -18,6 +18,6 @@
     @apply rounded-2xl border border-slate-200/70 bg-white shadow-card;
   }
   .rx-label {
-    @apply text-[11px] font-semibold uppercase tracking-wider text-slate-400;
+    @apply text-[11px] font-semibold uppercase tracking-wider text-slate-500;
   }
 }

@@ -3,6 +3,7 @@
 .env.*
 !.env.example
 secrets/
+infra/docker/vault/tls/
 
 # python
 __pycache__/
@@ -12,6 +13,8 @@ __pycache__/
 # node / next
 node_modules/
 .next/
+next-env.d.ts
+*.tsbuildinfo
 frontend/public/sw.js
 frontend/public/workbox-*.js
 

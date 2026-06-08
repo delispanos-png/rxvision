@@ -7,16 +7,17 @@ from datetime import datetime, timezone
 from bson import ObjectId
 
 from app.core.db import shared_db
-
-
-def _utcnow() -> datetime:
-    return datetime.now(tz=timezone.utc)
 from app.core.security import (
     create_access_token,
     create_refresh_token,
     decode_token,
     verify_password,
+    verify_totp,
 )
+
+
+def _utcnow() -> datetime:
+    return datetime.now(tz=timezone.utc)
 
 
 # Core modules are tenant-admin surfaces (settings: users/roles, plan, billing,
@@ -50,7 +51,10 @@ class AuthService:
         # a suspended/expired tenant cannot log in, no external call at login time.
         if not await self._tenant_access_ok(user["tenant_id"]):
             return None
-        # TODO: verify mfa_code when user["mfa_enabled"].
+        # MFA: if enabled, require a valid TOTP code (previously the code was ignored).
+        # Distinct signal so the client can prompt for the code after a correct password.
+        if user.get("mfa_enabled") and not verify_totp(user.get("mfa_secret", ""), mfa_code or ""):
+            return {"mfa_required": True}
         await db["users"].update_one({"_id": user["_id"]},
                                      {"$set": {"last_login_at": _utcnow()}})  # for Noeton pull
         modules, roles, perms = await self._resolve(user)

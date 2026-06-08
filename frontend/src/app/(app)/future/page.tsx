@@ -10,6 +10,7 @@ import { SelectFilter } from "@/components/filters/SelectFilter";
 import { DataTable, type Column } from "@/components/tables/DataTable";
 import { KpiCard } from "@/components/kpi/KpiCard";
 import { PanelCard } from "@/components/ui/Card";
+import { QueryState } from "@/components/ui/QueryState";
 import { LineChart } from "@/components/charts/LineChart";
 
 type UpcomingDay = { date: string; count: number };
@@ -68,7 +69,7 @@ export default function FuturePage() {
 
       <div className="space-y-4">
         {/* KPI row */}
-        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+        <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
           <KpiCard label="Μελλοντικές συνταγές" value={fmtNum(total)} sub="σύνολο 30 ημερών" icon={CalendarClock} accent="indigo" />
           <KpiCard label="Επόμενες 7 ημέρες" value={fmtNum(next7)} sub="συνταγές" icon={CalendarDays} accent="violet" />
           <KpiCard label="Επόμενες 30 ημέρες" value={fmtNum(next30)} sub="συνταγές" icon={CalendarRange} accent="amber" />
@@ -93,11 +94,14 @@ export default function FuturePage() {
 
         {/* forecast table */}
         <PanelCard title="Πρόβλεψη ζήτησης ανά σκεύασμα (30 ημέρες)" bodyClassName="pt-2">
-          {forecast.isLoading ? (
-            <div className="text-slate-400">Φόρτωση δεδομένων…</div>
-          ) : (
+          <QueryState
+            isLoading={forecast.isLoading}
+            isError={forecast.isError}
+            isEmpty={(forecast.data?.items?.length ?? 0) === 0}
+            onRetry={() => forecast.refetch()}
+          >
             <DataTable columns={forecastColumns} rows={forecast.data?.items ?? []} rowKey={(r) => r.product_id} />
-          )}
+          </QueryState>
         </PanelCard>
       </div>
     </ModuleGuard>

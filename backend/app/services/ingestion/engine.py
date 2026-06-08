@@ -15,8 +15,9 @@ from datetime import datetime, timedelta, timezone
 from bson import ObjectId
 from pymongo import ReturnDocument
 
+from app.core.config import settings
 from app.core.db import shared_db
-from app.services.ingestion.canonical import CanonicalExecution
+from app.services.ingestion.canonical import CanonicalExecution, CanonicalItem
 from app.services.ingestion.validate import validate_execution
 from app.services.vault_service import vault
 from app.utils.anonymization import age_group, pseudonymize
@@ -172,27 +173,56 @@ class IngestionEngine:
             upsert=True, return_document=ReturnDocument.AFTER)
         return res["_id"]
 
+    async def _effective_wholesale(self, it: CanonicalItem) -> tuple[int, str]:
+        """Resolve an item's wholesale cost in cents (+ its source), so profitability is
+        never computed against a 0 cost (which made gross_profit == amount_claimed for
+        live ΗΔΙΚΑ — T-06). Priority:
+          1. value from the source feed (ΓΕΣΥ / synthetic / PharmacyOne),
+          2. a known *real* price already in product masterdata,
+          3. an estimate from retail via WHOLESALE_FALLBACK_MARGIN_PCT (flagged 'estimated').
+        """
+        if it.wholesale_price > 0:
+            return it.wholesale_price, "source"
+        if it.barcode:
+            prod = await self.db["products"].find_one(
+                {"tenant_id": self.tenant_id, "barcode": it.barcode},
+                {"wholesale_price": 1, "wholesale_source": 1})
+            known = (prod or {}).get("wholesale_price", 0) or 0
+            # Only trust a previously-stored price if it was real, not itself an estimate.
+            if known > 0 and (prod or {}).get("wholesale_source") != "estimated":
+                return known, "masterdata"
+        pct = settings.WHOLESALE_FALLBACK_MARGIN_PCT
+        if it.retail_price > 0 and pct > 0:
+            return round(it.retail_price * (1 - pct / 100)), "estimated"
+        return 0, "unknown"
+
     async def _resolve_items(self, ex: CanonicalExecution) -> tuple[list[dict], int, int]:
         docs: list[dict] = []
         amount_total = wholesale_cost = 0
         for it in ex.items:
-            margin = it.retail_price - it.wholesale_price
+            wholesale, wsource = await self._effective_wholesale(it)
+            margin = it.retail_price - wholesale
             margin_pct = round((margin / it.retail_price) * 100, 2) if it.retail_price else 0
+            set_fields = {"name": it.name, "retail_price": it.retail_price, "margin": margin,
+                          "margin_pct": margin_pct, "category": it.category,
+                          "substance": it.substance, "updated_at": _now()}
+            # Never clobber a known masterdata wholesale price with 0/unknown.
+            if wholesale > 0:
+                set_fields["wholesale_price"] = wholesale
+                set_fields["wholesale_source"] = wsource
             res = await self.db["products"].find_one_and_update(
                 {"tenant_id": self.tenant_id, "barcode": it.barcode},
-                {"$set": {"name": it.name, "retail_price": it.retail_price,
-                          "wholesale_price": it.wholesale_price, "margin": margin,
-                          "margin_pct": margin_pct, "category": it.category,
-                          "substance": it.substance, "updated_at": _now()},
+                {"$set": set_fields,
                  "$setOnInsert": {"tenant_id": self.tenant_id, "barcode": it.barcode,
                                   "rx_frequency": 0}},
                 upsert=True, return_document=ReturnDocument.AFTER)
             product_id = res["_id"]
             amount_total += it.retail_price * it.quantity
-            wholesale_cost += it.wholesale_price * it.quantity
+            wholesale_cost += wholesale * it.quantity
             docs.append({"product_id": product_id, "active_substance_id": None,
                          "quantity": it.quantity, "retail_price": it.retail_price,
-                         "wholesale_price": it.wholesale_price, "margin": margin,
+                         "wholesale_price": wholesale, "wholesale_source": wsource,
+                         "margin": margin,
                          "amount_claimed": it.retail_price * it.quantity, "patient_share": 0,
                          "is_executed": it.is_executed, "category": it.category})
         return docs, amount_total, wholesale_cost

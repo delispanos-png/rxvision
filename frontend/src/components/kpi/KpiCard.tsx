@@ -34,7 +34,7 @@ export function KpiCard({
         <div className="min-w-0">
           <div className="rx-label">{label}</div>
           <div className="mt-2 flex items-baseline gap-2">
-            <div className="truncate text-[26px] font-bold leading-none text-slate-900">{value}</div>
+            <div className="truncate text-xl font-bold leading-none text-slate-900 sm:text-[26px]">{value}</div>
             {trend !== undefined && (
               <span className={`text-xs font-semibold ${trend >= 0 ? "text-emerald-600" : "text-rose-600"}`}>
                 {trend >= 0 ? "▲" : "▼"} {Math.abs(trend).toFixed(1)}%

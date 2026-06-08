@@ -65,7 +65,7 @@ export default function BillingSettingsPage() {
                     </span>
                   </div>
                   <div className="h-2 w-full rounded-full bg-slate-100">
-                    <div className="h-2 rounded-full bg-teal-600" style={{ width: `${pct}%` }} />
+                    <div className="h-2 rounded-full bg-brand-600" style={{ width: `${pct}%` }} />
                   </div>
                 </div>
               );
@@ -83,7 +83,7 @@ export default function BillingSettingsPage() {
               type="button"
               onClick={() => checkout.mutate(p)}
               disabled={checkout.isPending || s?.plan === p}
-              className="rounded-lg border border-teal-300 bg-teal-50 px-4 py-2 text-sm font-medium text-teal-800 hover:bg-teal-100 disabled:opacity-50"
+              className="rounded-lg border border-brand-300 bg-brand-50 px-4 py-2 text-sm font-medium text-brand-800 hover:bg-brand-100 disabled:opacity-50"
             >
               {p}
             </button>

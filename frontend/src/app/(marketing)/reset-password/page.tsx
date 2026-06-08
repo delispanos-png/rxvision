@@ -23,7 +23,7 @@ function ResetPasswordForm() {
           Μη έγκυρος σύνδεσμος.
         </div>
         <div className="mt-4 text-center text-sm text-slate-500">
-          <a href="/forgot-password" className="text-teal-700 hover:underline">
+          <a href="/forgot-password" className="text-brand-700 hover:underline">
             Ζητήστε νέον σύνδεσμο
           </a>
         </div>
@@ -81,7 +81,7 @@ function ResetPasswordForm() {
               required
               value={newPassword}
               onChange={(e) => setNewPassword(e.target.value)}
-              className="w-full rounded-lg border border-slate-300 px-3 py-2 focus:border-teal-600 focus:outline-none"
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 focus:border-brand-600 focus:outline-none"
             />
           </div>
           <div>
@@ -92,7 +92,7 @@ function ResetPasswordForm() {
               required
               value={confirm}
               onChange={(e) => setConfirm(e.target.value)}
-              className="w-full rounded-lg border border-slate-300 px-3 py-2 focus:border-teal-600 focus:outline-none"
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 focus:border-brand-600 focus:outline-none"
             />
           </div>
 
@@ -103,7 +103,7 @@ function ResetPasswordForm() {
           <button
             type="submit"
             disabled={submitting}
-            className="w-full rounded-lg bg-teal-700 px-4 py-2 font-medium text-white hover:bg-teal-800 disabled:opacity-50"
+            className="w-full rounded-lg bg-brand-700 px-4 py-2 font-medium text-white hover:bg-brand-800 disabled:opacity-50"
           >
             {submitting ? "Αποθήκευση…" : "Αλλαγή κωδικού"}
           </button>
@@ -111,7 +111,7 @@ function ResetPasswordForm() {
       )}
 
       <div className="mt-4 text-center text-sm text-slate-500">
-        <a href="/login" className="text-teal-700 hover:underline">
+        <a href="/login" className="text-brand-700 hover:underline">
           Επιστροφή στη σύνδεση
         </a>
       </div>

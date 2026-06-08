@@ -29,12 +29,12 @@
 }
 
 app.rxvision.gr {
-	tls {$CADDY_TLS}
+	tls {$CADDY_TLS:internal}
 	import api_and_app
 }
 
 adminpanel.rxvision.gr {
-	tls {$CADDY_TLS}
+	tls {$CADDY_TLS:internal}
 	# Land the back-office on /admin by default.
 	@root path /
 	rewrite @root /admin

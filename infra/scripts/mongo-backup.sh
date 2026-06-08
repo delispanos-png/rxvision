@@ -9,7 +9,10 @@ mkdir -p "$DEST"
 TS=$(date +%Y%m%d-%H%M%S)
 OUT="$DEST/rxvision-$TS.archive.gz"
 
-docker exec rxvision-mongo-1 sh -c "mongodump --db rxvision --archive --gzip" > "$OUT"
+# Auth: read root creds from the container's own env (set via compose).
+docker exec rxvision-mongo-1 sh -c \
+  'mongodump --username "$MONGO_INITDB_ROOT_USERNAME" --password "$MONGO_INITDB_ROOT_PASSWORD" \
+     --authenticationDatabase admin --db rxvision --archive --gzip' > "$OUT"
 
 # retention: keep newest 14
 ls -1t "$DEST"/rxvision-*.archive.gz 2>/dev/null | tail -n +15 | xargs -r rm -f

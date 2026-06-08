@@ -6,6 +6,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { adminApi, ApiError } from "@/lib/adminClient";
 import { fmtDate } from "@/lib/formatters";
 import { DataTable, type Column } from "@/components/tables/DataTable";
+import { Modal } from "@/components/ui/Modal";
 
 type Staff = { id: string; email: string; full_name: string; status: string; created_at: string; super_admin: boolean; permissions: string[] };
 type Section = { key: string; label: string };
@@ -114,9 +115,9 @@ export default function StaffPage() {
     },
     { key: "created_at", header: "Δημιουργία", render: (r) => fmtDate(r.created_at) },
     {
-      key: "actions", header: "", align: "right",
+      key: "actions", header: "", align: "right", fullWidthOnMobile: true,
       render: (r) => (
-        <div className="flex justify-end gap-2">
+        <div className="flex flex-wrap justify-end gap-2">
           <button onClick={() => setEditing(r)} className="rounded-md border border-slate-300 px-2 py-1 text-xs hover:bg-slate-50">Επεξεργασία</button>
           <button onClick={() => resetPw(r)} className="rounded-md border border-slate-300 px-2 py-1 text-xs hover:bg-slate-50">Reset κωδικού</button>
           <button onClick={() => sendCreds(r)} className="rounded-md border border-brand-300 bg-brand-50 px-2 py-1 text-xs text-brand-700 hover:bg-brand-100">Αποστολή credentials</button>
@@ -168,14 +169,13 @@ function EditStaffModal({ staff, sections, onClose, onDone }: { staff: Staff; se
       await adminApi(`/admin/staff/${staff.id}`, { method: "PATCH", body: JSON.stringify({ full_name: form.full_name, email: form.email, super_admin: superAdmin, permissions: perms }) });
       onDone(`Αποθηκεύτηκε: ${form.email}`); onClose();
     } catch (e) {
-      setError(e instanceof ApiError ? `Σφάλμα: ${JSON.stringify(e.problem)}` : "Σφάλμα.");
+      setError(e instanceof ApiError ? "Σφάλμα — δοκιμάστε ξανά." : "Σφάλμα.");
     } finally { setBusy(false); }
   }
 
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4" onClick={onClose}>
-      <form onSubmit={submit} className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl" onClick={(e) => e.stopPropagation()}>
-        <h2 className="mb-4 text-lg font-bold text-slate-900">Επεξεργασία χρήστη</h2>
+    <Modal open onClose={onClose} title="Επεξεργασία χρήστη">
+      <form onSubmit={submit}>
         <label className="mb-3 block text-sm">
           <span className="mb-1 block text-slate-600">Όνομα</span>
           <input required value={form.full_name} onChange={(e) => setForm({ ...form, full_name: e.target.value })}
@@ -195,7 +195,7 @@ function EditStaffModal({ staff, sections, onClose, onDone }: { staff: Staff; se
           </button>
         </div>
       </form>
-    </div>
+    </Modal>
   );
 }
 
@@ -216,14 +216,13 @@ function AddStaffModal({ sections, onClose, onDone }: { sections: Section[]; onC
       onDone(r.temp_password ? `Δημιουργήθηκε ${r.email}. Προσωρινός κωδικός: ${r.temp_password}` : `Δημιουργήθηκε ${r.email}.`);
       onClose();
     } catch (e) {
-      setError(e instanceof ApiError ? `Σφάλμα: ${JSON.stringify(e.problem)}` : "Σφάλμα.");
+      setError(e instanceof ApiError ? "Σφάλμα — δοκιμάστε ξανά." : "Σφάλμα.");
     } finally { setBusy(false); }
   }
 
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4" onClick={onClose}>
-      <form onSubmit={submit} className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl" onClick={(e) => e.stopPropagation()}>
-        <h2 className="mb-4 text-lg font-bold text-slate-900">Νέος χρήστης CloudOn</h2>
+    <Modal open onClose={onClose} title="Νέος χρήστης CloudOn">
+      <form onSubmit={submit}>
         <label className="mb-3 block text-sm">
           <span className="mb-1 block text-slate-600">Όνομα</span>
           <input required value={form.full_name} onChange={(e) => setForm({ ...form, full_name: e.target.value })}
@@ -236,7 +235,7 @@ function AddStaffModal({ sections, onClose, onDone }: { sections: Section[]; onC
         </label>
         <label className="mb-4 block text-sm">
           <span className="mb-1 block text-slate-600">Κωδικός (κενό = αυτόματος)</span>
-          <input type="text" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })}
+          <input type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })}
             className="w-full rounded-lg border border-slate-300 px-3 py-2 focus:border-indigo-500 focus:outline-none" />
         </label>
         <SectionPicker sections={sections} superAdmin={superAdmin} perms={perms} onSuper={setSuperAdmin} onToggle={toggle} />
@@ -248,6 +247,6 @@ function AddStaffModal({ sections, onClose, onDone }: { sections: Section[]; onC
           </button>
         </div>
       </form>
-    </div>
+    </Modal>
   );
 }

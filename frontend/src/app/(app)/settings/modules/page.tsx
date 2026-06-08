@@ -22,7 +22,7 @@ const LABELS: Record<string, string> = {
 };
 
 const BADGE: Record<ModuleState, string> = {
-  enabled: "bg-teal-100 text-teal-800",
+  enabled: "bg-brand-100 text-brand-800",
   trial: "bg-amber-100 text-amber-800",
   locked: "bg-slate-100 text-slate-500",
 };

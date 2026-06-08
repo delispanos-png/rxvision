@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-from app.core.security import decode_token
+from app.core.security import decode_platform_token, decode_token
 
 _bearer = HTTPBearer(auto_error=True)
 
@@ -33,9 +33,9 @@ async def get_platform_admin(
     creds: HTTPAuthorizationCredentials = Depends(_bearer),
 ) -> PlatformContext:
     """Gate for the back-office: requires a platform-admin token (`padmin`), NOT a
-    tenant `owner`. A tenant token (no `padmin`) is rejected here."""
+    tenant `owner`. A tenant token (different key + audience) is rejected here."""
     try:
-        claims = decode_token(creds.credentials)
+        claims = decode_platform_token(creds.credentials)
     except ValueError:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid_token")
     if claims.get("scope") != "access" or not claims.get("padmin"):
@@ -53,9 +53,16 @@ async def get_current_context(
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid_token")
     if claims.get("scope") != "access":
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "wrong_token_scope")
+    # Domain separation: a platform-admin token must never be accepted as a tenant
+    # identity, even though both are signed with the same key (H1).
+    if claims.get("padmin"):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "platform_token_not_allowed")
+    tenant_id = claims.get("tid")
+    if not tenant_id:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "missing_tenant")
 
     ctx = TenantContext(
-        tenant_id=claims["tid"],
+        tenant_id=tenant_id,
         user_id=claims["sub"],
         roles=claims.get("roles", []),
         modules=claims.get("modules", {}),

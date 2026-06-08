@@ -11,9 +11,11 @@ export type DonutDatum = { name: string; value: number };
 export function DonutChart({
   data,
   height = 280,
+  ariaLabel = "Γράφημα κατανομής",
 }: {
   data: DonutDatum[];
   height?: number;
+  ariaLabel?: string;
 }) {
   const option = {
     color: PALETTE,
@@ -32,5 +34,9 @@ export function DonutChart({
     ],
   };
 
-  return <ReactECharts option={option} style={{ height, width: "100%" }} notMerge lazyUpdate />;
+  return (
+    <div role="img" aria-label={ariaLabel}>
+      <ReactECharts option={option} style={{ height, width: "100%" }} notMerge lazyUpdate />
+    </div>
+  );
 }

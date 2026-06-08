@@ -5,7 +5,7 @@ set -uo pipefail
 cd "$(dirname "$0")/../.."
 
 for _ in $(seq 1 30); do
-  if docker exec -e VAULT_ADDR=http://127.0.0.1:8200 rxvision-vault-1 \
+  if docker exec -e VAULT_ADDR=https://127.0.0.1:8200 -e VAULT_CACERT=/vault/tls/vault.crt rxvision-vault-1 \
        vault status -format=json >/tmp/vstatus.json 2>/dev/null \
      || [ -s /tmp/vstatus.json ]; then
     break

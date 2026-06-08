@@ -21,6 +21,7 @@ Transient failures raise ConnectionError/TimeoutError so the Celery task retries
 
 from __future__ import annotations
 
+import re as _re
 import time
 import xml.etree.ElementTree as ET
 from collections.abc import Iterator
@@ -44,9 +45,6 @@ _TIMEOUT = httpx.Timeout(30.0, connect=10.0)
 
 def _strip_ns(tag: str) -> str:
     return tag.rsplit("}", 1)[-1]  # "{ns}Foo" → "Foo"
-
-
-import re as _re
 
 
 def _gateway_message(text: str) -> str | None:
@@ -422,7 +420,10 @@ def _map_treatment(t: dict) -> CanonicalItem:
         substance=_first(med, "activeSubstance", "substanceName"),
         quantity=qty,
         retail_price=_eur_cents(_first(t, "totalPrice", default=0)),
-        wholesale_price=0,  # χονδρική: από masterdata/prices ή PharmacyOne (TODO)
+        # ΗΔΙΚΑ doesn't return wholesale price; the engine resolves it from product
+        # masterdata, else estimates from retail (WHOLESALE_FALLBACK_MARGIN_PCT). See
+        # IngestionEngine._effective_wholesale (T-06).
+        wholesale_price=0,
         category=_category(med),
         is_executed=outstanding < qty,  # ανεκτέλεστη δραστική (§9)
     )

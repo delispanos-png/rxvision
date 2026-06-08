@@ -8,7 +8,7 @@ export const BASE_GRID = { left: 48, right: 16, top: 24, bottom: 36 };
 export const axisStyle = {
   axisLine: { lineStyle: { color: "#e2e8f0" } },
   axisTick: { show: false },
-  axisLabel: { color: "#94a3b8", fontSize: 11 },
+  axisLabel: { color: "#64748b", fontSize: 11 },
   splitLine: { lineStyle: { color: "#f1f5f9" } },
 };
 

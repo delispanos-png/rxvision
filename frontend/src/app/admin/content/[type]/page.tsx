@@ -7,6 +7,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { adminApi } from "@/lib/adminClient";
 import { fmtDate } from "@/lib/formatters";
 import { DataTable, type Column } from "@/components/tables/DataTable";
+import { Modal } from "@/components/ui/Modal";
 
 type Post = { id: string; type: string; title: string; body: string; status: string; updated_at: string };
 
@@ -80,9 +81,8 @@ function PostModal({ type, post, onClose, onDone }: { type: string; post: Post |
 
   const inp = "w-full rounded-lg border border-slate-300 px-3 py-2 focus:border-indigo-500 focus:outline-none";
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4" onClick={onClose}>
-      <form onSubmit={submit} className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl" onClick={(e) => e.stopPropagation()}>
-        <h2 className="mb-4 text-lg font-bold text-slate-900">{post ? "Επεξεργασία" : "Νέο περιεχόμενο"}</h2>
+    <Modal open onClose={onClose} title={post ? "Επεξεργασία" : "Νέο περιεχόμενο"} size="lg">
+      <form onSubmit={submit}>
         <label className="mb-3 block text-sm"><span className="mb-1 block text-slate-600">Τίτλος</span>
           <input required className={inp} value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} /></label>
         <label className="mb-3 block text-sm"><span className="mb-1 block text-slate-600">Περιεχόμενο (HTML)</span>
@@ -97,6 +97,6 @@ function PostModal({ type, post, onClose, onDone }: { type: string; post: Post |
           <button type="submit" disabled={busy} className="flex-1 rounded-lg bg-indigo-600 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-60">{busy ? "…" : "Αποθήκευση"}</button>
         </div>
       </form>
-    </div>
+    </Modal>
   );
 }

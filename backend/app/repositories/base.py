@@ -31,6 +31,11 @@ def jsonsafe(value: Any) -> Any:
     return value
 
 
+# Hard ceiling on any single page, regardless of what a caller/endpoint asks for.
+# Defense-in-depth against unbounded reads exhausting memory on the shared DB.
+MAX_PAGE_SIZE = 500
+
+
 class BaseRepository:
     collection_name: str
 
@@ -51,6 +56,8 @@ class BaseRepository:
         return jsonsafe(await self._coll.find_one(self._scope(query)))
 
     async def find(self, query: dict | None = None, *, sort=None, skip=0, limit=50) -> list[dict]:
+        limit = max(1, min(int(limit), MAX_PAGE_SIZE))
+        skip = max(0, int(skip))
         cursor = self._coll.find(self._scope(query))
         if sort:
             cursor = cursor.sort(sort)

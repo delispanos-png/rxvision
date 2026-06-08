@@ -55,7 +55,7 @@ export function HeatmapChart({
       itemWidth: 12,
       itemHeight: 120,
       inRange: { color: ["#eef2ff", BRAND_SOFT, BRAND] },
-      textStyle: { color: "#94a3b8", fontSize: 11 },
+      textStyle: { color: "#64748b", fontSize: 11 },
     },
     series: [
       {
@@ -68,5 +68,13 @@ export function HeatmapChart({
     ],
   };
 
-  return <ReactECharts option={option} style={{ height, width: "100%" }} notMerge lazyUpdate />;
+  // 24 hour-columns are illegible on phones; let the matrix keep a usable min width
+  // and scroll horizontally on small screens instead of squashing.
+  return (
+    <div className="overflow-x-auto" role="img" aria-label={`Χάρτης θερμότητας — ${valueLabel}`}>
+      <div className="min-w-[560px]">
+        <ReactECharts option={option} style={{ height, width: "100%" }} notMerge lazyUpdate />
+      </div>
+    </div>
+  );
 }

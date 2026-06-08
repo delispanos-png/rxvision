@@ -97,8 +97,8 @@ export default function NoetonPage() {
       <div className="rounded-xl border border-slate-200 bg-slate-50 p-5 text-sm text-slate-600">
         <div className="mb-2 font-semibold text-slate-700">③ Στο Noeton Admin (external_platform_url)</div>
         <ul className="space-y-1">
-          <li>Base / Health: <code>{OUR_HOST}</code> · <code>{OUR_HOST}/health</code></li>
-          <li>Webhooks: <code>{OUR_HOST}/api/noeton/webhooks</code></li>
+          <li className="break-words">Base / Health: <code className="break-all">{OUR_HOST}</code> · <code className="break-all">{OUR_HOST}/health</code></li>
+          <li className="break-words">Webhooks: <code className="break-all">{OUR_HOST}/api/noeton/webhooks</code></li>
           <li>+ τα κλειδιά του βήματος ① (inbound + webhook secret)</li>
         </ul>
       </div>
