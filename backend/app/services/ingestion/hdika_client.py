@@ -168,15 +168,54 @@ class HdikaClient:
         return {k: str(v) for k, v in info.items() if v not in (None, "")}
 
     # ── paging: executed prescriptions ─────────────────────
+    @staticmethod
+    def _rows(data: dict) -> list:
+        """Spring Page rows: <contents><item>…</item></contents> → flat list."""
+        contents = _first(data, "contents", "content", "items", default=[])
+        if isinstance(contents, dict) and "item" in contents:
+            contents = contents["item"]
+        return _as_list(contents)
+
+    @staticmethod
+    def _is_last(data: dict, n: int) -> bool:
+        last = str(data.get("lastPage", data.get("last", ""))).lower() == "true"
+        return last or n < _PAGE_SIZE
+
+    def _prescription_index(self, start, end) -> dict:
+        """barcode → prescription summary (patient AMKA, drug category, dates) for the
+        range, from /prescriptions/search. ΗΔΙΚΑ's bulk views don't return per-medicine
+        lines / doctor / ICD-10 (only PDF or at execution time), so this is the richest
+        retrievable layer; we merge it with execution amounts by barcode."""
+        idx: dict = {}
+        page = 0
+        while True:
+            params = {"size": _PAGE_SIZE, "page": page,
+                      "from": start.isoformat(), "to": end.isoformat()}
+            if self.pharmacy_id:
+                params["pharmacyId"] = self.pharmacy_id
+            try:
+                data = _to_dict(self._get_xml("/api/v1/prescriptions/search", params))
+            except Exception:  # noqa: BLE001 — enrichment is best-effort
+                break
+            rows = self._rows(data)
+            for r in rows:
+                if isinstance(r, dict) and _first(r, "barcode"):
+                    idx[str(_first(r, "barcode"))] = r
+            if self._is_last(data, len(rows)):
+                break
+            page += 1
+        return idx
+
     def iter_executions(self, since: datetime | None) -> Iterator[CanonicalExecution]:
-        """Yield canonical executions from `since`→today. ΗΔΙΚΑ's search filters by a
-        single required `executionDate` (yyyy-MM-dd) + `pharmacyId`, paged (Spring Page,
-        list field `contents`, flag `lastPage`), so we iterate day-by-day."""
-        from datetime import date, timedelta
+        """Yield canonical executions from `since`→today. Driver = prescription-execution
+        /search (per executionDate, paged) for amounts/fund; enriched by barcode from
+        /prescriptions/search for patient (AMKA) + drug category."""
+        from datetime import timedelta
         end = datetime.now(tz=timezone.utc).date()
         start = since.date() if since else end
         if (end - start).days > _MAX_BACKFILL_DAYS:        # safety cap for huge backfills
             start = end - timedelta(days=_MAX_BACKFILL_DAYS)
+        summaries = self._prescription_index(start, end)
         day = start
         while day <= end:
             page = 0
@@ -190,19 +229,58 @@ class HdikaClient:
                 except Exception:  # noqa: BLE001 — one bad day must not abort the backfill
                     self.skipped_days += 1
                     break
-                contents = _first(data, "contents", "content", "items", default=[])
-                # Spring Page wraps repeated rows as <contents><item>…</item></contents>
-                if isinstance(contents, dict) and "item" in contents:
-                    contents = contents["item"]
-                records = _as_list(contents)
+                records = self._rows(data)
                 for raw in records:
                     if isinstance(raw, dict):
-                        yield self.map_raw(raw)
-                last = str(data.get("lastPage", data.get("last", ""))).lower() == "true"
-                if last or len(records) < _PAGE_SIZE:
+                        presc = raw.get("prescription") if isinstance(raw.get("prescription"), dict) else {}
+                        bc = str(_first(presc, "barcode") or _first(raw, "barcode", default=""))
+                        yield self._map_merged(raw, summaries.get(bc, {}))
+                if self._is_last(data, len(records)):
                     break
                 page += 1
             day += timedelta(days=1)
+
+    @staticmethod
+    def _map_merged(ex: dict, summary: dict) -> CanonicalExecution:
+        """Merge an execution row (amounts/fund) with its prescription summary (patient/
+        category) → CanonicalExecution. Doctor/ICD-10/per-medicine lines are NOT exposed
+        by ΗΔΙΚΑ bulk retrieval, so a single prescription-level line item carries the value."""
+        presc = ex.get("prescription") if isinstance(ex.get("prescription"), dict) else {}
+        barcode = str(_first(presc, "barcode") or _first(ex, "barcode", default=""))
+        fund_d = presc.get("socialInsuranceDTO") or summary.get("socialInsurance") or {}
+        if not isinstance(fund_d, dict):
+            fund_d = {}
+        pinfo = summary.get("patientInfo") if isinstance(summary.get("patientInfo"), dict) else {}
+        amka = str(_first(pinfo, "amka", "identificationNo", default=""))
+        total = _eur_cents(_first(ex, "totalValue", "payableAmount", default=0))
+        share = _eur_cents(_first(ex, "participationValue", default=0))
+        dcat = summary.get("drugCategory")
+        cat_name = dcat.get("name") if isinstance(dcat, dict) else (dcat or None)
+        narcotic = str(summary.get("medicineDrug", "")).lower() == "true"
+        item = CanonicalItem(
+            barcode=barcode or "rx",
+            name=cat_name or "Συνταγή (ΗΔΙΚΑ)",
+            quantity=1,
+            retail_price=total,
+            category="narcotic" if narcotic else "normal",
+            is_executed=True,
+        )
+        return CanonicalExecution(
+            source="HDIKA",
+            external_id=barcode,
+            executed_at=_parse_dt(_first(ex, "executionDate", "executed_at")),
+            patient=CanonicalPatient(
+                national_id=amka or barcode,   # never empty (validator) — barcode is a last resort
+                area=_first(pinfo, "country", default="unknown")),
+            doctor=CanonicalDoctor(full_name="Άγνωστος"),   # not in ΗΔΙΚΑ bulk retrieval
+            fund=CanonicalFund(code=str(_first(fund_d, "shortName", "id", default="EOPYY")),
+                               name=_first(fund_d, "name", default="ΕΟΠΥΥ")),
+            items=[item],
+            icd10=[],                                        # not in ΗΔΙΚΑ bulk retrieval
+            repeat_current=1,
+            repeat_total=int(_first(summary, "executions", default=1) or 1),
+            patient_share=share,
+        )
 
     def _get_xml(self, path: str, params: dict) -> ET.Element:
         try:
