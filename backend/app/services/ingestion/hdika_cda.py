@@ -112,4 +112,15 @@ def parse_cda(text: str) -> dict:
             "name": ((name.text or "").strip() if name is not None and name.text else
                      (code.get("displayName") if code is not None else "")) or "Φάρμακο",
         })
+
+    # ── treatment window (effectiveTime high) → recurrence signal for the forecast ──
+    # The latest <high value="YYYYMMDD"> across the dosing effectiveTimes is when the
+    # treatment ends; if it extends past the next refill, the prescription recurs.
+    highs = []
+    for et in _iter(root, "high"):
+        v = (et.get("value") or "")[:8]
+        if len(v) == 8 and v.isdigit():
+            highs.append(v)
+    if highs:
+        out["valid_until"] = max(highs)  # YYYYMMDD
     return out

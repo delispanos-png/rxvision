@@ -236,8 +236,8 @@ class HdikaClient:
         start = since.date() if since else end
         if (end - start).days > _MAX_BACKFILL_DAYS:        # safety cap for huge backfills
             start = end - timedelta(days=_MAX_BACKFILL_DAYS)
-        day = start
-        while day <= end:
+        day = end                       # most-recent day first → recent analytics/forecast fill fast
+        while day >= start:
             # repeat info for THIS day only — interleaved so a big backfill streams
             # results immediately instead of waiting on one huge upfront sweep.
             summaries = self._prescription_index(day, day)
@@ -261,7 +261,7 @@ class HdikaClient:
                 if self._is_last(data, len(records)):
                     break
                 page += 1
-            day += timedelta(days=1)
+            day -= timedelta(days=1)
 
     def _map_full(self, ex: dict, cda: dict, summary: dict | None = None) -> CanonicalExecution:
         """Execution row (amounts/fund/executionNo) + full CDA (patient/doctor/ICD-10/
@@ -309,6 +309,14 @@ class HdikaClient:
         elif sum(i.retail_price * i.quantity for i in items) == 0 and total > 0:
             items[0].retail_price = total               # catalog miss → keep revenue on line 1
 
+        vu = cda.get("valid_until")
+        valid_until = None
+        if isinstance(vu, str) and len(vu) == 8 and vu.isdigit():
+            try:
+                valid_until = datetime(int(vu[:4]), int(vu[4:6]), int(vu[6:8]), tzinfo=timezone.utc)
+            except ValueError:
+                valid_until = None
+
         fund_name = _first(fund_d, "name") or cda_pat.get("fund_name") or "ΕΟΠΥΥ"
         fund_code = str(_first(fund_d, "shortName", "id", default="") or cda_pat.get("fund_code") or "EOPYY")
         return CanonicalExecution(
@@ -329,6 +337,7 @@ class HdikaClient:
             repeat_current=min(exec_no, repeat_total),
             repeat_total=repeat_total,
             patient_share=share,
+            valid_until=valid_until,
         )
 
     def _get_xml(self, path: str, params: dict) -> ET.Element:

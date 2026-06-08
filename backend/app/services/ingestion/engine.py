@@ -96,8 +96,11 @@ class IngestionEngine:
             return "duplicates"
 
         next_open = None
-        if ex.repeat_current < ex.repeat_total:
-            next_open = ex.executed_at + timedelta(days=_REPEAT_INTERVAL_DAYS)
+        candidate = ex.executed_at + timedelta(days=_REPEAT_INTERVAL_DAYS)
+        if ex.repeat_current < ex.repeat_total:           # ΗΔΙΚΑ: more executions to come
+            next_open = candidate
+        elif ex.valid_until and candidate < ex.valid_until:  # treatment runs past the next refill
+            next_open = candidate
 
         doc = {
             **nat_key, "pharmacy_id": None, "executed_at": ex.executed_at,
