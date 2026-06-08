@@ -13,12 +13,14 @@ provisional until live-validated.)* See `docs/audit-summary.md` (top-20) +
 ## Git
 
 - Default branch: `main` @ `f0f494e` ("Branding: use the official RxVision logo PNG everywhere").
-- **Active working branch: `quick-wins`** — now **committed in 7 clean commits** (infra ·
-  backend security · backend T-06 · frontend responsive · frontend build gates · docs · gitignore),
-  **NOT pushed** (push only on explicit request; `origin/main` unchanged at `f0f494e`).
-- Everything (security, T-06, responsive A–D, both build gates, audit reports, AI OS) is on
-  `quick-wins`. Static-validated only — a live `docker compose up` + `pytest` + browser pass
-  is the outstanding gate before merge.
+- **Active working branch: `quick-wins`** — committed (9 commits) and **PUSHED** to
+  `origin/quick-wins` (2026-06-08). `origin/main` unchanged at `f0f494e`; NOT merged.
+- **CI is GREEN** on `origin/quick-wins`: ✅ Frontend (tsc·lint·build) ✅ Backend (ruff·pytest).
+  mypy runs advisory (continue-on-error). So pytest + the production build pass in a real
+  environment — the work is now validated, not just static-checked.
+- Open a PR with: `gh pr create --base main --head quick-wins` (not yet created).
+- **Still pending** before merge: a live `docker compose up` smoke + a browser/device
+  responsive pass (CI doesn't spin up the full stack or a browser).
 
 ## How to work here (AI Tech Lead)
 
