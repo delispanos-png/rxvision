@@ -7,13 +7,15 @@ import { api } from "@/lib/apiClient";
 import { PanelCard } from "@/components/ui/Card";
 
 type Item = {
-  name: string | null; barcode: string | null; category: string | null;
-  quantity: number; retail_price: number; wholesale_price: number; margin: number; is_executed: boolean;
+  name: string | null; barcode: string | null; substance: string | null; category: string | null;
+  quantity: number; retail_price: number; wholesale_price: number; margin: number;
+  participation: number | null; patient_share: number; fund_share: number; is_executed: boolean;
 };
 type Detail = {
   external_id: string; executed_at: string; status: string | null; source: string;
   repeat_current: number; repeat_total: number; next_open_date: string | null;
   amount_total: number; amount_claimed: number; patient_share: number; wholesale_cost: number;
+  fund_payable: number; patient_payable: number;
   icd10: string[]; has_unexecuted_substances: boolean;
   doctor: { name: string | null; specialty: string | null } | null;
   fund: { name: string | null; code: string | null } | null;
@@ -61,12 +63,21 @@ export default function PrescriptionDetailPage() {
         </div>
       </div>
 
+      {/* Πληρωτέο από Ταμείο — the headline number (what the pharmacy collects from the fund) */}
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-brand-600 px-5 py-4 text-white">
+        <div>
+          <div className="text-xs uppercase tracking-wide text-brand-100">Πληρωτέο από Ταμείο</div>
+          <div className="text-xs text-brand-200">Τι έχει να εισπράξει το φαρμακείο από το ταμείο</div>
+        </div>
+        <div className="text-3xl font-extrabold">{eur(d.fund_payable)}</div>
+      </div>
+
       {/* KPI strip */}
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         {[
-          ["Αξία", eur(d.amount_total)],
-          ["Αιτούμενα", eur(d.amount_claimed)],
-          ["Συμμετοχή ασθενή", eur(d.patient_share)],
+          ["Σύνολο αξίας", eur(d.amount_total)],
+          ["Πληρωτέο από Ασφ/νο", eur(d.patient_payable)],
+          ["Χονδρικό κόστος", eur(d.wholesale_cost)],
           ["Μεικτό κέρδος", eur(profit)],
         ].map(([l, v]) => (
           <div key={l} className="rx-card p-4">
@@ -106,10 +117,12 @@ export default function PrescriptionDetailPage() {
             <thead>
               <tr className="border-b border-slate-100 text-left text-xs text-slate-400">
                 <th className="py-2">Σκεύασμα</th>
-                <th>Barcode</th>
+                <th>Δραστική ουσία</th>
                 <th className="text-right">Ποσ.</th>
                 <th className="text-right">Λιανική</th>
-                <th className="text-right">Χονδρική</th>
+                <th className="text-right">Συμμ.%</th>
+                <th className="text-right">Από ασφ/νο</th>
+                <th className="text-right">Από ταμείο</th>
                 <th className="text-right">Κέρδος</th>
               </tr>
             </thead>
@@ -117,15 +130,17 @@ export default function PrescriptionDetailPage() {
               {d.items.map((it, i) => (
                 <tr key={i} className="border-b border-slate-50">
                   <td className="py-2 font-medium text-slate-800">{it.name || "—"}{it.category === "narcotic" && <span className="ml-1 rounded bg-rose-50 px-1 text-[10px] text-rose-600">ναρκωτικό</span>}</td>
-                  <td className="text-slate-500">{it.barcode || "—"}</td>
+                  <td className="text-slate-500">{it.substance || "—"}</td>
                   <td className="text-right">{it.quantity}</td>
                   <td className="text-right">{eur(it.retail_price)}</td>
-                  <td className="text-right text-slate-500">{eur(it.wholesale_price)}</td>
+                  <td className="text-right text-slate-500">{it.participation != null ? `${it.participation}%` : "—"}</td>
+                  <td className="text-right text-amber-700">{eur(it.patient_share)}</td>
+                  <td className="text-right font-medium text-brand-700">{eur(it.fund_share)}</td>
                   <td className="text-right font-medium text-emerald-700">{eur(it.margin)}</td>
                 </tr>
               ))}
               {d.items.length === 0 && (
-                <tr><td colSpan={6} className="py-4 text-center text-slate-400">Δεν υπάρχουν γραμμές φαρμάκων.</td></tr>
+                <tr><td colSpan={8} className="py-4 text-center text-slate-400">Δεν υπάρχουν γραμμές φαρμάκων.</td></tr>
               )}
             </tbody>
           </table>

@@ -45,15 +45,30 @@ class PrescriptionRepository(BaseRepository):
         for it in item_docs:
             prod = await db["products"].find_one({"_id": it.get("product_id")}) if it.get("product_id") else None
             prod = prod or {}
+            cat = await db["medicine_catalog"].find_one({"barcode": prod.get("barcode")}) if prod.get("barcode") else None
+            cat = cat or {}
+            retail = it.get("retail_price", 0)
+            qty = it.get("quantity", 1)
+            line_total = retail * qty
+            participation = cat.get("participation")  # co-pay % (0/10/25…)
+            # per-line split: what the patient pays vs what the fund reimburses
+            pat_share = round(line_total * (participation or 0) / 100) if participation else 0
             items.append({
                 "name": prod.get("name"), "barcode": prod.get("barcode"),
+                "substance": cat.get("substance_name"),
                 "category": it.get("category") or prod.get("category"),
-                "quantity": it.get("quantity", 1),
-                "retail_price": it.get("retail_price", 0),
+                "quantity": qty,
+                "retail_price": retail,
                 "wholesale_price": it.get("wholesale_price", 0),
-                "margin": it.get("margin", (it.get("retail_price", 0) - it.get("wholesale_price", 0))),
+                "margin": it.get("margin", (retail - it.get("wholesale_price", 0))),
+                "participation": participation,
+                "patient_share": pat_share,
+                "fund_share": line_total - pat_share,
                 "is_executed": it.get("is_executed", True),
             })
+        # ΠΛΗΡΩΤΕΟ ΑΠΟ ΤΑΜΕΙΟ = amount_claimed (fund reimburses); ΑΠΟ ΑΣΦ/ΝΟ = patient_share
+        fund_payable = ex.get("amount_claimed", 0)
+        patient_payable = ex.get("patient_share", 0)
         out = {
             "external_id": ex.get("external_id"), "executed_at": ex.get("executed_at"),
             "status": ex.get("status"), "source": ex.get("source"),
@@ -61,6 +76,7 @@ class PrescriptionRepository(BaseRepository):
             "next_open_date": ex.get("next_open_date"),
             "amount_total": ex.get("amount_total", 0), "amount_claimed": ex.get("amount_claimed", 0),
             "patient_share": ex.get("patient_share", 0), "wholesale_cost": ex.get("wholesale_cost", 0),
+            "fund_payable": fund_payable, "patient_payable": patient_payable,
             "icd10": ex.get("icd10", []),
             "has_unexecuted_substances": ex.get("has_unexecuted_substances", False),
             "doctor": {"name": (doctor or {}).get("full_name"),
