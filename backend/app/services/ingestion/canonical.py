@@ -58,4 +58,5 @@ class CanonicalExecution:
     repeat_current: int = 1
     repeat_total: int = 1
     patient_share: int = 0           # cents (0 => engine derives default 0)
+    amount_total: int = 0            # cents — authoritative retail from source (0 => sum items)
     valid_until: datetime | None = None  # treatment end (CDA effectiveTime high) → recurrence

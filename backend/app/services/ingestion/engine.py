@@ -86,6 +86,8 @@ class IngestionEngine:
         fund_id = await self._resolve_fund(ex)
 
         item_docs, amount_total, wholesale_cost = await self._resolve_items(ex)
+        if ex.amount_total:                       # source-authoritative retail (ΗΔΙΚΑ) → exact totals
+            amount_total = ex.amount_total
         patient_share = ex.patient_share or 0
         amount_claimed = amount_total - patient_share
         chash = _content_hash(ex, amount_total, amount_claimed)

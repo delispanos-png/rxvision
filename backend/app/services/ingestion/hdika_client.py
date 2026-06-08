@@ -271,12 +271,20 @@ class HdikaClient:
         presc = ex.get("prescription") if isinstance(ex.get("prescription"), dict) else {}
         barcode = str(_first(presc, "barcode") or _first(ex, "barcode", default=""))
         fund_d = presc.get("socialInsuranceDTO") if isinstance(presc.get("socialInsuranceDTO"), dict) else {}
-        total = _eur_cents(_first(ex, "totalValue", "payableAmount", default=0))
-        # ΠΛΗΡΩΤΕΟ ΑΠΟ ΑΣΦ/ΝΟ = co-pay (participationValue) + the retail−reference excess the
-        # patient covers (totalDifference). ΗΔΙΚΑ keeps these separate; the fund pays the rest,
-        # so amount_claimed = total − share = ΠΛΗΡΩΤΕΟ ΑΠΟ ΤΑΜΕΙΟ. (Earlier we missed totalDifference.)
+        # ΗΔΙΚΑ amounts (verified against official printouts):
+        #   totalValue        = reimbursed base (Αποζ.Ασφ), NOT retail
+        #   totalDifference   = full retail−reference difference; sociTotalDifference = fund's part
+        #   socialInsuranceSurcharge = the 1€ per-prescription fee the patient pays
+        # retail            = totalValue + totalDifference
+        # ΠΛΗΡΩΤΕΟ ΑΠΟ ΑΣΦ/ΝΟ = participation + (difference − fund's part) + 1€ fee + supplemental
+        # ΠΛΗΡΩΤΕΟ ΑΠΟ ΤΑΜΕΙΟ = retail − ΠΛΗΡΩΤΕΟ ΑΠΟ ΑΣΦ/ΝΟ (engine: amount_total − share)
+        total_value = _eur_cents(_first(ex, "totalValue", default=0))
+        total_diff = _eur_cents(_first(ex, "totalDifference", default=0))
+        soci_diff = _eur_cents(_first(ex, "sociTotalDifference", default=0))
+        total = total_value + total_diff
         share = (_eur_cents(_first(ex, "participationValue", default=0))
-                 + _eur_cents(_first(ex, "totalDifference", default=0))
+                 + max(0, total_diff - soci_diff)
+                 + _eur_cents(_first(ex, "socialInsuranceSurcharge", default=0))
                  + _eur_cents(_first(ex, "supplementalDifferenceAmt", default=0)))
         exec_no = int(float(_first(ex, "executionNo", default=1) or 1))
         repeat_total = max(int(float(_first(summary, "executions", default=1) or 1)), exec_no, 1)
@@ -337,6 +345,7 @@ class HdikaClient:
             repeat_current=min(exec_no, repeat_total),
             repeat_total=repeat_total,
             patient_share=share,
+            amount_total=total,        # ΗΔΙΚΑ retail (totalValue+totalDifference) — authoritative
             valid_until=valid_until,
         )
 
