@@ -7,7 +7,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, Query
 
 from app.core.deps import TenantContext, require
-from app.repositories.doctors import DoctorExecutionsRepository, DoctorRepository
+from app.repositories.doctors import DoctorExecutionsRepository
 
 router = APIRouter()
 

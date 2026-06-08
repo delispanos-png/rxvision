@@ -1,0 +1,4 @@
+# Run logs are local scratch output — never committed.
+*
+!.gitignore
+!README.md

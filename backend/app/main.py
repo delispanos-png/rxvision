@@ -13,12 +13,15 @@ from app.api.v1 import api_router
 from app.core.config import settings
 from app.core.db import ensure_indexes
 from app.middleware.audit import AuditMiddleware
+from app.services.vault_service import vault
 
 _STARTED_AT = time.time()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    settings.assert_production_secrets()
+    vault.assert_ready()  # prod: refuse to boot without a real Vault (no in-memory fallback)
     await ensure_indexes()
     yield
 

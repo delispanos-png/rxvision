@@ -46,41 +46,46 @@ def test_client_sets_basic_apikey_and_accept_headers():
     c.close()
 
 
-def test_iter_executions_parses_xml_to_canonical():
-    captured = {}
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        captured["path"] = request.url.path
-        captured["params"] = dict(request.url.params)
-        return httpx.Response(200, content=_XML_PAGE.encode(),
-                              headers={"Content-Type": "application/xml"})
-
-    c = HdikaClient({"base_url": "https://hdika.example/pharmapiv2",
-                     "username": "u", "password": "p", "api_key": "k", "pharmacy_id": 7})
-    c._client = httpx.Client(transport=httpx.MockTransport(handler))
-
-    rows = list(c.iter_executions(since=None))
-    assert captured["path"] == "/pharmapiv2/api/v1/prescription-execution/search"
-    assert captured["params"]["pharmacyId"] == "7"
-    assert len(rows) == 1
-    e = rows[0]
-    assert e.source == "HDIKA"
-    assert e.external_id == "RX-1"
+def test_map_full_builds_canonical_from_execution_and_cda():
+    """New ΗΔΙΚΑ flow (post CDA-enrichment rewrite): an execution row (amounts/fund) + the
+    HL7 CDA (patient/doctor/ICD-10/medicines) + the repeat summary → a complete
+    CanonicalExecution, with each medicine priced from the Δελτίο Τιμών catalog. This is the
+    core mapping `iter_executions` yields, tested directly (no 3-endpoint HTTP mock)."""
+    c = HdikaClient(
+        {"base_url": "https://hdika.example/pharmapiv2", "username": "u", "password": "p", "api_key": "k"},
+        catalog={"EOF123": {"barcode": "5290001", "name": "Glucophage 850", "atc": "A10BA02",
+                            "retail_cents": 420, "wholesale_cents": 300, "narcotic": False}},
+    )
+    ex = {
+        "prescription": {"barcode": "RX-1",
+                         "socialInsuranceDTO": {"name": "ΕΟΠΥΥ", "shortName": "EOPYY"}},
+        "executionDate": "2026-06-01T10:00:00Z", "executionNo": 1,
+        "totalValue": 3.20, "totalDifference": 1.00, "sociTotalDifference": 0.40,
+        "participationValue": 0.50, "socialInsuranceSurcharge": 1.00,
+    }
+    cda = {
+        "patient": {"amka": "AMKA123", "sex": "F", "birth_year": 1960,
+                    "city": "Αττική", "full_name": "Π. Παπαδόπουλος"},
+        "doctor": {"name": "Κ. Παπαδόπουλος", "specialty": "Παθολόγος"},
+        "medicines": [{"code": "EOF123", "quantity": 2, "name": "Glucophage"}],
+        "icd10": [{"code": "E11.9"}],
+        "valid_until": "20260901",
+    }
+    e = c._map_full(ex, cda, {"executions": 3})
+    assert e.source == "HDIKA" and e.external_id == "RX-1"
     assert e.executed_at.year == 2026 and e.executed_at.month == 6
-    assert e.patient.national_id == "AMKA123"   # raw reaches engine → anonymised there
-    assert e.patient.sex == "F"
-    assert e.patient.birth_year == 1960
-    assert e.doctor.full_name == "Κ. Παπαδόπουλος"
-    assert e.doctor.specialty == "Παθολόγος"
+    assert e.patient.national_id == "AMKA123" and e.patient.sex == "F" and e.patient.birth_year == 1960
+    assert e.doctor.full_name == "Κ. Παπαδόπουλος" and e.doctor.specialty == "Παθολόγος"
     assert e.fund.code == "EOPYY" and e.fund.name == "ΕΟΠΥΥ"
     assert e.icd10 == ["E11.9"]
-    assert e.repeat_total == 3
-    assert e.patient_share == 100               # 1.00 € → cents
+    assert e.repeat_total == 3 and e.repeat_current == 1
+    assert e.amount_total == 420          # totalValue 320 + totalDifference 100 (cents)
+    assert e.patient_share == 210         # 50 + max(0,100−40) + 100
+    assert e.valid_until is not None and e.valid_until.year == 2026 and e.valid_until.month == 9
     assert len(e.items) == 1
     it = e.items[0]
-    assert it.barcode == "529001" and it.name == "Glucophage"
-    assert it.quantity == 2 and it.retail_price == 420
-    assert it.is_executed is True               # quantityOutstanding 0 < 2
+    assert it.barcode == "5290001" and it.name == "Glucophage 850" and it.substance == "A10BA02"
+    assert it.quantity == 2 and it.retail_price == 420 and it.wholesale_price == 300
     c.close()
 
 

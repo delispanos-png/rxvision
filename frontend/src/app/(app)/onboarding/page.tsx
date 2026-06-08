@@ -19,7 +19,7 @@ type SyncStats = {
 
 function StepBadge({ n }: { n: number }) {
   return (
-    <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-teal-700 text-sm font-semibold text-white">
+    <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-brand-700 text-sm font-semibold text-white">
       {n}
     </span>
   );
@@ -74,14 +74,14 @@ export default function OnboardingPage() {
 
       {country === "CY" ? (
         <div className="space-y-6">
-          <div className="rounded-xl border border-teal-200 bg-teal-50 p-5">
+          <div className="rounded-xl border border-brand-200 bg-brand-50 p-5">
             <div className="flex items-start gap-3">
               <StepBadge n={1} />
               <div>
-                <h2 className="text-sm font-semibold text-teal-800">
+                <h2 className="text-sm font-semibold text-brand-800">
                   ΓΕΣΥ / Κύπρος: έρχεται σύντομα (step 2)
                 </h2>
-                <p className="mt-1 text-sm text-teal-700">
+                <p className="mt-1 text-sm text-brand-700">
                   Η εισαγωγή δεδομένων ΓΕΣΥ θα είναι διαθέσιμη σε επόμενο βήμα.
                 </p>
                 <div className="mt-3">
@@ -99,7 +99,7 @@ export default function OnboardingPage() {
           <button
             type="button"
             onClick={() => router.push("/dashboard")}
-            className="rounded-lg bg-teal-700 px-4 py-2 text-sm font-medium text-white hover:bg-teal-800"
+            className="rounded-lg bg-brand-700 px-4 py-2 text-sm font-medium text-white hover:bg-brand-800"
           >
             Μετάβαση στο Dashboard
           </button>
@@ -124,7 +124,7 @@ export default function OnboardingPage() {
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
                   required
-                  className="w-full rounded-lg border border-slate-300 px-3 py-2 focus:border-teal-600 focus:outline-none"
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 focus:border-brand-600 focus:outline-none"
                 />
               </div>
               <div>
@@ -134,7 +134,7 @@ export default function OnboardingPage() {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   required
-                  className="w-full rounded-lg border border-slate-300 px-3 py-2 focus:border-teal-600 focus:outline-none"
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 focus:border-brand-600 focus:outline-none"
                 />
               </div>
               <div>
@@ -143,18 +143,18 @@ export default function OnboardingPage() {
                   value={pharmacyCode}
                   onChange={(e) => setPharmacyCode(e.target.value)}
                   required
-                  className="w-full rounded-lg border border-slate-300 px-3 py-2 focus:border-teal-600 focus:outline-none"
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 focus:border-brand-600 focus:outline-none"
                 />
               </div>
               <button
                 type="submit"
                 disabled={saveCreds.isPending}
-                className="rounded-lg bg-teal-700 px-4 py-2 text-sm font-medium text-white hover:bg-teal-800 disabled:opacity-50"
+                className="rounded-lg bg-brand-700 px-4 py-2 text-sm font-medium text-white hover:bg-brand-800 disabled:opacity-50"
               >
                 {saveCreds.isPending ? "Αποθήκευση…" : "Αποθήκευση"}
               </button>
               {credsSaved && (
-                <p className="text-sm text-teal-700">Τα στοιχεία αποθηκεύτηκαν με ασφάλεια.</p>
+                <p className="text-sm text-brand-700">Τα στοιχεία αποθηκεύτηκαν με ασφάλεια.</p>
               )}
             </form>
           </div>
@@ -169,7 +169,7 @@ export default function OnboardingPage() {
                 type="button"
                 onClick={() => triggerSync.mutate()}
                 disabled={triggerSync.isPending}
-                className="rounded-lg bg-teal-700 px-4 py-2 text-sm font-medium text-white hover:bg-teal-800 disabled:opacity-50"
+                className="rounded-lg bg-brand-700 px-4 py-2 text-sm font-medium text-white hover:bg-brand-800 disabled:opacity-50"
               >
                 {triggerSync.isPending ? "Συγχρονισμός…" : "Πρώτος συγχρονισμός"}
               </button>
@@ -185,7 +185,7 @@ export default function OnboardingPage() {
           <button
             type="button"
             onClick={() => router.push("/dashboard")}
-            className="rounded-lg bg-teal-700 px-4 py-2 text-sm font-medium text-white hover:bg-teal-800"
+            className="rounded-lg bg-brand-700 px-4 py-2 text-sm font-medium text-white hover:bg-brand-800"
           >
             Μετάβαση στο Dashboard
           </button>

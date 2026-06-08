@@ -7,6 +7,7 @@ single-use, time-limited, and stored hashed-by-value (opaque) on the user doc.
 
 from __future__ import annotations
 
+import hashlib
 import secrets
 from datetime import datetime, timedelta, timezone
 
@@ -29,6 +30,12 @@ def _oid(value):
         return ObjectId(value)
     except Exception:  # noqa: BLE001
         return value
+
+
+def _hash_token(token: str) -> str:
+    """Reset tokens are 256-bit random, so a fast hash is sufficient: we store only
+    the hash, never the raw token, so a DB/backup leak yields no usable tokens (H2)."""
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
 class AccountError(Exception):
@@ -80,7 +87,9 @@ class AccountService:
             return
         token = secrets.token_urlsafe(32)
         await db["users"].update_one({"_id": u["_id"]}, {"$set": {
-            "reset_token": token, "reset_expires": _now() + timedelta(minutes=_RESET_TTL_MIN)}})
+            "reset_token_hash": _hash_token(token),
+            "reset_expires": _now() + timedelta(minutes=_RESET_TTL_MIN)},
+            "$unset": {"reset_token": ""}})  # drop any legacy plaintext token
         link = _RESET_URL.format(token=token)
         html = (f"<p>Γεια σας {u.get('full_name','')},</p>"
                 f"<p>Λάβαμε αίτημα επαναφοράς κωδικού για τον λογαριασμό σας στο RxVision.</p>"
@@ -95,10 +104,20 @@ class AccountService:
         if len(new) < 8:
             raise AccountError("weak_password")
         db = shared_db()
-        u = await db["users"].find_one({"reset_token": token})
-        if not u or (u.get("reset_expires") and u["reset_expires"] < _now()):
+        # Atomic single-use: match the hashed token AND consume it in one operation,
+        # gated on a still-active account and an unexpired token. A second attempt
+        # (or a suspended user) finds nothing — no lookup-then-update race (H2).
+        updated = await db["users"].find_one_and_update(
+            {
+                "reset_token_hash": _hash_token(token),
+                "status": "active",
+                "reset_expires": {"$gt": _now()},
+            },
+            {
+                "$set": {"password_hash": hash_password(new), "updated_at": _now()},
+                "$unset": {"reset_token_hash": "", "reset_token": "", "reset_expires": ""},
+                "$inc": {"refresh_token_version": 1},
+            },
+        )
+        if updated is None:
             raise AccountError("invalid_or_expired_token")
-        await db["users"].update_one({"_id": u["_id"]}, {
-            "$set": {"password_hash": hash_password(new), "updated_at": _now()},
-            "$unset": {"reset_token": "", "reset_expires": ""},
-            "$inc": {"refresh_token_version": 1}})

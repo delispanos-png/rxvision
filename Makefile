@@ -2,13 +2,16 @@
 COMPOSE := docker compose -f docker-compose.prod.yml
 
 .DEFAULT_GOAL := help
-.PHONY: help up down restart ps logs build deploy seed smoke test unseal backup shell-api psql-mongo
+.PHONY: help up down restart ps logs build deploy seed smoke test unseal vault-tls backup shell-api psql-mongo
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
 	  awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
 
-up: ## Start the full stack
+vault-tls: ## Generate the self-signed Vault TLS cert (idempotent)
+	bash infra/scripts/gen-vault-tls.sh
+
+up: vault-tls ## Start the full stack
 	$(COMPOSE) up -d
 
 down: ## Stop the stack

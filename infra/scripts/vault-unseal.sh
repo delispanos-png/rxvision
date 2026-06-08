@@ -12,7 +12,7 @@ INIT_FILE="secrets/vault-init.json"
 [ -f "$INIT_FILE" ] || { echo "missing $INIT_FILE"; exit 1; }
 
 UNSEAL=$(python3 -c 'import json;print(json.load(open("secrets/vault-init.json"))["unseal_keys_b64"][0])')
-docker exec -e VAULT_ADDR=http://127.0.0.1:8200 rxvision-vault-1 vault operator unseal "$UNSEAL" >/dev/null
+docker exec -e VAULT_ADDR=https://127.0.0.1:8200 -e VAULT_CACERT=/vault/tls/vault.crt rxvision-vault-1 vault operator unseal "$UNSEAL" >/dev/null
 echo "vault unsealed:"
-docker exec -e VAULT_ADDR=http://127.0.0.1:8200 rxvision-vault-1 vault status -format=json \
+docker exec -e VAULT_ADDR=https://127.0.0.1:8200 -e VAULT_CACERT=/vault/tls/vault.crt rxvision-vault-1 vault status -format=json \
   | python3 -c 'import sys,json;print("  sealed =",json.load(sys.stdin)["sealed"])'

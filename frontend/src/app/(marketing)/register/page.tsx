@@ -84,7 +84,7 @@ export default function RegisterPage() {
           <input
             type="text"
             {...register("pharmacy_name")}
-            className="w-full rounded-lg border border-slate-300 px-3 py-2 focus:border-teal-600 focus:outline-none"
+            className="w-full rounded-lg border border-slate-300 px-3 py-2 focus:border-brand-600 focus:outline-none"
           />
           {errors.pharmacy_name && (
             <p className="mt-1 text-xs text-red-600">{errors.pharmacy_name.message}</p>
@@ -95,7 +95,7 @@ export default function RegisterPage() {
           <label className="mb-1 block text-sm text-slate-600">Χώρα</label>
           <select
             {...register("country")}
-            className="w-full rounded-lg border border-slate-300 px-3 py-2 focus:border-teal-600 focus:outline-none"
+            className="w-full rounded-lg border border-slate-300 px-3 py-2 focus:border-brand-600 focus:outline-none"
           >
             <option value="GR">Ελλάδα</option>
             <option value="CY">Κύπρος</option>
@@ -109,7 +109,7 @@ export default function RegisterPage() {
             type="text"
             autoComplete="name"
             {...register("full_name")}
-            className="w-full rounded-lg border border-slate-300 px-3 py-2 focus:border-teal-600 focus:outline-none"
+            className="w-full rounded-lg border border-slate-300 px-3 py-2 focus:border-brand-600 focus:outline-none"
           />
           {errors.full_name && (
             <p className="mt-1 text-xs text-red-600">{errors.full_name.message}</p>
@@ -122,7 +122,7 @@ export default function RegisterPage() {
             type="email"
             autoComplete="email"
             {...register("email")}
-            className="w-full rounded-lg border border-slate-300 px-3 py-2 focus:border-teal-600 focus:outline-none"
+            className="w-full rounded-lg border border-slate-300 px-3 py-2 focus:border-brand-600 focus:outline-none"
           />
           {errors.email && <p className="mt-1 text-xs text-red-600">{errors.email.message}</p>}
         </div>
@@ -133,7 +133,7 @@ export default function RegisterPage() {
             type="password"
             autoComplete="new-password"
             {...register("password")}
-            className="w-full rounded-lg border border-slate-300 px-3 py-2 focus:border-teal-600 focus:outline-none"
+            className="w-full rounded-lg border border-slate-300 px-3 py-2 focus:border-brand-600 focus:outline-none"
           />
           {errors.password && <p className="mt-1 text-xs text-red-600">{errors.password.message}</p>}
         </div>
@@ -145,14 +145,14 @@ export default function RegisterPage() {
         <button
           type="submit"
           disabled={isSubmitting}
-          className="w-full rounded-lg bg-teal-700 px-4 py-2 font-medium text-white hover:bg-teal-800 disabled:opacity-50"
+          className="w-full rounded-lg bg-brand-700 px-4 py-2 font-medium text-white hover:bg-brand-800 disabled:opacity-50"
         >
           {isSubmitting ? "Εγγραφή…" : "Εγγραφή"}
         </button>
       </form>
 
       <div className="mt-4 text-center text-sm text-slate-500">
-        <a href="/login" className="text-teal-700 hover:underline">
+        <a href="/login" className="text-brand-700 hover:underline">
           Έχετε ήδη λογαριασμό; Σύνδεση
         </a>
       </div>

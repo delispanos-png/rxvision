@@ -157,7 +157,7 @@ class TenantProvisioningService:
             tenant_doc["updated_at"] = _now()
             await db["tenants"].update_one({"_id": tid}, {"$set": tenant_doc})
         await self.apply_subscription(tenant_code=tid, subscription=subscription)
-        return {"tenant_id": tid, "admin_url": f"https://app.rxvision.gr/login",
+        return {"tenant_id": tid, "admin_url": "https://app.rxvision.gr/login",
                 "activated_at": _now().isoformat()}
 
     async def apply_subscription(self, *, tenant_code: str, subscription: dict) -> dict:

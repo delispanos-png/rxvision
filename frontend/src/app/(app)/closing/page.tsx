@@ -10,6 +10,7 @@ import { fmtEur, fmtNum } from "@/lib/formatters";
 import { DataTable, type Column } from "@/components/tables/DataTable";
 import { KpiCard } from "@/components/kpi/KpiCard";
 import { PanelCard } from "@/components/ui/Card";
+import { QueryState } from "@/components/ui/QueryState";
 import { BarChart } from "@/components/charts/BarChart";
 
 type ControlItem = { key: string; label: string; ok: boolean; detail?: string };
@@ -86,7 +87,7 @@ export default function ClosingPage() {
 
       <div className="space-y-4">
         {/* KPI row */}
-        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+        <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
           <KpiCard label="Συνταγές" value={fmtNum(totalRx)} sub="περιόδου" icon={Receipt} accent="indigo" />
           <KpiCard label="Σύνολο ταμείων" value={fmtEur(totalClaimed)} sub="αιτούμενα" icon={Wallet} accent="amber" />
           <KpiCard label="Ασυμφωνίες" value={fmtNum(discrItems.length)} sub="ελλείψεις" icon={AlertTriangle} accent={discrItems.length ? "rose" : "green"} />
@@ -95,10 +96,8 @@ export default function ClosingPage() {
 
         {/* checklist */}
         <PanelCard title="Λίστα ελέγχου" bodyClassName="space-y-2">
-          {control.isLoading ? (
-            <div className="text-slate-400">Φόρτωση δεδομένων…</div>
-          ) : (
-            checks.map((c) => (
+          <QueryState isLoading={control.isLoading} isError={control.isError} onRetry={() => control.refetch()}>
+            {checks.map((c) => (
               <div
                 key={c.key}
                 className="flex items-center justify-between rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm"
@@ -108,8 +107,8 @@ export default function ClosingPage() {
                   {c.ok ? "✓ ΟΚ" : `✗ ${c.detail ?? "Πρόβλημα"}`}
                 </span>
               </div>
-            ))
-          )}
+            ))}
+          </QueryState>
         </PanelCard>
 
         {/* fund totals chart */}

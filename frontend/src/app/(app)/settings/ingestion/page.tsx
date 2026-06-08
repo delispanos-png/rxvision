@@ -212,7 +212,7 @@ export default function IngestionSettingsPage() {
           <span className="inline-flex items-center gap-1.5">
             {discover.error ? <XCircle className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4" />}
             {discover.error
-              ? `Αποτυχία άντλησης: ${JSON.stringify((discover.error as any)?.problem ?? discover.error)}`
+              ? "Αποτυχία άντλησης. Ελέγξτε τα στοιχεία σύνδεσης ΗΔΙΚΑ."
               : `Αντλήθηκαν αυτόματα ${Object.keys(discover.data?.discovered ?? {}).length} στοιχεία φαρμακείου από την ΗΔΙΚΑ.`}
           </span>
         </div>

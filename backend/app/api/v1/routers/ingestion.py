@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 
+from app.core.config import settings
 from app.core.db import shared_db
 from app.core.deps import TenantContext, require
 from app.repositories.sync_jobs import SyncJobRepository
@@ -27,6 +28,17 @@ from app.services.ingestion.hdika import HdikaAdapter
 from app.services.ingestion.hdika_client import HdikaClient
 from app.services.ingestion.sources import assert_source_allowed
 from app.services.vault_service import vault
+from app.utils.net import UnsafeUrlError, assert_safe_outbound_url
+
+
+def _assert_safe_idika_base_url(creds: dict) -> None:
+    """Block SSRF via a tenant-supplied ΗΔΙΚΑ base_url (M2) — public hosts only."""
+    if creds.get("base_url"):
+        try:
+            assert_safe_outbound_url(creds["base_url"],
+                                     allowed_host_suffixes=settings.idika_allowed_host_suffixes)
+        except UnsafeUrlError as exc:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Μη επιτρεπτό endpoint ΗΔΙΚΑ: {exc}")
 
 router = APIRouter()
 
@@ -94,6 +106,7 @@ async def _effective_hdika_creds(tenant_id: str) -> dict:
             if envcfg.get("pharmacy_id"):
                 creds["pharmacy_id"] = envcfg["pharmacy_id"]
         # production: keep the tenant's own username/password/api_key/pharmacy_id as-is
+    _assert_safe_idika_base_url(creds)   # SSRF guard before any outbound ΗΔΙΚΑ call (M2)
     return creds
 
 
@@ -124,6 +137,7 @@ async def set_hdika_credentials(
         if k in keep_if_empty and v in (None, ""):
             continue
         creds[k] = v
+    _assert_safe_idika_base_url(creds)   # reject a malicious base_url at save time too (M2)
     repo = TenantRepository(tenant_id=ctx.tenant_id)
     ref = vault.set_tenant_credentials(ctx.tenant_id, "hdika", creds)
     await repo.set_credentials_ref("hdika", ref)

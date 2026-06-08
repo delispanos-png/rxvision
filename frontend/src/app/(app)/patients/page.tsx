@@ -14,6 +14,7 @@ import { DonutChart } from "@/components/charts/DonutChart";
 import { DataTable, type Column } from "@/components/tables/DataTable";
 import { KpiCard } from "@/components/kpi/KpiCard";
 import { PanelCard } from "@/components/ui/Card";
+import { QueryState } from "@/components/ui/QueryState";
 
 type AggRow = { label: string; value: number };
 type RetentionPoint = { period: string; retained_pct: number };
@@ -120,7 +121,7 @@ export default function PatientsPage() {
 
       <div className="space-y-4">
         {/* KPI row */}
-        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+        <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
           <KpiCard label="Ασφαλισμένοι" value={fmtNum(totalInsured)} sub="σύνολο κατανομών" icon={Users} accent="indigo" />
           <KpiCard label="Αξία (top 100)" value={fmtEur(totalValue)} sub="κορυφαίοι ασφαλισμένοι" icon={Wallet} accent="violet" />
           <KpiCard label="Κερδοφορία (top 100)" value={fmtEur(totalProfit)} sub="μεικτό κέρδος" icon={TrendingUp} accent="green" />
@@ -169,12 +170,15 @@ export default function PatientsPage() {
 
         {/* per-patient table */}
         <PanelCard title="Ανά ασφαλισμένο — αξία, αιτούμενα & κερδοφορία (top 100)" bodyClassName="pt-2">
-          {perPatient.isLoading ? (
-            <div className="text-slate-400">Φόρτωση δεδομένων…</div>
-          ) : (
+          <QueryState
+            isLoading={perPatient.isLoading}
+            isError={perPatient.isError}
+            isEmpty={patients.length === 0}
+            onRetry={() => perPatient.refetch()}
+          >
             <DataTable columns={patientColumns} rows={patients} rowKey={(r) => r.patient_ref}
               onRowClick={(r) => router.push(`/patients/${encodeURIComponent(r.patient_ref)}`)} />
-          )}
+          </QueryState>
         </PanelCard>
       </div>
     </ModuleGuard>

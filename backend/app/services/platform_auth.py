@@ -14,7 +14,7 @@ from app.core.db import shared_db
 from app.core.security import (
     create_platform_refresh_token,
     create_platform_token,
-    decode_token,
+    decode_platform_token,
     verify_password,
 )
 
@@ -36,7 +36,7 @@ class PlatformAuthService:
 
     async def refresh(self, refresh_token: str) -> dict | None:
         try:
-            claims = decode_token(refresh_token)
+            claims = decode_platform_token(refresh_token)
         except ValueError:
             return None
         if claims.get("scope") != "refresh" or not claims.get("padmin"):

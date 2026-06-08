@@ -133,11 +133,6 @@ export default function LoginPage() {
             Νέο φαρμακείο; Εγγραφή
           </a>
         </div>
-        <div>
-          <a href="/pricing" className="text-brand-600 hover:underline">
-            Δείτε τα πλάνα
-          </a>
-        </div>
       </div>
     </div>
   );

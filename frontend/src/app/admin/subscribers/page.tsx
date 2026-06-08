@@ -7,6 +7,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { adminApi, ApiError } from "@/lib/adminClient";
 import { fmtEur, fmtNum, fmtDate } from "@/lib/formatters";
 import { DataTable, type Column } from "@/components/tables/DataTable";
+import { Modal } from "@/components/ui/Modal";
 
 type Tenant = { id: string; name: string; plan: string; status: string; users: number; mrr: number; created_at: string };
 type Package = { _id: string; name: string; price_monthly: number; modules: string[]; seats: number; trial_days: number };
@@ -44,9 +45,9 @@ export default function SubscribersPage() {
     { key: "mrr", header: "MRR", align: "right", render: (r) => fmtEur(r.mrr) },
     { key: "created_at", header: "Εγγραφή", render: (r) => fmtDate(r.created_at) },
     {
-      key: "actions", header: "", align: "right",
+      key: "actions", header: "", align: "right", fullWidthOnMobile: true,
       render: (r) => (
-        <div className="flex justify-end gap-2">
+        <div className="flex flex-wrap justify-end gap-2">
           <button onClick={(e) => { e.stopPropagation(); router.push(`/admin/subscribers/${encodeURIComponent(r.id)}`); }}
             className="rounded-md border border-slate-300 px-2 py-1 text-xs hover:bg-slate-50">Καρτέλα</button>
           <button onClick={(e) => { e.stopPropagation(); toggleStatus(r); }}
@@ -92,14 +93,13 @@ function OpenTenantModal({ onClose, onDone }: { onClose: () => void; onDone: () 
         "/admin/tenants", { method: "POST", body: JSON.stringify({ ...form, package_code: pkg }) });
       setResult(r); onDone();
     } catch (e) {
-      setError(e instanceof ApiError ? `Σφάλμα: ${JSON.stringify(e.problem)}` : "Σφάλμα.");
+      setError(e instanceof ApiError ? "Σφάλμα — δοκιμάστε ξανά." : "Σφάλμα.");
     } finally { setBusy(false); }
   }
 
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4" onClick={onClose}>
-      <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl" onClick={(e) => e.stopPropagation()}>
-        {result ? (
+    <Modal open onClose={onClose}>
+      {result ? (
           <div>
             <h2 className="mb-2 text-lg font-bold text-emerald-700">✓ Ο tenant άνοιξε</h2>
             <div className="space-y-1 rounded-lg bg-slate-50 p-4 text-sm">
@@ -131,7 +131,6 @@ function OpenTenantModal({ onClose, onDone }: { onClose: () => void; onDone: () 
             </div>
           </form>
         )}
-      </div>
-    </div>
+    </Modal>
   );
 }
