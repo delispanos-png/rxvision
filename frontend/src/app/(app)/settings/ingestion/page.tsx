@@ -59,12 +59,15 @@ export default function IngestionSettingsPage() {
     queryKey: ["ingestion-jobs"],
     queryFn: () => api<{ items: any[] }>("/ingestion/jobs"),
     retry: false,
-    refetchInterval: syncing ? 1500 : false,
+    // steady poll so the progress bar appears whenever a sync/backfill is running
+    // (not only right after the user clicks), and updates the live count.
+    refetchInterval: 3000,
   });
   const latestJob = jobs.data?.items?.[0];
   const jobRunning = latestJob?.status === "running";
+  const showProgress = syncing || jobRunning;
 
-  // stop polling once our queued sync has finished
+  // clear the just-clicked flag once our queued sync has finished
   useEffect(() => {
     if (!syncing || !latestJob) return;
     const started = latestJob.started_at ? new Date(latestJob.started_at).getTime() : 0;
@@ -175,15 +178,17 @@ export default function IngestionSettingsPage() {
         </button>
       </div>
 
-      {/* live sync progress */}
-      {syncing && (
+      {/* live sync progress — shows whenever a sync/backfill job is running */}
+      {showProgress && (
         <div className="rx-card p-4">
           <div className="mb-2 flex items-center justify-between text-sm">
             <span className="inline-flex items-center gap-1.5 font-medium text-slate-700">
               <Loader2 className="h-4 w-4 animate-spin text-brand-600" />
-              {jobRunning ? "Συγχρονισμός σε εξέλιξη…" : "Εκκίνηση συγχρονισμού…"}
+              {jobRunning
+                ? (latestJob?.type === "backfill" ? "Ιστορική άντληση σε εξέλιξη…" : "Συγχρονισμός σε εξέλιξη…")
+                : "Εκκίνηση συγχρονισμού…"}
             </span>
-            <span className="text-slate-500">{(latestJob?.stats?.fetched ?? 0)} συνταγές · {(latestJob?.stats?.inserted ?? 0)} νέες</span>
+            <span className="text-slate-500">{(latestJob?.stats?.fetched ?? 0)} συνταγές · {(latestJob?.stats?.inserted ?? 0)} νέες · {(latestJob?.stats?.updated ?? 0)} ενημ.</span>
           </div>
           <div className="h-2 w-full overflow-hidden rounded-full bg-slate-200">
             <div className="h-full w-full animate-pulse rounded-full bg-brand-500" />
