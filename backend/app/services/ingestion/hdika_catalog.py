@@ -91,6 +91,37 @@ async def refresh_catalog(db, client) -> int:
     return total
 
 
+async def refresh_icd10(db, client) -> int:
+    """Page masterdata/icd10s → global `icd10_codes` (_id=code → Greek title). Powers
+    ICD-10 names in the diagnosis analytics. Idempotent."""
+    coll = db["icd10_codes"]
+    page = 0
+    total = 0
+    while True:
+        try:
+            data = _to_dict(client._get_xml("/api/v1/masterdata/icd10s", {"size": _PAGE, "page": page}))
+        except Exception:  # noqa: BLE001
+            break
+        rows = client._rows(data)
+        ops = []
+        for r in rows:
+            if not isinstance(r, dict):
+                continue
+            code = str(r.get("code") or "")
+            if not code:
+                continue
+            ops.append(UpdateOne({"_id": code}, {"$set": {
+                "_id": code, "title_el": r.get("title"),
+                "description": r.get("description")}}, upsert=True))
+        if ops:
+            await coll.bulk_write(ops, ordered=False)
+            total += len(ops)
+        if client._is_last(data, len(rows)):
+            break
+        page += 1
+    return total
+
+
 async def load_catalog_map(db) -> dict:
     """eofCode → {retail_cents, wholesale_cents, name, barcode, narcotic, atc} for fast
     in-memory lookups during ingestion."""

@@ -34,7 +34,10 @@ async def aggregate(
     ctx: TenantContext = Depends(require("patients:read", module=_MODULE)),
 ):
     repo = PatientRepository(tenant_id=ctx.tenant_id)
-    return {"by": by, "buckets": await repo.aggregate_by(by=by)}
+    buckets = await repo.aggregate_by(by=by)
+    # rows: {label, value=patient count} — shape the Ασφαλισμένοι charts expect
+    rows = [{"label": b.get("key") or "—", "value": b.get("patients", 0)} for b in buckets]
+    return {"by": by, "rows": rows}
 
 
 @router.get("/retention")
@@ -43,7 +46,9 @@ async def retention(
     ctx: TenantContext = Depends(require("patients:read", module=_MODULE)),
 ):
     repo = PatientRepository(tenant_id=ctx.tenant_id)
-    return {"cohort": cohort, "rows": await repo.retention(cohort=cohort)}
+    rows = await repo.retention(cohort=cohort)
+    points = [{"period": r.get("lifecycle") or "—", "retained_pct": r.get("pct", 0.0)} for r in rows]
+    return {"cohort": cohort, "points": points}
 
 
 @router.get("/list")

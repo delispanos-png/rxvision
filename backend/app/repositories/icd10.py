@@ -62,8 +62,13 @@ class Icd10Repository(BaseRepository):
                       "code_count": {"$size": "$codes"}}},
             {"$sort": {sort_field: -1}},
             {"$limit": limit},
+            # name the node from a representative code's Greek title
+            {"$set": {"_first_code": {"$arrayElemAt": ["$codes", 0]}}},
+            {"$lookup": {"from": "icd10_codes", "localField": "_first_code",
+                         "foreignField": "_id", "as": "_c"}},
+            {"$set": {"title": {"$first": "$_c.title_el"}}},
             {"$project": {"_id": 0, "node": "$_id", "level": {"$literal": level},
-                          "rx": 1, "value": 1, "claimed": 1, "cost": 1, "profit": 1,
-                          "codes": 1, "code_count": 1}},
+                          "title": 1, "rx": 1, "value": 1, "claimed": 1, "cost": 1,
+                          "profit": 1, "codes": 1, "code_count": 1}},
         ]
         return await self.aggregate(pipeline)
