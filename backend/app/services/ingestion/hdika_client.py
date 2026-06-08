@@ -271,7 +271,10 @@ def _map_treatment(t: dict) -> CanonicalItem:
         substance=_first(med, "activeSubstance", "substanceName"),
         quantity=qty,
         retail_price=_eur_cents(_first(t, "totalPrice", default=0)),
-        wholesale_price=0,  # χονδρική: από masterdata/prices ή PharmacyOne (TODO)
+        # ΗΔΙΚΑ doesn't return wholesale price; the engine resolves it from product
+        # masterdata, else estimates from retail (WHOLESALE_FALLBACK_MARGIN_PCT). See
+        # IngestionEngine._effective_wholesale (T-06).
+        wholesale_price=0,
         category=_category(med),
         is_executed=outstanding < qty,  # ανεκτέλεστη δραστική (§9)
     )

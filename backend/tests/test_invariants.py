@@ -277,13 +277,35 @@ async def test_unexecuted_matches_undispensed_lines(monkeypatch):
 
 # ── platform-admin identity (back-office gating) ───────────
 def test_platform_token_has_padmin_and_no_tenant():
-    from app.core.security import create_platform_token, decode_token
+    from app.core.security import create_platform_token, decode_platform_token
 
-    claims = decode_token(create_platform_token(admin_id="a1", email="cloudon@rxvision.gr"))
+    claims = decode_platform_token(create_platform_token(admin_id="a1", email="cloudon@rxvision.gr"))
     assert claims["padmin"] is True
     assert claims["scope"] == "access"
     assert claims["sub"] == "a1"
     assert "tid" not in claims  # platform admins belong to NO tenant
+
+
+def test_tenant_and_platform_tokens_are_cryptographically_separate():
+    """T-04: a token minted for one identity class cannot be decoded as the other —
+    different signing key AND different audience."""
+    from app.core.security import (
+        create_access_token, create_platform_token, decode_platform_token, decode_token,
+    )
+
+    tenant_tok = create_access_token(user_id="u", tenant_id="t", roles=[],
+                                     modules={}, permissions=[])
+    platform_tok = create_platform_token(admin_id="a1", email="x@rxvision.gr")
+
+    # each decodes under its own decoder
+    assert decode_token(tenant_tok)["tid"] == "t"
+    assert decode_platform_token(platform_tok)["padmin"] is True
+
+    # cross-decoding is rejected (key + audience mismatch)
+    with pytest.raises(ValueError):
+        decode_platform_token(tenant_tok)
+    with pytest.raises(ValueError):
+        decode_token(platform_tok)
 
 
 @pytest.mark.asyncio
@@ -297,12 +319,13 @@ async def test_get_platform_admin_rejects_tenant_token(monkeypatch):
     def creds(tok):
         return HTTPAuthorizationCredentials(scheme="Bearer", credentials=tok)
 
-    # a tenant OWNER token must NOT open the back-office (the old security hole)
+    # a tenant OWNER token must NOT open the back-office (the old security hole).
+    # With T-04 it is now rejected at the signature/audience layer (401), not 403.
     tenant_tok = create_access_token(user_id="u", tenant_id="t", roles=["owner"],
                                      modules={}, permissions=["*"])
     with pytest.raises(HTTPException) as ei:
         await get_platform_admin(creds=creds(tenant_tok))
-    assert ei.value.status_code == 403
+    assert ei.value.status_code in (401, 403)
 
     # a real platform token passes and carries the admin identity
     ctx = await get_platform_admin(creds=creds(
@@ -431,6 +454,37 @@ def test_password_roundtrip():
     assert not verify_password("wrong", h)
 
 
+def test_vault_is_mandatory_in_production(monkeypatch):
+    """T-01/C2: in prod, an unavailable Vault must stop the app booting — never a
+    silent in-memory fallback. In dev the fallback is allowed."""
+    from app.core.config import settings as cfg
+    from app.services.vault_service import VaultService
+
+    monkeypatch.setattr(cfg, "VAULT_ADDR", "")
+    monkeypatch.setattr(cfg, "VAULT_TOKEN", "")
+
+    # production with no Vault → refuse to boot
+    monkeypatch.setattr(cfg, "ENV", "prod")
+    with pytest.raises(RuntimeError):
+        VaultService().assert_ready()
+
+    # dev with no Vault → fine (in-memory fallback)
+    monkeypatch.setattr(cfg, "ENV", "local")
+    VaultService().assert_ready()  # no raise
+
+
+def test_verify_totp_accepts_valid_rejects_invalid():
+    """T-05: TOTP verification actually works (the mfa_code was previously ignored)."""
+    pyotp = pytest.importorskip("pyotp")
+    from app.core.security import verify_totp
+
+    secret = pyotp.random_base32()
+    assert verify_totp(secret, pyotp.TOTP(secret).now()) is True
+    assert verify_totp(secret, "000000") is False
+    assert verify_totp("", pyotp.TOTP(secret).now()) is False
+    assert verify_totp(secret, "") is False
+
+
 def test_access_token_carries_tid_and_perms():
     tok = create_access_token(
         user_id="u1", tenant_id="t-1", roles=["owner"],
@@ -440,3 +494,44 @@ def test_access_token_carries_tid_and_perms():
     assert claims["tid"] == "t-1"
     assert claims["perms"] == ["*"]
     assert claims["scope"] == "access"
+
+
+# ── T-06: wholesale price resolution (profitability correctness) ───
+@pytest.mark.asyncio
+async def test_effective_wholesale_resolution_priority(monkeypatch):
+    from app.core.config import settings as cfg
+    from app.services.ingestion.canonical import CanonicalItem
+    from app.services.ingestion.engine import IngestionEngine
+
+    monkeypatch.setattr(cfg, "WHOLESALE_FALLBACK_MARGIN_PCT", 25.0)
+
+    class _Coll:
+        def __init__(self, doc):
+            self._doc = doc
+        async def find_one(self, *a, **k):
+            return self._doc
+
+    class _DB:
+        def __init__(self, doc):
+            self._coll = _Coll(doc)
+        def __getitem__(self, _name):
+            return self._coll
+
+    eng = IngestionEngine.__new__(IngestionEngine)  # skip __init__ (no Vault/DB needed)
+    eng.tenant_id = "t"
+
+    def item(retail, wholesale):
+        return CanonicalItem(barcode="b1", name="x", retail_price=retail, wholesale_price=wholesale)
+
+    # 1) source-provided wholesale wins
+    eng.db = _DB(None)
+    assert await eng._effective_wholesale(item(1000, 700)) == (700, "source")
+    # 2) known real masterdata used when the source omits it
+    eng.db = _DB({"wholesale_price": 650, "wholesale_source": "source"})
+    assert await eng._effective_wholesale(item(1000, 0)) == (650, "masterdata")
+    # 3) a prior *estimate* is NOT treated as authoritative → re-estimate
+    eng.db = _DB({"wholesale_price": 999, "wholesale_source": "estimated"})
+    assert await eng._effective_wholesale(item(1000, 0)) == (750, "estimated")
+    # 4) unknown → estimate from retail (1000 * (1 - 0.25) = 750); never 0/100%-margin
+    eng.db = _DB(None)
+    assert await eng._effective_wholesale(item(1000, 0)) == (750, "estimated")
