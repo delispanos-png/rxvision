@@ -14,6 +14,7 @@ import { BarChart } from "@/components/charts/BarChart";
 import { ExportButton } from "@/components/export/ExportButton";
 import { KpiCard } from "@/components/kpi/KpiCard";
 import { PanelCard } from "@/components/ui/Card";
+import { QueryState } from "@/components/ui/QueryState";
 
 type Node = {
   node: string;
@@ -47,7 +48,7 @@ export default function Icd10Page() {
   const q = filtersToQuery(filters);
   const [level, setLevel] = useState("3");
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ["icd10", "hierarchy", level, q],
     queryFn: () => api<{ items: Node[] }>(`/icd10/hierarchy?level=${level}&metric=value&${q}`),
   });
@@ -80,12 +81,10 @@ export default function Icd10Page() {
         />
       </div>
 
-      {isLoading ? (
-        <div className="text-slate-400">Φόρτωση δεδομένων…</div>
-      ) : (
+      <QueryState isLoading={isLoading} isError={isError} onRetry={() => refetch()}>
         <div className="space-y-4">
           {/* KPI row */}
-          <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+          <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
             <KpiCard label="Διαγνώσεις (κόμβοι)" value={fmtNum(rows.length)} sub="στο τρέχον επίπεδο" icon={Stethoscope} accent="indigo" />
             <KpiCard label="Σύνολο συνταγών" value={fmtNum(totalRx)} sub="πλήθος εκτελέσεων" icon={Receipt} accent="violet" />
             <KpiCard label="Αξία" value={fmtEur(totalValue)} sub="σύνολο περιόδου" icon={Wallet} accent="amber" />
@@ -110,7 +109,7 @@ export default function Icd10Page() {
             <DataTable columns={columns} rows={rows} rowKey={(r) => r.node} />
           </PanelCard>
         </div>
-      )}
+      </QueryState>
     </ModuleGuard>
   );
 }

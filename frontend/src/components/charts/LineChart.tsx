@@ -23,6 +23,7 @@ export function LineChart({
   name = "",
   height = 280,
   area = true,
+  ariaLabel,
 }: {
   labels: (string | number)[];
   data?: number[];
@@ -30,6 +31,7 @@ export function LineChart({
   name?: string;
   height?: number;
   area?: boolean;
+  ariaLabel?: string;
 }) {
   const resolved: LineSeries[] = series ?? [{ name, data: data ?? [] }];
 
@@ -59,5 +61,9 @@ export function LineChart({
     })),
   };
 
-  return <ReactECharts option={option} style={{ height, width: "100%" }} notMerge lazyUpdate />;
+  return (
+    <div role="img" aria-label={ariaLabel ?? name ?? "Γράφημα γραμμής"}>
+      <ReactECharts option={option} style={{ height, width: "100%" }} notMerge lazyUpdate />
+    </div>
+  );
 }

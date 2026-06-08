@@ -9,7 +9,9 @@ import { DataTable, type Column } from "@/components/tables/DataTable";
 import { ExportButton } from "@/components/export/ExportButton";
 import { KpiCard } from "@/components/kpi/KpiCard";
 import { PanelCard } from "@/components/ui/Card";
+import { QueryState } from "@/components/ui/QueryState";
 import { BarChart } from "@/components/charts/BarChart";
+import { toastError, toastSuccess } from "@/store/toastStore";
 
 type Suggestion = {
   product_id: string;
@@ -33,14 +35,18 @@ const columns: Column<Suggestion>[] = [
 export default function OrdersPage() {
   const qc = useQueryClient();
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, refetch } = useQuery({
     queryKey: queryKeys.orderSuggestions(),
     queryFn: () => api<{ items: Suggestion[] }>(`/orders/suggestions`),
   });
 
   const recompute = useMutation({
     mutationFn: () => api<{ ok: boolean }>(`/orders/suggestions/recompute`, { method: "POST" }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.orderSuggestions() }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.orderSuggestions() });
+      toastSuccess("Οι προτάσεις παραγγελίας επαναϋπολογίστηκαν.");
+    },
+    onError: () => toastError("Αποτυχία επανυπολογισμού — δοκιμάστε ξανά."),
   });
 
   const items = data?.items ?? [];
@@ -70,12 +76,10 @@ export default function OrdersPage() {
         </div>
       </div>
 
-      {isLoading ? (
-        <div className="text-slate-400">Φόρτωση δεδομένων…</div>
-      ) : (
+      <QueryState isLoading={isLoading} isError={isError} onRetry={() => refetch()}>
         <div className="space-y-4">
           {/* KPI row */}
-          <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+          <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
             <KpiCard label="Προτεινόμενα είδη" value={fmtNum(items.length)} sub="σκευάσματα" icon={PackageSearch} accent="indigo" />
             <KpiCard label="Συνολική ποσότητα" value={fmtNum(totalQty)} sub="τεμάχια προς παραγγελία" icon={Boxes} accent="violet" />
             <KpiCard label="Εκτ. κόστος" value={fmtEur(totalCost)} sub="σύνολο πρότασης" icon={Wallet} accent="amber" />
@@ -98,7 +102,7 @@ export default function OrdersPage() {
           {/* table / cards */}
           <DataTable columns={columns} rows={items} rowKey={(r) => r.product_id} />
         </div>
-      )}
+      </QueryState>
     </ModuleGuard>
   );
 }

@@ -12,6 +12,7 @@ import { BarChart } from "@/components/charts/BarChart";
 import { ExportButton } from "@/components/export/ExportButton";
 import { KpiCard } from "@/components/kpi/KpiCard";
 import { PanelCard } from "@/components/ui/Card";
+import { QueryState } from "@/components/ui/QueryState";
 
 type Prescription = {
   external_id: string;
@@ -96,7 +97,7 @@ export default function PrescriptionsPage() {
 
       <div className="space-y-4">
         {/* KPI row */}
-        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+        <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
           <KpiCard label="Συνταγές" value={fmtNum(items.length)} sub="πρόσφατες εκτελέσεις" icon={Receipt} accent="indigo" />
           <KpiCard label="Αξία συνταγών" value={fmtEur(totalValue)} sub="σύνολο περιόδου" icon={Wallet} accent="violet" />
           <KpiCard label="Αιτούμενα ταμείων" value={fmtEur(totalClaimed)} sub="προς ασφ. φορείς" icon={Pill} accent="amber" />
@@ -146,11 +147,15 @@ export default function PrescriptionsPage() {
 
         {/* recent prescriptions table */}
         <PanelCard title="Πρόσφατες εκτελέσεις" bodyClassName="pt-2">
-          {list.isLoading ? (
-            <div className="text-slate-400">Φόρτωση δεδομένων…</div>
-          ) : (
+          <QueryState
+            isLoading={list.isLoading}
+            isError={list.isError}
+            isEmpty={items.length === 0}
+            onRetry={() => list.refetch()}
+            empty="Δεν υπάρχουν εκτελέσεις στην περίοδο."
+          >
             <DataTable columns={columns} rows={items} rowKey={(r) => r.external_id} />
-          )}
+          </QueryState>
         </PanelCard>
       </div>
     </ModuleGuard>

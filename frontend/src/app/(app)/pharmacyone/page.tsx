@@ -10,6 +10,7 @@ import { DateRangeFilter } from "@/components/filters/DateRangeFilter";
 import { DataTable, type Column } from "@/components/tables/DataTable";
 import { KpiCard } from "@/components/kpi/KpiCard";
 import { PanelCard } from "@/components/ui/Card";
+import { QueryState } from "@/components/ui/QueryState";
 import { BarChart } from "@/components/charts/BarChart";
 
 type SellerRow = { seller: string; orders: number; value: number };
@@ -62,7 +63,7 @@ export default function PharmacyOnePage() {
 
       <div className="space-y-4">
         {/* KPI row */}
-        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+        <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
           <KpiCard label="Πωλήσεις" value={fmtEur(totalSales)} sub="σύνολο περιόδου" icon={ShoppingCart} accent="indigo" />
           <KpiCard label="Παραγγελίες" value={fmtNum(totalOrders)} sub="πλήθος πωλήσεων" icon={Users} accent="violet" />
           <KpiCard label="Ανεκτέλεστα" value={fmtNum(unexecutedItems.length)} sub="προς εκτέλεση" icon={XCircle} accent={unexecutedItems.length ? "rose" : "green"} />
@@ -89,11 +90,14 @@ export default function PharmacyOnePage() {
 
         {/* unexecuted table */}
         <PanelCard title="Ανεκτέλεστα" bodyClassName="pt-2">
-          {unexecuted.isLoading ? (
-            <div className="text-slate-400">Φόρτωση δεδομένων…</div>
-          ) : (
+          <QueryState
+            isLoading={unexecuted.isLoading}
+            isError={unexecuted.isError}
+            isEmpty={unexecutedItems.length === 0}
+            onRetry={() => unexecuted.refetch()}
+          >
             <DataTable columns={unexecutedColumns} rows={unexecutedItems} rowKey={(r) => r.id} />
-          )}
+          </QueryState>
         </PanelCard>
       </div>
     </ModuleGuard>

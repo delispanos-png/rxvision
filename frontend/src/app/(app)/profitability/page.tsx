@@ -8,6 +8,7 @@ import { ModuleGuard } from "@/components/layout/ModuleGuard";
 import { fmtEur, fmtPct, fmtNum } from "@/lib/formatters";
 import { KpiCard } from "@/components/kpi/KpiCard";
 import { PanelCard } from "@/components/ui/Card";
+import { QueryState } from "@/components/ui/QueryState";
 import { SelectFilter } from "@/components/filters/SelectFilter";
 import { DataTable, type Column } from "@/components/tables/DataTable";
 import { BarChart } from "@/components/charts/BarChart";
@@ -89,7 +90,7 @@ export default function ProfitabilityPage() {
 
       <div className="space-y-4">
         {/* KPI row */}
-        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+        <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
           <KpiCard label="Μεικτό κέρδος" value={s ? fmtEur(s.gross_profit) : "—"} sub="αιτούμενα − κόστος" icon={TrendingUp} accent="green" />
           <KpiCard label="Περιθώριο" value={s ? fmtPct(s.margin_pct) : "—"} sub="μεικτό περιθώριο" icon={Percent} accent="violet" />
           <KpiCard label="Έσοδα" value={s ? fmtEur(s.revenue) : "—"} sub="σύνολο περιόδου" icon={Coins} accent="amber" />
@@ -150,11 +151,14 @@ export default function ProfitabilityPage() {
 
         {/* low-margin table */}
         <PanelCard title="Είδη χαμηλής κερδοφορίας (< 10%)" bodyClassName="pt-2">
-          {lowMargin.isLoading ? (
-            <div className="text-slate-400">Φόρτωση δεδομένων…</div>
-          ) : (
+          <QueryState
+            isLoading={lowMargin.isLoading}
+            isError={lowMargin.isError}
+            isEmpty={lowItems.length === 0}
+            onRetry={() => lowMargin.refetch()}
+          >
             <DataTable columns={lowMarginColumns} rows={lowItems} rowKey={(r) => r.product_id} />
-          )}
+          </QueryState>
         </PanelCard>
       </div>
     </ModuleGuard>

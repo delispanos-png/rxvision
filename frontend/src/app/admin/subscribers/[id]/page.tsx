@@ -60,7 +60,7 @@ export default function TenantCardPage() {
       const url = `${r.app_url}/login#imp=${encodeURIComponent(`${r.access_token}~${r.refresh_token}`)}`;
       window.open(url, "_blank", "noopener");
       setNotice(`Άνοιξε νέα καρτέλα συνδεδεμένη ως ${r.as_email}.`);
-    } catch (e) { setNotice(e instanceof ApiError ? `Σφάλμα: ${JSON.stringify(e.problem)}` : "Σφάλμα."); }
+    } catch { setNotice("Σφάλμα — η ενέργεια απέτυχε. Δοκιμάστε ξανά."); }
     finally { setBusy(false); }
   }
 
@@ -74,7 +74,7 @@ export default function TenantCardPage() {
       setSentCreds(r);
       setNotice(r.emailed ? `Στάλθηκε email στον ${email}.`
         : `Δημιουργήθηκε κωδικός — το email ΔΕΝ στάλθηκε (έλεγξε SMTP). Δώσ' τον χειροκίνητα.`);
-    } catch (e) { setNotice(e instanceof ApiError ? `Σφάλμα: ${JSON.stringify(e.problem)}` : "Σφάλμα."); }
+    } catch { setNotice("Σφάλμα — η ενέργεια απέτυχε. Δοκιμάστε ξανά."); }
     finally { setBusy(false); }
   }
 
@@ -82,7 +82,7 @@ export default function TenantCardPage() {
   async function act(fn: () => Promise<unknown>, ok: string) {
     setBusy(true); setNotice(null);
     try { await fn(); setNotice(ok); refresh(); }
-    catch (e) { setNotice(e instanceof ApiError ? `Σφάλμα: ${JSON.stringify(e.problem)}` : "Σφάλμα."); }
+    catch { setNotice("Σφάλμα — η ενέργεια απέτυχε. Δοκιμάστε ξανά."); }
     finally { setBusy(false); }
   }
 
@@ -99,7 +99,7 @@ export default function TenantCardPage() {
       {notice && <div className="mb-4 rounded-lg bg-slate-100 px-4 py-2 text-sm text-slate-700">{notice}</div>}
 
       <div className="mb-6 grid grid-cols-2 gap-4 md:grid-cols-4">
-        <KpiCard label="Πλάνο" value={s.plan_name || (s.plan ? s.plan.split("-").pop() : "—")} />
+        <KpiCard label="Πλάνο" value={s.plan_name || s.plan?.split("-").pop() || "—"} />
         <KpiCard label="Κατάσταση συνδρομής" value={s.status ?? "—"} />
         <KpiCard label="MRR" value={fmtEur(s.mrr)} accent="violet" />
         <KpiCard label="Χρήστες" value={fmtNum(data.users.length)} accent="sky" />
@@ -155,7 +155,7 @@ export default function TenantCardPage() {
               <div key={i} className="flex items-center gap-3 border-b border-slate-100 py-2 last:border-0">
                 <span className="w-16 font-medium">{j.source}</span><Badge value={j.status} />
                 <span className="text-slate-400">{fmtDate(j.started_at)}</span>
-                <span className="text-xs text-slate-400">{JSON.stringify(j.stats)}</span>
+                <span className="break-all text-xs text-slate-400">{JSON.stringify(j.stats)}</span>
               </div>
             ))}
           </div>

@@ -6,6 +6,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { adminApi, ApiError } from "@/lib/adminClient";
 import { fmtEur, fmtDate } from "@/lib/formatters";
 import { DataTable, type Column } from "@/components/tables/DataTable";
+import { Modal } from "@/components/ui/Modal";
 
 type Invoice = {
   id: string; tenant_id: string; tenant_name: string | null; doc_type: string; series: string;
@@ -35,7 +36,7 @@ export default function Invoices() {
     setNotice(null);
     try { await fn(); setNotice(ok); refresh(); }
     catch (e) {
-      const m = e instanceof ApiError ? (e.problem?.detail?.message ?? JSON.stringify(e.problem)) : "Σφάλμα.";
+      const m = e instanceof ApiError ? ((e.problem as { detail?: { message?: string } })?.detail?.message ?? "Σφάλμα.") : "Σφάλμα.";
       setNotice(`Σφάλμα: ${m}`);
     }
   }
@@ -107,17 +108,19 @@ function InvoiceModal({ modal, tenants, onClose, onDone }:
       else await adminApi(`/admin/invoices/${inv!.id}`, { method: "PATCH", body: JSON.stringify(payload) });
       onDone(mode === "create" ? "Δημιουργήθηκε παραστατικό ✓" : "Αποθηκεύτηκε ✓");
     } catch (e) {
-      setError(e instanceof ApiError ? (e.problem?.detail?.message ?? JSON.stringify(e.problem)) : "Σφάλμα.");
+      setError(e instanceof ApiError ? ((e.problem as { detail?: { message?: string } })?.detail?.message ?? "Σφάλμα.") : "Σφάλμα.");
     } finally { setBusy(false); }
   }
 
   const inp = "w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none disabled:bg-slate-50";
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4" onClick={onClose}>
-      <form onSubmit={submit} className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl" onClick={(e) => e.stopPropagation()}>
-        <h2 className="mb-4 text-lg font-bold text-slate-900">
-          {mode === "create" ? "Νέο παραστατικό" : mode === "edit" ? `Επεξεργασία ${inv?.full_number}` : `Παραστατικό ${inv?.full_number}`}
-        </h2>
+    <Modal
+      open
+      onClose={onClose}
+      size="lg"
+      title={mode === "create" ? "Νέο παραστατικό" : mode === "edit" ? `Επεξεργασία ${inv?.full_number}` : `Παραστατικό ${inv?.full_number}`}
+    >
+      <form onSubmit={submit}>
         {view && inv?.aade_status === "transmitted" && (
           <div className="mb-3 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">Διαβιβασμένο ΑΑΔΕ · MARK: <code>{inv.aade_mark}</code></div>
         )}
@@ -147,6 +150,6 @@ function InvoiceModal({ modal, tenants, onClose, onDone }:
           {!view && <button type="submit" disabled={busy} className="flex-1 rounded-lg bg-indigo-600 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-60">{busy ? "…" : "Αποθήκευση"}</button>}
         </div>
       </form>
-    </div>
+    </Modal>
   );
 }

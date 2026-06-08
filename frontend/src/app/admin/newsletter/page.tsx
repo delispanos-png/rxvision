@@ -361,6 +361,9 @@ export default function NewsletterPage() {
               <iframe
                 title="Προεπισκόπηση newsletter"
                 srcDoc={previewHtml}
+                // Render untrusted/author HTML inert: no script execution, no
+                // same-origin access — only the preview is displayed (M4).
+                sandbox=""
                 style={{ width: frameWidth }}
                 className="h-[640px] max-w-full rounded-md border border-slate-200 bg-white shadow-sm transition-[width] duration-200"
               />

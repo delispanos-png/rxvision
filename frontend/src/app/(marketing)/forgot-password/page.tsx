@@ -45,14 +45,14 @@ export default function ForgotPasswordPage() {
               required
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              className="w-full rounded-lg border border-slate-300 px-3 py-2 focus:border-teal-600 focus:outline-none"
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 focus:border-brand-600 focus:outline-none"
             />
           </div>
 
           <button
             type="submit"
             disabled={submitting}
-            className="w-full rounded-lg bg-teal-700 px-4 py-2 font-medium text-white hover:bg-teal-800 disabled:opacity-50"
+            className="w-full rounded-lg bg-brand-700 px-4 py-2 font-medium text-white hover:bg-brand-800 disabled:opacity-50"
           >
             {submitting ? "Αποστολή…" : "Αποστολή συνδέσμου"}
           </button>
@@ -60,7 +60,7 @@ export default function ForgotPasswordPage() {
       )}
 
       <div className="mt-4 text-center text-sm text-slate-500">
-        <a href="/login" className="text-teal-700 hover:underline">
+        <a href="/login" className="text-brand-700 hover:underline">
           Επιστροφή στη σύνδεση
         </a>
       </div>

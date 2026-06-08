@@ -155,7 +155,7 @@ export default function IngestionSettingsPage() {
         <div className={`rx-card p-3 text-sm ${(test.data?.ok ?? true) ? "text-emerald-700" : "text-rose-700"}`}>
           <span className="inline-flex items-center gap-1.5">
             {(test.data?.ok ?? true) ? <CheckCircle2 className="h-4 w-4" /> : <XCircle className="h-4 w-4" />}
-            {test.data?.message ?? (sync.data ? `Sync ${sync.data.status}: ${JSON.stringify(sync.data.stats)}` : "")}
+            {test.data?.message ?? (sync.data ? `Συγχρονισμός: ${sync.data.status}` : "")}
           </span>
         </div>
       )}
@@ -164,7 +164,7 @@ export default function IngestionSettingsPage() {
           <span className="inline-flex items-center gap-1.5">
             {discover.error ? <XCircle className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4" />}
             {discover.error
-              ? `Αποτυχία άντλησης: ${JSON.stringify((discover.error as any)?.problem ?? discover.error)}`
+              ? "Αποτυχία άντλησης. Ελέγξτε τα στοιχεία σύνδεσης ΗΔΙΚΑ."
               : `Αντλήθηκαν αυτόματα ${Object.keys(discover.data?.discovered ?? {}).length} στοιχεία φαρμακείου από την ΗΔΙΚΑ.`}
           </span>
         </div>

@@ -14,7 +14,7 @@ export function DateRangeFilter() {
           type="date"
           value={dateFrom}
           onChange={(e) => setDateRange(e.target.value, dateTo)}
-          className="rounded-lg border border-slate-300 px-3 py-2 text-slate-900 focus:border-teal-600 focus:outline-none"
+          className="rounded-lg border border-slate-300 px-3 py-2 text-slate-900 focus:border-brand-600 focus:outline-none"
         />
       </label>
       <label className="text-sm">
@@ -23,7 +23,7 @@ export function DateRangeFilter() {
           type="date"
           value={dateTo}
           onChange={(e) => setDateRange(dateFrom, e.target.value)}
-          className="rounded-lg border border-slate-300 px-3 py-2 text-slate-900 focus:border-teal-600 focus:outline-none"
+          className="rounded-lg border border-slate-300 px-3 py-2 text-slate-900 focus:border-brand-600 focus:outline-none"
         />
       </label>
     </div>

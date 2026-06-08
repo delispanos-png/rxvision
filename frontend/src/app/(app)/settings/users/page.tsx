@@ -5,6 +5,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, queryKeys, ApiError } from "@/lib/apiClient";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
 import { DataTable, type Column } from "@/components/tables/DataTable";
+import { Modal } from "@/components/ui/Modal";
 import { appAlert, appConfirm, appPrompt } from "@/store/dialogStore";
 
 type User = {
@@ -116,6 +117,7 @@ export default function UsersSettingsPage() {
     {
       key: "actions",
       header: "Ενέργειες",
+      fullWidthOnMobile: true,
       render: (r) => {
         const self = me.data?.user_id === r.id;
         const btn = "rounded-md border px-2 py-1 text-xs hover:bg-slate-50";
@@ -210,35 +212,32 @@ function EditUserModal({
   const inp = "w-full rounded-lg border border-slate-300 px-3 py-2 focus:border-brand-400 focus:outline-none";
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onCancel}>
-      <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl" onClick={(e) => e.stopPropagation()}>
-        <h3 className="mb-1 text-base font-bold text-slate-900">Επεξεργασία χρήστη</h3>
-        <p className="mb-4 text-sm text-slate-500">{user.email}</p>
-        <form
-          className="space-y-4"
-          onSubmit={(e) => { e.preventDefault(); onSave(name.trim(), rid ? [rid] : []); }}
-        >
-          <label className="block text-sm">
-            <span className="mb-1 block text-slate-600">Όνομα</span>
-            <input value={name} onChange={(e) => setName(e.target.value)} required className={inp} />
-          </label>
-          <label className="block text-sm">
-            <span className="mb-1 block text-slate-600">Ρόλος</span>
-            <select value={rid} onChange={(e) => setRid(e.target.value)} className={inp}>
-              <option value="">— Χωρίς ρόλο —</option>
-              {roles.map((r) => (
-                <option key={roleId(r)} value={roleId(r)}>{r.name}</option>
-              ))}
-            </select>
-          </label>
-          <div className="flex justify-end gap-2 pt-2">
-            <button type="button" onClick={onCancel} className="rounded-lg border border-slate-300 px-4 py-2 text-sm hover:bg-slate-50">Άκυρο</button>
-            <button type="submit" disabled={saving} className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50">
-              {saving ? "Αποθήκευση…" : "Αποθήκευση"}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
+    <Modal open onClose={onCancel} title="Επεξεργασία χρήστη">
+      <p className="mb-4 text-sm text-slate-500">{user.email}</p>
+      <form
+        className="space-y-4"
+        onSubmit={(e) => { e.preventDefault(); onSave(name.trim(), rid ? [rid] : []); }}
+      >
+        <label className="block text-sm">
+          <span className="mb-1 block text-slate-600">Όνομα</span>
+          <input value={name} onChange={(e) => setName(e.target.value)} required className={inp} />
+        </label>
+        <label className="block text-sm">
+          <span className="mb-1 block text-slate-600">Ρόλος</span>
+          <select value={rid} onChange={(e) => setRid(e.target.value)} className={inp}>
+            <option value="">— Χωρίς ρόλο —</option>
+            {roles.map((r) => (
+              <option key={roleId(r)} value={roleId(r)}>{r.name}</option>
+            ))}
+          </select>
+        </label>
+        <div className="flex justify-end gap-2 pt-2">
+          <button type="button" onClick={onCancel} className="rounded-lg border border-slate-300 px-4 py-2 text-sm hover:bg-slate-50">Άκυρο</button>
+          <button type="submit" disabled={saving} className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50">
+            {saving ? "Αποθήκευση…" : "Αποθήκευση"}
+          </button>
+        </div>
+      </form>
+    </Modal>
   );
 }

@@ -12,6 +12,7 @@ import { DataTable, type Column } from "@/components/tables/DataTable";
 import { ExportButton } from "@/components/export/ExportButton";
 import { KpiCard } from "@/components/kpi/KpiCard";
 import { PanelCard } from "@/components/ui/Card";
+import { QueryState } from "@/components/ui/QueryState";
 import { BarChart } from "@/components/charts/BarChart";
 
 type Doctor = {
@@ -29,7 +30,7 @@ export default function DoctorsPage() {
   const filters = useUiStore();
   const q = filtersToQuery(filters);
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, refetch } = useQuery({
     queryKey: queryKeys.doctors(q),
     queryFn: () => api<{ items: Doctor[] }>(`/doctors?${q}`),
   });
@@ -59,12 +60,10 @@ export default function DoctorsPage() {
 
       <div className="mb-4"><DateRangeFilter /></div>
 
-      {isLoading ? (
-        <div className="text-slate-400">Φόρτωση δεδομένων…</div>
-      ) : (
+      <QueryState isLoading={isLoading} isError={isError} onRetry={() => refetch()}>
         <div className="space-y-4">
           {/* KPI row */}
-          <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
+          <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-5">
             <KpiCard label="Ιατροί" value={fmtNum(items.length)} icon={Stethoscope} accent="indigo" />
             <KpiCard label="Συνταγές" value={fmtNum(sum((d) => d.rx_count))} icon={BarChart3} accent="violet" />
             <KpiCard label="Αξία" value={fmtEur(sum((d) => d.value))} icon={Wallet} accent="amber" />
@@ -93,7 +92,7 @@ export default function DoctorsPage() {
             onRowClick={(r) => router.push(`/doctors/${r.id}`)}
           />
         </div>
-      )}
+      </QueryState>
     </ModuleGuard>
   );
 }

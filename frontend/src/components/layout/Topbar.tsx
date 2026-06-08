@@ -3,9 +3,10 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
-import { Bell, Globe, KeyRound, LogOut, Menu, Settings, User } from "lucide-react";
+import { KeyRound, LogOut, Menu, Settings, User } from "lucide-react";
 import { api, queryKeys } from "@/lib/apiClient";
 import { useNavStore } from "@/store/navStore";
+import { InstallButton } from "@/components/pwa/InstallButton";
 
 type Me = {
   roles?: string[];
@@ -66,17 +67,11 @@ export function Topbar() {
       <button
         onClick={() => useNavStore.getState().setOpen(true)}
         aria-label="Μενού"
-        className="mr-auto grid h-9 w-9 place-items-center rounded-lg text-slate-600 hover:bg-white md:hidden"
+        className="mr-auto grid h-10 w-10 place-items-center rounded-lg text-slate-600 hover:bg-white md:hidden"
       >
         <Menu className="h-5 w-5" />
       </button>
-      <button className="hidden items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm font-medium text-slate-500 hover:bg-white sm:flex">
-        <Globe className="h-4 w-4" /> EL
-      </button>
-      <button className="relative grid h-9 w-9 place-items-center rounded-lg text-slate-500 hover:bg-white">
-        <Bell className="h-[18px] w-[18px]" />
-        <span className="absolute right-2 top-2 h-1.5 w-1.5 rounded-full bg-brand-500" />
-      </button>
+      <InstallButton />
       <div className="mx-1 h-6 w-px bg-slate-200" />
 
       <div ref={menuRef} className="relative">

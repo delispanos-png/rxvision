@@ -12,19 +12,31 @@ export function BarChart({
   name = "",
   height = 280,
   horizontal = false,
+  ariaLabel,
 }: {
   labels: (string | number)[];
   data: number[];
   name?: string;
   height?: number;
   horizontal?: boolean;
+  ariaLabel?: string;
 }) {
-  const cat = { type: "category" as const, data: labels, ...axisStyle };
+  // Truncate long category labels so they stay legible on narrow screens.
+  const truncate = (v: string | number) =>
+    typeof v === "string" && v.length > 16 ? `${v.slice(0, 15)}…` : `${v}`;
+  const cat = {
+    type: "category" as const,
+    data: labels,
+    ...axisStyle,
+    axisLabel: { ...axisStyle.axisLabel, formatter: truncate },
+  };
   const val = { type: "value" as const, ...axisStyle };
 
   const option = {
     color: PALETTE,
-    grid: { ...BASE_GRID, left: horizontal ? 120 : BASE_GRID.left },
+    // containLabel lets ECharts auto-size the gutter for the (truncated) labels at any
+    // width, instead of a fixed 120px left that crushed the plot area on mobile.
+    grid: { ...BASE_GRID, containLabel: true },
     tooltip: { trigger: "axis", axisPointer: { type: "shadow" } },
     xAxis: horizontal ? val : cat,
     yAxis: horizontal ? { ...cat, inverse: true } : val,
@@ -39,5 +51,9 @@ export function BarChart({
     ],
   };
 
-  return <ReactECharts option={option} style={{ height, width: "100%" }} notMerge lazyUpdate />;
+  return (
+    <div role="img" aria-label={ariaLabel ?? name ?? "Ραβδόγραμμα"}>
+      <ReactECharts option={option} style={{ height, width: "100%" }} notMerge lazyUpdate />
+    </div>
+  );
 }
