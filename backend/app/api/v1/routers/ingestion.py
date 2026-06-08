@@ -110,13 +110,28 @@ async def _effective_hdika_creds(tenant_id: str) -> dict:
     return creds
 
 
+def _history_floor(creds: dict) -> datetime | None:
+    """Earliest date the operator allows syncing from (Άντληση ιστορικού από) — caps how
+    far back we pull so a 20-year pharmacy doesn't download two decades of data."""
+    s = (creds or {}).get("history_from")
+    if not s:
+        return None
+    try:
+        return datetime.strptime(str(s)[:10], "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    except (ValueError, TypeError):
+        return None
+
+
 async def _last_watermark(tenant_id: str, source: str) -> datetime:
-    """Most recent ingested execution time minus a 1-day overlap buffer."""
+    """Sync start = max(last ingested − 1d, configured history_from). Never before
+    history_from, so the operator controls the period."""
     last = await shared_db()["prescription_executions"].find_one(
         {"tenant_id": tenant_id, "source": source}, sort=[("executed_at", -1)])
+    floor = _history_floor(vault.get_secret(f"tenants/{tenant_id}/hdika") or {})
     if last and last.get("executed_at"):
-        return last["executed_at"] - timedelta(days=1)
-    return datetime(2024, 1, 1, tzinfo=timezone.utc)
+        wm = last["executed_at"] - timedelta(days=1)
+        return max(wm, floor) if floor else wm
+    return floor or datetime(2024, 1, 1, tzinfo=timezone.utc)
 
 
 # ── ΗΔΙΚΑ (Greece) — primary path ──────────────────────────

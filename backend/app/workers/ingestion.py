@@ -27,12 +27,25 @@ def _fresh_db():
     return client, client[settings.MONGODB_DB]
 
 
+def _history_floor(creds: dict):
+    """Earliest allowed sync date (Άντληση ιστορικού από) — caps how far back we pull."""
+    s = (creds or {}).get("history_from")
+    if not s:
+        return None
+    try:
+        return datetime.strptime(str(s)[:10], "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    except (ValueError, TypeError):
+        return None
+
+
 async def _watermark(db, tenant_id: str) -> datetime:
     last = await db["prescription_executions"].find_one(
         {"tenant_id": tenant_id, "source": "HDIKA"}, sort=[("executed_at", -1)])
+    floor = _history_floor(vault.get_secret(f"tenants/{tenant_id}/hdika") or {})
     if last and last.get("executed_at"):
-        return last["executed_at"] - timedelta(days=1)
-    return datetime(2024, 1, 1, tzinfo=timezone.utc)
+        wm = last["executed_at"] - timedelta(days=1)
+        return max(wm, floor) if floor else wm
+    return floor or datetime(2024, 1, 1, tzinfo=timezone.utc)
 
 
 @celery_app.task(name="app.workers.ingestion.dispatch_incremental_sync")

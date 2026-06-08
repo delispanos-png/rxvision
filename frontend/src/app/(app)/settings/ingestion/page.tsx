@@ -311,7 +311,7 @@ export default function IngestionSettingsPage() {
               </select>
             </Field>
             <Field label="Συχνότητα (λεπτά)"><input type="number" min={5} max={1440} className={inputCls} value={f.sync_interval_minutes} onChange={(e) => set("sync_interval_minutes", Number(e.target.value))} /></Field>
-            <Field label="Άντληση ιστορικού από" hint="αρχή σύμβασης ΕΟΠΥΥ"><DateInput value={f.history_from?.slice(0, 10) || ""} onChange={(v) => set("history_from", v)} /></Field>
+            <Field label="Συγχρονισμός από (ιστορικό)" hint="Ο συγχρονισμός ΔΕΝ κατεβάζει δεδομένα πριν από αυτή την ημερομηνία (π.χ. για να μην τραβήξεις 20ετία). Πάτησε «Αποθήκευση» για να ισχύσει."><DateInput value={f.history_from?.slice(0, 10) || ""} onChange={(v) => set("history_from", v)} /></Field>
           </div>
         </PanelCard>
 
