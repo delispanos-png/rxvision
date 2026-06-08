@@ -7,10 +7,6 @@ from datetime import datetime, timezone
 from bson import ObjectId
 
 from app.core.db import shared_db
-
-
-def _utcnow() -> datetime:
-    return datetime.now(tz=timezone.utc)
 from app.core.security import (
     create_access_token,
     create_refresh_token,
@@ -18,6 +14,10 @@ from app.core.security import (
     verify_password,
     verify_totp,
 )
+
+
+def _utcnow() -> datetime:
+    return datetime.now(tz=timezone.utc)
 
 
 # Core modules are tenant-admin surfaces (settings: users/roles, plan, billing,

@@ -21,6 +21,7 @@ Transient failures raise ConnectionError/TimeoutError so the Celery task retries
 
 from __future__ import annotations
 
+import re as _re
 import xml.etree.ElementTree as ET
 from collections.abc import Iterator
 from datetime import datetime, timezone
@@ -42,9 +43,6 @@ _TIMEOUT = httpx.Timeout(30.0, connect=10.0)
 
 def _strip_ns(tag: str) -> str:
     return tag.rsplit("}", 1)[-1]  # "{ns}Foo" → "Foo"
-
-
-import re as _re
 
 
 def _gateway_message(text: str) -> str | None:
@@ -172,7 +170,7 @@ class HdikaClient:
         """Yield canonical executions from `since`→today. ΗΔΙΚΑ's search filters by a
         single required `executionDate` (yyyy-MM-dd) + `pharmacyId`, paged (Spring Page,
         list field `contents`, flag `lastPage`), so we iterate day-by-day."""
-        from datetime import date, timedelta
+        from datetime import timedelta
         end = datetime.now(tz=timezone.utc).date()
         start = since.date() if since else end
         if (end - start).days > _MAX_BACKFILL_DAYS:        # safety cap for huge backfills
