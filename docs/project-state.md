@@ -3,14 +3,13 @@
 > Living snapshot for session continuity. Update at the end of each work session.
 > Last updated: **2026-06-07**.
 
-## ⚠️ Active concurrency (2026-06-08)
-**A second agent is actively building the ΗΔΙΚΑ integration** and has pushed to `origin/main`
-(`f0f494e → a7e6284`: HL7 CDA, per-pharmacy identity, integrator auth, ingestion/auth fixes).
-**We are PAUSED** to let it land. Rules while paused: do **not** touch the ΗΔΙΚΑ/ingestion lane
-(`services/ingestion/hdika_client.py`, `api/v1/routers/ingestion.py`, `routers/admin.py`,
-`hdika_cda.py`, `frontend/.../admin/idika`); do **not** rebase/force-push into the moving `main`.
-PR #1 base has moved → quick-wins needs a rebase onto `origin/main` (conflicts: `hdika_client.py`,
-`ingestion.py`) once the other agent is idle. Full plan: journal 2026-06-07 §Session 24.
+## Integration status (2026-06-08)
+The concurrent agent's ΗΔΙΚΑ work landed on `main` (`→ 0a03a9d`: HL7 CDA enrichment,
+per-pharmacy identity, barcode search, DateInput, detail pages). It has now been **merged into
+`quick-wins`** (merge `40db87a`, not rebase — non-destructive). 8 conflicts resolved keeping
+both intents; ruff + a stale ΗΔΙΚΑ test fixed. **CI GREEN on the integrated tree** (tsc·lint·build
++ ruff·pytest 38/38). **PR #1 = MERGEABLE / CLEAN**, ready for human review/merge. Details:
+journal §Session 26. (`net.py` M2 SSRF still frozen/uncommitted — wire after merge.)
 
 ## Audit snapshot (2026-06-07)
 Full audit complete (docs only). Scores: **overall 64** · arch 78 · security 68* · code 60
