@@ -27,8 +27,8 @@ const withPWA = require("next-pwa")({
 module.exports = withPWA({
   reactStrictMode: true,
   output: "standalone",
-  // TECH DEBT: agents wrote TS without a tsc pass. Don't block the MVP build on
-  // type/lint errors; tighten this up (remove both) once `npm run typecheck` is clean.
-  typescript: { ignoreBuildErrors: true },
-  eslint: { ignoreDuringBuilds: true },
+  // Both gates ENABLED (2026-06-08): `tsc --noEmit` and `next lint`
+  // (eslint-config-next core-web-vitals) are clean, so the build fails on type OR lint errors.
+  typescript: { ignoreBuildErrors: false },
+  eslint: { ignoreDuringBuilds: false },
 });
