@@ -7,10 +7,24 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, Query
 
+from fastapi import HTTPException, status
+
 from app.core.deps import TenantContext, require
 from app.repositories.prescriptions import PrescriptionRepository
 
 router = APIRouter()
+
+
+@router.get("/detail/{external_id}")
+async def execution_detail(
+    external_id: str,
+    ctx: TenantContext = Depends(require("prescriptions:read", module="prescription_analytics")),
+):
+    repo = PrescriptionRepository(tenant_id=ctx.tenant_id)
+    detail = await repo.execution_detail(external_id)
+    if detail is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "execution_not_found")
+    return detail
 
 
 @router.get("")

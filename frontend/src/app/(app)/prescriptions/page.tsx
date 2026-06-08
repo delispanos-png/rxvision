@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { Receipt, Wallet, Pill, AlertTriangle } from "lucide-react";
 import { api } from "@/lib/apiClient";
@@ -56,6 +57,7 @@ const unexecutedColumns: Column<UnexecutedRow>[] = [
 ];
 
 export default function PrescriptionsPage() {
+  const router = useRouter();
   const filters = useUiStore();
   const q = filtersToQuery(filters);
 
@@ -149,7 +151,8 @@ export default function PrescriptionsPage() {
           {list.isLoading ? (
             <div className="text-slate-400">Φόρτωση δεδομένων…</div>
           ) : (
-            <DataTable columns={columns} rows={items} rowKey={(r) => r.external_id} />
+            <DataTable columns={columns} rows={items} rowKey={(r) => r.external_id}
+              onRowClick={(r) => router.push(`/prescriptions/${encodeURIComponent(r.external_id)}`)} />
           )}
         </PanelCard>
       </div>

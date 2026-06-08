@@ -10,6 +10,7 @@ export type HeatCell = [number, number, number];
 
 const HOURS = Array.from({ length: 24 }, (_, h) => `${h}`.padStart(2, "0"));
 const DAYS = ["Δευ", "Τρι", "Τετ", "Πεμ", "Παρ", "Σαβ", "Κυρ"];
+const FULL_DAYS = ["Δευτέρα", "Τρίτη", "Τετάρτη", "Πέμπτη", "Παρασκευή", "Σάββατο", "Κυριακή"];
 
 /** Busy-hours matrix: ώρα ημέρας × ημέρα εβδομάδας. */
 export function HeatmapChart({
@@ -29,8 +30,11 @@ export function HeatmapChart({
       backgroundColor: "#0f172a",
       borderWidth: 0,
       textStyle: { color: "#fff", fontSize: 12 },
-      formatter: (p: { data: HeatCell }) =>
-        `${DAYS[p.data[1]]} ${HOURS[p.data[0]]}:00 — <b>${p.data[2]}</b> ${valueLabel.toLowerCase()}`,
+      formatter: (p: { data: HeatCell }) => {
+        const h = p.data[0];
+        const next = `${(h + 1) % 24}`.padStart(2, "0");
+        return `<b>${FULL_DAYS[p.data[1]]}</b> ${HOURS[h]}:00–${next}:00<br/>${p.data[2]} ${valueLabel.toLowerCase()}`;
+      },
     },
     grid: { left: 44, right: 16, top: 12, bottom: 56 },
     xAxis: {
