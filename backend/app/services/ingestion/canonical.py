@@ -14,10 +14,11 @@ from datetime import datetime
 
 @dataclass
 class CanonicalPatient:
-    national_id: str                 # AMKA / ΓΕΣΥ id — anonymised by the engine
+    national_id: str                 # AMKA / ΓΕΣΥ id
     sex: str = "U"                   # M | F | U
     birth_year: int | None = None
     area: str = "unknown"
+    full_name: str | None = None     # pharmacy is the data controller → may store/show it
 
 
 @dataclass

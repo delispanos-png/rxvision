@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.core.deps import TenantContext, require
 from app.repositories.patients import PatientExecutionsRepository, PatientRepository
@@ -13,6 +13,19 @@ from app.repositories.patients import PatientExecutionsRepository, PatientReposi
 router = APIRouter()
 
 _MODULE = "patient_analytics"
+
+
+@router.get("/detail/{patient_id}")
+async def patient_detail(
+    patient_id: str,
+    ctx: TenantContext = Depends(require("patients:read", module=_MODULE)),
+):
+    """Drill-down: one patient's profile + therapeutic categories / ICD-10 / medicines."""
+    repo = PatientExecutionsRepository(tenant_id=ctx.tenant_id)
+    detail = await repo.patient_detail(patient_id)
+    if detail is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "patient_not_found")
+    return detail
 
 
 @router.get("/aggregate")

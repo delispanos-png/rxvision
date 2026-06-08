@@ -131,10 +131,18 @@ class IngestionEngine:
     async def _resolve_patient(self, ex: CanonicalExecution) -> ObjectId:
         pseudo = pseudonymize(ex.patient.national_id, tenant_pepper=self.pepper)
         ag = age_group(ex.patient.birth_year, today=_now().date()) if ex.patient.birth_year else "unknown"
+        set_fields = {"sex": ex.patient.sex, "age_group": ag,
+                      "residence_area": ex.patient.area, "last_seen_at": ex.executed_at,
+                      "birth_year": ex.patient.birth_year}
+        # The pharmacy is the data controller of its own patients → store identifiers so
+        # the (authorised) pharmacist can see who they are. Tenant-isolated.
+        if ex.patient.full_name:
+            set_fields["full_name"] = ex.patient.full_name
+        if ex.patient.national_id and ex.patient.national_id.isdigit():
+            set_fields["amka"] = ex.patient.national_id
         res = await self.db["patients_anonymized"].find_one_and_update(
             {"tenant_id": self.tenant_id, "pseudo_id": pseudo},
-            {"$set": {"sex": ex.patient.sex, "age_group": ag,
-                      "residence_area": ex.patient.area, "last_seen_at": ex.executed_at},
+            {"$set": set_fields,
              "$setOnInsert": {"tenant_id": self.tenant_id, "pseudo_id": pseudo,
                               "first_seen_at": ex.executed_at, "rx_count": 0,
                               "rx_value_total": 0, "lifecycle": "new", "created_at": _now()}},
@@ -170,7 +178,7 @@ class IngestionEngine:
                 {"$set": {"name": it.name, "retail_price": it.retail_price,
                           "wholesale_price": it.wholesale_price, "margin": margin,
                           "margin_pct": margin_pct, "category": it.category,
-                          "updated_at": _now()},
+                          "substance": it.substance, "updated_at": _now()},
                  "$setOnInsert": {"tenant_id": self.tenant_id, "barcode": it.barcode,
                                   "rx_frequency": 0}},
                 upsert=True, return_document=ReturnDocument.AFTER)

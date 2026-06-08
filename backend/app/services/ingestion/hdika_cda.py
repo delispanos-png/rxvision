@@ -63,6 +63,16 @@ def parse_cda(text: str) -> dict:
         city = _first(rt, "city")
         if city is not None and city.text:
             out["patient"]["city"] = city.text.strip()
+        pp = _first(rt, "patient")          # <patient> holds the name
+        if pp is not None:
+            nm = _first(pp, "name")
+            if nm is not None:
+                given = _first(nm, "given")
+                family = _first(nm, "family")
+                parts = [(family.text if family is not None else ""), (given.text if given is not None else "")]
+                name = " ".join(p.strip() for p in parts if p and p.strip())
+                if name:
+                    out["patient"]["full_name"] = name
 
     # ── doctor (first author) ──
     au = _first(root, "author")

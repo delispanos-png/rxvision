@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { Users, Wallet, TrendingUp, Activity } from "lucide-react";
 import { api, queryKeys } from "@/lib/apiClient";
@@ -19,6 +20,7 @@ type RetentionPoint = { period: string; retained_pct: number };
 type PatientRow = {
   patient_ref: string;
   pseudo_id: string;
+  full_name?: string | null;
   age_group: string;
   sex: string;
   area: string;
@@ -32,7 +34,7 @@ type PatientRow = {
 const CURRENT_COHORT = new Date().toISOString().slice(0, 7);
 
 const patientColumns: Column<PatientRow>[] = [
-  { key: "pseudo_id", header: "Ασφαλισμένος", render: (r) => r.pseudo_id ?? r.patient_ref },
+  { key: "pseudo_id", header: "Ασφαλισμένος", render: (r) => r.full_name || r.pseudo_id || r.patient_ref },
   { key: "age_group", header: "Ηλικία" },
   { key: "sex", header: "Φύλο" },
   { key: "rx", header: "Συνταγές", align: "right", render: (r) => fmtNum(r.rx) },
@@ -43,6 +45,7 @@ const patientColumns: Column<PatientRow>[] = [
 ];
 
 export default function PatientsPage() {
+  const router = useRouter();
   const filters = useUiStore();
   const q = filtersToQuery(filters);
 
@@ -131,7 +134,8 @@ export default function PatientsPage() {
           {perPatient.isLoading ? (
             <div className="text-slate-400">Φόρτωση δεδομένων…</div>
           ) : (
-            <DataTable columns={patientColumns} rows={patients} rowKey={(r) => r.patient_ref} />
+            <DataTable columns={patientColumns} rows={patients} rowKey={(r) => r.patient_ref}
+              onRowClick={(r) => router.push(`/patients/${encodeURIComponent(r.patient_ref)}`)} />
           )}
         </PanelCard>
       </div>

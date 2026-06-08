@@ -33,10 +33,14 @@ def _num(v):
 
 async def refresh_catalog(db, client) -> int:
     """Page masterdata/medicines → upsert into global `medicine_catalog` (keyed by eofCode).
-    Returns the number of medicines loaded. Safe to re-run (idempotent upserts)."""
+    Logs every retail-price change vs the previous snapshot into `price_changes` (powers the
+    price-change module). Returns the number of medicines loaded. Idempotent."""
     coll = db["medicine_catalog"]
+    prev = {d["_id"]: d.get("retail_cents", 0) async for d in coll.find({}, {"retail_cents": 1})}
+    now = datetime.now(tz=timezone.utc)
     page = 0
     total = 0
+    changes = []
     while True:
         try:
             data = _to_dict(client._get_xml("/api/v1/masterdata/medicines", {"size": _PAGE, "page": page}))
@@ -50,10 +54,21 @@ async def refresh_catalog(db, client) -> int:
             eof = str(r.get("eofCode") or "")
             if not eof:
                 continue
+            retail = _cents(r.get("retailPrice"))
+            old = prev.get(eof)
+            if old is not None and old != retail and retail > 0 and old > 0:
+                changes.append(UpdateOne(
+                    {"eofCode": eof, "changed_at": now},
+                    {"$set": {"eofCode": eof, "name": r.get("commercialName"),
+                              "barcode": r.get("barcode"), "atc": r.get("atcCode"),
+                              "old_cents": old, "new_cents": retail,
+                              "delta_cents": retail - old,
+                              "direction": "up" if retail > old else "down",
+                              "changed_at": now}}, upsert=True))
             ops.append(UpdateOne({"_id": eof}, {"$set": {
                 "_id": eof, "eofCode": eof, "barcode": r.get("barcode"),
                 "name": r.get("commercialName"),
-                "retail_cents": _cents(r.get("retailPrice")),
+                "retail_cents": retail,
                 "wholesale_cents": _cents(r.get("wholesalePrice")),
                 "reference_cents": _cents(r.get("referencePrice")),
                 "participation": _num(r.get("participationPercentage")),
@@ -62,7 +77,8 @@ async def refresh_catalog(db, client) -> int:
                 "atc": r.get("atcCode"),
                 "drug_category": r.get("drugCategoryId"),
                 "active_substances": r.get("activeSubstances"),
-                "updated_at": datetime.now(tz=timezone.utc),
+                "vendor_update_date": r.get("updateDate"),
+                "updated_at": now,
             }}, upsert=True))
         if ops:
             await coll.bulk_write(ops, ordered=False)
@@ -70,6 +86,8 @@ async def refresh_catalog(db, client) -> int:
         if client._is_last(data, len(rows)):
             break
         page += 1
+    if changes:
+        await db["price_changes"].bulk_write(changes, ordered=False)
     return total
 
 

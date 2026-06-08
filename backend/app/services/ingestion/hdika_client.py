@@ -310,7 +310,8 @@ class HdikaClient:
                 national_id=str(cda_pat.get("amka") or barcode),  # never empty (validator)
                 sex=sex,
                 birth_year=cda_pat.get("birth_year"),
-                area=cda_pat.get("city") or "unknown"),
+                area=cda_pat.get("city") or "unknown",
+                full_name=cda_pat.get("full_name")),
             doctor=CanonicalDoctor(full_name=cda_doc.get("name") or "Άγνωστος",
                                    specialty=cda_doc.get("specialty")),
             fund=CanonicalFund(code=fund_code, name=fund_name),
