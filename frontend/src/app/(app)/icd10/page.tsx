@@ -18,6 +18,7 @@ import { QueryState } from "@/components/ui/QueryState";
 
 type Node = {
   node: string;
+  title?: string | null;
   rx: number;
   value: number; // cents
   claimed: number; // cents
@@ -36,6 +37,7 @@ const LEVELS = [
 
 const columns: Column<Node>[] = [
   { key: "node", header: "Κόμβος ICD-10" },
+  { key: "title", header: "Περιγραφή", render: (r) => r.title || "—" },
   { key: "code_count", header: "Κωδικοί", align: "right", hideOnMobile: true, render: (r) => fmtNum(r.code_count) },
   { key: "rx", header: "Πλήθος", align: "right", render: (r) => fmtNum(r.rx) },
   { key: "value", header: "Αξία", align: "right", render: (r) => fmtEur(r.value) },

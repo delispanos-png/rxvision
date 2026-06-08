@@ -17,13 +17,19 @@ _MODULE = "doctor_analytics"
 @router.get("")
 async def list_doctors(
     search: str | None = None,
+    date_from: datetime | None = Query(None),
+    date_to: datetime | None = Query(None),
     page: int = 1,
-    page_size: int = 50,
+    page_size: int = 500,
     ctx: TenantContext = Depends(require("doctors:read", module=_MODULE)),
 ):
-    repo = DoctorRepository(tenant_id=ctx.tenant_id)
-    items = await repo.list_doctors(search=search, skip=(page - 1) * page_size,
-                                    limit=page_size)
+    from datetime import timedelta, timezone
+    now = datetime.now(tz=timezone.utc)
+    df = date_from or (now - timedelta(days=365))
+    dt = date_to or now
+    repo = DoctorExecutionsRepository(tenant_id=ctx.tenant_id)
+    items = await repo.doctors_with_stats(date_from=df, date_to=dt, search=search,
+                                          skip=(page - 1) * page_size, limit=page_size)
     return {"page": page, "page_size": page_size, "items": items}
 
 

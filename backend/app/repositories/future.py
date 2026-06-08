@@ -64,7 +64,8 @@ class FuturePrescriptionRepository(BaseRepository):
             {"$lookup": {"from": "products", "localField": "_id",
                          "foreignField": "_id", "as": "p"}},
             {"$set": {"name": {"$first": "$p.name"}}},
-            {"$project": {"p": 0, "product_id": "$_id", "_id": 0,
+            # inclusion-only projection (mixing include + "p":0 exclusion errors in Mongo)
+            {"$project": {"_id": 0, "product_id": "$_id",
                           "expected_demand": 1, "name": 1}},
         ]
         return await self.aggregate(pipeline)

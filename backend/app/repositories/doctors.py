@@ -32,6 +32,36 @@ class DoctorExecutionsRepository(BaseRepository):
 
     collection_name = "prescription_executions"
 
+    async def doctors_with_stats(self, *, date_from: datetime, date_to: datetime,
+                                 search: str | None, skip: int, limit: int) -> list[dict]:
+        """One row per doctor for the period: name + specialty (joined from `doctors`) +
+        rx_count / value / gross_profit / distinct patients. Powers the Doctors page."""
+        pipe: list[dict] = [
+            {"$match": {"executed_at": {"$gte": date_from, "$lte": date_to},
+                        "doctor_id": {"$ne": None}}},
+            {"$group": {"_id": "$doctor_id",
+                        "rx_count": {"$sum": 1},
+                        "value": {"$sum": "$amount_total"},
+                        "cost": {"$sum": "$wholesale_cost"},
+                        "patients": {"$addToSet": "$patient_ref"}}},
+            {"$lookup": {"from": "doctors", "localField": "_id",
+                         "foreignField": "_id", "as": "d"}},
+            {"$set": {"d": {"$first": "$d"}}},
+            {"$set": {"name": {"$ifNull": ["$d.full_name", "Άγνωστος"]},
+                      "specialty": "$d.specialty"}},
+        ]
+        if search:
+            pipe.append({"$match": {"name": {"$regex": search, "$options": "i"}}})
+        pipe += [
+            {"$project": {"_id": 0, "id": {"$toString": "$_id"}, "name": 1, "specialty": 1,
+                          "rx_count": 1, "value": 1,
+                          "gross_profit": {"$subtract": ["$value", "$cost"]},
+                          "new_patients": {"$size": "$patients"}}},
+            {"$sort": {"value": -1}},
+            {"$skip": skip}, {"$limit": limit},
+        ]
+        return await self.aggregate(pipe)
+
     async def stats(self, *, doctor_id, date_from: datetime, date_to: datetime) -> dict:
         """rx / value / claimed / cost / profit / margin for one doctor in a period."""
         pipeline = [
@@ -45,7 +75,7 @@ class DoctorExecutionsRepository(BaseRepository):
                 "cost": {"$sum": "$wholesale_cost"},
                 "patients": {"$addToSet": "$patient_ref"},
             }},
-            {"$set": {"profit": {"$subtract": ["$claimed", "$cost"]},
+            {"$set": {"profit": {"$subtract": ["$value", "$cost"]},  # retail − wholesale
                       "distinct_patients": {"$size": "$patients"}}},
             {"$set": {"margin_pct": {"$cond": [
                 {"$gt": ["$claimed", 0]},

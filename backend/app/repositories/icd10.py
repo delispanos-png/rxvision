@@ -23,7 +23,7 @@ class Icd10Repository(BaseRepository):
                 "claimed": {"$sum": "$amount_claimed"},
                 "cost": {"$sum": "$wholesale_cost"},
             }},
-            {"$set": {"profit": {"$subtract": ["$claimed", "$cost"]}}},
+            {"$set": {"profit": {"$subtract": ["$value", "$cost"]}}},  # retail − wholesale
             {"$sort": {sort_field: -1}},
             {"$limit": limit},
             {"$lookup": {"from": "icd10_codes", "localField": "_id",
@@ -58,12 +58,17 @@ class Icd10Repository(BaseRepository):
                 "cost": {"$sum": "$wholesale_cost"},
                 "codes": {"$addToSet": "$icd10"},
             }},
-            {"$set": {"profit": {"$subtract": ["$claimed", "$cost"]},
+            {"$set": {"profit": {"$subtract": ["$value", "$cost"]},  # retail − wholesale
                       "code_count": {"$size": "$codes"}}},
             {"$sort": {sort_field: -1}},
             {"$limit": limit},
+            # name the node from a representative code's Greek title
+            {"$set": {"_first_code": {"$arrayElemAt": ["$codes", 0]}}},
+            {"$lookup": {"from": "icd10_codes", "localField": "_first_code",
+                         "foreignField": "_id", "as": "_c"}},
+            {"$set": {"title": {"$first": "$_c.title_el"}}},
             {"$project": {"_id": 0, "node": "$_id", "level": {"$literal": level},
-                          "rx": 1, "value": 1, "claimed": 1, "cost": 1, "profit": 1,
-                          "codes": 1, "code_count": 1}},
+                          "title": 1, "rx": 1, "value": 1, "claimed": 1, "cost": 1,
+                          "profit": 1, "codes": 1, "code_count": 1}},
         ]
         return await self.aggregate(pipeline)

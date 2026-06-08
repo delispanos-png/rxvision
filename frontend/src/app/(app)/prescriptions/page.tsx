@@ -1,7 +1,9 @@
 "use client";
 
+import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
-import { Receipt, Wallet, Pill, AlertTriangle } from "lucide-react";
+import { Receipt, Wallet, Pill, AlertTriangle, Search } from "lucide-react";
 import { api } from "@/lib/apiClient";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
 import { useUiStore, filtersToQuery } from "@/store/uiStore";
@@ -22,7 +24,13 @@ type Prescription = {
   amount_total: number; // cents
   amount_claimed: number; // cents
   has_unexecuted_substances: boolean;
+  patient_name?: string | null;
+  amka?: string | null;
+  fund_name?: string | null;
+  status?: string | null;
 };
+
+const STATUS_EL: Record<string, string> = { executed: "Εκτελεσμένη", partial: "Μερικώς", cancelled: "Ακυρωμένη" };
 
 type UnexecutedRow = {
   product_id: string;
@@ -36,17 +44,20 @@ type UnexecutedRow = {
 const columns: Column<Prescription>[] = [
   { key: "executed_at", header: "Ημ/νία", render: (r) => fmtDate(r.executed_at) },
   { key: "external_id", header: "Κωδικός" },
-  { key: "source", header: "Πηγή" },
+  { key: "patient_name", header: "Ασθενής", render: (r) => r.patient_name || "—" },
+  { key: "amka", header: "ΑΜΚΑ", hideOnMobile: true, render: (r) => r.amka || "—" },
+  { key: "fund_name", header: "Ταμείο", hideOnMobile: true, render: (r) => r.fund_name || "—" },
+  {
+    key: "status", header: "Κατάσταση", hideOnMobile: true,
+    render: (r) => (
+      <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${r.has_unexecuted_substances ? "bg-amber-100 text-amber-700" : "bg-emerald-100 text-emerald-700"}`}>
+        {r.has_unexecuted_substances ? "Μερικώς" : STATUS_EL[r.status || "executed"] || "Εκτελεσμένη"}
+      </span>
+    ),
+  },
   { key: "icd10", header: "ICD-10", hideOnMobile: true, render: (r) => (r.icd10 ?? []).join(", ") },
   { key: "amount_total", header: "Αξία", align: "right", render: (r) => fmtEur(r.amount_total) },
-  { key: "amount_claimed", header: "Αιτούμενα", align: "right", render: (r) => fmtEur(r.amount_claimed) },
-  {
-    key: "has_unexecuted_substances",
-    header: "Ανεκτέλεστα",
-    align: "center",
-    render: (r) =>
-      r.has_unexecuted_substances ? <span className="text-amber-600">●</span> : <span className="text-slate-300">—</span>,
-  },
+  { key: "amount_claimed", header: "Από ταμείο", align: "right", render: (r) => fmtEur(r.amount_claimed) },
 ];
 
 const unexecutedColumns: Column<UnexecutedRow>[] = [
@@ -57,12 +68,16 @@ const unexecutedColumns: Column<UnexecutedRow>[] = [
 ];
 
 export default function PrescriptionsPage() {
+  const router = useRouter();
   const filters = useUiStore();
   const q = filtersToQuery(filters);
+  const [barcode, setBarcode] = useState("");
+  const bc = barcode.trim();
+  const listQs = bc ? `${q}&barcode=${encodeURIComponent(bc)}` : q;
 
   const list = useQuery({
-    queryKey: ["prescriptions", "list", q],
-    queryFn: () => api<{ items: Prescription[] }>(`/prescriptions?${q}&page=1&page_size=50`),
+    queryKey: ["prescriptions", "list", listQs],
+    queryFn: () => api<{ items: Prescription[] }>(`/prescriptions?${listQs}&page=1&page_size=50`),
   });
 
   const unexecuted = useQuery({
@@ -91,8 +106,25 @@ export default function PrescriptionsPage() {
         <ExportButton path="/prescriptions" query={`?${q}`} />
       </div>
 
-      <div className="mb-4">
+      <div className="mb-4 flex flex-wrap items-end gap-3">
         <DateRangeFilter />
+        <label className="text-sm">
+          <span className="mb-1 block text-slate-500">Αναζήτηση barcode</span>
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            <input
+              value={barcode}
+              onChange={(e) => setBarcode(e.target.value)}
+              placeholder="π.χ. 2606022236114"
+              inputMode="numeric"
+              className="w-56 rounded-lg border border-slate-300 py-2 pl-8 pr-8 text-sm text-slate-900 focus:border-brand-500 focus:outline-none"
+            />
+            {bc && (
+              <button onClick={() => setBarcode("")} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600" title="Καθαρισμός">×</button>
+            )}
+          </div>
+        </label>
+        {bc && <span className="pb-2 text-xs text-slate-400">Αναζήτηση σε όλη την περίοδο</span>}
       </div>
 
       <div className="space-y-4">
@@ -154,7 +186,8 @@ export default function PrescriptionsPage() {
             onRetry={() => list.refetch()}
             empty="Δεν υπάρχουν εκτελέσεις στην περίοδο."
           >
-            <DataTable columns={columns} rows={items} rowKey={(r) => r.external_id} />
+            <DataTable columns={columns} rows={items} rowKey={(r) => r.external_id}
+              onRowClick={(r) => router.push(`/prescriptions/${encodeURIComponent(r.external_id)}`)} />
           </QueryState>
         </PanelCard>
       </div>

@@ -63,21 +63,37 @@ def _public_config(creds: dict) -> dict:
 
 
 async def _effective_hdika_creds(tenant_id: str) -> dict:
-    """Tenant creds (username/password/pharmacy) + platform integrator config
-    (application api_key/base_url/doctor_ip ανά ενεργό περιβάλλον, από το adminpanel)
-    → πλήρη credentials για τον HdikaClient. Το api-key/endpoint είναι του CloudOn."""
-    creds = dict(vault.get_secret(f"tenants/{tenant_id}/hdika") or {})
+    """Build the HdikaClient credentials for a pharmacy.
+
+    Each pharmacy is an AUTONOMOUS ΗΔΙΚΑ identity: in PRODUCTION it uses its OWN
+    username / password / api_key / pharmacy_id (stored per-tenant), calling ΗΔΙΚΑ
+    directly. The platform only supplies the production endpoint (base_url).
+
+    TEST is different: ΗΔΙΚΑ gives CloudOn ONE shared sandbox pharmacy account
+    (foreignoffice_tst + a test key + a test pharmacy_id). In test mode every tenant
+    is routed through that sandbox account so we can develop without real pharmacies.
+    """
+    creds = dict(vault.get_secret(f"tenants/{tenant_id}/hdika") or {})   # pharmacy's OWN creds
     plat = await shared_db()["platform_settings"].find_one({"_id": "idika"})
     if plat:
         env = plat.get("active_environment", "test")
         envcfg = plat.get(env) or {}
-        if envcfg.get("api_key"):
-            creds["api_key"] = envcfg["api_key"]
         if envcfg.get("base_url"):
             creds["base_url"] = envcfg["base_url"]
         if plat.get("doctor_ip"):
             creds["doctor_ip"] = plat["doctor_ip"]
         creds["environment"] = env
+        if env == "test":
+            # route through CloudOn's shared sandbox account (overrides tenant creds)
+            if envcfg.get("integrator_username"):
+                creds["username"] = envcfg["integrator_username"]
+            if envcfg.get("integrator_password"):
+                creds["password"] = envcfg["integrator_password"]
+            if envcfg.get("api_key"):
+                creds["api_key"] = envcfg["api_key"]
+            if envcfg.get("pharmacy_id"):
+                creds["pharmacy_id"] = envcfg["pharmacy_id"]
+        # production: keep the tenant's own username/password/api_key/pharmacy_id as-is
     return creds
 
 

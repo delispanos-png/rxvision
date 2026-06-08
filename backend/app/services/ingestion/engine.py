@@ -87,6 +87,8 @@ class IngestionEngine:
         fund_id = await self._resolve_fund(ex)
 
         item_docs, amount_total, wholesale_cost = await self._resolve_items(ex)
+        if ex.amount_total:                       # source-authoritative retail (ΗΔΙΚΑ) → exact totals
+            amount_total = ex.amount_total
         patient_share = ex.patient_share or 0
         amount_claimed = amount_total - patient_share
         chash = _content_hash(ex, amount_total, amount_claimed)
@@ -97,8 +99,11 @@ class IngestionEngine:
             return "duplicates"
 
         next_open = None
-        if ex.repeat_current < ex.repeat_total:
-            next_open = ex.executed_at + timedelta(days=_REPEAT_INTERVAL_DAYS)
+        candidate = ex.executed_at + timedelta(days=_REPEAT_INTERVAL_DAYS)
+        if ex.repeat_current < ex.repeat_total:           # ΗΔΙΚΑ: more executions to come
+            next_open = candidate
+        elif ex.valid_until and candidate < ex.valid_until:  # treatment runs past the next refill
+            next_open = candidate
 
         doc = {
             **nat_key, "pharmacy_id": None, "executed_at": ex.executed_at,
@@ -132,10 +137,18 @@ class IngestionEngine:
     async def _resolve_patient(self, ex: CanonicalExecution) -> ObjectId:
         pseudo = pseudonymize(ex.patient.national_id, tenant_pepper=self.pepper)
         ag = age_group(ex.patient.birth_year, today=_now().date()) if ex.patient.birth_year else "unknown"
+        set_fields = {"sex": ex.patient.sex, "age_group": ag,
+                      "residence_area": ex.patient.area, "last_seen_at": ex.executed_at,
+                      "birth_year": ex.patient.birth_year}
+        # The pharmacy is the data controller of its own patients → store identifiers so
+        # the (authorised) pharmacist can see who they are. Tenant-isolated.
+        if ex.patient.full_name:
+            set_fields["full_name"] = ex.patient.full_name
+        if ex.patient.national_id and ex.patient.national_id.isdigit():
+            set_fields["amka"] = ex.patient.national_id
         res = await self.db["patients_anonymized"].find_one_and_update(
             {"tenant_id": self.tenant_id, "pseudo_id": pseudo},
-            {"$set": {"sex": ex.patient.sex, "age_group": ag,
-                      "residence_area": ex.patient.area, "last_seen_at": ex.executed_at},
+            {"$set": set_fields,
              "$setOnInsert": {"tenant_id": self.tenant_id, "pseudo_id": pseudo,
                               "first_seen_at": ex.executed_at, "rx_count": 0,
                               "rx_value_total": 0, "lifecycle": "new", "created_at": _now()}},
@@ -191,7 +204,8 @@ class IngestionEngine:
             margin = it.retail_price - wholesale
             margin_pct = round((margin / it.retail_price) * 100, 2) if it.retail_price else 0
             set_fields = {"name": it.name, "retail_price": it.retail_price, "margin": margin,
-                          "margin_pct": margin_pct, "category": it.category, "updated_at": _now()}
+                          "margin_pct": margin_pct, "category": it.category,
+                          "substance": it.substance, "updated_at": _now()}
             # Never clobber a known masterdata wholesale price with 0/unknown.
             if wholesale > 0:
                 set_fields["wholesale_price"] = wholesale

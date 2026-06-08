@@ -22,6 +22,7 @@ Transient failures raise ConnectionError/TimeoutError so the Celery task retries
 from __future__ import annotations
 
 import re as _re
+import time
 import xml.etree.ElementTree as ET
 from collections.abc import Iterator
 from datetime import datetime, timezone
@@ -35,8 +36,9 @@ from app.services.ingestion.canonical import (
     CanonicalItem,
     CanonicalPatient,
 )
+from app.services.ingestion.hdika_cda import parse_cda
 
-_PAGE_SIZE = 200
+_PAGE_SIZE = 100                  # ΗΔΙΚΑ rejects size>~150 with HTTP 400; 100 is safe
 _MAX_BACKFILL_DAYS = 400          # cap day-by-day backfill (search is per-day)
 _TIMEOUT = httpx.Timeout(30.0, connect=10.0)
 
@@ -90,7 +92,7 @@ def _as_list(v) -> list:
 
 
 class HdikaClient:
-    def __init__(self, credentials: dict) -> None:
+    def __init__(self, credentials: dict, catalog: dict | None = None) -> None:
         c = credentials or {}
         self.c = c
         self.base = (c.get("base_url") or c.get("live_endpoint") or "").rstrip("/")
@@ -98,6 +100,8 @@ class HdikaClient:
         self.password = c.get("password", "")
         self.api_key = c.get("api_key", "")                       # APPLICATION key
         self.pharmacy_id = c.get("pharmacy_id") or c.get("pharmacy_code")
+        self.catalog = catalog or {}     # eofCode → price/cost (Δελτίο Τιμών) for per-med analysis
+        self.throttle = float(c.get("throttle") or 0)   # seconds to pause after each call (be gentle on ΗΔΙΚΑ)
         self.skipped_days = 0           # days skipped due to transient gateway errors
         headers = {"Accept": "application/xml"}
         if self.api_key:
@@ -166,17 +170,75 @@ class HdikaClient:
         return {k: str(v) for k, v in info.items() if v not in (None, "")}
 
     # ── paging: executed prescriptions ─────────────────────
+    @staticmethod
+    def _rows(data: dict) -> list:
+        """Spring Page rows: <contents><item>…</item></contents> → flat list."""
+        contents = _first(data, "contents", "content", "items", default=[])
+        if isinstance(contents, dict) and "item" in contents:
+            contents = contents["item"]
+        return _as_list(contents)
+
+    @staticmethod
+    def _is_last(data: dict, n: int) -> bool:
+        last = str(data.get("lastPage", data.get("last", ""))).lower() == "true"
+        return last or n < _PAGE_SIZE
+
+    def _fetch_cda(self, barcode: str) -> dict:
+        """Full prescription (doctor / ICD-10 / medicines / patient) as HL7 CDA from
+        /prescriptions/get/{barcode} (Accept: application/x-hl7). Best-effort: returns {}
+        on any error so a missing detail never aborts the run."""
+        if not barcode:
+            return {}
+        try:
+            params = {"pharmacyId": self.pharmacy_id} if self.pharmacy_id else {}
+            r = self._client.get(self._url(f"/api/v1/prescriptions/get/{barcode}"),
+                                 params=params, headers={"Accept": "application/x-hl7"})
+            if self.throttle:
+                time.sleep(self.throttle)
+            if r.status_code == 200 and r.text.lstrip().startswith("<?xml"):
+                return parse_cda(r.text)
+        except Exception:  # noqa: BLE001
+            pass
+        return {}
+
+    def _prescription_index(self, start, end) -> dict:
+        """barcode → prescription summary (executions=total repeats, expiryDate) from
+        /prescriptions/search over the range. Cheap (one paged sweep) and gives the
+        repeat structure (single vs 3-/6-month recurring)."""
+        idx: dict = {}
+        page = 0
+        while True:
+            params = {"size": _PAGE_SIZE, "page": page,
+                      "from": start.isoformat(), "to": end.isoformat()}
+            if self.pharmacy_id:
+                params["pharmacyId"] = self.pharmacy_id
+            try:
+                data = _to_dict(self._get_xml("/api/v1/prescriptions/search", params))
+            except Exception:  # noqa: BLE001 — repeat enrichment is best-effort
+                break
+            rows = self._rows(data)
+            for r in rows:
+                if isinstance(r, dict) and _first(r, "barcode"):
+                    idx[str(_first(r, "barcode"))] = r
+            if self._is_last(data, len(rows)):
+                break
+            page += 1
+        return idx
+
     def iter_executions(self, since: datetime | None) -> Iterator[CanonicalExecution]:
-        """Yield canonical executions from `since`→today. ΗΔΙΚΑ's search filters by a
-        single required `executionDate` (yyyy-MM-dd) + `pharmacyId`, paged (Spring Page,
-        list field `contents`, flag `lastPage`), so we iterate day-by-day."""
+        """Yield canonical executions from `since`→today. Driver = prescription-execution
+        /search (amounts/fund, executionNo); enriched per barcode by the full HL7 CDA
+        (doctor, ICD-10, medicines, patient) and by /prescriptions/search (repeat info)."""
         from datetime import timedelta
         end = datetime.now(tz=timezone.utc).date()
         start = since.date() if since else end
         if (end - start).days > _MAX_BACKFILL_DAYS:        # safety cap for huge backfills
             start = end - timedelta(days=_MAX_BACKFILL_DAYS)
-        day = start
-        while day <= end:
+        day = end                       # most-recent day first → recent analytics/forecast fill fast
+        while day >= start:
+            # repeat info for THIS day only — interleaved so a big backfill streams
+            # results immediately instead of waiting on one huge upfront sweep.
+            summaries = self._prescription_index(day, day)
             page = 0
             while True:
                 params = {"size": _PAGE_SIZE, "page": page,
@@ -188,19 +250,108 @@ class HdikaClient:
                 except Exception:  # noqa: BLE001 — one bad day must not abort the backfill
                     self.skipped_days += 1
                     break
-                records = _as_list(_first(data, "contents", "content", "items", default=[]))
+                records = self._rows(data)
                 for raw in records:
                     if isinstance(raw, dict):
-                        yield self.map_raw(raw)
-                last = str(data.get("lastPage", data.get("last", ""))).lower() == "true"
-                if last or len(records) < _PAGE_SIZE:
+                        presc = raw.get("prescription") if isinstance(raw.get("prescription"), dict) else {}
+                        bc = str(_first(presc, "barcode") or _first(raw, "barcode", default=""))
+                        yield self._map_full(raw, self._fetch_cda(bc), summaries.get(bc, {}))
+                if self._is_last(data, len(records)):
                     break
                 page += 1
-            day += timedelta(days=1)
+            day -= timedelta(days=1)
+
+    def _map_full(self, ex: dict, cda: dict, summary: dict | None = None) -> CanonicalExecution:
+        """Execution row (amounts/fund/executionNo) + full CDA (patient/doctor/ICD-10/
+        medicines) + repeat summary → a complete CanonicalExecution. Each medicine is a
+        real line priced from the catalog (retail + wholesale → margin)."""
+        summary = summary or {}
+        presc = ex.get("prescription") if isinstance(ex.get("prescription"), dict) else {}
+        barcode = str(_first(presc, "barcode") or _first(ex, "barcode", default=""))
+        fund_d = presc.get("socialInsuranceDTO") if isinstance(presc.get("socialInsuranceDTO"), dict) else {}
+        # ΗΔΙΚΑ amounts (verified against official printouts):
+        #   totalValue        = reimbursed base (Αποζ.Ασφ), NOT retail
+        #   totalDifference   = full retail−reference difference; sociTotalDifference = fund's part
+        #   socialInsuranceSurcharge = the 1€ per-prescription fee the patient pays
+        # retail            = totalValue + totalDifference
+        # ΠΛΗΡΩΤΕΟ ΑΠΟ ΑΣΦ/ΝΟ = participation + (difference − fund's part) + 1€ fee + supplemental
+        # ΠΛΗΡΩΤΕΟ ΑΠΟ ΤΑΜΕΙΟ = retail − ΠΛΗΡΩΤΕΟ ΑΠΟ ΑΣΦ/ΝΟ (engine: amount_total − share)
+        total_value = _eur_cents(_first(ex, "totalValue", default=0))
+        total_diff = _eur_cents(_first(ex, "totalDifference", default=0))
+        soci_diff = _eur_cents(_first(ex, "sociTotalDifference", default=0))
+        total = total_value + total_diff
+        share = (_eur_cents(_first(ex, "participationValue", default=0))
+                 + max(0, total_diff - soci_diff)
+                 + _eur_cents(_first(ex, "socialInsuranceSurcharge", default=0))
+                 + _eur_cents(_first(ex, "supplementalDifferenceAmt", default=0)))
+        exec_no = int(float(_first(ex, "executionNo", default=1) or 1))
+        repeat_total = max(int(float(_first(summary, "executions", default=1) or 1)), exec_no, 1)
+
+        cda_pat = cda.get("patient") or {}
+        cda_doc = cda.get("doctor") or {}
+        meds = cda.get("medicines") or []
+        sex = (cda_pat.get("sex") or "U")
+        sex = "M" if sex.startswith("M") else "F" if sex.startswith("F") else "U"
+
+        # one priced line per medicine (retail + wholesale from the Δελτίο Τιμών catalog)
+        items: list[CanonicalItem] = []
+        for n, m in enumerate(meds):
+            eof = str(m.get("code") or "")
+            cat = self.catalog.get(eof) or {}
+            qty = int(m.get("quantity") or 1)
+            items.append(CanonicalItem(
+                barcode=str(cat.get("barcode") or eof or f"{barcode}-{n}"),
+                name=cat.get("name") or m.get("name") or "Φάρμακο",
+                substance=cat.get("atc"),
+                quantity=qty,
+                retail_price=int(cat.get("retail_cents") or 0),
+                wholesale_price=int(cat.get("wholesale_cents") or 0),
+                category="narcotic" if cat.get("narcotic") else "normal",
+                is_executed=True,
+            ))
+        if not items:                                   # CDA missing → prescription-level line
+            items = [CanonicalItem(barcode=barcode or "rx", name="Συνταγή (ΗΔΙΚΑ)",
+                                   quantity=1, retail_price=total, is_executed=True)]
+        elif sum(i.retail_price * i.quantity for i in items) == 0 and total > 0:
+            items[0].retail_price = total               # catalog miss → keep revenue on line 1
+
+        vu = cda.get("valid_until")
+        valid_until = None
+        if isinstance(vu, str) and len(vu) == 8 and vu.isdigit():
+            try:
+                valid_until = datetime(int(vu[:4]), int(vu[4:6]), int(vu[6:8]), tzinfo=timezone.utc)
+            except ValueError:
+                valid_until = None
+
+        fund_name = _first(fund_d, "name") or cda_pat.get("fund_name") or "ΕΟΠΥΥ"
+        fund_code = str(_first(fund_d, "shortName", "id", default="") or cda_pat.get("fund_code") or "EOPYY")
+        return CanonicalExecution(
+            source="HDIKA",
+            external_id=barcode,
+            executed_at=_parse_dt(_first(ex, "executionDate", "executed_at")),
+            patient=CanonicalPatient(
+                national_id=str(cda_pat.get("amka") or barcode),  # never empty (validator)
+                sex=sex,
+                birth_year=cda_pat.get("birth_year"),
+                area=cda_pat.get("city") or "unknown",
+                full_name=cda_pat.get("full_name")),
+            doctor=CanonicalDoctor(full_name=cda_doc.get("name") or "Άγνωστος",
+                                   specialty=cda_doc.get("specialty")),
+            fund=CanonicalFund(code=fund_code, name=fund_name),
+            items=items,
+            icd10=[d["code"] for d in cda.get("icd10", []) if d.get("code")],
+            repeat_current=min(exec_no, repeat_total),
+            repeat_total=repeat_total,
+            patient_share=share,
+            amount_total=total,        # ΗΔΙΚΑ retail (totalValue+totalDifference) — authoritative
+            valid_until=valid_until,
+        )
 
     def _get_xml(self, path: str, params: dict) -> ET.Element:
         try:
             r = self._client.get(self._url(path), params=params)
+            if self.throttle:
+                time.sleep(self.throttle)
             gw = _gateway_message(r.text)
             if gw:                   # gateway HTML (e.g. lockout) even with HTTP 200
                 raise PermissionError(gw)

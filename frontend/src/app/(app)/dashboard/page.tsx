@@ -1,11 +1,13 @@
 "use client";
 
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { BarChart3 as BarIcon, Receipt, TrendingUp, Users, Wallet } from "lucide-react";
 import { api } from "@/lib/apiClient";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
 import { KpiCard } from "@/components/kpi/KpiCard";
 import { PanelCard } from "@/components/ui/Card";
+import { DateInput } from "@/components/ui/DateInput";
 import { LineChart } from "@/components/charts/LineChart";
 import { DonutChart } from "@/components/charts/DonutChart";
 import { BarChart } from "@/components/charts/BarChart";
@@ -21,19 +23,17 @@ const eur = (c: number) => new Intl.NumberFormat("el-GR", { style: "currency", c
 const eur2 = (c: number) => new Intl.NumberFormat("el-GR", { style: "currency", currency: "EUR" }).format((c || 0) / 100);
 const num = (n: number) => new Intl.NumberFormat("el-GR").format(n || 0);
 
-function isoDaysAgo(d: number) {
-  const t = new Date();
-  t.setDate(t.getDate() - d);
-  return t.toISOString();
-}
 const GREETING = () => {
   const h = new Date().getHours();
   return h < 12 ? "Καλημέρα" : h < 18 ? "Καλησπέρα" : "Καλό βράδυ";
 };
 
 export default function DashboardPage() {
-  const to = new Date().toISOString();
-  const from = isoDaysAgo(120);
+  // Date range filter — defaults to year-to-date so the full year's data is visible.
+  const [fromD, setFromD] = useState(() => `${new Date().getFullYear()}-01-01`);
+  const [toD, setToD] = useState(() => new Date().toISOString().slice(0, 10));
+  const from = new Date(`${fromD}T00:00:00.000Z`).toISOString();
+  const to = new Date(`${toD}T23:59:59.999Z`).toISOString();
   const qs = `date_from=${from}&date_to=${to}`;
 
   const summary = useQuery({ queryKey: ["dash", "summary", from, to], queryFn: () => api<Summary>(`/dashboard/summary?${qs}`) });
@@ -57,14 +57,24 @@ export default function DashboardPage() {
   return (
     <ModuleGuard module="dashboard">
       {/* header */}
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold tracking-tight text-slate-900">{GREETING()}! 👋</h1>
-        <p className="mt-1 text-sm text-slate-500">Επισκόπηση φαρμακείου — {dateLabel}</p>
+      <div className="mb-6 flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight text-slate-900">{GREETING()}! 👋</h1>
+          <p className="mt-1 text-sm text-slate-500">Επισκόπηση φαρμακείου — {dateLabel}</p>
+        </div>
+        <div className="flex items-end gap-2">
+          <label className="text-xs text-slate-500">Από
+            <DateInput value={fromD} onChange={setFromD} className="mt-1" />
+          </label>
+          <label className="text-xs text-slate-500">Έως
+            <DateInput value={toD} onChange={setToD} className="mt-1" />
+          </label>
+        </div>
       </div>
 
       {/* KPI row */}
       <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-5">
-        <KpiCard label="Εκτελέσεις (120ημ)" value={num(s?.executions ?? 0)} sub="συνταγές" icon={Receipt} accent="indigo" />
+        <KpiCard label="Εκτελέσεις" value={num(s?.executions ?? 0)} sub="συνταγές περιόδου" icon={Receipt} accent="indigo" />
         <KpiCard label="Αξία συνταγών" value={eur(s?.value ?? 0)} sub="σύνολο περιόδου" icon={BarIcon} accent="violet" />
         <KpiCard label="Αιτούμενα ταμείων" value={eur(s?.claimed ?? 0)} sub="προς ασφ. φορείς" icon={Wallet} accent="amber" />
         <KpiCard label="Μεικτό κέρδος" value={eur(s?.gross_profit ?? 0)} sub="αιτούμενο − χονδρική" icon={TrendingUp} accent="green" />

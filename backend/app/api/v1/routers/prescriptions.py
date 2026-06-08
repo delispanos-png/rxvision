@@ -2,15 +2,30 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from typing import Literal
 
 from fastapi import APIRouter, Depends, Query
 
+from fastapi import HTTPException, status
+
 from app.core.deps import TenantContext, require
 from app.repositories.prescriptions import PrescriptionRepository
 
 router = APIRouter()
+
+
+@router.get("/detail/{external_id}")
+async def execution_detail(
+    external_id: str,
+    ctx: TenantContext = Depends(require("prescriptions:read", module="prescription_analytics")),
+):
+    repo = PrescriptionRepository(tenant_id=ctx.tenant_id)
+    detail = await repo.execution_detail(external_id)
+    if detail is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "execution_not_found")
+    return detail
 
 
 @router.get("")
@@ -20,6 +35,7 @@ async def list_prescriptions(
     fund_id: str | None = None,
     doctor_id: str | None = None,
     icd10: str | None = None,
+    barcode: str | None = None,
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=500),
     ctx: TenantContext = Depends(require("prescriptions:read", module="prescription_analytics")),
@@ -32,8 +48,12 @@ async def list_prescriptions(
         query["doctor_id"] = doctor_id
     if icd10:
         query["icd10"] = icd10
-    items = await repo.find(query, sort=[("executed_at", -1)],
-                            skip=(page - 1) * page_size, limit=page_size)
+    if barcode and barcode.strip():
+        # search by prescription barcode (prefix match); ignore the date window so a
+        # known barcode is found regardless of the selected period.
+        query.pop("executed_at", None)
+        query["external_id"] = {"$regex": "^" + re.escape(barcode.strip())}
+    items = await repo.list_executions(query, skip=(page - 1) * page_size, limit=page_size)
     return {"page": page, "page_size": page_size, "items": items}
 
 

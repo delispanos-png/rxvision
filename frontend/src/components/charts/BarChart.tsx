@@ -34,9 +34,9 @@ export function BarChart({
 
   const option = {
     color: PALETTE,
-    // containLabel lets ECharts auto-size the gutter for the (truncated) labels at any
-    // width, instead of a fixed 120px left that crushed the plot area on mobile.
-    grid: { ...BASE_GRID, containLabel: true },
+    // containLabel lets ECharts reserve exactly the space the (long Greek) category
+    // labels need (auto-sized at any width — no fixed 120px gutter crushing mobile).
+    grid: { ...BASE_GRID, left: horizontal ? 8 : BASE_GRID.left, containLabel: true },
     tooltip: { trigger: "axis", axisPointer: { type: "shadow" } },
     xAxis: horizontal ? val : cat,
     yAxis: horizontal ? { ...cat, inverse: true } : val,

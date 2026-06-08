@@ -206,13 +206,16 @@ class MaintenanceIn(BaseModel):
 # ── platform-level ΗΔΙΚΑ integrator config (CloudOn, shared by all tenants) ──
 _IDIKA_DEFAULTS = {
     "test": "https://testeps.e-prescription.gr/pharmapiv2",
-    "production": "https://eps.e-prescription.gr/pharmapiv2",
+    "production": "https://eps.e-prescription.gr/pharmacistapi",
 }
 
 
 class IdikaEnvIn(BaseModel):
     base_url: str | None = None
-    api_key: str | None = None       # secret → masked on GET, kept on empty (merge)
+    api_key: str | None = None              # TEST sandbox key (secret); prod key is per-pharmacy
+    integrator_username: str | None = None  # TEST sandbox account (Basic auth); prod is per-pharmacy
+    integrator_password: str | None = None  # secret → masked on GET, kept on empty (merge)
+    pharmacy_id: str | None = None          # TEST sandbox pharmacy id (e.g. 11316)
 
 
 class IdikaIn(BaseModel):
@@ -1063,7 +1066,10 @@ async def get_idika(_: PlatformContext = Depends(get_platform_admin)):
     def env(name):
         e = doc.get(name) or {}
         return {"base_url": e.get("base_url") or _IDIKA_DEFAULTS[name],
-                "has_api_key": bool(e.get("api_key"))}
+                "has_api_key": bool(e.get("api_key")),
+                "integrator_username": e.get("integrator_username") or "",
+                "has_integrator_password": bool(e.get("integrator_password")),
+                "pharmacy_id": e.get("pharmacy_id") or ""}
 
     return {"active_environment": doc.get("active_environment", "test"),
             "doctor_ip": doc.get("doctor_ip"),
@@ -1078,8 +1084,13 @@ async def put_idika(body: IdikaIn, _: PlatformContext = Depends(get_platform_adm
            "doctor_ip": body.doctor_ip, "updated_at": datetime.now(tz=timezone.utc)}
     for name, inp in (("test", body.test), ("production", body.production)):
         prev = existing.get(name) or {}
-        api_key = inp.api_key if inp.api_key else prev.get("api_key", "")  # keep on empty
-        doc[name] = {"base_url": inp.base_url or _IDIKA_DEFAULTS[name], "api_key": api_key}
+        api_key = inp.api_key if inp.api_key else prev.get("api_key", "")  # keep secret on empty
+        password = inp.integrator_password if inp.integrator_password else prev.get("integrator_password", "")
+        username = inp.integrator_username if inp.integrator_username is not None else prev.get("integrator_username", "")
+        pharmacy_id = inp.pharmacy_id if inp.pharmacy_id is not None else prev.get("pharmacy_id", "")
+        doc[name] = {"base_url": inp.base_url or _IDIKA_DEFAULTS[name], "api_key": api_key,
+                     "integrator_username": username, "integrator_password": password,
+                     "pharmacy_id": pharmacy_id}
     await db["platform_settings"].update_one({"_id": "idika"}, {"$set": doc}, upsert=True)
     return {"saved": True}
 

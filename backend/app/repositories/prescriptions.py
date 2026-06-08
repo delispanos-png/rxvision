@@ -8,14 +8,107 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from app.repositories.base import BaseRepository
+from bson import ObjectId
+
+from app.repositories.base import BaseRepository, jsonsafe
 
 _GRAIN_FMT = {"day": "%Y-%m-%d", "month": "%Y-%m"}
 _METRIC_FIELD = {"executions": None, "value": "$amount_total", "claimed": "$amount_claimed"}
 
 
+def _oid(v):
+    try:
+        return v if isinstance(v, ObjectId) else ObjectId(str(v))
+    except Exception:  # noqa: BLE001
+        return None
+
+
 class PrescriptionRepository(BaseRepository):
     collection_name = "prescription_executions"
+
+    async def execution_detail(self, external_id: str) -> dict | None:
+        """Full drill-down for one executed prescription: doctor + (anonymised) patient +
+        fund + repeat info + ICD-10 + every medicine line (name/qty/retail/wholesale/margin)."""
+        ex = await self._coll.find_one(self._scope({"external_id": external_id}))
+        if not ex:
+            return None
+        db = self._db
+        async def _get(coll, oid):
+            o = _oid(oid)
+            return await db[coll].find_one({"_id": o}) if o else None
+        doctor = await _get("doctors", ex.get("doctor_id"))
+        fund = await _get("insurance_funds", ex.get("fund_id"))
+        patient = await _get("patients_anonymized", ex.get("patient_ref"))
+        item_docs = await db["prescription_items"].find(
+            {"tenant_id": self.tenant_id, "execution_id": ex["_id"]}).to_list(200)
+        items = []
+        for it in item_docs:
+            prod = await db["products"].find_one({"_id": it.get("product_id")}) if it.get("product_id") else None
+            prod = prod or {}
+            cat = await db["medicine_catalog"].find_one({"barcode": prod.get("barcode")}) if prod.get("barcode") else None
+            cat = cat or {}
+            retail = it.get("retail_price", 0)
+            qty = it.get("quantity", 1)
+            line_total = retail * qty
+            participation = cat.get("participation")  # co-pay % (0/10/25…)
+            # per-line split: what the patient pays vs what the fund reimburses
+            pat_share = round(line_total * (participation or 0) / 100) if participation else 0
+            items.append({
+                "name": prod.get("name"), "barcode": prod.get("barcode"),
+                "substance": cat.get("substance_name"),
+                "category": it.get("category") or prod.get("category"),
+                "quantity": qty,
+                "retail_price": retail,
+                "wholesale_price": it.get("wholesale_price", 0),
+                "margin": it.get("margin", (retail - it.get("wholesale_price", 0))),
+                "participation": participation,
+                "patient_share": pat_share,
+                "fund_share": line_total - pat_share,
+                "is_executed": it.get("is_executed", True),
+            })
+        # ΠΛΗΡΩΤΕΟ ΑΠΟ ΤΑΜΕΙΟ = amount_claimed (fund reimburses); ΑΠΟ ΑΣΦ/ΝΟ = patient_share
+        fund_payable = ex.get("amount_claimed", 0)
+        patient_payable = ex.get("patient_share", 0)
+        out = {
+            "external_id": ex.get("external_id"), "executed_at": ex.get("executed_at"),
+            "status": ex.get("status"), "source": ex.get("source"),
+            "repeat_current": ex.get("repeat_current", 1), "repeat_total": ex.get("repeat_total", 1),
+            "next_open_date": ex.get("next_open_date"),
+            "amount_total": ex.get("amount_total", 0), "amount_claimed": ex.get("amount_claimed", 0),
+            "patient_share": ex.get("patient_share", 0), "wholesale_cost": ex.get("wholesale_cost", 0),
+            "fund_payable": fund_payable, "patient_payable": patient_payable,
+            "icd10": ex.get("icd10", []),
+            "has_unexecuted_substances": ex.get("has_unexecuted_substances", False),
+            "doctor": {"name": (doctor or {}).get("full_name"),
+                       "specialty": (doctor or {}).get("specialty")} if doctor else None,
+            "fund": {"name": (fund or {}).get("name"), "code": (fund or {}).get("code")} if fund else None,
+            "patient": {"sex": (patient or {}).get("sex"), "birth_year": (patient or {}).get("birth_year"),
+                        "area": (patient or {}).get("area")} if patient else None,
+            "items": items,
+        }
+        return jsonsafe(out)
+
+    async def list_executions(self, query: dict, skip: int, limit: int) -> list[dict]:
+        """Executions list enriched like the ΗΔΙΚΑ portal: patient name/AMKA, fund,
+        status + execution case, ICD-10 and amounts."""
+        pipeline = [
+            {"$match": query},
+            {"$sort": {"executed_at": -1}},
+            {"$skip": skip},
+            {"$limit": limit},
+            {"$lookup": {"from": "patients_anonymized", "localField": "patient_ref",
+                         "foreignField": "_id", "as": "p"}},
+            {"$lookup": {"from": "insurance_funds", "localField": "fund_id",
+                         "foreignField": "_id", "as": "f"}},
+            {"$set": {"patient_name": {"$first": "$p.full_name"},
+                      "amka": {"$first": "$p.amka"},
+                      "fund_name": {"$first": "$f.name"}}},
+            {"$project": {"_id": 0, "external_id": 1, "executed_at": 1, "source": 1,
+                          "icd10": 1, "amount_total": 1, "amount_claimed": 1,
+                          "status": 1, "has_unexecuted_substances": 1,
+                          "patient_name": 1, "amka": 1, "fund_name": 1}},
+        ]
+        return await self.aggregate(pipeline)
 
     async def dashboard_summary(self, date_from: datetime, date_to: datetime) -> dict:
         pipeline = [
@@ -30,7 +123,9 @@ class PrescriptionRepository(BaseRepository):
             }},
             {"$project": {
                 "_id": 0, "executions": 1, "value": 1, "claimed": 1,
-                "gross_profit": {"$subtract": ["$claimed", "$cost"]},
+                # gross margin = retail − wholesale (the pharmacy collects full retail
+                # from patient+fund); NOT claimed−cost (claimed is only the fund share).
+                "gross_profit": {"$subtract": ["$value", "$cost"]},
                 "patient_count": {"$size": "$patients"},
             }},
         ]
