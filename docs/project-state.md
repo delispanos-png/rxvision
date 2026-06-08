@@ -3,6 +3,28 @@
 > Living snapshot for session continuity. Update at the end of each work session.
 > Last updated: **2026-06-07**.
 
+## Backlog sweep (2026-06-08) — done vs deferred
+**Cleared this session (all CI-green on `quick-wins`, pushed):**
+- Merge-integrated the concurrent ΗΔΙΚΑ work (8 conflicts resolved) + fixed ruff + a stale test.
+- Responsive QA (real browser, 186 checks) + 2 overflow fixes (`/orders`, `/admin/noeton`).
+- **M2 SSRF guard** on tenant ΗΔΙΚΑ `base_url` (`app/utils/net.py` wired into ingestion) + test.
+- **python-multipart** CVE floor bump (≥0.0.18).
+- **IngestionEngine e2e tests** (persist/pseudonymize/dedup/tenant-scope, mongomock) — audit gap #4.
+
+**Deferred — needs a decision / live env / browser (NOT safe to auto-ship):**
+- `apply_retention` worker — **beat-scheduled nightly + DESTRUCTIVE** (deletes executions beyond
+  `subscription.limits.history_months`). Needs product policy: hard-delete vs archive? grace
+  period? which collections? → must confirm before enabling.
+- `compute_nightly` snapshots — needs aggregation + snapshot schema design + **live** validation
+  (mongomock can't run the pipelines).
+- T-08 MFA enrollment, T-09 per-tenant random pepper — sizeable features (Vault + UX + migration).
+- Billing checkout, myDATA/ΑΑΔΕ, GESY automation, order recompute, export polling — need provider
+  /spec/product decisions.
+- ΗΔΙΚΑ repeat-mapping verification — needs the real ΗΔΙΚΑ spec (other agent's domain).
+- Observability stack, Mongo HA, lockfiles+live `docker compose up` smoke — infra/ops work.
+- T-15b (toast migration, react-hook-form, broad contrast) + seed-data/device QA — need a browser.
+- Next.js ≥14.2.25 / python-jose→PyJWT / Motor→PyMongo — dependency migrations (build-risk).
+
 ## Integration status (2026-06-08)
 The concurrent agent's ΗΔΙΚΑ work landed on `main` (`→ 0a03a9d`: HL7 CDA enrichment,
 per-pharmacy identity, barcode search, DateInput, detail pages). It has now been **merged into
