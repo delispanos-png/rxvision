@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
@@ -44,6 +45,26 @@ type UnexecutedRow = {
   rxs?: { barcode: string; patient?: string | null; date?: string | null }[];
 };
 
+function BarcodeChip({ bc, patient, date }: { bc: string; patient?: string | null; date?: string | null }) {
+  const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
+  const tip = [patient || "", date ? new Date(date).toLocaleString("el-GR", { dateStyle: "medium", timeStyle: "short" }) : ""].filter(Boolean).join(" · ");
+  return (
+    <>
+      <Link href={`/prescriptions/${encodeURIComponent(bc)}`}
+        onMouseEnter={(e) => { const r = e.currentTarget.getBoundingClientRect(); setPos({ x: r.left + r.width / 2, y: r.top }); }}
+        onMouseLeave={() => setPos(null)}
+        className="rounded bg-slate-100 px-1.5 py-0.5 text-xs font-medium text-brand-700 hover:bg-brand-50">
+        {bc}
+      </Link>
+      {pos && tip && typeof document !== "undefined" && createPortal(
+        <span style={{ position: "fixed", left: pos.x, top: pos.y - 6, transform: "translate(-50%, -100%)", zIndex: 9999 }}
+          className="pointer-events-none whitespace-nowrap rounded-lg bg-slate-900 px-2.5 py-1.5 text-xs font-medium text-white shadow-xl">
+          {tip}
+        </span>, document.body)}
+    </>
+  );
+}
+
 const columns: Column<Prescription>[] = [
   { key: "executed_at", header: "Ημ/νία", render: (r) => fmtDate(r.executed_at) },
   { key: "external_id", header: "Κωδικός" },
@@ -72,22 +93,7 @@ const unexecutedColumns: Column<UnexecutedRow>[] = [
       const rxs = r.rxs ?? (r.barcodes ?? []).map((b) => ({ barcode: b }));
       return (
         <div className="flex flex-wrap gap-1.5">
-          {rxs.slice(0, 4).map((x) => {
-            const tip = [x.patient || "", x.date ? new Date(x.date).toLocaleString("el-GR", { dateStyle: "medium", timeStyle: "short" }) : ""].filter(Boolean).join(" · ");
-            return (
-              <span key={x.barcode} className="group relative inline-block">
-                <Link href={`/prescriptions/${encodeURIComponent(x.barcode)}`}
-                  className="rounded bg-slate-100 px-1.5 py-0.5 text-xs font-medium text-brand-700 hover:bg-brand-50">
-                  {x.barcode}
-                </Link>
-                {tip && (
-                  <span className="pointer-events-none absolute bottom-full left-1/2 z-30 mb-1 -translate-x-1/2 whitespace-nowrap rounded-lg bg-slate-900 px-2 py-1 text-xs font-medium text-white opacity-0 shadow-lg transition-opacity duration-100 group-hover:opacity-100">
-                    {tip}
-                  </span>
-                )}
-              </span>
-            );
-          })}
+          {rxs.slice(0, 4).map((x) => <BarcodeChip key={x.barcode} bc={x.barcode} patient={x.patient} date={x.date} />)}
           {rxs.length > 4 && <span className="text-xs text-slate-400">+{rxs.length - 4}</span>}
           {!rxs.length && <span className="text-slate-300">—</span>}
         </div>
