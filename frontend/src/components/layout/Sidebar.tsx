@@ -14,6 +14,7 @@ import {
   LayoutDashboard,
   PackageSearch,
   Settings,
+  Sparkles,
   Stethoscope,
   TrendingUp,
   Users,
@@ -24,6 +25,13 @@ type Item = { href: string; label: string; icon: LucideIcon };
 type Group = { title: string; items: Item[] };
 
 const GROUPS: Group[] = [
+  {
+    title: "Έξυπνοι Σύμβουλοι",
+    items: [
+      { href: "/advisor", label: "Σύμβουλος Επιχείρησης", icon: Sparkles },
+      { href: "/order-advisor", label: "Σύμβουλος Παραγγελίας", icon: Sparkles },
+    ],
+  },
   {
     title: "Αναλυτικά",
     items: [
