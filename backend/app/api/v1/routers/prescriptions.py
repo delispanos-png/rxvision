@@ -28,6 +28,37 @@ async def execution_detail(
     return detail
 
 
+@router.get("/idika/{barcode}")
+async def idika_full_detail(
+    barcode: str,
+    ctx: TenantContext = Depends(require("prescriptions:read", module="prescription_analytics")),
+):
+    """Live, portal-equivalent detail straight from the ΗΔΙΚΑ CDA (on-demand): issue/
+    deadline dates, exemption/opinion/surcharge flags, per-line lot/prices/dosage."""
+    from fastapi.concurrency import run_in_threadpool
+    from app.api.v1.routers.ingestion import _effective_hdika_creds
+    from app.services.ingestion.hdika_client import HdikaClient
+
+    creds = await _effective_hdika_creds(ctx.tenant_id)
+    if not creds:
+        raise HTTPException(status.HTTP_409_CONFLICT, "no_idika_credentials")
+
+    def _fetch() -> dict:
+        client = HdikaClient(creds)
+        try:
+            return client.fetch_cda_full(barcode)
+        finally:
+            try:
+                client.close()
+            except Exception:  # noqa: BLE001
+                pass
+
+    data = await run_in_threadpool(_fetch)
+    if not data:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "idika_fetch_failed")
+    return data
+
+
 @router.get("")
 async def list_prescriptions(
     date_from: datetime = Query(...),

@@ -1,8 +1,9 @@
 "use client";
 
+import { useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowLeft, Repeat, Printer } from "lucide-react";
+import { ArrowLeft, Repeat, Printer, FileText } from "lucide-react";
 import { api } from "@/lib/apiClient";
 import { PanelCard } from "@/components/ui/Card";
 
@@ -36,7 +37,24 @@ type Detail = {
   items: Item[];
 };
 
+type IdikaLine = {
+  name: string; eof_code: string | null; form: string | null; substance: string | null; atc: string | null;
+  is_executed: boolean; dose: string | null; frequency: string | null; duration: string | null; lot: string | null;
+  execution_price: number | null; retail_price: number | null; reference_price: number | null;
+  participation_pct: number | null; patient_share: number | null; difference: number | null;
+  substitution_allowed: boolean; generic: boolean;
+};
+type Idika = {
+  details: {
+    issue_date: string | null; deadline_date: string | null; fund_surcharge: boolean;
+    fund_surcharge_amount: number | null; patient_share_total: number | null; fund_share_total: number | null;
+    exemption: boolean; opinion: boolean;
+  };
+  lines: IdikaLine[];
+};
+
 const eur = (c: number) => new Intl.NumberFormat("el-GR", { style: "currency", currency: "EUR" }).format((c || 0) / 100);
+const eurR = (v: number | null) => (v == null ? "—" : new Intl.NumberFormat("el-GR", { style: "currency", currency: "EUR" }).format(v));
 const dt = (s: string) => new Date(s).toLocaleString("el-GR", { dateStyle: "medium", timeStyle: "short" });
 const sexLabel = (s: string | null) => (s === "M" ? "Άνδρας" : s === "F" ? "Γυναίκα" : "—");
 
@@ -48,6 +66,15 @@ export default function PrescriptionDetailPage() {
     queryKey: ["rx-detail", id],
     queryFn: () => api<Detail>(`/prescriptions/detail/${encodeURIComponent(id)}`),
     retry: false,
+  });
+
+  const [loadIdika, setLoadIdika] = useState(false);
+  const idika = useQuery({
+    queryKey: ["rx-idika", id],
+    queryFn: () => api<Idika>(`/prescriptions/idika/${encodeURIComponent(id)}`),
+    enabled: loadIdika,
+    retry: false,
+    staleTime: 5 * 60 * 1000,
   });
 
   if (isLoading) return <div className="text-slate-400">Φόρτωση…</div>;
@@ -167,6 +194,69 @@ export default function PrescriptionDetailPage() {
           </table>
         </div>
       </PanelCard>
+
+      {/* full portal-style detail, fetched live from ΗΔΙΚΑ on demand */}
+      <PanelCard title="Πλήρη στοιχεία ΗΔΙΚΑ">
+        {!loadIdika ? (
+          <div className="flex flex-col items-start gap-2">
+            <p className="text-sm text-slate-500">Φέρε ζωντανά από την ΗΔΙΚΑ όλες τις λεπτομέρειες της εκτέλεσης (ημερομηνίες, ταινία γνησιότητας, δοσολογία, τιμές αναφοράς, απαλλαγή/γνωμάτευση).</p>
+            <button onClick={() => setLoadIdika(true)} className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 print:hidden">
+              <FileText className="h-4 w-4" /> Φόρτωση από ΗΔΙΚΑ
+            </button>
+          </div>
+        ) : idika.isLoading ? (
+          <div className="py-6 text-center text-sm text-slate-400">Άντληση από ΗΔΙΚΑ…</div>
+        ) : idika.isError || !idika.data ? (
+          <div className="py-4 text-sm text-rose-600">Αποτυχία άντλησης από ΗΔΙΚΑ. <button onClick={() => idika.refetch()} className="underline">Δοκίμασε ξανά</button></div>
+        ) : (
+          <div className="space-y-5">
+            {/* general */}
+            <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm sm:grid-cols-3 lg:grid-cols-4">
+              <Field label="Ημ/νία έκδοσης" value={idika.data.details.issue_date} />
+              <Field label="Προθεσμία εκτέλεσης" value={idika.data.details.deadline_date} />
+              <Field label="Επιβάρυνση 1€" value={idika.data.details.fund_surcharge ? "Ναι" : "Όχι"} />
+              <Field label="Απαλλαγή συμμετοχής" value={idika.data.details.exemption ? "Ναι" : "Όχι"} />
+              <Field label="Γνωμάτευση" value={idika.data.details.opinion ? "Ναι" : "Όχι"} />
+              <Field label="Συμμετοχή ασθενή (σύν.)" value={eurR(idika.data.details.patient_share_total)} />
+              <Field label="Από ταμείο (σύν.)" value={eurR(idika.data.details.fund_share_total)} />
+            </div>
+            {/* per-line */}
+            <div className="space-y-3">
+              {idika.data.lines.map((ln, i) => (
+                <div key={i} className="rounded-xl border border-slate-200 p-4">
+                  <div className="mb-2 flex flex-wrap items-center gap-2">
+                    <span className="font-semibold text-slate-800">{ln.name}</span>
+                    {ln.atc && <span className="text-[10px] text-slate-400">{ln.atc}</span>}
+                    <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${ln.is_executed ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>{ln.is_executed ? "Εκτελέστηκε" : "Δεν εκτελέστηκε"}</span>
+                    {ln.generic && <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-medium text-sky-700">Γενόσημο</span>}
+                  </div>
+                  <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 text-sm sm:grid-cols-3 lg:grid-cols-4">
+                    <Field label="Δραστική" value={ln.substance} />
+                    <Field label="Μορφή" value={ln.form} />
+                    <Field label="Δοσολογία" value={[ln.dose, ln.frequency && `ανά ${ln.frequency}`, ln.duration && `για ${ln.duration}`].filter(Boolean).join(" · ") || null} />
+                    <Field label="Ταινία γνησιότητας" value={ln.lot} />
+                    <Field label="Τιμή εκτέλεσης" value={eurR(ln.execution_price)} />
+                    <Field label="Τιμή λιανικής" value={eurR(ln.retail_price)} />
+                    <Field label="Τιμή αναφοράς" value={eurR(ln.reference_price)} />
+                    <Field label="Συμμετοχή %" value={ln.participation_pct != null ? `${ln.participation_pct}%` : null} />
+                    <Field label="Διαφορά" value={eurR(ln.difference)} />
+                    <Field label="Αντικατάσταση" value={ln.substitution_allowed ? "Επιτρέπεται" : "Όχι"} />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </PanelCard>
+    </div>
+  );
+}
+
+function Field({ label, value }: { label: string; value: string | null | undefined }) {
+  return (
+    <div>
+      <div className="text-xs text-slate-400">{label}</div>
+      <div className="font-medium text-slate-800">{value || "—"}</div>
     </div>
   );
 }

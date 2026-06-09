@@ -210,6 +210,29 @@ class HdikaClient:
             break
         return {}
 
+    def fetch_cda_full(self, barcode: str) -> dict:
+        """Like _fetch_cda but returns the RICH portal-style detail (parse_cda_full):
+        issue/deadline dates, flags, per-line lot/prices/dosage. For on-demand viewing."""
+        from app.services.ingestion.hdika_cda import parse_cda_full
+        if not barcode:
+            return {}
+        params = {"pharmacyId": self.pharmacy_id} if self.pharmacy_id else {}
+        for attempt in range(3):
+            try:
+                r = self._client.get(self._url(f"/api/v1/prescriptions/get/{barcode}"),
+                                     params=params, headers={"Accept": "application/x-hl7"})
+                if r.status_code == 200 and r.text.lstrip().startswith("<?xml"):
+                    return parse_cda_full(r.text)
+                if r.status_code in (429, 500, 502, 503, 504) and attempt < 2:
+                    time.sleep(0.4 * (attempt + 1))
+                    continue
+            except Exception:  # noqa: BLE001
+                if attempt < 2:
+                    time.sleep(0.4 * (attempt + 1))
+                    continue
+            break
+        return {}
+
     def _prescription_index(self, start, end) -> dict:
         """barcode → prescription summary (executions=total repeats, expiryDate) from
         /prescriptions/search over the range. Cheap (one paged sweep) and gives the

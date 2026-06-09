@@ -150,3 +150,132 @@ def parse_cda(text: str) -> dict:
     if highs:
         out["valid_until"] = max(highs)  # YYYYMMDD
     return out
+
+
+# ── full portal-style detail (on-demand) ─────────────────────────────────────
+def _id_map(el) -> dict:
+    """root → extension (first occurrence) for all <id> under `el`."""
+    out: dict = {}
+    for idel in _iter(el, "id"):
+        r, ext = idel.get("root"), idel.get("extension")
+        if r and ext is not None and r not in out:
+            out[r] = ext
+    return out
+
+
+def _date(v):
+    v = (v or "")[:8]
+    return f"{v[6:8]}/{v[4:6]}/{v[0:4]}" if len(v) == 8 and v.isdigit() else None
+
+
+def _dt(v):
+    v = v or ""
+    if len(v) >= 12 and v[:12].isdigit():
+        return f"{v[6:8]}/{v[4:6]}/{v[0:4]} {v[8:10]}:{v[10:12]}"
+    return _date(v)
+
+
+def _flag(v) -> bool:
+    return str(v).strip() in ("1", "true", "True")
+
+
+def _num(v):
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def parse_cda_full(text: str) -> dict:
+    """Rich, portal-equivalent view of one eDispensation CDA: issue/deadline dates,
+    exemption/opinion/surcharge flags, and per-line lot/prices/dosage/participation.
+    Builds on parse_cda() (patient/doctor/icd10) and never raises."""
+    out: dict = {**parse_cda(text), "details": {}, "lines": []}
+    try:
+        root = ET.fromstring(text.encode("utf-8") if isinstance(text, str) else text)
+    except ET.ParseError:
+        return out
+
+    # prescription-level act = first <act> whose effectiveTime <low> has a real value
+    presc = None
+    for act in _iter(root, "act"):
+        et = _first(act, "effectiveTime")
+        low = _first(et, "low") if et is not None else None
+        if low is not None and low.get("value"):
+            presc = act
+            break
+    if presc is not None:
+        ids = _id_map(presc)
+        et = _first(presc, "effectiveTime")
+        low = _first(et, "low") if et is not None else None
+        high = _first(et, "high") if et is not None else None
+        out["details"] = {
+            "issue_date": _date(low.get("value")) if low is not None else None,
+            "deadline_date": _date(high.get("value")) if high is not None else None,
+            "fund_surcharge": _flag(ids.get("1.1.22.1")),
+            "fund_surcharge_amount": _num(ids.get("1.1.22")),
+            "patient_share_total": _num(ids.get("1.1.2.4")),
+            "fund_share_total": _num(ids.get("1.1.2.5")),
+            "exemption": _flag(ids.get("1.1.26")),
+            "opinion": _flag(ids.get("1.1.23")),
+        }
+
+    # per-line: each top-level <entry> that carries a product (medicine line)
+    for sup in _iter(root, "entry"):
+        mm = _first(sup, "manufacturedMaterial")
+        if mm is None:
+            continue
+        ids = _id_map(sup)
+        code = _first(mm, "code")
+        name = _first(mm, "name")
+        form = _first(mm, "formCode")
+        # active substance (last ingredient code/name)
+        sub_name = sub_atc = None
+        for ing in _iter(mm, "ingredient"):
+            c = _first(ing, "code")
+            if c is not None and c.get("code"):
+                sub_atc = c.get("code")
+                nm = _first(ing, "name")
+                sub_name = (nm.text.strip() if nm is not None and nm.text else c.get("displayName"))
+        lot = _first(mm, "lotNumberText")
+        sa = _first(sup, "substanceAdministration")
+        executed = True
+        dose = freq = duration = None
+        if sa is not None:
+            sc = _first(sa, "statusCode")
+            executed = ((sc.get("code") if sc is not None else "completed") or "").lower() == "completed"
+            dq = _first(sa, "doseQuantity")
+            if dq is not None:
+                lo = _first(dq, "low")
+                if lo is not None:
+                    dose = f"{lo.get('value')} {lo.get('unit') or ''}".strip()
+            for et2 in _iter(sa, "effectiveTime"):
+                if et2.get("{http://www.w3.org/2001/XMLSchema-instance}type") == "PIVL_TS" or _first(et2, "period") is not None:
+                    per = _first(et2, "period")
+                    if per is not None:
+                        freq = f"{per.get('value')} {per.get('unit') or ''}".strip()
+            rq = _first(sa, "rateQuantity")
+            if rq is not None:
+                lo = _first(rq, "low")
+                if lo is not None:
+                    duration = f"{lo.get('value')} {lo.get('unit') or ''}".strip()
+        out["lines"].append({
+            "name": (name.text.strip() if name is not None and name.text
+                     else (code.get("displayName") if code is not None else "Φάρμακο")),
+            "eof_code": code.get("code") if code is not None else None,
+            "form": (form.get("displayName") if form is not None else None),
+            "substance": sub_name,
+            "atc": sub_atc,
+            "is_executed": executed,
+            "dose": dose, "frequency": freq, "duration": duration,
+            "lot": (lot.text.strip() if lot is not None and lot.text else ids.get("2.10.12")),
+            "execution_price": _num(ids.get("2.10.9")),
+            "retail_price": _num(ids.get("2.10.11")),
+            "reference_price": _num(ids.get("2.10.10")),
+            "participation_pct": _num(ids.get("1.4.18")),
+            "patient_share": _num(ids.get("1.4.20")),
+            "difference": _num(ids.get("1.4.21")),
+            "substitution_allowed": _flag(ids.get("1.4.23")),
+            "generic": _flag(ids.get("1.9.6.2")),
+        })
+    return out
