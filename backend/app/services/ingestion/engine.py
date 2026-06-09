@@ -56,6 +56,7 @@ class IngestionEngine:
         if window and window[0] and window[1]:
             span = abs((window[1] - window[0]).total_seconds()) or None
         first_cursor: object = None
+        cancelled = False
         await self.db["sync_jobs"].insert_one({
             "_id": job_id, "tenant_id": self.tenant_id, "source": source, "type": job_type,
             "status": "running", "cursor": {}, "stats": stats, "attempts": 1,
@@ -88,13 +89,17 @@ class IngestionEngine:
                     if span and first_cursor is not None:
                         upd["progress"] = min(1.0, abs((cur - first_cursor).total_seconds()) / span)
                 await self.db["sync_jobs"].update_one({"_id": job_id}, {"$set": upd})
+                # cooperative stop: the API sets cancel_requested on this running job
+                j = await self.db["sync_jobs"].find_one({"_id": job_id}, {"cancel_requested": 1})
+                if j and j.get("cancel_requested"):
+                    cancelled = True
+                    break
 
-        status = "success" if not errors else "partial"
-        await self.db["sync_jobs"].update_one(
-            {"_id": job_id},
-            {"$set": {"status": status, "stats": stats, "errors": errors[:200],
-                      "progress": 1.0, "finished_at": _now()}},
-        )
+        status = "cancelled" if cancelled else ("success" if not errors else "partial")
+        final = {"status": status, "stats": stats, "errors": errors[:200], "finished_at": _now()}
+        if not cancelled:
+            final["progress"] = 1.0
+        await self.db["sync_jobs"].update_one({"_id": job_id}, {"$set": final})
         job = await self.db["sync_jobs"].find_one({"_id": job_id})
         job["_id"] = str(job["_id"])
         return job

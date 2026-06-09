@@ -258,6 +258,33 @@ async def trigger_hdika_backfill(
     return {"status": "queued"}
 
 
+@router.post("/hdika/sync/stop", status_code=202)
+async def stop_hdika_sync(
+    ctx: TenantContext = Depends(require("ingestion:run", module=_MODULE)),
+):
+    """Cooperative stop: flag every running ΗΔΙΚΑ job so the worker breaks at its next
+    checkpoint (≈ every 20 records) and marks itself 'cancelled'."""
+    res = await shared_db()["sync_jobs"].update_many(
+        {"tenant_id": ctx.tenant_id, "status": "running"},
+        {"$set": {"cancel_requested": True}})
+    return {"status": "stopping", "jobs": res.modified_count}
+
+
+@router.delete("/hdika/data")
+async def delete_hdika_data(
+    date_from: str = Query(..., description="YYYY-MM-DD"),
+    date_to: str = Query(..., description="YYYY-MM-DD (inclusive)"),
+    ctx: TenantContext = Depends(require("ingestion:run", module=_MODULE)),
+):
+    """Hard-delete executions + items + derived future-prescriptions in a date range so the
+    operator can re-ingest that period cleanly. Destructive — the UI double-confirms."""
+    from app.repositories.prescriptions import PrescriptionRepository
+    df = datetime.fromisoformat(f"{date_from}T00:00:00+00:00")
+    dt = datetime.fromisoformat(f"{date_to}T00:00:00+00:00") + timedelta(days=1)
+    result = await PrescriptionRepository(tenant_id=ctx.tenant_id).delete_range(df, dt)
+    return {"status": "deleted", **result}
+
+
 # ── ΓΕΣΥ (Cyprus) — step 2, gated to CY tenants ────────────
 @router.post("/gesy/upload", status_code=202)
 async def upload_gesy(

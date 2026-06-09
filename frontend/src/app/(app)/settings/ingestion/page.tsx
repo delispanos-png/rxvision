@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { DateInput } from "@/components/ui/DateInput";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { CheckCircle2, Link2, Loader2, PlugZap, RefreshCw, ShieldCheck, XCircle } from "lucide-react";
+import { CheckCircle2, Link2, Loader2, PlugZap, RefreshCw, ShieldCheck, XCircle, Square, Trash2 } from "lucide-react";
 import { api } from "@/lib/apiClient";
 import { PanelCard } from "@/components/ui/Card";
 
@@ -138,6 +138,8 @@ export default function IngestionSettingsPage() {
   // historical download for a chosen date range
   const [dlFrom, setDlFrom] = useState(`${new Date().getFullYear()}-01-01`);
   const [dlTo, setDlTo] = useState(new Date().toISOString().slice(0, 10));
+  const [delFrom, setDelFrom] = useState(`${new Date().getFullYear()}-01-01`);
+  const [delTo, setDelTo] = useState(new Date().toISOString().slice(0, 10));
   const backfillRange = useMutation({
     mutationFn: () => api("/ingestion/hdika/backfill?date_from=" + dlFrom + "&date_to=" + dlTo, { method: "POST" }),
     onSuccess: () => {
@@ -145,6 +147,17 @@ export default function IngestionSettingsPage() {
       setSyncing(true);
       qc.invalidateQueries({ queryKey: ["ingestion-jobs"] });
     },
+  });
+
+  const stopSync = useMutation({
+    mutationFn: () => api<{ jobs: number }>("/ingestion/hdika/sync/stop", { method: "POST" }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["ingestion-jobs"] }),
+  });
+
+  const deleteRange = useMutation({
+    mutationFn: () => api<{ executions: number; items: number; future: number }>(
+      `/ingestion/hdika/data?date_from=${delFrom}&date_to=${delTo}`, { method: "DELETE" }),
+    onSuccess: () => qc.invalidateQueries(),
   });
 
   if (country === "CY") {
@@ -203,6 +216,34 @@ export default function IngestionSettingsPage() {
         </button>
       </div>
 
+      {/* delete a date range (destructive — double confirm) */}
+      <div className="rounded-2xl border border-rose-200 bg-rose-50/40 p-4">
+        <div className="flex flex-wrap items-end gap-3">
+          <div className="mr-auto">
+            <div className="text-sm font-semibold text-rose-800">Διαγραφή δεδομένων (περίοδος)</div>
+            <div className="text-xs text-rose-500">Σβήνει ΟΡΙΣΤΙΚΑ εκτελέσεις + γραμμές + μελλοντικές αυτού του διαστήματος (για καθαρό re-ingest).</div>
+          </div>
+          <label className="text-xs text-slate-500">Από<DateInput value={delFrom} onChange={setDelFrom} className="mt-1 w-40" /></label>
+          <label className="text-xs text-slate-500">Έως<DateInput value={delTo} onChange={setDelTo} className="mt-1 w-40" /></label>
+          <button
+            onClick={() => {
+              if (!delFrom || !delTo) return;
+              if (!confirm(`Οριστική διαγραφή ΟΛΩΝ των δεδομένων ${delFrom} → ${delTo};`)) return;
+              if (!confirm("Σίγουρα; Η ενέργεια ΔΕΝ αναιρείται.")) return;
+              deleteRange.mutate();
+            }}
+            disabled={deleteRange.isPending || syncing || !delFrom || !delTo}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-rose-300 bg-white px-3 py-2 text-sm font-medium text-rose-700 hover:bg-rose-50 disabled:opacity-40">
+            {deleteRange.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />} Διαγραφή περιόδου
+          </button>
+        </div>
+        {deleteRange.isSuccess && deleteRange.data && (
+          <div className="mt-2 text-xs font-medium text-rose-700">
+            Διαγράφηκαν: {deleteRange.data.executions} εκτελέσεις · {deleteRange.data.items} γραμμές · {deleteRange.data.future} μελλοντικές.
+          </div>
+        )}
+      </div>
+
       {/* live sync progress — real % bar driven by how much of the date range is done */}
       {showProgress && (() => {
         const pct = Math.max(0, Math.min(100, Math.round((latestJob?.progress ?? 0) * 100)));
@@ -217,7 +258,15 @@ export default function IngestionSettingsPage() {
                   : "Εκκίνηση συγχρονισμού…"}
                 {known && <span className="ml-1 font-bold text-brand-700">{pct}%</span>}
               </span>
-              <span className="text-slate-500">{(latestJob?.stats?.fetched ?? 0)} συνταγές · {(latestJob?.stats?.inserted ?? 0)} νέες · {(latestJob?.stats?.updated ?? 0)} ενημ.</span>
+              <span className="inline-flex items-center gap-3">
+                <span className="text-slate-500">{(latestJob?.stats?.fetched ?? 0)} συνταγές · {(latestJob?.stats?.inserted ?? 0)} νέες · {(latestJob?.stats?.updated ?? 0)} ενημ.</span>
+                {jobRunning && (
+                  <button onClick={() => stopSync.mutate()} disabled={stopSync.isPending}
+                    className="inline-flex items-center gap-1 rounded-lg border border-rose-300 bg-rose-50 px-2.5 py-1 text-xs font-medium text-rose-700 hover:bg-rose-100 disabled:opacity-50">
+                    {stopSync.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Square className="h-3.5 w-3.5" />} {stopSync.isSuccess ? "Διακόπτεται…" : "Σταμάτημα"}
+                  </button>
+                )}
+              </span>
             </div>
             <div className="h-2.5 w-full overflow-hidden rounded-full bg-slate-200">
               <div

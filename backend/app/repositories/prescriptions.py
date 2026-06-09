@@ -162,6 +162,21 @@ class PrescriptionRepository(BaseRepository):
             g["is_group"] = len(g["funds"]) > 1
         return sorted(groups.values(), key=lambda x: -x["value"])
 
+    async def delete_range(self, date_from: datetime, date_to: datetime) -> dict:
+        """Hard-delete all executions (+ their items + derived future prescriptions) whose
+        executed_at falls in [date_from, date_to). Tenant-scoped. Destructive — used by the
+        Settings 'delete a period' action so the operator can re-ingest cleanly."""
+        q = {"executed_at": {"$gte": date_from, "$lt": date_to}}
+        ids = [e["_id"] async for e in self._coll.find(self._scope(q), {"_id": 1})]
+        db = self._db
+        fut = await db["future_prescriptions"].delete_many(
+            {"tenant_id": self.tenant_id, "source_execution_id": {"$in": ids}})
+        items = await db["prescription_items"].delete_many(
+            {"tenant_id": self.tenant_id, "executed_at": {"$gte": date_from, "$lt": date_to}})
+        execs = await self._coll.delete_many(self._scope(q))
+        return {"executions": execs.deleted_count, "items": items.deleted_count,
+                "future": fut.deleted_count}
+
     async def dashboard_summary(self, date_from: datetime, date_to: datetime) -> dict:
         pipeline = [
             {"$match": {"executed_at": {"$gte": date_from, "$lt": date_to}}},
