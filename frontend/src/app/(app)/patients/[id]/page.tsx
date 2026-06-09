@@ -5,6 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { ArrowLeft } from "lucide-react";
 import { api } from "@/lib/apiClient";
 import { PanelCard } from "@/components/ui/Card";
+import { ContactCard } from "@/components/patients/ContactCard";
 
 type Med = { name: string | null; barcode: string | null; substance: string | null; atc: string | null; category: string | null; times: number; value: number };
 type Icd = { code: string; count: number; title?: string | null };
@@ -71,6 +72,8 @@ export default function PatientDetailPage() {
           </div>
         ))}
       </div>
+
+      <ContactCard patientId={id} />
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <PanelCard title="Διαγνώσεις (ICD-10)">

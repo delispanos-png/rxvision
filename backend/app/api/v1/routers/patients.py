@@ -7,12 +7,47 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
+from pydantic import BaseModel, Field
+
 from app.core.deps import TenantContext, require
+from app.repositories.contacts import PatientContactRepository
 from app.repositories.patients import PatientExecutionsRepository, PatientRepository
 
 router = APIRouter()
 
 _MODULE = "patient_analytics"
+
+
+class ContactIn(BaseModel):
+    phone: str | None = None
+    mobile: str | None = None
+    email: str | None = None
+    address: str | None = None
+    city: str | None = None
+    postal_code: str | None = None
+    notes: str | None = None
+    marketing_consent: bool = False
+    preferred_channel: str | None = Field(default=None, description="email|sms|phone")
+
+
+@router.get("/{patient_id}/contact")
+async def get_contact(
+    patient_id: str,
+    ctx: TenantContext = Depends(require("patients:read", module=_MODULE)),
+):
+    return await PatientContactRepository(tenant_id=ctx.tenant_id).get(patient_id) or {}
+
+
+@router.put("/{patient_id}/contact")
+async def put_contact(
+    patient_id: str,
+    body: ContactIn,
+    ctx: TenantContext = Depends(require("patients:read", module=_MODULE)),
+):
+    saved = await PatientContactRepository(tenant_id=ctx.tenant_id).upsert(patient_id, body.model_dump())
+    if saved is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "patient_not_found")
+    return saved
 
 
 @router.get("/detail/{patient_id}")
