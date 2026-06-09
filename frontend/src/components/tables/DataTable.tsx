@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
 
 export type Column<T> = {
@@ -16,6 +16,11 @@ export type Column<T> = {
    *  2-col label/value grid. Use for action-button columns so they don't overflow
    *  the half-width value cell on phones (R-2). */
   fullWidthOnMobile?: boolean;
+  /** Allow clicking the header to sort by this column (default true). */
+  sortable?: boolean;
+  /** Value used for sorting (defaults to row[key]). Use when the cell renders
+   *  a computed/formatted value but you want to sort by the raw number/string. */
+  sortValue?: (row: T) => string | number | null | undefined;
 };
 
 const alignCls = (a?: string) =>
@@ -45,14 +50,39 @@ export function DataTable<T extends Record<string, unknown>>({
   const cell = (c: Column<T>, row: T): ReactNode =>
     c.render ? c.render(row) : String(row[c.key] ?? "");
 
-  const paginated = !!pageSize && pageSize > 0 && rows.length > pageSize;
+  // click-to-sort (client-side, by raw value or a column's sortValue)
+  const [sort, setSort] = useState<{ key: string; dir: "asc" | "desc" } | null>(null);
+  const sortVal = (c: Column<T>, row: T) =>
+    c.sortValue ? c.sortValue(row) : (row[c.key] as string | number | null | undefined);
+  const sortedRows = useMemo(() => {
+    if (!sort) return rows;
+    const col = columns.find((c) => c.key === sort.key);
+    if (!col) return rows;
+    const dir = sort.dir === "asc" ? 1 : -1;
+    return [...rows].sort((a, b) => {
+      const va = sortVal(col, a), vb = sortVal(col, b);
+      if (va == null) return 1;
+      if (vb == null) return -1;
+      if (typeof va === "number" && typeof vb === "number") return (va - vb) * dir;
+      return String(va).localeCompare(String(vb), "el") * dir;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows, sort, columns]);
+  const toggleSort = (c: Column<T>) => {
+    if (c.sortable === false) return;
+    setSort((s) => s && s.key === c.key
+      ? (s.dir === "asc" ? { key: c.key, dir: "desc" } : null)
+      : { key: c.key, dir: "asc" });
+  };
+
+  const paginated = !!pageSize && pageSize > 0 && sortedRows.length > pageSize;
   const [page, setPage] = useState(1);
-  useEffect(() => { setPage(1); }, [rows.length]);
-  const totalPages = paginated ? Math.ceil(rows.length / (pageSize as number)) : 1;
+  useEffect(() => { setPage(1); }, [rows.length, sort]);
+  const totalPages = paginated ? Math.ceil(sortedRows.length / (pageSize as number)) : 1;
   const safePage = Math.min(page, totalPages);
   const pageRows = paginated
-    ? rows.slice((safePage - 1) * (pageSize as number), safePage * (pageSize as number))
-    : rows;
+    ? sortedRows.slice((safePage - 1) * (pageSize as number), safePage * (pageSize as number))
+    : sortedRows;
 
   if (rows.length === 0) {
     return (
@@ -79,11 +109,22 @@ export function DataTable<T extends Record<string, unknown>>({
         <table className="min-w-full divide-y divide-slate-200 text-sm">
           <thead className="bg-slate-50">
             <tr>
-              {columns.map((c) => (
-                <th key={c.key} className={`px-4 py-3 font-medium text-slate-500 ${alignCls(c.align)}`}>
-                  {c.header}
-                </th>
-              ))}
+              {columns.map((c) => {
+                const canSort = c.sortable !== false && !!c.header;
+                const active = sort?.key === c.key;
+                return (
+                  <th
+                    key={c.key}
+                    onClick={canSort ? () => toggleSort(c) : undefined}
+                    className={`px-4 py-3 font-medium text-slate-500 ${alignCls(c.align)} ${canSort ? "cursor-pointer select-none hover:text-slate-700" : ""}`}
+                  >
+                    <span className={`inline-flex items-center gap-1 ${c.align === "right" ? "flex-row-reverse" : ""}`}>
+                      {c.header}
+                      {active && <span className="text-brand-600">{sort?.dir === "asc" ? "▲" : "▼"}</span>}
+                    </span>
+                  </th>
+                );
+              })}
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
