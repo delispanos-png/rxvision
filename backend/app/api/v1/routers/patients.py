@@ -30,6 +30,14 @@ class ContactIn(BaseModel):
     preferred_channel: str | None = Field(default=None, description="email|sms|phone")
 
 
+@router.get("/search")
+async def search_patients(
+    q: str = Query(..., min_length=2),
+    ctx: TenantContext = Depends(require("patients:read", module=_MODULE)),
+):
+    return {"items": await PatientExecutionsRepository(tenant_id=ctx.tenant_id).search(q)}
+
+
 @router.get("/{patient_id}/contact")
 async def get_contact(
     patient_id: str,

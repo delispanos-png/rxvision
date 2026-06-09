@@ -5,9 +5,10 @@ Reads only from patients_anonymized (no PII). Tenant-scoped by construction.
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 
-from app.repositories.base import BaseRepository
+from app.repositories.base import BaseRepository, jsonsafe
 
 _DIM_FIELD = {
     "age_group": "$age_group",
@@ -103,6 +104,35 @@ class PatientExecutionsRepository(BaseRepository):
                           "age_group": 1, "sex": 1, "area": 1, "lifecycle": 1}},
         ]
         return await self.aggregate(pipeline)
+
+    async def search(self, q: str, limit: int = 25) -> list[dict]:
+        """Find patients by name / ΑΜΚΑ / phone / email (any stored detail)."""
+        db = self._db
+        rx = {"$regex": re.escape(q.strip()), "$options": "i"}
+        ids = set()
+        async for d in db["patients_anonymized"].find(
+                self._scope({"$or": [{"full_name": rx}, {"amka": rx}]}), {"_id": 1}).limit(60):
+            ids.add(d["_id"])
+        async for d in db["patient_contacts"].find(
+                {"tenant_id": self.tenant_id, "$or": [{"mobile": rx}, {"phone": rx}, {"email": rx}]},
+                {"_id": 1}).limit(60):
+            ids.add(d["_id"])
+        if not ids:
+            return []
+        rows = await db["patients_anonymized"].aggregate([
+            {"$match": {"_id": {"$in": list(ids)}, "tenant_id": self.tenant_id}},
+            {"$lookup": {"from": "patient_contacts", "localField": "_id",
+                         "foreignField": "_id", "as": "ct"}},
+            {"$set": {"ct": {"$first": "$ct"}}},
+            {"$project": {"_id": 0, "patient_id": {"$toString": "$_id"},
+                          "name": "$full_name", "amka": 1, "age_group": 1, "sex": 1, "birth_year": 1,
+                          "last_seen": "$last_seen_at", "rx_count": 1,
+                          "mobile": "$ct.mobile", "phone": "$ct.phone", "email": "$ct.email",
+                          "consent": {"$ifNull": ["$ct.marketing_consent", False]}}},
+            {"$sort": {"last_seen": -1}},
+            {"$limit": limit},
+        ]).to_list(length=None)
+        return jsonsafe(rows)
 
     async def patient_detail(self, patient_id: str) -> dict | None:
         """Drill-down for one patient: profile + every therapeutic category / ICD-10 /

@@ -13,6 +13,7 @@ import {
   ClipboardCheck,
   LayoutDashboard,
   Mail,
+  Salad,
   PackageSearch,
   Settings,
   Sparkles,
@@ -31,6 +32,7 @@ const GROUPS: Group[] = [
     items: [
       { href: "/advisor", label: "Σύμβουλος Επιχείρησης", icon: Sparkles },
       { href: "/order-advisor", label: "Σύμβουλος Παραγγελίας", icon: Sparkles },
+      { href: "/nutrition", label: "Σύμβουλος Διατροφής", icon: Salad },
     ],
   },
   {

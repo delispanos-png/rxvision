@@ -78,6 +78,75 @@ CROSS_SELL = [
      "why": "Διαχείριση χρόνιου πόνου & ποιότητα ύπνου."},
 ]
 
+# Nutrition knowledge base: ATC prefix → personalised dietary advice for the patient,
+# to improve treatment outcomes. Curated, conservative, GR-friendly.
+NUTRITION = [
+    {"atc": "C10AA", "title": "Στατίνες (χοληστερόλη)",
+     "favor": "Λιπαρά ψάρια 2×/εβδ. (Ω-3), βρώμη, όσπρια, ανάλατοι ξηροί καρποί, ελαιόλαδο, λαχανικά",
+     "avoid": "Γκρέιπφρουτ & χυμός του (αλληλεπίδραση), κορεσμένα/τηγανητά, υπερβολικό αλκοόλ",
+     "why": "Ενισχύεις τη μείωση χοληστερόλης και στηρίζεις τους μυς."},
+    {"atc": "B01AA", "title": "Αντιπηκτικά (βαρφαρίνη)",
+     "favor": "Σταθερή ημερήσια ποσότητα πράσινων φυλλωδών — χωρίς αυξομειώσεις",
+     "avoid": "Απότομες αλλαγές σε σπανάκι/μπρόκολο, cranberry σε υπερβολή, αλκοόλ",
+     "why": "Η σταθερή βιταμίνη K κρατά σταθερό το INR."},
+    {"atc": "A10", "title": "Αντιδιαβητικά / Σακχαρώδης διαβήτης",
+     "favor": "Σύνθετοι υδατάνθρακες, φυτικές ίνες, λαχανικά, καλή πρωτεΐνη, τακτικά γεύματα",
+     "avoid": "Ζάχαρη/γλυκά, αναψυκτικά, λευκό ψωμί, υπερβολικό αλκοόλ",
+     "why": "Σταθεροποιείς το σάκχαρο και μειώνεις υπογλυκαιμίες."},
+    {"atc": "C09", "title": "Αντιυπερτασικά (ΜΕΑ/ARB)",
+     "favor": "Δίαιτα DASH: λαχανικά, φρούτα, κάλιο (μπανάνα, ντομάτα), χαμηλά λιπαρά",
+     "avoid": "Αλάτι/αλμυρά, υποκατάστατα αλατιού με κάλιο, γλυκόριζα",
+     "why": "Ρίχνεις την πίεση φυσικά & ενισχύεις τη θεραπεία."},
+    {"atc": "C03", "title": "Διουρητικά",
+     "favor": "Τρόφιμα με κάλιο & μαγνήσιο (λαχανικά, ξηροί καρποί), καλή ενυδάτωση",
+     "avoid": "Υπερβολικό αλάτι, αφυδάτωση", "why": "Αναπληρώνεις ηλεκτρολύτες που χάνονται."},
+    {"atc": "A02BC", "title": "Αναστολείς αντλίας πρωτονίων (PPI)",
+     "favor": "Τρόφιμα με μαγνήσιο/B12/ασβέστιο, μικρά & συχνά γεύματα",
+     "avoid": "Καφεΐνη, πικάντικα, λιπαρά, αλκοόλ, όψιμο βραδινό",
+     "why": "Καλύπτεις ελλείψεις & μειώνεις την παλινδρόμηση."},
+    {"atc": "H03AA", "title": "Λεβοθυροξίνη (θυρεοειδής)",
+     "favor": "Λήψη με άδειο στομάχι· σελήνιο (καρύδια Βραζιλίας)",
+     "avoid": "Σόγια, ασβέστιο/σίδηρο & καφές κοντά στη δόση",
+     "why": "Μεγιστοποιείς την απορρόφηση της ορμόνης."},
+    {"atc": "M05B", "title": "Οστεοπόρωση",
+     "favor": "Ασβέστιο (γαλακτοκομικά, σαρδέλες) + βιταμίνη D, καλή πρωτεΐνη",
+     "avoid": "Υπερβολική καφεΐνη/αναψυκτικά cola, αλκοόλ, κάπνισμα",
+     "why": "Στηρίζεις την οστική πυκνότητα."},
+    {"atc": "J01", "title": "Αντιβιοτικά (τρέχουσα αγωγή)",
+     "favor": "Προβιοτικά/γιαούρτι σε διαφορετική ώρα, καλή ενυδάτωση",
+     "avoid": "Γαλακτοκομικά κοντά στη δόση (τετρακυκλίνες/κινολόνες), αλκοόλ",
+     "why": "Προστατεύεις τη χλωρίδα & την απορρόφηση."},
+    {"atc": "N06A", "title": "Αντικαταθλιπτικά",
+     "favor": "Ω-3, σύμπλεγμα B, τρυπτοφάνη (γαλοπούλα), ενυδάτωση",
+     "avoid": "Αλκοόλ· (MAOI: τυραμίνη — παλαιωμένα τυριά/αλλαντικά)",
+     "why": "Υποστηρίζεις διάθεση & νευρικό σύστημα."},
+    {"atc": "M01A", "title": "Αντιφλεγμονώδη (ΜΣΑΦ)",
+     "favor": "Λήψη με φαγητό, αντιφλεγμονώδη τρόφιμα (ψάρι, κουρκουμάς, ελαιόλαδο)",
+     "avoid": "Άδειο στομάχι, αλκοόλ, υπερβολικό αλάτι",
+     "why": "Προστατεύεις το στομάχι & μειώνεις τη φλεγμονή."},
+]
+
+
+def nutrition_html(plan: dict, from_name: str | None = None) -> str:
+    secs = "".join(
+        f"""<div style="margin:0 0 12px;padding:14px 16px;border:1px solid #e2e8f0;border-radius:12px;">
+            <div style="font-weight:700;color:#4f46e5;font-size:15px;">{s['title']}</div>
+            <div style="font-size:12px;color:#94a3b8;margin:2px 0 8px;">Σχετικά φάρμακα: {', '.join(s['drugs']) or '—'}</div>
+            <div style="font-size:14px;color:#0f172a;"><b style="color:#16a34a;">✓ Προτίμησε:</b> {s['favor']}</div>
+            <div style="font-size:14px;color:#0f172a;margin-top:4px;"><b style="color:#dc2626;">✕ Πρόσεξε:</b> {s['avoid']}</div>
+            <div style="font-size:13px;color:#64748b;margin-top:4px;">{s['why']}</div></div>"""
+        for s in plan.get("sections", []))
+    return f"""<div style="background:#f1f5f9;padding:24px;font-family:Arial,Helvetica,sans-serif;">
+      <div style="max-width:620px;margin:0 auto;background:#fff;border-radius:14px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.08);">
+        <div style="background:#4f46e5;padding:18px 24px;color:#fff;">
+          <div style="font-size:18px;font-weight:800;">{from_name or 'Το φαρμακείο σας'}</div>
+          <div style="font-size:13px;opacity:.9;">Εξατομικευμένες διατροφικές συμβουλές</div></div>
+        <div style="padding:20px 24px;">
+          <p style="font-size:15px;color:#0f172a;line-height:1.6;">Αγαπητέ/ή {plan.get('name') or ''}, με βάση τη φαρμακευτική σας αγωγή ετοιμάσαμε προτάσεις διατροφής για καλύτερα αποτελέσματα:</p>
+          {secs or '<p style="color:#64748b;">Δεν εντοπίστηκαν ειδικές διατροφικές οδηγίες για την τρέχουσα αγωγή.</p>'}
+          <p style="font-size:12px;color:#94a3b8;margin-top:14px;line-height:1.5;">Οι συμβουλές είναι γενικές & ενημερωτικές και δεν υποκαθιστούν ιατρική ή διαιτολογική γνωμάτευση. Συμβουλευτείτε τον φαρμακοποιό σας.</p>
+        </div></div></div>"""
+
 
 class AdvisorRepository(BaseRepository):
     collection_name = "prescription_executions"
@@ -317,6 +386,39 @@ class AdvisorRepository(BaseRepository):
                             "why": rule["why"], "reach": reach})
         out.sort(key=lambda x: -x["reach"])
         return out
+
+    async def nutrition_plan(self, patient_id: str) -> dict | None:
+        """Personalised nutrition plan from a patient's medication mix (ATC classes)."""
+        oid = _as_oid(patient_id)
+        if not oid:
+            return None
+        pa = await self._db["patients_anonymized"].find_one({"_id": oid, "tenant_id": self.tenant_id})
+        if not pa:
+            return None
+        rows = await self.aggregate([
+            {"$match": {"patient_ref": oid}},
+            {"$lookup": {"from": "prescription_items", "localField": "_id",
+                         "foreignField": "execution_id", "as": "it"}},
+            {"$unwind": "$it"},
+            {"$lookup": {"from": "products", "localField": "it.product_id",
+                         "foreignField": "_id", "as": "p"}},
+            {"$set": {"atc": {"$toUpper": {"$ifNull": [{"$first": "$p.atc"}, ""]}},
+                      "nm": {"$first": "$p.name"}}},
+            {"$match": {"atc": {"$ne": ""}}},
+            {"$group": {"_id": "$atc", "drugs": {"$addToSet": "$nm"}}},
+        ])
+        atc_drugs = {r["_id"]: [d for d in r["drugs"] if d] for r in rows}
+        sections = []
+        for rule in NUTRITION:
+            matched = [a for a in atc_drugs if a.startswith(rule["atc"])]
+            if matched:
+                drugs = sorted({d for a in matched for d in atc_drugs[a]})[:6]
+                sections.append({"title": rule["title"], "drugs": drugs,
+                                 "favor": rule["favor"], "avoid": rule["avoid"], "why": rule["why"]})
+        ct = await self._db["patient_contacts"].find_one({"_id": oid, "tenant_id": self.tenant_id})
+        return {"patient_id": patient_id, "name": pa.get("full_name"),
+                "email": (ct or {}).get("email"), "mobile": (ct or {}).get("mobile"),
+                "sections": sections}
 
     async def cross_sell_patients(self, atc_prefix: str) -> list[dict]:
         """Patients on a therapeutic class (ATC prefix) — with demographics + contact +
