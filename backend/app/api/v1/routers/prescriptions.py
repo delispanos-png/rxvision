@@ -60,6 +60,16 @@ async def list_prescriptions(
     return {"page": page, "page_size": page_size, "items": items}
 
 
+@router.get("/by-fund")
+async def by_fund(
+    date_from: datetime = Query(...),
+    date_to: datetime = Query(...),
+    ctx: TenantContext = Depends(require("prescriptions:read", module="prescription_analytics")),
+):
+    repo = PrescriptionRepository(tenant_id=ctx.tenant_id)
+    return {"items": await repo.by_fund(date_from, date_to)}
+
+
 @router.get("/aggregate")
 async def aggregate(
     group_by: Literal["fund", "doctor", "icd10", "product"] = "fund",

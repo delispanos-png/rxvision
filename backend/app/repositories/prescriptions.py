@@ -114,6 +114,25 @@ class PrescriptionRepository(BaseRepository):
         ]
         return await self.aggregate(pipeline)
 
+    async def by_fund(self, date_from: datetime, date_to: datetime) -> list[dict]:
+        """Per-fund breakdown for the period: rx count, retail value, fund-claimed,
+        and how many prescriptions carry unexecuted substances."""
+        pipeline = [
+            {"$match": {"executed_at": {"$gte": date_from, "$lt": date_to}}},
+            {"$group": {"_id": "$fund_id",
+                        "rx": {"$sum": 1},
+                        "value": {"$sum": "$amount_total"},
+                        "claimed": {"$sum": "$amount_claimed"},
+                        "unexecuted": {"$sum": {"$cond": ["$has_unexecuted_substances", 1, 0]}}}},
+            {"$lookup": {"from": "insurance_funds", "localField": "_id",
+                         "foreignField": "_id", "as": "f"}},
+            {"$set": {"fund_name": {"$ifNull": [{"$first": "$f.name"}, "— (χωρίς ταμείο)"]}}},
+            {"$sort": {"value": -1}},
+            {"$project": {"_id": 0, "fund_name": 1, "rx": 1, "value": 1,
+                          "claimed": 1, "unexecuted": 1}},
+        ]
+        return await self.aggregate(pipeline)
+
     async def dashboard_summary(self, date_from: datetime, date_to: datetime) -> dict:
         pipeline = [
             {"$match": {"executed_at": {"$gte": date_from, "$lt": date_to}}},

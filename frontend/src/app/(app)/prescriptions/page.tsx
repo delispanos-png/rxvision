@@ -5,11 +5,12 @@ import { createPortal } from "react-dom";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
-import { Receipt, Wallet, Pill, AlertTriangle, Search } from "lucide-react";
+import { Receipt, Wallet, Pill, AlertTriangle, Search, Download } from "lucide-react";
 import { api } from "@/lib/apiClient";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
 import { useUiStore, filtersToQuery } from "@/store/uiStore";
 import { fmtEur, fmtNum, fmtDate } from "@/lib/formatters";
+import { downloadCsv } from "@/lib/csv";
 import { DateRangeFilter } from "@/components/filters/DateRangeFilter";
 import { DataTable, type Column } from "@/components/tables/DataTable";
 import { BarChart } from "@/components/charts/BarChart";
@@ -17,6 +18,7 @@ import { ExportButton } from "@/components/export/ExportButton";
 import { KpiCard } from "@/components/kpi/KpiCard";
 import { PanelCard } from "@/components/ui/Card";
 import { QueryState } from "@/components/ui/QueryState";
+import { Modal } from "@/components/ui/Modal";
 
 type Prescription = {
   external_id: string;
@@ -47,6 +49,16 @@ type UnexecutedRow = {
   barcodes?: string[];
   rxs?: { barcode: string; patient?: string | null; date?: string | null }[];
 };
+
+type FundRow = { fund_name: string; rx: number; value: number; claimed: number; unexecuted: number };
+type FundMetric = "rx" | "value" | "claimed" | "unexecuted";
+const fundCols: Column<FundRow>[] = [
+  { key: "fund_name", header: "Ταμείο", render: (r) => r.fund_name || "—" },
+  { key: "rx", header: "Συνταγές", align: "right", render: (r) => fmtNum(r.rx), sortValue: (r) => r.rx },
+  { key: "value", header: "Αξία", align: "right", render: (r) => fmtEur(r.value), sortValue: (r) => r.value },
+  { key: "claimed", header: "Αιτούμενο", align: "right", render: (r) => fmtEur(r.claimed), sortValue: (r) => r.claimed },
+  { key: "unexecuted", header: "Ανεκτέλεστες", align: "right", render: (r) => fmtNum(r.unexecuted), sortValue: (r) => r.unexecuted },
+];
 
 function BarcodeChip({ bc, patient, date }: { bc: string; patient?: string | null; date?: string | null }) {
   const [show, setShow] = useState(false);
@@ -151,6 +163,15 @@ export default function PrescriptionsPage() {
       ),
   });
 
+  const [fundModal, setFundModal] = useState<{ title: string; metric: FundMetric } | null>(null);
+  const byFund = useQuery({
+    queryKey: ["prescriptions", "by-fund", q],
+    queryFn: () => api<{ items: FundRow[] }>(`/prescriptions/by-fund?${q}`),
+    enabled: !!fundModal,
+  });
+  const fundMetric = fundModal?.metric ?? "value";
+  const fundRows = [...(byFund.data?.items ?? [])].sort((a, b) => (b[fundMetric] as number) - (a[fundMetric] as number));
+
   const items = list.data?.items ?? [];
   const un = unexecuted.data;
   const unRows = un?.items ?? [];
@@ -193,15 +214,19 @@ export default function PrescriptionsPage() {
       <div className="space-y-4">
         {/* KPI row */}
         <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
-          <KpiCard label="Συνταγές" value={fmtNum(items.length)} sub="πρόσφατες εκτελέσεις" icon={Receipt} accent="indigo" />
-          <KpiCard label="Αξία συνταγών" value={fmtEur(totalValue)} sub="σύνολο περιόδου" icon={Wallet} accent="violet" />
-          <KpiCard label="Αιτούμενα ταμείων" value={fmtEur(totalClaimed)} sub="προς ασφ. φορείς" icon={Pill} accent="amber" />
+          <KpiCard label="Συνταγές" value={fmtNum(items.length)} sub="ανά ταμείο →" icon={Receipt} accent="indigo"
+            onClick={() => setFundModal({ title: "Συνταγές ανά ταμείο", metric: "rx" })} />
+          <KpiCard label="Αξία συνταγών" value={fmtEur(totalValue)} sub="ανά ταμείο →" icon={Wallet} accent="violet"
+            onClick={() => setFundModal({ title: "Αξία συνταγών ανά ταμείο", metric: "value" })} />
+          <KpiCard label="Αιτούμενα ταμείων" value={fmtEur(totalClaimed)} sub="ανά ταμείο →" icon={Pill} accent="amber"
+            onClick={() => setFundModal({ title: "Αιτούμενο ανά ταμείο", metric: "claimed" })} />
           <KpiCard
             label="Με ανεκτέλεστα"
             value={fmtNum(unexecutedCount)}
-            sub={`χαμένη αξία ${fmtEur(un?.total_lost_value ?? 0)}`}
+            sub={`ανά ταμείο →`}
             icon={AlertTriangle}
             accent="rose"
+            onClick={() => setFundModal({ title: "Ανεκτέλεστες ανά ταμείο", metric: "unexecuted" })}
           />
         </div>
 
@@ -274,6 +299,31 @@ export default function PrescriptionsPage() {
           </div>
         </PanelCard>
       </div>
+
+      {/* per-fund breakdown popup (clickable KPIs) */}
+      <Modal open={!!fundModal} onClose={() => setFundModal(null)} title={fundModal?.title} size="2xl">
+        <div className="-mt-2 mb-3 flex items-center justify-between gap-3">
+          <p className="text-sm text-slate-500">Σύνολο περιόδου · {fundRows.length} ταμεία</p>
+          {fundRows.length > 0 && (
+            <button
+              onClick={() => downloadCsv("ana-tameio", [
+                { key: "fund_name", header: "Ταμείο" },
+                { key: "rx", header: "Συνταγές" },
+                { key: "value", header: "Αξία (€)", value: (r: FundRow) => (r.value / 100).toFixed(2) },
+                { key: "claimed", header: "Αιτούμενο (€)", value: (r: FundRow) => (r.claimed / 100).toFixed(2) },
+                { key: "unexecuted", header: "Ανεκτέλεστες" },
+              ], fundRows)}
+              className="shrink-0 inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+            >
+              <Download className="h-3.5 w-3.5" /> Εξαγωγή CSV
+            </button>
+          )}
+        </div>
+        <QueryState isLoading={byFund.isLoading} isError={byFund.isError}
+          isEmpty={fundRows.length === 0} onRetry={() => byFund.refetch()} empty="Καμία εγγραφή.">
+          <DataTable pageSize={20} columns={fundCols} rows={fundRows} rowKey={(r) => r.fund_name} />
+        </QueryState>
+      </Modal>
     </ModuleGuard>
   );
 }
