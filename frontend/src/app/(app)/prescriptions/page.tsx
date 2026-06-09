@@ -164,21 +164,24 @@ export default function PrescriptionsPage() {
   });
 
   const [fundModal, setFundModal] = useState<{ title: string; metric: FundMetric } | null>(null);
+  // always-on: also powers the period-total KPIs (sum across funds), not just the popup
   const byFund = useQuery({
     queryKey: ["prescriptions", "by-fund", q],
     queryFn: () => api<{ items: FundRow[] }>(`/prescriptions/by-fund?${q}`),
-    enabled: !!fundModal,
   });
+  const fundData = byFund.data?.items ?? [];
   const fundMetric = fundModal?.metric ?? "value";
-  const fundRows = [...(byFund.data?.items ?? [])].sort((a, b) => (b[fundMetric] as number) - (a[fundMetric] as number));
+  const fundRows = [...fundData].sort((a, b) => (b[fundMetric] as number) - (a[fundMetric] as number));
 
   const items = list.data?.items ?? [];
   const un = unexecuted.data;
   const unRows = un?.items ?? [];
 
-  const totalValue = items.reduce((a, r) => a + (r.amount_total || 0), 0);
-  const totalClaimed = items.reduce((a, r) => a + (r.amount_claimed || 0), 0);
-  const unexecutedCount = items.filter((r) => r.has_unexecuted_substances).length;
+  // period totals (whole date range), summed across funds — NOT the visible page
+  const totalRx = fundData.reduce((a, f) => a + f.rx, 0);
+  const totalValue = fundData.reduce((a, f) => a + f.value, 0);
+  const totalClaimed = fundData.reduce((a, f) => a + f.claimed, 0);
+  const unexecutedCount = fundData.reduce((a, f) => a + f.unexecuted, 0);
 
   return (
     <ModuleGuard module="prescription_analytics">
@@ -214,16 +217,16 @@ export default function PrescriptionsPage() {
       <div className="space-y-4">
         {/* KPI row */}
         <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
-          <KpiCard label="Συνταγές" value={fmtNum(items.length)} sub="ανά ταμείο →" icon={Receipt} accent="indigo"
+          <KpiCard label="Συνταγές" value={fmtNum(totalRx)} sub="σύνολο περιόδου · ανά ταμείο →" icon={Receipt} accent="indigo"
             onClick={() => setFundModal({ title: "Συνταγές ανά ταμείο", metric: "rx" })} />
-          <KpiCard label="Αξία συνταγών" value={fmtEur(totalValue)} sub="ανά ταμείο →" icon={Wallet} accent="violet"
+          <KpiCard label="Αξία συνταγών" value={fmtEur(totalValue)} sub="σύνολο περιόδου · ανά ταμείο →" icon={Wallet} accent="violet"
             onClick={() => setFundModal({ title: "Αξία συνταγών ανά ταμείο", metric: "value" })} />
-          <KpiCard label="Αιτούμενα ταμείων" value={fmtEur(totalClaimed)} sub="ανά ταμείο →" icon={Pill} accent="amber"
+          <KpiCard label="Αιτούμενα ταμείων" value={fmtEur(totalClaimed)} sub="προς ασφ. φορείς · ανά ταμείο →" icon={Pill} accent="amber"
             onClick={() => setFundModal({ title: "Αιτούμενο ανά ταμείο", metric: "claimed" })} />
           <KpiCard
             label="Με ανεκτέλεστα"
             value={fmtNum(unexecutedCount)}
-            sub={`ανά ταμείο →`}
+            sub={`χαμένη αξία ${fmtEur(un?.total_lost_value ?? 0)} · ανά ταμείο →`}
             icon={AlertTriangle}
             accent="rose"
             onClick={() => setFundModal({ title: "Ανεκτέλεστες ανά ταμείο", metric: "unexecuted" })}
