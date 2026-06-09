@@ -2,11 +2,16 @@
 
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { BarChart3 as BarIcon, Receipt, TrendingUp, Users, Wallet } from "lucide-react";
+import { BarChart3 as BarIcon, Receipt, TrendingUp, Users, Wallet, Download } from "lucide-react";
 import { api } from "@/lib/apiClient";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
 import { KpiCard } from "@/components/kpi/KpiCard";
 import { PanelCard } from "@/components/ui/Card";
+import { Modal } from "@/components/ui/Modal";
+import { DataTable, type Column } from "@/components/tables/DataTable";
+import { QueryState } from "@/components/ui/QueryState";
+import { downloadCsv } from "@/lib/csv";
+import { fmtDate } from "@/lib/formatters";
 import { DateInput } from "@/components/ui/DateInput";
 import { LineChart } from "@/components/charts/LineChart";
 import { DonutChart } from "@/components/charts/DonutChart";
@@ -24,6 +29,25 @@ const eur = (c: number) => new Intl.NumberFormat("el-GR", { style: "currency", c
 const eur2 = (c: number) => new Intl.NumberFormat("el-GR", { style: "currency", currency: "EUR" }).format((c || 0) / 100);
 const num = (n: number) => new Intl.NumberFormat("el-GR").format(n || 0);
 
+type RxRow = { external_id: string; executed_at: string; patient_name?: string | null; amka?: string | null; fund_name?: string | null; amount_total: number; amount_claimed: number };
+type PatRow = { patient_ref?: string; full_name?: string | null; age_group?: string | null; area?: string | null; rx?: number; value?: number };
+
+const rxModalCols: Column<RxRow>[] = [
+  { key: "executed_at", header: "Ημ/νία", render: (r) => fmtDate(r.executed_at), sortValue: (r) => r.executed_at },
+  { key: "external_id", header: "Κωδικός" },
+  { key: "patient_name", header: "Ασθενής", render: (r) => r.patient_name || "—" },
+  { key: "fund_name", header: "Ταμείο", hideOnMobile: true, render: (r) => r.fund_name || "—" },
+  { key: "amount_total", header: "Αξία", align: "right", render: (r) => eur2(r.amount_total), sortValue: (r) => r.amount_total },
+  { key: "amount_claimed", header: "Από ταμείο", align: "right", render: (r) => eur2(r.amount_claimed), sortValue: (r) => r.amount_claimed },
+];
+const patModalCols: Column<PatRow>[] = [
+  { key: "full_name", header: "Ασφαλισμένος", render: (r) => r.full_name || r.patient_ref || "—" },
+  { key: "age_group", header: "Ηλικία", hideOnMobile: true, render: (r) => r.age_group || "—" },
+  { key: "area", header: "Περιοχή", hideOnMobile: true, render: (r) => r.area || "—" },
+  { key: "rx", header: "Συνταγές", align: "right", render: (r) => num(r.rx || 0), sortValue: (r) => r.rx ?? 0 },
+  { key: "value", header: "Αξία", align: "right", render: (r) => eur2(r.value || 0), sortValue: (r) => r.value ?? 0 },
+];
+
 const GREETING = () => {
   const h = new Date().getHours();
   return h < 12 ? "Καλημέρα" : h < 18 ? "Καλησπέρα" : "Καλό βράδυ";
@@ -36,6 +60,15 @@ export default function DashboardPage() {
   const from = new Date(`${fromD}T00:00:00.000Z`).toISOString();
   const to = new Date(`${toD}T23:59:59.999Z`).toISOString();
   const qs = `date_from=${from}&date_to=${to}`;
+
+  // drill-down popup (clickable KPIs)
+  const [modal, setModal] = useState<{ title: string; kind: "rx" | "patients"; qs: string } | null>(null);
+  const modalList = useQuery({
+    queryKey: ["dash", "modal", modal?.kind, modal?.qs],
+    queryFn: () => api<{ items: Record<string, unknown>[] }>(
+      modal!.kind === "patients" ? `/patients/list?${modal!.qs}` : `/prescriptions?${modal!.qs}`),
+    enabled: !!modal,
+  });
 
   const summary = useQuery({ queryKey: ["dash", "summary", from, to], queryFn: () => api<Summary>(`/dashboard/summary?${qs}`) });
   const tsVal = useQuery({ queryKey: ["dash", "ts", "value", from, to], queryFn: () => api<Bucket[]>(`/dashboard/timeseries?metric=value&grain=day&${qs}`) });
@@ -80,11 +113,15 @@ export default function DashboardPage() {
 
       {/* KPI row */}
       <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-5">
-        <KpiCard label="Εκτελέσεις" value={num(s?.executions ?? 0)} sub="συνταγές περιόδου" icon={Receipt} accent="indigo" />
-        <KpiCard label="Αξία συνταγών" value={eur(s?.value ?? 0)} sub="σύνολο περιόδου" icon={BarIcon} accent="violet" />
-        <KpiCard label="Αιτούμενα ταμείων" value={eur(s?.claimed ?? 0)} sub="προς ασφ. φορείς" icon={Wallet} accent="amber" />
+        <KpiCard label="Εκτελέσεις" value={num(s?.executions ?? 0)} sub="συνταγές περιόδου · δες λίστα" icon={Receipt} accent="indigo"
+          onClick={() => setModal({ title: "Εκτελέσεις περιόδου", kind: "rx", qs: `${qs}&page_size=300&sort=executed_at&dir=-1` })} />
+        <KpiCard label="Αξία συνταγών" value={eur(s?.value ?? 0)} sub="σύνολο περιόδου · δες λίστα" icon={BarIcon} accent="violet"
+          onClick={() => setModal({ title: "Συνταγές κατά αξία (φθίνουσα)", kind: "rx", qs: `${qs}&page_size=300&sort=amount_total&dir=-1` })} />
+        <KpiCard label="Αιτούμενα ταμείων" value={eur(s?.claimed ?? 0)} sub="προς ασφ. φορείς · δες λίστα" icon={Wallet} accent="amber"
+          onClick={() => setModal({ title: "Συνταγές κατά αιτούμενο ταμείου", kind: "rx", qs: `${qs}&page_size=300&sort=amount_claimed&dir=-1` })} />
         <KpiCard label="Μεικτό κέρδος" value={eur(s?.gross_profit ?? 0)} sub="αιτούμενο − χονδρική" icon={TrendingUp} accent="green" />
-        <KpiCard label="Ασφαλισμένοι" value={num(s?.patient_count ?? 0)} sub="μοναδικοί" icon={Users} accent="sky" />
+        <KpiCard label="Ασφαλισμένοι" value={num(s?.patient_count ?? 0)} sub="μοναδικοί · δες λίστα" icon={Users} accent="sky"
+          onClick={() => setModal({ title: "Ασφαλισμένοι περιόδου", kind: "patients", qs: `${qs}&sort=value&limit=300` })} />
       </div>
 
       {/* charts row */}
@@ -156,6 +193,35 @@ export default function DashboardPage() {
           <CalendarHeatmap data={calendarData} height={Math.max(180, calendarWeeks * 18 + 80)} />
         </PanelCard>
       </div>
+
+      {/* KPI drill-down popup */}
+      <Modal open={!!modal} onClose={() => setModal(null)} title={modal?.title} size="3xl">
+        {modal && (
+          <div className="-mt-2 mb-3 flex items-center justify-between gap-3">
+            <p className="text-sm text-slate-500">{num(modalList.data?.items?.length ?? 0)} εγγραφές</p>
+            {(modalList.data?.items?.length ?? 0) > 0 && (
+              <button
+                onClick={() => {
+                  const cols = modal.kind === "patients"
+                    ? [{ key: "full_name", header: "Ασφαλισμένος" }, { key: "age_group", header: "Ηλικία" }, { key: "area", header: "Περιοχή" }, { key: "rx", header: "Συνταγές" }, { key: "value", header: "Αξία (€)", value: (r: Record<string, unknown>) => (((r.value as number) || 0) / 100).toFixed(2) }]
+                    : [{ key: "executed_at", header: "Ημ/νία", value: (r: Record<string, unknown>) => fmtDate(r.executed_at as string) }, { key: "external_id", header: "Κωδικός" }, { key: "patient_name", header: "Ασθενής" }, { key: "fund_name", header: "Ταμείο" }, { key: "amount_total", header: "Αξία (€)", value: (r: Record<string, unknown>) => (((r.amount_total as number) || 0) / 100).toFixed(2) }, { key: "amount_claimed", header: "Από ταμείο (€)", value: (r: Record<string, unknown>) => (((r.amount_claimed as number) || 0) / 100).toFixed(2) }];
+                  downloadCsv(modal.kind === "patients" ? "asfalismenoi" : "syntages", cols, modalList.data!.items);
+                }}
+                className="shrink-0 inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+              >
+                <Download className="h-3.5 w-3.5" /> Εξαγωγή CSV
+              </button>
+            )}
+          </div>
+        )}
+        <QueryState isLoading={modalList.isLoading} isError={modalList.isError}
+          isEmpty={(modalList.data?.items?.length ?? 0) === 0} onRetry={() => modalList.refetch()}
+          empty="Καμία εγγραφή.">
+          {modal?.kind === "patients"
+            ? <DataTable pageSize={15} columns={patModalCols} rows={(modalList.data?.items ?? []) as PatRow[]} rowKey={(r, i) => `${(r as PatRow).patient_ref ?? i}`} />
+            : <DataTable pageSize={15} columns={rxModalCols} rows={(modalList.data?.items ?? []) as RxRow[]} rowKey={(r, i) => `${(r as RxRow).external_id ?? i}`} />}
+        </QueryState>
+      </Modal>
     </ModuleGuard>
   );
 }

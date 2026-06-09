@@ -2,8 +2,9 @@
 
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { CalendarClock, CalendarDays, CalendarRange, Pill } from "lucide-react";
+import { CalendarClock, CalendarDays, CalendarRange, Pill, Download } from "lucide-react";
 import { api } from "@/lib/apiClient";
+import { downloadCsv } from "@/lib/csv";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
 import { fmtNum, fmtDate } from "@/lib/formatters";
 import { SelectFilter } from "@/components/filters/SelectFilter";
@@ -106,13 +107,17 @@ export default function FuturePage() {
           />
         </div>
 
-        {/* upcoming-by-day chart */}
-        <PanelCard title="Συνταγές που ανοίγουν ανά ημέρα (30 ημέρες)">
+        {/* upcoming-by-day chart — click a day to see its prescriptions */}
+        <PanelCard title="Συνταγές που ανοίγουν ανά ημέρα (30 ημέρες) — κλικ σε ημέρα για λίστα">
           <LineChart
             labels={days.map((d) => fmtDate(d.date))}
             data={days.map((d) => d.count)}
             name="Συνταγές"
             height={300}
+            onPointClick={(i) => {
+              const d = days[i];
+              if (d) setModal({ title: `Συνταγές — ${fmtDate(d.date)}`, subtitle: `${d.count} συνταγές αναμένονται`, qs: `date=${d.date}&min_history=${minHistory}` });
+            }}
           />
         </PanelCard>
 
@@ -131,7 +136,23 @@ export default function FuturePage() {
 
       {/* drill-down popup: the individual prescriptions behind a KPI */}
       <Modal open={!!modal} onClose={() => setModal(null)} title={modal?.title} size="3xl">
-        {modal && <p className="-mt-2 mb-3 text-sm text-slate-500">{modal.subtitle}</p>}
+        <div className="-mt-2 mb-3 flex items-center justify-between gap-3">
+          {modal && <p className="text-sm text-slate-500">{modal.subtitle}</p>}
+          {(list.data?.items?.length ?? 0) > 0 && (
+            <button
+              onClick={() => downloadCsv("mellontikes-syntages", [
+                { key: "expected_open_date", header: "Αναμένεται", value: (r: FutureRx) => fmtDate(r.expected_open_date) },
+                { key: "patient_name", header: "Ασθενής" },
+                { key: "amka", header: "ΑΜΚΑ" },
+                { key: "products", header: "Σκευάσματα", value: (r: FutureRx) => (r.products ?? []).filter(Boolean).join(" | ") },
+                { key: "source_barcode", header: "Από συνταγή" },
+              ], list.data!.items)}
+              className="shrink-0 inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+            >
+              <Download className="h-3.5 w-3.5" /> Εξαγωγή CSV
+            </button>
+          )}
+        </div>
         <QueryState
           isLoading={list.isLoading}
           isError={list.isError}

@@ -24,6 +24,7 @@ export function LineChart({
   height = 280,
   area = true,
   ariaLabel,
+  onPointClick,
 }: {
   labels: (string | number)[];
   data?: number[];
@@ -32,8 +33,11 @@ export function LineChart({
   height?: number;
   area?: boolean;
   ariaLabel?: string;
+  /** When set, each point is a clickable dot; fires with the clicked index. */
+  onPointClick?: (index: number) => void;
 }) {
   const resolved: LineSeries[] = series ?? [{ name, data: data ?? [] }];
+  const clickable = !!onPointClick;
 
   const option = {
     color: PALETTE,
@@ -55,17 +59,24 @@ export function LineChart({
       name: s.name,
       type: "line",
       smooth: 0.4,
-      showSymbol: false,
+      showSymbol: clickable && i === 0,
+      symbol: "circle",
+      symbolSize: clickable ? 8 : 4,
       data: s.data,
+      cursor: clickable ? "pointer" : "default",
       lineStyle: { width: 2.5 },
       areaStyle: area && i === 0 ? { color: gradient("99, 102, 241") } : undefined,
       itemStyle: { color: i === 0 ? BRAND : undefined },
     })),
   };
 
+  const onEvents = onPointClick
+    ? { click: (p: { dataIndex: number }) => onPointClick(p.dataIndex) }
+    : undefined;
+
   return (
     <div role="img" aria-label={ariaLabel ?? name ?? "Γράφημα γραμμής"}>
-      <ReactECharts option={option} style={{ height, width: "100%" }} notMerge lazyUpdate />
+      <ReactECharts option={option} style={{ height, width: "100%" }} notMerge lazyUpdate onEvents={onEvents} />
     </div>
   );
 }
