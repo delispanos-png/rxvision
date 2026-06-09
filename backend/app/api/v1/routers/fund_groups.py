@@ -84,3 +84,18 @@ async def update_group(group_id: str, body: GroupIn,
 @router.delete("/{group_id}", status_code=204)
 async def delete_group(group_id: str, ctx: PlatformContext = Depends(get_platform_admin)):
     await _coll().delete_one({"_id": _oid(group_id)})
+
+
+class AssignIn(BaseModel):
+    code: str
+    group_id: str | None = None  # None → remove from every group (ungrouped)
+
+
+@router.post("/assign")
+async def assign(body: AssignIn, ctx: PlatformContext = Depends(get_platform_admin)):
+    """Move a fund code to a group (single source of truth: a code lives in ≤1 group)."""
+    await _coll().update_many({"codes": body.code}, {"$pull": {"codes": body.code}})
+    if body.group_id:
+        await _coll().update_one({"_id": _oid(body.group_id)},
+                                 {"$addToSet": {"codes": body.code}})
+    return {"ok": True}

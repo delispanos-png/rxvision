@@ -5,7 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import {
   LayoutGrid, FileText, Newspaper, BookOpen, Users, UserCog, Mail,
-  Server, Wrench, BarChart3, CreditCard, Receipt, LogOut, PlugZap, Network, Menu, X,
+  Server, Wrench, BarChart3, CreditCard, Receipt, LogOut, PlugZap, Network, Menu, X, Layers,
 } from "lucide-react";
 import { adminApi, adminTokens, ApiError } from "@/lib/adminClient";
 import { LogoMark } from "@/components/brand/Logo";
@@ -18,6 +18,7 @@ const NAV = [
   { label: "Συνδρομές", icon: CreditCard, href: "/admin/subscriptions", section: "subscriptions" },
   { label: "Τιμολόγηση", icon: Receipt, href: "/admin/billing", section: "billing" },
   { label: "Διασύνδεση ΗΔΙΚΑ", icon: PlugZap, href: "/admin/idika", section: "idika" },
+  { label: "Ομάδες ταμείων", icon: Layers, href: "/admin/fund-groups", section: "fund_groups" },
   { label: "Noeton", icon: Network, href: "/admin/noeton", section: "noeton" },
   { label: "Newsletter", icon: Mail, href: "/admin/newsletter", section: "newsletter" },
   { label: "Ρυθμίσεις SMTP", icon: Server, href: "/admin/smtp", section: "smtp" },

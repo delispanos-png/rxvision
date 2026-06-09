@@ -50,10 +50,18 @@ type UnexecutedRow = {
   rxs?: { barcode: string; patient?: string | null; date?: string | null }[];
 };
 
-type FundRow = { fund_name: string; rx: number; value: number; claimed: number; unexecuted: number };
+type FundRow = { fund_name: string; rx: number; value: number; claimed: number; unexecuted: number; is_group?: boolean; funds?: { fund_name: string }[] };
 type FundMetric = "rx" | "value" | "claimed" | "unexecuted";
 const fundCols: Column<FundRow>[] = [
-  { key: "fund_name", header: "Ταμείο", render: (r) => r.fund_name || "—" },
+  {
+    key: "fund_name", header: "Ταμείο / Ομάδα",
+    render: (r) => (
+      <span className="inline-flex items-center gap-2">
+        {r.fund_name || "—"}
+        {r.is_group && <span className="rounded bg-brand-100 px-1.5 py-0.5 text-[10px] font-semibold text-brand-700" title={(r.funds ?? []).map((f) => f.fund_name).join(", ")}>ομάδα · {r.funds?.length}</span>}
+      </span>
+    ),
+  },
   { key: "rx", header: "Συνταγές", align: "right", render: (r) => fmtNum(r.rx), sortValue: (r) => r.rx },
   { key: "value", header: "Αξία", align: "right", render: (r) => fmtEur(r.value), sortValue: (r) => r.value },
   { key: "claimed", header: "Αιτούμενο", align: "right", render: (r) => fmtEur(r.claimed), sortValue: (r) => r.claimed },
