@@ -134,7 +134,7 @@ export default function DoctorsPage() {
 
           {/* top doctors chart */}
           {top.length > 0 && (
-            <PanelCard title="Top Ιατροί (αξία)">
+            <PanelCard collapsible defaultOpen={false} title="Top Ιατροί (αξία)">
               <BarChart
                 horizontal
                 height={Math.max(220, top.length * 38)}
