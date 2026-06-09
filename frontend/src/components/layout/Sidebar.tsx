@@ -12,6 +12,7 @@ import {
   CalendarClock,
   ClipboardCheck,
   LayoutDashboard,
+  Mail,
   PackageSearch,
   Settings,
   Sparkles,
@@ -48,6 +49,7 @@ const GROUPS: Group[] = [
     items: [
       { href: "/future", label: "Μελλοντικές", icon: CalendarClock },
       { href: "/orders", label: "Παραγγελίες", icon: PackageSearch },
+      { href: "/communications", label: "Επικοινωνία", icon: Mail },
       { href: "/closing", label: "Κλείσιμο μήνα", icon: ClipboardCheck },
       { href: "/pharmacyone", label: "PharmacyOne", icon: Boxes },
     ],

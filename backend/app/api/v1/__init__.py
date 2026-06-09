@@ -4,6 +4,7 @@ from app.api.v1.routers import (
     admin,
     advisor,
     auth,
+    communications,
     dashboard,
     doctors,
     fund_groups,
@@ -28,6 +29,7 @@ api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
 api_router.include_router(onboarding.router, prefix="/onboarding", tags=["onboarding"])
 api_router.include_router(dashboard.router, prefix="/dashboard", tags=["dashboard"])
 api_router.include_router(advisor.router, prefix="/advisor", tags=["advisor"])
+api_router.include_router(communications.router, prefix="/communications", tags=["communications"])
 api_router.include_router(prescriptions.router, prefix="/prescriptions", tags=["prescriptions"])
 
 # Analytics modules
