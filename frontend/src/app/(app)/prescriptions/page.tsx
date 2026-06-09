@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { Receipt, Wallet, Pill, AlertTriangle, Search } from "lucide-react";
@@ -39,6 +40,7 @@ type UnexecutedRow = {
   occurrences: number;
   qty: number;
   lost_value: number; // cents
+  barcodes?: string[];
 };
 
 const columns: Column<Prescription>[] = [
@@ -63,6 +65,21 @@ const columns: Column<Prescription>[] = [
 const unexecutedColumns: Column<UnexecutedRow>[] = [
   { key: "name", header: "Σκεύασμα", render: (r) => r.name ?? r.product_id },
   { key: "category", header: "Κατηγορία", hideOnMobile: true },
+  {
+    key: "barcodes", header: "Από συνταγή",
+    render: (r) => (
+      <div className="flex flex-wrap gap-1.5">
+        {(r.barcodes ?? []).slice(0, 4).map((b) => (
+          <Link key={b} href={`/prescriptions/${encodeURIComponent(b)}`}
+            className="rounded bg-slate-100 px-1.5 py-0.5 text-xs font-medium text-brand-700 hover:bg-brand-50">
+            {b}
+          </Link>
+        ))}
+        {(r.barcodes?.length ?? 0) > 4 && <span className="text-xs text-slate-400">+{(r.barcodes?.length ?? 0) - 4}</span>}
+        {!(r.barcodes?.length) && <span className="text-slate-300">—</span>}
+      </div>
+    ),
+  },
   { key: "occurrences", header: "Φορές", align: "right", render: (r) => fmtNum(r.occurrences) },
   { key: "lost_value", header: "Χαμένη αξία", align: "right", render: (r) => fmtEur(r.lost_value) },
 ];

@@ -213,18 +213,23 @@ class PrescriptionRepository(BaseRepository):
         rows = await items.aggregate([
             {"$match": {"executed_at": {"$gte": date_from, "$lt": date_to},
                         "is_executed": False}},
+            # which prescription each unexecuted line came from
+            {"$lookup": {"from": "prescription_executions", "localField": "execution_id",
+                         "foreignField": "_id", "as": "ex"}},
+            {"$set": {"barcode": {"$first": "$ex.external_id"}}},
             {"$group": {"_id": "$product_id",
                         "occurrences": {"$sum": 1},
                         "qty": {"$sum": "$quantity"},
                         "lost_value": {"$sum": "$retail_price"},
-                        "category": {"$first": "$category"}}},
+                        "category": {"$first": "$category"},
+                        "barcodes": {"$addToSet": "$barcode"}}},
             {"$sort": {"occurrences": -1}}, {"$limit": limit},
             {"$lookup": {"from": "products", "localField": "_id",
                          "foreignField": "_id", "as": "p"}},
             {"$set": {"name": {"$first": "$p.name"}}},
             {"$project": {"_id": 0, "product_id": "$_id",
                           "occurrences": 1, "qty": 1, "lost_value": 1,
-                          "category": 1, "name": 1}},
+                          "category": 1, "name": 1, "barcodes": 1}},
         ])
         return {
             "items": rows,
