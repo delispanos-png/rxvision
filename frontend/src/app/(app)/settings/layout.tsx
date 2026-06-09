@@ -7,6 +7,7 @@ const TABS = [
   { href: "/settings/users", label: "Χρήστες & Ρόλοι" },
   { href: "/settings/modules", label: "Modules / Πλάνο" },
   { href: "/settings/ingestion", label: "Διασύνδεση ΗΔΙΚΑ" },
+  { href: "/settings/communications", label: "Επικοινωνία" },
   { href: "/settings/billing", label: "Χρέωση" },
 ];
 

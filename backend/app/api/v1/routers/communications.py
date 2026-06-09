@@ -69,41 +69,104 @@ async def test_sms(to: str = Query(...), ctx: TenantContext = Depends(require("p
     return {"ok": True}
 
 
-async def _audience(tenant_id: str, channel: str) -> list[dict]:
+async def _segment_patient_ids(tenant_id: str, segment: str, value: str | None):
+    """Set of patient _ids matching a smart segment, or None = no restriction (all)."""
+    db = shared_db()
+    now = datetime.now(tz=timezone.utc)
+    if not segment or segment == "all":
+        return None
+    if segment == "upcoming":
+        from datetime import timedelta
+        days = int(value or 30)
+        ids = await db["future_prescriptions"].distinct("patient_ref", {
+            "tenant_id": tenant_id, "status": "pending",
+            "expected_open_date": {"$gte": now, "$lt": now + timedelta(days=days)}})
+        return set(ids)
+    if segment == "icd":
+        ids = await db["prescription_executions"].distinct("patient_ref", {"tenant_id": tenant_id, "icd10": value})
+        return set(ids)
+    if segment == "inactive":
+        from datetime import timedelta
+        cutoff = now - timedelta(days=int(value or 180))
+        recent = set(await db["prescription_executions"].distinct("patient_ref", {"tenant_id": tenant_id, "executed_at": {"$gte": cutoff}}))
+        allp = set(await db["prescription_executions"].distinct("patient_ref", {"tenant_id": tenant_id}))
+        return allp - recent
+    if segment == "substance":
+        val = (value or "").upper()
+        rows = await db["prescription_executions"].aggregate([
+            {"$match": {"tenant_id": tenant_id}},
+            {"$lookup": {"from": "prescription_items", "localField": "_id", "foreignField": "execution_id", "as": "it"}},
+            {"$unwind": "$it"},
+            {"$lookup": {"from": "products", "localField": "it.product_id", "foreignField": "_id", "as": "p"}},
+            {"$set": {"atc": {"$toUpper": {"$ifNull": [{"$first": "$p.atc"}, ""]}},
+                      "sub": {"$toUpper": {"$ifNull": [{"$first": "$p.substance"}, ""]}}}},
+            {"$match": {"$or": [{"atc": {"$regex": "^" + val}}, {"sub": {"$regex": val}}]}},
+            {"$group": {"_id": "$patient_ref"}},
+        ]).to_list(length=None)
+        return {r["_id"] for r in rows}
+    return None
+
+
+async def _audience(tenant_id: str, channel: str, segment: str = "all", value: str | None = None) -> list[dict]:
     field = "email" if channel == "email" else "mobile"
-    cur = shared_db()["patient_contacts"].find(
-        {"tenant_id": tenant_id, "marketing_consent": True, field: {"$nin": [None, ""]}},
-        {field: 1, "_id": 0})
-    return [d async for d in cur]
+    q: dict = {"tenant_id": tenant_id, "marketing_consent": True, field: {"$nin": [None, ""]}}
+    seg = await _segment_patient_ids(tenant_id, segment, value)
+    if seg is not None:
+        q["_id"] = {"$in": list(seg)}
+    rows = await shared_db()["patient_contacts"].aggregate([
+        {"$match": q},
+        {"$lookup": {"from": "patients_anonymized", "localField": "_id", "foreignField": "_id", "as": "pp"}},
+        {"$set": {"name": {"$first": "$pp.full_name"}}},
+        {"$project": {"_id": 0, field: 1, "name": 1}},
+    ]).to_list(length=None)
+    return rows
 
 
 @router.get("/audience")
 async def audience(channel: Literal["email", "sms"] = "email",
+                   segment: str = "all", value: str | None = None,
                    ctx: TenantContext = Depends(require("patients:read", module=_MODULE))):
-    rows = await _audience(ctx.tenant_id, channel)
-    return {"channel": channel, "count": len(rows)}
+    rows = await _audience(ctx.tenant_id, channel, segment, value)
+    return {"channel": channel, "segment": segment, "count": len(rows)}
 
 
 class CampaignIn(BaseModel):
     channel: Literal["email", "sms"]
     subject: str | None = None
     message: str
+    segment: str = "all"
+    value: str | None = None
+
+
+def _email_html(message: str, from_name: str | None) -> str:
+    body = message.replace("\n", "<br/>")
+    return f"""<div style="background:#f1f5f9;padding:24px;font-family:Arial,Helvetica,sans-serif;">
+      <div style="max-width:560px;margin:0 auto;background:#fff;border-radius:14px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.08);">
+        <div style="background:#4f46e5;padding:18px 24px;color:#fff;font-size:18px;font-weight:700;">{from_name or "Το φαρμακείο σας"}</div>
+        <div style="padding:24px;color:#0f172a;font-size:15px;line-height:1.6;">{body}</div>
+        <div style="padding:16px 24px;border-top:1px solid #e2e8f0;color:#94a3b8;font-size:12px;">
+          Λάβατε αυτό το μήνυμα επειδή είστε πελάτης του φαρμακείου μας. Για διαγραφή, απαντήστε «ΔΙΑΓΡΑΦΗ».
+        </div>
+      </div>
+    </div>"""
 
 
 @router.post("/send", status_code=202)
 async def send_campaign(body: CampaignIn, ctx: TenantContext = Depends(require("patients:read", module=_MODULE))):
     cfg = comms.get_config(ctx.tenant_id)
-    rows = await _audience(ctx.tenant_id, body.channel)
+    rows = await _audience(ctx.tenant_id, body.channel, body.segment, body.value)
     sent = failed = 0
     field = "email" if body.channel == "email" else "mobile"
-    html = "<div style='font-family:Arial'>" + body.message.replace("\n", "<br/>") + "</div>"
-    for r in rows[:1000]:
+    for r in rows[:2000]:
         to = r.get(field)
+        first = (r.get("name") or "").split(" ")[-1] if r.get("name") else ""
+        text = body.message.replace("{name}", r.get("name") or "").replace("{first}", first)
         try:
             if body.channel == "email":
-                await comms.send_email(cfg, to, body.subject or "Ενημέρωση φαρμακείου", html)
+                await comms.send_email(cfg, to, body.subject or "Ενημέρωση φαρμακείου",
+                                       _email_html(text, cfg.get("from_name")))
             else:
-                await comms.send_sms(cfg, to, body.message)
+                await comms.send_sms(cfg, to, text)
             sent += 1
         except Exception:  # noqa: BLE001
             failed += 1
