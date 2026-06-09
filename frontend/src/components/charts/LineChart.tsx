@@ -1,11 +1,14 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { BRAND, PALETTE, BASE_GRID, axisStyle } from "./theme";
+import { PALETTE, BASE_GRID, axisStyle } from "./theme";
 
 const ReactECharts = dynamic(() => import("echarts-for-react"), { ssr: false });
 
 export type LineSeries = { name: string; data: number[] };
+
+// distinct colour per line so overlapping series are easy to tell apart
+const LINE_COLORS = ["#6366f1", "#10b981", "#f59e0b", "#06b6d4", "#ec4899", "#ef4444"];
 
 const gradient = (rgb: string) => ({
   type: "linear", x: 0, y: 0, x2: 0, y2: 1,
@@ -55,19 +58,22 @@ export function LineChart({
       : undefined,
     xAxis: { type: "category", data: labels, boundaryGap: false, ...axisStyle },
     yAxis: { type: "value", ...axisStyle },
-    series: resolved.map((s, i) => ({
-      name: s.name,
-      type: "line",
-      smooth: 0.4,
-      showSymbol: clickable && i === 0,
-      symbol: "circle",
-      symbolSize: clickable ? 8 : 4,
-      data: s.data,
-      cursor: clickable ? "pointer" : "default",
-      lineStyle: { width: 2.5 },
-      areaStyle: area && i === 0 ? { color: gradient("99, 102, 241") } : undefined,
-      itemStyle: { color: i === 0 ? BRAND : undefined },
-    })),
+    series: resolved.map((s, i) => {
+      const color = LINE_COLORS[i % LINE_COLORS.length];
+      return {
+        name: s.name,
+        type: "line",
+        smooth: 0.4,
+        showSymbol: clickable && i === 0,
+        symbol: "circle",
+        symbolSize: clickable ? 8 : 4,
+        data: s.data,
+        cursor: clickable ? "pointer" : "default",
+        lineStyle: { width: 2.5, color },
+        areaStyle: area && i === 0 ? { color: gradient("99, 102, 241") } : undefined,
+        itemStyle: { color },
+      };
+    }),
   };
 
   const onEvents = onPointClick
