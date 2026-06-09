@@ -10,8 +10,10 @@ from fastapi import APIRouter, Depends, Query
 from app.core.deps import TenantContext, require
 from app.repositories.profitability import (
     ProductRepository,
+    ProfitabilityLiveRepository,
     ProfitabilitySnapshotRepository,
     ReceivablesRepository,
+    _month_range,
 )
 
 router = APIRouter()
@@ -34,9 +36,10 @@ async def by_dimension(
     period: str = Query(..., description="YYYY-MM"),
     ctx: TenantContext = Depends(require("profitability:read", module=_MODULE)),
 ):
-    repo = ProfitabilitySnapshotRepository(tenant_id=ctx.tenant_id)
-    return {"period": period, "dim": dim,
-            "items": await repo.by_dimension(period=period, dim=dim)}
+    start, end = _month_range(period)
+    repo = ProfitabilityLiveRepository(tenant_id=ctx.tenant_id)
+    rows = await repo.by_dimension_live(date_from=start, date_to=end, dim=dim)
+    return {"period": period, "dim": dim, "rows": rows}
 
 
 @router.get("/low-margin")

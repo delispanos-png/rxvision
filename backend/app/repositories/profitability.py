@@ -75,8 +75,10 @@ class ProfitabilitySnapshotRepository(BaseRepository):
                 {"$multiply": [{"$divide": ["$gross_profit", "$amount_total"]}, 100]},
                 0,
             ]}}},
-            {"$project": {"_id": 0, "period": period, "rx_count": 1, "amount_total": 1,
-                          "amount_claimed": 1, "wholesale_cost": 1, "gross_profit": 1, "margin_pct": 1}},
+            {"$project": {"_id": 0, "period": period, "rx_count": 1,
+                          "revenue": "$amount_total", "cost": "$wholesale_cost",
+                          "amount_total": 1, "amount_claimed": 1, "wholesale_cost": 1,
+                          "gross_profit": 1, "margin_pct": 1}},
         ]
         rows = await execs.aggregate(pipeline)
         return rows[0] if rows else {
@@ -136,19 +138,71 @@ class ProfitabilityLiveRepository(BaseRepository):
             "gross_profit": 0, "avg_margin_pct": 0,
         }
 
+    async def by_dimension_live(self, *, date_from: datetime, date_to: datetime,
+                                dim: str, limit: int = 20) -> list[dict]:
+        """Live gross profit (retail − wholesale) + margin grouped by a dimension.
+        Snapshots are not generated, so this computes from prescription_executions."""
+        match = {"executed_at": {"$gte": date_from, "$lt": date_to}}
+        margin = {"$set": {"gross_profit": {"$subtract": ["$value", "$cost"]}}}
+        pct = {"$set": {"margin_pct": {"$cond": [
+            {"$gt": ["$value", 0]},
+            {"$multiply": [{"$divide": ["$gross_profit", "$value"]}, 100]}, 0]}}}
+        tail = [{"$sort": {"gross_profit": -1}}, {"$limit": limit}]
+        proj = {"$project": {"_id": 0, "label": 1, "gross_profit": 1, "margin_pct": 1}}
+
+        if dim in ("fund", "doctor"):
+            field = "fund_id" if dim == "fund" else "doctor_id"
+            coll, name_field = _DIM_LOOKUP[dim]
+            pipe = [{"$match": match},
+                    {"$group": {"_id": f"${field}", "value": {"$sum": "$amount_total"},
+                                "cost": {"$sum": "$wholesale_cost"}}},
+                    margin, pct, *tail,
+                    {"$lookup": {"from": coll, "localField": "_id",
+                                 "foreignField": "_id", "as": "_d"}},
+                    {"$set": {"label": {"$ifNull": [{"$first": f"$_d.{name_field}"}, "—"]}}}, proj]
+        elif dim == "icd10":
+            pipe = [{"$match": match}, {"$unwind": "$icd10"},
+                    {"$group": {"_id": "$icd10", "value": {"$sum": "$amount_total"},
+                                "cost": {"$sum": "$wholesale_cost"}}},
+                    margin, pct, *tail,
+                    {"$lookup": {"from": "icd10_codes", "localField": "_id",
+                                 "foreignField": "_id", "as": "_d"}},
+                    {"$set": {"label": {"$concat": ["$_id", " ",
+                                {"$ifNull": [{"$first": "$_d.title_el"}, ""]}]}}}, proj]
+        else:  # product | category — from the medicine lines
+            group_id = "$it.product_id" if dim == "product" else "$it.category"
+            pipe = [{"$match": match},
+                    {"$lookup": {"from": "prescription_items", "localField": "_id",
+                                 "foreignField": "execution_id", "as": "it"}},
+                    {"$unwind": "$it"},
+                    {"$group": {"_id": group_id,
+                                "value": {"$sum": {"$multiply": ["$it.retail_price", "$it.quantity"]}},
+                                "cost": {"$sum": {"$multiply": ["$it.wholesale_price", "$it.quantity"]}}}},
+                    margin, pct, *tail]
+            if dim == "product":
+                pipe += [{"$lookup": {"from": "products", "localField": "_id",
+                                      "foreignField": "_id", "as": "_d"}},
+                         {"$set": {"label": {"$ifNull": [{"$first": "$_d.name"}, "—"]}}}, proj]
+            else:
+                pipe += [{"$set": {"label": {"$ifNull": ["$_id", "—"]}}}, proj]
+        return await self.aggregate(pipe)
+
 
 class ProductRepository(BaseRepository):
     collection_name = "products"
 
     async def low_margin(self, *, threshold_pct: float, limit: int = 50) -> list[dict]:
-        """ANALYTICS.md §10 — low margin but frequently prescribed → priority."""
+        """ANALYTICS.md §10 — low margin but frequently prescribed → priority.
+        Field names match the frontend table (product_name/units/gross_profit)."""
         pipeline = [
             {"$match": {"margin_pct": {"$lt": threshold_pct}, "rx_frequency": {"$gt": 0}}},
             {"$sort": {"rx_frequency": -1}},
             {"$limit": limit},
-            {"$project": {"name": 1, "category": 1, "retail_price": 1,
-                          "wholesale_price": 1, "margin": 1, "margin_pct": 1,
-                          "rx_frequency": 1}},
+            {"$project": {"_id": 0, "product_id": {"$toString": "$_id"},
+                          "product_name": "$name", "category": 1,
+                          "units": "$rx_frequency", "margin_pct": 1,
+                          "gross_profit": {"$multiply": [{"$ifNull": ["$margin", 0]},
+                                                         {"$ifNull": ["$rx_frequency", 0]}]}}},
         ]
         return await self.aggregate(pipeline)
 
