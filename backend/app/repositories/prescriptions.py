@@ -115,8 +115,9 @@ class PrescriptionRepository(BaseRepository):
         return await self.aggregate(pipeline)
 
     async def by_fund(self, date_from: datetime, date_to: datetime) -> list[dict]:
-        """Per-fund breakdown for the period: rx count, retail value, fund-claimed,
-        and how many prescriptions carry unexecuted substances."""
+        """Per-fund breakdown for the period (rx/value/claimed/unexecuted), folded into
+        the central fund GROUPS (ΗΔΙΚΑ code → group). Funds with no group stay as
+        themselves; grouped funds are summed. Each row carries its member `funds`."""
         pipeline = [
             {"$match": {"executed_at": {"$gte": date_from, "$lt": date_to}}},
             {"$group": {"_id": "$fund_id",
@@ -126,12 +127,33 @@ class PrescriptionRepository(BaseRepository):
                         "unexecuted": {"$sum": {"$cond": ["$has_unexecuted_substances", 1, 0]}}}},
             {"$lookup": {"from": "insurance_funds", "localField": "_id",
                          "foreignField": "_id", "as": "f"}},
-            {"$set": {"fund_name": {"$ifNull": [{"$first": "$f.name"}, "— (χωρίς ταμείο)"]}}},
-            {"$sort": {"value": -1}},
-            {"$project": {"_id": 0, "fund_name": 1, "rx": 1, "value": 1,
+            {"$set": {"fund_name": {"$ifNull": [{"$first": "$f.name"}, "— (χωρίς ταμείο)"]},
+                      "code": {"$first": "$f.code"}}},
+            {"$project": {"_id": 0, "fund_name": 1, "code": 1, "rx": 1, "value": 1,
                           "claimed": 1, "unexecuted": 1}},
         ]
-        return await self.aggregate(pipeline)
+        funds = await self.aggregate(pipeline)
+
+        from app.core.db import shared_db
+        cfg = await shared_db()["fund_groups"].find().to_list(length=None)
+        code2group = {c: g["name"] for g in cfg for c in g.get("codes", [])}
+
+        groups: dict[str, dict] = {}
+        for f in funds:
+            gname = code2group.get(f.get("code")) or f["fund_name"]
+            g = groups.get(gname)
+            if g is None:
+                g = groups[gname] = {"fund_name": gname, "rx": 0, "value": 0,
+                                     "claimed": 0, "unexecuted": 0, "funds": []}
+            g["rx"] += f["rx"]
+            g["value"] += f["value"]
+            g["claimed"] += f["claimed"]
+            g["unexecuted"] += f["unexecuted"]
+            g["funds"].append({k: f.get(k) for k in
+                               ("fund_name", "rx", "value", "claimed", "unexecuted")})
+        for g in groups.values():
+            g["is_group"] = len(g["funds"]) > 1
+        return sorted(groups.values(), key=lambda x: -x["value"])
 
     async def dashboard_summary(self, date_from: datetime, date_to: datetime) -> dict:
         pipeline = [
