@@ -19,7 +19,7 @@ export function DonutChart({
 }) {
   const option = {
     color: PALETTE,
-    tooltip: { trigger: "item" },
+    tooltip: { appendToBody: true, confine: true, trigger: "item" },
     legend: { bottom: 0, textStyle: { color: "#475569" } },
     series: [
       {

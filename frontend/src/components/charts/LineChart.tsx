@@ -39,6 +39,8 @@ export function LineChart({
     color: PALETTE,
     grid: BASE_GRID,
     tooltip: {
+      appendToBody: true,
+      confine: true,
       trigger: "axis",
       backgroundColor: "#0f172a",
       borderWidth: 0,

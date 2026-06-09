@@ -26,7 +26,9 @@ export function HeatmapChart({
 
   const option = {
     tooltip: {
-      position: "top",
+      // render on <body> + confine so the bubble is never clipped by the card/top rows
+      appendToBody: true,
+      confine: true,
       backgroundColor: "#0f172a",
       borderWidth: 0,
       textStyle: { color: "#fff", fontSize: 12 },

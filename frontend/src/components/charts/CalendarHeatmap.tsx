@@ -21,6 +21,8 @@ export function CalendarHeatmap({
 
   const option = {
     tooltip: {
+      appendToBody: true,
+      confine: true,
       backgroundColor: "#0f172a",
       borderWidth: 0,
       textStyle: { color: "#fff", fontSize: 12 },

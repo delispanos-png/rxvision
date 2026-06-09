@@ -37,7 +37,7 @@ export function BarChart({
     // containLabel lets ECharts reserve exactly the space the (long Greek) category
     // labels need (auto-sized at any width — no fixed 120px gutter crushing mobile).
     grid: { ...BASE_GRID, left: horizontal ? 8 : BASE_GRID.left, containLabel: true },
-    tooltip: { trigger: "axis", axisPointer: { type: "shadow" } },
+    tooltip: { appendToBody: true, confine: true, trigger: "axis", axisPointer: { type: "shadow" } },
     xAxis: horizontal ? val : cat,
     yAxis: horizontal ? { ...cat, inverse: true } : val,
     series: [
