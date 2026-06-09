@@ -49,7 +49,7 @@ export function CrossSellCard({ x }: { x: Xsell }) {
 
   return (
     <>
-      <button onClick={() => setOpen(true)} className="group w-full rounded-2xl border border-brand-200 bg-brand-50/40 p-4 text-left transition hover:-translate-y-0.5 hover:border-brand-300 hover:shadow-lg">
+      <button onClick={() => setOpen(true)} className="group w-full rounded-2xl border border-brand-200 bg-brand-50/40 p-4 text-left transition hover:-translate-y-0.5 hover:border-brand-300 hover:shadow-lg dark:border-brand-800/50 dark:bg-brand-950/30 dark:hover:border-brand-700">
         <div className="flex items-center justify-between gap-2">
           <span className="text-sm font-semibold text-slate-800">{x.class}</span>
           <span className="shrink-0 rounded-full bg-brand-100 px-2 py-0.5 text-[11px] font-bold text-brand-700">{fmtNum(x.reach)} ασθενείς</span>

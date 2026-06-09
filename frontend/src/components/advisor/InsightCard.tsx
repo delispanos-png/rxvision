@@ -14,11 +14,11 @@ const ICONS: Record<string, LucideIcon> = {
 };
 
 const SEV: Record<string, { ring: string; chip: string; icon: string; label: string }> = {
-  critical: { ring: "border-rose-200 bg-rose-50/60", chip: "bg-rose-100 text-rose-700", icon: "text-rose-600", label: "Κρίσιμο" },
-  warning: { ring: "border-amber-200 bg-amber-50/60", chip: "bg-amber-100 text-amber-700", icon: "text-amber-600", label: "Προσοχή" },
-  opportunity: { ring: "border-brand-200 bg-brand-50/50", chip: "bg-brand-100 text-brand-700", icon: "text-brand-600", label: "Ευκαιρία" },
-  info: { ring: "border-slate-200 bg-white", chip: "bg-slate-100 text-slate-600", icon: "text-slate-500", label: "Πληροφορία" },
-  positive: { ring: "border-emerald-200 bg-emerald-50/60", chip: "bg-emerald-100 text-emerald-700", icon: "text-emerald-600", label: "Θετικό" },
+  critical: { ring: "border-rose-200 bg-rose-50/60 dark:border-rose-900/50 dark:bg-rose-950/40", chip: "bg-rose-100 text-rose-700 dark:bg-rose-900/50 dark:text-rose-300", icon: "text-rose-600 dark:text-rose-400", label: "Κρίσιμο" },
+  warning: { ring: "border-amber-200 bg-amber-50/60 dark:border-amber-900/40 dark:bg-amber-950/30", chip: "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300", icon: "text-amber-600 dark:text-amber-400", label: "Προσοχή" },
+  opportunity: { ring: "border-brand-200 bg-brand-50/50 dark:border-brand-800/50 dark:bg-brand-950/40", chip: "bg-brand-100 text-brand-700 dark:bg-brand-900/50 dark:text-brand-300", icon: "text-brand-600 dark:text-brand-400", label: "Ευκαιρία" },
+  info: { ring: "border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900", chip: "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300", icon: "text-slate-500 dark:text-slate-400", label: "Πληροφορία" },
+  positive: { ring: "border-emerald-200 bg-emerald-50/60 dark:border-emerald-900/40 dark:bg-emerald-950/30", chip: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300", icon: "text-emerald-600 dark:text-emerald-400", label: "Θετικό" },
 };
 
 export type Insight = {
