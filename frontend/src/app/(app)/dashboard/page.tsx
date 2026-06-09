@@ -12,6 +12,7 @@ import { LineChart } from "@/components/charts/LineChart";
 import { DonutChart } from "@/components/charts/DonutChart";
 import { BarChart } from "@/components/charts/BarChart";
 import { HeatmapChart, type HeatCell } from "@/components/charts/HeatmapChart";
+import { CalendarHeatmap } from "@/components/charts/CalendarHeatmap";
 
 type Summary = { executions: number; value: number; claimed: number; gross_profit: number; patient_count: number };
 type Bucket = { bucket: string; value: number };
@@ -43,6 +44,11 @@ export default function DashboardPage() {
   const topDoc = useQuery({ queryKey: ["dash", "doc", from, to], queryFn: () => api<Top[]>(`/dashboard/top?dim=doctors&limit=6&${qs}`) });
   const recent = useQuery({ queryKey: ["dash", "recent", from, to], queryFn: () => api<{ items: Rx[] }>(`/prescriptions?${qs}&page=1&page_size=6`) });
   const heat = useQuery({ queryKey: ["dash", "heat", from, to], queryFn: () => api<HeatPoint[]>(`/dashboard/heatmap?metric=executions&${qs}`) });
+  const tsExec = useQuery({ queryKey: ["dash", "ts", "exec", from, to], queryFn: () => api<Bucket[]>(`/dashboard/timeseries?metric=executions&grain=day&${qs}`) });
+
+  // [date, executions] per calendar day for the calendar heatmap
+  const calendarData: [string, number][] = (tsExec.data ?? []).map((b) => [b.bucket, b.value]);
+  const calendarWeeks = Math.ceil((calendarData.length || 7) / 7) + 1;
 
   // {dow:1-7, hour:0-23} → [hourIdx, dowIdx(0=Δευ), value]
   const heatCells: HeatCell[] = (heat.data ?? []).map((p) => [p.hour, p.dow - 1, p.value]);
@@ -137,6 +143,13 @@ export default function DashboardPage() {
       <div className="mt-4">
         <PanelCard title="Ώρες αιχμής — εκτελέσεις ανά ώρα & ημέρα">
           <HeatmapChart cells={heatCells} />
+        </PanelCard>
+      </div>
+
+      {/* calendar heatmap — executions per DATE */}
+      <div className="mt-4">
+        <PanelCard title="Ημερολόγιο αιχμής — εκτελέσεις ανά ημερομηνία">
+          <CalendarHeatmap data={calendarData} height={Math.max(180, calendarWeeks * 18 + 80)} />
         </PanelCard>
       </div>
     </ModuleGuard>
