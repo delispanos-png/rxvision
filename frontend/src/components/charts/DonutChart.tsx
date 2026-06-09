@@ -19,13 +19,23 @@ export function DonutChart({
 }) {
   const option = {
     color: PALETTE,
-    tooltip: { appendToBody: true, confine: true, trigger: "item" },
-    legend: { bottom: 0, textStyle: { color: "#475569" } },
+    tooltip: {
+      appendToBody: true, confine: true, trigger: "item",
+      formatter: (p: { name: string; value: number; percent: number }) =>
+        `${p.name}<br/><b>${p.value}</b> (${p.percent}%)`,
+    },
+    legend: {
+      type: "scroll",
+      bottom: 0,
+      textStyle: { color: "#475569", fontSize: 11 },
+      // truncate long labels (e.g. full ICD-10 names) so the legend always fits
+      formatter: (name: string) => (name.length > 26 ? name.slice(0, 25) + "…" : name),
+    },
     series: [
       {
         type: "pie",
-        radius: ["45%", "70%"],
-        center: ["50%", "45%"],
+        radius: ["45%", "68%"],
+        center: ["50%", "42%"],
         avoidLabelOverlap: true,
         itemStyle: { borderColor: "#fff", borderWidth: 2 },
         label: { show: false },

@@ -12,7 +12,8 @@ import { DataTable, type Column } from "@/components/tables/DataTable";
 import { QueryState } from "@/components/ui/QueryState";
 import { downloadCsv } from "@/lib/csv";
 import { fmtDate } from "@/lib/formatters";
-import { DateInput } from "@/components/ui/DateInput";
+import { DateRangeFilter } from "@/components/filters/DateRangeFilter";
+import { useUiStore, filtersToQuery } from "@/store/uiStore";
 import { LineChart } from "@/components/charts/LineChart";
 import { DonutChart } from "@/components/charts/DonutChart";
 import { BarChart } from "@/components/charts/BarChart";
@@ -54,12 +55,11 @@ const GREETING = () => {
 };
 
 export default function DashboardPage() {
-  // Date range filter — defaults to year-to-date so the full year's data is visible.
-  const [fromD, setFromD] = useState(() => `${new Date().getFullYear()}-01-01`);
-  const [toD, setToD] = useState(() => new Date().toISOString().slice(0, 10));
-  const from = new Date(`${fromD}T00:00:00.000Z`).toISOString();
-  const to = new Date(`${toD}T23:59:59.999Z`).toISOString();
-  const qs = `date_from=${from}&date_to=${to}`;
+  // shared global filter (date range + fund/doctor/icd10) — same across every page
+  const filters = useUiStore();
+  const qs = filtersToQuery(filters);
+  const from = filters.dateFrom, to = filters.dateTo;
+  const fromD = filters.dateFrom, toD = filters.dateTo;
 
   // drill-down popup (clickable KPIs)
   const [modal, setModal] = useState<{ title: string; kind: "rx" | "patients"; qs: string } | null>(null);
@@ -101,14 +101,7 @@ export default function DashboardPage() {
           <h1 className="text-2xl font-bold tracking-tight text-slate-900">{GREETING()}! 👋</h1>
           <p className="mt-1 text-sm text-slate-500">Επισκόπηση φαρμακείου — {dateLabel}</p>
         </div>
-        <div className="flex items-end gap-2">
-          <label className="text-xs text-slate-500">Από
-            <DateInput value={fromD} onChange={setFromD} className="mt-1" />
-          </label>
-          <label className="text-xs text-slate-500">Έως
-            <DateInput value={toD} onChange={setToD} className="mt-1" />
-          </label>
-        </div>
+        <DateRangeFilter />
       </div>
 
       {/* KPI row */}
@@ -140,7 +133,7 @@ export default function DashboardPage() {
         <PanelCard title="Ανάλυση ανά ICD-10">
           <DonutChart
             height={300}
-            data={(topIcd.data ?? []).map((d) => ({ name: d._id || "—", value: d.rx || 0 }))}
+            data={(topIcd.data ?? []).map((d) => ({ name: d.name ? `${d._id} · ${d.name}` : (d._id || "—"), value: d.rx || 0 }))}
           />
         </PanelCard>
       </div>

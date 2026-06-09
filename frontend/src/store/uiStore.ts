@@ -1,13 +1,14 @@
 import { create } from "zustand";
 
-function monthRange(): { from: string; to: string } {
+function yearToDate(): { from: string; to: string } {
+  // shared default for every page: 1 Jan → tomorrow (exclusive upper bound, includes today)
   const now = new Date();
-  const first = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
-  const next = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
-  return { from: first.toISOString().slice(0, 10), to: next.toISOString().slice(0, 10) };
+  const first = new Date(Date.UTC(now.getUTCFullYear(), 0, 1));
+  const tomorrow = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1));
+  return { from: first.toISOString().slice(0, 10), to: tomorrow.toISOString().slice(0, 10) };
 }
 
-const defaults = monthRange();
+const defaults = yearToDate();
 
 export type UiState = {
   dateFrom: string;

@@ -245,7 +245,11 @@ class PrescriptionRepository(BaseRepository):
             pipeline = [match, {"$unwind": "$icd10"},
                         {"$group": {"_id": "$icd10", "rx": {"$sum": 1},
                                     "value": {"$sum": "$amount_total"}}},
-                        {"$sort": {"rx": -1}}, {"$limit": limit}]
+                        {"$sort": {"rx": -1}}, {"$limit": limit},
+                        {"$lookup": {"from": "icd10_codes", "localField": "_id",
+                                     "foreignField": "_id", "as": "c"}},
+                        {"$set": {"name": {"$first": "$c.title_el"}}},
+                        {"$project": {"c": 0}}]
         elif dim == "doctors":
             pipeline = [match,
                         {"$group": {"_id": "$doctor_id", "rx": {"$sum": 1},
