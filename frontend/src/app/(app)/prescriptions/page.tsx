@@ -101,7 +101,8 @@ const unexecutedColumns: Column<UnexecutedRow>[] = [
   {
     key: "barcodes", header: "Από συνταγή",
     render: (r) => {
-      const rxs = r.rxs ?? (r.barcodes ?? []).map((b) => ({ barcode: b }));
+      const rxs: { barcode: string; patient?: string | null; date?: string | null }[] =
+        r.rxs ?? (r.barcodes ?? []).map((b) => ({ barcode: b }));
       return (
         <div className="flex flex-wrap gap-1.5">
           {rxs.slice(0, 4).map((x) => <BarcodeChip key={x.barcode} bc={x.barcode} patient={x.patient} date={x.date} />)}

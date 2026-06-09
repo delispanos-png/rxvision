@@ -38,6 +38,8 @@ export function DataTable<T extends Record<string, unknown>>({
   empty = "Δεν υπάρχουν δεδομένα.",
   rowKey,
   pageSize,
+  serverSort,
+  onServerSort,
 }: {
   columns: Column<T>[];
   rows: T[];
