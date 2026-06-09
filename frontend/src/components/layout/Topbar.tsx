@@ -3,9 +3,10 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
-import { KeyRound, LogOut, Menu, Settings, User } from "lucide-react";
+import { KeyRound, LogOut, Menu, Settings, User, Sun, Moon } from "lucide-react";
 import { api, queryKeys } from "@/lib/apiClient";
 import { useNavStore } from "@/store/navStore";
+import { usePref, useT } from "@/store/prefStore";
 import { InstallButton } from "@/components/pwa/InstallButton";
 
 type Me = {
@@ -23,6 +24,8 @@ function initials(name: string): string {
 
 export function Topbar() {
   const router = useRouter();
+  const { theme, setTheme, locale, setLocale } = usePref();
+  const t = useT();
   const { data } = useQuery({ queryKey: queryKeys.me(), queryFn: () => api<Me>("/auth/me"), retry: false });
 
   const [open, setOpen] = useState(false);
@@ -63,16 +66,30 @@ export function Topbar() {
   }
 
   return (
-    <header className="sticky top-0 z-10 flex h-16 items-center justify-end gap-2 border-b border-slate-200/70 bg-canvas/80 px-4 backdrop-blur sm:px-6">
+    <header className="sticky top-0 z-10 flex h-16 items-center justify-end gap-2 border-b border-slate-200/70 bg-canvas/80 px-4 backdrop-blur dark:border-slate-800 dark:bg-slate-950/80 sm:px-6">
       <button
         onClick={() => useNavStore.getState().setOpen(true)}
         aria-label="Μενού"
-        className="mr-auto grid h-10 w-10 place-items-center rounded-lg text-slate-600 hover:bg-white md:hidden"
+        className="mr-auto grid h-10 w-10 place-items-center rounded-lg text-slate-600 hover:bg-white dark:text-slate-300 dark:hover:bg-slate-800 md:hidden"
       >
         <Menu className="h-5 w-5" />
       </button>
+      <button
+        onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+        title={t("Σκούρο/Φωτεινό θέμα", "Dark/Light theme")}
+        className="grid h-9 w-9 place-items-center rounded-lg text-slate-500 hover:bg-white dark:text-slate-300 dark:hover:bg-slate-800"
+      >
+        {theme === "dark" ? <Sun className="h-[18px] w-[18px]" /> : <Moon className="h-[18px] w-[18px]" />}
+      </button>
+      <button
+        onClick={() => setLocale(locale === "el" ? "en" : "el")}
+        title={t("Γλώσσα", "Language")}
+        className="grid h-9 min-w-[36px] place-items-center rounded-lg px-2 text-xs font-bold text-slate-500 hover:bg-white dark:text-slate-300 dark:hover:bg-slate-800"
+      >
+        {locale === "el" ? "EN" : "ΕΛ"}
+      </button>
       <InstallButton />
-      <div className="mx-1 h-6 w-px bg-slate-200" />
+      <div className="mx-1 h-6 w-px bg-slate-200 dark:bg-slate-700" />
 
       <div ref={menuRef} className="relative">
         <button
@@ -109,21 +126,21 @@ export function Topbar() {
                 onClick={() => go("/account")}
                 className="flex w-full items-center gap-2.5 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
               >
-                <User className="h-4 w-4 text-slate-400" /> Ο λογαριασμός μου
+                <User className="h-4 w-4 text-slate-400" /> {t("Ο λογαριασμός μου", "My account")}
               </button>
               <button
                 role="menuitem"
                 onClick={() => go("/account#password")}
                 className="flex w-full items-center gap-2.5 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
               >
-                <KeyRound className="h-4 w-4 text-slate-400" /> Αλλαγή κωδικού
+                <KeyRound className="h-4 w-4 text-slate-400" /> {t("Αλλαγή κωδικού", "Change password")}
               </button>
               <button
                 role="menuitem"
                 onClick={() => go("/settings/users")}
                 className="flex w-full items-center gap-2.5 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
               >
-                <Settings className="h-4 w-4 text-slate-400" /> Ρυθμίσεις
+                <Settings className="h-4 w-4 text-slate-400" /> {t("Ρυθμίσεις", "Settings")}
               </button>
             </div>
 
@@ -133,7 +150,7 @@ export function Topbar() {
                 onClick={logout}
                 className="flex w-full items-center gap-2.5 px-4 py-2 text-sm font-medium text-rose-600 hover:bg-rose-50"
               >
-                <LogOut className="h-4 w-4" /> Αποσύνδεση
+                <LogOut className="h-4 w-4" /> {t("Αποσύνδεση", "Sign out")}
               </button>
             </div>
           </div>

@@ -11,13 +11,33 @@
   body {
     @apply bg-canvas text-slate-900 font-sans;
   }
+  .dark body {
+    @apply bg-slate-950 text-slate-100;
+  }
 }
 
 @layer components {
   .rx-card {
-    @apply rounded-2xl border border-slate-200/70 bg-white shadow-card;
+    @apply rounded-2xl border border-slate-200/70 bg-white shadow-card dark:border-slate-700/60 dark:bg-slate-900;
   }
   .rx-label {
-    @apply text-[11px] font-semibold uppercase tracking-wider text-slate-500;
+    @apply text-[11px] font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400;
   }
 }
+
+/* Dark-mode safety net — soften the most common hard-coded light utilities so pages that
+   aren't individually themed still read correctly in dark mode. */
+.dark .bg-white { background-color: #0f172a !important; }
+.dark .bg-canvas { background-color: #020617 !important; }
+.dark .text-slate-900 { color: #f1f5f9 !important; }
+.dark .text-slate-800 { color: #e2e8f0 !important; }
+.dark .text-slate-700 { color: #cbd5e1 !important; }
+.dark .text-slate-600 { color: #94a3b8 !important; }
+.dark .text-slate-500 { color: #94a3b8 !important; }
+.dark .border-slate-200, .dark .border-slate-200\/70, .dark .border-slate-100, .dark .border-slate-300 { border-color: #1e293b !important; }
+.dark .bg-slate-50, .dark .bg-slate-50\/60, .dark .bg-slate-50\/40, .dark .bg-slate-100 { background-color: #111827 !important; }
+.dark thead.bg-slate-50 { background-color: #0b1220 !important; }
+.dark .divide-slate-100 > :not([hidden]) ~ :not([hidden]),
+.dark .divide-slate-200 > :not([hidden]) ~ :not([hidden]) { border-color: #1e293b !important; }
+.dark input, .dark select, .dark textarea { background-color: #0b1220; border-color: #334155; color: #e2e8f0; }
+.dark .hover\:bg-slate-50:hover { background-color: #1e293b !important; }
