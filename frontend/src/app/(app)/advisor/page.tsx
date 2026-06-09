@@ -11,7 +11,7 @@ import { CrossSellCard } from "@/components/advisor/CrossSellCard";
 
 type Kpi = { value: number; delta: number | null };
 type Cat = { code: string; name: string; revenue: number; gross_profit: number; margin_pct: number; units: number; rx: number; share_pct: number; trend_pct: number | null; verdict: string };
-type Xsell = { class: string; sell: string; why: string; reach: number };
+type Xsell = { atc: string; class: string; sell: string; why: string; reach: number };
 type Business = {
   period: { from: string; to: string };
   kpis: { revenue: Kpi; gross_profit: Kpi; margin_pct: Kpi; rx: Kpi; claimed: Kpi; patients: Kpi };

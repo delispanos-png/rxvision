@@ -17,7 +17,7 @@ type Sug = {
   avg_daily: number; expected_demand: number; suggested_qty: number; est_cost: number; price_rising?: boolean;
 };
 type Upc = { expected_open_date: string; patient_name?: string | null; amka?: string | null; products?: (string | null)[]; source_barcode?: string | null };
-type Xsell = { class: string; sell: string; why: string; reach: number };
+type Xsell = { atc: string; class: string; sell: string; why: string; reach: number };
 type OrderAdvice = {
   kpis: { items: number; qty: number; cost: number; rising: number };
   insights: Insight[];
