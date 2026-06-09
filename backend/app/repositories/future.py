@@ -46,6 +46,37 @@ class FuturePrescriptionRepository(BaseRepository):
         ]
         return await self.aggregate(pipeline)
 
+    async def upcoming_list(self, *, today: datetime, horizon: datetime,
+                            min_history: int = 0, limit: int = 1000) -> list[dict]:
+        """Individual pending future prescriptions within the window, enriched with
+        patient name/AMKA, the source prescription barcode and the expected products."""
+        match: dict = {"status": "pending",
+                       "expected_open_date": {"$gte": today, "$lt": horizon}}
+        if min_history > 0:
+            match["patient_ref"] = {"$in": await self._patients_with_min_history(min_history)}
+        pipeline = [
+            {"$match": match},
+            {"$sort": {"expected_open_date": 1}},
+            {"$limit": limit},
+            {"$lookup": {"from": "patients_anonymized", "localField": "patient_ref",
+                         "foreignField": "_id", "as": "p"}},
+            {"$lookup": {"from": "prescription_executions", "localField": "source_execution_id",
+                         "foreignField": "_id", "as": "ex"}},
+            {"$lookup": {"from": "products", "localField": "products.product_id",
+                         "foreignField": "_id", "as": "pr"}},
+            {"$project": {
+                "_id": 0,
+                "expected_open_date": 1,
+                "confidence": 1,
+                "patient_name": {"$first": "$p.full_name"},
+                "amka": {"$first": "$p.amka"},
+                "source_barcode": {"$first": "$ex.external_id"},
+                "products": "$pr.name",
+                "n_items": {"$size": {"$ifNull": ["$products", []]}},
+            }},
+        ]
+        return await self.aggregate(pipeline)
+
     async def forecast(self, *, today: datetime, horizon: datetime,
                        product_id=None) -> list[dict]:
         """Expected demand per product from pending future prescriptions."""

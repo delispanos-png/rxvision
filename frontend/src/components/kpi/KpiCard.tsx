@@ -20,6 +20,7 @@ export function KpiCard({
   icon: Icon,
   accent = "indigo",
   trend,
+  onClick,
 }: {
   label: string;
   value: string;
@@ -27,9 +28,16 @@ export function KpiCard({
   icon?: LucideIcon;
   accent?: Accent;
   trend?: number;
+  onClick?: () => void;
 }) {
   return (
-    <div className="rx-card p-5">
+    <div
+      className={`rx-card p-5 ${onClick ? "cursor-pointer transition hover:shadow-lg hover:ring-1 hover:ring-brand-200" : ""}`}
+      onClick={onClick}
+      role={onClick ? "button" : undefined}
+      tabIndex={onClick ? 0 : undefined}
+      onKeyDown={onClick ? (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onClick(); } } : undefined}
+    >
       <div className="flex items-start justify-between">
         <div className="min-w-0">
           <div className="rx-label">{label}</div>

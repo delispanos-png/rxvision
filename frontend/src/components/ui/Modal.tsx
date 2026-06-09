@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, type ReactNode } from "react";
 
-const SIZES = { sm: "max-w-sm", md: "max-w-md", lg: "max-w-lg", xl: "max-w-2xl" } as const;
+const SIZES = { sm: "max-w-sm", md: "max-w-md", lg: "max-w-lg", xl: "max-w-2xl", "2xl": "max-w-4xl", "3xl": "max-w-6xl" } as const;
 
 /** Accessible modal primitive: backdrop, Escape-to-close, focus trap, focus restore,
  *  and `max-h-[90vh]` scroll for small screens (U-12, R-5). Consolidates the ad-hoc
