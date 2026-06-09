@@ -9,6 +9,7 @@ from app.api.v1.routers import (
     doctors,
     fund_groups,
     future,
+    infra_cloud,
     icd10,
     ingestion,
     monthly_closing,
@@ -54,6 +55,7 @@ api_router.include_router(pharmacyone.router, prefix="/pharmacyone", tags=["phar
 # Back-office (platform/CloudOn) — separate auth + cross-tenant admin
 api_router.include_router(platform.router, prefix="/platform", tags=["platform"])
 api_router.include_router(fund_groups.router, prefix="/platform/fund-groups", tags=["platform"])
+api_router.include_router(infra_cloud.router, prefix="/platform/cloud", tags=["platform"])
 api_router.include_router(admin.router, prefix="/admin", tags=["admin"])
 
 # Admin: subscriptions, tenant, users/roles/permissions
