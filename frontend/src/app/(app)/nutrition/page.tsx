@@ -9,6 +9,23 @@ import { PanelCard } from "@/components/ui/Card";
 
 type Hit = { patient_id: string; name?: string | null; amka?: string | null; birth_year?: number | null; age_group?: string | null; last_seen?: string | null; mobile?: string | null; email?: string | null; consent?: boolean };
 type Section = { title: string; drugs: string[]; favor: string; avoid: string; why: string };
+
+// pick a fitting emoji + accent per therapeutic category (by keyword in the title)
+function decor(title: string): { emoji: string; from: string; to: string; text: string } {
+  const t = title.toLowerCase();
+  if (t.includes("στατίν") || t.includes("χοληστ")) return { emoji: "🫀", from: "from-rose-50", to: "to-orange-50", text: "text-rose-700" };
+  if (t.includes("διαβ")) return { emoji: "🩸", from: "from-red-50", to: "to-pink-50", text: "text-red-700" };
+  if (t.includes("πιεσ") || t.includes("υπερτασ")) return { emoji: "💓", from: "from-pink-50", to: "to-rose-50", text: "text-pink-700" };
+  if (t.includes("διουρητ")) return { emoji: "💧", from: "from-sky-50", to: "to-cyan-50", text: "text-sky-700" };
+  if (t.includes("ppi") || t.includes("πρωτον")) return { emoji: "🔥", from: "from-amber-50", to: "to-orange-50", text: "text-amber-700" };
+  if (t.includes("θυρε") || t.includes("λεβοθ")) return { emoji: "🦋", from: "from-violet-50", to: "to-fuchsia-50", text: "text-violet-700" };
+  if (t.includes("οστε")) return { emoji: "🦴", from: "from-slate-50", to: "to-stone-100", text: "text-slate-700" };
+  if (t.includes("αντιβιο")) return { emoji: "🦠", from: "from-lime-50", to: "to-green-50", text: "text-green-700" };
+  if (t.includes("κατάθλ") || t.includes("καταθλ")) return { emoji: "🧠", from: "from-indigo-50", to: "to-violet-50", text: "text-indigo-700" };
+  if (t.includes("φλεγμον") || t.includes("μσαφ")) return { emoji: "🦵", from: "from-teal-50", to: "to-emerald-50", text: "text-teal-700" };
+  if (t.includes("αντιπηκτ")) return { emoji: "🩹", from: "from-red-50", to: "to-rose-50", text: "text-red-700" };
+  return { emoji: "🥗", from: "from-emerald-50", to: "to-teal-50", text: "text-emerald-700" };
+}
 type Plan = { patient_id: string; name?: string | null; email?: string | null; mobile?: string | null; sections: Section[] };
 
 export default function NutritionPage() {
@@ -51,6 +68,15 @@ export default function NutritionPage() {
         )}
       </div>
 
+      {/* friendly empty state */}
+      {!picked && (
+        <div className="mt-10 flex flex-col items-center text-center print:hidden">
+          <div className="mb-3 text-5xl">🥗 🍋 🐟 🥦 🫐</div>
+          <h3 className="text-lg font-semibold text-slate-700">Αναζήτησε έναν πελάτη για να ξεκινήσεις</h3>
+          <p className="mt-1 max-w-md text-sm text-slate-400">Μόλις επιλέξεις, ο σύμβουλος συνθέτει εξατομικευμένες διατροφικές οδηγίες με βάση τη φαρμακευτική του αγωγή — έτοιμες για email ή εκτύπωση.</p>
+        </div>
+      )}
+
       {/* plan */}
       {picked && (
         <div>
@@ -71,16 +97,34 @@ export default function NutritionPage() {
 
           {plan.isLoading ? <div className="text-slate-400">Δημιουργία πλάνου…</div> :
             (plan.data?.sections?.length ?? 0) === 0 ? <PanelCard title="Διατροφικές συμβουλές"><p className="text-sm text-slate-500">Δεν εντοπίστηκαν ειδικές οδηγίες για την τρέχουσα αγωγή.</p></PanelCard> : (
-              <div className="grid gap-3 lg:grid-cols-2">
-                {plan.data!.sections.map((s, i) => (
-                  <div key={i} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-card">
-                    <div className="text-base font-semibold text-emerald-700">{s.title}</div>
-                    <div className="mt-0.5 text-xs text-slate-400">Σχετικά φάρμακα: {s.drugs.join(", ") || "—"}</div>
-                    <div className="mt-3 text-sm text-slate-700"><b className="text-emerald-600">✓ Προτίμησε:</b> {s.favor}</div>
-                    <div className="mt-1.5 text-sm text-slate-700"><b className="text-rose-600">✕ Πρόσεξε:</b> {s.avoid}</div>
-                    <div className="mt-1.5 text-xs text-slate-500">{s.why}</div>
-                  </div>
-                ))}
+              <div className="grid gap-4 lg:grid-cols-2">
+                {plan.data!.sections.map((s, i) => {
+                  const d = decor(s.title);
+                  return (
+                    <div key={i} className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-card transition hover:shadow-lg">
+                      <div className={`flex items-center gap-3 bg-gradient-to-r ${d.from} ${d.to} px-4 py-3`}>
+                        <span className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-white text-2xl shadow-sm">{d.emoji}</span>
+                        <div className="min-w-0">
+                          <div className={`text-base font-bold ${d.text}`}>{s.title}</div>
+                          <div className="mt-1 flex flex-wrap gap-1">
+                            {s.drugs.length ? s.drugs.map((dr) => <span key={dr} className="rounded-full bg-white/70 px-2 py-0.5 text-[10px] font-medium text-slate-500">{dr}</span>) : <span className="text-[11px] text-slate-400">—</span>}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="space-y-2.5 p-4">
+                        <div>
+                          <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-bold text-emerald-700">🥗 Προτίμησε</span>
+                          <p className="mt-1 text-sm leading-relaxed text-slate-700">{s.favor}</p>
+                        </div>
+                        <div>
+                          <span className="inline-flex items-center gap-1 rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-bold text-rose-700">⛔ Πρόσεξε</span>
+                          <p className="mt-1 text-sm leading-relaxed text-slate-700">{s.avoid}</p>
+                        </div>
+                        <p className="flex gap-1.5 rounded-lg bg-slate-50 px-3 py-2 text-xs italic text-slate-500"><span className="not-italic">💡</span>{s.why}</p>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             )}
           <p className="mt-4 text-xs text-slate-400">Οι συμβουλές είναι γενικές & ενημερωτικές, δεν υποκαθιστούν ιατρική/διαιτολογική γνωμάτευση.</p>

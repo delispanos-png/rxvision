@@ -132,9 +132,9 @@ def nutrition_html(plan: dict, from_name: str | None = None) -> str:
         f"""<div style="margin:0 0 12px;padding:14px 16px;border:1px solid #e2e8f0;border-radius:12px;">
             <div style="font-weight:700;color:#4f46e5;font-size:15px;">{s['title']}</div>
             <div style="font-size:12px;color:#94a3b8;margin:2px 0 8px;">Σχετικά φάρμακα: {', '.join(s['drugs']) or '—'}</div>
-            <div style="font-size:14px;color:#0f172a;"><b style="color:#16a34a;">✓ Προτίμησε:</b> {s['favor']}</div>
-            <div style="font-size:14px;color:#0f172a;margin-top:4px;"><b style="color:#dc2626;">✕ Πρόσεξε:</b> {s['avoid']}</div>
-            <div style="font-size:13px;color:#64748b;margin-top:4px;">{s['why']}</div></div>"""
+            <div style="font-size:14px;color:#0f172a;"><b style="color:#16a34a;">🥗 Προτίμησε:</b> {s['favor']}</div>
+            <div style="font-size:14px;color:#0f172a;margin-top:4px;"><b style="color:#dc2626;">⛔ Πρόσεξε:</b> {s['avoid']}</div>
+            <div style="font-size:13px;color:#64748b;margin-top:6px;">💡 {s['why']}</div></div>"""
         for s in plan.get("sections", []))
     return f"""<div style="background:#f1f5f9;padding:24px;font-family:Arial,Helvetica,sans-serif;">
       <div style="max-width:620px;margin:0 auto;background:#fff;border-radius:14px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.08);">
