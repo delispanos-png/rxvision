@@ -6,7 +6,7 @@ import { api, queryKeys } from "@/lib/apiClient";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
 import { fmtNum, fmtEur } from "@/lib/formatters";
 import { DataTable, type Column } from "@/components/tables/DataTable";
-import { ExportButton } from "@/components/export/ExportButton";
+import { ExportMenu } from "@/components/export/ExportMenu";
 import { KpiCard } from "@/components/kpi/KpiCard";
 import { PanelCard } from "@/components/ui/Card";
 import { QueryState } from "@/components/ui/QueryState";
@@ -74,7 +74,14 @@ export default function OrdersPage() {
             <RefreshCw className={`h-4 w-4 ${recompute.isPending ? "animate-spin" : ""}`} />
             {recompute.isPending ? "Υπολογισμός…" : "Επανυπολογισμός"}
           </button>
-          <ExportButton path="/orders/suggestions" label="Εξαγωγή προς φαρμακαποθήκη" />
+          <ExportMenu filename="protaseis-paraggelias" title="Προτάσεις παραγγελίας" label="Εξαγωγή προς φαρμακαποθήκη" rows={items} columns={[
+            { key: "product_name", header: "Σκεύασμα" },
+            { key: "substance", header: "Δραστική", value: (r) => r.substance || "—" },
+            { key: "avg_daily", header: "Μ.Ο./ημέρα" },
+            { key: "expected_demand", header: "Αναμ. ζήτηση" },
+            { key: "suggested_qty", header: "Πρόταση" },
+            { key: "est_cost", header: "Εκτ. κόστος (€)", value: (r) => ((r.est_cost || 0) / 100).toFixed(2) },
+          ]} />
         </div>
       </div>
 

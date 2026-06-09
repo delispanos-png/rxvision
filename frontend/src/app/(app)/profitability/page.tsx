@@ -14,7 +14,7 @@ import { SelectFilter } from "@/components/filters/SelectFilter";
 import { DateRangeFilter } from "@/components/filters/DateRangeFilter";
 import { DataTable, type Column } from "@/components/tables/DataTable";
 import { BarChart } from "@/components/charts/BarChart";
-import { ExportButton } from "@/components/export/ExportButton";
+import { ExportMenu } from "@/components/export/ExportMenu";
 
 type Summary = {
   revenue: number; // cents
@@ -87,7 +87,11 @@ export default function ProfitabilityPage() {
           <h1 className="text-2xl font-bold tracking-tight text-slate-900">Κερδοφορία</h1>
           <p className="mt-1 text-sm text-slate-500">Μεικτό κέρδος, περιθώρια & ταμειακή ροή</p>
         </div>
-        <ExportButton path="/profitability/by" query={`?dim=${dim}&${q}`} />
+        <ExportMenu filename={`kerdoforia-${dim}`} title="Κερδοφορία ανά διάσταση" rows={byDim.data?.rows ?? []} columns={[
+          { key: "label", header: "Διάσταση" },
+          { key: "gross_profit", header: "Μεικτό κέρδος (€)", value: (r) => ((r.gross_profit || 0) / 100).toFixed(2) },
+          { key: "margin_pct", header: "Περιθώριο %", value: (r) => (r.margin_pct ?? 0).toFixed(1) },
+        ]} />
       </div>
 
       <div className="mb-4"><DateRangeFilter /></div>

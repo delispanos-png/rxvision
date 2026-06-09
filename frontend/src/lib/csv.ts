@@ -1,7 +1,7 @@
 /** Client-side CSV export — builds a UTF-8 (BOM) file from rows and triggers a
  *  download. No backend needed; works on whatever list is already on screen.
  *  Excel opens it directly (the BOM makes Greek render correctly). */
-export function downloadCsv<T extends Record<string, unknown>>(
+export function downloadCsv<T>(
   filename: string,
   columns: { key: string; header: string; value?: (row: T) => unknown }[],
   rows: T[],
@@ -12,7 +12,7 @@ export function downloadCsv<T extends Record<string, unknown>>(
   };
   const head = columns.map((c) => esc(c.header)).join(";");
   const body = rows
-    .map((r) => columns.map((c) => esc(c.value ? c.value(r) : r[c.key])).join(";"))
+    .map((r) => columns.map((c) => esc(c.value ? c.value(r) : (r as Record<string, unknown>)[c.key])).join(";"))
     .join("\n");
   const blob = new Blob(["﻿" + head + "\n" + body], { type: "text/csv;charset=utf-8;" });
   const url = URL.createObjectURL(blob);

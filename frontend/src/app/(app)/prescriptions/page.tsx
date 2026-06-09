@@ -14,7 +14,7 @@ import { downloadCsv } from "@/lib/csv";
 import { DateRangeFilter } from "@/components/filters/DateRangeFilter";
 import { DataTable, type Column } from "@/components/tables/DataTable";
 import { BarChart } from "@/components/charts/BarChart";
-import { ExportButton } from "@/components/export/ExportButton";
+import { ExportMenu } from "@/components/export/ExportMenu";
 import { KpiCard } from "@/components/kpi/KpiCard";
 import { PanelCard } from "@/components/ui/Card";
 import { QueryState } from "@/components/ui/QueryState";
@@ -198,7 +198,18 @@ export default function PrescriptionsPage() {
           <h1 className="text-2xl font-bold tracking-tight text-slate-900">Συνταγές</h1>
           <p className="mt-1 text-sm text-slate-500">Εκτελέσεις & ανεκτέλεστες δραστικές της περιόδου</p>
         </div>
-        <ExportButton path="/prescriptions" query={`?${q}`} />
+        <ExportMenu<Prescription> filename="syntages" title="Συνταγές — εκτελέσεις περιόδου"
+          columns={[
+            { key: "executed_at", header: "Ημ/νία", value: (r) => fmtDate(r.executed_at) },
+            { key: "external_id", header: "Κωδικός" },
+            { key: "patient_name", header: "Ασθενής", value: (r) => r.patient_name || "—" },
+            { key: "amka", header: "ΑΜΚΑ", value: (r) => r.amka || "—" },
+            { key: "fund_name", header: "Ταμείο", value: (r) => r.fund_name || "—" },
+            { key: "status", header: "Κατάσταση", value: (r) => STATUS_EL[r.status ?? ""] || r.status || "—" },
+            { key: "amount_total", header: "Αξία (€)", value: (r) => ((r.amount_total || 0) / 100).toFixed(2) },
+            { key: "amount_claimed", header: "Από ταμείο (€)", value: (r) => ((r.amount_claimed || 0) / 100).toFixed(2) },
+          ]}
+          fetchRows={async () => (await api<{ items: Prescription[] }>(`/prescriptions?${q}&page=1&page_size=1000&sort=executed_at&dir=-1`)).items} />
       </div>
 
       <div className="mb-4 flex flex-wrap items-end gap-3">

@@ -155,11 +155,36 @@ class ProfitabilityLiveRepository(BaseRepository):
         tail = [{"$sort": {"gross_profit": -1}}, {"$limit": limit}]
         proj = {"$project": {"_id": 0, "label": 1, "gross_profit": 1, "margin_pct": 1}}
 
-        if dim in ("fund", "doctor"):
-            field = "fund_id" if dim == "fund" else "doctor_id"
+        if dim == "fund":
+            # per-fund value/cost + ΗΔΙΚΑ code, then fold into the central fund GROUPS
+            rows = await self.aggregate([
+                {"$match": match},
+                {"$group": {"_id": "$fund_id", "value": {"$sum": "$amount_total"},
+                            "cost": {"$sum": "$wholesale_cost"}}},
+                {"$lookup": {"from": "insurance_funds", "localField": "_id",
+                             "foreignField": "_id", "as": "_d"}},
+                {"$set": {"name": {"$ifNull": [{"$first": "$_d.name"}, "—"]},
+                          "code": {"$first": "$_d.code"}}},
+                {"$project": {"_id": 0, "name": 1, "code": 1, "value": 1, "cost": 1}},
+            ])
+            from app.core.db import shared_db
+            cfg = await shared_db()["fund_groups"].find().to_list(length=None)
+            code2group = {c: g["name"] for g in cfg for c in g.get("codes", [])}
+            groups: dict[str, dict] = {}
+            for r in rows:
+                gname = code2group.get(r.get("code")) or r["name"]
+                g = groups.setdefault(gname, {"label": gname, "value": 0, "cost": 0})
+                g["value"] += r["value"] or 0
+                g["cost"] += r["cost"] or 0
+            out = [{"label": g["label"], "gross_profit": g["value"] - g["cost"],
+                    "margin_pct": ((g["value"] - g["cost"]) / g["value"] * 100) if g["value"] else 0}
+                   for g in groups.values()]
+            out.sort(key=lambda x: x["gross_profit"], reverse=True)
+            return out[:limit]
+        if dim == "doctor":
             coll, name_field = _DIM_LOOKUP[dim]
             pipe = [{"$match": match},
-                    {"$group": {"_id": f"${field}", "value": {"$sum": "$amount_total"},
+                    {"$group": {"_id": "$doctor_id", "value": {"$sum": "$amount_total"},
                                 "cost": {"$sum": "$wholesale_cost"}}},
                     margin, pct, *tail,
                     {"$lookup": {"from": coll, "localField": "_id",

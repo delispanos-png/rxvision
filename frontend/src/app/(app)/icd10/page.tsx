@@ -11,7 +11,7 @@ import { DateRangeFilter } from "@/components/filters/DateRangeFilter";
 import { SelectFilter } from "@/components/filters/SelectFilter";
 import { DataTable, type Column } from "@/components/tables/DataTable";
 import { BarChart } from "@/components/charts/BarChart";
-import { ExportButton } from "@/components/export/ExportButton";
+import { ExportMenu } from "@/components/export/ExportMenu";
 import { KpiCard } from "@/components/kpi/KpiCard";
 import { PanelCard } from "@/components/ui/Card";
 import { QueryState } from "@/components/ui/QueryState";
@@ -69,7 +69,15 @@ export default function Icd10Page() {
           <h1 className="text-2xl font-bold tracking-tight text-slate-900">ICD-10 — Ιεραρχία διαγνώσεων</h1>
           <p className="mt-1 text-sm text-slate-500">Ανάλυση συνταγών & αξίας ανά κόμβο διάγνωσης</p>
         </div>
-        <ExportButton path="/icd10/hierarchy" query={`?level=${level}&metric=value&${q}`} />
+        <ExportMenu filename="icd10" title="Ανάλυση ανά ICD-10" rows={rows} columns={[
+          { key: "node", header: "Κόμβος ICD-10" },
+          { key: "title", header: "Περιγραφή", value: (r) => r.title || "—" },
+          { key: "code_count", header: "Κωδικοί" },
+          { key: "rx", header: "Πλήθος" },
+          { key: "value", header: "Αξία (€)", value: (r) => ((r.value || 0) / 100).toFixed(2) },
+          { key: "claimed", header: "Αιτούμενα (€)", value: (r) => ((r.claimed || 0) / 100).toFixed(2) },
+          { key: "profit", header: "Κερδοφορία (€)", value: (r) => ((r.profit || 0) / 100).toFixed(2) },
+        ]} />
       </div>
 
       <div className="mb-4 flex flex-wrap items-end gap-4">

@@ -11,7 +11,7 @@ import { fmtEur, fmtNum } from "@/lib/formatters";
 import { downloadCsv } from "@/lib/csv";
 import { DateRangeFilter } from "@/components/filters/DateRangeFilter";
 import { DataTable, type Column } from "@/components/tables/DataTable";
-import { ExportButton } from "@/components/export/ExportButton";
+import { ExportMenu } from "@/components/export/ExportMenu";
 import { KpiCard } from "@/components/kpi/KpiCard";
 import { PanelCard } from "@/components/ui/Card";
 import { QueryState } from "@/components/ui/QueryState";
@@ -102,7 +102,14 @@ export default function DoctorsPage() {
           <h1 className="text-2xl font-bold tracking-tight text-slate-900">Ιατροί</h1>
           <p className="mt-1 text-sm text-slate-500">Στατιστικά συνταγογράφησης ανά ιατρό</p>
         </div>
-        <ExportButton path="/doctors" query={`?${q}`} />
+        <ExportMenu filename="iatroi" title="Ιατροί — στατιστικά συνταγογράφησης" rows={items} columns={[
+          { key: "name", header: "Ιατρός" },
+          { key: "specialty", header: "Ειδικότητα", value: (r) => r.specialty || "—" },
+          { key: "rx_count", header: "Συνταγές" },
+          { key: "value", header: "Αξία (€)", value: (r) => (r.value / 100).toFixed(2) },
+          { key: "gross_profit", header: "Κερδοφορία (€)", value: (r) => (r.gross_profit / 100).toFixed(2) },
+          { key: "new_patients", header: "Νέοι πελάτες" },
+        ]} />
       </div>
 
       <div className="mb-4 flex flex-wrap items-end gap-4">
