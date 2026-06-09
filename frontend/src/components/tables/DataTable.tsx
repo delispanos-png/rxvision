@@ -1,3 +1,6 @@
+"use client";
+
+import { useEffect, useState } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
 
 export type Column<T> = {
@@ -29,15 +32,27 @@ export function DataTable<T extends Record<string, unknown>>({
   onRowClick,
   empty = "Δεν υπάρχουν δεδομένα.",
   rowKey,
+  pageSize,
 }: {
   columns: Column<T>[];
   rows: T[];
   onRowClick?: (row: T) => void;
   empty?: string;
   rowKey?: (row: T, index: number) => string | number;
+  /** When set, paginate the given rows client-side with Prev/Next controls. */
+  pageSize?: number;
 }) {
   const cell = (c: Column<T>, row: T): ReactNode =>
     c.render ? c.render(row) : String(row[c.key] ?? "");
+
+  const paginated = !!pageSize && pageSize > 0 && rows.length > pageSize;
+  const [page, setPage] = useState(1);
+  useEffect(() => { setPage(1); }, [rows.length]);
+  const totalPages = paginated ? Math.ceil(rows.length / (pageSize as number)) : 1;
+  const safePage = Math.min(page, totalPages);
+  const pageRows = paginated
+    ? rows.slice((safePage - 1) * (pageSize as number), safePage * (pageSize as number))
+    : rows;
 
   if (rows.length === 0) {
     return (
@@ -72,7 +87,7 @@ export function DataTable<T extends Record<string, unknown>>({
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
-            {rows.map((row, i) => (
+            {pageRows.map((row, i) => (
               <tr
                 key={rowKey ? rowKey(row, i) : i}
                 onClick={onRowClick ? () => onRowClick(row) : undefined}
@@ -94,7 +109,7 @@ export function DataTable<T extends Record<string, unknown>>({
 
       {/* mobile cards */}
       <div className="space-y-2.5 md:hidden">
-        {rows.map((row, i) => {
+        {pageRows.map((row, i) => {
           const visible = rest.filter((c) => !c.hideOnMobile);
           const gridCols = visible.filter((c) => !c.fullWidthOnMobile);
           const blockCols = visible.filter((c) => c.fullWidthOnMobile);
@@ -128,6 +143,27 @@ export function DataTable<T extends Record<string, unknown>>({
           );
         })}
       </div>
+
+      {/* client-side pagination */}
+      {paginated && (
+        <div className="mt-3 flex items-center justify-between text-sm">
+          <span className="text-slate-500">
+            Σελίδα {safePage} από {totalPages} · {rows.length} εγγραφές
+          </span>
+          <div className="flex gap-2">
+            <button
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              disabled={safePage <= 1}
+              className="rounded-lg border border-slate-300 px-3 py-1.5 font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+            >← Προηγούμενη</button>
+            <button
+              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              disabled={safePage >= totalPages}
+              className="rounded-lg border border-slate-300 px-3 py-1.5 font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+            >Επόμενη →</button>
+          </div>
+        </div>
+      )}
     </>
   );
 }

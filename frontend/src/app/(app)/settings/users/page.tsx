@@ -182,7 +182,7 @@ export default function UsersSettingsPage() {
       {users.isLoading ? (
         <div className="text-slate-400">Φόρτωση δεδομένων…</div>
       ) : (
-        <DataTable columns={columns} rows={users.data?.items ?? []} rowKey={(r) => r.id} />
+        <DataTable pageSize={20} columns={columns} rows={users.data?.items ?? []} rowKey={(r) => r.id} />
       )}
 
       {editing && (

@@ -85,7 +85,7 @@ export default function PharmacyOnePage() {
 
         {/* sellers table */}
         <PanelCard title="Αναλυτικά ανά πωλητή" bodyClassName="pt-2">
-          <DataTable columns={sellerColumns} rows={sellers} rowKey={(r) => r.seller} />
+          <DataTable pageSize={20} columns={sellerColumns} rows={sellers} rowKey={(r) => r.seller} />
         </PanelCard>
 
         {/* unexecuted table */}
@@ -96,7 +96,7 @@ export default function PharmacyOnePage() {
             isEmpty={unexecutedItems.length === 0}
             onRetry={() => unexecuted.refetch()}
           >
-            <DataTable columns={unexecutedColumns} rows={unexecutedItems} rowKey={(r) => r.id} />
+            <DataTable pageSize={20} columns={unexecutedColumns} rows={unexecutedItems} rowKey={(r) => r.id} />
           </QueryState>
         </PanelCard>
       </div>

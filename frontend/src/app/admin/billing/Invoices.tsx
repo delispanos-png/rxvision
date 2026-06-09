@@ -75,7 +75,7 @@ export default function Invoices() {
         <button onClick={() => setModal({ mode: "create" })} className="rounded-lg bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-700">+ Νέο παραστατικό</button>
       </div>
       {notice && <div className="mb-3 rounded-lg bg-slate-100 px-4 py-2 text-sm text-slate-700">{notice}</div>}
-      {invoices.isLoading ? <div className="text-slate-400">Φόρτωση…</div> : <DataTable columns={columns} rows={rows} rowKey={(r) => r.id} empty="Δεν υπάρχουν παραστατικά." />}
+      {invoices.isLoading ? <div className="text-slate-400">Φόρτωση…</div> : <DataTable pageSize={20} columns={columns} rows={rows} rowKey={(r) => r.id} empty="Δεν υπάρχουν παραστατικά." />}
 
       {modal && <InvoiceModal modal={modal} tenants={tenants.data?.items ?? []} onClose={() => setModal(null)} onDone={(m) => { setNotice(m); refresh(); setModal(null); }} />}
     </div>

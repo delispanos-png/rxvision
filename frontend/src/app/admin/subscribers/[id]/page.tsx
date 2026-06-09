@@ -144,7 +144,7 @@ export default function TenantCardPage() {
 
       {/* Χρήστες */}
       <h2 className="mb-3 text-sm font-semibold text-slate-700">Χρήστες</h2>
-      <div className="mb-6"><DataTable columns={userColumns} rows={data.users} rowKey={(r) => r.external_user_id} empty="Κανένας χρήστης." /></div>
+      <div className="mb-6"><DataTable pageSize={20} columns={userColumns} rows={data.users} rowKey={(r) => r.external_user_id} empty="Κανένας χρήστης." /></div>
 
       {/* Sync */}
       {data.sync.length > 0 && (

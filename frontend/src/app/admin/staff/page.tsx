@@ -146,7 +146,7 @@ export default function StaffPage() {
         </div>
       )}
 
-      {staff.isLoading ? <div className="text-slate-400">Φόρτωση…</div> : <DataTable columns={columns} rows={rows} rowKey={(r) => r.id} />}
+      {staff.isLoading ? <div className="text-slate-400">Φόρτωση…</div> : <DataTable pageSize={20} columns={columns} rows={rows} rowKey={(r) => r.id} />}
 
       {open && <AddStaffModal sections={sections} onClose={() => setOpen(false)} onDone={(msg) => { setNotice(msg); refresh(); }} />}
       {editing && <EditStaffModal staff={editing} sections={sections} onClose={() => setEditing(null)} onDone={(msg) => { setNotice(msg); refresh(); }} />}

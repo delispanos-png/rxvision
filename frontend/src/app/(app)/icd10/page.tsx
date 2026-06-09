@@ -108,7 +108,7 @@ export default function Icd10Page() {
 
           {/* table */}
           <PanelCard title="Αναλυτικά ανά κόμβο" bodyClassName="pt-2">
-            <DataTable columns={columns} rows={rows} rowKey={(r) => r.node} />
+            <DataTable pageSize={20} columns={columns} rows={rows} rowKey={(r) => r.node} />
           </PanelCard>
         </div>
       </QueryState>

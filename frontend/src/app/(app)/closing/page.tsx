@@ -126,7 +126,7 @@ export default function ClosingPage() {
 
         {/* discrepancies */}
         <PanelCard title="Ασυμφωνίες / ελλείψεις" bodyClassName="pt-2">
-          <DataTable
+          <DataTable pageSize={20}
             columns={discrepancyColumns}
             rows={discrItems}
             rowKey={(r) => r.id}
@@ -136,7 +136,7 @@ export default function ClosingPage() {
 
         {/* fund totals table */}
         <PanelCard title="Συγκεντρωτικά ανά ταμείο" bodyClassName="pt-2">
-          <DataTable columns={fundColumns} rows={funds} rowKey={(r) => r.fund_name} />
+          <DataTable pageSize={20} columns={fundColumns} rows={funds} rowKey={(r) => r.fund_name} />
         </PanelCard>
       </div>
     </ModuleGuard>

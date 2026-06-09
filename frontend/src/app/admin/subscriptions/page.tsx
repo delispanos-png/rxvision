@@ -100,7 +100,7 @@ export default function SubscriptionsPage() {
       {isLoading ? (
         <div className="text-slate-400">Φόρτωση…</div>
       ) : (
-        <DataTable columns={columns} rows={rows} rowKey={(r) => r.tenant_id} />
+        <DataTable pageSize={20} columns={columns} rows={rows} rowKey={(r) => r.tenant_id} />
       )}
     </div>
   );

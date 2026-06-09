@@ -58,7 +58,7 @@ export default function ContentPage() {
         <button onClick={() => setEditing("new")} className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700">+ Νέο</button>
       </div>
 
-      {posts.isLoading ? <div className="text-slate-400">Φόρτωση…</div> : <DataTable columns={columns} rows={posts.data?.items ?? []} rowKey={(r) => r.id} empty="Κανένα περιεχόμενο." />}
+      {posts.isLoading ? <div className="text-slate-400">Φόρτωση…</div> : <DataTable pageSize={20} columns={columns} rows={posts.data?.items ?? []} rowKey={(r) => r.id} empty="Κανένα περιεχόμενο." />}
 
       {editing && <PostModal type={type} post={editing === "new" ? null : editing} onClose={() => setEditing(null)} onDone={() => { setEditing(null); refresh(); }} />}
     </div>

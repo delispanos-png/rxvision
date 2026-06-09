@@ -100,7 +100,7 @@ export default function FuturePage() {
             isEmpty={(forecast.data?.items?.length ?? 0) === 0}
             onRetry={() => forecast.refetch()}
           >
-            <DataTable columns={forecastColumns} rows={forecast.data?.items ?? []} rowKey={(r) => r.product_id} />
+            <DataTable pageSize={20} columns={forecastColumns} rows={forecast.data?.items ?? []} rowKey={(r) => r.product_id} />
           </QueryState>
         </PanelCard>
       </div>

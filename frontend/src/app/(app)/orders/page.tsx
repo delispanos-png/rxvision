@@ -100,7 +100,7 @@ export default function OrdersPage() {
           )}
 
           {/* table / cards */}
-          <DataTable columns={columns} rows={items} rowKey={(r) => r.product_id} />
+          <DataTable pageSize={20} columns={columns} rows={items} rowKey={(r) => r.product_id} />
         </div>
       </QueryState>
     </ModuleGuard>

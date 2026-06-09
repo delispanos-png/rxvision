@@ -54,12 +54,12 @@ export default function BillingPage() {
         </div>
         <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
           <div className="mb-2 text-sm font-medium text-slate-500">Σύνολο ανά πλάνο</div>
-          <DataTable columns={planColumns} rows={plans} rowKey={(r) => r.plan} />
+          <DataTable pageSize={20} columns={planColumns} rows={plans} rowKey={(r) => r.plan} />
         </div>
       </div>
 
       <h2 className="mb-3 text-sm font-semibold text-slate-700">Συνεισφορά MRR ανά tenant</h2>
-      {isLoading ? <div className="text-slate-400">Φόρτωση…</div> : <DataTable columns={tenantColumns} rows={data?.tenants ?? []} rowKey={(r) => r.tenant} />}
+      {isLoading ? <div className="text-slate-400">Φόρτωση…</div> : <DataTable pageSize={20} columns={tenantColumns} rows={data?.tenants ?? []} rowKey={(r) => r.tenant} />}
 
       <Invoices />
     </div>

@@ -157,7 +157,7 @@ export default function ProfitabilityPage() {
             isEmpty={lowItems.length === 0}
             onRetry={() => lowMargin.refetch()}
           >
-            <DataTable columns={lowMarginColumns} rows={lowItems} rowKey={(r) => r.product_id} />
+            <DataTable pageSize={20} columns={lowMarginColumns} rows={lowItems} rowKey={(r) => r.product_id} />
           </QueryState>
         </PanelCard>
       </div>

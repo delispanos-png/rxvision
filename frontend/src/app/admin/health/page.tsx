@@ -89,7 +89,7 @@ export default function HealthPage() {
       </div>
 
       <h2 className="mb-3 text-sm font-semibold text-slate-700">Πρόσφατες αποτυχίες</h2>
-      <DataTable columns={failColumns} rows={data?.recent_failures ?? []} rowKey={(r, i) => `${r.tenant}-${i}`} empty="Καμία αποτυχία 🎉" />
+      <DataTable pageSize={20} columns={failColumns} rows={data?.recent_failures ?? []} rowKey={(r, i) => `${r.tenant}-${i}`} empty="Καμία αποτυχία 🎉" />
     </div>
   );
 }

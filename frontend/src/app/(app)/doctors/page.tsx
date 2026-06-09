@@ -85,7 +85,7 @@ export default function DoctorsPage() {
           )}
 
           {/* table / cards */}
-          <DataTable
+          <DataTable pageSize={20}
             columns={columns}
             rows={items}
             rowKey={(r) => r.id}

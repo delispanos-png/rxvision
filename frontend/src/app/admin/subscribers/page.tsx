@@ -68,7 +68,7 @@ export default function SubscribersPage() {
         </button>
       </div>
 
-      {tenants.isLoading ? <div className="text-slate-400">Φόρτωση…</div> : <DataTable columns={columns} rows={rows} rowKey={(r) => r.id} />}
+      {tenants.isLoading ? <div className="text-slate-400">Φόρτωση…</div> : <DataTable pageSize={20} columns={columns} rows={rows} rowKey={(r) => r.id} />}
 
       {open && <OpenTenantModal onClose={() => setOpen(false)} onDone={() => qc.invalidateQueries({ queryKey: ["admin", "tenants"] })} />}
     </div>

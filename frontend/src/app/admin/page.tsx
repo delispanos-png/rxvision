@@ -46,7 +46,7 @@ export default function AdminDashboardPage() {
       </div>
 
       <h2 className="mb-3 text-sm font-semibold text-slate-700">Υγεία συγχρονισμών</h2>
-      {sync.isLoading ? <div className="text-slate-400">Φόρτωση…</div> : <DataTable columns={syncColumns} rows={sync.data?.items ?? []} rowKey={(r) => r.id} />}
+      {sync.isLoading ? <div className="text-slate-400">Φόρτωση…</div> : <DataTable pageSize={20} columns={syncColumns} rows={sync.data?.items ?? []} rowKey={(r) => r.id} />}
     </div>
   );
 }

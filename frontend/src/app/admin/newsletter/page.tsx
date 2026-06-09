@@ -377,7 +377,7 @@ export default function NewsletterPage() {
       {history.isLoading ? (
         <div className="text-slate-400">Φόρτωση…</div>
       ) : (
-        <DataTable
+        <DataTable pageSize={20}
           columns={columns}
           rows={history.data?.items ?? []}
           rowKey={(r) => r.id}

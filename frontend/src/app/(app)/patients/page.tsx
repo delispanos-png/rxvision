@@ -176,7 +176,7 @@ export default function PatientsPage() {
             isEmpty={patients.length === 0}
             onRetry={() => perPatient.refetch()}
           >
-            <DataTable columns={patientColumns} rows={patients} rowKey={(r) => r.patient_ref}
+            <DataTable pageSize={20} columns={patientColumns} rows={patients} rowKey={(r) => r.patient_ref}
               onRowClick={(r) => router.push(`/patients/${encodeURIComponent(r.patient_ref)}`)} />
           </QueryState>
         </PanelCard>
