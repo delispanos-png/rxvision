@@ -70,17 +70,24 @@ const unexecutedColumns: Column<UnexecutedRow>[] = [
     key: "barcodes", header: "Από συνταγή",
     render: (r) => {
       const rxs = r.rxs ?? (r.barcodes ?? []).map((b) => ({ barcode: b }));
-      const tip = (x: { patient?: string | null; date?: string | null }) =>
-        [x.patient || "", x.date ? new Date(x.date).toLocaleString("el-GR", { dateStyle: "medium", timeStyle: "short" }) : ""]
-          .filter(Boolean).join(" · ");
       return (
         <div className="flex flex-wrap gap-1.5">
-          {rxs.slice(0, 4).map((x) => (
-            <Link key={x.barcode} href={`/prescriptions/${encodeURIComponent(x.barcode)}`} title={tip(x)}
-              className="rounded bg-slate-100 px-1.5 py-0.5 text-xs font-medium text-brand-700 hover:bg-brand-50">
-              {x.barcode}
-            </Link>
-          ))}
+          {rxs.slice(0, 4).map((x) => {
+            const tip = [x.patient || "", x.date ? new Date(x.date).toLocaleString("el-GR", { dateStyle: "medium", timeStyle: "short" }) : ""].filter(Boolean).join(" · ");
+            return (
+              <span key={x.barcode} className="group relative inline-block">
+                <Link href={`/prescriptions/${encodeURIComponent(x.barcode)}`}
+                  className="rounded bg-slate-100 px-1.5 py-0.5 text-xs font-medium text-brand-700 hover:bg-brand-50">
+                  {x.barcode}
+                </Link>
+                {tip && (
+                  <span className="pointer-events-none absolute bottom-full left-1/2 z-30 mb-1 -translate-x-1/2 whitespace-nowrap rounded-lg bg-slate-900 px-2 py-1 text-xs font-medium text-white opacity-0 shadow-lg transition-opacity duration-100 group-hover:opacity-100">
+                    {tip}
+                  </span>
+                )}
+              </span>
+            );
+          })}
           {rxs.length > 4 && <span className="text-xs text-slate-400">+{rxs.length - 4}</span>}
           {!rxs.length && <span className="text-slate-300">—</span>}
         </div>
