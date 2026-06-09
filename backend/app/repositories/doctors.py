@@ -32,8 +32,12 @@ class DoctorExecutionsRepository(BaseRepository):
 
     collection_name = "prescription_executions"
 
+    _SORT_FIELDS = {"value": "value", "rx": "rx_count", "profit": "gross_profit",
+                    "patients": "new_patients", "name": "name"}
+
     async def doctors_with_stats(self, *, date_from: datetime, date_to: datetime,
-                                 search: str | None, skip: int, limit: int) -> list[dict]:
+                                 search: str | None, skip: int, limit: int,
+                                 sort: str = "value") -> list[dict]:
         """One row per doctor for the period: name + specialty (joined from `doctors`) +
         rx_count / value / gross_profit / distinct patients. Powers the Doctors page."""
         pipe: list[dict] = [
@@ -57,7 +61,7 @@ class DoctorExecutionsRepository(BaseRepository):
                           "rx_count": 1, "value": 1,
                           "gross_profit": {"$subtract": ["$value", "$cost"]},
                           "new_patients": {"$size": "$patients"}}},
-            {"$sort": {"value": -1}},
+            {"$sort": {self._SORT_FIELDS.get(sort, "value"): (1 if sort == "name" else -1)}},
             {"$skip": skip}, {"$limit": limit},
         ]
         return await self.aggregate(pipe)

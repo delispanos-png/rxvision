@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { BarChart3, Stethoscope, TrendingUp, UserPlus, Wallet } from "lucide-react";
@@ -25,14 +26,23 @@ type Doctor = {
   new_patients: number;
 };
 
+const SORTS = [
+  { value: "value", label: "Αξία (μεγαλύτερη)" },
+  { value: "rx", label: "Συνταγές (περισσότερες)" },
+  { value: "profit", label: "Κερδοφορία (μεγαλύτερη)" },
+  { value: "patients", label: "Νέοι πελάτες (περισσότεροι)" },
+  { value: "name", label: "Όνομα (Α→Ω)" },
+];
+
 export default function DoctorsPage() {
   const router = useRouter();
   const filters = useUiStore();
   const q = filtersToQuery(filters);
+  const [sort, setSort] = useState("value");
 
   const { data, isLoading, isError, refetch } = useQuery({
-    queryKey: queryKeys.doctors(q),
-    queryFn: () => api<{ items: Doctor[] }>(`/doctors?${q}`),
+    queryKey: queryKeys.doctors(`${q}&sort=${sort}`),
+    queryFn: () => api<{ items: Doctor[] }>(`/doctors?${q}&sort=${sort}`),
   });
 
   const items = data?.items ?? [];
@@ -58,7 +68,16 @@ export default function DoctorsPage() {
         <ExportButton path="/doctors" query={`?${q}`} />
       </div>
 
-      <div className="mb-4"><DateRangeFilter /></div>
+      <div className="mb-4 flex flex-wrap items-end gap-4">
+        <DateRangeFilter />
+        <label className="text-sm">
+          <span className="mb-1 block text-slate-500">Ταξινόμηση κατά</span>
+          <select value={sort} onChange={(e) => setSort(e.target.value)}
+            className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-brand-500 focus:outline-none">
+            {SORTS.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
+          </select>
+        </label>
+      </div>
 
       <QueryState isLoading={isLoading} isError={isError} onRetry={() => refetch()}>
         <div className="space-y-4">

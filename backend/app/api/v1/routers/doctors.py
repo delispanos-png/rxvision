@@ -17,6 +17,7 @@ _MODULE = "doctor_analytics"
 @router.get("")
 async def list_doctors(
     search: str | None = None,
+    sort: str = "value",
     date_from: datetime | None = Query(None),
     date_to: datetime | None = Query(None),
     page: int = 1,
@@ -29,7 +30,7 @@ async def list_doctors(
     dt = date_to or now
     repo = DoctorExecutionsRepository(tenant_id=ctx.tenant_id)
     items = await repo.doctors_with_stats(date_from=df, date_to=dt, search=search,
-                                          skip=(page - 1) * page_size, limit=page_size)
+                                          skip=(page - 1) * page_size, limit=page_size, sort=sort)
     return {"page": page, "page_size": page_size, "items": items}
 
 

@@ -189,16 +189,25 @@ class HdikaClient:
         on any error so a missing detail never aborts the run."""
         if not barcode:
             return {}
-        try:
-            params = {"pharmacyId": self.pharmacy_id} if self.pharmacy_id else {}
-            r = self._client.get(self._url(f"/api/v1/prescriptions/get/{barcode}"),
-                                 params=params, headers={"Accept": "application/x-hl7"})
-            if self.throttle:
-                time.sleep(self.throttle)
-            if r.status_code == 200 and r.text.lstrip().startswith("<?xml"):
-                return parse_cda(r.text)
-        except Exception:  # noqa: BLE001
-            pass
+        params = {"pharmacyId": self.pharmacy_id} if self.pharmacy_id else {}
+        # retry transient failures — otherwise a hiccup leaves the execution with no
+        # doctor/patient/ICD (it shows up as the «Άγνωστος» doctor).
+        for attempt in range(3):
+            try:
+                r = self._client.get(self._url(f"/api/v1/prescriptions/get/{barcode}"),
+                                     params=params, headers={"Accept": "application/x-hl7"})
+                if self.throttle:
+                    time.sleep(self.throttle)
+                if r.status_code == 200 and r.text.lstrip().startswith("<?xml"):
+                    return parse_cda(r.text)
+                if r.status_code in (429, 500, 502, 503, 504) and attempt < 2:
+                    time.sleep(0.4 * (attempt + 1))
+                    continue
+            except Exception:  # noqa: BLE001
+                if attempt < 2:
+                    time.sleep(0.4 * (attempt + 1))
+                    continue
+            break
         return {}
 
     def _prescription_index(self, start, end) -> dict:
