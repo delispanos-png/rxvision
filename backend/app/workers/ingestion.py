@@ -112,9 +112,10 @@ def hdika_incremental_sync(self, tenant_id: str) -> dict:
 
 
 @celery_app.task(name="app.workers.ingestion.hdika_backfill")
-def hdika_backfill(tenant_id: str, since_iso: str, throttle: float = 0.08) -> dict:
-    """Full historical ΗΔΙΚΑ ingest from `since_iso` → today (recent-first), run in the
-    worker's own Celery process so it survives (unlike a foreground exec). Idempotent."""
+def hdika_backfill(tenant_id: str, since_iso: str, until_iso: str | None = None,
+                   throttle: float = 0.08) -> dict:
+    """Historical ΗΔΙΚΑ ingest for the window [`since_iso`, `until_iso`] (until defaults
+    to today), recent-first, in the worker's own Celery process so it survives. Idempotent."""
     from app.services.ingestion.hdika_catalog import load_catalog_map
 
     async def _run() -> dict:
@@ -139,10 +140,14 @@ def hdika_backfill(tenant_id: str, since_iso: str, throttle: float = 0.08) -> di
             since = datetime.fromisoformat(since_iso)
             if since.tzinfo is None:
                 since = since.replace(tzinfo=timezone.utc)
-            now = datetime.now(tz=timezone.utc)
-            records = HdikaAdapter(creds, catalog=cat).fetch(since=since)
+            until = datetime.now(tz=timezone.utc)
+            if until_iso:
+                until = datetime.fromisoformat(until_iso)
+                if until.tzinfo is None:
+                    until = until.replace(tzinfo=timezone.utc)
+            records = HdikaAdapter(creds, catalog=cat).fetch(since=since, until=until)
             job = await IngestionEngine(tenant_id, db=db).ingest(
-                source="HDIKA", job_type="backfill", records=records, window=(since, now))
+                source="HDIKA", job_type="backfill", records=records, window=(since, until))
             return {"tenant_id": tenant_id, "status": job["status"], "stats": job["stats"]}
         finally:
             client.close()

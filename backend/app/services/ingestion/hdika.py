@@ -35,8 +35,9 @@ class HdikaAdapter:
         self.credentials = credentials or {}
         self.catalog = catalog or {}     # eofCode → price/cost map for per-medicine analysis
 
-    def fetch(self, *, since: datetime | None = None, count: int = 20):
-        """Yield canonical executions newer than `since`.
+    def fetch(self, *, since: datetime | None = None,
+              until: datetime | None = None, count: int = 20):
+        """Yield canonical executions in [`since`, `until`] (until defaults to today).
 
         Real ΗΔΙΚΑ access flips on when credentials carry a `live_endpoint`; until
         then we yield deterministic synthetic data so the whole pipeline runs.
@@ -45,21 +46,18 @@ class HdikaAdapter:
         # Go live only with a COMPLETE real config: endpoint + application api-key
         # (platform-level) + the pharmacy's username. Otherwise synthetic demo data.
         if (c.get("base_url") or c.get("live_endpoint")) and c.get("api_key") and c.get("username"):
-            yield from self._fetch_real(since)
+            yield from self._fetch_real(since, until)
             return
         yield from self._fetch_synthetic(since=since, count=count)
 
-    def _fetch_real(self, since: datetime | None):
-        """REAL ΗΔΙΚΑ path: authenticate, page executions since the watermark, map
-        each raw record → canonical. Active when credentials carry `live_endpoint`.
-        Transient failures raise Connection/TimeoutError so the task auto-retries.
-        Field/endpoint mapping lives in hdika_client.py (ASSUMED contract until the
-        official ΗΔΙΚΑ spec lands)."""
+    def _fetch_real(self, since: datetime | None, until: datetime | None = None):
+        """REAL ΗΔΙΚΑ path: authenticate, page executions in the window, map each raw
+        record → canonical. Field/endpoint mapping lives in hdika_client.py."""
         from app.services.ingestion.hdika_client import HdikaClient
 
         client = HdikaClient(self.credentials, catalog=self.catalog)
         try:
-            yield from client.iter_executions(since)
+            yield from client.iter_executions(since, until)
         finally:
             client.close()
 

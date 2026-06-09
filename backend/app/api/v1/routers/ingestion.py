@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 
 from app.core.config import settings
 from app.core.db import shared_db
@@ -241,6 +241,20 @@ async def trigger_hdika_sync(
     assert_source_allowed(await _tenant_country(ctx.tenant_id), "HDIKA")
     from app.workers.ingestion import hdika_incremental_sync
     hdika_incremental_sync.delay(ctx.tenant_id)
+    return {"status": "queued"}
+
+
+@router.post("/hdika/backfill", status_code=202)
+async def trigger_hdika_backfill(
+    date_from: str = Query(..., description="YYYY-MM-DD"),
+    date_to: str | None = Query(None, description="YYYY-MM-DD (default today)"),
+    ctx: TenantContext = Depends(require("ingestion:run", module=_MODULE)),
+):
+    """Queue a historical ΗΔΙΚΑ download for a chosen date range; progress via /ingestion/jobs."""
+    assert_source_allowed(await _tenant_country(ctx.tenant_id), "HDIKA")
+    from app.workers.ingestion import hdika_backfill
+    until_iso = f"{date_to}T23:59:59+00:00" if date_to else None
+    hdika_backfill.delay(ctx.tenant_id, f"{date_from}T00:00:00+00:00", until_iso, 0.08)
     return {"status": "queued"}
 
 

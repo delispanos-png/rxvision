@@ -135,6 +135,17 @@ export default function IngestionSettingsPage() {
       qc.invalidateQueries({ queryKey: ["ingestion-jobs"] });
     },
   });
+  // historical download for a chosen date range
+  const [dlFrom, setDlFrom] = useState(`${new Date().getFullYear()}-01-01`);
+  const [dlTo, setDlTo] = useState(new Date().toISOString().slice(0, 10));
+  const backfillRange = useMutation({
+    mutationFn: () => api("/ingestion/hdika/backfill?date_from=" + dlFrom + "&date_to=" + dlTo, { method: "POST" }),
+    onSuccess: () => {
+      syncStartRef.current = Date.now();
+      setSyncing(true);
+      qc.invalidateQueries({ queryKey: ["ingestion-jobs"] });
+    },
+  });
 
   if (country === "CY") {
     return (
@@ -175,6 +186,20 @@ export default function IngestionSettingsPage() {
         <button onClick={() => sync.mutate()} disabled={syncing || sync.isPending || !c?.configured}
           className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-3 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-40">
           {(syncing || sync.isPending) ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />} Συγχρονισμός τώρα
+        </button>
+      </div>
+
+      {/* historical download for a chosen period */}
+      <div className="rx-card flex flex-wrap items-end gap-3 p-4">
+        <div className="mr-auto">
+          <div className="text-sm font-semibold text-slate-800">Κατέβασμα ιστορικού (επιλογή περιόδου)</div>
+          <div className="text-xs text-slate-400">Διάλεξε ημερομηνίες και κατέβασε ΜΟΝΟ αυτό το διάστημα.</div>
+        </div>
+        <label className="text-xs text-slate-500">Από<DateInput value={dlFrom} onChange={setDlFrom} className="mt-1 w-40" /></label>
+        <label className="text-xs text-slate-500">Έως<DateInput value={dlTo} onChange={setDlTo} className="mt-1 w-40" /></label>
+        <button onClick={() => backfillRange.mutate()} disabled={syncing || backfillRange.isPending || !c?.configured || !dlFrom}
+          className="inline-flex items-center gap-1.5 rounded-lg border border-brand-300 bg-brand-50 px-3 py-2 text-sm font-medium text-brand-700 hover:bg-brand-100 disabled:opacity-40">
+          {(syncing || backfillRange.isPending) ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />} Κατέβασμα περιόδου
         </button>
       </div>
 

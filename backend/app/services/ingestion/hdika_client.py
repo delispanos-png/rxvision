@@ -225,12 +225,13 @@ class HdikaClient:
             page += 1
         return idx
 
-    def iter_executions(self, since: datetime | None) -> Iterator[CanonicalExecution]:
-        """Yield canonical executions from `since`→today. Driver = prescription-execution
-        /search (amounts/fund, executionNo); enriched per barcode by the full HL7 CDA
-        (doctor, ICD-10, medicines, patient) and by /prescriptions/search (repeat info)."""
+    def iter_executions(self, since: datetime | None,
+                        until: datetime | None = None) -> Iterator[CanonicalExecution]:
+        """Yield canonical executions from `since`→`until` (default today). Driver =
+        prescription-execution /search (amounts/fund, executionNo); enriched per barcode by
+        the full HL7 CDA (doctor, ICD-10, medicines, patient) and /prescriptions/search."""
         from datetime import timedelta
-        end = datetime.now(tz=timezone.utc).date()
+        end = (until.date() if until else datetime.now(tz=timezone.utc).date())
         start = since.date() if since else end
         if (end - start).days > _MAX_BACKFILL_DAYS:        # safety cap for huge backfills
             start = end - timedelta(days=_MAX_BACKFILL_DAYS)
