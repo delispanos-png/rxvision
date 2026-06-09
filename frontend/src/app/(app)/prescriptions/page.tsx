@@ -46,18 +46,18 @@ type UnexecutedRow = {
 const columns: Column<Prescription>[] = [
   { key: "executed_at", header: "Ημ/νία", render: (r) => fmtDate(r.executed_at) },
   { key: "external_id", header: "Κωδικός" },
-  { key: "patient_name", header: "Ασθενής", render: (r) => r.patient_name || "—" },
-  { key: "amka", header: "ΑΜΚΑ", hideOnMobile: true, render: (r) => r.amka || "—" },
-  { key: "fund_name", header: "Ταμείο", hideOnMobile: true, render: (r) => r.fund_name || "—" },
+  { key: "patient_name", header: "Ασθενής", sortable: false, render: (r) => r.patient_name || "—" },
+  { key: "amka", header: "ΑΜΚΑ", hideOnMobile: true, sortable: false, render: (r) => r.amka || "—" },
+  { key: "fund_name", header: "Ταμείο", hideOnMobile: true, sortable: false, render: (r) => r.fund_name || "—" },
   {
-    key: "status", header: "Κατάσταση", hideOnMobile: true,
+    key: "status", header: "Κατάσταση", hideOnMobile: true, sortable: false,
     render: (r) => (
       <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${r.has_unexecuted_substances ? "bg-amber-100 text-amber-700" : "bg-emerald-100 text-emerald-700"}`}>
         {r.has_unexecuted_substances ? "Μερικώς" : STATUS_EL[r.status || "executed"] || "Εκτελεσμένη"}
       </span>
     ),
   },
-  { key: "icd10", header: "ICD-10", hideOnMobile: true, render: (r) => (r.icd10 ?? []).join(", ") },
+  { key: "icd10", header: "ICD-10", hideOnMobile: true, sortable: false, render: (r) => (r.icd10 ?? []).join(", ") },
   { key: "amount_total", header: "Αξία", align: "right", render: (r) => fmtEur(r.amount_total) },
   { key: "amount_claimed", header: "Από ταμείο", align: "right", render: (r) => fmtEur(r.amount_claimed) },
 ];
@@ -93,12 +93,19 @@ export default function PrescriptionsPage() {
   const listQs = bc ? `${q}&barcode=${encodeURIComponent(bc)}` : q;
   const PAGE_SIZE = 50;
   const [page, setPage] = useState(1);
+  const [sort, setSort] = useState<{ key: string; dir: 1 | -1 }>({ key: "executed_at", dir: -1 });
+  const SERVER_SORTS = new Set(["executed_at", "external_id", "amount_total", "amount_claimed"]);
+  const onServerSort = (key: string) => {
+    if (!SERVER_SORTS.has(key)) return;
+    setSort((s) => (s.key === key ? { key, dir: (s.dir === 1 ? -1 : 1) as 1 | -1 } : { key, dir: -1 }));
+    setPage(1);
+  };
   // reset to page 1 whenever the filters/search change
   useEffect(() => { setPage(1); }, [listQs]);
 
   const list = useQuery({
-    queryKey: ["prescriptions", "list", listQs, page],
-    queryFn: () => api<{ items: Prescription[] }>(`/prescriptions?${listQs}&page=${page}&page_size=${PAGE_SIZE}`),
+    queryKey: ["prescriptions", "list", listQs, page, sort.key, sort.dir],
+    queryFn: () => api<{ items: Prescription[] }>(`/prescriptions?${listQs}&page=${page}&page_size=${PAGE_SIZE}&sort=${sort.key}&dir=${sort.dir}`),
   });
 
   const unexecuted = useQuery({
@@ -208,6 +215,8 @@ export default function PrescriptionsPage() {
             empty="Δεν υπάρχουν εκτελέσεις στην περίοδο."
           >
             <DataTable columns={columns} rows={items} rowKey={(r) => r.external_id}
+              serverSort={{ key: sort.key, dir: sort.dir === 1 ? "asc" : "desc" }}
+              onServerSort={onServerSort}
               onRowClick={(r) => router.push(`/prescriptions/${encodeURIComponent(r.external_id)}`)} />
           </QueryState>
           {/* pagination */}

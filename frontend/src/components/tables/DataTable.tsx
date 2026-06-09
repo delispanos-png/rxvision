@@ -46,16 +46,22 @@ export function DataTable<T extends Record<string, unknown>>({
   rowKey?: (row: T, index: number) => string | number;
   /** When set, paginate the given rows client-side with Prev/Next controls. */
   pageSize?: number;
+  /** Server-side sort mode: header clicks call onServerSort instead of sorting locally
+   *  (use for server-paginated lists so sorting covers ALL pages, not just the visible one). */
+  serverSort?: { key: string; dir: "asc" | "desc" } | null;
+  onServerSort?: (key: string) => void;
 }) {
   const cell = (c: Column<T>, row: T): ReactNode =>
     c.render ? c.render(row) : String(row[c.key] ?? "");
 
-  // click-to-sort (client-side, by raw value or a column's sortValue)
-  const [sort, setSort] = useState<{ key: string; dir: "asc" | "desc" } | null>(null);
+  // click-to-sort: server-side when onServerSort is given, else client-side
+  const serverMode = !!onServerSort;
+  const [localSort, setLocalSort] = useState<{ key: string; dir: "asc" | "desc" } | null>(null);
+  const sort = serverMode ? (serverSort ?? null) : localSort;
   const sortVal = (c: Column<T>, row: T) =>
     c.sortValue ? c.sortValue(row) : (row[c.key] as string | number | null | undefined);
   const sortedRows = useMemo(() => {
-    if (!sort) return rows;
+    if (serverMode || !sort) return rows;   // server already sorted the full set
     const col = columns.find((c) => c.key === sort.key);
     if (!col) return rows;
     const dir = sort.dir === "asc" ? 1 : -1;
@@ -70,7 +76,8 @@ export function DataTable<T extends Record<string, unknown>>({
   }, [rows, sort, columns]);
   const toggleSort = (c: Column<T>) => {
     if (c.sortable === false) return;
-    setSort((s) => s && s.key === c.key
+    if (serverMode) { onServerSort!(c.key); return; }
+    setLocalSort((s) => s && s.key === c.key
       ? (s.dir === "asc" ? { key: c.key, dir: "desc" } : null)
       : { key: c.key, dir: "asc" });
   };

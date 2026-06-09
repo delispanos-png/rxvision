@@ -88,12 +88,16 @@ class PrescriptionRepository(BaseRepository):
         }
         return jsonsafe(out)
 
-    async def list_executions(self, query: dict, skip: int, limit: int) -> list[dict]:
+    _LIST_SORTS = {"executed_at", "amount_total", "amount_claimed", "external_id"}
+
+    async def list_executions(self, query: dict, skip: int, limit: int,
+                              sort: str = "executed_at", direction: int = -1) -> list[dict]:
         """Executions list enriched like the ΗΔΙΚΑ portal: patient name/AMKA, fund,
-        status + execution case, ICD-10 and amounts."""
+        status + execution case, ICD-10 and amounts. Server-side sort over the WHOLE set."""
+        sort_field = sort if sort in self._LIST_SORTS else "executed_at"
         pipeline = [
             {"$match": query},
-            {"$sort": {"executed_at": -1}},
+            {"$sort": {sort_field: 1 if direction >= 0 else -1, "_id": 1}},
             {"$skip": skip},
             {"$limit": limit},
             {"$lookup": {"from": "patients_anonymized", "localField": "patient_ref",

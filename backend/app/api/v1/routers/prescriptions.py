@@ -36,6 +36,8 @@ async def list_prescriptions(
     doctor_id: str | None = None,
     icd10: str | None = None,
     barcode: str | None = None,
+    sort: str = "executed_at",
+    dir: int = -1,
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=500),
     ctx: TenantContext = Depends(require("prescriptions:read", module="prescription_analytics")),
@@ -53,7 +55,8 @@ async def list_prescriptions(
         # known barcode is found regardless of the selected period.
         query.pop("executed_at", None)
         query["external_id"] = {"$regex": "^" + re.escape(barcode.strip())}
-    items = await repo.list_executions(query, skip=(page - 1) * page_size, limit=page_size)
+    items = await repo.list_executions(query, skip=(page - 1) * page_size, limit=page_size,
+                                       sort=sort, direction=dir)
     return {"page": page, "page_size": page_size, "items": items}
 
 
