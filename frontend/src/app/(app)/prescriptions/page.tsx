@@ -33,6 +33,9 @@ type Prescription = {
 };
 
 const STATUS_EL: Record<string, string> = { executed: "Εκτελεσμένη", partial: "Μερικώς", cancelled: "Ακυρωμένη" };
+const CATEGORY_EL: Record<string, string> = {
+  normal: "Κανονικό", narcotic: "Ναρκωτικό", fyk: "ΦΥΚ", vaccine: "Εμβόλιο", special: "Ειδικό",
+};
 
 type UnexecutedRow = {
   product_id: string;
@@ -97,7 +100,7 @@ const columns: Column<Prescription>[] = [
 
 const unexecutedColumns: Column<UnexecutedRow>[] = [
   { key: "name", header: "Σκεύασμα", render: (r) => r.name ?? r.product_id },
-  { key: "category", header: "Κατηγορία", hideOnMobile: true },
+  { key: "category", header: "Κατηγορία", hideOnMobile: true, render: (r) => CATEGORY_EL[r.category] || r.category || "—" },
   {
     key: "barcodes", header: "Από συνταγή",
     render: (r) => {
