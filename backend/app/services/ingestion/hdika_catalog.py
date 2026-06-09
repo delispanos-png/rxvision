@@ -115,7 +115,49 @@ async def refresh_catalog(db, client) -> int:
         page += 1
     if changes:
         await db["price_changes"].bulk_write(changes, ordered=False)
+    await enrich_product_categories(db)
     return total
+
+
+def categorize(atc, narcotic, high_cost, name: str = "") -> str:
+    """ΗΔΙΚΑ medicine class: narcotic / vaccine (ATC J07) / allergen (ATC V01) / ΦΥΚ
+    (high-cost) / normal. ATC code is the primary signal, with name fallbacks."""
+    a = (atc or "").upper()
+    n = (name or "").upper()
+    if narcotic is True or str(narcotic).lower() == "true":
+        return "narcotic"
+    if a.startswith("J07") or "ΕΜΒΟΛΙ" in n or "VACCINE" in n:
+        return "vaccine"
+    if a.startswith("V01") or "ΑΛΛΕΡΓΙΟΓΟΝ" in n or "ALLERGEN" in n:
+        return "allergen"
+    if high_cost is True or str(high_cost).lower() == "true":
+        return "fyk"
+    return "normal"
+
+
+async def enrich_product_categories(db) -> int:
+    """Tag every product (all tenants — shared collection) with category/atc/substance
+    from the catalog, keyed by eofCode (== product.barcode). Idempotent; run after each
+    catalog refresh so new medicines get classified."""
+    from pymongo import UpdateOne
+
+    cmap: dict = {}
+    async for d in db["medicine_catalog"].find(
+            {}, {"atc": 1, "narcotic": 1, "high_cost": 1, "substance_name": 1}):
+        cmap[d["_id"]] = d
+    ops = []
+    async for p in db["products"].find({}, {"barcode": 1, "name": 1, "substance": 1}):
+        c = cmap.get(p.get("barcode"))
+        if not c:
+            continue
+        cls = categorize(c.get("atc"), c.get("narcotic"), c.get("high_cost"),
+                         c.get("substance_name") or p.get("name"))
+        ops.append(UpdateOne({"_id": p["_id"]}, {"$set": {
+            "category": cls, "atc": c.get("atc"),
+            "substance": c.get("substance_name") or p.get("substance")}}))
+    if ops:
+        await db["products"].bulk_write(ops, ordered=False)
+    return len(ops)
 
 
 async def refresh_icd10(db, client) -> int:

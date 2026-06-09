@@ -2,15 +2,28 @@
 
 import { useParams, useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowLeft, Repeat } from "lucide-react";
+import { ArrowLeft, Repeat, Printer } from "lucide-react";
 import { api } from "@/lib/apiClient";
 import { PanelCard } from "@/components/ui/Card";
 
 type Item = {
   name: string | null; barcode: string | null; substance: string | null; category: string | null;
+  atc?: string | null; narcotic?: boolean; high_cost?: boolean;
   quantity: number; retail_price: number; wholesale_price: number; margin: number;
   participation: number | null; patient_share: number; fund_share: number; is_executed: boolean;
 };
+
+const CAT_BADGE: Record<string, { label: string; cls: string }> = {
+  narcotic: { label: "Ναρκωτικό", cls: "bg-rose-100 text-rose-700" },
+  vaccine: { label: "Εμβόλιο", cls: "bg-sky-100 text-sky-700" },
+  allergen: { label: "Αλλεργιογόνο", cls: "bg-amber-100 text-amber-700" },
+  fyk: { label: "ΦΥΚ", cls: "bg-violet-100 text-violet-700" },
+};
+function CategoryBadge({ category }: { category?: string | null }) {
+  const b = category ? CAT_BADGE[category] : undefined;
+  if (!b) return null;
+  return <span className={`ml-1.5 rounded px-1.5 py-0.5 text-[10px] font-semibold ${b.cls}`}>{b.label}</span>;
+}
 type Detail = {
   external_id: string; executed_at: string; status: string | null; source: string;
   repeat_current: number; repeat_total: number; next_open_date: string | null;
@@ -47,9 +60,14 @@ export default function PrescriptionDetailPage() {
 
   return (
     <div className="space-y-5">
-      <button onClick={() => router.back()} className="inline-flex items-center gap-1.5 text-sm text-brand-600 hover:underline">
-        <ArrowLeft className="h-4 w-4" /> Πίσω
-      </button>
+      <div className="flex items-center justify-between gap-2 print:hidden">
+        <button onClick={() => router.back()} className="inline-flex items-center gap-1.5 text-sm text-brand-600 hover:underline">
+          <ArrowLeft className="h-4 w-4" /> Πίσω
+        </button>
+        <button onClick={() => window.print()} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50">
+          <Printer className="h-4 w-4" /> Εκτύπωση εκτέλεσης
+        </button>
+      </div>
 
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h1 className="text-xl font-bold text-slate-900">Συνταγή {d.external_id}</h1>
@@ -129,7 +147,10 @@ export default function PrescriptionDetailPage() {
             <tbody>
               {d.items.map((it, i) => (
                 <tr key={i} className="border-b border-slate-50">
-                  <td className="py-2 font-medium text-slate-800">{it.name || "—"}{it.category === "narcotic" && <span className="ml-1 rounded bg-rose-50 px-1 text-[10px] text-rose-600">ναρκωτικό</span>}</td>
+                  <td className="py-2 font-medium text-slate-800">
+                    {it.name || "—"}<CategoryBadge category={it.category} />
+                    {it.atc && <span className="ml-1.5 text-[10px] text-slate-400">{it.atc}</span>}
+                  </td>
                   <td className="text-slate-500">{it.substance || "—"}</td>
                   <td className="text-right">{it.quantity}</td>
                   <td className="text-right">{eur(it.retail_price)}</td>

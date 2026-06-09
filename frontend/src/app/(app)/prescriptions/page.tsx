@@ -36,7 +36,7 @@ type Prescription = {
 
 const STATUS_EL: Record<string, string> = { executed: "Εκτελεσμένη", partial: "Μερικώς", cancelled: "Ακυρωμένη" };
 const CATEGORY_EL: Record<string, string> = {
-  normal: "Κανονικό", narcotic: "Ναρκωτικό", fyk: "ΦΥΚ", vaccine: "Εμβόλιο", special: "Ειδικό",
+  normal: "Κανονικό", narcotic: "Ναρκωτικό", fyk: "ΦΥΚ", vaccine: "Εμβόλιο", allergen: "Αλλεργιογόνο", special: "Ειδικό",
 };
 
 type UnexecutedRow = {

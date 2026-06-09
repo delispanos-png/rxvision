@@ -45,7 +45,11 @@ class PrescriptionRepository(BaseRepository):
         for it in item_docs:
             prod = await db["products"].find_one({"_id": it.get("product_id")}) if it.get("product_id") else None
             prod = prod or {}
-            cat = await db["medicine_catalog"].find_one({"barcode": prod.get("barcode")}) if prod.get("barcode") else None
+            # catalog is keyed by eofCode (== product.barcode); fall back to full-EAN barcode
+            cat = None
+            if prod.get("barcode"):
+                cat = (await db["medicine_catalog"].find_one({"_id": prod["barcode"]})
+                       or await db["medicine_catalog"].find_one({"barcode": prod["barcode"]}))
             cat = cat or {}
             retail = it.get("retail_price", 0)
             qty = it.get("quantity", 1)
@@ -55,8 +59,11 @@ class PrescriptionRepository(BaseRepository):
             pat_share = round(line_total * (participation or 0) / 100) if participation else 0
             items.append({
                 "name": prod.get("name"), "barcode": prod.get("barcode"),
-                "substance": cat.get("substance_name"),
-                "category": it.get("category") or prod.get("category"),
+                "substance": cat.get("substance_name") or prod.get("substance"),
+                "category": prod.get("category") or it.get("category") or "normal",
+                "atc": cat.get("atc") or prod.get("atc"),
+                "narcotic": bool(cat.get("narcotic")),
+                "high_cost": bool(cat.get("high_cost")),
                 "quantity": qty,
                 "retail_price": retail,
                 "wholesale_price": it.get("wholesale_price", 0),
