@@ -62,7 +62,7 @@ class IngestionEngine:
             "status": "running", "cursor": {}, "stats": stats, "attempts": 1,
             "progress": 0.0, "cursor_date": None,
             "window": ({"start": window[0], "end": window[1]} if window else None),
-            "error": None, "started_at": _now(), "finished_at": None,
+            "error": None, "started_at": _now(), "updated_at": _now(), "finished_at": None,
         })
 
         for ex in records:
@@ -82,7 +82,7 @@ class IngestionEngine:
             if first_cursor is None and getattr(ex, "executed_at", None):
                 first_cursor = ex.executed_at
             if stats["fetched"] % 20 == 0:
-                upd = {"stats": stats}
+                upd = {"stats": stats, "updated_at": _now()}  # heartbeat → detect orphans
                 cur = getattr(ex, "executed_at", None)
                 if cur is not None:
                     upd["cursor_date"] = cur

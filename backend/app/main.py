@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.noeton_inbound import router as noeton_inbound_router
 from app.api.v1 import api_router
 from app.core.config import settings
-from app.core.db import ensure_indexes
+from app.core.db import ensure_indexes, reap_orphan_jobs
 from app.middleware.audit import AuditMiddleware
 from app.services.vault_service import vault
 
@@ -23,6 +23,7 @@ async def lifespan(app: FastAPI):
     settings.assert_production_secrets()
     vault.assert_ready()  # prod: refuse to boot without a real Vault (no in-memory fallback)
     await ensure_indexes()
+    await reap_orphan_jobs()  # clear sync_jobs orphaned by worker restarts
     yield
 
 
