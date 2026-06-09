@@ -141,14 +141,18 @@ export default function DashboardPage() {
 
       {/* busy-hours heatmap */}
       <div className="mt-4">
-        <PanelCard title="Ώρες αιχμής — εκτελέσεις ανά ώρα & ημέρα">
+        <PanelCard title="Ώρες αιχμής — μοτίβο εβδομάδας (όλη η περίοδος)">
+          <p className="-mt-1 mb-3 text-xs text-slate-400">
+            Συγκεντρωτικά για ΟΛΗ την επιλεγμένη περίοδο ({fromD.split("-").reverse().join("/")} → {toD.split("-").reverse().join("/")}):
+            όλες οι Δευτέρες αθροίζονται μαζί, όλες οι Τρίτες μαζί κ.λπ. — δείχνει το <b>τυπικό μοτίβο</b> της εβδομάδας, ΟΧΙ μία συγκεκριμένη εβδομάδα.
+          </p>
           <HeatmapChart cells={heatCells} />
         </PanelCard>
       </div>
 
       {/* calendar heatmap — executions per DATE */}
       <div className="mt-4">
-        <PanelCard title="Ημερολόγιο αιχμής — εκτελέσεις ανά ημερομηνία">
+        <PanelCard title="Ημερολόγιο αιχμής — εκτελέσεις ανά ημερομηνία (κάθε μέρα ξεχωριστά)">
           <CalendarHeatmap data={calendarData} height={Math.max(180, calendarWeeks * 18 + 80)} />
         </PanelCard>
       </div>
