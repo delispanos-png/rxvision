@@ -8,17 +8,23 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 
+from app.core.db import shared_db
 from app.core.deps import PlatformContext, get_platform_admin
-from app.services.vault_service import vault
 
 router = APIRouter()
 
-_PATH = "platform/cloud"
 _SECRETS = ("hetzner_token", "cloudflare_token")
 
 
-def _cfg() -> dict:
-    return dict(vault.get_secret(_PATH) or {})
+async def _cfg() -> dict:
+    # stored in platform_settings (shared DB, auth-protected) like the SMTP config —
+    # the app's Vault policy is scoped to tenants/* only.
+    return await shared_db()["platform_settings"].find_one({"_id": "cloud"}) or {}
+
+
+async def _save(cfg: dict) -> None:
+    cfg["_id"] = "cloud"
+    await shared_db()["platform_settings"].update_one({"_id": "cloud"}, {"$set": cfg}, upsert=True)
 
 
 class CloudIn(BaseModel):
@@ -29,7 +35,7 @@ class CloudIn(BaseModel):
 @router.get("")
 async def get_cloud(ctx: PlatformContext = Depends(get_platform_admin)):
     """Non-secret status only — never echoes the tokens."""
-    c = _cfg()
+    c = await _cfg()
     return {
         "hetzner_configured": bool(c.get("hetzner_token")),
         "cloudflare_configured": bool(c.get("cloudflare_token")),
@@ -38,26 +44,26 @@ async def get_cloud(ctx: PlatformContext = Depends(get_platform_admin)):
 
 @router.put("")
 async def put_cloud(body: CloudIn, ctx: PlatformContext = Depends(get_platform_admin)):
-    c = _cfg()
+    c = await _cfg()
     new = body.model_dump()
     # blank field on the form = keep the stored secret (masked round-trip)
     for k in _SECRETS:
         if not new.get(k) and c.get(k):
             new[k] = c[k]
-    vault.set_secret(_PATH, {k: v for k, v in new.items() if v})
+    await _save({k: v for k, v in new.items() if v and k in _SECRETS})
     return {"ok": True}
 
 
 @router.delete("")
 async def clear_cloud(ctx: PlatformContext = Depends(get_platform_admin)):
-    vault.set_secret(_PATH, {})
+    await _save({"hetzner_token": None, "cloudflare_token": None})
     return {"ok": True}
 
 
 @router.post("/verify")
 async def verify(ctx: PlatformContext = Depends(get_platform_admin)):
     """Validate the stored tokens against the live APIs (read-only)."""
-    c = _cfg()
+    c = await _cfg()
     out: dict = {}
     if c.get("hetzner_token"):
         try:
