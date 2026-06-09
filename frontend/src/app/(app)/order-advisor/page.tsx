@@ -10,6 +10,7 @@ import { PanelCard } from "@/components/ui/Card";
 import { DataTable, type Column } from "@/components/tables/DataTable";
 import { ExportMenu } from "@/components/export/ExportMenu";
 import { InsightCard, type Insight } from "@/components/advisor/InsightCard";
+import { CrossSellCard } from "@/components/advisor/CrossSellCard";
 
 type Sug = {
   product_id: string; product_name: string; substance?: string | null;
@@ -54,11 +55,15 @@ export default function OrderAdvisorPage() {
 
   return (
     <ModuleGuard module="order_suggestions">
-      <div className="mb-5">
-        <h1 className="flex items-center gap-2 text-2xl font-bold tracking-tight text-slate-900">
-          <Sparkles className="h-6 w-6 text-brand-600" /> Σύμβουλος Παραγγελίας
-        </h1>
-        <p className="mt-1 text-sm text-slate-500">Έξυπνες προτάσεις αναπλήρωσης — βάσει ζήτησης, επαναλήψεων & αλλαγών τιμών.</p>
+      <div className="mb-5 overflow-hidden rounded-2xl bg-gradient-to-br from-violet-700 via-brand-600 to-brand-600 p-5 text-white shadow-lg">
+        <div className="flex items-center gap-2">
+          <span className="relative flex h-2.5 w-2.5"><span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-white/70" /><span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-white" /></span>
+          <span className="text-[11px] font-semibold uppercase tracking-[0.15em] text-white/80">AI · Πρόβλεψη ζήτησης</span>
+        </div>
+        <h1 className="mt-1.5 flex items-center gap-2 text-2xl font-bold tracking-tight"><Sparkles className="h-6 w-6" /> Σύμβουλος Παραγγελίας</h1>
+        <p className="mt-2 max-w-3xl text-sm leading-relaxed text-white/90">
+          {data ? <>Υπολόγισα τη ζήτηση από επαναλαμβανόμενες συνταγές & τάσεις: <b>{fmtNum(k?.items ?? 0)}</b> σκευάσματα προς παραγγελία, <b>{fmtNum(k?.rising ?? 0)}</b> που ακριβαίνουν, και <b>{data.cross_sell?.length ?? 0}</b> κατηγορίες παραφαρμάκου για στοκ.</> : "Υπολογίζω την επερχόμενη ζήτηση…"}
+        </p>
       </div>
 
       {k && (
@@ -83,16 +88,7 @@ export default function OrderAdvisorPage() {
           <h2 className="mb-1 text-sm font-semibold uppercase tracking-wide text-slate-500">Παραφάρμακα για στοκ (συνοδευτική πώληση)</h2>
           <p className="mb-3 text-xs text-slate-400">Με βάση τις θεραπείες των ασθενών σου — έχε τα διαθέσιμα για να κλείνεις την πώληση στο ταμείο.</p>
           <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
-            {data!.cross_sell.map((x, idx) => (
-              <div key={idx} className="rounded-2xl border border-brand-200 bg-brand-50/40 p-4">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-sm font-semibold text-slate-800">{x.class}</span>
-                  <span className="shrink-0 rounded-full bg-brand-100 px-2 py-0.5 text-[11px] font-bold text-brand-700">{fmtNum(x.reach)} ασθενείς</span>
-                </div>
-                <div className="mt-1.5 text-sm font-medium text-brand-700">→ {x.sell}</div>
-                <p className="mt-1 text-xs leading-relaxed text-slate-500">{x.why}</p>
-              </div>
-            ))}
+            {data!.cross_sell.map((x, idx) => <CrossSellCard key={idx} x={x} />)}
           </div>
         </div>
       )}

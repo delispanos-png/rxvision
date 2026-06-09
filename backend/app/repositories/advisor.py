@@ -313,10 +313,46 @@ class AdvisorRepository(BaseRepository):
             pref = rule["atc"]
             reach = sum(1 for atcs in pmap.values() if any(a.startswith(pref) for a in atcs))
             if reach > 0:
-                out.append({"class": rule["name"], "sell": rule["sell"],
+                out.append({"atc": rule["atc"], "class": rule["name"], "sell": rule["sell"],
                             "why": rule["why"], "reach": reach})
         out.sort(key=lambda x: -x["reach"])
         return out
+
+    async def cross_sell_patients(self, atc_prefix: str) -> list[dict]:
+        """Patients on a therapeutic class (ATC prefix) — with demographics + contact +
+        quick-reach info, for the cross-sell drill-down. Last 12 months."""
+        cutoff = _now() - timedelta(days=365)
+        pref = (atc_prefix or "").upper()
+        rows = await self.aggregate([
+            {"$match": {"executed_at": {"$gte": cutoff}}},
+            {"$lookup": {"from": "prescription_items", "localField": "_id",
+                         "foreignField": "execution_id", "as": "it"}},
+            {"$unwind": "$it"},
+            {"$lookup": {"from": "products", "localField": "it.product_id",
+                         "foreignField": "_id", "as": "p"}},
+            {"$set": {"atc": {"$toUpper": {"$ifNull": [{"$first": "$p.atc"}, ""]}},
+                      "pname": {"$first": "$p.name"}}},
+            {"$match": {"atc": {"$regex": "^" + pref}}},
+            {"$group": {"_id": "$patient_ref", "times": {"$sum": 1},
+                        "last": {"$max": "$executed_at"},
+                        "drugs": {"$addToSet": "$pname"}}},
+            {"$lookup": {"from": "patients_anonymized", "localField": "_id",
+                         "foreignField": "_id", "as": "pa"}},
+            {"$lookup": {"from": "patient_contacts", "localField": "_id",
+                         "foreignField": "_id", "as": "ct"}},
+            {"$set": {"pa": {"$first": "$pa"}, "ct": {"$first": "$ct"}}},
+            {"$project": {
+                "_id": 0, "patient_id": {"$toString": "$_id"},
+                "name": "$pa.full_name", "amka": "$pa.amka",
+                "age_group": "$pa.age_group", "sex": "$pa.sex", "birth_year": "$pa.birth_year",
+                "times": 1, "last": 1, "drugs": {"$slice": ["$drugs", 4]},
+                "mobile": "$ct.mobile", "phone": "$ct.phone", "email": "$ct.email",
+                "consent": {"$ifNull": ["$ct.marketing_consent", False]},
+            }},
+            {"$sort": {"last": -1}},
+            {"$limit": 500},
+        ])
+        return rows
 
     # ── order advisor ────────────────────────────────────────────────────
     async def orders(self, *, lead_days: int = 7, safety_pct: float = 15.0) -> dict:

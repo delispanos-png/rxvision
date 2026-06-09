@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Mail, MessageSquare, Send, Loader2, Users, Settings, Target } from "lucide-react";
@@ -33,6 +33,15 @@ export default function CommunicationsPage() {
   const [value, setValue] = useState("");
   const [subject, setSubject] = useState("");
   const [message, setMessage] = useState("");
+
+  // prefill from a "Δημιουργία καμπάνιας" deep-link (e.g. from the cross-sell drill-down)
+  useEffect(() => {
+    const p = new URLSearchParams(window.location.search);
+    if (p.get("segment")) setSegment(p.get("segment")!);
+    if (p.get("value")) setValue(p.get("value")!);
+    if (p.get("subject")) setSubject(p.get("subject")!);
+    if (p.get("channel") === "sms") setChannel("sms");
+  }, []);
 
   const seg = SEGMENTS.find((s) => s.value === segment)!;
   const qs = `channel=${channel}&segment=${segment}${value ? `&value=${encodeURIComponent(value)}` : ""}`;

@@ -21,6 +21,14 @@ async def business(
     return await AdvisorRepository(tenant_id=ctx.tenant_id).business(date_from, date_to)
 
 
+@router.get("/cross-sell-patients")
+async def cross_sell_patients(
+    atc: str = Query(..., description="ATC prefix, e.g. C10AA"),
+    ctx: TenantContext = Depends(require("patients:read", module="patient_analytics")),
+):
+    return {"atc": atc, "items": await AdvisorRepository(tenant_id=ctx.tenant_id).cross_sell_patients(atc)}
+
+
 @router.get("/orders")
 async def orders(
     lead_days: int = 7,
