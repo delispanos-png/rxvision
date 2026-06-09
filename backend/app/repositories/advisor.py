@@ -36,6 +36,49 @@ def _sort_insights(ins: list[dict]) -> None:
     ins.sort(key=lambda x: _SEV_ORDER.get(x["severity"], 9))
 
 
+# ATC level-1 therapeutic classes → Greek names
+ATC_L1 = {
+    "A": "Πεπτικό & μεταβολισμός", "B": "Αίμα & αιμοποιητικά", "C": "Καρδιαγγειακό",
+    "D": "Δερματολογικά", "G": "Ουροποιογεννητικό & ορμόνες φύλου", "H": "Ορμόνες (συστηματικές)",
+    "J": "Αντιλοιμώδη", "L": "Αντινεοπλασματικά & ανοσορυθμιστικά", "M": "Μυοσκελετικό",
+    "N": "Νευρικό σύστημα", "P": "Αντιπαρασιτικά", "R": "Αναπνευστικό", "S": "Αισθητήρια όργανα",
+    "V": "Διάφορα",
+}
+
+# Cross-sell knowledge base: chronic-therapy ATC prefix → accompanying-sale opportunity.
+# Curated for the Greek pharmacy (παραφαρμακευτικά/ΜΗΣΥΦΑ). reach = distinct patients on that class.
+CROSS_SELL = [
+    {"atc": "C10AA", "name": "Στατίνες", "sell": "Συνένζυμο Q10 · Ω-3 λιπαρά · Βιταμίνη D",
+     "why": "Μειώνουν το CoQ10 και προκαλούν μυαλγίες — ισχυρή, λογική συνοδευτική πώληση."},
+    {"atc": "A10", "name": "Αντιδιαβητικά", "sell": "Ταινίες μέτρησης · Βιταμίνη B12 · Περιποίηση διαβητικού ποδιού",
+     "why": "Η μετφορμίνη μειώνει τη B12· ανάγκη συνεχούς μέτρησης σακχάρου & φροντίδας ποδιού."},
+    {"atc": "A02BC", "name": "Αναστολείς αντλίας πρωτονίων (PPI)", "sell": "Μαγνήσιο · Βιταμίνη B12 · Προβιοτικά",
+     "why": "Μακροχρόνια χρήση μειώνει Mg/B12 και επηρεάζει την απορρόφηση."},
+    {"atc": "C03", "name": "Διουρητικά", "sell": "Μαγνήσιο · Κάλιο · Ενυδάτωση",
+     "why": "Αυξημένη αποβολή ηλεκτρολυτών."},
+    {"atc": "J01", "name": "Αντιβιοτικά", "sell": "Προβιοτικά · Ηλεκτρολύτες",
+     "why": "Προστασία εντερικής χλωρίδας κατά/μετά την αγωγή."},
+    {"atc": "H03AA", "name": "Λεβοθυροξίνη (υποθυρεοειδισμός)", "sell": "Σελήνιο · Βιταμίνη D",
+     "why": "Υποστήριξη λειτουργίας θυρεοειδούς."},
+    {"atc": "M05B", "name": "Οστεοπόρωση (διφωσφονικά)", "sell": "Ασβέστιο + Βιταμίνη D3 · Κολλαγόνο",
+     "why": "Απαραίτητα συμπληρώματα για την αποτελεσματικότητα της αγωγής."},
+    {"atc": "R03", "name": "Εισπνεόμενα (άσθμα/ΧΑΠ)", "sell": "Spacer/αποστείρωση · Βιταμίνη D · Φυσιολογικός ορός",
+     "why": "Υποστήριξη αναπνευστικού & σωστή χρήση συσκευής."},
+    {"atc": "B01", "name": "Αντιπηκτικά / Αντιαιμοπεταλιακά", "sell": "Συμβουλή διατροφής (βιτ. K) · Ασπίδα στομάχου",
+     "why": "Αλληλεπιδράσεις & κίνδυνος γαστρικής δυσφορίας."},
+    {"atc": "N06A", "name": "Αντικαταθλιπτικά", "sell": "Ω-3 · Μαγνήσιο · Σύμπλεγμα B · Μελατονίνη",
+     "why": "Υποστήριξη διάθεσης, ύπνου και νευρικού συστήματος."},
+    {"atc": "G03", "name": "Ορμονική/αντισύλληψη", "sell": "Φυλλικό οξύ · Μαγνήσιο · B6",
+     "why": "Συχνές ελλείψεις θρεπτικών στις θεραπείες αυτές."},
+    {"atc": "M01A", "name": "ΜΣΑΦ (αντιφλεγμονώδη)", "sell": "Γαστροπροστασία · Τοπικά gel · Κολλαγόνο/γλυκοζαμίνη",
+     "why": "Προστασία στομάχου & υποστήριξη αρθρώσεων."},
+    {"atc": "C09", "name": "Αντιυπερτασικά (ΜΕΑ/ARB)", "sell": "Πιεσόμετρο · Ω-3 · CoQ10 · Μαγνήσιο",
+     "why": "Παρακολούθηση πίεσης στο σπίτι & καρδιαγγειακή υποστήριξη."},
+    {"atc": "N02", "name": "Αναλγητικά", "sell": "Θερμοφόρες/τοπικά · Μαγνήσιο · Συμπληρώματα ύπνου",
+     "why": "Διαχείριση χρόνιου πόνου & ποιότητα ύπνου."},
+]
+
+
 class AdvisorRepository(BaseRepository):
     collection_name = "prescription_executions"
 
@@ -204,7 +247,76 @@ class AdvisorRepository(BaseRepository):
                 "patients": {"value": cur["patients"], "delta": _pct(cur["patients"], prev["patients"])},
             },
             "insights": ins,
+            "categories": await self.category_analysis(df, dt),
+            "cross_sell": await self.cross_sell(df, dt),
         }
+
+    # ── deep category & cross-sell analytics ─────────────────────────────
+    async def _cat_rows(self, df, dt) -> list[dict]:
+        items = BaseRepository(tenant_id=self.tenant_id)
+        items.collection_name = "prescription_items"
+        rows = await items.aggregate([
+            {"$match": {"executed_at": {"$gte": df, "$lt": dt}, "is_executed": True}},
+            {"$lookup": {"from": "products", "localField": "product_id",
+                         "foreignField": "_id", "as": "p"}},
+            {"$set": {"code": {"$toUpper": {"$substrCP": [{"$ifNull": [{"$first": "$p.atc"}, "?"]}, 0, 1]}}}},
+            {"$group": {"_id": "$code",
+                        "revenue": {"$sum": {"$multiply": ["$retail_price", "$quantity"]}},
+                        "cost": {"$sum": {"$multiply": ["$wholesale_price", "$quantity"]}},
+                        "units": {"$sum": "$quantity"}, "rx": {"$sum": 1}}},
+            {"$project": {"_id": 0, "code": "$_id", "revenue": 1, "cost": 1, "units": 1, "rx": 1}},
+        ])
+        return [r for r in rows if r["code"] in ATC_L1]
+
+    async def category_analysis(self, df, dt) -> list[dict]:
+        span = dt - df
+        cur = await self._cat_rows(df, dt)
+        prev = {r["code"]: r["revenue"] for r in await self._cat_rows(df - span, df)}
+        total = sum(r["revenue"] for r in cur) or 1
+        out = []
+        for r in cur:
+            gp = r["revenue"] - r["cost"]
+            margin = (gp / r["revenue"] * 100) if r["revenue"] else 0
+            share = r["revenue"] / total * 100
+            trend = _pct(r["revenue"], prev.get(r["code"], 0))
+            if share >= 8 and margin >= 18:
+                verdict = "focus"
+            elif margin < 12 or (share < 3 and (trend or 0) < 0):
+                verdict = "divest"
+            else:
+                verdict = "maintain"
+            out.append({"code": r["code"], "name": ATC_L1.get(r["code"], r["code"]),
+                        "revenue": r["revenue"], "gross_profit": gp, "margin_pct": margin,
+                        "units": r["units"], "rx": r["rx"], "share_pct": share,
+                        "trend_pct": trend, "verdict": verdict})
+        out.sort(key=lambda x: -x["revenue"])
+        return out
+
+    async def cross_sell(self, df, dt) -> list[dict]:
+        pairs = await self.aggregate([
+            {"$match": {"executed_at": {"$gte": df, "$lt": dt}}},
+            {"$lookup": {"from": "prescription_items", "localField": "_id",
+                         "foreignField": "execution_id", "as": "it"}},
+            {"$unwind": "$it"},
+            {"$lookup": {"from": "products", "localField": "it.product_id",
+                         "foreignField": "_id", "as": "p"}},
+            {"$set": {"atc": {"$toUpper": {"$ifNull": [{"$first": "$p.atc"}, ""]}}}},
+            {"$match": {"atc": {"$ne": ""}}},
+            {"$group": {"_id": {"pt": "$patient_ref", "atc": "$atc"}}},
+            {"$project": {"_id": 0, "pt": "$_id.pt", "atc": "$_id.atc"}},
+        ])
+        pmap: dict = {}
+        for r in pairs:
+            pmap.setdefault(str(r.get("pt")), set()).add(r.get("atc") or "")
+        out = []
+        for rule in CROSS_SELL:
+            pref = rule["atc"]
+            reach = sum(1 for atcs in pmap.values() if any(a.startswith(pref) for a in atcs))
+            if reach > 0:
+                out.append({"class": rule["name"], "sell": rule["sell"],
+                            "why": rule["why"], "reach": reach})
+        out.sort(key=lambda x: -x["reach"])
+        return out
 
     # ── order advisor ────────────────────────────────────────────────────
     async def orders(self, *, lead_days: int = 7, safety_pct: float = 15.0) -> dict:
@@ -257,4 +369,6 @@ class AdvisorRepository(BaseRepository):
             "insights": ins,
             "suggestions": suggestions[:50],
             "upcoming": upcoming[:50],
+            # accompanying products worth stocking, from the patient base's therapy mix (90d)
+            "cross_sell": await self.cross_sell(today - timedelta(days=90), today),
         }

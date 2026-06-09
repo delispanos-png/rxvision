@@ -9,10 +9,20 @@ import { DateRangeFilter } from "@/components/filters/DateRangeFilter";
 import { InsightCard, type Insight } from "@/components/advisor/InsightCard";
 
 type Kpi = { value: number; delta: number | null };
+type Cat = { code: string; name: string; revenue: number; gross_profit: number; margin_pct: number; units: number; rx: number; share_pct: number; trend_pct: number | null; verdict: string };
+type Xsell = { class: string; sell: string; why: string; reach: number };
 type Business = {
   period: { from: string; to: string };
   kpis: { revenue: Kpi; gross_profit: Kpi; margin_pct: Kpi; rx: Kpi; claimed: Kpi; patients: Kpi };
   insights: Insight[];
+  categories: Cat[];
+  cross_sell: Xsell[];
+};
+
+const VERDICT: Record<string, { label: string; cls: string }> = {
+  focus: { label: "🟢 Εστίασε", cls: "bg-emerald-100 text-emerald-700" },
+  maintain: { label: "🟡 Διατήρησε", cls: "bg-amber-100 text-amber-700" },
+  divest: { label: "🔴 Μη επενδύεις", cls: "bg-rose-100 text-rose-700" },
 };
 
 const eur = (c: number) => new Intl.NumberFormat("el-GR", { style: "currency", currency: "EUR", maximumFractionDigits: 0 }).format((c || 0) / 100);
@@ -84,6 +94,52 @@ export default function BusinessAdvisorPage() {
       ) : (
         <div className="grid gap-3 lg:grid-cols-2">
           {ins.map((i, idx) => <InsightCard key={idx} ins={i} />)}
+        </div>
+      )}
+
+      {/* therapeutic-category turnover & verdict */}
+      {(data?.categories?.length ?? 0) > 0 && (
+        <div className="mt-6">
+          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">Θεραπευτικές κατηγορίες — πού να εστιάσεις</h2>
+          <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-card">
+            <table className="min-w-full divide-y divide-slate-200 text-sm">
+              <thead className="bg-slate-50 text-left text-xs text-slate-500">
+                <tr><th className="px-4 py-3">Κατηγορία (ATC)</th><th className="px-4 py-3 text-right">Τζίρος</th><th className="px-4 py-3 text-right">Μερίδιο</th><th className="px-4 py-3 text-right">Περιθώριο</th><th className="px-4 py-3 text-right">Τάση</th><th className="px-4 py-3">Ετυμηγορία</th></tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {data!.categories.map((c) => (
+                  <tr key={c.code}>
+                    <td className="px-4 py-3 font-medium text-slate-800">{c.name} <span className="text-[10px] text-slate-400">{c.code}</span></td>
+                    <td className="px-4 py-3 text-right">{eur(c.revenue)}</td>
+                    <td className="px-4 py-3 text-right text-slate-500">{c.share_pct.toFixed(0)}%</td>
+                    <td className="px-4 py-3 text-right">{c.margin_pct.toFixed(0)}%</td>
+                    <td className={`px-4 py-3 text-right font-medium ${(c.trend_pct ?? 0) >= 0 ? "text-emerald-600" : "text-rose-600"}`}>{c.trend_pct == null ? "—" : `${c.trend_pct >= 0 ? "+" : ""}${c.trend_pct.toFixed(0)}%`}</td>
+                    <td className="px-4 py-3"><span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${VERDICT[c.verdict]?.cls}`}>{VERDICT[c.verdict]?.label}</span></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* cross-sell opportunities */}
+      {(data?.cross_sell?.length ?? 0) > 0 && (
+        <div className="mt-6">
+          <h2 className="mb-1 text-sm font-semibold uppercase tracking-wide text-slate-500">Ευκαιρίες συνοδευτικής πώλησης</h2>
+          <p className="mb-3 text-xs text-slate-400">Βάσει των θεραπευτικών κατηγοριών στις οποίες ανήκουν οι ασθενείς σου — λογικές, αιτιολογημένες προτάσεις παραφαρμάκου.</p>
+          <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
+            {data!.cross_sell.map((x, idx) => (
+              <div key={idx} className="rounded-2xl border border-brand-200 bg-brand-50/40 p-4">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-sm font-semibold text-slate-800">{x.class}</span>
+                  <span className="shrink-0 rounded-full bg-brand-100 px-2 py-0.5 text-[11px] font-bold text-brand-700">{num(x.reach)} ασθενείς</span>
+                </div>
+                <div className="mt-1.5 text-sm font-medium text-brand-700">→ {x.sell}</div>
+                <p className="mt-1 text-xs leading-relaxed text-slate-500">{x.why}</p>
+              </div>
+            ))}
+          </div>
         </div>
       )}
     </ModuleGuard>

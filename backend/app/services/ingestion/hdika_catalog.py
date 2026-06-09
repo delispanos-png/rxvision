@@ -141,13 +141,17 @@ async def enrich_product_categories(db) -> int:
     catalog refresh so new medicines get classified."""
     from pymongo import UpdateOne
 
-    cmap: dict = {}
+    by_id: dict = {}
+    by_bc: dict = {}
     async for d in db["medicine_catalog"].find(
-            {}, {"atc": 1, "narcotic": 1, "high_cost": 1, "substance_name": 1}):
-        cmap[d["_id"]] = d
+            {}, {"atc": 1, "narcotic": 1, "high_cost": 1, "substance_name": 1, "barcode": 1}):
+        by_id[d["_id"]] = d                        # eofCode
+        if d.get("barcode"):
+            by_bc[d["barcode"]] = d                # full EAN-13
     ops = []
     async for p in db["products"].find({}, {"barcode": 1, "name": 1, "substance": 1}):
-        c = cmap.get(p.get("barcode"))
+        # product.barcode is inconsistent (sometimes eofCode, sometimes full EAN) → try both
+        c = by_id.get(p.get("barcode")) or by_bc.get(p.get("barcode"))
         if not c:
             continue
         cls = categorize(c.get("atc"), c.get("narcotic"), c.get("high_cost"),

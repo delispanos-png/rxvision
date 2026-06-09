@@ -16,11 +16,13 @@ type Sug = {
   avg_daily: number; expected_demand: number; suggested_qty: number; est_cost: number; price_rising?: boolean;
 };
 type Upc = { expected_open_date: string; patient_name?: string | null; amka?: string | null; products?: (string | null)[]; source_barcode?: string | null };
+type Xsell = { class: string; sell: string; why: string; reach: number };
 type OrderAdvice = {
   kpis: { items: number; qty: number; cost: number; rising: number };
   insights: Insight[];
   suggestions: Sug[];
   upcoming: Upc[];
+  cross_sell: Xsell[];
 };
 
 const sugCols: Column<Sug>[] = [
@@ -72,6 +74,26 @@ export default function OrderAdvisorPage() {
       {isLoading ? <div className="text-slate-400">Ανάλυση…</div> : (
         <div className="mb-5 grid gap-3 lg:grid-cols-2">
           {ins.map((i, idx) => <InsightCard key={idx} ins={i} />)}
+        </div>
+      )}
+
+      {/* παραφάρμακα to stock for cross-sell */}
+      {(data?.cross_sell?.length ?? 0) > 0 && (
+        <div className="mb-5">
+          <h2 className="mb-1 text-sm font-semibold uppercase tracking-wide text-slate-500">Παραφάρμακα για στοκ (συνοδευτική πώληση)</h2>
+          <p className="mb-3 text-xs text-slate-400">Με βάση τις θεραπείες των ασθενών σου — έχε τα διαθέσιμα για να κλείνεις την πώληση στο ταμείο.</p>
+          <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
+            {data!.cross_sell.map((x, idx) => (
+              <div key={idx} className="rounded-2xl border border-brand-200 bg-brand-50/40 p-4">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-sm font-semibold text-slate-800">{x.class}</span>
+                  <span className="shrink-0 rounded-full bg-brand-100 px-2 py-0.5 text-[11px] font-bold text-brand-700">{fmtNum(x.reach)} ασθενείς</span>
+                </div>
+                <div className="mt-1.5 text-sm font-medium text-brand-700">→ {x.sell}</div>
+                <p className="mt-1 text-xs leading-relaxed text-slate-500">{x.why}</p>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
