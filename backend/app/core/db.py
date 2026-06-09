@@ -92,15 +92,14 @@ async def ensure_indexes() -> None:
 
 
 async def reap_orphan_jobs() -> int:
-    """Mark sync_jobs stuck in 'running' with a stale heartbeat (>15min, no live worker)
-    as cancelled. Worker restarts orphan in-flight Celery tasks, leaving 'running' records."""
+    """Delete sync_jobs stuck in 'running' with a stale heartbeat (>15min, no live worker).
+    Worker restarts orphan in-flight Celery tasks, leaving dead 'running' records that are
+    pure noise (the data they ingested stays). Removed entirely so the history stays clean."""
     from datetime import datetime, timedelta, timezone
-    now = datetime.now(tz=timezone.utc)
-    cutoff = now - timedelta(minutes=15)
-    res = await shared_db()["sync_jobs"].update_many(
+    cutoff = datetime.now(tz=timezone.utc) - timedelta(minutes=15)
+    res = await shared_db()["sync_jobs"].delete_many(
         {"status": "running", "$or": [
             {"updated_at": {"$lt": cutoff}},
             {"updated_at": {"$exists": False}, "started_at": {"$lt": cutoff}},
-        ]},
-        {"$set": {"status": "cancelled", "finished_at": now, "error": "orphaned (worker restart)"}})
-    return res.modified_count
+        ]})
+    return res.deleted_count

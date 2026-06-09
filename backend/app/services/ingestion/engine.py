@@ -47,7 +47,7 @@ class IngestionEngine:
 
     async def ingest(self, *, source: str, job_type: str,
                      records: Iterable[CanonicalExecution],
-                     window: tuple | None = None) -> dict:
+                     window: tuple | None = None, task_id: str | None = None) -> dict:
         stats = {"fetched": 0, "inserted": 0, "updated": 0, "duplicates": 0, "invalid": 0}
         errors: list[dict] = []
         job_id = ObjectId()
@@ -60,7 +60,7 @@ class IngestionEngine:
         await self.db["sync_jobs"].insert_one({
             "_id": job_id, "tenant_id": self.tenant_id, "source": source, "type": job_type,
             "status": "running", "cursor": {}, "stats": stats, "attempts": 1,
-            "progress": 0.0, "cursor_date": None,
+            "progress": 0.0, "cursor_date": None, "task_id": task_id,
             "window": ({"start": window[0], "end": window[1]} if window else None),
             "error": None, "started_at": _now(), "updated_at": _now(), "finished_at": None,
         })

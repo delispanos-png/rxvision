@@ -248,6 +248,8 @@ export default function IngestionSettingsPage() {
       {showProgress && (() => {
         const pct = Math.max(0, Math.min(100, Math.round((latestJob?.progress ?? 0) * 100)));
         const known = typeof latestJob?.progress === "number" && latestJob.progress > 0;
+        const fmtD = (d?: string) => d ? new Date(d).toLocaleDateString("el-GR", { day: "2-digit", month: "2-digit", year: "numeric" }) : "—";
+        const win = latestJob?.window as { start?: string; end?: string } | undefined;
         return (
           <div className="rx-card p-4">
             <div className="mb-2 flex items-center justify-between text-sm">
@@ -268,6 +270,19 @@ export default function IngestionSettingsPage() {
                 )}
               </span>
             </div>
+            {(win?.start || latestJob?.cursor_date) && (
+              <div className="mb-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500">
+                <span className="rounded-md bg-brand-50 px-1.5 py-0.5 font-semibold text-brand-700">
+                  {latestJob?.type === "backfill" ? "Ιστορικό" : "Incremental"}
+                </span>
+                {win?.start && (
+                  <span>Περίοδος: <b className="text-slate-700">{fmtD(win.start)}</b> → <b className="text-slate-700">{fmtD(win.end)}</b></span>
+                )}
+                {latestJob?.cursor_date && (
+                  <span>· συγχρονίζει τώρα στο <b className="text-brand-700">{fmtD(latestJob.cursor_date)}</b></span>
+                )}
+              </div>
+            )}
             <div className="h-2.5 w-full overflow-hidden rounded-full bg-slate-200">
               <div
                 className={`h-full rounded-full bg-brand-500 transition-[width] duration-700 ease-out ${known ? "" : "w-1/3 animate-pulse"}`}

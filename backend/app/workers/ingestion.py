@@ -103,7 +103,7 @@ def hdika_incremental_sync(self, tenant_id: str) -> dict:
             records = HdikaAdapter(creds).fetch(since=since)
             job = await IngestionEngine(tenant_id, db=db).ingest(
                 source="HDIKA", job_type="incremental", records=records,
-                window=(since, now))
+                window=(since, now), task_id=self.request.id)
             return {"tenant_id": tenant_id, "status": job["status"], "stats": job["stats"]}
         finally:
             client.close()
@@ -111,8 +111,8 @@ def hdika_incremental_sync(self, tenant_id: str) -> dict:
     return asyncio.run(_run())
 
 
-@celery_app.task(name="app.workers.ingestion.hdika_backfill")
-def hdika_backfill(tenant_id: str, since_iso: str, until_iso: str | None = None,
+@celery_app.task(name="app.workers.ingestion.hdika_backfill", bind=True)
+def hdika_backfill(self, tenant_id: str, since_iso: str, until_iso: str | None = None,
                    throttle: float = 0.08) -> dict:
     """Historical ΗΔΙΚΑ ingest for the window [`since_iso`, `until_iso`] (until defaults
     to today), recent-first, in the worker's own Celery process so it survives. Idempotent."""
@@ -147,8 +147,40 @@ def hdika_backfill(tenant_id: str, since_iso: str, until_iso: str | None = None,
                     until = until.replace(tzinfo=timezone.utc)
             records = HdikaAdapter(creds, catalog=cat).fetch(since=since, until=until)
             job = await IngestionEngine(tenant_id, db=db).ingest(
-                source="HDIKA", job_type="backfill", records=records, window=(since, until))
+                source="HDIKA", job_type="backfill", records=records, window=(since, until),
+                task_id=self.request.id)
             return {"tenant_id": tenant_id, "status": job["status"], "stats": job["stats"]}
+        finally:
+            client.close()
+
+    return asyncio.run(_run())
+
+
+@celery_app.task(name="app.workers.ingestion.reap_stalled_sync")
+def reap_stalled_sync(stall_minutes: int = 5) -> dict:
+    """Watchdog (beat). A healthy sync writes a heartbeat (`updated_at`) every 20 records.
+    If a 'running' job hasn't progressed for >`stall_minutes`, its worker is stuck →
+    KILL the Celery task (SIGKILL, no redelivery) and mark the job failed."""
+    async def _run() -> dict:
+        client, db = _fresh_db()
+        try:
+            cutoff = datetime.now(tz=timezone.utc) - timedelta(minutes=stall_minutes)
+            killed: list[str] = []
+            cursor = db["sync_jobs"].find(
+                {"status": "running", "$or": [
+                    {"updated_at": {"$lt": cutoff}},
+                    {"updated_at": {"$exists": False}, "started_at": {"$lt": cutoff}}]})
+            async for j in cursor:
+                tid = j.get("task_id")
+                if tid:
+                    # terminate the running task + revoke so acks_late can't redeliver it
+                    celery_app.control.revoke(tid, terminate=True, signal="SIGKILL")
+                await db["sync_jobs"].update_one(
+                    {"_id": j["_id"]},
+                    {"$set": {"status": "failed", "finished_at": datetime.now(tz=timezone.utc),
+                              "error": f"stalled (no progress >{stall_minutes}min) — killed by watchdog"}})
+                killed.append(str(j["_id"]))
+            return {"killed": killed, "count": len(killed)}
         finally:
             client.close()
 

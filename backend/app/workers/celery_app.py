@@ -27,6 +27,10 @@ celery_app.conf.beat_schedule = {
         "task": "app.workers.ingestion.dispatch_incremental_sync",
         "schedule": crontab(minute="*/15"),
     },
+    "reap-stalled-sync": {  # watchdog: kill sync jobs with no progress >5min
+        "task": "app.workers.ingestion.reap_stalled_sync",
+        "schedule": crontab(minute="*/2"),
+    },
     "nightly-snapshots": {
         "task": "app.workers.snapshots.compute_nightly",
         "schedule": crontab(hour=2, minute=30),
