@@ -133,6 +133,7 @@ export default function DashboardPage() {
               { name: "Αξία (€)", data: valSeries },
               { name: "Αιτούμενα (€)", data: claimSeries },
             ]}
+            colors={["#ef4444", "#10b981"]}
             height={300}
           />
         </PanelCard>

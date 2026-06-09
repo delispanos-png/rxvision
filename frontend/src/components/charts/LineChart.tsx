@@ -10,6 +10,12 @@ export type LineSeries = { name: string; data: number[] };
 // distinct colour per line so overlapping series are easy to tell apart
 const LINE_COLORS = ["#6366f1", "#10b981", "#f59e0b", "#06b6d4", "#ec4899", "#ef4444"];
 
+const hexToRgb = (hex: string) => {
+  const h = hex.replace("#", "");
+  const n = parseInt(h.length === 3 ? h.split("").map((c) => c + c).join("") : h, 16);
+  return `${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}`;
+};
+
 const gradient = (rgb: string) => ({
   type: "linear", x: 0, y: 0, x2: 0, y2: 1,
   colorStops: [
@@ -28,6 +34,7 @@ export function LineChart({
   area = true,
   ariaLabel,
   onPointClick,
+  colors,
 }: {
   labels: (string | number)[];
   data?: number[];
@@ -38,9 +45,12 @@ export function LineChart({
   ariaLabel?: string;
   /** When set, each point is a clickable dot; fires with the clicked index. */
   onPointClick?: (index: number) => void;
+  /** Override the per-series colours (e.g. ["#ef4444", "#10b981"]). */
+  colors?: string[];
 }) {
   const resolved: LineSeries[] = series ?? [{ name, data: data ?? [] }];
   const clickable = !!onPointClick;
+  const cols = colors && colors.length ? colors : LINE_COLORS;
 
   const option = {
     color: PALETTE,
@@ -59,7 +69,7 @@ export function LineChart({
     xAxis: { type: "category", data: labels, boundaryGap: false, ...axisStyle },
     yAxis: { type: "value", ...axisStyle },
     series: resolved.map((s, i) => {
-      const color = LINE_COLORS[i % LINE_COLORS.length];
+      const color = cols[i % cols.length];
       return {
         name: s.name,
         type: "line",
@@ -70,7 +80,7 @@ export function LineChart({
         data: s.data,
         cursor: clickable ? "pointer" : "default",
         lineStyle: { width: 2.5, color },
-        areaStyle: area && i === 0 ? { color: gradient("99, 102, 241") } : undefined,
+        areaStyle: area && i === 0 ? { color: gradient(hexToRgb(color)) } : undefined,
         itemStyle: { color },
       };
     }),
