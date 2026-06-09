@@ -55,11 +55,16 @@ class ProfitabilitySnapshotRepository(BaseRepository):
         if rows and rows[0].get("rx_count"):
             return rows[0]
         # No snapshot yet (e.g. current month before nightly precompute) → live scan.
-        return await self._summary_live(period)
-
-    async def _summary_live(self, period: str) -> dict:
-        """Compute the period summary directly from prescription_executions."""
         start, end = _month_range(period)
+        return await self._summary_live(start=start, end=end, label=period)
+
+    async def range_summary(self, *, date_from: datetime, date_to: datetime) -> dict:
+        """Live profitability summary for an arbitrary date range (shared date filter)."""
+        return await self._summary_live(start=date_from, end=date_to)
+
+    async def _summary_live(self, *, start: datetime, end: datetime, label: str = "") -> dict:
+        """Compute the period summary directly from prescription_executions."""
+        period = label
         execs = BaseRepository(tenant_id=self.tenant_id)
         execs.collection_name = "prescription_executions"
         pipeline = [

@@ -13,7 +13,6 @@ from app.repositories.profitability import (
     ProfitabilityLiveRepository,
     ProfitabilitySnapshotRepository,
     ReceivablesRepository,
-    _month_range,
 )
 
 router = APIRouter()
@@ -23,23 +22,24 @@ _MODULE = "profitability"
 
 @router.get("/summary")
 async def summary(
-    period: str = Query(..., description="YYYY-MM"),
+    date_from: datetime = Query(...),
+    date_to: datetime = Query(...),
     ctx: TenantContext = Depends(require("profitability:read", module=_MODULE)),
 ):
     repo = ProfitabilitySnapshotRepository(tenant_id=ctx.tenant_id)
-    return await repo.summary(period=period)
+    return await repo.range_summary(date_from=date_from, date_to=date_to)
 
 
 @router.get("/by")
 async def by_dimension(
     dim: Literal["fund", "doctor", "icd10", "product", "category"] = "fund",
-    period: str = Query(..., description="YYYY-MM"),
+    date_from: datetime = Query(...),
+    date_to: datetime = Query(...),
     ctx: TenantContext = Depends(require("profitability:read", module=_MODULE)),
 ):
-    start, end = _month_range(period)
     repo = ProfitabilityLiveRepository(tenant_id=ctx.tenant_id)
-    rows = await repo.by_dimension_live(date_from=start, date_to=end, dim=dim)
-    return {"period": period, "dim": dim, "rows": rows}
+    rows = await repo.by_dimension_live(date_from=date_from, date_to=date_to, dim=dim)
+    return {"dim": dim, "rows": rows}
 
 
 @router.get("/low-margin")

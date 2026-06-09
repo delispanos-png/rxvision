@@ -3,13 +3,15 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { TrendingUp, Percent, Coins, AlertTriangle } from "lucide-react";
-import { api, queryKeys } from "@/lib/apiClient";
+import { api } from "@/lib/apiClient";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
+import { useUiStore, filtersToQuery } from "@/store/uiStore";
 import { fmtEur, fmtPct, fmtNum } from "@/lib/formatters";
 import { KpiCard } from "@/components/kpi/KpiCard";
 import { PanelCard } from "@/components/ui/Card";
 import { QueryState } from "@/components/ui/QueryState";
 import { SelectFilter } from "@/components/filters/SelectFilter";
+import { DateRangeFilter } from "@/components/filters/DateRangeFilter";
 import { DataTable, type Column } from "@/components/tables/DataTable";
 import { BarChart } from "@/components/charts/BarChart";
 import { ExportButton } from "@/components/export/ExportButton";
@@ -33,8 +35,6 @@ type LowMarginRow = {
   gross_profit: number; // cents
 };
 
-const CURRENT_PERIOD = new Date().toISOString().slice(0, 7);
-
 const DIMS = [
   { value: "fund", label: "Ταμείο" },
   { value: "doctor", label: "Ιατρός" },
@@ -51,20 +51,22 @@ const lowMarginColumns: Column<LowMarginRow>[] = [
 ];
 
 export default function ProfitabilityPage() {
+  const filters = useUiStore();
+  const q = filtersToQuery(filters);
   const [dim, setDim] = useState("fund");
 
   const summary = useQuery({
-    queryKey: queryKeys.profitabilitySummary(CURRENT_PERIOD),
-    queryFn: () => api<Summary>(`/profitability/summary?period=${CURRENT_PERIOD}`),
+    queryKey: ["profitability", "summary", q],
+    queryFn: () => api<Summary>(`/profitability/summary?${q}`),
   });
 
   const byDim = useQuery({
-    queryKey: queryKeys.profitabilityBy(dim, CURRENT_PERIOD),
-    queryFn: () => api<{ rows: ByRow[] }>(`/profitability/by?dim=${dim}&period=${CURRENT_PERIOD}`),
+    queryKey: ["profitability", "by", dim, q],
+    queryFn: () => api<{ rows: ByRow[] }>(`/profitability/by?dim=${dim}&${q}`),
   });
 
   const lowMargin = useQuery({
-    queryKey: queryKeys.profitabilityLowMargin(10),
+    queryKey: ["profitability", "low-margin", 10],
     queryFn: () => api<{ items: LowMarginRow[] }>(`/profitability/low-margin?threshold_pct=10`),
   });
 
@@ -83,10 +85,12 @@ export default function ProfitabilityPage() {
       <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-slate-900">Κερδοφορία</h1>
-          <p className="mt-1 text-sm text-slate-500">Μεικτό κέρδος, περιθώρια & ταμειακή ροή — {CURRENT_PERIOD}</p>
+          <p className="mt-1 text-sm text-slate-500">Μεικτό κέρδος, περιθώρια & ταμειακή ροή</p>
         </div>
-        <ExportButton path="/profitability/by" query={`?dim=${dim}&period=${CURRENT_PERIOD}`} />
+        <ExportButton path="/profitability/by" query={`?dim=${dim}&${q}`} />
       </div>
+
+      <div className="mb-4"><DateRangeFilter /></div>
 
       <div className="space-y-4">
         {/* KPI row */}
