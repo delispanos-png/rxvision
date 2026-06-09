@@ -41,3 +41,11 @@
 .dark .divide-slate-200 > :not([hidden]) ~ :not([hidden]) { border-color: #1e293b !important; }
 .dark input, .dark select, .dark textarea { background-color: #0b1220; border-color: #334155; color: #e2e8f0; }
 .dark .hover\:bg-slate-50:hover { background-color: #1e293b !important; }
+
+/* intro splash animations */
+@keyframes rxLogo { 0%{opacity:0;transform:scale(.55) translateY(14px)} 55%{opacity:1;transform:scale(1.08)} 100%{opacity:1;transform:scale(1)} }
+@keyframes rxUp { 0%{opacity:0;transform:translateY(16px)} 100%{opacity:1;transform:translateY(0)} }
+@keyframes rxRing { 0%{transform:scale(.85);opacity:.55} 100%{transform:scale(2.4);opacity:0} }
+@keyframes rxFloat { 0%,100%{transform:translateY(0) rotate(0)} 50%{transform:translateY(-16px) rotate(6deg)} }
+@keyframes rxBar { 0%{width:0} 100%{width:100%} }
+@keyframes rxDot { 0%,80%,100%{opacity:.3;transform:scale(.8)} 40%{opacity:1;transform:scale(1)} }
