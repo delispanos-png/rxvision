@@ -111,6 +111,45 @@ def hdika_incremental_sync(self, tenant_id: str) -> dict:
     return asyncio.run(_run())
 
 
+@celery_app.task(name="app.workers.ingestion.hdika_backfill")
+def hdika_backfill(tenant_id: str, since_iso: str, throttle: float = 0.08) -> dict:
+    """Full historical ΗΔΙΚΑ ingest from `since_iso` → today (recent-first), run in the
+    worker's own Celery process so it survives (unlike a foreground exec). Idempotent."""
+    from app.services.ingestion.hdika_catalog import load_catalog_map
+
+    async def _run() -> dict:
+        client, db = _fresh_db()
+        try:
+            creds = dict(vault.get_secret(f"tenants/{tenant_id}/hdika") or {})
+            plat = await db["platform_settings"].find_one({"_id": "idika"})
+            if plat:
+                env = plat.get("active_environment", "test")
+                envcfg = plat.get(env) or {}
+                if envcfg.get("base_url"):
+                    creds["base_url"] = envcfg["base_url"]
+                creds["environment"] = env
+                if env == "test":
+                    for src, dst in (("integrator_username", "username"),
+                                     ("integrator_password", "password"),
+                                     ("api_key", "api_key"), ("pharmacy_id", "pharmacy_id")):
+                        if envcfg.get(src):
+                            creds[dst] = envcfg[src]
+            creds["throttle"] = throttle
+            cat = await load_catalog_map(db)
+            since = datetime.fromisoformat(since_iso)
+            if since.tzinfo is None:
+                since = since.replace(tzinfo=timezone.utc)
+            now = datetime.now(tz=timezone.utc)
+            records = HdikaAdapter(creds, catalog=cat).fetch(since=since)
+            job = await IngestionEngine(tenant_id, db=db).ingest(
+                source="HDIKA", job_type="backfill", records=records, window=(since, now))
+            return {"tenant_id": tenant_id, "status": job["status"], "stats": job["stats"]}
+        finally:
+            client.close()
+
+    return asyncio.run(_run())
+
+
 @celery_app.task(name="app.workers.ingestion.gesy_xml_ingest")
 def gesy_xml_ingest(tenant_id: str, object_ref: str) -> dict:
     """ΓΕΣΥ (CY) — step 2. Parse stored XML via the same engine. Placeholder."""

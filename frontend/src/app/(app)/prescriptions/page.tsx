@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { Receipt, Wallet, Pill, AlertTriangle, Search } from "lucide-react";
@@ -74,10 +74,14 @@ export default function PrescriptionsPage() {
   const [barcode, setBarcode] = useState("");
   const bc = barcode.trim();
   const listQs = bc ? `${q}&barcode=${encodeURIComponent(bc)}` : q;
+  const PAGE_SIZE = 50;
+  const [page, setPage] = useState(1);
+  // reset to page 1 whenever the filters/search change
+  useEffect(() => { setPage(1); }, [listQs]);
 
   const list = useQuery({
-    queryKey: ["prescriptions", "list", listQs],
-    queryFn: () => api<{ items: Prescription[] }>(`/prescriptions?${listQs}&page=1&page_size=50`),
+    queryKey: ["prescriptions", "list", listQs, page],
+    queryFn: () => api<{ items: Prescription[] }>(`/prescriptions?${listQs}&page=${page}&page_size=${PAGE_SIZE}`),
   });
 
   const unexecuted = useQuery({
@@ -189,6 +193,24 @@ export default function PrescriptionsPage() {
             <DataTable columns={columns} rows={items} rowKey={(r) => r.external_id}
               onRowClick={(r) => router.push(`/prescriptions/${encodeURIComponent(r.external_id)}`)} />
           </QueryState>
+          {/* pagination */}
+          <div className="mt-3 flex items-center justify-between text-sm">
+            <span className="text-slate-500">
+              Σελίδα {page}{items.length ? ` · εγγραφές ${(page - 1) * PAGE_SIZE + 1}–${(page - 1) * PAGE_SIZE + items.length}` : ""}
+            </span>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                disabled={page === 1 || list.isFetching}
+                className="rounded-lg border border-slate-300 px-3 py-1.5 font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+              >← Προηγούμενη</button>
+              <button
+                onClick={() => setPage((p) => p + 1)}
+                disabled={items.length < PAGE_SIZE || list.isFetching}
+                className="rounded-lg border border-slate-300 px-3 py-1.5 font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+              >Επόμενη →</button>
+            </div>
+          </div>
         </PanelCard>
       </div>
     </ModuleGuard>
