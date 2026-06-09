@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -46,22 +46,33 @@ type UnexecutedRow = {
 };
 
 function BarcodeChip({ bc, patient, date }: { bc: string; patient?: string | null; date?: string | null }) {
-  const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
-  const tip = [patient || "", date ? new Date(date).toLocaleString("el-GR", { dateStyle: "medium", timeStyle: "short" }) : ""].filter(Boolean).join(" · ");
+  const [show, setShow] = useState(false);
+  const [pos, setPos] = useState({ x: 0, y: 0 });
+  const ref = useRef<HTMLSpanElement>(null);
+  const info = [patient || "", date ? new Date(date).toLocaleString("el-GR", { dateStyle: "medium", timeStyle: "short" }) : ""].filter(Boolean).join(" · ");
+  const onEnter = () => {
+    const r = ref.current?.getBoundingClientRect();
+    if (r) { setPos({ x: r.left + r.width / 2, y: r.top }); setShow(true); }
+  };
   return (
-    <>
-      <Link href={`/prescriptions/${encodeURIComponent(bc)}`}
-        onMouseEnter={(e) => { const r = e.currentTarget.getBoundingClientRect(); setPos({ x: r.left + r.width / 2, y: r.top }); }}
-        onMouseLeave={() => setPos(null)}
-        className="rounded bg-slate-100 px-1.5 py-0.5 text-xs font-medium text-brand-700 hover:bg-brand-50">
-        {bc}
-      </Link>
-      {pos && tip && typeof document !== "undefined" && createPortal(
-        <span style={{ position: "fixed", left: pos.x, top: pos.y - 6, transform: "translate(-50%, -100%)", zIndex: 9999 }}
-          className="pointer-events-none whitespace-nowrap rounded-lg bg-slate-900 px-2.5 py-1.5 text-xs font-medium text-white shadow-xl">
-          {tip}
-        </span>, document.body)}
-    </>
+    <span
+      ref={ref}
+      onMouseEnter={onEnter}
+      onMouseLeave={() => setShow(false)}
+      className="cursor-default rounded bg-slate-100 px-1.5 py-0.5 text-xs font-medium text-brand-700 hover:bg-brand-200"
+    >
+      {bc}
+      {show && info && typeof document !== "undefined" && createPortal(
+        <div
+          style={{ position: "fixed", left: pos.x, top: pos.y - 10, transform: "translate(-50%, -100%)", zIndex: 9999 }}
+          className="pointer-events-none whitespace-nowrap rounded-lg bg-slate-900 px-3 py-2 text-xs font-medium text-white shadow-2xl"
+        >
+          {info}
+          <span className="absolute left-1/2 top-full h-0 w-0 -translate-x-1/2 border-4 border-transparent border-t-slate-900" />
+        </div>,
+        document.body,
+      )}
+    </span>
   );
 }
 
