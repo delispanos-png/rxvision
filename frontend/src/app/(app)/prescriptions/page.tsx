@@ -41,6 +41,7 @@ type UnexecutedRow = {
   qty: number;
   lost_value: number; // cents
   barcodes?: string[];
+  rxs?: { barcode: string; patient?: string | null; date?: string | null }[];
 };
 
 const columns: Column<Prescription>[] = [
@@ -67,18 +68,24 @@ const unexecutedColumns: Column<UnexecutedRow>[] = [
   { key: "category", header: "Κατηγορία", hideOnMobile: true },
   {
     key: "barcodes", header: "Από συνταγή",
-    render: (r) => (
-      <div className="flex flex-wrap gap-1.5">
-        {(r.barcodes ?? []).slice(0, 4).map((b) => (
-          <Link key={b} href={`/prescriptions/${encodeURIComponent(b)}`}
-            className="rounded bg-slate-100 px-1.5 py-0.5 text-xs font-medium text-brand-700 hover:bg-brand-50">
-            {b}
-          </Link>
-        ))}
-        {(r.barcodes?.length ?? 0) > 4 && <span className="text-xs text-slate-400">+{(r.barcodes?.length ?? 0) - 4}</span>}
-        {!(r.barcodes?.length) && <span className="text-slate-300">—</span>}
-      </div>
-    ),
+    render: (r) => {
+      const rxs = r.rxs ?? (r.barcodes ?? []).map((b) => ({ barcode: b }));
+      const tip = (x: { patient?: string | null; date?: string | null }) =>
+        [x.patient || "", x.date ? new Date(x.date).toLocaleString("el-GR", { dateStyle: "medium", timeStyle: "short" }) : ""]
+          .filter(Boolean).join(" · ");
+      return (
+        <div className="flex flex-wrap gap-1.5">
+          {rxs.slice(0, 4).map((x) => (
+            <Link key={x.barcode} href={`/prescriptions/${encodeURIComponent(x.barcode)}`} title={tip(x)}
+              className="rounded bg-slate-100 px-1.5 py-0.5 text-xs font-medium text-brand-700 hover:bg-brand-50">
+              {x.barcode}
+            </Link>
+          ))}
+          {rxs.length > 4 && <span className="text-xs text-slate-400">+{rxs.length - 4}</span>}
+          {!rxs.length && <span className="text-slate-300">—</span>}
+        </div>
+      );
+    },
   },
   { key: "occurrences", header: "Φορές", align: "right", render: (r) => fmtNum(r.occurrences) },
   { key: "lost_value", header: "Χαμένη αξία", align: "right", render: (r) => fmtEur(r.lost_value) },

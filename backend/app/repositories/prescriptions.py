@@ -217,23 +217,29 @@ class PrescriptionRepository(BaseRepository):
         rows = await items.aggregate([
             {"$match": {"executed_at": {"$gte": date_from, "$lt": date_to},
                         "is_executed": False}},
-            # which prescription each unexecuted line came from
+            # which prescription each unexecuted line came from (barcode + patient + date)
             {"$lookup": {"from": "prescription_executions", "localField": "execution_id",
                          "foreignField": "_id", "as": "ex"}},
-            {"$set": {"barcode": {"$first": "$ex.external_id"}}},
+            {"$set": {"ex": {"$first": "$ex"}}},
+            {"$lookup": {"from": "patients_anonymized", "localField": "ex.patient_ref",
+                         "foreignField": "_id", "as": "pt"}},
+            {"$set": {"rx": {"barcode": "$ex.external_id",
+                             "patient": {"$first": "$pt.full_name"},
+                             "date": "$ex.executed_at"}}},
             {"$group": {"_id": "$product_id",
                         "occurrences": {"$sum": 1},
                         "qty": {"$sum": "$quantity"},
                         "lost_value": {"$sum": "$retail_price"},
                         "category": {"$first": "$category"},
-                        "barcodes": {"$addToSet": "$barcode"}}},
+                        "barcodes": {"$addToSet": "$ex.external_id"},
+                        "rxs": {"$addToSet": "$rx"}}},
             {"$sort": {"occurrences": -1}}, {"$limit": limit},
             {"$lookup": {"from": "products", "localField": "_id",
                          "foreignField": "_id", "as": "p"}},
             {"$set": {"name": {"$first": "$p.name"}}},
             {"$project": {"_id": 0, "product_id": "$_id",
                           "occurrences": 1, "qty": 1, "lost_value": 1,
-                          "category": 1, "name": 1, "barcodes": 1}},
+                          "category": 1, "name": 1, "barcodes": 1, "rxs": 1}},
         ])
         return {
             "items": rows,
