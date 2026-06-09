@@ -9,7 +9,17 @@ from __future__ import annotations
 import re
 from datetime import datetime
 
+from bson import ObjectId
+
 from app.repositories.base import BaseRepository
+
+
+def _oid(v):
+    """Coerce a string doctor_id (from the URL) to ObjectId so it matches stored ids."""
+    try:
+        return v if isinstance(v, ObjectId) else ObjectId(str(v))
+    except Exception:  # noqa: BLE001
+        return v
 
 
 class DoctorRepository(BaseRepository):
@@ -68,6 +78,7 @@ class DoctorExecutionsRepository(BaseRepository):
 
     async def stats(self, *, doctor_id, date_from: datetime, date_to: datetime) -> dict:
         """rx / value / claimed / cost / profit / margin for one doctor in a period."""
+        doctor_id = _oid(doctor_id)
         pipeline = [
             {"$match": {"doctor_id": doctor_id,
                         "executed_at": {"$gte": date_from, "$lt": date_to}}},
@@ -128,3 +139,45 @@ class DoctorExecutionsRepository(BaseRepository):
             {"$project": {"_id": 0, "patient_ref": "$_id", "first_at": 1}},
         ]
         return await self.aggregate(pipeline)
+
+    async def prescriptions(self, *, doctor_id, date_from: datetime,
+                            date_to: datetime, limit: int = 300) -> list[dict]:
+        """Prescriptions written by this doctor in the period (patient, fund, amounts)."""
+        pipe = [
+            {"$match": {"doctor_id": _oid(doctor_id),
+                        "executed_at": {"$gte": date_from, "$lt": date_to}}},
+            {"$sort": {"executed_at": -1}},
+            {"$limit": limit},
+            {"$lookup": {"from": "patients_anonymized", "localField": "patient_ref",
+                         "foreignField": "_id", "as": "p"}},
+            {"$lookup": {"from": "insurance_funds", "localField": "fund_id",
+                         "foreignField": "_id", "as": "f"}},
+            {"$project": {"_id": 0, "external_id": 1, "executed_at": 1, "icd10": 1,
+                          "amount_total": 1, "amount_claimed": 1, "status": 1,
+                          "has_unexecuted_substances": 1,
+                          "patient_name": {"$first": "$p.full_name"},
+                          "amka": {"$first": "$p.amka"},
+                          "fund_name": {"$first": "$f.name"}}},
+        ]
+        return await self.aggregate(pipe)
+
+    async def patients(self, *, doctor_id, date_from: datetime,
+                       date_to: datetime, limit: int = 300) -> list[dict]:
+        """Patients this doctor prescribed to in the period (rx count + value)."""
+        pipe = [
+            {"$match": {"doctor_id": _oid(doctor_id),
+                        "executed_at": {"$gte": date_from, "$lt": date_to}}},
+            {"$group": {"_id": "$patient_ref", "rx": {"$sum": 1},
+                        "value": {"$sum": "$amount_total"}, "last": {"$max": "$executed_at"}}},
+            {"$sort": {"value": -1}},
+            {"$limit": limit},
+            {"$lookup": {"from": "patients_anonymized", "localField": "_id",
+                         "foreignField": "_id", "as": "p"}},
+            {"$project": {"_id": 0, "patient_ref": {"$toString": "$_id"},
+                          "rx": 1, "value": 1, "last": 1,
+                          "name": {"$first": "$p.full_name"},
+                          "amka": {"$first": "$p.amka"},
+                          "age_group": {"$first": "$p.age_group"},
+                          "sex": {"$first": "$p.sex"}}},
+        ]
+        return await self.aggregate(pipe)

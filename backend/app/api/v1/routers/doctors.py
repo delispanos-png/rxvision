@@ -56,3 +56,27 @@ async def doctor_new_patients(
     items = await repo.new_patients(doctor_id=doctor_id, date_from=date_from,
                                     date_to=date_to)
     return {"doctor_id": doctor_id, "count": len(items), "items": items}
+
+
+@router.get("/{doctor_id}/prescriptions")
+async def doctor_prescriptions(
+    doctor_id: str,
+    date_from: datetime = Query(...),
+    date_to: datetime = Query(...),
+    ctx: TenantContext = Depends(require("doctors:read", module=_MODULE)),
+):
+    repo = DoctorExecutionsRepository(tenant_id=ctx.tenant_id)
+    return {"items": await repo.prescriptions(doctor_id=doctor_id,
+                                              date_from=date_from, date_to=date_to)}
+
+
+@router.get("/{doctor_id}/patients")
+async def doctor_patients(
+    doctor_id: str,
+    date_from: datetime = Query(...),
+    date_to: datetime = Query(...),
+    ctx: TenantContext = Depends(require("doctors:read", module=_MODULE)),
+):
+    repo = DoctorExecutionsRepository(tenant_id=ctx.tenant_id)
+    return {"items": await repo.patients(doctor_id=doctor_id,
+                                         date_from=date_from, date_to=date_to)}
