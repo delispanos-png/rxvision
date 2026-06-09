@@ -36,11 +36,12 @@ export function ExportMenu<T>({
     setBusy(fmt);
     try {
       const data = fetchRows ? await fetchRows() : (rows ?? []);
+      if (!data.length) { alert("Δεν υπάρχουν δεδομένα για εξαγωγή."); return; }
       if (fmt === "csv") downloadCsv(filename, columns, data);
       else if (fmt === "xlsx") await downloadXlsx(filename, columns, data);
       else await downloadPdf(filename, title, columns, data);
-    } catch {
-      // swallow — a failed export shouldn't crash the page
+    } catch (e) {
+      alert("Η εξαγωγή απέτυχε: " + (e instanceof Error ? e.message : "άγνωστο σφάλμα"));
     } finally {
       setBusy(null);
       setOpen(false);

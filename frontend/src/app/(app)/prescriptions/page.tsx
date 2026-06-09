@@ -209,7 +209,15 @@ export default function PrescriptionsPage() {
             { key: "amount_total", header: "Αξία (€)", value: (r) => ((r.amount_total || 0) / 100).toFixed(2) },
             { key: "amount_claimed", header: "Από ταμείο (€)", value: (r) => ((r.amount_claimed || 0) / 100).toFixed(2) },
           ]}
-          fetchRows={async () => (await api<{ items: Prescription[] }>(`/prescriptions?${q}&page=1&page_size=1000&sort=executed_at&dir=-1`)).items} />
+          fetchRows={async () => {
+            const all: Prescription[] = [];
+            for (let p = 1; p <= 30; p++) {
+              const r = await api<{ items: Prescription[] }>(`/prescriptions?${q}&page=${p}&page_size=500&sort=executed_at&dir=-1`);
+              all.push(...r.items);
+              if (r.items.length < 500) break;
+            }
+            return all;
+          }} />
       </div>
 
       <div className="mb-4 flex flex-wrap items-end gap-3">
