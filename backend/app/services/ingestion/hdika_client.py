@@ -308,7 +308,7 @@ class HdikaClient:
                 retail_price=int(cat.get("retail_cents") or 0),
                 wholesale_price=int(cat.get("wholesale_cents") or 0),
                 category="narcotic" if cat.get("narcotic") else "normal",
-                is_executed=True,
+                is_executed=bool(m.get("is_executed", True)),
             ))
         if not items:                                   # CDA missing → prescription-level line
             items = [CanonicalItem(barcode=barcode or "rx", name="Συνταγή (ΗΔΙΚΑ)",

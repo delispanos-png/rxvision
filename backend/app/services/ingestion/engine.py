@@ -130,7 +130,8 @@ class IngestionEngine:
             "repeat_current": ex.repeat_current, "repeat_total": ex.repeat_total,
             "icd10": ex.icd10, "amount_total": amount_total, "amount_claimed": amount_claimed,
             "patient_share": patient_share, "wholesale_cost": wholesale_cost,
-            "status": "executed", "has_unexecuted_substances": any(not i.is_executed for i in ex.items),
+            "status": ("partial" if any(not i.is_executed for i in ex.items) else "executed"),
+            "has_unexecuted_substances": any(not i.is_executed for i in ex.items),
             "next_open_date": next_open, "hash": chash, "ingested_at": _now(),
             "sync_job_id": job_id,
         }

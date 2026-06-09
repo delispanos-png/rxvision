@@ -103,15 +103,41 @@ def parse_cda(text: str) -> dict:
                 seen.add(code)
                 out["icd10"].append({"code": code, "name": v.get("displayName")})
 
-    # ── medicines ──
-    for mm in _iter(root, "manufacturedMaterial"):
+    # ── medicines (per substanceAdministration → captures executed vs not) ──
+    # A dispensed substance's substanceAdministration statusCode is "completed"; one that
+    # was NOT dispensed stays "active" → the prescription is partially executed (ΜΕΡΙΚΩΣ).
+    any_unexec = False
+    seen_codes = set()
+    for sa in _iter(root, "substanceAdministration"):
+        mm = _first(sa, "manufacturedMaterial")
+        if mm is None:
+            continue
         code = _first(mm, "code")
         name = _first(mm, "name")
+        sc = _first(sa, "statusCode")
+        executed = ((sc.get("code") if sc is not None else "completed") or "").lower() == "completed"
+        if not executed:
+            any_unexec = True
         out["medicines"].append({
             "code": (code.get("code") if code is not None else "") or "",
             "name": ((name.text or "").strip() if name is not None and name.text else
                      (code.get("displayName") if code is not None else "")) or "Φάρμακο",
+            "is_executed": executed,
         })
+        if code is not None and code.get("code"):
+            seen_codes.add(code.get("code"))
+    # fallback: if no substanceAdministration wrapped the materials, list them plainly
+    if not out["medicines"]:
+        for mm in _iter(root, "manufacturedMaterial"):
+            code = _first(mm, "code")
+            name = _first(mm, "name")
+            out["medicines"].append({
+                "code": (code.get("code") if code is not None else "") or "",
+                "name": ((name.text or "").strip() if name is not None and name.text else
+                         (code.get("displayName") if code is not None else "")) or "Φάρμακο",
+                "is_executed": True,
+            })
+    out["has_unexecuted"] = any_unexec
 
     # ── treatment window (effectiveTime high) → recurrence signal for the forecast ──
     # The latest <high value="YYYYMMDD"> across the dosing effectiveTimes is when the
