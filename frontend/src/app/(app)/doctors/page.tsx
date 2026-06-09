@@ -3,11 +3,12 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
-import { BarChart3, Stethoscope, TrendingUp, UserPlus, Wallet } from "lucide-react";
+import { BarChart3, Stethoscope, TrendingUp, UserPlus, Wallet, Download } from "lucide-react";
 import { api, queryKeys } from "@/lib/apiClient";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
 import { useUiStore, filtersToQuery } from "@/store/uiStore";
 import { fmtEur, fmtNum } from "@/lib/formatters";
+import { downloadCsv } from "@/lib/csv";
 import { DateRangeFilter } from "@/components/filters/DateRangeFilter";
 import { DataTable, type Column } from "@/components/tables/DataTable";
 import { ExportButton } from "@/components/export/ExportButton";
@@ -15,6 +16,10 @@ import { KpiCard } from "@/components/kpi/KpiCard";
 import { PanelCard } from "@/components/ui/Card";
 import { QueryState } from "@/components/ui/QueryState";
 import { BarChart } from "@/components/charts/BarChart";
+import { Modal } from "@/components/ui/Modal";
+
+type SpecialtyRow = { specialty: string; doctors: number; rx_count: number; value: number; gross_profit: number; new_patients: number };
+type DocMetric = "rx_count" | "value" | "gross_profit" | "new_patients";
 
 type Doctor = {
   id: string;
@@ -48,6 +53,38 @@ export default function DoctorsPage() {
   const items = data?.items ?? [];
   const sum = (f: (d: Doctor) => number) => items.reduce((a, d) => a + (f(d) || 0), 0);
   const top = [...items].sort((a, b) => b.value - a.value).slice(0, 8);
+
+  // KPI drill-down popup (client-side — all doctors+stats are already loaded)
+  const [modal, setModal] = useState<{ title: string; view: "doctor" | "specialty"; metric: DocMetric } | null>(null);
+  const doctorRows = modal ? [...items].sort((a, b) => (b[modal.metric] as number) - (a[modal.metric] as number)) : [];
+  const specialtyRows: SpecialtyRow[] = (() => {
+    const m = new Map<string, SpecialtyRow>();
+    for (const d of items) {
+      const s = d.specialty || "— (χωρίς ειδικότητα)";
+      const g = m.get(s) ?? { specialty: s, doctors: 0, rx_count: 0, value: 0, gross_profit: 0, new_patients: 0 };
+      g.doctors += 1; g.rx_count += d.rx_count || 0; g.value += d.value || 0;
+      g.gross_profit += d.gross_profit || 0; g.new_patients += d.new_patients || 0;
+      m.set(s, g);
+    }
+    return [...m.values()].sort((a, b) => b.value - a.value);
+  })();
+
+  const docModalCols: Column<Doctor>[] = [
+    { key: "name", header: "Ιατρός" },
+    { key: "specialty", header: "Ειδικότητα", render: (r) => r.specialty || "—" },
+    { key: "rx_count", header: "Συνταγές", align: "right", render: (r) => fmtNum(r.rx_count), sortValue: (r) => r.rx_count },
+    { key: "value", header: "Αξία", align: "right", render: (r) => fmtEur(r.value), sortValue: (r) => r.value },
+    { key: "gross_profit", header: "Κερδοφορία", align: "right", render: (r) => fmtEur(r.gross_profit), sortValue: (r) => r.gross_profit },
+    { key: "new_patients", header: "Νέοι", align: "right", render: (r) => fmtNum(r.new_patients), sortValue: (r) => r.new_patients },
+  ];
+  const specModalCols: Column<SpecialtyRow>[] = [
+    { key: "specialty", header: "Ειδικότητα" },
+    { key: "doctors", header: "Ιατροί", align: "right", render: (r) => fmtNum(r.doctors), sortValue: (r) => r.doctors },
+    { key: "rx_count", header: "Συνταγές", align: "right", render: (r) => fmtNum(r.rx_count), sortValue: (r) => r.rx_count },
+    { key: "value", header: "Αξία", align: "right", render: (r) => fmtEur(r.value), sortValue: (r) => r.value },
+    { key: "gross_profit", header: "Κερδοφορία", align: "right", render: (r) => fmtEur(r.gross_profit), sortValue: (r) => r.gross_profit },
+    { key: "new_patients", header: "Νέοι", align: "right", render: (r) => fmtNum(r.new_patients), sortValue: (r) => r.new_patients },
+  ];
 
   const columns: Column<Doctor>[] = [
     { key: "name", header: "Ιατρός" },
@@ -83,11 +120,16 @@ export default function DoctorsPage() {
         <div className="space-y-4">
           {/* KPI row */}
           <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-5">
-            <KpiCard label="Ιατροί" value={fmtNum(items.length)} icon={Stethoscope} accent="indigo" />
-            <KpiCard label="Συνταγές" value={fmtNum(sum((d) => d.rx_count))} icon={BarChart3} accent="violet" />
-            <KpiCard label="Αξία" value={fmtEur(sum((d) => d.value))} icon={Wallet} accent="amber" />
-            <KpiCard label="Κερδοφορία" value={fmtEur(sum((d) => d.gross_profit))} icon={TrendingUp} accent="green" />
-            <KpiCard label="Νέοι πελάτες" value={fmtNum(sum((d) => d.new_patients))} icon={UserPlus} accent="sky" />
+            <KpiCard label="Ιατροί" value={fmtNum(items.length)} sub="ανά ειδικότητα →" icon={Stethoscope} accent="indigo"
+              onClick={() => setModal({ title: "Ιατροί ανά ειδικότητα", view: "specialty", metric: "value" })} />
+            <KpiCard label="Συνταγές" value={fmtNum(sum((d) => d.rx_count))} sub="ανά ιατρό →" icon={BarChart3} accent="violet"
+              onClick={() => setModal({ title: "Συνταγές ανά ιατρό", view: "doctor", metric: "rx_count" })} />
+            <KpiCard label="Αξία" value={fmtEur(sum((d) => d.value))} sub="ανά ιατρό & ειδικότητα →" icon={Wallet} accent="amber"
+              onClick={() => setModal({ title: "Αξία ανά ιατρό & ειδικότητα", view: "doctor", metric: "value" })} />
+            <KpiCard label="Κερδοφορία" value={fmtEur(sum((d) => d.gross_profit))} sub="ανά ιατρό & ειδικότητα →" icon={TrendingUp} accent="green"
+              onClick={() => setModal({ title: "Κερδοφορία ανά ιατρό & ειδικότητα", view: "doctor", metric: "gross_profit" })} />
+            <KpiCard label="Νέοι πελάτες" value={fmtNum(sum((d) => d.new_patients))} sub="ανά ιατρό & ειδικότητα →" icon={UserPlus} accent="sky"
+              onClick={() => setModal({ title: "Νέοι πελάτες ανά ιατρό & ειδικότητα", view: "doctor", metric: "new_patients" })} />
           </div>
 
           {/* top doctors chart */}
@@ -112,6 +154,43 @@ export default function DoctorsPage() {
           />
         </div>
       </QueryState>
+
+      {/* KPI drill-down popup */}
+      <Modal open={!!modal} onClose={() => setModal(null)} title={modal?.title} size="3xl">
+        {modal && (
+          <div className="-mt-2 mb-3 flex items-center justify-between gap-3">
+            <p className="text-sm text-slate-500">{modal.view === "specialty" ? `${specialtyRows.length} ειδικότητες` : `${doctorRows.length} ιατροί`}</p>
+            <button
+              onClick={() => {
+                if (modal.view === "specialty") {
+                  downloadCsv("iatroi-ana-eidikotita", [
+                    { key: "specialty", header: "Ειδικότητα" }, { key: "doctors", header: "Ιατροί" },
+                    { key: "rx_count", header: "Συνταγές" },
+                    { key: "value", header: "Αξία (€)", value: (r: SpecialtyRow) => (r.value / 100).toFixed(2) },
+                    { key: "gross_profit", header: "Κερδοφορία (€)", value: (r: SpecialtyRow) => (r.gross_profit / 100).toFixed(2) },
+                    { key: "new_patients", header: "Νέοι" },
+                  ], specialtyRows);
+                } else {
+                  downloadCsv("ana-iatro", [
+                    { key: "name", header: "Ιατρός" }, { key: "specialty", header: "Ειδικότητα" },
+                    { key: "rx_count", header: "Συνταγές" },
+                    { key: "value", header: "Αξία (€)", value: (r: Doctor) => (r.value / 100).toFixed(2) },
+                    { key: "gross_profit", header: "Κερδοφορία (€)", value: (r: Doctor) => (r.gross_profit / 100).toFixed(2) },
+                    { key: "new_patients", header: "Νέοι" },
+                  ], doctorRows);
+                }
+              }}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+            >
+              <Download className="h-3.5 w-3.5" /> Εξαγωγή CSV
+            </button>
+          </div>
+        )}
+        {modal?.view === "specialty"
+          ? <DataTable pageSize={15} columns={specModalCols} rows={specialtyRows} rowKey={(r) => r.specialty} />
+          : <DataTable pageSize={15} columns={docModalCols} rows={doctorRows} rowKey={(r) => r.id}
+              onRowClick={(r) => router.push(`/doctors/${r.id}`)} />}
+      </Modal>
     </ModuleGuard>
   );
 }
