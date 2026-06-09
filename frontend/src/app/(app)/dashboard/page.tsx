@@ -87,7 +87,7 @@ export default function DashboardPage() {
   const heatCells: HeatCell[] = (heat.data ?? []).map((p) => [p.hour, p.dow - 1, p.value]);
 
   const s = summary.data;
-  const labels = (tsVal.data ?? []).map((b) => { const [y, m, d] = b.bucket.split("-"); return `${d}/${m}/${y}`; }); // DD/MM/YYYY
+  const labels = (tsVal.data ?? []).map((b) => { const [, m, d] = b.bucket.split("-"); return `${d}/${m}`; }); // DD/MM
   const valSeries = (tsVal.data ?? []).map((b) => Math.round((b.value || 0) / 100));
   const claimSeries = (tsClaim.data ?? []).map((b) => Math.round((b.value || 0) / 100));
 
