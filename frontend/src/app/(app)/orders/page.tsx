@@ -16,20 +16,22 @@ import { toastError, toastSuccess } from "@/store/toastStore";
 type Suggestion = {
   product_id: string;
   product_name: string;
-  on_hand: number;
+  substance?: string | null;
+  expected_demand: number;
+  on_hand?: number | null;
   avg_daily: number;
   suggested_qty: number;
   est_cost: number; // cents
-  supplier: string;
+  supplier?: string | null;
 };
 
 const columns: Column<Suggestion>[] = [
-  { key: "product_name", header: "Σκεύασμα" },
-  { key: "supplier", header: "Προμηθευτής" },
-  { key: "on_hand", header: "Απόθεμα", align: "right", render: (r) => fmtNum(r.on_hand) },
-  { key: "avg_daily", header: "Μ.Ο./ημέρα", align: "right", render: (r) => fmtNum(r.avg_daily), hideOnMobile: true },
-  { key: "suggested_qty", header: "Πρόταση", align: "right", render: (r) => fmtNum(r.suggested_qty) },
-  { key: "est_cost", header: "Εκτ. κόστος", align: "right", render: (r) => fmtEur(r.est_cost) },
+  { key: "product_name", header: "Σκεύασμα", render: (r) => r.product_name || "—", sortValue: (r) => r.product_name },
+  { key: "substance", header: "Δραστική", hideOnMobile: true, render: (r) => r.substance || "—" },
+  { key: "avg_daily", header: "Μ.Ο./ημέρα", align: "right", render: (r) => fmtNum(r.avg_daily), sortValue: (r) => r.avg_daily, hideOnMobile: true },
+  { key: "expected_demand", header: "Αναμ. ζήτηση", align: "right", render: (r) => fmtNum(r.expected_demand), sortValue: (r) => r.expected_demand, hideOnMobile: true },
+  { key: "suggested_qty", header: "Πρόταση", align: "right", render: (r) => fmtNum(r.suggested_qty), sortValue: (r) => r.suggested_qty },
+  { key: "est_cost", header: "Εκτ. κόστος", align: "right", render: (r) => fmtEur(r.est_cost), sortValue: (r) => r.est_cost },
 ];
 
 export default function OrdersPage() {
@@ -52,7 +54,7 @@ export default function OrdersPage() {
   const items = data?.items ?? [];
   const totalQty = items.reduce((s, r) => s + (r.suggested_qty || 0), 0);
   const totalCost = items.reduce((s, r) => s + (r.est_cost || 0), 0);
-  const suppliers = new Set(items.map((r) => r.supplier).filter(Boolean)).size;
+  const substances = new Set(items.map((r) => r.substance).filter(Boolean)).size;
   const top = [...items].sort((a, b) => b.suggested_qty - a.suggested_qty).slice(0, 10);
 
   return (
@@ -83,7 +85,7 @@ export default function OrdersPage() {
             <KpiCard label="Προτεινόμενα είδη" value={fmtNum(items.length)} sub="σκευάσματα" icon={PackageSearch} accent="indigo" />
             <KpiCard label="Συνολική ποσότητα" value={fmtNum(totalQty)} sub="τεμάχια προς παραγγελία" icon={Boxes} accent="violet" />
             <KpiCard label="Εκτ. κόστος" value={fmtEur(totalCost)} sub="σύνολο πρότασης" icon={Wallet} accent="amber" />
-            <KpiCard label="Προμηθευτές" value={fmtNum(suppliers)} sub="μοναδικοί" icon={RefreshCw} accent="sky" />
+            <KpiCard label="Δραστικές ουσίες" value={fmtNum(substances)} sub="μοναδικές" icon={RefreshCw} accent="sky" />
           </div>
 
           {/* suggested qty chart */}
