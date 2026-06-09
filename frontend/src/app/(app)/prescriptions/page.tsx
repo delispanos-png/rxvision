@@ -244,6 +244,8 @@ export default function PrescriptionsPage() {
         {/* unexecuted chart */}
         {unRows.length > 0 && (
           <PanelCard
+            collapsible
+            defaultOpen={false}
             title="Ανεκτέλεστες δραστικές"
             action={
               <div className="flex gap-4 text-sm">
@@ -267,7 +269,7 @@ export default function PrescriptionsPage() {
         )}
 
         {/* unexecuted table */}
-        <PanelCard title="Ανεκτέλεστες δραστικές — αναλυτικά" bodyClassName="pt-2">
+        <PanelCard collapsible defaultOpen={false} title="Ανεκτέλεστες δραστικές — αναλυτικά" bodyClassName="pt-2">
           <DataTable
             columns={unexecutedColumns}
             rows={unRows}
