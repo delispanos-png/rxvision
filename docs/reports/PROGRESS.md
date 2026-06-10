@@ -53,6 +53,11 @@ gdpr changes. Static checks only (CI runs tsc/lint/build + pytest). No push to m
   + pagination; never mutates. Frontend `admin/audit-logs/page.tsx` (filter form + table +
   pagination, dark-mode, Greek) + nav entry «Αρχείο ενεργειών». tsc 0, lint 0, build ✓.
 
+### #8 Onboarding/registration polish — DONE
+- register page: dark-mode, label↔input association (htmlFor/id) + aria-invalid + aria-describedby
+  + role="alert" errors, onTouched validation, password show/hide toggle, password hint, 409 maps
+  to an inline email error. tsc 0, lint 0, build ✓.
+
 ### Remaining
-- #8 onboarding/registration polish; #10 i18n (progressive). Frontend e2e + pip-audit-in-CI need
-  sign-off (QUESTIONS.md).
+- #10 i18n (STRETCH, progressive) — bulk translation of Greek UI strings via useT/prefStore; large,
+  best as a dedicated effort. Frontend e2e + pip-audit-in-CI need sign-off (QUESTIONS.md).
