@@ -7,6 +7,7 @@ from app.api.v1.routers import (
     communications,
     dashboard,
     doctors,
+    billing,
     fund_groups,
     future,
     gdpr,
@@ -29,6 +30,7 @@ from app.api.v1.routers import (
 api_router = APIRouter()
 api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
 api_router.include_router(onboarding.router, prefix="/onboarding", tags=["onboarding"])
+api_router.include_router(billing.router, prefix="/billing", tags=["billing"])
 api_router.include_router(dashboard.router, prefix="/dashboard", tags=["dashboard"])
 api_router.include_router(advisor.router, prefix="/advisor", tags=["advisor"])
 api_router.include_router(communications.router, prefix="/communications", tags=["communications"])

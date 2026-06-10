@@ -57,6 +57,23 @@ export default function RegisterWizard() {
   const step1ok = company.name.trim().length > 1 && company.email.includes("@");
   const step3ok = admin.full_name.trim() && admin.email.includes("@") && admin.password.length >= 8;
 
+  async function payWithRevolut(token: string, mode: string): Promise<void> {
+    return new Promise<void>((resolve) => {
+      const w = window as unknown as { RevolutCheckout?: (t: string, m: string) => Promise<{ payWithPopup: (o: Record<string, () => void>) => void }> };
+      const run = () => {
+        if (!w.RevolutCheckout) return resolve();
+        w.RevolutCheckout(token, mode === "live" ? "prod" : "sandbox")
+          .then((rc) => rc.payWithPopup({ onSuccess: resolve, onError: resolve, onCancel: resolve }))
+          .catch(() => resolve());
+      };
+      if (w.RevolutCheckout) return run();
+      const s = document.createElement("script");
+      s.src = mode === "live" ? "https://merchant.revolut.com/embed.js" : "https://sandbox-merchant.revolut.com/embed.js";
+      s.onload = run; s.onerror = () => resolve();
+      document.body.appendChild(s);
+    });
+  }
+
   async function activate() {
     setErr(null); setBusy(true);
     try {
@@ -72,6 +89,11 @@ export default function RegisterWizard() {
         window.localStorage.setItem("access_token", res.access_token);
         window.localStorage.setItem("refresh_token", res.refresh_token);
       }
+      // capture the card via Revolut if configured; trial proceeds regardless
+      try {
+        const cc = await api<{ ok: boolean; token?: string; mode?: string }>("/billing/card-capture", { method: "POST" });
+        if (cc.ok && cc.token) await payWithRevolut(cc.token, cc.mode || "sandbox");
+      } catch { /* Revolut not configured → trial only */ }
       router.push("/onboarding");
     } catch (e) {
       setErr(e instanceof ApiError && e.status === 409 ? "Το email χρησιμοποιείται ήδη." : "Η ενεργοποίηση απέτυχε. Δοκίμασε ξανά.");
