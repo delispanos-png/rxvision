@@ -95,7 +95,7 @@ export default function BusinessAdvisorPage() {
       ) : ins.length === 0 ? (
         <div className="rx-card p-8 text-center text-slate-400">Καμία ειδική ένδειξη — όλα ομαλά για την περίοδο. 👍</div>
       ) : (
-        <div className="grid gap-3 lg:grid-cols-2">
+        <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
           {ins.map((i, idx) => <InsightCard key={idx} ins={i} />)}
         </div>
       )}

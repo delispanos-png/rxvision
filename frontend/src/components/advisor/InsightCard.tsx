@@ -29,25 +29,31 @@ export type Insight = {
 export function InsightCard({ ins }: { ins: Insight }) {
   const s = SEV[ins.severity] ?? SEV.info;
   const Icon = ICONS[ins.icon] ?? Lightbulb;
+  const m = ins.metric || "";
+  const metricTone = m.startsWith("-") || m.startsWith("↓")
+    ? "bg-rose-100 text-rose-700 dark:bg-rose-900/40 dark:text-rose-300"
+    : m.startsWith("+") || m.startsWith("↑")
+      ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300"
+      : s.chip;
   return (
-    <div className={`rounded-2xl border p-4 shadow-card ${s.ring}`}>
-      <div className="flex items-start gap-3">
-        <span className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-white dark:bg-slate-800 ${s.icon}`}>
-          <Icon className="h-5 w-5" strokeWidth={2} />
-        </span>
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${s.chip}`}>{s.label}</span>
-            {ins.metric && <span className="text-base font-bold text-slate-900 dark:text-slate-100">{ins.metric}</span>}
-          </div>
-          <h3 className="mt-1.5 text-sm font-semibold text-slate-800 dark:text-slate-200">{ins.title}</h3>
-          <p className="mt-0.5 text-sm leading-relaxed text-slate-500">{ins.detail}</p>
-          {ins.cta && (
-            <Link href={ins.cta.href} className="mt-2 inline-flex items-center gap-1 text-sm font-medium text-brand-700 hover:underline">
-              {ins.cta.label} <ArrowRight className="h-3.5 w-3.5" />
-            </Link>
-          )}
+    <div className={`flex flex-col rounded-2xl border p-4 shadow-card ${s.ring}`}>
+      <div className="mb-2 flex items-start justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-2">
+          <span className={`grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-white dark:bg-slate-800 ${s.icon}`}>
+            <Icon className="h-4 w-4" strokeWidth={2} />
+          </span>
+          <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-100">{ins.title}</h3>
         </div>
+        {m && <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-bold ${metricTone}`}>{m}</span>}
+      </div>
+      <p className="flex-1 text-sm leading-relaxed text-slate-500 dark:text-slate-400">{ins.detail}</p>
+      <div className="mt-3 flex items-center justify-between">
+        <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${s.chip}`}>{s.label}</span>
+        {ins.cta && (
+          <Link href={ins.cta.href} className="inline-flex items-center gap-1 text-sm font-medium text-brand-700 hover:underline dark:text-brand-300">
+            {ins.cta.label} <ArrowRight className="h-3.5 w-3.5" />
+          </Link>
+        )}
       </div>
     </div>
   );
