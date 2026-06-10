@@ -30,8 +30,23 @@ Decisions:
 - Consent **ledger is authoritative** over `patient_contacts.marketing_consent`: the send
   path excludes anyone whose latest ledger event for the channel is a withdrawal.
 
-### Next
-- Frontend GDPR/Privacy settings page + DSAR tools UI.
-- docs/gdpr/ deliverables (RoPA, DPIA, Privacy Policy, DPA, sub-processors, breach, retention,
-  runbook, gap-analysis).
-- Static checks (tsc/lint) + push branch for CI pytest.
+### Frontend — DONE
+- `settings/gdpr/page.tsx` (Greek): data-categories & retention summary (from `/gdpr/data-map`)
+  + DSAR tools — search subject → export (JSON + Greek PDF), rectify, consent grant/withdraw per
+  channel, restrict/object, erase with confirm. Nav tab added. `lib/gdprExport.ts` (JSON download
+  + html2canvas→jsPDF Greek PDF). Backend `GET /gdpr/search` added. tsc 0, lint clean.
+
+### Docs — DONE (docs/gdpr/)
+- gap-analysis.md (Art-by-Art → state → gap → fix + P0/P1/P2 checklist), ropa.md (Art.30),
+  retention-policy.md (per-category + legal-hold + apply_retention alignment), dpia.md (Art.35,
+  8-risk table), privacy-policy.md, dpa-template.md (Art.28), sub-processors.md, breach-response.md
+  (Art.33-34, 72h), dsr-runbook.md. Legal/business unknowns marked «[ΠΡΟΣ ΕΠΙΒΕΒΑΙΩΣΗ: …]».
+- Corrected the parallel-drafted docs where they assumed "no PDF" (PDF IS implemented client-side).
+
+### CI status
+- Branch `gdpr-compliance` pushed; CI **green** (Backend ruff+pytest 47 passed, Frontend
+  tsc·lint·build). mypy advisory.
+
+### Remaining
+- SUMMARY.md (final). Legal facts in QUESTIONS.md await CloudOn/legal. Stretch C (cookie banner +
+  public /privacy /terms) not started.
