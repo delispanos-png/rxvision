@@ -48,7 +48,7 @@ export function Topbar() {
     };
   }, [open]);
 
-  const name = data?.full_name || (data?.roles?.[0] ?? "Χρήστης");
+  const name = data?.full_name || (data?.roles?.[0] ?? t("Χρήστης", "User"));
   const email = data?.email ?? "";
 
   function go(path: string) {
@@ -69,7 +69,7 @@ export function Topbar() {
     <header className="sticky top-0 z-10 flex h-16 items-center justify-end gap-2 border-b border-slate-200/70 bg-canvas/80 px-4 backdrop-blur dark:border-slate-800 dark:bg-slate-950/80 sm:px-6">
       <button
         onClick={() => useNavStore.getState().setOpen(true)}
-        aria-label="Μενού"
+        aria-label={t("Μενού", "Menu")}
         className="mr-auto grid h-10 w-10 place-items-center rounded-lg text-slate-600 hover:bg-white dark:text-slate-300 dark:hover:bg-slate-800 md:hidden"
       >
         <Menu className="h-5 w-5" />
@@ -77,7 +77,7 @@ export function Topbar() {
       <button
         onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
         title={t("Σκούρο/Φωτεινό θέμα", "Dark/Light theme")}
-        aria-label="Εναλλαγή θέματος"
+        aria-label={t("Εναλλαγή θέματος", "Toggle theme")}
         className="grid h-9 w-9 place-items-center rounded-lg text-slate-500 hover:bg-white dark:text-slate-300 dark:hover:bg-slate-800"
       >
         {theme === "dark" ? <Sun className="h-[18px] w-[18px]" /> : <Moon className="h-[18px] w-[18px]" />}
@@ -85,7 +85,7 @@ export function Topbar() {
       <button
         onClick={() => setLocale(locale === "el" ? "en" : "el")}
         title={t("Γλώσσα", "Language")}
-        aria-label="Αλλαγή γλώσσας"
+        aria-label={t("Αλλαγή γλώσσας", "Change language")}
         className="grid h-9 min-w-[36px] place-items-center rounded-lg px-2 text-xs font-bold text-slate-500 hover:bg-white dark:text-slate-300 dark:hover:bg-slate-800"
       >
         {locale === "el" ? "EN" : "ΕΛ"}

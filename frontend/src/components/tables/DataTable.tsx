@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
+import { useT } from "@/store/prefStore";
 
 export type Column<T> = {
   key: string;
@@ -35,7 +36,7 @@ export function DataTable<T extends Record<string, unknown>>({
   columns,
   rows,
   onRowClick,
-  empty = "Δεν υπάρχουν δεδομένα.",
+  empty,
   rowKey,
   pageSize,
   serverSort,
@@ -53,6 +54,8 @@ export function DataTable<T extends Record<string, unknown>>({
   serverSort?: { key: string; dir: "asc" | "desc" } | null;
   onServerSort?: (key: string) => void;
 }) {
+  const t = useT();
+  const emptyText = empty ?? t("Δεν υπάρχουν δεδομένα.", "No data.");
   const cell = (c: Column<T>, row: T): ReactNode =>
     c.render ? c.render(row) : String(row[c.key] ?? "");
 
@@ -96,7 +99,7 @@ export function DataTable<T extends Record<string, unknown>>({
   if (rows.length === 0) {
     return (
       <div className="rounded-2xl border border-slate-200/70 bg-white p-8 text-center text-slate-400 shadow-card">
-        {empty}
+        {emptyText}
       </div>
     );
   }
@@ -198,19 +201,22 @@ export function DataTable<T extends Record<string, unknown>>({
       {paginated && (
         <div className="mt-3 flex items-center justify-between text-sm">
           <span className="text-slate-500">
-            Σελίδα {safePage} από {totalPages} · {rows.length} εγγραφές
+            {t(
+              `Σελίδα ${safePage} από ${totalPages} · ${rows.length} εγγραφές`,
+              `Page ${safePage} of ${totalPages} · ${rows.length} records`,
+            )}
           </span>
           <div className="flex gap-2">
             <button
               onClick={() => setPage((p) => Math.max(1, p - 1))}
               disabled={safePage <= 1}
               className="rounded-lg border border-slate-300 px-3 py-1.5 font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
-            >← Προηγούμενη</button>
+            >{t("← Προηγούμενη", "← Previous")}</button>
             <button
               onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
               disabled={safePage >= totalPages}
               className="rounded-lg border border-slate-300 px-3 py-1.5 font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
-            >Επόμενη →</button>
+            >{t("Επόμενη →", "Next →")}</button>
           </div>
         </div>
       )}

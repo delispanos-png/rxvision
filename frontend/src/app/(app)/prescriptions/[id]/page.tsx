@@ -7,6 +7,9 @@ import { ArrowLeft, Repeat, Printer, FileText } from "lucide-react";
 import { api } from "@/lib/apiClient";
 import { PanelCard } from "@/components/ui/Card";
 import { RepeatTree } from "@/components/prescriptions/RepeatTree";
+import { useT } from "@/store/prefStore";
+
+type T = (el: string, en: string) => string;
 
 type Item = {
   name: string | null; barcode: string | null; substance: string | null; category: string | null;
@@ -15,14 +18,15 @@ type Item = {
   participation: number | null; patient_share: number; fund_share: number; is_executed: boolean;
 };
 
-const CAT_BADGE: Record<string, { label: string; cls: string }> = {
-  narcotic: { label: "Ναρκωτικό", cls: "bg-rose-100 text-rose-700" },
-  vaccine: { label: "Εμβόλιο", cls: "bg-sky-100 text-sky-700" },
-  allergen: { label: "Αλλεργιογόνο", cls: "bg-amber-100 text-amber-700" },
+const catBadge = (t: T): Record<string, { label: string; cls: string }> => ({
+  narcotic: { label: t("Ναρκωτικό", "Narcotic"), cls: "bg-rose-100 text-rose-700" },
+  vaccine: { label: t("Εμβόλιο", "Vaccine"), cls: "bg-sky-100 text-sky-700" },
+  allergen: { label: t("Αλλεργιογόνο", "Allergen"), cls: "bg-amber-100 text-amber-700" },
   fyk: { label: "ΦΥΚ", cls: "bg-violet-100 text-violet-700" },
-};
+});
 function CategoryBadge({ category }: { category?: string | null }) {
-  const b = category ? CAT_BADGE[category] : undefined;
+  const t = useT();
+  const b = category ? catBadge(t)[category] : undefined;
   if (!b) return null;
   return <span className={`ml-1.5 rounded px-1.5 py-0.5 text-[10px] font-semibold ${b.cls}`}>{b.label}</span>;
 }
@@ -57,9 +61,10 @@ type Idika = {
 const eur = (c: number) => new Intl.NumberFormat("el-GR", { style: "currency", currency: "EUR" }).format((c || 0) / 100);
 const eurR = (v: number | null) => (v == null ? "—" : new Intl.NumberFormat("el-GR", { style: "currency", currency: "EUR" }).format(v));
 const dt = (s: string) => new Date(s).toLocaleString("el-GR", { dateStyle: "medium", timeStyle: "short" });
-const sexLabel = (s: string | null) => (s === "M" ? "Άνδρας" : s === "F" ? "Γυναίκα" : "—");
+const sexLabel = (s: string | null, t: T) => (s === "M" ? t("Άνδρας", "Male") : s === "F" ? t("Γυναίκα", "Female") : "—");
 
 export default function PrescriptionDetailPage() {
+  const t = useT();
   const params = useParams<{ id: string }>();
   const id = decodeURIComponent(params.id);
   const router = useRouter();
@@ -78,8 +83,8 @@ export default function PrescriptionDetailPage() {
     staleTime: 5 * 60 * 1000,
   });
 
-  if (isLoading) return <div className="text-slate-400">Φόρτωση…</div>;
-  if (!data) return <div className="text-slate-500">Η συνταγή δεν βρέθηκε.</div>;
+  if (isLoading) return <div className="text-slate-400">{t("Φόρτωση…", "Loading…")}</div>;
+  if (!data) return <div className="text-slate-500">{t("Η συνταγή δεν βρέθηκε.", "Prescription not found.")}</div>;
 
   const d = data;
   const age = d.patient?.birth_year ? new Date().getFullYear() - d.patient.birth_year : null;
@@ -90,20 +95,20 @@ export default function PrescriptionDetailPage() {
     <div className="space-y-5">
       <div className="flex items-center justify-between gap-2 print:hidden">
         <button onClick={() => router.back()} className="inline-flex items-center gap-1.5 text-sm text-brand-600 hover:underline">
-          <ArrowLeft className="h-4 w-4" /> Πίσω
+          <ArrowLeft className="h-4 w-4" /> {t("Πίσω", "Back")}
         </button>
         <button onClick={() => window.print()} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50">
-          <Printer className="h-4 w-4" /> Εκτύπωση εκτέλεσης
+          <Printer className="h-4 w-4" /> {t("Εκτύπωση εκτέλεσης", "Print execution")}
         </button>
       </div>
 
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h1 className="text-xl font-bold text-slate-900">Συνταγή {d.external_id}</h1>
+        <h1 className="text-xl font-bold text-slate-900">{t("Συνταγή", "Prescription")} {d.external_id}</h1>
         <div className="flex items-center gap-2">
-          <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-700">{d.status || "ΕΚΤΕΛΕΣΜΕΝΗ"}</span>
+          <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-700">{d.status || t("ΕΚΤΕΛΕΣΜΕΝΗ", "EXECUTED")}</span>
           {recurring && (
             <span className="inline-flex items-center gap-1 rounded-full bg-violet-50 px-3 py-1 text-xs font-medium text-violet-700">
-              <Repeat className="h-3.5 w-3.5" /> Επαναλαμβανόμενη {d.repeat_current}/{d.repeat_total}
+              <Repeat className="h-3.5 w-3.5" /> {t("Επαναλαμβανόμενη", "Recurring")} {d.repeat_current}/{d.repeat_total}
             </span>
           )}
         </div>
@@ -112,8 +117,8 @@ export default function PrescriptionDetailPage() {
       {/* Πληρωτέο από Ταμείο — the headline number (what the pharmacy collects from the fund) */}
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-brand-600 px-5 py-4 text-white">
         <div>
-          <div className="text-xs uppercase tracking-wide text-brand-100">Πληρωτέο από Ταμείο</div>
-          <div className="text-xs text-brand-200">Τι έχει να εισπράξει το φαρμακείο από το ταμείο</div>
+          <div className="text-xs uppercase tracking-wide text-brand-100">{t("Πληρωτέο από Ταμείο", "Payable by Fund")}</div>
+          <div className="text-xs text-brand-200">{t("Τι έχει να εισπράξει το φαρμακείο από το ταμείο", "What the pharmacy collects from the fund")}</div>
         </div>
         <div className="text-3xl font-extrabold">{eur(d.fund_payable)}</div>
       </div>
@@ -121,10 +126,10 @@ export default function PrescriptionDetailPage() {
       {/* KPI strip */}
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         {[
-          ["Σύνολο αξίας", eur(d.amount_total)],
-          ["Πληρωτέο από Ασφ/νο", eur(d.patient_payable)],
-          ["Χονδρικό κόστος", eur(d.wholesale_cost)],
-          ["Μεικτό κέρδος", eur(profit)],
+          [t("Σύνολο αξίας", "Total value"), eur(d.amount_total)],
+          [t("Πληρωτέο από Ασφ/νο", "Payable by patient"), eur(d.patient_payable)],
+          [t("Χονδρικό κόστος", "Wholesale cost"), eur(d.wholesale_cost)],
+          [t("Μεικτό κέρδος", "Gross profit"), eur(profit)],
         ].map(([l, v]) => (
           <div key={l} className="rx-card p-4">
             <div className="text-xs text-slate-400">{l}</div>
@@ -134,19 +139,19 @@ export default function PrescriptionDetailPage() {
       </div>
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-        <PanelCard title="Ιατρός">
-          <div className="text-sm font-semibold text-slate-800">{d.doctor?.name || "Άγνωστος"}</div>
+        <PanelCard title={t("Ιατρός", "Doctor")}>
+          <div className="text-sm font-semibold text-slate-800">{d.doctor?.name || t("Άγνωστος", "Unknown")}</div>
           <div className="text-xs text-slate-500">{d.doctor?.specialty || "—"}</div>
         </PanelCard>
-        <PanelCard title="Ασθενής (ανωνυμοποιημένος)">
-          <div className="text-sm text-slate-700">{sexLabel(d.patient?.sex ?? null)}{age ? `, ${age} ετών` : ""}</div>
-          <div className="text-xs text-slate-500">{d.patient?.area || "—"} · Ταμείο: {d.fund?.name || "—"}</div>
+        <PanelCard title={t("Ασθενής (ανωνυμοποιημένος)", "Patient (anonymized)")}>
+          <div className="text-sm text-slate-700">{sexLabel(d.patient?.sex ?? null, t)}{age ? t(`, ${age} ετών`, `, ${age} years old`) : ""}</div>
+          <div className="text-xs text-slate-500">{d.patient?.area || "—"} · {t("Ταμείο", "Fund")}: {d.fund?.name || "—"}</div>
         </PanelCard>
-        <PanelCard title="Συνταγή">
-          <div className="text-sm text-slate-700">Εκτέλεση: {dt(d.executed_at)}</div>
+        <PanelCard title={t("Συνταγή", "Prescription")}>
+          <div className="text-sm text-slate-700">{t("Εκτέλεση", "Execution")}: {dt(d.executed_at)}</div>
           <div className="text-xs text-slate-500">
-            {recurring ? `Επανάληψη ${d.repeat_current}/${d.repeat_total}` : "Μία εκτέλεση"}
-            {d.next_open_date ? ` · Επόμενη: ${new Date(d.next_open_date).toLocaleDateString("el-GR")}` : ""}
+            {recurring ? t(`Επανάληψη ${d.repeat_current}/${d.repeat_total}`, `Repeat ${d.repeat_current}/${d.repeat_total}`) : t("Μία εκτέλεση", "Single execution")}
+            {d.next_open_date ? t(` · Επόμενη: ${new Date(d.next_open_date).toLocaleDateString("el-GR")}`, ` · Next: ${new Date(d.next_open_date).toLocaleDateString("el-GR")}`) : ""}
           </div>
           <div className="mt-2 flex flex-wrap gap-1">
             {(d.icd10 || []).map((c) => (
@@ -160,19 +165,19 @@ export default function PrescriptionDetailPage() {
       <RepeatTree externalId={id} />
 
       {/* medicines */}
-      <PanelCard title="Φάρμακα & θεραπείες">
+      <PanelCard title={t("Φάρμακα & θεραπείες", "Medicines & treatments")}>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-slate-100 text-left text-xs text-slate-400">
-                <th className="py-2">Σκεύασμα</th>
-                <th>Δραστική ουσία</th>
-                <th className="text-right">Ποσ.</th>
-                <th className="text-right">Λιανική</th>
-                <th className="text-right">Συμμ.%</th>
-                <th className="text-right">Από ασφ/νο</th>
-                <th className="text-right">Από ταμείο</th>
-                <th className="text-right">Κέρδος</th>
+                <th className="py-2">{t("Σκεύασμα", "Product")}</th>
+                <th>{t("Δραστική ουσία", "Active substance")}</th>
+                <th className="text-right">{t("Ποσ.", "Qty")}</th>
+                <th className="text-right">{t("Λιανική", "Retail")}</th>
+                <th className="text-right">{t("Συμμ.%", "Part.%")}</th>
+                <th className="text-right">{t("Από ασφ/νο", "From patient")}</th>
+                <th className="text-right">{t("Από ταμείο", "From fund")}</th>
+                <th className="text-right">{t("Κέρδος", "Profit")}</th>
               </tr>
             </thead>
             <tbody>
@@ -192,7 +197,7 @@ export default function PrescriptionDetailPage() {
                 </tr>
               ))}
               {d.items.length === 0 && (
-                <tr><td colSpan={8} className="py-4 text-center text-slate-400">Δεν υπάρχουν γραμμές φαρμάκων.</td></tr>
+                <tr><td colSpan={8} className="py-4 text-center text-slate-400">{t("Δεν υπάρχουν γραμμές φαρμάκων.", "No medicine lines.")}</td></tr>
               )}
             </tbody>
           </table>
@@ -200,29 +205,29 @@ export default function PrescriptionDetailPage() {
       </PanelCard>
 
       {/* full portal-style detail, fetched live from ΗΔΙΚΑ on demand */}
-      <PanelCard title="Πλήρη στοιχεία ΗΔΙΚΑ">
+      <PanelCard title={t("Πλήρη στοιχεία ΗΔΙΚΑ", "Full ΗΔΙΚΑ details")}>
         {!loadIdika ? (
           <div className="flex flex-col items-start gap-2">
-            <p className="text-sm text-slate-500">Φέρε ζωντανά από την ΗΔΙΚΑ όλες τις λεπτομέρειες της εκτέλεσης (ημερομηνίες, ταινία γνησιότητας, δοσολογία, τιμές αναφοράς, απαλλαγή/γνωμάτευση).</p>
+            <p className="text-sm text-slate-500">{t("Φέρε ζωντανά από την ΗΔΙΚΑ όλες τις λεπτομέρειες της εκτέλεσης (ημερομηνίες, ταινία γνησιότητας, δοσολογία, τιμές αναφοράς, απαλλαγή/γνωμάτευση).", "Fetch live from ΗΔΙΚΑ all execution details (dates, authenticity strip, dosage, reference prices, exemption/opinion).")}</p>
             <button onClick={() => setLoadIdika(true)} className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 print:hidden">
-              <FileText className="h-4 w-4" /> Φόρτωση από ΗΔΙΚΑ
+              <FileText className="h-4 w-4" /> {t("Φόρτωση από ΗΔΙΚΑ", "Load from ΗΔΙΚΑ")}
             </button>
           </div>
         ) : idika.isLoading ? (
-          <div className="py-6 text-center text-sm text-slate-400">Άντληση από ΗΔΙΚΑ…</div>
+          <div className="py-6 text-center text-sm text-slate-400">{t("Άντληση από ΗΔΙΚΑ…", "Fetching from ΗΔΙΚΑ…")}</div>
         ) : idika.isError || !idika.data ? (
-          <div className="py-4 text-sm text-rose-600">Αποτυχία άντλησης από ΗΔΙΚΑ. <button onClick={() => idika.refetch()} className="underline">Δοκίμασε ξανά</button></div>
+          <div className="py-4 text-sm text-rose-600">{t("Αποτυχία άντλησης από ΗΔΙΚΑ.", "Failed to fetch from ΗΔΙΚΑ.")} <button onClick={() => idika.refetch()} className="underline">{t("Δοκίμασε ξανά", "Try again")}</button></div>
         ) : (
           <div className="space-y-5">
             {/* general */}
             <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm sm:grid-cols-3 lg:grid-cols-4">
-              <Field label="Ημ/νία έκδοσης" value={idika.data.details.issue_date} />
-              <Field label="Προθεσμία εκτέλεσης" value={idika.data.details.deadline_date} />
-              <Field label="Επιβάρυνση 1€" value={idika.data.details.fund_surcharge ? "Ναι" : "Όχι"} />
-              <Field label="Απαλλαγή συμμετοχής" value={idika.data.details.exemption ? "Ναι" : "Όχι"} />
-              <Field label="Γνωμάτευση" value={idika.data.details.opinion ? "Ναι" : "Όχι"} />
-              <Field label="Συμμετοχή ασθενή (σύν.)" value={eurR(idika.data.details.patient_share_total)} />
-              <Field label="Από ταμείο (σύν.)" value={eurR(idika.data.details.fund_share_total)} />
+              <Field label={t("Ημ/νία έκδοσης", "Issue date")} value={idika.data.details.issue_date} />
+              <Field label={t("Προθεσμία εκτέλεσης", "Execution deadline")} value={idika.data.details.deadline_date} />
+              <Field label={t("Επιβάρυνση 1€", "€1 surcharge")} value={idika.data.details.fund_surcharge ? t("Ναι", "Yes") : t("Όχι", "No")} />
+              <Field label={t("Απαλλαγή συμμετοχής", "Co-payment exemption")} value={idika.data.details.exemption ? t("Ναι", "Yes") : t("Όχι", "No")} />
+              <Field label={t("Γνωμάτευση", "Opinion")} value={idika.data.details.opinion ? t("Ναι", "Yes") : t("Όχι", "No")} />
+              <Field label={t("Συμμετοχή ασθενή (σύν.)", "Patient share (total)")} value={eurR(idika.data.details.patient_share_total)} />
+              <Field label={t("Από ταμείο (σύν.)", "From fund (total)")} value={eurR(idika.data.details.fund_share_total)} />
             </div>
             {/* per-line */}
             <div className="space-y-3">
@@ -231,20 +236,20 @@ export default function PrescriptionDetailPage() {
                   <div className="mb-2 flex flex-wrap items-center gap-2">
                     <span className="font-semibold text-slate-800">{ln.name}</span>
                     {ln.atc && <span className="text-[10px] text-slate-400">{ln.atc}</span>}
-                    <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${ln.is_executed ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>{ln.is_executed ? "Εκτελέστηκε" : "Δεν εκτελέστηκε"}</span>
-                    {ln.generic && <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-medium text-sky-700">Γενόσημο</span>}
+                    <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${ln.is_executed ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>{ln.is_executed ? t("Εκτελέστηκε", "Executed") : t("Δεν εκτελέστηκε", "Not executed")}</span>
+                    {ln.generic && <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-medium text-sky-700">{t("Γενόσημο", "Generic")}</span>}
                   </div>
                   <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 text-sm sm:grid-cols-3 lg:grid-cols-4">
-                    <Field label="Δραστική" value={ln.substance} />
-                    <Field label="Μορφή" value={ln.form} />
-                    <Field label="Δοσολογία" value={[ln.dose, ln.frequency && `ανά ${ln.frequency}`, ln.duration && `για ${ln.duration}`].filter(Boolean).join(" · ") || null} />
-                    <Field label="Ταινία γνησιότητας" value={ln.lot} />
-                    <Field label="Τιμή εκτέλεσης" value={eurR(ln.execution_price)} />
-                    <Field label="Τιμή λιανικής" value={eurR(ln.retail_price)} />
-                    <Field label="Τιμή αναφοράς" value={eurR(ln.reference_price)} />
-                    <Field label="Συμμετοχή %" value={ln.participation_pct != null ? `${ln.participation_pct}%` : null} />
-                    <Field label="Διαφορά" value={eurR(ln.difference)} />
-                    <Field label="Αντικατάσταση" value={ln.substitution_allowed ? "Επιτρέπεται" : "Όχι"} />
+                    <Field label={t("Δραστική", "Active substance")} value={ln.substance} />
+                    <Field label={t("Μορφή", "Form")} value={ln.form} />
+                    <Field label={t("Δοσολογία", "Dosage")} value={[ln.dose, ln.frequency && t(`ανά ${ln.frequency}`, `every ${ln.frequency}`), ln.duration && t(`για ${ln.duration}`, `for ${ln.duration}`)].filter(Boolean).join(" · ") || null} />
+                    <Field label={t("Ταινία γνησιότητας", "Authenticity strip")} value={ln.lot} />
+                    <Field label={t("Τιμή εκτέλεσης", "Execution price")} value={eurR(ln.execution_price)} />
+                    <Field label={t("Τιμή λιανικής", "Retail price")} value={eurR(ln.retail_price)} />
+                    <Field label={t("Τιμή αναφοράς", "Reference price")} value={eurR(ln.reference_price)} />
+                    <Field label={t("Συμμετοχή %", "Co-payment %")} value={ln.participation_pct != null ? `${ln.participation_pct}%` : null} />
+                    <Field label={t("Διαφορά", "Difference")} value={eurR(ln.difference)} />
+                    <Field label={t("Αντικατάσταση", "Substitution")} value={ln.substitution_allowed ? t("Επιτρέπεται", "Allowed") : t("Όχι", "No")} />
                   </div>
                 </div>
               ))}

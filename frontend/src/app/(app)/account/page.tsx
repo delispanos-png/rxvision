@@ -5,6 +5,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { CheckCircle2, KeyRound, Loader2, ShieldCheck, User } from "lucide-react";
 import { api, ApiError, queryKeys } from "@/lib/apiClient";
 import { PanelCard } from "@/components/ui/Card";
+import { useT } from "@/store/prefStore";
 
 type Me = {
   user_id: string;
@@ -31,6 +32,7 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
 }
 
 export default function AccountPage() {
+  const t = useT();
   const qc = useQueryClient();
   const me = useQuery({ queryKey: queryKeys.me(), queryFn: () => api<Me>("/auth/me"), retry: false });
 
@@ -67,9 +69,9 @@ export default function AccountPage() {
     onError: (e) => {
       const detail = e instanceof ApiError ? (e.problem as any)?.detail : null;
       const err = detail?.error;
-      if (err === "wrong_current_password") setPwdError("Λάθος τρέχων κωδικός.");
-      else if (err === "weak_password") setPwdError("Ο νέος κωδικός είναι πολύ αδύναμος.");
-      else setPwdError("Η αλλαγή κωδικού απέτυχε. Δοκιμάστε ξανά.");
+      if (err === "wrong_current_password") setPwdError(t("Λάθος τρέχων κωδικός.", "Wrong current password."));
+      else if (err === "weak_password") setPwdError(t("Ο νέος κωδικός είναι πολύ αδύναμος.", "The new password is too weak."));
+      else setPwdError(t("Η αλλαγή κωδικού απέτυχε. Δοκιμάστε ξανά.", "Password change failed. Please try again."));
     },
   });
 
@@ -77,11 +79,11 @@ export default function AccountPage() {
     e.preventDefault();
     setPwdError(null);
     if (pwd.new_password.length < 8) {
-      setPwdError("Ο νέος κωδικός πρέπει να έχει τουλάχιστον 8 χαρακτήρες.");
+      setPwdError(t("Ο νέος κωδικός πρέπει να έχει τουλάχιστον 8 χαρακτήρες.", "The new password must be at least 8 characters."));
       return;
     }
     if (pwd.new_password !== pwd.confirm_password) {
-      setPwdError("Οι κωδικοί δεν ταιριάζουν.");
+      setPwdError(t("Οι κωδικοί δεν ταιριάζουν.", "The passwords do not match."));
       return;
     }
     changePassword.mutate();
@@ -89,13 +91,13 @@ export default function AccountPage() {
 
   return (
     <div className="space-y-4">
-      <h1 className="text-xl font-bold text-slate-900">Ο λογαριασμός μου</h1>
+      <h1 className="text-xl font-bold text-slate-900">{t("Ο λογαριασμός μου", "My account")}</h1>
 
       {/* Στοιχεία λογαριασμού */}
-      <PanelCard title="Στοιχεία λογαριασμού">
+      <PanelCard title={t("Στοιχεία λογαριασμού", "Account details")}>
         {me.isLoading ? (
           <div className="flex items-center gap-2 text-sm text-slate-400">
-            <Loader2 className="h-4 w-4 animate-spin" /> Φόρτωση…
+            <Loader2 className="h-4 w-4 animate-spin" /> {t("Φόρτωση…", "Loading…")}
           </div>
         ) : (
           <form
@@ -106,21 +108,21 @@ export default function AccountPage() {
             className="space-y-4"
           >
             <div className="grid gap-4 sm:grid-cols-2">
-              <Field label="Ονοματεπώνυμο">
+              <Field label={t("Ονοματεπώνυμο", "Full name")}>
                 <input
                   className={inputCls}
                   value={profile.full_name}
                   onChange={(e) => setProfile((s) => ({ ...s, full_name: e.target.value }))}
                 />
               </Field>
-              <Field label="Τηλέφωνο">
+              <Field label={t("Τηλέφωνο", "Phone")}>
                 <input
                   className={inputCls}
                   value={profile.phone}
                   onChange={(e) => setProfile((s) => ({ ...s, phone: e.target.value }))}
                 />
               </Field>
-              <Field label="Email" hint="Το email δεν μπορεί να αλλάξει από εδώ.">
+              <Field label="Email" hint={t("Το email δεν μπορεί να αλλάξει από εδώ.", "Email cannot be changed here.")}>
                 <input
                   className={`${inputCls} bg-slate-50 text-slate-500`}
                   value={me.data?.email ?? ""}
@@ -139,21 +141,21 @@ export default function AccountPage() {
                 ) : (
                   <CheckCircle2 className="h-4 w-4" />
                 )}
-                Αποθήκευση
+                {t("Αποθήκευση", "Save")}
               </button>
-              {saveProfile.isSuccess && <span className="text-sm text-emerald-600">Αποθηκεύτηκε ✓</span>}
-              {saveProfile.isError && <span className="text-sm text-rose-600">Σφάλμα αποθήκευσης</span>}
+              {saveProfile.isSuccess && <span className="text-sm text-emerald-600">{t("Αποθηκεύτηκε ✓", "Saved ✓")}</span>}
+              {saveProfile.isError && <span className="text-sm text-rose-600">{t("Σφάλμα αποθήκευσης", "Save error")}</span>}
             </div>
           </form>
         )}
       </PanelCard>
 
       {/* Αλλαγή κωδικού */}
-      <PanelCard title="Αλλαγή κωδικού">
+      <PanelCard title={t("Αλλαγή κωδικού", "Change password")}>
         <div id="password" className="-mt-24 pt-24" />
         <form onSubmit={submitPassword} className="space-y-4">
           <div className="grid gap-4 sm:grid-cols-3">
-            <Field label="Τρέχων κωδικός">
+            <Field label={t("Τρέχων κωδικός", "Current password")}>
               <input
                 type="password"
                 autoComplete="current-password"
@@ -162,7 +164,7 @@ export default function AccountPage() {
                 onChange={(e) => setPwd((s) => ({ ...s, current_password: e.target.value }))}
               />
             </Field>
-            <Field label="Νέος κωδικός" hint="Τουλάχιστον 8 χαρακτήρες">
+            <Field label={t("Νέος κωδικός", "New password")} hint={t("Τουλάχιστον 8 χαρακτήρες", "At least 8 characters")}>
               <input
                 type="password"
                 autoComplete="new-password"
@@ -171,7 +173,7 @@ export default function AccountPage() {
                 onChange={(e) => setPwd((s) => ({ ...s, new_password: e.target.value }))}
               />
             </Field>
-            <Field label="Επιβεβαίωση νέου κωδικού">
+            <Field label={t("Επιβεβαίωση νέου κωδικού", "Confirm new password")}>
               <input
                 type="password"
                 autoComplete="new-password"
@@ -197,11 +199,11 @@ export default function AccountPage() {
               ) : (
                 <KeyRound className="h-4 w-4" />
               )}
-              Αλλαγή κωδικού
+              {t("Αλλαγή κωδικού", "Change password")}
             </button>
             {changePassword.isSuccess && (
               <span className="text-sm text-emerald-600">
-                Ο κωδικός άλλαξε ✓ — οι άλλες συνεδρίες αποσυνδέθηκαν.
+                {t("Ο κωδικός άλλαξε ✓ — οι άλλες συνεδρίες αποσυνδέθηκαν.", "Password changed ✓ — other sessions were signed out.")}
               </span>
             )}
           </div>
@@ -209,7 +211,7 @@ export default function AccountPage() {
       </PanelCard>
 
       {/* Ασφάλεια */}
-      <PanelCard title="Ασφάλεια">
+      <PanelCard title={t("Ασφάλεια", "Security")}>
         <div className="flex flex-wrap items-center gap-3">
           <span
             className={`grid h-10 w-10 place-items-center rounded-xl ${
@@ -220,10 +222,10 @@ export default function AccountPage() {
           </span>
           <div className="mr-auto">
             <div className="text-sm font-semibold text-slate-800">
-              Έλεγχος ταυτότητας δύο παραγόντων (MFA)
+              {t("Έλεγχος ταυτότητας δύο παραγόντων (MFA)", "Two-factor authentication (MFA)")}
             </div>
             <div className="text-xs text-slate-400">
-              {me.data?.mfa_enabled ? "Ενεργοποιημένο" : "Ανενεργό"}
+              {me.data?.mfa_enabled ? t("Ενεργοποιημένο", "Enabled") : t("Ανενεργό", "Disabled")}
             </div>
           </div>
           <button
@@ -231,7 +233,7 @@ export default function AccountPage() {
             disabled
             className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-400"
           >
-            <ShieldCheck className="h-4 w-4" /> Ενεργοποίηση MFA (σύντομα)
+            <ShieldCheck className="h-4 w-4" /> {t("Ενεργοποίηση MFA (σύντομα)", "Enable MFA (soon)")}
           </button>
         </div>
       </PanelCard>

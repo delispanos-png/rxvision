@@ -1,6 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
+import { useT } from "@/store/prefStore";
 import { PALETTE } from "./theme";
 
 const ReactECharts = dynamic(() => import("echarts-for-react"), { ssr: false });
@@ -11,12 +12,14 @@ export type DonutDatum = { name: string; value: number };
 export function DonutChart({
   data,
   height = 280,
-  ariaLabel = "Γράφημα κατανομής",
+  ariaLabel,
 }: {
   data: DonutDatum[];
   height?: number;
   ariaLabel?: string;
 }) {
+  const t = useT();
+  const aria = ariaLabel ?? t("Γράφημα κατανομής", "Distribution chart");
   const option = {
     color: PALETTE,
     tooltip: {
@@ -45,7 +48,7 @@ export function DonutChart({
   };
 
   return (
-    <div role="img" aria-label={ariaLabel}>
+    <div role="img" aria-label={aria}>
       <ReactECharts option={option} style={{ height, width: "100%" }} notMerge lazyUpdate />
     </div>
   );

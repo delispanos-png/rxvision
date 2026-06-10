@@ -4,21 +4,13 @@ import { useParams, useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowLeft } from "lucide-react";
 import { api } from "@/lib/apiClient";
+import { useT } from "@/store/prefStore";
 import { PanelCard } from "@/components/ui/Card";
 import { ContactCard } from "@/components/patients/ContactCard";
 
 type Med = { name: string | null; barcode: string | null; substance: string | null; atc: string | null; category: string | null; times: number; value: number };
 type Icd = { code: string; count: number; title?: string | null };
 
-// ATC level-1 therapeutic classes (WHO) → Greek names
-const ATC_L1: Record<string, string> = {
-  A: "Πεπτικό σύστημα & μεταβολισμός", B: "Αίμα & αιμοποιητικά όργανα",
-  C: "Καρδιαγγειακό σύστημα", D: "Δερματολογικά",
-  G: "Ουροποιογεννητικό & ορμόνες φύλου", H: "Ορμονικά σκευάσματα (συστηματικά)",
-  J: "Αντιλοιμώδη (συστηματικά)", L: "Αντινεοπλασματικά & ανοσορυθμιστικά",
-  M: "Μυοσκελετικό σύστημα", N: "Νευρικό σύστημα", P: "Αντιπαρασιτικά",
-  R: "Αναπνευστικό σύστημα", S: "Αισθητήρια όργανα", V: "Διάφορα",
-};
 type Detail = {
   patient_id: string; full_name: string | null; amka: string | null;
   sex: string | null; age_group: string | null; birth_year: number | null; area: string | null;
@@ -28,43 +20,61 @@ type Detail = {
 };
 
 const eur = (c: number) => new Intl.NumberFormat("el-GR", { style: "currency", currency: "EUR" }).format((c || 0) / 100);
-const sexLabel = (s: string | null) => (s === "M" ? "Άνδρας" : s === "F" ? "Γυναίκα" : "—");
 const dte = (s: string | null) => (s ? new Date(s).toLocaleDateString("el-GR") : "—");
 
 export default function PatientDetailPage() {
+  const t = useT();
   const id = decodeURIComponent(useParams<{ id: string }>().id);
   const router = useRouter();
+  // ATC level-1 therapeutic classes (WHO) → display names
+  const ATC_L1: Record<string, string> = {
+    A: t("Πεπτικό σύστημα & μεταβολισμός", "Alimentary tract & metabolism"),
+    B: t("Αίμα & αιμοποιητικά όργανα", "Blood & blood-forming organs"),
+    C: t("Καρδιαγγειακό σύστημα", "Cardiovascular system"),
+    D: t("Δερματολογικά", "Dermatologicals"),
+    G: t("Ουροποιογεννητικό & ορμόνες φύλου", "Genitourinary system & sex hormones"),
+    H: t("Ορμονικά σκευάσματα (συστηματικά)", "Systemic hormonal preparations"),
+    J: t("Αντιλοιμώδη (συστηματικά)", "Antiinfectives (systemic)"),
+    L: t("Αντινεοπλασματικά & ανοσορυθμιστικά", "Antineoplastic & immunomodulating"),
+    M: t("Μυοσκελετικό σύστημα", "Musculoskeletal system"),
+    N: t("Νευρικό σύστημα", "Nervous system"),
+    P: t("Αντιπαρασιτικά", "Antiparasitic products"),
+    R: t("Αναπνευστικό σύστημα", "Respiratory system"),
+    S: t("Αισθητήρια όργανα", "Sensory organs"),
+    V: t("Διάφορα", "Various"),
+  };
+  const sexLabel = (s: string | null) => (s === "M" ? t("Άνδρας", "Male") : s === "F" ? t("Γυναίκα", "Female") : "—");
   const { data, isLoading } = useQuery({
     queryKey: ["patient-detail", id],
     queryFn: () => api<Detail>(`/patients/detail/${encodeURIComponent(id)}`),
     retry: false,
   });
 
-  if (isLoading) return <div className="text-slate-400">Φόρτωση…</div>;
-  if (!data) return <div className="text-slate-500">Ο ασφαλισμένος δεν βρέθηκε.</div>;
+  if (isLoading) return <div className="text-slate-400">{t("Φόρτωση…", "Loading…")}</div>;
+  if (!data) return <div className="text-slate-500">{t("Ο ασφαλισμένος δεν βρέθηκε.", "Patient not found.")}</div>;
   const d = data;
   const age = d.birth_year ? new Date().getFullYear() - d.birth_year : null;
 
   return (
     <div className="space-y-5">
       <button onClick={() => router.back()} className="inline-flex items-center gap-1.5 text-sm text-brand-600 hover:underline">
-        <ArrowLeft className="h-4 w-4" /> Πίσω
+        <ArrowLeft className="h-4 w-4" /> {t("Πίσω", "Back")}
       </button>
 
       <div>
-        <h1 className="text-xl font-bold text-slate-900">{d.full_name || "Ασφαλισμένος"}</h1>
+        <h1 className="text-xl font-bold text-slate-900">{d.full_name || t("Ασφαλισμένος", "Patient")}</h1>
         <p className="mt-1 text-sm text-slate-500">
-          {sexLabel(d.sex)}{age ? `, ${age} ετών` : d.age_group ? `, ${d.age_group}` : ""}
+          {sexLabel(d.sex)}{age ? `, ${age} ${t("ετών", "years old")}` : d.age_group ? `, ${d.age_group}` : ""}
           {d.amka ? ` · ΑΜΚΑ ${d.amka}` : ""} · {d.area || "—"}
         </p>
       </div>
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         {[
-          ["Συνταγές", String(d.rx_count)],
-          ["Συνολική αξία", eur(d.value_total)],
-          ["Πρώτη εκτέλεση", dte(d.first_seen)],
-          ["Τελευταία", dte(d.last_seen)],
+          [t("Συνταγές", "Prescriptions"), String(d.rx_count)],
+          [t("Συνολική αξία", "Total value"), eur(d.value_total)],
+          [t("Πρώτη εκτέλεση", "First execution"), dte(d.first_seen)],
+          [t("Τελευταία", "Last seen"), dte(d.last_seen)],
         ].map(([l, v]) => (
           <div key={l} className="rx-card p-4">
             <div className="text-xs text-slate-400">{l}</div>
@@ -76,7 +86,7 @@ export default function PatientDetailPage() {
       <ContactCard patientId={id} />
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <PanelCard title="Διαγνώσεις (ICD-10)">
+        <PanelCard title={t("Διαγνώσεις (ICD-10)", "Diagnoses (ICD-10)")}>
           {d.icd10.length === 0 ? <div className="text-sm text-slate-400">—</div> : (
             <div className="flex flex-wrap gap-2">
               {d.icd10.map((x) => (
@@ -88,7 +98,7 @@ export default function PatientDetailPage() {
           )}
         </PanelCard>
 
-        <PanelCard title="Θεραπευτικές κατηγορίες (ATC)">
+        <PanelCard title={t("Θεραπευτικές κατηγορίες (ATC)", "Therapeutic categories (ATC)")}>
           {(() => {
             const byAtc = new Map<string, number>();
             for (const m of d.medicines) {
@@ -109,15 +119,15 @@ export default function PatientDetailPage() {
         </PanelCard>
       </div>
 
-      <PanelCard title="Φάρμακα που έχει λάβει">
+      <PanelCard title={t("Φάρμακα που έχει λάβει", "Medicines received")}>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-slate-100 text-left text-xs text-slate-400">
-                <th className="py-2">Σκεύασμα</th>
-                <th>Δραστική ουσία</th>
-                <th className="text-right">Φορές</th>
-                <th className="text-right">Αξία</th>
+                <th className="py-2">{t("Σκεύασμα", "Product")}</th>
+                <th>{t("Δραστική ουσία", "Active substance")}</th>
+                <th className="text-right">{t("Φορές", "Times")}</th>
+                <th className="text-right">{t("Αξία", "Value")}</th>
               </tr>
             </thead>
             <tbody>

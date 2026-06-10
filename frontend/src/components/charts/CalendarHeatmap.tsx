@@ -1,6 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
+import { usePref, useT } from "@/store/prefStore";
 
 const ReactECharts = dynamic(() => import("echarts-for-react"), { ssr: false });
 
@@ -9,12 +10,15 @@ const ReactECharts = dynamic(() => import("echarts-for-react"), { ssr: false });
 export function CalendarHeatmap({
   data,
   height = 200,
-  label = "εκτελέσεις",
+  label,
 }: {
   data: [string, number][];
   height?: number;
   label?: string;
 }) {
+  const t = useT();
+  const locale = usePref((s) => s.locale);
+  const lbl = label ?? t("εκτελέσεις", "executions");
   const max = data.reduce((m, d) => Math.max(m, d[1] || 0), 0);
   const dates = data.map((d) => d[0]).sort();
   const range = dates.length ? [dates[0], dates[dates.length - 1]] : undefined;
@@ -27,7 +31,7 @@ export function CalendarHeatmap({
       borderWidth: 0,
       textStyle: { color: "#fff", fontSize: 12 },
       formatter: (p: { data: [string, number] }) =>
-        `${new Date(p.data[0]).toLocaleDateString("el-GR", { weekday: "long", day: "numeric", month: "long" })}<br/><b>${p.data[1]}</b> ${label}`,
+        `${new Date(p.data[0]).toLocaleDateString(locale === "en" ? "en-GB" : "el-GR", { weekday: "long", day: "numeric", month: "long" })}<br/><b>${p.data[1]}</b> ${lbl}`,
     },
     visualMap: {
       min: 0,
@@ -52,9 +56,16 @@ export function CalendarHeatmap({
       itemStyle: { borderColor: "#fff", borderWidth: 2 },
       splitLine: { show: true, lineStyle: { color: "#e2e8f0" } },
       yearLabel: { show: false },
-      dayLabel: { nameMap: ["Κυ", "Δε", "Τρ", "Τε", "Πε", "Πα", "Σα"], color: "#94a3b8", fontSize: 11 },
+      dayLabel: {
+        nameMap: locale === "en"
+          ? ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+          : ["Κυ", "Δε", "Τρ", "Τε", "Πε", "Πα", "Σα"],
+        color: "#94a3b8", fontSize: 11,
+      },
       monthLabel: {
-        nameMap: ["Ιαν", "Φεβ", "Μαρ", "Απρ", "Μάι", "Ιουν", "Ιουλ", "Αυγ", "Σεπ", "Οκτ", "Νοε", "Δεκ"],
+        nameMap: locale === "en"
+          ? ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+          : ["Ιαν", "Φεβ", "Μαρ", "Απρ", "Μάι", "Ιουν", "Ιουλ", "Αυγ", "Σεπ", "Οκτ", "Νοε", "Δεκ"],
         color: "#64748b", fontSize: 11,
       },
     },
@@ -62,7 +73,7 @@ export function CalendarHeatmap({
   };
 
   return (
-    <div role="img" aria-label={`Ημερολογιακός χάρτης θερμότητας — ${label}`}>
+    <div role="img" aria-label={`${t("Ημερολογιακός χάρτης θερμότητας", "Calendar heatmap")} — ${lbl}`}>
       <ReactECharts option={option} style={{ height, width: "100%" }} notMerge lazyUpdate />
     </div>
   );

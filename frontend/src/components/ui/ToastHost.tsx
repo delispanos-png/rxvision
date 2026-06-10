@@ -2,6 +2,7 @@
 
 import { CheckCircle2, Info, X, XCircle } from "lucide-react";
 import { useToastStore, type ToastKind } from "@/store/toastStore";
+import { useT } from "@/store/prefStore";
 
 const STYLE: Record<ToastKind, string> = {
   success: "border-emerald-200 bg-emerald-50 text-emerald-800",
@@ -13,6 +14,7 @@ const ICON = { success: CheckCircle2, error: XCircle, info: Info };
 /** Renders the active toasts (top-right, stacked). Mount once in Providers. */
 export function ToastHost() {
   const { toasts, dismiss } = useToastStore();
+  const tr = useT();
   if (!toasts.length) return null;
   return (
     <div
@@ -26,7 +28,7 @@ export function ToastHost() {
           <div key={t.id} className={`flex items-start gap-2 rounded-xl border p-3 text-sm shadow-pop ${STYLE[t.kind]}`}>
             <Icon className="mt-0.5 h-4 w-4 shrink-0" />
             <span className="flex-1 break-words">{t.message}</span>
-            <button onClick={() => dismiss(t.id)} aria-label="Κλείσιμο" className="shrink-0 opacity-60 hover:opacity-100">
+            <button onClick={() => dismiss(t.id)} aria-label={tr("Κλείσιμο", "Close")} className="shrink-0 opacity-60 hover:opacity-100">
               <X className="h-4 w-4" />
             </button>
           </div>

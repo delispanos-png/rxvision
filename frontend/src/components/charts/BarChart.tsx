@@ -1,6 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
+import { useT } from "@/store/prefStore";
 import { PALETTE, BASE_GRID, axisStyle } from "./theme";
 
 const ReactECharts = dynamic(() => import("echarts-for-react"), { ssr: false });
@@ -21,6 +22,7 @@ export function BarChart({
   horizontal?: boolean;
   ariaLabel?: string;
 }) {
+  const t = useT();
   // Truncate long category labels so they stay legible on narrow screens.
   const truncate = (v: string | number) =>
     typeof v === "string" && v.length > 16 ? `${v.slice(0, 15)}…` : `${v}`;
@@ -52,7 +54,7 @@ export function BarChart({
   };
 
   return (
-    <div role="img" aria-label={ariaLabel ?? name ?? "Ραβδόγραμμα"}>
+    <div role="img" aria-label={ariaLabel ?? name ?? t("Ραβδόγραμμα", "Bar chart")}>
       <ReactECharts option={option} style={{ height, width: "100%" }} notMerge lazyUpdate />
     </div>
   );

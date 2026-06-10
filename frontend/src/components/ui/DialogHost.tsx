@@ -2,11 +2,13 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useDialogStore } from "@/store/dialogStore";
+import { useT } from "@/store/prefStore";
 
 /** Renders the current app dialog (alert/confirm/prompt). Mount once in Providers. */
 export function DialogHost() {
   const { open, kind, title, message, confirmText, cancelText, danger, defaultValue, placeholder, seq, _settle } =
     useDialogStore();
+  const t = useT();
   const [value, setValue] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -33,7 +35,7 @@ export function DialogHost() {
   const cancel = () => _settle(kind === "prompt" ? null : false);
   const accept = () => _settle(kind === "alert" ? undefined : kind === "prompt" ? value : true);
 
-  const okLabel = confirmText ?? (kind === "alert" ? "Εντάξει" : "OK");
+  const okLabel = confirmText ?? (kind === "alert" ? t("Εντάξει", "OK") : "OK");
   const okCls = danger
     ? "bg-rose-600 hover:bg-rose-700"
     : "bg-brand-600 hover:bg-brand-700";
@@ -74,7 +76,7 @@ export function DialogHost() {
               onClick={cancel}
               className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
             >
-              {cancelText ?? "Άκυρο"}
+              {cancelText ?? t("Άκυρο", "Cancel")}
             </button>
           )}
           <button

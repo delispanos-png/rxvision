@@ -20,6 +20,7 @@ import { DonutChart } from "@/components/charts/DonutChart";
 import { BarChart } from "@/components/charts/BarChart";
 import { HeatmapChart, type HeatCell } from "@/components/charts/HeatmapChart";
 import { CalendarHeatmap } from "@/components/charts/CalendarHeatmap";
+import { useT } from "@/store/prefStore";
 
 type Summary = { executions: number; value: number; claimed: number; gross_profit: number; patient_count: number };
 type Bucket = { bucket: string; value: number };
@@ -34,28 +35,32 @@ const num = (n: number) => new Intl.NumberFormat("el-GR").format(n || 0);
 type RxRow = { external_id: string; executed_at: string; patient_name?: string | null; amka?: string | null; fund_name?: string | null; amount_total: number; amount_claimed: number };
 type PatRow = { patient_ref?: string; full_name?: string | null; age_group?: string | null; area?: string | null; rx?: number; value?: number };
 
-const rxModalCols: Column<RxRow>[] = [
-  { key: "executed_at", header: "Ημ/νία", render: (r) => fmtDate(r.executed_at), sortValue: (r) => r.executed_at },
-  { key: "external_id", header: "Κωδικός" },
-  { key: "patient_name", header: "Ασθενής", render: (r) => r.patient_name || "—" },
-  { key: "fund_name", header: "Ταμείο", hideOnMobile: true, render: (r) => r.fund_name || "—" },
-  { key: "amount_total", header: "Αξία", align: "right", render: (r) => eur2(r.amount_total), sortValue: (r) => r.amount_total },
-  { key: "amount_claimed", header: "Από ταμείο", align: "right", render: (r) => eur2(r.amount_claimed), sortValue: (r) => r.amount_claimed },
+type T = (el: string, en: string) => string;
+const makeRxModalCols = (t: T): Column<RxRow>[] => [
+  { key: "executed_at", header: t("Ημ/νία", "Date"), render: (r) => fmtDate(r.executed_at), sortValue: (r) => r.executed_at },
+  { key: "external_id", header: t("Κωδικός", "Code") },
+  { key: "patient_name", header: t("Ασθενής", "Patient"), render: (r) => r.patient_name || "—" },
+  { key: "fund_name", header: t("Ταμείο", "Fund"), hideOnMobile: true, render: (r) => r.fund_name || "—" },
+  { key: "amount_total", header: t("Αξία", "Value"), align: "right", render: (r) => eur2(r.amount_total), sortValue: (r) => r.amount_total },
+  { key: "amount_claimed", header: t("Από ταμείο", "From fund"), align: "right", render: (r) => eur2(r.amount_claimed), sortValue: (r) => r.amount_claimed },
 ];
-const patModalCols: Column<PatRow>[] = [
-  { key: "full_name", header: "Ασφαλισμένος", render: (r) => r.full_name || r.patient_ref || "—" },
-  { key: "age_group", header: "Ηλικία", hideOnMobile: true, render: (r) => r.age_group || "—" },
-  { key: "area", header: "Περιοχή", hideOnMobile: true, render: (r) => r.area || "—" },
-  { key: "rx", header: "Συνταγές", align: "right", render: (r) => num(r.rx || 0), sortValue: (r) => r.rx ?? 0 },
-  { key: "value", header: "Αξία", align: "right", render: (r) => eur2(r.value || 0), sortValue: (r) => r.value ?? 0 },
+const makePatModalCols = (t: T): Column<PatRow>[] => [
+  { key: "full_name", header: t("Ασφαλισμένος", "Patient"), render: (r) => r.full_name || r.patient_ref || "—" },
+  { key: "age_group", header: t("Ηλικία", "Age"), hideOnMobile: true, render: (r) => r.age_group || "—" },
+  { key: "area", header: t("Περιοχή", "Area"), hideOnMobile: true, render: (r) => r.area || "—" },
+  { key: "rx", header: t("Συνταγές", "Prescriptions"), align: "right", render: (r) => num(r.rx || 0), sortValue: (r) => r.rx ?? 0 },
+  { key: "value", header: t("Αξία", "Value"), align: "right", render: (r) => eur2(r.value || 0), sortValue: (r) => r.value ?? 0 },
 ];
 
-const GREETING = () => {
+const GREETING = (t: T) => {
   const h = new Date().getHours();
-  return h < 12 ? "Καλημέρα" : h < 18 ? "Καλησπέρα" : "Καλό βράδυ";
+  return h < 12 ? t("Καλημέρα", "Good morning") : h < 18 ? t("Καλησπέρα", "Good afternoon") : t("Καλό βράδυ", "Good evening");
 };
 
 export default function DashboardPage() {
+  const t = useT();
+  const rxModalCols = makeRxModalCols(t);
+  const patModalCols = makePatModalCols(t);
   // shared global filter (date range + fund/doctor/icd10) — same across every page
   const filters = useUiStore();
   const qs = filtersToQuery(filters);
@@ -109,39 +114,39 @@ export default function DashboardPage() {
       {/* header */}
       <div className="mb-6 flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight text-slate-900">{GREETING()}! 👋</h1>
-          <p className="mt-1 text-sm text-slate-500">Επισκόπηση φαρμακείου — {dateLabel}</p>
+          <h1 className="text-2xl font-bold tracking-tight text-slate-900">{GREETING(t)}! 👋</h1>
+          <p className="mt-1 text-sm text-slate-500">{t("Επισκόπηση φαρμακείου", "Pharmacy overview")} — {dateLabel}</p>
         </div>
         <DateRangeFilter />
       </div>
 
       {/* KPI row */}
       <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-5">
-        <KpiCard label="Εκτελέσεις" value={num(s?.executions ?? 0)} sub="συνταγές περιόδου · δες λίστα" icon={Receipt} accent="indigo" trend={delta(s?.executions, prev?.executions)}
-          onClick={() => setModal({ title: "Εκτελέσεις περιόδου", kind: "rx", qs: `${qs}&page_size=300&sort=executed_at&dir=-1` })} />
-        <KpiCard label="Αξία συνταγών" value={eur(s?.value ?? 0)} sub="σύνολο περιόδου · δες λίστα" icon={BarIcon} accent="violet" trend={delta(s?.value, prev?.value)}
-          onClick={() => setModal({ title: "Συνταγές κατά αξία (φθίνουσα)", kind: "rx", qs: `${qs}&page_size=300&sort=amount_total&dir=-1` })} />
-        <KpiCard label="Αιτούμενα ταμείων" value={eur(s?.claimed ?? 0)} sub="προς ασφ. φορείς · δες λίστα" icon={Wallet} accent="amber" trend={delta(s?.claimed, prev?.claimed)}
-          onClick={() => setModal({ title: "Συνταγές κατά αιτούμενο ταμείου", kind: "rx", qs: `${qs}&page_size=300&sort=amount_claimed&dir=-1` })} />
-        <KpiCard label="Μεικτό κέρδος" value={eur(s?.gross_profit ?? 0)} sub="αιτούμενο − χονδρική" icon={TrendingUp} accent="green" trend={delta(s?.gross_profit, prev?.gross_profit)} />
-        <KpiCard label="Ασφαλισμένοι" value={num(s?.patient_count ?? 0)} sub="μοναδικοί · δες λίστα" icon={Users} accent="sky" trend={delta(s?.patient_count, prev?.patient_count)}
-          onClick={() => setModal({ title: "Ασφαλισμένοι περιόδου", kind: "patients", qs: `${qs}&sort=value&limit=300` })} />
+        <KpiCard label={t("Εκτελέσεις", "Executions")} value={num(s?.executions ?? 0)} sub={t("συνταγές περιόδου · δες λίστα", "prescriptions in period · see list")} icon={Receipt} accent="indigo" trend={delta(s?.executions, prev?.executions)}
+          onClick={() => setModal({ title: t("Εκτελέσεις περιόδου", "Executions in period"), kind: "rx", qs: `${qs}&page_size=300&sort=executed_at&dir=-1` })} />
+        <KpiCard label={t("Αξία συνταγών", "Prescriptions value")} value={eur(s?.value ?? 0)} sub={t("σύνολο περιόδου · δες λίστα", "period total · see list")} icon={BarIcon} accent="violet" trend={delta(s?.value, prev?.value)}
+          onClick={() => setModal({ title: t("Συνταγές κατά αξία (φθίνουσα)", "Prescriptions by value (descending)"), kind: "rx", qs: `${qs}&page_size=300&sort=amount_total&dir=-1` })} />
+        <KpiCard label={t("Αιτούμενα ταμείων", "Funds claimed")} value={eur(s?.claimed ?? 0)} sub={t("προς ασφ. φορείς · δες λίστα", "to insurance funds · see list")} icon={Wallet} accent="amber" trend={delta(s?.claimed, prev?.claimed)}
+          onClick={() => setModal({ title: t("Συνταγές κατά αιτούμενο ταμείου", "Prescriptions by fund claimed"), kind: "rx", qs: `${qs}&page_size=300&sort=amount_claimed&dir=-1` })} />
+        <KpiCard label={t("Μεικτό κέρδος", "Gross profit")} value={eur(s?.gross_profit ?? 0)} sub={t("αιτούμενο − χονδρική", "claimed − wholesale")} icon={TrendingUp} accent="green" trend={delta(s?.gross_profit, prev?.gross_profit)} />
+        <KpiCard label={t("Ασφαλισμένοι", "Patients")} value={num(s?.patient_count ?? 0)} sub={t("μοναδικοί · δες λίστα", "unique · see list")} icon={Users} accent="sky" trend={delta(s?.patient_count, prev?.patient_count)}
+          onClick={() => setModal({ title: t("Ασφαλισμένοι περιόδου", "Patients in period"), kind: "patients", qs: `${qs}&sort=value&limit=300` })} />
       </div>
 
       {/* charts row */}
       <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-3">
-        <PanelCard title="Πορεία Αξίας & Αιτούμενων" className="lg:col-span-2">
+        <PanelCard title={t("Πορεία Αξίας & Αιτούμενων", "Value & claimed trend")} className="lg:col-span-2">
           <LineChart
             labels={labels}
             series={[
-              { name: "Αξία (€)", data: valSeries },
-              { name: "Αιτούμενα (€)", data: claimSeries },
+              { name: t("Αξία (€)", "Value (€)"), data: valSeries },
+              { name: t("Αιτούμενα (€)", "Claimed (€)"), data: claimSeries },
             ]}
             colors={["#ef4444", "#10b981"]}
             height={300}
           />
         </PanelCard>
-        <PanelCard title="Ανάλυση ανά ICD-10">
+        <PanelCard title={t("Ανάλυση ανά ICD-10", "Breakdown by ICD-10")}>
           <DonutChart
             height={300}
             data={(topIcd.data ?? []).map((d) => ({ name: d.name ? `${d._id} · ${d.name}` : (d._id || "—"), value: d.rx || 0 }))}
@@ -151,7 +156,7 @@ export default function DashboardPage() {
 
       {/* bottom row */}
       <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-3">
-        <PanelCard title="Top Ιατροί (αξία)" className="lg:col-span-2">
+        <PanelCard title={t("Top Ιατροί (αξία)", "Top Doctors (value)")} className="lg:col-span-2">
           <BarChart
             horizontal
             height={300}
@@ -160,7 +165,7 @@ export default function DashboardPage() {
             name="€"
           />
         </PanelCard>
-        <PanelCard title="Πρόσφατες Συνταγές" bodyClassName="pt-2">
+        <PanelCard title={t("Πρόσφατες Συνταγές", "Recent Prescriptions")} bodyClassName="pt-2">
           <ul className="divide-y divide-slate-100">
             {(recent.data?.items ?? []).map((r) => (
               <li key={r.external_id} className="flex items-center justify-between py-3">
@@ -175,7 +180,7 @@ export default function DashboardPage() {
               </li>
             ))}
             {!recent.isLoading && (recent.data?.items?.length ?? 0) === 0 && (
-              <li className="py-8 text-center text-sm text-slate-400">Δεν υπάρχουν</li>
+              <li className="py-8 text-center text-sm text-slate-400">{t("Δεν υπάρχουν", "None")}</li>
             )}
           </ul>
         </PanelCard>
@@ -183,10 +188,10 @@ export default function DashboardPage() {
 
       {/* busy-hours heatmap */}
       <div className="mt-4">
-        <PanelCard title="Ώρες αιχμής — μοτίβο εβδομάδας (όλη η περίοδος)">
+        <PanelCard title={t("Ώρες αιχμής — μοτίβο εβδομάδας (όλη η περίοδος)", "Peak hours — weekly pattern (whole period)")}>
           <p className="-mt-1 mb-3 text-xs text-slate-400">
-            Συγκεντρωτικά για ΟΛΗ την επιλεγμένη περίοδο ({fromD.split("-").reverse().join("/")} → {toD.split("-").reverse().join("/")}):
-            όλες οι Δευτέρες αθροίζονται μαζί, όλες οι Τρίτες μαζί κ.λπ. — δείχνει το <b>τυπικό μοτίβο</b> της εβδομάδας, ΟΧΙ μία συγκεκριμένη εβδομάδα.
+            {t("Συγκεντρωτικά για ΟΛΗ την επιλεγμένη περίοδο", "Aggregated over the WHOLE selected period")} ({fromD.split("-").reverse().join("/")} → {toD.split("-").reverse().join("/")}):
+            {" "}{t("όλες οι Δευτέρες αθροίζονται μαζί, όλες οι Τρίτες μαζί κ.λπ. — δείχνει το", "all Mondays summed together, all Tuesdays together, etc. — shows the")} <b>{t("τυπικό μοτίβο", "typical pattern")}</b> {t("της εβδομάδας, ΟΧΙ μία συγκεκριμένη εβδομάδα.", "of the week, NOT one specific week.")}
           </p>
           <HeatmapChart cells={heatCells} />
         </PanelCard>
@@ -194,7 +199,7 @@ export default function DashboardPage() {
 
       {/* calendar heatmap — executions per DATE */}
       <div className="mt-4">
-        <PanelCard title="Ημερολόγιο αιχμής — εκτελέσεις ανά ημερομηνία (κάθε μέρα ξεχωριστά)">
+        <PanelCard title={t("Ημερολόγιο αιχμής — εκτελέσεις ανά ημερομηνία (κάθε μέρα ξεχωριστά)", "Peak calendar — executions per date (each day separately)")}>
           <CalendarHeatmap data={calendarData} height={Math.max(180, calendarWeeks * 18 + 80)} />
         </PanelCard>
       </div>
@@ -203,25 +208,25 @@ export default function DashboardPage() {
       <Modal open={!!modal} onClose={() => setModal(null)} title={modal?.title} size="3xl">
         {modal && (
           <div className="-mt-2 mb-3 flex items-center justify-between gap-3">
-            <p className="text-sm text-slate-500">{num(modalList.data?.items?.length ?? 0)} εγγραφές</p>
+            <p className="text-sm text-slate-500">{num(modalList.data?.items?.length ?? 0)} {t("εγγραφές", "records")}</p>
             {(modalList.data?.items?.length ?? 0) > 0 && (
               <button
                 onClick={() => {
                   const cols = modal.kind === "patients"
-                    ? [{ key: "full_name", header: "Ασφαλισμένος" }, { key: "age_group", header: "Ηλικία" }, { key: "area", header: "Περιοχή" }, { key: "rx", header: "Συνταγές" }, { key: "value", header: "Αξία (€)", value: (r: Record<string, unknown>) => (((r.value as number) || 0) / 100).toFixed(2) }]
-                    : [{ key: "executed_at", header: "Ημ/νία", value: (r: Record<string, unknown>) => fmtDate(r.executed_at as string) }, { key: "external_id", header: "Κωδικός" }, { key: "patient_name", header: "Ασθενής" }, { key: "fund_name", header: "Ταμείο" }, { key: "amount_total", header: "Αξία (€)", value: (r: Record<string, unknown>) => (((r.amount_total as number) || 0) / 100).toFixed(2) }, { key: "amount_claimed", header: "Από ταμείο (€)", value: (r: Record<string, unknown>) => (((r.amount_claimed as number) || 0) / 100).toFixed(2) }];
+                    ? [{ key: "full_name", header: t("Ασφαλισμένος", "Patient") }, { key: "age_group", header: t("Ηλικία", "Age") }, { key: "area", header: t("Περιοχή", "Area") }, { key: "rx", header: t("Συνταγές", "Prescriptions") }, { key: "value", header: t("Αξία (€)", "Value (€)"), value: (r: Record<string, unknown>) => (((r.value as number) || 0) / 100).toFixed(2) }]
+                    : [{ key: "executed_at", header: t("Ημ/νία", "Date"), value: (r: Record<string, unknown>) => fmtDate(r.executed_at as string) }, { key: "external_id", header: t("Κωδικός", "Code") }, { key: "patient_name", header: t("Ασθενής", "Patient") }, { key: "fund_name", header: t("Ταμείο", "Fund") }, { key: "amount_total", header: t("Αξία (€)", "Value (€)"), value: (r: Record<string, unknown>) => (((r.amount_total as number) || 0) / 100).toFixed(2) }, { key: "amount_claimed", header: t("Από ταμείο (€)", "From fund (€)"), value: (r: Record<string, unknown>) => (((r.amount_claimed as number) || 0) / 100).toFixed(2) }];
                   downloadCsv(modal.kind === "patients" ? "asfalismenoi" : "syntages", cols, modalList.data!.items);
                 }}
                 className="shrink-0 inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
               >
-                <Download className="h-3.5 w-3.5" /> Εξαγωγή CSV
+                <Download className="h-3.5 w-3.5" /> {t("Εξαγωγή CSV", "Export CSV")}
               </button>
             )}
           </div>
         )}
         <QueryState isLoading={modalList.isLoading} isError={modalList.isError}
           isEmpty={(modalList.data?.items?.length ?? 0) === 0} onRetry={() => modalList.refetch()}
-          empty="Καμία εγγραφή.">
+          empty={t("Καμία εγγραφή.", "No records.")}>
           {modal?.kind === "patients"
             ? <DataTable pageSize={15} columns={patModalCols} rows={(modalList.data?.items ?? []) as PatRow[]} rowKey={(r, i) => `${(r as PatRow).patient_ref ?? i}`} />
             : <DataTable pageSize={15} columns={rxModalCols} rows={(modalList.data?.items ?? []) as RxRow[]} rowKey={(r, i) => `${(r as RxRow).external_id ?? i}`} />}

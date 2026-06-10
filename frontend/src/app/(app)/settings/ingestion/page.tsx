@@ -6,6 +6,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { CheckCircle2, Link2, Loader2, PlugZap, RefreshCw, ShieldCheck, XCircle, Square, Trash2 } from "lucide-react";
 import { api } from "@/lib/apiClient";
 import { PanelCard } from "@/components/ui/Card";
+import { useT } from "@/store/prefStore";
 
 type Config = {
   configured: boolean;
@@ -50,6 +51,7 @@ const HDIKA_ENDPOINTS: Record<string, string> = {
 };
 
 export default function IngestionSettingsPage() {
+  const t = useT();
   const qc = useQueryClient();
   const tenant = useQuery({ queryKey: ["tenant"], queryFn: () => api<Tenant>("/tenant"), retry: false });
   const cfg = useQuery({ queryKey: ["hdika-config"], queryFn: () => api<Config>("/ingestion/credentials/hdika"), retry: false });
@@ -162,10 +164,9 @@ export default function IngestionSettingsPage() {
 
   if (country === "CY") {
     return (
-      <PanelCard title="Διασύνδεση ΓΕΣΥ (Κύπρος)">
+      <PanelCard title={t("Διασύνδεση ΓΕΣΥ (Κύπρος)", "ΓΕΣΥ Connection (Cyprus)")}>
         <p className="text-sm text-slate-600">
-          Για φαρμακεία Κύπρου η συλλογή γίνεται μέσω <b>ΓΕΣΥ</b> (χειροκίνητο XML upload) και
-          είναι προγραμματισμένη για το <b>επόμενο στάδιο</b>. Η ΗΔΙΚΑ δεν ισχύει για Κύπρο.
+          {t("Για φαρμακεία Κύπρου η συλλογή γίνεται μέσω ", "For Cyprus pharmacies, collection is done via ")}<b>ΓΕΣΥ</b>{t(" (χειροκίνητο XML upload) και είναι προγραμματισμένη για το ", " (manual XML upload) and is scheduled for the ")}<b>{t("επόμενο στάδιο", "next stage")}</b>{t(". Η ΗΔΙΚΑ δεν ισχύει για Κύπρο.", ". ΗΔΙΚΑ does not apply to Cyprus.")}
         </p>
       </PanelCard>
     );
@@ -180,39 +181,42 @@ export default function IngestionSettingsPage() {
         </span>
         <div className="mr-auto">
           <div className="text-sm font-semibold text-slate-800">
-            Διασύνδεση ΗΔΙΚΑ {c?.configured ? "— ενεργή" : "— δεν έχει ρυθμιστεί"}
+            {t("Διασύνδεση ΗΔΙΚΑ", "ΗΔΙΚΑ Connection")} {c?.configured ? t("— ενεργή", "— active") : t("— δεν έχει ρυθμιστεί", "— not configured")}
           </div>
           <div className="text-xs text-slate-400">
             {c?.configured
-              ? `Περιβάλλον: ${c.environment} · Χρήστης: ${c.username ?? "—"}${c.last_sync ? ` · Τελ. sync: ${c.last_sync.status}` : ""}`
-              : "Καταχωρήστε τα στοιχεία e-Συνταγογράφησης για άντληση συνταγών."}
+              ? t(
+                  `Περιβάλλον: ${c.environment} · Χρήστης: ${c.username ?? "—"}${c.last_sync ? ` · Τελ. sync: ${c.last_sync.status}` : ""}`,
+                  `Environment: ${c.environment} · User: ${c.username ?? "—"}${c.last_sync ? ` · Last sync: ${c.last_sync.status}` : ""}`
+                )
+              : t("Καταχωρήστε τα στοιχεία e-Συνταγογράφησης για άντληση συνταγών.", "Enter your e-Prescription credentials to fetch prescriptions.")}
           </div>
         </div>
         <button onClick={() => test.mutate()} disabled={test.isPending}
           className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
-          {test.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <ShieldCheck className="h-4 w-4" />} Έλεγχος σύνδεσης
+          {test.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <ShieldCheck className="h-4 w-4" />} {t("Έλεγχος σύνδεσης", "Test connection")}
         </button>
         <button onClick={() => discover.mutate()} disabled={discover.isPending}
           className="inline-flex items-center gap-1.5 rounded-lg border border-brand-300 bg-brand-50 px-3 py-2 text-sm font-medium text-brand-700 hover:bg-brand-100">
-          {discover.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Link2 className="h-4 w-4" />} Σύνδεση & άντληση στοιχείων
+          {discover.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Link2 className="h-4 w-4" />} {t("Σύνδεση & άντληση στοιχείων", "Connect & fetch details")}
         </button>
         <button onClick={() => sync.mutate()} disabled={syncing || sync.isPending || !c?.configured}
           className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-3 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-40">
-          {(syncing || sync.isPending) ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />} Συγχρονισμός τώρα
+          {(syncing || sync.isPending) ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />} {t("Συγχρονισμός τώρα", "Sync now")}
         </button>
       </div>
 
       {/* historical download for a chosen period */}
       <div className="rx-card flex flex-wrap items-end gap-3 p-4">
         <div className="mr-auto">
-          <div className="text-sm font-semibold text-slate-800">Κατέβασμα ιστορικού (επιλογή περιόδου)</div>
-          <div className="text-xs text-slate-400">Διάλεξε ημερομηνίες και κατέβασε ΜΟΝΟ αυτό το διάστημα.</div>
+          <div className="text-sm font-semibold text-slate-800">{t("Κατέβασμα ιστορικού (επιλογή περιόδου)", "Download history (select period)")}</div>
+          <div className="text-xs text-slate-400">{t("Διάλεξε ημερομηνίες και κατέβασε ΜΟΝΟ αυτό το διάστημα.", "Pick dates and download ONLY that range.")}</div>
         </div>
-        <label className="text-xs text-slate-500">Από<DateInput value={dlFrom} onChange={setDlFrom} className="mt-1 w-40" /></label>
-        <label className="text-xs text-slate-500">Έως<DateInput value={dlTo} onChange={setDlTo} className="mt-1 w-40" /></label>
+        <label className="text-xs text-slate-500">{t("Από", "From")}<DateInput value={dlFrom} onChange={setDlFrom} className="mt-1 w-40" /></label>
+        <label className="text-xs text-slate-500">{t("Έως", "To")}<DateInput value={dlTo} onChange={setDlTo} className="mt-1 w-40" /></label>
         <button onClick={() => backfillRange.mutate()} disabled={syncing || backfillRange.isPending || !c?.configured || !dlFrom}
           className="inline-flex items-center gap-1.5 rounded-lg border border-brand-300 bg-brand-50 px-3 py-2 text-sm font-medium text-brand-700 hover:bg-brand-100 disabled:opacity-40">
-          {(syncing || backfillRange.isPending) ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />} Κατέβασμα περιόδου
+          {(syncing || backfillRange.isPending) ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />} {t("Κατέβασμα περιόδου", "Download period")}
         </button>
       </div>
 
@@ -220,26 +224,26 @@ export default function IngestionSettingsPage() {
       <div className="rounded-2xl border border-rose-200 bg-rose-50/40 p-4">
         <div className="flex flex-wrap items-end gap-3">
           <div className="mr-auto">
-            <div className="text-sm font-semibold text-rose-800">Διαγραφή δεδομένων (περίοδος)</div>
-            <div className="text-xs text-rose-500">Σβήνει ΟΡΙΣΤΙΚΑ εκτελέσεις + γραμμές + μελλοντικές αυτού του διαστήματος (για καθαρό re-ingest).</div>
+            <div className="text-sm font-semibold text-rose-800">{t("Διαγραφή δεδομένων (περίοδος)", "Delete data (period)")}</div>
+            <div className="text-xs text-rose-500">{t("Σβήνει ΟΡΙΣΤΙΚΑ εκτελέσεις + γραμμές + μελλοντικές αυτού του διαστήματος (για καθαρό re-ingest).", "PERMANENTLY deletes executions + line items + upcoming for this range (for a clean re-ingest).")}</div>
           </div>
-          <label className="text-xs text-slate-500">Από<DateInput value={delFrom} onChange={setDelFrom} className="mt-1 w-40" /></label>
-          <label className="text-xs text-slate-500">Έως<DateInput value={delTo} onChange={setDelTo} className="mt-1 w-40" /></label>
+          <label className="text-xs text-slate-500">{t("Από", "From")}<DateInput value={delFrom} onChange={setDelFrom} className="mt-1 w-40" /></label>
+          <label className="text-xs text-slate-500">{t("Έως", "To")}<DateInput value={delTo} onChange={setDelTo} className="mt-1 w-40" /></label>
           <button
             onClick={() => {
               if (!delFrom || !delTo) return;
-              if (!confirm(`Οριστική διαγραφή ΟΛΩΝ των δεδομένων ${delFrom} → ${delTo};`)) return;
-              if (!confirm("Σίγουρα; Η ενέργεια ΔΕΝ αναιρείται.")) return;
+              if (!confirm(t(`Οριστική διαγραφή ΟΛΩΝ των δεδομένων ${delFrom} → ${delTo};`, `Permanently delete ALL data ${delFrom} → ${delTo}?`))) return;
+              if (!confirm(t("Σίγουρα; Η ενέργεια ΔΕΝ αναιρείται.", "Are you sure? This action CANNOT be undone."))) return;
               deleteRange.mutate();
             }}
             disabled={deleteRange.isPending || syncing || !delFrom || !delTo}
             className="inline-flex items-center gap-1.5 rounded-lg border border-rose-300 bg-white px-3 py-2 text-sm font-medium text-rose-700 hover:bg-rose-50 disabled:opacity-40">
-            {deleteRange.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />} Διαγραφή περιόδου
+            {deleteRange.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />} {t("Διαγραφή περιόδου", "Delete period")}
           </button>
         </div>
         {deleteRange.isSuccess && deleteRange.data && (
           <div className="mt-2 text-xs font-medium text-rose-700">
-            Διαγράφηκαν: {deleteRange.data.executions} εκτελέσεις · {deleteRange.data.items} γραμμές · {deleteRange.data.future} μελλοντικές.
+            {t("Διαγράφηκαν:", "Deleted:")} {deleteRange.data.executions} {t("εκτελέσεις", "executions")} · {deleteRange.data.items} {t("γραμμές", "line items")} · {deleteRange.data.future} {t("μελλοντικές.", "upcoming.")}
           </div>
         )}
       </div>
@@ -248,7 +252,7 @@ export default function IngestionSettingsPage() {
       {showProgress && (() => {
         const pct = Math.max(0, Math.min(100, Math.round((latestJob?.progress ?? 0) * 100)));
         const known = typeof latestJob?.progress === "number" && latestJob.progress > 0;
-        const fmtD = (d?: string) => d ? new Date(d).toLocaleDateString("el-GR", { day: "2-digit", month: "2-digit", year: "numeric" }) : "—";
+        const fmtD = (d?: string) => d ? new Date(d).toLocaleDateString(t("el-GR", "en-GB"), { day: "2-digit", month: "2-digit", year: "numeric" }) : "—";
         const win = latestJob?.window as { start?: string; end?: string } | undefined;
         return (
           <div className="rx-card p-4">
@@ -256,16 +260,16 @@ export default function IngestionSettingsPage() {
               <span className="inline-flex items-center gap-1.5 font-medium text-slate-700">
                 <Loader2 className="h-4 w-4 animate-spin text-brand-600" />
                 {jobRunning
-                  ? (latestJob?.type === "backfill" ? "Ιστορική άντληση σε εξέλιξη…" : "Συγχρονισμός σε εξέλιξη…")
-                  : "Εκκίνηση συγχρονισμού…"}
+                  ? (latestJob?.type === "backfill" ? t("Ιστορική άντληση σε εξέλιξη…", "Historical fetch in progress…") : t("Συγχρονισμός σε εξέλιξη…", "Sync in progress…"))
+                  : t("Εκκίνηση συγχρονισμού…", "Starting sync…")}
                 {known && <span className="ml-1 font-bold text-brand-700">{pct}%</span>}
               </span>
               <span className="inline-flex items-center gap-3">
-                <span className="text-slate-500">{(latestJob?.stats?.fetched ?? 0)} συνταγές · {(latestJob?.stats?.inserted ?? 0)} νέες · {(latestJob?.stats?.updated ?? 0)} ενημ.</span>
+                <span className="text-slate-500">{(latestJob?.stats?.fetched ?? 0)} {t("συνταγές", "prescriptions")} · {(latestJob?.stats?.inserted ?? 0)} {t("νέες", "new")} · {(latestJob?.stats?.updated ?? 0)} {t("ενημ.", "upd.")}</span>
                 {jobRunning && (
                   <button onClick={() => stopSync.mutate()} disabled={stopSync.isPending}
                     className="inline-flex items-center gap-1 rounded-lg border border-rose-300 bg-rose-50 px-2.5 py-1 text-xs font-medium text-rose-700 hover:bg-rose-100 disabled:opacity-50">
-                    {stopSync.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Square className="h-3.5 w-3.5" />} {stopSync.isSuccess ? "Διακόπτεται…" : "Σταμάτημα"}
+                    {stopSync.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Square className="h-3.5 w-3.5" />} {stopSync.isSuccess ? t("Διακόπτεται…", "Stopping…") : t("Σταμάτημα", "Stop")}
                   </button>
                 )}
               </span>
@@ -273,13 +277,13 @@ export default function IngestionSettingsPage() {
             {(win?.start || latestJob?.cursor_date) && (
               <div className="mb-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500">
                 <span className="rounded-md bg-brand-50 px-1.5 py-0.5 font-semibold text-brand-700">
-                  {latestJob?.type === "backfill" ? "Ιστορικό" : "Incremental"}
+                  {latestJob?.type === "backfill" ? t("Ιστορικό", "Historical") : "Incremental"}
                 </span>
                 {win?.start && (
-                  <span>Περίοδος: <b className="text-slate-700">{fmtD(win.start)}</b> → <b className="text-slate-700">{fmtD(win.end)}</b></span>
+                  <span>{t("Περίοδος:", "Period:")} <b className="text-slate-700">{fmtD(win.start)}</b> → <b className="text-slate-700">{fmtD(win.end)}</b></span>
                 )}
                 {latestJob?.cursor_date && (
-                  <span>· συγχρονίζει τώρα στο <b className="text-brand-700">{fmtD(latestJob.cursor_date)}</b></span>
+                  <span>{t("· συγχρονίζει τώρα στο ", "· now syncing at ")}<b className="text-brand-700">{fmtD(latestJob.cursor_date)}</b></span>
                 )}
               </div>
             )}
@@ -305,7 +309,7 @@ export default function IngestionSettingsPage() {
         <div className="rx-card p-3 text-sm text-emerald-700">
           <span className="inline-flex items-center gap-1.5">
             <CheckCircle2 className="h-4 w-4" />
-            Ο συγχρονισμός ολοκληρώθηκε — {latestJob.stats?.inserted ?? 0} νέες, {latestJob.stats?.updated ?? 0} ενημερώσεις, {latestJob.stats?.fetched ?? 0} σύνολο.
+            {t("Ο συγχρονισμός ολοκληρώθηκε —", "Sync completed —")} {latestJob.stats?.inserted ?? 0} {t("νέες,", "new,")} {latestJob.stats?.updated ?? 0} {t("ενημερώσεις,", "updates,")} {latestJob.stats?.fetched ?? 0} {t("σύνολο.", "total.")}
           </span>
         </div>
       )}
@@ -314,20 +318,23 @@ export default function IngestionSettingsPage() {
           <span className="inline-flex items-center gap-1.5">
             {discover.error ? <XCircle className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4" />}
             {discover.error
-              ? "Αποτυχία άντλησης. Ελέγξτε τα στοιχεία σύνδεσης ΗΔΙΚΑ."
-              : `Αντλήθηκαν αυτόματα ${Object.keys(discover.data?.discovered ?? {}).length} στοιχεία φαρμακείου από την ΗΔΙΚΑ.`}
+              ? t("Αποτυχία άντλησης. Ελέγξτε τα στοιχεία σύνδεσης ΗΔΙΚΑ.", "Fetch failed. Check your ΗΔΙΚΑ connection credentials.")
+              : t(
+                  `Αντλήθηκαν αυτόματα ${Object.keys(discover.data?.discovered ?? {}).length} στοιχεία φαρμακείου από την ΗΔΙΚΑ.`,
+                  `Automatically fetched ${Object.keys(discover.data?.discovered ?? {}).length} pharmacy details from ΗΔΙΚΑ.`
+                )}
           </span>
         </div>
       )}
 
       <form onSubmit={(e) => { e.preventDefault(); save.mutate(); }} className="space-y-4">
-        <PanelCard title="Λογαριασμός e-Συνταγογράφησης">
+        <PanelCard title={t("Λογαριασμός e-Συνταγογράφησης", "e-Prescription account")}>
           <div className="grid gap-4 sm:grid-cols-2">
-            <Field label="Όνομα χρήστη ΗΔΙΚΑ"><input className={inputCls} value={f.username} onChange={(e) => set("username", e.target.value)} required /></Field>
-            <Field label="Κωδικός" hint={c?.configured ? "Αποθηκευμένο — κενό για να μην αλλάξει" : undefined}>
+            <Field label={t("Όνομα χρήστη ΗΔΙΚΑ", "ΗΔΙΚΑ username")}><input className={inputCls} value={f.username} onChange={(e) => set("username", e.target.value)} required /></Field>
+            <Field label={t("Κωδικός", "Password")} hint={c?.configured ? t("Αποθηκευμένο — κενό για να μην αλλάξει", "Saved — leave empty to keep unchanged") : undefined}>
               {c?.configured && (
                 <span className="mb-1 inline-flex items-center gap-1 text-xs font-medium text-emerald-600">
-                  <CheckCircle2 className="h-3.5 w-3.5" /> Αποθηκευμένο (κρυπτογραφημένο)
+                  <CheckCircle2 className="h-3.5 w-3.5" /> {t("Αποθηκευμένο (κρυπτογραφημένο)", "Saved (encrypted)")}
                 </span>
               )}
               <input type="password" className={inputCls} value={f.password} onChange={(e) => set("password", e.target.value)} placeholder={c?.configured ? "••••••••" : ""} />
@@ -335,9 +342,9 @@ export default function IngestionSettingsPage() {
           </div>
         </PanelCard>
 
-        <PanelCard title="Στοιχεία φαρμακείου (ανακτώνται αυτόματα από ΗΔΙΚΑ)">
+        <PanelCard title={t("Στοιχεία φαρμακείου (ανακτώνται αυτόματα από ΗΔΙΚΑ)", "Pharmacy details (fetched automatically from ΗΔΙΚΑ)")}>
           <p className="mb-4 flex items-center gap-1.5 rounded-lg bg-emerald-50 px-3 py-2 text-xs text-emerald-700">
-            <Link2 className="h-3.5 w-3.5" /> Δεν χρειάζεται να τα πληκτρολογήσετε — πατήστε «Σύνδεση & άντληση στοιχείων» και συμπληρώνονται από την ΗΔΙΚΑ (λιγότερα λάθη).
+            <Link2 className="h-3.5 w-3.5" /> {t("Δεν χρειάζεται να τα πληκτρολογήσετε — πατήστε «Σύνδεση & άντληση στοιχείων» και συμπληρώνονται από την ΗΔΙΚΑ (λιγότερα λάθη).", "No need to type them — click «Connect & fetch details» and they are filled in from ΗΔΙΚΑ (fewer errors).")}
           </p>
           {(c?.pharmacy_name || c?.pharmacy_id) && (
             <div className="mb-4 rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-700">
@@ -345,76 +352,76 @@ export default function IngestionSettingsPage() {
             </div>
           )}
           <div className="grid gap-4 sm:grid-cols-3">
-            <Field label="ΑΦΜ" hint="ανακτάται αυτόματα"><input className={inputCls} value={f.afm} onChange={(e) => set("afm", e.target.value)} /></Field>
-            <Field label="ΑΜ ΕΟΠΥΥ" hint="ανακτάται αυτόματα"><input className={inputCls} value={f.eopyy_registry} onChange={(e) => set("eopyy_registry", e.target.value)} /></Field>
-            <Field label="Κωδικός φαρμακείου (ΣΗΣ)" hint="ανακτάται αυτόματα"><input className={inputCls} value={f.pharmacy_code} onChange={(e) => set("pharmacy_code", e.target.value)} /></Field>
+            <Field label="ΑΦΜ" hint={t("ανακτάται αυτόματα", "fetched automatically")}><input className={inputCls} value={f.afm} onChange={(e) => set("afm", e.target.value)} /></Field>
+            <Field label="ΑΜ ΕΟΠΥΥ" hint={t("ανακτάται αυτόματα", "fetched automatically")}><input className={inputCls} value={f.eopyy_registry} onChange={(e) => set("eopyy_registry", e.target.value)} /></Field>
+            <Field label={t("Κωδικός φαρμακείου (ΣΗΣ)", "Pharmacy code (ΣΗΣ)")} hint={t("ανακτάται αυτόματα", "fetched automatically")}><input className={inputCls} value={f.pharmacy_code} onChange={(e) => set("pharmacy_code", e.target.value)} /></Field>
           </div>
         </PanelCard>
 
-        <PanelCard title="Παράμετροι API ΗΔΙΚΑ">
+        <PanelCard title={t("Παράμετροι API ΗΔΙΚΑ", "ΗΔΙΚΑ API parameters")}>
           <p className="mb-4 flex items-center gap-1.5 rounded-lg bg-brand-50 px-3 py-2 text-xs text-brand-700">
-            <Link2 className="h-3.5 w-3.5" /> Το endpoint & τα integrator credentials δίνονται από την ΗΔΙΚΑ κατόπιν σύμβασης (pharm.api.support@idika.gr).
+            <Link2 className="h-3.5 w-3.5" /> {t("Το endpoint & τα integrator credentials δίνονται από την ΗΔΙΚΑ κατόπιν σύμβασης (pharm.api.support@idika.gr).", "The endpoint & integrator credentials are provided by ΗΔΙΚΑ after a contract (pharm.api.support@idika.gr).")}
           </p>
           <div className="grid gap-4 sm:grid-cols-2">
-            <Field label="Περιβάλλον">
+            <Field label={t("Περιβάλλον", "Environment")}>
               <div className="flex gap-2">
                 {(["test", "production"] as const).map((env) => (
                   <button type="button" key={env} onClick={() => selectEnv(env)}
                     className={`flex-1 rounded-lg border px-3 py-2 text-sm ${f.environment === env ? "border-brand-500 bg-brand-50 font-medium text-brand-700" : "border-slate-200 text-slate-600 hover:bg-slate-50"}`}>
-                    {env === "test" ? "Δοκιμαστικό (test)" : "Παραγωγή (production)"}
+                    {env === "test" ? t("Δοκιμαστικό (test)", "Test") : t("Παραγωγή (production)", "Production")}
                   </button>
                 ))}
               </div>
             </Field>
-            <Field label="API endpoint (base URL)" hint={customUrl ? "Προσαρμοσμένο URL" : "Συμπληρώνεται αυτόματα από το περιβάλλον"}>
+            <Field label="API endpoint (base URL)" hint={customUrl ? t("Προσαρμοσμένο URL", "Custom URL") : t("Συμπληρώνεται αυτόματα από το περιβάλλον", "Filled automatically from the environment")}>
               <input className={`${inputCls} ${customUrl ? "" : "bg-slate-50 text-slate-500"}`} value={f.base_url}
                 readOnly={!customUrl} onChange={(e) => set("base_url", e.target.value)} />
               <label className="mt-1.5 flex items-center gap-1.5 text-[11px] text-slate-400">
                 <input type="checkbox" checked={customUrl}
                   onChange={(e) => { setCustomUrl(e.target.checked); if (!e.target.checked) set("base_url", HDIKA_ENDPOINTS[f.environment]); }} />
-                Προσαρμοσμένο URL (για ειδικές περιπτώσεις)
+                {t("Προσαρμοσμένο URL (για ειδικές περιπτώσεις)", "Custom URL (for special cases)")}
               </label>
             </Field>
-            <Field label="Application API Key" hint={c?.has_api_key ? "Είναι αποθηκευμένο — άφησε κενό για να μην αλλάξει, ή γράψε νέο για αντικατάσταση." : "APPLICATION ACCESS API KEY (μοναδικό ανά εφαρμογή)"}>
+            <Field label="Application API Key" hint={c?.has_api_key ? t("Είναι αποθηκευμένο — άφησε κενό για να μην αλλάξει, ή γράψε νέο για αντικατάσταση.", "It is saved — leave empty to keep unchanged, or type a new one to replace.") : t("APPLICATION ACCESS API KEY (μοναδικό ανά εφαρμογή)", "APPLICATION ACCESS API KEY (unique per application)")}>
               {c?.has_api_key && (
                 <span className="mb-1 inline-flex items-center gap-1 text-xs font-medium text-emerald-600">
-                  <CheckCircle2 className="h-3.5 w-3.5" /> Αποθηκευμένο (κρυπτογραφημένο)
+                  <CheckCircle2 className="h-3.5 w-3.5" /> {t("Αποθηκευμένο (κρυπτογραφημένο)", "Saved (encrypted)")}
                 </span>
               )}
-              <input type="password" className={inputCls} value={f.api_key} onChange={(e) => set("api_key", e.target.value)} placeholder={c?.has_api_key ? "•••••••• (αποθηκευμένο)" : "επικόλλησε το key"} />
+              <input type="password" className={inputCls} value={f.api_key} onChange={(e) => set("api_key", e.target.value)} placeholder={c?.has_api_key ? t("•••••••• (αποθηκευμένο)", "•••••••• (saved)") : t("επικόλλησε το key", "paste the key")} />
             </Field>
-            <Field label="X-DOCTOR-IP" hint="εξωτερική IP κλήσης (αν απαιτείται)"><input className={inputCls} value={f.doctor_ip} onChange={(e) => set("doctor_ip", e.target.value)} /></Field>
+            <Field label="X-DOCTOR-IP" hint={t("εξωτερική IP κλήσης (αν απαιτείται)", "external call IP (if required)")}><input className={inputCls} value={f.doctor_ip} onChange={(e) => set("doctor_ip", e.target.value)} /></Field>
             <Field label="Client ID (integrator)"><input className={inputCls} value={f.client_id} onChange={(e) => set("client_id", e.target.value)} /></Field>
-            <Field label="Client Secret" hint={c?.has_client_secret ? "Αποθηκευμένο — κενό για να μην αλλάξει" : undefined}>
+            <Field label="Client Secret" hint={c?.has_client_secret ? t("Αποθηκευμένο — κενό για να μην αλλάξει", "Saved — leave empty to keep unchanged") : undefined}>
               <input type="password" className={inputCls} value={f.client_secret} onChange={(e) => set("client_secret", e.target.value)} placeholder={c?.has_client_secret ? "••••••••" : ""} />
             </Field>
           </div>
         </PanelCard>
 
-        <PanelCard title="Συγχρονισμός">
+        <PanelCard title={t("Συγχρονισμός", "Synchronization")}>
           <div className="grid items-end gap-4 sm:grid-cols-3">
-            <Field label="Αυτόματος συγχρονισμός">
+            <Field label={t("Αυτόματος συγχρονισμός", "Automatic sync")}>
               <select className={inputCls} value={f.sync_enabled ? "1" : "0"} onChange={(e) => set("sync_enabled", e.target.value === "1")}>
-                <option value="1">Ενεργός (αέναος)</option>
-                <option value="0">Ανενεργός</option>
+                <option value="1">{t("Ενεργός (αέναος)", "Enabled (continuous)")}</option>
+                <option value="0">{t("Ανενεργός", "Disabled")}</option>
               </select>
             </Field>
-            <Field label="Συχνότητα (λεπτά)"><input type="number" min={5} max={1440} className={inputCls} value={f.sync_interval_minutes} onChange={(e) => set("sync_interval_minutes", Number(e.target.value))} /></Field>
-            <Field label="Συγχρονισμός από (ιστορικό)" hint="Ο συγχρονισμός ΔΕΝ κατεβάζει δεδομένα πριν από αυτή την ημερομηνία (π.χ. για να μην τραβήξεις 20ετία). Πάτησε «Αποθήκευση» για να ισχύσει."><DateInput value={f.history_from?.slice(0, 10) || ""} onChange={(v) => set("history_from", v)} /></Field>
+            <Field label={t("Συχνότητα (λεπτά)", "Frequency (minutes)")}><input type="number" min={5} max={1440} className={inputCls} value={f.sync_interval_minutes} onChange={(e) => set("sync_interval_minutes", Number(e.target.value))} /></Field>
+            <Field label={t("Συγχρονισμός από (ιστορικό)", "Sync from (history)")} hint={t("Ο συγχρονισμός ΔΕΝ κατεβάζει δεδομένα πριν από αυτή την ημερομηνία (π.χ. για να μην τραβήξεις 20ετία). Πάτησε «Αποθήκευση» για να ισχύσει.", "Sync does NOT download data before this date (e.g. to avoid pulling 20 years). Click «Save» to apply.")}><DateInput value={f.history_from?.slice(0, 10) || ""} onChange={(v) => set("history_from", v)} /></Field>
           </div>
         </PanelCard>
 
         <div className="flex items-center gap-3">
           <button type="submit" disabled={save.isPending}
             className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-40">
-            {save.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />} Αποθήκευση
+            {save.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />} {t("Αποθήκευση", "Save")}
           </button>
-          {save.isSuccess && <span className="text-sm text-emerald-600">Αποθηκεύτηκε ✓</span>}
-          {save.isError && <span className="text-sm text-rose-600">Σφάλμα αποθήκευσης</span>}
+          {save.isSuccess && <span className="text-sm text-emerald-600">{t("Αποθηκεύτηκε ✓", "Saved ✓")}</span>}
+          {save.isError && <span className="text-sm text-rose-600">{t("Σφάλμα αποθήκευσης", "Save error")}</span>}
         </div>
       </form>
 
-      <PanelCard title="Ιστορικό συγχρονισμών" bodyClassName="pt-2">
+      <PanelCard title={t("Ιστορικό συγχρονισμών", "Sync history")} bodyClassName="pt-2">
         <ul className="divide-y divide-slate-100 text-sm">
           {(jobs.data?.items ?? []).slice(0, 8).map((j: any) => (
             <li key={j._id} className="flex items-center justify-between py-2.5">
@@ -423,11 +430,11 @@ export default function IngestionSettingsPage() {
                 <span className="text-slate-600">{j.type}</span>
               </div>
               <span className={`text-xs font-medium ${j.status === "success" ? "text-emerald-600" : j.status === "failed" ? "text-rose-600" : "text-slate-400"}`}>
-                {j.status} · {j.stats ? `${j.stats.inserted ?? 0} νέες / ${j.stats.duplicates ?? 0} διπλές` : ""}
+                {j.status} · {j.stats ? t(`${j.stats.inserted ?? 0} νέες / ${j.stats.duplicates ?? 0} διπλές`, `${j.stats.inserted ?? 0} new / ${j.stats.duplicates ?? 0} dup`) : ""}
               </span>
             </li>
           ))}
-          {(jobs.data?.items?.length ?? 0) === 0 && <li className="py-6 text-center text-slate-400">Καμία εργασία ακόμη</li>}
+          {(jobs.data?.items?.length ?? 0) === 0 && <li className="py-6 text-center text-slate-400">{t("Καμία εργασία ακόμη", "No jobs yet")}</li>}
         </ul>
       </PanelCard>
     </div>

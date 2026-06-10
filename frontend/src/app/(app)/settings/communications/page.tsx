@@ -5,6 +5,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Mail, MessageSquare, Send, Loader2, Check, Settings } from "lucide-react";
 import { api } from "@/lib/apiClient";
 import { PanelCard } from "@/components/ui/Card";
+import { useT } from "@/store/prefStore";
 
 type S = {
   email_configured: boolean; from_name?: string | null; from_email?: string | null;
@@ -13,6 +14,7 @@ type S = {
 };
 
 export default function CommsSettingsPage() {
+  const t = useT();
   const qc = useQueryClient();
   const settings = useQuery({ queryKey: ["comms", "settings"], queryFn: () => api<S>("/communications/settings"), retry: false });
   const [f, setF] = useState<Record<string, string | number | boolean>>({ smtp_port: 587, smtp_use_tls: true });
@@ -20,39 +22,39 @@ export default function CommsSettingsPage() {
   const set = (k: string, v: string | number | boolean) => setF((s) => ({ ...s, [k]: v }));
   const save = useMutation({ mutationFn: () => api("/communications/settings", { method: "PUT", body: JSON.stringify(f) }), onSuccess: () => qc.invalidateQueries({ queryKey: ["comms", "settings"] }) });
   const [testTo, setTestTo] = useState("");
-  const testEmail = useMutation({ mutationFn: () => api(`/communications/test-email?to=${encodeURIComponent(testTo)}`, { method: "POST" }), onError: (e: Error) => alert("Αποτυχία: " + e.message), onSuccess: () => alert("Στάλθηκε δοκιμαστικό email ✅") });
+  const testEmail = useMutation({ mutationFn: () => api(`/communications/test-email?to=${encodeURIComponent(testTo)}`, { method: "POST" }), onError: (e: Error) => alert(t("Αποτυχία: ", "Failed: ") + e.message), onSuccess: () => alert(t("Στάλθηκε δοκιμαστικό email ✅", "Test email sent ✅")) });
   const inp = "w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-brand-500 focus:outline-none";
 
   return (
-    <PanelCard title="Ρυθμίσεις αποστολέα (email & SMS)">
-      <p className="-mt-1 mb-4 text-xs text-slate-400">Τα emails φεύγουν από το <b>δικό σου</b> mail account· τα SMS μέσω Apifon. Τα στοιχεία αποθηκεύονται κρυπτογραφημένα.</p>
+    <PanelCard title={t("Ρυθμίσεις αποστολέα (email & SMS)", "Sender settings (email & SMS)")}>
+      <p className="-mt-1 mb-4 text-xs text-slate-400">{t("Τα emails φεύγουν από το ", "Emails are sent from ")}<b>{t("δικό σου", "your own")}</b>{t(" mail account· τα SMS μέσω Apifon. Τα στοιχεία αποθηκεύονται κρυπτογραφημένα.", " mail account; SMS via Apifon. Credentials are stored encrypted.")}</p>
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         <div>
-          <h3 className="mb-2 flex items-center gap-1.5 text-sm font-semibold text-slate-700"><Mail className="h-4 w-4" /> Email (SMTP του φαρμακείου)</h3>
+          <h3 className="mb-2 flex items-center gap-1.5 text-sm font-semibold text-slate-700"><Mail className="h-4 w-4" /> {t("Email (SMTP του φαρμακείου)", "Email (pharmacy SMTP)")}</h3>
           <div className="grid grid-cols-2 gap-2">
-            <label className="col-span-2 text-xs text-slate-500">Όνομα αποστολέα<input value={String(f.from_name ?? "")} onChange={(e) => set("from_name", e.target.value)} placeholder="Φαρμακείο …" className={inp} /></label>
-            <label className="col-span-2 text-xs text-slate-500">Email αποστολέα<input value={String(f.from_email ?? "")} onChange={(e) => set("from_email", e.target.value)} placeholder="info@pharmacy.gr" className={inp} /></label>
+            <label className="col-span-2 text-xs text-slate-500">{t("Όνομα αποστολέα", "Sender name")}<input value={String(f.from_name ?? "")} onChange={(e) => set("from_name", e.target.value)} placeholder={t("Φαρμακείο …", "Pharmacy …")} className={inp} /></label>
+            <label className="col-span-2 text-xs text-slate-500">{t("Email αποστολέα", "Sender email")}<input value={String(f.from_email ?? "")} onChange={(e) => set("from_email", e.target.value)} placeholder="info@pharmacy.gr" className={inp} /></label>
             <label className="text-xs text-slate-500">SMTP host<input value={String(f.smtp_host ?? "")} onChange={(e) => set("smtp_host", e.target.value)} placeholder="smtp.gmail.com" className={inp} /></label>
-            <label className="text-xs text-slate-500">Θύρα<input value={String(f.smtp_port ?? 587)} onChange={(e) => set("smtp_port", Number(e.target.value))} className={inp} /></label>
-            <label className="text-xs text-slate-500">Χρήστης<input value={String(f.smtp_username ?? "")} onChange={(e) => set("smtp_username", e.target.value)} className={inp} /></label>
-            <label className="text-xs text-slate-500">Κωδικός<input type="password" onChange={(e) => set("smtp_password", e.target.value)} placeholder={settings.data?.email_configured ? "••••• (αποθηκευμένο)" : ""} className={inp} /></label>
+            <label className="text-xs text-slate-500">{t("Θύρα", "Port")}<input value={String(f.smtp_port ?? 587)} onChange={(e) => set("smtp_port", Number(e.target.value))} className={inp} /></label>
+            <label className="text-xs text-slate-500">{t("Χρήστης", "Username")}<input value={String(f.smtp_username ?? "")} onChange={(e) => set("smtp_username", e.target.value)} className={inp} /></label>
+            <label className="text-xs text-slate-500">{t("Κωδικός", "Password")}<input type="password" onChange={(e) => set("smtp_password", e.target.value)} placeholder={settings.data?.email_configured ? t("••••• (αποθηκευμένο)", "••••• (saved)") : ""} className={inp} /></label>
           </div>
         </div>
         <div>
           <h3 className="mb-2 flex items-center gap-1.5 text-sm font-semibold text-slate-700"><MessageSquare className="h-4 w-4" /> SMS (Apifon)</h3>
           <div className="grid grid-cols-1 gap-2">
-            <label className="text-xs text-slate-500">Όνομα αποστολέα SMS<input value={String(f.sms_sender ?? "")} onChange={(e) => set("sms_sender", e.target.value)} placeholder="PHARMACY" className={inp} /></label>
-            <label className="text-xs text-slate-500">Apifon token<input onChange={(e) => set("apifon_token", e.target.value)} placeholder={settings.data?.sms_configured ? "••••• (αποθηκευμένο)" : ""} className={inp} /></label>
-            <label className="text-xs text-slate-500">Apifon secret<input type="password" onChange={(e) => set("apifon_secret", e.target.value)} placeholder={settings.data?.sms_configured ? "••••• (αποθηκευμένο)" : ""} className={inp} /></label>
-            <p className="text-[11px] text-slate-400">Τα στοιχεία SMS τα παίρνεις από τον λογαριασμό σου στην Apifon.</p>
+            <label className="text-xs text-slate-500">{t("Όνομα αποστολέα SMS", "SMS sender name")}<input value={String(f.sms_sender ?? "")} onChange={(e) => set("sms_sender", e.target.value)} placeholder="PHARMACY" className={inp} /></label>
+            <label className="text-xs text-slate-500">Apifon token<input onChange={(e) => set("apifon_token", e.target.value)} placeholder={settings.data?.sms_configured ? t("••••• (αποθηκευμένο)", "••••• (saved)") : ""} className={inp} /></label>
+            <label className="text-xs text-slate-500">Apifon secret<input type="password" onChange={(e) => set("apifon_secret", e.target.value)} placeholder={settings.data?.sms_configured ? t("••••• (αποθηκευμένο)", "••••• (saved)") : ""} className={inp} /></label>
+            <p className="text-[11px] text-slate-400">{t("Τα στοιχεία SMS τα παίρνεις από τον λογαριασμό σου στην Apifon.", "Get your SMS credentials from your Apifon account.")}</p>
           </div>
         </div>
       </div>
       <div className="mt-5 flex flex-wrap items-center gap-2">
-        <button onClick={() => save.mutate()} disabled={save.isPending} className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50">{save.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : save.isSuccess ? <Check className="h-4 w-4" /> : <Settings className="h-4 w-4" />} Αποθήκευση</button>
+        <button onClick={() => save.mutate()} disabled={save.isPending} className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50">{save.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : save.isSuccess ? <Check className="h-4 w-4" /> : <Settings className="h-4 w-4" />} {t("Αποθήκευση", "Save")}</button>
         <span className="mx-2 text-slate-300">·</span>
-        <input value={testTo} onChange={(e) => setTestTo(e.target.value)} placeholder="email για δοκιμή" className="w-52 rounded-lg border border-slate-300 px-3 py-2 text-sm" />
-        <button onClick={() => testEmail.mutate()} disabled={testEmail.isPending || !testTo} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50">{testEmail.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />} Δοκιμή email</button>
+        <input value={testTo} onChange={(e) => setTestTo(e.target.value)} placeholder={t("email για δοκιμή", "email for testing")} className="w-52 rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+        <button onClick={() => testEmail.mutate()} disabled={testEmail.isPending || !testTo} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50">{testEmail.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />} {t("Δοκιμή email", "Test email")}</button>
       </div>
     </PanelCard>
   );

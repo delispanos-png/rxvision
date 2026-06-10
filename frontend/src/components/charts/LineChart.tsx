@@ -1,6 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
+import { useT } from "@/store/prefStore";
 import { PALETTE, BASE_GRID, axisStyle } from "./theme";
 
 const ReactECharts = dynamic(() => import("echarts-for-react"), { ssr: false });
@@ -48,6 +49,7 @@ export function LineChart({
   /** Override the per-series colours (e.g. ["#ef4444", "#10b981"]). */
   colors?: string[];
 }) {
+  const t = useT();
   const resolved: LineSeries[] = series ?? [{ name, data: data ?? [] }];
   const clickable = !!onPointClick;
   const cols = colors && colors.length ? colors : LINE_COLORS;
@@ -91,7 +93,7 @@ export function LineChart({
     : undefined;
 
   return (
-    <div role="img" aria-label={ariaLabel ?? name ?? "Γράφημα γραμμής"}>
+    <div role="img" aria-label={ariaLabel ?? name ?? t("Γράφημα γραμμής", "Line chart")}>
       <ReactECharts option={option} style={{ height, width: "100%" }} notMerge lazyUpdate onEvents={onEvents} />
     </div>
   );

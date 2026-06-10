@@ -6,6 +6,7 @@ import { api, queryKeys, ApiError } from "@/lib/apiClient";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
 import { fmtEur, fmtNum } from "@/lib/formatters";
 import { KpiCard } from "@/components/kpi/KpiCard";
+import { useT } from "@/store/prefStore";
 
 type Subscription = {
   plan: string;
@@ -20,6 +21,7 @@ type Usage = {
 };
 
 export default function BillingSettingsPage() {
+  const t = useT();
   const subscription = useQuery({
     queryKey: queryKeys.subscription(),
     queryFn: () => api<Subscription>(`/subscription`),
@@ -35,7 +37,7 @@ export default function BillingSettingsPage() {
     onSuccess: (r) => {
       if (r.url && typeof window !== "undefined") window.location.href = r.url;
     },
-    onError: (e) => appAlert(e instanceof ApiError ? `Σφάλμα (${e.status})` : "Αποτυχία"),
+    onError: (e) => appAlert(e instanceof ApiError ? t(`Σφάλμα (${e.status})`, `Error (${e.status})`) : t("Αποτυχία", "Failed")),
   });
 
   const s = subscription.data;
@@ -43,15 +45,15 @@ export default function BillingSettingsPage() {
   return (
     <ModuleGuard module="settings">
       <div className="mb-6 grid grid-cols-2 gap-4 md:grid-cols-3">
-        <KpiCard label="Πλάνο" value={s?.plan ?? "—"} />
-        <KpiCard label="Κατάσταση" value={s?.status ?? "—"} />
-        <KpiCard label="Μηνιαία χρέωση" value={s ? fmtEur(s.price) : "—"} />
+        <KpiCard label={t("Πλάνο", "Plan")} value={s?.plan ?? "—"} />
+        <KpiCard label={t("Κατάσταση", "Status")} value={s?.status ?? "—"} />
+        <KpiCard label={t("Μηνιαία χρέωση", "Monthly charge")} value={s ? fmtEur(s.price) : "—"} />
       </div>
 
       <div className="mb-6 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-        <h2 className="mb-3 text-sm font-semibold text-slate-700">Χρήση</h2>
+        <h2 className="mb-3 text-sm font-semibold text-slate-700">{t("Χρήση", "Usage")}</h2>
         {usage.isLoading ? (
-          <div className="text-slate-400">Φόρτωση δεδομένων…</div>
+          <div className="text-slate-400">{t("Φόρτωση δεδομένων…", "Loading data…")}</div>
         ) : (
           <div className="space-y-3">
             {(usage.data?.items ?? []).map((u) => {
@@ -75,7 +77,7 @@ export default function BillingSettingsPage() {
       </div>
 
       <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-        <h2 className="mb-3 text-sm font-semibold text-slate-700">Αναβάθμιση πλάνου</h2>
+        <h2 className="mb-3 text-sm font-semibold text-slate-700">{t("Αναβάθμιση πλάνου", "Upgrade plan")}</h2>
         <div className="flex gap-2">
           {["starter", "pro", "enterprise"].map((p) => (
             <button

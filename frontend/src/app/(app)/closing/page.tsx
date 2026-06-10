@@ -5,6 +5,7 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, Lock, Receipt, Wallet } from "lucide-react";
 import { api, queryKeys, ApiError } from "@/lib/apiClient";
+import { useT } from "@/store/prefStore";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
 import { fmtEur, fmtNum } from "@/lib/formatters";
 import { DataTable, type Column } from "@/components/tables/DataTable";
@@ -21,20 +22,24 @@ type FundTotal = { fund_name: string; rx_count: number; value: number; claimed: 
 
 const CURRENT_PERIOD = new Date().toISOString().slice(0, 7);
 
-const discrepancyColumns: Column<Discrepancy>[] = [
-  { key: "type", header: "Τύπος" },
-  { key: "description", header: "Περιγραφή" },
-  { key: "amount", header: "Ποσό", align: "right", render: (r) => fmtEur(r.amount) },
+type T = (el: string, en: string) => string;
+const makeDiscrepancyColumns = (t: T): Column<Discrepancy>[] => [
+  { key: "type", header: t("Τύπος", "Type") },
+  { key: "description", header: t("Περιγραφή", "Description") },
+  { key: "amount", header: t("Ποσό", "Amount"), align: "right", render: (r) => fmtEur(r.amount) },
 ];
 
-const fundColumns: Column<FundTotal>[] = [
-  { key: "fund_name", header: "Ταμείο" },
-  { key: "rx_count", header: "Συνταγές", align: "right", render: (r) => fmtNum(r.rx_count) },
-  { key: "value", header: "Αξία", align: "right", render: (r) => fmtEur(r.value) },
-  { key: "claimed", header: "Αιτούμενα", align: "right", render: (r) => fmtEur(r.claimed) },
+const makeFundColumns = (t: T): Column<FundTotal>[] => [
+  { key: "fund_name", header: t("Ταμείο", "Insurance fund") },
+  { key: "rx_count", header: t("Συνταγές", "Prescriptions"), align: "right", render: (r) => fmtNum(r.rx_count) },
+  { key: "value", header: t("Αξία", "Value"), align: "right", render: (r) => fmtEur(r.value) },
+  { key: "claimed", header: t("Αιτούμενα", "Claimed"), align: "right", render: (r) => fmtEur(r.claimed) },
 ];
 
 export default function ClosingPage() {
+  const t = useT();
+  const discrepancyColumns = makeDiscrepancyColumns(t);
+  const fundColumns = makeFundColumns(t);
   const [period] = useState(CURRENT_PERIOD);
   const qc = useQueryClient();
 
@@ -54,7 +59,7 @@ export default function ClosingPage() {
   const lock = useMutation({
     mutationFn: () => api<{ locked: boolean }>(`/closing/${period}/lock`, { method: "POST" }),
     onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.closingControl(period) }),
-    onError: (e) => appAlert(e instanceof ApiError ? `Αποτυχία κλειδώματος (${e.status})` : "Αποτυχία κλειδώματος"),
+    onError: (e) => appAlert(e instanceof ApiError ? t(`Αποτυχία κλειδώματος (${e.status})`, `Lock failed (${e.status})`) : t("Αποτυχία κλειδώματος", "Lock failed")),
   });
 
   const checks = control.data?.checks ?? [];
@@ -71,8 +76,8 @@ export default function ClosingPage() {
     <ModuleGuard module="monthly_closing">
       <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight text-slate-900">Κλείσιμο μήνα — {period}</h1>
-          <p className="mt-1 text-sm text-slate-500">Έλεγχος, ασυμφωνίες και συγκεντρωτικά ανά ταμείο</p>
+          <h1 className="text-2xl font-bold tracking-tight text-slate-900">{t("Κλείσιμο μήνα", "Month closing")} — {period}</h1>
+          <p className="mt-1 text-sm text-slate-500">{t("Έλεγχος, ασυμφωνίες και συγκεντρωτικά ανά ταμείο", "Control, discrepancies and totals per fund")}</p>
         </div>
         <button
           type="button"
@@ -81,21 +86,21 @@ export default function ClosingPage() {
           className="inline-flex items-center gap-2 rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50"
         >
           <Lock className="h-4 w-4" />
-          {locked ? "Κλειδωμένο" : lock.isPending ? "Κλείδωμα…" : "Κλείδωμα περιόδου"}
+          {locked ? t("Κλειδωμένο", "Locked") : lock.isPending ? t("Κλείδωμα…", "Locking…") : t("Κλείδωμα περιόδου", "Lock period")}
         </button>
       </div>
 
       <div className="space-y-4">
         {/* KPI row */}
         <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
-          <KpiCard label="Συνταγές" value={fmtNum(totalRx)} sub="περιόδου" icon={Receipt} accent="indigo" />
-          <KpiCard label="Σύνολο ταμείων" value={fmtEur(totalClaimed)} sub="αιτούμενα" icon={Wallet} accent="amber" />
-          <KpiCard label="Ασυμφωνίες" value={fmtNum(discrItems.length)} sub="ελλείψεις" icon={AlertTriangle} accent={discrItems.length ? "rose" : "green"} />
-          <KpiCard label="Κατάσταση" value={locked ? "Κλειδωμένο" : allOk ? "Έτοιμο" : "Σε έλεγχο"} sub={`${checks.filter((c) => c.ok).length}/${checks.length} έλεγχοι ΟΚ`} icon={Lock} accent={locked ? "green" : "violet"} />
+          <KpiCard label={t("Συνταγές", "Prescriptions")} value={fmtNum(totalRx)} sub={t("περιόδου", "for period")} icon={Receipt} accent="indigo" />
+          <KpiCard label={t("Σύνολο ταμείων", "Funds total")} value={fmtEur(totalClaimed)} sub={t("αιτούμενα", "claimed")} icon={Wallet} accent="amber" />
+          <KpiCard label={t("Ασυμφωνίες", "Discrepancies")} value={fmtNum(discrItems.length)} sub={t("ελλείψεις", "missing")} icon={AlertTriangle} accent={discrItems.length ? "rose" : "green"} />
+          <KpiCard label={t("Κατάσταση", "Status")} value={locked ? t("Κλειδωμένο", "Locked") : allOk ? t("Έτοιμο", "Ready") : t("Σε έλεγχο", "In review")} sub={t(`${checks.filter((c) => c.ok).length}/${checks.length} έλεγχοι ΟΚ`, `${checks.filter((c) => c.ok).length}/${checks.length} checks OK`)} icon={Lock} accent={locked ? "green" : "violet"} />
         </div>
 
         {/* checklist */}
-        <PanelCard title="Λίστα ελέγχου" bodyClassName="space-y-2">
+        <PanelCard title={t("Λίστα ελέγχου", "Checklist")} bodyClassName="space-y-2">
           <QueryState isLoading={control.isLoading} isError={control.isError} onRetry={() => control.refetch()}>
             {checks.map((c) => (
               <div
@@ -104,7 +109,7 @@ export default function ClosingPage() {
               >
                 <span className="text-slate-700">{c.label}</span>
                 <span className={c.ok ? "font-medium text-emerald-600" : "font-medium text-rose-600"}>
-                  {c.ok ? "✓ ΟΚ" : `✗ ${c.detail ?? "Πρόβλημα"}`}
+                  {c.ok ? t("✓ ΟΚ", "✓ OK") : `✗ ${c.detail ?? t("Πρόβλημα", "Problem")}`}
                 </span>
               </div>
             ))}
@@ -113,7 +118,7 @@ export default function ClosingPage() {
 
         {/* fund totals chart */}
         {top.length > 0 && (
-          <PanelCard title="Αιτούμενα ανά ταμείο">
+          <PanelCard title={t("Αιτούμενα ανά ταμείο", "Claimed per fund")}>
             <BarChart
               horizontal
               height={Math.max(220, top.length * 38)}
@@ -125,17 +130,17 @@ export default function ClosingPage() {
         )}
 
         {/* discrepancies */}
-        <PanelCard title="Ασυμφωνίες / ελλείψεις" bodyClassName="pt-2">
+        <PanelCard title={t("Ασυμφωνίες / ελλείψεις", "Discrepancies / missing")} bodyClassName="pt-2">
           <DataTable pageSize={20}
             columns={discrepancyColumns}
             rows={discrItems}
             rowKey={(r) => r.id}
-            empty="Δεν εντοπίστηκαν ασυμφωνίες."
+            empty={t("Δεν εντοπίστηκαν ασυμφωνίες.", "No discrepancies found.")}
           />
         </PanelCard>
 
         {/* fund totals table */}
-        <PanelCard title="Συγκεντρωτικά ανά ταμείο" bodyClassName="pt-2">
+        <PanelCard title={t("Συγκεντρωτικά ανά ταμείο", "Totals per fund")} bodyClassName="pt-2">
           <DataTable pageSize={20} columns={fundColumns} rows={funds} rowKey={(r) => r.fund_name} />
         </PanelCard>
       </div>

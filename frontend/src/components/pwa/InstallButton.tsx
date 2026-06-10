@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Download, Share } from "lucide-react";
+import { useT } from "@/store/prefStore";
 
 type BIPEvent = Event & { prompt: () => Promise<void>; userChoice: Promise<{ outcome: string }> };
 
@@ -9,6 +10,7 @@ type BIPEvent = Event & { prompt: () => Promise<void>; userChoice: Promise<{ out
  * captured beforeinstallprompt event. iOS Safari: no such event → show Add-to-Home
  * instructions. Hidden when already running installed (standalone). */
 export function InstallButton() {
+  const t = useT();
   const [deferred, setDeferred] = useState<BIPEvent | null>(null);
   const [iosHint, setIosHint] = useState(false);
   const [installed, setInstalled] = useState(false);
@@ -46,13 +48,13 @@ export function InstallButton() {
         onClick={onClick}
         className="flex items-center gap-1.5 rounded-lg border border-brand-200 bg-brand-50 px-2.5 py-1.5 text-sm font-medium text-brand-700 hover:bg-brand-100"
       >
-        <Download className="h-4 w-4" /> <span className="hidden sm:inline">Εγκατάσταση</span>
+        <Download className="h-4 w-4" /> <span className="hidden sm:inline">{t("Εγκατάσταση", "Install")}</span>
       </button>
       {iosHint && (
         <div className="absolute right-0 top-full z-50 mt-2 w-64 rounded-xl border border-slate-200 bg-white p-3 text-xs text-slate-600 shadow-pop">
-          <div className="mb-1 font-semibold text-slate-800">Εγκατάσταση στο iPhone</div>
-          Πατήστε <Share className="inline h-3.5 w-3.5" /> <b>Κοινή χρήση</b> και μετά
-          <b> «Προσθήκη στην οθόνη Αφετηρίας»</b>.
+          <div className="mb-1 font-semibold text-slate-800">{t("Εγκατάσταση στο iPhone", "Install on iPhone")}</div>
+          {t("Πατήστε", "Tap")} <Share className="inline h-3.5 w-3.5" /> <b>{t("Κοινή χρήση", "Share")}</b> {t("και μετά", "then")}
+          <b> {t("«Προσθήκη στην οθόνη Αφετηρίας»", "“Add to Home Screen”")}</b>.
         </div>
       )}
     </div>
