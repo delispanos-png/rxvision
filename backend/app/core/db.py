@@ -54,6 +54,7 @@ INDEXES: list[tuple[str, list[tuple[str, int]], dict]] = [
     ("prescription_executions", [("tenant_id", 1), ("icd10", 1)], {}),
     ("prescription_executions", [("tenant_id", 1), ("next_open_date", 1)], {}),
     ("prescription_executions", [("tenant_id", 1), ("patient_ref", 1)], {}),
+    ("prescription_executions", [("tenant_id", 1), ("repeat_root", 1)], {}),
     ("prescription_items", [("tenant_id", 1), ("execution_id", 1)], {}),
     ("prescription_items", [("tenant_id", 1), ("product_id", 1), ("executed_at", -1)], {}),
     ("prescription_items", [("tenant_id", 1), ("category", 1), ("executed_at", -1)], {}),

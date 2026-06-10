@@ -133,6 +133,7 @@ class IngestionEngine:
             **nat_key, "pharmacy_id": None, "executed_at": ex.executed_at,
             "fund_id": fund_id, "doctor_id": doctor_id, "patient_ref": patient_ref,
             "repeat_current": ex.repeat_current, "repeat_total": ex.repeat_total,
+            "repeat_root": ex.repeat_root, "valid_from": ex.valid_from, "valid_until": ex.valid_until,
             "icd10": ex.icd10, "amount_total": amount_total, "amount_claimed": amount_claimed,
             "patient_share": patient_share, "wholesale_cost": wholesale_cost,
             "status": ("partial" if any(not i.is_executed for i in ex.items) else "executed"),

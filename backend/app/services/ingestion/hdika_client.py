@@ -361,13 +361,17 @@ class HdikaClient:
         elif sum(i.retail_price * i.quantity for i in items) == 0 and total > 0:
             items[0].retail_price = total               # catalog miss → keep revenue on line 1
 
-        vu = cda.get("valid_until")
-        valid_until = None
-        if isinstance(vu, str) and len(vu) == 8 and vu.isdigit():
-            try:
-                valid_until = datetime(int(vu[:4]), int(vu[4:6]), int(vu[6:8]), tzinfo=timezone.utc)
-            except ValueError:
-                valid_until = None
+        def _ymd(v):
+            if isinstance(v, str) and len(v) == 8 and v.isdigit():
+                try:
+                    return datetime(int(v[:4]), int(v[4:6]), int(v[6:8]), tzinfo=timezone.utc)
+                except ValueError:
+                    return None
+            return None
+        valid_until = _ymd(cda.get("valid_until"))
+        valid_from = _ymd(cda.get("valid_from"))
+        # repeat chain key: the FIRST prescription's barcode (id root 1.1.4.2), else self = root
+        repeat_root = cda.get("repeat_root") or barcode
 
         fund_name = _first(fund_d, "name") or cda_pat.get("fund_name") or "ΕΟΠΥΥ"
         fund_code = str(_first(fund_d, "shortName", "id", default="") or cda_pat.get("fund_code") or "EOPYY")
@@ -393,6 +397,8 @@ class HdikaClient:
             patient_share=share,
             amount_total=total,        # ΗΔΙΚΑ retail (totalValue+totalDifference) — authoritative
             valid_until=valid_until,
+            valid_from=valid_from,
+            repeat_root=repeat_root,
         )
 
     def _get_xml(self, path: str, params: dict) -> ET.Element:

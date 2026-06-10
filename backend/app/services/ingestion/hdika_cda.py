@@ -139,16 +139,27 @@ def parse_cda(text: str) -> dict:
             })
     out["has_unexecuted"] = any_unexec
 
-    # ── treatment window (effectiveTime high) → recurrence signal for the forecast ──
-    # The latest <high value="YYYYMMDD"> across the dosing effectiveTimes is when the
-    # treatment ends; if it extends past the next refill, the prescription recurs.
-    highs = []
+    # ── repeat chain: id[root=1.1.4.2].extension = barcode of the FIRST (original)
+    # prescription when this is a repeat. Absent ⇒ this prescription IS the root. ──
+    for idel in _iter(root, "id"):
+        if idel.get("root") == "1.1.4.2" and idel.get("extension"):
+            out["repeat_root"] = idel.get("extension")
+            break
+
+    # ── treatment window (effectiveTime low/high) → monthly repeat schedule + recurrence. ──
+    highs, lows = [], []
     for et in _iter(root, "high"):
         v = (et.get("value") or "")[:8]
         if len(v) == 8 and v.isdigit():
             highs.append(v)
+    for et in _iter(root, "low"):
+        v = (et.get("value") or "")[:8]
+        if len(v) == 8 and v.isdigit():
+            lows.append(v)
     if highs:
         out["valid_until"] = max(highs)  # YYYYMMDD
+    if lows:
+        out["valid_from"] = min(lows)    # YYYYMMDD — schedule start
     return out
 
 
