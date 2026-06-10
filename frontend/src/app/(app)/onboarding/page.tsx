@@ -13,11 +13,6 @@ type Tenant = {
   country?: string;
 } & Record<string, unknown>;
 
-type SyncStats = {
-  inserted: number;
-  duplicates: number;
-};
-
 function StepBadge({ n }: { n: number }) {
   return (
     <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-brand-700 text-sm font-semibold text-white">
@@ -30,11 +25,15 @@ export default function OnboardingPage() {
   const t = useT();
   const router = useRouter();
   const [credsSaved, setCredsSaved] = useState(false);
-  const [syncStats, setSyncStats] = useState<SyncStats | null>(null);
 
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [pharmacyCode, setPharmacyCode] = useState("");
+
+  const today = new Date().toISOString().slice(0, 10);
+  const [dateFrom, setDateFrom] = useState(`${new Date().getFullYear() - 1}-01-01`);
+  const [dateTo, setDateTo] = useState(today);
+  const [queued, setQueued] = useState(false);
 
   const me = useQuery({
     queryKey: queryKeys.me(),
@@ -57,10 +56,10 @@ export default function OnboardingPage() {
       appAlert(e instanceof ApiError ? t(`Σφάλμα (${e.status})`, `Error (${e.status})`) : t("Αποτυχία αποθήκευσης", "Save failed")),
   });
 
-  const triggerSync = useMutation({
-    mutationFn: () => api<SyncStats>("/ingestion/hdika/sync", { method: "POST" }),
-    onSuccess: (data) => setSyncStats(data),
-    onError: (e) => appAlert(e instanceof ApiError ? t(`Σφάλμα (${e.status})`, `Error (${e.status})`) : t("Αποτυχία συγχρονισμού", "Sync failed")),
+  const triggerBackfill = useMutation({
+    mutationFn: () => api(`/ingestion/hdika/backfill?date_from=${dateFrom}&date_to=${dateTo}`, { method: "POST" }),
+    onSuccess: () => setQueued(true),
+    onError: (e) => appAlert(e instanceof ApiError ? t(`Σφάλμα (${e.status})`, `Error (${e.status})`) : t("Αποτυχία άντλησης", "Download failed")),
   });
 
   if (me.isLoading || tenant.isLoading) {
@@ -165,20 +164,30 @@ export default function OnboardingPage() {
             <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
               <div className="mb-3 flex items-center gap-3">
                 <StepBadge n={2} />
-                <h2 className="text-sm font-semibold text-slate-700">{t("Πρώτος συγχρονισμός", "First sync")}</h2>
+                <h2 className="text-sm font-semibold text-slate-700">{t("Άντληση ιστορικών δεδομένων", "Download historical data")}</h2>
+              </div>
+              <p className="mb-3 text-sm text-slate-500">{t("Διάλεξε από πότε μέχρι πότε να κατεβάσουμε τις εκτελέσεις συνταγών σου από την ΗΔΙΚΑ.", "Choose the date range to download your prescription executions from ΗΔΙΚΑ.")}</p>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-slate-600">{t("Από", "From")}</label>
+                  <input type="date" value={dateFrom} max={dateTo} onChange={(e) => setDateFrom(e.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-slate-600">{t("Έως", "To")}</label>
+                  <input type="date" value={dateTo} min={dateFrom} max={today} onChange={(e) => setDateTo(e.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+                </div>
               </div>
               <button
                 type="button"
-                onClick={() => triggerSync.mutate()}
-                disabled={triggerSync.isPending}
-                className="rounded-lg bg-brand-700 px-4 py-2 text-sm font-medium text-white hover:bg-brand-800 disabled:opacity-50"
+                onClick={() => triggerBackfill.mutate()}
+                disabled={triggerBackfill.isPending || !dateFrom || !dateTo}
+                className="mt-3 rounded-lg bg-brand-700 px-4 py-2 text-sm font-medium text-white hover:bg-brand-800 disabled:opacity-50"
               >
-                {triggerSync.isPending ? t("Συγχρονισμός…", "Syncing…") : t("Πρώτος συγχρονισμός", "First sync")}
+                {triggerBackfill.isPending ? t("Έναρξη…", "Starting…") : t("Κατέβασμα δεδομένων", "Download data")}
               </button>
-              {syncStats && (
-                <div className="mt-3 rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-700">
-                  <div>{t("Νέες εγγραφές:", "New records:")} {syncStats.inserted}</div>
-                  <div>{t("Διπλότυπα:", "Duplicates:")} {syncStats.duplicates}</div>
+              {queued && (
+                <div className="mt-3 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+                  {t(`✓ Η άντληση ${dateFrom} → ${dateTo} ξεκίνησε. Δες την πρόοδο στο «Ιστορικό συγχρονισμών» — μπορείς να συνεχίσεις στο Dashboard.`, `✓ Download ${dateFrom} → ${dateTo} started. Track progress in "Sync history" — you can continue to the Dashboard.`)}
                 </div>
               )}
             </div>
