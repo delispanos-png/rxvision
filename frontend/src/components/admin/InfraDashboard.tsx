@@ -72,52 +72,63 @@ function Topology({ infra }: { infra: Infra }) {
   const apps = infra.servers.filter((s) => s.role === "app");
   const dbs = infra.servers.filter((s) => s.role === "db");
   const net = infra.networks[0];
-  const Node = ({ children, tone }: { children: React.ReactNode; tone: string }) => (
-    <div className={`rounded-xl border px-3 py-2 text-center text-xs ${tone}`}>{children}</div>
+  const W = 720, H = 510;
+  const internet = { x: 360, y: 40 };
+  const lbXY = { x: 360, y: 150 };
+  const appXY = apps.map((s, i) => ({ s, x: Math.round(W * (i + 1) / (apps.length + 1)), y: 290 }));
+  const dbXY = { x: 250, y: 440 };
+  const stXY = { x: 505, y: 440 };
+
+  // directed edges (source → target = real data flow)
+  const edges: { id: string; d: string }[] = [];
+  if (lb) {
+    edges.push({ id: "e0", d: `M${internet.x},${internet.y + 26} L${lbXY.x},${lbXY.y - 26}` });
+    appXY.forEach((a, i) => edges.push({ id: `la${i}`, d: `M${lbXY.x},${lbXY.y + 26} C${lbXY.x},${lbXY.y + 78} ${a.x},${a.y - 62} ${a.x},${a.y - 28}` }));
+  }
+  if (dbs.length) appXY.forEach((a, i) => edges.push({ id: `ad${i}`, d: `M${a.x},${a.y + 28} C${a.x},${a.y + 86} ${dbXY.x},${dbXY.y - 62} ${dbXY.x},${dbXY.y - 28}` }));
+  if (infra.storage && dbs.length) edges.push({ id: "ds", d: `M${dbXY.x + 58},${dbXY.y} L${stXY.x - 60},${stXY.y}` });
+
+  const pct = (v: number, t: number) => `${(v / t) * 100}%`;
+  const Card = ({ x, y, tone, children }: { x: number; y: number; tone: string; children: React.ReactNode }) => (
+    <div className={`absolute z-10 -translate-x-1/2 -translate-y-1/2 rounded-xl border px-3 py-1.5 text-center text-xs shadow-sm ${tone}`}
+      style={{ left: pct(x, W), top: pct(y, H), minWidth: 112 }}>{children}</div>
   );
-  const Flow = () => (
-    <div className="relative h-6 w-0.5 bg-gradient-to-b from-slate-200 to-slate-300 dark:from-slate-700 dark:to-slate-600">
-      {[0, 0.6, 1.2].map((d) => (
-        <span key={d} className="absolute left-1/2 top-0 h-1.5 w-1.5 rounded-full bg-brand-500"
-          style={{ animation: `rxFlow 1.8s linear ${d}s infinite`, boxShadow: "0 0 6px 1px rgba(99,102,241,0.7)" }} />
-      ))}
-    </div>
-  );
+
   return (
-    <div className="rounded-2xl border border-slate-200 bg-gradient-to-b from-slate-50 to-white p-5 dark:border-slate-700 dark:from-slate-900 dark:to-slate-950">
-      <h3 className="mb-4 flex items-center gap-2 text-sm font-semibold text-slate-700 dark:text-slate-200"><Network className="h-4 w-4" /> Τοπολογία δικτύου</h3>
-      <div className="flex flex-col items-center gap-2">
-        <Node tone="border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-800 dark:bg-sky-950 dark:text-sky-300"><Globe className="mx-auto mb-0.5 h-4 w-4" />Internet / Cloudflare<div className="text-[10px] opacity-70">app.rxvision.gr</div></Node>
-        <Flow />
-        {lb && <Node tone="border-brand-200 bg-brand-50 text-brand-700 dark:border-brand-800 dark:bg-brand-950 dark:text-brand-300"><Scale className="mx-auto mb-0.5 h-4 w-4" />{lb.name}<div className="font-mono text-[10px] opacity-70">{lb.public_ip}</div></Node>}
-        <Flow />
-        <div className="relative w-full overflow-hidden rounded-lg bg-emerald-50 py-1 text-center text-[11px] font-medium text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">
-          <span className="pointer-events-none absolute inset-0" style={{ background: "linear-gradient(90deg, transparent, rgba(16,185,129,0.28), transparent)", backgroundSize: "200% 100%", animation: "rxShimmer 2.5s linear infinite" }} />
-          <span className="relative">Private Network {net ? `— ${net.range}` : ""}</span>
-        </div>
-        <div className="mt-1 flex flex-wrap items-start justify-center gap-3">
-          {apps.map((s) => (
-            <Node key={s.name} tone="border-slate-200 bg-white text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">
-              <Server className="mx-auto mb-0.5 h-4 w-4 text-brand-600" />{s.name}<div className="font-mono text-[10px] opacity-70">{s.private_ip}</div>
-              <span className={`mt-1 inline-block h-1.5 w-1.5 rounded-full ${s.status === "running" ? "bg-emerald-500" : "bg-rose-500"}`} />
-            </Node>
-          ))}
-        </div>
-        {dbs.length > 0 && <Flow />}
-        <div className="flex flex-wrap items-start justify-center gap-3">
-          {dbs.map((s) => (
-            <Node key={s.name} tone="border-violet-200 bg-violet-50 text-violet-700 dark:border-violet-800 dark:bg-violet-950 dark:text-violet-300">
-              <Database className="mx-auto mb-0.5 h-4 w-4" />{s.name}<div className="font-mono text-[10px] opacity-70">{s.private_ip}</div><div className="text-[10px] opacity-70">MongoDB + Redis</div>
-            </Node>
-          ))}
-          {infra.storage && (
-            <Node tone="border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-300">
-              <HardDrive className="mx-auto mb-0.5 h-4 w-4" />Backup Storage
-              <div className="font-mono text-[10px] opacity-70">{infra.storage.host || "—"}</div>
-              <div className="text-[10px] opacity-70">{infra.storage.configured ? "offsite backups" : "μη ρυθμισμένο"}</div>
-            </Node>
-          )}
-        </div>
+    <div className="rounded-2xl border border-slate-200 bg-gradient-to-b from-slate-50 to-white p-4 dark:border-slate-700 dark:from-slate-900 dark:to-slate-950">
+      <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold text-slate-700 dark:text-slate-200"><Network className="h-4 w-4" /> Τοπολογία δικτύου — ροή δεδομένων</h3>
+      <div className="relative mx-auto w-full" style={{ aspectRatio: `${W} / ${H}`, maxWidth: 680 }}>
+        <svg viewBox={`0 0 ${W} ${H}`} className="absolute inset-0 h-full w-full" preserveAspectRatio="xMidYMid meet">
+          <defs>
+            <filter id="rxglow" x="-60%" y="-60%" width="220%" height="220%">
+              <feGaussianBlur stdDeviation="2.4" result="b" /><feMerge><feMergeNode in="b" /><feMergeNode in="SourceGraphic" /></feMerge>
+            </filter>
+            {edges.map((e) => <path key={e.id} id={e.id} d={e.d} fill="none" />)}
+          </defs>
+          <rect x="0" y="214" width={W} height="26" rx="7" className="fill-emerald-50 dark:fill-emerald-950" />
+          <text x={W / 2} y="231" textAnchor="middle" className="fill-emerald-700 dark:fill-emerald-300" fontSize="11" fontWeight="600">Private Network{net?.range ? ` — ${net.range}` : ""}</text>
+          {edges.map((e) => <use key={`l${e.id}`} href={`#${e.id}`} className="stroke-slate-300 dark:stroke-slate-600" strokeWidth="2" fill="none" />)}
+          {edges.flatMap((e) => [0, 1.1].map((delay) => (
+            <circle key={`${e.id}-${delay}`} r="3.6" className="fill-brand-500" filter="url(#rxglow)">
+              <animateMotion dur="2.2s" begin={`${delay}s`} repeatCount="indefinite"><mpath href={`#${e.id}`} /></animateMotion>
+            </circle>
+          )))}
+        </svg>
+
+        <Card x={internet.x} y={internet.y} tone="border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-800 dark:bg-sky-950 dark:text-sky-300"><Globe className="mx-auto mb-0.5 h-3.5 w-3.5" />Internet / Cloudflare<div className="text-[9px] opacity-70">app.rxvision.gr</div></Card>
+        {lb && <Card x={lbXY.x} y={lbXY.y} tone="border-brand-200 bg-brand-50 text-brand-700 dark:border-brand-800 dark:bg-brand-950 dark:text-brand-300"><Scale className="mx-auto mb-0.5 h-3.5 w-3.5" />{lb.name}<div className="font-mono text-[9px] opacity-70">{lb.public_ip}</div></Card>}
+        {appXY.map((a) => (
+          <Card key={a.s.name} x={a.x} y={a.y} tone="border-slate-200 bg-white text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">
+            <Server className="mx-auto mb-0.5 h-3.5 w-3.5 text-brand-600" />{a.s.name}<div className="font-mono text-[9px] opacity-70">{a.s.private_ip}</div>
+            <span className={`mt-0.5 inline-block h-1.5 w-1.5 rounded-full ${a.s.status === "running" ? "bg-emerald-500" : "bg-rose-500"}`} />
+          </Card>
+        ))}
+        {dbs.map((s) => (
+          <Card key={s.name} x={dbXY.x} y={dbXY.y} tone="border-violet-200 bg-violet-50 text-violet-700 dark:border-violet-800 dark:bg-violet-950 dark:text-violet-300"><Database className="mx-auto mb-0.5 h-3.5 w-3.5" />{s.name}<div className="font-mono text-[9px] opacity-70">{s.private_ip}</div><div className="text-[9px] opacity-70">MongoDB + Redis</div></Card>
+        ))}
+        {infra.storage && (
+          <Card x={stXY.x} y={stXY.y} tone="border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-300"><HardDrive className="mx-auto mb-0.5 h-3.5 w-3.5" />Backup Storage<div className="font-mono text-[9px] opacity-70">{infra.storage.host || "—"}</div><div className="text-[9px] opacity-70">customer data backup</div></Card>
+        )}
       </div>
     </div>
   );
