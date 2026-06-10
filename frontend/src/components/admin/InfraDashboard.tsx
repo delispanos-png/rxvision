@@ -13,7 +13,7 @@ type Srv = {
 type LB = { name: string; public_ip: string | null; private_ip: string | null; services: string[]; targets: { name: string; healthy: boolean | null }[] };
 type Net = { name: string; range: string | null; members: string[] };
 type Store = { configured: boolean; host: string | null; path: string | null };
-type Infra = { servers: Srv[]; load_balancers: LB[]; networks: Net[]; storage: Store | null; fetched_at: string };
+type Infra = { servers: Srv[]; load_balancers: LB[]; networks: Net[]; storage: Store | null; hetzner_ok?: boolean; fetched_at: string };
 
 const barColor = (p: number) => (p >= 85 ? "bg-rose-500" : p >= 60 ? "bg-amber-500" : "bg-emerald-500");
 
@@ -126,6 +126,12 @@ export function InfraDashboard() {
         <h2 className="flex items-center gap-2 text-lg font-bold text-slate-900 dark:text-slate-100"><Server className="h-5 w-5 text-brand-600" /> Servers</h2>
         <span className="inline-flex items-center gap-1 text-xs text-slate-400"><RefreshCw className={`h-3 w-3 ${q.isFetching ? "animate-spin" : ""}`} /> live · κάθε 12s</span>
       </div>
+
+      {infra.hetzner_ok === false && (
+        <div className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-200">
+          ⚠️ Το <b>Hetzner token</b> λείπει ή είναι άκυρο — δείχνω μόνο τους κόμβους που στέλνουν live metrics. Βάλε έγκυρο token (64 χαρακτήρων) στο πεδίο πάνω για να δεις servers, specs, Load Balancer & δίκτυο.
+        </div>
+      )}
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
         {infra.servers.map((s) => <ServerCard key={s.name} s={s} />)}

@@ -143,23 +143,10 @@ async def _hetzner_cpu(cl: httpx.AsyncClient, h: dict, sid: int) -> float | None
         return None
 
 
-@router.get("/infra")
-async def infra(ctx: PlatformContext = Depends(get_platform_admin)):
-    """Live infrastructure topology — servers (+ specs, status, live metrics), the load
-    balancer (+ target health) and the private network. Powers the admin infra dashboard."""
-    c = await _cfg()
-    token = c.get("hetzner_token")
-    if not token:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Δεν έχει αποθηκευτεί Hetzner token.")
+async def _hetzner_topology(token: str, live: dict) -> tuple[list, list, list]:
+    """Build (servers, load_balancers, networks) from the Hetzner API. Raises on an
+    invalid token / non-200 so the caller can fall back to the live-metrics view."""
     h = {"Authorization": f"Bearer {token}"}
-
-    # live RAM/CPU/load reported by each node's agent (node_metrics), keyed by node name
-    live: dict[str, dict] = {}
-    cutoff = datetime.now(tz=timezone.utc) - timedelta(minutes=3)
-    async for m in shared_db()["node_metrics"].find({}):
-        m["fresh"] = bool(m.get("ts") and m["ts"] > cutoff)
-        live[m.get("node") or m.get("_id")] = m
-
     async with httpx.AsyncClient(timeout=20) as cl:
         srv_r, lb_r, net_r, st_r = await asyncio.gather(
             cl.get("https://api.hetzner.cloud/v1/servers", headers=h),
@@ -167,7 +154,9 @@ async def infra(ctx: PlatformContext = Depends(get_platform_admin)):
             cl.get("https://api.hetzner.cloud/v1/networks", headers=h),
             cl.get("https://api.hetzner.cloud/v1/server_types", headers=h),
         )
-        servers_raw = srv_r.json().get("servers", []) if srv_r.status_code == 200 else []
+        if srv_r.status_code != 200:
+            raise RuntimeError(f"hetzner {srv_r.status_code}")  # e.g. 401 invalid token
+        servers_raw = srv_r.json().get("servers", [])
         types = {t["id"]: t for t in (st_r.json().get("server_types", []) if st_r.status_code == 200 else [])}
         # CPU per server (parallel, best-effort)
         cpus = await asyncio.gather(*[_hetzner_cpu(cl, h, s["id"]) for s in servers_raw])
@@ -210,9 +199,48 @@ async def infra(ctx: PlatformContext = Depends(get_platform_admin)):
         nets = [{"name": n["name"], "range": n.get("ip_range"),
                  "members": [str(x) for x in n.get("servers", [])]}
                 for n in (net_r.json().get("networks", []) if net_r.status_code == 200 else [])]
+    return servers, lbs, nets
+
+
+@router.get("/infra")
+async def infra(ctx: PlatformContext = Depends(get_platform_admin)):
+    """Live infrastructure topology. Degrades gracefully — if the Hetzner token is missing
+    or invalid it still shows the nodes actively reporting metrics, with hetzner_ok=false."""
+    c = await _cfg()
+    token = c.get("hetzner_token")
+
+    live: dict[str, dict] = {}
+    cutoff = datetime.now(tz=timezone.utc) - timedelta(minutes=3)
+    async for m in shared_db()["node_metrics"].find({}):
+        m["fresh"] = bool(m.get("ts") and m["ts"] > cutoff)
+        live[m.get("node") or m.get("_id")] = m
+
+    servers: list = []
+    lbs: list = []
+    nets: list = []
+    hetzner_ok = False
+    if token:
+        try:
+            servers, lbs, nets = await _hetzner_topology(token, live)
+            hetzner_ok = True
+        except Exception:  # noqa: BLE001 — invalid/expired token or API hiccup
+            hetzner_ok = False
+
+    if not hetzner_ok:  # fall back to the nodes actively reporting metrics
+        for name, lm in sorted(live.items()):
+            servers.append({
+                "name": name, "role": _role(name),
+                "status": "running" if lm.get("fresh") else "unknown",
+                "type": None, "cores": None, "memory_gb": None, "disk_gb": None,
+                "public_ip": None, "private_ip": None, "location": None,
+                "cpu": lm.get("cpu") if lm.get("fresh") else None,
+                "ram_pct": lm.get("ram_pct") if lm.get("fresh") else None,
+                "load": lm.get("load") if lm.get("fresh") else None,
+                "metrics_live": bool(lm.get("fresh")),
+            })
 
     storage = {"configured": bool(c.get("storage_password")), "host": c.get("storage_host"),
                "path": c.get("storage_path")} if c.get("storage_host") else None
 
     return {"servers": servers, "load_balancers": lbs, "networks": nets, "storage": storage,
-            "fetched_at": datetime.now(tz=timezone.utc).isoformat()}
+            "hetzner_ok": hetzner_ok, "fetched_at": datetime.now(tz=timezone.utc).isoformat()}
