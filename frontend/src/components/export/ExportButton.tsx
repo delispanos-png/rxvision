@@ -54,18 +54,18 @@ export function ExportButton({
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
-        className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+        className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
       >
         {busy ? "Εξαγωγή…" : label} ▾
       </button>
       {open && (
-        <div className="absolute right-0 z-10 mt-1 w-32 rounded-lg border border-slate-200 bg-white py-1 shadow-lg">
+        <div className="absolute right-0 z-10 mt-1 w-32 rounded-lg border border-slate-200 bg-white py-1 shadow-lg dark:border-slate-700 dark:bg-slate-800">
           {(["csv", "xlsx", "pdf"] as ExportFormat[]).map((f) => (
             <button
               key={f}
               type="button"
               onClick={() => start(f)}
-              className="block w-full px-4 py-2 text-left text-sm text-slate-700 hover:bg-slate-50"
+              className="block w-full px-4 py-2 text-left text-sm text-slate-700 hover:bg-slate-50 dark:text-slate-200 dark:hover:bg-slate-700"
             >
               {f.toUpperCase()}
             </button>

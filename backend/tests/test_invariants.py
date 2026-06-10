@@ -549,3 +549,65 @@ def test_ssrf_guard_blocks_internal_allows_public():
     # host off the allow-list is rejected even if public
     with pytest.raises(UnsafeUrlError):
         assert_safe_outbound_url("https://8.8.8.8/", allowed_host_suffixes=["e-prescription.gr"])
+
+
+# ── THE rule: BaseRepository enforces tenant isolation by construction ─────────
+# Round-trip tests against a real in-memory Mongo (mongomock-motor): every read/write/
+# aggregate must be scoped to the repository's tenant_id. If any of these break, isolation
+# is broken — the single most important invariant in the codebase.
+def _isolation_repo(monkeypatch):
+    """Patch the resolver to a fresh in-memory DB and return a scoped repo class."""
+    from mongomock_motor import AsyncMongoMockClient
+
+    import app.repositories.base as base_mod
+    db = AsyncMongoMockClient()["isolation_test"]
+    monkeypatch.setattr(base_mod.db_resolver, "resolve", lambda **_: db)
+
+    class _Widgets(base_mod.BaseRepository):
+        collection_name = "widgets"
+
+    return _Widgets
+
+
+async def test_baserepo_reads_writes_are_tenant_scoped(monkeypatch):
+    W = _isolation_repo(monkeypatch)
+    a, b = W(tenant_id="A"), W(tenant_id="B")
+    wid = await a.insert_one({"name": "x"})
+    assert (await a._coll.find_one({"_id": wid}))["tenant_id"] == "A"   # tenant injected on write
+    # B is fully blind to A's data
+    assert await b.find_one({"name": "x"}) is None
+    assert await b.count() == 0
+    assert await a.count() == 1
+    assert (await a.find_one({"name": "x"}))["name"] == "x"
+
+
+async def test_baserepo_update_delete_cannot_cross_tenant(monkeypatch):
+    W = _isolation_repo(monkeypatch)
+    a, b = W(tenant_id="A"), W(tenant_id="B")
+    await a.insert_one({"name": "x", "v": 1})
+    await b.update_one({"name": "x"}, {"$set": {"v": 99}})    # must NOT touch A's doc
+    assert (await a.find_one({"name": "x"}))["v"] == 1
+    await b.delete_many({})                                   # must NOT delete A's doc
+    assert await a.count() == 1
+    await a.update_one({"name": "x"}, {"$set": {"v": 2}})
+    assert (await a.find_one({"name": "x"}))["v"] == 2
+
+
+async def test_baserepo_aggregate_prepends_tenant_match(monkeypatch):
+    W = _isolation_repo(monkeypatch)
+    a, b = W(tenant_id="A"), W(tenant_id="B")
+    await a.insert_one({"g": "x", "v": 10})
+    await a.insert_one({"g": "x", "v": 5})
+    await b.insert_one({"g": "x", "v": 999})                 # other tenant — must be excluded
+    rows = await a.aggregate([{"$group": {"_id": "$g", "total": {"$sum": "$v"}}}])
+    assert rows == [{"_id": "x", "total": 15}]
+
+
+async def test_baserepo_find_clamps_pagination(monkeypatch):
+    W = _isolation_repo(monkeypatch)
+    a = W(tenant_id="A")
+    for i in range(5):
+        await a.insert_one({"n": i})
+    assert len(await a.find({}, limit=10)) == 5
+    assert len(await a.find({}, limit=2)) == 2
+    assert len(await a.find({}, limit=0)) == 1    # clamped to >= 1

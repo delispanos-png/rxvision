@@ -33,6 +33,7 @@ export function CopyButton({ value, className = "" }: { value?: string | null; c
       type="button"
       onClick={copy}
       title={copied ? "Αντιγράφηκε!" : "Αντιγραφή"}
+      aria-label={copied ? "Αντιγράφηκε" : "Αντιγραφή"}
       className={`inline-flex items-center rounded p-0.5 text-slate-400 transition hover:bg-slate-100 hover:text-brand-600 dark:hover:bg-slate-800 ${className}`}
     >
       {copied ? <Check className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5" />}

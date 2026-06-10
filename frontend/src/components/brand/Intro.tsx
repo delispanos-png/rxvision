@@ -31,6 +31,10 @@ export function Intro() {
   return (
     <div
       onClick={dismiss}
+      role="button"
+      tabIndex={0}
+      aria-label="Κλείσιμο"
+      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") dismiss(); }}
       className={`fixed inset-0 z-[200] flex cursor-pointer flex-col items-center justify-center overflow-hidden bg-gradient-to-br from-brand-600 via-violet-600 to-brand-700 transition-opacity duration-500 ${leaving ? "opacity-0" : "opacity-100"}`}
     >
       {/* floating glyphs */}

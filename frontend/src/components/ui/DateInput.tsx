@@ -33,7 +33,7 @@ export function DateInput({
         onClick={(e) => (e.currentTarget as HTMLInputElement).showPicker?.()}
         className="peer absolute inset-0 z-10 h-full w-full cursor-pointer opacity-0 disabled:cursor-not-allowed"
       />
-      <div className="pointer-events-none flex items-center justify-between gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm peer-focus:border-brand-500 peer-focus:ring-1 peer-focus:ring-brand-500">
+      <div className="pointer-events-none flex items-center justify-between gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm peer-focus:border-brand-500 peer-focus:ring-1 peer-focus:ring-brand-500 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200">
         <span className={value ? "text-slate-900" : "text-slate-400"}>{display}</span>
         <Calendar className="h-4 w-4 text-slate-400" />
       </div>

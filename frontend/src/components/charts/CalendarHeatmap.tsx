@@ -61,5 +61,9 @@ export function CalendarHeatmap({
     series: { type: "heatmap", coordinateSystem: "calendar", data },
   };
 
-  return <ReactECharts option={option} style={{ height, width: "100%" }} notMerge lazyUpdate />;
+  return (
+    <div role="img" aria-label={`Ημερολογιακός χάρτης θερμότητας — ${label}`}>
+      <ReactECharts option={option} style={{ height, width: "100%" }} notMerge lazyUpdate />
+    </div>
+  );
 }

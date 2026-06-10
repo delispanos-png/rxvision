@@ -3,7 +3,7 @@ import { Intro } from "@/components/brand/Intro";
 
 export default function MarketingLayout({ children }: { children: React.ReactNode }) {
   return (
-    <div className="flex min-h-screen items-center justify-center bg-slate-50 p-4">
+    <main className="flex min-h-screen items-center justify-center bg-slate-50 p-4 dark:bg-slate-950">
       <Intro />
       <div className="w-full max-w-md">
         {children}
@@ -13,6 +13,6 @@ export default function MarketingLayout({ children }: { children: React.ReactNod
           <Link href="/terms" className="hover:text-slate-600">Όροι Χρήσης</Link>
         </footer>
       </div>
-    </div>
+    </main>
   );
 }

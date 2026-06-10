@@ -40,10 +40,10 @@ export function PanelCard({
               aria-expanded={open}
             >
               <ChevronDown className={`h-4 w-4 shrink-0 text-slate-400 transition-transform ${open ? "" : "-rotate-90"}`} />
-              <h3 className="text-[15px] font-semibold text-slate-800">{title}</h3>
+              <h3 className="text-[15px] font-semibold text-slate-800 dark:text-slate-200">{title}</h3>
             </button>
           ) : (
-            <h3 className="text-[15px] font-semibold text-slate-800">{title}</h3>
+            <h3 className="text-[15px] font-semibold text-slate-800 dark:text-slate-200">{title}</h3>
           )}
           {action}
         </div>

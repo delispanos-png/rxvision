@@ -77,6 +77,7 @@ export function Topbar() {
       <button
         onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
         title={t("Σκούρο/Φωτεινό θέμα", "Dark/Light theme")}
+        aria-label="Εναλλαγή θέματος"
         className="grid h-9 w-9 place-items-center rounded-lg text-slate-500 hover:bg-white dark:text-slate-300 dark:hover:bg-slate-800"
       >
         {theme === "dark" ? <Sun className="h-[18px] w-[18px]" /> : <Moon className="h-[18px] w-[18px]" />}
@@ -84,6 +85,7 @@ export function Topbar() {
       <button
         onClick={() => setLocale(locale === "el" ? "en" : "el")}
         title={t("Γλώσσα", "Language")}
+        aria-label="Αλλαγή γλώσσας"
         className="grid h-9 min-w-[36px] place-items-center rounded-lg px-2 text-xs font-bold text-slate-500 hover:bg-white dark:text-slate-300 dark:hover:bg-slate-800"
       >
         {locale === "el" ? "EN" : "ΕΛ"}
@@ -96,9 +98,9 @@ export function Topbar() {
           onClick={() => setOpen((v) => !v)}
           aria-haspopup="menu"
           aria-expanded={open}
-          className="flex items-center gap-2.5 rounded-lg px-1 py-1 hover:bg-white"
+          className="flex items-center gap-2.5 rounded-lg px-1 py-1 hover:bg-white dark:hover:bg-slate-800"
         >
-          <span className="grid h-9 w-9 place-items-center rounded-full bg-brand-100 text-xs font-bold text-brand-700">
+          <span className="grid h-9 w-9 place-items-center rounded-full bg-brand-100 text-xs font-bold text-brand-700 dark:bg-brand-900/40 dark:text-brand-300">
             {initials(name)}
           </span>
           <div className="hidden leading-tight sm:block">

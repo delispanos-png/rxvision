@@ -4,6 +4,8 @@ const withPWA = require("next-pwa")({
   disable: process.env.NODE_ENV === "development",
   register: true,
   skipWaiting: true,
+  // Offline fallback: a failed navigation with no cached page renders /offline.
+  fallbacks: { document: "/offline" },
   runtimeCaching: [
     {
       // Analytics GETs: fast, refreshed in background.

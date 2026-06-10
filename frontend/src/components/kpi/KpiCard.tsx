@@ -42,7 +42,7 @@ export function KpiCard({
         <div className="min-w-0">
           <div className="rx-label">{label}</div>
           <div className="mt-2 flex items-baseline gap-2">
-            <div className="truncate text-xl font-bold leading-none text-slate-900 sm:text-[26px]">{value}</div>
+            <div className="truncate text-xl font-bold leading-none text-slate-900 dark:text-slate-100 sm:text-[26px]">{value}</div>
             {trend !== undefined && (
               <span title="Δ vs προηγούμενη ισόχρονη περίοδο"
                 className={`text-xs font-semibold ${trend >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400"}`}>
@@ -50,7 +50,7 @@ export function KpiCard({
               </span>
             )}
           </div>
-          {sub && <div className="mt-1.5 text-xs text-slate-400">{sub}</div>}
+          {sub && <div className="mt-1.5 text-xs text-slate-400 dark:text-slate-500">{sub}</div>}
         </div>
         {Icon && (
           <span className={`grid h-11 w-11 shrink-0 place-items-center rounded-xl ${ACCENT[accent]}`}>

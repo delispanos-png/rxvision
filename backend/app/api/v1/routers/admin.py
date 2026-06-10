@@ -1173,3 +1173,39 @@ async def sync_health(_: PlatformContext = Depends(get_platform_admin)):
             "errors": row["errors"],
         })
     return {"items": jsonsafe(items)}
+
+
+@router.get("/audit-logs")
+async def audit_logs_list(
+    _: PlatformContext = Depends(get_platform_admin),
+    tenant_id: str | None = None,
+    actor_user_id: str | None = None,
+    action: str | None = None,
+    date_from: datetime | None = None,
+    date_to: datetime | None = None,
+    page: int = 1,
+    page_size: int = 50,
+):
+    """Read-only cross-tenant audit-log viewer with filters (date / tenant / user / action).
+    Platform-admin only; never mutates."""
+    db = shared_db()
+    q: dict = {}
+    if tenant_id:
+        q["tenant_id"] = tenant_id
+    if actor_user_id:
+        q["actor_user_id"] = actor_user_id
+    if action:
+        q["action"] = {"$regex": re.escape(action), "$options": "i"}
+    at: dict = {}
+    if date_from:
+        at["$gte"] = date_from
+    if date_to:
+        at["$lte"] = date_to
+    if at:
+        q["at"] = at
+    page = max(1, page)
+    page_size = max(1, min(page_size, 200))
+    total = await db["audit_logs"].count_documents(q)
+    rows = await (db["audit_logs"].find(q).sort("at", -1)
+                  .skip((page - 1) * page_size).limit(page_size).to_list(length=page_size))
+    return {"page": page, "page_size": page_size, "total": total, "items": jsonsafe(rows)}
