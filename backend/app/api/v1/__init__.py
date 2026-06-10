@@ -9,6 +9,7 @@ from app.api.v1.routers import (
     doctors,
     fund_groups,
     future,
+    gdpr,
     infra_cloud,
     icd10,
     ingestion,
@@ -31,6 +32,7 @@ api_router.include_router(onboarding.router, prefix="/onboarding", tags=["onboar
 api_router.include_router(dashboard.router, prefix="/dashboard", tags=["dashboard"])
 api_router.include_router(advisor.router, prefix="/advisor", tags=["advisor"])
 api_router.include_router(communications.router, prefix="/communications", tags=["communications"])
+api_router.include_router(gdpr.router, prefix="/gdpr", tags=["gdpr"])
 api_router.include_router(prescriptions.router, prefix="/prescriptions", tags=["prescriptions"])
 
 # Analytics modules
