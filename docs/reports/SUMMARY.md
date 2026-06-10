@@ -4,7 +4,7 @@ Branch **`quality-hardening`** (off `main`). Self-contained; no infra/ingestion/
 gdpr changes. **CI green** throughout (backend ruff+pytest 48 passed; frontend tsc·lint·build).
 No push to main / merge / deploy — left for review.
 
-## ✅ Done (9 / 10 mission items)
+## ✅ Done (9.5 / 10 mission items)
 
 | # | Item | Outcome |
 |---|---|---|
@@ -18,8 +18,11 @@ No push to main / merge / deploy — left for review.
 | 8 | Onboarding/registration polish | dark-mode + a11y (label assoc, aria-invalid, role=alert) + onTouched validation + password show/hide + inline 409. |
 | 9 | Dependency audit (report-only) | `docs/reports/dependency-audit.md` — npm audit (1 crit/10 high/2 mod) + backend review + prioritised plan. No upgrades applied. |
 
+| 10 | i18n (stretch, **progressive**) | Mechanism confirmed; navigation shell fully bilingual (Sidebar + Settings tabs + collapse aria); **`docs/reports/i18n-plan.md`** (approach + glossary + per-page batches) for the remaining page-body strings. |
+
 ## ⏳ Remaining
-- **#10 i18n (stretch)** — bulk-translate remaining Greek UI strings via `useT`/`prefStore`. Large/progressive; best as a dedicated effort.
+- **#10 page-body translation** — hundreds of hard-coded Greek strings across app/admin/marketing
+  pages; follow `i18n-plan.md` batches. Genuinely progressive (per the mission's "stretch").
 
 ## ⚠️ Cross-stream fixes (NOTES.md) — `main` had RED CI from the ingestion stream
 Fixed to unblock this branch's CI, **without touching ingestion source**:
