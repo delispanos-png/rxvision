@@ -24,6 +24,9 @@ async def lifespan(app: FastAPI):
     vault.assert_ready()  # prod: refuse to boot without a real Vault (no in-memory fallback)
     await ensure_indexes()
     await reap_orphan_jobs()  # clear sync_jobs orphaned by worker restarts
+    import asyncio
+    from app.services.node_metrics import report_loop
+    asyncio.create_task(report_loop())  # per-node CPU/RAM/load → admin infra dashboard
     yield
 
 

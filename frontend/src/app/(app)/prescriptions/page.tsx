@@ -18,6 +18,7 @@ import { ExportMenu } from "@/components/export/ExportMenu";
 import { KpiCard } from "@/components/kpi/KpiCard";
 import { PanelCard } from "@/components/ui/Card";
 import { QueryState } from "@/components/ui/QueryState";
+import { CopyButton } from "@/components/ui/CopyButton";
 import { Modal } from "@/components/ui/Modal";
 
 type Prescription = {
@@ -103,7 +104,9 @@ const columns: Column<Prescription>[] = [
   { key: "executed_at", header: "Ημ/νία", render: (r) => fmtDate(r.executed_at) },
   { key: "external_id", header: "Κωδικός" },
   { key: "patient_name", header: "Ασθενής", sortable: false, render: (r) => r.patient_name || "—" },
-  { key: "amka", header: "ΑΜΚΑ", hideOnMobile: true, sortable: false, render: (r) => r.amka || "—" },
+  { key: "amka", header: "ΑΜΚΑ", hideOnMobile: true, sortable: false, render: (r) => r.amka ? (
+    <span className="inline-flex items-center gap-1 font-mono tabular-nums">{r.amka}<CopyButton value={r.amka} /></span>
+  ) : "—" },
   { key: "fund_name", header: "Ταμείο", hideOnMobile: true, sortable: false, render: (r) => r.fund_name || "—" },
   {
     key: "status", header: "Κατάσταση", hideOnMobile: true, sortable: false,

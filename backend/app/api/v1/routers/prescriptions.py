@@ -43,10 +43,11 @@ async def idika_full_detail(
     if not creds:
         raise HTTPException(status.HTTP_409_CONFLICT, "no_idika_credentials")
 
+    bc = barcode.split(":")[0]  # external_id is "barcode:executionNo" → ΗΔΙΚΑ wants the bare barcode
     def _fetch() -> dict:
         client = HdikaClient(creds)
         try:
-            return client.fetch_cda_full(barcode)
+            return client.fetch_cda_full(bc)
         finally:
             try:
                 client.close()
