@@ -45,16 +45,19 @@ export default function OrdersPage() {
   });
 
   const items = data?.items ?? [];
-  // manual on-hand stock per product → order only what's missing (suggested − on hand)
+  // coverage horizon (days of needs to cover) + manual on-hand stock per product
+  const [coverage, setCoverage] = useState(30);
   const [stock, setStock] = useState<Record<string, number>>({});
-  const adj = (r: Suggestion) => Math.max(0, (r.suggested_qty || 0) - (stock[r.product_id] || 0));
-  const adjCost = (r: Suggestion) => (r.suggested_qty ? Math.round((r.est_cost || 0) * adj(r) / r.suggested_qty) : 0);
+  const need = (r: Suggestion) => Math.ceil((r.avg_daily || 0) * coverage);          // ανάγκη για X μέρες
+  const adj = (r: Suggestion) => Math.max(0, need(r) - (stock[r.product_id] || 0));   // παράγγειλε = ανάγκη − απόθεμα
+  const unitCost = (r: Suggestion) => (r.suggested_qty ? (r.est_cost || 0) / r.suggested_qty : 0);
+  const adjCost = (r: Suggestion) => Math.round(unitCost(r) * adj(r));
 
   const cols = useMemo<Column<Suggestion>[]>(() => [
     { key: "product_name", header: "Σκεύασμα", render: (r) => r.product_name || "—", sortValue: (r) => r.product_name },
     { key: "substance", header: "Δραστική", hideOnMobile: true, render: (r) => r.substance || "—" },
     { key: "avg_daily", header: "Μ.Ο./ημέρα", align: "right", render: (r) => fmtNum(r.avg_daily), sortValue: (r) => r.avg_daily, hideOnMobile: true },
-    { key: "suggested_qty", header: "Πρόταση", align: "right", render: (r) => fmtNum(r.suggested_qty), sortValue: (r) => r.suggested_qty },
+    { key: "need", header: `Ανάγκη ${coverage}ημ.`, align: "right", render: (r) => fmtNum(need(r)), sortValue: (r) => need(r) },
     { key: "stock", header: "Απόθεμα", align: "right", render: (r) => (
       <input type="number" min={0} value={stock[r.product_id] ?? ""} placeholder="0"
         onChange={(e) => setStock((s) => ({ ...s, [r.product_id]: Math.max(0, parseInt(e.target.value) || 0) }))}
@@ -62,7 +65,7 @@ export default function OrdersPage() {
         className="w-16 rounded-md border border-slate-300 px-1.5 py-0.5 text-right text-sm focus:border-brand-500 focus:outline-none dark:border-slate-600 dark:bg-slate-800" /> ) },
     { key: "adjusted", header: "Παράγγειλε", align: "right", render: (r) => <span className={`font-bold ${adj(r) > 0 ? "text-brand-700 dark:text-brand-300" : "text-slate-300"}`}>{fmtNum(adj(r))}</span>, sortValue: (r) => adj(r) },
     { key: "est_cost", header: "Εκτ. κόστος", align: "right", render: (r) => fmtEur(adjCost(r)), sortValue: (r) => adjCost(r) },
-  ], [stock]);
+  ], [stock, coverage]);
 
   const totalQty = items.reduce((s, r) => s + adj(r), 0);
   const totalCost = items.reduce((s, r) => s + adjCost(r), 0);
@@ -74,9 +77,19 @@ export default function OrdersPage() {
       <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-slate-900">Προτάσεις παραγγελίας</h1>
-          <p className="mt-1 text-sm text-slate-500">Αυτόματες προτάσεις αναπλήρωσης αποθέματος</p>
+          <p className="mt-1 text-sm text-slate-500">Διάλεξε πόσων ημερών ανάγκες θες να καλύψεις — οι ποσότητες προσαρμόζονται αυτόματα.</p>
         </div>
         <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:justify-end">
+          <div className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1.5 dark:border-slate-700 dark:bg-slate-900">
+            <span className="mr-1 text-xs font-medium text-slate-500">Κάλυψη:</span>
+            {[7, 14, 30, 60].map((d) => (
+              <button key={d} type="button" onClick={() => setCoverage(d)}
+                className={`rounded px-2 py-0.5 text-xs font-semibold ${coverage === d ? "bg-brand-600 text-white" : "text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"}`}>{d}ημ.</button>
+            ))}
+            <input type="number" min={1} value={coverage} onChange={(e) => setCoverage(Math.max(1, parseInt(e.target.value) || 1))}
+              className="ml-1 w-14 rounded border border-slate-300 px-1 py-0.5 text-right text-xs dark:border-slate-600 dark:bg-slate-800" />
+            <span className="text-xs text-slate-400">ημέρες</span>
+          </div>
           <button
             type="button"
             onClick={() => recompute.mutate()}
