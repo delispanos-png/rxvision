@@ -226,25 +226,59 @@ class AdvisorRepository(BaseRepository):
 
     # ── business advisor ─────────────────────────────────────────────────
     async def business(self, df: datetime, dt: datetime) -> dict:
-        span = dt - df
+        def _my(d: datetime) -> datetime:  # same date, one year earlier (πέρσι)
+            try:
+                return d.replace(year=d.year - 1)
+            except ValueError:  # 29 Feb
+                return d.replace(year=d.year - 1, day=28)
         cur = await self._period(df, dt)
-        prev = await self._period(df - span, df)
+        prev = await self._period(_my(df), _my(dt))  # σύγκριση vs πέρσι, ίδια περίοδος
         ins: list[dict] = []
 
         def add(sev, icon, title, detail, metric=None, cta=None):
             ins.append({"severity": sev, "icon": icon, "title": title,
                         "detail": detail, "metric": metric, "cta": cta})
 
-        # 1) revenue trend
+        # 1) revenue trend (vs πέρσι)
         d_rev = _pct(cur["revenue"], prev["revenue"])
         if d_rev is not None:
             if d_rev <= -10:
                 add("critical", "trending-down", "Πτώση εσόδων",
-                    f"Τα έσοδα έπεσαν {abs(d_rev):.0f}% σε σχέση με την προηγούμενη ίση περίοδο.",
+                    f"Τα έσοδα έπεσαν {abs(d_rev):.0f}% σε σχέση με πέρσι (ίδια περίοδος). Ενεργοποίησε recall ανεκτέλεστων/επαναλήψεων & cross-sell.",
                     f"{d_rev:+.0f}%", {"label": "Δες συνταγές", "href": "/prescriptions"})
             elif d_rev >= 10:
                 add("positive", "trending-up", "Άνοδος εσόδων",
-                    f"Τα έσοδα αυξήθηκαν {d_rev:.0f}% έναντι της προηγούμενης περιόδου.", f"{d_rev:+.0f}%")
+                    f"Τα έσοδα αυξήθηκαν {d_rev:.0f}% έναντι πέρσι (ίδια περίοδος). Κράτα ό,τι δουλεύει.", f"{d_rev:+.0f}%")
+
+        # 1b) executions (συνταγές) vs πέρσι
+        d_rx = _pct(cur["rx"], prev["rx"])
+        if d_rx is not None and d_rx <= -10:
+            add("warning", "trending-down", "Λιγότερες συνταγές",
+                f"Εκτελέστηκαν {abs(d_rx):.0f}% λιγότερες συνταγές vs πέρσι — κάλεσε ασθενείς με χαμένες/εκκρεμείς επαναλήψεις.",
+                f"{d_rx:+.0f}%", {"label": "Συνταγές", "href": "/prescriptions"})
+        elif d_rx is not None and d_rx >= 10:
+            add("positive", "trending-up", "Περισσότερες συνταγές",
+                f"+{d_rx:.0f}% συνταγές vs πέρσι — η κίνηση ανεβαίνει.", f"{d_rx:+.0f}%")
+
+        # 1c) gross profit (μεικτό κέρδος) vs πέρσι
+        d_gp = _pct(cur["gross_profit"], prev["gross_profit"])
+        if d_gp is not None and d_gp <= -10:
+            add("warning", "wallet", "Πτώση μεικτού κέρδους",
+                f"Το μεικτό κέρδος έπεσε {abs(d_gp):.0f}% vs πέρσι — έλεγξε μείγμα προϊόντων, χονδρικές τιμές & χαμηλά περιθώρια.",
+                f"{d_gp:+.0f}%", {"label": "Κερδοφορία", "href": "/profitability"})
+        elif d_gp is not None and d_gp >= 15:
+            add("positive", "wallet", "Άνοδος κερδοφορίας",
+                f"Το μεικτό κέρδος αυξήθηκε {d_gp:.0f}% vs πέρσι.", f"{d_gp:+.0f}%")
+
+        # 1d) unique patients (ασφαλισμένοι) vs πέρσι
+        d_pat = _pct(cur["patients"], prev["patients"])
+        if d_pat is not None and d_pat <= -10:
+            add("opportunity", "users", "Λιγότεροι ασθενείς",
+                f"{abs(d_pat):.0f}% λιγότεροι μοναδικοί ασθενείς vs πέρσι — καμπάνια επανενεργοποίησης ανενεργών & πρόγραμμα πιστότητας.",
+                f"{d_pat:+.0f}%", {"label": "Επικοινωνία", "href": "/communications"})
+        elif d_pat is not None and d_pat >= 10:
+            add("positive", "users", "Περισσότεροι ασθενείς",
+                f"+{d_pat:.0f}% ασθενείς vs πέρσι — η πελατειακή βάση μεγαλώνει.", f"{d_pat:+.0f}%")
 
         # 2) margin
         if cur["margin_pct"] < 18 and cur["revenue"] > 0:
