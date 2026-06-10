@@ -2,7 +2,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { adminApi } from "@/lib/adminClient";
-import { Server, Database, Scale, Globe, Cpu, MemoryStick, Activity, RefreshCw, Network } from "lucide-react";
+import { Server, Database, Scale, Globe, Cpu, MemoryStick, Activity, RefreshCw, Network, HardDrive } from "lucide-react";
 
 type Srv = {
   name: string; role: "app" | "db" | "lb"; status: string | null; type: string | null;
@@ -12,7 +12,8 @@ type Srv = {
 };
 type LB = { name: string; public_ip: string | null; private_ip: string | null; services: string[]; targets: { name: string; healthy: boolean | null }[] };
 type Net = { name: string; range: string | null; members: string[] };
-type Infra = { servers: Srv[]; load_balancers: LB[]; networks: Net[]; fetched_at: string };
+type Store = { configured: boolean; host: string | null; path: string | null };
+type Infra = { servers: Srv[]; load_balancers: LB[]; networks: Net[]; storage: Store | null; fetched_at: string };
 
 const barColor = (p: number) => (p >= 85 ? "bg-rose-500" : p >= 60 ? "bg-amber-500" : "bg-emerald-500");
 
@@ -92,12 +93,19 @@ function Topology({ infra }: { infra: Infra }) {
           ))}
         </div>
         {dbs.length > 0 && <div className="h-4 w-px bg-slate-300 dark:bg-slate-600" />}
-        <div className="flex flex-wrap justify-center gap-3">
+        <div className="flex flex-wrap items-start justify-center gap-3">
           {dbs.map((s) => (
             <Node key={s.name} tone="border-violet-200 bg-violet-50 text-violet-700 dark:border-violet-800 dark:bg-violet-950 dark:text-violet-300">
               <Database className="mx-auto mb-0.5 h-4 w-4" />{s.name}<div className="font-mono text-[10px] opacity-70">{s.private_ip}</div><div className="text-[10px] opacity-70">MongoDB + Redis</div>
             </Node>
           ))}
+          {infra.storage && (
+            <Node tone="border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-300">
+              <HardDrive className="mx-auto mb-0.5 h-4 w-4" />Backup Storage
+              <div className="font-mono text-[10px] opacity-70">{infra.storage.host || "—"}</div>
+              <div className="text-[10px] opacity-70">{infra.storage.configured ? "offsite backups" : "μη ρυθμισμένο"}</div>
+            </Node>
+          )}
         </div>
       </div>
     </div>

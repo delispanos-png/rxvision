@@ -25,7 +25,8 @@ def _role(name: str) -> str:
         return "lb"
     return "app"
 
-_SECRETS = ("hetzner_token", "cloudflare_token")
+_SECRETS = ("hetzner_token", "cloudflare_token", "storage_password")
+_CONFIG = ("storage_host", "storage_user", "storage_path")
 
 
 async def _cfg() -> dict:
@@ -42,15 +43,23 @@ async def _save(cfg: dict) -> None:
 class CloudIn(BaseModel):
     hetzner_token: str | None = None
     cloudflare_token: str | None = None
+    storage_host: str | None = None      # e.g. u599547.your-storagebox.de
+    storage_user: str | None = None      # e.g. u599547
+    storage_password: str | None = None
+    storage_path: str | None = None      # subdir for backups, e.g. /rxvision-backups
 
 
 @router.get("")
 async def get_cloud(ctx: PlatformContext = Depends(get_platform_admin)):
-    """Non-secret status only — never echoes the tokens."""
+    """Non-secret status only — never echoes the tokens/password."""
     c = await _cfg()
     return {
         "hetzner_configured": bool(c.get("hetzner_token")),
         "cloudflare_configured": bool(c.get("cloudflare_token")),
+        "storage_configured": bool(c.get("storage_password")),
+        "storage_host": c.get("storage_host"),
+        "storage_user": c.get("storage_user"),
+        "storage_path": c.get("storage_path"),
     }
 
 
@@ -58,17 +67,23 @@ async def get_cloud(ctx: PlatformContext = Depends(get_platform_admin)):
 async def put_cloud(body: CloudIn, ctx: PlatformContext = Depends(get_platform_admin)):
     c = await _cfg()
     new = body.model_dump()
-    # blank field on the form = keep the stored secret (masked round-trip)
+    # blank secret on the form = keep the stored one (masked round-trip)
     for k in _SECRETS:
         if not new.get(k) and c.get(k):
             new[k] = c[k]
-    await _save({k: v for k, v in new.items() if v and k in _SECRETS})
+    out = {k: v for k, v in new.items() if v and k in _SECRETS}          # secrets
+    out.update({k: new[k] for k in _CONFIG if new.get(k) is not None})   # plain config
+    # keep existing config the form didn't touch
+    for k in _CONFIG:
+        if k not in out and c.get(k):
+            out[k] = c[k]
+    await _save(out)
     return {"ok": True}
 
 
 @router.delete("")
 async def clear_cloud(ctx: PlatformContext = Depends(get_platform_admin)):
-    await _save({"hetzner_token": None, "cloudflare_token": None})
+    await _save({k: None for k in (*_SECRETS, *_CONFIG)})
     return {"ok": True}
 
 
@@ -98,6 +113,16 @@ async def verify(ctx: PlatformContext = Depends(get_platform_admin)):
         except Exception as exc:  # noqa: BLE001
             out["cloudflare_ok"] = False
             out["cloudflare_error"] = str(exc)[:120]
+    if c.get("storage_host"):
+        try:
+            fut = asyncio.open_connection(c["storage_host"], 23)  # Hetzner Storage Box SSH/SFTP
+            reader, writer = await asyncio.wait_for(fut, timeout=10)
+            writer.close()
+            out["storage_ok"] = True
+            out["storage_host"] = c["storage_host"]
+        except Exception as exc:  # noqa: BLE001
+            out["storage_ok"] = False
+            out["storage_error"] = str(exc)[:120]
     if not out:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Δεν έχουν αποθηκευτεί tokens.")
     return out
@@ -186,5 +211,8 @@ async def infra(ctx: PlatformContext = Depends(get_platform_admin)):
                  "members": [str(x) for x in n.get("servers", [])]}
                 for n in (net_r.json().get("networks", []) if net_r.status_code == 200 else [])]
 
-    return {"servers": servers, "load_balancers": lbs, "networks": nets,
+    storage = {"configured": bool(c.get("storage_password")), "host": c.get("storage_host"),
+               "path": c.get("storage_path")} if c.get("storage_host") else None
+
+    return {"servers": servers, "load_balancers": lbs, "networks": nets, "storage": storage,
             "fetched_at": datetime.now(tz=timezone.utc).isoformat()}
