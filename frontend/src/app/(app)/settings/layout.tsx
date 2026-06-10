@@ -9,6 +9,7 @@ const TABS = [
   { href: "/settings/ingestion", label: "Διασύνδεση ΗΔΙΚΑ" },
   { href: "/settings/communications", label: "Επικοινωνία" },
   { href: "/settings/billing", label: "Χρέωση" },
+  { href: "/settings/gdpr", label: "GDPR / Απόρρητο" },
 ];
 
 export default function SettingsLayout({ children }: { children: React.ReactNode }) {

@@ -57,6 +57,11 @@ _PERMISSION_DEFS: list[tuple[str, str, str | None, str]] = [
     ("users", "manage", None, "Διαχείριση χρηστών & ρόλων"),
     # Billing
     ("billing", "manage", None, "Διαχείριση συνδρομής / billing"),
+    # GDPR / data-subject rights (legal obligation — never module-locked)
+    ("gdpr", "read", None, "Προβολή δεδομένων & συγκαταθέσεων GDPR"),
+    ("gdpr", "export", None, "Εξαγωγή δεδομένων υποκειμένου (Άρθρο 15/20)"),
+    ("gdpr", "rectify", None, "Διόρθωση/περιορισμός δεδομένων (Άρθρο 16/18/21)"),
+    ("gdpr", "erase", None, "Διαγραφή/ανωνυμοποίηση δεδομένων (Άρθρο 17)"),
 ]
 
 PERMISSIONS: list[dict] = [
@@ -97,6 +102,9 @@ DEFAULT_ROLES: list[dict] = [
                 "settings:read",
                 "settings:write",
                 "users:manage",
+                "gdpr:export",
+                "gdpr:rectify",
+                "gdpr:erase",
             ]
         )),
     },
@@ -111,6 +119,9 @@ DEFAULT_ROLES: list[dict] = [
                 "orders:run",
                 "closing:run",
                 "ingestion:run",
+                "gdpr:export",
+                "gdpr:rectify",
+                "gdpr:erase",
             ]
         )),
     },

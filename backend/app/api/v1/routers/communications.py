@@ -11,7 +11,7 @@ from pydantic import BaseModel
 
 from app.core.db import shared_db
 from app.core.deps import TenantContext, require
-from app.services import comms
+from app.services import comms, consent
 
 router = APIRouter()
 _MODULE = "patient_analytics"
@@ -111,8 +111,16 @@ async def _audience(tenant_id: str, channel: str, segment: str = "all", value: s
     field = "email" if channel == "email" else "mobile"
     q: dict = {"tenant_id": tenant_id, "marketing_consent": True, field: {"$nin": [None, ""]}}
     seg = await _segment_patient_ids(tenant_id, segment, value)
+    # Consent ledger is authoritative: exclude anyone whose latest event for this channel
+    # is a withdrawal/objection, even if a stale contact flag still says consented (GDPR).
+    withdrawn = await consent.withdrawn_patient_ids(tenant_id, channel)
+    id_filter: dict = {}
     if seg is not None:
-        q["_id"] = {"$in": list(seg)}
+        id_filter["$in"] = list(seg)
+    if withdrawn:
+        id_filter["$nin"] = list(withdrawn)
+    if id_filter:
+        q["_id"] = id_filter
     rows = await shared_db()["patient_contacts"].aggregate([
         {"$match": q},
         {"$lookup": {"from": "patients_anonymized", "localField": "_id", "foreignField": "_id", "as": "pp"}},

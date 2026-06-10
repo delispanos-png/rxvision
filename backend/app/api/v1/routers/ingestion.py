@@ -24,7 +24,6 @@ from app.schemas.ingestion import (
 )
 from app.services.ingestion.engine import IngestionEngine
 from app.services.ingestion.gesy import parse_gesy_xml
-from app.services.ingestion.hdika import HdikaAdapter
 from app.services.ingestion.hdika_client import HdikaClient
 from app.services.ingestion.sources import assert_source_allowed
 from app.services.vault_service import vault

@@ -72,7 +72,8 @@ def test_map_full_builds_canonical_from_execution_and_cda():
         "valid_until": "20260901",
     }
     e = c._map_full(ex, cda, {"executions": 3})
-    assert e.source == "HDIKA" and e.external_id == "RX-1"
+    # external_id is the natural key barcode:executionNo (distinguishes repeat executions)
+    assert e.source == "HDIKA" and e.external_id == "RX-1:1"
     assert e.executed_at.year == 2026 and e.executed_at.month == 6
     assert e.patient.national_id == "AMKA123" and e.patient.sex == "F" and e.patient.birth_year == 1960
     assert e.doctor.full_name == "Κ. Παπαδόπουλος" and e.doctor.specialty == "Παθολόγος"
