@@ -62,6 +62,14 @@ async def cross_sell_patients(
     return {"atc": atc, "items": await AdvisorRepository(tenant_id=ctx.tenant_id).cross_sell_patients(atc)}
 
 
+@router.get("/recall")
+async def recall(
+    ctx: TenantContext = Depends(require("patients:read", module="patient_analytics")),
+):
+    """Recall list — patients with a missed/available repeat, ranked by € at risk."""
+    return await AdvisorRepository(tenant_id=ctx.tenant_id).recall()
+
+
 @router.get("/orders")
 async def orders(
     lead_days: int = 7,

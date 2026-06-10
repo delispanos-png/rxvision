@@ -8,6 +8,7 @@ import { useUiStore, filtersToQuery } from "@/store/uiStore";
 import { DateRangeFilter } from "@/components/filters/DateRangeFilter";
 import { InsightCard, type Insight } from "@/components/advisor/InsightCard";
 import { CrossSellCard } from "@/components/advisor/CrossSellCard";
+import { RecallSection } from "@/components/advisor/RecallSection";
 
 type Kpi = { value: number; delta: number | null };
 type Cat = { code: string; name: string; revenue: number; gross_profit: number; margin_pct: number; units: number; rx: number; share_pct: number; trend_pct: number | null; verdict: string };
@@ -88,6 +89,8 @@ export default function BusinessAdvisorPage() {
           <KpiTile label="Ασθενείς" value={num(k.patients.value)} delta={k.patients.delta} />
         </div>
       )}
+
+      <div className="mb-6"><RecallSection /></div>
 
       <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">Προτεραιότητες & προτάσεις</h2>
       {isLoading ? (

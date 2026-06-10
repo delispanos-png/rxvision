@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 from bson import ObjectId
 from bson.errors import InvalidId
 
-from app.repositories.base import BaseRepository
+from app.repositories.base import BaseRepository, jsonsafe
 
 
 def _as_oid(v):
@@ -489,6 +489,71 @@ class AdvisorRepository(BaseRepository):
             {"$limit": 500},
         ])
         return rows
+
+    async def recall(self) -> dict:
+        """Patients with a MISSED (window passed, unexecuted) or AVAILABLE-NOW repeat, ranked by
+        € at risk — the recall list. Joins demographics + contact for one-click outreach."""
+        import calendar
+        from collections import defaultdict
+        now = _now()
+
+        def addm(d, n):
+            y, mo = d.year + (d.month - 1 + n) // 12, (d.month - 1 + n) % 12 + 1
+            return d.replace(year=y, month=mo, day=min(d.day, calendar.monthrange(y, mo)[1]))
+
+        chains: dict = defaultdict(list)
+        async for e in self._db["prescription_executions"].find(  # tenant-ok: scoped by tenant_id below
+                {"tenant_id": self.tenant_id},
+                {"repeat_root": 1, "external_id": 1, "executed_at": 1, "valid_from": 1,
+                 "valid_until": 1, "amount_total": 1, "patient_ref": 1}):
+            chains[e.get("repeat_root")].append(e)
+
+        per: dict = defaultdict(lambda: {"missed": 0, "available": 0, "value": 0})
+        for exs in chains.values():
+            vf = min((e["valid_from"] for e in exs if e.get("valid_from")), default=None)
+            vu = max((e["valid_until"] for e in exs if e.get("valid_until")), default=None)
+            if not vf or not vu or (vu - vf).days < 40:
+                continue
+            avg = sum(e.get("amount_total", 0) for e in exs) / max(len(exs), 1)
+            pat = exs[0].get("patient_ref")
+            if not pat:
+                continue
+            i = 0
+            while i < 18 and addm(vf, i) <= vu:
+                wopen, wclose = addm(vf, i), addm(vf, i + 1)
+                done = any(e.get("executed_at") and wopen <= e["executed_at"] < wclose for e in exs)
+                if not done:
+                    if wclose <= now:
+                        per[pat]["missed"] += 1; per[pat]["value"] += avg
+                    elif wopen <= now < wclose:
+                        per[pat]["available"] += 1; per[pat]["value"] += avg
+                i += 1
+
+        prefs = [p for p, d in per.items() if d["missed"] or d["available"]]
+        if not prefs:
+            return {"items": [], "total_value": 0, "total_missed": 0, "total_available": 0, "patients": 0}
+        pats = {p["_id"]: p async for p in self._db["patients_anonymized"].find(
+            {"_id": {"$in": prefs}, "tenant_id": self.tenant_id})}
+        cts = {c["_id"]: c async for c in self._db["patient_contacts"].find(
+            {"_id": {"$in": prefs}, "tenant_id": self.tenant_id})}
+        items = []
+        for pref in prefs:
+            d = per[pref]; pa = pats.get(pref, {}); ct = cts.get(pref, {})
+            items.append({
+                "patient_id": str(pref), "name": pa.get("full_name"), "amka": pa.get("amka"),
+                "age_group": pa.get("age_group"), "last_seen": pa.get("last_seen_at"),
+                "missed": d["missed"], "available": d["available"], "value": round(d["value"]),
+                "mobile": ct.get("mobile"), "phone": ct.get("phone"), "email": ct.get("email"),
+                "consent": bool(ct.get("marketing_consent")), "has_contact": bool(ct.get("mobile") or ct.get("phone") or ct.get("email")),
+            })
+        items.sort(key=lambda x: x["value"], reverse=True)
+        return jsonsafe({
+            "items": items[:500], "patients": len(items),
+            "total_value": sum(i["value"] for i in items),
+            "total_missed": sum(i["missed"] for i in items),
+            "total_available": sum(i["available"] for i in items),
+            "with_contact": sum(1 for i in items if i["has_contact"]),
+        })
 
     # ── order advisor ────────────────────────────────────────────────────
     async def orders(self, *, lead_days: int = 7, safety_pct: float = 15.0) -> dict:
