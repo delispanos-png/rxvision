@@ -17,9 +17,9 @@ export function Logo({
     <div className="flex items-center gap-2.5">
       <LogoMark className={markClassName} />
       <div className="leading-tight">
-        <div className="text-[15px] font-bold tracking-tight text-slate-900">RxVision</div>
+        <div className="text-[15px] font-bold tracking-tight text-slate-900 dark:text-slate-100">RxVision</div>
         {subtitle && (
-          <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">
+          <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400 dark:text-slate-500">
             {subtitle}
           </div>
         )}

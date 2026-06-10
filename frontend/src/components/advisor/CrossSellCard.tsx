@@ -36,9 +36,9 @@ export function CrossSellCard({ x }: { x: Xsell }) {
         if (!has) return <span className="text-xs text-slate-300">— χωρίς στοιχεία</span>;
         return (
           <span className="inline-flex items-center gap-1.5">
-            {tel && <a href={`tel:${tel}`} onClick={(e) => e.stopPropagation()} title="Κλήση" className="rounded-lg border border-slate-200 p-1.5 text-emerald-600 hover:bg-emerald-50"><Phone className="h-3.5 w-3.5" /></a>}
-            {r.mobile && <a href={`sms:${r.mobile}`} onClick={(e) => e.stopPropagation()} title="SMS" className="rounded-lg border border-slate-200 p-1.5 text-brand-600 hover:bg-brand-50"><MessageSquare className="h-3.5 w-3.5" /></a>}
-            {r.email && <a href={`mailto:${r.email}`} onClick={(e) => e.stopPropagation()} title="Email" className="rounded-lg border border-slate-200 p-1.5 text-amber-600 hover:bg-amber-50"><Mail className="h-3.5 w-3.5" /></a>}
+            {tel && <a href={`tel:${tel}`} onClick={(e) => e.stopPropagation()} title="Κλήση" aria-label="Κλήση" className="rounded-lg border border-slate-200 p-1.5 text-emerald-600 hover:bg-emerald-50"><Phone className="h-3.5 w-3.5" /></a>}
+            {r.mobile && <a href={`sms:${r.mobile}`} onClick={(e) => e.stopPropagation()} title="SMS" aria-label="SMS" className="rounded-lg border border-slate-200 p-1.5 text-brand-600 hover:bg-brand-50"><MessageSquare className="h-3.5 w-3.5" /></a>}
+            {r.email && <a href={`mailto:${r.email}`} onClick={(e) => e.stopPropagation()} title="Email" aria-label="Email" className="rounded-lg border border-slate-200 p-1.5 text-amber-600 hover:bg-amber-50"><Mail className="h-3.5 w-3.5" /></a>}
             {r.consent && <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700">συγκατάθεση</span>}
           </span>
         );

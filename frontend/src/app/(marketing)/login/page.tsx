@@ -92,7 +92,7 @@ export default function LoginPage() {
             type="email"
             autoComplete="email"
             {...register("email")}
-            className="w-full rounded-lg border border-slate-300 px-3 py-2 focus:border-brand-500 focus:outline-none"
+            className="w-full rounded-lg border border-slate-300 px-3 py-2 focus:border-brand-500 focus:outline-none dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200"
           />
           {errors.email && <p className="mt-1 text-xs text-red-600">{errors.email.message}</p>}
         </div>
@@ -103,7 +103,7 @@ export default function LoginPage() {
             type="password"
             autoComplete="current-password"
             {...register("password")}
-            className="w-full rounded-lg border border-slate-300 px-3 py-2 focus:border-brand-500 focus:outline-none"
+            className="w-full rounded-lg border border-slate-300 px-3 py-2 focus:border-brand-500 focus:outline-none dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200"
           />
           {errors.password && <p className="mt-1 text-xs text-red-600">{errors.password.message}</p>}
         </div>

@@ -13,8 +13,23 @@ gdpr changes. Static checks only (CI runs tsc/lint/build + pytest). No push to m
   untouched: it's adjacent to the infra/ingestion stream's surface and it is a warning, not an
   error; noted in NOTES.md). CI already runs all three steps and they pass.
 
-### Next (in mission priority order)
-- #2 Test coverage (backend repos/services + extend test_invariants; frontend where CI-runnable).
-- #3 Accessibility (WCAG 2.1 AA). #4 Dark-mode completion.
-- Secondary: SEO/PWA/robots/sitemap/offline; audit-log viewer (read-only); email templates
-  (render layer); onboarding polish. Report: dependency audit. Stretch: i18n.
+### #2 Test coverage — backend isolation tests DONE
+- `test_invariants.py`: BaseRepository round-trip tenant-isolation tests (reads/writes/update/
+  delete/aggregate scoped; pagination clamp). mongomock-motor. CI green (45 passed).
+- Also fixed 2 pre-existing `main` CI breakages (noted in NOTES.md): ruff F401 in routers/
+  ingestion.py; stale assertion in test_hdika_client.py (ingestion stream changed external_id to
+  barcode:execNo). Frontend unit-test runner: proposed in QUESTIONS.md (needs sign-off); e2e needs
+  CI service containers (out of current CI) — documented.
+
+### #3 Accessibility (WCAG AA) + #4 Dark-mode — high-impact pass DONE
+- Dark-mode: added `dark:` variants across shell + shared components (body, Modal, Card, QueryState,
+  DateInput, Topbar, Export menus, Logo, KpiCard, InsightCard, SelectFilter, ContactCard, login
+  inputs, marketing/admin layouts, nutrition gradient cards).
+- A11y: `aria-label` on icon-only buttons/links (theme/lang toggles, sidebar collapse, CopyButton,
+  contact tel/sms/mail, cross-sell), search-input labels, Intro dismiss made keyboard-operable
+  (role/tabIndex/onKeyDown), marketing layout `<main>` landmark, CalendarHeatmap `role="img"`+label
+  (other charts already had it). tsc 0, lint 0, build ✓ (24 files).
+
+### Next
+- Secondary: SEO/PWA (meta+OG, robots, sitemap, offline page); audit-log viewer (read-only admin);
+  email templates (render layer); onboarding polish. Report: dependency audit. Stretch: i18n.

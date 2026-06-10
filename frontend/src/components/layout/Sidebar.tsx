@@ -92,6 +92,7 @@ export function Sidebar() {
         {/* collapse toggle (desktop) */}
         <button
           onClick={toggleCollapsed}
+          aria-label={collapsed ? "Ανάπτυξη μενού" : "Σύμπτυξη μενού"}
           className="hidden items-center gap-2 border-t border-slate-100 px-4 py-3 text-xs font-medium text-slate-400 hover:text-slate-600 dark:border-slate-800 dark:hover:text-slate-200 md:flex"
         >
           {collapsed ? <PanelLeft className="h-4 w-4" /> : <><PanelLeftClose className="h-4 w-4" /> {t("Σύμπτυξη", "Collapse")}</>}

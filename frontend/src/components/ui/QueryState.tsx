@@ -53,7 +53,7 @@ function StateBox({ tone, children }: { tone: "muted" | "error"; children: React
   const cls =
     tone === "error"
       ? "border-rose-200 bg-rose-50 text-rose-700"
-      : "border-slate-200/70 bg-white text-slate-400";
+      : "border-slate-200/70 bg-white text-slate-400 dark:border-slate-700/60 dark:bg-slate-900 dark:text-slate-500";
   return (
     <div
       role={tone === "error" ? "alert" : "status"}

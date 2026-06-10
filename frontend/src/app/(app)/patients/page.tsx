@@ -168,7 +168,7 @@ export default function PatientsPage() {
         <PanelCard title={searching ? `Αποτελέσματα αναζήτησης («${term.trim()}»)` : "Λίστα ασφαλισμένων (top 100 κατά αξία)"} bodyClassName="pt-2">
           <div className="relative mb-3">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-            <input value={term} onChange={(e) => setTerm(e.target.value)} placeholder="Αναζήτηση: όνομα, επίθετο, ΑΜΚΑ, τηλέφωνο ή email…"
+            <input value={term} onChange={(e) => setTerm(e.target.value)} placeholder="Αναζήτηση: όνομα, επίθετο, ΑΜΚΑ, τηλέφωνο ή email…" aria-label="Αναζήτηση ασθενή"
               className="w-full rounded-xl border border-slate-300 py-2.5 pl-10 pr-4 text-sm focus:border-brand-500 focus:outline-none" />
           </div>
           {searching ? (

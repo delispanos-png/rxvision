@@ -35,7 +35,7 @@ export function ContactCard({ patientId }: { patientId: string }) {
     <label className="text-sm">
       <span className="mb-1 block text-xs text-slate-500">{label}</span>
       <input type={type} value={(f[k] as string) || ""} onChange={(e) => set(k, e.target.value)} placeholder={ph}
-        className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-brand-500 focus:outline-none" />
+        className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-brand-500 focus:outline-none dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200" />
     </label>
   );
 
@@ -43,9 +43,9 @@ export function ContactCard({ patientId }: { patientId: string }) {
   return (
     <PanelCard title="Στοιχεία επικοινωνίας" action={
       <div className="flex gap-1.5">
-        {tel && <a href={`tel:${tel}`} title="Κλήση" className="rounded-lg border border-slate-200 p-1.5 text-emerald-600 hover:bg-emerald-50"><Phone className="h-4 w-4" /></a>}
-        {f.mobile && <a href={`sms:${f.mobile}`} title="SMS" className="rounded-lg border border-slate-200 p-1.5 text-brand-600 hover:bg-brand-50"><MessageSquare className="h-4 w-4" /></a>}
-        {f.email && <a href={`mailto:${f.email}`} title="Email" className="rounded-lg border border-slate-200 p-1.5 text-amber-600 hover:bg-amber-50"><Mail className="h-4 w-4" /></a>}
+        {tel && <a href={`tel:${tel}`} title="Κλήση" aria-label="Κλήση" className="rounded-lg border border-slate-200 p-1.5 text-emerald-600 hover:bg-emerald-50"><Phone className="h-4 w-4" /></a>}
+        {f.mobile && <a href={`sms:${f.mobile}`} title="SMS" aria-label="SMS" className="rounded-lg border border-slate-200 p-1.5 text-brand-600 hover:bg-brand-50"><MessageSquare className="h-4 w-4" /></a>}
+        {f.email && <a href={`mailto:${f.email}`} title="Email" aria-label="Email" className="rounded-lg border border-slate-200 p-1.5 text-amber-600 hover:bg-amber-50"><Mail className="h-4 w-4" /></a>}
       </div>
     }>
       <p className="-mt-1 mb-3 text-xs text-slate-400">Καταχωρείς εσύ — <b>δεν επηρεάζονται</b> από συγχρονισμό ΗΔΙΚΑ.</p>
@@ -56,7 +56,7 @@ export function ContactCard({ patientId }: { patientId: string }) {
         <label className="text-sm">
           <span className="mb-1 block text-xs text-slate-500">Προτιμώμενο κανάλι</span>
           <select value={f.preferred_channel || "mobile"} onChange={(e) => set("preferred_channel", e.target.value)}
-            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-brand-500 focus:outline-none">
+            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-brand-500 focus:outline-none dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200">
             <option value="mobile">SMS (κινητό)</option>
             <option value="email">Email</option>
             <option value="phone">Τηλέφωνο</option>
@@ -70,7 +70,7 @@ export function ContactCard({ patientId }: { patientId: string }) {
         <label className="text-sm sm:col-span-2">
           <span className="mb-1 block text-xs text-slate-500">Σημειώσεις</span>
           <textarea value={f.notes || ""} onChange={(e) => set("notes", e.target.value)} rows={2}
-            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-brand-500 focus:outline-none" />
+            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-brand-500 focus:outline-none dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200" />
         </label>
       </div>
       <div className="mt-3 flex items-center justify-between gap-3">

@@ -55,14 +55,14 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   }
 
   return (
-    <div className="flex min-h-screen bg-slate-100">
+    <div className="flex min-h-screen bg-slate-100 dark:bg-slate-950">
       {/* mobile backdrop */}
       {mobileOpen && (
         <div className="fixed inset-0 z-30 bg-black/40 md:hidden" onClick={() => setMobileOpen(false)} />
       )}
 
       {/* sidebar: slide-over drawer on mobile, static on desktop */}
-      <aside className={`fixed inset-y-0 left-0 z-40 flex w-64 shrink-0 flex-col border-r border-slate-200 bg-white transition-transform duration-200 md:static md:w-60 md:translate-x-0 ${mobileOpen ? "translate-x-0" : "-translate-x-full"}`}>
+      <aside className={`fixed inset-y-0 left-0 z-40 flex w-64 shrink-0 flex-col border-r border-slate-200 bg-white transition-transform duration-200 dark:border-slate-800 dark:bg-slate-900 md:static md:w-60 md:translate-x-0 ${mobileOpen ? "translate-x-0" : "-translate-x-full"}`}>
         <div className="flex items-center gap-2 px-5 py-4 font-bold text-slate-900">
           <LogoMark className="h-7 w-7" />
           RxVision Admin
@@ -101,7 +101,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
       <div className="flex min-w-0 flex-1 flex-col">
         {/* mobile top bar with hamburger */}
-        <div className="flex items-center gap-3 border-b border-slate-200 bg-white px-4 py-3 md:hidden">
+        <div className="flex items-center gap-3 border-b border-slate-200 bg-white px-4 py-3 dark:border-slate-800 dark:bg-slate-900 md:hidden">
           <button onClick={() => setMobileOpen(true)} aria-label="Μενού" className="grid h-9 w-9 place-items-center rounded-lg text-slate-600 hover:bg-slate-100">
             <Menu className="h-5 w-5" />
           </button>

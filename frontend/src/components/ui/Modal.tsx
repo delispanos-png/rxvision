@@ -78,10 +78,10 @@ export function Modal({
         role="dialog"
         aria-modal="true"
         tabIndex={-1}
-        className={`max-h-[90vh] w-full ${SIZES[size]} overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl outline-none`}
+        className={`max-h-[90vh] w-full ${SIZES[size]} overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl outline-none dark:bg-slate-900`}
         onMouseDown={(e) => e.stopPropagation()}
       >
-        {title && <h3 className="mb-3 text-base font-bold text-slate-900">{title}</h3>}
+        {title && <h3 className="mb-3 text-base font-bold text-slate-900 dark:text-slate-100">{title}</h3>}
         {children}
         {footer && <div className="mt-6 flex justify-end gap-2">{footer}</div>}
       </div>

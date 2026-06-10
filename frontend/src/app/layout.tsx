@@ -21,7 +21,7 @@ export const viewport: Viewport = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="el">
-      <body className="bg-slate-50 text-slate-900">
+      <body className="bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100">
         <ServiceWorkerRegister />
         <Providers>{children}</Providers>
       </body>

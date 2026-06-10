@@ -32,15 +32,15 @@ export function InsightCard({ ins }: { ins: Insight }) {
   return (
     <div className={`rounded-2xl border p-4 shadow-card ${s.ring}`}>
       <div className="flex items-start gap-3">
-        <span className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-white ${s.icon}`}>
+        <span className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-white dark:bg-slate-800 ${s.icon}`}>
           <Icon className="h-5 w-5" strokeWidth={2} />
         </span>
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${s.chip}`}>{s.label}</span>
-            {ins.metric && <span className="text-base font-bold text-slate-900">{ins.metric}</span>}
+            {ins.metric && <span className="text-base font-bold text-slate-900 dark:text-slate-100">{ins.metric}</span>}
           </div>
-          <h3 className="mt-1.5 text-sm font-semibold text-slate-800">{ins.title}</h3>
+          <h3 className="mt-1.5 text-sm font-semibold text-slate-800 dark:text-slate-200">{ins.title}</h3>
           <p className="mt-0.5 text-sm leading-relaxed text-slate-500">{ins.detail}</p>
           {ins.cta && (
             <Link href={ins.cta.href} className="mt-2 inline-flex items-center gap-1 text-sm font-medium text-brand-700 hover:underline">

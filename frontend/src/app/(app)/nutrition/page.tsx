@@ -11,20 +11,20 @@ type Hit = { patient_id: string; name?: string | null; amka?: string | null; bir
 type Section = { title: string; drugs: string[]; favor: string; avoid: string; why: string };
 
 // pick a fitting emoji + accent per therapeutic category (by keyword in the title)
-function decor(title: string): { emoji: string; from: string; to: string; text: string } {
+function decor(title: string): { emoji: string; from: string; to: string; text: string; darkFrom: string; darkTo: string; darkText: string } {
   const t = title.toLowerCase();
-  if (t.includes("στατίν") || t.includes("χοληστ")) return { emoji: "🫀", from: "from-rose-50", to: "to-orange-50", text: "text-rose-700" };
-  if (t.includes("διαβ")) return { emoji: "🩸", from: "from-red-50", to: "to-pink-50", text: "text-red-700" };
-  if (t.includes("πιεσ") || t.includes("υπερτασ")) return { emoji: "💓", from: "from-pink-50", to: "to-rose-50", text: "text-pink-700" };
-  if (t.includes("διουρητ")) return { emoji: "💧", from: "from-sky-50", to: "to-cyan-50", text: "text-sky-700" };
-  if (t.includes("ppi") || t.includes("πρωτον")) return { emoji: "🔥", from: "from-amber-50", to: "to-orange-50", text: "text-amber-700" };
-  if (t.includes("θυρε") || t.includes("λεβοθ")) return { emoji: "🦋", from: "from-violet-50", to: "to-fuchsia-50", text: "text-violet-700" };
-  if (t.includes("οστε")) return { emoji: "🦴", from: "from-slate-50", to: "to-stone-100", text: "text-slate-700" };
-  if (t.includes("αντιβιο")) return { emoji: "🦠", from: "from-lime-50", to: "to-green-50", text: "text-green-700" };
-  if (t.includes("κατάθλ") || t.includes("καταθλ")) return { emoji: "🧠", from: "from-indigo-50", to: "to-violet-50", text: "text-indigo-700" };
-  if (t.includes("φλεγμον") || t.includes("μσαφ")) return { emoji: "🦵", from: "from-teal-50", to: "to-emerald-50", text: "text-teal-700" };
-  if (t.includes("αντιπηκτ")) return { emoji: "🩹", from: "from-red-50", to: "to-rose-50", text: "text-red-700" };
-  return { emoji: "🥗", from: "from-emerald-50", to: "to-teal-50", text: "text-emerald-700" };
+  if (t.includes("στατίν") || t.includes("χοληστ")) return { emoji: "🫀", from: "from-rose-50", to: "to-orange-50", text: "text-rose-700", darkFrom: "dark:from-rose-900/30", darkTo: "dark:to-orange-900/20", darkText: "dark:text-rose-300" };
+  if (t.includes("διαβ")) return { emoji: "🩸", from: "from-red-50", to: "to-pink-50", text: "text-red-700", darkFrom: "dark:from-red-900/30", darkTo: "dark:to-pink-900/20", darkText: "dark:text-red-300" };
+  if (t.includes("πιεσ") || t.includes("υπερτασ")) return { emoji: "💓", from: "from-pink-50", to: "to-rose-50", text: "text-pink-700", darkFrom: "dark:from-pink-900/30", darkTo: "dark:to-rose-900/20", darkText: "dark:text-pink-300" };
+  if (t.includes("διουρητ")) return { emoji: "💧", from: "from-sky-50", to: "to-cyan-50", text: "text-sky-700", darkFrom: "dark:from-sky-900/30", darkTo: "dark:to-cyan-900/20", darkText: "dark:text-sky-300" };
+  if (t.includes("ppi") || t.includes("πρωτον")) return { emoji: "🔥", from: "from-amber-50", to: "to-orange-50", text: "text-amber-700", darkFrom: "dark:from-amber-900/30", darkTo: "dark:to-orange-900/20", darkText: "dark:text-amber-300" };
+  if (t.includes("θυρε") || t.includes("λεβοθ")) return { emoji: "🦋", from: "from-violet-50", to: "to-fuchsia-50", text: "text-violet-700", darkFrom: "dark:from-violet-900/30", darkTo: "dark:to-fuchsia-900/20", darkText: "dark:text-violet-300" };
+  if (t.includes("οστε")) return { emoji: "🦴", from: "from-slate-50", to: "to-stone-100", text: "text-slate-700", darkFrom: "dark:from-slate-800/40", darkTo: "dark:to-stone-800/30", darkText: "dark:text-slate-200" };
+  if (t.includes("αντιβιο")) return { emoji: "🦠", from: "from-lime-50", to: "to-green-50", text: "text-green-700", darkFrom: "dark:from-lime-900/30", darkTo: "dark:to-green-900/20", darkText: "dark:text-green-300" };
+  if (t.includes("κατάθλ") || t.includes("καταθλ")) return { emoji: "🧠", from: "from-indigo-50", to: "to-violet-50", text: "text-indigo-700", darkFrom: "dark:from-indigo-900/30", darkTo: "dark:to-violet-900/20", darkText: "dark:text-indigo-300" };
+  if (t.includes("φλεγμον") || t.includes("μσαφ")) return { emoji: "🦵", from: "from-teal-50", to: "to-emerald-50", text: "text-teal-700", darkFrom: "dark:from-teal-900/30", darkTo: "dark:to-emerald-900/20", darkText: "dark:text-teal-300" };
+  if (t.includes("αντιπηκτ")) return { emoji: "🩹", from: "from-red-50", to: "to-rose-50", text: "text-red-700", darkFrom: "dark:from-red-900/30", darkTo: "dark:to-rose-900/20", darkText: "dark:text-red-300" };
+  return { emoji: "🥗", from: "from-emerald-50", to: "to-teal-50", text: "text-emerald-700", darkFrom: "dark:from-emerald-900/30", darkTo: "dark:to-teal-900/20", darkText: "dark:text-emerald-300" };
 }
 type Plan = { patient_id: string; name?: string | null; email?: string | null; mobile?: string | null; sections: Section[] };
 
@@ -38,7 +38,7 @@ export default function NutritionPage() {
 
   return (
     <ModuleGuard module="patient_analytics">
-      <div className="mb-5 overflow-hidden rounded-2xl bg-gradient-to-br from-emerald-600 via-emerald-600 to-teal-700 p-5 text-white shadow-lg print:hidden">
+      <div className="mb-5 overflow-hidden rounded-2xl bg-gradient-to-br from-emerald-600 via-emerald-600 to-teal-700 p-5 text-white shadow-lg dark:from-emerald-700 dark:to-teal-800 print:hidden">
         <div className="flex items-center gap-2">
           <span className="relative flex h-2.5 w-2.5"><span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-white/70" /><span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-white" /></span>
           <span className="text-[11px] font-semibold uppercase tracking-[0.15em] text-white/80">AI · Διατροφικές οδηγίες</span>
@@ -51,8 +51,8 @@ export default function NutritionPage() {
       <div className="mb-4 print:hidden">
         <div className="relative max-w-xl">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-          <input autoFocus value={q} onChange={(e) => { setQ(e.target.value); setPicked(null); }} placeholder="Αναζήτηση: όνομα, ΑΜΚΑ, τηλέφωνο ή email…"
-            className="w-full rounded-xl border border-slate-300 py-3 pl-10 pr-4 text-sm focus:border-brand-500 focus:outline-none" />
+          <input autoFocus value={q} onChange={(e) => { setQ(e.target.value); setPicked(null); }} placeholder="Αναζήτηση: όνομα, ΑΜΚΑ, τηλέφωνο ή email…" aria-label="Αναζήτηση ασθενή"
+            className="w-full rounded-xl border border-slate-300 py-3 pl-10 pr-4 text-sm focus:border-brand-500 focus:outline-none dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200" />
         </div>
         {q.trim().length >= 2 && !picked && (
           <div className="mt-2 max-w-xl overflow-hidden rounded-xl border border-slate-200 bg-white shadow-card">
@@ -101,11 +101,11 @@ export default function NutritionPage() {
                 {plan.data!.sections.map((s, i) => {
                   const d = decor(s.title);
                   return (
-                    <div key={i} className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-card transition hover:shadow-lg">
-                      <div className={`flex items-center gap-3 bg-gradient-to-r ${d.from} ${d.to} px-4 py-3`}>
-                        <span className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-white text-2xl shadow-sm">{d.emoji}</span>
+                    <div key={i} className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-card transition hover:shadow-lg dark:border-slate-700 dark:bg-slate-900">
+                      <div className={`flex items-center gap-3 bg-gradient-to-r ${d.from} ${d.to} ${d.darkFrom} ${d.darkTo} px-4 py-3`}>
+                        <span className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-white text-2xl shadow-sm dark:bg-slate-800">{d.emoji}</span>
                         <div className="min-w-0">
-                          <div className={`text-base font-bold ${d.text}`}>{s.title}</div>
+                          <div className={`text-base font-bold ${d.text} ${d.darkText}`}>{s.title}</div>
                           <div className="mt-1 flex flex-wrap gap-1">
                             {s.drugs.length ? s.drugs.map((dr) => <span key={dr} className="rounded-full bg-white/70 px-2 py-0.5 text-[10px] font-medium text-slate-500">{dr}</span>) : <span className="text-[11px] text-slate-400">—</span>}
                           </div>
