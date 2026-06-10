@@ -22,3 +22,6 @@ frontend/public/workbox-*.js
 *.log
 .DS_Store
 backups/
+
+# provisioning SSH keys — never commit
+infra/scaling/keys/

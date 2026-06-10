@@ -111,7 +111,8 @@ def hdika_incremental_sync(self, tenant_id: str) -> dict:
     return asyncio.run(_run())
 
 
-@celery_app.task(name="app.workers.ingestion.hdika_backfill", bind=True)
+@celery_app.task(name="app.workers.ingestion.hdika_backfill", bind=True,
+                 acks_late=False, max_retries=0)
 def hdika_backfill(self, tenant_id: str, since_iso: str, until_iso: str | None = None,
                    throttle: float = 0.08) -> dict:
     """Historical ΗΔΙΚΑ ingest for the window [`since_iso`, `until_iso`] (until defaults
@@ -121,6 +122,16 @@ def hdika_backfill(self, tenant_id: str, since_iso: str, until_iso: str | None =
     async def _run() -> dict:
         client, db = _fresh_db()
         try:
+            # Guard: never run two backfills for one tenant at once (they'd race over the
+            # same window). Skip if one is already running with a live heartbeat (<10min).
+            from datetime import datetime as _dt
+            fresh = _dt.now(tz=timezone.utc) - timedelta(minutes=10)
+            busy = await db["sync_jobs"].find_one(
+                {"tenant_id": tenant_id, "type": "backfill", "status": "running",
+                 "updated_at": {"$gte": fresh}})
+            if busy:
+                return {"tenant_id": tenant_id, "status": "skipped",
+                        "note": "backfill already running"}
             creds = dict(vault.get_secret(f"tenants/{tenant_id}/hdika") or {})
             plat = await db["platform_settings"].find_one({"_id": "idika"})
             if plat:

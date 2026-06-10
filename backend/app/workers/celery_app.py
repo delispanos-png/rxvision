@@ -19,6 +19,9 @@ celery_app.conf.update(
     task_reject_on_worker_lost=True,
     worker_prefetch_multiplier=1,
     task_default_retry_delay=60,
+    # Long backfills (>1h) were being redelivered by Redis' default 1h visibility timeout,
+    # spawning duplicate concurrent runs that raced over the same window. Raise to 12h.
+    broker_transport_options={"visibility_timeout": 43200},
 )
 
 # Periodic schedule (beat). Per-tenant incremental sync fans out from the dispatcher.
