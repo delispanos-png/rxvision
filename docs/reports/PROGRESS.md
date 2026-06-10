@@ -48,6 +48,11 @@ gdpr changes. Static checks only (CI runs tsc/lint/build + pytest). No push to m
   none → NOT applied. Backend: `pip-audit` not runnable here (no pip) — manual pyproject review
   (recommend PyJWT over python-jose; add pip-audit to CI). Prioritised action list included.
 
+### #7 Audit-log viewer (read-only) — DONE
+- Backend `GET /admin/audit-logs` (platform-admin, read-only) with filters (date/tenant/user/action)
+  + pagination; never mutates. Frontend `admin/audit-logs/page.tsx` (filter form + table +
+  pagination, dark-mode, Greek) + nav entry «Αρχείο ενεργειών». tsc 0, lint 0, build ✓.
+
 ### Remaining
-- #7 audit-log viewer (read-only admin page + endpoint); #8 onboarding/registration polish;
-  #10 i18n (progressive). Frontend e2e + pip-audit-in-CI need sign-off (QUESTIONS.md).
+- #8 onboarding/registration polish; #10 i18n (progressive). Frontend e2e + pip-audit-in-CI need
+  sign-off (QUESTIONS.md).

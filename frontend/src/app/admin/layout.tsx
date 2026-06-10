@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import {
   LayoutGrid, FileText, Newspaper, BookOpen, Users, UserCog, Mail,
   Server, Wrench, BarChart3, CreditCard, Receipt, LogOut, PlugZap, Network, Menu, X, Layers, Cloud,
+  ScrollText,
 } from "lucide-react";
 import { adminApi, adminTokens, ApiError } from "@/lib/adminClient";
 import { LogoMark } from "@/components/brand/Logo";
@@ -25,6 +26,7 @@ const NAV = [
   { label: "Ρυθμίσεις SMTP", icon: Server, href: "/admin/smtp", section: "smtp" },
   { label: "Συντήρηση", icon: Wrench, href: "/admin/maintenance", section: "maintenance" },
   { label: "Επισκεψιμότητα", icon: BarChart3, href: "/admin/health", section: "health" },
+  { label: "Αρχείο ενεργειών", icon: ScrollText, href: "/admin/audit-logs", section: "audit" },
 ];
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
