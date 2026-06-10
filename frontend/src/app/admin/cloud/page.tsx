@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { adminApi } from "@/lib/adminClient";
 import { Cloud, Save, Loader2, Check, ShieldCheck, Trash2 } from "lucide-react";
+import { InfraDashboard } from "@/components/admin/InfraDashboard";
 
 type Status = { hetzner_configured: boolean; cloudflare_configured: boolean };
 type Verify = { hetzner_ok?: boolean; hetzner_servers?: string[]; cloudflare_ok?: boolean; cloudflare_zones?: string[]; hetzner_error?: string; cloudflare_error?: string };
@@ -61,6 +62,8 @@ export default function CloudPage() {
           </div>
         )}
       </div>
+
+      {status.data?.hetzner_configured && <InfraDashboard />}
     </div>
   );
 }
