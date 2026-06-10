@@ -7,6 +7,7 @@ import { Users, Wallet, TrendingUp, Activity, Search, Phone, MessageSquare, Mail
 import { api, queryKeys } from "@/lib/apiClient";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
 import { useUiStore, filtersToQuery } from "@/store/uiStore";
+import { prevYearRange, pctDelta } from "@/lib/compare";
 import { fmtNum, fmtEur, fmtDate } from "@/lib/formatters";
 import { DateRangeFilter } from "@/components/filters/DateRangeFilter";
 import { BarChart } from "@/components/charts/BarChart";
@@ -117,6 +118,16 @@ export default function PatientsPage() {
     queryKey: ["patients", "list", q],
     queryFn: () => api<{ items: PatientRow[] }>(`/patients/list?sort=value&${q}`),
   });
+  const pr = prevYearRange(filters.dateFrom, filters.dateTo);
+  const prevQ = pr ? filtersToQuery({ ...filters, dateFrom: pr.from, dateTo: pr.to }) : "";
+  const prevSex = useQuery({
+    queryKey: ["patients", "agg", "sex", "prevYear", pr?.from, pr?.to],
+    queryFn: () => api<{ rows: AggRow[] }>(`/patients/aggregate?by=sex&${prevQ}`), enabled: !!pr,
+  });
+  const prevList = useQuery({
+    queryKey: ["patients", "list", "prevYear", pr?.from, pr?.to],
+    queryFn: () => api<{ items: PatientRow[] }>(`/patients/list?sort=value&${prevQ}`), enabled: !!pr,
+  });
   const [term, setTerm] = useState("");
   const searching = term.trim().length >= 2;
   const search = useQuery({
@@ -135,6 +146,9 @@ export default function PatientsPage() {
 
   const totalInsured = sex.reduce((a, r) => a + (r.value || 0), 0) || age.reduce((a, r) => a + (r.value || 0), 0);
   const totalValue = patients.reduce((a, r) => a + (r.value || 0), 0);
+  const pInsured = (prevSex.data?.rows ?? []).reduce((a, r) => a + (r.value || 0), 0);
+  const pValue = (prevList.data?.items ?? []).reduce((a, r) => a + (r.value || 0), 0);
+  const hasPrev = !!(prevSex.data && prevList.data);
   const totalProfit = patients.reduce((a, r) => a + (r.profit || 0), 0);
   const lastRetention = ret.length ? ret[ret.length - 1].retained_pct : 0;
 
@@ -152,8 +166,8 @@ export default function PatientsPage() {
       <div className="space-y-4">
         {/* KPI row */}
         <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
-          <KpiCard label="Ασφαλισμένοι" value={fmtNum(totalInsured)} sub="σύνολο κατανομών" icon={Users} accent="indigo" />
-          <KpiCard label="Αξία (top 100)" value={fmtEur(totalValue)} sub="κορυφαίοι ασφαλισμένοι" icon={Wallet} accent="violet" />
+          <KpiCard label="Ασφαλισμένοι" value={fmtNum(totalInsured)} sub="σύνολο κατανομών" icon={Users} accent="indigo" trend={hasPrev ? pctDelta(totalInsured, pInsured) : undefined} />
+          <KpiCard label="Αξία (top 100)" value={fmtEur(totalValue)} sub="κορυφαίοι ασφαλισμένοι" icon={Wallet} accent="violet" trend={hasPrev ? pctDelta(totalValue, pValue) : undefined} />
           <KpiCard label="Κερδοφορία (top 100)" value={fmtEur(totalProfit)} sub="μεικτό κέρδος" icon={TrendingUp} accent="green" />
           <KpiCard
             label="Διατήρηση"

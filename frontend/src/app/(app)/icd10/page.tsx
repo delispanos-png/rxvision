@@ -6,6 +6,7 @@ import { Stethoscope, Receipt, Wallet, TrendingUp } from "lucide-react";
 import { api } from "@/lib/apiClient";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
 import { useUiStore, filtersToQuery } from "@/store/uiStore";
+import { prevYearRange, pctDelta } from "@/lib/compare";
 import { fmtEur, fmtNum } from "@/lib/formatters";
 import { DateRangeFilter } from "@/components/filters/DateRangeFilter";
 import { SelectFilter } from "@/components/filters/SelectFilter";
@@ -54,6 +55,12 @@ export default function Icd10Page() {
     queryKey: ["icd10", "hierarchy", level, q],
     queryFn: () => api<{ items: Node[] }>(`/icd10/hierarchy?level=${level}&metric=value&${q}`),
   });
+  const pr = prevYearRange(filters.dateFrom, filters.dateTo);
+  const prevIcd = useQuery({
+    queryKey: ["icd10", "hierarchy", "prevYear", level, pr?.from, pr?.to],
+    queryFn: () => api<{ items: Node[] }>(`/icd10/hierarchy?level=${level}&metric=value&${filtersToQuery({ ...filters, dateFrom: pr!.from, dateTo: pr!.to })}`),
+    enabled: !!pr,
+  });
 
   const rows = data?.items ?? [];
   const top = rows.slice(0, 10);
@@ -61,6 +68,10 @@ export default function Icd10Page() {
   const totalRx = rows.reduce((a, r) => a + (r.rx || 0), 0);
   const totalValue = rows.reduce((a, r) => a + (r.value || 0), 0);
   const totalProfit = rows.reduce((a, r) => a + (r.profit || 0), 0);
+  const prows = prevIcd.data?.items ?? [];
+  const pRx = prows.reduce((a, r) => a + (r.rx || 0), 0), pValue = prows.reduce((a, r) => a + (r.value || 0), 0);
+  const pProfit = prows.reduce((a, r) => a + (r.profit || 0), 0);
+  const hasPrev = !!prevIcd.data;
 
   return (
     <ModuleGuard module="icd10_analytics">
@@ -96,9 +107,9 @@ export default function Icd10Page() {
           {/* KPI row */}
           <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
             <KpiCard label="Διαγνώσεις (κόμβοι)" value={fmtNum(rows.length)} sub="στο τρέχον επίπεδο" icon={Stethoscope} accent="indigo" />
-            <KpiCard label="Σύνολο συνταγών" value={fmtNum(totalRx)} sub="πλήθος εκτελέσεων" icon={Receipt} accent="violet" />
-            <KpiCard label="Αξία" value={fmtEur(totalValue)} sub="σύνολο περιόδου" icon={Wallet} accent="amber" />
-            <KpiCard label="Κερδοφορία" value={fmtEur(totalProfit)} sub="μεικτό κέρδος" icon={TrendingUp} accent="green" />
+            <KpiCard label="Σύνολο συνταγών" value={fmtNum(totalRx)} sub="πλήθος εκτελέσεων" icon={Receipt} accent="violet" trend={hasPrev ? pctDelta(totalRx, pRx) : undefined} />
+            <KpiCard label="Αξία" value={fmtEur(totalValue)} sub="σύνολο περιόδου" icon={Wallet} accent="amber" trend={hasPrev ? pctDelta(totalValue, pValue) : undefined} />
+            <KpiCard label="Κερδοφορία" value={fmtEur(totalProfit)} sub="μεικτό κέρδος" icon={TrendingUp} accent="green" trend={hasPrev ? pctDelta(totalProfit, pProfit) : undefined} />
           </div>
 
           {/* top nodes chart */}

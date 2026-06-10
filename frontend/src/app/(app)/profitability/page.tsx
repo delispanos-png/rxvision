@@ -6,6 +6,7 @@ import { TrendingUp, Percent, Coins, AlertTriangle } from "lucide-react";
 import { api } from "@/lib/apiClient";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
 import { useUiStore, filtersToQuery } from "@/store/uiStore";
+import { prevYearRange, pctDelta } from "@/lib/compare";
 import { fmtEur, fmtPct, fmtNum } from "@/lib/formatters";
 import { KpiCard } from "@/components/kpi/KpiCard";
 import { PanelCard } from "@/components/ui/Card";
@@ -59,6 +60,12 @@ export default function ProfitabilityPage() {
     queryKey: ["profitability", "summary", q],
     queryFn: () => api<Summary>(`/profitability/summary?${q}`),
   });
+  const pr = prevYearRange(filters.dateFrom, filters.dateTo);
+  const prevSummary = useQuery({
+    queryKey: ["profitability", "summary", "prevYear", pr?.from, pr?.to],
+    queryFn: () => api<Summary>(`/profitability/summary?${filtersToQuery({ ...filters, dateFrom: pr!.from, dateTo: pr!.to })}`),
+    enabled: !!pr,
+  });
 
   const byDim = useQuery({
     queryKey: ["profitability", "by", dim, q],
@@ -76,6 +83,7 @@ export default function ProfitabilityPage() {
   });
 
   const s = summary.data;
+  const p = prevSummary.data;
   const rows = byDim.data?.rows ?? [];
   const ag = aging.data;
   const lowItems = lowMargin.data?.items ?? [];
@@ -99,9 +107,9 @@ export default function ProfitabilityPage() {
       <div className="space-y-4">
         {/* KPI row */}
         <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
-          <KpiCard label="Μεικτό κέρδος" value={s ? fmtEur(s.gross_profit) : "—"} sub="αιτούμενα − κόστος" icon={TrendingUp} accent="green" />
-          <KpiCard label="Περιθώριο" value={s ? fmtPct(s.margin_pct) : "—"} sub="μεικτό περιθώριο" icon={Percent} accent="violet" />
-          <KpiCard label="Έσοδα" value={s ? fmtEur(s.revenue) : "—"} sub="σύνολο περιόδου" icon={Coins} accent="amber" />
+          <KpiCard label="Μεικτό κέρδος" value={s ? fmtEur(s.gross_profit) : "—"} sub="αιτούμενα − κόστος" icon={TrendingUp} accent="green" trend={pctDelta(s?.gross_profit, p?.gross_profit)} />
+          <KpiCard label="Περιθώριο" value={s ? fmtPct(s.margin_pct) : "—"} sub="μεικτό περιθώριο" icon={Percent} accent="violet" trend={pctDelta(s?.margin_pct, p?.margin_pct)} />
+          <KpiCard label="Έσοδα" value={s ? fmtEur(s.revenue) : "—"} sub="σύνολο περιόδου" icon={Coins} accent="amber" trend={pctDelta(s?.revenue, p?.revenue)} />
           <KpiCard
             label="Είδη χαμηλής κερδοφορίας"
             value={fmtNum(lowItems.length)}

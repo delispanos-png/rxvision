@@ -44,7 +44,7 @@ export function KpiCard({
           <div className="mt-2 flex items-baseline gap-2">
             <div className="truncate text-xl font-bold leading-none text-slate-900 dark:text-slate-100 sm:text-[26px]">{value}</div>
             {trend !== undefined && (
-              <span title="Δ vs προηγούμενη ισόχρονη περίοδο"
+              <span title="Δ vs πέρσι (ίδια περίοδος)"
                 className={`text-xs font-semibold ${trend >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400"}`}>
                 {trend >= 0 ? "▲" : "▼"} {Math.abs(trend).toFixed(1)}%
               </span>

@@ -7,6 +7,7 @@ import { BarChart3, Stethoscope, TrendingUp, UserPlus, Wallet, Download } from "
 import { api, queryKeys } from "@/lib/apiClient";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
 import { useUiStore, filtersToQuery } from "@/store/uiStore";
+import { prevYearRange, pctDelta } from "@/lib/compare";
 import { fmtEur, fmtNum } from "@/lib/formatters";
 import { downloadCsv } from "@/lib/csv";
 import { DateRangeFilter } from "@/components/filters/DateRangeFilter";
@@ -49,9 +50,18 @@ export default function DoctorsPage() {
     queryKey: queryKeys.doctors(`${q}&sort=${sort}`),
     queryFn: () => api<{ items: Doctor[] }>(`/doctors?${q}&sort=${sort}`),
   });
+  const pr = prevYearRange(filters.dateFrom, filters.dateTo);
+  const prevDoc = useQuery({
+    queryKey: ["doctors", "prevYear", pr?.from, pr?.to],
+    queryFn: () => api<{ items: Doctor[] }>(`/doctors?${filtersToQuery({ ...filters, dateFrom: pr!.from, dateTo: pr!.to })}&sort=value`),
+    enabled: !!pr,
+  });
 
   const items = data?.items ?? [];
   const sum = (f: (d: Doctor) => number) => items.reduce((a, d) => a + (f(d) || 0), 0);
+  const pItems = prevDoc.data?.items ?? [];
+  const psum = (f: (d: Doctor) => number) => pItems.reduce((a, d) => a + (f(d) || 0), 0);
+  const hasPrev = !!prevDoc.data;
   const top = [...items].sort((a, b) => b.value - a.value).slice(0, 8);
 
   // KPI drill-down popup (client-side — all doctors+stats are already loaded)
@@ -127,15 +137,15 @@ export default function DoctorsPage() {
         <div className="space-y-4">
           {/* KPI row */}
           <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-5">
-            <KpiCard label="Ιατροί" value={fmtNum(items.length)} sub="ανά ειδικότητα →" icon={Stethoscope} accent="indigo"
+            <KpiCard label="Ιατροί" value={fmtNum(items.length)} sub="ανά ειδικότητα →" icon={Stethoscope} accent="indigo" trend={hasPrev ? pctDelta(items.length, pItems.length) : undefined}
               onClick={() => setModal({ title: "Ιατροί ανά ειδικότητα", view: "specialty", metric: "value" })} />
-            <KpiCard label="Συνταγές" value={fmtNum(sum((d) => d.rx_count))} sub="ανά ιατρό →" icon={BarChart3} accent="violet"
+            <KpiCard label="Συνταγές" value={fmtNum(sum((d) => d.rx_count))} sub="ανά ιατρό →" icon={BarChart3} accent="violet" trend={hasPrev ? pctDelta(sum((d) => d.rx_count), psum((d) => d.rx_count)) : undefined}
               onClick={() => setModal({ title: "Συνταγές ανά ιατρό", view: "doctor", metric: "rx_count" })} />
-            <KpiCard label="Αξία" value={fmtEur(sum((d) => d.value))} sub="ανά ιατρό & ειδικότητα →" icon={Wallet} accent="amber"
+            <KpiCard label="Αξία" value={fmtEur(sum((d) => d.value))} sub="ανά ιατρό & ειδικότητα →" icon={Wallet} accent="amber" trend={hasPrev ? pctDelta(sum((d) => d.value), psum((d) => d.value)) : undefined}
               onClick={() => setModal({ title: "Αξία ανά ιατρό & ειδικότητα", view: "doctor", metric: "value" })} />
-            <KpiCard label="Κερδοφορία" value={fmtEur(sum((d) => d.gross_profit))} sub="ανά ιατρό & ειδικότητα →" icon={TrendingUp} accent="green"
+            <KpiCard label="Κερδοφορία" value={fmtEur(sum((d) => d.gross_profit))} sub="ανά ιατρό & ειδικότητα →" icon={TrendingUp} accent="green" trend={hasPrev ? pctDelta(sum((d) => d.gross_profit), psum((d) => d.gross_profit)) : undefined}
               onClick={() => setModal({ title: "Κερδοφορία ανά ιατρό & ειδικότητα", view: "doctor", metric: "gross_profit" })} />
-            <KpiCard label="Νέοι πελάτες" value={fmtNum(sum((d) => d.new_patients))} sub="ανά ιατρό & ειδικότητα →" icon={UserPlus} accent="sky"
+            <KpiCard label="Νέοι πελάτες" value={fmtNum(sum((d) => d.new_patients))} sub="ανά ιατρό & ειδικότητα →" icon={UserPlus} accent="sky" trend={hasPrev ? pctDelta(sum((d) => d.new_patients), psum((d) => d.new_patients)) : undefined}
               onClick={() => setModal({ title: "Νέοι πελάτες ανά ιατρό & ειδικότητα", view: "doctor", metric: "new_patients" })} />
           </div>
 

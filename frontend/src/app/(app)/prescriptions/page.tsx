@@ -9,6 +9,7 @@ import { Receipt, Wallet, Pill, AlertTriangle, Search, Download } from "lucide-r
 import { api } from "@/lib/apiClient";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
 import { useUiStore, filtersToQuery } from "@/store/uiStore";
+import { prevYearRange, pctDelta } from "@/lib/compare";
 import { fmtEur, fmtNum, fmtDate } from "@/lib/formatters";
 import { downloadCsv } from "@/lib/csv";
 import { DateRangeFilter } from "@/components/filters/DateRangeFilter";
@@ -180,6 +181,12 @@ export default function PrescriptionsPage() {
     queryKey: ["prescriptions", "by-fund", q],
     queryFn: () => api<{ items: FundRow[] }>(`/prescriptions/by-fund?${q}`),
   });
+  const pr = prevYearRange(filters.dateFrom, filters.dateTo);
+  const prevFund = useQuery({
+    queryKey: ["prescriptions", "by-fund", "prevYear", pr?.from, pr?.to],
+    queryFn: () => api<{ items: FundRow[] }>(`/prescriptions/by-fund?${filtersToQuery({ ...filters, dateFrom: pr!.from, dateTo: pr!.to })}`),
+    enabled: !!pr,
+  });
   const fundData = byFund.data?.items ?? [];
   const fundMetric = fundModal?.metric ?? "value";
   const fundRows = [...fundData].sort((a, b) => (b[fundMetric] as number) - (a[fundMetric] as number));
@@ -193,6 +200,11 @@ export default function PrescriptionsPage() {
   const totalValue = fundData.reduce((a, f) => a + f.value, 0);
   const totalClaimed = fundData.reduce((a, f) => a + f.claimed, 0);
   const unexecutedCount = fundData.reduce((a, f) => a + f.unexecuted, 0);
+  // πέρσι, ίδια περίοδος → Δ
+  const pf = prevFund.data?.items ?? [];
+  const pRx = pf.reduce((a, f) => a + f.rx, 0), pValue = pf.reduce((a, f) => a + f.value, 0);
+  const pClaimed = pf.reduce((a, f) => a + f.claimed, 0), pUnexec = pf.reduce((a, f) => a + f.unexecuted, 0);
+  const hasPrev = !!prevFund.data;
 
   return (
     <ModuleGuard module="prescription_analytics">
@@ -247,11 +259,11 @@ export default function PrescriptionsPage() {
       <div className="space-y-4">
         {/* KPI row */}
         <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
-          <KpiCard label="Συνταγές" value={fmtNum(totalRx)} sub="σύνολο περιόδου · ανά ταμείο →" icon={Receipt} accent="indigo"
+          <KpiCard label="Συνταγές" value={fmtNum(totalRx)} sub="σύνολο περιόδου · ανά ταμείο →" icon={Receipt} accent="indigo" trend={hasPrev ? pctDelta(totalRx, pRx) : undefined}
             onClick={() => setFundModal({ title: "Συνταγές ανά ταμείο", metric: "rx" })} />
-          <KpiCard label="Αξία συνταγών" value={fmtEur(totalValue)} sub="σύνολο περιόδου · ανά ταμείο →" icon={Wallet} accent="violet"
+          <KpiCard label="Αξία συνταγών" value={fmtEur(totalValue)} sub="σύνολο περιόδου · ανά ταμείο →" icon={Wallet} accent="violet" trend={hasPrev ? pctDelta(totalValue, pValue) : undefined}
             onClick={() => setFundModal({ title: "Αξία συνταγών ανά ταμείο", metric: "value" })} />
-          <KpiCard label="Αιτούμενα ταμείων" value={fmtEur(totalClaimed)} sub="προς ασφ. φορείς · ανά ταμείο →" icon={Pill} accent="amber"
+          <KpiCard label="Αιτούμενα ταμείων" value={fmtEur(totalClaimed)} sub="προς ασφ. φορείς · ανά ταμείο →" icon={Pill} accent="amber" trend={hasPrev ? pctDelta(totalClaimed, pClaimed) : undefined}
             onClick={() => setFundModal({ title: "Αιτούμενο ανά ταμείο", metric: "claimed" })} />
           <KpiCard
             label="Με ανεκτέλεστα"
@@ -259,6 +271,7 @@ export default function PrescriptionsPage() {
             sub={`χαμένη αξία ${fmtEur(un?.total_lost_value ?? 0)} · ανά ταμείο →`}
             icon={AlertTriangle}
             accent="rose"
+            trend={hasPrev ? pctDelta(unexecutedCount, pUnexec) : undefined}
             onClick={() => setFundModal({ title: "Ανεκτέλεστες ανά ταμείο", metric: "unexecuted" })}
           />
         </div>

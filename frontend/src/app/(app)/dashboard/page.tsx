@@ -14,6 +14,7 @@ import { downloadCsv } from "@/lib/csv";
 import { fmtDate } from "@/lib/formatters";
 import { DateRangeFilter } from "@/components/filters/DateRangeFilter";
 import { useUiStore, filtersToQuery } from "@/store/uiStore";
+import { prevYearRange, pctDelta } from "@/lib/compare";
 import { LineChart } from "@/components/charts/LineChart";
 import { DonutChart } from "@/components/charts/DonutChart";
 import { BarChart } from "@/components/charts/BarChart";
@@ -71,25 +72,16 @@ export default function DashboardPage() {
   });
 
   const summary = useQuery({ queryKey: ["dash", "summary", from, to], queryFn: () => api<Summary>(`/dashboard/summary?${qs}`) });
-  // Δ vs the immediately-preceding equal-length period
-  const prevRange = (() => {
-    if (!from || !to) return null;
-    const f = new Date(from), t = new Date(to);
-    const len = t.getTime() - f.getTime();
-    const pTo = new Date(f.getTime() - 86400000);
-    const pFrom = new Date(pTo.getTime() - len);
-    const iso = (d: Date) => d.toISOString().slice(0, 10);
-    return { from: iso(pFrom), to: iso(pTo) };
-  })();
+  // Δ vs the SAME period last year (πέρσι)
+  const prevRange = prevYearRange(from, to);
   const prevQs = prevRange ? filtersToQuery({ ...filters, dateFrom: prevRange.from, dateTo: prevRange.to }) : "";
   const prevSummary = useQuery({
-    queryKey: ["dash", "summary", "prev", prevRange?.from, prevRange?.to],
+    queryKey: ["dash", "summary", "prevYear", prevRange?.from, prevRange?.to],
     queryFn: () => api<Summary>(`/dashboard/summary?${prevQs}`),
     enabled: !!prevRange,
   });
   const prev = prevSummary.data;
-  const delta = (cur?: number, p?: number) =>
-    p && p > 0 && cur !== undefined ? ((cur - p) / p) * 100 : undefined;
+  const delta = pctDelta;
   const tsVal = useQuery({ queryKey: ["dash", "ts", "value", from, to], queryFn: () => api<Bucket[]>(`/dashboard/timeseries?metric=value&grain=day&${qs}`) });
   const tsClaim = useQuery({ queryKey: ["dash", "ts", "claimed", from, to], queryFn: () => api<Bucket[]>(`/dashboard/timeseries?metric=claimed&grain=day&${qs}`) });
   const topIcd = useQuery({ queryKey: ["dash", "icd", from, to], queryFn: () => api<Top[]>(`/dashboard/top?dim=icd10&limit=6&${qs}`) });
