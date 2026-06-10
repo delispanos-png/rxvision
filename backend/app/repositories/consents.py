@@ -61,28 +61,31 @@ class PatientConsentRepository(BaseRepository):
         oid = _oid(patient_id)
         if not oid:
             return []
-        return await self.find({"patient_id": oid}, sort=[("at", -1)], limit=500)
+        return await self.find({"patient_id": oid}, sort=[("at", -1), ("_id", -1)], limit=500)
 
     async def current(self, patient_id) -> dict[str, str]:
-        """Latest status per channel for one patient → {channel: status}."""
+        """Latest status per channel for one patient → {channel: status}.
+        Computed from the newest-first event stream (robust across DB engines)."""
         oid = _oid(patient_id)
         if not oid:
             return {}
-        rows = await self.aggregate([
-            {"$match": {"patient_id": oid}},
-            {"$sort": {"at": -1}},
-            {"$group": {"_id": "$channel", "status": {"$first": "$status"}}},
-        ])
-        return {r["_id"]: r["status"] for r in rows}
+        out: dict[str, str] = {}
+        for ev in await self.find({"patient_id": oid}, sort=[("at", -1), ("_id", -1)], limit=500):
+            ch = ev.get("channel")
+            if ch and ch not in out:        # first seen == latest (desc sort)
+                out[ch] = ev.get("status")
+        return out
 
     async def withdrawn_patient_ids(self, channel: str) -> set:
         """Patient _ids whose LATEST event for `channel` (or the catch-all "all") is a
         withdrawal — used to exclude them from a campaign even if a stale contact flag
-        still says consented. Returns a set of ObjectId."""
-        rows = await self.aggregate([
-            {"$match": {"channel": {"$in": [channel, "all"]}}},
-            {"$sort": {"at": -1}},
-            {"$group": {"_id": "$patient_id", "status": {"$first": "$status"}}},
-            {"$match": {"status": "withdrawn"}},
-        ])
-        return {oid for r in rows if (oid := _oid(r["_id"]))}
+        still says consented. Returns a set of ObjectId. (Consent events are sparse;
+        the 500 cap is the most-recent events, which cover active subjects.)"""
+        latest: dict[str, str] = {}
+        events = await self.find({"channel": {"$in": [channel, "all"]}},
+                                 sort=[("at", -1), ("_id", -1)], limit=500)
+        for ev in events:
+            pid = ev.get("patient_id")
+            if pid is not None and pid not in latest:   # first seen == latest
+                latest[pid] = ev.get("status")
+        return {oid for pid, st in latest.items() if st == "withdrawn" and (oid := _oid(pid))}
