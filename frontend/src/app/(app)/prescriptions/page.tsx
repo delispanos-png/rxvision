@@ -176,6 +176,7 @@ export default function PrescriptionsPage() {
   });
 
   const [fundModal, setFundModal] = useState<{ title: string; metric: FundMetric } | null>(null);
+  const [unexecModal, setUnexecModal] = useState<UnexecutedRow | null>(null);
   // always-on: also powers the period-total KPIs (sum across funds), not just the popup
   const byFund = useQuery({
     queryKey: ["prescriptions", "by-fund", q],
@@ -309,6 +310,7 @@ export default function PrescriptionsPage() {
             columns={unexecutedColumns}
             rows={unRows}
             rowKey={(r) => r.product_id}
+            onRowClick={(r) => setUnexecModal(r)}
             empty="Καμία ανεκτέλεστη δραστική στην περίοδο."
           />
         </PanelCard>
@@ -371,6 +373,30 @@ export default function PrescriptionsPage() {
           isEmpty={fundRows.length === 0} onRetry={() => byFund.refetch()} empty="Καμία εγγραφή.">
           <DataTable pageSize={20} columns={fundCols} rows={fundRows} rowKey={(r) => r.fund_name} />
         </QueryState>
+      </Modal>
+
+      {/* all prescriptions for a clicked unexecuted item */}
+      <Modal open={!!unexecModal} onClose={() => setUnexecModal(null)} title={unexecModal ? `${unexecModal.name} — όλες οι συνταγές` : ""} size="2xl">
+        {unexecModal && (() => {
+          const rxs = unexecModal.rxs ?? (unexecModal.barcodes ?? []).map((b) => ({ barcode: b, patient: null, date: null }));
+          return (
+            <>
+              <div className="-mt-2 mb-3 text-sm text-slate-500">
+                {unexecModal.occurrences} φορές ανεκτέλεστο · {rxs.length} συνταγές · χαμένη αξία <b className="text-amber-600">{fmtEur(unexecModal.lost_value)}</b>
+              </div>
+              <div className="max-h-[60vh] divide-y divide-slate-100 overflow-y-auto rounded-xl border border-slate-100 dark:divide-slate-800 dark:border-slate-800">
+                {rxs.map((x, i) => (
+                  <button key={`${x.barcode}-${i}`} onClick={() => { setUnexecModal(null); router.push(`/prescriptions/${encodeURIComponent(x.barcode)}`); }}
+                    className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm hover:bg-slate-50 dark:hover:bg-slate-800">
+                    <span className="font-mono text-brand-700 dark:text-brand-300">{x.barcode}</span>
+                    <span className="min-w-0 flex-1 truncate text-slate-600 dark:text-slate-300">{x.patient || "—"}</span>
+                    <span className="shrink-0 text-xs text-slate-400">{x.date ? new Date(x.date).toLocaleDateString("el-GR") : ""}</span>
+                  </button>
+                ))}
+              </div>
+            </>
+          );
+        })()}
       </Modal>
     </ModuleGuard>
   );
