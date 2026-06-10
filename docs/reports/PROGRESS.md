@@ -36,6 +36,18 @@ gdpr changes. Static checks only (CI runs tsc/lint/build + pytest). No push to m
   `app/offline/page.tsx` + next-pwa `fallbacks.document: "/offline"`. Build emits /robots.txt,
   /sitemap.xml, /offline; PWA precaches the offline fallback. tsc 0, lint 0, build ✓.
 
-### Next (secondary, in order)
-- #6 email templates (render layer only); #7 audit-log viewer (read-only admin page); #8
-  onboarding/registration polish. Report: #9 dependency audit. Stretch: #10 i18n.
+### #6 Email templates (render layer) — DONE
+- `email_template.py` already had a responsive/branded newsletter renderer; added reusable
+  `render_transactional()` (welcome/reset/notifications: 600px table, inline styles, preheader,
+  brand header, optional CTA). Added `tests/test_email_template.py` (merge-tags escaping,
+  responsive newsletter, transactional with/without CTA). Did NOT touch the comms send backend.
+
+### #9 Dependency audit (report-only) — DONE
+- `docs/reports/dependency-audit.md`: `npm audit` = 1 critical / 10 high / 2 moderate (mostly
+  transitive via unmaintained `next-pwa` + `jspdf`/`xlsx`/`next`); all fixes are breaking or
+  none → NOT applied. Backend: `pip-audit` not runnable here (no pip) — manual pyproject review
+  (recommend PyJWT over python-jose; add pip-audit to CI). Prioritised action list included.
+
+### Remaining
+- #7 audit-log viewer (read-only admin page + endpoint); #8 onboarding/registration polish;
+  #10 i18n (progressive). Frontend e2e + pip-audit-in-CI need sign-off (QUESTIONS.md).
