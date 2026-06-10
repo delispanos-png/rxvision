@@ -6,7 +6,9 @@ prepends it so isolation can never be forgotten.
 
 from __future__ import annotations
 
-from datetime import datetime
+import calendar
+from collections import defaultdict
+from datetime import datetime, timezone
 
 from bson import ObjectId
 
@@ -96,33 +98,73 @@ class PrescriptionRepository(BaseRepository):
         return jsonsafe(out)
 
     async def repeats(self, external_id: str) -> dict:
-        """Repeat tree for a prescription: every execution sharing its barcode
-        (barcode:1, barcode:2, …) ordered by execution number, plus the next expected one."""
-        import re as _re
-        barcode = str(external_id).split(":")[0]
-        cur = self._coll.find(self._scope(
-            {"external_id": {"$regex": "^" + _re.escape(barcode) + "(:|$)"}}))
-        rows: list[dict] = []
-        async for ex in cur:
-            eid = ex.get("external_id", "")
-            tail = eid.split(":")[-1]
-            rows.append({
-                "external_id": eid,
-                "exec_no": int(tail) if ":" in eid and tail.isdigit() else 1,
-                "executed_at": ex.get("executed_at"),
-                "status": ex.get("status"),
-                "amount_total": ex.get("amount_total", 0),
-                "amount_claimed": ex.get("amount_claimed", 0),
-                "repeat_total": ex.get("repeat_total", 1),
-                "next_open_date": ex.get("next_open_date"),
-                "icd10": ex.get("icd10", []),
-            })
-        rows.sort(key=lambda r: r["exec_no"])
-        total = max([r["repeat_total"] for r in rows], default=1)
-        next_dates = [r["next_open_date"] for r in rows if r.get("next_open_date")]
-        next_expected = max(next_dates) if next_dates and len(rows) < total else None
-        return jsonsafe({"barcode": barcode, "total": total, "done": len(rows),
-                         "executions": rows, "next_expected": next_expected})
+        """Repeat-chain tree. Groups every execution sharing `repeat_root` (the first
+        prescription's barcode); each distinct barcode = one monthly repeat, with its partial
+        executions (:1,:2) nested. Builds the monthly schedule from the validity window and
+        assigns each month a state: executed / available / lost / future."""
+        ex = await self._coll.find_one(self._scope({"external_id": external_id}))
+        root = (ex.get("repeat_root") if ex else None) or str(external_id).split(":")[0]
+        rows = [r async for r in self._coll.find(self._scope({"repeat_root": root}))]
+        if not rows:  # fall back to same-barcode grouping (e.g. legacy rows without repeat_root)
+            rows = [r async for r in self._coll.find(self._scope(
+                {"external_id": {"$regex": "^" + str(external_id).split(":")[0]}}))]
+
+        by_bc: dict[str, list] = defaultdict(list)
+        for r in rows:
+            by_bc[str(r.get("external_id", "")).split(":")[0]].append(r)
+
+        def repeat_of(parts: list) -> dict:
+            parts = sorted(parts, key=lambda p: p.get("external_id", ""))
+            dates = [p["executed_at"] for p in parts if p.get("executed_at")]
+            return {
+                "barcode": str(parts[0].get("external_id", "")).split(":")[0],
+                "executed_at": min(dates) if dates else None,
+                "status": "executed" if all(p.get("status") == "executed" for p in parts) else "partial",
+                "amount_total": sum(p.get("amount_total", 0) for p in parts),
+                "icd10": parts[0].get("icd10", []),
+                "parts": [{"external_id": p.get("external_id"), "executed_at": p.get("executed_at"),
+                           "status": p.get("status"), "amount_total": p.get("amount_total", 0)} for p in parts],
+            }
+
+        repeats = [r for r in (repeat_of(p) for p in by_bc.values()) if r["executed_at"]]
+        repeats.sort(key=lambda r: r["executed_at"])
+
+        starts = [r["valid_from"] for r in rows if r.get("valid_from")]
+        ends = [r["valid_until"] for r in rows if r.get("valid_until")]
+        start = min(starts) if starts else (repeats[0]["executed_at"] if repeats else None)
+        end = max(ends) if ends else (repeats[-1]["executed_at"] if repeats else None)
+        now = datetime.now(tz=timezone.utc)
+
+        def add_months(d: datetime, n: int) -> datetime:
+            y, m = d.year + (d.month - 1 + n) // 12, (d.month - 1 + n) % 12 + 1
+            return d.replace(year=y, month=m, day=min(d.day, calendar.monthrange(y, m)[1]))
+
+        def midx(d: datetime, base: datetime) -> int:
+            return (d.year - base.year) * 12 + (d.month - base.month)
+
+        slots: list[dict] = []
+        if start and end:
+            exec_by_slot = {midx(r["executed_at"], start): r for r in repeats}
+            i = 0
+            while i < 18:  # safety cap
+                opening = add_months(start, i)
+                if opening > end and i >= len(repeats):
+                    break
+                window_end = add_months(start, i + 1)
+                r = exec_by_slot.get(i)
+                state = ("executed" if r else "lost" if window_end <= now
+                         else "available" if opening <= now else "future")
+                slots.append({"index": i, "opening": opening, "state": state, "repeat": r})
+                i += 1
+        else:
+            slots = [{"index": i, "opening": r["executed_at"], "state": "executed", "repeat": r}
+                     for i, r in enumerate(repeats)]
+
+        return jsonsafe({
+            "root": root, "is_chain": len(slots) > 1 or len(by_bc) > 1,
+            "total": len(slots), "executed_count": len(repeats),
+            "valid_from": start, "valid_until": end, "slots": slots,
+        })
 
     _LIST_SORTS = {"executed_at", "amount_total", "amount_claimed", "external_id"}
 
