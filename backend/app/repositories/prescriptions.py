@@ -139,30 +139,36 @@ class PrescriptionRepository(BaseRepository):
             y, m = d.year + (d.month - 1 + n) // 12, (d.month - 1 + n) % 12 + 1
             return d.replace(year=y, month=m, day=min(d.day, calendar.monthrange(y, m)[1]))
 
-        def midx(d: datetime, base: datetime) -> int:
-            return (d.year - base.year) * 12 + (d.month - base.month)
-
         slots: list[dict] = []
         if start and end:
-            exec_by_slot = {midx(r["executed_at"], start): r for r in repeats}
-            i = 0
-            while i < 18:  # safety cap
-                opening = add_months(start, i)
-                if opening > end and i >= len(repeats):
-                    break
-                window_end = add_months(start, i + 1)
+            # the monthly WINDOW [open_i, open_{i+1}) an execution belongs to — by date range,
+            # NOT calendar-month number (an exec on 17/02 with start 28/01 is window 0, not 1).
+            def window_of(d: datetime) -> int:
+                i = 0
+                while i < 18 and add_months(start, i + 1) <= d:
+                    i += 1
+                return i
+            exec_by_slot = {window_of(r["executed_at"]): r for r in repeats}
+            n = 1
+            while n < 18 and add_months(start, n) <= end:
+                n += 1
+            if exec_by_slot:
+                n = max(n, max(exec_by_slot) + 1)
+            for i in range(n):
+                opening, window_end = add_months(start, i), add_months(start, i + 1)
                 r = exec_by_slot.get(i)
                 state = ("executed" if r else "lost" if window_end <= now
                          else "available" if opening <= now else "future")
                 slots.append({"index": i, "opening": opening, "state": state, "repeat": r})
-                i += 1
         else:
             slots = [{"index": i, "opening": r["executed_at"], "state": "executed", "repeat": r}
                      for i, r in enumerate(repeats)]
 
         return jsonsafe({
             "root": root, "is_chain": len(slots) > 1 or len(by_bc) > 1,
-            "total": len(slots), "executed_count": len(repeats),
+            "total": len(slots),
+            "executed_count": sum(1 for s in slots if s["state"] == "executed"),
+            "lost_count": sum(1 for s in slots if s["state"] == "lost"),
             "valid_from": start, "valid_until": end, "slots": slots,
         })
 
