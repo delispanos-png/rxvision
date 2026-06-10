@@ -6,6 +6,7 @@ import { useQuery } from "@tanstack/react-query";
 import { ArrowLeft, Repeat, Printer, FileText } from "lucide-react";
 import { api } from "@/lib/apiClient";
 import { PanelCard } from "@/components/ui/Card";
+import { RepeatTree } from "@/components/prescriptions/RepeatTree";
 
 type Item = {
   name: string | null; barcode: string | null; substance: string | null; category: string | null;
@@ -154,6 +155,9 @@ export default function PrescriptionDetailPage() {
           </div>
         </PanelCard>
       </div>
+
+      {/* repeat tree — all executions of this prescription's barcode */}
+      <RepeatTree externalId={id} />
 
       {/* medicines */}
       <PanelCard title="Φάρμακα & θεραπείες">

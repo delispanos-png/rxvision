@@ -95,6 +95,35 @@ class PrescriptionRepository(BaseRepository):
         }
         return jsonsafe(out)
 
+    async def repeats(self, external_id: str) -> dict:
+        """Repeat tree for a prescription: every execution sharing its barcode
+        (barcode:1, barcode:2, …) ordered by execution number, plus the next expected one."""
+        import re as _re
+        barcode = str(external_id).split(":")[0]
+        cur = self._coll.find(self._scope(
+            {"external_id": {"$regex": "^" + _re.escape(barcode) + "(:|$)"}}))
+        rows: list[dict] = []
+        async for ex in cur:
+            eid = ex.get("external_id", "")
+            tail = eid.split(":")[-1]
+            rows.append({
+                "external_id": eid,
+                "exec_no": int(tail) if ":" in eid and tail.isdigit() else 1,
+                "executed_at": ex.get("executed_at"),
+                "status": ex.get("status"),
+                "amount_total": ex.get("amount_total", 0),
+                "amount_claimed": ex.get("amount_claimed", 0),
+                "repeat_total": ex.get("repeat_total", 1),
+                "next_open_date": ex.get("next_open_date"),
+                "icd10": ex.get("icd10", []),
+            })
+        rows.sort(key=lambda r: r["exec_no"])
+        total = max([r["repeat_total"] for r in rows], default=1)
+        next_dates = [r["next_open_date"] for r in rows if r.get("next_open_date")]
+        next_expected = max(next_dates) if next_dates and len(rows) < total else None
+        return jsonsafe({"barcode": barcode, "total": total, "done": len(rows),
+                         "executions": rows, "next_expected": next_expected})
+
     _LIST_SORTS = {"executed_at", "amount_total", "amount_claimed", "external_id"}
 
     async def list_executions(self, query: dict, skip: int, limit: int,

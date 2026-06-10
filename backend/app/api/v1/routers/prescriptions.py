@@ -28,6 +28,16 @@ async def execution_detail(
     return detail
 
 
+@router.get("/repeats/{external_id}")
+async def prescription_repeats(
+    external_id: str,
+    ctx: TenantContext = Depends(require("prescriptions:read", module="prescription_analytics")),
+):
+    """The repeat tree — all executions of this prescription's barcode + next expected."""
+    repo = PrescriptionRepository(tenant_id=ctx.tenant_id)
+    return await repo.repeats(external_id)
+
+
 @router.get("/idika/{barcode}")
 async def idika_full_detail(
     barcode: str,
