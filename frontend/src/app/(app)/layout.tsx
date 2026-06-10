@@ -2,6 +2,7 @@ import { Sidebar } from "@/components/layout/Sidebar";
 import { Topbar } from "@/components/layout/Topbar";
 import { MaintenanceBanner } from "@/components/layout/MaintenanceBanner";
 import { ThemeInit } from "@/components/layout/ThemeInit";
+import { PageHelp } from "@/components/help/PageHelp";
 
 // Backend always enforces permissions/modules; the sidebar is presentational.
 export default function AppLayout({ children }: { children: React.ReactNode }) {
@@ -17,6 +18,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           <div className="mx-auto w-full max-w-[1600px]">{children}</div>
         </main>
       </div>
+      <PageHelp />
     </div>
   );
 }
