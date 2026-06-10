@@ -105,6 +105,17 @@ async def test_rectify_updates_contact(monkeypatch):
     assert await db["audit_logs"].find_one({"action": "gdpr.rectify", "subject_id": str(oid)}) is not None
 
 
+async def test_search_finds_by_name_and_contact(monkeypatch):
+    db = _wire(monkeypatch)
+    oid = ObjectId()
+    await _seed_patient(db, T1, oid)
+    assert any(r["id"] == str(oid) for r in await gdpr_service.search_subjects(T1, "Παπαδ"))
+    assert any(r["id"] == str(oid) for r in await gdpr_service.search_subjects(T1, "2101234567"))
+    # too short → no results; tenant isolation holds
+    assert await gdpr_service.search_subjects(T1, "x") == []
+    assert await gdpr_service.search_subjects(T2, "Παπαδ") == []
+
+
 async def test_export_is_tenant_scoped(monkeypatch):
     db = _wire(monkeypatch)
     oid = ObjectId()

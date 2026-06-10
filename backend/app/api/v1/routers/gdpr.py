@@ -43,6 +43,12 @@ async def data_map(ctx: TenantContext = Depends(require("gdpr:read"))):
     return {"categories": DATA_MAP}
 
 
+@router.get("/search")
+async def search_subjects(q: str, ctx: TenantContext = Depends(require("gdpr:read"))):
+    """Find a data subject by name / phone / email before exercising a right."""
+    return {"results": await gdpr_service.search_subjects(ctx.tenant_id, q)}
+
+
 @router.get("/export/{patient_id}")
 async def export_subject(patient_id: str,
                          ctx: TenantContext = Depends(require("gdpr:export"))):

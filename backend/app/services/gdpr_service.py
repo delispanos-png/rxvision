@@ -12,6 +12,7 @@ identifiers (contact PII + name/AMKA) and keeps the pseudonymous, legally-requir
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 
 from bson import ObjectId
@@ -55,6 +56,25 @@ async def audit(tenant_id: str, *, actor_user_id: str | None, action: str,
         "details": details or None,
         "at": datetime.now(tz=timezone.utc),
     })
+
+
+async def search_subjects(tenant_id: str, q: str, *, limit: int = 20) -> list[dict]:
+    """Find data subjects by name (patients_anonymized.full_name) or contact (phone/email),
+    so the pharmacist can locate a patient before exercising a right. Tenant-scoped."""
+    q = (q or "").strip()
+    if len(q) < 2:
+        return []
+    rx = {"$regex": re.escape(q), "$options": "i"}
+    by_id: dict = {}
+    for p in await _repo(tenant_id, "patients_anonymized").find({"full_name": rx}, limit=limit):
+        by_id[p["_id"]] = {"id": p["_id"], "name": p.get("full_name"),
+                           "age_group": p.get("age_group"), "erased": bool(p.get("erased"))}
+    for c in await _repo(tenant_id, "patient_contacts").find(
+            {"$or": [{"phone": rx}, {"mobile": rx}, {"email": rx}]}, limit=limit):
+        e = by_id.setdefault(c["_id"], {"id": c["_id"], "name": None})
+        e["phone"] = c.get("phone") or c.get("mobile")
+        e["email"] = c.get("email")
+    return list(by_id.values())[:limit]
 
 
 async def export_subject(tenant_id: str, patient_id: str, *, actor_user_id: str | None = None) -> dict:
