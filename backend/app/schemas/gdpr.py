@@ -37,3 +37,8 @@ class EraseIn(BaseModel):
     """Art.17 — right to be forgotten (with legal hold). Confirmation required."""
     confirm: bool = False
     reason: str | None = Field(None, max_length=500)
+
+
+class RetentionIn(BaseModel):
+    """The controller (pharmacy) chooses how long RxVision keeps its data (months)."""
+    retention_months: int = Field(..., ge=1, le=600)

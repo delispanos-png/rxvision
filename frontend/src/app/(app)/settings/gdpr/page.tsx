@@ -25,6 +25,7 @@ export default function GdprPage() {
   const [form, setForm] = useState<Record<string, string>>({});
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
+  const [retMonths, setRetMonths] = useState("");
 
   const dataMap = useQuery({ queryKey: ["gdpr", "data-map"], queryFn: () => api<{ categories: DataCat[] }>("/gdpr/data-map"), retry: false });
   const search = useQuery({
@@ -54,6 +55,13 @@ export default function GdprPage() {
       api(`/gdpr/restrict/${sel!.id}`, { method: "POST", body: JSON.stringify(v) }),
     onSuccess: () => { toastSuccess("Εφαρμόστηκε."); qc.invalidateQueries({ queryKey: ["gdpr", "consents", sel?.id] }); },
     onError: () => toastError("Αποτυχία."),
+  });
+
+  const retention = useQuery({ queryKey: ["gdpr", "retention"], queryFn: () => api<{ retention_months: number | null }>("/gdpr/retention"), retry: false });
+  const saveRetention = useMutation({
+    mutationFn: (m: number) => api("/gdpr/retention", { method: "PUT", body: JSON.stringify({ retention_months: m }) }),
+    onSuccess: () => { toastSuccess("Η περίοδος διατήρησης αποθηκεύτηκε."); setRetMonths(""); qc.invalidateQueries({ queryKey: ["gdpr", "retention"] }); },
+    onError: () => toastError("Μη έγκυρη περίοδος (1–600 μήνες)."),
   });
 
   async function doExport(kind: "json" | "pdf") {
@@ -112,6 +120,32 @@ export default function GdprPage() {
               ))}
             </tbody>
           </table>
+        </div>
+      </PanelCard>
+
+      {/* Retention period — the pharmacy (controller) decides */}
+      <PanelCard title="Περίοδος διατήρησης δεδομένων">
+        <div className="space-y-3 px-5 pb-5">
+          <p className="text-sm text-slate-600 dark:text-slate-400">
+            Εσείς, ως υπεύθυνος επεξεργασίας, ορίζετε για πόσο διατηρούνται τα δεδομένα σας στο RxVision.
+            Τα κλινικά αρχεία συνταγών διατηρούνται τουλάχιστον όσο επιβάλλει η φαρμακευτική νομοθεσία
+            (νόμιμη διατήρηση)· πέραν αυτού ισχύει η δική σας επιλογή.
+          </p>
+          <p className="text-sm text-slate-500">
+            Τρέχουσα ρύθμιση: <strong>{retention.data?.retention_months ? `${retention.data.retention_months} μήνες` : "δεν έχει οριστεί"}</strong>
+          </p>
+          <div className="flex items-center gap-2">
+            <input
+              type="number" min={1} max={600}
+              className="w-40 rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800"
+              placeholder="μήνες (1–600)" value={retMonths} onChange={(e) => setRetMonths(e.target.value)}
+            />
+            <button
+              disabled={saveRetention.isPending || !retMonths}
+              onClick={() => saveRetention.mutate(parseInt(retMonths, 10))}
+              className={`${btn} bg-brand-600 text-white hover:bg-brand-700 disabled:opacity-50`}
+            >Αποθήκευση</button>
+          </div>
         </div>
       </PanelCard>
 

@@ -58,6 +58,34 @@ async def audit(tenant_id: str, *, actor_user_id: str | None, action: str,
     })
 
 
+# Retention is the CONTROLLER's (pharmacy's) choice, not ours. The pharmacist sets how long
+# RxVision keeps their data; the only floor is the statutory clinical-record minimum (legal hold).
+RETENTION_MIN_MONTHS = 1
+RETENTION_MAX_MONTHS = 600   # 50y ceiling (sanity bound, not a policy)
+
+
+async def get_retention(tenant_id: str) -> dict:
+    """The tenant's chosen data-retention period (months). None ⇒ not yet configured."""
+    doc = await _repo(tenant_id, "gdpr_settings").find_one({}) or {}
+    return {"retention_months": doc.get("retention_months"), "updated_at": doc.get("updated_at")}
+
+
+async def set_retention(tenant_id: str, months: int, *, actor_user_id: str | None = None) -> dict:
+    """The pharmacist (controller) sets the retention period. Bounded only by a sanity range;
+    the statutory minimum (legal hold) is enforced at deletion time by the retention worker —
+    see docs/gdpr/retention-policy.md."""
+    months = int(months)
+    if months < RETENTION_MIN_MONTHS or months > RETENTION_MAX_MONTHS:
+        raise ValueError(f"retention_months out of range ({RETENTION_MIN_MONTHS}..{RETENTION_MAX_MONTHS})")
+    await _repo(tenant_id, "gdpr_settings").update_one(
+        {}, {"$set": {"retention_months": months,
+                      "updated_at": datetime.now(tz=timezone.utc), "updated_by": actor_user_id}},
+        upsert=True)
+    await audit(tenant_id, actor_user_id=actor_user_id, action="gdpr.retention.set",
+                subject_id=None, retention_months=months)
+    return {"retention_months": months}
+
+
 async def search_subjects(tenant_id: str, q: str, *, limit: int = 20) -> list[dict]:
     """Find data subjects by name (patients_anonymized.full_name) or contact (phone/email),
     so the pharmacist can locate a patient before exercising a right. Tenant-scoped."""

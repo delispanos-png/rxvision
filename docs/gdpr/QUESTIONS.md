@@ -11,11 +11,15 @@ working on everything else.
    address. Is a formal DPO appointed (Art.37)? (Large-scale Art.9 health data likely
    triggers the requirement.)
 3. **Official company email + privacy mailbox** (e.g. privacy@rxvision.gr / dpo@…).
-4. **Statutory retention years per category** — confirm Greek pharmacy/tax law periods:
-   - Prescription execution records (φαρμακευτική νομοθεσία / ΕΟΠΥΥ) — how many years?
-   - Tax/accounting (invoices, ΑΑΔΕ/myDATA) — typically 5–10y; confirm.
-   - Contact/marketing data after last interaction — proposed default, confirm.
-   - audit_logs / security logs retention — confirm.
+4. **Statutory MINIMUM retention (the legal-hold floor)** — the retention *period* is now
+   **chosen by each pharmacy** (controller) via `/settings/gdpr` → `gdpr_settings.retention_months`;
+   it is NOT CloudOn's decision. What legal must confirm is only the **minimum floor** below which
+   clinical/tax records may not be deleted:
+   - Prescription execution records (φαρμακευτική νομοθεσία / ΕΟΠΥΥ) — minimum years?
+   - Tax/accounting (invoices, ΑΑΔΕ/myDATA) — minimum years (typically 5–10y)?
+   - audit_logs / security logs — minimum retention?
+   (Contact/marketing data has no statutory floor — kept until consent withdrawal or the pharmacy's
+   chosen period.)
 5. **Controller vs processor confirmation** — confirmed model: pharmacy = controller,
    CloudOn = processor. Any joint-controllership for platform-level analytics?
 6. **Sub-processors — exact list + contracts**: confirm Hetzner (region — Helsinki/

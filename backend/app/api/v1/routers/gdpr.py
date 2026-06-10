@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.core.deps import TenantContext, require
 from app.repositories.consents import PatientConsentRepository
-from app.schemas.gdpr import ConsentIn, EraseIn, RectifyIn, RestrictIn
+from app.schemas.gdpr import ConsentIn, EraseIn, RectifyIn, RestrictIn, RetentionIn
 from app.services import gdpr_service
 
 router = APIRouter()
@@ -47,6 +47,23 @@ async def data_map(ctx: TenantContext = Depends(require("gdpr:read"))):
 async def search_subjects(q: str, ctx: TenantContext = Depends(require("gdpr:read"))):
     """Find a data subject by name / phone / email before exercising a right."""
     return {"results": await gdpr_service.search_subjects(ctx.tenant_id, q)}
+
+
+@router.get("/retention")
+async def get_retention(ctx: TenantContext = Depends(require("gdpr:read"))):
+    """The pharmacy's chosen data-retention period (controller decides)."""
+    return await gdpr_service.get_retention(ctx.tenant_id)
+
+
+@router.put("/retention")
+async def set_retention(body: RetentionIn, ctx: TenantContext = Depends(require("gdpr:rectify"))):
+    """The pharmacist sets how long RxVision keeps their data (bounded by the statutory floor
+    at deletion time — see retention-policy.md)."""
+    try:
+        return await gdpr_service.set_retention(ctx.tenant_id, body.retention_months,
+                                                actor_user_id=ctx.user_id)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
 
 @router.get("/export/{patient_id}")

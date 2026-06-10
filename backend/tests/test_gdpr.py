@@ -116,6 +116,22 @@ async def test_search_finds_by_name_and_contact(monkeypatch):
     assert await gdpr_service.search_subjects(T2, "Παπαδ") == []
 
 
+async def test_retention_is_controller_configured(monkeypatch):
+    db = _wire(monkeypatch)
+    assert (await gdpr_service.get_retention(T1))["retention_months"] is None   # default unset
+    await gdpr_service.set_retention(T1, 36, actor_user_id="u1")
+    assert (await gdpr_service.get_retention(T1))["retention_months"] == 36
+    # per-tenant (isolation) + audited + bounds enforced
+    assert (await gdpr_service.get_retention(T2))["retention_months"] is None
+    assert await db["audit_logs"].find_one({"action": "gdpr.retention.set"}) is not None
+    for bad in (0, 601):
+        try:
+            await gdpr_service.set_retention(T1, bad)
+            raise AssertionError("expected ValueError")
+        except ValueError:
+            pass
+
+
 async def test_export_is_tenant_scoped(monkeypatch):
     db = _wire(monkeypatch)
     oid = ObjectId()
