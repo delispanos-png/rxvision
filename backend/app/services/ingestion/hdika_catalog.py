@@ -149,7 +149,7 @@ async def enrich_product_categories(db) -> int:
         if d.get("barcode"):
             by_bc[d["barcode"]] = d                # full EAN-13
     ops = []
-    async for p in db["products"].find({}, {"barcode": 1, "name": 1, "substance": 1}):
+    async for p in db["products"].find({}, {"barcode": 1, "name": 1, "substance": 1}):  # tenant-ok: platform catalog enrichment (shared, tenant-agnostic)
         # product.barcode is inconsistent (sometimes eofCode, sometimes full EAN) → try both
         c = by_id.get(p.get("barcode")) or by_bc.get(p.get("barcode"))
         if not c:
@@ -160,7 +160,7 @@ async def enrich_product_categories(db) -> int:
             "category": cls, "atc": c.get("atc"),
             "substance": c.get("substance_name") or p.get("substance")}}))
     if ops:
-        await db["products"].bulk_write(ops, ordered=False)
+        await db["products"].bulk_write(ops, ordered=False)  # tenant-ok: enrichment writes by _id
     return len(ops)
 
 

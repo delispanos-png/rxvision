@@ -177,7 +177,7 @@ def reap_stalled_sync(stall_minutes: int = 5) -> dict:
         try:
             cutoff = datetime.now(tz=timezone.utc) - timedelta(minutes=stall_minutes)
             killed: list[str] = []
-            cursor = db["sync_jobs"].find(
+            cursor = db["sync_jobs"].find(  # tenant-ok: platform stalled-job watchdog (all tenants)
                 {"status": "running", "$or": [
                     {"updated_at": {"$lt": cutoff}},
                     {"updated_at": {"$exists": False}, "started_at": {"$lt": cutoff}}]})

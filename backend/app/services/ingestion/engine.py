@@ -118,7 +118,7 @@ class IngestionEngine:
         chash = _content_hash(ex, amount_total, amount_claimed)
 
         nat_key = {"tenant_id": self.tenant_id, "source": ex.source, "external_id": ex.external_id}
-        existing = await self.db["prescription_executions"].find_one(nat_key, {"hash": 1})
+        existing = await self.db["prescription_executions"].find_one(nat_key, {"hash": 1})  # tenant-ok: nat_key carries tenant_id
         if existing and existing.get("hash") == chash:
             return "duplicates"
 
@@ -141,7 +141,7 @@ class IngestionEngine:
             "next_open_date": next_open, "hash": chash, "ingested_at": _now(),
             "sync_job_id": job_id,
         }
-        res = await self.db["prescription_executions"].find_one_and_update(
+        res = await self.db["prescription_executions"].find_one_and_update(  # tenant-ok: nat_key carries tenant_id
             nat_key, {"$set": doc}, upsert=True, return_document=ReturnDocument.AFTER)
         exec_id = res["_id"]
         is_new = existing is None
@@ -153,7 +153,7 @@ class IngestionEngine:
             it_doc.update({"tenant_id": self.tenant_id, "execution_id": exec_id,
                            "executed_at": ex.executed_at})
         if item_docs:
-            await self.db["prescription_items"].insert_many(item_docs)
+            await self.db["prescription_items"].insert_many(item_docs)  # tenant-ok: item_docs carry tenant_id
 
         await self._post_process(ex, exec_id, patient_ref, amount_total, next_open,
                                  item_docs, count_patient=is_new)
