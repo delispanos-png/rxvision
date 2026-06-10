@@ -1,0 +1,39 @@
+# App-only stack for horizontal app nodes (RxVisionSRV02+). No state services here —
+# Mongo/Redis live on RxVisionDB01 (10.0.0.3); Vault stays on RxVisionSRV01, reached over
+# the private net via the socat proxy on 10.0.0.2:8200 (see PHASE1-app-node.md).
+# The node's .env must point MONGODB_URI/REDIS_URL → 10.0.0.3 and VAULT_ADDR → http://10.0.0.2:8200.
+# NOTE: no `beat` here — the Celery scheduler is a singleton and runs ONLY on SRV01.
+name: rxvision-app
+services:
+  api:
+    build: ./backend
+    restart: unless-stopped
+    env_file: .env
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2
+    expose: ["8000"]
+  worker:
+    build: ./backend
+    restart: unless-stopped
+    env_file: .env
+    command: celery -A app.workers.celery_app worker -l info --concurrency 2
+  web:
+    build:
+      context: ./frontend
+      target: runner
+      args:
+        NEXT_PUBLIC_API_BASE: "/api/v1"
+    restart: unless-stopped
+    env_file: .env
+    depends_on: [api]
+    expose: ["3000"]
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    env_file: .env
+    ports: ["80:80", "443:443"]
+    volumes:
+      - "./infra/docker/Caddyfile:/etc/caddy/Caddyfile:ro"
+      - "caddy_data:/data"
+      - "caddy_config:/config"
+    depends_on: [web, api]
+volumes: {caddy_data: {}, caddy_config: {}}
