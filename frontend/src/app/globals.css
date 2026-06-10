@@ -49,3 +49,12 @@
 @keyframes rxFloat { 0%,100%{transform:translateY(0) rotate(0)} 50%{transform:translateY(-16px) rotate(6deg)} }
 @keyframes rxBar { 0%{width:0} 100%{width:100%} }
 @keyframes rxDot { 0%,80%,100%{opacity:.3;transform:scale(.8)} 40%{opacity:1;transform:scale(1)} }
+
+/* infra topology — animated data flow along the connectors */
+@keyframes rxFlow {
+  0%   { transform: translate(-50%, -10px); opacity: 0; }
+  15%  { opacity: 1; }
+  85%  { opacity: 1; }
+  100% { transform: translate(-50%, 34px); opacity: 0; }
+}
+@keyframes rxShimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }

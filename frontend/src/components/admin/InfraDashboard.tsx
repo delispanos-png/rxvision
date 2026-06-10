@@ -75,15 +75,26 @@ function Topology({ infra }: { infra: Infra }) {
   const Node = ({ children, tone }: { children: React.ReactNode; tone: string }) => (
     <div className={`rounded-xl border px-3 py-2 text-center text-xs ${tone}`}>{children}</div>
   );
+  const Flow = () => (
+    <div className="relative h-6 w-0.5 bg-gradient-to-b from-slate-200 to-slate-300 dark:from-slate-700 dark:to-slate-600">
+      {[0, 0.6, 1.2].map((d) => (
+        <span key={d} className="absolute left-1/2 top-0 h-1.5 w-1.5 rounded-full bg-brand-500"
+          style={{ animation: `rxFlow 1.8s linear ${d}s infinite`, boxShadow: "0 0 6px 1px rgba(99,102,241,0.7)" }} />
+      ))}
+    </div>
+  );
   return (
     <div className="rounded-2xl border border-slate-200 bg-gradient-to-b from-slate-50 to-white p-5 dark:border-slate-700 dark:from-slate-900 dark:to-slate-950">
       <h3 className="mb-4 flex items-center gap-2 text-sm font-semibold text-slate-700 dark:text-slate-200"><Network className="h-4 w-4" /> Τοπολογία δικτύου</h3>
       <div className="flex flex-col items-center gap-2">
         <Node tone="border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-800 dark:bg-sky-950 dark:text-sky-300"><Globe className="mx-auto mb-0.5 h-4 w-4" />Internet / Cloudflare<div className="text-[10px] opacity-70">app.rxvision.gr</div></Node>
-        <div className="h-4 w-px bg-slate-300 dark:bg-slate-600" />
+        <Flow />
         {lb && <Node tone="border-brand-200 bg-brand-50 text-brand-700 dark:border-brand-800 dark:bg-brand-950 dark:text-brand-300"><Scale className="mx-auto mb-0.5 h-4 w-4" />{lb.name}<div className="font-mono text-[10px] opacity-70">{lb.public_ip}</div></Node>}
-        <div className="h-4 w-px bg-slate-300 dark:bg-slate-600" />
-        <div className="w-full rounded-lg bg-emerald-50 py-1 text-center text-[11px] font-medium text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">Private Network {net ? `— ${net.range}` : ""}</div>
+        <Flow />
+        <div className="relative w-full overflow-hidden rounded-lg bg-emerald-50 py-1 text-center text-[11px] font-medium text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">
+          <span className="pointer-events-none absolute inset-0" style={{ background: "linear-gradient(90deg, transparent, rgba(16,185,129,0.28), transparent)", backgroundSize: "200% 100%", animation: "rxShimmer 2.5s linear infinite" }} />
+          <span className="relative">Private Network {net ? `— ${net.range}` : ""}</span>
+        </div>
         <div className="mt-1 flex flex-wrap items-start justify-center gap-3">
           {apps.map((s) => (
             <Node key={s.name} tone="border-slate-200 bg-white text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">
@@ -92,7 +103,7 @@ function Topology({ infra }: { infra: Infra }) {
             </Node>
           ))}
         </div>
-        {dbs.length > 0 && <div className="h-4 w-px bg-slate-300 dark:bg-slate-600" />}
+        {dbs.length > 0 && <Flow />}
         <div className="flex flex-wrap items-start justify-center gap-3">
           {dbs.map((s) => (
             <Node key={s.name} tone="border-violet-200 bg-violet-50 text-violet-700 dark:border-violet-800 dark:bg-violet-950 dark:text-violet-300">
