@@ -267,6 +267,11 @@ class HdikaClient:
         start = since.date() if since else end
         if (end - start).days > _MAX_BACKFILL_DAYS:        # safety cap for huge backfills
             start = end - timedelta(days=_MAX_BACKFILL_DAYS)
+        # executionDate search returns a multi-day window, so day-by-day stepping re-sees the
+        # same executions; dedup on (barcode, executionNo) so each repeat is fetched once, and
+        # cache each barcode's CDA (shared by all its repeats) → one CDA fetch per prescription.
+        seen: set = set()
+        cda_cache: dict = {}
         day = end                       # most-recent day first → recent analytics/forecast fill fast
         while day >= start:
             # repeat info for THIS day only — interleaved so a big backfill streams
@@ -285,10 +290,18 @@ class HdikaClient:
                     break
                 records = self._rows(data)
                 for raw in records:
-                    if isinstance(raw, dict):
-                        presc = raw.get("prescription") if isinstance(raw.get("prescription"), dict) else {}
-                        bc = str(_first(presc, "barcode") or _first(raw, "barcode", default=""))
-                        yield self._map_full(raw, self._fetch_cda(bc), summaries.get(bc, {}))
+                    if not isinstance(raw, dict):
+                        continue
+                    presc = raw.get("prescription") if isinstance(raw.get("prescription"), dict) else {}
+                    bc = str(_first(presc, "barcode") or _first(raw, "barcode", default=""))
+                    execno = int(float(_first(raw, "executionNo", default=1) or 1))
+                    key = (bc, execno)
+                    if not bc or key in seen:        # overlapping day-windows → skip re-seen executions
+                        continue
+                    seen.add(key)
+                    if bc not in cda_cache:          # a prescription's CDA is shared by all its repeats
+                        cda_cache[bc] = self._fetch_cda(bc)
+                    yield self._map_full(raw, cda_cache[bc], summaries.get(bc, {}))
                 if self._is_last(data, len(records)):
                     break
                 page += 1
@@ -360,7 +373,9 @@ class HdikaClient:
         fund_code = str(_first(fund_d, "shortName", "id", default="") or cda_pat.get("fund_code") or "EOPYY")
         return CanonicalExecution(
             source="HDIKA",
-            external_id=barcode,
+            # barcode alone collapses repeats (same barcode, one row per monthly execution) →
+            # the execution number makes each repeat a distinct execution.
+            external_id=f"{barcode}:{exec_no}",
             executed_at=_parse_dt(_first(ex, "executionDate", "executed_at")),
             patient=CanonicalPatient(
                 national_id=str(cda_pat.get("amka") or barcode),  # never empty (validator)
