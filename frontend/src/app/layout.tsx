@@ -2,6 +2,7 @@ import "./globals.css";
 import type { Metadata, Viewport } from "next";
 import { Providers } from "./providers";
 import { ServiceWorkerRegister } from "@/components/pwa/ServiceWorkerRegister";
+import { CookieConsent } from "@/components/legal/CookieConsent";
 
 export const metadata: Metadata = {
   title: "RxVision",
@@ -24,6 +25,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body className="bg-slate-50 text-slate-900">
         <ServiceWorkerRegister />
         <Providers>{children}</Providers>
+        <CookieConsent />
       </body>
     </html>
   );
