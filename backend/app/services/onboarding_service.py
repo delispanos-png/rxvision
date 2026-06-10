@@ -43,7 +43,9 @@ class OnboardingError(Exception):
 
 class OnboardingService:
     async def register(self, *, pharmacy_name: str, country: str, email: str,
-                       password: str, full_name: str) -> dict:
+                       password: str, full_name: str, company: dict | None = None,
+                       package_code: str | None = None, billing_cycle: str | None = None,
+                       sla: str | None = None) -> dict:
         country = country.upper()
         if country not in _COUNTRY_SETTINGS:
             raise OnboardingError("unsupported_country")
@@ -58,15 +60,25 @@ class OnboardingService:
             "_id": tid, "name": pharmacy_name, "slug": tid, "country": country,
             "status": "trial", "isolation_tier": "shared", "settings": settings,
             "modules": {}, "credentials_ref": {"hdika": None, "gesy": None},
+            "billing_profile": company or {},
             "created_at": _now(), "updated_at": _now(),
         })
+
+        # subscription — from the chosen package (else the legacy free trial)
+        pkg = await db["packages"].find_one({"_id": package_code}) if package_code else None
+        cycle = billing_cycle or "monthly"
+        trial_days = int((pkg or {}).get("trial_days", _TRIAL_DAYS))
+        price = (pkg or {}).get("price_yearly" if cycle == "yearly" else "price_monthly", 0) if pkg else 0
         await db["subscriptions"].insert_one({
-            "tenant_id": tid, "plan": "free_trial", "status": "active",
-            "trial_ends_at": _now() + timedelta(days=_TRIAL_DAYS), "seats": 3,
-            "price_per_pharmacy": 0, "currency": "EUR", "addons": [],
-            "modules_included": _MODULES,
-            "limits": {"pharmacies": 1, "history_months": 3, "api_sync": True},
-            "current_period_end": _now() + timedelta(days=_TRIAL_DAYS), "created_at": _now(),
+            "tenant_id": tid, "plan": package_code or "free_trial",
+            "status": "trialing" if trial_days else "active",
+            "billing_cycle": cycle, "sla": sla or (pkg or {}).get("sla", "basic"),
+            "trial_ends_at": _now() + timedelta(days=trial_days), "seats": (pkg or {}).get("seats", 3),
+            "price_per_pharmacy": price, "currency": "EUR", "addons": [],
+            "modules_included": (pkg or {}).get("modules") or _MODULES,
+            "limits": {"pharmacies": 1, "history_months": 36, "api_sync": True},
+            "current_period_end": _now() + timedelta(days=trial_days), "created_at": _now(),
+            "payment_provider": None, "payment_status": "trial",
         })
         await seed_rbac(tenant_id=tid)
         owner_role = await db["roles"].find_one({"tenant_id": tid, "key": "owner"})

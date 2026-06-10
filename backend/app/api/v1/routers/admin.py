@@ -354,6 +354,71 @@ async def packages(_: PlatformContext = Depends(get_platform_admin)):
     return {"items": jsonsafe(items)}
 
 
+class PackageIn(BaseModel):
+    name: str | None = None
+    price_monthly: int | None = None  # cents
+    price_yearly: int | None = None   # cents
+    trial_days: int | None = None
+    sla: str | None = None
+
+
+@router.put("/packages/{code}")
+async def update_package(code: str, body: PackageIn,
+                         _: PlatformContext = Depends(get_platform_admin)):
+    """Edit a package's price/trial/name (admin-managed pricing)."""
+    upd = {k: v for k, v in body.model_dump().items() if v is not None}
+    db = shared_db()
+    if upd:
+        await db["packages"].update_one({"_id": code}, {"$set": upd}, upsert=True)
+    return {"ok": True, "package": jsonsafe(await db["packages"].find_one({"_id": code}))}
+
+
+class IntegrationsIn(BaseModel):
+    aade_username: str | None = None
+    aade_password: str | None = None
+    revolut_api_key: str | None = None
+    revolut_mode: str | None = None  # sandbox | live
+    revolut_webhook_secret: str | None = None
+
+
+@router.get("/integrations")
+async def get_integrations(_: PlatformContext = Depends(get_platform_admin)):
+    """ΑΑΔΕ + Revolut credential status (secrets masked) for the admin settings screen."""
+    db = shared_db()
+    aade = await db["platform_settings"].find_one({"_id": "aade"}) or {}
+    rev = await db["platform_settings"].find_one({"_id": "revolut"}) or {}
+    return {
+        "aade": {"username": aade.get("username"),
+                 "configured": bool(aade.get("username") and aade.get("password"))},
+        "revolut": {"mode": rev.get("mode", "sandbox"), "api_key_set": bool(rev.get("api_key")),
+                    "webhook_secret_set": bool(rev.get("webhook_secret"))},
+    }
+
+
+@router.put("/integrations")
+async def set_integrations(body: IntegrationsIn,
+                           _: PlatformContext = Depends(get_platform_admin)):
+    """Store ΑΑΔΕ / Revolut credentials in platform_settings (never in git/logs)."""
+    db = shared_db()
+    a = {}
+    if body.aade_username is not None:
+        a["username"] = body.aade_username
+    if body.aade_password:
+        a["password"] = body.aade_password
+    if a:
+        await db["platform_settings"].update_one({"_id": "aade"}, {"$set": a}, upsert=True)
+    r = {}
+    if body.revolut_api_key:
+        r["api_key"] = body.revolut_api_key
+    if body.revolut_mode:
+        r["mode"] = body.revolut_mode
+    if body.revolut_webhook_secret:
+        r["webhook_secret"] = body.revolut_webhook_secret
+    if r:
+        await db["platform_settings"].update_one({"_id": "revolut"}, {"$set": r}, upsert=True)
+    return {"ok": True}
+
+
 @router.post("/tenants")
 async def open_tenant(body: OpenTenantIn, _: PlatformContext = Depends(get_platform_admin)):
     """«Άνοιγμα» tenant από πακέτο — admin entry point (same service Noeton will use)."""
