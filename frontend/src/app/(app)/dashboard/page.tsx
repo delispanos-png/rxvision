@@ -71,6 +71,25 @@ export default function DashboardPage() {
   });
 
   const summary = useQuery({ queryKey: ["dash", "summary", from, to], queryFn: () => api<Summary>(`/dashboard/summary?${qs}`) });
+  // Δ vs the immediately-preceding equal-length period
+  const prevRange = (() => {
+    if (!from || !to) return null;
+    const f = new Date(from), t = new Date(to);
+    const len = t.getTime() - f.getTime();
+    const pTo = new Date(f.getTime() - 86400000);
+    const pFrom = new Date(pTo.getTime() - len);
+    const iso = (d: Date) => d.toISOString().slice(0, 10);
+    return { from: iso(pFrom), to: iso(pTo) };
+  })();
+  const prevQs = prevRange ? filtersToQuery({ ...filters, dateFrom: prevRange.from, dateTo: prevRange.to }) : "";
+  const prevSummary = useQuery({
+    queryKey: ["dash", "summary", "prev", prevRange?.from, prevRange?.to],
+    queryFn: () => api<Summary>(`/dashboard/summary?${prevQs}`),
+    enabled: !!prevRange,
+  });
+  const prev = prevSummary.data;
+  const delta = (cur?: number, p?: number) =>
+    p && p > 0 && cur !== undefined ? ((cur - p) / p) * 100 : undefined;
   const tsVal = useQuery({ queryKey: ["dash", "ts", "value", from, to], queryFn: () => api<Bucket[]>(`/dashboard/timeseries?metric=value&grain=day&${qs}`) });
   const tsClaim = useQuery({ queryKey: ["dash", "ts", "claimed", from, to], queryFn: () => api<Bucket[]>(`/dashboard/timeseries?metric=claimed&grain=day&${qs}`) });
   const topIcd = useQuery({ queryKey: ["dash", "icd", from, to], queryFn: () => api<Top[]>(`/dashboard/top?dim=icd10&limit=6&${qs}`) });
@@ -106,14 +125,14 @@ export default function DashboardPage() {
 
       {/* KPI row */}
       <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-5">
-        <KpiCard label="Εκτελέσεις" value={num(s?.executions ?? 0)} sub="συνταγές περιόδου · δες λίστα" icon={Receipt} accent="indigo"
+        <KpiCard label="Εκτελέσεις" value={num(s?.executions ?? 0)} sub="συνταγές περιόδου · δες λίστα" icon={Receipt} accent="indigo" trend={delta(s?.executions, prev?.executions)}
           onClick={() => setModal({ title: "Εκτελέσεις περιόδου", kind: "rx", qs: `${qs}&page_size=300&sort=executed_at&dir=-1` })} />
-        <KpiCard label="Αξία συνταγών" value={eur(s?.value ?? 0)} sub="σύνολο περιόδου · δες λίστα" icon={BarIcon} accent="violet"
+        <KpiCard label="Αξία συνταγών" value={eur(s?.value ?? 0)} sub="σύνολο περιόδου · δες λίστα" icon={BarIcon} accent="violet" trend={delta(s?.value, prev?.value)}
           onClick={() => setModal({ title: "Συνταγές κατά αξία (φθίνουσα)", kind: "rx", qs: `${qs}&page_size=300&sort=amount_total&dir=-1` })} />
-        <KpiCard label="Αιτούμενα ταμείων" value={eur(s?.claimed ?? 0)} sub="προς ασφ. φορείς · δες λίστα" icon={Wallet} accent="amber"
+        <KpiCard label="Αιτούμενα ταμείων" value={eur(s?.claimed ?? 0)} sub="προς ασφ. φορείς · δες λίστα" icon={Wallet} accent="amber" trend={delta(s?.claimed, prev?.claimed)}
           onClick={() => setModal({ title: "Συνταγές κατά αιτούμενο ταμείου", kind: "rx", qs: `${qs}&page_size=300&sort=amount_claimed&dir=-1` })} />
-        <KpiCard label="Μεικτό κέρδος" value={eur(s?.gross_profit ?? 0)} sub="αιτούμενο − χονδρική" icon={TrendingUp} accent="green" />
-        <KpiCard label="Ασφαλισμένοι" value={num(s?.patient_count ?? 0)} sub="μοναδικοί · δες λίστα" icon={Users} accent="sky"
+        <KpiCard label="Μεικτό κέρδος" value={eur(s?.gross_profit ?? 0)} sub="αιτούμενο − χονδρική" icon={TrendingUp} accent="green" trend={delta(s?.gross_profit, prev?.gross_profit)} />
+        <KpiCard label="Ασφαλισμένοι" value={num(s?.patient_count ?? 0)} sub="μοναδικοί · δες λίστα" icon={Users} accent="sky" trend={delta(s?.patient_count, prev?.patient_count)}
           onClick={() => setModal({ title: "Ασφαλισμένοι περιόδου", kind: "patients", qs: `${qs}&sort=value&limit=300` })} />
       </div>
 

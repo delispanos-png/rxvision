@@ -1,5 +1,6 @@
 "use client";
 
+import { useState, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Boxes, PackageSearch, RefreshCw, Wallet } from "lucide-react";
 import { api, queryKeys } from "@/lib/apiClient";
@@ -25,14 +26,6 @@ type Suggestion = {
   supplier?: string | null;
 };
 
-const columns: Column<Suggestion>[] = [
-  { key: "product_name", header: "Σκεύασμα", render: (r) => r.product_name || "—", sortValue: (r) => r.product_name },
-  { key: "substance", header: "Δραστική", hideOnMobile: true, render: (r) => r.substance || "—" },
-  { key: "avg_daily", header: "Μ.Ο./ημέρα", align: "right", render: (r) => fmtNum(r.avg_daily), sortValue: (r) => r.avg_daily, hideOnMobile: true },
-  { key: "expected_demand", header: "Αναμ. ζήτηση", align: "right", render: (r) => fmtNum(r.expected_demand), sortValue: (r) => r.expected_demand, hideOnMobile: true },
-  { key: "suggested_qty", header: "Πρόταση", align: "right", render: (r) => fmtNum(r.suggested_qty), sortValue: (r) => r.suggested_qty },
-  { key: "est_cost", header: "Εκτ. κόστος", align: "right", render: (r) => fmtEur(r.est_cost), sortValue: (r) => r.est_cost },
-];
 
 export default function OrdersPage() {
   const qc = useQueryClient();
@@ -52,10 +45,29 @@ export default function OrdersPage() {
   });
 
   const items = data?.items ?? [];
-  const totalQty = items.reduce((s, r) => s + (r.suggested_qty || 0), 0);
-  const totalCost = items.reduce((s, r) => s + (r.est_cost || 0), 0);
+  // manual on-hand stock per product → order only what's missing (suggested − on hand)
+  const [stock, setStock] = useState<Record<string, number>>({});
+  const adj = (r: Suggestion) => Math.max(0, (r.suggested_qty || 0) - (stock[r.product_id] || 0));
+  const adjCost = (r: Suggestion) => (r.suggested_qty ? Math.round((r.est_cost || 0) * adj(r) / r.suggested_qty) : 0);
+
+  const cols = useMemo<Column<Suggestion>[]>(() => [
+    { key: "product_name", header: "Σκεύασμα", render: (r) => r.product_name || "—", sortValue: (r) => r.product_name },
+    { key: "substance", header: "Δραστική", hideOnMobile: true, render: (r) => r.substance || "—" },
+    { key: "avg_daily", header: "Μ.Ο./ημέρα", align: "right", render: (r) => fmtNum(r.avg_daily), sortValue: (r) => r.avg_daily, hideOnMobile: true },
+    { key: "suggested_qty", header: "Πρόταση", align: "right", render: (r) => fmtNum(r.suggested_qty), sortValue: (r) => r.suggested_qty },
+    { key: "stock", header: "Απόθεμα", align: "right", render: (r) => (
+      <input type="number" min={0} value={stock[r.product_id] ?? ""} placeholder="0"
+        onChange={(e) => setStock((s) => ({ ...s, [r.product_id]: Math.max(0, parseInt(e.target.value) || 0) }))}
+        onClick={(e) => e.stopPropagation()}
+        className="w-16 rounded-md border border-slate-300 px-1.5 py-0.5 text-right text-sm focus:border-brand-500 focus:outline-none dark:border-slate-600 dark:bg-slate-800" /> ) },
+    { key: "adjusted", header: "Παράγγειλε", align: "right", render: (r) => <span className={`font-bold ${adj(r) > 0 ? "text-brand-700 dark:text-brand-300" : "text-slate-300"}`}>{fmtNum(adj(r))}</span>, sortValue: (r) => adj(r) },
+    { key: "est_cost", header: "Εκτ. κόστος", align: "right", render: (r) => fmtEur(adjCost(r)), sortValue: (r) => adjCost(r) },
+  ], [stock]);
+
+  const totalQty = items.reduce((s, r) => s + adj(r), 0);
+  const totalCost = items.reduce((s, r) => s + adjCost(r), 0);
   const substances = new Set(items.map((r) => r.substance).filter(Boolean)).size;
-  const top = [...items].sort((a, b) => b.suggested_qty - a.suggested_qty).slice(0, 10);
+  const top = [...items].filter((r) => adj(r) > 0).sort((a, b) => adj(b) - adj(a)).slice(0, 10);
 
   return (
     <ModuleGuard module="order_suggestions">
@@ -80,7 +92,9 @@ export default function OrdersPage() {
             { key: "avg_daily", header: "Μ.Ο./ημέρα" },
             { key: "expected_demand", header: "Αναμ. ζήτηση" },
             { key: "suggested_qty", header: "Πρόταση" },
-            { key: "est_cost", header: "Εκτ. κόστος (€)", value: (r) => ((r.est_cost || 0) / 100).toFixed(2) },
+            { key: "stock", header: "Απόθεμα", value: (r) => String(stock[r.product_id] ?? 0) },
+            { key: "adjusted", header: "Παράγγειλε", value: (r) => String(adj(r)) },
+            { key: "est_cost", header: "Εκτ. κόστος (€)", value: (r) => (adjCost(r) / 100).toFixed(2) },
           ]} />
         </div>
       </div>
@@ -102,14 +116,14 @@ export default function OrdersPage() {
                 horizontal
                 height={Math.max(220, top.length * 38)}
                 labels={top.map((r) => r.product_name)}
-                data={top.map((r) => r.suggested_qty)}
+                data={top.map((r) => adj(r))}
                 name="Τεμάχια"
               />
             </PanelCard>
           )}
 
           {/* table / cards */}
-          <DataTable pageSize={20} columns={columns} rows={items} rowKey={(r) => r.product_id} />
+          <DataTable pageSize={20} columns={cols} rows={items} rowKey={(r) => r.product_id} />
         </div>
       </QueryState>
     </ModuleGuard>
