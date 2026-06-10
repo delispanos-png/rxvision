@@ -17,5 +17,10 @@ Things I deliberately did NOT change (guardrails / collision avoidance), recorde
   (`HdikaAdapter`, ruff F401) that was failing CI on `main`. One line, zero behaviour change; the
   router is NOT in the forbidden `services/ingestion/*` list. Needed to unblock the backend CI job
   (ruff gates pytest). Flag for the ingestion-stream owner in case they intended to use it.
+- **`backend/tests/test_hdika_client.py`** — the ingestion stream changed `_map_full` so a
+  ΗΔΙΚΑ execution's `external_id` is now the natural key `barcode:executionNo` (e.g. `RX-1:1`,
+  distinguishing repeat executions) — which left this (originally mine) test asserting the old
+  `RX-1` and failing on `main`. Updated the assertion to match the intentional new format. The
+  ingestion *source* was NOT touched. Flag for the ingestion owner.
 - **GDPR module** (branch `gdpr-compliance`, `docs/gdpr/`, DSAR/consent files) — NOT on this branch
   (off `main`); not touched.
