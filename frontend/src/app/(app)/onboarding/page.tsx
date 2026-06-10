@@ -6,6 +6,11 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { api, queryKeys, ApiError } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
+import { Loader2, CheckCircle2 } from "lucide-react";
+
+type Job = { status?: string; type?: string; progress?: number; cursor_date?: string;
+  stats?: { fetched?: number; inserted?: number; updated?: number };
+  window?: { start?: string; end?: string } };
 
 type Me = { modules: Record<string, "enabled" | "trial" | "locked"> } & Record<string, unknown>;
 
@@ -61,6 +66,19 @@ export default function OnboardingPage() {
     onSuccess: () => setQueued(true),
     onError: (e) => appAlert(e instanceof ApiError ? t(`Σφάλμα (${e.status})`, `Error (${e.status})`) : t("Αποτυχία άντλησης", "Download failed")),
   });
+
+  const jobs = useQuery({
+    queryKey: ["onboarding-jobs"],
+    queryFn: () => api<{ items: Job[] }>("/ingestion/jobs"),
+    enabled: queued,
+    refetchInterval: 3000,
+    retry: false,
+  });
+  const job = jobs.data?.items?.[0];
+  const jobRunning = job?.status === "running";
+  const jobDone = job?.status === "completed" || job?.status === "success";
+  const jobKnown = typeof job?.progress === "number" && job.progress > 0;
+  const jobPct = Math.max(0, Math.min(100, Math.round((job?.progress ?? 0) * 100)));
 
   if (me.isLoading || tenant.isLoading) {
     return <div className="p-6 text-slate-400">{t("Φόρτωση…", "Loading…")}</div>;
@@ -186,8 +204,21 @@ export default function OnboardingPage() {
                 {triggerBackfill.isPending ? t("Έναρξη…", "Starting…") : t("Κατέβασμα δεδομένων", "Download data")}
               </button>
               {queued && (
-                <div className="mt-3 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
-                  {t(`✓ Η άντληση ${dateFrom} → ${dateTo} ξεκίνησε. Δες την πρόοδο στο «Ιστορικό συγχρονισμών» — μπορείς να συνεχίσεις στο Dashboard.`, `✓ Download ${dateFrom} → ${dateTo} started. Track progress in "Sync history" — you can continue to the Dashboard.`)}
+                <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
+                  <div className="mb-2 flex items-center justify-between text-sm">
+                    <span className="inline-flex items-center gap-1.5 font-medium text-slate-700">
+                      {jobDone ? <CheckCircle2 className="h-4 w-4 text-emerald-600" /> : <Loader2 className="h-4 w-4 animate-spin text-brand-600" />}
+                      {jobDone ? t("Η άντληση ολοκληρώθηκε", "Download complete") : jobRunning ? t("Άντληση σε εξέλιξη…", "Download in progress…") : t("Εκκίνηση άντλησης…", "Starting download…")}
+                      {jobKnown && !jobDone && <span className="font-bold text-brand-700">{jobPct}%</span>}
+                    </span>
+                    <span className="text-xs text-slate-500">{(job?.stats?.fetched ?? 0)} {t("συνταγές", "rx")} · {(job?.stats?.inserted ?? 0)} {t("νέες", "new")}</span>
+                  </div>
+                  <div className="h-2.5 w-full overflow-hidden rounded-full bg-slate-200">
+                    <div className={`h-full rounded-full transition-[width] duration-700 ${jobDone ? "w-full bg-emerald-500" : jobKnown ? "bg-brand-500" : "w-1/3 animate-pulse bg-brand-500"}`} style={!jobDone && jobKnown ? { width: `${jobPct}%` } : undefined} />
+                  </div>
+                  <p className="mt-2 text-xs text-slate-500">
+                    {t(`Περίοδος ${dateFrom} → ${dateTo}. Μπορείς να συνεχίσεις στο Dashboard — η άντληση τρέχει στο παρασκήνιο.`, `Period ${dateFrom} → ${dateTo}. You can continue to the Dashboard — the download runs in the background.`)}
+                  </p>
                 </div>
               )}
             </div>
