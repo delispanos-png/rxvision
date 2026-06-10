@@ -47,6 +47,20 @@ Decisions:
 - Branch `gdpr-compliance` pushed; CI **green** (Backend ruff+pytest 47 passed, Frontend
   tsc·lint·build). mypy advisory.
 
-### Remaining
-- SUMMARY.md (final). Legal facts in QUESTIONS.md await CloudOn/legal. Stretch C (cookie banner +
-  public /privacy /terms) not started.
+### Stretch C — DONE
+- Cookie-consent banner (`components/legal/CookieConsent.tsx`, essential-only default, choice in
+  localStorage, mounted site-wide) + public in-app `/privacy` & `/terms` (Greek, no patient data,
+  linked from login/register footer + banner). CI green.
+
+### Decisions (2026-06-10)
+- **Access model (confirmed by Panagiotis):** the authorized pharmacist sees EVERYTHING about
+  THEIR OWN patients (full identity) — they are the controller and already hold that identity via
+  ΗΔΙΚΑ + their commercial dispensing software, so RxVision adds no new exposure. Least-privilege
+  (RBAC) + tenant isolation still bar everyone unauthorized. Reflected in DPIA R1 + privacy page.
+- **Marketing site is on Lovable** (separate; capabilities + packages only) — out of this repo.
+  The in-app `/privacy` & `/terms` are the APP's own legal pages (option A). If canonical legal
+  text later lives on Lovable, switch the two pages to link those URLs (option B) — small change.
+
+### Remaining (humans)
+- Fill legal facts in QUESTIONS.md (entity, DPO, retention years, Art.9(2) basis, sub-processor
+  SCCs); sign-offs (DPIA/DPA/RoPA/DPO). Code P1/P2: consent 500-cap index; verify PDF pagination.
