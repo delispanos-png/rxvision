@@ -13,5 +13,9 @@ Things I deliberately did NOT change (guardrails / collision avoidance), recorde
   forbid binding ports / containers and the current CI runs only typecheck/lint/build (no server).
   Frontend testing here is limited to pure-logic unit tests (no server). E2e is documented as a
   follow-up needing a CI service container — see QUESTIONS.md.
+- **`backend/app/api/v1/routers/ingestion.py`** — removed a pre-existing unused import
+  (`HdikaAdapter`, ruff F401) that was failing CI on `main`. One line, zero behaviour change; the
+  router is NOT in the forbidden `services/ingestion/*` list. Needed to unblock the backend CI job
+  (ruff gates pytest). Flag for the ingestion-stream owner in case they intended to use it.
 - **GDPR module** (branch `gdpr-compliance`, `docs/gdpr/`, DSAR/consent files) — NOT on this branch
   (off `main`); not touched.
