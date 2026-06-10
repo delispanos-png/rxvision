@@ -1,6 +1,7 @@
 "use client";
 
 import { Calendar } from "lucide-react";
+import { useT } from "@/store/prefStore";
 
 /**
  * Date field that ALWAYS displays DD/MM/YYYY regardless of browser locale.
@@ -19,9 +20,10 @@ export function DateInput({
   className?: string;
   disabled?: boolean;
 }) {
+  const t = useT();
   const display = /^\d{4}-\d{2}-\d{2}$/.test(value)
     ? `${value.slice(8, 10)}/${value.slice(5, 7)}/${value.slice(0, 4)}`
-    : "ΗΗ/ΜΜ/ΕΕΕΕ";
+    : t("ΗΗ/ΜΜ/ΕΕΕΕ", "DD/MM/YYYY");
 
   return (
     <div className={`relative ${className}`}>

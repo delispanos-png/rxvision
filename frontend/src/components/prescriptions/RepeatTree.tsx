@@ -3,6 +3,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/apiClient";
+import { useT } from "@/store/prefStore";
 import { GitBranch, CheckCircle2, XCircle, Clock, AlertCircle, PhoneCall } from "lucide-react";
 import { fmtEur, fmtDate } from "@/lib/formatters";
 
@@ -18,37 +19,42 @@ const STATE: Record<string, { label: string; cls: string; dot: string; Icon: typ
   future:    { label: "Μελλοντική",   cls: "bg-slate-100 text-slate-500",     dot: "bg-slate-400",   Icon: Clock },
 };
 
+const STATE_LABEL_EN: Record<string, string> = {
+  executed: "Executed", available: "Available now", lost: "Lost", future: "Upcoming",
+};
+
 export function RepeatTree({ externalId }: { externalId: string }) {
+  const t = useT();
   const router = useRouter();
   const q = useQuery({ queryKey: ["rx-chain", externalId], queryFn: () => api<Chain>(`/prescriptions/repeats/${encodeURIComponent(externalId)}`) });
-  const t = q.data;
-  if (!t || !t.is_chain) return null;
+  const tree = q.data;
+  if (!tree || !tree.is_chain) return null;
 
-  const lost = t.slots.filter((s) => s.state === "lost").length;
-  const available = t.slots.filter((s) => s.state === "available").length;
+  const lost = tree.slots.filter((s) => s.state === "lost").length;
+  const available = tree.slots.filter((s) => s.state === "available").length;
 
   return (
     <div className="rx-card p-5">
       <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
-        <h3 className="flex items-center gap-2 font-semibold text-slate-900 dark:text-slate-100"><GitBranch className="h-4 w-4 text-brand-600" /> Επαναλαμβανόμενη συνταγή — δέντρο επαναλήψεων</h3>
+        <h3 className="flex items-center gap-2 font-semibold text-slate-900 dark:text-slate-100"><GitBranch className="h-4 w-4 text-brand-600" /> {t("Επαναλαμβανόμενη συνταγή — δέντρο επαναλήψεων", "Repeat prescription — repeats tree")}</h3>
         <div className="flex flex-wrap gap-1.5 text-[11px] font-semibold">
-          <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-emerald-700">{t.executed_count} εκτελεσμένες</span>
-          {available > 0 && <span className="rounded-full bg-sky-100 px-2 py-0.5 text-sky-700">{available} διαθέσιμες</span>}
-          {lost > 0 && <span className="rounded-full bg-rose-100 px-2 py-0.5 text-rose-700">{lost} χαμένες</span>}
-          <span className="rounded-full bg-slate-100 px-2 py-0.5 text-slate-500 dark:bg-slate-800 dark:text-slate-300">{t.total} σύνολο</span>
+          <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-emerald-700">{tree.executed_count} {t("εκτελεσμένες", "executed")}</span>
+          {available > 0 && <span className="rounded-full bg-sky-100 px-2 py-0.5 text-sky-700">{available} {t("διαθέσιμες", "available")}</span>}
+          {lost > 0 && <span className="rounded-full bg-rose-100 px-2 py-0.5 text-rose-700">{lost} {t("χαμένες", "lost")}</span>}
+          <span className="rounded-full bg-slate-100 px-2 py-0.5 text-slate-500 dark:bg-slate-800 dark:text-slate-300">{tree.total} {t("σύνολο", "total")}</span>
         </div>
       </div>
-      <div className="mb-3 font-mono text-xs text-slate-400">℞ root {t.root}{t.valid_from && t.valid_until ? ` · ισχύς ${fmtDate(t.valid_from)} → ${fmtDate(t.valid_until)}` : ""}</div>
+      <div className="mb-3 font-mono text-xs text-slate-400">℞ root {tree.root}{tree.valid_from && tree.valid_until ? ` · ${t("ισχύς", "valid")} ${fmtDate(tree.valid_from)} → ${fmtDate(tree.valid_until)}` : ""}</div>
 
       {lost > 0 && (
         <div className="mb-4 flex items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700 dark:border-rose-800 dark:bg-rose-950 dark:text-rose-300">
-          <PhoneCall className="h-4 w-4 shrink-0" /> <b>{lost}</b> χαμένη/ες επανάληψη/εις — ευκαιρία recall: ο ασθενής έχασε αγωγή + χαμένος τζίρος.
+          <PhoneCall className="h-4 w-4 shrink-0" /> <b>{lost}</b> {t("χαμένη/ες επανάληψη/εις — ευκαιρία recall: ο ασθενής έχασε αγωγή + χαμένος τζίρος.", "lost repeat(s) — recall opportunity: the patient missed treatment + lost revenue.")}
         </div>
       )}
 
       <div className="relative pl-6">
         <div className="absolute bottom-2 left-[9px] top-2 w-0.5 bg-slate-200 dark:bg-slate-700" />
-        {t.slots.map((s) => {
+        {tree.slots.map((s) => {
           const st = STATE[s.state];
           const r = s.repeat;
           const isCurrent = r?.parts.some((p) => p.external_id === externalId);
@@ -62,13 +68,13 @@ export function RepeatTree({ externalId }: { externalId: string }) {
                 disabled={!r}
                 className="flex w-full items-center gap-3 text-left disabled:cursor-default"
               >
-                <span className={`grid h-9 w-9 shrink-0 place-items-center rounded-lg text-xs font-bold ${r ? "bg-brand-600 text-white" : "bg-slate-100 text-slate-400 dark:bg-slate-800"}`}>{s.index + 1}/{t.total}</span>
+                <span className={`grid h-9 w-9 shrink-0 place-items-center rounded-lg text-xs font-bold ${r ? "bg-brand-600 text-white" : "bg-slate-100 text-slate-400 dark:bg-slate-800"}`}>{s.index + 1}/{tree.total}</span>
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2 text-sm font-medium text-slate-800 dark:text-slate-100">
-                    {r?.executed_at ? fmtDate(r.executed_at) : `άνοιγμα ${s.opening ? fmtDate(s.opening) : "—"}`}
-                    <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${st.cls}`}>{st.label}</span>
-                    {r && r.status !== "executed" && <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700">μερική</span>}
-                    {isCurrent && <span className="rounded bg-brand-600 px-1.5 py-0.5 text-[10px] font-semibold text-white">τρέχουσα</span>}
+                    {r?.executed_at ? fmtDate(r.executed_at) : `${t("άνοιγμα", "opens")} ${s.opening ? fmtDate(s.opening) : "—"}`}
+                    <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${st.cls}`}>{t(st.label, STATE_LABEL_EN[s.state] ?? st.label)}</span>
+                    {r && r.status !== "executed" && <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700">{t("μερική", "partial")}</span>}
+                    {isCurrent && <span className="rounded bg-brand-600 px-1.5 py-0.5 text-[10px] font-semibold text-white">{t("τρέχουσα", "current")}</span>}
                   </div>
                   {r?.icd10?.length ? <div className="mt-0.5 truncate text-xs text-slate-400">{r.icd10.join(", ")}</div> : null}
                 </div>
@@ -80,7 +86,7 @@ export function RepeatTree({ externalId }: { externalId: string }) {
                 <div className="mt-2 ml-12 space-y-1 border-l border-dashed border-slate-200 pl-3 dark:border-slate-700">
                   {r.parts.map((p, k) => (
                     <div key={p.external_id} className="flex items-center justify-between text-xs text-slate-500">
-                      <span>Μερική εκτέλεση {k + 1}: {p.executed_at ? fmtDate(p.executed_at) : "—"}</span>
+                      <span>{t("Μερική εκτέλεση", "Partial execution")} {k + 1}: {p.executed_at ? fmtDate(p.executed_at) : "—"}</span>
                       <span className="font-medium text-slate-600 dark:text-slate-300">{fmtEur(p.amount_total)}</span>
                     </div>
                   ))}

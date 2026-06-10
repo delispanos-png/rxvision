@@ -3,6 +3,7 @@
 import { appAlert } from "@/store/dialogStore";
 import { useState } from "react";
 import { api } from "@/lib/apiClient";
+import { useT } from "@/store/prefStore";
 
 type ExportFormat = "csv" | "xlsx" | "pdf";
 
@@ -16,7 +17,7 @@ type ExportJob = { id?: string; url?: string; status?: string };
 export function ExportButton({
   path,
   query = "",
-  label = "Εξαγωγή",
+  label,
 }: {
   path: string;
   query?: string;
@@ -24,6 +25,8 @@ export function ExportButton({
 }) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState<ExportFormat | null>(null);
+  const t = useT();
+  const labelText = label ?? t("Εξαγωγή", "Export");
 
   async function start(format: ExportFormat) {
     setBusy(format);
@@ -39,10 +42,10 @@ export function ExportButton({
       if (url && typeof window !== "undefined") {
         window.open(url, "_blank");
       } else {
-        appAlert("Η εξαγωγή ξεκίνησε. Θα ειδοποιηθείτε όταν είναι έτοιμη.");
+        appAlert(t("Η εξαγωγή ξεκίνησε. Θα ειδοποιηθείτε όταν είναι έτοιμη.", "Export started. You will be notified when it is ready."));
       }
     } catch {
-      appAlert("Η εξαγωγή απέτυχε.");
+      appAlert(t("Η εξαγωγή απέτυχε.", "Export failed."));
     } finally {
       setBusy(null);
       setOpen(false);
@@ -56,7 +59,7 @@ export function ExportButton({
         onClick={() => setOpen((o) => !o)}
         className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
       >
-        {busy ? "Εξαγωγή…" : label} ▾
+        {busy ? t("Εξαγωγή…", "Exporting…") : labelText} ▾
       </button>
       {open && (
         <div className="absolute right-0 z-10 mt-1 w-32 rounded-lg border border-slate-200 bg-white py-1 shadow-lg dark:border-slate-700 dark:bg-slate-800">

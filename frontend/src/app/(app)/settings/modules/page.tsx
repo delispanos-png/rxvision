@@ -4,21 +4,22 @@ import { appAlert } from "@/store/dialogStore";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, queryKeys, ApiError } from "@/lib/apiClient";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
+import { useT } from "@/store/prefStore";
 
 type ModuleState = "enabled" | "trial" | "locked";
 type ModulesResponse = { modules: Record<string, ModuleState> };
 
-const LABELS: Record<string, string> = {
-  dashboard: "Πίνακας Ελέγχου",
-  prescription_analytics: "Ανάλυση Συνταγών",
-  doctor_analytics: "Ανάλυση Ιατρών",
-  patient_analytics: "Ανάλυση Ασφαλισμένων",
-  icd10_analytics: "Ανάλυση ICD-10",
-  profitability: "Κερδοφορία",
-  future_prescriptions: "Μελλοντικές Συνταγές",
-  order_suggestions: "Προτάσεις Παραγγελίας",
-  monthly_closing: "Κλείσιμο Μήνα",
-  pharmacyone: "PharmacyOne",
+const LABELS: Record<string, { el: string; en: string }> = {
+  dashboard: { el: "Πίνακας Ελέγχου", en: "Dashboard" },
+  prescription_analytics: { el: "Ανάλυση Συνταγών", en: "Prescription analytics" },
+  doctor_analytics: { el: "Ανάλυση Ιατρών", en: "Doctor analytics" },
+  patient_analytics: { el: "Ανάλυση Ασφαλισμένων", en: "Patient analytics" },
+  icd10_analytics: { el: "Ανάλυση ICD-10", en: "ICD-10 analytics" },
+  profitability: { el: "Κερδοφορία", en: "Profitability" },
+  future_prescriptions: { el: "Μελλοντικές Συνταγές", en: "Upcoming prescriptions" },
+  order_suggestions: { el: "Προτάσεις Παραγγελίας", en: "Order suggestions" },
+  monthly_closing: { el: "Κλείσιμο Μήνα", en: "Month closing" },
+  pharmacyone: { el: "PharmacyOne", en: "PharmacyOne" },
 };
 
 const BADGE: Record<ModuleState, string> = {
@@ -27,13 +28,14 @@ const BADGE: Record<ModuleState, string> = {
   locked: "bg-slate-100 text-slate-500",
 };
 
-const STATE_LABEL: Record<ModuleState, string> = {
-  enabled: "Ενεργό",
-  trial: "Δοκιμή",
-  locked: "Κλειδωμένο",
+const STATE_LABEL: Record<ModuleState, { el: string; en: string }> = {
+  enabled: { el: "Ενεργό", en: "Enabled" },
+  trial: { el: "Δοκιμή", en: "Trial" },
+  locked: { el: "Κλειδωμένο", en: "Locked" },
 };
 
 export default function ModulesSettingsPage() {
+  const t = useT();
   const qc = useQueryClient();
 
   const { data, isLoading } = useQuery({
@@ -48,7 +50,7 @@ export default function ModulesSettingsPage() {
         body: JSON.stringify({ modules: { [body.module]: body.state } }),
       }),
     onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.tenantModules() }),
-    onError: (e) => appAlert(e instanceof ApiError ? `Σφάλμα (${e.status})` : "Αποτυχία ενημέρωσης"),
+    onError: (e) => appAlert(e instanceof ApiError ? t(`Σφάλμα (${e.status})`, `Error (${e.status})`) : t("Αποτυχία ενημέρωσης", "Update failed")),
   });
 
   const entries = Object.entries(data?.modules ?? {});
@@ -56,7 +58,7 @@ export default function ModulesSettingsPage() {
   return (
     <ModuleGuard module="settings">
       {isLoading ? (
-        <div className="text-slate-400">Φόρτωση δεδομένων…</div>
+        <div className="text-slate-400">{t("Φόρτωση δεδομένων…", "Loading data…")}</div>
       ) : (
         <div className="space-y-2">
           {entries.map(([key, state]) => (
@@ -65,12 +67,12 @@ export default function ModulesSettingsPage() {
               className="flex items-center justify-between rounded-lg border border-slate-200 bg-white px-4 py-3"
             >
               <div>
-                <div className="text-sm font-medium text-slate-800">{LABELS[key] ?? key}</div>
+                <div className="text-sm font-medium text-slate-800">{LABELS[key] ? t(LABELS[key].el, LABELS[key].en) : key}</div>
                 <div className="text-xs text-slate-400">{key}</div>
               </div>
               <div className="flex items-center gap-3">
                 <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${BADGE[state]}`}>
-                  {STATE_LABEL[state]}
+                  {t(STATE_LABEL[state].el, STATE_LABEL[state].en)}
                 </span>
                 <button
                   type="button"
@@ -80,7 +82,7 @@ export default function ModulesSettingsPage() {
                   }
                   className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
                 >
-                  {state === "enabled" ? "Απενεργοποίηση" : "Ενεργοποίηση"}
+                  {state === "enabled" ? t("Απενεργοποίηση", "Disable") : t("Ενεργοποίηση", "Enable")}
                 </button>
               </div>
             </div>

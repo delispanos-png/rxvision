@@ -2,10 +2,12 @@
 
 import { useEffect, useState } from "react";
 import { LogoMark } from "@/components/brand/Logo";
+import { useT } from "@/store/prefStore";
 
 /** Cinematic brand intro shown once per browser session before the auth screens.
  *  Click anywhere to skip. Pure CSS animations — no extra deps. */
 export function Intro() {
+  const t = useT();
   const [show, setShow] = useState(false);
   const [leaving, setLeaving] = useState(false);
 
@@ -33,7 +35,7 @@ export function Intro() {
       onClick={dismiss}
       role="button"
       tabIndex={0}
-      aria-label="Κλείσιμο"
+      aria-label={t("Κλείσιμο", "Close")}
       onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") dismiss(); }}
       className={`fixed inset-0 z-[200] flex cursor-pointer flex-col items-center justify-center overflow-hidden bg-gradient-to-br from-brand-600 via-violet-600 to-brand-700 transition-opacity duration-500 ${leaving ? "opacity-0" : "opacity-100"}`}
     >
@@ -57,7 +59,7 @@ export function Intro() {
       </div>
 
       <h1 className="mt-7 text-5xl font-extrabold tracking-tight text-white" style={{ animation: "rxUp .7s .25s both" }}>RxVision</h1>
-      <p className="mt-2.5 text-lg font-medium text-white/90" style={{ animation: "rxUp .7s .45s both" }}>Έξυπνη ανάλυση φαρμακείου — με μάτια AI</p>
+      <p className="mt-2.5 text-lg font-medium text-white/90" style={{ animation: "rxUp .7s .45s both" }}>{t("Έξυπνη ανάλυση φαρμακείου — με μάτια AI", "Smart pharmacy analytics — with AI eyes")}</p>
 
       {/* loading bar + dots */}
       <div className="mt-8 h-1 w-44 overflow-hidden rounded-full bg-white/20" style={{ animation: "rxUp .7s .6s both" }}>
@@ -67,7 +69,7 @@ export function Intro() {
         {[0, 1, 2].map((i) => <span key={i} className="h-2 w-2 rounded-full bg-white" style={{ animation: `rxDot 1.4s ${i * 0.2}s infinite` }} />)}
       </div>
 
-      <span className="absolute bottom-8 text-xs text-white/55">κλικ για παράλειψη</span>
+      <span className="absolute bottom-8 text-xs text-white/55">{t("κλικ για παράλειψη", "click to skip")}</span>
     </div>
   );
 }

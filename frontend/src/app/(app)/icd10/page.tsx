@@ -16,6 +16,9 @@ import { ExportMenu } from "@/components/export/ExportMenu";
 import { KpiCard } from "@/components/kpi/KpiCard";
 import { PanelCard } from "@/components/ui/Card";
 import { QueryState } from "@/components/ui/QueryState";
+import { useT } from "@/store/prefStore";
+
+type T = (el: string, en: string) => string;
 
 type Node = {
   node: string;
@@ -28,25 +31,28 @@ type Node = {
   codes: string[];
 };
 
-const LEVELS = [
-  { value: "1", label: "Επίπεδο 1 — Κεφάλαιο (π.χ. E)" },
-  { value: "2", label: "Επίπεδο 2 (π.χ. E1)" },
-  { value: "3", label: "Επίπεδο 3 — Κατηγορία (π.χ. E11)" },
-  { value: "4", label: "Επίπεδο 4 (π.χ. E119)" },
-  { value: "5", label: "Επίπεδο 5 — Πλήρης κωδικός" },
+const makeLevels = (t: T) => [
+  { value: "1", label: t("Επίπεδο 1 — Κεφάλαιο (π.χ. E)", "Level 1 — Chapter (e.g. E)") },
+  { value: "2", label: t("Επίπεδο 2 (π.χ. E1)", "Level 2 (e.g. E1)") },
+  { value: "3", label: t("Επίπεδο 3 — Κατηγορία (π.χ. E11)", "Level 3 — Category (e.g. E11)") },
+  { value: "4", label: t("Επίπεδο 4 (π.χ. E119)", "Level 4 (e.g. E119)") },
+  { value: "5", label: t("Επίπεδο 5 — Πλήρης κωδικός", "Level 5 — Full code") },
 ];
 
-const columns: Column<Node>[] = [
-  { key: "node", header: "Κόμβος ICD-10" },
-  { key: "title", header: "Περιγραφή", render: (r) => r.title || "—" },
-  { key: "code_count", header: "Κωδικοί", align: "right", hideOnMobile: true, render: (r) => fmtNum(r.code_count) },
-  { key: "rx", header: "Πλήθος", align: "right", render: (r) => fmtNum(r.rx) },
-  { key: "value", header: "Αξία", align: "right", render: (r) => fmtEur(r.value) },
-  { key: "claimed", header: "Αιτούμενα", align: "right", hideOnMobile: true, render: (r) => fmtEur(r.claimed) },
-  { key: "profit", header: "Κερδοφορία", align: "right", render: (r) => fmtEur(r.profit) },
+const makeColumns = (t: T): Column<Node>[] => [
+  { key: "node", header: t("Κόμβος ICD-10", "ICD-10 node") },
+  { key: "title", header: t("Περιγραφή", "Description"), render: (r) => r.title || "—" },
+  { key: "code_count", header: t("Κωδικοί", "Codes"), align: "right", hideOnMobile: true, render: (r) => fmtNum(r.code_count) },
+  { key: "rx", header: t("Πλήθος", "Count"), align: "right", render: (r) => fmtNum(r.rx) },
+  { key: "value", header: t("Αξία", "Value"), align: "right", render: (r) => fmtEur(r.value) },
+  { key: "claimed", header: t("Αιτούμενα", "Claimed"), align: "right", hideOnMobile: true, render: (r) => fmtEur(r.claimed) },
+  { key: "profit", header: t("Κερδοφορία", "Profitability"), align: "right", render: (r) => fmtEur(r.profit) },
 ];
 
 export default function Icd10Page() {
+  const t = useT();
+  const LEVELS = makeLevels(t);
+  const columns = makeColumns(t);
   const filters = useUiStore();
   const q = filtersToQuery(filters);
   const [level, setLevel] = useState("3");
@@ -77,28 +83,28 @@ export default function Icd10Page() {
     <ModuleGuard module="icd10_analytics">
       <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight text-slate-900">ICD-10 — Ιεραρχία διαγνώσεων</h1>
-          <p className="mt-1 text-sm text-slate-500">Ανάλυση συνταγών & αξίας ανά κόμβο διάγνωσης</p>
+          <h1 className="text-2xl font-bold tracking-tight text-slate-900">{t("ICD-10 — Ιεραρχία διαγνώσεων", "ICD-10 — Diagnosis hierarchy")}</h1>
+          <p className="mt-1 text-sm text-slate-500">{t("Ανάλυση συνταγών & αξίας ανά κόμβο διάγνωσης", "Prescription & value analysis by diagnosis node")}</p>
         </div>
-        <ExportMenu filename="icd10" title="Ανάλυση ανά ICD-10" rows={rows} columns={[
-          { key: "node", header: "Κόμβος ICD-10" },
-          { key: "title", header: "Περιγραφή", value: (r) => r.title || "—" },
-          { key: "code_count", header: "Κωδικοί" },
-          { key: "rx", header: "Πλήθος" },
-          { key: "value", header: "Αξία (€)", value: (r) => ((r.value || 0) / 100).toFixed(2) },
-          { key: "claimed", header: "Αιτούμενα (€)", value: (r) => ((r.claimed || 0) / 100).toFixed(2) },
-          { key: "profit", header: "Κερδοφορία (€)", value: (r) => ((r.profit || 0) / 100).toFixed(2) },
+        <ExportMenu filename="icd10" title={t("Ανάλυση ανά ICD-10", "Breakdown by ICD-10")} rows={rows} columns={[
+          { key: "node", header: t("Κόμβος ICD-10", "ICD-10 node") },
+          { key: "title", header: t("Περιγραφή", "Description"), value: (r) => r.title || "—" },
+          { key: "code_count", header: t("Κωδικοί", "Codes") },
+          { key: "rx", header: t("Πλήθος", "Count") },
+          { key: "value", header: t("Αξία (€)", "Value (€)"), value: (r) => ((r.value || 0) / 100).toFixed(2) },
+          { key: "claimed", header: t("Αιτούμενα (€)", "Claimed (€)"), value: (r) => ((r.claimed || 0) / 100).toFixed(2) },
+          { key: "profit", header: t("Κερδοφορία (€)", "Profitability (€)"), value: (r) => ((r.profit || 0) / 100).toFixed(2) },
         ]} />
       </div>
 
       <div className="mb-4 flex flex-wrap items-end gap-4">
         <DateRangeFilter />
         <SelectFilter
-          label="Επίπεδο ιεραρχίας"
+          label={t("Επίπεδο ιεραρχίας", "Hierarchy level")}
           value={level}
           options={LEVELS}
           onChange={(v) => setLevel(v ?? "3")}
-          allLabel="Επίπεδο 3 — Κατηγορία"
+          allLabel={t("Επίπεδο 3 — Κατηγορία", "Level 3 — Category")}
         />
       </div>
 
@@ -106,19 +112,19 @@ export default function Icd10Page() {
         <div className="space-y-4">
           {/* KPI row */}
           <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
-            <KpiCard label="Διαγνώσεις (κόμβοι)" value={fmtNum(rows.length)} sub="στο τρέχον επίπεδο" icon={Stethoscope} accent="indigo" />
-            <KpiCard label="Σύνολο συνταγών" value={fmtNum(totalRx)} sub="πλήθος εκτελέσεων" icon={Receipt} accent="violet" trend={hasPrev ? pctDelta(totalRx, pRx) : undefined} />
-            <KpiCard label="Αξία" value={fmtEur(totalValue)} sub="σύνολο περιόδου" icon={Wallet} accent="amber" trend={hasPrev ? pctDelta(totalValue, pValue) : undefined} />
-            <KpiCard label="Κερδοφορία" value={fmtEur(totalProfit)} sub="μεικτό κέρδος" icon={TrendingUp} accent="green" trend={hasPrev ? pctDelta(totalProfit, pProfit) : undefined} />
+            <KpiCard label={t("Διαγνώσεις (κόμβοι)", "Diagnoses (nodes)")} value={fmtNum(rows.length)} sub={t("στο τρέχον επίπεδο", "at the current level")} icon={Stethoscope} accent="indigo" />
+            <KpiCard label={t("Σύνολο συνταγών", "Total prescriptions")} value={fmtNum(totalRx)} sub={t("πλήθος εκτελέσεων", "number of executions")} icon={Receipt} accent="violet" trend={hasPrev ? pctDelta(totalRx, pRx) : undefined} />
+            <KpiCard label={t("Αξία", "Value")} value={fmtEur(totalValue)} sub={t("σύνολο περιόδου", "period total")} icon={Wallet} accent="amber" trend={hasPrev ? pctDelta(totalValue, pValue) : undefined} />
+            <KpiCard label={t("Κερδοφορία", "Profitability")} value={fmtEur(totalProfit)} sub={t("μεικτό κέρδος", "gross profit")} icon={TrendingUp} accent="green" trend={hasPrev ? pctDelta(totalProfit, pProfit) : undefined} />
           </div>
 
           {/* top nodes chart */}
           {top.length > 0 && (
-            <PanelCard title="Top 10 κόμβοι ανά αξία">
+            <PanelCard title={t("Top 10 κόμβοι ανά αξία", "Top 10 nodes by value")}>
               <BarChart
                 labels={top.map((r) => r.node)}
                 data={top.map((r) => Math.round(r.value / 100))}
-                name="Αξία"
+                name={t("Αξία", "Value")}
                 horizontal
                 height={Math.max(220, top.length * 38)}
               />
@@ -126,7 +132,7 @@ export default function Icd10Page() {
           )}
 
           {/* table */}
-          <PanelCard title="Αναλυτικά ανά κόμβο" bodyClassName="pt-2">
+          <PanelCard title={t("Αναλυτικά ανά κόμβο", "Details by node")} bodyClassName="pt-2">
             <DataTable pageSize={20} columns={columns} rows={rows} rowKey={(r) => r.node} />
           </PanelCard>
         </div>

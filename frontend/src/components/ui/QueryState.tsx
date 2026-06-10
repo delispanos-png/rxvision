@@ -1,6 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
+import { useT } from "@/store/prefStore";
 
 /** Standard loading / error / empty wrapper for data-backed sections.
  *  Replaces the silent `?? []` / `?? 0` pattern so a failed query is no longer
@@ -16,9 +17,9 @@ export function QueryState({
   isError,
   isEmpty,
   onRetry,
-  loading = "Φόρτωση δεδομένων…",
-  error = "Δεν ήταν δυνατή η φόρτωση των δεδομένων.",
-  empty = "Δεν υπάρχουν δεδομένα.",
+  loading,
+  error,
+  empty,
   children,
 }: {
   isLoading?: boolean;
@@ -30,22 +31,26 @@ export function QueryState({
   empty?: ReactNode;
   children: ReactNode;
 }) {
-  if (isLoading) return <StateBox tone="muted">{loading}</StateBox>;
+  const t = useT();
+  const loadingText = loading ?? t("Φόρτωση δεδομένων…", "Loading data…");
+  const errorText = error ?? t("Δεν ήταν δυνατή η φόρτωση των δεδομένων.", "Could not load data.");
+  const emptyText = empty ?? t("Δεν υπάρχουν δεδομένα.", "No data.");
+  if (isLoading) return <StateBox tone="muted">{loadingText}</StateBox>;
   if (isError)
     return (
       <StateBox tone="error">
-        <span>{error}</span>
+        <span>{errorText}</span>
         {onRetry && (
           <button
             onClick={onRetry}
             className="ml-1 rounded-md border border-rose-300 px-3 py-1.5 text-sm font-medium text-rose-700 hover:bg-rose-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-300"
           >
-            Δοκιμή ξανά
+            {t("Δοκιμή ξανά", "Try again")}
           </button>
         )}
       </StateBox>
     );
-  if (isEmpty) return <StateBox tone="muted">{empty}</StateBox>;
+  if (isEmpty) return <StateBox tone="muted">{emptyText}</StateBox>;
   return <>{children}</>;
 }
 

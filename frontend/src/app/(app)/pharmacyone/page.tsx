@@ -3,6 +3,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Crown, ShoppingCart, Users, XCircle } from "lucide-react";
 import { api, queryKeys } from "@/lib/apiClient";
+import { useT } from "@/store/prefStore";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
 import { useUiStore, filtersToQuery } from "@/store/uiStore";
 import { fmtEur, fmtNum } from "@/lib/formatters";
@@ -16,21 +17,22 @@ import { BarChart } from "@/components/charts/BarChart";
 type SellerRow = { seller: string; orders: number; value: number };
 type Unexecuted = { id: string; created_at: string; patient_ref: string; product_name: string; reason: string };
 
-const sellerColumns: Column<SellerRow>[] = [
-  { key: "seller", header: "Πωλητής" },
-  { key: "orders", header: "Πωλήσεις", align: "right", render: (r) => fmtNum(r.orders) },
-  { key: "value", header: "Αξία", align: "right", render: (r) => fmtEur(r.value) },
-];
-
-const unexecutedColumns: Column<Unexecuted>[] = [
-  { key: "patient_ref", header: "Ασφαλισμένος" },
-  { key: "product_name", header: "Σκεύασμα" },
-  { key: "reason", header: "Αιτία" },
-];
-
 export default function PharmacyOnePage() {
+  const t = useT();
   const filters = useUiStore();
   const q = filtersToQuery(filters);
+
+  const sellerColumns: Column<SellerRow>[] = [
+    { key: "seller", header: t("Πωλητής", "Seller") },
+    { key: "orders", header: t("Πωλήσεις", "Sales"), align: "right", render: (r) => fmtNum(r.orders) },
+    { key: "value", header: t("Αξία", "Value"), align: "right", render: (r) => fmtEur(r.value) },
+  ];
+
+  const unexecutedColumns: Column<Unexecuted>[] = [
+    { key: "patient_ref", header: t("Ασφαλισμένος", "Patient") },
+    { key: "product_name", header: t("Σκεύασμα", "Product") },
+    { key: "reason", header: t("Αιτία", "Reason") },
+  ];
 
   const bySeller = useQuery({
     queryKey: queryKeys.pharmacyoneBySeller(q),
@@ -53,7 +55,7 @@ export default function PharmacyOnePage() {
       <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-slate-900">PharmacyOne</h1>
-          <p className="mt-1 text-sm text-slate-500">Πωλήσεις ανά πωλητή και ανεκτέλεστα</p>
+          <p className="mt-1 text-sm text-slate-500">{t("Πωλήσεις ανά πωλητή και ανεκτέλεστα", "Sales per seller and unexecuted items")}</p>
         </div>
       </div>
 
@@ -64,15 +66,15 @@ export default function PharmacyOnePage() {
       <div className="space-y-4">
         {/* KPI row */}
         <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
-          <KpiCard label="Πωλήσεις" value={fmtEur(totalSales)} sub="σύνολο περιόδου" icon={ShoppingCart} accent="indigo" />
-          <KpiCard label="Παραγγελίες" value={fmtNum(totalOrders)} sub="πλήθος πωλήσεων" icon={Users} accent="violet" />
-          <KpiCard label="Ανεκτέλεστα" value={fmtNum(unexecutedItems.length)} sub="προς εκτέλεση" icon={XCircle} accent={unexecutedItems.length ? "rose" : "green"} />
-          <KpiCard label="Top πωλητής" value={topSeller?.seller ?? "—"} sub={topSeller ? fmtEur(topSeller.value) : "—"} icon={Crown} accent="amber" />
+          <KpiCard label={t("Πωλήσεις", "Sales")} value={fmtEur(totalSales)} sub={t("σύνολο περιόδου", "period total")} icon={ShoppingCart} accent="indigo" />
+          <KpiCard label={t("Παραγγελίες", "Orders")} value={fmtNum(totalOrders)} sub={t("πλήθος πωλήσεων", "number of sales")} icon={Users} accent="violet" />
+          <KpiCard label={t("Ανεκτέλεστα", "Unexecuted")} value={fmtNum(unexecutedItems.length)} sub={t("προς εκτέλεση", "pending execution")} icon={XCircle} accent={unexecutedItems.length ? "rose" : "green"} />
+          <KpiCard label={t("Top πωλητής", "Top seller")} value={topSeller?.seller ?? "—"} sub={topSeller ? fmtEur(topSeller.value) : "—"} icon={Crown} accent="amber" />
         </div>
 
         {/* sales by seller chart */}
         {chartData.length > 0 && (
-          <PanelCard title="Πωλήσεις ανά πωλητή">
+          <PanelCard title={t("Πωλήσεις ανά πωλητή", "Sales per seller")}>
             <BarChart
               horizontal
               height={Math.max(220, chartData.length * 38)}
@@ -84,12 +86,12 @@ export default function PharmacyOnePage() {
         )}
 
         {/* sellers table */}
-        <PanelCard title="Αναλυτικά ανά πωλητή" bodyClassName="pt-2">
+        <PanelCard title={t("Αναλυτικά ανά πωλητή", "Breakdown by seller")} bodyClassName="pt-2">
           <DataTable pageSize={20} columns={sellerColumns} rows={sellers} rowKey={(r) => r.seller} />
         </PanelCard>
 
         {/* unexecuted table */}
-        <PanelCard title="Ανεκτέλεστα" bodyClassName="pt-2">
+        <PanelCard title={t("Ανεκτέλεστα", "Unexecuted")} bodyClassName="pt-2">
           <QueryState
             isLoading={unexecuted.isLoading}
             isError={unexecuted.isError}

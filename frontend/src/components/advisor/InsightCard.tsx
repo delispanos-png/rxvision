@@ -6,6 +6,7 @@ import {
   CalendarClock, Tag, Users, PackageSearch, ArrowRight, Lightbulb,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
+import { useT } from "@/store/prefStore";
 
 const ICONS: Record<string, LucideIcon> = {
   "trending-down": TrendingDown, "trending-up": TrendingUp, percent: Percent, wallet: Wallet,
@@ -26,8 +27,15 @@ export type Insight = {
   metric?: string | null; cta?: { label: string; href: string } | null;
 };
 
+const SEV_LABEL_EN: Record<string, string> = {
+  critical: "Critical", warning: "Warning", opportunity: "Opportunity",
+  info: "Info", positive: "Positive",
+};
+
 export function InsightCard({ ins }: { ins: Insight }) {
+  const t = useT();
   const s = SEV[ins.severity] ?? SEV.info;
+  const sevLabel = t(s.label, SEV_LABEL_EN[ins.severity] ?? SEV_LABEL_EN.info);
   const Icon = ICONS[ins.icon] ?? Lightbulb;
   const m = ins.metric || "";
   const metricTone = m.startsWith("-") || m.startsWith("↓")
@@ -48,7 +56,7 @@ export function InsightCard({ ins }: { ins: Insight }) {
       </div>
       <p className="flex-1 text-sm leading-relaxed text-slate-500 dark:text-slate-400">{ins.detail}</p>
       <div className="mt-3 flex items-center justify-between">
-        <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${s.chip}`}>{s.label}</span>
+        <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${s.chip}`}>{sevLabel}</span>
         {ins.cta && (
           <Link href={ins.cta.href} className="inline-flex items-center gap-1 text-sm font-medium text-brand-700 hover:underline dark:text-brand-300">
             {ins.cta.label} <ArrowRight className="h-3.5 w-3.5" />

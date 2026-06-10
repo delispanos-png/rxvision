@@ -1,6 +1,7 @@
 "use client";
 
 import { appPrompt } from "@/store/dialogStore";
+import { useT } from "@/store/prefStore";
 import { useEffect, useImperativeHandle, forwardRef } from "react";
 import { useEditor, EditorContent, type Editor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
@@ -53,11 +54,12 @@ function ToolbarBtn({
 }
 
 function Toolbar({ editor }: { editor: Editor }) {
+  const t = useT();
   const sep = <span className="mx-1 h-5 w-px bg-slate-200" />;
 
   async function setLink() {
     const prev = editor.getAttributes("link").href as string | undefined;
-    const url = await appPrompt("Διεύθυνση συνδέσμου (URL):", { title: "Σύνδεσμος", defaultValue: prev ?? "", placeholder: "https://…" });
+    const url = await appPrompt(t("Διεύθυνση συνδέσμου (URL):", "Link address (URL):"), { title: t("Σύνδεσμος", "Link"), defaultValue: prev ?? "", placeholder: "https://…" });
     if (url === null) return; // cancelled
     if (url === "") {
       editor.chain().focus().extendMarkRange("link").unsetLink().run();
@@ -67,36 +69,36 @@ function Toolbar({ editor }: { editor: Editor }) {
   }
 
   async function addImage() {
-    const url = await appPrompt("Διεύθυνση εικόνας (URL):", { title: "Εικόνα", placeholder: "https://…" });
+    const url = await appPrompt(t("Διεύθυνση εικόνας (URL):", "Image address (URL):"), { title: t("Εικόνα", "Image"), placeholder: "https://…" });
     if (url) editor.chain().focus().setImage({ src: url }).run();
   }
 
   return (
     <div className="flex flex-wrap items-center gap-0.5 border-b border-slate-200 bg-slate-50 px-2 py-1.5">
-      <ToolbarBtn title="Έντονα" active={editor.isActive("bold")} onClick={() => editor.chain().focus().toggleBold().run()}><Bold className="h-4 w-4" /></ToolbarBtn>
-      <ToolbarBtn title="Πλάγια" active={editor.isActive("italic")} onClick={() => editor.chain().focus().toggleItalic().run()}><Italic className="h-4 w-4" /></ToolbarBtn>
-      <ToolbarBtn title="Υπογράμμιση" active={editor.isActive("underline")} onClick={() => editor.chain().focus().toggleUnderline().run()}><UnderlineIcon className="h-4 w-4" /></ToolbarBtn>
-      <ToolbarBtn title="Διακριτή διαγραφή" active={editor.isActive("strike")} onClick={() => editor.chain().focus().toggleStrike().run()}><Strikethrough className="h-4 w-4" /></ToolbarBtn>
+      <ToolbarBtn title={t("Έντονα", "Bold")} active={editor.isActive("bold")} onClick={() => editor.chain().focus().toggleBold().run()}><Bold className="h-4 w-4" /></ToolbarBtn>
+      <ToolbarBtn title={t("Πλάγια", "Italic")} active={editor.isActive("italic")} onClick={() => editor.chain().focus().toggleItalic().run()}><Italic className="h-4 w-4" /></ToolbarBtn>
+      <ToolbarBtn title={t("Υπογράμμιση", "Underline")} active={editor.isActive("underline")} onClick={() => editor.chain().focus().toggleUnderline().run()}><UnderlineIcon className="h-4 w-4" /></ToolbarBtn>
+      <ToolbarBtn title={t("Διακριτή διαγραφή", "Strikethrough")} active={editor.isActive("strike")} onClick={() => editor.chain().focus().toggleStrike().run()}><Strikethrough className="h-4 w-4" /></ToolbarBtn>
       {sep}
-      <ToolbarBtn title="Επικεφαλίδα 1" active={editor.isActive("heading", { level: 1 })} onClick={() => editor.chain().focus().toggleHeading({ level: 1 }).run()}><Heading1 className="h-4 w-4" /></ToolbarBtn>
-      <ToolbarBtn title="Επικεφαλίδα 2" active={editor.isActive("heading", { level: 2 })} onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()}><Heading2 className="h-4 w-4" /></ToolbarBtn>
-      <ToolbarBtn title="Επικεφαλίδα 3" active={editor.isActive("heading", { level: 3 })} onClick={() => editor.chain().focus().toggleHeading({ level: 3 }).run()}><Heading3 className="h-4 w-4" /></ToolbarBtn>
+      <ToolbarBtn title={t("Επικεφαλίδα 1", "Heading 1")} active={editor.isActive("heading", { level: 1 })} onClick={() => editor.chain().focus().toggleHeading({ level: 1 }).run()}><Heading1 className="h-4 w-4" /></ToolbarBtn>
+      <ToolbarBtn title={t("Επικεφαλίδα 2", "Heading 2")} active={editor.isActive("heading", { level: 2 })} onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()}><Heading2 className="h-4 w-4" /></ToolbarBtn>
+      <ToolbarBtn title={t("Επικεφαλίδα 3", "Heading 3")} active={editor.isActive("heading", { level: 3 })} onClick={() => editor.chain().focus().toggleHeading({ level: 3 }).run()}><Heading3 className="h-4 w-4" /></ToolbarBtn>
       {sep}
-      <ToolbarBtn title="Λίστα με κουκκίδες" active={editor.isActive("bulletList")} onClick={() => editor.chain().focus().toggleBulletList().run()}><List className="h-4 w-4" /></ToolbarBtn>
-      <ToolbarBtn title="Αριθμημένη λίστα" active={editor.isActive("orderedList")} onClick={() => editor.chain().focus().toggleOrderedList().run()}><ListOrdered className="h-4 w-4" /></ToolbarBtn>
-      <ToolbarBtn title="Παράθεση" active={editor.isActive("blockquote")} onClick={() => editor.chain().focus().toggleBlockquote().run()}><Quote className="h-4 w-4" /></ToolbarBtn>
+      <ToolbarBtn title={t("Λίστα με κουκκίδες", "Bullet list")} active={editor.isActive("bulletList")} onClick={() => editor.chain().focus().toggleBulletList().run()}><List className="h-4 w-4" /></ToolbarBtn>
+      <ToolbarBtn title={t("Αριθμημένη λίστα", "Numbered list")} active={editor.isActive("orderedList")} onClick={() => editor.chain().focus().toggleOrderedList().run()}><ListOrdered className="h-4 w-4" /></ToolbarBtn>
+      <ToolbarBtn title={t("Παράθεση", "Quote")} active={editor.isActive("blockquote")} onClick={() => editor.chain().focus().toggleBlockquote().run()}><Quote className="h-4 w-4" /></ToolbarBtn>
       {sep}
-      <ToolbarBtn title="Σύνδεσμος" active={editor.isActive("link")} onClick={setLink}><LinkIcon className="h-4 w-4" /></ToolbarBtn>
-      <ToolbarBtn title="Εικόνα" onClick={addImage}><ImageIcon className="h-4 w-4" /></ToolbarBtn>
+      <ToolbarBtn title={t("Σύνδεσμος", "Link")} active={editor.isActive("link")} onClick={setLink}><LinkIcon className="h-4 w-4" /></ToolbarBtn>
+      <ToolbarBtn title={t("Εικόνα", "Image")} onClick={addImage}><ImageIcon className="h-4 w-4" /></ToolbarBtn>
       {sep}
-      <ToolbarBtn title="Στοίχιση αριστερά" active={editor.isActive({ textAlign: "left" })} onClick={() => editor.chain().focus().setTextAlign("left").run()}><AlignLeft className="h-4 w-4" /></ToolbarBtn>
-      <ToolbarBtn title="Στοίχιση στο κέντρο" active={editor.isActive({ textAlign: "center" })} onClick={() => editor.chain().focus().setTextAlign("center").run()}><AlignCenter className="h-4 w-4" /></ToolbarBtn>
-      <ToolbarBtn title="Στοίχιση δεξιά" active={editor.isActive({ textAlign: "right" })} onClick={() => editor.chain().focus().setTextAlign("right").run()}><AlignRight className="h-4 w-4" /></ToolbarBtn>
+      <ToolbarBtn title={t("Στοίχιση αριστερά", "Align left")} active={editor.isActive({ textAlign: "left" })} onClick={() => editor.chain().focus().setTextAlign("left").run()}><AlignLeft className="h-4 w-4" /></ToolbarBtn>
+      <ToolbarBtn title={t("Στοίχιση στο κέντρο", "Align center")} active={editor.isActive({ textAlign: "center" })} onClick={() => editor.chain().focus().setTextAlign("center").run()}><AlignCenter className="h-4 w-4" /></ToolbarBtn>
+      <ToolbarBtn title={t("Στοίχιση δεξιά", "Align right")} active={editor.isActive({ textAlign: "right" })} onClick={() => editor.chain().focus().setTextAlign("right").run()}><AlignRight className="h-4 w-4" /></ToolbarBtn>
       {sep}
-      <ToolbarBtn title="Οριζόντια γραμμή" onClick={() => editor.chain().focus().setHorizontalRule().run()}><Minus className="h-4 w-4" /></ToolbarBtn>
-      <ToolbarBtn title="Αναίρεση" disabled={!editor.can().undo()} onClick={() => editor.chain().focus().undo().run()}><Undo2 className="h-4 w-4" /></ToolbarBtn>
-      <ToolbarBtn title="Επανάληψη" disabled={!editor.can().redo()} onClick={() => editor.chain().focus().redo().run()}><Redo2 className="h-4 w-4" /></ToolbarBtn>
-      <ToolbarBtn title="Καθαρισμός μορφοποίησης" onClick={() => editor.chain().focus().unsetAllMarks().clearNodes().run()}><RemoveFormatting className="h-4 w-4" /></ToolbarBtn>
+      <ToolbarBtn title={t("Οριζόντια γραμμή", "Horizontal rule")} onClick={() => editor.chain().focus().setHorizontalRule().run()}><Minus className="h-4 w-4" /></ToolbarBtn>
+      <ToolbarBtn title={t("Αναίρεση", "Undo")} disabled={!editor.can().undo()} onClick={() => editor.chain().focus().undo().run()}><Undo2 className="h-4 w-4" /></ToolbarBtn>
+      <ToolbarBtn title={t("Επανάληψη", "Redo")} disabled={!editor.can().redo()} onClick={() => editor.chain().focus().redo().run()}><Redo2 className="h-4 w-4" /></ToolbarBtn>
+      <ToolbarBtn title={t("Καθαρισμός μορφοποίησης", "Clear formatting")} onClick={() => editor.chain().focus().unsetAllMarks().clearNodes().run()}><RemoveFormatting className="h-4 w-4" /></ToolbarBtn>
     </div>
   );
 }

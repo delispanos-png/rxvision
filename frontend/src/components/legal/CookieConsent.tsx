@@ -7,10 +7,12 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { useT } from "@/store/prefStore";
 
 const KEY = "rxvision_cookie_consent";
 
 export function CookieConsent() {
+  const t = useT();
   const [show, setShow] = useState(false);
 
   useEffect(() => {
@@ -36,10 +38,15 @@ export function CookieConsent() {
     <div className="fixed inset-x-0 bottom-0 z-50 p-3 sm:p-4">
       <div className="mx-auto flex max-w-3xl flex-col gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-lg sm:flex-row sm:items-center sm:justify-between">
         <p className="text-sm text-slate-600">
-          Χρησιμοποιούμε μόνο <strong>απαραίτητα cookies</strong> για τη λειτουργία της εφαρμογής.
-          Με την «Αποδοχή όλων» επιτρέπετε τυχόν προαιρετικά cookies στο μέλλον. Δες την{" "}
+          {t("Χρησιμοποιούμε μόνο", "We use only")}{" "}
+          <strong>{t("απαραίτητα cookies", "essential cookies")}</strong>{" "}
+          {t("για τη λειτουργία της εφαρμογής.", "for the app to work.")}{" "}
+          {t(
+            "Με την «Αποδοχή όλων» επιτρέπετε τυχόν προαιρετικά cookies στο μέλλον. Δες την",
+            "By choosing “Accept all” you allow any optional cookies in the future. See the",
+          )}{" "}
           <Link href="/privacy" className="font-medium text-brand-600 underline">
-            Πολιτική Απορρήτου
+            {t("Πολιτική Απορρήτου", "Privacy Policy")}
           </Link>
           .
         </p>
@@ -48,13 +55,13 @@ export function CookieConsent() {
             onClick={() => choose("essential")}
             className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
           >
-            Μόνο απαραίτητα
+            {t("Μόνο απαραίτητα", "Essential only")}
           </button>
           <button
             onClick={() => choose("all")}
             className="rounded-lg bg-brand-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-700"
           >
-            Αποδοχή όλων
+            {t("Αποδοχή όλων", "Accept all")}
           </button>
         </div>
       </div>

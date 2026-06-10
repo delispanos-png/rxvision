@@ -21,6 +21,9 @@ import { PanelCard } from "@/components/ui/Card";
 import { QueryState } from "@/components/ui/QueryState";
 import { CopyButton } from "@/components/ui/CopyButton";
 import { Modal } from "@/components/ui/Modal";
+import { useT } from "@/store/prefStore";
+
+type T = (el: string, en: string) => string;
 
 type Prescription = {
   external_id: string;
@@ -36,10 +39,10 @@ type Prescription = {
   status?: string | null;
 };
 
-const STATUS_EL: Record<string, string> = { executed: "Εκτελεσμένη", partial: "Μερικώς", cancelled: "Ακυρωμένη" };
-const CATEGORY_EL: Record<string, string> = {
-  normal: "Κανονικό", narcotic: "Ναρκωτικό", fyk: "ΦΥΚ", vaccine: "Εμβόλιο", allergen: "Αλλεργιογόνο", special: "Ειδικό",
-};
+const statusEl = (t: T): Record<string, string> => ({ executed: t("Εκτελεσμένη", "Executed"), partial: t("Μερικώς", "Partial"), cancelled: t("Ακυρωμένη", "Cancelled") });
+const categoryEl = (t: T): Record<string, string> => ({
+  normal: t("Κανονικό", "Normal"), narcotic: t("Ναρκωτικό", "Narcotic"), fyk: "ΦΥΚ", vaccine: t("Εμβόλιο", "Vaccine"), allergen: t("Αλλεργιογόνο", "Allergen"), special: t("Ειδικό", "Special"),
+});
 
 type UnexecutedRow = {
   product_id: string;
@@ -54,20 +57,20 @@ type UnexecutedRow = {
 
 type FundRow = { fund_name: string; rx: number; value: number; claimed: number; unexecuted: number; is_group?: boolean; funds?: { fund_name: string }[] };
 type FundMetric = "rx" | "value" | "claimed" | "unexecuted";
-const fundCols: Column<FundRow>[] = [
+const makeFundCols = (t: T): Column<FundRow>[] => [
   {
-    key: "fund_name", header: "Ταμείο / Ομάδα",
+    key: "fund_name", header: t("Ταμείο / Ομάδα", "Fund / Group"),
     render: (r) => (
       <span className="inline-flex items-center gap-2">
         {r.fund_name || "—"}
-        {r.is_group && <span className="rounded bg-brand-100 px-1.5 py-0.5 text-[10px] font-semibold text-brand-700" title={(r.funds ?? []).map((f) => f.fund_name).join(", ")}>ομάδα · {r.funds?.length}</span>}
+        {r.is_group && <span className="rounded bg-brand-100 px-1.5 py-0.5 text-[10px] font-semibold text-brand-700" title={(r.funds ?? []).map((f) => f.fund_name).join(", ")}>{t("ομάδα", "group")} · {r.funds?.length}</span>}
       </span>
     ),
   },
-  { key: "rx", header: "Συνταγές", align: "right", render: (r) => fmtNum(r.rx), sortValue: (r) => r.rx },
-  { key: "value", header: "Αξία", align: "right", render: (r) => fmtEur(r.value), sortValue: (r) => r.value },
-  { key: "claimed", header: "Αιτούμενο", align: "right", render: (r) => fmtEur(r.claimed), sortValue: (r) => r.claimed },
-  { key: "unexecuted", header: "Ανεκτέλεστες", align: "right", render: (r) => fmtNum(r.unexecuted), sortValue: (r) => r.unexecuted },
+  { key: "rx", header: t("Συνταγές", "Prescriptions"), align: "right", render: (r) => fmtNum(r.rx), sortValue: (r) => r.rx },
+  { key: "value", header: t("Αξία", "Value"), align: "right", render: (r) => fmtEur(r.value), sortValue: (r) => r.value },
+  { key: "claimed", header: t("Αιτούμενο", "Claimed"), align: "right", render: (r) => fmtEur(r.claimed), sortValue: (r) => r.claimed },
+  { key: "unexecuted", header: t("Ανεκτέλεστες", "Unexecuted"), align: "right", render: (r) => fmtNum(r.unexecuted), sortValue: (r) => r.unexecuted },
 ];
 
 function BarcodeChip({ bc, patient, date }: { bc: string; patient?: string | null; date?: string | null }) {
@@ -101,32 +104,37 @@ function BarcodeChip({ bc, patient, date }: { bc: string; patient?: string | nul
   );
 }
 
-const columns: Column<Prescription>[] = [
-  { key: "executed_at", header: "Ημ/νία", render: (r) => fmtDate(r.executed_at) },
-  { key: "external_id", header: "Κωδικός" },
-  { key: "patient_name", header: "Ασθενής", sortable: false, render: (r) => r.patient_name || "—" },
+const makeColumns = (t: T): Column<Prescription>[] => {
+  const STATUS_EL = statusEl(t);
+  return [
+  { key: "executed_at", header: t("Ημ/νία", "Date"), render: (r) => fmtDate(r.executed_at) },
+  { key: "external_id", header: t("Κωδικός", "Code") },
+  { key: "patient_name", header: t("Ασθενής", "Patient"), sortable: false, render: (r) => r.patient_name || "—" },
   { key: "amka", header: "ΑΜΚΑ", hideOnMobile: true, sortable: false, render: (r) => r.amka ? (
     <span className="inline-flex items-center gap-1 font-mono tabular-nums">{r.amka}<CopyButton value={r.amka} /></span>
   ) : "—" },
-  { key: "fund_name", header: "Ταμείο", hideOnMobile: true, sortable: false, render: (r) => r.fund_name || "—" },
+  { key: "fund_name", header: t("Ταμείο", "Fund"), hideOnMobile: true, sortable: false, render: (r) => r.fund_name || "—" },
   {
-    key: "status", header: "Κατάσταση", hideOnMobile: true, sortable: false,
+    key: "status", header: t("Κατάσταση", "Status"), hideOnMobile: true, sortable: false,
     render: (r) => (
       <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${r.has_unexecuted_substances ? "bg-amber-100 text-amber-700" : "bg-emerald-100 text-emerald-700"}`}>
-        {r.has_unexecuted_substances ? "Μερικώς" : STATUS_EL[r.status || "executed"] || "Εκτελεσμένη"}
+        {r.has_unexecuted_substances ? t("Μερικώς", "Partial") : STATUS_EL[r.status || "executed"] || t("Εκτελεσμένη", "Executed")}
       </span>
     ),
   },
   { key: "icd10", header: "ICD-10", hideOnMobile: true, sortable: false, render: (r) => (r.icd10 ?? []).join(", ") },
-  { key: "amount_total", header: "Αξία", align: "right", render: (r) => fmtEur(r.amount_total) },
-  { key: "amount_claimed", header: "Από ταμείο", align: "right", render: (r) => fmtEur(r.amount_claimed) },
-];
+  { key: "amount_total", header: t("Αξία", "Value"), align: "right", render: (r) => fmtEur(r.amount_total) },
+  { key: "amount_claimed", header: t("Από ταμείο", "From fund"), align: "right", render: (r) => fmtEur(r.amount_claimed) },
+  ];
+};
 
-const unexecutedColumns: Column<UnexecutedRow>[] = [
-  { key: "name", header: "Σκεύασμα", render: (r) => r.name ?? r.product_id },
-  { key: "category", header: "Κατηγορία", hideOnMobile: true, render: (r) => CATEGORY_EL[r.category] || r.category || "—" },
+const makeUnexecutedColumns = (t: T): Column<UnexecutedRow>[] => {
+  const CATEGORY_EL = categoryEl(t);
+  return [
+  { key: "name", header: t("Σκεύασμα", "Product"), render: (r) => r.name ?? r.product_id },
+  { key: "category", header: t("Κατηγορία", "Category"), hideOnMobile: true, render: (r) => CATEGORY_EL[r.category] || r.category || "—" },
   {
-    key: "barcodes", header: "Από συνταγή",
+    key: "barcodes", header: t("Από συνταγή", "From prescription"),
     render: (r) => {
       const rxs: { barcode: string; patient?: string | null; date?: string | null }[] =
         r.rxs ?? (r.barcodes ?? []).map((b) => ({ barcode: b }));
@@ -139,11 +147,17 @@ const unexecutedColumns: Column<UnexecutedRow>[] = [
       );
     },
   },
-  { key: "occurrences", header: "Φορές", align: "right", render: (r) => fmtNum(r.occurrences) },
-  { key: "lost_value", header: "Χαμένη αξία", align: "right", render: (r) => fmtEur(r.lost_value) },
-];
+  { key: "occurrences", header: t("Φορές", "Times"), align: "right", render: (r) => fmtNum(r.occurrences) },
+  { key: "lost_value", header: t("Χαμένη αξία", "Lost value"), align: "right", render: (r) => fmtEur(r.lost_value) },
+  ];
+};
 
 export default function PrescriptionsPage() {
+  const t = useT();
+  const STATUS_EL = statusEl(t);
+  const columns = makeColumns(t);
+  const unexecutedColumns = makeUnexecutedColumns(t);
+  const fundCols = makeFundCols(t);
   const router = useRouter();
   const filters = useUiStore();
   const q = filtersToQuery(filters);
@@ -211,19 +225,19 @@ export default function PrescriptionsPage() {
     <ModuleGuard module="prescription_analytics">
       <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight text-slate-900">Συνταγές</h1>
-          <p className="mt-1 text-sm text-slate-500">Εκτελέσεις & ανεκτέλεστες δραστικές της περιόδου</p>
+          <h1 className="text-2xl font-bold tracking-tight text-slate-900">{t("Συνταγές", "Prescriptions")}</h1>
+          <p className="mt-1 text-sm text-slate-500">{t("Εκτελέσεις & ανεκτέλεστες δραστικές της περιόδου", "Executions & unexecuted substances for the period")}</p>
         </div>
-        <ExportMenu<Prescription> filename="syntages" title="Συνταγές — εκτελέσεις περιόδου"
+        <ExportMenu<Prescription> filename="syntages" title={t("Συνταγές — εκτελέσεις περιόδου", "Prescriptions — executions for the period")}
           columns={[
-            { key: "executed_at", header: "Ημ/νία", value: (r) => fmtDate(r.executed_at) },
-            { key: "external_id", header: "Κωδικός" },
-            { key: "patient_name", header: "Ασθενής", value: (r) => r.patient_name || "—" },
+            { key: "executed_at", header: t("Ημ/νία", "Date"), value: (r) => fmtDate(r.executed_at) },
+            { key: "external_id", header: t("Κωδικός", "Code") },
+            { key: "patient_name", header: t("Ασθενής", "Patient"), value: (r) => r.patient_name || "—" },
             { key: "amka", header: "ΑΜΚΑ", value: (r) => r.amka || "—" },
-            { key: "fund_name", header: "Ταμείο", value: (r) => r.fund_name || "—" },
-            { key: "status", header: "Κατάσταση", value: (r) => STATUS_EL[r.status ?? ""] || r.status || "—" },
-            { key: "amount_total", header: "Αξία (€)", value: (r) => ((r.amount_total || 0) / 100).toFixed(2) },
-            { key: "amount_claimed", header: "Από ταμείο (€)", value: (r) => ((r.amount_claimed || 0) / 100).toFixed(2) },
+            { key: "fund_name", header: t("Ταμείο", "Fund"), value: (r) => r.fund_name || "—" },
+            { key: "status", header: t("Κατάσταση", "Status"), value: (r) => STATUS_EL[r.status ?? ""] || r.status || "—" },
+            { key: "amount_total", header: t("Αξία (€)", "Value (€)"), value: (r) => ((r.amount_total || 0) / 100).toFixed(2) },
+            { key: "amount_claimed", header: t("Από ταμείο (€)", "From fund (€)"), value: (r) => ((r.amount_claimed || 0) / 100).toFixed(2) },
           ]}
           fetchRows={async () => {
             const all: Prescription[] = [];
@@ -239,41 +253,41 @@ export default function PrescriptionsPage() {
       <div className="mb-4 flex flex-wrap items-end gap-3">
         <DateRangeFilter />
         <label className="text-sm">
-          <span className="mb-1 block text-slate-500">Αναζήτηση barcode</span>
+          <span className="mb-1 block text-slate-500">{t("Αναζήτηση barcode", "Search barcode")}</span>
           <div className="relative">
             <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
             <input
               value={barcode}
               onChange={(e) => setBarcode(e.target.value)}
-              placeholder="π.χ. 2606022236114"
+              placeholder={t("π.χ. 2606022236114", "e.g. 2606022236114")}
               inputMode="numeric"
               className="w-56 rounded-lg border border-slate-300 py-2 pl-8 pr-8 text-sm text-slate-900 focus:border-brand-500 focus:outline-none"
             />
             {bc && (
-              <button onClick={() => setBarcode("")} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600" title="Καθαρισμός">×</button>
+              <button onClick={() => setBarcode("")} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600" title={t("Καθαρισμός", "Clear")}>×</button>
             )}
           </div>
         </label>
-        {bc && <span className="pb-2 text-xs text-slate-400">Αναζήτηση σε όλη την περίοδο</span>}
+        {bc && <span className="pb-2 text-xs text-slate-400">{t("Αναζήτηση σε όλη την περίοδο", "Search across the whole period")}</span>}
       </div>
 
       <div className="space-y-4">
         {/* KPI row */}
         <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
-          <KpiCard label="Συνταγές" value={fmtNum(totalRx)} sub="σύνολο περιόδου · ανά ταμείο →" icon={Receipt} accent="indigo" trend={hasPrev ? pctDelta(totalRx, pRx) : undefined}
-            onClick={() => setFundModal({ title: "Συνταγές ανά ταμείο", metric: "rx" })} />
-          <KpiCard label="Αξία συνταγών" value={fmtEur(totalValue)} sub="σύνολο περιόδου · ανά ταμείο →" icon={Wallet} accent="violet" trend={hasPrev ? pctDelta(totalValue, pValue) : undefined}
-            onClick={() => setFundModal({ title: "Αξία συνταγών ανά ταμείο", metric: "value" })} />
-          <KpiCard label="Αιτούμενα ταμείων" value={fmtEur(totalClaimed)} sub="προς ασφ. φορείς · ανά ταμείο →" icon={Pill} accent="amber" trend={hasPrev ? pctDelta(totalClaimed, pClaimed) : undefined}
-            onClick={() => setFundModal({ title: "Αιτούμενο ανά ταμείο", metric: "claimed" })} />
+          <KpiCard label={t("Συνταγές", "Prescriptions")} value={fmtNum(totalRx)} sub={t("σύνολο περιόδου · ανά ταμείο →", "period total · by fund →")} icon={Receipt} accent="indigo" trend={hasPrev ? pctDelta(totalRx, pRx) : undefined}
+            onClick={() => setFundModal({ title: t("Συνταγές ανά ταμείο", "Prescriptions by fund"), metric: "rx" })} />
+          <KpiCard label={t("Αξία συνταγών", "Prescriptions value")} value={fmtEur(totalValue)} sub={t("σύνολο περιόδου · ανά ταμείο →", "period total · by fund →")} icon={Wallet} accent="violet" trend={hasPrev ? pctDelta(totalValue, pValue) : undefined}
+            onClick={() => setFundModal({ title: t("Αξία συνταγών ανά ταμείο", "Prescriptions value by fund"), metric: "value" })} />
+          <KpiCard label={t("Αιτούμενα ταμείων", "Funds claimed")} value={fmtEur(totalClaimed)} sub={t("προς ασφ. φορείς · ανά ταμείο →", "to insurance funds · by fund →")} icon={Pill} accent="amber" trend={hasPrev ? pctDelta(totalClaimed, pClaimed) : undefined}
+            onClick={() => setFundModal({ title: t("Αιτούμενο ανά ταμείο", "Claimed by fund"), metric: "claimed" })} />
           <KpiCard
-            label="Με ανεκτέλεστα"
+            label={t("Με ανεκτέλεστα", "With unexecuted")}
             value={fmtNum(unexecutedCount)}
-            sub={`χαμένη αξία ${fmtEur(un?.total_lost_value ?? 0)} · ανά ταμείο →`}
+            sub={t(`χαμένη αξία ${fmtEur(un?.total_lost_value ?? 0)} · ανά ταμείο →`, `lost value ${fmtEur(un?.total_lost_value ?? 0)} · by fund →`)}
             icon={AlertTriangle}
             accent="rose"
             trend={hasPrev ? pctDelta(unexecutedCount, pUnexec) : undefined}
-            onClick={() => setFundModal({ title: "Ανεκτέλεστες ανά ταμείο", metric: "unexecuted" })}
+            onClick={() => setFundModal({ title: t("Ανεκτέλεστες ανά ταμείο", "Unexecuted by fund"), metric: "unexecuted" })}
           />
         </div>
 
@@ -282,14 +296,14 @@ export default function PrescriptionsPage() {
           <PanelCard
             collapsible
             defaultOpen={false}
-            title="Ανεκτέλεστες δραστικές"
+            title={t("Ανεκτέλεστες δραστικές", "Unexecuted substances")}
             action={
               <div className="flex gap-4 text-sm">
                 <span className="text-slate-500">
-                  Σύνολο: <b className="text-slate-800">{fmtNum(un?.total_occurrences ?? 0)}</b>
+                  {t("Σύνολο", "Total")}: <b className="text-slate-800">{fmtNum(un?.total_occurrences ?? 0)}</b>
                 </span>
                 <span className="text-slate-500">
-                  Χαμένη αξία: <b className="text-amber-600">{fmtEur(un?.total_lost_value ?? 0)}</b>
+                  {t("Χαμένη αξία", "Lost value")}: <b className="text-amber-600">{fmtEur(un?.total_lost_value ?? 0)}</b>
                 </span>
               </div>
             }
@@ -297,7 +311,7 @@ export default function PrescriptionsPage() {
             <BarChart
               labels={unRows.slice(0, 10).map((r) => r.name ?? r.product_id)}
               data={unRows.slice(0, 10).map((r) => r.occurrences)}
-              name="Φορές"
+              name={t("Φορές", "Times")}
               horizontal
               height={Math.max(220, unRows.slice(0, 10).length * 38)}
             />
@@ -305,24 +319,24 @@ export default function PrescriptionsPage() {
         )}
 
         {/* unexecuted table */}
-        <PanelCard collapsible defaultOpen={false} title="Ανεκτέλεστες δραστικές — αναλυτικά" bodyClassName="pt-2">
+        <PanelCard collapsible defaultOpen={false} title={t("Ανεκτέλεστες δραστικές — αναλυτικά", "Unexecuted substances — details")} bodyClassName="pt-2">
           <DataTable
             columns={unexecutedColumns}
             rows={unRows}
             rowKey={(r) => r.product_id}
             onRowClick={(r) => setUnexecModal(r)}
-            empty="Καμία ανεκτέλεστη δραστική στην περίοδο."
+            empty={t("Καμία ανεκτέλεστη δραστική στην περίοδο.", "No unexecuted substances in the period.")}
           />
         </PanelCard>
 
         {/* recent prescriptions table */}
-        <PanelCard title="Πρόσφατες εκτελέσεις" bodyClassName="pt-2">
+        <PanelCard title={t("Πρόσφατες εκτελέσεις", "Recent executions")} bodyClassName="pt-2">
           <QueryState
             isLoading={list.isLoading}
             isError={list.isError}
             isEmpty={items.length === 0}
             onRetry={() => list.refetch()}
-            empty="Δεν υπάρχουν εκτελέσεις στην περίοδο."
+            empty={t("Δεν υπάρχουν εκτελέσεις στην περίοδο.", "No executions in the period.")}
           >
             <DataTable columns={columns} rows={items} rowKey={(r) => r.external_id}
               serverSort={{ key: sort.key, dir: sort.dir === 1 ? "asc" : "desc" }}
@@ -332,19 +346,19 @@ export default function PrescriptionsPage() {
           {/* pagination */}
           <div className="mt-3 flex items-center justify-between text-sm">
             <span className="text-slate-500">
-              Σελίδα {page}{items.length ? ` · εγγραφές ${(page - 1) * PAGE_SIZE + 1}–${(page - 1) * PAGE_SIZE + items.length}` : ""}
+              {t("Σελίδα", "Page")} {page}{items.length ? t(` · εγγραφές ${(page - 1) * PAGE_SIZE + 1}–${(page - 1) * PAGE_SIZE + items.length}`, ` · records ${(page - 1) * PAGE_SIZE + 1}–${(page - 1) * PAGE_SIZE + items.length}`) : ""}
             </span>
             <div className="flex gap-2">
               <button
                 onClick={() => setPage((p) => Math.max(1, p - 1))}
                 disabled={page === 1 || list.isFetching}
                 className="rounded-lg border border-slate-300 px-3 py-1.5 font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
-              >← Προηγούμενη</button>
+              >← {t("Προηγούμενη", "Previous")}</button>
               <button
                 onClick={() => setPage((p) => p + 1)}
                 disabled={items.length < PAGE_SIZE || list.isFetching}
                 className="rounded-lg border border-slate-300 px-3 py-1.5 font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
-              >Επόμενη →</button>
+              >{t("Επόμενη", "Next")} →</button>
             </div>
           </div>
         </PanelCard>
@@ -353,36 +367,36 @@ export default function PrescriptionsPage() {
       {/* per-fund breakdown popup (clickable KPIs) */}
       <Modal open={!!fundModal} onClose={() => setFundModal(null)} title={fundModal?.title} size="2xl">
         <div className="-mt-2 mb-3 flex items-center justify-between gap-3">
-          <p className="text-sm text-slate-500">Σύνολο περιόδου · {fundRows.length} ταμεία</p>
+          <p className="text-sm text-slate-500">{t("Σύνολο περιόδου", "Period total")} · {fundRows.length} {t("ταμεία", "funds")}</p>
           {fundRows.length > 0 && (
             <button
               onClick={() => downloadCsv("ana-tameio", [
-                { key: "fund_name", header: "Ταμείο" },
-                { key: "rx", header: "Συνταγές" },
-                { key: "value", header: "Αξία (€)", value: (r: FundRow) => (r.value / 100).toFixed(2) },
-                { key: "claimed", header: "Αιτούμενο (€)", value: (r: FundRow) => (r.claimed / 100).toFixed(2) },
-                { key: "unexecuted", header: "Ανεκτέλεστες" },
+                { key: "fund_name", header: t("Ταμείο", "Fund") },
+                { key: "rx", header: t("Συνταγές", "Prescriptions") },
+                { key: "value", header: t("Αξία (€)", "Value (€)"), value: (r: FundRow) => (r.value / 100).toFixed(2) },
+                { key: "claimed", header: t("Αιτούμενο (€)", "Claimed (€)"), value: (r: FundRow) => (r.claimed / 100).toFixed(2) },
+                { key: "unexecuted", header: t("Ανεκτέλεστες", "Unexecuted") },
               ], fundRows)}
               className="shrink-0 inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
             >
-              <Download className="h-3.5 w-3.5" /> Εξαγωγή CSV
+              <Download className="h-3.5 w-3.5" /> {t("Εξαγωγή CSV", "Export CSV")}
             </button>
           )}
         </div>
         <QueryState isLoading={byFund.isLoading} isError={byFund.isError}
-          isEmpty={fundRows.length === 0} onRetry={() => byFund.refetch()} empty="Καμία εγγραφή.">
+          isEmpty={fundRows.length === 0} onRetry={() => byFund.refetch()} empty={t("Καμία εγγραφή.", "No records.")}>
           <DataTable pageSize={20} columns={fundCols} rows={fundRows} rowKey={(r) => r.fund_name} />
         </QueryState>
       </Modal>
 
       {/* all prescriptions for a clicked unexecuted item */}
-      <Modal open={!!unexecModal} onClose={() => setUnexecModal(null)} title={unexecModal ? `${unexecModal.name} — όλες οι συνταγές` : ""} size="2xl">
+      <Modal open={!!unexecModal} onClose={() => setUnexecModal(null)} title={unexecModal ? t(`${unexecModal.name} — όλες οι συνταγές`, `${unexecModal.name} — all prescriptions`) : ""} size="2xl">
         {unexecModal && (() => {
           const rxs = unexecModal.rxs ?? (unexecModal.barcodes ?? []).map((b) => ({ barcode: b, patient: null, date: null }));
           return (
             <>
               <div className="-mt-2 mb-3 text-sm text-slate-500">
-                {unexecModal.occurrences} φορές ανεκτέλεστο · {rxs.length} συνταγές · χαμένη αξία <b className="text-amber-600">{fmtEur(unexecModal.lost_value)}</b>
+                {unexecModal.occurrences} {t("φορές ανεκτέλεστο", "times unexecuted")} · {rxs.length} {t("συνταγές", "prescriptions")} · {t("χαμένη αξία", "lost value")} <b className="text-amber-600">{fmtEur(unexecModal.lost_value)}</b>
               </div>
               <div className="max-h-[60vh] divide-y divide-slate-100 overflow-y-auto rounded-xl border border-slate-100 dark:divide-slate-800 dark:border-slate-800">
                 {rxs.map((x, i) => (
