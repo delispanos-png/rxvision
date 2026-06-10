@@ -81,7 +81,7 @@ async def test_erase_strips_identifiers_but_keeps_legal_hold(monkeypatch):
 
 
 async def test_consent_ledger_current_and_withdrawn(monkeypatch):
-    db = _wire(monkeypatch)
+    _wire(monkeypatch)
     oid = ObjectId()
     repo = PatientConsentRepository(tenant_id=T1)
 
