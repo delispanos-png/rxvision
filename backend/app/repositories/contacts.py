@@ -40,6 +40,13 @@ class PatientContactRepository(BaseRepository):
         if not oid:
             return None
         payload = {k: data.get(k) for k in CONTACT_FIELDS if k in data}
+        # pharmacist-controlled lifecycle (deceased / moved / stopped) — kept in THIS protected
+        # collection so a ΗΔΙΚΑ re-ingest can never resurrect an inactive patient.
+        if "active" in data:
+            active = bool(data.get("active"))
+            payload["active"] = active
+            payload["inactive_reason"] = (data.get("inactive_reason") or None) if not active else None
+            payload["inactive_at"] = datetime.now(tz=timezone.utc) if not active else None
         payload["tenant_id"] = self.tenant_id
         payload["updated_at"] = datetime.now(tz=timezone.utc)
         await self._coll.update_one(

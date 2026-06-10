@@ -28,6 +28,8 @@ class ContactIn(BaseModel):
     notes: str | None = None
     marketing_consent: bool = False
     preferred_channel: str | None = Field(default=None, description="email|sms|phone")
+    active: bool = True
+    inactive_reason: str | None = Field(default=None, description="deceased|moved|stopped|other")
 
 
 @router.get("/search")

@@ -537,8 +537,12 @@ class AdvisorRepository(BaseRepository):
         cts = {c["_id"]: c async for c in self._db["patient_contacts"].find(
             {"_id": {"$in": prefs}, "tenant_id": self.tenant_id})}
         items = []
+        excluded_inactive = 0
         for pref in prefs:
             d = per[pref]; pa = pats.get(pref, {}); ct = cts.get(pref, {})
+            if ct.get("active") is False:  # deceased / moved / stopped — don't chase
+                excluded_inactive += 1
+                continue
             items.append({
                 "patient_id": str(pref), "name": pa.get("full_name"), "amka": pa.get("amka"),
                 "age_group": pa.get("age_group"), "last_seen": pa.get("last_seen_at"),
@@ -553,6 +557,7 @@ class AdvisorRepository(BaseRepository):
             "total_missed": sum(i["missed"] for i in items),
             "total_available": sum(i["available"] for i in items),
             "with_contact": sum(1 for i in items if i["has_contact"]),
+            "excluded_inactive": excluded_inactive,
         })
 
     # ── order advisor ────────────────────────────────────────────────────

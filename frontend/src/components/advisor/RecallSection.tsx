@@ -79,7 +79,7 @@ export function RecallSection() {
       )}
 
       <DataTable pageSize={15} columns={cols} rows={d.items} rowKey={(r) => r.patient_id}
-        onRowClick={(r) => router.push(`/patients?q=${encodeURIComponent(r.amka || r.name || "")}`)}
+        onRowClick={(r) => router.push(`/patients/${encodeURIComponent(r.patient_id)}`)}
         empty={t("Καμία εκκρεμή επανάληψη.", "No pending repeats.")} />
     </PanelCard>
   );

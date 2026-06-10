@@ -11,10 +11,11 @@ type Contact = {
   phone?: string | null; mobile?: string | null; email?: string | null;
   address?: string | null; city?: string | null; postal_code?: string | null;
   notes?: string | null; marketing_consent?: boolean; preferred_channel?: string | null;
+  active?: boolean; inactive_reason?: string | null;
   updated_at?: string | null;
 };
 
-const empty: Contact = { marketing_consent: false, preferred_channel: "mobile" };
+const empty: Contact = { marketing_consent: false, preferred_channel: "mobile", active: true };
 
 export function ContactCard({ patientId }: { patientId: string }) {
   const t = useT();
@@ -51,6 +52,30 @@ export function ContactCard({ patientId }: { patientId: string }) {
       </div>
     }>
       <p className="-mt-1 mb-3 text-xs text-slate-400">{t("Καταχωρείς εσύ", "You enter it")} — <b>{t("δεν επηρεάζονται", "not affected")}</b> {t("από συγχρονισμό ΗΔΙΚΑ.", "by ΗΔΙΚΑ sync.")}</p>
+
+      {/* lifecycle — pharmacist-controlled, survives ΗΔΙΚΑ re-ingest */}
+      <div className={`mb-3 rounded-lg border p-3 ${f.active === false ? "border-amber-200 bg-amber-50 dark:border-amber-800 dark:bg-amber-950/40" : "border-slate-200 dark:border-slate-700"}`}>
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-sm font-medium text-slate-700 dark:text-slate-200">{t("Κατάσταση πελάτη", "Patient status")}</span>
+          <span className="inline-flex items-center gap-1">
+            <button type="button" onClick={() => set("active", true)} className={`rounded-lg px-3 py-1 text-xs font-semibold ${f.active !== false ? "bg-emerald-100 text-emerald-700" : "text-slate-400 hover:bg-slate-100"}`}>{t("Ενεργός", "Active")}</button>
+            <button type="button" onClick={() => set("active", false)} className={`rounded-lg px-3 py-1 text-xs font-semibold ${f.active === false ? "bg-rose-100 text-rose-700" : "text-slate-400 hover:bg-slate-100"}`}>{t("Ανενεργός", "Inactive")}</button>
+          </span>
+        </div>
+        {f.active === false && (
+          <div className="mt-2">
+            <select value={f.inactive_reason || "stopped"} onChange={(e) => set("inactive_reason", e.target.value)}
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200">
+              <option value="deceased">{t("Αποβίωσε", "Deceased")}</option>
+              <option value="moved">{t("Μετακόμισε", "Moved away")}</option>
+              <option value="stopped">{t("Σταμάτησε να ψωνίζει", "Stopped purchasing")}</option>
+              <option value="other">{t("Άλλο", "Other")}</option>
+            </select>
+            <p className="mt-1 text-xs text-amber-700 dark:text-amber-300">{t("Εξαιρείται από recall, win-back & καμπάνιες.", "Excluded from recall, win-back & campaigns.")}</p>
+          </div>
+        )}
+      </div>
+
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <Field label={t("Κινητό", "Mobile")} k="mobile" type="tel" ph="69········" />
         <Field label={t("Σταθερό", "Landline")} k="phone" type="tel" />
