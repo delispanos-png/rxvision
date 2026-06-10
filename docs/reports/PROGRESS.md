@@ -30,6 +30,12 @@ gdpr changes. Static checks only (CI runs tsc/lint/build + pytest). No push to m
   (role/tabIndex/onKeyDown), marketing layout `<main>` landmark, CalendarHeatmap `role="img"`+label
   (other charts already had it). tsc 0, lint 0, build ✓ (24 files).
 
-### Next
-- Secondary: SEO/PWA (meta+OG, robots, sitemap, offline page); audit-log viewer (read-only admin);
-  email templates (render layer); onboarding polish. Report: dependency audit. Stretch: i18n.
+### #5 SEO/PWA — DONE
+- `app/robots.ts` (allow public surface, disallow authed app + /api), `app/sitemap.ts` (public
+  routes), enhanced `layout.tsx` metadata (metadataBase, Open Graph, Twitter, title template),
+  `app/offline/page.tsx` + next-pwa `fallbacks.document: "/offline"`. Build emits /robots.txt,
+  /sitemap.xml, /offline; PWA precaches the offline fallback. tsc 0, lint 0, build ✓.
+
+### Next (secondary, in order)
+- #6 email templates (render layer only); #7 audit-log viewer (read-only admin page); #8
+  onboarding/registration polish. Report: #9 dependency audit. Stretch: #10 i18n.

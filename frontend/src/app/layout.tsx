@@ -4,11 +4,22 @@ import { Providers } from "./providers";
 import { ServiceWorkerRegister } from "@/components/pwa/ServiceWorkerRegister";
 
 export const metadata: Metadata = {
-  title: "RxVision",
+  metadataBase: new URL("https://app.rxvision.gr"),
+  title: { default: "RxVision", template: "%s — RxVision" },
   description: "Στατιστική ανάλυση εκτελέσεων συνταγών φαρμακείου",
+  applicationName: "RxVision",
   manifest: "/manifest.webmanifest",
   appleWebApp: { capable: true, title: "RxVision", statusBarStyle: "default" },
   icons: { icon: "/favicon.ico", apple: "/icons/apple-touch-icon.png" },
+  openGraph: {
+    type: "website",
+    siteName: "RxVision",
+    title: "RxVision",
+    description: "Στατιστική ανάλυση εκτελέσεων συνταγών φαρμακείου",
+    locale: "el_GR",
+    images: [{ url: "/icons/apple-touch-icon.png" }],
+  },
+  twitter: { card: "summary", title: "RxVision", description: "Στατιστική ανάλυση εκτελέσεων συνταγών φαρμακείου" },
 };
 
 export const viewport: Viewport = {
