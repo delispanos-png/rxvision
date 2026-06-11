@@ -8,6 +8,10 @@ COPY pyproject.toml ./
 RUN pip install --upgrade pip && pip install -e .
 
 FROM base AS runtime
+# OCR runtime: Tesseract (+Greek) and zbar for the optical-audit pipeline
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    tesseract-ocr tesseract-ocr-ell libzbar0 \
+    && rm -rf /var/lib/apt/lists/*
 # non-root
 RUN useradd -m -u 10001 appuser
 COPY --from=deps /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages

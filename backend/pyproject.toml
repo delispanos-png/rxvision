@@ -18,6 +18,9 @@ dependencies = [
     "python-multipart>=0.0.18",   # uploads
     "hvac>=2.3",                 # HashiCorp Vault client
     "pyotp>=2.9",                # TOTP / MFA verification
+    "Pillow>=10.2",             # image preprocessing for optical audit
+    "pytesseract>=0.3.10",       # Tesseract OCR (self-hosted)
+    "pyzbar>=0.1.9",             # QR / barcode decoding
 ]
 
 [project.optional-dependencies]

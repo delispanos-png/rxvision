@@ -1,77 +1,109 @@
 "use client";
 
 import { useState, useRef } from "react";
-import { Camera, ScanLine, QrCode, FileText, Stamp, CheckCircle2, X } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { Camera, CheckCircle2, Loader2, X, QrCode, AlertTriangle, Link2 } from "lucide-react";
+import { api, apiUpload } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
 
-type Shot = { url: string; name: string };
+type Scan = {
+  scan_id: string; filename?: string; status: string; optical_risk?: number | null; band?: string | null;
+  flags?: string[]; matched?: string | null; barcode?: string | null; quality?: number | null;
+};
+type Local = { scan_id: string; preview: string };
+
+const BAND: Record<string, { cls: string; el: string; en: string }> = {
+  ok: { cls: "bg-emerald-100 text-emerald-700", el: "OK", en: "OK" },
+  needs_review: { cls: "bg-amber-100 text-amber-700", el: "Προς έλεγχο", en: "Needs review" },
+  high_risk: { cls: "bg-rose-100 text-rose-700", el: "Υψηλό ρίσκο", en: "High risk" },
+};
+const FLAG: Record<string, { el: string; en: string }> = {
+  missing_coupon: { el: "Λείπει κουπόνι/QR", en: "Missing coupon/QR" },
+  data_mismatch: { el: "Ασυμφωνία δεδομένων", en: "Data mismatch" },
+  image_quality: { el: "Κακή ποιότητα εικόνας", en: "Poor image quality" },
+  low_text: { el: "Ελάχιστο κείμενο", en: "Low text" },
+  ocr_failed: { el: "Αποτυχία OCR", en: "OCR failed" },
+};
 
 export default function OpticalAuditPage() {
   const t = useT();
   const inputRef = useRef<HTMLInputElement>(null);
-  const [shots, setShots] = useState<Shot[]>([]);
+  const [locals, setLocals] = useState<Local[]>([]);
+  const [uploading, setUploading] = useState(false);
 
-  function onPick(e: React.ChangeEvent<HTMLInputElement>) {
+  const queue = useQuery({
+    queryKey: ["optical-queue"], queryFn: () => api<{ items: Scan[] }>("/reimbursement/scans"),
+    refetchInterval: 3000,
+  });
+  const byId = new Map((queue.data?.items ?? []).map((s) => [s.scan_id, s]));
+
+  async function onPick(e: React.ChangeEvent<HTMLInputElement>) {
     const files = Array.from(e.target.files ?? []);
-    setShots((s) => [...files.map((f) => ({ url: URL.createObjectURL(f), name: f.name })), ...s]);
     e.target.value = "";
+    setUploading(true);
+    for (const f of files) {
+      try {
+        const fd = new FormData();
+        fd.append("file", f);
+        const r = await apiUpload<{ scan_id: string }>("/reimbursement/scans", fd);
+        setLocals((s) => [{ scan_id: r.scan_id, preview: URL.createObjectURL(f) }, ...s]);
+      } catch { /* ignore single failure */ }
+    }
+    setUploading(false);
+    queue.refetch();
   }
 
-  const pipeline = [
-    { icon: ScanLine, el: "Επεξεργασία εικόνας", en: "Image processing", d: t("auto crop · deskew · contrast · blur detection", "auto crop · deskew · contrast · blur detection") },
-    { icon: FileText, el: "OCR & αναγνώριση", en: "OCR & recognition", d: t("αρ. συνταγής · φάρμακα · ημ/νία · ταμείο", "Rx no · meds · date · fund") },
-    { icon: QrCode, el: "QR & κουπόνια", en: "QR & coupons", d: t("QR/barcode · κουπόνι σωστό; · ευανάγνωστο;", "QR/barcode · coupon valid? · readable?") },
-    { icon: Stamp, el: "Οπτική συμμόρφωση", en: "Visual compliance", d: t("υπογραφές · σφραγίδες · δικαιολογητικά", "signatures · stamps · documents") },
-    { icon: CheckCircle2, el: "Data matching", en: "Data matching", d: t("OCR vs δεδομένα RxVision → optical risk score", "OCR vs RxVision data → optical risk score") },
-  ];
+  // merge: local previews first, then server scans not in locals
+  const localIds = new Set(locals.map((l) => l.scan_id));
+  const serverOnly = (queue.data?.items ?? []).filter((s) => !localIds.has(s.scan_id));
+
+  function Card({ scan, preview }: { scan?: Scan; preview?: string }) {
+    const done = scan?.status === "done";
+    const band = scan?.band ? BAND[scan.band] : null;
+    return (
+      <div className="overflow-hidden rounded-xl border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
+        <div className="relative aspect-[3/4] bg-slate-100 dark:bg-slate-800">
+          {preview ? /* eslint-disable-next-line @next/next/no-img-element */ <img src={preview} alt="" className="h-full w-full object-cover" /> : <div className="grid h-full place-items-center text-slate-300"><QrCode className="h-8 w-8" /></div>}
+          <span className="absolute left-1.5 top-1.5 inline-flex items-center gap-1 rounded-full bg-black/55 px-2 py-0.5 text-[10px] font-semibold text-white">
+            {done ? <CheckCircle2 className="h-3 w-3" /> : <Loader2 className="h-3 w-3 animate-spin" />} {done ? "OCR" : t("ανάλυση…", "analyzing…")}
+          </span>
+          {band && <span className={`absolute right-1.5 top-1.5 rounded-full px-2 py-0.5 text-[10px] font-bold ${band.cls}`}>{t(band.el, band.en)}{scan?.optical_risk != null ? ` ${scan.optical_risk}` : ""}</span>}
+        </div>
+        <div className="space-y-1 p-2 text-xs">
+          {scan?.barcode && <div className="flex items-center gap-1 font-mono text-slate-600 dark:text-slate-300"><QrCode className="h-3 w-3" /> {scan.barcode}</div>}
+          {scan?.matched ? <div className="flex items-center gap-1 text-emerald-600"><Link2 className="h-3 w-3" /> {t("Ταυτοποιήθηκε", "Matched")}</div>
+            : done && scan?.barcode ? <div className="flex items-center gap-1 text-rose-600"><AlertTriangle className="h-3 w-3" /> {t("Χωρίς αντιστοίχιση", "No match")}</div> : null}
+          {!!scan?.flags?.length && <div className="flex flex-wrap gap-1">{scan.flags.map((f) => <span key={f} className="rounded bg-rose-50 px-1.5 py-0.5 text-[9px] font-medium text-rose-600 dark:bg-rose-950/40">{t(FLAG[f]?.el ?? f, FLAG[f]?.en ?? f)}</span>)}</div>}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
-      {/* capture */}
       <div className="rounded-2xl border-2 border-dashed border-emerald-300 bg-emerald-50/40 p-6 text-center dark:border-emerald-800 dark:bg-emerald-950/20">
         <Camera className="mx-auto h-10 w-10 text-emerald-600" />
-        <h2 className="mt-2 text-lg font-bold text-slate-900 dark:text-slate-100">{t("Σάρωση συνταγής από κινητό", "Scan prescription from mobile")}</h2>
-        <p className="mt-1 text-sm text-slate-500">{t("Φωτογράφισε συνταγή, γνωμάτευση, κουπόνια ή δικαιολογητικά. Android · iPhone · tablet.", "Photograph the prescription, opinion, coupons or documents. Android · iPhone · tablet.")}</p>
+        <h2 className="mt-2 text-lg font-bold text-slate-900 dark:text-slate-100">{t("Σάρωση & οπτικός έλεγχος", "Scan & optical audit")}</h2>
+        <p className="mt-1 text-sm text-slate-500">{t("Φωτογράφισε συνταγή/κουπόνι/γνωμάτευση — OCR (ελληνικά) + ανάγνωση barcode/QR + αντιστοίχιση με τα δεδομένα σου.", "Photograph prescription/coupon/opinion — Greek OCR + barcode/QR read + matching to your data.")}</p>
         <input ref={inputRef} type="file" accept="image/*" capture="environment" multiple onChange={onPick} className="hidden" />
-        <button onClick={() => inputRef.current?.click()} className="mt-4 inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-emerald-700">
-          <Camera className="h-4 w-4" /> {t("Λήψη φωτογραφίας", "Take photo")}
+        <button onClick={() => inputRef.current?.click()} disabled={uploading} className="mt-4 inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-50">
+          {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Camera className="h-4 w-4" />} {t("Λήψη φωτογραφίας", "Take photo")}
         </button>
       </div>
 
-      {!!shots.length && (
+      {(locals.length > 0 || serverOnly.length > 0) && (
         <div>
-          <h3 className="mb-2 text-sm font-semibold text-slate-700 dark:text-slate-200">{t("Λήψεις", "Captures")} ({shots.length})</h3>
-          <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 md:grid-cols-6">
-            {shots.map((s, i) => (
-              <div key={i} className="group relative aspect-[3/4] overflow-hidden rounded-lg border border-slate-200 dark:border-slate-700">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={s.url} alt={s.name} className="h-full w-full object-cover" />
-                <button onClick={() => setShots((arr) => arr.filter((_, j) => j !== i))} className="absolute right-1 top-1 rounded-full bg-black/50 p-1 text-white opacity-0 group-hover:opacity-100"><X className="h-3 w-3" /></button>
-              </div>
-            ))}
+          <h3 className="mb-2 text-sm font-semibold text-slate-700 dark:text-slate-200">{t("Optical Audit — ουρά", "Optical Audit — queue")} ({(queue.data?.items ?? []).length})</h3>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6">
+            {locals.map((l) => <Card key={l.scan_id} scan={byId.get(l.scan_id)} preview={l.preview} />)}
+            {serverOnly.map((s) => <Card key={s.scan_id} scan={s} />)}
           </div>
-          <p className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
-            {t("Η αποθήκευση & αυτόματη ανάλυση (OCR/QR/οπτικός έλεγχος) είναι το επόμενο βήμα ενσωμάτωσης — δες το pipeline παρακάτω.", "Storage & automatic analysis (OCR/QR/visual check) is the next integration step — see the pipeline below.")}
-          </p>
         </div>
       )}
 
-      {/* pipeline roadmap */}
-      <div>
-        <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">{t("Pipeline οπτικού ελέγχου (αρχιτεκτονική)", "Optical audit pipeline (architecture)")}</h3>
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-          {pipeline.map((p, i) => {
-            const Icon = p.icon;
-            return (
-              <div key={i} className="rx-card p-4">
-                <div className="flex items-center gap-2"><span className="grid h-9 w-9 place-items-center rounded-xl bg-emerald-50 text-emerald-600 dark:bg-emerald-950"><Icon className="h-4 w-4" /></span><span className="text-[10px] font-bold text-slate-300">{i + 1}</span></div>
-                <h4 className="mt-2 text-sm font-semibold text-slate-800 dark:text-slate-100">{t(p.el, p.en)}</h4>
-                <p className="mt-0.5 text-xs text-slate-500">{p.d}</p>
-              </div>
-            );
-          })}
-        </div>
-      </div>
+      <p className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-500 dark:border-slate-700 dark:bg-slate-800/60">
+        🔒 {t("Οι εικόνες αποθηκεύονται στη δική μας υποδομή (GridFS) — δεν φεύγουν σε τρίτους. OCR: Tesseract (ελληνικά), barcode/QR: zbar.", "Images stored on our own infrastructure (GridFS) — never sent to third parties. OCR: Tesseract (Greek), barcode/QR: zbar.")}
+      </p>
     </div>
   );
 }

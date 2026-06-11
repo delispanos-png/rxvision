@@ -5,11 +5,13 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
+from fastapi.responses import Response
 from pydantic import BaseModel
 
 from app.core.deps import TenantContext, require
 from app.repositories.reimbursement import ReimbursementRepository
+from app.repositories.scans import ScanRepository
 
 router = APIRouter()
 _MODULE = "monthly_closing"
@@ -84,3 +86,30 @@ async def set_payment(body: PaymentIn, period: str = Query(None),
 async def reconciliation(period: str = Query(None),
                          ctx: TenantContext = Depends(require("closing:read", module=_MODULE))):
     return await _repo(ctx).reconciliation(period or _cur())
+
+
+# ── Optical Audit (OCR scans) ───────────────────────────────────────────────
+@router.post("/scans")
+async def upload_scan(file: UploadFile = File(...), doc_type: str = Form("prescription"),
+                      ctx: TenantContext = Depends(require("closing:read", module=_MODULE))):
+    content = await file.read()
+    repo = ScanRepository(tenant_id=ctx.tenant_id)
+    scan_id = await repo.create(filename=file.filename or "scan.jpg", content=content,
+                                content_type=file.content_type or "image/jpeg", doc_type=doc_type)
+    from app.workers.optical import process_scan
+    process_scan.delay(ctx.tenant_id, scan_id)
+    return {"scan_id": scan_id, "status": "processing"}
+
+
+@router.get("/scans")
+async def scan_queue(ctx: TenantContext = Depends(require("closing:read", module=_MODULE))):
+    return {"items": await ScanRepository(tenant_id=ctx.tenant_id).queue()}
+
+
+@router.get("/scans/{scan_id}/image")
+async def scan_image(scan_id: str,
+                     ctx: TenantContext = Depends(require("closing:read", module=_MODULE))):
+    content, ctype = await ScanRepository(tenant_id=ctx.tenant_id).image(scan_id)
+    if content is None:
+        return Response(status_code=404)
+    return Response(content=content, media_type=ctype or "image/jpeg")

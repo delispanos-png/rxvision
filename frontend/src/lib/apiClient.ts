@@ -79,6 +79,17 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+/** Multipart upload (FormData) — lets the browser set the boundary; auth + one refresh retry. */
+export async function apiUpload<T>(path: string, form: FormData): Promise<T> {
+  const auth = (): HeadersInit => { const tk = getAccessToken(); return tk ? { Authorization: `Bearer ${tk}` } : {}; };
+  let res = await fetch(`${API_BASE}${path}`, { method: "POST", headers: auth(), body: form });
+  if (res.status === 401 && (await refreshAccessToken())) {
+    res = await fetch(`${API_BASE}${path}`, { method: "POST", headers: auth(), body: form });
+  }
+  if (!res.ok) throw new ApiError(res.status, await res.json().catch(() => null));
+  return res.json() as Promise<T>;
+}
+
 export const queryKeys = {
   dashboardSummary: (from: string, to: string) => ["dashboard", "summary", from, to],
   timeseries: (metric: string, grain: string, from: string, to: string) =>
