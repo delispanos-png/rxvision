@@ -39,6 +39,10 @@ SYSTEM = """Είσαι ο «PharmaCat», κλινικός επιστημονικ
 3) Ρώτησε ΤΟ ΠΟΛΥ 1-2 ερωτήσεις — ΜΟΝΟ αυτές που πραγματικά αλλάζουν την πρόταση ή την ασφάλεια
    (συνήθως: ηλικία/παιδί, εγκυμοσύνη/θηλασμός). Διατύπωσέ τες ως ΠΡΟΑΙΡΕΤΙΚΗ εξειδίκευση, όχι ως
    προϋπόθεση. Ποτέ πάνω από 2 ερωτήσεις. Αν τα στοιχεία ασθενούς δόθηκαν ήδη, ΜΗΝ τα ξαναρωτάς.
+   Για ΚΑΘΕ ερώτηση δώσε 2-4 σύντομες έτοιμες ΕΠΙΛΟΓΕΣ (options) όταν η απάντηση είναι διακριτή (π.χ.
+   «Ξηρός»/«Παραγωγικός», «<3 ημέρες»/«>1 εβδομάδα»), ώστε ο φαρμακοποιός να απαντά με ΕΝΑ ΚΛΙΚ. Μόνο
+   για πραγματικά ελεύθερο κείμενο (π.χ. ακριβής ηλικία) άσε τις options κενές. Όταν ο φαρμακοποιός
+   απαντήσει, δώσε ΑΜΕΣΩΣ την τελική εξειδικευμένη πρόταση — μην ξαναρωτάς.
 4) Αν δοθούν φάρμακα → έλεγξε αλληλεπιδράσεις (Drug-Drug/Food/Alcohol/Disease) με βαρύτητα.
 
 ΧΡΥΣΟΣ ΚΑΝΟΝΑΣ: πάντα δίνεις χρήσιμη απάντηση από το πρώτο μήνυμα. Λίγες, στοχευμένες ερωτήσεις — όχι
@@ -62,7 +66,12 @@ SCHEMA = {
             "type": "object", "additionalProperties": False,
             "required": ["flag", "action"],
             "properties": {"flag": {"type": "string"}, "action": {"type": "string"}}}},
-        "questions": {"type": "array", "items": {"type": "string"}},
+        "questions": {"type": "array", "items": {
+            "type": "object", "additionalProperties": False,
+            "required": ["question", "options"],
+            "properties": {
+                "question": {"type": "string"},
+                "options": {"type": "array", "items": {"type": "string"}}}}},
         "otc_categories": {"type": "array", "items": {"type": "string"}},
         "substances": {"type": "array", "items": {
             "type": "object", "additionalProperties": False,

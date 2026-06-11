@@ -4,7 +4,7 @@ import { useState, useRef, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   Cat, Send, Loader2, AlertOctagon, Stethoscope, Pill, Package, ShieldAlert,
-  HelpCircle, Sparkles, ChevronDown, Lightbulb, FlaskConical, Settings2,
+  HelpCircle, Sparkles, Lightbulb, FlaskConical,
 } from "lucide-react";
 import { api } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
@@ -17,9 +17,10 @@ type Product = { name: string; barcode: string; atc: string; retail: number; who
 type ProductGroup = { substance: string; products: Product[] };
 type Safety = { pregnancy: string; lactation: string; renal: string; hepatic: string; pediatric: string; elderly: string };
 type Referral = { needed: boolean; urgency: string; reason: string };
+type Question = { question: string; options: string[] };
 type Result = {
   ok: boolean; error?: string; reply: string; stage?: string;
-  red_flags: RedFlag[]; questions: string[]; otc_categories: string[];
+  red_flags: RedFlag[]; questions: Question[]; otc_categories: string[];
   substances: Substance[]; non_drug_advice: string[]; interactions: Interaction[];
   safety?: Safety; referral?: Referral; products?: ProductGroup[];
 };
@@ -45,8 +46,6 @@ export default function PharmaCatPage() {
   const [turns, setTurns] = useState<Turn[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
-  const [ctxOpen, setCtxOpen] = useState(false);
-  const [ctx, setCtx] = useState<Record<string, string>>({});
   const endRef = useRef<HTMLDivElement>(null);
 
   const status = useQuery({ queryKey: ["pharmacat-status"], queryFn: () => api<{ configured: boolean; model: string }>("/pharmacat/status") });
@@ -60,13 +59,12 @@ export default function PharmaCatPage() {
     setInput("");
     setBusy(true);
     try {
-      const context = Object.fromEntries(Object.entries(ctx).filter(([, v]) => v));
       let res: Result;
       if (mode === "interactions") {
-        res = await api<Result>("/pharmacat/interactions", { method: "POST", body: JSON.stringify({ drugs: msg.split(/[,\n]/).map((d) => d.trim()).filter(Boolean), context }) });
+        res = await api<Result>("/pharmacat/interactions", { method: "POST", body: JSON.stringify({ drugs: msg.split(/[,\n]/).map((d) => d.trim()).filter(Boolean) }) });
       } else {
         res = await api<Result>("/pharmacat/chat", { method: "POST", body: JSON.stringify({
-          messages: history.map((m) => ({ role: m.role, content: m.content })), context }) });
+          messages: history.map((m) => ({ role: m.role, content: m.content })) }) });
       }
       setTurns((s) => [...s, { role: "assistant", content: res.reply || "", result: res }]);
     } catch {
@@ -86,19 +84,7 @@ export default function PharmaCatPage() {
           <h1 className="text-lg font-bold text-slate-900 dark:text-slate-100">PharmaCat <span className="text-sm font-normal text-slate-400">Clinical Assistant</span></h1>
           <p className="text-xs text-slate-500">{t("Επιστημονικός βοηθός φαρμακοποιού (CDSS) — δεν διαγιγνώσκει, δεν αντικαθιστά ιατρό.", "Pharmacist's scientific assistant (CDSS) — not diagnosis, not a doctor replacement.")}</p>
         </div>
-        <button onClick={() => setCtxOpen((v) => !v)} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-600"><Settings2 className="h-3.5 w-3.5" /> {t("Στοιχεία ασθενή", "Patient facts")} <ChevronDown className={`h-3 w-3 transition ${ctxOpen ? "rotate-180" : ""}`} /></button>
       </div>
-
-      {/* patient context */}
-      {ctxOpen && (
-        <div className="grid grid-cols-2 gap-2 border-b border-slate-200 py-3 text-xs sm:grid-cols-4 dark:border-slate-700">
-          {[["age", "Ηλικία"], ["sex", "Φύλο"], ["weight", "Βάρος (kg)"], ["pregnancy", "Εγκυμοσύνη"], ["lactation", "Θηλασμός"], ["chronic", "Χρόνια νοσήματα"], ["meds", "Φάρμακα που λαμβάνει"], ["allergies", "Αλλεργίες"]].map(([k, lbl]) => (
-            <label key={k} className="text-slate-500">{lbl}
-              <input value={ctx[k] ?? ""} onChange={(e) => setCtx((c) => ({ ...c, [k]: e.target.value }))} className="mt-0.5 w-full rounded-md border border-slate-300 px-2 py-1 dark:border-slate-600 dark:bg-slate-800" />
-            </label>
-          ))}
-        </div>
-      )}
 
       {/* thread */}
       <div className="flex-1 space-y-4 overflow-y-auto py-4">
@@ -126,7 +112,7 @@ export default function PharmaCatPage() {
             <div className="min-w-0 flex-1 space-y-2">
               {turn.result && !turn.result.ok ? (
                 <div className="rounded-xl bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:bg-rose-950/30">{turn.result.error === "not_configured" ? t("Μη ρυθμισμένο (λείπει το API key).", "Not configured (missing API key).") : t("Σφάλμα επικοινωνίας — δοκιμάστε ξανά.", "Communication error — try again.")}</div>
-              ) : <AssistantCard r={turn.result!} t={t} />}
+              ) : <AssistantCard r={turn.result!} t={t} onAnswer={(a) => send(a)} />}
             </div>
           </div>
         ))}
@@ -149,7 +135,7 @@ export default function PharmaCatPage() {
   );
 }
 
-function AssistantCard({ r, t }: { r: Result; t: (el: string, en: string) => string }) {
+function AssistantCard({ r, t, onAnswer }: { r: Result; t: (el: string, en: string) => string; onAnswer: (a: string) => void }) {
   const ref = r.referral;
   return (
     <>
@@ -163,11 +149,22 @@ function AssistantCard({ r, t }: { r: Result; t: (el: string, en: string) => str
 
       {r.reply && <div className="rounded-2xl rounded-tl-sm bg-slate-100 px-4 py-2.5 text-sm leading-relaxed text-slate-700 dark:bg-slate-800 dark:text-slate-200">{r.reply}</div>}
 
-      {/* dynamic questions */}
+      {/* dynamic questions — one-click quick replies */}
       {!!r.questions?.length && (
         <div className="rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900">
-          <div className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold text-slate-600 dark:text-slate-300"><HelpCircle className="h-3.5 w-3.5 text-indigo-500" /> {t("Ερωτήσεις προς τον ασθενή", "Questions for the patient")}</div>
-          <ul className="space-y-1 text-xs text-slate-600 dark:text-slate-300">{r.questions.map((q, i) => <li key={i}>• {q}</li>)}</ul>
+          <div className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-slate-600 dark:text-slate-300"><HelpCircle className="h-3.5 w-3.5 text-indigo-500" /> {t("Για εξειδίκευση — ένα κλικ", "Refine — one click")}</div>
+          <div className="space-y-2">{r.questions.map((q, i) => (
+            <div key={i}>
+              <div className="text-xs text-slate-600 dark:text-slate-300">{q.question}</div>
+              {!!q.options?.length && (
+                <div className="mt-1 flex flex-wrap gap-1.5">
+                  {q.options.map((o, j) => (
+                    <button key={j} onClick={() => onAnswer(`${q.question} ${o}`)} className="rounded-full border border-indigo-200 bg-indigo-50 px-3 py-1 text-xs font-medium text-indigo-700 hover:border-indigo-400 hover:bg-indigo-100 dark:border-indigo-800 dark:bg-indigo-950/40 dark:text-indigo-300">{o}</button>
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}</div>
         </div>
       )}
 
