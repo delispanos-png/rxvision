@@ -14,6 +14,7 @@ from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
 from app.repositories.base import BaseRepository, jsonsafe
+from app.utils.format import eur_gr
 
 
 def _now() -> datetime:
@@ -496,12 +497,12 @@ class PatientIntelligenceRepository(BaseRepository):
             out.append({"icon": "phone-call", "severity": "opportunity",
                         "title": "Ασθενείς προς ανάκτηση",
                         "text": f"Έχετε {recall_patients} ασθενείς με καθυστερημένη/διαθέσιμη ανανέωση θεραπείας. "
-                                f"Η πιθανή αξία ανάκτησης εκτιμάται σε €{recall_recoverable/100:,.0f}.",
+                                f"Η πιθανή αξία ανάκτησης εκτιμάται σε €{eur_gr(recall_recoverable)}.",
                         "cta": {"label": "Recall Center", "href": "/intelligence/recall"}})
         if winback_revenue:
             out.append({"icon": "rotate-ccw", "severity": "opportunity",
                         "title": "Δυνητικός τζίρος επανενεργοποίησης",
-                        "text": f"Από ανενεργούς ασθενείς εκτιμάται ανακτήσιμος τζίρος €{winback_revenue/100:,.0f}.",
+                        "text": f"Από ανενεργούς ασθενείς εκτιμάται ανακτήσιμος τζίρος €{eur_gr(winback_revenue)}.",
                         "cta": {"label": "Win-Back Center", "href": "/intelligence/winback"}})
         crit = sum(1 for c in chain.values() if c.get("compliance") is not None and c["compliance"] < 25)
         if crit:

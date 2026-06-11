@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 from bson import ObjectId
 
 from app.repositories.base import BaseRepository, jsonsafe
+from app.utils.format import eur_gr
 
 
 def _now() -> datetime:
@@ -551,13 +552,13 @@ class ReimbursementRepository(BaseRepository):
         if to_fix:
             insights.append({"severity": "critical", "icon": "shield-alert",
                              "text": f"Βρέθηκαν {to_fix} συνταγές υψηλού κινδύνου περικοπής. "
-                                     f"Πιθανή απώλεια €{cuts['total']/100:,.0f} — διόρθωσέ τες πριν την υποβολή."})
+                                     f"Πιθανή απώλεια €{eur_gr(cuts['total'])} — διόρθωσέ τες πριν την υποβολή."})
         if mismatch:
             insights.append({"severity": "warning", "icon": "calculator",
                              "text": f"{mismatch} συνταγές με ασυμφωνία ποσών (ταμείο+συμμετοχή ≠ λιανική)."})
         insights.append({"severity": "info", "icon": "wallet",
-                         "text": f"Αναμενόμενη απαίτηση μήνα: €{t['claim']/100:,.0f} "
-                                 f"(ΕΟΠΥΥ €{t['eopyy_claim']/100:,.0f} · λοιπά €{t['other_claim']/100:,.0f})."})
+                         "text": f"Αναμενόμενη απαίτηση μήνα: €{eur_gr(t['claim'])} "
+                                 f"(ΕΟΠΥΥ €{eur_gr(t['eopyy_claim'])} · λοιπά €{eur_gr(t['other_claim'])})."})
 
         return jsonsafe({
             "period": period,

@@ -10,6 +10,7 @@ from bson import ObjectId
 from bson.errors import InvalidId
 
 from app.repositories.base import BaseRepository, jsonsafe
+from app.utils.format import eur_gr
 
 
 def _as_oid(v):
@@ -296,15 +297,15 @@ class AdvisorRepository(BaseRepository):
         overdue = await self._aging_overdue()
         if overdue > 50000:
             add("critical", "wallet", "Καθυστερημένες απαιτήσεις",
-                f"€{overdue/100:,.0f} αιτούμενα από ταμεία με εκτέλεση πάνω από 90 ημέρες — διεκδίκησε/έλεγξε εκκαθαρίσεις.",
-                f"€{overdue/100:,.0f}", {"label": "Ταμειακή ροή", "href": "/profitability"})
+                f"€{eur_gr(overdue)} αιτούμενα από ταμεία με εκτέλεση πάνω από 90 ημέρες — διεκδίκησε/έλεγξε εκκαθαρίσεις.",
+                f"€{eur_gr(overdue)}", {"label": "Ταμειακή ροή", "href": "/profitability"})
 
         # 4) lost value (unexecuted)
         lost = await self._unexec_lost(df, dt)
         if lost > 0:
             add("opportunity", "alert-triangle", "Χαμένη αξία από ανεκτέλεστες",
-                f"€{lost/100:,.0f} σε δραστικές που δεν εκτελέστηκαν. Επικοινώνησε με τους ασθενείς να τις ολοκληρώσουν.",
-                f"€{lost/100:,.0f}", {"label": "Ανεκτέλεστες", "href": "/prescriptions"})
+                f"€{eur_gr(lost)} σε δραστικές που δεν εκτελέστηκαν. Επικοινώνησε με τους ασθενείς να τις ολοκληρώσουν.",
+                f"€{eur_gr(lost)}", {"label": "Ανεκτέλεστες", "href": "/prescriptions"})
 
         # 5) doctor concentration
         top_doc, doc_total = await self._top_dimension(df, dt, "doctor_id")
@@ -591,8 +592,8 @@ class AdvisorRepository(BaseRepository):
 
         if total_qty > 0:
             add("opportunity", "package-search", "Προτεινόμενη παραγγελία",
-                f"{len(suggestions)} σκευάσματα · {total_qty} τεμάχια · εκτ. κόστος €{total_cost/100:,.0f} για κάλυψη {lead_days} ημερών (+{safety_pct:.0f}% ασφάλεια).",
-                f"€{total_cost/100:,.0f}", {"label": "Δες προτάσεις", "href": "/orders"})
+                f"{len(suggestions)} σκευάσματα · {total_qty} τεμάχια · εκτ. κόστος €{eur_gr(total_cost)} για κάλυψη {lead_days} ημερών (+{safety_pct:.0f}% ασφάλεια).",
+                f"€{eur_gr(total_cost)}", {"label": "Δες προτάσεις", "href": "/orders"})
         if rising_items:
             names = ", ".join(s.get("product_name", "?") for s in rising_items[:3])
             add("warning", "tag", "Ακριβαίνουν — παράγγειλε τώρα",
