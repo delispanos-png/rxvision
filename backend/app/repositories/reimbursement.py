@@ -11,6 +11,7 @@ scans land in `prescription_scans` and are surfaced in the Optical Audit queue.
 
 from __future__ import annotations
 
+import re
 from collections import defaultdict
 from datetime import datetime, timezone
 
@@ -361,6 +362,50 @@ class ReimbursementRepository(BaseRepository):
         events = [e async for e in self._db["claim_events"].find(
             {"tenant_id": self.tenant_id, "batch_id": batch_id}).sort("at", 1)]
         return jsonsafe({"events": events})
+
+    # ── PHYSICAL BARCODE CHECK (digital vs physical reconciliation) ─────────
+    async def physical_check(self, period: str) -> dict:
+        """All distinct prescription barcodes we hold for the month + their scan status, plus the
+        'extra' barcodes scanned that we DON'T have (i.e., ΗΔΙΚΑ-side discrepancies)."""
+        start, end = _month_bounds(period)
+        meta = await self._fund_meta()
+        rows = await self._db["prescription_executions"].aggregate([
+            {"$match": {"tenant_id": self.tenant_id, "executed_at": {"$gte": start, "$lt": end}}},
+            {"$group": {"_id": {"$arrayElemAt": [{"$split": ["$external_id", ":"]}, 0]},
+                        "claim": {"$sum": "$amount_claimed"}, "fund_id": {"$first": "$fund_id"},
+                        "executed_at": {"$min": "$executed_at"}}},
+        ]).to_list(None)
+        session = await self._db["barcode_check"].find_one(
+            {"tenant_id": self.tenant_id, "period": period}) or {}
+        checked = set(session.get("checked", []))
+        items = [{"barcode": r["_id"], "claim": r["claim"], "executed_at": r["executed_at"],
+                  "fund": meta.get(r["fund_id"], {}).get("group", "—"),
+                  "checked": r["_id"] in checked} for r in rows]
+        items.sort(key=lambda x: (x["checked"], -x["claim"]))  # unchecked, by € first
+        checked_n = sum(1 for i in items if i["checked"])
+        return jsonsafe({
+            "period": period, "total": len(items), "checked": checked_n,
+            "remaining": len(items) - checked_n, "extra": session.get("extra", []),
+            "items": items})
+
+    async def physical_scan(self, period: str, barcode: str) -> dict:
+        bc = (barcode or "").strip().split(":")[0].strip()
+        if not bc:
+            return {"ok": False, "error": "empty"}
+        start, end = _month_bounds(period)
+        ex = await self._db["prescription_executions"].find_one(
+            {"tenant_id": self.tenant_id, "executed_at": {"$gte": start, "$lt": end},
+             "external_id": {"$regex": f"^{re.escape(bc)}"}})  # tenant-ok: scoped by tenant_id
+        found = bool(ex)
+        field = "checked" if found else "extra"
+        await self._db["barcode_check"].update_one(
+            {"tenant_id": self.tenant_id, "period": period},
+            {"$addToSet": {field: bc}, "$set": {"updated_at": _now()}}, upsert=True)
+        return {"ok": True, "found": found, "barcode": bc}
+
+    async def physical_reset(self, period: str) -> dict:
+        await self._db["barcode_check"].delete_one({"tenant_id": self.tenant_id, "period": period})
+        return {"ok": True}
 
     # ── 19. EXECUTIVE DASHBOARD + 18. AI AUDITOR ────────────────────────────
     async def executive(self, period: str | None = None) -> dict:

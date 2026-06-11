@@ -27,6 +27,10 @@ class PaymentIn(BaseModel):
     paid_amount: int  # cents
 
 
+class BarcodeIn(BaseModel):
+    barcode: str
+
+
 def _repo(ctx: TenantContext) -> ReimbursementRepository:
     return ReimbursementRepository(tenant_id=ctx.tenant_id)
 
@@ -86,6 +90,25 @@ async def set_payment(body: PaymentIn, period: str = Query(None),
 async def reconciliation(period: str = Query(None),
                          ctx: TenantContext = Depends(require("closing:read", module=_MODULE))):
     return await _repo(ctx).reconciliation(period or _cur())
+
+
+# ── Physical barcode check (digital vs physical) ────────────────────────────
+@router.get("/physical")
+async def physical(period: str = Query(None),
+                   ctx: TenantContext = Depends(require("closing:read", module=_MODULE))):
+    return await _repo(ctx).physical_check(period or _cur())
+
+
+@router.post("/physical/scan")
+async def physical_scan(body: BarcodeIn, period: str = Query(None),
+                        ctx: TenantContext = Depends(require("closing:read", module=_MODULE))):
+    return await _repo(ctx).physical_scan(period or _cur(), body.barcode)
+
+
+@router.post("/physical/reset")
+async def physical_reset(period: str = Query(None),
+                         ctx: TenantContext = Depends(require("closing:read", module=_MODULE))):
+    return await _repo(ctx).physical_reset(period or _cur())
 
 
 # ── Optical Audit (OCR scans) ───────────────────────────────────────────────
