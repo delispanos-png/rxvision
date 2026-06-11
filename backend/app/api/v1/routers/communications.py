@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 from typing import Literal
 
@@ -92,7 +93,8 @@ async def _segment_patient_ids(tenant_id: str, segment: str, value: str | None):
         allp = set(await db["prescription_executions"].distinct("patient_ref", {"tenant_id": tenant_id}))
         return allp - recent
     if segment == "substance":
-        val = (value or "").upper()
+        # Escape user input before it reaches a Mongo $regex — prevents regex injection / ReDoS.
+        val = re.escape((value or "").upper())
         rows = await db["prescription_executions"].aggregate([
             {"$match": {"tenant_id": tenant_id}},
             {"$lookup": {"from": "prescription_items", "localField": "_id", "foreignField": "execution_id", "as": "it"}},
