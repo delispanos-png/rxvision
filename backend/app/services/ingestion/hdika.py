@@ -44,11 +44,15 @@ class HdikaAdapter:
         """
         c = self.credentials
         # Go live only with a COMPLETE real config: endpoint + application api-key
-        # (platform-level) + the pharmacy's username. Otherwise synthetic demo data.
+        # (platform-level) + the pharmacy's username.
         if (c.get("base_url") or c.get("live_endpoint")) and c.get("api_key") and c.get("username"):
             yield from self._fetch_real(since, until)
             return
-        yield from self._fetch_synthetic(since=since, count=count)
+        # Incomplete creds: NEVER inject synthetic demo data into a real tenant's dataset (it
+        # pollutes analytics with fake HDIKA-SYNTH barcodes). Synthetic runs ONLY when a demo
+        # tenant explicitly opts in via creds.allow_synthetic; otherwise yield nothing.
+        if c.get("allow_synthetic"):
+            yield from self._fetch_synthetic(since=since, count=count)
 
     def _fetch_real(self, since: datetime | None, until: datetime | None = None):
         """REAL ΗΔΙΚΑ path: authenticate, page executions in the window, map each raw
