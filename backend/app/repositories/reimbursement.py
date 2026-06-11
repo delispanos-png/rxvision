@@ -47,11 +47,11 @@ def _pct(a: float, b: float) -> float | None:
     return ((a - b) / b * 100) if b else None
 
 
-# risk weights (data-derivable factors; optical factors add on top once scans exist)
-RISK_UNEXEC = 40       # partial execution — a top ΕΟΠΥΥ cut reason
-RISK_MISMATCH = 30     # amount_claimed + patient_share ≠ amount_total
-RISK_NO_FUND = 20      # missing insurer
-RISK_HIGH_COST = 10    # high-cost line → extra scrutiny
+# risk weights (data-derivable factors; optical factors add on top once scans exist).
+# NOTE: partial execution is NOT a cut reason — the patient may lawfully decline part of the Rx.
+RISK_MISMATCH = 40     # amount_claimed + patient_share ≠ amount_total
+RISK_NO_FUND = 35      # missing insurer
+RISK_HIGH_COST = 15    # high-cost line → extra scrutiny
 
 
 def _band(score: int) -> str:
@@ -188,8 +188,6 @@ class ReimbursementRepository(BaseRepository):
         for e in rows:
             score = 0
             flags = []
-            if e.get("has_unexecuted_substances"):
-                score += RISK_UNEXEC; flags.append("partial_execution")
             retail, claim, patient = e.get("amount_total", 0), e.get("amount_claimed", 0), e.get("patient_share", 0)
             if abs((claim + patient) - retail) > 2:  # >2 cents → real mismatch
                 score += RISK_MISMATCH; flags.append("amount_mismatch")
@@ -412,9 +410,13 @@ class ReimbursementRepository(BaseRepository):
         period = period or _now().strftime("%Y-%m")
         closing = await self.monthly_closing(period)
         cuts = await self.expected_cuts(period)
+        start, end = _month_bounds(period)
         risk_rows = await self._risk_rows(period)
         to_fix = sum(1 for r in risk_rows if r["score"] >= 50)
-        partial = sum(1 for r in risk_rows if "partial_execution" in r["flags"])
+        # informational only — partial execution is lawful, NOT a cut reason
+        partial = await self._db["prescription_executions"].count_documents(
+            {"tenant_id": self.tenant_id, "executed_at": {"$gte": start, "$lt": end},
+             "has_unexecuted_substances": True})
         mismatch = sum(1 for r in risk_rows if "amount_mismatch" in r["flags"])
         t = closing["totals"]
 
@@ -423,9 +425,6 @@ class ReimbursementRepository(BaseRepository):
             insights.append({"severity": "critical", "icon": "shield-alert",
                              "text": f"Βρέθηκαν {to_fix} συνταγές υψηλού κινδύνου περικοπής. "
                                      f"Πιθανή απώλεια €{cuts['total']/100:,.0f} — διόρθωσέ τες πριν την υποβολή."})
-        if partial:
-            insights.append({"severity": "warning", "icon": "alert-triangle",
-                             "text": f"{partial} συνταγές με μερική εκτέλεση (ανεκτέλεστες δραστικές) — συχνή αιτία περικοπής."})
         if mismatch:
             insights.append({"severity": "warning", "icon": "calculator",
                              "text": f"{mismatch} συνταγές με ασυμφωνία ποσών (ταμείο+συμμετοχή ≠ λιανική)."})

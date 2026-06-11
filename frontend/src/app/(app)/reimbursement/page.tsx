@@ -73,7 +73,7 @@ export default function ReimbursementExecutive() {
             <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
               <KpiCard label={t("Πιθανές περικοπές", "Expected cuts")} value={fmtEur(k?.expected_cuts ?? 0)} icon={ScissorsLineDashed} accent="rose" onClick={() => router.push("/reimbursement/risk")} />
               <KpiCard label={t("Προς διόρθωση", "To fix")} value={fmtNum(k?.to_fix ?? 0)} icon={Wrench} accent="rose" onClick={() => router.push("/reimbursement/risk")} />
-              <KpiCard label={t("Μερικές εκτελέσεις", "Partial executions")} value={fmtNum(k?.partial ?? 0)} icon={FileWarning} accent="amber" />
+              <KpiCard label={t("Μερικές εκτελέσεις", "Partial executions")} value={fmtNum(k?.partial ?? 0)} icon={FileWarning} accent="indigo" sub={t("ενημερωτικό · νόμιμο (όχι περικοπή)", "informational · lawful (not a cut)")} />
               <KpiCard label={t("Ασυμφωνίες ποσών", "Amount mismatches")} value={fmtNum(k?.mismatch ?? 0)} icon={Calculator} accent="amber" />
             </div>
           </div>
