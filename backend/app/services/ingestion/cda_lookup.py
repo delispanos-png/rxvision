@@ -29,12 +29,14 @@ async def _creds(tenant_id: str, db) -> dict:
     return creds
 
 
-async def fetch_opinion(tenant_id: str, db, barcode: str) -> bool | None:
-    """Prescription-level γνωμάτευση flag from the ΗΔΙΚΑ CDA. None if creds incomplete or unreachable."""
+async def fetch_cda_info(tenant_id: str, db, barcode: str) -> dict:
+    """From the ΗΔΙΚΑ CDA: {opinion: bool|None (prescription-level γνωμάτευση, id 1.1.23),
+    qr_by_eof: {eofCode: bool}} — per-medicine QR-coupon flag (CDA id 2.10.14: 1=QR/HMVS,
+    0=ΕΟΦ ταινία γνησιότητας). {} if creds incomplete or unreachable."""
     creds = await _creds(tenant_id, db)
     if not ((creds.get("base_url") or creds.get("live_endpoint"))
             and creds.get("api_key") and creds.get("username")):
-        return None
+        return {}
 
     def _do():
         cl = HdikaClient(creds)
@@ -46,4 +48,8 @@ async def fetch_opinion(tenant_id: str, db, barcode: str) -> bool | None:
             cl.close()
 
     cda = await asyncio.to_thread(_do)
-    return (cda or {}).get("details", {}).get("opinion")
+    if not cda:
+        return {}
+    qr = {str(ln["eof_code"]): bool(ln.get("qr"))
+          for ln in cda.get("lines", []) if ln.get("eof_code")}
+    return {"opinion": cda.get("details", {}).get("opinion"), "qr_by_eof": qr}

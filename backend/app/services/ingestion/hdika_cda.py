@@ -288,5 +288,7 @@ def parse_cda_full(text: str) -> dict:
             "difference": _num(ids.get("1.4.21")),
             "substitution_allowed": _flag(ids.get("1.4.23")),
             "generic": _flag(ids.get("1.9.6.2")),
+            # 2.10.14: "1" = QR code (HMVS) → electronic coupon, auto-verified; "0" = ΕΟΦ ταινία γνησιότητας
+            "qr": ids.get("2.10.14") == "1",
         })
     return out

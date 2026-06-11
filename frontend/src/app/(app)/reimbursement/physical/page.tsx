@@ -15,9 +15,9 @@ import { DataTable, type Column } from "@/components/tables/DataTable";
 type Item = { barcode: string; claim: number; fund: string; executed_at: string; checked: boolean; day: string };
 type DayRow = { date: string; total: number; checked: number };
 type Check = { period: string; total: number; checked: number; remaining: number; extra: string[]; by_day: DayRow[]; items: Item[] };
-type Coupon = { name: string; barcode: string; quantity: number; category: string; executed: boolean };
+type Coupon = { name: string; barcode: string; quantity: number; category: string; executed: boolean; qr: boolean | null };
 type Detail = { ok: boolean; found: boolean; barcode: string; fund: string; claim: number; n_coupons: number; has_opinion: boolean | null; is_fyk: boolean; has_vaccine: boolean; has_narcotic: boolean; partial: boolean; coupons: Coupon[] };
-type ScanRes = { ok: boolean; found: boolean; barcode: string; detail: Detail | null };
+type ScanRes = { ok: boolean; found: boolean; barcode: string };
 
 function fmtDay(d: string) { try { return new Date(d + "T00:00:00").toLocaleDateString("el-GR", { weekday: "long", day: "numeric", month: "long" }); } catch { return d; } }
 function fmtDayShort(d: string) { try { return new Date(d + "T00:00:00").toLocaleDateString("el-GR", { weekday: "short", day: "numeric", month: "short" }); } catch { return d; } }
@@ -48,7 +48,7 @@ export default function PhysicalCheckPage() {
 
   const scan = useMutation({
     mutationFn: (barcode: string) => api<ScanRes>(`/reimbursement/physical/scan?period=${period}`, { method: "POST", body: JSON.stringify({ barcode }) }),
-    onSuccess: (r) => { setLast({ found: r.found, barcode: r.barcode }); if (r.found && r.detail?.found) setDetail(r.detail); qc.invalidateQueries({ queryKey: ["reimb-physical", period] }); },
+    onSuccess: (r) => { setLast({ found: r.found, barcode: r.barcode }); qc.invalidateQueries({ queryKey: ["reimb-physical", period] }); },
   });
   const reset = useMutation({
     mutationFn: () => api(`/reimbursement/physical/reset?period=${period}`, { method: "POST" }),
@@ -205,12 +205,14 @@ export default function PhysicalCheckPage() {
                 </div>
                 <div className="space-y-1.5">
                   {detail.coupons.map((c, i) => (
-                    <div key={i} className="flex items-start gap-2 rounded-lg border border-slate-200 p-2 text-xs dark:border-slate-700">
-                      <Pill className={`mt-0.5 h-4 w-4 shrink-0 ${c.category === "fyk" ? "text-orange-500" : c.category === "vaccine" ? "text-sky-500" : c.category === "narcotic" ? "text-rose-500" : "text-slate-400"}`} />
+                    <div key={i} className={`flex items-start gap-2 rounded-lg border p-2 text-xs ${c.qr === true ? "border-emerald-200 bg-emerald-50/40 dark:border-emerald-900/50 dark:bg-emerald-950/20" : "border-slate-200 dark:border-slate-700"}`}>
+                      {c.qr === true ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" /> : <Pill className={`mt-0.5 h-4 w-4 shrink-0 ${c.category === "fyk" ? "text-orange-500" : c.category === "vaccine" ? "text-sky-500" : c.category === "narcotic" ? "text-rose-500" : "text-slate-400"}`} />}
                       <div className="min-w-0 flex-1">
                         <div className="font-medium text-slate-700 dark:text-slate-200">{c.name} {c.quantity > 1 && <span className="text-slate-400">×{c.quantity}</span>}</div>
                         <div className="flex flex-wrap items-center gap-1.5 text-[10px] text-slate-400">
                           {c.barcode && <span className="font-mono">{c.barcode}</span>}
+                          {c.qr === true && <span className="font-semibold text-emerald-600">✓ QR ({t("αυτόματα ελεγμένο", "auto-verified")})</span>}
+                          {c.qr === false && <span className="text-amber-600">{t("ΕΟΦ ταινία — έλεγξε κουπόνι", "ΕΟΦ strip — check coupon")}</span>}
                           {!c.executed && <span className="text-rose-500">{t("ανεκτέλεστο", "unexecuted")}</span>}
                         </div>
                       </div>
