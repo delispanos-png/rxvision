@@ -4,7 +4,7 @@ import { useState, useRef, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   ScanBarcode, CheckCircle2, XCircle, RotateCcw, ChevronLeft, ChevronRight,
-  X, FileText, Syringe, Pill, ShieldAlert, Ticket, PartyPopper, CalendarDays,
+  X, FileText, Syringe, Pill, ShieldAlert, Ticket, PartyPopper, CalendarDays, ArrowRight,
 } from "lucide-react";
 import { api } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
@@ -20,6 +20,7 @@ type Detail = { ok: boolean; found: boolean; barcode: string; fund: string; clai
 type ScanRes = { ok: boolean; found: boolean; barcode: string; detail: Detail | null };
 
 function fmtDay(d: string) { try { return new Date(d + "T00:00:00").toLocaleDateString("el-GR", { weekday: "long", day: "numeric", month: "long" }); } catch { return d; } }
+function fmtDayShort(d: string) { try { return new Date(d + "T00:00:00").toLocaleDateString("el-GR", { weekday: "short", day: "numeric", month: "short" }); } catch { return d; } }
 
 export default function PhysicalCheckPage() {
   const t = useT();
@@ -43,7 +44,7 @@ export default function PhysicalCheckPage() {
       setDayIdx(i < 0 ? byDay.length - 1 : i);
     }
   }, [data, byDay]);
-  useEffect(() => { inputRef.current?.focus(); }, [dayIdx]);
+  useEffect(() => { inputRef.current?.focus(); document.getElementById(`dayrow-${dayIdx}`)?.scrollIntoView({ block: "nearest" }); }, [dayIdx]);
 
   const scan = useMutation({
     mutationFn: (barcode: string) => api<ScanRes>(`/reimbursement/physical/scan?period=${period}`, { method: "POST", body: JSON.stringify({ barcode }) }),
@@ -103,6 +104,26 @@ export default function PhysicalCheckPage() {
         <button onClick={() => { if (confirm(t("Μηδενισμός ελέγχου;", "Reset check?"))) reset.mutate(); }} className="inline-flex items-center gap-1 rounded-lg border border-slate-300 px-2.5 py-1 hover:bg-slate-50 dark:border-slate-600"><RotateCcw className="h-3 w-3" /> {t("Μηδενισμός", "Reset")}</button>
       </div>
       <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700"><div className="h-full rounded-full bg-emerald-500 transition-all" style={{ width: `${byDay.length ? (daysComplete / byDay.length) * 100 : 0}%` }} /></div>
+
+      {/* days overview — count + status per day */}
+      <div className="max-h-56 overflow-y-auto rounded-xl border border-slate-200 dark:border-slate-700">
+        {byDay.map((d, i) => {
+          const done = d.checked >= d.total;
+          const isCur = i === dayIdx;
+          return (
+            <button id={`dayrow-${i}`} key={d.date} onClick={() => setDayIdx(i)}
+              className={`flex w-full items-center gap-2 border-b border-slate-100 px-3 py-2 text-left text-xs last:border-0 dark:border-slate-800 ${isCur ? "bg-emerald-50 ring-1 ring-inset ring-emerald-300 dark:bg-emerald-950/30" : "hover:bg-slate-50 dark:hover:bg-slate-800/50"}`}>
+              {done ? <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" /> : isCur ? <ArrowRight className="h-4 w-4 shrink-0 text-emerald-600" /> : <span className="h-4 w-4 shrink-0 rounded-full border-2 border-slate-300" />}
+              <span className={`flex-1 capitalize ${isCur ? "font-semibold text-slate-800 dark:text-slate-100" : done ? "text-slate-400 line-through" : "text-slate-600 dark:text-slate-300"}`}>
+                {fmtDayShort(d.date)}
+                {isCur && <span className="ml-1.5 font-medium text-emerald-600">← {t("τώρα εδώ", "now here")}</span>}
+                {done && !isCur && <span className="ml-1.5 text-emerald-500">✓ {t("ολοκληρώθηκε", "done")}</span>}
+              </span>
+              <span className={`shrink-0 tabular-nums font-medium ${done ? "text-emerald-600" : "text-slate-500 dark:text-slate-400"}`}>{d.checked}/{d.total}</span>
+            </button>
+          );
+        })}
+      </div>
 
       {/* current day card */}
       <div className={`rounded-2xl border-2 p-5 ${dayDone ? "border-emerald-300 bg-emerald-50/50 dark:border-emerald-800 dark:bg-emerald-950/20" : "border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900"}`}>
