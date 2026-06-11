@@ -178,6 +178,18 @@ export function Topbar() {
                 <LogOut className="h-4 w-4" /> {t("Αποσύνδεση", "Sign out")}
               </button>
             </div>
+
+            <a
+              href="https://cloudon.gr"
+              target="_blank"
+              rel="noopener noreferrer"
+              title="Powered by CloudOn"
+              className="flex items-center justify-center gap-2 border-t border-slate-100 py-2.5 opacity-70 transition hover:opacity-100 dark:border-slate-800"
+            >
+              <span className="text-[10px] font-medium uppercase tracking-wide text-slate-400">Powered by</span>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src="/cloudon-logo.png" alt="CloudOn" className="h-3.5 w-auto" />
+            </a>
           </div>
         )}
       </div>
