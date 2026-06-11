@@ -16,7 +16,9 @@ were false alarms or by-design — noted below).
 | Sev | File:line | Issue | Fix |
 |---|---|---|---|
 | **HIGH (security)** | `backend/app/api/v1/routers/communications.py:95` | **Mongo `$regex` injection / ReDoS** — the `substance` campaign segment built `{$regex: "^"+val}` / `{$regex: val}` from the raw user `value` query param (unescaped). A crafted value (e.g. `(a+)+`) enables ReDoS / regex logic injection. | `import re` + `val = re.escape((value or "").upper())` — literal search preserved, injection removed. |
-| **LOW (hygiene)** | `backend/app/services/billing_service.py:89` | Platform billing scans `subscriptions` across all tenants with no `tenant_id` — **by design**, but undocumented (would re-trip tenant-isolation audits). | Added `# tenant-ok` marker documenting the deliberate platform-wide scan (per the CLAUDE.md convention). No logic change. |
+| **LOW (hygiene)** | `backend/app/services/billing_service.py:90` | Platform billing scans `subscriptions` across all tenants with no `tenant_id` — **by design**, but undocumented; `test_tenant_isolation.py` was RED on it (reads the marker on the call line). | Added inline `# tenant-ok` on the `subscriptions.find(` line documenting the deliberate platform-wide scan (per convention). Test now green. No logic change. |
+| **MED (lint, cross-stream)** | `advisor.py`, `patient_intelligence.py`, `pharmacat.py`, `reimbursement.py`, `scans.py` (21 sites) | **ruff E702** (semicolon-joined statements) — pre-existing on `main`, **red CI** (from the analytics/scans stream). | Mechanically split into separate lines (zero behaviour change). Lint gate green. |
+| **MED (test, cross-stream)** | `backend/tests/test_ingestion.py:35` | `test_hdika_adapter_yields_stable_ids` fetched **0** (was red on `main`): the ingestion adapter now gates synthetic data behind `allow_synthetic` (a safety hardening), but the stale test didn't pass it. | Updated the test to `HdikaAdapter({"allow_synthetic": True})`. Aligns with the intentional new behaviour. |
 
 ---
 
@@ -47,6 +49,9 @@ were false alarms or by-design — noted below).
 `test_tenant_isolation.py` checks for the *string* `tenant_id` in a call; it does **not** verify that an **aggregation's first stage** is `{$match:{tenant_id}}`. Harden it to specifically assert the `$match` first-stage for `.aggregate(...)` calls (catches output-only `$tenant_id` references like the platform `fund_groups` group).
 
 ## Summary of what ran
-- `py_compile` on edited backend files: **OK**. Frontend `tsc --noEmit`: **0 errors** (baseline + post-edit; no frontend code changed).
-- Backend `ruff`/`mypy`/`pytest` (incl. the two isolation test files) run in **CI on push** of this branch.
-- 2 fixes committed; everything else documented above. No prod/Vault/ΗΔΙΚΑ/deploy actions taken.
+- **Full CI green on `audit-fixes`**: Backend **ruff ✓ · pytest 57 passed** (incl. `test_invariants.py`
+  + `test_tenant_isolation.py`) · Frontend **tsc · lint · build ✓**. (`main` itself was RED before this
+  branch — ruff E702 + 2 failing tests from other streams — now fixed here.)
+- Commits (focused): security regex escape · billing `# tenant-ok` · E702 splits ×21 · 2 test
+  alignments · this report. Everything else above is documented & DEFERRED (not touched).
+- No prod data / migrations / Vault / ΗΔΙΚΑ-API / deploy / main-push actions taken. Branch left for review.
