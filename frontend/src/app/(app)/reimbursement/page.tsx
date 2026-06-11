@@ -1,0 +1,92 @@
+"use client";
+
+import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { useRouter } from "next/navigation";
+import {
+  Receipt, Wallet, Landmark, Coins, TrendingUp, ShieldAlert, AlertTriangle, Calculator,
+  Building2, ScissorsLineDashed, Wrench, FileWarning,
+} from "lucide-react";
+import { api } from "@/lib/apiClient";
+import { useT } from "@/store/prefStore";
+import { fmtNum, fmtEur } from "@/lib/formatters";
+import { KpiCard } from "@/components/kpi/KpiCard";
+
+type Exec = {
+  period: string;
+  kpis: Record<string, number>;
+  delta_prev: Record<string, number | null>;
+  delta_yoy: Record<string, number | null>;
+  insights: { severity: string; icon: string; text: string }[];
+};
+
+const SEV: Record<string, string> = {
+  critical: "border-rose-200 bg-rose-50/60 dark:border-rose-900/50 dark:bg-rose-950/40",
+  warning: "border-amber-200 bg-amber-50/60 dark:border-amber-900/40 dark:bg-amber-950/30",
+  info: "border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900",
+};
+const SEV_ICON: Record<string, string> = { critical: "text-rose-600", warning: "text-amber-600", info: "text-slate-500" };
+
+function curMonth() { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`; }
+
+export default function ReimbursementExecutive() {
+  const t = useT();
+  const router = useRouter();
+  const [period, setPeriod] = useState(curMonth());
+  const { data, isLoading } = useQuery({ queryKey: ["reimb-exec", period], queryFn: () => api<Exec>(`/reimbursement/executive?period=${period}`) });
+  const k = data?.kpis;
+  const dp = data?.delta_prev;
+
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className="text-sm text-slate-500">{t("Περίοδος κλεισίματος", "Closing period")}</span>
+        <input type="month" value={period} max={curMonth()} onChange={(e) => setPeriod(e.target.value)}
+          className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm dark:border-slate-600 dark:bg-slate-800" />
+      </div>
+
+      {isLoading ? <div className="p-8 text-slate-400">{t("Έλεγχος αποζημίωσης…", "Auditing reimbursement…")}</div> : (
+        <>
+          {/* AI AUDITOR */}
+          {!!data?.insights.length && (
+            <div>
+              <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-slate-500"><ShieldAlert className="h-4 w-4 text-emerald-600" /> {t("AI Auditor", "AI Auditor")}</h2>
+              <div className="grid gap-3 md:grid-cols-2">
+                {data.insights.map((i, idx) => (
+                  <div key={idx} className={`flex items-start gap-3 rounded-2xl border p-4 shadow-card ${SEV[i.severity] ?? SEV.info}`}>
+                    <span className={`mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-white dark:bg-slate-800 ${SEV_ICON[i.severity] ?? SEV_ICON.info}`}>
+                      {i.severity === "critical" ? <ShieldAlert className="h-5 w-5" /> : i.severity === "warning" ? <AlertTriangle className="h-5 w-5" /> : <Calculator className="h-5 w-5" />}
+                    </span>
+                    <p className="text-sm leading-relaxed text-slate-600 dark:text-slate-300">{i.text}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* FINANCIALS */}
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-4">
+            <KpiCard label={t("Συνταγές μήνα", "Prescriptions")} value={fmtNum(k?.rx ?? 0)} icon={Receipt} accent="indigo" trend={dp?.rx ?? undefined} />
+            <KpiCard label={t("Λιανική αξία", "Retail value")} value={fmtEur(k?.retail ?? 0)} icon={Wallet} accent="violet" trend={dp?.retail ?? undefined} />
+            <KpiCard label={t("Συνολική απαίτηση", "Total claim")} value={fmtEur(k?.claim ?? 0)} icon={Landmark} accent="green" trend={dp?.claim ?? undefined} />
+            <KpiCard label={t("Συμμετοχή ασφ/νου", "Patient share")} value={fmtEur(k?.patient ?? 0)} icon={Coins} accent="amber" trend={dp?.patient ?? undefined} />
+            <KpiCard label={t("Απαίτηση ΕΟΠΥΥ", "ΕΟΠΥΥ claim")} value={fmtEur(k?.eopyy_claim ?? 0)} icon={Building2} accent="sky" />
+            <KpiCard label={t("Απαίτηση λοιπά ταμεία", "Other funds claim")} value={fmtEur(k?.other_claim ?? 0)} icon={Building2} accent="indigo" />
+            <KpiCard label={t("Μεικτό κέρδος", "Gross profit")} value={fmtEur(k?.gross_profit ?? 0)} icon={TrendingUp} accent="green" />
+          </div>
+
+          {/* AUDIT / RISK */}
+          <div>
+            <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">{t("Έλεγχος πριν την υποβολή", "Pre-submission control")}</h2>
+            <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+              <KpiCard label={t("Πιθανές περικοπές", "Expected cuts")} value={fmtEur(k?.expected_cuts ?? 0)} icon={ScissorsLineDashed} accent="rose" onClick={() => router.push("/reimbursement/risk")} />
+              <KpiCard label={t("Προς διόρθωση", "To fix")} value={fmtNum(k?.to_fix ?? 0)} icon={Wrench} accent="rose" onClick={() => router.push("/reimbursement/risk")} />
+              <KpiCard label={t("Μερικές εκτελέσεις", "Partial executions")} value={fmtNum(k?.partial ?? 0)} icon={FileWarning} accent="amber" />
+              <KpiCard label={t("Ασυμφωνίες ποσών", "Amount mismatches")} value={fmtNum(k?.mismatch ?? 0)} icon={Calculator} accent="amber" />
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
