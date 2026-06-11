@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { adminApi } from "@/lib/adminClient";
 import { KeyRound, Save, Loader2, Check, Landmark, CreditCard, Package, Bot } from "lucide-react";
+import { fmtMoney } from "@/lib/formatters";
 
 type Integrations = {
   aade: { username: string | null; configured: boolean };
@@ -127,7 +128,7 @@ export default function IntegrationsPage() {
       {/* Package pricing */}
       <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
         <h3 className="mb-1 flex items-center gap-2 text-sm font-semibold text-slate-700"><Package className="h-4 w-4 text-brand-600" /> Πακέτο RxVision Standard — τιμές</h3>
-        <p className="mb-3 text-xs text-slate-500">Τρέχον: <b>€{((std?.price_monthly ?? 0) / 100).toFixed(0)}/μήνα</b> · <b>€{((std?.price_yearly ?? 0) / 100).toFixed(0)}/έτος</b> · <b>{std?.trial_days ?? 0} ημέρες</b> δοκιμή. (Κενό = αμετάβλητο.)</p>
+        <p className="mb-3 text-xs text-slate-500">Τρέχον: <b>{fmtMoney(std?.price_monthly ?? 0)} €/μήνα</b> · <b>{fmtMoney(std?.price_yearly ?? 0)} €/έτος</b> · <b>{std?.trial_days ?? 0} ημέρες</b> δοκιμή. (Κενό = αμετάβλητο.)</p>
         <div className="grid gap-4 sm:grid-cols-3">
           <label className="text-xs text-slate-500">€/μήνα<input type="number" value={pm} onChange={(e) => setPm(e.target.value)} placeholder={String((std?.price_monthly ?? 0) / 100)} className={inp} /></label>
           <label className="text-xs text-slate-500">€/έτος<input type="number" value={py} onChange={(e) => setPy(e.target.value)} placeholder={String((std?.price_yearly ?? 0) / 100)} className={inp} /></label>

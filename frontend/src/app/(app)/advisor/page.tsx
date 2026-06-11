@@ -1,4 +1,5 @@
 "use client";
+import { fmtDec } from "@/lib/formatters";
 
 import { useQuery } from "@tanstack/react-query";
 import { Sparkles, ArrowUpRight, ArrowDownRight } from "lucide-react";
@@ -38,7 +39,7 @@ function Delta({ delta, invert = false }: { delta: number | null; invert?: boole
   const Icon = delta >= 0 ? ArrowUpRight : ArrowDownRight;
   return (
     <span className={`inline-flex items-center gap-0.5 text-xs font-semibold ${good ? "text-emerald-600" : "text-rose-600"}`}>
-      <Icon className="h-3.5 w-3.5" /> {Math.abs(delta).toFixed(1)}%
+      <Icon className="h-3.5 w-3.5" /> {fmtDec(Math.abs(delta), 1)}%
     </span>
   );
 }
@@ -91,7 +92,7 @@ export default function BusinessAdvisorPage() {
         <div className="mb-5 grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-6">
           <KpiTile sub={vsPrev} label={t("Έσοδα", "Revenue")} value={eur(k.revenue.value)} delta={k.revenue.delta} />
           <KpiTile sub={vsPrev} label={t("Μεικτό κέρδος", "Gross profit")} value={eur(k.gross_profit.value)} delta={k.gross_profit.delta} />
-          <KpiTile sub={vsPrev} label={t("Περιθώριο", "Margin")} value={`${(k.margin_pct.value || 0).toFixed(1)}%`} delta={k.margin_pct.delta} />
+          <KpiTile sub={vsPrev} label={t("Περιθώριο", "Margin")} value={`${fmtDec(k.margin_pct.value || 0, 1)}%`} delta={k.margin_pct.delta} />
           <KpiTile sub={vsPrev} label={t("Συνταγές", "Prescriptions")} value={num(k.rx.value)} delta={k.rx.delta} />
           <KpiTile sub={vsPrev} label={t("Αιτούμενα", "Claimed")} value={eur(k.claimed.value)} delta={k.claimed.delta} />
           <KpiTile sub={vsPrev} label={t("Ασθενείς", "Patients")} value={num(k.patients.value)} delta={k.patients.delta} />
@@ -125,9 +126,9 @@ export default function BusinessAdvisorPage() {
                   <tr key={c.code}>
                     <td className="px-4 py-3 font-medium text-slate-800">{c.name} <span className="text-[10px] text-slate-400">{c.code}</span></td>
                     <td className="px-4 py-3 text-right">{eur(c.revenue)}</td>
-                    <td className="px-4 py-3 text-right text-slate-500">{c.share_pct.toFixed(0)}%</td>
-                    <td className="px-4 py-3 text-right">{c.margin_pct.toFixed(0)}%</td>
-                    <td className={`px-4 py-3 text-right font-medium ${(c.trend_pct ?? 0) >= 0 ? "text-emerald-600" : "text-rose-600"}`}>{c.trend_pct == null ? "—" : `${c.trend_pct >= 0 ? "+" : ""}${c.trend_pct.toFixed(0)}%`}</td>
+                    <td className="px-4 py-3 text-right text-slate-500">{fmtDec(c.share_pct, 0)}%</td>
+                    <td className="px-4 py-3 text-right">{fmtDec(c.margin_pct, 0)}%</td>
+                    <td className={`px-4 py-3 text-right font-medium ${(c.trend_pct ?? 0) >= 0 ? "text-emerald-600" : "text-rose-600"}`}>{c.trend_pct == null ? "—" : `${c.trend_pct >= 0 ? "+" : ""}${fmtDec(c.trend_pct, 0)}%`}</td>
                     <td className="px-4 py-3"><span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${VERDICT[c.verdict]?.cls}`}>{VERDICT[c.verdict]?.label}</span></td>
                   </tr>
                 ))}

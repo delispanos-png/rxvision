@@ -8,7 +8,7 @@ import { useT } from "@/store/prefStore";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
 import { useUiStore, filtersToQuery } from "@/store/uiStore";
 import { prevYearRange, pctDelta } from "@/lib/compare";
-import { fmtEur, fmtPct, fmtNum, fmtMoney} from "@/lib/formatters";
+import { fmtDec, fmtEur, fmtPct, fmtNum, fmtMoney} from "@/lib/formatters";
 import { KpiCard } from "@/components/kpi/KpiCard";
 import { PanelCard } from "@/components/ui/Card";
 import { QueryState } from "@/components/ui/QueryState";
@@ -100,7 +100,7 @@ export default function ProfitabilityPage() {
         <ExportMenu filename={`kerdoforia-${dim}`} title={t("Κερδοφορία ανά διάσταση", "Profitability by dimension")} rows={byDim.data?.rows ?? []} columns={[
           { key: "label", header: t("Διάσταση", "Dimension") },
           { key: "gross_profit", header: t("Μεικτό κέρδος (€)", "Gross profit (€)"), value: (r) => fmtMoney((r.gross_profit || 0)) },
-          { key: "margin_pct", header: t("Περιθώριο %", "Margin %"), value: (r) => (r.margin_pct ?? 0).toFixed(1) },
+          { key: "margin_pct", header: t("Περιθώριο %", "Margin %"), value: (r) => fmtDec(r.margin_pct ?? 0, 1) },
         ]} />
       </div>
 

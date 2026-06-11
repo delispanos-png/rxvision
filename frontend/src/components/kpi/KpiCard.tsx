@@ -1,4 +1,5 @@
 "use client";
+import { fmtDec } from "@/lib/formatters";
 
 import type { LucideIcon } from "lucide-react";
 import { useT } from "@/store/prefStore";
@@ -50,7 +51,7 @@ export function KpiCard({
             {trend !== undefined && (
               <span title={t("Δ vs πέρσι (ίδια περίοδος)", "Δ vs last year (same period)")}
                 className={`text-xs font-semibold ${trend >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400"}`}>
-                {trend >= 0 ? "▲" : "▼"} {Math.abs(trend).toFixed(1)}%
+                {trend >= 0 ? "▲" : "▼"} {fmtDec(Math.abs(trend), 1)}%
               </span>
             )}
           </div>
