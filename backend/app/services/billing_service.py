@@ -86,6 +86,7 @@ async def bill_due() -> dict:
         return {"skipped": "revolut_not_configured"}
     now = _now()
     charged = failed = suspended = 0
+    # tenant-ok: platform billing run — intentionally scans due subscriptions across ALL tenants.
     cur = db["subscriptions"].find({
         "status": {"$in": ["trialing", "active"]},
         "current_period_end": {"$lte": now},
