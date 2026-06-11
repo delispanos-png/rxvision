@@ -50,8 +50,11 @@ async def fetch_cda_info(tenant_id: str, db, barcode: str) -> dict:
     cda = await asyncio.to_thread(_do)
     if not cda:
         return {}
-    by_eof = {str(ln["eof_code"]): {"qr": ln.get("qr"), "batch": ln.get("qr_batch"),
-                                    "expiry": ln.get("qr_expiry"),
-                                    "lot": ln.get("lot") or ln.get("strip")}
-              for ln in cda.get("lines", []) if ln.get("eof_code")}
-    return {"opinion": cda.get("details", {}).get("opinion"), "lines_by_eof": by_eof}
+    # The CDA lines ARE the coupons — each carries executed + QR + lot together (no eof-collision,
+    # no executed/qr contradiction). An unexecuted line has no coupon (no QR, no strip).
+    lines = [{"eof": str(ln.get("eof_code") or ""), "name": ln.get("name"),
+              "executed": bool(ln.get("is_executed", True)),
+              "qr": ln.get("qr"), "batch": ln.get("qr_batch"), "expiry": ln.get("qr_expiry"),
+              "lot": ln.get("lot") or ln.get("strip")}
+             for ln in cda.get("lines", []) if ln.get("eof_code")]
+    return {"opinion": cda.get("details", {}).get("opinion"), "lines": lines}

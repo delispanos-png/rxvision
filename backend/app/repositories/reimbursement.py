@@ -464,6 +464,34 @@ class ReimbursementRepository(BaseRepository):
                           "executed": bool(it.get("is_executed", True))})
         return lines, flags
 
+    async def _coupons_from_cda(self, cda_lines: list) -> tuple:
+        """Authoritative coupons straight from the CDA lines (each = one coupon, executed + QR + lot
+        from the SAME source). An unexecuted line was never dispensed → it has NO coupon (no QR/strip)."""
+        from app.services.ingestion.hdika_catalog import categorize
+        eofs = [ln["eof"] for ln in cda_lines if ln.get("eof")]
+        cat_by_key: dict = {}
+        async for c in self._db["medicine_catalog"].find(  # tenant-ok: shared catalogue
+                {"$or": [{"_id": {"$in": eofs}}, {"barcode": {"$in": eofs}}]}):
+            cat_by_key[c["_id"]] = c
+            if c.get("barcode"):
+                cat_by_key[c["barcode"]] = c
+        coupons, flags = [], set()
+        for ln in cda_lines:
+            c = cat_by_key.get(ln.get("eof"), {})
+            cat = categorize(c.get("atc"), c.get("narcotic"), c.get("high_cost"),
+                             c.get("substance_name") or ln.get("name") or "")
+            flags.add(cat)
+            ex = bool(ln.get("executed", True))
+            coupons.append({
+                "name": c.get("full_name") or ln.get("name") or "—",
+                "barcode": c.get("barcode") or ln.get("eof"), "quantity": 1,
+                "category": cat, "executed": ex,
+                "qr": ln.get("qr") if ex else None,            # unexecuted → no coupon at all
+                "qr_batch": ln.get("batch") if ex else None,
+                "qr_expiry": ln.get("expiry") if ex else None,
+                "lot": ln.get("lot") if ex else None})
+        return coupons, flags
+
     async def prescription_detail(self, barcode: str, live: bool = False) -> dict:
         bc = (barcode or "").split(":")[0].strip()
         if not bc:
@@ -473,30 +501,27 @@ class ReimbursementRepository(BaseRepository):
         if not exs:
             return {"ok": True, "found": False, "barcode": bc}
         meta = await self._fund_meta()
-        lines, flags = await self._rx_lines([e["_id"] for e in exs])
-        # γνωμάτευση is a PRESCRIPTION-level flag (ΗΔΙΚΑ CDA id 1.1.23) — NOT per medicine. Read the
-        # cached `has_opinion`; if absent and live (user opened the prescription), fetch the CDA once
-        # and cache it on every execution of this barcode (gentle, one ΗΔΙΚΑ call per Rx ever).
+        # γνωμάτευση is a PRESCRIPTION-level flag (ΗΔΙΚΑ CDA id 1.1.23) — NOT per medicine. When the
+        # user OPENS the Rx (live) we fetch the CDA once → authoritative coupons (executed + QR + lot
+        # consistent, no eof-collision) + opinion (cached). The scan path uses our stored items.
         opinion = exs[0].get("has_opinion")
-        lines_by_eof: dict = {}
-        if live:  # explicit open → one CDA call: prescription γνωμάτευση + per-coupon QR flags
+        cda_lines: list = []
+        if live:
             from app.services.ingestion.cda_lookup import fetch_cda_info
             try:
                 info = await fetch_cda_info(self.tenant_id, self._db, bc)
             except Exception:  # noqa: BLE001
                 info = {}
-            lines_by_eof = info.get("lines_by_eof", {})
+            cda_lines = info.get("lines") or []
             if info.get("opinion") is not None:
                 opinion = info["opinion"]
                 await self._db["prescription_executions"].update_many(
                     {"tenant_id": self.tenant_id, "external_id": {"$regex": f"^{re.escape(bc)}"}},
                     {"$set": {"has_opinion": opinion}})
-        for ln in lines:  # QR coupon (HMVS) → auto-verified; ΕΟΦ ταινία → physical check needed
-            ci = lines_by_eof.get(str(ln.get("eof"))) or {}
-            ln["qr"] = ci.get("qr")
-            ln["qr_batch"] = ci.get("batch")
-            ln["qr_expiry"] = ci.get("expiry")
-            ln["lot"] = ci.get("lot")
+        if cda_lines:
+            lines, flags = await self._coupons_from_cda(cda_lines)
+        else:
+            lines, flags = await self._rx_lines([e["_id"] for e in exs])
         return jsonsafe({
             "ok": True, "found": True, "barcode": bc,
             "fund": meta.get(exs[0].get("fund_id"), {}).get("group", "—"),
