@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
-import { KeyRound, LogOut, Menu, Settings, User, Sun, Moon, PanelLeft, PanelLeftClose } from "lucide-react";
+import { KeyRound, LogOut, Menu, Settings, User, Sun, Moon, PanelLeft, PanelLeftClose, Sparkles } from "lucide-react";
 import { api, queryKeys } from "@/lib/apiClient";
 import { useNavStore } from "@/store/navStore";
 import { usePref, useT } from "@/store/prefStore";
@@ -104,6 +104,14 @@ export function Topbar() {
         className="grid h-9 min-w-[36px] place-items-center rounded-lg px-2 text-xs font-bold text-slate-500 hover:bg-white dark:text-slate-300 dark:hover:bg-slate-800"
       >
         {locale === "el" ? "EN" : "ΕΛ"}
+      </button>
+      <button
+        onClick={() => router.push("/copilot")}
+        title={t("Copilot — Βοηθός προγράμματος", "Copilot — App assistant")}
+        aria-label="Copilot"
+        className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-sky-200 bg-sky-50 px-2.5 text-xs font-semibold text-sky-700 hover:bg-sky-100 dark:border-sky-800 dark:bg-sky-950/40 dark:text-sky-300"
+      >
+        <Sparkles className="h-4 w-4" /> <span className="hidden sm:inline">{t("Βοηθός", "Copilot")}</span>
       </button>
       <InstallButton />
       <div className="mx-1 h-6 w-px bg-slate-200 dark:bg-slate-700" />
