@@ -13,6 +13,7 @@ const TABS = [
   { href: "/intelligence/compliance", el: "Συμμόρφωση", en: "Compliance" },
   { href: "/intelligence/recall", el: "Recall", en: "Recall" },
   { href: "/intelligence/winback", el: "Win-Back", en: "Win-Back" },
+  { href: "/intelligence/returns", el: "Επιστροφές", en: "Returns" },
   { href: "/intelligence/vip", el: "VIP", en: "VIP" },
   { href: "/intelligence/risk", el: "Ρίσκο", en: "Risk" },
   { href: "/intelligence/segments", el: "Segments", en: "Segments" },

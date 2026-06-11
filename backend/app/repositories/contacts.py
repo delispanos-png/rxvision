@@ -14,6 +14,7 @@ from app.repositories.base import BaseRepository, jsonsafe
 CONTACT_FIELDS = (
     "phone", "mobile", "email", "address", "city", "postal_code",
     "notes", "marketing_consent", "preferred_channel",
+    "reactivation_reason", "discontinuation_reason",
 )
 
 

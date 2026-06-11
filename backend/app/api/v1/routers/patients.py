@@ -30,6 +30,8 @@ class ContactIn(BaseModel):
     preferred_channel: str | None = Field(default=None, description="email|sms|phone")
     active: bool = True
     inactive_reason: str | None = Field(default=None, description="deceased|moved|stopped|other")
+    reactivation_reason: str | None = None
+    discontinuation_reason: str | None = None
 
 
 @router.get("/search")

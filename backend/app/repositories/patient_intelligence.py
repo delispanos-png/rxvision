@@ -101,6 +101,61 @@ class PatientIntelligenceRepository(BaseRepository):
     async def _patients(self) -> list[dict]:
         return [p async for p in self._db["patients_anonymized"].find({"tenant_id": self.tenant_id})]
 
+    async def _timeline(self) -> dict:
+        """patient_ref → sorted [(executed_at, amount_total)]. The earliest entry is the patient's
+        first-EVER execution we hold (basis for the 'never executed before' new-patient rule)."""
+        by: dict = defaultdict(list)
+        async for e in self._db["prescription_executions"].find(
+                {"tenant_id": self.tenant_id},
+                {"patient_ref": 1, "executed_at": 1, "amount_total": 1}):
+            if e.get("patient_ref") and e.get("executed_at"):
+                by[e["patient_ref"]].append((e["executed_at"], e.get("amount_total", 0)))
+        for evs in by.values():
+            evs.sort()
+        return by
+
+    # ── RETURNS (reactivation) ──────────────────────────────────────────────
+    # A returned patient = was dormant ≥ RETURN_GAP days, then came back. "Recent" returns are
+    # comebacks within the last RECENT_DAYS — what we want to learn the reason for.
+    RETURN_GAP = 90
+    RECENT_DAYS = 120
+
+    def _returns_from(self, by: dict, now: datetime) -> list[dict]:
+        recent = now - timedelta(days=self.RECENT_DAYS)
+        out = []
+        for pref, evs in by.items():
+            for i in range(len(evs) - 1, 0, -1):  # most-recent gap first
+                gap = (evs[i][0] - evs[i - 1][0]).days
+                if gap >= self.RETURN_GAP:
+                    if evs[i][0] >= recent:
+                        out.append({"patient_ref": pref, "returned_at": evs[i][0], "gap_days": gap,
+                                    "dormant_since": evs[i - 1][0],
+                                    "value": sum(v for _, v in evs)})
+                    break  # only the latest dormancy matters
+        out.sort(key=lambda x: x["returned_at"], reverse=True)
+        return out
+
+    async def returns(self) -> dict:
+        now = _now()
+        by = await self._timeline()
+        rets = self._returns_from(by, now)
+        prefs = [r["patient_ref"] for r in rets]
+        pats = {p["_id"]: p async for p in self._db["patients_anonymized"].find(
+            {"_id": {"$in": prefs}, "tenant_id": self.tenant_id})} if prefs else {}
+        cts = {c["_id"]: c async for c in self._db["patient_contacts"].find(
+            {"_id": {"$in": prefs}, "tenant_id": self.tenant_id})} if prefs else {}
+        items = []
+        for r in rets:
+            pa = pats.get(r["patient_ref"], {}); ct = cts.get(r["patient_ref"], {})
+            items.append({
+                "patient_id": str(r["patient_ref"]), "name": pa.get("full_name"), "amka": pa.get("amka"),
+                "returned_at": r["returned_at"], "gap_days": r["gap_days"], "value": r["value"],
+                "reactivation_reason": ct.get("reactivation_reason"),
+                "mobile": ct.get("mobile"), "phone": ct.get("phone"),
+            })
+        return jsonsafe({"items": items, "count": len(items),
+                         "recovered_value": round(sum(r["value"] for r in rets))})
+
     # ── 1. DASHBOARD overview ───────────────────────────────────────────────
     async def overview(self) -> dict:
         now = _now()
@@ -109,6 +164,7 @@ class PatientIntelligenceRepository(BaseRepository):
         pmstart = _addm(mstart, -1)
         pats = await self._patients()
         chain = await self._chain_analysis()
+        tl = await self._timeline()  # patient → sorted executions (first entry = first-EVER)
 
         def seen_after(p, dt):
             ls = p.get("last_seen_at")
@@ -116,8 +172,10 @@ class PatientIntelligenceRepository(BaseRepository):
 
         active30 = sum(1 for p in pats if seen_after(p, d30))
         active30_prev = sum(1 for p in pats if (isinstance(p.get("last_seen_at"), datetime) and d60 <= p["last_seen_at"] < d30))
-        new_month = sum(1 for p in pats if isinstance(p.get("first_seen_at"), datetime) and p["first_seen_at"] >= mstart)
-        new_prev = sum(1 for p in pats if isinstance(p.get("first_seen_at"), datetime) and pmstart <= p["first_seen_at"] < mstart)
+        # NEW = the patient's first-EVER execution falls in the period (never executed before)
+        new_month = sum(1 for evs in tl.values() if evs and evs[0][0] >= mstart)
+        new_prev = sum(1 for evs in tl.values() if evs and pmstart <= evs[0][0] < mstart)
+        returns_count = len(self._returns_from(tl, now))
         lost = sum(1 for p in pats if not seen_after(p, now - timedelta(days=120)))
         total_rev = sum(p.get("rx_value_total", 0) for p in pats)
         rev_per_patient = round(total_rev / len(pats)) if pats else 0
@@ -152,6 +210,7 @@ class PatientIntelligenceRepository(BaseRepository):
         kpis = {
             "active_30d": {"value": active30, "delta": _pct(active30, active30_prev)},
             "new_month": {"value": new_month, "delta": _pct(new_month, new_prev)},
+            "returns": {"value": returns_count, "delta": None},
             "lost_patients": {"value": lost, "delta": None},
             "rx_month": {"value": rx_month, "delta": _pct(rx_month, rx_prev)},
             "avg_rx_value": {"value": avg_rx, "delta": None},
@@ -373,8 +432,14 @@ class PatientIntelligenceRepository(BaseRepository):
         ]).to_list(None)
         top_meds = [{"name": r["_id"], "count": r["n"]} for r in meds if r["_id"]]
 
-        new_today = await db["patients_anonymized"].count_documents(
-            {"tenant_id": self.tenant_id, "first_seen_at": {"$gte": tstart, "$lt": tend}})
+        # NEW today = patient whose first-EVER execution we hold falls today (never executed before)
+        new_rows = await db["prescription_executions"].aggregate([
+            {"$match": {"tenant_id": self.tenant_id}},
+            {"$group": {"_id": "$patient_ref", "first": {"$min": "$executed_at"}}},
+            {"$match": {"first": {"$gte": tstart, "$lt": tend}}},
+            {"$count": "n"},
+        ]).to_list(1)
+        new_today = new_rows[0]["n"] if new_rows else 0
 
         d30 = await db["prescription_executions"].aggregate([
             {"$match": {"tenant_id": self.tenant_id, "executed_at": {"$gte": tstart - timedelta(days=30), "$lt": tstart}}},

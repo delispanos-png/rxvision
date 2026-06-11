@@ -49,6 +49,11 @@ async def winback(ctx: TenantContext = Depends(require("patients:read", module=_
     return await _repo(ctx).winback()
 
 
+@router.get("/returns")
+async def returns(ctx: TenantContext = Depends(require("patients:read", module=_MODULE))):
+    return await _repo(ctx).returns()
+
+
 @router.get("/vip")
 async def vip(ctx: TenantContext = Depends(require("patients:read", module=_MODULE))):
     return await _repo(ctx).vip()

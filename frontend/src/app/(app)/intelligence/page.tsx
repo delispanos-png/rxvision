@@ -5,7 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import {
   Users, UserPlus, UserMinus, Receipt, Wallet, Coins, Activity, PhoneCall, RotateCcw, Crown,
-  Sparkles, AlertTriangle, ArrowRight, Brain,
+  Sparkles, AlertTriangle, ArrowRight, Brain, UserCheck,
 } from "lucide-react";
 import { api } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
@@ -46,6 +46,7 @@ export default function IntelligenceDashboard() {
   const cards: { key: string; label: string; en: string; icon: typeof Users; accent: "indigo" | "sky" | "rose" | "violet" | "amber" | "green" | "orange"; money?: boolean; suffix?: string; href?: string }[] = [
     { key: "active_30d", label: "Ενεργοί (30ημ)", en: "Active (30d)", icon: Users, accent: "indigo", href: "/intelligence/patients" },
     { key: "new_month", label: "Νέοι ασθενείς", en: "New patients", icon: UserPlus, accent: "sky" },
+    { key: "returns", label: "Επιστροφές", en: "Returns", icon: UserCheck, accent: "green", href: "/intelligence/returns" },
     { key: "lost_patients", label: "Χαμένοι ασθενείς", en: "Lost patients", icon: UserMinus, accent: "rose", href: "/intelligence/winback" },
     { key: "rx_month", label: "Συνταγές μήνα", en: "Prescriptions (month)", icon: Receipt, accent: "violet" },
     { key: "avg_rx_value", label: "Μέση αξία συνταγής", en: "Avg prescription value", icon: Wallet, accent: "amber", money: true },
