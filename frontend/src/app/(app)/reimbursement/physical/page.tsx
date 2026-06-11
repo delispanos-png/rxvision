@@ -4,7 +4,7 @@ import { useState, useRef, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   ScanBarcode, CheckCircle2, XCircle, RotateCcw, ChevronLeft, ChevronRight,
-  X, FileText, Syringe, Pill, ShieldAlert, Ticket, PartyPopper, CalendarDays, ArrowRight,
+  X, FileText, Syringe, Pill, ShieldAlert, Ticket, PartyPopper, CalendarDays, ArrowRight, AlertTriangle,
 } from "lucide-react";
 import { api } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
@@ -15,7 +15,7 @@ import { DataTable, type Column } from "@/components/tables/DataTable";
 type Item = { barcode: string; claim: number; fund: string; executed_at: string; checked: boolean; day: string };
 type DayRow = { date: string; total: number; checked: number };
 type Check = { period: string; total: number; checked: number; remaining: number; extra: string[]; by_day: DayRow[]; items: Item[] };
-type Coupon = { name: string; barcode: string; quantity: number; category: string; executed: boolean; qr: boolean | null };
+type Coupon = { name: string; barcode: string; quantity: number; category: string; executed: boolean; qr: boolean | null; qr_batch: string | null; qr_expiry: string | null; lot: string | null };
 type Detail = { ok: boolean; found: boolean; barcode: string; fund: string; claim: number; n_coupons: number; has_opinion: boolean | null; is_fyk: boolean; has_vaccine: boolean; has_narcotic: boolean; partial: boolean; coupons: Coupon[] };
 type ScanRes = { ok: boolean; found: boolean; barcode: string };
 
@@ -204,20 +204,33 @@ export default function PhysicalCheckPage() {
                   {detail.partial && <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-600">{t("Μερική εκτέλεση", "Partial")}</span>}
                 </div>
                 <div className="space-y-1.5">
-                  {detail.coupons.map((c, i) => (
-                    <div key={i} className={`flex items-start gap-2 rounded-lg border p-2 text-xs ${c.qr === true ? "border-emerald-200 bg-emerald-50/40 dark:border-emerald-900/50 dark:bg-emerald-950/20" : "border-slate-200 dark:border-slate-700"}`}>
-                      {c.qr === true ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" /> : <Pill className={`mt-0.5 h-4 w-4 shrink-0 ${c.category === "fyk" ? "text-orange-500" : c.category === "vaccine" ? "text-sky-500" : c.category === "narcotic" ? "text-rose-500" : "text-slate-400"}`} />}
-                      <div className="min-w-0 flex-1">
-                        <div className="font-medium text-slate-700 dark:text-slate-200">{c.name} {c.quantity > 1 && <span className="text-slate-400">×{c.quantity}</span>}</div>
-                        <div className="flex flex-wrap items-center gap-1.5 text-[10px] text-slate-400">
-                          {c.barcode && <span className="font-mono">{c.barcode}</span>}
-                          {c.qr === true && <span className="font-semibold text-emerald-600">✓ QR ({t("αυτόματα ελεγμένο", "auto-verified")})</span>}
-                          {c.qr === false && <span className="text-amber-600">{t("ΕΟΦ ταινία — έλεγξε κουπόνι", "ΕΟΦ strip — check coupon")}</span>}
-                          {!c.executed && <span className="text-rose-500">{t("ανεκτέλεστο", "unexecuted")}</span>}
+                  {detail.coupons.map((c, i) => {
+                    const strip = c.qr === false;
+                    return (
+                      <div key={i} className={`flex items-start gap-2 rounded-lg border p-2.5 ${
+                        c.qr === true ? "border-emerald-200 bg-emerald-50/50 dark:border-emerald-900/50 dark:bg-emerald-950/20"
+                          : strip ? "border-amber-300 bg-amber-50/70 dark:border-amber-800 dark:bg-amber-950/30"
+                            : "border-slate-200 dark:border-slate-700"}`}>
+                        {c.qr === true ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
+                          : strip ? <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+                            : <Pill className={`mt-0.5 h-4 w-4 shrink-0 ${c.category === "fyk" ? "text-orange-500" : c.category === "vaccine" ? "text-sky-500" : c.category === "narcotic" ? "text-rose-500" : "text-slate-400"}`} />}
+                        <div className="min-w-0 flex-1">
+                          <div className={`text-xs ${strip ? "font-semibold text-slate-800 dark:text-slate-100" : "font-medium text-slate-700 dark:text-slate-200"}`}>{c.name} {c.quantity > 1 && <span className="text-slate-400">×{c.quantity}</span>}</div>
+                          {c.qr === true && (
+                            <div className="mt-0.5 text-[11px] font-semibold text-emerald-600">✓ QR — {t("δεν χρειάζεται έλεγχος", "no check needed")}{c.qr_batch ? ` · batch ${c.qr_batch}` : ""}{c.qr_expiry ? ` · ${t("λήξη", "exp")} ${c.qr_expiry}` : ""}</div>
+                          )}
+                          {strip && (
+                            <div className="mt-1">
+                              <div className="text-[11px] font-bold uppercase tracking-wide text-amber-700">⚠ {t("Ταινία γνησιότητας — έλεγξέ το", "Authenticity strip — check it")}</div>
+                              {c.lot && <div className="mt-0.5 font-mono text-lg font-extrabold tracking-wider text-slate-900 dark:text-slate-100">{c.lot}</div>}
+                            </div>
+                          )}
+                          {c.qr === null && c.barcode && <div className="font-mono text-[10px] text-slate-400">{c.barcode}</div>}
+                          {!c.executed && <div className="text-[10px] text-rose-500">{t("ανεκτέλεστο", "unexecuted")}</div>}
                         </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
                 <p className="mt-3 text-[10px] text-slate-400">{t("Τα κουπόνια που πρέπει να υπάρχουν στη συνταγή για την κατάθεση.", "The coupons that should be on the prescription for submission.")}</p>
               </>

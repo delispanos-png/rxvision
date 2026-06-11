@@ -478,21 +478,25 @@ class ReimbursementRepository(BaseRepository):
         # cached `has_opinion`; if absent and live (user opened the prescription), fetch the CDA once
         # and cache it on every execution of this barcode (gentle, one ΗΔΙΚΑ call per Rx ever).
         opinion = exs[0].get("has_opinion")
-        qr_by_eof: dict = {}
+        lines_by_eof: dict = {}
         if live:  # explicit open → one CDA call: prescription γνωμάτευση + per-coupon QR flags
             from app.services.ingestion.cda_lookup import fetch_cda_info
             try:
                 info = await fetch_cda_info(self.tenant_id, self._db, bc)
             except Exception:  # noqa: BLE001
                 info = {}
-            qr_by_eof = info.get("qr_by_eof", {})
+            lines_by_eof = info.get("lines_by_eof", {})
             if info.get("opinion") is not None:
                 opinion = info["opinion"]
                 await self._db["prescription_executions"].update_many(
                     {"tenant_id": self.tenant_id, "external_id": {"$regex": f"^{re.escape(bc)}"}},
                     {"$set": {"has_opinion": opinion}})
         for ln in lines:  # QR coupon (HMVS) → auto-verified; ΕΟΦ ταινία → physical check needed
-            ln["qr"] = qr_by_eof.get(str(ln.get("eof"))) if qr_by_eof else None
+            ci = lines_by_eof.get(str(ln.get("eof"))) or {}
+            ln["qr"] = ci.get("qr")
+            ln["qr_batch"] = ci.get("batch")
+            ln["qr_expiry"] = ci.get("expiry")
+            ln["lot"] = ci.get("lot")
         return jsonsafe({
             "ok": True, "found": True, "barcode": bc,
             "fund": meta.get(exs[0].get("fund_id"), {}).get("group", "—"),

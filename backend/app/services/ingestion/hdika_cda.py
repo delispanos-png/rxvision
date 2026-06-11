@@ -288,7 +288,17 @@ def parse_cda_full(text: str) -> dict:
             "difference": _num(ids.get("1.4.21")),
             "substitution_allowed": _flag(ids.get("1.4.23")),
             "generic": _flag(ids.get("1.9.6.2")),
-            # 2.10.14: "1" = QR code (HMVS) → electronic coupon, auto-verified; "0" = ΕΟΦ ταινία γνησιότητας
-            "qr": ids.get("2.10.14") == "1",
+            # Coupon type — a medicine has EITHER an ΕΟΦ authenticity strip OR a QR code, never both:
+            #   QR (electronic, HMVS → auto-verified, no physical check): 2.10.14="1" OR any of the QR
+            #     fields filled (2.10.15 product code / 2.10.16 batch / 2.10.17 expiry).
+            #   Strip (physical, needs coupon check): 2.10.12 filled OR 2.10.14="0".
+            "strip": ids.get("2.10.12"),
+            "qr_product_code": ids.get("2.10.15"),
+            "qr_batch": ids.get("2.10.16"),
+            "qr_expiry": ids.get("2.10.17"),
+            "qr": (True if (ids.get("2.10.14") == "1" or ids.get("2.10.15")
+                            or ids.get("2.10.16") or ids.get("2.10.17"))
+                   else False if (ids.get("2.10.14") == "0" or ids.get("2.10.12"))
+                   else None),
         })
     return out

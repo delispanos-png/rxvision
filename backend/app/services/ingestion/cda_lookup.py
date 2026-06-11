@@ -50,6 +50,8 @@ async def fetch_cda_info(tenant_id: str, db, barcode: str) -> dict:
     cda = await asyncio.to_thread(_do)
     if not cda:
         return {}
-    qr = {str(ln["eof_code"]): bool(ln.get("qr"))
-          for ln in cda.get("lines", []) if ln.get("eof_code")}
-    return {"opinion": cda.get("details", {}).get("opinion"), "qr_by_eof": qr}
+    by_eof = {str(ln["eof_code"]): {"qr": ln.get("qr"), "batch": ln.get("qr_batch"),
+                                    "expiry": ln.get("qr_expiry"),
+                                    "lot": ln.get("lot") or ln.get("strip")}
+              for ln in cda.get("lines", []) if ln.get("eof_code")}
+    return {"opinion": cda.get("details", {}).get("opinion"), "lines_by_eof": by_eof}
