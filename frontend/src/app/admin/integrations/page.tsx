@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { adminApi } from "@/lib/adminClient";
 import { KeyRound, Save, Loader2, Check, Landmark, CreditCard, Package, Bot } from "lucide-react";
@@ -8,7 +8,7 @@ import { KeyRound, Save, Loader2, Check, Landmark, CreditCard, Package, Bot } fr
 type Integrations = {
   aade: { username: string | null; configured: boolean };
   revolut: { mode: string; api_key_set: boolean; webhook_secret_set: boolean };
-  anthropic?: { api_key_set: boolean };
+  anthropic?: { api_key_set: boolean; enabled: boolean; model: string };
 };
 type Pkg = { _id: string; name?: string; price_monthly?: number; price_yearly?: number; trial_days?: number };
 
@@ -26,12 +26,20 @@ export default function IntegrationsPage() {
   const [revMode, setRevMode] = useState("sandbox");
   const [revSecret, setRevSecret] = useState("");
   const [antKey, setAntKey] = useState("");
+  const [antEnabled, setAntEnabled] = useState(true);
+  const [antModel, setAntModel] = useState("claude-opus-4-8");
+  useEffect(() => {
+    if (status.data?.anthropic) {
+      setAntEnabled(status.data.anthropic.enabled ?? true);
+      setAntModel(status.data.anthropic.model || "claude-opus-4-8");
+    }
+  }, [status.data]);
 
   const save = useMutation({
     mutationFn: () => adminApi("/admin/integrations", { method: "PUT", body: JSON.stringify({
       aade_username: aadeUser || null, aade_password: aadePass || null,
       revolut_api_key: revKey || null, revolut_mode: revMode || null, revolut_webhook_secret: revSecret || null,
-      anthropic_api_key: antKey || null,
+      anthropic_api_key: antKey || null, anthropic_enabled: antEnabled, anthropic_model: antModel || null,
     }) }),
     onSuccess: () => { setAadePass(""); setRevKey(""); setRevSecret(""); setAntKey(""); qc.invalidateQueries({ queryKey: ["integrations"] }); },
   });
@@ -92,14 +100,27 @@ export default function IntegrationsPage() {
 
       {/* Anthropic / PharmaCat */}
       <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-        <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-700"><Bot className="h-4 w-4 text-brand-600" /> PharmaCat — Anthropic (Claude) API key <Badge ok={s?.anthropic?.api_key_set} /></h3>
-        <label className="text-xs text-slate-500">Anthropic API key (κλινικός βοηθός PharmaCat)
-          <input type="password" value={antKey} onChange={(e) => setAntKey(e.target.value)} placeholder={s?.anthropic?.api_key_set ? "•••• (αποθηκευμένο — κενό = αμετάβλητο)" : "sk-ant-..."} className={inp} />
-        </label>
-        <p className="mt-3 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-500">Τροφοδοτεί το κύκλωμα <b>PharmaCat Clinical Assistant</b> (CDSS). Χωρίς κλειδί, το κύκλωμα εμφανίζει «μη ρυθμισμένο». Μοντέλο: <code className="text-brand-700">claude-opus-4-8</code>.</p>
+        <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-700"><Bot className="h-4 w-4 text-brand-600" /> PharmaCat — Anthropic (Claude) <Badge ok={s?.anthropic?.api_key_set} /></h3>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <label className="text-xs text-slate-500 sm:col-span-2">Anthropic API key
+            <input type="password" value={antKey} onChange={(e) => setAntKey(e.target.value)} placeholder={s?.anthropic?.api_key_set ? "•••• (αποθηκευμένο — κενό = αμετάβλητο)" : "sk-ant-..."} className={inp} />
+          </label>
+          <label className="text-xs text-slate-500">Μοντέλο (κόστος vs ποιότητα)
+            <select value={antModel} onChange={(e) => setAntModel(e.target.value)} className={inp}>
+              <option value="claude-opus-4-8">Opus 4.8 — κορυφαίο (ακριβότερο)</option>
+              <option value="claude-sonnet-4-6">Sonnet 4.6 — ισορροπία (φθηνό)</option>
+              <option value="claude-haiku-4-5">Haiku 4.5 — οικονομικό</option>
+            </select>
+          </label>
+          <label className="flex items-center gap-2 self-end pb-2 text-xs font-medium text-slate-600">
+            <input type="checkbox" checked={antEnabled} onChange={(e) => setAntEnabled(e.target.checked)} className="h-4 w-4 rounded border-slate-300" />
+            Ενεργή υπηρεσία {!antEnabled && <span className="text-rose-500">(απενεργοποιημένη για όλους)</span>}
+          </label>
+        </div>
+        <p className="mt-3 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-500">Τροφοδοτεί το <b>PharmaCat Clinical Assistant</b> (CDSS). Cache: επαναλαμβανόμενες ερωτήσεις = δωρεάν. Όριο: 50 νέες ερωτήσεις/φαρμακείο/ημέρα.</p>
       </div>
 
-      <button onClick={() => save.mutate()} disabled={save.isPending || (!aadeUser && !aadePass && !revKey && !revSecret && !antKey)} className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50">
+      <button onClick={() => save.mutate()} disabled={save.isPending} className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50">
         {save.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : save.isSuccess ? <Check className="h-4 w-4" /> : <Save className="h-4 w-4" />} Αποθήκευση διαπιστευτηρίων
       </button>
 

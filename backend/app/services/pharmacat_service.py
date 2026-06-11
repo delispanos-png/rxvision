@@ -14,7 +14,9 @@ import json
 
 from app.core.db import shared_db
 
-_MODEL = "claude-opus-4-8"
+_DEFAULT_MODEL = "claude-opus-4-8"
+# Selectable in admin → Integrations (cost vs quality). Opus best, Sonnet ~6× cheaper, Haiku cheapest.
+ALLOWED_MODELS = ("claude-opus-4-8", "claude-sonnet-4-6", "claude-haiku-4-5")
 
 # Hard-coded clinical safety contract. Phrased as context + duties, not over-aggressive commands.
 SYSTEM = """Είσαι ο «PharmaCat», κλινικός επιστημονικός βοηθός (Clinical Decision Support System)
@@ -104,21 +106,24 @@ SCHEMA = {
 }
 
 
-async def api_key() -> str | None:
+async def _config() -> dict:
     cfg = await shared_db()["platform_settings"].find_one({"_id": "anthropic"}) or {}
-    return cfg.get("api_key")
+    model = cfg.get("model") if cfg.get("model") in ALLOWED_MODELS else _DEFAULT_MODEL
+    return {"api_key": cfg.get("api_key"), "enabled": cfg.get("enabled", True), "model": model}
 
 
 async def status() -> dict:
-    return {"configured": bool(await api_key()), "model": _MODEL}
+    c = await _config()
+    return {"configured": bool(c["api_key"]), "enabled": bool(c["enabled"]), "model": c["model"]}
 
 
 async def ask(messages: list[dict], context: dict | None = None) -> dict:
-    """messages: [{role: 'user'|'assistant', content: str}]. context: patient facts the pharmacist
-    has filled (age, sex, pregnancy, chronic, meds, allergies…). Returns the structured analysis."""
-    key = await api_key()
-    if not key:
+    """messages: [{role: 'user'|'assistant', content: str}]. Returns the structured analysis."""
+    c = await _config()
+    if not c["api_key"]:
         return {"ok": False, "error": "not_configured"}
+    if not c["enabled"]:
+        return {"ok": False, "error": "disabled"}
 
     import anthropic
 
@@ -128,15 +133,19 @@ async def ask(messages: list[dict], context: dict | None = None) -> dict:
         if facts:
             sys = f"{SYSTEM}\n\nΓΝΩΣΤΑ ΣΤΟΙΧΕΙΑ ΑΣΘΕΝΟΥΣ: {facts}"
 
-    client = anthropic.AsyncAnthropic(api_key=key)
+    model = c["model"]
+    # Cost-optimised for a high-volume counter tool: NO extended thinking (OTC triage is recall).
+    out_cfg: dict = {"format": {"type": "json_schema", "schema": SCHEMA}}
+    if model != "claude-haiku-4-5":   # effort param errors on Haiku 4.5
+        out_cfg["effort"] = "low"
+    client = anthropic.AsyncAnthropic(api_key=c["api_key"])
     try:
         resp = await client.messages.create(
-            model=_MODEL,
-            max_tokens=4096,
-            thinking={"type": "adaptive"},
+            model=model,
+            max_tokens=2048,
             system=sys,
             messages=[{"role": m["role"], "content": m["content"]} for m in messages],
-            output_config={"format": {"type": "json_schema", "schema": SCHEMA}, "effort": "high"},
+            output_config=out_cfg,
         )
     except anthropic.APIStatusError as e:
         return {"ok": False, "error": f"api_error:{e.status_code}"}
