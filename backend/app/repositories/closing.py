@@ -7,18 +7,23 @@ under module "monthly_closing" keyed by period.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 from app.repositories.base import BaseRepository
 
+# executed_at is a UTC instant; the closing period is the pharmacy's LOCAL calendar month,
+# so bounds are built in Europe/Athens (comparison stays instant-based & correct).
+_ATHENS = ZoneInfo("Europe/Athens")
+
 
 def _period_bounds(period: str) -> tuple[datetime, datetime]:
-    """`period` is YYYY-MM → [first-of-month, first-of-next-month) in UTC."""
+    """`period` is YYYY-MM → [first-of-month, first-of-next-month) in Europe/Athens local time."""
     year, month = (int(x) for x in period.split("-"))
-    start = datetime(year, month, 1, tzinfo=timezone.utc)
+    start = datetime(year, month, 1, tzinfo=_ATHENS)
     if month == 12:
-        end = datetime(year + 1, 1, 1, tzinfo=timezone.utc)
+        end = datetime(year + 1, 1, 1, tzinfo=_ATHENS)
     else:
-        end = datetime(year, month + 1, 1, tzinfo=timezone.utc)
+        end = datetime(year, month + 1, 1, tzinfo=_ATHENS)
     return start, end
 
 
