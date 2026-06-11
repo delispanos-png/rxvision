@@ -1,6 +1,5 @@
 "use client";
 
-import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import {
@@ -9,6 +8,7 @@ import {
 } from "lucide-react";
 import { api } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
+import { useReimbPeriod } from "@/store/reimbStore";
 import { fmtNum, fmtEur } from "@/lib/formatters";
 import { KpiCard } from "@/components/kpi/KpiCard";
 
@@ -27,24 +27,16 @@ const SEV: Record<string, string> = {
 };
 const SEV_ICON: Record<string, string> = { critical: "text-rose-600", warning: "text-amber-600", info: "text-slate-500" };
 
-function curMonth() { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`; }
-
 export default function ReimbursementExecutive() {
   const t = useT();
   const router = useRouter();
-  const [period, setPeriod] = useState(curMonth());
+  const { period } = useReimbPeriod();
   const { data, isLoading } = useQuery({ queryKey: ["reimb-exec", period], queryFn: () => api<Exec>(`/reimbursement/executive?period=${period}`) });
   const k = data?.kpis;
   const dp = data?.delta_prev;
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <span className="text-sm text-slate-500">{t("Περίοδος κλεισίματος", "Closing period")}</span>
-        <input type="month" value={period} max={curMonth()} onChange={(e) => setPeriod(e.target.value)}
-          className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm dark:border-slate-600 dark:bg-slate-800" />
-      </div>
-
       {isLoading ? <div className="p-8 text-slate-400">{t("Έλεγχος αποζημίωσης…", "Auditing reimbursement…")}</div> : (
         <>
           {/* AI AUDITOR */}

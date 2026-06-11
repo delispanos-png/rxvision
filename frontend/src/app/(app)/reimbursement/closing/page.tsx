@@ -1,10 +1,10 @@
 "use client";
 
-import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Building2, Layers } from "lucide-react";
 import { api } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
+import { useReimbPeriod } from "@/store/reimbStore";
 import { fmtNum, fmtEur } from "@/lib/formatters";
 import { DataTable, type Column } from "@/components/tables/DataTable";
 import { ExportMenu } from "@/components/export/ExportMenu";
@@ -19,11 +19,10 @@ type Closing = {
 };
 
 const CAT: Record<string, string> = { normal: "Κανονικό", narcotic: "Ναρκωτικό", vaccine: "Εμβόλιο", high_cost: "Υψηλού κόστους", allergen: "Αλλεργιογόνο" };
-function curMonth() { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`; }
 
 export default function ClosingPage() {
   const t = useT();
-  const [period, setPeriod] = useState(curMonth());
+  const { period } = useReimbPeriod();
   const { data, isLoading } = useQuery({ queryKey: ["reimb-closing", period], queryFn: () => api<Closing>(`/reimbursement/closing?period=${period}`) });
   const maxDay = Math.max(1, ...(data?.by_day ?? []).map((d) => d.rx));
   const maxCat = Math.max(1, ...(data?.by_category ?? []).map((c) => c.claim));
@@ -38,10 +37,6 @@ export default function ClosingPage() {
 
   return (
     <div className="space-y-5">
-      <div className="flex items-center justify-between">
-        <span className="text-sm text-slate-500">{t("Κλείσιμο", "Closing")} {period}</span>
-        <input type="month" value={period} max={curMonth()} onChange={(e) => setPeriod(e.target.value)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm dark:border-slate-600 dark:bg-slate-800" />
-      </div>
       {isLoading ? <div className="p-8 text-slate-400">{t("Φόρτωση…", "Loading…")}</div> : (
         <>
           <div className="grid grid-cols-2 gap-3 rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900 md:grid-cols-4">

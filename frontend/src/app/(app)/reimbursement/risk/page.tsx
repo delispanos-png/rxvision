@@ -1,10 +1,10 @@
 "use client";
 
-import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ScissorsLineDashed } from "lucide-react";
 import { api } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
+import { useReimbPeriod } from "@/store/reimbStore";
 import { fmtNum, fmtEur, fmtDate } from "@/lib/formatters";
 import { DataTable, type Column } from "@/components/tables/DataTable";
 
@@ -20,11 +20,9 @@ const FLAG: Record<string, { el: string; en: string }> = {
   missing_fund: { el: "Λείπει ταμείο", en: "Missing fund" },
   high_cost: { el: "Υψηλού κόστους", en: "High cost" },
 };
-function curMonth() { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`; }
-
 export default function RiskPage() {
   const t = useT();
-  const [period, setPeriod] = useState(curMonth());
+  const { period } = useReimbPeriod();
   const risk = useQuery({ queryKey: ["reimb-risk", period], queryFn: () => api<Risk>(`/reimbursement/risk?period=${period}`) });
   const cuts = useQuery({ queryKey: ["reimb-cuts", period], queryFn: () => api<Cuts>(`/reimbursement/cuts?period=${period}`) });
   const total = (risk.data?.distribution ?? []).reduce((s, b) => s + b.count, 0) || 1;
@@ -40,10 +38,7 @@ export default function RiskPage() {
 
   return (
     <div className="space-y-5">
-      <div className="flex items-center justify-between">
-        <span className="inline-flex items-center gap-2 text-sm font-medium text-slate-700 dark:text-slate-200"><ScissorsLineDashed className="h-4 w-4 text-rose-600" /> {t("Συνολική πιθανή απώλεια", "Total likely loss")}: <b className="text-rose-600">{fmtEur(risk.data?.total_at_risk ?? 0)}</b></span>
-        <input type="month" value={period} max={curMonth()} onChange={(e) => setPeriod(e.target.value)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm dark:border-slate-600 dark:bg-slate-800" />
-      </div>
+      <span className="inline-flex items-center gap-2 text-sm font-medium text-slate-700 dark:text-slate-200"><ScissorsLineDashed className="h-4 w-4 text-rose-600" /> {t("Συνολική πιθανή απώλεια", "Total likely loss")}: <b className="text-rose-600">{fmtEur(risk.data?.total_at_risk ?? 0)}</b></span>
 
       <div className="rx-card p-5">
         <h3 className="mb-3 text-sm font-semibold text-slate-700 dark:text-slate-200">{t("Κατανομή κινδύνου συνταγών", "Prescription risk distribution")}</h3>

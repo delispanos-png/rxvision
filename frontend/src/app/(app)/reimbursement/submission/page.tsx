@@ -1,11 +1,11 @@
 "use client";
 
-import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { Building2, Send } from "lucide-react";
 import { api } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
+import { useReimbPeriod } from "@/store/reimbStore";
 import { fmtNum, fmtEur } from "@/lib/formatters";
 import { DataTable, type Column } from "@/components/tables/DataTable";
 
@@ -18,14 +18,11 @@ type Sub = { period: string; batches: Batch[]; status_counts: Record<string, num
 const STATUSES = ["draft", "ready_for_review", "ready_for_submission", "submitted", "received", "approved", "paid", "cut", "rejected"];
 const ST_EL: Record<string, string> = { draft: "Πρόχειρο", ready_for_review: "Προς έλεγχο", ready_for_submission: "Έτοιμο υποβολής", submitted: "Υποβλήθηκε", received: "Παρελήφθη", approved: "Εγκρίθηκε", paid: "Πληρώθηκε", cut: "Περικοπή", rejected: "Απορρίφθηκε" };
 const ST_COLOR: Record<string, string> = { draft: "bg-slate-100 text-slate-600", ready_for_review: "bg-amber-100 text-amber-700", ready_for_submission: "bg-sky-100 text-sky-700", submitted: "bg-violet-100 text-violet-700", received: "bg-indigo-100 text-indigo-700", approved: "bg-emerald-100 text-emerald-700", paid: "bg-emerald-100 text-emerald-700", cut: "bg-rose-100 text-rose-700", rejected: "bg-rose-100 text-rose-700" };
-function prevMonth() { const d = new Date(); d.setMonth(d.getMonth() - 1); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`; }
-function curMonth() { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`; }
-
 export default function SubmissionPage() {
   const t = useT();
   const router = useRouter();
   const qc = useQueryClient();
-  const [period, setPeriod] = useState(prevMonth());
+  const { period } = useReimbPeriod();
   const { data, isLoading } = useQuery({ queryKey: ["reimb-sub", period], queryFn: () => api<Sub>(`/reimbursement/submission?period=${period}`) });
   const setStatus = useMutation({
     mutationFn: (v: { batch_id: string; status: string }) => api(`/reimbursement/submission/status?period=${period}`, { method: "POST", body: JSON.stringify(v) }),
@@ -47,10 +44,7 @@ export default function SubmissionPage() {
 
   return (
     <div className="space-y-5">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <h3 className="inline-flex items-center gap-2 text-sm font-semibold text-slate-700 dark:text-slate-200"><Send className="h-4 w-4 text-emerald-600" /> {t("Κέντρο υποβολής — δέσμες ανά ταμείο", "Submission center — per-fund batches")}</h3>
-        <input type="month" value={period} max={curMonth()} onChange={(e) => setPeriod(e.target.value)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm dark:border-slate-600 dark:bg-slate-800" />
-      </div>
+      <h3 className="inline-flex items-center gap-2 text-sm font-semibold text-slate-700 dark:text-slate-200"><Send className="h-4 w-4 text-emerald-600" /> {t("Κέντρο υποβολής — δέσμες ανά ομάδα ταμείων", "Submission center — per-group batches")}</h3>
 
       {/* status funnel */}
       <div className="flex flex-wrap gap-2">

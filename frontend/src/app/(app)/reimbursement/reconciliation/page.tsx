@@ -5,14 +5,12 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Landmark, Wallet, ScissorsLineDashed, Clock } from "lucide-react";
 import { api } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
+import { useReimbPeriod } from "@/store/reimbStore";
 import { fmtEur } from "@/lib/formatters";
 import { KpiCard } from "@/components/kpi/KpiCard";
 
 type Sub = { batches: { batch_id: string; fund: string; is_eopyy: boolean; expected_claim: number; paid_amount?: number | null; cut_amount?: number | null; status: string }[] };
 type Rec = { expected: number; paid: number; cut: number; outstanding: number };
-
-function prevMonth() { const d = new Date(); d.setMonth(d.getMonth() - 1); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`; }
-function curMonth() { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`; }
 
 function PayInput({ batch, period, onSaved }: { batch: Sub["batches"][0]; period: string; onSaved: () => void }) {
   const [val, setVal] = useState(batch.paid_amount != null ? String(batch.paid_amount / 100) : "");
@@ -29,17 +27,14 @@ function PayInput({ batch, period, onSaved }: { batch: Sub["batches"][0]; period
 export default function ReconciliationPage() {
   const t = useT();
   const qc = useQueryClient();
-  const [period, setPeriod] = useState(prevMonth());
+  const { period } = useReimbPeriod();
   const sub = useQuery({ queryKey: ["reimb-sub", period], queryFn: () => api<Sub>(`/reimbursement/submission?period=${period}`) });
   const rec = useQuery({ queryKey: ["reimb-rec", period], queryFn: () => api<Rec>(`/reimbursement/reconciliation?period=${period}`) });
   const refresh = () => { qc.invalidateQueries({ queryKey: ["reimb-rec", period] }); qc.invalidateQueries({ queryKey: ["reimb-sub", period] }); };
 
   return (
     <div className="space-y-5">
-      <div className="flex items-center justify-between">
-        <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-200">{t("Συμφωνία πληρωμών — αναμενόμενο vs πληρωμένο", "Reconciliation — expected vs paid")}</h3>
-        <input type="month" value={period} max={curMonth()} onChange={(e) => setPeriod(e.target.value)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm dark:border-slate-600 dark:bg-slate-800" />
-      </div>
+      <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-200">{t("Συμφωνία πληρωμών — αναμενόμενο vs πληρωμένο", "Reconciliation — expected vs paid")}</h3>
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <KpiCard label={t("Αναμενόμενο", "Expected")} value={fmtEur(rec.data?.expected ?? 0)} icon={Landmark} accent="indigo" />

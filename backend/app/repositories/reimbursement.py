@@ -64,9 +64,22 @@ class ReimbursementRepository(BaseRepository):
         return {f["_id"]: f.get("name") or f.get("fund_name") or "—"
                 async for f in self._db["insurance_funds"].find({"tenant_id": self.tenant_id})}
 
-    @staticmethod
-    def _is_eopyy(name: str | None) -> bool:
-        return bool(name and ("ΕΟΠΥΥ" in name.upper() or "EOPYY" in name.upper()))
+    async def _fund_meta(self) -> dict:
+        """fund_id → {name, group, is_eopyy} using the admin fund-grouping (the 'ΕΟΠΥΥ' group
+        lists every ΕΟΠΥΥ-administered fund). Funds not in any group map to themselves (standalone)."""
+        grouping: dict = {}  # fund code → (group_name, is_eopyy)
+        async for g in self._db["fund_groups"].find({}):  # tenant-ok: shared platform grouping
+            gname = g.get("name") or ""
+            is_eo = "ΕΟΠΥΥ" in gname.upper() or "EOPYY" in gname.upper()
+            for code in g.get("codes", []):
+                grouping[code] = (gname, is_eo)
+        out = {}
+        async for f in self._db["insurance_funds"].find({"tenant_id": self.tenant_id}):
+            name = f.get("name") or f.get("fund_name") or "—"
+            code = f.get("code") or name
+            grp, is_eo = grouping.get(code, (name, False))
+            out[f["_id"]] = {"name": name, "group": grp, "is_eopyy": is_eo}
+        return out
 
     # ── 1. MONTHLY CLOSING ──────────────────────────────────────────────────
     async def _period_money(self, period: str) -> dict:
@@ -83,7 +96,7 @@ class ReimbursementRepository(BaseRepository):
 
     async def monthly_closing(self, period: str) -> dict:
         start, end = _month_bounds(period)
-        names = await self._fund_names()
+        meta = await self._fund_meta()
         match = {"tenant_id": self.tenant_id, "executed_at": {"$gte": start, "$lt": end}}
 
         by_day = [{"day": r["_id"], "rx": r["rx"], "claim": r["claim"]}
@@ -98,16 +111,17 @@ class ReimbursementRepository(BaseRepository):
             {"$group": {"_id": "$fund_id", "rx": {"$sum": 1}, "retail": {"$sum": "$amount_total"},
                         "claim": {"$sum": "$amount_claimed"}, "patient": {"$sum": "$patient_share"}}},
             {"$sort": {"claim": -1}}]).to_list(None)
-        by_fund, eopyy_claim, other_claim = [], 0, 0
+        grouped: dict = defaultdict(lambda: {"rx": 0, "retail": 0, "claim": 0, "patient": 0, "is_eopyy": False})
         for f in by_fund_raw:
-            nm = names.get(f["_id"], "—")
-            eopyy = self._is_eopyy(nm)
-            by_fund.append({"fund": nm, "is_eopyy": eopyy, "rx": f["rx"], "retail": f["retail"],
-                            "claim": f["claim"], "patient": f["patient"]})
-            if eopyy:
-                eopyy_claim += f["claim"]
-            else:
-                other_claim += f["claim"]
+            m = meta.get(f["_id"], {"group": "—", "is_eopyy": False})
+            g = grouped[m["group"]]
+            g["rx"] += f["rx"]; g["retail"] += f["retail"]; g["claim"] += f["claim"]; g["patient"] += f["patient"]
+            g["is_eopyy"] = m["is_eopyy"]
+        by_fund = [{"fund": k, "is_eopyy": v["is_eopyy"], "rx": v["rx"], "retail": v["retail"],
+                    "claim": v["claim"], "patient": v["patient"]} for k, v in grouped.items()]
+        by_fund.sort(key=lambda x: x["claim"], reverse=True)
+        eopyy_claim = sum(b["claim"] for b in by_fund if b["is_eopyy"])
+        other_claim = sum(b["claim"] for b in by_fund if not b["is_eopyy"])
 
         by_cat = [{"category": (r["_id"] or "—"), "rx": r["rx"], "claim": r["claim"]}
                   for r in await self._db["prescription_executions"].aggregate([
@@ -141,21 +155,22 @@ class ReimbursementRepository(BaseRepository):
             if m == 0:
                 y, m = y - 1, 12
             months.append(f"{y:04d}-{m:02d}")
-        names = await self._fund_names()
-        acc: dict = defaultdict(lambda: {"claim": 0, "n": 0})
+        meta = await self._fund_meta()
+        acc: dict = defaultdict(lambda: {"claim": 0, "is_eopyy": False})
+        n_months = 0
         for per in months:
             start, end = _month_bounds(per)
             rows = await self._db["prescription_executions"].aggregate([
                 {"$match": {"tenant_id": self.tenant_id, "executed_at": {"$gte": start, "$lt": end}}},
                 {"$group": {"_id": "$fund_id", "claim": {"$sum": "$amount_claimed"}}}]).to_list(None)
+            if rows:
+                n_months += 1
             for r in rows:
-                acc[r["_id"]]["claim"] += r["claim"]
-                acc[r["_id"]]["n"] += 1
-        out = []
-        for fid, a in acc.items():
-            avg = round(a["claim"] / max(a["n"], 1))
-            out.append({"fund": names.get(fid, "—"), "is_eopyy": self._is_eopyy(names.get(fid)),
-                        "expected_monthly": avg})
+                m = meta.get(r["_id"], {"group": "—", "is_eopyy": False})
+                acc[m["group"]]["claim"] += r["claim"]
+                acc[m["group"]]["is_eopyy"] = m["is_eopyy"]
+        out = [{"fund": grp, "is_eopyy": a["is_eopyy"],
+                "expected_monthly": round(a["claim"] / max(n_months, 1))} for grp, a in acc.items()]
         out.sort(key=lambda x: x["expected_monthly"], reverse=True)
         return jsonsafe({"months_used": months, "by_fund": out,
                          "expected_total": sum(o["expected_monthly"] for o in out)})
@@ -242,39 +257,45 @@ class ReimbursementRepository(BaseRepository):
         """Per-fund submission batches for a month — auto-synced from executions (financials/rx),
         status/payment preserved. Plus a risk summary per batch."""
         start, end = _month_bounds(period)
-        names = await self._fund_names()
+        meta = await self._fund_meta()
         agg = await self._db["prescription_executions"].aggregate([
             {"$match": {"tenant_id": self.tenant_id, "executed_at": {"$gte": start, "$lt": end}}},
             {"$group": {"_id": "$fund_id", "rx": {"$sum": 1}, "claim": {"$sum": "$amount_claimed"}}},
         ]).to_list(None)
+        # fold funds into their group (ΕΟΠΥΥ = one batch, standalone funds separate)
+        gagg: dict = defaultdict(lambda: {"rx": 0, "claim": 0, "is_eopyy": False})
+        for a in agg:
+            m = meta.get(a["_id"], {"group": "—", "is_eopyy": False})
+            g = gagg[m["group"]]
+            g["rx"] += a["rx"]; g["claim"] += a["claim"]; g["is_eopyy"] = m["is_eopyy"]
         risk_rows = await self._risk_rows(period)
-        risk_by_fund: dict = defaultdict(lambda: {"flagged": 0, "cut": 0})
+        risk_by_group: dict = defaultdict(lambda: {"flagged": 0, "cut": 0})
         for r in risk_rows:
             if r["score"] >= 25:
-                risk_by_fund[r["fund_id"]]["flagged"] += 1
-                risk_by_fund[r["fund_id"]]["cut"] += r["expected_cut"]
+                m = meta.get(r["fund_id"], {"group": "—"})
+                risk_by_group[m["group"]]["flagged"] += 1
+                risk_by_group[m["group"]]["cut"] += r["expected_cut"]
 
         out = []
-        for a in agg:
-            fid = a["_id"]
-            bid = self._batch_id(period, fid)
+        for grp, a in gagg.items():
+            bid = self._batch_id(period, grp)
             existing = await self._db["submission_batches"].find_one(
                 {"_id": bid, "tenant_id": self.tenant_id})
             doc = {
-                "_id": bid, "tenant_id": self.tenant_id, "period": period, "fund_id": fid,
-                "fund_name": names.get(fid, "—"), "is_eopyy": self._is_eopyy(names.get(fid)),
+                "_id": bid, "tenant_id": self.tenant_id, "period": period, "fund_id": grp,
+                "fund_name": grp, "is_eopyy": a["is_eopyy"],
                 "rx": a["rx"], "expected_claim": a["claim"], "updated_at": _now()}
             if not existing:
                 doc["status"] = "ready_for_review"
                 await self._db["submission_batches"].insert_one(doc)
-                await self._log(bid, period, fid, "created", None, "ready_for_review")
+                await self._log(bid, period, grp, "created", None, "ready_for_review")
                 existing = doc
             else:
                 await self._db["submission_batches"].update_one(
                     {"_id": bid, "tenant_id": self.tenant_id},
-                    {"$set": {"rx": a["rx"], "expected_claim": a["claim"], "fund_name": doc["fund_name"],
-                              "is_eopyy": doc["is_eopyy"], "updated_at": _now()}})
-            rb = risk_by_fund.get(fid, {"flagged": 0, "cut": 0})
+                    {"$set": {"rx": a["rx"], "expected_claim": a["claim"], "fund_name": grp,
+                              "is_eopyy": a["is_eopyy"], "updated_at": _now()}})
+            rb = risk_by_group.get(grp, {"flagged": 0, "cut": 0})
             out.append({
                 "batch_id": bid, "fund": doc["fund_name"], "is_eopyy": doc["is_eopyy"],
                 "rx": a["rx"], "expected_claim": a["claim"],

@@ -89,12 +89,14 @@ export default function TodayPage() {
         {/* categories */}
         <div className="rx-card p-5">
           <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-700 dark:text-slate-200"><Layers className="h-4 w-4 text-brand-600" /> {t("Κατηγορίες εκτελέσεων", "Execution categories")}</h3>
-          <div className="space-y-2">
+          <div className="space-y-2.5">
             {data.categories.map((c) => (
-              <div key={c.category} className="flex items-center gap-3">
-                <span className="w-28 shrink-0 truncate text-sm text-slate-600 dark:text-slate-300">{t(CAT[c.category] ?? c.category, c.category)}</span>
-                <div className="h-2.5 flex-1 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800"><div className="h-full rounded-full bg-brand-500" style={{ width: `${(c.count / maxCat) * 100}%` }} /></div>
-                <b className="w-8 text-right text-sm text-slate-700 dark:text-slate-200">{c.count}</b>
+              <div key={c.category}>
+                <div className="mb-0.5 flex items-center justify-between gap-2">
+                  <span className="text-sm text-slate-600 dark:text-slate-300">{t(CAT[c.category] ?? c.category, c.category)}</span>
+                  <b className="text-sm text-slate-700 dark:text-slate-200">{c.count}</b>
+                </div>
+                <div className="h-2 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800"><div className="h-full rounded-full bg-brand-500" style={{ width: `${(c.count / maxCat) * 100}%` }} /></div>
               </div>
             ))}
             {!data.categories.length && <p className="text-sm text-slate-400">{t("Καμία εκτέλεση.", "No executions.")}</p>}
@@ -104,12 +106,14 @@ export default function TodayPage() {
         {/* top meds */}
         <div className="rx-card p-5">
           <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-700 dark:text-slate-200"><Pill className="h-4 w-4 text-brand-600" /> {t("Κορυφαία φάρμακα ημέρας", "Top medicines today")}</h3>
-          <div className="space-y-2">
+          <div className="space-y-2.5">
             {data.top_meds.map((m) => (
-              <div key={m.name} className="flex items-center gap-3">
-                <span className="w-32 shrink-0 truncate text-sm text-slate-600 dark:text-slate-300">{m.name}</span>
-                <div className="h-2.5 flex-1 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800"><div className="h-full rounded-full bg-violet-500" style={{ width: `${(m.count / maxMed) * 100}%` }} /></div>
-                <b className="w-8 text-right text-sm text-slate-700 dark:text-slate-200">{m.count}</b>
+              <div key={m.name}>
+                <div className="mb-0.5 flex items-center justify-between gap-2">
+                  <span className="text-sm text-slate-600 dark:text-slate-300">{m.name}</span>
+                  <b className="text-sm text-slate-700 dark:text-slate-200">{m.count}</b>
+                </div>
+                <div className="h-2 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800"><div className="h-full rounded-full bg-violet-500" style={{ width: `${(m.count / maxMed) * 100}%` }} /></div>
               </div>
             ))}
             {!data.top_meds.length && <p className="text-sm text-slate-400">{t("Καμία εκτέλεση.", "No executions.")}</p>}
