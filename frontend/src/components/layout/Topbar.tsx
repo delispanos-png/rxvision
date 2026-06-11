@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
-import { KeyRound, LogOut, Menu, Settings, User, Sun, Moon } from "lucide-react";
+import { KeyRound, LogOut, Menu, Settings, User, Sun, Moon, PanelLeft, PanelLeftClose } from "lucide-react";
 import { api, queryKeys } from "@/lib/apiClient";
 import { useNavStore } from "@/store/navStore";
 import { usePref, useT } from "@/store/prefStore";
@@ -24,7 +24,7 @@ function initials(name: string): string {
 
 export function Topbar() {
   const router = useRouter();
-  const { theme, setTheme, locale, setLocale } = usePref();
+  const { theme, setTheme, locale, setLocale, collapsed, toggleCollapsed } = usePref();
   const t = useT();
   const { data } = useQuery({ queryKey: queryKeys.me(), queryFn: () => api<Me>("/auth/me"), retry: false });
 
@@ -73,6 +73,14 @@ export function Topbar() {
         className="mr-auto grid h-10 w-10 place-items-center rounded-lg text-slate-600 hover:bg-white dark:text-slate-300 dark:hover:bg-slate-800 md:hidden"
       >
         <Menu className="h-5 w-5" />
+      </button>
+      <button
+        onClick={toggleCollapsed}
+        title={collapsed ? t("Ανάπτυξη μενού", "Expand menu") : t("Σύμπτυξη μενού", "Collapse menu")}
+        aria-label={collapsed ? t("Ανάπτυξη μενού", "Expand menu") : t("Σύμπτυξη μενού", "Collapse menu")}
+        className="mr-auto hidden h-9 w-9 place-items-center rounded-lg text-slate-500 hover:bg-white dark:text-slate-300 dark:hover:bg-slate-800 md:grid"
+      >
+        {collapsed ? <PanelLeft className="h-[18px] w-[18px]" /> : <PanelLeftClose className="h-[18px] w-[18px]" />}
       </button>
       <button
         onClick={() => setTheme(theme === "dark" ? "light" : "dark")}

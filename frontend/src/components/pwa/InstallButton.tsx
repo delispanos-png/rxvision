@@ -46,9 +46,11 @@ export function InstallButton() {
     <div className="relative">
       <button
         onClick={onClick}
-        className="flex items-center gap-1.5 rounded-lg border border-brand-200 bg-brand-50 px-2.5 py-1.5 text-sm font-medium text-brand-700 hover:bg-brand-100"
+        title={t("Εγκατάσταση εφαρμογής", "Install app")}
+        aria-label={t("Εγκατάσταση εφαρμογής", "Install app")}
+        className="grid h-9 w-9 place-items-center rounded-lg border border-brand-200 bg-brand-50 text-brand-700 hover:bg-brand-100"
       >
-        <Download className="h-4 w-4" /> <span className="hidden sm:inline">{t("Εγκατάσταση", "Install")}</span>
+        <Download className="h-[18px] w-[18px]" />
       </button>
       {iosHint && (
         <div className="absolute right-0 top-full z-50 mt-2 w-64 rounded-xl border border-slate-200 bg-white p-3 text-xs text-slate-600 shadow-pop">

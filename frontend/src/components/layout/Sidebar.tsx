@@ -9,7 +9,7 @@ import { Logo } from "@/components/brand/Logo";
 import {
   Activity, BarChart3, Boxes, CalendarClock, ClipboardCheck, LayoutDashboard,
   Mail, Salad, PackageSearch, Settings, Sparkles, Stethoscope, TrendingUp, Users,
-  PanelLeftClose, PanelLeft, type LucideIcon,
+  type LucideIcon,
 } from "lucide-react";
 
 type Item = { href: string; label: string; en: string; icon: LucideIcon };
@@ -44,7 +44,7 @@ const GROUPS: Group[] = [
 export function Sidebar() {
   const pathname = usePathname();
   const { open, setOpen } = useNavStore();
-  const { collapsed, toggleCollapsed } = usePref();
+  const { collapsed } = usePref();
   const t = useT();
   useEffect(() => { setOpen(false); }, [pathname, setOpen]);
 
@@ -88,15 +88,6 @@ export function Sidebar() {
             </div>
           ))}
         </nav>
-
-        {/* collapse toggle (desktop) */}
-        <button
-          onClick={toggleCollapsed}
-          aria-label={collapsed ? t("Ανάπτυξη μενού", "Expand menu") : t("Σύμπτυξη μενού", "Collapse menu")}
-          className="hidden items-center gap-2 border-t border-slate-100 px-4 py-3 text-xs font-medium text-slate-400 hover:text-slate-600 dark:border-slate-800 dark:hover:text-slate-200 md:flex"
-        >
-          {collapsed ? <PanelLeft className="h-4 w-4" /> : <><PanelLeftClose className="h-4 w-4" /> {t("Σύμπτυξη", "Collapse")}</>}
-        </button>
       </aside>
     </>
   );
