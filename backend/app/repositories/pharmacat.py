@@ -102,7 +102,9 @@ class PharmaCatRepository(BaseRepository):
         hit = await kb.find_one({"sig": sig})
         if hit:  # FREE, instant — serve from our growing knowledge base
             await kb.update_one({"sig": sig}, {"$inc": {"hits": 1}, "$set": {"last_at": _now()}})
-            res = dict(hit["result"]); res["ok"] = True; res["source"] = "cache"
+            res = dict(hit["result"])
+            res["ok"] = True
+            res["source"] = "cache"
             res["products"] = await self.products_for(res.get("substances") or [])
             await self._record(user, messages, context, res, kind=kind, drugs=drugs, source="cache")
             return jsonsafe(res)

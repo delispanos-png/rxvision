@@ -7,16 +7,21 @@ snapshot exists. Low-margin items read `products` (ANALYTICS.md §10).
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from app.repositories.base import BaseRepository
 
+# executed_at is stored as a UTC instant; the month window is the pharmacy's LOCAL calendar
+# month, so bounds are built in Europe/Athens (the comparison stays instant-based & correct).
+_ATHENS = ZoneInfo("Europe/Athens")
+
 
 def _month_range(period: str) -> tuple[datetime, datetime]:
-    """'YYYY-MM' -> (start_of_month, start_of_next_month) in UTC."""
+    """'YYYY-MM' -> [start_of_month, start_of_next_month) in Europe/Athens local time."""
     year, month = (int(x) for x in period.split("-")[:2])
-    start = datetime(year, month, 1, tzinfo=timezone.utc)
-    end = datetime(year + (month // 12), (month % 12) + 1, 1, tzinfo=timezone.utc)
+    start = datetime(year, month, 1, tzinfo=_ATHENS)
+    end = datetime(year + (month // 12), (month % 12) + 1, 1, tzinfo=_ATHENS)
     return start, end
 
 

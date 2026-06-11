@@ -29,18 +29,24 @@ def _score_and_flags(ocr: dict, matched: str | None) -> tuple[int, list[str]]:
         return 100, ["ocr_failed"]
     score, flags = 0, []
     if not ocr.get("rx_barcode"):
-        score += 30; flags.append("missing_coupon")     # no QR/barcode detected
+        score += 30
+        flags.append("missing_coupon")     # no QR/barcode detected
     elif not matched:
-        score += 40; flags.append("data_mismatch")       # barcode found but no execution match
+        score += 40
+        flags.append("data_mismatch")       # barcode found but no execution match
     if (ocr.get("quality") or 0) < 25:
-        score += 20; flags.append("image_quality")
+        score += 20
+        flags.append("image_quality")
     if len((ocr.get("text") or "").strip()) < 20:
-        score += 15; flags.append("low_text")
+        score += 15
+        flags.append("low_text")
     vis = ocr.get("visual") or {}
     if vis.get("signature") is False:
-        score += 15; flags.append("missing_signature")
+        score += 15
+        flags.append("missing_signature")
     if vis.get("stamp") is False:
-        score += 10; flags.append("missing_stamp")
+        score += 10
+        flags.append("missing_stamp")
     return min(score, 100), flags
 
 

@@ -71,7 +71,8 @@ class Settings(BaseSettings):
                 ("JWT_PLATFORM_SECRET", self.JWT_PLATFORM_SECRET),
                 ("ANONYMIZATION_GLOBAL_PEPPER", self.ANONYMIZATION_GLOBAL_PEPPER),
             )
-            if _DEV_DEFAULT_SECRET in value or not value.strip()
+            # weak if: dev-default sentinel, empty, OR too short to be a strong secret (<32 chars)
+            if _DEV_DEFAULT_SECRET in value or not value.strip() or len(value.strip()) < 32
         ]
         if "*" in self.cors_origins:
             weak.append("CORS_ORIGINS(=*)")

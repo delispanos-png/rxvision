@@ -32,8 +32,9 @@ def test_parse_gesy_xml():
 
 # ── ΗΔΙΚΑ adapter (synthetic) ──────────────────────────────
 def test_hdika_adapter_yields_stable_ids():
-    a = list(HdikaAdapter().fetch(count=10))
-    b = list(HdikaAdapter().fetch(count=10))
+    # synthetic data is gated behind allow_synthetic (never injected into a real tenant)
+    a = list(HdikaAdapter({"allow_synthetic": True}).fetch(count=10))
+    b = list(HdikaAdapter({"allow_synthetic": True}).fetch(count=10))
     assert len(a) == 10
     assert [x.external_id for x in a] == [x.external_id for x in b]  # stable → dedup works
     assert all(x.source == "HDIKA" for x in a)
