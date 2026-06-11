@@ -14,6 +14,7 @@ const TABS = [
   { href: "/reimbursement/closing", el: "Κλείσιμο Μήνα", en: "Monthly Closing" },
   { href: "/reimbursement/forecast", el: "Πρόβλεψη", en: "Forecast" },
   { href: "/reimbursement/risk", el: "Ρίσκο & Περικοπές", en: "Risk & Cuts" },
+  { href: "/reimbursement/daily", el: "Ημερήσιος Έλεγχος", en: "Daily Check" },
   { href: "/reimbursement/physical", el: "Έλεγχος Barcode", en: "Barcode Check" },
   { href: "/reimbursement/submission", el: "Υποβολή", en: "Submission" },
   { href: "/reimbursement/reconciliation", el: "Συμφωνία", en: "Reconciliation" },

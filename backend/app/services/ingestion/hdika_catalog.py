@@ -112,6 +112,9 @@ async def refresh_catalog(db, client) -> int:
                 "participation": _num(r.get("participationPercentage")),
                 "narcotic": str(r.get("drug", "")).lower() == "true",
                 "high_cost": str(r.get("highCost", "")).lower() == "true",
+                "requires_opinion": (str(r.get("highCost", "")).lower() == "true"
+                                     or str(r.get("eopyyPreapproval", "")).lower() == "true"
+                                     or str(r.get("onlyByProtocol", "")).lower() == "true"),
                 "atc": r.get("atcCode"),
                 "drug_category": r.get("drugCategoryId"),
                 "active_substances": r.get("activeSubstances"),

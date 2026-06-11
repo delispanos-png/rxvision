@@ -362,9 +362,10 @@ class ReimbursementRepository(BaseRepository):
         return jsonsafe({"events": events})
 
     # ── PHYSICAL BARCODE CHECK (digital vs physical reconciliation) ─────────
-    async def physical_check(self, period: str) -> dict:
+    async def physical_check(self, period: str, day: str | None = None) -> dict:
         """All distinct prescription barcodes we hold for the month + their scan status, plus the
-        'extra' barcodes scanned that we DON'T have (i.e., ΗΔΙΚΑ-side discrepancies)."""
+        'extra' barcodes scanned that we DON'T have. Optional `day` (YYYY-MM-DD) narrows to one day
+        (daily reconciliation); `by_day` always lists per-day counts for the day picker."""
         start, end = _month_bounds(period)
         meta = await self._fund_meta()
         rows = await self._db["prescription_executions"].aggregate([
@@ -376,15 +377,22 @@ class ReimbursementRepository(BaseRepository):
         session = await self._db["barcode_check"].find_one(
             {"tenant_id": self.tenant_id, "period": period}) or {}
         checked = set(session.get("checked", []))
-        items = [{"barcode": r["_id"], "claim": r["claim"], "executed_at": r["executed_at"],
-                  "fund": meta.get(r["fund_id"], {}).get("group", "—"),
-                  "checked": r["_id"] in checked} for r in rows]
+        allrows = [{"barcode": r["_id"], "claim": r["claim"], "executed_at": r["executed_at"],
+                    "day": r["executed_at"].strftime("%Y-%m-%d") if r.get("executed_at") else None,
+                    "fund": meta.get(r["fund_id"], {}).get("group", "—"),
+                    "checked": r["_id"] in checked} for r in rows]
+        by_day: dict = {}
+        for it in allrows:
+            d = by_day.setdefault(it["day"], {"date": it["day"], "total": 0, "checked": 0})
+            d["total"] += 1
+            d["checked"] += 1 if it["checked"] else 0
+        items = [i for i in allrows if i["day"] == day] if day else allrows
         items.sort(key=lambda x: (x["checked"], -x["claim"]))  # unchecked, by € first
         checked_n = sum(1 for i in items if i["checked"])
         return jsonsafe({
-            "period": period, "total": len(items), "checked": checked_n,
+            "period": period, "day": day, "total": len(items), "checked": checked_n,
             "remaining": len(items) - checked_n, "extra": session.get("extra", []),
-            "items": items})
+            "by_day": sorted(by_day.values(), key=lambda x: x["date"] or ""), "items": items})
 
     async def physical_scan(self, period: str, barcode: str) -> dict:
         bc = (barcode or "").strip().split(":")[0].strip()
@@ -399,11 +407,87 @@ class ReimbursementRepository(BaseRepository):
         await self._db["barcode_check"].update_one(
             {"tenant_id": self.tenant_id, "period": period},
             {"$addToSet": {field: bc}, "$set": {"updated_at": _now()}}, upsert=True)
-        return {"ok": True, "found": found, "barcode": bc}
+        # advanced: return the prescription's coupons (medicine lines) + submission flags
+        detail = await self.prescription_detail(bc) if found else None
+        return {"ok": True, "found": found, "barcode": bc, "detail": detail}
 
     async def physical_reset(self, period: str) -> dict:
         await self._db["barcode_check"].delete_one({"tenant_id": self.tenant_id, "period": period})
         return {"ok": True}
+
+    # ── DAILY RECONCILIATION — amounts + execution counts per day (vs the pharmacist's program) ─
+    async def daily_reconciliation(self, period: str) -> dict:
+        start, end = _month_bounds(period)
+        rows = await self._db["prescription_executions"].aggregate([
+            {"$match": {"tenant_id": self.tenant_id, "executed_at": {"$gte": start, "$lt": end}}},
+            {"$group": {
+                "_id": {"$dateToString": {"format": "%Y-%m-%d", "date": "$executed_at"}},
+                "barcodes": {"$addToSet": {"$arrayElemAt": [{"$split": ["$external_id", ":"]}, 0]}},
+                "executions": {"$sum": 1}, "claim": {"$sum": "$amount_claimed"},
+                "retail": {"$sum": "$amount_total"}, "patient": {"$sum": "$patient_share"}}},
+            {"$sort": {"_id": 1}},
+        ]).to_list(None)
+        days = [{"date": r["_id"], "rx": len(r["barcodes"]), "executions": r["executions"],
+                 "claim": r["claim"], "retail": r["retail"], "patient": r["patient"]} for r in rows]
+        tot = {k: sum(d[k] for d in days) for k in ("rx", "executions", "claim", "retail", "patient")}
+        tot["days"] = len(days)
+        return jsonsafe({"period": period, "days": days, "totals": tot})
+
+    # ── ADVANCED PER-PRESCRIPTION DETAIL — coupons (medicine lines) + submission flags ──────────
+    async def _rx_lines(self, ex_ids: list) -> tuple:
+        items = [it async for it in self._db["prescription_items"].find(
+            {"tenant_id": self.tenant_id, "execution_id": {"$in": ex_ids}})]
+        pids = []
+        for it in items:
+            try:
+                pids.append(ObjectId(it.get("product_id")))
+            except Exception:  # noqa: BLE001
+                pass
+        prods = {}
+        async for p in self._db["products"].find({"_id": {"$in": pids}, "tenant_id": self.tenant_id}):
+            prods[str(p["_id"])] = p
+        # resolve the catalogue (full name + requires_opinion) by product.barcode (== eofCode)
+        eofs = [p.get("barcode") for p in prods.values() if p.get("barcode")]
+        cat_by_key: dict = {}
+        async for c in self._db["medicine_catalog"].find(  # tenant-ok: shared catalogue
+                {"$or": [{"_id": {"$in": eofs}}, {"barcode": {"$in": eofs}}]}):
+            cat_by_key[c["_id"]] = c
+            if c.get("barcode"):
+                cat_by_key[c["barcode"]] = c
+        lines, flags = [], set()
+        opinion = False
+        for it in items:
+            p = prods.get(str(it.get("product_id")), {})
+            c = cat_by_key.get(p.get("barcode"), {})
+            cat = it.get("category") or p.get("category") or "normal"
+            flags.add(cat)
+            req = bool(c.get("requires_opinion")) or cat == "fyk"
+            opinion = opinion or req
+            lines.append({"name": c.get("full_name") or p.get("name") or "—",
+                          "barcode": p.get("barcode"), "quantity": it.get("quantity"),
+                          "category": cat, "requires_opinion": req,
+                          "executed": bool(it.get("is_executed", True))})
+        return lines, flags, opinion
+
+    async def prescription_detail(self, barcode: str) -> dict:
+        bc = (barcode or "").split(":")[0].strip()
+        if not bc:
+            return {"ok": False, "found": False}
+        exs = [e async for e in self._db["prescription_executions"].find(
+            {"tenant_id": self.tenant_id, "external_id": {"$regex": f"^{re.escape(bc)}"}})]  # tenant-ok
+        if not exs:
+            return {"ok": True, "found": False, "barcode": bc}
+        meta = await self._fund_meta()
+        lines, flags, opinion = await self._rx_lines([e["_id"] for e in exs])
+        return jsonsafe({
+            "ok": True, "found": True, "barcode": bc,
+            "fund": meta.get(exs[0].get("fund_id"), {}).get("group", "—"),
+            "claim": sum(e.get("amount_claimed", 0) for e in exs), "n_coupons": len(lines),
+            "requires_opinion": opinion,               # ΦΥΚ / ΕΟΠΥΥ-preapproval / protocol
+            "is_fyk": "fyk" in flags, "has_vaccine": "vaccine" in flags,
+            "has_narcotic": "narcotic" in flags,
+            "partial": any(not ln["executed"] for ln in lines),
+            "coupons": lines})
 
     # ── 19. EXECUTIVE DASHBOARD + 18. AI AUDITOR ────────────────────────────
     async def executive(self, period: str | None = None) -> dict:

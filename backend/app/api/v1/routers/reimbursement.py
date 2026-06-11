@@ -92,11 +92,24 @@ async def reconciliation(period: str = Query(None),
     return await _repo(ctx).reconciliation(period or _cur())
 
 
+# ── Daily reconciliation (amounts + execution counts per day) ───────────────
+@router.get("/daily")
+async def daily(period: str = Query(None),
+                ctx: TenantContext = Depends(require("closing:read", module=_MODULE))):
+    return await _repo(ctx).daily_reconciliation(period or _cur())
+
+
+@router.get("/prescription")
+async def prescription(barcode: str = Query(...),
+                       ctx: TenantContext = Depends(require("closing:read", module=_MODULE))):
+    return await _repo(ctx).prescription_detail(barcode)
+
+
 # ── Physical barcode check (digital vs physical) ────────────────────────────
 @router.get("/physical")
-async def physical(period: str = Query(None),
+async def physical(period: str = Query(None), day: str = Query(None),
                    ctx: TenantContext = Depends(require("closing:read", module=_MODULE))):
-    return await _repo(ctx).physical_check(period or _cur())
+    return await _repo(ctx).physical_check(period or _cur(), day)
 
 
 @router.post("/physical/scan")
