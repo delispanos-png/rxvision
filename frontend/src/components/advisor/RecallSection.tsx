@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { api } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
 import { Phone, MessageSquare, Mail, PhoneCall, Users, AlertTriangle, Wallet } from "lucide-react";
-import { fmtEur, fmtDate } from "@/lib/formatters";
+import { fmtEur, fmtDate, fmtMoney} from "@/lib/formatters";
 import { DataTable, type Column } from "@/components/tables/DataTable";
 import { KpiCard } from "@/components/kpi/KpiCard";
 import { ExportMenu } from "@/components/export/ExportMenu";
@@ -59,7 +59,7 @@ export function RecallSection() {
         { key: "amka", header: "ΑΜΚΑ" },
         { key: "available", header: t("Διαθέσιμες τώρα", "Available now") },
         { key: "missed", header: t("Χαμένες", "Missed") },
-        { key: "value", header: t("Αξία ρίσκου (€)", "Value at risk (€)"), value: (r) => (r.value / 100).toFixed(2) },
+        { key: "value", header: t("Αξία ρίσκου (€)", "Value at risk (€)"), value: (r) => fmtMoney(r.value) },
         { key: "mobile", header: t("Κινητό", "Mobile"), value: (r) => r.mobile || r.phone || "" },
         { key: "email", header: "Email", value: (r) => r.email || "" },
       ]} />}>

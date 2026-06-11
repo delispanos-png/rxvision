@@ -5,7 +5,7 @@ import { Sparkles, PackageSearch, Boxes, Wallet, TrendingUp } from "lucide-react
 import { api } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
-import { fmtNum, fmtEur, fmtDate } from "@/lib/formatters";
+import { fmtNum, fmtEur, fmtDate, fmtMoney} from "@/lib/formatters";
 import { KpiCard } from "@/components/kpi/KpiCard";
 import { PanelCard } from "@/components/ui/Card";
 import { DataTable, type Column } from "@/components/tables/DataTable";
@@ -106,7 +106,7 @@ export default function OrderAdvisorPage() {
           action={<ExportMenu filename="protaseis-paraggelias" title={t("Προτάσεις παραγγελίας", "Order suggestions")} rows={sug} columns={[
             { key: "product_name", header: t("Σκεύασμα", "Product") }, { key: "substance", header: t("Δραστική", "Active substance"), value: (r) => r.substance || "—" },
             { key: "avg_daily", header: t("Μ.Ο./ημέρα", "Avg/day") }, { key: "suggested_qty", header: t("Πρόταση", "Suggestion") },
-            { key: "est_cost", header: t("Εκτ. κόστος (€)", "Est. cost (€)"), value: (r) => ((r.est_cost || 0) / 100).toFixed(2) },
+            { key: "est_cost", header: t("Εκτ. κόστος (€)", "Est. cost (€)"), value: (r) => fmtMoney((r.est_cost || 0)) },
           ]} />}>
           <DataTable pageSize={15} columns={sugCols} rows={sug} rowKey={(r) => r.product_id} empty={t("Καμία πρόταση.", "No suggestions.")} />
         </PanelCard>

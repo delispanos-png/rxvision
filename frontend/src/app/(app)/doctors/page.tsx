@@ -8,7 +8,7 @@ import { api, queryKeys } from "@/lib/apiClient";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
 import { useUiStore, filtersToQuery } from "@/store/uiStore";
 import { prevYearRange, pctDelta } from "@/lib/compare";
-import { fmtEur, fmtNum } from "@/lib/formatters";
+import { fmtEur, fmtNum, fmtMoney} from "@/lib/formatters";
 import { downloadCsv } from "@/lib/csv";
 import { DateRangeFilter } from "@/components/filters/DateRangeFilter";
 import { DataTable, type Column } from "@/components/tables/DataTable";
@@ -121,8 +121,8 @@ export default function DoctorsPage() {
           { key: "name", header: t("Ιατρός", "Doctor") },
           { key: "specialty", header: t("Ειδικότητα", "Specialty"), value: (r) => r.specialty || "—" },
           { key: "rx_count", header: t("Συνταγές", "Prescriptions") },
-          { key: "value", header: t("Αξία (€)", "Value (€)"), value: (r) => (r.value / 100).toFixed(2) },
-          { key: "gross_profit", header: t("Κερδοφορία (€)", "Profitability (€)"), value: (r) => (r.gross_profit / 100).toFixed(2) },
+          { key: "value", header: t("Αξία (€)", "Value (€)"), value: (r) => fmtMoney(r.value) },
+          { key: "gross_profit", header: t("Κερδοφορία (€)", "Profitability (€)"), value: (r) => fmtMoney(r.gross_profit) },
           { key: "new_patients", header: t("Νέοι πελάτες", "New patients") },
         ]} />
       </div>
@@ -188,16 +188,16 @@ export default function DoctorsPage() {
                   downloadCsv("iatroi-ana-eidikotita", [
                     { key: "specialty", header: t("Ειδικότητα", "Specialty") }, { key: "doctors", header: t("Ιατροί", "Doctors") },
                     { key: "rx_count", header: t("Συνταγές", "Prescriptions") },
-                    { key: "value", header: t("Αξία (€)", "Value (€)"), value: (r: SpecialtyRow) => (r.value / 100).toFixed(2) },
-                    { key: "gross_profit", header: t("Κερδοφορία (€)", "Profitability (€)"), value: (r: SpecialtyRow) => (r.gross_profit / 100).toFixed(2) },
+                    { key: "value", header: t("Αξία (€)", "Value (€)"), value: (r: SpecialtyRow) => fmtMoney(r.value) },
+                    { key: "gross_profit", header: t("Κερδοφορία (€)", "Profitability (€)"), value: (r: SpecialtyRow) => fmtMoney(r.gross_profit) },
                     { key: "new_patients", header: t("Νέοι", "New") },
                   ], specialtyRows);
                 } else {
                   downloadCsv("ana-iatro", [
                     { key: "name", header: t("Ιατρός", "Doctor") }, { key: "specialty", header: t("Ειδικότητα", "Specialty") },
                     { key: "rx_count", header: t("Συνταγές", "Prescriptions") },
-                    { key: "value", header: t("Αξία (€)", "Value (€)"), value: (r: Doctor) => (r.value / 100).toFixed(2) },
-                    { key: "gross_profit", header: t("Κερδοφορία (€)", "Profitability (€)"), value: (r: Doctor) => (r.gross_profit / 100).toFixed(2) },
+                    { key: "value", header: t("Αξία (€)", "Value (€)"), value: (r: Doctor) => fmtMoney(r.value) },
+                    { key: "gross_profit", header: t("Κερδοφορία (€)", "Profitability (€)"), value: (r: Doctor) => fmtMoney(r.gross_profit) },
                     { key: "new_patients", header: t("Νέοι", "New") },
                   ], doctorRows);
                 }

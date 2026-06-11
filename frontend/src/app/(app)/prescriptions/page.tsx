@@ -10,7 +10,7 @@ import { api } from "@/lib/apiClient";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
 import { useUiStore, filtersToQuery } from "@/store/uiStore";
 import { prevYearRange, pctDelta } from "@/lib/compare";
-import { fmtEur, fmtNum, fmtDate } from "@/lib/formatters";
+import { fmtEur, fmtNum, fmtDate, fmtMoney} from "@/lib/formatters";
 import { downloadCsv } from "@/lib/csv";
 import { DateRangeFilter } from "@/components/filters/DateRangeFilter";
 import { DataTable, type Column } from "@/components/tables/DataTable";
@@ -236,8 +236,8 @@ export default function PrescriptionsPage() {
             { key: "amka", header: "ΑΜΚΑ", value: (r) => r.amka || "—" },
             { key: "fund_name", header: t("Ταμείο", "Fund"), value: (r) => r.fund_name || "—" },
             { key: "status", header: t("Κατάσταση", "Status"), value: (r) => STATUS_EL[r.status ?? ""] || r.status || "—" },
-            { key: "amount_total", header: t("Αξία (€)", "Value (€)"), value: (r) => ((r.amount_total || 0) / 100).toFixed(2) },
-            { key: "amount_claimed", header: t("Από ταμείο (€)", "From fund (€)"), value: (r) => ((r.amount_claimed || 0) / 100).toFixed(2) },
+            { key: "amount_total", header: t("Αξία (€)", "Value (€)"), value: (r) => fmtMoney((r.amount_total || 0)) },
+            { key: "amount_claimed", header: t("Από ταμείο (€)", "From fund (€)"), value: (r) => fmtMoney((r.amount_claimed || 0)) },
           ]}
           fetchRows={async () => {
             const all: Prescription[] = [];
@@ -373,8 +373,8 @@ export default function PrescriptionsPage() {
               onClick={() => downloadCsv("ana-tameio", [
                 { key: "fund_name", header: t("Ταμείο", "Fund") },
                 { key: "rx", header: t("Συνταγές", "Prescriptions") },
-                { key: "value", header: t("Αξία (€)", "Value (€)"), value: (r: FundRow) => (r.value / 100).toFixed(2) },
-                { key: "claimed", header: t("Αιτούμενο (€)", "Claimed (€)"), value: (r: FundRow) => (r.claimed / 100).toFixed(2) },
+                { key: "value", header: t("Αξία (€)", "Value (€)"), value: (r: FundRow) => fmtMoney(r.value) },
+                { key: "claimed", header: t("Αιτούμενο (€)", "Claimed (€)"), value: (r: FundRow) => fmtMoney(r.claimed) },
                 { key: "unexecuted", header: t("Ανεκτέλεστες", "Unexecuted") },
               ], fundRows)}
               className="shrink-0 inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"

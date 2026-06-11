@@ -6,7 +6,7 @@ import { Boxes, PackageSearch, RefreshCw, Wallet } from "lucide-react";
 import { api, queryKeys } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
-import { fmtNum, fmtEur } from "@/lib/formatters";
+import { fmtNum, fmtEur, fmtMoney} from "@/lib/formatters";
 import { DataTable, type Column } from "@/components/tables/DataTable";
 import { ExportMenu } from "@/components/export/ExportMenu";
 import { KpiCard } from "@/components/kpi/KpiCard";
@@ -109,7 +109,7 @@ export default function OrdersPage() {
             { key: "suggested_qty", header: t("Πρόταση", "Suggestion") },
             { key: "stock", header: t("Απόθεμα", "Stock"), value: (r) => String(stock[r.product_id] ?? 0) },
             { key: "adjusted", header: t("Παράγγειλε", "Order"), value: (r) => String(adj(r)) },
-            { key: "est_cost", header: t("Εκτ. κόστος (€)", "Est. cost (€)"), value: (r) => (adjCost(r) / 100).toFixed(2) },
+            { key: "est_cost", header: t("Εκτ. κόστος (€)", "Est. cost (€)"), value: (r) => fmtMoney(adjCost(r)) },
           ]} />
         </div>
       </div>

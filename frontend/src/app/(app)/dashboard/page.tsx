@@ -11,7 +11,7 @@ import { Modal } from "@/components/ui/Modal";
 import { DataTable, type Column } from "@/components/tables/DataTable";
 import { QueryState } from "@/components/ui/QueryState";
 import { downloadCsv } from "@/lib/csv";
-import { fmtDate } from "@/lib/formatters";
+import { fmtDate, fmtMoney} from "@/lib/formatters";
 import { DateRangeFilter } from "@/components/filters/DateRangeFilter";
 import { useUiStore, filtersToQuery } from "@/store/uiStore";
 import { prevYearRange, pctDelta } from "@/lib/compare";
@@ -213,8 +213,8 @@ export default function DashboardPage() {
               <button
                 onClick={() => {
                   const cols = modal.kind === "patients"
-                    ? [{ key: "full_name", header: t("Ασφαλισμένος", "Patient") }, { key: "age_group", header: t("Ηλικία", "Age") }, { key: "area", header: t("Περιοχή", "Area") }, { key: "rx", header: t("Συνταγές", "Prescriptions") }, { key: "value", header: t("Αξία (€)", "Value (€)"), value: (r: Record<string, unknown>) => (((r.value as number) || 0) / 100).toFixed(2) }]
-                    : [{ key: "executed_at", header: t("Ημ/νία", "Date"), value: (r: Record<string, unknown>) => fmtDate(r.executed_at as string) }, { key: "external_id", header: t("Κωδικός", "Code") }, { key: "patient_name", header: t("Ασθενής", "Patient") }, { key: "fund_name", header: t("Ταμείο", "Fund") }, { key: "amount_total", header: t("Αξία (€)", "Value (€)"), value: (r: Record<string, unknown>) => (((r.amount_total as number) || 0) / 100).toFixed(2) }, { key: "amount_claimed", header: t("Από ταμείο (€)", "From fund (€)"), value: (r: Record<string, unknown>) => (((r.amount_claimed as number) || 0) / 100).toFixed(2) }];
+                    ? [{ key: "full_name", header: t("Ασφαλισμένος", "Patient") }, { key: "age_group", header: t("Ηλικία", "Age") }, { key: "area", header: t("Περιοχή", "Area") }, { key: "rx", header: t("Συνταγές", "Prescriptions") }, { key: "value", header: t("Αξία (€)", "Value (€)"), value: (r: Record<string, unknown>) => fmtMoney(((r.value as number) || 0)) }]
+                    : [{ key: "executed_at", header: t("Ημ/νία", "Date"), value: (r: Record<string, unknown>) => fmtDate(r.executed_at as string) }, { key: "external_id", header: t("Κωδικός", "Code") }, { key: "patient_name", header: t("Ασθενής", "Patient") }, { key: "fund_name", header: t("Ταμείο", "Fund") }, { key: "amount_total", header: t("Αξία (€)", "Value (€)"), value: (r: Record<string, unknown>) => fmtMoney(((r.amount_total as number) || 0)) }, { key: "amount_claimed", header: t("Από ταμείο (€)", "From fund (€)"), value: (r: Record<string, unknown>) => fmtMoney(((r.amount_claimed as number) || 0)) }];
                   downloadCsv(modal.kind === "patients" ? "asfalismenoi" : "syntages", cols, modalList.data!.items);
                 }}
                 className="shrink-0 inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"

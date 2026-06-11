@@ -5,7 +5,7 @@ import { Building2, Layers } from "lucide-react";
 import { api } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
 import { useReimbPeriod } from "@/store/reimbStore";
-import { fmtNum, fmtEur } from "@/lib/formatters";
+import { fmtNum, fmtEur, fmtMoney} from "@/lib/formatters";
 import { DataTable, type Column } from "@/components/tables/DataTable";
 import { ExportMenu } from "@/components/export/ExportMenu";
 
@@ -51,7 +51,7 @@ export default function ClosingPage() {
               <ExportMenu filename={`closing-${period}`} title="Monthly Closing" rows={data?.by_fund ?? []} columns={[
                 { key: "fund", header: t("Ταμείο", "Fund") },
                 { key: "rx", header: "Rx" },
-                { key: "claim", header: "Claim (€)", value: (r) => (r.claim / 100).toFixed(2) },
+                { key: "claim", header: "Claim (€)", value: (r) => fmtMoney(r.claim) },
               ]} />
             </div>
             <DataTable pageSize={15} columns={cols} rows={data?.by_fund ?? []} rowKey={(r) => r.fund} empty={t("Καμία εγγραφή.", "No data.")} />

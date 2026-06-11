@@ -7,7 +7,7 @@ import { api } from "@/lib/apiClient";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
 import { useUiStore, filtersToQuery } from "@/store/uiStore";
 import { prevYearRange, pctDelta } from "@/lib/compare";
-import { fmtEur, fmtNum } from "@/lib/formatters";
+import { fmtEur, fmtNum, fmtMoney} from "@/lib/formatters";
 import { DateRangeFilter } from "@/components/filters/DateRangeFilter";
 import { SelectFilter } from "@/components/filters/SelectFilter";
 import { DataTable, type Column } from "@/components/tables/DataTable";
@@ -91,9 +91,9 @@ export default function Icd10Page() {
           { key: "title", header: t("Περιγραφή", "Description"), value: (r) => r.title || "—" },
           { key: "code_count", header: t("Κωδικοί", "Codes") },
           { key: "rx", header: t("Πλήθος", "Count") },
-          { key: "value", header: t("Αξία (€)", "Value (€)"), value: (r) => ((r.value || 0) / 100).toFixed(2) },
-          { key: "claimed", header: t("Αιτούμενα (€)", "Claimed (€)"), value: (r) => ((r.claimed || 0) / 100).toFixed(2) },
-          { key: "profit", header: t("Κερδοφορία (€)", "Profitability (€)"), value: (r) => ((r.profit || 0) / 100).toFixed(2) },
+          { key: "value", header: t("Αξία (€)", "Value (€)"), value: (r) => fmtMoney((r.value || 0)) },
+          { key: "claimed", header: t("Αιτούμενα (€)", "Claimed (€)"), value: (r) => fmtMoney((r.claimed || 0)) },
+          { key: "profit", header: t("Κερδοφορία (€)", "Profitability (€)"), value: (r) => fmtMoney((r.profit || 0)) },
         ]} />
       </div>
 

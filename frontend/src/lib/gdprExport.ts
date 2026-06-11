@@ -1,3 +1,4 @@
+import { fmtMoney } from "@/lib/formatters";
 // Client-side GDPR data-subject export helpers (Art.15 access + Art.20 portability):
 // a machine-readable JSON download and a human-readable PDF. The PDF is rendered via
 // html2canvas (like lib/export.ts) so Greek text draws correctly — jsPDF core fonts are
@@ -32,7 +33,7 @@ type Bundle = {
 function bundleHtml(b: Bundle): string {
   const id = b.identity || {};
   const c = b.contact || {};
-  const eur = (v: unknown) => (typeof v === "number" ? (v / 100).toFixed(2) + " €" : "—");
+  const eur = (v: unknown) => (typeof v === "number" ? fmtMoney(v) + " €" : "—");
   const rows = (b.prescription_executions || []).slice(0, 300).map((e) =>
     `<tr><td style="padding:4px 8px;border-bottom:1px solid #e2e8f0;">${esc(e.executed_at)}</td>
      <td style="padding:4px 8px;border-bottom:1px solid #e2e8f0;">${esc((e.icd10 as string[] || []).join(", "))}</td>

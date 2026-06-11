@@ -5,7 +5,7 @@ import { DateInput } from "@/components/ui/DateInput";
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { adminApi, ApiError } from "@/lib/adminClient";
-import { fmtEur, fmtDate } from "@/lib/formatters";
+import { fmtEur, fmtDate, fmtMoney} from "@/lib/formatters";
 import { DataTable, type Column } from "@/components/tables/DataTable";
 import { Modal } from "@/components/ui/Modal";
 
@@ -91,7 +91,7 @@ function InvoiceModal({ modal, tenants, onClose, onDone }:
     doc_type: inv?.doc_type ?? "ΤΠΥ", series: inv?.series ?? "Α",
     issue_date: inv?.issue_date ?? new Date().toISOString().slice(0, 10),
     description: inv?.description ?? "",
-    net_eur: inv ? (inv.net_amount / 100).toFixed(2) : "", vat_rate: String(inv?.vat_rate ?? 24),
+    net_eur: inv ? fmtMoney(inv.net_amount) : "", vat_rate: String(inv?.vat_rate ?? 24),
   });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);

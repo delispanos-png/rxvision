@@ -5,7 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
-import { fmtNum, fmtEur, fmtDate } from "@/lib/formatters";
+import { fmtNum, fmtEur, fmtDate, fmtMoney} from "@/lib/formatters";
 import { DataTable, type Column } from "@/components/tables/DataTable";
 import { ExportMenu } from "@/components/export/ExportMenu";
 
@@ -48,7 +48,7 @@ export default function PatientAnalyticsPage() {
           <ExportMenu filename="patient-analytics" title="Patient Analytics" rows={data?.items ?? []} columns={[
             { key: "name", header: t("Ασθενής", "Patient"), value: (r) => r.name || r.amka || "" },
             { key: "rx_count", header: "Rx" },
-            { key: "value", header: "LTV (€)", value: (r) => (r.value / 100).toFixed(2) },
+            { key: "value", header: "LTV (€)", value: (r) => fmtMoney(r.value) },
             { key: "frequency", header: "Freq/mo" },
           ]} />
         </div>
