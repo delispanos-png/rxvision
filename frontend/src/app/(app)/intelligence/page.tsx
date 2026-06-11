@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import {
@@ -18,7 +19,7 @@ type Overview = {
   winback: { bucket: number; count: number; lost_revenue: number; recoverable: number }[];
   vip: { tier: string; label: string; count: number; revenue: number }[];
   compliance_distribution: { band: string; label: string; count: number }[];
-  trend: { daily: { label: string; rx: number; value: number }[]; monthly: { label: string; rx: number; value: number }[] };
+  trend: Record<"daily" | "weekly" | "monthly", { label: string; rx: number; value: number }[]>;
   insights: { icon: string; severity: string; title: string; text: string; cta: { label: string; href: string } | null }[];
 };
 
@@ -36,6 +37,7 @@ export default function IntelligenceDashboard() {
   const t = useT();
   const router = useRouter();
   const { data, isLoading } = useQuery({ queryKey: ["pi-overview"], queryFn: () => api<Overview>("/patient-intelligence/overview") });
+  const [tv, setTv] = useState<"daily" | "weekly" | "monthly">("monthly");
   const k = data?.kpis;
   const go = (href: string) => router.push(href);
 
@@ -54,7 +56,8 @@ export default function IntelligenceDashboard() {
     { key: "vip_patients", label: "VIP ασθενείς", en: "VIP patients", icon: Crown, accent: "amber", href: "/intelligence/vip" },
   ];
 
-  const maxMonthly = Math.max(1, ...(data?.trend.monthly ?? []).map((m) => m.rx));
+  const series = data?.trend[tv] ?? [];
+  const maxTrend = Math.max(1, ...series.map((m) => m.rx));
   const compTotal = (data?.compliance_distribution ?? []).reduce((s, b) => s + b.count, 0) || 1;
 
   return (
@@ -143,14 +146,23 @@ export default function IntelligenceDashboard() {
           </div>
         </div>
 
-        {/* MONTHLY TREND */}
+        {/* TREND — daily / weekly / monthly */}
         <div className="rx-card p-5">
-          <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-700 dark:text-slate-200"><Receipt className="h-4 w-4 text-brand-600" /> {t("Τάση συνταγών (μήνας)", "Prescriptions trend (monthly)")}</h3>
+          <div className="mb-3 flex items-center justify-between">
+            <h3 className="flex items-center gap-2 text-sm font-semibold text-slate-700 dark:text-slate-200"><Receipt className="h-4 w-4 text-brand-600" /> {t("Τάση συνταγών", "Prescriptions trend")}</h3>
+            <div className="inline-flex rounded-lg border border-slate-200 p-0.5 text-xs dark:border-slate-700">
+              {(["daily", "weekly", "monthly"] as const).map((v) => (
+                <button key={v} onClick={() => setTv(v)} className={`rounded px-2 py-0.5 font-medium ${tv === v ? "bg-brand-600 text-white" : "text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800"}`}>
+                  {t({ daily: "Ημέρα", weekly: "Εβδ.", monthly: "Μήνας" }[v], { daily: "Day", weekly: "Wk", monthly: "Month" }[v])}
+                </button>
+              ))}
+            </div>
+          </div>
           <div className="flex h-28 items-end gap-1">
-            {(data?.trend.monthly ?? []).map((m) => (
+            {series.map((m) => (
               <div key={m.label} className="group flex flex-1 flex-col items-center justify-end" title={`${m.label}: ${m.rx}`}>
-                <div className="w-full rounded-t bg-brand-400 transition-all group-hover:bg-brand-600" style={{ height: `${(m.rx / maxMonthly) * 100}%` }} />
-                <span className="mt-1 truncate text-[9px] text-slate-400">{m.label.slice(5)}</span>
+                <div className="w-full rounded-t bg-brand-400 transition-all group-hover:bg-brand-600" style={{ height: `${(m.rx / maxTrend) * 100}%`, minHeight: m.rx ? "3px" : "0" }} />
+                <span className="mt-1 truncate text-[9px] text-slate-400">{tv === "monthly" ? m.label.slice(5) : tv === "daily" ? m.label.slice(8) : m.label.slice(6)}</span>
               </div>
             ))}
           </div>
