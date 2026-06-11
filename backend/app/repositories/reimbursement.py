@@ -223,6 +223,124 @@ class ReimbursementRepository(BaseRepository):
             "by_fund": [{"fund": names.get(k, "—"), **v} for k, v in sorted(by_fund.items(), key=lambda x: -x[1]["cut"])],
         })
 
+    # ── 7. SUBMISSION CONTROL + 8. AUDIT TRAIL + 9. RECONCILIATION ──────────
+    # Workflow at the monthly per-fund batch level (how pharmacies actually submit).
+    STATUSES = ("draft", "ready_for_review", "ready_for_submission", "submitted",
+                "received", "approved", "paid", "cut", "rejected")
+
+    def _batch_id(self, period: str, fund_id) -> str:
+        return f"{self.tenant_id}:{period}:{fund_id}"
+
+    async def _log(self, batch_id: str, period: str, fund_id, action: str,
+                   frm: str | None, to: str | None, note: str | None = None) -> None:
+        await self._db["claim_events"].insert_one({
+            "tenant_id": self.tenant_id, "batch_id": batch_id, "period": period,
+            "fund_id": fund_id, "action": action, "from_status": frm, "to_status": to,
+            "note": note, "at": _now()})
+
+    async def submission(self, period: str) -> dict:
+        """Per-fund submission batches for a month — auto-synced from executions (financials/rx),
+        status/payment preserved. Plus a risk summary per batch."""
+        start, end = _month_bounds(period)
+        names = await self._fund_names()
+        agg = await self._db["prescription_executions"].aggregate([
+            {"$match": {"tenant_id": self.tenant_id, "executed_at": {"$gte": start, "$lt": end}}},
+            {"$group": {"_id": "$fund_id", "rx": {"$sum": 1}, "claim": {"$sum": "$amount_claimed"}}},
+        ]).to_list(None)
+        risk_rows = await self._risk_rows(period)
+        risk_by_fund: dict = defaultdict(lambda: {"flagged": 0, "cut": 0})
+        for r in risk_rows:
+            if r["score"] >= 25:
+                risk_by_fund[r["fund_id"]]["flagged"] += 1
+                risk_by_fund[r["fund_id"]]["cut"] += r["expected_cut"]
+
+        out = []
+        for a in agg:
+            fid = a["_id"]
+            bid = self._batch_id(period, fid)
+            existing = await self._db["submission_batches"].find_one(
+                {"_id": bid, "tenant_id": self.tenant_id})
+            doc = {
+                "_id": bid, "tenant_id": self.tenant_id, "period": period, "fund_id": fid,
+                "fund_name": names.get(fid, "—"), "is_eopyy": self._is_eopyy(names.get(fid)),
+                "rx": a["rx"], "expected_claim": a["claim"], "updated_at": _now()}
+            if not existing:
+                doc["status"] = "ready_for_review"
+                await self._db["submission_batches"].insert_one(doc)
+                await self._log(bid, period, fid, "created", None, "ready_for_review")
+                existing = doc
+            else:
+                await self._db["submission_batches"].update_one(
+                    {"_id": bid, "tenant_id": self.tenant_id},
+                    {"$set": {"rx": a["rx"], "expected_claim": a["claim"], "fund_name": doc["fund_name"],
+                              "is_eopyy": doc["is_eopyy"], "updated_at": _now()}})
+            rb = risk_by_fund.get(fid, {"flagged": 0, "cut": 0})
+            out.append({
+                "batch_id": bid, "fund": doc["fund_name"], "is_eopyy": doc["is_eopyy"],
+                "rx": a["rx"], "expected_claim": a["claim"],
+                "status": existing.get("status", "ready_for_review"),
+                "paid_amount": existing.get("paid_amount"), "cut_amount": existing.get("cut_amount"),
+                "flagged": rb["flagged"], "risk_cut": rb["cut"],
+                "submitted_at": existing.get("submitted_at"), "paid_at": existing.get("paid_at"),
+            })
+        out.sort(key=lambda x: x["expected_claim"], reverse=True)
+        counts: dict = defaultdict(int)
+        for b in out:
+            counts[b["status"]] += 1
+        return jsonsafe({"period": period, "batches": out,
+                         "status_counts": {s: counts.get(s, 0) for s in self.STATUSES}})
+
+    async def set_status(self, period: str, batch_id: str, status: str) -> dict:
+        if status not in self.STATUSES:
+            return {"ok": False, "error": "bad_status"}
+        b = await self._db["submission_batches"].find_one({"_id": batch_id, "tenant_id": self.tenant_id})
+        if not b:
+            return {"ok": False, "error": "not_found"}
+        extra = {"submitted_at": _now()} if status == "submitted" else {}
+        await self._db["submission_batches"].update_one(
+            {"_id": batch_id, "tenant_id": self.tenant_id},
+            {"$set": {"status": status, "updated_at": _now(), **extra}})
+        await self._log(batch_id, period, b.get("fund_id"), "status_change", b.get("status"), status)
+        return {"ok": True}
+
+    async def set_payment(self, period: str, batch_id: str, paid_amount: int) -> dict:
+        b = await self._db["submission_batches"].find_one({"_id": batch_id, "tenant_id": self.tenant_id})
+        if not b:
+            return {"ok": False, "error": "not_found"}
+        expected = b.get("expected_claim", 0)
+        cut = max(0, expected - int(paid_amount))
+        status = "cut" if cut > 0 else "paid"
+        await self._db["submission_batches"].update_one(
+            {"_id": batch_id, "tenant_id": self.tenant_id},
+            {"$set": {"paid_amount": int(paid_amount), "cut_amount": cut, "status": status,
+                      "paid_at": _now(), "updated_at": _now()}})
+        await self._log(batch_id, period, b.get("fund_id"), "payment", b.get("status"), status,
+                        note=f"paid {paid_amount} / expected {expected} / cut {cut}")
+        return {"ok": True, "cut": cut, "status": status}
+
+    async def reconciliation(self, period: str) -> dict:
+        batches = [b async for b in self._db["submission_batches"].find(
+            {"tenant_id": self.tenant_id, "period": period})]
+        rows, exp, paid, cut = [], 0, 0, 0
+        for b in batches:
+            e = b.get("expected_claim", 0)
+            p = b.get("paid_amount")
+            exp += e
+            if p is not None:
+                paid += p
+                c = b.get("cut_amount", 0)
+                cut += c
+                rows.append({"fund": b.get("fund_name"), "expected": e, "paid": p, "cut": c,
+                             "diff_pct": _pct(p, e), "status": b.get("status")})
+        rows.sort(key=lambda x: x["cut"], reverse=True)
+        return jsonsafe({"period": period, "expected": exp, "paid": paid, "cut": cut,
+                         "outstanding": exp - paid - cut, "rows": rows})
+
+    async def audit_trail(self, batch_id: str) -> dict:
+        events = [e async for e in self._db["claim_events"].find(
+            {"tenant_id": self.tenant_id, "batch_id": batch_id}).sort("at", 1)]
+        return jsonsafe({"events": events})
+
     # ── 19. EXECUTIVE DASHBOARD + 18. AI AUDITOR ────────────────────────────
     async def executive(self, period: str | None = None) -> dict:
         period = period or _now().strftime("%Y-%m")
