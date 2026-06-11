@@ -389,8 +389,12 @@ class PatientIntelligenceRepository(BaseRepository):
             {"tenant_id": self.tenant_id, "status": "pending",
              "expected_open_date": {"$gte": now - timedelta(days=7), "$lte": now}})
 
+        # ΗΔΙΚΑ executed_at carries Athens local time → current hour must be Athens too, or the
+        # live axis cap would hide today's (afternoon) executions.
+        from zoneinfo import ZoneInfo
+        athens_hour = now.astimezone(ZoneInfo("Europe/Athens")).hour
         return jsonsafe({
-            "day": tstart.date().isoformat(), "is_live": True, "current_hour": now.hour,
+            "day": tstart.date().isoformat(), "is_live": True, "current_hour": athens_hour,
             "last_activity": last_activity, "last_sync": last_sync,
             "rx": day_rx, "value": day_value, "patients": day_patients, "new_patients": new_today,
             "avg_day_rx": avg_day, "vs_avg": _pct(day_rx, avg_day),
