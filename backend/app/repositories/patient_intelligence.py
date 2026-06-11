@@ -328,16 +328,15 @@ class PatientIntelligenceRepository(BaseRepository):
         db = self._db
         now = _now()
         tstart = now.replace(hour=0, minute=0, second=0, microsecond=0)
-        # active day = today if it has activity, else the latest day with data (demo-friendly)
-        if not await db["prescription_executions"].count_documents(
-                {"tenant_id": self.tenant_id, "executed_at": {"$gte": tstart}}):
-            last = await db["prescription_executions"].find_one(
-                {"tenant_id": self.tenant_id}, sort=[("executed_at", -1)])
-            if last and last.get("executed_at"):
-                tstart = last["executed_at"].replace(hour=0, minute=0, second=0, microsecond=0)
         tend = tstart + timedelta(days=1)
-        is_live = tstart.date() == now.date()
         match = {"tenant_id": self.tenant_id, "executed_at": {"$gte": tstart, "$lt": tend}}
+        # latest execution + last sync (for the "as of" / freshness hint, esp. on a quiet morning)
+        latest = await db["prescription_executions"].find_one(
+            {"tenant_id": self.tenant_id}, sort=[("executed_at", -1)], projection={"executed_at": 1})
+        last_activity = latest.get("executed_at") if latest else None
+        last_job = await db["sync_jobs"].find_one(
+            {"tenant_id": self.tenant_id, "source": "HDIKA"}, sort=[("finished_at", -1)])
+        last_sync = (last_job or {}).get("finished_at") or (last_job or {}).get("started_at")
 
         tot = await db["prescription_executions"].aggregate([
             {"$match": match},
@@ -391,7 +390,8 @@ class PatientIntelligenceRepository(BaseRepository):
              "expected_open_date": {"$gte": now - timedelta(days=7), "$lte": now}})
 
         return jsonsafe({
-            "day": tstart.date().isoformat(), "is_live": is_live, "current_hour": now.hour,
+            "day": tstart.date().isoformat(), "is_live": True, "current_hour": now.hour,
+            "last_activity": last_activity, "last_sync": last_sync,
             "rx": day_rx, "value": day_value, "patients": day_patients, "new_patients": new_today,
             "avg_day_rx": avg_day, "vs_avg": _pct(day_rx, avg_day),
             "by_hour": by_hour, "categories": categories, "top_meds": top_meds,

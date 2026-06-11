@@ -2,14 +2,15 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
-import { Receipt, Wallet, Users, UserPlus, PhoneCall, Clock, Pill, Layers, Radio } from "lucide-react";
+import { Receipt, Wallet, Users, UserPlus, PhoneCall, Clock, Pill, Layers } from "lucide-react";
 import { api } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
 import { fmtNum, fmtEur } from "@/lib/formatters";
 import { KpiCard } from "@/components/kpi/KpiCard";
 
 type Today = {
-  day: string; is_live: boolean; current_hour: number; rx: number; value: number; patients: number; new_patients: number;
+  day: string; is_live: boolean; current_hour: number; last_activity?: string | null; last_sync?: string | null;
+  rx: number; value: number; patients: number; new_patients: number;
   avg_day_rx: number; vs_avg: number | null;
   by_hour: { hour: number; rx: number; value: number }[];
   categories: { category: string; count: number }[];
@@ -43,11 +44,16 @@ export default function TodayPage() {
       {/* header */}
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2 text-sm">
-          <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ${data.is_live ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-600"}`}>
-            <Radio className="h-3.5 w-3.5" /> {data.is_live ? t("Ζωντανά σήμερα", "Live today") : t("Τελευταία μέρα με δεδομένα", "Latest day with data")}
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-semibold text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">
+            <span className="relative flex h-2 w-2"><span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-500 opacity-75" /><span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" /></span>
+            {t("Ζωντανά σήμερα", "Live today")}
           </span>
           <span className="font-medium text-slate-700 dark:text-slate-200">{dayLabel}</span>
         </div>
+        <span className="text-xs text-slate-400">
+          {data.last_activity && <>{t("Τελ. εκτέλεση", "Last execution")} {new Date(data.last_activity).toLocaleTimeString(t("el-GR", "en-GB"), { hour: "2-digit", minute: "2-digit" })}</>}
+          {data.last_sync && <> · {t("sync", "sync")} {new Date(data.last_sync).toLocaleTimeString(t("el-GR", "en-GB"), { hour: "2-digit", minute: "2-digit" })}</>}
+        </span>
       </div>
 
       {/* KPIs */}

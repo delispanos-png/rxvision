@@ -29,7 +29,7 @@ celery_app.conf.update(
 celery_app.conf.beat_schedule = {
     "hdika-incremental-dispatch": {
         "task": "app.workers.ingestion.dispatch_incremental_sync",
-        "schedule": crontab(minute="*/15"),
+        "schedule": crontab(minute="*/5"),
     },
     "reap-stalled-sync": {  # watchdog: kill sync jobs with no progress >5min
         "task": "app.workers.ingestion.reap_stalled_sync",
