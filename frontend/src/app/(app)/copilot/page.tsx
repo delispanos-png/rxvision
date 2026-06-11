@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
-import { Sparkles, Send, Loader2, ArrowUpRight, Compass } from "lucide-react";
+import { Sparkles, Send, Loader2, ArrowUpRight, Compass, Mic } from "lucide-react";
 import { api } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
 
@@ -30,6 +30,33 @@ export default function CopilotPage() {
 
   const status = useQuery({ queryKey: ["copilot-status"], queryFn: () => api<Status>("/copilot/status") });
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [turns, busy]);
+
+  // Voice input — browser-native Greek speech-to-text (no backend, no Anthropic credits)
+  /* eslint-disable */
+  const recogRef = useRef<any>(null);
+  const [listening, setListening] = useState(false);
+  const [micOk, setMicOk] = useState(false);
+  useEffect(() => {
+    const w = window as any;
+    const SR = w.SpeechRecognition || w.webkitSpeechRecognition;
+    if (!SR) return;
+    setMicOk(true);
+    const r = new SR();
+    r.lang = "el-GR";
+    r.interimResults = true;
+    r.continuous = false;
+    r.onresult = (e: any) => setInput(Array.from(e.results).map((res: any) => res[0].transcript).join(""));
+    r.onend = () => setListening(false);
+    r.onerror = () => setListening(false);
+    recogRef.current = r;
+  }, []);
+  function toggleMic() {
+    const r = recogRef.current;
+    if (!r) return;
+    if (listening) { r.stop(); setListening(false); }
+    else { setInput(""); try { r.start(); setListening(true); } catch { /* already started */ } }
+  }
+  /* eslint-enable */
 
   async function send(text: string) {
     const msg = text.trim();
@@ -108,6 +135,9 @@ export default function CopilotPage() {
           <input value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") send(input); }}
             disabled={busy || blocked} placeholder={t("Πώς κάνω… ; / Πού βλέπω… ;", "How do I… ? / Where do I see… ?")}
             className="flex-1 rounded-xl border border-slate-300 px-4 py-2.5 text-sm focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500 disabled:opacity-50 dark:border-slate-600 dark:bg-slate-800" />
+          {micOk && (
+            <button onClick={toggleMic} disabled={busy || blocked} title={t("Πες την εντολή", "Speak the command")} className={`grid place-items-center rounded-xl border px-3 disabled:opacity-40 ${listening ? "animate-pulse border-rose-300 bg-rose-50 text-rose-600 dark:border-rose-700 dark:bg-rose-950/40" : "border-slate-300 text-slate-500 hover:bg-slate-50 dark:border-slate-600"}`}><Mic className="h-4 w-4" /></button>
+          )}
           <button onClick={() => send(input)} disabled={busy || blocked || !input.trim()} className="grid place-items-center rounded-xl bg-sky-600 px-4 text-white hover:bg-sky-700 disabled:opacity-40"><Send className="h-4 w-4" /></button>
         </div>
         <p className="mt-1.5 text-center text-[10px] text-slate-400">{t("Οδηγός χρήσης του RxVision. Σύντομα θα απαντά και με δεδομένα σου.", "RxVision usage guide. Soon it will answer with your data too.")}</p>
