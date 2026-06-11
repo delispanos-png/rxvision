@@ -391,7 +391,7 @@ class PatientIntelligenceRepository(BaseRepository):
              "expected_open_date": {"$gte": now - timedelta(days=7), "$lte": now}})
 
         return jsonsafe({
-            "day": tstart.date().isoformat(), "is_live": is_live,
+            "day": tstart.date().isoformat(), "is_live": is_live, "current_hour": now.hour,
             "rx": day_rx, "value": day_value, "patients": day_patients, "new_patients": new_today,
             "avg_day_rx": avg_day, "vs_avg": _pct(day_rx, avg_day),
             "by_hour": by_hour, "categories": categories, "top_meds": top_meds,

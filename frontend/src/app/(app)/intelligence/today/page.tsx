@@ -9,7 +9,7 @@ import { fmtNum, fmtEur } from "@/lib/formatters";
 import { KpiCard } from "@/components/kpi/KpiCard";
 
 type Today = {
-  day: string; is_live: boolean; rx: number; value: number; patients: number; new_patients: number;
+  day: string; is_live: boolean; current_hour: number; rx: number; value: number; patients: number; new_patients: number;
   avg_day_rx: number; vs_avg: number | null;
   by_hour: { hour: number; rx: number; value: number }[];
   categories: { category: string; count: number }[];
@@ -30,7 +30,9 @@ export default function TodayPage() {
   if (!data) return null;
 
   const maxHour = Math.max(1, ...data.by_hour.map((h) => h.rx));
-  const hours = Array.from({ length: 16 }, (_, i) => i + 7); // 07:00 – 22:00
+  // live → cap the axis at the current hour (can't execute in the future); past day → full 07–22
+  const endHour = data.is_live ? Math.max(9, Math.min(22, data.current_hour)) : 22;
+  const hours = Array.from({ length: endHour - 7 + 1 }, (_, i) => i + 7);
   const byHourMap = new Map(data.by_hour.map((h) => [h.hour, h.rx]));
   const maxCat = Math.max(1, ...data.categories.map((c) => c.count));
   const maxMed = Math.max(1, ...data.top_meds.map((m) => m.count));
@@ -59,7 +61,10 @@ export default function TodayPage() {
 
       {/* intraday curve */}
       <div className="rx-card p-5">
-        <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-700 dark:text-slate-200"><Clock className="h-4 w-4 text-brand-600" /> {t("Ροή ημέρας ανά ώρα", "Hourly flow")}</h3>
+        <div className="mb-3 flex items-center justify-between">
+          <h3 className="flex items-center gap-2 text-sm font-semibold text-slate-700 dark:text-slate-200"><Clock className="h-4 w-4 text-brand-600" /> {t("Ροή ημέρας ανά ώρα", "Hourly flow")}</h3>
+          <span className="text-xs text-slate-400">{data.is_live ? t(`έως ${data.current_hour}:00 (τώρα)`, `to ${data.current_hour}:00 (now)`) : dayLabel}</span>
+        </div>
         <div className="flex h-32 items-end gap-1">
           {hours.map((h) => {
             const rx = byHourMap.get(h) ?? 0;
