@@ -5,7 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useNavStore } from "@/store/navStore";
 import { usePref, useT } from "@/store/prefStore";
-import { Logo } from "@/components/brand/Logo";
+import { Logo, LogoMark } from "@/components/brand/Logo";
 import {
   Activity, BarChart3, Boxes, CalendarClock, ClipboardCheck, LayoutDashboard,
   Mail, Salad, PackageSearch, Settings, Sparkles, Stethoscope, TrendingUp, Users,
@@ -54,8 +54,11 @@ export function Sidebar() {
     <>
       {open && <div className="fixed inset-0 z-30 bg-black/40 md:hidden" onClick={() => setOpen(false)} />}
       <aside className={`fixed inset-y-0 left-0 z-40 flex w-64 shrink-0 flex-col border-r border-slate-200/70 bg-white transition-all duration-200 dark:border-slate-800 dark:bg-slate-900 md:static md:translate-x-0 ${collapsed ? "md:w-[72px]" : "md:w-64"} ${open ? "translate-x-0" : "-translate-x-full"}`}>
-        <div className={`flex h-16 items-center ${collapsed ? "md:justify-center md:px-0" : ""} px-5`}>
-          <Logo markClassName="h-9 w-9" />
+        <div className={`flex h-16 items-center px-5 ${collapsed ? "md:justify-center md:px-0" : ""}`}>
+          {/* full wordmark — always on mobile drawer; on desktop only when expanded */}
+          <div className={collapsed ? "md:hidden" : ""}><Logo markClassName="h-9 w-9" /></div>
+          {/* collapsed desktop → only the purple mark */}
+          {collapsed && <LogoMark className="hidden h-9 w-9 md:block" />}
         </div>
 
         <nav className="flex-1 space-y-6 overflow-y-auto px-3 py-4">
