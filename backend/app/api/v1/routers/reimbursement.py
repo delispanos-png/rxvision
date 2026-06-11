@@ -102,7 +102,8 @@ async def daily(period: str = Query(None),
 @router.get("/prescription")
 async def prescription(barcode: str = Query(...),
                        ctx: TenantContext = Depends(require("closing:read", module=_MODULE))):
-    return await _repo(ctx).prescription_detail(barcode)
+    # explicit open → live CDA lookup for the prescription-level γνωμάτευση (cached after first time)
+    return await _repo(ctx).prescription_detail(barcode, live=True)
 
 
 # ── Physical barcode check (digital vs physical) ────────────────────────────

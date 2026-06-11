@@ -446,7 +446,7 @@ class ReimbursementRepository(BaseRepository):
         prods = {}
         async for p in self._db["products"].find({"_id": {"$in": pids}, "tenant_id": self.tenant_id}):
             prods[str(p["_id"])] = p
-        # resolve the catalogue (full name + requires_opinion) by product.barcode (== eofCode)
+        # resolve the catalogue (full name + category) by product.barcode (== eofCode)
         eofs = [p.get("barcode") for p in prods.values() if p.get("barcode")]
         cat_by_key: dict = {}
         async for c in self._db["medicine_catalog"].find(  # tenant-ok: shared catalogue
@@ -455,21 +455,17 @@ class ReimbursementRepository(BaseRepository):
             if c.get("barcode"):
                 cat_by_key[c["barcode"]] = c
         lines, flags = [], set()
-        opinion = False
         for it in items:
             p = prods.get(str(it.get("product_id")), {})
             c = cat_by_key.get(p.get("barcode"), {})
             cat = it.get("category") or p.get("category") or "normal"
             flags.add(cat)
-            req = bool(c.get("requires_opinion")) or cat == "fyk"
-            opinion = opinion or req
             lines.append({"name": c.get("full_name") or p.get("name") or "—",
                           "barcode": p.get("barcode"), "quantity": it.get("quantity"),
-                          "category": cat, "requires_opinion": req,
-                          "executed": bool(it.get("is_executed", True))})
-        return lines, flags, opinion
+                          "category": cat, "executed": bool(it.get("is_executed", True))})
+        return lines, flags
 
-    async def prescription_detail(self, barcode: str) -> dict:
+    async def prescription_detail(self, barcode: str, live: bool = False) -> dict:
         bc = (barcode or "").split(":")[0].strip()
         if not bc:
             return {"ok": False, "found": False}
@@ -478,12 +474,26 @@ class ReimbursementRepository(BaseRepository):
         if not exs:
             return {"ok": True, "found": False, "barcode": bc}
         meta = await self._fund_meta()
-        lines, flags, opinion = await self._rx_lines([e["_id"] for e in exs])
+        lines, flags = await self._rx_lines([e["_id"] for e in exs])
+        # γνωμάτευση is a PRESCRIPTION-level flag (ΗΔΙΚΑ CDA id 1.1.23) — NOT per medicine. Read the
+        # cached `has_opinion`; if absent and live (user opened the prescription), fetch the CDA once
+        # and cache it on every execution of this barcode (gentle, one ΗΔΙΚΑ call per Rx ever).
+        opinion = exs[0].get("has_opinion")
+        if opinion is None and live:
+            from app.services.ingestion.cda_lookup import fetch_opinion
+            try:
+                opinion = await fetch_opinion(self.tenant_id, self._db, bc)
+            except Exception:  # noqa: BLE001
+                opinion = None
+            if opinion is not None:
+                await self._db["prescription_executions"].update_many(
+                    {"tenant_id": self.tenant_id, "external_id": {"$regex": f"^{re.escape(bc)}"}},
+                    {"$set": {"has_opinion": opinion}})
         return jsonsafe({
             "ok": True, "found": True, "barcode": bc,
             "fund": meta.get(exs[0].get("fund_id"), {}).get("group", "—"),
             "claim": sum(e.get("amount_claimed", 0) for e in exs), "n_coupons": len(lines),
-            "requires_opinion": opinion,               # ΦΥΚ / ΕΟΠΥΥ-preapproval / protocol
+            "has_opinion": opinion,                    # prescription-level γνωμάτευση (None=unknown)
             "is_fyk": "fyk" in flags, "has_vaccine": "vaccine" in flags,
             "has_narcotic": "narcotic" in flags,
             "partial": any(not ln["executed"] for ln in lines),

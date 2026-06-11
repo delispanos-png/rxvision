@@ -15,8 +15,8 @@ import { DataTable, type Column } from "@/components/tables/DataTable";
 type Item = { barcode: string; claim: number; fund: string; executed_at: string; checked: boolean; day: string };
 type DayRow = { date: string; total: number; checked: number };
 type Check = { period: string; total: number; checked: number; remaining: number; extra: string[]; by_day: DayRow[]; items: Item[] };
-type Coupon = { name: string; barcode: string; quantity: number; category: string; requires_opinion: boolean; executed: boolean };
-type Detail = { ok: boolean; found: boolean; barcode: string; fund: string; claim: number; n_coupons: number; requires_opinion: boolean; is_fyk: boolean; has_vaccine: boolean; has_narcotic: boolean; partial: boolean; coupons: Coupon[] };
+type Coupon = { name: string; barcode: string; quantity: number; category: string; executed: boolean };
+type Detail = { ok: boolean; found: boolean; barcode: string; fund: string; claim: number; n_coupons: number; has_opinion: boolean | null; is_fyk: boolean; has_vaccine: boolean; has_narcotic: boolean; partial: boolean; coupons: Coupon[] };
 type ScanRes = { ok: boolean; found: boolean; barcode: string; detail: Detail | null };
 
 function fmtDay(d: string) { try { return new Date(d + "T00:00:00").toLocaleDateString("el-GR", { weekday: "long", day: "numeric", month: "long" }); } catch { return d; } }
@@ -196,7 +196,8 @@ export default function PhysicalCheckPage() {
                   <button onClick={() => setDetail(null)} className="text-slate-400 hover:text-slate-600"><X className="h-5 w-5" /></button>
                 </div>
                 <div className="mb-3 flex flex-wrap gap-1.5">
-                  {detail.requires_opinion && <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-700"><FileText className="h-3 w-3" /> {t("Απαιτεί γνωμάτευση", "Requires opinion")}</span>}
+                  {detail.has_opinion === true && <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-700"><FileText className="h-3 w-3" /> {t("Απαιτεί γνωμάτευση (συνταγή)", "Requires opinion (prescription)")}</span>}
+                  {detail.has_opinion === false && <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-600"><FileText className="h-3 w-3" /> {t("Χωρίς γνωμάτευση", "No opinion needed")}</span>}
                   {detail.is_fyk && <span className="rounded-full bg-orange-100 px-2 py-0.5 text-[11px] font-semibold text-orange-700">ΦΥΚ</span>}
                   {detail.has_vaccine && <span className="inline-flex items-center gap-1 rounded-full bg-sky-100 px-2 py-0.5 text-[11px] font-semibold text-sky-700"><Syringe className="h-3 w-3" /> {t("Εμβόλιο", "Vaccine")}</span>}
                   {detail.has_narcotic && <span className="inline-flex items-center gap-1 rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-semibold text-rose-700"><ShieldAlert className="h-3 w-3" /> {t("Ναρκωτικό", "Narcotic")}</span>}
@@ -210,7 +211,6 @@ export default function PhysicalCheckPage() {
                         <div className="font-medium text-slate-700 dark:text-slate-200">{c.name} {c.quantity > 1 && <span className="text-slate-400">×{c.quantity}</span>}</div>
                         <div className="flex flex-wrap items-center gap-1.5 text-[10px] text-slate-400">
                           {c.barcode && <span className="font-mono">{c.barcode}</span>}
-                          {c.requires_opinion && <span className="text-amber-600">📋 {t("γνωμάτευση", "opinion")}</span>}
                           {!c.executed && <span className="text-rose-500">{t("ανεκτέλεστο", "unexecuted")}</span>}
                         </div>
                       </div>
