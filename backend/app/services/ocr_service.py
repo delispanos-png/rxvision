@@ -37,8 +37,38 @@ def _quality(gray) -> int:
     return max(0, min(100, round(var / 30)))        # ~heuristic scale
 
 
+def visual_compliance(img_bytes: bytes) -> dict:
+    """Heuristic visual check (no ML): colored-ink blobs → likely stamp/signature ink; dense ink
+    marks in the lower region → likely a signature. Flags for human review, not definitive."""
+    try:
+        from PIL import Image
+        img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
+        img.thumbnail((1000, 1000))
+        w, h = img.size
+        total = max(w * h, 1)
+        # colored ink (stamps/coloured signatures): high SATURATION alone separates it — white and
+        # black both have ~0 saturation, only coloured ink is saturated (regardless of brightness).
+        _, s, _v = img.convert("HSV").split()
+        colored = s.point(lambda p: 255 if p > 100 else 0)
+        colored_ratio = colored.histogram()[255] / total
+        # ink density in the lower 40% (signature zone)
+        gray = img.convert("L")
+        bottom = gray.crop((0, int(h * 0.6), w, h))
+        bt = max(bottom.size[0] * bottom.size[1], 1)
+        dark = bottom.point(lambda p: 255 if p < 110 else 0)
+        ink_ratio = dark.histogram()[255] / bt
+        return {
+            "stamp": colored_ratio > 0.003,             # ≥0.3% coloured ink
+            "colored_ratio": round(colored_ratio * 100, 2),
+            "signature": ink_ratio > 0.010,             # handwriting marks in the signature zone
+            "ink_ratio": round(ink_ratio * 100, 2),
+        }
+    except Exception as e:  # noqa: BLE001
+        return {"stamp": None, "signature": None, "error": f"vc_error:{type(e).__name__}"}
+
+
 def analyze(img_bytes: bytes) -> dict:
-    """Returns {ok, text, barcodes, rx_barcode, date, quality, error}."""
+    """Returns {ok, text, barcodes, rx_barcode, date, quality, visual, error}."""
     try:
         import pytesseract
         from pyzbar import pyzbar
@@ -61,6 +91,6 @@ def analyze(img_bytes: bytes) -> dict:
         dm = _DATE_RE.search(text)
         return {"ok": True, "text": text[:4000], "barcodes": codes,
                 "rx_barcode": rx_barcode, "date": dm.group(1) if dm else None,
-                "quality": _quality(gray)}
+                "quality": _quality(gray), "visual": visual_compliance(img_bytes)}
     except Exception as e:  # noqa: BLE001
         return {"ok": False, "error": f"ocr_error:{type(e).__name__}"}

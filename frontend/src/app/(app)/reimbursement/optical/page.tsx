@@ -9,6 +9,7 @@ import { useT } from "@/store/prefStore";
 type Scan = {
   scan_id: string; filename?: string; status: string; optical_risk?: number | null; band?: string | null;
   flags?: string[]; matched?: string | null; barcode?: string | null; quality?: number | null;
+  signature?: boolean | null; stamp?: boolean | null;
 };
 type Local = { scan_id: string; preview: string };
 
@@ -23,6 +24,8 @@ const FLAG: Record<string, { el: string; en: string }> = {
   image_quality: { el: "Κακή ποιότητα εικόνας", en: "Poor image quality" },
   low_text: { el: "Ελάχιστο κείμενο", en: "Low text" },
   ocr_failed: { el: "Αποτυχία OCR", en: "OCR failed" },
+  missing_signature: { el: "Πιθανή έλλειψη υπογραφής", en: "Possible missing signature" },
+  missing_stamp: { el: "Πιθανή έλλειψη σφραγίδας", en: "Possible missing stamp" },
 };
 
 export default function OpticalAuditPage() {
@@ -73,6 +76,12 @@ export default function OpticalAuditPage() {
           {scan?.barcode && <div className="flex items-center gap-1 font-mono text-slate-600 dark:text-slate-300"><QrCode className="h-3 w-3" /> {scan.barcode}</div>}
           {scan?.matched ? <div className="flex items-center gap-1 text-emerald-600"><Link2 className="h-3 w-3" /> {t("Ταυτοποιήθηκε", "Matched")}</div>
             : done && scan?.barcode ? <div className="flex items-center gap-1 text-rose-600"><AlertTriangle className="h-3 w-3" /> {t("Χωρίς αντιστοίχιση", "No match")}</div> : null}
+          {done && (
+            <div className="flex gap-2 text-[10px] font-medium">
+              <span className={scan?.signature ? "text-emerald-600" : "text-rose-500"}>{scan?.signature ? "✓" : "✗"} {t("Υπογραφή", "Signature")}</span>
+              <span className={scan?.stamp ? "text-emerald-600" : "text-rose-500"}>{scan?.stamp ? "✓" : "✗"} {t("Σφραγίδα", "Stamp")}</span>
+            </div>
+          )}
           {!!scan?.flags?.length && <div className="flex flex-wrap gap-1">{scan.flags.map((f) => <span key={f} className="rounded bg-rose-50 px-1.5 py-0.5 text-[9px] font-medium text-rose-600 dark:bg-rose-950/40">{t(FLAG[f]?.el ?? f, FLAG[f]?.en ?? f)}</span>)}</div>}
         </div>
       </div>

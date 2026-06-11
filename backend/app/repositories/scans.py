@@ -36,6 +36,11 @@ def _score_and_flags(ocr: dict, matched: str | None) -> tuple[int, list[str]]:
         score += 20; flags.append("image_quality")
     if len((ocr.get("text") or "").strip()) < 20:
         score += 15; flags.append("low_text")
+    vis = ocr.get("visual") or {}
+    if vis.get("signature") is False:
+        score += 15; flags.append("missing_signature")
+    if vis.get("stamp") is False:
+        score += 10; flags.append("missing_stamp")
     return min(score, 100), flags
 
 
@@ -87,7 +92,7 @@ class ScanRepository(BaseRepository):
         await self._coll.update_one({"_id": s["_id"], "tenant_id": self.tenant_id}, {"$set": {
             "status": "done",
             "ocr": {k: ocr.get(k) for k in ("rx_barcode", "date", "quality", "barcodes", "ok", "error")},
-            "ocr_text": (ocr.get("text") or "")[:2000],
+            "ocr_text": (ocr.get("text") or "")[:2000], "visual": ocr.get("visual"),
             "matched_execution": matched, "optical_risk": score, "band": _band(score),
             "flags": flags, "processed_at": _now()}})
 
@@ -101,4 +106,6 @@ class ScanRepository(BaseRepository):
             "flags": s.get("flags", []), "matched": s.get("matched_execution"),
             "barcode": (s.get("ocr") or {}).get("rx_barcode"),
             "quality": (s.get("ocr") or {}).get("quality"),
+            "signature": (s.get("visual") or {}).get("signature"),
+            "stamp": (s.get("visual") or {}).get("stamp"),
         } for s in rows])
