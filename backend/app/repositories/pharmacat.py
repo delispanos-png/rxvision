@@ -59,16 +59,16 @@ class PharmaCatRepository(BaseRepository):
                 ors += [{"substance_name": {"$regex": word, "$options": "i"}},
                         {"active_substances": {"$regex": word, "$options": "i"}}]
             rows = await self._db["medicine_catalog"].find(  # tenant-ok: shared platform catalogue
-                {"$or": ors}).limit(40).to_list(40)
+                {"$or": ors}).limit(60).to_list(60)
             names = []
             for r in rows:
-                nm = (r.get("name") or "").strip()
+                nm = (r.get("full_name") or r.get("name") or "").strip()  # full name w/ strength/form
                 key = nm.lower()
                 if not nm or key in seen_names:
                     continue
                 seen_names.add(key)
                 names.append({"name": nm, "narcotic": bool(r.get("narcotic"))})
-                if len(names) >= 6:
+                if len(names) >= 8:
                     break
             if names:
                 out.append({"substance": term or atc, "products": names})

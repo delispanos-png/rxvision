@@ -53,22 +53,25 @@ export default function PharmaCatPage() {
   useEffect(() => { if (!busy) status.refetch(); }, [turns]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Voice input — browser-native Greek speech-to-text (no backend, free)
-  const recogRef = useRef<any>(null); // eslint-disable-line @typescript-eslint/no-explicit-any
+  /* eslint-disable */
+  const recogRef = useRef<any>(null);
   const [listening, setListening] = useState(false);
   const [micOk, setMicOk] = useState(false);
   useEffect(() => {
-    const SR = (typeof window !== "undefined") && ((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition); // eslint-disable-line @typescript-eslint/no-explicit-any
+    const w = window as any;
+    const SR = w.SpeechRecognition || w.webkitSpeechRecognition;
     if (!SR) return;
     setMicOk(true);
     const r = new SR();
     r.lang = "el-GR";
     r.interimResults = true;
     r.continuous = false;
-    r.onresult = (e: any) => setInput(Array.from(e.results).map((res: any) => res[0].transcript).join("")); // eslint-disable-line @typescript-eslint/no-explicit-any
+    r.onresult = (e: any) => setInput(Array.from(e.results).map((res: any) => res[0].transcript).join(""));
     r.onend = () => setListening(false);
     r.onerror = () => setListening(false);
     recogRef.current = r;
   }, []);
+  /* eslint-enable */
   function toggleMic() {
     const r = recogRef.current;
     if (!r) return;

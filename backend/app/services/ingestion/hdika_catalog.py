@@ -31,6 +31,14 @@ def _num(v):
         return None
 
 
+def _full_name(commercial, content) -> str:
+    """Full pharmacist-facing name = brand + strength/content, e.g. 'DEPON 500MG/TAB' (the bare
+    commercialName 'DEPON' can't distinguish 500 vs 1000 — content carries the differentiator)."""
+    c = str(commercial or "").strip()
+    ct = str(content or "").strip()
+    return f"{c} {ct}".strip() if ct else c
+
+
 def _substance_name(active_substances) -> str:
     """Pull the human substance name(s) out of the nested activeSubstances structure:
     {activeSubstance:{activeSubstance:{description: 'ATORVASTATIN…'}}} (dict or list)."""
@@ -94,6 +102,10 @@ async def refresh_catalog(db, client) -> int:
             ops.append(UpdateOne({"_id": eof}, {"$set": {
                 "_id": eof, "eofCode": eof, "barcode": r.get("barcode"),
                 "name": r.get("commercialName"),
+                "full_name": _full_name(r.get("commercialName"), r.get("content")),
+                "content": r.get("content"),
+                "form_code": r.get("formCode"),
+                "package_form": r.get("packageForm"),
                 "retail_cents": retail,
                 "wholesale_cents": _cents(r.get("wholesalePrice")),
                 "reference_cents": _cents(r.get("referencePrice")),
