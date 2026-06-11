@@ -4,7 +4,7 @@ import { useState, useRef, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   Cat, Send, Loader2, AlertOctagon, Stethoscope, Pill, Package, ShieldAlert,
-  HelpCircle, Sparkles, Lightbulb, FlaskConical,
+  HelpCircle, Sparkles, Lightbulb, FlaskConical, Mic,
 } from "lucide-react";
 import { api } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
@@ -51,6 +51,30 @@ export default function PharmaCatPage() {
   const status = useQuery({ queryKey: ["pharmacat-status"], queryFn: () => api<Status>("/pharmacat/status") });
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [turns, busy]);
   useEffect(() => { if (!busy) status.refetch(); }, [turns]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Voice input — browser-native Greek speech-to-text (no backend, free)
+  const recogRef = useRef<any>(null); // eslint-disable-line @typescript-eslint/no-explicit-any
+  const [listening, setListening] = useState(false);
+  const [micOk, setMicOk] = useState(false);
+  useEffect(() => {
+    const SR = (typeof window !== "undefined") && ((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition); // eslint-disable-line @typescript-eslint/no-explicit-any
+    if (!SR) return;
+    setMicOk(true);
+    const r = new SR();
+    r.lang = "el-GR";
+    r.interimResults = true;
+    r.continuous = false;
+    r.onresult = (e: any) => setInput(Array.from(e.results).map((res: any) => res[0].transcript).join("")); // eslint-disable-line @typescript-eslint/no-explicit-any
+    r.onend = () => setListening(false);
+    r.onerror = () => setListening(false);
+    recogRef.current = r;
+  }, []);
+  function toggleMic() {
+    const r = recogRef.current;
+    if (!r) return;
+    if (listening) { r.stop(); setListening(false); }
+    else { setInput(""); try { r.start(); setListening(true); } catch { /* already started */ } }
+  }
 
   async function send(text: string, mode: "chat" | "interactions" = "chat") {
     const msg = text.trim();
@@ -143,6 +167,9 @@ export default function PharmaCatPage() {
           <input value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(input); } }}
             disabled={busy || blocked} placeholder={t("Σύμπτωμα ή κλινική ερώτηση…", "Symptom or clinical question…")}
             className="flex-1 rounded-xl border border-slate-300 px-4 py-2.5 text-sm focus:border-violet-500 focus:outline-none focus:ring-1 focus:ring-violet-500 disabled:opacity-50 dark:border-slate-600 dark:bg-slate-800" />
+          {micOk && (
+            <button onClick={toggleMic} disabled={busy || blocked} title={t("Πες το σύμπτωμα", "Speak the symptom")} className={`grid place-items-center rounded-xl border px-3 disabled:opacity-40 ${listening ? "animate-pulse border-rose-300 bg-rose-50 text-rose-600 dark:border-rose-700 dark:bg-rose-950/40" : "border-slate-300 text-slate-500 hover:bg-slate-50 dark:border-slate-600"}`}><Mic className="h-4 w-4" /></button>
+          )}
           <button onClick={() => send(input, "interactions")} disabled={busy || blocked || !input.trim()} title={t("Έλεγχος αλληλεπιδράσεων (φάρμακα χωρισμένα με κόμμα)", "Interaction check (comma-separated drugs)")} className="grid place-items-center rounded-xl border border-slate-300 px-3 text-slate-500 hover:bg-slate-50 disabled:opacity-40 dark:border-slate-600"><FlaskConical className="h-4 w-4" /></button>
           <button onClick={() => send(input)} disabled={busy || blocked || !input.trim()} className="grid place-items-center rounded-xl bg-violet-600 px-4 text-white hover:bg-violet-700 disabled:opacity-40"><Send className="h-4 w-4" /></button>
         </div>
