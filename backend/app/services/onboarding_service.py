@@ -20,7 +20,7 @@ _TRIAL_DAYS = 14
 _MODULES = [
     "dashboard", "prescription_analytics", "doctor_analytics", "patient_analytics",
     "icd10_analytics", "profitability", "future_prescriptions", "order_suggestions",
-    "monthly_closing", "ingestion", "pharmacyone",
+    "monthly_closing", "ingestion", "pharmacyone", "pharmacat",
 ]
 _COUNTRY_SETTINGS = {
     "GR": {"locale": "el-GR", "timezone": "Europe/Athens", "currency": "EUR"},

@@ -8,6 +8,7 @@ import { api, queryKeys } from "@/lib/apiClient";
 import { useNavStore } from "@/store/navStore";
 import { usePref, useT } from "@/store/prefStore";
 import { InstallButton } from "@/components/pwa/InstallButton";
+import { PharmaCatLauncher } from "@/components/pharmacat/PharmaCatLauncher";
 
 type Me = {
   roles?: string[];
@@ -15,6 +16,7 @@ type Me = {
   tenant_id?: string;
   full_name?: string;
   email?: string;
+  modules?: Record<string, "enabled" | "trial" | "locked">;
 };
 
 function initials(name: string): string {
@@ -99,6 +101,7 @@ export function Topbar() {
         {locale === "el" ? "EN" : "ΕΛ"}
       </button>
       <InstallButton />
+      {(data?.modules?.pharmacat === "enabled" || data?.modules?.pharmacat === "trial") && <PharmaCatLauncher />}
       <div className="mx-1 h-6 w-px bg-slate-200 dark:bg-slate-700" />
 
       <div ref={menuRef} className="relative">

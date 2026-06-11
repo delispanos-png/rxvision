@@ -9,7 +9,7 @@ import { Logo, LogoMark } from "@/components/brand/Logo";
 import {
   Activity, BarChart3, Boxes, CalendarClock, ClipboardCheck, LayoutDashboard,
   Mail, Salad, PackageSearch, Settings, Sparkles, Stethoscope, TrendingUp, Users,
-  Brain, ShieldCheck, Cat, type LucideIcon,
+  Brain, ShieldCheck, type LucideIcon,
 } from "lucide-react";
 
 type Item = { href: string; label: string; en: string; icon: LucideIcon };
@@ -21,9 +21,6 @@ const GROUPS: Group[] = [
   ] },
   { title: "Reimbursement", en: "Reimbursement", items: [
     { href: "/reimbursement", label: "Έλεγχος Αποζημίωσης", en: "Reimbursement Audit", icon: ShieldCheck },
-  ] },
-  { title: "Κλινικός Βοηθός", en: "Clinical Assistant", items: [
-    { href: "/pharmacat", label: "PharmaCat", en: "PharmaCat", icon: Cat },
   ] },
   { title: "Έξυπνοι Σύμβουλοι", en: "AI Advisors", items: [
     { href: "/advisor", label: "Σύμβουλος Επιχείρησης", en: "Business Advisor", icon: Sparkles },

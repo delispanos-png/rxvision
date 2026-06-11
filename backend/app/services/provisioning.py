@@ -18,7 +18,7 @@ from app.services.rbac_seed import seed_rbac
 
 _ALL_MODULES = ["dashboard", "prescription_analytics", "doctor_analytics", "patient_analytics",
                 "icd10_analytics", "profitability", "future_prescriptions", "order_suggestions",
-                "monthly_closing", "ingestion", "pharmacyone"]
+                "monthly_closing", "ingestion", "pharmacyone", "pharmacat"]
 # Noeton role → RxVision tenant role key
 _NOETON_ROLE_MAP = {"admin": "owner", "owner": "owner", "manager": "manager",
                     "pharmacist": "pharmacist", "user": "staff", "staff": "staff"}
