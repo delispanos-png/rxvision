@@ -150,3 +150,10 @@ async def scan_image(scan_id: str,
     if content is None:
         return Response(status_code=404)
     return Response(content=content, media_type=ctype or "image/jpeg")
+
+
+@router.delete("/scans/{scan_id}")
+async def delete_scan(scan_id: str,
+                      ctx: TenantContext = Depends(require("closing:read", module=_MODULE))):
+    ok = await ScanRepository(tenant_id=ctx.tenant_id).delete(scan_id)
+    return {"ok": ok}

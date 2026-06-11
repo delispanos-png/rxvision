@@ -73,6 +73,20 @@ class ScanRepository(BaseRepository):
         stream = await self._bucket().open_download_stream(s["image_id"])
         return await stream.read(), s.get("content_type", "image/jpeg")
 
+    async def delete(self, scan_id: str) -> bool:
+        """Remove a scan: its doc + the stored image (GridFS). Tenant-scoped."""
+        oid = _oid(scan_id)
+        s = await self._coll.find_one({"_id": oid, "tenant_id": self.tenant_id}) if oid else None
+        if not s:
+            return False
+        if s.get("image_id"):
+            try:
+                await self._bucket().delete(s["image_id"])
+            except Exception:  # noqa: BLE001 — image may already be gone; delete the doc anyway
+                pass
+        await self._coll.delete_one({"_id": oid, "tenant_id": self.tenant_id})
+        return True
+
     async def process(self, scan_id: str) -> None:
         oid = _oid(scan_id)
         s = await self._coll.find_one({"_id": oid, "tenant_id": self.tenant_id}) if oid else None
