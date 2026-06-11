@@ -97,6 +97,19 @@ export function Sidebar() {
             </div>
           ))}
         </nav>
+
+        {/* Powered by CloudOn */}
+        <a
+          href="https://cloudon.gr"
+          target="_blank"
+          rel="noopener noreferrer"
+          title="Powered by CloudOn"
+          className={`flex shrink-0 items-center justify-center gap-2 border-t border-slate-200/70 py-3 opacity-70 transition hover:opacity-100 dark:border-slate-800 ${collapsed ? "md:px-0" : "px-3"}`}
+        >
+          <span className={`text-[10px] font-medium uppercase tracking-wide text-slate-400 ${hide}`}>Powered by</span>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/cloudon-logo.png" alt="CloudOn" className="h-4 w-auto" />
+        </a>
       </aside>
     </>
   );
