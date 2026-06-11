@@ -6,17 +6,34 @@ The TenantDatabaseResolver is the seam that lets us move from the shared-DB mode
 
 from __future__ import annotations
 
+import asyncio
+
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
 
 from app.core.config import settings
 
 _client: AsyncIOMotorClient | None = None
+_client_loop: object | None = None  # the event loop the cached client is bound to
 
 
 def get_client() -> AsyncIOMotorClient:
-    global _client
-    if _client is None:
+    """Loop-aware Motor client. The API runs on one persistent event loop (client created once,
+    reused). Celery workers run `asyncio.run()` PER TASK → a fresh loop each time; a Motor client
+    bound to a previous (now-closed) loop raises 'Event loop is closed'. So when we're running on a
+    different loop than the cached client, we recreate it bound to the current loop."""
+    global _client, _client_loop
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+    if _client is None or (loop is not None and loop is not _client_loop):
+        if _client is not None:
+            try:
+                _client.close()
+            except Exception:  # noqa: BLE001 — old loop may already be closed; best-effort
+                pass
         _client = AsyncIOMotorClient(settings.MONGODB_URI, tz_aware=True)
+        _client_loop = loop
     return _client
 
 

@@ -9,6 +9,10 @@ from app.workers.celery_app import celery_app
 
 @celery_app.task(name="app.workers.optical.process_scan")
 def process_scan(tenant_id: str, scan_id: str) -> dict:
-    from app.repositories.scans import ScanRepository
-    asyncio.run(ScanRepository(tenant_id=tenant_id).process(scan_id))
+    async def _run() -> None:
+        # construct the repo INSIDE the running loop so the Motor client binds to THIS loop
+        from app.repositories.scans import ScanRepository
+        await ScanRepository(tenant_id=tenant_id).process(scan_id)
+
+    asyncio.run(_run())
     return {"tenant_id": tenant_id, "scan_id": scan_id, "status": "done"}
