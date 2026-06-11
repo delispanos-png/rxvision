@@ -323,6 +323,81 @@ class PatientIntelligenceRepository(BaseRepository):
         items.sort(key=lambda x: x["compliance"])
         return jsonsafe({"distribution": self._compliance_dist(chain), "items": items[:400]})
 
+    # ── TODAY (live daily operations) ───────────────────────────────────────
+    async def today(self) -> dict:
+        db = self._db
+        now = _now()
+        tstart = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        # active day = today if it has activity, else the latest day with data (demo-friendly)
+        if not await db["prescription_executions"].count_documents(
+                {"tenant_id": self.tenant_id, "executed_at": {"$gte": tstart}}):
+            last = await db["prescription_executions"].find_one(
+                {"tenant_id": self.tenant_id}, sort=[("executed_at", -1)])
+            if last and last.get("executed_at"):
+                tstart = last["executed_at"].replace(hour=0, minute=0, second=0, microsecond=0)
+        tend = tstart + timedelta(days=1)
+        is_live = tstart.date() == now.date()
+        match = {"tenant_id": self.tenant_id, "executed_at": {"$gte": tstart, "$lt": tend}}
+
+        tot = await db["prescription_executions"].aggregate([
+            {"$match": match},
+            {"$group": {"_id": None, "rx": {"$sum": 1}, "value": {"$sum": "$amount_total"},
+                        "patients": {"$addToSet": "$patient_ref"}}},
+        ]).to_list(1)
+        t0 = tot[0] if tot else {}
+        day_rx, day_value = t0.get("rx", 0), t0.get("value", 0)
+        day_patients = len(t0.get("patients", []) or [])
+
+        bh = await db["prescription_executions"].aggregate([
+            {"$match": match},
+            {"$group": {"_id": {"$hour": "$executed_at"}, "rx": {"$sum": 1}, "value": {"$sum": "$amount_total"}}},
+            {"$sort": {"_id": 1}},
+        ]).to_list(None)
+        by_hour = [{"hour": r["_id"], "rx": r["rx"], "value": r["value"]} for r in bh]
+
+        cats = await db["prescription_executions"].aggregate([
+            {"$match": match},
+            {"$lookup": {"from": "prescription_items", "localField": "_id", "foreignField": "execution_id", "as": "it"}},
+            {"$unwind": "$it"},
+            {"$group": {"_id": "$it.category", "n": {"$sum": 1}}},
+            {"$sort": {"n": -1}},
+        ]).to_list(None)
+        categories = [{"category": (r["_id"] or "—"), "count": r["n"]} for r in cats]
+
+        meds = await db["prescription_executions"].aggregate([
+            {"$match": match},
+            {"$lookup": {"from": "prescription_items", "localField": "_id", "foreignField": "execution_id", "as": "it"}},
+            {"$unwind": "$it"},
+            {"$lookup": {"from": "products", "localField": "it.product_id", "foreignField": "_id", "as": "p"}},
+            {"$group": {"_id": {"$first": "$p.name"}, "n": {"$sum": 1}}},
+            {"$sort": {"n": -1}}, {"$limit": 8},
+        ]).to_list(None)
+        top_meds = [{"name": r["_id"], "count": r["n"]} for r in meds if r["_id"]]
+
+        new_today = await db["patients_anonymized"].count_documents(
+            {"tenant_id": self.tenant_id, "first_seen_at": {"$gte": tstart, "$lt": tend}})
+
+        d30 = await db["prescription_executions"].aggregate([
+            {"$match": {"tenant_id": self.tenant_id, "executed_at": {"$gte": tstart - timedelta(days=30), "$lt": tstart}}},
+            {"$group": {"_id": {"$dateToString": {"format": "%Y-%m-%d", "date": "$executed_at"}}, "rx": {"$sum": 1}}},
+        ]).to_list(None)
+        avg_day = round(sum(r["rx"] for r in d30) / len(d30)) if d30 else 0
+
+        # expected but not arrived: overdue + pending repeats (backlog), and due this week
+        overdue = await db["future_prescriptions"].count_documents(
+            {"tenant_id": self.tenant_id, "status": "pending", "expected_open_date": {"$lte": now}})
+        week = await db["future_prescriptions"].count_documents(
+            {"tenant_id": self.tenant_id, "status": "pending",
+             "expected_open_date": {"$gte": now - timedelta(days=7), "$lte": now}})
+
+        return jsonsafe({
+            "day": tstart.date().isoformat(), "is_live": is_live,
+            "rx": day_rx, "value": day_value, "patients": day_patients, "new_patients": new_today,
+            "avg_day_rx": avg_day, "vs_avg": _pct(day_rx, avg_day),
+            "by_hour": by_hour, "categories": categories, "top_meds": top_meds,
+            "expected_absent": overdue, "expected_week": week,
+        })
+
     # ── 2. PATIENT ANALYTICS ────────────────────────────────────────────────
     async def patients_table(self, *, sort: str = "value", limit: int = 300) -> dict:
         pats = await self._patients()

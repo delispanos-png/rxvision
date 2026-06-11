@@ -23,6 +23,11 @@ async def overview(ctx: TenantContext = Depends(require("patients:read", module=
     return await _repo(ctx).overview()
 
 
+@router.get("/today")
+async def today(ctx: TenantContext = Depends(require("patients:read", module=_MODULE))):
+    return await _repo(ctx).today()
+
+
 @router.get("/patients")
 async def patients(sort: str = Query("value"),
                    ctx: TenantContext = Depends(require("patients:read", module=_MODULE))):
