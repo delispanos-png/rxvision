@@ -3,11 +3,12 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { adminApi } from "@/lib/adminClient";
-import { KeyRound, Save, Loader2, Check, Landmark, CreditCard, Package } from "lucide-react";
+import { KeyRound, Save, Loader2, Check, Landmark, CreditCard, Package, Bot } from "lucide-react";
 
 type Integrations = {
   aade: { username: string | null; configured: boolean };
   revolut: { mode: string; api_key_set: boolean; webhook_secret_set: boolean };
+  anthropic?: { api_key_set: boolean };
 };
 type Pkg = { _id: string; name?: string; price_monthly?: number; price_yearly?: number; trial_days?: number };
 
@@ -24,13 +25,15 @@ export default function IntegrationsPage() {
   const [revKey, setRevKey] = useState("");
   const [revMode, setRevMode] = useState("sandbox");
   const [revSecret, setRevSecret] = useState("");
+  const [antKey, setAntKey] = useState("");
 
   const save = useMutation({
     mutationFn: () => adminApi("/admin/integrations", { method: "PUT", body: JSON.stringify({
       aade_username: aadeUser || null, aade_password: aadePass || null,
       revolut_api_key: revKey || null, revolut_mode: revMode || null, revolut_webhook_secret: revSecret || null,
+      anthropic_api_key: antKey || null,
     }) }),
-    onSuccess: () => { setAadePass(""); setRevKey(""); setRevSecret(""); qc.invalidateQueries({ queryKey: ["integrations"] }); },
+    onSuccess: () => { setAadePass(""); setRevKey(""); setRevSecret(""); setAntKey(""); qc.invalidateQueries({ queryKey: ["integrations"] }); },
   });
 
   const std = pkgs.data?.items?.find((p) => p._id === "standard");
@@ -87,7 +90,16 @@ export default function IntegrationsPage() {
         <p className="mt-3 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-500">Webhook URL για το Revolut dashboard: <code className="text-brand-700">https://app.rxvision.gr/api/v1/billing/webhook/revolut</code> (events: ORDER_COMPLETED, ORDER_PAYMENT_FAILED)</p>
       </div>
 
-      <button onClick={() => save.mutate()} disabled={save.isPending || (!aadeUser && !aadePass && !revKey && !revSecret)} className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50">
+      {/* Anthropic / PharmaCat */}
+      <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-700"><Bot className="h-4 w-4 text-brand-600" /> PharmaCat — Anthropic (Claude) API key <Badge ok={s?.anthropic?.api_key_set} /></h3>
+        <label className="text-xs text-slate-500">Anthropic API key (κλινικός βοηθός PharmaCat)
+          <input type="password" value={antKey} onChange={(e) => setAntKey(e.target.value)} placeholder={s?.anthropic?.api_key_set ? "•••• (αποθηκευμένο — κενό = αμετάβλητο)" : "sk-ant-..."} className={inp} />
+        </label>
+        <p className="mt-3 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-500">Τροφοδοτεί το κύκλωμα <b>PharmaCat Clinical Assistant</b> (CDSS). Χωρίς κλειδί, το κύκλωμα εμφανίζει «μη ρυθμισμένο». Μοντέλο: <code className="text-brand-700">claude-opus-4-8</code>.</p>
+      </div>
+
+      <button onClick={() => save.mutate()} disabled={save.isPending || (!aadeUser && !aadePass && !revKey && !revSecret && !antKey)} className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50">
         {save.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : save.isSuccess ? <Check className="h-4 w-4" /> : <Save className="h-4 w-4" />} Αποθήκευση διαπιστευτηρίων
       </button>
 

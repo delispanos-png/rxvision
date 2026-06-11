@@ -21,6 +21,7 @@ dependencies = [
     "Pillow>=10.2",             # image preprocessing for optical audit
     "pytesseract>=0.3.10",       # Tesseract OCR (self-hosted)
     "pyzbar>=0.1.9",             # QR / barcode decoding
+    "anthropic>=0.49",           # Claude API — PharmaCat clinical assistant (CDSS)
 ]
 
 [project.optional-dependencies]

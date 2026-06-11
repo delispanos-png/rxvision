@@ -379,6 +379,7 @@ class IntegrationsIn(BaseModel):
     revolut_api_key: str | None = None
     revolut_mode: str | None = None  # sandbox | live
     revolut_webhook_secret: str | None = None
+    anthropic_api_key: str | None = None  # PharmaCat clinical assistant (Claude)
 
 
 @router.get("/integrations")
@@ -387,11 +388,13 @@ async def get_integrations(_: PlatformContext = Depends(get_platform_admin)):
     db = shared_db()
     aade = await db["platform_settings"].find_one({"_id": "aade"}) or {}
     rev = await db["platform_settings"].find_one({"_id": "revolut"}) or {}
+    ant = await db["platform_settings"].find_one({"_id": "anthropic"}) or {}
     return {
         "aade": {"username": aade.get("username"),
                  "configured": bool(aade.get("username") and aade.get("password"))},
         "revolut": {"mode": rev.get("mode", "sandbox"), "api_key_set": bool(rev.get("api_key")),
                     "webhook_secret_set": bool(rev.get("webhook_secret"))},
+        "anthropic": {"api_key_set": bool(ant.get("api_key"))},
     }
 
 
@@ -416,6 +419,9 @@ async def set_integrations(body: IntegrationsIn,
         r["webhook_secret"] = body.revolut_webhook_secret
     if r:
         await db["platform_settings"].update_one({"_id": "revolut"}, {"$set": r}, upsert=True)
+    if body.anthropic_api_key:
+        await db["platform_settings"].update_one(
+            {"_id": "anthropic"}, {"$set": {"api_key": body.anthropic_api_key}}, upsert=True)
     return {"ok": True}
 
 
