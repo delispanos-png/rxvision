@@ -69,6 +69,11 @@ export function Topbar() {
 
   return (
     <header className="sticky top-0 z-10 flex h-16 items-center justify-end gap-2 border-b border-slate-200/70 bg-canvas/80 px-4 backdrop-blur dark:border-slate-800 dark:bg-slate-950/80 sm:px-6">
+      {(data?.modules?.pharmacat === "enabled" || data?.modules?.pharmacat === "trial") && (
+        <div className="pointer-events-none absolute left-1/2 top-1/2 z-20 -translate-x-1/2 -translate-y-1/2">
+          <div className="pointer-events-auto"><PharmaCatLauncher /></div>
+        </div>
+      )}
       <button
         onClick={() => useNavStore.getState().setOpen(true)}
         aria-label={t("Μενού", "Menu")}
@@ -101,7 +106,6 @@ export function Topbar() {
         {locale === "el" ? "EN" : "ΕΛ"}
       </button>
       <InstallButton />
-      {(data?.modules?.pharmacat === "enabled" || data?.modules?.pharmacat === "trial") && <PharmaCatLauncher />}
       <div className="mx-1 h-6 w-px bg-slate-200 dark:bg-slate-700" />
 
       <div ref={menuRef} className="relative">
