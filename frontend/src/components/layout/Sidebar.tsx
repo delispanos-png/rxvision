@@ -9,13 +9,16 @@ import { Logo, LogoMark } from "@/components/brand/Logo";
 import {
   Activity, BarChart3, Boxes, CalendarClock, ClipboardCheck, LayoutDashboard,
   Mail, Salad, PackageSearch, Settings, Sparkles, Stethoscope, TrendingUp, Users,
-  type LucideIcon,
+  Brain, type LucideIcon,
 } from "lucide-react";
 
 type Item = { href: string; label: string; en: string; icon: LucideIcon };
 type Group = { title: string; en: string; items: Item[] };
 
 const GROUPS: Group[] = [
+  { title: "Patient Intelligence", en: "Patient Intelligence", items: [
+    { href: "/intelligence", label: "Patient Intelligence", en: "Patient Intelligence", icon: Brain },
+  ] },
   { title: "Έξυπνοι Σύμβουλοι", en: "AI Advisors", items: [
     { href: "/advisor", label: "Σύμβουλος Επιχείρησης", en: "Business Advisor", icon: Sparkles },
     { href: "/order-advisor", label: "Σύμβουλος Παραγγελίας", en: "Order Advisor", icon: Sparkles },
