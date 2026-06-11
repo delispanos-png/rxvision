@@ -67,12 +67,28 @@ class PharmaCatRepository(BaseRepository):
                 if not nm or key in seen_names:
                     continue
                 seen_names.add(key)
-                names.append({"name": nm, "narcotic": bool(r.get("narcotic"))})
+                names.append({"name": nm, "narcotic": bool(r.get("narcotic")), "eof": r.get("_id")})
                 if len(names) >= 8:
                     break
             if names:
                 out.append({"substance": term or atc, "products": names})
         return out
+
+    async def medicine(self, eof: str) -> dict:
+        """Full ΗΔΙΚΑ catalogue info for one medicine (clicked from a recommendation)."""
+        d = await self._db["medicine_catalog"].find_one({"_id": eof})  # tenant-ok: shared catalogue
+        if not d:
+            return {"ok": False}
+        return jsonsafe({
+            "ok": True, "eof": d.get("_id"),
+            "full_name": d.get("full_name") or d.get("name"), "name": d.get("name"),
+            "substance": d.get("substance_name"), "atc": d.get("atc"),
+            "content": d.get("content"), "form_code": d.get("form_code"),
+            "package_form": d.get("package_form"), "barcode": d.get("barcode"),
+            "retail_cents": d.get("retail_cents"), "wholesale_cents": d.get("wholesale_cents"),
+            "reference_cents": d.get("reference_cents"), "participation": d.get("participation"),
+            "narcotic": bool(d.get("narcotic")), "high_cost": bool(d.get("high_cost")),
+            "category": d.get("drug_category")})
 
     async def _today_llm_count(self) -> int:
         day0 = _now().replace(hour=0, minute=0, second=0, microsecond=0)

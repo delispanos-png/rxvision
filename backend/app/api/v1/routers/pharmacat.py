@@ -47,6 +47,11 @@ async def interactions(body: InteractionIn, ctx: TenantContext = Depends(require
     return await _repo(ctx).interactions(ctx.user_id, body.drugs, body.context)
 
 
+@router.get("/medicine")
+async def medicine(eof: str, ctx: TenantContext = Depends(require("patients:read"))):
+    return await _repo(ctx).medicine(eof)
+
+
 @router.get("/cases")
 async def cases(limit: int = 40, ctx: TenantContext = Depends(require("patients:read"))):
     return await _repo(ctx).cases(limit)

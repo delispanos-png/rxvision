@@ -4,15 +4,17 @@ import { useState, useRef, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   Cat, Send, Loader2, AlertOctagon, Stethoscope, Pill, Package, ShieldAlert,
-  HelpCircle, Sparkles, Lightbulb, FlaskConical, Mic,
+  HelpCircle, Sparkles, Lightbulb, FlaskConical, Mic, X, Info,
 } from "lucide-react";
 import { api } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
+import { fmtEur } from "@/lib/formatters";
 
 type RedFlag = { flag: string; action: string };
 type Substance = { name: string; atc: string; note: string };
 type Interaction = { a: string; b: string; severity: string; mechanism: string; risk: string; action: string };
-type Product = { name: string; narcotic: boolean };
+type Product = { name: string; narcotic: boolean; eof: string };
+type MedInfo = { ok: boolean; eof: string; full_name: string; name: string; substance: string; atc: string; content: string; form_code: string; package_form: string; barcode: string; retail_cents: number; wholesale_cents: number; reference_cents: number; participation: number; narcotic: boolean; high_cost: boolean; category: string };
 type ProductGroup = { substance: string; products: Product[] };
 type Safety = { pregnancy: string; lactation: string; renal: string; hepatic: string; pediatric: string; elderly: string };
 type Referral = { needed: boolean; urgency: string; reason: string };
@@ -77,6 +79,21 @@ export default function PharmaCatPage() {
     if (!r) return;
     if (listening) { r.stop(); setListening(false); }
     else { setInput(""); try { r.start(); setListening(true); } catch { /* already started */ } }
+  }
+
+  // Medicine info popup (ΗΔΙΚΑ catalogue) — click a product
+  const [med, setMed] = useState<MedInfo | null>(null);
+  const [medLoading, setMedLoading] = useState(false);
+  async function openMed(eof: string) {
+    if (!eof) return;
+    setMed(null); setMedLoading(true);
+    try { const d = await api<MedInfo>(`/pharmacat/medicine?eof=${encodeURIComponent(eof)}`); setMed(d.ok ? d : null); }
+    catch { setMed(null); }
+    setMedLoading(false);
+  }
+  function row(label: string, value: string | null | undefined) {
+    if (!value) return null;
+    return <div className="flex justify-between gap-3"><dt className="text-slate-500">{label}</dt><dd className="text-right font-medium text-slate-700 dark:text-slate-200">{value}</dd></div>;
   }
 
   async function send(text: string, mode: "chat" | "interactions" = "chat") {
@@ -156,7 +173,7 @@ export default function PharmaCatPage() {
                     : turn.result.error === "not_configured" ? t("Μη ρυθμισμένο (λείπει το API key).", "Not configured (missing API key).")
                     : t("Σφάλμα επικοινωνίας — δοκιμάστε ξανά.", "Communication error — try again.")}
                 </div>
-              ) : <AssistantCard r={turn.result!} t={t} onAnswer={(a) => send(a)} />}
+              ) : <AssistantCard r={turn.result!} t={t} onAnswer={(a) => send(a)} onMed={openMed} />}
             </div>
           </div>
         ))}
@@ -178,11 +195,51 @@ export default function PharmaCatPage() {
         </div>
         <p className="mt-1.5 text-center text-[10px] text-slate-400">{t("Υποστήριξη απόφασης για επαγγελματία υγείας. Δεν υποκαθιστά την κλινική κρίση ή τον ιατρό.", "Decision support for a health professional. Does not replace clinical judgment or a physician.")}</p>
       </div>
+
+      {/* medicine info modal — ΗΔΙΚΑ catalogue */}
+      {(med || medLoading) && (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4" onClick={() => { setMed(null); setMedLoading(false); }}>
+          <div className="w-full max-w-md rounded-2xl bg-white p-5 shadow-xl dark:bg-slate-900" onClick={(e) => e.stopPropagation()}>
+            {medLoading ? (
+              <div className="flex items-center gap-2 text-sm text-slate-400"><Loader2 className="h-4 w-4 animate-spin" /> {t("Φόρτωση…", "Loading…")}</div>
+            ) : med ? (
+              <>
+                <div className="mb-3 flex items-start justify-between gap-2">
+                  <div>
+                    <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase text-violet-500"><Info className="h-3.5 w-3.5" /> {t("Πληροφορίες ΗΔΙΚΑ", "ΗΔΙΚΑ info")}</div>
+                    <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">{med.full_name}</h3>
+                  </div>
+                  <button onClick={() => setMed(null)} className="text-slate-400 hover:text-slate-600"><X className="h-5 w-5" /></button>
+                </div>
+                <dl className="space-y-1.5 text-sm">
+                  {row(t("Δραστική", "Substance"), med.substance)}
+                  {row("ATC", med.atc)}
+                  {row(t("Περιεκτικότητα", "Content"), med.content)}
+                  {row(t("Μορφή", "Form"), med.form_code)}
+                  {row(t("Συσκευασία", "Package"), med.package_form)}
+                  {row("Barcode", med.barcode)}
+                  {row(t("Λιανική (Δελτίο Τιμών)", "Retail (price bulletin)"), med.retail_cents != null ? fmtEur(med.retail_cents) : null)}
+                  {row(t("Χονδρική", "Wholesale"), med.wholesale_cents != null ? fmtEur(med.wholesale_cents) : null)}
+                  {row(t("Τιμή αναφοράς", "Reference price"), med.reference_cents ? fmtEur(med.reference_cents) : null)}
+                  {row(t("Συμμετοχή", "Participation"), med.participation != null ? `${med.participation}%` : null)}
+                </dl>
+                <div className="mt-3 flex flex-wrap gap-1.5">
+                  {med.narcotic && <span className="rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-medium text-rose-700">⚠ {t("Ναρκωτικό", "Narcotic")}</span>}
+                  {med.high_cost && <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-medium text-amber-700">{t("Υψηλού κόστους (ΦΥΚ)", "High-cost")}</span>}
+                </div>
+                <p className="mt-3 text-[10px] text-slate-400">{t("Τιμή & διαθεσιμότητα στο φαρμακείο: από το σύστημά σας.", "Pharmacy price & stock: from your own system.")}</p>
+              </>
+            ) : (
+              <div className="text-sm text-slate-500">{t("Δεν βρέθηκαν στοιχεία.", "No data found.")}</div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
-function AssistantCard({ r, t, onAnswer }: { r: Result; t: (el: string, en: string) => string; onAnswer: (a: string) => void }) {
+function AssistantCard({ r, t, onAnswer, onMed }: { r: Result; t: (el: string, en: string) => string; onAnswer: (a: string) => void; onMed: (eof: string) => void }) {
   const ref = r.referral;
   return (
     <>
@@ -235,7 +292,7 @@ function AssistantCard({ r, t, onAnswer }: { r: Result; t: (el: string, en: stri
               <div className="mb-1 text-[11px] font-medium text-slate-400">{g.substance}</div>
               <div className="flex flex-wrap gap-1">
                 {g.products.map((p, j) => (
-                  <span key={j} className="rounded-md bg-slate-100 px-2 py-0.5 text-xs text-slate-700 dark:bg-slate-800 dark:text-slate-200">{p.name}{p.narcotic ? " ⚠" : ""}</span>
+                  <button key={j} onClick={() => onMed(p.eof)} title={t("Πληροφορίες φαρμάκου", "Medicine info")} className="rounded-md bg-slate-100 px-2 py-0.5 text-xs text-slate-700 transition hover:bg-violet-100 hover:text-violet-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-violet-900/40">{p.name}{p.narcotic ? " ⚠" : ""}</button>
                 ))}
               </div>
             </div>
