@@ -116,7 +116,10 @@ class ReimbursementRepository(BaseRepository):
         for f in by_fund_raw:
             m = meta.get(f["_id"], {"group": "—", "is_eopyy": False})
             g = grouped[m["group"]]
-            g["rx"] += f["rx"]; g["retail"] += f["retail"]; g["claim"] += f["claim"]; g["patient"] += f["patient"]
+            g["rx"] += f["rx"]
+            g["retail"] += f["retail"]
+            g["claim"] += f["claim"]
+            g["patient"] += f["patient"]
             g["is_eopyy"] = m["is_eopyy"]
         by_fund = [{"fund": k, "is_eopyy": v["is_eopyy"], "rx": v["rx"], "retail": v["retail"],
                     "claim": v["claim"], "patient": v["patient"]} for k, v in grouped.items()]
@@ -190,11 +193,14 @@ class ReimbursementRepository(BaseRepository):
             flags = []
             retail, claim, patient = e.get("amount_total", 0), e.get("amount_claimed", 0), e.get("patient_share", 0)
             if abs((claim + patient) - retail) > 2:  # >2 cents → real mismatch
-                score += RISK_MISMATCH; flags.append("amount_mismatch")
+                score += RISK_MISMATCH
+                flags.append("amount_mismatch")
             if not e.get("fund_id"):
-                score += RISK_NO_FUND; flags.append("missing_fund")
+                score += RISK_NO_FUND
+                flags.append("missing_fund")
             if any((it.get("category") == "high_cost") for it in e.get("it", [])):
-                score += RISK_HIGH_COST; flags.append("high_cost")
+                score += RISK_HIGH_COST
+                flags.append("high_cost")
             score = min(score, 100)
             # expected cut: claim-at-risk weighted by score (capped)
             cut = round(claim * min(score, 80) / 100)
@@ -266,7 +272,9 @@ class ReimbursementRepository(BaseRepository):
         for a in agg:
             m = meta.get(a["_id"], {"group": "—", "is_eopyy": False})
             g = gagg[m["group"]]
-            g["rx"] += a["rx"]; g["claim"] += a["claim"]; g["is_eopyy"] = m["is_eopyy"]
+            g["rx"] += a["rx"]
+            g["claim"] += a["claim"]
+            g["is_eopyy"] = m["is_eopyy"]
         risk_rows = await self._risk_rows(period)
         risk_by_group: dict = defaultdict(lambda: {"flagged": 0, "cut": 0})
         for r in risk_rows:

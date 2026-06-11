@@ -146,7 +146,8 @@ class PatientIntelligenceRepository(BaseRepository):
             {"_id": {"$in": prefs}, "tenant_id": self.tenant_id})} if prefs else {}
         items = []
         for r in rets:
-            pa = pats.get(r["patient_ref"], {}); ct = cts.get(r["patient_ref"], {})
+            pa = pats.get(r["patient_ref"], {})
+            ct = cts.get(r["patient_ref"], {})
             items.append({
                 "patient_id": str(r["patient_ref"]), "name": pa.get("full_name"), "amka": pa.get("amka"),
                 "returned_at": r["returned_at"], "gap_days": r["gap_days"], "value": r["value"],

@@ -524,9 +524,11 @@ class AdvisorRepository(BaseRepository):
                 done = any(e.get("executed_at") and wopen <= e["executed_at"] < wclose for e in exs)
                 if not done:
                     if wclose <= now:
-                        per[pat]["missed"] += 1; per[pat]["value"] += avg
+                        per[pat]["missed"] += 1
+                        per[pat]["value"] += avg
                     elif wopen <= now < wclose:
-                        per[pat]["available"] += 1; per[pat]["value"] += avg
+                        per[pat]["available"] += 1
+                        per[pat]["value"] += avg
                 i += 1
 
         prefs = [p for p, d in per.items() if d["missed"] or d["available"]]
@@ -539,7 +541,9 @@ class AdvisorRepository(BaseRepository):
         items = []
         excluded_inactive = 0
         for pref in prefs:
-            d = per[pref]; pa = pats.get(pref, {}); ct = cts.get(pref, {})
+            d = per[pref]
+            pa = pats.get(pref, {})
+            ct = cts.get(pref, {})
             if ct.get("active") is False:  # deceased / moved / stopped — don't chase
                 excluded_inactive += 1
                 continue
