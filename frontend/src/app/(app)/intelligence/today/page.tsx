@@ -12,6 +12,7 @@ type Today = {
   day: string; is_live: boolean; current_hour: number; last_activity?: string | null; last_sync?: string | null;
   rx: number; value: number; patients: number; new_patients: number;
   avg_day_rx: number; vs_avg: number | null;
+  rx_yoy: number; value_yoy: number; vs_yoy_rx: number | null; vs_yoy_value: number | null;
   by_hour: { hour: number; rx: number; value: number }[];
   categories: { category: string; count: number }[];
   top_meds: { name: string; count: number }[];
@@ -58,8 +59,8 @@ export default function TodayPage() {
 
       {/* KPIs */}
       <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-5">
-        <KpiCard label={t("Συνταγές", "Prescriptions")} value={fmtNum(data.rx)} icon={Receipt} accent="indigo" trend={data.vs_avg ?? undefined} sub={t(`μ.ο. μέρας ${data.avg_day_rx}`, `day avg ${data.avg_day_rx}`)} />
-        <KpiCard label={t("Τζίρος ημέρας", "Day revenue")} value={fmtEur(data.value)} icon={Wallet} accent="green" />
+        <KpiCard label={t("Συνταγές", "Prescriptions")} value={fmtNum(data.rx)} icon={Receipt} accent="indigo" trend={data.vs_yoy_rx ?? undefined} sub={t(`μ.ο. μέρας ${data.avg_day_rx}${data.vs_avg != null ? ` · ${data.vs_avg >= 0 ? "+" : ""}${Math.round(data.vs_avg)}% vs μ.ο.` : ""}`, `day avg ${data.avg_day_rx}${data.vs_avg != null ? ` · ${data.vs_avg >= 0 ? "+" : ""}${Math.round(data.vs_avg)}% vs avg` : ""}`)} />
+        <KpiCard label={t("Τζίρος ημέρας", "Day revenue")} value={fmtEur(data.value)} icon={Wallet} accent="green" trend={data.vs_yoy_value ?? undefined} sub={t(`πέρσι ${fmtEur(data.value_yoy)}`, `last year ${fmtEur(data.value_yoy)}`)} />
         <KpiCard label={t("Ασθενείς", "Patients")} value={fmtNum(data.patients)} icon={Users} accent="violet" />
         <KpiCard label={t("Νέοι σήμερα", "New today")} value={fmtNum(data.new_patients)} icon={UserPlus} accent="sky" />
         <KpiCard label={t("Δεν ήρθαν (εκκρεμείς)", "No-shows (pending)")} value={fmtNum(data.expected_absent)} icon={PhoneCall} accent="rose" sub={t(`${data.expected_week} αυτή την εβδομάδα`, `${data.expected_week} this week`)} onClick={() => router.push("/intelligence/recall")} />

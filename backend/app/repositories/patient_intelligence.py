@@ -424,6 +424,16 @@ class PatientIntelligenceRepository(BaseRepository):
         day_rx, day_value = t0.get("rx", 0), t0.get("value", 0)
         day_patients = len(t0.get("patients", []) or [])
 
+        # YoY: SAME day last year, time-aligned (midnight→same moment) so a half-day isn't
+        # compared to a full one. executed_at carries Athens local time, like `now`.
+        yday = await db["prescription_executions"].aggregate([
+            {"$match": {"tenant_id": self.tenant_id,
+                        "executed_at": {"$gte": _yago(tstart), "$lt": _yago(now)}}},
+            {"$group": {"_id": None, "rx": {"$sum": 1}, "value": {"$sum": "$amount_total"}}},
+        ]).to_list(1)
+        y0 = yday[0] if yday else {}
+        rx_yoy, value_yoy = y0.get("rx", 0), y0.get("value", 0)
+
         bh = await db["prescription_executions"].aggregate([
             {"$match": match},
             {"$group": {"_id": {"$hour": "$executed_at"}, "rx": {"$sum": 1}, "value": {"$sum": "$amount_total"}}},
@@ -481,6 +491,8 @@ class PatientIntelligenceRepository(BaseRepository):
             "last_activity": last_activity, "last_sync": last_sync,
             "rx": day_rx, "value": day_value, "patients": day_patients, "new_patients": new_today,
             "avg_day_rx": avg_day, "vs_avg": _pct(day_rx, avg_day),
+            "rx_yoy": rx_yoy, "value_yoy": value_yoy,
+            "vs_yoy_rx": _pct(day_rx, rx_yoy), "vs_yoy_value": _pct(day_value, value_yoy),
             "by_hour": by_hour, "categories": categories, "top_meds": top_meds,
             "expected_absent": overdue, "expected_week": week,
         })
