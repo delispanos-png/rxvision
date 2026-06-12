@@ -23,6 +23,10 @@ celery_app.conf.update(
     # Long backfills (>1h) were being redelivered by Redis' default 1h visibility timeout,
     # spawning duplicate concurrent runs that raced over the same window. Raise to 12h.
     broker_transport_options={"visibility_timeout": 43200},
+    task_default_queue="celery",
+    # Optical-audit scans (interactive, user-facing) get a DEDICATED queue so they never
+    # wait behind heavy/slow background jobs (e.g. a 100s ΗΔΙΚΑ incremental sync).
+    task_routes={"app.workers.optical.process_scan": {"queue": "optical"}},
 )
 
 # Periodic schedule (beat). Per-tenant incremental sync fans out from the dispatcher.
@@ -60,5 +64,10 @@ celery_app.conf.beat_schedule = {
     "bill-subscriptions": {
         "task": "app.workers.billing.bill_subscriptions",
         "schedule": crontab(hour=6, minute=0),
+    },
+    # self-heal stuck optical scans (worker death/redeploy) — never leave one hanging
+    "reap-stuck-scans": {
+        "task": "app.workers.optical.reap_stuck_scans",
+        "schedule": crontab(minute="*/2"),
     },
 }

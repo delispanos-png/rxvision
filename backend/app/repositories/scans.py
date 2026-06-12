@@ -98,8 +98,15 @@ class ScanRepository(BaseRepository):
         matched = None
         bc = ocr.get("rx_barcode")
         if ocr.get("ok") and bc and bc.isdigit():  # numeric → safe in regex
+            # Το τυπωμένο barcode της ΗΔΙΚΑ φέρει 3 επιπλέον ψηφία encoding στο τέλος που
+            # ΔΕΝ υπάρχουν στο barcode του συστήματος (external_id, ~13ψήφιο). Τα αφαιρούμε
+            # για να γίνει η αντιστοίχιση. Δοκιμάζουμε και τις δύο μορφές για ασφάλεια.
+            candidates = {bc}
+            if len(bc) > 13:
+                candidates.add(bc[:-3])
             ex = await self._db["prescription_executions"].find_one(
-                {"tenant_id": self.tenant_id, "external_id": {"$regex": f"^{bc}"}})  # tenant-ok: scoped by tenant_id
+                {"tenant_id": self.tenant_id,                       # tenant-ok: scoped by tenant_id
+                 "$or": [{"external_id": {"$regex": f"^{c}"}} for c in candidates]})
             if ex:
                 matched = str(ex.get("external_id"))
         score, flags = _score_and_flags(ocr, matched)

@@ -27,11 +27,12 @@ def _addm(d: datetime, n: int) -> datetime:
 
 
 def _yago(d: datetime) -> datetime:
-    """Same calendar moment one year earlier (Feb 29 → Feb 28). Used for YoY deltas."""
-    try:
-        return d.replace(year=d.year - 1)
-    except ValueError:
-        return d - timedelta(days=365)
+    """'Last year' = exactly 52 weeks (364 days) earlier — same WEEKDAY, NOT same calendar date.
+    A Friday must compare to a Friday: weekday dynamics (e.g. a recurring Friday local event, or
+    just weekday vs weekend traffic) otherwise distort YoY deltas and lead to wrong decisions
+    (12/6/2026 Fri vs 12/6/2025 Thu is misleading). 364d also keeps the ordinal week (2nd Friday of
+    June ↔ 2nd Friday of June)."""
+    return d - timedelta(days=364)
 
 
 def _pct(a: float, b: float) -> float | None:

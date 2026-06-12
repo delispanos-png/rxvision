@@ -91,7 +91,19 @@ services:
     restart: unless-stopped
     env_file: .env
     depends_on: [redis, mongo]
-    command: celery -A app.workers.celery_app worker -l info --concurrency 2
+    # default queue only — heavy/slow background jobs (ingestion, noeton, snapshots)
+    command: celery -A app.workers.celery_app worker -l info --concurrency 4 -Q celery
+    volumes:
+      - "./infra/docker/vault/tls/vault.crt:/vault/tls/vault.crt:ro"
+
+  # Dedicated worker for user-facing Optical Audit scans — isolated queue so a scan never
+  # waits behind a slow ΗΔΙΚΑ sync. Per-scan time bounded by the OCR timeout.
+  optical:
+    build: ./backend
+    restart: unless-stopped
+    env_file: .env
+    depends_on: [redis, mongo]
+    command: celery -A app.workers.celery_app worker -l info --concurrency 3 -Q optical -n optical@%h
     volumes:
       - "./infra/docker/vault/tls/vault.crt:/vault/tls/vault.crt:ro"
 

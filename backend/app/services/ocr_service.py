@@ -21,6 +21,7 @@ def _preprocess(img_bytes: bytes):
     from PIL import Image, ImageOps
     img = Image.open(io.BytesIO(img_bytes))
     img = ImageOps.exif_transpose(img)              # auto-rotate from EXIF
+    img.thumbnail((2200, 2200))                     # cap size: phone photos are huge → OCR/zbar χρόνος
     gray = ImageOps.grayscale(img)
     gray = ImageOps.autocontrast(gray)              # contrast enhancement
     return img, gray
@@ -76,19 +77,35 @@ def analyze(img_bytes: bytes) -> dict:
         return {"ok": False, "error": f"ocr_unavailable:{type(e).__name__}"}
     try:
         img, gray = _preprocess(img_bytes)
-        text = pytesseract.image_to_string(gray, lang="ell+eng") or ""
+        # 1) FAST PATH: decode barcode/QR (zbar, ms) — αυτό αρκεί για την αντιστοίχιση.
+        #    Δοκιμάζουμε ΠΛΗΡΗ ανάλυση πρώτα (καλύτερη ακρίβεια), μετά τη σμικρυμένη.
+        from PIL import Image, ImageOps
+        try:
+            full = ImageOps.exif_transpose(Image.open(io.BytesIO(img_bytes)))
+        except Exception:  # noqa: BLE001
+            full = img
         codes = []
-        for b in pyzbar.decode(img):
-            try:
-                codes.append({"type": b.type, "data": b.data.decode("utf-8", "ignore")})
-            except Exception:  # noqa: BLE001
-                pass
-        # prefer a decoded barcode; else fall back to a numeric run in the OCR text
+        for src in (full, img):
+            for b in pyzbar.decode(src):
+                try:
+                    codes.append({"type": b.type, "data": b.data.decode("utf-8", "ignore")})
+                except Exception:  # noqa: BLE001
+                    pass
+            if codes:
+                break
         rx_barcode = next((c["data"] for c in codes if c["data"].isdigit() and len(c["data"]) >= 11), None)
+        # 2) Το ΑΚΡΙΒΟ Tesseract τρέχει ΜΟΝΟ όταν δεν διαβάστηκε barcode (fallback), με hard
+        #    timeout ώστε να μην κολλάει ποτέ σε λεπτά. Έτσι το bulk scan με καθαρά barcode = γρήγορο.
+        text = ""
         if not rx_barcode:
+            try:
+                text = pytesseract.image_to_string(
+                    gray, lang="ell+eng", config="--oem 1 --psm 6", timeout=20) or ""
+            except Exception:  # noqa: BLE001 — timeout/άλλο → συνεχίζουμε χωρίς κείμενο
+                text = ""
             m = _BARCODE_RE.search(text.replace(" ", ""))
             rx_barcode = m.group(1) if m else None
-        dm = _DATE_RE.search(text)
+        dm = _DATE_RE.search(text) if text else None
         return {"ok": True, "text": text[:4000], "barcodes": codes,
                 "rx_barcode": rx_barcode, "date": dm.group(1) if dm else None,
                 "quality": _quality(gray), "visual": visual_compliance(img_bytes)}

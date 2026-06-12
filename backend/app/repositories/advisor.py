@@ -227,11 +227,8 @@ class AdvisorRepository(BaseRepository):
 
     # ── business advisor ─────────────────────────────────────────────────
     async def business(self, df: datetime, dt: datetime) -> dict:
-        def _my(d: datetime) -> datetime:  # same date, one year earlier (πέρσι)
-            try:
-                return d.replace(year=d.year - 1)
-            except ValueError:  # 29 Feb
-                return d.replace(year=d.year - 1, day=28)
+        def _my(d: datetime) -> datetime:  # 'πέρσι' = 52 weeks (364d) back → ίδια μέρα εβδομάδας
+            return d - timedelta(weeks=52)  # Παρασκευή↔Παρασκευή, όχι ημερομηνία↔ημερομηνία
         cur = await self._period(df, dt)
         prev = await self._period(_my(df), _my(dt))  # σύγκριση vs πέρσι, ίδια περίοδος
         ins: list[dict] = []
