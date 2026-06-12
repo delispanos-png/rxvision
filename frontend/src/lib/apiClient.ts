@@ -90,6 +90,18 @@ export async function apiUpload<T>(path: string, form: FormData): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+/** Authenticated GET returning a Blob (e.g. a scan image) — img tags can't send the
+ * bearer token, so we fetch with auth + one refresh retry and hand back the blob. */
+export async function apiBlob(path: string): Promise<Blob> {
+  const auth = (): HeadersInit => { const tk = getAccessToken(); return tk ? { Authorization: `Bearer ${tk}` } : {}; };
+  let res = await fetch(`${API_BASE}${path}`, { headers: auth() });
+  if (res.status === 401 && (await refreshAccessToken())) {
+    res = await fetch(`${API_BASE}${path}`, { headers: auth() });
+  }
+  if (!res.ok) throw new ApiError(res.status, null);
+  return res.blob();
+}
+
 export const queryKeys = {
   dashboardSummary: (from: string, to: string) => ["dashboard", "summary", from, to],
   timeseries: (metric: string, grain: string, from: string, to: string) =>

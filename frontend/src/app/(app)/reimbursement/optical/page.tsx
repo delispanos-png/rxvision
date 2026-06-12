@@ -1,10 +1,26 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Camera, CheckCircle2, Loader2, X, QrCode, AlertTriangle, Link2, Trash2 } from "lucide-react";
-import { api, apiUpload } from "@/lib/apiClient";
+import { api, apiUpload, apiBlob } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
+
+/** Loads a scan image from the server (auth'd) so ANY user on the tenant sees it,
+ * not just the uploader. Falls back to a QR placeholder while loading/on error. */
+function ScanImage({ scanId, onOpen }: { scanId: string; onOpen?: (url: string) => void }) {
+  const [url, setUrl] = useState<string | null>(null);
+  useEffect(() => {
+    let alive = true; let obj = "";
+    apiBlob(`/reimbursement/scans/${scanId}/image`)
+      .then((b) => { if (!alive) return; obj = URL.createObjectURL(b); setUrl(obj); })
+      .catch(() => {});
+    return () => { alive = false; if (obj) URL.revokeObjectURL(obj); };
+  }, [scanId]);
+  if (!url) return <div className="grid h-full place-items-center text-slate-300"><QrCode className="h-8 w-8" /></div>;
+  /* eslint-disable-next-line @next/next/no-img-element */
+  return <img src={url} alt="" onClick={() => onOpen?.(url)} className="h-full w-full cursor-zoom-in object-cover" />;
+}
 
 type Scan = {
   scan_id: string; filename?: string; status: string; optical_risk?: number | null; band?: string | null;
@@ -33,6 +49,7 @@ export default function OpticalAuditPage() {
   const inputRef = useRef<HTMLInputElement>(null);
   const [locals, setLocals] = useState<Local[]>([]);
   const [uploading, setUploading] = useState(false);
+  const [lightbox, setLightbox] = useState<string | null>(null);
 
   const queue = useQuery({
     queryKey: ["optical-queue"], queryFn: () => api<{ items: Scan[] }>("/reimbursement/scans"),
@@ -73,7 +90,7 @@ export default function OpticalAuditPage() {
     return (
       <div className="overflow-hidden rounded-xl border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
         <div className="relative aspect-[3/4] bg-slate-100 dark:bg-slate-800">
-          {preview ? /* eslint-disable-next-line @next/next/no-img-element */ <img src={preview} alt="" className="h-full w-full object-cover" /> : <div className="grid h-full place-items-center text-slate-300"><QrCode className="h-8 w-8" /></div>}
+          {preview ? /* eslint-disable-next-line @next/next/no-img-element */ <img src={preview} alt="" onClick={() => setLightbox(preview)} className="h-full w-full cursor-zoom-in object-cover" /> : <ScanImage scanId={id} onOpen={setLightbox} />}
           <span className="absolute left-1.5 top-1.5 inline-flex items-center gap-1 rounded-full bg-black/55 px-2 py-0.5 text-[10px] font-semibold text-white">
             {done ? <CheckCircle2 className="h-3 w-3" /> : <Loader2 className="h-3 w-3 animate-spin" />} {done ? "OCR" : t("ανάλυση…", "analyzing…")}
           </span>
@@ -121,6 +138,14 @@ export default function OpticalAuditPage() {
       <p className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-500 dark:border-slate-700 dark:bg-slate-800/60">
         🔒 {t("Οι εικόνες αποθηκεύονται στη δική μας υποδομή (GridFS) — δεν φεύγουν σε τρίτους. OCR: Tesseract (ελληνικά), barcode/QR: zbar.", "Images stored on our own infrastructure (GridFS) — never sent to third parties. OCR: Tesseract (Greek), barcode/QR: zbar.")}
       </p>
+
+      {lightbox && (
+        <div onClick={() => setLightbox(null)} className="fixed inset-0 z-50 grid place-items-center bg-black/80 p-4">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={lightbox} alt="" className="max-h-full max-w-full rounded-lg object-contain" />
+          <button onClick={() => setLightbox(null)} className="absolute right-4 top-4 grid h-9 w-9 place-items-center rounded-full bg-white/90 text-slate-800 hover:bg-white"><X className="h-5 w-5" /></button>
+        </div>
+      )}
     </div>
   );
 }
