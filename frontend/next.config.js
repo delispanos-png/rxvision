@@ -1,7 +1,10 @@
 /** @type {import('next').NextConfig} */
 const withPWA = require("next-pwa")({
   dest: "public",
-  disable: process.env.NODE_ENV === "development",
+  // DISABLED (2026-06-12): the caching SW served stale builds after deploys, crashing
+  // clients. Replaced by a kill-switch public/sw.js that self-unregisters + clears caches.
+  // Re-enable with a controllerchange-reload strategy once deploys are infrequent.
+  disable: true,
   register: true,
   skipWaiting: true,
   // Offline fallback: a failed navigation with no cached page renders /offline.
