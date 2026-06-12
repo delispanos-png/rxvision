@@ -171,9 +171,11 @@ class PatientIntelligenceRepository(BaseRepository):
         d30 = now - timedelta(days=30)
         mstart = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
         # ALL deltas are YEAR-OVER-YEAR — compared to the SAME calendar window one year ago.
-        yago = _yago(now)
+        yago = _yago(now)                                    # same moment last year (today-1y)
         y30_lo, y30_hi = yago - timedelta(days=30), yago     # same 30-day window, last year
-        mstart_y, mend_y = _yago(mstart), _addm(_yago(mstart), 1)  # same month, last year
+        mstart_y = _yago(mstart)                             # same month START last year — the
+        # current month is compared MONTH-TO-DATE (mstart→now) vs the same span last year
+        # (mstart_y→yago), so a half-finished month isn't unfairly compared to a full one.
         pats = await self._patients()
         chain = await self._chain_analysis()
         tl = await self._timeline()  # patient → sorted executions (first entry = first-EVER)
@@ -190,7 +192,7 @@ class PatientIntelligenceRepository(BaseRepository):
         active30_prev = ya[0]["n"] if ya else 0
         # NEW = the patient's first-EVER execution falls in the period (never executed before)
         new_month = sum(1 for evs in tl.values() if evs and evs[0][0] >= mstart)
-        new_prev = sum(1 for evs in tl.values() if evs and mstart_y <= evs[0][0] < mend_y)
+        new_prev = sum(1 for evs in tl.values() if evs and mstart_y <= evs[0][0] < yago)
         returns_count = len(self._returns_from(tl, now))
         lost = sum(1 for p in pats if not seen_after(p, now - timedelta(days=120)))
         total_rev = sum(p.get("rx_value_total", 0) for p in pats)
@@ -204,7 +206,7 @@ class PatientIntelligenceRepository(BaseRepository):
         rx_month = (agg[0]["n"] if agg else 0)
         avg_rx = round((agg[0]["val"] / agg[0]["n"]) if agg and agg[0]["n"] else 0)
         aggp = await self._db["prescription_executions"].aggregate([
-            {"$match": {"tenant_id": self.tenant_id, "executed_at": {"$gte": mstart_y, "$lt": mend_y}}},
+            {"$match": {"tenant_id": self.tenant_id, "executed_at": {"$gte": mstart_y, "$lt": yago}}},
             {"$group": {"_id": None, "n": {"$sum": 1}}},
         ]).to_list(1)
         rx_prev = (aggp[0]["n"] if aggp else 0)
