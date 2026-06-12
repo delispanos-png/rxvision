@@ -26,6 +26,14 @@ def _addm(d: datetime, n: int) -> datetime:
     return d.replace(year=y, month=mo, day=min(d.day, calendar.monthrange(y, mo)[1]))
 
 
+def _yago(d: datetime) -> datetime:
+    """Same calendar moment one year earlier (Feb 29 → Feb 28). Used for YoY deltas."""
+    try:
+        return d.replace(year=d.year - 1)
+    except ValueError:
+        return d - timedelta(days=365)
+
+
 def _pct(a: float, b: float) -> float | None:
     return ((a - b) / b * 100) if b else None
 
@@ -160,9 +168,12 @@ class PatientIntelligenceRepository(BaseRepository):
     # ── 1. DASHBOARD overview ───────────────────────────────────────────────
     async def overview(self) -> dict:
         now = _now()
-        d30, d60 = now - timedelta(days=30), now - timedelta(days=60)
+        d30 = now - timedelta(days=30)
         mstart = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-        pmstart = _addm(mstart, -1)
+        # ALL deltas are YEAR-OVER-YEAR — compared to the SAME calendar window one year ago.
+        yago = _yago(now)
+        y30_lo, y30_hi = yago - timedelta(days=30), yago     # same 30-day window, last year
+        mstart_y, mend_y = _yago(mstart), _addm(_yago(mstart), 1)  # same month, last year
         pats = await self._patients()
         chain = await self._chain_analysis()
         tl = await self._timeline()  # patient → sorted executions (first entry = first-EVER)
@@ -172,10 +183,14 @@ class PatientIntelligenceRepository(BaseRepository):
             return isinstance(ls, datetime) and ls >= dt
 
         active30 = sum(1 for p in pats if seen_after(p, d30))
-        active30_prev = sum(1 for p in pats if (isinstance(p.get("last_seen_at"), datetime) and d60 <= p["last_seen_at"] < d30))
+        # YoY: distinct patients with an execution in the SAME 30-day window last year
+        ya = await self._db["prescription_executions"].aggregate([
+            {"$match": {"tenant_id": self.tenant_id, "executed_at": {"$gte": y30_lo, "$lt": y30_hi}}},
+            {"$group": {"_id": "$patient_ref"}}, {"$count": "n"}]).to_list(1)
+        active30_prev = ya[0]["n"] if ya else 0
         # NEW = the patient's first-EVER execution falls in the period (never executed before)
         new_month = sum(1 for evs in tl.values() if evs and evs[0][0] >= mstart)
-        new_prev = sum(1 for evs in tl.values() if evs and pmstart <= evs[0][0] < mstart)
+        new_prev = sum(1 for evs in tl.values() if evs and mstart_y <= evs[0][0] < mend_y)
         returns_count = len(self._returns_from(tl, now))
         lost = sum(1 for p in pats if not seen_after(p, now - timedelta(days=120)))
         total_rev = sum(p.get("rx_value_total", 0) for p in pats)
@@ -189,7 +204,7 @@ class PatientIntelligenceRepository(BaseRepository):
         rx_month = (agg[0]["n"] if agg else 0)
         avg_rx = round((agg[0]["val"] / agg[0]["n"]) if agg and agg[0]["n"] else 0)
         aggp = await self._db["prescription_executions"].aggregate([
-            {"$match": {"tenant_id": self.tenant_id, "executed_at": {"$gte": pmstart, "$lt": mstart}}},
+            {"$match": {"tenant_id": self.tenant_id, "executed_at": {"$gte": mstart_y, "$lt": mend_y}}},
             {"$group": {"_id": None, "n": {"$sum": 1}}},
         ]).to_list(1)
         rx_prev = (aggp[0]["n"] if aggp else 0)
