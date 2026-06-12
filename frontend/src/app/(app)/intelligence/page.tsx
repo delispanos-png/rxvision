@@ -44,7 +44,7 @@ export default function IntelligenceDashboard() {
   if (isLoading) return <div className="p-8 text-slate-400">{t("Ανάλυση δεδομένων…", "Analyzing…")}</div>;
 
   const cards: { key: string; label: string; en: string; icon: typeof Users; accent: "indigo" | "sky" | "rose" | "violet" | "amber" | "green" | "orange"; money?: boolean; suffix?: string; href?: string }[] = [
-    { key: "active_30d", label: "Ενεργοί (30ημ)", en: "Active (30d)", icon: Users, accent: "indigo", href: "/intelligence/patients" },
+    { key: "active_60d", label: "Ενεργοί (60ημ)", en: "Active (60d)", icon: Users, accent: "indigo", href: "/intelligence/patients" },
     { key: "new_month", label: "Νέοι ασθενείς", en: "New patients", icon: UserPlus, accent: "sky" },
     { key: "returns", label: "Επιστροφές", en: "Returns", icon: UserCheck, accent: "green", href: "/intelligence/returns" },
     { key: "lost_patients", label: "Χαμένοι ασθενείς", en: "Lost patients", icon: UserMinus, accent: "rose", href: "/intelligence/winback" },

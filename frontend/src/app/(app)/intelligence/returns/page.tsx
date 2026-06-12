@@ -45,9 +45,9 @@ export default function ReturnsPage() {
   if (isLoading) return <div className="p-8 text-slate-400">{t("Εντοπισμός επιστροφών…", "Detecting returns…")}</div>;
 
   const cols: Column<Row>[] = [
-    { key: "name", header: t("Ασθενής", "Patient"), render: (r) => r.name || r.amka || "—" },
+    { key: "name", header: t("Ασθενής", "Patient"), render: (r) => <div><div className="font-medium">{r.name || "—"}</div>{r.amka && <div className="font-mono text-[10px] text-slate-400">ΑΜΚΑ {r.amka}</div>}</div> },
     { key: "returned_at", header: t("Επέστρεψε", "Returned"), sortValue: (r) => r.returned_at, render: (r) => fmtDate(r.returned_at) },
-    { key: "gap_days", header: t("Αδράνεια", "Dormancy"), align: "right", sortValue: (r) => r.gap_days, render: (r) => `${fmtNum(r.gap_days)} ${t("μέρες", "days")}` },
+    { key: "gap_days", header: t("Κενό από προηγ. εκτέλεση", "Gap since last Rx"), align: "right", sortValue: (r) => r.gap_days, render: (r) => `${fmtNum(r.gap_days)} ${t("μέρες", "days")}` },
     { key: "value", header: t("Αξία ζωής", "LTV"), align: "right", sortValue: (r) => r.value, render: (r) => <b>{fmtEur(r.value)}</b> },
     { key: "reason", header: t("Λόγος επιστροφής", "Return reason"), render: (r) => <ReasonSelect row={r} t={t} /> },
     { key: "contact", header: t("Επικ.", "Contact"), render: (r) => {

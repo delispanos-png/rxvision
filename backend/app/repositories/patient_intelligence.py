@@ -168,11 +168,14 @@ class PatientIntelligenceRepository(BaseRepository):
     # ── 1. DASHBOARD overview ───────────────────────────────────────────────
     async def overview(self) -> dict:
         now = _now()
-        d30 = now - timedelta(days=30)
+        # "Active" window = 60 days (not 30): a monthly chronic Rx opens every ~30d and the patient
+        # has up to ~20d to execute → a loyal monthly customer can return up to ~50d apart. A 30-day
+        # window would wrongly drop them; 60 days keeps the genuinely-active base.
+        d_active = now - timedelta(days=60)
         mstart = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
         # ALL deltas are YEAR-OVER-YEAR — compared to the SAME calendar window one year ago.
         yago = _yago(now)                                    # same moment last year (today-1y)
-        y30_lo, y30_hi = yago - timedelta(days=30), yago     # same 30-day window, last year
+        yact_lo, yact_hi = yago - timedelta(days=60), yago   # same 60-day window, last year
         mstart_y = _yago(mstart)                             # same month START last year — the
         # current month is compared MONTH-TO-DATE (mstart→now) vs the same span last year
         # (mstart_y→yago), so a half-finished month isn't unfairly compared to a full one.
@@ -184,12 +187,12 @@ class PatientIntelligenceRepository(BaseRepository):
             ls = p.get("last_seen_at")
             return isinstance(ls, datetime) and ls >= dt
 
-        active30 = sum(1 for p in pats if seen_after(p, d30))
-        # YoY: distinct patients with an execution in the SAME 30-day window last year
+        active60 = sum(1 for p in pats if seen_after(p, d_active))
+        # YoY: distinct patients with an execution in the SAME 60-day window last year
         ya = await self._db["prescription_executions"].aggregate([
-            {"$match": {"tenant_id": self.tenant_id, "executed_at": {"$gte": y30_lo, "$lt": y30_hi}}},
+            {"$match": {"tenant_id": self.tenant_id, "executed_at": {"$gte": yact_lo, "$lt": yact_hi}}},
             {"$group": {"_id": "$patient_ref"}}, {"$count": "n"}]).to_list(1)
-        active30_prev = ya[0]["n"] if ya else 0
+        active60_prev = ya[0]["n"] if ya else 0
         # NEW = the patient's first-EVER execution falls in the period (never executed before)
         new_month = sum(1 for evs in tl.values() if evs and evs[0][0] >= mstart)
         new_prev = sum(1 for evs in tl.values() if evs and mstart_y <= evs[0][0] < yago)
@@ -226,7 +229,7 @@ class PatientIntelligenceRepository(BaseRepository):
         vip_count = sum(t["count"] for t in vip if t["tier"] in ("platinum", "gold"))
 
         kpis = {
-            "active_30d": {"value": active30, "delta": _pct(active30, active30_prev)},
+            "active_60d": {"value": active60, "delta": _pct(active60, active60_prev)},
             "new_month": {"value": new_month, "delta": _pct(new_month, new_prev)},
             "returns": {"value": returns_count, "delta": None},
             "lost_patients": {"value": lost, "delta": None},
