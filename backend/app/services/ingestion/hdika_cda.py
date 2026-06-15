@@ -161,6 +161,12 @@ def parse_cda(text: str) -> dict:
             out["bimonthly"] = True
         elif r == "1.10.9" and ext == "1":
             out["chronic"] = True
+        elif r == "1.1.18" and "execution_case" not in out:
+            out["execution_case"] = ext     # 1=όλα·2=όχι όλα/επιθυμία·3=ασυμφ.δοσολ.·4=όχι πλήρης
+        elif r == "1.1.14" and ext == "1":
+            out["n3816"] = True             # Ν.3816 — ΦΥΚ χρόνια/υψηλού κόστους
+        elif r == "1.10.4" and ext == "1":
+            out["ekas"] = True              # δικαιούχος ΕΚΑΣ
 
     # ── treatment window (effectiveTime low/high) → monthly repeat schedule + recurrence. ──
     highs, lows = [], []
@@ -312,8 +318,16 @@ def parse_cda_full(text: str) -> dict:
             "participation_pct": _num(ids.get("1.4.18")),
             "patient_share": _num(ids.get("1.4.20")),
             "difference": _num(ids.get("1.4.21")),
+            # Υπόλοιπο = ποσότητα ΠΡΟΣ εκτέλεση (>0 ⇒ μερικώς/μη εκτελεσμένη γραμμή) — η αυθεντική
+            # πηγή για «ανεκτέλεστα» αντί inference από statusCode.
+            "outstanding": _num(ids.get("1.4.19")),
+            # συνολική διαφορά γραμμής (1.4.21.1) & μερίδιο Ασφ.Φορέα ανά εκτέλεση (1.4.21.2)
+            "line_total_difference": _num(ids.get("1.4.21.1")),
+            "fund_difference": _num(ids.get("1.4.21.2")),
             "substitution_allowed": _flag(ids.get("1.4.23")),
-            "generic": _flag(ids.get("1.9.6.2")),
+            "generic": _flag(ids.get("1.9.6.2")),                 # θεραπευτική κατηγορία με γενόσημο
+            "generic_suggested": _flag(ids.get("1.4.15")),        # προτάθηκε γενόσημο
+            "drug_type": ids.get("1.9.6.1"),                      # τύπος φαρμάκου (R=πρωτότυπο…)
             # Coupon type — a medicine has EITHER an ΕΟΦ authenticity strip OR a QR code, never both:
             #   QR (electronic, HMVS → auto-verified, no physical check): 2.10.14="1" OR any of the QR
             #     fields filled (2.10.15 product code / 2.10.16 batch / 2.10.17 expiry).

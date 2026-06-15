@@ -425,13 +425,23 @@ class HdikaClient:
                 "difference": mc(m.get("difference")),
                 "participation_pct": m.get("participation_pct"),
                 "generic": m.get("generic"),
+                "generic_suggested": m.get("generic_suggested"),
+                "drug_type": m.get("drug_type"),
                 "substitution_allowed": m.get("substitution_allowed"),
+                "outstanding": m.get("outstanding"),
+                "line_total_difference": mc(m.get("line_total_difference")),
+                "fund_difference": mc(m.get("fund_difference")),
                 "lot": m.get("lot"),
                 "dose": m.get("dose"), "frequency": m.get("frequency"), "duration": m.get("duration"),
                 "qr": m.get("qr"), "strip": m.get("strip"),
                 "qr_batch": m.get("qr_batch"), "qr_expiry": m.get("qr_expiry"),
                 "qr_product_code": m.get("qr_product_code"),
             }
+            # «Ανεκτέλεστο» = αυθεντικά από το Υπόλοιπο (1.4.19): >0 ⇒ δεν δόθηκε όλη η ποσότητα.
+            # Πέφτουμε στο statusCode μόνο όταν λείπει το Υπόλοιπο.
+            outstanding = m.get("outstanding")
+            executed = (outstanding is not None and outstanding <= 0) if outstanding is not None \
+                else bool(m.get("is_executed", True))
             items.append(CanonicalItem(
                 barcode=str(cat.get("barcode") or eof or f"{barcode}-{n}"),
                 # FULL pharmacist-facing name (brand + strength/pack) so LOSEC 20 vs LOSEC 40 are
@@ -442,7 +452,7 @@ class HdikaClient:
                 retail_price=retail_cents,
                 wholesale_price=int(cat.get("wholesale_cents") or 0),
                 category="narcotic" if cat.get("narcotic") else "normal",
-                is_executed=bool(m.get("is_executed", True)),
+                is_executed=executed,
                 details={k: v for k, v in details.items() if v is not None},
             ))
         if not items:                                   # CDA missing → prescription-level line
@@ -509,6 +519,10 @@ class HdikaClient:
             # ρυθμός χορήγησης χρόνιας αγωγής (μήνες) + ένδειξη χρόνιας πάθησης (CDA 1.4.9/1.4.10/1.10.9)
             "interval_months": (2 if cda.get("bimonthly") else 1 if cda.get("monthly") else None),
             "chronic": (True if cda.get("chronic") else None),
+            # περίπτωση εκτέλεσης (1.1.18): 1=όλα·2=όχι όλα(επιθυμία)·3=ασυμφ.δοσολ.·4=όχι πλήρης
+            "execution_case": cda.get("execution_case"),
+            "n3816": (True if cda.get("n3816") else None),     # ΦΥΚ Ν.3816
+            "ekas": (True if cda.get("ekas") else None),       # δικαιούχος ΕΚΑΣ
         }.items() if v is not None}
         return CanonicalExecution(
             source="HDIKA",
