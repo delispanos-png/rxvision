@@ -4,7 +4,7 @@ import { useState, useRef, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   Cat, Send, Loader2, AlertOctagon, Stethoscope, Pill, Package, ShieldAlert,
-  HelpCircle, Sparkles, Lightbulb, FlaskConical, Mic, X, Info,
+  HelpCircle, Sparkles, Lightbulb, FlaskConical, Mic, X, Info, Trash2,
 } from "lucide-react";
 import { api } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
@@ -142,6 +142,13 @@ function PharmaCatInner() {
         </div>
         {status.data?.configured && status.data?.enabled && (
           <span className="hidden shrink-0 rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-medium text-slate-500 sm:inline dark:bg-slate-800" title={t("Νέες ερωτήσεις AI σήμερα (οι αποθηκευμένες είναι δωρεάν)", "New AI questions today (cached are free)")}>{status.data.today_used}/{status.data.daily_limit} {t("σήμερα", "today")}</span>
+        )}
+        {turns.length > 0 && (
+          <button onClick={() => { setTurns([]); setInput(""); setMed(null); }}
+            title={t("Καθαρισμός συνομιλίας", "Clear conversation")}
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-slate-300 px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800">
+            <Trash2 className="h-3.5 w-3.5" /> {t("Καθαρισμός", "Clear")}
+          </button>
         )}
       </div>
 
