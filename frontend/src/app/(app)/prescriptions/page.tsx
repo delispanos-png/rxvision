@@ -108,6 +108,36 @@ function BarcodeChip({ bc, patient, date }: { bc: string; patient?: string | nul
   );
 }
 
+// Compact ICD-10 χαρακτηρισμός + hover «μήνυμα»: λευκό bubble, μαύρα γράμματα, με ουρά.
+// Portal + position:fixed ώστε να ΜΗΝ κόβεται από το overflow-x-auto του πίνακα.
+function DxBubble({ dx, label, title }: { dx: string[]; label: string; title: string }) {
+  const ref = useRef<HTMLSpanElement>(null);
+  const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
+  const show = () => {
+    const r = ref.current?.getBoundingClientRect();
+    if (r) setPos({ x: Math.min(r.left, window.innerWidth - 360), y: r.bottom + 9 });
+  };
+  return (
+    <>
+      <span ref={ref} onMouseEnter={show} onMouseLeave={() => setPos(null)}
+        className="inline-flex max-w-[12rem] cursor-help items-center gap-1 truncate rounded-full bg-violet-50 px-2 py-0.5 text-xs font-medium text-violet-700">
+        <Stethoscope className="h-3 w-3 shrink-0" />
+        <span className="truncate">{label}</span>
+      </span>
+      {pos && typeof document !== "undefined" && createPortal(
+        <div style={{ position: "fixed", left: pos.x, top: pos.y, zIndex: 60 }} className="pointer-events-none w-[340px] max-w-[90vw]">
+          <div className="relative rounded-2xl border border-slate-200 bg-white p-3 text-[13px] leading-relaxed text-slate-900 shadow-xl">
+            <span className="absolute -top-1.5 left-5 h-3 w-3 rotate-45 border-l border-t border-slate-200 bg-white" />
+            <div className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold text-violet-600"><Stethoscope className="h-3.5 w-3.5" /> {title}</div>
+            <ul className="space-y-1">
+              {dx.map((c, i) => <li key={i} className="border-b border-slate-100 pb-1 last:border-0 last:pb-0">{c}</li>)}
+            </ul>
+          </div>
+        </div>, document.body)}
+    </>
+  );
+}
+
 const makeColumns = (t: T): Column<Prescription>[] => {
   const STATUS_EL = statusEl(t);
   return [
@@ -135,13 +165,9 @@ const makeColumns = (t: T): Column<Prescription>[] => {
   { key: "icd10", header: t("Διάγνωση", "Diagnosis"), hideOnMobile: true, sortable: false, render: (r) => {
     const dx = r.icd10_named ?? r.icd10 ?? [];
     if (!dx.length) return <span className="text-slate-300">—</span>;
-    // Compact χαρακτηρισμός — όλες οι διαγνώσεις (μία/γραμμή) στο hover-bubble (native title).
-    return (
-      <span className="inline-flex max-w-[12rem] cursor-help items-center gap-1 truncate rounded-full bg-violet-50 px-2 py-0.5 text-xs font-medium text-violet-700" title={dx.join("\n")}>
-        <Stethoscope className="h-3 w-3 shrink-0" />
-        <span className="truncate">{dx.length === 1 ? (r.icd10?.[0] || dx[0]) : `${dx.length} ${t("διαγνώσεις", "diagnoses")}`}</span>
-      </span>
-    );
+    // ΠΑΝΤΑ ο αριθμός των διαγνώσεων (ομοιόμορφα) — οι αναλυτικές στο hover-bubble.
+    const label = `${dx.length} ${dx.length === 1 ? t("διάγνωση", "diagnosis") : t("διαγνώσεις", "diagnoses")}`;
+    return <DxBubble dx={dx} label={label} title={t("Διαγνώσεις", "Diagnoses")} />;
   } },
   { key: "amount_total", header: t("Αξία", "Value"), align: "right", render: (r) => fmtEur(r.amount_total) },
   { key: "patient_share", header: t("Από ασφ/νο", "From patient"), align: "right", hideOnMobile: true, render: (r) => fmtEur(r.patient_share ?? 0) },
