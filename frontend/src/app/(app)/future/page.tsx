@@ -18,7 +18,7 @@ import { LineChart } from "@/components/charts/LineChart";
 type UpcomingDay = { date: string; count: number };
 type FutureRx = {
   expected_open_date: string; patient_name?: string | null; amka?: string | null;
-  source_barcode?: string | null; products?: (string | null)[]; n_items?: number; confidence?: number;
+  source_barcode?: string | null; products?: (string | null)[]; n_items?: number; confidence?: number; chronic?: boolean | null;
 };
 type CoverageItem = {
   product_id: string; product_name?: string | null; substance?: string | null;
@@ -246,7 +246,8 @@ export default function FuturePage() {
                     <li key={key}>
                       <button onClick={() => setExpandedRx(open ? null : key)}
                         className="flex w-full items-center justify-between gap-3 py-2.5 text-left text-sm hover:bg-slate-50">
-                        <span className="flex min-w-0 items-center gap-3">
+                        <span className="flex min-w-0 items-center gap-2">
+                          {r.chronic ? <HeartPulse className="h-3.5 w-3.5 shrink-0 text-amber-500" aria-label={t("Χρόνια αγωγή", "Chronic therapy")}><title>{t("Χρόνια αγωγή", "Chronic therapy")}</title></HeartPulse> : null}
                           <span className="font-mono font-semibold text-slate-800">#{r.source_barcode ?? "—"}</span>
                           <span className="truncate text-slate-600">{r.patient_name || "—"}</span>
                         </span>

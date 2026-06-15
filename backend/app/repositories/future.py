@@ -71,6 +71,7 @@ class FuturePrescriptionRepository(BaseRepository):
                 "patient_name": {"$first": "$p.full_name"},
                 "amka": {"$first": "$p.amka"},
                 "source_barcode": {"$first": "$ex.external_id"},
+                "chronic": {"$ifNull": [{"$first": "$ex.details.chronic"}, False]},
                 "products": "$pr.name",
                 "n_items": {"$size": {"$ifNull": ["$products", []]}},
             }},
