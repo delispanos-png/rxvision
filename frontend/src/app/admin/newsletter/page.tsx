@@ -1,6 +1,7 @@
 "use client";
 
 import { appConfirm } from "@/store/dialogStore";
+import { Tooltip } from "@/components/ui/Tooltip";
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2, Monitor, Smartphone, Send, Mail } from "lucide-react";
@@ -329,26 +330,24 @@ export default function NewsletterPage() {
             title="Προεπισκόπηση"
             action={
               <div className="flex items-center gap-1 rounded-lg bg-slate-100 p-1">
-                <button
+                <Tooltip label="Υπολογιστής"><button
                   type="button"
                   onClick={() => setDevice("desktop")}
-                  title="Υπολογιστής"
                   className={`grid h-7 w-8 place-items-center rounded-md ${
                     device === "desktop" ? "bg-white text-brand-600 shadow-sm" : "text-slate-500"
                   }`}
                 >
                   <Monitor className="h-4 w-4" />
-                </button>
-                <button
+                </button></Tooltip>
+                <Tooltip label="Κινητό"><button
                   type="button"
                   onClick={() => setDevice("mobile")}
-                  title="Κινητό"
                   className={`grid h-7 w-8 place-items-center rounded-md ${
                     device === "mobile" ? "bg-white text-brand-600 shadow-sm" : "text-slate-500"
                   }`}
                 >
                   <Smartphone className="h-4 w-4" />
-                </button>
+                </button></Tooltip>
               </div>
             }
           >

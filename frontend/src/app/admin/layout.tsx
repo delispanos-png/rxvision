@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { adminApi, adminTokens, ApiError } from "@/lib/adminClient";
 import { LogoMark } from "@/components/brand/Logo";
+import { Tooltip } from "@/components/ui/Tooltip";
 
 // CloudOn console navigation. `href` = built (routable); otherwise "σύντομα".
 const NAV = [
@@ -79,10 +80,10 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
             const cls = "flex items-center gap-3 rounded-lg px-3 py-2 text-sm";
             if (!n.href) {
               return (
-                <div key={n.label} className={`${cls} cursor-default text-slate-400`} title="Σύντομα">
+                <Tooltip key={n.label} label="Σύντομα"><div className={`${cls} cursor-default text-slate-400`}>
                   <Icon className="h-4 w-4" /><span className="flex-1">{n.label}</span>
                   <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px]">σύντομα</span>
-                </div>
+                </div></Tooltip>
               );
             }
             return (

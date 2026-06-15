@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Cat, X } from "lucide-react";
 import { useT } from "@/store/prefStore";
+import { Tooltip } from "@/components/ui/Tooltip";
 
 const MESSAGES: [string, string][] = [
   ["Θέλεις κάποια ερώτηση από μένα; 🐱", "Got a question for me? 🐱"],
@@ -50,16 +51,17 @@ export function PharmaCatLauncher() {
 
   return (
     <div className="relative flex justify-center">
-      <button
-        onClick={open}
-        title={t("PharmaCat — Κλινικός Βοηθός", "PharmaCat — Clinical Assistant")}
-        aria-label="PharmaCat"
-        className="animate-pc-glow relative inline-flex items-center gap-2 rounded-full bg-gradient-to-r from-violet-500 to-indigo-600 px-4 py-2 text-sm font-bold text-white shadow-lg transition hover:scale-105"
-      >
-        <span className="absolute inset-0 animate-ping rounded-full bg-violet-400 opacity-20" />
-        <Cat className={`h-5 w-5 ${wiggle ? "animate-pc-wiggle" : ""}`} />
-        <span className="hidden sm:inline">PharmaCat</span>
-      </button>
+      <Tooltip label={t("PharmaCat — Κλινικός Βοηθός", "PharmaCat — Clinical Assistant")}>
+        <button
+          onClick={open}
+          aria-label="PharmaCat"
+          className="animate-pc-glow relative inline-flex items-center gap-2 rounded-full bg-gradient-to-r from-violet-500 to-indigo-600 px-4 py-2 text-sm font-bold text-white shadow-lg transition hover:scale-105"
+        >
+          <span className="absolute inset-0 animate-ping rounded-full bg-violet-400 opacity-20" />
+          <Cat className={`h-5 w-5 ${wiggle ? "animate-pc-wiggle" : ""}`} />
+          <span className="hidden sm:inline">PharmaCat</span>
+        </button>
+      </Tooltip>
 
       {bubble && (
         <button

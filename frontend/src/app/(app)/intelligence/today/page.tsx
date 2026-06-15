@@ -7,6 +7,7 @@ import { api } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
 import { fmtNum, fmtEur } from "@/lib/formatters";
 import { KpiCard } from "@/components/kpi/KpiCard";
+import { Tooltip } from "@/components/ui/Tooltip";
 
 type Today = {
   day: string; is_live: boolean; current_hour: number; last_activity?: string | null; last_sync?: string | null;
@@ -76,11 +77,11 @@ export default function TodayPage() {
           {hours.map((h) => {
             const rx = byHourMap.get(h) ?? 0;
             return (
-              <div key={h} className="group flex flex-1 flex-col items-center justify-end" title={`${h}:00 — ${rx}`}>
+              <Tooltip key={h} label={`${h}:00 — ${rx}`}><div className="group flex flex-1 flex-col items-center justify-end">
                 <span className="mb-1 text-[10px] font-semibold text-slate-400 group-hover:text-brand-600">{rx || ""}</span>
                 <div className="w-full rounded-t bg-brand-400 transition-all group-hover:bg-brand-600" style={{ height: `${(rx / maxHour) * 100}%`, minHeight: rx ? "4px" : "0" }} />
                 <span className="mt-1 text-[9px] text-slate-400">{h}</span>
-              </div>
+              </div></Tooltip>
             );
           })}
         </div>

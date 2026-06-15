@@ -3,6 +3,7 @@ import { fmtDec } from "@/lib/formatters";
 
 import type { LucideIcon } from "lucide-react";
 import { useT } from "@/store/prefStore";
+import { Tooltip } from "@/components/ui/Tooltip";
 
 type Accent = "indigo" | "green" | "amber" | "orange" | "sky" | "rose" | "violet";
 
@@ -51,19 +52,23 @@ export function KpiCard({
           <div className="rx-label flex items-center gap-1">
             {label}
             {help && (
-              <span title={help}
-                className="grid h-3.5 w-3.5 cursor-help place-items-center rounded-full border border-slate-300 text-[9px] font-bold leading-none text-slate-400 hover:border-brand-400 hover:text-brand-500 dark:border-slate-600">
-                i
-              </span>
+              <Tooltip label={help}>
+                <span
+                  className="grid h-3.5 w-3.5 cursor-help place-items-center rounded-full border border-slate-300 text-[9px] font-bold leading-none text-slate-400 hover:border-brand-400 hover:text-brand-500 dark:border-slate-600">
+                  i
+                </span>
+              </Tooltip>
             )}
           </div>
           <div className="mt-2 flex items-baseline gap-2">
             <div className="truncate text-xl font-bold leading-none text-slate-900 dark:text-slate-100 sm:text-[26px]">{value}</div>
             {trend !== undefined && (
-              <span title={t("Δ vs πέρσι (ίδια περίοδος)", "Δ vs last year (same period)")}
-                className={`text-xs font-semibold ${trend >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400"}`}>
-                {trend >= 0 ? "▲" : "▼"} {fmtDec(Math.abs(trend), 1)}%
-              </span>
+              <Tooltip label={t("Δ vs πέρσι (ίδια περίοδος)", "Δ vs last year (same period)")}>
+                <span
+                  className={`text-xs font-semibold ${trend >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400"}`}>
+                  {trend >= 0 ? "▲" : "▼"} {fmtDec(Math.abs(trend), 1)}%
+                </span>
+              </Tooltip>
             )}
           </div>
           {sub && <div className="mt-1.5 text-xs text-slate-400 dark:text-slate-500">{sub}</div>}

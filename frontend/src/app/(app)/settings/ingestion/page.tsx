@@ -6,6 +6,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { CheckCircle2, Link2, Loader2, PlugZap, RefreshCw, ShieldCheck, XCircle, Square, Trash2 } from "lucide-react";
 import { api } from "@/lib/apiClient";
 import { PanelCard } from "@/components/ui/Card";
+import { appConfirm } from "@/store/dialogStore";
 import { useT } from "@/store/prefStore";
 
 type Config = {
@@ -230,10 +231,10 @@ export default function IngestionSettingsPage() {
           <label className="text-xs text-slate-500">{t("Από", "From")}<DateInput value={delFrom} onChange={setDelFrom} className="mt-1 w-40" /></label>
           <label className="text-xs text-slate-500">{t("Έως", "To")}<DateInput value={delTo} onChange={setDelTo} className="mt-1 w-40" /></label>
           <button
-            onClick={() => {
+            onClick={async () => {
               if (!delFrom || !delTo) return;
-              if (!confirm(t(`Οριστική διαγραφή ΟΛΩΝ των δεδομένων ${delFrom} → ${delTo};`, `Permanently delete ALL data ${delFrom} → ${delTo}?`))) return;
-              if (!confirm(t("Σίγουρα; Η ενέργεια ΔΕΝ αναιρείται.", "Are you sure? This action CANNOT be undone."))) return;
+              if (!(await appConfirm(t(`Οριστική διαγραφή ΟΛΩΝ των δεδομένων ${delFrom} → ${delTo};`, `Permanently delete ALL data ${delFrom} → ${delTo}?`), { danger: true }))) return;
+              if (!(await appConfirm(t("Σίγουρα; Η ενέργεια ΔΕΝ αναιρείται.", "Are you sure? This action CANNOT be undone."), { danger: true }))) return;
               deleteRange.mutate();
             }}
             disabled={deleteRange.isPending || syncing || !delFrom || !delTo}

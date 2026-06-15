@@ -8,6 +8,7 @@ import { api } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
 import { PanelCard } from "@/components/ui/Card";
+import { appAlert, appConfirm } from "@/store/dialogStore";
 
 type Campaign = { id: string; channel: string; subject?: string | null; recipients: number; sent: number; failed: number; created_at: string };
 
@@ -54,8 +55,8 @@ export default function CommunicationsPage() {
 
   const send = useMutation({
     mutationFn: () => api<{ recipients: number; sent: number; failed: number }>("/communications/send", { method: "POST", body: JSON.stringify({ channel, subject, message, segment, value: value || null }) }),
-    onSuccess: (r) => { alert(t(`Στάλθηκαν ${r.sent}/${r.recipients} (${r.failed} αποτυχίες)`, `Sent ${r.sent}/${r.recipients} (${r.failed} failures)`)); setMessage(""); setSubject(""); qc.invalidateQueries({ queryKey: ["comms", "history"] }); },
-    onError: (e: Error) => alert(t("Αποτυχία: ", "Failed: ") + e.message),
+    onSuccess: (r) => { appAlert(t(`Στάλθηκαν ${r.sent}/${r.recipients} (${r.failed} αποτυχίες)`, `Sent ${r.sent}/${r.recipients} (${r.failed} failures)`)); setMessage(""); setSubject(""); qc.invalidateQueries({ queryKey: ["comms", "history"] }); },
+    onError: (e: Error) => appAlert(t("Αποτυχία: ", "Failed: ") + e.message),
   });
 
   const inp = "rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-brand-500 focus:outline-none";
@@ -100,7 +101,7 @@ export default function CommunicationsPage() {
           <textarea value={message} onChange={(e) => setMessage(e.target.value)} rows={5} placeholder={channel === "sms" ? t("Κείμενο SMS…", "SMS text…") : t("Μήνυμα… (μεταβλητές: {name} = πλήρες όνομα, {first} = επώνυμο)", "Message… (variables: {name} = full name, {first} = last name)")} className={`${inp} w-full`} />
           <div className="mt-3 flex items-center justify-between">
             <span className="text-xs text-slate-400">{channel === "sms" ? t(`${message.length} χαρακτήρες`, `${message.length} characters`) : t("Διαθέσιμες μεταβλητές: {name}, {first}", "Available variables: {name}, {first}")}</span>
-            <button onClick={() => { if (message.trim() && confirm(t(`Αποστολή σε ${audience.data?.count ?? 0} παραλήπτες;`, `Send to ${audience.data?.count ?? 0} recipients?`))) send.mutate(); }}
+            <button onClick={async () => { if (message.trim() && await appConfirm(t(`Αποστολή σε ${audience.data?.count ?? 0} παραλήπτες;`, `Send to ${audience.data?.count ?? 0} recipients?`))) send.mutate(); }}
               disabled={send.isPending || !message.trim() || !(audience.data?.count)}
               className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-5 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50">
               {send.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />} {t("Αποστολή", "Send")}

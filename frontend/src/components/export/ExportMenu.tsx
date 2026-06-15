@@ -5,6 +5,7 @@ import { Download, Loader2, FileText, FileSpreadsheet, FileType } from "lucide-r
 import { downloadCsv } from "@/lib/csv";
 import { downloadXlsx, downloadPdf, type ExportCol } from "@/lib/export";
 import { useT } from "@/store/prefStore";
+import { appAlert } from "@/store/dialogStore";
 
 /** Real client-side export menu: CSV, XLSX (Excel) and a colour-branded PDF.
  *  Pass already-loaded `rows`, or `fetchRows` to pull the full dataset on demand. */
@@ -39,12 +40,12 @@ export function ExportMenu<T>({
     setBusy(fmt);
     try {
       const data = fetchRows ? await fetchRows() : (rows ?? []);
-      if (!data.length) { alert(t("Δεν υπάρχουν δεδομένα για εξαγωγή.", "No data to export.")); return; }
+      if (!data.length) { appAlert(t("Δεν υπάρχουν δεδομένα για εξαγωγή.", "No data to export.")); return; }
       if (fmt === "csv") downloadCsv(filename, columns, data);
       else if (fmt === "xlsx") await downloadXlsx(filename, columns, data);
       else await downloadPdf(filename, title, columns, data);
     } catch (e) {
-      alert(t("Η εξαγωγή απέτυχε: ", "Export failed: ") + (e instanceof Error ? e.message : t("άγνωστο σφάλμα", "unknown error")));
+      appAlert(t("Η εξαγωγή απέτυχε: ", "Export failed: ") + (e instanceof Error ? e.message : t("άγνωστο σφάλμα", "unknown error")));
     } finally {
       setBusy(null);
       setOpen(false);

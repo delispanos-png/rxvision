@@ -11,6 +11,7 @@ import { api } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
 import { fmtNum, fmtEur } from "@/lib/formatters";
 import { KpiCard } from "@/components/kpi/KpiCard";
+import { Tooltip } from "@/components/ui/Tooltip";
 
 type Kpi = { value: number; delta: number | null };
 type Overview = {
@@ -137,7 +138,7 @@ export default function IntelligenceDashboard() {
           </div>
           <div className="mb-2 flex h-4 overflow-hidden rounded-full">
             {(data?.compliance_distribution ?? []).map((b) => b.count > 0 && (
-              <div key={b.band} className={BAND[b.band]} style={{ width: `${(b.count / compTotal) * 100}%` }} title={`${b.label}: ${b.count}`} />
+              <Tooltip key={b.band} label={`${b.label}: ${b.count}`}><div className={BAND[b.band]} style={{ width: `${(b.count / compTotal) * 100}%` }} /></Tooltip>
             ))}
           </div>
           <div className="grid grid-cols-2 gap-1 text-xs sm:grid-cols-3">
@@ -161,10 +162,10 @@ export default function IntelligenceDashboard() {
           </div>
           <div className="flex h-28 items-end gap-1">
             {series.map((m) => (
-              <div key={m.label} className="group flex flex-1 flex-col items-center justify-end" title={`${m.label}: ${m.rx}`}>
+              <Tooltip key={m.label} label={`${m.label}: ${m.rx}`}><div className="group flex flex-1 flex-col items-center justify-end">
                 <div className="w-full rounded-t bg-brand-400 transition-all group-hover:bg-brand-600" style={{ height: `${(m.rx / maxTrend) * 100}%`, minHeight: m.rx ? "3px" : "0" }} />
                 <span className="mt-1 truncate text-[9px] text-slate-400">{tv === "monthly" ? m.label.slice(5) : tv === "daily" ? m.label.slice(8) : m.label.slice(6)}</span>
-              </div>
+              </div></Tooltip>
             ))}
           </div>
         </div>

@@ -8,6 +8,7 @@ import { api } from "@/lib/apiClient";
 import { PanelCard } from "@/components/ui/Card";
 import { RepeatTree } from "@/components/prescriptions/RepeatTree";
 import { useT } from "@/store/prefStore";
+import { appAlert } from "@/store/dialogStore";
 
 type T = (el: string, en: string) => string;
 
@@ -163,9 +164,9 @@ export default function PrescriptionDetailPage() {
     try {
       const res = await fetch(`${base}/prescriptions/idika-print/${encodeURIComponent(id)}`,
         { headers: token ? { Authorization: `Bearer ${token}` } : {} });
-      if (!res.ok) { alert(t("Το έντυπο ΗΔΙΚΑ δεν είναι διαθέσιμο.", "ΗΔΙΚΑ printout unavailable.")); return; }
+      if (!res.ok) { appAlert(t("Το έντυπο ΗΔΙΚΑ δεν είναι διαθέσιμο.", "ΗΔΙΚΑ printout unavailable.")); return; }
       window.open(URL.createObjectURL(await res.blob()), "_blank");
-    } catch { alert(t("Αποτυχία λήψης εντύπου ΗΔΙΚΑ.", "Failed to fetch ΗΔΙΚΑ printout.")); }
+    } catch { appAlert(t("Αποτυχία λήψης εντύπου ΗΔΙΚΑ.", "Failed to fetch ΗΔΙΚΑ printout.")); }
   };
 
   return (

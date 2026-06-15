@@ -6,6 +6,8 @@ import { useQuery } from "@tanstack/react-query";
 import { Sparkles, Send, Loader2, ArrowUpRight, Compass, Mic, Zap } from "lucide-react";
 import { api } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
+import { Tooltip } from "@/components/ui/Tooltip";
+import { appConfirm } from "@/store/dialogStore";
 
 type Action =
   | { type: "navigate"; href: string; label: string }
@@ -76,7 +78,7 @@ export default function CopilotPage() {
 
   async function runAction(a: Extract<Action, { type: "action" }>) {
     if (busy) return;
-    if (!window.confirm(`${a.summary}\n\nΝα συνεχίσω;`)) return;
+    if (!(await appConfirm(`${a.summary}\n\nΝα συνεχίσω;`))) return;
     setBusy(true);
     try {
       const r = await api<{ ok: boolean; reply?: string; error?: string }>("/copilot/act", { method: "POST", body: JSON.stringify({ action: a.action, params: a.params ?? {} }) });
@@ -153,7 +155,7 @@ export default function CopilotPage() {
             disabled={busy || blocked} placeholder={t("Πώς κάνω… ; / Πού βλέπω… ;", "How do I… ? / Where do I see… ?")}
             className="flex-1 rounded-xl border border-slate-300 px-4 py-2.5 text-sm focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500 disabled:opacity-50 dark:border-slate-600 dark:bg-slate-800" />
           {micOk && (
-            <button onClick={toggleMic} disabled={busy || blocked} title={t("Πες την εντολή", "Speak the command")} className={`grid place-items-center rounded-xl border px-3 disabled:opacity-40 ${listening ? "animate-pulse border-rose-300 bg-rose-50 text-rose-600 dark:border-rose-700 dark:bg-rose-950/40" : "border-slate-300 text-slate-500 hover:bg-slate-50 dark:border-slate-600"}`}><Mic className="h-4 w-4" /></button>
+            <Tooltip label={t("Πες την εντολή", "Speak the command")}><button onClick={toggleMic} disabled={busy || blocked} className={`grid place-items-center rounded-xl border px-3 disabled:opacity-40 ${listening ? "animate-pulse border-rose-300 bg-rose-50 text-rose-600 dark:border-rose-700 dark:bg-rose-950/40" : "border-slate-300 text-slate-500 hover:bg-slate-50 dark:border-slate-600"}`}><Mic className="h-4 w-4" /></button></Tooltip>
           )}
           <button onClick={() => send(input)} disabled={busy || blocked || !input.trim()} className="grid place-items-center rounded-xl bg-sky-600 px-4 text-white hover:bg-sky-700 disabled:opacity-40"><Send className="h-4 w-4" /></button>
         </div>

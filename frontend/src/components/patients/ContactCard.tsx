@@ -6,6 +6,7 @@ import { Phone, Mail, MessageSquare, Save, Loader2, Check } from "lucide-react";
 import { api } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
 import { PanelCard } from "@/components/ui/Card";
+import { Tooltip } from "@/components/ui/Tooltip";
 
 type Contact = {
   phone?: string | null; mobile?: string | null; email?: string | null;
@@ -46,9 +47,9 @@ export function ContactCard({ patientId }: { patientId: string }) {
   return (
     <PanelCard title={t("Στοιχεία επικοινωνίας", "Contact details")} action={
       <div className="flex gap-1.5">
-        {tel && <a href={`tel:${tel}`} title={t("Κλήση", "Call")} aria-label={t("Κλήση", "Call")} className="rounded-lg border border-slate-200 p-1.5 text-emerald-600 hover:bg-emerald-50"><Phone className="h-4 w-4" /></a>}
-        {f.mobile && <a href={`sms:${f.mobile}`} title="SMS" aria-label="SMS" className="rounded-lg border border-slate-200 p-1.5 text-brand-600 hover:bg-brand-50"><MessageSquare className="h-4 w-4" /></a>}
-        {f.email && <a href={`mailto:${f.email}`} title="Email" aria-label="Email" className="rounded-lg border border-slate-200 p-1.5 text-amber-600 hover:bg-amber-50"><Mail className="h-4 w-4" /></a>}
+        {tel && <Tooltip label={t("Κλήση", "Call")}><a href={`tel:${tel}`} aria-label={t("Κλήση", "Call")} className="rounded-lg border border-slate-200 p-1.5 text-emerald-600 hover:bg-emerald-50"><Phone className="h-4 w-4" /></a></Tooltip>}
+        {f.mobile && <Tooltip label="SMS"><a href={`sms:${f.mobile}`} aria-label="SMS" className="rounded-lg border border-slate-200 p-1.5 text-brand-600 hover:bg-brand-50"><MessageSquare className="h-4 w-4" /></a></Tooltip>}
+        {f.email && <Tooltip label="Email"><a href={`mailto:${f.email}`} aria-label="Email" className="rounded-lg border border-slate-200 p-1.5 text-amber-600 hover:bg-amber-50"><Mail className="h-4 w-4" /></a></Tooltip>}
       </div>
     }>
       <p className="-mt-1 mb-3 text-xs text-slate-400">{t("Καταχωρείς εσύ", "You enter it")} — <b>{t("δεν επηρεάζονται", "not affected")}</b> {t("από συγχρονισμό ΗΔΥΚΑ.", "by ΗΔΥΚΑ sync.")}</p>

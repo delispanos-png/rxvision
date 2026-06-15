@@ -5,6 +5,8 @@ import { useQuery } from "@tanstack/react-query";
 import { Camera, CheckCircle2, Loader2, X, QrCode, AlertTriangle, Link2, Trash2 } from "lucide-react";
 import { api, apiUpload, apiBlob } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
+import { Tooltip } from "@/components/ui/Tooltip";
+import { appConfirm } from "@/store/dialogStore";
 
 /** Loads a scan image from the server (auth'd) so ANY user on the tenant sees it,
  * not just the uploader. Falls back to a QR placeholder while loading/on error. */
@@ -74,7 +76,7 @@ export default function OpticalAuditPage() {
   }
 
   async function del(scanId: string) {
-    if (!scanId || !confirm(t("Διαγραφή αυτής της σάρωσης;", "Delete this scan?"))) return;
+    if (!scanId || !(await appConfirm(t("Διαγραφή αυτής της σάρωσης;", "Delete this scan?"), { danger: true }))) return;
     try { await api(`/reimbursement/scans/${scanId}`, { method: "DELETE" }); } catch { /* ignore */ }
     setLocals((s) => s.filter((l) => l.scan_id !== scanId));
     queue.refetch();
@@ -95,7 +97,7 @@ export default function OpticalAuditPage() {
             {done ? <CheckCircle2 className="h-3 w-3" /> : <Loader2 className="h-3 w-3 animate-spin" />} {done ? "OCR" : t("ανάλυση…", "analyzing…")}
           </span>
           {band && <span className={`absolute right-1.5 top-1.5 rounded-full px-2 py-0.5 text-[10px] font-bold ${band.cls}`}>{t(band.el, band.en)}{scan?.optical_risk != null ? ` ${scan.optical_risk}` : ""}</span>}
-          <button onClick={() => del(id)} title={t("Διαγραφή", "Delete")} className="absolute bottom-1.5 right-1.5 grid h-7 w-7 place-items-center rounded-full bg-black/55 text-white opacity-80 transition hover:bg-rose-600 hover:opacity-100"><Trash2 className="h-3.5 w-3.5" /></button>
+          <Tooltip label={t("Διαγραφή", "Delete")}><button onClick={() => del(id)} className="absolute bottom-1.5 right-1.5 grid h-7 w-7 place-items-center rounded-full bg-black/55 text-white opacity-80 transition hover:bg-rose-600 hover:opacity-100"><Trash2 className="h-3.5 w-3.5" /></button></Tooltip>
         </div>
         <div className="space-y-1 p-2 text-xs">
           {scan?.barcode && <div className="flex items-center gap-1 font-mono text-slate-600 dark:text-slate-300"><QrCode className="h-3 w-3" /> {scan.barcode}</div>}

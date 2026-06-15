@@ -6,6 +6,7 @@ import { api } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
 import { fmtNum, fmtEur } from "@/lib/formatters";
 import { DataTable, type Column } from "@/components/tables/DataTable";
+import { Tooltip } from "@/components/ui/Tooltip";
 
 type Dist = { band: string; label: string; count: number };
 type Row = { patient_id: string; name?: string | null; amka?: string | null; compliance: number; band: string; band_label: string; executed: number; expected: number; missed: number; value: number };
@@ -39,7 +40,7 @@ export default function CompliancePage() {
       <div className="rx-card p-5">
         <h3 className="mb-3 text-sm font-semibold text-slate-700 dark:text-slate-200">{t("Κατανομή συμμόρφωσης", "Compliance distribution")}</h3>
         <div className="mb-2 flex h-5 overflow-hidden rounded-full">
-          {(data?.distribution ?? []).map((b) => b.count > 0 && <div key={b.band} className={BAND[b.band]} style={{ width: `${(b.count / total) * 100}%` }} title={`${b.label}: ${b.count}`} />)}
+          {(data?.distribution ?? []).map((b) => b.count > 0 && <Tooltip key={b.band} label={`${b.label}: ${b.count}`}><div className={BAND[b.band]} style={{ width: `${(b.count / total) * 100}%` }} /></Tooltip>)}
         </div>
         <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
           {(data?.distribution ?? []).map((b) => <span key={b.band} className="inline-flex items-center gap-1.5 text-slate-500"><span className={`h-2.5 w-2.5 rounded-full ${BAND[b.band]}`} /> {b.label}: <b className="text-slate-700 dark:text-slate-200">{b.count}</b></span>)}

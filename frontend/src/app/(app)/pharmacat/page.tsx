@@ -10,6 +10,7 @@ import { api } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
 import { fmtEur } from "@/lib/formatters";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
+import { Tooltip } from "@/components/ui/Tooltip";
 
 type RedFlag = { flag: string; action: string };
 type Substance = { name: string; atc: string; note: string };
@@ -141,14 +142,13 @@ function PharmaCatInner() {
           <p className="text-xs text-slate-500">{t("Επιστημονικός βοηθός φαρμακοποιού (CDSS) — δεν διαγιγνώσκει, δεν αντικαθιστά ιατρό.", "Pharmacist's scientific assistant (CDSS) — not diagnosis, not a doctor replacement.")}</p>
         </div>
         {status.data?.configured && status.data?.enabled && (
-          <span className="hidden shrink-0 rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-medium text-slate-500 sm:inline dark:bg-slate-800" title={t("Νέες ερωτήσεις AI σήμερα (οι αποθηκευμένες είναι δωρεάν)", "New AI questions today (cached are free)")}>{status.data.today_used}/{status.data.daily_limit} {t("σήμερα", "today")}</span>
+          <Tooltip label={t("Νέες ερωτήσεις AI σήμερα (οι αποθηκευμένες είναι δωρεάν)", "New AI questions today (cached are free)")}><span className="hidden shrink-0 rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-medium text-slate-500 sm:inline dark:bg-slate-800">{status.data.today_used}/{status.data.daily_limit} {t("σήμερα", "today")}</span></Tooltip>
         )}
         {turns.length > 0 && (
-          <button onClick={() => { setTurns([]); setInput(""); setMed(null); }}
-            title={t("Καθαρισμός συνομιλίας", "Clear conversation")}
+          <Tooltip label={t("Καθαρισμός συνομιλίας", "Clear conversation")}><button onClick={() => { setTurns([]); setInput(""); setMed(null); }}
             className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-slate-300 px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800">
             <Trash2 className="h-3.5 w-3.5" /> {t("Καθαρισμός", "Clear")}
-          </button>
+          </button></Tooltip>
         )}
       </div>
 
@@ -204,9 +204,9 @@ function PharmaCatInner() {
             disabled={busy || blocked} placeholder={t("Σύμπτωμα ή κλινική ερώτηση…", "Symptom or clinical question…")}
             className="flex-1 rounded-xl border border-slate-300 px-4 py-2.5 text-sm focus:border-violet-500 focus:outline-none focus:ring-1 focus:ring-violet-500 disabled:opacity-50 dark:border-slate-600 dark:bg-slate-800" />
           {micOk && (
-            <button onClick={toggleMic} disabled={busy || blocked} title={t("Πες το σύμπτωμα", "Speak the symptom")} className={`grid place-items-center rounded-xl border px-3 disabled:opacity-40 ${listening ? "animate-pulse border-rose-300 bg-rose-50 text-rose-600 dark:border-rose-700 dark:bg-rose-950/40" : "border-slate-300 text-slate-500 hover:bg-slate-50 dark:border-slate-600"}`}><Mic className="h-4 w-4" /></button>
+            <Tooltip label={t("Πες το σύμπτωμα", "Speak the symptom")}><button onClick={toggleMic} disabled={busy || blocked} className={`grid place-items-center rounded-xl border px-3 disabled:opacity-40 ${listening ? "animate-pulse border-rose-300 bg-rose-50 text-rose-600 dark:border-rose-700 dark:bg-rose-950/40" : "border-slate-300 text-slate-500 hover:bg-slate-50 dark:border-slate-600"}`}><Mic className="h-4 w-4" /></button></Tooltip>
           )}
-          <button onClick={() => send(input, "interactions")} disabled={busy || blocked || !input.trim()} title={t("Έλεγχος αλληλεπιδράσεων (φάρμακα χωρισμένα με κόμμα)", "Interaction check (comma-separated drugs)")} className="grid place-items-center rounded-xl border border-slate-300 px-3 text-slate-500 hover:bg-slate-50 disabled:opacity-40 dark:border-slate-600"><FlaskConical className="h-4 w-4" /></button>
+          <Tooltip label={t("Έλεγχος αλληλεπιδράσεων (φάρμακα χωρισμένα με κόμμα)", "Interaction check (comma-separated drugs)")}><button onClick={() => send(input, "interactions")} disabled={busy || blocked || !input.trim()} className="grid place-items-center rounded-xl border border-slate-300 px-3 text-slate-500 hover:bg-slate-50 disabled:opacity-40 dark:border-slate-600"><FlaskConical className="h-4 w-4" /></button></Tooltip>
           <button onClick={() => send(input)} disabled={busy || blocked || !input.trim()} className="grid place-items-center rounded-xl bg-violet-600 px-4 text-white hover:bg-violet-700 disabled:opacity-40"><Send className="h-4 w-4" /></button>
         </div>
         <p className="mt-1.5 text-center text-[10px] text-slate-400">{t("Υποστήριξη απόφασης για επαγγελματία υγείας. Δεν υποκαθιστά την κλινική κρίση ή τον ιατρό.", "Decision support for a health professional. Does not replace clinical judgment or a physician.")}</p>
@@ -308,7 +308,7 @@ function AssistantCard({ r, t, onAnswer, onMed }: { r: Result; t: (el: string, e
               <div className="mb-1 text-[11px] font-medium text-slate-400">{g.substance}</div>
               <div className="flex flex-wrap gap-1">
                 {g.products.map((p, j) => (
-                  <button key={j} onClick={() => onMed(p.eof)} title={t("Πληροφορίες φαρμάκου", "Medicine info")} className="rounded-md bg-slate-100 px-2 py-0.5 text-xs text-slate-700 transition hover:bg-violet-100 hover:text-violet-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-violet-900/40">{p.name}{p.narcotic ? " ⚠" : ""}</button>
+                  <Tooltip key={j} label={t("Πληροφορίες φαρμάκου", "Medicine info")}><button onClick={() => onMed(p.eof)} className="rounded-md bg-slate-100 px-2 py-0.5 text-xs text-slate-700 transition hover:bg-violet-100 hover:text-violet-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-violet-900/40">{p.name}{p.narcotic ? " ⚠" : ""}</button></Tooltip>
                 ))}
               </div>
             </div>

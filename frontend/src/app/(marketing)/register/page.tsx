@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Building2, Package, UserCog, Search, Check, ArrowRight, ArrowLeft, Eye, EyeOff, Loader2, CreditCard } from "lucide-react";
 import { api, ApiError } from "@/lib/apiClient";
+import { Tooltip } from "@/components/ui/Tooltip";
 
 type Company = {
   name: string; title: string; afm: string; doy: string; country: "GR" | "CY";
@@ -144,7 +145,7 @@ export default function RegisterWizard() {
                     <label className={label}>ΑΦΜ / VAT</label>
                     <div className="flex gap-1.5">
                       <input className={input} {...C("afm")} placeholder="999999999" inputMode="numeric" />
-                      <button type="button" onClick={lookupAade} disabled={aade.loading} title="Αναζήτηση ΑΑΔΕ" className="shrink-0 rounded-lg border border-slate-300 px-2.5 text-slate-600 hover:bg-slate-50">{aade.loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}</button>
+                      <Tooltip label="Αναζήτηση ΑΑΔΕ"><button type="button" onClick={lookupAade} disabled={aade.loading} className="shrink-0 rounded-lg border border-slate-300 px-2.5 text-slate-600 hover:bg-slate-50">{aade.loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}</button></Tooltip>
                     </div>
                   </div>
                   <div><label className={label}>ΔΟΥ</label><input className={input} {...C("doy")} /></div>

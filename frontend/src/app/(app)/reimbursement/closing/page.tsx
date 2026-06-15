@@ -8,6 +8,7 @@ import { useReimbPeriod } from "@/store/reimbStore";
 import { fmtNum, fmtEur, fmtMoney} from "@/lib/formatters";
 import { DataTable, type Column } from "@/components/tables/DataTable";
 import { ExportMenu } from "@/components/export/ExportMenu";
+import { Tooltip } from "@/components/ui/Tooltip";
 
 type Fund = { fund: string; is_eopyy: boolean; rx: number; retail: number; claim: number; patient: number };
 type Closing = {
@@ -74,10 +75,10 @@ export default function ClosingPage() {
               <h3 className="mb-3 text-sm font-semibold text-slate-700 dark:text-slate-200">{t("Ανά ημέρα", "By day")}</h3>
               <div className="flex h-28 items-end gap-0.5">
                 {(data?.by_day ?? []).map((d) => (
-                  <div key={d.day} className="group flex flex-1 flex-col items-center justify-end" title={`${d.day}: ${d.rx}`}>
+                  <Tooltip key={d.day} label={`${d.day}: ${d.rx}`}><div className="group flex flex-1 flex-col items-center justify-end">
                     <div className="w-full rounded-t bg-emerald-400 group-hover:bg-emerald-600" style={{ height: `${(d.rx / maxDay) * 100}%`, minHeight: d.rx ? "2px" : "0" }} />
                     <span className="mt-0.5 text-[8px] text-slate-400">{d.day.slice(8)}</span>
-                  </div>
+                  </div></Tooltip>
                 ))}
               </div>
             </div>

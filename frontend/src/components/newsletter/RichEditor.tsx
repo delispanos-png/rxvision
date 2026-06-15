@@ -2,6 +2,7 @@
 
 import { appPrompt } from "@/store/dialogStore";
 import { useT } from "@/store/prefStore";
+import { Tooltip } from "@/components/ui/Tooltip";
 import { useEffect, useImperativeHandle, forwardRef } from "react";
 import { useEditor, EditorContent, type Editor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
@@ -37,19 +38,20 @@ function ToolbarBtn({
   disabled?: boolean;
 }) {
   return (
-    <button
-      type="button"
-      title={title}
-      onClick={onClick}
-      disabled={disabled}
-      className={`grid h-8 w-8 place-items-center rounded-md border text-slate-600 transition disabled:cursor-not-allowed disabled:opacity-40 ${
-        active
-          ? "border-brand-600 bg-brand-50 text-brand-600"
-          : "border-transparent hover:bg-slate-100"
-      }`}
-    >
-      {children}
-    </button>
+    <Tooltip label={title}>
+      <button
+        type="button"
+        onClick={onClick}
+        disabled={disabled}
+        className={`grid h-8 w-8 place-items-center rounded-md border text-slate-600 transition disabled:cursor-not-allowed disabled:opacity-40 ${
+          active
+            ? "border-brand-600 bg-brand-50 text-brand-600"
+            : "border-transparent hover:bg-slate-100"
+        }`}
+      >
+        {children}
+      </button>
+    </Tooltip>
   );
 }
 

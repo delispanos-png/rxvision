@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Copy, Check } from "lucide-react";
 import { useT } from "@/store/prefStore";
+import { Tooltip } from "@/components/ui/Tooltip";
 
 /** Small inline copy-to-clipboard button. Stops row-click propagation so it works
  *  inside clickable table rows. Falls back to execCommand on non-secure contexts. */
@@ -31,14 +32,15 @@ export function CopyButton({ value, className = "" }: { value?: string | null; c
   };
 
   return (
-    <button
-      type="button"
-      onClick={copy}
-      title={copied ? t("Αντιγράφηκε!", "Copied!") : t("Αντιγραφή", "Copy")}
-      aria-label={copied ? t("Αντιγράφηκε", "Copied") : t("Αντιγραφή", "Copy")}
-      className={`inline-flex items-center rounded p-0.5 text-slate-400 transition hover:bg-slate-100 hover:text-brand-600 dark:hover:bg-slate-800 ${className}`}
-    >
-      {copied ? <Check className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5" />}
-    </button>
+    <Tooltip label={copied ? t("Αντιγράφηκε!", "Copied!") : t("Αντιγραφή", "Copy")}>
+      <button
+        type="button"
+        onClick={copy}
+        aria-label={copied ? t("Αντιγράφηκε", "Copied") : t("Αντιγραφή", "Copy")}
+        className={`inline-flex items-center rounded p-0.5 text-slate-400 transition hover:bg-slate-100 hover:text-brand-600 dark:hover:bg-slate-800 ${className}`}
+      >
+        {copied ? <Check className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5" />}
+      </button>
+    </Tooltip>
   );
 }

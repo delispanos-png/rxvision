@@ -8,6 +8,7 @@ import { api, queryKeys } from "@/lib/apiClient";
 import { useNavStore } from "@/store/navStore";
 import { usePref, useT } from "@/store/prefStore";
 import { Logo, LogoMark } from "@/components/brand/Logo";
+import { Tooltip } from "@/components/ui/Tooltip";
 import {
   Activity, BarChart3, Boxes, CalendarClock, ClipboardCheck, LayoutDashboard,
   Mail, Salad, PackageSearch, Settings, Sparkles, Stethoscope, TrendingUp, Users,
@@ -115,17 +116,18 @@ export function Sidebar() {
         </nav>
 
         {/* Powered by CloudOn */}
-        <a
-          href="https://cloudon.gr"
-          target="_blank"
-          rel="noopener noreferrer"
-          title="Powered by CloudOn"
-          className={`flex shrink-0 items-center justify-center gap-2 border-t border-slate-200/70 py-3 opacity-70 transition hover:opacity-100 dark:border-slate-800 ${collapsed ? "md:px-0" : "px-3"}`}
-        >
-          <span className={`text-[10px] font-medium uppercase tracking-wide text-slate-400 ${hide}`}>Powered by</span>
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/cloudon-logo.png" alt="CloudOn" className="h-4 w-auto" />
-        </a>
+        <Tooltip label="Powered by CloudOn">
+          <a
+            href="https://cloudon.gr"
+            target="_blank"
+            rel="noopener noreferrer"
+            className={`flex shrink-0 items-center justify-center gap-2 border-t border-slate-200/70 py-3 opacity-70 transition hover:opacity-100 dark:border-slate-800 ${collapsed ? "md:px-0" : "px-3"}`}
+          >
+            <span className={`text-[10px] font-medium uppercase tracking-wide text-slate-400 ${hide}`}>Powered by</span>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src="/cloudon-logo.png" alt="CloudOn" className="h-4 w-auto" />
+          </a>
+        </Tooltip>
       </aside>
     </>
   );

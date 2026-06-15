@@ -8,6 +8,7 @@ import { downloadCsv } from "@/lib/csv";
 import { useT } from "@/store/prefStore";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
 import { DateInput } from "@/components/ui/DateInput";
+import { Tooltip } from "@/components/ui/Tooltip";
 import { fmtNum, fmtDate, fmtEur } from "@/lib/formatters";
 import { DataTable, type Column } from "@/components/tables/DataTable";
 import { KpiCard } from "@/components/kpi/KpiCard";
@@ -247,7 +248,7 @@ export default function FuturePage() {
                       <button onClick={() => setExpandedRx(open ? null : key)}
                         className="flex w-full items-center justify-between gap-3 py-2.5 text-left text-sm hover:bg-slate-50">
                         <span className="flex min-w-0 items-center gap-2">
-                          {r.chronic ? <HeartPulse className="h-3.5 w-3.5 shrink-0 text-amber-500" aria-label={t("Χρόνια αγωγή", "Chronic therapy")}><title>{t("Χρόνια αγωγή", "Chronic therapy")}</title></HeartPulse> : null}
+                          {r.chronic ? <Tooltip label={t("Χρόνια αγωγή", "Chronic therapy")}><HeartPulse className="h-3.5 w-3.5 shrink-0 text-amber-500" aria-label={t("Χρόνια αγωγή", "Chronic therapy")} /></Tooltip> : null}
                           <span className="font-mono font-semibold text-slate-800">#{r.source_barcode ?? "—"}</span>
                           <span className="truncate text-slate-600">{r.patient_name || "—"}</span>
                         </span>

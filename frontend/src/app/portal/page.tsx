@@ -7,6 +7,7 @@ import {
   Calendar, ChevronDown, ChevronUp, CheckCircle2, Clock, Sparkles, X, Search, CalendarPlus, AlertCircle,
   PackageCheck,
 } from "lucide-react";
+import { Tooltip } from "@/components/ui/Tooltip";
 import { patientApi, patientTokens } from "@/lib/patientClient";
 import { PharmacyPicker, MedicinePicker, type Medicine } from "@/components/portal/pickers";
 import { pushSupported, isPushSubscribed, enablePush } from "@/lib/push";
@@ -224,12 +225,12 @@ export default function PortalHome() {
                 <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
               </div>
             )}
-            <button onClick={() => setShowNotifs((v) => !v)} title="Ειδοποιήσεις"
+            <Tooltip label="Ειδοποιήσεις"><button onClick={() => setShowNotifs((v) => !v)}
               className="relative grid h-9 w-9 place-items-center rounded-xl border border-slate-200 bg-white text-slate-500 shadow-sm hover:bg-slate-50">
               <Bell className="h-[18px] w-[18px]" />
               {notifs.length > 0 && <span className="absolute -right-1 -top-1 grid h-4 min-w-[16px] place-items-center rounded-full bg-rose-500 px-1 text-[10px] font-bold text-white">{notifs.length}</span>}
-            </button>
-            <button onClick={logout} title="Έξοδος" className="grid h-9 w-9 place-items-center rounded-xl border border-slate-200 bg-white text-slate-500 shadow-sm hover:bg-slate-50"><LogOut className="h-[18px] w-[18px]" /></button>
+            </button></Tooltip>
+            <Tooltip label="Έξοδος"><button onClick={logout} className="grid h-9 w-9 place-items-center rounded-xl border border-slate-200 bg-white text-slate-500 shadow-sm hover:bg-slate-50"><LogOut className="h-[18px] w-[18px]" /></button></Tooltip>
           </div>
         </div>
       </header>

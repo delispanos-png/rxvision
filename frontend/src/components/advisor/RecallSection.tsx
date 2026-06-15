@@ -10,6 +10,7 @@ import { DataTable, type Column } from "@/components/tables/DataTable";
 import { KpiCard } from "@/components/kpi/KpiCard";
 import { ExportMenu } from "@/components/export/ExportMenu";
 import { PanelCard } from "@/components/ui/Card";
+import { Tooltip } from "@/components/ui/Tooltip";
 
 type RecallPat = {
   patient_id: string; name?: string | null; amka?: string | null; age_group?: string | null;
@@ -43,9 +44,9 @@ export function RecallSection() {
       if (!tel && !r.email) return <span className="text-xs text-slate-300">— {t("πρόσθεσε στοιχεία", "add details")}</span>;
       return (
         <span className="inline-flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
-          {tel && <a href={`tel:${tel}`} title={t("Κλήση", "Call")} aria-label={t("Κλήση", "Call")} className="rounded-lg border border-slate-200 p-1.5 text-emerald-600 hover:bg-emerald-50 dark:border-slate-700"><Phone className="h-3.5 w-3.5" /></a>}
-          {r.mobile && <a href={`sms:${r.mobile}`} title="SMS" aria-label="SMS" className="rounded-lg border border-slate-200 p-1.5 text-brand-600 hover:bg-brand-50 dark:border-slate-700"><MessageSquare className="h-3.5 w-3.5" /></a>}
-          {r.email && <a href={`mailto:${r.email}`} title="Email" aria-label="Email" className="rounded-lg border border-slate-200 p-1.5 text-amber-600 hover:bg-amber-50 dark:border-slate-700"><Mail className="h-3.5 w-3.5" /></a>}
+          {tel && <Tooltip label={t("Κλήση", "Call")}><a href={`tel:${tel}`} aria-label={t("Κλήση", "Call")} className="rounded-lg border border-slate-200 p-1.5 text-emerald-600 hover:bg-emerald-50 dark:border-slate-700"><Phone className="h-3.5 w-3.5" /></a></Tooltip>}
+          {r.mobile && <Tooltip label="SMS"><a href={`sms:${r.mobile}`} aria-label="SMS" className="rounded-lg border border-slate-200 p-1.5 text-brand-600 hover:bg-brand-50 dark:border-slate-700"><MessageSquare className="h-3.5 w-3.5" /></a></Tooltip>}
+          {r.email && <Tooltip label="Email"><a href={`mailto:${r.email}`} aria-label="Email" className="rounded-lg border border-slate-200 p-1.5 text-amber-600 hover:bg-amber-50 dark:border-slate-700"><Mail className="h-3.5 w-3.5" /></a></Tooltip>}
           {r.consent && <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700">{t("συγκατάθεση", "consent")}</span>}
         </span>
       );

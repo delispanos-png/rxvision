@@ -7,6 +7,7 @@ import { api } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
 import { PanelCard } from "@/components/ui/Card";
 import { ContactCard } from "@/components/patients/ContactCard";
+import { Tooltip } from "@/components/ui/Tooltip";
 
 type Med = { name: string | null; barcode: string | null; substance: string | null; atc: string | null; category: string | null; times: number; value: number };
 type Icd = { code: string; count: number; title?: string | null };
@@ -90,9 +91,9 @@ export default function PatientDetailPage() {
           {d.icd10.length === 0 ? <div className="text-sm text-slate-400">—</div> : (
             <div className="flex flex-wrap gap-2">
               {d.icd10.map((x) => (
-                <span key={x.code} title={x.title || ""} className="rounded-lg bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-700">
+                <Tooltip key={x.code} label={x.title || ""}><span className="rounded-lg bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-700">
                   <b>{x.code}</b>{x.title ? ` — ${x.title}` : ""} <span className="text-slate-400">×{x.count}</span>
-                </span>
+                </span></Tooltip>
               ))}
             </div>
           )}

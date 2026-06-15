@@ -1,6 +1,7 @@
 "use client";
 
 import { appConfirm } from "@/store/dialogStore";
+import { Tooltip } from "@/components/ui/Tooltip";
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
@@ -211,10 +212,10 @@ export default function TenantCardPage() {
             {(creds.data?.users ?? data.users).map((u) => (
               <div key={u.external_user_id} className="flex items-center justify-between gap-2 py-0.5">
                 <div className="text-slate-600">{u.email} <span className="text-xs text-slate-400">({u.role})</span></div>
-                <button disabled={busy} onClick={() => sendCreds(u.email)} title="Δημιουργία & αποστολή νέου προσωρινού κωδικού"
+                <Tooltip label="Δημιουργία & αποστολή νέου προσωρινού κωδικού"><button disabled={busy} onClick={() => sendCreds(u.email)}
                   className="shrink-0 rounded-md border border-brand-300 bg-brand-50 px-2 py-1 text-xs font-medium text-brand-700 hover:bg-brand-100 disabled:opacity-40">
                   Νέος κωδικός
-                </button>
+                </button></Tooltip>
               </div>
             ))}
             {sentCreds && (

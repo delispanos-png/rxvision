@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Download, Share } from "lucide-react";
 import { useT } from "@/store/prefStore";
+import { Tooltip } from "@/components/ui/Tooltip";
 
 type BIPEvent = Event & { prompt: () => Promise<void>; userChoice: Promise<{ outcome: string }> };
 
@@ -44,14 +45,15 @@ export function InstallButton() {
 
   return (
     <div className="relative">
-      <button
-        onClick={onClick}
-        title={t("Εγκατάσταση εφαρμογής", "Install app")}
-        aria-label={t("Εγκατάσταση εφαρμογής", "Install app")}
-        className="grid h-9 w-9 place-items-center rounded-lg border border-brand-200 bg-brand-50 text-brand-700 hover:bg-brand-100"
-      >
-        <Download className="h-[18px] w-[18px]" />
-      </button>
+      <Tooltip label={t("Εγκατάσταση εφαρμογής", "Install app")}>
+        <button
+          onClick={onClick}
+          aria-label={t("Εγκατάσταση εφαρμογής", "Install app")}
+          className="grid h-9 w-9 place-items-center rounded-lg border border-brand-200 bg-brand-50 text-brand-700 hover:bg-brand-100"
+        >
+          <Download className="h-[18px] w-[18px]" />
+        </button>
+      </Tooltip>
       {iosHint && (
         <div className="absolute right-0 top-full z-50 mt-2 w-[min(16rem,calc(100vw-1.5rem))] rounded-xl border border-slate-200 bg-white p-3 text-xs text-slate-600 shadow-pop">
           <div className="mb-1 font-semibold text-slate-800">{t("Εγκατάσταση στο iPhone", "Install on iPhone")}</div>

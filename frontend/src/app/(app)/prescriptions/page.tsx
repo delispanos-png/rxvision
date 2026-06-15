@@ -1,13 +1,13 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { Receipt, Wallet, Pill, AlertTriangle, Search, Download, HeartPulse, Stethoscope } from "lucide-react";
 import { api } from "@/lib/apiClient";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
+import { Tooltip } from "@/components/ui/Tooltip";
 import { useUiStore, filtersToQuery } from "@/store/uiStore";
 import { prevYearRange, pctDelta } from "@/lib/compare";
 import { fmtEur, fmtNum, fmtDate, fmtMoney} from "@/lib/formatters";
@@ -67,7 +67,7 @@ const makeFundCols = (t: T): Column<FundRow>[] => [
     render: (r) => (
       <span className="inline-flex items-center gap-2">
         {r.fund_name || "—"}
-        {r.is_group && <span className="rounded bg-brand-100 px-1.5 py-0.5 text-[10px] font-semibold text-brand-700" title={(r.funds ?? []).map((f) => f.fund_name).join(", ")}>{t("ομάδα", "group")} · {r.funds?.length}</span>}
+        {r.is_group && <Tooltip label={(r.funds ?? []).map((f) => f.fund_name).join(", ")}><span className="rounded bg-brand-100 px-1.5 py-0.5 text-[10px] font-semibold text-brand-700">{t("ομάδα", "group")} · {r.funds?.length}</span></Tooltip>}
       </span>
     ),
   },
@@ -78,63 +78,25 @@ const makeFundCols = (t: T): Column<FundRow>[] => [
 ];
 
 function BarcodeChip({ bc, patient, date }: { bc: string; patient?: string | null; date?: string | null }) {
-  const [show, setShow] = useState(false);
-  const [pos, setPos] = useState({ x: 0, y: 0 });
-  const ref = useRef<HTMLSpanElement>(null);
   const info = [patient || "", date ? new Date(date).toLocaleString("el-GR", { dateStyle: "medium", timeStyle: "short" }) : ""].filter(Boolean).join(" · ");
-  const onEnter = () => {
-    const r = ref.current?.getBoundingClientRect();
-    if (r) { setPos({ x: r.left + r.width / 2, y: r.top }); setShow(true); }
-  };
   return (
-    <span
-      ref={ref}
-      onMouseEnter={onEnter}
-      onMouseLeave={() => setShow(false)}
-      className="cursor-default rounded bg-slate-100 px-1.5 py-0.5 text-xs font-medium text-brand-700 hover:bg-brand-200"
-    >
-      {bc}
-      {show && info && typeof document !== "undefined" && createPortal(
-        <div
-          style={{ position: "fixed", left: pos.x, top: pos.y - 10, transform: "translate(-50%, -100%)", zIndex: 9999 }}
-          className="pointer-events-none whitespace-nowrap rounded-lg bg-slate-900 px-3 py-2 text-xs font-medium text-white shadow-2xl"
-        >
-          {info}
-          <span className="absolute left-1/2 top-full h-0 w-0 -translate-x-1/2 border-4 border-transparent border-t-slate-900" />
-        </div>,
-        document.body,
-      )}
-    </span>
+    <Tooltip label={info}>
+      <span className="cursor-default rounded bg-slate-100 px-1.5 py-0.5 text-xs font-medium text-brand-700 hover:bg-brand-200">
+        {bc}
+      </span>
+    </Tooltip>
   );
 }
 
-// Compact ICD-10 χαρακτηρισμός + hover «μήνυμα»: λευκό bubble, μαύρα γράμματα, με ουρά.
-// Portal + position:fixed ώστε να ΜΗΝ κόβεται από το overflow-x-auto του πίνακα.
+// Compact ICD-10 χαρακτηρισμός + κοινό hover «μήνυμα» (Tooltip): όλες οι διαγνώσεις, μία/γραμμή.
 function DxBubble({ dx, label, title }: { dx: string[]; label: string; title: string }) {
-  const ref = useRef<HTMLSpanElement>(null);
-  const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
-  const show = () => {
-    const r = ref.current?.getBoundingClientRect();
-    if (r) setPos({ x: Math.min(r.left, window.innerWidth - 360), y: r.bottom + 9 });
-  };
   return (
-    <>
-      <span ref={ref} onMouseEnter={show} onMouseLeave={() => setPos(null)}
-        className="inline-flex max-w-[12rem] cursor-help items-center gap-1 truncate rounded-full bg-violet-50 px-2 py-0.5 text-xs font-medium text-violet-700">
+    <Tooltip lines={dx} title={title}>
+      <span className="inline-flex max-w-[12rem] cursor-help items-center gap-1 truncate rounded-full bg-violet-50 px-2 py-0.5 text-xs font-medium text-violet-700">
         <Stethoscope className="h-3 w-3 shrink-0" />
         <span className="truncate">{label}</span>
       </span>
-      {pos && typeof document !== "undefined" && createPortal(
-        <div style={{ position: "fixed", left: pos.x, top: pos.y, zIndex: 60 }} className="pointer-events-none w-[340px] max-w-[90vw]">
-          <div className="relative rounded-2xl border border-slate-200 bg-white p-3 text-[13px] leading-relaxed text-slate-900 shadow-xl">
-            <span className="absolute -top-1.5 left-5 h-3 w-3 rotate-45 border-l border-t border-slate-200 bg-white" />
-            <div className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold text-violet-600"><Stethoscope className="h-3.5 w-3.5" /> {title}</div>
-            <ul className="space-y-1">
-              {dx.map((c, i) => <li key={i} className="border-b border-slate-100 pb-1 last:border-0 last:pb-0">{c}</li>)}
-            </ul>
-          </div>
-        </div>, document.body)}
-    </>
+    </Tooltip>
   );
 }
 
@@ -144,7 +106,7 @@ const makeColumns = (t: T): Column<Prescription>[] => {
   { key: "executed_at", header: t("Ημ/νία", "Date/time"), render: (r) => new Date(r.executed_at).toLocaleString("el-GR", { dateStyle: "short", timeStyle: "short" }) },
   { key: "barcode", header: "Barcode", sortValue: (r) => r.external_id, render: (r) => (
     <span className="inline-flex items-center gap-1.5 font-mono tabular-nums">
-      {r.chronic ? <HeartPulse className="h-3.5 w-3.5 shrink-0 text-amber-500" aria-label={t("Χρόνια αγωγή", "Chronic therapy")}><title>{t("Χρόνια αγωγή", "Chronic therapy")}</title></HeartPulse> : null}
+      {r.chronic ? <Tooltip label={t("Χρόνια αγωγή", "Chronic therapy")}><HeartPulse className="h-3.5 w-3.5 shrink-0 text-amber-500" aria-label={t("Χρόνια αγωγή", "Chronic therapy")} /></Tooltip> : null}
       {r.external_id.split(":")[0]}
     </span>
   ) },
@@ -311,7 +273,7 @@ export default function PrescriptionsPage() {
               className="w-full rounded-lg border border-slate-300 py-2 pl-8 pr-8 text-sm text-slate-900 focus:border-brand-500 focus:outline-none sm:w-56"
             />
             {bc && (
-              <button onClick={() => setBarcode("")} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600" title={t("Καθαρισμός", "Clear")}>×</button>
+              <Tooltip label={t("Καθαρισμός", "Clear")}><button onClick={() => setBarcode("")} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">×</button></Tooltip>
             )}
           </div>
         </label>

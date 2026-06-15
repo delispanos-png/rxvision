@@ -1,5 +1,6 @@
 "use client";
 
+import { appConfirm } from "@/store/dialogStore";
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { adminApi } from "@/lib/adminClient";
@@ -64,7 +65,7 @@ export default function FundGroupsPage() {
                   className="w-72 rounded-lg border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-800 focus:border-brand-500 focus:outline-none"
                 />
                 <span className="text-xs text-slate-400">{assignedCount(g.id)} ταμεία</span>
-                <button onClick={() => { if (confirm(`Διαγραφή ομάδας «${g.name}»;`)) del.mutate(g.id); }}
+                <button onClick={async () => { if (await appConfirm(`Διαγραφή ομάδας «${g.name}»;`, { danger: true })) del.mutate(g.id); }}
                   className="ml-auto rounded-lg p-1.5 text-slate-400 hover:bg-rose-50 hover:text-rose-600" aria-label="Διαγραφή">
                   <Trash2 className="h-4 w-4" />
                 </button>

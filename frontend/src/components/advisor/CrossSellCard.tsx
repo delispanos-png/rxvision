@@ -8,6 +8,7 @@ import { api } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
 import { fmtNum, fmtDate } from "@/lib/formatters";
 import { Modal } from "@/components/ui/Modal";
+import { Tooltip } from "@/components/ui/Tooltip";
 import { DataTable, type Column } from "@/components/tables/DataTable";
 import { ExportMenu } from "@/components/export/ExportMenu";
 
@@ -38,9 +39,9 @@ export function CrossSellCard({ x }: { x: Xsell }) {
         if (!has) return <span className="text-xs text-slate-300">{t("— χωρίς στοιχεία", "— no details")}</span>;
         return (
           <span className="inline-flex items-center gap-1.5">
-            {tel && <a href={`tel:${tel}`} onClick={(e) => e.stopPropagation()} title={t("Κλήση", "Call")} aria-label={t("Κλήση", "Call")} className="rounded-lg border border-slate-200 p-1.5 text-emerald-600 hover:bg-emerald-50"><Phone className="h-3.5 w-3.5" /></a>}
-            {r.mobile && <a href={`sms:${r.mobile}`} onClick={(e) => e.stopPropagation()} title="SMS" aria-label="SMS" className="rounded-lg border border-slate-200 p-1.5 text-brand-600 hover:bg-brand-50"><MessageSquare className="h-3.5 w-3.5" /></a>}
-            {r.email && <a href={`mailto:${r.email}`} onClick={(e) => e.stopPropagation()} title="Email" aria-label="Email" className="rounded-lg border border-slate-200 p-1.5 text-amber-600 hover:bg-amber-50"><Mail className="h-3.5 w-3.5" /></a>}
+            {tel && <Tooltip label={t("Κλήση", "Call")}><a href={`tel:${tel}`} onClick={(e) => e.stopPropagation()} aria-label={t("Κλήση", "Call")} className="rounded-lg border border-slate-200 p-1.5 text-emerald-600 hover:bg-emerald-50"><Phone className="h-3.5 w-3.5" /></a></Tooltip>}
+            {r.mobile && <Tooltip label="SMS"><a href={`sms:${r.mobile}`} onClick={(e) => e.stopPropagation()} aria-label="SMS" className="rounded-lg border border-slate-200 p-1.5 text-brand-600 hover:bg-brand-50"><MessageSquare className="h-3.5 w-3.5" /></a></Tooltip>}
+            {r.email && <Tooltip label="Email"><a href={`mailto:${r.email}`} onClick={(e) => e.stopPropagation()} aria-label="Email" className="rounded-lg border border-slate-200 p-1.5 text-amber-600 hover:bg-amber-50"><Mail className="h-3.5 w-3.5" /></a></Tooltip>}
             {r.consent && <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700">{t("συγκατάθεση", "consent")}</span>}
           </span>
         );

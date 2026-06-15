@@ -7,6 +7,7 @@ import { api } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
 import { PanelCard } from "@/components/ui/Card";
+import { appAlert } from "@/store/dialogStore";
 
 type Hit = { patient_id: string; name?: string | null; amka?: string | null; birth_year?: number | null; age_group?: string | null; last_seen?: string | null; mobile?: string | null; email?: string | null; consent?: boolean };
 type Section = { title: string; drugs: string[]; favor: string; avoid: string; why: string };
@@ -36,7 +37,7 @@ export default function NutritionPage() {
 
   const search = useQuery({ queryKey: ["pat-search", q], queryFn: () => api<{ items: Hit[] }>(`/patients/search?q=${encodeURIComponent(q)}`), enabled: q.trim().length >= 2, retry: false });
   const plan = useQuery({ queryKey: ["nutrition", picked?.patient_id], queryFn: () => api<Plan>(`/advisor/nutrition/${picked!.patient_id}`), enabled: !!picked, retry: false });
-  const email = useMutation({ mutationFn: () => api<{ to: string }>(`/advisor/nutrition/${picked!.patient_id}/email`, { method: "POST" }), onSuccess: (r) => alert(t("Στάλθηκε στο ", "Sent to ") + r.to + " ✅"), onError: (e: Error) => alert(t("Αποτυχία: ", "Failed: ") + e.message) });
+  const email = useMutation({ mutationFn: () => api<{ to: string }>(`/advisor/nutrition/${picked!.patient_id}/email`, { method: "POST" }), onSuccess: (r) => appAlert(t("Στάλθηκε στο ", "Sent to ") + r.to + " ✅"), onError: (e: Error) => appAlert(t("Αποτυχία: ", "Failed: ") + e.message) });
 
   return (
     <ModuleGuard module="patient_analytics">

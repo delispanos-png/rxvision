@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { HelpCircle, X, Lightbulb } from "lucide-react";
 import { helpFor } from "@/lib/help";
 import { useT, usePref } from "@/store/prefStore";
+import { Tooltip } from "@/components/ui/Tooltip";
 
 /** Floating "?" button on every circuit → slide-over panel explaining what the page shows
  *  and how it works. Content lives in src/lib/help.ts (mirrored in docs/USER_MANUAL.md). */
@@ -18,14 +19,15 @@ export function PageHelp() {
 
   return (
     <>
-      <button
-        onClick={() => setOpen(true)}
-        title={t("Βοήθεια — τι βλέπω εδώ;", "Help — what am I looking at?")}
-        aria-label={t("Βοήθεια", "Help")}
-        className="fixed bottom-5 right-5 z-40 inline-flex h-12 w-12 items-center justify-center rounded-full bg-brand-600 text-white shadow-lg transition hover:scale-105 hover:bg-brand-700"
-      >
-        <HelpCircle className="h-6 w-6" />
-      </button>
+      <Tooltip label={t("Βοήθεια — τι βλέπω εδώ;", "Help — what am I looking at?")}>
+        <button
+          onClick={() => setOpen(true)}
+          aria-label={t("Βοήθεια", "Help")}
+          className="fixed bottom-5 right-5 z-40 inline-flex h-12 w-12 items-center justify-center rounded-full bg-brand-600 text-white shadow-lg transition hover:scale-105 hover:bg-brand-700"
+        >
+          <HelpCircle className="h-6 w-6" />
+        </button>
+      </Tooltip>
 
       {open && (
         <div className="fixed inset-0 z-50" onClick={() => setOpen(false)}>

@@ -1,5 +1,6 @@
 "use client";
 
+import { Tooltip } from "@/components/ui/Tooltip";
 import { useQuery } from "@tanstack/react-query";
 import { adminApi } from "@/lib/adminClient";
 import { fmtNum, fmtDate } from "@/lib/formatters";
@@ -36,12 +37,11 @@ function ServiceRow({ s }: { s: Service }) {
         <span className="font-medium text-slate-800">{s.source}</span>
         <span className={`text-sm font-medium ${st.cls}`}>{st.text}</span>
       </div>
-      <div className="flex gap-[2px]" title="30 ημέρες">
+      <Tooltip label="30 ημέρες"><div className="flex gap-[2px]">
         {s.daily.map((d) => (
-          <div key={d.date} className={`h-8 flex-1 rounded-sm ${barColor(d.ratio)}`}
-            title={`${d.date}: ${d.ratio === null ? "—" : Math.round(d.ratio * 100) + "% ok"}`} />
+          <Tooltip key={d.date} label={`${d.date}: ${d.ratio === null ? "—" : Math.round(d.ratio * 100) + "% ok"}`}><div className={`h-8 flex-1 rounded-sm ${barColor(d.ratio)}`} /></Tooltip>
         ))}
-      </div>
+      </div></Tooltip>
       <div className="mt-1 flex justify-between text-xs text-slate-400">
         <span>30 ημέρες πριν</span>
         <span>{s.uptime_pct}% uptime · {fmtNum(s.runs)} syncs · {fmtNum(s.failed)} σφάλματα</span>

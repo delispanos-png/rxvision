@@ -11,6 +11,7 @@ import { useT } from "@/store/prefStore";
 import { useReimbPeriod } from "@/store/reimbStore";
 import { fmtEur } from "@/lib/formatters";
 import { DataTable, type Column } from "@/components/tables/DataTable";
+import { appConfirm } from "@/store/dialogStore";
 
 type Item = { barcode: string; claim: number; fund: string; executed_at: string; checked: boolean; day: string };
 type DayRow = { date: string; total: number; checked: number };
@@ -68,9 +69,9 @@ export default function PhysicalCheckPage() {
     setBc("");
     inputRef.current?.focus();
   }
-  function nextDay() {
+  async function nextDay() {
     if (!dayDone && cur && cur.total - cur.checked > 0 &&
-        !confirm(t(`Λείπουν ${cur.total - cur.checked} συνταγές από αυτή τη μέρα. Να προχωρήσεις; (θα μείνουν εκκρεμείς)`, `${cur.total - cur.checked} prescriptions missing from this day. Proceed anyway?`))) return;
+        !(await appConfirm(t(`Λείπουν ${cur.total - cur.checked} συνταγές από αυτή τη μέρα. Να προχωρήσεις; (θα μείνουν εκκρεμείς)`, `${cur.total - cur.checked} prescriptions missing from this day. Proceed anyway?`)))) return;
     setDayIdx((i) => Math.min(i + 1, byDay.length - 1));
   }
   async function openDetail(barcode: string) {
@@ -92,7 +93,7 @@ export default function PhysicalCheckPage() {
       <h2 className="text-xl font-bold text-slate-900 dark:text-slate-100">{t("Ο μήνας ολοκληρώθηκε! 🎉", "Month complete! 🎉")}</h2>
       <p className="text-sm text-slate-500">{t(`Όλες οι ${data?.total ?? 0} συνταγές ελέγχθηκαν σε ${byDay.length} ημέρες.`, `All ${data?.total ?? 0} prescriptions checked across ${byDay.length} days.`)}</p>
       {!!data?.extra.length && <p className="text-sm text-rose-600">{t(`Προσοχή: ${data.extra.length} σκαναρίστηκαν εκτός λίστας.`, `Note: ${data.extra.length} scanned not in data.`)}</p>}
-      <button onClick={() => { if (confirm(t("Μηδενισμός ελέγχου;", "Reset check?"))) reset.mutate(); }} className="mx-auto inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-600"><RotateCcw className="h-4 w-4" /> {t("Νέος έλεγχος", "New check")}</button>
+      <button onClick={async () => { if (await appConfirm(t("Μηδενισμός ελέγχου;", "Reset check?"), { danger: true })) reset.mutate(); }} className="mx-auto inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-600"><RotateCcw className="h-4 w-4" /> {t("Νέος έλεγχος", "New check")}</button>
     </div>
   );
 
@@ -101,7 +102,7 @@ export default function PhysicalCheckPage() {
       {/* month progress */}
       <div className="flex items-center justify-between text-xs text-slate-500">
         <span className="inline-flex items-center gap-1.5"><CalendarDays className="h-4 w-4" /> {t("Ημέρες ολοκληρωμένες", "Days complete")}: <b className="text-slate-700 dark:text-slate-200">{daysComplete}/{byDay.length}</b></span>
-        <button onClick={() => { if (confirm(t("Μηδενισμός ελέγχου;", "Reset check?"))) reset.mutate(); }} className="inline-flex items-center gap-1 rounded-lg border border-slate-300 px-2.5 py-1 hover:bg-slate-50 dark:border-slate-600"><RotateCcw className="h-3 w-3" /> {t("Μηδενισμός", "Reset")}</button>
+        <button onClick={async () => { if (await appConfirm(t("Μηδενισμός ελέγχου;", "Reset check?"), { danger: true })) reset.mutate(); }} className="inline-flex items-center gap-1 rounded-lg border border-slate-300 px-2.5 py-1 hover:bg-slate-50 dark:border-slate-600"><RotateCcw className="h-3 w-3" /> {t("Μηδενισμός", "Reset")}</button>
       </div>
       <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700"><div className="h-full rounded-full bg-emerald-500 transition-all" style={{ width: `${byDay.length ? (daysComplete / byDay.length) * 100 : 0}%` }} /></div>
 

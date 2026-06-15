@@ -5,6 +5,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Mail, MessageSquare, Send, Loader2, Check, Settings } from "lucide-react";
 import { api } from "@/lib/apiClient";
 import { PanelCard } from "@/components/ui/Card";
+import { appAlert } from "@/store/dialogStore";
 import { useT } from "@/store/prefStore";
 
 type S = {
@@ -22,7 +23,7 @@ export default function CommsSettingsPage() {
   const set = (k: string, v: string | number | boolean) => setF((s) => ({ ...s, [k]: v }));
   const save = useMutation({ mutationFn: () => api("/communications/settings", { method: "PUT", body: JSON.stringify(f) }), onSuccess: () => qc.invalidateQueries({ queryKey: ["comms", "settings"] }) });
   const [testTo, setTestTo] = useState("");
-  const testEmail = useMutation({ mutationFn: () => api(`/communications/test-email?to=${encodeURIComponent(testTo)}`, { method: "POST" }), onError: (e: Error) => alert(t("Αποτυχία: ", "Failed: ") + e.message), onSuccess: () => alert(t("Στάλθηκε δοκιμαστικό email ✅", "Test email sent ✅")) });
+  const testEmail = useMutation({ mutationFn: () => api(`/communications/test-email?to=${encodeURIComponent(testTo)}`, { method: "POST" }), onError: (e: Error) => appAlert(t("Αποτυχία: ", "Failed: ") + e.message), onSuccess: () => appAlert(t("Στάλθηκε δοκιμαστικό email ✅", "Test email sent ✅")) });
   const inp = "w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-brand-500 focus:outline-none";
 
   return (

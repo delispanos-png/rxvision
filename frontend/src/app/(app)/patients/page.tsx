@@ -17,6 +17,7 @@ import { DataTable, type Column } from "@/components/tables/DataTable";
 import { KpiCard } from "@/components/kpi/KpiCard";
 import { PanelCard } from "@/components/ui/Card";
 import { QueryState } from "@/components/ui/QueryState";
+import { Tooltip } from "@/components/ui/Tooltip";
 
 type AggRow = { label: string; value: number };
 type RetentionPoint = { period: string; retained_pct: number };
@@ -66,9 +67,9 @@ const ContactCell = ({ r }: { r: Hit }) => {
   if (!tel && !r.email) return <span className="text-xs text-slate-300">—</span>;
   return (
     <span className="inline-flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
-      {tel && <a href={`tel:${tel}`} title={t("Κλήση", "Call")} className="rounded-lg border border-slate-200 p-1.5 text-emerald-600 hover:bg-emerald-50"><Phone className="h-3.5 w-3.5" /></a>}
-      {r.mobile && <a href={`sms:${r.mobile}`} title="SMS" className="rounded-lg border border-slate-200 p-1.5 text-brand-600 hover:bg-brand-50"><MessageSquare className="h-3.5 w-3.5" /></a>}
-      {r.email && <a href={`mailto:${r.email}`} title="Email" className="rounded-lg border border-slate-200 p-1.5 text-amber-600 hover:bg-amber-50"><Mail className="h-3.5 w-3.5" /></a>}
+      {tel && <Tooltip label={t("Κλήση", "Call")}><a href={`tel:${tel}`} className="rounded-lg border border-slate-200 p-1.5 text-emerald-600 hover:bg-emerald-50"><Phone className="h-3.5 w-3.5" /></a></Tooltip>}
+      {r.mobile && <Tooltip label="SMS"><a href={`sms:${r.mobile}`} className="rounded-lg border border-slate-200 p-1.5 text-brand-600 hover:bg-brand-50"><MessageSquare className="h-3.5 w-3.5" /></a></Tooltip>}
+      {r.email && <Tooltip label="Email"><a href={`mailto:${r.email}`} className="rounded-lg border border-slate-200 p-1.5 text-amber-600 hover:bg-amber-50"><Mail className="h-3.5 w-3.5" /></a></Tooltip>}
     </span>
   );
 };

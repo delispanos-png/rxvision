@@ -7,6 +7,7 @@ import { useT } from "@/store/prefStore";
 import { useReimbPeriod } from "@/store/reimbStore";
 import { fmtNum, fmtEur, fmtDate } from "@/lib/formatters";
 import { DataTable, type Column } from "@/components/tables/DataTable";
+import { Tooltip } from "@/components/ui/Tooltip";
 
 type Item = { external_id: string; executed_at: string; fund: string; claim: number; score: number; band: string; flags: string[]; expected_cut: number };
 type Risk = { distribution: { band: string; count: number }[]; items: Item[]; total_at_risk: number };
@@ -43,7 +44,7 @@ export default function RiskPage() {
       <div className="rx-card p-5">
         <h3 className="mb-3 text-sm font-semibold text-slate-700 dark:text-slate-200">{t("Κατανομή κινδύνου συνταγών", "Prescription risk distribution")}</h3>
         <div className="mb-2 flex h-5 overflow-hidden rounded-full">
-          {(risk.data?.distribution ?? []).map((b) => b.count > 0 && <div key={b.band} className={BAND[b.band]} style={{ width: `${(b.count / total) * 100}%` }} title={`${b.band}: ${b.count}`} />)}
+          {(risk.data?.distribution ?? []).map((b) => b.count > 0 && <Tooltip key={b.band} label={`${b.band}: ${b.count}`}><div className={BAND[b.band]} style={{ width: `${(b.count / total) * 100}%` }} /></Tooltip>)}
         </div>
         <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
           {(risk.data?.distribution ?? []).map((b) => <span key={b.band} className="inline-flex items-center gap-1.5 capitalize text-slate-500"><span className={`h-2.5 w-2.5 rounded-full ${BAND[b.band]}`} /> {b.band}: <b className="text-slate-700 dark:text-slate-200">{b.count}</b></span>)}

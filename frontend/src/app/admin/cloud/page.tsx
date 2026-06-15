@@ -1,5 +1,6 @@
 "use client";
 
+import { appAlert, appConfirm } from "@/store/dialogStore";
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { adminApi } from "@/lib/adminClient";
@@ -24,7 +25,7 @@ export default function CloudPage() {
     mutationFn: () => adminApi("/platform/cloud", { method: "PUT", body: JSON.stringify({ hetzner_token: hetzner || null, cloudflare_token: cloudflare || null, storage_host: stHost || null, storage_user: stUser || null, storage_password: stPass || null, storage_path: stPath || null }) }),
     onSuccess: () => { setHetzner(""); setCloudflare(""); setStPass(""); qc.invalidateQueries({ queryKey: ["cloud", "status"] }); },
   });
-  const doVerify = useMutation({ mutationFn: () => adminApi<Verify>("/platform/cloud/verify", { method: "POST" }), onSuccess: (r) => setVerify(r), onError: (e: Error) => alert("Αποτυχία: " + e.message) });
+  const doVerify = useMutation({ mutationFn: () => adminApi<Verify>("/platform/cloud/verify", { method: "POST" }), onSuccess: (r) => setVerify(r), onError: (e: Error) => appAlert("Αποτυχία: " + e.message) });
   const clear = useMutation({ mutationFn: () => adminApi("/platform/cloud", { method: "DELETE" }), onSuccess: () => { setVerify(null); qc.invalidateQueries({ queryKey: ["cloud", "status"] }); } });
 
   const inp = "w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none";
@@ -56,7 +57,7 @@ export default function CloudPage() {
         <div className="mt-4 flex flex-wrap items-center gap-2">
           <button onClick={() => save.mutate()} disabled={save.isPending || (!hetzner && !cloudflare)} className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50">{save.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : save.isSuccess ? <Check className="h-4 w-4" /> : <Save className="h-4 w-4" />} Αποθήκευση</button>
           <button onClick={() => doVerify.mutate()} disabled={doVerify.isPending} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50">{doVerify.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <ShieldCheck className="h-4 w-4" />} Έλεγχος</button>
-          <button onClick={() => { if (confirm("Διαγραφή αποθηκευμένων tokens;")) clear.mutate(); }} className="ml-auto inline-flex items-center gap-1.5 rounded-lg border border-rose-300 px-3 py-2 text-sm font-medium text-rose-600 hover:bg-rose-50"><Trash2 className="h-4 w-4" /> Διαγραφή</button>
+          <button onClick={async () => { if (await appConfirm("Διαγραφή αποθηκευμένων tokens;", { danger: true })) clear.mutate(); }} className="ml-auto inline-flex items-center gap-1.5 rounded-lg border border-rose-300 px-3 py-2 text-sm font-medium text-rose-600 hover:bg-rose-50"><Trash2 className="h-4 w-4" /> Διαγραφή</button>
         </div>
 
         {verify && (

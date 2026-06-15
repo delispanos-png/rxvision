@@ -9,6 +9,7 @@ import { useNavStore } from "@/store/navStore";
 import { usePref, useT } from "@/store/prefStore";
 import { InstallButton } from "@/components/pwa/InstallButton";
 import { PharmaCatLauncher } from "@/components/pharmacat/PharmaCatLauncher";
+import { Tooltip } from "@/components/ui/Tooltip";
 
 type Me = {
   roles?: string[];
@@ -81,38 +82,42 @@ export function Topbar() {
       >
         <Menu className="h-5 w-5" />
       </button>
-      <button
-        onClick={toggleCollapsed}
-        title={collapsed ? t("Ανάπτυξη μενού", "Expand menu") : t("Σύμπτυξη μενού", "Collapse menu")}
-        aria-label={collapsed ? t("Ανάπτυξη μενού", "Expand menu") : t("Σύμπτυξη μενού", "Collapse menu")}
-        className="mr-auto hidden h-9 w-9 place-items-center rounded-lg text-slate-500 hover:bg-white dark:text-slate-300 dark:hover:bg-slate-800 md:grid"
-      >
-        {collapsed ? <PanelLeft className="h-[18px] w-[18px]" /> : <PanelLeftClose className="h-[18px] w-[18px]" />}
-      </button>
-      <button
-        onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
-        title={t("Σκούρο/Φωτεινό θέμα", "Dark/Light theme")}
-        aria-label={t("Εναλλαγή θέματος", "Toggle theme")}
-        className="grid h-9 w-9 place-items-center rounded-lg text-slate-500 hover:bg-white dark:text-slate-300 dark:hover:bg-slate-800"
-      >
-        {theme === "dark" ? <Sun className="h-[18px] w-[18px]" /> : <Moon className="h-[18px] w-[18px]" />}
-      </button>
-      <button
-        onClick={() => setLocale(locale === "el" ? "en" : "el")}
-        title={t("Γλώσσα", "Language")}
-        aria-label={t("Αλλαγή γλώσσας", "Change language")}
-        className="grid h-9 min-w-[36px] place-items-center rounded-lg px-2 text-xs font-bold text-slate-500 hover:bg-white dark:text-slate-300 dark:hover:bg-slate-800"
-      >
-        {locale === "el" ? "EN" : "ΕΛ"}
-      </button>
-      <button
-        onClick={() => router.push("/copilot")}
-        title={t("Copilot — Βοηθός προγράμματος", "Copilot — App assistant")}
-        aria-label="Copilot"
-        className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-sky-200 bg-sky-50 px-2.5 text-xs font-semibold text-sky-700 hover:bg-sky-100 dark:border-sky-800 dark:bg-sky-950/40 dark:text-sky-300"
-      >
-        <Sparkles className="h-4 w-4" /> <span className="hidden sm:inline">{t("Βοηθός", "Copilot")}</span>
-      </button>
+      <Tooltip label={collapsed ? t("Ανάπτυξη μενού", "Expand menu") : t("Σύμπτυξη μενού", "Collapse menu")}>
+        <button
+          onClick={toggleCollapsed}
+          aria-label={collapsed ? t("Ανάπτυξη μενού", "Expand menu") : t("Σύμπτυξη μενού", "Collapse menu")}
+          className="mr-auto hidden h-9 w-9 place-items-center rounded-lg text-slate-500 hover:bg-white dark:text-slate-300 dark:hover:bg-slate-800 md:grid"
+        >
+          {collapsed ? <PanelLeft className="h-[18px] w-[18px]" /> : <PanelLeftClose className="h-[18px] w-[18px]" />}
+        </button>
+      </Tooltip>
+      <Tooltip label={t("Σκούρο/Φωτεινό θέμα", "Dark/Light theme")}>
+        <button
+          onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+          aria-label={t("Εναλλαγή θέματος", "Toggle theme")}
+          className="grid h-9 w-9 place-items-center rounded-lg text-slate-500 hover:bg-white dark:text-slate-300 dark:hover:bg-slate-800"
+        >
+          {theme === "dark" ? <Sun className="h-[18px] w-[18px]" /> : <Moon className="h-[18px] w-[18px]" />}
+        </button>
+      </Tooltip>
+      <Tooltip label={t("Γλώσσα", "Language")}>
+        <button
+          onClick={() => setLocale(locale === "el" ? "en" : "el")}
+          aria-label={t("Αλλαγή γλώσσας", "Change language")}
+          className="grid h-9 min-w-[36px] place-items-center rounded-lg px-2 text-xs font-bold text-slate-500 hover:bg-white dark:text-slate-300 dark:hover:bg-slate-800"
+        >
+          {locale === "el" ? "EN" : "ΕΛ"}
+        </button>
+      </Tooltip>
+      <Tooltip label={t("Copilot — Βοηθός προγράμματος", "Copilot — App assistant")}>
+        <button
+          onClick={() => router.push("/copilot")}
+          aria-label="Copilot"
+          className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-sky-200 bg-sky-50 px-2.5 text-xs font-semibold text-sky-700 hover:bg-sky-100 dark:border-sky-800 dark:bg-sky-950/40 dark:text-sky-300"
+        >
+          <Sparkles className="h-4 w-4" /> <span className="hidden sm:inline">{t("Βοηθός", "Copilot")}</span>
+        </button>
+      </Tooltip>
       <InstallButton />
       <div className="mx-1 h-6 w-px bg-slate-200 dark:bg-slate-700" />
 
@@ -179,17 +184,18 @@ export function Topbar() {
               </button>
             </div>
 
-            <a
-              href="https://cloudon.gr"
-              target="_blank"
-              rel="noopener noreferrer"
-              title="Powered by CloudOn"
-              className="flex items-center justify-center gap-2 border-t border-slate-100 py-2.5 opacity-70 transition hover:opacity-100 dark:border-slate-800"
-            >
-              <span className="text-[10px] font-medium uppercase tracking-wide text-slate-400">Powered by</span>
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src="/cloudon-logo.png" alt="CloudOn" className="h-3.5 w-auto" />
-            </a>
+            <Tooltip label="Powered by CloudOn">
+              <a
+                href="https://cloudon.gr"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center justify-center gap-2 border-t border-slate-100 py-2.5 opacity-70 transition hover:opacity-100 dark:border-slate-800"
+              >
+                <span className="text-[10px] font-medium uppercase tracking-wide text-slate-400">Powered by</span>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src="/cloudon-logo.png" alt="CloudOn" className="h-3.5 w-auto" />
+              </a>
+            </Tooltip>
           </div>
         )}
       </div>
