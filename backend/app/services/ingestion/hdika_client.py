@@ -379,7 +379,11 @@ class HdikaClient:
         # = executions (που έβγαζε παραπλανητικά "N/N" badges)· το display παράγει την αλυσίδα από
         # τις εκτελέσεις + τον εξαγόμενο ρυθμό. repeat_current = ο executionNo αυτής της γραμμής.
         repeat_planned = int(cda.get("repeat_planned") or 0)
-        repeat_total = repeat_planned if repeat_planned > 1 else 0
+        # repeat_total must be ≥ repeat_current (validator: repeat_current in 1..repeat_total). When
+        # the CDA carries no real plan we fall back to the execution number — NOT 0 (which dropped
+        # every repeat as invalid). The display derives the true chain from repeat_root + the actual
+        # executions, so this no longer surfaces a misleading "N/N".
+        repeat_total = max(repeat_planned, exec_no, 1)
 
         cda_pat = cda.get("patient") or {}
         cda_doc = cda.get("doctor") or {}

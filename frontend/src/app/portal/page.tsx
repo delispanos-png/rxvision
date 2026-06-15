@@ -15,7 +15,7 @@ import { BellRing } from "lucide-react";
 type Pharmacy = { tenant_id: string; pharmacy_name: string };
 type Me = { profile: { first_name: string; last_name: string }; active_tenant: string | null; pharmacies: Pharmacy[] };
 type Summary = { rx_count: number; paid_cents: number; total_cents: number; covered_cents: number; doctors: number; medicines: number; repeats_active: number; next_open_date?: string | null; first_at?: string | null; last_at?: string | null };
-type Rx = { barcode: string; executed_at: string; status?: string; patient_share?: number; repeat_current?: number; repeat_total?: number; next_open_date?: string | null; medicines: string[]; pending?: string[]; partial?: boolean; doctor?: string | null; specialty?: string | null };
+type Rx = { barcode: string; executed_at: string; status?: string; patient_share?: number; repeat_current?: number; repeat_total?: number; repeat_root?: string | null; next_open_date?: string | null; medicines: string[]; pending?: string[]; partial?: boolean; doctor?: string | null; specialty?: string | null };
 type RepeatMed = { name: string; dosage?: string | null };
 type Repeat = Omit<Rx, "medicines"> & { medicines: RepeatMed[] };
 type RxItem = { name?: string | null; quantity?: number; retail_price?: number; is_executed?: boolean; dosage?: string | null };
@@ -336,7 +336,7 @@ export default function PortalHome() {
                           <div className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500">
                             {activeName && <span className="inline-flex items-center gap-1"><Building2 className="h-3.5 w-3.5 text-slate-400" /> {activeName}</span>}
                             {detail.doctor && <span className="inline-flex items-center gap-1"><Stethoscope className="h-3.5 w-3.5 text-slate-400" /> {detail.doctor}{detail.specialty ? ` · ${detail.specialty}` : ""}</span>}
-                            {detail.repeat_total && detail.repeat_total > 1 && <span className="inline-flex items-center gap-1"><RefreshCw className="h-3.5 w-3.5 text-slate-400" /> επανάληψη {detail.repeat_current}/{detail.repeat_total}</span>}
+                            {detail.repeat_root && detail.repeat_root !== detail.barcode.split(":")[0] && <span className="inline-flex items-center gap-1"><RefreshCw className="h-3.5 w-3.5 text-slate-400" /> επανάληψη συνταγής</span>}
                           </div>
                           <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">Φάρμακα</div>
                           <ul className="divide-y divide-slate-200/70">

@@ -79,10 +79,10 @@ def test_map_full_builds_canonical_from_execution_and_cda():
     assert e.doctor.full_name == "Κ. Παπαδόπουλος" and e.doctor.specialty == "Παθολόγος"
     assert e.fund.code == "EOPYY" and e.fund.name == "ΕΟΠΥΥ"
     assert e.icd10 == ["E11.9"]
-    # ΗΔΙΚΑ "executions" (3) = executions done so far, NOT the planned repeat count → with no
-    # CDA repeat schedule we keep repeat_total unknown (0) instead of faking it = executions.
-    # repeat_current is simply this row's executionNo.
-    assert e.repeat_total == 0 and e.repeat_current == 1
+    # repeat_current = this row's executionNo; with no CDA repeat plan, repeat_total falls back to
+    # the execution number (≥ repeat_current, so the validator passes) — the real chain comes from
+    # repeat_root + actual executions, not this number.
+    assert e.repeat_total == 1 and e.repeat_current == 1
     assert e.amount_total == 420          # totalValue 320 + totalDifference 100 (cents)
     assert e.patient_share == 210         # 50 + max(0,100−40) + 100
     assert e.valid_until is not None and e.valid_until.year == 2026 and e.valid_until.month == 9

@@ -344,7 +344,7 @@ class PatientRxRepository(BaseRepository):
             "executed_at": ex.get("executed_at"), "status": ex.get("status"),
             "patient_share": ex.get("patient_share", 0), "amount_total": ex.get("amount_total", 0),
             "repeat_current": ex.get("repeat_current", 1), "repeat_total": ex.get("repeat_total", 1),
-            "next_open_date": ex.get("next_open_date"),
+            "repeat_root": ex.get("repeat_root"), "next_open_date": ex.get("next_open_date"),
             "icd10": await self._icd10_named(ex.get("icd10", [])),
             "doctor": (doctor or {}).get("full_name"), "specialty": (doctor or {}).get("specialty"),
             "details": ex.get("details") or {}, "items": items,
