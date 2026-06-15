@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, Query
 
@@ -12,10 +13,27 @@ from app.repositories.future import FuturePrescriptionRepository
 router = APIRouter()
 
 _MODULE = "future_prescriptions"
+# All day windows are anchored to the pharmacy's local calendar (Europe/Athens), because the
+# per-day chart buckets `expected_open_date` with $dateToString timezone=Europe/Athens. If the
+# list/coverage windows were built on UTC midnight instead, a prescription opening just after
+# local midnight (= late-evening UTC the day before) would land on a different day in the list
+# than on the chart → the count and the list disagree. Keep ALL of them on Athens days.
+_ATHENS = ZoneInfo("Europe/Athens")
 
 
 def _now() -> datetime:
     return datetime.now(tz=timezone.utc)
+
+
+def _athens_today_start() -> datetime:
+    """Midnight of the current day in Europe/Athens (tz-aware) — start of a full local day."""
+    return _now().astimezone(_ATHENS).replace(hour=0, minute=0, second=0, microsecond=0)
+
+
+def _athens_day(s: str) -> datetime:
+    """A YYYY-MM-DD string → that day's local midnight in Europe/Athens (tz-aware)."""
+    return datetime.fromisoformat(s).replace(hour=0, minute=0, second=0, microsecond=0,
+                                             tzinfo=_ATHENS)
 
 
 @router.get("/upcoming")
@@ -25,7 +43,9 @@ async def upcoming(
     ctx: TenantContext = Depends(require("future:read", module=_MODULE)),
 ):
     repo = FuturePrescriptionRepository(tenant_id=ctx.tenant_id)
-    today = _now()
+    # full local days: start at TODAY 00:00 Athens (so today's & the last day's buckets are whole
+    # days, matching the per-date list) rather than a partial window starting at the current time.
+    today = _athens_today_start()
     horizon = today + timedelta(days=days)
     return {"days": days, "min_history": min_history,
             "items": await repo.upcoming(today=today, horizon=horizon,
@@ -43,19 +63,15 @@ async def upcoming_list(
     or a single calendar day (date=YYYY-MM-DD, e.g. the peak day)."""
     repo = FuturePrescriptionRepository(tenant_id=ctx.tenant_id)
     if date:
-        start = datetime.fromisoformat(date).replace(tzinfo=timezone.utc)
+        # full local calendar day → matches exactly the chart bucket the user clicked.
+        start = _athens_day(date)
         today, horizon = start, start + timedelta(days=1)
     else:
-        today = _now()
+        today = _athens_today_start()
         horizon = today + timedelta(days=days)
     return {"days": days, "date": date, "min_history": min_history,
             "items": await repo.upcoming_list(today=today, horizon=horizon,
                                               min_history=min_history)}
-
-
-def _day(s: str) -> datetime:
-    return datetime.fromisoformat(s).replace(hour=0, minute=0, second=0, microsecond=0,
-                                             tzinfo=timezone.utc)
 
 
 @router.get("/daily-coverage")
@@ -70,11 +86,11 @@ async def daily_coverage(
     Default = ΑΥΡΙΟ (το βλέπεις από σήμερα για να προλάβεις να παραγγείλεις)."""
     repo = FuturePrescriptionRepository(tenant_id=ctx.tenant_id)
     if from_ and to:
-        start, end = _day(from_), _day(to) + timedelta(days=1)
+        start, end = _athens_day(from_), _athens_day(to) + timedelta(days=1)
     elif date:
-        start = _day(date); end = start + timedelta(days=1)
-    else:
-        start = (_now() + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+        start = _athens_day(date); end = start + timedelta(days=1)
+    else:  # default = ΑΥΡΙΟ (full local day)
+        start = _athens_today_start() + timedelta(days=1)
         end = start + timedelta(days=1)
     res = await repo.daily_coverage(day_start=start, day_end=end)
     return {"from": start.date().isoformat(),

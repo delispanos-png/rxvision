@@ -29,18 +29,19 @@ type Coverage = {
   summary: { prescriptions: number; n_patients: number; products: number; total_units: number; est_cost: number };
   items: CoverageItem[];
 };
-const _iso = (n: number) => new Date(Date.now() + n * 86400000).toISOString().slice(0, 10);
+// Calendar date n days from now in Europe/Athens (YYYY-MM-DD). MUST be Athens-local, not UTC:
+// the server groups the chart and filters the list by Europe/Athens days, so a UTC date near
+// midnight would point the KPI/list at the wrong bucket. (en-CA formats as YYYY-MM-DD.)
+const _iso = (n: number) =>
+  new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Athens" }).format(new Date(Date.now() + n * 86400000));
 type Period = "today" | "tomorrow" | "day_after" | "week" | "custom";
 function periodRange(p: Period, cf: string, ct: string): { from: string; to: string } {
   if (p === "today") return { from: _iso(0), to: _iso(0) };
   if (p === "tomorrow") return { from: _iso(1), to: _iso(1) };
   if (p === "day_after") return { from: _iso(2), to: _iso(2) };
   if (p === "week") {
-    const now = new Date();
-    const dow = (now.getDay() + 6) % 7;            // 0=Δευτέρα
-    const mon = new Date(now); mon.setDate(now.getDate() - dow);
-    const sun = new Date(mon); sun.setDate(mon.getDate() + 6);
-    return { from: mon.toISOString().slice(0, 10), to: sun.toISOString().slice(0, 10) };
+    const dow = (new Date(_iso(0) + "T00:00:00").getDay() + 6) % 7;   // 0=Δευτέρα (Athens week)
+    return { from: _iso(-dow), to: _iso(6 - dow) };
   }
   return { from: cf, to: ct };
 }
