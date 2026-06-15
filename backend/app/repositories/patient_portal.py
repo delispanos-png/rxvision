@@ -329,12 +329,15 @@ class PatientRxRepository(BaseRepository):
         async for it in self._db["prescription_items"].find(
                 {"tenant_id": self.tenant_id, "execution_id": ex["_id"]}):
             prod = await self._db["products"].find_one({"_id": it.get("product_id")}) if it.get("product_id") else None
+            d = it.get("details") or {}
             items.append({
                 "name": (prod or {}).get("name"),
                 "quantity": it.get("quantity", 1),
                 "retail_price": it.get("retail_price", 0),
                 "is_executed": it.get("is_executed", True),
-                "details": it.get("details") or {},
+                # doctor's posology for this line (dose · frequency · duration), from the ΗΔΙΚΑ CDA
+                "dosage": _format_dosage(d.get("dose"), d.get("frequency"), d.get("duration")),
+                "details": d,
             })
         return jsonsafe({
             "barcode": str(ex.get("external_id", "")).split(":")[0],
