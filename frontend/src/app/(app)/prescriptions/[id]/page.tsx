@@ -23,6 +23,7 @@ type PrescDetails = {
   issue_date?: string | null; deadline_date?: string | null;
   exemption?: boolean | null; opinion?: boolean | null; fund_surcharge?: boolean | null;
   fund_surcharge_amount?: number | null; patient_share_total?: number | null; fund_share_total?: number | null;
+  kyyap_covered?: number | null;   // ΚΥΥΑΠ (ΕΤΥΑΠ) — ποσό που πληρώνει το ΚΥΥΑΠ
 };
 
 type Item = {
@@ -119,15 +120,32 @@ export default function PrescriptionDetailPage() {
   // until the per-execution dispensing detail arrives from ΗΔΙΚΑ.
   const marginReliable = d.status !== "partial" && profit >= 0;
 
+  // Fetch the official ΗΔΙΚΑ PDF (auth header can't ride a plain window.open, so fetch as a blob).
+  const openIdikaPrint = async () => {
+    const base = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8000/api/v1";
+    const token = typeof window !== "undefined" ? window.localStorage.getItem("access_token") : null;
+    try {
+      const res = await fetch(`${base}/prescriptions/idika-print/${encodeURIComponent(id)}`,
+        { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+      if (!res.ok) { alert(t("Το έντυπο ΗΔΙΚΑ δεν είναι διαθέσιμο.", "ΗΔΙΚΑ printout unavailable.")); return; }
+      window.open(URL.createObjectURL(await res.blob()), "_blank");
+    } catch { alert(t("Αποτυχία λήψης εντύπου ΗΔΙΚΑ.", "Failed to fetch ΗΔΙΚΑ printout.")); }
+  };
+
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between gap-2 print:hidden">
         <button onClick={() => router.back()} className="inline-flex items-center gap-1.5 text-sm text-brand-600 hover:underline">
           <ArrowLeft className="h-4 w-4" /> {t("Πίσω", "Back")}
         </button>
-        <button onClick={() => window.print()} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50">
-          <Printer className="h-4 w-4" /> {t("Εκτύπωση εκτέλεσης", "Print execution")}
-        </button>
+        <div className="flex items-center gap-2">
+          <button onClick={openIdikaPrint} className="inline-flex items-center gap-1.5 rounded-lg border border-brand-300 bg-brand-50 px-3 py-1.5 text-sm font-medium text-brand-700 hover:bg-brand-100">
+            <Printer className="h-4 w-4" /> {t("Εκτύπωση ΗΔΙΚΑ", "ΗΔΙΚΑ printout")}
+          </button>
+          <button onClick={() => window.print()} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50">
+            <Printer className="h-4 w-4" /> {t("Εκτύπωση εκτέλεσης", "Print execution")}
+          </button>
+        </div>
       </div>
 
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -165,6 +183,14 @@ export default function PrescriptionDetailPage() {
           </div>
         ))}
       </div>
+      {/* ΚΥΥΑΠ (ΕΤΥΑΠ σωμάτων ασφαλείας): τριμερής επιμερισμός Ασφ/νος · ΚΥΥΑΠ · ΕΟΠΥΥ */}
+      {d.details?.kyyap_covered ? (
+        <div className="flex flex-wrap gap-2 text-sm">
+          <span className="rounded-lg bg-amber-50 px-3 py-1.5 font-medium text-amber-700">{t("Από Ασφ/νο", "From patient")}: {eur(d.patient_payable)}</span>
+          <span className="rounded-lg bg-violet-50 px-3 py-1.5 font-medium text-violet-700">{t("Από ΚΥΥΑΠ", "From ΚΥΥΑΠ")}: {eur(d.details.kyyap_covered)}</span>
+          <span className="rounded-lg bg-brand-50 px-3 py-1.5 font-medium text-brand-700">{t("Από ΕΟΠΥΥ", "From ΕΟΠΥΥ")}: {eur(d.fund_payable - d.details.kyyap_covered)}</span>
+        </div>
+      ) : null}
       {!marginReliable && (
         <div className="-mt-2 text-xs text-slate-400">
           {t("Το χονδρικό κόστος & το μεικτό κέρδος αφορούν όλη τη συνταγή, όχι τη μερική εκτέλεση — θα υπολογιστούν ανά εκτέλεση μετά τον πλήρη συγχρονισμό με το ΗΔΙΚΑ.",

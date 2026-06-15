@@ -91,6 +91,20 @@ def _as_list(v) -> list:
     return v if isinstance(v, list) else ([] if v in (None, "") else [v])
 
 
+def _round_half_up(x: float) -> int:
+    """Round to the nearest integer cent, halves UP (ΗΔΙΚΑ/PharmacyOne CustomRound) — NOT Python's
+    banker's rounding (which gave 200 instead of 201 on a .5 participation)."""
+    import math
+    return int(math.floor(x + 0.5))
+
+
+def _round_half_down(x: float) -> int:
+    """Round to the nearest integer cent, halves DOWN (PharmacyOne CustomRoundDown) — the patient's
+    half of a ΚΥΥΑΠ price difference rounds in the patient's favour."""
+    import math
+    return int(math.ceil(x - 0.5))
+
+
 class HdikaClient:
     def __init__(self, credentials: dict, catalog: dict | None = None) -> None:
         c = credentials or {}
@@ -356,22 +370,12 @@ class HdikaClient:
         soci_diff = _eur_cents(_first(ex, "sociTotalDifference", default=0))
         total = total_value + total_diff
         participation = _eur_cents(_first(ex, "participationValue", default=0))
+        surcharge = _eur_cents(_first(ex, "socialInsuranceSurcharge", default=0))
         share = (participation
                  + max(0, total_diff - soci_diff)
-                 + _eur_cents(_first(ex, "socialInsuranceSurcharge", default=0))
+                 + surcharge
                  + _eur_cents(_first(ex, "supplementalDifferenceAmt", default=0)))
-        # ── ΕΤΥΑΠ (επικουρικό σωμάτων ασφαλείας) ───────────────────────────────────────────
-        # ΕΤΥΑΠ ασφαλισμένοι ανήκουν στον ΕΟΠΥΥ αλλά καλύπτονται επιπλέον από το ΕΤΥΑΠ. ΑΝ ο Φ.Σ.
-        # του φαρμακείου είναι ΣΥΜΒΕΒΛΗΜΕΝΟΣ με ΕΤΥΑΠ (getMyContracts → /user/me/contracts), τότε
-        # το ΕΤΥΑΠ — όχι ο ασθενής — πληρώνει τη ΣΥΜΜΕΤΟΧΗ (participationValue)· ο ασθενής μένει με
-        # επιβάρυνση (διαφορά) + 1€ ΕΟΠΥΥ. Εξαίρεση: συνταγές ΕΤΥΑΠ με 100% συμμετοχή βαραίνουν
-        # εξολοκλήρου τον ασθενή (ξεχωριστό τιμολόγιο/κατάσταση) → δεν μετακινούμε τη συμμετοχή.
-        # Μη-συμβεβλημένα φαρμακεία: η συνταγή ΕΤΥΑΠ αντιμετωπίζεται σαν κάθε ΕΟΠΥΥ (καμία αλλαγή).
-        etyap_covered = 0
-        is_etyap = "ΕΤΥΑΠ" in str(_first(fund_d, "name") or "").upper()
-        if self.etyap_contracted and is_etyap and 0 < participation < total_value:
-            etyap_covered = participation          # ΕΤΥΑΠ αναλαμβάνει τη συμμετοχή
-            share -= participation                 # ο ασθενής δεν την πληρώνει
+        # ΚΥΥΑΠ split is computed AFTER the priced lines are built (needs per-line ref/diff). See below.
         exec_no = int(float(_first(ex, "executionNo", default=1) or 1))
         # ΗΔΙΚΑ `executions` = πόσες φορές εκτελέστηκε ΜΕΧΡΙ ΤΩΡΑ — ΟΧΙ το πλάνο επαναλήψεων. Το
         # πραγματικό πλάνο ("3 από 4", "1 από 6") ζει στο CDA repeat schedule (parse_cda →
@@ -445,6 +449,35 @@ class HdikaClient:
         elif sum(i.retail_price * i.quantity for i in items) == 0 and total > 0:
             items[0].retail_price = total               # catalog miss → keep revenue on line 1
 
+        # ── ΚΥΥΑΠ / «ΕΤΥΑΠ» σωμάτων ασφαλείας (Ι.Κ.Α. πρώην Ο.Π.Α.Δ. - Κ.Υ.Υ.Α.Π.) ─────────────
+        # ΤΡΙΜΕΡΗΣ επιμερισμός (επαληθευμένος στο επίσημο έντυπο ΗΔΙΚΑ): ο ασφαλισμένος πληρώνει τη
+        # ΜΙΣΗ διαφορά (στρογγ. κάτω) + το 1€ ΕΟΠΥΥ· το ΚΥΥΑΠ πληρώνει τη συμμετοχή + την άλλη μισή
+        # διαφορά· το ΕΟΠΥΥ το υπόλοιπο (amount_total − ασφ/νος − ΚΥΥΑΠ, μέσω amount_claimed). Μόνο
+        # για συμβεβλημένα φαρμακεία (νομός Αττικής/Θεσσαλονίκης κ.λπ.)· αλλιώς σαν απλό ΕΟΠΥΥ.
+        fund_label = str(_first(fund_d, "name") or cda_pat.get("fund_name") or "").upper().replace(".", "")
+        is_kyyap = "ΚΥΥΑΠ" in fund_label
+        kyyap_covered = 0
+        if self.etyap_contracted and is_kyyap:
+            pat_diff_half = kyy = 0
+            for it in items:
+                if not it.is_executed:
+                    continue
+                dd = it.details or {}
+                ref_unit, pct = dd.get("reference_price"), dd.get("participation_pct")
+                if not ref_unit or not pct:
+                    continue
+                ref_line = int(ref_unit) * it.quantity
+                diff_line = dd.get("difference")
+                if diff_line is None:
+                    diff_line = max(0, it.retail_price * it.quantity - ref_line)
+                participation_line = _round_half_up(ref_line * float(pct) / 100.0)
+                half = _round_half_down(diff_line / 2.0)        # ασφαλισμένου μερίδιο διαφοράς
+                pat_diff_half += half
+                kyy += participation_line + (diff_line - half)  # ΚΥΥΑΠ: συμμετοχή + άλλη μισή
+            if kyy or pat_diff_half:
+                share = pat_diff_half + surcharge               # ασφ/νος: μισή διαφορά + 1€
+                kyyap_covered = kyy
+
         def _ymd(v):
             if isinstance(v, str) and len(v) == 8 and v.isdigit():
                 try:
@@ -469,8 +502,8 @@ class HdikaClient:
             "fund_surcharge_amount": _mc(_cd.get("fund_surcharge_amount")),
             "patient_share_total": _mc(_cd.get("patient_share_total")),
             "fund_share_total": _mc(_cd.get("fund_share_total")),
-            # συμμετοχή που ανέλαβε το ΕΤΥΑΠ αντί του ασθενή (για ξεχωριστή κατάσταση/τιμολόγιο ΕΤΥΑΠ)
-            "etyap_covered": etyap_covered or None,
+            # ποσό που πληρώνει το ΚΥΥΑΠ (συμμετοχή + μισή διαφορά) — για την ανάλυση/εκτύπωση ΕΤΥΑΠ
+            "kyyap_covered": kyyap_covered or None,
         }.items() if v is not None}
         return CanonicalExecution(
             source="HDIKA",
@@ -498,6 +531,11 @@ class HdikaClient:
             repeat_root=repeat_root,
             details=presc_details,
         )
+
+    def get_pdf(self, path: str, params: dict) -> httpx.Response:
+        """Raw GET for a binary ΗΔΙΚΑ document (PDF printout). Returns the httpx.Response so the
+        caller can stream the bytes back; auth/Api-Key headers ride along as on every request."""
+        return self._client.get(self._url(path), params=params, headers={"Accept": "application/pdf"})
 
     def _get_xml(self, path: str, params: dict) -> ET.Element:
         try:

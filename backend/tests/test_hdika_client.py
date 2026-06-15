@@ -93,28 +93,6 @@ def test_map_full_builds_canonical_from_execution_and_cda():
     c.close()
 
 
-def test_etyap_contracted_pharmacy_shifts_participation_to_fund():
-    """ΕΤΥΑΠ + συμβεβλημένος Φ.Σ.: το ΕΤΥΑΠ πληρώνει τη συμμετοχή (participationValue),
-    ο ασθενής μένει με διαφορά + 1€ — όχι τη συμμετοχή. Καταγράφεται το etyap_covered."""
-    ex = {
-        "prescription": {"barcode": "RX-E", "socialInsuranceDTO": {"name": "ΕΤΥΑΠ", "shortName": "ETYAP"}},
-        "executionDate": "2026-06-01T10:00:00Z", "executionNo": 1,
-        "totalValue": 20.00, "totalDifference": 1.00, "sociTotalDifference": 0.40,
-        "participationValue": 5.00, "socialInsuranceSurcharge": 1.00,
-    }
-    # μη-συμβεβλημένο → σαν ΕΟΠΥΥ: ο ασθενής πληρώνει τη συμμετοχή (5€) + διαφορά (0.60) + 1€ = 660
-    base = HdikaClient({"base_url": "x", "username": "u", "password": "p", "api_key": "k"})
-    e0 = base._map_full(ex, {}, {})
-    assert e0.patient_share == 660 and (e0.details or {}).get("etyap_covered") is None
-    base.close()
-    # συμβεβλημένο → ΕΤΥΑΠ αναλαμβάνει τη συμμετοχή (5€): ασθενής 0.60 + 1€ = 160· etyap_covered=500
-    contracted = HdikaClient({"base_url": "x", "username": "u", "password": "p",
-                              "api_key": "k", "etyap_contracted": "true"})
-    e1 = contracted._map_full(ex, {}, {})
-    assert e1.patient_share == 160 and (e1.details or {}).get("etyap_covered") == 500
-    contracted.close()
-
-
 _USER_XML = """<?xml version="1.0"?>
 <PharmUser><id>123</id>
   <pharmacy>
@@ -131,6 +109,29 @@ _CONTRACTS_XML = """<?xml version="1.0"?>
   <contents><effectiveFrom>2023-05-01</effectiveFrom></contents>
   <contents><effectiveFrom>2022-01-15</effectiveFrom></contents>
 </ListResponse>"""
+
+
+def test_kyyap_three_way_split_matches_idika_printout():
+    """ΚΥΥΑΠ (Ι.Κ.Α. πρώην Ο.Π.Α.Δ.) σε συμβεβλημένο φαρμακείο: τριμερής επιμερισμός — ασφ/νος
+    μισή διαφορά + 1€, ΚΥΥΑΠ συμμετοχή + άλλη μισή, ΕΟΠΥΥ το υπόλοιπο. Επαληθευμένο στο επίσημο
+    έντυπο ΗΔΙΚΑ (2606086725235): ΑΣΦ/ΝΟ 4,68 · ΚΥΥΑΠ 6,83 · ΤΑΜΕΙΟ 8,41 · ΣΥΝΟΛΟ 19,92."""
+    c = HdikaClient({"base_url": "x", "username": "u", "password": "p",
+                     "api_key": "k", "etyap_contracted": "true"})
+    ex = {"prescription": {"barcode": "RX-K",
+                           "socialInsuranceDTO": {"name": "Ι.Κ.Α. (πρώην Ο.Π.Α.Δ.) - Κ.Υ.Υ.Α.Π."}},
+          "executionDate": "2026-06-09T10:00:00Z", "executionNo": 1,
+          "totalValue": 12.56, "totalDifference": 7.36, "socialInsuranceSurcharge": 1.00}
+    cda = {"patient": {"amka": "X"}, "doctor": {"name": "Δ"}, "icd10": [], "lines": [
+        {"eof_code": "E1", "quantity": 2, "retail_price": 5.66, "reference_price": 4.01,
+         "participation_pct": 25, "difference": 3.30, "is_executed": True, "name": "TRIATEC"},
+        {"eof_code": "E2", "quantity": 2, "retail_price": 4.30, "reference_price": 2.27,
+         "participation_pct": 25, "difference": 4.06, "is_executed": True, "name": "NORVASC"}]}
+    e = c._map_full(ex, cda, {})
+    c.close()
+    assert e.amount_total == 1992                       # ΣΥΝΟΛΟ 19,92
+    assert e.patient_share == 468                       # ΠΛΗΡΩΤΕΟ ΑΠΟ ΑΣΦ/ΝΟ 4,68
+    assert e.details["kyyap_covered"] == 683            # ΠΛΗΡΩΤΕΟ ΑΠΟ ΚΥΥΑΠ 6,83
+    assert e.amount_total - e.patient_share - e.details["kyyap_covered"] == 841  # ΤΑΜΕΙΟ 8,41
 
 
 def test_fetch_user_info_auto_discovers_pharmacy_fields():

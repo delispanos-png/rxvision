@@ -28,6 +28,36 @@ async def execution_detail(
     return detail
 
 
+@router.get("/idika-print/{external_id}")
+async def idika_printout(
+    external_id: str,
+    ctx: TenantContext = Depends(require("prescriptions:read", module="prescription_analytics")),
+):
+    """The official ΗΔΙΚΑ prescription form (PDF) for this execution, fetched live from
+    ΗΔΙΚΑ (/api/v1/prescriptions/print/{barcode}?executionNo=N) and streamed back to the UI."""
+    from fastapi import Response
+    from app.api.v1.routers.ingestion import _effective_hdika_creds
+    from app.services.ingestion.hdika_client import HdikaClient
+    bc, _, execno = str(external_id).partition(":")
+    creds = await _effective_hdika_creds(ctx.tenant_id)
+    if not creds.get("base_url") or not creds.get("api_key"):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "ΗΔΙΚΑ δεν είναι ρυθμισμένο.")
+    client = HdikaClient(creds)
+    try:
+        params = {"executionNo": int(execno or 1)}
+        if creds.get("pharmacy_id"):
+            params["pharmacyId"] = creds["pharmacy_id"]
+        r = client.get_pdf(f"/api/v1/prescriptions/print/{bc}", params)
+    except Exception as exc:  # noqa: BLE001 — surface a clean error to the UI
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"Αποτυχία λήψης εντύπου ΗΔΙΚΑ: {exc}")
+    finally:
+        client.close()
+    if r.status_code != 200 or "pdf" not in (r.headers.get("content-type") or ""):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Το έντυπο ΗΔΙΚΑ δεν είναι διαθέσιμο.")
+    return Response(content=r.content, media_type="application/pdf",
+                    headers={"Content-Disposition": f'inline; filename="{bc}.pdf"'})
+
+
 @router.get("/repeats/{external_id}")
 async def prescription_repeats(
     external_id: str,
