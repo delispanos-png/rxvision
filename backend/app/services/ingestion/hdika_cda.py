@@ -253,12 +253,26 @@ def parse_cda_full(text: str) -> dict:
             "opinion": _flag(ids.get("1.1.23")),
         }
 
+    # narrative block: <text><list><item ID="med_notes_1|prescription_notes">…</item> — holds
+    # the doctor's free text (incl. the composition/recipe of a γαληνικό σκεύασμα). Each line's
+    # substanceAdministration references its note via <reference value="#med_notes_N"/>.
+    narr = {it.get("ID"): (it.text or "").strip()
+            for it in _iter(root, "item") if it.get("ID") and it.text}
+    out["doctor_notes"] = narr.get("prescription_notes") or None
+
     # per-line: each top-level <entry> that carries a product (medicine line)
     for sup in _iter(root, "entry"):
         mm = _first(sup, "manufacturedMaterial")
         if mm is None:
             continue
         ids = _id_map(sup)
+        # doctor's free-text note for THIS line (composition for γαληνικά) — follow the reference
+        line_note = None
+        for ref in _iter(sup, "reference"):
+            key = (ref.get("value") or "").lstrip("#")
+            if key.startswith("med_notes") and narr.get(key):
+                line_note = narr[key]
+                break
         code = _first(mm, "code")
         name = _first(mm, "name")
         form = _first(mm, "formCode")
@@ -328,6 +342,7 @@ def parse_cda_full(text: str) -> dict:
             "generic": _flag(ids.get("1.9.6.2")),                 # θεραπευτική κατηγορία με γενόσημο
             "generic_suggested": _flag(ids.get("1.4.15")),        # προτάθηκε γενόσημο
             "drug_type": ids.get("1.9.6.1"),                      # τύπος φαρμάκου (R=πρωτότυπο…)
+            "notes": line_note,                                   # οδηγία/σύνθεση γιατρού (γαληνικά)
             # Coupon type — a medicine has EITHER an ΕΟΦ authenticity strip OR a QR code, never both:
             #   QR (electronic, HMVS → auto-verified, no physical check): 2.10.14="1" OR any of the QR
             #     fields filled (2.10.15 product code / 2.10.16 batch / 2.10.17 expiry).

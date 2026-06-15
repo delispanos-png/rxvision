@@ -82,6 +82,29 @@ const eurR = (v: number | null) => (v == null ? "—" : new Intl.NumberFormat("e
 const dt = (s: string) => new Date(s).toLocaleString("el-GR", { dateStyle: "medium", timeStyle: "short" });
 const sexLabel = (s: string | null, t: T) => (s === "M" ? t("Άνδρας", "Male") : s === "F" ? t("Γυναίκα", "Female") : "—");
 const yesNo = (v: boolean | null | undefined, t: T) => (v == null ? null : v ? t("Ναι", "Yes") : t("Όχι", "No"));
+// Human-readable posology (ΗΔΥΚΑ CDA spec frequency table): «12 h»→«2 φορές/ημέρα» κ.λπ.
+const _FREQ: Record<string, string> = {
+  "2 wk": "κάθε 2 εβδομάδες", "1 wk": "1 φορά/εβδομάδα", "1 d": "1 φορά/ημέρα",
+  "4 d": "2 φορές/εβδομάδα", "2 d": "3 φορές/εβδομάδα", "12 h": "2 φορές/ημέρα",
+  "8 h": "3 φορές/ημέρα", "6 h": "4 φορές/ημέρα", "1 once": "εφάπαξ",
+  "1 pain": "επί πόνου", "1 dyspnea": "επί δύσπνοιας", "1 without": "άνευ",
+};
+const _UNIT: Record<string, string> = { h: "ώρες", d: "ημέρες", wk: "εβδομάδες", mo: "μήνες" };
+const _qty = (v?: string | null): [string, string] | null => {
+  const m = /([\d.]+)\s*([A-Za-z]+)/.exec(v || "");
+  if (!m) return null;
+  const f = parseFloat(m[1]);
+  return [isNaN(f) ? m[1] : String(Math.round(f)), m[2]];
+};
+const fmtDosage = (dose?: string | null, freq?: string | null, dur?: string | null): string | null => {
+  const parts: string[] = [];
+  if (dose) parts.push(String(dose).replace(/_/g, " ").trim());
+  const fq = _qty(freq);
+  if (fq) parts.push(_FREQ[`${fq[0]} ${fq[1]}`] || `κάθε ${fq[0]} ${_UNIT[fq[1]] || fq[1]}`);
+  const dq = _qty(dur);
+  if (dq) parts.push(`για ${dq[0]} ${_UNIT[dq[1]] || dq[1]}`);
+  return parts.length ? parts.join(" · ") : null;
+};
 const hasStoredHdyka = (d: Detail) =>
   !!(d.details && Object.keys(d.details).length) || d.items.some((i) => i.details && Object.keys(i.details).length);
 
@@ -290,7 +313,7 @@ export default function PrescriptionDetailPage() {
                       <Field label={t("Δραστική", "Active substance")} value={it.substance} />
                       <Field label={t("Μορφή", "Form")} value={ln.form} />
                       <Field label={t("Ποσότητα", "Quantity")} value={String(it.quantity)} />
-                      <Field label={t("Δοσολογία", "Dosage")} value={[ln.dose, ln.frequency && t(`ανά ${ln.frequency}`, `every ${ln.frequency}`), ln.duration && t(`για ${ln.duration}`, `for ${ln.duration}`)].filter(Boolean).join(" · ") || null} />
+                      <Field label={t("Δοσολογία", "Dosage")} value={fmtDosage(ln.dose, ln.frequency, ln.duration)} />
                       <Field label={t("Ταινία γνησιότητας", "Authenticity strip")} value={ln.strip || ln.lot} />
                       <Field label={t("Τιμή εκτέλεσης", "Execution price")} value={ln.execution_price != null ? eur(ln.execution_price) : null} />
                       <Field label={t("Τιμή λιανικής", "Retail price")} value={ln.retail_price != null ? eur(ln.retail_price) : null} />
@@ -330,7 +353,7 @@ export default function PrescriptionDetailPage() {
                   <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 text-sm sm:grid-cols-3 lg:grid-cols-4">
                     <Field label={t("Δραστική", "Active substance")} value={ln.substance} />
                     <Field label={t("Μορφή", "Form")} value={ln.form} />
-                    <Field label={t("Δοσολογία", "Dosage")} value={[ln.dose, ln.frequency && t(`ανά ${ln.frequency}`, `every ${ln.frequency}`), ln.duration && t(`για ${ln.duration}`, `for ${ln.duration}`)].filter(Boolean).join(" · ") || null} />
+                    <Field label={t("Δοσολογία", "Dosage")} value={fmtDosage(ln.dose, ln.frequency, ln.duration)} />
                     <Field label={t("Ταινία γνησιότητας", "Authenticity strip")} value={ln.lot} />
                     <Field label={t("Τιμή εκτέλεσης", "Execution price")} value={eurR(ln.execution_price)} />
                     <Field label={t("Τιμή λιανικής", "Retail price")} value={eurR(ln.retail_price)} />

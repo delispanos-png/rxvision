@@ -442,16 +442,34 @@ class HdikaClient:
             outstanding = m.get("outstanding")
             executed = (outstanding is not None and outstanding <= 0) if outstanding is not None \
                 else bool(m.get("is_executed", True))
+            # Γαληνικά (ΕΟΦ «-1» = ΓΑΛΗΝΙΚΟ ΣΚΕΥΑΣΜΑ) & εισαγωγές ΙΦΕΤ («-2») είναι ΕΙΔΙΚΑ είδη: όχι
+            # εμπορικά προϊόντα, χωρίς Δελτίο Τιμών (wholesale=0). ΔΕΝ πρέπει να συγχωνεύονται όλα σε
+            # ένα προϊόν (το catalog δίνει κοινό barcode 280-11) — κάθε γαληνικό = δική του σύνθεση,
+            # άρα μοναδικό barcode ανά γραμμή. Όνομα = η σύνθεση/οδηγία του γιατρού (από το CDA).
+            special = {"-1": "galenic", "-2": "ifet"}.get(eof)
+            composition = str(m.get("notes") or "").strip()
+            if special:
+                it_barcode = f"{barcode}-{eof.lstrip('-')}-{n}"
+                it_name = (f"Γαληνικό: {composition}" if (special == "galenic" and composition)
+                           else cat.get("name") or m.get("name") or
+                           ("Γαληνικό σκεύασμα" if special == "galenic" else "Εισαγωγή ΙΦΕΤ"))
+                it_category, it_wholesale = special, 0
+                if composition:
+                    details["composition"] = composition
+            else:
+                it_barcode = str(cat.get("barcode") or eof or f"{barcode}-{n}")
+                # FULL pharmacist-facing name (brand + strength/pack) so LOSEC 20 vs 40 never confused.
+                it_name = cat.get("full_name") or cat.get("name") or m.get("name") or "Φάρμακο"
+                it_category = "narcotic" if cat.get("narcotic") else "normal"
+                it_wholesale = int(cat.get("wholesale_cents") or 0)
             items.append(CanonicalItem(
-                barcode=str(cat.get("barcode") or eof or f"{barcode}-{n}"),
-                # FULL pharmacist-facing name (brand + strength/pack) so LOSEC 20 vs LOSEC 40 are
-                # never confused — fall back to the brand-only commercialName, then the CDA name.
-                name=cat.get("full_name") or cat.get("name") or m.get("name") or "Φάρμακο",
+                barcode=it_barcode,
+                name=it_name,
                 substance=cat.get("atc") or m.get("atc"),
                 quantity=qty,
                 retail_price=retail_cents,
-                wholesale_price=int(cat.get("wholesale_cents") or 0),
-                category="narcotic" if cat.get("narcotic") else "normal",
+                wholesale_price=it_wholesale,
+                category=it_category,
                 is_executed=executed,
                 details={k: v for k, v in details.items() if v is not None},
             ))
