@@ -231,6 +231,7 @@ class PrescriptionRepository(BaseRepository):
                           "patient_name": 1, "amka": 1, "fund_name": 1, "fund_code": 1}},
         ]
         rows = await self.aggregate(pipeline)
+        from app.core.db import shared_db
         # general fund name (group, π.χ. ΕΟΠΥΥ) for the LIST — the specific fund stays in the detail.
         cfg = await shared_db()["fund_groups"].find().to_list(length=None)
         code2group = {c: g["name"] for g in cfg for c in g.get("codes", [])}
