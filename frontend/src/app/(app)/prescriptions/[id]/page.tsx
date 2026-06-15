@@ -132,6 +132,9 @@ export default function PrescriptionDetailPage() {
     staleTime: 5 * 60 * 1000,
   });
 
+  const [lineTab, setLineTab] = useState<"exec" | "summary" | "unexec">("exec");
+  const [coupon, setCoupon] = useState<Item | null>(null);
+
   if (isLoading) return <div className="text-slate-400">{t("Φόρτωση…", "Loading…")}</div>;
   if (!data) return <div className="text-slate-500">{t("Η συνταγή δεν βρέθηκε.", "Prescription not found.")}</div>;
 
@@ -147,9 +150,7 @@ export default function PrescriptionDetailPage() {
   // until the per-execution dispensing detail arrives from ΗΔΙΚΑ.
   const marginReliable = d.status !== "partial" && profit >= 0;
 
-  // BLOCK 2 tabs + BLOCK 3 coupon popup
-  const [lineTab, setLineTab] = useState<"exec" | "summary" | "unexec">("exec");
-  const [coupon, setCoupon] = useState<Item | null>(null);
+  // BLOCK 2 tabs + BLOCK 3 coupon popup (hooks declared before the early returns above)
   const executed = d.items.filter((it) => it.is_executed);
   const unexecuted = d.items.filter((it) => !it.is_executed || (it.details?.outstanding ?? 0) > 0);
   const qrCount = executed.filter((it) => it.details?.qr).length;
