@@ -341,7 +341,8 @@ class PatientRxRepository(BaseRepository):
             "executed_at": ex.get("executed_at"), "status": ex.get("status"),
             "patient_share": ex.get("patient_share", 0), "amount_total": ex.get("amount_total", 0),
             "repeat_current": ex.get("repeat_current", 1), "repeat_total": ex.get("repeat_total", 1),
-            "next_open_date": ex.get("next_open_date"), "icd10": ex.get("icd10", []),
+            "next_open_date": ex.get("next_open_date"),
+            "icd10": await self._icd10_named(ex.get("icd10", [])),
             "doctor": (doctor or {}).get("full_name"), "specialty": (doctor or {}).get("specialty"),
             "details": ex.get("details") or {}, "items": items,
         })
@@ -393,6 +394,24 @@ class PatientRxRepository(BaseRepository):
             "first_at": g.get("first_at"),
             "last_at": g.get("last_at"),
         })
+
+    async def _icd10_named(self, codes: list[str]) -> list[str]:
+        """«J45» → «J45 — Βρογχικό άσθμα» από το icd10_codes (title_el). Για υποκατηγορία
+        που λείπει (π.χ. E79.8) πέφτει στον γονικό κωδικό (E79)."""
+        if not codes:
+            return []
+        want = set(codes)
+        for c in codes:
+            if "." in c:
+                want.add(c.split(".")[0])
+        names: dict = {}
+        async for d in self._db["icd10_codes"].find({"_id": {"$in": list(want)}}):
+            names[d["_id"]] = d.get("title_el") or d.get("description")
+        out = []
+        for c in codes:
+            nm = names.get(c) or (names.get(c.split(".")[0]) if "." in c else None)
+            out.append(f"{c} — {nm}" if nm else c)
+        return out
 
     async def my_repeats(self, patient_ref: str) -> list[dict]:
         """Repeats that are open / about to open (the patient's recurring therapy).
