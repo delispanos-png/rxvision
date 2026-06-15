@@ -382,12 +382,14 @@ class HdikaClient:
         # `repeat_planned`). Όταν λείπει, κρατάμε repeat_total=0 (άγνωστο) αντί να το φαμπρικάρουμε
         # = executions (που έβγαζε παραπλανητικά "N/N" badges)· το display παράγει την αλυσίδα από
         # τις εκτελέσεις + τον εξαγόμενο ρυθμό. repeat_current = ο executionNo αυτής της γραμμής.
-        repeat_planned = int(cda.get("repeat_planned") or 0)
-        # repeat_total must be ≥ repeat_current (validator: repeat_current in 1..repeat_total). When
-        # the CDA carries no real plan we fall back to the execution number — NOT 0 (which dropped
-        # every repeat as invalid). The display derives the true chain from repeat_root + the actual
-        # executions, so this no longer surfaces a misleading "N/N".
-        repeat_total = max(repeat_planned, exec_no, 1)
+        # Repeat chain — AUTHORITATIVE from the ΗΔΙΚΑ CDA: 1.1.4 = planned count (1=απλή, 3/4/5/6 =
+        # 3/4/5/6-μηνη αλυσίδα), 1.1.4.1 = Σειρά (this prescription's position). Gives the real
+        # "X of Y" (e.g. 1 of 6) even when sibling repeat-barcodes are not synced. Validator needs
+        # current ≤ total. Falls back to a single (1/1) when the CDA carries no chain info.
+        repeat_type = int(float(cda.get("repeat_type") or 0))
+        repeat_seq = int(float(cda.get("repeat_seq") or 0))
+        repeat_total = repeat_type if repeat_type > 1 else 1
+        repeat_current = min(repeat_seq, repeat_total) if repeat_seq > 0 else 1
 
         cda_pat = cda.get("patient") or {}
         cda_doc = cda.get("doctor") or {}
@@ -504,6 +506,9 @@ class HdikaClient:
             "fund_share_total": _mc(_cd.get("fund_share_total")),
             # ποσό που πληρώνει το ΚΥΥΑΠ (συμμετοχή + μισή διαφορά) — για την ανάλυση/εκτύπωση ΕΤΥΑΠ
             "kyyap_covered": kyyap_covered or None,
+            # ρυθμός χορήγησης χρόνιας αγωγής (μήνες) + ένδειξη χρόνιας πάθησης (CDA 1.4.9/1.4.10/1.10.9)
+            "interval_months": (2 if cda.get("bimonthly") else 1 if cda.get("monthly") else None),
+            "chronic": (True if cda.get("chronic") else None),
         }.items() if v is not None}
         return CanonicalExecution(
             source="HDIKA",
@@ -522,7 +527,7 @@ class HdikaClient:
             fund=CanonicalFund(code=fund_code, name=fund_name),
             items=items,
             icd10=[d["code"] for d in cda.get("icd10", []) if d.get("code")],
-            repeat_current=exec_no,
+            repeat_current=repeat_current,
             repeat_total=repeat_total,
             patient_share=share,
             amount_total=total,        # ΗΔΙΚΑ retail (totalValue+totalDifference) — authoritative

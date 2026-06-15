@@ -111,6 +111,20 @@ _CONTRACTS_XML = """<?xml version="1.0"?>
 </ListResponse>"""
 
 
+def test_repeat_chain_and_recurrence_from_cda():
+    """Repeat count/position + recurrence come straight from the ΗΔΙΚΑ CDA (1.1.4 / 1.1.4.1 /
+    1.4.10 / 1.10.9). A 6-month chain at position 1 → repeat 1/6, δίμηνη, χρόνια."""
+    c = HdikaClient({"base_url": "x", "username": "u", "password": "p", "api_key": "k"})
+    ex = {"prescription": {"barcode": "RX-R"}, "executionDate": "2026-06-01T10:00:00Z", "executionNo": 1}
+    cda = {"patient": {"amka": "X"}, "doctor": {"name": "Δ"}, "icd10": [], "medicines": [],
+           "repeat_type": "6", "repeat_seq": "1", "bimonthly": True, "chronic": True}
+    e = c._map_full(ex, cda, {})
+    c.close()
+    assert e.repeat_current == 1 and e.repeat_total == 6      # «1 από 6»
+    assert (e.details or {}).get("interval_months") == 2      # δίμηνη
+    assert (e.details or {}).get("chronic") is True
+
+
 def test_kyyap_three_way_split_matches_idika_printout():
     """ΚΥΥΑΠ (Ι.Κ.Α. πρώην Ο.Π.Α.Δ.) σε συμβεβλημένο φαρμακείο: τριμερής επιμερισμός — ασφ/νος
     μισή διαφορά + 1€, ΚΥΥΑΠ συμμετοχή + άλλη μισή, ΕΟΠΥΥ το υπόλοιπο. Επαληθευμένο στο επίσημο

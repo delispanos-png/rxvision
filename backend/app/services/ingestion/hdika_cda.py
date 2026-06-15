@@ -139,12 +139,28 @@ def parse_cda(text: str) -> dict:
             })
     out["has_unexecuted"] = any_unexec
 
-    # ── repeat chain: id[root=1.1.4.2].extension = barcode of the FIRST (original)
-    # prescription when this is a repeat. Absent ⇒ this prescription IS the root. ──
+    # ── repeat / recurrence metadata (ΗΔΙΚΑ CDA spec, prescription act) ──
+    #   1.1.4   = επαναληψιμότητα: 1=απλή, 3/4/5/6 = 3/4/5/6-μηνη αλυσίδα → planned repeat count
+    #   1.1.4.1 = Σειρά της Συνταγής → ποια επανάληψη της αλυσίδας είναι (repeat_current)
+    #   1.1.4.2 = barcode της 1ης/αρχικής (repeat_root)· απών ⇒ αυτή ΕΙΝΑΙ η αρχική
+    #   1.4.9 / 1.4.10 = Μηνιαία / Δίμηνη συνταγή (ρυθμός χορήγησης χρόνιας αγωγής)
+    #   1.10.9 = Χρόνια Ασθένεια
     for idel in _iter(root, "id"):
-        if idel.get("root") == "1.1.4.2" and idel.get("extension"):
-            out["repeat_root"] = idel.get("extension")
-            break
+        r, ext = idel.get("root"), idel.get("extension")
+        if not ext:
+            continue
+        if r == "1.1.4.2" and "repeat_root" not in out:
+            out["repeat_root"] = ext
+        elif r == "1.1.4" and "repeat_type" not in out:
+            out["repeat_type"] = ext            # 1 | 3 | 4 | 5 | 6
+        elif r == "1.1.4.1" and "repeat_seq" not in out:
+            out["repeat_seq"] = ext
+        elif r == "1.4.9" and ext == "1":
+            out["monthly"] = True
+        elif r == "1.4.10" and ext == "1":
+            out["bimonthly"] = True
+        elif r == "1.10.9" and ext == "1":
+            out["chronic"] = True
 
     # ── treatment window (effectiveTime low/high) → monthly repeat schedule + recurrence. ──
     highs, lows = [], []

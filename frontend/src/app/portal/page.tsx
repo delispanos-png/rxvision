@@ -336,7 +336,7 @@ export default function PortalHome() {
                           <div className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500">
                             {activeName && <span className="inline-flex items-center gap-1"><Building2 className="h-3.5 w-3.5 text-slate-400" /> {activeName}</span>}
                             {detail.doctor && <span className="inline-flex items-center gap-1"><Stethoscope className="h-3.5 w-3.5 text-slate-400" /> {detail.doctor}{detail.specialty ? ` · ${detail.specialty}` : ""}</span>}
-                            {detail.repeat_root && detail.repeat_root !== detail.barcode.split(":")[0] && <span className="inline-flex items-center gap-1"><RefreshCw className="h-3.5 w-3.5 text-slate-400" /> επανάληψη συνταγής</span>}
+                            {detail.repeat_total && detail.repeat_total > 1 ? <span className="inline-flex items-center gap-1"><RefreshCw className="h-3.5 w-3.5 text-slate-400" /> επανάληψη {detail.repeat_current}/{detail.repeat_total}</span> : null}
                           </div>
                           <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">Φάρμακα</div>
                           <ul className="divide-y divide-slate-200/70">

@@ -24,6 +24,8 @@ type PrescDetails = {
   exemption?: boolean | null; opinion?: boolean | null; fund_surcharge?: boolean | null;
   fund_surcharge_amount?: number | null; patient_share_total?: number | null; fund_share_total?: number | null;
   kyyap_covered?: number | null;   // ΚΥΥΑΠ (ΕΤΥΑΠ) — ποσό που πληρώνει το ΚΥΥΑΠ
+  interval_months?: number | null; // 1=μηνιαία, 2=δίμηνη (ρυθμός χρόνιας αγωγής)
+  chronic?: boolean | null;        // χρόνια πάθηση
 };
 
 type Item = {
@@ -110,10 +112,9 @@ export default function PrescriptionDetailPage() {
   const d = data;
   const age = d.patient?.birth_year ? new Date().getFullYear() - d.patient.birth_year : null;
   const profit = d.amount_total - d.wholesale_cost;
-  // This is a repeat of an earlier prescription when its repeat_root points to a DIFFERENT
-  // barcode (the chain's first ℞). The stored repeat_current/repeat_total are unreliable until
-  // the full ΗΔΙΚΑ chain is synced, so we no longer print a fake "N/N".
-  const recurring = !!d.repeat_root && d.repeat_root !== d.external_id.split(":")[0];
+  // repeat_current/repeat_total now come straight from the ΗΔΙΚΑ CDA (1.1.4 = planned count,
+  // 1.1.4.1 = position), so "X/Y" is authoritative even when sibling barcodes aren't synced.
+  const recurring = d.repeat_total > 1;
   // A partial execution's amount_total covers only what was dispensed in THIS visit, while
   // wholesale_cost is the whole prescription's cost (incl. not-yet-dispensed lines) → the
   // per-execution gross profit is meaningless. Suppress it (a negative profit is the same tell)
@@ -154,9 +155,15 @@ export default function PrescriptionDetailPage() {
           <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-700">{d.status || t("ΕΚΤΕΛΕΣΜΕΝΗ", "EXECUTED")}</span>
           {recurring && (
             <span className="inline-flex items-center gap-1 rounded-full bg-violet-50 px-3 py-1 text-xs font-medium text-violet-700">
-              <Repeat className="h-3.5 w-3.5" /> {t("Επανάληψη συνταγής", "Repeat prescription")}
+              <Repeat className="h-3.5 w-3.5" /> {t(`Επανάληψη ${d.repeat_current}/${d.repeat_total}`, `Repeat ${d.repeat_current}/${d.repeat_total}`)}
             </span>
           )}
+          {d.details?.interval_months ? (
+            <span className="rounded-full bg-sky-50 px-3 py-1 text-xs font-medium text-sky-700">{d.details.interval_months === 2 ? t("Δίμηνη", "Bi-monthly") : t("Μηνιαία", "Monthly")}</span>
+          ) : null}
+          {d.details?.chronic ? (
+            <span className="rounded-full bg-amber-50 px-3 py-1 text-xs font-medium text-amber-700">{t("Χρόνια αγωγή", "Chronic")}</span>
+          ) : null}
         </div>
       </div>
 
@@ -211,7 +218,7 @@ export default function PrescriptionDetailPage() {
         <PanelCard title={t("Συνταγή", "Prescription")}>
           <div className="text-sm text-slate-700">{t("Εκτέλεση", "Execution")}: {dt(d.executed_at)}</div>
           <div className="text-xs text-slate-500">
-            {recurring ? t("Επανάληψη συνταγής", "Repeat prescription") : t("Μία εκτέλεση", "Single execution")}
+            {recurring ? t(`Επανάληψη ${d.repeat_current}/${d.repeat_total}`, `Repeat ${d.repeat_current}/${d.repeat_total}`) : t("Μία εκτέλεση", "Single execution")}
             {d.next_open_date ? t(` · Επόμενη: ${new Date(d.next_open_date).toLocaleDateString("el-GR")}`, ` · Next: ${new Date(d.next_open_date).toLocaleDateString("el-GR")}`) : ""}
           </div>
           <div className="mt-2 flex flex-wrap gap-1">

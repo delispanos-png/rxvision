@@ -35,30 +35,46 @@ def _oid(v):
         return None
 
 
+# ΗΔΙΚΑ CDA frequency table (effectiveTime PIVL_TS period value+unit → human text), per the
+# official CDA spec §2.1.2.4. Anything not in the table falls back to a "κάθε N <μονάδα>" form.
+_FREQ_MAP = {
+    ("2", "wk"): "κάθε 2 εβδομάδες", ("1", "wk"): "1 φορά/εβδομάδα",
+    ("1", "d"): "1 φορά/ημέρα", ("4", "d"): "2 φορές/εβδομάδα", ("2", "d"): "3 φορές/εβδομάδα",
+    ("12", "h"): "2 φορές/ημέρα", ("8", "h"): "3 φορές/ημέρα", ("6", "h"): "4 φορές/ημέρα",
+    ("1", "once"): "εφάπαξ", ("1", "pain"): "επί πόνου",
+    ("1", "dyspnea"): "επί δύσπνοιας", ("1", "without"): "άνευ",
+}
+_UNIT_EL = {"h": "ώρες", "d": "ημέρες", "wk": "εβδομάδες", "mo": "μήνες"}
+
+
+def _parse_qty(val):
+    """'12 h' / '12.0 h' → ('12', 'h'); None on no match."""
+    m = re.match(r"\s*([\d.]+)\s*([A-Za-z]+)", str(val or ""))
+    if not m:
+        return None
+    num = m.group(1)
+    try:
+        num = str(int(float(num)))
+    except ValueError:
+        pass
+    return num, m.group(2)
+
+
 def _format_dosage(dose, freq, dur) -> str | None:
-    """Readable doctor's posology from the ΗΔΙΚΑ CDA fields: dose («1 ΔΙΣΚΙΑ…»),
-    frequency (period, π.χ. «12 h»/«1 d») και duration («30 d»)."""
+    """Doctor's posology from the ΗΔΙΚΑ CDA, formatted EXACTLY per the CDA spec §2.1.2.4:
+    dose (doseQuantity, π.χ. «1 ΔΙΣΚΙΑ»), frequency (PIVL_TS period → πίνακας συχνότητας,
+    π.χ. «12 h» → «2 φορές/ημέρα»), duration (rateQuantity σε ημέρες → «για N ημέρες»)."""
     parts: list[str] = []
     if dose:
         parts.append(str(dose).replace("_", " ").strip())
-    for val, is_freq in ((freq, True), (dur, False)):
-        if not val:
-            continue
-        m = re.match(r"\s*([\d.]+)\s*([hd])", str(val))
-        if not m:
-            continue
-        num, unit = m.group(1), m.group(2)
-        try:
-            n = int(float(num))
-        except ValueError:
-            n = None
-        if is_freq:
-            if unit == "d":
-                parts.append("1 φορά/ημέρα" if n == 1 else f"κάθε {num} ημέρες")
-            else:
-                parts.append("1 φορά/ημέρα" if n == 24 else f"κάθε {num} ώρες")
-        else:
-            parts.append(f"για {num} {'ημέρες' if unit == 'd' else 'ώρες'}")
+    fq = _parse_qty(freq)
+    if fq:
+        num, unit = fq
+        parts.append(_FREQ_MAP.get((num, unit)) or f"κάθε {num} {_UNIT_EL.get(unit, unit)}")
+    dq = _parse_qty(dur)
+    if dq:
+        num, unit = dq
+        parts.append(f"για {num} {_UNIT_EL.get(unit, unit)}")
     return " · ".join(parts) if parts else None
 
 
