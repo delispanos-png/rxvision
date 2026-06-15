@@ -156,10 +156,12 @@ async def enrich_product_categories(db) -> int:
     catalog refresh so new medicines get classified."""
     from pymongo import UpdateOne
 
+    import re
     by_id: dict = {}
     by_bc: dict = {}
     async for d in db["medicine_catalog"].find(
-            {}, {"atc": 1, "narcotic": 1, "high_cost": 1, "substance_name": 1, "barcode": 1}):
+            {}, {"atc": 1, "narcotic": 1, "high_cost": 1, "substance_name": 1,
+                 "barcode": 1, "full_name": 1, "name": 1}):
         by_id[d["_id"]] = d                        # eofCode
         if d.get("barcode"):
             by_bc[d["barcode"]] = d                # full EAN-13
@@ -171,9 +173,15 @@ async def enrich_product_categories(db) -> int:
             continue
         cls = categorize(c.get("atc"), c.get("narcotic"), c.get("high_cost"),
                          c.get("substance_name") or p.get("name"))
-        ops.append(UpdateOne({"_id": p["_id"]}, {"$set": {
-            "category": cls, "atc": c.get("atc"),
-            "substance": c.get("substance_name") or p.get("substance")}}))
+        set_fields = {"category": cls, "atc": c.get("atc"),
+                      "substance": c.get("substance_name") or p.get("substance")}
+        # Backfill the FULL drug name (brand + strength + pack) when the product carries a
+        # brand-only name (no strength/digit) — so LOSEC 20 vs LOSEC 40 are never confused.
+        cur = p.get("name") or ""
+        full = c.get("full_name") or c.get("name")
+        if full and not re.search(r"\d", cur) and re.search(r"\d", full):
+            set_fields["name"] = full
+        ops.append(UpdateOne({"_id": p["_id"]}, {"$set": set_fields}))
     if ops:
         await db["products"].bulk_write(ops, ordered=False)  # tenant-ok: enrichment writes by _id
     return len(ops)

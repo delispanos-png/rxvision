@@ -50,6 +50,7 @@ function periodRange(p: Period, cf: string, ct: string): { from: string; to: str
 export default function FuturePage() {
   const t = useT();
   const [minHistory] = useState("0");
+  const [tab, setTab] = useState<"coverage" | "forecast">("coverage");
   const [period, setPeriod] = useState<Period>("tomorrow");
   const [cFrom, setCFrom] = useState(_iso(0));
   const [cTo, setCTo] = useState(_iso(6));
@@ -113,8 +114,22 @@ export default function FuturePage() {
         </div>
       </div>
 
+      {/* δύο ξεχωριστές όψεις στο ίδιο κύκλωμα */}
+      <div className="mb-4 inline-flex rounded-xl border border-slate-200 bg-white p-1">
+        {([
+          ["coverage", t("Κάλυψη περιόδου", "Period coverage")],
+          ["forecast", t("Πρόβλεψη ζήτησης", "Demand forecast")],
+        ] as ["coverage" | "forecast", string][]).map(([k, label]) => (
+          <button key={k} onClick={() => setTab(k)}
+            className={`rounded-lg px-4 py-2 text-sm font-medium transition ${tab === k ? "bg-indigo-600 text-white" : "text-slate-600 hover:bg-slate-50"}`}>
+            {label}
+          </button>
+        ))}
+      </div>
+
       <div className="space-y-4">
-        {/* Κάλυψη ημέρας — τι να έχεις/παραγγείλεις για τις συνταγές που ανοίγουν */}
+        {/* TAB 1 — Κάλυψη: τι να έχεις/παραγγείλεις για τις συνταγές που ανοίγουν */}
+        {tab === "coverage" && (
         <PanelCard
           title={t("Κάλυψη περιόδου — ποσότητες για τις συνταγές που ανοίγουν", "Period coverage — quantities for opening prescriptions")}
           bodyClassName="pt-2"
@@ -180,7 +195,10 @@ export default function FuturePage() {
             <DataTable pageSize={50} columns={covCols} rows={cov?.items ?? []} rowKey={(r) => r.product_id} />
           </QueryState>
         </PanelCard>
+        )}
 
+        {/* TAB 2 — Πρόβλεψη ζήτησης (30 ημέρες): KPIs + χάρτης + ανά σκεύασμα */}
+        {tab === "forecast" && (<>
         {/* KPI row */}
         <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
           <KpiCard label={t("Μελλοντικές συνταγές", "Upcoming prescriptions")} value={fmtNum(total)} sub={t("σύνολο 30 ημερών · δες λίστα", "30-day total · see list")} icon={CalendarClock} accent="indigo"
@@ -224,6 +242,7 @@ export default function FuturePage() {
             <DataTable pageSize={20} columns={forecastColumns} rows={forecast.data?.items ?? []} rowKey={(r) => r.product_id} />
           </QueryState>
         </PanelCard>
+        </>)}
       </div>
 
       {/* drill-down popup: the individual prescriptions behind a KPI */}
