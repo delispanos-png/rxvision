@@ -294,10 +294,12 @@ export default function PortalHome() {
         )}
 
         {/* ── tabs ───────────────────────────────────────────── */}
-        <div className="mb-5 flex gap-1.5 overflow-x-auto rounded-2xl border border-slate-200 bg-white p-1.5 shadow-sm">
+        <div className="mb-5 flex gap-2 overflow-x-auto p-0.5">
           {TABS.map(([k, label]) => (
             <button key={k} onClick={() => setTab(k)}
-              className={`flex-none whitespace-nowrap rounded-xl px-4 py-2 text-sm font-semibold transition sm:flex-1 ${tab === k ? "bg-brand-600 text-white shadow-sm shadow-brand-500/30" : "text-slate-500 hover:bg-slate-50"}`}>
+              className={`flex-none whitespace-nowrap rounded-xl border px-4 py-2.5 text-sm font-semibold transition sm:flex-1 ${tab === k
+                ? "border-brand-600 bg-brand-600 text-white shadow-sm shadow-brand-500/30"
+                : "border-slate-200 bg-white text-slate-700 shadow-sm hover:border-brand-300 hover:bg-brand-50 hover:text-brand-700"}`}>
               {label}
             </button>
           ))}
