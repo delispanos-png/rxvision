@@ -1,8 +1,9 @@
 "use client";
 
 import { useParams, useRouter } from "next/navigation";
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowLeft, Repeat, Printer } from "lucide-react";
+import { ArrowLeft, Repeat, Printer, X } from "lucide-react";
 import { api } from "@/lib/apiClient";
 import { PanelCard } from "@/components/ui/Card";
 import { RepeatTree } from "@/components/prescriptions/RepeatTree";
@@ -18,6 +19,8 @@ type LineDetails = {
   generic?: boolean | null; substitution_allowed?: boolean | null; lot?: string | null;
   dose?: string | null; frequency?: string | null; duration?: string | null;
   qr?: boolean | null; strip?: string | null;
+  outstanding?: number | null;            // υπόλοιπη (ανεκτέλεστη) ποσότητα — ΗΔΥΚΑ 1.4.19
+  qr_product_code?: string | null; qr_batch?: string | null; qr_expiry?: string | null;
 };
 type PrescDetails = {
   issue_date?: string | null; deadline_date?: string | null;
@@ -53,7 +56,7 @@ type Detail = {
   repeat_current: number; repeat_total: number; repeat_root: string | null; next_open_date: string | null;
   amount_total: number; amount_claimed: number; patient_share: number; wholesale_cost: number;
   fund_payable: number; patient_payable: number;
-  icd10: string[]; has_unexecuted_substances: boolean;
+  icd10: string[]; icd10_named?: string[]; has_unexecuted_substances: boolean;
   doctor: { name: string | null; specialty: string | null } | null;
   fund: { name: string | null; code: string | null } | null;
   patient: { sex: string | null; birth_year: number | null; area: string | null; full_name: string | null; amka: string | null } | null;
@@ -143,6 +146,14 @@ export default function PrescriptionDetailPage() {
   // per-execution gross profit is meaningless. Suppress it (a negative profit is the same tell)
   // until the per-execution dispensing detail arrives from ΗΔΙΚΑ.
   const marginReliable = d.status !== "partial" && profit >= 0;
+
+  // BLOCK 2 tabs + BLOCK 3 coupon popup
+  const [lineTab, setLineTab] = useState<"exec" | "summary" | "unexec">("exec");
+  const [coupon, setCoupon] = useState<Item | null>(null);
+  const executed = d.items.filter((it) => it.is_executed);
+  const unexecuted = d.items.filter((it) => !it.is_executed || (it.details?.outstanding ?? 0) > 0);
+  const qrCount = executed.filter((it) => it.details?.qr).length;
+  const eofCount = executed.filter((it) => !it.details?.qr && it.details?.strip).length;
 
   // Fetch the official ΗΔΙΚΑ PDF (auth header can't ride a plain window.open, so fetch as a blob).
   const openIdikaPrint = async () => {
@@ -245,8 +256,8 @@ export default function PrescriptionDetailPage() {
             {d.next_open_date ? t(` · Επόμενη: ${new Date(d.next_open_date).toLocaleDateString("el-GR")}`, ` · Next: ${new Date(d.next_open_date).toLocaleDateString("el-GR")}`) : ""}
           </div>
           <div className="mt-2 flex flex-wrap gap-1">
-            {(d.icd10 || []).map((c) => (
-              <span key={c} className="rounded bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-600">{c}</span>
+            {(d.icd10_named ?? d.icd10 ?? []).map((c, i) => (
+              <span key={i} className="rounded bg-violet-50 px-2 py-0.5 text-[11px] font-medium text-violet-700">{c}</span>
             ))}
           </div>
         </PanelCard>
@@ -255,33 +266,60 @@ export default function PrescriptionDetailPage() {
       {/* repeat tree — all executions of this prescription's barcode */}
       <RepeatTree externalId={id} />
 
-      {/* medicines */}
-      <PanelCard title={t("Φάρμακα & θεραπείες", "Medicines & treatments")}>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-slate-100 text-left text-xs text-slate-400">
-                <th className="py-2">{t("Σκεύασμα", "Product")}</th>
-                <th>{t("Δραστική ουσία", "Active substance")}</th>
-                <th className="text-right">{t("Ποσ.", "Qty")}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {d.items.map((it, i) => (
-                <tr key={i} className="border-b border-slate-50">
-                  <td className="py-2 font-medium text-slate-800">
-                    {it.name || "—"}<CategoryBadge category={it.category} />
-                    {it.atc && <span className="ml-1.5 text-[10px] text-slate-400">{it.atc}</span>}
-                  </td>
-                  <td className="text-slate-500">{it.substance || "—"}</td>
-                  <td className="text-right">{it.quantity}</td>
-                </tr>
-              ))}
-              {d.items.length === 0 && (
-                <tr><td colSpan={3} className="py-4 text-center text-slate-400">{t("Δεν υπάρχουν γραμμές φαρμάκων.", "No medicine lines.")}</td></tr>
-              )}
-            </tbody>
-          </table>
+      {/* Φάρμακα — tabs: Εκτέλεση (αυτή η εκτέλεση) / Συνοπτικά (όλη η συνταγή) / Ανεκτέλεστα */}
+      <PanelCard title={t("Φάρμακα", "Medicines")}>
+        <div className="mb-3 flex flex-wrap items-center gap-2">
+          <div className="inline-flex rounded-xl border border-slate-200 p-1 text-sm dark:border-slate-700">
+            {([["exec", t("Εκτέλεση", "Execution")],
+               ["summary", t("Συνοπτικά", "Summary")],
+               ["unexec", `${t("Ανεκτέλεστα", "Unexecuted")}${unexecuted.length ? ` (${unexecuted.length})` : ""}`]] as ["exec" | "summary" | "unexec", string][]).map(([k, label]) => (
+              <button key={k} onClick={() => setLineTab(k)}
+                className={`rounded-lg px-3 py-1.5 font-medium transition ${lineTab === k ? "bg-indigo-600 text-white" : "text-slate-600 hover:bg-slate-50 dark:text-slate-300"}`}>{label}</button>
+            ))}
+          </div>
+          {lineTab === "exec" && (qrCount || eofCount) ? (
+            <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-600 dark:bg-slate-800">{qrCount} QR · {eofCount} ΕΟΦ</span>
+          ) : null}
+        </div>
+        {/* διαγνώσεις (γενικά) — κωδικός + τίτλος */}
+        {(d.icd10_named?.length || d.icd10?.length) ? (
+          <div className="mb-3 flex flex-wrap gap-1.5">
+            {(d.icd10_named ?? d.icd10 ?? []).map((c, i) => (
+              <span key={i} className="rounded bg-violet-50 px-2 py-0.5 text-[11px] font-medium text-violet-700">{c}</span>
+            ))}
+          </div>
+        ) : null}
+        <div className="space-y-2">
+          {(lineTab === "exec" ? executed : lineTab === "unexec" ? unexecuted : d.items).map((it, i) => {
+            const ln = it.details || {};
+            const out = ln.outstanding ?? 0;
+            return (
+              <div key={i} className={`rounded-xl border p-3 ${it.is_executed ? "border-slate-200 dark:border-slate-700" : "border-slate-300 bg-slate-50 dark:bg-slate-800/60"}`}>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="flex min-w-0 flex-wrap items-center gap-2">
+                    <span className={`font-semibold ${it.is_executed ? "text-slate-800 dark:text-slate-100" : "text-slate-500"}`}>{it.name || "—"}</span>
+                    {it.atc && <span className="text-[10px] text-slate-400">{it.atc}</span>}
+                    <CategoryBadge category={it.category} />
+                    {it.is_executed && ln.qr ? <button onClick={() => setCoupon(it)} className="rounded-full bg-sky-50 px-2 py-0.5 text-[10px] font-semibold text-sky-700 hover:bg-sky-100">QR ↗</button>
+                      : it.is_executed && ln.strip ? <button onClick={() => setCoupon(it)} className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-700 hover:bg-amber-100">ΕΟΦ ↗</button> : null}
+                  </span>
+                  <span className="shrink-0 text-sm text-slate-600">
+                    {lineTab === "unexec"
+                      ? <span className="font-semibold text-amber-700">{t("Υπόλοιπο", "Remaining")}: {out || it.quantity}</span>
+                      : <>×{it.quantity}{ln.retail_price != null && <span className="ml-2 font-medium text-slate-800 dark:text-slate-100">{eur(ln.retail_price)}</span>}</>}
+                  </span>
+                </div>
+                {lineTab !== "unexec" && (it.substance || fmtDosage(ln.dose, ln.frequency, ln.duration)) ? (
+                  <div className="mt-1 text-xs text-slate-500">{[it.substance, fmtDosage(ln.dose, ln.frequency, ln.duration)].filter(Boolean).join(" · ")}</div>
+                ) : null}
+              </div>
+            );
+          })}
+          {(lineTab === "exec" ? executed : lineTab === "unexec" ? unexecuted : d.items).length === 0 && (
+            <div className="py-6 text-center text-sm text-slate-400">
+              {lineTab === "unexec" ? t("Δεν υπάρχουν ανεκτέλεστα φάρμακα.", "No unexecuted medicines.") : t("Δεν υπάρχουν γραμμές φαρμάκων.", "No medicine lines.")}
+            </div>
+          )}
         </div>
       </PanelCard>
 
@@ -368,6 +406,35 @@ export default function PrescriptionDetailPage() {
           </div>
         )}
       </PanelCard>
+
+      {/* BLOCK 3 — αναλυτικά κουπόνι (QR / ΕΟΦ) που εκτελέστηκε σε αυτή τη γραμμή */}
+      {coupon ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setCoupon(null)}>
+          <div className="w-full max-w-md rounded-2xl bg-white p-5 shadow-xl dark:bg-slate-900" onClick={(e) => e.stopPropagation()}>
+            <div className="mb-3 flex items-center justify-between">
+              <h3 className="font-semibold text-slate-900 dark:text-slate-100">{t("Στοιχεία κουπονιού", "Coupon details")}</h3>
+              <button onClick={() => setCoupon(null)} className="text-slate-400 hover:text-slate-600"><X className="h-5 w-5" /></button>
+            </div>
+            <div className="mb-3 text-sm font-medium text-slate-700 dark:text-slate-200">{coupon.name}{coupon.quantity > 1 ? ` · ×${coupon.quantity}` : ""}</div>
+            <div className="grid grid-cols-1 gap-2 text-sm sm:grid-cols-2">
+              <Field label={t("Τύπος", "Type")} value={coupon.details?.qr ? "QR (HMVS)" : t("Ταινία γνησιότητας ΕΟΦ", "ΕΟΦ authenticity strip")} />
+              {coupon.details?.qr ? (
+                <>
+                  <Field label={t("Κωδικός / Serial", "Code / Serial")} value={coupon.details?.strip} />
+                  <Field label={t("Κωδικός προϊόντος", "Product code")} value={coupon.details?.qr_product_code} />
+                  <Field label={t("Παρτίδα", "Batch")} value={coupon.details?.qr_batch} />
+                  <Field label={t("Λήξη", "Expiry")} value={coupon.details?.qr_expiry} />
+                </>
+              ) : (
+                <Field label={t("Αριθμός ταινίας", "Strip number")} value={coupon.details?.strip || coupon.details?.lot} />
+              )}
+            </div>
+            {coupon.quantity > 1 ? (
+              <p className="mt-3 text-xs text-slate-400">{t("Σημ.: αναλυτικά κουπόνια ανά τεμάχιο διαθέσιμα μετά τον πλήρη συγχρονισμό ανά εκτελεσμένη ποσότητα.", "Note: per-unit coupon detail available after full per-quantity sync.")}</p>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

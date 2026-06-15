@@ -99,6 +99,14 @@ class PrescriptionRepository(BaseRepository):
             "details": ex.get("details") or {},   # rich ΗΔΥΚΑ/CDA prescription-level detail (stored)
             "items": items,
         }
+        # ICD-10 με ελληνικό τίτλο (κωδικός — τίτλος) για την προβολή (γενικά + ανά γραμμή)
+        codes = ex.get("icd10", []) or []
+        if codes:
+            titles = {d["_id"]: d.get("title_el") async for d in
+                      self._db["icd10_codes"].find({"_id": {"$in": codes}}, {"title_el": 1})}
+            out["icd10_named"] = [f"{c} — {titles[c]}" if titles.get(c) else c for c in codes]
+        else:
+            out["icd10_named"] = []
         return jsonsafe(out)
 
     async def repeats(self, external_id: str) -> dict:
