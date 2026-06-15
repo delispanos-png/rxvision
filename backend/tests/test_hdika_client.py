@@ -79,7 +79,10 @@ def test_map_full_builds_canonical_from_execution_and_cda():
     assert e.doctor.full_name == "Κ. Παπαδόπουλος" and e.doctor.specialty == "Παθολόγος"
     assert e.fund.code == "EOPYY" and e.fund.name == "ΕΟΠΥΥ"
     assert e.icd10 == ["E11.9"]
-    assert e.repeat_total == 3 and e.repeat_current == 1
+    # ΗΔΙΚΑ "executions" (3) = executions done so far, NOT the planned repeat count → with no
+    # CDA repeat schedule we keep repeat_total unknown (0) instead of faking it = executions.
+    # repeat_current is simply this row's executionNo.
+    assert e.repeat_total == 0 and e.repeat_current == 1
     assert e.amount_total == 420          # totalValue 320 + totalDifference 100 (cents)
     assert e.patient_share == 210         # 50 + max(0,100−40) + 100
     assert e.valid_until is not None and e.valid_until.year == 2026 and e.valid_until.month == 9
@@ -88,6 +91,28 @@ def test_map_full_builds_canonical_from_execution_and_cda():
     assert it.barcode == "5290001" and it.name == "Glucophage 850" and it.substance == "A10BA02"
     assert it.quantity == 2 and it.retail_price == 420 and it.wholesale_price == 300
     c.close()
+
+
+def test_etyap_contracted_pharmacy_shifts_participation_to_fund():
+    """ΕΤΥΑΠ + συμβεβλημένος Φ.Σ.: το ΕΤΥΑΠ πληρώνει τη συμμετοχή (participationValue),
+    ο ασθενής μένει με διαφορά + 1€ — όχι τη συμμετοχή. Καταγράφεται το etyap_covered."""
+    ex = {
+        "prescription": {"barcode": "RX-E", "socialInsuranceDTO": {"name": "ΕΤΥΑΠ", "shortName": "ETYAP"}},
+        "executionDate": "2026-06-01T10:00:00Z", "executionNo": 1,
+        "totalValue": 20.00, "totalDifference": 1.00, "sociTotalDifference": 0.40,
+        "participationValue": 5.00, "socialInsuranceSurcharge": 1.00,
+    }
+    # μη-συμβεβλημένο → σαν ΕΟΠΥΥ: ο ασθενής πληρώνει τη συμμετοχή (5€) + διαφορά (0.60) + 1€ = 660
+    base = HdikaClient({"base_url": "x", "username": "u", "password": "p", "api_key": "k"})
+    e0 = base._map_full(ex, {}, {})
+    assert e0.patient_share == 660 and (e0.details or {}).get("etyap_covered") is None
+    base.close()
+    # συμβεβλημένο → ΕΤΥΑΠ αναλαμβάνει τη συμμετοχή (5€): ασθενής 0.60 + 1€ = 160· etyap_covered=500
+    contracted = HdikaClient({"base_url": "x", "username": "u", "password": "p",
+                              "api_key": "k", "etyap_contracted": "true"})
+    e1 = contracted._map_full(ex, {}, {})
+    assert e1.patient_share == 160 and (e1.details or {}).get("etyap_covered") == 500
+    contracted.close()
 
 
 _USER_XML = """<?xml version="1.0"?>

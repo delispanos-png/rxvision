@@ -10,7 +10,9 @@ import { fmtEur, fmtDate } from "@/lib/formatters";
 type Part = { external_id: string; executed_at: string | null; status: string | null; amount_total: number };
 type Repeat = { barcode: string; executed_at: string | null; status: string | null; amount_total: number; icd10: string[]; parts: Part[] };
 type Slot = { index: number; opening: string | null; state: "executed" | "available" | "lost" | "future"; repeat: Repeat | null };
-type Chain = { root: string; is_chain: boolean; total: number; executed_count: number; valid_from: string | null; valid_until: string | null; slots: Slot[] };
+type Chain = { root: string; is_chain: boolean; plan_incomplete: boolean; interval_months: number | null; total: number; executed_count: number; valid_from: string | null; valid_until: string | null; slots: Slot[] };
+
+const CADENCE: Record<number, string> = { 1: "μηνιαία", 2: "δίμηνη", 3: "τρίμηνη", 4: "τετράμηνη", 6: "εξάμηνη" };
 
 const STATE: Record<string, { label: string; cls: string; dot: string; Icon: typeof CheckCircle2 }> = {
   executed:  { label: "Εκτελεσμένη", cls: "bg-emerald-100 text-emerald-700", dot: "bg-emerald-500", Icon: CheckCircle2 },
@@ -44,7 +46,13 @@ export function RepeatTree({ externalId }: { externalId: string }) {
           <span className="rounded-full bg-slate-100 px-2 py-0.5 text-slate-500 dark:bg-slate-800 dark:text-slate-300">{tree.total} {t("σύνολο", "total")}</span>
         </div>
       </div>
-      <div className="mb-3 font-mono text-xs text-slate-400">℞ root {tree.root}{tree.valid_from && tree.valid_until ? ` · ${t("ισχύς", "valid")} ${fmtDate(tree.valid_from)} → ${fmtDate(tree.valid_until)}` : ""}</div>
+      <div className="mb-3 font-mono text-xs text-slate-400">℞ root {tree.root}{tree.interval_months && CADENCE[tree.interval_months] ? ` · ${t(CADENCE[tree.interval_months], `${tree.interval_months}-monthly`)}` : ""}{tree.valid_from && tree.valid_until ? ` · ${t("ισχύς", "valid")} ${fmtDate(tree.valid_from)} → ${fmtDate(tree.valid_until)}` : ""}</div>
+
+      {tree.plan_incomplete && (
+        <div className="mb-4 flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-300">
+          <AlertCircle className="h-4 w-4 shrink-0" /> {t("Αυτή είναι επανάληψη μιας αλυσίδας συνταγών — προς το παρόν έχουμε μόνο αυτή την εκτέλεση. Το πλήρες ιστορικό επαναλήψεων (πόσες από πόσες) θα συμπληρωθεί με τον πλήρη συγχρονισμό ΗΔΙΚΑ.", "This is a repeat in a prescription chain — for now we only hold this execution. The full repeat history will be filled in after the complete ΗΔΙΚΑ sync.")}
+        </div>
+      )}
 
       {lost > 0 && (
         <div className="mb-4 flex items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700 dark:border-rose-800 dark:bg-rose-950 dark:text-rose-300">

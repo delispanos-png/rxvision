@@ -100,6 +100,10 @@ class HdikaClient:
         self.password = c.get("password", "")
         self.api_key = c.get("api_key", "")                       # APPLICATION key
         self.pharmacy_id = c.get("pharmacy_id") or c.get("pharmacy_code")
+        # whether THIS pharmacy's association is contracted with ΕΤΥΑΠ — discovered from
+        # /user/me/contracts (getMyContracts) and saved to settings. When true, ΕΤΥΑΠ (not the
+        # patient) pays the insured's participation on ΕΤΥΑΠ scripts (see share calc in _map_full).
+        self.etyap_contracted = str(c.get("etyap_contracted", "")).strip().lower() in ("1", "true", "yes")
         self.catalog = catalog or {}     # eofCode → price/cost (Δελτίο Τιμών) for per-med analysis
         self.throttle = float(c.get("throttle") or 0)   # seconds to pause after each call (be gentle on ΗΔΙΚΑ)
         self.skipped_days = 0           # days skipped due to transient gateway errors
@@ -158,15 +162,19 @@ class HdikaClient:
             "address": _first(ph, "address"),
             "city": city.get("name") if isinstance(city, dict) else city,
         }
-        try:  # contract start → history_from (earliest effectiveFrom)
+        try:  # contract start → history_from (earliest effectiveFrom); + ΕΤΥΑΠ contract flag
             cr = _to_dict(self._get_xml("/api/v1/user/me/contracts", {}))
             contracts = _as_list(cr.get("contents"))
             froms = [c.get("effectiveFrom") for c in contracts
                      if isinstance(c, dict) and c.get("effectiveFrom")]
             if froms:
                 info["history_from"] = min(froms)
+            # is the pharmacy's association contracted with ΕΤΥΑΠ? (each contract names a fund —
+            # the exact element varies, so scan the whole contract blob for the ΕΤΥΑΠ marker).
+            if any("ΕΤΥΑΠ" in str(c).upper() for c in contracts):
+                info["etyap_contracted"] = "true"
         except Exception:  # noqa: BLE001 — contracts is non-critical (ΗΔΙΚΑ test 500s it)
-            pass  # operator can set history_from manually
+            pass  # operator can set history_from / etyap_contracted manually
         return {k: str(v) for k, v in info.items() if v not in (None, "")}
 
     # ── paging: executed prescriptions ─────────────────────
@@ -328,12 +336,31 @@ class HdikaClient:
         total_diff = _eur_cents(_first(ex, "totalDifference", default=0))
         soci_diff = _eur_cents(_first(ex, "sociTotalDifference", default=0))
         total = total_value + total_diff
-        share = (_eur_cents(_first(ex, "participationValue", default=0))
+        participation = _eur_cents(_first(ex, "participationValue", default=0))
+        share = (participation
                  + max(0, total_diff - soci_diff)
                  + _eur_cents(_first(ex, "socialInsuranceSurcharge", default=0))
                  + _eur_cents(_first(ex, "supplementalDifferenceAmt", default=0)))
+        # ── ΕΤΥΑΠ (επικουρικό σωμάτων ασφαλείας) ───────────────────────────────────────────
+        # ΕΤΥΑΠ ασφαλισμένοι ανήκουν στον ΕΟΠΥΥ αλλά καλύπτονται επιπλέον από το ΕΤΥΑΠ. ΑΝ ο Φ.Σ.
+        # του φαρμακείου είναι ΣΥΜΒΕΒΛΗΜΕΝΟΣ με ΕΤΥΑΠ (getMyContracts → /user/me/contracts), τότε
+        # το ΕΤΥΑΠ — όχι ο ασθενής — πληρώνει τη ΣΥΜΜΕΤΟΧΗ (participationValue)· ο ασθενής μένει με
+        # επιβάρυνση (διαφορά) + 1€ ΕΟΠΥΥ. Εξαίρεση: συνταγές ΕΤΥΑΠ με 100% συμμετοχή βαραίνουν
+        # εξολοκλήρου τον ασθενή (ξεχωριστό τιμολόγιο/κατάσταση) → δεν μετακινούμε τη συμμετοχή.
+        # Μη-συμβεβλημένα φαρμακεία: η συνταγή ΕΤΥΑΠ αντιμετωπίζεται σαν κάθε ΕΟΠΥΥ (καμία αλλαγή).
+        etyap_covered = 0
+        is_etyap = "ΕΤΥΑΠ" in str(_first(fund_d, "name") or "").upper()
+        if self.etyap_contracted and is_etyap and 0 < participation < total_value:
+            etyap_covered = participation          # ΕΤΥΑΠ αναλαμβάνει τη συμμετοχή
+            share -= participation                 # ο ασθενής δεν την πληρώνει
         exec_no = int(float(_first(ex, "executionNo", default=1) or 1))
-        repeat_total = max(int(float(_first(summary, "executions", default=1) or 1)), exec_no, 1)
+        # ΗΔΙΚΑ `executions` = πόσες φορές εκτελέστηκε ΜΕΧΡΙ ΤΩΡΑ — ΟΧΙ το πλάνο επαναλήψεων. Το
+        # πραγματικό πλάνο ("3 από 4", "1 από 6") ζει στο CDA repeat schedule (parse_cda →
+        # `repeat_planned`). Όταν λείπει, κρατάμε repeat_total=0 (άγνωστο) αντί να το φαμπρικάρουμε
+        # = executions (που έβγαζε παραπλανητικά "N/N" badges)· το display παράγει την αλυσίδα από
+        # τις εκτελέσεις + τον εξαγόμενο ρυθμό. repeat_current = ο executionNo αυτής της γραμμής.
+        repeat_planned = int(cda.get("repeat_planned") or 0)
+        repeat_total = repeat_planned if repeat_planned > 1 else 0
 
         cda_pat = cda.get("patient") or {}
         cda_doc = cda.get("doctor") or {}
@@ -417,6 +444,8 @@ class HdikaClient:
             "fund_surcharge_amount": _mc(_cd.get("fund_surcharge_amount")),
             "patient_share_total": _mc(_cd.get("patient_share_total")),
             "fund_share_total": _mc(_cd.get("fund_share_total")),
+            # συμμετοχή που ανέλαβε το ΕΤΥΑΠ αντί του ασθενή (για ξεχωριστή κατάσταση/τιμολόγιο ΕΤΥΑΠ)
+            "etyap_covered": etyap_covered or None,
         }.items() if v is not None}
         return CanonicalExecution(
             source="HDIKA",
@@ -435,7 +464,7 @@ class HdikaClient:
             fund=CanonicalFund(code=fund_code, name=fund_name),
             items=items,
             icd10=[d["code"] for d in cda.get("icd10", []) if d.get("code")],
-            repeat_current=min(exec_no, repeat_total),
+            repeat_current=exec_no,
             repeat_total=repeat_total,
             patient_share=share,
             amount_total=total,        # ΗΔΙΚΑ retail (totalValue+totalDifference) — authoritative

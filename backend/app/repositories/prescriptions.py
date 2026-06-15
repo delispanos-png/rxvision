@@ -83,7 +83,7 @@ class PrescriptionRepository(BaseRepository):
             "external_id": ex.get("external_id"), "executed_at": ex.get("executed_at"),
             "status": ex.get("status"), "source": ex.get("source"),
             "repeat_current": ex.get("repeat_current", 1), "repeat_total": ex.get("repeat_total", 1),
-            "next_open_date": ex.get("next_open_date"),
+            "repeat_root": ex.get("repeat_root"), "next_open_date": ex.get("next_open_date"),
             "amount_total": ex.get("amount_total", 0), "amount_claimed": ex.get("amount_claimed", 0),
             "patient_share": ex.get("patient_share", 0), "wholesale_cost": ex.get("wholesale_cost", 0),
             "fund_payable": fund_payable, "patient_payable": patient_payable,
@@ -101,15 +101,22 @@ class PrescriptionRepository(BaseRepository):
 
     async def repeats(self, external_id: str) -> dict:
         """Repeat-chain tree. Groups every execution sharing `repeat_root` (the first
-        prescription's barcode); each distinct barcode = one monthly repeat, with its partial
-        executions (:1,:2) nested. Builds the monthly schedule from the validity window and
-        assigns each month a state: executed / available / lost / future."""
+        prescription's barcode); each distinct barcode = one repeat period, with its partial
+        executions (:1,:2,…) nested.
+
+        We project a recurring schedule (executed/available/lost/future) ONLY for a genuine
+        multi-barcode chain whose cadence we can infer from the gaps between repeats. For a
+        single barcode — even a repeat whose sibling barcodes were not synced yet, or one
+        dispensed in several partial executions — we show ONLY what actually happened and
+        flag `plan_incomplete`. (The old logic fabricated monthly slots from the validity
+        window, which turned one-off prescriptions into phantom "2 of 2" chains.)"""
+        this_bc = str(external_id).split(":")[0]
         ex = await self._coll.find_one(self._scope({"external_id": external_id}))
-        root = (ex.get("repeat_root") if ex else None) or str(external_id).split(":")[0]
+        root = (ex.get("repeat_root") if ex else None) or this_bc
         rows = [r async for r in self._coll.find(self._scope({"repeat_root": root}))]
         if not rows:  # fall back to same-barcode grouping (e.g. legacy rows without repeat_root)
             rows = [r async for r in self._coll.find(self._scope(
-                {"external_id": {"$regex": "^" + str(external_id).split(":")[0]}}))]
+                {"external_id": {"$regex": "^" + this_bc}}))]
 
         by_bc: dict[str, list] = defaultdict(list)
         for r in rows:
@@ -128,13 +135,27 @@ class PrescriptionRepository(BaseRepository):
                            "status": p.get("status"), "amount_total": p.get("amount_total", 0)} for p in parts],
             }
 
-        repeats = [r for r in (repeat_of(p) for p in by_bc.values()) if r["executed_at"]]
-        repeats.sort(key=lambda r: r["executed_at"])
+        periods = [r for r in (repeat_of(p) for p in by_bc.values()) if r["executed_at"]]
+        periods.sort(key=lambda r: r["executed_at"])
+
+        n_barcodes = len(by_bc)
+        is_repeat = n_barcodes > 1 or root != this_bc
+        has_partials = any(len(p["parts"]) > 1 for p in periods)
+
+        # cadence (months) inferred from the gaps between DISTINCT repeat periods. A single
+        # barcode (only partial executions of one period) has no interval to infer.
+        interval = None
+        if len(periods) >= 2:
+            gaps = sorted((periods[i + 1]["executed_at"] - periods[i]["executed_at"]).days
+                          for i in range(len(periods) - 1))
+            gaps = [g for g in gaps if g > 0]
+            if gaps:
+                interval = max(1, round(gaps[len(gaps) // 2] / 30))
 
         starts = [r["valid_from"] for r in rows if r.get("valid_from")]
         ends = [r["valid_until"] for r in rows if r.get("valid_until")]
-        start = min(starts) if starts else (repeats[0]["executed_at"] if repeats else None)
-        end = max(ends) if ends else (repeats[-1]["executed_at"] if repeats else None)
+        start = min(starts) if starts else (periods[0]["executed_at"] if periods else None)
+        end = max(ends) if ends else (periods[-1]["executed_at"] if periods else None)
         now = datetime.now(tz=timezone.utc)
 
         def add_months(d: datetime, n: int) -> datetime:
@@ -142,32 +163,38 @@ class PrescriptionRepository(BaseRepository):
             return d.replace(year=y, month=m, day=min(d.day, calendar.monthrange(y, m)[1]))
 
         slots: list[dict] = []
-        if start and end:
-            # the monthly WINDOW [open_i, open_{i+1}) an execution belongs to — by date range,
-            # NOT calendar-month number (an exec on 17/02 with start 28/01 is window 0, not 1).
+        if n_barcodes > 1 and interval and start and end:
+            # genuine multi-barcode chain with a known cadence → project the schedule at the
+            # inferred interval (NOT hard-coded monthly) and mark missed windows as lost.
             def window_of(d: datetime) -> int:
                 i = 0
-                while i < 18 and add_months(start, i + 1) <= d:
+                while i < 24 and add_months(start, (i + 1) * interval) <= d:
                     i += 1
                 return i
-            exec_by_slot = {window_of(r["executed_at"]): r for r in repeats}
+            exec_by_slot = {window_of(r["executed_at"]): r for r in periods}
             n = 1
-            while n < 18 and add_months(start, n) <= end:
+            while n < 24 and add_months(start, n * interval) <= end:
                 n += 1
             if exec_by_slot:
                 n = max(n, max(exec_by_slot) + 1)
             for i in range(n):
-                opening, window_end = add_months(start, i), add_months(start, i + 1)
+                opening, window_end = add_months(start, i * interval), add_months(start, (i + 1) * interval)
                 r = exec_by_slot.get(i)
                 state = ("executed" if r else "lost" if window_end <= now
                          else "available" if opening <= now else "future")
                 slots.append({"index": i, "opening": opening, "state": state, "repeat": r})
         else:
+            # show only what actually happened — one slot per executed period, no fabrication.
             slots = [{"index": i, "opening": r["executed_at"], "state": "executed", "repeat": r}
-                     for i, r in enumerate(repeats)]
+                     for i, r in enumerate(periods)]
 
         return jsonsafe({
-            "root": root, "is_chain": len(slots) > 1 or len(by_bc) > 1,
+            "root": root,
+            "is_chain": is_repeat or has_partials,
+            # it IS a repeat chain but we only hold one barcode of it (siblings not synced) →
+            # the full "N of M" plan needs a ΗΔΙΚΑ re-sync; we don't fake it.
+            "plan_incomplete": is_repeat and n_barcodes <= 1,
+            "interval_months": interval,
             "total": len(slots),
             "executed_count": sum(1 for s in slots if s["state"] == "executed"),
             "lost_count": sum(1 for s in slots if s["state"] == "lost"),
