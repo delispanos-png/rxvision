@@ -424,7 +424,9 @@ class HdikaClient:
             }
             items.append(CanonicalItem(
                 barcode=str(cat.get("barcode") or eof or f"{barcode}-{n}"),
-                name=cat.get("name") or m.get("name") or "Φάρμακο",
+                # FULL pharmacist-facing name (brand + strength/pack) so LOSEC 20 vs LOSEC 40 are
+                # never confused — fall back to the brand-only commercialName, then the CDA name.
+                name=cat.get("full_name") or cat.get("name") or m.get("name") or "Φάρμακο",
                 substance=cat.get("atc") or m.get("atc"),
                 quantity=qty,
                 retail_price=retail_cents,

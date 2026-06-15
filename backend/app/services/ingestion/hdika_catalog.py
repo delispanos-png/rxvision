@@ -223,7 +223,7 @@ async def load_catalog_map(db) -> dict:
     in-memory lookups during ingestion."""
     out: dict = {}
     cur = db["medicine_catalog"].find({}, {
-        "eofCode": 1, "retail_cents": 1, "wholesale_cents": 1, "name": 1,
+        "eofCode": 1, "retail_cents": 1, "wholesale_cents": 1, "name": 1, "full_name": 1,
         "barcode": 1, "narcotic": 1, "atc": 1})
     async for d in cur:
         out[str(d["_id"])] = d
