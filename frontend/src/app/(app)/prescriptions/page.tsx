@@ -5,7 +5,7 @@ import { createPortal } from "react-dom";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
-import { Receipt, Wallet, Pill, AlertTriangle, Search, Download, HeartPulse } from "lucide-react";
+import { Receipt, Wallet, Pill, AlertTriangle, Search, Download, HeartPulse, Stethoscope } from "lucide-react";
 import { api } from "@/lib/apiClient";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
 import { useUiStore, filtersToQuery } from "@/store/uiStore";
@@ -132,7 +132,17 @@ const makeColumns = (t: T): Column<Prescription>[] => {
       </span>
     ),
   },
-  { key: "icd10", header: "ICD-10", hideOnMobile: true, sortable: false, render: (r) => (r.icd10_named ?? r.icd10 ?? []).join(" · ") || "—" },
+  { key: "icd10", header: t("Διάγνωση", "Diagnosis"), hideOnMobile: true, sortable: false, render: (r) => {
+    const dx = r.icd10_named ?? r.icd10 ?? [];
+    if (!dx.length) return <span className="text-slate-300">—</span>;
+    // Compact χαρακτηρισμός — όλες οι διαγνώσεις (μία/γραμμή) στο hover-bubble (native title).
+    return (
+      <span className="inline-flex max-w-[12rem] cursor-help items-center gap-1 truncate rounded-full bg-violet-50 px-2 py-0.5 text-xs font-medium text-violet-700" title={dx.join("\n")}>
+        <Stethoscope className="h-3 w-3 shrink-0" />
+        <span className="truncate">{dx.length === 1 ? (r.icd10?.[0] || dx[0]) : `${dx.length} ${t("διαγνώσεις", "diagnoses")}`}</span>
+      </span>
+    );
+  } },
   { key: "amount_total", header: t("Αξία", "Value"), align: "right", render: (r) => fmtEur(r.amount_total) },
   { key: "patient_share", header: t("Από ασφ/νο", "From patient"), align: "right", hideOnMobile: true, render: (r) => fmtEur(r.patient_share ?? 0) },
   { key: "amount_claimed", header: t("Από ταμείο", "From fund"), align: "right", render: (r) => fmtEur(r.amount_claimed) },
