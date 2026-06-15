@@ -53,7 +53,7 @@ type Detail = {
   icd10: string[]; has_unexecuted_substances: boolean;
   doctor: { name: string | null; specialty: string | null } | null;
   fund: { name: string | null; code: string | null } | null;
-  patient: { sex: string | null; birth_year: number | null; area: string | null } | null;
+  patient: { sex: string | null; birth_year: number | null; area: string | null; full_name: string | null; amka: string | null } | null;
   details?: PrescDetails | null;
   items: Item[];
 };
@@ -177,8 +177,9 @@ export default function PrescriptionDetailPage() {
           <div className="text-sm font-semibold text-slate-800">{d.doctor?.name || t("Άγνωστος", "Unknown")}</div>
           <div className="text-xs text-slate-500">{d.doctor?.specialty || "—"}</div>
         </PanelCard>
-        <PanelCard title={t("Ασθενής (ανωνυμοποιημένος)", "Patient (anonymized)")}>
-          <div className="text-sm text-slate-700">{sexLabel(d.patient?.sex ?? null, t)}{age ? t(`, ${age} ετών`, `, ${age} years old`) : ""}</div>
+        <PanelCard title={t("Ασθενής", "Patient")}>
+          <div className="text-sm font-semibold text-slate-800">{d.patient?.full_name || t("—", "—")}</div>
+          <div className="text-xs text-slate-500">{sexLabel(d.patient?.sex ?? null, t)}{age ? t(`, ${age} ετών`, `, ${age} years old`) : ""}{d.patient?.amka ? ` · ΑΜΚΑ ${d.patient.amka}` : ""}</div>
           <div className="text-xs text-slate-500">{d.patient?.area || "—"} · {t("Ταμείο", "Fund")}: {d.fund?.name || "—"}</div>
         </PanelCard>
         <PanelCard title={t("Συνταγή", "Prescription")}>
@@ -207,11 +208,6 @@ export default function PrescriptionDetailPage() {
                 <th className="py-2">{t("Σκεύασμα", "Product")}</th>
                 <th>{t("Δραστική ουσία", "Active substance")}</th>
                 <th className="text-right">{t("Ποσ.", "Qty")}</th>
-                <th className="text-right">{t("Λιανική", "Retail")}</th>
-                <th className="text-right">{t("Συμμ.%", "Part.%")}</th>
-                <th className="text-right">{t("Από ασφ/νο", "From patient")}</th>
-                <th className="text-right">{t("Από ταμείο", "From fund")}</th>
-                <th className="text-right">{t("Κέρδος", "Profit")}</th>
               </tr>
             </thead>
             <tbody>
@@ -223,15 +219,10 @@ export default function PrescriptionDetailPage() {
                   </td>
                   <td className="text-slate-500">{it.substance || "—"}</td>
                   <td className="text-right">{it.quantity}</td>
-                  <td className="text-right">{eur(it.retail_price)}</td>
-                  <td className="text-right text-slate-500">{it.participation != null ? `${it.participation}%` : "—"}</td>
-                  <td className="text-right text-amber-700">{eur(it.patient_share)}</td>
-                  <td className="text-right font-medium text-brand-700">{eur(it.fund_share)}</td>
-                  <td className="text-right font-medium text-emerald-700">{eur(it.margin)}</td>
                 </tr>
               ))}
               {d.items.length === 0 && (
-                <tr><td colSpan={8} className="py-4 text-center text-slate-400">{t("Δεν υπάρχουν γραμμές φαρμάκων.", "No medicine lines.")}</td></tr>
+                <tr><td colSpan={3} className="py-4 text-center text-slate-400">{t("Δεν υπάρχουν γραμμές φαρμάκων.", "No medicine lines.")}</td></tr>
               )}
             </tbody>
           </table>

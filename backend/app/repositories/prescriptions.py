@@ -93,7 +93,9 @@ class PrescriptionRepository(BaseRepository):
                        "specialty": (doctor or {}).get("specialty")} if doctor else None,
             "fund": {"name": (fund or {}).get("name"), "code": (fund or {}).get("code")} if fund else None,
             "patient": {"sex": (patient or {}).get("sex"), "birth_year": (patient or {}).get("birth_year"),
-                        "area": (patient or {}).get("area")} if patient else None,
+                        "area": (patient or {}).get("area"),
+                        "full_name": (patient or {}).get("full_name"),
+                        "amka": (patient or {}).get("amka")} if patient else None,
             "details": ex.get("details") or {},   # rich ΗΔΥΚΑ/CDA prescription-level detail (stored)
             "items": items,
         }
