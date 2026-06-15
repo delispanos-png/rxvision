@@ -16,7 +16,6 @@ import { QueryState } from "@/components/ui/QueryState";
 import { LineChart } from "@/components/charts/LineChart";
 
 type UpcomingDay = { date: string; count: number };
-type ForecastRow = { product_id: string; name: string; expected_demand: number };
 type FutureRx = {
   expected_open_date: string; patient_name?: string | null; amka?: string | null;
   source_barcode?: string | null; products?: (string | null)[]; n_items?: number; confidence?: number;
@@ -70,11 +69,6 @@ export default function FuturePage() {
     { key: "est_cost", header: t("Εκτ. κόστος", "Est. cost"), align: "right", hideOnMobile: true, render: (r) => fmtEur(r.est_cost) },
   ];
 
-  const forecastColumns: Column<ForecastRow>[] = [
-    { key: "name", header: t("Σκεύασμα", "Product"), render: (r) => r.name ?? r.product_id },
-    { key: "expected_demand", header: t("Αναμενόμενη ζήτηση", "Expected demand"), align: "right", render: (r) => fmtNum(r.expected_demand) },
-  ];
-
   const list = useQuery({
     queryKey: ["future", "list", modal?.qs],
     queryFn: () => api<{ items: FutureRx[] }>(`/future/upcoming-list?${modal!.qs}`),
@@ -84,11 +78,6 @@ export default function FuturePage() {
   const upcoming = useQuery({
     queryKey: ["future", "upcoming", 30, minHistory],
     queryFn: () => api<{ items: UpcomingDay[] }>(`/future/upcoming?days=30&min_history=${minHistory}`),
-  });
-
-  const forecast = useQuery({
-    queryKey: ["future", "forecast", 30],
-    queryFn: () => api<{ items: ForecastRow[] }>(`/future/forecast?horizon_days=30`),
   });
 
   const days = upcoming.data?.items ?? [];
@@ -289,17 +278,6 @@ export default function FuturePage() {
           </PanelCard>
         )}
 
-        {/* forecast table */}
-        <PanelCard title={t("Πρόβλεψη ζήτησης ανά σκεύασμα (30 ημέρες)", "Demand forecast by product (30 days)")} bodyClassName="pt-2">
-          <QueryState
-            isLoading={forecast.isLoading}
-            isError={forecast.isError}
-            isEmpty={(forecast.data?.items?.length ?? 0) === 0}
-            onRetry={() => forecast.refetch()}
-          >
-            <DataTable pageSize={20} columns={forecastColumns} rows={forecast.data?.items ?? []} rowKey={(r) => r.product_id} />
-          </QueryState>
-        </PanelCard>
         </>)}
       </div>
     </ModuleGuard>
