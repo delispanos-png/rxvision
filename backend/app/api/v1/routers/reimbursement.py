@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from fastapi.responses import Response
 from pydantic import BaseModel
 
@@ -15,6 +15,20 @@ from app.repositories.scans import ScanRepository
 
 router = APIRouter()
 _MODULE = "monthly_closing"
+
+# Scan upload hardening: cap size + restrict to real image/PDF types. The bytes are later
+# opened by Pillow in the OCR worker (which sets MAX_IMAGE_PIXELS to guard decompression bombs).
+_MAX_SCAN = 15 * 1024 * 1024  # 15 MB
+_ALLOWED_SCAN_TYPES = {
+    "image/jpeg", "image/jpg", "image/png", "image/webp",
+    "image/heic", "image/heif", "image/tiff", "image/bmp", "application/pdf",
+}
+# What we'll actually serve back as (never trust the client-stored content-type → no stored-XSS).
+_SERVE_TYPE = {
+    "image/jpg": "image/jpeg", "image/jpeg": "image/jpeg", "image/png": "image/png",
+    "image/webp": "image/webp", "image/heic": "image/heic", "image/heif": "image/heif",
+    "image/tiff": "image/tiff", "image/bmp": "image/bmp", "application/pdf": "application/pdf",
+}
 
 
 class StatusIn(BaseModel):
@@ -129,10 +143,17 @@ async def physical_reset(period: str = Query(None),
 @router.post("/scans")
 async def upload_scan(file: UploadFile = File(...), doc_type: str = Form("prescription"),
                       ctx: TenantContext = Depends(require("closing:read", module=_MODULE))):
-    content = await file.read()
+    ctype = (file.content_type or "").split(";")[0].strip().lower()
+    if ctype not in _ALLOWED_SCAN_TYPES:
+        raise HTTPException(status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+                            detail={"error": "unsupported_type", "content_type": ctype})
+    content = await file.read(_MAX_SCAN + 1)  # read at most cap+1 → no unbounded memory
+    if len(content) > _MAX_SCAN:
+        raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                            detail={"error": "file_too_large", "max_bytes": _MAX_SCAN})
     repo = ScanRepository(tenant_id=ctx.tenant_id)
     scan_id = await repo.create(filename=file.filename or "scan.jpg", content=content,
-                                content_type=file.content_type or "image/jpeg", doc_type=doc_type)
+                                content_type=ctype, doc_type=doc_type)
     from app.workers.optical import process_scan
     process_scan.delay(ctx.tenant_id, scan_id)
     return {"scan_id": scan_id, "status": "processing"}
@@ -149,7 +170,12 @@ async def scan_image(scan_id: str,
     content, ctype = await ScanRepository(tenant_id=ctx.tenant_id).image(scan_id)
     if content is None:
         return Response(status_code=404)
-    return Response(content=content, media_type=ctype or "image/jpeg")
+    # Serve only a server-allowlisted type + nosniff so a mislabelled upload can't be
+    # sniffed/executed as HTML/script from our origin (stored-XSS guard).
+    safe = _SERVE_TYPE.get((ctype or "").lower(), "application/octet-stream")
+    return Response(content=content, media_type=safe,
+                    headers={"X-Content-Type-Options": "nosniff",
+                             "Content-Disposition": "inline"})
 
 
 @router.delete("/scans/{scan_id}")

@@ -27,10 +27,12 @@ def _redis() -> aioredis.Redis:
 
 
 def _client_ip(request: Request) -> str:
-    # Behind Caddy the real client is the left-most X-Forwarded-For entry.
-    xff = request.headers.get("x-forwarded-for")
-    if xff:
-        return xff.split(",")[0].strip()
+    # SECURITY: Cloudflare sets CF-Connecting-IP to the TRUE client and overwrites any
+    # client-supplied value, so it's authoritative. We do NOT trust the left-most
+    # X-Forwarded-For entry — a client can spoof it to rotate the key and bypass the limit.
+    cf = request.headers.get("cf-connecting-ip")
+    if cf:
+        return cf.strip()
     return request.client.host if request.client else "unknown"
 
 
@@ -64,3 +66,39 @@ def rate_limit(name: str, *, limit: int, window_seconds: int):
             )
 
     return _dep
+
+
+# ── Per-account login lockout (complements the IP limit) ────────────────────────
+# Keyed by email: after _LOCK_THRESHOLD failures within _LOCK_WINDOW, the account is
+# locked for _LOCK_DURATION. Fails OPEN on Redis errors. NB: an email-keyed lock allows
+# a targeted lock-out (DoS) of a known account — kept moderate (threshold + short TTL) to
+# bound that. Always pair with the IP rate limit on the login route.
+_LOCK_THRESHOLD = 8
+_LOCK_WINDOW = 900
+_LOCK_DURATION = 900
+
+
+async def account_locked(email: str) -> int:
+    """Remaining lock seconds (>0 if currently locked), else 0."""
+    return await _safe_ttl(f"lock:{email.strip().lower()}")
+
+
+async def record_login_failure(email: str) -> None:
+    e = email.strip().lower()
+    try:
+        r = _redis()
+        n = await r.incr(f"fail:{e}")
+        await r.expire(f"fail:{e}", _LOCK_WINDOW, nx=True)
+        if n >= _LOCK_THRESHOLD:
+            await r.set(f"lock:{e}", "1", ex=_LOCK_DURATION)
+            await r.delete(f"fail:{e}")
+    except Exception as exc:  # noqa: BLE001 — never let Redis block auth
+        logger.warning("login-failure tracking skipped (redis error: %s)", exc)
+
+
+async def clear_login_failures(email: str) -> None:
+    e = email.strip().lower()
+    try:
+        await _redis().delete(f"fail:{e}", f"lock:{e}")
+    except Exception:  # noqa: BLE001
+        pass

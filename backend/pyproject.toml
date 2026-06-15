@@ -14,6 +14,7 @@ dependencies = [
     "redis>=5.0",
     "celery>=5.4",
     "lxml>=5.2",                 # GESY XML parsing
+    "defusedxml>=0.7",           # XXE/billion-laughs-safe XML parsing (ΑΑΔΕ SOAP)
     "httpx>=0.27",               # HDIKA adapter
     "python-multipart>=0.0.18",   # uploads
     "hvac>=2.3",                 # HashiCorp Vault client
@@ -22,6 +23,7 @@ dependencies = [
     "pytesseract>=0.3.10",       # Tesseract OCR (self-hosted)
     "pyzbar>=0.1.9",             # QR / barcode decoding
     "anthropic>=0.49",           # Claude API — PharmaCat clinical assistant (CDSS)
+    "pywebpush>=2.0",            # Web Push (VAPID) — patient portal phone notifications
 ]
 
 [project.optional-dependencies]

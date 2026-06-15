@@ -6,7 +6,7 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/apiClient";
 
 /**
- * First-login gate: if the pharmacy hasn't connected ΗΔΙΚΑ yet, send the user to the
+ * First-login gate: if the pharmacy hasn't connected ΗΔΥΚΑ yet, send the user to the
  * /onboarding setup screen (credentials + date-range download) ONCE per session — so they
  * see it without digging into Settings, but aren't trapped there afterwards.
  */

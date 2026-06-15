@@ -53,6 +53,22 @@ async def upcoming_list(
                                               min_history=min_history)}
 
 
+@router.get("/daily-coverage")
+async def daily_coverage(
+    date: str | None = None,
+    ctx: TenantContext = Depends(require("future:read", module=_MODULE)),
+):
+    """Κάλυψη ημέρας: ποσότητες ανά φάρμακο για τις επαναλαμβανόμενες συνταγές που
+    ανοίγουν τη συγκεκριμένη μέρα. Default = ΑΥΡΙΟ (το βλέπεις από σήμερα για να
+    προλάβεις να παραγγείλεις ό,τι λείπει)."""
+    repo = FuturePrescriptionRepository(tenant_id=ctx.tenant_id)
+    start = datetime.fromisoformat(date).replace(tzinfo=timezone.utc) if date else _now() + timedelta(days=1)
+    start = start.replace(hour=0, minute=0, second=0, microsecond=0)
+    end = start + timedelta(days=1)
+    res = await repo.daily_coverage(day_start=start, day_end=end)
+    return {"date": start.date().isoformat(), **res}
+
+
 @router.get("/forecast")
 async def forecast(
     product_id: str | None = None,

@@ -31,11 +31,17 @@ async def lifespan(app: FastAPI):
 
 
 def create_app() -> FastAPI:
+    # SECURITY: never expose interactive docs / OpenAPI schema in prod/staging — it hands a
+    # full endpoint+schema map (admin, gdpr, ingestion…) to anonymous visitors.
+    _docs = None if settings.is_production else "/api/docs"
+    _openapi = None if settings.is_production else "/api/openapi.json"
+    _redoc = None if settings.is_production else "/api/redoc"
     app = FastAPI(
         title="RxVision API",
         version="1.0.0",
-        docs_url="/api/docs",
-        openapi_url="/api/openapi.json",
+        docs_url=_docs,
+        redoc_url=_redoc,
+        openapi_url=_openapi,
         lifespan=lifespan,
     )
     app.add_middleware(

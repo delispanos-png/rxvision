@@ -11,6 +11,15 @@ import io
 import re
 import statistics
 
+# Decompression-bomb guard: cap the pixel count Pillow will decode (a tiny file can declare a
+# huge canvas). Beyond this, Image.open raises DecompressionBombError instead of exhausting RAM.
+try:
+    from PIL import Image as _PILImage
+
+    _PILImage.MAX_IMAGE_PIXELS = 64_000_000  # ~64 MP
+except Exception:  # noqa: BLE001 — Pillow always present in the worker image; never block import
+    pass
+
 # ΗΔΙΚΑ prescription barcodes are long numeric strings (≈13+ digits). Match a digit run even when
 # OCR glues it to adjacent (Greek) letters — so no \b, just digit-run boundaries.
 _BARCODE_RE = re.compile(r"(?<!\d)(\d{11,16})(?!\d)")

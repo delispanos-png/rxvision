@@ -25,6 +25,19 @@ async def _role_names(tenant_id: str) -> dict[str, str]:
     return {r["_id"]: r["name"] for r in roles}
 
 
+async def _validate_role_ids(tenant_id: str, role_ids: list[str] | None) -> None:
+    """Reject any role_id that doesn't belong to THIS tenant — blocks attaching another
+    tenant's role to a user (cross-tenant privilege escalation at login)."""
+    if not role_ids:
+        return
+    roles = await RoleRepository(tenant_id=tenant_id).list_roles(skip=0, limit=500)
+    valid = {str(r["_id"]) for r in roles}
+    bad = [str(r) for r in role_ids if str(r) not in valid]
+    if bad:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            detail={"error": "invalid_role_ids", "ids": bad})
+
+
 def _shape_user(u: dict, role_names: dict[str, str]) -> dict:
     """Frontend-friendly shape: id / role names / active flag (hides internals)."""
     u = jsonsafe(u)
@@ -78,6 +91,7 @@ async def get_user(user_id: str, ctx: TenantContext = Depends(require(_PERM))):
 @router.post("/users", status_code=201)
 async def create_user(body: UserCreate, ctx: TenantContext = Depends(require(_PERM))):
     repo = UserRepository(tenant_id=ctx.tenant_id)
+    await _validate_role_ids(ctx.tenant_id, body.role_ids)
     # one account per email within a tenant
     if await repo._coll.find_one(repo._scope({"email": str(body.email)})):
         raise HTTPException(status.HTTP_409_CONFLICT, detail={"error": "email_exists"})
@@ -114,6 +128,7 @@ async def update_user(
 ):
     if body.status == "suspended" and user_id == ctx.user_id:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail={"error": "cannot_suspend_self"})
+    await _validate_role_ids(ctx.tenant_id, getattr(body, "role_ids", None))
     repo = UserRepository(tenant_id=ctx.tenant_id)
     user = await repo.update(user_id, body.model_dump(exclude_none=True))
     if user is None:

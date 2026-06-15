@@ -72,7 +72,7 @@ export default function IdikaConfigPage() {
 
   return (
     <div className="max-w-3xl">
-      <h1 className="mb-2 text-xl font-bold text-slate-900">Διασύνδεση ΗΔΙΚΑ</h1>
+      <h1 className="mb-2 text-xl font-bold text-slate-900">Διασύνδεση ΗΔΥΚΑ</h1>
       <p className="mb-6 text-sm text-slate-500">
         Στο <b>production</b> κάθε φαρμακείο είναι αυτόνομη οντότητα: χρησιμοποιεί τα <b>δικά του</b> username/password/
         API key/pharmacy_id (ορίζονται ανά φαρμακείο στις ρυθμίσεις του). Εδώ ορίζεις μόνο το <b>endpoint</b> του production
@@ -94,14 +94,14 @@ export default function IdikaConfigPage() {
           <p className="mt-1 text-xs text-slate-400">
             {activeEnv === "test"
               ? "Όλα τα φαρμακεία δρομολογούνται μέσω του κοινού sandbox λογαριασμού."
-              : "Κάθε φαρμακείο καλεί την ΗΔΙΚΑ με τα δικά του στοιχεία."}
+              : "Κάθε φαρμακείο καλεί την ΗΔΥΚΑ με τα δικά του στοιχεία."}
           </p>
         </div>
 
         {/* TEST sandbox — CloudOn shared account */}
         <div className="rounded-lg border border-slate-200 p-4">
           <div className="mb-1 text-sm font-semibold text-slate-700">Δοκιμαστικό sandbox (CloudOn)</div>
-          <p className="mb-3 text-xs text-slate-400">Ο κοινός λογαριασμός που μας έδωσε η ΗΔΙΚΑ για δοκιμές ως φαρμακείο.</p>
+          <p className="mb-3 text-xs text-slate-400">Ο κοινός λογαριασμός που μας έδωσε η ΗΔΥΚΑ για δοκιμές ως φαρμακείο.</p>
           <label className="mb-3 block text-sm"><span className="mb-1 block text-slate-600">Base URL</span>
             <input className={inp} value={f.testUrl} onChange={(e) => set("testUrl", e.target.value)} /></label>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">

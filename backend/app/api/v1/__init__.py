@@ -18,8 +18,10 @@ from app.api.v1.routers import (
     onboarding,
     orders,
     copilot,
+    patient,
     patient_intelligence,
     patients,
+    portal_admin,
     pharmacat,
     pharmacyone,
     platform,
@@ -35,6 +37,8 @@ api_router = APIRouter()
 api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
 api_router.include_router(onboarding.router, prefix="/onboarding", tags=["onboarding"])
 api_router.include_router(billing.router, prefix="/billing", tags=["billing"])
+api_router.include_router(patient.router, prefix="/patient", tags=["patient-portal"])
+api_router.include_router(portal_admin.router, prefix="/portal", tags=["patient-portal-admin"])
 api_router.include_router(patient_intelligence.router, prefix="/patient-intelligence", tags=["patient-intelligence"])
 api_router.include_router(pharmacat.router, prefix="/pharmacat", tags=["pharmacat"])
 api_router.include_router(copilot.router, prefix="/copilot", tags=["copilot"])

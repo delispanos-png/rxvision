@@ -106,7 +106,11 @@ class AuthService:
         role_ids = [_as_object_id(r) for r in (user.get("role_ids") or [])]
         roles: list[str] = []
         perms: set[str] = set()
-        async for role in db["roles"].find({"_id": {"$in": role_ids}}):
+        # SECURITY: scope role lookup to the user's OWN tenant — otherwise a role_id from
+        # another tenant (smuggled in via the users API) unions foreign permissions into
+        # this token = cross-tenant privilege escalation.
+        async for role in db["roles"].find(
+            {"_id": {"$in": role_ids}, "tenant_id": user["tenant_id"]}):
             roles.append(role.get("key", str(role["_id"])))
             perms.update(role.get("permissions", []))
         return modules, roles, sorted(perms)

@@ -43,6 +43,9 @@ class CanonicalItem:
     wholesale_price: int = 0         # cents
     category: str = "normal"         # normal | FYK | vaccine | narcotic | special
     is_executed: bool = True
+    # Rich per-line ΗΔΥΚΑ/CDA detail (persisted for KPIs): execution/reference price (cents),
+    # participation %, patient share, difference, generic flag, lot, dosage, QR/strip, etc.
+    details: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -62,3 +65,6 @@ class CanonicalExecution:
     valid_until: datetime | None = None  # treatment end (CDA effectiveTime high) → recurrence
     valid_from: datetime | None = None   # schedule start (CDA effectiveTime low)
     repeat_root: str | None = None       # barcode of the FIRST prescription, if this is a repeat
+    # Prescription-level ΗΔΥΚΑ/CDA detail (persisted for KPIs): issue/deadline dates,
+    # exemption/opinion flags, 1€ surcharge, patient/fund share totals.
+    details: dict = field(default_factory=dict)

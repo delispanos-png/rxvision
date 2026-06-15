@@ -74,6 +74,7 @@ class PrescriptionRepository(BaseRepository):
                 "patient_share": pat_share,
                 "fund_share": line_total - pat_share,
                 "is_executed": it.get("is_executed", True),
+                "details": it.get("details") or {},   # rich ΗΔΥΚΑ/CDA per-line detail (stored)
             })
         # ΠΛΗΡΩΤΕΟ ΑΠΟ ΤΑΜΕΙΟ = amount_claimed (fund reimburses); ΑΠΟ ΑΣΦ/ΝΟ = patient_share
         fund_payable = ex.get("amount_claimed", 0)
@@ -93,6 +94,7 @@ class PrescriptionRepository(BaseRepository):
             "fund": {"name": (fund or {}).get("name"), "code": (fund or {}).get("code")} if fund else None,
             "patient": {"sex": (patient or {}).get("sex"), "birth_year": (patient or {}).get("birth_year"),
                         "area": (patient or {}).get("area")} if patient else None,
+            "details": ex.get("details") or {},   # rich ΗΔΥΚΑ/CDA prescription-level detail (stored)
             "items": items,
         }
         return jsonsafe(out)

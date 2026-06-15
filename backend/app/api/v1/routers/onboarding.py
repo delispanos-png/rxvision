@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, EmailStr, Field
 
+from app.core.ratelimit import rate_limit
 from app.services.onboarding_service import OnboardingError, OnboardingService
 
 router = APIRouter()
@@ -40,7 +41,8 @@ class RegisterIn(BaseModel):
     sla: Literal["basic", "professional"] | None = None
 
 
-@router.post("/register", status_code=201)
+@router.post("/register", status_code=201,
+             dependencies=[Depends(rate_limit("onboarding_register", limit=5, window_seconds=600))])
 async def register(body: RegisterIn):
     try:
         return await OnboardingService().register(
@@ -52,7 +54,8 @@ async def register(body: RegisterIn):
         raise HTTPException(status.HTTP_409_CONFLICT, detail={"error": str(exc)})
 
 
-@router.get("/aade/{afm}")
+@router.get("/aade/{afm}",
+            dependencies=[Depends(rate_limit("onboarding_aade", limit=15, window_seconds=600))])
 async def aade_lookup(afm: str):
     """Public ΑΑΔΕ VAT lookup for the signup wizard — AFM → company details auto-fill."""
     from app.services.aade_service import lookup

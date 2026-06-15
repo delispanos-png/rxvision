@@ -261,7 +261,7 @@ export default function PrescriptionsPage() {
               onChange={(e) => setBarcode(e.target.value)}
               placeholder={t("π.χ. 2606022236114", "e.g. 2606022236114")}
               inputMode="numeric"
-              className="w-56 rounded-lg border border-slate-300 py-2 pl-8 pr-8 text-sm text-slate-900 focus:border-brand-500 focus:outline-none"
+              className="w-full rounded-lg border border-slate-300 py-2 pl-8 pr-8 text-sm text-slate-900 focus:border-brand-500 focus:outline-none sm:w-56"
             />
             {bc && (
               <button onClick={() => setBarcode("")} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600" title={t("Καθαρισμός", "Clear")}>×</button>

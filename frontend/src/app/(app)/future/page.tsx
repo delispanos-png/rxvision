@@ -2,12 +2,13 @@
 
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { CalendarClock, CalendarDays, CalendarRange, Pill, Download } from "lucide-react";
+import { CalendarClock, CalendarDays, CalendarRange, Pill, Download, PackageCheck, Users } from "lucide-react";
 import { api } from "@/lib/apiClient";
 import { downloadCsv } from "@/lib/csv";
 import { useT } from "@/store/prefStore";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
-import { fmtNum, fmtDate } from "@/lib/formatters";
+import { DateInput } from "@/components/ui/DateInput";
+import { fmtNum, fmtDate, fmtEur } from "@/lib/formatters";
 import { SelectFilter } from "@/components/filters/SelectFilter";
 import { DataTable, type Column } from "@/components/tables/DataTable";
 import { KpiCard } from "@/components/kpi/KpiCard";
@@ -22,11 +23,35 @@ type FutureRx = {
   expected_open_date: string; patient_name?: string | null; amka?: string | null;
   source_barcode?: string | null; products?: (string | null)[]; n_items?: number; confidence?: number;
 };
+type CoverageItem = {
+  product_id: string; product_name?: string | null; substance?: string | null;
+  needed_qty: number; n_patients: number; prescriptions: number; avg_daily: number; est_cost: number;
+};
+type Coverage = {
+  date: string;
+  summary: { prescriptions: number; n_patients: number; products: number; total_units: number; est_cost: number };
+  items: CoverageItem[];
+};
+const _tomorrow = () => new Date(Date.now() + 86400000).toISOString().slice(0, 10);
 
 export default function FuturePage() {
   const t = useT();
   const [minHistory, setMinHistory] = useState("0");
+  const [covDate, setCovDate] = useState(_tomorrow());
   const [modal, setModal] = useState<{ title: string; subtitle: string; qs: string } | null>(null);
+
+  const coverage = useQuery({
+    queryKey: ["future", "daily-coverage", covDate],
+    queryFn: () => api<Coverage>(`/future/daily-coverage?date=${covDate}`),
+  });
+  const cov = coverage.data;
+  const covCols: Column<CoverageItem>[] = [
+    { key: "product_name", header: t("Φάρμακο", "Product"), render: (r) => r.product_name ?? r.product_id },
+    { key: "needed_qty", header: t("Ποσότητα", "Qty"), align: "right", render: (r) => <span className="font-semibold">{fmtNum(r.needed_qty)}</span> },
+    { key: "n_patients", header: t("Ασθενείς", "Patients"), align: "right", render: (r) => fmtNum(r.n_patients) },
+    { key: "avg_daily", header: t("Μ.Ο./μέρα", "Avg/day"), align: "right", hideOnMobile: true, render: (r) => r.avg_daily },
+    { key: "est_cost", header: t("Εκτ. κόστος", "Est. cost"), align: "right", hideOnMobile: true, render: (r) => fmtEur(r.est_cost) },
+  ];
 
   const futureCols: Column<FutureRx>[] = [
     { key: "expected_open_date", header: t("Αναμένεται", "Expected"), render: (r) => fmtDate(r.expected_open_date) },
@@ -91,6 +116,53 @@ export default function FuturePage() {
       </div>
 
       <div className="space-y-4">
+        {/* Κάλυψη ημέρας — τι να έχεις/παραγγείλεις για τις συνταγές που ανοίγουν */}
+        <PanelCard
+          title={t("Κάλυψη ημέρας — ποσότητες για τις συνταγές που ανοίγουν", "Daily coverage — quantities for opening prescriptions")}
+          bodyClassName="pt-2"
+        >
+          <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
+            <div className="flex items-end gap-2">
+              <label className="block text-sm">
+                <span className="mb-1 block text-slate-600">{t("Ημέρα", "Day")}</span>
+                <DateInput value={covDate} onChange={(v) => setCovDate(v || _tomorrow())} />
+              </label>
+              <button onClick={() => setCovDate(_tomorrow())} className="rounded-lg border border-slate-300 px-3 py-2 text-sm hover:bg-slate-50">{t("Αύριο", "Tomorrow")}</button>
+            </div>
+            {(cov?.items?.length ?? 0) > 0 && (
+              <button
+                onClick={() => downloadCsv(`kalypsi-imeras-${covDate}`, [
+                  { key: "product_name", header: t("Φάρμακο", "Product") },
+                  { key: "substance", header: t("Δραστική", "Substance") },
+                  { key: "needed_qty", header: t("Ποσότητα", "Qty") },
+                  { key: "n_patients", header: t("Ασθενείς", "Patients") },
+                  { key: "prescriptions", header: t("Συνταγές", "Prescriptions") },
+                  { key: "avg_daily", header: t("Μ.Ο./μέρα", "Avg/day") },
+                  { key: "est_cost", header: t("Εκτ. κόστος (€)", "Est. cost (€)"), value: (r: CoverageItem) => (r.est_cost / 100).toFixed(2) },
+                ], cov!.items)}
+                className="shrink-0 inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+              >
+                <Download className="h-3.5 w-3.5" /> {t("Εξαγωγή για παραγγελία", "Export for ordering")}
+              </button>
+            )}
+          </div>
+          <div className="mb-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <KpiCard label={t("Συνταγές", "Prescriptions")} value={fmtNum(cov?.summary.prescriptions ?? 0)} icon={CalendarDays} accent="indigo" />
+            <KpiCard label={t("Σταθεροί ασθενείς", "Stable patients")} value={fmtNum(cov?.summary.n_patients ?? 0)} icon={Users} accent="violet" />
+            <KpiCard label={t("Φάρμακα / τεμάχια", "Products / units")} value={`${fmtNum(cov?.summary.products ?? 0)} / ${fmtNum(cov?.summary.total_units ?? 0)}`} icon={PackageCheck} accent="amber" />
+            <KpiCard label={t("Εκτ. κόστος", "Est. cost")} value={fmtEur(cov?.summary.est_cost ?? 0)} icon={Pill} accent="sky" />
+          </div>
+          <QueryState
+            isLoading={coverage.isLoading}
+            isError={coverage.isError}
+            isEmpty={(cov?.items?.length ?? 0) === 0}
+            empty={t("Καμία επαναλαμβανόμενη συνταγή δεν ανοίγει αυτή τη μέρα.", "No recurring prescriptions open on this day.")}
+            onRetry={() => coverage.refetch()}
+          >
+            <DataTable pageSize={50} columns={covCols} rows={cov?.items ?? []} rowKey={(r) => r.product_id} />
+          </QueryState>
+        </PanelCard>
+
         {/* KPI row */}
         <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
           <KpiCard label={t("Μελλοντικές συνταγές", "Upcoming prescriptions")} value={fmtNum(total)} sub={t("σύνολο 30 ημερών · δες λίστα", "30-day total · see list")} icon={CalendarClock} accent="indigo"

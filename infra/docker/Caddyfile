@@ -15,7 +15,21 @@
 	email admin@rxvision.gr
 }
 
+# Security response headers (defense-in-depth; applied to every site below).
+# NB: no Content-Security-Policy yet — Next.js inline hydration scripts need a nonce
+# integration first; clickjacking is covered by X-Frame-Options DENY.
+(security_headers) {
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+}
+
 (api_and_app) {
+	import security_headers
 	# API first (same-origin -> no CORS), everything else to the web app.
 	handle /api/* {
 		reverse_proxy api:8000
@@ -38,6 +52,14 @@ adminpanel.rxvision.gr {
 	# Land the back-office on /admin by default.
 	@root path /
 	rewrite @root /admin
+	import api_and_app
+}
+
+my.rxvision.gr {
+	tls {$CADDY_TLS:internal}
+	# Patient portal (3rd identity). Land on /portal by default; same web + /api backend.
+	@root path /
+	rewrite @root /portal
 	import api_and_app
 }
 

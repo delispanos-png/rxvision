@@ -9,6 +9,7 @@ import {
 import { api } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
 import { fmtEur } from "@/lib/formatters";
+import { ModuleGuard } from "@/components/layout/ModuleGuard";
 
 type RedFlag = { flag: string; action: string };
 type Substance = { name: string; atc: string; note: string };
@@ -44,6 +45,14 @@ const URGENCY: Record<string, { cls: string; el: string }> = {
 };
 
 export default function PharmaCatPage() {
+  return (
+    <ModuleGuard module="pharmacat">
+      <PharmaCatInner />
+    </ModuleGuard>
+  );
+}
+
+function PharmaCatInner() {
   const t = useT();
   const [turns, setTurns] = useState<Turn[]>([]);
   const [input, setInput] = useState("");
@@ -81,7 +90,7 @@ export default function PharmaCatPage() {
     else { setInput(""); try { r.start(); setListening(true); } catch { /* already started */ } }
   }
 
-  // Medicine info popup (ΗΔΙΚΑ catalogue) — click a product
+  // Medicine info popup (ΗΔΥΚΑ catalogue) — click a product
   const [med, setMed] = useState<MedInfo | null>(null);
   const [medLoading, setMedLoading] = useState(false);
   async function openMed(eof: string) {
@@ -196,7 +205,7 @@ export default function PharmaCatPage() {
         <p className="mt-1.5 text-center text-[10px] text-slate-400">{t("Υποστήριξη απόφασης για επαγγελματία υγείας. Δεν υποκαθιστά την κλινική κρίση ή τον ιατρό.", "Decision support for a health professional. Does not replace clinical judgment or a physician.")}</p>
       </div>
 
-      {/* medicine info modal — ΗΔΙΚΑ catalogue */}
+      {/* medicine info modal — ΗΔΥΚΑ catalogue */}
       {(med || medLoading) && (
         <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4" onClick={() => { setMed(null); setMedLoading(false); }}>
           <div className="w-full max-w-md rounded-2xl bg-white p-5 shadow-xl dark:bg-slate-900" onClick={(e) => e.stopPropagation()}>
@@ -206,7 +215,7 @@ export default function PharmaCatPage() {
               <>
                 <div className="mb-3 flex items-start justify-between gap-2">
                   <div>
-                    <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase text-violet-500"><Info className="h-3.5 w-3.5" /> {t("Πληροφορίες ΗΔΙΚΑ", "ΗΔΙΚΑ info")}</div>
+                    <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase text-violet-500"><Info className="h-3.5 w-3.5" /> {t("Πληροφορίες ΗΔΥΚΑ", "ΗΔΥΚΑ info")}</div>
                     <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">{med.full_name}</h3>
                   </div>
                   <button onClick={() => setMed(null)} className="text-slate-400 hover:text-slate-600"><X className="h-5 w-5" /></button>

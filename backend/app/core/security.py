@@ -17,6 +17,7 @@ _ph = PasswordHasher()
 # minted for one is rejected when presented to the other (combined with separate keys). (H1)
 AUD_TENANT = "rxvision/tenant"
 AUD_PLATFORM = "rxvision/platform"
+AUD_PATIENT = "rxvision/patient"   # 3rd identity: pharmacy customer (patient portal)
 
 
 def hash_password(raw: str) -> str:
@@ -104,6 +105,47 @@ def create_platform_refresh_token(*, admin_id: str, version: int) -> str:
         "jti": str(uuid.uuid4()),
     }
     return jwt.encode(payload, settings.JWT_PLATFORM_SECRET, algorithm=settings.JWT_ALG)
+
+
+def create_patient_token(*, account_id: str, tenant_id: str, patient_ref: str) -> str:
+    """Access token for a PATIENT (pharmacy customer). Carries the active pharmacy (`tid`) and
+    that pharmacy's pseudonymised patient record (`pref`) so the API scopes to the patient's own
+    data only. Signed with JWT_PATIENT_SECRET + audience rxvision/patient (isolated from tenant/admin)."""
+    payload = {
+        "sub": account_id,
+        "pat": True,
+        "tid": tenant_id,
+        "pref": patient_ref,
+        "scope": "access",
+        "aud": AUD_PATIENT,
+        "iat": _now(),
+        "exp": _now() + timedelta(seconds=settings.ACCESS_TOKEN_TTL_SECONDS),
+        "jti": str(uuid.uuid4()),
+    }
+    return jwt.encode(payload, settings.JWT_PATIENT_SECRET, algorithm=settings.JWT_ALG)
+
+
+def create_patient_refresh_token(*, account_id: str, version: int) -> str:
+    payload = {
+        "sub": account_id,
+        "ver": version,
+        "pat": True,
+        "scope": "refresh",
+        "aud": AUD_PATIENT,
+        "iat": _now(),
+        "exp": _now() + timedelta(seconds=settings.REFRESH_TOKEN_TTL_SECONDS),
+        "jti": str(uuid.uuid4()),
+    }
+    return jwt.encode(payload, settings.JWT_PATIENT_SECRET, algorithm=settings.JWT_ALG)
+
+
+def decode_patient_token(token: str) -> dict:
+    """Decode a PATIENT token (signed with JWT_PATIENT_SECRET, audience rxvision/patient)."""
+    try:
+        return jwt.decode(token, settings.JWT_PATIENT_SECRET, algorithms=[settings.JWT_ALG],
+                          audience=AUD_PATIENT)
+    except JWTError as exc:  # noqa: BLE001
+        raise ValueError("invalid_token") from exc
 
 
 def decode_token(token: str) -> dict:

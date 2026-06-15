@@ -65,7 +65,8 @@ class DoctorExecutionsRepository(BaseRepository):
                       "specialty": "$d.specialty"}},
         ]
         if search:
-            pipe.append({"$match": {"name": {"$regex": search, "$options": "i"}}})
+            # re.escape → no ReDoS / CPU DoS on the shared Mongo from a crafted pattern
+            pipe.append({"$match": {"name": {"$regex": re.escape(search), "$options": "i"}}})
         pipe += [
             {"$project": {"_id": 0, "id": {"$toString": "$_id"}, "name": 1, "specialty": 1,
                           "rx_count": 1, "value": 1,

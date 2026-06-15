@@ -19,7 +19,7 @@ const NAV = [
   { label: "Συνδρομές", icon: CreditCard, href: "/admin/subscriptions", section: "subscriptions" },
   { label: "Τιμολόγηση", icon: Receipt, href: "/admin/billing", section: "billing" },
   { label: "Πληρωμές & ΑΑΔΕ", icon: KeyRound, href: "/admin/integrations", section: "integrations" },
-  { label: "Διασύνδεση ΗΔΙΚΑ", icon: PlugZap, href: "/admin/idika", section: "idika" },
+  { label: "Διασύνδεση ΗΔΥΚΑ", icon: PlugZap, href: "/admin/idika", section: "idika" },
   { label: "Ομάδες ταμείων", icon: Layers, href: "/admin/fund-groups", section: "fund_groups" },
   { label: "Υποδομή / Cloud", icon: Cloud, href: "/admin/cloud", section: "cloud" },
   { label: "Noeton", icon: Network, href: "/admin/noeton", section: "noeton" },

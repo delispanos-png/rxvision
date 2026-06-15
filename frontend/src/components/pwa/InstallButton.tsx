@@ -53,7 +53,7 @@ export function InstallButton() {
         <Download className="h-[18px] w-[18px]" />
       </button>
       {iosHint && (
-        <div className="absolute right-0 top-full z-50 mt-2 w-64 rounded-xl border border-slate-200 bg-white p-3 text-xs text-slate-600 shadow-pop">
+        <div className="absolute right-0 top-full z-50 mt-2 w-[min(16rem,calc(100vw-1.5rem))] rounded-xl border border-slate-200 bg-white p-3 text-xs text-slate-600 shadow-pop">
           <div className="mb-1 font-semibold text-slate-800">{t("Εγκατάσταση στο iPhone", "Install on iPhone")}</div>
           {t("Πατήστε", "Tap")} <Share className="inline h-3.5 w-3.5" /> <b>{t("Κοινή χρήση", "Share")}</b> {t("και μετά", "then")}
           <b> {t("«Προσθήκη στην οθόνη Αφετηρίας»", "“Add to Home Screen”")}</b>.

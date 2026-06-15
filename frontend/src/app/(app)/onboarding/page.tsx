@@ -128,7 +128,7 @@ export default function OnboardingPage() {
           <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
             <div className="mb-3 flex items-center gap-3">
               <StepBadge n={1} />
-              <h2 className="text-sm font-semibold text-slate-700">{t("Σύνδεση με ΗΔΙΚΑ", "Connect to ΗΔΙΚΑ")}</h2>
+              <h2 className="text-sm font-semibold text-slate-700">{t("Σύνδεση με ΗΔΥΚΑ", "Connect to ΗΔΥΚΑ")}</h2>
             </div>
             <form
               className="space-y-3"
@@ -184,7 +184,7 @@ export default function OnboardingPage() {
                 <StepBadge n={2} />
                 <h2 className="text-sm font-semibold text-slate-700">{t("Άντληση ιστορικών δεδομένων", "Download historical data")}</h2>
               </div>
-              <p className="mb-3 text-sm text-slate-500">{t("Διάλεξε από πότε μέχρι πότε να κατεβάσουμε τις εκτελέσεις συνταγών σου από την ΗΔΙΚΑ.", "Choose the date range to download your prescription executions from ΗΔΙΚΑ.")}</p>
+              <p className="mb-3 text-sm text-slate-500">{t("Διάλεξε από πότε μέχρι πότε να κατεβάσουμε τις εκτελέσεις συνταγών σου από την ΗΔΥΚΑ.", "Choose the date range to download your prescription executions from ΗΔΥΚΑ.")}</p>
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="mb-1 block text-xs font-medium text-slate-600">{t("Από", "From")}</label>

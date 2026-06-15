@@ -24,6 +24,7 @@ export function KpiCard({
   icon: Icon,
   accent = "indigo",
   trend,
+  help,
   onClick,
 }: {
   label: string;
@@ -32,6 +33,8 @@ export function KpiCard({
   icon?: LucideIcon;
   accent?: Accent;
   trend?: number;
+  /** Plain-language "what does this mean?" shown on hover — so even a KPI-naive pharmacist gets it. */
+  help?: string;
   onClick?: () => void;
 }) {
   const t = useT();
@@ -45,7 +48,15 @@ export function KpiCard({
     >
       <div className="flex items-start justify-between">
         <div className="min-w-0">
-          <div className="rx-label">{label}</div>
+          <div className="rx-label flex items-center gap-1">
+            {label}
+            {help && (
+              <span title={help}
+                className="grid h-3.5 w-3.5 cursor-help place-items-center rounded-full border border-slate-300 text-[9px] font-bold leading-none text-slate-400 hover:border-brand-400 hover:text-brand-500 dark:border-slate-600">
+                i
+              </span>
+            )}
+          </div>
           <div className="mt-2 flex items-baseline gap-2">
             <div className="truncate text-xl font-bold leading-none text-slate-900 dark:text-slate-100 sm:text-[26px]">{value}</div>
             {trend !== undefined && (

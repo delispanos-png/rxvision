@@ -20,6 +20,11 @@ class ChatIn(BaseModel):
     messages: list[Msg]
 
 
+class ActIn(BaseModel):
+    action: str
+    params: dict | None = None
+
+
 def _repo(ctx: TenantContext) -> CopilotRepository:
     return CopilotRepository(tenant_id=ctx.tenant_id)
 
@@ -31,4 +36,11 @@ async def status(ctx: TenantContext = Depends(require("patients:read"))):
 
 @router.post("/chat")
 async def chat(body: ChatIn, ctx: TenantContext = Depends(require("patients:read"))):
-    return await _repo(ctx).chat(ctx.user_id, [m.model_dump() for m in body.messages])
+    return await _repo(ctx).chat(ctx.user_id, ctx.permissions, [m.model_dump() for m in body.messages])
+
+
+@router.post("/act")
+async def act(body: ActIn, ctx: TenantContext = Depends(require("patients:read"))):
+    """Execute a Level-3 action the user explicitly confirmed in the UI. The action's own
+    permission is re-checked inside the service (the chat only PROPOSES actions)."""
+    return await _repo(ctx).run_action(ctx.user_id, ctx.permissions, body.action, body.params)

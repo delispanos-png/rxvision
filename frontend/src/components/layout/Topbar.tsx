@@ -68,9 +68,9 @@ export function Topbar() {
   }
 
   return (
-    <header className="sticky top-0 z-10 flex h-16 items-center justify-end gap-2 border-b border-slate-200/70 bg-canvas/80 px-4 backdrop-blur dark:border-slate-800 dark:bg-slate-950/80 sm:px-6">
+    <header className="sticky top-0 z-10 flex h-16 items-center justify-end gap-1 border-b border-slate-200/70 bg-canvas/80 px-3 backdrop-blur dark:border-slate-800 dark:bg-slate-950/80 sm:gap-2 sm:px-6">
       {(data?.modules?.pharmacat === "enabled" || data?.modules?.pharmacat === "trial") && (
-        <div className="pointer-events-none absolute left-1/2 top-1/2 z-20 -translate-x-1/2 -translate-y-1/2">
+        <div className="pointer-events-none absolute left-1/2 top-1/2 z-20 hidden -translate-x-1/2 -translate-y-1/2 sm:block">
           <div className="pointer-events-auto"><PharmaCatLauncher /></div>
         </div>
       )}
@@ -135,7 +135,7 @@ export function Topbar() {
         {open && (
           <div
             role="menu"
-            className="rx-card absolute right-0 top-full mt-2 w-64 overflow-hidden p-0 shadow-lg"
+            className="rx-card absolute right-0 top-full mt-2 w-[min(16rem,calc(100vw-1.5rem))] overflow-hidden p-0 shadow-lg"
           >
             <div className="border-b border-slate-100 px-4 py-3">
               <div className="truncate text-sm font-bold text-slate-800">{name}</div>

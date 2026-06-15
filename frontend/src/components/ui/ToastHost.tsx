@@ -18,7 +18,7 @@ export function ToastHost() {
   if (!toasts.length) return null;
   return (
     <div
-      className="fixed right-4 top-4 z-[200] flex w-[calc(100%-2rem)] max-w-sm flex-col gap-2"
+      className="fixed inset-x-4 top-4 z-[200] ml-auto flex w-auto max-w-sm flex-col gap-2 sm:left-auto sm:right-4 sm:w-[calc(100%-2rem)]"
       role="status"
       aria-live="polite"
     >

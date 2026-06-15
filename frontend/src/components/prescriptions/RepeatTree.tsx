@@ -71,7 +71,7 @@ export function RepeatTree({ externalId }: { externalId: string }) {
                 <span className={`grid h-9 w-9 shrink-0 place-items-center rounded-lg text-xs font-bold ${r ? "bg-brand-600 text-white" : "bg-slate-100 text-slate-400 dark:bg-slate-800"}`}>{s.index + 1}/{tree.total}</span>
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2 text-sm font-medium text-slate-800 dark:text-slate-100">
-                    {r?.executed_at ? fmtDate(r.executed_at) : `${t("άνοιγμα", "opens")} ${s.opening ? fmtDate(s.opening) : "—"}`}
+                    {r?.executed_at ? fmtDate(r.executed_at) : `${t("έναρξη", "starts")} ${s.opening ? fmtDate(s.opening) : "—"}`}
                     <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${st.cls}`}>{t(st.label, STATE_LABEL_EN[s.state] ?? st.label)}</span>
                     {r && r.status !== "executed" && <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700">{t("μερική", "partial")}</span>}
                     {isCurrent && <span className="rounded bg-brand-600 px-1.5 py-0.5 text-[10px] font-semibold text-white">{t("τρέχουσα", "current")}</span>}

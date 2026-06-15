@@ -44,7 +44,7 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
 const inputCls =
   "w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none focus:border-brand-400 focus:ring-2 focus:ring-brand-100";
 
-// Επίσημα ΗΔΙΚΑ endpoints ανά περιβάλλον — επιλέγεις περιβάλλον, μπαίνει το URL μόνο του.
+// Επίσημα ΗΔΥΚΑ endpoints ανά περιβάλλον — επιλέγεις περιβάλλον, μπαίνει το URL μόνο του.
 const HDIKA_ENDPOINTS: Record<string, string> = {
   test: "https://testeps.e-prescription.gr/pharmapiv2",
   production: "https://eps.e-prescription.gr/pharmapiv2",
@@ -122,7 +122,7 @@ export default function IngestionSettingsPage() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["hdika-config"] }),
   });
   const discover = useMutation({
-    // αποθήκευση credentials πρώτα → μετά άντληση στοιχείων φαρμακείου από ΗΔΙΚΑ
+    // αποθήκευση credentials πρώτα → μετά άντληση στοιχείων φαρμακείου από ΗΔΥΚΑ
     mutationFn: async () => {
       await api("/ingestion/credentials/hdika", { method: "PUT", body: JSON.stringify(f) });
       return api<{ ok: boolean; discovered: Record<string, string> }>("/ingestion/hdika/discover", { method: "POST" });
@@ -166,7 +166,7 @@ export default function IngestionSettingsPage() {
     return (
       <PanelCard title={t("Διασύνδεση ΓΕΣΥ (Κύπρος)", "ΓΕΣΥ Connection (Cyprus)")}>
         <p className="text-sm text-slate-600">
-          {t("Για φαρμακεία Κύπρου η συλλογή γίνεται μέσω ", "For Cyprus pharmacies, collection is done via ")}<b>ΓΕΣΥ</b>{t(" (χειροκίνητο XML upload) και είναι προγραμματισμένη για το ", " (manual XML upload) and is scheduled for the ")}<b>{t("επόμενο στάδιο", "next stage")}</b>{t(". Η ΗΔΙΚΑ δεν ισχύει για Κύπρο.", ". ΗΔΙΚΑ does not apply to Cyprus.")}
+          {t("Για φαρμακεία Κύπρου η συλλογή γίνεται μέσω ", "For Cyprus pharmacies, collection is done via ")}<b>ΓΕΣΥ</b>{t(" (χειροκίνητο XML upload) και είναι προγραμματισμένη για το ", " (manual XML upload) and is scheduled for the ")}<b>{t("επόμενο στάδιο", "next stage")}</b>{t(". Η ΗΔΥΚΑ δεν ισχύει για Κύπρο.", ". ΗΔΥΚΑ does not apply to Cyprus.")}
         </p>
       </PanelCard>
     );
@@ -181,7 +181,7 @@ export default function IngestionSettingsPage() {
         </span>
         <div className="mr-auto">
           <div className="text-sm font-semibold text-slate-800">
-            {t("Διασύνδεση ΗΔΙΚΑ", "ΗΔΙΚΑ Connection")} {c?.configured ? t("— ενεργή", "— active") : t("— δεν έχει ρυθμιστεί", "— not configured")}
+            {t("Διασύνδεση ΗΔΥΚΑ", "ΗΔΥΚΑ Connection")} {c?.configured ? t("— ενεργή", "— active") : t("— δεν έχει ρυθμιστεί", "— not configured")}
           </div>
           <div className="text-xs text-slate-400">
             {c?.configured
@@ -318,10 +318,10 @@ export default function IngestionSettingsPage() {
           <span className="inline-flex items-center gap-1.5">
             {discover.error ? <XCircle className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4" />}
             {discover.error
-              ? t("Αποτυχία άντλησης. Ελέγξτε τα στοιχεία σύνδεσης ΗΔΙΚΑ.", "Fetch failed. Check your ΗΔΙΚΑ connection credentials.")
+              ? t("Αποτυχία άντλησης. Ελέγξτε τα στοιχεία σύνδεσης ΗΔΥΚΑ.", "Fetch failed. Check your ΗΔΥΚΑ connection credentials.")
               : t(
-                  `Αντλήθηκαν αυτόματα ${Object.keys(discover.data?.discovered ?? {}).length} στοιχεία φαρμακείου από την ΗΔΙΚΑ.`,
-                  `Automatically fetched ${Object.keys(discover.data?.discovered ?? {}).length} pharmacy details from ΗΔΙΚΑ.`
+                  `Αντλήθηκαν αυτόματα ${Object.keys(discover.data?.discovered ?? {}).length} στοιχεία φαρμακείου από την ΗΔΥΚΑ.`,
+                  `Automatically fetched ${Object.keys(discover.data?.discovered ?? {}).length} pharmacy details from ΗΔΥΚΑ.`
                 )}
           </span>
         </div>
@@ -330,7 +330,7 @@ export default function IngestionSettingsPage() {
       <form onSubmit={(e) => { e.preventDefault(); save.mutate(); }} className="space-y-4">
         <PanelCard title={t("Λογαριασμός e-Συνταγογράφησης", "e-Prescription account")}>
           <div className="grid gap-4 sm:grid-cols-2">
-            <Field label={t("Όνομα χρήστη ΗΔΙΚΑ", "ΗΔΙΚΑ username")}><input className={inputCls} value={f.username} onChange={(e) => set("username", e.target.value)} required /></Field>
+            <Field label={t("Όνομα χρήστη ΗΔΥΚΑ", "ΗΔΥΚΑ username")}><input className={inputCls} value={f.username} onChange={(e) => set("username", e.target.value)} required /></Field>
             <Field label={t("Κωδικός", "Password")} hint={c?.configured ? t("Αποθηκευμένο — κενό για να μην αλλάξει", "Saved — leave empty to keep unchanged") : undefined}>
               {c?.configured && (
                 <span className="mb-1 inline-flex items-center gap-1 text-xs font-medium text-emerald-600">
@@ -342,13 +342,13 @@ export default function IngestionSettingsPage() {
           </div>
         </PanelCard>
 
-        <PanelCard title={t("Στοιχεία φαρμακείου (ανακτώνται αυτόματα από ΗΔΙΚΑ)", "Pharmacy details (fetched automatically from ΗΔΙΚΑ)")}>
+        <PanelCard title={t("Στοιχεία φαρμακείου (ανακτώνται αυτόματα από ΗΔΥΚΑ)", "Pharmacy details (fetched automatically from ΗΔΥΚΑ)")}>
           <p className="mb-4 flex items-center gap-1.5 rounded-lg bg-emerald-50 px-3 py-2 text-xs text-emerald-700">
-            <Link2 className="h-3.5 w-3.5" /> {t("Δεν χρειάζεται να τα πληκτρολογήσετε — πατήστε «Σύνδεση & άντληση στοιχείων» και συμπληρώνονται από την ΗΔΙΚΑ (λιγότερα λάθη).", "No need to type them — click «Connect & fetch details» and they are filled in from ΗΔΙΚΑ (fewer errors).")}
+            <Link2 className="h-3.5 w-3.5" /> {t("Δεν χρειάζεται να τα πληκτρολογήσετε — πατήστε «Σύνδεση & άντληση στοιχείων» και συμπληρώνονται από την ΗΔΥΚΑ (λιγότερα λάθη).", "No need to type them — click «Connect & fetch details» and they are filled in from ΗΔΥΚΑ (fewer errors).")}
           </p>
           {(c?.pharmacy_name || c?.pharmacy_id) && (
             <div className="mb-4 rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-700">
-              <b>{c?.pharmacy_name ?? "—"}</b>{c?.pharmacy_id ? ` · ΗΔΙΚΑ ID: ${c.pharmacy_id}` : ""}
+              <b>{c?.pharmacy_name ?? "—"}</b>{c?.pharmacy_id ? ` · ΗΔΥΚΑ ID: ${c.pharmacy_id}` : ""}
             </div>
           )}
           <div className="grid gap-4 sm:grid-cols-3">
@@ -358,9 +358,9 @@ export default function IngestionSettingsPage() {
           </div>
         </PanelCard>
 
-        <PanelCard title={t("Παράμετροι API ΗΔΙΚΑ", "ΗΔΙΚΑ API parameters")}>
+        <PanelCard title={t("Παράμετροι API ΗΔΥΚΑ", "ΗΔΥΚΑ API parameters")}>
           <p className="mb-4 flex items-center gap-1.5 rounded-lg bg-brand-50 px-3 py-2 text-xs text-brand-700">
-            <Link2 className="h-3.5 w-3.5" /> {t("Το endpoint & τα integrator credentials δίνονται από την ΗΔΙΚΑ κατόπιν σύμβασης (pharm.api.support@idika.gr).", "The endpoint & integrator credentials are provided by ΗΔΙΚΑ after a contract (pharm.api.support@idika.gr).")}
+            <Link2 className="h-3.5 w-3.5" /> {t("Το endpoint & τα integrator credentials δίνονται από την ΗΔΥΚΑ κατόπιν σύμβασης (pharm.api.support@idika.gr).", "The endpoint & integrator credentials are provided by ΗΔΥΚΑ after a contract (pharm.api.support@idika.gr).")}
           </p>
           <div className="grid gap-4 sm:grid-cols-2">
             <Field label={t("Περιβάλλον", "Environment")}>

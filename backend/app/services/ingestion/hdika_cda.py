@@ -270,7 +270,17 @@ def parse_cda_full(text: str) -> dict:
                 lo = _first(rq, "low")
                 if lo is not None:
                     duration = f"{lo.get('value')} {lo.get('unit') or ''}".strip()
+        # dispensed pack count: <supply><quantity value="N"/> (first quantity with a numeric value)
+        qty = None
+        sp = _first(sup, "supply")
+        if sp is not None:
+            for q in _iter(sp, "quantity"):
+                v = _num(q.get("value"))
+                if v is not None:
+                    qty = int(v) if v == int(v) else v
+                    break
         out["lines"].append({
+            "quantity": qty or 1,
             "name": (name.text.strip() if name is not None and name.text
                      else (code.get("displayName") if code is not None else "Φάρμακο")),
             "eof_code": code.get("code") if code is not None else None,

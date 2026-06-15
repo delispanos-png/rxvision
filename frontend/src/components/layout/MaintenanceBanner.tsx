@@ -21,7 +21,7 @@ export function MaintenanceBanner() {
   const m = data?.maintenance;
   if (!m?.enabled || !m.message) return null;
   return (
-    <div className="bg-amber-500 px-6 py-2 text-center text-sm font-medium text-white">
+    <div className="bg-amber-500 px-3 py-2 text-center text-sm font-medium text-white sm:px-6">
       🛠 {m.message}
     </div>
   );

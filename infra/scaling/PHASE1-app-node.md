@@ -45,3 +45,16 @@ App nodes set `VAULT_ADDR=http://10.0.0.2:8200`.
 - App-node `api` runs `reap_orphan_jobs` on boot (deletes 'running' sync_jobs with heartbeat
   >15min). A live backfill has a fresh heartbeat → safe. Don't boot a node while a sync is mid-stall.
 - LB uses round-robin; app is stateless (shared DB + same secrets) so no sticky sessions needed.
+
+---
+
+## ⛔ Frontend deploys: build ONCE, distribute (incident 2026-06-13)
+
+NEVER run `docker compose -f docker-compose.app.yml build web` on the app node (SRV02).
+Two independent Next.js builds have different chunk hashes; Cloudflare round-robins across
+SRV01 + SRV02 origins → a browser gets index.html from one build and a 404 chunk from the
+other → app-wide blank "client-side exception".
+
+**Always deploy the web tier with:** `bash infra/scaling/deploy-web.sh`
+(builds on SRV01, ships the byte-identical image to SRV02, verifies BUILD_IDs match).
+Backend (`api`/`worker`) can still be built per-node — only the frontend has hashed chunks.

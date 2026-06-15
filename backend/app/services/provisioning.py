@@ -18,7 +18,10 @@ from app.services.rbac_seed import seed_rbac
 
 _ALL_MODULES = ["dashboard", "prescription_analytics", "doctor_analytics", "patient_analytics",
                 "icd10_analytics", "profitability", "future_prescriptions", "order_suggestions",
-                "monthly_closing", "ingestion", "pharmacyone", "pharmacat"]
+                "monthly_closing", "ingestion", "pharmacyone"]
+# Opt-in capabilities — NOT granted by default; the platform admin enables them per pharmacy
+# (tenant module override). Pharmacists without them don't see them at all.
+_OPT_IN_MODULES = ["pharmacat", "patient_portal"]
 # Noeton role → RxVision tenant role key
 _NOETON_ROLE_MAP = {"admin": "owner", "owner": "owner", "manager": "manager",
                     "pharmacist": "pharmacist", "user": "staff", "staff": "staff"}

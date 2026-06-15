@@ -19,15 +19,23 @@ class AuditMiddleware(BaseHTTPMiddleware):
         request.state.request_id = request_id
         response = await call_next(request)
 
-        if request.method in _AUDITED_METHODS and not request.url.path.endswith("/auth/login"):
+        if request.method in _AUDITED_METHODS:
             ctx = getattr(request.state, "tenant", None)
-            if ctx is not None:
-                await shared_db()["audit_logs"].insert_one({
-                    "tenant_id": ctx.tenant_id,
-                    "actor_user_id": ctx.user_id,
-                    "action": f"{request.method} {request.url.path}",
+            admin = getattr(request.state, "admin", None)
+            path = request.url.path
+            is_login = path.endswith("/auth/login")
+            # Tenant mutations (as before) + platform-admin actions + login attempts (incl.
+            # failures) — closes the forensic gaps on the highest-privilege surfaces.
+            if ctx is not None or admin is not None or is_login:
+                actor_kind = "tenant" if ctx else "platform_admin" if admin else "anonymous"
+                await shared_db()["audit_logs"].insert_one({  # tenant-ok: platform audit record
+                    "tenant_id": getattr(ctx, "tenant_id", None),
+                    "actor_user_id": getattr(ctx, "user_id", None) or getattr(admin, "admin_id", None),
+                    "actor_kind": actor_kind,
+                    "action": f"{request.method} {path}",
                     "request_id": request_id,
-                    "ip": request.client.host if request.client else None,
+                    "ip": (request.headers.get("cf-connecting-ip")
+                           or (request.client.host if request.client else None)),
                     "outcome": "success" if response.status_code < 400 else "error",
                     "status_code": response.status_code,
                     "at": datetime.now(tz=timezone.utc),

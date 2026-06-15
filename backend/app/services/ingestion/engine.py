@@ -139,7 +139,7 @@ class IngestionEngine:
             "status": ("partial" if any(not i.is_executed for i in ex.items) else "executed"),
             "has_unexecuted_substances": any(not i.is_executed for i in ex.items),
             "next_open_date": next_open, "hash": chash, "ingested_at": _now(),
-            "sync_job_id": job_id,
+            "sync_job_id": job_id, "details": ex.details or {},
         }
         res = await self.db["prescription_executions"].find_one_and_update(  # tenant-ok: nat_key carries tenant_id
             nat_key, {"$set": doc}, upsert=True, return_document=ReturnDocument.AFTER)
@@ -250,7 +250,8 @@ class IngestionEngine:
                          "wholesale_price": wholesale, "wholesale_source": wsource,
                          "margin": margin,
                          "amount_claimed": it.retail_price * it.quantity, "patient_share": 0,
-                         "is_executed": it.is_executed, "category": it.category})
+                         "is_executed": it.is_executed, "category": it.category,
+                         "details": it.details or {}})
         return docs, amount_total, wholesale_cost
 
     async def _post_process(self, ex, exec_id, patient_ref, amount_total, next_open,

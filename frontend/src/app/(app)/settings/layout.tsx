@@ -7,7 +7,7 @@ import { useT } from "@/store/prefStore";
 const TABS = [
   { href: "/settings/users", el: "Χρήστες & Ρόλοι", en: "Users & Roles" },
   { href: "/settings/modules", el: "Modules / Πλάνο", en: "Modules / Plan" },
-  { href: "/settings/ingestion", el: "Διασύνδεση ΗΔΙΚΑ", en: "ΗΔΙΚΑ Connection" },
+  { href: "/settings/ingestion", el: "Διασύνδεση ΗΔΥΚΑ", en: "ΗΔΥΚΑ Connection" },
   { href: "/settings/communications", el: "Επικοινωνία", en: "Communications" },
   { href: "/settings/billing", el: "Χρέωση", en: "Billing" },
   { href: "/settings/gdpr", el: "GDPR / Απόρρητο", en: "GDPR / Privacy" },

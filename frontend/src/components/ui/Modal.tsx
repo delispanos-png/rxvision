@@ -78,7 +78,7 @@ export function Modal({
         role="dialog"
         aria-modal="true"
         tabIndex={-1}
-        className={`max-h-[90vh] w-full ${SIZES[size]} overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl outline-none dark:bg-slate-900`}
+        className={`max-h-[90vh] w-full ${SIZES[size]} overflow-y-auto rounded-2xl bg-white p-4 shadow-2xl outline-none dark:bg-slate-900 sm:p-6`}
         onMouseDown={(e) => e.stopPropagation()}
       >
         {title && <h3 className="mb-3 text-base font-bold text-slate-900 dark:text-slate-100">{title}</h3>}

@@ -101,6 +101,64 @@ class FuturePrescriptionRepository(BaseRepository):
         ]
         return await self.aggregate(pipeline)
 
+    async def daily_coverage(self, *, day_start: datetime, day_end: datetime,
+                             history_days: int = 90) -> dict:
+        """«Κάλυψη ημέρας» — για τις επαναλαμβανόμενες συνταγές που ΑΝΟΙΓΟΥΝ τη
+        συγκεκριμένη μέρα: ποσότητες ανά φάρμακο που πρέπει να έχουμε, + πόσοι σταθεροί
+        ασθενείς/συνταγές, + πραγματική ημερήσια κατανάλωση & εκτ. κόστος. Το βλέπεις
+        από την προηγούμενη μέρα για να προλάβεις να παραγγείλεις."""
+        base = {"status": "pending",
+                "expected_open_date": {"$gte": day_start, "$lt": day_end}}
+        summary = await self.aggregate([
+            {"$match": base},
+            {"$group": {"_id": None, "prescriptions": {"$sum": 1},
+                        "patients": {"$addToSet": "$patient_ref"}}},
+            {"$project": {"_id": 0, "prescriptions": 1, "n_patients": {"$size": "$patients"}}},
+        ])
+        products = await self.aggregate([
+            {"$match": base},
+            {"$unwind": "$products"},
+            {"$group": {"_id": "$products.product_id",
+                        "needed_qty": {"$sum": "$products.expected_qty"},
+                        "prescriptions": {"$sum": 1},
+                        "patients": {"$addToSet": "$patient_ref"}}},
+            {"$set": {"n_patients": {"$size": "$patients"}}},
+            {"$sort": {"needed_qty": -1}},
+            {"$lookup": {"from": "products", "localField": "_id",
+                         "foreignField": "_id", "as": "p"}},
+            {"$set": {"product_name": {"$first": "$p.name"},
+                      "substance": {"$first": "$p.substance"},
+                      "category": {"$first": "$p.category"}}},
+            {"$project": {"_id": 0, "product_id": "$_id", "needed_qty": 1,
+                          "prescriptions": 1, "n_patients": 1,
+                          "product_name": 1, "substance": 1, "category": 1}},
+        ])
+        # trailing-window real daily consumption + unit wholesale cost (for ordering)
+        items = BaseRepository(tenant_id=self.tenant_id)
+        items.collection_name = "prescription_items"
+        hist_start = day_start - timedelta(days=history_days)
+        hist = await items.aggregate([
+            {"$match": {"executed_at": {"$gte": hist_start}, "is_executed": True}},
+            {"$group": {"_id": "$product_id", "units": {"$sum": "$quantity"},
+                        "cost": {"$sum": "$wholesale_price"}}},
+        ])
+        hmap = {h["_id"]: h for h in hist}
+        out = []
+        for d in products:
+            h = hmap.get(d["product_id"], {})
+            units, cost = h.get("units") or 0, h.get("cost") or 0
+            unit_cost = (cost / units) if units else 0
+            sub = d.get("substance")
+            out.append({**d,
+                        "substance": None if sub in (None, "None", "") else sub,
+                        "avg_daily": round(units / history_days, 2),
+                        "est_cost": int(round((d.get("needed_qty") or 0) * unit_cost))})
+        s = summary[0] if summary else {"prescriptions": 0, "n_patients": 0}
+        return {"summary": {**s, "products": len(out),
+                            "total_units": sum(i["needed_qty"] for i in out),
+                            "est_cost": sum(i["est_cost"] for i in out)},
+                "items": out}
+
     async def order_suggestions(self, *, today: datetime, lead_horizon: datetime,
                                 safety_stock_pct: float = 15.0,
                                 history_days: int = 90) -> list[dict]:

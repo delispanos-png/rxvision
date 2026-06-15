@@ -36,9 +36,17 @@ class Settings(BaseSettings):
     # Separate signing key for platform-admin tokens — cryptographic domain separation
     # from tenant tokens (a tenant token can never be replayed as a platform one). (H1)
     JWT_PLATFORM_SECRET: str = "change-me-dev-only-platform"
+    # 3rd identity: patient-portal customers — own signing key, isolated from tenant/admin.
+    JWT_PATIENT_SECRET: str = "change-me-dev-only-patient"
     JWT_ALG: str = "HS256"
     ACCESS_TOKEN_TTL_SECONDS: int = 900
     REFRESH_TOKEN_TTL_SECONDS: int = 60 * 60 * 24 * 30
+
+    # Web Push (VAPID) — patient portal phone notifications. Public key is exposed to the
+    # browser; private key (base64 of its PEM) signs the push. Empty ⇒ push disabled (no-op).
+    VAPID_PUBLIC_KEY: str = ""
+    VAPID_PRIVATE_KEY_B64: str = ""
+    VAPID_SUBJECT: str = "mailto:admin@rxvision.gr"
 
     # In prod read from Vault, never from env files.
     ANONYMIZATION_GLOBAL_PEPPER: str = "change-me-dev-only"
@@ -69,6 +77,7 @@ class Settings(BaseSettings):
             for name, value in (
                 ("JWT_SECRET", self.JWT_SECRET),
                 ("JWT_PLATFORM_SECRET", self.JWT_PLATFORM_SECRET),
+                ("JWT_PATIENT_SECRET", self.JWT_PATIENT_SECRET),
                 ("ANONYMIZATION_GLOBAL_PEPPER", self.ANONYMIZATION_GLOBAL_PEPPER),
             )
             if _DEV_DEFAULT_SECRET in value or not value.strip()

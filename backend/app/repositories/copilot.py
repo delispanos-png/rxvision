@@ -6,7 +6,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from app.repositories.base import BaseRepository, jsonsafe
-from app.repositories.pharmacat import DAILY_LIMIT, _sig  # shared cache key + daily cap
+from app.repositories.pharmacat import DAILY_LIMIT  # shared daily cap
 from app.services import copilot_service
 
 
@@ -22,25 +22,23 @@ class CopilotRepository(BaseRepository):
         return await self._coll.count_documents(
             {"tenant_id": self.tenant_id, "source": "llm", "at": {"$gte": day0}})
 
-    async def chat(self, user: str, messages: list[dict]) -> dict:
-        sig = _sig(messages, None)
-        kb = self._db["copilot_knowledge"]  # tenant-ok: shared app-guide KB (generic, no PII)
-        hit = await kb.find_one({"sig": sig})
-        if hit:
-            await kb.update_one({"sig": sig}, {"$inc": {"hits": 1}, "$set": {"last_at": _now()}})
-            res = dict(hit["result"]); res["ok"] = True; res["source"] = "cache"
-            await self._record(user, messages, source="cache")
-            return jsonsafe(res)
+    async def chat(self, user: str, perms: set[str], messages: list[dict]) -> dict:
+        # No caching: answers can carry live tenant data / action proposals → must be fresh.
         if await self._today_llm_count() >= DAILY_LIMIT:
             return {"ok": False, "error": "daily_limit", "limit": DAILY_LIMIT}
-        res = await copilot_service.ask(messages)
-        if not res.get("ok"):
-            return res
-        store = {k: v for k, v in res.items() if k != "ok"}
-        await kb.update_one({"sig": sig}, {"$set": {"sig": sig, "result": store, "last_at": _now()},
-                                           "$setOnInsert": {"created_at": _now(), "hits": 0}}, upsert=True)
-        res["source"] = "llm"
-        await self._record(user, messages, source="llm")
+        res = await copilot_service.ask(tenant_id=self.tenant_id, perms=perms, messages=messages)
+        if res.get("ok"):
+            await self._record(user, messages, source="llm")
+        return jsonsafe(res)
+
+    async def run_action(self, user: str, perms: set[str], action: str,
+                         params: dict | None = None) -> dict:
+        """Execute a confirmed Level-3 action (whitelisted in copilot_service)."""
+        res = await copilot_service.execute_action(
+            tenant_id=self.tenant_id, perms=perms, action=action, params=params)
+        await self._coll.insert_one({
+            "tenant_id": self.tenant_id, "user_id": user, "at": _now(),
+            "source": "action", "action": action, "ok": bool(res.get("ok"))})
         return jsonsafe(res)
 
     async def _record(self, user: str, messages: list[dict], *, source: str) -> None:

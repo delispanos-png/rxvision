@@ -82,7 +82,7 @@ export default function OrdersPage() {
           <p className="mt-1 text-sm text-slate-500">{t("Διάλεξε πόσων ημερών ανάγκες θες να καλύψεις — οι ποσότητες προσαρμόζονται αυτόματα.", "Choose how many days of needs to cover — quantities adjust automatically.")}</p>
         </div>
         <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:justify-end">
-          <div className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1.5 dark:border-slate-700 dark:bg-slate-900">
+          <div className="flex flex-wrap items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1.5 dark:border-slate-700 dark:bg-slate-900">
             <span className="mr-1 text-xs font-medium text-slate-500">{t("Κάλυψη:", "Coverage:")}</span>
             {[7, 14, 30, 60].map((d) => (
               <button key={d} type="button" onClick={() => setCoverage(d)}

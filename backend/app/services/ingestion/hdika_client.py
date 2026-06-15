@@ -36,7 +36,7 @@ from app.services.ingestion.canonical import (
     CanonicalItem,
     CanonicalPatient,
 )
-from app.services.ingestion.hdika_cda import parse_cda
+from app.services.ingestion.hdika_cda import parse_cda, parse_cda_full
 
 _PAGE_SIZE = 100                  # ΗΔΙΚΑ rejects size>~150 with HTTP 400; 100 is safe
 _MAX_BACKFILL_DAYS = 400          # cap day-by-day backfill (search is per-day)
@@ -199,7 +199,9 @@ class HdikaClient:
                 if self.throttle:
                     time.sleep(self.throttle)
                 if r.status_code == 200 and r.text.lstrip().startswith("<?xml"):
-                    return parse_cda(r.text)
+                    # rich parse → per-line execution/retail price + quantity + generic
+                    # (superset of parse_cda, so all existing keys are still present)
+                    return parse_cda_full(r.text)
                 if r.status_code in (429, 500, 502, 503, 504) and attempt < 2:
                     time.sleep(0.4 * (attempt + 1))
                     continue
@@ -335,25 +337,55 @@ class HdikaClient:
 
         cda_pat = cda.get("patient") or {}
         cda_doc = cda.get("doctor") or {}
-        meds = cda.get("medicines") or []
+        # rich per-line data (parse_cda_full): real EOF code, executed flag, per-line price (€),
+        # dispensed quantity. Falls back to the light "medicines" list if rich lines are absent.
+        meds = cda.get("lines") or cda.get("medicines") or []
         sex = (cda_pat.get("sex") or "U")
         sex = "M" if sex.startswith("M") else "F" if sex.startswith("F") else "U"
 
-        # one priced line per medicine (retail + wholesale from the Δελτίο Τιμών catalog)
+        # one priced line per medicine: price + quantity come from the CDA itself (authoritative);
+        # the Δελτίο Τιμών catalogue only fills the wholesale cost (and a retail fallback on a miss).
         items: list[CanonicalItem] = []
         for n, m in enumerate(meds):
-            eof = str(m.get("code") or "")
+            eof = str(m.get("eof_code") or m.get("code") or "")
             cat = self.catalog.get(eof) or {}
             qty = int(m.get("quantity") or 1)
+            # per-line retail (€→cents) STRICTLY from the CDA (authoritative for what ΗΔΥΚΑ billed):
+            # retail price → execution price → 0. We do NOT fall back to the catalogue here — a line
+            # with no CDA price (non-dispensed / non-reimbursed) must stay 0 so the line sum reconciles
+            # with the prescription's amount_total. (Catalogue is used only for wholesale cost below.)
+            price_eur = m.get("retail_price") or m.get("execution_price")
+            retail_cents = int(round(price_eur * 100)) if price_eur else 0
+            # Persist the FULL per-line ΗΔΥΚΑ/CDA detail so the page shows it without a live fetch
+            # and KPIs can be derived (generic mix, reference-price gaps, dosage, coupon type…).
+            mc = lambda x: _eur_cents(x) if x is not None else None  # noqa: E731 — €→cents, keep None
+            details = {
+                "eof_code": m.get("eof_code"),
+                "form": m.get("form"),
+                "execution_price": mc(m.get("execution_price")),
+                "retail_price": mc(m.get("retail_price")),
+                "reference_price": mc(m.get("reference_price")),
+                "patient_share": mc(m.get("patient_share")),
+                "difference": mc(m.get("difference")),
+                "participation_pct": m.get("participation_pct"),
+                "generic": m.get("generic"),
+                "substitution_allowed": m.get("substitution_allowed"),
+                "lot": m.get("lot"),
+                "dose": m.get("dose"), "frequency": m.get("frequency"), "duration": m.get("duration"),
+                "qr": m.get("qr"), "strip": m.get("strip"),
+                "qr_batch": m.get("qr_batch"), "qr_expiry": m.get("qr_expiry"),
+                "qr_product_code": m.get("qr_product_code"),
+            }
             items.append(CanonicalItem(
                 barcode=str(cat.get("barcode") or eof or f"{barcode}-{n}"),
                 name=cat.get("name") or m.get("name") or "Φάρμακο",
-                substance=cat.get("atc"),
+                substance=cat.get("atc") or m.get("atc"),
                 quantity=qty,
-                retail_price=int(cat.get("retail_cents") or 0),
+                retail_price=retail_cents,
                 wholesale_price=int(cat.get("wholesale_cents") or 0),
                 category="narcotic" if cat.get("narcotic") else "normal",
                 is_executed=bool(m.get("is_executed", True)),
+                details={k: v for k, v in details.items() if v is not None},
             ))
         if not items:                                   # CDA missing → prescription-level line
             items = [CanonicalItem(barcode=barcode or "rx", name="Συνταγή (ΗΔΙΚΑ)",
@@ -375,6 +407,17 @@ class HdikaClient:
 
         fund_name = _first(fund_d, "name") or cda_pat.get("fund_name") or "ΕΟΠΥΥ"
         fund_code = str(_first(fund_d, "shortName", "id", default="") or cda_pat.get("fund_code") or "EOPYY")
+        # prescription-level ΗΔΥΚΑ/CDA detail (issue/deadline, exemption/opinion, surcharge, totals)
+        _cd = cda.get("details") or {}
+        _mc = lambda x: _eur_cents(x) if x is not None else None  # noqa: E731
+        presc_details = {k: v for k, v in {
+            "issue_date": _cd.get("issue_date"), "deadline_date": _cd.get("deadline_date"),
+            "exemption": _cd.get("exemption"), "opinion": _cd.get("opinion"),
+            "fund_surcharge": _cd.get("fund_surcharge"),
+            "fund_surcharge_amount": _mc(_cd.get("fund_surcharge_amount")),
+            "patient_share_total": _mc(_cd.get("patient_share_total")),
+            "fund_share_total": _mc(_cd.get("fund_share_total")),
+        }.items() if v is not None}
         return CanonicalExecution(
             source="HDIKA",
             # barcode alone collapses repeats (same barcode, one row per monthly execution) →
@@ -399,6 +442,7 @@ class HdikaClient:
             valid_until=valid_until,
             valid_from=valid_from,
             repeat_root=repeat_root,
+            details=presc_details,
         )
 
     def _get_xml(self, path: str, params: dict) -> ET.Element:

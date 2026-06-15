@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-from app.core.security import decode_platform_token, decode_token
+from app.core.security import decode_patient_token, decode_platform_token, decode_token
 
 _bearer = HTTPBearer(auto_error=True)
 
@@ -29,7 +29,18 @@ class PlatformContext:
     email: str
 
 
+@dataclass
+class PatientContext:
+    """A pharmacy customer (patient portal). `tenant_id` = the active pharmacy, `patient_ref` =
+    that pharmacy's pseudonymised patient record. The API scopes STRICTLY to this patient's own data."""
+
+    account_id: str
+    tenant_id: str
+    patient_ref: str
+
+
 async def get_platform_admin(
+    request: Request,
     creds: HTTPAuthorizationCredentials = Depends(_bearer),
 ) -> PlatformContext:
     """Gate for the back-office: requires a platform-admin token (`padmin`), NOT a
@@ -40,7 +51,26 @@ async def get_platform_admin(
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid_token")
     if claims.get("scope") != "access" or not claims.get("padmin"):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "platform_admin_required")
-    return PlatformContext(admin_id=claims["sub"], email=claims.get("email", ""))
+    admin = PlatformContext(admin_id=claims["sub"], email=claims.get("email", ""))
+    request.state.admin = admin  # so AuditMiddleware can log platform-admin actions
+    return admin
+
+
+async def get_patient_context(
+    creds: HTTPAuthorizationCredentials = Depends(_bearer),
+) -> PatientContext:
+    """Gate for the patient portal: requires a PATIENT token (`pat`, audience rxvision/patient).
+    Tenant/admin tokens are rejected (separate key + audience)."""
+    try:
+        claims = decode_patient_token(creds.credentials)
+    except ValueError:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid_token")
+    if claims.get("scope") != "access" or not claims.get("pat"):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "patient_token_required")
+    tid, pref = claims.get("tid"), claims.get("pref")
+    if not tid or not pref:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "incomplete_patient_token")
+    return PatientContext(account_id=claims["sub"], tenant_id=tid, patient_ref=pref)
 
 
 async def get_current_context(

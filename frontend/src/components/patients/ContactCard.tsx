@@ -51,9 +51,9 @@ export function ContactCard({ patientId }: { patientId: string }) {
         {f.email && <a href={`mailto:${f.email}`} title="Email" aria-label="Email" className="rounded-lg border border-slate-200 p-1.5 text-amber-600 hover:bg-amber-50"><Mail className="h-4 w-4" /></a>}
       </div>
     }>
-      <p className="-mt-1 mb-3 text-xs text-slate-400">{t("Καταχωρείς εσύ", "You enter it")} — <b>{t("δεν επηρεάζονται", "not affected")}</b> {t("από συγχρονισμό ΗΔΙΚΑ.", "by ΗΔΙΚΑ sync.")}</p>
+      <p className="-mt-1 mb-3 text-xs text-slate-400">{t("Καταχωρείς εσύ", "You enter it")} — <b>{t("δεν επηρεάζονται", "not affected")}</b> {t("από συγχρονισμό ΗΔΥΚΑ.", "by ΗΔΥΚΑ sync.")}</p>
 
-      {/* lifecycle — pharmacist-controlled, survives ΗΔΙΚΑ re-ingest */}
+      {/* lifecycle — pharmacist-controlled, survives ΗΔΥΚΑ re-ingest */}
       <div className={`mb-3 rounded-lg border p-3 ${f.active === false ? "border-amber-200 bg-amber-50 dark:border-amber-800 dark:bg-amber-950/40" : "border-slate-200 dark:border-slate-700"}`}>
         <div className="flex items-center justify-between gap-2">
           <span className="text-sm font-medium text-slate-700 dark:text-slate-200">{t("Κατάσταση πελάτη", "Patient status")}</span>

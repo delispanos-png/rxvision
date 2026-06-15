@@ -62,8 +62,8 @@ export const HELP: Record<string, Help> = {
       { label: "Καρτέλα ασθενή", desc: "Ιστορικό, φάρμακα, αξία — και στοιχεία επικοινωνίας (τηλ/email/διεύθυνση).", label_en: "Patient card", desc_en: "History, medicines, value — and contact details (phone/email/address)." },
       { label: "Γραφήματα", desc: "Κλειστά by default — ανοίγουν με κλικ για περισσότερη οθόνη.", label_en: "Charts", desc_en: "Collapsed by default — expand with a click for more screen space." },
     ],
-    tips: ["Τα στοιχεία επικοινωνίας αποθηκεύονται ξεχωριστά — ΔΕΝ χάνονται σε συγχρονισμό ΗΔΙΚΑ."],
-    tips_en: ["Contact details are stored separately — they are NOT lost on a ΗΔΙΚΑ sync."],
+    tips: ["Τα στοιχεία επικοινωνίας αποθηκεύονται ξεχωριστά — ΔΕΝ χάνονται σε συγχρονισμό ΗΔΥΚΑ."],
+    tips_en: ["Contact details are stored separately — they are NOT lost on a ΗΔΥΚΑ sync."],
   },
   "/icd10": {
     title: "ICD-10 (Διαγνώσεις)",
@@ -163,10 +163,10 @@ export const HELP: Record<string, Help> = {
   "/settings": {
     title: "Ρυθμίσεις",
     title_en: "Settings",
-    intro: "Χρήστες & ρόλοι, διασύνδεση ΗΔΙΚΑ, επικοινωνία και συγχρονισμός.",
-    intro_en: "Users & roles, ΗΔΙΚΑ integration, communications and sync.",
+    intro: "Χρήστες & ρόλοι, διασύνδεση ΗΔΥΚΑ, επικοινωνία και συγχρονισμός.",
+    intro_en: "Users & roles, ΗΔΥΚΑ integration, communications and sync.",
     what: [
-      { label: "Συγχρονισμός (Ingestion)", desc: "Άντληση από ΗΔΙΚΑ + ιστορικό συγχρονισμών + πρόοδος (περίοδος/cursor).", label_en: "Sync (Ingestion)", desc_en: "Fetching from ΗΔΙΚΑ + sync history + progress (period/cursor)." },
+      { label: "Συγχρονισμός (Ingestion)", desc: "Άντληση από ΗΔΥΚΑ + ιστορικό συγχρονισμών + πρόοδος (περίοδος/cursor).", label_en: "Sync (Ingestion)", desc_en: "Fetching from ΗΔΥΚΑ + sync history + progress (period/cursor)." },
       { label: "Χρήστες/Ρόλοι", desc: "Ποιος βλέπει τι.", label_en: "Users/Roles", desc_en: "Who sees what." },
       { label: "Επικοινωνία", desc: "SMTP (email) & SMS (Apifon) του φαρμακείου.", label_en: "Communications", desc_en: "The pharmacy's SMTP (email) & SMS (Apifon)." },
     ],

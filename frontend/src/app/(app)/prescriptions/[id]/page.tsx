@@ -1,9 +1,8 @@
 "use client";
 
-import { useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowLeft, Repeat, Printer, FileText } from "lucide-react";
+import { ArrowLeft, Repeat, Printer } from "lucide-react";
 import { api } from "@/lib/apiClient";
 import { PanelCard } from "@/components/ui/Card";
 import { RepeatTree } from "@/components/prescriptions/RepeatTree";
@@ -11,11 +10,27 @@ import { useT } from "@/store/prefStore";
 
 type T = (el: string, en: string) => string;
 
+// Stored ΗΔΥΚΑ/CDA per-line detail (money in cents). Persisted at ingestion → no live fetch needed.
+type LineDetails = {
+  eof_code?: string | null; form?: string | null;
+  execution_price?: number | null; retail_price?: number | null; reference_price?: number | null;
+  patient_share?: number | null; difference?: number | null; participation_pct?: number | null;
+  generic?: boolean | null; substitution_allowed?: boolean | null; lot?: string | null;
+  dose?: string | null; frequency?: string | null; duration?: string | null;
+  qr?: boolean | null; strip?: string | null;
+};
+type PrescDetails = {
+  issue_date?: string | null; deadline_date?: string | null;
+  exemption?: boolean | null; opinion?: boolean | null; fund_surcharge?: boolean | null;
+  fund_surcharge_amount?: number | null; patient_share_total?: number | null; fund_share_total?: number | null;
+};
+
 type Item = {
   name: string | null; barcode: string | null; substance: string | null; category: string | null;
   atc?: string | null; narcotic?: boolean; high_cost?: boolean;
   quantity: number; retail_price: number; wholesale_price: number; margin: number;
   participation: number | null; patient_share: number; fund_share: number; is_executed: boolean;
+  details?: LineDetails | null;
 };
 
 const catBadge = (t: T): Record<string, { label: string; cls: string }> => ({
@@ -39,6 +54,7 @@ type Detail = {
   doctor: { name: string | null; specialty: string | null } | null;
   fund: { name: string | null; code: string | null } | null;
   patient: { sex: string | null; birth_year: number | null; area: string | null } | null;
+  details?: PrescDetails | null;
   items: Item[];
 };
 
@@ -62,6 +78,9 @@ const eur = (c: number) => new Intl.NumberFormat("el-GR", { style: "currency", c
 const eurR = (v: number | null) => (v == null ? "—" : new Intl.NumberFormat("el-GR", { style: "currency", currency: "EUR" }).format(v));
 const dt = (s: string) => new Date(s).toLocaleString("el-GR", { dateStyle: "medium", timeStyle: "short" });
 const sexLabel = (s: string | null, t: T) => (s === "M" ? t("Άνδρας", "Male") : s === "F" ? t("Γυναίκα", "Female") : "—");
+const yesNo = (v: boolean | null | undefined, t: T) => (v == null ? null : v ? t("Ναι", "Yes") : t("Όχι", "No"));
+const hasStoredHdyka = (d: Detail) =>
+  !!(d.details && Object.keys(d.details).length) || d.items.some((i) => i.details && Object.keys(i.details).length);
 
 export default function PrescriptionDetailPage() {
   const t = useT();
@@ -74,11 +93,12 @@ export default function PrescriptionDetailPage() {
     retry: false,
   });
 
-  const [loadIdika, setLoadIdika] = useState(false);
   const idika = useQuery({
     queryKey: ["rx-idika", id],
     queryFn: () => api<Idika>(`/prescriptions/idika/${encodeURIComponent(id)}`),
-    enabled: loadIdika,
+    // Auto-fetch live ONLY when the details aren't stored yet (pre re-download). Once stored,
+    // the section renders from the DB with no ΗΔΥΚΑ call.
+    enabled: !!data && !hasStoredHdyka(data),
     retry: false,
     staleTime: 5 * 60 * 1000,
   });
@@ -204,40 +224,70 @@ export default function PrescriptionDetailPage() {
         </div>
       </PanelCard>
 
-      {/* full portal-style detail, fetched live from ΗΔΙΚΑ on demand */}
-      <PanelCard title={t("Πλήρη στοιχεία ΗΔΙΚΑ", "Full ΗΔΙΚΑ details")}>
-        {!loadIdika ? (
-          <div className="flex flex-col items-start gap-2">
-            <p className="text-sm text-slate-500">{t("Φέρε ζωντανά από την ΗΔΙΚΑ όλες τις λεπτομέρειες της εκτέλεσης (ημερομηνίες, ταινία γνησιότητας, δοσολογία, τιμές αναφοράς, απαλλαγή/γνωμάτευση).", "Fetch live from ΗΔΙΚΑ all execution details (dates, authenticity strip, dosage, reference prices, exemption/opinion).")}</p>
-            <button onClick={() => setLoadIdika(true)} className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 print:hidden">
-              <FileText className="h-4 w-4" /> {t("Φόρτωση από ΗΔΙΚΑ", "Load from ΗΔΙΚΑ")}
-            </button>
+      {/* Full ΗΔΥΚΑ details — ALWAYS shown, from the stored data (no button). Falls back to a live
+          fetch only while a prescription's details aren't stored yet (i.e. before the re-download). */}
+      <PanelCard title={t("Πλήρη στοιχεία ΗΔΥΚΑ", "Full ΗΔΥΚΑ details")}>
+        {hasStoredHdyka(d) ? (
+          <div className="space-y-5">
+            <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm sm:grid-cols-3 lg:grid-cols-4">
+              <Field label={t("Ημ/νία έκδοσης", "Issue date")} value={d.details?.issue_date} />
+              <Field label={t("Προθεσμία εκτέλεσης", "Execution deadline")} value={d.details?.deadline_date} />
+              <Field label={t("Επιβάρυνση 1€", "€1 surcharge")} value={yesNo(d.details?.fund_surcharge, t)} />
+              <Field label={t("Απαλλαγή συμμετοχής", "Co-payment exemption")} value={yesNo(d.details?.exemption, t)} />
+              <Field label={t("Γνωμάτευση", "Opinion")} value={yesNo(d.details?.opinion, t)} />
+              <Field label={t("Συμμετοχή ασθενή (σύν.)", "Patient share (total)")} value={d.details?.patient_share_total != null ? eur(d.details.patient_share_total) : null} />
+              <Field label={t("Από ταμείο (σύν.)", "From fund (total)")} value={d.details?.fund_share_total != null ? eur(d.details.fund_share_total) : null} />
+            </div>
+            <div className="space-y-3">
+              {d.items.map((it, i) => {
+                const ln = it.details || {};
+                return (
+                  <div key={i} className={`rounded-xl border p-4 ${it.is_executed ? "border-slate-200" : "border-slate-300 bg-slate-100 dark:bg-slate-800/60"}`}>
+                    <div className="mb-2 flex flex-wrap items-center gap-2">
+                      <span className={`font-semibold ${it.is_executed ? "text-slate-800" : "text-slate-500"}`}>{it.name}</span>
+                      {it.atc && <span className="text-[10px] text-slate-400">{it.atc}</span>}
+                      <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${it.is_executed ? "bg-emerald-100 text-emerald-700" : "bg-slate-200 text-slate-600"}`}>{it.is_executed ? t("Εκτελέστηκε", "Executed") : t("Δεν εκτελέστηκε", "Not executed")}</span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 text-sm sm:grid-cols-3 lg:grid-cols-4">
+                      <Field label={t("Δραστική", "Active substance")} value={it.substance} />
+                      <Field label={t("Μορφή", "Form")} value={ln.form} />
+                      <Field label={t("Ποσότητα", "Quantity")} value={String(it.quantity)} />
+                      <Field label={t("Δοσολογία", "Dosage")} value={[ln.dose, ln.frequency && t(`ανά ${ln.frequency}`, `every ${ln.frequency}`), ln.duration && t(`για ${ln.duration}`, `for ${ln.duration}`)].filter(Boolean).join(" · ") || null} />
+                      <Field label={t("Ταινία γνησιότητας", "Authenticity strip")} value={ln.strip || ln.lot} />
+                      <Field label={t("Τιμή εκτέλεσης", "Execution price")} value={ln.execution_price != null ? eur(ln.execution_price) : null} />
+                      <Field label={t("Τιμή λιανικής", "Retail price")} value={ln.retail_price != null ? eur(ln.retail_price) : null} />
+                      <Field label={t("Τιμή αναφοράς", "Reference price")} value={ln.reference_price != null ? eur(ln.reference_price) : null} />
+                      <Field label={t("Συμμετοχή %", "Co-payment %")} value={ln.participation_pct != null ? `${ln.participation_pct}%` : null} />
+                      <Field label={t("Διαφορά", "Difference")} value={ln.difference != null ? eur(ln.difference) : null} />
+                      <Field label={t("Τύπος κουπονιού", "Coupon type")} value={ln.qr ? "QR" : ln.strip ? t("Ταινία", "Strip") : null} />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           </div>
         ) : idika.isLoading ? (
-          <div className="py-6 text-center text-sm text-slate-400">{t("Άντληση από ΗΔΙΚΑ…", "Fetching from ΗΔΙΚΑ…")}</div>
+          <div className="py-6 text-center text-sm text-slate-400">{t("Άντληση από ΗΔΥΚΑ…", "Fetching from ΗΔΥΚΑ…")}</div>
         ) : idika.isError || !idika.data ? (
-          <div className="py-4 text-sm text-rose-600">{t("Αποτυχία άντλησης από ΗΔΙΚΑ.", "Failed to fetch from ΗΔΙΚΑ.")} <button onClick={() => idika.refetch()} className="underline">{t("Δοκίμασε ξανά", "Try again")}</button></div>
+          <div className="py-4 text-sm text-rose-600">{t("Αποτυχία άντλησης από ΗΔΥΚΑ.", "Failed to fetch from ΗΔΥΚΑ.")} <button onClick={() => idika.refetch()} className="underline">{t("Δοκίμασε ξανά", "Try again")}</button></div>
         ) : (
           <div className="space-y-5">
-            {/* general */}
             <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm sm:grid-cols-3 lg:grid-cols-4">
               <Field label={t("Ημ/νία έκδοσης", "Issue date")} value={idika.data.details.issue_date} />
               <Field label={t("Προθεσμία εκτέλεσης", "Execution deadline")} value={idika.data.details.deadline_date} />
-              <Field label={t("Επιβάρυνση 1€", "€1 surcharge")} value={idika.data.details.fund_surcharge ? t("Ναι", "Yes") : t("Όχι", "No")} />
-              <Field label={t("Απαλλαγή συμμετοχής", "Co-payment exemption")} value={idika.data.details.exemption ? t("Ναι", "Yes") : t("Όχι", "No")} />
-              <Field label={t("Γνωμάτευση", "Opinion")} value={idika.data.details.opinion ? t("Ναι", "Yes") : t("Όχι", "No")} />
+              <Field label={t("Επιβάρυνση 1€", "€1 surcharge")} value={yesNo(idika.data.details.fund_surcharge, t)} />
+              <Field label={t("Απαλλαγή συμμετοχής", "Co-payment exemption")} value={yesNo(idika.data.details.exemption, t)} />
+              <Field label={t("Γνωμάτευση", "Opinion")} value={yesNo(idika.data.details.opinion, t)} />
               <Field label={t("Συμμετοχή ασθενή (σύν.)", "Patient share (total)")} value={eurR(idika.data.details.patient_share_total)} />
               <Field label={t("Από ταμείο (σύν.)", "From fund (total)")} value={eurR(idika.data.details.fund_share_total)} />
             </div>
-            {/* per-line */}
             <div className="space-y-3">
               {idika.data.lines.map((ln, i) => (
-                <div key={i} className="rounded-xl border border-slate-200 p-4">
+                <div key={i} className={`rounded-xl border p-4 ${ln.is_executed ? "border-slate-200" : "border-slate-300 bg-slate-100 dark:bg-slate-800/60"}`}>
                   <div className="mb-2 flex flex-wrap items-center gap-2">
-                    <span className="font-semibold text-slate-800">{ln.name}</span>
+                    <span className={`font-semibold ${ln.is_executed ? "text-slate-800" : "text-slate-500"}`}>{ln.name}</span>
                     {ln.atc && <span className="text-[10px] text-slate-400">{ln.atc}</span>}
-                    <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${ln.is_executed ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>{ln.is_executed ? t("Εκτελέστηκε", "Executed") : t("Δεν εκτελέστηκε", "Not executed")}</span>
-                    {ln.generic && <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-medium text-sky-700">{t("Γενόσημο", "Generic")}</span>}
+                    <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${ln.is_executed ? "bg-emerald-100 text-emerald-700" : "bg-slate-200 text-slate-600"}`}>{ln.is_executed ? t("Εκτελέστηκε", "Executed") : t("Δεν εκτελέστηκε", "Not executed")}</span>
                   </div>
                   <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 text-sm sm:grid-cols-3 lg:grid-cols-4">
                     <Field label={t("Δραστική", "Active substance")} value={ln.substance} />

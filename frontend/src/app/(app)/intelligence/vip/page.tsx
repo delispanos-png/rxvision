@@ -30,7 +30,7 @@ export default function VipPage() {
 
   return (
     <div className="space-y-5">
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
         {(data?.tiers ?? []).map((tr) => (
           <div key={tr.tier} className={`rounded-2xl bg-gradient-to-br ${TIER_BG[tr.tier]} p-4 text-white shadow`}>
             <div className="flex items-center gap-1.5 text-xs font-semibold uppercase opacity-90"><Crown className="h-3.5 w-3.5" /> {tr.label}</div>

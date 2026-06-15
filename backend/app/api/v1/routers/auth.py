@@ -6,7 +6,9 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, EmailStr, Field
 
 from app.core.deps import TenantContext, get_current_context
-from app.core.ratelimit import rate_limit
+from app.core.ratelimit import (
+    account_locked, clear_login_failures, rate_limit, record_login_failure,
+)
 from app.services.account_service import AccountError, AccountService
 from app.services.auth_service import AuthService
 
@@ -51,12 +53,20 @@ class ResetPasswordIn(BaseModel):
 @router.post("/login", response_model=TokenOut,
              dependencies=[Depends(rate_limit("auth_login", limit=10, window_seconds=300))])
 async def login(body: LoginIn):
+    locked = await account_locked(body.email)
+    if locked:
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            detail={"error": "account_locked", "retry_after": locked},
+            headers={"Retry-After": str(locked)})
     result = await AuthService().login(body.email, body.password, body.mfa_code)
     if result is None:
+        await record_login_failure(body.email)  # count only true credential failures
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid_credentials")
     if result.get("mfa_required"):
         # Password OK but a valid TOTP code is required — client should prompt for it.
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail={"error": "mfa_required"})
+    await clear_login_failures(body.email)
     return result
 
 

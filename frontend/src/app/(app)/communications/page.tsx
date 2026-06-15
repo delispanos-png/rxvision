@@ -85,7 +85,7 @@ export default function CommunicationsPage() {
               <select value={segment} onChange={(e) => { setSegment(e.target.value); setValue(""); }} className={inp}>
                 {SEGMENTS.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
               </select>
-              {seg.needs && <input value={value} onChange={(e) => setValue(e.target.value)} placeholder={seg.ph} className={`${inp} w-72`} />}
+              {seg.needs && <input value={value} onChange={(e) => setValue(e.target.value)} placeholder={seg.ph} className={`${inp} w-full sm:w-72`} />}
               <span className="ml-auto inline-flex items-center gap-1.5 rounded-lg bg-white px-3 py-2 text-sm"><Users className="h-4 w-4 text-brand-600" /> {t("Παραλήπτες:", "Recipients:")} <b className="text-slate-900">{audience.isFetching ? "…" : audience.data?.count ?? 0}</b></span>
             </div>
           </div>

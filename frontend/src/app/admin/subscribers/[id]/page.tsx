@@ -14,9 +14,25 @@ type User = { external_user_id: string; email: string; first_name: string; last_
 type Detail = {
   tenant: { id: string; name: string; status: string; country: string; opened_via: string; external_ref: string; created_at: string; contact_email?: string; contact_phone?: string; company?: { name?: string; legal_name?: string; tax_id?: string; tax_office?: string; address?: string; city?: string; postal_code?: string }; store?: { name?: string; code?: string } };
   subscription: { plan: string; plan_name: string; status: string; product_code: string; features: Record<string, unknown>; limits: Record<string, unknown>; billing_cycle: string; seats: number; mrr: number; trial_ends_at: string | null; current_period_end: string | null; source: string };
+  modules?: Record<string, "enabled" | "trial" | "locked">;
   users: User[];
   sync: { source: string; status: string; started_at: string; stats: Record<string, number> }[];
 };
+
+const MODULE_LABELS: [string, string][] = [
+  ["dashboard", "Πίνακας Ελέγχου"],
+  ["prescription_analytics", "Συνταγές"],
+  ["doctor_analytics", "Ιατροί"],
+  ["patient_analytics", "Ασθενείς / Patient Intelligence"],
+  ["icd10_analytics", "ICD-10"],
+  ["profitability", "Κερδοφορία"],
+  ["future_prescriptions", "Μελλοντικές συνταγές"],
+  ["order_suggestions", "Σύμβουλος Παραγγελιών"],
+  ["monthly_closing", "Αποζημίωση / Κλείσιμο"],
+  ["pharmacyone", "PharmacyOne"],
+  ["pharmacat", "🤖 PharmaCat (κλινικός βοηθός)"],
+  ["patient_portal", "👥 Πύλη Πελατών (ραντεβού/διαθεσιμότητα)"],
+];
 type Creds = {
   users: User[];
   hdika: { configured: boolean; username: string | null; pharmacy_id: string | null; pharmacy_name: string | null; environment: string | null; base_url: string | null; has_password: boolean; has_api_key: boolean };
@@ -122,6 +138,25 @@ export default function TenantCardPage() {
         </div>
       </div>
 
+      {/* Δυνατότητες / Modules — enable per pharmacist; locked ⇒ hidden from their panel */}
+      <div className="mb-6 rounded-xl border border-slate-200 bg-white p-6">
+        <div className="mb-1 text-sm font-semibold text-slate-700">Δυνατότητες (ανά φαρμακείο)</div>
+        <p className="mb-3 text-xs text-slate-400">Ό,τι είναι κλειστό δεν εμφανίζεται καθόλου στο πάνελ του φαρμακοποιού. Οι αλλαγές ισχύουν μετά την επόμενη σύνδεσή του.</p>
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+          {MODULE_LABELS.map(([key, label]) => {
+            const on = data.modules?.[key] === "enabled" || data.modules?.[key] === "trial";
+            return (
+              <label key={key} className="flex cursor-pointer items-center justify-between rounded-lg border border-slate-200 px-3 py-2 text-sm hover:bg-slate-50">
+                <span className="text-slate-700">{label}</span>
+                <input type="checkbox" checked={on} disabled={busy}
+                  onChange={(e) => { const v = e.target.checked; act(() => adminApi(`/admin/tenants/${encodeURIComponent(id)}/modules`, { method: "PUT", body: JSON.stringify({ modules: { [key]: v ? "enabled" : "locked" } }) }), v ? "Ενεργοποιήθηκε ✓" : "Απενεργοποιήθηκε ✓"); }}
+                  className="h-4 w-4 accent-indigo-600" />
+              </label>
+            );
+          })}
+        </div>
+      </div>
+
       {/* Στοιχεία Τιμολόγησης */}
       {t.company && t.company.tax_id && (
         <div className="mb-6 rounded-xl border border-slate-200 bg-white p-6">
@@ -193,7 +228,7 @@ export default function TenantCardPage() {
             )}
           </div>
           <div className="rounded-lg border border-slate-200 p-3 text-sm">
-            <div className="mb-1 font-medium text-slate-700">Διασύνδεση ΗΔΙΚΑ</div>
+            <div className="mb-1 font-medium text-slate-700">Διασύνδεση ΗΔΥΚΑ</div>
             {creds.data?.hdika?.configured ? (
               <div className="space-y-0.5 text-slate-600">
                 <div>Χρήστης: <code className="text-xs">{creds.data.hdika.username ?? "—"}</code></div>

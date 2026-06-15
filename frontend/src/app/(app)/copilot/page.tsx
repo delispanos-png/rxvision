@@ -3,21 +3,23 @@
 import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
-import { Sparkles, Send, Loader2, ArrowUpRight, Compass, Mic } from "lucide-react";
+import { Sparkles, Send, Loader2, ArrowUpRight, Compass, Mic, Zap } from "lucide-react";
 import { api } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
 
-type Link = { label: string; href: string };
-type Result = { ok: boolean; error?: string; limit?: number; source?: string; reply: string; links: Link[] };
+type Action =
+  | { type: "navigate"; href: string; label: string }
+  | { type: "action"; action: string; label: string; summary: string; params?: Record<string, unknown> };
+type Result = { ok: boolean; error?: string; limit?: number; reply: string; actions?: Action[] };
 type Turn = { role: "user" | "assistant"; content: string; result?: Result };
 type Status = { configured: boolean; enabled: boolean; model: string; today_used: number; daily_limit: number };
 
 const QUICK = [
+  ["Πόσος τζίρος & κέρδος τον τελευταίο μήνα;", "Revenue & profit last month?"],
+  ["Ποιοι είναι οι top 5 ιατροί;", "Who are the top 5 doctors?"],
+  ["Έχω εκκρεμή αιτήματα πελατών;", "Any pending customer requests?"],
+  ["Ξεκίνα συγχρονισμό ΗΔΙΚΑ", "Start ΗΔΙΚΑ sync"],
   ["Πώς κάνω κλείσιμο μήνα;", "How do I do the monthly closing?"],
-  ["Πού βλέπω ανεκτέλεστες συνταγές;", "Where do I see unexecuted prescriptions?"],
-  ["Πώς στέλνω recall σε ασθενείς;", "How do I send patient recall?"],
-  ["Πώς ελέγχω αποζημίωση ΕΟΠΥΥ;", "How do I audit ΕΟΠΥΥ reimbursement?"],
-  ["Πώς προσθέτω χρήστη;", "How do I add a user?"],
 ] as const;
 
 export default function CopilotPage() {
@@ -72,6 +74,20 @@ export default function CopilotPage() {
     setBusy(false);
   }
 
+  async function runAction(a: Extract<Action, { type: "action" }>) {
+    if (busy) return;
+    if (!window.confirm(`${a.summary}\n\nΝα συνεχίσω;`)) return;
+    setBusy(true);
+    try {
+      const r = await api<{ ok: boolean; reply?: string; error?: string }>("/copilot/act", { method: "POST", body: JSON.stringify({ action: a.action, params: a.params ?? {} }) });
+      const reply = r.reply || (r.ok ? "Έγινε." : t("Η ενέργεια απέτυχε.", "The action failed."));
+      setTurns((s) => [...s, { role: "assistant", content: "", result: { ok: true, reply } }]);
+    } catch {
+      setTurns((s) => [...s, { role: "assistant", content: "", result: { ok: false, error: "network", reply: "" } }]);
+    }
+    setBusy(false);
+  }
+
   const notConfigured = status.data && !status.data.configured;
   const disabled = status.data && status.data.configured && !status.data.enabled;
   const blocked = notConfigured || disabled;
@@ -82,7 +98,7 @@ export default function CopilotPage() {
         <span className="grid h-11 w-11 place-items-center rounded-2xl bg-gradient-to-br from-sky-500 to-blue-600 text-white shadow-lg"><Sparkles className="h-6 w-6" /></span>
         <div>
           <h1 className="text-lg font-bold text-slate-900 dark:text-slate-100">RxVision Copilot</h1>
-          <p className="text-xs text-slate-500">{t("Ρώτα με πώς να κάνεις οτιδήποτε στο πρόγραμμα — σε πάω κατευθείαν στη σωστή σελίδα.", "Ask me how to do anything in the app — I'll take you to the right screen.")}</p>
+          <p className="text-xs text-slate-500">{t("Ρώτα με πώς γίνεται κάτι, ζήτα δεδομένα (τζίρος, top ιατροί, εκκρεμότητες) ή ζήτα ενέργειες (π.χ. συγχρονισμός ΗΔΙΚΑ).", "Ask how to do something, ask for data (revenue, top doctors, pending), or ask for actions (e.g. ΗΔΙΚΑ sync).")}</p>
         </div>
       </div>
 
@@ -112,12 +128,13 @@ export default function CopilotPage() {
                 </div>
               ) : (
                 <>
-                  {turn.result?.source === "cache" && <div className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-600">⚡ {t("από τη βάση γνώσης", "from knowledge base")}</div>}
                   <div className="rounded-2xl rounded-tl-sm bg-slate-100 px-4 py-2.5 text-sm leading-relaxed text-slate-700 whitespace-pre-wrap dark:bg-slate-800 dark:text-slate-200">{turn.result?.reply}</div>
-                  {!!turn.result?.links?.length && (
+                  {!!turn.result?.actions?.length && (
                     <div className="flex flex-wrap gap-1.5">
-                      {turn.result.links.map((l, j) => (
-                        <button key={j} onClick={() => router.push(l.href)} className="inline-flex items-center gap-1 rounded-lg border border-sky-200 bg-sky-50 px-3 py-1.5 text-xs font-semibold text-sky-700 hover:border-sky-400 hover:bg-sky-100 dark:border-sky-800 dark:bg-sky-950/40 dark:text-sky-300">{l.label} <ArrowUpRight className="h-3 w-3" /></button>
+                      {turn.result.actions.map((a, j) => a.type === "navigate" ? (
+                        <button key={j} onClick={() => router.push(a.href)} className="inline-flex items-center gap-1 rounded-lg border border-sky-200 bg-sky-50 px-3 py-1.5 text-xs font-semibold text-sky-700 hover:border-sky-400 hover:bg-sky-100 dark:border-sky-800 dark:bg-sky-950/40 dark:text-sky-300">{a.label} <ArrowUpRight className="h-3 w-3" /></button>
+                      ) : (
+                        <button key={j} onClick={() => runAction(a)} disabled={busy} className="inline-flex items-center gap-1 rounded-lg border border-amber-300 bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-700 hover:border-amber-400 hover:bg-amber-100 disabled:opacity-50 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-300"><Zap className="h-3 w-3" /> {a.label}</button>
                       ))}
                     </div>
                   )}
@@ -140,7 +157,7 @@ export default function CopilotPage() {
           )}
           <button onClick={() => send(input)} disabled={busy || blocked || !input.trim()} className="grid place-items-center rounded-xl bg-sky-600 px-4 text-white hover:bg-sky-700 disabled:opacity-40"><Send className="h-4 w-4" /></button>
         </div>
-        <p className="mt-1.5 text-center text-[10px] text-slate-400">{t("Οδηγός χρήσης του RxVision. Σύντομα θα απαντά και με δεδομένα σου.", "RxVision usage guide. Soon it will answer with your data too.")}</p>
+        <p className="mt-1.5 text-center text-[10px] text-slate-400">{t("Οδηγός + δεδομένα + ενέργειες. Οι ενέργειες εκτελούνται μόνο μετά από επιβεβαίωσή σου.", "Guide + data + actions. Actions run only after your confirmation.")}</p>
       </div>
     </div>
   );

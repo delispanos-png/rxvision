@@ -128,12 +128,12 @@ export default function PhysicalCheckPage() {
       {/* current day card */}
       <div className={`rounded-2xl border-2 p-5 ${dayDone ? "border-emerald-300 bg-emerald-50/50 dark:border-emerald-800 dark:bg-emerald-950/20" : "border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900"}`}>
         <div className="flex items-center justify-between">
-          <button onClick={() => setDayIdx((i) => Math.max(0, i - 1))} disabled={dayIdx === 0} className="grid h-8 w-8 place-items-center rounded-lg text-slate-400 hover:bg-slate-100 disabled:opacity-30 dark:hover:bg-slate-800"><ChevronLeft className="h-5 w-5" /></button>
+          <button onClick={() => setDayIdx((i) => Math.max(0, i - 1))} disabled={dayIdx === 0} className="grid h-11 w-11 shrink-0 place-items-center rounded-lg text-slate-400 hover:bg-slate-100 disabled:opacity-30 dark:hover:bg-slate-800 sm:h-8 sm:w-8"><ChevronLeft className="h-5 w-5" /></button>
           <div className="text-center">
             <div className="text-[11px] font-medium uppercase tracking-wide text-slate-400">{t("Ημέρα", "Day")} {dayIdx + 1}/{byDay.length}</div>
             <div className="text-lg font-bold capitalize text-slate-900 dark:text-slate-100">{cur ? fmtDay(cur.date) : "—"}</div>
           </div>
-          <button onClick={nextDay} disabled={dayIdx >= byDay.length - 1} className="grid h-8 w-8 place-items-center rounded-lg text-slate-400 hover:bg-slate-100 disabled:opacity-30 dark:hover:bg-slate-800"><ChevronRight className="h-5 w-5" /></button>
+          <button onClick={nextDay} disabled={dayIdx >= byDay.length - 1} className="grid h-11 w-11 shrink-0 place-items-center rounded-lg text-slate-400 hover:bg-slate-100 disabled:opacity-30 dark:hover:bg-slate-800 sm:h-8 sm:w-8"><ChevronRight className="h-5 w-5" /></button>
         </div>
 
         {/* day progress */}

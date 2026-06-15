@@ -21,7 +21,7 @@ from app.core.deps import PlatformContext, get_platform_admin
 from app.core.security import hash_password
 from app.repositories.base import jsonsafe
 from app.services import email_template, mailer
-from app.services.auth_service import AuthService
+from app.services.auth_service import AuthService, resolve_modules
 from app.services.provisioning import ProvisioningError, TenantProvisioningService
 from app.services.vault_service import vault
 
@@ -474,6 +474,7 @@ async def tenant_detail(tenant_id: str, _: PlatformContext = Depends(get_platfor
                    "external_ref": t.get("external_ref"), "created_at": t.get("created_at"),
                    "contact_email": t.get("contact_email"), "contact_phone": t.get("contact_phone"),
                    "company": t.get("company"), "store": t.get("store")},
+        "modules": resolve_modules(set(sub.get("modules_included", [])), t.get("modules") or {}),
         "subscription": {
             "plan": sub.get("plan"), "plan_name": sub.get("plan_name"),
             "status": sub.get("status"), "product_code": sub.get("product_code"),
@@ -501,6 +502,27 @@ async def edit_tenant(tenant_id: str, body: TenantEditIn,
     if not res.matched_count:
         raise HTTPException(http_status.HTTP_404_NOT_FOUND, "not_found")
     return {"id": tenant_id, "updated": True}
+
+
+class ModulesIn(BaseModel):
+    modules: dict[str, str]   # {module_key: "enabled" | "trial" | "locked"}
+
+
+@router.put("/tenants/{tenant_id}/modules")
+async def set_tenant_modules(tenant_id: str, body: ModulesIn,
+                             _: PlatformContext = Depends(get_platform_admin)):
+    """Enable/lock individual capabilities (pharmacat, patient_portal, …) for ONE pharmacy.
+    Stored as a per-tenant override; takes effect on the tenant's next login/token refresh."""
+    db = shared_db()
+    allowed = {"enabled", "trial", "locked"}
+    sets = {f"modules.{k}": v for k, v in body.modules.items() if v in allowed}
+    if sets:
+        res = await db["tenants"].update_one(  # tenant-ok: platform admin, explicit _id
+            {"_id": tenant_id}, {"$set": {**sets, "updated_at": datetime.now(tz=timezone.utc)}})
+        if not res.matched_count:
+            raise HTTPException(http_status.HTTP_404_NOT_FOUND, "not_found")
+    t = await db["tenants"].find_one({"_id": tenant_id}, {"modules": 1})
+    return {"modules": (t or {}).get("modules") or {}}
 
 
 @router.post("/tenants/{tenant_id}/cancel")

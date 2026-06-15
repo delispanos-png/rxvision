@@ -8,7 +8,8 @@ live in `platform_settings._id='aade'` (entered in admin, like the cloud tokens)
 from __future__ import annotations
 
 import html
-from xml.etree import ElementTree as ET
+
+import defusedxml.ElementTree as ET  # XXE/billion-laughs-safe drop-in for ElementTree
 
 import httpx
 
