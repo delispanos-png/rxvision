@@ -225,6 +225,7 @@ class PrescriptionRepository(BaseRepository):
             {"$project": {"_id": 0, "external_id": 1, "executed_at": 1, "source": 1,
                           "icd10": 1, "amount_total": 1, "amount_claimed": 1,
                           "status": 1, "has_unexecuted_substances": 1,
+                          "chronic": {"$ifNull": ["$details.chronic", False]},
                           "patient_name": 1, "amka": 1, "fund_name": 1}},
         ]
         return await self.aggregate(pipeline)

@@ -37,6 +37,7 @@ type Prescription = {
   amka?: string | null;
   fund_name?: string | null;
   status?: string | null;
+  chronic?: boolean | null;
 };
 
 const statusEl = (t: T): Record<string, string> => ({ executed: t("Εκτελεσμένη", "Executed"), partial: t("Μερικώς", "Partial"), cancelled: t("Ακυρωμένη", "Cancelled") });
@@ -109,7 +110,12 @@ const makeColumns = (t: T): Column<Prescription>[] => {
   return [
   { key: "executed_at", header: t("Ημ/νία", "Date"), render: (r) => fmtDate(r.executed_at) },
   { key: "external_id", header: t("Κωδικός", "Code") },
-  { key: "patient_name", header: t("Ασθενής", "Patient"), sortable: false, render: (r) => r.patient_name || "—" },
+  { key: "patient_name", header: t("Ασθενής", "Patient"), sortable: false, render: (r) => (
+    <span className="flex flex-wrap items-center gap-1.5">
+      {r.patient_name || "—"}
+      {r.chronic ? <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700" title={t("Χρόνια αγωγή", "Chronic therapy")}>χρόνια</span> : null}
+    </span>
+  ) },
   { key: "amka", header: "ΑΜΚΑ", hideOnMobile: true, sortable: false, render: (r) => r.amka ? (
     <span className="inline-flex items-center gap-1 font-mono tabular-nums">{r.amka}<CopyButton value={r.amka} /></span>
   ) : "—" },
