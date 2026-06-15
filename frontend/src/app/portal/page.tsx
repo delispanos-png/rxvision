@@ -16,6 +16,8 @@ type Pharmacy = { tenant_id: string; pharmacy_name: string };
 type Me = { profile: { first_name: string; last_name: string }; active_tenant: string | null; pharmacies: Pharmacy[] };
 type Summary = { rx_count: number; paid_cents: number; total_cents: number; covered_cents: number; doctors: number; medicines: number; repeats_active: number; next_open_date?: string | null; first_at?: string | null; last_at?: string | null };
 type Rx = { barcode: string; executed_at: string; status?: string; patient_share?: number; repeat_current?: number; repeat_total?: number; next_open_date?: string | null; medicines: string[]; pending?: string[]; partial?: boolean; doctor?: string | null; specialty?: string | null };
+type RepeatMed = { name: string; dosage?: string | null };
+type Repeat = Omit<Rx, "medicines"> & { medicines: RepeatMed[] };
 type RxItem = { name?: string | null; quantity?: number; retail_price?: number; is_executed?: boolean };
 type RxDetail = Rx & { amount_total?: number; icd10?: string[]; items: RxItem[] };
 type Notif = { id: string; type: string; title: string; body: string; when?: string | null };
@@ -45,7 +47,7 @@ export default function PortalHome() {
   const [noPharmacy, setNoPharmacy] = useState(false);
   const [tab, setTab] = useState<string>("rx");
   const [rx, setRx] = useState<Rx[]>([]);
-  const [repeats, setRepeats] = useState<Rx[]>([]);
+  const [repeats, setRepeats] = useState<Repeat[]>([]);
   const [avail, setAvail] = useState<Avail[]>([]);
   const [services, setServices] = useState<Service[]>([]);
   const [appts, setAppts] = useState<Appt[]>([]);
@@ -93,7 +95,7 @@ export default function PortalHome() {
       const [s, p, r, n] = await Promise.all([
         patientApi<Summary>("/patient/summary"),
         patientApi<{ items: Rx[] }>("/patient/prescriptions"),
-        patientApi<{ items: Rx[] }>("/patient/repeats"),
+        patientApi<{ items: Repeat[] }>("/patient/repeats"),
         patientApi<{ items: Notif[] }>("/patient/notifications"),
       ]);
       setSummary(s); setRx(p.items); setRepeats(r.items); setNotifs(n.items);
@@ -167,14 +169,15 @@ export default function PortalHome() {
     setAppt({ service_name: "", date: "", time: "" });
     patientApi<{ items: Appt[] }>("/patient/appointments").then((d) => setAppts(d.items));
   }
-  async function bookPickup(p: Rx) {
+  async function bookPickup(p: Rx | Repeat) {
     if (!pickupAt) return;
+    const names = p.medicines.map((m) => typeof m === "string" ? m : m.name).slice(0, 6).join(", ");
     await patientApi("/patient/appointments", { method: "POST", body: JSON.stringify({
       tenant_id: me?.active_tenant || undefined,
       kind: "pickup",
       service_name: "Παραλαβή συνταγής",
       requested_at: new Date(pickupAt).toISOString(),
-      note: p.medicines.slice(0, 6).join(", "),
+      note: names,
     }) });
     setPickupDone((d) => ({ ...d, [p.barcode]: pickupAt }));
     setPickupFor(null); setPickupAt("");
@@ -390,8 +393,12 @@ export default function PortalHome() {
                     {p.medicines.length === 0 ? <div className="text-xs text-slate-400">—</div> : (
                       <ul className="divide-y divide-slate-200/70">
                         {p.medicines.map((m, i) => (
-                          <li key={i} className="flex items-center gap-2 py-2 text-sm text-slate-700">
-                            <Pill className="h-4 w-4 shrink-0 text-emerald-500" /> {m}
+                          <li key={i} className="flex items-start gap-2 py-2 text-sm text-slate-700">
+                            <Pill className="mt-0.5 h-4 w-4 shrink-0 text-emerald-500" />
+                            <div className="min-w-0">
+                              <div className="font-medium">{m.name}</div>
+                              {m.dosage && <div className="text-xs text-slate-500">💊 {m.dosage}</div>}
+                            </div>
                           </li>
                         ))}
                       </ul>

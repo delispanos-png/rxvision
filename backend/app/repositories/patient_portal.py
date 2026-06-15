@@ -35,6 +35,33 @@ def _oid(v):
         return None
 
 
+def _format_dosage(dose, freq, dur) -> str | None:
+    """Readable doctor's posology from the ΗΔΙΚΑ CDA fields: dose («1 ΔΙΣΚΙΑ…»),
+    frequency (period, π.χ. «12 h»/«1 d») και duration («30 d»)."""
+    parts: list[str] = []
+    if dose:
+        parts.append(str(dose).replace("_", " ").strip())
+    for val, is_freq in ((freq, True), (dur, False)):
+        if not val:
+            continue
+        m = re.match(r"\s*([\d.]+)\s*([hd])", str(val))
+        if not m:
+            continue
+        num, unit = m.group(1), m.group(2)
+        try:
+            n = int(float(num))
+        except ValueError:
+            n = None
+        if is_freq:
+            if unit == "d":
+                parts.append("1 φορά/ημέρα" if n == 1 else f"κάθε {num} ημέρες")
+            else:
+                parts.append("1 φορά/ημέρα" if n == 24 else f"κάθε {num} ώρες")
+        else:
+            parts.append(f"για {num} {'ημέρες' if unit == 'd' else 'ώρες'}")
+    return " · ".join(parts) if parts else None
+
+
 class PatientAccountRepository:
     def __init__(self):
         self.db = shared_db()
@@ -384,9 +411,23 @@ class PatientRxRepository(BaseRepository):
                          "foreignField": "_id", "as": "prods"}},
             {"$project": {"_id": 0, "barcode": "$external_id", "next_open_date": 1,
                           "repeat_current": 1, "repeat_total": 1,
-                          "medicines": {"$map": {"input": "$prods", "as": "p", "in": "$$p.name"}}}},
+                          # one entry per line: medicine name + the doctor's dosage details
+                          "medicines": {"$map": {
+                              "input": "$items", "as": "it",
+                              "in": {"$let": {
+                                  "vars": {"m": {"$first": {"$filter": {
+                                      "input": "$prods", "as": "p",
+                                      "cond": {"$eq": ["$$p._id", "$$it.product_id"]}}}}},
+                                  "in": {"name": {"$ifNull": ["$$m.name", "Φάρμακο"]},
+                                         "dose": "$$it.details.dose",
+                                         "frequency": "$$it.details.frequency",
+                                         "duration": "$$it.details.duration"}}}}}}},
         ]
-        return await self.aggregate(pipe)
+        rows = await self.aggregate(pipe)
+        for r in rows:
+            for m in r.get("medicines", []):
+                m["dosage"] = _format_dosage(m.get("dose"), m.get("frequency"), m.get("duration"))
+        return rows
 
 
 class PharmacyServiceRepository(BaseRepository):
