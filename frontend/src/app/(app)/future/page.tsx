@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { CalendarClock, CalendarDays, CalendarRange, Pill, Download, PackageCheck, Users } from "lucide-react";
+import { CalendarClock, CalendarDays, CalendarRange, Pill, Download, PackageCheck, Users, ChevronDown, ChevronUp, X } from "lucide-react";
 import { api } from "@/lib/apiClient";
 import { downloadCsv } from "@/lib/csv";
 import { useT } from "@/store/prefStore";
@@ -14,7 +14,6 @@ import { KpiCard } from "@/components/kpi/KpiCard";
 import { PanelCard } from "@/components/ui/Card";
 import { QueryState } from "@/components/ui/QueryState";
 import { LineChart } from "@/components/charts/LineChart";
-import { Modal } from "@/components/ui/Modal";
 
 type UpcomingDay = { date: string; count: number };
 type ForecastRow = { product_id: string; name: string; expected_demand: number };
@@ -56,6 +55,7 @@ export default function FuturePage() {
   const [cTo, setCTo] = useState(_iso(6));
   const range = periodRange(period, cFrom, cTo);
   const [modal, setModal] = useState<{ title: string; subtitle: string; qs: string } | null>(null);
+  const [expandedRx, setExpandedRx] = useState<string | null>(null);
 
   const coverage = useQuery({
     queryKey: ["future", "daily-coverage", range.from, range.to],
@@ -68,14 +68,6 @@ export default function FuturePage() {
     { key: "n_patients", header: t("Ασθενείς", "Patients"), align: "right", render: (r) => fmtNum(r.n_patients) },
     { key: "avg_daily", header: t("Μ.Ο./μέρα", "Avg/day"), align: "right", hideOnMobile: true, render: (r) => r.avg_daily },
     { key: "est_cost", header: t("Εκτ. κόστος", "Est. cost"), align: "right", hideOnMobile: true, render: (r) => fmtEur(r.est_cost) },
-  ];
-
-  const futureCols: Column<FutureRx>[] = [
-    { key: "expected_open_date", header: t("Αναμένεται", "Expected"), render: (r) => fmtDate(r.expected_open_date) },
-    { key: "patient_name", header: t("Ασθενής", "Patient"), render: (r) => r.patient_name || "—" },
-    { key: "amka", header: "ΑΜΚΑ", hideOnMobile: true, render: (r) => r.amka || "—" },
-    { key: "products", header: t("Σκευάσματα", "Products"), render: (r) => (r.products ?? []).filter(Boolean).join(", ") || t(`${r.n_items ?? 0} είδη`, `${r.n_items ?? 0} items`) },
-    { key: "source_barcode", header: t("Από συνταγή", "From prescription"), hideOnMobile: true, render: (r) => r.source_barcode || "—" },
   ];
 
   const forecastColumns: Column<ForecastRow>[] = [
@@ -242,39 +234,74 @@ export default function FuturePage() {
             <DataTable pageSize={20} columns={forecastColumns} rows={forecast.data?.items ?? []} rowKey={(r) => r.product_id} />
           </QueryState>
         </PanelCard>
+
+        {/* inline drill-down — η λίστα της επιλεγμένης ημέρας/περιόδου: αρ. συνταγής + πελάτης,
+            κλικ σε γραμμή για να δεις τι περιλαμβάνει η συνταγή */}
+        {modal && (
+          <PanelCard title={modal.title} bodyClassName="pt-2">
+            <div className="-mt-1 mb-3 flex flex-wrap items-center justify-between gap-3">
+              <p className="text-sm text-slate-500">{modal.subtitle}</p>
+              <div className="flex shrink-0 items-center gap-2">
+                {(list.data?.items?.length ?? 0) > 0 && (
+                  <button onClick={() => downloadCsv("syntages-imeras", [
+                    { key: "source_barcode", header: t("Αρ. συνταγής", "Rx number") },
+                    { key: "patient_name", header: t("Πελάτης", "Patient") },
+                    { key: "expected_open_date", header: t("Αναμένεται", "Expected"), value: (r: FutureRx) => fmtDate(r.expected_open_date) },
+                    { key: "products", header: t("Σκευάσματα", "Products"), value: (r: FutureRx) => (r.products ?? []).filter(Boolean).join(" | ") },
+                  ], list.data!.items)}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50">
+                    <Download className="h-3.5 w-3.5" /> {t("Εξαγωγή CSV", "Export CSV")}
+                  </button>
+                )}
+                <button onClick={() => setModal(null)} className="inline-flex items-center gap-1 rounded-lg border border-slate-300 px-2.5 py-1.5 text-xs text-slate-600 hover:bg-slate-50">
+                  <X className="h-3.5 w-3.5" /> {t("Κλείσιμο", "Close")}
+                </button>
+              </div>
+            </div>
+            <QueryState isLoading={list.isLoading} isError={list.isError}
+              isEmpty={(list.data?.items?.length ?? 0) === 0} onRetry={() => list.refetch()}
+              empty={t("Καμία αναμενόμενη συνταγή.", "No expected prescriptions.")}>
+              <ul className="divide-y divide-slate-200">
+                {(list.data?.items ?? []).map((r, i) => {
+                  const key = `${r.source_barcode}-${i}`;
+                  const open = expandedRx === key;
+                  const meds = (r.products ?? []).filter(Boolean);
+                  return (
+                    <li key={key}>
+                      <button onClick={() => setExpandedRx(open ? null : key)}
+                        className="flex w-full items-center justify-between gap-3 py-2.5 text-left text-sm hover:bg-slate-50">
+                        <span className="flex min-w-0 items-center gap-3">
+                          <span className="font-mono font-semibold text-slate-800">#{r.source_barcode ?? "—"}</span>
+                          <span className="truncate text-slate-600">{r.patient_name || "—"}</span>
+                        </span>
+                        <span className="flex shrink-0 items-center gap-2 text-xs text-slate-400">
+                          {fmtDate(r.expected_open_date)} · {meds.length || r.n_items || 0} {t("είδη", "items")}
+                          {open ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                        </span>
+                      </button>
+                      {open && (
+                        <div className="bg-slate-50/60 px-3 pb-3 pt-1">
+                          <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">{t("Περιλαμβάνει", "Includes")}</div>
+                          {meds.length ? (
+                            <ul className="space-y-1">
+                              {meds.map((p, j) => (
+                                <li key={j} className="flex items-center gap-2 text-sm text-slate-700">
+                                  <Pill className="h-4 w-4 shrink-0 text-indigo-500" /> {p}
+                                </li>
+                              ))}
+                            </ul>
+                          ) : <div className="text-xs text-slate-400">—</div>}
+                        </div>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+            </QueryState>
+          </PanelCard>
+        )}
         </>)}
       </div>
-
-      {/* drill-down popup: the individual prescriptions behind a KPI */}
-      <Modal open={!!modal} onClose={() => setModal(null)} title={modal?.title} size="3xl">
-        <div className="-mt-2 mb-3 flex items-center justify-between gap-3">
-          {modal && <p className="text-sm text-slate-500">{modal.subtitle}</p>}
-          {(list.data?.items?.length ?? 0) > 0 && (
-            <button
-              onClick={() => downloadCsv("mellontikes-syntages", [
-                { key: "expected_open_date", header: t("Αναμένεται", "Expected"), value: (r: FutureRx) => fmtDate(r.expected_open_date) },
-                { key: "patient_name", header: t("Ασθενής", "Patient") },
-                { key: "amka", header: "ΑΜΚΑ" },
-                { key: "products", header: t("Σκευάσματα", "Products"), value: (r: FutureRx) => (r.products ?? []).filter(Boolean).join(" | ") },
-                { key: "source_barcode", header: t("Από συνταγή", "From prescription") },
-              ], list.data!.items)}
-              className="shrink-0 inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
-            >
-              <Download className="h-3.5 w-3.5" /> {t("Εξαγωγή CSV", "Export CSV")}
-            </button>
-          )}
-        </div>
-        <QueryState
-          isLoading={list.isLoading}
-          isError={list.isError}
-          isEmpty={(list.data?.items?.length ?? 0) === 0}
-          onRetry={() => list.refetch()}
-          empty={t("Καμία αναμενόμενη συνταγή.", "No expected prescriptions.")}
-        >
-          <DataTable pageSize={15} columns={futureCols} rows={list.data?.items ?? []}
-            rowKey={(r, i) => `${r.source_barcode}-${i}`} />
-        </QueryState>
-      </Modal>
     </ModuleGuard>
   );
 }
