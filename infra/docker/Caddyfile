@@ -37,8 +37,22 @@
 	handle /health {
 		reverse_proxy api:8000
 	}
-	handle {
+	# Immutable hashed assets — keep Next.js' long-lived cache.
+	handle /_next/* {
 		reverse_proxy web:3000
+	}
+	# Service worker must never be cached (so the kill-switch/updates always land).
+	handle /sw.js {
+		reverse_proxy web:3000 {
+			header_down >Cache-Control "no-cache, no-store, must-revalidate"
+		}
+	}
+	# Everything else (HTML documents) — strip the origin's s-maxage (which let Cloudflare
+	# cache HTML for a year) and force revalidation, so a redeploy is picked up immediately.
+	handle {
+		reverse_proxy web:3000 {
+			header_down >Cache-Control "no-cache, must-revalidate"
+		}
 	}
 }
 
