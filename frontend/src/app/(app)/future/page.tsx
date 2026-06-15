@@ -81,10 +81,11 @@ export default function FuturePage() {
   });
 
   const days = upcoming.data?.items ?? [];
-  const total = days.reduce((s, d) => s + d.count, 0);
-  const next7 = days.slice(0, 7).reduce((s, d) => s + d.count, 0);
-  const next30 = total;
-  const peak = days.reduce<UpcomingDay | null>((m, d) => (!m || d.count > m.count ? d : m), null);
+  const total = days.reduce((s, d) => s + d.count, 0);     // 30-day total
+  const todayStr = _iso(0), tomorrowStr = _iso(1), wkEnd = _iso(6);
+  const todayCount = days.find((d) => d.date === todayStr)?.count ?? 0;
+  const tomorrowCount = days.find((d) => d.date === tomorrowStr)?.count ?? 0;
+  const next7 = days.filter((d) => d.date <= wkEnd).reduce((s, d) => s + d.count, 0);
 
   return (
     <ModuleGuard module="future_prescriptions">
@@ -182,20 +183,14 @@ export default function FuturePage() {
         {tab === "forecast" && (<>
         {/* KPI row */}
         <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
-          <KpiCard label={t("Μελλοντικές συνταγές", "Upcoming prescriptions")} value={fmtNum(total)} sub={t("σύνολο 30 ημερών · δες λίστα", "30-day total · see list")} icon={CalendarClock} accent="indigo"
-            onClick={() => setModal({ title: t("Μελλοντικές συνταγές — 30 ημέρες", "Upcoming prescriptions — 30 days"), subtitle: t(`${total} συνταγές αναμένονται`, `${total} prescriptions expected`), qs: `days=30&min_history=${minHistory}` })} />
-          <KpiCard label={t("Επόμενες 7 ημέρες", "Next 7 days")} value={fmtNum(next7)} sub={t("συνταγές · δες λίστα", "prescriptions · see list")} icon={CalendarDays} accent="violet"
+          <KpiCard label={t("Σήμερα", "Today")} value={fmtNum(todayCount)} sub={t(`${fmtDate(todayStr)} · δες λίστα`, `${fmtDate(todayStr)} · see list`)} icon={CalendarClock} accent="indigo"
+            onClick={() => setModal({ title: t(`Σήμερα — ${fmtDate(todayStr)}`, `Today — ${fmtDate(todayStr)}`), subtitle: t(`${todayCount} συνταγές ανοίγουν σήμερα`, `${todayCount} prescriptions open today`), qs: `date=${todayStr}&min_history=${minHistory}` })} />
+          <KpiCard label={t("Αύριο", "Tomorrow")} value={fmtNum(tomorrowCount)} sub={t(`${fmtDate(tomorrowStr)} · δες λίστα`, `${fmtDate(tomorrowStr)} · see list`)} icon={CalendarDays} accent="violet"
+            onClick={() => setModal({ title: t(`Αύριο — ${fmtDate(tomorrowStr)}`, `Tomorrow — ${fmtDate(tomorrowStr)}`), subtitle: t(`${tomorrowCount} συνταγές ανοίγουν αύριο`, `${tomorrowCount} prescriptions open tomorrow`), qs: `date=${tomorrowStr}&min_history=${minHistory}` })} />
+          <KpiCard label={t("Επόμενες 7 ημέρες", "Next 7 days")} value={fmtNum(next7)} sub={t("συνταγές · δες λίστα", "prescriptions · see list")} icon={CalendarRange} accent="amber"
             onClick={() => setModal({ title: t("Επόμενες 7 ημέρες", "Next 7 days"), subtitle: t(`${next7} συνταγές`, `${next7} prescriptions`), qs: `days=7&min_history=${minHistory}` })} />
-          <KpiCard label={t("Επόμενες 30 ημέρες", "Next 30 days")} value={fmtNum(next30)} sub={t("συνταγές · δες λίστα", "prescriptions · see list")} icon={CalendarRange} accent="amber"
-            onClick={() => setModal({ title: t("Επόμενες 30 ημέρες", "Next 30 days"), subtitle: t(`${next30} συνταγές`, `${next30} prescriptions`), qs: `days=30&min_history=${minHistory}` })} />
-          <KpiCard
-            label={t("Ημέρα αιχμής", "Peak day")}
-            value={peak ? fmtNum(peak.count) : "—"}
-            sub={peak ? t(`${fmtDate(peak.date)} · δες λίστα`, `${fmtDate(peak.date)} · see list`) : "—"}
-            icon={Pill}
-            accent="sky"
-            onClick={peak ? () => setModal({ title: t(`Ημέρα αιχμής — ${fmtDate(peak.date)}`, `Peak day — ${fmtDate(peak.date)}`), subtitle: t(`${peak.count} συνταγές αναμένονται`, `${peak.count} prescriptions expected`), qs: `date=${peak.date}&min_history=${minHistory}` }) : undefined}
-          />
+          <KpiCard label={t("Επόμενες 30 ημέρες", "Next 30 days")} value={fmtNum(total)} sub={t("συνταγές · δες λίστα", "prescriptions · see list")} icon={Pill} accent="sky"
+            onClick={() => setModal({ title: t("Επόμενες 30 ημέρες", "Next 30 days"), subtitle: t(`${total} συνταγές`, `${total} prescriptions`), qs: `days=30&min_history=${minHistory}` })} />
         </div>
 
         {/* upcoming-by-day chart — click a day to see its prescriptions */}
