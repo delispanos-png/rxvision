@@ -223,18 +223,6 @@ export default function FuturePage() {
           />
         </PanelCard>
 
-        {/* forecast table */}
-        <PanelCard title={t("Πρόβλεψη ζήτησης ανά σκεύασμα (30 ημέρες)", "Demand forecast by product (30 days)")} bodyClassName="pt-2">
-          <QueryState
-            isLoading={forecast.isLoading}
-            isError={forecast.isError}
-            isEmpty={(forecast.data?.items?.length ?? 0) === 0}
-            onRetry={() => forecast.refetch()}
-          >
-            <DataTable pageSize={20} columns={forecastColumns} rows={forecast.data?.items ?? []} rowKey={(r) => r.product_id} />
-          </QueryState>
-        </PanelCard>
-
         {/* inline drill-down — η λίστα της επιλεγμένης ημέρας/περιόδου: αρ. συνταγής + πελάτης,
             κλικ σε γραμμή για να δεις τι περιλαμβάνει η συνταγή */}
         {modal && (
@@ -300,6 +288,18 @@ export default function FuturePage() {
             </QueryState>
           </PanelCard>
         )}
+
+        {/* forecast table */}
+        <PanelCard title={t("Πρόβλεψη ζήτησης ανά σκεύασμα (30 ημέρες)", "Demand forecast by product (30 days)")} bodyClassName="pt-2">
+          <QueryState
+            isLoading={forecast.isLoading}
+            isError={forecast.isError}
+            isEmpty={(forecast.data?.items?.length ?? 0) === 0}
+            onRetry={() => forecast.refetch()}
+          >
+            <DataTable pageSize={20} columns={forecastColumns} rows={forecast.data?.items ?? []} rowKey={(r) => r.product_id} />
+          </QueryState>
+        </PanelCard>
         </>)}
       </div>
     </ModuleGuard>
