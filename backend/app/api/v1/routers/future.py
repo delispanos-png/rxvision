@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 
 from app.core.deps import TenantContext, require
 from app.repositories.future import FuturePrescriptionRepository
@@ -53,20 +53,32 @@ async def upcoming_list(
                                               min_history=min_history)}
 
 
+def _day(s: str) -> datetime:
+    return datetime.fromisoformat(s).replace(hour=0, minute=0, second=0, microsecond=0,
+                                             tzinfo=timezone.utc)
+
+
 @router.get("/daily-coverage")
 async def daily_coverage(
     date: str | None = None,
+    from_: str | None = Query(None, alias="from"),
+    to: str | None = None,
     ctx: TenantContext = Depends(require("future:read", module=_MODULE)),
 ):
-    """Κάλυψη ημέρας: ποσότητες ανά φάρμακο για τις επαναλαμβανόμενες συνταγές που
-    ανοίγουν τη συγκεκριμένη μέρα. Default = ΑΥΡΙΟ (το βλέπεις από σήμερα για να
-    προλάβεις να παραγγείλεις ό,τι λείπει)."""
+    """Κάλυψη περιόδου: ποσότητες ανά φάρμακο για τις επαναλαμβανόμενες συνταγές που
+    ανοίγουν στο διάστημα. Δέχεται είτε μία μέρα (date) είτε εύρος (from..to, inclusive).
+    Default = ΑΥΡΙΟ (το βλέπεις από σήμερα για να προλάβεις να παραγγείλεις)."""
     repo = FuturePrescriptionRepository(tenant_id=ctx.tenant_id)
-    start = datetime.fromisoformat(date).replace(tzinfo=timezone.utc) if date else _now() + timedelta(days=1)
-    start = start.replace(hour=0, minute=0, second=0, microsecond=0)
-    end = start + timedelta(days=1)
+    if from_ and to:
+        start, end = _day(from_), _day(to) + timedelta(days=1)
+    elif date:
+        start = _day(date); end = start + timedelta(days=1)
+    else:
+        start = (_now() + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+        end = start + timedelta(days=1)
     res = await repo.daily_coverage(day_start=start, day_end=end)
-    return {"date": start.date().isoformat(), **res}
+    return {"from": start.date().isoformat(),
+            "to": (end - timedelta(days=1)).date().isoformat(), **res}
 
 
 @router.get("/forecast")

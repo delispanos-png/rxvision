@@ -9,7 +9,6 @@ import { useT } from "@/store/prefStore";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
 import { DateInput } from "@/components/ui/DateInput";
 import { fmtNum, fmtDate, fmtEur } from "@/lib/formatters";
-import { SelectFilter } from "@/components/filters/SelectFilter";
 import { DataTable, type Column } from "@/components/tables/DataTable";
 import { KpiCard } from "@/components/kpi/KpiCard";
 import { PanelCard } from "@/components/ui/Card";
@@ -32,17 +31,34 @@ type Coverage = {
   summary: { prescriptions: number; n_patients: number; products: number; total_units: number; est_cost: number };
   items: CoverageItem[];
 };
-const _tomorrow = () => new Date(Date.now() + 86400000).toISOString().slice(0, 10);
+const _iso = (n: number) => new Date(Date.now() + n * 86400000).toISOString().slice(0, 10);
+type Period = "today" | "tomorrow" | "day_after" | "week" | "custom";
+function periodRange(p: Period, cf: string, ct: string): { from: string; to: string } {
+  if (p === "today") return { from: _iso(0), to: _iso(0) };
+  if (p === "tomorrow") return { from: _iso(1), to: _iso(1) };
+  if (p === "day_after") return { from: _iso(2), to: _iso(2) };
+  if (p === "week") {
+    const now = new Date();
+    const dow = (now.getDay() + 6) % 7;            // 0=Δευτέρα
+    const mon = new Date(now); mon.setDate(now.getDate() - dow);
+    const sun = new Date(mon); sun.setDate(mon.getDate() + 6);
+    return { from: mon.toISOString().slice(0, 10), to: sun.toISOString().slice(0, 10) };
+  }
+  return { from: cf, to: ct };
+}
 
 export default function FuturePage() {
   const t = useT();
-  const [minHistory, setMinHistory] = useState("0");
-  const [covDate, setCovDate] = useState(_tomorrow());
+  const [minHistory] = useState("0");
+  const [period, setPeriod] = useState<Period>("tomorrow");
+  const [cFrom, setCFrom] = useState(_iso(0));
+  const [cTo, setCTo] = useState(_iso(6));
+  const range = periodRange(period, cFrom, cTo);
   const [modal, setModal] = useState<{ title: string; subtitle: string; qs: string } | null>(null);
 
   const coverage = useQuery({
-    queryKey: ["future", "daily-coverage", covDate],
-    queryFn: () => api<Coverage>(`/future/daily-coverage?date=${covDate}`),
+    queryKey: ["future", "daily-coverage", range.from, range.to],
+    queryFn: () => api<Coverage>(`/future/daily-coverage?from=${range.from}&to=${range.to}`),
   });
   const cov = coverage.data;
   const covCols: Column<CoverageItem>[] = [
@@ -59,14 +75,6 @@ export default function FuturePage() {
     { key: "amka", header: "ΑΜΚΑ", hideOnMobile: true, render: (r) => r.amka || "—" },
     { key: "products", header: t("Σκευάσματα", "Products"), render: (r) => (r.products ?? []).filter(Boolean).join(", ") || t(`${r.n_items ?? 0} είδη`, `${r.n_items ?? 0} items`) },
     { key: "source_barcode", header: t("Από συνταγή", "From prescription"), hideOnMobile: true, render: (r) => r.source_barcode || "—" },
-  ];
-
-  const HISTORY = [
-    { value: "0", label: t("Όλοι οι ασφαλισμένοι", "All patients") },
-    { value: "1", label: t("≥ 1 προηγούμενη", "≥ 1 previous") },
-    { value: "2", label: t("≥ 2 προηγούμενες", "≥ 2 previous") },
-    { value: "3", label: t("≥ 3 προηγούμενες", "≥ 3 previous") },
-    { value: "5", label: t("≥ 5 προηγούμενες", "≥ 5 previous") },
   ];
 
   const forecastColumns: Column<ForecastRow>[] = [
@@ -105,33 +113,40 @@ export default function FuturePage() {
         </div>
       </div>
 
-      <div className="mb-4">
-        <SelectFilter
-          label={t("Πελάτες με ιστορικό", "Customers with history")}
-          value={minHistory}
-          options={HISTORY}
-          onChange={(v) => setMinHistory(v ?? "0")}
-          allLabel={t("Όλοι οι ασφαλισμένοι", "All patients")}
-        />
-      </div>
-
       <div className="space-y-4">
         {/* Κάλυψη ημέρας — τι να έχεις/παραγγείλεις για τις συνταγές που ανοίγουν */}
         <PanelCard
-          title={t("Κάλυψη ημέρας — ποσότητες για τις συνταγές που ανοίγουν", "Daily coverage — quantities for opening prescriptions")}
+          title={t("Κάλυψη περιόδου — ποσότητες για τις συνταγές που ανοίγουν", "Period coverage — quantities for opening prescriptions")}
           bodyClassName="pt-2"
         >
           <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
-            <div className="flex items-end gap-2">
-              <label className="block text-sm">
-                <span className="mb-1 block text-slate-600">{t("Ημέρα", "Day")}</span>
-                <DateInput value={covDate} onChange={(v) => setCovDate(v || _tomorrow())} />
-              </label>
-              <button onClick={() => setCovDate(_tomorrow())} className="rounded-lg border border-slate-300 px-3 py-2 text-sm hover:bg-slate-50">{t("Αύριο", "Tomorrow")}</button>
+            <div className="flex flex-wrap items-end gap-2">
+              <div className="flex flex-wrap gap-1.5">
+                {([
+                  ["today", t("Σήμερα", "Today")],
+                  ["tomorrow", t("Αύριο", "Tomorrow")],
+                  ["day_after", t("Μεθαύριο", "Day after")],
+                  ["week", t("Εβδομάδα", "This week")],
+                  ["custom", t("Προσαρμοσμένο", "Custom")],
+                ] as [Period, string][]).map(([p, label]) => (
+                  <button key={p} onClick={() => setPeriod(p)}
+                    className={`rounded-lg border px-3 py-2 text-sm ${period === p ? "border-indigo-500 bg-indigo-50 font-medium text-indigo-700" : "border-slate-200 text-slate-600 hover:bg-slate-50"}`}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+              {period === "custom" && (
+                <div className="flex items-end gap-2">
+                  <label className="block text-sm"><span className="mb-1 block text-slate-600">{t("Από", "From")}</span>
+                    <DateInput value={cFrom} onChange={(v) => setCFrom(v || _iso(0))} /></label>
+                  <label className="block text-sm"><span className="mb-1 block text-slate-600">{t("Έως", "To")}</span>
+                    <DateInput value={cTo} onChange={(v) => setCTo(v || _iso(6))} /></label>
+                </div>
+              )}
             </div>
             {(cov?.items?.length ?? 0) > 0 && (
               <button
-                onClick={() => downloadCsv(`kalypsi-imeras-${covDate}`, [
+                onClick={() => downloadCsv(`kalypsi-${range.from}_${range.to}`, [
                   { key: "product_name", header: t("Φάρμακο", "Product") },
                   { key: "substance", header: t("Δραστική", "Substance") },
                   { key: "needed_qty", header: t("Ποσότητα", "Qty") },
@@ -145,6 +160,9 @@ export default function FuturePage() {
                 <Download className="h-3.5 w-3.5" /> {t("Εξαγωγή για παραγγελία", "Export for ordering")}
               </button>
             )}
+          </div>
+          <div className="mb-2 text-xs text-slate-500">
+            {t("Περίοδος", "Period")}: <b>{fmtDate(range.from)}</b>{range.from !== range.to && <> → <b>{fmtDate(range.to)}</b></>}
           </div>
           <div className="mb-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
             <KpiCard label={t("Συνταγές", "Prescriptions")} value={fmtNum(cov?.summary.prescriptions ?? 0)} icon={CalendarDays} accent="indigo" />
