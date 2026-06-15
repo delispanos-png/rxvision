@@ -252,7 +252,6 @@ export default function TenantCardPage() {
           <button disabled={busy} onClick={async () => { if (await appConfirm(`ΟΡΙΣΤΙΚΗ ΔΙΑΓΡΑΦΗ του «${t.name}» και ΟΛΩΝ των δεδομένων του. Δεν αναιρείται. Συνέχεια;`, { title: "Οριστική διαγραφή πελάτη", danger: true, confirmText: "Διαγραφή πελάτη" })) act(async () => { await adminApi(`/admin/tenants/${encodeURIComponent(id)}`, { method: "DELETE" }); router.push("/admin/subscribers"); }, "Διαγράφηκε."); }}
             className="rounded-lg border border-red-300 px-4 py-2 text-sm text-red-700 hover:bg-red-50">Διαγραφή πελάτη</button>
         </div>
-        <p className="mt-2 text-xs text-slate-400">Σημ.: για πελάτες Noeton, η συνδρομή ελέγχεται από τη Noeton — ο επόμενος συγχρονισμός μπορεί να επαναφέρει αλλαγές κατάστασης.</p>
       </div>
     </div>
   );

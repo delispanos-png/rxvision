@@ -28,7 +28,7 @@ TENANT_COLLECTIONS = {
 PLATFORM_FILES = {
     "app/api/v1/routers/admin.py", "app/services/platform_auth.py", "app/services/auth_service.py",
     "app/services/provisioning.py", "app/services/onboarding_service.py",
-    "app/services/account_service.py", "app/services/rbac_seed.py", "app/workers/noeton.py",
+    "app/services/account_service.py", "app/services/rbac_seed.py",
     "app/core/db.py",
 }
 

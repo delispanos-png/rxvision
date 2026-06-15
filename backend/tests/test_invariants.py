@@ -362,38 +362,6 @@ async def test_open_tenant_rejects_unknown_package(monkeypatch):
     assert "unknown_package" in str(ei.value)
 
 
-# ── Noeton integration (HMAC webhook + inbound key) ────────
-def test_noeton_webhook_hmac_roundtrip():
-    import hashlib
-    import hmac
-    import time
-
-    from app.services.noeton import verify_webhook
-
-    secret = "whsec_test"
-    body = b'{"event_type":"ping"}'
-    ts = str(int(time.time()))
-    sig = "sha256=" + hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
-    assert verify_webhook(body, secret, sig, ts) is True
-    # tampered body → fail
-    assert verify_webhook(b'{"event_type":"hacked"}', secret, sig, ts) is False
-    # wrong secret → fail
-    assert verify_webhook(body, "other", sig, ts) is False
-    # stale timestamp (>5min) → fail
-    old = str(int(time.time()) - 400)
-    sig_old = "sha256=" + hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
-    assert verify_webhook(body, secret, sig_old, old) is False
-
-
-def test_noeton_inbound_key_constant_time_match():
-    from app.services.noeton import verify_inbound_key
-
-    assert verify_inbound_key("noeton_abc", "noeton_abc") is True
-    assert verify_inbound_key("noeton_abc", "noeton_xyz") is False
-    assert verify_inbound_key(None, "noeton_abc") is False
-    assert verify_inbound_key("x", "") is False  # not configured → reject
-
-
 @pytest.mark.asyncio
 async def test_login_blocked_for_suspended_or_expired_tenant(monkeypatch):
     import app.services.auth_service as a

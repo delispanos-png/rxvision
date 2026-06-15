@@ -11,7 +11,7 @@ celery_app = Celery(
     "rxvision",
     broker=settings.CELERY_BROKER_URL,
     backend=settings.CELERY_RESULT_BACKEND,
-    include=["app.workers.ingestion", "app.workers.snapshots", "app.workers.noeton",
+    include=["app.workers.ingestion", "app.workers.snapshots",
              "app.workers.billing", "app.workers.optical"],
 )
 
@@ -46,19 +46,6 @@ celery_app.conf.beat_schedule = {
     "retention-cleanup": {
         "task": "app.workers.snapshots.apply_retention",
         "schedule": crontab(hour=3, minute=0),
-    },
-    # Noeton outbound automation (no-op until Noeton is configured)
-    "noeton-heartbeat": {
-        "task": "app.workers.noeton.heartbeat",
-        "schedule": crontab(minute="*/5"),
-    },
-    "noeton-subscription-sync": {
-        "task": "app.workers.noeton.sync_subscriptions",
-        "schedule": crontab(minute="*/30"),
-    },
-    "noeton-usage-report": {
-        "task": "app.workers.noeton.report_usage",
-        "schedule": crontab(hour=4, minute=0),
     },
     # Subscription billing — charge due trials/renewals; auto-suspend on failure (no-op w/o Revolut)
     "bill-subscriptions": {

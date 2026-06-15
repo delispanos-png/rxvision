@@ -16,7 +16,7 @@ const ACCENT: Record<Accent, string> = {
   violet: "bg-violet-50 text-violet-600",
 };
 
-/** KPI card — big value + colored icon square (Noeton-style). */
+/** KPI card — big value + colored icon square . */
 export function KpiCard({
   label,
   value,

@@ -1,7 +1,7 @@
 """TenantProvisioningService — «άνοιγμα» tenant από πακέτο.
 
 ONE service, meant to be driven by TWO entry points (now: the admin console; later:
-a Noeton M2M API). Opening a tenant creates: tenant + RBAC roles + owner user +
+the admin API). Opening a tenant creates: tenant + RBAC roles + owner user +
 subscription with the package's modules/price/trial.
 """
 
@@ -22,24 +22,10 @@ _ALL_MODULES = ["dashboard", "prescription_analytics", "doctor_analytics", "pati
 # Opt-in capabilities — NOT granted by default; the platform admin enables them per pharmacy
 # (tenant module override). Pharmacists without them don't see them at all.
 _OPT_IN_MODULES = ["pharmacat", "patient_portal"]
-# Noeton role → RxVision tenant role key
+# External role → RxVision tenant role key
 _NOETON_ROLE_MAP = {"admin": "owner", "owner": "owner", "manager": "manager",
                     "pharmacist": "pharmacist", "user": "staff", "staff": "staff"}
 
-
-async def _notify_noeton_user(tenant_code: str, email: str, name: str, role: str) -> None:
-    """Best-effort: tell Noeton a user was created on our side (no-op if unconfigured)."""
-    try:
-        from app.services.noeton import NoetonClient, get_config
-        cfg = await get_config()
-        if not cfg.get("api_key"):
-            return
-        parts = (name or "").split()
-        await NoetonClient(cfg).register_user(
-            tenant_code=tenant_code, email=email, role=role,
-            first_name=parts[0] if parts else "", last_name=parts[-1] if len(parts) > 1 else "")
-    except Exception:  # noqa: BLE001 — provisioning must never fail on a Noeton hiccup
-        pass
 
 
 def _now() -> datetime:
@@ -106,7 +92,6 @@ class TenantProvisioningService:
             "current_period_end": _now() + timedelta(days=trial_days or 30),
             "external_ref": external_ref, "created_at": _now(), "updated_at": _now()})
 
-        await _notify_noeton_user(tid, owner_email, owner_name or name, "owner")
         return {
             "tenant_id": tid, "name": name, "owner_email": owner_email,
             "package": package_code,
@@ -114,57 +99,9 @@ class TenantProvisioningService:
             "temp_password": None if owner_password else temp_password,
         }
 
-    # ── Noeton-driven provisioning (keyed by tenant_code) ──────
-    async def activate_from_noeton(self, *, tenant_code: str, subscription: dict,
-                                   name: str | None = None,
-                                   contact_email: str = "", contact_phone: str = "",
-                                   country: str = "GR", language: str = "el",
-                                   timezone: str = "Europe/Athens", currency: str = "EUR",
-                                   company: dict | None = None,
-                                   store: dict | None = None) -> dict:
-        """Idempotent activate: create tenant (+RBAC) if missing, (re)apply subscription,
-        set active. Users arrive separately via provision_user. tenant_code = tenant _id."""
-        db = shared_db()
-        tid = tenant_code
-        locale = f"{language}-{country.upper()}" if language else "el-GR"
-        tenant_doc = {
-            "name": name or tenant_code, "slug": tid, "country": country or "GR",
-            "status": "active", "isolation_tier": "shared",
-            "settings": {"locale": locale, "timezone": timezone or "Europe/Athens",
-                         "currency": currency or "EUR"},
-            "contact_email": contact_email or "", "contact_phone": contact_phone or "",
-            "modules": {}, "credentials_ref": {"hdika": None, "gesy": None},
-            "external_ref": tenant_code, "opened_via": "noeton",
-        }
-        if company:
-            tenant_doc["company"] = {
-                "name": company.get("name", ""),
-                "legal_name": company.get("legal_name", ""),
-                "tax_id": company.get("tax_id", ""),
-                "tax_office": company.get("tax_office", ""),
-                "address": company.get("address", ""),
-                "city": company.get("city", ""),
-                "postal_code": company.get("postal_code", ""),
-            }
-        if store:
-            tenant_doc["store"] = store
-
-        existing = await db["tenants"].find_one({"_id": tid})
-        if not existing:
-            tenant_doc["_id"] = tid
-            tenant_doc["created_at"] = _now()
-            tenant_doc["updated_at"] = _now()
-            await db["tenants"].insert_one(tenant_doc)
-            await seed_rbac(tenant_id=tid)
-        else:
-            tenant_doc["updated_at"] = _now()
-            await db["tenants"].update_one({"_id": tid}, {"$set": tenant_doc})
-        await self.apply_subscription(tenant_code=tid, subscription=subscription)
-        return {"tenant_id": tid, "admin_url": "https://app.rxvision.gr/login",
-                "activated_at": _now().isoformat()}
-
+    
     async def apply_subscription(self, *, tenant_code: str, subscription: dict) -> dict:
-        """Upsert the tenant's subscription from a Noeton subscription payload and map
+        """Upsert the tenant's subscription from an external subscription payload and map
         plan → enabled modules."""
         db = shared_db()
         plan_code = subscription.get("plan_code") or ""
@@ -179,7 +116,7 @@ class TenantProvisioningService:
         await db["subscriptions"].update_one(
             {"tenant_id": tenant_code},
             {"$set": {
-                "tenant_id": tenant_code, "plan": plan_code or "noeton", "status": status,
+                "tenant_id": tenant_code, "plan": plan_code or "default", "status": status,
                 "plan_name": subscription.get("plan_name"),
                 "features": subscription.get("features", {}),
                 "limits": subscription.get("limits", {}),
@@ -190,7 +127,7 @@ class TenantProvisioningService:
                 "billing_cycle": subscription.get("billing_cycle"),
                 "trial_ends_at": subscription.get("trial_ends_at"),
                 "current_period_end": subscription.get("expires_at"),
-                "external_ref": tenant_code, "source": "noeton", "updated_at": _now()},
+                "external_ref": tenant_code, "source": "platform", "updated_at": _now()},
              "$setOnInsert": {"created_at": _now()}},
             upsert=True)
         # tenant status follows subscription (active/suspended/expired/cancelled)
@@ -200,7 +137,7 @@ class TenantProvisioningService:
         return {"tenant_code": tenant_code, "status": status, "modules": modules}
 
     async def provision_user(self, *, tenant_code: str, user: dict) -> dict:
-        """Create/update a user in the tenant from Noeton. Returns external_user_id."""
+        """Create/update a user in the tenant from an external source. Returns external_user_id."""
         db = shared_db()
         if not await db["tenants"].find_one({"_id": tenant_code}):
             raise ProvisioningError("tenant_not_found")
@@ -220,7 +157,7 @@ class TenantProvisioningService:
             "full_name": full_name, "role_ids": [role["_id"]] if role else [],
             "pharmacy_ids": [], "status": "active" if user.get("is_active", True) else "suspended",
             "mfa_enabled": False, "refresh_token_version": 0, "must_change_password": True,
-            "source": "noeton", "created_at": _now(), "updated_at": _now()})
+            "source": "platform", "created_at": _now(), "updated_at": _now()})
         return {"external_user_id": str(res.inserted_id), "created": True}
 
     async def list_users(self, *, tenant_code: str, since: datetime | None = None) -> list[dict]:
@@ -229,7 +166,7 @@ class TenantProvisioningService:
                        db["roles"].find({"tenant_id": tenant_code})}
         query: dict = {"tenant_id": tenant_code}
         if since is not None:
-            query["updated_at"] = {"$gte": since}   # incremental pull (Noeton ?since=)
+            query["updated_at"] = {"$gte": since}   # incremental pull (?since=)
         out = []
         async for u in db["users"].find(query):
             role = next((owner_roles.get(rid) for rid in u.get("role_ids", [])

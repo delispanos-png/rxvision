@@ -47,7 +47,7 @@ class AuthService:
         user = await db["users"].find_one({"email": email, "status": "active"})
         if not user or not verify_password(password, user["password_hash"]):
             return None
-        # Enforce subscription/tenant access (kept fresh locally by the Noeton sync) —
+        # Enforce subscription/tenant access (kept fresh locally) —
         # a suspended/expired tenant cannot log in, no external call at login time.
         if not await self._tenant_access_ok(user["tenant_id"]):
             return None
@@ -56,7 +56,7 @@ class AuthService:
         if user.get("mfa_enabled") and not verify_totp(user.get("mfa_secret", ""), mfa_code or ""):
             return {"mfa_required": True}
         await db["users"].update_one({"_id": user["_id"]},
-                                     {"$set": {"last_login_at": _utcnow()}})  # for Noeton pull
+                                     {"$set": {"last_login_at": _utcnow()}})  
         modules, roles, perms = await self._resolve(user)
         return self._issue(user, roles, modules, perms)
 

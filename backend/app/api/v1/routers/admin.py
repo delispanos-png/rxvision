@@ -38,7 +38,7 @@ def _oid(value):
 ADMIN_SECTIONS = [
     ("dashboard", "Πίνακας"), ("subscribers", "Συνδρομητές"), ("subscriptions", "Συνδρομές"),
     ("staff", "Χρήστες (staff)"), ("billing", "Τιμολόγηση"), ("newsletter", "Newsletter"),
-    ("smtp", "Ρυθμίσεις SMTP"), ("idika", "Διασύνδεση ΗΔΙΚΑ"), ("noeton", "Noeton"),
+    ("smtp", "Ρυθμίσεις SMTP"), ("idika", "Διασύνδεση ΗΔΙΚΑ"),
     ("content", "Περιεχόμενο"), ("maintenance", "Συντήρηση"), ("health", "Επισκεψιμότητα"),
 ]
 ADMIN_SECTION_KEYS = [k for k, _ in ADMIN_SECTIONS]
@@ -47,7 +47,7 @@ _SEG_TO_SECTION = {
     "tenants": "subscribers", "packages": "subscribers", "subscriptions": "subscriptions",
     "staff": "staff", "billing": "billing", "invoices": "billing",
     "newsletter": "newsletter", "smtp": "smtp",
-    "idika": "idika", "noeton": "noeton", "posts": "content", "maintenance": "maintenance",
+    "idika": "idika", "posts": "content", "maintenance": "maintenance",
     "health": "health", "sync-health": "health",
 }
 # read-only endpoints που χρειάζεται και ο «dashboard»-only χρήστης
@@ -225,14 +225,6 @@ class IdikaIn(BaseModel):
     production: IdikaEnvIn = IdikaEnvIn()
 
 
-class NoetonIn(BaseModel):
-    base_url: str | None = None
-    api_key: str | None = None         # our key → Noeton (secret, keep on empty)
-    inbound_key: str | None = None     # key Noeton uses → us (secret)
-    webhook_secret: str | None = None  # HMAC shared secret (secret)
-
-
-_NOETON_SECRETS = ("api_key", "inbound_key", "webhook_secret")
 
 
 async def _newsletter_recipients(db, segment: str) -> list[dict]:
@@ -262,7 +254,7 @@ async def _newsletter_recipients(db, segment: str) -> list[dict]:
 def _days_until(when, now: datetime) -> int | None:
     if not when:
         return None
-    if isinstance(when, str):                       # Noeton stores ISO strings
+    if isinstance(when, str):                       # handles ISO strings
         try:
             when = datetime.fromisoformat(when.replace("Z", "+00:00"))
         except ValueError:
@@ -437,7 +429,7 @@ async def set_integrations(body: IntegrationsIn,
 
 @router.post("/tenants")
 async def open_tenant(body: OpenTenantIn, _: PlatformContext = Depends(get_platform_admin)):
-    """«Άνοιγμα» tenant από πακέτο — admin entry point (same service Noeton will use)."""
+    """«Άνοιγμα» tenant από πακέτο — admin entry point ."""
     try:
         result = await TenantProvisioningService().open_tenant(
             name=body.name, owner_email=body.owner_email, package_code=body.package_code,
@@ -782,7 +774,7 @@ async def delete_staff(admin_id: str, ctx: PlatformContext = Depends(get_platfor
 async def billing(_: PlatformContext = Depends(get_platform_admin)):
     """Platform revenue overview (Οικονομικά): MRR/ARR, ανά πλάνο, MRR σε κίνδυνο.
 
-    Actual invoicing lives in Noeton; here we surface what RxVision knows from
+    Invoicing is managed separately; here we surface what RxVision knows from
     subscriptions (read-only revenue picture)."""
     db = shared_db()
     now = datetime.now(tz=timezone.utc)
@@ -1198,55 +1190,8 @@ async def put_idika(body: IdikaIn, _: PlatformContext = Depends(get_platform_adm
     return {"saved": True}
 
 
-@router.get("/noeton")
-async def get_noeton(_: PlatformContext = Depends(get_platform_admin)):
-    """Noeton integration config (platform-level). Secrets masked — only presence flags."""
-    doc = await shared_db()["platform_settings"].find_one({"_id": "noeton"}) or {}
-    return {"base_url": doc.get("base_url") or "https://admin.noeton.eu/api/v1/external",
-            "has_api_key": bool(doc.get("api_key")),
-            "has_inbound_key": bool(doc.get("inbound_key")),
-            "has_webhook_secret": bool(doc.get("webhook_secret"))}
 
 
-@router.put("/noeton")
-async def put_noeton(body: NoetonIn, _: PlatformContext = Depends(get_platform_admin)):
-    db = shared_db()
-    existing = await db["platform_settings"].find_one({"_id": "noeton"}) or {}
-    doc = {"_id": "noeton", "base_url": body.base_url or existing.get("base_url")
-           or "https://admin.noeton.eu/api/v1/external", "updated_at": datetime.now(tz=timezone.utc)}
-    for k in _NOETON_SECRETS:
-        v = getattr(body, k)
-        doc[k] = v if v else existing.get(k, "")   # keep stored on empty
-    await db["platform_settings"].update_one({"_id": "noeton"}, {"$set": doc}, upsert=True)
-    return {"saved": True}
-
-
-@router.post("/noeton/generate-keys")
-async def generate_noeton_keys(_: PlatformContext = Depends(get_platform_admin)):
-    """Auto-generate the keys WE define (inbound_key + webhook_secret), save them, and
-    return them ONCE so they can be pasted into Noeton's product config. The api_key
-    (RxVision → Noeton) is NOT generated here — that one is issued by Noeton."""
-    inbound = "noeton_in_" + secrets.token_urlsafe(32)
-    webhook = "whsec_" + secrets.token_urlsafe(32)
-    db = shared_db()
-    existing = await db["platform_settings"].find_one({"_id": "noeton"}) or {}
-    await db["platform_settings"].update_one(
-        {"_id": "noeton"},
-        {"$set": {"_id": "noeton", "inbound_key": inbound, "webhook_secret": webhook,
-                  "base_url": existing.get("base_url") or "https://admin.noeton.eu/api/v1/external",
-                  "updated_at": datetime.now(tz=timezone.utc)}}, upsert=True)
-    return {"inbound_key": inbound, "webhook_secret": webhook}
-
-
-@router.post("/noeton/heartbeat")
-async def noeton_heartbeat(_: PlatformContext = Depends(get_platform_admin)):
-    """Test the outbound Noeton connection (X-API-Key) by sending a heartbeat."""
-    from app.services.noeton import NoetonClient, get_config
-    try:
-        await NoetonClient(await get_config()).heartbeat()
-    except Exception as e:  # noqa: BLE001
-        raise HTTPException(http_status.HTTP_400_BAD_REQUEST, f"noeton_error: {e}")
-    return {"ok": True}
 
 
 @router.get("/sync-health")
