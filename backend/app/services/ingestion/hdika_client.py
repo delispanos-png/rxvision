@@ -162,16 +162,35 @@ class HdikaClient:
             "address": _first(ph, "address"),
             "city": city.get("name") if isinstance(city, dict) else city,
         }
-        try:  # contract start → history_from (earliest effectiveFrom); + ΕΤΥΑΠ contract flag
+        try:  # getMyContracts → contracted funds, history_from, county, ΕΤΥΑΠ flag
             cr = _to_dict(self._get_xml("/api/v1/user/me/contracts", {}))
-            contracts = _as_list(cr.get("contents"))
-            froms = [c.get("effectiveFrom") for c in contracts
-                     if isinstance(c, dict) and c.get("effectiveFrom")]
+            # the list is nested Spring-style as contents/item[] — _rows unwraps it (plain
+            # `contents` gave a single {item:[…]} blob, so froms/funds came out empty).
+            contracts = [c for c in self._rows(cr) if isinstance(c, dict)]
+            froms, fund_names, county = [], [], None
+            for c in contracts:
+                if c.get("effectiveFrom"):
+                    froms.append(c["effectiveFrom"])
+                si = c.get("socialInsurance") if isinstance(c.get("socialInsurance"), dict) else {}
+                nm = si.get("shortName") or si.get("name")
+                if nm:
+                    fund_names.append(str(nm))
+                hp = c.get("healthProvider") if isinstance(c.get("healthProvider"), dict) else {}
+                if hp.get("county") and not county:
+                    county = str(hp["county"]).strip()
             if froms:
                 info["history_from"] = min(froms)
-            # is the pharmacy's association contracted with ΕΤΥΑΠ? (each contract names a fund —
-            # the exact element varies, so scan the whole contract blob for the ΕΤΥΑΠ marker).
-            if any("ΕΤΥΑΠ" in str(c).upper() for c in contracts):
+            if county:
+                info["county"] = county
+            if fund_names:
+                info["contracted_funds"] = ", ".join(sorted(set(fund_names)))
+            # ΕΤΥΑΠ (επικουρικό σωμάτων ασφαλείας) is a Φ.Σ.-level arrangement — it is NOT a fund
+            # in getMyContracts. ΗΔΙΚΑ ties it to the pharmacy's prefecture: whole Φαρμακευτικοί
+            # Σύλλογοι are (or aren't) contracted. Known contracted prefectures below (expandable);
+            # plus an explicit ΕΤΥΑΠ contract if one ever appears in the funds list.
+            etyap_counties = {"ΑΤΤΙΚΗΣ", "ΘΕΣΣΑΛΟΝΙΚΗΣ"}
+            if any("ΕΤΥΑΠ" in n.upper() for n in fund_names) or (
+                    county and county.upper() in etyap_counties):
                 info["etyap_contracted"] = "true"
         except Exception:  # noqa: BLE001 — contracts is non-critical (ΗΔΙΚΑ test 500s it)
             pass  # operator can set history_from / etyap_contracted manually
