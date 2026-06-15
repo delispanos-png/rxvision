@@ -95,6 +95,17 @@ class IngestionEngine:
                     cancelled = True
                     break
 
+        # Keep products' catalog-derived fields fresh after any ingest that created/updated products
+        # (atc/category/substance/πλήρες όνομα). Χωρίς αυτό, μετά από backfill τα products έχουν κενό
+        # atc → ο Σύμβουλος Διατροφής / ATC analytics δεν βρίσκουν τίποτα. Best-effort, ποτέ δεν ρίχνει
+        # το job. (Idempotent· τρέχει μόνο όταν μπήκαν/άλλαξαν είδη.)
+        if not cancelled and (stats.get("inserted") or stats.get("updated")):
+            try:
+                from app.services.ingestion.hdika_catalog import enrich_product_categories
+                await enrich_product_categories(self.db)
+            except Exception:  # noqa: BLE001
+                pass
+
         status = "cancelled" if cancelled else ("success" if not errors else "partial")
         final = {"status": status, "stats": stats, "errors": errors[:200], "finished_at": _now()}
         if not cancelled:
