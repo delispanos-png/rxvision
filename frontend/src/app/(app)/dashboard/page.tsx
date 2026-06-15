@@ -32,7 +32,7 @@ const eur = (c: number) => new Intl.NumberFormat("el-GR", { style: "currency", c
 const eur2 = (c: number) => new Intl.NumberFormat("el-GR", { style: "currency", currency: "EUR" }).format((c || 0) / 100);
 const num = (n: number) => new Intl.NumberFormat("el-GR").format(n || 0);
 
-type RxRow = { external_id: string; executed_at: string; patient_name?: string | null; amka?: string | null; fund_name?: string | null; amount_total: number; amount_claimed: number };
+type RxRow = { external_id: string; executed_at: string; patient_name?: string | null; amka?: string | null; fund_name?: string | null; fund_general?: string | null; amount_total: number; amount_claimed: number };
 type PatRow = { patient_ref?: string; full_name?: string | null; age_group?: string | null; area?: string | null; rx?: number; value?: number };
 
 type T = (el: string, en: string) => string;
@@ -40,7 +40,7 @@ const makeRxModalCols = (t: T): Column<RxRow>[] => [
   { key: "executed_at", header: t("Ημ/νία", "Date"), render: (r) => fmtDate(r.executed_at), sortValue: (r) => r.executed_at },
   { key: "external_id", header: t("Κωδικός", "Code") },
   { key: "patient_name", header: t("Ασθενής", "Patient"), render: (r) => r.patient_name || "—" },
-  { key: "fund_name", header: t("Ταμείο", "Fund"), hideOnMobile: true, render: (r) => r.fund_name || "—" },
+  { key: "fund_name", header: t("Ταμείο", "Fund"), hideOnMobile: true, render: (r) => r.fund_general || r.fund_name || "—" },
   { key: "amount_total", header: t("Αξία", "Value"), align: "right", render: (r) => eur2(r.amount_total), sortValue: (r) => r.amount_total },
   { key: "amount_claimed", header: t("Από ταμείο", "From fund"), align: "right", render: (r) => eur2(r.amount_claimed), sortValue: (r) => r.amount_claimed },
 ];
@@ -214,7 +214,7 @@ export default function DashboardPage() {
                 onClick={() => {
                   const cols = modal.kind === "patients"
                     ? [{ key: "full_name", header: t("Ασφαλισμένος", "Patient") }, { key: "age_group", header: t("Ηλικία", "Age") }, { key: "area", header: t("Περιοχή", "Area") }, { key: "rx", header: t("Συνταγές", "Prescriptions") }, { key: "value", header: t("Αξία (€)", "Value (€)"), value: (r: Record<string, unknown>) => fmtMoney(((r.value as number) || 0)) }]
-                    : [{ key: "executed_at", header: t("Ημ/νία", "Date"), value: (r: Record<string, unknown>) => fmtDate(r.executed_at as string) }, { key: "external_id", header: t("Κωδικός", "Code") }, { key: "patient_name", header: t("Ασθενής", "Patient") }, { key: "fund_name", header: t("Ταμείο", "Fund") }, { key: "amount_total", header: t("Αξία (€)", "Value (€)"), value: (r: Record<string, unknown>) => fmtMoney(((r.amount_total as number) || 0)) }, { key: "amount_claimed", header: t("Από ταμείο (€)", "From fund (€)"), value: (r: Record<string, unknown>) => fmtMoney(((r.amount_claimed as number) || 0)) }];
+                    : [{ key: "executed_at", header: t("Ημ/νία", "Date"), value: (r: Record<string, unknown>) => fmtDate(r.executed_at as string) }, { key: "external_id", header: t("Κωδικός", "Code") }, { key: "patient_name", header: t("Ασθενής", "Patient") }, { key: "fund_name", header: t("Ταμείο", "Fund"), value: (r: Record<string, unknown>) => (r.fund_general as string) || (r.fund_name as string) || "" }, { key: "amount_total", header: t("Αξία (€)", "Value (€)"), value: (r: Record<string, unknown>) => fmtMoney(((r.amount_total as number) || 0)) }, { key: "amount_claimed", header: t("Από ταμείο (€)", "From fund (€)"), value: (r: Record<string, unknown>) => fmtMoney(((r.amount_claimed as number) || 0)) }];
                   downloadCsv(modal.kind === "patients" ? "asfalismenoi" : "syntages", cols, modalList.data!.items);
                 }}
                 className="shrink-0 inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
