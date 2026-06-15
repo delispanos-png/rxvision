@@ -111,9 +111,15 @@ class FuturePrescriptionRepository(BaseRepository):
                 "expected_open_date": {"$gte": day_start, "$lt": day_end}}
         summary = await self.aggregate([
             {"$match": base},
+            # χρόνια πάθηση: από τη συνταγή-πηγή (execution.details.chronic, ΗΔΥΚΑ 1.10.9)
+            {"$lookup": {"from": "prescription_executions", "localField": "source_execution_id",
+                         "foreignField": "_id", "as": "ex"}},
+            {"$set": {"chronic": {"$ifNull": [{"$first": "$ex.details.chronic"}, False]}}},
             {"$group": {"_id": None, "prescriptions": {"$sum": 1},
-                        "patients": {"$addToSet": "$patient_ref"}}},
-            {"$project": {"_id": 0, "prescriptions": 1, "n_patients": {"$size": "$patients"}}},
+                        "patients": {"$addToSet": "$patient_ref"},
+                        "chronic": {"$sum": {"$cond": ["$chronic", 1, 0]}}}},
+            {"$project": {"_id": 0, "prescriptions": 1, "chronic": 1,
+                          "n_patients": {"$size": "$patients"}}},
         ])
         products = await self.aggregate([
             {"$match": base},
@@ -153,7 +159,7 @@ class FuturePrescriptionRepository(BaseRepository):
                         "substance": None if sub in (None, "None", "") else sub,
                         "avg_daily": round(units / history_days, 2),
                         "est_cost": int(round((d.get("needed_qty") or 0) * unit_cost))})
-        s = summary[0] if summary else {"prescriptions": 0, "n_patients": 0}
+        s = summary[0] if summary else {"prescriptions": 0, "n_patients": 0, "chronic": 0}
         return {"summary": {**s, "products": len(out),
                             "total_units": sum(i["needed_qty"] for i in out),
                             "est_cost": sum(i["est_cost"] for i in out)},

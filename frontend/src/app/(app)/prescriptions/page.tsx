@@ -5,7 +5,7 @@ import { createPortal } from "react-dom";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
-import { Receipt, Wallet, Pill, AlertTriangle, Search, Download } from "lucide-react";
+import { Receipt, Wallet, Pill, AlertTriangle, Search, Download, HeartPulse } from "lucide-react";
 import { api } from "@/lib/apiClient";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
 import { useUiStore, filtersToQuery } from "@/store/uiStore";
@@ -109,13 +109,13 @@ const makeColumns = (t: T): Column<Prescription>[] => {
   const STATUS_EL = statusEl(t);
   return [
   { key: "executed_at", header: t("Ημ/νία", "Date"), render: (r) => fmtDate(r.executed_at) },
-  { key: "external_id", header: t("Κωδικός", "Code") },
-  { key: "patient_name", header: t("Ασθενής", "Patient"), sortable: false, render: (r) => (
-    <span className="flex flex-wrap items-center gap-1.5">
-      {r.patient_name || "—"}
-      {r.chronic ? <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700" title={t("Χρόνια αγωγή", "Chronic therapy")}>χρόνια</span> : null}
+  { key: "external_id", header: t("Κωδικός", "Code"), render: (r) => (
+    <span className="inline-flex items-center gap-1.5">
+      {r.chronic ? <HeartPulse className="h-3.5 w-3.5 shrink-0 text-amber-500" aria-label={t("Χρόνια αγωγή", "Chronic therapy")}><title>{t("Χρόνια αγωγή", "Chronic therapy")}</title></HeartPulse> : null}
+      {r.external_id}
     </span>
   ) },
+  { key: "patient_name", header: t("Ασθενής", "Patient"), sortable: false, render: (r) => r.patient_name || "—" },
   { key: "amka", header: "ΑΜΚΑ", hideOnMobile: true, sortable: false, render: (r) => r.amka ? (
     <span className="inline-flex items-center gap-1 font-mono tabular-nums">{r.amka}<CopyButton value={r.amka} /></span>
   ) : "—" },

@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { CalendarClock, CalendarDays, CalendarRange, Pill, Download, PackageCheck, Users, ChevronDown, ChevronUp, X } from "lucide-react";
+import { CalendarClock, CalendarDays, CalendarRange, Pill, Download, PackageCheck, Users, ChevronDown, ChevronUp, X, HeartPulse } from "lucide-react";
 import { api } from "@/lib/apiClient";
 import { downloadCsv } from "@/lib/csv";
 import { useT } from "@/store/prefStore";
@@ -26,7 +26,7 @@ type CoverageItem = {
 };
 type Coverage = {
   date: string;
-  summary: { prescriptions: number; n_patients: number; products: number; total_units: number; est_cost: number };
+  summary: { prescriptions: number; chronic: number; n_patients: number; products: number; total_units: number; est_cost: number };
   items: CoverageItem[];
 };
 // Calendar date n days from now in Europe/Athens (YYYY-MM-DD). MUST be Athens-local, not UTC:
@@ -162,8 +162,11 @@ export default function FuturePage() {
           <div className="mb-2 text-xs text-slate-500">
             {t("Περίοδος", "Period")}: <b>{fmtDate(range.from)}</b>{range.from !== range.to && <> → <b>{fmtDate(range.to)}</b></>}
           </div>
-          <div className="mb-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <div className="mb-3 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
             <KpiCard label={t("Συνταγές", "Prescriptions")} value={fmtNum(cov?.summary.prescriptions ?? 0)} icon={CalendarDays} accent="indigo" />
+            <KpiCard label={t("Χρόνια αγωγή", "Chronic")} value={fmtNum(cov?.summary.chronic ?? 0)}
+              sub={t(`μη χρόνιες: ${fmtNum((cov?.summary.prescriptions ?? 0) - (cov?.summary.chronic ?? 0))}`, `non-chronic: ${fmtNum((cov?.summary.prescriptions ?? 0) - (cov?.summary.chronic ?? 0))}`)}
+              icon={HeartPulse} accent="rose" />
             <KpiCard label={t("Σταθεροί ασθενείς", "Stable patients")} value={fmtNum(cov?.summary.n_patients ?? 0)} icon={Users} accent="violet" />
             <KpiCard label={t("Φάρμακα / τεμάχια", "Products / units")} value={`${fmtNum(cov?.summary.products ?? 0)} / ${fmtNum(cov?.summary.total_units ?? 0)}`} icon={PackageCheck} accent="amber" />
             <KpiCard label={t("Εκτ. κόστος", "Est. cost")} value={fmtEur(cov?.summary.est_cost ?? 0)} icon={Pill} accent="sky" />
