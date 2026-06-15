@@ -221,14 +221,28 @@ class PrescriptionRepository(BaseRepository):
                          "foreignField": "_id", "as": "f"}},
             {"$set": {"patient_name": {"$first": "$p.full_name"},
                       "amka": {"$first": "$p.amka"},
-                      "fund_name": {"$first": "$f.name"}}},
+                      "fund_name": {"$first": "$f.name"},
+                      "fund_code": {"$first": "$f.code"}}},
             {"$project": {"_id": 0, "external_id": 1, "executed_at": 1, "source": 1,
                           "icd10": 1, "amount_total": 1, "amount_claimed": 1,
+                          "patient_share": 1,            # Αιτούμενο/πληρωτέο από ασφαλισμένο
                           "status": 1, "has_unexecuted_substances": 1,
                           "chronic": {"$ifNull": ["$details.chronic", False]},
-                          "patient_name": 1, "amka": 1, "fund_name": 1}},
+                          "patient_name": 1, "amka": 1, "fund_name": 1, "fund_code": 1}},
         ]
-        return await self.aggregate(pipeline)
+        rows = await self.aggregate(pipeline)
+        # general fund name (group, π.χ. ΕΟΠΥΥ) for the LIST — the specific fund stays in the detail.
+        cfg = await shared_db()["fund_groups"].find().to_list(length=None)
+        code2group = {c: g["name"] for g in cfg for c in g.get("codes", [])}
+        # ICD-10 with Greek titles (code — τίτλος) for the list
+        codes = {c for r in rows for c in (r.get("icd10") or [])}
+        titles = {d["_id"]: d.get("title_el") async for d in
+                  shared_db()["icd10_codes"].find({"_id": {"$in": list(codes)}}, {"title_el": 1})}
+        for r in rows:
+            r["fund_general"] = code2group.get(r.get("fund_code")) or r.get("fund_name")
+            r["icd10_named"] = [f"{c} — {titles[c]}" if titles.get(c) else c
+                                for c in (r.get("icd10") or [])]
+        return rows
 
     async def by_fund(self, date_from: datetime, date_to: datetime) -> list[dict]:
         """Per-fund breakdown for the period (rx/value/claimed/unexecuted), folded into

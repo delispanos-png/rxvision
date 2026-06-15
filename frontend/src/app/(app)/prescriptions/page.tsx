@@ -33,9 +33,12 @@ type Prescription = {
   amount_total: number; // cents
   amount_claimed: number; // cents
   has_unexecuted_substances: boolean;
+  patient_share?: number; // cents — αιτούμενο/πληρωτέο από ασφαλισμένο
   patient_name?: string | null;
   amka?: string | null;
   fund_name?: string | null;
+  fund_general?: string | null; // γενική ονομασία ταμείου (group, π.χ. ΕΟΠΥΥ)
+  icd10_named?: string[];       // «κωδικός — τίτλος»
   status?: string | null;
   chronic?: boolean | null;
 };
@@ -108,18 +111,19 @@ function BarcodeChip({ bc, patient, date }: { bc: string; patient?: string | nul
 const makeColumns = (t: T): Column<Prescription>[] => {
   const STATUS_EL = statusEl(t);
   return [
-  { key: "executed_at", header: t("Ημ/νία", "Date"), render: (r) => fmtDate(r.executed_at) },
-  { key: "external_id", header: t("Κωδικός", "Code"), render: (r) => (
-    <span className="inline-flex items-center gap-1.5">
+  { key: "executed_at", header: t("Ημ/νία", "Date/time"), render: (r) => new Date(r.executed_at).toLocaleString("el-GR", { dateStyle: "short", timeStyle: "short" }) },
+  { key: "barcode", header: "Barcode", sortValue: (r) => r.external_id, render: (r) => (
+    <span className="inline-flex items-center gap-1.5 font-mono tabular-nums">
       {r.chronic ? <HeartPulse className="h-3.5 w-3.5 shrink-0 text-amber-500" aria-label={t("Χρόνια αγωγή", "Chronic therapy")}><title>{t("Χρόνια αγωγή", "Chronic therapy")}</title></HeartPulse> : null}
-      {r.external_id}
+      {r.external_id.split(":")[0]}
     </span>
   ) },
+  { key: "execno", header: t("Εκτ.", "Exec"), align: "right", sortable: false, render: (r) => r.external_id.split(":")[1] || "1" },
   { key: "patient_name", header: t("Ασθενής", "Patient"), sortable: false, render: (r) => r.patient_name || "—" },
   { key: "amka", header: "ΑΜΚΑ", hideOnMobile: true, sortable: false, render: (r) => r.amka ? (
     <span className="inline-flex items-center gap-1 font-mono tabular-nums">{r.amka}<CopyButton value={r.amka} /></span>
   ) : "—" },
-  { key: "fund_name", header: t("Ταμείο", "Fund"), hideOnMobile: true, sortable: false, render: (r) => r.fund_name || "—" },
+  { key: "fund_general", header: t("Ταμείο", "Fund"), hideOnMobile: true, sortable: false, render: (r) => r.fund_general || r.fund_name || "—" },
   {
     key: "status", header: t("Κατάσταση", "Status"), hideOnMobile: true, sortable: false,
     render: (r) => (
@@ -128,8 +132,9 @@ const makeColumns = (t: T): Column<Prescription>[] => {
       </span>
     ),
   },
-  { key: "icd10", header: "ICD-10", hideOnMobile: true, sortable: false, render: (r) => (r.icd10 ?? []).join(", ") },
+  { key: "icd10", header: "ICD-10", hideOnMobile: true, sortable: false, render: (r) => (r.icd10_named ?? r.icd10 ?? []).join(" · ") || "—" },
   { key: "amount_total", header: t("Αξία", "Value"), align: "right", render: (r) => fmtEur(r.amount_total) },
+  { key: "patient_share", header: t("Από ασφ/νο", "From patient"), align: "right", hideOnMobile: true, render: (r) => fmtEur(r.patient_share ?? 0) },
   { key: "amount_claimed", header: t("Από ταμείο", "From fund"), align: "right", render: (r) => fmtEur(r.amount_claimed) },
   ];
 };
