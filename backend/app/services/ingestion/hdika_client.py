@@ -436,6 +436,8 @@ class HdikaClient:
                 "qr": m.get("qr"), "strip": m.get("strip"),
                 "qr_batch": m.get("qr_batch"), "qr_expiry": m.get("qr_expiry"),
                 "qr_product_code": m.get("qr_product_code"),
+                # ΕΝΑ κουπόνι ανά εκτελεσμένο τεμάχιο (ταινία/QR) — όσα και η ποσότητα.
+                "coupons": m.get("coupons") or [],
             }
             # «Ανεκτέλεστο» = αυθεντικά από το Υπόλοιπο (1.4.19): >0 ⇒ δεν δόθηκε όλη η ποσότητα.
             # Πέφτουμε στο statusCode μόνο όταν λείπει το Υπόλοιπο.

@@ -315,7 +315,28 @@ def parse_cda_full(text: str) -> dict:
                 if v is not None:
                     qty = int(v) if v == int(v) else v
                     break
+        # Per-executed-quantity coupons: το CDA έχει ΕΝΑ entryRelationship[SPRT]/act ανά
+        # εκτελεσμένη ποσότητα (Ενότητα 2.1.2.4.5), καθένα με δική του ταινία/QR (2.10.x). Το
+        # _id_map τα ισοπεδώνει σε ένα — εδώ τα εξάγουμε ΟΛΑ (ένα κουπόνι ανά τεμάχιο).
+        coupons: list[dict] = []
+        for act in _iter(sa if sa is not None else sup, "act"):
+            aid = _id_map(act)
+            if "2.10.8" not in aid:           # μόνο τα blocks εκτελεσμένης ποσότητας
+                continue
+            c_strip = aid.get("2.10.12")
+            c_pc, c_b, c_e = aid.get("2.10.15"), aid.get("2.10.16"), aid.get("2.10.17")
+            cet = _first(act, "effectiveTime")
+            coupons.append({
+                "execution_no": _num(aid.get("2.10.8")),
+                "strip": c_strip,
+                "qr_product_code": c_pc, "qr_batch": c_b, "qr_expiry": c_e,
+                "qr": (True if (aid.get("2.10.14") == "1" or c_pc or c_b or c_e)
+                       else False if (aid.get("2.10.14") == "0" or c_strip) else None),
+                "executed_at": (cet.get("value") if cet is not None else None),
+            })
+        coupons.sort(key=lambda c: c.get("execution_no") or 0)
         out["lines"].append({
+            "coupons": coupons,
             "quantity": qty or 1,
             "name": (name.text.strip() if name is not None and name.text
                      else (code.get("displayName") if code is not None else "Φάρμακο")),

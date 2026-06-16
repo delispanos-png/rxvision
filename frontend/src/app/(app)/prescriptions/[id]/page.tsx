@@ -1,7 +1,7 @@
 "use client";
 
 import { useParams, useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowLeft, Repeat, Printer, X } from "lucide-react";
 import { api } from "@/lib/apiClient";
@@ -22,6 +22,12 @@ type LineDetails = {
   qr?: boolean | null; strip?: string | null;
   outstanding?: number | null;            // υπόλοιπη (ανεκτέλεστη) ποσότητα — ΗΔΥΚΑ 1.4.19
   qr_product_code?: string | null; qr_batch?: string | null; qr_expiry?: string | null;
+  coupons?: Coupon[] | null;              // ΕΝΑ κουπόνι ανά εκτελεσμένο τεμάχιο (όσα η ποσότητα)
+};
+type Coupon = {
+  execution_no?: number | null; strip?: string | null; qr?: boolean | null;
+  qr_product_code?: string | null; qr_batch?: string | null; qr_expiry?: string | null;
+  executed_at?: string | null;
 };
 type PrescDetails = {
   issue_date?: string | null; deadline_date?: string | null;
@@ -52,6 +58,37 @@ function CategoryBadge({ category }: { category?: string | null }) {
   if (!b) return null;
   return <span className={`ml-1.5 rounded px-1.5 py-0.5 text-[10px] font-semibold ${b.cls}`}>{b.label}</span>;
 }
+
+// Κουπόνια μιας γραμμής: η αυθεντική per-τεμάχιο λίστα (μετά το full sync)· αλλιώς πέφτουμε
+// στο μοναδικό legacy κουπόνι αν υπάρχει.
+function couponsOf(it: Item): Coupon[] {
+  const d = it.details;
+  if (d?.coupons?.length) return d.coupons;
+  if (d && (d.qr || d.strip)) return [{ qr: d.qr, strip: d.strip, qr_product_code: d.qr_product_code, qr_batch: d.qr_batch, qr_expiry: d.qr_expiry }];
+  return [];
+}
+
+// GS1 DataMatrix (EU FMD) — ο πραγματικός κωδικός που σαρώνεται: (01)GTIN(17)λήξη(10)παρτίδα(21)serial.
+function GS1Code({ c }: { c: Coupon }) {
+  const ref = useRef<HTMLCanvasElement>(null);
+  const gtin = (c.qr_product_code || "").replace(/\D/g, "").padStart(14, "0").slice(-14);
+  useEffect(() => {
+    if (!ref.current || !c.qr_product_code) return;
+    let dead = false;
+    (async () => {
+      try {
+        const bwipjs = (await import("bwip-js")).default;
+        if (dead || !ref.current) return;
+        const ai = `(01)${gtin}` + (c.qr_expiry ? `(17)${c.qr_expiry}` : "")
+          + (c.qr_batch ? `(10)${c.qr_batch}` : "") + (c.strip ? `(21)${c.strip}` : "");
+        bwipjs.toCanvas(ref.current, { bcid: "gs1datamatrix", text: ai, scale: 3, padding: 4, backgroundcolor: "FFFFFF" });
+      } catch { /* ignore render errors */ }
+    })();
+    return () => { dead = true; };
+  }, [gtin, c.qr_product_code, c.qr_expiry, c.qr_batch, c.strip]);
+  if (!c.qr_product_code) return null;
+  return <canvas ref={ref} className="h-24 w-24 shrink-0 rounded border border-slate-200 bg-white" />;
+}
 type Detail = {
   external_id: string; executed_at: string; status: string | null; source: string;
   repeat_current: number; repeat_total: number; repeat_root: string | null; next_open_date: string | null;
@@ -63,6 +100,12 @@ type Detail = {
   patient: { sex: string | null; birth_year: number | null; area: string | null; full_name: string | null; amka: string | null } | null;
   details?: PrescDetails | null;
   items: Item[];
+  summary?: SummaryItem[];        // σύνολο όλων των εκτελέσεων της συνταγής
+  execution_count?: number;
+};
+type SummaryItem = {
+  name: string | null; category: string | null; substance: string | null;
+  quantity: number; amount: number; executions: number; is_executed: boolean;
 };
 
 type IdikaLine = {
@@ -154,8 +197,10 @@ export default function PrescriptionDetailPage() {
   // BLOCK 2 tabs + BLOCK 3 coupon popup (hooks declared before the early returns above)
   const executed = d.items.filter((it) => it.is_executed);
   const unexecuted = d.items.filter((it) => !it.is_executed || (it.details?.outstanding ?? 0) > 0);
-  const qrCount = executed.filter((it) => it.details?.qr).length;
-  const eofCount = executed.filter((it) => !it.details?.qr && it.details?.strip).length;
+  // πλήθος κουπονιών (ανά τεμάχιο) σε ΑΥΤΗ την εκτέλεση — όχι ανά γραμμή
+  const allCoupons = executed.flatMap(couponsOf);
+  const qrCount = allCoupons.filter((c) => c.qr).length;
+  const eofCount = allCoupons.filter((c) => !c.qr && c.strip).length;
 
   // Fetch the official ΗΔΙΚΑ PDF (auth header can't ride a plain window.open, so fetch as a blob).
   const openIdikaPrint = async () => {
@@ -254,7 +299,9 @@ export default function PrescriptionDetailPage() {
         <PanelCard title={t("Συνταγή", "Prescription")}>
           <div className="text-sm text-slate-700">{t("Εκτέλεση", "Execution")}: {dt(d.executed_at)}</div>
           <div className="text-xs text-slate-500">
-            {recurring ? t(`Επανάληψη ${d.repeat_current}/${d.repeat_total}`, `Repeat ${d.repeat_current}/${d.repeat_total}`) : t("Μία εκτέλεση", "Single execution")}
+            {recurring ? t(`Επανάληψη ${d.repeat_current}/${d.repeat_total}`, `Repeat ${d.repeat_current}/${d.repeat_total}`)
+              : d.execution_count && d.execution_count > 1 ? t(`${d.execution_count} εκτελέσεις`, `${d.execution_count} executions`)
+              : t("Μία εκτέλεση", "Single execution")}
             {d.next_open_date ? t(` · Επόμενη: ${new Date(d.next_open_date).toLocaleDateString("el-GR")}`, ` · Next: ${new Date(d.next_open_date).toLocaleDateString("el-GR")}`) : ""}
           </div>
           <div className="mt-2 flex flex-wrap gap-1">
@@ -273,7 +320,7 @@ export default function PrescriptionDetailPage() {
         <div className="mb-3 flex flex-wrap items-center gap-2">
           <div className="inline-flex rounded-xl border border-slate-200 p-1 text-sm dark:border-slate-700">
             {([["exec", t("Εκτέλεση", "Execution")],
-               ["summary", t("Συνοπτικά", "Summary")],
+               ["summary", `${t("Συνοπτικά", "Summary")}${d.execution_count && d.execution_count > 1 ? ` (${d.execution_count})` : ""}`],
                ["unexec", `${t("Ανεκτέλεστα", "Unexecuted")}${unexecuted.length ? ` (${unexecuted.length})` : ""}`]] as ["exec" | "summary" | "unexec", string][]).map(([k, label]) => (
               <button key={k} onClick={() => setLineTab(k)}
                 className={`rounded-lg px-3 py-1.5 font-medium transition ${lineTab === k ? "bg-indigo-600 text-white" : "text-slate-600 hover:bg-slate-50 dark:text-slate-300"}`}>{label}</button>
@@ -292,9 +339,23 @@ export default function PrescriptionDetailPage() {
           </div>
         ) : null}
         <div className="space-y-2">
-          {(lineTab === "exec" ? executed : lineTab === "unexec" ? unexecuted : d.items).map((it, i) => {
+          {/* Συνοπτικά = άθροισμα ΟΛΩΝ των εκτελέσεων της συνταγής (όχι μόνο αυτής) */}
+          {lineTab === "summary" ? (d.summary ?? []).map((s, i) => (
+            <div key={i} className="rounded-xl border border-slate-200 p-3 dark:border-slate-700">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="flex min-w-0 flex-wrap items-center gap-2">
+                  <span className={`font-semibold ${s.is_executed ? "text-slate-800 dark:text-slate-100" : "text-slate-500"}`}>{s.name || "—"}</span>
+                  <CategoryBadge category={s.category} />
+                </span>
+                <span className="shrink-0 text-sm text-slate-600">×{s.quantity}{s.amount != null && <span className="ml-2 font-medium text-slate-800 dark:text-slate-100">{eur(s.amount)}</span>}</span>
+              </div>
+              <div className="mt-1 text-xs text-slate-500">{[s.substance, `${s.executions} ${s.executions === 1 ? t("εκτέλεση", "execution") : t("εκτελέσεις", "executions")}`].filter(Boolean).join(" · ")}</div>
+            </div>
+          )) : (lineTab === "exec" ? executed : unexecuted).map((it, i) => {
             const ln = it.details || {};
             const out = ln.outstanding ?? 0;
+            const cps = couponsOf(it);
+            const isQr = cps[0]?.qr;
             return (
               <div key={i} className={`rounded-xl border p-3 ${it.is_executed ? "border-slate-200 dark:border-slate-700" : "border-slate-300 bg-slate-50 dark:bg-slate-800/60"}`}>
                 <div className="flex flex-wrap items-center justify-between gap-2">
@@ -302,8 +363,12 @@ export default function PrescriptionDetailPage() {
                     <span className={`font-semibold ${it.is_executed ? "text-slate-800 dark:text-slate-100" : "text-slate-500"}`}>{it.name || "—"}</span>
                     {it.atc && <span className="text-[10px] text-slate-400">{it.atc}</span>}
                     <CategoryBadge category={it.category} />
-                    {it.is_executed && ln.qr ? <button onClick={() => setCoupon(it)} className="rounded-full bg-sky-50 px-2 py-0.5 text-[10px] font-semibold text-sky-700 hover:bg-sky-100">QR ↗</button>
-                      : it.is_executed && ln.strip ? <button onClick={() => setCoupon(it)} className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-700 hover:bg-amber-100">ΕΟΦ ↗</button> : null}
+                    {it.is_executed && cps.length ? (
+                      <button onClick={() => setCoupon(it)}
+                        className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${isQr ? "bg-sky-50 text-sky-700 hover:bg-sky-100" : "bg-amber-50 text-amber-700 hover:bg-amber-100"}`}>
+                        {cps.length > 1 ? `${cps.length} ` : ""}{isQr ? "QR" : "ΕΟΦ"} ↗
+                      </button>
+                    ) : null}
                   </span>
                   <span className="shrink-0 text-sm text-slate-600">
                     {lineTab === "unexec"
@@ -317,9 +382,11 @@ export default function PrescriptionDetailPage() {
               </div>
             );
           })}
-          {(lineTab === "exec" ? executed : lineTab === "unexec" ? unexecuted : d.items).length === 0 && (
+          {(lineTab === "summary" ? (d.summary ?? []) : lineTab === "exec" ? executed : unexecuted).length === 0 && (
             <div className="py-6 text-center text-sm text-slate-400">
-              {lineTab === "unexec" ? t("Δεν υπάρχουν ανεκτέλεστα φάρμακα.", "No unexecuted medicines.") : t("Δεν υπάρχουν γραμμές φαρμάκων.", "No medicine lines.")}
+              {lineTab === "unexec" ? t("Δεν υπάρχουν ανεκτέλεστα φάρμακα.", "No unexecuted medicines.")
+                : lineTab === "summary" ? t("Δεν υπάρχουν εκτελέσεις.", "No executions.")
+                : t("Δεν υπάρχουν γραμμές φαρμάκων.", "No medicine lines.")}
             </div>
           )}
         </div>
@@ -417,22 +484,35 @@ export default function PrescriptionDetailPage() {
               <h3 className="font-semibold text-slate-900 dark:text-slate-100">{t("Στοιχεία κουπονιού", "Coupon details")}</h3>
               <button onClick={() => setCoupon(null)} className="text-slate-400 hover:text-slate-600"><X className="h-5 w-5" /></button>
             </div>
-            <div className="mb-3 text-sm font-medium text-slate-700 dark:text-slate-200">{coupon.name}{coupon.quantity > 1 ? ` · ×${coupon.quantity}` : ""}</div>
-            <div className="grid grid-cols-1 gap-2 text-sm sm:grid-cols-2">
-              <Field label={t("Τύπος", "Type")} value={coupon.details?.qr ? "QR (HMVS)" : t("Ταινία γνησιότητας ΕΟΦ", "ΕΟΦ authenticity strip")} />
-              {coupon.details?.qr ? (
-                <>
-                  <Field label={t("Κωδικός / Serial", "Code / Serial")} value={coupon.details?.strip} />
-                  <Field label={t("Κωδικός προϊόντος", "Product code")} value={coupon.details?.qr_product_code} />
-                  <Field label={t("Παρτίδα", "Batch")} value={coupon.details?.qr_batch} />
-                  <Field label={t("Λήξη", "Expiry")} value={coupon.details?.qr_expiry} />
-                </>
-              ) : (
-                <Field label={t("Αριθμός ταινίας", "Strip number")} value={coupon.details?.strip || coupon.details?.lot} />
-              )}
+            <div className="mb-3 text-sm font-medium text-slate-700 dark:text-slate-200">
+              {coupon.name}
+              <span className="ml-2 text-xs font-normal text-slate-400">×{coupon.quantity} · {couponsOf(coupon).length} {couponsOf(coupon).length === 1 ? t("κουπόνι", "coupon") : t("κουπόνια", "coupons")}</span>
             </div>
-            {coupon.quantity > 1 ? (
-              <p className="mt-3 text-xs text-slate-400">{t("Σημ.: αναλυτικά κουπόνια ανά τεμάχιο διαθέσιμα μετά τον πλήρη συγχρονισμό ανά εκτελεσμένη ποσότητα.", "Note: per-unit coupon detail available after full per-quantity sync.")}</p>
+            {/* ΕΝΑ κουπόνι ανά εκτελεσμένο τεμάχιο, με τον πραγματικό GS1 DataMatrix (EU FMD) */}
+            <div className="max-h-[60vh] space-y-3 overflow-y-auto">
+              {couponsOf(coupon).map((c, ci) => (
+                <div key={ci} className="flex items-start gap-3 rounded-xl border border-slate-200 p-3 dark:border-slate-700">
+                  <GS1Code c={c} />
+                  <div className="min-w-0 flex-1 space-y-1.5 text-sm">
+                    <div className="flex items-center gap-2">
+                      <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold text-slate-600 dark:bg-slate-800">#{ci + 1}</span>
+                      <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${c.qr ? "bg-sky-100 text-sky-700" : "bg-amber-100 text-amber-700"}`}>{c.qr ? "QR (HMVS)" : t("Ταινία ΕΟΦ", "ΕΟΦ strip")}</span>
+                    </div>
+                    <Field label={t("Serial", "Serial")} value={c.strip} />
+                    {c.qr ? (<>
+                      <Field label={t("Κωδικός προϊόντος (GTIN)", "Product code (GTIN)")} value={c.qr_product_code} />
+                      <Field label={t("Παρτίδα", "Batch")} value={c.qr_batch} />
+                      <Field label={t("Λήξη", "Expiry")} value={c.qr_expiry} />
+                    </>) : null}
+                  </div>
+                </div>
+              ))}
+              {couponsOf(coupon).length === 0 ? (
+                <div className="py-4 text-center text-sm text-slate-400">{t("Δεν υπάρχουν στοιχεία κουπονιού.", "No coupon data.")}</div>
+              ) : null}
+            </div>
+            {couponsOf(coupon).length > 0 && couponsOf(coupon).length < coupon.quantity ? (
+              <p className="mt-3 text-xs text-slate-400">{t(`Εμφανίζονται ${couponsOf(coupon).length} από ${coupon.quantity} τεμάχια — τα υπόλοιπα συμπληρώνονται με τον πλήρη συγχρονισμό.`, `Showing ${couponsOf(coupon).length} of ${coupon.quantity} units — the rest fill in after full sync.`)}</p>
             ) : null}
           </div>
         </div>

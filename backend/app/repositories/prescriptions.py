@@ -76,6 +76,32 @@ class PrescriptionRepository(BaseRepository):
                 "is_executed": it.get("is_executed", True),
                 "details": it.get("details") or {},   # rich ΗΔΥΚΑ/CDA per-line detail (stored)
             })
+        # ── Συνοπτικά: άθροισμα ΟΛΩΝ των εκτελέσεων αυτής της συνταγής (ίδιο barcode, κάθε :N
+        # ξεχωριστή εκτέλεση) — σύνολο ποσότητας/αξίας ανά προϊόν, για το tab «Συνοπτικά».
+        barcode = str(external_id).split(":")[0]
+        sib_ids = [e["_id"] async for e in self._coll.find(
+            self._scope({"external_id": {"$regex": "^" + barcode + "(:|$)"}}), {"_id": 1})]
+        sib_items = await db["prescription_items"].find(
+            {"tenant_id": self.tenant_id, "execution_id": {"$in": sib_ids}}).to_list(2000)
+        pids = list({it.get("product_id") for it in sib_items if it.get("product_id")})
+        pmap = {p["_id"]: p async for p in db["products"].find(
+            {"_id": {"$in": pids}}, {"name": 1, "category": 1, "substance": 1})}
+        agg: dict = {}
+        for it in sib_items:
+            pid = it.get("product_id")
+            prod = pmap.get(pid) or {}
+            g = agg.get(pid) or {"name": prod.get("name"),
+                                 "category": prod.get("category") or it.get("category") or "normal",
+                                 "substance": prod.get("substance"),
+                                 "quantity": 0, "amount": 0, "executions": 0, "is_executed": False}
+            q = it.get("quantity", 1) or 1
+            g["quantity"] += q
+            g["amount"] += (it.get("retail_price", 0) or 0) * q
+            g["executions"] += 1
+            g["is_executed"] = g["is_executed"] or bool(it.get("is_executed", True))
+            agg[pid] = g
+        summary = sorted(agg.values(), key=lambda x: -x["amount"])
+
         # ΠΛΗΡΩΤΕΟ ΑΠΟ ΤΑΜΕΙΟ = amount_claimed (fund reimburses); ΑΠΟ ΑΣΦ/ΝΟ = patient_share
         fund_payable = ex.get("amount_claimed", 0)
         patient_payable = ex.get("patient_share", 0)
@@ -98,6 +124,8 @@ class PrescriptionRepository(BaseRepository):
                         "amka": (patient or {}).get("amka")} if patient else None,
             "details": ex.get("details") or {},   # rich ΗΔΥΚΑ/CDA prescription-level detail (stored)
             "items": items,
+            "summary": summary,                    # σύνολο όλων των εκτελέσεων της συνταγής
+            "execution_count": len(sib_ids),
         }
         # ICD-10 με ελληνικό τίτλο (κωδικός — τίτλος) για την προβολή (γενικά + ανά γραμμή)
         codes = ex.get("icd10", []) or []

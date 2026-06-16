@@ -29,8 +29,13 @@ def _now() -> datetime:
     return datetime.now(tz=timezone.utc)
 
 
+# Bump όταν αλλάζει η ΔΟΜΗ των αποθηκευμένων items/details (όχι μόνο οι τιμές) ώστε ένα
+# re-ingest να ΞΑΝΑΓΡΑΨΕΙ τα items αντί να κάνει skip-by-hash. v2: per-τεμάχιο coupons.
+_PARSE_VERSION = "v2-coupons"
+
+
 def _content_hash(ex: CanonicalExecution, amount_total: int, claimed: int) -> str:
-    parts = [ex.source, ex.external_id, ex.executed_at.isoformat(),
+    parts = [_PARSE_VERSION, ex.source, ex.external_id, ex.executed_at.isoformat(),
              str(amount_total), str(claimed), str(ex.repeat_current), str(ex.repeat_total),
              ",".join(sorted(ex.icd10)),
              ";".join(sorted(f"{i.barcode}:{i.quantity}:{i.retail_price}" for i in ex.items))]
