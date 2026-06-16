@@ -86,26 +86,32 @@ function couponsOf(it: Item): Coupon[] {
   return [];
 }
 
-// GS1 DataMatrix (EU FMD) — ο πραγματικός κωδικός που σαρώνεται: (01)GTIN(17)λήξη(10)παρτίδα(21)serial.
-function GS1Code({ c }: { c: Coupon }) {
+// Σαρώσιμος κωδικός κουπονιού: QR → GS1 DataMatrix (EU FMD, (01)GTIN(17)λήξη(10)παρτίδα(21)serial)·
+// ΕΟΦ ταινία γνησιότητας → γραμμικός Code-128 του serial (για να σκανάρεται στο φαρμακείο).
+function CouponBarcode({ c }: { c: Coupon }) {
   const ref = useRef<HTMLCanvasElement>(null);
+  const isQr = !!c.qr_product_code;
   const gtin = (c.qr_product_code || "").replace(/\D/g, "").padStart(14, "0").slice(-14);
   useEffect(() => {
-    if (!ref.current || !c.qr_product_code) return;
+    if (!ref.current || (!isQr && !c.strip)) return;
     let dead = false;
     (async () => {
       try {
         const bwipjs = (await import("bwip-js")).default;
         if (dead || !ref.current) return;
-        const ai = `(01)${gtin}` + (c.qr_expiry ? `(17)${c.qr_expiry}` : "")
-          + (c.qr_batch ? `(10)${c.qr_batch}` : "") + (c.strip ? `(21)${c.strip}` : "");
-        bwipjs.toCanvas(ref.current, { bcid: "gs1datamatrix", text: ai, scale: 3, padding: 4, backgroundcolor: "FFFFFF" });
+        if (isQr) {
+          const ai = `(01)${gtin}` + (c.qr_expiry ? `(17)${c.qr_expiry}` : "")
+            + (c.qr_batch ? `(10)${c.qr_batch}` : "") + (c.strip ? `(21)${c.strip}` : "");
+          bwipjs.toCanvas(ref.current, { bcid: "gs1datamatrix", text: ai, scale: 3, padding: 4, backgroundcolor: "FFFFFF" });
+        } else {
+          bwipjs.toCanvas(ref.current, { bcid: "code128", text: String(c.strip), scale: 2, height: 14, includetext: true, textsize: 9, paddingwidth: 6, paddingheight: 4, backgroundcolor: "FFFFFF" });
+        }
       } catch { /* ignore render errors */ }
     })();
     return () => { dead = true; };
-  }, [gtin, c.qr_product_code, c.qr_expiry, c.qr_batch, c.strip]);
-  if (!c.qr_product_code) return null;
-  return <canvas ref={ref} className="h-24 w-24 shrink-0 rounded border border-slate-200 bg-white" />;
+  }, [isQr, gtin, c.qr_expiry, c.qr_batch, c.strip]);
+  if (!isQr && !c.strip) return null;
+  return <canvas ref={ref} className={`shrink-0 rounded border border-slate-200 bg-white ${isQr ? "h-24 w-24" : "h-16 w-auto max-w-[12rem]"}`} />;
 }
 
 // Χαρακτηριστικά συνταγής (CDA flags) → badges + κάρτα Γνωμάτευσης. Βοηθούν τον φαρμακοποιό
@@ -592,7 +598,7 @@ export default function PrescriptionDetailPage() {
             <div className="max-h-[60vh] space-y-3 overflow-y-auto">
               {couponsOf(coupon).map((c, ci) => (
                 <div key={ci} className="flex items-start gap-3 rounded-xl border border-slate-200 p-3 dark:border-slate-700">
-                  <GS1Code c={c} />
+                  <CouponBarcode c={c} />
                   <div className="min-w-0 flex-1 space-y-1.5 text-sm">
                     <div className="flex items-center gap-2">
                       <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold text-slate-600 dark:bg-slate-800">#{ci + 1}</span>
