@@ -3,7 +3,7 @@
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowLeft, Repeat, Printer, X } from "lucide-react";
+import { ArrowLeft, Repeat, Printer, QrCode, X } from "lucide-react";
 import { api } from "@/lib/apiClient";
 import { PanelCard } from "@/components/ui/Card";
 import { CopyButton } from "@/components/ui/CopyButton";
@@ -276,6 +276,7 @@ export default function PrescriptionDetailPage() {
 
   const [lineTab, setLineTab] = useState<"exec" | "summary" | "unexec">("exec");
   const [coupon, setCoupon] = useState<Item | null>(null);
+  const [couponSheet, setCouponSheet] = useState(false);
 
   if (isLoading) return <div className="text-slate-400">{t("Φόρτωση…", "Loading…")}</div>;
   if (!data) return <div className="text-slate-500">{t("Η συνταγή δεν βρέθηκε.", "Prescription not found.")}</div>;
@@ -286,11 +287,9 @@ export default function PrescriptionDetailPage() {
   // repeat_current/repeat_total now come straight from the ΗΔΙΚΑ CDA (1.1.4 = planned count,
   // 1.1.4.1 = position), so "X/Y" is authoritative even when sibling barcodes aren't synced.
   const recurring = d.repeat_total > 1;
-  // A partial execution's amount_total covers only what was dispensed in THIS visit, while
-  // wholesale_cost is the whole prescription's cost (incl. not-yet-dispensed lines) → the
-  // per-execution gross profit is meaningless. Suppress it (a negative profit is the same tell)
-  // until the per-execution dispensing detail arrives from ΗΔΙΚΑ.
-  const marginReliable = d.status !== "partial" && profit >= 0;
+  // Το wholesale_cost κλιμακώνεται πλέον στο authoritative amount_total (ανά εκτέλεση), οπότε
+  // το μεικτό κέρδος είναι έγκυρο όποτε έχουμε εκτίμηση χονδρικής (>0).
+  const marginReliable = d.wholesale_cost > 0;
 
   // BLOCK 2 tabs + BLOCK 3 coupon popup (hooks declared before the early returns above)
   const executed = d.items.filter((it) => it.is_executed);
@@ -325,6 +324,11 @@ export default function PrescriptionDetailPage() {
           <button onClick={() => window.print()} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50">
             <Printer className="h-4 w-4" /> {t("Εκτύπωση εκτέλεσης", "Print execution")}
           </button>
+          {executed.some((it) => couponsOf(it).length) ? (
+            <button onClick={() => setCouponSheet(true)} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50">
+              <QrCode className="h-4 w-4" /> {t("Εκτύπωση κουπονιών", "Print coupons")}
+            </button>
+          ) : null}
         </div>
       </div>
 
@@ -380,10 +384,15 @@ export default function PrescriptionDetailPage() {
           <span className="rounded-lg bg-brand-50 px-3 py-1.5 font-medium text-brand-700">{t("Από ΕΟΠΥΥ", "From ΕΟΠΥΥ")}: {eur(d.fund_payable - d.details.kyyap_covered)}</span>
         </div>
       ) : null}
-      {!marginReliable && (
+      {marginReliable ? (
         <div className="-mt-2 text-xs text-slate-400">
-          {t("Το χονδρικό κόστος & το μεικτό κέρδος αφορούν όλη τη συνταγή, όχι τη μερική εκτέλεση — θα υπολογιστούν ανά εκτέλεση μετά τον πλήρη συγχρονισμό με το ΗΔΙΚΑ.",
-             "Wholesale cost & gross profit cover the whole prescription, not this partial execution — they will be computed per-execution after the full ΗΔΙΚΑ sync.")}
+          {t("Η χονδρική τιμή είναι εκτίμηση (ελλείψει επίσημου Δελτίου Τιμών) — το μεικτό κέρδος είναι ενδεικτικό.",
+             "Wholesale price is an estimate (no official price bulletin) — gross profit is indicative.")}
+        </div>
+      ) : (
+        <div className="-mt-2 text-xs text-slate-400">
+          {t("Το χονδρικό κόστος & το μεικτό κέρδος δεν είναι διαθέσιμα για αυτή την εκτέλεση.",
+             "Wholesale cost & gross profit are not available for this execution.")}
         </div>
       )}
 
@@ -624,6 +633,47 @@ export default function PrescriptionDetailPage() {
             {couponsOf(coupon).length > 0 && couponsOf(coupon).length < coupon.quantity ? (
               <p className="mt-3 text-xs text-slate-400">{t(`Εμφανίζονται ${couponsOf(coupon).length} από ${coupon.quantity} τεμάχια — τα υπόλοιπα συμπληρώνονται με τον πλήρη συγχρονισμό.`, `Showing ${couponsOf(coupon).length} of ${coupon.quantity} units — the rest fill in after full sync.`)}</p>
             ) : null}
+          </div>
+        </div>
+      ) : null}
+
+      {/* Φύλλο εκτύπωσης κουπονιών (QR/ΕΟΦ) της ΤΡΕΧΟΥΣΑΣ εκτέλεσης — barcode + serial ανά τεμάχιο */}
+      {couponSheet ? (
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-black/40 p-4 print:static print:bg-white print:p-0" onClick={() => setCouponSheet(false)}>
+          <style jsx global>{`
+            @media print {
+              body * { visibility: hidden !important; }
+              #coupon-print, #coupon-print * { visibility: visible !important; }
+              #coupon-print { position: absolute; left: 0; top: 0; width: 100%; }
+              .no-print { display: none !important; }
+            }
+          `}</style>
+          <div id="coupon-print" className="mx-auto max-w-3xl rounded-2xl bg-white p-6 shadow-xl print:max-w-full print:rounded-none print:shadow-none" onClick={(e) => e.stopPropagation()}>
+            <div className="mb-4 flex items-start justify-between gap-3">
+              <div>
+                <h3 className="text-lg font-bold text-slate-900">{t("Κουπόνια εκτέλεσης", "Execution coupons")}</h3>
+                <div className="text-sm text-slate-500">{t("Συνταγή", "Prescription")} {d.external_id} · {dt(d.executed_at)}{d.patient?.full_name ? ` · ${d.patient.full_name}` : ""}</div>
+              </div>
+              <div className="no-print flex items-center gap-2">
+                <button onClick={() => window.print()} className="inline-flex items-center gap-1.5 rounded-lg border border-brand-300 bg-brand-50 px-3 py-1.5 text-sm font-medium text-brand-700 hover:bg-brand-100"><Printer className="h-4 w-4" /> {t("Εκτύπωση", "Print")}</button>
+                <button onClick={() => setCouponSheet(false)} className="text-slate-400 hover:text-slate-600"><X className="h-5 w-5" /></button>
+              </div>
+            </div>
+            <div className="space-y-4">
+              {executed.filter((it) => couponsOf(it).length).map((it, i) => (
+                <div key={i} className="break-inside-avoid">
+                  <div className="mb-2 text-sm font-semibold text-slate-800">{it.name} <span className="font-normal text-slate-400">×{it.quantity}</span></div>
+                  <div className="flex flex-wrap gap-3">
+                    {couponsOf(it).map((c, ci) => (
+                      <div key={ci} className="flex flex-col items-center gap-1 rounded-lg border border-slate-200 p-2">
+                        <CouponBarcode c={c} />
+                        <div className="text-center text-[10px] text-slate-500"><span className={`font-semibold ${c.qr ? "text-sky-700" : "text-amber-700"}`}>{c.qr ? "QR" : "ΕΟΦ"}</span> {c.strip}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       ) : null}

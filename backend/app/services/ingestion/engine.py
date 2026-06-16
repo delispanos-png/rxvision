@@ -31,7 +31,7 @@ def _now() -> datetime:
 
 # Bump όταν αλλάζει η ΔΟΜΗ των αποθηκευμένων items/details (όχι μόνο οι τιμές) ώστε ένα
 # re-ingest να ΞΑΝΑΓΡΑΨΕΙ τα items αντί να κάνει skip-by-hash. v2: per-τεμάχιο coupons.
-_PARSE_VERSION = "v3-characteristics"
+_PARSE_VERSION = "v4-wholesale-scale"
 
 
 def _content_hash(ex: CanonicalExecution, amount_total: int, claimed: int) -> str:
@@ -128,6 +128,10 @@ class IngestionEngine:
 
         item_docs, amount_total, wholesale_cost = await self._resolve_items(ex)
         if ex.amount_total:                       # source-authoritative retail (ΗΔΙΚΑ) → exact totals
+            # Κλιμάκωσε το χονδρικό στο ίδιο authoritative σύνολο ώστε ο λόγος χονδρ./λιαν. να
+            # μένει σταθερός — αλλιώς (διπλός πολλαπλασιασμός qty) το μεικτό κέρδος βγαίνει αρνητικό.
+            if amount_total > 0:
+                wholesale_cost = round(wholesale_cost * ex.amount_total / amount_total)
             amount_total = ex.amount_total
         patient_share = ex.patient_share or 0
         amount_claimed = amount_total - patient_share
