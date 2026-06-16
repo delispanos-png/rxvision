@@ -9,6 +9,7 @@ import { useT } from "@/store/prefStore";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
 import { PanelCard } from "@/components/ui/Card";
 import { appAlert, appConfirm } from "@/store/dialogStore";
+import { fmtDate } from "@/lib/formatters";
 
 type Campaign = { id: string; channel: string; subject?: string | null; recipients: number; sent: number; failed: number; created_at: string };
 
@@ -115,7 +116,7 @@ export default function CommunicationsPage() {
               {history.data!.items.map((c) => (
                 <div key={c.id} className="flex items-center justify-between py-2 text-sm">
                   <span className="flex items-center gap-2 text-slate-700">{c.channel === "email" ? <Mail className="h-4 w-4 text-slate-400" /> : <MessageSquare className="h-4 w-4 text-slate-400" />}{c.subject || (c.channel === "sms" ? "SMS" : "Email")}</span>
-                  <span className="text-slate-500">{new Date(c.created_at).toLocaleDateString("el-GR")} · {c.sent}/{c.recipients} {c.failed ? `· ${c.failed} ✗` : ""}</span>
+                  <span className="text-slate-500">{fmtDate(c.created_at)} · {c.sent}/{c.recipients} {c.failed ? `· ${c.failed} ✗` : ""}</span>
                 </div>
               ))}
             </div>

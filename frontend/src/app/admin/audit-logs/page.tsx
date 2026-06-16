@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { adminApi } from "@/lib/adminClient";
+import { fmtDateTime } from "@/lib/formatters";
 
 type AuditLog = {
   _id: string; tenant_id?: string; actor_user_id?: string; action?: string; at?: string;
@@ -92,7 +93,7 @@ export default function AuditLogsPage() {
             )}
             {rows.map((r) => (
               <tr key={r._id} className="border-t border-slate-100 dark:border-slate-800">
-                <td className="whitespace-nowrap px-3 py-2 text-slate-600 dark:text-slate-300">{r.at ? new Date(r.at).toLocaleString("el-GR") : "—"}</td>
+                <td className="whitespace-nowrap px-3 py-2 text-slate-600 dark:text-slate-300">{r.at ? fmtDateTime(r.at) : "—"}</td>
                 <td className="px-3 py-2 text-slate-600 dark:text-slate-300">{r.tenant_id ?? "—"}</td>
                 <td className="px-3 py-2 text-slate-600 dark:text-slate-300">{r.actor_user_id ?? "—"}</td>
                 <td className="px-3 py-2 font-medium text-slate-800 dark:text-slate-200">{r.action ?? "—"}</td>

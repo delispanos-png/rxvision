@@ -2,6 +2,8 @@
 // → jsPDF, which renders Greek perfectly because the browser draws the text). All heavy
 // libs are dynamically imported so they never bloat the main bundle.
 
+import { fmtDate } from "./formatters";
+
 export type ExportCol<T> = { key: string; header: string; value?: (row: T) => unknown };
 
 const cell = <T,>(c: ExportCol<T>, r: T): unknown => {
@@ -29,7 +31,7 @@ export async function downloadPdf<T>(filename: string, title: string, columns: E
   ]);
   const MAX = 1500;
   const data = rows.slice(0, MAX);
-  const date = new Date().toLocaleDateString("el-GR", { day: "numeric", month: "long", year: "numeric" });
+  const date = fmtDate(new Date().toISOString());
 
   const ths = columns.map((c) => `<th style="background:#4f46e5;color:#fff;text-align:left;padding:9px 11px;font-size:12px;font-weight:600;white-space:nowrap;">${esc(c.header)}</th>`).join("");
   const trs = data.map((r, i) =>

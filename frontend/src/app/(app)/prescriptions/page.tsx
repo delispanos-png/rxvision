@@ -10,7 +10,7 @@ import { ModuleGuard } from "@/components/layout/ModuleGuard";
 import { Tooltip } from "@/components/ui/Tooltip";
 import { useUiStore, filtersToQuery } from "@/store/uiStore";
 import { prevYearRange, pctDelta } from "@/lib/compare";
-import { fmtEur, fmtNum, fmtDate, fmtMoney} from "@/lib/formatters";
+import { fmtEur, fmtNum, fmtDate, fmtDateTime, fmtMoney} from "@/lib/formatters";
 import { downloadCsv } from "@/lib/csv";
 import { DateRangeFilter } from "@/components/filters/DateRangeFilter";
 import { DataTable, type Column } from "@/components/tables/DataTable";
@@ -78,7 +78,7 @@ const makeFundCols = (t: T): Column<FundRow>[] => [
 ];
 
 function BarcodeChip({ bc, patient, date }: { bc: string; patient?: string | null; date?: string | null }) {
-  const info = [patient || "", date ? new Date(date).toLocaleString("el-GR", { dateStyle: "medium", timeStyle: "short" }) : ""].filter(Boolean).join(" · ");
+  const info = [patient || "", date ? fmtDateTime(date) : ""].filter(Boolean).join(" · ");
   return (
     <Tooltip label={info}>
       <span className="cursor-default rounded bg-slate-100 px-1.5 py-0.5 text-xs font-medium text-brand-700 hover:bg-brand-200">
@@ -103,7 +103,7 @@ function DxBubble({ dx, label, title }: { dx: string[]; label: string; title: st
 const makeColumns = (t: T): Column<Prescription>[] => {
   const STATUS_EL = statusEl(t);
   return [
-  { key: "executed_at", header: t("Ημ/νία", "Date/time"), render: (r) => new Date(r.executed_at).toLocaleString("el-GR", { dateStyle: "short", timeStyle: "short" }) },
+  { key: "executed_at", header: t("Ημ/νία", "Date/time"), render: (r) => fmtDateTime(r.executed_at) },
   { key: "barcode", header: "Barcode", sortValue: (r) => r.external_id, render: (r) => (
     <span className="inline-flex items-center gap-1.5 font-mono tabular-nums">
       {r.chronic ? <Tooltip label={t("Χρόνια αγωγή", "Chronic therapy")}><HeartPulse className="h-3.5 w-3.5 shrink-0 text-amber-500" aria-label={t("Χρόνια αγωγή", "Chronic therapy")} /></Tooltip> : null}
@@ -413,7 +413,7 @@ export default function PrescriptionsPage() {
                     className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm hover:bg-slate-50 dark:hover:bg-slate-800">
                     <span className="font-mono text-brand-700 dark:text-brand-300">{x.barcode}</span>
                     <span className="min-w-0 flex-1 truncate text-slate-600 dark:text-slate-300">{x.patient || "—"}</span>
-                    <span className="shrink-0 text-xs text-slate-400">{x.date ? new Date(x.date).toLocaleDateString("el-GR") : ""}</span>
+                    <span className="shrink-0 text-xs text-slate-400">{x.date ? fmtDate(x.date) : ""}</span>
                   </button>
                 ))}
               </div>

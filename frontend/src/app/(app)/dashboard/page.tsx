@@ -174,7 +174,7 @@ export default function DashboardPage() {
                     <span className="rounded-md bg-brand-50 px-1.5 py-0.5 text-[10px] font-semibold text-brand-600">{r.source}</span>
                     <span className="truncate text-sm font-medium text-slate-700">{r.external_id}</span>
                   </div>
-                  <div className="mt-0.5 text-xs text-slate-400">{new Date(r.executed_at).toLocaleDateString("el-GR")}</div>
+                  <div className="mt-0.5 text-xs text-slate-400">{fmtDate(r.executed_at)}</div>
                 </div>
                 <div className="text-sm font-semibold text-slate-900">{eur2(r.amount_total)}</div>
               </li>

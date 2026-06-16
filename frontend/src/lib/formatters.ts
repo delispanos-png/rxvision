@@ -15,8 +15,22 @@ export const fmtDec = (n: number, digits = 1) =>
 export const fmtPct = (n: number) =>
   new Intl.NumberFormat("el-GR", { style: "percent", maximumFractionDigits: 1 }).format((n ?? 0) / 100);
 
+/** Ενιαία μορφή ημερομηνίας σε ΟΛΟ το project: DD/MM/YYYY (πάντα με μηδενικά). */
 export const fmtDate = (iso: string) => {
   if (!iso) return "";
   const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? iso : new Intl.DateTimeFormat("el-GR").format(d);
+  if (Number.isNaN(d.getTime())) return iso;
+  const dd = String(d.getDate()).padStart(2, "0");
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  return `${dd}/${mm}/${d.getFullYear()}`;
+};
+
+/** Ημερομηνία + ώρα: DD/MM/YYYY HH:mm (ενιαία μορφή). */
+export const fmtDateTime = (iso: string) => {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mi = String(d.getMinutes()).padStart(2, "0");
+  return `${fmtDate(iso)} ${hh}:${mi}`;
 };

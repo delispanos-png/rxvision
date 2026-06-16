@@ -12,6 +12,7 @@ import { patientApi, patientTokens } from "@/lib/patientClient";
 import { PharmacyPicker, MedicinePicker, type Medicine } from "@/components/portal/pickers";
 import { pushSupported, isPushSubscribed, enablePush } from "@/lib/push";
 import { BellRing } from "lucide-react";
+import { fmtDate, fmtDateTime } from "@/lib/formatters";
 
 type Pharmacy = { tenant_id: string; pharmacy_name: string };
 type Me = { profile: { first_name: string; last_name: string }; active_tenant: string | null; pharmacies: Pharmacy[] };
@@ -26,8 +27,8 @@ type Avail = { _id?: string; query: string; medicine_name?: string | null; statu
 type Service = { _id?: string; name: string; kind?: string; description?: string };
 type Appt = { _id?: string; service_name: string; requested_at: string; status: string };
 
-const dt = (s?: string | null) => (s ? new Date(s).toLocaleDateString("el-GR", { day: "2-digit", month: "short", year: "numeric" }) : "—");
-const dtl = (s?: string | null) => (s ? new Date(s).toLocaleString("el-GR", { dateStyle: "medium", timeStyle: "short" }) : "—");
+const dt = (s?: string | null) => (s ? fmtDate(s) : "—");
+const dtl = (s?: string | null) => (s ? fmtDateTime(s) : "—");
 const eur = (c?: number) => new Intl.NumberFormat("el-GR", { style: "currency", currency: "EUR", maximumFractionDigits: 2 }).format((c || 0) / 100);
 
 const TABS = [["rx", "Συνταγές"], ["repeats", "Επαναλήψεις"], ["availability", "Διαθεσιμότητα"], ["appointments", "Ραντεβού"]] as const;

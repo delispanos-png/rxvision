@@ -8,6 +8,7 @@ import { api } from "@/lib/apiClient";
 import { PanelCard } from "@/components/ui/Card";
 import { appConfirm } from "@/store/dialogStore";
 import { useT } from "@/store/prefStore";
+import { fmtDate } from "@/lib/formatters";
 
 type Config = {
   configured: boolean;
@@ -253,7 +254,7 @@ export default function IngestionSettingsPage() {
       {showProgress && (() => {
         const pct = Math.max(0, Math.min(100, Math.round((latestJob?.progress ?? 0) * 100)));
         const known = typeof latestJob?.progress === "number" && latestJob.progress > 0;
-        const fmtD = (d?: string) => d ? new Date(d).toLocaleDateString(t("el-GR", "en-GB"), { day: "2-digit", month: "2-digit", year: "numeric" }) : "—";
+        const fmtD = (d?: string) => d ? fmtDate(d) : "—";
         const win = latestJob?.window as { start?: string; end?: string } | undefined;
         return (
           <div className="rx-card p-4">

@@ -6,13 +6,14 @@ import { Users, MessageSquare, CalendarClock, Stethoscope } from "lucide-react";
 import { api } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
+import { fmtDateTime } from "@/lib/formatters";
 
 type Avail = { id?: string; _id?: string; query: string; medicine_name?: string | null; patient_name?: string; patient_phone?: string; status: string; answer?: string | null; created_at: string };
 type Appt = { id?: string; _id?: string; service_name: string; kind?: string; note?: string; patient_name?: string; patient_phone?: string; requested_at: string; status: string };
 type Service = { id?: string; _id?: string; name: string; kind?: string; description?: string; active?: boolean };
 
 const oid = (x: { id?: string; _id?: string }) => x.id ?? x._id ?? "";
-const dtl = (s: string) => new Date(s).toLocaleString("el-GR", { dateStyle: "medium", timeStyle: "short" });
+const dtl = (s: string) => fmtDateTime(s);
 
 function AvailabilityTab() {
   const t = useT();

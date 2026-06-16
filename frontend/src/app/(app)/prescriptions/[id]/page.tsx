@@ -6,6 +6,8 @@ import { useQuery } from "@tanstack/react-query";
 import { ArrowLeft, Repeat, Printer, X } from "lucide-react";
 import { api } from "@/lib/apiClient";
 import { PanelCard } from "@/components/ui/Card";
+import { CopyButton } from "@/components/ui/CopyButton";
+import { fmtDate, fmtDateTime } from "@/lib/formatters";
 import { RepeatTree } from "@/components/prescriptions/RepeatTree";
 import { useT } from "@/store/prefStore";
 import { appAlert } from "@/store/dialogStore";
@@ -126,7 +128,14 @@ type Idika = {
 
 const eur = (c: number) => new Intl.NumberFormat("el-GR", { style: "currency", currency: "EUR" }).format((c || 0) / 100);
 const eurR = (v: number | null) => (v == null ? "—" : new Intl.NumberFormat("el-GR", { style: "currency", currency: "EUR" }).format(v));
-const dt = (s: string) => new Date(s).toLocaleString("el-GR", { dateStyle: "medium", timeStyle: "short" });
+const dt = (s: string) => fmtDateTime(s);
+// GS1 ημερομηνία λήξης (YYMMDD) → DD/MM/YYYY (ή MM/YYYY αν η μέρα είναι 00 = τέλος μήνα).
+const fmtGs1Expiry = (v?: string | null) => {
+  const s = (v || "").replace(/\D/g, "");
+  if (s.length !== 6) return v || null;
+  const yy = `20${s.slice(0, 2)}`, mm = s.slice(2, 4), dd = s.slice(4, 6);
+  return dd === "00" ? `${mm}/${yy}` : `${dd}/${mm}/${yy}`;
+};
 const sexLabel = (s: string | null, t: T) => (s === "M" ? t("Άνδρας", "Male") : s === "F" ? t("Γυναίκα", "Female") : "—");
 const yesNo = (v: boolean | null | undefined, t: T) => (v == null ? null : v ? t("Ναι", "Yes") : t("Όχι", "No"));
 // Human-readable posology (ΗΔΥΚΑ CDA spec frequency table): «12 h»→«2 φορές/ημέρα» κ.λπ.
@@ -231,7 +240,10 @@ export default function PrescriptionDetailPage() {
       </div>
 
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h1 className="text-xl font-bold text-slate-900">{t("Συνταγή", "Prescription")} {d.external_id}</h1>
+        <h1 className="flex items-center gap-1.5 text-xl font-bold text-slate-900">
+          <span>{t("Συνταγή", "Prescription")} {d.external_id}</span>
+          <CopyButton value={d.external_id.split(":")[0]} className="!p-1" />
+        </h1>
         <div className="flex items-center gap-2">
           <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-700">{d.status || t("ΕΚΤΕΛΕΣΜΕΝΗ", "EXECUTED")}</span>
           {recurring && (
@@ -302,7 +314,7 @@ export default function PrescriptionDetailPage() {
             {recurring ? t(`Επανάληψη ${d.repeat_current}/${d.repeat_total}`, `Repeat ${d.repeat_current}/${d.repeat_total}`)
               : d.execution_count && d.execution_count > 1 ? t(`${d.execution_count} εκτελέσεις`, `${d.execution_count} executions`)
               : t("Μία εκτέλεση", "Single execution")}
-            {d.next_open_date ? t(` · Επόμενη: ${new Date(d.next_open_date).toLocaleDateString("el-GR")}`, ` · Next: ${new Date(d.next_open_date).toLocaleDateString("el-GR")}`) : ""}
+            {d.next_open_date ? t(` · Επόμενη: ${fmtDate(d.next_open_date)}`, ` · Next: ${fmtDate(d.next_open_date)}`) : ""}
           </div>
           <div className="mt-2 flex flex-wrap gap-1">
             {(d.icd10_named ?? d.icd10 ?? []).map((c, i) => (
@@ -502,7 +514,7 @@ export default function PrescriptionDetailPage() {
                     {c.qr ? (<>
                       <Field label={t("Κωδικός προϊόντος (GTIN)", "Product code (GTIN)")} value={c.qr_product_code} />
                       <Field label={t("Παρτίδα", "Batch")} value={c.qr_batch} />
-                      <Field label={t("Λήξη", "Expiry")} value={c.qr_expiry} />
+                      <Field label={t("Λήξη", "Expiry")} value={fmtGs1Expiry(c.qr_expiry)} />
                     </>) : null}
                   </div>
                 </div>
