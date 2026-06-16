@@ -2,8 +2,9 @@
  * logo by scripts/gen-icons.py → public/brand/rxvision-mark.png (transparent). */
 
 export function LogoMark({ className = "h-9 w-9" }: { className?: string }) {
+  // ?v=2 = cache-bust: παρακάμπτει τυχόν stale-cached 404 (Cloudflare/browser) του logo.
   // eslint-disable-next-line @next/next/no-img-element
-  return <img src="/brand/rxvision-mark.png" alt="RxVision" className={className} />;
+  return <img src="/brand/rxvision-mark.png?v=2" alt="RxVision" className={className} />;
 }
 
 export function Logo({

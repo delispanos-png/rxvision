@@ -93,28 +93,33 @@ export default function RxTypesPage() {
                 <Trend cur={d.total} prev={prev?.total} />
               </div>
             </div>
-            {GROUPS(t).map((g) => (
-              <div key={g.title}>
-                <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-400">{g.title}</h2>
-                <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-                  {g.rows.map(([key, label, token]) => {
-                    const s = d.items[key] || { count: 0, value: 0 };
-                    const pct = d.total ? Math.round((s.count / d.total) * 100) : 0;
-                    return (
-                      <button key={key} onClick={() => router.push(`/prescriptions?char=${token}`)}
-                        className="rounded-xl border border-slate-200 p-3 text-left transition hover:border-brand-300 hover:bg-brand-50/40 dark:border-slate-700 dark:hover:bg-brand-950/30">
-                        <div className="truncate text-xs text-slate-500" title={label}>{label}</div>
-                        <div className="mt-1 flex items-baseline gap-2">
-                          <span className="text-xl font-bold text-slate-900 dark:text-slate-100">{fmtNum(s.count)}</span>
-                          <Trend cur={s.count} prev={prev?.items?.[key]?.count} />
-                        </div>
-                        <div className="text-xs text-slate-400">{s.value > 0 ? fmtEur(s.value) : ""}{s.count > 0 ? ` · ${pct}% ${t("του συνόλου", "of total")}` : ""}</div>
-                      </button>
-                    );
-                  })}
+            {GROUPS(t).map((g) => {
+              // μόνο κάρτες με αποτέλεσμα (>0)· κρύψε ομάδα αν είναι όλες μηδέν
+              const visible = g.rows.filter(([key]) => (d.items[key]?.count || 0) > 0);
+              if (!visible.length) return null;
+              return (
+                <div key={g.title}>
+                  <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-400">{g.title}</h2>
+                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+                    {visible.map(([key, label, token]) => {
+                      const s = d.items[key] || { count: 0, value: 0 };
+                      const pct = d.total ? Math.round((s.count / d.total) * 100) : 0;
+                      return (
+                        <button key={key} onClick={() => router.push(`/prescriptions?char=${token}`)}
+                          className="rx-card p-4 text-left transition hover:ring-2 hover:ring-brand-200 dark:hover:ring-brand-800">
+                          <div className="truncate text-xs text-slate-500" title={label}>{label}</div>
+                          <div className="mt-1 flex items-baseline gap-2">
+                            <span className="text-xl font-bold text-slate-900 dark:text-slate-100">{fmtNum(s.count)}</span>
+                            <Trend cur={s.count} prev={prev?.items?.[key]?.count} />
+                          </div>
+                          <div className="text-xs text-slate-400">{s.value > 0 ? fmtEur(s.value) : ""}{s.count > 0 ? ` · ${pct}% ${t("του συνόλου", "of total")}` : ""}</div>
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </QueryState>
