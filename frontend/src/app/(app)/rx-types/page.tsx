@@ -7,7 +7,8 @@ import { ModuleGuard } from "@/components/layout/ModuleGuard";
 import { DateRangeFilter } from "@/components/filters/DateRangeFilter";
 import { useUiStore, filtersToQuery } from "@/store/uiStore";
 import { useT } from "@/store/prefStore";
-import { fmtNum, fmtEur } from "@/lib/formatters";
+import { fmtNum, fmtEur, fmtDec } from "@/lib/formatters";
+import { prevYearRange, pctDelta } from "@/lib/compare";
 import { QueryState } from "@/components/ui/QueryState";
 
 type Stat = { count: number; value: number };
@@ -52,6 +53,17 @@ const GROUPS = (t: T): { title: string; rows: [string, string, string][] }[] => 
   ] },
 ];
 
+// Δ% vs την ίδια περσινή περίοδο (▲ πράσινο / ▼ κόκκινο)
+function Trend({ cur, prev }: { cur: number; prev?: number }) {
+  const d = pctDelta(cur, prev);
+  if (d === undefined) return null;
+  return (
+    <span className={`text-[11px] font-semibold ${d >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400"}`}>
+      {d >= 0 ? "▲" : "▼"} {fmtDec(Math.abs(d), 1)}%
+    </span>
+  );
+}
+
 export default function RxTypesPage() {
   const t = useT();
   const router = useRouter();
@@ -59,6 +71,11 @@ export default function RxTypesPage() {
   const qs = filtersToQuery(filters);
   const q = useQuery({ queryKey: ["rx-characteristics", qs], queryFn: () => api<Breakdown>(`/prescriptions/characteristics?${qs}`) });
   const d = q.data;
+  // ίδια περίοδος πέρσι (52 εβδομάδες πίσω) για Δ%
+  const pr = prevYearRange(filters.dateFrom, filters.dateTo);
+  const prevQs = pr ? filtersToQuery({ ...filters, dateFrom: pr.from, dateTo: pr.to }) : "";
+  const qp = useQuery({ queryKey: ["rx-characteristics", "prev", prevQs], queryFn: () => api<Breakdown>(`/prescriptions/characteristics?${prevQs}`), enabled: !!pr });
+  const prev = qp.data;
   return (
     <ModuleGuard module="prescription_analytics">
       <div className="mb-5">
@@ -70,8 +87,11 @@ export default function RxTypesPage() {
         {d && (
           <div className="space-y-6">
             <div className="rx-card p-4">
-              <div className="text-xs text-slate-400">{t("Σύνολο εκτελέσεων περιόδου", "Total executions in period")}</div>
-              <div className="mt-1 text-2xl font-bold text-slate-900 dark:text-slate-100">{fmtNum(d.total)} <span className="text-base font-medium text-slate-400">· {fmtEur(d.value)}</span></div>
+              <div className="text-xs text-slate-400">{t("Σύνολο εκτελέσεων περιόδου", "Total executions in period")}{pr ? t(" · Δ vs ίδια περσινή περίοδο", " · Δ vs same period last year") : ""}</div>
+              <div className="mt-1 flex items-baseline gap-2 text-2xl font-bold text-slate-900 dark:text-slate-100">
+                {fmtNum(d.total)} <span className="text-base font-medium text-slate-400">· {fmtEur(d.value)}</span>
+                <Trend cur={d.total} prev={prev?.total} />
+              </div>
             </div>
             {GROUPS(t).map((g) => (
               <div key={g.title}>
@@ -86,9 +106,9 @@ export default function RxTypesPage() {
                         <div className="truncate text-xs text-slate-500" title={label}>{label}</div>
                         <div className="mt-1 flex items-baseline gap-2">
                           <span className="text-xl font-bold text-slate-900 dark:text-slate-100">{fmtNum(s.count)}</span>
-                          {s.count > 0 ? <span className="text-[11px] text-slate-400">{pct}%</span> : null}
+                          <Trend cur={s.count} prev={prev?.items?.[key]?.count} />
                         </div>
-                        {s.value > 0 ? <div className="text-xs text-slate-400">{fmtEur(s.value)}</div> : null}
+                        <div className="text-xs text-slate-400">{s.value > 0 ? fmtEur(s.value) : ""}{s.count > 0 ? ` · ${pct}% ${t("του συνόλου", "of total")}` : ""}</div>
                       </button>
                     );
                   })}
