@@ -12,7 +12,7 @@ import { Tooltip } from "@/components/ui/Tooltip";
 import {
   Activity, BarChart3, Boxes, CalendarClock, ClipboardCheck, LayoutDashboard,
   Mail, Salad, PackageSearch, Settings, Sparkles, Stethoscope, TrendingUp, Users,
-  Brain, ShieldCheck, type LucideIcon,
+  Brain, ShieldCheck, Tags, type LucideIcon,
 } from "lucide-react";
 
 // `module` gates visibility: an item is shown only when the tenant has that module
@@ -36,6 +36,7 @@ const GROUPS: Group[] = [
   { title: "Αναλυτικά", en: "Analytics", items: [
     { href: "/dashboard", label: "Πίνακας Ελέγχου", en: "Dashboard", icon: LayoutDashboard },
     { href: "/prescriptions", label: "Συνταγές", en: "Prescriptions", icon: BarChart3, module: "prescription_analytics" },
+    { href: "/rx-types", label: "Είδη συνταγών", en: "Prescription types", icon: Tags, module: "prescription_analytics" },
     { href: "/doctors", label: "Ιατροί", en: "Doctors", icon: Stethoscope, module: "doctor_analytics" },
     { href: "/patients", label: "Ασφαλισμένοι", en: "Patients", icon: Users, module: "patient_analytics" },
     { href: "/icd10", label: "ICD-10", en: "ICD-10", icon: Activity, module: "icd10_analytics" },

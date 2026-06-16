@@ -323,6 +323,41 @@ class PrescriptionRepository(BaseRepository):
         return [p["_id"] async for p in
                 self._db["patients_anonymized"].find(q, {"_id": 1})]
 
+    # Χαρακτηριστικά συνταγής (πεδία details) για ανάλυση «ανά είδος».
+    _BREAKDOWN_FLAGS = ["chronic", "high_cost", "narcotic", "antibiotic", "special_antibiotic",
+                        "n3816", "ifet", "ifet_import", "heparin", "vaccines", "desensitization",
+                        "single_dose", "by_brand", "ekas", "eopyy_only", "hospital_only",
+                        "eopyy_preapproval", "outside_eopyy", "negative_list", "home_delivery",
+                        "intangible", "consumables", "supplementary_cover"]
+
+    async def characteristics_breakdown(self, date_from: datetime, date_to: datetime) -> dict:
+        """Πλήθος + αξία εκτελέσεων ανά χαρακτηριστικό συνταγής για την περίοδο (ένα pass)."""
+        group: dict = {"_id": None, "total": {"$sum": 1}, "value": {"$sum": "$amount_total"}}
+        for f in self._BREAKDOWN_FLAGS:
+            cond = {"$eq": [f"$details.{f}", True]}
+            group[f] = {"$sum": {"$cond": [cond, 1, 0]}}
+            group[f"{f}__v"] = {"$sum": {"$cond": [cond, "$amount_total", 0]}}
+        # διάρκεια + επαναληψιμότητα
+        specials = {
+            "monthly": {"$eq": ["$details.interval_months", 1]},
+            "bimonthly": {"$eq": ["$details.interval_months", 2]},
+            "repeat": {"$gt": ["$repeat_total", 1]},
+            "simple": {"$lte": ["$repeat_total", 1]},
+            "r3": {"$eq": ["$repeat_total", 3]}, "r4": {"$eq": ["$repeat_total", 4]},
+            "r5": {"$eq": ["$repeat_total", 5]}, "r6": {"$eq": ["$repeat_total", 6]},
+        }
+        for k, cond in specials.items():
+            group[k] = {"$sum": {"$cond": [cond, 1, 0]}}
+            group[f"{k}__v"] = {"$sum": {"$cond": [cond, "$amount_total", 0]}}
+        rows = await self.aggregate([
+            {"$match": {"executed_at": {"$gte": date_from, "$lt": date_to}}},
+            {"$group": group}])
+        raw = rows[0] if rows else {}
+        items = {k: {"count": int(raw.get(k, 0) or 0), "value": int(raw.get(f"{k}__v", 0) or 0)}
+                 for k in (self._BREAKDOWN_FLAGS + list(specials))}
+        return {"total": int(raw.get("total", 0) or 0), "value": int(raw.get("value", 0) or 0),
+                "items": items}
+
     async def by_fund(self, date_from: datetime, date_to: datetime) -> list[dict]:
         """Per-fund breakdown for the period (rx/value/claimed/unexecuted), folded into
         the central fund GROUPS (ΗΔΙΚΑ code → group). Funds with no group stay as

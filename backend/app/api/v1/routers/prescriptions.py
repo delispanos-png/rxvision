@@ -181,6 +181,17 @@ async def by_fund(
     return {"items": await repo.by_fund(date_from, date_to)}
 
 
+@router.get("/characteristics")
+async def characteristics(
+    date_from: datetime = Query(...),
+    date_to: datetime = Query(...),
+    ctx: TenantContext = Depends(require("prescriptions:read", module="prescription_analytics")),
+):
+    """Πλήθος + αξία εκτελέσεων ανά χαρακτηριστικό συνταγής (για την ανάλυση «ανά είδος»)."""
+    repo = PrescriptionRepository(tenant_id=ctx.tenant_id)
+    return await repo.characteristics_breakdown(date_from, date_to)
+
+
 @router.get("/aggregate")
 async def aggregate(
     group_by: Literal["fund", "doctor", "icd10", "product"] = "fund",

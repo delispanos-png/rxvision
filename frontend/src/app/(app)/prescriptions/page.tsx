@@ -187,6 +187,11 @@ export default function PrescriptionsPage() {
   ].filter(Boolean).join("&");
   const listQs = extra ? `${q}&${extra}` : q;
   const anyFilter = !!(bc || amka.trim() || patientName.trim() || status || chars.length);
+  // deep-link από τη σελίδα «είδη συνταγών»: /prescriptions?char=chronic,narcotic → προεπιλογή φίλτρων
+  useEffect(() => {
+    const c = new URLSearchParams(window.location.search).get("char");
+    if (c) setChars(c.split(",").filter(Boolean));
+  }, []);
   const PAGE_SIZE = 50;
   const [page, setPage] = useState(1);
   const [sort, setSort] = useState<{ key: string; dir: 1 | -1 }>({ key: "executed_at", dir: -1 });
