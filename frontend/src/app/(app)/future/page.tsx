@@ -9,7 +9,6 @@ import { useT } from "@/store/prefStore";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
 import { DateInput } from "@/components/ui/DateInput";
 import { Tooltip } from "@/components/ui/Tooltip";
-import { CopyButton } from "@/components/ui/CopyButton";
 import { fmtNum, fmtDate, fmtEur } from "@/lib/formatters";
 import { DataTable, type Column } from "@/components/tables/DataTable";
 import { KpiCard } from "@/components/kpi/KpiCard";
@@ -245,20 +244,25 @@ export default function FuturePage() {
                   const key = `${r.source_barcode}-${i}`;
                   const open = expandedRx === key;
                   const meds = (r.products ?? []).filter((p): p is { name: string | null; qty?: number } => Boolean(p?.name));
+                  // διάρκεια κάλυψης από την περίοδο επανάληψης: 60→δίμηνη, 30→μηνιαία, αλλιώς απλή
+                  const dur = r.repeat_period_days === 60 ? t("Δίμηνη", "Bimonthly")
+                    : r.repeat_period_days === 30 ? t("Μηνιαία", "Monthly")
+                    : (r.repeat_total && r.repeat_total > 1 ? null : t("Απλή", "Simple"));
                   return (
                     <li key={key}>
                       <div role="button" tabIndex={0} onClick={() => setExpandedRx(open ? null : key)}
                         onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") setExpandedRx(open ? null : key); }}
                         className="flex w-full cursor-pointer items-center justify-between gap-3 py-2.5 text-left text-sm hover:bg-slate-50">
-                        <span className="flex min-w-0 items-center gap-2">
-                          {r.chronic ? <Tooltip label={t("Χρόνια αγωγή", "Chronic therapy")}><HeartPulse className="h-3.5 w-3.5 shrink-0 text-amber-500" aria-label={t("Χρόνια αγωγή", "Chronic therapy")} /></Tooltip> : null}
-                          <span className="inline-flex items-center font-mono font-semibold text-slate-800">#{r.source_barcode ?? "—"}<CopyButton value={r.source_barcode} /></span>
+                        <span className="flex min-w-0 flex-wrap items-center gap-2">
+                          {/* ΟΧΙ barcode εδώ — η μελλοντική εκτέλεση δεν έχει δικό της· το source barcode (προηγούμενη) μπερδεύει */}
                           {r.repeat_total && r.repeat_total > 1 ? (
                             <Tooltip label={t("Σειρά επανάληψης", "Repeat sequence")}>
                               <span className="inline-flex items-center gap-1 rounded-full bg-brand-50 px-2 py-0.5 text-[11px] font-semibold text-brand-700">↻ {(r.repeat_current ?? 0) + 1}/{r.repeat_total}</span>
                             </Tooltip>
                           ) : null}
-                          <span className="truncate text-slate-600">{r.patient_name || "—"}</span>
+                          <span className="truncate font-medium text-slate-700">{r.patient_name || "—"}</span>
+                          {r.chronic ? <Tooltip label={t("Χρόνια αγωγή", "Chronic therapy")}><span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-700"><HeartPulse className="h-3 w-3" /> {t("Χρόνια", "Chronic")}</span></Tooltip> : null}
+                          {dur ? <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-300">{dur}</span> : null}
                         </span>
                         <span className="flex shrink-0 items-center gap-2 text-xs text-slate-400">
                           {fmtDate(r.expected_open_date)} · {meds.length || r.n_items || 0} {t("είδη", "items")}

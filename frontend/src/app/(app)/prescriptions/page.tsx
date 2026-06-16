@@ -13,6 +13,7 @@ import { prevYearRange, pctDelta } from "@/lib/compare";
 import { fmtEur, fmtNum, fmtDate, fmtDateTime, fmtMoney} from "@/lib/formatters";
 import { downloadCsv } from "@/lib/csv";
 import { DateRangeFilter } from "@/components/filters/DateRangeFilter";
+import { MultiSelect } from "@/components/filters/MultiSelect";
 import { DataTable, type Column } from "@/components/tables/DataTable";
 import { BarChart } from "@/components/charts/BarChart";
 import { ExportMenu } from "@/components/export/ExportMenu";
@@ -174,7 +175,7 @@ export default function PrescriptionsPage() {
   const [amka, setAmka] = useState("");
   const [patientName, setPatientName] = useState("");
   const [status, setStatus] = useState("");           // "" | executed | partial
-  const [characteristic, setCharacteristic] = useState(""); // "" | repeat | chronic | …
+  const [chars, setChars] = useState<string[]>([]);   // πολλαπλά χαρακτηριστικά (AND)
   const bc = barcode.trim();
   // φίλτρα λίστας (πέρα από το κοινό date/fund/doctor/icd10) — αγνοούν περίοδο όταν ψάχνεις barcode/ΑΜΚΑ/όνομα
   const extra = [
@@ -182,10 +183,10 @@ export default function PrescriptionsPage() {
     amka.trim() && `amka=${encodeURIComponent(amka.trim())}`,
     patientName.trim() && `patient=${encodeURIComponent(patientName.trim())}`,
     status && `status=${status}`,
-    characteristic && `characteristic=${characteristic}`,
+    chars.length && `characteristic=${encodeURIComponent(chars.join(","))}`,
   ].filter(Boolean).join("&");
   const listQs = extra ? `${q}&${extra}` : q;
-  const anyFilter = !!(bc || amka.trim() || patientName.trim() || status || characteristic);
+  const anyFilter = !!(bc || amka.trim() || patientName.trim() || status || chars.length);
   const PAGE_SIZE = 50;
   const [page, setPage] = useState(1);
   const [sort, setSort] = useState<{ key: string; dir: 1 | -1 }>({ key: "executed_at", dir: -1 });
@@ -306,26 +307,52 @@ export default function PrescriptionsPage() {
             <option value="partial">{t("Μερικώς", "Partial")}</option>
           </select>
         </label>
-        <label className="text-sm">
-          <span className="mb-1 block text-slate-500">{t("Χαρακτηριστικό", "Characteristic")}</span>
-          <select value={characteristic} onChange={(e) => setCharacteristic(e.target.value)}
-            className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-brand-500 focus:outline-none">
-            <option value="">{t("Όλα", "All")}</option>
-            <option value="repeat">{t("Επαναλαμβανόμενη", "Repeating")}</option>
-            <option value="chronic">{t("Χρόνια αγωγή", "Chronic")}</option>
-            <option value="narcotic">{t("Ναρκωτικό", "Narcotic")}</option>
-            <option value="antibiotic">{t("Αντιβιοτικό", "Antibiotic")}</option>
-            <option value="high_cost">{t("Υψηλού κόστους", "High cost")}</option>
-            <option value="vaccines">{t("Εμβόλια", "Vaccines")}</option>
-            <option value="n3816">{t("Ν.3816 (ΦΥΚ)", "Law 3816")}</option>
-            <option value="ifet">ΙΦΕΤ</option>
-            <option value="heparin">{t("Ηπαρίνη", "Heparin")}</option>
-            <option value="home_delivery">{t("Κατ' οίκον", "Home delivery")}</option>
-            <option value="negative_list">{t("Αρνητική λίστα", "Negative list")}</option>
-          </select>
-        </label>
+        <MultiSelect
+          label={t("Χαρακτηριστικά", "Characteristics")}
+          allLabel={t("Όλα", "All")}
+          selectedLabel={(n) => t(`${n} επιλεγμένα`, `${n} selected`)}
+          clearLabel={t("Καθαρισμός", "Clear")}
+          selected={chars}
+          onChange={setChars}
+          groups={[
+            { title: t("Χαρακτηριστικά", "Characteristics"), options: [
+              { value: "chronic", label: t("Χρόνια αγωγή", "Chronic") },
+              { value: "high_cost", label: t("Υψηλού κόστους", "High cost") },
+              { value: "narcotic", label: t("Ναρκωτικό", "Narcotic") },
+              { value: "antibiotic", label: t("Αντιβιοτικό", "Antibiotic") },
+              { value: "special_antibiotic", label: t("Ειδικό αντιβιοτικό", "Special antibiotic") },
+              { value: "n3816", label: t("Νόμος 3816 (ΦΥΚ)", "Law 3816") },
+              { value: "ifet", label: "ΙΦΕΤ" },
+              { value: "heparin", label: t("Ηπαρίνη", "Heparin") },
+              { value: "vaccines", label: t("Εμβόλιο", "Vaccine") },
+              { value: "desensitization", label: t("Εμβόλιο απευαισθ.", "Desensitization") },
+              { value: "single_dose", label: t("Μονοδοσιακό", "Single-dose") },
+              { value: "by_brand", label: t("Εμπορική ονομασία", "By brand") },
+              { value: "ekas", label: "ΕΚΑΣ" },
+              { value: "eopyy_only", label: t("Μόνο φαρμακεία ΕΟΠΥΥ", "EOPYY pharmacies only") },
+              { value: "hospital_only", label: t("Μόνο νοσοκομεία", "Hospitals only") },
+              { value: "eopyy_preapproval", label: t("Απαιτεί προέγκριση", "Pre-approval") },
+              { value: "outside_eopyy", label: t("Εκτός φαρμ. κόστους", "Outside EOPYY cost") },
+              { value: "negative_list", label: t("Αρνητική λίστα", "Negative list") },
+              { value: "home_delivery", label: t("Κατ' οίκον", "Home delivery") },
+              { value: "intangible", label: t("Άυλη", "Intangible") },
+            ] },
+            { title: t("Διάρκεια", "Duration"), options: [
+              { value: "monthly", label: t("Μηνιαία", "Monthly") },
+              { value: "bimonthly", label: t("Δίμηνη", "Bimonthly") },
+            ] },
+            { title: t("Επαναληψιμότητα", "Repeatability"), options: [
+              { value: "simple", label: t("Απλή", "Simple") },
+              { value: "repeat", label: t("Επαναλαμβανόμενη", "Repeating") },
+              { value: "3", label: t("Τρίμηνη", "3-month") },
+              { value: "4", label: t("Τετράμηνη", "4-month") },
+              { value: "5", label: t("Πεντάμηνη", "5-month") },
+              { value: "6", label: t("Εξάμηνη", "6-month") },
+            ] },
+          ]}
+        />
         {anyFilter && (
-          <button onClick={() => { setBarcode(""); setAmka(""); setPatientName(""); setStatus(""); setCharacteristic(""); }}
+          <button onClick={() => { setBarcode(""); setAmka(""); setPatientName(""); setStatus(""); setChars([]); }}
             className="mb-0.5 inline-flex items-center gap-1 rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50">
             × {t("Καθαρισμός", "Clear")}
           </button>

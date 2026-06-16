@@ -141,11 +141,23 @@ async def list_prescriptions(
         query["has_unexecuted_substances"] = False
     elif status == "partial":
         query["has_unexecuted_substances"] = True
-    # χαρακτηριστικό συνταγής (whitelist για ασφάλεια)
-    if characteristic == "repeat":
-        query["repeat_total"] = {"$gt": 1}
-    elif characteristic in _CHARACTERISTICS:
-        query[f"details.{characteristic}"] = True
+    # χαρακτηριστικά συνταγής — πολλαπλά (comma-separated), συνδυάζονται με AND
+    for tok in (characteristic or "").split(","):
+        tok = tok.strip()
+        if not tok:
+            continue
+        if tok == "repeat":
+            query["repeat_total"] = {"$gt": 1}
+        elif tok == "simple":
+            query["repeat_total"] = {"$lte": 1}
+        elif tok in ("3", "4", "5", "6"):
+            query["repeat_total"] = int(tok)
+        elif tok == "monthly":
+            query["details.interval_months"] = 1
+        elif tok == "bimonthly":
+            query["details.interval_months"] = 2
+        elif tok in _CHARACTERISTICS:
+            query[f"details.{tok}"] = True
     items = await repo.list_executions(query, skip=(page - 1) * page_size, limit=page_size,
                                        sort=sort, direction=dir)
     return {"page": page, "page_size": page_size, "items": items}
@@ -153,8 +165,10 @@ async def list_prescriptions(
 
 # Επιτρεπτά χαρακτηριστικά συνταγής για φιλτράρισμα (πεδία στο details, βλ. hdika_cda).
 _CHARACTERISTICS = {"chronic", "narcotic", "antibiotic", "special_antibiotic", "high_cost",
-                    "vaccines", "n3816", "ifet", "ifet_import", "heparin", "home_delivery",
-                    "negative_list", "single_dose", "intangible"}
+                    "vaccines", "desensitization", "n3816", "ifet", "ifet_import", "heparin",
+                    "home_delivery", "negative_list", "single_dose", "intangible", "by_brand",
+                    "ekas", "eopyy_only", "hospital_only", "eopyy_preapproval", "outside_eopyy",
+                    "consumables", "supplementary_cover"}
 
 
 @router.get("/by-fund")
