@@ -31,7 +31,7 @@ def _now() -> datetime:
 
 # Bump όταν αλλάζει η ΔΟΜΗ των αποθηκευμένων items/details (όχι μόνο οι τιμές) ώστε ένα
 # re-ingest να ΞΑΝΑΓΡΑΨΕΙ τα items αντί να κάνει skip-by-hash. v2: per-τεμάχιο coupons.
-_PARSE_VERSION = "v5-forecast-repeat-only"
+_PARSE_VERSION = "v6-repeat-period"
 
 
 def _content_hash(ex: CanonicalExecution, amount_total: int, claimed: int) -> str:
@@ -148,7 +148,11 @@ class IngestionEngine:
         # πρόβλεψη. (Το παλιό valid_until heuristic φαβρικάριζε phantom επαναλήψεις για απλές.)
         next_open = None
         if ex.repeat_current < ex.repeat_total:           # ΗΔΥΚΑ: υπάρχουν κι άλλες εκτελέσεις
-            next_open = ex.executed_at + timedelta(days=_REPEAT_INTERVAL_DAYS)
+            det = ex.details or {}
+            # Πραγματική περίοδος επανάληψης: CDA 1.1.4.4 (30/28/60 ημ.)· αλλιώς μηνιαία/δίμηνη
+            # (interval_months·30)· αλλιώς 30. Βάση = ημ/νία εκτέλεσης αυτής της σειράς.
+            period = det.get("repeat_period_days") or ((det.get("interval_months") or 1) * 30)
+            next_open = ex.executed_at + timedelta(days=int(period))
 
         doc = {
             **nat_key, "pharmacy_id": None, "executed_at": ex.executed_at,

@@ -21,6 +21,7 @@ type UpcomingDay = { date: string; count: number };
 type FutureRx = {
   expected_open_date: string; patient_name?: string | null; amka?: string | null;
   source_barcode?: string | null; products?: ({ name: string | null; qty?: number } | null)[]; n_items?: number; confidence?: number; chronic?: boolean | null;
+  repeat_current?: number | null; repeat_total?: number | null; repeat_period_days?: number | null;
 };
 type CoverageItem = {
   product_id: string; product_name?: string | null; substance?: string | null;
@@ -252,6 +253,11 @@ export default function FuturePage() {
                         <span className="flex min-w-0 items-center gap-2">
                           {r.chronic ? <Tooltip label={t("Χρόνια αγωγή", "Chronic therapy")}><HeartPulse className="h-3.5 w-3.5 shrink-0 text-amber-500" aria-label={t("Χρόνια αγωγή", "Chronic therapy")} /></Tooltip> : null}
                           <span className="inline-flex items-center font-mono font-semibold text-slate-800">#{r.source_barcode ?? "—"}<CopyButton value={r.source_barcode} /></span>
+                          {r.repeat_total && r.repeat_total > 1 ? (
+                            <Tooltip label={t("Σειρά επανάληψης", "Repeat sequence")}>
+                              <span className="inline-flex items-center gap-1 rounded-full bg-brand-50 px-2 py-0.5 text-[11px] font-semibold text-brand-700">↻ {(r.repeat_current ?? 0) + 1}/{r.repeat_total}</span>
+                            </Tooltip>
+                          ) : null}
                           <span className="truncate text-slate-600">{r.patient_name || "—"}</span>
                         </span>
                         <span className="flex shrink-0 items-center gap-2 text-xs text-slate-400">

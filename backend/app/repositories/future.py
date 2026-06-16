@@ -88,6 +88,11 @@ class FuturePrescriptionRepository(BaseRepository):
                     }
                 },
                 "n_items": {"$size": {"$ifNull": ["$products", []]}},
+                # αριθμός επανάληψης (σειρά/σύνολο) + ρυθμός — από τη συνταγή-πηγή
+                "repeat_current": {"$first": "$ex.repeat_current"},
+                "repeat_total": {"$first": "$ex.repeat_total"},
+                "repeat_period_days": {"$ifNull": [{"$first": "$ex.details.repeat_period_days"},
+                                                   {"$multiply": [{"$ifNull": [{"$first": "$ex.details.interval_months"}, 1]}, 30]}]},
             }},
         ]
         return await self.aggregate(pipeline)
