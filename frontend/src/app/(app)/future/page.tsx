@@ -9,6 +9,7 @@ import { useT } from "@/store/prefStore";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
 import { DateInput } from "@/components/ui/DateInput";
 import { Tooltip } from "@/components/ui/Tooltip";
+import { CopyButton } from "@/components/ui/CopyButton";
 import { fmtNum, fmtDate, fmtEur } from "@/lib/formatters";
 import { DataTable, type Column } from "@/components/tables/DataTable";
 import { KpiCard } from "@/components/kpi/KpiCard";
@@ -245,18 +246,19 @@ export default function FuturePage() {
                   const meds = (r.products ?? []).filter((p): p is { name: string | null; qty?: number } => Boolean(p?.name));
                   return (
                     <li key={key}>
-                      <button onClick={() => setExpandedRx(open ? null : key)}
-                        className="flex w-full items-center justify-between gap-3 py-2.5 text-left text-sm hover:bg-slate-50">
+                      <div role="button" tabIndex={0} onClick={() => setExpandedRx(open ? null : key)}
+                        onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") setExpandedRx(open ? null : key); }}
+                        className="flex w-full cursor-pointer items-center justify-between gap-3 py-2.5 text-left text-sm hover:bg-slate-50">
                         <span className="flex min-w-0 items-center gap-2">
                           {r.chronic ? <Tooltip label={t("Χρόνια αγωγή", "Chronic therapy")}><HeartPulse className="h-3.5 w-3.5 shrink-0 text-amber-500" aria-label={t("Χρόνια αγωγή", "Chronic therapy")} /></Tooltip> : null}
-                          <span className="font-mono font-semibold text-slate-800">#{r.source_barcode ?? "—"}</span>
+                          <span className="inline-flex items-center font-mono font-semibold text-slate-800">#{r.source_barcode ?? "—"}<CopyButton value={r.source_barcode} /></span>
                           <span className="truncate text-slate-600">{r.patient_name || "—"}</span>
                         </span>
                         <span className="flex shrink-0 items-center gap-2 text-xs text-slate-400">
                           {fmtDate(r.expected_open_date)} · {meds.length || r.n_items || 0} {t("είδη", "items")}
                           {open ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
                         </span>
-                      </button>
+                      </div>
                       {open && (
                         <div className="bg-slate-50/60 px-3 pb-3 pt-1">
                           <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">{t("Περιλαμβάνει", "Includes")}</div>
