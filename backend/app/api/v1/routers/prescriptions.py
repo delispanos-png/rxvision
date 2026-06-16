@@ -21,7 +21,7 @@ async def execution_detail(
     external_id: str,
     ctx: TenantContext = Depends(require("prescriptions:read", module="prescription_analytics")),
 ):
-    repo = PrescriptionRepository(tenant_id=ctx.tenant_id)
+    repo = PrescriptionRepository(tenant_id=ctx.tenant_id, demo=ctx.demo)
     detail = await repo.execution_detail(external_id)
     if detail is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "execution_not_found")
@@ -64,7 +64,7 @@ async def prescription_repeats(
     ctx: TenantContext = Depends(require("prescriptions:read", module="prescription_analytics")),
 ):
     """The repeat tree — all executions of this prescription's barcode + next expected."""
-    repo = PrescriptionRepository(tenant_id=ctx.tenant_id)
+    repo = PrescriptionRepository(tenant_id=ctx.tenant_id, demo=ctx.demo)
     return await repo.repeats(external_id)
 
 
@@ -118,7 +118,7 @@ async def list_prescriptions(
     page_size: int = Query(50, ge=1, le=500),
     ctx: TenantContext = Depends(require("prescriptions:read", module="prescription_analytics")),
 ):
-    repo = PrescriptionRepository(tenant_id=ctx.tenant_id)
+    repo = PrescriptionRepository(tenant_id=ctx.tenant_id, demo=ctx.demo)
     query: dict = {"executed_at": {"$gte": date_from, "$lt": date_to}}
     if fund_id:
         query["fund_id"] = fund_id
@@ -177,7 +177,7 @@ async def by_fund(
     date_to: datetime = Query(...),
     ctx: TenantContext = Depends(require("prescriptions:read", module="prescription_analytics")),
 ):
-    repo = PrescriptionRepository(tenant_id=ctx.tenant_id)
+    repo = PrescriptionRepository(tenant_id=ctx.tenant_id, demo=ctx.demo)
     return {"items": await repo.by_fund(date_from, date_to)}
 
 
@@ -188,7 +188,7 @@ async def characteristics(
     ctx: TenantContext = Depends(require("prescriptions:read", module="prescription_analytics")),
 ):
     """Πλήθος + αξία εκτελέσεων ανά χαρακτηριστικό συνταγής (για την ανάλυση «ανά είδος»)."""
-    repo = PrescriptionRepository(tenant_id=ctx.tenant_id)
+    repo = PrescriptionRepository(tenant_id=ctx.tenant_id, demo=ctx.demo)
     return await repo.characteristics_breakdown(date_from, date_to)
 
 
@@ -199,7 +199,7 @@ async def aggregate(
     date_to: datetime = Query(...),
     ctx: TenantContext = Depends(require("prescriptions:read", module="prescription_analytics")),
 ):
-    repo = PrescriptionRepository(tenant_id=ctx.tenant_id)
+    repo = PrescriptionRepository(tenant_id=ctx.tenant_id, demo=ctx.demo)
     dim = {"fund": "doctors", "doctor": "doctors", "icd10": "icd10", "product": "products"}
     # reuse top() shape for fund/doctor/icd10/product groupings
     return await repo.top(dim=dim.get(group_by, "doctors"), limit=100,
@@ -214,5 +214,5 @@ async def unexecuted(
     ctx: TenantContext = Depends(require("prescriptions:read", module="prescription_analytics")),
 ):
     """Concept doc §9 — ανεκτέλεστες δραστικές: μη-εκτελεσμένες γραμμές + χαμένη αξία."""
-    repo = PrescriptionRepository(tenant_id=ctx.tenant_id)
+    repo = PrescriptionRepository(tenant_id=ctx.tenant_id, demo=ctx.demo)
     return await repo.unexecuted_substances(date_from=date_from, date_to=date_to, limit=limit)

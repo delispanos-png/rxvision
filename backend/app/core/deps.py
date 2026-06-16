@@ -19,6 +19,7 @@ class TenantContext:
     roles: list[str]
     modules: dict[str, str]          # module_key -> enabled|trial|locked
     permissions: set[str]            # resolved from roles (filled by middleware/service)
+    demo: bool = False               # «πελάτης παρουσίασης» → απόκρυψη PII (επίθετο/ΑΜΚΑ)
 
 
 @dataclass
@@ -97,6 +98,7 @@ async def get_current_context(
         roles=claims.get("roles", []),
         modules=claims.get("modules", {}),
         permissions=set(claims.get("perms", [])),
+        demo=bool(claims.get("demo", False)),
     )
     request.state.tenant = ctx
     return ctx

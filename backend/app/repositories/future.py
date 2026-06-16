@@ -8,6 +8,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 
 from app.repositories.base import BaseRepository
+from app.utils.masking import mask_amka, mask_name
 
 
 class FuturePrescriptionRepository(BaseRepository):
@@ -95,7 +96,11 @@ class FuturePrescriptionRepository(BaseRepository):
                                                    {"$multiply": [{"$ifNull": [{"$first": "$ex.details.interval_months"}, 1]}, 30]}]},
             }},
         ]
-        return await self.aggregate(pipeline)
+        rows = await self.aggregate(pipeline)
+        for r in rows:
+            r["patient_name"] = mask_name(r.get("patient_name"), self.demo)
+            r["amka"] = mask_amka(r.get("amka"), self.demo)
+        return rows
 
     async def forecast(self, *, today: datetime, horizon: datetime,
                        product_id=None) -> list[dict]:

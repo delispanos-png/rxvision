@@ -39,8 +39,10 @@ MAX_PAGE_SIZE = 500
 class BaseRepository:
     collection_name: str
 
-    def __init__(self, *, tenant_id: str, isolation_tier: str = "shared") -> None:
+    def __init__(self, *, tenant_id: str, isolation_tier: str = "shared",
+                 demo: bool = False) -> None:
         self.tenant_id = tenant_id
+        self.demo = demo            # «πελάτης παρουσίασης» → masking PII στα reads
         self._db = db_resolver.resolve(tenant_id=tenant_id, isolation_tier=isolation_tier)
 
     @property

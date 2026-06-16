@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from bson import ObjectId
 
 from app.repositories.base import BaseRepository, jsonsafe
+from app.utils.masking import mask_amka, mask_name
 
 _GRAIN_FMT = {"day": "%Y-%m-%d", "month": "%Y-%m"}
 _METRIC_FIELD = {"executions": None, "value": "$amount_total", "claimed": "$amount_claimed"}
@@ -121,8 +122,8 @@ class PrescriptionRepository(BaseRepository):
             "fund": {"name": (fund or {}).get("name"), "code": (fund or {}).get("code")} if fund else None,
             "patient": {"sex": (patient or {}).get("sex"), "birth_year": (patient or {}).get("birth_year"),
                         "area": (patient or {}).get("area"),
-                        "full_name": (patient or {}).get("full_name"),
-                        "amka": (patient or {}).get("amka")} if patient else None,
+                        "full_name": mask_name((patient or {}).get("full_name"), self.demo),
+                        "amka": mask_amka((patient or {}).get("amka"), self.demo)} if patient else None,
             "details": ex.get("details") or {},   # rich ΗΔΥΚΑ/CDA prescription-level detail (stored)
             "items": items,
             "summary": summary,                    # σύνολο όλων των εκτελέσεων της συνταγής
@@ -308,6 +309,8 @@ class PrescriptionRepository(BaseRepository):
             r["fund_general"] = code2group.get(r.get("fund_code")) or r.get("fund_name")
             r["icd10_named"] = [f"{c} — {titles[c]}" if titles.get(c) else c
                                 for c in (r.get("icd10") or [])]
+            r["patient_name"] = mask_name(r.get("patient_name"), self.demo)
+            r["amka"] = mask_amka(r.get("amka"), self.demo)
         return rows
 
     async def find_patient_refs(self, amka: str | None = None, name: str | None = None) -> list:

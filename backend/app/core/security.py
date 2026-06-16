@@ -48,13 +48,15 @@ def verify_totp(secret: str, code: str) -> bool:
 
 
 def create_access_token(*, user_id: str, tenant_id: str, roles: list[str],
-                        modules: dict[str, str], permissions: list[str] | None = None) -> str:
+                        modules: dict[str, str], permissions: list[str] | None = None,
+                        demo: bool = False) -> str:
     payload = {
         "sub": user_id,
         "tid": tenant_id,
         "roles": roles,
         "modules": modules,
         "perms": permissions or [],
+        "demo": bool(demo),          # «πελάτης παρουσίασης» → απόκρυψη PII (GDPR-safe demo)
         "scope": "access",
         "aud": AUD_TENANT,
         "iat": _now(),

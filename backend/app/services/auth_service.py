@@ -57,8 +57,8 @@ class AuthService:
             return {"mfa_required": True}
         await db["users"].update_one({"_id": user["_id"]},
                                      {"$set": {"last_login_at": _utcnow()}})  
-        modules, roles, perms = await self._resolve(user)
-        return self._issue(user, roles, modules, perms)
+        modules, roles, perms, demo = await self._resolve(user)
+        return self._issue(user, roles, modules, perms, demo)
 
     async def _tenant_access_ok(self, tenant_id) -> bool:
         db = shared_db()
@@ -81,16 +81,16 @@ class AuthService:
         user = await db["users"].find_one({"_id": _as_object_id(claims["sub"])})
         if not user or user.get("refresh_token_version") != claims.get("ver"):
             return None  # revoked
-        modules, roles, perms = await self._resolve(user)
-        return self._issue(user, roles, modules, perms)
+        modules, roles, perms, demo = await self._resolve(user)
+        return self._issue(user, roles, modules, perms, demo)
 
     async def issue_for_user(self, user: dict) -> dict:
         """Mint tokens for a user WITHOUT a password check or last_login update — used
         for admin impersonation. Reuses the user's own identity (no new seat/license)."""
-        modules, roles, perms = await self._resolve(user)
-        return self._issue(user, roles, modules, perms)
+        modules, roles, perms, demo = await self._resolve(user)
+        return self._issue(user, roles, modules, perms, demo)
 
-    async def _resolve(self, user: dict) -> tuple[dict, list[str], list[str]]:
+    async def _resolve(self, user: dict) -> tuple[dict, list[str], list[str], bool]:
         db = shared_db()
         tenant = await db["tenants"].find_one({"_id": user["tenant_id"]})
         sub = await db["subscriptions"].find_one({"tenant_id": user["tenant_id"]})
@@ -113,13 +113,16 @@ class AuthService:
             {"_id": {"$in": role_ids}, "tenant_id": user["tenant_id"]}):
             roles.append(role.get("key", str(role["_id"])))
             perms.update(role.get("permissions", []))
-        return modules, roles, sorted(perms)
+        demo = bool((tenant or {}).get("demo"))   # «πελάτης παρουσίασης» (απόκρυψη PII)
+        return modules, roles, sorted(perms), demo
 
-    def _issue(self, user: dict, roles: list[str], modules: dict, perms: list[str]) -> dict:
+    def _issue(self, user: dict, roles: list[str], modules: dict, perms: list[str],
+               demo: bool = False) -> dict:
         uid, tid = str(user["_id"]), str(user["tenant_id"])
         return {
             "access_token": create_access_token(
-                user_id=uid, tenant_id=tid, roles=roles, modules=modules, permissions=perms),
+                user_id=uid, tenant_id=tid, roles=roles, modules=modules, permissions=perms,
+                demo=demo),
             "refresh_token": create_refresh_token(
                 user_id=uid, tenant_id=tid, version=user.get("refresh_token_version", 0)),
             "expires_in": 900,

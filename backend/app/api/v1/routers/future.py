@@ -42,7 +42,7 @@ async def upcoming(
     min_history: int = 0,
     ctx: TenantContext = Depends(require("future:read", module=_MODULE)),
 ):
-    repo = FuturePrescriptionRepository(tenant_id=ctx.tenant_id)
+    repo = FuturePrescriptionRepository(tenant_id=ctx.tenant_id, demo=ctx.demo)
     # full local days: start at TODAY 00:00 Athens (so today's & the last day's buckets are whole
     # days, matching the per-date list) rather than a partial window starting at the current time.
     today = _athens_today_start()
@@ -61,7 +61,7 @@ async def upcoming_list(
 ):
     """Individual upcoming prescriptions. Either a rolling window (days from today)
     or a single calendar day (date=YYYY-MM-DD, e.g. the peak day)."""
-    repo = FuturePrescriptionRepository(tenant_id=ctx.tenant_id)
+    repo = FuturePrescriptionRepository(tenant_id=ctx.tenant_id, demo=ctx.demo)
     if date:
         # full local calendar day → matches exactly the chart bucket the user clicked.
         start = _athens_day(date)
@@ -84,7 +84,7 @@ async def daily_coverage(
     """Κάλυψη περιόδου: ποσότητες ανά φάρμακο για τις επαναλαμβανόμενες συνταγές που
     ανοίγουν στο διάστημα. Δέχεται είτε μία μέρα (date) είτε εύρος (from..to, inclusive).
     Default = ΑΥΡΙΟ (το βλέπεις από σήμερα για να προλάβεις να παραγγείλεις)."""
-    repo = FuturePrescriptionRepository(tenant_id=ctx.tenant_id)
+    repo = FuturePrescriptionRepository(tenant_id=ctx.tenant_id, demo=ctx.demo)
     if from_ and to:
         start, end = _athens_day(from_), _athens_day(to) + timedelta(days=1)
     elif date:
@@ -103,7 +103,7 @@ async def forecast(
     horizon_days: int = 30,
     ctx: TenantContext = Depends(require("future:read", module=_MODULE)),
 ):
-    repo = FuturePrescriptionRepository(tenant_id=ctx.tenant_id)
+    repo = FuturePrescriptionRepository(tenant_id=ctx.tenant_id, demo=ctx.demo)
     today = _now()
     horizon = today + timedelta(days=horizon_days)
     return {"horizon_days": horizon_days,

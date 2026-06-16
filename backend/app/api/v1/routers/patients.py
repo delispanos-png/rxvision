@@ -80,7 +80,7 @@ async def aggregate(
     by: Literal["age_group", "sex", "area", "lifecycle"] = "age_group",
     ctx: TenantContext = Depends(require("patients:read", module=_MODULE)),
 ):
-    repo = PatientRepository(tenant_id=ctx.tenant_id)
+    repo = PatientRepository(tenant_id=ctx.tenant_id, demo=ctx.demo)
     buckets = await repo.aggregate_by(by=by)
     # rows: {label, value=patient count} — shape the Ασφαλισμένοι charts expect
     rows = [{"label": b.get("key") or "—", "value": b.get("patients", 0)} for b in buckets]
@@ -92,7 +92,7 @@ async def retention(
     cohort: str | None = None,
     ctx: TenantContext = Depends(require("patients:read", module=_MODULE)),
 ):
-    repo = PatientRepository(tenant_id=ctx.tenant_id)
+    repo = PatientRepository(tenant_id=ctx.tenant_id, demo=ctx.demo)
     rows = await repo.retention(cohort=cohort)
     points = [{"period": r.get("lifecycle") or "—", "retained_pct": r.get("pct", 0.0)} for r in rows]
     return {"cohort": cohort, "points": points}

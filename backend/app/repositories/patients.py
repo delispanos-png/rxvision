@@ -9,6 +9,7 @@ import re
 from datetime import datetime
 
 from app.repositories.base import BaseRepository, jsonsafe
+from app.utils.masking import mask_amka, mask_name
 
 _DIM_FIELD = {
     "age_group": "$age_group",
@@ -103,7 +104,10 @@ class PatientExecutionsRepository(BaseRepository):
                           "active_since": 1, "last_seen": 1, "pseudo_id": 1, "full_name": 1,
                           "age_group": 1, "sex": 1, "area": 1, "lifecycle": 1}},
         ]
-        return await self.aggregate(pipeline)
+        rows = await self.aggregate(pipeline)
+        for r in rows:
+            r["full_name"] = mask_name(r.get("full_name"), self.demo)
+        return rows
 
     async def search(self, q: str, limit: int = 25) -> list[dict]:
         """Find patients by name / ΑΜΚΑ / phone / email (any stored detail)."""
@@ -132,6 +136,11 @@ class PatientExecutionsRepository(BaseRepository):
             {"$sort": {"last_seen": -1}},
             {"$limit": limit},
         ]).to_list(length=None)
+        if self.demo:
+            for r in rows:
+                r["name"] = mask_name(r.get("name"), True)
+                r["amka"] = mask_amka(r.get("amka"), True)
+                r["mobile"] = r["phone"] = r["email"] = None   # στοιχεία επικοινωνίας = PII
         return jsonsafe(rows)
 
     async def patient_detail(self, patient_id: str) -> dict | None:
@@ -187,7 +196,8 @@ class PatientExecutionsRepository(BaseRepository):
         from app.repositories.base import jsonsafe
         return jsonsafe({
             "patient_id": patient_id,
-            "full_name": prof.get("full_name"), "amka": prof.get("amka"),
+            "full_name": mask_name(prof.get("full_name"), self.demo),
+            "amka": mask_amka(prof.get("amka"), self.demo),
             "sex": prof.get("sex"), "age_group": prof.get("age_group"),
             "birth_year": prof.get("birth_year"), "area": prof.get("residence_area"),
             "lifecycle": prof.get("lifecycle"),

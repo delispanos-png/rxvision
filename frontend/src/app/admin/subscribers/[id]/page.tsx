@@ -13,7 +13,7 @@ import { DataTable, type Column } from "@/components/tables/DataTable";
 
 type User = { external_user_id: string; email: string; first_name: string; last_name: string; role: string; is_active: boolean; last_login_at: string | null };
 type Detail = {
-  tenant: { id: string; name: string; status: string; country: string; opened_via: string; external_ref: string; created_at: string; contact_email?: string; contact_phone?: string; company?: { name?: string; legal_name?: string; tax_id?: string; tax_office?: string; address?: string; city?: string; postal_code?: string }; store?: { name?: string; code?: string } };
+  tenant: { id: string; name: string; status: string; country: string; opened_via: string; external_ref: string; created_at: string; contact_email?: string; contact_phone?: string; company?: { name?: string; legal_name?: string; tax_id?: string; tax_office?: string; address?: string; city?: string; postal_code?: string }; store?: { name?: string; code?: string }; demo?: boolean };
   subscription: { plan: string; plan_name: string; status: string; product_code: string; features: Record<string, unknown>; limits: Record<string, unknown>; billing_cycle: string; seats: number; mrr: number; trial_ends_at: string | null; current_period_end: string | null; source: string };
   modules?: Record<string, "enabled" | "trial" | "locked">;
   users: User[];
@@ -129,6 +129,15 @@ export default function TenantCardPage() {
           <input className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" value={name} onChange={(e) => setName(e.target.value)} /></label>
         <button disabled={busy || name === t.name} onClick={() => act(() => adminApi(`/admin/tenants/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify({ name }) }), "Αποθηκεύτηκε ✓")}
           className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50">Αποθήκευση</button>
+        <label className="mt-4 flex max-w-md items-start gap-2 rounded-lg border border-amber-200 bg-amber-50/60 p-3 text-sm">
+          <input type="checkbox" disabled={busy} checked={!!t.demo}
+            onChange={(e) => { const v = e.target.checked; act(() => adminApi(`/admin/tenants/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify({ demo: v }) }), v ? "Λειτουργία παρουσίασης ΟΝ ✓" : "Λειτουργία παρουσίασης OFF ✓"); }}
+            className="mt-0.5 rounded border-slate-300 text-amber-600 focus:ring-amber-400" />
+          <span>
+            <span className="font-medium text-slate-800">Πελάτης παρουσίασης</span>
+            <span className="mt-0.5 block text-xs text-slate-500">Κρύβει ευαίσθητα στοιχεία ασθενών (επίθετο, μέρος ΑΜΚΑ, τηλέφωνο/email) σε όλη την εφαρμογή — για επιδείξεις χωρίς έκθεση πραγματικών δεδομένων (GDPR). Ισχύει στο επόμενο login του χρήστη.</span>
+          </span>
+        </label>
         <div className="mt-4 grid grid-cols-2 gap-x-6 gap-y-1 text-sm text-slate-600 md:grid-cols-3">
           <div>Tenant id: <code className="text-xs">{t.id}</code></div>
           <div>Προέλευση: {t.opened_via ?? "—"}</div>

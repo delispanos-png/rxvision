@@ -95,6 +95,7 @@ class StatusIn(BaseModel):
 
 class TenantEditIn(BaseModel):
     name: str | None = None
+    demo: bool | None = None        # «πελάτης παρουσίασης» → απόκρυψη PII (ισχύει στο επόμενο login)
 
 
 class InvoiceIn(BaseModel):
@@ -465,7 +466,8 @@ async def tenant_detail(tenant_id: str, _: PlatformContext = Depends(get_platfor
                    "country": t.get("country"), "opened_via": t.get("opened_via"),
                    "external_ref": t.get("external_ref"), "created_at": t.get("created_at"),
                    "contact_email": t.get("contact_email"), "contact_phone": t.get("contact_phone"),
-                   "company": t.get("company"), "store": t.get("store")},
+                   "company": t.get("company"), "store": t.get("store"),
+                   "demo": bool(t.get("demo"))},
         "modules": resolve_modules(set(sub.get("modules_included", [])), t.get("modules") or {}),
         "subscription": {
             "plan": sub.get("plan"), "plan_name": sub.get("plan_name"),
