@@ -135,8 +135,11 @@ class PrescriptionRepository(BaseRepository):
         def repeat_of(parts: list) -> dict:
             parts = sorted(parts, key=lambda p: p.get("external_id", ""))
             dates = [p["executed_at"] for p in parts if p.get("executed_at")]
+            # Σειρά (CDA 1.1.4.1) — authoritative position of this barcode in the chain.
+            seqs = [int(p["repeat_current"]) for p in parts if p.get("repeat_current")]
             return {
                 "barcode": str(parts[0].get("external_id", "")).split(":")[0],
+                "seq": seqs[0] if seqs else 1,
                 "executed_at": min(dates) if dates else None,
                 "status": "executed" if all(p.get("status") == "executed" for p in parts) else "partial",
                 "amount_total": sum(p.get("amount_total", 0) for p in parts),
@@ -146,66 +149,91 @@ class PrescriptionRepository(BaseRepository):
             }
 
         periods = [r for r in (repeat_of(p) for p in by_bc.values()) if r["executed_at"]]
-        periods.sort(key=lambda r: r["executed_at"])
+        periods.sort(key=lambda r: r["seq"])
 
         n_barcodes = len(by_bc)
-        is_repeat = n_barcodes > 1 or root != this_bc
         has_partials = any(len(p["parts"]) > 1 for p in periods)
 
-        # cadence (months) inferred from the gaps between DISTINCT repeat periods. A single
-        # barcode (only partial executions of one period) has no interval to infer.
-        interval = None
-        if len(periods) >= 2:
-            gaps = sorted((periods[i + 1]["executed_at"] - periods[i]["executed_at"]).days
-                          for i in range(len(periods) - 1))
-            gaps = [g for g in gaps if g > 0]
-            if gaps:
-                interval = max(1, round(gaps[len(gaps) // 2] / 30))
+        # Authoritative plan: πλήθος επαναλήψεων = CDA 1.1.4 (repeat_total)· κάθε barcode
+        # τοποθετείται στη ΣΕΙΡΑ του (1.1.4.1). ΔΕΝ μαντεύουμε πλήθος/θέση από ημερομηνίες.
+        plan_total = max((int(r.get("repeat_total") or 1) for r in rows), default=1)
+        max_seq = max((p["seq"] for p in periods), default=1)
+        total = max(plan_total, max_seq, 1)
+        is_repeat = total > 1 or n_barcodes > 1 or root != this_bc
 
-        starts = [r["valid_from"] for r in rows if r.get("valid_from")]
-        ends = [r["valid_until"] for r in rows if r.get("valid_until")]
-        start = min(starts) if starts else (periods[0]["executed_at"] if periods else None)
-        end = max(ends) if ends else (periods[-1]["executed_at"] if periods else None)
         now = datetime.now(tz=timezone.utc)
 
         def add_months(d: datetime, n: int) -> datetime:
             y, m = d.year + (d.month - 1 + n) // 12, (d.month - 1 + n) % 12 + 1
             return d.replace(year=y, month=m, day=min(d.day, calendar.monthrange(y, m)[1]))
 
+        # interval (μήνες) ΜΟΝΟ για να προβάλουμε ημερομηνίες έναρξης κενών/μελλοντικών σειρών:
+        # ρητές ΗΔΥΚΑ ενδείξεις (μηνιαία/δίμηνη) > inferred από σειρά-ζυγισμένα gaps > default 1.
+        interval = None
+        for r in rows:
+            det = r.get("details") or {}
+            if det.get("interval_months"):
+                interval = int(det["interval_months"]); break
+            if det.get("bimonthly"):
+                interval = 2; break
+            if det.get("monthly"):
+                interval = 1; break
+        if interval is None and len(periods) >= 2:
+            rates = []
+            for i in range(len(periods) - 1):
+                dseq = periods[i + 1]["seq"] - periods[i]["seq"]
+                dd = (periods[i + 1]["executed_at"] - periods[i]["executed_at"]).days
+                if dseq > 0 and dd > 0:
+                    rates.append(dd / dseq)
+            if rates:
+                rates.sort(); interval = max(1, round(rates[len(rates) // 2] / 30))
+        if interval is None and is_repeat:
+            interval = 1
+
+        starts = [r["valid_from"] for r in rows if r.get("valid_from")]
+        ends = [r["valid_until"] for r in rows if r.get("valid_until")]
+        start = min(starts) if starts else (periods[0]["executed_at"] if periods else None)
+        end = max(ends) if ends else (periods[-1]["executed_at"] if periods else None)
+
+        # Ορίζοντας δεδομένων: η παλαιότερη εκτέλεση που έχουμε συγχρονίσει. Σειρές που η
+        # προβλεπόμενη έναρξή τους προηγείται του ορίζοντα ΔΕΝ είναι «χαμένες» — απλώς δεν τις
+        # κατεβάσαμε ποτέ (η αλυσίδα ξεκίνησε πριν την περίοδο συγχρονισμού) → τις παραλείπουμε.
+        horizon_doc = await self._coll.find_one(self._scope({}), sort=[("executed_at", 1)],
+                                                projection={"executed_at": 1})
+        horizon = horizon_doc.get("executed_at") if horizon_doc else None
+
+        # Ημερομηνία έναρξης ανά σειρά: εκτελεσμένες → πραγματική· κενές → προβολή με anchor
+        # την πρώτη εκτελεσμένη σειρά (ευθυγραμμίζει τις προβλέψεις με τα πραγματικά δεδομένα).
+        exec_by_seq = {p["seq"]: p for p in periods}
+        anchor = periods[0] if periods else None
+
+        def opening_for(seq: int) -> datetime | None:
+            if anchor and anchor["executed_at"]:
+                return add_months(anchor["executed_at"], (seq - anchor["seq"]) * (interval or 1))
+            return add_months(start, (seq - 1) * (interval or 1)) if start else None
+
         slots: list[dict] = []
-        if n_barcodes > 1 and interval and start and end:
-            # genuine multi-barcode chain with a known cadence → project the schedule at the
-            # inferred interval (NOT hard-coded monthly) and mark missed windows as lost.
-            def window_of(d: datetime) -> int:
-                i = 0
-                while i < 24 and add_months(start, (i + 1) * interval) <= d:
-                    i += 1
-                return i
-            exec_by_slot = {window_of(r["executed_at"]): r for r in periods}
-            n = 1
-            while n < 24 and add_months(start, n * interval) <= end:
-                n += 1
-            if exec_by_slot:
-                n = max(n, max(exec_by_slot) + 1)
-            for i in range(n):
-                opening, window_end = add_months(start, i * interval), add_months(start, (i + 1) * interval)
-                r = exec_by_slot.get(i)
-                state = ("executed" if r else "lost" if window_end <= now
-                         else "available" if opening <= now else "future")
-                slots.append({"index": i, "opening": opening, "state": state, "repeat": r})
-        else:
-            # show only what actually happened — one slot per executed period, no fabrication.
-            slots = [{"index": i, "opening": r["executed_at"], "state": "executed", "repeat": r}
-                     for i, r in enumerate(periods)]
+        for seq in range(1, total + 1):
+            r = exec_by_seq.get(seq)
+            opening = r["executed_at"] if r else opening_for(seq)
+            if not r and horizon and opening and opening < horizon:
+                continue  # προηγείται του ορίζοντα συγχρονισμού — δεν τη φαμπρικάρουμε ως χαμένη
+            if r:
+                state = "executed"
+            else:
+                win_end = add_months(opening, interval or 1) if opening else None
+                state = ("lost" if win_end and win_end <= now
+                         else "available" if opening and opening <= now else "future")
+            slots.append({"index": seq - 1, "opening": opening, "state": state, "repeat": r})
 
         return jsonsafe({
             "root": root,
             "is_chain": is_repeat or has_partials,
-            # it IS a repeat chain but we only hold one barcode of it (siblings not synced) →
-            # the full "N of M" plan needs a ΗΔΙΚΑ re-sync; we don't fake it.
-            "plan_incomplete": is_repeat and n_barcodes <= 1,
+            # Το πλήρες πλάνο είναι πλέον authoritative από το CDA (1.1.4 + σειρά)· δεν χρειάζεται
+            # «θα συμπληρωθεί με sync». Κενές σειρές εντός ορίζοντα = πραγματικά χαμένες (recall).
+            "plan_incomplete": False,
             "interval_months": interval,
-            "total": len(slots),
+            "total": total,
             "executed_count": sum(1 for s in slots if s["state"] == "executed"),
             "lost_count": sum(1 for s in slots if s["state"] == "lost"),
             "valid_from": start, "valid_until": end, "slots": slots,
