@@ -31,7 +31,7 @@ def _now() -> datetime:
 
 # Bump όταν αλλάζει η ΔΟΜΗ των αποθηκευμένων items/details (όχι μόνο οι τιμές) ώστε ένα
 # re-ingest να ΞΑΝΑΓΡΑΨΕΙ τα items αντί να κάνει skip-by-hash. v2: per-τεμάχιο coupons.
-_PARSE_VERSION = "v2-coupons"
+_PARSE_VERSION = "v3-characteristics"
 
 
 def _content_hash(ex: CanonicalExecution, amount_total: int, claimed: int) -> str:

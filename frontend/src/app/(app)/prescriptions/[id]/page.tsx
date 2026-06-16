@@ -33,11 +33,27 @@ type Coupon = {
 };
 type PrescDetails = {
   issue_date?: string | null; deadline_date?: string | null;
-  exemption?: boolean | null; opinion?: boolean | null; fund_surcharge?: boolean | null;
+  exemption?: boolean | null; exemption_reason?: string | null; opinion?: boolean | null;
+  fund_surcharge?: boolean | null;
   fund_surcharge_amount?: number | null; patient_share_total?: number | null; fund_share_total?: number | null;
   kyyap_covered?: number | null;   // ΚΥΥΑΠ (ΕΤΥΑΠ) — ποσό που πληρώνει το ΚΥΥΑΠ
+  kyyap_difference?: number | null; supplementary_cover?: boolean | null; supplementary_amount?: number | null;
   interval_months?: number | null; // 1=μηνιαία, 2=δίμηνη (ρυθμός χρόνιας αγωγής)
+  repeat_period_days?: number | null;
   chronic?: boolean | null;        // χρόνια πάθηση
+  // γνωμάτευση
+  opinion_doctor_name?: string | null; opinion_specialty?: string | null; opinion_date?: string | null;
+  opinion_type?: string | null; opinion_barcode?: string | null; opinion_doctor_amka?: string | null;
+  // τύπος / εκτελέσεις / επίσκεψη
+  rx_type?: string | null; by_brand?: boolean | null; hiv_type?: string | null;
+  narcotic_category?: string | null; exec_count?: number | null; active_executions?: string | null; visit_id?: string | null;
+  // boolean flags (χαρακτηριστικά)
+  single_dose?: boolean | null; high_cost?: boolean | null; heparin?: boolean | null; ifet_import?: boolean | null;
+  desensitization?: boolean | null; eopyy_only?: boolean | null; narcotic?: boolean | null; hospital_only?: boolean | null;
+  special_antibiotic?: boolean | null; ifet?: boolean | null; eopyy_preapproval?: boolean | null; outside_eopyy?: boolean | null;
+  negative_list?: boolean | null; antibiotic?: boolean | null; vaccines?: boolean | null; home_delivery?: boolean | null;
+  home_delivery_wish?: boolean | null; intangible?: boolean | null; consumables?: boolean | null;
+  n3816?: boolean | null; ekas?: boolean | null;
 };
 
 type Item = {
@@ -90,6 +106,71 @@ function GS1Code({ c }: { c: Coupon }) {
   }, [gtin, c.qr_product_code, c.qr_expiry, c.qr_batch, c.strip]);
   if (!c.qr_product_code) return null;
   return <canvas ref={ref} className="h-24 w-24 shrink-0 rounded border border-slate-200 bg-white" />;
+}
+
+// Χαρακτηριστικά συνταγής (CDA flags) → badges + κάρτα Γνωμάτευσης. Βοηθούν τον φαρμακοποιό
+// να βγάλει συμπεράσματα και τροφοδοτούν μελλοντικά KPI.
+const FLAG_DEFS: [keyof PrescDetails, string, string, string][] = [
+  ["chronic", "Χρόνια αγωγή", "Chronic", "bg-amber-100 text-amber-700"],
+  ["high_cost", "Υψηλού κόστους", "High cost", "bg-rose-100 text-rose-700"],
+  ["narcotic", "Ναρκωτικό", "Narcotic", "bg-rose-100 text-rose-700"],
+  ["heparin", "Με ηπαρίνη", "Heparin", "bg-rose-100 text-rose-700"],
+  ["negative_list", "Αρνητική λίστα", "Negative list", "bg-rose-100 text-rose-700"],
+  ["antibiotic", "Αντιβιοτικό", "Antibiotic", "bg-orange-100 text-orange-700"],
+  ["special_antibiotic", "Ειδικό αντιβιοτικό", "Special antibiotic", "bg-orange-100 text-orange-700"],
+  ["n3816", "Ν.3816 (ΦΥΚ)", "Law 3816", "bg-violet-100 text-violet-700"],
+  ["ifet", "ΙΦΕΤ", "ΙΦΕΤ", "bg-violet-100 text-violet-700"],
+  ["ifet_import", "Εισαγωγή ΙΦΕΤ", "ΙΦΕΤ import", "bg-violet-100 text-violet-700"],
+  ["vaccines", "Εμβόλια", "Vaccines", "bg-sky-100 text-sky-700"],
+  ["desensitization", "Απευαισθητοποίηση", "Desensitization", "bg-sky-100 text-sky-700"],
+  ["single_dose", "Μονοδοσιακό", "Single-dose", "bg-slate-100 text-slate-700"],
+  ["consumables", "Με αναλώσιμα", "Consumables", "bg-slate-100 text-slate-700"],
+  ["eopyy_only", "Μόνο ΕΟΠΥΥ", "EOPYY only", "bg-indigo-100 text-indigo-700"],
+  ["hospital_only", "Μόνο νοσοκομείο", "Hospital only", "bg-indigo-100 text-indigo-700"],
+  ["eopyy_preapproval", "Προέγκριση ΕΟΠΥΥ", "EOPYY pre-approval", "bg-indigo-100 text-indigo-700"],
+  ["outside_eopyy", "Εκτός δαπάνης ΕΟΠΥΥ", "Outside EOPYY", "bg-slate-100 text-slate-700"],
+  ["home_delivery", "Κατ' οίκον παράδοση", "Home delivery", "bg-emerald-100 text-emerald-700"],
+  ["intangible", "Άυλη", "Intangible", "bg-slate-100 text-slate-700"],
+  ["ekas", "ΕΚΑΣ", "ΕΚΑΣ", "bg-slate-100 text-slate-700"],
+  ["exemption", "Απαλλαγή συμμετοχής", "Co-pay exemption", "bg-emerald-100 text-emerald-700"],
+  ["supplementary_cover", "Συμπληρωματική κάλυψη", "Supplementary cover", "bg-emerald-100 text-emerald-700"],
+];
+
+function RxCharacteristics({ d }: { d?: PrescDetails | null }) {
+  const t = useT();
+  if (!d) return null;
+  const flags = FLAG_DEFS.filter(([k]) => d[k]);
+  const rxType = d.rx_type === "2" ? t("Ελεύθερη", "Free") : d.rx_type === "1" ? t("Τυπική", "Typical") : null;
+  const hiv = d.hiv_type === "1" ? t("HIV — αντιρετροϊκή", "HIV — antiretroviral") : d.hiv_type === "2" ? t("HIV — προφύλαξη", "HIV — prophylaxis") : null;
+  const opinionType = d.opinion_type === "1" ? t("Νοσοκομειακή", "Hospital") : d.opinion_type === "2" ? t("Ειδικότητας", "Specialty") : null;
+  const hasOpinion = d.opinion && (d.opinion_doctor_name || d.opinion_date || d.opinion_specialty || d.opinion_barcode);
+  if (!flags.length && !rxType && !hiv && !d.by_brand && !hasOpinion && !d.repeat_period_days) return null;
+  return (
+    <PanelCard title={t("Χαρακτηριστικά συνταγής", "Prescription characteristics")}>
+      <div className="flex flex-wrap gap-1.5">
+        {rxType ? <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-700 dark:bg-slate-800 dark:text-slate-300">{rxType}</span> : null}
+        {d.by_brand ? <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-700 dark:bg-slate-800 dark:text-slate-300">{t("Με εμπορική ονομασία", "By brand name")}</span> : null}
+        {flags.map(([k, el, en, cls]) => (
+          <span key={k} className={`rounded-full px-2.5 py-1 text-xs font-medium ${cls}`}>{t(el, en)}{k === "narcotic" && d.narcotic_category ? ` (${d.narcotic_category})` : ""}</span>
+        ))}
+        {hiv ? <span className="rounded-full bg-rose-100 px-2.5 py-1 text-xs font-medium text-rose-700">{hiv}</span> : null}
+        {d.repeat_period_days ? <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-700 dark:bg-slate-800 dark:text-slate-300">{t(`Περίοδος επανάληψης ${d.repeat_period_days} ημ.`, `Repeat period ${d.repeat_period_days}d`)}</span> : null}
+      </div>
+      {hasOpinion ? (
+        <div className="mt-3 rounded-xl border border-slate-200 p-3 dark:border-slate-700">
+          <div className="mb-2 text-sm font-semibold text-slate-700 dark:text-slate-200">{t("Γνωμάτευση", "Medical opinion")}{opinionType ? ` · ${opinionType}` : ""}</div>
+          <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 text-sm sm:grid-cols-3 lg:grid-cols-4">
+            <Field label={t("Ιατρός", "Doctor")} value={d.opinion_doctor_name} />
+            <Field label={t("Ειδικότητα", "Specialty")} value={d.opinion_specialty} />
+            <Field label={t("Ημ/νία", "Date")} value={d.opinion_date} />
+            <Field label={t("ΑΜΚΑ ιατρού", "Doctor ΑΜΚΑ")} value={d.opinion_doctor_amka} />
+            <Field label={t("Barcode", "Barcode")} value={d.opinion_barcode} />
+          </div>
+        </div>
+      ) : null}
+      {d.exemption_reason ? <div className="mt-2 text-xs text-slate-500">{t("Λόγος απαλλαγής", "Exemption reason")}: {d.exemption_reason}</div> : null}
+    </PanelCard>
+  );
 }
 type Detail = {
   external_id: string; executed_at: string; status: string | null; source: string;
@@ -327,6 +408,9 @@ export default function PrescriptionDetailPage() {
       {/* repeat tree — all executions of this prescription's barcode */}
       <RepeatTree externalId={id} />
 
+      {/* Χαρακτηριστικά συνταγής (CDA flags) — βοηθούν τον φαρμακοποιό + τροφοδοτούν KPI */}
+      <RxCharacteristics d={d.details} />
+
       {/* Φάρμακα — tabs: Εκτέλεση (αυτή η εκτέλεση) / Συνοπτικά (όλη η συνταγή) / Ανεκτέλεστα */}
       <PanelCard title={t("Φάρμακα", "Medicines")}>
         <div className="mb-3 flex flex-wrap items-center gap-2">
@@ -417,6 +501,10 @@ export default function PrescriptionDetailPage() {
               <Field label={t("Γνωμάτευση", "Opinion")} value={yesNo(d.details?.opinion, t)} />
               <Field label={t("Συμμετοχή ασθενή (σύν.)", "Patient share (total)")} value={d.details?.patient_share_total != null ? eur(d.details.patient_share_total) : null} />
               <Field label={t("Από ταμείο (σύν.)", "From fund (total)")} value={d.details?.fund_share_total != null ? eur(d.details.fund_share_total) : null} />
+              <Field label={t("Διαφορά ΚΥΥΑΠ", "ΚΥΥΑΠ difference")} value={d.details?.kyyap_difference != null ? eur(d.details.kyyap_difference) : null} />
+              <Field label={t("Συμπληρωματική κάλυψη", "Supplementary cover")} value={d.details?.supplementary_amount != null ? eur(d.details.supplementary_amount) : null} />
+              <Field label={t("Πλήθος εκτελέσεων", "Execution count")} value={d.details?.exec_count != null ? String(d.details.exec_count) : null} />
+              <Field label={t("Id επίσκεψης", "Visit Id")} value={d.details?.visit_id} />
             </div>
             <div className="space-y-3">
               {d.items.map((it, i) => {

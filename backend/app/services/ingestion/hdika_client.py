@@ -527,23 +527,26 @@ class HdikaClient:
         # prescription-level ΗΔΥΚΑ/CDA detail (issue/deadline, exemption/opinion, surcharge, totals)
         _cd = cda.get("details") or {}
         _mc = lambda x: _eur_cents(x) if x is not None else None  # noqa: E731
-        presc_details = {k: v for k, v in {
-            "issue_date": _cd.get("issue_date"), "deadline_date": _cd.get("deadline_date"),
-            "exemption": _cd.get("exemption"), "opinion": _cd.get("opinion"),
-            "fund_surcharge": _cd.get("fund_surcharge"),
-            "fund_surcharge_amount": _mc(_cd.get("fund_surcharge_amount")),
-            "patient_share_total": _mc(_cd.get("patient_share_total")),
-            "fund_share_total": _mc(_cd.get("fund_share_total")),
+        # Όλα τα χαρακτηριστικά συνταγής (parse) περνούν αυτούσια (future-proof)· τα ποσά → cents
+        # και προστίθενται τα υπολογιζόμενα/top-level. Το φιλτράρισμα κρατά μόνο ουσιαστικές τιμές.
+        _money = ("fund_surcharge_amount", "patient_share_total", "fund_share_total",
+                  "supplementary_amount", "kyyap_difference")
+        presc_details = {
+            **_cd,
+            **{k: _mc(_cd.get(k)) for k in _money},
             # ποσό που πληρώνει το ΚΥΥΑΠ (συμμετοχή + μισή διαφορά) — για την ανάλυση/εκτύπωση ΕΤΥΑΠ
             "kyyap_covered": kyyap_covered or None,
-            # ρυθμός χορήγησης χρόνιας αγωγής (μήνες) + ένδειξη χρόνιας πάθησης (CDA 1.4.9/1.4.10/1.10.9)
-            "interval_months": (2 if cda.get("bimonthly") else 1 if cda.get("monthly") else None),
+            # ρυθμός χορήγησης (μήνες): αυθεντικά από 1.1.4.4 (30/28/60 ημ.), αλλιώς μηνιαία/δίμηνη
+            "interval_months": ({30: 1, 28: 1, 60: 2}.get(_cd.get("repeat_period_days"))
+                                or (2 if cda.get("bimonthly") else 1 if cda.get("monthly") else None)),
             "chronic": (True if cda.get("chronic") else None),
             # περίπτωση εκτέλεσης (1.1.18): 1=όλα·2=όχι όλα(επιθυμία)·3=ασυμφ.δοσολ.·4=όχι πλήρης
             "execution_case": cda.get("execution_case"),
             "n3816": (True if cda.get("n3816") else None),     # ΦΥΚ Ν.3816
             "ekas": (True if cda.get("ekas") else None),       # δικαιούχος ΕΚΑΣ
-        }.items() if v is not None}
+        }
+        # κράτα μόνο ουσιαστικές τιμές (πέτα None/""/False/μηδενικά ποσά → λιτό doc)
+        presc_details = {k: v for k, v in presc_details.items() if v not in (None, "", False, 0, 0.0)}
         return CanonicalExecution(
             source="HDIKA",
             # barcode alone collapses repeats (same barcode, one row per monthly execution) →

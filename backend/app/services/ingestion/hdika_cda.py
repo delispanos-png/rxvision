@@ -250,7 +250,49 @@ def parse_cda_full(text: str) -> dict:
             "patient_share_total": _num(ids.get("1.1.2.4")),
             "fund_share_total": _num(ids.get("1.1.2.5")),
             "exemption": _flag(ids.get("1.1.26")),
+            "exemption_reason": ids.get("1.1.26.1"),
             "opinion": _flag(ids.get("1.1.23")),
+            # ── Γνωμάτευση (αναλυτικά, CDA 1.1.23.x) ──
+            "opinion_doctor_amka": ids.get("1.1.23.1"),
+            "opinion_date": _date(ids.get("1.1.23.2")),
+            "opinion_specialty": ids.get("1.1.23.4"),
+            "opinion_doctor_name": ids.get("1.1.23.5"),
+            "opinion_barcode": ids.get("1.1.23.6"),
+            "opinion_type": ids.get("1.1.23.7"),            # 1=Νοσοκομειακή · 2=Ειδικότητας
+            # ── τύπος & επανάληψη ──
+            "rx_type": ids.get("1.1.3"),                    # 1=τυπική · 2=ελεύθερη
+            "by_brand": _flag(ids.get("1.1.3.1")),          # συνταγογράφηση με εμπορική ονομασία
+            "repeat_period_days": {"1": 30, "2": 28, "3": 60}.get(ids.get("1.1.4.4")),  # 1.1.4.4
+            # ── κλινικές/κανονιστικές ενδείξεις (flags) ──
+            "single_dose": _flag(ids.get("1.4.11")),        # μονοδοσιακό
+            "high_cost": _flag(ids.get("1.1.7")),           # υψηλού κόστους
+            "heparin": _flag(ids.get("1.1.30")),            # με ηπαρίνη
+            "ifet_import": _flag(ids.get("1.1.34")),        # εισαγωγή ΙΦΕΤ
+            "desensitization": _flag(ids.get("1.1.8")),     # εμβόλιο απευαισθητοποίησης
+            "eopyy_only": _flag(ids.get("1.1.9")),          # μόνο φαρμακείο ΕΟΠΥΥ
+            "narcotic": _flag(ids.get("1.1.11")),           # ναρκωτική ουσία
+            "narcotic_category": ids.get("1.1.11.1") if _flag(ids.get("1.1.11")) else None,
+            "hospital_only": _flag(ids.get("1.1.12")),      # μόνο νοσοκομεία
+            "special_antibiotic": _flag(ids.get("1.1.13")), # ειδικό αντιβιοτικό
+            "ifet": _flag(ids.get("1.1.15")),               # ΙΦΕΤ
+            "eopyy_preapproval": _flag(ids.get("1.1.16")),  # προέγκριση ΕΟΠΥΥ επιτροπής
+            "outside_eopyy": _flag(ids.get("1.1.17")),      # εκτός φαρμ. δαπάνης ΕΟΠΥΥ
+            "negative_list": _flag(ids.get("1.1.28.1")),    # φάρμακα αρνητικής λίστας
+            "antibiotic": _flag(ids.get("1.1.29")),         # αντιβιοτικό
+            "vaccines": _flag(ids.get("1.1.24")),           # περιέχει εμβόλια
+            "home_delivery": _flag(ids.get("1.1.28")),      # κατ' οίκον παράδοση
+            "home_delivery_wish": _flag(ids.get("1.5.13")), # επιθυμία κατ' οίκον
+            "intangible": _flag(ids.get("1.5.10")),         # άυλη συνταγή
+            "hiv_type": ids.get("1.5.12") or None,          # 1=αντιρετροϊκή · 2=προφυλακτική
+            "consumables": _flag(ids.get("1.8.1")),         # με αναλώσιμα
+            # ── απαλλαγή / συμπληρωματική κάλυψη / ΚΥΥΑΠ ──
+            "supplementary_cover": _flag(ids.get("1.1.27")),       # ΤΕΑΠΑΣΑ συμπληρωματική
+            "supplementary_amount": _num(ids.get("1.1.27.1")),
+            "kyyap_difference": _num(ids.get("1.1.27.2")),         # συνολ. διαφορά ΚΥΥΑΠ (€)
+            # ── εκτελέσεις / επίσκεψη ──
+            "exec_count": _num(ids.get("1.1.19")),
+            "active_executions": ids.get("1.1.19.1"),
+            "visit_id": ids.get("1.80"),
         }
 
     # narrative block: <text><list><item ID="med_notes_1|prescription_notes">…</item> — holds
