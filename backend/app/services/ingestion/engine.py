@@ -31,7 +31,7 @@ def _now() -> datetime:
 
 # Bump όταν αλλάζει η ΔΟΜΗ των αποθηκευμένων items/details (όχι μόνο οι τιμές) ώστε ένα
 # re-ingest να ΞΑΝΑΓΡΑΨΕΙ τα items αντί να κάνει skip-by-hash. v2: per-τεμάχιο coupons.
-_PARSE_VERSION = "v4-wholesale-scale"
+_PARSE_VERSION = "v5-forecast-repeat-only"
 
 
 def _content_hash(ex: CanonicalExecution, amount_total: int, claimed: int) -> str:
@@ -142,12 +142,13 @@ class IngestionEngine:
         if existing and existing.get("hash") == chash:
             return "duplicates"
 
+        # «Επόμενη εκτέλεση» ΜΟΝΟ για γνήσια επαναλαμβανόμενη συνταγή (CDA 1.1.4 = 3/4/5/6 →
+        # repeat_total>1, με σειρά < σύνολο). Μια ΑΠΛΗ συνταγή (1.1.4=1, rt=1) — ακόμη κι αν είναι
+        # μηνιαία/δίμηνη (η μία εκτέλεση καλύπτει 1-2 μήνες) ΔΕΝ ξανανοίγει· δεν μπαίνει στην
+        # πρόβλεψη. (Το παλιό valid_until heuristic φαβρικάριζε phantom επαναλήψεις για απλές.)
         next_open = None
-        candidate = ex.executed_at + timedelta(days=_REPEAT_INTERVAL_DAYS)
-        if ex.repeat_current < ex.repeat_total:           # ΗΔΙΚΑ: more executions to come
-            next_open = candidate
-        elif ex.valid_until and candidate < ex.valid_until:  # treatment runs past the next refill
-            next_open = candidate
+        if ex.repeat_current < ex.repeat_total:           # ΗΔΥΚΑ: υπάρχουν κι άλλες εκτελέσεις
+            next_open = ex.executed_at + timedelta(days=_REPEAT_INTERVAL_DAYS)
 
         doc = {
             **nat_key, "pharmacy_id": None, "executed_at": ex.executed_at,
@@ -295,3 +296,7 @@ class IngestionEngine:
                  "$setOnInsert": {"tenant_id": self.tenant_id, "source_execution_id": exec_id,
                                   "confidence": 0.9, "created_at": _now()}},
                 upsert=True)
+        else:
+            # καμία επόμενη εκτέλεση (απλή συνταγή) → καθάρισε τυχόν παλιά phantom πρόβλεψη
+            await self.db["future_prescriptions"].delete_one(
+                {"tenant_id": self.tenant_id, "source_execution_id": exec_id})
