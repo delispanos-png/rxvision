@@ -171,8 +171,21 @@ export default function PrescriptionsPage() {
   const filters = useUiStore();
   const q = filtersToQuery(filters);
   const [barcode, setBarcode] = useState("");
+  const [amka, setAmka] = useState("");
+  const [patientName, setPatientName] = useState("");
+  const [status, setStatus] = useState("");           // "" | executed | partial
+  const [characteristic, setCharacteristic] = useState(""); // "" | repeat | chronic | …
   const bc = barcode.trim();
-  const listQs = bc ? `${q}&barcode=${encodeURIComponent(bc)}` : q;
+  // φίλτρα λίστας (πέρα από το κοινό date/fund/doctor/icd10) — αγνοούν περίοδο όταν ψάχνεις barcode/ΑΜΚΑ/όνομα
+  const extra = [
+    bc && `barcode=${encodeURIComponent(bc)}`,
+    amka.trim() && `amka=${encodeURIComponent(amka.trim())}`,
+    patientName.trim() && `patient=${encodeURIComponent(patientName.trim())}`,
+    status && `status=${status}`,
+    characteristic && `characteristic=${characteristic}`,
+  ].filter(Boolean).join("&");
+  const listQs = extra ? `${q}&${extra}` : q;
+  const anyFilter = !!(bc || amka.trim() || patientName.trim() || status || characteristic);
   const PAGE_SIZE = 50;
   const [page, setPage] = useState(1);
   const [sort, setSort] = useState<{ key: string; dir: 1 | -1 }>({ key: "executed_at", dir: -1 });
@@ -270,14 +283,54 @@ export default function PrescriptionsPage() {
               onChange={(e) => setBarcode(e.target.value)}
               placeholder={t("π.χ. 2606022236114", "e.g. 2606022236114")}
               inputMode="numeric"
-              className="w-full rounded-lg border border-slate-300 py-2 pl-8 pr-8 text-sm text-slate-900 focus:border-brand-500 focus:outline-none sm:w-56"
+              className="w-full rounded-lg border border-slate-300 py-2 pl-8 pr-3 text-sm text-slate-900 focus:border-brand-500 focus:outline-none sm:w-48"
             />
-            {bc && (
-              <Tooltip label={t("Καθαρισμός", "Clear")}><button onClick={() => setBarcode("")} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">×</button></Tooltip>
-            )}
           </div>
         </label>
-        {bc && <span className="pb-2 text-xs text-slate-400">{t("Αναζήτηση σε όλη την περίοδο", "Search across the whole period")}</span>}
+        <label className="text-sm">
+          <span className="mb-1 block text-slate-500">ΑΜΚΑ</span>
+          <input value={amka} onChange={(e) => setAmka(e.target.value)} placeholder={t("π.χ. 01017…", "e.g. 01017…")} inputMode="numeric"
+            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-brand-500 focus:outline-none sm:w-40" />
+        </label>
+        <label className="text-sm">
+          <span className="mb-1 block text-slate-500">{t("Όνομα ασθενή", "Patient name")}</span>
+          <input value={patientName} onChange={(e) => setPatientName(e.target.value)} placeholder={t("π.χ. ΠΑΠΑΔΟΠΟΥΛΟΣ", "e.g. surname")}
+            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-brand-500 focus:outline-none sm:w-48" />
+        </label>
+        <label className="text-sm">
+          <span className="mb-1 block text-slate-500">{t("Κατάσταση", "Status")}</span>
+          <select value={status} onChange={(e) => setStatus(e.target.value)}
+            className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-brand-500 focus:outline-none">
+            <option value="">{t("Όλες", "All")}</option>
+            <option value="executed">{t("Εκτελεσμένες", "Executed")}</option>
+            <option value="partial">{t("Μερικώς", "Partial")}</option>
+          </select>
+        </label>
+        <label className="text-sm">
+          <span className="mb-1 block text-slate-500">{t("Χαρακτηριστικό", "Characteristic")}</span>
+          <select value={characteristic} onChange={(e) => setCharacteristic(e.target.value)}
+            className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-brand-500 focus:outline-none">
+            <option value="">{t("Όλα", "All")}</option>
+            <option value="repeat">{t("Επαναλαμβανόμενη", "Repeating")}</option>
+            <option value="chronic">{t("Χρόνια αγωγή", "Chronic")}</option>
+            <option value="narcotic">{t("Ναρκωτικό", "Narcotic")}</option>
+            <option value="antibiotic">{t("Αντιβιοτικό", "Antibiotic")}</option>
+            <option value="high_cost">{t("Υψηλού κόστους", "High cost")}</option>
+            <option value="vaccines">{t("Εμβόλια", "Vaccines")}</option>
+            <option value="n3816">{t("Ν.3816 (ΦΥΚ)", "Law 3816")}</option>
+            <option value="ifet">ΙΦΕΤ</option>
+            <option value="heparin">{t("Ηπαρίνη", "Heparin")}</option>
+            <option value="home_delivery">{t("Κατ' οίκον", "Home delivery")}</option>
+            <option value="negative_list">{t("Αρνητική λίστα", "Negative list")}</option>
+          </select>
+        </label>
+        {anyFilter && (
+          <button onClick={() => { setBarcode(""); setAmka(""); setPatientName(""); setStatus(""); setCharacteristic(""); }}
+            className="mb-0.5 inline-flex items-center gap-1 rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50">
+            × {t("Καθαρισμός", "Clear")}
+          </button>
+        )}
+        {(bc || amka.trim() || patientName.trim()) && <span className="pb-2 text-xs text-slate-400">{t("Αναζήτηση σε όλη την περίοδο", "Search across the whole period")}</span>}
       </div>
 
       <div className="space-y-4">

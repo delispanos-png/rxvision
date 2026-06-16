@@ -7,6 +7,7 @@ prepends it so isolation can never be forgotten.
 from __future__ import annotations
 
 import calendar
+import re
 from collections import defaultdict
 from datetime import datetime, timezone
 
@@ -308,6 +309,19 @@ class PrescriptionRepository(BaseRepository):
             r["icd10_named"] = [f"{c} — {titles[c]}" if titles.get(c) else c
                                 for c in (r.get("icd10") or [])]
         return rows
+
+    async def find_patient_refs(self, amka: str | None = None, name: str | None = None) -> list:
+        """Patient _ids (tenant-scoped) matching ΑΜΚΑ (prefix) ή/και όνομα (case-insensitive,
+        διακριτικά-agnostic) — για φιλτράρισμα εκτελέσεων ανά ασθενή."""
+        q: dict = {"tenant_id": self.tenant_id}
+        if amka and amka.strip():
+            q["amka"] = {"$regex": "^" + re.escape(amka.strip())}
+        if name and name.strip():
+            q["full_name"] = {"$regex": re.escape(name.strip()), "$options": "i"}
+        if len(q) == 1:  # κανένα κριτήριο
+            return []
+        return [p["_id"] async for p in
+                self._db["patients_anonymized"].find(q, {"_id": 1})]
 
     async def by_fund(self, date_from: datetime, date_to: datetime) -> list[dict]:
         """Per-fund breakdown for the period (rx/value/claimed/unexecuted), folded into

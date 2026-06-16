@@ -108,6 +108,10 @@ async def list_prescriptions(
     doctor_id: str | None = None,
     icd10: str | None = None,
     barcode: str | None = None,
+    amka: str | None = None,
+    patient: str | None = None,
+    status: str | None = None,            # "executed" | "partial"
+    characteristic: str | None = None,    # χαρακτηριστικό συνταγής (βλ. _CHARACTERISTICS)
     sort: str = "executed_at",
     dir: int = -1,
     page: int = Query(1, ge=1),
@@ -127,9 +131,30 @@ async def list_prescriptions(
         # known barcode is found regardless of the selected period.
         query.pop("executed_at", None)
         query["external_id"] = {"$regex": "^" + re.escape(barcode.strip())}
+    # ΑΜΚΑ ή/και όνομα ασθενή → περιορισμός σε ασθενείς που ταιριάζουν (αγνοεί την περίοδο)
+    if (amka and amka.strip()) or (patient and patient.strip()):
+        refs = await repo.find_patient_refs(amka=amka, name=patient)
+        query.pop("executed_at", None)
+        query["patient_ref"] = {"$in": refs}   # κενό → 0 αποτελέσματα (σωστό)
+    # κατάσταση εκτέλεσης
+    if status == "executed":
+        query["has_unexecuted_substances"] = False
+    elif status == "partial":
+        query["has_unexecuted_substances"] = True
+    # χαρακτηριστικό συνταγής (whitelist για ασφάλεια)
+    if characteristic == "repeat":
+        query["repeat_total"] = {"$gt": 1}
+    elif characteristic in _CHARACTERISTICS:
+        query[f"details.{characteristic}"] = True
     items = await repo.list_executions(query, skip=(page - 1) * page_size, limit=page_size,
                                        sort=sort, direction=dir)
     return {"page": page, "page_size": page_size, "items": items}
+
+
+# Επιτρεπτά χαρακτηριστικά συνταγής για φιλτράρισμα (πεδία στο details, βλ. hdika_cda).
+_CHARACTERISTICS = {"chronic", "narcotic", "antibiotic", "special_antibiotic", "high_cost",
+                    "vaccines", "n3816", "ifet", "ifet_import", "heparin", "home_delivery",
+                    "negative_list", "single_dose", "intangible"}
 
 
 @router.get("/by-fund")
