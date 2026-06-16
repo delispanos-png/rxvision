@@ -72,7 +72,21 @@ class FuturePrescriptionRepository(BaseRepository):
                 "amka": {"$first": "$p.amka"},
                 "source_barcode": {"$first": "$ex.external_id"},
                 "chronic": {"$ifNull": [{"$first": "$ex.details.chronic"}, False]},
-                "products": "$pr.name",
+                # name + αναμενόμενη ποσότητα ανά σκεύασμα (διατηρεί το expected_qty)
+                "products": {
+                    "$map": {
+                        "input": {"$ifNull": ["$products", []]},
+                        "as": "it",
+                        "in": {
+                            "name": {"$let": {
+                                "vars": {"m": {"$first": {"$filter": {
+                                    "input": "$pr", "as": "p",
+                                    "cond": {"$eq": ["$$p._id", "$$it.product_id"]}}}}},
+                                "in": {"$ifNull": ["$$m.name", "$$it.product_id"]}}},
+                            "qty": {"$ifNull": ["$$it.expected_qty", 1]},
+                        },
+                    }
+                },
                 "n_items": {"$size": {"$ifNull": ["$products", []]}},
             }},
         ]

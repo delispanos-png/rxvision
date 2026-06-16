@@ -19,7 +19,7 @@ import { LineChart } from "@/components/charts/LineChart";
 type UpcomingDay = { date: string; count: number };
 type FutureRx = {
   expected_open_date: string; patient_name?: string | null; amka?: string | null;
-  source_barcode?: string | null; products?: (string | null)[]; n_items?: number; confidence?: number; chronic?: boolean | null;
+  source_barcode?: string | null; products?: ({ name: string | null; qty?: number } | null)[]; n_items?: number; confidence?: number; chronic?: boolean | null;
 };
 type CoverageItem = {
   product_id: string; product_name?: string | null; substance?: string | null;
@@ -224,7 +224,7 @@ export default function FuturePage() {
                     { key: "source_barcode", header: t("Αρ. συνταγής", "Rx number") },
                     { key: "patient_name", header: t("Πελάτης", "Patient") },
                     { key: "expected_open_date", header: t("Αναμένεται", "Expected"), value: (r: FutureRx) => fmtDate(r.expected_open_date) },
-                    { key: "products", header: t("Σκευάσματα", "Products"), value: (r: FutureRx) => (r.products ?? []).filter(Boolean).join(" | ") },
+                    { key: "products", header: t("Σκευάσματα", "Products"), value: (r: FutureRx) => (r.products ?? []).filter((p) => p?.name).map((p) => `${p!.name} × ${p!.qty ?? 1}`).join(" | ") },
                   ], list.data!.items)}
                     className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50">
                     <Download className="h-3.5 w-3.5" /> {t("Εξαγωγή CSV", "Export CSV")}
@@ -242,7 +242,7 @@ export default function FuturePage() {
                 {(list.data?.items ?? []).map((r, i) => {
                   const key = `${r.source_barcode}-${i}`;
                   const open = expandedRx === key;
-                  const meds = (r.products ?? []).filter(Boolean);
+                  const meds = (r.products ?? []).filter((p): p is { name: string | null; qty?: number } => Boolean(p?.name));
                   return (
                     <li key={key}>
                       <button onClick={() => setExpandedRx(open ? null : key)}
@@ -263,8 +263,11 @@ export default function FuturePage() {
                           {meds.length ? (
                             <ul className="space-y-1">
                               {meds.map((p, j) => (
-                                <li key={j} className="flex items-center gap-2 text-sm text-slate-700">
-                                  <Pill className="h-4 w-4 shrink-0 text-indigo-500" /> {p}
+                                <li key={j} className="flex items-center justify-between gap-2 text-sm text-slate-700">
+                                  <span className="flex min-w-0 items-center gap-2">
+                                    <Pill className="h-4 w-4 shrink-0 text-indigo-500" /> <span className="truncate">{p.name}</span>
+                                  </span>
+                                  <span className="shrink-0 rounded-full bg-indigo-50 px-2 py-0.5 text-xs font-semibold tabular-nums text-indigo-700">× {fmtNum(p.qty ?? 1)}</span>
                                 </li>
                               ))}
                             </ul>
