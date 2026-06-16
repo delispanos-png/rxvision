@@ -102,16 +102,18 @@ function CouponBarcode({ c }: { c: Coupon }) {
         if (isQr) {
           const ai = `(01)${gtin}` + (c.qr_expiry ? `(17)${c.qr_expiry}` : "")
             + (c.qr_batch ? `(10)${c.qr_batch}` : "") + (c.strip ? `(21)${c.strip}` : "");
-          bwipjs.toCanvas(ref.current, { bcid: "gs1datamatrix", text: ai, scale: 3, padding: 4, backgroundcolor: "FFFFFF" });
+          bwipjs.toCanvas(ref.current, { bcid: "gs1datamatrix", text: ai, scale: 5, padding: 6, backgroundcolor: "FFFFFF" });
         } else {
-          bwipjs.toCanvas(ref.current, { bcid: "code128", text: String(c.strip), scale: 2, height: 14, includetext: true, textsize: 9, paddingwidth: 6, paddingheight: 4, backgroundcolor: "FFFFFF" });
+          // Code-128 αρκετά μεγάλο/ψηλό + ορατός αριθμός, σε native ανάλυση ώστε να σκανάρεται.
+          bwipjs.toCanvas(ref.current, { bcid: "code128", text: String(c.strip), scale: 3, height: 22, includetext: true, textsize: 12, textyoffset: 2, paddingwidth: 12, paddingheight: 8, backgroundcolor: "FFFFFF" });
         }
       } catch { /* ignore render errors */ }
     })();
     return () => { dead = true; };
   }, [isQr, gtin, c.qr_expiry, c.qr_batch, c.strip]);
   if (!isQr && !c.strip) return null;
-  return <canvas ref={ref} className={`shrink-0 rounded border border-slate-200 bg-white ${isQr ? "h-24 w-24" : "h-16 w-auto max-w-[12rem]"}`} />;
+  // ΧΩΡΙΣ CSS resize (θα θόλωνε τις μπάρες) — native pixels + pixelated για κρυστάλλινο, σαρώσιμο κώδικα.
+  return <canvas ref={ref} style={{ imageRendering: "pixelated" }} className="max-w-full rounded border border-slate-200 bg-white" />;
 }
 
 // Χαρακτηριστικά συνταγής (CDA flags) → badges + κάρτα Γνωμάτευσης. Βοηθούν τον φαρμακοποιό
@@ -597,13 +599,15 @@ export default function PrescriptionDetailPage() {
             {/* ΕΝΑ κουπόνι ανά εκτελεσμένο τεμάχιο, με τον πραγματικό GS1 DataMatrix (EU FMD) */}
             <div className="max-h-[60vh] space-y-3 overflow-y-auto">
               {couponsOf(coupon).map((c, ci) => (
-                <div key={ci} className="flex items-start gap-3 rounded-xl border border-slate-200 p-3 dark:border-slate-700">
-                  <CouponBarcode c={c} />
-                  <div className="min-w-0 flex-1 space-y-1.5 text-sm">
-                    <div className="flex items-center gap-2">
-                      <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold text-slate-600 dark:bg-slate-800">#{ci + 1}</span>
-                      <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${c.qr ? "bg-sky-100 text-sky-700" : "bg-amber-100 text-amber-700"}`}>{c.qr ? "QR (HMVS)" : t("Ταινία ΕΟΦ", "ΕΟΦ strip")}</span>
-                    </div>
+                <div key={ci} className="rounded-xl border border-slate-200 p-3 dark:border-slate-700">
+                  <div className="mb-2 flex items-center gap-2">
+                    <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold text-slate-600 dark:bg-slate-800">#{ci + 1}</span>
+                    <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${c.qr ? "bg-sky-100 text-sky-700" : "bg-amber-100 text-amber-700"}`}>{c.qr ? "QR (HMVS)" : t("Ταινία ΕΟΦ", "ΕΟΦ strip")}</span>
+                  </div>
+                  <div className="flex justify-center rounded-lg bg-white p-2">
+                    <CouponBarcode c={c} />
+                  </div>
+                  <div className="mt-2 grid grid-cols-2 gap-x-6 gap-y-1.5 text-sm">
                     <Field label={t("Serial", "Serial")} value={c.strip} />
                     {c.qr ? (<>
                       <Field label={t("Κωδικός προϊόντος (GTIN)", "Product code (GTIN)")} value={c.qr_product_code} />
