@@ -45,6 +45,25 @@ class BarcodeIn(BaseModel):
     barcode: str
 
 
+class PaymentIn(BaseModel):
+    period: str        # YYYY-MM
+    fund: str          # fund group name
+    amount: int        # cents received in this installment (δόση)
+    note: str | None = None
+
+
+class SettleIn(BaseModel):
+    period: str
+    fund: str
+    settled: bool = True
+
+
+class RemovePaymentIn(BaseModel):
+    period: str
+    fund: str
+    index: int
+
+
 def _repo(ctx: TenantContext) -> ReimbursementRepository:
     return ReimbursementRepository(tenant_id=ctx.tenant_id)
 
@@ -106,6 +125,31 @@ async def reconciliation(period: str = Query(None),
     return await _repo(ctx).reconciliation(period or _cur())
 
 
+# ── Open balances / receivables (cross-month: what funds still owe) ─────────
+@router.get("/receivables")
+async def receivables(months: int = Query(12, ge=0, le=120),  # 0 = όλο το ιστορικό
+                      ctx: TenantContext = Depends(require("closing:read", module=_MODULE))):
+    return await _repo(ctx).receivables(months)
+
+
+@router.post("/receivables/payment")
+async def add_receivable_payment(body: PaymentIn,
+                                 ctx: TenantContext = Depends(require("closing:read", module=_MODULE))):
+    return await _repo(ctx).add_payment(body.period, body.fund, body.amount, body.note)
+
+
+@router.post("/receivables/settle")
+async def settle_receivable(body: SettleIn,
+                            ctx: TenantContext = Depends(require("closing:read", module=_MODULE))):
+    return await _repo(ctx).settle(body.period, body.fund, body.settled)
+
+
+@router.post("/receivables/payment/remove")
+async def remove_receivable_payment(body: RemovePaymentIn,
+                                    ctx: TenantContext = Depends(require("closing:read", module=_MODULE))):
+    return await _repo(ctx).remove_payment(body.period, body.fund, body.index)
+
+
 # ── Daily reconciliation (amounts + execution counts per day) ───────────────
 @router.get("/daily")
 async def daily(period: str = Query(None),
@@ -162,6 +206,16 @@ async def upload_scan(file: UploadFile = File(...), doc_type: str = Form("prescr
 @router.get("/scans")
 async def scan_queue(ctx: TenantContext = Depends(require("closing:read", module=_MODULE))):
     return {"items": await ScanRepository(tenant_id=ctx.tenant_id).queue()}
+
+
+class ScanReviewIn(BaseModel):
+    ok: bool
+
+
+@router.post("/scans/{scan_id}/review")
+async def scan_review(scan_id: str, body: ScanReviewIn,
+                      ctx: TenantContext = Depends(require("closing:read", module=_MODULE))):
+    return await ScanRepository(tenant_id=ctx.tenant_id).set_review(scan_id, body.ok)
 
 
 @router.get("/scans/{scan_id}/image")

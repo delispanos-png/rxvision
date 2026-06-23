@@ -12,6 +12,7 @@ from datetime import datetime
 from bson import ObjectId
 
 from app.repositories.base import BaseRepository
+from app.utils.masking import mask_name, mask_rows
 
 
 def _oid(v):
@@ -75,7 +76,12 @@ class DoctorExecutionsRepository(BaseRepository):
             {"$sort": {self._SORT_FIELDS.get(sort, "value"): (1 if sort == "name" else -1)}},
             {"$skip": skip}, {"$limit": limit},
         ]
-        return await self.aggregate(pipe)
+        rows = await self.aggregate(pipe)
+        if self.demo:   # «πελάτης παρουσίασης» → κρύψε το επίθετο του ιατρού
+            for r in rows:
+                if r.get("name") and r["name"] != "Άγνωστος":
+                    r["name"] = mask_name(r["name"], True)
+        return rows
 
     async def stats(self, *, doctor_id, date_from: datetime, date_to: datetime) -> dict:
         """rx / value / claimed / cost / profit / margin for one doctor in a period."""
@@ -160,7 +166,7 @@ class DoctorExecutionsRepository(BaseRepository):
                           "amka": {"$first": "$p.amka"},
                           "fund_name": {"$first": "$f.name"}}},
         ]
-        return await self.aggregate(pipe)
+        return mask_rows(await self.aggregate(pipe), self.demo)
 
     async def patients(self, *, doctor_id, date_from: datetime,
                        date_to: datetime, limit: int = 300) -> list[dict]:
@@ -181,4 +187,4 @@ class DoctorExecutionsRepository(BaseRepository):
                           "age_group": {"$first": "$p.age_group"},
                           "sex": {"$first": "$p.sex"}}},
         ]
-        return await self.aggregate(pipe)
+        return mask_rows(await self.aggregate(pipe), self.demo)

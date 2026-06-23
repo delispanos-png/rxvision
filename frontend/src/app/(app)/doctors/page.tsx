@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useHashView } from "@/lib/useHashView";
 import { useQuery } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { BarChart3, Stethoscope, TrendingUp, UserPlus, Wallet, Download } from "lucide-react";
@@ -69,6 +70,8 @@ export default function DoctorsPage() {
   const hasPrev = !!prevDoc.data;
   const top = [...items].sort((a, b) => b.value - a.value).slice(0, 8);
 
+  const view = useHashView();              // #list → μόνο λίστα · #kpi → μόνο δείκτες · κενό → όλα
+  const showKpi = view !== "list", showList = view !== "kpi";
   // KPI drill-down popup (client-side — all doctors+stats are already loaded)
   const [modal, setModal] = useState<{ title: string; view: "doctor" | "specialty"; metric: DocMetric } | null>(null);
   const doctorRows = modal ? [...items].sort((a, b) => (b[modal.metric] as number) - (a[modal.metric] as number)) : [];
@@ -140,6 +143,7 @@ export default function DoctorsPage() {
 
       <QueryState isLoading={isLoading} isError={isError} onRetry={() => refetch()}>
         <div className="space-y-4">
+          {showKpi && (<>
           {/* KPI row */}
           <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-5">
             <KpiCard label={t("Ιατροί", "Doctors")} value={fmtNum(items.length)} sub={t("ανά ειδικότητα →", "by specialty →")} icon={Stethoscope} accent="indigo" trend={hasPrev ? pctDelta(items.length, pItems.length) : undefined}
@@ -154,9 +158,9 @@ export default function DoctorsPage() {
               onClick={() => setModal({ title: t("Νέοι πελάτες ανά ιατρό & ειδικότητα", "New patients by doctor & specialty"), view: "doctor", metric: "new_patients" })} />
           </div>
 
-          {/* top doctors chart */}
+          {/* top doctors chart — auto-open στο view «Δείκτες» (#kpi)· key→remount ανά view */}
           {top.length > 0 && (
-            <PanelCard collapsible defaultOpen={false} title={t("Top Ιατροί (αξία)", "Top Doctors (value)")}>
+            <PanelCard key={view} collapsible defaultOpen={view === "kpi"} title={t("Top Ιατροί (αξία)", "Top Doctors (value)")}>
               <BarChart
                 horizontal
                 height={Math.max(220, top.length * 38)}
@@ -166,14 +170,17 @@ export default function DoctorsPage() {
               />
             </PanelCard>
           )}
+          </>)}
 
           {/* table / cards */}
+          {showList && (
           <DataTable pageSize={20}
             columns={columns}
             rows={items}
             rowKey={(r) => r.id}
             onRowClick={(r) => router.push(`/doctors/${r.id}`)}
           />
+          )}
         </div>
       </QueryState>
 

@@ -18,6 +18,7 @@ const TABS = [
   { href: "/reimbursement/physical", el: "Έλεγχος Barcode", en: "Barcode Check" },
   { href: "/reimbursement/submission", el: "Υποβολή", en: "Submission" },
   { href: "/reimbursement/reconciliation", el: "Συμφωνία", en: "Reconciliation" },
+  { href: "/reimbursement/receivables", el: "Ανοιχτά Υπόλοιπα", en: "Open Balances" },
   { href: "/reimbursement/optical", el: "Optical Audit", en: "Optical Audit" },
 ];
 

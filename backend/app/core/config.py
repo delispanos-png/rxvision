@@ -18,12 +18,12 @@ class Settings(BaseSettings):
     MONGODB_URI: str = "mongodb://mongo:27017/?replicaSet=rs0"
     MONGODB_DB: str = "rxvision"
 
-    # Ingestion: when a source feed (e.g. live ΗΔΙΚΑ) doesn't provide wholesale price and
+    # Ingestion: when a source feed (e.g. live ΗΔΥΚΑ) doesn't provide wholesale price and
     # no masterdata price is known, estimate wholesale = retail * (1 - pct/100) so margins
     # aren't computed against a 0 cost (which made gross_profit == amount_claimed). Such
     # items are flagged wholesale_source="estimated". Set to 0 to disable estimation.
     WHOLESALE_FALLBACK_MARGIN_PCT: float = 25.0
-    # SSRF guard: optional comma-separated host suffixes the tenant-supplied ΗΔΙΚΑ base_url
+    # SSRF guard: optional comma-separated host suffixes the tenant-supplied ΗΔΥΚΑ base_url
     # must match (e.g. "e-prescription.gr"). Empty = allow any PUBLIC host (private/loopback
     # IPs are always blocked). See app/utils/net.assert_safe_outbound_url (M2).
     IDIKA_ALLOWED_HOST_SUFFIXES: str = ""

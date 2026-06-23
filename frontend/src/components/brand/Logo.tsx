@@ -1,10 +1,13 @@
 /* RxVision brand mark + wordmark. The mark image is generated from the official
  * logo by scripts/gen-icons.py → public/brand/rxvision-mark.png (transparent). */
 
+import { LOGO_MARK_DATA_URI } from "./logoMark";
+
 export function LogoMark({ className = "h-9 w-9" }: { className?: string }) {
-  // ?v=2 = cache-bust: παρακάμπτει τυχόν stale-cached 404 (Cloudflare/browser) του logo.
+  // Inline data-URI (όχι /brand/*.png): ΚΑΝΕΝΑ external request → το logo δεν σπάει ποτέ
+  // από browser/Cloudflare cache, routing ή 404 — σε κάθε host (app/adminpanel/portal).
   // eslint-disable-next-line @next/next/no-img-element
-  return <img src="/brand/rxvision-mark.png?v=2" alt="RxVision" className={className} />;
+  return <img src={LOGO_MARK_DATA_URI} alt="RxVision" className={className} />;
 }
 
 export function Logo({

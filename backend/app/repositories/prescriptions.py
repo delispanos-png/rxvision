@@ -273,7 +273,7 @@ class PrescriptionRepository(BaseRepository):
 
     async def list_executions(self, query: dict, skip: int, limit: int,
                               sort: str = "executed_at", direction: int = -1) -> list[dict]:
-        """Executions list enriched like the ΗΔΙΚΑ portal: patient name/AMKA, fund,
+        """Executions list enriched like the ΗΔΥΚΑ portal: patient name/AMKA, fund,
         status + execution case, ICD-10 and amounts. Server-side sort over the WHOLE set."""
         sort_field = sort if sort in self._LIST_SORTS else "executed_at"
         pipeline = [
@@ -353,20 +353,39 @@ class PrescriptionRepository(BaseRepository):
             group[k] = {"$sum": {"$cond": [cond, 1, 0]}}
             group[f"{k}__v"] = {"$sum": {"$cond": [cond, "$amount_total", 0]}}
         rows = await self.aggregate([
-            {"$match": {"executed_at": {"$gte": date_from, "$lt": date_to}}},
+            {"$match": {"executed_at": {"$gte": date_from, "$lt": date_to}, "status": {"$ne": "cancelled"}}},
             {"$group": group}])
         raw = rows[0] if rows else {}
         items = {k: {"count": int(raw.get(k, 0) or 0), "value": int(raw.get(f"{k}__v", 0) or 0)}
                  for k in (self._BREAKDOWN_FLAGS + list(specials))}
+        # ΓΑΛΗΝΙΚΑ: not an execution flag — it's a prescription_item category. Count DISTINCT
+        # executions that contain a γαληνικό line (+ their retail value) over the same period.
+        gal = await self._db["prescription_items"].aggregate([
+            {"$match": {"tenant_id": self.tenant_id, "category": "galenic", "cancelled": {"$ne": True},
+                        "executed_at": {"$gte": date_from, "$lt": date_to}}},
+            {"$group": {"_id": "$execution_id", "v": {"$sum": "$retail_price"}}},
+            {"$group": {"_id": None, "count": {"$sum": 1}, "value": {"$sum": "$v"}}},
+        ]).to_list(length=None)
+        g = gal[0] if gal else {}
+        items["galenic"] = {"count": int(g.get("count", 0) or 0), "value": int(g.get("value", 0) or 0)}
         return {"total": int(raw.get("total", 0) or 0), "value": int(raw.get("value", 0) or 0),
                 "items": items}
 
+    async def galenic_exec_ids(self, date_from: datetime, date_to: datetime) -> list:
+        """Execution _ids that contain a γαληνικό line in the period (for the «Γαληνικά» filter)."""
+        rows = await self._db["prescription_items"].aggregate([
+            {"$match": {"tenant_id": self.tenant_id, "category": "galenic", "cancelled": {"$ne": True},
+                        "executed_at": {"$gte": date_from, "$lt": date_to}}},
+            {"$group": {"_id": "$execution_id"}},
+        ]).to_list(length=None)
+        return [r["_id"] for r in rows]
+
     async def by_fund(self, date_from: datetime, date_to: datetime) -> list[dict]:
         """Per-fund breakdown for the period (rx/value/claimed/unexecuted), folded into
-        the central fund GROUPS (ΗΔΙΚΑ code → group). Funds with no group stay as
+        the central fund GROUPS (ΗΔΥΚΑ code → group). Funds with no group stay as
         themselves; grouped funds are summed. Each row carries its member `funds`."""
         pipeline = [
-            {"$match": {"executed_at": {"$gte": date_from, "$lt": date_to}}},
+            {"$match": {"executed_at": {"$gte": date_from, "$lt": date_to}, "status": {"$ne": "cancelled"}}},
             {"$group": {"_id": "$fund_id",
                         "rx": {"$sum": 1},
                         "value": {"$sum": "$amount_total"},
@@ -419,7 +438,7 @@ class PrescriptionRepository(BaseRepository):
 
     async def dashboard_summary(self, date_from: datetime, date_to: datetime) -> dict:
         pipeline = [
-            {"$match": {"executed_at": {"$gte": date_from, "$lt": date_to}}},
+            {"$match": {"executed_at": {"$gte": date_from, "$lt": date_to}, "status": {"$ne": "cancelled"}}},
             {"$group": {
                 "_id": None,
                 "executions": {"$sum": 1},
@@ -446,7 +465,7 @@ class PrescriptionRepository(BaseRepository):
         field = _METRIC_FIELD[metric]
         agg = {"$sum": 1} if field is None else {"$sum": field}
         pipeline = [
-            {"$match": {"executed_at": {"$gte": date_from, "$lt": date_to}}},
+            {"$match": {"executed_at": {"$gte": date_from, "$lt": date_to}, "status": {"$ne": "cancelled"}}},
             {"$group": {
                 "_id": {"$dateToString": {"format": _GRAIN_FMT[grain],
                                           "date": "$executed_at", "timezone": "Europe/Athens"}},
@@ -465,7 +484,7 @@ class PrescriptionRepository(BaseRepository):
         agg = {"$sum": 1} if field is None else {"$sum": field}
         tz = {"timezone": "Europe/Athens"}
         pipeline = [
-            {"$match": {"executed_at": {"$gte": date_from, "$lt": date_to}}},
+            {"$match": {"executed_at": {"$gte": date_from, "$lt": date_to}, "status": {"$ne": "cancelled"}}},
             {"$group": {
                 "_id": {
                     "dow": {"$isoDayOfWeek": {"date": "$executed_at", **tz}},
@@ -480,7 +499,7 @@ class PrescriptionRepository(BaseRepository):
 
     async def top(self, *, dim: str, limit: int, date_from: datetime,
                   date_to: datetime) -> list[dict]:
-        match = {"$match": {"executed_at": {"$gte": date_from, "$lt": date_to}}}
+        match = {"$match": {"executed_at": {"$gte": date_from, "$lt": date_to}, "status": {"$ne": "cancelled"}}}
         if dim == "icd10":
             pipeline = [match, {"$unwind": "$icd10"},
                         {"$group": {"_id": "$icd10", "rx": {"$sum": 1},

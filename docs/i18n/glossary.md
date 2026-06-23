@@ -3,7 +3,7 @@
 Mechanism: `import { useT } from "@/store/prefStore"; const t = useT();` then
 `t("Ελληνικά (verbatim)", "English")`. Default locale = Greek. Keep Greek EXACTLY as today.
 
-**Never translate** (leave verbatim): RxVision, PharmacyOne, Noeton, CloudOn, ΗΔΙΚΑ, ΓΕΣΥ,
+**Never translate** (leave verbatim): RxVision, PharmacyOne, Noeton, CloudOn, ΗΔΥΚΑ, ΓΕΣΥ,
 ΕΟΠΥΥ, ΑΑΔΕ, ΑΜΚΑ, myDATA, ICD-10, ATC, identifiers, API paths, data values, code, comments.
 **Do NOT translate backend-generated text** (advisor insights, server messages, API `detail`).
 

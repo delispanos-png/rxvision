@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { CalendarClock, CalendarDays, CalendarRange, Pill, Download, PackageCheck, Users, ChevronDown, ChevronUp, X, HeartPulse } from "lucide-react";
 import { api } from "@/lib/apiClient";
@@ -52,6 +52,12 @@ export default function FuturePage() {
   const t = useT();
   const [minHistory] = useState("0");
   const [tab, setTab] = useState<"coverage" | "forecast">("coverage");
+  useEffect(() => {
+    const read = () => { const h = window.location.hash.replace("#", ""); if (h === "coverage" || h === "forecast") setTab(h); };
+    read();
+    window.addEventListener("hashchange", read);
+    return () => window.removeEventListener("hashchange", read);
+  }, []);
   const [period, setPeriod] = useState<Period>("tomorrow");
   const [cFrom, setCFrom] = useState(_iso(0));
   const [cTo, setCTo] = useState(_iso(6));

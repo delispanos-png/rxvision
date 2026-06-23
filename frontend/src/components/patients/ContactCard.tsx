@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Phone, Mail, MessageSquare, Save, Loader2, Check } from "lucide-react";
+import { Phone, Mail, MessageSquare, Save, Loader2, Check, Pencil, X } from "lucide-react";
 import { api } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
 import { PanelCard } from "@/components/ui/Card";
@@ -18,7 +18,9 @@ type Contact = {
 
 const empty: Contact = { marketing_consent: false, preferred_channel: "mobile", active: true };
 
-export function ContactCard({ patientId }: { patientId: string }) {
+/** Στοιχεία επικοινωνίας πελάτη (pharmacist-controlled). Με `collapsible` ξεκινά κλειστή
+ *  (μόνο σύνοψη) και ανοίγει η φόρμα με «Επεξεργασία» — για αλλαγή μόνο όταν χρειάζεται. */
+export function ContactCard({ patientId, collapsible = false, extraAction }: { patientId: string; collapsible?: boolean; extraAction?: ReactNode }) {
   const t = useT();
   const qc = useQueryClient();
   const { data } = useQuery({
@@ -27,14 +29,54 @@ export function ContactCard({ patientId }: { patientId: string }) {
     retry: false,
   });
   const [f, setF] = useState<Contact>(empty);
+  const [editing, setEditing] = useState(!collapsible);
   useEffect(() => { if (data) setF({ ...empty, ...data }); }, [data]);
   const set = (k: keyof Contact, v: string | boolean) => setF((s) => ({ ...s, [k]: v }));
 
   const save = useMutation({
     mutationFn: () => api<Contact>(`/patients/${encodeURIComponent(patientId)}/contact`, { method: "PUT", body: JSON.stringify(f) }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["patient-contact", patientId] }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["patient-contact", patientId] }); if (collapsible) setEditing(false); },
   });
 
+  const tel = (data?.mobile || data?.phone) ?? null;
+
+  // quick call/SMS/email actions (κοινά και στις δύο προβολές)
+  const quickActions = (
+    <div className="flex gap-1.5">
+      {tel && <Tooltip label={t("Κλήση", "Call")}><a href={`tel:${tel}`} aria-label={t("Κλήση", "Call")} className="rounded-lg border border-slate-200 p-1.5 text-emerald-600 hover:bg-emerald-50"><Phone className="h-4 w-4" /></a></Tooltip>}
+      {data?.mobile && <Tooltip label="SMS"><a href={`sms:${data.mobile}`} aria-label="SMS" className="rounded-lg border border-slate-200 p-1.5 text-brand-600 hover:bg-brand-50"><MessageSquare className="h-4 w-4" /></a></Tooltip>}
+      {data?.email && <Tooltip label="Email"><a href={`mailto:${data.email}`} aria-label="Email" className="rounded-lg border border-slate-200 p-1.5 text-amber-600 hover:bg-amber-50"><Mail className="h-4 w-4" /></a></Tooltip>}
+    </div>
+  );
+
+  // ── ΚΛΕΙΣΤΗ προβολή: σύνοψη + «Επεξεργασία» ──
+  if (collapsible && !editing) {
+    const hasAny = !!(data?.mobile || data?.phone || data?.email);
+    return (
+      <PanelCard title={t("Στοιχεία επικοινωνίας", "Contact details")} action={
+        <div className="flex flex-wrap items-center gap-1.5">
+          {quickActions}
+          {extraAction}
+          <button onClick={() => setEditing(true)}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300">
+            <Pencil className="h-3.5 w-3.5" /> {t("Επεξεργασία", "Edit")}
+          </button>
+        </div>
+      }>
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-sm text-slate-600 dark:text-slate-300">
+          <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${data?.active === false ? "bg-rose-100 text-rose-700" : "bg-emerald-100 text-emerald-700"}`}>
+            {data?.active === false ? t("Ανενεργός", "Inactive") : t("Ενεργός", "Active")}
+          </span>
+          {tel && <span className="inline-flex items-center gap-1.5"><Phone className="h-4 w-4 text-slate-400" />{tel}</span>}
+          {data?.email && <span className="inline-flex items-center gap-1.5"><Mail className="h-4 w-4 text-slate-400" />{data.email}</span>}
+          {data?.marketing_consent && <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] text-emerald-700">{t("Συγκατάθεση marketing", "Marketing consent")}</span>}
+          {!hasAny && <span className="text-slate-400">{t("Χωρίς στοιχεία — «Επεξεργασία» για προσθήκη.", "No details — click Edit to add.")}</span>}
+        </div>
+      </PanelCard>
+    );
+  }
+
+  // ── ΑΝΟΙΧΤΗ προβολή: πλήρης φόρμα ──
   const Field = ({ label, k, type = "text", ph }: { label: string; k: keyof Contact; type?: string; ph?: string }) => (
     <label className="text-sm">
       <span className="mb-1 block text-xs text-slate-500">{label}</span>
@@ -43,13 +85,17 @@ export function ContactCard({ patientId }: { patientId: string }) {
     </label>
   );
 
-  const tel = f.mobile || f.phone;
   return (
     <PanelCard title={t("Στοιχεία επικοινωνίας", "Contact details")} action={
-      <div className="flex gap-1.5">
-        {tel && <Tooltip label={t("Κλήση", "Call")}><a href={`tel:${tel}`} aria-label={t("Κλήση", "Call")} className="rounded-lg border border-slate-200 p-1.5 text-emerald-600 hover:bg-emerald-50"><Phone className="h-4 w-4" /></a></Tooltip>}
-        {f.mobile && <Tooltip label="SMS"><a href={`sms:${f.mobile}`} aria-label="SMS" className="rounded-lg border border-slate-200 p-1.5 text-brand-600 hover:bg-brand-50"><MessageSquare className="h-4 w-4" /></a></Tooltip>}
-        {f.email && <Tooltip label="Email"><a href={`mailto:${f.email}`} aria-label="Email" className="rounded-lg border border-slate-200 p-1.5 text-amber-600 hover:bg-amber-50"><Mail className="h-4 w-4" /></a></Tooltip>}
+      <div className="flex flex-wrap items-center gap-1.5">
+        {quickActions}
+        {extraAction}
+        {collapsible && (
+          <Tooltip label={t("Κλείσιμο", "Close")}>
+            <button onClick={() => { setEditing(false); if (data) setF({ ...empty, ...data }); }} aria-label={t("Κλείσιμο", "Close")}
+              className="rounded-lg border border-slate-200 p-1.5 text-slate-500 hover:bg-slate-50 dark:border-slate-700"><X className="h-4 w-4" /></button>
+          </Tooltip>
+        )}
       </div>
     }>
       <p className="-mt-1 mb-3 text-xs text-slate-400">{t("Καταχωρείς εσύ", "You enter it")} — <b>{t("δεν επηρεάζονται", "not affected")}</b> {t("από συγχρονισμό ΗΔΥΚΑ.", "by ΗΔΥΚΑ sync.")}</p>

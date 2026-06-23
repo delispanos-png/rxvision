@@ -28,7 +28,7 @@ async def list_doctors(
     now = datetime.now(tz=timezone.utc)
     df = date_from or (now - timedelta(days=365))
     dt = date_to or now
-    repo = DoctorExecutionsRepository(tenant_id=ctx.tenant_id)
+    repo = DoctorExecutionsRepository(tenant_id=ctx.tenant_id, demo=ctx.demo)
     items = await repo.doctors_with_stats(date_from=df, date_to=dt, search=search,
                                           skip=(page - 1) * page_size, limit=page_size, sort=sort)
     return {"page": page, "page_size": page_size, "items": items}
@@ -41,7 +41,7 @@ async def doctor_stats(
     date_to: datetime = Query(...),
     ctx: TenantContext = Depends(require("doctors:read", module=_MODULE)),
 ):
-    repo = DoctorExecutionsRepository(tenant_id=ctx.tenant_id)
+    repo = DoctorExecutionsRepository(tenant_id=ctx.tenant_id, demo=ctx.demo)
     return await repo.stats(doctor_id=doctor_id, date_from=date_from, date_to=date_to)
 
 
@@ -52,7 +52,7 @@ async def doctor_new_patients(
     date_to: datetime = Query(...),
     ctx: TenantContext = Depends(require("doctors:read", module=_MODULE)),
 ):
-    repo = DoctorExecutionsRepository(tenant_id=ctx.tenant_id)
+    repo = DoctorExecutionsRepository(tenant_id=ctx.tenant_id, demo=ctx.demo)
     items = await repo.new_patients(doctor_id=doctor_id, date_from=date_from,
                                     date_to=date_to)
     return {"doctor_id": doctor_id, "count": len(items), "items": items}
@@ -65,7 +65,7 @@ async def doctor_prescriptions(
     date_to: datetime = Query(...),
     ctx: TenantContext = Depends(require("doctors:read", module=_MODULE)),
 ):
-    repo = DoctorExecutionsRepository(tenant_id=ctx.tenant_id)
+    repo = DoctorExecutionsRepository(tenant_id=ctx.tenant_id, demo=ctx.demo)
     return {"items": await repo.prescriptions(doctor_id=doctor_id,
                                               date_from=date_from, date_to=date_to)}
 
@@ -77,6 +77,6 @@ async def doctor_patients(
     date_to: datetime = Query(...),
     ctx: TenantContext = Depends(require("doctors:read", module=_MODULE)),
 ):
-    repo = DoctorExecutionsRepository(tenant_id=ctx.tenant_id)
+    repo = DoctorExecutionsRepository(tenant_id=ctx.tenant_id, demo=ctx.demo)
     return {"items": await repo.patients(doctor_id=doctor_id,
                                          date_from=date_from, date_to=date_to)}

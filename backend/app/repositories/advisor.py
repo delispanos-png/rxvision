@@ -1,4 +1,4 @@
-"""Intelligent advisors — Business & Order. Synthesise every signal ΗΔΙΚΑ gives us
+"""Intelligent advisors — Business & Order. Synthesise every signal ΗΔΥΚΑ gives us
 into a small set of prioritised, actionable insights so the pharmacist decides from
 one screen. Pure read-side aggregation over the existing collections."""
 
@@ -11,6 +11,7 @@ from bson.errors import InvalidId
 
 from app.repositories.base import BaseRepository, jsonsafe
 from app.utils.format import eur_gr
+from app.utils.masking import mask_name, mask_row, mask_rows
 
 
 def _as_oid(v):
@@ -310,6 +311,7 @@ class AdvisorRepository(BaseRepository):
             share = top_doc["rev"] / doc_total * 100
             if share >= 15:
                 nm = await self._name("doctors", top_doc["_id"], "full_name")
+                nm = mask_name(nm, self.demo)   # demo → κρύψε το επίθετο του ιατρού
                 add("info", "stethoscope", "Εξάρτηση από ιατρό",
                     f"Ο/Η {nm or 'κορυφαίος ιατρός'} φέρνει το {share:.0f}% των εσόδων. Καλλιέργησε τη σχέση — αλλά πρόσεξε τη συγκέντρωση.",
                     f"{share:.0f}%", {"label": "Ιατροί", "href": "/doctors"})
@@ -448,9 +450,9 @@ class AdvisorRepository(BaseRepository):
                 sections.append({"title": rule["title"], "drugs": drugs,
                                  "favor": rule["favor"], "avoid": rule["avoid"], "why": rule["why"]})
         ct = await self._db["patient_contacts"].find_one({"_id": oid, "tenant_id": self.tenant_id})
-        return {"patient_id": patient_id, "name": pa.get("full_name"),
-                "email": (ct or {}).get("email"), "mobile": (ct or {}).get("mobile"),
-                "sections": sections}
+        return mask_row({"patient_id": patient_id, "name": pa.get("full_name"),
+                         "email": (ct or {}).get("email"), "mobile": (ct or {}).get("mobile"),
+                         "sections": sections}, self.demo)
 
     async def cross_sell_patients(self, atc_prefix: str) -> list[dict]:
         """Patients on a therapeutic class (ATC prefix) — with demographics + contact +
@@ -475,6 +477,7 @@ class AdvisorRepository(BaseRepository):
             {"$lookup": {"from": "patient_contacts", "localField": "_id",
                          "foreignField": "_id", "as": "ct"}},
             {"$set": {"pa": {"$first": "$pa"}, "ct": {"$first": "$ct"}}},
+            {"$match": {"pa.deceased": {"$ne": True}}},   # θανόντες → εκτός cross-sell
             {"$project": {
                 "_id": 0, "patient_id": {"$toString": "$_id"},
                 "name": "$pa.full_name", "amka": "$pa.amka",
@@ -486,7 +489,7 @@ class AdvisorRepository(BaseRepository):
             {"$sort": {"last": -1}},
             {"$limit": 500},
         ])
-        return rows
+        return mask_rows(rows, self.demo)
 
     async def recall(self) -> dict:
         """Patients with a MISSED (window passed, unexecuted) or AVAILABLE-NOW repeat, ranked by
@@ -550,7 +553,7 @@ class AdvisorRepository(BaseRepository):
             })
         items.sort(key=lambda x: x["value"], reverse=True)
         return jsonsafe({
-            "items": items[:500], "patients": len(items),
+            "items": mask_rows(items[:500], self.demo), "patients": len(items),
             "total_value": sum(i["value"] for i in items),
             "total_missed": sum(i["missed"] for i in items),
             "total_available": sum(i["available"] for i in items),
@@ -561,7 +564,7 @@ class AdvisorRepository(BaseRepository):
     # ── order advisor ────────────────────────────────────────────────────
     async def orders(self, *, lead_days: int = 7, safety_pct: float = 15.0) -> dict:
         from app.repositories.future import FuturePrescriptionRepository
-        fr = FuturePrescriptionRepository(tenant_id=self.tenant_id)
+        fr = FuturePrescriptionRepository(tenant_id=self.tenant_id, demo=self.demo)
         today = _now()
         suggestions = await fr.order_suggestions(
             today=today, lead_horizon=today + timedelta(days=lead_days), safety_stock_pct=safety_pct)

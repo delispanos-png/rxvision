@@ -3,18 +3,20 @@ intelligence: KPIs, compliance scoring, recall, win-back, VIP tiers, risk detect
 revenue opportunities, segmentation and AI insights.
 
 Leverages the rich `patients_anonymized` profile (lifecycle / rx_count / rx_value_total /
-last_seen) + the ΗΔΙΚΑ repeat chains (repeat_root windows). One chain pass feeds compliance +
+last_seen) + the ΗΔΥΚΑ repeat chains (repeat_root windows). One chain pass feeds compliance +
 recall + win-back-recoverable; patient aggregates feed the rest.
 """
 
 from __future__ import annotations
 
 import calendar
+import re
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
 from app.repositories.base import BaseRepository, jsonsafe
 from app.utils.format import eur_gr
+from app.utils.masking import mask_rows
 
 
 def _now() -> datetime:
@@ -109,7 +111,9 @@ class PatientIntelligenceRepository(BaseRepository):
         return per
 
     async def _patients(self) -> list[dict]:
-        return [p async for p in self._db["patients_anonymized"].find({"tenant_id": self.tenant_id})]
+        # Εξαιρούμε θανόντες (deceased) από κάθε patient-level ανάλυση/λίστα — δεν τους «κυνηγάμε».
+        return [p async for p in self._db["patients_anonymized"].find(
+            {"tenant_id": self.tenant_id, "deceased": {"$ne": True}})]
 
     async def _timeline(self) -> dict:
         """patient_ref → sorted [(executed_at, amount_total)]. The earliest entry is the patient's
@@ -163,7 +167,7 @@ class PatientIntelligenceRepository(BaseRepository):
                 "reactivation_reason": ct.get("reactivation_reason"),
                 "mobile": ct.get("mobile"), "phone": ct.get("phone"),
             })
-        return jsonsafe({"items": items, "count": len(items),
+        return jsonsafe({"items": mask_rows(items, self.demo), "count": len(items),
                          "recovered_value": round(sum(r["value"] for r in rets))})
 
     # ── 1. DASHBOARD overview ───────────────────────────────────────────────
@@ -322,7 +326,7 @@ class PatientIntelligenceRepository(BaseRepository):
             "value": p.get("rx_value_total", 0), "rx_count": p.get("rx_count", 0),
             "last_seen": p.get("last_seen_at"), "tier": tier_of(i),
         } for i, p in enumerate(ranked[:300])]
-        return jsonsafe({"tiers": self._vip_tiers(pats), "items": items})
+        return jsonsafe({"tiers": self._vip_tiers(pats), "items": mask_rows(items, self.demo)})
 
     # ── 7. RISK detection ───────────────────────────────────────────────────
     async def risk(self) -> dict:
@@ -331,6 +335,8 @@ class PatientIntelligenceRepository(BaseRepository):
         now = _now()
         items = []
         for pref, c in chain.items():
+            if pref not in pats:        # θανών/εξαιρεθείς → εκτός λίστας ρίσκου
+                continue
             pa = pats.get(pref, {})
             score = c.get("compliance")
             ls = pa.get("last_seen_at")
@@ -351,7 +357,343 @@ class PatientIntelligenceRepository(BaseRepository):
                 "recoverable": round(c["recoverable"]),
             })
         items.sort(key=lambda x: x["recoverable"], reverse=True)
-        return jsonsafe({"items": items[:300], "count": len(items)})
+        return jsonsafe({"items": mask_rows(items[:300], self.demo), "count": len(items)})
+
+    # ── 360° SINGLE-PATIENT PROFILE («Εικόνα Πελάτη», by ΑΜΚΑ) ───────────────
+    async def patient_profile(self, amka: str | None = None, patient_id: str | None = None,
+                              barcode: str | None = None, date_from: datetime | None = None,
+                              date_to: datetime | None = None) -> dict:
+        # Το date range περιορίζει ΜΟΝΟ τα κλινικά (διαγνώσεις/φάρμακα/segments & άρα το AI) ώστε να
+        # μη «θολώνουν» παλιές διαγνώσεις 1-2 ετών· financials/εκτελέσεις/γραφήματα μένουν πλήρη.
+        def _aware(d):
+            return d.replace(tzinfo=timezone.utc) if d and d.tzinfo is None else d
+        date_from, date_to = _aware(date_from), _aware(date_to)
+        pa = None
+        if barcode:   # σάρωση συνταγής/εμβολίου στο φαρμακείο → βρες τον πελάτη ΧΩΡΙΣ να ζητήσεις ΑΜΚΑ
+            bc = (barcode or "").strip().split(":")[0]
+            if bc:
+                ex = await self._db["prescription_executions"].find_one(
+                    {"tenant_id": self.tenant_id, "external_id": {"$regex": "^" + re.escape(bc)}},
+                    {"patient_ref": 1})
+                if ex and ex.get("patient_ref"):
+                    patient_id = str(ex["patient_ref"])
+                else:   # ίσως barcode εμβολιασμού (ξεχωριστό registry, κρατά raw ΑΜΚΑ)
+                    v = await self._db["vaccinations"].find_one(
+                        {"tenant_id": self.tenant_id, "$or": [{"barcode": bc}, {"external_id": bc}]},
+                        {"amka": 1})
+                    if v and v.get("amka"):
+                        amka = v["amka"]
+        if patient_id:   # από την αναζήτηση ονόματος/ΑΜΚΑ (το ΑΜΚΑ μπορεί να είναι masked σε demo)
+            from bson import ObjectId
+            try:
+                pa = await self._db["patients_anonymized"].find_one(
+                    {"tenant_id": self.tenant_id, "_id": ObjectId(patient_id)})
+            except Exception:  # noqa: BLE001
+                pa = None
+        if pa is None:
+            amka = (amka or "").strip()
+            if amka:
+                pa = await self._db["patients_anonymized"].find_one(
+                    {"tenant_id": self.tenant_id, "amka": amka})
+        if not pa:
+            return {"found": False}
+        pid = pa["_id"]
+        amka = pa.get("amka") or ""   # πραγματικό ΑΜΚΑ για τα downstream (matching εμβολιασμών)
+        now = _now()
+        ct = await self._db["patient_contacts"].find_one(
+            {"tenant_id": self.tenant_id, "_id": pid}) or {}
+
+        exs = [e async for e in self._db["prescription_executions"].find(
+            {"tenant_id": self.tenant_id, "patient_ref": pid},
+            {"repeat_root": 1, "executed_at": 1, "valid_from": 1, "valid_until": 1,
+             "amount_total": 1, "amount_claimed": 1, "patient_share": 1, "wholesale_cost": 1,
+             "icd10": 1, "doctor_id": 1, "next_open_date": 1})]
+        value = sum(e.get("amount_total", 0) for e in exs)
+        claimed = sum(e.get("amount_claimed", 0) for e in exs)
+        paid = sum(e.get("patient_share", 0) for e in exs)
+        cost = sum(e.get("wholesale_cost", 0) for e in exs)
+        rx_count = len(exs)
+
+        # medicines per repeat-chain (so the missed/available drill-downs name the actual therapy)
+        rm_rows = await self.aggregate([
+            {"$match": {"patient_ref": pid, "repeat_root": {"$ne": None}}},
+            {"$lookup": {"from": "prescription_items", "localField": "_id",
+                         "foreignField": "execution_id", "as": "it"}},
+            {"$unwind": "$it"},
+            {"$lookup": {"from": "products", "localField": "it.product_id",
+                         "foreignField": "_id", "as": "p"}},
+            {"$set": {"pname": {"$first": "$p.name"}}},
+            {"$group": {"_id": "$repeat_root", "meds": {"$addToSet": "$pname"}}},
+        ])
+        root_meds = {r["_id"]: [m for m in r["meds"] if m][:5] for r in rm_rows}
+
+        # repeat-chain windows → compliance + the actual missed / available-now prescriptions
+        chains: dict = defaultdict(list)
+        for e in exs:
+            chains[e.get("repeat_root")].append(e)
+        # Data floor: we have NO data before the patient's FIRST execution we actually hold. A repeat
+        # chain whose validity began earlier (e.g. the customer was active in 2024 but we only ingested
+        # from 2025) must NOT count those pre-data windows as "missed" — that would be a false miss.
+        # Computed straight from the loaded executions (more reliable than the stored first_seen_at).
+        data_floor = min((e["executed_at"] for e in exs if e.get("executed_at")), default=None)
+        missed = available = expected = executed = 0
+        recoverable = 0.0
+        missed_items: list = []
+        available_items: list = []
+        for root, cexs in chains.items():
+            vf = min((e["valid_from"] for e in cexs if e.get("valid_from")), default=None)
+            vu = max((e["valid_until"] for e in cexs if e.get("valid_until")), default=None)
+            if not vf or not vu or (vu - vf).days < 40:
+                continue
+            avg = sum(e.get("amount_total", 0) for e in cexs) / max(len(cexs), 1)
+            cm = ca = 0
+            last_due = avail_until = None
+            i = 0
+            while i < 18 and _addm(vf, i) <= vu:
+                wopen, wclose = _addm(vf, i), _addm(vf, i + 1)
+                if data_floor and wopen < data_floor:  # window before we had any data → unknown, skip
+                    i += 1
+                    continue
+                done = any(e.get("executed_at") and wopen <= e["executed_at"] < wclose for e in cexs)
+                if wclose <= now:
+                    expected += 1
+                    if done:
+                        executed += 1
+                    else:
+                        missed += 1; recoverable += avg; cm += 1; last_due = wopen
+                elif wopen <= now < wclose and not done:  # open & NOT yet dispensed → available now
+                    available += 1; recoverable += avg; ca += 1; avail_until = wclose
+                i += 1
+            if cm or ca:
+                meds = root_meds.get(root, [])
+                last_exec = max((e["executed_at"] for e in cexs if e.get("executed_at")), default=None)
+                if cm:
+                    missed_items.append({"root": root, "medicines": meds, "count": cm,
+                                         "value": round(cm * avg), "last_executed": last_exec,
+                                         "due": last_due})
+                if ca:
+                    available_items.append({"root": root, "medicines": meds, "count": ca,
+                                            "value": round(ca * avg), "until": avail_until,
+                                            "last_executed": last_exec})
+        missed_items.sort(key=lambda x: x["value"], reverse=True)
+        available_items.sort(key=lambda x: x["value"], reverse=True)
+        compliance = round(executed / expected * 100) if expected else None
+        next_open = min((e["next_open_date"] for e in exs
+                         if e.get("next_open_date") and e["next_open_date"] >= now), default=None)
+
+        # flu vaccination of the CURRENT season (Sep→Aug); matched by pseudonym or ΑΜΚΑ
+        fy = now.year if now.month >= 9 else now.year - 1
+        s_start = datetime(fy, 9, 1, tzinfo=timezone.utc)
+        s_end = datetime(fy + 1, 9, 1, tzinfo=timezone.utc)
+        flu_doc = await self._db["vaccinations"].find_one(
+            {"tenant_id": self.tenant_id, "cancelled": {"$ne": True},
+             "executed_at": {"$gte": s_start, "$lt": s_end},
+             "$or": [{"patient_ref": pa.get("pseudo_id")}, {"amka": amka}]},
+            sort=[("executed_at", -1)])
+        flu = {"season": f"{fy}-{fy + 1}", "vaccinated": bool(flu_doc),
+               "date": flu_doc.get("executed_at") if flu_doc else None,
+               "vaccine": flu_doc.get("vaccine_name") if flu_doc else None}
+
+        # κλινικό date-scope (διαγνώσεις/φάρμακα): match εκτελέσεων εντός περιόδου, αν δόθηκε
+        clin_match: dict = {"patient_ref": pid}
+        if date_from or date_to:
+            rng: dict = {}
+            if date_from:
+                rng["$gte"] = date_from
+            if date_to:
+                rng["$lt"] = date_to
+            clin_match["executed_at"] = rng
+
+        # medicines (top) + ATC-derived therapeutic segments
+        med_rows = await self.aggregate([
+            {"$match": clin_match},
+            {"$lookup": {"from": "prescription_items", "localField": "_id",
+                         "foreignField": "execution_id", "as": "it"}},
+            {"$unwind": "$it"},
+            {"$lookup": {"from": "products", "localField": "it.product_id",
+                         "foreignField": "_id", "as": "p"}},
+            {"$set": {"pname": {"$first": "$p.name"}, "subst": {"$first": "$p.substance"},
+                      "atc": {"$toUpper": {"$ifNull": [{"$first": "$p.atc"}, ""]}}}},
+            {"$group": {"_id": "$pname", "atc": {"$first": "$atc"}, "subst": {"$first": "$subst"},
+                        "times": {"$sum": 1},
+                        "value": {"$sum": {"$multiply": ["$it.retail_price",
+                                                         {"$ifNull": ["$it.quantity", 1]}]}}}},
+            {"$sort": {"times": -1}},
+        ])
+        medicines = [{"name": m["_id"], "atc": m.get("atc"), "substance": m.get("subst"),
+                      "times": m["times"], "value": m["value"]} for m in med_rows if m["_id"]]
+        segments = [{"key": s["key"], "label": s["label"]} for s in SEGMENTS
+                    if any(any((m.get("atc") or "").startswith(pfx) for pfx in s["atc"])
+                           for m in medicines)]
+
+        # top doctors
+        doc_rows = await self.aggregate([
+            {"$match": {"patient_ref": pid, "doctor_id": {"$ne": None}}},
+            {"$group": {"_id": "$doctor_id", "times": {"$sum": 1}}},
+            {"$sort": {"times": -1}}, {"$limit": 5},
+            {"$lookup": {"from": "doctors", "localField": "_id", "foreignField": "_id", "as": "d"}},
+            {"$set": {"name": {"$first": "$d.full_name"}, "spec": {"$first": "$d.specialty"}}},
+        ])
+        doctors = [{"name": d.get("name"), "specialty": d.get("spec"), "times": d["times"]}
+                   for d in doc_rows if d.get("name")]
+
+        # full execution list (the «Επισκέψεις» KPI drills into this) — newest first
+        exec_rows = await self.aggregate([
+            {"$match": {"patient_ref": pid}},
+            {"$sort": {"executed_at": -1}}, {"$limit": 2000},  # «όλες οι συνταγές του πελάτη»
+            {"$lookup": {"from": "prescription_items", "localField": "_id",
+                         "foreignField": "execution_id", "as": "it"}},
+            {"$lookup": {"from": "products", "localField": "it.product_id",
+                         "foreignField": "_id", "as": "prods"}},
+            {"$lookup": {"from": "doctors", "localField": "doctor_id",
+                         "foreignField": "_id", "as": "doc"}},
+            {"$project": {"_id": 0, "barcode": "$external_id", "executed_at": 1,
+                          "amount_total": 1, "patient_share": 1,
+                          "doctor": {"$ifNull": [{"$first": "$doc.full_name"}, None]},
+                          "medicines": {"$map": {"input": "$prods", "as": "p", "in": "$$p.name"}}}},
+        ])
+        # keep the FULL external_id ("barcode:execNo") — the detail endpoint matches it EXACTLY
+        executions = [{"kind": "rx", "barcode": str(e.get("barcode", "")), "executed_at": e.get("executed_at"),
+                       "amount_total": e.get("amount_total", 0), "patient_share": e.get("patient_share", 0),
+                       "doctor": e.get("doctor"), "cancelled": False,
+                       "medicines": [m for m in (e.get("medicines") or []) if m]}
+                      for e in exec_rows]
+        # ALSO merge the patient's flu vaccinations (separate ΗΔΥΚΑ INFLUENZA registry) so the execution
+        # list is complete. Ο εμβολιασμός έχει ΔΙΚΗ του τιμή (total_price / insurance_part / patient_part)·
+        # μετρά κανονικά ως τζίρος του πελάτη — μην το μηδενίζεις (αλλιώς εμφανίζεται «—»).
+        vac_value = vac_claimed = vac_paid = 0
+        async for v in self._db["vaccinations"].find(
+                {"tenant_id": self.tenant_id,
+                 "$or": [{"patient_ref": pa.get("pseudo_id")}, {"amka": amka}]},
+                {"barcode": 1, "external_id": 1, "executed_at": 1, "vaccine_name": 1, "cancelled": 1,
+                 "total_price": 1, "insurance_part": 1, "patient_part": 1}):
+            ve = v.get("executed_at")
+            if data_floor and ve and ve < data_floor:  # only the window we monitor (same as prescriptions)
+                continue
+            cancelled = bool(v.get("cancelled"))
+            vt = (v.get("total_price") or 0) if not cancelled else 0
+            vp = (v.get("patient_part") or 0) if not cancelled else 0
+            if not cancelled:
+                vac_value += vt
+                vac_claimed += v.get("insurance_part") or 0
+                vac_paid += vp
+            executions.append({
+                "kind": "vaccine", "barcode": v.get("barcode") or v.get("external_id") or "",
+                "executed_at": v.get("executed_at"), "amount_total": vt, "patient_share": vp,
+                "doctor": None, "cancelled": cancelled,
+                "medicines": [v.get("vaccine_name") or "Εμβόλιο γρίπης"]})
+        # εμβολιασμοί → στον τζίρο/αιτούμενο/συμμετοχή του πελάτη (LTV, μέσος όρος ανά εκτέλεση)
+        value += vac_value; claimed += vac_claimed; paid += vac_paid
+        executions.sort(key=lambda x: x.get("executed_at") or datetime(1970, 1, 1, tzinfo=timezone.utc),
+                        reverse=True)
+        rx_count = len(executions)  # «Αριθμός εκτελέσεων» = συνταγές + εμβολιασμοί (εντός παραθύρου)
+
+        # ICD-10 conditions with titles — εντός της επιλεγμένης περιόδου (αν δόθηκε)
+        icd_count: dict = defaultdict(int)
+        for e in exs:
+            ea = e.get("executed_at")
+            if (date_from and (ea is None or ea < date_from)) or (date_to and (ea is None or ea >= date_to)):
+                continue
+            for c in (e.get("icd10") or []):
+                icd_count[c] += 1
+        want = set(icd_count)
+        for c in list(icd_count):
+            if "." in c:
+                want.add(c.split(".")[0])
+        titles: dict = {}
+        if want:
+            async for d in self._db["icd10_codes"].find({"_id": {"$in": list(want)}}):
+                titles[d["_id"]] = d.get("title_el") or d.get("description")
+        conditions = []
+        for c, n in sorted(icd_count.items(), key=lambda x: -x[1])[:12]:
+            title = titles.get(c) or (titles.get(c.split(".")[0]) if "." in c else None)
+            conditions.append({"code": c, "title": title, "times": n})
+
+        # VIP tier by value percentile
+        total_pat = await self._db["patients_anonymized"].count_documents(
+            {"tenant_id": self.tenant_id, "rx_value_total": {"$gt": 0}})
+        higher = await self._db["patients_anonymized"].count_documents(
+            {"tenant_id": self.tenant_id, "rx_value_total": {"$gt": pa.get("rx_value_total", 0)}})
+        rank = higher + 1
+        r = rank / total_pat if total_pat else 1
+        tier = ("platinum" if r <= 0.05 else "gold" if r <= 0.15
+                else "silver" if r <= 0.35 else "bronze")
+
+        ls = pa.get("last_seen_at")
+        gap_days = (now - ls).days if isinstance(ls, datetime) else None
+        return jsonsafe({
+            "found": True,
+            "patient": {"id": str(pid), "name": pa.get("full_name"), "amka": pa.get("amka"),
+                        "age_group": pa.get("age_group"), "sex": pa.get("sex"),
+                        "area": pa.get("residence_area"), "birth_year": pa.get("birth_year"),
+                        "lifecycle": pa.get("lifecycle"), "deceased": bool(pa.get("deceased")),
+                        "first_seen": pa.get("first_seen_at"), "last_seen": ls, "gap_days": gap_days},
+            "contact": {"mobile": ct.get("mobile"), "phone": ct.get("phone"),
+                        "email": ct.get("email"), "consent": bool(ct.get("marketing_consent")),
+                        "active": ct.get("active", True),
+                        "has_contact": bool(ct.get("mobile") or ct.get("phone") or ct.get("email"))},
+            "financials": {"rx_count": rx_count, "value": value, "claimed": claimed, "paid": paid,
+                           "profit": value - cost,
+                           "avg_per_visit": round(value / rx_count) if rx_count else 0},
+            "vip": {"tier": tier, "rank": rank, "of": total_pat,
+                    "percentile": round((1 - r) * 100), "value": pa.get("rx_value_total", 0)},
+            "adherence": {"compliance": compliance,
+                          "band": _band(compliance)[1] if compliance is not None else None,
+                          "executed": executed, "expected": expected, "missed": missed,
+                          "available": available, "lost_value": round(recoverable),
+                          "next_open": next_open},
+            "missed_items": missed_items, "available_items": available_items, "flu": flu,
+            "clinical": {"g6pd_deficiency": bool(ct.get("g6pd_deficiency"))},
+            "segments": segments, "conditions": conditions,
+            "medicines": medicines[:15], "doctors": doctors, "executions": executions,
+        })
+
+    # ── pharmacist notes / comments on a patient («σχόλια πελάτη») ───────────
+    async def _patient_by_amka(self, amka: str):
+        return await self._db["patients_anonymized"].find_one(
+            {"tenant_id": self.tenant_id, "amka": (amka or "").strip()})
+
+    async def list_notes(self, amka: str) -> list[dict]:
+        pa = await self._patient_by_amka(amka)
+        if not pa:
+            return []
+        rows = [n async for n in self._db["patient_notes"].find(
+            {"tenant_id": self.tenant_id, "patient_ref": pa["_id"]}).sort("at", -1).limit(200)]
+        return jsonsafe([{"id": str(n["_id"]), "text": n.get("text"), "by": n.get("by"),
+                          "at": n.get("at")} for n in rows])
+
+    async def add_note(self, amka: str, text: str, by: str | None = None) -> dict:
+        pa = await self._patient_by_amka(amka)
+        if not pa:
+            return {"ok": False, "error": "patient_not_found"}
+        text = (text or "").strip()[:2000]
+        if not text:
+            return {"ok": False, "error": "empty"}
+        res = await self._db["patient_notes"].insert_one({
+            "tenant_id": self.tenant_id, "patient_ref": pa["_id"], "text": text,
+            "by": by, "at": _now()})
+        return {"ok": True, "id": str(res.inserted_id)}
+
+    async def delete_note(self, note_id: str) -> dict:
+        from bson import ObjectId
+        try:
+            oid = ObjectId(note_id)
+        except Exception:  # noqa: BLE001
+            return {"ok": False, "error": "bad_id"}
+        await self._db["patient_notes"].delete_one({"_id": oid, "tenant_id": self.tenant_id})
+        return {"ok": True}
+
+    async def set_g6pd(self, amka: str, value: bool) -> dict:
+        """Pharmacist-set clinical flag: G6PD enzyme deficiency. Stored in the protected
+        patient_contacts doc (survives ΗΔΥΚΑ re-ingest); fed to the AI advice."""
+        pa = await self._patient_by_amka(amka)
+        if not pa:
+            return {"ok": False, "error": "patient_not_found"}
+        await self._db["patient_contacts"].update_one(
+            {"tenant_id": self.tenant_id, "_id": pa["_id"]},
+            {"$set": {"tenant_id": self.tenant_id, "g6pd_deficiency": bool(value), "updated_at": _now()}},
+            upsert=True)
+        return {"ok": True, "g6pd_deficiency": bool(value)}
 
     # ── 9. SEGMENTATION ─────────────────────────────────────────────────────
     async def segments(self) -> dict:
@@ -391,7 +733,7 @@ class PatientIntelligenceRepository(BaseRepository):
         chain = await self._chain_analysis()
         items = []
         for pref, c in chain.items():
-            if c.get("compliance") is None:
+            if c.get("compliance") is None or pref not in pats:   # θανών/εξαιρεθείς → εκτός
                 continue
             band, label = _band(c["compliance"])
             pa = pats.get(pref, {})
@@ -402,7 +744,7 @@ class PatientIntelligenceRepository(BaseRepository):
                 "value": pa.get("rx_value_total", 0),
             })
         items.sort(key=lambda x: x["compliance"])
-        return jsonsafe({"distribution": self._compliance_dist(chain), "items": items[:400]})
+        return jsonsafe({"distribution": self._compliance_dist(chain), "items": mask_rows(items[:400], self.demo)})
 
     # ── TODAY (live daily operations) ───────────────────────────────────────
     async def today(self) -> dict:
@@ -486,7 +828,7 @@ class PatientIntelligenceRepository(BaseRepository):
             {"tenant_id": self.tenant_id, "status": "pending",
              "expected_open_date": {"$gte": now - timedelta(days=7), "$lte": now}})
 
-        # ΗΔΙΚΑ executed_at carries Athens local time → current hour must be Athens too, or the
+        # ΗΔΥΚΑ executed_at carries Athens local time → current hour must be Athens too, or the
         # live axis cap would hide today's (afternoon) executions.
         from zoneinfo import ZoneInfo
         athens_hour = now.astimezone(ZoneInfo("Europe/Athens")).hour
@@ -521,7 +863,7 @@ class PatientIntelligenceRepository(BaseRepository):
             })
         key = {"value": "value", "rx": "rx_count", "frequency": "frequency", "recent": "gap_days"}.get(sort, "value")
         items.sort(key=lambda x: (x[key] is None, x[key]), reverse=(sort != "recent"))
-        return jsonsafe({"items": items[:limit], "total": len(pats)})
+        return jsonsafe({"items": mask_rows(items[:limit], self.demo), "total": len(pats)})
 
     # ── 10. AI INSIGHTS ─────────────────────────────────────────────────────
     def _ai_insights(self, kpis, recall_patients, recall_recoverable, winback_revenue, chain, pats) -> list[dict]:

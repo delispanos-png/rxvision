@@ -55,7 +55,7 @@ Decisions:
 ### Decisions (2026-06-10)
 - **Access model (confirmed by Panagiotis):** the authorized pharmacist sees EVERYTHING about
   THEIR OWN patients (full identity) — they are the controller and already hold that identity via
-  ΗΔΙΚΑ + their commercial dispensing software, so RxVision adds no new exposure. Least-privilege
+  ΗΔΥΚΑ + their commercial dispensing software, so RxVision adds no new exposure. Least-privilege
   (RBAC) + tenant isolation still bar everyone unauthorized. Reflected in DPIA R1 + privacy page.
 - **Marketing site is on Lovable** (separate; capabilities + packages only) — out of this repo.
   The in-app `/privacy` & `/terms` are the APP's own legal pages (option A). If canonical legal

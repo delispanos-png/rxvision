@@ -28,7 +28,7 @@ locale. **tsc 0 · next lint 0 · build ✓.** No backend changes, no push to ma
   order-advisor **insight & cross-sell** content, nutrition **plan** text, closing **checklist**
   labels/details, server `detail`/error messages, and any value rendered straight from API/props.
   These are flagged in `PROGRESS.md`; translating them requires backend i18n (separate workstream).
-- Brand/identifier tokens kept verbatim: RxVision, PharmacyOne, Noeton, ΗΔΙΚΑ, ΓΕΣΥ, ΕΟΠΥΥ, ΑΑΔΕ,
+- Brand/identifier tokens kept verbatim: RxVision, PharmacyOne, Noeton, ΗΔΥΚΑ, ΓΕΣΥ, ΕΟΠΥΥ, ΑΑΔΕ,
   ΑΜΚΑ, ΑΦΜ, myDATA, ICD-10, ATC, plan names, code/identifiers/API paths.
 
 ## Verification

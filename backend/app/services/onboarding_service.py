@@ -2,7 +2,7 @@
 
 Creates tenant + free trial subscription + system roles + owner user, then logs in.
 Country drives locale/timezone and (downstream) the allowed ingestion source
-(GR→ΗΔΙΚΑ, CY→ΓΕΣΥ) via sources.py.
+(GR→ΗΔΥΚΑ, CY→ΓΕΣΥ) via sources.py.
 """
 
 from __future__ import annotations
@@ -46,7 +46,8 @@ class OnboardingService:
     async def register(self, *, pharmacy_name: str, country: str, email: str,
                        password: str, full_name: str, company: dict | None = None,
                        package_code: str | None = None, billing_cycle: str | None = None,
-                       sla: str | None = None) -> dict:
+                       sla: str | None = None, seats: int | None = None,
+                       payment_method: str | None = None) -> dict:
         country = country.upper()
         if country not in _COUNTRY_SETTINGS:
             raise OnboardingError("unsupported_country")
@@ -68,18 +69,34 @@ class OnboardingService:
         # subscription — from the chosen package (else the legacy free trial)
         pkg = await db["packages"].find_one({"_id": package_code}) if package_code else None
         cycle = billing_cycle or "monthly"
+        yearly = cycle == "yearly"
         trial_days = int((pkg or {}).get("trial_days", _TRIAL_DAYS))
-        price = (pkg or {}).get("price_yearly" if cycle == "yearly" else "price_monthly", 0) if pkg else 0
+        price = (pkg or {}).get("price_yearly" if yearly else "price_monthly", 0) if pkg else 0
+        # seats & cost breakdown: base package + chosen SLA tier + extra concurrent users
+        sla_code = sla or (pkg or {}).get("sla", "basic")
+        included_seats = int((pkg or {}).get("seats", 1) or 1)
+        chosen_seats = max(int(seats or included_seats), included_seats)
+        extra_users = max(0, chosen_seats - included_seats)
+        extra_rate = int((pkg or {}).get("extra_user_price_yearly" if yearly else "extra_user_price", 0) or 0)
+        sla_doc = await db["sla_tiers"].find_one({"_id": sla_code}) or {}
+        sla_price = int(sla_doc.get("price_yearly" if yearly else "price_monthly", 0) or 0)
+        extra_total = extra_users * extra_rate
+        price_total = int(price) + sla_price + extra_total
         await db["subscriptions"].insert_one({
             "tenant_id": tid, "plan": package_code or "free_trial",
             "status": "trialing" if trial_days else "active",
-            "billing_cycle": cycle, "sla": sla or (pkg or {}).get("sla", "basic"),
-            "trial_ends_at": _now() + timedelta(days=trial_days), "seats": (pkg or {}).get("seats", 3),
+            "billing_cycle": cycle, "sla": sla_code,
+            "trial_ends_at": _now() + timedelta(days=trial_days), "seats": chosen_seats,
             "price_per_pharmacy": price, "currency": "EUR", "addons": [],
+            # cost analysis as agreed at signup (cents, for the chosen cycle)
+            "sla_price": sla_price, "extra_users": extra_users, "extra_user_rate": extra_rate,
+            "extra_users_total": extra_total, "price_total": price_total,
             "modules_included": (pkg or {}).get("modules") or _MODULES,
             "limits": {"pharmacies": 1, "history_months": 36, "api_sync": True},
             "current_period_end": _now() + timedelta(days=trial_days), "created_at": _now(),
             "payment_provider": None, "payment_status": "trial",
+            # how the customer chose to pay at signup: "card" (Revolut capture) or "bank" (manual transfer)
+            "payment_method": payment_method or "card",
         })
         await seed_rbac(tenant_id=tid)
         owner_role = await db["roles"].find_one({"tenant_id": tid, "key": "owner"})

@@ -4,7 +4,7 @@ import { useParams, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowLeft, Repeat, Printer, QrCode, X } from "lucide-react";
-import { api } from "@/lib/apiClient";
+import { api, queryKeys } from "@/lib/apiClient";
 import { PanelCard } from "@/components/ui/Card";
 import { CopyButton } from "@/components/ui/CopyButton";
 import { fmtDate, fmtDateTime } from "@/lib/formatters";
@@ -112,8 +112,9 @@ function CouponBarcode({ c }: { c: Coupon }) {
     return () => { dead = true; };
   }, [isQr, gtin, c.qr_expiry, c.qr_batch, c.strip]);
   if (!isQr && !c.strip) return null;
-  // ΧΩΡΙΣ CSS resize (θα θόλωνε τις μπάρες) — native pixels + pixelated για κρυστάλλινο, σαρώσιμο κώδικα.
-  return <canvas ref={ref} style={{ imageRendering: "pixelated" }} className="max-w-full rounded border border-slate-200 bg-white" />;
+  // Render σε ΥΨΗΛΗ native ανάλυση (σαρώσιμο) αλλά περιορισμένο σε ΦΥΣΙΚΟ μέγεθος μέσω CSS
+  // (.qr-canvas / .eof-canvas — βλ. print styles). Downscale υψηλής ανάλυσης = κρυστάλλινο στην εκτύπωση.
+  return <canvas ref={ref} className={`${isQr ? "qr-canvas" : "eof-canvas"} rounded border border-slate-200 bg-white`} />;
 }
 
 // Χαρακτηριστικά συνταγής (CDA flags) → badges + κάρτα Γνωμάτευσης. Βοηθούν τον φαρμακοποιό
@@ -264,6 +265,10 @@ export default function PrescriptionDetailPage() {
     retry: false,
   });
 
+  // «Πελάτης παρουσίασης» → κλειδώνουμε εκτυπώσεις ΗΔΥΚΑ & κουπονιών (δεν τυπώνουμε πραγματικά έγγραφα σε demo).
+  const { data: me } = useQuery({ queryKey: queryKeys.me(), queryFn: () => api<{ demo?: boolean }>("/auth/me"), retry: false });
+  const demo = !!me?.demo;
+
   const idika = useQuery({
     queryKey: ["rx-idika", id],
     queryFn: () => api<Idika>(`/prescriptions/idika/${encodeURIComponent(id)}`),
@@ -284,7 +289,7 @@ export default function PrescriptionDetailPage() {
   const d = data;
   const age = d.patient?.birth_year ? new Date().getFullYear() - d.patient.birth_year : null;
   const profit = d.amount_total - d.wholesale_cost;
-  // repeat_current/repeat_total now come straight from the ΗΔΙΚΑ CDA (1.1.4 = planned count,
+  // repeat_current/repeat_total now come straight from the ΗΔΥΚΑ CDA (1.1.4 = planned count,
   // 1.1.4.1 = position), so "X/Y" is authoritative even when sibling barcodes aren't synced.
   const recurring = d.repeat_total > 1;
   // Το wholesale_cost κλιμακώνεται πλέον στο authoritative amount_total (ανά εκτέλεση), οπότε
@@ -298,17 +303,21 @@ export default function PrescriptionDetailPage() {
   const allCoupons = executed.flatMap(couponsOf);
   const qrCount = allCoupons.filter((c) => c.qr).length;
   const eofCount = allCoupons.filter((c) => !c.qr && c.strip).length;
+  // flat list με όνομα φαρμάκου, ταξινομημένο QR → ΕΟΦ για την εκτύπωση κουπονιών
+  const flatCoupons = executed.flatMap((it) => couponsOf(it).map((c) => ({ c, name: it.name })));
+  const qrCoupons = flatCoupons.filter((x) => x.c.qr);
+  const eofCoupons = flatCoupons.filter((x) => !x.c.qr && x.c.strip);
 
-  // Fetch the official ΗΔΙΚΑ PDF (auth header can't ride a plain window.open, so fetch as a blob).
+  // Fetch the official ΗΔΥΚΑ PDF (auth header can't ride a plain window.open, so fetch as a blob).
   const openIdikaPrint = async () => {
     const base = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8000/api/v1";
     const token = typeof window !== "undefined" ? window.localStorage.getItem("access_token") : null;
     try {
       const res = await fetch(`${base}/prescriptions/idika-print/${encodeURIComponent(id)}`,
         { headers: token ? { Authorization: `Bearer ${token}` } : {} });
-      if (!res.ok) { appAlert(t("Το έντυπο ΗΔΙΚΑ δεν είναι διαθέσιμο.", "ΗΔΙΚΑ printout unavailable.")); return; }
+      if (!res.ok) { appAlert(t("Το έντυπο ΗΔΥΚΑ δεν είναι διαθέσιμο.", "ΗΔΥΚΑ printout unavailable.")); return; }
       window.open(URL.createObjectURL(await res.blob()), "_blank");
-    } catch { appAlert(t("Αποτυχία λήψης εντύπου ΗΔΙΚΑ.", "Failed to fetch ΗΔΙΚΑ printout.")); }
+    } catch { appAlert(t("Αποτυχία λήψης εντύπου ΗΔΥΚΑ.", "Failed to fetch ΗΔΥΚΑ printout.")); }
   };
 
   return (
@@ -318,13 +327,16 @@ export default function PrescriptionDetailPage() {
           <ArrowLeft className="h-4 w-4" /> {t("Πίσω", "Back")}
         </button>
         <div className="flex items-center gap-2">
-          <button onClick={openIdikaPrint} className="inline-flex items-center gap-1.5 rounded-lg border border-brand-300 bg-brand-50 px-3 py-1.5 text-sm font-medium text-brand-700 hover:bg-brand-100">
-            <Printer className="h-4 w-4" /> {t("Εκτύπωση ΗΔΙΚΑ", "ΗΔΙΚΑ printout")}
-          </button>
+          {/* Σε «πελάτη παρουσίασης» κρύβουμε τις εκτυπώσεις ΗΔΥΚΑ & κουπονιών (όχι πραγματικά έγγραφα σε demo). */}
+          {!demo && (
+            <button onClick={openIdikaPrint} className="inline-flex items-center gap-1.5 rounded-lg border border-brand-300 bg-brand-50 px-3 py-1.5 text-sm font-medium text-brand-700 hover:bg-brand-100">
+              <Printer className="h-4 w-4" /> {t("Εκτύπωση ΗΔΥΚΑ", "ΗΔΥΚΑ printout")}
+            </button>
+          )}
           <button onClick={() => window.print()} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50">
             <Printer className="h-4 w-4" /> {t("Εκτύπωση εκτέλεσης", "Print execution")}
           </button>
-          {executed.some((it) => couponsOf(it).length) ? (
+          {!demo && executed.some((it) => couponsOf(it).length) ? (
             <button onClick={() => setCouponSheet(true)} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50">
               <QrCode className="h-4 w-4" /> {t("Εκτύπωση κουπονιών", "Print coupons")}
             </button>
@@ -641,10 +653,15 @@ export default function PrescriptionDetailPage() {
       {couponSheet ? (
         <div className="fixed inset-0 z-50 overflow-y-auto bg-black/40 p-4 print:static print:bg-white print:p-0" onClick={() => setCouponSheet(false)}>
           <style jsx global>{`
+            #coupon-print .qr-canvas { width: 84px; height: 84px; }
+            #coupon-print .eof-canvas { width: 150px; height: auto; }
             @media print {
+              @page { size: A4; margin: 12mm; }
               body * { visibility: hidden !important; }
               #coupon-print, #coupon-print * { visibility: visible !important; }
               #coupon-print { position: absolute; left: 0; top: 0; width: 100%; }
+              #coupon-print .qr-canvas { width: 20mm !important; height: 20mm !important; }
+              #coupon-print .eof-canvas { width: 40mm !important; height: auto !important; }
               .no-print { display: none !important; }
             }
           `}</style>
@@ -659,20 +676,36 @@ export default function PrescriptionDetailPage() {
                 <button onClick={() => setCouponSheet(false)} className="text-slate-400 hover:text-slate-600"><X className="h-5 w-5" /></button>
               </div>
             </div>
-            <div className="space-y-4">
-              {executed.filter((it) => couponsOf(it).length).map((it, i) => (
-                <div key={i} className="break-inside-avoid">
-                  <div className="mb-2 text-sm font-semibold text-slate-800">{it.name} <span className="font-normal text-slate-400">×{it.quantity}</span></div>
-                  <div className="flex flex-wrap gap-3">
-                    {couponsOf(it).map((c, ci) => (
-                      <div key={ci} className="flex flex-col items-center gap-1 rounded-lg border border-slate-200 p-2">
-                        <CouponBarcode c={c} />
-                        <div className="text-center text-[10px] text-slate-500"><span className={`font-semibold ${c.qr ? "text-sky-700" : "text-amber-700"}`}>{c.qr ? "QR" : "ΕΟΦ"}</span> {c.strip}</div>
+            <div className="space-y-5">
+              {qrCoupons.length > 0 && (
+                <section>
+                  <h4 className="mb-2 border-b border-slate-200 pb-1 text-xs font-bold uppercase tracking-wide text-sky-700">QR · DataMatrix ({qrCoupons.length})</h4>
+                  <div className="flex flex-wrap gap-2.5">
+                    {qrCoupons.map((x, i) => (
+                      <div key={i} className="flex w-[88px] break-inside-avoid flex-col items-center gap-0.5">
+                        <CouponBarcode c={x.c} />
+                        <div className="w-full truncate text-center text-[8px] leading-tight text-slate-500" title={`${x.name} · ${x.c.strip ?? ""}`}>{x.name}</div>
                       </div>
                     ))}
                   </div>
-                </div>
-              ))}
+                </section>
+              )}
+              {eofCoupons.length > 0 && (
+                <section>
+                  <h4 className="mb-2 border-b border-slate-200 pb-1 text-xs font-bold uppercase tracking-wide text-amber-700">{t("ΕΟΦ · Ταινίες γνησιότητας", "ΕΟΦ strips")} ({eofCoupons.length})</h4>
+                  <div className="flex flex-wrap gap-2.5">
+                    {eofCoupons.map((x, i) => (
+                      <div key={i} className="flex w-[154px] break-inside-avoid flex-col items-center gap-0.5">
+                        <CouponBarcode c={x.c} />
+                        <div className="w-full truncate text-center text-[8px] leading-tight text-slate-500" title={x.name ?? undefined}>{x.name}</div>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              )}
+              {qrCoupons.length === 0 && eofCoupons.length === 0 && (
+                <div className="py-6 text-center text-sm text-slate-400">{t("Δεν υπάρχουν κουπόνια προς εκτύπωση.", "No coupons to print.")}</div>
+              )}
             </div>
           </div>
         </div>

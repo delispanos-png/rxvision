@@ -26,6 +26,7 @@ class ContactIn(BaseModel):
     city: str | None = None
     postal_code: str | None = None
     notes: str | None = None
+    observations: str | None = None   # «Παρατηρήσεις» — ελεύθερο κείμενο φαρμακοποιού
     marketing_consent: bool = False
     preferred_channel: str | None = Field(default=None, description="email|sms|phone")
     active: bool = True
@@ -39,7 +40,7 @@ async def search_patients(
     q: str = Query(..., min_length=2),
     ctx: TenantContext = Depends(require("patients:read", module=_MODULE)),
 ):
-    return {"items": await PatientExecutionsRepository(tenant_id=ctx.tenant_id).search(q)}
+    return {"items": await PatientExecutionsRepository(tenant_id=ctx.tenant_id, demo=ctx.demo).search(q)}
 
 
 @router.get("/{patient_id}/contact")
@@ -68,7 +69,7 @@ async def patient_detail(
     ctx: TenantContext = Depends(require("patients:read", module=_MODULE)),
 ):
     """Drill-down: one patient's profile + therapeutic categories / ICD-10 / medicines."""
-    repo = PatientExecutionsRepository(tenant_id=ctx.tenant_id)
+    repo = PatientExecutionsRepository(tenant_id=ctx.tenant_id, demo=ctx.demo)
     detail = await repo.patient_detail(patient_id)
     if detail is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "patient_not_found")
@@ -104,10 +105,34 @@ async def per_patient(
     limit: int = Query(100, ge=1, le=500),
     date_from: datetime = Query(...),
     date_to: datetime = Query(...),
+    sex: str | None = Query(None, description="M|F"),
+    age_groups: str | None = Query(None, description="comma-separated age groups"),
+    area: str | None = Query(None),
+    lifecycle: str | None = Query(None, description="active|new|inactive"),
+    rx_min: int | None = Query(None, ge=0),
+    value_min: float | None = Query(None, description="euros"),
+    profit_min: float | None = Query(None, description="euros"),
+    status_filter: str | None = Query(None, alias="status", description="active|inactive"),
+    reason: str | None = Query(None, description="deceased|moved|stopped|other"),
+    has_contact: bool | None = Query(None),
+    consent: bool | None = Query(None),
     ctx: TenantContext = Depends(require("patients:read", module=_MODULE)),
 ):
-    """Concept doc §2 — per-patient rx/value/claimed/profit + «ενεργός από» (active_since)."""
-    repo = PatientExecutionsRepository(tenant_id=ctx.tenant_id)
+    """Concept doc §2 — per-patient rx/value/claimed/profit + «ενεργός από», με πλήρη φίλτρα."""
+    repo = PatientExecutionsRepository(tenant_id=ctx.tenant_id, demo=ctx.demo)
+    filters = {
+        "sex": sex or None,
+        "age_groups": [a for a in (age_groups or "").split(",") if a.strip()] or None,
+        "area": area or None,
+        "lifecycle": lifecycle or None,
+        "rx_min": rx_min,
+        "value_min": int(round(value_min * 100)) if value_min is not None else None,
+        "profit_min": int(round(profit_min * 100)) if profit_min is not None else None,
+        "status": status_filter or None,
+        "reason": reason or None,
+        "has_contact": has_contact or None,
+        "consent": consent or None,
+    }
     items = await repo.per_patient(date_from=date_from, date_to=date_to,
-                                   sort=sort, limit=limit)
+                                   sort=sort, limit=limit, filters=filters)
     return {"sort": sort, "items": items}

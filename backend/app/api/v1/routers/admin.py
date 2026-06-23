@@ -38,7 +38,7 @@ def _oid(value):
 ADMIN_SECTIONS = [
     ("dashboard", "Πίνακας"), ("subscribers", "Συνδρομητές"), ("subscriptions", "Συνδρομές"),
     ("staff", "Χρήστες (staff)"), ("billing", "Τιμολόγηση"), ("newsletter", "Newsletter"),
-    ("smtp", "Ρυθμίσεις SMTP"), ("idika", "Διασύνδεση ΗΔΙΚΑ"),
+    ("smtp", "Ρυθμίσεις SMTP"), ("idika", "Διασύνδεση ΗΔΥΚΑ"),
     ("content", "Περιεχόμενο"), ("maintenance", "Συντήρηση"), ("health", "Επισκεψιμότητα"),
 ]
 ADMIN_SECTION_KEYS = [k for k, _ in ADMIN_SECTIONS]
@@ -87,6 +87,12 @@ class OpenTenantIn(BaseModel):
     package_code: str
     owner_name: str | None = None
     owner_password: str | None = None  # if omitted, a temp password is generated & returned
+    billing_cycle: str | None = None   # monthly | yearly
+    sla: str | None = None
+    company: dict | None = None        # ΑΑΔΕ company profile (afm/doy/address/city/…)
+    modules: list[str] | None = None   # capabilities to grant (overrides the package's base set)
+    seats: int | None = None           # ταυτόχρονοι χρήστες (≥ package included seats)
+    payment_method: str | None = None  # card | bank
 
 
 class StatusIn(BaseModel):
@@ -204,7 +210,7 @@ class MaintenanceIn(BaseModel):
     message: str = ""
 
 
-# ── platform-level ΗΔΙΚΑ integrator config (CloudOn, shared by all tenants) ──
+# ── platform-level ΗΔΥΚΑ integrator config (CloudOn, shared by all tenants) ──
 _IDIKA_DEFAULTS = {
     "test": "https://testeps.e-prescription.gr/pharmapiv2",
     "production": "https://eps.e-prescription.gr/pharmacistapi",
@@ -273,6 +279,14 @@ async def tenants(_: PlatformContext = Depends(get_platform_admin)):
     user_counts: dict[str, int] = {}
     async for row in db["users"].aggregate([{"$group": {"_id": "$tenant_id", "n": {"$sum": 1}}}]):
         user_counts[row["_id"]] = row["n"]
+    # concurrent active users = distinct users seen in the last 5 minutes, per tenant
+    cutoff = datetime.now(tz=timezone.utc) - timedelta(minutes=5)
+    active_now: dict[str, int] = {}
+    async for row in db["users"].aggregate([
+        {"$match": {"last_active_at": {"$gte": cutoff}}},
+        {"$group": {"_id": "$tenant_id", "n": {"$sum": 1}}},
+    ]):
+        active_now[row["_id"]] = row["n"]
 
     items = []
     async for t in db["tenants"].find({}).sort("created_at", -1):
@@ -285,6 +299,8 @@ async def tenants(_: PlatformContext = Depends(get_platform_admin)):
             "plan": sub.get("plan", "—"),
             "status": sub.get("status", t.get("status", "—")),
             "users": user_counts.get(t["_id"], 0),
+            "active_now": active_now.get(t["_id"], 0),
+            "seats": sub.get("seats") or pharmacies,
             "mrr": mrr,
             "created_at": t.get("created_at"),
         })
@@ -300,6 +316,13 @@ async def subscriptions(_: PlatformContext = Depends(get_platform_admin)):
     db = shared_db()
     now = datetime.now(tz=timezone.utc)
     names = {t["_id"]: t.get("name", t["_id"]) async for t in db["tenants"].find({})}
+    created = {t["_id"]: t.get("created_at") async for t in db["tenants"].find({}, {"created_at": 1})}
+    active_now: dict[str, int] = {}
+    async for row in db["users"].aggregate([
+        {"$match": {"last_active_at": {"$gte": now - timedelta(minutes=5)}}},
+        {"$group": {"_id": "$tenant_id", "n": {"$sum": 1}}},
+    ]):
+        active_now[row["_id"]] = row["n"]
 
     items = []
     async for s in db["subscriptions"].find({}):
@@ -315,8 +338,11 @@ async def subscriptions(_: PlatformContext = Depends(get_platform_admin)):
             "tenant": names.get(s["tenant_id"], s["tenant_id"]),
             "plan": s.get("plan", "—"),
             "status": s.get("status", "—"),
+            "billing_cycle": s.get("billing_cycle"),
             "seats": s.get("seats", pharmacies),
+            "active_now": active_now.get(s["tenant_id"], 0),
             "mrr": (s.get("price_per_pharmacy") or 0) * pharmacies,
+            "started_at": s.get("created_at") or created.get(s["tenant_id"]),
             "current_period_end": s.get("current_period_end"),
             "days_to_expiry": d2e,
             "trial_ends_at": s.get("trial_ends_at"),
@@ -339,6 +365,80 @@ async def subscriptions(_: PlatformContext = Depends(get_platform_admin)):
     return {"items": jsonsafe(items), "summary": summary}
 
 
+@router.get("/subscriptions/{tenant_id}")
+async def subscription_detail(tenant_id: str, _: PlatformContext = Depends(get_platform_admin)):
+    """Full subscription card: plan/cycle/dates/costs + concurrent users + issued invoices."""
+    db = shared_db()
+    s = await db["subscriptions"].find_one({"tenant_id": tenant_id}) or {}
+    t = await db["tenants"].find_one({"_id": tenant_id}) or {}
+    pkg_code = str(s.get("plan") or "").split("-")[-1]
+    pkg = await db["packages"].find_one({"_id": pkg_code}) or {}
+    now = datetime.now(tz=timezone.utc)
+    active_now = await db["users"].count_documents({
+        "tenant_id": tenant_id, "last_active_at": {"$gte": now - timedelta(minutes=5)}})
+    users = await db["users"].count_documents({"tenant_id": tenant_id})
+    pharmacies = (s.get("limits") or {}).get("pharmacies", 1) or 1
+    invoices = [_invoice_public(i, t.get("name"))
+                async for i in db["invoices"].find({"tenant_id": tenant_id}).sort("created_at", -1)]
+    return jsonsafe({
+        "tenant_id": tenant_id, "tenant": t.get("name", tenant_id),
+        "plan": s.get("plan"), "plan_name": s.get("plan_name") or pkg.get("name"),
+        "status": s.get("status"), "billing_cycle": s.get("billing_cycle") or "monthly",
+        "sla": s.get("sla"), "seats": s.get("seats", pharmacies),
+        "users": users, "active_now": active_now,
+        "price_per_pharmacy": s.get("price_per_pharmacy"),
+        "mrr": (s.get("price_per_pharmacy") or 0) * pharmacies,
+        # subscription-level override wins over the package default (admin can edit per-tenant)
+        "extra_user_price": s.get("extra_user_price") if "extra_user_price" in s else pkg.get("extra_user_price"),
+        "extra_user_price_yearly": s.get("extra_user_price_yearly") if "extra_user_price_yearly" in s else pkg.get("extra_user_price_yearly"),
+        "started_at": s.get("started_at") or s.get("created_at") or t.get("created_at"),
+        "current_period_end": s.get("current_period_end"),
+        "trial_ends_at": s.get("trial_ends_at"),
+        "invoices": invoices,
+    })
+
+
+class SubEditIn(BaseModel):
+    billing_cycle: str | None = None
+    price_per_pharmacy: int | None = None      # cents
+    current_period_end: datetime | None = None
+    trial_ends_at: datetime | None = None
+    started_at: datetime | None = None         # έναρξη συνδρομής
+    seats: int | None = None
+    sla: str | None = None
+    plan: str | None = None
+    plan_name: str | None = None               # εμφανιζόμενο όνομα πλάνου
+    extra_user_price: int | None = None        # cents/μήνα — override του πακέτου
+    extra_user_price_yearly: int | None = None # cents/έτος — override του πακέτου
+    status: str | None = None                  # active|suspended|cancelled|past_due|trial
+
+
+@router.patch("/subscriptions/{tenant_id}")
+async def edit_subscription(tenant_id: str, body: SubEditIn,
+                            _: PlatformContext = Depends(get_platform_admin)):
+    """Edit a subscription (cycle/price/dates/seats/sla/plan/status). A status change also
+    flips the tenant active/suspended — so «απενεργοποίηση λόγω μη πληρωμής» blocks login."""
+    db = shared_db()
+    upd = {k: v for k, v in body.model_dump().items() if v is not None}
+    if not await db["subscriptions"].find_one({"tenant_id": tenant_id}):
+        raise HTTPException(http_status.HTTP_404_NOT_FOUND, "subscription_not_found")
+    if upd:
+        upd["updated_at"] = datetime.now(tz=timezone.utc)
+        await db["subscriptions"].update_one({"tenant_id": tenant_id}, {"$set": upd})
+        if body.status:
+            tstatus = "active" if body.status in ("active", "trial", "past_due") else "suspended"
+            await db["tenants"].update_one(  # tenant-ok: platform admin, explicit _id
+                {"_id": tenant_id}, {"$set": {"status": tstatus, "updated_at": upd["updated_at"]}})
+    return {"ok": True}
+
+
+@router.get("/aade/{afm}")
+async def admin_aade(afm: str, _: PlatformContext = Depends(get_platform_admin)):
+    """ΑΑΔΕ company lookup for the admin «open tenant» wizard (auto-fill from ΑΦΜ)."""
+    from app.services.aade_service import lookup
+    return await lookup(afm)
+
+
 @router.get("/packages")
 async def packages(_: PlatformContext = Depends(get_platform_admin)):
     """Available subscription packages (code → modules/price/trial) for opening tenants."""
@@ -349,21 +449,78 @@ async def packages(_: PlatformContext = Depends(get_platform_admin)):
 
 class PackageIn(BaseModel):
     name: str | None = None
+    description: str | None = None
     price_monthly: int | None = None  # cents
     price_yearly: int | None = None   # cents
+    extra_user_price: int | None = None         # cents — cost per extra user/seat beyond `seats`, per MONTH
+    extra_user_price_yearly: int | None = None   # cents — cost per extra user/seat beyond `seats`, per YEAR
     trial_days: int | None = None
+    seats: int | None = None
     sla: str | None = None
+    modules: list[str] | None = None  # the capabilities this package grants
+    active: bool | None = None
 
 
 @router.put("/packages/{code}")
 async def update_package(code: str, body: PackageIn,
                          _: PlatformContext = Depends(get_platform_admin)):
-    """Edit a package's price/trial/name (admin-managed pricing)."""
+    """Create/edit a subscription package (name/pricing/trial/seats/SLA + the modules it grants)."""
     upd = {k: v for k, v in body.model_dump().items() if v is not None}
     db = shared_db()
     if upd:
-        await db["packages"].update_one({"_id": code}, {"$set": upd}, upsert=True)
+        upd["updated_at"] = datetime.now(tz=timezone.utc)
+        await db["packages"].update_one(  # tenant-ok: platform-level catalog, explicit _id
+            {"_id": code}, {"$set": upd}, upsert=True)
     return {"ok": True, "package": jsonsafe(await db["packages"].find_one({"_id": code}))}
+
+
+@router.delete("/packages/{code}")
+async def delete_package(code: str, _: PlatformContext = Depends(get_platform_admin)):
+    await shared_db()["packages"].delete_one({"_id": code})  # tenant-ok: platform catalog
+    return {"ok": True}
+
+
+# ── SLA / support tiers (admin-managed) ──────────────────────
+_DEFAULT_SLA = [
+    {"_id": "basic", "name": "Basic", "description": "Email support, απόκριση 24ω",
+     "response_hours": 24, "channels": "email", "price_monthly": 0, "price_yearly": 0},
+    {"_id": "professional", "name": "Professional", "description": "Τηλ. + email, απόκριση 4ω",
+     "response_hours": 4, "channels": "phone,email", "price_monthly": 0, "price_yearly": 0},
+]
+
+
+@router.get("/sla")
+async def sla_tiers(_: PlatformContext = Depends(get_platform_admin)):
+    db = shared_db()
+    if await db["sla_tiers"].count_documents({}) == 0:
+        await db["sla_tiers"].insert_many([dict(s) for s in _DEFAULT_SLA])  # seed once
+    items = [s async for s in db["sla_tiers"].find({}).sort("response_hours", 1)]
+    return {"items": jsonsafe(items)}
+
+
+class SlaIn(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    response_hours: int | None = None
+    channels: str | None = None
+    price_monthly: int | None = None   # cents — add-on cost of this support tier, per month
+    price_yearly: int | None = None    # cents — add-on cost of this support tier, per year
+    active: bool | None = None
+
+
+@router.put("/sla/{code}")
+async def update_sla(code: str, body: SlaIn, _: PlatformContext = Depends(get_platform_admin)):
+    upd = {k: v for k, v in body.model_dump().items() if v is not None}
+    db = shared_db()
+    if upd:
+        await db["sla_tiers"].update_one({"_id": code}, {"$set": upd}, upsert=True)  # tenant-ok: catalog
+    return {"ok": True, "sla": jsonsafe(await db["sla_tiers"].find_one({"_id": code}))}
+
+
+@router.delete("/sla/{code}")
+async def delete_sla(code: str, _: PlatformContext = Depends(get_platform_admin)):
+    await shared_db()["sla_tiers"].delete_one({"_id": code})  # tenant-ok: catalog
+    return {"ok": True}
 
 
 class IntegrationsIn(BaseModel):
@@ -434,7 +591,9 @@ async def open_tenant(body: OpenTenantIn, _: PlatformContext = Depends(get_platf
     try:
         result = await TenantProvisioningService().open_tenant(
             name=body.name, owner_email=body.owner_email, package_code=body.package_code,
-            owner_name=body.owner_name, owner_password=body.owner_password, source="admin")
+            owner_name=body.owner_name, owner_password=body.owner_password, source="admin",
+            billing_cycle=body.billing_cycle, sla=body.sla, company=body.company,
+            modules=body.modules, seats=body.seats, payment_method=body.payment_method)
     except ProvisioningError as e:
         raise HTTPException(http_status.HTTP_400_BAD_REQUEST, str(e))
     return result
@@ -458,6 +617,9 @@ async def tenant_detail(tenant_id: str, _: PlatformContext = Depends(get_platfor
         raise HTTPException(http_status.HTTP_404_NOT_FOUND, "not_found")
     sub = await db["subscriptions"].find_one({"tenant_id": tenant_id}) or {}
     users = await TenantProvisioningService().list_users(tenant_code=tenant_id)
+    active_now = await db["users"].count_documents({
+        "tenant_id": tenant_id,
+        "last_active_at": {"$gte": datetime.now(tz=timezone.utc) - timedelta(minutes=5)}})
     jobs = [j async for j in db["sync_jobs"].find({"tenant_id": tenant_id})
             .sort("started_at", -1).limit(5)]
     pharmacies = (sub.get("limits") or {}).get("pharmacies", 1) or 1
@@ -479,6 +641,7 @@ async def tenant_detail(tenant_id: str, _: PlatformContext = Depends(get_platfor
             "current_period_end": sub.get("current_period_end"),
             "source": sub.get("source")},
         "users": users,
+        "active_now": active_now,
         "sync": [{"source": j.get("source"), "status": j.get("status"),
                   "started_at": j.get("started_at"), "stats": j.get("stats")} for j in jobs],
     })
@@ -547,7 +710,7 @@ async def _pick_impersonation_user(tenant_id: str) -> dict | None:
 
 @router.get("/tenants/{tenant_id}/credentials")
 async def tenant_credentials(tenant_id: str, _: PlatformContext = Depends(get_platform_admin)):
-    """Credentials πελάτη: λογαριασμοί σύνδεσης (email/ρόλος) + ΗΔΙΚΑ σύνδεση (χωρίς
+    """Credentials πελάτη: λογαριασμοί σύνδεσης (email/ρόλος) + ΗΔΥΚΑ σύνδεση (χωρίς
     να αποκαλύπτονται μυστικά — μόνο username/αναγνωριστικά + flags)."""
     db = shared_db()
     if not await db["tenants"].find_one({"_id": tenant_id}):
@@ -1156,7 +1319,7 @@ async def set_maintenance(body: MaintenanceIn, _: PlatformContext = Depends(get_
 
 @router.get("/idika")
 async def get_idika(_: PlatformContext = Depends(get_platform_admin)):
-    """Platform-level ΗΔΙΚΑ integrator config (CloudOn): application keys + endpoints,
+    """Platform-level ΗΔΥΚΑ integrator config (CloudOn): application keys + endpoints,
     κοινά για όλα τα φαρμακεία. Secrets masked — never returned."""
     doc = await shared_db()["platform_settings"].find_one({"_id": "idika"}) or {}
 

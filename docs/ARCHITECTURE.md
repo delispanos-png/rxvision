@@ -35,7 +35,7 @@
                   ingestion │     │
         ┌─────────────────────────┴────────────────────────┐
         │  External sources                                  │
-        │  🇬🇷 ΗΔΙΚΑ (e-prescription) — credentials/automated │
+        │  🇬🇷 ΗΔΥΚΑ (e-prescription) — credentials/automated │
         │  🇨🇾 ΓΕΣΥ — XML upload (→ API αργότερα)             │
         └────────────────────────────────────────────────────┘
 ```
@@ -50,7 +50,7 @@
 | `beat` | Celery beat — scheduling περιοδικών sync & nightly jobs |
 | `mongo` | MongoDB replica set (primary data store) |
 | `redis` | cache, rate-limit counters, Celery broker/result backend |
-| `vault` | secrets — tenant ΗΔΙΚΑ/ΓΕΣΥ credentials, encryption keys |
+| `vault` | secrets — tenant ΗΔΥΚΑ/ΓΕΣΥ credentials, encryption keys |
 
 ## 2. Multi-tenancy
 
@@ -103,7 +103,7 @@ tenant
  ├─ subscription        (plan, status, trial_ends_at, seats, add-ons)
  ├─ modules[]           (enabled/locked/trial ανά module key)
  ├─ users[]             (μέσω users.tenant_id)  → roles → permissions
- ├─ api_credentials     (ΗΔΙΚΑ/ΓΕΣΥ — encrypted refs σε Vault, ΟΧΙ raw)
+ ├─ api_credentials     (ΗΔΥΚΑ/ΓΕΣΥ — encrypted refs σε Vault, ΟΧΙ raw)
  ├─ data isolation tier (shared | dedicated_db)
  └─ lifecycle ops       (backup, export, deletion / right-to-be-forgotten)
 ```
@@ -218,7 +218,7 @@ GDPR anonymization service. Λεπτομέρειες: [SECURITY_GDPR.md](SECURIT
 
 ## 7. Data ingestion (περίληψη)
 
-- **ΗΔΙΚΑ (GR):** tenant καταχωρεί credentials (→ Vault). Worker κάνει **αρχικό
+- **ΗΔΥΚΑ (GR):** tenant καταχωρεί credentials (→ Vault). Worker κάνει **αρχικό
   full sync** και μετά **incremental** σε σταθερό interval (αέναο). Retry με backoff,
   duplicate detection με natural key, validation, per-tenant error reporting.
 - **ΓΕΣΥ (CY):** αρχικά **χειροκίνητο XML upload** (parse → normalize → ingest), με ίδιο
@@ -231,7 +231,7 @@ GDPR anonymization service. Λεπτομέρειες: [SECURITY_GDPR.md](SECURIT
 | Απόφαση | Επιλογή | Γιατί | Trade-off |
 |---|---|---|---|
 | Tenancy | Shared DB + `tenant_id` | απλό, φθηνό, cross-tenant benchmarking, εύκολο onboarding | πρέπει αυστηρό enforcement (το λύνουμε στο repo layer) |
-| DB | MongoDB | ετερογενές ingestion (ΗΔΙΚΑ/ΓΕΣΥ διαφορετικά schemas), δυνατό aggregation για stats | όχι ACID πολλαπλών docs — δεν μας χρειάζεται για analytics |
+| DB | MongoDB | ετερογενές ingestion (ΗΔΥΚΑ/ΓΕΣΥ διαφορετικά schemas), δυνατό aggregation για stats | όχι ACID πολλαπλών docs — δεν μας χρειάζεται για analytics |
 | API framework | FastAPI | async, Pydantic, auto-OpenAPI, ταχύτητα ανάπτυξης | — |
 | REST vs GraphQL | **REST** core, GraphQL μόνο αν χρειαστεί | analytics endpoints είναι λίγα & σταθερά· REST + query params αρκεί· caching ευκολότερο | GraphQL θα έδινε flexible drill-down — Phase 2 αν ζητηθεί |
 | Jobs | Celery + Redis | ώριμο, beat scheduling, ανεξάρτητο scaling των workers | extra infra (αποδεκτό) |

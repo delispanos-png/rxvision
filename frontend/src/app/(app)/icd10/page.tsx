@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useHashView } from "@/lib/useHashView";
 import { useQuery } from "@tanstack/react-query";
 import { Stethoscope, Receipt, Wallet, TrendingUp } from "lucide-react";
 import { api } from "@/lib/apiClient";
@@ -56,6 +57,8 @@ export default function Icd10Page() {
   const filters = useUiStore();
   const q = filtersToQuery(filters);
   const [level, setLevel] = useState("3");
+  const view = useHashView();              // #list → μόνο λίστα · #kpi → μόνο δείκτες · κενό → όλα
+  const showKpi = view !== "list", showList = view !== "kpi";
 
   const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ["icd10", "hierarchy", level, q],
@@ -110,31 +113,36 @@ export default function Icd10Page() {
 
       <QueryState isLoading={isLoading} isError={isError} onRetry={() => refetch()}>
         <div className="space-y-4">
-          {/* KPI row */}
-          <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
-            <KpiCard label={t("Διαγνώσεις (κόμβοι)", "Diagnoses (nodes)")} value={fmtNum(rows.length)} sub={t("στο τρέχον επίπεδο", "at the current level")} icon={Stethoscope} accent="indigo" />
-            <KpiCard label={t("Σύνολο συνταγών", "Total prescriptions")} value={fmtNum(totalRx)} sub={t("πλήθος εκτελέσεων", "number of executions")} icon={Receipt} accent="violet" trend={hasPrev ? pctDelta(totalRx, pRx) : undefined} />
-            <KpiCard label={t("Αξία", "Value")} value={fmtEur(totalValue)} sub={t("σύνολο περιόδου", "period total")} icon={Wallet} accent="amber" trend={hasPrev ? pctDelta(totalValue, pValue) : undefined} />
-            <KpiCard label={t("Κερδοφορία", "Profitability")} value={fmtEur(totalProfit)} sub={t("μεικτό κέρδος", "gross profit")} icon={TrendingUp} accent="green" trend={hasPrev ? pctDelta(totalProfit, pProfit) : undefined} />
-          </div>
-
-          {/* top nodes chart */}
-          {top.length > 0 && (
-            <PanelCard title={t("Top 10 κόμβοι ανά αξία", "Top 10 nodes by value")}>
-              <BarChart
-                labels={top.map((r) => r.node)}
-                data={top.map((r) => Math.round(r.value / 100))}
-                name={t("Αξία", "Value")}
-                horizontal
-                height={Math.max(220, top.length * 38)}
-              />
-            </PanelCard>
+          {showKpi && (
+            <>
+              {/* KPI row */}
+              <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
+                <KpiCard label={t("Διαγνώσεις (κόμβοι)", "Diagnoses (nodes)")} value={fmtNum(rows.length)} sub={t("στο τρέχον επίπεδο", "at the current level")} icon={Stethoscope} accent="indigo" />
+                <KpiCard label={t("Σύνολο συνταγών", "Total prescriptions")} value={fmtNum(totalRx)} sub={t("πλήθος εκτελέσεων", "number of executions")} icon={Receipt} accent="violet" trend={hasPrev ? pctDelta(totalRx, pRx) : undefined} />
+                <KpiCard label={t("Αξία", "Value")} value={fmtEur(totalValue)} sub={t("σύνολο περιόδου", "period total")} icon={Wallet} accent="amber" trend={hasPrev ? pctDelta(totalValue, pValue) : undefined} />
+                <KpiCard label={t("Κερδοφορία", "Profitability")} value={fmtEur(totalProfit)} sub={t("μεικτό κέρδος", "gross profit")} icon={TrendingUp} accent="green" trend={hasPrev ? pctDelta(totalProfit, pProfit) : undefined} />
+              </div>
+              {/* top nodes chart */}
+              {top.length > 0 && (
+                <PanelCard title={t("Top 10 κόμβοι ανά αξία", "Top 10 nodes by value")}>
+                  <BarChart
+                    labels={top.map((r) => r.node)}
+                    data={top.map((r) => Math.round(r.value / 100))}
+                    name={t("Αξία", "Value")}
+                    horizontal
+                    height={Math.max(220, top.length * 38)}
+                  />
+                </PanelCard>
+              )}
+            </>
           )}
 
           {/* table */}
-          <PanelCard title={t("Αναλυτικά ανά κόμβο", "Details by node")} bodyClassName="pt-2">
-            <DataTable pageSize={20} columns={columns} rows={rows} rowKey={(r) => r.node} />
-          </PanelCard>
+          {showList && (
+            <PanelCard title={t("Αναλυτικά ανά κόμβο", "Details by node")} bodyClassName="pt-2">
+              <DataTable pageSize={20} columns={columns} rows={rows} rowKey={(r) => r.node} />
+            </PanelCard>
+          )}
         </div>
       </QueryState>
     </ModuleGuard>

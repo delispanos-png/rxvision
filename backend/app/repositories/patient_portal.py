@@ -35,7 +35,7 @@ def _oid(v):
         return None
 
 
-# ΗΔΙΚΑ CDA frequency table (effectiveTime PIVL_TS period value+unit → human text), per the
+# ΗΔΥΚΑ CDA frequency table (effectiveTime PIVL_TS period value+unit → human text), per the
 # official CDA spec §2.1.2.4. Anything not in the table falls back to a "κάθε N <μονάδα>" form.
 _FREQ_MAP = {
     ("2", "wk"): "κάθε 2 εβδομάδες", ("1", "wk"): "1 φορά/εβδομάδα",
@@ -61,7 +61,7 @@ def _parse_qty(val):
 
 
 def _format_dosage(dose, freq, dur) -> str | None:
-    """Doctor's posology from the ΗΔΙΚΑ CDA, formatted EXACTLY per the CDA spec §2.1.2.4:
+    """Doctor's posology from the ΗΔΥΚΑ CDA, formatted EXACTLY per the CDA spec §2.1.2.4:
     dose (doseQuantity, π.χ. «1 ΔΙΣΚΙΑ»), frequency (PIVL_TS period → πίνακας συχνότητας,
     π.χ. «12 h» → «2 φορές/ημέρα»), duration (rateQuantity σε ημέρες → «για N ημέρες»)."""
     parts: list[str] = []
@@ -108,6 +108,12 @@ class PatientAccountRepository:
         res = await self.db["patient_accounts"].insert_one(doc)  # tenant-ok
         doc["_id"] = res.inserted_id
         return doc
+
+    async def set_favorite(self, account_id, tenant_id: str) -> None:
+        oid = _oid(account_id)
+        if oid:
+            await self.db["patient_accounts"].update_one(  # tenant-ok: global patient account
+                {"_id": oid}, {"$set": {"favorite_tenant_id": tenant_id}})
 
     async def set_password(self, account_id, password_hash: str) -> None:
         oid = _oid(account_id)
@@ -160,6 +166,44 @@ class PatientAccountRepository:
             return None
         return await self.db["patient_links"].find_one(  # tenant-ok
             {"account_id": oid, "tenant_id": tenant_id})
+
+    async def portal_customers(self, tenant_id: str, *, limit: int = 300) -> dict:
+        """Pharmacist view: how many of THIS pharmacy's patients are registered in the portal
+        («favourite» customers) vs how many remain to invite. patient_links.patient_ref ==
+        patients_anonymized._id."""
+        db = self.db
+        links = [l async for l in db["patient_links"].find({"tenant_id": tenant_id})]  # tenant-ok: scoped
+        by_ref = {l.get("patient_ref"): l for l in links if l.get("patient_ref")}
+        reg_refs = list(by_ref.keys())
+        total = await db["patients_anonymized"].count_documents(
+            {"tenant_id": tenant_id, "lifecycle": {"$in": ["active", "new"]}})
+        registered = len(reg_refs)
+        reg_list: list = []
+        if reg_refs:
+            async for p in db["patients_anonymized"].find(
+                    {"tenant_id": tenant_id, "_id": {"$in": reg_refs}},
+                    {"full_name": 1, "last_seen_at": 1}):
+                lk = by_ref.get(p["_id"]) or {}
+                reg_list.append({"name": p.get("full_name") or "—",
+                                 "since": lk.get("created_at"), "last_seen": p.get("last_seen_at")})
+        reg_list.sort(key=lambda x: str(x.get("since") or ""), reverse=True)
+        # patients we could proactively contact (have a mobile/email on file, not yet registered)
+        contactable = await db["patient_contacts"].count_documents(
+            {"tenant_id": tenant_id, "active": {"$ne": False},
+             "$or": [{"mobile": {"$nin": [None, ""]}}, {"email": {"$nin": [None, ""]}}]})
+        tenant = await db["tenants"].find_one({"_id": tenant_id}, {"name": 1})  # tenant-ok: own tenant
+        return jsonsafe({
+            "registered": registered,
+            "total": total,
+            "to_invite": max(0, total - registered),
+            "adoption_pct": round(registered / total * 100, 1) if total else 0.0,
+            "contactable": contactable,
+            "registered_list": reg_list[:limit],
+            "tenant_id": tenant_id,
+            "pharmacy_name": (tenant or {}).get("name"),
+            # QR / share link → pre-selects THIS pharmacy as the patient's «αγαπημένο»
+            "register_url": f"https://my.rxvision.gr/portal/register?ph={tenant_id}",
+        })
 
     # ── pharmacy directory (nearby) ───────────────────────────
     async def nearby_pharmacies(self, lat: float, lon: float, *, limit: int = 25) -> list[dict]:
@@ -351,7 +395,7 @@ class PatientRxRepository(BaseRepository):
                 "quantity": it.get("quantity", 1),
                 "retail_price": it.get("retail_price", 0),
                 "is_executed": it.get("is_executed", True),
-                # doctor's posology for this line (dose · frequency · duration), from the ΗΔΙΚΑ CDA
+                # doctor's posology for this line (dose · frequency · duration), from the ΗΔΥΚΑ CDA
                 "dosage": _format_dosage(d.get("dose"), d.get("frequency"), d.get("duration")),
                 "details": d,
             })
@@ -488,6 +532,11 @@ class PharmacyServiceRepository(BaseRepository):
         if oid:
             await self.update_one({"_id": oid}, {"$set": {**fields, "updated_at": _now()}})
 
+    async def delete(self, service_id: str):
+        oid = _oid(service_id)
+        if oid:
+            await self.delete_many({"_id": oid})
+
 
 class AvailabilityRepository(BaseRepository):
     """Patient → pharmacist 'do you have medicine X?' questions, with the pharmacist's answer."""
@@ -556,3 +605,66 @@ class AppointmentRepository(BaseRepository):
             return None
         await self.update_one({"_id": oid}, {"$set": {"status": status, "updated_at": _now()}})
         return await self.find_one({"_id": oid})
+
+
+class RxRequestRepository(BaseRepository):
+    """Patient → pharmacy «Ανάθεση συνταγής»: by Rx barcode OR a photo of the doctor's paper Rx
+    (stored in GridFS on our own infra). The pharmacist sees it and prepares/downloads the Rx."""
+
+    collection_name = "rx_requests"
+
+    def _bucket(self):
+        from motor.motor_asyncio import AsyncIOMotorGridFSBucket
+        return AsyncIOMotorGridFSBucket(self._db, bucket_name="rx_requests")
+
+    async def create(self, *, account_id, patient_ref, patient_name, patient_phone,
+                     kind: str, barcode: str | None = None, note: str | None = None,
+                     image: bytes | None = None, content_type: str | None = None,
+                     cda: dict | None = None) -> str:
+        image_id = None
+        if image is not None:
+            image_id = await self._bucket().upload_from_stream(
+                "rx", image, metadata={"tenant_id": self.tenant_id})
+        return str(await self.insert_one({
+            "account_id": _oid(account_id),
+            "patient_ref": _oid(patient_ref) if patient_ref else None,
+            "patient_name": patient_name, "patient_phone": patient_phone,
+            "kind": kind, "barcode": ((barcode or "").strip()[:40] or None),
+            "image_id": image_id, "content_type": content_type,
+            "cda": cda,                          # live ΗΔΥΚΑ snapshot (barcode requests)
+            "note": (note or "").strip()[:300], "status": "new", "created_at": _now()}))
+
+    async def mine(self, account_id) -> list[dict]:
+        return await self.find({"account_id": _oid(account_id)}, sort=[("created_at", -1)], limit=100)
+
+    async def pending(self) -> list[dict]:
+        return await self.find({"status": "new"}, sort=[("created_at", -1)], limit=100)
+
+    async def list_all(self) -> list[dict]:
+        return await self.find({}, sort=[("created_at", -1)], limit=300)
+
+    async def set_status(self, req_id: str, status: str) -> dict | None:
+        oid = _oid(req_id)
+        if not oid:
+            return None
+        await self.update_one({"_id": oid}, {"$set": {"status": status, "updated_at": _now()}})
+        return await self.find_one({"_id": oid})
+
+    async def reply(self, req_id: str, text: str, available_date: str | None = None) -> dict | None:
+        """Pharmacist replies to the patient (shortage info / availability date) + marks answered."""
+        oid = _oid(req_id)
+        if not oid:
+            return None
+        upd = {"reply": (text or "").strip()[:600], "replied_at": _now(), "status": "answered"}
+        if available_date:
+            upd["available_date"] = available_date
+        await self.update_one({"_id": oid}, {"$set": upd})
+        return await self.find_one({"_id": oid})
+
+    async def image(self, req_id: str):
+        oid = _oid(req_id)
+        r = await self.find_one({"_id": oid}) if oid else None
+        if not r or not r.get("image_id"):
+            return None, None
+        stream = await self._bucket().open_download_stream(_oid(r["image_id"]))
+        return await stream.read(), r.get("content_type", "image/jpeg")

@@ -36,21 +36,24 @@ def _txt(root, local: str) -> str | None:
 
 
 def _envelope(user: str, pw: str, afm: str) -> str:
+    # RgWsPublic2 is a SOAP 1.2 endpoint — the envelope namespace must be the SOAP 1.2 one
+    # (http://www.w3.org/2003/05/soap-envelope). A SOAP 1.1 envelope returns HTTP 415 with a
+    # VersionMismatch fault. The content-type must likewise be application/soap+xml (see lookup).
     u, p, a = html.escape(user), html.escape(pw), html.escape(afm)
     return (
-        '<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" '
+        '<env:Envelope xmlns:env="http://www.w3.org/2003/05/soap-envelope" '
         'xmlns:ns2="http://rgwspublic2/RgWsPublic2">'
-        '<soapenv:Header>'
+        '<env:Header>'
         '<wsse:Security xmlns:wsse="http://docs.oasis-open.org/wss/2004/01/'
         'oasis-200401-wss-wssecurity-secext-1.0.xsd">'
         f'<wsse:UsernameToken><wsse:Username>{u}</wsse:Username>'
         '<wsse:Password Type="http://docs.oasis-open.org/wss/2004/01/'
         f'oasis-200401-wss-username-token-profile-1.0#PasswordText">{p}</wsse:Password>'
-        '</wsse:UsernameToken></wsse:Security></soapenv:Header>'
-        '<soapenv:Body><ns2:rgWsPublic2AfmMethod><ns2:INPUT_REC>'
+        '</wsse:UsernameToken></wsse:Security></env:Header>'
+        '<env:Body><ns2:rgWsPublic2AfmMethod><ns2:INPUT_REC>'
         '<ns2:afm_called_by></ns2:afm_called_by>'
         f'<ns2:afm_called_for>{a}</ns2:afm_called_for>'
-        '</ns2:INPUT_REC></ns2:rgWsPublic2AfmMethod></soapenv:Body></soapenv:Envelope>'
+        '</ns2:INPUT_REC></ns2:rgWsPublic2AfmMethod></env:Body></env:Envelope>'
     )
 
 
@@ -65,25 +68,26 @@ async def lookup(afm: str) -> dict:
     try:
         async with httpx.AsyncClient(timeout=20) as cl:
             r = await cl.post(_URL, content=_envelope(user, pw, afm).encode("utf-8"),
-                              headers={"Content-Type": "text/xml; charset=utf-8"})
+                              headers={"Content-Type": "application/soap+xml; charset=utf-8"})
         root = ET.fromstring(r.text)
     except Exception as e:  # noqa: BLE001 — surface a clean error to the wizard
         return {"ok": False, "error": f"aade_unreachable:{type(e).__name__}"}
 
-    err = _txt(root, "errorDescr") or _txt(root, "faultstring")
+    # RgWsPublic2 response fields are snake_case; errors live in error_rec/error_descr.
+    err = _txt(root, "error_descr") or _txt(root, "Text") or _txt(root, "faultstring")
     if err:
         return {"ok": False, "error": err}
     name = _txt(root, "onomasia")
     if not name:
         return {"ok": False, "error": "not_found"}
-    addr = " ".join(x for x in [_txt(root, "postalAddress"), _txt(root, "postalAddressNo")] if x)
+    addr = " ".join(x for x in [_txt(root, "postal_address"), _txt(root, "postal_address_no")] if x)
     return {
         "ok": True, "afm": afm, "name": name,
-        "title": _txt(root, "commerTitle"),
-        "doy": _txt(root, "doyDescr"),
+        "title": _txt(root, "commer_title"),
+        "doy": _txt(root, "doy_descr"),
         "address": addr or None,
-        "postal_code": _txt(root, "postalZipCode"),
-        "city": _txt(root, "postalAreaDescription"),
-        # RgWsPublic2: deactivationFlag "1" = active, "2" = deactivated
-        "active": (_txt(root, "deactivationFlag") or "1") == "1",
+        "postal_code": _txt(root, "postal_zip_code"),
+        "city": _txt(root, "postal_area_description"),
+        # RgWsPublic2: deactivation_flag "1" = active, "2" = deactivated
+        "active": (_txt(root, "deactivation_flag") or "1") == "1",
     }

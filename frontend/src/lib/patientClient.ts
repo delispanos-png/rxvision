@@ -85,6 +85,18 @@ export async function patientApi<T>(path: string, init: RequestInit = {}): Promi
   return res.json() as Promise<T>;
 }
 
+// Multipart upload (e.g. a photo of the doctor's Rx) with the patient token.
+export async function patientUpload<T>(path: string, form: FormData): Promise<T> {
+  const token = patientTokens.access;
+  let res = await fetch(`${API_BASE}${path}`, { method: "POST", headers: token ? { Authorization: `Bearer ${token}` } : {}, body: form });
+  if ((res.status === 401 || res.status === 403) && (await refresh())) {
+    const t2 = patientTokens.access;
+    res = await fetch(`${API_BASE}${path}`, { method: "POST", headers: t2 ? { Authorization: `Bearer ${t2}` } : {}, body: form });
+  }
+  if (!res.ok) throw new ApiError(res.status, await res.json().catch(() => null));
+  return res.json() as Promise<T>;
+}
+
 // Raw helper for the auth endpoints (no token, returns the session payload).
 export async function patientAuth<T>(path: string, body: unknown): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {

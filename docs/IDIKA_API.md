@@ -1,4 +1,4 @@
-# ΗΔΙΚΑ — API ΦΑΡΜΑΚΟΠΟΙΩΝ v2 (integration notes)
+# ΗΔΥΚΑ — API ΦΑΡΜΑΚΟΠΟΙΩΝ v2 (integration notes)
 
 > «ΜΗΧΑΝΙΣΜΟΣ ΔΙΑΛΕΙΤΟΥΡΓΙΚΟΤΗΤΑΣ ΣΗΣ ΜΕ ΤΡΙΤΑ ΣΥΣΤΗΜΑΤΑ ΦΑΡΜΑΚΟΠΟΙΩΝ» — OpenAPI 3.0.1, version v2.0.
 > Test docs (ReDoc): `https://testeps.e-prescription.gr/pharmapiv2/documentation/manufacturers/index.html`
@@ -9,7 +9,7 @@
 - `basicAuth` — HTTP Basic (username/password του integrator).
 - `apiKey` — header **`Api-Key`** (κλειδί integrator).
 
-⚠️ **BLOCKER:** Με μόνο Basic auth κάθε κλήση επιστρέφει `ApiError code 604 "You must provide a valid api key"`. Χρειαζόμαστε το **Api-Key** από την ΗΔΙΚΑ (pharm.api.support@idika.gr) πριν γίνουν live κλήσεις.
+⚠️ **BLOCKER:** Με μόνο Basic auth κάθε κλήση επιστρέφει `ApiError code 604 "You must provide a valid api key"`. Χρειαζόμαστε το **Api-Key** από την ΗΔΥΚΑ (pharm.api.support@idika.gr) πριν γίνουν live κλήσεις.
 
 Base URL (test): `https://testeps.e-prescription.gr/pharmapiv2/`
 **Responses: XML** (`application/xml`) — ο client πρέπει να κάνει XML parsing.
@@ -30,7 +30,7 @@ Base URL (test): `https://testeps.e-prescription.gr/pharmapiv2/`
 
 ## Πλήρης συνταγή — `PharmPrescriptionDTO` (102 πεδία) → mapping σε concept doc
 
-| Concept doc | ΗΔΙΚΑ πεδία |
+| Concept doc | ΗΔΥΚΑ πεδία |
 |---|---|
 | **Ασφαλισμένος** (§2) | `patient`: sex, birthDate (→ηλικιακό group), city/postalCode (→τόπος), **amka** → *pseudonymize, ποτέ raw* |
 | **Ιατρός** (§3) | `doctor`: firstName/lastName, specialtyName, amka, unit |
@@ -41,12 +41,12 @@ Base URL (test): `https://testeps.e-prescription.gr/pharmapiv2/`
 | **Χαρακτηριστικά ειδών** (§8) | medicineDrug (ναρκωτικό), medicineAntibiotic, medicineDesensitization (εμβόλια απευαισθ.), medicineHighcost, chronicDisease, galenicalTreatment, drugCategoryId (ΦΥΚ/ναρκωτικά) |
 | **Ανεκτέλεστες δραστικές** (§9) | `treatments[].quantityOutstanding` |
 
-➡️ Η πραγματική ΗΔΙΚΑ δίνει δεδομένα για **ΟΛΕΣ** τις ενότητες του concept doc.
+➡️ Η πραγματική ΗΔΥΚΑ δίνει δεδομένα για **ΟΛΕΣ** τις ενότητες του concept doc.
 
 ## GDPR
 AMKA + ονόματα ασθενών έρχονται — **ανωνυμοποιούμε τον ασθενή** (pseudo_id, 0 raw AMKA), κρατάμε επώνυμο ιατρό (επιτρεπτό). PII (τηλέφωνο/email/διεύθυνση) δεν αποθηκεύεται.
 
 ## Action items
-1. **Αίτημα Api-Key** integrator από ΗΔΙΚΑ (pharm.api.support@idika.gr) — χωρίς αυτό δεν τρέχει τίποτα live.
+1. **Αίτημα Api-Key** integrator από ΗΔΥΚΑ (pharm.api.support@idika.gr) — χωρίς αυτό δεν τρέχει τίποτα live.
 2. Υλοποίηση `HdikaClient` (υπάρχει scaffold): Basic+Api-Key auth, **XML parser**, paging, execution-search → detail → ανωνυμοποίηση → ingest, + clearance.
 3. Connection settings (ήδη στο tenant Settings): προσθήκη πεδίου `api_key` (→ Vault).

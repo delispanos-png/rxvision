@@ -1,5 +1,5 @@
 """Patient contact details — pharmacist-entered PII (phone/email/address) kept in a
-SEPARATE collection from `patients_anonymized`, so ΗΔΙΚΑ re-ingestion never touches it.
+SEPARATE collection from `patients_anonymized`, so ΗΔΥΚΑ re-ingestion never touches it.
 The pharmacist is the data controller; `marketing_consent` gates newsletters/SMS."""
 
 from __future__ import annotations
@@ -13,8 +13,9 @@ from app.repositories.base import BaseRepository, jsonsafe
 
 CONTACT_FIELDS = (
     "phone", "mobile", "email", "address", "city", "postal_code",
-    "notes", "marketing_consent", "preferred_channel",
+    "notes", "observations", "marketing_consent", "preferred_channel",
     "reactivation_reason", "discontinuation_reason",
+    "g6pd_deficiency",   # clinical flag (pharmacist-set) — έλλειψη ενζύμου G6PD
 )
 
 
@@ -42,7 +43,7 @@ class PatientContactRepository(BaseRepository):
             return None
         payload = {k: data.get(k) for k in CONTACT_FIELDS if k in data}
         # pharmacist-controlled lifecycle (deceased / moved / stopped) — kept in THIS protected
-        # collection so a ΗΔΙΚΑ re-ingest can never resurrect an inactive patient.
+        # collection so a ΗΔΥΚΑ re-ingest can never resurrect an inactive patient.
         if "active" in data:
             active = bool(data.get("active"))
             payload["active"] = active

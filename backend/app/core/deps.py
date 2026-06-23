@@ -101,7 +101,60 @@ async def get_current_context(
         demo=bool(claims.get("demo", False)),
     )
     request.state.tenant = ctx
+    await _touch_activity(ctx.user_id)
+    await _touch_serving(ctx.tenant_id)
     return ctx
+
+
+# ── concurrent-users tracking: stamp users.last_active_at, throttled to ≤1 write/min/user ──
+_ACTIVITY_SEEN: dict[str, float] = {}
+
+
+async def _touch_activity(user_id: str) -> None:
+    import time as _t
+
+    now = _t.time()
+    if now - _ACTIVITY_SEEN.get(user_id, 0.0) < 60:
+        return
+    _ACTIVITY_SEEN[user_id] = now
+    try:
+        from datetime import datetime, timezone
+
+        from bson import ObjectId
+
+        from app.core.db import shared_db
+        oid = ObjectId(user_id) if ObjectId.is_valid(user_id) else user_id
+        await shared_db()["users"].update_one(
+            {"_id": oid}, {"$set": {"last_active_at": datetime.now(tz=timezone.utc)}})
+    except Exception:  # noqa: BLE001 — activity stamping must never break a request
+        pass
+
+
+# ── load-visibility: which app node last served each tenant (throttled ≤1 write/min/tenant) ──
+_SERVING_SEEN: dict[str, float] = {}
+
+
+async def _touch_serving(tenant_id: str) -> None:
+    import os
+    import time as _t
+
+    node = os.environ.get("NODE_NAME")
+    if not node or not tenant_id:
+        return
+    now = _t.time()
+    if now - _SERVING_SEEN.get(tenant_id, 0.0) < 60:
+        return
+    _SERVING_SEEN[tenant_id] = now
+    try:
+        from datetime import datetime, timezone
+
+        from app.core.db import shared_db
+        await shared_db()["tenant_serving"].update_one(
+            {"_id": tenant_id},
+            {"$set": {"node": node, "last_at": datetime.now(tz=timezone.utc)}, "$inc": {"hits": 1}},
+            upsert=True)
+    except Exception:  # noqa: BLE001 — must never break a request
+        pass
 
 
 def require(permission: str, module: str | None = None):

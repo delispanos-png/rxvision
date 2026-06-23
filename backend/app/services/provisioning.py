@@ -45,7 +45,10 @@ class TenantProvisioningService:
     async def open_tenant(self, *, name: str, owner_email: str, package_code: str,
                           owner_password: str | None = None, owner_name: str | None = None,
                           tenant_id: str | None = None, external_ref: str | None = None,
-                          source: str = "admin") -> dict:
+                          source: str = "admin", billing_cycle: str | None = None,
+                          sla: str | None = None, company: dict | None = None,
+                          modules: list[str] | None = None, seats: int | None = None,
+                          payment_method: str | None = None) -> dict:
         db = shared_db()
 
         package = await db["packages"].find_one({"_id": package_code})
@@ -58,12 +61,22 @@ class TenantProvisioningService:
         if await db["tenants"].find_one({"_id": tid}):
             raise ProvisioningError("tenant_exists")
 
+        # capability overrides: the admin's selected modules vs the package's base set.
+        # Only diffs are stored as overrides → resolve_modules(base, overrides) == selected.
+        base = set(package.get("modules") or [])
+        mod_overrides: dict[str, str] = {}
+        if modules is not None:
+            selected = set(modules)
+            mod_overrides = {**{m: "enabled" for m in selected - base},
+                             **{m: "locked" for m in base - selected}}
+
         # tenant
         await db["tenants"].insert_one({
             "_id": tid, "name": name, "slug": tid, "country": "GR", "status": "active",
             "isolation_tier": "shared",
             "settings": {"locale": "el-GR", "timezone": "Europe/Athens", "currency": "EUR"},
-            "modules": {}, "credentials_ref": {"hdika": None, "gesy": None},
+            "modules": mod_overrides, "credentials_ref": {"hdika": None, "gesy": None},
+            "billing_profile": company or {},
             "external_ref": external_ref, "opened_via": source,
             "created_at": _now(), "updated_at": _now()})
 
@@ -79,15 +92,31 @@ class TenantProvisioningService:
             "refresh_token_version": 0, "must_change_password": owner_password is None,
             "created_at": _now(), "updated_at": _now()})
 
-        # subscription from the package
+        # subscription from the package (billing cycle drives the price; SLA is admin-chosen)
         trial_days = package.get("trial_days", 0)
-        seats = package.get("seats", 1)
+        cycle = billing_cycle or "monthly"
+        yearly = cycle == "yearly"
+        price = package.get("price_yearly", 0) if yearly else package.get("price_monthly", 0)
+        # seats & cost breakdown: base package + chosen SLA tier + extra concurrent users
+        sla_code = sla or package.get("sla")
+        included_seats = int(package.get("seats", 1) or 1)
+        chosen_seats = max(int(seats or included_seats), included_seats)
+        extra_users = max(0, chosen_seats - included_seats)
+        extra_rate = int(package.get("extra_user_price_yearly" if yearly else "extra_user_price", 0) or 0)
+        sla_doc = await db["sla_tiers"].find_one({"_id": sla_code}) if sla_code else None
+        sla_price = int((sla_doc or {}).get("price_yearly" if yearly else "price_monthly", 0) or 0)
+        extra_total = extra_users * extra_rate
+        price_total = int(price) + sla_price + extra_total
         await db["subscriptions"].insert_one({
             "tenant_id": tid, "plan": package_code,
-            "status": "trial" if trial_days else "active", "seats": seats,
-            "price_per_pharmacy": package.get("price_monthly", 0), "currency": "EUR",
+            "status": "trial" if trial_days else "active", "seats": chosen_seats,
+            "billing_cycle": cycle, "sla": sla_code,
+            "price_per_pharmacy": price, "currency": "EUR",
+            "sla_price": sla_price, "extra_users": extra_users, "extra_user_rate": extra_rate,
+            "extra_users_total": extra_total, "price_total": price_total,
+            "payment_method": payment_method or "card",
             "modules_included": package.get("modules", []),
-            "limits": {"pharmacies": seats},
+            "limits": {"pharmacies": chosen_seats},
             "trial_ends_at": (_now() + timedelta(days=trial_days)) if trial_days else None,
             "current_period_end": _now() + timedelta(days=trial_days or 30),
             "external_ref": external_ref, "created_at": _now(), "updated_at": _now()})

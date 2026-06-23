@@ -1,4 +1,4 @@
-"""Parse the ΗΔΙΚΑ full-prescription document (HL7 v3 CDA, `application/x-hl7`)
+"""Parse the ΗΔΥΚΑ full-prescription document (HL7 v3 CDA, `application/x-hl7`)
 returned by GET /api/v1/prescriptions/get/{barcode}.
 
 The execution-search/prescriptions-search views are summaries; the rich data
@@ -6,7 +6,7 @@ The execution-search/prescriptions-search views are summaries; the rich data
 in this CDA ClinicalDocument. We navigate it namespace-agnostically and pull fields
 by their HL7 `root` OIDs / codeSystem names.
 
-Key locations (verified against the ΗΔΙΚΑ test environment):
+Key locations (verified against the ΗΔΥΚΑ test environment):
   patient   recordTarget/patientRole : id[root=1.10.1]=AMKA · patient/administrativeGenderCode ·
             patient/birthTime · addr/city · id[root=1.10.30.2]=fund name
   doctor    author/assignedAuthor : id[root=1.19.2]=specialty · assignedPerson/name (given+family)
@@ -139,7 +139,7 @@ def parse_cda(text: str) -> dict:
             })
     out["has_unexecuted"] = any_unexec
 
-    # ── repeat / recurrence metadata (ΗΔΙΚΑ CDA spec, prescription act) ──
+    # ── repeat / recurrence metadata (ΗΔΥΚΑ CDA spec, prescription act) ──
     #   1.1.4   = επαναληψιμότητα: 1=απλή, 3/4/5/6 = 3/4/5/6-μηνη αλυσίδα → planned repeat count
     #   1.1.4.1 = Σειρά της Συνταγής → ποια επανάληψη της αλυσίδας είναι (repeat_current)
     #   1.1.4.2 = barcode της 1ης/αρχικής (repeat_root)· απών ⇒ αυτή ΕΙΝΑΙ η αρχική
@@ -266,6 +266,7 @@ def parse_cda_full(text: str) -> dict:
             # ── κλινικές/κανονιστικές ενδείξεις (flags) ──
             "single_dose": _flag(ids.get("1.4.11")),        # μονοδοσιακό
             "high_cost": _flag(ids.get("1.1.7")),           # υψηλού κόστους
+            "n3816": _flag(ids.get("1.1.14")),              # ΦΥΚ Ν.3816/10 (ext 1=ναι) — stored on details for rebate-exclusion + Έλεγχος Barcode
             "heparin": _flag(ids.get("1.1.30")),            # με ηπαρίνη
             "ifet_import": _flag(ids.get("1.1.34")),        # εισαγωγή ΙΦΕΤ
             "desensitization": _flag(ids.get("1.1.8")),     # εμβόλιο απευαισθητοποίησης
@@ -302,32 +303,36 @@ def parse_cda_full(text: str) -> dict:
             for it in _iter(root, "item") if it.get("ID") and it.text}
     out["doctor_notes"] = narr.get("prescription_notes") or None
 
-    # per-line: each top-level <entry> that carries a product (medicine line)
+    # per-line: each top-level <entry> that carries a product (medicine line) OR is a γαληνικό/
+    # σύνθετο σκεύασμα (a substanceAdministration with NO product — its composition is in the
+    # doctor's free-text note). The prescription-level <act> entry has neither → it's skipped.
     for sup in _iter(root, "entry"):
         mm = _first(sup, "manufacturedMaterial")
-        if mm is None:
+        sa = _first(sup, "substanceAdministration")
+        if mm is None and sa is None:
             continue
         ids = _id_map(sup)
-        # doctor's free-text note for THIS line (composition for γαληνικά) — follow the reference
+        # doctor's free-text note for THIS line (composition/σύνθεση for γαληνικά) — follow the ref
         line_note = None
         for ref in _iter(sup, "reference"):
             key = (ref.get("value") or "").lstrip("#")
             if key.startswith("med_notes") and narr.get(key):
                 line_note = narr[key]
                 break
-        code = _first(mm, "code")
-        name = _first(mm, "name")
-        form = _first(mm, "formCode")
+        galenic = mm is None                       # compounded preparation (no marketed product)
+        code = _first(mm, "code") if mm is not None else None
+        name = _first(mm, "name") if mm is not None else None
+        form = _first(mm, "formCode") if mm is not None else None
         # active substance (last ingredient code/name)
         sub_name = sub_atc = None
-        for ing in _iter(mm, "ingredient"):
-            c = _first(ing, "code")
-            if c is not None and c.get("code"):
-                sub_atc = c.get("code")
-                nm = _first(ing, "name")
-                sub_name = (nm.text.strip() if nm is not None and nm.text else c.get("displayName"))
-        lot = _first(mm, "lotNumberText")
-        sa = _first(sup, "substanceAdministration")
+        if mm is not None:
+            for ing in _iter(mm, "ingredient"):
+                c = _first(ing, "code")
+                if c is not None and c.get("code"):
+                    sub_atc = c.get("code")
+                    nm = _first(ing, "name")
+                    sub_name = (nm.text.strip() if nm is not None and nm.text else c.get("displayName"))
+        lot = _first(mm, "lotNumberText") if mm is not None else None
         executed = True
         dose = freq = duration = None
         if sa is not None:
@@ -370,6 +375,7 @@ def parse_cda_full(text: str) -> dict:
             cet = _first(act, "effectiveTime")
             coupons.append({
                 "execution_no": _num(aid.get("2.10.8")),
+                "price": _num(aid.get("2.10.9")),    # per-component price (γαληνικά → συστατικά)
                 "strip": c_strip,
                 "qr_product_code": c_pc, "qr_batch": c_b, "qr_expiry": c_e,
                 "qr": (True if (aid.get("2.10.14") == "1" or c_pc or c_b or c_e)
@@ -381,7 +387,9 @@ def parse_cda_full(text: str) -> dict:
             "coupons": coupons,
             "quantity": qty or 1,
             "name": (name.text.strip() if name is not None and name.text
-                     else (code.get("displayName") if code is not None else "Φάρμακο")),
+                     else (code.get("displayName") if code is not None and code.get("displayName")
+                           else ("Γαληνικό σκεύασμα" if galenic else "Φάρμακο"))),
+            "galenic": galenic,
             "eof_code": code.get("code") if code is not None else None,
             "form": (form.get("displayName") if form is not None else None),
             "substance": sub_name,
@@ -390,7 +398,10 @@ def parse_cda_full(text: str) -> dict:
             "dose": dose, "frequency": freq, "duration": duration,
             "lot": (lot.text.strip() if lot is not None and lot.text else ids.get("2.10.12")),
             "execution_price": _num(ids.get("2.10.9")),
-            "retail_price": _num(ids.get("2.10.11")),
+            # γαληνικά have no 2.10.11 retail — fall back to the line total price (1.4.17)
+            "retail_price": (_num(ids.get("2.10.11")) if _num(ids.get("2.10.11")) is not None
+                             else _num(ids.get("1.4.17"))),
+            "price_total": _num(ids.get("1.4.17")),
             "reference_price": _num(ids.get("2.10.10")),
             "participation_pct": _num(ids.get("1.4.18")),
             "patient_share": _num(ids.get("1.4.20")),

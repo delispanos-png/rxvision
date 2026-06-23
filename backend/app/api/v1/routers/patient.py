@@ -4,15 +4,17 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi.responses import Response
 from pydantic import BaseModel, EmailStr, Field
 
 from app.core.deps import PatientContext, get_patient_context
 from app.core.ratelimit import rate_limit
 from app.repositories.patient_portal import (
     AppointmentRepository, AvailabilityRepository, PatientAccountRepository,
-    PatientRxRepository, PharmacyServiceRepository,
+    PatientRxRepository, PharmacyServiceRepository, RxRequestRepository,
 )
+from app.services.hdika_lookup import lookup_prescription
 from app.services.patient_auth_service import PatientAuthService, PatientError
 
 router = APIRouter()
@@ -26,6 +28,7 @@ class RegisterIn(BaseModel):
     phone: str = Field("", max_length=40)
     amka: str = Field(..., min_length=6, max_length=20)
     password: str = Field(..., min_length=8, max_length=128)
+    pharmacy: str | None = Field(None, max_length=40)   # «αγαπημένο» tenant from a counter QR
 
 
 class LoginIn(BaseModel):
@@ -64,7 +67,7 @@ async def register(body: RegisterIn):
     try:
         return await PatientAuthService().register(
             first_name=body.first_name, last_name=body.last_name, email=body.email,
-            phone=body.phone, amka=body.amka, password=body.password)
+            phone=body.phone, amka=body.amka, password=body.password, pharmacy=body.pharmacy)
     except PatientError as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, detail={"error": str(exc)})
 
@@ -245,3 +248,75 @@ async def book_appointment(body: AppointmentIn, ctx: PatientContext = Depends(ge
 @router.get("/appointments")
 async def my_appointments(ctx: PatientContext = Depends(get_patient_context)):
     return {"items": await PatientAccountRepository().my_appointments(ctx.account_id)}
+
+
+# ── «Ανάθεση συνταγής» — by barcode OR a photo of the doctor's Rx ───────────
+class RxRequestIn(BaseModel):
+    barcode: str
+    note: str | None = None
+    tenant_id: str | None = None
+
+
+@router.post("/rx-request", status_code=201)
+async def rx_request_barcode(body: RxRequestIn, ctx: PatientContext = Depends(get_patient_context)):
+    bc = (body.barcode or "").strip()
+    if len(bc) < 4:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "barcode_required")
+    target, pref, name, phone = await _target(ctx, body.tenant_id)
+    # live ΗΔΥΚΑ check via the pharmacy's own connection — verify + enrich the barcode
+    cda = await lookup_prescription(target, bc)
+    rid = await RxRequestRepository(tenant_id=target).create(
+        account_id=ctx.account_id, patient_ref=pref, patient_name=name, patient_phone=phone,
+        kind="barcode", barcode=bc, note=body.note, cda=cda)
+    return {"id": rid, "status": "new", "cda": cda}
+
+
+_MAX_RX_PHOTO = 12 * 1024 * 1024
+_RX_PHOTO_TYPES = {"image/jpeg", "image/jpg", "image/png", "image/webp", "image/heic", "image/heif", "application/pdf"}
+
+
+@router.post("/rx-request/photo", status_code=201)
+async def rx_request_photo(file: UploadFile = File(...), note: str | None = Form(None),
+                           tenant_id: str | None = Form(None),
+                           ctx: PatientContext = Depends(get_patient_context)):
+    if (file.content_type or "") not in _RX_PHOTO_TYPES:
+        raise HTTPException(status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, "bad_type")
+    content = await file.read()
+    if len(content) > _MAX_RX_PHOTO:
+        raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "too_large")
+    target, pref, name, phone = await _target(ctx, tenant_id)
+    rid = await RxRequestRepository(tenant_id=target).create(
+        account_id=ctx.account_id, patient_ref=pref, patient_name=name, patient_phone=phone,
+        kind="photo", note=note, image=content, content_type=file.content_type)
+    return {"id": rid, "status": "new"}
+
+
+@router.get("/rx-requests")
+async def my_rx_requests(ctx: PatientContext = Depends(get_patient_context)):
+    return {"items": await RxRequestRepository(tenant_id=ctx.tenant_id).mine(ctx.account_id)}
+
+
+# ── loyalty wallet (πορτοφόλι επιβράβευσης) ────────────────────────────────
+@router.get("/loyalty")
+async def my_loyalty(ctx: PatientContext = Depends(get_patient_context)):
+    from app.repositories.loyalty import LoyaltyRepository
+    repo = LoyaltyRepository(tenant_id=ctx.tenant_id)
+    cfg = await repo.config()
+    if not cfg.get("enabled"):
+        return {"enabled": False}
+    if not await repo.is_enrolled(ctx.patient_ref):
+        return {"enabled": True, "enrolled": False, "terms": cfg.get("terms")}
+    member = await repo.member(ctx.patient_ref)
+    rewards = await repo.rewards(only_active=True)
+    return {"enabled": True, "enrolled": True, "member": member, "rewards": rewards, "terms": cfg.get("terms")}
+
+
+@router.post("/loyalty/join", status_code=201)
+async def join_loyalty(ctx: PatientContext = Depends(get_patient_context)):
+    """Patient accepts the terms electronically and joins the programme."""
+    from app.repositories.loyalty import LoyaltyRepository
+    repo = LoyaltyRepository(tenant_id=ctx.tenant_id)
+    cfg = await repo.config()
+    if not cfg.get("enabled"):
+        raise HTTPException(status.HTTP_409_CONFLICT, "loyalty_off")
+    return await repo.enroll(ctx.patient_ref, method="electronic")

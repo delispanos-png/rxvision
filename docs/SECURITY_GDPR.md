@@ -28,12 +28,12 @@ analytics store. Privacy-by-design & by-default.
 - **Field-level (optional):** για τυχόν ευαίσθητα πεδία tenant settings — MongoDB CSFLE.
 
 ## 4. Secrets management
-- **Vault** (ή cloud KMS/Secrets Manager) για: tenant ΗΔΙΚΑ/ΓΕΣΥ credentials,
+- **Vault** (ή cloud KMS/Secrets Manager) για: tenant ΗΔΥΚΑ/ΓΕΣΥ credentials,
   `tenant_pepper`, JWT signing keys, DB creds.
 - App χρησιμοποιεί short-lived dynamic secrets / leases. **Καμία** secret σε env files
   παραγωγής, repo, logs, ή API responses. Rotation πολιτική (JWT keys, peppers με versioning).
 
-## 5. Credential storage για ΗΔΙΚΑ / ΓΕΣΥ
+## 5. Credential storage για ΗΔΥΚΑ / ΓΕΣΥ
 - Endpoint `PUT /ingestion/credentials/*` είναι **write-only**: γράφει στο Vault, δεν
   διαβάζεται ποτέ πίσω από το API. Workers τα διαβάζουν runtime με lease.
 - Στο `tenants.credentials_ref` κρατάμε **μόνο** το Vault path + status (set/unset/expired).

@@ -1,7 +1,7 @@
-"""Fund groups — platform-admin-managed grouping of insurance funds (by ΗΔΙΚΑ code).
+"""Fund groups — platform-admin-managed grouping of insurance funds (by ΗΔΥΚΑ code).
 
 Defined ONCE centrally (shared DB) and applied to every tenant's fund breakdowns.
-Funds are keyed by their ΗΔΙΚΑ `code`, which is identical across all pharmacies.
+Funds are keyed by their ΗΔΥΚΑ `code`, which is identical across all pharmacies.
 """
 
 from __future__ import annotations

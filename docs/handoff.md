@@ -26,7 +26,7 @@ then, treat all code changes as "implemented, not verified live".
 
 ## Then (priority order — see docs/todo.md / docs/execution-roadmap.md)
 1. **T-06** wire wholesale pricing → fixes profitability correctness (currently wrong for
-   real ΗΔΙΚΑ tenants). 
+   real ΗΔΥΚΑ tenants). 
 2. Responsive/UX **Phase A** foundations (`<QueryState>`, `<Modal>`, DataTable mobile/keyboard,
    max-width) — see `responsive-fixes-plan.md`.
 3. Remaining P0/P1 security (SSRF allow-list M2, audit logging M5, lockfiles), then the stubs

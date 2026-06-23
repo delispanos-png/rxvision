@@ -44,9 +44,9 @@
 - [ ] **T-08** MFA enrollment flow — generate per-user `mfa_secret` (store in Vault),
       QR/provisioning URI, verify-on-enable, disable, recovery codes. T-05 only added
       the *verification* path; no user can self-enable MFA yet (UI still says "σύντομα").
-- [~] **M2** SSRF allow-list / private-IP filtering on tenant-supplied ΗΔΙΚΑ `base_url`.
+- [~] **M2** SSRF allow-list / private-IP filtering on tenant-supplied ΗΔΥΚΑ `base_url`.
       **PAUSED 2026-06-08** — `backend/app/utils/net.py` guard built (uncommitted, not wired);
-      wiring touches `ingestion.py` which the concurrent ΗΔΙΚΑ agent owns. Finish after rebase
+      wiring touches `ingestion.py` which the concurrent ΗΔΥΚΑ agent owns. Finish after rebase
       onto the new `main`. *(see project-state §Active concurrency)*
 - [ ] Audit logging for PHI reads + failed logins; WORM/append-only audit store. *(M5)*
 
@@ -67,10 +67,10 @@
       source feed → real product masterdata → estimate from retail
       (`WHOLESALE_FALLBACK_MARGIN_PCT`, default 25%, flagged `wholesale_source="estimated"`).
       `_resolve_items` no longer clobbers a known masterdata price with 0. Fixes the
-      gross_profit==amount_claimed (100%-margin) bug for live ΗΔΙΚΑ. ΓΕΣΥ/synthetic unaffected
+      gross_profit==amount_claimed (100%-margin) bug for live ΗΔΥΚΑ. ΓΕΣΥ/synthetic unaffected
       (carry real wholesale). ⚠️ Estimate is approximate — real masterdata/PharmacyOne price
       feed is the proper long-term source (a price-list import remains a good follow-up).
-- [ ] Verify ΗΔΙΚΑ `repeat_total`/`repeat_current` mapping against the real spec
+- [ ] Verify ΗΔΥΚΑ `repeat_total`/`repeat_current` mapping against the real spec
       (drives future-prescription generation).
 - [ ] End-to-end tests for `IngestionEngine` (dedup, idempotency, future-rx, counters).
 - [ ] Integration tests (FastAPI `TestClient`) for auth, RBAC gating, tenant isolation.
@@ -161,6 +161,6 @@
 ---
 
 ### Open questions for the user (carry forward)
-1. Go-live market priority — Greece (ΗΔΙΚΑ) first, or GR+CY together? (affects GESY automation priority)
+1. Go-live market priority — Greece (ΗΔΥΚΑ) first, or GR+CY together? (affects GESY automation priority)
 2. Security-first sequencing vs parallel feature work for demos?
 3. ~~Public TLS method~~ → RESOLVED 2026-06-07: Let's Encrypt via Cloudflare DNS-01 (D-015).

@@ -1,6 +1,6 @@
 """Outbound-URL safety (SSRF guard).
 
-Tenant-influenced URLs (e.g. the ΗΔΙΚΑ `base_url`) are sent authenticated requests that
+Tenant-influenced URLs (e.g. the ΗΔΥΚΑ `base_url`) are sent authenticated requests that
 carry the platform Api-Key. Without a guard a tenant could point them at internal services
 (http://vault:8200, http://169.254.169.254, the Mongo host, …) and exfiltrate the key or
 probe the private network (M2). This restricts such URLs to PUBLIC http(s) hosts only.

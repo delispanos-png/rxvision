@@ -153,7 +153,7 @@ async def _read_tool(name: str, args: dict, tenant_id: str) -> dict:
 async def _a_start_sync(tenant_id, p):
     from app.workers.ingestion import hdika_incremental_sync
     hdika_incremental_sync.delay(tenant_id)
-    return "Ξεκίνησε ο συγχρονισμός ΗΔΙΚΑ. Δες πρόοδο στο «Λήψη ΗΔΙΚΑ»."
+    return "Ξεκίνησε ο συγχρονισμός ΗΔΥΚΑ. Δες πρόοδο στο «Λήψη ΗΔΥΚΑ»."
 
 
 async def _a_stop_sync(tenant_id, p):
@@ -170,7 +170,7 @@ async def _a_backfill(tenant_id, p):
     from app.workers.ingestion import hdika_backfill
     hdika_backfill.delay(tenant_id, f"{df}T00:00:00+00:00",
                          f"{dt}T23:59:59+00:00" if dt else None, 0.08)
-    return f"Ξεκίνησε ιστορική λήψη ΗΔΙΚΑ {df} → {dt or 'σήμερα'}."
+    return f"Ξεκίνησε ιστορική λήψη ΗΔΥΚΑ {df} → {dt or 'σήμερα'}."
 
 
 async def _a_answer_avail(tenant_id, p):
@@ -201,9 +201,9 @@ async def _a_pickup_ready(tenant_id, p):
 
 
 SERVER_ACTIONS = {
-    "start_hdika_sync": {"perm": "ingestion:run", "label": "Έναρξη λήψης ΗΔΙΚΑ", "run": _a_start_sync},
-    "stop_hdika_sync": {"perm": "ingestion:run", "label": "Διακοπή λήψης ΗΔΙΚΑ", "run": _a_stop_sync},
-    "run_hdika_backfill": {"perm": "ingestion:run", "label": "Ιστορική λήψη ΗΔΙΚΑ", "run": _a_backfill},
+    "start_hdika_sync": {"perm": "ingestion:run", "label": "Έναρξη λήψης ΗΔΥΚΑ", "run": _a_start_sync},
+    "stop_hdika_sync": {"perm": "ingestion:run", "label": "Διακοπή λήψης ΗΔΥΚΑ", "run": _a_stop_sync},
+    "run_hdika_backfill": {"perm": "ingestion:run", "label": "Ιστορική λήψη ΗΔΥΚΑ", "run": _a_backfill},
     "answer_availability": {"perm": "portal:manage", "label": "Απάντηση διαθεσιμότητας", "run": _a_answer_avail},
     "mark_pickup_ready": {"perm": "portal:manage", "label": "Σήμανση «έτοιμη για παραλαβή»", "run": _a_pickup_ready},
 }
@@ -230,7 +230,7 @@ _READ_DESC = {
     "get_upcoming": "Μελλοντικές συνταγές που ανοίγουν. params: days.",
     "get_order_suggestions": "Προτάσεις παραγγελίας/αναπλήρωσης. params: days.",
     "get_portal_pending": "Εκκρεμή αιτήματα πελατών (διαθεσιμότητες + ραντεβού/παραλαβές) με ids.",
-    "get_ingestion_status": "Κατάσταση τελευταίων εργασιών λήψης ΗΔΙΚΑ.",
+    "get_ingestion_status": "Κατάσταση τελευταίων εργασιών λήψης ΗΔΥΚΑ.",
 }
 
 

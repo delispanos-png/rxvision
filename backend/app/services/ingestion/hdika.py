@@ -1,6 +1,6 @@
-"""ΗΔΙΚΑ (Greece) adapter → canonical executions.
+"""ΗΔΥΚΑ (Greece) adapter → canonical executions.
 
-The real adapter authenticates with the pharmacy's ΗΔΙΚΑ credentials and pages the
+The real adapter authenticates with the pharmacy's ΗΔΥΚΑ credentials and pages the
 e-prescription API. Until we have API access, `fetch()` yields SYNTHETIC demo records
 so the full automated path (sync_jobs, dedup, post-process, analytics) is exercisable
 end-to-end. External ids are stable across runs so re-running demonstrates dedup.
@@ -39,7 +39,7 @@ class HdikaAdapter:
               until: datetime | None = None, count: int = 20):
         """Yield canonical executions in [`since`, `until`] (until defaults to today).
 
-        Real ΗΔΙΚΑ access flips on when credentials carry a `live_endpoint`; until
+        Real ΗΔΥΚΑ access flips on when credentials carry a `live_endpoint`; until
         then we yield deterministic synthetic data so the whole pipeline runs.
         """
         c = self.credentials
@@ -55,7 +55,7 @@ class HdikaAdapter:
             yield from self._fetch_synthetic(since=since, count=count)
 
     def _fetch_real(self, since: datetime | None, until: datetime | None = None):
-        """REAL ΗΔΙΚΑ path: authenticate, page executions in the window, map each raw
+        """REAL ΗΔΥΚΑ path: authenticate, page executions in the window, map each raw
         record → canonical. Field/endpoint mapping lives in hdika_client.py."""
         from app.services.ingestion.hdika_client import HdikaClient
 

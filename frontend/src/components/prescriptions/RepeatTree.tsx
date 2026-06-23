@@ -50,7 +50,7 @@ export function RepeatTree({ externalId }: { externalId: string }) {
 
       {tree.plan_incomplete && (
         <div className="mb-4 flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-300">
-          <AlertCircle className="h-4 w-4 shrink-0" /> {t("Αυτή είναι επανάληψη μιας αλυσίδας συνταγών — προς το παρόν έχουμε μόνο αυτή την εκτέλεση. Το πλήρες ιστορικό επαναλήψεων (πόσες από πόσες) θα συμπληρωθεί με τον πλήρη συγχρονισμό ΗΔΙΚΑ.", "This is a repeat in a prescription chain — for now we only hold this execution. The full repeat history will be filled in after the complete ΗΔΙΚΑ sync.")}
+          <AlertCircle className="h-4 w-4 shrink-0" /> {t("Αυτή είναι επανάληψη μιας αλυσίδας συνταγών — προς το παρόν έχουμε μόνο αυτή την εκτέλεση. Το πλήρες ιστορικό επαναλήψεων (πόσες από πόσες) θα συμπληρωθεί με τον πλήρη συγχρονισμό ΗΔΥΚΑ.", "This is a repeat in a prescription chain — for now we only hold this execution. The full repeat history will be filled in after the complete ΗΔΥΚΑ sync.")}
         </div>
       )}
 

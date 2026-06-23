@@ -1,7 +1,7 @@
-"""On-demand ΗΔΙΚΑ CDA lookup — the prescription-level γνωμάτευση (opinion) flag (CDA id 1.1.23)
+"""On-demand ΗΔΥΚΑ CDA lookup — the prescription-level γνωμάτευση (opinion) flag (CDA id 1.1.23)
 is NOT in the execution-search response, only in the eDispensation CDA. We fetch it lazily when a
 prescription is inspected and CACHE it on the execution (`has_opinion`), so each prescription costs
-at most ONE CDA call ever — gentle on ΗΔΙΚΑ, human-paced.
+at most ONE CDA call ever — gentle on ΗΔΥΚΑ, human-paced.
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ from app.services.vault_service import vault
 
 async def _creds(tenant_id: str, db) -> dict:
     creds = dict(vault.get_secret(f"tenants/{tenant_id}/hdika") or {})
-    plat = await db["platform_settings"].find_one({"_id": "idika"})  # tenant-ok: platform ΗΔΙΚΑ env
+    plat = await db["platform_settings"].find_one({"_id": "idika"})  # tenant-ok: platform ΗΔΥΚΑ env
     if plat:
         env = plat.get("active_environment", "test")
         envcfg = plat.get(env) or {}
@@ -30,7 +30,7 @@ async def _creds(tenant_id: str, db) -> dict:
 
 
 async def fetch_cda_info(tenant_id: str, db, barcode: str) -> dict:
-    """From the ΗΔΙΚΑ CDA: {opinion: bool|None (prescription-level γνωμάτευση, id 1.1.23),
+    """From the ΗΔΥΚΑ CDA: {opinion: bool|None (prescription-level γνωμάτευση, id 1.1.23),
     qr_by_eof: {eofCode: bool}} — per-medicine QR-coupon flag (CDA id 2.10.14: 1=QR/HMVS,
     0=ΕΟΦ ταινία γνησιότητας). {} if creds incomplete or unreachable."""
     creds = await _creds(tenant_id, db)

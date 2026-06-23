@@ -20,7 +20,7 @@ try:
 except Exception:  # noqa: BLE001 — Pillow always present in the worker image; never block import
     pass
 
-# ΗΔΙΚΑ prescription barcodes are long numeric strings (≈13+ digits). Match a digit run even when
+# ΗΔΥΚΑ prescription barcodes are long numeric strings (≈13+ digits). Match a digit run even when
 # OCR glues it to adjacent (Greek) letters — so no \b, just digit-run boundaries.
 _BARCODE_RE = re.compile(r"(?<!\d)(\d{11,16})(?!\d)")
 _DATE_RE = re.compile(r"\b(\d{1,2}[/.\-]\d{1,2}[/.\-]\d{2,4})\b")

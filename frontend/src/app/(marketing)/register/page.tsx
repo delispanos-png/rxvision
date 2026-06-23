@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Building2, Package, UserCog, Search, Check, ArrowRight, ArrowLeft, Eye, EyeOff, Loader2, CreditCard } from "lucide-react";
+import { Building2, Package, UserCog, Search, Check, ArrowRight, ArrowLeft, Eye, EyeOff, Loader2, CreditCard, Landmark } from "lucide-react";
 import { api, ApiError } from "@/lib/apiClient";
 import { Tooltip } from "@/components/ui/Tooltip";
 
@@ -14,31 +14,82 @@ type Company = {
 type Admin = { full_name: string; email: string; password: string };
 type RegisterResponse = { access_token: string; refresh_token: string; tenant_id: string };
 type Aade = { ok: boolean; error?: string; name?: string; title?: string; doy?: string; address?: string; postal_code?: string; city?: string; active?: boolean };
+type Pkg = { _id: string; name?: string; description?: string; price_monthly?: number; price_yearly?: number; trial_days?: number; seats?: number; sla?: string; extra_user_price?: number; extra_user_price_yearly?: number };
+type Sla = { _id: string; name?: string; description?: string; response_hours?: number; channels?: string; price_monthly?: number; price_yearly?: number };
 
-const PRICE = { monthly: 4500, yearly: 38000 };
-const eur = (c: number) => new Intl.NumberFormat("el-GR", { style: "currency", currency: "EUR", maximumFractionDigits: 0 }).format(c / 100);
+const eur = (c: number) => new Intl.NumberFormat("el-GR", { style: "currency", currency: "EUR", maximumFractionDigits: 0 }).format((c || 0) / 100);
 const input = "w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-brand-600 focus:outline-none focus:ring-1 focus:ring-brand-500";
 const label = "mb-1 block text-xs font-medium text-slate-600";
 
 const STEPS = [
   { icon: Building2, title: "Στοιχεία Πελάτη", sub: "Επωνυμία, ΑΦΜ, επικοινωνία" },
-  { icon: Package, title: "Προϊόν & Πακέτο", sub: "Επιλογή πακέτου, billing, SLA" },
-  { icon: UserCog, title: "Διαχειριστής & Ενεργοποίηση", sub: "Λογαριασμός + πληρωμή" },
+  { icon: Package, title: "Πακέτο & Χρήστες", sub: "Πακέτο, SLA, χρήστες, κόστος" },
+  { icon: CreditCard, title: "Τρόπος Πληρωμής", sub: "Κάρτα ή τραπεζικό έμβασμα" },
+  { icon: UserCog, title: "Λογαριασμός Owner", sub: "Username, email & κωδικός" },
 ];
+const N = STEPS.length;
+const STEP = { COMPANY: 0, PACKAGE: 1, PAYMENT: 2, OWNER: 3 } as const;
 
 export default function RegisterWizard() {
   const router = useRouter();
   const [step, setStep] = useState(0);
   const [company, setCompany] = useState<Company>({ name: "", title: "", afm: "", doy: "", country: "GR", email: "", billing_email: "", phone: "", website: "", address: "", postal_code: "", city: "", region: "" });
-  const [pkg, setPkg] = useState({ billing_cycle: "yearly" as "monthly" | "yearly", sla: "basic" as "basic" | "professional" });
   const [admin, setAdmin] = useState<Admin>({ full_name: "", email: "", password: "" });
   const [showPw, setShowPw] = useState(false);
   const [aade, setAade] = useState<{ loading: boolean; msg: string | null }>({ loading: false, msg: null });
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
+  // dynamic catalogue (only active packages/SLA are returned by the API)
+  const [pkgs, setPkgs] = useState<Pkg[]>([]);
+  const [slaTiers, setSlaTiers] = useState<Sla[]>([]);
+  const [pkgCode, setPkgCode] = useState<string>("");
+  const [billing, setBilling] = useState<"monthly" | "yearly">("yearly");
+  const [sla, setSla] = useState<string>("");
+  const [seats, setSeats] = useState<number>(1);
+  const [payMethod, setPayMethod] = useState<"card" | "bank">("card");
+
+  useEffect(() => {
+    api<{ packages: Pkg[]; sla: Sla[] }>("/onboarding/packages")
+      .then((r) => {
+        setPkgs(r.packages || []); setSlaTiers(r.sla || []);
+        if (r.packages?.length) { setPkgCode(r.packages[0]._id); if (r.packages[0].sla) setSla(r.packages[0].sla); }
+        if (!r.packages?.[0]?.sla && r.sla?.length) setSla(r.sla[0]._id);
+      })
+      .catch(() => { /* leave empty → manual */ });
+  }, []);
+
+  const pkg = pkgs.find((p) => p._id === pkgCode);
+  const slaObj = slaTiers.find((s) => s._id === sla);
+  const yearly = billing === "yearly";
+  const per = yearly ? "έτος" : "μήνα";
+  const basePrice = (yearly ? pkg?.price_yearly : pkg?.price_monthly) ?? 0;
+  const includedSeats = Math.max(1, pkg?.seats ?? 1);
+  const extraUsers = Math.max(0, seats - includedSeats);
+  const extraRate = (yearly ? pkg?.extra_user_price_yearly : pkg?.extra_user_price) ?? 0;
+  const extraTotal = extraUsers * extraRate;
+  const slaPrice = (yearly ? slaObj?.price_yearly : slaObj?.price_monthly) ?? 0;
+  const price = basePrice + slaPrice + extraTotal;   // full subscription value
+  const trialDays = pkg?.trial_days ?? 14;
+  // keep seats ≥ what the package includes when the package changes
+  useEffect(() => { setSeats((s) => Math.max(s, includedSeats)); }, [includedSeats]);
+
+  function genPassword() {
+    const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789!@#$%";
+    let out = "";
+    const rnd = typeof crypto !== "undefined" && crypto.getRandomValues ? crypto.getRandomValues(new Uint32Array(14)) : null;
+    for (let i = 0; i < 14; i++) out += chars[(rnd ? rnd[i] : Math.floor(Math.random() * 1e9)) % chars.length];
+    setAdmin((a) => ({ ...a, password: out })); setShowPw(true);
+  }
+
   const C = (k: keyof Company) => ({ value: company[k], onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => setCompany((c) => ({ ...c, [k]: e.target.value })) });
   const A = (k: keyof Admin) => ({ value: admin[k], onChange: (e: React.ChangeEvent<HTMLInputElement>) => setAdmin((a) => ({ ...a, [k]: e.target.value })) });
+
+  function choosePkg(code: string) {
+    setPkgCode(code);
+    const p = pkgs.find((x) => x._id === code);
+    if (p?.sla) setSla(p.sla);
+  }
 
   async function lookupAade() {
     const afm = company.afm.trim();
@@ -55,8 +106,10 @@ export default function RegisterWizard() {
     } catch { setAade({ loading: false, msg: "Αποτυχία σύνδεσης — συμπλήρωσε χειροκίνητα." }); }
   }
 
-  const step1ok = company.name.trim().length > 1 && company.email.includes("@");
-  const step3ok = admin.full_name.trim() && admin.email.includes("@") && admin.password.length >= 8;
+  const step0ok = company.name.trim().length > 1 && company.email.includes("@");
+  const step1ok = !!pkgCode;
+  const ownerOk = !!admin.full_name.trim() && admin.email.includes("@") && admin.password.length >= 8;
+  const canNext = step === STEP.COMPANY ? step0ok : step === STEP.PACKAGE ? step1ok : true;
 
   async function payWithRevolut(token: string, mode: string): Promise<void> {
     return new Promise<void>((resolve) => {
@@ -83,26 +136,27 @@ export default function RegisterWizard() {
         body: JSON.stringify({
           pharmacy_name: company.title || company.name, country: company.country,
           email: admin.email, password: admin.password, full_name: admin.full_name,
-          company, package_code: "standard", billing_cycle: pkg.billing_cycle, sla: pkg.sla,
+          company, package_code: pkgCode || "standard", billing_cycle: billing, sla: sla || undefined,
+          seats, payment_method: payMethod,
         }),
       });
       if (typeof window !== "undefined") {
         window.localStorage.setItem("access_token", res.access_token);
         window.localStorage.setItem("refresh_token", res.refresh_token);
       }
-      // capture the card via Revolut if configured; trial proceeds regardless
-      try {
-        const cc = await api<{ ok: boolean; token?: string; mode?: string }>("/billing/card-capture", { method: "POST" });
-        if (cc.ok && cc.token) await payWithRevolut(cc.token, cc.mode || "sandbox");
-      } catch { /* Revolut not configured → trial only */ }
+      // card → capture via Revolut if configured; bank → skip (invoice with IBAN follows). Trial proceeds either way.
+      if (payMethod === "card") {
+        try {
+          const cc = await api<{ ok: boolean; token?: string; mode?: string }>("/billing/card-capture", { method: "POST" });
+          if (cc.ok && cc.token) await payWithRevolut(cc.token, cc.mode || "sandbox");
+        } catch { /* Revolut not configured → trial only */ }
+      }
       router.push("/onboarding");
     } catch (e) {
       setErr(e instanceof ApiError && e.status === 409 ? "Το email χρησιμοποιείται ήδη." : "Η ενεργοποίηση απέτυχε. Δοκίμασε ξανά.");
       setBusy(false);
     }
   }
-
-  const price = PRICE[pkg.billing_cycle];
 
   return (
     <div className="fixed inset-0 z-[120] overflow-y-auto bg-slate-50">
@@ -113,9 +167,9 @@ export default function RegisterWizard() {
           <div className="flex items-center gap-1.5 text-lg font-bold"><span className="text-brand-700">℞</span> RxVision</div>
         </div>
         <div className="mb-1 h-1.5 overflow-hidden rounded-full bg-slate-200">
-          <div className="h-full rounded-full bg-brand-600 transition-all" style={{ width: `${((step + 1) / 3) * 100}%` }} />
+          <div className="h-full rounded-full bg-brand-600 transition-all" style={{ width: `${((step + 1) / N) * 100}%` }} />
         </div>
-        <div className="mb-6 flex justify-between text-[11px] text-slate-400"><span>Βήμα {step + 1} / 3</span><span>{Math.round(((step + 1) / 3) * 100)}%</span></div>
+        <div className="mb-6 flex justify-between text-[11px] text-slate-400"><span>Βήμα {step + 1} / {N}</span><span>{Math.round(((step + 1) / N) * 100)}%</span></div>
 
         <div className="grid gap-6 md:grid-cols-[220px_1fr]">
           {/* step rail */}
@@ -171,63 +225,125 @@ export default function RegisterWizard() {
 
             {step === 1 && (
               <div className="space-y-5">
-                <h2 className="text-xl font-bold text-slate-900">Προϊόν & Πακέτο</h2>
-                <div>
-                  <label className={label}>Επιλογή Προϊόντος</label>
-                  <div className="flex items-center gap-3 rounded-xl border-2 border-brand-300 bg-brand-50/50 p-3"><span className="grid h-9 w-9 place-items-center rounded-lg bg-brand-600 text-white">℞</span><div><div className="font-semibold text-slate-900">RxVision</div><div className="text-xs text-slate-500">Ανάλυση εκτελέσεων συνταγών</div></div><Check className="ml-auto h-5 w-5 text-brand-600" /></div>
-                </div>
-                <div>
-                  <label className={label}>Πακέτο Συνδρομής</label>
-                  <div className="rounded-xl border border-slate-200 p-4"><div className="font-semibold text-slate-900">RxVision Standard</div><div className="mt-1 text-2xl font-bold text-brand-700">{eur(price)}<span className="text-sm font-normal text-slate-400">/{pkg.billing_cycle === "yearly" ? "έτος" : "μήνα"}</span></div><div className="mt-1 text-xs text-emerald-600">✓ 14 ημέρες δωρεάν δοκιμή</div></div>
-                </div>
+                <h2 className="text-xl font-bold text-slate-900">Πακέτο Συνδρομής</h2>
+                {pkgs.length === 0 ? (
+                  <div className="rounded-xl border border-slate-200 p-4 text-sm text-slate-500">Φόρτωση πακέτων…</div>
+                ) : (
+                  <div>
+                    <label className={label}>Επιλογή Πακέτου</label>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      {pkgs.map((p) => {
+                        const pp = (billing === "yearly" ? p.price_yearly : p.price_monthly) ?? 0;
+                        const sel = p._id === pkgCode;
+                        return (
+                          <button key={p._id} type="button" onClick={() => choosePkg(p._id)} className={`rounded-xl border-2 p-4 text-left transition ${sel ? "border-brand-400 bg-brand-50/50" : "border-slate-200 hover:border-slate-300"}`}>
+                            <div className="flex items-center justify-between"><div className="font-semibold text-slate-900">{p.name || p._id}</div>{sel && <Check className="h-4 w-4 text-brand-600" />}</div>
+                            {p.description && <div className="mt-0.5 text-xs text-slate-500">{p.description}</div>}
+                            <div className="mt-2 text-xl font-bold text-brand-700">{eur(pp)}<span className="text-xs font-normal text-slate-400">/{billing === "yearly" ? "έτος" : "μήνα"}</span></div>
+                            {(p.trial_days ?? 0) > 0 && <div className="mt-1 text-[11px] text-emerald-600">✓ {p.trial_days} ημέρες δωρεάν δοκιμή</div>}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
                 <div>
                   <label className={label}>Κύκλος Τιμολόγησης</label>
                   <div className="grid grid-cols-2 gap-3">
                     {(["monthly", "yearly"] as const).map((bc) => (
-                      <button key={bc} type="button" onClick={() => setPkg((p) => ({ ...p, billing_cycle: bc }))} className={`rounded-xl border-2 p-3 text-left ${pkg.billing_cycle === bc ? "border-brand-400 bg-brand-50/50" : "border-slate-200"}`}>
+                      <button key={bc} type="button" onClick={() => setBilling(bc)} className={`rounded-xl border-2 p-3 text-left ${billing === bc ? "border-brand-400 bg-brand-50/50" : "border-slate-200"}`}>
                         <div className="font-medium text-slate-800">{bc === "monthly" ? "Μηνιαία" : "Ετήσια"}</div>
-                        <div className="text-xs text-slate-500">{bc === "monthly" ? eur(PRICE.monthly) + "/μήνα" : eur(PRICE.yearly) + "/έτος · έκπτωση ~30%"}</div>
+                        <div className="text-xs text-slate-500">{bc === "monthly" ? eur(pkg?.price_monthly ?? 0) + "/μήνα" : eur(pkg?.price_yearly ?? 0) + "/έτος"}</div>
                       </button>
                     ))}
                   </div>
                 </div>
-                <div>
-                  <label className={label}>SLA / Υποστήριξη</label>
-                  <div className="grid grid-cols-2 gap-3">
-                    {([["basic", "Basic", "Email support, απόκριση 24ω"], ["professional", "Professional", "Τηλ. + email, απόκριση 4ω"]] as const).map(([v, t, d]) => (
-                      <button key={v} type="button" onClick={() => setPkg((p) => ({ ...p, sla: v }))} className={`rounded-xl border-2 p-3 text-left ${pkg.sla === v ? "border-brand-400 bg-brand-50/50" : "border-slate-200"}`}><div className="font-medium text-slate-800">{t}</div><div className="text-xs text-slate-500">{d}</div></button>
-                    ))}
+                {slaTiers.length > 0 && (
+                  <div>
+                    <label className={label}>SLA / Υποστήριξη</label>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      {slaTiers.map((s) => (
+                        <button key={s._id} type="button" onClick={() => setSla(s._id)} className={`rounded-xl border-2 p-3 text-left ${sla === s._id ? "border-brand-400 bg-brand-50/50" : "border-slate-200"}`}>
+                          <div className="font-medium text-slate-800">{s.name || s._id}</div>
+                          <div className="text-xs text-slate-500">{s.description || (s.response_hours ? `Απόκριση ${s.response_hours}ω` : "")}{s.channels ? ` · ${s.channels}` : ""}</div>
+                        </button>
+                      ))}
+                    </div>
                   </div>
+                )}
+                {/* concurrent users + cost breakdown */}
+                <div>
+                  <label className={label}>Ταυτόχρονοι χρήστες</label>
+                  <div className="flex items-center gap-3">
+                    <button type="button" onClick={() => setSeats((n) => Math.max(includedSeats, n - 1))} className="grid h-9 w-9 place-items-center rounded-lg border border-slate-300 text-lg text-slate-600 hover:bg-slate-50">−</button>
+                    <input type="number" min={includedSeats} value={seats} onChange={(e) => setSeats(Math.max(includedSeats, parseInt(e.target.value) || includedSeats))} className={`${input} w-20 text-center`} />
+                    <button type="button" onClick={() => setSeats((n) => n + 1)} className="grid h-9 w-9 place-items-center rounded-lg border border-slate-300 text-lg text-slate-600 hover:bg-slate-50">+</button>
+                    <span className="text-xs text-slate-400">Περιλαμβάνονται {includedSeats} · {extraUsers > 0 ? `+${extraUsers} έξτρα` : "χωρίς έξτρα"}</span>
+                  </div>
+                </div>
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="mb-2 text-xs font-semibold text-slate-500">Ανάλυση κόστους ({yearly ? "ετήσια" : "μηνιαία"})</div>
+                  <dl className="space-y-1.5 text-sm">
+                    <div className="flex justify-between"><dt className="text-slate-600">{pkg?.name || "Πακέτο"}</dt><dd className="font-medium text-slate-800">{eur(basePrice)}</dd></div>
+                    <div className="flex justify-between"><dt className="text-slate-600">SLA{slaObj?.name ? ` · ${slaObj.name}` : ""}</dt><dd className="font-medium text-slate-800">{slaPrice ? eur(slaPrice) : "—"}</dd></div>
+                    <div className="flex justify-between"><dt className="text-slate-600">Έξτρα χρήστες {extraUsers > 0 ? `(${extraUsers} × ${eur(extraRate)})` : ""}</dt><dd className="font-medium text-slate-800">{extraTotal ? eur(extraTotal) : "—"}</dd></div>
+                    <div className="mt-1 flex justify-between border-t border-slate-200 pt-2 text-base"><dt className="font-semibold text-slate-900">Σύνολο</dt><dd className="font-bold text-brand-700">{eur(price)}<span className="text-xs font-normal text-slate-400">/{per}</span></dd></div>
+                  </dl>
                 </div>
               </div>
             )}
 
-            {step === 2 && (
+            {step === STEP.OWNER && (
               <div className="space-y-4">
-                <h2 className="text-xl font-bold text-slate-900">Διαχειριστής & Ενεργοποίηση</h2>
-                <div className="rounded-xl bg-brand-50 p-3 text-sm text-brand-800"><b>Λογαριασμός Διαχειριστή</b> — θα τον χρησιμοποιείς για σύνδεση στο RxVision.</div>
+                <h2 className="text-xl font-bold text-slate-900">Λογαριασμός Owner</h2>
+                <div className="rounded-xl bg-brand-50 p-3 text-sm text-brand-800"><b>Στοιχεία σύνδεσης</b> — με αυτά θα μπαίνεις (owner) στην πλατφόρμα RxVision.</div>
                 <div><label className={label}>Ονοματεπώνυμο *</label><input className={input} {...A("full_name")} autoComplete="name" /></div>
-                <div><label className={label}>Email *</label><input className={input} {...A("email")} type="email" autoComplete="email" /><p className="mt-1 text-[11px] text-slate-400">Θα χρησιμοποιηθεί για σύνδεση & ειδοποιήσεις.</p></div>
+                <div><label className={label}>Email (username) *</label><input className={input} {...A("email")} type="email" autoComplete="email" /><p className="mt-1 text-[11px] text-slate-400">Θα χρησιμοποιηθεί για σύνδεση & ειδοποιήσεις.</p></div>
                 <div>
-                  <label className={label}>Κωδικός *</label>
+                  <div className="flex items-center justify-between"><label className={label}>Κωδικός *</label><button type="button" onClick={genPassword} className="mb-1 text-[11px] font-medium text-brand-600 hover:underline">Αυτόματη δημιουργία</button></div>
                   <div className="relative"><input className={`${input} pr-10`} {...A("password")} type={showPw ? "text" : "password"} autoComplete="new-password" /><button type="button" onClick={() => setShowPw((s) => !s)} className="absolute inset-y-0 right-0 grid w-10 place-items-center text-slate-400">{showPw ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}</button></div>
-                  <p className="mt-1 text-[11px] text-slate-400">Τουλάχιστον 8 χαρακτήρες.</p>
+                  <p className="mt-1 text-[11px] text-slate-400">Τουλάχιστον 8 χαρακτήρες — ή πάτησε «Αυτόματη δημιουργία» για ισχυρό κωδικό.</p>
                 </div>
-                <div className="rounded-xl border border-slate-200 p-3">
-                  <div className="flex items-center gap-2 text-sm font-semibold text-slate-800"><CreditCard className="h-4 w-4 text-brand-600" /> Τρόπος Πληρωμής</div>
-                  <p className="mt-1 text-xs text-slate-500"><b>14 ημέρες δωρεάν.</b> Η κάρτα θα ζητηθεί ασφαλώς μέσω Revolut· καμία χρέωση πριν λήξει η δοκιμή ({eur(price)}/{pkg.billing_cycle === "yearly" ? "έτος" : "μήνα"}). Ακύρωση οποτεδήποτε.</p>
+                <div className="rounded-xl bg-brand-50/60 p-3 text-xs text-brand-800">
+                  <b>Σύνοψη:</b> {company.title || company.name || "—"} · {pkg?.name || pkgCode} · {yearly ? "ετήσια" : "μηνιαία"} · {seats} χρήστες · <b>{eur(price)}/{per}</b> · SLA: {slaObj?.name || sla || "—"} · Πληρωμή: {payMethod === "card" ? "κάρτα" : "τράπεζα"}
                 </div>
                 {err && <div role="alert" className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{err}</div>}
+              </div>
+            )}
+
+            {step === STEP.PAYMENT && (
+              <div className="space-y-4">
+                <h2 className="text-xl font-bold text-slate-900">Τρόπος Πληρωμής</h2>
+                <p className="text-sm text-slate-500"><b>{trialDays} ημέρες δωρεάν.</b> Επίλεξε πώς θα πληρώνεις μετά τη δοκιμή — καμία χρέωση τώρα. Ακύρωση οποτεδήποτε.</p>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <button type="button" onClick={() => setPayMethod("card")} className={`rounded-xl border-2 p-4 text-left ${payMethod === "card" ? "border-brand-400 bg-brand-50/50" : "border-slate-200 hover:border-slate-300"}`}>
+                    <div className="flex items-center gap-2 font-semibold text-slate-900"><CreditCard className="h-4 w-4 text-brand-600" /> Κάρτα {payMethod === "card" && <Check className="ml-auto h-4 w-4 text-brand-600" />}</div>
+                    <div className="mt-1 text-xs text-slate-500">Ασφαλής αποθήκευση μέσω Revolut. Αυτόματη χρέωση στη λήξη της δοκιμής.</div>
+                  </button>
+                  <button type="button" onClick={() => setPayMethod("bank")} className={`rounded-xl border-2 p-4 text-left ${payMethod === "bank" ? "border-brand-400 bg-brand-50/50" : "border-slate-200 hover:border-slate-300"}`}>
+                    <div className="flex items-center gap-2 font-semibold text-slate-900"><Landmark className="h-4 w-4 text-brand-600" /> Τραπεζικό έμβασμα {payMethod === "bank" && <Check className="ml-auto h-4 w-4 text-brand-600" />}</div>
+                    <div className="mt-1 text-xs text-slate-500">Θα λάβεις τιμολόγιο με IBAN στο email τιμολόγησης πριν τη λήξη της δοκιμής.</div>
+                  </button>
+                </div>
+
+                {payMethod === "card" && (
+                  <div className="rounded-xl border border-slate-200 p-3 text-xs text-slate-500">Στην «Ενεργοποίηση» θα ανοίξει ασφαλές παράθυρο Revolut για να καταχωρήσεις την κάρτα. Χρέωση {eur(price)}/{per} μόνο μετά τη λήξη της δωρεάν δοκιμής.</div>
+                )}
+                {payMethod === "bank" && (
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
+                    Θα σου σταλεί τιμολόγιο ({eur(price)}/{per}) με τα στοιχεία τραπεζικού λογαριασμού (IBAN) στο <b>{company.billing_email || company.email || "email τιμολόγησης"}</b>. Η δοκιμή ξεκινά αμέσως.
+                  </div>
+                )}
               </div>
             )}
 
             {/* nav */}
             <div className="mt-6 flex items-center justify-between">
               <button type="button" onClick={() => setStep((s) => Math.max(0, s - 1))} className={`inline-flex items-center gap-1 text-sm text-slate-500 hover:text-slate-700 ${step === 0 ? "invisible" : ""}`}><ArrowLeft className="h-4 w-4" /> Προηγούμενο</button>
-              {step < 2 ? (
-                <button type="button" disabled={step === 0 && !step1ok} onClick={() => setStep((s) => s + 1)} className="inline-flex items-center gap-1.5 rounded-lg bg-brand-700 px-5 py-2.5 text-sm font-medium text-white hover:bg-brand-800 disabled:opacity-50">Επόμενο <ArrowRight className="h-4 w-4" /></button>
+              {step < N - 1 ? (
+                <button type="button" disabled={!canNext} onClick={() => setStep((s) => s + 1)} className="inline-flex items-center gap-1.5 rounded-lg bg-brand-700 px-5 py-2.5 text-sm font-medium text-white hover:bg-brand-800 disabled:opacity-50">Επόμενο <ArrowRight className="h-4 w-4" /></button>
               ) : (
-                <button type="button" disabled={!step3ok || busy} onClick={activate} className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50">{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />} Ενεργοποίηση & Έναρξη Δοκιμής</button>
+                <button type="button" disabled={!ownerOk || busy} onClick={activate} className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50">{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />} Ενεργοποίηση & Έναρξη Δοκιμής</button>
               )}
             </div>
           </div>

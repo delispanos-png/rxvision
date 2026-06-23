@@ -156,7 +156,7 @@ class ProfitabilityLiveRepository(BaseRepository):
         proj = {"$project": {"_id": 0, "label": 1, "gross_profit": 1, "margin_pct": 1}}
 
         if dim == "fund":
-            # per-fund value/cost + ΗΔΙΚΑ code, then fold into the central fund GROUPS
+            # per-fund value/cost + ΗΔΥΚΑ code, then fold into the central fund GROUPS
             rows = await self.aggregate([
                 {"$match": match},
                 {"$group": {"_id": "$fund_id", "value": {"$sum": "$amount_total"},

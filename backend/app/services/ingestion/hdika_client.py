@@ -1,4 +1,4 @@
-"""Real ΗΔΙΚΑ HTTP client — API ΦΑΡΜΑΚΟΠΟΙΩΝ v2 (e-prescription).
+"""Real ΗΔΥΚΑ HTTP client — API ΦΑΡΜΑΚΟΠΟΙΩΝ v2 (e-prescription).
 
 Built against the OFFICIAL test spec (see docs/IDIKA_API.md):
   base   <base_url>            e.g. https://testeps.e-prescription.gr/pharmapiv2
@@ -38,7 +38,7 @@ from app.services.ingestion.canonical import (
 )
 from app.services.ingestion.hdika_cda import parse_cda, parse_cda_full
 
-_PAGE_SIZE = 100                  # ΗΔΙΚΑ rejects size>~150 with HTTP 400; 100 is safe
+_PAGE_SIZE = 100                  # ΗΔΥΚΑ rejects size>~150 with HTTP 400; 100 is safe
 _MAX_BACKFILL_DAYS = 400          # cap day-by-day backfill (search is per-day)
 _TIMEOUT = httpx.Timeout(30.0, connect=10.0)
 
@@ -57,16 +57,16 @@ def _gateway_message(text: str) -> str | None:
     visible = _re.sub(r"<[^>]*>", " ", text or "")
     visible = _re.sub(r"\s+", " ", visible).strip()
     if "hpdia0306w" in visible.lower() or "locked out" in visible.lower() or "κλειδ" in visible.lower():
-        return ("Ο λογαριασμός ΗΔΙΚΑ κλειδώθηκε προσωρινά από την πύλη λόγω πολλών "
+        return ("Ο λογαριασμός ΗΔΥΚΑ κλειδώθηκε προσωρινά από την πύλη λόγω πολλών "
                 "αποτυχημένων προσπαθειών σύνδεσης. Περιμένετε ~15–30 λεπτά και "
                 "δοκιμάστε ΜΙΑ φορά (μην επαναλαμβάνετε — οι προσπάθειες παρατείνουν το κλείδωμα).")
     # generic gateway page → surface its visible text (helps diagnose)
-    return f"Η πύλη ΗΔΙΚΑ επέστρεψε σελίδα σφάλματος: {visible[:180]}" if visible else None
+    return f"Η πύλη ΗΔΥΚΑ επέστρεψε σελίδα σφάλματος: {visible[:180]}" if visible else None
 
 
 def _to_dict(el: ET.Element) -> dict:
     """Namespace-agnostic XML element → nested dict/list. Repeated children become
-    lists; leaf text is kept. Robust to the JAXB-style XML ΗΔΙΚΑ returns."""
+    lists; leaf text is kept. Robust to the JAXB-style XML ΗΔΥΚΑ returns."""
     out: dict = {}
     for child in el:
         key = _strip_ns(child.tag)
@@ -92,7 +92,7 @@ def _as_list(v) -> list:
 
 
 def _round_half_up(x: float) -> int:
-    """Round to the nearest integer cent, halves UP (ΗΔΙΚΑ/PharmacyOne CustomRound) — NOT Python's
+    """Round to the nearest integer cent, halves UP (ΗΔΥΚΑ/PharmacyOne CustomRound) — NOT Python's
     banker's rounding (which gave 200 instead of 201 on a .5 participation)."""
     import math
     return int(math.floor(x + 0.5))
@@ -103,6 +103,22 @@ def _round_half_down(x: float) -> int:
     half of a ΚΥΥΑΠ price difference rounds in the patient's favour."""
     import math
     return int(math.ceil(x - 0.5))
+
+
+class PatientDeceased(Exception):
+    """Η ΗΔΥΚΑ αναγγέλλει θάνατο για το ΑΜΚΑ (getpatient) → ο caller σημαίνει τον ασθενή
+    ως θανόντα (services.patient_lifecycle.mark_deceased) αντί να το χειριστεί ως σφάλμα."""
+
+    def __init__(self, amka: str) -> None:
+        self.amka = amka
+        super().__init__(f"ΗΔΥΚΑ: αναγγελθείς θάνατος για ΑΜΚΑ {amka}")
+
+
+def _is_deceased_announcement(text: str) -> bool:
+    """True αν το σώμα (JSON/XML) της ΗΔΥΚΑ είναι αναγγελία θανάτου — μήνυμα τύπου
+    «έχει αναγγελθεί Θάνατος στο Εθνικό Μητρώο ΑΜΚΑ-ΕΜΑΕΣ»."""
+    t = (text or "").lower()
+    return "θάνατος" in t and ("μητρώο αμκα" in t or "εμαες" in t or "αναγγελθεί" in t)
 
 
 class HdikaClient:
@@ -119,7 +135,7 @@ class HdikaClient:
         # patient) pays the insured's participation on ΕΤΥΑΠ scripts (see share calc in _map_full).
         self.etyap_contracted = str(c.get("etyap_contracted", "")).strip().lower() in ("1", "true", "yes")
         self.catalog = catalog or {}     # eofCode → price/cost (Δελτίο Τιμών) for per-med analysis
-        self.throttle = float(c.get("throttle") or 0)   # seconds to pause after each call (be gentle on ΗΔΙΚΑ)
+        self.throttle = float(c.get("throttle") or 0)   # seconds to pause after each call (be gentle on ΗΔΥΚΑ)
         self.skipped_days = 0           # days skipped due to transient gateway errors
         headers = {"Accept": "application/xml"}
         if self.api_key:
@@ -138,28 +154,58 @@ class HdikaClient:
 
     def authenticate(self) -> None:
         """v2 has no login step — creds ride every request. Validate them cheaply so
-        bad/missing keys fail fast with the ΗΔΙΚΑ error (604 no key / 911 invalid key)."""
+        bad/missing keys fail fast with the ΗΔΥΚΑ error (604 no key / 911 invalid key)."""
         try:
             r = self._client.get(self._url("/api/v1/user/me"))
         except httpx.TimeoutException as exc:
-            raise TimeoutError(f"ΗΔΙΚΑ auth timeout: {exc}") from exc
+            raise TimeoutError(f"ΗΔΥΚΑ auth timeout: {exc}") from exc
         except httpx.TransportError as exc:
-            raise ConnectionError(f"ΗΔΙΚΑ auth transport error: {exc}") from exc
+            raise ConnectionError(f"ΗΔΥΚΑ auth transport error: {exc}") from exc
         text = r.text or ""
         gw = _gateway_message(text)
         if gw:                       # IBM gateway HTML (lockout / error page)
             raise PermissionError(gw)
         if r.status_code in (401, 403, 404):
             raise PermissionError(
-                f"Η πύλη ΗΔΙΚΑ απέρριψε το αίτημα (HTTP {r.status_code}). Συνήθως σημαίνει "
+                f"Η πύλη ΗΔΥΚΑ απέρριψε το αίτημα (HTTP {r.status_code}). Συνήθως σημαίνει "
                 "λάθος περιβάλλον (test/production) ή μη έγκυρα credentials/endpoint γι' αυτό το περιβάλλον.")
         # app-level XML ApiError (π.χ. 911 invalid key) → ανέδειξε το <description>
         if r.status_code >= 400:
             if "<description>" in text:
                 text = text.split("<description>", 1)[1].split("</description>", 1)[0]
-            raise PermissionError(f"ΗΔΙΚΑ: {text[:200]}")
+            raise PermissionError(f"ΗΔΥΚΑ: {text[:200]}")
 
-    # ── auto-discovery: pharmacy profile from ΗΔΙΚΑ ────────
+    def get_patient(self, amka: str) -> dict:
+        """GET ΗΔΥΚΑ getpatient για έναν ΑΜΚΑ. Αν η πύλη αναγγείλει θάνατο, σηκώνει
+        PatientDeceased ώστε ο caller να σημάνει τον ασθενή (mark_deceased) αντί να
+        χειριστεί 400 ως απλό σφάλμα.
+
+        DORMANT μέχρι να ξεμπλοκάρει η live ΗΔΥΚΑ: το ακριβές path/params/μορφή
+        απάντησης οριστικοποιούνται με έγκυρο Api-Key — το error-ladder (θάνατος/gateway/
+        ApiError) είναι ήδη σωστό βάσει του παρατηρημένου JSON ApiError 400."""
+        try:
+            r = self._client.get(self._url("/api/v1/common/getpatient"), params={"patientamka": amka})
+        except httpx.TimeoutException as exc:
+            raise TimeoutError(f"ΗΔΥΚΑ getpatient timeout: {exc}") from exc
+        except httpx.TransportError as exc:
+            raise ConnectionError(f"ΗΔΥΚΑ getpatient transport error: {exc}") from exc
+        text = r.text or ""
+        if _is_deceased_announcement(text):       # «έχει αναγγελθεί Θάνατος…»
+            raise PatientDeceased(amka)
+        gw = _gateway_message(text)
+        if gw:
+            raise PermissionError(gw)
+        if r.status_code >= 400:
+            desc = text
+            if "<description>" in text:
+                desc = text.split("<description>", 1)[1].split("</description>", 1)[0]
+            raise PermissionError(f"ΗΔΥΚΑ getpatient: {desc[:200]}")
+        try:
+            return _to_dict(ET.fromstring(text.encode("utf-8")))
+        except ET.ParseError:
+            return {}
+
+    # ── auto-discovery: pharmacy profile from ΗΔΥΚΑ ────────
     def fetch_user_info(self) -> dict:
         """GET /api/v1/user/me (+ /contracts) → the pharmacy fields we should NOT ask
         the operator to type: pharmacy_id, ΑΦΜ, ΣΗΣ code, ΑΜ ΕΟΠΥΥ, name, history_from.
@@ -199,14 +245,14 @@ class HdikaClient:
             if fund_names:
                 info["contracted_funds"] = ", ".join(sorted(set(fund_names)))
             # ΕΤΥΑΠ (επικουρικό σωμάτων ασφαλείας) is a Φ.Σ.-level arrangement — it is NOT a fund
-            # in getMyContracts. ΗΔΙΚΑ ties it to the pharmacy's prefecture: whole Φαρμακευτικοί
+            # in getMyContracts. ΗΔΥΚΑ ties it to the pharmacy's prefecture: whole Φαρμακευτικοί
             # Σύλλογοι are (or aren't) contracted. Known contracted prefectures below (expandable);
             # plus an explicit ΕΤΥΑΠ contract if one ever appears in the funds list.
             etyap_counties = {"ΑΤΤΙΚΗΣ", "ΘΕΣΣΑΛΟΝΙΚΗΣ"}
             if any("ΕΤΥΑΠ" in n.upper() for n in fund_names) or (
                     county and county.upper() in etyap_counties):
                 info["etyap_contracted"] = "true"
-        except Exception:  # noqa: BLE001 — contracts is non-critical (ΗΔΙΚΑ test 500s it)
+        except Exception:  # noqa: BLE001 — contracts is non-critical (ΗΔΥΚΑ test 500s it)
             pass  # operator can set history_from / etyap_contracted manually
         return {k: str(v) for k, v in info.items() if v not in (None, "")}
 
@@ -350,6 +396,33 @@ class HdikaClient:
                 page += 1
             day -= timedelta(days=1)
 
+    def search_keys(self, day) -> set:
+        """Reconciliation helper — the set of (barcode, executionNo) ΗΔΥΚΑ CURRENTLY returns for
+        `day` (a date), WITHOUT fetching any CDA (light: 1 search request per page). RAISES on a
+        failed fetch so the caller skips that day (we must never cancel from a bad/empty fetch)."""
+        keys: set = set()
+        page = 0
+        while True:
+            params = {"size": _PAGE_SIZE, "page": page, "executionDate": day.isoformat()}
+            if self.pharmacy_id:
+                params["pharmacyId"] = self.pharmacy_id
+            data = _to_dict(self._get_xml("/api/v1/prescription-execution/search", params))
+            records = self._rows(data)
+            for raw in records:
+                if not isinstance(raw, dict):
+                    continue
+                presc = raw.get("prescription") if isinstance(raw.get("prescription"), dict) else {}
+                bc = str(_first(presc, "barcode") or _first(raw, "barcode", default=""))
+                if not bc:
+                    continue
+                keys.add((bc, int(float(_first(raw, "executionNo", default=1) or 1))))
+            if self.throttle:
+                time.sleep(self.throttle)
+            if self._is_last(data, len(records)):
+                break
+            page += 1
+        return keys
+
     def _map_full(self, ex: dict, cda: dict, summary: dict | None = None) -> CanonicalExecution:
         """Execution row (amounts/fund/executionNo) + full CDA (patient/doctor/ICD-10/
         medicines) + repeat summary → a complete CanonicalExecution. Each medicine is a
@@ -358,7 +431,7 @@ class HdikaClient:
         presc = ex.get("prescription") if isinstance(ex.get("prescription"), dict) else {}
         barcode = str(_first(presc, "barcode") or _first(ex, "barcode", default=""))
         fund_d = presc.get("socialInsuranceDTO") if isinstance(presc.get("socialInsuranceDTO"), dict) else {}
-        # ΗΔΙΚΑ amounts (verified against official printouts):
+        # ΗΔΥΚΑ amounts (verified against official printouts):
         #   totalValue        = reimbursed base (Αποζ.Ασφ), NOT retail
         #   totalDifference   = full retail−reference difference; sociTotalDifference = fund's part
         #   socialInsuranceSurcharge = the 1€ per-prescription fee the patient pays
@@ -377,12 +450,12 @@ class HdikaClient:
                  + _eur_cents(_first(ex, "supplementalDifferenceAmt", default=0)))
         # ΚΥΥΑΠ split is computed AFTER the priced lines are built (needs per-line ref/diff). See below.
         exec_no = int(float(_first(ex, "executionNo", default=1) or 1))
-        # ΗΔΙΚΑ `executions` = πόσες φορές εκτελέστηκε ΜΕΧΡΙ ΤΩΡΑ — ΟΧΙ το πλάνο επαναλήψεων. Το
+        # ΗΔΥΚΑ `executions` = πόσες φορές εκτελέστηκε ΜΕΧΡΙ ΤΩΡΑ — ΟΧΙ το πλάνο επαναλήψεων. Το
         # πραγματικό πλάνο ("3 από 4", "1 από 6") ζει στο CDA repeat schedule (parse_cda →
         # `repeat_planned`). Όταν λείπει, κρατάμε repeat_total=0 (άγνωστο) αντί να το φαμπρικάρουμε
         # = executions (που έβγαζε παραπλανητικά "N/N" badges)· το display παράγει την αλυσίδα από
         # τις εκτελέσεις + τον εξαγόμενο ρυθμό. repeat_current = ο executionNo αυτής της γραμμής.
-        # Repeat chain — AUTHORITATIVE from the ΗΔΙΚΑ CDA: 1.1.4 = planned count (1=απλή, 3/4/5/6 =
+        # Repeat chain — AUTHORITATIVE from the ΗΔΥΚΑ CDA: 1.1.4 = planned count (1=απλή, 3/4/5/6 =
         # 3/4/5/6-μηνη αλυσίδα), 1.1.4.1 = Σειρά (this prescription's position). Gives the real
         # "X of Y" (e.g. 1 of 6) even when sibling repeat-barcodes are not synced. Validator needs
         # current ≤ total. Falls back to a single (1/1) when the CDA carries no chain info.
@@ -448,10 +521,10 @@ class HdikaClient:
             # εμπορικά προϊόντα, χωρίς Δελτίο Τιμών (wholesale=0). ΔΕΝ πρέπει να συγχωνεύονται όλα σε
             # ένα προϊόν (το catalog δίνει κοινό barcode 280-11) — κάθε γαληνικό = δική του σύνθεση,
             # άρα μοναδικό barcode ανά γραμμή. Όνομα = η σύνθεση/οδηγία του γιατρού (από το CDA).
-            special = {"-1": "galenic", "-2": "ifet"}.get(eof)
+            special = {"-1": "galenic", "-2": "ifet"}.get(eof) or ("galenic" if m.get("galenic") else None)
             composition = str(m.get("notes") or "").strip()
             if special:
-                it_barcode = f"{barcode}-{eof.lstrip('-')}-{n}"
+                it_barcode = f"{barcode}-{(eof.lstrip('-') or 'g')}-{n}"
                 it_name = (f"Γαληνικό: {composition}" if (special == "galenic" and composition)
                            else cat.get("name") or m.get("name") or
                            ("Γαληνικό σκεύασμα" if special == "galenic" else "Εισαγωγή ΙΦΕΤ"))
@@ -476,13 +549,13 @@ class HdikaClient:
                 details={k: v for k, v in details.items() if v is not None},
             ))
         if not items:                                   # CDA missing → prescription-level line
-            items = [CanonicalItem(barcode=barcode or "rx", name="Συνταγή (ΗΔΙΚΑ)",
+            items = [CanonicalItem(barcode=barcode or "rx", name="Συνταγή (ΗΔΥΚΑ)",
                                    quantity=1, retail_price=total, is_executed=True)]
         elif sum(i.retail_price * i.quantity for i in items) == 0 and total > 0:
             items[0].retail_price = total               # catalog miss → keep revenue on line 1
 
         # ── ΚΥΥΑΠ / «ΕΤΥΑΠ» σωμάτων ασφαλείας (Ι.Κ.Α. πρώην Ο.Π.Α.Δ. - Κ.Υ.Υ.Α.Π.) ─────────────
-        # ΤΡΙΜΕΡΗΣ επιμερισμός (επαληθευμένος στο επίσημο έντυπο ΗΔΙΚΑ): ο ασφαλισμένος πληρώνει τη
+        # ΤΡΙΜΕΡΗΣ επιμερισμός (επαληθευμένος στο επίσημο έντυπο ΗΔΥΚΑ): ο ασφαλισμένος πληρώνει τη
         # ΜΙΣΗ διαφορά (στρογγ. κάτω) + το 1€ ΕΟΠΥΥ· το ΚΥΥΑΠ πληρώνει τη συμμετοχή + την άλλη μισή
         # διαφορά· το ΕΟΠΥΥ το υπόλοιπο (amount_total − ασφ/νος − ΚΥΥΑΠ, μέσω amount_claimed). Μόνο
         # για συμβεβλημένα φαρμακεία (νομός Αττικής/Θεσσαλονίκης κ.λπ.)· αλλιώς σαν απλό ΕΟΠΥΥ.
@@ -567,7 +640,7 @@ class HdikaClient:
             repeat_current=repeat_current,
             repeat_total=repeat_total,
             patient_share=share,
-            amount_total=total,        # ΗΔΙΚΑ retail (totalValue+totalDifference) — authoritative
+            amount_total=total,        # ΗΔΥΚΑ retail (totalValue+totalDifference) — authoritative
             valid_until=valid_until,
             valid_from=valid_from,
             repeat_root=repeat_root,
@@ -575,7 +648,7 @@ class HdikaClient:
         )
 
     def get_pdf(self, path: str, params: dict) -> httpx.Response:
-        """Raw GET for a binary ΗΔΙΚΑ document (PDF printout). Returns the httpx.Response so the
+        """Raw GET for a binary ΗΔΥΚΑ document (PDF printout). Returns the httpx.Response so the
         caller can stream the bytes back; auth/Api-Key headers ride along as on every request."""
         return self._client.get(self._url(path), params=params, headers={"Accept": "application/pdf"})
 
@@ -592,16 +665,16 @@ class HdikaClient:
         except PermissionError:
             raise
         except httpx.TimeoutException as exc:
-            raise TimeoutError(f"ΗΔΙΚΑ list timeout: {exc}") from exc
+            raise TimeoutError(f"ΗΔΥΚΑ list timeout: {exc}") from exc
         except httpx.TransportError as exc:
-            raise ConnectionError(f"ΗΔΙΚΑ list transport error: {exc}") from exc
+            raise ConnectionError(f"ΗΔΥΚΑ list transport error: {exc}") from exc
         except ET.ParseError as exc:
-            raise ValueError(f"ΗΔΙΚΑ list: invalid XML: {exc}") from exc
+            raise ValueError(f"ΗΔΥΚΑ list: invalid XML: {exc}") from exc
 
-    # ── mapping (ΗΔΙΚΑ XML record → canonical) ──────────────
+    # ── mapping (ΗΔΥΚΑ XML record → canonical) ──────────────
     @staticmethod
     def map_raw(raw: dict) -> CanonicalExecution:
-        """Map one ΗΔΙΚΑ prescription record (PharmPrescriptionDTO field names) to a
+        """Map one ΗΔΥΚΑ prescription record (PharmPrescriptionDTO field names) to a
         CanonicalExecution. Defensive: tolerates missing nodes from the lighter
         execution-search view until detail-enrichment is wired to a confirmed payload."""
         patient = raw.get("patient") if isinstance(raw.get("patient"), dict) else {}
@@ -652,7 +725,7 @@ def _map_treatment(t: dict) -> CanonicalItem:
         substance=_first(med, "activeSubstance", "substanceName"),
         quantity=qty,
         retail_price=_eur_cents(_first(t, "totalPrice", default=0)),
-        # ΗΔΙΚΑ doesn't return wholesale price; the engine resolves it from product
+        # ΗΔΥΚΑ doesn't return wholesale price; the engine resolves it from product
         # masterdata, else estimates from retail (WHOLESALE_FALLBACK_MARGIN_PCT). See
         # IngestionEngine._effective_wholesale (T-06).
         wholesale_price=0,

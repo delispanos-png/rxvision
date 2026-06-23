@@ -16,6 +16,39 @@ from app.repositories.prescriptions import PrescriptionRepository
 router = APIRouter()
 
 
+async def _flu_vaccination_rows(tenant_id: str, date_from, date_to, barcode, page, page_size):
+    """Flu vaccinations mapped into the prescriptions-list row shape (separate `vaccinations` coll)."""
+    from app.core.db import shared_db
+    from app.repositories.base import jsonsafe
+    db = shared_db()
+    if barcode and barcode.strip():
+        q = {"tenant_id": tenant_id, "source": "INFLUENZA", "barcode": barcode.strip()}
+    else:
+        q = {"tenant_id": tenant_id, "source": "INFLUENZA",
+             "executed_at": {"$gte": date_from, "$lt": date_to}}
+    rows = []
+    async for v in (db["vaccinations"].find(q).sort("executed_at", -1)
+                    .skip((page - 1) * page_size).limit(page_size)):
+        rows.append({
+            "external_id": v.get("barcode") or v.get("external_id"),
+            "executed_at": v.get("executed_at"), "source": "INFLUENZA",
+            "patient_name": v.get("patient_name"), "amka": v.get("amka"),
+            "fund_name": v.get("vaccine_name") or "Εμβόλιο Γρίπης",     # vaccine shown in the fund column
+            "fund_general": v.get("vaccine_name") or "Εμβόλιο Γρίπης",
+            "status": "cancelled" if v.get("cancelled") else "executed",
+            "has_unexecuted_substances": False,
+            "amount_total": v.get("total_price") or v.get("payable") or 0,
+            "amount_claimed": v.get("insurance_part") or 0,
+            "patient_share": v.get("patient_part") or 0,
+            "icd10": [v["icd10_code"]] if v.get("icd10_code") else [],
+            "icd10_named": ([f"{v['icd10_code']} — {v['icd10_title']}"] if v.get("icd10_code") and v.get("icd10_title")
+                            else ([v["icd10_code"]] if v.get("icd10_code") else [])),
+            "details": {"vaccine": v.get("vaccine_name"), "age": v.get("patient_age_group"),
+                        "risk": v.get("high_risk_group"), "lot": v.get("lot")},
+        })
+    return {"page": page, "page_size": page_size, "items": jsonsafe(rows)}
+
+
 @router.get("/detail/{external_id}")
 async def execution_detail(
     external_id: str,
@@ -33,15 +66,15 @@ async def idika_printout(
     external_id: str,
     ctx: TenantContext = Depends(require("prescriptions:read", module="prescription_analytics")),
 ):
-    """The official ΗΔΙΚΑ prescription form (PDF) for this execution, fetched live from
-    ΗΔΙΚΑ (/api/v1/prescriptions/print/{barcode}?executionNo=N) and streamed back to the UI."""
+    """The official ΗΔΥΚΑ prescription form (PDF) for this execution, fetched live from
+    ΗΔΥΚΑ (/api/v1/prescriptions/print/{barcode}?executionNo=N) and streamed back to the UI."""
     from fastapi import Response
     from app.api.v1.routers.ingestion import _effective_hdika_creds
     from app.services.ingestion.hdika_client import HdikaClient
     bc, _, execno = str(external_id).partition(":")
     creds = await _effective_hdika_creds(ctx.tenant_id)
     if not creds.get("base_url") or not creds.get("api_key"):
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "ΗΔΙΚΑ δεν είναι ρυθμισμένο.")
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "ΗΔΥΚΑ δεν είναι ρυθμισμένο.")
     client = HdikaClient(creds)
     try:
         params = {"executionNo": int(execno or 1)}
@@ -49,11 +82,11 @@ async def idika_printout(
             params["pharmacyId"] = creds["pharmacy_id"]
         r = client.get_pdf(f"/api/v1/prescriptions/print/{bc}", params)
     except Exception as exc:  # noqa: BLE001 — surface a clean error to the UI
-        raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"Αποτυχία λήψης εντύπου ΗΔΙΚΑ: {exc}")
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"Αποτυχία λήψης εντύπου ΗΔΥΚΑ: {exc}")
     finally:
         client.close()
     if r.status_code != 200 or "pdf" not in (r.headers.get("content-type") or ""):
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Το έντυπο ΗΔΙΚΑ δεν είναι διαθέσιμο.")
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Το έντυπο ΗΔΥΚΑ δεν είναι διαθέσιμο.")
     return Response(content=r.content, media_type="application/pdf",
                     headers={"Content-Disposition": f'inline; filename="{bc}.pdf"'})
 
@@ -73,7 +106,7 @@ async def idika_full_detail(
     barcode: str,
     ctx: TenantContext = Depends(require("prescriptions:read", module="prescription_analytics")),
 ):
-    """Live, portal-equivalent detail straight from the ΗΔΙΚΑ CDA (on-demand): issue/
+    """Live, portal-equivalent detail straight from the ΗΔΥΚΑ CDA (on-demand): issue/
     deadline dates, exemption/opinion/surcharge flags, per-line lot/prices/dosage."""
     from fastapi.concurrency import run_in_threadpool
     from app.api.v1.routers.ingestion import _effective_hdika_creds
@@ -83,7 +116,7 @@ async def idika_full_detail(
     if not creds:
         raise HTTPException(status.HTTP_409_CONFLICT, "no_idika_credentials")
 
-    bc = barcode.split(":")[0]  # external_id is "barcode:executionNo" → ΗΔΙΚΑ wants the bare barcode
+    bc = barcode.split(":")[0]  # external_id is "barcode:executionNo" → ΗΔΥΚΑ wants the bare barcode
     def _fetch() -> dict:
         client = HdikaClient(creds)
         try:
@@ -119,6 +152,10 @@ async def list_prescriptions(
     ctx: TenantContext = Depends(require("prescriptions:read", module="prescription_analytics")),
 ):
     repo = PrescriptionRepository(tenant_id=ctx.tenant_id, demo=ctx.demo)
+    # Special category: flu vaccinations live in the separate `vaccinations` collection — when the
+    # «Εμβολιασμοί Γρίπης» characteristic is picked, return those mapped into the same list row shape.
+    if "flu_vaccination" in {x.strip() for x in (characteristic or "").split(",")}:
+        return await _flu_vaccination_rows(ctx.tenant_id, date_from, date_to, barcode, page, page_size)
     query: dict = {"executed_at": {"$gte": date_from, "$lt": date_to}}
     if fund_id:
         query["fund_id"] = fund_id
@@ -156,8 +193,15 @@ async def list_prescriptions(
             query["details.interval_months"] = 1
         elif tok == "bimonthly":
             query["details.interval_months"] = 2
+        elif tok == "galenic":   # not an execution flag — filter by executions with a γαληνικό item
+            query["_id"] = {"$in": await repo.galenic_exec_ids(date_from, date_to)}
+        elif tok == "cancelled":  # show ONLY cancelled (ακυρωμένες) — they're hidden by default
+            query["status"] = "cancelled"
         elif tok in _CHARACTERISTICS:
             query[f"details.{tok}"] = True
+    # ακυρωμένες συνταγές εξαιρούνται από προεπιλογή (φαίνονται μόνο με το φίλτρο «cancelled»)
+    if query.get("status") != "cancelled":
+        query["status"] = {"$ne": "cancelled"}
     items = await repo.list_executions(query, skip=(page - 1) * page_size, limit=page_size,
                                        sort=sort, direction=dir)
     return {"page": page, "page_size": page_size, "items": items}

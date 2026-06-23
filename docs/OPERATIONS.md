@@ -52,13 +52,13 @@ bash infra/scripts/vault-unseal.sh
 ```
 - Init keys & root token: `secrets/vault-init.json` (chmod 600, **never commit / back up securely**).
 - The API degrades gracefully to env-based secrets while Vault is sealed, but tenant
-  ΗΔΙΚΑ/ΓΕΣΥ credentials are only available once unsealed.
+  ΗΔΥΚΑ/ΓΕΣΥ credentials are only available once unsealed.
 - **Production hardening:** move to auto-unseal (cloud KMS / Vault transit) so no on-disk
   unseal key is needed.
 
 ## Preview access (before DNS is live)
 - App: **http://157.180.26.98/** · Adminpanel: **/admin** · login = the demo credentials printed by `seed.py`
-- Self-service signup: **/register** (creates a tenant + 14-day trial; country GR→ΗΔΙΚΑ / CY→ΓΕΣΥ)
+- Self-service signup: **/register** (creates a tenant + 14-day trial; country GR→ΗΔΥΚΑ / CY→ΓΕΣΥ)
 - Docker UI (Portainer): **http://157.180.26.98:9000**
 - Plain HTTP preview block lives in `infra/docker/Caddyfile` — remove it once domains are live.
 

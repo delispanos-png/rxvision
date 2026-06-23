@@ -1,8 +1,8 @@
 """Country ↔ ingestion source rule.
 
 A pharmacy (tenant) is bound to one e-prescription system by its country:
-  - Greece (GR)  → ΗΔΙΚΑ   (ΓΕΣΥ is not applicable)
-  - Cyprus (CY)  → ΓΕΣΥ    (ΗΔΙΚΑ is not applicable)
+  - Greece (GR)  → ΗΔΥΚΑ   (ΓΕΣΥ is not applicable)
+  - Cyprus (CY)  → ΓΕΣΥ    (ΗΔΥΚΑ is not applicable)
 
 This guard is enforced at the API boundary so a GR tenant can never ingest ΓΕΣΥ
 data and vice-versa.

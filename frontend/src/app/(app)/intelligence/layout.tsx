@@ -9,6 +9,7 @@ import { ModuleGuard } from "@/components/layout/ModuleGuard";
 const TABS = [
   { href: "/intelligence", el: "Dashboard", en: "Dashboard" },
   { href: "/intelligence/today", el: "Σήμερα", en: "Today" },
+  { href: "/intelligence/profile", el: "Εικόνα Πελάτη", en: "Patient 360" },
   { href: "/intelligence/patients", el: "Ασθενείς", en: "Patients" },
   { href: "/intelligence/compliance", el: "Συμμόρφωση", en: "Compliance" },
   { href: "/intelligence/recall", el: "Recall", en: "Recall" },

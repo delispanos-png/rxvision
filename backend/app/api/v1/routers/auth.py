@@ -86,6 +86,7 @@ async def me(ctx: TenantContext = Depends(get_current_context)):
         "tenant_id": ctx.tenant_id,
         "roles": ctx.roles,
         "modules": ctx.modules,
+        "demo": ctx.demo,                # «πελάτης παρουσίασης» → frontend κλειδώνει εκτυπώσεις ΗΔΥΚΑ/κουπονιών
         **profile,                       # full_name, email, phone, mfa_enabled
     }
 

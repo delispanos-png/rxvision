@@ -24,10 +24,11 @@ function ScanImage({ scanId, onOpen }: { scanId: string; onOpen?: (url: string) 
   return <img src={url} alt="" onClick={() => onOpen?.(url)} className="h-full w-full cursor-zoom-in object-cover" />;
 }
 
+type Coupons = { meds: number; qr: number; eof: number; intangible?: boolean | null; items?: { name: string | null; type: string | null }[] };
 type Scan = {
   scan_id: string; filename?: string; status: string; optical_risk?: number | null; band?: string | null;
   flags?: string[]; matched?: string | null; barcode?: string | null; quality?: number | null;
-  signature?: boolean | null; stamp?: boolean | null;
+  signature?: boolean | null; stamp?: boolean | null; coupons?: Coupons | null; reviewed_ok?: boolean | null;
 };
 type Local = { scan_id: string; preview: string };
 
@@ -37,13 +38,12 @@ const BAND: Record<string, { cls: string; el: string; en: string }> = {
   high_risk: { cls: "bg-rose-100 text-rose-700", el: "Υψηλό ρίσκο", en: "High risk" },
 };
 const FLAG: Record<string, { el: string; en: string }> = {
-  missing_coupon: { el: "Λείπει κουπόνι/QR", en: "Missing coupon/QR" },
+  missing_coupon: { el: "Φάρμακα χωρίς κουπόνι (QR/ΕΟΦ)", en: "Meds without coupon" },
+  barcode_unread: { el: "Δεν διαβάστηκε barcode — χειροκίνητη ταυτοποίηση", en: "Barcode unread — match manually" },
   data_mismatch: { el: "Ασυμφωνία δεδομένων", en: "Data mismatch" },
   image_quality: { el: "Κακή ποιότητα εικόνας", en: "Poor image quality" },
   low_text: { el: "Ελάχιστο κείμενο", en: "Low text" },
   ocr_failed: { el: "Αποτυχία OCR", en: "OCR failed" },
-  missing_signature: { el: "Πιθανή έλλειψη υπογραφής", en: "Possible missing signature" },
-  missing_stamp: { el: "Πιθανή έλλειψη σφραγίδας", en: "Possible missing stamp" },
 };
 
 export default function OpticalAuditPage() {
@@ -75,6 +75,11 @@ export default function OpticalAuditPage() {
     queue.refetch();
   }
 
+  async function review(scanId: string, ok: boolean) {
+    try { await api(`/reimbursement/scans/${scanId}/review`, { method: "POST", body: JSON.stringify({ ok }) }); } catch { /* ignore */ }
+    queue.refetch();
+  }
+
   async function del(scanId: string) {
     if (!scanId || !(await appConfirm(t("Διαγραφή αυτής της σάρωσης;", "Delete this scan?"), { danger: true }))) return;
     try { await api(`/reimbursement/scans/${scanId}`, { method: "DELETE" }); } catch { /* ignore */ }
@@ -96,20 +101,43 @@ export default function OpticalAuditPage() {
           <span className="absolute left-1.5 top-1.5 inline-flex items-center gap-1 rounded-full bg-black/55 px-2 py-0.5 text-[10px] font-semibold text-white">
             {done ? <CheckCircle2 className="h-3 w-3" /> : <Loader2 className="h-3 w-3 animate-spin" />} {done ? "OCR" : t("ανάλυση…", "analyzing…")}
           </span>
-          {band && <span className={`absolute right-1.5 top-1.5 rounded-full px-2 py-0.5 text-[10px] font-bold ${band.cls}`}>{t(band.el, band.en)}{scan?.optical_risk != null ? ` ${scan.optical_risk}` : ""}</span>}
+          {scan?.reviewed_ok === true
+            ? <span className="absolute right-1.5 top-1.5 rounded-full bg-emerald-600 px-2 py-0.5 text-[10px] font-bold text-white">✓ {t("Σύννομη", "OK")}</span>
+            : scan?.reviewed_ok === false
+            ? <span className="absolute right-1.5 top-1.5 rounded-full bg-rose-600 px-2 py-0.5 text-[10px] font-bold text-white">✗ {t("Μη σύννομη", "Not OK")}</span>
+            : band && <span className={`absolute right-1.5 top-1.5 rounded-full px-2 py-0.5 text-[10px] font-bold ${band.cls}`}>{t(band.el, band.en)}{scan?.optical_risk != null ? ` ${scan.optical_risk}` : ""}</span>}
           <Tooltip label={t("Διαγραφή", "Delete")}><button onClick={() => del(id)} className="absolute bottom-1.5 right-1.5 grid h-7 w-7 place-items-center rounded-full bg-black/55 text-white opacity-80 transition hover:bg-rose-600 hover:opacity-100"><Trash2 className="h-3.5 w-3.5" /></button></Tooltip>
         </div>
         <div className="space-y-1 p-2 text-xs">
           {scan?.barcode && <div className="flex items-center gap-1 font-mono text-slate-600 dark:text-slate-300"><QrCode className="h-3 w-3" /> {scan.barcode}</div>}
           {scan?.matched ? <div className="flex items-center gap-1 text-emerald-600"><Link2 className="h-3 w-3" /> {t("Ταυτοποιήθηκε", "Matched")}</div>
             : done && scan?.barcode ? <div className="flex items-center gap-1 text-rose-600"><AlertTriangle className="h-3 w-3" /> {t("Χωρίς αντιστοίχιση", "No match")}</div> : null}
+          {done && scan?.coupons && scan.coupons.meds > 0 && (() => {
+            const c = scan.coupons!; const ok = c.qr + c.eof >= c.meds;
+            return (
+              <div className="flex flex-wrap items-center gap-1 text-[10px] font-medium">
+                <span className={ok ? "text-emerald-600" : "text-amber-600"}>{ok ? "✓" : "•"} {c.meds} {t("φάρμακα", "meds")}</span>
+                {c.qr > 0 && <span className="rounded bg-sky-50 px-1 text-sky-700 dark:bg-sky-950/40">{c.qr} QR</span>}
+                {c.eof > 0 && <span className="rounded bg-amber-50 px-1 text-amber-700 dark:bg-amber-950/40">{c.eof} ΕΟΦ</span>}
+                {c.intangible && <span className="rounded bg-violet-50 px-1 text-violet-700 dark:bg-violet-950/40">{t("άυλη", "paperless")}</span>}
+              </div>
+            );
+          })()}
           {done && (
-            <div className="flex gap-2 text-[10px] font-medium">
-              <span className={scan?.signature ? "text-emerald-600" : "text-rose-500"}>{scan?.signature ? "✓" : "✗"} {t("Υπογραφή", "Signature")}</span>
-              <span className={scan?.stamp ? "text-emerald-600" : "text-rose-500"}>{scan?.stamp ? "✓" : "✗"} {t("Σφραγίδα", "Stamp")}</span>
+            <div className="flex items-center gap-2 text-[10px] text-slate-400">
+              <Tooltip label={t("Αυτόματη εκτίμηση OCR — επιβεβαίωσε οπτικά (αναξιόπιστο)", "OCR estimate — confirm visually (unreliable)")}>
+                <span className="cursor-help">{scan?.signature ? "~" : "·"} {t("Υπογρ.", "Sig")} · {scan?.stamp ? "~" : "·"} {t("Σφραγ.", "Stamp")} <span className="text-[8px] italic">({t("εκτίμηση", "estimate")})</span></span>
+              </Tooltip>
             </div>
           )}
           {!!scan?.flags?.length && <div className="flex flex-wrap gap-1">{scan.flags.map((f) => <span key={f} className="rounded bg-rose-50 px-1.5 py-0.5 text-[9px] font-medium text-rose-600 dark:bg-rose-950/40">{t(FLAG[f]?.el ?? f, FLAG[f]?.en ?? f)}</span>)}</div>}
+          {done && (
+            <div className="flex items-center gap-1 pt-0.5">
+              <span className="text-[9px] text-slate-400">{t("Έλεγχος:", "Verdict:")}</span>
+              <button onClick={() => review(id, true)} className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${scan?.reviewed_ok === true ? "bg-emerald-600 text-white" : "border border-emerald-300 text-emerald-700 hover:bg-emerald-50"}`}>✓ {t("Σύννομη", "OK")}</button>
+              <button onClick={() => review(id, false)} className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${scan?.reviewed_ok === false ? "bg-rose-600 text-white" : "border border-slate-300 text-slate-400 hover:bg-slate-50"}`}>✗</button>
+            </div>
+          )}
         </div>
       </div>
     );

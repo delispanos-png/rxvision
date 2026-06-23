@@ -4,10 +4,10 @@
 `sync_jobs` (per-tenant) και per-tenant logs.
 
 > **Country rule (επιβάλλεται):** το φαρμακείο (tenant) δένεται σε **μία** πηγή από τη χώρα του —
-> **GR → ΗΔΙΚΑ**, **CY → ΓΕΣΥ**. Ένας GR tenant ΔΕΝ μπορεί να κάνει ingest ΓΕΣΥ και αντίστροφα
+> **GR → ΗΔΥΚΑ**, **CY → ΓΕΣΥ**. Ένας GR tenant ΔΕΝ μπορεί να κάνει ingest ΓΕΣΥ και αντίστροφα
 > (`app/services/ingestion/sources.py`, 409 στο API boundary).
 >
-> **Status:** η **ΗΔΙΚΑ/Ελλάδα** είναι σε προτεραιότητα και υλοποιημένη end-to-end (engine +
+> **Status:** η **ΗΔΥΚΑ/Ελλάδα** είναι σε προτεραιότητα και υλοποιημένη end-to-end (engine +
 > adapter interface· ο adapter δίνει synthetic demo data μέχρι να υπάρξει πρόσβαση στο πραγματικό
 > API). **ΓΕΣΥ/Κύπρος** (XML upload) είναι έτοιμο αλλά gated για δεύτερο step.
 > Σήμερα το processing γίνεται **inline** στο request (≤25MB)· για μεγάλα/αυτόματα → Celery worker.
@@ -28,15 +28,15 @@ Implementation: `app/services/ingestion/` — `canonical.py` (source-agnostic mo
 `prescription_executions` + `prescription_items` (βλ. DATABASE.md). Έτσι το downstream
 είναι αγνωστικιστικό ως προς πηγή.
 
-## 2. 🇬🇷 ΗΔΙΚΑ (e-prescription) — automated, αέναο sync
-- **Credentials:** ο tenant καταχωρεί ΗΔΙΚΑ creds μέσω `PUT /ingestion/credentials/hdika`
+## 2. 🇬🇷 ΗΔΥΚΑ (e-prescription) — automated, αέναο sync
+- **Credentials:** ο tenant καταχωρεί ΗΔΥΚΑ creds μέσω `PUT /ingestion/credentials/hdika`
   → αποθηκεύονται **μόνο** στο Vault (`vault://tenants/<id>/hdika`). Το app κρατά reference.
 - **Initial full sync:** worker `ingestion_hdika_full` τραβά όλο το διαθέσιμο ιστορικό
   (paged ανά ημερομηνία/σελίδα). Μεγάλο job → chunked, resumable μέσω `sync_jobs.cursor`.
 - **Incremental (αέναο):** Celery beat προγραμματίζει `ingestion_hdika_incremental` ανά
   N λεπτά (tenant-configurable). Cursor = `last_executed_at` του προηγούμενου επιτυχημένου
   job· τραβά μόνο νέες εκτελέσεις (`executed_at > cursor` με overlap buffer για late arrivals).
-- **Auth lifecycle:** session/token της ΗΔΙΚΑ ανανεώνεται από τον adapter· αποτυχία auth →
+- **Auth lifecycle:** session/token της ΗΔΥΚΑ ανανεώνεται από τον adapter· αποτυχία auth →
   job `failed` με reason `auth_expired` και notification στον tenant να ανανεώσει creds.
 
 ## 3. 🇨🇾 ΓΕΣΥ — manual XML upload (→ API αργότερα)

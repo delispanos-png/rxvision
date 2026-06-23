@@ -22,7 +22,8 @@ class PatientAuthService:
         self.repo = PatientAccountRepository()
 
     async def register(self, *, first_name: str, last_name: str, email: str,
-                       phone: str | None, amka: str, password: str) -> dict:
+                       phone: str | None, amka: str, password: str,
+                       pharmacy: str | None = None) -> dict:
         email = (email or "").strip().lower()
         amka = (amka or "").strip()
         if await self.repo.get_by_email(email):
@@ -32,8 +33,32 @@ class PatientAuthService:
         acc = await self.repo.create(
             first_name=first_name, last_name=last_name, email=email,
             phone=phone, amka=amka, password_hash=hash_password(password))
+        # came in via a pharmacy's QR → that pharmacy becomes the «αγαπημένο» (default active)
+        if pharmacy:
+            await self.repo.set_favorite(acc["_id"], pharmacy)
+            acc["favorite_tenant_id"] = pharmacy
         links = await self.repo.refresh_links(acc["_id"], amka)
         return self._session(acc, links)
+
+    async def admin_create(self, *, first_name: str, last_name: str, email: str,
+                           phone: str | None, amka: str) -> dict:
+        """Pharmacist-initiated account creation for a patient (my.rxvision.gr). Generates a temp
+        password to hand to the patient; returns it ONCE. Auto-links the patient's pharmacies."""
+        email = (email or "").strip().lower()
+        amka = (amka or "").strip()
+        if not email or "@" not in email:
+            return {"ok": False, "error": "bad_email"}
+        if await self.repo.get_by_amka(amka):
+            return {"ok": False, "error": "amka_exists"}
+        if await self.repo.get_by_email(email):
+            return {"ok": False, "error": "email_exists"}
+        import secrets
+        pw = secrets.token_urlsafe(8)
+        acc = await self.repo.create(
+            first_name=first_name, last_name=last_name, email=email,
+            phone=phone, amka=amka, password_hash=hash_password(pw))
+        await self.repo.refresh_links(acc["_id"], amka)
+        return {"ok": True, "email": email, "temp_password": pw}
 
     async def login(self, email: str, password: str) -> dict | None:
         acc = await self.repo.get_by_email((email or "").strip().lower())
@@ -65,7 +90,9 @@ class PatientAuthService:
 
     def _session(self, acc: dict, links: list[dict]) -> dict:
         account_id = str(acc["_id"])
-        active = links[0] if links else None
+        # prefer the «αγαπημένο» pharmacy (set via a counter QR) as the default active one
+        fav = acc.get("favorite_tenant_id")
+        active = next((l for l in links if l.get("tenant_id") == fav), None) or (links[0] if links else None)
         access = (create_patient_token(account_id=account_id, tenant_id=active["tenant_id"],
                                        patient_ref=active["patient_ref"]) if active else None)
         refresh = create_patient_refresh_token(account_id=account_id,

@@ -1,7 +1,7 @@
 """Vault secrets service (HashiCorp Vault, KV v2).
 
 Single seam for every secret the app needs:
-  - per-tenant ΗΔΙΚΑ/ΓΕΣΥ credentials   (path: tenants/<id>/hdika | tenants/<id>/gesy)
+  - per-tenant ΗΔΥΚΑ/ΓΕΣΥ credentials   (path: tenants/<id>/hdika | tenants/<id>/gesy)
   - per-tenant anonymization pepper      (path: tenants/<id>/pepper)
   - app signing keys                     (path: app/jwt)
 

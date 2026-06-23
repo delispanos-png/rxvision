@@ -21,7 +21,7 @@ def _utcnow() -> datetime:
 
 
 # Core modules are tenant-admin surfaces (settings: users/roles, plan, billing,
-# ΗΔΙΚΑ connection) — always available regardless of subscription plan. Actual
+# ΗΔΥΚΑ connection) — always available regardless of subscription plan. Actual
 # access is still enforced per-request by RBAC permissions (settings:read/write).
 _CORE_MODULES = {"settings"}
 

@@ -18,7 +18,8 @@ type DayRow = { date: string; total: number; checked: number };
 type Check = { period: string; total: number; checked: number; remaining: number; extra: string[]; by_day: DayRow[]; items: Item[] };
 type Coupon = { name: string; barcode: string; quantity: number; category: string; executed: boolean; qr: boolean | null; qr_batch: string | null; qr_expiry: string | null; lot: string | null };
 type Detail = { ok: boolean; found: boolean; barcode: string; fund: string; claim: number; n_coupons: number; has_opinion: boolean | null; is_fyk: boolean; has_vaccine: boolean; has_narcotic: boolean; partial: boolean; coupons: Coupon[] };
-type ScanRes = { ok: boolean; found: boolean; barcode: string };
+type ScanFlags = { is_intangible: boolean; needs_original: boolean; is_fyk: boolean; has_desensitization: boolean; has_opinion: boolean; has_vaccine: boolean; exec_count: number | null };
+type ScanRes = { ok: boolean; found: boolean; barcode: string; flags?: ScanFlags };
 
 function fmtDay(d: string) { try { return new Date(d + "T00:00:00").toLocaleDateString("el-GR", { weekday: "long", day: "numeric", month: "long" }); } catch { return d; } }
 function fmtDayShort(d: string) { try { return new Date(d + "T00:00:00").toLocaleDateString("el-GR", { weekday: "short", day: "numeric", month: "short" }); } catch { return d; } }
@@ -30,7 +31,7 @@ export default function PhysicalCheckPage() {
   const inputRef = useRef<HTMLInputElement>(null);
   const [bc, setBc] = useState("");
   const [dayIdx, setDayIdx] = useState(0);
-  const [last, setLast] = useState<{ found: boolean; barcode: string } | null>(null);
+  const [last, setLast] = useState<{ found: boolean; barcode: string; flags?: ScanFlags } | null>(null);
   const [detail, setDetail] = useState<Detail | null>(null);
   const resumed = useRef(false);
 
@@ -49,7 +50,7 @@ export default function PhysicalCheckPage() {
 
   const scan = useMutation({
     mutationFn: (barcode: string) => api<ScanRes>(`/reimbursement/physical/scan?period=${period}`, { method: "POST", body: JSON.stringify({ barcode }) }),
-    onSuccess: (r) => { setLast({ found: r.found, barcode: r.barcode }); qc.invalidateQueries({ queryKey: ["reimb-physical", period] }); },
+    onSuccess: (r) => { setLast({ found: r.found, barcode: r.barcode, flags: r.flags }); qc.invalidateQueries({ queryKey: ["reimb-physical", period] }); },
   });
   const reset = useMutation({
     mutationFn: () => api(`/reimbursement/physical/reset?period=${period}`, { method: "POST" }),
@@ -161,9 +162,21 @@ export default function PhysicalCheckPage() {
         )}
 
         {last && (
-          <div className={`mt-3 inline-flex items-center gap-2 rounded-lg px-3 py-1.5 text-sm font-medium ${last.found ? "bg-emerald-100 text-emerald-700" : "bg-rose-100 text-rose-700"}`}>
-            {last.found ? <CheckCircle2 className="h-4 w-4" /> : <XCircle className="h-4 w-4" />}
-            <span className="font-mono">{last.barcode}</span> — {last.found ? t("βρέθηκε ✓", "found ✓") : t("ΔΕΝ υπάρχει στα δεδομένα!", "NOT in our data!")}
+          <div className="mt-3 space-y-2">
+            <div className={`inline-flex items-center gap-2 rounded-lg px-3 py-1.5 text-sm font-medium ${last.found ? "bg-emerald-100 text-emerald-700" : "bg-rose-100 text-rose-700"}`}>
+              {last.found ? <CheckCircle2 className="h-4 w-4" /> : <XCircle className="h-4 w-4" />}
+              <span className="font-mono">{last.barcode}</span> — {last.found ? t("βρέθηκε ✓", "found ✓") : t("ΔΕΝ υπάρχει στα δεδομένα — έλεγξε το barcode ή τη συνταγή!", "NOT in our data — check the barcode/prescription!")}
+            </div>
+            {last.found && last.flags && (
+              <div className="flex flex-wrap gap-1.5">
+                {last.flags.needs_original && <span className="rounded-md bg-amber-100 px-2 py-1 text-xs font-semibold text-amber-800">📄 {t("Χρειάζεται πρωτότυπη συνταγή ιατρού", "Needs original paper Rx")}</span>}
+                {last.flags.is_fyk && <span className="rounded-md bg-fuchsia-100 px-2 py-1 text-xs font-semibold text-fuchsia-800">💊 {t("ΦΥΚ (Ν.3816)", "High-cost (L.3816)")}</span>}
+                {last.flags.has_desensitization && <span className="rounded-md bg-rose-100 px-2 py-1 text-xs font-semibold text-rose-800">🧪 {t("Εμβόλιο απευαισθητοποίησης — βάλε & αντίγραφο τιμολογίου παραλαβής", "Desensitization vaccine — include purchase invoice copy")}</span>}
+                {last.flags.has_opinion && <span className="rounded-md bg-sky-100 px-2 py-1 text-xs font-semibold text-sky-800">📋 {t("Έχει γνωμάτευση", "Has medical opinion")}</span>}
+                {last.flags.has_vaccine && <span className="rounded-md bg-teal-100 px-2 py-1 text-xs font-semibold text-teal-800">💉 {t("Συνταγή εμβολίων (ξεχωριστή υποβολή)", "Vaccine Rx (separate batch)")}</span>}
+                {last.flags.is_intangible && <span className="rounded-md bg-violet-100 px-2 py-1 text-xs font-semibold text-violet-800">📲 {t("Άυλη", "Paperless")}</span>}
+              </div>
+            )}
           </div>
         )}
       </div>

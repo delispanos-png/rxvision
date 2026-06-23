@@ -12,7 +12,7 @@
 *real* (non-estimated) price from product masterdata; else estimate from retail via
 `WHOLESALE_FALLBACK_MARGIN_PCT` (default 25%), flagged `wholesale_source="estimated"`.
 `_resolve_items` no longer overwrites a known masterdata wholesale with 0.
-*Why:* live ΗΔΙΚΑ doesn't return wholesale, so the old hardcoded `wholesale_price=0` made
+*Why:* live ΗΔΥΚΑ doesn't return wholesale, so the old hardcoded `wholesale_price=0` made
 `gross_profit == amount_claimed` (100% margin) — every profitability/margin number wrong for
 real GR tenants. A real price source (masterdata import / PharmacyOne) is ideal but absent;
 estimating from retail with a flagged, configurable margin makes analytics *approximately
@@ -66,7 +66,7 @@ prod it just logs. New `assert_ready()` (called in `main.lifespan`, alongside
 `assert_production_secrets`) raises if prod has no authenticated Vault client.
 *Why:* closes C2 — previously a misconfigured prod booted "successfully" on an in-memory
 store seeded from env defaults, silently defeating secrets management and losing tenant
-ΗΔΙΚΑ/ΓΕΣΥ credentials. Fail-fast at boot is the correct posture for a secrets backend.
+ΗΔΥΚΑ/ΓΕΣΥ credentials. Fail-fast at boot is the correct posture for a secrets backend.
 Dev keeps the graceful fallback so local work needs no Vault. Chose a boot-time
 `assert_ready()` over raising in the module-singleton constructor so importing the module
 never crashes (tests, tooling) — only actually *starting* prod does.

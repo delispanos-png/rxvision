@@ -20,7 +20,7 @@ const QUICK = [
   ["Πόσος τζίρος & κέρδος τον τελευταίο μήνα;", "Revenue & profit last month?"],
   ["Ποιοι είναι οι top 5 ιατροί;", "Who are the top 5 doctors?"],
   ["Έχω εκκρεμή αιτήματα πελατών;", "Any pending customer requests?"],
-  ["Ξεκίνα συγχρονισμό ΗΔΙΚΑ", "Start ΗΔΙΚΑ sync"],
+  ["Ξεκίνα συγχρονισμό ΗΔΥΚΑ", "Start ΗΔΥΚΑ sync"],
   ["Πώς κάνω κλείσιμο μήνα;", "How do I do the monthly closing?"],
 ] as const;
 
@@ -100,7 +100,7 @@ export default function CopilotPage() {
         <span className="grid h-11 w-11 place-items-center rounded-2xl bg-gradient-to-br from-sky-500 to-blue-600 text-white shadow-lg"><Sparkles className="h-6 w-6" /></span>
         <div>
           <h1 className="text-lg font-bold text-slate-900 dark:text-slate-100">RxVision Copilot</h1>
-          <p className="text-xs text-slate-500">{t("Ρώτα με πώς γίνεται κάτι, ζήτα δεδομένα (τζίρος, top ιατροί, εκκρεμότητες) ή ζήτα ενέργειες (π.χ. συγχρονισμός ΗΔΙΚΑ).", "Ask how to do something, ask for data (revenue, top doctors, pending), or ask for actions (e.g. ΗΔΙΚΑ sync).")}</p>
+          <p className="text-xs text-slate-500">{t("Ρώτα με πώς γίνεται κάτι, ζήτα δεδομένα (τζίρος, top ιατροί, εκκρεμότητες) ή ζήτα ενέργειες (π.χ. συγχρονισμός ΗΔΥΚΑ).", "Ask how to do something, ask for data (revenue, top doctors, pending), or ask for actions (e.g. ΗΔΥΚΑ sync).")}</p>
         </div>
       </div>
 

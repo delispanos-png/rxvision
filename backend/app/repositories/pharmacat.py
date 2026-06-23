@@ -75,7 +75,7 @@ class PharmaCatRepository(BaseRepository):
         return out
 
     async def medicine(self, eof: str) -> dict:
-        """Full ΗΔΙΚΑ catalogue info for one medicine (clicked from a recommendation)."""
+        """Full ΗΔΥΚΑ catalogue info for one medicine (clicked from a recommendation)."""
         d = await self._db["medicine_catalog"].find_one({"_id": eof})  # tenant-ok: shared catalogue
         if not d:
             return {"ok": False}

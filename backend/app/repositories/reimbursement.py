@@ -2,7 +2,7 @@
 
 Turns the monthly claim/submission/reimbursement cycle into a controlled, data-driven workflow:
 monthly closing financials, claim forecast, a per-prescription risk engine, expected-cuts
-estimation, a pre-submission audit and an executive dashboard. Computed from the ΗΔΙΚΑ amount
+estimation, a pre-submission audit and an executive dashboard. Computed from the ΗΔΥΚΑ amount
 model (amount_total = amount_claimed [fund] + patient_share) — see the hdika-amount-model note.
 
 The optical/OCR half (mobile scan, coupon/QR/signature verification) is a separate subsystem;
@@ -18,7 +18,12 @@ from datetime import datetime, timezone
 from bson import ObjectId
 
 from app.repositories.base import BaseRepository, jsonsafe
+from app.services.reimbursement_finance import deductions
 from app.utils.format import eur_gr
+
+# ΕΟΠΥΥ splits into two distinct submissions (φάρμακα vs εμβόλια), per CDA root 1.1.24.
+EOPYY_MED = "ΕΟΠΥΥ - Φάρμακα"
+EOPYY_VAC = "ΕΟΠΥΥ - Εμβόλια"
 
 
 def _now() -> datetime:
@@ -79,7 +84,8 @@ class ReimbursementRepository(BaseRepository):
         async for f in self._db["insurance_funds"].find({"tenant_id": self.tenant_id}):
             name = f.get("name") or f.get("fund_name") or "—"
             code = f.get("code") or name
-            grp, is_eo = grouping.get(code, (name, False))
+            # ungrouped funds → ΗΔΥΚΑ SHORT name (the `code`, e.g. «Ο.Α.Ε.Ε.»), not the long official name
+            grp, is_eo = grouping.get(code, (code or name, False))
             out[f["_id"]] = {"name": name, "group": grp, "is_eopyy": is_eo}
         return out
 
@@ -96,6 +102,14 @@ class ReimbursementRepository(BaseRepository):
         return {"rx": r.get("rx", 0), "retail": r.get("retail", 0), "claim": r.get("claim", 0),
                 "patient": r.get("patient", 0), "cost": r.get("cost", 0)}
 
+    def _grp_label(self, meta: dict, fund_id, is_vaccine: bool) -> tuple[str, bool]:
+        """Fold a (fund, vaccine?) into a display group. ΕΟΠΥΥ splits φάρμακα/εμβόλια; others keep
+        their group name (standalone funds incl. ΕΤΥΑΠ map to themselves)."""
+        m = meta.get(fund_id, {"group": "—", "is_eopyy": False})
+        if m["is_eopyy"]:
+            return (EOPYY_VAC if is_vaccine else EOPYY_MED), True
+        return m["group"], False
+
     async def monthly_closing(self, period: str) -> dict:
         start, end = _month_bounds(period)
         meta = await self._fund_meta()
@@ -108,74 +122,179 @@ class ReimbursementRepository(BaseRepository):
                                   "rx": {"$sum": 1}, "claim": {"$sum": "$amount_claimed"}}},
                       {"$sort": {"_id": 1}}]).to_list(None)]
 
+        # per (fund, vaccine?, ΦΥΚ?) so we can split ΕΟΠΥΥ φάρμακα/εμβόλια and isolate the rebate base
         by_fund_raw = await self._db["prescription_executions"].aggregate([
             {"$match": match},
-            {"$group": {"_id": "$fund_id", "rx": {"$sum": 1}, "retail": {"$sum": "$amount_total"},
+            {"$group": {"_id": {"fund": "$fund_id",
+                                "vac": {"$ifNull": ["$details.vaccines", False]},
+                                "fyk": {"$ifNull": ["$details.n3816", False]}},
+                        "rx": {"$sum": 1}, "retail": {"$sum": "$amount_total"},
                         "claim": {"$sum": "$amount_claimed"}, "patient": {"$sum": "$patient_share"}}},
-            {"$sort": {"claim": -1}}]).to_list(None)
-        grouped: dict = defaultdict(lambda: {"rx": 0, "retail": 0, "claim": 0, "patient": 0, "is_eopyy": False})
+        ]).to_list(None)
+        grouped: dict = defaultdict(lambda: {"rx": 0, "retail": 0, "claim": 0, "patient": 0,
+                                             "is_eopyy": False, "is_vaccine": False})
+        rebate_base = 0
         for f in by_fund_raw:
-            m = meta.get(f["_id"], {"group": "—", "is_eopyy": False})
-            g = grouped[m["group"]]
+            fid, vac, fyk = f["_id"]["fund"], bool(f["_id"]["vac"]), bool(f["_id"]["fyk"])
+            label, is_eo = self._grp_label(meta, fid, vac)
+            g = grouped[label]
             g["rx"] += f["rx"]; g["retail"] += f["retail"]; g["claim"] += f["claim"]; g["patient"] += f["patient"]
-            g["is_eopyy"] = m["is_eopyy"]
-        by_fund = [{"fund": k, "is_eopyy": v["is_eopyy"], "rx": v["rx"], "retail": v["retail"],
-                    "claim": v["claim"], "patient": v["patient"]} for k, v in grouped.items()]
+            g["is_eopyy"] = is_eo; g["is_vaccine"] = is_eo and vac
+            if is_eo and not vac and not fyk:  # rebate/discount base: ΕΟΠΥΥ φάρμακα, εκτός ΦΥΚ
+                rebate_base += f["claim"]
+        fin = deductions(rebate_base)
+
+        by_fund = []
+        for k, v in grouped.items():
+            row = {"fund": k, "is_eopyy": v["is_eopyy"], "is_vaccine": v["is_vaccine"],
+                   "rx": v["rx"], "retail": v["retail"], "claim": v["claim"], "patient": v["patient"],
+                   "rebate": 0, "discount": 0, "receipt": v["claim"]}
+            if k == EOPYY_MED:
+                row.update(rebate=fin["rebate"], discount=fin["discount"], rebate_base=fin["base"],
+                           receipt=v["claim"] - fin["rebate"] - fin["discount"])
+            by_fund.append(row)
+        # ΕΤΥΑΠ: secondary-fund coverage (details.kyyap_covered) — a SEPARATE αιτούμενο that
+        # contracted pharmacies claim on top of ΕΟΠΥΥ. No rebate/discount, no patient share.
+        et = await self._db["prescription_executions"].aggregate([
+            {"$match": {**match, "details.kyyap_covered": {"$gt": 0}}},
+            {"$group": {"_id": None, "rx": {"$sum": 1}, "claim": {"$sum": "$details.kyyap_covered"}}},
+        ]).to_list(1)
+        etyap_claim = (et[0]["claim"] if et else 0) or 0
+        if etyap_claim > 0:
+            by_fund.append({"fund": "ΕΤΥΑΠ", "is_eopyy": False, "is_vaccine": False,
+                            "rx": et[0]["rx"], "retail": 0, "claim": etyap_claim, "patient": 0,
+                            "rebate": 0, "discount": 0, "receipt": etyap_claim})
+
         by_fund.sort(key=lambda x: x["claim"], reverse=True)
         eopyy_claim = sum(b["claim"] for b in by_fund if b["is_eopyy"])
         other_claim = sum(b["claim"] for b in by_fund if not b["is_eopyy"])
 
-        by_cat = [{"category": (r["_id"] or "—"), "rx": r["rx"], "claim": r["claim"]}
-                  for r in await self._db["prescription_executions"].aggregate([
-                      {"$match": match},
-                      {"$lookup": {"from": "prescription_items", "localField": "_id",
-                                   "foreignField": "execution_id", "as": "it"}},
-                      {"$unwind": "$it"},
-                      {"$group": {"_id": "$it.category", "rx": {"$sum": 1}, "claim": {"$sum": "$it.amount_claimed"}}},
-                      {"$sort": {"claim": -1}}]).to_list(None)]
+        # executions ανά ταμείο ανά ημέρα (replaces the old by-category chart)
+        by_fd_raw = await self._db["prescription_executions"].aggregate([
+            {"$match": match},
+            {"$group": {"_id": {"day": {"$dateToString": {"format": "%d", "date": "$executed_at"}},
+                                "fund": "$fund_id",
+                                "vac": {"$ifNull": ["$details.vaccines", False]}},
+                        "rx": {"$sum": 1}}},
+        ]).to_list(None)
+        day_map: dict = defaultdict(lambda: defaultdict(int))
+        fund_tot: dict = defaultdict(int)
+        for r in by_fd_raw:
+            label, _ = self._grp_label(meta, r["_id"]["fund"], bool(r["_id"]["vac"]))
+            day_map[r["_id"]["day"]][label] += r["rx"]
+            fund_tot[label] += r["rx"]
+        top = [f for f, _ in sorted(fund_tot.items(), key=lambda x: -x[1])][:6]
+        fd_rows = []
+        spilled = False
+        for day in sorted(day_map):
+            counts: dict = defaultdict(int)
+            total = 0
+            for label, n in day_map[day].items():
+                key = label if label in top else "Λοιπά"
+                spilled = spilled or key == "Λοιπά"
+                counts[key] += n
+                total += n
+            fd_rows.append({"day": day, "counts": dict(counts), "total": total})
+        by_fund_day = {"funds": top + (["Λοιπά"] if spilled else []), "rows": fd_rows}
 
         cur = await self._period_money(period)
         prev = await self._period_money(_prev_period(period))
         yoy = await self._period_money(_yoy_period(period))
         return jsonsafe({
             "period": period,
-            "totals": {**cur, "net_claim": cur["claim"], "eopyy_claim": eopyy_claim, "other_claim": other_claim,
-                       "gross_profit": cur["retail"] - cur["cost"]},
+            "totals": {**cur, "net_claim": cur["claim"], "eopyy_claim": eopyy_claim,
+                       "other_claim": other_claim, "gross_profit": cur["retail"] - cur["cost"],
+                       "rebate": fin["rebate"], "discount": fin["discount"], "etyap": etyap_claim,
+                       "rebate_base": fin["base"],
+                       "receipt": cur["claim"] - fin["rebate"] - fin["discount"] + etyap_claim},
+            "deductions": fin,  # base + per-bracket breakdown → KPI tooltip shows the formula
             "delta_prev": {k: _pct(cur[k], prev[k]) for k in ("rx", "retail", "claim", "patient")},
             "delta_yoy": {k: _pct(cur[k], yoy[k]) for k in ("rx", "retail", "claim", "patient")},
-            "by_day": by_day, "by_fund": by_fund, "by_category": by_cat,
+            "by_day": by_day, "by_fund": by_fund, "by_fund_day": by_fund_day,
         })
 
     # ── 2. CLAIM FORECAST ───────────────────────────────────────────────────
-    async def forecast(self) -> dict:
-        """Expected receipts per fund, projected from the last 3 closed months' average."""
-        now = _now()
-        months = []
-        y, m = now.year, now.month
-        for _ in range(3):
-            m -= 1
-            if m == 0:
-                y, m = y - 1, 12
-            months.append(f"{y:04d}-{m:02d}")
+    async def _period_group_claims_split(self, period: str) -> dict:
+        """{group → {claim, claim_reb, rx, is_eopyy, is_vaccine}} for one month, ΕΟΠΥΥ split
+        φάρμακα/εμβόλια. `claim_reb` = the rebatable base (ΕΟΠΥΥ φάρμακα ΕΚΤΟΣ ΦΥΚ)."""
+        start, end = _month_bounds(period)
         meta = await self._fund_meta()
-        acc: dict = defaultdict(lambda: {"claim": 0, "is_eopyy": False})
-        n_months = 0
-        for per in months:
-            start, end = _month_bounds(per)
-            rows = await self._db["prescription_executions"].aggregate([
-                {"$match": {"tenant_id": self.tenant_id, "executed_at": {"$gte": start, "$lt": end}}},
-                {"$group": {"_id": "$fund_id", "claim": {"$sum": "$amount_claimed"}}}]).to_list(None)
-            if rows:
-                n_months += 1
-            for r in rows:
-                m = meta.get(r["_id"], {"group": "—", "is_eopyy": False})
-                acc[m["group"]]["claim"] += r["claim"]
-                acc[m["group"]]["is_eopyy"] = m["is_eopyy"]
-        out = [{"fund": grp, "is_eopyy": a["is_eopyy"],
-                "expected_monthly": round(a["claim"] / max(n_months, 1))} for grp, a in acc.items()]
-        out.sort(key=lambda x: x["expected_monthly"], reverse=True)
-        return jsonsafe({"months_used": months, "by_fund": out,
-                         "expected_total": sum(o["expected_monthly"] for o in out)})
+        agg = await self._db["prescription_executions"].aggregate([
+            {"$match": {"tenant_id": self.tenant_id, "executed_at": {"$gte": start, "$lt": end}}},
+            {"$group": {"_id": {"fund": "$fund_id",
+                                "vac": {"$ifNull": ["$details.vaccines", False]},
+                                "fyk": {"$ifNull": ["$details.n3816", False]}},
+                        "claim": {"$sum": "$amount_claimed"}, "rx": {"$sum": 1}}},
+        ]).to_list(None)
+        out: dict = defaultdict(lambda: {"claim": 0, "claim_reb": 0, "rx": 0,
+                                         "is_eopyy": False, "is_vaccine": False})
+        for a in agg:
+            vac, fyk = bool(a["_id"]["vac"]), bool(a["_id"]["fyk"])
+            label, is_eo = self._grp_label(meta, a["_id"]["fund"], vac)
+            o = out[label]
+            o["claim"] += a["claim"]; o["rx"] += a["rx"]
+            o["is_eopyy"] = is_eo; o["is_vaccine"] = is_eo and vac
+            if is_eo and not vac and not fyk:  # rebatable base excludes ΦΥΚ
+                o["claim_reb"] += a["claim"]
+        return dict(out)
+
+    async def forecast(self) -> dict:
+        """Per-fund forecast of the CURRENT month's αιτούμενο using the pharmacist's method:
+          Α = avg of the last 3 months · Β = avg of the SAME 3 months last year ·
+          Γ = the corresponding month last year · Δ = (Γ−Β)/Β (last-year seasonal deviation) ·
+          Forecast = Α × (1+Δ). Then rebate/discount → expected receipt (ΕΟΠΥΥ-Φάρμακα only)."""
+        now = _now()
+        target = f"{now.year:04d}-{now.month:02d}"
+
+        def minus(period: str, k: int) -> str:
+            y, m = int(period[:4]), int(period[5:7])
+            for _ in range(k):
+                m -= 1
+                if m == 0:
+                    y, m = y - 1, 12
+            return f"{y:04d}-{m:02d}"
+
+        a_months = [minus(target, i) for i in (1, 2, 3)]
+        b_months = [_yoy_period(p) for p in a_months]
+        target_ly = _yoy_period(target)
+        needed = set(a_months) | set(b_months) | {target_ly}
+        claims = {p: await self._period_group_claims_split(p) for p in needed}
+
+        labels: set = set()
+        for p in needed:
+            labels |= set(claims[p].keys())
+        rows = []
+        for label in labels:
+            def cl(p: str, key: str = "claim") -> int:
+                return claims[p].get(label, {}).get(key, 0)
+            info = next((claims[p][label] for p in needed if label in claims[p]), {})
+            a_val = sum(cl(p) for p in a_months) / 3
+            b_val = sum(cl(p) for p in b_months) / 3
+            g_val = cl(target_ly)
+            dev = ((g_val - b_val) / b_val) if b_val > 0 else 0.0
+            fc = round(a_val * (1 + dev))
+            # rebate/discount only on ΕΟΠΥΥ-Φάρμακα, computed on the rebatable base (excl. ΦΥΚ),
+            # scaled by the same seasonal deviation.
+            if label == EOPYY_MED:
+                reb_base = round((sum(cl(p, "claim_reb") for p in a_months) / 3) * (1 + dev))
+                ded = deductions(reb_base)
+            else:
+                ded = {"rebate": 0, "discount": 0}
+            rows.append({
+                "fund": label, "is_eopyy": info.get("is_eopyy", False),
+                "is_vaccine": info.get("is_vaccine", False),
+                "avg_3m": round(a_val), "avg_3m_ly": round(b_val), "ly_month": g_val,
+                "deviation": dev, "forecast": fc,
+                "rebate": ded["rebate"], "discount": ded["discount"],
+                "receipt": fc - ded["rebate"] - ded["discount"]})
+        rows.sort(key=lambda x: x["forecast"], reverse=True)
+        return jsonsafe({
+            "target": target, "a_months": a_months, "b_months": b_months, "ly_month": target_ly,
+            "by_fund": rows,
+            "forecast_total": sum(r["forecast"] for r in rows),
+            "receipt_total": sum(r["receipt"] for r in rows),
+            "rebate_total": sum(r["rebate"] for r in rows),
+            "discount_total": sum(r["discount"] for r in rows)})
 
     # ── 5. RISK ENGINE + 6. EXPECTED CUTS + 3. AUDIT ────────────────────────
     async def _risk_rows(self, period: str) -> list[dict]:
@@ -339,6 +458,167 @@ class ReimbursementRepository(BaseRepository):
                         note=f"paid {paid_amount} / expected {expected} / cut {cut}")
         return {"ok": True, "cut": cut, "status": status}
 
+    # ── 10. OPEN BALANCES / RECEIVABLES (cross-month) ───────────────────────
+    # ΗΔΥΚΑ never tells us which submission a fund has settled, so the pharmacist marks each
+    # month/fund as «εισπράχθηκε» and edits the amount actually received; we then show what's
+    # still OPEN (uncollected) per fund across months. Reuses the submission_batches store.
+    async def _period_group_claims(self, period: str) -> dict:
+        """{fund_group → {rx, claim, is_eopyy}} for one month (ΕΟΠΥΥ folded into one group)."""
+        start, end = _month_bounds(period)
+        meta = await self._fund_meta()
+        agg = await self._db["prescription_executions"].aggregate([
+            {"$match": {"tenant_id": self.tenant_id, "executed_at": {"$gte": start, "$lt": end}}},
+            {"$group": {"_id": "$fund_id", "rx": {"$sum": 1}, "claim": {"$sum": "$amount_claimed"}}},
+        ]).to_list(None)
+        g: dict = defaultdict(lambda: {"rx": 0, "claim": 0, "is_eopyy": False})
+        for a in agg:
+            m = meta.get(a["_id"], {"group": "—", "is_eopyy": False})
+            gg = g[m["group"]]
+            gg["rx"] += a["rx"]; gg["claim"] += a["claim"]; gg["is_eopyy"] = m["is_eopyy"]
+        return dict(g)
+
+    @staticmethod
+    def _load_payments(b: dict) -> tuple[list, bool]:
+        """Payments list + settled flag for a batch, migrating the legacy single paid_amount."""
+        payments = b.get("payments")
+        if payments is None:
+            pa = b.get("paid_amount")
+            payments = [{"amount": pa, "at": b.get("paid_at")}] if pa is not None else []
+            settled = bool(b.get("status") in ("paid", "cut") and pa is not None)
+        else:
+            settled = bool(b.get("settled"))
+        return list(payments), settled
+
+    @staticmethod
+    def _recent_periods(now: datetime, n: int) -> list[str]:
+        out, y, m = [], now.year, now.month
+        for _ in range(max(1, n)):
+            out.append(f"{y:04d}-{m:02d}")
+            m -= 1
+            if m == 0:
+                y, m = y - 1, 12
+        return out
+
+    async def receivables(self, months_back: int = 12) -> dict:
+        """Per (month, fund) receivable across the last N months: expected vs collected, and the
+        OPEN balance (= expected for anything not yet marked collected). months_back<=0 ⇒ ALL
+        history (from the earliest execution, capped at 120 months)."""
+        now = _now()
+        if months_back <= 0:
+            first = await self._db["prescription_executions"].find_one(
+                {"tenant_id": self.tenant_id}, sort=[("executed_at", 1)], projection={"executed_at": 1})
+            fe = (first or {}).get("executed_at")
+            months_back = ((now.year - fe.year) * 12 + (now.month - fe.month) + 1) if fe else 12
+            months_back = max(1, min(months_back, 120))
+        periods = self._recent_periods(now, months_back)
+        batch_map: dict = {}
+        async for b in self._db["submission_batches"].find(
+                {"tenant_id": self.tenant_id, "period": {"$in": periods}}):
+            batch_map[b["_id"]] = b
+
+        rows: list[dict] = []
+        by_fund: dict = defaultdict(lambda: {"expected": 0, "paid": 0, "open": 0, "cut": 0, "is_eopyy": False})
+        tot = {"expected": 0, "paid": 0, "open": 0, "cut": 0,
+               "settled_count": 0, "partial_count": 0, "open_count": 0}
+        for per in periods:
+            for grp, a in (await self._period_group_claims(per)).items():
+                expected = a["claim"]
+                if expected <= 0:
+                    continue
+                b = batch_map.get(self._batch_id(per, grp)) or {}
+                payments, settled = self._load_payments(b)
+                paid_total = sum(p.get("amount", 0) for p in payments)
+                # OPEN until fully settled; once settled the shortfall becomes the περικοπή (cut)
+                open_bal = 0 if settled else max(0, expected - paid_total)
+                cut = max(0, expected - paid_total) if settled else 0
+                status = "settled" if settled else ("partial" if paid_total > 0 else "open")
+                rows.append({
+                    "period": per, "batch_id": self._batch_id(per, grp), "fund": grp,
+                    "is_eopyy": a["is_eopyy"], "rx": a["rx"], "expected": expected,
+                    "payments": payments, "paid": paid_total, "settled": settled,
+                    "cut": cut, "open": open_bal, "status": status})
+                f = by_fund[grp]
+                f["expected"] += expected; f["paid"] += paid_total; f["open"] += open_bal
+                f["cut"] += cut; f["is_eopyy"] = a["is_eopyy"]
+                tot["expected"] += expected; tot["paid"] += paid_total
+                tot["open"] += open_bal; tot["cut"] += cut
+                tot["settled_count"] += 1 if settled else 0
+                tot["partial_count"] += 1 if (not settled and paid_total > 0) else 0
+                tot["open_count"] += 0 if settled else 1
+        rows.sort(key=lambda r: (r["open"], r["period"]), reverse=True)  # biggest open first, then recent
+        fund_summary = sorted(({"fund": k, **v} for k, v in by_fund.items()),
+                              key=lambda x: x["open"], reverse=True)
+        return jsonsafe({"periods": periods, "totals": tot, "by_fund": fund_summary, "rows": rows})
+
+    async def _receivable_base(self, period: str, fund_group: str) -> dict:
+        g = (await self._period_group_claims(period)).get(fund_group) or {}
+        return {"tenant_id": self.tenant_id, "period": period, "fund_id": fund_group,
+                "fund_name": fund_group, "is_eopyy": g.get("is_eopyy", False),
+                "expected_claim": g.get("claim", 0), "updated_at": _now()}
+
+    async def add_payment(self, period: str, fund_group: str, amount: int, note: str | None = None) -> dict:
+        """Record an installment (δόση) toward a month/fund receivable. ΕΟΠΥΥ usually pays in two."""
+        base = await self._receivable_base(period, fund_group)
+        expected = base["expected_claim"]
+        bid = self._batch_id(period, fund_group)
+        prev = await self._db["submission_batches"].find_one({"_id": bid, "tenant_id": self.tenant_id})
+        payments, _ = self._load_payments(prev or {})
+        payments.append({"amount": int(amount), "at": _now(), "note": (note or None)})
+        paid_total = sum(p.get("amount", 0) for p in payments)
+        await self._db["submission_batches"].update_one(
+            {"_id": bid, "tenant_id": self.tenant_id},
+            {"$set": {**base, "payments": payments, "paid_amount": paid_total, "settled": False,
+                      "cut_amount": None, "status": "partial", "paid_at": _now()}}, upsert=True)
+        await self._log(bid, period, fund_group, "payment", (prev or {}).get("status"), "partial",
+                        note=f"δόση {len(payments)}: +{amount} (σύνολο {paid_total}/{expected})")
+        return {"ok": True, "paid": paid_total, "open": max(0, expected - paid_total),
+                "installments": len(payments)}
+
+    async def settle(self, period: str, fund_group: str, settled: bool = True) -> dict:
+        """Close (εξόφληση) a receivable: shortfall vs expected becomes the περικοπή. Or reopen it."""
+        base = await self._receivable_base(period, fund_group)
+        expected = base["expected_claim"]
+        bid = self._batch_id(period, fund_group)
+        prev = await self._db["submission_batches"].find_one({"_id": bid, "tenant_id": self.tenant_id})
+        payments, _ = self._load_payments(prev or {})
+        paid_total = sum(p.get("amount", 0) for p in payments)
+        if settled:
+            cut = max(0, expected - paid_total)
+            await self._db["submission_batches"].update_one(
+                {"_id": bid, "tenant_id": self.tenant_id},
+                {"$set": {**base, "payments": payments, "settled": True, "paid_amount": paid_total,
+                          "cut_amount": cut, "status": "cut" if cut > 0 else "paid",
+                          "settled_at": _now()}}, upsert=True)
+            await self._log(bid, period, fund_group, "settle", (prev or {}).get("status"),
+                            "cut" if cut > 0 else "paid",
+                            note=f"εξόφληση: εισπράχθηκε {paid_total}/{expected}, περικοπή {cut}")
+            return {"ok": True, "cut": cut}
+        await self._db["submission_batches"].update_one(
+            {"_id": bid, "tenant_id": self.tenant_id},
+            {"$set": {**base, "settled": False, "cut_amount": None,
+                      "status": "partial" if paid_total > 0 else "ready_for_review"}}, upsert=True)
+        await self._log(bid, period, fund_group, "reopen", (prev or {}).get("status"), "partial")
+        return {"ok": True, "open": max(0, expected - paid_total)}
+
+    async def remove_payment(self, period: str, fund_group: str, index: int) -> dict:
+        """Undo a mistaken installment."""
+        bid = self._batch_id(period, fund_group)
+        prev = await self._db["submission_batches"].find_one({"_id": bid, "tenant_id": self.tenant_id})
+        if not prev:
+            return {"ok": False, "error": "not_found"}
+        payments, _ = self._load_payments(prev)
+        if 0 <= index < len(payments):
+            payments.pop(index)
+        paid_total = sum(p.get("amount", 0) for p in payments)
+        expected = (await self._receivable_base(period, fund_group))["expected_claim"]
+        await self._db["submission_batches"].update_one(
+            {"_id": bid, "tenant_id": self.tenant_id},
+            {"$set": {"payments": payments, "paid_amount": (paid_total if payments else None),
+                      "settled": False, "cut_amount": None,
+                      "status": "partial" if payments else "ready_for_review", "updated_at": _now()}})
+        await self._log(bid, period, fund_group, "payment_removed", prev.get("status"), None)
+        return {"ok": True, "paid": paid_total, "open": max(0, expected - paid_total)}
+
     async def reconciliation(self, period: str) -> dict:
         batches = [b async for b in self._db["submission_batches"].find(
             {"tenant_id": self.tenant_id, "period": period})]
@@ -395,6 +675,24 @@ class ReimbursementRepository(BaseRepository):
             "remaining": len(items) - checked_n, "extra": session.get("extra", []),
             "by_day": sorted(by_day.values(), key=lambda x: x["date"] or ""), "items": items})
 
+    @staticmethod
+    def _submission_flags(ex: dict) -> dict:
+        """Per-prescription flags the pharmacist must act on when assembling the ΕΟΠΥΥ submission
+        (Έλεγχος συνταγών). All are prescription-level (same across partial executions)."""
+        d = ex.get("details") or {}
+        intangible = bool(d.get("intangible"))            # 1.5.10
+        exec_count = d.get("exec_count")                  # 1.1.19
+        return {
+            "is_intangible": intangible,
+            # α) μη άυλη + πρώτη/μοναδική εκτέλεση → χρειάζεται η πρωτότυπη χάρτινη συνταγή ιατρού
+            "needs_original": (not intangible) and ((exec_count or 1) <= 1),
+            "is_fyk": bool(d.get("n3816")),               # β) ΦΥΚ Ν.3816/10 (1.1.14)
+            "has_desensitization": bool(d.get("desensitization")),  # γ) εμβόλιο απευαισθητοποίησης (1.1.8)
+            "has_opinion": bool(d.get("opinion")),        # δ) γνωμάτευση (1.1.23)
+            "has_vaccine": bool(d.get("vaccines")),       # ενημερωτικό: συνταγή εμβολίων (1.1.24)
+            "exec_count": exec_count,
+        }
+
     async def physical_scan(self, period: str, barcode: str) -> dict:
         bc = (barcode or "").strip().split(":")[0].strip()
         if not bc:
@@ -408,7 +706,10 @@ class ReimbursementRepository(BaseRepository):
         await self._db["barcode_check"].update_one(
             {"tenant_id": self.tenant_id, "period": period},
             {"$addToSet": {field: bc}, "$set": {"updated_at": _now()}}, upsert=True)
-        return {"ok": True, "found": found, "barcode": bc}
+        res = {"ok": True, "found": found, "barcode": bc}
+        if found:
+            res["flags"] = self._submission_flags(ex)
+        return res
 
     async def physical_reset(self, period: str) -> dict:
         await self._db["barcode_check"].delete_one({"tenant_id": self.tenant_id, "period": period})
@@ -502,7 +803,7 @@ class ReimbursementRepository(BaseRepository):
         if not exs:
             return {"ok": True, "found": False, "barcode": bc}
         meta = await self._fund_meta()
-        # γνωμάτευση is a PRESCRIPTION-level flag (ΗΔΙΚΑ CDA id 1.1.23) — NOT per medicine. When the
+        # γνωμάτευση is a PRESCRIPTION-level flag (ΗΔΥΚΑ CDA id 1.1.23) — NOT per medicine. When the
         # user OPENS the Rx (live) we fetch the CDA once → authoritative coupons (executed + QR + lot
         # consistent, no eof-collision) + opinion (cached). The scan path uses our stored items.
         opinion = exs[0].get("has_opinion")
@@ -528,9 +829,12 @@ class ReimbursementRepository(BaseRepository):
             "fund": meta.get(exs[0].get("fund_id"), {}).get("group", "—"),
             "claim": sum(e.get("amount_claimed", 0) for e in exs), "n_coupons": len(lines),
             "has_opinion": opinion,                    # prescription-level γνωμάτευση (None=unknown)
-            "is_fyk": "fyk" in flags, "has_vaccine": "vaccine" in flags,
+            "has_vaccine": "vaccine" in flags,
             "has_narcotic": "narcotic" in flags,
             "partial": any(not ln["executed"] for ln in lines),
+            **{k: v for k, v in self._submission_flags(exs[0]).items()
+               if k in ("is_intangible", "needs_original", "has_desensitization", "exec_count")},
+            "is_fyk": ("fyk" in flags) or bool((exs[0].get("details") or {}).get("n3816")),
             "coupons": lines})
 
     # ── 19. EXECUTIVE DASHBOARD + 18. AI AUDITOR ────────────────────────────

@@ -23,7 +23,12 @@ def _role(name: str) -> str:
         return "db"
     if "LB" in n:
         return "lb"
+    if "MGMT" in n or "CTRL" in n:
+        return "mgmt"   # management/control node (not an LB target)
     return "app"
+
+
+_MGMT_NODE = "RxVisionMGMT01"  # runs backups / provisioning / ops orchestration (deploy key + token)
 
 _SECRETS = ("hetzner_token", "cloudflare_token", "storage_password")
 _CONFIG = ("storage_host", "storage_user", "storage_path")
@@ -177,6 +182,8 @@ async def _hetzner_topology(token: str, live: dict) -> tuple[list, list, list]:
                 "cpu": lm.get("cpu") if lm.get("fresh") else hz_cpu,
                 "ram_pct": lm.get("ram_pct") if lm.get("fresh") else None,
                 "load": lm.get("load") if lm.get("fresh") else None,
+                "disk_pct": lm.get("disk_pct") if lm.get("fresh") else None,
+                "disk_total_gb": lm.get("disk_total_gb") if lm.get("fresh") else st.get("disk"),
                 "metrics_live": bool(lm.get("fresh")),
             })
 
@@ -200,6 +207,78 @@ async def _hetzner_topology(token: str, live: dict) -> tuple[list, list, list]:
                  "members": [str(x) for x in n.get("servers", [])]}
                 for n in (net_r.json().get("networks", []) if net_r.status_code == 200 else [])]
     return servers, lbs, nets
+
+
+class OpsIn(BaseModel):
+    type: str            # "prune" | "backup" | "restore"
+    target: str = "all"  # "all" or a specific node name
+    file: str | None = None  # for restore: the backup archive filename
+
+
+@router.post("/ops")
+async def enqueue_op(body: OpsIn, ctx: PlatformContext = Depends(get_platform_admin)):
+    """Queue a host-ops command (docker prune / backup / restore). A per-node systemd ops-agent
+    picks it up and runs it on the host — the api never touches docker/SSH itself."""
+    db = shared_db()
+    if body.type not in ("prune", "backup", "restore", "add_node"):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "unknown_op")
+    now = datetime.now(tz=timezone.utc)
+    extra: dict = {}
+    if body.type == "restore":
+        # only allow restoring a file we actually know about (anti-injection)
+        if not body.file or not await db["backups"].find_one({"file": body.file}):
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "unknown_backup_file")
+        nodes = [_MGMT_NODE]
+        extra["file"] = body.file
+    elif body.type == "add_node":
+        nodes = [_MGMT_NODE]   # provisioning runs on the mgmt node (deploy key + token + repo)
+    elif body.type == "backup":
+        nodes = [_MGMT_NODE]                            # backup runs on the mgmt node
+    elif body.target == "all":
+        nodes = [m["_id"] async for m in db["node_metrics"].find({}) if "DB" not in (m["_id"] or "")]
+    else:
+        nodes = [body.target]
+    docs = [{"type": body.type, "node": n, "status": "pending", "requested_at": now,
+             "requested_by": getattr(ctx, "email", None), **extra} for n in nodes]
+    if docs:
+        await db["ops_commands"].insert_many(docs)
+    return {"ok": True, "queued": len(docs)}
+
+
+@router.get("/ops")
+async def list_ops(ctx: PlatformContext = Depends(get_platform_admin)):
+    """Recent host-ops commands + their results (for the maintenance panel)."""
+    from app.repositories.base import jsonsafe
+    db = shared_db()
+    items = [jsonsafe(c) async for c in db["ops_commands"].find({}).sort("requested_at", -1).limit(8)]
+    return {"items": items}
+
+
+@router.get("/serving")
+async def serving_distribution(ctx: PlatformContext = Depends(get_platform_admin)):
+    """Load visibility: which app node last served each tenant + per-node distribution.
+    Tenants are NOT pinned — this is just where each tenant's most recent request landed."""
+    from app.repositories.base import jsonsafe
+    db = shared_db()
+    names = {t["_id"]: t.get("name", t["_id"]) async for t in db["tenants"].find({}, {"name": 1})}
+    rows = []
+    by_node: dict[str, int] = {}
+    async for s in db["tenant_serving"].find({}).sort("last_at", -1):
+        node = s.get("node") or "—"
+        by_node[node] = by_node.get(node, 0) + 1
+        rows.append({"tenant_id": s["_id"], "tenant": names.get(s["_id"], s["_id"]),
+                     "node": node, "last_at": s.get("last_at"), "hits": s.get("hits", 0)})
+    dist = [{"node": k, "tenants": v} for k, v in sorted(by_node.items())]
+    return jsonsafe({"distribution": dist, "tenants": rows})
+
+
+@router.get("/backups")
+async def list_backups(ctx: PlatformContext = Depends(get_platform_admin)):
+    """Available DB backup archives (kept ~1 week), newest first — for the restore picker."""
+    from app.repositories.base import jsonsafe
+    db = shared_db()
+    items = [jsonsafe(b) async for b in db["backups"].find({}).sort("ts", -1).limit(30)]
+    return {"items": items}
 
 
 @router.get("/infra")
@@ -236,11 +315,21 @@ async def infra(ctx: PlatformContext = Depends(get_platform_admin)):
                 "cpu": lm.get("cpu") if lm.get("fresh") else None,
                 "ram_pct": lm.get("ram_pct") if lm.get("fresh") else None,
                 "load": lm.get("load") if lm.get("fresh") else None,
+                "disk_pct": lm.get("disk_pct") if lm.get("fresh") else None,
+                "disk_total_gb": lm.get("disk_total_gb") if lm.get("fresh") else None,
                 "metrics_live": bool(lm.get("fresh")),
             })
 
-    storage = {"configured": bool(c.get("storage_password")), "host": c.get("storage_host"),
-               "path": c.get("storage_path")} if c.get("storage_host") else None
+    last_backup = await shared_db()["backup_status"].find_one({"_id": "last"})
+    lb = last_backup or {}
+    storage = ({"configured": bool(c.get("storage_password")), "host": c.get("storage_host"),
+                "path": c.get("storage_path"),
+                "last_backup_at": lb.get("ts"), "last_backup_size": lb.get("size"),
+                "last_backup_location": lb.get("location"), "last_backup_ok": lb.get("ok"),
+                # backup storage footprint + free space on the backups filesystem
+                "backups_total": lb.get("backups_total"), "disk_avail": lb.get("disk_avail"),
+                "disk_total": lb.get("disk_total"), "disk_used_pct": lb.get("disk_used_pct")}
+               if c.get("storage_host") else None)
 
     return {"servers": servers, "load_balancers": lbs, "networks": nets, "storage": storage,
             "hetzner_ok": hetzner_ok, "fetched_at": datetime.now(tz=timezone.utc).isoformat()}

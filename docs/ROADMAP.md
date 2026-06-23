@@ -6,7 +6,7 @@
 | Plan | Τιμή (ανά φαρμακείο/μήνα) | Modules | Limits |
 |---|---|---|---|
 | **Free Trial** (14–30 ημ.) | €0 | Dashboard + Prescription Analytics + **trial** όλων | 1 pharmacy, 3 μήνες ιστορικό, no API sync (manual) |
-| **Basic** | €€ | Dashboard, Prescription, Doctor, ICD-10 analytics | 1 pharmacy, 12 μήνες, ΗΔΙΚΑ sync |
+| **Basic** | €€ | Dashboard, Prescription, Doctor, ICD-10 analytics | 1 pharmacy, 12 μήνες, ΗΔΥΚΑ sync |
 | **Pro** | €€€ | + Patient analytics, **Profitability**, Future, Orders, Monthly Closing | έως 3 pharmacies, 24 μήνες, full sync |
 | **Enterprise** | custom | όλα + dedicated isolation, SSO, SLA, support | unlimited pharmacies, 60 μήνες, dedicated DB tier |
 
@@ -26,13 +26,13 @@
 
 ## B. MVP roadmap (Phase 1 — ~10–14 εβδ.)
 
-**Στόχος:** ένα φαρμακείο (GR/ΗΔΙΚΑ) βλέπει αξιόπιστα στατιστικά end-to-end.
+**Στόχος:** ένα φαρμακείο (GR/ΗΔΥΚΑ) βλέπει αξιόπιστα στατιστικά end-to-end.
 
 | Sprint | Παραδοτέο |
 |---|---|
 | 0 | Repo scaffold, docker-compose, CI, Mongo replica set, index bootstrap, auth (JWT+refresh), tenant middleware, RBAC base, audit logging |
 | 1 | Tenant onboarding + users/roles + consent/DPA, subscription (trial/basic) + module gating |
-| 2 | **ΗΔΙΚΑ ingestion**: credentials→Vault, full sync, normalizer + **anonymization**, validation, dedup, sync_jobs |
+| 2 | **ΗΔΥΚΑ ingestion**: credentials→Vault, full sync, normalizer + **anonymization**, validation, dedup, sync_jobs |
 | 3 | Incremental (αέναο) sync + retries + per-tenant error reporting· post-process (counters, future rx) |
 | 4 | **Dashboard** (KPIs, timeseries, top widgets) + precompute snapshots |
 | 5 | **Prescription Analytics** (φίλτρα, compare, trends, drill-down) + export CSV/Excel |
@@ -40,7 +40,7 @@
 | 7 | PWA (manifest, SW, offline shell, install) + responsive polish + role-based menus |
 | 8 | Hardening: rate-limit, security headers, DPIA, backups, staging UAT με πραγματικό φαρμακείο |
 
-**MVP «done» = ** GR φαρμακείο: login → connect ΗΔΙΚΑ → αυτόματος sync → dashboard +
+**MVP «done» = ** GR φαρμακείο: login → connect ΗΔΥΚΑ → αυτόματος sync → dashboard +
 prescription/doctor/ICD-10/profitability analytics → export, με GDPR anonymization & audit.
 
 ---

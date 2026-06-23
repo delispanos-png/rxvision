@@ -6,7 +6,7 @@ import { useEffect, useState } from "react";
 import {
   LayoutGrid, FileText, Newspaper, BookOpen, Users, UserCog, Mail,
   Server, Wrench, BarChart3, CreditCard, Receipt, LogOut, PlugZap,  Menu, X, Layers, Cloud,
-  ScrollText, KeyRound,
+  ScrollText, KeyRound, Boxes, Settings, ChevronDown, ChevronRight,
 } from "lucide-react";
 import { adminApi, adminTokens, ApiError } from "@/lib/adminClient";
 import { LogoMark } from "@/components/brand/Logo";
@@ -16,19 +16,27 @@ import { Tooltip } from "@/components/ui/Tooltip";
 const NAV = [
   { label: "Πίνακας", icon: LayoutGrid, href: "/admin", section: "dashboard" },
   { label: "Συνδρομητές", icon: Users, href: "/admin/subscribers", section: "subscribers" },
-  { label: "Χρήστες", icon: UserCog, href: "/admin/staff", section: "staff" },
   { label: "Συνδρομές", icon: CreditCard, href: "/admin/subscriptions", section: "subscriptions" },
+  { label: "Πακέτα & SLA", icon: Boxes, href: "/admin/packages", section: "subscriptions" },
   { label: "Τιμολόγηση", icon: Receipt, href: "/admin/billing", section: "billing" },
-  { label: "Πληρωμές & ΑΑΔΕ", icon: KeyRound, href: "/admin/integrations", section: "integrations" },
-  { label: "Διασύνδεση ΗΔΥΚΑ", icon: PlugZap, href: "/admin/idika", section: "idika" },
   { label: "Ομάδες ταμείων", icon: Layers, href: "/admin/fund-groups", section: "fund_groups" },
-  { label: "Υποδομή / Cloud", icon: Cloud, href: "/admin/cloud", section: "cloud" },
   { label: "Newsletter", icon: Mail, href: "/admin/newsletter", section: "newsletter" },
-  { label: "Ρυθμίσεις SMTP", icon: Server, href: "/admin/smtp", section: "smtp" },
-  { label: "Συντήρηση", icon: Wrench, href: "/admin/maintenance", section: "maintenance" },
   { label: "Επισκεψιμότητα", icon: BarChart3, href: "/admin/health", section: "health" },
-  { label: "Αρχείο ενεργειών", icon: ScrollText, href: "/admin/audit-logs", section: "audit" },
 ];
+
+// «Ρυθμίσεις Συστήματος» — collapsible group (system administration)
+const SETTINGS_GROUP = {
+  label: "Ρυθμίσεις Συστήματος", icon: Settings,
+  items: [
+    { label: "Χρήστες", icon: UserCog, href: "/admin/staff", section: "staff" },
+    { label: "Πληρωμές & ΑΑΔΕ", icon: KeyRound, href: "/admin/integrations", section: "integrations" },
+    { label: "Διασύνδεση ΗΔΥΚΑ", icon: PlugZap, href: "/admin/idika", section: "idika" },
+    { label: "Υποδομή / Cloud", icon: Cloud, href: "/admin/cloud", section: "cloud" },
+    { label: "Ρυθμίσεις SMTP", icon: Server, href: "/admin/smtp", section: "smtp" },
+    { label: "Συντήρηση", icon: Wrench, href: "/admin/maintenance", section: "maintenance" },
+    { label: "Αρχείο ενεργειών", icon: ScrollText, href: "/admin/audit-logs", section: "audit" },
+  ],
+};
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -36,6 +44,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   const [email, setEmail] = useState<string | null>(null);
   const [access, setAccess] = useState<{ super_admin: boolean; permissions: string[] } | null>(null);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const isLogin = pathname === "/admin/login";
 
   useEffect(() => {
@@ -51,6 +60,10 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
   const canSee = (section: string) => !access || access.super_admin || access.permissions.includes(section);
   const nav = NAV.filter((n) => canSee(n.section));
+  const settingsItems = SETTINGS_GROUP.items.filter((n) => canSee(n.section));
+  const settingsActive = settingsItems.some((n) => pathname === n.href || pathname.startsWith(n.href + "/"));
+  const settingsExpanded = settingsOpen || settingsActive;
+  const SettingsIcon = SETTINGS_GROUP.icon;
 
   function logout() {
     adminTokens.clear();
@@ -93,6 +106,32 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
               </Link>
             );
           })}
+
+          {/* Ρυθμίσεις Συστήματος — collapsible group */}
+          {settingsItems.length > 0 && (
+            <div className="pt-1">
+              <button onClick={() => setSettingsOpen((v) => !v)}
+                className={`flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm ${settingsActive ? "font-medium text-indigo-700" : "text-slate-600 hover:bg-slate-50"}`}>
+                <SettingsIcon className="h-4 w-4" />
+                <span className="flex-1 text-left">{SETTINGS_GROUP.label}</span>
+                {settingsExpanded ? <ChevronDown className="h-4 w-4 text-slate-400" /> : <ChevronRight className="h-4 w-4 text-slate-400" />}
+              </button>
+              {settingsExpanded && (
+                <div className="ml-4 mt-0.5 space-y-0.5 border-l border-slate-200 pl-3">
+                  {settingsItems.map((n) => {
+                    const active = pathname === n.href || pathname.startsWith(n.href + "/");
+                    const Icon = n.icon;
+                    return (
+                      <Link key={n.label} href={n.href} onClick={() => setMobileOpen(false)}
+                        className={`flex items-center gap-3 rounded-lg px-3 py-2 text-sm ${active ? "bg-indigo-50 font-medium text-indigo-700" : "text-slate-600 hover:bg-slate-50"}`}>
+                        <Icon className="h-4 w-4" />{n.label}
+                      </Link>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
         </nav>
         <div className="border-t border-slate-200 px-5 py-3 text-sm">
           {email && <div className="mb-2 truncate text-slate-500">{email}</div>}

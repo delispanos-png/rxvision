@@ -14,6 +14,7 @@ from app.api.v1.routers import (
     infra_cloud,
     icd10,
     ingestion,
+    loyalty,
     monthly_closing,
     onboarding,
     orders,
@@ -29,6 +30,7 @@ from app.api.v1.routers import (
     profitability,
     reimbursement,
     subscriptions,
+    vaccinations,
     tenants,
     users,
 )
@@ -43,11 +45,13 @@ api_router.include_router(patient_intelligence.router, prefix="/patient-intellig
 api_router.include_router(pharmacat.router, prefix="/pharmacat", tags=["pharmacat"])
 api_router.include_router(copilot.router, prefix="/copilot", tags=["copilot"])
 api_router.include_router(reimbursement.router, prefix="/reimbursement", tags=["reimbursement"])
+api_router.include_router(loyalty.router, prefix="/loyalty", tags=["loyalty"])
 api_router.include_router(dashboard.router, prefix="/dashboard", tags=["dashboard"])
 api_router.include_router(advisor.router, prefix="/advisor", tags=["advisor"])
 api_router.include_router(communications.router, prefix="/communications", tags=["communications"])
 api_router.include_router(gdpr.router, prefix="/gdpr", tags=["gdpr"])
 api_router.include_router(prescriptions.router, prefix="/prescriptions", tags=["prescriptions"])
+api_router.include_router(vaccinations.router, prefix="/vaccinations", tags=["vaccinations"])
 
 # Analytics modules
 api_router.include_router(doctors.router, prefix="/doctors", tags=["doctors"])

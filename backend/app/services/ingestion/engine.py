@@ -31,7 +31,7 @@ def _now() -> datetime:
 
 # Bump όταν αλλάζει η ΔΟΜΗ των αποθηκευμένων items/details (όχι μόνο οι τιμές) ώστε ένα
 # re-ingest να ΞΑΝΑΓΡΑΨΕΙ τα items αντί να κάνει skip-by-hash. v2: per-τεμάχιο coupons.
-_PARSE_VERSION = "v6-repeat-period"
+_PARSE_VERSION = "v7-galenic"
 
 
 def _content_hash(ex: CanonicalExecution, amount_total: int, claimed: int) -> str:
@@ -127,7 +127,7 @@ class IngestionEngine:
         fund_id = await self._resolve_fund(ex)
 
         item_docs, amount_total, wholesale_cost = await self._resolve_items(ex)
-        if ex.amount_total:                       # source-authoritative retail (ΗΔΙΚΑ) → exact totals
+        if ex.amount_total:                       # source-authoritative retail (ΗΔΥΚΑ) → exact totals
             # Κλιμάκωσε το χονδρικό στο ίδιο authoritative σύνολο ώστε ο λόγος χονδρ./λιαν. να
             # μένει σταθερός — αλλιώς (διπλός πολλαπλασιασμός qty) το μεικτό κέρδος βγαίνει αρνητικό.
             if amount_total > 0:
@@ -189,7 +189,7 @@ class IngestionEngine:
         pseudo = pseudonymize(ex.patient.national_id, tenant_pepper=self.pepper)
         ag = age_group(ex.patient.birth_year, today=_now().date()) if ex.patient.birth_year else "unknown"
         set_fields = {"sex": ex.patient.sex, "age_group": ag,
-                      "residence_area": ex.patient.area, "last_seen_at": ex.executed_at,
+                      "residence_area": ex.patient.area,
                       "birth_year": ex.patient.birth_year}
         # The pharmacy is the data controller of its own patients → store identifiers so
         # the (authorised) pharmacist can see who they are. Tenant-isolated.
@@ -197,12 +197,16 @@ class IngestionEngine:
             set_fields["full_name"] = ex.patient.full_name
         if ex.patient.national_id and ex.patient.national_id.isdigit():
             set_fields["amka"] = ex.patient.national_id
+        # first_seen_at = EARLIEST execution date, last_seen_at = LATEST — via $min/$max so they stay
+        # correct regardless of INGESTION ORDER (e.g. May-2026 downloaded before a Jan-2025 backfill).
         res = await self.db["patients_anonymized"].find_one_and_update(
             {"tenant_id": self.tenant_id, "pseudo_id": pseudo},
             {"$set": set_fields,
+             "$min": {"first_seen_at": ex.executed_at},
+             "$max": {"last_seen_at": ex.executed_at},
              "$setOnInsert": {"tenant_id": self.tenant_id, "pseudo_id": pseudo,
-                              "first_seen_at": ex.executed_at, "rx_count": 0,
-                              "rx_value_total": 0, "lifecycle": "new", "created_at": _now()}},
+                              "rx_count": 0, "rx_value_total": 0,
+                              "lifecycle": "new", "created_at": _now()}},
             upsert=True, return_document=ReturnDocument.AFTER)
         return res["_id"]
 
@@ -227,7 +231,7 @@ class IngestionEngine:
     async def _effective_wholesale(self, it: CanonicalItem) -> tuple[int, str]:
         """Resolve an item's wholesale cost in cents (+ its source), so profitability is
         never computed against a 0 cost (which made gross_profit == amount_claimed for
-        live ΗΔΙΚΑ — T-06). Priority:
+        live ΗΔΥΚΑ — T-06). Priority:
           1. value from the source feed (ΓΕΣΥ / synthetic / PharmacyOne),
           2. a known *real* price already in product masterdata,
           3. an estimate from retail via WHOLESALE_FALLBACK_MARGIN_PCT (flagged 'estimated').

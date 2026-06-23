@@ -1,6 +1,6 @@
 """Source-agnostic canonical model.
 
-Every adapter (ΓΕΣΥ XML, ΗΔΙΚΑ API, …) converts its raw payload into these shapes,
+Every adapter (ΓΕΣΥ XML, ΗΔΥΚΑ API, …) converts its raw payload into these shapes,
 so the persist engine is identical regardless of source. Money is integer cents.
 Patient `national_id` is RAW here and is pseudonymised by the engine before any write —
 it is the only place raw PII exists, and only in memory.

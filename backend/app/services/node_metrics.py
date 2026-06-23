@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import shutil
 from datetime import datetime, timezone
 
 from app.core.db import shared_db
@@ -50,6 +51,14 @@ def _load() -> float:
         return float(f.read().split()[0])
 
 
+def _disk() -> tuple[float, float]:
+    # statvfs("/") inside the container reports the underlying host filesystem (overlay is
+    # backed by the host's root disk), so this reflects real host disk usage. Returns (GB total, used %).
+    du = shutil.disk_usage("/")
+    pct = round(du.used / du.total * 100, 1) if du.total else 0.0
+    return round(du.total / 1_000_000_000, 1), pct
+
+
 async def report_loop() -> None:
     name = os.environ.get("NODE_NAME")
     if not name:
@@ -60,10 +69,12 @@ async def report_loop() -> None:
         try:
             cpu = _cpu_pct()
             ram_total, ram_pct = _ram()
+            disk_total_gb, disk_pct = _disk()
             await shared_db()["node_metrics"].update_one(
                 {"_id": name},
                 {"$set": {"node": name, "cpu": cpu, "ram_pct": ram_pct,
                           "ram_total_mb": ram_total, "load": _load(),
+                          "disk_pct": disk_pct, "disk_total_gb": disk_total_gb,
                           "ts": datetime.now(tz=timezone.utc)}},
                 upsert=True)
         except Exception:  # noqa: BLE001 — metrics must never crash the app

@@ -102,6 +102,7 @@ DEFAULT_ROLES: list[dict] = [
                 "settings:read",
                 "settings:write",
                 "users:manage",
+                "portal:manage",
                 "gdpr:export",
                 "gdpr:rectify",
                 "gdpr:erase",
@@ -119,6 +120,7 @@ DEFAULT_ROLES: list[dict] = [
                 "orders:run",
                 "closing:run",
                 "ingestion:run",
+                "portal:manage",
                 "gdpr:export",
                 "gdpr:rectify",
                 "gdpr:erase",
@@ -129,7 +131,8 @@ DEFAULT_ROLES: list[dict] = [
         "key": "staff",
         "name": "Προσωπικό",
         "is_system": True,
-        # Read-only on the day-to-day analytics modules.
+        # Read-only on the day-to-day analytics modules + the customer-portal circuit
+        # (front-desk staff answer patients / handle assigned prescriptions).
         "permissions": sorted(set([
             "dashboard:read",
             "prescriptions:read",
@@ -138,6 +141,7 @@ DEFAULT_ROLES: list[dict] = [
             "icd10:read",
             "future:read",
             "orders:read",
+            "portal:manage",
         ])),
     },
 ]

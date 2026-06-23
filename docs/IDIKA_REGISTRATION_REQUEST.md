@@ -1,4 +1,4 @@
-# Αίτημα πρόσβασης API ΦΑΡΜΑΚΟΠΟΙΩΝ (ΗΔΙΚΑ) — RxVision / CloudOn
+# Αίτημα πρόσβασης API ΦΑΡΜΑΚΟΠΟΙΩΝ (ΗΔΥΚΑ) — RxVision / CloudOn
 
 > Προς: **pharm.api.support@idika.gr**
 > Θέμα: **Αίτημα εγγραφής εφαρμογής & application API key — Μηχανισμός Διαλειτουργικότητας API Φαρμακοποιών**
@@ -46,4 +46,4 @@
 - HdikaClient: Basic + `Api-Key` + `Accept: application/xml` (+ `X-DOCTOR-IP`), XML parser,
   paging `prescription-execution/search`, auto-discovery `/user/me`. Configurable από Settings.
 - Μόλις λάβουμε **(α) application key + (β) allowlist της 157.180.26.98**, βάζουμε το key
-  στα Settings → «Διασύνδεση ΗΔΙΚΑ» και δουλεύει live. (Λεπτομέρειες: [docs/IDIKA_API.md](IDIKA_API.md).)
+  στα Settings → «Διασύνδεση ΗΔΥΚΑ» και δουλεύει live. (Λεπτομέρειες: [docs/IDIKA_API.md](IDIKA_API.md).)

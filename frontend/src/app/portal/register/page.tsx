@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Pill } from "lucide-react";
@@ -11,15 +11,20 @@ type Session = { access_token: string | null; refresh_token: string; pharmacies:
 export default function PortalRegister() {
   const router = useRouter();
   const [f, setF] = useState({ first_name: "", last_name: "", email: "", phone: "", amka: "", password: "" });
+  const [ph, setPh] = useState<string | null>(null);   // «αγαπημένο» φαρμακείο από QR πάγκου (?ph=)
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
   const set = (k: string) => (e: React.ChangeEvent<HTMLInputElement>) => setF({ ...f, [k]: e.target.value });
+
+  useEffect(() => {
+    try { const p = new URLSearchParams(window.location.search).get("ph"); if (p) setPh(p); } catch { /* ignore */ }
+  }, []);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setErr(""); setBusy(true);
     try {
-      const s = await patientAuth<Session>("/patient/auth/register", f);
+      const s = await patientAuth<Session>("/patient/auth/register", { ...f, pharmacy: ph || undefined });
       patientTokens.set(s.access_token, s.refresh_token);
       router.replace("/portal");
     } catch (e) {
@@ -41,6 +46,7 @@ export default function PortalRegister() {
           <h1 className="text-xl font-extrabold tracking-tight text-slate-900">Δημιουργία λογαριασμού</h1>
           <p className="mt-1 text-sm text-slate-500">Δες τις συνταγές σου & κλείσε ραντεβού στο φαρμακείο σου</p>
         </div>
+        {ph && <div className="rounded-xl bg-emerald-50 px-3 py-2 text-center text-xs font-medium text-emerald-700">📍 Εγγραφή με το φαρμακείο σου ως αγαπημένο</div>}
         {err && <div className="rounded-xl bg-rose-50 px-3 py-2 text-sm text-rose-700">{err}</div>}
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
           <input required placeholder="Όνομα" value={f.first_name} onChange={set("first_name")} className={inp} />

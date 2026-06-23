@@ -320,6 +320,9 @@ export default function PrescriptionsPage() {
           selected={chars}
           onChange={setChars}
           groups={[
+            { title: t("Ειδικά μητρώα", "Special registries"), options: [
+              { value: "flu_vaccination", label: t("💉 Εμβολιασμοί Γρίπης", "💉 Flu Vaccinations") },
+            ] },
             { title: t("Χαρακτηριστικά", "Characteristics"), options: [
               { value: "chronic", label: t("Χρόνια αγωγή", "Chronic") },
               { value: "high_cost", label: t("Υψηλού κόστους", "High cost") },
@@ -435,7 +438,9 @@ export default function PrescriptionsPage() {
             <DataTable columns={columns} rows={items} rowKey={(r) => r.external_id}
               serverSort={{ key: sort.key, dir: sort.dir === 1 ? "asc" : "desc" }}
               onServerSort={onServerSort}
-              onRowClick={(r) => router.push(`/prescriptions/${encodeURIComponent(r.external_id)}`)} />
+              onRowClick={(r) => router.push(r.source === "INFLUENZA"
+                ? `/vaccinations?barcode=${encodeURIComponent(r.external_id)}`
+                : `/prescriptions/${encodeURIComponent(r.external_id)}`)} />
           </QueryState>
           {/* pagination */}
           <div className="mt-3 flex items-center justify-between text-sm">

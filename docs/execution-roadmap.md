@@ -21,14 +21,14 @@
 ## Phase 2 — Data correctness & core completeness (trustworthy product)
 | Task | Priority | Effort | Dependencies | Expected impact |
 |---|---|---|---|---|
-| **T-06** wire wholesale pricing (`hdika_client.py:274`) | Critical | M | ΗΔΙΚΑ masterdata | Fixes profitability/margins for real ΗΔΙΚΑ tenants (currently wrong) |
-| Verify ΗΔΙΚΑ `repeat_total/current` mapping vs real spec | High | M | ΗΔΙΚΑ spec | Correct future-prescription generation |
+| **T-06** wire wholesale pricing (`hdika_client.py:274`) | Critical | M | ΗΔΥΚΑ masterdata | Fixes profitability/margins for real ΗΔΥΚΑ tenants (currently wrong) |
+| Verify ΗΔΥΚΑ `repeat_total/current` mapping vs real spec | High | M | ΗΔΥΚΑ spec | Correct future-prescription generation |
 | End-to-end tests for `IngestionEngine` | High | M | — | Protects the most critical, untested path |
 | Integration tests (FastAPI TestClient: auth/RBAC/isolation) | High | M | — | Real regression safety net |
 | Implement data retention/erasure worker (GDPR) | High | M | — | Legal compliance; closes a stub |
 | Implement profitability snapshots worker | Medium | M | — | Performance + correct by_dimension analytics |
 | Make ingestion item-replace transactional (Mongo session) | Medium | S | rs0✓ | No partial-write corruption |
-| Move blocking ΗΔΙΚΑ sync off the event loop | Medium | M | — | API responsiveness during backfills |
+| Move blocking ΗΔΥΚΑ sync off the event loop | Medium | M | — | API responsiveness during backfills |
 
 ## Phase 3 — Responsive, UX & hardening (production polish)
 | Task | Priority | Effort | Dependencies | Expected impact |
@@ -37,7 +37,7 @@
 | Responsive/UX Phase B (filters, chart legibility, KPI grids, touch targets) | High | M | Phase A | Usable analytics on phones/tablets |
 | Remove dead UI + branded 404/error pages + mount InstallButton | High | S | — | Removes broken/fake affordances |
 | Stop leaking `JSON.stringify(problem)`; friendly errors | Medium | S | — | Professional UX, no payload leak |
-| SSRF allow-list on ΗΔΙΚΑ `base_url` (M2) | Medium | S | — | Blocks internal-network probing |
+| SSRF allow-list on ΗΔΥΚΑ `base_url` (M2) | Medium | S | — | Blocks internal-network probing |
 | Audit logging for PHI reads + failed logins; WORM store (M5) | Medium | M | — | GDPR accountability |
 | Tenant data export (GDPR portability) | Medium | M | — | Compliance; closes stub |
 | T-09 random per-tenant pepper at creation | Medium | M | test | Stronger pseudonym isolation |

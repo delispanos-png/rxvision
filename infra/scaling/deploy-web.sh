@@ -16,7 +16,7 @@ set -euo pipefail
 
 ROOT=/opt/rxvision
 KEY="$ROOT/infra/scaling/keys/rxvision_data"
-APP_NODE=root@62.238.5.78
+APP_NODE=root@10.0.0.5   # SRV02 PRIVATE IP — ship over the private net (fast, no public-traffic cost)
 SSH=(ssh -i "$KEY" -o StrictHostKeyChecking=no)
 
 cd "$ROOT"

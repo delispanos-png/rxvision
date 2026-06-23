@@ -24,7 +24,7 @@
 2. `const t = useT();` at the top of the component.
 3. Replace each user-visible Greek literal with `t("Greek", "English")`. Do NOT translate:
    identifiers, API paths, data values, ICD-10 codes, or brand names (RxVision, PharmacyOne,
-   ΗΔΙΚΑ, ΓΕΣΥ, Noeton).
+   ΗΔΥΚΑ, ΓΕΣΥ, Noeton).
 4. Keep server components (no hooks) using a passed-in locale or leaving them el-only if not
    user-critical (e.g. legal pages already have their own metadata).
 5. Run `tsc --noEmit` + `next lint` + `build` after each batch.

@@ -74,9 +74,13 @@ class PatientExecutionsRepository(BaseRepository):
     collection_name = "prescription_executions"
 
     async def per_patient(self, *, date_from: datetime, date_to: datetime,
-                          sort: str = "value", limit: int = 100) -> list[dict]:
+                          sort: str = "value", limit: int = 100,
+                          filters: dict | None = None) -> list[dict]:
+        """Per-patient rx/value/claimed/profit + demographics + contact, with rich filtering.
+        Filters are applied BEFORE the limit so "top N matching" is correct (not top-N-then-filter)."""
+        f = filters or {}
         sort_field = _PATIENT_SORT.get(sort, "value")
-        pipeline = [
+        pipeline: list[dict] = [
             {"$match": {"executed_at": {"$gte": date_from, "$lt": date_to}}},
             {"$group": {
                 "_id": "$patient_ref",
@@ -88,9 +92,19 @@ class PatientExecutionsRepository(BaseRepository):
                 "last_seen": {"$max": "$executed_at"},
             }},
             {"$set": {"profit": {"$subtract": ["$value", "$cost"]}}},  # retail − wholesale
-            {"$sort": {sort_field: -1}},
-            {"$limit": limit},
-            # join anonymized profile (no PII): pseudo_id + demographics + lifecycle
+        ]
+        # numeric filters on the grouped totals (cheap, before the demographics/contact lookups)
+        num: dict = {}
+        if f.get("rx_min") is not None:
+            num["rx"] = {"$gte": int(f["rx_min"])}
+        if f.get("value_min") is not None:
+            num["value"] = {"$gte": int(f["value_min"])}        # cents
+        if f.get("profit_min") is not None:
+            num["profit"] = {"$gte": int(f["profit_min"])}      # cents (may be negative)
+        if num:
+            pipeline.append({"$match": num})
+        # demographics (anonymized profile — no PII)
+        pipeline += [
             {"$lookup": {"from": "patients_anonymized", "localField": "_id",
                          "foreignField": "_id", "as": "p"}},
             {"$set": {"pseudo_id": {"$first": "$p.pseudo_id"},
@@ -99,14 +113,56 @@ class PatientExecutionsRepository(BaseRepository):
                       "sex": {"$first": "$p.sex"},
                       "area": {"$first": "$p.residence_area"},
                       "lifecycle": {"$first": "$p.lifecycle"}}},
+        ]
+        demo: dict = {}
+        if f.get("sex"):
+            demo["sex"] = f["sex"]
+        if f.get("age_groups"):
+            demo["age_group"] = {"$in": list(f["age_groups"])}
+        if f.get("lifecycle"):
+            demo["lifecycle"] = f["lifecycle"]
+        if f.get("area"):
+            demo["area"] = {"$regex": re.escape(str(f["area"])), "$options": "i"}
+        if demo:
+            pipeline.append({"$match": demo})
+        # contact + pharmacist lifecycle (separate collection, survives ΗΔΙΚΑ re-ingest)
+        pipeline += [
+            {"$lookup": {"from": "patient_contacts", "localField": "_id",
+                         "foreignField": "_id", "as": "ct"}},
+            {"$set": {"ct": {"$first": "$ct"}}},
+        ]
+        cf: dict = {}
+        status = f.get("status")
+        if status == "inactive":
+            cf["ct.active"] = False
+        elif status == "active":
+            cf["ct.active"] = {"$ne": False}     # missing contact or active=true
+        if f.get("reason"):
+            cf["ct.inactive_reason"] = f["reason"]
+        if f.get("has_contact"):
+            cf["$or"] = [{"ct.mobile": {"$nin": [None, ""]}}, {"ct.phone": {"$nin": [None, ""]}},
+                         {"ct.email": {"$nin": [None, ""]}}]
+        if f.get("consent"):
+            cf["ct.marketing_consent"] = True
+        if cf:
+            pipeline.append({"$match": cf})
+        pipeline += [
+            {"$sort": {sort_field: -1}},
+            {"$limit": limit},
             {"$project": {"_id": 0, "patient_ref": "$_id",
                           "rx": 1, "value": 1, "claimed": 1, "cost": 1, "profit": 1,
                           "active_since": 1, "last_seen": 1, "pseudo_id": 1, "full_name": 1,
-                          "age_group": 1, "sex": 1, "area": 1, "lifecycle": 1}},
+                          "age_group": 1, "sex": 1, "area": 1, "lifecycle": 1,
+                          "mobile": "$ct.mobile", "phone": "$ct.phone", "email": "$ct.email",
+                          "consent": {"$ifNull": ["$ct.marketing_consent", False]},
+                          "contact_active": {"$ifNull": ["$ct.active", True]},
+                          "inactive_reason": "$ct.inactive_reason"}},
         ]
         rows = await self.aggregate(pipeline)
         for r in rows:
             r["full_name"] = mask_name(r.get("full_name"), self.demo)
+            if self.demo:
+                r["mobile"] = r["phone"] = r["email"] = None  # contact = PII
         return rows
 
     async def search(self, q: str, limit: int = 25) -> list[dict]:

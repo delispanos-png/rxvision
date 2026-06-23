@@ -1,4 +1,4 @@
-"""ΗΔΙΚΑ medicine price catalog (Δελτίο Τιμών) — global, shared by all tenants.
+"""ΗΔΥΚΑ medicine price catalog (Δελτίο Τιμών) — global, shared by all tenants.
 
 masterdata/medicines (~14k items) carries the real retail / wholesale / reference
 prices + participation + ATC + narcotic flag per medicine, keyed by `eofCode` — the
@@ -135,7 +135,7 @@ async def refresh_catalog(db, client) -> int:
 
 
 def categorize(atc, narcotic, high_cost, name: str = "") -> str:
-    """ΗΔΙΚΑ medicine class: narcotic / vaccine (ATC J07) / allergen (ATC V01) / ΦΥΚ
+    """ΗΔΥΚΑ medicine class: narcotic / vaccine (ATC J07) / allergen (ATC V01) / ΦΥΚ
     (high-cost) / normal. ATC code is the primary signal, with name fallbacks."""
     a = (atc or "").upper()
     n = (name or "").upper()

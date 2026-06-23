@@ -26,3 +26,34 @@ def mask_amka(amka: str | None, demo: bool) -> str | None:
     if len(s) <= 6:
         return "•" * len(s)
     return s[:4] + "•" * (len(s) - 6) + s[-2:]
+
+
+# Κλειδιά dict που περιέχουν PII ασθενή — μασκάρονται ομοιόμορφα σε κάθε λίστα αποτελεσμάτων.
+_NAME_KEYS = ("name", "full_name", "patient_name")
+_AMKA_KEYS = ("amka",)
+_CONTACT_KEYS = ("phone", "mobile", "email")  # σε demo → None (καμία επικοινωνία/έκθεση)
+
+
+def mask_row(row: dict, demo: bool) -> dict:
+    """In-place masking ενός dict αποτελέσματος: επίθετο (name/full_name/patient_name),
+    ΑΜΚΑ, και μηδενισμός τηλεφώνου/email. No-op αν δεν είμαστε σε demo."""
+    if not demo or not isinstance(row, dict):
+        return row
+    for k in _NAME_KEYS:
+        if row.get(k):
+            row[k] = mask_name(row[k], True)
+    for k in _AMKA_KEYS:
+        if row.get(k):
+            row[k] = mask_amka(row[k], True)
+    for k in _CONTACT_KEYS:
+        if k in row:
+            row[k] = None
+    return row
+
+
+def mask_rows(rows: list[dict] | None, demo: bool) -> list[dict] | None:
+    """Μασκάρει κάθε dict μιας λίστας (in-place). Επιστρέφει την ίδια λίστα για chaining."""
+    if demo and rows:
+        for r in rows:
+            mask_row(r, True)
+    return rows

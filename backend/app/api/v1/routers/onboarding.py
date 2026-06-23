@@ -38,7 +38,9 @@ class RegisterIn(BaseModel):
     company: CompanyIn | None = None
     package_code: str | None = Field(None, max_length=40)
     billing_cycle: Literal["monthly", "yearly"] | None = None
-    sla: Literal["basic", "professional"] | None = None
+    sla: str | None = Field(None, max_length=40)
+    seats: int | None = Field(None, ge=1, le=999)        # ταυτόχρονοι χρήστες
+    payment_method: Literal["card", "bank"] | None = None
 
 
 @router.post("/register", status_code=201,
@@ -49,9 +51,24 @@ async def register(body: RegisterIn):
             pharmacy_name=body.pharmacy_name, country=body.country,
             email=body.email, password=body.password, full_name=body.full_name,
             company=body.company.model_dump() if body.company else None,
-            package_code=body.package_code, billing_cycle=body.billing_cycle, sla=body.sla)
+            package_code=body.package_code, billing_cycle=body.billing_cycle, sla=body.sla,
+            seats=body.seats, payment_method=body.payment_method)
     except OnboardingError as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, detail={"error": str(exc)})
+
+
+@router.get("/packages",
+            dependencies=[Depends(rate_limit("onboarding_packages", limit=60, window_seconds=600))])
+async def public_packages():
+    """Active subscription packages + active SLA tiers for the public /register wizard. Only
+    `active` items are exposed, so deactivated packages are never offered to new customers."""
+    from app.core.db import shared_db
+    from app.repositories.base import jsonsafe
+    db = shared_db()
+    flt = {"$or": [{"active": {"$ne": False}}, {"active": {"$exists": False}}]}
+    pkgs = [p async for p in db["packages"].find(flt).sort("price_monthly", 1)]
+    sla = [s async for s in db["sla_tiers"].find(flt).sort("response_hours", 1)]
+    return {"packages": jsonsafe(pkgs), "sla": jsonsafe(sla)}
 
 
 @router.get("/aade/{afm}",

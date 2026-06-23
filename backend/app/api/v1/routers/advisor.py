@@ -19,7 +19,7 @@ async def nutrition(
     patient_id: str,
     ctx: TenantContext = Depends(require("patients:read", module="patient_analytics")),
 ):
-    plan = await AdvisorRepository(tenant_id=ctx.tenant_id).nutrition_plan(patient_id)
+    plan = await AdvisorRepository(tenant_id=ctx.tenant_id, demo=ctx.demo).nutrition_plan(patient_id)
     if not plan:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "patient_not_found")
     return plan
@@ -31,7 +31,7 @@ async def nutrition_email(
     ctx: TenantContext = Depends(require("patients:read", module="patient_analytics")),
 ):
     from app.services import comms
-    plan = await AdvisorRepository(tenant_id=ctx.tenant_id).nutrition_plan(patient_id)
+    plan = await AdvisorRepository(tenant_id=ctx.tenant_id, demo=ctx.demo).nutrition_plan(patient_id)
     if not plan:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "patient_not_found")
     if not plan.get("email"):
@@ -51,7 +51,7 @@ async def business(
     date_to: datetime = Query(...),
     ctx: TenantContext = Depends(require("prescriptions:read", module="prescription_analytics")),
 ):
-    return await AdvisorRepository(tenant_id=ctx.tenant_id).business(date_from, date_to)
+    return await AdvisorRepository(tenant_id=ctx.tenant_id, demo=ctx.demo).business(date_from, date_to)
 
 
 @router.get("/cross-sell-patients")
@@ -59,7 +59,7 @@ async def cross_sell_patients(
     atc: str = Query(..., description="ATC prefix, e.g. C10AA"),
     ctx: TenantContext = Depends(require("patients:read", module="patient_analytics")),
 ):
-    return {"atc": atc, "items": await AdvisorRepository(tenant_id=ctx.tenant_id).cross_sell_patients(atc)}
+    return {"atc": atc, "items": await AdvisorRepository(tenant_id=ctx.tenant_id, demo=ctx.demo).cross_sell_patients(atc)}
 
 
 @router.get("/recall")
@@ -67,7 +67,7 @@ async def recall(
     ctx: TenantContext = Depends(require("patients:read", module="patient_analytics")),
 ):
     """Recall list — patients with a missed/available repeat, ranked by € at risk."""
-    return await AdvisorRepository(tenant_id=ctx.tenant_id).recall()
+    return await AdvisorRepository(tenant_id=ctx.tenant_id, demo=ctx.demo).recall()
 
 
 @router.get("/orders")
@@ -76,5 +76,5 @@ async def orders(
     safety_pct: float = 15.0,
     ctx: TenantContext = Depends(require("orders:read", module="order_suggestions")),
 ):
-    return await AdvisorRepository(tenant_id=ctx.tenant_id).orders(
+    return await AdvisorRepository(tenant_id=ctx.tenant_id, demo=ctx.demo).orders(
         lead_days=lead_days, safety_pct=safety_pct)

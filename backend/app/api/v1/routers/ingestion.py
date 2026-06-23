@@ -1,6 +1,6 @@
-"""Ingestion router — ΗΔΙΚΑ credentials/sync (GR, primary), ΓΕΣΥ upload (CY, step 2).
+"""Ingestion router — ΗΔΥΚΑ credentials/sync (GR, primary), ΓΕΣΥ upload (CY, step 2).
 
-Country rule (sources.py): a GR tenant ingests ONLY via ΗΔΙΚΑ, a CY tenant ONLY via ΓΕΣΥ.
+Country rule (sources.py): a GR tenant ingests ONLY via ΗΔΥΚΑ, a CY tenant ONLY via ΓΕΣΥ.
 Credentials are write-only: they go to Vault and only a `vault://...` reference is persisted.
 """
 
@@ -31,13 +31,13 @@ from app.utils.net import UnsafeUrlError, assert_safe_outbound_url
 
 
 def _assert_safe_idika_base_url(creds: dict) -> None:
-    """Block SSRF via a tenant-supplied ΗΔΙΚΑ base_url (M2) — public hosts only."""
+    """Block SSRF via a tenant-supplied ΗΔΥΚΑ base_url (M2) — public hosts only."""
     if creds.get("base_url"):
         try:
             assert_safe_outbound_url(creds["base_url"],
                                      allowed_host_suffixes=settings.idika_allowed_host_suffixes)
         except UnsafeUrlError as exc:
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Μη επιτρεπτό endpoint ΗΔΙΚΑ: {exc}")
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Μη επιτρεπτό endpoint ΗΔΥΚΑ: {exc}")
 
 router = APIRouter()
 
@@ -51,7 +51,7 @@ async def _tenant_country(tenant_id: str) -> str:
 
 
 def _public_config(creds: dict) -> dict:
-    """Non-secret subset of the ΗΔΙΚΑ config persisted on the tenant for display."""
+    """Non-secret subset of the ΗΔΥΚΑ config persisted on the tenant for display."""
     return {
         "configured": True,
         "username": creds.get("username"),   # non-secret → returned in full so the form rehydrates
@@ -76,11 +76,11 @@ def _public_config(creds: dict) -> dict:
 async def _effective_hdika_creds(tenant_id: str) -> dict:
     """Build the HdikaClient credentials for a pharmacy.
 
-    Each pharmacy is an AUTONOMOUS ΗΔΙΚΑ identity: in PRODUCTION it uses its OWN
-    username / password / api_key / pharmacy_id (stored per-tenant), calling ΗΔΙΚΑ
+    Each pharmacy is an AUTONOMOUS ΗΔΥΚΑ identity: in PRODUCTION it uses its OWN
+    username / password / api_key / pharmacy_id (stored per-tenant), calling ΗΔΥΚΑ
     directly. The platform only supplies the production endpoint (base_url).
 
-    TEST is different: ΗΔΙΚΑ gives CloudOn ONE shared sandbox pharmacy account
+    TEST is different: ΗΔΥΚΑ gives CloudOn ONE shared sandbox pharmacy account
     (foreignoffice_tst + a test key + a test pharmacy_id). In test mode every tenant
     is routed through that sandbox account so we can develop without real pharmacies.
     """
@@ -105,7 +105,7 @@ async def _effective_hdika_creds(tenant_id: str) -> dict:
             if envcfg.get("pharmacy_id"):
                 creds["pharmacy_id"] = envcfg["pharmacy_id"]
         # production: keep the tenant's own username/password/api_key/pharmacy_id as-is
-    _assert_safe_idika_base_url(creds)   # SSRF guard before any outbound ΗΔΙΚΑ call (M2)
+    _assert_safe_idika_base_url(creds)   # SSRF guard before any outbound ΗΔΥΚΑ call (M2)
     return creds
 
 
@@ -133,13 +133,13 @@ async def _last_watermark(tenant_id: str, source: str) -> datetime:
     return floor or datetime(2024, 1, 1, tzinfo=timezone.utc)
 
 
-# ── ΗΔΙΚΑ (Greece) — primary path ──────────────────────────
+# ── ΗΔΥΚΑ (Greece) — primary path ──────────────────────────
 @router.put("/credentials/hdika", response_model=CredentialsStatusOut)
 async def set_hdika_credentials(
     body: HdikaCredentialsIn,
     ctx: TenantContext = Depends(require("settings:write", module=_MODULE)),
 ):
-    """Register/replace the ΗΔΙΚΑ connection. Full credentials → Vault (write-only);
+    """Register/replace the ΗΔΥΚΑ connection. Full credentials → Vault (write-only);
     non-secret config/status → tenant for display in Settings."""
     assert_source_allowed(await _tenant_country(ctx.tenant_id), "HDIKA")
     # MERGE with stored creds: empty secrets/username keep their saved value, so
@@ -163,7 +163,7 @@ async def set_hdika_credentials(
 async def get_hdika_config(
     ctx: TenantContext = Depends(require("settings:read", module=_MODULE)),
 ):
-    """Non-secret ΗΔΙΚΑ connection status for the Settings page (never returns secrets)."""
+    """Non-secret ΗΔΥΚΑ connection status for the Settings page (never returns secrets)."""
     repo = TenantRepository(tenant_id=ctx.tenant_id)
     cfg = await repo.get_ingestion_config("hdika")
     last = await shared_db()["sync_jobs"].find_one(
@@ -178,8 +178,8 @@ async def get_hdika_config(
 async def test_hdika_connection(
     ctx: TenantContext = Depends(require("ingestion:run", module=_MODULE)),
 ):
-    """Test the ΗΔΙΚΑ connection. Live auth if a base_url is configured, else reports
-    synthetic mode (awaiting official ΗΔΙΚΑ API access)."""
+    """Test the ΗΔΥΚΑ connection. Live auth if a base_url is configured, else reports
+    synthetic mode (awaiting official ΗΔΥΚΑ API access)."""
     assert_source_allowed(await _tenant_country(ctx.tenant_id), "HDIKA")
     repo = TenantRepository(tenant_id=ctx.tenant_id)
     creds = await _effective_hdika_creds(ctx.tenant_id)
@@ -191,13 +191,13 @@ async def test_hdika_connection(
             client = HdikaClient(creds)
             client.authenticate()
             client.close()
-            result = ConnectionTestOut(ok=True, mode="live", message="Επιτυχής σύνδεση με ΗΔΙΚΑ.")
+            result = ConnectionTestOut(ok=True, mode="live", message="Επιτυχής σύνδεση με ΗΔΥΚΑ.")
         except Exception as exc:  # noqa: BLE001
             result = ConnectionTestOut(ok=False, mode="live", message=f"Αποτυχία σύνδεσης: {exc}")
     else:
         result = ConnectionTestOut(
             ok=True, mode="synthetic",
-            message="Τα credentials αποθηκεύτηκαν. Αναμονή επίσημου endpoint ΗΔΙΚΑ "
+            message="Τα credentials αποθηκεύτηκαν. Αναμονή επίσημου endpoint ΗΔΥΚΑ "
                     "(αίτημα: pharm.api.support@idika.gr) — μέχρι τότε λειτουργεί σε demo δεδομένα.")
     await repo.patch_ingestion_config("hdika", {"last_test": {
         "at": datetime.now(tz=timezone.utc).isoformat(), "ok": result.ok, "message": result.message}})
@@ -209,18 +209,18 @@ async def discover_hdika_pharmacy(
     ctx: TenantContext = Depends(require("ingestion:run", module=_MODULE)),
 ):
     """Σύνδεση & άντληση στοιχείων: authenticate, then pull the pharmacy profile from
-    ΗΔΙΚΑ (/user/me + /contracts) and auto-save it — so the operator never types
+    ΗΔΥΚΑ (/user/me + /contracts) and auto-save it — so the operator never types
     pharmacy_id/ΑΦΜ/ΣΗΣ/ΑΜ ΕΟΠΥΥ/history_from by hand."""
     assert_source_allowed(await _tenant_country(ctx.tenant_id), "HDIKA")
     client_creds = await _effective_hdika_creds(ctx.tenant_id)   # + platform api-key/endpoint
     if not client_creds.get("base_url") or not client_creds.get("api_key"):
-        raise HTTPException(400, "Λείπει endpoint/application key — ρύθμισέ τα στο adminpanel (Διασύνδεση ΗΔΙΚΑ).")
+        raise HTTPException(400, "Λείπει endpoint/application key — ρύθμισέ τα στο adminpanel (Διασύνδεση ΗΔΥΚΑ).")
     try:
         client = HdikaClient(client_creds)
         client.authenticate()
         discovered = client.fetch_user_info()
         client.close()
-    except Exception as exc:  # noqa: BLE001 — surface the ΗΔΙΚΑ error to the operator
+    except Exception as exc:  # noqa: BLE001 — surface the ΗΔΥΚΑ error to the operator
         raise HTTPException(400, f"Αποτυχία άντλησης: {exc}")
     # save discovered into the TENANT's own creds (not the platform key)
     tenant_creds = vault.get_secret(f"tenants/{ctx.tenant_id}/hdika") or {}
@@ -235,12 +235,48 @@ async def discover_hdika_pharmacy(
 async def trigger_hdika_sync(
     ctx: TenantContext = Depends(require("ingestion:run", module=_MODULE)),
 ):
-    """Queue an ΗΔΙΚΑ incremental sync on the worker (non-blocking) so the UI can poll
+    """Queue an ΗΔΥΚΑ incremental sync on the worker (non-blocking) so the UI can poll
     /ingestion/jobs for live progress. Idempotent via natural key + hash."""
     assert_source_allowed(await _tenant_country(ctx.tenant_id), "HDIKA")
     from app.workers.ingestion import hdika_incremental_sync
     hdika_incremental_sync.delay(ctx.tenant_id)
     return {"status": "queued"}
+
+
+@router.post("/hdika/reconcile-cancellations")
+async def reconcile_cancellations(
+    dry_run: bool = Query(True),
+    days: int = Query(10, ge=1, le=30),
+    ctx: TenantContext = Depends(require("ingestion:run", module=_MODULE)),
+):
+    """Reconcile cancelled prescriptions against ΗΔΥΚΑ: list what ΗΔΥΚΑ currently has for the last
+    `days`, diff vs what we hold, mark the missing ones `cancelled` (and restore any that reappear).
+    `dry_run=true` (default) only REPORTS what would change — run it first to review."""
+    from app.services.ingestion.cancellations import reconcile_tenant
+    return await reconcile_tenant(ctx.tenant_id, db=shared_db(), days=days, dry_run=dry_run)
+
+
+@router.post("/hdika/deep-reconcile")
+async def deep_reconcile(
+    days: int = Query(35, ge=1, le=120),
+    dry_run: bool = Query(True),
+    ctx: TenantContext = Depends(require("ingestion:run", module=_MODULE)),
+):
+    """Deep reconciliation: re-download the last `days` (corrects executions cancelled & re-executed
+    with different medicine lines/quantities) + cancel ones ΗΔΥΚΑ no longer returns. dry_run skips
+    the re-download and only previews the cancellations."""
+    from app.services.ingestion.cancellations import deep_reconcile_tenant
+    return await deep_reconcile_tenant(ctx.tenant_id, db=shared_db(), days=days, dry_run=dry_run)
+
+
+@router.post("/influenza/sync")
+async def influenza_sync(
+    dry_run: bool = Query(False),
+    ctx: TenantContext = Depends(require("ingestion:run", module=_MODULE)),
+):
+    """Sync seasonal-flu vaccinations from the ΗΔΥΚΑ Influenza Vaccination Registry into `vaccinations`."""
+    from app.services.ingestion.influenza import sync_influenza
+    return await sync_influenza(ctx.tenant_id, db=shared_db(), dry_run=dry_run)
 
 
 @router.post("/hdika/backfill", status_code=202)
@@ -249,7 +285,7 @@ async def trigger_hdika_backfill(
     date_to: str | None = Query(None, description="YYYY-MM-DD (default today)"),
     ctx: TenantContext = Depends(require("ingestion:run", module=_MODULE)),
 ):
-    """Queue a historical ΗΔΙΚΑ download for a chosen date range; progress via /ingestion/jobs."""
+    """Queue a historical ΗΔΥΚΑ download for a chosen date range; progress via /ingestion/jobs."""
     assert_source_allowed(await _tenant_country(ctx.tenant_id), "HDIKA")
     from app.workers.ingestion import hdika_backfill
     until_iso = f"{date_to}T23:59:59+00:00" if date_to else None
@@ -261,7 +297,7 @@ async def trigger_hdika_backfill(
 async def stop_hdika_sync(
     ctx: TenantContext = Depends(require("ingestion:run", module=_MODULE)),
 ):
-    """Cooperative stop: flag every running ΗΔΙΚΑ job so the worker breaks at its next
+    """Cooperative stop: flag every running ΗΔΥΚΑ job so the worker breaks at its next
     checkpoint (≈ every 20 records) and marks itself 'cancelled'."""
     res = await shared_db()["sync_jobs"].update_many(
         {"tenant_id": ctx.tenant_id, "status": "running"},

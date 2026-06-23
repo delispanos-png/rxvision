@@ -1,4 +1,4 @@
-"""Ingestion request/response DTOs — ΗΔΙΚΑ connection settings.
+"""Ingestion request/response DTOs — ΗΔΥΚΑ connection settings.
 
 Secrets (password, client_secret) go to Vault and are NEVER returned by reads.
 Non-secret config + status is stored on the tenant for display in Settings.
@@ -15,9 +15,9 @@ HDIKA_SECRET_FIELDS = {"password", "client_secret", "api_key"}
 
 
 class HdikaCredentialsIn(BaseModel):
-    """Everything a pharmacy registers to connect to the ΗΔΙΚΑ e-prescription API.
+    """Everything a pharmacy registers to connect to the ΗΔΥΚΑ e-prescription API.
 
-    The official ΗΔΙΚΑ interoperability spec (endpoint/auth) is provided under
+    The official ΗΔΥΚΑ interoperability spec (endpoint/auth) is provided under
     agreement (pharm.api.support@idika.gr); these fields cover the realistic set.
     """
 
@@ -32,9 +32,9 @@ class HdikaCredentialsIn(BaseModel):
     eopyy_registry: str | None = Field(None, description="ΑΜ ΕΟΠΥΥ φαρμακείου")
     pharmacy_code: str | None = Field(None, description="Κωδικός φαρμακείου στο ΣΗΣ")
 
-    # ── integration parameters (given by ΗΔΙΚΑ) ──
+    # ── integration parameters (given by ΗΔΥΚΑ) ──
     environment: Literal["test", "production"] = "test"
-    base_url: str | None = Field(None, description="ΗΔΙΚΑ API endpoint, π.χ. https://testeps.e-prescription.gr/pharmapiv2")
+    base_url: str | None = Field(None, description="ΗΔΥΚΑ API endpoint, π.χ. https://testeps.e-prescription.gr/pharmapiv2")
     api_key: str | None = Field(None, description="APPLICATION ACCESS API KEY — μοναδικό ανά εφαρμογή (secret → Vault)")
     doctor_ip: str | None = Field(None, description="X-DOCTOR-IP — εξωτερική IP κλήσης (αν απαιτείται)")
     client_id: str | None = Field(None, description="Integrator client id (αν OAuth)")
@@ -54,7 +54,7 @@ class HdikaConfigOut(BaseModel):
     afm: str | None = None
     eopyy_registry: str | None = None
     pharmacy_code: str | None = None
-    pharmacy_id: str | None = None          # auto-discovered from ΗΔΙΚΑ
+    pharmacy_id: str | None = None          # auto-discovered from ΗΔΥΚΑ
     pharmacy_name: str | None = None         # auto-discovered
     environment: str = "test"
     base_url: str | None = None

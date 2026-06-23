@@ -25,7 +25,7 @@ celery_app.conf.update(
     broker_transport_options={"visibility_timeout": 43200},
     task_default_queue="celery",
     # Optical-audit scans (interactive, user-facing) get a DEDICATED queue so they never
-    # wait behind heavy/slow background jobs (e.g. a 100s ΗΔΙΚΑ incremental sync).
+    # wait behind heavy/slow background jobs (e.g. a 100s ΗΔΥΚΑ incremental sync).
     task_routes={"app.workers.optical.process_scan": {"queue": "optical"}},
 )
 
@@ -46,6 +46,22 @@ celery_app.conf.beat_schedule = {
     "retention-cleanup": {
         "task": "app.workers.snapshots.apply_retention",
         "schedule": crontab(hour=3, minute=0),
+    },
+    # Deep reconciliation — re-download the window (correct cancelled-&-re-executed-differently:
+    # changed lines/quantities/amounts) + cancel ones ΗΔΥΚΑ no longer returns. Daily over today,
+    # weekly over 35 days back. 05:00 UTC = 07:00/08:00 Athens, clear of ΗΔΥΚΑ post-23:00 maintenance.
+    "deep-reconcile-daily": {
+        "task": "app.workers.ingestion.dispatch_deep_reconcile_daily",
+        "schedule": crontab(hour=5, minute=0),
+    },
+    "deep-reconcile-weekly": {
+        "task": "app.workers.ingestion.dispatch_deep_reconcile_weekly",
+        "schedule": crontab(hour=4, minute=0, day_of_week=0),  # Sunday
+    },
+    # Seasonal-flu vaccinations sync (ΗΔΥΚΑ Influenza Registry) — daily 04:30 UTC.
+    "influenza-sync": {
+        "task": "app.workers.ingestion.dispatch_influenza_sync",
+        "schedule": crontab(hour=4, minute=30),
     },
     # Subscription billing — charge due trials/renewals; auto-suspend on failure (no-op w/o Revolut)
     "bill-subscriptions": {

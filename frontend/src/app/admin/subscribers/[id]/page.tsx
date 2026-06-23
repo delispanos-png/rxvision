@@ -17,6 +17,7 @@ type Detail = {
   subscription: { plan: string; plan_name: string; status: string; product_code: string; features: Record<string, unknown>; limits: Record<string, unknown>; billing_cycle: string; seats: number; mrr: number; trial_ends_at: string | null; current_period_end: string | null; source: string };
   modules?: Record<string, "enabled" | "trial" | "locked">;
   users: User[];
+  active_now?: number;
   sync: { source: string; status: string; started_at: string; stats: Record<string, number> }[];
 };
 
@@ -43,6 +44,25 @@ const STATUS_STYLE: Record<string, string> = {
   active: "bg-emerald-100 text-emerald-700", trial: "bg-sky-100 text-sky-700",
   past_due: "bg-red-100 text-red-700", suspended: "bg-slate-200 text-slate-600", cancelled: "bg-red-100 text-red-700",
 };
+const SYNC_STAT_LABELS: Record<string, string> = {
+  fetched: "ελήφθησαν", inserted: "νέες", updated: "ενημερώσεις",
+  duplicates: "αμετάβλητες", invalid: "άκυρες", cancelled: "ακυρώσεις", deleted: "διαγραφές",
+};
+
+function SyncStats({ stats }: { stats: Record<string, number> }) {
+  const entries = Object.entries(stats || {});
+  if (!entries.length) return <span className="text-xs text-slate-300">—</span>;
+  return (
+    <span className="flex flex-wrap gap-1.5">
+      {entries.map(([k, v]) => (
+        <span key={k} className={`rounded-full px-1.5 py-0.5 text-[11px] ${v > 0 ? "bg-slate-100 text-slate-600" : "text-slate-300"}`}>
+          <b>{fmtNum(v)}</b> {SYNC_STAT_LABELS[k] ?? k}
+        </span>
+      ))}
+    </span>
+  );
+}
+
 function Badge({ value }: { value: string }) {
   return <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_STYLE[value] ?? "bg-slate-100 text-slate-600"}`}>{value}</span>;
 }
@@ -119,7 +139,7 @@ export default function TenantCardPage() {
         <KpiCard label="Πλάνο" value={s.plan_name || s.plan?.split("-").pop() || "—"} />
         <KpiCard label="Κατάσταση συνδρομής" value={s.status ?? "—"} />
         <KpiCard label="MRR" value={fmtEur(s.mrr)} accent="violet" />
-        <KpiCard label="Χρήστες" value={fmtNum(data.users.length)} accent="sky" />
+        <KpiCard label="Χρήστες" value={`${data.active_now ?? 0} / ${fmtNum(data.users.length)}`} sub={`${data.active_now ?? 0} ενεργοί τώρα · ${s.seats ?? "—"} θέσεις`} accent="sky" />
       </div>
 
       {/* Edit + στοιχεία */}
@@ -199,8 +219,8 @@ export default function TenantCardPage() {
             {data.sync.map((j, i) => (
               <div key={i} className="flex items-center gap-3 border-b border-slate-100 py-2 last:border-0">
                 <span className="w-16 font-medium">{j.source}</span><Badge value={j.status} />
-                <span className="text-slate-400">{fmtDate(j.started_at)}</span>
-                <span className="break-all text-xs text-slate-400">{JSON.stringify(j.stats)}</span>
+                <span className="shrink-0 text-slate-400">{fmtDate(j.started_at)}</span>
+                <SyncStats stats={j.stats} />
               </div>
             ))}
           </div>
