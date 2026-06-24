@@ -17,8 +17,8 @@ type Item = { barcode: string; claim: number; fund: string; executed_at: string;
 type DayRow = { date: string; total: number; checked: number };
 type Check = { period: string; total: number; checked: number; remaining: number; extra: string[]; by_day: DayRow[]; items: Item[] };
 type Coupon = { name: string; barcode: string; quantity: number; category: string; executed: boolean; qr: boolean | null; qr_batch: string | null; qr_expiry: string | null; lot: string | null };
-type Detail = { ok: boolean; found: boolean; barcode: string; fund: string; claim: number; n_coupons: number; has_opinion: boolean | null; is_fyk: boolean; has_vaccine: boolean; has_narcotic: boolean; partial: boolean; coupons: Coupon[] };
-type ScanFlags = { is_intangible: boolean; needs_original: boolean; is_fyk: boolean; has_desensitization: boolean; has_opinion: boolean; has_vaccine: boolean; exec_count: number | null };
+type Detail = { ok: boolean; found: boolean; barcode: string; fund: string; claim: number; n_coupons: number; has_opinion: boolean | null; is_fyk: boolean; has_vaccine: boolean; has_narcotic: boolean; is_etyap?: boolean; partial: boolean; coupons: Coupon[] };
+type ScanFlags = { is_intangible: boolean; needs_original: boolean; is_fyk: boolean; has_desensitization: boolean; has_opinion: boolean; has_vaccine: boolean; is_etyap: boolean; exec_count: number | null };
 type ScanRes = { ok: boolean; found: boolean; barcode: string; flags?: ScanFlags };
 
 function fmtDay(d: string) { try { return new Date(d + "T00:00:00").toLocaleDateString("el-GR", { weekday: "long", day: "numeric", month: "long" }); } catch { return d; } }
@@ -33,6 +33,12 @@ export default function PhysicalCheckPage() {
   const [dayIdx, setDayIdx] = useState(0);
   const [last, setLast] = useState<{ found: boolean; barcode: string; flags?: ScanFlags } | null>(null);
   const [detail, setDetail] = useState<Detail | null>(null);
+  // παραμετρικό: αυτόματο pop-up κουπονιών στο σκανάρισμα (επιλογή φαρμακοποιού, αποθηκεύεται τοπικά)
+  const [couponsPopup, setCouponsPopup] = useState(false);
+  useEffect(() => { setCouponsPopup(typeof window !== "undefined" && localStorage.getItem("rxv_coupons_on_scan") === "1"); }, []);
+  function toggleCouponsPopup() {
+    setCouponsPopup((v) => { const nv = !v; localStorage.setItem("rxv_coupons_on_scan", nv ? "1" : "0"); return nv; });
+  }
   const resumed = useRef(false);
 
   const { data } = useQuery({ queryKey: ["reimb-physical", period], queryFn: () => api<Check>(`/reimbursement/physical?period=${period}`) });
@@ -50,7 +56,11 @@ export default function PhysicalCheckPage() {
 
   const scan = useMutation({
     mutationFn: (barcode: string) => api<ScanRes>(`/reimbursement/physical/scan?period=${period}`, { method: "POST", body: JSON.stringify({ barcode }) }),
-    onSuccess: (r) => { setLast({ found: r.found, barcode: r.barcode, flags: r.flags }); qc.invalidateQueries({ queryKey: ["reimb-physical", period] }); },
+    onSuccess: (r) => {
+      setLast({ found: r.found, barcode: r.barcode, flags: r.flags });
+      qc.invalidateQueries({ queryKey: ["reimb-physical", period] });
+      if (r.found && localStorage.getItem("rxv_coupons_on_scan") === "1") openDetail(r.barcode);
+    },
   });
   const reset = useMutation({
     mutationFn: () => api(`/reimbursement/physical/reset?period=${period}`, { method: "POST" }),
@@ -158,6 +168,14 @@ export default function PhysicalCheckPage() {
               <button onClick={submit} className="rounded-lg bg-emerald-600 px-5 text-sm font-semibold text-white hover:bg-emerald-700">{t("Έλεγχος", "Check")}</button>
             </div>
             <button onClick={nextDay} disabled={dayIdx >= byDay.length - 1} className="mt-2 w-full text-center text-xs text-slate-400 hover:text-slate-600">{t("Παράλειψη ημέρας (εκκρεμεί)", "Skip day (leave pending)")} →</button>
+            {/* παραμετρική ρύθμιση: εμφάνιση pop-up κουπονιών σε κάθε σκανάρισμα */}
+            <label className="mt-3 flex cursor-pointer items-center justify-center gap-2 text-xs text-slate-500 dark:text-slate-400">
+              <button type="button" role="switch" aria-checked={couponsPopup} onClick={toggleCouponsPopup}
+                className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${couponsPopup ? "bg-emerald-500" : "bg-slate-300 dark:bg-slate-600"}`}>
+                <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${couponsPopup ? "translate-x-4" : "translate-x-0.5"}`} />
+              </button>
+              <span className="inline-flex items-center gap-1"><Ticket className="h-3.5 w-3.5" /> {t("Άνοιγμα κουπονιών (pop-up) σε κάθε σκανάρισμα", "Open coupons (pop-up) on every scan")}</span>
+            </label>
           </>
         )}
 
@@ -174,6 +192,7 @@ export default function PhysicalCheckPage() {
                 {last.flags.has_desensitization && <span className="rounded-md bg-rose-100 px-2 py-1 text-xs font-semibold text-rose-800">🧪 {t("Εμβόλιο απευαισθητοποίησης — βάλε & αντίγραφο τιμολογίου παραλαβής", "Desensitization vaccine — include purchase invoice copy")}</span>}
                 {last.flags.has_opinion && <span className="rounded-md bg-sky-100 px-2 py-1 text-xs font-semibold text-sky-800">📋 {t("Έχει γνωμάτευση", "Has medical opinion")}</span>}
                 {last.flags.has_vaccine && <span className="rounded-md bg-teal-100 px-2 py-1 text-xs font-semibold text-teal-800">💉 {t("Συνταγή εμβολίων (ξεχωριστή υποβολή)", "Vaccine Rx (separate batch)")}</span>}
+                {last.flags.is_etyap && <span className="rounded-md bg-cyan-100 px-2 py-1 text-xs font-semibold text-cyan-800">🛡️ {t("ΕΤΥΑΠ / συμπληρωματική κάλυψη — έλεγχος μόνο στον ΕΟΠΥΥ", "ΕΤΥΑΠ / supplementary cover")}</span>}
                 {last.flags.is_intangible && <span className="rounded-md bg-violet-100 px-2 py-1 text-xs font-semibold text-violet-800">📲 {t("Άυλη", "Paperless")}</span>}
               </div>
             )}
@@ -213,6 +232,7 @@ export default function PhysicalCheckPage() {
                   {detail.has_opinion === true && <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-700"><FileText className="h-3 w-3" /> {t("Απαιτεί γνωμάτευση (συνταγή)", "Requires opinion (prescription)")}</span>}
                   {detail.has_opinion === false && <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-600"><FileText className="h-3 w-3" /> {t("Χωρίς γνωμάτευση", "No opinion needed")}</span>}
                   {detail.is_fyk && <span className="rounded-full bg-orange-100 px-2 py-0.5 text-[11px] font-semibold text-orange-700">ΦΥΚ</span>}
+                  {detail.is_etyap && <span className="rounded-full bg-cyan-100 px-2 py-0.5 text-[11px] font-semibold text-cyan-700">🛡️ ΕΤΥΑΠ</span>}
                   {detail.has_vaccine && <span className="inline-flex items-center gap-1 rounded-full bg-sky-100 px-2 py-0.5 text-[11px] font-semibold text-sky-700"><Syringe className="h-3 w-3" /> {t("Εμβόλιο", "Vaccine")}</span>}
                   {detail.has_narcotic && <span className="inline-flex items-center gap-1 rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-semibold text-rose-700"><ShieldAlert className="h-3 w-3" /> {t("Ναρκωτικό", "Narcotic")}</span>}
                   {detail.partial && <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-600">{t("Μερική εκτέλεση", "Partial")}</span>}

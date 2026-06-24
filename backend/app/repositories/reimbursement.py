@@ -692,6 +692,8 @@ class ReimbursementRepository(BaseRepository):
             "has_desensitization": bool(d.get("desensitization")),  # γ) εμβόλιο απευαισθητοποίησης (1.1.8)
             "has_opinion": bool(d.get("opinion")),        # δ) γνωμάτευση (1.1.23)
             "has_vaccine": bool(d.get("vaccines")),       # ενημερωτικό: συνταγή εμβολίων (1.1.24)
+            # ΕΤΥΑΠ/ΚΥΥΑΠ: συμπληρωματική κάλυψη (1.1.27) — δεν ελέγχεται ξεχωριστά, αρκεί ο έλεγχος ΕΟΠΥΥ
+            "is_etyap": bool(d.get("supplementary_cover")),
             "exec_count": exec_count,
         }
 
@@ -838,7 +840,7 @@ class ReimbursementRepository(BaseRepository):
             "has_narcotic": "narcotic" in flags,
             "partial": any(not ln["executed"] for ln in lines),
             **{k: v for k, v in self._submission_flags(exs[0]).items()
-               if k in ("is_intangible", "needs_original", "has_desensitization", "exec_count")},
+               if k in ("is_intangible", "needs_original", "has_desensitization", "exec_count", "is_etyap")},
             "is_fyk": ("fyk" in flags) or bool((exs[0].get("details") or {}).get("n3816")),
             "coupons": lines})
 
