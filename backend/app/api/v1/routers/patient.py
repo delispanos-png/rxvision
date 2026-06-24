@@ -296,6 +296,16 @@ async def my_rx_requests(ctx: PatientContext = Depends(get_patient_context)):
     return {"items": await RxRequestRepository(tenant_id=ctx.tenant_id).mine(ctx.account_id)}
 
 
+# ── οι μετρήσεις μου (πίεση/ζάχαρο/βάρος + ύψος) ────────────────────────────
+@router.get("/health")
+async def my_health(ctx: PatientContext = Depends(get_patient_context)):
+    from app.repositories.contacts import PatientContactRepository
+    repo = PatientContactRepository(tenant_id=ctx.tenant_id)
+    contact = await repo.get(ctx.patient_ref) or {}
+    meas = await repo.measurements(ctx.patient_ref)
+    return {"height_cm": contact.get("height_cm"), **meas}
+
+
 # ── loyalty wallet (πορτοφόλι επιβράβευσης) ────────────────────────────────
 @router.get("/loyalty")
 async def my_loyalty(ctx: PatientContext = Depends(get_patient_context)):

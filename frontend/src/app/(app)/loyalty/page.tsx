@@ -61,7 +61,7 @@ export default function LoyaltyPage() {
   }, [data, q]);
 
   return (
-    <ModuleGuard module="patient_portal">
+    <ModuleGuard module="loyalty">
       <div className="mb-4 flex items-center gap-3">
         <span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-gradient-to-br from-rose-500 to-amber-500 text-white shadow-lg"><Gift className="h-6 w-6" /></span>
         <div>
@@ -216,17 +216,17 @@ function ScanModal({ onClose, onCode }: { onClose: () => void; onCode: (code: st
 function ConfigCard({ cfg }: { cfg: Cfg }) {
   const t = useT();
   const qc = useQueryClient();
-  const [f, setF] = useState({ ...cfg });
+  const [f, setF] = useState({...cfg });
   const save = useMutation({
     mutationFn: () => api("/loyalty/config", { method: "POST", body: JSON.stringify(f) }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["loyalty"] }),
   });
-  const num = (k: keyof Cfg) => (e: React.ChangeEvent<HTMLInputElement>) => setF({ ...f, [k]: Math.max(0, Math.round(+e.target.value)) });
+  const num = (k: keyof Cfg) => (e: React.ChangeEvent<HTMLInputElement>) => setF({...f, [k]: Math.max(0, Math.round(+e.target.value)) });
   return (
     <div className="rx-card p-4">
       <div className="mb-3 flex items-center justify-between">
         <div className="text-sm font-semibold text-slate-800 dark:text-slate-200">⚙️ {t("Κανόνες προγράμματος", "Program rules")}</div>
-        <label className="inline-flex cursor-pointer items-center gap-2 text-sm"><input type="checkbox" checked={f.enabled} onChange={(e) => setF({ ...f, enabled: e.target.checked })} /> {t("Ενεργό", "Enabled")}</label>
+        <label className="inline-flex cursor-pointer items-center gap-2 text-sm"><input type="checkbox" checked={f.enabled} onChange={(e) => setF({...f, enabled: e.target.checked })} /> {t("Ενεργό", "Enabled")}</label>
       </div>
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <label className="text-xs text-slate-500">{t("Πόντοι ανά εκτέλεση", "Points / refill")}
@@ -240,7 +240,7 @@ function ConfigCard({ cfg }: { cfg: Cfg }) {
       </div>
       <div className="mt-3">
         <label className="text-xs text-slate-500">{t("Όροι συμμετοχής (εμφανίζονται στον πελάτη & εκτυπώνονται)", "Terms (shown to patient & printed)")}
-          <textarea value={f.terms ?? ""} onChange={(e) => setF({ ...f, terms: e.target.value })} rows={5} className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-800" /></label>
+          <textarea value={f.terms ?? ""} onChange={(e) => setF({...f, terms: e.target.value })} rows={5} className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-800" /></label>
       </div>
       <div className="mt-3 flex items-center gap-3">
         <button onClick={() => save.mutate()} className="rounded-lg bg-brand-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-brand-700">{t("Αποθήκευση", "Save")}</button>
@@ -263,9 +263,9 @@ function EnrollCard({ cfg }: { cfg: Cfg }) {
         <h2 style="text-align:center">Πρόγραμμα Επιβράβευσης Πελατών</h2>
         <pre style="white-space:pre-wrap;font-family:inherit;font-size:14px;line-height:1.6">${(cfg.terms || "").replace(/</g, "&lt;")}</pre>
         <div style="margin-top:48px;display:flex;justify-content:space-between;font-size:14px">
-          <div>Ονοματεπώνυμο: ............................</div><div>Υπογραφή: ............................</div>
+          <div>Ονοματεπώνυμο:............................</div><div>Υπογραφή:............................</div>
         </div>
-        <div style="margin-top:16px;font-size:13px;color:#64748b">Ημερομηνία: ......./......./............</div>
+        <div style="margin-top:16px;font-size:13px;color:#64748b">Ημερομηνία:......./......./............</div>
       </body></html>`);
     w.document.close(); w.focus(); setTimeout(() => w.print(), 250);
   }
@@ -337,12 +337,12 @@ function RewardsCard() {
       <div className="mb-1 text-sm font-semibold text-slate-800 dark:text-slate-200">🎁 {t("Κατάλογος δώρων & εξαργυρώσεων", "Rewards catalogue")}</div>
       <p className="mb-3 text-xs text-slate-500">{t("Όρισε σε τι μπορούν να εξαργυρώσουν τους πόντους τους — προϊόντα, υπηρεσίες ή έκπτωση.", "Define what points can be redeemed for — products, services or discounts.")}</p>
       <div className="flex flex-wrap items-end gap-2">
-        <input value={f.title} onChange={(e) => setF({ ...f, title: e.target.value })} placeholder={t("Τίτλος δώρου (π.χ. Δωρεάν βιταμίνη C)", "Reward title")} className="min-w-[180px] flex-1 rounded-lg border border-slate-300 px-3 py-1.5 text-sm dark:border-slate-700 dark:bg-slate-800" />
-        <select value={f.type} onChange={(e) => setF({ ...f, type: e.target.value })} className="rounded-lg border border-slate-300 px-2 py-1.5 text-sm dark:border-slate-700 dark:bg-slate-800">
+        <input value={f.title} onChange={(e) => setF({...f, title: e.target.value })} placeholder={t("Τίτλος δώρου (π.χ. Δωρεάν βιταμίνη C)", "Reward title")} className="min-w-[180px] flex-1 rounded-lg border border-slate-300 px-3 py-1.5 text-sm dark:border-slate-700 dark:bg-slate-800" />
+        <select value={f.type} onChange={(e) => setF({...f, type: e.target.value })} className="rounded-lg border border-slate-300 px-2 py-1.5 text-sm dark:border-slate-700 dark:bg-slate-800">
           {Object.entries(RTYPE).map(([k, v]) => <option key={k} value={k}>{v.emoji} {v.el}</option>)}
         </select>
         <label className="text-xs text-slate-500">{t("Κόστος (πόντοι)", "Cost (points)")}
-          <input type="number" value={f.cost_points} onChange={(e) => setF({ ...f, cost_points: Math.max(1, +e.target.value) })} className="mt-0.5 block w-24 rounded-lg border border-slate-300 px-2 py-1.5 text-sm dark:border-slate-700 dark:bg-slate-800" /></label>
+          <input type="number" value={f.cost_points} onChange={(e) => setF({...f, cost_points: Math.max(1, +e.target.value) })} className="mt-0.5 block w-24 rounded-lg border border-slate-300 px-2 py-1.5 text-sm dark:border-slate-700 dark:bg-slate-800" /></label>
         <button onClick={() => f.title.trim() && add.mutate()} className="rounded-lg bg-brand-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-700">{t("Προσθήκη", "Add")}</button>
       </div>
       <div className="mt-3 space-y-2">

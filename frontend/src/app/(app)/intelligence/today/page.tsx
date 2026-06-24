@@ -32,13 +32,13 @@ export default function TodayPage() {
   if (isLoading) return <div className="p-8 text-slate-400">{t("Φόρτωση ημέρας…", "Loading day…")}</div>;
   if (!data) return null;
 
-  const maxHour = Math.max(1, ...data.by_hour.map((h) => h.rx));
+  const maxHour = Math.max(1,...data.by_hour.map((h) => h.rx));
   // live → cap the axis at the current hour (can't execute in the future); past day → full 07–22
   const endHour = data.is_live ? Math.max(9, Math.min(22, data.current_hour)) : 22;
   const hours = Array.from({ length: endHour - 7 + 1 }, (_, i) => i + 7);
   const byHourMap = new Map(data.by_hour.map((h) => [h.hour, h.rx]));
-  const maxCat = Math.max(1, ...data.categories.map((c) => c.count));
-  const maxMed = Math.max(1, ...data.top_meds.map((m) => m.count));
+  const maxCat = Math.max(1,...data.categories.map((c) => c.count));
+  const maxMed = Math.max(1,...data.top_meds.map((m) => m.count));
   const dayLabel = new Date(data.day).toLocaleDateString(t("el-GR", "en-GB"), { weekday: "long", day: "2-digit", month: "long", year: "numeric" });
 
   return (
@@ -60,11 +60,11 @@ export default function TodayPage() {
 
       {/* KPIs */}
       <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-5">
-        <KpiCard label={t("Συνταγές", "Prescriptions")} value={fmtNum(data.rx)} icon={Receipt} accent="indigo" trend={data.vs_yoy_rx ?? undefined} sub={t(`μ.ο. μέρας ${data.avg_day_rx}${data.vs_avg != null ? ` · ${data.vs_avg >= 0 ? "+" : ""}${Math.round(data.vs_avg)}% vs μ.ο.` : ""}`, `day avg ${data.avg_day_rx}${data.vs_avg != null ? ` · ${data.vs_avg >= 0 ? "+" : ""}${Math.round(data.vs_avg)}% vs avg` : ""}`)} />
-        <KpiCard label={t("Τζίρος ημέρας", "Day revenue")} value={fmtEur(data.value)} icon={Wallet} accent="green" trend={data.vs_yoy_value ?? undefined} sub={t(`πέρσι ${fmtEur(data.value_yoy)}`, `last year ${fmtEur(data.value_yoy)}`)} />
-        <KpiCard label={t("Ασθενείς", "Patients")} value={fmtNum(data.patients)} icon={Users} accent="violet" />
-        <KpiCard label={t("Νέοι σήμερα", "New today")} value={fmtNum(data.new_patients)} icon={UserPlus} accent="sky" />
-        <KpiCard label={t("Δεν ήρθαν (εκκρεμείς)", "No-shows (pending)")} value={fmtNum(data.expected_absent)} icon={PhoneCall} accent="rose" sub={t(`${data.expected_week} αυτή την εβδομάδα`, `${data.expected_week} this week`)} onClick={() => router.push("/intelligence/recall")} />
+        <KpiCard label={t("Συνταγές", "Prescriptions")} help={t("Πλήθος εκτελέσεων συνταγών στην περίοδο.", "Number of executions in the period.")} value={fmtNum(data.rx)} icon={Receipt} accent="indigo" trend={data.vs_yoy_rx ?? undefined} sub={t(`μ.ο. μέρας ${data.avg_day_rx}${data.vs_avg != null ? ` · ${data.vs_avg >= 0 ? "+" : ""}${Math.round(data.vs_avg)}% vs μ.ο.` : ""}`, `day avg ${data.avg_day_rx}${data.vs_avg != null ? ` · ${data.vs_avg >= 0 ? "+" : ""}${Math.round(data.vs_avg)}% vs avg` : ""}`)} />
+        <KpiCard label={t("Τζίρος ημέρας", "Day revenue")} help={t("Συνολική λιανική αξία των εκτελέσεων της ημέρας.", "Day's total retail value.")} value={fmtEur(data.value)} icon={Wallet} accent="green" trend={data.vs_yoy_value ?? undefined} sub={t(`πέρσι ${fmtEur(data.value_yoy)}`, `last year ${fmtEur(data.value_yoy)}`)} />
+        <KpiCard label={t("Ασθενείς", "Patients")} help={t("Μοναδικοί ασθενείς της περιόδου/ομάδας.", "Unique patients.")} value={fmtNum(data.patients)} icon={Users} accent="violet" />
+        <KpiCard label={t("Νέοι σήμερα", "New today")} help={t("Ασθενείς με πρώτη εκτέλεση στην περίοδο.", "Patients with their first execution in the period.")} value={fmtNum(data.new_patients)} icon={UserPlus} accent="sky" />
+        <KpiCard label={t("Δεν ήρθαν (εκκρεμείς)", "No-shows (pending)")} help={t("Ασθενείς που δεν ήρθαν για την επανάληψή τους.", "Patients who didn't return for refills.")} value={fmtNum(data.expected_absent)} icon={PhoneCall} accent="rose" sub={t(`${data.expected_week} αυτή την εβδομάδα`, `${data.expected_week} this week`)} onClick={() => router.push("/intelligence/recall")} />
       </div>
 
       {/* intraday curve */}

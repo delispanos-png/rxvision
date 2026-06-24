@@ -9,6 +9,7 @@ import { useT } from "@/store/prefStore";
 import { fmtNum, fmtEur, fmtDec } from "@/lib/formatters";
 import { KpiCard } from "@/components/kpi/KpiCard";
 import { ContactCard } from "@/components/patients/ContactCard";
+import { MeasurementsCard } from "@/components/patients/MeasurementsCard";
 import { PatientCommentsCard } from "@/components/patients/PatientCommentsCard";
 import { BarChart } from "@/components/charts/BarChart";
 
@@ -187,7 +188,7 @@ export default function PatientProfilePage() {
           {/* financial KPIs */}
           <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
             <KpiCard label={t("Αξία πελάτη (LTV)", "Lifetime value")} value={fmtEur(p.financials!.value)} icon={Wallet} accent="green" help={t("Συνολική λιανική αξία όλων των εκτελέσεων.", "Total retail value of all executions.")} />
-            <KpiCard label={t("Αριθμός εκτελέσεων", "Executions")} value={fmtNum(p.financials!.rx_count)} icon={Repeat} accent="indigo" sub={t(`μ.ο. ${fmtEur(p.financials!.avg_per_visit)}/εκτέλεση · κλικ για λίστα`, `avg ${fmtEur(p.financials!.avg_per_visit)}/exec · click for list`)} onClick={() => p.executions?.length && setShowExecs(true)} />
+            <KpiCard label={t("Αριθμός εκτελέσεων", "Executions")} help={t("Πλήθος εκτελέσεων συνταγών του ασθενή.", "Number of the patient's executions.")} value={fmtNum(p.financials!.rx_count)} icon={Repeat} accent="indigo" sub={t(`μ.ο. ${fmtEur(p.financials!.avg_per_visit)}/εκτέλεση · κλικ για λίστα`, `avg ${fmtEur(p.financials!.avg_per_visit)}/exec · click for list`)} onClick={() => p.executions?.length && setShowExecs(true)} />
             <KpiCard label={t("Μικτό κέρδος", "Gross profit")} value={fmtEur(p.financials!.profit)} icon={Wallet} accent="violet" help={t("Λιανική − κόστος αγοράς.", "Retail − cost of goods.")} />
             <KpiCard label={t("Συμμόρφωση", "Adherence")} value={p.adherence!.compliance != null ? `${p.adherence!.compliance}%` : "—"} icon={Target} accent={p.adherence!.compliance != null && p.adherence!.compliance < 50 ? "rose" : "amber"} sub={p.adherence!.band ?? undefined} help={t("Εκτελεσμένες / αναμενόμενες ανανεώσεις επαναλαμβανόμενης θεραπείας.", "Executed / expected repeat renewals.")} />
           </div>
@@ -358,6 +359,9 @@ export default function PatientProfilePage() {
               <User className="h-3.5 w-3.5" /> {t("Λογαριασμός my.rxvision", "my.rxvision account")}
             </button>
           } />
+
+          {/* μετρήσεις & σωματομετρικά (πίεση/ζάχαρο/βάρος/BMI + ιστορικό) */}
+          <MeasurementsCard patientId={p.patient.id} />
 
           {/* Κλινικό flag G6PD */}
           <div className={`flex flex-wrap items-center gap-3 rounded-2xl border p-4 ${g6pd ? "border-rose-200 bg-rose-50 dark:border-rose-900/40 dark:bg-rose-950/20" : "border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900"}`}>

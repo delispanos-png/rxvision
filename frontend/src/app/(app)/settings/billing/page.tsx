@@ -45,9 +45,9 @@ export default function BillingSettingsPage() {
   return (
     <ModuleGuard module="settings">
       <div className="mb-6 grid grid-cols-2 gap-4 md:grid-cols-3">
-        <KpiCard label={t("Πλάνο", "Plan")} value={s?.plan ?? "—"} />
-        <KpiCard label={t("Κατάσταση", "Status")} value={s?.status ?? "—"} />
-        <KpiCard label={t("Μηνιαία χρέωση", "Monthly charge")} value={s ? fmtEur(s.price) : "—"} />
+        <KpiCard label={t("Πλάνο", "Plan")} help={t("Το πλάνο συνδρομής του φαρμακείου.", "The pharmacy's subscription plan.")} value={s?.plan ?? "—"} />
+        <KpiCard label={t("Κατάσταση", "Status")} help={t("Κατάσταση συνδρομής (active/trial κ.λπ.).", "Subscription status.")} value={s?.status ?? "—"} />
+        <KpiCard label={t("Μηνιαία χρέωση", "Monthly charge")} help={t("Μηνιαία χρέωση συνδρομής.", "Monthly subscription charge.")} value={s ? fmtEur(s.price) : "—"} />
       </div>
 
       <div className="mb-6 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">

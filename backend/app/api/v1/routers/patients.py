@@ -32,6 +32,7 @@ class ContactIn(BaseModel):
     active: bool = True
     inactive_reason: str | None = Field(default=None, description="deceased|moved|stopped|other")
     reactivation_reason: str | None = None
+    height_cm: float | None = None
     discontinuation_reason: str | None = None
 
 
@@ -48,7 +49,7 @@ async def get_contact(
     patient_id: str,
     ctx: TenantContext = Depends(require("patients:read", module=_MODULE)),
 ):
-    return await PatientContactRepository(tenant_id=ctx.tenant_id).get(patient_id) or {}
+    return await PatientContactRepository(tenant_id=ctx.tenant_id, demo=ctx.demo).get(patient_id) or {}
 
 
 @router.put("/{patient_id}/contact")
@@ -61,6 +62,51 @@ async def put_contact(
     if saved is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "patient_not_found")
     return saved
+
+
+class HeightIn(BaseModel):
+    height_cm: float | None = Field(None, ge=0, le=300)
+
+
+@router.patch("/{patient_id}/height")
+async def set_height(patient_id: str, body: HeightIn,
+                     ctx: TenantContext = Depends(require("patients:read", module=_MODULE))):
+    # partial update — upsert reads the raw dict so only height_cm changes (no field clobber)
+    return await PatientContactRepository(tenant_id=ctx.tenant_id).upsert(
+        patient_id, {"height_cm": body.height_cm}) or {}
+
+
+class MeasurementIn(BaseModel):
+    kind: Literal["bp", "glucose", "weight"]
+    systolic: int | None = Field(None, ge=40, le=300)
+    diastolic: int | None = Field(None, ge=20, le=200)
+    value: float | None = Field(None, ge=0, le=1000)
+    at: datetime | None = None
+    note: str | None = None
+
+
+@router.get("/{patient_id}/measurements")
+async def get_measurements(patient_id: str,
+                           ctx: TenantContext = Depends(require("patients:read", module=_MODULE))):
+    return await PatientContactRepository(tenant_id=ctx.tenant_id).measurements(patient_id)
+
+
+@router.post("/{patient_id}/measurements", status_code=201)
+async def add_measurement(patient_id: str, body: MeasurementIn,
+                          ctx: TenantContext = Depends(require("patients:read", module=_MODULE))):
+    res = await PatientContactRepository(tenant_id=ctx.tenant_id).add_measurement(
+        patient_id, body.kind, systolic=body.systolic, diastolic=body.diastolic,
+        value=body.value, at=body.at, note=body.note)
+    if res is None:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid_measurement")
+    return res
+
+
+@router.delete("/{patient_id}/measurements/{measurement_id}")
+async def delete_measurement(patient_id: str, measurement_id: str,
+                             ctx: TenantContext = Depends(require("patients:read", module=_MODULE))):
+    res = await PatientContactRepository(tenant_id=ctx.tenant_id).delete_measurement(patient_id, measurement_id)
+    return res or {}
 
 
 @router.get("/detail/{patient_id}")

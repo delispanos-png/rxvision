@@ -98,6 +98,8 @@ export default function NutritionPage() {
             </div>
           </div>
 
+          <div className="mb-4"><MeasureAdvice patientId={picked.patient_id} /></div>
+
           {plan.isLoading ? <div className="text-slate-400">{t("Δημιουργία πλάνου…", "Creating plan…")}</div> :
             (plan.data?.sections?.length ?? 0) === 0 ? <PanelCard title={t("Διατροφικές συμβουλές", "Nutrition advice")}><p className="text-sm text-slate-500">{t("Δεν εντοπίστηκαν ειδικές οδηγίες για την τρέχουσα αγωγή.", "No specific guidance found for the current medication.")}</p></PanelCard> : (
               <div className="grid gap-4 lg:grid-cols-2">
@@ -134,5 +136,45 @@ export default function NutritionPage() {
         </div>
       )}
     </ModuleGuard>
+  );
+}
+
+type LM = { systolic?: number; diastolic?: number; value?: number; at: string };
+function MeasureAdvice({ patientId }: { patientId: string }) {
+  const t = useT();
+  const { data } = useQuery({ queryKey: ["patient-measurements", patientId], queryFn: () => api<{ latest: Record<string, LM> }>(`/patients/${encodeURIComponent(patientId)}/measurements`) });
+  const { data: contact } = useQuery({ queryKey: ["patient-contact", patientId], queryFn: () => api<{ height_cm?: number | null }>(`/patients/${encodeURIComponent(patientId)}/contact`), retry: false });
+  const lt = data?.latest ?? {}; const bp = lt.bp; const gl = lt.glucose; const wt = lt.weight;
+  const h = contact?.height_cm || undefined;
+  const bmi = h && wt?.value ? wt.value / ((h / 100) ** 2) : undefined;
+  const advice: { icon: string; sev: "high" | "warn"; label: string; text: string }[] = [];
+  if (bp?.systolic && bp.diastolic) {
+    const s = bp.systolic, d = bp.diastolic;
+    if (s >= 140 || d >= 90) advice.push({ icon: "❤️", sev: "high", label: `Υψηλή πίεση ${s}/${d}`, text: "Μείωσε αλάτι/νάτριο (<5g/ημέρα) & επεξεργασμένα τρόφιμα. Αύξησε κάλιο (φρούτα, λαχανικά, όσπρια). Μεσογειακή διατροφή, περιορισμός αλκοόλ/καφεΐνης." });
+    else if (s >= 130 || d >= 85) advice.push({ icon: "❤️", sev: "warn", label: `Οριακή πίεση ${s}/${d}`, text: "Πρόσεξε το αλάτι, τακτική αερόβια άσκηση, διατήρηση υγιούς βάρους." });
+  }
+  if (gl?.value) {
+    const v = gl.value;
+    if (v >= 126) advice.push({ icon: "🩸", sev: "high", label: `Υψηλό ζάχαρο ${v} mg/dL`, text: "Περιόρισε ζάχαρη & απλούς υδατάνθρακες (λευκό ψωμί/ρύζι/γλυκά). Προτίμησε χαμηλό γλυκαιμικό δείκτη, φυτικές ίνες, τακτικά μικρά γεύματα. Παρακολούθηση από ιατρό." });
+    else if (v >= 100) advice.push({ icon: "🩸", sev: "warn", label: `Οριακό ζάχαρο ${v} mg/dL`, text: "Μείωσε ζάχαρη & εξευγενισμένους υδατάνθρακες, αύξησε φυτικές ίνες & σωματική δραστηριότητα." });
+  }
+  if (bmi) {
+    if (bmi >= 30) advice.push({ icon: "⚖️", sev: "high", label: `ΔΜΣ ${bmi.toFixed(1)} (παχυσαρκία)`, text: "Σταδιακό θερμιδικό έλλειμμα, έλεγχος μερίδων, αύξηση φυσικής δραστηριότητας. Σύσταση για διαιτολόγο." });
+    else if (bmi >= 25) advice.push({ icon: "⚖️", sev: "warn", label: `ΔΜΣ ${bmi.toFixed(1)} (υπέρβαρο)`, text: "Ελαφρύ θερμιδικό έλλειμμα, λιγότερα κορεσμένα λιπαρά & ζάχαρη, περισσότερη κίνηση." });
+    else if (bmi < 18.5) advice.push({ icon: "⚖️", sev: "warn", label: `ΔΜΣ ${bmi.toFixed(1)} (λιποβαρές)`, text: "Αύξηση θερμιδικής & πρωτεϊνικής πρόσληψης με θρεπτικά τρόφιμα." });
+  }
+  const hasData = !!(bp || gl || bmi);
+  return (
+    <PanelCard title={t("Συμβουλές βάσει μετρήσεων", "Advice from measurements")}>
+      {!hasData ? <p className="text-sm text-slate-500">{t("Δεν υπάρχουν μετρήσεις (πίεση/ζάχαρο/βάρος). Καταχώρησέ τες στην «Εικόνα Πελάτη».", "No measurements yet — add them in the patient profile.")}</p>
+        : advice.length === 0 ? <p className="text-sm font-medium text-emerald-700">✓ {t("Οι μετρήσεις είναι σε φυσιολογικά όρια — συνέχισε ισορροπημένη μεσογειακή διατροφή.", "Measurements within normal range — keep a balanced Mediterranean diet.")}</p>
+        : <div className="space-y-2">{advice.map((a, i) => (
+            <div key={i} className={`rounded-lg border p-3 ${a.sev === "high" ? "border-rose-200 bg-rose-50" : "border-amber-200 bg-amber-50"}`}>
+              <div className={`text-sm font-semibold ${a.sev === "high" ? "text-rose-700" : "text-amber-700"}`}>{a.icon} {a.label}</div>
+              <p className="mt-0.5 text-sm text-slate-600">{a.text}</p>
+            </div>))}
+          </div>}
+      <p className="mt-2 text-[11px] text-slate-400">{t("Γενικές διατροφικές συστάσεις — δεν υποκαθιστούν ιατρική γνωμάτευση.", "General dietary guidance — not a substitute for medical advice.")}</p>
+    </PanelCard>
   );
 }

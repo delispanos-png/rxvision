@@ -112,14 +112,14 @@ export default function AccountPage() {
                 <input
                   className={inputCls}
                   value={profile.full_name}
-                  onChange={(e) => setProfile((s) => ({ ...s, full_name: e.target.value }))}
+                  onChange={(e) => setProfile((s) => ({...s, full_name: e.target.value }))}
                 />
               </Field>
               <Field label={t("Τηλέφωνο", "Phone")}>
                 <input
                   className={inputCls}
                   value={profile.phone}
-                  onChange={(e) => setProfile((s) => ({ ...s, phone: e.target.value }))}
+                  onChange={(e) => setProfile((s) => ({...s, phone: e.target.value }))}
                 />
               </Field>
               <Field label="Email" hint={t("Το email δεν μπορεί να αλλάξει από εδώ.", "Email cannot be changed here.")}>
@@ -161,7 +161,7 @@ export default function AccountPage() {
                 autoComplete="current-password"
                 className={inputCls}
                 value={pwd.current_password}
-                onChange={(e) => setPwd((s) => ({ ...s, current_password: e.target.value }))}
+                onChange={(e) => setPwd((s) => ({...s, current_password: e.target.value }))}
               />
             </Field>
             <Field label={t("Νέος κωδικός", "New password")} hint={t("Τουλάχιστον 8 χαρακτήρες", "At least 8 characters")}>
@@ -170,7 +170,7 @@ export default function AccountPage() {
                 autoComplete="new-password"
                 className={inputCls}
                 value={pwd.new_password}
-                onChange={(e) => setPwd((s) => ({ ...s, new_password: e.target.value }))}
+                onChange={(e) => setPwd((s) => ({...s, new_password: e.target.value }))}
               />
             </Field>
             <Field label={t("Επιβεβαίωση νέου κωδικού", "Confirm new password")}>
@@ -179,7 +179,7 @@ export default function AccountPage() {
                 autoComplete="new-password"
                 className={inputCls}
                 value={pwd.confirm_password}
-                onChange={(e) => setPwd((s) => ({ ...s, confirm_password: e.target.value }))}
+                onChange={(e) => setPwd((s) => ({...s, confirm_password: e.target.value }))}
               />
             </Field>
           </div>

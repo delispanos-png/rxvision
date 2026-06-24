@@ -9,7 +9,7 @@ from app.core.deps import TenantContext, require
 from app.repositories.loyalty import LoyaltyRepository
 
 router = APIRouter()
-_MODULE = "patient_portal"
+_MODULE = "loyalty"          # opt-in module — ενεργοποιείται ανά φαρμακείο
 _PERM = "portal:manage"
 
 

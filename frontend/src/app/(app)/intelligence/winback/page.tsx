@@ -20,9 +20,9 @@ export default function WinbackPage() {
   return (
     <div className="space-y-5">
       <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
-        <KpiCard label={t("Ανενεργοί ασθενείς", "Inactive patients")} value={fmtNum((data?.buckets ?? []).reduce((s, b) => s + b.count, 0))} icon={Users} accent="rose" />
-        <KpiCard label={t("Συνολικός χαμένος τζίρος", "Total lost revenue")} value={fmtEur(data?.total_lost ?? 0)} icon={Wallet} accent="amber" />
-        <KpiCard label={t("Δυνητική ανάκτηση", "Potential recovery")} value={fmtEur(data?.total_recoverable ?? 0)} icon={RotateCcw} accent="green" />
+        <KpiCard label={t("Ανενεργοί ασθενείς", "Inactive patients")} help={t("Ασθενείς που σημάνθηκαν ανενεργοί (αποβίωσαν/μετακόμισαν/σταμάτησαν).", "Patients marked inactive.")} value={fmtNum((data?.buckets ?? []).reduce((s, b) => s + b.count, 0))} icon={Users} accent="rose" />
+        <KpiCard label={t("Συνολικός χαμένος τζίρος", "Total lost revenue")} help={t("Συνολική αξία χαμένων (μη εκτελεσμένων) επαναλήψεων.", "Total lost turnover from missed refills.")} value={fmtEur(data?.total_lost ?? 0)} icon={Wallet} accent="amber" />
+        <KpiCard label={t("Δυνητική ανάκτηση", "Potential recovery")} help={t("Αξία χαμένων/ανοιχτών επαναλήψεων που μπορείς να ανακτήσεις.", "Recoverable value of missed/open refills.")} value={fmtEur(data?.total_recoverable ?? 0)} icon={RotateCcw} accent="green" />
       </div>
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         {(data?.buckets ?? []).map((b) => (

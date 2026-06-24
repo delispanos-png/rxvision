@@ -54,7 +54,7 @@ export default function VaccinationOverviewPage() {
                 help={t("Πελάτες που δεν έχουν εμβολιαστεί ακόμη αυτή τη σεζόν.", "Customers not yet vaccinated this season.")} />
               <KpiCard label={t("Υψηλού κινδύνου εκκρεμείς", "High-risk pending")} value={fmtNum(c.high_risk_pending)} icon={ShieldAlert} accent="rose"
                 help={t("Εκκρεμείς με αναπνευστικά/χρόνια ICD-10 στο ιστορικό — απόλυτη προτεραιότητα.", "Pending with respiratory/chronic ICD-10 history — top priority.")} />
-              <KpiCard label={t("Εμβολιασμένοι σεζόν", "Vaccinated this season")} value={fmtNum(c.vaccinated)} icon={CheckCircle2} accent="green" />
+              <KpiCard label={t("Εμβολιασμένοι σεζόν", "Vaccinated this season")} help={t("Ασθενείς που εμβολιάστηκαν στη σεζόν.", "Patients vaccinated this season.")} value={fmtNum(c.vaccinated)} icon={CheckCircle2} accent="green" />
               <KpiCard label={t("Κάλυψη", "Coverage")} value={`${coverage}%`} icon={Users} accent="violet"
                 help={t("Εμβολιασμένοι ως ποσοστό της πελατειακής βάσης.", "Vaccinated as a share of the customer base.")} />
             </div>

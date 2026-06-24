@@ -20,6 +20,9 @@ const LABELS: Record<string, { el: string; en: string }> = {
   order_suggestions: { el: "Προτάσεις Παραγγελίας", en: "Order suggestions" },
   monthly_closing: { el: "Κλείσιμο Μήνα", en: "Month closing" },
   pharmacyone: { el: "PharmacyOne", en: "PharmacyOne" },
+  patient_portal: { el: "Πύλη Πελατών", en: "Customer portal" },
+  pharmacat: { el: "PharmaCat", en: "PharmaCat" },
+  loyalty: { el: "Πιστότητα", en: "Loyalty" },
 };
 
 const BADGE: Record<ModuleState, string> = {

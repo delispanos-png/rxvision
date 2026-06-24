@@ -59,7 +59,7 @@ export default function DoctorsPage() {
   const pr = prevYearRange(filters.dateFrom, filters.dateTo);
   const prevDoc = useQuery({
     queryKey: ["doctors", "prevYear", pr?.from, pr?.to],
-    queryFn: () => api<{ items: Doctor[] }>(`/doctors?${filtersToQuery({ ...filters, dateFrom: pr!.from, dateTo: pr!.to })}&sort=value`),
+    queryFn: () => api<{ items: Doctor[] }>(`/doctors?${filtersToQuery({...filters, dateFrom: pr!.from, dateTo: pr!.to })}&sort=value`),
     enabled: !!pr,
   });
 
@@ -146,15 +146,15 @@ export default function DoctorsPage() {
           {showKpi && (<>
           {/* KPI row */}
           <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-5">
-            <KpiCard label={t("Ιατροί", "Doctors")} value={fmtNum(items.length)} sub={t("ανά ειδικότητα →", "by specialty →")} icon={Stethoscope} accent="indigo" trend={hasPrev ? pctDelta(items.length, pItems.length) : undefined}
+            <KpiCard label={t("Ιατροί", "Doctors")} help={t("Πλήθος ιατρών που συνταγογράφησαν στην περίοδο.", "Doctors who prescribed in the period.")} value={fmtNum(items.length)} sub={t("ανά ειδικότητα →", "by specialty →")} icon={Stethoscope} accent="indigo" trend={hasPrev ? pctDelta(items.length, pItems.length) : undefined}
               onClick={() => setModal({ title: t("Ιατροί ανά ειδικότητα", "Doctors by specialty"), view: "specialty", metric: "value" })} />
-            <KpiCard label={t("Συνταγές", "Prescriptions")} value={fmtNum(sum((d) => d.rx_count))} sub={t("ανά ιατρό →", "by doctor →")} icon={BarChart3} accent="violet" trend={hasPrev ? pctDelta(sum((d) => d.rx_count), psum((d) => d.rx_count)) : undefined}
+            <KpiCard label={t("Συνταγές", "Prescriptions")} help={t("Πλήθος εκτελέσεων συνταγών στην περίοδο.", "Number of executions in the period.")} value={fmtNum(sum((d) => d.rx_count))} sub={t("ανά ιατρό →", "by doctor →")} icon={BarChart3} accent="violet" trend={hasPrev ? pctDelta(sum((d) => d.rx_count), psum((d) => d.rx_count)) : undefined}
               onClick={() => setModal({ title: t("Συνταγές ανά ιατρό", "Prescriptions by doctor"), view: "doctor", metric: "rx_count" })} />
-            <KpiCard label={t("Αξία", "Value")} value={fmtEur(sum((d) => d.value))} sub={t("ανά ιατρό & ειδικότητα →", "by doctor & specialty →")} icon={Wallet} accent="amber" trend={hasPrev ? pctDelta(sum((d) => d.value), psum((d) => d.value)) : undefined}
+            <KpiCard label={t("Αξία", "Value")} help={t("Άθροισμα λιανικής αξίας των εκτελέσεων της περιόδου.", "Sum of retail value of executions.")} value={fmtEur(sum((d) => d.value))} sub={t("ανά ιατρό & ειδικότητα →", "by doctor & specialty →")} icon={Wallet} accent="amber" trend={hasPrev ? pctDelta(sum((d) => d.value), psum((d) => d.value)) : undefined}
               onClick={() => setModal({ title: t("Αξία ανά ιατρό & ειδικότητα", "Value by doctor & specialty"), view: "doctor", metric: "value" })} />
-            <KpiCard label={t("Κερδοφορία", "Profitability")} value={fmtEur(sum((d) => d.gross_profit))} sub={t("ανά ιατρό & ειδικότητα →", "by doctor & specialty →")} icon={TrendingUp} accent="green" trend={hasPrev ? pctDelta(sum((d) => d.gross_profit), psum((d) => d.gross_profit)) : undefined}
+            <KpiCard label={t("Κερδοφορία", "Profitability")} help={t("Μεικτό κέρδος = αιτούμενο − κόστος χονδρικής.", "Gross profit = claimed − wholesale cost.")} value={fmtEur(sum((d) => d.gross_profit))} sub={t("ανά ιατρό & ειδικότητα →", "by doctor & specialty →")} icon={TrendingUp} accent="green" trend={hasPrev ? pctDelta(sum((d) => d.gross_profit), psum((d) => d.gross_profit)) : undefined}
               onClick={() => setModal({ title: t("Κερδοφορία ανά ιατρό & ειδικότητα", "Profitability by doctor & specialty"), view: "doctor", metric: "gross_profit" })} />
-            <KpiCard label={t("Νέοι πελάτες", "New patients")} value={fmtNum(sum((d) => d.new_patients))} sub={t("ανά ιατρό & ειδικότητα →", "by doctor & specialty →")} icon={UserPlus} accent="sky" trend={hasPrev ? pctDelta(sum((d) => d.new_patients), psum((d) => d.new_patients)) : undefined}
+            <KpiCard label={t("Νέοι πελάτες", "New patients")} help={t("Ασθενείς με πρώτη εκτέλεση στην περίοδο.", "Patients with their first execution in the period.")} value={fmtNum(sum((d) => d.new_patients))} sub={t("ανά ιατρό & ειδικότητα →", "by doctor & specialty →")} icon={UserPlus} accent="sky" trend={hasPrev ? pctDelta(sum((d) => d.new_patients), psum((d) => d.new_patients)) : undefined}
               onClick={() => setModal({ title: t("Νέοι πελάτες ανά ιατρό & ειδικότητα", "New patients by doctor & specialty"), view: "doctor", metric: "new_patients" })} />
           </div>
 

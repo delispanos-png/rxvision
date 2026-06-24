@@ -15,8 +15,8 @@ function ScanImage({ scanId, onOpen }: { scanId: string; onOpen?: (url: string) 
   useEffect(() => {
     let alive = true; let obj = "";
     apiBlob(`/reimbursement/scans/${scanId}/image`)
-      .then((b) => { if (!alive) return; obj = URL.createObjectURL(b); setUrl(obj); })
-      .catch(() => {});
+     .then((b) => { if (!alive) return; obj = URL.createObjectURL(b); setUrl(obj); })
+     .catch(() => {});
     return () => { alive = false; if (obj) URL.revokeObjectURL(obj); };
   }, [scanId]);
   if (!url) return <div className="grid h-full place-items-center text-slate-300"><QrCode className="h-8 w-8" /></div>;
@@ -68,7 +68,7 @@ export default function OpticalAuditPage() {
         const fd = new FormData();
         fd.append("file", f);
         const r = await apiUpload<{ scan_id: string }>("/reimbursement/scans", fd);
-        setLocals((s) => [{ scan_id: r.scan_id, preview: URL.createObjectURL(f) }, ...s]);
+        setLocals((s) => [{ scan_id: r.scan_id, preview: URL.createObjectURL(f) },...s]);
       } catch { /* ignore single failure */ }
     }
     setUploading(false);

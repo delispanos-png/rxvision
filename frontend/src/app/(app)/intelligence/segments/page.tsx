@@ -12,7 +12,7 @@ export default function SegmentsPage() {
   const t = useT();
   const { data, isLoading } = useQuery({ queryKey: ["pi-segments"], queryFn: () => api<{ segments: Seg[] }>("/patient-intelligence/segments") });
   if (isLoading) return <div className="p-8 text-slate-400">{t("Ανάλυση κατηγοριών…", "Analyzing segments…")}</div>;
-  const max = Math.max(1, ...(data?.segments ?? []).map((s) => s.patients));
+  const max = Math.max(1,...(data?.segments ?? []).map((s) => s.patients));
 
   return (
     <div className="space-y-4">

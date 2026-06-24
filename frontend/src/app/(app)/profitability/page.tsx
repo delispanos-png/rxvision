@@ -65,7 +65,7 @@ export default function ProfitabilityPage() {
   const pr = prevYearRange(filters.dateFrom, filters.dateTo);
   const prevSummary = useQuery({
     queryKey: ["profitability", "summary", "prevYear", pr?.from, pr?.to],
-    queryFn: () => api<Summary>(`/profitability/summary?${filtersToQuery({ ...filters, dateFrom: pr!.from, dateTo: pr!.to })}`),
+    queryFn: () => api<Summary>(`/profitability/summary?${filtersToQuery({...filters, dateFrom: pr!.from, dateTo: pr!.to })}`),
     enabled: !!pr,
   });
 
@@ -109,9 +109,9 @@ export default function ProfitabilityPage() {
       <div className="space-y-4">
         {/* KPI row */}
         <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
-          <KpiCard label={t("Μεικτό κέρδος", "Gross profit")} value={s ? fmtEur(s.gross_profit) : "—"} sub={t("αιτούμενα − κόστος", "claimed − cost")} icon={TrendingUp} accent="green" trend={pctDelta(s?.gross_profit, p?.gross_profit)} />
-          <KpiCard label={t("Περιθώριο", "Margin")} value={s ? fmtPct(s.margin_pct) : "—"} sub={t("μεικτό περιθώριο", "gross margin")} icon={Percent} accent="violet" trend={pctDelta(s?.margin_pct, p?.margin_pct)} />
-          <KpiCard label={t("Έσοδα", "Revenue")} value={s ? fmtEur(s.revenue) : "—"} sub={t("σύνολο περιόδου", "period total")} icon={Coins} accent="amber" trend={pctDelta(s?.revenue, p?.revenue)} />
+          <KpiCard label={t("Μεικτό κέρδος", "Gross profit")} help={t("Αιτούμενο/αξία − κόστος χονδρικής των φαρμάκων.", "Claimed/value − wholesale cost.")} value={s ? fmtEur(s.gross_profit) : "—"} sub={t("αιτούμενα − κόστος", "claimed − cost")} icon={TrendingUp} accent="green" trend={pctDelta(s?.gross_profit, p?.gross_profit)} />
+          <KpiCard label={t("Περιθώριο", "Margin")} help={t("Περιθώριο κέρδους = μεικτό κέρδος / λιανική αξία.", "Margin = gross profit / retail value.")} value={s ? fmtPct(s.margin_pct) : "—"} sub={t("μεικτό περιθώριο", "gross margin")} icon={Percent} accent="violet" trend={pctDelta(s?.margin_pct, p?.margin_pct)} />
+          <KpiCard label={t("Έσοδα", "Revenue")} help={t("Συνολικά έσοδα της περιόδου.", "Total revenue for the period.")} value={s ? fmtEur(s.revenue) : "—"} sub={t("σύνολο περιόδου", "period total")} icon={Coins} accent="amber" trend={pctDelta(s?.revenue, p?.revenue)} />
           <KpiCard
             label={t("Είδη χαμηλής κερδοφορίας", "Low-margin items")}
             value={fmtNum(lowItems.length)}

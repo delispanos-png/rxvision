@@ -63,8 +63,8 @@ export default function ReturnsPage() {
   return (
     <div className="space-y-5">
       <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
-        <KpiCard label={t("Επιστροφές", "Returns")} value={fmtNum(data?.count ?? 0)} icon={UserCheck} accent="green" sub={t("γύρισαν μετά 90+ μέρες αδράνειας", "returned after 90+ idle days")} />
-        <KpiCard label={t("Ανακτημένη αξία", "Recovered value")} value={fmtEur(data?.recovered_value ?? 0)} icon={Wallet} accent="amber" sub={t("αξία ζωής επιστρεφόντων", "LTV of returners")} />
+        <KpiCard label={t("Επιστροφές", "Returns")} help={t("Επιστροφές φαρμάκων/συνταγών.", "Medicine/prescription returns.")} value={fmtNum(data?.count ?? 0)} icon={UserCheck} accent="green" sub={t("γύρισαν μετά 90+ μέρες αδράνειας", "returned after 90+ idle days")} />
+        <KpiCard label={t("Ανακτημένη αξία", "Recovered value")} help={t("Αξία ανακτημένων χαμένων επαναλήψεων.", "Recovered value of missed refills.")} value={fmtEur(data?.recovered_value ?? 0)} icon={Wallet} accent="amber" sub={t("αξία ζωής επιστρεφόντων", "LTV of returners")} />
       </div>
       <p className="text-sm text-slate-500">{t("Ασθενείς που ήταν ανενεργοί 3+ μήνες και ξαναεμφανίστηκαν. Κατέγραψε τον λόγο επιστροφής για να μάθεις τι λειτουργεί.", "Patients dormant 3+ months who came back. Record the return reason to learn what works.")}</p>
       <DataTable pageSize={20} columns={cols} rows={data?.items ?? []} rowKey={(r) => r.patient_id}

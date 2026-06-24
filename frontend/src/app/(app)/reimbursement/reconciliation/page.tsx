@@ -37,10 +37,10 @@ export default function ReconciliationPage() {
       <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-200">{t("Συμφωνία πληρωμών — αναμενόμενο vs πληρωμένο", "Reconciliation — expected vs paid")}</h3>
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <KpiCard label={t("Αναμενόμενο", "Expected")} value={fmtEur(rec.data?.expected ?? 0)} icon={Landmark} accent="indigo" />
-        <KpiCard label={t("Πληρωμένο", "Paid")} value={fmtEur(rec.data?.paid ?? 0)} icon={Wallet} accent="green" />
-        <KpiCard label={t("Περικοπές", "Cuts")} value={fmtEur(rec.data?.cut ?? 0)} icon={ScissorsLineDashed} accent="rose" />
-        <KpiCard label={t("Εκκρεμές", "Outstanding")} value={fmtEur(rec.data?.outstanding ?? 0)} icon={Clock} accent="amber" />
+        <KpiCard label={t("Αναμενόμενο", "Expected")} help={t("Αναμενόμενο ποσό/όγκος της περιόδου με βάση τις ανοιχτές επαναλήψεις.", "Expected amount/volume for the period.")} value={fmtEur(rec.data?.expected ?? 0)} icon={Landmark} accent="indigo" />
+        <KpiCard label={t("Πληρωμένο", "Paid")} help={t("Ποσά που έχουν ήδη πληρωθεί.", "Amounts already paid.")} value={fmtEur(rec.data?.paid ?? 0)} icon={Wallet} accent="green" />
+        <KpiCard label={t("Περικοπές", "Cuts")} help={t("Εκτιμώμενες περικοπές ταμείων.", "Estimated fund cuts.")} value={fmtEur(rec.data?.cut ?? 0)} icon={ScissorsLineDashed} accent="rose" />
+        <KpiCard label={t("Εκκρεμές", "Outstanding")} help={t("Ποσό που εκκρεμεί (δεν έχει εισπραχθεί/ολοκληρωθεί).", "Pending/uncollected amount.")} value={fmtEur(rec.data?.outstanding ?? 0)} icon={Clock} accent="amber" />
       </div>
 
       <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">

@@ -25,7 +25,7 @@ type Vacc = {
 };
 
 function BarList({ title, rows, label }: { title: string; rows: NC[]; label: (r: NC) => string }) {
-  const max = Math.max(1, ...rows.map((r) => r.count));
+  const max = Math.max(1,...rows.map((r) => r.count));
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900">
       <h3 className="mb-3 text-sm font-semibold text-slate-700 dark:text-slate-200">{title}</h3>
@@ -85,10 +85,10 @@ export default function VaccinationRegistryPage() {
           {d && (
             <>
               <div className="mb-5 grid grid-cols-2 gap-4 md:grid-cols-4">
-                <KpiCard label={t("Σύνολο εμβολιασμών", "Total vaccinations")} value={fmtNum(d.total)} icon={Syringe} accent="sky" />
-                <KpiCard label={t("Ακυρωμένοι", "Cancelled")} value={fmtNum(d.cancelled)} icon={ShieldAlert} accent={d.cancelled ? "rose" : "green"} />
-                <KpiCard label={t("Διαφορετικά εμβόλια", "Distinct vaccines")} value={fmtNum(d.by_vaccine.length)} icon={CalendarRange} accent="violet" />
-                <KpiCard label={t("Ομάδες κινδύνου", "Risk groups")} value={fmtNum(d.by_risk_group.length)} icon={Users} accent="amber" />
+                <KpiCard label={t("Σύνολο εμβολιασμών", "Total vaccinations")} help={t("Πλήθος εμβολιασμών στην περίοδο/καμπάνια.", "Total vaccinations.")} value={fmtNum(d.total)} icon={Syringe} accent="sky" />
+                <KpiCard label={t("Ακυρωμένοι", "Cancelled")} help={t("Εγγραφές που ακυρώθηκαν.", "Cancelled records.")} value={fmtNum(d.cancelled)} icon={ShieldAlert} accent={d.cancelled ? "rose" : "green"} />
+                <KpiCard label={t("Διαφορετικά εμβόλια", "Distinct vaccines")} help={t("Διακριτά εμβόλια που χορηγήθηκαν.", "Distinct vaccines administered.")} value={fmtNum(d.by_vaccine.length)} icon={CalendarRange} accent="violet" />
+                <KpiCard label={t("Ομάδες κινδύνου", "Risk groups")} help={t("Ασθενείς ομαδοποιημένοι κατά επίπεδο κινδύνου απώλειας.", "Patients grouped by churn risk.")} value={fmtNum(d.by_risk_group.length)} icon={Users} accent="amber" />
               </div>
               <div className="mb-5 grid grid-cols-1 gap-4 lg:grid-cols-2">
                 <BarList title={t("Ανά εμβόλιο", "By vaccine")} rows={d.by_vaccine} label={(r) => r.name || "—"} />

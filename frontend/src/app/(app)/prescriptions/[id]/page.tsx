@@ -113,7 +113,7 @@ function CouponBarcode({ c }: { c: Coupon }) {
   }, [isQr, gtin, c.qr_expiry, c.qr_batch, c.strip]);
   if (!isQr && !c.strip) return null;
   // Render σε ΥΨΗΛΗ native ανάλυση (σαρώσιμο) αλλά περιορισμένο σε ΦΥΣΙΚΟ μέγεθος μέσω CSS
-  // (.qr-canvas / .eof-canvas — βλ. print styles). Downscale υψηλής ανάλυσης = κρυστάλλινο στην εκτύπωση.
+  // (.qr-canvas /.eof-canvas — βλ. print styles). Downscale υψηλής ανάλυσης = κρυστάλλινο στην εκτύπωση.
   return <canvas ref={ref} className={`${isQr ? "qr-canvas" : "eof-canvas"} rounded border border-slate-200 bg-white`} />;
 }
 
@@ -292,7 +292,7 @@ export default function PrescriptionDetailPage() {
   // repeat_current/repeat_total now come straight from the ΗΔΥΚΑ CDA (1.1.4 = planned count,
   // 1.1.4.1 = position), so "X/Y" is authoritative even when sibling barcodes aren't synced.
   const recurring = d.repeat_total > 1;
-  // Το wholesale_cost κλιμακώνεται πλέον στο authoritative amount_total (ανά εκτέλεση), οπότε
+  // Το wholesale_cost κλιμακώνεται πλέον στο authoritative λιανική αξία (ανά εκτέλεση), οπότε
   // το μεικτό κέρδος είναι έγκυρο όποτε έχουμε εκτίμηση χονδρικής (>0).
   const marginReliable = d.wholesale_cost > 0;
 
@@ -653,16 +653,16 @@ export default function PrescriptionDetailPage() {
       {couponSheet ? (
         <div className="fixed inset-0 z-50 overflow-y-auto bg-black/40 p-4 print:static print:bg-white print:p-0" onClick={() => setCouponSheet(false)}>
           <style jsx global>{`
-            #coupon-print .qr-canvas { width: 84px; height: 84px; }
-            #coupon-print .eof-canvas { width: 150px; height: auto; }
+            #coupon-print.qr-canvas { width: 84px; height: 84px; }
+            #coupon-print.eof-canvas { width: 150px; height: auto; }
             @media print {
               @page { size: A4; margin: 12mm; }
               body * { visibility: hidden !important; }
               #coupon-print, #coupon-print * { visibility: visible !important; }
               #coupon-print { position: absolute; left: 0; top: 0; width: 100%; }
-              #coupon-print .qr-canvas { width: 20mm !important; height: 20mm !important; }
-              #coupon-print .eof-canvas { width: 40mm !important; height: auto !important; }
-              .no-print { display: none !important; }
+              #coupon-print.qr-canvas { width: 20mm !important; height: 20mm !important; }
+              #coupon-print.eof-canvas { width: 40mm !important; height: auto !important; }
+             .no-print { display: none !important; }
             }
           `}</style>
           <div id="coupon-print" className="mx-auto max-w-3xl rounded-2xl bg-white p-6 shadow-xl print:max-w-full print:rounded-none print:shadow-none" onClick={(e) => e.stopPropagation()}>

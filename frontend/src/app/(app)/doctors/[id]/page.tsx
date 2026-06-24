@@ -93,12 +93,12 @@ export default function DoctorDetailPage() {
         <div className="text-slate-400">{t("Φόρτωση δεδομένων…", "Loading data…")}</div>
       ) : (
         <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-6">
-          <KpiCard label={t("Συνταγές", "Prescriptions")} value={fmtNum(d.rx)} />
-          <KpiCard label={t("Αξία", "Value")} value={fmtEur(d.value)} />
-          <KpiCard label={t("Αιτούμενα", "Claimed")} value={fmtEur(d.claimed)} />
-          <KpiCard label={t("Κερδοφορία", "Profitability")} value={fmtEur(d.profit)} sub={fmtPct(d.margin_pct)} />
-          <KpiCard label={t("Μοναδικοί πελάτες", "Unique patients")} value={fmtNum(d.distinct_patients)} />
-          <KpiCard label={t("Νέοι πελάτες", "New patients")} value={fmtNum(d.new_patients)} />
+          <KpiCard label={t("Συνταγές", "Prescriptions")} help={t("Πλήθος εκτελέσεων συνταγών στην περίοδο.", "Number of executions in the period.")} value={fmtNum(d.rx)} />
+          <KpiCard label={t("Αξία", "Value")} help={t("Άθροισμα λιανικής αξίας των εκτελέσεων της περιόδου.", "Sum of retail value of executions.")} value={fmtEur(d.value)} />
+          <KpiCard label={t("Αιτούμενα", "Claimed")} help={t("Άθροισμα του αιτούμενου ποσού προς τα ασφαλιστικά ταμεία.", "Sum of amount claimed to insurance funds.")} value={fmtEur(d.claimed)} />
+          <KpiCard label={t("Κερδοφορία", "Profitability")} help={t("Μεικτό κέρδος = αιτούμενο − κόστος χονδρικής.", "Gross profit = claimed − wholesale cost.")} value={fmtEur(d.profit)} sub={fmtPct(d.margin_pct)} />
+          <KpiCard label={t("Μοναδικοί πελάτες", "Unique patients")} help={t("Μοναδικοί ασθενείς με ≥1 εκτέλεση στην περίοδο.", "Unique patients with ≥1 execution.")} value={fmtNum(d.distinct_patients)} />
+          <KpiCard label={t("Νέοι πελάτες", "New patients")} help={t("Ασθενείς με πρώτη εκτέλεση στην περίοδο.", "Patients with their first execution in the period.")} value={fmtNum(d.new_patients)} />
         </div>
       )}
 

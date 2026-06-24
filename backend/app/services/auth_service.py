@@ -113,7 +113,10 @@ class AuthService:
             {"_id": {"$in": role_ids}, "tenant_id": user["tenant_id"]}):
             roles.append(role.get("key", str(role["_id"])))
             perms.update(role.get("permissions", []))
-        demo = bool((tenant or {}).get("demo"))   # «πελάτης παρουσίασης» (απόκρυψη PII)
+        # PII masking applies when EITHER the tenant is a «πελάτης παρουσίασης» (demo) OR this
+        # specific user is GDPR-restricted (mask_pii) — e.g. a health advisor at the counter who
+        # may operate but must not see patients' surname/ΑΜΚΑ/contact details.
+        demo = bool((tenant or {}).get("demo")) or bool(user.get("mask_pii"))
         return modules, roles, sorted(perms), demo
 
     def _issue(self, user: dict, roles: list[str], modules: dict, perms: list[str],

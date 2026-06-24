@@ -89,11 +89,11 @@ export default function IngestionSettingsPage() {
     environment: "test", base_url: HDIKA_ENDPOINTS.test, api_key: "", doctor_ip: "", client_id: "", client_secret: "",
     sync_enabled: true, sync_interval_minutes: 15, history_from: "",
   });
-  const set = (k: string, v: any) => setF((s) => ({ ...s, [k]: v }));
+  const set = (k: string, v: any) => setF((s) => ({...s, [k]: v }));
   const [customUrl, setCustomUrl] = useState(false);
   // Επιλογή περιβάλλοντος → αυτόματη συμπλήρωση endpoint (εκτός custom).
   const selectEnv = (env: string) =>
-    setF((s) => ({ ...s, environment: env, base_url: customUrl ? s.base_url : HDIKA_ENDPOINTS[env] }));
+    setF((s) => ({...s, environment: env, base_url: customUrl ? s.base_url : HDIKA_ENDPOINTS[env] }));
 
   // prefill non-secret fields from saved config
   useEffect(() => {
@@ -102,7 +102,7 @@ export default function IngestionSettingsPage() {
     const baseUrl = c.base_url || HDIKA_ENDPOINTS[env] || "";
     setCustomUrl(!!c.base_url && c.base_url !== HDIKA_ENDPOINTS[env]);  // saved a non-standard URL
     setF((s) => ({
-      ...s,
+     ...s,
       username: c.username ?? "",
       afm: c.afm ?? "", eopyy_registry: c.eopyy_registry ?? "", pharmacy_code: c.pharmacy_code ?? "",
       environment: env, base_url: baseUrl, doctor_ip: c.doctor_ip ?? "", client_id: c.client_id ?? "",

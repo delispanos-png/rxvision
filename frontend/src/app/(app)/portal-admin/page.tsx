@@ -45,8 +45,8 @@ function DateField({ value, onChange, className }: { value: string; onChange: (i
 const slotsSummary = (av?: Availability) => {
   if (!av || av.mode !== "custom") return "Όλο το ωράριο του φαρμακείου";
   const parts = [
-    ...(av.slots ?? []).map((s) => `${DAYS[s.day]} ${s.start}–${s.end}`),
-    ...(av.date_ranges ?? []).map((r) => `📅 ${rangeLabel(r)}`),
+   ...(av.slots ?? []).map((s) => `${DAYS[s.day]} ${s.start}–${s.end}`),
+   ...(av.date_ranges ?? []).map((r) => `📅 ${rangeLabel(r)}`),
   ];
   return parts.length ? parts.join(" · ") : "Όλο το ωράριο του φαρμακείου";
 };
@@ -165,7 +165,7 @@ function AvailabilityTab() {
               <div className="mt-1 text-sm text-emerald-700">{t("Απάντησες", "Answered")}: {a.answer}</div>
             ) : (
               <div className="mt-2 flex gap-2">
-                <input value={answers[id] ?? ""} onChange={(e) => setAnswers({ ...answers, [id]: e.target.value })}
+                <input value={answers[id] ?? ""} onChange={(e) => setAnswers({...answers, [id]: e.target.value })}
                   placeholder={t("Απάντηση (π.χ. Ναι, διαθέσιμο)", "Answer (e.g. Yes, in stock)")}
                   className="flex-1 rounded-lg border border-slate-300 px-3 py-1.5 text-sm dark:border-slate-700 dark:bg-slate-800" />
                 <button onClick={() => answers[id] && answer.mutate({ id, answer: answers[id] })}
@@ -324,12 +324,12 @@ function RxRequestsTab() {
               <div className="mt-2 text-sm text-emerald-700 dark:text-emerald-400">{t("Απάντησες", "Replied")}: {r.reply}{r.available_date ? ` (${t("διαθ.", "avail.")} ${r.available_date})` : ""}</div>
             ) : (
               <div className="mt-3 space-y-2">
-                <textarea value={replies[id] ?? ""} onChange={(e) => setReplies({ ...replies, [id]: e.target.value })} rows={2}
+                <textarea value={replies[id] ?? ""} onChange={(e) => setReplies({...replies, [id]: e.target.value })} rows={2}
                   placeholder={t("Απάντηση στον πελάτη (π.χ. έλλειψη, οδηγίες)…", "Reply to the patient…")}
                   className="w-full rounded-lg border border-slate-300 px-3 py-1.5 text-sm dark:border-slate-700 dark:bg-slate-800" />
                 <div className="flex flex-wrap items-center gap-2">
                   <label className="text-xs text-slate-500">{t("Ημ. διαθεσιμότητας", "Available date")}:</label>
-                  <input type="date" value={dates[id] ?? ""} onChange={(e) => setDates({ ...dates, [id]: e.target.value })} className="rounded-lg border border-slate-300 px-2 py-1 text-sm dark:border-slate-700 dark:bg-slate-800" />
+                  <input type="date" value={dates[id] ?? ""} onChange={(e) => setDates({...dates, [id]: e.target.value })} className="rounded-lg border border-slate-300 px-2 py-1 text-sm dark:border-slate-700 dark:bg-slate-800" />
                   <button onClick={() => { const rep = replies[id]?.trim() || (dates[id] ? `${t("Θα είναι διαθέσιμο", "Available on")} ${dates[id]}` : ""); if (rep) reply.mutate({ id, reply: rep, available_date: dates[id] }); }}
                     className="rounded-lg bg-brand-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-700">{t("Στείλε απάντηση", "Send reply")}</button>
                 </div>
@@ -392,12 +392,12 @@ function ServiceRow({ s }: { s: Service }) {
                 <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">{t("Εβδομαδιαίο πρόγραμμα", "Weekly schedule")}</div>
                 {slots.map((sl, i) => (
                   <div key={i} className="flex flex-wrap items-center gap-2">
-                    <select value={sl.day} onChange={(e) => setSlots(slots.map((x, j) => j === i ? { ...x, day: +e.target.value } : x))} className="rounded-lg border border-slate-300 px-2 py-1 text-sm dark:border-slate-700 dark:bg-slate-800">
+                    <select value={sl.day} onChange={(e) => setSlots(slots.map((x, j) => j === i ? {...x, day: +e.target.value } : x))} className="rounded-lg border border-slate-300 px-2 py-1 text-sm dark:border-slate-700 dark:bg-slate-800">
                       {DAYS.map((d, di) => <option key={di} value={di}>{d}</option>)}
                     </select>
-                    <input type="time" value={sl.start} onChange={(e) => setSlots(slots.map((x, j) => j === i ? { ...x, start: e.target.value } : x))} className="rounded-lg border border-slate-300 px-2 py-1 text-sm dark:border-slate-700 dark:bg-slate-800" />
+                    <input type="time" value={sl.start} onChange={(e) => setSlots(slots.map((x, j) => j === i ? {...x, start: e.target.value } : x))} className="rounded-lg border border-slate-300 px-2 py-1 text-sm dark:border-slate-700 dark:bg-slate-800" />
                     <span className="text-slate-400">–</span>
-                    <input type="time" value={sl.end} onChange={(e) => setSlots(slots.map((x, j) => j === i ? { ...x, end: e.target.value } : x))} className="rounded-lg border border-slate-300 px-2 py-1 text-sm dark:border-slate-700 dark:bg-slate-800" />
+                    <input type="time" value={sl.end} onChange={(e) => setSlots(slots.map((x, j) => j === i ? {...x, end: e.target.value } : x))} className="rounded-lg border border-slate-300 px-2 py-1 text-sm dark:border-slate-700 dark:bg-slate-800" />
                     <button onClick={() => setSlots(slots.filter((_, j) => j !== i))} className="rounded-lg p-1 text-rose-500 hover:bg-rose-50"><Trash2 className="h-3.5 w-3.5" /></button>
                   </div>
                 ))}
@@ -408,12 +408,12 @@ function ServiceRow({ s }: { s: Service }) {
                 <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">📅 {t("Συγκεκριμένες ημερομηνίες (events)", "Specific dates (events)")}</div>
                 {ranges.map((r, i) => (
                   <div key={i} className="flex flex-wrap items-center gap-2">
-                    <DateField value={r.start_date} onChange={(iso) => setRanges(ranges.map((x, j) => j === i ? { ...x, start_date: iso, end_date: x.end_date && x.end_date >= iso ? x.end_date : iso } : x))} className="w-28 rounded-lg border border-slate-300 px-2 py-1 text-sm dark:border-slate-700 dark:bg-slate-800" />
+                    <DateField value={r.start_date} onChange={(iso) => setRanges(ranges.map((x, j) => j === i ? {...x, start_date: iso, end_date: x.end_date && x.end_date >= iso ? x.end_date : iso } : x))} className="w-28 rounded-lg border border-slate-300 px-2 py-1 text-sm dark:border-slate-700 dark:bg-slate-800" />
                     <span className="text-slate-400">→</span>
-                    <DateField value={r.end_date} onChange={(iso) => setRanges(ranges.map((x, j) => j === i ? { ...x, end_date: iso } : x))} className="w-28 rounded-lg border border-slate-300 px-2 py-1 text-sm dark:border-slate-700 dark:bg-slate-800" />
-                    <input type="time" value={r.start} onChange={(e) => setRanges(ranges.map((x, j) => j === i ? { ...x, start: e.target.value } : x))} className="rounded-lg border border-slate-300 px-2 py-1 text-sm dark:border-slate-700 dark:bg-slate-800" />
+                    <DateField value={r.end_date} onChange={(iso) => setRanges(ranges.map((x, j) => j === i ? {...x, end_date: iso } : x))} className="w-28 rounded-lg border border-slate-300 px-2 py-1 text-sm dark:border-slate-700 dark:bg-slate-800" />
+                    <input type="time" value={r.start} onChange={(e) => setRanges(ranges.map((x, j) => j === i ? {...x, start: e.target.value } : x))} className="rounded-lg border border-slate-300 px-2 py-1 text-sm dark:border-slate-700 dark:bg-slate-800" />
                     <span className="text-slate-400">–</span>
-                    <input type="time" value={r.end} onChange={(e) => setRanges(ranges.map((x, j) => j === i ? { ...x, end: e.target.value } : x))} className="rounded-lg border border-slate-300 px-2 py-1 text-sm dark:border-slate-700 dark:bg-slate-800" />
+                    <input type="time" value={r.end} onChange={(e) => setRanges(ranges.map((x, j) => j === i ? {...x, end: e.target.value } : x))} className="rounded-lg border border-slate-300 px-2 py-1 text-sm dark:border-slate-700 dark:bg-slate-800" />
                     <button onClick={() => setRanges(ranges.filter((_, j) => j !== i))} className="rounded-lg p-1 text-rose-500 hover:bg-rose-50"><Trash2 className="h-3.5 w-3.5" /></button>
                   </div>
                 ))}

@@ -43,7 +43,15 @@ const dt = (s?: string | null) => (s ? fmtDate(s) : "—");
 const dtl = (s?: string | null) => (s ? fmtDateTime(s) : "—");
 const eur = (c?: number) => new Intl.NumberFormat("el-GR", { style: "currency", currency: "EUR", maximumFractionDigits: 2 }).format((c || 0) / 100);
 
-const TABS = [["rx", "Συνταγές"], ["wallet", "Επιβράβευση"], ["repeats", "Επαναλήψεις"], ["assign", "Ανάθεση συνταγής"], ["availability", "Διαθεσιμότητα"], ["appointments", "Ραντεβού"]] as const;
+const TABS = [["rx", "Συνταγές"], ["health", "Υγεία"], ["wallet", "Επιβράβευση"], ["repeats", "Επαναλήψεις"], ["assign", "Ανάθεση συνταγής"], ["availability", "Διαθεσιμότητα"], ["appointments", "Ραντεβού"]] as const;
+type HMeas = { _id?: string; kind: string; systolic?: number; diastolic?: number; value?: number; at: string };
+type Health = { height_cm?: number | null; latest: Record<string, HMeas>; history: Record<string, HMeas[]> };
+const hStat = (k: string, m?: HMeas) => {
+  if (!m) return "bg-slate-50 text-slate-500";
+  if (k === "bp") return (m.systolic! >= 140 || m.diastolic! >= 90) ? "bg-rose-50 text-rose-700" : (m.systolic! >= 130 || m.diastolic! >= 85) ? "bg-amber-50 text-amber-700" : "bg-emerald-50 text-emerald-700";
+  if (k === "glucose") return m.value! >= 126 ? "bg-rose-50 text-rose-700" : m.value! >= 100 ? "bg-amber-50 text-amber-700" : "bg-emerald-50 text-emerald-700";
+  return "bg-slate-50 text-slate-700";
+};
 const TIER_GR: Record<string, string> = { Bronze: "Χάλκινο", Silver: "Ασημένιο", Gold: "Χρυσό", Platinum: "Πλατινένιο" };
 
 const STATUS_LABEL: Record<string, string> = {
@@ -69,6 +77,7 @@ export default function PortalHome() {
   const [appts, setAppts] = useState<Appt[]>([]);
   const [rxReqs, setRxReqs] = useState<RxReq[]>([]);
   const [loyalty, setLoyalty] = useState<Loyalty | null>(null);
+  const [health, setHealth] = useState<Health | null>(null);
   const [assignBc, setAssignBc] = useState("");
   const [assignNote, setAssignNote] = useState("");
   const [assignBusy, setAssignBusy] = useState(false);
@@ -129,6 +138,7 @@ export default function PortalHome() {
 
   useEffect(() => {
     if (!me) return;
+    if (tab === "health") patientApi<Health>("/patient/health").then(setHealth).catch(() => {});
     if (tab === "wallet") patientApi<Loyalty>("/patient/loyalty").then(setLoyalty).catch(() => {});
     if (tab === "assign") patientApi<{ items: RxReq[] }>("/patient/rx-requests").then((d) => setRxReqs(d.items)).catch(() => {});
     if (tab === "availability") patientApi<{ items: Avail[] }>("/patient/availability").then((d) => setAvail(d.items)).catch(() => {});
@@ -491,6 +501,46 @@ export default function PortalHome() {
             })}
           </div>
         )}
+
+        {/* ── ΥΓΕΙΑ / ΜΕΤΡΗΣΕΙΣ ─────────────────────────────── */}
+        {tab === "health" && (() => {
+          const lt = health?.latest ?? {}; const bp = lt.bp; const gl = lt.glucose; const wt = lt.weight;
+          const bmi = health?.height_cm && wt?.value ? (wt.value / ((health.height_cm / 100) ** 2)) : undefined;
+          const tiles = [
+            { k: "bp", label: "Πίεση", val: bp ? `${bp.systolic}/${bp.diastolic}` : "—", sub: bp ? dt(bp.at) : "—", cls: hStat("bp", bp) },
+            { k: "glucose", label: "Ζάχαρο", val: gl ? `${gl.value}` : "—", sub: gl ? `mg/dL · ${dt(gl.at)}` : "—", cls: hStat("glucose", gl) },
+            { k: "weight", label: "Βάρος", val: wt ? `${wt.value}` : "—", sub: wt ? `kg · ${dt(wt.at)}` : "—", cls: "bg-slate-50 text-slate-700" },
+            { k: "bmi", label: "ΔΜΣ", val: bmi ? bmi.toFixed(1) : "—", sub: health?.height_cm ? `ύψος ${health.height_cm}cm` : "—", cls: bmi ? (bmi >= 30 ? "bg-rose-50 text-rose-700" : (bmi >= 25 || bmi < 18.5) ? "bg-amber-50 text-amber-700" : "bg-emerald-50 text-emerald-700") : "bg-slate-50 text-slate-500" },
+          ];
+          const anyHist = ["bp", "glucose", "weight"].some((k) => (health?.history?.[k]?.length ?? 0) > 0);
+          return (
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                {tiles.map((tl) => (
+                  <div key={tl.k} className="rounded-2xl border border-slate-200 bg-white p-4">
+                    <div className="text-xs text-slate-500">{tl.label}</div>
+                    <div className={`mt-1 inline-flex rounded px-1.5 text-xl font-bold ${tl.cls}`}>{tl.val}</div>
+                    <div className="mt-0.5 text-[11px] text-slate-400">{tl.sub}</div>
+                  </div>
+                ))}
+              </div>
+              {(["bp", "glucose", "weight"] as const).map((k) => (health?.history?.[k]?.length ? (
+                <div key={k}>
+                  <div className="mb-1 text-xs font-semibold text-slate-500">{k === "bp" ? "Πίεση" : k === "glucose" ? "Ζάχαρο" : "Βάρος"} — εξέλιξη</div>
+                  <div className="space-y-1">
+                    {health.history[k].map((m, i) => (
+                      <div key={m._id ?? i} className="flex items-center justify-between rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-sm">
+                        <span className="font-medium text-slate-700">{m.kind === "bp" ? `${m.systolic}/${m.diastolic}` : m.value}{m.kind === "glucose" ? " mg/dL" : m.kind === "weight" ? " kg" : ""}</span>
+                        <span className="text-xs text-slate-400">{dt(m.at)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null))}
+              {!anyHist && <Empty icon={Pill} text="Δεν υπάρχουν μετρήσεις ακόμη — καταχωρούνται από το φαρμακείο σου." />}
+            </div>
+          );
+        })()}
 
         {/* ── ΕΠΙΒΡΑΒΕΥΣΗ / ΠΟΡΤΟΦΟΛΙ ───────────────────────── */}
         {tab === "wallet" && (

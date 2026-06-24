@@ -16,6 +16,7 @@ type User = {
   roles: string[];
   role_ids?: string[];
   active: boolean;
+  mask_pii?: boolean;
 };
 type Role = { _id?: string; id?: string; name: string };
 type CreateResult = User & { credentials_emailed?: boolean; temporary_password?: string };
@@ -69,8 +70,8 @@ export default function UsersSettingsPage() {
   });
 
   const update = useMutation({
-    mutationFn: (v: { id: string; full_name: string; role_ids: string[] }) =>
-      api<User>(`/users/${v.id}`, { method: "PATCH", body: JSON.stringify({ full_name: v.full_name, role_ids: v.role_ids }) }),
+    mutationFn: (v: { id: string; full_name: string; role_ids: string[]; mask_pii: boolean }) =>
+      api<User>(`/users/${v.id}`, { method: "PATCH", body: JSON.stringify({ full_name: v.full_name, role_ids: v.role_ids, mask_pii: v.mask_pii }) }),
     onSuccess: () => { refresh(); setEditing(null); },
     onError: (e) => appAlert(errText(e, t("Αποτυχία αποθήκευσης", "Save failed"), t)),
   });
@@ -80,6 +81,13 @@ export default function UsersSettingsPage() {
       api<User>(`/users/${v.id}`, { method: "PATCH", body: JSON.stringify({ status: v.status }) }),
     onSuccess: refresh,
     onError: (e) => appAlert(errText(e, t("Αποτυχία αλλαγής κατάστασης", "Status change failed"), t)),
+  });
+
+  const setMask = useMutation({
+    mutationFn: (v: { id: string; mask_pii: boolean }) =>
+      api<User>(`/users/${v.id}`, { method: "PATCH", body: JSON.stringify({ mask_pii: v.mask_pii }) }),
+    onSuccess: refresh,
+    onError: (e) => appAlert(errText(e, t("Αποτυχία αλλαγής", "Change failed"), t)),
   });
 
   const remove = useMutation({
@@ -127,6 +135,18 @@ export default function UsersSettingsPage() {
     { key: "email", header: "Email" },
     { key: "roles", header: t("Ρόλοι", "Roles"), render: (r) => r.roles.join(", ") || "—" },
     { key: "active", header: t("Κατάσταση", "Status"), render: (r) => (r.active ? t("Ενεργός", "Active") : t("Ανενεργός", "Inactive")) },
+    {
+      key: "mask_pii",
+      header: t("Δεδομένα πελατών", "Patient data"),
+      render: (r) => (
+        <button
+          onClick={() => setMask.mutate({ id: r.id, mask_pii: !r.mask_pii })}
+          title={t("Εναλλαγή πρόσβασης σε ευαίσθητα προσωπικά δεδομένα πελατών (επίθετο/ΑΜΚΑ/επικοινωνία)", "Toggle access to patients' sensitive data")}
+          className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs font-semibold transition hover:ring-2 hover:ring-brand-200 ${r.mask_pii ? "border-amber-300 bg-amber-100 text-amber-700" : "border-emerald-300 bg-emerald-100 text-emerald-700"}`}>
+          {r.mask_pii ? t("🔒 Μασκαρισμένα", "🔒 Masked") : t("Πλήρης πρόσβαση", "Full access")} <span className="opacity-50">⇄</span>
+        </button>
+      ),
+    },
     {
       key: "actions",
       header: t("Ενέργειες", "Actions"),
@@ -204,7 +224,7 @@ export default function UsersSettingsPage() {
           roles={roles.data?.items ?? []}
           saving={update.isPending}
           onCancel={() => setEditing(null)}
-          onSave={(full_name, role_ids) => update.mutate({ id: editing.id, full_name, role_ids })}
+          onSave={(full_name, role_ids, mask_pii) => update.mutate({ id: editing.id, full_name, role_ids, mask_pii })}
         />
       )}
     </ModuleGuard>
@@ -218,11 +238,12 @@ function EditUserModal({
   roles: Role[];
   saving: boolean;
   onCancel: () => void;
-  onSave: (full_name: string, role_ids: string[]) => void;
+  onSave: (full_name: string, role_ids: string[], mask_pii: boolean) => void;
 }) {
   const t = useT();
   const [name, setName] = useState(user.full_name);
   const [rid, setRid] = useState(user.role_ids?.[0] ?? "");
+  const [mask, setMask] = useState(!!user.mask_pii);
   const inp = "w-full rounded-lg border border-slate-300 px-3 py-2 focus:border-brand-400 focus:outline-none";
 
   return (
@@ -230,7 +251,7 @@ function EditUserModal({
       <p className="mb-4 text-sm text-slate-500">{user.email}</p>
       <form
         className="space-y-4"
-        onSubmit={(e) => { e.preventDefault(); onSave(name.trim(), rid ? [rid] : []); }}
+        onSubmit={(e) => { e.preventDefault(); onSave(name.trim(), rid ? [rid] : [], mask); }}
       >
         <label className="block text-sm">
           <span className="mb-1 block text-slate-600">{t("Όνομα", "Name")}</span>
@@ -245,6 +266,16 @@ function EditUserModal({
             ))}
           </select>
         </label>
+        {/* GDPR — πρόσβαση σε ευαίσθητα προσωπικά δεδομένα πελατών */}
+        <div className="rounded-lg border border-slate-200 p-3 dark:border-slate-700">
+          <div className="text-sm font-medium text-slate-700 dark:text-slate-200">{t("Πρόσβαση σε προσωπικά δεδομένα πελατών (GDPR)", "Access to patient personal data (GDPR)")}</div>
+          <p className="mt-0.5 text-xs text-slate-500">{t("Ο εγκεκριμένος φαρμακοποιός βλέπει τα πάντα. Ο σύμβουλος υγείας στον πάγκο να βλέπει μασκαρισμένα (επίθετο/ΑΜΚΑ/τηλέφωνο).", "Licensed pharmacist sees everything; a counter advisor sees masked PII.")}</p>
+          <div className="mt-2 flex gap-2">
+            <button type="button" onClick={() => setMask(false)} className={`flex-1 rounded-lg px-3 py-1.5 text-sm font-semibold ${!mask ? "bg-emerald-100 text-emerald-700" : "border border-slate-300 text-slate-500 hover:bg-slate-50"}`}>{t("Πλήρης πρόσβαση", "Full access")}</button>
+            <button type="button" onClick={() => setMask(true)} className={`flex-1 rounded-lg px-3 py-1.5 text-sm font-semibold ${mask ? "bg-amber-100 text-amber-700" : "border border-slate-300 text-slate-500 hover:bg-slate-50"}`}>🔒 {t("Μασκαρισμένα", "Masked")}</button>
+          </div>
+          <p className="mt-1.5 text-[11px] text-slate-400">{t("Ισχύει στο επόμενο login του χρήστη.", "Applies on the user's next login.")}</p>
+        </div>
         <div className="flex justify-end gap-2 pt-2">
           <button type="button" onClick={onCancel} className="rounded-lg border border-slate-300 px-4 py-2 text-sm hover:bg-slate-50">{t("Άκυρο", "Cancel")}</button>
           <button type="submit" disabled={saving} className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50">

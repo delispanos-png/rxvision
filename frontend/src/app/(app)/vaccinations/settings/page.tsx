@@ -91,10 +91,10 @@ export default function VaccinationSettingsPage() {
               <div key={a} className="flex items-center gap-3">
                 <span className="w-16 text-sm font-semibold text-slate-700 dark:text-slate-200">{a}</span>
                 <input type="date" value={rollout[a]?.from || ""}
-                  onChange={(e) => setRollout((r) => ({ ...r, [a]: { from: e.target.value, to: r[a]?.to || "" } }))}
+                  onChange={(e) => setRollout((r) => ({...r, [a]: { from: e.target.value, to: r[a]?.to || "" } }))}
                   className="w-[8.5rem] rounded-lg border border-slate-300 px-3 py-1.5 text-sm dark:border-slate-600 dark:bg-slate-800" />
                 <input type="date" value={rollout[a]?.to || ""}
-                  onChange={(e) => setRollout((r) => ({ ...r, [a]: { from: r[a]?.from || "", to: e.target.value } }))}
+                  onChange={(e) => setRollout((r) => ({...r, [a]: { from: r[a]?.from || "", to: e.target.value } }))}
                   className="w-[8.5rem] rounded-lg border border-slate-300 px-3 py-1.5 text-sm dark:border-slate-600 dark:bg-slate-800" />
               </div>
             ))}

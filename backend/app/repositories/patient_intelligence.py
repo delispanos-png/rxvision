@@ -16,7 +16,7 @@ from datetime import datetime, timedelta, timezone
 
 from app.repositories.base import BaseRepository, jsonsafe
 from app.utils.format import eur_gr
-from app.utils.masking import mask_rows
+from app.utils.masking import mask_amka, mask_name, mask_rows
 
 
 def _now() -> datetime:
@@ -623,15 +623,19 @@ class PatientIntelligenceRepository(BaseRepository):
         gap_days = (now - ls).days if isinstance(ls, datetime) else None
         return jsonsafe({
             "found": True,
-            "patient": {"id": str(pid), "name": pa.get("full_name"), "amka": pa.get("amka"),
+            "patient": {"id": str(pid), "name": mask_name(pa.get("full_name"), self.demo),
+                        "amka": mask_amka(pa.get("amka"), self.demo),
                         "age_group": pa.get("age_group"), "sex": pa.get("sex"),
                         "area": pa.get("residence_area"), "birth_year": pa.get("birth_year"),
                         "lifecycle": pa.get("lifecycle"), "deceased": bool(pa.get("deceased")),
                         "first_seen": pa.get("first_seen_at"), "last_seen": ls, "gap_days": gap_days},
-            "contact": {"mobile": ct.get("mobile"), "phone": ct.get("phone"),
-                        "email": ct.get("email"), "consent": bool(ct.get("marketing_consent")),
+            # GDPR: σε demo/περιορισμένο χρήστη μηδενίζουμε τα στοιχεία επικοινωνίας
+            "contact": {"mobile": None if self.demo else ct.get("mobile"),
+                        "phone": None if self.demo else ct.get("phone"),
+                        "email": None if self.demo else ct.get("email"),
+                        "consent": bool(ct.get("marketing_consent")),
                         "active": ct.get("active", True),
-                        "has_contact": bool(ct.get("mobile") or ct.get("phone") or ct.get("email"))},
+                        "has_contact": (not self.demo) and bool(ct.get("mobile") or ct.get("phone") or ct.get("email"))},
             "financials": {"rx_count": rx_count, "value": value, "claimed": claimed, "paid": paid,
                            "profit": value - cost,
                            "avg_per_visit": round(value / rx_count) if rx_count else 0},

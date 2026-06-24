@@ -76,10 +76,10 @@ export default function OrderAdvisorPage() {
 
       {k && (
         <div className="mb-5 grid grid-cols-2 gap-3 md:grid-cols-4">
-          <KpiCard label={t("Προτεινόμενα είδη", "Suggested items")} value={fmtNum(k.items)} sub={t("σκευάσματα", "products")} icon={PackageSearch} accent="indigo" />
-          <KpiCard label={t("Συνολική ποσότητα", "Total quantity")} value={fmtNum(k.qty)} sub={t("τεμάχια", "units")} icon={Boxes} accent="violet" />
-          <KpiCard label={t("Εκτ. κόστος", "Est. cost")} value={fmtEur(k.cost)} sub={t("σύνολο πρότασης", "suggestion total")} icon={Wallet} accent="amber" />
-          <KpiCard label={t("Ακριβαίνουν", "Rising in price")} value={fmtNum(k.rising)} sub={t("παράγγειλε νωρίς", "order early")} icon={TrendingUp} accent="rose" />
+          <KpiCard label={t("Προτεινόμενα είδη", "Suggested items")} help={t("Είδη που προτείνονται για παραγγελία βάσει εκτελέσεων/πρόβλεψης.", "Items suggested for ordering.")} value={fmtNum(k.items)} sub={t("σκευάσματα", "products")} icon={PackageSearch} accent="indigo" />
+          <KpiCard label={t("Συνολική ποσότητα", "Total quantity")} help={t("Συνολική ποσότητα τεμαχίων.", "Total quantity of units.")} value={fmtNum(k.qty)} sub={t("τεμάχια", "units")} icon={Boxes} accent="violet" />
+          <KpiCard label={t("Εκτ. κόστος", "Est. cost")} help={t("Εκτιμώμενο κόστος χονδρικής της πρότασης παραγγελίας.", "Estimated wholesale cost of the order.")} value={fmtEur(k.cost)} sub={t("σύνολο πρότασης", "suggestion total")} icon={Wallet} accent="amber" />
+          <KpiCard label={t("Ακριβαίνουν", "Rising in price")} help={t("Είδη με ανοδική τιμή χονδρικής.", "Items with rising wholesale price.")} value={fmtNum(k.rising)} sub={t("παράγγειλε νωρίς", "order early")} icon={TrendingUp} accent="rose" />
         </div>
       )}
 

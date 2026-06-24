@@ -47,13 +47,13 @@ const CURRENT_COHORT = new Date().toISOString().slice(0, 7);
 // Merge area spelling variants (ΑΓ.ΔΗΜΗΤΡΙΟΣ / ΑΓ ΔΗΜΗΤΡΙΟΣ / ΑΓΙΟΥ ΔΗΜΗΤΡΙΟΥ → one).
 function normAreaKey(s: string) {
   return (s || "")
-    .toUpperCase()
-    .normalize("NFD").replace(/[̀-ͯ]/g, "") // strip accents
-    .replace(/[.\-,]/g, " ")
-    .replace(/\bΑΓΙΟΥ\b/g, "ΑΓ").replace(/\bΑΓΙΟΣ\b/g, "ΑΓ").replace(/\bΑΓ\b/g, "ΑΓ")
-    .replace(/\bΠΑΛΑΙΟΥ?\b/g, "Π").replace(/\bΝΕΑΣ?\b/g, "Ν").replace(/\bΝ\b/g, "Ν")
-    .replace(/ΟΥ\b/g, "ΟΣ") // crude genitive→nominative
-    .replace(/\s+/g, " ").trim();
+   .toUpperCase()
+   .normalize("NFD").replace(/[̀-ͯ]/g, "") // strip accents
+   .replace(/[.\-,]/g, " ")
+   .replace(/\bΑΓΙΟΥ\b/g, "ΑΓ").replace(/\bΑΓΙΟΣ\b/g, "ΑΓ").replace(/\bΑΓ\b/g, "ΑΓ")
+   .replace(/\bΠΑΛΑΙΟΥ?\b/g, "Π").replace(/\bΝΕΑΣ?\b/g, "Ν").replace(/\bΝ\b/g, "Ν")
+   .replace(/ΟΥ\b/g, "ΟΣ") // crude genitive→nominative
+   .replace(/\s+/g, " ").trim();
 }
 function mergeAreas(rows: AggRow[]) {
   const m = new Map<string, { label: string; value: number }>();
@@ -124,8 +124,8 @@ export default function PatientsPage() {
   const showKpi = view !== "list", showList = view !== "kpi";
   const EMPTY_FLT = { sex: "", ages: [] as string[], area: "", lifecycle: "", status: "", reason: "", rxMin: "", valueMin: "", profitMin: "", hasContact: false, consent: false, sort: "value" };
   const [flt, setFlt] = useState(EMPTY_FLT);
-  const setF = <K extends keyof typeof flt>(k: K, v: (typeof flt)[K]) => setFlt((s) => ({ ...s, [k]: v }));
-  const toggleAge = (a: string) => setFlt((s) => ({ ...s, ages: s.ages.includes(a) ? s.ages.filter((x) => x !== a) : [...s.ages, a] }));
+  const setF = <K extends keyof typeof flt>(k: K, v: (typeof flt)[K]) => setFlt((s) => ({...s, [k]: v }));
+  const toggleAge = (a: string) => setFlt((s) => ({...s, ages: s.ages.includes(a) ? s.ages.filter((x) => x !== a) : [...s.ages, a] }));
   const activeCount = (flt.sex ? 1 : 0) + (flt.ages.length ? 1 : 0) + (flt.area ? 1 : 0) + (flt.lifecycle ? 1 : 0) + (flt.status ? 1 : 0) + (flt.reason ? 1 : 0) + (flt.rxMin ? 1 : 0) + (flt.valueMin ? 1 : 0) + (flt.profitMin ? 1 : 0) + (flt.hasContact ? 1 : 0) + (flt.consent ? 1 : 0);
   const fqStr = (() => {
     const p = new URLSearchParams();
@@ -168,7 +168,7 @@ export default function PatientsPage() {
     queryFn: () => api<{ items: PatientRow[] }>(`/patients/list?${q}&${fqStr}`),
   });
   const pr = prevYearRange(filters.dateFrom, filters.dateTo);
-  const prevQ = pr ? filtersToQuery({ ...filters, dateFrom: pr.from, dateTo: pr.to }) : "";
+  const prevQ = pr ? filtersToQuery({...filters, dateFrom: pr.from, dateTo: pr.to }) : "";
   const prevSex = useQuery({
     queryKey: ["patients", "agg", "sex", "prevYear", pr?.from, pr?.to],
     queryFn: () => api<{ rows: AggRow[] }>(`/patients/aggregate?by=sex&${prevQ}`), enabled: !!pr,
@@ -216,9 +216,9 @@ export default function PatientsPage() {
         {/* KPI row */}
         {showKpi && (
         <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
-          <KpiCard label={t("Ασφαλισμένοι", "Patients")} value={fmtNum(totalInsured)} sub={t("σύνολο κατανομών", "total across distributions")} icon={Users} accent="indigo" trend={hasPrev ? pctDelta(totalInsured, pInsured) : undefined} />
-          <KpiCard label={t("Αξία (top 100)", "Value (top 100)")} value={fmtEur(totalValue)} sub={t("κορυφαίοι ασφαλισμένοι", "top patients")} icon={Wallet} accent="violet" trend={hasPrev ? pctDelta(totalValue, pValue) : undefined} />
-          <KpiCard label={t("Κερδοφορία (top 100)", "Profitability (top 100)")} value={fmtEur(totalProfit)} sub={t("μεικτό κέρδος", "gross profit")} icon={TrendingUp} accent="green" />
+          <KpiCard label={t("Ασφαλισμένοι", "Patients")} help={t("Μοναδικοί ασθενείς με ≥1 εκτέλεση στην περίοδο.", "Unique patients with ≥1 execution.")} value={fmtNum(totalInsured)} sub={t("σύνολο κατανομών", "total across distributions")} icon={Users} accent="indigo" trend={hasPrev ? pctDelta(totalInsured, pInsured) : undefined} />
+          <KpiCard label={t("Αξία (top 100)", "Value (top 100)")} help={t("Άθροισμα λιανικής αξίας των εκτελέσεων της περιόδου.", "Sum of retail value of executions.")} value={fmtEur(totalValue)} sub={t("κορυφαίοι ασφαλισμένοι", "top patients")} icon={Wallet} accent="violet" trend={hasPrev ? pctDelta(totalValue, pValue) : undefined} />
+          <KpiCard label={t("Κερδοφορία (top 100)", "Profitability (top 100)")} help={t("Μεικτό κέρδος = αιτούμενο − κόστος χονδρικής.", "Gross profit = claimed − wholesale cost.")} value={fmtEur(totalProfit)} sub={t("μεικτό κέρδος", "gross profit")} icon={TrendingUp} accent="green" />
           <KpiCard
             label={t("Διατήρηση", "Retention")}
             value={`${fmtNum(Math.round(lastRetention))}%`}

@@ -171,13 +171,13 @@ export default function FuturePage() {
             {t("Περίοδος", "Period")}: <b>{fmtDate(range.from)}</b>{range.from !== range.to && <> → <b>{fmtDate(range.to)}</b></>}
           </div>
           <div className="mb-3 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-            <KpiCard label={t("Συνταγές", "Prescriptions")} value={fmtNum(cov?.summary.prescriptions ?? 0)} icon={CalendarDays} accent="indigo" />
-            <KpiCard label={t("Χρόνια αγωγή", "Chronic")} value={fmtNum(cov?.summary.chronic ?? 0)}
+            <KpiCard label={t("Συνταγές", "Prescriptions")} help={t("Πλήθος εκτελέσεων συνταγών στην περίοδο.", "Number of executions in the period.")} value={fmtNum(cov?.summary.prescriptions ?? 0)} icon={CalendarDays} accent="indigo" />
+            <KpiCard label={t("Χρόνια αγωγή", "Chronic")} help={t("Ασθενείς με χρόνια/επαναλαμβανόμενη αγωγή.", "Patients on chronic therapy.")} value={fmtNum(cov?.summary.chronic ?? 0)}
               sub={t(`μη χρόνιες: ${fmtNum((cov?.summary.prescriptions ?? 0) - (cov?.summary.chronic ?? 0))}`, `non-chronic: ${fmtNum((cov?.summary.prescriptions ?? 0) - (cov?.summary.chronic ?? 0))}`)}
               icon={HeartPulse} accent="rose" />
-            <KpiCard label={t("Σταθεροί ασθενείς", "Stable patients")} value={fmtNum(cov?.summary.n_patients ?? 0)} icon={Users} accent="violet" />
-            <KpiCard label={t("Φάρμακα / τεμάχια", "Products / units")} value={`${fmtNum(cov?.summary.products ?? 0)} / ${fmtNum(cov?.summary.total_units ?? 0)}`} icon={PackageCheck} accent="amber" />
-            <KpiCard label={t("Εκτ. κόστος", "Est. cost")} value={fmtEur(cov?.summary.est_cost ?? 0)} icon={Pill} accent="sky" />
+            <KpiCard label={t("Σταθεροί ασθενείς", "Stable patients")} help={t("Ασθενείς σε σταθερή χρόνια αγωγή (επαναλαμβανόμενες συνταγές).", "Patients on stable chronic therapy.")} value={fmtNum(cov?.summary.n_patients ?? 0)} icon={Users} accent="violet" />
+            <KpiCard label={t("Φάρμακα / τεμάχια", "Products / units")} help={t("Συνολικά τεμάχια φαρμάκων που εκτελέστηκαν.", "Total medicine units dispensed.")} value={`${fmtNum(cov?.summary.products ?? 0)} / ${fmtNum(cov?.summary.total_units ?? 0)}`} icon={PackageCheck} accent="amber" />
+            <KpiCard label={t("Εκτ. κόστος", "Est. cost")} help={t("Εκτιμώμενο κόστος χονδρικής της πρότασης παραγγελίας.", "Estimated wholesale cost of the order.")} value={fmtEur(cov?.summary.est_cost ?? 0)} icon={Pill} accent="sky" />
           </div>
           <QueryState
             isLoading={coverage.isLoading}
@@ -195,13 +195,13 @@ export default function FuturePage() {
         {tab === "forecast" && (<>
         {/* KPI row */}
         <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
-          <KpiCard label={t("Σήμερα", "Today")} value={fmtNum(todayCount)} sub={t(`${fmtDate(todayStr)} · δες λίστα`, `${fmtDate(todayStr)} · see list`)} icon={CalendarClock} accent="indigo"
+          <KpiCard label={t("Σήμερα", "Today")} help={t("Δραστηριότητα/επαναλήψεις σήμερα.", "Today's refills/activity.")} value={fmtNum(todayCount)} sub={t(`${fmtDate(todayStr)} · δες λίστα`, `${fmtDate(todayStr)} · see list`)} icon={CalendarClock} accent="indigo"
             onClick={() => setModal({ title: t(`Σήμερα — ${fmtDate(todayStr)}`, `Today — ${fmtDate(todayStr)}`), subtitle: t(`${todayCount} συνταγές ανοίγουν σήμερα`, `${todayCount} prescriptions open today`), qs: `date=${todayStr}&min_history=${minHistory}` })} />
-          <KpiCard label={t("Αύριο", "Tomorrow")} value={fmtNum(tomorrowCount)} sub={t(`${fmtDate(tomorrowStr)} · δες λίστα`, `${fmtDate(tomorrowStr)} · see list`)} icon={CalendarDays} accent="violet"
+          <KpiCard label={t("Αύριο", "Tomorrow")} help={t("Επαναλήψεις/δραστηριότητα για αύριο.", "Tomorrow's refills/activity.")} value={fmtNum(tomorrowCount)} sub={t(`${fmtDate(tomorrowStr)} · δες λίστα`, `${fmtDate(tomorrowStr)} · see list`)} icon={CalendarDays} accent="violet"
             onClick={() => setModal({ title: t(`Αύριο — ${fmtDate(tomorrowStr)}`, `Tomorrow — ${fmtDate(tomorrowStr)}`), subtitle: t(`${tomorrowCount} συνταγές ανοίγουν αύριο`, `${tomorrowCount} prescriptions open tomorrow`), qs: `date=${tomorrowStr}&min_history=${minHistory}` })} />
-          <KpiCard label={t("Επόμενες 7 ημέρες", "Next 7 days")} value={fmtNum(next7)} sub={t("συνταγές · δες λίστα", "prescriptions · see list")} icon={CalendarRange} accent="amber"
+          <KpiCard label={t("Επόμενες 7 ημέρες", "Next 7 days")} help={t("Επαναλήψεις που ανοίγουν τις επόμενες 7 ημέρες.", "Refills opening in the next 7 days.")} value={fmtNum(next7)} sub={t("συνταγές · δες λίστα", "prescriptions · see list")} icon={CalendarRange} accent="amber"
             onClick={() => setModal({ title: t("Επόμενες 7 ημέρες", "Next 7 days"), subtitle: t(`${next7} συνταγές`, `${next7} prescriptions`), qs: `days=7&min_history=${minHistory}` })} />
-          <KpiCard label={t("Επόμενες 30 ημέρες", "Next 30 days")} value={fmtNum(total)} sub={t("συνταγές · δες λίστα", "prescriptions · see list")} icon={Pill} accent="sky"
+          <KpiCard label={t("Επόμενες 30 ημέρες", "Next 30 days")} help={t("Επαναλήψεις που ανοίγουν τις επόμενες 30 ημέρες.", "Refills opening in the next 30 days.")} value={fmtNum(total)} sub={t("συνταγές · δες λίστα", "prescriptions · see list")} icon={Pill} accent="sky"
             onClick={() => setModal({ title: t("Επόμενες 30 ημέρες", "Next 30 days"), subtitle: t(`${total} συνταγές`, `${total} prescriptions`), qs: `days=30&min_history=${minHistory}` })} />
         </div>
 

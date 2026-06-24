@@ -93,10 +93,10 @@ export default function ClosingPage() {
       <div className="space-y-4">
         {/* KPI row */}
         <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
-          <KpiCard label={t("Συνταγές", "Prescriptions")} value={fmtNum(totalRx)} sub={t("περιόδου", "for period")} icon={Receipt} accent="indigo" />
-          <KpiCard label={t("Σύνολο ταμείων", "Funds total")} value={fmtEur(totalClaimed)} sub={t("αιτούμενα", "claimed")} icon={Wallet} accent="amber" />
-          <KpiCard label={t("Ασυμφωνίες", "Discrepancies")} value={fmtNum(discrItems.length)} sub={t("ελλείψεις", "missing")} icon={AlertTriangle} accent={discrItems.length ? "rose" : "green"} />
-          <KpiCard label={t("Κατάσταση", "Status")} value={locked ? t("Κλειδωμένο", "Locked") : allOk ? t("Έτοιμο", "Ready") : t("Σε έλεγχο", "In review")} sub={t(`${checks.filter((c) => c.ok).length}/${checks.length} έλεγχοι ΟΚ`, `${checks.filter((c) => c.ok).length}/${checks.length} checks OK`)} icon={Lock} accent={locked ? "green" : "violet"} />
+          <KpiCard label={t("Συνταγές", "Prescriptions")} help={t("Πλήθος εκτελέσεων συνταγών στην περίοδο.", "Number of executions in the period.")} value={fmtNum(totalRx)} sub={t("περιόδου", "for period")} icon={Receipt} accent="indigo" />
+          <KpiCard label={t("Σύνολο ταμείων", "Funds total")} help={t("Πλήθος διακριτών ταμείων.", "Number of distinct funds.")} value={fmtEur(totalClaimed)} sub={t("αιτούμενα", "claimed")} icon={Wallet} accent="amber" />
+          <KpiCard label={t("Ασυμφωνίες", "Discrepancies")} help={t("Συνταγές με ασυμφωνία ποσών (ταμείο+συμμετοχή ≠ λιανική).", "Prescriptions with amount mismatch.")} value={fmtNum(discrItems.length)} sub={t("ελλείψεις", "missing")} icon={AlertTriangle} accent={discrItems.length ? "rose" : "green"} />
+          <KpiCard label={t("Κατάσταση", "Status")} help={t("Κατάσταση συνδρομής (active/trial κ.λπ.).", "Subscription status.")} value={locked ? t("Κλειδωμένο", "Locked") : allOk ? t("Έτοιμο", "Ready") : t("Σε έλεγχο", "In review")} sub={t(`${checks.filter((c) => c.ok).length}/${checks.length} έλεγχοι ΟΚ`, `${checks.filter((c) => c.ok).length}/${checks.length} checks OK`)} icon={Lock} accent={locked ? "green" : "violet"} />
         </div>
 
         {/* checklist */}

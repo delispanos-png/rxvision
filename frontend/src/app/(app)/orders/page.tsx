@@ -62,7 +62,7 @@ export default function OrdersPage() {
     { key: "need", header: t(`Ανάγκη ${coverage}ημ.`, `Need ${coverage}d`), align: "right", render: (r) => fmtNum(need(r)), sortValue: (r) => need(r) },
     { key: "stock", header: t("Απόθεμα", "Stock"), align: "right", render: (r) => (
       <input type="number" min={0} value={stock[r.product_id] ?? ""} placeholder="0"
-        onChange={(e) => setStock((s) => ({ ...s, [r.product_id]: Math.max(0, parseInt(e.target.value) || 0) }))}
+        onChange={(e) => setStock((s) => ({...s, [r.product_id]: Math.max(0, parseInt(e.target.value) || 0) }))}
         onClick={(e) => e.stopPropagation()}
         className="w-16 rounded-md border border-slate-300 px-1.5 py-0.5 text-right text-sm focus:border-brand-500 focus:outline-none dark:border-slate-600 dark:bg-slate-800" /> ) },
     { key: "adjusted", header: t("Παράγγειλε", "Order"), align: "right", render: (r) => <span className={`font-bold ${adj(r) > 0 ? "text-brand-700 dark:text-brand-300" : "text-slate-300"}`}>{fmtNum(adj(r))}</span>, sortValue: (r) => adj(r) },
@@ -118,10 +118,10 @@ export default function OrdersPage() {
         <div className="space-y-4">
           {/* KPI row */}
           <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
-            <KpiCard label={t("Προτεινόμενα είδη", "Suggested items")} value={fmtNum(items.length)} sub={t("σκευάσματα", "products")} icon={PackageSearch} accent="indigo" />
-            <KpiCard label={t("Συνολική ποσότητα", "Total quantity")} value={fmtNum(totalQty)} sub={t("τεμάχια προς παραγγελία", "units to order")} icon={Boxes} accent="violet" />
-            <KpiCard label={t("Εκτ. κόστος", "Est. cost")} value={fmtEur(totalCost)} sub={t("σύνολο πρότασης", "suggestion total")} icon={Wallet} accent="amber" />
-            <KpiCard label={t("Δραστικές ουσίες", "Active substances")} value={fmtNum(substances)} sub={t("μοναδικές", "unique")} icon={RefreshCw} accent="sky" />
+            <KpiCard label={t("Προτεινόμενα είδη", "Suggested items")} help={t("Είδη που προτείνονται για παραγγελία βάσει εκτελέσεων/πρόβλεψης.", "Items suggested for ordering.")} value={fmtNum(items.length)} sub={t("σκευάσματα", "products")} icon={PackageSearch} accent="indigo" />
+            <KpiCard label={t("Συνολική ποσότητα", "Total quantity")} help={t("Συνολική ποσότητα τεμαχίων.", "Total quantity of units.")} value={fmtNum(totalQty)} sub={t("τεμάχια προς παραγγελία", "units to order")} icon={Boxes} accent="violet" />
+            <KpiCard label={t("Εκτ. κόστος", "Est. cost")} help={t("Εκτιμώμενο κόστος χονδρικής της πρότασης παραγγελίας.", "Estimated wholesale cost of the order.")} value={fmtEur(totalCost)} sub={t("σύνολο πρότασης", "suggestion total")} icon={Wallet} accent="amber" />
+            <KpiCard label={t("Δραστικές ουσίες", "Active substances")} help={t("Διακριτές δραστικές ουσίες (ATC) που εκτελέστηκαν.", "Distinct active substances (ATC).")} value={fmtNum(substances)} sub={t("μοναδικές", "unique")} icon={RefreshCw} accent="sky" />
           </div>
 
           {/* suggested qty chart */}

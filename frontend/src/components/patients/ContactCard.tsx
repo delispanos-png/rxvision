@@ -13,6 +13,7 @@ type Contact = {
   address?: string | null; city?: string | null; postal_code?: string | null;
   notes?: string | null; marketing_consent?: boolean; preferred_channel?: string | null;
   active?: boolean; inactive_reason?: string | null;
+  height_cm?: number | string | null;
   updated_at?: string | null;
 };
 
@@ -34,7 +35,7 @@ export function ContactCard({ patientId, collapsible = false, extraAction }: { p
   const set = (k: keyof Contact, v: string | boolean) => setF((s) => ({ ...s, [k]: v }));
 
   const save = useMutation({
-    mutationFn: () => api<Contact>(`/patients/${encodeURIComponent(patientId)}/contact`, { method: "PUT", body: JSON.stringify(f) }),
+    mutationFn: () => api<Contact>(`/patients/${encodeURIComponent(patientId)}/contact`, { method: "PUT", body: JSON.stringify({ ...f, height_cm: f.height_cm ? Number(f.height_cm) : null }) }),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["patient-contact", patientId] }); if (collapsible) setEditing(false); },
   });
 
@@ -137,9 +138,10 @@ export function ContactCard({ patientId, collapsible = false, extraAction }: { p
           </select>
         </label>
         <Field label={t("Διεύθυνση", "Address")} k="address" />
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-3 gap-3">
           <Field label={t("Πόλη", "City")} k="city" />
           <Field label={t("Τ.Κ.", "Postal code")} k="postal_code" />
+          <Field label={t("Ύψος (cm)", "Height (cm)")} k="height_cm" type="number" ph="175" />
         </div>
         <label className="text-sm sm:col-span-2">
           <span className="mb-1 block text-xs text-slate-500">{t("Σημειώσεις", "Notes")}</span>

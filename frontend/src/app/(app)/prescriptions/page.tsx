@@ -227,7 +227,7 @@ export default function PrescriptionsPage() {
   const pr = prevYearRange(filters.dateFrom, filters.dateTo);
   const prevFund = useQuery({
     queryKey: ["prescriptions", "by-fund", "prevYear", pr?.from, pr?.to],
-    queryFn: () => api<{ items: FundRow[] }>(`/prescriptions/by-fund?${filtersToQuery({ ...filters, dateFrom: pr!.from, dateTo: pr!.to })}`),
+    queryFn: () => api<{ items: FundRow[] }>(`/prescriptions/by-fund?${filtersToQuery({...filters, dateFrom: pr!.from, dateTo: pr!.to })}`),
     enabled: !!pr,
   });
   const fundData = byFund.data?.items ?? [];
@@ -371,11 +371,11 @@ export default function PrescriptionsPage() {
       <div className="space-y-4">
         {/* KPI row */}
         <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
-          <KpiCard label={t("Συνταγές", "Prescriptions")} value={fmtNum(totalRx)} sub={t("σύνολο περιόδου · ανά ταμείο →", "period total · by fund →")} icon={Receipt} accent="indigo" trend={hasPrev ? pctDelta(totalRx, pRx) : undefined}
+          <KpiCard label={t("Συνταγές", "Prescriptions")} help={t("Πλήθος εκτελέσεων συνταγών στην περίοδο.", "Number of executions in the period.")} value={fmtNum(totalRx)} sub={t("σύνολο περιόδου · ανά ταμείο →", "period total · by fund →")} icon={Receipt} accent="indigo" trend={hasPrev ? pctDelta(totalRx, pRx) : undefined}
             onClick={() => setFundModal({ title: t("Συνταγές ανά ταμείο", "Prescriptions by fund"), metric: "rx" })} />
-          <KpiCard label={t("Αξία συνταγών", "Prescriptions value")} value={fmtEur(totalValue)} sub={t("σύνολο περιόδου · ανά ταμείο →", "period total · by fund →")} icon={Wallet} accent="violet" trend={hasPrev ? pctDelta(totalValue, pValue) : undefined}
+          <KpiCard label={t("Αξία συνταγών", "Prescriptions value")} help={t("Άθροισμα λιανικής αξίας των εκτελέσεων της περιόδου.", "Sum of retail value of executions.")} value={fmtEur(totalValue)} sub={t("σύνολο περιόδου · ανά ταμείο →", "period total · by fund →")} icon={Wallet} accent="violet" trend={hasPrev ? pctDelta(totalValue, pValue) : undefined}
             onClick={() => setFundModal({ title: t("Αξία συνταγών ανά ταμείο", "Prescriptions value by fund"), metric: "value" })} />
-          <KpiCard label={t("Αιτούμενα ταμείων", "Funds claimed")} value={fmtEur(totalClaimed)} sub={t("προς ασφ. φορείς · ανά ταμείο →", "to insurance funds · by fund →")} icon={Pill} accent="amber" trend={hasPrev ? pctDelta(totalClaimed, pClaimed) : undefined}
+          <KpiCard label={t("Αιτούμενα ταμείων", "Funds claimed")} help={t("Άθροισμα του αιτούμενου ποσού προς τα ασφαλιστικά ταμεία.", "Sum of amount claimed to insurance funds.")} value={fmtEur(totalClaimed)} sub={t("προς ασφ. φορείς · ανά ταμείο →", "to insurance funds · by fund →")} icon={Pill} accent="amber" trend={hasPrev ? pctDelta(totalClaimed, pClaimed) : undefined}
             onClick={() => setFundModal({ title: t("Αιτούμενο ανά ταμείο", "Claimed by fund"), metric: "claimed" })} />
           <KpiCard
             label={t("Με ανεκτέλεστα", "With unexecuted")}

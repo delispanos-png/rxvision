@@ -79,7 +79,7 @@ export default function DashboardPage() {
   const summary = useQuery({ queryKey: ["dash", "summary", from, to], queryFn: () => api<Summary>(`/dashboard/summary?${qs}`) });
   // Δ vs the SAME period last year (πέρσι)
   const prevRange = prevYearRange(from, to);
-  const prevQs = prevRange ? filtersToQuery({ ...filters, dateFrom: prevRange.from, dateTo: prevRange.to }) : "";
+  const prevQs = prevRange ? filtersToQuery({...filters, dateFrom: prevRange.from, dateTo: prevRange.to }) : "";
   const prevSummary = useQuery({
     queryKey: ["dash", "summary", "prevYear", prevRange?.from, prevRange?.to],
     queryFn: () => api<Summary>(`/dashboard/summary?${prevQs}`),
@@ -123,13 +123,18 @@ export default function DashboardPage() {
       {/* KPI row */}
       <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-5">
         <KpiCard label={t("Εκτελέσεις", "Executions")} value={num(s?.executions ?? 0)} sub={t("συνταγές περιόδου · δες λίστα", "prescriptions in period · see list")} icon={Receipt} accent="indigo" trend={delta(s?.executions, prev?.executions)}
+          help={t("Πλήθος εκτελέσεων συνταγών με ημερομηνία εντός της περιόδου του φίλτρου.", "Count of executions within the selected period.")}
           onClick={() => setModal({ title: t("Εκτελέσεις περιόδου", "Executions in period"), kind: "rx", qs: `${qs}&page_size=300&sort=executed_at&dir=-1` })} />
         <KpiCard label={t("Αξία συνταγών", "Prescriptions value")} value={eur(s?.value ?? 0)} sub={t("σύνολο περιόδου · δες λίστα", "period total · see list")} icon={BarIcon} accent="violet" trend={delta(s?.value, prev?.value)}
+          help={t("Άθροισμα της λιανικής αξίας όλων των εκτελέσεων της περιόδου.", "Sum of retail value of all executions in the period.")}
           onClick={() => setModal({ title: t("Συνταγές κατά αξία (φθίνουσα)", "Prescriptions by value (descending)"), kind: "rx", qs: `${qs}&page_size=300&sort=amount_total&dir=-1` })} />
         <KpiCard label={t("Αιτούμενα ταμείων", "Funds claimed")} value={eur(s?.claimed ?? 0)} sub={t("προς ασφ. φορείς · δες λίστα", "to insurance funds · see list")} icon={Wallet} accent="amber" trend={delta(s?.claimed, prev?.claimed)}
+          help={t("Άθροισμα του αιτούμενου ποσού προς τα ασφαλιστικά ταμεία.", "Sum of amount claimed to insurance funds.")}
           onClick={() => setModal({ title: t("Συνταγές κατά αιτούμενο ταμείου", "Prescriptions by fund claimed"), kind: "rx", qs: `${qs}&page_size=300&sort=amount_claimed&dir=-1` })} />
-        <KpiCard label={t("Μεικτό κέρδος", "Gross profit")} value={eur(s?.gross_profit ?? 0)} sub={t("αιτούμενο − χονδρική", "claimed − wholesale")} icon={TrendingUp} accent="green" trend={delta(s?.gross_profit, prev?.gross_profit)} />
+        <KpiCard label={t("Μεικτό κέρδος", "Gross profit")} value={eur(s?.gross_profit ?? 0)} sub={t("αιτούμενο − χονδρική", "claimed − wholesale")} icon={TrendingUp} accent="green" trend={delta(s?.gross_profit, prev?.gross_profit)}
+          help={t("Αιτούμενο − κόστος χονδρικής των φαρμάκων που εκτελέστηκαν.", "Claimed − wholesale cost of dispensed medicines.")} />
         <KpiCard label={t("Ασφαλισμένοι", "Patients")} value={num(s?.patient_count ?? 0)} sub={t("μοναδικοί · δες λίστα", "unique · see list")} icon={Users} accent="sky" trend={delta(s?.patient_count, prev?.patient_count)}
+          help={t("Μοναδικοί ασθενείς με τουλάχιστον μία εκτέλεση στην περίοδο.", "Unique patients with at least one execution in the period.")}
           onClick={() => setModal({ title: t("Ασφαλισμένοι περιόδου", "Patients in period"), kind: "patients", qs: `${qs}&sort=value&limit=300` })} />
       </div>
 

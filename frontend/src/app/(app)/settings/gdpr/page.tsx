@@ -48,7 +48,7 @@ export default function GdprPage() {
   });
   const consent = useMutation({
     mutationFn: (v: { channel: string; status: string }) =>
-      api(`/gdpr/consents/${sel!.id}`, { method: "POST", body: JSON.stringify({ ...v, source: "pharmacist_ui" }) }),
+      api(`/gdpr/consents/${sel!.id}`, { method: "POST", body: JSON.stringify({...v, source: "pharmacist_ui" }) }),
     onSuccess: () => { toastSuccess(t("Καταγράφηκε η συγκατάθεση.", "Consent recorded.")); qc.invalidateQueries({ queryKey: ["gdpr", "consents", sel?.id] }); },
     onError: () => toastError(t("Αποτυχία καταγραφής.", "Recording failed.")),
   });
@@ -204,7 +204,7 @@ export default function GdprPage() {
                 <h4 className="mb-1 text-sm font-semibold text-slate-700 dark:text-slate-300">{t("Διόρθωση στοιχείων (Άρθρο 16)", "Rectification (Article 16)")}</h4>
                 <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                   {(["phone", "mobile", "email", "address", "city", "postal_code"] as const).map((f) => (
-                    <input key={f} className={inp} placeholder={f} value={form[f] ?? ""} onChange={(e) => setForm((s) => ({ ...s, [f]: e.target.value }))} />
+                    <input key={f} className={inp} placeholder={f} value={form[f] ?? ""} onChange={(e) => setForm((s) => ({...s, [f]: e.target.value }))} />
                   ))}
                 </div>
                 <button

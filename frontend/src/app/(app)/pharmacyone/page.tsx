@@ -66,10 +66,10 @@ export default function PharmacyOnePage() {
       <div className="space-y-4">
         {/* KPI row */}
         <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
-          <KpiCard label={t("Πωλήσεις", "Sales")} value={fmtEur(totalSales)} sub={t("σύνολο περιόδου", "period total")} icon={ShoppingCart} accent="indigo" />
-          <KpiCard label={t("Παραγγελίες", "Orders")} value={fmtNum(totalOrders)} sub={t("πλήθος πωλήσεων", "number of sales")} icon={Users} accent="violet" />
-          <KpiCard label={t("Ανεκτέλεστα", "Unexecuted")} value={fmtNum(unexecutedItems.length)} sub={t("προς εκτέλεση", "pending execution")} icon={XCircle} accent={unexecutedItems.length ? "rose" : "green"} />
-          <KpiCard label={t("Top πωλητής", "Top seller")} value={topSeller?.seller ?? "—"} sub={topSeller ? fmtEur(topSeller.value) : "—"} icon={Crown} accent="amber" />
+          <KpiCard label={t("Πωλήσεις", "Sales")} help={t("Συνολική αξία πωλήσεων της περιόδου.", "Total sales value.")} value={fmtEur(totalSales)} sub={t("σύνολο περιόδου", "period total")} icon={ShoppingCart} accent="indigo" />
+          <KpiCard label={t("Παραγγελίες", "Orders")} help={t("Προτάσεις παραγγελίας βάσει εκτελέσεων/πρόβλεψης.", "Order suggestions.")} value={fmtNum(totalOrders)} sub={t("πλήθος πωλήσεων", "number of sales")} icon={Users} accent="violet" />
+          <KpiCard label={t("Ανεκτέλεστα", "Unexecuted")} help={t("Επαναλήψεις που άνοιξαν αλλά δεν εκτελέστηκαν.", "Opened but unexecuted refills.")} value={fmtNum(unexecutedItems.length)} sub={t("προς εκτέλεση", "pending execution")} icon={XCircle} accent={unexecutedItems.length ? "rose" : "green"} />
+          <KpiCard label={t("Top πωλητής", "Top seller")} help={t("Το είδος με τις περισσότερες πωλήσεις.", "Top-selling item.")} value={topSeller?.seller ?? "—"} sub={topSeller ? fmtEur(topSeller.value) : "—"} icon={Crown} accent="amber" />
         </div>
 
         {/* sales by seller chart */}

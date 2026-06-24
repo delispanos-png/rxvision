@@ -48,6 +48,7 @@ def _shape_user(u: dict, role_names: dict[str, str]) -> dict:
         "role_ids": u.get("role_ids", []),
         "roles": [role_names.get(rid, rid) for rid in u.get("role_ids", [])],
         "active": u.get("status", "active") == "active",
+        "mask_pii": bool(u.get("mask_pii", False)),
     }
 
 

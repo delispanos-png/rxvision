@@ -37,7 +37,7 @@ export default function ClosingPage() {
   const { data, isLoading } = useQuery({ queryKey: ["reimb-closing", period], queryFn: () => api<Closing>(`/reimbursement/closing?period=${period}`) });
   const [hidden, setHidden] = useState<Set<string>>(new Set());
   const toggleFund = (f: string) => setHidden((prev) => { const n = new Set(prev); if (n.has(f)) n.delete(f); else n.add(f); return n; });
-  const maxDay = Math.max(1, ...(data?.by_day ?? []).map((d) => d.rx));
+  const maxDay = Math.max(1,...(data?.by_day ?? []).map((d) => d.rx));
   const ded = data?.deductions;
   const fd = data?.by_fund_day;
 
@@ -66,11 +66,11 @@ export default function ClosingPage() {
         <>
           <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
             <KpiCard label={t("Συνταγές", "Rx")} value={fmtNum(data?.totals.rx ?? 0)} icon={Receipt} accent="indigo" help={t("Πλήθος εκτελέσεων του μήνα.", "Executions this month.")} />
-            <KpiCard label={t("Αιτούμενο", "Claim")} value={fmtEur(data?.totals.claim ?? 0)} icon={Banknote} accent="green" help={t("Ποσό που αποζημιώνει το ταμείο = Λιανική − Συμμετοχή ασθενούς (amount_claimed).", "Fund-reimbursed amount = retail − patient share.")} />
+            <KpiCard label={t("Αιτούμενο", "Claim")} value={fmtEur(data?.totals.claim ?? 0)} icon={Banknote} accent="green" help={t("Ποσό που αποζημιώνει το ταμείο = Λιανική − Συμμετοχή ασθενούς.", "Fund-reimbursed amount = retail − patient share.")} />
             <KpiCard label="Rebate" value={`−${fmtEur(data?.totals.rebate ?? 0)}`} icon={ScissorsLineDashed} accent="rose" help={rebateHelp} />
             <KpiCard label={t("Έκπτωση τζίρου", "Turnover disc.")} value={`−${fmtEur(data?.totals.discount ?? 0)}`} icon={ScissorsLineDashed} accent="rose" help={discountHelp} />
             <KpiCard label={t("Αναμ. είσπραξη", "Expected receipt")} value={fmtEur(data?.totals.receipt ?? 0)} icon={Wallet} accent="violet" help={t("Αιτούμενο − Rebate − Έκπτωση βάσει τζίρου = το ποσό που τελικά εισπράττει το φαρμακείο.", "Claim − rebate − turnover discount = what the pharmacy actually collects.")} />
-            <KpiCard label={t("Συμμετοχή", "Patient")} value={fmtEur(data?.totals.patient ?? 0)} icon={Wallet} accent="amber" help={t("Ποσό που πληρώνει ο ασθενής (patient_share).", "Patient out-of-pocket.")} />
+            <KpiCard label={t("Συμμετοχή", "Patient")} value={fmtEur(data?.totals.patient ?? 0)} icon={Wallet} accent="amber" help={t("Ποσό που πληρώνει ο ασθενής.", "Patient out-of-pocket.")} />
           </div>
 
           <div className="rx-card p-5">
@@ -95,7 +95,7 @@ export default function ClosingPage() {
               {fd && (() => {
                 const visible = fd.funds.filter((f) => !hidden.has(f));
                 const rowTotal = (row: FundDay["rows"][0]) => visible.reduce((s, f) => s + (row.counts[f] || 0), 0);
-                const max = Math.max(1, ...fd.rows.map(rowTotal));
+                const max = Math.max(1,...fd.rows.map(rowTotal));
                 return (
                   <>
                     <div className="mb-2 flex flex-wrap gap-2 text-[11px]">

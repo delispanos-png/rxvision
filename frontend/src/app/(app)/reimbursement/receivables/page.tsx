@@ -89,8 +89,8 @@ export default function ReceivablesPage() {
 
   const d = q.data;
   const rows = (d?.rows ?? [])
-    .filter((r) => (!fund || r.fund === fund) && (!openOnly || !r.settled))
-    .sort((a, b) => {
+   .filter((r) => (!fund || r.fund === fund) && (!openOnly || !r.settled))
+   .sort((a, b) => {
       const va = a[sortKey] as string | number | null, vb = b[sortKey] as string | number | null;
       const cmp = typeof va === "string" ? va.localeCompare(String(vb)) : (Number(va ?? 0) - Number(vb ?? 0));
       return sortDir === "asc" ? cmp : -cmp;
@@ -135,12 +135,12 @@ export default function ReceivablesPage() {
         {d && (
           <>
             <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-              <KpiCard label={t("Αναμενόμενο σύνολο", "Total expected")} value={fmtEur(d.totals.expected)} icon={Landmark} accent="indigo" />
-              <KpiCard label={t("Εισπραγμένο", "Collected")} value={fmtEur(d.totals.paid)} icon={Wallet} accent="green" />
+              <KpiCard label={t("Αναμενόμενο σύνολο", "Total expected")} help={t("Αναμενόμενο ποσό/όγκος της περιόδου με βάση τις ανοιχτές επαναλήψεις.", "Expected amount/volume for the period.")} value={fmtEur(d.totals.expected)} icon={Landmark} accent="indigo" />
+              <KpiCard label={t("Εισπραγμένο", "Collected")} help={t("Ποσά που έχουν ήδη εισπραχθεί από τα ταμεία.", "Amounts already collected.")} value={fmtEur(d.totals.paid)} icon={Wallet} accent="green" />
               <KpiCard label={t("Ανοιχτό υπόλοιπο", "Open balance")} value={fmtEur(d.totals.open)} icon={AlertCircle} accent="amber"
                 sub={t(`${d.totals.open_count} εκκρεμή`, `${d.totals.open_count} open`)}
                 help={t("Όσα δεν έχουν σημειωθεί ως εισπραγμένα — αυτά οφείλουν ακόμη τα ταμεία.", "Receivables not yet marked collected — still owed by the funds.")} />
-              <KpiCard label={t("Περικοπές", "Cuts")} value={fmtEur(d.totals.cut)} icon={ScissorsLineDashed} accent="rose" />
+              <KpiCard label={t("Περικοπές", "Cuts")} help={t("Εκτιμώμενες περικοπές ταμείων.", "Estimated fund cuts.")} value={fmtEur(d.totals.cut)} icon={ScissorsLineDashed} accent="rose" />
             </div>
 
             {/* per-fund open balance */}
@@ -149,7 +149,7 @@ export default function ReceivablesPage() {
               <div className="space-y-2">
                 {d.by_fund.filter((f) => f.open > 0).length === 0 && <div className="text-sm text-slate-400">{t("Κανένα ανοιχτό υπόλοιπο 🎉", "No open balance 🎉")}</div>}
                 {d.by_fund.filter((f) => f.open > 0).map((f) => {
-                  const max = Math.max(1, ...d.by_fund.map((x) => x.open));
+                  const max = Math.max(1,...d.by_fund.map((x) => x.open));
                   return (
                     <div key={f.fund}>
                       <div className="mb-0.5 flex items-center justify-between text-xs">

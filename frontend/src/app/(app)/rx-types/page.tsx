@@ -83,7 +83,7 @@ export default function RxTypesPage() {
   const d = q.data;
   // ίδια περίοδος πέρσι (52 εβδομάδες πίσω) για Δ%
   const pr = prevYearRange(filters.dateFrom, filters.dateTo);
-  const prevQs = pr ? filtersToQuery({ ...filters, dateFrom: pr.from, dateTo: pr.to }) : "";
+  const prevQs = pr ? filtersToQuery({...filters, dateFrom: pr.from, dateTo: pr.to }) : "";
   const qp = useQuery({ queryKey: ["rx-characteristics", "prev", prevQs], queryFn: () => api<Breakdown>(`/prescriptions/characteristics?${prevQs}`), enabled: !!pr });
   const prev = qp.data;
   return (

@@ -12,6 +12,9 @@ class UserCreate(BaseModel):
     full_name: str = Field(..., min_length=1)
     role_ids: list[str] = Field(default_factory=list)
     pharmacy_ids: list[str] = Field(default_factory=list)
+    # GDPR: μάσκα ευαίσθητων προσωπικών δεδομένων πελατών για ΑΥΤΟΝ τον χρήστη
+    # (π.χ. σύμβουλος υγείας στον πάγκο που δεν πρέπει να βλέπει επίθετο/ΑΜΚΑ/επικοινωνία).
+    mask_pii: bool = False
 
 
 class UserUpdate(BaseModel):
@@ -19,6 +22,7 @@ class UserUpdate(BaseModel):
     role_ids: list[str] | None = None
     pharmacy_ids: list[str] | None = None
     status: str | None = None  # active|suspended
+    mask_pii: bool | None = None
 
 
 class ResetPasswordIn(BaseModel):

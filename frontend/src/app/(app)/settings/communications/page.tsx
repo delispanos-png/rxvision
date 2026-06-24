@@ -19,8 +19,8 @@ export default function CommsSettingsPage() {
   const qc = useQueryClient();
   const settings = useQuery({ queryKey: ["comms", "settings"], queryFn: () => api<S>("/communications/settings"), retry: false });
   const [f, setF] = useState<Record<string, string | number | boolean>>({ smtp_port: 587, smtp_use_tls: true });
-  useEffect(() => { if (settings.data) setF((s) => ({ ...s, from_name: settings.data.from_name || "", from_email: settings.data.from_email || "", smtp_host: settings.data.smtp_host || "", smtp_port: settings.data.smtp_port || 587, smtp_username: settings.data.smtp_username || "", smtp_use_tls: settings.data.smtp_use_tls ?? true, sms_sender: settings.data.sms_sender || "" })); }, [settings.data]);
-  const set = (k: string, v: string | number | boolean) => setF((s) => ({ ...s, [k]: v }));
+  useEffect(() => { if (settings.data) setF((s) => ({...s, from_name: settings.data.from_name || "", from_email: settings.data.from_email || "", smtp_host: settings.data.smtp_host || "", smtp_port: settings.data.smtp_port || 587, smtp_username: settings.data.smtp_username || "", smtp_use_tls: settings.data.smtp_use_tls ?? true, sms_sender: settings.data.sms_sender || "" })); }, [settings.data]);
+  const set = (k: string, v: string | number | boolean) => setF((s) => ({...s, [k]: v }));
   const save = useMutation({ mutationFn: () => api("/communications/settings", { method: "PUT", body: JSON.stringify(f) }), onSuccess: () => qc.invalidateQueries({ queryKey: ["comms", "settings"] }) });
   const [testTo, setTestTo] = useState("");
   const testEmail = useMutation({ mutationFn: () => api(`/communications/test-email?to=${encodeURIComponent(testTo)}`, { method: "POST" }), onError: (e: Error) => appAlert(t("Αποτυχία: ", "Failed: ") + e.message), onSuccess: () => appAlert(t("Στάλθηκε δοκιμαστικό email ✅", "Test email sent ✅")) });

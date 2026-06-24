@@ -67,7 +67,7 @@ export default function Icd10Page() {
   const pr = prevYearRange(filters.dateFrom, filters.dateTo);
   const prevIcd = useQuery({
     queryKey: ["icd10", "hierarchy", "prevYear", level, pr?.from, pr?.to],
-    queryFn: () => api<{ items: Node[] }>(`/icd10/hierarchy?level=${level}&metric=value&${filtersToQuery({ ...filters, dateFrom: pr!.from, dateTo: pr!.to })}`),
+    queryFn: () => api<{ items: Node[] }>(`/icd10/hierarchy?level=${level}&metric=value&${filtersToQuery({...filters, dateFrom: pr!.from, dateTo: pr!.to })}`),
     enabled: !!pr,
   });
 
@@ -117,10 +117,10 @@ export default function Icd10Page() {
             <>
               {/* KPI row */}
               <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
-                <KpiCard label={t("Διαγνώσεις (κόμβοι)", "Diagnoses (nodes)")} value={fmtNum(rows.length)} sub={t("στο τρέχον επίπεδο", "at the current level")} icon={Stethoscope} accent="indigo" />
-                <KpiCard label={t("Σύνολο συνταγών", "Total prescriptions")} value={fmtNum(totalRx)} sub={t("πλήθος εκτελέσεων", "number of executions")} icon={Receipt} accent="violet" trend={hasPrev ? pctDelta(totalRx, pRx) : undefined} />
-                <KpiCard label={t("Αξία", "Value")} value={fmtEur(totalValue)} sub={t("σύνολο περιόδου", "period total")} icon={Wallet} accent="amber" trend={hasPrev ? pctDelta(totalValue, pValue) : undefined} />
-                <KpiCard label={t("Κερδοφορία", "Profitability")} value={fmtEur(totalProfit)} sub={t("μεικτό κέρδος", "gross profit")} icon={TrendingUp} accent="green" trend={hasPrev ? pctDelta(totalProfit, pProfit) : undefined} />
+                <KpiCard label={t("Διαγνώσεις (κόμβοι)", "Diagnoses (nodes)")} help={t("Πλήθος κωδικών ICD-10 στο τρέχον επίπεδο της ιεραρχίας.", "ICD-10 codes at the current level.")} value={fmtNum(rows.length)} sub={t("στο τρέχον επίπεδο", "at the current level")} icon={Stethoscope} accent="indigo" />
+                <KpiCard label={t("Σύνολο συνταγών", "Total prescriptions")} help={t("Πλήθος εκτελέσεων συνταγών στην περίοδο.", "Number of executions in the period.")} value={fmtNum(totalRx)} sub={t("πλήθος εκτελέσεων", "number of executions")} icon={Receipt} accent="violet" trend={hasPrev ? pctDelta(totalRx, pRx) : undefined} />
+                <KpiCard label={t("Αξία", "Value")} help={t("Άθροισμα λιανικής αξίας των εκτελέσεων της περιόδου.", "Sum of retail value of executions.")} value={fmtEur(totalValue)} sub={t("σύνολο περιόδου", "period total")} icon={Wallet} accent="amber" trend={hasPrev ? pctDelta(totalValue, pValue) : undefined} />
+                <KpiCard label={t("Κερδοφορία", "Profitability")} help={t("Μεικτό κέρδος = αιτούμενο − κόστος χονδρικής.", "Gross profit = claimed − wholesale cost.")} value={fmtEur(totalProfit)} sub={t("μεικτό κέρδος", "gross profit")} icon={TrendingUp} accent="green" trend={hasPrev ? pctDelta(totalProfit, pProfit) : undefined} />
               </div>
               {/* top nodes chart */}
               {top.length > 0 && (

@@ -44,22 +44,22 @@ export default function IntelligenceDashboard() {
 
   if (isLoading) return <div className="p-8 text-slate-400">{t("Ανάλυση δεδομένων…", "Analyzing…")}</div>;
 
-  const cards: { key: string; label: string; en: string; icon: typeof Users; accent: "indigo" | "sky" | "rose" | "violet" | "amber" | "green" | "orange"; money?: boolean; suffix?: string; href?: string }[] = [
-    { key: "active_60d", label: "Ενεργοί (60ημ)", en: "Active (60d)", icon: Users, accent: "indigo", href: "/intelligence/patients" },
-    { key: "new_month", label: "Νέοι ασθενείς", en: "New patients", icon: UserPlus, accent: "sky" },
-    { key: "returns", label: "Επιστροφές", en: "Returns", icon: UserCheck, accent: "green", href: "/intelligence/returns" },
-    { key: "lost_patients", label: "Χαμένοι ασθενείς", en: "Lost patients", icon: UserMinus, accent: "rose", href: "/intelligence/winback" },
-    { key: "rx_month", label: "Συνταγές μήνα", en: "Prescriptions (month)", icon: Receipt, accent: "violet" },
-    { key: "avg_rx_value", label: "Μέση αξία συνταγής", en: "Avg prescription value", icon: Wallet, accent: "amber", money: true },
-    { key: "revenue_per_patient", label: "Έσοδα ανά ασθενή", en: "Revenue per patient", icon: Coins, accent: "green", money: true },
-    { key: "compliance_score", label: "Compliance Score", en: "Compliance Score", icon: Activity, accent: "indigo", suffix: "/100", href: "/intelligence/compliance" },
-    { key: "recall_patients", label: "Προς Recall", en: "To Recall", icon: PhoneCall, accent: "orange", href: "/intelligence/recall" },
-    { key: "winback_revenue", label: "Win-Back έσοδα", en: "Win-Back revenue", icon: RotateCcw, accent: "green", money: true, href: "/intelligence/winback" },
-    { key: "vip_patients", label: "VIP ασθενείς", en: "VIP patients", icon: Crown, accent: "amber", href: "/intelligence/vip" },
+  const cards: { key: string; label: string; en: string; icon: typeof Users; accent: "indigo" | "sky" | "rose" | "violet" | "amber" | "green" | "orange"; money?: boolean; suffix?: string; href?: string; help: string; helpEn: string }[] = [
+    { key: "active_60d", label: "Ενεργοί (60ημ)", en: "Active (60d)", icon: Users, accent: "indigo", href: "/intelligence/patients", help: "Πελάτες που εξυπηρετήθηκαν τις τελευταίες 60 ημέρες.", helpEn: "Patients served in the last 60 days." },
+    { key: "new_month", label: "Νέοι ασθενείς", en: "New patients", icon: UserPlus, accent: "sky", help: "Πελάτες που εκτέλεσαν για πρώτη φορά συνταγή στο φαρμακείο σου αυτόν τον μήνα.", helpEn: "Patients with their first prescription this month." },
+    { key: "returns", label: "Επιστροφές", en: "Returns", icon: UserCheck, accent: "green", href: "/intelligence/returns", help: "Ανενεργοί πελάτες που ξαναγύρισαν στο φαρμακείο.", helpEn: "Inactive patients who returned." },
+    { key: "lost_patients", label: "Χαμένοι ασθενείς", en: "Lost patients", icon: UserMinus, accent: "rose", href: "/intelligence/winback", help: "Πελάτες που έχουν να εμφανιστούν πολύ καιρό (πέρα από το διάστημα της αγωγής τους).", helpEn: "Patients absent well beyond their therapy interval." },
+    { key: "rx_month", label: "Συνταγές μήνα", en: "Prescriptions (month)", icon: Receipt, accent: "violet", help: "Πλήθος εκτελέσεων συνταγών αυτόν τον μήνα.", helpEn: "Number of prescriptions executed this month." },
+    { key: "avg_rx_value", label: "Μέση αξία συνταγής", en: "Avg prescription value", icon: Wallet, accent: "amber", money: true, help: "Μέση λιανική αξία ανά εκτελεσμένη συνταγή (συνολική αξία ÷ πλήθος συνταγών).", helpEn: "Average retail value per prescription." },
+    { key: "revenue_per_patient", label: "Έσοδα ανά ασθενή", en: "Revenue per patient", icon: Coins, accent: "green", money: true, help: "Μέση συνολική αξία που αφήνει κάθε πελάτης (συνολικός τζίρος ÷ πλήθος πελατών).", helpEn: "Average total value per patient." },
+    { key: "compliance_score", label: "Compliance Score", en: "Compliance Score", icon: Activity, accent: "indigo", suffix: "/100", href: "/intelligence/compliance", help: "Μέση συνέπεια των χρόνιων ασθενών: πόσες από τις αναμενόμενες επαναλήψεις τους εκτελέστηκαν εγκαίρως (0–100).", helpEn: "Average adherence of chronic patients (0–100)." },
+    { key: "recall_patients", label: "Προς Recall", en: "To Recall", icon: PhoneCall, accent: "orange", href: "/intelligence/recall", help: "Πελάτες με συνταγή που ανοίγει τώρα/σύντομα — αξίζει να τους θυμίσεις να περάσουν.", helpEn: "Patients with a refill opening now/soon." },
+    { key: "winback_revenue", label: "Win-Back έσοδα", en: "Win-Back revenue", icon: RotateCcw, accent: "green", money: true, href: "/intelligence/winback", help: "Δυνητικά έσοδα αν επαναφέρεις τους χαμένους πελάτες (αξία των αγωγών που έχασαν).", helpEn: "Potential revenue from winning back lost patients." },
+    { key: "vip_patients", label: "VIP ασθενείς", en: "VIP patients", icon: Crown, accent: "amber", href: "/intelligence/vip", help: "Οι κορυφαίοι πελάτες σε συνολική αξία (κατηγορίες Platinum 5% + Gold 10% της πελατείας).", helpEn: "Top patients by total value (Platinum + Gold)." },
   ];
 
   const series = data?.trend[tv] ?? [];
-  const maxTrend = Math.max(1, ...series.map((m) => m.rx));
+  const maxTrend = Math.max(1,...series.map((m) => m.rx));
   const compTotal = (data?.compliance_distribution ?? []).reduce((s, b) => s + b.count, 0) || 1;
 
   return (
@@ -88,7 +88,7 @@ export default function IntelligenceDashboard() {
       {/* KPI GRID */}
       <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-5">
         {k && cards.map((c) => (
-          <KpiCard key={c.key} label={t(c.label, c.en)}
+          <KpiCard key={c.key} label={t(c.label, c.en)} help={t(c.help, c.helpEn)}
             value={c.money ? fmtEur(k[c.key]?.value ?? 0) : `${fmtNum(k[c.key]?.value ?? 0)}${c.suffix ?? ""}`}
             icon={c.icon} accent={c.accent} trend={k[c.key]?.delta ?? undefined}
             onClick={c.href ? () => go(c.href!) : undefined} />
@@ -116,7 +116,11 @@ export default function IntelligenceDashboard() {
         {/* VIP TIERS */}
         <div className="rx-card p-5">
           <div className="mb-3 flex items-center justify-between">
-            <h3 className="flex items-center gap-2 text-sm font-semibold text-slate-700 dark:text-slate-200"><Crown className="h-4 w-4 text-amber-500" /> {t("VIP κατηγορίες", "VIP tiers")}</h3>
+            <h3 className="flex items-center gap-2 text-sm font-semibold text-slate-700 dark:text-slate-200"><Crown className="h-4 w-4 text-amber-500" /> {t("VIP κατηγορίες", "VIP tiers")}
+              <Tooltip label={t("Κατάταξη όλων των πελατών σου με βάση τη ΣΥΝΟΛΙΚΗ ΑΞΙΑ (τζίρο) που έχουν αφήσει, από τον μεγαλύτερο στον μικρότερο. Χωρίζονται σε: Platinum = κορυφαίο 5%, Gold = επόμενο 10%, Silver = επόμενο 20%, Bronze = υπόλοιπο 65%. Όσοι δεν έχουν αγορές εξαιρούνται.", "Customers ranked by total value: Platinum top 5%, Gold next 10%, Silver next 20%, Bronze rest.")}>
+                <span className="grid h-4 w-4 cursor-help place-items-center rounded-full border border-slate-300 text-[9px] font-bold text-slate-400 hover:border-brand-400 hover:text-brand-500">i</span>
+              </Tooltip>
+            </h3>
             <button onClick={() => go("/intelligence/vip")} className="text-xs font-medium text-brand-700 hover:underline">{t("Άνοιγμα", "Open")} →</button>
           </div>
           <div className="grid grid-cols-2 gap-2">

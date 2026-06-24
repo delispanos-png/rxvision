@@ -259,7 +259,7 @@ function NotifyModal({ ages, openOnly, highOnly, onClose }: { ages: string[]; op
   const doPreview = async () => {
     setErr(null);
     try {
-      const r = await api<{ recipients: number }>("/vaccinations/notify", { method: "POST", body: JSON.stringify({ ...payload(), dry_run: true }) });
+      const r = await api<{ recipients: number }>("/vaccinations/notify", { method: "POST", body: JSON.stringify({...payload(), dry_run: true }) });
       setPreview(r.recipients);
     } catch { setErr(t("Αποτυχία προεπισκόπησης.", "Preview failed.")); }
   };
