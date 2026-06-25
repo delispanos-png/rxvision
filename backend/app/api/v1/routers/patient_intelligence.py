@@ -4,7 +4,9 @@ scattered across the advisor/patients modules."""
 
 from __future__ import annotations
 
-from datetime import datetime
+import hashlib
+import json
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
@@ -92,13 +94,17 @@ class AdviceIn(BaseModel):
     amka: str
     date_from: datetime | None = None
     date_to: datetime | None = None
+    force: bool = False     # αναγκαστική αναδημιουργία (αγνοεί την αποθηκευμένη)
 
 
 @router.post("/profile/advice")
 async def profile_advice(body: AdviceIn,
                          ctx: TenantContext = Depends(require("patients:read", module=_MODULE))):
-    """AI care/retention/lifestyle advice for ONE patient, from their 360° profile (ίδιο date scope)."""
-    prof = await _repo(ctx).patient_profile(body.amka, date_from=body.date_from, date_to=body.date_to)
+    """AI care/retention/lifestyle advice for ONE patient, from their 360° profile (ίδιο date scope).
+    Αποθηκεύεται στη βάση· καλεί ξανά το AI ΜΟΝΟ όταν οι κλινικές συνθήκες (παθήσεις/φάρμακα/
+    κατηγορίες/G6PD) έχουν αλλάξει — αλλιώς επιστρέφει τις αποθηκευμένες (ταχύτητα + μικρότερο κόστος)."""
+    repo = _repo(ctx)
+    prof = await repo.patient_profile(body.amka, date_from=body.date_from, date_to=body.date_to)
     if not prof.get("found"):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "patient_not_found")
     p, fin, adh = prof["patient"], prof["financials"], prof["adherence"]
@@ -113,10 +119,32 @@ async def profile_advice(body: AdviceIn,
         "επισκέψεις": fin.get("rx_count"), "ημέρες_από_τελευταία": p.get("gap_days"),
         "έλλειψη_ενζύμου_G6PD": "ΝΑΙ — προσοχή σε οξειδωτικά φάρμακα" if prof.get("clinical", {}).get("g6pd_deficiency") else "όχι",
     }
+    # Υπογραφή ΜΟΝΟ των κλινικών (αργά μεταβαλλόμενων) συνθηκών — όχι μεταβλητών όπως συμμόρφωση.
+    sig_src = {"age": facts["ηλικιακή_ομάδα"], "sex": facts["φύλο"],
+               "conditions": sorted(facts["παθήσεις"]), "medicines": sorted(facts["βασικά_φάρμακα"]),
+               "segments": sorted(facts["θεραπευτικές_κατηγορίες"]), "g6pd": facts["έλλειψη_ενζύμου_G6PD"]}
+    sig = hashlib.sha256(json.dumps(sig_src, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+    pid = prof["patient"].get("id")
+    coll = repo._db["patient_ai_advice"]
+    cached = await coll.find_one({"tenant_id": ctx.tenant_id, "patient_ref": pid})
+
+    def _iso(d):
+        return d.isoformat() if d else None
+
+    # Αμετάβλητες συνθήκες → επιστροφή αποθηκευμένων (χωρίς κλήση AI)
+    if cached and cached.get("sig") == sig and not body.force and cached.get("advice", {}).get("ok"):
+        return {**cached["advice"], "cached": True, "generated_at": _iso(cached.get("generated_at"))}
+
     res = await patient_advice.advise(facts)
     if not res.get("ok"):
+        if cached and cached.get("advice", {}).get("ok"):    # AI κάτω → fallback στις αποθηκευμένες
+            return {**cached["advice"], "cached": True, "stale": True, "generated_at": _iso(cached.get("generated_at"))}
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, res.get("error", "unavailable"))
-    return res
+    now = datetime.now(tz=timezone.utc)
+    await coll.update_one({"tenant_id": ctx.tenant_id, "patient_ref": pid},
+                          {"$set": {"sig": sig, "advice": res, "generated_at": now,
+                                    "conditions": sig_src["conditions"]}}, upsert=True)
+    return {**res, "cached": False, "generated_at": _iso(now)}
 
 
 # ── pharmacist notes / comments on a patient ────────────────────────────────

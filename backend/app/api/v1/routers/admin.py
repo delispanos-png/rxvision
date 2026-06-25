@@ -13,7 +13,7 @@ from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
 from bson import ObjectId
-from fastapi import APIRouter, Depends, HTTPException, Request, status as http_status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status as http_status
 from pydantic import BaseModel, EmailStr, Field
 
 from app.core.db import shared_db
@@ -24,6 +24,7 @@ from app.services import email_template, mailer
 from app.services.auth_service import AuthService, resolve_modules
 from app.services.provisioning import ProvisioningError, TenantProvisioningService
 from app.services.vault_service import vault
+from app.services.wholesale import DEFAULT_BANDS, load_bands, recompute, sanitize_bands
 
 
 def _oid(value):
@@ -1353,6 +1354,49 @@ async def put_idika(body: IdikaIn, _: PlatformContext = Depends(get_platform_adm
                      "pharmacy_id": pharmacy_id}
     await db["platform_settings"].update_one({"_id": "idika"}, {"$set": doc}, upsert=True)
     return {"saved": True}
+
+
+# ── Διατίμηση (κλιμακωτό μεικτό κέρδος φαρμακείου) — platform-global, ισχύει σε ΟΛΟΥΣ τους πελάτες ──
+class MarkupIn(BaseModel):
+    bands: list[list[float]]   # [[upper_euro, pct], …] — π.χ. [[50, 30], [100, 20], …]
+
+
+async def _recompute_all_markup(bands: list[list[float]]) -> None:
+    await recompute(shared_db(), bands)
+
+
+@router.get("/markup")
+async def get_markup(_: PlatformContext = Depends(get_platform_admin)):
+    db = shared_db()
+    doc = await db["platform_settings"].find_one({"_id": "markup"}) or {}
+    bands = sanitize_bands(doc.get("bands"))
+    return {"bands": bands or [list(b) for b in DEFAULT_BANDS],
+            "is_default": not bool(bands),
+            "default_bands": [list(b) for b in DEFAULT_BANDS],
+            "updated_at": jsonsafe(doc.get("updated_at"))}
+
+
+@router.put("/markup")
+async def put_markup(body: MarkupIn, background: BackgroundTasks,
+                     ctx: PlatformContext = Depends(get_platform_admin)):
+    bands = sanitize_bands(body.bands)
+    if not bands:
+        raise HTTPException(http_status.HTTP_400_BAD_REQUEST, "invalid_bands")
+    await shared_db()["platform_settings"].update_one(
+        {"_id": "markup"},
+        {"$set": {"bands": bands, "updated_at": datetime.now(tz=timezone.utc), "updated_by": ctx.email}},
+        upsert=True)
+    # Εφαρμογή στα ιστορικά δεδομένα ΟΛΩΝ των πελατών (background) — τα νέα sync το παίρνουν αυτόματα.
+    background.add_task(_recompute_all_markup, bands)
+    return {"saved": True, "bands": bands, "recompute": "started"}
+
+
+@router.post("/markup/recompute")
+async def recompute_markup(background: BackgroundTasks,
+                           _: PlatformContext = Depends(get_platform_admin)):
+    bands = await load_bands(shared_db())
+    background.add_task(_recompute_all_markup, bands)
+    return {"recompute": "started"}
 
 
 

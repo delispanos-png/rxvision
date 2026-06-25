@@ -88,8 +88,10 @@ function couponsOf(it: Item): Coupon[] {
 
 // Σαρώσιμος κωδικός κουπονιού: QR → GS1 DataMatrix (EU FMD, (01)GTIN(17)λήξη(10)παρτίδα(21)serial)·
 // ΕΟΦ ταινία γνησιότητας → γραμμικός Code-128 του serial (για να σκανάρεται στο φαρμακείο).
-function CouponBarcode({ c }: { c: Coupon }) {
-  const ref = useRef<HTMLCanvasElement>(null);
+// Render σε VECTOR SVG (όχι canvas): κρυστάλλινες ακμές σε οποιοδήποτε μέγεθος εκτύπωσης →
+// αξιόπιστο & επαναλήψιμο σκανάρισμα (το canvas σμικρυμένο με CSS θόλωνε τα modules).
+function CouponBarcode({ c, size }: { c: Coupon; size?: number }) {
+  const ref = useRef<HTMLDivElement>(null);
   const isQr = !!c.qr_product_code;
   const gtin = (c.qr_product_code || "").replace(/\D/g, "").padStart(14, "0").slice(-14);
   useEffect(() => {
@@ -99,22 +101,64 @@ function CouponBarcode({ c }: { c: Coupon }) {
       try {
         const bwipjs = (await import("bwip-js")).default;
         if (dead || !ref.current) return;
+        let svg: string;
         if (isQr) {
           const ai = `(01)${gtin}` + (c.qr_expiry ? `(17)${c.qr_expiry}` : "")
             + (c.qr_batch ? `(10)${c.qr_batch}` : "") + (c.strip ? `(21)${c.strip}` : "");
-          bwipjs.toCanvas(ref.current, { bcid: "gs1datamatrix", text: ai, scale: 5, padding: 6, backgroundcolor: "FFFFFF" });
+          // padding 4 modules = επαρκής λευκή ζώνη (quiet zone) γύρω από τον DataMatrix.
+          svg = bwipjs.toSVG({ bcid: "gs1datamatrix", text: ai, scale: 4, padding: 4, backgroundcolor: "FFFFFF" });
         } else {
-          // Code-128 αρκετά μεγάλο/ψηλό + ορατός αριθμός, σε native ανάλυση ώστε να σκανάρεται.
-          bwipjs.toCanvas(ref.current, { bcid: "code128", text: String(c.strip), scale: 3, height: 22, includetext: true, textsize: 12, textyoffset: 2, paddingwidth: 12, paddingheight: 8, backgroundcolor: "FFFFFF" });
+          svg = bwipjs.toSVG({ bcid: "code128", text: String(c.strip), scale: 3, height: 22, includetext: true, textsize: 12, textyoffset: 2, paddingwidth: 12, paddingheight: 8, backgroundcolor: "FFFFFF" });
         }
+        ref.current.innerHTML = svg;
+        const el = ref.current.querySelector("svg");
+        if (el) { el.removeAttribute("width"); el.removeAttribute("height"); el.setAttribute("style", "width:100%;height:auto;display:block"); }
       } catch { /* ignore render errors */ }
     })();
     return () => { dead = true; };
   }, [isQr, gtin, c.qr_expiry, c.qr_batch, c.strip]);
   if (!isQr && !c.strip) return null;
-  // Render σε ΥΨΗΛΗ native ανάλυση (σαρώσιμο) αλλά περιορισμένο σε ΦΥΣΙΚΟ μέγεθος μέσω CSS
-  // (.qr-canvas /.eof-canvas — βλ. print styles). Downscale υψηλής ανάλυσης = κρυστάλλινο στην εκτύπωση.
-  return <canvas ref={ref} className={`${isQr ? "qr-canvas" : "eof-canvas"} rounded border border-slate-200 bg-white`} />;
+  // Default μέγεθος οθόνης (inline)· στην εκτύπωση το #coupon-print CSS το αντικαθιστά σε mm (!important).
+  return <div ref={ref} style={{ width: size ?? (isQr ? 160 : 200), maxWidth: "100%" }} className={`${isQr ? "qr-canvas" : "eof-canvas"} overflow-hidden rounded border border-slate-200 bg-white`} />;
+}
+
+// Το string που θα έβγαζε ο σκάνερ διαβάζοντας τον κωδικό — για ΑΝΤΙΓΡΑΦΗ & επικόλληση στο εμπορικό
+// πρόγραμμα χωρίς σκανάρισμα. GS1: AIs χωρίς παρενθέσεις, με GS (ASCII 29) μετά από μεταβλητού μήκους AI.
+const GS = String.fromCharCode(29);
+function couponScanString(c: Coupon): string {
+  if (c.qr_product_code) {
+    const gtin = (c.qr_product_code || "").replace(/\D/g, "").padStart(14, "0").slice(-14);
+    let s = `01${gtin}`;
+    let lastVar = false;                       // 01 & 17 = σταθερού μήκους
+    if (c.qr_expiry) { s += `17${c.qr_expiry}`; lastVar = false; }
+    if (c.qr_batch) { s += `10${c.qr_batch}`; lastVar = true; }   // 10 = μεταβλητό
+    if (c.strip) { s += (lastVar ? GS : "") + `21${c.strip}`; }   // GS πριν το 21 μόνο μετά από μεταβλητό AI
+    return s;
+  }
+  return c.strip || "";
+}
+
+// Γραμμωτός κωδικός (Code-128) του barcode της συνταγής — ο φαρμακοποιός το σκανάρει για να βρει
+// τη συνταγή στο εμπορικό πρόγραμμα χωρίς να πληκτρολογεί τον αριθμό.
+function LinearBarcode({ value, className }: { value: string; className?: string }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!ref.current || !value) return;
+    let dead = false;
+    (async () => {
+      try {
+        const bwipjs = (await import("bwip-js")).default;
+        if (dead || !ref.current) return;
+        const svg = bwipjs.toSVG({ bcid: "code128", text: value, scale: 4, height: 13, includetext: true, textsize: 11, textyoffset: 2, paddingwidth: 10, paddingheight: 6, backgroundcolor: "FFFFFF" });
+        ref.current.innerHTML = svg;
+        const el = ref.current.querySelector("svg");
+        if (el) { el.removeAttribute("width"); el.removeAttribute("height"); el.setAttribute("style", "width:100%;height:auto;display:block"); }
+      } catch { /* ignore render errors */ }
+    })();
+    return () => { dead = true; };
+  }, [value]);
+  if (!value) return null;
+  return <div ref={ref} className={`rx-barcode bg-white ${className ?? ""}`} />;
 }
 
 // Χαρακτηριστικά συνταγής (CDA flags) → badges + κάρτα Γνωμάτευσης. Βοηθούν τον φαρμακοποιό
@@ -282,6 +326,18 @@ export default function PrescriptionDetailPage() {
   const [lineTab, setLineTab] = useState<"exec" | "summary" | "unexec">("exec");
   const [coupon, setCoupon] = useState<Item | null>(null);
   const [couponSheet, setCouponSheet] = useState(false);
+  const [execSheet, setExecSheet] = useState(false);
+  // αντιγραφή κωδικού κουπονιού στο πρόχειρο (αντί σκαναρίσματος από οθόνη)
+  const [copiedKey, setCopiedKey] = useState<string | null>(null);
+  async function copyCoupon(c: Coupon) {
+    const s = couponScanString(c);
+    try { await navigator.clipboard.writeText(s); } catch { /* clipboard μη διαθέσιμο */ }
+    setCopiedKey(s); setTimeout(() => setCopiedKey((k) => (k === s ? null : k)), 1600);
+  }
+  // χαρτί εκτύπωσης κουπονιών: A4 φύλλο ή θερμικό ρολό 80/58mm (αποθηκεύεται)
+  const [paper, setPaper] = useState<"a4" | "th80" | "th58">("a4");
+  useEffect(() => { const p = typeof window !== "undefined" && localStorage.getItem("rxv_coupon_paper"); if (p === "a4" || p === "th80" || p === "th58") setPaper(p); }, []);
+  function pickPaper(p: "a4" | "th80" | "th58") { setPaper(p); localStorage.setItem("rxv_coupon_paper", p); }
 
   if (isLoading) return <div className="text-slate-400">{t("Φόρτωση…", "Loading…")}</div>;
   if (!data) return <div className="text-slate-500">{t("Η συνταγή δεν βρέθηκε.", "Prescription not found.")}</div>;
@@ -333,7 +389,7 @@ export default function PrescriptionDetailPage() {
               <Printer className="h-4 w-4" /> {t("Εκτύπωση ΗΔΥΚΑ", "ΗΔΥΚΑ printout")}
             </button>
           )}
-          <button onClick={() => window.print()} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50">
+          <button onClick={() => setExecSheet(true)} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50">
             <Printer className="h-4 w-4" /> {t("Εκτύπωση εκτέλεσης", "Print execution")}
           </button>
           {!demo && executed.some((it) => couponsOf(it).length) ? (
@@ -379,8 +435,8 @@ export default function PrescriptionDetailPage() {
         {[
           [t("Σύνολο αξίας", "Total value"), eur(d.amount_total)],
           [t("Πληρωτέο από Ασφ/νο", "Payable by patient"), eur(d.patient_payable)],
-          [t("Χονδρικό κόστος", "Wholesale cost"), marginReliable ? eur(d.wholesale_cost) : "—"],
-          [t("Μεικτό κέρδος", "Gross profit"), marginReliable ? eur(profit) : "—"],
+          [t("Χονδρικό κόστος", "Wholesale cost"), marginReliable ? eur(d.wholesale_cost) : t("Ν/Α", "N/A")],
+          [t("Μεικτό κέρδος", "Gross profit"), marginReliable ? eur(profit) : t("Ν/Α", "N/A")],
         ].map(([l, v]) => (
           <div key={l} className="rx-card p-4">
             <div className="text-xs text-slate-400">{l}</div>
@@ -398,13 +454,13 @@ export default function PrescriptionDetailPage() {
       ) : null}
       {marginReliable ? (
         <div className="-mt-2 text-xs text-slate-400">
-          {t("Η χονδρική τιμή είναι εκτίμηση (ελλείψει επίσημου Δελτίου Τιμών) — το μεικτό κέρδος είναι ενδεικτικό.",
-             "Wholesale price is an estimate (no official price bulletin) — gross profit is indicative.")}
+          {t("Η χονδρική τιμή εκτιμάται από την επίσημη κλιμακωτή διατίμηση (μεικτό κέρδος φαρμακείου ανά τιμή) — ενδεικτικό.",
+             "Wholesale price is estimated from the official progressive markup scale — indicative.")}
         </div>
       ) : (
         <div className="-mt-2 text-xs text-slate-400">
-          {t("Το χονδρικό κόστος & το μεικτό κέρδος δεν είναι διαθέσιμα για αυτή την εκτέλεση.",
-             "Wholesale cost & gross profit are not available for this execution.")}
+          {t("Χονδρικό κόστος & μεικτό κέρδος: Ν/Α — γαληνικό/μαγιστρικό σκεύασμα (δεν ισχύει η κανονική διατίμηση & δεν έχουμε χονδρική τιμή).",
+             "Wholesale cost & gross profit: N/A — galenic/compounded preparation (standard pricing doesn't apply and no wholesale price is available).")}
         </div>
       )}
 
@@ -649,42 +705,179 @@ export default function PrescriptionDetailPage() {
         </div>
       ) : null}
 
-      {/* Φύλλο εκτύπωσης κουπονιών (QR/ΕΟΦ) της ΤΡΕΧΟΥΣΑΣ εκτέλεσης — barcode + serial ανά τεμάχιο */}
-      {couponSheet ? (
+      {/* Καθαρό φύλλο εκτύπωσης ΕΚΤΕΛΕΣΗΣ (A4) — όχι print-screen· κρύβει όλη την εφαρμογή και τυπώνει μόνο το #exec-print */}
+      {execSheet ? (
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-black/40 p-4 print:static print:bg-white print:p-0" onClick={() => setExecSheet(false)}>
+          <style jsx global>{`
+            #exec-print .rx-barcode { width: 230px; height: auto; }
+            @media print {
+              @page { size: A4; margin: 14mm; }
+              body * { visibility: hidden !important; }
+              #exec-print, #exec-print * { visibility: visible !important; }
+              #exec-print { position: absolute; left: 0; top: 0; width: 100%; color: #000; }
+              #exec-print .rx-barcode { width: 60mm !important; height: auto !important; }
+              .no-print { display: none !important; }
+            }
+          `}</style>
+          <div id="exec-print" className="mx-auto max-w-3xl rounded-2xl bg-white p-8 text-slate-900 shadow-xl print:max-w-full print:rounded-none print:p-0 print:shadow-none" onClick={(e) => e.stopPropagation()}>
+            {/* header */}
+            <div className="mb-5 flex items-start justify-between gap-3 border-b border-slate-300 pb-4">
+              <div>
+                <div className="text-lg font-extrabold tracking-tight">RxVision</div>
+                <h3 className="mt-1 text-base font-bold">{t("Εκτέλεση συνταγής", "Prescription execution")}</h3>
+                <div className="font-mono text-sm text-slate-600">{d.external_id}</div>
+                {/* γραμμωτός κωδικός για σκανάρισμα στο εμπορικό πρόγραμμα */}
+                <LinearBarcode value={d.external_id.split(":")[0]} className="mt-1.5" />
+              </div>
+              <div className="text-right text-xs text-slate-500">
+                <div>{t("Ημ/νία εκτέλεσης", "Execution date")}: <b className="text-slate-800">{dt(d.executed_at)}</b></div>
+                <div>{t("Κατάσταση", "Status")}: {d.status || t("ΕΚΤΕΛΕΣΜΕΝΗ", "EXECUTED")}</div>
+                {recurring ? <div>{t(`Επανάληψη ${d.repeat_current}/${d.repeat_total}`, `Repeat ${d.repeat_current}/${d.repeat_total}`)}</div> : null}
+              </div>
+              <div className="no-print flex items-center gap-2">
+                <button onClick={() => window.print()} className="inline-flex items-center gap-1.5 rounded-lg border border-brand-300 bg-brand-50 px-3 py-1.5 text-sm font-medium text-brand-700 hover:bg-brand-100"><Printer className="h-4 w-4" /> {t("Εκτύπωση", "Print")}</button>
+                <button onClick={() => setExecSheet(false)} className="text-slate-400 hover:text-slate-600"><X className="h-5 w-5" /></button>
+              </div>
+            </div>
+
+            {/* amounts */}
+            <div className="mb-5 grid grid-cols-3 gap-3 text-center">
+              <div className="rounded-lg border border-slate-300 p-3">
+                <div className="text-[10px] uppercase tracking-wide text-slate-500">{t("Σύνολο αξίας", "Total value")}</div>
+                <div className="mt-0.5 text-lg font-bold">{eur(d.amount_total)}</div>
+              </div>
+              <div className="rounded-lg border border-slate-300 p-3">
+                <div className="text-[10px] uppercase tracking-wide text-slate-500">{t("Πληρωτέο από Ασφ/νο", "Payable by patient")}</div>
+                <div className="mt-0.5 text-lg font-bold">{eur(d.patient_payable)}</div>
+              </div>
+              <div className="rounded-lg border border-slate-800 bg-slate-50 p-3">
+                <div className="text-[10px] uppercase tracking-wide text-slate-600">{t("Πληρωτέο από Ταμείο", "Payable by Fund")}</div>
+                <div className="mt-0.5 text-lg font-extrabold">{eur(d.fund_payable)}</div>
+              </div>
+            </div>
+
+            {/* doctor / patient */}
+            <div className="mb-5 grid grid-cols-2 gap-4 text-sm">
+              <div className="rounded-lg border border-slate-300 p-3">
+                <div className="mb-1 text-[10px] font-bold uppercase tracking-wide text-slate-500">{t("Ιατρός", "Doctor")}</div>
+                <div className="font-semibold">{d.doctor?.name || t("Άγνωστος", "Unknown")}</div>
+                <div className="text-xs text-slate-600">{d.doctor?.specialty || "—"}</div>
+              </div>
+              <div className="rounded-lg border border-slate-300 p-3">
+                <div className="mb-1 text-[10px] font-bold uppercase tracking-wide text-slate-500">{t("Ασθενής", "Patient")}</div>
+                <div className="font-semibold">{d.patient?.full_name || "—"}</div>
+                <div className="text-xs text-slate-600">{sexLabel(d.patient?.sex ?? null, t)}{age ? t(`, ${age} ετών`, `, ${age} y`) : ""}{d.patient?.amka ? ` · ΑΜΚΑ ${d.patient.amka}` : ""}</div>
+                <div className="text-xs text-slate-600">{t("Ταμείο", "Fund")}: {d.fund?.name || "—"}</div>
+              </div>
+            </div>
+
+            {/* diagnoses */}
+            {(d.icd10_named?.length || d.icd10?.length) ? (
+              <div className="mb-4 text-sm">
+                <div className="mb-1 text-[10px] font-bold uppercase tracking-wide text-slate-500">{t("Διαγνώσεις (ICD-10)", "Diagnoses (ICD-10)")}</div>
+                <div className="flex flex-wrap gap-1.5">
+                  {(d.icd10_named ?? d.icd10 ?? []).map((c, i) => (
+                    <span key={i} className="rounded border border-slate-300 px-2 py-0.5 text-[11px]">{c}</span>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
+            {/* medicines table */}
+            <div className="mb-4">
+              <div className="mb-1.5 text-[10px] font-bold uppercase tracking-wide text-slate-500">{t("Φάρμακα εκτέλεσης", "Executed medicines")}</div>
+              <table className="w-full border-collapse text-sm">
+                <thead>
+                  <tr className="border-b-2 border-slate-400 text-left text-[11px] uppercase text-slate-500">
+                    <th className="py-1.5 pr-2">{t("Φάρμακο", "Medicine")}</th>
+                    <th className="py-1.5 px-1 text-center">{t("Ποσ.", "Qty")}</th>
+                    <th className="py-1.5 px-1 text-right">{t("Αξία", "Value")}</th>
+                    <th className="py-1.5 px-1 text-right">{t("Ασφ/νος", "Patient")}</th>
+                    <th className="py-1.5 pl-1 text-right">{t("Ταμείο", "Fund")}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {executed.map((it, i) => (
+                    <tr key={i} className="border-b border-slate-200 align-top">
+                      <td className="py-1.5 pr-2">
+                        <div className="font-medium">{it.name || "—"}</div>
+                        {it.substance ? <div className="text-[11px] text-slate-500">{it.substance}</div> : null}
+                      </td>
+                      <td className="py-1.5 px-1 text-center">{it.quantity}</td>
+                      <td className="py-1.5 px-1 text-right">{eur(it.retail_price)}</td>
+                      <td className="py-1.5 px-1 text-right">{eur(it.patient_share)}</td>
+                      <td className="py-1.5 pl-1 text-right font-medium">{eur(it.fund_share)}</td>
+                    </tr>
+                  ))}
+                  {executed.length === 0 ? (
+                    <tr><td colSpan={5} className="py-3 text-center text-slate-400">{t("Καμία γραμμή εκτέλεσης.", "No executed lines.")}</td></tr>
+                  ) : null}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="mt-6 border-t border-slate-300 pt-3 text-[10px] text-slate-400">
+              {t("Εκτυπώθηκε από RxVision", "Printed by RxVision")} · {fmtDateTime(new Date().toISOString())}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {/* Φύλλο εκτύπωσης κουπονιών (QR/ΕΟΦ) της ΤΡΕΧΟΥΣΑΣ εκτέλεσης — barcode + serial σε ΠΡΑΓΜΑΤΙΚΟ μέγεθος (mm),
+          με επιλογή χαρτιού: A4 φύλλο ή θερμικό ρολό 80/58mm (αποδείξεων). */}
+      {couponSheet ? (() => {
+        const P = ({
+          a4:   { page: "A4",        margin: "10mm", qr: 25, eof: 58, col: false, label: "A4" },
+          th80: { page: "72mm auto", margin: "3mm",  qr: 26, eof: 64, col: true,  label: "80mm" },
+          th58: { page: "48mm auto", margin: "2mm",  qr: 22, eof: 44, col: true,  label: "58mm" },
+        } as const)[paper];
+        return (
         <div className="fixed inset-0 z-50 overflow-y-auto bg-black/40 p-4 print:static print:bg-white print:p-0" onClick={() => setCouponSheet(false)}>
           <style jsx global>{`
-            #coupon-print.qr-canvas { width: 84px; height: 84px; }
-            #coupon-print.eof-canvas { width: 150px; height: auto; }
             @media print {
-              @page { size: A4; margin: 12mm; }
+              @page { size: ${P.page}; margin: ${P.margin}; }
               body * { visibility: hidden !important; }
               #coupon-print, #coupon-print * { visibility: visible !important; }
               #coupon-print { position: absolute; left: 0; top: 0; width: 100%; }
-              #coupon-print.qr-canvas { width: 20mm !important; height: 20mm !important; }
-              #coupon-print.eof-canvas { width: 40mm !important; height: auto !important; }
-             .no-print { display: none !important; }
+              /* ΠΡΑΓΜΑΤΙΚΟ φυσικό μέγεθος σε mm — υψηλή native ανάλυση downscaled = κρυστάλλινο & σαρώσιμο */
+              #coupon-print .qr-canvas { width: ${P.qr}mm !important; height: auto !important; }
+              #coupon-print .eof-canvas { width: ${P.eof}mm !important; height: auto !important; }
+              #coupon-print .coupon-item { width: auto !important; max-width: 100% !important; }
+              #coupon-print .rx-barcode { width: 55mm !important; height: auto !important; }
+              ${P.col ? "#coupon-print .coupon-grid { flex-direction: column !important; align-items: center !important; gap: 4mm !important; }" : ""}
+              .no-print { display: none !important; }
             }
           `}</style>
-          <div id="coupon-print" className="mx-auto max-w-3xl rounded-2xl bg-white p-6 shadow-xl print:max-w-full print:rounded-none print:shadow-none" onClick={(e) => e.stopPropagation()}>
-            <div className="mb-4 flex items-start justify-between gap-3">
+          <div id="coupon-print" className="mx-auto max-w-3xl rounded-2xl bg-white p-6 shadow-xl print:max-w-full print:rounded-none print:p-0 print:shadow-none" onClick={(e) => e.stopPropagation()}>
+            <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
               <div>
                 <h3 className="text-lg font-bold text-slate-900">{t("Κουπόνια εκτέλεσης", "Execution coupons")}</h3>
                 <div className="text-sm text-slate-500">{t("Συνταγή", "Prescription")} {d.external_id} · {dt(d.executed_at)}{d.patient?.full_name ? ` · ${d.patient.full_name}` : ""}</div>
+                {/* γραμμωτός κωδικός συνταγής — σκανάρισμα στο εμπορικό πρόγραμμα χωρίς πληκτρολόγηση */}
+                <LinearBarcode value={d.external_id.split(":")[0]} className="mt-1.5 w-[200px] max-w-full" />
               </div>
-              <div className="no-print flex items-center gap-2">
+              <div className="no-print flex flex-wrap items-center gap-2">
+                {/* επιλογή χαρτιού */}
+                <div className="inline-flex overflow-hidden rounded-lg border border-slate-300">
+                  {([["a4", "A4"], ["th80", t("Θερμικό 80mm", "Thermal 80mm")], ["th58", t("Θερμικό 58mm", "Thermal 58mm")]] as const).map(([k, lbl]) => (
+                    <button key={k} onClick={() => pickPaper(k)} className={`px-2.5 py-1.5 text-xs font-medium ${paper === k ? "bg-brand-600 text-white" : "bg-white text-slate-600 hover:bg-slate-50"}`}>{lbl}</button>
+                  ))}
+                </div>
                 <button onClick={() => window.print()} className="inline-flex items-center gap-1.5 rounded-lg border border-brand-300 bg-brand-50 px-3 py-1.5 text-sm font-medium text-brand-700 hover:bg-brand-100"><Printer className="h-4 w-4" /> {t("Εκτύπωση", "Print")}</button>
                 <button onClick={() => setCouponSheet(false)} className="text-slate-400 hover:text-slate-600"><X className="h-5 w-5" /></button>
               </div>
             </div>
+            <p className="no-print mb-4 text-xs text-slate-400">{t(`💡 Κλικ σε ένα κουπόνι = αντιγραφή του κωδικού στο πρόχειρο (επικόλλησέ τον στο εμπορικό πρόγραμμα — χωρίς σκανάρισμα). · Για εκτύπωση: χαρτί ${P.label}, πραγματικό μέγεθος (σαρώσιμα).`, `💡 Click a coupon to copy its code to the clipboard (paste it into your pharmacy software — no scanning needed). · For printing: ${P.label} paper, real size.`)}</p>
             <div className="space-y-5">
               {qrCoupons.length > 0 && (
                 <section>
                   <h4 className="mb-2 border-b border-slate-200 pb-1 text-xs font-bold uppercase tracking-wide text-sky-700">QR · DataMatrix ({qrCoupons.length})</h4>
-                  <div className="flex flex-wrap gap-2.5">
+                  <div className="coupon-grid flex flex-wrap gap-2.5">
                     {qrCoupons.map((x, i) => (
-                      <div key={i} className="flex w-[88px] break-inside-avoid flex-col items-center gap-0.5">
+                      <div key={i} className="coupon-item flex w-[88px] break-inside-avoid cursor-copy flex-col items-center gap-0.5" onClick={() => copyCoupon(x.c)} title={t("Κλικ για αντιγραφή του κωδικού", "Click to copy the code")}>
                         <CouponBarcode c={x.c} />
                         <div className="w-full truncate text-center text-[8px] leading-tight text-slate-500" title={`${x.name} · ${x.c.strip ?? ""}`}>{x.name}</div>
+                        <div className={`no-print text-[9px] font-semibold ${copiedKey === couponScanString(x.c) ? "text-emerald-600" : "text-brand-600"}`}>{copiedKey === couponScanString(x.c) ? t("✓ Αντιγράφηκε", "✓ Copied") : t("📋 Αντιγραφή", "📋 Copy")}</div>
                       </div>
                     ))}
                   </div>
@@ -693,11 +886,12 @@ export default function PrescriptionDetailPage() {
               {eofCoupons.length > 0 && (
                 <section>
                   <h4 className="mb-2 border-b border-slate-200 pb-1 text-xs font-bold uppercase tracking-wide text-amber-700">{t("ΕΟΦ · Ταινίες γνησιότητας", "ΕΟΦ strips")} ({eofCoupons.length})</h4>
-                  <div className="flex flex-wrap gap-2.5">
+                  <div className="coupon-grid flex flex-wrap gap-2.5">
                     {eofCoupons.map((x, i) => (
-                      <div key={i} className="flex w-[154px] break-inside-avoid flex-col items-center gap-0.5">
+                      <div key={i} className="coupon-item flex w-[154px] break-inside-avoid cursor-copy flex-col items-center gap-0.5" onClick={() => copyCoupon(x.c)} title={t("Κλικ για αντιγραφή του κωδικού", "Click to copy the code")}>
                         <CouponBarcode c={x.c} />
                         <div className="w-full truncate text-center text-[8px] leading-tight text-slate-500" title={x.name ?? undefined}>{x.name}</div>
+                        <div className={`no-print text-[9px] font-semibold ${copiedKey === couponScanString(x.c) ? "text-emerald-600" : "text-brand-600"}`}>{copiedKey === couponScanString(x.c) ? t("✓ Αντιγράφηκε", "✓ Copied") : t("📋 Αντιγραφή", "📋 Copy")}</div>
                       </div>
                     ))}
                   </div>
@@ -709,7 +903,8 @@ export default function PrescriptionDetailPage() {
             </div>
           </div>
         </div>
-      ) : null}
+        );
+      })() : null}
     </div>
   );
 }

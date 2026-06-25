@@ -68,6 +68,44 @@ class PatientContactRepository(BaseRepository):
         )
         return await self.get(patient_id)
 
+    async def import_insured(self, rows: list[dict]) -> dict:
+        """Ταίριασμα κάθε γραμμής με υπάρχοντα ασθενή βάσει ΑΜΚΑ → ενημέρωση στοιχείων
+        επικοινωνίας (+ ονόματος). Όσοι ΑΜΚΑ δεν αντιστοιχούν παραλείπονται (μόνο ενημέρωση
+        υπαρχόντων — δεν δημιουργούνται νέοι ασθενείς)."""
+        updated = skipped = 0
+        skipped_sample: list[str] = []
+        pa = self._db["patients_anonymized"]
+        now = datetime.now(tz=timezone.utc)
+        for row in rows:
+            amka = (row.get("amka") or "").strip()
+            if not amka:
+                continue
+            cand = [amka]
+            if len(amka) == 10:                       # Excel μπορεί να έκοψε ένα αρχικό μηδενικό
+                cand.append("0" + amka)
+            patient = await pa.find_one(
+                {"tenant_id": self.tenant_id, "amka": {"$in": cand}}, {"_id": 1})
+            if not patient:
+                skipped += 1
+                if len(skipped_sample) < 20:
+                    skipped_sample.append(amka)
+                continue
+            pid = patient["_id"]
+            contact = {k: row[k] for k in CONTACT_FIELDS if k in row}
+            if contact:
+                contact["tenant_id"] = self.tenant_id
+                contact["updated_at"] = now
+                await self._coll.update_one(
+                    {"_id": pid, "tenant_id": self.tenant_id},
+                    {"$set": contact, "$setOnInsert": {"_id": pid}}, upsert=True)
+            name = (row.get("full_name") or "").strip()
+            if name:
+                await pa.update_one({"_id": pid, "tenant_id": self.tenant_id},
+                                    {"$set": {"full_name": name}})
+            updated += 1
+        return {"updated": updated, "skipped": skipped,
+                "skipped_sample": skipped_sample, "total": len(rows)}
+
     # ── κλινικές μετρήσεις (πίεση / ζάχαρο / βάρος) με ημερομηνία + ιστορικό ──
     async def add_measurement(self, patient_id: str, kind: str, *, systolic=None,
                               diastolic=None, value=None, at=None, note=None) -> dict | None:

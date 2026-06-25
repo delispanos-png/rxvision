@@ -5,13 +5,14 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile, status
 
 from pydantic import BaseModel, Field
 
 from app.core.deps import TenantContext, require
 from app.repositories.contacts import PatientContactRepository
 from app.repositories.patients import PatientExecutionsRepository, PatientRepository
+from app.services.contacts_import import build_template_xlsx, parse_contacts_xlsx
 
 router = APIRouter()
 
@@ -62,6 +63,32 @@ async def put_contact(
     if saved is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "patient_not_found")
     return saved
+
+
+# ── Εισαγωγή ασφαλισμένων από Excel — ταίριασμα με ΑΜΚΑ, ενημέρωση υπαρχόντων ──
+@router.get("/import/template")
+async def import_template(ctx: TenantContext = Depends(require("patients:read", module=_MODULE))):
+    return Response(
+        content=build_template_xlsx(),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="rxvision_asfalismenoi_template.xlsx"'},
+    )
+
+
+@router.post("/import")
+async def import_insured(
+    file: UploadFile = File(...),
+    ctx: TenantContext = Depends(require("patients:read", module=_MODULE)),
+):
+    data = await file.read()
+    if len(data) > 8_000_000:
+        raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "Πολύ μεγάλο αρχείο (>8MB).")
+    rows, err = parse_contacts_xlsx(data)
+    if err:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, err)
+    if not rows:
+        return {"updated": 0, "skipped": 0, "total": 0, "skipped_sample": []}
+    return await PatientContactRepository(tenant_id=ctx.tenant_id, demo=ctx.demo).import_insured(rows)
 
 
 class HeightIn(BaseModel):

@@ -36,6 +36,16 @@ class StatusIn(BaseModel):
     status: str
 
 
+class ManualInvoiceIn(BaseModel):
+    label: str                    # π.χ. «Αναλώσιμα e-dapy»
+    amount: int                   # cents
+    note: str | None = None
+
+
+class ManualDeleteIn(BaseModel):
+    batch_id: str
+
+
 class PaymentIn(BaseModel):
     batch_id: str
     paid_amount: int  # cents
@@ -119,6 +129,18 @@ async def set_payment(body: PaymentIn, period: str = Query(None),
     return await _repo(ctx).set_payment(period or _cur(), body.batch_id, body.paid_amount)
 
 
+@router.post("/submission/manual")
+async def add_manual_invoice(body: ManualInvoiceIn, period: str = Query(None),
+                             ctx: TenantContext = Depends(require("closing:read", module=_MODULE))):
+    return await _repo(ctx).add_manual_invoice(period or _cur(), body.label, body.amount, body.note)
+
+
+@router.post("/submission/manual/delete")
+async def delete_manual_invoice(body: ManualDeleteIn,
+                                ctx: TenantContext = Depends(require("closing:read", module=_MODULE))):
+    return await _repo(ctx).delete_manual_invoice(body.batch_id)
+
+
 @router.get("/reconciliation")
 async def reconciliation(period: str = Query(None),
                          ctx: TenantContext = Depends(require("closing:read", module=_MODULE))):
@@ -152,9 +174,9 @@ async def remove_receivable_payment(body: RemovePaymentIn,
 
 # ── Daily reconciliation (amounts + execution counts per day) ───────────────
 @router.get("/daily")
-async def daily(period: str = Query(None),
+async def daily(period: str = Query(None), group: str = Query("all"),
                 ctx: TenantContext = Depends(require("closing:read", module=_MODULE))):
-    return await _repo(ctx).daily_reconciliation(period or _cur())
+    return await _repo(ctx).daily_reconciliation(period or _cur(), group=group)
 
 
 @router.get("/prescription")
@@ -166,9 +188,9 @@ async def prescription(barcode: str = Query(...),
 
 # ── Physical barcode check (digital vs physical) ────────────────────────────
 @router.get("/physical")
-async def physical(period: str = Query(None), day: str = Query(None),
+async def physical(period: str = Query(None), day: str = Query(None), group: str = Query("all"),
                    ctx: TenantContext = Depends(require("closing:read", module=_MODULE))):
-    return await _repo(ctx).physical_check(period or _cur(), day)
+    return await _repo(ctx).physical_check(period or _cur(), day, group=group)
 
 
 @router.post("/physical/scan")

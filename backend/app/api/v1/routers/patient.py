@@ -2,14 +2,16 @@
 in their ACTIVE pharmacy (tenant + patient_ref come from the patient token — never from the client)."""
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from fastapi.responses import Response
 from pydantic import BaseModel, EmailStr, Field
 
+from app.core.db import shared_db
 from app.core.deps import PatientContext, get_patient_context
 from app.core.ratelimit import rate_limit
+from app.repositories.advisor import AdvisorRepository
 from app.repositories.patient_portal import (
     AppointmentRepository, AvailabilityRepository, PatientAccountRepository,
     PatientRxRepository, PharmacyServiceRepository, RxRequestRepository,
@@ -129,6 +131,50 @@ async def my_repeats(ctx: PatientContext = Depends(get_patient_context)):
 async def my_summary(ctx: PatientContext = Depends(get_patient_context)):
     """KPI snapshot for the portal home (counts, paid, fund-covered, repeats)."""
     return await PatientRxRepository(tenant_id=ctx.tenant_id).summary(ctx.patient_ref)
+
+
+@router.get("/renewals")
+async def my_renewals(ctx: PatientContext = Depends(get_patient_context)):
+    """Διαθέσιμες ανανεώσεις: χρόνιες επαναλαμβανόμενες συνταγές που μπορούν να εκτελεστούν τώρα
+    στο ενεργό φαρμακείο (ώστε ο ασθενής να μην ξεχάσει την επανάληψη)."""
+    det = await AdvisorRepository(tenant_id=ctx.tenant_id).recall_detail(str(ctx.patient_ref))
+    items = []
+    for c in det.get("chains", []):
+        if c.get("available"):
+            since = next((w["due"] for w in c.get("windows", []) if w.get("status") == "available"), None)
+            items.append({"key": c.get("key"), "medicine": c.get("medicine"),
+                          "doctor": c.get("doctor"), "available": c["available"],
+                          "since": since, "intent": c.get("intent")})
+    return {"items": items}
+
+
+class RenewalRespondIn(BaseModel):
+    key: str
+    decision: str                  # "take" (θα το πάρω) | "skip" (δεν θα το πάρω)
+    visit_date: str | None = None  # ISO ημερομηνία επίσκεψης (αν θα το πάρει)
+    reason: str | None = None      # λόγος (αν δεν θα το πάρει)
+
+
+@router.post("/renewals/respond")
+async def respond_renewal(body: RenewalRespondIn, ctx: PatientContext = Depends(get_patient_context)):
+    """Ο ασθενής δηλώνει αν θα παραλάβει την ανανέωση (+ημ/νία επίσκεψης) ή όχι (+λόγο) — ώστε
+    ο φαρμακοποιός να προγραμματίσει παραγγελία/διαθεσιμότητα/παράδοση."""
+    from bson import ObjectId
+    from bson.errors import InvalidId
+    if body.decision not in ("take", "skip"):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "bad_decision")
+    try:
+        pref = ObjectId(ctx.patient_ref)
+    except (InvalidId, TypeError):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "bad_patient")
+    await shared_db()["renewal_intents"].update_one(
+        {"tenant_id": ctx.tenant_id, "patient_ref": pref, "key": body.key},
+        {"$set": {"decision": body.decision,
+                  "visit_date": (body.visit_date or None) if body.decision == "take" else None,
+                  "reason": (body.reason or None) if body.decision == "skip" else None,
+                  "account_id": ctx.account_id, "updated_at": datetime.now(tz=timezone.utc)}},
+        upsert=True)
+    return {"ok": True}
 
 
 @router.get("/prescriptions/{barcode}")

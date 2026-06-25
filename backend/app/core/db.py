@@ -78,6 +78,7 @@ INDEXES: list[tuple[str, list[tuple[str, int]], dict]] = [
     ("loyalty_rewards", [("tenant_id", 1), ("active", 1)], {}),
     ("loyalty_members", [("tenant_id", 1), ("patient_ref", 1)], {"unique": True}),
     ("patient_measurements", [("tenant_id", 1), ("patient_ref", 1), ("kind", 1), ("at", -1)], {}),
+    ("patient_ai_advice", [("tenant_id", 1), ("patient_ref", 1)], {"unique": True}),
     ("prescription_executions", [("tenant_id", 1), ("executed_at", -1)], {}),
     ("prescription_executions", [("tenant_id", 1), ("doctor_id", 1), ("executed_at", -1)], {}),
     ("prescription_executions", [("tenant_id", 1), ("fund_id", 1), ("executed_at", -1)], {}),

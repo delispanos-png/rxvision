@@ -12,6 +12,7 @@ import { Tooltip } from "@/components/ui/Tooltip";
 import { LogoMark } from "@/components/brand/Logo";
 import { patientApi, patientTokens, patientUpload } from "@/lib/patientClient";
 import { PharmacyPicker, MedicinePicker, type Medicine } from "@/components/portal/pickers";
+import { RenewalCard, type Renewal } from "@/components/portal/RenewalCard";
 import { pushSupported, isPushSubscribed, enablePush } from "@/lib/push";
 import { BellRing } from "lucide-react";
 import { fmtDate, fmtDateTime } from "@/lib/formatters";
@@ -43,7 +44,7 @@ const dt = (s?: string | null) => (s ? fmtDate(s) : "—");
 const dtl = (s?: string | null) => (s ? fmtDateTime(s) : "—");
 const eur = (c?: number) => new Intl.NumberFormat("el-GR", { style: "currency", currency: "EUR", maximumFractionDigits: 2 }).format((c || 0) / 100);
 
-const TABS = [["rx", "Συνταγές"], ["health", "Υγεία"], ["wallet", "Επιβράβευση"], ["repeats", "Επαναλήψεις"], ["assign", "Ανάθεση συνταγής"], ["availability", "Διαθεσιμότητα"], ["appointments", "Ραντεβού"]] as const;
+const TABS = [["rx", "Συνταγές"], ["health", "Υγεία"], ["wallet", "Επιβράβευση"], ["repeats", "Επαναλήψεις"], ["renewals", "Ανεκτέλεστα"], ["assign", "Ανάθεση συνταγής"], ["availability", "Διαθεσιμότητα"], ["appointments", "Ραντεβού"]] as const;
 type HMeas = { _id?: string; kind: string; systolic?: number; diastolic?: number; value?: number; at: string };
 type Health = { height_cm?: number | null; latest: Record<string, HMeas>; history: Record<string, HMeas[]> };
 const hStat = (k: string, m?: HMeas) => {
@@ -78,6 +79,7 @@ export default function PortalHome() {
   const [rxReqs, setRxReqs] = useState<RxReq[]>([]);
   const [loyalty, setLoyalty] = useState<Loyalty | null>(null);
   const [health, setHealth] = useState<Health | null>(null);
+  const [renewals, setRenewals] = useState<Renewal[] | null>(null);
   const [assignBc, setAssignBc] = useState("");
   const [assignNote, setAssignNote] = useState("");
   const [assignBusy, setAssignBusy] = useState(false);
@@ -139,6 +141,7 @@ export default function PortalHome() {
   useEffect(() => {
     if (!me) return;
     if (tab === "health") patientApi<Health>("/patient/health").then(setHealth).catch(() => {});
+    if (tab === "renewals") patientApi<{ items: Renewal[] }>("/patient/renewals").then((d) => setRenewals(d.items)).catch(() => {});
     if (tab === "wallet") patientApi<Loyalty>("/patient/loyalty").then(setLoyalty).catch(() => {});
     if (tab === "assign") patientApi<{ items: RxReq[] }>("/patient/rx-requests").then((d) => setRxReqs(d.items)).catch(() => {});
     if (tab === "availability") patientApi<{ items: Avail[] }>("/patient/availability").then((d) => setAvail(d.items)).catch(() => {});
@@ -356,10 +359,11 @@ export default function PortalHome() {
         )}
 
         {/* ── tabs ───────────────────────────────────────────── */}
-        <div className="mb-5 flex gap-2 overflow-x-auto p-0.5">
+        {/* flex-wrap: το μενού αναδιπλώνεται ώστε να φαίνεται ΠΑΝΤΑ ολόκληρο σε κάθε ανάλυση & στα κινητά */}
+        <div className="mb-5 flex flex-wrap gap-2 p-0.5">
           {TABS.map(([k, label]) => (
             <button key={k} onClick={() => setTab(k)}
-              className={`flex-none whitespace-nowrap rounded-xl border px-4 py-2.5 text-sm font-semibold transition sm:flex-1 ${tab === k
+              className={`whitespace-nowrap rounded-xl border px-3.5 py-2 text-sm font-semibold transition ${tab === k
                 ? "border-brand-600 bg-brand-600 text-white shadow-sm shadow-brand-500/30"
                 : "border-slate-200 bg-white text-slate-700 shadow-sm hover:border-brand-300 hover:bg-brand-50 hover:text-brand-700"}`}>
               {label}
@@ -499,6 +503,22 @@ export default function PortalHome() {
               </div>
               );
             })}
+          </div>
+        )}
+
+        {/* ── ΑΝΕΚΤΕΛΕΣΤΑ (διαθέσιμες ανανεώσεις) ───────────── */}
+        {tab === "renewals" && (
+          <div className="space-y-3">
+            <p className="text-sm text-slate-500">Χρόνιες επαναλαμβανόμενες συνταγές σου που είναι <b>διαθέσιμες προς εκτέλεση</b> στο φαρμακείο σου. Δήλωσε αν θα τις παραλάβεις (& πότε θα περάσεις) ή όχι — έτσι ο φαρμακοποιός προγραμματίζει διαθεσιμότητα & παράδοση.</p>
+            {renewals === null ? (
+              <div className="p-6 text-center text-slate-400">Φόρτωση…</div>
+            ) : renewals.length === 0 ? (
+              <div className="rounded-xl border border-slate-200 bg-white p-6 text-center text-sm text-slate-400">Δεν υπάρχουν ανεκτέλεστα αυτή τη στιγμή. 👍</div>
+            ) : (
+              renewals.map((r, i) => (
+                <RenewalCard key={r.key || i} r={r} onDone={() => patientApi<{ items: Renewal[] }>("/patient/renewals").then((d) => setRenewals(d.items)).catch(() => {})} />
+              ))
+            )}
           </div>
         )}
 

@@ -502,6 +502,11 @@ class AdvisorRepository(BaseRepository):
             y, mo = d.year + (d.month - 1 + n) // 12, (d.month - 1 + n) % 12 + 1
             return d.replace(year=y, month=mo, day=min(d.day, calendar.monthrange(y, mo)[1]))
 
+        # Όριο κάλυψης δεδομένων: δεν έχουμε ΚΑΘΟΛΟΥ δεδομένα πριν την πρώτη εκτέλεση που κρατάμε.
+        # Επαναλήψεις με παράθυρο πριν από αυτό (π.χ. τρίμηνη που ξεκίνησε το 2024 ενώ κατέβηκε μόνο
+        # 2025+) ΔΕΝ θεωρούνται χαμένες — απλώς δεν έχουμε ορατότητα.
+        coverage_start = await self._coverage_start()
+
         chains: dict = defaultdict(list)
         async for e in self._db["prescription_executions"].find(  # tenant-ok: scoped by tenant_id below
                 {"tenant_id": self.tenant_id},
@@ -522,6 +527,9 @@ class AdvisorRepository(BaseRepository):
             i = 0
             while i < 18 and addm(vf, i) <= vu:
                 wopen, wclose = addm(vf, i), addm(vf, i + 1)
+                if coverage_start and wopen < coverage_start:   # παράθυρο πριν την κάλυψη → άγνωστο
+                    i += 1
+                    continue
                 done = any(e.get("executed_at") and wopen <= e["executed_at"] < wclose for e in exs)
                 if not done:
                     if wclose <= now:
@@ -560,6 +568,110 @@ class AdvisorRepository(BaseRepository):
             "with_contact": sum(1 for i in items if i["has_contact"]),
             "excluded_inactive": excluded_inactive,
         })
+
+    async def _coverage_start(self):
+        """Η παλαιότερη εκτέλεση που κρατάμε για τον tenant — όριο ορατότητας δεδομένων."""
+        doc = await self._db["prescription_executions"].find_one(
+            {"tenant_id": self.tenant_id}, {"executed_at": 1}, sort=[("executed_at", 1)])
+        return doc.get("executed_at") if doc else None
+
+    async def _chain_medicine(self, exec_ids: list) -> str | None:
+        from collections import Counter
+        pids: Counter = Counter()
+        async for it in self._db["prescription_items"].find(
+                {"tenant_id": self.tenant_id, "execution_id": {"$in": exec_ids}}, {"product_id": 1}):
+            if it.get("product_id"):
+                pids[it["product_id"]] += 1
+        if not pids:
+            return None
+        prod = await self._db["products"].find_one(
+            {"_id": pids.most_common(1)[0][0]}, {"name": 1})
+        return (prod or {}).get("name")
+
+    async def recall_detail(self, patient_id: str) -> dict:
+        """Ανά πελάτη: οι επαναλαμβανόμενες συνταγές με τις χαμένες/διαθέσιμες επαναλήψεις
+        (φάρμακο, ημερομηνίες παραθύρων & κατάσταση) — για να ξέρει ο φαρμακοποιός ποια & γιατί."""
+        import calendar
+        from collections import defaultdict
+
+        from bson import ObjectId
+        from bson.errors import InvalidId
+        try:
+            pid = ObjectId(patient_id)
+        except (InvalidId, TypeError):
+            return {"found": False}
+        now = _now()
+
+        def addm(d, n):
+            y, mo = d.year + (d.month - 1 + n) // 12, (d.month - 1 + n) % 12 + 1
+            return d.replace(year=y, month=mo, day=min(d.day, calendar.monthrange(y, mo)[1]))
+
+        coverage_start = await self._coverage_start()
+        pa = await self._db["patients_anonymized"].find_one(
+            {"_id": pid, "tenant_id": self.tenant_id}) or {}
+        intents = {i.get("key"): i async for i in self._db["renewal_intents"].find(
+            {"tenant_id": self.tenant_id, "patient_ref": pid})}
+
+        chains: dict = defaultdict(list)
+        async for e in self._db["prescription_executions"].find(
+                {"tenant_id": self.tenant_id, "patient_ref": pid},
+                {"repeat_root": 1, "executed_at": 1, "valid_from": 1, "valid_until": 1,
+                 "amount_total": 1, "doctor_id": 1, "_id": 1}):
+            chains[e.get("repeat_root")].append(e)
+
+        out_chains = []
+        for root, exs in chains.items():
+            vf = min((e["valid_from"] for e in exs if e.get("valid_from")), default=None)
+            vu = max((e["valid_until"] for e in exs if e.get("valid_until")), default=None)
+            if not vf or not vu or (vu - vf).days < 40:
+                continue
+            avg = sum(e.get("amount_total", 0) for e in exs) / max(len(exs), 1)
+            med = await self._chain_medicine([e["_id"] for e in exs])
+            # γιατρός της πιο πρόσφατης εκτέλεσης της αλυσίδας
+            doc = None
+            did = next((e.get("doctor_id") for e in sorted(
+                exs, key=lambda x: x.get("executed_at") or vf, reverse=True) if e.get("doctor_id")), None)
+            if did:
+                dd = await self._db["doctors"].find_one(
+                    {"_id": did, "tenant_id": self.tenant_id}, {"full_name": 1, "specialty": 1, "phone": 1})
+                if dd:
+                    doc = {"name": dd.get("full_name"), "specialty": dd.get("specialty"), "phone": dd.get("phone")}
+            windows = []
+            missed = available = 0
+            i = 0
+            while i < 18 and addm(vf, i) <= vu:
+                wopen, wclose = addm(vf, i), addm(vf, i + 1)
+                done = any(e.get("executed_at") and wopen <= e["executed_at"] < wclose for e in exs)
+                if done:
+                    status = "executed"
+                elif coverage_start and wopen < coverage_start:
+                    status = "before_coverage"        # πριν την κάλυψη — δεν μετράει
+                elif wclose <= now:
+                    status = "missed"; missed += 1
+                elif wopen <= now < wclose:
+                    status = "available"; available += 1
+                else:
+                    status = "future"
+                windows.append({"due": wopen, "status": status})
+                i += 1
+            if missed or available:
+                key = str(root) if root else None
+                it = intents.get(key) or {}
+                out_chains.append({
+                    "key": key, "medicine": med, "doctor": doc, "valid_from": vf, "valid_until": vu,
+                    "missed": missed, "available": available,
+                    "value": round(avg * (missed + available)), "windows": windows,
+                    "intent": {"decision": it.get("decision"), "visit_date": it.get("visit_date"),
+                               "reason": it.get("reason")} if it else None,
+                })
+        # Διαθέσιμες ΤΩΡΑ (εκτελέσιμες) πρώτες — εκεί μπορεί ο φαρμακοποιός να ενεργήσει· μετά κατά αξία.
+        out_chains.sort(key=lambda c: (c["available"] == 0, -c["value"]))
+        name, amka = pa.get("full_name"), pa.get("amka")
+        if self.demo:
+            from app.utils.masking import mask_amka, mask_name
+            name, amka = mask_name(name, True), mask_amka(amka, True)
+        return jsonsafe({"found": True, "patient_id": patient_id, "name": name, "amka": amka,
+                         "coverage_start": coverage_start, "chains": out_chains})
 
     # ── order advisor ────────────────────────────────────────────────────
     async def orders(self, *, lead_days: int = 7, safety_pct: float = 15.0) -> dict:

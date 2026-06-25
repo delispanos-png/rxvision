@@ -58,7 +58,8 @@ export default function ReimbursementExecutive() {
 
           {/* FINANCIALS */}
           <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-4">
-            <KpiCard label={t("Συνταγές μήνα", "Prescriptions")} help={t("Πλήθος εκτελέσεων του μήνα.", "Executions for the month.")} value={fmtNum(k?.rx ?? 0)} icon={Receipt} accent="indigo" trend={dp?.rx ?? undefined} />
+            <KpiCard label={t("Εκτελέσεις μήνα", "Executions")} help={t("Πλήθος εκτελέσεων του μήνα.", "Executions for the month.")} value={fmtNum(k?.rx ?? 0)} icon={Receipt} accent="indigo" trend={dp?.rx ?? undefined} />
+            <KpiCard label={t("Συνταγές 100%", "100% prescriptions")} help={t("Συνταγές με αμιγώς 100% συμμετοχή — ο ασθενής πληρώνει όλη τη λιανική. ΔΕΝ υποβάλλονται στο ταμείο, κρατούνται στο φαρμακείο.", "Pure 100%-participation prescriptions — patient pays the full retail. NOT submitted; kept at the pharmacy.")} value={fmtNum(k?.rx_100 ?? 0)} icon={Receipt} accent="amber" />
             <KpiCard label={t("Λιανική αξία", "Retail value")} help={t("Άθροισμα λιανικής αξίας των εκτελέσεων.", "Sum of retail value.")} value={fmtEur(k?.retail ?? 0)} icon={Wallet} accent="violet" trend={dp?.retail ?? undefined} />
             <KpiCard label={t("Συνολική απαίτηση", "Total claim")} help={t("Συνολικό αιτούμενο ποσό προς όλα τα ταμεία.", "Total amount claimed to all funds.")} value={fmtEur(k?.claim ?? 0)} icon={Landmark} accent="green" trend={dp?.claim ?? undefined} />
             <KpiCard label={t("Συμμετοχή ασφ/νου", "Patient share")} help={t("Ποσό που πλήρωσαν οι ασθενείς από την τσέπη.", "Out-of-pocket patient share.")} value={fmtEur(k?.patient ?? 0)} icon={Coins} accent="amber" trend={dp?.patient ?? undefined} />
@@ -67,7 +68,8 @@ export default function ReimbursementExecutive() {
             <KpiCard label={t("Μεικτό κέρδος", "Gross profit")} help={t("Αιτούμενο/αξία − κόστος χονδρικής των φαρμάκων.", "Claimed/value − wholesale cost.")} value={fmtEur(k?.gross_profit ?? 0)} icon={TrendingUp} accent="green" />
           </div>
 
-          {/* AUDIT / RISK */}
+          {/* AUDIT / RISK — κρυμμένο προς το παρόν (θα ενεργοποιηθεί μαζί με τον Οπτικό Έλεγχο) */}
+          {false && (
           <div>
             <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">{t("Έλεγχος πριν την υποβολή", "Pre-submission control")}</h2>
             <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
@@ -77,6 +79,7 @@ export default function ReimbursementExecutive() {
               <KpiCard label={t("Ασυμφωνίες ποσών", "Amount mismatches")} help={t("Συνταγές με ασυμφωνία ποσών (ταμείο+συμμετοχή ≠ λιανική).", "Prescriptions with amount mismatch.")} value={fmtNum(k?.mismatch ?? 0)} icon={Calculator} accent="amber" />
             </div>
           </div>
+          )}
         </>
       )}
     </div>

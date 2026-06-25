@@ -93,6 +93,13 @@ def parse_cda(text: str) -> dict:
             name = " ".join(p.strip() for p in parts if p and p.strip())
             if name:
                 out["doctor"]["name"] = name
+        # τηλέφωνο/email γιατρού — η ΗΔΥΚΑ τα δίνει στο author (<telecom value="tel:…"/mailto:…">)
+        for tc in _iter(au, "telecom"):
+            val = (tc.get("value") or "").strip()
+            if val.startswith("tel:") and not out["doctor"].get("phone"):
+                out["doctor"]["phone"] = val[4:].strip()
+            elif val.startswith("mailto:") and not out["doctor"].get("email"):
+                out["doctor"]["email"] = val[7:].strip()
 
     # ── ICD-10 diagnoses ──
     seen = set()

@@ -13,11 +13,12 @@ const TABS = [
   { href: "/reimbursement", el: "Executive", en: "Executive" },
   { href: "/reimbursement/closing", el: "Κλείσιμο Μήνα", en: "Monthly Closing" },
   { href: "/reimbursement/forecast", el: "Πρόβλεψη", en: "Forecast" },
-  { href: "/reimbursement/risk", el: "Ρίσκο & Περικοπές", en: "Risk & Cuts" },
+  // «Ρίσκο & Περικοπές» κρυμμένο προς το παρόν — θα ενεργοποιηθεί μαζί με τον Οπτικό Έλεγχο.
+  // { href: "/reimbursement/risk", el: "Ρίσκο & Περικοπές", en: "Risk & Cuts" },
   { href: "/reimbursement/daily", el: "Ημερήσιος Έλεγχος", en: "Daily Check" },
   { href: "/reimbursement/physical", el: "Έλεγχος Barcode", en: "Barcode Check" },
   { href: "/reimbursement/submission", el: "Υποβολή", en: "Submission" },
-  { href: "/reimbursement/reconciliation", el: "Συμφωνία", en: "Reconciliation" },
+  // «Συμφωνία» αφαιρέθηκε — καλύπτεται από τα «Ανοιχτά Υπόλοιπα».
   { href: "/reimbursement/receivables", el: "Ανοιχτά Υπόλοιπα", en: "Open Balances" },
   { href: "/reimbursement/optical", el: "Optical Audit", en: "Optical Audit" },
 ];

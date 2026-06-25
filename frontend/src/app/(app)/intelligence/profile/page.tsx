@@ -37,7 +37,7 @@ type Profile = {
   executions?: Exec[];
   clinical?: { g6pd_deficiency: boolean };
 };
-type Advice = { ok: boolean; summary?: string; approach?: string[]; lifestyle?: string[]; opportunities?: string[]; watch?: string[] };
+type Advice = { ok: boolean; summary?: string; approach?: string[]; lifestyle?: string[]; opportunities?: string[]; watch?: string[]; cached?: boolean; generated_at?: string | null };
 
 const TIER: Record<string, { label: string; cls: string }> = {
   platinum: { label: "Platinum", cls: "bg-violet-100 text-violet-700" },
@@ -83,7 +83,7 @@ export default function PatientProfilePage() {
     onSuccess: (d) => { setAdvice(null); setShow(null); setShowExecs(false); setOpen(false); setShowPortal(false); setPortalResult(null); setG6pd(!!(d.found && d.clinical?.g6pd_deficiency)); },
   });
   const ask = useMutation({
-    mutationFn: (a: string) => api<Advice>("/patient-intelligence/profile/advice", { method: "POST", body: JSON.stringify({ amka: a, date_from: rangeMonths ? monthsAgoISO(rangeMonths) : null }) }),
+    mutationFn: (v: { a: string; force?: boolean }) => api<Advice>("/patient-intelligence/profile/advice", { method: "POST", body: JSON.stringify({ amka: v.a, date_from: rangeMonths ? monthsAgoISO(rangeMonths) : null, force: v.force }) }),
     onSuccess: (d) => setAdvice(d),
   });
   const g6pdMut = useMutation({
@@ -380,7 +380,8 @@ export default function PatientProfilePage() {
           <div className="rounded-2xl border border-brand-100 bg-gradient-to-br from-brand-50 to-white p-5 dark:border-brand-900/40 dark:from-brand-950/20 dark:to-slate-900">
             <div className="flex items-center justify-between">
               <h3 className="flex items-center gap-2 text-sm font-semibold text-brand-700 dark:text-brand-300"><Sparkles className="h-4 w-4" /> {t("Συμβουλές AI — πώς να τον φροντίσω", "AI advice — how to care for them")}</h3>
-              {!advice && <button onClick={() => ask.mutate(p.patient!.amka)} disabled={ask.isPending} className="rounded-lg bg-brand-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-50">{ask.isPending ? t("Ανάλυση…", "Analyzing…") : t("Δημιουργία συμβουλών", "Generate")}</button>}
+              {!advice && <button onClick={() => ask.mutate({ a: p.patient!.amka })} disabled={ask.isPending} className="rounded-lg bg-brand-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-50">{ask.isPending ? t("Ανάλυση…", "Analyzing…") : t("Δημιουργία συμβουλών", "Generate")}</button>}
+              {advice?.ok && <button onClick={() => ask.mutate({ a: p.patient!.amka, force: true })} disabled={ask.isPending} className="rounded-lg border border-brand-300 px-3 py-1.5 text-xs font-medium text-brand-700 hover:bg-brand-50 disabled:opacity-50 dark:border-brand-700 dark:text-brand-300">{ask.isPending ? t("Ανάλυση…", "Analyzing…") : t("🔄 Ανανέωση", "🔄 Refresh")}</button>}
             </div>
             {ask.isError && <div className="mt-3 text-sm text-rose-600">{t("Η AI δεν είναι διαθέσιμη/ρυθμισμένη. Ρύθμισε το κλειδί στο admin.", "AI not available/configured. Set the key in admin.")}</div>}
             {advice?.ok && (
@@ -392,7 +393,10 @@ export default function PatientProfilePage() {
                   <AdviceList icon={Target} title={t("Ευκαιρίες φροντίδας", "Care opportunities")} items={advice.opportunities} accent="text-violet-700 dark:text-violet-400" />
                   <AdviceList icon={AlertTriangle} title={t("Σημεία προσοχής", "Watch")} items={advice.watch} accent="text-amber-700 dark:text-amber-500" />
                 </div>
-                <p className="text-[11px] text-slate-400">{t("Γενικές συμβουλές — δεν υποκαθιστούν την ιατρική γνώμη.", "General guidance — not a substitute for medical advice.")}</p>
+                <p className="text-[11px] text-slate-400">
+                  {t("Γενικές συμβουλές — δεν υποκαθιστούν την ιατρική γνώμη.", "General guidance — not a substitute for medical advice.")}
+                  {advice.cached ? ` · ${t("Αποθηκευμένες συμβουλές", "Saved advice")}${advice.generated_at ? ` (${fmtDate(advice.generated_at)})` : ""} — ${t("ανανεώνονται αυτόματα μόνο όταν αλλάξουν οι παθήσεις/φάρμακα.", "auto-refreshed only when conditions/medicines change.")}` : ""}
+                </p>
               </div>
             )}
           </div>

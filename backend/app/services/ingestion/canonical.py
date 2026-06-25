@@ -25,6 +25,8 @@ class CanonicalPatient:
 class CanonicalDoctor:
     full_name: str
     specialty: str | None = None
+    phone: str | None = None    # ΗΔΥΚΑ author telecom (tel:)
+    email: str | None = None    # ΗΔΥΚΑ author telecom (mailto:)
 
 
 @dataclass

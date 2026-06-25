@@ -1,16 +1,18 @@
 "use client";
 
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
-import { Phone, MessageSquare, Mail, PhoneCall, Users, AlertTriangle, Wallet } from "lucide-react";
+import { Phone, MessageSquare, Mail, PhoneCall, Users, AlertTriangle, Wallet, Pill, ExternalLink } from "lucide-react";
 import { fmtEur, fmtDate, fmtMoney} from "@/lib/formatters";
 import { DataTable, type Column } from "@/components/tables/DataTable";
 import { KpiCard } from "@/components/kpi/KpiCard";
 import { ExportMenu } from "@/components/export/ExportMenu";
 import { PanelCard } from "@/components/ui/Card";
 import { Tooltip } from "@/components/ui/Tooltip";
+import { Modal } from "@/components/ui/Modal";
 
 type RecallPat = {
   patient_id: string; name?: string | null; amka?: string | null; age_group?: string | null;
@@ -21,11 +23,21 @@ type Recall = {
   items: RecallPat[]; patients: number; total_value: number; total_missed: number;
   total_available: number; with_contact: number;
 };
+type Win = { due: string; status: string };
+type Intent = { decision?: string | null; visit_date?: string | null; reason?: string | null } | null;
+type Chain = { key?: string | null; medicine?: string | null; valid_from: string; valid_until: string; missed: number; available: number; value: number; windows: Win[]; intent?: Intent };
+type RecallDetail = { found: boolean; name?: string | null; amka?: string | null; coverage_start?: string | null; chains: Chain[] };
 
 export function RecallSection() {
   const t = useT();
   const router = useRouter();
   const q = useQuery({ queryKey: ["recall"], queryFn: () => api<Recall>("/advisor/recall"), retry: false });
+  const [sel, setSel] = useState<RecallPat | null>(null);
+  const det = useQuery({
+    queryKey: ["recall-detail", sel?.patient_id],
+    queryFn: () => api<RecallDetail>(`/advisor/recall/${encodeURIComponent(sel!.patient_id)}`),
+    enabled: !!sel,
+  });
   const d = q.data;
   if (!d || d.patients === 0) return null;
 
@@ -80,8 +92,74 @@ export function RecallSection() {
       )}
 
       <DataTable pageSize={15} columns={cols} rows={d.items} rowKey={(r) => r.patient_id}
-        onRowClick={(r) => router.push(`/patients/${encodeURIComponent(r.patient_id)}`)}
+        onRowClick={(r) => setSel(r)}
         empty={t("Καμία εκκρεμή επανάληψη.", "No pending repeats.")} />
+
+      <Modal open={!!sel} onClose={() => setSel(null)} size="2xl"
+        title={`${t("Χαμένες/διαθέσιμες επαναλήψεις", "Missed/available repeats")} · ${sel?.name || sel?.amka || ""}`}>
+        {det.isLoading ? <div className="p-6 text-slate-400">{t("Φόρτωση…", "Loading…")}</div> : !det.data?.chains?.length ? (
+          <div className="p-6 text-center text-sm text-slate-400">{t("Δεν βρέθηκαν λεπτομέρειες.", "No details found.")}</div>
+        ) : (
+          <div className="space-y-3">
+            <p className="text-xs text-slate-500">
+              {t("Διαθέσιμες τώρα (εκτελέσιμες) πρώτες. Για τις οριστικά χαμένες κρατάμε μόνο ιστορικό. Επαναλήψεις πριν την έναρξη των δεδομένων μας δεν προσμετρώνται.",
+                 "Available-now (executable) first. Definitively missed ones are kept as history only. Renewals before our data coverage start are not counted.")}
+              {det.data?.coverage_start ? ` ${t("Κάλυψη δεδομένων από", "Data coverage from")}: ${fmtDate(det.data.coverage_start)}.` : ""}
+            </p>
+
+            {/* Εύκολη ειδοποίηση πελάτη για τις ΔΙΑΘΕΣΙΜΕΣ ανανεώσεις (SMS/email, prefilled) */}
+            {(() => {
+              const avail = det.data.chains.filter((c) => c.available > 0).map((c) => c.medicine || "").filter(Boolean);
+              if (!avail.length) return null;
+              const tel = sel?.mobile || sel?.phone;
+              const msg = t(
+                `Καλησπέρα${sel?.name ? " " + sel.name : ""}, στο φαρμακείο σας είναι διαθέσιμες προς εκτέλεση οι επαναλήψεις: ${avail.join(", ")}. Περάστε να τις παραλάβετε ή δείτε τις στο my.rxvision.gr`,
+                `Hello${sel?.name ? " " + sel.name : ""}, these repeat prescriptions are available to dispense at your pharmacy: ${avail.join(", ")}. Visit us or check my.rxvision.gr`);
+              return (
+                <div className="rounded-xl border border-sky-200 bg-sky-50 p-3 dark:border-sky-900 dark:bg-sky-950/30">
+                  <div className="mb-2 text-sm font-semibold text-sky-800 dark:text-sky-200">{t("Ενημέρωσε τον πελάτη για τις διαθέσιμες ανανεώσεις", "Notify the patient about available renewals")}</div>
+                  {tel || sel?.email ? (
+                    <div className="flex flex-wrap gap-2">
+                      {sel?.mobile && <a href={`sms:${sel.mobile}?&body=${encodeURIComponent(msg)}`} className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-700"><MessageSquare className="h-4 w-4" /> SMS</a>}
+                      {sel?.email && <a href={`mailto:${sel.email}?subject=${encodeURIComponent(t("Διαθέσιμες ανανεώσεις συνταγών", "Available prescription renewals"))}&body=${encodeURIComponent(msg)}`} className="inline-flex items-center gap-1.5 rounded-lg bg-amber-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-amber-700"><Mail className="h-4 w-4" /> Email</a>}
+                      {tel && <a href={`tel:${tel}`} className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-300 px-3 py-1.5 text-sm font-medium text-emerald-700 hover:bg-emerald-50"><Phone className="h-4 w-4" /> {t("Κλήση", "Call")}</a>}
+                    </div>
+                  ) : (
+                    <div className="text-xs text-slate-500">{t("Δεν υπάρχουν στοιχεία επικοινωνίας — πρόσθεσέ τα στην καρτέλα του ασθενή. Αν είναι εγγεγραμμένος στο my.rxvision, τα βλέπει αυτόματα εκεί.", "No contact details — add them in the patient profile. If registered on my.rxvision, they see these automatically there.")}</div>
+                  )}
+                  <div className="mt-1.5 text-[11px] text-sky-700 dark:text-sky-300">{t("Αν ο πελάτης είναι εγγεγραμμένος στο my.rxvision, βλέπει τις διαθέσιμες ανανεώσεις και στην εφαρμογή του.", "If registered on my.rxvision, the patient also sees these in their app.")}</div>
+                </div>
+              );
+            })()}
+            {det.data.chains.map((c, i) => (
+              <div key={i} className="rounded-xl border border-slate-200 p-3 dark:border-slate-700">
+                <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                  <span className="inline-flex items-center gap-1.5 font-semibold text-slate-800 dark:text-slate-100"><Pill className="h-4 w-4 text-brand-600" /> {c.medicine || t("Φάρμακο", "Medicine")}</span>
+                  <span className="text-sm"><b className="text-rose-600">{fmtEur(c.value)}</b> <span className="text-slate-400">{t("σε ρίσκο", "at risk")}</span></span>
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {c.windows.filter((w) => w.status === "missed" || w.status === "available").map((w, j) => (
+                    <span key={j} className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-xs font-medium ${w.status === "missed" ? "bg-rose-100 text-rose-700 dark:bg-rose-900/40 dark:text-rose-300" : "bg-sky-100 text-sky-700 dark:bg-sky-900/40 dark:text-sky-300"}`}>
+                      {fmtDate(w.due)} · {w.status === "missed" ? t("χάθηκε", "missed") : t("διαθέσιμη", "available")}
+                    </span>
+                  ))}
+                </div>
+                <div className="mt-1.5 text-[11px] text-slate-400">
+                  {c.missed ? t(`${c.missed} χαμένες (πέρασε το παράθυρο επανάληψης χωρίς εκτέλεση)`, `${c.missed} missed (repeat window passed unexecuted)`) : ""}
+                  {c.missed && c.available ? " · " : ""}
+                  {c.available ? t(`${c.available} διαθέσιμη τώρα (μπορεί να εκτελεστεί)`, `${c.available} available now`) : ""}
+                </div>
+                {c.intent?.decision === "take" && <div className="mt-1.5 rounded-lg bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">🟢 {t("Ο πελάτης δήλωσε ότι θα το παραλάβει", "Patient will pick up")}{c.intent.visit_date ? ` — ${fmtDate(c.intent.visit_date)}` : ""} <span className="text-emerald-500">({t("προγραμμάτισε διαθεσιμότητα", "plan availability")})</span></div>}
+                {c.intent?.decision === "skip" && <div className="mt-1.5 rounded-lg bg-rose-50 px-2.5 py-1 text-xs font-medium text-rose-700 dark:bg-rose-950/40 dark:text-rose-300">🔴 {t("Ο πελάτης δήλωσε ότι ΔΕΝ θα το παραλάβει", "Patient will NOT pick up")}{c.intent.reason ? `: ${c.intent.reason}` : ""}</div>}
+              </div>
+            ))}
+            <button onClick={() => router.push(`/patients/${encodeURIComponent(sel!.patient_id)}`)}
+              className="inline-flex items-center gap-1.5 text-sm font-medium text-brand-600 hover:underline">
+              <ExternalLink className="h-4 w-4" /> {t("Πλήρης καρτέλα ασθενή", "Full patient profile")}
+            </button>
+          </div>
+        )}
+      </Modal>
     </PanelCard>
   );
 }

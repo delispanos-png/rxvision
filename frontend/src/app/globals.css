@@ -66,3 +66,7 @@
 .animate-pc-pop { animation: pcPop 0.25s cubic-bezier(0.34,1.56,0.64,1); }
 @keyframes pcGlow { 0%,100%{box-shadow:0 0 0 0 rgba(139,92,246,0.45)} 50%{box-shadow:0 0 20px 5px rgba(139,92,246,0.55)} }
 .animate-pc-glow { animation: pcGlow 2.4s ease-in-out infinite; }
+
+/* Κρυφή οριζόντια μπάρα κύλισης (διατηρεί τη λειτουργία scroll) — π.χ. tabs μενού */
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+.no-scrollbar::-webkit-scrollbar { display: none; }

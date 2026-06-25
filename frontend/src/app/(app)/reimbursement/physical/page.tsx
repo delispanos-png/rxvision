@@ -13,9 +13,9 @@ import { fmtEur } from "@/lib/formatters";
 import { DataTable, type Column } from "@/components/tables/DataTable";
 import { appConfirm } from "@/store/dialogStore";
 
-type Item = { barcode: string; claim: number; fund: string; executed_at: string; checked: boolean; day: string };
+type Item = { barcode: string; claim: number; fund: string; group: string; is_eopyy: boolean; is_vaccine: boolean; is_100: boolean; is_fyk: boolean; is_etyap: boolean; needs_original: boolean; executed_at: string; checked: boolean; day: string };
 type DayRow = { date: string; total: number; checked: number };
-type Check = { period: string; total: number; checked: number; remaining: number; extra: string[]; by_day: DayRow[]; items: Item[] };
+type Check = { period: string; group: string; groups: string[]; total: number; checked: number; remaining: number; extra: string[]; by_day: DayRow[]; items: Item[] };
 type Coupon = { name: string; barcode: string; quantity: number; category: string; executed: boolean; qr: boolean | null; qr_batch: string | null; qr_expiry: string | null; lot: string | null };
 type Detail = { ok: boolean; found: boolean; barcode: string; fund: string; claim: number; n_coupons: number; has_opinion: boolean | null; is_fyk: boolean; has_vaccine: boolean; has_narcotic: boolean; is_etyap?: boolean; partial: boolean; coupons: Coupon[] };
 type ScanFlags = { is_intangible: boolean; needs_original: boolean; is_fyk: boolean; has_desensitization: boolean; has_opinion: boolean; has_vaccine: boolean; is_etyap: boolean; exec_count: number | null };
@@ -40,8 +40,10 @@ export default function PhysicalCheckPage() {
     setCouponsPopup((v) => { const nv = !v; localStorage.setItem("rxv_coupons_on_scan", nv ? "1" : "0"); return nv; });
   }
   const resumed = useRef(false);
+  const [group, setGroup] = useState("all");
+  const groupLabel = (g: string) => g === "all" ? t("Όλες μαζί", "All together") : g;
 
-  const { data } = useQuery({ queryKey: ["reimb-physical", period], queryFn: () => api<Check>(`/reimbursement/physical?period=${period}`) });
+  const { data } = useQuery({ queryKey: ["reimb-physical", period, group], queryFn: () => api<Check>(`/reimbursement/physical?period=${period}&group=${encodeURIComponent(group)}`) });
   const byDay = data?.by_day ?? [];
 
   // resume at the first not-yet-complete day, once
@@ -94,7 +96,18 @@ export default function PhysicalCheckPage() {
   const cols: Column<Item>[] = [
     { key: "checked", header: "", render: (r) => r.checked ? <CheckCircle2 className="h-4 w-4 text-emerald-600" /> : <span className="inline-block h-4 w-4 rounded-full border-2 border-slate-300" /> },
     { key: "barcode", header: "Barcode", render: (r) => <button onClick={() => openDetail(r.barcode)} className={`font-mono text-xs hover:text-emerald-600 hover:underline ${r.checked ? "text-slate-400 line-through" : "text-slate-700 dark:text-slate-200"}`}>{r.barcode}</button> },
-    { key: "fund", header: t("Ταμείο", "Fund"), hideOnMobile: true, render: (r) => r.fund },
+    { key: "group", header: t("Ομάδα / Ενδείξεις", "Group / Flags"), render: (r) => {
+      const badge = r.is_100 ? "bg-amber-100 text-amber-800" : r.is_vaccine ? "bg-sky-100 text-sky-700" : r.is_eopyy ? "bg-emerald-100 text-emerald-700" : "bg-violet-100 text-violet-700";
+      const lbl = r.group === "ΕΟΠΥΥ - Φάρμακα" ? "ΕΟΠΥΥ Φάρμ." : r.group === "ΕΟΠΥΥ - Εμβόλια" ? "Εμβόλια" : r.group === "Αμιγώς 100%" ? "100%" : r.group;
+      return (
+        <span className="inline-flex flex-wrap items-center gap-1">
+          <span className={`rounded px-1.5 py-0.5 text-[10px] font-bold ${badge}`} title={r.group}>{lbl}</span>
+          {r.needs_original && <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800" title={t("Χρειάζεται πρωτότυπη χάρτινη συνταγή ιατρού", "Needs original paper Rx")}>📄</span>}
+          {r.is_fyk && <span className="rounded bg-fuchsia-100 px-1.5 py-0.5 text-[10px] font-semibold text-fuchsia-800">ΦΥΚ</span>}
+          {r.is_etyap && <span className="rounded bg-cyan-100 px-1.5 py-0.5 text-[10px] font-semibold text-cyan-800" title="ΕΤΥΑΠ">🛡️</span>}
+        </span>
+      );
+    } },
     { key: "claim", header: t("Απαίτηση", "Claim"), align: "right", sortValue: (r) => r.claim, render: (r) => fmtEur(r.claim) },
   ];
 
@@ -110,6 +123,15 @@ export default function PhysicalCheckPage() {
 
   return (
     <div className="mx-auto max-w-2xl space-y-4">
+      {/* διαχωρισμός ανά υποβολή (ταμείο) ή όλες μαζί */}
+      <div className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-white p-2.5 dark:border-slate-700 dark:bg-slate-900">
+        <label className="text-sm font-medium text-slate-600 dark:text-slate-300">{t("Υποβολή:", "Submission:")}</label>
+        <select value={group} onChange={(e) => { setGroup(e.target.value); resumed.current = false; setDayIdx(0); setLast(null); }} className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm focus:border-emerald-500 focus:outline-none dark:border-slate-600 dark:bg-slate-800">
+          {(data?.groups ?? ["all"]).map((g) => <option key={g} value={g}>{groupLabel(g)}</option>)}
+        </select>
+        <span className="text-xs text-slate-400">{group === "all" ? t("όλες μαζί — δες την ομάδα κάθε συνταγής", "all — group shown per Rx") : t("μόνο αυτή η υποβολή", "this submission only")}</span>
+      </div>
+
       {/* month progress */}
       <div className="flex items-center justify-between text-xs text-slate-500">
         <span className="inline-flex items-center gap-1.5"><CalendarDays className="h-4 w-4" /> {t("Ημέρες ολοκληρωμένες", "Days complete")}: <b className="text-slate-700 dark:text-slate-200">{daysComplete}/{byDay.length}</b></span>

@@ -20,6 +20,7 @@ from app.core.db import shared_db
 from app.services.ingestion.canonical import CanonicalExecution, CanonicalItem
 from app.services.ingestion.validate import validate_execution
 from app.services.vault_service import vault
+from app.services.wholesale import load_bands, markup_pct
 from app.utils.anonymization import age_group, pseudonymize
 
 _REPEAT_INTERVAL_DAYS = 30
@@ -49,6 +50,7 @@ class IngestionEngine:
         self.tenant_id = tenant_id
         self.db = db if db is not None else shared_db()
         self.pepper = vault.tenant_pepper(tenant_id)
+        self._bands: list[list[float]] | None = None   # κλιμακωτή διατίμηση (platform-global, lazy)
 
     async def ingest(self, *, source: str, job_type: str,
                      records: Iterable[CanonicalExecution],
@@ -211,9 +213,14 @@ class IngestionEngine:
         return res["_id"]
 
     async def _resolve_doctor(self, ex: CanonicalExecution) -> ObjectId:
+        set_fields: dict = {"specialty": ex.doctor.specialty}
+        if ex.doctor.phone:                      # ΗΔΥΚΑ τηλέφωνο/email γιατρού (μη κενά μόνο)
+            set_fields["phone"] = ex.doctor.phone
+        if ex.doctor.email:
+            set_fields["email"] = ex.doctor.email
         res = await self.db["doctors"].find_one_and_update(
             {"tenant_id": self.tenant_id, "full_name": ex.doctor.full_name},
-            {"$set": {"specialty": ex.doctor.specialty},
+            {"$set": set_fields,
              "$setOnInsert": {"tenant_id": self.tenant_id, "full_name": ex.doctor.full_name,
                               "first_seen_at": ex.executed_at, "created_at": _now()}},
             upsert=True, return_document=ReturnDocument.AFTER)
@@ -246,9 +253,15 @@ class IngestionEngine:
             # Only trust a previously-stored price if it was real, not itself an estimate.
             if known > 0 and (prod or {}).get("wholesale_source") != "estimated":
                 return known, "masterdata"
-        pct = settings.WHOLESALE_FALLBACK_MARGIN_PCT
-        if it.retail_price > 0 and pct > 0:
-            return round(it.retail_price * (1 - pct / 100)), "estimated"
+        # Γαληνικά/μαγιστρικά σκευάσματα: δεν ισχύει η κανονική διατίμηση & δεν έχουμε χονδρική →
+        # Ν/Α (εξαιρούνται τελείως από κόστος/κέρδος αντί να φαβρικάρουμε νούμερο).
+        if (it.details or {}).get("galenic"):
+            return 0, "unavailable"
+        # Εκτίμηση από την κλιμακωτή διατίμηση (platform-global, ρυθμιζόμενη από το admin).
+        if it.retail_price > 0:
+            if self._bands is None:
+                self._bands = await load_bands(self.db)
+            return round(it.retail_price * (1 - markup_pct(it.retail_price, self._bands) / 100)), "estimated"
         return 0, "unknown"
 
     async def _resolve_items(self, ex: CanonicalExecution) -> tuple[list[dict], int, int]:

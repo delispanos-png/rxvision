@@ -70,6 +70,15 @@ async def recall(
     return await AdvisorRepository(tenant_id=ctx.tenant_id, demo=ctx.demo).recall()
 
 
+@router.get("/recall/{patient_id}")
+async def recall_detail(
+    patient_id: str,
+    ctx: TenantContext = Depends(require("patients:read", module="patient_analytics")),
+):
+    """Drill-down: οι επαναλαμβανόμενες συνταγές ενός πελάτη με τις χαμένες/διαθέσιμες επαναλήψεις."""
+    return await AdvisorRepository(tenant_id=ctx.tenant_id, demo=ctx.demo).recall_detail(patient_id)
+
+
 @router.get("/orders")
 async def orders(
     lead_days: int = 7,

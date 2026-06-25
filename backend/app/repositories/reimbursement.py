@@ -124,9 +124,11 @@ class ReimbursementRepository(BaseRepository):
                                   "rx": {"$sum": 1}, "claim": {"$sum": "$amount_claimed"}}},
                       {"$sort": {"_id": 1}}]).to_list(None)]
 
-        # per (fund, vaccine?, ΦΥΚ?) so we can split ΕΟΠΥΥ φάρμακα/εμβόλια and isolate the rebate base
+        # per (fund, vaccine?, ΦΥΚ?) so we can split ΕΟΠΥΥ φάρμακα/εμβόλια and isolate the rebate base.
+        # Οι αμιγώς-100% (claim=0) ΔΕΝ υποβάλλονται → εξαιρούνται από τις γραμμές ταμείων, μπαίνουν
+        # σε ξεχωριστή γραμμή «Αμιγώς 100%».
         by_fund_raw = await self._db["prescription_executions"].aggregate([
-            {"$match": match},
+            {"$match": {**match, "amount_claimed": {"$gt": 0}}},
             {"$group": {"_id": {"fund": "$fund_id",
                                 "vac": {"$ifNull": ["$details.vaccines", False]},
                                 "fyk": {"$ifNull": ["$details.n3816", False]}},
@@ -166,6 +168,20 @@ class ReimbursementRepository(BaseRepository):
             by_fund.append({"fund": "ΕΤΥΑΠ", "is_eopyy": False, "is_vaccine": False,
                             "rx": et[0]["rx"], "retail": 0, "claim": etyap_claim, "patient": 0,
                             "rebate": 0, "discount": 0, "receipt": etyap_claim})
+
+        # Αμιγώς 100% συμμετοχή — ο ασθενής πληρώνει όλη τη λιανική, ΔΕΝ υποβάλλονται (κρατούνται στο φαρμακείο)
+        h = await self._db["prescription_executions"].aggregate([
+            {"$match": {**match, "amount_total": {"$gt": 0}, "amount_claimed": 0}},
+            {"$group": {"_id": None, "rx": {"$sum": 1}, "retail": {"$sum": "$amount_total"},
+                        "patient": {"$sum": "$patient_share"}}},
+        ]).to_list(1)
+        hundred = {"rx": (h[0]["rx"] if h else 0), "retail": (h[0]["retail"] if h else 0),
+                   "patient": (h[0]["patient"] if h else 0)}
+        if hundred["rx"]:
+            by_fund.append({"fund": "Αμιγώς 100% (δεν υποβάλλονται)", "is_eopyy": False,
+                            "is_vaccine": False, "not_submitted": True,
+                            "rx": hundred["rx"], "retail": hundred["retail"], "claim": 0,
+                            "patient": hundred["patient"], "rebate": 0, "discount": 0, "receipt": 0})
 
         by_fund.sort(key=lambda x: x["claim"], reverse=True)
         eopyy_claim = sum(b["claim"] for b in by_fund if b["is_eopyy"])
@@ -207,7 +223,7 @@ class ReimbursementRepository(BaseRepository):
             "totals": {**cur, "net_claim": cur["claim"], "eopyy_claim": eopyy_claim,
                        "other_claim": other_claim, "gross_profit": cur["retail"] - cur["cost"],
                        "rebate": fin["rebate"], "discount": fin["discount"], "etyap": etyap_claim,
-                       "rebate_base": fin["base"],
+                       "rebate_base": fin["base"], "hundred_rx": hundred["rx"], "hundred_retail": hundred["retail"],
                        "receipt": cur["claim"] - fin["rebate"] - fin["discount"] + etyap_claim},
             "deductions": fin,  # base + per-bracket breakdown → KPI tooltip shows the formula
             "delta_prev": {k: _pct(cur[k], prev[k]) for k in ("rx", "retail", "claim", "patient")},
@@ -425,12 +441,38 @@ class ReimbursementRepository(BaseRepository):
                 "flagged": rb["flagged"], "risk_cut": rb["cut"],
                 "submitted_at": existing.get("submitted_at"), "paid_at": existing.get("paid_at"),
             })
+        # χειροκίνητα τιμολόγια (π.χ. Αναλώσιμα e-dapy) — δεν προέρχονται από εκτελέσεις
+        async for mb in self._db["submission_batches"].find(
+                {"tenant_id": self.tenant_id, "period": period, "manual": True}):
+            out.append({
+                "batch_id": mb["_id"], "fund": mb.get("fund_name", "Χειροκίνητο τιμολόγιο"),
+                "is_eopyy": False, "manual": True, "note": mb.get("note"),
+                "rx": 0, "expected_claim": mb.get("expected_claim", 0),
+                "status": mb.get("status", "ready_for_review"),
+                "paid_amount": mb.get("paid_amount"), "cut_amount": mb.get("cut_amount"),
+                "flagged": 0, "risk_cut": 0,
+                "submitted_at": mb.get("submitted_at"), "paid_at": mb.get("paid_at")})
         out.sort(key=lambda x: x["expected_claim"], reverse=True)
         counts: dict = defaultdict(int)
         for b in out:
             counts[b["status"]] += 1
         return jsonsafe({"period": period, "batches": out,
                          "status_counts": {s: counts.get(s, 0) for s in self.STATUSES}})
+
+    async def add_manual_invoice(self, period: str, label: str, amount: int, note: str | None = None) -> dict:
+        import uuid
+        bid = f"manual:{period}:{uuid.uuid4().hex[:8]}"
+        await self._db["submission_batches"].insert_one({
+            "_id": bid, "tenant_id": self.tenant_id, "period": period, "manual": True,
+            "fund_name": (label or "Χειροκίνητο τιμολόγιο").strip(), "expected_claim": int(amount or 0),
+            "rx": 0, "status": "ready_for_review", "note": (note or None),
+            "created_at": _now(), "updated_at": _now()})
+        return {"ok": True, "batch_id": bid}
+
+    async def delete_manual_invoice(self, batch_id: str) -> dict:
+        await self._db["submission_batches"].delete_one(
+            {"_id": batch_id, "tenant_id": self.tenant_id, "manual": True})
+        return {"ok": True}
 
     async def set_status(self, period: str, batch_id: str, status: str) -> dict:
         if status not in self.STATUSES:
@@ -645,25 +687,47 @@ class ReimbursementRepository(BaseRepository):
         return jsonsafe({"events": events})
 
     # ── PHYSICAL BARCODE CHECK (digital vs physical reconciliation) ─────────
-    async def physical_check(self, period: str, day: str | None = None) -> dict:
+    async def physical_check(self, period: str, day: str | None = None, group: str = "all") -> dict:
         """All distinct prescription barcodes we hold for the month + their scan status, plus the
-        'extra' barcodes scanned that we DON'T have. Optional `day` (YYYY-MM-DD) narrows to one day
-        (daily reconciliation); `by_day` always lists per-day counts for the day picker."""
+        'extra' barcodes scanned that we DON'T have. Optional `day` narrows to one day; `group`
+        filters per submission/fund («ΕΟΠΥΥ - Φάρμακα»/«ΕΟΠΥΥ - Εμβόλια»/«Αμιγώς 100%»/ταμείο)."""
         start, end = _month_bounds(period)
         meta = await self._fund_meta()
         rows = await self._db["prescription_executions"].aggregate([
             {"$match": {"tenant_id": self.tenant_id, "executed_at": {"$gte": start, "$lt": end}, "status": {"$ne": "cancelled"}}},
             {"$group": {"_id": {"$arrayElemAt": [{"$split": ["$external_id", ":"]}, 0]},
-                        "claim": {"$sum": "$amount_claimed"}, "fund_id": {"$first": "$fund_id"},
+                        "claim": {"$sum": "$amount_claimed"}, "retail": {"$sum": "$amount_total"},
+                        "fund_id": {"$first": "$fund_id"},
+                        "vac": {"$first": {"$ifNull": ["$details.vaccines", False]}},
+                        "intangible": {"$first": {"$ifNull": ["$details.intangible", False]}},
+                        "exec_count": {"$first": "$details.exec_count"},
+                        "n3816": {"$first": {"$ifNull": ["$details.n3816", False]}},
+                        "supp": {"$first": {"$ifNull": ["$details.supplementary_cover", False]}},
                         "executed_at": {"$min": "$executed_at"}}},
         ]).to_list(None)
         session = await self._db["barcode_check"].find_one(
             {"tenant_id": self.tenant_id, "period": period}) or {}
         checked = set(session.get("checked", []))
-        allrows = [{"barcode": r["_id"], "claim": r["claim"], "executed_at": r["executed_at"],
-                    "day": r["executed_at"].strftime("%Y-%m-%d") if r.get("executed_at") else None,
-                    "fund": meta.get(r["fund_id"], {}).get("group", "—"),
-                    "checked": r["_id"] in checked} for r in rows]
+        allrows = []
+        for r in rows:
+            is_100 = (r.get("retail", 0) or 0) > 0 and (r.get("claim", 0) or 0) == 0
+            if is_100:
+                glabel, is_eo, is_vac = "Αμιγώς 100%", False, False
+            else:
+                glabel, is_eo = self._grp_label(meta, r["fund_id"], bool(r.get("vac")))
+                is_vac = is_eo and bool(r.get("vac"))
+            ec = r.get("exec_count")
+            allrows.append({
+                "barcode": r["_id"], "claim": r["claim"], "executed_at": r["executed_at"],
+                "day": r["executed_at"].strftime("%Y-%m-%d") if r.get("executed_at") else None,
+                "fund": glabel, "group": glabel, "is_eopyy": is_eo, "is_vaccine": is_vac,
+                "is_100": is_100, "is_fyk": bool(r.get("n3816")), "is_etyap": bool(r.get("supp")),
+                "needs_original": (not bool(r.get("intangible"))) and ((ec or 1) <= 1),
+                "checked": r["_id"] in checked})
+        order = {EOPYY_MED: 0, "ΕΟΠΥΥ - Εμβόλια": 1, "Αμιγώς 100%": 8}
+        groups = ["all"] + sorted({a["group"] for a in allrows}, key=lambda g: (order.get(g, 5), g))
+        if group != "all":
+            allrows = [a for a in allrows if a["group"] == group]
         by_day: dict = {}
         for it in allrows:
             d = by_day.setdefault(it["day"], {"date": it["day"], "total": 0, "checked": 0})
@@ -673,7 +737,8 @@ class ReimbursementRepository(BaseRepository):
         items.sort(key=lambda x: (x["checked"], -x["claim"]))  # unchecked, by € first
         checked_n = sum(1 for i in items if i["checked"])
         return jsonsafe({
-            "period": period, "day": day, "total": len(items), "checked": checked_n,
+            "period": period, "day": day, "group": group, "groups": groups,
+            "total": len(items), "checked": checked_n,
             "remaining": len(items) - checked_n, "extra": session.get("extra", []),
             "by_day": sorted(by_day.values(), key=lambda x: x["date"] or ""), "items": items})
 
@@ -721,24 +786,62 @@ class ReimbursementRepository(BaseRepository):
         return {"ok": True}
 
     # ── DAILY RECONCILIATION — amounts + execution counts per day (vs the pharmacist's program) ─
-    async def daily_reconciliation(self, period: str) -> dict:
+    async def daily_reconciliation(self, period: str, group: str = "all") -> dict:
+        """Ανά ημέρα, με δυνατότητα φίλτρου ανά ομάδα/ταμείο («all», «ΕΟΠΥΥ - Φάρμακα»,
+        «ΕΟΠΥΥ - Εμβόλια», «ΕΤΥΑΠ», ή οποιοδήποτε ταμείο). Σε ξεχωριστό πεδίο, οι αμιγώς-100%
+        συμμετοχής ανά ημέρα (δεν υποβάλλονται). Εξαιρούνται οι ακυρωμένες."""
         start, end = _month_bounds(period)
-        rows = await self._db["prescription_executions"].aggregate([
-            # εξαιρούμε ακυρωμένες (status=cancelled) ώστε να συμφωνεί με τη σελίδα «Συνταγές» (by_fund)
-            {"$match": {"tenant_id": self.tenant_id, "executed_at": {"$gte": start, "$lt": end},
-                        "status": {"$ne": "cancelled"}}},
-            {"$group": {
-                "_id": {"$dateToString": {"format": "%Y-%m-%d", "date": "$executed_at"}},
-                "barcodes": {"$addToSet": {"$arrayElemAt": [{"$split": ["$external_id", ":"]}, 0]}},
-                "executions": {"$sum": 1}, "claim": {"$sum": "$amount_claimed"},
-                "retail": {"$sum": "$amount_total"}, "patient": {"$sum": "$patient_share"}}},
-            {"$sort": {"_id": 1}},
-        ]).to_list(None)
-        days = [{"date": r["_id"], "rx": len(r["barcodes"]), "executions": r["executions"],
-                 "claim": r["claim"], "retail": r["retail"], "patient": r["patient"]} for r in rows]
-        tot = {k: sum(d[k] for d in days) for k in ("rx", "executions", "claim", "retail", "patient")}
+        meta = await self._fund_meta()
+        per: dict = defaultdict(lambda: {"barcodes": set(), "executions": 0, "claim": 0,
+                                         "retail": 0, "patient": 0, "hundred": 0})
+        groups: set = set()
+        cur = self._db["prescription_executions"].find(
+            {"tenant_id": self.tenant_id, "executed_at": {"$gte": start, "$lt": end},
+             "status": {"$ne": "cancelled"}},
+            {"executed_at": 1, "external_id": 1, "fund_id": 1, "amount_total": 1,
+             "amount_claimed": 1, "patient_share": 1, "details.vaccines": 1, "details.kyyap_covered": 1})
+        async for e in cur:
+            day = e["executed_at"].strftime("%Y-%m-%d")
+            det = e.get("details") or {}
+            vac = bool(det.get("vaccines"))
+            kyyap = det.get("kyyap_covered") or 0
+            label, _is_eo = self._grp_label(meta, e.get("fund_id"), vac)
+            groups.add(label)
+            if kyyap > 0:
+                groups.add("ΕΤΥΑΠ")
+            total = e.get("amount_total", 0) or 0
+            claim = e.get("amount_claimed", 0) or 0
+            is_100 = total > 0 and claim == 0
+            d = per[day]
+            if is_100:
+                d["hundred"] += 1
+            if group == "ΕΤΥΑΠ":
+                inc, cval, rval, pval = kyyap > 0, kyyap, 0, 0
+            elif group == "all":
+                inc, cval, rval, pval = True, claim, total, (e.get("patient_share", 0) or 0)
+            else:                                      # συγκεκριμένη ομάδα ταμείου — μόνο υποβαλλόμενες
+                inc = (label == group) and not is_100
+                cval, rval, pval = claim, total, (e.get("patient_share", 0) or 0)
+            if inc:
+                d["barcodes"].add(str(e.get("external_id", "")).split(":")[0])
+                d["executions"] += 1
+                d["claim"] += cval
+                d["retail"] += rval
+                d["patient"] += pval
+        days = []
+        for day in sorted(per):
+            d = per[day]
+            if d["executions"] == 0 and d["hundred"] == 0:
+                continue
+            days.append({"date": day, "rx": len(d["barcodes"]), "executions": d["executions"],
+                         "claim": d["claim"], "retail": d["retail"], "patient": d["patient"],
+                         "hundred": d["hundred"]})
+        tot = {k: sum(d[k] for d in days) for k in ("rx", "executions", "claim", "retail", "patient", "hundred")}
         tot["days"] = len(days)
-        return jsonsafe({"period": period, "days": days, "totals": tot})
+        # επιλογές για το dropdown: σύνολο + ομάδες, με ΕΟΠΥΥ/ΕΤΥΑΠ πρώτα
+        order = {EOPYY_MED: 0, "ΕΟΠΥΥ - Εμβόλια": 1, "ΕΤΥΑΠ": 2}
+        opts = ["all"] + sorted(groups, key=lambda g: (order.get(g, 9), g))
+        return jsonsafe({"period": period, "group": group, "groups": opts, "days": days, "totals": tot})
 
     # ── ADVANCED PER-PRESCRIPTION DETAIL — coupons (medicine lines) + submission flags ──────────
     async def _rx_lines(self, ex_ids: list) -> tuple:
@@ -857,6 +960,11 @@ class ReimbursementRepository(BaseRepository):
             {"tenant_id": self.tenant_id, "executed_at": {"$gte": start, "$lt": end},
              "status": {"$ne": "cancelled"}, "has_unexecuted_substances": True})
         mismatch = sum(1 for r in risk_rows if "amount_mismatch" in r["flags"])
+        # Συνταγές με αμιγώς 100% συμμετοχή (ο ασθενής πληρώνει όλη τη λιανική → ταμείο 0) — ΔΕΝ
+        # υποβάλλονται, κρατούνται στο φαρμακείο.
+        rx_100 = await self._db["prescription_executions"].count_documents(
+            {"tenant_id": self.tenant_id, "executed_at": {"$gte": start, "$lt": end},
+             "status": {"$ne": "cancelled"}, "amount_total": {"$gt": 0}, "amount_claimed": 0})
         t = closing["totals"]
 
         insights = []
@@ -878,7 +986,7 @@ class ReimbursementRepository(BaseRepository):
                 "eopyy_claim": t["eopyy_claim"], "other_claim": t["other_claim"],
                 "patient": t["patient"], "gross_profit": t["gross_profit"],
                 "expected_cuts": cuts["total"], "to_fix": to_fix,
-                "partial": partial, "mismatch": mismatch,
+                "partial": partial, "mismatch": mismatch, "rx_100": rx_100,
             },
             "delta_prev": closing["delta_prev"], "delta_yoy": closing["delta_yoy"],
             "insights": insights,

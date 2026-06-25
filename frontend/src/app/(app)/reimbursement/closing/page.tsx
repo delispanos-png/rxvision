@@ -13,7 +13,7 @@ import { KpiCard } from "@/components/kpi/KpiCard";
 
 type Bracket = { from: number; to: number | null; rate: number; base: number; amount: number };
 type Deductions = { base: number; rebate: number; rebate_breakdown: Bracket[]; discount: number; discount_breakdown: Bracket[]; receipt: number };
-type Fund = { fund: string; is_eopyy: boolean; is_vaccine: boolean; rx: number; retail: number; claim: number; patient: number; rebate: number; discount: number; receipt: number; rebate_base?: number };
+type Fund = { fund: string; is_eopyy: boolean; is_vaccine: boolean; rx: number; retail: number; claim: number; patient: number; rebate: number; discount: number; receipt: number; rebate_base?: number; not_submitted?: boolean };
 type FundDay = { funds: string[]; rows: { day: string; counts: Record<string, number>; total: number }[] };
 type Closing = {
   period: string;
@@ -49,7 +49,9 @@ export default function ClosingPage() {
     : t("Δεν προκύπτει έκπτωση (βάση < 35.000€).", "No discount (base < €35,000).");
 
   const cols: Column<Fund>[] = [
-    { key: "fund", header: t("Ταμείο", "Fund"), render: (r) => <span className="inline-flex items-center gap-1.5" title={r.fund}>{r.is_vaccine ? <Syringe className="h-3.5 w-3.5 text-sky-600" /> : r.is_eopyy ? <Building2 className="h-3.5 w-3.5 text-emerald-600" /> : null}{short(r.fund)}</span> },
+    { key: "fund", header: t("Ταμείο", "Fund"), render: (r) => r.not_submitted
+        ? <span className="inline-flex items-center gap-1.5 rounded-md bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800 dark:bg-amber-900/40 dark:text-amber-300" title={t("Αμιγώς 100% συμμετοχή — δεν υποβάλλονται, κρατούνται στο φαρμακείο", "Pure 100% — kept at the pharmacy, not submitted")}>💯 {short(r.fund)}</span>
+        : <span className="inline-flex items-center gap-1.5" title={r.fund}>{r.is_vaccine ? <Syringe className="h-3.5 w-3.5 text-sky-600" /> : r.is_eopyy ? <Building2 className="h-3.5 w-3.5 text-emerald-600" /> : null}{short(r.fund)}</span> },
     { key: "rx", header: t("Συνταγές", "Rx"), align: "right", sortValue: (r) => r.rx, render: (r) => fmtNum(r.rx) },
     { key: "claim", header: t("Αιτούμενο", "Claim"), align: "right", sortValue: (r) => r.claim, render: (r) => <b className="text-emerald-700 dark:text-emerald-400">{fmtEur(r.claim)}</b> },
     { key: "rebate", header: "Rebate", align: "right", hideOnMobile: true, sortValue: (r) => r.rebate, render: (r) => r.rebate ? <span className="text-rose-600">−{fmtEur(r.rebate)}</span> : <span className="text-slate-300">—</span> },

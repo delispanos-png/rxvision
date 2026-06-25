@@ -6,7 +6,7 @@ import { useEffect, useState } from "react";
 import {
   LayoutGrid, FileText, Newspaper, BookOpen, Users, UserCog, Mail,
   Server, Wrench, BarChart3, CreditCard, Receipt, LogOut, PlugZap,  Menu, X, Layers, Cloud,
-  ScrollText, KeyRound, Boxes, Settings, ChevronDown, ChevronRight,
+  ScrollText, KeyRound, Boxes, Settings, ChevronDown, ChevronRight, Percent,
 } from "lucide-react";
 import { adminApi, adminTokens, ApiError } from "@/lib/adminClient";
 import { LogoMark } from "@/components/brand/Logo";
@@ -31,6 +31,7 @@ const SETTINGS_GROUP = {
     { label: "Χρήστες", icon: UserCog, href: "/admin/staff", section: "staff" },
     { label: "Πληρωμές & ΑΑΔΕ", icon: KeyRound, href: "/admin/integrations", section: "integrations" },
     { label: "Διασύνδεση ΗΔΥΚΑ", icon: PlugZap, href: "/admin/idika", section: "idika" },
+    { label: "Διατίμηση / Κέρδος", icon: Percent, href: "/admin/markup", section: "markup" },
     { label: "Υποδομή / Cloud", icon: Cloud, href: "/admin/cloud", section: "cloud" },
     { label: "Ρυθμίσεις SMTP", icon: Server, href: "/admin/smtp", section: "smtp" },
     { label: "Συντήρηση", icon: Wrench, href: "/admin/maintenance", section: "maintenance" },
