@@ -38,9 +38,15 @@ celery_app.conf.beat_schedule = {
         "task": "app.workers.ingestion.dispatch_incremental_sync",
         "schedule": crontab(minute="*/5"),
     },
-    "reap-stalled-sync": {  # watchdog: kill sync jobs with no progress >5min
+    "reap-stalled-sync": {  # watchdog: kill sync jobs with no progress >10min
         "task": "app.workers.ingestion.reap_stalled_sync",
         "schedule": crontab(minute="*/2"),
+    },
+    # self-heal: resume historical backfill for tenants with a history_from not yet reached
+    # (a killed/stalled chunk → auto-continue from the current oldest record).
+    "historical-continue-dispatch": {
+        "task": "app.workers.ingestion.dispatch_historical_continue",
+        "schedule": crontab(minute="*/20"),
     },
     "nightly-snapshots": {
         "task": "app.workers.snapshots.compute_nightly",

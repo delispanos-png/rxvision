@@ -415,11 +415,50 @@ def hdika_backfill_continue(self, tenant_id: str, floor_iso: str | None = None) 
             "until": until.date().isoformat()}
 
 
+@celery_app.task(name="app.workers.ingestion.dispatch_historical_continue")
+def dispatch_historical_continue() -> int:
+    """Self-heal (beat): re-trigger ιστορική συνέχιση για tenants με `history_from` που δεν έχουν
+    ακόμη φτάσει εκεί — auto-resume αν ένα chunk σκοτώθηκε. Παραλείπει όσους τρέχουν ήδη backfill."""
+    async def _run():
+        client, db = _fresh_db()
+        try:
+            todo = []
+            async for t in db["tenants"].find(
+                    {"country": "GR", "status": {"$in": ["active", "trial"]},
+                     "credentials_ref.hdika": {"$ne": None}}, {"_id": 1}):
+                tid = str(t["_id"])
+                hf = (vault.get_secret(f"tenants/{tid}/hdika") or {}).get("history_from")
+                if not hf:
+                    continue
+                try:
+                    floor = datetime.strptime(str(hf)[:10], "%Y-%m-%d").replace(tzinfo=timezone.utc)
+                except ValueError:
+                    continue
+                d = await db["prescription_executions"].find_one(
+                    {"tenant_id": tid}, sort=[("executed_at", 1)], projection={"executed_at": 1})
+                oldest = d.get("executed_at") if d else None
+                if oldest and oldest.date() > floor.date():
+                    busy = await db["sync_jobs"].find_one(
+                        {"tenant_id": tid, "type": "backfill", "status": "running",
+                         "updated_at": {"$gte": datetime.now(tz=timezone.utc) - timedelta(minutes=12)}})
+                    if not busy:
+                        todo.append((tid, floor.isoformat()))
+            return todo
+        finally:
+            client.close()
+
+    todo = _run_async(_run())
+    for tid, floor_iso in todo:
+        hdika_backfill_continue.delay(tid, floor_iso)
+    return len(todo)
+
+
 @celery_app.task(name="app.workers.ingestion.reap_stalled_sync")
-def reap_stalled_sync(stall_minutes: int = 5) -> dict:
+def reap_stalled_sync(stall_minutes: int = 10) -> dict:
     """Watchdog (beat). A healthy sync writes a heartbeat (`updated_at`) every 20 records.
     If a 'running' job hasn't progressed for >`stall_minutes`, its worker is stuck →
-    KILL the Celery task (SIGKILL, no redelivery) and mark the job failed."""
+    KILL the Celery task (SIGKILL, no redelivery) and mark the job failed. 10min gives a heavy
+    rate-limited backfill page room to finish before being (falsely) reaped."""
     async def _run() -> dict:
         client, db = _fresh_db()
         try:
