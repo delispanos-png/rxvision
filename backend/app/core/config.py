@@ -29,8 +29,8 @@ class Settings(BaseSettings):
     IDIKA_ALLOWED_HOST_SUFFIXES: str = ""
 
     REDIS_URL: str = "redis://redis:6379/0"
-    HDIKA_MAX_CALLS_PER_SEC: int = 8     # global cap on ΗΔΥΚΑ HTTP calls/sec across ALL workers
-    HDIKA_CDA_CONCURRENCY: int = 5       # parallel CDA fetches within one tenant sync (bounded)
+    HDIKA_MAX_CALLS_PER_SEC: int = 40    # global cap on ΗΔΥΚΑ HTTP calls/sec across ALL workers
+    HDIKA_CDA_CONCURRENCY: int = 16      # parallel CDA fetches within one tenant sync (bounded)
     CELERY_BROKER_URL: str = "redis://redis:6379/1"
     CELERY_RESULT_BACKEND: str = "redis://redis:6379/2"
 

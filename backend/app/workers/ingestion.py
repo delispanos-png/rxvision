@@ -293,7 +293,7 @@ def hdika_incremental_sync(self, tenant_id: str) -> dict:
 @celery_app.task(name="app.workers.ingestion.hdika_backfill", bind=True,
                  acks_late=False, max_retries=0)
 def hdika_backfill(self, tenant_id: str, since_iso: str, until_iso: str | None = None,
-                   throttle: float = 0.08, continue_floor_iso: str | None = None) -> dict:
+                   throttle: float = 0.0, continue_floor_iso: str | None = None) -> dict:
     """Historical ΗΔΥΚΑ ingest for the window [`since_iso`, `until_iso`] (until defaults
     to today), recent-first, in the worker's own Celery process so it survives. Idempotent.
 

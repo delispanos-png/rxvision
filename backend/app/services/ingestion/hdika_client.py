@@ -180,7 +180,7 @@ class HdikaClient:
         # Basic auth + Api-Key + Accept on every request (no token/login step in v2).
         self._client = httpx.Client(
             timeout=_TIMEOUT,
-            limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
+            limits=httpx.Limits(max_connections=60, max_keepalive_connections=30),
             auth=(self.username, self.password) if self.username else None,
             headers=headers,
         )

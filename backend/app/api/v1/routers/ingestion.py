@@ -296,7 +296,7 @@ async def trigger_hdika_backfill(
     assert_source_allowed(await _tenant_country(ctx.tenant_id), "HDIKA")
     from app.workers.ingestion import hdika_backfill
     until_iso = f"{date_to}T23:59:59+00:00" if date_to else None
-    hdika_backfill.delay(ctx.tenant_id, f"{date_from}T00:00:00+00:00", until_iso, 0.08)
+    hdika_backfill.delay(ctx.tenant_id, f"{date_from}T00:00:00+00:00", until_iso, 0.0)
     return {"status": "queued"}
 
 
