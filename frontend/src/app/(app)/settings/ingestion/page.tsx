@@ -33,6 +33,21 @@ type Config = {
 type Tenant = { country?: string };
 type TestRes = { ok: boolean; mode: string; message: string };
 type SyncRes = { status: string; stats: Record<string, number> };
+type Progress = {
+  initialization: {
+    enabled: boolean; total_executions: number; oldest: string | null; newest: string | null;
+    running: boolean; target: string | null; complete: boolean; percent: number;
+    current?: { from: string | null; to: string | null; fetched: number | null; inserted: number | null };
+  };
+  incremental: {
+    running: boolean; newest: string | null; days_behind: number | null; percent: number;
+    last_at?: string | null; last_status?: string | null;
+    current?: { fetched: number | null; inserted: number | null; updated: number | null };
+  };
+};
+
+const fmtD = (s: string | null | undefined): string =>
+  s && /^\d{4}-\d{2}-\d{2}/.test(s) ? `${s.slice(8, 10)}/${s.slice(5, 7)}/${s.slice(0, 4)}` : "—";
 
 function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
   return (
@@ -70,6 +85,12 @@ export default function IngestionSettingsPage() {
   const latestJob = jobs.data?.items?.[0];
   const jobRunning = latestJob?.status === "running";
   const showProgress = syncing || jobRunning;
+  const progress = useQuery({
+    queryKey: ["hdika-progress"],
+    queryFn: () => api<Progress>("/ingestion/hdika/progress"),
+    retry: false,
+    refetchInterval: 5000,
+  });
 
   // clear the just-clicked flag once our queued sync has finished
   useEffect(() => {
@@ -208,6 +229,72 @@ export default function IngestionSettingsPage() {
           {(syncing || sync.isPending) ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />} {t("Συγχρονισμός τώρα", "Sync now")}
         </button>
       </div>
+
+      {/* ── ΔΥΟ ΜΠΑΡΕΣ ΠΡΟΟΔΟΥ: αρχικοποίηση ιστορικού + καθημερινός (incremental) ── */}
+      {c?.configured && progress.data && (() => {
+        const ini = progress.data.initialization;
+        const inc = progress.data.incremental;
+        return (
+          <div className="rx-card grid gap-5 p-4 sm:grid-cols-2">
+            {/* Αρχικοποίηση / ιστορικό */}
+            <div>
+              <div className="mb-1.5 flex items-center justify-between text-sm">
+                <span className="font-medium text-slate-700 dark:text-slate-200">
+                  {t("Αρχικοποίηση ιστορικού", "Historical initialization")}
+                  {ini.running && <span className="ml-2 text-[11px] font-normal text-brand-600">● {t("σε εξέλιξη", "running")}</span>}
+                </span>
+                <span className="text-xs font-medium text-slate-500">{ini.enabled ? `${ini.percent}%` : t("—", "—")}</span>
+              </div>
+              <div className="h-2.5 w-full overflow-hidden rounded-full bg-slate-100 dark:bg-slate-700">
+                <div className={`h-full rounded-full transition-all duration-700 ${ini.complete ? "bg-emerald-500" : "bg-brand-500"} ${ini.running ? "animate-pulse" : ""}`}
+                  style={{ width: `${ini.enabled ? ini.percent : 100}%` }} />
+              </div>
+              <div className="mt-1.5 text-xs text-slate-500 dark:text-slate-400">
+                {ini.complete
+                  ? t("✓ Πλήρες ιστορικό", "✓ Full history")
+                  : ini.enabled
+                    ? t(`Έφτασε ${fmtD(ini.oldest)} · στόχος ${fmtD(ini.target)}`, `Reached ${fmtD(ini.oldest)} · target ${fmtD(ini.target)}`)
+                    : t(`Δεδομένα από ${fmtD(ini.oldest)}`, `Data from ${fmtD(ini.oldest)}`)}
+                {ini.running && ini.current && (
+                  <span className="ml-1 text-brand-600">· {t("κατεβάζει", "fetching")} {fmtD(ini.current.to)}→{fmtD(ini.current.from)} ({(ini.current.fetched ?? 0).toLocaleString("el-GR")})</span>
+                )}
+              </div>
+              <div className="mt-0.5 text-[11px] text-slate-400">{ini.total_executions.toLocaleString("el-GR")} {t("εκτελέσεις σύνολο", "executions total")}</div>
+            </div>
+            {/* Καθημερινός / incremental */}
+            <div>
+              <div className="mb-1.5 flex items-center justify-between text-sm">
+                <span className="font-medium text-slate-700 dark:text-slate-200">
+                  {t("Καθημερινός συγχρονισμός", "Incremental sync")}
+                  {inc.running && <span className="ml-2 text-[11px] font-normal text-brand-600">● {t("σε εξέλιξη", "running")}</span>}
+                </span>
+                <span className="text-xs font-medium text-slate-500">{inc.percent}%</span>
+              </div>
+              <div className="h-2.5 w-full overflow-hidden rounded-full bg-slate-100 dark:bg-slate-700">
+                <div className={`h-full rounded-full transition-all duration-700 ${inc.percent >= 100 ? "bg-emerald-500" : "bg-amber-500"} ${inc.running ? "animate-pulse" : ""}`}
+                  style={{ width: `${Math.max(inc.percent, 4)}%` }} />
+              </div>
+              <div className="mt-1.5 text-xs text-slate-500 dark:text-slate-400">
+                {inc.running
+                  ? t("Συγχρονίζεται τώρα…", "Syncing now…")
+                  : inc.days_behind === 0
+                    ? t("✓ Ενημερωμένο (σήμερα)", "✓ Up to date (today)")
+                    : inc.newest
+                      ? t(`Ενημερωμένο έως ${fmtD(inc.newest)} (${inc.days_behind} ημ. πίσω)`, `Up to ${fmtD(inc.newest)} (${inc.days_behind}d behind)`)
+                      : t("Καμία άντληση ακόμη", "No data yet")}
+                {inc.running && inc.current && (
+                  <span className="ml-1 text-brand-600">· {(inc.current.fetched ?? 0).toLocaleString("el-GR")} {t("εγγραφές", "records")}</span>
+                )}
+              </div>
+              {inc.last_at && (
+                <div className="mt-0.5 text-[11px] text-slate-400">
+                  {t("Τελευταίος:", "Last:")} {new Date(inc.last_at).toLocaleString("el-GR")} · {inc.last_status}
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })()}
 
       {/* διακόπτης: όλα τα τεχνικά/επικίνδυνα εργαλεία κρυμμένα από προεπιλογή */}
       <div>

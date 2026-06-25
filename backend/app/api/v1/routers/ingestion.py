@@ -314,6 +314,85 @@ async def continue_hdika_history(
     return {"status": "queued"}
 
 
+@router.get("/hdika/progress")
+async def hdika_progress(
+    ctx: TenantContext = Depends(require("ingestion:read", module=_MODULE)),
+):
+    """Δύο μπάρες προόδου: (1) αρχικοποίηση/ιστορικό — πόσο πίσω έφτασε το oldest προς το
+    history_from· (2) incremental — πόσο ενημερωμένα είναι τα δεδομένα (newest vs σήμερα).
+    Δείχνει και αν τρέχει αυτή τη στιγμή κάποια εργασία + ζωντανά νούμερα."""
+    db = shared_db()
+    tid = ctx.tenant_id
+    now = datetime.now(tz=timezone.utc)
+
+    proj = {"executed_at": 1}
+    oldest_d = await db["prescription_executions"].find_one({"tenant_id": tid}, sort=[("executed_at", 1)], projection=proj)
+    newest_d = await db["prescription_executions"].find_one({"tenant_id": tid}, sort=[("executed_at", -1)], projection=proj)
+    total = await db["prescription_executions"].count_documents({"tenant_id": tid})
+    oldest = oldest_d.get("executed_at") if oldest_d else None
+    newest = newest_d.get("executed_at") if newest_d else None
+
+    # history_from (στόχος αρχικοποίησης)
+    hf_raw = (vault.get_secret(f"tenants/{tid}/hdika") or {}).get("history_from")
+    target = None
+    if hf_raw:
+        try:
+            target = datetime.strptime(str(hf_raw)[:10], "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        except ValueError:
+            target = None
+
+    fresh = now - timedelta(minutes=12)
+    run_bf = await db["sync_jobs"].find_one({"tenant_id": tid, "type": "backfill", "status": "running", "updated_at": {"$gte": fresh}})
+    run_inc = await db["sync_jobs"].find_one({"tenant_id": tid, "type": "incremental", "status": "running", "updated_at": {"$gte": fresh}})
+    last_inc = await db["sync_jobs"].find_one({"tenant_id": tid, "type": "incremental"}, sort=[("started_at", -1)])
+
+    def pct(x: float) -> int:
+        return max(0, min(100, round(x)))
+
+    # (1) Αρχικοποίηση: η μπάρα γεμίζει καθώς το oldest πάει προς το target.
+    init: dict = {"enabled": bool(target), "total_executions": total,
+                  "oldest": oldest.date().isoformat() if oldest else None,
+                  "newest": newest.date().isoformat() if newest else None,
+                  "running": bool(run_bf)}
+    if target and oldest:
+        span = (now - target).days or 1
+        covered = (now - oldest).days
+        init["target"] = target.date().isoformat()
+        init["complete"] = oldest.date() <= target.date()
+        init["percent"] = 100 if init["complete"] else pct(covered / span * 100)
+    else:
+        init["target"] = target.date().isoformat() if target else None
+        init["complete"] = False
+        init["percent"] = 0
+    if run_bf:
+        w = run_bf.get("window") or {}
+        s = run_bf.get("stats") or {}
+        init["current"] = {
+            "from": (w.get("start").date().isoformat() if w.get("start") else None),
+            "to": (w.get("end").date().isoformat() if w.get("end") else None),
+            "fetched": s.get("fetched"), "inserted": s.get("inserted")}
+
+    # (2) Incremental: ενημερωμένο όταν newest ≈ σήμερα. Μπάρα = 100 αν ≤1 ημέρα πίσω.
+    days_behind = (now.date() - newest.date()).days if newest else None
+    inc: dict = {"running": bool(run_inc), "newest": newest.date().isoformat() if newest else None,
+                 "days_behind": days_behind}
+    if days_behind is None:
+        inc["percent"] = 0
+    elif days_behind <= 1:
+        inc["percent"] = 100
+    else:
+        inc["percent"] = pct(100 - days_behind * 3)   # ~33 ημέρες πίσω → 0%
+    if last_inc:
+        inc["last_at"] = (last_inc.get("finished_at") or last_inc.get("started_at"))
+        inc["last_status"] = last_inc.get("status")
+    if run_inc:
+        s = run_inc.get("stats") or {}
+        inc["current"] = {"fetched": s.get("fetched"), "inserted": s.get("inserted"),
+                          "updated": s.get("updated")}
+
+    return {"initialization": init, "incremental": inc}
+
+
 @router.post("/hdika/sync/stop", status_code=202)
 async def stop_hdika_sync(
     ctx: TenantContext = Depends(require("ingestion:run", module=_MODULE)),
