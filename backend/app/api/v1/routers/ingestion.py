@@ -300,6 +300,20 @@ async def trigger_hdika_backfill(
     return {"status": "queued"}
 
 
+@router.post("/hdika/continue", status_code=202)
+async def continue_hdika_history(
+    floor: str | None = Query(None, description="YYYY-MM-DD — μέχρι πού πίσω (default: history_from ή 2024-01-01)"),
+    ctx: TenantContext = Depends(require("ingestion:run", module=_MODULE)),
+):
+    """Συνέχιση ιστορικής άντλησης από εκεί που σταμάτησε — κατεβάζει τα ΠΑΛΑΙΟΤΕΡΑ από όσα έχουμε,
+    αυτόματα σε chunks μέχρι το floor. Resumable μετά από διακοπή (ξεκινά από το τρέχον min)."""
+    assert_source_allowed(await _tenant_country(ctx.tenant_id), "HDIKA")
+    from app.workers.ingestion import hdika_backfill_continue
+    floor_iso = f"{floor}T00:00:00+00:00" if floor else None
+    hdika_backfill_continue.delay(ctx.tenant_id, floor_iso)
+    return {"status": "queued"}
+
+
 @router.post("/hdika/sync/stop", status_code=202)
 async def stop_hdika_sync(
     ctx: TenantContext = Depends(require("ingestion:run", module=_MODULE)),

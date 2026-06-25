@@ -145,6 +145,10 @@ export default function IngestionSettingsPage() {
   const [dlTo, setDlTo] = useState(new Date().toISOString().slice(0, 10));
   const [delFrom, setDelFrom] = useState(`${new Date().getFullYear()}-01-01`);
   const [delTo, setDelTo] = useState(new Date().toISOString().slice(0, 10));
+  const continueHistory = useMutation({
+    mutationFn: () => api("/ingestion/hdika/continue?floor=" + dlFrom, { method: "POST" }),
+    onSuccess: () => { syncStartRef.current = Date.now(); setSyncing(true); qc.invalidateQueries({ queryKey: ["ingestion-jobs"] }); },
+  });
   const backfillRange = useMutation({
     mutationFn: () => api("/ingestion/hdika/backfill?date_from=" + dlFrom + "&date_to=" + dlTo, { method: "POST" }),
     onSuccess: () => {
@@ -224,6 +228,11 @@ export default function IngestionSettingsPage() {
         </div>
         <label className="text-xs text-slate-500">{t("Από", "From")}<DateInput value={dlFrom} onChange={setDlFrom} className="mt-1 w-40" /></label>
         <label className="text-xs text-slate-500">{t("Έως", "To")}<DateInput value={dlTo} onChange={setDlTo} className="mt-1 w-40" /></label>
+        <button onClick={() => continueHistory.mutate()} disabled={syncing || continueHistory.isPending || !c?.configured || !dlFrom}
+          title={t("Κατεβάζει αυτόματα ΟΛΟ το ιστορικό από την ημ/νία «Από» μέχρι σήμερα, συνεχίζοντας από εκεί που έφτασε (resume).", "Auto-downloads ALL history from «From» to today, resuming where it left off.")}
+          className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-3 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-40">
+          {(syncing || continueHistory.isPending) ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />} {t("Συνέχιση ιστορικού (auto)", "Continue history (auto)")}
+        </button>
         <button onClick={() => backfillRange.mutate()} disabled={syncing || backfillRange.isPending || !c?.configured || !dlFrom}
           className="inline-flex items-center gap-1.5 rounded-lg border border-brand-300 bg-brand-50 px-3 py-2 text-sm font-medium text-brand-700 hover:bg-brand-100 disabled:opacity-40">
           {(syncing || backfillRange.isPending) ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />} {t("Κατέβασμα περιόδου", "Download period")}

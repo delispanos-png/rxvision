@@ -293,14 +293,25 @@ def hdika_incremental_sync(self, tenant_id: str) -> dict:
 @celery_app.task(name="app.workers.ingestion.hdika_backfill", bind=True,
                  acks_late=False, max_retries=0)
 def hdika_backfill(self, tenant_id: str, since_iso: str, until_iso: str | None = None,
-                   throttle: float = 0.08) -> dict:
+                   throttle: float = 0.08, continue_floor_iso: str | None = None) -> dict:
     """Historical ΗΔΥΚΑ ingest for the window [`since_iso`, `until_iso`] (until defaults
-    to today), recent-first, in the worker's own Celery process so it survives. Idempotent."""
+    to today), recent-first, in the worker's own Celery process so it survives. Idempotent.
+
+    If `continue_floor_iso` is set, the backfill SELF-CHAINS: after this 400-day chunk it checks
+    whether older data was fetched and, if there is still history above the floor, re-enqueues the
+    next older chunk. The «resume cursor» is min(executed_at) — re-triggering always continues from
+    where it stopped, even after an interruption. Stops when no older data exists or the floor is hit."""
     from app.services.ingestion.hdika_catalog import load_catalog_map
+
+    async def _oldest(db) -> datetime | None:
+        d = await db["prescription_executions"].find_one(
+            {"tenant_id": tenant_id}, sort=[("executed_at", 1)], projection={"executed_at": 1})
+        return d.get("executed_at") if d else None
 
     async def _run() -> dict:
         client, db = _fresh_db()
         try:
+            before_min = await _oldest(db)
             # Guard: never run two backfills for one tenant at once (they'd race over the
             # same window). Skip if one is already running with a live heartbeat (<10min).
             from datetime import datetime as _dt
@@ -339,11 +350,69 @@ def hdika_backfill(self, tenant_id: str, since_iso: str, until_iso: str | None =
             job = await IngestionEngine(tenant_id, db=db).ingest(
                 source="HDIKA", job_type="backfill", records=records, window=(since, until),
                 task_id=self.request.id)
-            return {"tenant_id": tenant_id, "status": job["status"], "stats": job["stats"]}
+            result = {"tenant_id": tenant_id, "status": job["status"], "stats": job["stats"]}
+            # AUTO-CHAIN: αν ζητήθηκε ιστορική συνέχιση & κατεβάσαμε παλαιότερα δεδομένα και υπάρχει
+            # ακόμη ιστορία πάνω από το floor → enqueue το επόμενο (παλαιότερο) chunk.
+            if continue_floor_iso:
+                floor = datetime.fromisoformat(continue_floor_iso)
+                if floor.tzinfo is None:
+                    floor = floor.replace(tzinfo=timezone.utc)
+                new_min = await _oldest(db)
+                progressed = (before_min is None) or (new_min and new_min < before_min)
+                if (progressed and new_min and new_min.date() > floor.date()
+                        and since.date() > floor.date()):
+                    nxt_until = new_min
+                    nxt_since = max(floor, nxt_until - timedelta(days=395))
+                    hdika_backfill.apply_async(
+                        (tenant_id, nxt_since.isoformat(), nxt_until.isoformat()),
+                        kwargs={"throttle": throttle, "continue_floor_iso": continue_floor_iso})
+                    result["continuing_from"] = nxt_since.date().isoformat()
+                else:
+                    result["historical_complete"] = True
+            return result
         finally:
             client.close()
 
     return _run_async(_run())
+
+
+@celery_app.task(name="app.workers.ingestion.hdika_backfill_continue", bind=True, max_retries=0)
+def hdika_backfill_continue(self, tenant_id: str, floor_iso: str | None = None) -> dict:
+    """Συνέχιση ιστορικής άντλησης από εκεί που σταμάτησε: κατεβάζει τα ΠΑΛΑΙΟΤΕΡΑ από όσα έχουμε,
+    μέχρι το floor (default = history_from ή 01/01/2024). Resumable — ξεκινά πάντα από το τρέχον
+    min(executed_at), οπότε ένα re-trigger μετά από διακοπή συνεχίζει χωρίς να ξαναρχίζει."""
+    async def _seed():
+        client, db = _fresh_db()
+        try:
+            floor = None
+            if floor_iso:
+                floor = datetime.fromisoformat(floor_iso)
+            if floor is None:
+                hf = (vault.get_secret(f"tenants/{tenant_id}/hdika") or {}).get("history_from")
+                if hf:
+                    floor = datetime.strptime(str(hf)[:10], "%Y-%m-%d")
+            if floor is None:
+                floor = datetime(2024, 1, 1)
+            if floor.tzinfo is None:
+                floor = floor.replace(tzinfo=timezone.utc)
+            d = await db["prescription_executions"].find_one(
+                {"tenant_id": tenant_id}, sort=[("executed_at", 1)], projection={"executed_at": 1})
+            until = d.get("executed_at") if d else datetime.now(tz=timezone.utc)
+            return floor, until
+        finally:
+            client.close()
+
+    floor, until = _run_async(_seed())
+    if until.date() <= floor.date():
+        return {"tenant_id": tenant_id, "status": "already_complete",
+                "note": f"data already reaches {floor.date().isoformat()}"}
+    since = max(floor, until - timedelta(days=395))
+    hdika_backfill.apply_async(
+        (tenant_id, since.isoformat(), until.isoformat()),
+        kwargs={"continue_floor_iso": floor.isoformat()})
+    return {"tenant_id": tenant_id, "status": "started",
+            "floor": floor.date().isoformat(), "first_chunk_from": since.date().isoformat(),
+            "until": until.date().isoformat()}
 
 
 @celery_app.task(name="app.workers.ingestion.reap_stalled_sync")
