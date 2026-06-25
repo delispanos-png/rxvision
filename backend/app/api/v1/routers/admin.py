@@ -532,7 +532,8 @@ class IntegrationsIn(BaseModel):
     revolut_webhook_secret: str | None = None
     anthropic_api_key: str | None = None  # PharmaCat clinical assistant (Claude)
     anthropic_enabled: bool | None = None
-    anthropic_model: str | None = None
+    anthropic_model: str | None = None        # model for pharmacist queries (cheap)
+    anthropic_admin_model: str | None = None  # model for admin KB corrections (strong)
 
 
 @router.get("/integrations")
@@ -549,7 +550,8 @@ async def get_integrations(_: PlatformContext = Depends(get_platform_admin)):
                     "webhook_secret_set": bool(rev.get("webhook_secret"))},
         "anthropic": {"api_key_set": bool(ant.get("api_key")),
                       "enabled": ant.get("enabled", True),
-                      "model": ant.get("model", "claude-opus-4-8")},
+                      "model": ant.get("model", "claude-opus-4-8"),
+                      "admin_model": ant.get("admin_model", "claude-opus-4-8")},
     }
 
 
@@ -581,6 +583,8 @@ async def set_integrations(body: IntegrationsIn,
         ant["enabled"] = body.anthropic_enabled
     if body.anthropic_model:
         ant["model"] = body.anthropic_model
+    if body.anthropic_admin_model:
+        ant["admin_model"] = body.anthropic_admin_model
     if ant:
         await db["platform_settings"].update_one({"_id": "anthropic"}, {"$set": ant}, upsert=True)
     return {"ok": True}
@@ -1466,3 +1470,124 @@ async def audit_logs_list(
     rows = await (db["audit_logs"].find(q).sort("at", -1)
                   .skip((page - 1) * page_size).limit(page_size).to_list(length=page_size))
     return {"page": page, "page_size": page_size, "total": total, "items": jsonsafe(rows)}
+
+
+# ── PharmaCat shared knowledge base (cached clinical answers) — admin curation ──────────────
+# The CDSS caches every answer platform-wide by query signature and re-serves it for free. A
+# wrong/miscategorised answer would otherwise be frozen, so admins can search/fix/delete entries.
+class KbEditIn(BaseModel):
+    reply: str | None = None
+    substances: list[str] | None = None       # commercial-substance names (drive product chips)
+    otc_categories: list[str] | None = None
+    query: str | None = None                  # the question text (lets admins fill unknown ones)
+
+
+class KbRegenIn(BaseModel):
+    question: str | None = None               # supply the question when the entry has none stored
+
+
+_GR_FOLD = {"α": "αά", "ά": "αά", "ε": "εέ", "έ": "εέ", "η": "ηή", "ή": "ηή",
+            "ι": "ιίϊΐ", "ί": "ιίϊΐ", "ϊ": "ιίϊΐ", "ο": "οό", "ό": "οό",
+            "υ": "υύϋΰ", "ύ": "υύϋΰ", "ϋ": "υύϋΰ", "ω": "ωώ", "ώ": "ωώ"}
+
+
+def _accent_insensitive_regex(term: str) -> str:
+    """Greek search that ignores tonos — 'καουρα' matches 'καούρα' and vice-versa."""
+    out = []
+    for ch in term:
+        cls = _GR_FOLD.get(ch.lower())
+        out.append(f"[{cls}]" if cls else re.escape(ch))
+    return "".join(out)
+
+
+@router.get("/pharmacat-kb")
+async def pharmacat_kb_list(q: str | None = None, page: int = 1, page_size: int = 30,
+                            _: PlatformContext = Depends(get_platform_admin)):
+    """Search the shared PharmaCat knowledge base by question or answer text."""
+    db = shared_db()
+    filt: dict = {}
+    if q and q.strip():
+        rx = {"$regex": _accent_insensitive_regex(q.strip()), "$options": "i"}
+        filt = {"$or": [{"query": rx}, {"result.reply": rx},
+                        {"result.substances.name": rx}]}
+    page = max(1, page)
+    page_size = max(1, min(page_size, 100))
+    coll = db["pharmacat_knowledge"]
+    total = await coll.count_documents(filt)
+    rows = await (coll.find(filt).sort("last_at", -1)
+                  .skip((page - 1) * page_size).limit(page_size).to_list(length=page_size))
+    items = []
+    for r in rows:
+        res = r.get("result") or {}
+        items.append({
+            "sig": r.get("sig"),
+            "query": r.get("query"),
+            "reply": (res.get("reply") or "")[:800],
+            "substances": [s.get("name") for s in (res.get("substances") or []) if s.get("name")],
+            "otc_categories": res.get("otc_categories") or [],
+            "stage": res.get("stage"),
+            "hits": r.get("hits", 0),
+            "edited_at": r.get("edited_at"),
+            "last_at": r.get("last_at"), "created_at": r.get("created_at"),
+        })
+    return {"page": page, "page_size": page_size, "total": total, "items": jsonsafe(items)}
+
+
+@router.delete("/pharmacat-kb/{sig}")
+async def pharmacat_kb_delete(sig: str, _: PlatformContext = Depends(get_platform_admin)):
+    """Delete a cached answer → the next time that question is asked the AI is re-queried fresh."""
+    res = await shared_db()["pharmacat_knowledge"].delete_one({"sig": sig})
+    return {"deleted": res.deleted_count}
+
+
+@router.put("/pharmacat-kb/{sig}")
+async def pharmacat_kb_edit(sig: str, body: KbEditIn,
+                            _: PlatformContext = Depends(get_platform_admin)):
+    """Override a cached answer in place (authoritative correction kept for all pharmacies)."""
+    db = shared_db()
+    cur = await db["pharmacat_knowledge"].find_one({"sig": sig})
+    if not cur:
+        raise HTTPException(http_status.HTTP_404_NOT_FOUND, "not_found")
+    result = dict(cur.get("result") or {})
+    if body.reply is not None:
+        result["reply"] = body.reply
+    if body.substances is not None:
+        result["substances"] = [{"name": n.strip()} for n in body.substances if n.strip()]
+    if body.otc_categories is not None:
+        result["otc_categories"] = [c.strip() for c in body.otc_categories if c.strip()]
+    sets: dict = {"result": result, "edited_at": datetime.now(tz=timezone.utc)}
+    if body.query is not None and body.query.strip():
+        sets["query"] = body.query.strip()[:500]
+    await db["pharmacat_knowledge"].update_one({"sig": sig}, {"$set": sets})
+    return {"ok": True}
+
+
+@router.post("/pharmacat-kb/{sig}/regenerate")
+async def pharmacat_kb_regenerate(sig: str, body: KbRegenIn | None = None,
+                                  _: PlatformContext = Depends(get_platform_admin)):
+    """Re-ask the AI for this question NOW (bypassing cache + daily limit) and overwrite the stored
+    answer with the fresh one. If the entry has no stored question, the admin can supply it."""
+    from app.services import pharmacat_service
+    db = shared_db()
+    cur = await db["pharmacat_knowledge"].find_one({"sig": sig})
+    if not cur:
+        raise HTTPException(http_status.HTTP_404_NOT_FOUND, "not_found")
+    query = (cur.get("query") or "").strip()
+    supplied = bool(body and body.question and body.question.strip())
+    if not query and supplied:
+        query = body.question.strip()
+    if not query:
+        raise HTTPException(http_status.HTTP_400_BAD_REQUEST, "no_query")  # δεν ξέρουμε την ερώτηση
+    st = await pharmacat_service.status()           # corrections use the stronger admin model
+    res = await pharmacat_service.ask([{"role": "user", "content": query}], None,
+                                      model=st.get("admin_model"))
+    if not res.get("ok"):
+        raise HTTPException(http_status.HTTP_502_BAD_GATEWAY,
+                            {"error": res.get("error") or "ai_failed"})
+    store = {k: v for k, v in res.items() if k != "ok"}
+    now = datetime.now(tz=timezone.utc)
+    sets = {"result": store, "last_at": now, "regenerated_at": now}
+    if supplied:
+        sets["query"] = query[:500]   # remember it so the button stays enabled next time
+    await db["pharmacat_knowledge"].update_one({"sig": sig}, {"$set": sets})
+    return {"ok": True, "reply": (res.get("reply") or "")[:800]}

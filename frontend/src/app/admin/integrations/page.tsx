@@ -9,7 +9,7 @@ import { fmtMoney } from "@/lib/formatters";
 type Integrations = {
   aade: { username: string | null; configured: boolean };
   revolut: { mode: string; api_key_set: boolean; webhook_secret_set: boolean };
-  anthropic?: { api_key_set: boolean; enabled: boolean; model: string };
+  anthropic?: { api_key_set: boolean; enabled: boolean; model: string; admin_model: string };
 };
 type Pkg = { _id: string; name?: string; price_monthly?: number; price_yearly?: number; trial_days?: number };
 
@@ -29,10 +29,12 @@ export default function IntegrationsPage() {
   const [antKey, setAntKey] = useState("");
   const [antEnabled, setAntEnabled] = useState(true);
   const [antModel, setAntModel] = useState("claude-opus-4-8");
+  const [antAdminModel, setAntAdminModel] = useState("claude-opus-4-8");
   useEffect(() => {
     if (status.data?.anthropic) {
       setAntEnabled(status.data.anthropic.enabled ?? true);
       setAntModel(status.data.anthropic.model || "claude-opus-4-8");
+      setAntAdminModel(status.data.anthropic.admin_model || "claude-opus-4-8");
     }
   }, [status.data]);
 
@@ -41,6 +43,7 @@ export default function IntegrationsPage() {
       aade_username: aadeUser || null, aade_password: aadePass || null,
       revolut_api_key: revKey || null, revolut_mode: revMode || null, revolut_webhook_secret: revSecret || null,
       anthropic_api_key: antKey || null, anthropic_enabled: antEnabled, anthropic_model: antModel || null,
+      anthropic_admin_model: antAdminModel || null,
     }) }),
     onSuccess: () => { setAadePass(""); setRevKey(""); setRevSecret(""); setAntKey(""); qc.invalidateQueries({ queryKey: ["integrations"] }); },
   });
@@ -106,14 +109,21 @@ export default function IntegrationsPage() {
           <label className="text-xs text-slate-500 sm:col-span-2">Anthropic API key
             <input type="password" value={antKey} onChange={(e) => setAntKey(e.target.value)} placeholder={s?.anthropic?.api_key_set ? "•••• (αποθηκευμένο — κενό = αμετάβλητο)" : "sk-ant-..."} className={inp} />
           </label>
-          <label className="text-xs text-slate-500">Μοντέλο (κόστος vs ποιότητα)
+          <label className="text-xs text-slate-500">Μοντέλο φαρμακοποιού (κόστος vs ποιότητα)
             <select value={antModel} onChange={(e) => setAntModel(e.target.value)} className={inp}>
               <option value="claude-opus-4-8">Opus 4.8 — κορυφαίο (ακριβότερο)</option>
               <option value="claude-sonnet-4-6">Sonnet 4.6 — ισορροπία (φθηνό)</option>
               <option value="claude-haiku-4-5">Haiku 4.5 — οικονομικό</option>
             </select>
           </label>
-          <label className="flex items-center gap-2 self-end pb-2 text-xs font-medium text-slate-600">
+          <label className="text-xs text-slate-500">Μοντέλο διορθώσεων / admin (ποιότητα)
+            <select value={antAdminModel} onChange={(e) => setAntAdminModel(e.target.value)} className={inp}>
+              <option value="claude-opus-4-8">Opus 4.8 — κορυφαίο (ακριβότερο)</option>
+              <option value="claude-sonnet-4-6">Sonnet 4.6 — ισορροπία (φθηνό)</option>
+              <option value="claude-haiku-4-5">Haiku 4.5 — οικονομικό</option>
+            </select>
+          </label>
+          <label className="flex items-center gap-2 self-end pb-2 text-xs font-medium text-slate-600 sm:col-span-2">
             <input type="checkbox" checked={antEnabled} onChange={(e) => setAntEnabled(e.target.checked)} className="h-4 w-4 rounded border-slate-300" />
             Ενεργή υπηρεσία {!antEnabled && <span className="text-rose-500">(απενεργοποιημένη για όλους)</span>}
           </label>

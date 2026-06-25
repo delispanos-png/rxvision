@@ -112,8 +112,10 @@ class PharmaCatRepository(BaseRepository):
         if not res.get("ok"):
             return res
         store = {k: v for k, v in res.items() if k != "ok"}  # products re-matched fresh each serve
+        question = next((m["content"] for m in messages if m.get("role") == "user"), "")
         await kb.update_one({"sig": sig}, {"$set": {"sig": sig, "result": store, "last_at": _now()},
-                                           "$setOnInsert": {"created_at": _now(), "hits": 0}}, upsert=True)
+                                           "$setOnInsert": {"created_at": _now(), "hits": 0,
+                                                            "query": question[:500]}}, upsert=True)
         res["source"] = "llm"
         res["products"] = await self.products_for(res.get("substances") or [])
         await self._record(user, messages, context, res, kind=kind, drugs=drugs, source="llm")

@@ -109,16 +109,22 @@ SCHEMA = {
 async def _config() -> dict:
     cfg = await shared_db()["platform_settings"].find_one({"_id": "anthropic"}) or {}
     model = cfg.get("model") if cfg.get("model") in ALLOWED_MODELS else _DEFAULT_MODEL
-    return {"api_key": cfg.get("api_key"), "enabled": cfg.get("enabled", True), "model": model}
+    # Separate (usually stronger) model for admin curation/regeneration of KB answers.
+    admin_model = cfg.get("admin_model") if cfg.get("admin_model") in ALLOWED_MODELS else _DEFAULT_MODEL
+    return {"api_key": cfg.get("api_key"), "enabled": cfg.get("enabled", True),
+            "model": model, "admin_model": admin_model}
 
 
 async def status() -> dict:
     c = await _config()
-    return {"configured": bool(c["api_key"]), "enabled": bool(c["enabled"]), "model": c["model"]}
+    return {"configured": bool(c["api_key"]), "enabled": bool(c["enabled"]),
+            "model": c["model"], "admin_model": c["admin_model"]}
 
 
-async def ask(messages: list[dict], context: dict | None = None) -> dict:
-    """messages: [{role: 'user'|'assistant', content: str}]. Returns the structured analysis."""
+async def ask(messages: list[dict], context: dict | None = None,
+              model: str | None = None) -> dict:
+    """messages: [{role: 'user'|'assistant', content: str}]. Returns the structured analysis.
+    `model` overrides the configured pharmacist model (e.g. admin regeneration uses a stronger one)."""
     c = await _config()
     if not c["api_key"]:
         return {"ok": False, "error": "not_configured"}
@@ -133,7 +139,7 @@ async def ask(messages: list[dict], context: dict | None = None) -> dict:
         if facts:
             sys = f"{SYSTEM}\n\nΓΝΩΣΤΑ ΣΤΟΙΧΕΙΑ ΑΣΘΕΝΟΥΣ: {facts}"
 
-    model = c["model"]
+    model = model if model in ALLOWED_MODELS else c["model"]
     # Cost-optimised for a high-volume counter tool: NO extended thinking (OTC triage is recall).
     out_cfg: dict = {"format": {"type": "json_schema", "schema": SCHEMA}}
     if model != "claude-haiku-4-5":   # effort param errors on Haiku 4.5
