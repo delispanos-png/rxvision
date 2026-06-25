@@ -8,7 +8,6 @@ import { api } from "@/lib/apiClient";
 import { PanelCard } from "@/components/ui/Card";
 import { appConfirm } from "@/store/dialogStore";
 import { useT } from "@/store/prefStore";
-import { fmtDate } from "@/lib/formatters";
 
 type Config = {
   configured: boolean;
@@ -83,8 +82,6 @@ export default function IngestionSettingsPage() {
     refetchInterval: 3000,
   });
   const latestJob = jobs.data?.items?.[0];
-  const jobRunning = latestJob?.status === "running";
-  const showProgress = syncing || jobRunning;
   const progress = useQuery({
     queryKey: ["hdika-progress"],
     queryFn: () => api<Progress>("/ingestion/hdika/progress"),
@@ -235,7 +232,16 @@ export default function IngestionSettingsPage() {
         const ini = progress.data.initialization;
         const inc = progress.data.incremental;
         return (
-          <div className="rx-card grid gap-5 p-4 sm:grid-cols-2">
+          <div className="rx-card p-4">
+            {(ini.running || inc.running) && (
+              <div className="mb-3 flex items-center justify-end">
+                <button onClick={() => stopSync.mutate()} disabled={stopSync.isPending}
+                  className="inline-flex items-center gap-1 rounded-lg border border-rose-300 bg-rose-50 px-2.5 py-1 text-xs font-medium text-rose-700 hover:bg-rose-100 disabled:opacity-50">
+                  {stopSync.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Square className="h-3.5 w-3.5" />} {stopSync.isSuccess ? t("Διακόπτεται…", "Stopping…") : t("Σταμάτημα", "Stop")}
+                </button>
+              </div>
+            )}
+            <div className="grid gap-5 sm:grid-cols-2">
             {/* Αρχικοποίηση / ιστορικό */}
             <div>
               <div className="mb-1.5 flex items-center justify-between text-sm">
@@ -291,6 +297,7 @@ export default function IngestionSettingsPage() {
                   {t("Τελευταίος:", "Last:")} {new Date(inc.last_at).toLocaleString("el-GR")} · {inc.last_status}
                 </div>
               )}
+            </div>
             </div>
           </div>
         );
@@ -355,55 +362,6 @@ export default function IngestionSettingsPage() {
       </div>
       </>
       )}
-
-      {/* live sync progress — real % bar driven by how much of the date range is done */}
-      {showProgress && (() => {
-        const pct = Math.max(0, Math.min(100, Math.round((latestJob?.progress ?? 0) * 100)));
-        const known = typeof latestJob?.progress === "number" && latestJob.progress > 0;
-        const fmtD = (d?: string) => d ? fmtDate(d) : "—";
-        const win = latestJob?.window as { start?: string; end?: string } | undefined;
-        return (
-          <div className="rx-card p-4">
-            <div className="mb-2 flex items-center justify-between text-sm">
-              <span className="inline-flex items-center gap-1.5 font-medium text-slate-700">
-                <Loader2 className="h-4 w-4 animate-spin text-brand-600" />
-                {jobRunning
-                  ? (latestJob?.type === "backfill" ? t("Ιστορική άντληση σε εξέλιξη…", "Historical fetch in progress…") : t("Συγχρονισμός σε εξέλιξη…", "Sync in progress…"))
-                  : t("Εκκίνηση συγχρονισμού…", "Starting sync…")}
-                {known && <span className="ml-1 font-bold text-brand-700">{pct}%</span>}
-              </span>
-              <span className="inline-flex items-center gap-3">
-                <span className="text-slate-500">{(latestJob?.stats?.fetched ?? 0)} {t("συνταγές", "prescriptions")} · {(latestJob?.stats?.inserted ?? 0)} {t("νέες", "new")} · {(latestJob?.stats?.updated ?? 0)} {t("ενημ.", "upd.")}</span>
-                {jobRunning && (
-                  <button onClick={() => stopSync.mutate()} disabled={stopSync.isPending}
-                    className="inline-flex items-center gap-1 rounded-lg border border-rose-300 bg-rose-50 px-2.5 py-1 text-xs font-medium text-rose-700 hover:bg-rose-100 disabled:opacity-50">
-                    {stopSync.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Square className="h-3.5 w-3.5" />} {stopSync.isSuccess ? t("Διακόπτεται…", "Stopping…") : t("Σταμάτημα", "Stop")}
-                  </button>
-                )}
-              </span>
-            </div>
-            {(win?.start || latestJob?.cursor_date) && (
-              <div className="mb-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500">
-                <span className="rounded-md bg-brand-50 px-1.5 py-0.5 font-semibold text-brand-700">
-                  {latestJob?.type === "backfill" ? t("Ιστορικό", "Historical") : "Incremental"}
-                </span>
-                {win?.start && (
-                  <span>{t("Περίοδος:", "Period:")} <b className="text-slate-700">{fmtD(win.start)}</b> → <b className="text-slate-700">{fmtD(win.end)}</b></span>
-                )}
-                {latestJob?.cursor_date && (
-                  <span>{t("· συγχρονίζει τώρα στο ", "· now syncing at ")}<b className="text-brand-700">{fmtD(latestJob.cursor_date)}</b></span>
-                )}
-              </div>
-            )}
-            <div className="h-2.5 w-full overflow-hidden rounded-full bg-slate-200">
-              <div
-                className={`h-full rounded-full bg-brand-500 transition-[width] duration-700 ease-out ${known ? "" : "w-1/3 animate-pulse"}`}
-                style={known ? { width: `${pct}%` } : undefined}
-              />
-            </div>
-          </div>
-        );
-      })()}
 
       {test.data && (
         <div className={`rx-card p-3 text-sm ${test.data.ok ? "text-emerald-700" : "text-rose-700"}`}>
