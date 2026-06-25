@@ -11,10 +11,12 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 
+from app.core.config import settings
 from app.core.deps import TenantContext, require
 from app.repositories.advisor import AdvisorRepository
 from app.repositories.patient_intelligence import PatientIntelligenceRepository
 from app.services import patient_advice
+from app.utils.anonymization import pseudonymize
 
 router = APIRouter()
 _MODULE = "patient_analytics"
@@ -104,47 +106,48 @@ async def profile_advice(body: AdviceIn,
     Αποθηκεύεται στη βάση· καλεί ξανά το AI ΜΟΝΟ όταν οι κλινικές συνθήκες (παθήσεις/φάρμακα/
     κατηγορίες/G6PD) έχουν αλλάξει — αλλιώς επιστρέφει τις αποθηκευμένες (ταχύτητα + μικρότερο κόστος)."""
     repo = _repo(ctx)
+
+    def _iso(d):
+        return d.isoformat() if d else None
+
+    # 1) ΦΘΗΝΗ υπογραφή κλινικών συνθηκών (χωρίς το βαρύ προφίλ 360°). Cache-hit → ΑΜΕΣΗ απάντηση.
+    pid, amka, sig_src = await repo.advice_signature(body.amka, date_from=body.date_from, date_to=body.date_to)
+    if not pid:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "patient_not_found")
+    sig = hashlib.sha256(json.dumps(sig_src, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+    # ΚΑΘΟΛΙΚΗ βάση γνώσεων: κλειδί = καθολικό ψευδώνυμο του ΑΜΚΑ (hash, όχι raw) → κοινή χρήση μεταξύ
+    # φαρμακείων. Χωρίς ΑΜΚΑ (demo/masked) → fallback ανά tenant ώστε να μη σπάει.
+    kb_key = (pseudonymize(amka, tenant_pepper=settings.ANONYMIZATION_GLOBAL_PEPPER)
+              if amka else f"t:{ctx.tenant_id}:{pid}")
+    coll = repo._db["ai_advice_kb"]
+    cached = await coll.find_one({"_id": kb_key})
+    if cached and cached.get("sig") == sig and not body.force and cached.get("advice", {}).get("ok"):
+        return {**cached["advice"], "cached": True, "shared": bool(amka), "generated_at": _iso(cached.get("generated_at"))}
+
+    # 2) MISS (ή force) → χτίσε το προφίλ ΜΟΝΟ για κλινικά (παθήσεις/φάρμακα/δημογραφικά), κάλεσε AI,
+    # αποθήκευσε καθολικά. ΔΕΝ περνάμε στοιχεία-σχέσης φαρμακείου (επισκέψεις/αξία/VIP/συμμόρφωση) ώστε
+    # η κοινή συμβουλή να μη διαρρέει δεδομένα ενός φαρμακείου σε άλλο.
     prof = await repo.patient_profile(body.amka, date_from=body.date_from, date_to=body.date_to)
     if not prof.get("found"):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "patient_not_found")
-    p, fin, adh = prof["patient"], prof["financials"], prof["adherence"]
+    p = prof["patient"]
     facts = {
         "ηλικιακή_ομάδα": p.get("age_group"), "φύλο": p.get("sex"),
         "θεραπευτικές_κατηγορίες": [s["label"] for s in prof["segments"]],
         "παθήσεις": [f"{c['code']} {c.get('title') or ''}".strip() for c in prof["conditions"]],
         "βασικά_φάρμακα": [m["name"] for m in prof["medicines"][:8]],
-        "συμμόρφωση_%": adh.get("compliance"), "χαμένες_εκτελέσεις": adh.get("missed"),
-        "διαθέσιμες_ανανεώσεις": adh.get("available"),
-        "αξία_πελάτη_cents": prof["vip"].get("value"), "vip_tier": prof["vip"].get("tier"),
-        "επισκέψεις": fin.get("rx_count"), "ημέρες_από_τελευταία": p.get("gap_days"),
         "έλλειψη_ενζύμου_G6PD": "ΝΑΙ — προσοχή σε οξειδωτικά φάρμακα" if prof.get("clinical", {}).get("g6pd_deficiency") else "όχι",
     }
-    # Υπογραφή ΜΟΝΟ των κλινικών (αργά μεταβαλλόμενων) συνθηκών — όχι μεταβλητών όπως συμμόρφωση.
-    sig_src = {"age": facts["ηλικιακή_ομάδα"], "sex": facts["φύλο"],
-               "conditions": sorted(facts["παθήσεις"]), "medicines": sorted(facts["βασικά_φάρμακα"]),
-               "segments": sorted(facts["θεραπευτικές_κατηγορίες"]), "g6pd": facts["έλλειψη_ενζύμου_G6PD"]}
-    sig = hashlib.sha256(json.dumps(sig_src, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
-    pid = prof["patient"].get("id")
-    coll = repo._db["patient_ai_advice"]
-    cached = await coll.find_one({"tenant_id": ctx.tenant_id, "patient_ref": pid})
-
-    def _iso(d):
-        return d.isoformat() if d else None
-
-    # Αμετάβλητες συνθήκες → επιστροφή αποθηκευμένων (χωρίς κλήση AI)
-    if cached and cached.get("sig") == sig and not body.force and cached.get("advice", {}).get("ok"):
-        return {**cached["advice"], "cached": True, "generated_at": _iso(cached.get("generated_at"))}
-
     res = await patient_advice.advise(facts)
     if not res.get("ok"):
-        if cached and cached.get("advice", {}).get("ok"):    # AI κάτω → fallback στις αποθηκευμένες
+        if cached and cached.get("advice", {}).get("ok"):    # AI κάτω → fallback στα αποθηκευμένα
             return {**cached["advice"], "cached": True, "stale": True, "generated_at": _iso(cached.get("generated_at"))}
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, res.get("error", "unavailable"))
     now = datetime.now(tz=timezone.utc)
-    await coll.update_one({"tenant_id": ctx.tenant_id, "patient_ref": pid},
+    await coll.update_one({"_id": kb_key},
                           {"$set": {"sig": sig, "advice": res, "generated_at": now,
                                     "conditions": sig_src["conditions"]}}, upsert=True)
-    return {**res, "cached": False, "generated_at": _iso(now)}
+    return {**res, "cached": False, "shared": bool(amka), "generated_at": _iso(now)}
 
 
 # ── pharmacist notes / comments on a patient ────────────────────────────────

@@ -10,6 +10,7 @@ from app.api.v1.routers import (
     billing,
     fund_groups,
     future,
+    pharmacy_availability,
     gdpr,
     infra_cloud,
     icd10,
@@ -45,6 +46,7 @@ api_router.include_router(patient_intelligence.router, prefix="/patient-intellig
 api_router.include_router(pharmacat.router, prefix="/pharmacat", tags=["pharmacat"])
 api_router.include_router(copilot.router, prefix="/copilot", tags=["copilot"])
 api_router.include_router(reimbursement.router, prefix="/reimbursement", tags=["reimbursement"])
+api_router.include_router(pharmacy_availability.router, prefix="/pharmacy-availability", tags=["pharmacy-availability"])
 api_router.include_router(loyalty.router, prefix="/loyalty", tags=["loyalty"])
 api_router.include_router(dashboard.router, prefix="/dashboard", tags=["dashboard"])
 api_router.include_router(advisor.router, prefix="/advisor", tags=["advisor"])

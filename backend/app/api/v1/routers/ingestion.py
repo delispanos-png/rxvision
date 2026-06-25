@@ -104,7 +104,14 @@ async def _effective_hdika_creds(tenant_id: str) -> dict:
                 creds["api_key"] = envcfg["api_key"]
             if envcfg.get("pharmacy_id"):
                 creds["pharmacy_id"] = envcfg["pharmacy_id"]
-        # production: keep the tenant's own username/password/api_key/pharmacy_id as-is
+        else:
+            # PRODUCTION: η εφαρμογή (integrator) έχει ΚΟΙΝΟ api_key & integrator creds — κληρονομούνται
+            # από το platform ΟΤΑΝ το φαρμακείο δεν τα έχει δηλώσει, ώστε να δίνει ΜΟΝΟ username+password.
+            for src, dst in (("api_key", "api_key"), ("integrator_username", "integrator_username"),
+                             ("integrator_password", "integrator_password"),
+                             ("client_id", "client_id"), ("client_secret", "client_secret")):
+                if envcfg.get(src) and not creds.get(dst):
+                    creds[dst] = envcfg[src]
     _assert_safe_idika_base_url(creds)   # SSRF guard before any outbound ΗΔΥΚΑ call (M2)
     return creds
 

@@ -18,6 +18,7 @@ import { BellRing } from "lucide-react";
 import { fmtDate, fmtDateTime } from "@/lib/formatters";
 
 type Pharmacy = { tenant_id: string; pharmacy_name: string };
+type Pharm = { status: { isOpen: boolean; isOnDuty: boolean; isOvernightDuty: boolean; closingSoon: boolean; statusText: string }; schedule: { week: { day: number; status: string; intervals: { start: string; end: string }[] }[] } };
 type Me = { profile: { first_name: string; last_name: string }; active_tenant: string | null; pharmacies: Pharmacy[] };
 type Summary = { rx_count: number; paid_cents: number; total_cents: number; covered_cents: number; doctors: number; medicines: number; repeats_active: number; next_open_date?: string | null; first_at?: string | null; last_at?: string | null };
 type Rx = { barcode: string; executed_at: string; status?: string; patient_share?: number; repeat_current?: number; repeat_total?: number; repeat_root?: string | null; next_open_date?: string | null; medicines: string[]; pending?: string[]; partial?: boolean; doctor?: string | null; specialty?: string | null };
@@ -68,6 +69,7 @@ const statusCls = (s: string) =>
 export default function PortalHome() {
   const router = useRouter();
   const [me, setMe] = useState<Me | null>(null);
+  const [pharm, setPharm] = useState<Pharm | null>(null);
   const [summary, setSummary] = useState<Summary | null>(null);
   const [noPharmacy, setNoPharmacy] = useState(false);
   const [tab, setTab] = useState<string>("rx");
@@ -132,6 +134,7 @@ export default function PortalHome() {
         patientApi<{ items: Notif[] }>("/patient/notifications"),
       ]);
       setSummary(s); setRx(p.items); setRepeats(r.items); setNotifs(n.items);
+      patientApi<Pharm>("/patient/pharmacy-hours").then(setPharm).catch(() => setPharm(null));
       if (n.items.length) setShowNotifs(true);
     } catch { /* patientApi redirects to /portal/login on 401 */ }
   }, [router]);
@@ -300,6 +303,24 @@ export default function PortalHome() {
       </header>
 
       <main className="mx-auto max-w-5xl px-4 py-6">
+        {/* ── ζωντανή κατάσταση φαρμακείου ───────────────────── */}
+        {pharm && (
+          <div className={`mb-5 flex flex-wrap items-center justify-between gap-2 rounded-2xl px-4 py-3 text-white ${pharm.status.isOnDuty ? (pharm.status.isOvernightDuty ? "bg-indigo-600" : "bg-violet-600") : pharm.status.isOpen ? (pharm.status.closingSoon ? "bg-amber-500" : "bg-emerald-600") : "bg-slate-500"}`}>
+            <div className="flex items-center gap-2">
+              <span className="grid h-9 w-9 place-items-center rounded-xl bg-white/20 text-lg">{pharm.status.isOvernightDuty ? "🌙" : pharm.status.isOnDuty ? "🚑" : pharm.status.isOpen ? "🟢" : "🔴"}</span>
+              <div className="leading-tight">
+                <div className="text-[10px] uppercase tracking-wide opacity-80">{activeName || "Το φαρμακείο σου"}</div>
+                <div className="text-base font-extrabold">{pharm.status.statusText}</div>
+              </div>
+            </div>
+            {(() => {
+              const today = pharm.schedule.week.find((d) => d.day === ((new Date().getDay() + 6) % 7));
+              const hrs = today && today.status !== "closed" ? today.intervals.map((i) => `${i.start}–${i.end}`).join(" & ") : "Κλειστά";
+              return <div className="text-right text-xs opacity-90"><div className="opacity-70">Σήμερα</div><div className="font-semibold">{hrs}</div></div>;
+            })()}
+          </div>
+        )}
+
         {/* ── hero ───────────────────────────────────────────── */}
         <div className="mb-6">
           <h1 className="text-xl font-extrabold tracking-tight text-slate-900 sm:text-2xl">Γεια σου, {me.profile.first_name} 👋</h1>

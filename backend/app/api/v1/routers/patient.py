@@ -133,6 +133,14 @@ async def my_summary(ctx: PatientContext = Depends(get_patient_context)):
     return await PatientRxRepository(tenant_id=ctx.tenant_id).summary(ctx.patient_ref)
 
 
+@router.get("/pharmacy-hours")
+async def pharmacy_hours(ctx: PatientContext = Depends(get_patient_context)):
+    """Ζωντανή κατάσταση (ανοιχτό/κλειστό/εφημερία) + εβδομαδιαίο ωράριο του ενεργού φαρμακείου."""
+    from app.repositories.pharmacy_availability import PharmacyAvailabilityRepository
+    repo = PharmacyAvailabilityRepository(tenant_id=ctx.tenant_id)
+    return {"status": await repo.status(), "schedule": await repo.get_schedule()}
+
+
 @router.get("/renewals")
 async def my_renewals(ctx: PatientContext = Depends(get_patient_context)):
     """Διαθέσιμες ανανεώσεις: χρόνιες επαναλαμβανόμενες συνταγές που μπορούν να εκτελεστούν τώρα

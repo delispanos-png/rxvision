@@ -360,6 +360,63 @@ class PatientIntelligenceRepository(BaseRepository):
         return jsonsafe({"items": mask_rows(items[:300], self.demo), "count": len(items)})
 
     # ── 360° SINGLE-PATIENT PROFILE («Εικόνα Πελάτη», by ΑΜΚΑ) ───────────────
+    async def advice_signature(self, amka: str | None = None, patient_id: str | None = None,
+                               barcode: str | None = None, date_from: datetime | None = None,
+                               date_to: datetime | None = None) -> tuple:
+        """Φθηνή υπογραφή κλινικών συνθηκών (παθήσεις/φάρμακα/δημογραφικά/G6PD) ΧΩΡΙΣ το βαρύ προφίλ
+        360° — για άμεσο cache-hit στις AI συμβουλές. Επιστρέφει (patient_id_str, sig_src) ή (None, None)."""
+        from bson import ObjectId
+
+        def _aware(d):
+            return d.replace(tzinfo=timezone.utc) if d and d.tzinfo is None else d
+        date_from, date_to = _aware(date_from), _aware(date_to)
+        pa = None
+        if barcode:
+            bc = (barcode or "").strip().split(":")[0]
+            if bc:
+                ex = await self._db["prescription_executions"].find_one(
+                    {"tenant_id": self.tenant_id, "external_id": {"$regex": "^" + re.escape(bc)}},
+                    {"patient_ref": 1})
+                if ex and ex.get("patient_ref"):
+                    patient_id = str(ex["patient_ref"])
+        if patient_id:
+            try:
+                pa = await self._db["patients_anonymized"].find_one(
+                    {"tenant_id": self.tenant_id, "_id": ObjectId(patient_id)})
+            except Exception:  # noqa: BLE001
+                pa = None
+        if pa is None and (amka or "").strip():
+            pa = await self._db["patients_anonymized"].find_one(
+                {"tenant_id": self.tenant_id, "amka": amka.strip()})
+        if not pa:
+            return None, None, None
+        pid = pa["_id"]
+        q: dict = {"tenant_id": self.tenant_id, "patient_ref": pid}
+        if date_from or date_to:
+            q["executed_at"] = {}
+            if date_from:
+                q["executed_at"]["$gte"] = date_from
+            if date_to:
+                q["executed_at"]["$lte"] = date_to
+        codes: set = set()
+        exec_ids: list = []
+        async for e in self._db["prescription_executions"].find(q, {"icd10": 1}):
+            exec_ids.append(e["_id"])
+            for c in (e.get("icd10") or []):
+                codes.add(c)
+        meds: set = set()
+        if exec_ids:
+            async for it in self._db["prescription_items"].find(
+                    {"tenant_id": self.tenant_id, "execution_id": {"$in": exec_ids}}, {"product_id": 1}):
+                if it.get("product_id"):
+                    meds.add(str(it["product_id"]))
+        ct = await self._db["patient_contacts"].find_one(
+            {"tenant_id": self.tenant_id, "_id": pid}, {"g6pd_deficiency": 1}) or {}
+        sig_src = {"age": pa.get("age_group"), "sex": pa.get("sex"),
+                   "conditions": sorted(codes), "medicines": sorted(meds),
+                   "g6pd": bool(ct.get("g6pd_deficiency"))}
+        return str(pid), (pa.get("amka") or None), sig_src
+
     async def patient_profile(self, amka: str | None = None, patient_id: str | None = None,
                               barcode: str | None = None, date_from: datetime | None = None,
                               date_to: datetime | None = None) -> dict:
