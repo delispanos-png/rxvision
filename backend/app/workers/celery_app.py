@@ -24,9 +24,12 @@ celery_app.conf.update(
     # spawning duplicate concurrent runs that raced over the same window. Raise to 12h.
     broker_transport_options={"visibility_timeout": 43200},
     task_default_queue="celery",
-    # Optical-audit scans (interactive, user-facing) get a DEDICATED queue so they never
-    # wait behind heavy/slow background jobs (e.g. a 100s ΗΔΥΚΑ incremental sync).
-    task_routes={"app.workers.optical.process_scan": {"queue": "optical"}},
+    # Optical-audit scans (interactive) + heavy historical backfills get DEDICATED queues so they
+    # never block the fast 5-min incrementals (and vice-versa).
+    task_routes={
+        "app.workers.optical.process_scan": {"queue": "optical"},
+        "app.workers.ingestion.hdika_backfill": {"queue": "backfill"},
+    },
 )
 
 # Periodic schedule (beat). Per-tenant incremental sync fans out from the dispatcher.

@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timedelta, timezone
 
+import redis as _redis
 from motor.motor_asyncio import AsyncIOMotorClient
 
 from app.core.config import settings
@@ -21,10 +22,61 @@ from app.services.vault_service import vault
 from app.workers.celery_app import celery_app
 
 
+# ── Pool reuse: ΕΝΑ persistent event loop + ΕΝΑΣ Motor client ΑΝΑ worker process ──────────────
+# Πριν: κάθε task έφτιαχνε νέο loop (asyncio.run) + νέο Motor pool → connection churn με πολλούς
+# tenants. Τώρα: persistent loop ανά process· ο Motor client δένεται σε αυτό & επαναχρησιμοποιείται.
+_LOOP = None
+_MOTOR = None
+
+
+def _run_async(coro):
+    """Τρέξε coroutine σε persistent per-process loop (αντί asyncio.run που φτιάχνει/κλείνει loop)."""
+    global _LOOP, _MOTOR
+    if _LOOP is None or _LOOP.is_closed():
+        _LOOP = asyncio.new_event_loop()
+        asyncio.set_event_loop(_LOOP)
+        _MOTOR = None        # ο Motor client δένεται στο loop — νέο loop ⇒ νέος client
+    return _LOOP.run_until_complete(coro)
+
+
+class _NoClose:
+    """Proxy ώστε τα υπάρχοντα `client.close()` στα tasks να μη κλείνουν τον ΚΟΙΝΟ client."""
+    def close(self):
+        pass
+
+
 def _fresh_db():
-    """A Motor client bound to the current (per-task) event loop."""
-    client = AsyncIOMotorClient(settings.MONGODB_URI, tz_aware=True)
-    return client, client[settings.MONGODB_DB]
+    """Επιστρέφει τον ΚΟΙΝΟ (persistent) Motor client + db. Ο client δένεται στο persistent loop
+    την πρώτη φορά και επαναχρησιμοποιείται — όχι νέο pool ανά task."""
+    global _MOTOR
+    if _MOTOR is None:
+        _MOTOR = AsyncIOMotorClient(settings.MONGODB_URI, tz_aware=True)
+    return _NoClose(), _MOTOR[settings.MONGODB_DB]
+
+
+def _sync_lock(key: str, ttl: int):
+    """Best-effort per-tenant lock (Redis SET NX EX) so the 5-min beat never stacks two
+    concurrent syncs for the SAME tenant. Returns (acquired: bool, release: callable). If Redis
+    is unreachable we fail OPEN (allow the sync) — availability over the optimisation."""
+    try:
+        r = _redis.from_url(settings.REDIS_URL)
+        got = bool(r.set(key, "1", nx=True, ex=ttl))
+    except Exception:  # noqa: BLE001
+        return True, (lambda: None)
+
+    def _release():
+        try:
+            r.delete(key)
+            r.close()
+        except Exception:  # noqa: BLE001
+            pass
+
+    if not got:
+        try:
+            r.close()
+        except Exception:  # noqa: BLE001
+            pass
+    return got, _release
 
 
 def _history_floor(creds: dict):
@@ -66,7 +118,7 @@ def dispatch_incremental_sync() -> int:
         finally:
             client.close()
 
-    tenant_ids = asyncio.run(_run())
+    tenant_ids = _run_async(_run())
     for tid in tenant_ids:
         hdika_incremental_sync.delay(tid)
     return len(tenant_ids)
@@ -85,7 +137,7 @@ def dispatch_cancellation_reconcile() -> int:
         finally:
             client.close()
 
-    tenant_ids = asyncio.run(_run())
+    tenant_ids = _run_async(_run())
     for tid in tenant_ids:
         reconcile_cancellations_task.delay(tid)
     return len(tenant_ids)
@@ -103,7 +155,7 @@ def reconcile_cancellations_task(self, tenant_id: str) -> dict:
             return await reconcile_tenant(tenant_id, db=db, dry_run=False)
         finally:
             client.close()
-    return asyncio.run(_run())
+    return _run_async(_run())
 
 
 def _gr_hdika_tenants(db):
@@ -120,7 +172,7 @@ def _dispatch_deep(days: int) -> int:
             return [str(t["_id"]) async for t in _gr_hdika_tenants(db)]
         finally:
             client.close()
-    ids = asyncio.run(_run())
+    ids = _run_async(_run())
     for tid in ids:
         deep_reconcile_task.delay(tid, days)
     return len(ids)
@@ -150,7 +202,7 @@ def deep_reconcile_task(self, tenant_id: str, days: int) -> dict:
             return await deep_reconcile_tenant(tenant_id, db=db, days=days, dry_run=False)
         finally:
             client.close()
-    return asyncio.run(_run())
+    return _run_async(_run())
 
 
 @celery_app.task(name="app.workers.ingestion.dispatch_influenza_sync")
@@ -165,7 +217,7 @@ def dispatch_influenza_sync() -> int:
                  "ingestion_config.hdika.sync_enabled": {"$ne": False}}, {"_id": 1})]
         finally:
             client.close()
-    tenant_ids = asyncio.run(_run())
+    tenant_ids = _run_async(_run())
     for tid in tenant_ids:
         influenza_sync_task.delay(tid)
     return len(tenant_ids)
@@ -183,16 +235,26 @@ def influenza_sync_task(self, tenant_id: str) -> dict:
             return await sync_influenza(tenant_id, db=db, dry_run=False)
         finally:
             client.close()
-    return asyncio.run(_run())
+    return _run_async(_run())
 
 
 @celery_app.task(
     name="app.workers.ingestion.hdika_incremental_sync",
     bind=True, max_retries=5, autoretry_for=(ConnectionError, TimeoutError),
     retry_backoff=True, retry_backoff_max=3600, retry_jitter=True,
+    # Backstop: ένα incremental είναι πλέον λεπτά (parallel CDA). Αν ξεπεράσει 30′ κάτι πάει στραβά →
+    # σκοτώνεται (το lock ελευθερώνεται στο finally) & ξανατρέχει στο επόμενο beat. Τα backfills ΔΕΝ
+    # έχουν αυτό το όριο (τρέχουν στο δικό τους task/queue).
+    soft_time_limit=1800, time_limit=2100,
 )
 def hdika_incremental_sync(self, tenant_id: str) -> dict:
     """Pull new ΗΔΥΚΑ executions since the last watermark; idempotent."""
+    # Per-tenant lock: if a previous sync for this tenant is still running (slow ΗΔΥΚΑ / big
+    # window), SKIP this beat instead of stacking a duplicate concurrent sync.
+    acquired, _release_lock = _sync_lock(f"hdika:sync:lock:{tenant_id}", ttl=7200)
+    if not acquired:
+        return {"tenant_id": tenant_id, "status": "skipped", "note": "sync already running"}
+
     async def _run() -> dict:
         client, db = _fresh_db()
         try:
@@ -222,7 +284,10 @@ def hdika_incremental_sync(self, tenant_id: str) -> dict:
         finally:
             client.close()
 
-    return asyncio.run(_run())
+    try:
+        return _run_async(_run())
+    finally:
+        _release_lock()
 
 
 @celery_app.task(name="app.workers.ingestion.hdika_backfill", bind=True,
@@ -278,7 +343,7 @@ def hdika_backfill(self, tenant_id: str, since_iso: str, until_iso: str | None =
         finally:
             client.close()
 
-    return asyncio.run(_run())
+    return _run_async(_run())
 
 
 @celery_app.task(name="app.workers.ingestion.reap_stalled_sync")
@@ -300,6 +365,16 @@ def reap_stalled_sync(stall_minutes: int = 5) -> dict:
                 if tid:
                     # terminate the running task + revoke so acks_late can't redeliver it
                     celery_app.control.revoke(tid, terminate=True, signal="SIGKILL")
+                # Release the per-tenant lock — a SIGKILL/worker-restart never runs the task's
+                # `finally`, so the lock (2h TTL) would otherwise block this tenant's syncs.
+                ten = j.get("tenant_id")
+                if ten:
+                    try:
+                        rr = _redis.from_url(settings.REDIS_URL)
+                        rr.delete(f"hdika:sync:lock:{ten}")
+                        rr.close()
+                    except Exception:  # noqa: BLE001
+                        pass
                 await db["sync_jobs"].update_one(
                     {"_id": j["_id"]},
                     {"$set": {"status": "failed", "finished_at": datetime.now(tz=timezone.utc),
@@ -309,7 +384,7 @@ def reap_stalled_sync(stall_minutes: int = 5) -> dict:
         finally:
             client.close()
 
-    return asyncio.run(_run())
+    return _run_async(_run())
 
 
 @celery_app.task(name="app.workers.ingestion.gesy_xml_ingest")

@@ -36,11 +36,45 @@ from app.services.ingestion.canonical import (
     CanonicalItem,
     CanonicalPatient,
 )
+from app.core.config import settings
 from app.services.ingestion.hdika_cda import parse_cda, parse_cda_full
 
 _PAGE_SIZE = 100                  # ΗΔΥΚΑ rejects size>~150 with HTTP 400; 100 is safe
 _MAX_BACKFILL_DAYS = 400          # cap day-by-day backfill (search is per-day)
 _TIMEOUT = httpx.Timeout(30.0, connect=10.0)
+
+# ── ΚΑΘΟΛΙΚΟ rate limiter προς ΗΔΥΚΑ (Redis sliding 1-sec window) ─────────────────────────
+# Cap συνολικών calls/sec σε ΟΛΟΥΣ τους workers/tenants ώστε να μη «χτυπάμε» την ΗΔΥΚΑ (429/block).
+# Fail-open: αν το Redis δεν είναι διαθέσιμο, δεν μπλοκάρει τον συγχρονισμό.
+_RL = None
+
+
+def _rl_redis():
+    global _RL
+    if _RL is None:
+        try:
+            import redis
+            _RL = redis.from_url(settings.REDIS_URL)
+        except Exception:  # noqa: BLE001
+            _RL = False
+    return _RL
+
+
+def _hdika_rate_gate(max_per_sec: int) -> None:
+    r = _rl_redis()
+    if not r or max_per_sec <= 0:
+        return
+    for _ in range(400):                 # ~ έως 20s αναμονή σε ακραίο φόρτο
+        try:
+            slot = int(time.time())
+            n = r.incr(f"hdika:rl:{slot}")
+            if n == 1:
+                r.expire(f"hdika:rl:{slot}", 2)
+            if n <= max_per_sec:
+                return
+        except Exception:  # noqa: BLE001
+            return                        # Redis πρόβλημα → μην μπλοκάρεις
+        time.sleep(0.05)
 
 
 def _strip_ns(tag: str) -> str:
@@ -136,6 +170,7 @@ class HdikaClient:
         self.etyap_contracted = str(c.get("etyap_contracted", "")).strip().lower() in ("1", "true", "yes")
         self.catalog = catalog or {}     # eofCode → price/cost (Δελτίο Τιμών) for per-med analysis
         self.throttle = float(c.get("throttle") or 0)   # seconds to pause after each call (be gentle on ΗΔΥΚΑ)
+        self.max_rps = int(c.get("max_rps") or settings.HDIKA_MAX_CALLS_PER_SEC)  # global rate cap
         self.skipped_days = 0           # days skipped due to transient gateway errors
         headers = {"Accept": "application/xml"}
         if self.api_key:
@@ -145,9 +180,14 @@ class HdikaClient:
         # Basic auth + Api-Key + Accept on every request (no token/login step in v2).
         self._client = httpx.Client(
             timeout=_TIMEOUT,
+            limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
             auth=(self.username, self.password) if self.username else None,
             headers=headers,
         )
+
+    def _gate(self) -> None:
+        """Καθολικό throttle προς ΗΔΥΚΑ πριν από κάθε κλήση (cross-worker)."""
+        _hdika_rate_gate(self.max_rps)
 
     def _url(self, path: str) -> str:
         return f"{self.base}{path}"
@@ -281,6 +321,7 @@ class HdikaClient:
         # doctor/patient/ICD (it shows up as the «Άγνωστος» doctor).
         for attempt in range(3):
             try:
+                self._gate()
                 r = self._client.get(self._url(f"/api/v1/prescriptions/get/{barcode}"),
                                      params=params, headers={"Accept": "application/x-hl7"})
                 if self.throttle:
@@ -378,6 +419,7 @@ class HdikaClient:
                     self.skipped_days += 1
                     break
                 records = self._rows(data)
+                todo: list = []
                 for raw in records:
                     if not isinstance(raw, dict):
                         continue
@@ -388,9 +430,21 @@ class HdikaClient:
                     if not bc or key in seen:        # overlapping day-windows → skip re-seen executions
                         continue
                     seen.add(key)
-                    if bc not in cda_cache:          # a prescription's CDA is shared by all its repeats
+                    todo.append((raw, bc))
+                # ΠΑΡΑΛΛΗΛΗ άντληση CDA για τα νέα barcodes (bounded pool· global rate-limit μέσα στο
+                # _fetch_cda) — διώχνει το N+1 bottleneck χωρίς να φορτώνει την ΗΔΥΚΑ.
+                missing = list(dict.fromkeys(bc for _, bc in todo if bc not in cda_cache))
+                conc = max(1, min(settings.HDIKA_CDA_CONCURRENCY, len(missing)))
+                if conc <= 1:
+                    for bc in missing:
                         cda_cache[bc] = self._fetch_cda(bc)
-                    yield self._map_full(raw, cda_cache[bc], summaries.get(bc, {}))
+                elif missing:
+                    from concurrent.futures import ThreadPoolExecutor
+                    with ThreadPoolExecutor(max_workers=conc) as pool:
+                        for bc, cda in zip(missing, pool.map(self._fetch_cda, missing)):
+                            cda_cache[bc] = cda
+                for raw, bc in todo:
+                    yield self._map_full(raw, cda_cache.get(bc, {}), summaries.get(bc, {}))
                 if self._is_last(data, len(records)):
                     break
                 page += 1
@@ -654,23 +708,40 @@ class HdikaClient:
         return self._client.get(self._url(path), params=params, headers={"Accept": "application/pdf"})
 
     def _get_xml(self, path: str, params: dict) -> ET.Element:
-        try:
-            r = self._client.get(self._url(path), params=params)
-            if self.throttle:
-                time.sleep(self.throttle)
-            gw = _gateway_message(r.text)
-            if gw:                   # gateway HTML (e.g. lockout) even with HTTP 200
-                raise PermissionError(gw)
-            r.raise_for_status()
-            return ET.fromstring(r.content)
-        except PermissionError:
-            raise
-        except httpx.TimeoutException as exc:
-            raise TimeoutError(f"ΗΔΥΚΑ list timeout: {exc}") from exc
-        except httpx.TransportError as exc:
-            raise ConnectionError(f"ΗΔΥΚΑ list transport error: {exc}") from exc
-        except ET.ParseError as exc:
-            raise ValueError(f"ΗΔΥΚΑ list: invalid XML: {exc}") from exc
+        # Retry transient ΗΔΥΚΑ failures (429 rate-limit / 5xx) με exponential backoff — αλλιώς ένα
+        # 429 σε φόρτο αποτυγχάνει το sync. Εξαντλημένα retries → TimeoutError (Celery autoretry).
+        for attempt in range(4):
+            try:
+                self._gate()
+                r = self._client.get(self._url(path), params=params)
+                if self.throttle:
+                    time.sleep(self.throttle)
+                gw = _gateway_message(r.text)
+                if gw:               # gateway HTML (e.g. lockout) even with HTTP 200
+                    raise PermissionError(gw)
+                if r.status_code in (429, 500, 502, 503, 504) and attempt < 3:
+                    ra = r.headers.get("Retry-After")
+                    wait = (float(ra) if (ra or "").isdigit()
+                            else min(2 ** attempt, 30) * (2 if r.status_code == 429 else 1))
+                    time.sleep(wait)
+                    continue
+                r.raise_for_status()
+                return ET.fromstring(r.content)
+            except PermissionError:
+                raise
+            except httpx.TimeoutException as exc:
+                if attempt < 3:
+                    time.sleep(min(2 ** attempt, 20))
+                    continue
+                raise TimeoutError(f"ΗΔΥΚΑ list timeout: {exc}") from exc
+            except httpx.TransportError as exc:
+                if attempt < 3:
+                    time.sleep(min(2 ** attempt, 20))
+                    continue
+                raise ConnectionError(f"ΗΔΥΚΑ list transport error: {exc}") from exc
+            except ET.ParseError as exc:
+                raise ValueError(f"ΗΔΥΚΑ list: invalid XML: {exc}") from exc
+        raise TimeoutError("ΗΔΥΚΑ list: rate-limited/5xx after retries")
 
     # ── mapping (ΗΔΥΚΑ XML record → canonical) ──────────────
     @staticmethod

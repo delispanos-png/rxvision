@@ -51,6 +51,10 @@ class IngestionEngine:
         self.db = db if db is not None else shared_db()
         self.pepper = vault.tenant_pepper(tenant_id)
         self._bands: list[list[float]] | None = None   # κλιμακωτή διατίμηση (platform-global, lazy)
+        # caches εντός ΕΝΟΣ sync: ίδιος γιατρός/ταμείο επαναλαμβάνεται σε δεκάδες συνταγές —
+        # resolve μία φορά αντί για ένα find_one_and_update ανά εκτέλεση (μείωση DB round-trips).
+        self._doctor_cache: dict = {}
+        self._fund_cache: dict = {}
 
     async def ingest(self, *, source: str, job_type: str,
                      records: Iterable[CanonicalExecution],
@@ -213,6 +217,9 @@ class IngestionEngine:
         return res["_id"]
 
     async def _resolve_doctor(self, ex: CanonicalExecution) -> ObjectId:
+        cached = self._doctor_cache.get(ex.doctor.full_name)
+        if cached is not None:               # ίδιος γιατρός σε αυτό το sync → χωρίς νέο DB round-trip
+            return cached
         set_fields: dict = {"specialty": ex.doctor.specialty}
         if ex.doctor.phone:                      # ΗΔΥΚΑ τηλέφωνο/email γιατρού (μη κενά μόνο)
             set_fields["phone"] = ex.doctor.phone
@@ -224,15 +231,20 @@ class IngestionEngine:
              "$setOnInsert": {"tenant_id": self.tenant_id, "full_name": ex.doctor.full_name,
                               "first_seen_at": ex.executed_at, "created_at": _now()}},
             upsert=True, return_document=ReturnDocument.AFTER)
+        self._doctor_cache[ex.doctor.full_name] = res["_id"]
         return res["_id"]
 
     async def _resolve_fund(self, ex: CanonicalExecution) -> ObjectId:
+        cached = self._fund_cache.get(ex.fund.code)
+        if cached is not None:
+            return cached
         res = await self.db["insurance_funds"].find_one_and_update(
             {"tenant_id": self.tenant_id, "code": ex.fund.code},
             {"$set": {"name": ex.fund.name or ex.fund.code},
              "$setOnInsert": {"tenant_id": self.tenant_id, "code": ex.fund.code,
                               "created_at": _now()}},
             upsert=True, return_document=ReturnDocument.AFTER)
+        self._fund_cache[ex.fund.code] = res["_id"]
         return res["_id"]
 
     async def _effective_wholesale(self, it: CanonicalItem) -> tuple[int, str]:

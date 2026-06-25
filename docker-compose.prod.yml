@@ -107,6 +107,17 @@ services:
     volumes:
       - "./infra/docker/vault/tls/vault.crt:/vault/tls/vault.crt:ro"
 
+  # Dedicated worker for heavy historical backfills — isolated queue so a multi-month backfill
+  # never occupies the 4 incremental-sync slots (kept free for the fast 5-min incrementals).
+  worker-backfill:
+    build: ./backend
+    restart: unless-stopped
+    env_file: .env
+    depends_on: [redis, mongo]
+    command: celery -A app.workers.celery_app worker -l info --concurrency 1 -Q backfill -n backfill@%h
+    volumes:
+      - "./infra/docker/vault/tls/vault.crt:/vault/tls/vault.crt:ro"
+
   beat:
     build: ./backend
     restart: unless-stopped
