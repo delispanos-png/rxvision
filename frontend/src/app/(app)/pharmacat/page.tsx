@@ -4,7 +4,7 @@ import { useState, useRef, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   Cat, Send, Loader2, AlertOctagon, Stethoscope, Pill, Package, ShieldAlert,
-  HelpCircle, Sparkles, Lightbulb, FlaskConical, Mic, X, Info, Trash2,
+  HelpCircle, Sparkles, Lightbulb, FlaskConical, Mic, X, Info, Trash2, ThumbsDown, CheckCircle2,
 } from "lucide-react";
 import { api } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
@@ -22,7 +22,7 @@ type Safety = { pregnancy: string; lactation: string; renal: string; hepatic: st
 type Referral = { needed: boolean; urgency: string; reason: string };
 type Question = { question: string; options: string[] };
 type Result = {
-  ok: boolean; error?: string; limit?: number; source?: string; reply: string; stage?: string;
+  ok: boolean; error?: string; limit?: number; source?: string; sig?: string; reply: string; stage?: string;
   red_flags: RedFlag[]; questions: Question[]; otc_categories: string[];
   substances: Substance[]; non_drug_advice: string[]; interactions: Interaction[];
   safety?: Safety; referral?: Referral; products?: ProductGroup[];
@@ -61,6 +61,22 @@ function PharmaCatInner() {
   const endRef = useRef<HTMLDivElement>(null);
 
   const status = useQuery({ queryKey: ["pharmacat-status"], queryFn: () => api<Status>("/pharmacat/status") });
+  const [reported, setReported] = useState<Record<string, boolean>>({});
+  const reports = useQuery({
+    queryKey: ["pharmacat-reports"],
+    queryFn: () => api<{ unseen_resolved: number; items: { sig: string; query: string | null; status: string }[] }>("/pharmacat/reports"),
+    refetchInterval: 60000,
+  });
+  async function reportWrong(sig: string) {
+    const reason = prompt(t("Τι είναι λάθος σε αυτή την απάντηση; (προαιρετικό — βοηθά τη διόρθωση)", "What's wrong with this answer? (optional — helps the fix)"), "");
+    if (reason === null) return;   // ακύρωση
+    setReported((s) => ({ ...s, [sig]: true }));
+    try { await api("/pharmacat/report", { method: "POST", body: JSON.stringify({ sig, reason }) }); }
+    catch { setReported((s) => ({ ...s, [sig]: false })); }
+  }
+  async function dismissReportsBanner() {
+    try { await api("/pharmacat/reports/seen", { method: "POST" }); } finally { reports.refetch(); }
+  }
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [turns, busy]);
   useEffect(() => { if (!busy) status.refetch(); }, [turns]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -165,6 +181,14 @@ function PharmaCatInner() {
           </div>
         )}
 
+        {!!reports.data?.unseen_resolved && (
+          <div className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-300">
+            <CheckCircle2 className="h-4 w-4 shrink-0" />
+            <span className="flex-1">{t(`Διορθώθηκαν ${reports.data.unseen_resolved} απαντήσεις που είχες αναφέρει ως λάθος.`, `${reports.data.unseen_resolved} answer(s) you reported were corrected.`)}</span>
+            <button onClick={dismissReportsBanner} className="rounded-lg bg-emerald-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-emerald-700">{t("Εντάξει", "OK")}</button>
+          </div>
+        )}
+
         {turns.length === 0 && !blocked && (
           <div className="space-y-4 py-6 text-center">
             <Sparkles className="mx-auto h-8 w-8 text-violet-400" />
@@ -189,7 +213,7 @@ function PharmaCatInner() {
                     : turn.result.error === "not_configured" ? t("Μη ρυθμισμένο (λείπει το API key).", "Not configured (missing API key).")
                     : t("Σφάλμα επικοινωνίας — δοκιμάστε ξανά.", "Communication error — try again.")}
                 </div>
-              ) : <AssistantCard r={turn.result!} t={t} onAnswer={(a) => send(a)} onMed={openMed} />}
+              ) : <AssistantCard r={turn.result!} t={t} onAnswer={(a) => send(a)} onMed={openMed} onReport={reportWrong} reported={!!(turn.result!.sig && reported[turn.result!.sig])} />}
             </div>
           </div>
         ))}
@@ -255,7 +279,7 @@ function PharmaCatInner() {
   );
 }
 
-function AssistantCard({ r, t, onAnswer, onMed }: { r: Result; t: (el: string, en: string) => string; onAnswer: (a: string) => void; onMed: (eof: string) => void }) {
+function AssistantCard({ r, t, onAnswer, onMed, onReport, reported }: { r: Result; t: (el: string, en: string) => string; onAnswer: (a: string) => void; onMed: (eof: string) => void; onReport: (sig: string) => void; reported: boolean }) {
   const ref = r.referral;
   return (
     <>
@@ -270,6 +294,16 @@ function AssistantCard({ r, t, onAnswer, onMed }: { r: Result; t: (el: string, e
       {r.source === "cache" && <div className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-600 dark:bg-emerald-950/30">⚡ {t("από τη βάση γνώσης (άμεσο)", "from knowledge base (instant)")}</div>}
 
       {r.reply && <div className="rounded-2xl rounded-tl-sm bg-slate-100 px-4 py-2.5 text-sm leading-relaxed text-slate-700 dark:bg-slate-800 dark:text-slate-200">{r.reply}</div>}
+
+      {/* report a wrong answer → admin curation */}
+      {r.ok && r.sig && (
+        reported
+          ? <div className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-700"><CheckCircle2 className="h-3.5 w-3.5" /> {t("Ευχαριστούμε — αναφέρθηκε στους διαχειριστές", "Thanks — reported to admins")}</div>
+          : <button onClick={() => onReport(r.sig!)}
+              className="inline-flex items-center gap-1.5 rounded-full border border-rose-300 bg-rose-50 px-3 py-1.5 text-xs font-semibold text-rose-600 shadow-sm transition hover:bg-rose-100 hover:text-rose-700">
+              <ThumbsDown className="h-4 w-4" /> {t("Λάθος απάντηση; Ανέφερέ το", "Wrong answer? Report it")}
+            </button>
+      )}
 
       {/* dynamic questions — one-click quick replies */}
       {!!r.questions?.length && (

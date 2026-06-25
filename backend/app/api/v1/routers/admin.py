@@ -1501,21 +1501,32 @@ def _accent_insensitive_regex(term: str) -> str:
 
 
 @router.get("/pharmacat-kb")
-async def pharmacat_kb_list(q: str | None = None, page: int = 1, page_size: int = 30,
+async def pharmacat_kb_list(q: str | None = None, flagged: bool = False,
+                            page: int = 1, page_size: int = 30,
                             _: PlatformContext = Depends(get_platform_admin)):
-    """Search the shared PharmaCat knowledge base by question or answer text."""
+    """Search the shared PharmaCat knowledge base. `flagged=true` → only entries a pharmacist
+    reported as wrong (with the reasons), so they can be found & corrected quickly."""
     db = shared_db()
     filt: dict = {}
+    if flagged:
+        filt["flag_open"] = True
     if q and q.strip():
         rx = {"$regex": _accent_insensitive_regex(q.strip()), "$options": "i"}
-        filt = {"$or": [{"query": rx}, {"result.reply": rx},
-                        {"result.substances.name": rx}]}
+        filt["$or"] = [{"query": rx}, {"result.reply": rx}, {"result.substances.name": rx}]
     page = max(1, page)
     page_size = max(1, min(page_size, 100))
     coll = db["pharmacat_knowledge"]
     total = await coll.count_documents(filt)
-    rows = await (coll.find(filt).sort("last_at", -1)
+    flagged_total = await coll.count_documents({"flag_open": True})
+    # flagged entries first, then most-recent
+    rows = await (coll.find(filt).sort([("flag_open", -1), ("last_flag_at", -1), ("last_at", -1)])
                   .skip((page - 1) * page_size).limit(page_size).to_list(length=page_size))
+    sigs = [r.get("sig") for r in rows if r.get("flag_open")]
+    reports_by_sig: dict = {}
+    if sigs:
+        async for rep in db["pharmacat_reports"].find({"sig": {"$in": sigs}, "status": "open"}):
+            reports_by_sig.setdefault(rep["sig"], []).append(
+                {"reason": rep.get("reason"), "at": rep.get("created_at")})
     items = []
     for r in rows:
         res = r.get("result") or {}
@@ -1527,10 +1538,31 @@ async def pharmacat_kb_list(q: str | None = None, page: int = 1, page_size: int 
             "otc_categories": res.get("otc_categories") or [],
             "stage": res.get("stage"),
             "hits": r.get("hits", 0),
+            "flag_open": bool(r.get("flag_open")),
+            "flag_count": r.get("flag_count", 0),
+            "reports": reports_by_sig.get(r.get("sig"), []),
             "edited_at": r.get("edited_at"),
             "last_at": r.get("last_at"), "created_at": r.get("created_at"),
         })
-    return {"page": page, "page_size": page_size, "total": total, "items": jsonsafe(items)}
+    return {"page": page, "page_size": page_size, "total": total,
+            "flagged_total": flagged_total, "items": jsonsafe(items)}
+
+
+async def _resolve_reports(db, sig: str) -> None:
+    """Correction happened → mark this entry's open reports resolved (notifies the pharmacists)
+    and clear the KB flag."""
+    now = datetime.now(tz=timezone.utc)
+    await db["pharmacat_reports"].update_many(
+        {"sig": sig, "status": "open"}, {"$set": {"status": "resolved", "resolved_at": now}})
+    await db["pharmacat_knowledge"].update_one(
+        {"sig": sig}, {"$set": {"flag_open": False, "flag_count": 0}})
+
+
+@router.post("/pharmacat-kb/{sig}/resolve")
+async def pharmacat_kb_resolve(sig: str, _: PlatformContext = Depends(get_platform_admin)):
+    """Dismiss the flags on an entry (mark reports resolved) WITHOUT editing — for false reports."""
+    await _resolve_reports(shared_db(), sig)
+    return {"ok": True}
 
 
 @router.delete("/pharmacat-kb/{sig}")
@@ -1559,6 +1591,7 @@ async def pharmacat_kb_edit(sig: str, body: KbEditIn,
     if body.query is not None and body.query.strip():
         sets["query"] = body.query.strip()[:500]
     await db["pharmacat_knowledge"].update_one({"sig": sig}, {"$set": sets})
+    await _resolve_reports(db, sig)        # correction done → notify reporters
     return {"ok": True}
 
 
@@ -1590,4 +1623,5 @@ async def pharmacat_kb_regenerate(sig: str, body: KbRegenIn | None = None,
     if supplied:
         sets["query"] = query[:500]   # remember it so the button stays enabled next time
     await db["pharmacat_knowledge"].update_one({"sig": sig}, {"$set": sets})
+    await _resolve_reports(db, sig)        # correction done → notify reporters
     return {"ok": True, "reply": (res.get("reply") or "")[:800]}

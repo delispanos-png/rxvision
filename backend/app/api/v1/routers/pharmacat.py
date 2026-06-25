@@ -28,6 +28,11 @@ class InteractionIn(BaseModel):
     context: dict | None = None
 
 
+class ReportIn(BaseModel):
+    sig: str
+    reason: str | None = None
+
+
 def _repo(ctx: TenantContext) -> PharmaCatRepository:
     return PharmaCatRepository(tenant_id=ctx.tenant_id)
 
@@ -45,6 +50,23 @@ async def chat(body: ChatIn, ctx: TenantContext = Depends(require("patients:read
 @router.post("/interactions")
 async def interactions(body: InteractionIn, ctx: TenantContext = Depends(require("patients:read"))):
     return await _repo(ctx).interactions(ctx.user_id, body.drugs, body.context)
+
+
+@router.post("/report")
+async def report_wrong(body: ReportIn, ctx: TenantContext = Depends(require("patients:read"))):
+    """Flag a cached answer as wrong → shows up in the admin KB curation panel."""
+    return await _repo(ctx).report_wrong(ctx.user_id, body.sig, body.reason)
+
+
+@router.get("/reports")
+async def my_reports(ctx: TenantContext = Depends(require("patients:read"))):
+    """The pharmacist's own reports (+ unseen-resolved count for the «διορθώθηκε» banner)."""
+    return await _repo(ctx).my_reports(ctx.user_id)
+
+
+@router.post("/reports/seen")
+async def reports_seen(ctx: TenantContext = Depends(require("patients:read"))):
+    return await _repo(ctx).mark_reports_seen(ctx.user_id)
 
 
 @router.get("/medicine")

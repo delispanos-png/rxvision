@@ -102,7 +102,7 @@ class PharmaCatRepository(BaseRepository):
         hit = await kb.find_one({"sig": sig})
         if hit:  # FREE, instant — serve from our growing knowledge base
             await kb.update_one({"sig": sig}, {"$inc": {"hits": 1}, "$set": {"last_at": _now()}})
-            res = dict(hit["result"]); res["ok"] = True; res["source"] = "cache"
+            res = dict(hit["result"]); res["ok"] = True; res["source"] = "cache"; res["sig"] = sig
             res["products"] = await self.products_for(res.get("substances") or [])
             await self._record(user, messages, context, res, kind=kind, drugs=drugs, source="cache")
             return jsonsafe(res)
@@ -116,7 +116,7 @@ class PharmaCatRepository(BaseRepository):
         await kb.update_one({"sig": sig}, {"$set": {"sig": sig, "result": store, "last_at": _now()},
                                            "$setOnInsert": {"created_at": _now(), "hits": 0,
                                                             "query": question[:500]}}, upsert=True)
-        res["source"] = "llm"
+        res["source"] = "llm"; res["sig"] = sig
         res["products"] = await self.products_for(res.get("substances") or [])
         await self._record(user, messages, context, res, kind=kind, drugs=drugs, source="llm")
         return jsonsafe(res)
@@ -161,6 +161,44 @@ class PharmaCatRepository(BaseRepository):
             "red_flags": c.get("red_flags", []), "substances": c.get("substances", []),
             "referral": c.get("referral"), "user_id": c.get("user_id"),
         } for c in rows]})
+
+    # ── wrong-answer reports (pharmacist → admin → back to pharmacist) ──────────────────────
+    async def report_wrong(self, user_id: str, sig: str, reason: str | None = None) -> dict:
+        """A pharmacist flags a cached answer as wrong. Recorded per (sig, tenant, user) and the
+        KB entry is marked flagged for the admin filter."""
+        db = self._db
+        if not sig:
+            return {"ok": False, "error": "no_sig"}
+        kb = await db["pharmacat_knowledge"].find_one({"sig": sig}, {"query": 1})  # tenant-ok: shared KB
+        now = _now()
+        await db["pharmacat_reports"].update_one(  # tenant-ok: explicit tenant_id+user_id filter
+            {"sig": sig, "tenant_id": self.tenant_id, "user_id": user_id, "status": "open"},
+            {"$set": {"reason": (reason or "")[:500], "updated_at": now},
+             "$setOnInsert": {"sig": sig, "tenant_id": self.tenant_id, "user_id": user_id,
+                              "query": (kb or {}).get("query"), "status": "open", "created_at": now}},
+            upsert=True)
+        cnt = await db["pharmacat_reports"].count_documents({"sig": sig, "status": "open"})
+        await db["pharmacat_knowledge"].update_one(
+            {"sig": sig}, {"$set": {"flag_open": True, "flag_count": cnt, "last_flag_at": now}})
+        return {"ok": True}
+
+    async def my_reports(self, user_id: str) -> dict:
+        """The pharmacist's own reports — drives the «διορθώθηκε» notification."""
+        cursor = self._db["pharmacat_reports"].find(
+            {"tenant_id": self.tenant_id, "user_id": user_id}).sort("created_at", -1).limit(50)
+        rows = [r async for r in cursor]
+        unseen = sum(1 for r in rows if r.get("status") == "resolved" and not r.get("seen_at"))
+        return jsonsafe({
+            "unseen_resolved": unseen,
+            "items": [{"sig": r.get("sig"), "query": r.get("query"), "reason": r.get("reason"),
+                       "status": r.get("status"), "created_at": r.get("created_at"),
+                       "resolved_at": r.get("resolved_at")} for r in rows]})
+
+    async def mark_reports_seen(self, user_id: str) -> dict:
+        await self._db["pharmacat_reports"].update_many(
+            {"tenant_id": self.tenant_id, "user_id": user_id, "status": "resolved",
+             "seen_at": {"$exists": False}}, {"$set": {"seen_at": _now()}})
+        return {"ok": True}
 
     async def insights(self) -> dict:
         rows = [c async for c in self._coll.find({"tenant_id": self.tenant_id})

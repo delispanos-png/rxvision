@@ -2,9 +2,10 @@
 
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Brain, Search, Trash2, Pencil, Save, X, Loader2, RefreshCw } from "lucide-react";
+import { Brain, Search, Trash2, Pencil, Save, X, Loader2, RefreshCw, ThumbsDown, AlertTriangle } from "lucide-react";
 import { adminApi } from "@/lib/adminClient";
 
+type Report = { reason: string | null; at: string | null };
 type Entry = {
   sig: string;
   query: string | null;
@@ -13,26 +14,37 @@ type Entry = {
   otc_categories: string[];
   stage: string | null;
   hits: number;
+  flag_open: boolean;
+  flag_count: number;
+  reports: Report[];
   edited_at: string | null;
   last_at: string | null;
   created_at: string | null;
 };
-type ListRes = { page: number; page_size: number; total: number; items: Entry[] };
+type ListRes = { page: number; page_size: number; total: number; flagged_total: number; items: Entry[] };
 
 const fmt = (s: string | null) => (s ? new Date(s).toLocaleString("el-GR") : "—");
 
 export default function PharmaCatKbPage() {
   const [q, setQ] = useState("");
   const [term, setTerm] = useState("");
+  const [onlyFlagged, setOnlyFlagged] = useState(false);
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState<{ query: string; reply: string; substances: string; otc: string }>({ query: "", reply: "", substances: "", otc: "" });
   const [busy, setBusy] = useState<string | null>(null);
 
   const list = useQuery({
-    queryKey: ["admin", "pharmacat-kb", term],
-    queryFn: () => adminApi<ListRes>("/admin/pharmacat-kb?page_size=60&q=" + encodeURIComponent(term)),
+    queryKey: ["admin", "pharmacat-kb", term, onlyFlagged],
+    queryFn: () => adminApi<ListRes>("/admin/pharmacat-kb?page_size=60&flagged=" + onlyFlagged + "&q=" + encodeURIComponent(term)),
     retry: false,
   });
+
+  async function dismiss(sig: string) {
+    if (!confirm("Απόρριψη της αναφοράς (χωρίς διόρθωση); Θα θεωρηθεί ότι η απάντηση ήταν σωστή.")) return;
+    setBusy(sig);
+    try { await adminApi("/admin/pharmacat-kb/" + sig + "/resolve", { method: "POST" }); await list.refetch(); }
+    finally { setBusy(null); }
+  }
 
   function startEdit(e: Entry) {
     setEditing(e.sig);
@@ -105,16 +117,26 @@ export default function PharmaCatKbPage() {
         {term && <button type="button" onClick={() => { setQ(""); setTerm(""); }} className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-600 hover:bg-slate-50">Καθαρισμός</button>}
       </form>
 
-      <div className="mb-3 text-xs text-slate-400">
-        {list.isLoading ? "Φόρτωση…" : `${list.data?.total ?? 0} εγγραφές${term ? " (φιλτραρισμένες)" : ""}`}
+      <div className="mb-3 flex items-center justify-between gap-2">
+        <button onClick={() => setOnlyFlagged((v) => !v)}
+          className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium ${onlyFlagged ? "border-rose-300 bg-rose-50 text-rose-700" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"}`}>
+          <ThumbsDown className="h-3.5 w-3.5" /> {onlyFlagged ? "Όλες οι εγγραφές" : "Μόνο χαρακτηρισμένες ως λάθος"}
+          {!!list.data?.flagged_total && <span className="rounded-full bg-rose-600 px-1.5 text-[10px] font-bold text-white">{list.data.flagged_total}</span>}
+        </button>
+        <span className="text-xs text-slate-400">
+          {list.isLoading ? "Φόρτωση…" : `${list.data?.total ?? 0} εγγραφές${term || onlyFlagged ? " (φιλτραρισμένες)" : ""}`}
+        </span>
       </div>
 
       <div className="space-y-3">
         {items.map((e) => (
-          <div key={e.sig} className="rounded-xl border border-slate-200 bg-white p-4">
+          <div key={e.sig} className={`rounded-xl border bg-white p-4 ${e.flag_open ? "border-rose-300 ring-1 ring-rose-200" : "border-slate-200"}`}>
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
-                <div className="text-sm font-semibold text-slate-800">{e.query || <span className="italic text-slate-400">(άγνωστη ερώτηση)</span>}</div>
+                <div className="flex items-center gap-2 text-sm font-semibold text-slate-800">
+                  {e.flag_open && <span className="inline-flex items-center gap-1 rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-bold text-rose-700"><ThumbsDown className="h-3 w-3" /> ΛΑΘΟΣ ×{e.flag_count}</span>}
+                  {e.query || <span className="italic text-slate-400">(άγνωστη ερώτηση)</span>}
+                </div>
                 <div className="mt-0.5 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-slate-400">
                   <span>{e.hits} εμφανίσεις</span>
                   {e.stage && <span>στάδιο: {e.stage}</span>}
@@ -134,9 +156,24 @@ export default function PharmaCatKbPage() {
                   <button onClick={() => del(e.sig)} disabled={busy === e.sig} className="inline-flex items-center gap-1 rounded-lg border border-rose-300 bg-rose-50 px-2.5 py-1.5 text-xs font-medium text-rose-700 hover:bg-rose-100 disabled:opacity-50">
                     {busy === e.sig ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />} Διαγραφή
                   </button>
+                  {e.flag_open && (
+                    <button onClick={() => dismiss(e.sig)} disabled={busy === e.sig} title="Η αναφορά ήταν λάθος — η απάντηση είναι σωστή" className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-medium text-slate-500 hover:bg-slate-50">
+                      <X className="h-3.5 w-3.5" /> Απόρριψη αναφοράς
+                    </button>
+                  )}
                 </div>
               )}
             </div>
+
+            {e.flag_open && e.reports.length > 0 && (
+              <div className="mt-2 rounded-lg border border-rose-200 bg-rose-50/60 p-2 text-xs text-rose-800">
+                <div className="mb-1 flex items-center gap-1 font-semibold"><AlertTriangle className="h-3.5 w-3.5" /> Αναφορές φαρμακοποιών:</div>
+                <ul className="space-y-0.5">
+                  {e.reports.map((rp, i) => <li key={i}>• {rp.reason ? rp.reason : <span className="italic text-rose-400">(χωρίς σχόλιο)</span>}</li>)}
+                </ul>
+                <div className="mt-1 text-[11px] text-rose-500">Μετά τη διόρθωση/«Νέα ερώτηση» ειδοποιείται αυτόματα ο φαρμακοποιός.</div>
+              </div>
+            )}
 
             {editing === e.sig ? (
               <div className="mt-3 space-y-2">
