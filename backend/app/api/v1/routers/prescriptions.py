@@ -9,6 +9,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, Query
 
 from fastapi import HTTPException, status
+from pydantic import BaseModel
 
 from app.core.deps import TenantContext, require
 from app.repositories.prescriptions import PrescriptionRepository
@@ -59,6 +60,45 @@ async def execution_detail(
     if detail is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "execution_not_found")
     return detail
+
+
+@router.get("/checks/{external_id}")
+async def closing_checks(
+    external_id: str,
+    ctx: TenantContext = Depends(require("prescriptions:read", module="prescription_analytics")),
+):
+    """Έλεγχος κλεισίματος: έλεγχοι υπερδοσολογίας + ειδικών φαρμάκων ανά γραμμή της συνταγής."""
+    res = await PrescriptionRepository(tenant_id=ctx.tenant_id, demo=ctx.demo).closing_checks(external_id)
+    if res is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "execution_not_found")
+    return res
+
+
+@router.get("/check-settings")
+async def get_check_settings(
+    ctx: TenantContext = Depends(require("prescriptions:read", module="prescription_analytics")),
+):
+    from app.core.db import shared_db
+    s = await shared_db()["rx_check_settings"].find_one({"tenant_id": ctx.tenant_id}) or {}
+    return {"ultra_levure_check": s.get("ultra_levure_check", True)}
+
+
+class CheckSettingsIn(BaseModel):
+    ultra_levure_check: bool = True
+
+
+@router.post("/check-settings")
+async def set_check_settings(
+    body: CheckSettingsIn,
+    ctx: TenantContext = Depends(require("prescriptions:write", module="prescription_analytics")),
+):
+    from app.core.db import shared_db
+    from datetime import datetime as _dt, timezone as _tz
+    await shared_db()["rx_check_settings"].update_one(
+        {"tenant_id": ctx.tenant_id},
+        {"$set": {"tenant_id": ctx.tenant_id, "ultra_levure_check": body.ultra_levure_check,
+                  "updated_at": _dt.now(tz=_tz.utc)}}, upsert=True)
+    return {"ok": True}
 
 
 @router.get("/idika-print/{external_id}")

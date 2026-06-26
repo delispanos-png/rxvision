@@ -2,7 +2,7 @@
 
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Repeat, Printer, QrCode, X } from "lucide-react";
 import { api, queryKeys } from "@/lib/apiClient";
 import { PanelCard } from "@/components/ui/Card";
@@ -298,6 +298,54 @@ const fmtDosage = (dose?: string | null, freq?: string | null, dur?: string | nu
 const hasStoredHdyka = (d: Detail) =>
   !!(d.details && Object.keys(d.details).length) || d.items.some((i) => i.details && Object.keys(i.details).length);
 
+type RxCheck = { type: string; level: string; title: string; detail: string };
+type ChecksRes = { items: { name: string; barcode: string | null; checks: RxCheck[] }[]; count: number; warnings: number };
+
+function ClosingChecks({ id, t }: { id: string; t: (el: string, en: string) => string }) {
+  const qc = useQueryClient();
+  const checks = useQuery({ queryKey: ["rx-checks", id], queryFn: () => api<ChecksRes>(`/prescriptions/checks/${encodeURIComponent(id)}`), retry: false });
+  const settings = useQuery({ queryKey: ["rx-check-settings"], queryFn: () => api<{ ultra_levure_check: boolean }>("/prescriptions/check-settings"), retry: false });
+  const data = checks.data;
+  async function toggleUL() {
+    await api("/prescriptions/check-settings", { method: "POST", body: JSON.stringify({ ultra_levure_check: !(settings.data?.ultra_levure_check ?? true) }) });
+    qc.invalidateQueries({ queryKey: ["rx-check-settings"] });
+    qc.invalidateQueries({ queryKey: ["rx-checks", id] });
+  }
+  const hasUL = !!data?.items.some((it) => it.checks.some((c) => c.type === "ultra_levure"));
+  if (!data || data.count === 0) return null;
+  return (
+    <div className={`mb-4 rounded-2xl border p-4 ${data.warnings ? "border-amber-300 bg-amber-50/60 dark:border-amber-900/50 dark:bg-amber-950/20" : "border-sky-200 bg-sky-50/60 dark:border-sky-900/50 dark:bg-sky-950/20"}`}>
+      <div className="mb-2 flex items-center gap-2 text-sm font-bold text-slate-800 dark:text-slate-100">
+        🔎 {t("Έλεγχος κλεισίματος", "Closing checks")}
+        {data.warnings > 0 && <span className="rounded-full bg-amber-500 px-2 py-0.5 text-[11px] font-bold text-white">{data.warnings} {t("προσοχή", "to review")}</span>}
+      </div>
+      <div className="space-y-2.5">
+        {data.items.map((it, i) => (
+          <div key={i}>
+            <div className="text-xs font-semibold text-slate-700 dark:text-slate-200">{it.name}</div>
+            <div className="mt-1 space-y-1">
+              {it.checks.map((c, j) => (
+                <div key={j} className={`flex items-start gap-2 rounded-lg px-2.5 py-1.5 text-xs ${c.level === "warning" ? "bg-amber-100 text-amber-900 dark:bg-amber-950/40 dark:text-amber-200" : "bg-white text-slate-600 dark:bg-slate-800/60 dark:text-slate-300"}`}>
+                  <span className="mt-0.5 shrink-0">{c.level === "warning" ? "⚠️" : "ℹ️"}</span>
+                  <span><b>{c.title}.</b> {c.detail}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+      {hasUL && (
+        <div className="mt-2.5 flex items-center justify-between border-t border-amber-200/60 pt-2 text-[11px] text-slate-500 dark:border-amber-900/40">
+          <span>{t("Έλεγχος Ultra-Levure (παραμετρικός)", "Ultra-Levure check (optional)")}</span>
+          <button onClick={toggleUL} className={`rounded-full px-2.5 py-0.5 font-semibold ${settings.data?.ultra_levure_check ?? true ? "bg-emerald-100 text-emerald-700" : "bg-slate-200 text-slate-500"}`}>
+            {settings.data?.ultra_levure_check ?? true ? t("Ενεργός — απενεργοποίηση", "On — turn off") : t("Ανενεργός — ενεργοποίηση", "Off — turn on")}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function PrescriptionDetailPage() {
   const t = useT();
   const params = useParams<{ id: string }>();
@@ -420,6 +468,8 @@ export default function PrescriptionDetailPage() {
           ) : null}
         </div>
       </div>
+
+      <ClosingChecks id={id} t={t} />
 
       {/* Πληρωτέο από Ταμείο — the headline number (what the pharmacy collects from the fund) */}
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-brand-600 px-5 py-4 text-white">

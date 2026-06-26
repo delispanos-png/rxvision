@@ -30,6 +30,36 @@ def _oid(v):
 class PrescriptionRepository(BaseRepository):
     collection_name = "prescription_executions"
 
+    async def closing_checks(self, external_id: str) -> dict | None:
+        """Έλεγχος κλεισίματος συνταγής: ανά γραμμή, ποιοι έλεγχοι χρειάζονται (υπερδοσολογία +
+        ειδικά φάρμακα) με βάση τα MasterData πεδία + τη δοσολογία του ιατρού."""
+        from app.services import prescription_checks as pc
+        bc = str(external_id).split(":")[0]
+        ex = await self._coll.find_one(self._scope(
+            {"external_id": {"$regex": "^" + re.escape(bc)}}))
+        if not ex:
+            return None
+        setting = await self._db["rx_check_settings"].find_one({"tenant_id": self.tenant_id}) or {}
+        ul = setting.get("ultra_levure_check", True)
+        items_out: list[dict] = []
+        async for it in self._db["prescription_items"].find(
+                {"tenant_id": self.tenant_id, "execution_id": ex["_id"]}):
+            d = it.get("details") or {}
+            cat = (await self._db["medicine_catalog"].find_one({"_id": d.get("eof_code")})
+                   if d.get("eof_code") else None) or {}
+            prod = (await self._db["products"].find_one({"_id": it.get("product_id")})
+                    if it.get("product_id") else None)
+            name = (prod or {}).get("name") or cat.get("name") or "Φάρμακο"
+            item = {"barcode": cat.get("barcode"), "name": name, "quantity": it.get("quantity", 1),
+                    "dose": d.get("dose"), "frequency": d.get("frequency"), "duration": d.get("duration")}
+            checks = pc.check_item(item, cat, ultra_levure_enabled=ul)
+            if checks:
+                items_out.append({"name": name, "barcode": item["barcode"], "checks": checks})
+        return jsonsafe({
+            "items": items_out,
+            "count": sum(len(i["checks"]) for i in items_out),
+            "warnings": sum(1 for i in items_out for c in i["checks"] if c["level"] == "warning")})
+
     async def execution_detail(self, external_id: str) -> dict | None:
         """Full drill-down for one executed prescription: doctor + (anonymised) patient +
         fund + repeat info + ICD-10 + every medicine line (name/qty/retail/wholesale/margin)."""
