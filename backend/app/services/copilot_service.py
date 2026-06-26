@@ -200,7 +200,48 @@ async def _a_pickup_ready(tenant_id, p):
     return "Σημειώθηκε ως έτοιμη για παραλαβή και ειδοποιήθηκε ο πελάτης."
 
 
+async def _refill_candidates(tenant_id: str) -> dict:
+    """Portal-linked patients whose chronic therapy is due for refill within 7 days — the targets
+    for a 1-tap «refill reminder» push (the RxVision Loop spine)."""
+    from app.repositories.future import FuturePrescriptionRepository
+    from app.repositories.patient_portal import PatientAccountRepository
+    today = _now()
+    items = await FuturePrescriptionRepository(tenant_id=tenant_id).upcoming_list(
+        today=today, horizon=today + timedelta(days=7), limit=200)
+    accrepo = PatientAccountRepository()
+    out: list[dict] = []
+    seen: set = set()
+    for it in items:
+        amka = (it.get("amka") or "").strip()
+        if not amka or amka in seen:
+            continue
+        acc = await accrepo.get_by_amka(amka)
+        if not acc:
+            continue
+        seen.add(amka)
+        meds = [m.get("name") if isinstance(m, dict) else m for m in (it.get("products") or [])]
+        out.append({"account_id": str(acc["_id"]), "name": it.get("patient_name"), "meds": meds[:4]})
+    return {"count": len(out), "patients": out}
+
+
+async def _a_notify_refills(tenant_id, p):
+    cand = await _refill_candidates(tenant_id)
+    if not cand["count"]:
+        return "Δεν υπάρχουν συνδεδεμένοι ασθενείς με επανάληψη που λήγει αυτή την εβδομάδα."
+    from app.services import push_service
+    sent = 0
+    for pt in cand["patients"]:
+        n = await push_service.send_to_account(
+            pt["account_id"], title="🔁 Ώρα για επανάληψη",
+            body="Η αγωγή σου κοντεύει να τελειώσει — κράτησε την επανάληψη με 1 κλικ.", url="/portal")
+        if n:
+            sent += 1
+    return f"Στάλθηκαν {sent} υπενθυμίσεις επανάληψης στους ασθενείς (από {cand['count']} συνδεδεμένους)."
+
+
 SERVER_ACTIONS = {
+    "notify_refills": {"perm": "portal:manage", "label": "Αποστολή υπενθυμίσεων επανάληψης",
+                       "run": _a_notify_refills},
     "start_hdika_sync": {"perm": "ingestion:run", "label": "Έναρξη λήψης ΗΔΥΚΑ", "run": _a_start_sync},
     "stop_hdika_sync": {"perm": "ingestion:run", "label": "Διακοπή λήψης ΗΔΥΚΑ", "run": _a_stop_sync},
     "run_hdika_backfill": {"perm": "ingestion:run", "label": "Ιστορική λήψη ΗΔΥΚΑ", "run": _a_backfill},
@@ -259,6 +300,57 @@ def _tools() -> list[dict]:
 
 async def status() -> dict:
     return await pharmacat_service.status()
+
+
+async def build_action_plan(*, tenant_id: str, perms: set[str]) -> dict:
+    """Proactive «Πλάνο Ημέρας»: gather live signals from the read tools → a prioritised list of
+    action cards, each either directly EXECUTABLE (whitelisted action) or a deep-link to act on."""
+    cards: list[dict] = []
+
+    async def _safe(coro, default):
+        try:
+            return await coro
+        except Exception:  # noqa: BLE001
+            return default
+
+    def has(p: str) -> bool:
+        return p in perms or "*" in perms
+
+    if has("portal:manage"):
+        refill = await _safe(_refill_candidates(tenant_id), {"count": 0})
+        if refill.get("count"):
+            cards.append({"id": "refills", "urgency": "high", "icon": "refill",
+                          "title": f"{refill['count']} ασθενείς για υπενθύμιση επανάληψης",
+                          "why": "Χρόνιες αγωγές που λήγουν αυτή την εβδομάδα — στείλε τους υπενθύμιση στην εφαρμογή με 1 κλικ.",
+                          "impact": f"{refill['count']} ασθενείς", "executable": True,
+                          "action": {"kind": "act", "key": "notify_refills"},
+                          "cta": "Αποστολή υπενθυμίσεων"})
+        pend = await _safe(_read_tool("get_portal_pending", {}, tenant_id), {})
+        if pend.get("availability_open"):
+            cards.append({"id": "avail", "urgency": "high", "icon": "chat",
+                          "title": f"{pend['availability_open']} αιτήματα διαθεσιμότητας",
+                          "why": "Πελάτες ρωτούν αν έχεις κάποιο φάρμακο — απάντησέ τους.",
+                          "impact": f"{pend['availability_open']} αιτήματα", "executable": False,
+                          "action": {"kind": "navigate", "href": "/portal-admin"}, "cta": "Άνοιγμα"})
+        if pend.get("appointments_requested"):
+            cards.append({"id": "appts", "urgency": "medium", "icon": "calendar",
+                          "title": f"{pend['appointments_requested']} ραντεβού/παραλαβές σε αναμονή",
+                          "why": "Αιτήματα ραντεβού ή παραλαβής που περιμένουν επιβεβαίωση.",
+                          "impact": f"{pend['appointments_requested']} αιτήματα", "executable": False,
+                          "action": {"kind": "navigate", "href": "/portal-admin"}, "cta": "Άνοιγμα"})
+
+    orders = await _safe(_read_tool("get_order_suggestions", {}, tenant_id), {})
+    n_orders = len(orders.get("items", []) or [])
+    if n_orders:
+        cards.append({"id": "orders", "urgency": "medium", "icon": "package",
+                      "title": f"Πρόταση παραγγελίας: {n_orders} είδη",
+                      "why": "Αναμενόμενη ζήτηση από επαναλαμβανόμενες/χρόνιες συνταγές — μην ξεμείνεις.",
+                      "impact": f"{n_orders} είδη", "executable": False,
+                      "action": {"kind": "navigate", "href": "/orders"}, "cta": "Δες παραγγελία"})
+
+    rank = {"high": 0, "medium": 1, "low": 2}
+    cards.sort(key=lambda c: rank.get(c["urgency"], 3))
+    return {"cards": cards, "generated_at": _now().isoformat(), "count": len(cards)}
 
 
 async def execute_action(*, tenant_id: str, perms: set[str], action: str, params: dict | None = None) -> dict:

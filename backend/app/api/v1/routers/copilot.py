@@ -39,6 +39,12 @@ async def chat(body: ChatIn, ctx: TenantContext = Depends(require("patients:read
     return await _repo(ctx).chat(ctx.user_id, ctx.permissions, [m.model_dump() for m in body.messages])
 
 
+@router.get("/action-plan")
+async def action_plan(ctx: TenantContext = Depends(require("patients:read"))):
+    """Προληπτικό «Πλάνο Ημέρας» — προτεραιοποιημένες ενέργειες με κουμπί εκτέλεσης."""
+    return await _repo(ctx).action_plan(ctx.permissions)
+
+
 @router.post("/act")
 async def act(body: ActIn, ctx: TenantContext = Depends(require("patients:read"))):
     """Execute a Level-3 action the user explicitly confirmed in the UI. The action's own

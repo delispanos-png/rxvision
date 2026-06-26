@@ -13,6 +13,8 @@ type Action =
   | { type: "navigate"; href: string; label: string }
   | { type: "action"; action: string; label: string; summary: string; params?: Record<string, unknown> };
 type Result = { ok: boolean; error?: string; limit?: number; reply: string; actions?: Action[] };
+type PlanCard = { id: string; urgency: "high" | "medium" | "low"; icon: string; title: string; why: string; impact: string; executable?: boolean; action: { kind: "act"; key: string } | { kind: "navigate"; href: string }; cta: string };
+type Plan = { cards: PlanCard[]; count: number; generated_at: string };
 type Turn = { role: "user" | "assistant"; content: string; result?: Result };
 type Status = { configured: boolean; enabled: boolean; model: string; today_used: number; daily_limit: number };
 
@@ -33,6 +35,7 @@ export default function CopilotPage() {
   const endRef = useRef<HTMLDivElement>(null);
 
   const status = useQuery({ queryKey: ["copilot-status"], queryFn: () => api<Status>("/copilot/status") });
+  const plan = useQuery({ queryKey: ["copilot-plan"], queryFn: () => api<Plan>("/copilot/action-plan"), refetchInterval: 120000 });
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [turns, busy]);
 
   // Voice input — browser-native Greek speech-to-text (no backend, no Anthropic credits)
@@ -90,6 +93,21 @@ export default function CopilotPage() {
     setBusy(false);
   }
 
+  async function execCard(c: PlanCard) {
+    if (c.action.kind === "navigate") { router.push(c.action.href); return; }
+    if (busy) return;
+    if (!(await appConfirm(`${c.title}\n${c.why}\n\nΝα εκτελεστεί;`))) return;
+    setBusy(true);
+    try {
+      const r = await api<{ ok: boolean; reply?: string }>("/copilot/act", { method: "POST", body: JSON.stringify({ action: (c.action as { key: string }).key, params: {} }) });
+      setTurns((s) => [...s, { role: "assistant", content: "", result: { ok: true, reply: r.reply || "Έγινε." } }]);
+      plan.refetch();
+    } catch {
+      setTurns((s) => [...s, { role: "assistant", content: "", result: { ok: false, error: "network", reply: "" } }]);
+    }
+    setBusy(false);
+  }
+
   const notConfigured = status.data && !status.data.configured;
   const disabled = status.data && status.data.configured && !status.data.enabled;
   const blocked = notConfigured || disabled;
@@ -107,6 +125,29 @@ export default function CopilotPage() {
       <div className="flex-1 space-y-4 overflow-y-auto py-4">
         {notConfigured && <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/30">⚠️ {t("Δεν είναι ρυθμισμένο (λείπει το Anthropic API key — Admin → Integrations).", "Not configured (missing Anthropic API key — Admin → Integrations).")}</div>}
         {disabled && <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600 dark:border-slate-700 dark:bg-slate-800/60">⏸️ {t("Η υπηρεσία είναι απενεργοποιημένη.", "The service is disabled.")}</div>}
+
+        {!blocked && turns.length === 0 && !!plan.data?.cards?.length && (
+          <div className="space-y-2">
+            <div className="flex items-center gap-1.5 text-sm font-bold text-slate-700 dark:text-slate-200"><Zap className="h-4 w-4 text-amber-500" /> {t("Πλάνο ημέρας", "Today's plan")}</div>
+            {plan.data.cards.map((c) => (
+              <div key={c.id} className={`rounded-xl border p-3 ${c.urgency === "high" ? "border-rose-200 bg-rose-50/50 dark:border-rose-900/40 dark:bg-rose-950/20" : "border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-800/60"}`}>
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 text-sm font-semibold text-slate-800 dark:text-slate-100">
+                      {c.urgency === "high" && <span className="rounded-full bg-rose-100 px-1.5 py-0.5 text-[10px] font-bold text-rose-700">ΕΠΕΙΓΟΝ</span>}
+                      {c.title}
+                    </div>
+                    <div className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">{c.why}</div>
+                  </div>
+                  <button onClick={() => execCard(c)} disabled={busy}
+                    className={`inline-flex shrink-0 items-center gap-1 rounded-lg px-3 py-1.5 text-xs font-semibold disabled:opacity-50 ${c.executable ? "bg-sky-600 text-white hover:bg-sky-700" : "border border-sky-200 bg-sky-50 text-sky-700 hover:bg-sky-100 dark:border-sky-800 dark:bg-sky-950/40 dark:text-sky-300"}`}>
+                    {c.executable ? <Zap className="h-3.5 w-3.5" /> : <ArrowUpRight className="h-3.5 w-3.5" />} {c.cta}
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
 
         {turns.length === 0 && !blocked && (
           <div className="space-y-4 py-6 text-center">

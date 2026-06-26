@@ -31,6 +31,9 @@ class CopilotRepository(BaseRepository):
             await self._record(user, messages, source="llm")
         return jsonsafe(res)
 
+    async def action_plan(self, perms: set[str]) -> dict:
+        return jsonsafe(await copilot_service.build_action_plan(tenant_id=self.tenant_id, perms=perms))
+
     async def run_action(self, user: str, perms: set[str], action: str,
                          params: dict | None = None) -> dict:
         """Execute a confirmed Level-3 action (whitelisted in copilot_service)."""
