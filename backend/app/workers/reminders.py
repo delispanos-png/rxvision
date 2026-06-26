@@ -67,6 +67,26 @@ def dispatch_med_reminders() -> dict:
     return _run_async(_run())
 
 
+@celery_app.task(name="app.workers.reminders.dispatch_order_subscriptions")
+def dispatch_order_subscriptions() -> dict:
+    """Create the next order for every due recurring subscription (across tenants)."""
+    async def _run() -> dict:
+        from app.repositories.orders_delivery import OrdersDeliveryRepository
+        client, db = _fresh_db()
+        now = datetime.now(timezone.utc)
+        due = [s async for s in db["order_subscriptions"].find(
+            {"active": True, "next_run": {"$lte": now}}).limit(500)]
+        ran = 0
+        for sub in due:
+            try:
+                await OrdersDeliveryRepository(tenant_id=sub["tenant_id"]).run_subscription(sub)
+                ran += 1
+            except Exception:  # noqa: BLE001
+                continue
+        return {"ran": ran, "due": len(due)}
+    return _run_async(_run())
+
+
 @celery_app.task(name="app.workers.reminders.dispatch_refill_radar")
 def dispatch_refill_radar() -> dict:
     async def _run() -> dict:

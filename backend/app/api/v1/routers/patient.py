@@ -225,6 +225,7 @@ class OrderIn(BaseModel):
     address: AddressIn | None = None
     courier_authorized: bool = False
     gdpr_consent: bool = False
+    repeat_days: int = 0                     # 0 = εφάπαξ· >0 = συνδρομή κάθε N ημέρες
 
 
 @router.post("/shop/order")
@@ -234,17 +235,39 @@ async def place_order(body: OrderIn, ctx: PatientContext = Depends(get_patient_c
     acc = await PatientAccountRepository().get(ctx.account_id)
     name = f"{(acc or {}).get('first_name', '')} {(acc or {}).get('last_name', '')}".strip()
     phone = (body.address.phone if body.address else None) or (acc or {}).get("phone") or ""
-    return await OrdersDeliveryRepository(tenant_id=ctx.tenant_id).create_order(
+    repo = OrdersDeliveryRepository(tenant_id=ctx.tenant_id)
+    addr = body.address.model_dump() if body.address else None
+    st = await repo.settings()
+    sub_disc = st.get("subscription_discount_pct", 0) if body.repeat_days > 0 else 0
+    res = await repo.create_order(
         account_id=ctx.account_id, patient_ref=ctx.patient_ref, patient_name=name, patient_phone=phone,
-        lines=[ln.model_dump() for ln in body.lines], mode=body.mode,
-        address=body.address.model_dump() if body.address else None,
-        courier_authorized=body.courier_authorized, gdpr_consent=body.gdpr_consent)
+        lines=[ln.model_dump() for ln in body.lines], mode=body.mode, address=addr,
+        courier_authorized=body.courier_authorized, gdpr_consent=body.gdpr_consent, sub_discount_pct=sub_disc)
+    if res.get("ok") and body.repeat_days > 0 and st.get("subscription_enabled", True):
+        sub = await repo.create_subscription(
+            account_id=ctx.account_id, patient_ref=ctx.patient_ref, patient_name=name, patient_phone=phone,
+            lines=[ln.model_dump() for ln in body.lines], mode=body.mode, address=addr,
+            courier_authorized=body.courier_authorized, interval_days=body.repeat_days)
+        res["subscription_id"] = sub.get("subscription_id")
+    return res
 
 
 @router.get("/shop/orders")
 async def my_orders(ctx: PatientContext = Depends(get_patient_context)):
     from app.repositories.orders_delivery import OrdersDeliveryRepository
     return {"items": await OrdersDeliveryRepository(tenant_id=ctx.tenant_id).my_orders(ctx.account_id)}
+
+
+@router.get("/shop/subscriptions")
+async def my_subscriptions(ctx: PatientContext = Depends(get_patient_context)):
+    from app.repositories.orders_delivery import OrdersDeliveryRepository
+    return {"items": await OrdersDeliveryRepository(tenant_id=ctx.tenant_id).my_subscriptions(ctx.account_id)}
+
+
+@router.post("/shop/subscriptions/{sub_id}/cancel")
+async def cancel_subscription(sub_id: str, ctx: PatientContext = Depends(get_patient_context)):
+    from app.repositories.orders_delivery import OrdersDeliveryRepository
+    return await OrdersDeliveryRepository(tenant_id=ctx.tenant_id).cancel_subscription(sub_id, ctx.account_id)
 
 
 @router.get("/pharmacy-hours")

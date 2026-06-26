@@ -411,11 +411,12 @@ export default function PortalHome() {
         )}
 
         {/* ── tabs ───────────────────────────────────────────── */}
-        {/* flex-wrap: το μενού αναδιπλώνεται ώστε να φαίνεται ΠΑΝΤΑ ολόκληρο σε κάθε ανάλυση & στα κινητά */}
-        <div className="mb-5 flex flex-wrap gap-2 p-0.5">
+        {/* Μία οριζόντια κυλιόμενη μπάρα (app-like) — δεν αναδιπλώνεται/δεν στοιβάζεται στο κινητό.
+            Edge-to-edge scroll, κρυφό scrollbar, η ενεργή καρτέλα μένει ευδιάκριτη. */}
+        <div className="mb-5 -mx-4 flex gap-2 overflow-x-auto px-4 pb-1.5 sm:mx-0 sm:flex-wrap sm:px-0 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           {TABS.map(([k, label]) => (
             <button key={k} onClick={() => setTab(k)}
-              className={`whitespace-nowrap rounded-xl border px-3.5 py-2 text-sm font-semibold transition ${tab === k
+              className={`shrink-0 whitespace-nowrap rounded-full border px-3.5 py-2 text-sm font-semibold transition ${tab === k
                 ? "border-brand-600 bg-brand-600 text-white shadow-sm shadow-brand-500/30"
                 : "border-slate-200 bg-white text-slate-700 shadow-sm hover:border-brand-300 hover:bg-brand-50 hover:text-brand-700"}`}>
               {label}

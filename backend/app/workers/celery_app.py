@@ -92,4 +92,9 @@ celery_app.conf.beat_schedule = {
         "task": "app.workers.reminders.dispatch_refill_radar",
         "schedule": crontab(hour=7, minute=0),
     },
+    # Recurring order subscriptions — create the next order when due (daily 06:00 UTC)
+    "order-subscriptions": {
+        "task": "app.workers.reminders.dispatch_order_subscriptions",
+        "schedule": crontab(hour=6, minute=0),
+    },
 }

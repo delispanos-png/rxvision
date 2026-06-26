@@ -46,12 +46,14 @@ async def get_settings(ctx: TenantContext = Depends(require(_PERM, module=_MODUL
 
 
 class SettingsIn(BaseModel):
-    delivery_enabled: bool = True
+    delivery_enabled: bool = False      # αποστολή κλειστή by default
     pickup_enabled: bool = True
     delivery_fee_cents: int = Field(250, ge=0)
     free_over_cents: int = Field(0, ge=0)
     min_order_cents: int = Field(0, ge=0)
     pps_cert: str = ""
+    subscription_enabled: bool = True
+    subscription_discount_pct: int = Field(0, ge=0, le=90)
 
 
 @router.post("/settings")

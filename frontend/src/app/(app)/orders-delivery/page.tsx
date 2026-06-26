@@ -34,7 +34,7 @@ export default function OrdersDeliveryPage() {
 }
 
 function Orders() {
-  const [tab, setTab] = useState<"orders" | "settings">("orders");
+  const [tab, setTab] = useState<"orders" | "done" | "settings">("orders");
   const list = useQuery({ queryKey: ["od-orders"], queryFn: () => api<{ items: Order[] }>("/orders/delivery"), refetchInterval: 20000, retry: false });
   const [busy, setBusy] = useState<string | null>(null);
   async function advance(id: string, status: string) {
@@ -51,12 +51,13 @@ function Orders() {
       <p className="mb-4 text-sm text-slate-500">Παραγγελίες πελατών από τον κατάλογό σου (OTC + παραφάρμακα).</p>
 
       <div className="mb-4 flex gap-2">
-        {([["orders", "Παραγγελίες"], ["settings", "Ρυθμίσεις αποστολής"]] as const).map(([k, l]) => (
+        {([["orders", `Ενεργές${orders.length ? ` (${orders.length})` : ""}`], ["done", `Ολοκληρωμένες${done.length ? ` (${done.length})` : ""}`], ["settings", "Ρυθμίσεις αποστολής"]] as const).map(([k, l]) => (
           <button key={k} onClick={() => setTab(k)} className={`rounded-lg px-3 py-1.5 text-sm font-medium ${tab === k ? "bg-brand-600 text-white" : "border border-slate-200 text-slate-600 hover:bg-slate-50"}`}>{l}</button>
         ))}
       </div>
 
-      {tab === "settings" ? <SettingsTab /> : (
+      {tab === "settings" && <SettingsTab />}
+      {tab === "orders" && (
         <div className="space-y-3">
           {list.isLoading && <div className="py-8 text-center text-sm text-slate-400">Φόρτωση…</div>}
           {!list.isLoading && orders.length === 0 && <div className="rounded-xl border border-dashed border-slate-300 p-8 text-center text-sm text-slate-400">Καμία ενεργή παραγγελία.</div>}
@@ -92,11 +93,15 @@ function Orders() {
               </div>
             </div>
           ))}
-          {done.length > 0 && <div className="pt-2 text-xs font-semibold text-slate-400">Ολοκληρωμένες ({done.length})</div>}
-          {done.slice(0, 10).map((o) => (
-            <div key={o._id} className="flex items-center justify-between rounded-lg border border-slate-100 bg-slate-50/50 px-3 py-2 text-sm text-slate-500">
-              <span>{o.patient_name} · {o.items.length} είδη</span>
-              <span className="flex items-center gap-2"><span className={`rounded-full px-2 py-0.5 text-[11px] ${ST[o.status]?.cls}`}>{ST[o.status]?.label}</span> {eur(o.total_cents)}</span>
+        </div>
+      )}
+      {tab === "done" && (
+        <div className="space-y-2">
+          {done.length === 0 && <div className="rounded-xl border border-dashed border-slate-300 p-8 text-center text-sm text-slate-400">Καμία ολοκληρωμένη παραγγελία ακόμη.</div>}
+          {done.map((o) => (
+            <div key={o._id} className="flex items-center justify-between rounded-lg border border-slate-100 bg-slate-50/60 px-3 py-2.5 text-sm text-slate-500">
+              <span className="min-w-0 truncate">{o.patient_name} · {o.items.length} είδη · {new Date(o.created_at).toLocaleDateString("el-GR")}</span>
+              <span className="flex shrink-0 items-center gap-2"><span className={`rounded-full px-2 py-0.5 text-[11px] ${ST[o.status]?.cls}`}>{ST[o.status]?.label}</span> {eur(o.total_cents)}</span>
             </div>
           ))}
         </div>
@@ -128,6 +133,16 @@ function SettingsTab() {
       <label className="block text-xs text-slate-500">Αναφορά πιστοποίησης ΠΦΣ (e-φαρμακείο — εμφανίζεται με το λογότυπο ΕΕ)
         <input value={String(cur.pps_cert ?? "")} onChange={(e) => set("pps_cert", e.target.value)} placeholder="π.χ. αρ. μητρώου / σύνδεσμος" className="mt-1 w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm" /></label>
       <p className="text-[11px] text-slate-400">Για online πώληση φαρμάκων (OTC) απαιτείται πιστοποίηση ΠΦΣ + το κοινό λογότυπο ΕΕ. Τα παραφάρμακα δεν το χρειάζονται.</p>
+
+      <div className="rounded-lg border border-violet-200 bg-violet-50/60 p-3">
+        <label className="flex items-center gap-2 text-sm font-semibold text-violet-900"><input type="checkbox" checked={!!cur.subscription_enabled} onChange={(e) => set("subscription_enabled", e.target.checked)} /> 🔁 Επαναλαμβανόμενες παραγγελίες (συνδρομές)</label>
+        <p className="mt-1 text-[11px] text-violet-700">Ο πελάτης μπορεί να ορίσει παραγγελία που επαναλαμβάνεται αυτόματα. Δώσε επιπλέον κίνητρο με μεγαλύτερη έκπτωση (μόνο σε παραφάρμακα — τα φάρμακα μένουν χωρίς έκπτωση).</p>
+        {!!cur.subscription_enabled && (
+          <label className="mt-2 block text-xs text-slate-500">Επιπλέον έκπτωση συνδρομής % (στα παραφάρμακα)
+            <input type="number" value={Number(cur.subscription_discount_pct ?? 0)} onChange={(e) => set("subscription_discount_pct", Math.max(0, Math.min(90, +e.target.value)))} className="mt-1 w-32 rounded-lg border border-slate-300 px-2 py-1.5 text-sm" /></label>
+        )}
+      </div>
+
       <button onClick={save} className="rounded-lg bg-brand-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-brand-700">{saved ? "✓ Αποθηκεύτηκε" : "Αποθήκευση"}</button>
     </div>
   );
