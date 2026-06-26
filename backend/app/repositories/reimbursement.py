@@ -887,10 +887,13 @@ class ReimbursementRepository(BaseRepository):
                     if sk and dk in seen:
                         continue
                     seen.add(dk)
+                    # ανεκτέλεστη γραμμή → ΔΕΝ έχει κουπόνι/QR (δεν χορηγήθηκε ποτέ)
                     lines.append({"name": name, "barcode": bc, "eof": eof, "quantity": 1,
                                   "category": cat, "executed": executed,
-                                  "qr": cp.get("qr"), "qr_batch": cp.get("qr_batch"),
-                                  "qr_expiry": cp.get("qr_expiry"), "lot": cp.get("strip")})
+                                  "qr": cp.get("qr") if executed else None,
+                                  "qr_batch": cp.get("qr_batch") if executed else None,
+                                  "qr_expiry": cp.get("qr_expiry") if executed else None,
+                                  "lot": cp.get("strip") if executed else None})
             else:
                 dk = (eof, "_noc")
                 if dk in seen:

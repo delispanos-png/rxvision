@@ -108,9 +108,12 @@ def check_item(item: dict, cat: dict, *, ultra_levure_enabled: bool = True) -> l
                        "detail": "Καταχωρημένο ως αποσυρμένο από την κυκλοφορία — επιβεβαίωσε πριν την εκτέλεση."})
     if cat.get("limited_execution"):
         unit = cat.get("execution_unit")
+        extra = (f" μόνο από: {unit}." if unit
+                 else " — ισχύουν ειδικοί κανόνες/όρια χορήγησης (π.χ. ναρκωτικά/ψυχοτρόπα: ποσότητα, "
+                       "ειδική συνταγή). Έλεγξε ότι τηρούνται πριν την εκτέλεση.")
         checks.append({"type": "limited_execution", "level": "warning",
-                       "title": "Περιορισμένη εκτέλεση",
-                       "detail": f"Φάρμακο περιορισμένης εκτέλεσης{' — ' + unit if unit else ''}."})
+                       "title": "Περιορισμένη εκτέλεση (ΗΔΥΚΑ)",
+                       "detail": f"Φάρμακο περιορισμένης εκτέλεσης{extra}"})
     if cat.get("hospital_medicine"):
         checks.append({"type": "hospital", "level": "warning",
                        "title": "Νοσοκομειακό φάρμακο",
