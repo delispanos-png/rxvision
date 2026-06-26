@@ -866,16 +866,28 @@ class ReimbursementRepository(BaseRepository):
             cat_by_key[c["_id"]] = c
             if c.get("barcode"):
                 cat_by_key[c["barcode"]] = c
-        lines, flags = [], set()
+        # Ομαδοποίηση ανά φάρμακο: οι μερικές εκτελέσεις αποθηκεύουν η καθεμία το ΣΥΝΟΛΟ (ίδια
+        # κουπόνια) → χωρίς dedup το ίδιο φάρμακο θα εμφανιζόταν διπλό. Ποσότητα = διακριτά
+        # εκτελεσμένα κουπόνια (ανά strip/batch) = αληθινά τεμάχια.
+        by_key: dict = {}
+        flags = set()
         for it in items:
             p = prods.get(str(it.get("product_id")), {})
             c = cat_by_key.get(p.get("barcode"), {})
             cat = it.get("category") or p.get("category") or "normal"
             flags.add(cat)
-            lines.append({"name": c.get("full_name") or p.get("name") or "—",
-                          "barcode": p.get("barcode"), "eof": c.get("_id") or p.get("barcode"),
-                          "quantity": it.get("quantity"), "category": cat,
-                          "executed": bool(it.get("is_executed", True))})
+            key = c.get("_id") or p.get("barcode") or str(it.get("product_id"))
+            g = by_key.setdefault(key, {
+                "name": c.get("full_name") or p.get("name") or "—",
+                "barcode": p.get("barcode"), "eof": c.get("_id") or p.get("barcode"),
+                "category": cat, "executed": False, "strips": set(), "max_qty": 0})
+            for cp in (it.get("details") or {}).get("coupons") or []:
+                g["strips"].add(cp.get("strip") or cp.get("qr_batch") or len(g["strips"]) + 1)
+            g["max_qty"] = max(g["max_qty"], it.get("quantity", 1) or 1)
+            g["executed"] = g["executed"] or bool(it.get("is_executed", True))
+        lines = [{"name": g["name"], "barcode": g["barcode"], "eof": g["eof"],
+                  "quantity": len(g["strips"]) or g["max_qty"], "category": g["category"],
+                  "executed": g["executed"]} for g in by_key.values()]
         return lines, flags
 
     async def _coupons_from_cda(self, cda_lines: list) -> tuple:
@@ -939,7 +951,8 @@ class ReimbursementRepository(BaseRepository):
         return jsonsafe({
             "ok": True, "found": True, "barcode": bc,
             "fund": meta.get(exs[0].get("fund_id"), {}).get("group", "—"),
-            "claim": sum(e.get("amount_claimed", 0) for e in exs), "n_coupons": len(lines),
+            "claim": sum(e.get("amount_claimed", 0) for e in exs),
+            "n_coupons": sum(ln.get("quantity", 1) for ln in lines if ln.get("executed", True)),
             "has_opinion": opinion,                    # prescription-level γνωμάτευση (None=unknown)
             "has_vaccine": "vaccine" in flags,
             "has_narcotic": "narcotic" in flags,
