@@ -111,6 +111,8 @@ async def refresh_catalog(db, client) -> int:
                 "reference_cents": _cents(r.get("referencePrice")),
                 "participation": _num(r.get("participationPercentage")),
                 "narcotic": str(r.get("drug", "")).lower() == "true",
+                # αντιγριπικό εμβόλιο (ΗΔΥΚΑ MasterData isFluantiviral) → συνταγή = εμβολιασμός γρίπης
+                "flu_vaccine": str(r.get("isFluantiviral", "")).lower() == "true",
                 "high_cost": str(r.get("highCost", "")).lower() == "true",
                 "requires_opinion": (str(r.get("highCost", "")).lower() == "true"
                                      or str(r.get("eopyyPreapproval", "")).lower() == "true"

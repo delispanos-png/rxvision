@@ -55,6 +55,7 @@ class IngestionEngine:
         # resolve μία φορά αντί για ένα find_one_and_update ανά εκτέλεση (μείωση DB round-trips).
         self._doctor_cache: dict = {}
         self._fund_cache: dict = {}
+        self._flu_eof_set: set | None = None    # eofCodes αντιγριπικών (lazy, ανά sync)
 
     async def ingest(self, *, source: str, job_type: str,
                      records: Iterable[CanonicalExecution],
@@ -186,9 +187,39 @@ class IngestionEngine:
         if item_docs:
             await self.db["prescription_items"].insert_many(item_docs)  # tenant-ok: item_docs carry tenant_id
 
+        await self._maybe_record_flu_vaccine(ex, patient_ref, doc["status"])
         await self._post_process(ex, exec_id, patient_ref, amount_total, next_open,
                                  item_docs, count_patient=is_new)
         return "inserted" if is_new else "updated"
+
+    async def _flu_eofs(self) -> set:
+        """eofCodes που είναι αντιγριπικά εμβόλια (ΗΔΥΚΑ isFluantiviral). Lazy + cached ανά sync."""
+        if self._flu_eof_set is None:
+            self._flu_eof_set = {str(d["_id"]) async for d in
+                                 self.db["medicine_catalog"].find({"flu_vaccine": True}, {"_id": 1})}
+        return self._flu_eof_set
+
+    async def _maybe_record_flu_vaccine(self, ex: CanonicalExecution, patient_ref, status: str) -> None:
+        """Αν η συνταγή περιέχει αντιγριπικό εμβόλιο (συνταγογραφημένο από γιατρό), την προσθέτουμε
+        ΚΑΙ στο κύκλωμα εμβολιασμών (collection `vaccinations`, source=PRESCRIPTION) — μένει κανονικά
+        και στις συνταγές. Έτσι ο ασθενής μετράει ως εμβολιασμένος και από αυτή την πηγή."""
+        flu = await self._flu_eofs()
+        if not flu:
+            return
+        hit = next((it for it in ex.items if str((it.details or {}).get("eof_code") or "") in flu), None)
+        if hit is None:
+            return
+        bc = str(ex.external_id).split(":")[0]
+        amka = ex.patient.national_id if (ex.patient.national_id or "").isdigit() else None
+        ag = age_group(ex.patient.birth_year, today=_now().date()) if ex.patient.birth_year else None
+        await self.db["vaccinations"].update_one(  # tenant-ok: tenant_id in key
+            {"tenant_id": self.tenant_id, "source": "PRESCRIPTION", "external_id": "rx:" + bc},
+            {"$set": {"tenant_id": self.tenant_id, "source": "PRESCRIPTION", "external_id": "rx:" + bc,
+                      "executed_at": ex.executed_at, "cancelled": status == "cancelled",
+                      "vaccine_name": hit.name, "vaccine_type": "influenza",
+                      "patient_ref": patient_ref, "patient_name": ex.patient.full_name, "amka": amka,
+                      "patient_age_group": ag, "from_prescription": True, "updated_at": _now()}},
+            upsert=True)
 
     # ── reference resolution (upserts) ─────────────────────
     async def _resolve_patient(self, ex: CanonicalExecution) -> ObjectId:
