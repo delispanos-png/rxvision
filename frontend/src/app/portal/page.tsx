@@ -45,7 +45,12 @@ const dt = (s?: string | null) => (s ? fmtDate(s) : "—");
 const dtl = (s?: string | null) => (s ? fmtDateTime(s) : "—");
 const eur = (c?: number) => new Intl.NumberFormat("el-GR", { style: "currency", currency: "EUR", maximumFractionDigits: 2 }).format((c || 0) / 100);
 
-const TABS = [["rx", "Συνταγές"], ["health", "Υγεία"], ["wallet", "Επιβράβευση"], ["repeats", "Επαναλήψεις"], ["renewals", "Ανεκτέλεστα"], ["assign", "Ανάθεση συνταγής"], ["availability", "Διαθεσιμότητα"], ["appointments", "Ραντεβού"]] as const;
+const TABS = [["rx", "Συνταγές"], ["meds", "Πρόγραμμα λήψης"], ["health", "Υγεία"], ["wallet", "Επιβράβευση"], ["repeats", "Επαναλήψεις"], ["renewals", "Ανεκτέλεστα"], ["assign", "Ανάθεση συνταγής"], ["availability", "Διαθεσιμότητα"], ["appointments", "Ραντεβού"]] as const;
+
+const DOW = ["Δευ", "Τρί", "Τετ", "Πέμ", "Παρ", "Σάβ", "Κυρ"];
+type Therapy = { med_key: string; name: string; dose: string | null; dosage_text: string | null; kind: string; per_day: number; runout: string | null; days_left: number | null; enabled: boolean; reservable: boolean };
+type SlotCell = { slot: string; label: string; time: string; meds: { med_key: string; name: string; dose: string | null; time: string }[] };
+type Schedule = { therapies: Therapy[]; week: { dow: number; slots: SlotCell[] }[]; slot_times: Record<string, string>; streak: number };
 type HMeas = { _id?: string; kind: string; systolic?: number; diastolic?: number; value?: number; at: string };
 type Health = { height_cm?: number | null; latest: Record<string, HMeas>; history: Record<string, HMeas[]> };
 const hStat = (k: string, m?: HMeas) => {
@@ -81,6 +86,7 @@ export default function PortalHome() {
   const [rxReqs, setRxReqs] = useState<RxReq[]>([]);
   const [loyalty, setLoyalty] = useState<Loyalty | null>(null);
   const [health, setHealth] = useState<Health | null>(null);
+  const [sched, setSched] = useState<Schedule | null>(null);
   const [renewals, setRenewals] = useState<Renewal[] | null>(null);
   const [assignBc, setAssignBc] = useState("");
   const [assignNote, setAssignNote] = useState("");
@@ -143,6 +149,7 @@ export default function PortalHome() {
 
   useEffect(() => {
     if (!me) return;
+    if (tab === "meds") patientApi<Schedule>("/patient/meds/schedule").then(setSched).catch(() => {});
     if (tab === "health") patientApi<Health>("/patient/health").then(setHealth).catch(() => {});
     if (tab === "renewals") patientApi<{ items: Renewal[] }>("/patient/renewals").then((d) => setRenewals(d.items)).catch(() => {});
     if (tab === "wallet") patientApi<Loyalty>("/patient/loyalty").then(setLoyalty).catch(() => {});
@@ -171,6 +178,29 @@ export default function PortalHome() {
     const id = window.setInterval(tick, 12000);
     return () => window.clearInterval(id);
   }, [me, tab]);
+
+  async function toggleMed(med_key: string, enabled: boolean) {
+    setSched((s) => s ? { ...s, therapies: s.therapies.map((t) => t.med_key === med_key ? { ...t, enabled } : t) } : s);
+    try {
+      await patientApi("/patient/meds/reminder", { method: "POST", body: JSON.stringify({ med_key, enabled }) });
+      setSched(await patientApi<Schedule>("/patient/meds/schedule"));   // refresh grid
+    } catch { /* revert on next fetch */ }
+  }
+
+  const [tookToday, setTookToday] = useState<Record<string, boolean>>({});
+  async function takeMed(med_key: string) {
+    setTookToday((s) => ({ ...s, [med_key]: true }));
+    try {
+      const r = await patientApi<{ streak: number; points_awarded: number }>("/patient/meds/taken", { method: "POST", body: JSON.stringify({ med_key }) });
+      setSched((s) => s ? { ...s, streak: r.streak } : s);
+      if (r.points_awarded > 0) alert(`✓ Καταγράφηκε! Κέρδισες ${r.points_awarded} πόντους 🎁`);
+    } catch { setTookToday((s) => ({ ...s, [med_key]: false })); }
+  }
+  async function reserveMed(med_name: string) {
+    if (!confirm(`Κράτηση επανάληψης για «${med_name}» στο φαρμακείο σου;`)) return;
+    try { await patientApi("/patient/meds/reserve", { method: "POST", body: JSON.stringify({ med_name }) }); alert("✓ Η κράτηση στάλθηκε στο φαρμακείο σου. Θα ειδοποιηθείς όταν είναι έτοιμη."); }
+    catch { alert("Κάτι πήγε στραβά — δοκίμασε ξανά."); }
+  }
 
   async function switchPharmacy(tenant_id: string) {
     const d = await patientApi<{ access_token: string }>("/patient/auth/select-pharmacy", { method: "POST", body: JSON.stringify({ tenant_id }) });
@@ -544,6 +574,85 @@ export default function PortalHome() {
         )}
 
         {/* ── ΥΓΕΙΑ / ΜΕΤΡΗΣΕΙΣ ─────────────────────────────── */}
+        {tab === "meds" && (
+          <div className="space-y-5">
+            <div className="rounded-2xl bg-gradient-to-br from-violet-50 to-indigo-50 p-4">
+              <div className="text-sm font-semibold text-violet-900">💊 Το πρόγραμμα λήψης σου</div>
+              <p className="mt-1 text-xs text-violet-700">Φτιαγμένο από τις <b>οδηγίες του γιατρού σου</b> (όπως καταχωρήθηκαν στην ΗΔΥΚΑ). Ενεργοποίησε ποιες αγωγές θέλεις να σου θυμίζουμε. <span className="opacity-70">Ακολούθα πάντα τις οδηγίες του γιατρού/φαρμακοποιού σου.</span></p>
+              {!!sched?.streak && <div className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-orange-100 px-3 py-1 text-xs font-bold text-orange-700">🔥 {sched.streak} {sched.streak === 1 ? "μέρα" : "μέρες"} συνεπής λήψη στη σειρά!</div>}
+            </div>
+
+            {!sched ? <div className="py-10 text-center text-sm text-slate-400">Φόρτωση…</div>
+             : sched.therapies.length === 0 ? <Empty icon={BellRing} text="Δεν βρέθηκαν ενεργές αγωγές αυτή τη στιγμή." />
+             : (<>
+              {/* active therapies — opt-in per therapy */}
+              <div className="space-y-2">
+                {sched.therapies.map((th) => {
+                  const warn = th.days_left !== null && th.days_left <= 7;
+                  return (
+                    <div key={th.med_key} className={`rounded-2xl border p-3 ${th.enabled ? "border-violet-200 bg-white" : "border-slate-200 bg-slate-50"}`}>
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="truncate text-sm font-semibold text-slate-800">{th.name}</div>
+                          {th.dosage_text && <div className="mt-0.5 text-xs text-slate-500">{th.dosage_text}</div>}
+                          {th.days_left !== null && (
+                            <div className={`mt-1 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium ${warn ? "bg-amber-100 text-amber-700" : "bg-emerald-50 text-emerald-600"}`}>
+                              {warn ? "⏳" : "✓"} {th.days_left <= 0 ? "τελειώνει σήμερα" : `απομένουν ${th.days_left} ημέρες`}
+                            </div>
+                          )}
+                        </div>
+                        <button onClick={() => toggleMed(th.med_key, !th.enabled)}
+                          className={`relative h-6 w-11 shrink-0 rounded-full transition ${th.enabled ? "bg-violet-600" : "bg-slate-300"}`}>
+                          <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white transition-all ${th.enabled ? "left-[1.45rem]" : "left-0.5"}`} />
+                        </button>
+                      </div>
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        <button onClick={() => takeMed(th.med_key)} disabled={tookToday[th.med_key]}
+                          className={`inline-flex items-center gap-1 rounded-lg px-3 py-1.5 text-xs font-semibold ${tookToday[th.med_key] ? "bg-emerald-100 text-emerald-700" : "bg-violet-600 text-white hover:bg-violet-700"}`}>
+                          {tookToday[th.med_key] ? "✓ Το πήρα σήμερα" : "✓ Το πήρα"}
+                        </button>
+                        {th.reservable && (
+                          <button onClick={() => reserveMed(th.name)} className="inline-flex items-center gap-1 rounded-lg border border-amber-300 bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-700 hover:bg-amber-100">
+                            🔁 Κράτηση επανάληψης
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* weekly calendar — only enabled therapies */}
+              {sched.week.some((d) => d.slots.length > 0) ? (
+                <div>
+                  <div className="mb-2 mt-1 text-sm font-semibold text-slate-700">📅 Εβδομαδιαίο πρόγραμμα</div>
+                  <div className="space-y-2">
+                    {sched.week.map((d) => {
+                      const today = ((new Date().getDay() + 6) % 7) === d.dow;
+                      if (!d.slots.length) return null;
+                      return (
+                        <div key={d.dow} className={`rounded-2xl border p-3 ${today ? "border-violet-300 ring-1 ring-violet-200" : "border-slate-200"}`}>
+                          <div className="mb-1.5 text-xs font-bold text-slate-700">{DOW[d.dow]}{today && <span className="ml-1 rounded-full bg-violet-600 px-1.5 text-[10px] text-white">σήμερα</span>}</div>
+                          <div className="space-y-1.5">
+                            {d.slots.map((sl) => (
+                              <div key={sl.slot} className="flex items-start gap-2">
+                                <span className="mt-0.5 w-14 shrink-0 rounded-md bg-slate-100 px-1.5 py-0.5 text-center text-[11px] font-semibold text-slate-600">{sl.time}</span>
+                                <div className="flex flex-wrap gap-1">
+                                  {sl.meds.map((m, i) => <span key={i} className="rounded-md bg-violet-50 px-2 py-0.5 text-[11px] text-violet-700">{m.dose ? `${m.dose} · ` : ""}{m.name}</span>)}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : <p className="rounded-xl border border-dashed border-slate-300 p-4 text-center text-xs text-slate-400">Ενεργοποίησε μια αγωγή παραπάνω για να δεις το εβδομαδιαίο πρόγραμμα.</p>}
+             </>)}
+          </div>
+        )}
+
         {tab === "health" && (() => {
           const lt = health?.latest ?? {}; const bp = lt.bp; const gl = lt.glucose; const wt = lt.weight;
           const bmi = health?.height_cm && wt?.value ? (wt.value / ((health.height_cm / 100) ** 2)) : undefined;

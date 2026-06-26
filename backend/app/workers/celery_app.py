@@ -12,7 +12,7 @@ celery_app = Celery(
     broker=settings.CELERY_BROKER_URL,
     backend=settings.CELERY_RESULT_BACKEND,
     include=["app.workers.ingestion", "app.workers.snapshots",
-             "app.workers.billing", "app.workers.optical"],
+             "app.workers.billing", "app.workers.optical", "app.workers.reminders"],
 )
 
 celery_app.conf.update(
@@ -81,5 +81,15 @@ celery_app.conf.beat_schedule = {
     "reap-stuck-scans": {
         "task": "app.workers.optical.reap_stuck_scans",
         "schedule": crontab(minute="*/2"),
+    },
+    # RxVision Loop — patient med-intake reminders (each hour, matches the therapy slot times)
+    "med-reminders": {
+        "task": "app.workers.reminders.dispatch_med_reminders",
+        "schedule": crontab(minute=0),
+    },
+    # RxVision Loop — refill run-out radar (daily 07:00 UTC = 09:00/10:00 Athens)
+    "refill-radar": {
+        "task": "app.workers.reminders.dispatch_refill_radar",
+        "schedule": crontab(hour=7, minute=0),
     },
 }

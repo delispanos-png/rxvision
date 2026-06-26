@@ -27,6 +27,11 @@ DEFAULT_CONFIG = {
     "cents_per_point": 5,        # € value of one point (cents) → 10pts = 0.50€
     "min_redeem_cents": 100,     # smallest redemption (1.00€)
     "welcome_cents": 0,          # optional signup credit (cents) — applied as an adjust on first read
+    # Med-intake adherence rewards — PHARMACIST-ONLY opt-in, OFF by default (points cost real €).
+    "adherence_points_enabled": False,
+    "adherence_rule": "per_day",     # WHEN points are earned: per_med | per_day | full_day
+    "points_per_adherence": 1,       # points per earning event (per the rule)
+    "adherence_streak_bonus": 5,     # extra points each 7-day streak (per_day/full_day only)
 }
 
 # lifetime-points tiers (the «πιστότητα» ladder)
@@ -71,11 +76,19 @@ class LoyaltyRepository(BaseRepository):
         out["terms"] = doc.get("terms") or DEFAULT_TERMS
         return out
 
+    _BOOL_KEYS = {"enabled", "adherence_points_enabled"}
+    _STR_KEYS = {"adherence_rule"}
+
     async def save_config(self, cfg: dict) -> dict:
         clean = {}
         for k in DEFAULT_CONFIG:
             if k in cfg and cfg[k] is not None:
-                clean[k] = bool(cfg[k]) if k == "enabled" else max(0, int(cfg[k]))
+                if k in self._BOOL_KEYS:
+                    clean[k] = bool(cfg[k])
+                elif k in self._STR_KEYS:
+                    clean[k] = str(cfg[k])
+                else:
+                    clean[k] = max(0, int(cfg[k]))
         if "terms" in cfg and cfg["terms"] is not None:
             clean["terms"] = str(cfg["terms"])[:5000]
         await self._db["loyalty_config"].update_one(
@@ -124,6 +137,25 @@ class LoyaltyRepository(BaseRepository):
 
     async def ledger(self, patient_ref: str, limit: int = 50) -> list[dict]:
         return await self.find({"patient_ref": str(patient_ref)}, sort=[("at", -1)], limit=limit)
+
+    async def award_adherence(self, patient_ref: str, points: int, *, reason: str, dedup_key: str) -> dict:
+        """Award med-intake adherence points → wallet. NO-OP unless the pharmacist enabled it AND the
+        patient is enrolled. Idempotent via `dedup_key` (one award per patient per day)."""
+        cfg = await self.config()
+        if not cfg.get("adherence_points_enabled") or points <= 0:
+            return {"ok": True, "skipped": "disabled"}
+        enrolled = await self._db["loyalty_members"].find_one(
+            {"tenant_id": self.tenant_id, "patient_ref": str(patient_ref)})
+        if not enrolled:
+            return {"ok": True, "skipped": "not_enrolled"}
+        if await self._coll.find_one({"tenant_id": self.tenant_id, "dedup_key": dedup_key}):
+            return {"ok": True, "duplicate": True}
+        cents = int(points) * int(cfg["cents_per_point"])
+        await self._coll.insert_one({
+            "tenant_id": self.tenant_id, "patient_ref": str(patient_ref), "type": "adjust",
+            "cents": cents, "points": int(points), "reason": reason, "source": "adherence",
+            "dedup_key": dedup_key, "at": _now()})
+        return {"ok": True, "points": int(points), "cents": cents}
 
     async def _refills_since(self, enrolled: dict) -> dict:
         """Count repeat refills (distinct Rx barcodes) each enrolled patient executed ON/AFTER their

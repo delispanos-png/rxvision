@@ -133,6 +133,61 @@ async def my_summary(ctx: PatientContext = Depends(get_patient_context)):
     return await PatientRxRepository(tenant_id=ctx.tenant_id).summary(ctx.patient_ref)
 
 
+@router.get("/meds/schedule")
+async def meds_schedule(ctx: PatientContext = Depends(get_patient_context)):
+    """Εβδομαδιαίο πρόγραμμα λήψης: ενεργές αγωγές με τη δοσολογία του γιατρού + ημ/νία εξάντλησης,
+    και calendar grid για όσες έχει ενεργοποιήσει ο ασθενής."""
+    return await PatientRxRepository(tenant_id=ctx.tenant_id).medication_schedule(ctx.patient_ref)
+
+
+class ReminderIn(BaseModel):
+    med_key: str
+    enabled: bool
+
+
+@router.post("/meds/reminder")
+async def meds_reminder(body: ReminderIn, ctx: PatientContext = Depends(get_patient_context)):
+    """Ο ασθενής ενεργοποιεί/απενεργοποιεί ενημερώσεις λήψης για μια συγκεκριμένη αγωγή."""
+    return await PatientRxRepository(tenant_id=ctx.tenant_id).set_reminder(ctx.patient_ref, body.med_key, body.enabled)
+
+
+class IntakeIn(BaseModel):
+    med_key: str
+
+
+@router.post("/meds/taken")
+async def meds_taken(body: IntakeIn, ctx: PatientContext = Depends(get_patient_context)):
+    """«✓ Το πήρα» → σερί συνέπειας (+ πόντοι ΜΟΝΟ αν το φαρμακείο το έχει ενεργοποιήσει)."""
+    return await PatientRxRepository(tenant_id=ctx.tenant_id).log_intake(ctx.patient_ref, body.med_key)
+
+
+class ReserveIn(BaseModel):
+    med_name: str
+
+
+@router.post("/meds/reserve")
+async def meds_reserve(body: ReserveIn, ctx: PatientContext = Depends(get_patient_context)):
+    """Κράτηση επανάληψης (click-&-collect) → πέφτει στο worklist του φαρμακείου."""
+    from app.repositories.patient_portal import PatientAccountRepository
+    acc = await PatientAccountRepository().get(ctx.account_id)
+    name = f"{(acc or {}).get('first_name', '')} {(acc or {}).get('last_name', '')}".strip()
+    return await PatientRxRepository(tenant_id=ctx.tenant_id).reserve_refill(
+        account_id=ctx.account_id, patient_ref=ctx.patient_ref, med_name=body.med_name, patient_name=name)
+
+
+class SlotTimesIn(BaseModel):
+    morning: str | None = None
+    noon: str | None = None
+    evening: str | None = None
+    night: str | None = None
+
+
+@router.post("/meds/times")
+async def meds_times(body: SlotTimesIn, ctx: PatientContext = Depends(get_patient_context)):
+    """Προσωποποιημένες ώρες λήψης (πρωί/μεσημέρι/βράδυ/νύχτα)."""
+    return await PatientRxRepository(tenant_id=ctx.tenant_id).set_slot_times(ctx.patient_ref, body.model_dump())
+
+
 @router.get("/pharmacy-hours")
 async def pharmacy_hours(ctx: PatientContext = Depends(get_patient_context)):
     """Ζωντανή κατάσταση (ανοιχτό/κλειστό/εφημερία) + εβδομαδιαίο ωράριο του ενεργού φαρμακείου."""

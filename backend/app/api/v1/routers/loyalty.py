@@ -66,6 +66,12 @@ class ConfigIn(BaseModel):
     cents_per_point: int = Field(5, ge=0, le=1000)
     min_redeem_cents: int = Field(100, ge=0, le=100000)
     welcome_cents: int = Field(0, ge=0, le=100000)
+    # Πόντοι για συνεπή λήψη αγωγής (med-intake streak) — ΑΠΟΚΛΕΙΣΤΙΚΗ απόφαση του φαρμακοποιού,
+    # OFF by default (οι πόντοι κοστίζουν € στο wallet). Το calendar/σερί δουλεύουν ούτως ή άλλως.
+    adherence_points_enabled: bool = False
+    adherence_rule: str = Field("per_day", pattern="^(per_med|per_day|full_day)$")  # συνθήκη κέρδισης
+    points_per_adherence: int = Field(1, ge=0, le=100)        # πόντοι ανά γεγονός κέρδισης
+    adherence_streak_bonus: int = Field(5, ge=0, le=1000)     # bonus κάθε 7-μερο σερί
 
 
 @router.post("/config")

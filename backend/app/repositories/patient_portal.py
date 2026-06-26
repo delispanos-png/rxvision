@@ -410,6 +410,143 @@ class PatientRxRepository(BaseRepository):
             "details": ex.get("details") or {}, "items": items,
         })
 
+    async def medication_schedule(self, patient_ref: str) -> dict:
+        """The patient's ACTIVE therapies (course still running) with the doctor's posology turned
+        into an intake plan + run-out date, plus a 7-day calendar grid for the opted-in ones."""
+        from app.services import med_schedule as ms
+        pid = _oid(patient_ref)
+        if not pid:
+            return {"therapies": [], "week": [], "slot_times": ms.SLOT_TIMES}
+        now = datetime.now(tz=timezone.utc)
+        horizon = now - timedelta(days=180)
+        therapies: dict = {}
+        async for ex in self._coll.find(  # tenant-ok: _scope adds tenant_id
+                self._scope({"patient_ref": pid, "executed_at": {"$gte": horizon}})).sort("executed_at", -1):
+            async for it in self._db["prescription_items"].find(
+                    {"tenant_id": self.tenant_id, "execution_id": ex["_id"]}):
+                if not it.get("is_executed", True):
+                    continue
+                d = it.get("details") or {}
+                prod = (await self._db["products"].find_one({"_id": it.get("product_id")})
+                        if it.get("product_id") else None)
+                name = (prod or {}).get("name") or d.get("eof_code") or "Φάρμακο"
+                med_key = str(it.get("product_id") or d.get("eof_code") or name)
+                if med_key in therapies:        # keep only the most recent execution per medicine
+                    continue
+                plan = ms.frequency_plan(d.get("frequency"))
+                ro = ms.runout_date(ex.get("executed_at"), d.get("duration"))
+                active = (ro >= now) if ro else (ex.get("executed_at") and ex["executed_at"] >= now - timedelta(days=90))
+                if not active:
+                    continue
+                therapies[med_key] = {
+                    "med_key": med_key, "name": name,
+                    "dose": (str(d.get("dose")).replace("_", " ").strip() if d.get("dose") else None),
+                    "dosage_text": _format_dosage(d.get("dose"), d.get("frequency"), d.get("duration")),
+                    "plan": plan, "kind": plan["kind"], "per_day": plan["per_day"],
+                    "runout": ro, "last_dispensed": ex.get("executed_at"),
+                    "days_left": ((ro - now).days if ro else None)}
+        enabled = set()
+        async for r in self._db["med_reminders"].find(
+                {"tenant_id": self.tenant_id, "patient_ref": pid, "enabled": True}):
+            enabled.add(r.get("med_key"))
+        setting = await self._db["med_settings"].find_one(
+            {"tenant_id": self.tenant_id, "patient_ref": pid})
+        slot_times = {**ms.SLOT_TIMES, **((setting or {}).get("slot_times") or {})}
+        streak = await self._intake_streak(pid)
+        ths = list(therapies.values())
+        for t in ths:
+            t["enabled"] = t["med_key"] in enabled
+            t["reservable"] = t["days_left"] is not None and t["days_left"] <= 7
+        plans = [{"med_key": t["med_key"], "name": t["name"], "dose": t["dose"], "plan": t["plan"]}
+                 for t in ths if t["enabled"]]
+        return jsonsafe({"therapies": ths, "week": ms.weekly_grid(plans, slot_times),
+                         "slot_times": slot_times, "streak": streak})
+
+    async def _intake_streak(self, pid) -> int:
+        dates: set = set()
+        async for r in self._db["med_intake_log"].find(
+                {"tenant_id": self.tenant_id, "patient_ref": pid}, {"date": 1}).sort("date", -1).limit(180):
+            dates.add(r.get("date"))
+        streak = 0
+        d = datetime.now(tz=timezone.utc)
+        while d.strftime("%Y-%m-%d") in dates:
+            streak += 1
+            d -= timedelta(days=1)
+        return streak
+
+    async def log_intake(self, patient_ref: str, med_key: str) -> dict:
+        """«✓ Το πήρα» → record (idempotent/day), update streak, και (ΜΟΝΟ αν ο φαρμακοποιός το έχει
+        ενεργοποιήσει + ο ασθενής είναι μέλος) δίνει πόντους συμμόρφωσης."""
+        pid = _oid(patient_ref)
+        if not pid:
+            return {"ok": False}
+        now = datetime.now(tz=timezone.utc)
+        today = now.strftime("%Y-%m-%d")
+        await self._db["med_intake_log"].update_one(
+            {"tenant_id": self.tenant_id, "patient_ref": pid, "med_key": med_key, "date": today},
+            {"$set": {"at": now}}, upsert=True)
+        streak = await self._intake_streak(pid)
+        from app.repositories.loyalty import LoyaltyRepository
+        lrepo = LoyaltyRepository(tenant_id=self.tenant_id)
+        cfg = await lrepo.config()
+        points = 0
+        if cfg.get("adherence_points_enabled"):
+            rule = cfg.get("adherence_rule", "per_day")
+            base = int(cfg.get("points_per_adherence", 1))
+            bonus = int(cfg.get("adherence_streak_bonus", 0)) if (streak and streak % 7 == 0) else 0
+            award: tuple | None = None
+            if rule == "per_med":          # κάθε φάρμακο που επιβεβαιώνεις
+                award = (base, f"adh:{pid}:{med_key}:{today}", "Λήψη φαρμάκου")
+            elif rule == "full_day":       # ΜΟΝΟ αν πάρει ΟΛΑ τα φάρμακα της ημέρας
+                sched = await self.medication_schedule(patient_ref)
+                dow = now.weekday()
+                def _due(t):
+                    days = (t.get("plan") or {}).get("days")
+                    return days == "all" or (isinstance(days, list) and dow in days)
+                due = [t for t in sched.get("therapies", []) if _due(t)]   # ΟΛΕΣ οι ενεργές, όχι μόνο opt-in
+                confirmed = await self._db["med_intake_log"].count_documents(
+                    {"tenant_id": self.tenant_id, "patient_ref": pid, "date": today})
+                if due and confirmed >= len(due):
+                    award = (base + bonus, f"adh:{pid}:{today}", f"Πλήρης λήψη ημέρας (σερί {streak})")
+            else:                          # per_day — μία λήψη/ημέρα αρκεί
+                award = (base + bonus, f"adh:{pid}:{today}", f"Συνεπής λήψη (σερί {streak} ημ.)")
+            if award:
+                res = await lrepo.award_adherence(str(patient_ref), award[0],
+                                                  reason=award[2], dedup_key=award[1])
+                points = res.get("points", 0)
+        return {"ok": True, "streak": streak, "points_awarded": points}
+
+    async def set_slot_times(self, patient_ref: str, times: dict) -> dict:
+        pid = _oid(patient_ref)
+        if not pid:
+            return {"ok": False}
+        clean = {k: str(times[k]) for k in ("morning", "noon", "evening", "night")
+                 if times.get(k) and re.match(r"^\d{1,2}:\d{2}$", str(times[k]))}
+        await self._db["med_settings"].update_one(
+            {"tenant_id": self.tenant_id, "patient_ref": pid},
+            {"$set": {"slot_times": clean, "updated_at": datetime.now(tz=timezone.utc)}}, upsert=True)
+        return {"ok": True, "slot_times": clean}
+
+    async def reserve_refill(self, *, account_id, patient_ref: str, med_name: str,
+                             patient_name: str = "") -> dict:
+        """Click-&-collect: κράτηση επανάληψης → «ραντεβού» kind=refill → μπαίνει στο worklist του
+        φαρμακείου (ίδιο inbox/Copilot) → ο φαρμακοποιός το κάνει «έτοιμο» (υπάρχουσα ενέργεια)."""
+        appt = AppointmentRepository(tenant_id=self.tenant_id)
+        await appt.create(account_id=str(account_id), service_id=None,
+                          service_name=f"Επανάληψη: {med_name}", requested_at=None,
+                          note="Κράτηση επανάληψης από το πρόγραμμα λήψης", kind="refill",
+                          patient_ref=patient_ref, patient_name=patient_name)
+        return {"ok": True}
+
+    async def set_reminder(self, patient_ref: str, med_key: str, enabled: bool) -> dict:
+        pid = _oid(patient_ref)
+        if not pid or not med_key:
+            return {"ok": False}
+        await self._db["med_reminders"].update_one(
+            {"tenant_id": self.tenant_id, "patient_ref": pid, "med_key": med_key},
+            {"$set": {"enabled": enabled, "updated_at": datetime.now(tz=timezone.utc)}}, upsert=True)
+        return {"ok": True}
+
     async def summary(self, patient_ref: str) -> dict:
         """Patient KPI snapshot for the portal home: how many prescriptions, what they paid out of
         pocket, how much their insurance fund covered (savings), active repeats + next open date,

@@ -8,7 +8,7 @@ import { useT } from "@/store/prefStore";
 import { appConfirm } from "@/store/dialogStore";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
 
-type Cfg = { enabled: boolean; points_per_refill: number; cents_per_point: number; min_redeem_cents: number; welcome_cents: number; terms?: string };
+type Cfg = { enabled: boolean; points_per_refill: number; cents_per_point: number; min_redeem_cents: number; welcome_cents: number; terms?: string; adherence_points_enabled: boolean; adherence_rule: string; points_per_adherence: number; adherence_streak_bonus: number };
 type Candidate = { patient_ref: string; name: string; compliance: number | null };
 type Redemption = { _id?: string; id?: string; patient_ref: string; patient_name?: string; cents: number; kind?: string; reason?: string; at: string; voided?: boolean };
 type Member = { patient_ref: string; name: string; compliance: number | null; refills: number; expected: number; open_refills: number; points: number; balance_cents: number; redeemed_cents: number; tier: string; next_tier: string | null; to_next: number; progress_pct: number };
@@ -237,6 +237,33 @@ function ConfigCard({ cfg }: { cfg: Cfg }) {
           <input type="number" value={f.min_redeem_cents} onChange={num("min_redeem_cents")} className="mt-1 w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm dark:border-slate-700 dark:bg-slate-800" /></label>
         <label className="text-xs text-slate-500">{t("Δώρο εγγραφής (λεπτά)", "Welcome credit (cents)")}
           <input type="number" value={f.welcome_cents} onChange={num("welcome_cents")} className="mt-1 w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm dark:border-slate-700 dark:bg-slate-800" /></label>
+      </div>
+      {/* Πόντοι για συνεπή λήψη αγωγής — ΔΙΚΗ ΣΟΥ απόφαση (off by default, κοστίζει € στο wallet) */}
+      <div className="mt-4 rounded-xl border border-violet-200 bg-violet-50/60 p-3 dark:border-violet-900/40 dark:bg-violet-950/20">
+        <label className="inline-flex cursor-pointer items-center gap-2 text-sm font-semibold text-violet-900 dark:text-violet-200">
+          <input type="checkbox" checked={f.adherence_points_enabled} onChange={(e) => setF({ ...f, adherence_points_enabled: e.target.checked })} />
+          💊 {t("Πόντοι για συνεπή λήψη αγωγής", "Points for medication adherence")}
+        </label>
+        <p className="mt-1 text-[11px] text-violet-700 dark:text-violet-300">{t("Ο ασθενής κερδίζει πόντους όταν επιβεβαιώνει «✓ το πήρα» στην εφαρμογή. Δική σου επιλογή — οι πόντοι κοστίζουν € στο wallet. (Το πρόγραμμα λήψης & το σερί δουλεύουν ούτως ή άλλως.)", "The patient earns points when confirming intake in the app. Your choice — points cost € in the wallet.")}</p>
+        {f.adherence_points_enabled && (
+          <div className="mt-2 space-y-2">
+            <label className="block text-xs font-medium text-slate-600 dark:text-slate-300">{t("Συνθήκη κέρδισης — πότε κερδίζει ο ασθενής", "Earning rule")}
+              <select value={f.adherence_rule} onChange={(e) => setF({ ...f, adherence_rule: e.target.value })}
+                className="mt-1 w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm dark:border-slate-700 dark:bg-slate-800">
+                <option value="per_day">{t("Ανά ημέρα — αρκεί μία επιβεβαίωση λήψης", "Per day — at least one intake confirmed")}</option>
+                <option value="full_day">{t("Πλήρης ημέρα — όλα τα φάρμακα της ημέρας", "Full day — all of the day's meds")}</option>
+                <option value="per_med">{t("Ανά φάρμακο — κάθε φάρμακο που επιβεβαιώνει", "Per medicine — each confirmed med")}</option>
+              </select>
+            </label>
+            <div className="grid grid-cols-2 gap-3">
+              <label className="text-xs text-slate-500">{t("Πόντοι ανά κέρδισμα", "Points per earning")}
+                <input type="number" value={f.points_per_adherence} onChange={num("points_per_adherence")} className="mt-1 w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm dark:border-slate-700 dark:bg-slate-800" /></label>
+              <label className="text-xs text-slate-500">{t("Bonus ανά 7ήμερο σερί", "Bonus per 7-day streak")}
+                <input type="number" value={f.adherence_streak_bonus} onChange={num("adherence_streak_bonus")} className="mt-1 w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm dark:border-slate-700 dark:bg-slate-800" /></label>
+            </div>
+            <p className="text-[11px] text-slate-400">{t("Π.χ. «Πλήρης ημέρα» = ο ασθενής κερδίζει μόνο αν επιβεβαιώσει ΟΛΑ τα φάρμακα της ημέρας — επιβραβεύει την πραγματική συνέπεια.", "e.g. 'Full day' rewards real adherence — only if all of the day's meds are confirmed.")}</p>
+          </div>
+        )}
       </div>
       <div className="mt-3">
         <label className="text-xs text-slate-500">{t("Όροι συμμετοχής (εμφανίζονται στον πελάτη & εκτυπώνονται)", "Terms (shown to patient & printed)")}
