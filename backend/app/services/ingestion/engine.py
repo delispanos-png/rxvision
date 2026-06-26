@@ -215,6 +215,7 @@ class IngestionEngine:
         await self.db["vaccinations"].update_one(  # tenant-ok: tenant_id in key
             {"tenant_id": self.tenant_id, "source": "PRESCRIPTION", "external_id": "rx:" + bc},
             {"$set": {"tenant_id": self.tenant_id, "source": "PRESCRIPTION", "external_id": "rx:" + bc,
+                      "barcode": bc,
                       "executed_at": ex.executed_at, "cancelled": status == "cancelled",
                       "vaccine_name": hit.name, "vaccine_type": "influenza",
                       "patient_ref": patient_ref, "patient_name": ex.patient.full_name, "amka": amka,

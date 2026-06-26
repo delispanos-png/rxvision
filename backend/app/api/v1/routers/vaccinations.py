@@ -33,7 +33,8 @@ async def summary(
     ctx: TenantContext = Depends(require("prescriptions:read", module=_MODULE)),
 ):
     db = shared_db()
-    base = {"tenant_id": ctx.tenant_id, "source": "INFLUENZA",
+    # Αντιγριπικά: χορηγημένα από φαρμακοποιό (INFLUENZA) + συνταγογραφημένα από γιατρό (PRESCRIPTION).
+    base = {"tenant_id": ctx.tenant_id, "source": {"$in": ["INFLUENZA", "PRESCRIPTION"]},
             "executed_at": {"$gte": date_from, "$lt": date_to}}
     active = {**base, "cancelled": {"$ne": True}}
 
@@ -68,7 +69,7 @@ async def list_vaccinations(
 ):
     from app.repositories.base import jsonsafe
     db = shared_db()
-    q: dict = {"tenant_id": ctx.tenant_id, "source": "INFLUENZA"}
+    q: dict = {"tenant_id": ctx.tenant_id, "source": {"$in": ["INFLUENZA", "PRESCRIPTION"]}}
     if barcode and barcode.strip():
         # match either the vaccination's own barcode OR the treatment id (external_id) —
         # 199 records have no 92… barcode and the Συνταγές row falls back to external_id.
