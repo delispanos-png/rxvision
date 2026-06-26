@@ -65,6 +65,19 @@ def _substance_name(active_substances) -> str:
     return ", ".join(out)
 
 
+def _form_dose_auto(form_code, package_form, name) -> bool:
+    """ΗΔΥΚΑ ελέγχει υπερδοσολογία στη συνταγογράφηση για δισκία/κάψουλες/σιρόπι/αναπν.αμπούλες."""
+    f = (form_code or "").upper()
+    n = (name or "").upper()
+    if "TAB" in f or "CAP" in f or "ΔΙΣΚΙ" in n or "ΚΑΨΟΥΛ" in n or "ΤΑΜΠΛΕΤ" in n or "ΔΙΣΠ" in f:
+        return True
+    if "SYR" in f or "ΣΙΡΟΠ" in n or "SYRUP" in n or "POS" in f:
+        return True
+    if "NEB" in f or ("ΑΜΠ" in n and ("ΑΝΑΠΝΕΥΣ" in n or "ΕΙΣΠΝ" in n or "NEB" in n)):
+        return True
+    return False
+
+
 async def refresh_catalog(db, client) -> int:
     """Page masterdata/medicines → upsert into global `medicine_catalog` (keyed by eofCode).
     Logs every retail-price change vs the previous snapshot into `price_changes` (powers the
@@ -127,6 +140,11 @@ async def refresh_catalog(db, client) -> int:
                 "daily_dose": _num(r.get("dailyDose")),
                 "dose_unit": r.get("doseUnit"),
                 "desensitization_vaccine": str(r.get("desensitizationVaccine", "")).lower() == "true",
+                # χρειάζεται οπτικός έλεγχος δοσολογίας: ΟΧΙ δισκίο/κάψουλα/σιρόπι/αναπν.αμπούλα ΚΑΙ
+                # overdoseMessageType != 'E' (αλλιώς ελέγχθηκε στη συνταγογράφηση).
+                "needs_dose_check": ((r.get("overdoseMessageType") or "").upper() != "E"
+                                     and not _form_dose_auto(r.get("formCode"), r.get("packageForm"),
+                                                             r.get("commercialName"))),
                 "group_info": (r.get("groupInfo") or "").strip() or None,
                 "is_antibiotic": str(r.get("isAntibiotic", "")).lower() == "true",
                 "only_by_protocol": str(r.get("onlyByProtocol", "")).lower() == "true",

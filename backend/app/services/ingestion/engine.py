@@ -56,6 +56,7 @@ class IngestionEngine:
         self._doctor_cache: dict = {}
         self._fund_cache: dict = {}
         self._flu_eof_set: set | None = None    # eofCodes αντιγριπικών (lazy, ανά sync)
+        self._dose_eof_set: set | None = None    # eofCodes που χρειάζονται οπτικό έλεγχο δοσολογίας
 
     async def ingest(self, *, source: str, job_type: str,
                      records: Iterable[CanonicalExecution],
@@ -172,6 +173,7 @@ class IngestionEngine:
             "has_unexecuted_substances": any(not i.is_executed for i in ex.items),
             "next_open_date": next_open, "hash": chash, "ingested_at": _now(),
             "sync_job_id": job_id, "details": ex.details or {},
+            "needs_dose_check": await self._needs_dose_check(ex),
         }
         res = await self.db["prescription_executions"].find_one_and_update(  # tenant-ok: nat_key carries tenant_id
             nat_key, {"$set": doc}, upsert=True, return_document=ReturnDocument.AFTER)
@@ -198,6 +200,15 @@ class IngestionEngine:
             self._flu_eof_set = {str(d["_id"]) async for d in
                                  self.db["medicine_catalog"].find({"flu_vaccine": True}, {"_id": 1})}
         return self._flu_eof_set
+
+    async def _needs_dose_check(self, ex: CanonicalExecution) -> bool:
+        """True αν κάποιο είδος της συνταγής χρειάζεται οπτικό έλεγχο δοσολογίας (catalog flag)."""
+        if self._dose_eof_set is None:
+            self._dose_eof_set = {str(d["_id"]) async for d in
+                                  self.db["medicine_catalog"].find({"needs_dose_check": True}, {"_id": 1})}
+        if not self._dose_eof_set:
+            return False
+        return any(str((it.details or {}).get("eof_code") or "") in self._dose_eof_set for it in ex.items)
 
     async def _maybe_record_flu_vaccine(self, ex: CanonicalExecution, patient_ref, status: str) -> None:
         """Αν η συνταγή περιέχει αντιγριπικό εμβόλιο (συνταγογραφημένο από γιατρό), την προσθέτουμε

@@ -703,6 +703,7 @@ class ReimbursementRepository(BaseRepository):
                         "exec_count": {"$first": "$details.exec_count"},
                         "n3816": {"$first": {"$ifNull": ["$details.n3816", False]}},
                         "supp": {"$first": {"$ifNull": ["$details.supplementary_cover", False]}},
+                        "dose": {"$max": {"$ifNull": ["$needs_dose_check", False]}},
                         "executed_at": {"$min": "$executed_at"}}},
         ]).to_list(None)
         session = await self._db["barcode_check"].find_one(
@@ -723,6 +724,7 @@ class ReimbursementRepository(BaseRepository):
                 "fund": glabel, "group": glabel, "is_eopyy": is_eo, "is_vaccine": is_vac,
                 "is_100": is_100, "is_fyk": bool(r.get("n3816")), "is_etyap": bool(r.get("supp")),
                 "needs_original": (not bool(r.get("intangible"))) and ((ec or 1) <= 1),
+                "needs_dose_check": bool(r.get("dose")),
                 "checked": r["_id"] in checked})
         order = {EOPYY_MED: 0, "ΕΟΠΥΥ - Εμβόλια": 1, "Αμιγώς 100%": 8}
         groups = ["all"] + sorted({a["group"] for a in allrows}, key=lambda g: (order.get(g, 5), g))

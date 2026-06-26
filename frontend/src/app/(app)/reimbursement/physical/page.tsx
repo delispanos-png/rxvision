@@ -13,11 +13,13 @@ import { fmtEur } from "@/lib/formatters";
 import { DataTable, type Column } from "@/components/tables/DataTable";
 import { appConfirm } from "@/store/dialogStore";
 
-type Item = { barcode: string; claim: number; fund: string; group: string; is_eopyy: boolean; is_vaccine: boolean; is_100: boolean; is_fyk: boolean; is_etyap: boolean; needs_original: boolean; executed_at: string; checked: boolean; day: string };
+type Item = { barcode: string; claim: number; fund: string; group: string; is_eopyy: boolean; is_vaccine: boolean; is_100: boolean; is_fyk: boolean; is_etyap: boolean; needs_original: boolean; needs_dose_check: boolean; executed_at: string; checked: boolean; day: string };
 type DayRow = { date: string; total: number; checked: number };
 type Check = { period: string; group: string; groups: string[]; total: number; checked: number; remaining: number; extra: string[]; by_day: DayRow[]; items: Item[] };
 type Coupon = { name: string; barcode: string; quantity: number; category: string; executed: boolean; qr: boolean | null; qr_batch: string | null; qr_expiry: string | null; lot: string | null };
 type Detail = { ok: boolean; found: boolean; barcode: string; fund: string; claim: number; n_coupons: number; has_opinion: boolean | null; is_fyk: boolean; has_vaccine: boolean; has_narcotic: boolean; is_etyap?: boolean; partial: boolean; coupons: Coupon[] };
+type RxCheck = { type: string; level: string; title: string; detail: string };
+type ClosingChecksRes = { items: { name: string; barcode: string | null; checks: RxCheck[] }[]; count: number; warnings: number };
 type ScanFlags = { is_intangible: boolean; needs_original: boolean; is_fyk: boolean; has_desensitization: boolean; has_opinion: boolean; has_vaccine: boolean; is_etyap: boolean; exec_count: number | null };
 type ScanRes = { ok: boolean; found: boolean; barcode: string; flags?: ScanFlags };
 
@@ -33,6 +35,7 @@ export default function PhysicalCheckPage() {
   const [dayIdx, setDayIdx] = useState(0);
   const [last, setLast] = useState<{ found: boolean; barcode: string; flags?: ScanFlags } | null>(null);
   const [detail, setDetail] = useState<Detail | null>(null);
+  const [checks, setChecks] = useState<ClosingChecksRes | null>(null);
   // παραμετρικό: αυτόματο pop-up κουπονιών στο σκανάρισμα (επιλογή φαρμακοποιού, αποθηκεύεται τοπικά)
   const [couponsPopup, setCouponsPopup] = useState(false);
   useEffect(() => { setCouponsPopup(typeof window !== "undefined" && localStorage.getItem("rxv_coupons_on_scan") === "1"); }, []);
@@ -89,8 +92,11 @@ export default function PhysicalCheckPage() {
   }
   async function openDetail(barcode: string) {
     setDetail({ found: false } as Detail);
+    setChecks(null);
     try { const d = await api<Detail>(`/reimbursement/prescription?barcode=${encodeURIComponent(barcode)}`); setDetail(d.found ? d : null); }
     catch { setDetail(null); }
+    try { const c = await api<ClosingChecksRes>(`/prescriptions/checks/${encodeURIComponent(barcode)}`); setChecks(c.count > 0 ? c : null); }
+    catch { /* checks optional */ }
   }
 
   const cols: Column<Item>[] = [
@@ -105,6 +111,7 @@ export default function PhysicalCheckPage() {
           {r.needs_original && <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800" title={t("Χρειάζεται πρωτότυπη χάρτινη συνταγή ιατρού", "Needs original paper Rx")}>📄</span>}
           {r.is_fyk && <span className="rounded bg-fuchsia-100 px-1.5 py-0.5 text-[10px] font-semibold text-fuchsia-800">ΦΥΚ</span>}
           {r.is_etyap && <span className="rounded bg-cyan-100 px-1.5 py-0.5 text-[10px] font-semibold text-cyan-800" title="ΕΤΥΑΠ">🛡️</span>}
+          {r.needs_dose_check && <span className="rounded bg-orange-100 px-1.5 py-0.5 text-[10px] font-bold text-orange-700" title={t("Περιέχει σκεύασμα που χρειάζεται έλεγχο δοσολογίας", "Contains an item needing a dosage check")}>E</span>}
         </span>
       );
     } },
@@ -259,6 +266,22 @@ export default function PhysicalCheckPage() {
                   {detail.has_narcotic && <span className="inline-flex items-center gap-1 rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-semibold text-rose-700"><ShieldAlert className="h-3 w-3" /> {t("Ναρκωτικό", "Narcotic")}</span>}
                   {detail.partial && <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-600">{t("Μερική εκτέλεση", "Partial")}</span>}
                 </div>
+                {checks && checks.count > 0 && (
+                  <div className={`mb-3 rounded-xl border p-2.5 ${checks.warnings ? "border-amber-300 bg-amber-50/70 dark:border-amber-800 dark:bg-amber-950/30" : "border-sky-200 bg-sky-50/60 dark:border-sky-900/50 dark:bg-sky-950/20"}`}>
+                    <div className="mb-1.5 text-[11px] font-bold uppercase tracking-wide text-slate-600 dark:text-slate-300">🔎 {t("Έλεγχος κλεισίματος", "Closing checks")}</div>
+                    {checks.items.map((it, i) => (
+                      <div key={i} className="mb-1.5 last:mb-0">
+                        <div className="text-[11px] font-semibold text-slate-700 dark:text-slate-200">{it.name}</div>
+                        {it.checks.map((c, j) => (
+                          <div key={j} className={`mt-0.5 flex items-start gap-1.5 rounded-md px-2 py-1 text-[11px] ${c.level === "warning" ? "bg-amber-100 text-amber-900 dark:bg-amber-950/50 dark:text-amber-200" : "bg-white text-slate-600 dark:bg-slate-800/60 dark:text-slate-300"}`}>
+                            <span className="shrink-0">{c.level === "warning" ? "⚠️" : "ℹ️"}</span>
+                            <span><b>{c.title}.</b> {c.detail}</span>
+                          </div>
+                        ))}
+                      </div>
+                    ))}
+                  </div>
+                )}
                 {detail.coupons.some((c) => c.qr !== null) && (
                   <div className="mb-2 flex flex-wrap gap-1.5">
                     {detail.coupons.filter((c) => c.qr === true).length > 0 && <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-semibold text-emerald-700"><CheckCircle2 className="h-3.5 w-3.5" /> {detail.coupons.filter((c) => c.qr === true).length} QR {t("αυτόματα", "auto")}</span>}
