@@ -9,6 +9,7 @@ import { useNavStore } from "@/store/navStore";
 import { usePref, useT } from "@/store/prefStore";
 import { InstallButton } from "@/components/pwa/InstallButton";
 import { PharmaCatLauncher } from "@/components/pharmacat/PharmaCatLauncher";
+import { NotificationBells } from "@/components/layout/NotificationBells";
 import { Tooltip } from "@/components/ui/Tooltip";
 
 type Me = {
@@ -109,6 +110,7 @@ export function Topbar() {
           {locale === "el" ? "EN" : "ΕΛ"}
         </button>
       </Tooltip>
+      <NotificationBells modules={data?.modules} />
       <Tooltip label={t("Copilot — Βοηθός προγράμματος", "Copilot — App assistant")}>
         <button
           onClick={() => router.push("/copilot")}
