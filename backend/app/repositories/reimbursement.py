@@ -866,28 +866,39 @@ class ReimbursementRepository(BaseRepository):
             cat_by_key[c["_id"]] = c
             if c.get("barcode"):
                 cat_by_key[c["barcode"]] = c
-        # Ομαδοποίηση ανά φάρμακο: οι μερικές εκτελέσεις αποθηκεύουν η καθεμία το ΣΥΝΟΛΟ (ίδια
-        # κουπόνια) → χωρίς dedup το ίδιο φάρμακο θα εμφανιζόταν διπλό. Ποσότητα = διακριτά
-        # εκτελεσμένα κουπόνια (ανά strip/batch) = αληθινά τεμάχια.
-        by_key: dict = {}
-        flags = set()
+        # Μία κάρτα ΑΝΑ διακριτό εκτελεσμένο κουπόνι (ανά strip/batch) ώστε ΚΑΘΕ QR/ταινία να
+        # φαίνεται ξεχωριστά για έλεγχο. Το dedup διασταυρώνει ΜΟΝΟ τις μερικές εκτελέσεις (που
+        # αποθηκεύουν η καθεμία ΟΛΑ τα κουπόνια) → δεν διπλομετρώνται, αλλά τα 2 QR μένουν 2 κάρτες.
+        lines, flags, seen = [], set(), set()
         for it in items:
             p = prods.get(str(it.get("product_id")), {})
             c = cat_by_key.get(p.get("barcode"), {})
             cat = it.get("category") or p.get("category") or "normal"
             flags.add(cat)
-            key = c.get("_id") or p.get("barcode") or str(it.get("product_id"))
-            g = by_key.setdefault(key, {
-                "name": c.get("full_name") or p.get("name") or "—",
-                "barcode": p.get("barcode"), "eof": c.get("_id") or p.get("barcode"),
-                "category": cat, "executed": False, "strips": set(), "max_qty": 0})
-            for cp in (it.get("details") or {}).get("coupons") or []:
-                g["strips"].add(cp.get("strip") or cp.get("qr_batch") or len(g["strips"]) + 1)
-            g["max_qty"] = max(g["max_qty"], it.get("quantity", 1) or 1)
-            g["executed"] = g["executed"] or bool(it.get("is_executed", True))
-        lines = [{"name": g["name"], "barcode": g["barcode"], "eof": g["eof"],
-                  "quantity": len(g["strips"]) or g["max_qty"], "category": g["category"],
-                  "executed": g["executed"]} for g in by_key.values()]
+            name = c.get("full_name") or p.get("name") or "—"
+            bc = p.get("barcode")
+            eof = c.get("_id") or p.get("barcode")
+            executed = bool(it.get("is_executed", True))
+            coupons = (it.get("details") or {}).get("coupons") or []
+            if coupons:
+                for cp in coupons:
+                    sk = cp.get("strip") or cp.get("qr_batch")
+                    dk = (eof, sk)
+                    if sk and dk in seen:
+                        continue
+                    seen.add(dk)
+                    lines.append({"name": name, "barcode": bc, "eof": eof, "quantity": 1,
+                                  "category": cat, "executed": executed,
+                                  "qr": cp.get("qr"), "qr_batch": cp.get("qr_batch"),
+                                  "qr_expiry": cp.get("qr_expiry"), "lot": cp.get("strip")})
+            else:
+                dk = (eof, "_noc")
+                if dk in seen:
+                    continue
+                seen.add(dk)
+                lines.append({"name": name, "barcode": bc, "eof": eof,
+                              "quantity": it.get("quantity", 1) or 1, "category": cat,
+                              "executed": executed})
         return lines, flags
 
     async def _coupons_from_cda(self, cda_lines: list) -> tuple:
@@ -944,10 +955,17 @@ class ReimbursementRepository(BaseRepository):
                 await self._db["prescription_executions"].update_many(
                     {"tenant_id": self.tenant_id, "external_id": {"$regex": f"^{re.escape(bc)}"}},
                     {"$set": {"has_opinion": opinion}})
-        if cda_lines:
-            lines, flags = await self._coupons_from_cda(cda_lines)
+        # Το live CDA ΜΠΟΡΕΙ να υστερεί από τα αποθηκευμένα κουπόνια (π.χ. μερική εκτέλεση που
+        # μπήκε αργότερα) → διάλεξε την ΠΙΟ ΠΛΗΡΗ πηγή ώστε popup & έλεγχος κλεισίματος να
+        # συμφωνούν πάντα στα τεμάχια/QR.
+        cda_l, cda_f = (await self._coupons_from_cda(cda_lines)) if cda_lines else ([], set())
+        stored_l, stored_f = await self._rx_lines([e["_id"] for e in exs])
+        n_cda = sum(ln.get("quantity", 1) for ln in cda_l if ln.get("executed", True))
+        n_stored = sum(ln.get("quantity", 1) for ln in stored_l if ln.get("executed", True))
+        if cda_l and n_cda >= n_stored:
+            lines, flags = cda_l, cda_f
         else:
-            lines, flags = await self._rx_lines([e["_id"] for e in exs])
+            lines, flags = stored_l, stored_f
         return jsonsafe({
             "ok": True, "found": True, "barcode": bc,
             "fund": meta.get(exs[0].get("fund_id"), {}).get("group", "—"),
