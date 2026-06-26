@@ -126,7 +126,7 @@ export default function VaccinationRegistryPage() {
                     <td className="whitespace-nowrap px-4 py-2 text-slate-700 dark:text-slate-200">{v.executed_at ? new Date(v.executed_at).toLocaleString("el-GR") : "—"}</td>
                     <td className="px-4 py-2 text-slate-700 dark:text-slate-200">{v.patient_name || "—"}</td>
                     <td className="px-4 py-2 font-mono text-[11px] text-slate-500">{v.amka || "—"}</td>
-                    <td className="px-4 py-2 font-mono text-[11px] text-slate-500">{v.barcode || v.external_id || "—"}</td>
+                    <td className="px-4 py-2 font-mono text-[11px] text-slate-500">{v.barcode || "—"}</td>
                     <td className="px-4 py-2 text-slate-700 dark:text-slate-200">{v.vaccine_name || "—"}</td>
                     <td className="px-4 py-2 text-xs text-slate-500">{v.high_risk_group || "—"}</td>
                     <td className="px-4 py-2 text-slate-600 dark:text-slate-300">{v.patient_age_group || "—"}</td>
