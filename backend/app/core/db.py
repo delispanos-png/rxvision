@@ -88,6 +88,9 @@ INDEXES: list[tuple[str, list[tuple[str, int]], dict]] = [
     ("prescription_executions", [("tenant_id", 1), ("next_open_date", 1)], {}),
     ("prescription_executions", [("tenant_id", 1), ("patient_ref", 1)], {}),
     ("prescription_executions", [("tenant_id", 1), ("repeat_root", 1)], {}),
+    # GLOBAL (cross-tenant) — powers the cross-tenant contamination guard in the ingestion engine:
+    # a prescription barcode must live under exactly ONE tenant.
+    ("prescription_executions", [("external_id", 1), ("source", 1)], {"name": "guard_external_id_source"}),
     ("prescription_items", [("tenant_id", 1), ("execution_id", 1)], {}),
     ("prescription_items", [("tenant_id", 1), ("product_id", 1), ("executed_at", -1)], {}),
     ("prescription_items", [("tenant_id", 1), ("category", 1), ("executed_at", -1)], {}),

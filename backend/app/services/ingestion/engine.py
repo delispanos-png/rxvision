@@ -9,6 +9,7 @@ records a sync_jobs row with stats. Tenant-scoped on every operation.
 from __future__ import annotations
 
 import hashlib
+import logging
 from collections.abc import Iterable
 from datetime import datetime, timedelta, timezone
 
@@ -24,6 +25,7 @@ from app.services.wholesale import load_bands, markup_pct
 from app.utils.anonymization import age_group, pseudonymize
 
 _REPEAT_INTERVAL_DAYS = 30
+log = logging.getLogger(__name__)
 
 
 def _now() -> datetime:
@@ -61,7 +63,8 @@ class IngestionEngine:
     async def ingest(self, *, source: str, job_type: str,
                      records: Iterable[CanonicalExecution],
                      window: tuple | None = None, task_id: str | None = None) -> dict:
-        stats = {"fetched": 0, "inserted": 0, "updated": 0, "duplicates": 0, "invalid": 0}
+        stats = {"fetched": 0, "inserted": 0, "updated": 0, "duplicates": 0, "invalid": 0,
+                 "cross_tenant_skip": 0}
         errors: list[dict] = []
         job_id = ObjectId()
         # window = (start, end) date range being ingested → enables a real % progress bar
@@ -130,6 +133,24 @@ class IngestionEngine:
 
     # ── per-record persist ─────────────────────────────────
     async def _persist(self, ex: CanonicalExecution, job_id: ObjectId) -> str:
+        # ── ΦΡΟΥΡΟΣ cross-tenant ───────────────────────────────────────────────────────────
+        # Μια συνταγή (barcode) ανήκει σε ΕΝΑ φαρμακείο. Αν αυτό το external_id υπάρχει ήδη σε
+        # ΑΛΛΟΝ tenant, είναι διασταυρούμενη μόλυνση (αστάθεια ΗΔΥΚΑ / λάθος ρύθμιση) → ΔΕΝ το
+        # γράφουμε ΠΟΤΕ· καταγράφουμε alert για έλεγχο. Προστασία προσωπικών δεδομένων (GDPR).
+        clash = await self.db["prescription_executions"].find_one(
+            {"source": ex.source, "external_id": ex.external_id,
+             "tenant_id": {"$ne": self.tenant_id}}, {"tenant_id": 1})
+        if clash:
+            await self.db["ingestion_alerts"].update_one(
+                {"kind": "cross_tenant_barcode", "external_id": ex.external_id,
+                 "tenant_id": self.tenant_id},
+                {"$set": {"kind": "cross_tenant_barcode", "external_id": ex.external_id,
+                          "source": ex.source, "blocked_tenant_id": self.tenant_id,
+                          "owner_tenant_id": clash["tenant_id"], "job_id": job_id,
+                          "at": _now()}}, upsert=True)
+            log.warning("cross_tenant_block external_id=%s blocked=%s owner=%s",
+                        ex.external_id, self.tenant_id, clash["tenant_id"])
+            return "cross_tenant_skip"
         patient_ref = await self._resolve_patient(ex)
         doctor_id = await self._resolve_doctor(ex)
         fund_id = await self._resolve_fund(ex)

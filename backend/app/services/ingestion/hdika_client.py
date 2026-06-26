@@ -392,6 +392,12 @@ class HdikaClient:
         """Yield canonical executions from `since`→`until` (default today). Driver =
         prescription-execution /search (amounts/fund, executionNo); enriched per barcode by
         the full HL7 CDA (doctor, ICD-10, medicines, patient) and /prescriptions/search."""
+        # ΦΡΟΥΡΟΣ: ΠΟΤΕ αφιλτράριστη άντληση. Χωρίς pharmacyId η ΗΔΥΚΑ μπορεί να επιστρέψει
+        # δεδομένα συστεγασμένου/άλλου φαρμακείου → διασταυρούμενη μόλυνση. Αρνούμαστε να τρέξουμε.
+        if not self.pharmacy_id:
+            raise PermissionError(
+                "ΗΔΥΚΑ sync refused: δεν έχει οριστεί pharmacy_id — αφιλτράριστη άντληση μπορεί "
+                "να φέρει συνταγές άλλου φαρμακείου (GDPR). Ρύθμισε το pharmacy_id του φαρμακείου.")
         from datetime import timedelta
         end = (until.date() if until else datetime.now(tz=timezone.utc).date())
         start = since.date() if since else end
@@ -454,6 +460,8 @@ class HdikaClient:
         """Reconciliation helper — the set of (barcode, executionNo) ΗΔΥΚΑ CURRENTLY returns for
         `day` (a date), WITHOUT fetching any CDA (light: 1 search request per page). RAISES on a
         failed fetch so the caller skips that day (we must never cancel from a bad/empty fetch)."""
+        if not self.pharmacy_id:
+            raise PermissionError("ΗΔΥΚΑ reconcile refused: δεν έχει οριστεί pharmacy_id (GDPR).")
         keys: set = set()
         page = 0
         while True:
