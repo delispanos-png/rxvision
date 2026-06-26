@@ -87,8 +87,10 @@ def check_item(item: dict, cat: dict, *, ultra_levure_enabled: bool = True) -> l
                        "detail": "Απαιτείται ειδικός χειρισμός/έλεγχος εκτέλεσης."})
     if ultra_levure_enabled and str(item.get("barcode") or "") in ULTRA_LEVURE_BARCODES:
         checks.append({"type": "ultra_levure", "level": "warning",
-                       "title": "Ultra-Levure — έλεγχος περιορισμού",
-                       "detail": "Ο έλεγχος είναι ενεργός (παραμετρικά). Απενεργοποίησέ τον στις ρυθμίσεις αν δεν χρειάζεται."})
+                       "title": "Ultra-Levure — έλεγχος ένδειξης",
+                       "detail": "Χορηγείται συνήθως ΜΑΖΙ με αντιβιοτικό (προστασία εντέρου/διάρροια). "
+                                 "Επιβεβαίωσε ότι η συνταγή του γιατρού περιέχει τη σχετική ένδειξη/οδηγία "
+                                 "πριν την εκτέλεση. (Παραμετρικός έλεγχος — μπορείς να τον απενεργοποιήσεις.)"})
     gi = cat.get("group_info")
     if gi:
         checks.append({"type": "special_opinion", "level": "info",
