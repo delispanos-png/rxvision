@@ -13,6 +13,7 @@ import { LogoMark } from "@/components/brand/Logo";
 import { patientApi, patientTokens, patientUpload } from "@/lib/patientClient";
 import { PharmacyPicker, MedicinePicker, type Medicine } from "@/components/portal/pickers";
 import { RenewalCard, type Renewal } from "@/components/portal/RenewalCard";
+import { ShopTab } from "@/components/portal/ShopTab";
 import { pushSupported, isPushSubscribed, enablePush } from "@/lib/push";
 import { BellRing } from "lucide-react";
 import { fmtDate, fmtDateTime } from "@/lib/formatters";
@@ -45,7 +46,7 @@ const dt = (s?: string | null) => (s ? fmtDate(s) : "—");
 const dtl = (s?: string | null) => (s ? fmtDateTime(s) : "—");
 const eur = (c?: number) => new Intl.NumberFormat("el-GR", { style: "currency", currency: "EUR", maximumFractionDigits: 2 }).format((c || 0) / 100);
 
-const TABS = [["rx", "Συνταγές"], ["meds", "Πρόγραμμα λήψης"], ["health", "Υγεία"], ["wallet", "Επιβράβευση"], ["repeats", "Επαναλήψεις"], ["renewals", "Ανεκτέλεστα"], ["assign", "Ανάθεση συνταγής"], ["availability", "Διαθεσιμότητα"], ["appointments", "Ραντεβού"]] as const;
+const TABS = [["rx", "Συνταγές"], ["shop", "Κατάστημα"], ["meds", "Πρόγραμμα λήψης"], ["health", "Υγεία"], ["wallet", "Επιβράβευση"], ["repeats", "Επαναλήψεις"], ["renewals", "Ανεκτέλεστα"], ["assign", "Ανάθεση συνταγής"], ["availability", "Διαθεσιμότητα"], ["appointments", "Ραντεβού"]] as const;
 
 const DOW = ["Δευ", "Τρί", "Τετ", "Πέμ", "Παρ", "Σάβ", "Κυρ"];
 type Therapy = { med_key: string; name: string; dose: string | null; dosage_text: string | null; kind: string; per_day: number; runout: string | null; days_left: number | null; enabled: boolean; reservable: boolean };
@@ -574,6 +575,8 @@ export default function PortalHome() {
         )}
 
         {/* ── ΥΓΕΙΑ / ΜΕΤΡΗΣΕΙΣ ─────────────────────────────── */}
+        {tab === "shop" && <ShopTab />}
+
         {tab === "meds" && (
           <div className="space-y-5">
             <div className="rounded-2xl bg-gradient-to-br from-violet-50 to-indigo-50 p-4">

@@ -12,7 +12,7 @@ import { Tooltip } from "@/components/ui/Tooltip";
 import {
   Activity, BarChart3, Boxes, CalendarClock, ChevronRight, LayoutDashboard,
   Mail, Salad, PackageSearch, Settings, Sparkles, Stethoscope, TrendingUp, Users,
-  Brain, ShieldCheck, Tags, Syringe, Bot, Gift, BookOpen, type LucideIcon,
+  Brain, ShieldCheck, Tags, Syringe, Bot, Gift, BookOpen, Truck, type LucideIcon,
 } from "lucide-react";
 
 // A leaf (direct link). `module` gates visibility (shown only when enabled/trial).
@@ -64,6 +64,7 @@ const GROUPS: Group[] = [
     { label: "Έλεγχος συνταγών", en: "Rx Audit", icon: ShieldCheck, href: "/reimbursement", module: "monthly_closing" },
     { label: "Πύλη πελατών", en: "Customer Portal", icon: Users, href: "/portal-admin", module: "patient_portal" },
     { label: "Πιστότητα", en: "Loyalty", icon: Gift, href: "/loyalty", module: "loyalty" },
+    { label: "Παραγγελίες & Κατάλογος", en: "Orders & Catalog", icon: Truck, href: "/catalog", module: "order_delivery" },
     { label: "PharmacyOne", en: "PharmacyOne", icon: Boxes, href: "/pharmacyone", module: "pharmacyone" },
     { label: "Επικοινωνία", en: "Communications", icon: Mail, href: "/communications" },
     { label: "Οδηγός δεικτών", en: "Indicators guide", icon: BookOpen, href: "/guide" },

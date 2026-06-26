@@ -188,6 +188,65 @@ async def meds_times(body: SlotTimesIn, ctx: PatientContext = Depends(get_patien
     return await PatientRxRepository(tenant_id=ctx.tenant_id).set_slot_times(ctx.patient_ref, body.model_dump())
 
 
+# ── Κατάστημα φαρμακείου (OTC + παραφάρμακα) — παραγγελία στο δικό σου φαρμακείο ──────────────
+@router.get("/shop")
+async def shop(q: str = "", category: str | None = None, type: str | None = None,
+               ctx: PatientContext = Depends(get_patient_context)):
+    from app.repositories.pharmacy_catalog import PharmacyCatalogRepository
+    return await PharmacyCatalogRepository(tenant_id=ctx.tenant_id).list(
+        q=q, category=category, ptype=type, in_stock_only=True, page_size=60)
+
+
+@router.get("/shop/meta")
+async def shop_meta(ctx: PatientContext = Depends(get_patient_context)):
+    from app.repositories.pharmacy_catalog import PharmacyCatalogRepository
+    from app.repositories.orders_delivery import OrdersDeliveryRepository
+    cats = await PharmacyCatalogRepository(tenant_id=ctx.tenant_id).categories()
+    settings = await OrdersDeliveryRepository(tenant_id=ctx.tenant_id).settings()
+    return {"categories": cats, "settings": settings}
+
+
+class AddressIn(BaseModel):
+    street: str | None = None
+    area: str | None = None
+    postal: str | None = None
+    phone: str | None = None
+    notes: str | None = None
+
+
+class OrderLineIn(BaseModel):
+    barcode: str
+    qty: int = 1
+
+
+class OrderIn(BaseModel):
+    lines: list[OrderLineIn]
+    mode: str = "delivery"                  # delivery | pickup
+    address: AddressIn | None = None
+    courier_authorized: bool = False
+    gdpr_consent: bool = False
+
+
+@router.post("/shop/order")
+async def place_order(body: OrderIn, ctx: PatientContext = Depends(get_patient_context)):
+    from app.repositories.patient_portal import PatientAccountRepository
+    from app.repositories.orders_delivery import OrdersDeliveryRepository
+    acc = await PatientAccountRepository().get(ctx.account_id)
+    name = f"{(acc or {}).get('first_name', '')} {(acc or {}).get('last_name', '')}".strip()
+    phone = (body.address.phone if body.address else None) or (acc or {}).get("phone") or ""
+    return await OrdersDeliveryRepository(tenant_id=ctx.tenant_id).create_order(
+        account_id=ctx.account_id, patient_ref=ctx.patient_ref, patient_name=name, patient_phone=phone,
+        lines=[ln.model_dump() for ln in body.lines], mode=body.mode,
+        address=body.address.model_dump() if body.address else None,
+        courier_authorized=body.courier_authorized, gdpr_consent=body.gdpr_consent)
+
+
+@router.get("/shop/orders")
+async def my_orders(ctx: PatientContext = Depends(get_patient_context)):
+    from app.repositories.orders_delivery import OrdersDeliveryRepository
+    return {"items": await OrdersDeliveryRepository(tenant_id=ctx.tenant_id).my_orders(ctx.account_id)}
+
+
 @router.get("/pharmacy-hours")
 async def pharmacy_hours(ctx: PatientContext = Depends(get_patient_context)):
     """Ζωντανή κατάσταση (ανοιχτό/κλειστό/εφημερία) + εβδομαδιαίο ωράριο του ενεργού φαρμακείου."""

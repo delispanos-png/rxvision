@@ -35,6 +35,7 @@ const MODULE_LABELS: [string, string][] = [
   ["pharmacat", "🤖 PharmaCat (κλινικός βοηθός)"],
   ["patient_portal", "👥 Πύλη Πελατών (ραντεβού/διαθεσιμότητα)"],
   ["loyalty", "🎁 Πιστότητα (επιβράβευση πελατών)"],
+  ["order_delivery", "🚚 Παραγγελίες & Αποστολή (κατάλογος + κύκλωμα)"],
 ];
 type Creds = {
   users: User[];

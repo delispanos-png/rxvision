@@ -19,12 +19,14 @@ from app.api.v1.routers import (
     monthly_closing,
     onboarding,
     orders,
+    orders_delivery,
     copilot,
     patient,
     patient_intelligence,
     patients,
     portal_admin,
     pharmacat,
+    pharmacy_catalog,
     pharmacyone,
     platform,
     prescriptions,
@@ -48,6 +50,8 @@ api_router.include_router(copilot.router, prefix="/copilot", tags=["copilot"])
 api_router.include_router(reimbursement.router, prefix="/reimbursement", tags=["reimbursement"])
 api_router.include_router(pharmacy_availability.router, prefix="/pharmacy-availability", tags=["pharmacy-availability"])
 api_router.include_router(loyalty.router, prefix="/loyalty", tags=["loyalty"])
+api_router.include_router(pharmacy_catalog.router, prefix="/catalog", tags=["catalog"])
+api_router.include_router(orders_delivery.router, prefix="/orders/delivery", tags=["orders-delivery"])
 api_router.include_router(dashboard.router, prefix="/dashboard", tags=["dashboard"])
 api_router.include_router(advisor.router, prefix="/advisor", tags=["advisor"])
 api_router.include_router(communications.router, prefix="/communications", tags=["communications"])
