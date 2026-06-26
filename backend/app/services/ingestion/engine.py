@@ -208,7 +208,9 @@ class IngestionEngine:
                                   self.db["medicine_catalog"].find({"needs_dose_check": True}, {"_id": 1})}
         if not self._dose_eof_set:
             return False
-        return any(str((it.details or {}).get("eof_code") or "") in self._dose_eof_set for it in ex.items)
+        # μόνο αν ποσότητα > 1 (με 1 τεμάχιο δίνουμε το ελάχιστο → δεν χρειάζεται έλεγχος)
+        return any(str((it.details or {}).get("eof_code") or "") in self._dose_eof_set
+                   and (it.quantity or 1) > 1 for it in ex.items)
 
     async def _maybe_record_flu_vaccine(self, ex: CanonicalExecution, patient_ref, status: str) -> None:
         """Αν η συνταγή περιέχει αντιγριπικό εμβόλιο (συνταγογραφημένο από γιατρό), την προσθέτουμε

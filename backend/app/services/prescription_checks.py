@@ -68,17 +68,11 @@ def check_item(item: dict, cat: dict, *, ultra_levure_enabled: bool = True) -> l
     qty = item.get("quantity") or 1
     auto = _form_auto_checked(cat.get("form_code"), cat.get("package_form"), item.get("name"))
 
-    # ── 1. Υπερδοσολογία ──
-    if omt == "E":
-        pass                                            # ελέγχθηκε στη συνταγογράφηση
-    elif not auto:
+    # ── 1. Υπερδοσολογία ── (μόνο αν ποσότητα > 1· με 1 τεμάχιο δίνουμε το ελάχιστο → χωρίς έλεγχο)
+    if omt != "E" and not auto and qty > 1:
         checks.append({"type": "overdose", "level": "warning",
                        "title": "Οπτικός έλεγχος υπερδοσολογίας",
                        "detail": _overdose_detail(item, cat)})
-    elif qty > 1:
-        checks.append({"type": "overdose_qty", "level": "info",
-                       "title": "Ποσότητα > 1",
-                       "detail": f"Χορηγήθηκαν {qty} τεμάχια — επιβεβαίωσε ότι συμφωνεί με τη δοσολογία."})
 
     # ── 2. Ειδικά φάρμακα ──
     if cat.get("desensitization_vaccine"):
