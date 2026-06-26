@@ -94,4 +94,33 @@ def check_item(item: dict, cat: dict, *, ultra_levure_enabled: bool = True) -> l
         checks.append({"type": "fyk_high_value", "level": "info",
                        "title": "ΦΥΚ υψηλής αξίας",
                        "detail": f"Λιανική €{(cat['retail_cents'] / 100):,.2f} (> €3.000) — δώσε προσοχή."})
+
+    # ── 3. Επίσημα μηνύματα ΗΔΥΚΑ + κατάσταση κυκλοφορίας / περιορισμοί εκτέλεσης ──
+    if cat.get("info_popup"):
+        checks.append({"type": "hdika_info", "level": "warning",
+                       "title": "Προειδοποίηση ΗΔΥΚΑ", "detail": cat["info_popup"][:400]})
+    if cat.get("pharmacist_popup"):
+        checks.append({"type": "hdika_pharmacist", "level": "info",
+                       "title": "Οδηγία ΗΔΥΚΑ προς φαρμακοποιό", "detail": cat["pharmacist_popup"][:400]})
+    if cat.get("withdrawn"):
+        checks.append({"type": "withdrawn", "level": "warning",
+                       "title": "Αποσυρμένο φάρμακο",
+                       "detail": "Καταχωρημένο ως αποσυρμένο από την κυκλοφορία — επιβεβαίωσε πριν την εκτέλεση."})
+    if cat.get("limited_execution"):
+        unit = cat.get("execution_unit")
+        checks.append({"type": "limited_execution", "level": "warning",
+                       "title": "Περιορισμένη εκτέλεση",
+                       "detail": f"Φάρμακο περιορισμένης εκτέλεσης{' — ' + unit if unit else ''}."})
+    if cat.get("hospital_medicine"):
+        checks.append({"type": "hospital", "level": "warning",
+                       "title": "Νοσοκομειακό φάρμακο",
+                       "detail": "Χορηγείται μόνο σε νοσοκομειακό περιβάλλον."})
+    if cat.get("ifet"):
+        checks.append({"type": "ifet", "level": "info",
+                       "title": "Ειδική εισαγωγή (ΙΦΕΤ)",
+                       "detail": "Διατίθεται μέσω ΙΦΕΤ."})
+    if cat.get("is_heparin"):
+        checks.append({"type": "heparin", "level": "info",
+                       "title": "Ηπαρίνη",
+                       "detail": "Απαιτείται ειδικός χειρισμός/φύλαξη."})
     return checks

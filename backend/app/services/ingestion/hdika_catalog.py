@@ -148,6 +148,17 @@ async def refresh_catalog(db, client) -> int:
                 "group_info": (r.get("groupInfo") or "").strip() or None,
                 "is_antibiotic": str(r.get("isAntibiotic", "")).lower() == "true",
                 "only_by_protocol": str(r.get("onlyByProtocol", "")).lower() == "true",
+                # ── επίσημα μηνύματα ΗΔΥΚΑ + κατάσταση κυκλοφορίας/περιορισμοί (έλεγχος κλεισίματος) ──
+                "info_popup": (r.get("infoPopUp") or "").strip() or None,
+                "pharmacist_popup": (r.get("pharmacistPopUp") or "").strip() or None,
+                "withdrawn": str(r.get("withdrawn", "")).lower() == "true",
+                "in_circulation": str(r.get("inCirculation", "")).lower() == "true",
+                "limited_execution": str(r.get("limitedExecution", "")).lower() == "true",
+                "execution_unit": ((r.get("executionUnit") or {}).get("name")
+                                   if isinstance(r.get("executionUnit"), dict) else None),
+                "hospital_medicine": str(r.get("hospitalMedicine", "")).lower() == "true",
+                "ifet": str(r.get("ifet", "")).lower() == "true",
+                "is_heparin": str(r.get("isHeparin", "")).lower() == "true",
                 "active_substances": r.get("activeSubstances"),
                 "substance_name": _substance_name(r.get("activeSubstances")),
                 "vendor_update_date": r.get("updateDate"),
