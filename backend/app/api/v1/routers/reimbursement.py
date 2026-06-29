@@ -211,6 +211,21 @@ async def physical_visual(body: BarcodeIn, period: str = Query(None), undo: bool
     return await _repo(ctx).physical_visual(period or _cur(), body.barcode, undo=undo)
 
 
+@router.get("/settings")
+async def reimb_settings(ctx: TenantContext = Depends(require("closing:read", module=_MODULE))):
+    return await _repo(ctx).closing_prefs()
+
+
+class ClosingPrefsIn(BaseModel):
+    closing_mode: str = "classic"
+
+
+@router.post("/settings")
+async def set_reimb_settings(body: ClosingPrefsIn,
+                             ctx: TenantContext = Depends(require("closing:read", module=_MODULE))):
+    return await _repo(ctx).set_closing_prefs(body.closing_mode)
+
+
 # ── Optical Audit (OCR scans) ───────────────────────────────────────────────
 @router.post("/scans")
 async def upload_scan(file: UploadFile = File(...), doc_type: str = Form("prescription"),

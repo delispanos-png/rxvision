@@ -902,6 +902,19 @@ class ReimbursementRepository(BaseRepository):
             {op: {"visual": external_id}, "$set": {"updated_at": _now()}}, upsert=True)
         return {"ok": True, "external_id": external_id, "visual_checked": not undo}
 
+    async def closing_prefs(self) -> dict:
+        """Προτιμήσεις κλεισίματος (ανά φαρμακείο) — π.χ. τρόπος ελέγχου barcode."""
+        s = await self._db["reimbursement_settings"].find_one({"tenant_id": self.tenant_id}) or {}
+        return {"closing_mode": s.get("closing_mode", "classic")}
+
+    async def set_closing_prefs(self, closing_mode: str) -> dict:
+        mode = "guided" if closing_mode == "guided" else "classic"
+        await self._db["reimbursement_settings"].update_one(
+            {"tenant_id": self.tenant_id},
+            {"$set": {"tenant_id": self.tenant_id, "closing_mode": mode, "updated_at": _now()}},
+            upsert=True)
+        return {"ok": True, "closing_mode": mode}
+
     # ── DAILY RECONCILIATION — amounts + execution counts per day (vs the pharmacist's program) ─
     async def daily_reconciliation(self, period: str, group: str = "all") -> dict:
         """Ανά ημέρα, με δυνατότητα φίλτρου ανά ομάδα/ταμείο («all», «ΕΟΠΥΥ - Φάρμακα»,

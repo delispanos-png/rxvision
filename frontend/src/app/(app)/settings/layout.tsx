@@ -8,6 +8,7 @@ const TABS = [
   { href: "/settings/users", el: "Χρήστες & Ρόλοι", en: "Users & Roles" },
   { href: "/settings/modules", el: "Modules / Πλάνο", en: "Modules / Plan" },
   { href: "/settings/ingestion", el: "Διασύνδεση ΗΔΥΚΑ", en: "ΗΔΥΚΑ Connection" },
+  { href: "/settings/closing", el: "Κλείσιμο Μήνα", en: "Month Closing" },
   { href: "/settings/availability", el: "Ωράριο & Διαθεσιμότητα", en: "Hours & Availability" },
   { href: "/settings/communications", el: "Επικοινωνία", en: "Communications" },
   { href: "/settings/billing", el: "Χρέωση", en: "Billing" },
