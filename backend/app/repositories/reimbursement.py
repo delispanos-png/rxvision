@@ -695,7 +695,10 @@ class ReimbursementRepository(BaseRepository):
         meta = await self._fund_meta()
         rows = await self._db["prescription_executions"].aggregate([
             {"$match": {"tenant_id": self.tenant_id, "executed_at": {"$gte": start, "$lt": end}, "status": {"$ne": "cancelled"}}},
-            {"$group": {"_id": {"$arrayElemAt": [{"$split": ["$external_id", ":"]}, 0]},
+            # ΑΝΑ ΕΚΤΕΛΕΣΗ (full external_id = barcode:execNo), ΟΧΙ ανά barcode-root: μια συνταγή που
+            # εκτελέστηκε σε φάσεις (μερικές εκτελέσεις) πρέπει να εμφανίζεται ως ΞΕΧΩΡΙΣΤΕΣ εγγραφές
+            # για έλεγχο/υποβολή — μπορεί και σε διαφορετικές ημερομηνίες.
+            {"$group": {"_id": "$external_id",
                         "claim": {"$sum": "$amount_claimed"}, "retail": {"$sum": "$amount_total"},
                         "fund_id": {"$first": "$fund_id"},
                         "vac": {"$first": {"$ifNull": ["$details.vaccines", False]}},
@@ -718,14 +721,19 @@ class ReimbursementRepository(BaseRepository):
                 glabel, is_eo = self._grp_label(meta, r["fund_id"], bool(r.get("vac")))
                 is_vac = is_eo and bool(r.get("vac"))
             ec = r.get("exec_count")
+            ext = str(r["_id"])
+            root = ext.split(":")[0]                       # 13ψήφιο barcode συνταγής
+            exno = ext.split(":")[1] if ":" in ext else None  # αριθμός εκτέλεσης/φάσης
             allrows.append({
-                "barcode": r["_id"], "claim": r["claim"], "executed_at": r["executed_at"],
+                "barcode": root, "external_id": ext, "exec_no": exno,
+                "claim": r["claim"], "executed_at": r["executed_at"],
                 "day": r["executed_at"].strftime("%Y-%m-%d") if r.get("executed_at") else None,
                 "fund": glabel, "group": glabel, "is_eopyy": is_eo, "is_vaccine": is_vac,
                 "is_100": is_100, "is_fyk": bool(r.get("n3816")), "is_etyap": bool(r.get("supp")),
                 "needs_original": (not bool(r.get("intangible"))) and ((ec or 1) <= 1),
                 "needs_dose_check": bool(r.get("dose")),
-                "checked": r["_id"] in checked})
+                # checked ανά εκτέλεση (νέο) ή ανά barcode-root (παλιό state) — συμβατό και τα δύο
+                "checked": (ext in checked) or (root in checked)})
         order = {EOPYY_MED: 0, "ΕΟΠΥΥ - Εμβόλια": 1, "Αμιγώς 100%": 8}
         groups = ["all"] + sorted({a["group"] for a in allrows}, key=lambda g: (order.get(g, 5), g))
         if group != "all":
@@ -765,22 +773,29 @@ class ReimbursementRepository(BaseRepository):
         }
 
     async def physical_scan(self, period: str, barcode: str) -> dict:
-        bc = (barcode or "").strip().split(":")[0].strip()
+        # Το scanner διαβάζει 16 ψηφία (13 barcode συνταγής + 3 επανάληψης) → κρατάμε τα 13 πρώτα.
+        bc = (barcode or "").strip().split(":")[0].strip()[:13]
         if not bc:
             return {"ok": False, "error": "empty"}
         start, end = _month_bounds(period)
-        ex = await self._db["prescription_executions"].find_one(
+        # ΟΛΕΣ οι εκτελέσεις (φάσεις) αυτού του barcode → μαρκάρονται όλες (ανά full external_id)
+        exs = [e async for e in self._db["prescription_executions"].find(  # tenant-ok: scoped by tenant_id
             {"tenant_id": self.tenant_id, "executed_at": {"$gte": start, "$lt": end},
              "status": {"$ne": "cancelled"},
-             "external_id": {"$regex": f"^{re.escape(bc)}"}})  # tenant-ok: scoped by tenant_id
-        found = bool(ex)
-        field = "checked" if found else "extra"
-        await self._db["barcode_check"].update_one(
-            {"tenant_id": self.tenant_id, "period": period},
-            {"$addToSet": {field: bc}, "$set": {"updated_at": _now()}}, upsert=True)
-        res = {"ok": True, "found": found, "barcode": bc}
+             "external_id": {"$regex": f"^{re.escape(bc)}"}})]
+        found = bool(exs)
         if found:
-            res["flags"] = self._submission_flags(ex)
+            await self._db["barcode_check"].update_one(
+                {"tenant_id": self.tenant_id, "period": period},
+                {"$addToSet": {"checked": {"$each": [e["external_id"] for e in exs]}},
+                 "$set": {"updated_at": _now()}}, upsert=True)
+        else:
+            await self._db["barcode_check"].update_one(
+                {"tenant_id": self.tenant_id, "period": period},
+                {"$addToSet": {"extra": bc}, "$set": {"updated_at": _now()}}, upsert=True)
+        res = {"ok": True, "found": found, "barcode": bc, "n_executions": len(exs)}
+        if found:
+            res["flags"] = self._submission_flags(exs[0])
         return res
 
     async def physical_reset(self, period: str) -> dict:

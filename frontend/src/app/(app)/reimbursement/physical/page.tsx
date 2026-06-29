@@ -13,7 +13,7 @@ import { fmtEur } from "@/lib/formatters";
 import { DataTable, type Column } from "@/components/tables/DataTable";
 import { appConfirm } from "@/store/dialogStore";
 
-type Item = { barcode: string; claim: number; fund: string; group: string; is_eopyy: boolean; is_vaccine: boolean; is_100: boolean; is_fyk: boolean; is_etyap: boolean; needs_original: boolean; needs_dose_check: boolean; executed_at: string; checked: boolean; day: string };
+type Item = { barcode: string; external_id: string; exec_no: string | null; claim: number; fund: string; group: string; is_eopyy: boolean; is_vaccine: boolean; is_100: boolean; is_fyk: boolean; is_etyap: boolean; needs_original: boolean; needs_dose_check: boolean; executed_at: string; checked: boolean; day: string };
 type DayRow = { date: string; total: number; checked: number };
 type Check = { period: string; group: string; groups: string[]; total: number; checked: number; remaining: number; extra: string[]; by_day: DayRow[]; items: Item[] };
 type Coupon = { name: string; barcode: string; quantity: number; category: string; executed: boolean; qr: boolean | null; qr_batch: string | null; qr_expiry: string | null; lot: string | null };
@@ -74,6 +74,8 @@ export default function PhysicalCheckPage() {
 
   const cur = byDay[dayIdx];
   const dayItems = (data?.items ?? []).filter((i) => i.day === cur?.date).sort((a, b) => (a.checked === b.checked ? b.claim - a.claim : a.checked ? 1 : -1));
+  // πόσες εκτελέσεις/φάσεις έχει κάθε barcode σήμερα → δείχνουμε «φάση N» μόνο όταν >1
+  const execTotals = dayItems.reduce<Record<string, number>>((m, r) => { m[r.barcode] = (m[r.barcode] || 0) + 1; return m; }, {});
   const dayDone = !!cur && cur.checked >= cur.total;
   const monthDone = byDay.length > 0 && byDay.every((d) => d.checked >= d.total);
   const daysComplete = byDay.filter((d) => d.checked >= d.total).length;
@@ -101,7 +103,12 @@ export default function PhysicalCheckPage() {
 
   const cols: Column<Item>[] = [
     { key: "checked", header: "", render: (r) => r.checked ? <CheckCircle2 className="h-4 w-4 text-emerald-600" /> : <span className="inline-block h-4 w-4 rounded-full border-2 border-slate-300" /> },
-    { key: "barcode", header: "Barcode", render: (r) => <button onClick={() => openDetail(r.barcode)} className={`font-mono text-xs hover:text-emerald-600 hover:underline ${r.checked ? "text-slate-400 line-through" : "text-slate-700 dark:text-slate-200"}`}>{r.barcode}</button> },
+    { key: "barcode", header: "Barcode", render: (r) => (
+      <span className="inline-flex items-center gap-1">
+        <button onClick={() => openDetail(r.barcode)} className={`font-mono text-xs hover:text-emerald-600 hover:underline ${r.checked ? "text-slate-400 line-through" : "text-slate-700 dark:text-slate-200"}`}>{r.barcode}</button>
+        {execTotals[r.barcode] > 1 && r.exec_no && <span className="rounded bg-indigo-100 px-1 py-0.5 text-[9px] font-bold text-indigo-700 dark:bg-indigo-950/50 dark:text-indigo-300" title={t("Φάση μερικής εκτέλεσης — ξεχωριστή υποβολή", "Partial-execution phase — separate submission")}>{t("φάση", "phase")} {r.exec_no}</span>}
+      </span>
+    ) },
     { key: "group", header: t("Ομάδα / Ενδείξεις", "Group / Flags"), render: (r) => {
       const badge = r.is_100 ? "bg-amber-100 text-amber-800" : r.is_vaccine ? "bg-sky-100 text-sky-700" : r.is_eopyy ? "bg-emerald-100 text-emerald-700" : "bg-violet-100 text-violet-700";
       const lbl = r.group === "ΕΟΠΥΥ - Φάρμακα" ? "ΕΟΠΥΥ Φάρμ." : r.group === "ΕΟΠΥΥ - Εμβόλια" ? "Εμβόλια" : r.group === "Αμιγώς 100%" ? "100%" : r.group;
@@ -231,7 +238,7 @@ export default function PhysicalCheckPage() {
 
       {/* this day's prescriptions */}
       <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-200">{t("Συνταγές ημέρας", "Day's prescriptions")} ({dayItems.length})</h3>
-      <DataTable pageSize={50} columns={cols} rows={dayItems} rowKey={(r) => r.barcode} empty={t("Καμία συνταγή.", "No prescriptions.")} />
+      <DataTable pageSize={50} columns={cols} rows={dayItems} rowKey={(r) => r.external_id} empty={t("Καμία συνταγή.", "No prescriptions.")} />
 
       {/* extras (scanned but not in data) */}
       {!!data?.extra.length && (
