@@ -35,9 +35,15 @@ class PrescriptionRepository(BaseRepository):
         ειδικά φάρμακα) με βάση τα MasterData πεδία + τη δοσολογία του ιατρού."""
         from app.services import prescription_checks as pc
         bc = str(external_id).split(":")[0]
-        # ΟΛΕΣ οι (μερικές) εκτελέσεις του barcode — η συνολική ποσότητα ανά φάρμακο = διακριτά
-        # εκτελεσμένα κουπόνια (ανά strip/batch), όχι item.quantity που κάθε μερική το αποθηκεύει
-        # ως ΣΥΝΟΛΟ (→ διπλομέτρημα αν αθροίσεις τις μερικές).
+        # Αν δοθεί «:N» → έλεγχοι ΜΟΝΟ για τα φάρμακα ΑΥΤΗΣ της μερικής εκτέλεσης (κουπόνια με
+        # execution_no==N). Αλλιώς όλα τα φάρμακα της συνταγής. Ποσότητα ανά φάρμακο = διακριτά
+        # εκτελεσμένα κουπόνια (ανά strip/batch), όχι item.quantity (που κάθε μερική το αποθηκεύει ως σύνολο).
+        seq = None
+        if ":" in str(external_id):
+            try:
+                seq = int(str(external_id).split(":")[1])
+            except (ValueError, IndexError):
+                seq = None
         exs = [e async for e in self._coll.find(self._scope(
             {"external_id": {"$regex": "^" + re.escape(bc)}}))]
         if not exs:
@@ -50,8 +56,16 @@ class PrescriptionRepository(BaseRepository):
                 {"tenant_id": self.tenant_id, "execution_id": {"$in": ex_ids}}):
             d = it.get("details") or {}
             eof = d.get("eof_code")
+            coupons = d.get("coupons") or []
+            if seq is not None:
+                if coupons:
+                    coupons = [c for c in coupons if int(float(c.get("execution_no") or 0)) == seq]
+                    if not coupons:
+                        continue   # τα κουπόνια του φαρμάκου ανήκουν σε άλλη μερική εκτέλεση
+                elif seq != 1:
+                    continue       # ανεκτέλεστο (χωρίς κουπόνι) → εμφανίζεται μόνο στην 1η μερική
             g = by_eof.setdefault(eof, {"it": it, "d": d, "strips": set(), "max_qty": 0})
-            for c in (d.get("coupons") or []):
+            for c in coupons:
                 g["strips"].add(c.get("strip") or c.get("qr_batch") or len(g["strips"]) + 1)
             g["max_qty"] = max(g["max_qty"], it.get("quantity", 1) or 1)
         items_out: list[dict] = []
