@@ -737,6 +737,7 @@ class ReimbursementRepository(BaseRepository):
                 "is_100": is_100, "is_fyk": bool(r.get("n3816")), "is_etyap": bool(r.get("supp")),
                 "needs_original": (not bool(r.get("intangible"))) and ((ec or 1) <= 1),
                 "needs_dose_check": bool(r.get("dose")),
+                "has_opinion": bool(r.get("opinion")), "has_desens": bool(r.get("desens")),
                 # χρειάζεται έλεγχο = ταινία γνησιότητας (μη-QR) Ή κάποια ιδιαιτερότητα (δοσολογία/E,
                 # ΦΥΚ, γνωμάτευση, απευαισθητοποίηση, ναρκωτικό, πρωτότυπη, ή φάρμακο με σημείωση ΗΔΥΚΑ).
                 # base εδώ· τα strips + catalog-attention προστίθενται στο 2ο πέρασμα παρακάτω.
@@ -746,25 +747,43 @@ class ReimbursementRepository(BaseRepository):
                 "checked": (ext in checked) or (root in checked)})
             if r.get("doc_id"):
                 doc_map[r["doc_id"]] = allrows[-1]
-        # 2ο πέρασμα: ταινίες γνησιότητας (μη-QR εκτελεσμένο κουπόνι) + φάρμακα με σημείωση/περιορισμό
-        # ΗΔΥΚΑ → needs_check (μία αναζήτηση items + ένα set καταλόγου).
-        pending = {k: v for k, v in doc_map.items() if not v.get("needs_check")}
-        if pending:
-            attention = {str(d["_id"]) async for d in self._db["medicine_catalog"].find(  # tenant-ok: shared
+        # 2ο πέρασμα: κατηγοριοποίηση ανά εκτέλεση (ταινία μη-QR / ναρκωτικό / σημείωση ΗΔΥΚΑ) για
+        # το needs_check + την αναλυτική ενημέρωση μήνα. Μία αναζήτηση items + δύο set καταλόγου.
+        if doc_map:
+            narc = {str(d["_id"]) async for d in self._db["medicine_catalog"].find(  # tenant-ok: shared
+                {"narcotic": True}, {"_id": 1})}
+            note = {str(d["_id"]) async for d in self._db["medicine_catalog"].find(
                 {"$or": [{"info_popup": {"$ne": None}}, {"pharmacist_popup": {"$ne": None}},
                          {"withdrawn": True}, {"limited_execution": True}, {"hospital_medicine": True},
-                         {"ifet": True}, {"is_heparin": True}, {"desensitization_vaccine": True},
-                         {"narcotic": True}]}, {"_id": 1})}
+                         {"ifet": True}, {"is_heparin": True}]}, {"_id": 1})}
             async for it in self._db["prescription_items"].find(
-                    {"tenant_id": self.tenant_id, "execution_id": {"$in": list(pending.keys())}},
+                    {"tenant_id": self.tenant_id, "execution_id": {"$in": list(doc_map.keys())}},
                     {"execution_id": 1, "details.eof_code": 1, "details.coupons.qr": 1}):
-                row = pending.get(it["execution_id"])
-                if not row or row.get("needs_check"):
+                row = doc_map.get(it["execution_id"])
+                if not row:
                     continue
                 d = it.get("details") or {}
-                if any(c.get("qr") is False for c in (d.get("coupons") or [])) \
-                        or str(d.get("eof_code") or "") in attention:
+                eof = str(d.get("eof_code") or "")
+                if any(c.get("qr") is False for c in (d.get("coupons") or [])):
+                    row["has_strip"] = True
+                if eof in narc:
+                    row["is_narcotic"] = True
+                if eof in note:
+                    row["hdika_note"] = True
+            for row in doc_map.values():
+                if row.get("has_strip") or row.get("is_narcotic") or row.get("hdika_note"):
                     row["needs_check"] = True
+        # Αναλυτική ενημέρωση μήνα (πριν το φίλτρο ομάδας → όλος ο μήνας)
+        def _cnt(f):
+            return sum(1 for r in allrows if r.get(f))
+        summary = {
+            "total": len(allrows), "needs_check": _cnt("needs_check"),
+            "clean": len(allrows) - _cnt("needs_check"),
+            "dose": _cnt("needs_dose_check"), "fyk": _cnt("is_fyk"), "narcotic": _cnt("is_narcotic"),
+            "needs_original": _cnt("needs_original"), "opinion": _cnt("has_opinion"),
+            "desensitization": _cnt("has_desens"), "strips": _cnt("has_strip"),
+            "hdika_note": _cnt("hdika_note"), "vaccine": _cnt("is_vaccine"),
+        }
         order = {EOPYY_MED: 0, "ΕΟΠΥΥ - Εμβόλια": 1, "Αμιγώς 100%": 8}
         groups = ["all"] + sorted({a["group"] for a in allrows}, key=lambda g: (order.get(g, 5), g))
         if group != "all":
@@ -781,6 +800,7 @@ class ReimbursementRepository(BaseRepository):
             "period": period, "day": day, "group": group, "groups": groups,
             "total": len(items), "checked": checked_n,
             "remaining": len(items) - checked_n, "extra": session.get("extra", []),
+            "summary": summary,
             "by_day": sorted(by_day.values(), key=lambda x: x["date"] or ""), "items": items})
 
     @staticmethod
@@ -804,38 +824,34 @@ class ReimbursementRepository(BaseRepository):
         }
 
     async def physical_scan(self, period: str, barcode: str, day: str | None = None) -> dict:
-        # Το scanner διαβάζει 16 ψηφία (13 barcode συνταγής + 3 επανάληψης) → κρατάμε τα 13 πρώτα.
+        # Κρατάμε τα 13 ψηφία (barcode συνταγής)· η ΣΩΣΤΗ μερική εκτέλεση εντοπίζεται από την
+        # ΗΜΕΡΟΜΗΝΙΑ εκτέλεσης (αξιόπιστο), όχι από το 3ψήφιο suffix (ασυνεπές: π.χ. «160» vs «102»).
         bc = (barcode or "").strip().split(":")[0].strip()[:13]
         if not bc:
             return {"ok": False, "error": "empty"}
-        start, end = _month_bounds(period)
-        # ΟΛΕΣ οι εκτελέσεις (φάσεις) αυτού του barcode στον μήνα
-        exs = [e async for e in self._db["prescription_executions"].find(  # tenant-ok: scoped by tenant_id
-            {"tenant_id": self.tenant_id, "executed_at": {"$gte": start, "$lt": end},
-             "status": {"$ne": "cancelled"},
+        all_exs = [e async for e in self._db["prescription_executions"].find(  # tenant-ok
+            {"tenant_id": self.tenant_id, "status": {"$ne": "cancelled"},
              "external_id": {"$regex": f"^{re.escape(bc)}"}})]
-        if not exs:
+        if not all_exs:               # δεν υπάρχει καθόλου στα δεδομένα → extra
             await self._db["barcode_check"].update_one(
                 {"tenant_id": self.tenant_id, "period": period},
                 {"$addToSet": {"extra": bc}, "$set": {"updated_at": _now()}}, upsert=True)
             return {"ok": True, "found": False, "barcode": bc, "n_executions": 0}
-        # Έλεγχος ΑΝΑ ΗΜΕΡΑ: αν ελέγχουμε συγκεκριμένη μέρα αλλά η συνταγή ΔΕΝ εκτελέστηκε εκείνη
-        # τη μέρα → ΔΕΝ τη μαρκάρουμε· ειδοποιούμε ποια είναι η σωστή μέρα/μέρες.
-        if day:
-            on_day = [e for e in exs if e["executed_at"].strftime("%Y-%m-%d") == day]
-            if not on_day:
-                actual = sorted({e["executed_at"].strftime("%Y-%m-%d") for e in exs})
-                return {"ok": True, "found": True, "wrong_day": True, "barcode": bc,
-                        "scanned_day": day, "actual_days": actual, "n_executions": len(exs)}
-            exs = on_day            # μαρκάρουμε μόνο τις εκτελέσεις ΑΥΤΗΣ της μέρας
+        start, end = _month_bounds(period)
+        in_month = [e for e in all_exs if start <= e["executed_at"] < end]
+        targets = [e for e in in_month if e["executed_at"].strftime("%Y-%m-%d") == day] if day else in_month
+        if not targets:               # υπάρχει αλλά ΟΧΙ σε αυτή τη μέρα/μήνα → ειδοποίηση
+            actual = sorted({e["executed_at"].strftime("%Y-%m-%d") for e in all_exs})
+            return {"ok": True, "found": True, "wrong_day": True, "barcode": bc,
+                    "actual_days": actual, "n_executions": len(all_exs)}
         await self._db["barcode_check"].update_one(
             {"tenant_id": self.tenant_id, "period": period},
-            {"$addToSet": {"checked": {"$each": [e["external_id"] for e in exs]}},
+            {"$addToSet": {"checked": {"$each": [e["external_id"] for e in targets]}},
              "$set": {"updated_at": _now()}}, upsert=True)
-        res = {"ok": True, "found": True, "barcode": bc, "n_executions": len(exs)}
-        res["flags"] = self._submission_flags(exs[0])
-        if len(exs) == 1:              # μία φάση → popup με τα κουπόνια ΑΥΤΗΣ
-            res["external_id"] = exs[0]["external_id"]
+        res = {"ok": True, "found": True, "barcode": bc, "n_executions": len(targets)}
+        res["flags"] = self._submission_flags(targets[0])
+        if len(targets) == 1:         # μία μερική εκτέλεση → popup με τα κουπόνια ΑΥΤΗΣ
+            res["external_id"] = targets[0]["external_id"]
         return res
 
     async def physical_reset(self, period: str, day: str | None = None) -> dict:

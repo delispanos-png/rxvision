@@ -4,7 +4,7 @@ import { useState, useRef, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   ScanBarcode, CheckCircle2, XCircle, RotateCcw, ChevronLeft, ChevronRight,
-  X, FileText, Syringe, Pill, ShieldAlert, Ticket, PartyPopper, CalendarDays, ArrowRight, AlertTriangle, Filter,
+  X, FileText, Syringe, Pill, ShieldAlert, Ticket, PartyPopper, CalendarDays, ArrowRight, AlertTriangle, Filter, Printer, ClipboardList,
 } from "lucide-react";
 import { api } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
@@ -15,7 +15,8 @@ import { appConfirm, appAlert } from "@/store/dialogStore";
 
 type Item = { barcode: string; external_id: string; exec_no: string | null; claim: number; fund: string; group: string; is_eopyy: boolean; is_vaccine: boolean; is_100: boolean; is_fyk: boolean; is_etyap: boolean; needs_original: boolean; needs_dose_check: boolean; needs_check: boolean; executed_at: string; checked: boolean; day: string };
 type DayRow = { date: string; total: number; checked: number };
-type Check = { period: string; group: string; groups: string[]; total: number; checked: number; remaining: number; extra: string[]; by_day: DayRow[]; items: Item[] };
+type Summary = { total: number; needs_check: number; clean: number; dose: number; fyk: number; narcotic: number; needs_original: number; opinion: number; desensitization: number; strips: number; hdika_note: number; vaccine: number };
+type Check = { period: string; group: string; groups: string[]; total: number; checked: number; remaining: number; extra: string[]; summary?: Summary; by_day: DayRow[]; items: Item[] };
 type Coupon = { name: string; barcode: string; quantity: number; category: string; executed: boolean; qr: boolean | null; qr_batch: string | null; qr_expiry: string | null; lot: string | null };
 type Detail = { ok: boolean; found: boolean; barcode: string; exec_no?: number | null; fund: string; claim: number; n_coupons: number; has_opinion: boolean | null; is_fyk: boolean; has_vaccine: boolean; has_narcotic: boolean; is_etyap?: boolean; partial: boolean; coupons: Coupon[] };
 type RxCheck = { type: string; level: string; title: string; detail: string };
@@ -37,6 +38,8 @@ export default function PhysicalCheckPage() {
   const [last, setLast] = useState<{ found: boolean; barcode: string; flags?: ScanFlags } | null>(null);
   const [detail, setDetail] = useState<Detail | null>(null);
   const [checks, setChecks] = useState<ClosingChecksRes | null>(null);
+  const [showBriefing, setShowBriefing] = useState(false);
+  const briefedPeriod = useRef<string | null>(null);
   // παραμετρικό: αυτόματο pop-up κουπονιών στο σκανάρισμα (επιλογή φαρμακοποιού, αποθηκεύεται τοπικά)
   const [couponsPopup, setCouponsPopup] = useState(false);
   useEffect(() => { setCouponsPopup(typeof window !== "undefined" && localStorage.getItem("rxv_coupons_on_scan") === "1"); }, []);
@@ -56,6 +59,10 @@ export default function PhysicalCheckPage() {
 
   const { data } = useQuery({ queryKey: ["reimb-physical", period, group], queryFn: () => api<Check>(`/reimbursement/physical?period=${period}&group=${encodeURIComponent(group)}`) });
   const byDay = data?.by_day ?? [];
+  // ενημερωτικό παράθυρο μήνα — εμφανίζεται μία φορά ανά μήνα όταν φορτώσει η περίληψη
+  useEffect(() => {
+    if (data?.summary && briefedPeriod.current !== period) { briefedPeriod.current = period; setShowBriefing(true); }
+  }, [data?.summary, period]);
 
   // resume at the first not-yet-complete day, once
   useEffect(() => {
@@ -118,6 +125,29 @@ export default function PhysicalCheckPage() {
     try { const c = await api<ClosingChecksRes>(`/prescriptions/checks/${encodeURIComponent(barcode)}`); setChecks(c.count > 0 ? c : null); }
     catch { /* checks optional */ }
   }
+  const briefRows = (s: Summary): [string, number, boolean][] => [
+    [t("💊 Έλεγχος δοσολογίας", "💊 Dosage check"), s.dose, true],
+    [t("🔴 Ναρκωτικά", "🔴 Narcotics"), s.narcotic, true],
+    [t("ΦΥΚ (Ν.3816)", "High-cost (L.3816)"), s.fyk, true],
+    [t("📋 Με γνωμάτευση", "📋 With medical opinion"), s.opinion, true],
+    [t("📄 Χρειάζονται πρωτότυπη χάρτινη", "📄 Need original paper Rx"), s.needs_original, true],
+    [t("🧪 Απευαισθητοποίηση", "🧪 Desensitization"), s.desensitization, true],
+    [t("⚠️ Ταινίες γνησιότητας (μη-QR)", "⚠️ Authenticity strips (non-QR)"), s.strips, true],
+    [t("ℹ️ Σημείωση/περιορισμός ΗΔΥΚΑ", "ℹ️ ΗΔΥΚΑ note/restriction"), s.hdika_note, true],
+    [t("💉 Εμβόλια", "💉 Vaccines"), s.vaccine, false],
+  ];
+  function printBriefing() {
+    const s = data?.summary; if (!s) return;
+    const rows = briefRows(s).map(([l, v]) => `<tr><td>${l}</td><td style="text-align:right"><b>${v}</b></td></tr>`).join("");
+    const w = window.open("", "_blank", "width=620,height=760"); if (!w) return;
+    w.document.write(`<html><head><title>${t("Έλεγχος συνταγών", "Prescription check")} ${period}</title></head><body style="font-family:system-ui,sans-serif;padding:24px">
+      <h2>${t("Έλεγχος συνταγών — Τι θα συναντήσεις", "Prescription check — what to expect")} · ${period}</h2>
+      <p>${t("Σύνολο εκτελέσεων", "Total executions")}: <b>${s.total}</b> · ${t("χρειάζονται έλεγχο", "need a check")}: <b>${s.needs_check}</b> · ${t("καθαρές (all-QR)", "clean (all-QR)")}: <b>${s.clean}</b></p>
+      <table cellpadding="8" style="border-collapse:collapse;min-width:420px">${briefRows(s).map(([l, v]) => `<tr style="border-bottom:1px solid #ddd"><td>${l}</td><td style="text-align:right"><b>${v}</b></td></tr>`).join("")}</table>
+      ${rows ? "" : ""}</body></html>`);
+    w.document.close(); w.focus(); setTimeout(() => { w.print(); w.close(); }, 250);
+    setShowBriefing(false);
+  }
 
   const cols: Column<Item>[] = [
     { key: "checked", header: "", render: (r) => r.checked ? <CheckCircle2 className="h-4 w-4 text-emerald-600" /> : <span className="inline-block h-4 w-4 rounded-full border-2 border-slate-300" /> },
@@ -163,6 +193,7 @@ export default function PhysicalCheckPage() {
       <div className="flex items-center justify-between text-xs text-slate-500">
         <span className="inline-flex items-center gap-1.5"><CalendarDays className="h-4 w-4" /> {t("Ημέρες ολοκληρωμένες", "Days complete")}: <b className="text-slate-700 dark:text-slate-200">{daysComplete}/{byDay.length}</b></span>
         <span className="inline-flex items-center gap-1.5">
+          {data?.summary && <button onClick={() => setShowBriefing(true)} className="inline-flex items-center gap-1 rounded-lg border border-slate-300 px-2.5 py-1 hover:bg-slate-50 dark:border-slate-600"><ClipboardList className="h-3 w-3" /> {t("Τι θα συναντήσω", "Briefing")}</button>}
           <button onClick={async () => { if (cur && await appConfirm(t(`Μηδενισμός ελέγχου ΜΟΝΟ για την ${grDate(cur.date)}; (η δουλειά των άλλων ημερών διατηρείται)`, `Reset check for ${cur ? grDate(cur.date) : ""} only? (other days kept)`))) reset.mutate(cur.date); }} className="inline-flex items-center gap-1 rounded-lg border border-slate-300 px-2.5 py-1 hover:bg-slate-50 dark:border-slate-600"><RotateCcw className="h-3 w-3" /> {t("Μηδενισμός ημέρας", "Reset day")}</button>
           <button onClick={async () => { if (await appConfirm(t("Μηδενισμός ΟΛΟΥ του μήνα; (χάνεται ο έλεγχος όλων των ημερών)", "Reset the WHOLE month? (all days' checks lost)"), { danger: true })) reset.mutate(undefined); }} className="rounded-lg px-2 py-1 text-slate-400 hover:bg-slate-50 hover:text-rose-600 dark:hover:bg-slate-800">{t("όλος ο μήνας", "whole month")}</button>
         </span>
@@ -273,6 +304,37 @@ export default function PhysicalCheckPage() {
       )}
 
       {/* advanced detail modal */}
+      {showBriefing && data?.summary && (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4" onClick={() => setShowBriefing(false)}>
+          <div className="max-h-[85vh] w-full max-w-lg overflow-y-auto rounded-2xl bg-white p-5 shadow-xl dark:bg-slate-900" onClick={(e) => e.stopPropagation()}>
+            <div className="mb-3 flex items-start justify-between">
+              <div>
+                <div className="text-[11px] font-semibold uppercase text-emerald-600">{t("Ενημέρωση μήνα", "Month briefing")} · {period}</div>
+                <h3 className="text-lg font-bold text-slate-900 dark:text-slate-100">{t("Τι θα συναντήσεις στο κλείσιμο", "What you'll meet at closing")}</h3>
+              </div>
+              <button onClick={() => setShowBriefing(false)} className="text-slate-400 hover:text-slate-600"><X className="h-5 w-5" /></button>
+            </div>
+            <div className="mb-3 grid grid-cols-3 gap-2 text-center">
+              <div className="rounded-xl bg-slate-100 p-2 dark:bg-slate-800"><div className="text-xl font-extrabold text-slate-800 dark:text-slate-100">{data.summary.total}</div><div className="text-[10px] text-slate-500">{t("εκτελέσεις", "executions")}</div></div>
+              <div className="rounded-xl bg-amber-100 p-2 dark:bg-amber-950/40"><div className="text-xl font-extrabold text-amber-700">{data.summary.needs_check}</div><div className="text-[10px] text-amber-700">{t("χρειάζονται έλεγχο", "need a check")}</div></div>
+              <div className="rounded-xl bg-emerald-100 p-2 dark:bg-emerald-950/40"><div className="text-xl font-extrabold text-emerald-700">{data.summary.clean}</div><div className="text-[10px] text-emerald-700">{t("καθαρές (all-QR)", "clean (all-QR)")}</div></div>
+            </div>
+            <div className="space-y-1">
+              {briefRows(data.summary).filter(([, v]) => v > 0).map(([label, v, warn], i) => (
+                <div key={i} className={`flex items-center justify-between rounded-lg px-3 py-1.5 text-sm ${warn ? "bg-amber-50 dark:bg-amber-950/20" : "bg-slate-50 dark:bg-slate-800/50"}`}>
+                  <span className="text-slate-700 dark:text-slate-200">{label}</span><b className="text-slate-900 dark:text-slate-100">{v}</b>
+                </div>
+              ))}
+            </div>
+            <p className="mt-3 text-xs text-slate-500">{t("Σκάναρε μέρα-μέρα. Οι all-QR χωρίς ιδιαιτερότητα είναι αυτόματα ΟΚ — με τον διακόπτη «Μόνο όσες χρειάζονται έλεγχο» εστιάζεις στις υπόλοιπες.", "Scan day by day. All-QR with no specialness are auto-OK — use the «only those needing a check» toggle to focus on the rest.")}</p>
+            <div className="mt-4 flex gap-2">
+              <button onClick={printBriefing} className="flex-1 rounded-xl border border-slate-300 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200"><Printer className="mr-1 inline h-4 w-4" /> {t("Εκτύπωση", "Print")}</button>
+              <button onClick={() => setShowBriefing(false)} className="flex-1 rounded-xl bg-emerald-600 py-2.5 text-sm font-semibold text-white hover:bg-emerald-700">{t("Κλείσιμο & συνέχεια", "Close & continue")}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {detail !== null && (
         <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4" onClick={() => setDetail(null)}>
           <div className="max-h-[85vh] w-full max-w-md overflow-y-auto rounded-2xl bg-white p-5 shadow-xl dark:bg-slate-900" onClick={(e) => e.stopPropagation()}>
@@ -284,7 +346,7 @@ export default function PhysicalCheckPage() {
                   <div>
                     <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase text-emerald-600"><Ticket className="h-3.5 w-3.5" /> {t("Κουπόνια συνταγής", "Prescription coupons")}</div>
                     <h3 className="font-mono text-base font-bold text-slate-900 dark:text-slate-100">{detail.barcode}</h3>
-                    <p className="text-xs text-slate-500">{detail.fund} · {fmtEur(detail.claim)} · {detail.n_coupons} {t("κουπόνια", "coupons")}{detail.exec_no ? ` · ${t("φάση", "phase")} ${detail.exec_no}` : ""}</p>
+                    <p className="text-xs text-slate-500">{detail.fund} · {fmtEur(detail.claim)} · {detail.n_coupons} {t("κουπόνια", "coupons")}{detail.exec_no ? ` · ${t("μερική εκτέλεση", "partial execution")} ${detail.exec_no}` : ""}</p>
                   </div>
                   <button onClick={() => setDetail(null)} className="text-slate-400 hover:text-slate-600"><X className="h-5 w-5" /></button>
                 </div>
