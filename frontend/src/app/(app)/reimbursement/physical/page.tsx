@@ -63,9 +63,9 @@ export default function PhysicalCheckPage() {
   const mode: "classic" | "guided" = prefs?.closing_mode === "guided" ? "guided" : "classic";
   const byDay = data?.by_day ?? [];
   // ενημερωτικό παράθυρο μήνα — εμφανίζεται μία φορά ανά μήνα όταν φορτώσει η περίληψη
-  useEffect(() => {
-    if (data?.summary && briefedPeriod.current !== period) { briefedPeriod.current = period; setShowBriefing(true); }
-  }, [data?.summary, period]);
+  useEffect(() => {   // briefing pop-up μόνο στον κλασικό· στον καθοδηγούμενο το Στάδιο 1 είναι καθαρό μέτρημα
+    if (mode === "classic" && data?.summary && briefedPeriod.current !== period) { briefedPeriod.current = period; setShowBriefing(true); }
+  }, [data?.summary, period, mode]);
   // Ποιοτικό στάδιο (guided): worklist όσων χρειάζονται έλεγχο & δεν έχουν ελεγχθεί οπτικά
   const vAll = (data?.items ?? []).filter((i) => i.needs_check);
   const vRemaining = vAll.filter((i) => !i.visual_checked)
@@ -107,7 +107,7 @@ export default function PhysicalCheckPage() {
       }
       setLast({ found: r.found, barcode: r.barcode, flags: r.flags });
       qc.invalidateQueries({ queryKey: ["reimb-physical", period] });
-      if (r.found && localStorage.getItem("rxv_coupons_on_scan") === "1") openDetail(r.external_id || r.barcode);
+      if (mode === "classic" && r.found && localStorage.getItem("rxv_coupons_on_scan") === "1") openDetail(r.external_id || r.barcode);
     },
   });
   const reset = useMutation({
@@ -218,6 +218,21 @@ export default function PhysicalCheckPage() {
           {vCurrent.is_fyk && <span className="rounded bg-fuchsia-100 px-1.5 py-0.5 text-[10px] font-semibold text-fuchsia-800">ΦΥΚ</span>}
           {vCurrent.needs_original && <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800">📄 {t("πρωτότυπη", "original")}</span>}
         </div>
+        {/* Τι πρέπει να κάνεις / επισυνάψεις στο ταμείο για να είναι σωστή η υποβολή */}
+        {(() => {
+          const todo: string[] = [];
+          if (vCurrent.needs_original) todo.push(t("📄 Επισύναψε την ΠΡΩΤΟΤΥΠΗ χάρτινη συνταγή ιατρού.", "📄 Attach the ORIGINAL paper prescription."));
+          if (wizCoupons?.has_opinion) todo.push(t("📋 Επισύναψε τη ΓΝΩΜΑΤΕΥΣΗ.", "📋 Attach the medical opinion."));
+          if (vCurrent.is_fyk) todo.push(t("💊 ΦΥΚ (Ν.3816) — επισύναψε αντίγραφο τιμολογίου/δελτίου ΦΥΚ.", "💊 High-cost (L.3816) — attach the purchase invoice copy."));
+          if ((wizCoupons?.coupons || []).some((c) => c.qr === false)) todo.push(t("⚠️ Έλεγξε & κράτησε τις ΤΑΙΝΙΕΣ γνησιότητας (μη-QR).", "⚠️ Verify & keep the authenticity strips (non-QR)."));
+          if (vCurrent.is_etyap) todo.push(t("🛡️ ΕΤΥΑΠ — μπαίνει στη συμπληρωματική υποβολή.", "🛡️ ΕΤΥΑΠ — goes to the supplementary submission."));
+          return todo.length ? (
+            <div className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50/60 p-2.5 dark:border-emerald-900/50 dark:bg-emerald-950/20">
+              <div className="mb-1 flex items-center gap-1.5 text-[11px] font-bold uppercase text-emerald-700 dark:text-emerald-400"><ClipboardList className="h-3.5 w-3.5" /> {t("Για την υποβολή στο ταμείο", "For the fund submission")}</div>
+              <ul className="space-y-0.5 text-[11px] text-slate-700 dark:text-slate-200">{todo.map((x, i) => <li key={i}>{x}</li>)}</ul>
+            </div>
+          ) : null;
+        })()}
         {wizChecks && wizChecks.count > 0 ? (
           <div className="mt-3 space-y-1.5">
             {wizChecks.items.map((it, i) => (
@@ -265,6 +280,66 @@ export default function PhysicalCheckPage() {
       <button onClick={async () => { if (await appConfirm(t("Νέος έλεγχος μήνα;", "New month check?"), { danger: true })) reset.mutate(undefined); }} className="mx-auto inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-600"><RotateCcw className="h-4 w-4" /> {t("Νέος έλεγχος", "New check")}</button>
     </div>
   );
+
+  // ── GUIDED: Στάδιο 1 — Αριθμητικός, με ΗΜΕΡΟΛΟΓΙΟ (λιτό, χωρίς popup) ──
+  if (mode === "guided" && !monthDone) {
+    const yy = Number(period.split("-")[0]); const mm = Number(period.split("-")[1]);
+    const dim = new Date(yy, mm, 0).getDate();
+    const lead = (new Date(yy, mm - 1, 1).getDay() + 6) % 7;   // Δευτέρα = 0
+    const bmap: Record<string, DayRow> = {}; byDay.forEach((d) => { bmap[d.date] = d; });
+    const cells: (string | null)[] = [...Array(lead).fill(null), ...Array.from({ length: dim }, (_, i) => `${period}-${String(i + 1).padStart(2, "0")}`)];
+    return (
+      <div className="mx-auto max-w-2xl space-y-4">
+        <div className="flex items-center justify-between rounded-2xl border-2 border-violet-300 bg-gradient-to-r from-violet-50 to-white p-4 dark:border-violet-800 dark:from-violet-950/30 dark:to-slate-900">
+          <div>
+            <div className="text-[11px] font-semibold uppercase tracking-wide text-violet-600">{t("Καθοδηγούμενο κλείσιμο · Στάδιο 1/2", "Guided closing · Stage 1/2")}</div>
+            <div className="text-lg font-bold text-slate-900 dark:text-slate-100">{t("Αριθμητικός — σκάναρε όλες ανά ημέρα", "Numeric — scan all, day by day")}</div>
+          </div>
+          <div className="text-right"><div><span className="text-2xl font-extrabold text-violet-600">{daysComplete}</span><span className="text-slate-400">/{byDay.length}</span></div><div className="text-[10px] text-slate-400">{t("ημέρες", "days")}</div></div>
+        </div>
+        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900">
+          <div className="mb-2 text-sm font-semibold capitalize text-slate-700 dark:text-slate-200">{new Date(yy, mm - 1, 1).toLocaleDateString("el-GR", { month: "long", year: "numeric" })}</div>
+          <div className="grid grid-cols-7 gap-1 text-center text-[10px] font-medium text-slate-400">{["Δε", "Τρ", "Τε", "Πέ", "Πα", "Σά", "Κυ"].map((w) => <div key={w}>{w}</div>)}</div>
+          <div className="mt-1 grid grid-cols-7 gap-1">
+            {cells.map((date, i) => {
+              if (!date) return <div key={i} />;
+              const dnum = Number(date.slice(-2)); const d = bmap[date];
+              if (!d) return <div key={i} className="grid aspect-square place-items-center rounded-lg text-xs text-slate-300 dark:text-slate-600">{dnum}</div>;
+              const done = d.checked >= d.total; const idx = byDay.findIndex((x) => x.date === date); const isCur = idx === dayIdx;
+              return (
+                <button key={i} onClick={() => { setDayIdx(idx); setLast(null); }}
+                  className={`grid aspect-square place-items-center rounded-lg leading-none transition-colors ${done ? "bg-emerald-500 text-white" : d.checked > 0 ? "bg-amber-100 text-amber-900 dark:bg-amber-950/40 dark:text-amber-200" : "bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-200"} ${isCur ? "ring-2 ring-violet-500 ring-offset-1 dark:ring-offset-slate-900" : ""}`}>
+                  <span className="text-sm font-bold">{dnum}</span>
+                  <span className="mt-0.5 text-[9px] opacity-80">{done ? "✓" : `${d.checked}/${d.total}`}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+        {cur && (
+          <div className={`rounded-2xl border-2 p-5 ${dayDone ? "border-emerald-300 bg-emerald-50/50 dark:border-emerald-800 dark:bg-emerald-950/20" : "border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900"}`}>
+            <div className="flex items-center justify-between">
+              <button onClick={() => setDayIdx((i) => Math.max(0, i - 1))} disabled={dayIdx === 0} className="grid h-9 w-9 place-items-center rounded-lg text-slate-400 hover:bg-slate-100 disabled:opacity-30 dark:hover:bg-slate-800"><ChevronLeft className="h-5 w-5" /></button>
+              <div className="text-lg font-bold capitalize text-slate-900 dark:text-slate-100">{fmtDay(cur.date)}</div>
+              <button onClick={nextDay} disabled={dayIdx >= byDay.length - 1} className="grid h-9 w-9 place-items-center rounded-lg text-slate-400 hover:bg-slate-100 disabled:opacity-30 dark:hover:bg-slate-800"><ChevronRight className="h-5 w-5" /></button>
+            </div>
+            <div className="mt-3 flex items-center justify-center gap-2"><span className={`text-3xl font-extrabold ${dayDone ? "text-emerald-600" : "text-slate-900 dark:text-slate-100"}`}>{cur.checked}</span><span className="text-slate-400">/ {cur.total} {t("σκαναρισμένες", "scanned")}</span></div>
+            <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700"><div className="h-full rounded-full bg-emerald-500 transition-all" style={{ width: `${cur.total ? (cur.checked / cur.total) * 100 : 0}%` }} /></div>
+            {dayDone ? (
+              <button onClick={nextDay} disabled={dayIdx >= byDay.length - 1} className="mt-4 w-full rounded-xl bg-emerald-600 py-3 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-50">✓ {t("Ολοκληρώθηκε — Επόμενη ημέρα", "Done — Next day")} →</button>
+            ) : (
+              <div className="mt-4 flex gap-2">
+                <input ref={inputRef} autoFocus value={bc} onChange={(e) => setBc(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") submit(); }} placeholder={t("Σκάναρε barcode…", "Scan barcode…")} inputMode="numeric" className="flex-1 rounded-lg border border-slate-300 px-3 py-2.5 font-mono text-sm focus:border-violet-500 focus:outline-none focus:ring-1 focus:ring-violet-500 dark:border-slate-600 dark:bg-slate-800" />
+                <button onClick={submit} className="rounded-lg bg-violet-600 px-5 text-sm font-semibold text-white hover:bg-violet-700">{t("Έλεγχος", "Check")}</button>
+              </div>
+            )}
+            {last && <div className={`mt-3 inline-flex items-center gap-2 rounded-lg px-3 py-1.5 text-sm font-medium ${last.found ? "bg-emerald-100 text-emerald-700" : "bg-rose-100 text-rose-700"}`}>{last.found ? <CheckCircle2 className="h-4 w-4" /> : <XCircle className="h-4 w-4" />}<span className="font-mono">{last.barcode}</span> — {last.found ? t("βρέθηκε ✓", "found ✓") : t("εκτός λίστας!", "not in list!")}</div>}
+          </div>
+        )}
+        <p className="text-center text-xs text-slate-400">{t("Μόλις ολοκληρωθούν όλες οι μέρες → Στάδιο 2: οπτικός έλεγχος. (Αλλαγή τρόπου: Ρυθμίσεις → Κλείσιμο Μήνα)", "When all days are done → Stage 2: visual check. (Change mode: Settings → Month Closing)")}</p>
+      </div>
+    );
+  }
 
   if (monthDone) return (
     <div className="space-y-4 py-10 text-center">
