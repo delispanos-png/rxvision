@@ -855,9 +855,9 @@ class ReimbursementRepository(BaseRepository):
         if target is not None:
             td = target["executed_at"].strftime("%Y-%m-%d")
             if not (start <= target["executed_at"] < end) or (day and td != day):
-                actual = sorted({e["executed_at"].strftime("%Y-%m-%d") for e in all_exs})
+                # ΣΥΓΚΕΚΡΙΜΕΝΗ μερική εκτέλεση → ΜΙΑ ημερομηνία (αυτής της φάσης), όχι όλες της συνταγής
                 return {"ok": True, "found": True, "wrong_day": True, "barcode": bc,
-                        "actual_days": actual, "n_executions": 1}
+                        "exec_no": seq, "actual_days": [td], "n_executions": 1}
             targets = [target]
         else:
             in_month = [e for e in all_exs if start <= e["executed_at"] < end]
