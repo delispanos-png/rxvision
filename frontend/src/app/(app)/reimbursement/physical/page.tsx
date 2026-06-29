@@ -4,16 +4,16 @@ import { useState, useRef, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   ScanBarcode, CheckCircle2, XCircle, RotateCcw, ChevronLeft, ChevronRight,
-  X, FileText, Syringe, Pill, ShieldAlert, Ticket, PartyPopper, CalendarDays, ArrowRight, AlertTriangle,
+  X, FileText, Syringe, Pill, ShieldAlert, Ticket, PartyPopper, CalendarDays, ArrowRight, AlertTriangle, Filter,
 } from "lucide-react";
 import { api } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
 import { useReimbPeriod } from "@/store/reimbStore";
 import { fmtEur } from "@/lib/formatters";
 import { DataTable, type Column } from "@/components/tables/DataTable";
-import { appConfirm } from "@/store/dialogStore";
+import { appConfirm, appAlert } from "@/store/dialogStore";
 
-type Item = { barcode: string; external_id: string; exec_no: string | null; claim: number; fund: string; group: string; is_eopyy: boolean; is_vaccine: boolean; is_100: boolean; is_fyk: boolean; is_etyap: boolean; needs_original: boolean; needs_dose_check: boolean; executed_at: string; checked: boolean; day: string };
+type Item = { barcode: string; external_id: string; exec_no: string | null; claim: number; fund: string; group: string; is_eopyy: boolean; is_vaccine: boolean; is_100: boolean; is_fyk: boolean; is_etyap: boolean; needs_original: boolean; needs_dose_check: boolean; needs_check: boolean; executed_at: string; checked: boolean; day: string };
 type DayRow = { date: string; total: number; checked: number };
 type Check = { period: string; group: string; groups: string[]; total: number; checked: number; remaining: number; extra: string[]; by_day: DayRow[]; items: Item[] };
 type Coupon = { name: string; barcode: string; quantity: number; category: string; executed: boolean; qr: boolean | null; qr_batch: string | null; qr_expiry: string | null; lot: string | null };
@@ -21,7 +21,8 @@ type Detail = { ok: boolean; found: boolean; barcode: string; exec_no?: number |
 type RxCheck = { type: string; level: string; title: string; detail: string };
 type ClosingChecksRes = { items: { name: string; barcode: string | null; checks: RxCheck[] }[]; count: number; warnings: number };
 type ScanFlags = { is_intangible: boolean; needs_original: boolean; is_fyk: boolean; has_desensitization: boolean; has_opinion: boolean; has_vaccine: boolean; is_etyap: boolean; exec_count: number | null };
-type ScanRes = { ok: boolean; found: boolean; barcode: string; external_id?: string; flags?: ScanFlags };
+type ScanRes = { ok: boolean; found: boolean; barcode: string; external_id?: string; wrong_day?: boolean; actual_days?: string[]; flags?: ScanFlags };
+const grDate = (d: string) => d.split("-").reverse().join("/");
 
 function fmtDay(d: string) { try { return new Date(d + "T00:00:00").toLocaleDateString("el-GR", { weekday: "long", day: "numeric", month: "long" }); } catch { return d; } }
 function fmtDayShort(d: string) { try { return new Date(d + "T00:00:00").toLocaleDateString("el-GR", { weekday: "short", day: "numeric", month: "short" }); } catch { return d; } }
@@ -42,6 +43,13 @@ export default function PhysicalCheckPage() {
   function toggleCouponsPopup() {
     setCouponsPopup((v) => { const nv = !v; localStorage.setItem("rxv_coupons_on_scan", nv ? "1" : "0"); return nv; });
   }
+  // παραμετρικό: εμφάνιση ΜΟΝΟ όσων χρειάζονται έλεγχο (ταινία/ιδιαιτερότητα) — όσες είναι όλο QR
+  // χωρίς ιδιαιτερότητα κρύβονται (αυτόματα εντάξει).
+  const [onlyChecks, setOnlyChecks] = useState(false);
+  useEffect(() => { setOnlyChecks(typeof window !== "undefined" && localStorage.getItem("rxv_only_checks") === "1"); }, []);
+  function toggleOnlyChecks() {
+    setOnlyChecks((v) => { const nv = !v; localStorage.setItem("rxv_only_checks", nv ? "1" : "0"); return nv; });
+  }
   const resumed = useRef(false);
   const [group, setGroup] = useState("all");
   const groupLabel = (g: string) => g === "all" ? t("Όλες μαζί", "All together") : g;
@@ -60,30 +68,40 @@ export default function PhysicalCheckPage() {
   useEffect(() => { inputRef.current?.focus(); document.getElementById(`dayrow-${dayIdx}`)?.scrollIntoView({ block: "nearest" }); }, [dayIdx]);
 
   const scan = useMutation({
-    mutationFn: (barcode: string) => api<ScanRes>(`/reimbursement/physical/scan?period=${period}`, { method: "POST", body: JSON.stringify({ barcode }) }),
+    mutationFn: ({ barcode, day }: { barcode: string; day?: string }) =>
+      api<ScanRes>(`/reimbursement/physical/scan?period=${period}${day ? `&day=${encodeURIComponent(day)}` : ""}`, { method: "POST", body: JSON.stringify({ barcode }) }),
     onSuccess: (r) => {
+      if (r.wrong_day) {     // βρέθηκε στον μήνα αλλά ΟΧΙ σε αυτή την ημέρα → ειδοποίηση, χωρίς μαρκάρισμα
+        const days = (r.actual_days || []).map(grDate).join(", ");
+        appAlert(
+          t(`Η συνταγή ${r.barcode} ΔΕΝ εκτελέστηκε αυτή την ημέρα. Εκτελέστηκε: ${days}. Πήγαινε στη σωστή ημέρα για να την ελέγξεις.`,
+            `Rx ${r.barcode} was NOT executed on this day. Executed on: ${days}. Go to the correct day to check it.`),
+          { title: t("⚠️ Λάθος ημέρα", "⚠️ Wrong day") });
+        return;
+      }
       setLast({ found: r.found, barcode: r.barcode, flags: r.flags });
       qc.invalidateQueries({ queryKey: ["reimb-physical", period] });
       if (r.found && localStorage.getItem("rxv_coupons_on_scan") === "1") openDetail(r.external_id || r.barcode);
     },
   });
   const reset = useMutation({
-    mutationFn: () => api(`/reimbursement/physical/reset?period=${period}`, { method: "POST" }),
-    onSuccess: () => { setLast(null); resumed.current = false; setDayIdx(0); qc.invalidateQueries({ queryKey: ["reimb-physical", period] }); },
+    mutationFn: (day?: string) => api(`/reimbursement/physical/reset?period=${period}${day ? `&day=${encodeURIComponent(day)}` : ""}`, { method: "POST" }),
+    onSuccess: (_d, day) => { setLast(null); if (!day) { resumed.current = false; setDayIdx(0); } qc.invalidateQueries({ queryKey: ["reimb-physical", period] }); },
   });
 
   const cur = byDay[dayIdx];
   const dayItems = (data?.items ?? []).filter((i) => i.day === cur?.date).sort((a, b) => (a.checked === b.checked ? b.claim - a.claim : a.checked ? 1 : -1));
-  // πόσες εκτελέσεις/φάσεις έχει κάθε barcode σήμερα → δείχνουμε «φάση N» μόνο όταν >1
-  const execTotals = dayItems.reduce<Record<string, number>>((m, r) => { m[r.barcode] = (m[r.barcode] || 0) + 1; return m; }, {});
-  const dayDone = !!cur && cur.checked >= cur.total;
+  // φίλτρο «μόνο όσες χρειάζονται έλεγχο»: κρύβει τις all-QR χωρίς ιδιαιτερότητα
+  const shownItems = onlyChecks ? dayItems.filter((i) => i.needs_check) : dayItems;
+  const shownChecked = shownItems.filter((i) => i.checked).length;
+  const dayDone = onlyChecks ? (shownChecked >= shownItems.length) : (!!cur && cur.checked >= cur.total);
   const monthDone = byDay.length > 0 && byDay.every((d) => d.checked >= d.total);
   const daysComplete = byDay.filter((d) => d.checked >= d.total).length;
 
   function submit() {
     const v = bc.trim();
     if (!v) return;
-    scan.mutate(v);
+    scan.mutate({ barcode: v, day: cur?.date });
     setBc("");
     inputRef.current?.focus();
   }
@@ -103,12 +121,7 @@ export default function PhysicalCheckPage() {
 
   const cols: Column<Item>[] = [
     { key: "checked", header: "", render: (r) => r.checked ? <CheckCircle2 className="h-4 w-4 text-emerald-600" /> : <span className="inline-block h-4 w-4 rounded-full border-2 border-slate-300" /> },
-    { key: "barcode", header: "Barcode", render: (r) => (
-      <span className="inline-flex items-center gap-1">
-        <button onClick={() => openDetail(r.external_id)} className={`font-mono text-xs hover:text-emerald-600 hover:underline ${r.checked ? "text-slate-400 line-through" : "text-slate-700 dark:text-slate-200"}`}>{r.barcode}</button>
-        {execTotals[r.barcode] > 1 && r.exec_no && <span className="rounded bg-indigo-100 px-1 py-0.5 text-[9px] font-bold text-indigo-700 dark:bg-indigo-950/50 dark:text-indigo-300" title={t("Φάση μερικής εκτέλεσης — ξεχωριστή υποβολή", "Partial-execution phase — separate submission")}>{t("φάση", "phase")} {r.exec_no}</span>}
-      </span>
-    ) },
+    { key: "barcode", header: "Barcode", render: (r) => <button onClick={() => openDetail(r.external_id)} className={`font-mono text-xs hover:text-emerald-600 hover:underline ${r.checked ? "text-slate-400 line-through" : "text-slate-700 dark:text-slate-200"}`}>{r.barcode}</button> },
     { key: "group", header: t("Ομάδα / Ενδείξεις", "Group / Flags"), render: (r) => {
       const badge = r.is_100 ? "bg-amber-100 text-amber-800" : r.is_vaccine ? "bg-sky-100 text-sky-700" : r.is_eopyy ? "bg-emerald-100 text-emerald-700" : "bg-violet-100 text-violet-700";
       const lbl = r.group === "ΕΟΠΥΥ - Φάρμακα" ? "ΕΟΠΥΥ Φάρμ." : r.group === "ΕΟΠΥΥ - Εμβόλια" ? "Εμβόλια" : r.group === "Αμιγώς 100%" ? "100%" : r.group;
@@ -131,7 +144,7 @@ export default function PhysicalCheckPage() {
       <h2 className="text-xl font-bold text-slate-900 dark:text-slate-100">{t("Ο μήνας ολοκληρώθηκε! 🎉", "Month complete! 🎉")}</h2>
       <p className="text-sm text-slate-500">{t(`Όλες οι ${data?.total ?? 0} συνταγές ελέγχθηκαν σε ${byDay.length} ημέρες.`, `All ${data?.total ?? 0} prescriptions checked across ${byDay.length} days.`)}</p>
       {!!data?.extra.length && <p className="text-sm text-rose-600">{t(`Προσοχή: ${data.extra.length} σκαναρίστηκαν εκτός λίστας.`, `Note: ${data.extra.length} scanned not in data.`)}</p>}
-      <button onClick={async () => { if (await appConfirm(t("Μηδενισμός ελέγχου;", "Reset check?"), { danger: true })) reset.mutate(); }} className="mx-auto inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-600"><RotateCcw className="h-4 w-4" /> {t("Νέος έλεγχος", "New check")}</button>
+      <button onClick={async () => { if (await appConfirm(t("Μηδενισμός ελέγχου;", "Reset check?"), { danger: true })) reset.mutate(undefined); }} className="mx-auto inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-600"><RotateCcw className="h-4 w-4" /> {t("Νέος έλεγχος", "New check")}</button>
     </div>
   );
 
@@ -149,7 +162,10 @@ export default function PhysicalCheckPage() {
       {/* month progress */}
       <div className="flex items-center justify-between text-xs text-slate-500">
         <span className="inline-flex items-center gap-1.5"><CalendarDays className="h-4 w-4" /> {t("Ημέρες ολοκληρωμένες", "Days complete")}: <b className="text-slate-700 dark:text-slate-200">{daysComplete}/{byDay.length}</b></span>
-        <button onClick={async () => { if (await appConfirm(t("Μηδενισμός ελέγχου;", "Reset check?"), { danger: true })) reset.mutate(); }} className="inline-flex items-center gap-1 rounded-lg border border-slate-300 px-2.5 py-1 hover:bg-slate-50 dark:border-slate-600"><RotateCcw className="h-3 w-3" /> {t("Μηδενισμός", "Reset")}</button>
+        <span className="inline-flex items-center gap-1.5">
+          <button onClick={async () => { if (cur && await appConfirm(t(`Μηδενισμός ελέγχου ΜΟΝΟ για την ${grDate(cur.date)}; (η δουλειά των άλλων ημερών διατηρείται)`, `Reset check for ${cur ? grDate(cur.date) : ""} only? (other days kept)`))) reset.mutate(cur.date); }} className="inline-flex items-center gap-1 rounded-lg border border-slate-300 px-2.5 py-1 hover:bg-slate-50 dark:border-slate-600"><RotateCcw className="h-3 w-3" /> {t("Μηδενισμός ημέρας", "Reset day")}</button>
+          <button onClick={async () => { if (await appConfirm(t("Μηδενισμός ΟΛΟΥ του μήνα; (χάνεται ο έλεγχος όλων των ημερών)", "Reset the WHOLE month? (all days' checks lost)"), { danger: true })) reset.mutate(undefined); }} className="rounded-lg px-2 py-1 text-slate-400 hover:bg-slate-50 hover:text-rose-600 dark:hover:bg-slate-800">{t("όλος ο μήνας", "whole month")}</button>
+        </span>
       </div>
       <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700"><div className="h-full rounded-full bg-emerald-500 transition-all" style={{ width: `${byDay.length ? (daysComplete / byDay.length) * 100 : 0}%` }} /></div>
 
@@ -186,8 +202,8 @@ export default function PhysicalCheckPage() {
 
         {/* day progress */}
         <div className="mt-3 flex items-center justify-center gap-2 text-sm">
-          <span className={`text-2xl font-extrabold ${dayDone ? "text-emerald-600" : "text-slate-900 dark:text-slate-100"}`}>{cur?.checked ?? 0}</span>
-          <span className="text-slate-400">/ {cur?.total ?? 0} {t("συνταγές σκαναρισμένες", "prescriptions scanned")}</span>
+          <span className={`text-2xl font-extrabold ${dayDone ? "text-emerald-600" : "text-slate-900 dark:text-slate-100"}`}>{onlyChecks ? shownChecked : (cur?.checked ?? 0)}</span>
+          <span className="text-slate-400">/ {onlyChecks ? shownItems.length : (cur?.total ?? 0)} {onlyChecks ? t("που χρειάζονται έλεγχο", "needing a check") : t("συνταγές σκαναρισμένες", "prescriptions scanned")}</span>
         </div>
 
         {dayDone ? (
@@ -211,6 +227,14 @@ export default function PhysicalCheckPage() {
                 <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${couponsPopup ? "translate-x-4" : "translate-x-0.5"}`} />
               </button>
               <span className="inline-flex items-center gap-1"><Ticket className="h-3.5 w-3.5" /> {t("Άνοιγμα κουπονιών (pop-up) σε κάθε σκανάρισμα", "Open coupons (pop-up) on every scan")}</span>
+            </label>
+            {/* παραμετρικό: εμφάνιση μόνο όσων χρειάζονται έλεγχο */}
+            <label className="mt-2 flex cursor-pointer items-center justify-center gap-2 text-xs text-slate-500 dark:text-slate-400">
+              <button type="button" role="switch" aria-checked={onlyChecks} onClick={toggleOnlyChecks}
+                className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${onlyChecks ? "bg-emerald-500" : "bg-slate-300 dark:bg-slate-600"}`}>
+                <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${onlyChecks ? "translate-x-4" : "translate-x-0.5"}`} />
+              </button>
+              <span className="inline-flex items-center gap-1"><Filter className="h-3.5 w-3.5" /> {t("Μόνο όσες χρειάζονται έλεγχο (κρύψε τις all-QR)", "Only those needing a check (hide all-QR)")}</span>
             </label>
           </>
         )}
@@ -238,7 +262,7 @@ export default function PhysicalCheckPage() {
 
       {/* this day's prescriptions */}
       <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-200">{t("Συνταγές ημέρας", "Day's prescriptions")} ({dayItems.length})</h3>
-      <DataTable pageSize={50} columns={cols} rows={dayItems} rowKey={(r) => r.external_id} empty={t("Καμία συνταγή.", "No prescriptions.")} />
+      <DataTable pageSize={50} columns={cols} rows={shownItems} rowKey={(r) => r.external_id} empty={onlyChecks ? t("Καμία συνταγή χρειάζεται έλεγχο 🎉", "Nothing needs checking 🎉") : t("Καμία συνταγή.", "No prescriptions.")} />
 
       {/* extras (scanned but not in data) */}
       {!!data?.extra.length && (

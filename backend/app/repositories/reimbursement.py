@@ -707,12 +707,17 @@ class ReimbursementRepository(BaseRepository):
                         "n3816": {"$first": {"$ifNull": ["$details.n3816", False]}},
                         "supp": {"$first": {"$ifNull": ["$details.supplementary_cover", False]}},
                         "dose": {"$max": {"$ifNull": ["$needs_dose_check", False]}},
+                        "opinion": {"$first": {"$ifNull": ["$details.opinion", False]}},
+                        "desens": {"$first": {"$ifNull": ["$details.desensitization", False]}},
+                        "narcotic": {"$first": {"$ifNull": ["$details.narcotic", False]}},
+                        "doc_id": {"$first": "$_id"},
                         "executed_at": {"$min": "$executed_at"}}},
         ]).to_list(None)
         session = await self._db["barcode_check"].find_one(
             {"tenant_id": self.tenant_id, "period": period}) or {}
         checked = set(session.get("checked", []))
         allrows = []
+        doc_map: dict = {}     # execution _id → row (για 2ο πέρασμα: ταινίες + σημειώσεις ΗΔΥΚΑ)
         for r in rows:
             is_100 = (r.get("retail", 0) or 0) > 0 and (r.get("claim", 0) or 0) == 0
             if is_100:
@@ -732,8 +737,34 @@ class ReimbursementRepository(BaseRepository):
                 "is_100": is_100, "is_fyk": bool(r.get("n3816")), "is_etyap": bool(r.get("supp")),
                 "needs_original": (not bool(r.get("intangible"))) and ((ec or 1) <= 1),
                 "needs_dose_check": bool(r.get("dose")),
+                # χρειάζεται έλεγχο = ταινία γνησιότητας (μη-QR) Ή κάποια ιδιαιτερότητα (δοσολογία/E,
+                # ΦΥΚ, γνωμάτευση, απευαισθητοποίηση, ναρκωτικό, πρωτότυπη, ή φάρμακο με σημείωση ΗΔΥΚΑ).
+                # base εδώ· τα strips + catalog-attention προστίθενται στο 2ο πέρασμα παρακάτω.
+                "needs_check": bool(r.get("dose") or r.get("n3816") or r.get("opinion") or r.get("desens")
+                                    or r.get("narcotic") or ((not bool(r.get("intangible"))) and ((ec or 1) <= 1))),
                 # checked ανά εκτέλεση (νέο) ή ανά barcode-root (παλιό state) — συμβατό και τα δύο
                 "checked": (ext in checked) or (root in checked)})
+            if r.get("doc_id"):
+                doc_map[r["doc_id"]] = allrows[-1]
+        # 2ο πέρασμα: ταινίες γνησιότητας (μη-QR εκτελεσμένο κουπόνι) + φάρμακα με σημείωση/περιορισμό
+        # ΗΔΥΚΑ → needs_check (μία αναζήτηση items + ένα set καταλόγου).
+        pending = {k: v for k, v in doc_map.items() if not v.get("needs_check")}
+        if pending:
+            attention = {str(d["_id"]) async for d in self._db["medicine_catalog"].find(  # tenant-ok: shared
+                {"$or": [{"info_popup": {"$ne": None}}, {"pharmacist_popup": {"$ne": None}},
+                         {"withdrawn": True}, {"limited_execution": True}, {"hospital_medicine": True},
+                         {"ifet": True}, {"is_heparin": True}, {"desensitization_vaccine": True},
+                         {"narcotic": True}]}, {"_id": 1})}
+            async for it in self._db["prescription_items"].find(
+                    {"tenant_id": self.tenant_id, "execution_id": {"$in": list(pending.keys())}},
+                    {"execution_id": 1, "details.eof_code": 1, "details.coupons.qr": 1}):
+                row = pending.get(it["execution_id"])
+                if not row or row.get("needs_check"):
+                    continue
+                d = it.get("details") or {}
+                if any(c.get("qr") is False for c in (d.get("coupons") or [])) \
+                        or str(d.get("eof_code") or "") in attention:
+                    row["needs_check"] = True
         order = {EOPYY_MED: 0, "ΕΟΠΥΥ - Εμβόλια": 1, "Αμιγώς 100%": 8}
         groups = ["all"] + sorted({a["group"] for a in allrows}, key=lambda g: (order.get(g, 5), g))
         if group != "all":
@@ -772,37 +803,57 @@ class ReimbursementRepository(BaseRepository):
             "exec_count": exec_count,
         }
 
-    async def physical_scan(self, period: str, barcode: str) -> dict:
+    async def physical_scan(self, period: str, barcode: str, day: str | None = None) -> dict:
         # Το scanner διαβάζει 16 ψηφία (13 barcode συνταγής + 3 επανάληψης) → κρατάμε τα 13 πρώτα.
         bc = (barcode or "").strip().split(":")[0].strip()[:13]
         if not bc:
             return {"ok": False, "error": "empty"}
         start, end = _month_bounds(period)
-        # ΟΛΕΣ οι εκτελέσεις (φάσεις) αυτού του barcode → μαρκάρονται όλες (ανά full external_id)
+        # ΟΛΕΣ οι εκτελέσεις (φάσεις) αυτού του barcode στον μήνα
         exs = [e async for e in self._db["prescription_executions"].find(  # tenant-ok: scoped by tenant_id
             {"tenant_id": self.tenant_id, "executed_at": {"$gte": start, "$lt": end},
              "status": {"$ne": "cancelled"},
              "external_id": {"$regex": f"^{re.escape(bc)}"}})]
-        found = bool(exs)
-        if found:
-            await self._db["barcode_check"].update_one(
-                {"tenant_id": self.tenant_id, "period": period},
-                {"$addToSet": {"checked": {"$each": [e["external_id"] for e in exs]}},
-                 "$set": {"updated_at": _now()}}, upsert=True)
-        else:
+        if not exs:
             await self._db["barcode_check"].update_one(
                 {"tenant_id": self.tenant_id, "period": period},
                 {"$addToSet": {"extra": bc}, "$set": {"updated_at": _now()}}, upsert=True)
-        res = {"ok": True, "found": found, "barcode": bc, "n_executions": len(exs)}
-        if found:
-            res["flags"] = self._submission_flags(exs[0])
-            if len(exs) == 1:          # μία φάση στον μήνα → popup με τα κουπόνια ΑΥΤΗΣ
-                res["external_id"] = exs[0]["external_id"]
+            return {"ok": True, "found": False, "barcode": bc, "n_executions": 0}
+        # Έλεγχος ΑΝΑ ΗΜΕΡΑ: αν ελέγχουμε συγκεκριμένη μέρα αλλά η συνταγή ΔΕΝ εκτελέστηκε εκείνη
+        # τη μέρα → ΔΕΝ τη μαρκάρουμε· ειδοποιούμε ποια είναι η σωστή μέρα/μέρες.
+        if day:
+            on_day = [e for e in exs if e["executed_at"].strftime("%Y-%m-%d") == day]
+            if not on_day:
+                actual = sorted({e["executed_at"].strftime("%Y-%m-%d") for e in exs})
+                return {"ok": True, "found": True, "wrong_day": True, "barcode": bc,
+                        "scanned_day": day, "actual_days": actual, "n_executions": len(exs)}
+            exs = on_day            # μαρκάρουμε μόνο τις εκτελέσεις ΑΥΤΗΣ της μέρας
+        await self._db["barcode_check"].update_one(
+            {"tenant_id": self.tenant_id, "period": period},
+            {"$addToSet": {"checked": {"$each": [e["external_id"] for e in exs]}},
+             "$set": {"updated_at": _now()}}, upsert=True)
+        res = {"ok": True, "found": True, "barcode": bc, "n_executions": len(exs)}
+        res["flags"] = self._submission_flags(exs[0])
+        if len(exs) == 1:              # μία φάση → popup με τα κουπόνια ΑΥΤΗΣ
+            res["external_id"] = exs[0]["external_id"]
         return res
 
-    async def physical_reset(self, period: str) -> dict:
-        await self._db["barcode_check"].delete_one({"tenant_id": self.tenant_id, "period": period})
-        return {"ok": True}
+    async def physical_reset(self, period: str, day: str | None = None) -> dict:
+        if not day:                       # μηδενισμός ΟΛΟΥ του μήνα
+            await self._db["barcode_check"].delete_one({"tenant_id": self.tenant_id, "period": period})
+            return {"ok": True}
+        # μηδενισμός ΜΟΝΟ μιας ημέρας: αφαιρούμε από το checked τις εκτελέσεις εκείνης της μέρας
+        start, end = _month_bounds(period)
+        ids = [e["external_id"] async for e in self._db["prescription_executions"].find(  # tenant-ok
+            {"tenant_id": self.tenant_id, "executed_at": {"$gte": start, "$lt": end},
+             "status": {"$ne": "cancelled"}}, {"external_id": 1, "executed_at": 1})
+            if e["executed_at"].strftime("%Y-%m-%d") == day]
+        if ids:
+            roots = list({i.split(":")[0] for i in ids})   # + παλιό state ανά barcode-root
+            await self._db["barcode_check"].update_one(
+                {"tenant_id": self.tenant_id, "period": period},
+                {"$pull": {"checked": {"$in": ids + roots}}, "$set": {"updated_at": _now()}})
+        return {"ok": True, "day": day, "cleared": len(ids)}
 
     # ── DAILY RECONCILIATION — amounts + execution counts per day (vs the pharmacist's program) ─
     async def daily_reconciliation(self, period: str, group: str = "all") -> dict:

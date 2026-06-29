@@ -194,15 +194,15 @@ async def physical(period: str = Query(None), day: str = Query(None), group: str
 
 
 @router.post("/physical/scan")
-async def physical_scan(body: BarcodeIn, period: str = Query(None),
+async def physical_scan(body: BarcodeIn, period: str = Query(None), day: str = Query(None),
                         ctx: TenantContext = Depends(require("closing:read", module=_MODULE))):
-    return await _repo(ctx).physical_scan(period or _cur(), body.barcode)
+    return await _repo(ctx).physical_scan(period or _cur(), body.barcode, day=day)
 
 
 @router.post("/physical/reset")
-async def physical_reset(period: str = Query(None),
+async def physical_reset(period: str = Query(None), day: str = Query(None),
                          ctx: TenantContext = Depends(require("closing:read", module=_MODULE))):
-    return await _repo(ctx).physical_reset(period or _cur())
+    return await _repo(ctx).physical_reset(period or _cur(), day=day)
 
 
 # ── Optical Audit (OCR scans) ───────────────────────────────────────────────
