@@ -9,7 +9,7 @@ import {
 import { api } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
 import { useReimbPeriod } from "@/store/reimbStore";
-import { fmtEur } from "@/lib/formatters";
+import { fmtEur, fmtNum } from "@/lib/formatters";
 import { DataTable, type Column } from "@/components/tables/DataTable";
 import { appConfirm, appAlert } from "@/store/dialogStore";
 
@@ -290,13 +290,32 @@ export default function PhysicalCheckPage() {
     const cells: (string | null)[] = [...Array(lead).fill(null), ...Array.from({ length: dim }, (_, i) => `${period}-${String(i + 1).padStart(2, "0")}`)];
     return (
       <div className="mx-auto max-w-2xl space-y-4">
-        <div className="flex items-center justify-between rounded-2xl border-2 border-violet-300 bg-gradient-to-r from-violet-50 to-white p-4 dark:border-violet-800 dark:from-violet-950/30 dark:to-slate-900">
-          <div>
-            <div className="text-[11px] font-semibold uppercase tracking-wide text-violet-600">{t("Καθοδηγούμενο κλείσιμο · Στάδιο 1/2", "Guided closing · Stage 1/2")}</div>
-            <div className="text-lg font-bold text-slate-900 dark:text-slate-100">{t("Αριθμητικός — σκάναρε όλες ανά ημέρα", "Numeric — scan all, day by day")}</div>
-          </div>
-          <div className="text-right"><div><span className="text-2xl font-extrabold text-violet-600">{daysComplete}</span><span className="text-slate-400">/{byDay.length}</span></div><div className="text-[10px] text-slate-400">{t("ημέρες", "days")}</div></div>
-        </div>
+        {(() => {
+          const tot = data?.total ?? 0; const scn = data?.checked ?? 0; const rem = data?.remaining ?? (tot - scn);
+          const pct = tot ? Math.round((scn / tot) * 100) : 0;
+          return (
+            <div className="rounded-2xl border-2 border-violet-200 bg-gradient-to-br from-violet-50 to-white p-4 shadow-sm dark:border-violet-900/60 dark:from-violet-950/30 dark:to-slate-900">
+              <div className="text-[11px] font-semibold uppercase tracking-wide text-violet-600">{t("Καθοδηγούμενο κλείσιμο · Στάδιο 1/2 — Αριθμητικός", "Guided closing · Stage 1/2 — Numeric")}</div>
+              <div className="mt-3 flex items-center gap-4">
+                <div className="relative shrink-0">
+                  <svg viewBox="0 0 36 36" className="h-20 w-20 -rotate-90">
+                    <circle cx="18" cy="18" r="15.915" fill="none" className="stroke-slate-200 dark:stroke-slate-700" strokeWidth="3.5" />
+                    <circle cx="18" cy="18" r="15.915" fill="none" className="stroke-emerald-500" strokeWidth="3.5" strokeLinecap="round" strokeDasharray={`${pct} 100`} />
+                  </svg>
+                  <div className="absolute inset-0 grid place-items-center"><span className="text-lg font-extrabold text-slate-800 dark:text-slate-100">{pct}%</span></div>
+                </div>
+                <div className="grid flex-1 grid-cols-3 gap-2 text-center">
+                  <div className="rounded-xl bg-slate-100 p-2 dark:bg-slate-800"><div className="text-xl font-extrabold text-slate-800 dark:text-slate-100">{fmtNum(tot)}</div><div className="text-[10px] text-slate-500">{t("σύνολο μήνα", "month total")}</div></div>
+                  <div className="rounded-xl bg-emerald-100 p-2 dark:bg-emerald-950/40"><div className="text-xl font-extrabold text-emerald-700">{fmtNum(scn)}</div><div className="text-[10px] text-emerald-700">{t("σκαναρισμένες", "scanned")}</div></div>
+                  <div className="rounded-xl bg-amber-100 p-2 dark:bg-amber-950/40"><div className="text-xl font-extrabold text-amber-700">{fmtNum(rem)}</div><div className="text-[10px] text-amber-700">{t("μένουν", "remaining")}</div></div>
+                </div>
+              </div>
+              <div className="mt-3 flex items-center justify-between text-xs text-slate-500"><span className="inline-flex items-center gap-1"><CalendarDays className="h-3.5 w-3.5" /> {t("Ημέρες ολοκληρωμένες", "Days complete")}</span><b className="text-slate-700 dark:text-slate-200">{daysComplete}/{byDay.length}</b></div>
+              <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700"><div className="h-full rounded-full bg-violet-500 transition-all" style={{ width: `${byDay.length ? (daysComplete / byDay.length) * 100 : 0}%` }} /></div>
+              {rem === 0 && tot > 0 && <p className="mt-2 text-center text-xs font-semibold text-emerald-600">🎉 {t("Όλες σκαναρίστηκαν! Συνέχισε στο Στάδιο 2.", "All scanned! Continue to Stage 2.")}</p>}
+            </div>
+          );
+        })()}
         <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900">
           <div className="mb-2 text-sm font-semibold capitalize text-slate-700 dark:text-slate-200">{new Date(yy, mm - 1, 1).toLocaleDateString("el-GR", { month: "long", year: "numeric" })}</div>
           <div className="grid grid-cols-7 gap-1 text-center text-[10px] font-medium text-slate-400">{["Δε", "Τρ", "Τε", "Πέ", "Πα", "Σά", "Κυ"].map((w) => <div key={w}>{w}</div>)}</div>
@@ -304,13 +323,13 @@ export default function PhysicalCheckPage() {
             {cells.map((date, i) => {
               if (!date) return <div key={i} />;
               const dnum = Number(date.slice(-2)); const d = bmap[date];
-              if (!d) return <div key={i} className="grid aspect-square place-items-center rounded-lg text-xs text-slate-300 dark:text-slate-600">{dnum}</div>;
+              if (!d) return <div key={i} className="grid place-items-center rounded-md py-1 text-[11px] text-slate-300 dark:text-slate-600">{dnum}</div>;
               const done = d.checked >= d.total; const idx = byDay.findIndex((x) => x.date === date); const isCur = idx === dayIdx;
               return (
                 <button key={i} onClick={() => { setDayIdx(idx); setLast(null); }}
-                  className={`grid aspect-square place-items-center rounded-lg leading-none transition-colors ${done ? "bg-emerald-500 text-white" : d.checked > 0 ? "bg-amber-100 text-amber-900 dark:bg-amber-950/40 dark:text-amber-200" : "bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-200"} ${isCur ? "ring-2 ring-violet-500 ring-offset-1 dark:ring-offset-slate-900" : ""}`}>
-                  <span className="text-sm font-bold">{dnum}</span>
-                  <span className="mt-0.5 text-[9px] opacity-80">{done ? "✓" : `${d.checked}/${d.total}`}</span>
+                  className={`flex flex-col items-center justify-center rounded-md py-1 leading-none transition-colors ${done ? "bg-emerald-500 text-white" : d.checked > 0 ? "bg-amber-100 text-amber-900 dark:bg-amber-950/40 dark:text-amber-200" : "bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-200"} ${isCur ? "ring-2 ring-violet-500 dark:ring-offset-slate-900" : ""}`}>
+                  <span className="text-xs font-bold">{dnum}</span>
+                  <span className="mt-0.5 text-[8px] opacity-80">{done ? "✓" : `${d.checked}/${d.total}`}</span>
                 </button>
               );
             })}
