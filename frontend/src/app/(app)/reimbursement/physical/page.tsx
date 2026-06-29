@@ -17,11 +17,11 @@ type Item = { barcode: string; external_id: string; exec_no: string | null; clai
 type DayRow = { date: string; total: number; checked: number };
 type Check = { period: string; group: string; groups: string[]; total: number; checked: number; remaining: number; extra: string[]; by_day: DayRow[]; items: Item[] };
 type Coupon = { name: string; barcode: string; quantity: number; category: string; executed: boolean; qr: boolean | null; qr_batch: string | null; qr_expiry: string | null; lot: string | null };
-type Detail = { ok: boolean; found: boolean; barcode: string; fund: string; claim: number; n_coupons: number; has_opinion: boolean | null; is_fyk: boolean; has_vaccine: boolean; has_narcotic: boolean; is_etyap?: boolean; partial: boolean; coupons: Coupon[] };
+type Detail = { ok: boolean; found: boolean; barcode: string; exec_no?: number | null; fund: string; claim: number; n_coupons: number; has_opinion: boolean | null; is_fyk: boolean; has_vaccine: boolean; has_narcotic: boolean; is_etyap?: boolean; partial: boolean; coupons: Coupon[] };
 type RxCheck = { type: string; level: string; title: string; detail: string };
 type ClosingChecksRes = { items: { name: string; barcode: string | null; checks: RxCheck[] }[]; count: number; warnings: number };
 type ScanFlags = { is_intangible: boolean; needs_original: boolean; is_fyk: boolean; has_desensitization: boolean; has_opinion: boolean; has_vaccine: boolean; is_etyap: boolean; exec_count: number | null };
-type ScanRes = { ok: boolean; found: boolean; barcode: string; flags?: ScanFlags };
+type ScanRes = { ok: boolean; found: boolean; barcode: string; external_id?: string; flags?: ScanFlags };
 
 function fmtDay(d: string) { try { return new Date(d + "T00:00:00").toLocaleDateString("el-GR", { weekday: "long", day: "numeric", month: "long" }); } catch { return d; } }
 function fmtDayShort(d: string) { try { return new Date(d + "T00:00:00").toLocaleDateString("el-GR", { weekday: "short", day: "numeric", month: "short" }); } catch { return d; } }
@@ -64,7 +64,7 @@ export default function PhysicalCheckPage() {
     onSuccess: (r) => {
       setLast({ found: r.found, barcode: r.barcode, flags: r.flags });
       qc.invalidateQueries({ queryKey: ["reimb-physical", period] });
-      if (r.found && localStorage.getItem("rxv_coupons_on_scan") === "1") openDetail(r.barcode);
+      if (r.found && localStorage.getItem("rxv_coupons_on_scan") === "1") openDetail(r.external_id || r.barcode);
     },
   });
   const reset = useMutation({
@@ -105,7 +105,7 @@ export default function PhysicalCheckPage() {
     { key: "checked", header: "", render: (r) => r.checked ? <CheckCircle2 className="h-4 w-4 text-emerald-600" /> : <span className="inline-block h-4 w-4 rounded-full border-2 border-slate-300" /> },
     { key: "barcode", header: "Barcode", render: (r) => (
       <span className="inline-flex items-center gap-1">
-        <button onClick={() => openDetail(r.barcode)} className={`font-mono text-xs hover:text-emerald-600 hover:underline ${r.checked ? "text-slate-400 line-through" : "text-slate-700 dark:text-slate-200"}`}>{r.barcode}</button>
+        <button onClick={() => openDetail(r.external_id)} className={`font-mono text-xs hover:text-emerald-600 hover:underline ${r.checked ? "text-slate-400 line-through" : "text-slate-700 dark:text-slate-200"}`}>{r.barcode}</button>
         {execTotals[r.barcode] > 1 && r.exec_no && <span className="rounded bg-indigo-100 px-1 py-0.5 text-[9px] font-bold text-indigo-700 dark:bg-indigo-950/50 dark:text-indigo-300" title={t("Φάση μερικής εκτέλεσης — ξεχωριστή υποβολή", "Partial-execution phase — separate submission")}>{t("φάση", "phase")} {r.exec_no}</span>}
       </span>
     ) },
@@ -260,7 +260,7 @@ export default function PhysicalCheckPage() {
                   <div>
                     <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase text-emerald-600"><Ticket className="h-3.5 w-3.5" /> {t("Κουπόνια συνταγής", "Prescription coupons")}</div>
                     <h3 className="font-mono text-base font-bold text-slate-900 dark:text-slate-100">{detail.barcode}</h3>
-                    <p className="text-xs text-slate-500">{detail.fund} · {fmtEur(detail.claim)} · {detail.n_coupons} {t("κουπόνια", "coupons")}</p>
+                    <p className="text-xs text-slate-500">{detail.fund} · {fmtEur(detail.claim)} · {detail.n_coupons} {t("κουπόνια", "coupons")}{detail.exec_no ? ` · ${t("φάση", "phase")} ${detail.exec_no}` : ""}</p>
                   </div>
                   <button onClick={() => setDetail(null)} className="text-slate-400 hover:text-slate-600"><X className="h-5 w-5" /></button>
                 </div>

@@ -796,6 +796,8 @@ class ReimbursementRepository(BaseRepository):
         res = {"ok": True, "found": found, "barcode": bc, "n_executions": len(exs)}
         if found:
             res["flags"] = self._submission_flags(exs[0])
+            if len(exs) == 1:          # μία φάση στον μήνα → popup με τα κουπόνια ΑΥΤΗΣ
+                res["external_id"] = exs[0]["external_id"]
         return res
 
     async def physical_reset(self, period: str) -> dict:
@@ -861,7 +863,9 @@ class ReimbursementRepository(BaseRepository):
         return jsonsafe({"period": period, "group": group, "groups": opts, "days": days, "totals": tot})
 
     # ── ADVANCED PER-PRESCRIPTION DETAIL — coupons (medicine lines) + submission flags ──────────
-    async def _rx_lines(self, ex_ids: list) -> tuple:
+    async def _rx_lines(self, ex_ids: list, exec_no: int | None = None) -> tuple:
+        # exec_no: όταν δοθεί, κρατάμε ΜΟΝΟ τα κουπόνια αυτής της φάσης (κάθε κουπόνι φέρει
+        # execution_no) — ώστε κάθε μερική εκτέλεση να δείχνει ΤΑ ΔΙΚΑ ΤΗΣ κουπόνια, όχι το σύνολο.
         items = [it async for it in self._db["prescription_items"].find(
             {"tenant_id": self.tenant_id, "execution_id": {"$in": ex_ids}})]
         pids = []
@@ -895,6 +899,11 @@ class ReimbursementRepository(BaseRepository):
             eof = c.get("_id") or p.get("barcode")
             executed = bool(it.get("is_executed", True))
             coupons = (it.get("details") or {}).get("coupons") or []
+            if exec_no is not None:
+                coupons = [cp for cp in coupons
+                           if int(float(cp.get("execution_no") or 0)) == exec_no]
+                if not coupons:
+                    continue   # αυτό το είδος δεν χορηγήθηκε σε αυτή τη φάση
             if coupons:
                 for cp in coupons:
                     sk = cp.get("strip") or cp.get("qr_batch")
@@ -948,18 +957,29 @@ class ReimbursementRepository(BaseRepository):
         return coupons, flags
 
     async def prescription_detail(self, barcode: str, live: bool = False) -> dict:
-        bc = (barcode or "").split(":")[0].strip()
+        raw = (barcode or "").strip()
+        bc = raw.split(":")[0].strip()
+        scope_exec: int | None = None     # αν δοθεί barcode:N → δείξε ΜΟΝΟ αυτή τη φάση/εκτέλεση
+        if ":" in raw:
+            try:
+                scope_exec = int(raw.split(":")[1])
+            except (ValueError, IndexError):
+                scope_exec = None
         if not bc:
             return {"ok": False, "found": False}
         exs = [e async for e in self._db["prescription_executions"].find(
             {"tenant_id": self.tenant_id, "external_id": {"$regex": f"^{re.escape(bc)}"}})]  # tenant-ok
         if not exs:
             return {"ok": True, "found": False, "barcode": bc}
+        # περιορισμός σε μία φάση (μερική εκτέλεση) αν ζητήθηκε ρητά
+        scoped = [e for e in exs if e.get("external_id") == f"{bc}:{scope_exec}"] if scope_exec is not None else exs
+        if not scoped:                    # άγνωστη φάση → δείξε όλη τη συνταγή
+            scoped, scope_exec = exs, None
         meta = await self._fund_meta()
         # γνωμάτευση is a PRESCRIPTION-level flag (ΗΔΥΚΑ CDA id 1.1.23) — NOT per medicine. When the
         # user OPENS the Rx (live) we fetch the CDA once → authoritative coupons (executed + QR + lot
         # consistent, no eof-collision) + opinion (cached). The scan path uses our stored items.
-        opinion = exs[0].get("has_opinion")
+        opinion = scoped[0].get("has_opinion")
         cda_lines: list = []
         if live:
             from app.services.ingestion.cda_lookup import fetch_cda_info
@@ -976,26 +996,31 @@ class ReimbursementRepository(BaseRepository):
         # Το live CDA ΜΠΟΡΕΙ να υστερεί από τα αποθηκευμένα κουπόνια (π.χ. μερική εκτέλεση που
         # μπήκε αργότερα) → διάλεξε την ΠΙΟ ΠΛΗΡΗ πηγή ώστε popup & έλεγχος κλεισίματος να
         # συμφωνούν πάντα στα τεμάχια/QR.
-        cda_l, cda_f = (await self._coupons_from_cda(cda_lines)) if cda_lines else ([], set())
-        stored_l, stored_f = await self._rx_lines([e["_id"] for e in exs])
-        n_cda = sum(ln.get("quantity", 1) for ln in cda_l if ln.get("executed", True))
-        n_stored = sum(ln.get("quantity", 1) for ln in stored_l if ln.get("executed", True))
-        if cda_l and n_cda >= n_stored:
-            lines, flags = cda_l, cda_f
+        if scope_exec is not None:
+            # ΜΙΑ φάση: τα κουπόνια ΑΥΤΗΣ της εκτέλεσης (το CDA δεν ξεχωρίζει φάσεις → stored)
+            lines, flags = await self._rx_lines([e["_id"] for e in scoped], exec_no=scope_exec)
         else:
-            lines, flags = stored_l, stored_f
+            cda_l, cda_f = (await self._coupons_from_cda(cda_lines)) if cda_lines else ([], set())
+            stored_l, stored_f = await self._rx_lines([e["_id"] for e in exs])
+            n_cda = sum(ln.get("quantity", 1) for ln in cda_l if ln.get("executed", True))
+            n_stored = sum(ln.get("quantity", 1) for ln in stored_l if ln.get("executed", True))
+            if cda_l and n_cda >= n_stored:
+                lines, flags = cda_l, cda_f
+            else:
+                lines, flags = stored_l, stored_f
         return jsonsafe({
             "ok": True, "found": True, "barcode": bc,
-            "fund": meta.get(exs[0].get("fund_id"), {}).get("group", "—"),
-            "claim": sum(e.get("amount_claimed", 0) for e in exs),
+            "exec_no": scope_exec,
+            "fund": meta.get(scoped[0].get("fund_id"), {}).get("group", "—"),
+            "claim": sum(e.get("amount_claimed", 0) for e in scoped),
             "n_coupons": sum(ln.get("quantity", 1) for ln in lines if ln.get("executed", True)),
             "has_opinion": opinion,                    # prescription-level γνωμάτευση (None=unknown)
             "has_vaccine": "vaccine" in flags,
             "has_narcotic": "narcotic" in flags,
             "partial": any(not ln["executed"] for ln in lines),
-            **{k: v for k, v in self._submission_flags(exs[0]).items()
+            **{k: v for k, v in self._submission_flags(scoped[0]).items()
                if k in ("is_intangible", "needs_original", "has_desensitization", "exec_count", "is_etyap")},
-            "is_fyk": ("fyk" in flags) or bool((exs[0].get("details") or {}).get("n3816")),
+            "is_fyk": ("fyk" in flags) or bool((scoped[0].get("details") or {}).get("n3816")),
             "coupons": lines})
 
     # ── 19. EXECUTIVE DASHBOARD + 18. AI AUDITOR ────────────────────────────
