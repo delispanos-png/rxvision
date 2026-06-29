@@ -826,11 +826,14 @@ class ReimbursementRepository(BaseRepository):
         }
 
     async def physical_scan(self, period: str, barcode: str, day: str | None = None) -> dict:
-        # Κρατάμε τα 13 ψηφία (barcode συνταγής)· η ΣΩΣΤΗ μερική εκτέλεση εντοπίζεται από την
-        # ΗΜΕΡΟΜΗΝΙΑ εκτέλεσης (αξιόπιστο), όχι από το 3ψήφιο suffix (ασυνεπές: π.χ. «160» vs «102»).
-        bc = (barcode or "").strip().split(":")[0].strip()[:13]
+        # 16 ψηφία: 13 (barcode) + 3, όπου το 16ο ψηφίο = αριθμός ΜΕΡΙΚΗΣ ΕΚΤΕΛΕΣΗΣ (1-9). Έτσι
+        # ξεχωρίζουμε δύο μερικές εκτελέσεις της ΙΔΙΑΣ μέρας. Αν δεν δίνεται (ή 0) → ταίριασμα με
+        # ημερομηνία/μήνα (fallback για μονές εκτελέσεις/χειροκίνητη πληκτρολόγηση 13 ψηφίων).
+        raw = (barcode or "").strip().split(":")[0].strip()
+        bc = raw[:13]
         if not bc:
             return {"ok": False, "error": "empty"}
+        seq = int(raw[15]) if len(raw) >= 16 and raw[15:16].isdigit() and raw[15] != "0" else None
         all_exs = [e async for e in self._db["prescription_executions"].find(  # tenant-ok
             {"tenant_id": self.tenant_id, "status": {"$ne": "cancelled"},
              "external_id": {"$regex": f"^{re.escape(bc)}"}})]
@@ -840,19 +843,29 @@ class ReimbursementRepository(BaseRepository):
                 {"$addToSet": {"extra": bc}, "$set": {"updated_at": _now()}}, upsert=True)
             return {"ok": True, "found": False, "barcode": bc, "n_executions": 0}
         start, end = _month_bounds(period)
-        in_month = [e for e in all_exs if start <= e["executed_at"] < end]
-        targets = [e for e in in_month if e["executed_at"].strftime("%Y-%m-%d") == day] if day else in_month
-        if not targets:               # υπάρχει αλλά ΟΧΙ σε αυτή τη μέρα/μήνα → ειδοποίηση
-            actual = sorted({e["executed_at"].strftime("%Y-%m-%d") for e in all_exs})
-            return {"ok": True, "found": True, "wrong_day": True, "barcode": bc,
-                    "actual_days": actual, "n_executions": len(all_exs)}
+        # στόχος: συγκεκριμένη μερική εκτέλεση από το 16ο ψηφίο (bc:seq), αλλιώς ταίριασμα μήνα/μέρας
+        target = next((e for e in all_exs if e["external_id"] == f"{bc}:{seq}"), None) if seq else None
+        if target is not None:
+            td = target["executed_at"].strftime("%Y-%m-%d")
+            if not (start <= target["executed_at"] < end) or (day and td != day):
+                actual = sorted({e["executed_at"].strftime("%Y-%m-%d") for e in all_exs})
+                return {"ok": True, "found": True, "wrong_day": True, "barcode": bc,
+                        "actual_days": actual, "n_executions": 1}
+            targets = [target]
+        else:
+            in_month = [e for e in all_exs if start <= e["executed_at"] < end]
+            targets = [e for e in in_month if e["executed_at"].strftime("%Y-%m-%d") == day] if day else in_month
+            if not targets:           # υπάρχει αλλά ΟΧΙ σε αυτή τη μέρα/μήνα → ειδοποίηση
+                actual = sorted({e["executed_at"].strftime("%Y-%m-%d") for e in all_exs})
+                return {"ok": True, "found": True, "wrong_day": True, "barcode": bc,
+                        "actual_days": actual, "n_executions": len(all_exs)}
         await self._db["barcode_check"].update_one(
             {"tenant_id": self.tenant_id, "period": period},
             {"$addToSet": {"checked": {"$each": [e["external_id"] for e in targets]}},
              "$set": {"updated_at": _now()}}, upsert=True)
         res = {"ok": True, "found": True, "barcode": bc, "n_executions": len(targets)}
         res["flags"] = self._submission_flags(targets[0])
-        if len(targets) == 1:         # μία μερική εκτέλεση → popup με τα κουπόνια ΑΥΤΗΣ
+        if len(targets) == 1:         # μία μερική εκτέλεση → popup με τα κουπόνια ΑΥΤΗΣ (scope ανά :N)
             res["external_id"] = targets[0]["external_id"]
         return res
 
