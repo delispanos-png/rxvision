@@ -829,11 +829,18 @@ class ReimbursementRepository(BaseRepository):
         # 16 ψηφία: 13 (barcode) + 3, όπου το 16ο ψηφίο = αριθμός ΜΕΡΙΚΗΣ ΕΚΤΕΛΕΣΗΣ (1-9). Έτσι
         # ξεχωρίζουμε δύο μερικές εκτελέσεις της ΙΔΙΑΣ μέρας. Αν δεν δίνεται (ή 0) → ταίριασμα με
         # ημερομηνία/μήνα (fallback για μονές εκτελέσεις/χειροκίνητη πληκτρολόγηση 13 ψηφίων).
-        raw = (barcode or "").strip().split(":")[0].strip()
-        bc = raw[:13]
+        orig = (barcode or "").strip()
+        digits = re.sub(r"\D", "", orig.split(":")[0])   # ΜΟΝΟ ψηφία (αφαιρεί κενά π.χ. «… 121»)
+        bc = digits[:13]
         if not bc:
             return {"ok": False, "error": "empty"}
-        seq = int(raw[15]) if len(raw) >= 16 and raw[15:16].isdigit() and raw[15] != "0" else None
+        # αριθμός μερικής εκτέλεσης: από χειροκίνητο «:N» ή από το 16ο ψηφίο
+        if ":" in orig and orig.split(":", 1)[1][:1].isdigit():
+            seq = int(orig.split(":", 1)[1][0])
+        elif len(digits) >= 16 and digits[15] != "0":
+            seq = int(digits[15])
+        else:
+            seq = None
         all_exs = [e async for e in self._db["prescription_executions"].find(  # tenant-ok
             {"tenant_id": self.tenant_id, "status": {"$ne": "cancelled"},
              "external_id": {"$regex": f"^{re.escape(bc)}"}})]
