@@ -402,19 +402,19 @@ export default function PhysicalCheckPage() {
               </div>
               <div className="mt-3 flex items-center gap-4">
                 <div className="relative shrink-0">
-                  <svg viewBox="0 0 36 36" className="h-20 w-20 -rotate-90">
-                    <circle cx="18" cy="18" r="15.915" fill="none" className="stroke-slate-200 dark:stroke-slate-700" strokeWidth="3.5" />
-                    <circle cx="18" cy="18" r="15.915" fill="none" className="stroke-emerald-500" strokeWidth="3.5" strokeLinecap="round" strokeDasharray={`${pct} 100`} />
+                  <svg viewBox="0 0 36 36" className="h-14 w-14 -rotate-90">
+                    <circle cx="18" cy="18" r="15.915" fill="none" className="stroke-slate-200 dark:stroke-slate-700" strokeWidth="4" />
+                    <circle cx="18" cy="18" r="15.915" fill="none" className="stroke-emerald-500" strokeWidth="4" strokeLinecap="round" strokeDasharray={`${pct} 100`} />
                   </svg>
-                  <div className="absolute inset-0 grid place-items-center"><span className="text-lg font-extrabold text-slate-800 dark:text-slate-100">{pct}%</span></div>
+                  <div className="absolute inset-0 grid place-items-center"><span className="text-sm font-extrabold text-slate-800 dark:text-slate-100">{pct}%</span></div>
                 </div>
                 <div className="grid flex-1 grid-cols-3 gap-2 text-center">
-                  <div className="rounded-xl bg-slate-100 p-2 dark:bg-slate-800"><div className="text-xl font-extrabold text-slate-800 dark:text-slate-100">{fmtNum(tot)}</div><div className="text-[10px] text-slate-500">{t("σύνολο μήνα", "month total")}</div></div>
-                  <div className="rounded-xl bg-emerald-100 p-2 dark:bg-emerald-950/40"><div className="text-xl font-extrabold text-emerald-700">{fmtNum(scn)}</div><div className="text-[10px] text-emerald-700">{t("σκαναρισμένες", "scanned")}</div></div>
-                  <div className="rounded-xl bg-amber-100 p-2 dark:bg-amber-950/40"><div className="text-xl font-extrabold text-amber-700">{fmtNum(rem)}</div><div className="text-[10px] text-amber-700">{t("μένουν", "remaining")}</div></div>
+                  <div className="rounded-lg bg-slate-100 px-2 py-1 dark:bg-slate-800"><div className="text-lg font-extrabold leading-tight text-slate-800 dark:text-slate-100">{fmtNum(tot)}</div><div className="text-[9px] text-slate-500">{t("σύνολο", "total")}</div></div>
+                  <div className="rounded-lg bg-emerald-100 px-2 py-1 dark:bg-emerald-950/40"><div className="text-lg font-extrabold leading-tight text-emerald-700">{fmtNum(scn)}</div><div className="text-[9px] text-emerald-700">{t("σκαναρισμένες", "scanned")}</div></div>
+                  <div className="rounded-lg bg-amber-100 px-2 py-1 dark:bg-amber-950/40"><div className="text-lg font-extrabold leading-tight text-amber-700">{fmtNum(rem)}</div><div className="text-[9px] text-amber-700">{t("μένουν", "remaining")}</div></div>
                 </div>
               </div>
-              <div className="mt-3 flex items-center justify-between text-xs text-slate-500"><span className="inline-flex items-center gap-1"><CalendarDays className="h-3.5 w-3.5" /> {t("Ημέρες ολοκληρωμένες", "Days complete")}</span><b className="text-slate-700 dark:text-slate-200">{daysComplete}/{byDay.length}</b></div>
+              <div className="mt-2 flex items-center justify-between text-[11px] text-slate-500"><span className="inline-flex items-center gap-1"><CalendarDays className="h-3.5 w-3.5" /> {t("Ημέρες", "Days")}</span><b className="text-slate-700 dark:text-slate-200">{daysComplete}/{byDay.length}</b></div>
               <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700"><div className="h-full rounded-full bg-violet-500 transition-all" style={{ width: `${byDay.length ? (daysComplete / byDay.length) * 100 : 0}%` }} /></div>
               {/* εξέλιξη ανά κατηγορία υποβολής */}
               {(() => {
@@ -424,9 +424,9 @@ export default function PhysicalCheckPage() {
                 const lbl = (g: string) => g === "ΕΟΠΥΥ - Φάρμακα" ? t("ΕΟΠΥΥ Φάρμακα", "EOPYY Meds") : g === "ΕΟΠΥΥ - Εμβόλια" ? t("Εμβόλια", "Vaccines") : g === "Αμιγώς 100%" ? t("Αμιγώς 100%", "Full 100%") : g;
                 const col = (g: string) => g.includes("Εμβόλ") ? "bg-sky-500" : g.includes("100%") ? "bg-amber-500" : g.includes("ΕΤΥΑΠ") ? "bg-cyan-500" : g.includes("ΕΟΠΥΥ") || g.includes("Φάρμακα") ? "bg-emerald-500" : "bg-violet-500";
                 return rows.length > 1 ? (
-                  <div className="mt-2 border-t border-violet-100 pt-2 dark:border-violet-900/40">
-                    <div className="mb-1 text-[10px] font-bold uppercase tracking-wide text-slate-400">{t("Εξέλιξη ανά κατηγορία", "Progress by category")}</div>
-                    <div className="grid grid-cols-1 gap-x-4 gap-y-1.5 sm:grid-cols-2">
+                  <details className="mt-2 border-t border-violet-100 pt-2 dark:border-violet-900/40">
+                    <summary className="flex cursor-pointer list-none items-center gap-1 text-[10px] font-bold uppercase tracking-wide text-slate-400 hover:text-slate-600">▾ {t("Εξέλιξη ανά κατηγορία", "Progress by category")}</summary>
+                    <div className="mt-2 grid grid-cols-1 gap-x-4 gap-y-1.5 sm:grid-cols-2">
                       {rows.map(([g, v]) => { const p = v.tot ? Math.round((v.chk / v.tot) * 100) : 0; return (
                         <div key={g}>
                           <div className="flex items-center justify-between text-[10px] leading-tight"><span className="truncate pr-1 font-medium text-slate-600 dark:text-slate-300">{lbl(g)}</span><span className="shrink-0 tabular-nums text-slate-400">{v.chk}/{v.tot}</span></div>
@@ -434,7 +434,7 @@ export default function PhysicalCheckPage() {
                         </div>
                       ); })}
                     </div>
-                  </div>
+                  </details>
                 ) : null;
               })()}
               {rem === 0 && tot > 0 && <p className="mt-2 text-center text-xs font-semibold text-emerald-600">🎉 {t("Όλες σκαναρίστηκαν! Συνέχισε στο Στάδιο 2.", "All scanned! Continue to Stage 2.")}</p>}
