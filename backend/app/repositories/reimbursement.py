@@ -716,6 +716,7 @@ class ReimbursementRepository(BaseRepository):
         session = await self._db["barcode_check"].find_one(
             {"tenant_id": self.tenant_id, "period": period}) or {}
         checked = set(session.get("checked", []))
+        vchecked = set(session.get("visual", []))   # οπτικά ελεγμένες (ποιοτικό στάδιο)
         allrows = []
         doc_map: dict = {}     # execution _id → row (για 2ο πέρασμα: ταινίες + σημειώσεις ΗΔΥΚΑ)
         for r in rows:
@@ -744,7 +745,8 @@ class ReimbursementRepository(BaseRepository):
                 "needs_check": bool(r.get("dose") or r.get("n3816") or r.get("opinion") or r.get("desens")
                                     or r.get("narcotic") or ((not bool(r.get("intangible"))) and ((ec or 1) <= 1))),
                 # checked ανά εκτέλεση (νέο) ή ανά barcode-root (παλιό state) — συμβατό και τα δύο
-                "checked": (ext in checked) or (root in checked)})
+                "checked": (ext in checked) or (root in checked),
+                "visual_checked": (ext in vchecked) or (root in vchecked)})
             if r.get("doc_id"):
                 doc_map[r["doc_id"]] = allrows[-1]
         # 2ο πέρασμα: κατηγοριοποίηση ανά εκτέλεση (ταινία μη-QR / ναρκωτικό / σημείωση ΗΔΥΚΑ) για
@@ -868,8 +870,17 @@ class ReimbursementRepository(BaseRepository):
             roots = list({i.split(":")[0] for i in ids})   # + παλιό state ανά barcode-root
             await self._db["barcode_check"].update_one(
                 {"tenant_id": self.tenant_id, "period": period},
-                {"$pull": {"checked": {"$in": ids + roots}}, "$set": {"updated_at": _now()}})
+                {"$pull": {"checked": {"$in": ids + roots}, "visual": {"$in": ids + roots}},
+                 "$set": {"updated_at": _now()}})
         return {"ok": True, "day": day, "cleared": len(ids)}
+
+    async def physical_visual(self, period: str, external_id: str, undo: bool = False) -> dict:
+        """Ποιοτικό στάδιο: σημείωση μιας εκτέλεσης ως οπτικά ελεγμένης (ή αναίρεση)."""
+        op = "$pull" if undo else "$addToSet"
+        await self._db["barcode_check"].update_one(
+            {"tenant_id": self.tenant_id, "period": period},
+            {op: {"visual": external_id}, "$set": {"updated_at": _now()}}, upsert=True)
+        return {"ok": True, "external_id": external_id, "visual_checked": not undo}
 
     # ── DAILY RECONCILIATION — amounts + execution counts per day (vs the pharmacist's program) ─
     async def daily_reconciliation(self, period: str, group: str = "all") -> dict:

@@ -205,6 +205,12 @@ async def physical_reset(period: str = Query(None), day: str = Query(None),
     return await _repo(ctx).physical_reset(period or _cur(), day=day)
 
 
+@router.post("/physical/visual")
+async def physical_visual(body: BarcodeIn, period: str = Query(None), undo: bool = Query(False),
+                          ctx: TenantContext = Depends(require("closing:read", module=_MODULE))):
+    return await _repo(ctx).physical_visual(period or _cur(), body.barcode, undo=undo)
+
+
 # ── Optical Audit (OCR scans) ───────────────────────────────────────────────
 @router.post("/scans")
 async def upload_scan(file: UploadFile = File(...), doc_type: str = Form("prescription"),

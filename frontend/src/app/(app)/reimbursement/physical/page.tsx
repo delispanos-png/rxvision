@@ -13,7 +13,7 @@ import { fmtEur } from "@/lib/formatters";
 import { DataTable, type Column } from "@/components/tables/DataTable";
 import { appConfirm, appAlert } from "@/store/dialogStore";
 
-type Item = { barcode: string; external_id: string; exec_no: string | null; claim: number; fund: string; group: string; is_eopyy: boolean; is_vaccine: boolean; is_100: boolean; is_fyk: boolean; is_etyap: boolean; needs_original: boolean; needs_dose_check: boolean; needs_check: boolean; executed_at: string; checked: boolean; day: string };
+type Item = { barcode: string; external_id: string; exec_no: string | null; claim: number; fund: string; group: string; is_eopyy: boolean; is_vaccine: boolean; is_100: boolean; is_fyk: boolean; is_etyap: boolean; needs_original: boolean; needs_dose_check: boolean; needs_check: boolean; executed_at: string; checked: boolean; visual_checked: boolean; day: string };
 type DayRow = { date: string; total: number; checked: number };
 type Summary = { total: number; needs_check: number; clean: number; dose: number; fyk: number; narcotic: number; needs_original: number; opinion: number; desensitization: number; strips: number; hdika_note: number; vaccine: number };
 type Check = { period: string; group: string; groups: string[]; total: number; checked: number; remaining: number; extra: string[]; summary?: Summary; by_day: DayRow[]; items: Item[] };
@@ -40,6 +40,10 @@ export default function PhysicalCheckPage() {
   const [checks, setChecks] = useState<ClosingChecksRes | null>(null);
   const [showBriefing, setShowBriefing] = useState(false);
   const briefedPeriod = useRef<string | null>(null);
+  // τρόπος κλεισίματος: «classic» (όπως τώρα) ή «guided» (2 στάδια — αριθμητικός → ποιοτικός)
+  const [mode, setMode] = useState<"classic" | "guided">("classic");
+  useEffect(() => { const m = localStorage.getItem("rxv_closing_mode"); if (m === "guided") setMode("guided"); }, []);
+  function pickMode(m: "classic" | "guided") { setMode(m); localStorage.setItem("rxv_closing_mode", m); }
   // παραμετρικό: αυτόματο pop-up κουπονιών στο σκανάρισμα (επιλογή φαρμακοποιού, αποθηκεύεται τοπικά)
   const [couponsPopup, setCouponsPopup] = useState(false);
   useEffect(() => { setCouponsPopup(typeof window !== "undefined" && localStorage.getItem("rxv_coupons_on_scan") === "1"); }, []);
@@ -63,6 +67,17 @@ export default function PhysicalCheckPage() {
   useEffect(() => {
     if (data?.summary && briefedPeriod.current !== period) { briefedPeriod.current = period; setShowBriefing(true); }
   }, [data?.summary, period]);
+  // Ποιοτικό στάδιο (guided): worklist όσων χρειάζονται έλεγχο & δεν έχουν ελεγχθεί οπτικά
+  const vAll = (data?.items ?? []).filter((i) => i.needs_check);
+  const vRemaining = vAll.filter((i) => !i.visual_checked)
+    .sort((a, b) => (a.day < b.day ? -1 : a.day > b.day ? 1 : b.claim - a.claim));
+  const vCurrent = vRemaining[0];
+  const vDoneCount = vAll.length - vRemaining.length;
+  const { data: wizChecks } = useQuery({
+    queryKey: ["wiz-checks", period, vCurrent?.external_id],
+    queryFn: () => vCurrent ? api<ClosingChecksRes>(`/prescriptions/checks/${encodeURIComponent(vCurrent.external_id)}`) : Promise.resolve(null),
+    enabled: mode === "guided" && !!vCurrent,
+  });
 
   // resume at the first not-yet-complete day, once
   useEffect(() => {
@@ -94,6 +109,11 @@ export default function PhysicalCheckPage() {
   const reset = useMutation({
     mutationFn: (day?: string) => api(`/reimbursement/physical/reset?period=${period}${day ? `&day=${encodeURIComponent(day)}` : ""}`, { method: "POST" }),
     onSuccess: (_d, day) => { setLast(null); if (!day) { resumed.current = false; setDayIdx(0); } qc.invalidateQueries({ queryKey: ["reimb-physical", period] }); },
+  });
+  const visualMut = useMutation({
+    mutationFn: ({ external_id, undo }: { external_id: string; undo?: boolean }) =>
+      api(`/reimbursement/physical/visual?period=${period}${undo ? "&undo=true" : ""}`, { method: "POST", body: JSON.stringify({ barcode: external_id }) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["reimb-physical", period] }),
   });
 
   const cur = byDay[dayIdx];
@@ -168,6 +188,61 @@ export default function PhysicalCheckPage() {
     { key: "claim", header: t("Απαίτηση", "Claim"), align: "right", sortValue: (r) => r.claim, render: (r) => fmtEur(r.claim) },
   ];
 
+  // ── GUIDED: Στάδιο 2 — Ποιοτικός (οπτικός) έλεγχος, μία συνταγή τη φορά ──
+  if (mode === "guided" && monthDone && vCurrent) return (
+    <div className="mx-auto max-w-2xl space-y-4">
+      <div className="rounded-2xl border-2 border-violet-300 bg-violet-50/50 p-4 dark:border-violet-800 dark:bg-violet-950/20">
+        <div className="flex items-center justify-between">
+          <div>
+            <div className="text-[11px] font-semibold uppercase text-violet-600">{t("Στάδιο 2 — Ποιοτικός έλεγχος", "Stage 2 — Visual check")} · {period}</div>
+            <div className="text-lg font-bold text-slate-900 dark:text-slate-100">{t("Οπτικός έλεγχος — μία συνταγή τη φορά", "Visual review — one Rx at a time")}</div>
+          </div>
+          <div className="text-right"><span className="text-2xl font-extrabold text-violet-600">{vDoneCount}</span><span className="text-slate-400">/{vAll.length}</span></div>
+        </div>
+        <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700"><div className="h-full rounded-full bg-violet-500 transition-all" style={{ width: `${vAll.length ? (vDoneCount / vAll.length) * 100 : 0}%` }} /></div>
+      </div>
+      <div className="rounded-2xl border-2 border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-900">
+        <div className="flex items-start justify-between">
+          <div>
+            <div className="text-[11px] uppercase text-slate-400">{vCurrent.day ? fmtDay(vCurrent.day) : ""}</div>
+            <button onClick={() => openDetail(vCurrent.external_id)} className="font-mono text-base font-bold text-slate-900 hover:text-emerald-600 hover:underline dark:text-slate-100">{vCurrent.barcode}</button>
+          </div>
+          <span className="rounded bg-slate-100 px-2 py-0.5 text-[11px] font-bold text-slate-700 dark:bg-slate-800 dark:text-slate-200">{fmtEur(vCurrent.claim)}</span>
+        </div>
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {vCurrent.needs_dose_check && <span className="rounded bg-orange-100 px-1.5 py-0.5 text-[10px] font-bold text-orange-700">E {t("δοσολογία", "dosage")}</span>}
+          {vCurrent.is_fyk && <span className="rounded bg-fuchsia-100 px-1.5 py-0.5 text-[10px] font-semibold text-fuchsia-800">ΦΥΚ</span>}
+          {vCurrent.needs_original && <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800">📄 {t("πρωτότυπη", "original")}</span>}
+        </div>
+        {wizChecks && wizChecks.count > 0 ? (
+          <div className="mt-3 space-y-1.5">
+            {wizChecks.items.map((it, i) => (
+              <div key={i}>
+                <div className="text-[11px] font-semibold text-slate-700 dark:text-slate-200">{it.name}</div>
+                {it.checks.map((c, j) => (
+                  <div key={j} className={`mt-0.5 rounded-md px-2 py-1 text-[11px] ${c.level === "warning" ? "bg-amber-100 text-amber-900 dark:bg-amber-950/50 dark:text-amber-200" : "bg-slate-50 text-slate-600 dark:bg-slate-800/60 dark:text-slate-300"}`}><b>{c.title}.</b> {c.detail}</div>
+                ))}
+              </div>
+            ))}
+          </div>
+        ) : <p className="mt-3 text-xs text-slate-500">{t("Έλεγξε τα κουπόνια / ταινίες γνησιότητας της συνταγής.", "Check the prescription's coupons / authenticity strips.")}</p>}
+        <div className="mt-4 flex gap-2">
+          <button onClick={() => openDetail(vCurrent.external_id)} className="rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-600"><Ticket className="mr-1 inline h-4 w-4" /> {t("Κουπόνια", "Coupons")}</button>
+          <button onClick={() => visualMut.mutate({ external_id: vCurrent.external_id })} className="flex-1 rounded-xl bg-emerald-600 py-2.5 text-sm font-semibold text-white hover:bg-emerald-700">✓ {t("Ελέγχθηκε — Επόμενη", "Checked — Next")}</button>
+        </div>
+      </div>
+      <button onClick={() => pickMode("classic")} className="mx-auto block text-xs text-slate-400 hover:text-slate-600">{t("← Κλασικός τρόπος", "← Classic mode")}</button>
+    </div>
+  );
+  if (mode === "guided" && monthDone && !vCurrent) return (
+    <div className="space-y-4 py-10 text-center">
+      <PartyPopper className="mx-auto h-12 w-12 text-emerald-500" />
+      <h2 className="text-xl font-bold text-slate-900 dark:text-slate-100">{t("Ο μήνας έκλεισε σωστά! 🎉", "Month closed correctly! 🎉")}</h2>
+      <p className="text-sm text-slate-500">{t(`Αριθμητικός + οπτικός έλεγχος ολοκληρώθηκαν (${vAll.length} οπτικοί).`, `Numeric + visual checks done (${vAll.length} visual).`)}</p>
+      <button onClick={async () => { if (await appConfirm(t("Νέος έλεγχος μήνα;", "New month check?"), { danger: true })) reset.mutate(undefined); }} className="mx-auto inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-600"><RotateCcw className="h-4 w-4" /> {t("Νέος έλεγχος", "New check")}</button>
+    </div>
+  );
+
   if (monthDone) return (
     <div className="space-y-4 py-10 text-center">
       <PartyPopper className="mx-auto h-12 w-12 text-emerald-500" />
@@ -180,6 +255,15 @@ export default function PhysicalCheckPage() {
 
   return (
     <div className="mx-auto max-w-2xl space-y-4">
+      {/* τρόπος κλεισίματος — επιλογή φαρμακοποιού (αποθηκεύεται τοπικά) */}
+      <div className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-white p-2.5 text-sm dark:border-slate-700 dark:bg-slate-900">
+        <span className="font-medium text-slate-600 dark:text-slate-300">{t("Τρόπος κλεισίματος:", "Closing mode:")}</span>
+        <div className="inline-flex overflow-hidden rounded-lg border border-slate-300 dark:border-slate-600">
+          <button onClick={() => pickMode("classic")} className={`px-3 py-1 text-xs font-semibold ${mode === "classic" ? "bg-emerald-600 text-white" : "text-slate-600 hover:bg-slate-50 dark:text-slate-300"}`}>{t("Κλασικός", "Classic")}</button>
+          <button onClick={() => pickMode("guided")} className={`px-3 py-1 text-xs font-semibold ${mode === "guided" ? "bg-violet-600 text-white" : "text-slate-600 hover:bg-slate-50 dark:text-slate-300"}`}>{t("Καθοδηγούμενος (2 στάδια)", "Guided (2 stages)")}</button>
+        </div>
+        {mode === "guided" && <span className="text-xs text-violet-600">{t("Στάδιο 1 — Αριθμητικός (σκάναρε όλες)", "Stage 1 — Numeric (scan all)")}</span>}
+      </div>
       {/* διαχωρισμός ανά υποβολή (ταμείο) ή όλες μαζί */}
       <div className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-white p-2.5 dark:border-slate-700 dark:bg-slate-900">
         <label className="text-sm font-medium text-slate-600 dark:text-slate-300">{t("Υποβολή:", "Submission:")}</label>
@@ -259,14 +343,14 @@ export default function PhysicalCheckPage() {
               </button>
               <span className="inline-flex items-center gap-1"><Ticket className="h-3.5 w-3.5" /> {t("Άνοιγμα κουπονιών (pop-up) σε κάθε σκανάρισμα", "Open coupons (pop-up) on every scan")}</span>
             </label>
-            {/* παραμετρικό: εμφάνιση μόνο όσων χρειάζονται έλεγχο */}
-            <label className="mt-2 flex cursor-pointer items-center justify-center gap-2 text-xs text-slate-500 dark:text-slate-400">
+            {/* παραμετρικό: εμφάνιση μόνο όσων χρειάζονται έλεγχο (μόνο στον κλασικό) */}
+            {mode === "classic" && <label className="mt-2 flex cursor-pointer items-center justify-center gap-2 text-xs text-slate-500 dark:text-slate-400">
               <button type="button" role="switch" aria-checked={onlyChecks} onClick={toggleOnlyChecks}
                 className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${onlyChecks ? "bg-emerald-500" : "bg-slate-300 dark:bg-slate-600"}`}>
                 <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${onlyChecks ? "translate-x-4" : "translate-x-0.5"}`} />
               </button>
-              <span className="inline-flex items-center gap-1"><Filter className="h-3.5 w-3.5" /> {t("Μόνο όσες χρειάζονται έλεγχο (κρύψε τις all-QR)", "Only those needing a check (hide all-QR)")}</span>
-            </label>
+              <span className="inline-flex items-center gap-1"><Filter className="h-3.5 w-3.5" /> {t("Μόνο όσες χρειάζονται έλεγχο (κρύψε όσες δεν έχουν ιδιαιτερότητα)", "Only those needing a check (hide those with no specialness)")}</span>
+            </label>}
           </>
         )}
 
