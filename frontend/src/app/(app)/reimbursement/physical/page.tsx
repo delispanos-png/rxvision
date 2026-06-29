@@ -416,6 +416,25 @@ export default function PhysicalCheckPage() {
               </div>
               <div className="mt-3 flex items-center justify-between text-xs text-slate-500"><span className="inline-flex items-center gap-1"><CalendarDays className="h-3.5 w-3.5" /> {t("Ημέρες ολοκληρωμένες", "Days complete")}</span><b className="text-slate-700 dark:text-slate-200">{daysComplete}/{byDay.length}</b></div>
               <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700"><div className="h-full rounded-full bg-violet-500 transition-all" style={{ width: `${byDay.length ? (daysComplete / byDay.length) * 100 : 0}%` }} /></div>
+              {/* εξέλιξη ανά κατηγορία υποβολής */}
+              {(() => {
+                const grp: Record<string, { tot: number; chk: number }> = {};
+                (data?.items ?? []).forEach((i) => { const g = (grp[i.group] ||= { tot: 0, chk: 0 }); g.tot++; if (i.checked) g.chk++; });
+                const rows = Object.entries(grp).sort((a, b) => b[1].tot - a[1].tot);
+                const lbl = (g: string) => g === "ΕΟΠΥΥ - Φάρμακα" ? t("ΕΟΠΥΥ Φάρμακα", "EOPYY Meds") : g === "ΕΟΠΥΥ - Εμβόλια" ? t("Εμβόλια", "Vaccines") : g === "Αμιγώς 100%" ? t("Αμιγώς 100%", "Full 100%") : g;
+                const col = (g: string) => g.includes("Εμβόλ") ? "bg-sky-500" : g.includes("100%") ? "bg-amber-500" : g.includes("ΕΤΥΑΠ") ? "bg-cyan-500" : g.includes("ΕΟΠΥΥ") || g.includes("Φάρμακα") ? "bg-emerald-500" : "bg-violet-500";
+                return rows.length > 1 ? (
+                  <div className="mt-3 space-y-2 border-t border-violet-100 pt-3 dark:border-violet-900/40">
+                    <div className="text-[10px] font-bold uppercase tracking-wide text-slate-400">{t("Εξέλιξη ανά κατηγορία", "Progress by category")}</div>
+                    {rows.map(([g, v]) => { const p = v.tot ? Math.round((v.chk / v.tot) * 100) : 0; return (
+                      <div key={g}>
+                        <div className="mb-0.5 flex items-center justify-between text-[11px]"><span className="truncate pr-2 font-medium text-slate-600 dark:text-slate-300">{lbl(g)}</span><span className="shrink-0 tabular-nums text-slate-400">{v.chk}/{v.tot} · {p}%</span></div>
+                        <div className="h-2 w-full overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700"><div className={`h-full rounded-full ${col(g)} transition-all`} style={{ width: `${p}%` }} /></div>
+                      </div>
+                    ); })}
+                  </div>
+                ) : null;
+              })()}
               {rem === 0 && tot > 0 && <p className="mt-2 text-center text-xs font-semibold text-emerald-600">🎉 {t("Όλες σκαναρίστηκαν! Συνέχισε στο Στάδιο 2.", "All scanned! Continue to Stage 2.")}</p>}
             </div>
           );
