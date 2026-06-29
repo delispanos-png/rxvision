@@ -908,7 +908,7 @@ class ReimbursementRepository(BaseRepository):
         return {"closing_mode": s.get("closing_mode", "classic")}
 
     async def set_closing_prefs(self, closing_mode: str) -> dict:
-        mode = "guided" if closing_mode == "guided" else "classic"
+        mode = closing_mode if closing_mode in ("guided", "express") else "classic"
         await self._db["reimbursement_settings"].update_one(
             {"tenant_id": self.tenant_id},
             {"$set": {"tenant_id": self.tenant_id, "closing_mode": mode, "updated_at": _now()}},

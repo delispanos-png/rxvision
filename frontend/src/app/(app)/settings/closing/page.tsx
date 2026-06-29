@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { ScanBarcode, ListChecks, Check } from "lucide-react";
+import { ScanBarcode, ListChecks, LayoutPanelLeft, Check } from "lucide-react";
 import { api } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
 
@@ -22,6 +22,9 @@ export default function ClosingSettingsPage() {
     { id: "guided", icon: ListChecks, title: t("Καθοδηγούμενος (2 στάδια)", "Guided (2 stages)"),
       desc: t("Λιτή, καθοδηγούμενη ροή: Στάδιο 1 αριθμητικός (σκανάρεις όλες) → Στάδιο 2 ποιοτικός (οδηγός μία-συνταγή-τη-φορά μόνο για όσες χρειάζονται οπτικό έλεγχο).",
               "Lean guided flow: Stage 1 numeric (scan all) → Stage 2 qualitative (one-Rx-at-a-time wizard only for those needing a visual check).") },
+    { id: "express", icon: LayoutPanelLeft, title: t("Όλα σε ένα βήμα (express)", "All-in-one (express)"),
+      desc: t("Μία οθόνη: σκανάρεις και ΤΑΥΤΟΧΡΟΝΑ βλέπεις αριστερά τα κουπόνια και δεξιά τι πρέπει να ελέγξεις/καταθέσεις — χωρίς pop-up. Γρήγορο για έμπειρους.",
+              "One screen: scan and at the same time see the coupons on the left and what to check/submit on the right — no pop-ups. Fast for power users.") },
   ];
 
   return (
@@ -29,7 +32,7 @@ export default function ClosingSettingsPage() {
       <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-700 dark:bg-slate-900">
         <h2 className="text-base font-bold text-slate-900 dark:text-slate-100">{t("Έλεγχος Barcode — Τρόπος κλεισίματος", "Barcode check — closing mode")}</h2>
         <p className="mt-1 text-sm text-slate-500">{t("Πώς θα γίνεται ο έλεγχος των συνταγών πριν την υποβολή στα ταμεία. Ισχύει για όλο το φαρμακείο.", "How prescriptions are checked before submission. Applies to the whole pharmacy.")}</p>
-        <div className="mt-4 grid gap-3 sm:grid-cols-2">
+        <div className="mt-4 grid gap-3 sm:grid-cols-3">
           {opts.map((o) => {
             const active = mode === o.id;
             return (
