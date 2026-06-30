@@ -9,6 +9,7 @@ import {
   ScrollText, KeyRound, Boxes, Settings, ChevronDown, ChevronRight, Percent, Brain, Bell, Sparkles,
 } from "lucide-react";
 import { adminApi, adminTokens, ApiError } from "@/lib/adminClient";
+import { PoweredBy } from "@/components/brand/PoweredBy";
 import { LogoMark } from "@/components/brand/Logo";
 import { Tooltip } from "@/components/ui/Tooltip";
 
@@ -143,6 +144,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
             <LogOut className="h-4 w-4" /> Αποσύνδεση
           </button>
         </div>
+        <PoweredBy />
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">

@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import { Building2, Package, UserCog, Search, Check, ArrowRight, ArrowLeft, Eye, EyeOff, Loader2, CreditCard, Landmark } from "lucide-react";
 import { api, ApiError } from "@/lib/apiClient";
 import { Tooltip } from "@/components/ui/Tooltip";
+import { Logo } from "@/components/brand/Logo";
+import { PoweredBy } from "@/components/brand/PoweredBy";
 
 type Company = {
   name: string; title: string; afm: string; doy: string; country: "GR" | "CY";
@@ -170,7 +172,7 @@ export default function RegisterWizard() {
         {/* header + progress */}
         <div className="mb-6 flex items-center justify-between">
           <a href="/login" className="text-sm text-slate-500 hover:text-slate-700">← Σύνδεση</a>
-          <div className="flex items-center gap-1.5 text-lg font-bold"><span className="text-brand-700">℞</span> RxVision</div>
+          <Logo subtitle={false} markClassName="h-8 w-8" />
         </div>
         <div className="mb-1 h-1.5 overflow-hidden rounded-full bg-slate-200">
           <div className="h-full rounded-full bg-brand-600 transition-all" style={{ width: `${((step + 1) / N) * 100}%` }} />
@@ -353,6 +355,9 @@ export default function RegisterWizard() {
               )}
             </div>
           </div>
+        </div>
+        <div className="mt-8">
+          <PoweredBy />
         </div>
       </div>
     </div>

@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { PoweredBy } from "@/components/brand/PoweredBy";
 
 export const metadata: Metadata = {
   title: "RxVision — Πύλη Πελατών",
@@ -7,8 +8,9 @@ export const metadata: Metadata = {
 
 export default function PortalLayout({ children }: { children: React.ReactNode }) {
   return (
-    <div className="min-h-screen overflow-x-clip bg-gradient-to-b from-slate-50 via-white to-slate-50 text-slate-900">
-      {children}
+    <div className="flex min-h-screen flex-col overflow-x-clip bg-gradient-to-b from-slate-50 via-white to-slate-50 text-slate-900">
+      <div className="flex-1">{children}</div>
+      <PoweredBy />
     </div>
   );
 }
