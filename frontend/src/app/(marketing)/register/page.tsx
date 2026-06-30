@@ -50,10 +50,16 @@ export default function RegisterWizard() {
   const [payMethod, setPayMethod] = useState<"card" | "bank">("card");
 
   useEffect(() => {
+    // Optional deep-link preselect from the marketing site: /register?package=pro (alias: ?plan=).
+    const qp = new URLSearchParams(window.location.search);
+    const wanted = (qp.get("package") || qp.get("plan") || "").trim().toLowerCase();
     api<{ packages: Pkg[]; sla: Sla[] }>("/onboarding/packages")
       .then((r) => {
         setPkgs(r.packages || []); setSlaTiers(r.sla || []);
-        if (r.packages?.length) { setPkgCode(r.packages[0]._id); if (r.packages[0].sla) setSla(r.packages[0].sla); }
+        if (r.packages?.length) {
+          const pre = r.packages.find((p) => p._id.toLowerCase() === wanted) || r.packages[0];
+          setPkgCode(pre._id); if (pre.sla) setSla(pre.sla);
+        }
         if (!r.packages?.[0]?.sla && r.sla?.length) setSla(r.sla[0]._id);
       })
       .catch(() => { /* leave empty → manual */ });
