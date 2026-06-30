@@ -495,13 +495,57 @@ export default function PhysicalCheckPage() {
     </div>
   );
 
+  // ── Πλαϊνά panels (αντικαθιστούν το pop-up): κουπόνια ΔΕΞΙΑ, μηνύματα/τι-να-κάνεις ΑΡΙΣΤΕΡΑ ──
+  const sideTodo: string[] = [];
+  if (detail?.found) {
+    if (detail.needs_original) sideTodo.push(t("📄 Επισύναψε την ΠΡΩΤΟΤΥΠΗ χάρτινη συνταγή.", "📄 Attach the ORIGINAL paper Rx."));
+    if (detail.has_opinion) sideTodo.push(t("📋 Επισύναψε τη ΓΝΩΜΑΤΕΥΣΗ.", "📋 Attach the medical opinion."));
+    if (detail.is_fyk) sideTodo.push(t("💊 ΦΥΚ — αντίγραφο τιμολογίου.", "💊 High-cost — invoice copy."));
+    if ((detail.coupons || []).some((c) => c.qr === false)) sideTodo.push(t("⚠️ Κράτησε τις ΤΑΙΝΙΕΣ γνησιότητας.", "⚠️ Keep the authenticity strips."));
+    if (detail.is_etyap) sideTodo.push(t("🛡️ ΕΤΥΑΠ — συμπληρωματική υποβολή.", "🛡️ ΕΤΥΑΠ — supplementary submission."));
+  }
+  const messagesPanel = (
+    <aside className="order-2 lg:order-1 lg:sticky lg:top-4 lg:self-start">
+      <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-3 dark:border-slate-700 dark:bg-slate-800/40">
+        <div className="mb-2 text-[11px] font-bold uppercase text-slate-500">🔎 {t("Τι να ελέγξεις / καταθέσεις", "What to check / submit")}</div>
+        {detail?.found ? (
+          <div className="space-y-2">
+            {sideTodo.length > 0 && <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-2.5 dark:border-emerald-900/50 dark:bg-emerald-950/20"><div className="mb-1 flex items-center gap-1.5 text-[11px] font-bold uppercase text-emerald-700 dark:text-emerald-400"><ClipboardList className="h-3.5 w-3.5" /> {t("Για το ταμείο", "For the fund")}</div><ul className="space-y-0.5 text-[11px] text-slate-700 dark:text-slate-200">{sideTodo.map((x, i) => <li key={i}>{x}</li>)}</ul></div>}
+            {checks && checks.count > 0 ? checks.items.map((it, i) => (
+              <div key={i}><div className="text-[11px] font-semibold text-slate-700 dark:text-slate-200">{it.name}</div>
+                {it.checks.map((c, j) => <div key={j} className={`mt-0.5 rounded-md px-2 py-1 text-[11px] ${c.level === "warning" ? "bg-amber-100 text-amber-900 dark:bg-amber-950/50 dark:text-amber-200" : "bg-white text-slate-600 dark:bg-slate-900/60 dark:text-slate-300"}`}><b>{c.title}.</b> {c.detail}</div>)}
+              </div>
+            )) : (sideTodo.length === 0 && <p className="text-[11px] text-emerald-600">✓ {t("Καθαρή — όλα QR, καμία ιδιαιτερότητα.", "Clean — all QR, nothing special.")}</p>)}
+          </div>
+        ) : <p className="py-10 text-center text-xs text-slate-400">{t("Σκάναρε ή πάτησε μια συνταγή για να δεις τι πρέπει να κάνεις.", "Scan or tap a prescription to see what to do.")}</p>}
+      </div>
+    </aside>
+  );
+  const couponsPanel = (
+    <aside className="order-3 lg:sticky lg:top-4 lg:self-start">
+      <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-3 dark:border-slate-700 dark:bg-slate-800/40">
+        <div className="mb-2 flex items-center gap-1.5 text-[11px] font-bold uppercase text-slate-500"><Ticket className="h-3.5 w-3.5" /> {t("Κουπόνια", "Coupons")}{detail?.found ? ` · ${detail.barcode}` : ""}</div>
+        {detail?.found && detail.coupons ? (
+          <div className="space-y-1.5">
+            {detail.coupons.map((c, i) => { const strip = c.qr === false; return (
+              <div key={i} className={`flex items-start gap-2 rounded-lg border p-2 text-xs ${c.qr === true ? "border-emerald-200 bg-emerald-50/50 dark:border-emerald-900/50 dark:bg-emerald-950/20" : strip ? "border-amber-300 bg-amber-50/70 dark:border-amber-800 dark:bg-amber-950/30" : "border-slate-200 dark:border-slate-700"}`}>
+                {c.qr === true ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" /> : strip ? <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" /> : <Pill className="mt-0.5 h-4 w-4 shrink-0 text-slate-400" />}
+                <div className="min-w-0 flex-1"><div className="font-medium text-slate-700 dark:text-slate-200">{c.name} {c.quantity > 1 && <span className="text-slate-400">×{c.quantity}</span>}</div>
+                  {c.qr === true && <div className="text-[11px] font-semibold text-emerald-600">✓ QR{c.qr_batch ? ` · ${c.qr_batch}` : ""}</div>}
+                  {strip && <div className="text-[11px] font-bold text-amber-700">⚠ {t("Ταινία", "Strip")}{c.lot ? ` · ${c.lot}` : ""}</div>}
+                  {!c.executed && <div className="text-[10px] text-rose-500">{t("ανεκτέλεστο", "unexecuted")}</div>}
+                </div>
+              </div>); })}
+          </div>
+        ) : <p className="py-10 text-center text-xs text-slate-400">{t("Σκάναρε ή πάτησε μια συνταγή για να δεις τα κουπόνια.", "Scan or tap a prescription to see coupons.")}</p>}
+      </div>
+    </aside>
+  );
   return (
-    <div className="mx-auto max-w-2xl space-y-4">
-      {mode === "guided" && (
-        <div className="flex items-center justify-between rounded-xl border-2 border-violet-300 bg-violet-50/60 px-4 py-2 text-sm dark:border-violet-800 dark:bg-violet-950/20">
-          <span className="font-semibold text-violet-700 dark:text-violet-300">{t("Στάδιο 1 — Αριθμητικός έλεγχος (σκάναρε όλες τις συνταγές)", "Stage 1 — Numeric check (scan all prescriptions)")}</span>
-        </div>
-      )}
+    <div className="mx-auto max-w-7xl">
+      <div className="grid items-start gap-4 lg:grid-cols-[300px_minmax(0,1fr)_320px]">
+        {messagesPanel}
+        <div className="order-1 min-w-0 space-y-4 lg:order-2">
       {/* διαχωρισμός ανά υποβολή (ταμείο) ή όλες μαζί — μόνο στον κλασικό */}
       {mode === "classic" && <div className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-white p-2.5 dark:border-slate-700 dark:bg-slate-900">
         <label className="text-sm font-medium text-slate-600 dark:text-slate-300">{t("Υποβολή:", "Submission:")}</label>
@@ -579,7 +623,7 @@ export default function PhysicalCheckPage() {
                 className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${couponsPopup ? "bg-emerald-500" : "bg-slate-300 dark:bg-slate-600"}`}>
                 <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${couponsPopup ? "translate-x-4" : "translate-x-0.5"}`} />
               </button>
-              <span className="inline-flex items-center gap-1"><Ticket className="h-3.5 w-3.5" /> {t("Άνοιγμα κουπονιών (pop-up) σε κάθε σκανάρισμα", "Open coupons (pop-up) on every scan")}</span>
+              <span className="inline-flex items-center gap-1"><Ticket className="h-3.5 w-3.5" /> {t("Εμφάνιση κουπονιών & μηνυμάτων στα πλαϊνά σε κάθε σκανάρισμα", "Show coupons & messages in the side panels on every scan")}</span>
             </label>
             {/* παραμετρικό: εμφάνιση μόνο όσων χρειάζονται έλεγχο (μόνο στον κλασικό) */}
             {mode === "classic" && <label className="mt-2 flex cursor-pointer items-center justify-center gap-2 text-xs text-slate-500 dark:text-slate-400">
@@ -625,7 +669,9 @@ export default function PhysicalCheckPage() {
         </div>
       )}
 
-      {/* advanced detail modal */}
+        </div>
+        {couponsPanel}
+      </div>
       {showBriefing && data?.summary && (
         <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4" onClick={() => setShowBriefing(false)}>
           <div className="max-h-[85vh] w-full max-w-lg overflow-y-auto rounded-2xl bg-white p-5 shadow-xl dark:bg-slate-900" onClick={(e) => e.stopPropagation()}>
@@ -657,87 +703,7 @@ export default function PhysicalCheckPage() {
         </div>
       )}
 
-      {detail !== null && (
-        <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4" onClick={() => setDetail(null)}>
-          <div className="max-h-[85vh] w-full max-w-md overflow-y-auto rounded-2xl bg-white p-5 shadow-xl dark:bg-slate-900" onClick={(e) => e.stopPropagation()}>
-            {!detail.found && !detail.coupons ? (
-              <div className="text-sm text-slate-400">{t("Φόρτωση…", "Loading…")}</div>
-            ) : (
-              <>
-                <div className="mb-3 flex items-start justify-between gap-2">
-                  <div>
-                    <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase text-emerald-600"><Ticket className="h-3.5 w-3.5" /> {t("Κουπόνια συνταγής", "Prescription coupons")}</div>
-                    <h3 className="font-mono text-base font-bold text-slate-900 dark:text-slate-100">{detail.barcode}</h3>
-                    <p className="text-xs text-slate-500">{detail.fund} · {fmtEur(detail.claim)} · {detail.n_coupons} {t("κουπόνια", "coupons")}{detail.exec_no ? ` · ${t("μερική εκτέλεση", "partial execution")} ${detail.exec_no}` : ""}</p>
-                  </div>
-                  <button onClick={() => setDetail(null)} className="text-slate-400 hover:text-slate-600"><X className="h-5 w-5" /></button>
-                </div>
-                <div className="mb-3 flex flex-wrap gap-1.5">
-                  {detail.has_opinion === true && <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-700"><FileText className="h-3 w-3" /> {t("Απαιτεί γνωμάτευση (συνταγή)", "Requires opinion (prescription)")}</span>}
-                  {detail.has_opinion === false && <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-600"><FileText className="h-3 w-3" /> {t("Χωρίς γνωμάτευση", "No opinion needed")}</span>}
-                  {detail.is_fyk && <span className="rounded-full bg-orange-100 px-2 py-0.5 text-[11px] font-semibold text-orange-700">ΦΥΚ</span>}
-                  {detail.is_etyap && <span className="rounded-full bg-cyan-100 px-2 py-0.5 text-[11px] font-semibold text-cyan-700">🛡️ ΕΤΥΑΠ</span>}
-                  {detail.has_vaccine && <span className="inline-flex items-center gap-1 rounded-full bg-sky-100 px-2 py-0.5 text-[11px] font-semibold text-sky-700"><Syringe className="h-3 w-3" /> {t("Εμβόλιο", "Vaccine")}</span>}
-                  {detail.has_narcotic && <span className="inline-flex items-center gap-1 rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-semibold text-rose-700"><ShieldAlert className="h-3 w-3" /> {t("Ναρκωτικό", "Narcotic")}</span>}
-                  {detail.partial && <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-600">{t("Μερική εκτέλεση", "Partial")}</span>}
-                </div>
-                {checks && checks.count > 0 && (
-                  <div className={`mb-3 rounded-xl border p-2.5 ${checks.warnings ? "border-amber-300 bg-amber-50/70 dark:border-amber-800 dark:bg-amber-950/30" : "border-sky-200 bg-sky-50/60 dark:border-sky-900/50 dark:bg-sky-950/20"}`}>
-                    <div className="mb-1.5 text-[11px] font-bold uppercase tracking-wide text-slate-600 dark:text-slate-300">🔎 {t("Έλεγχος κλεισίματος", "Closing checks")}</div>
-                    {checks.items.map((it, i) => (
-                      <div key={i} className="mb-1.5 last:mb-0">
-                        <div className="text-[11px] font-semibold text-slate-700 dark:text-slate-200">{it.name}</div>
-                        {it.checks.map((c, j) => (
-                          <div key={j} className={`mt-0.5 flex items-start gap-1.5 rounded-md px-2 py-1 text-[11px] ${c.level === "warning" ? "bg-amber-100 text-amber-900 dark:bg-amber-950/50 dark:text-amber-200" : "bg-white text-slate-600 dark:bg-slate-800/60 dark:text-slate-300"}`}>
-                            <span className="shrink-0">{c.level === "warning" ? "⚠️" : "ℹ️"}</span>
-                            <span><b>{c.title}.</b> {c.detail}</span>
-                          </div>
-                        ))}
-                      </div>
-                    ))}
-                  </div>
-                )}
-                {detail.coupons.some((c) => c.qr !== null) && (
-                  <div className="mb-2 flex flex-wrap gap-1.5">
-                    {detail.coupons.filter((c) => c.qr === true).length > 0 && <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-semibold text-emerald-700"><CheckCircle2 className="h-3.5 w-3.5" /> {detail.coupons.filter((c) => c.qr === true).length} QR {t("αυτόματα", "auto")}</span>}
-                    {detail.coupons.filter((c) => c.qr === false).length > 0 && <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2.5 py-1 text-xs font-semibold text-amber-700"><AlertTriangle className="h-3.5 w-3.5" /> {detail.coupons.filter((c) => c.qr === false).length} {t("ταινίες προς έλεγχο", "strips to check")}</span>}
-                  </div>
-                )}
-                <div className="space-y-1.5">
-                  {detail.coupons.map((c, i) => {
-                    const strip = c.qr === false;
-                    return (
-                      <div key={i} className={`flex items-start gap-2 rounded-lg border p-2.5 ${
-                        c.qr === true ? "border-emerald-200 bg-emerald-50/50 dark:border-emerald-900/50 dark:bg-emerald-950/20"
-                          : strip ? "border-amber-300 bg-amber-50/70 dark:border-amber-800 dark:bg-amber-950/30"
-                            : "border-slate-200 dark:border-slate-700"}`}>
-                        {c.qr === true ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
-                          : strip ? <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
-                            : <Pill className={`mt-0.5 h-4 w-4 shrink-0 ${c.category === "fyk" ? "text-orange-500" : c.category === "vaccine" ? "text-sky-500" : c.category === "narcotic" ? "text-rose-500" : "text-slate-400"}`} />}
-                        <div className="min-w-0 flex-1">
-                          <div className={`text-xs ${strip ? "font-semibold text-slate-800 dark:text-slate-100" : "font-medium text-slate-700 dark:text-slate-200"}`}>{c.name} {c.quantity > 1 && <span className="text-slate-400">×{c.quantity}</span>}</div>
-                          {c.qr === true && (
-                            <div className="mt-0.5 text-[11px] font-semibold text-emerald-600">✓ QR — {t("δεν χρειάζεται έλεγχος", "no check needed")}{c.qr_batch ? ` · batch ${c.qr_batch}` : ""}{c.qr_expiry ? ` · ${t("λήξη", "exp")} ${c.qr_expiry}` : ""}</div>
-                          )}
-                          {strip && (
-                            <div className="mt-1">
-                              <div className="text-[11px] font-bold uppercase tracking-wide text-amber-700">⚠ {t("Ταινία γνησιότητας — έλεγξέ το", "Authenticity strip — check it")}</div>
-                              {c.lot && <div className="mt-0.5 font-mono text-lg font-extrabold tracking-wider text-slate-900 dark:text-slate-100">{c.lot}</div>}
-                            </div>
-                          )}
-                          {c.qr === null && c.barcode && <div className="font-mono text-[10px] text-slate-400">{c.barcode}</div>}
-                          {!c.executed && <div className="text-[10px] text-rose-500">{t("ανεκτέλεστο", "unexecuted")}</div>}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-                <p className="mt-3 text-[10px] text-slate-400">{t("Τα κουπόνια που πρέπει να υπάρχουν στη συνταγή για την κατάθεση.", "The coupons that should be on the prescription for submission.")}</p>
-              </>
-            )}
-          </div>
-        </div>
-      )}
+      {/* Λεπτομέρειες κουπονιών & μηνυμάτων → πλέον στα πλαϊνά panels (καταργήθηκε το pop-up) */}
     </div>
   );
 }
