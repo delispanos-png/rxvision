@@ -136,8 +136,11 @@ export function Sidebar() {
       {open && <div className="fixed inset-0 z-30 bg-black/40 md:hidden" onClick={() => setOpen(false)} />}
       <aside className={`fixed inset-y-0 left-0 z-40 flex w-[min(16rem,85vw)] shrink-0 flex-col border-r border-slate-200/70 bg-white transition-all duration-200 dark:border-slate-800 dark:bg-slate-900 md:static md:w-64 md:translate-x-0 ${collapsed ? "md:w-[72px]" : "md:w-64"} ${open ? "translate-x-0" : "-translate-x-full"}`}>
         <div className={`flex h-16 items-center px-5 ${collapsed ? "md:justify-center md:px-0" : ""}`}>
-          <div className={collapsed ? "md:hidden" : ""}><Logo markClassName="h-9 w-9" /></div>
-          {collapsed && <LogoMark className="hidden h-9 w-9 md:block" />}
+          {/* logo → marketing site (rxvision.gr) */}
+          <a href="https://rxvision.gr" title="rxvision.gr" className="transition hover:opacity-80">
+            <div className={collapsed ? "md:hidden" : ""}><Logo markClassName="h-9 w-9" /></div>
+            {collapsed && <LogoMark className="hidden h-9 w-9 md:block" />}
+          </a>
         </div>
 
         <nav className="flex-1 space-y-6 overflow-y-auto px-3 py-4">

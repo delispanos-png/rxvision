@@ -305,13 +305,13 @@ export default function PortalHome() {
       {/* ── top bar ───────────────────────────────────────────── */}
       <header className="sticky top-0 z-20 border-b border-slate-200/80 bg-white/85 backdrop-blur-md">
         <div className="mx-auto flex h-16 max-w-5xl items-center justify-between gap-1.5 px-3 sm:gap-3 sm:px-4">
-          <div className="flex items-center gap-2">
+          <a href="https://rxvision.gr" title="rxvision.gr" className="flex items-center gap-2 transition hover:opacity-80">
             <LogoMark className="h-9 w-9" />
             <div className="leading-tight">
               <div className="text-sm font-extrabold tracking-tight text-slate-900">RxVision</div>
               <div className="text-[10px] font-medium uppercase tracking-wider text-slate-400">Πύλη Πελατών</div>
             </div>
-          </div>
+          </a>
           <div className="flex items-center gap-2">
             {me.pharmacies.length > 0 && (
               <div className="relative">
