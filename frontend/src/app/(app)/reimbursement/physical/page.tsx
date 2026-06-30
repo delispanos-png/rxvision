@@ -125,6 +125,9 @@ export default function PhysicalCheckPage() {
   // φίλτρο «μόνο όσες χρειάζονται έλεγχο»: κρύβει τις all-QR χωρίς ιδιαιτερότητα
   const shownItems = onlyChecks ? dayItems.filter((i) => i.needs_check) : dayItems;
   const shownChecked = shownItems.filter((i) => i.checked).length;
+  // ανάλυση ανά ημέρα (για το hover στο ημερολόγιο): σύνολο + ανά κατηγορία/ταμείο
+  const dayStats: Record<string, { total: number; checked: number; groups: Record<string, number> }> = {};
+  (data?.items ?? []).forEach((i) => { const s = (dayStats[i.day] ||= { total: 0, checked: 0, groups: {} }); s.total++; if (i.checked) s.checked++; s.groups[i.group] = (s.groups[i.group] || 0) + 1; });
   const dayDone = onlyChecks ? (shownChecked >= shownItems.length) : (!!cur && cur.checked >= cur.total);
   const monthDone = byDay.length > 0 && byDay.every((d) => d.checked >= d.total);
   const daysComplete = byDay.filter((d) => d.checked >= d.total).length;
@@ -566,25 +569,45 @@ export default function PhysicalCheckPage() {
       </div>
       <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700"><div className="h-full rounded-full bg-emerald-500 transition-all" style={{ width: `${byDay.length ? (daysComplete / byDay.length) * 100 : 0}%` }} /></div>
 
-      {/* days overview — count + status per day */}
-      <div className="max-h-56 overflow-y-auto rounded-xl border border-slate-200 dark:border-slate-700">
-        {byDay.map((d, i) => {
-          const done = d.checked >= d.total;
-          const isCur = i === dayIdx;
-          return (
-            <button id={`dayrow-${i}`} key={d.date} onClick={() => setDayIdx(i)}
-              className={`flex w-full items-center gap-2 border-b border-slate-100 px-3 py-2 text-left text-xs last:border-0 dark:border-slate-800 ${isCur ? "bg-emerald-50 ring-1 ring-inset ring-emerald-300 dark:bg-emerald-950/30" : "hover:bg-slate-50 dark:hover:bg-slate-800/50"}`}>
-              {done ? <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" /> : isCur ? <ArrowRight className="h-4 w-4 shrink-0 text-emerald-600" /> : <span className="h-4 w-4 shrink-0 rounded-full border-2 border-slate-300" />}
-              <span className={`flex-1 capitalize ${isCur ? "font-semibold text-slate-800 dark:text-slate-100" : done ? "text-slate-400 line-through" : "text-slate-600 dark:text-slate-300"}`}>
-                {fmtDayShort(d.date)}
-                {isCur && <span className="ml-1.5 font-medium text-emerald-600">← {t("τώρα εδώ", "now here")}</span>}
-                {done && !isCur && <span className="ml-1.5 text-emerald-500">✓ {t("ολοκληρώθηκε", "done")}</span>}
-              </span>
-              <span className={`shrink-0 tabular-nums font-medium ${done ? "text-emerald-600" : "text-slate-500 dark:text-slate-400"}`}>{d.checked}/{d.total}</span>
-            </button>
-          );
-        })}
-      </div>
+      {/* days overview — compact ημερολόγιο + hover ανάλυση ανά μέρα */}
+      {(() => {
+        const yy = Number(period.split("-")[0]); const mm = Number(period.split("-")[1]);
+        const dim = new Date(yy, mm, 0).getDate();
+        const lead = (new Date(yy, mm - 1, 1).getDay() + 6) % 7;
+        const bmap: Record<string, DayRow> = {}; byDay.forEach((d) => { bmap[d.date] = d; });
+        const idxOf: Record<string, number> = {}; byDay.forEach((d, i) => { idxOf[d.date] = i; });
+        const cells: (string | null)[] = [...Array(lead).fill(null), ...Array.from({ length: dim }, (_, i) => `${period}-${String(i + 1).padStart(2, "0")}`)];
+        const lbl = (g: string) => g === "ΕΟΠΥΥ - Φάρμακα" ? "ΕΟΠΥΥ Φάρμ." : g === "ΕΟΠΥΥ - Εμβόλια" ? t("Εμβόλια", "Vaccines") : g === "Αμιγώς 100%" ? t("Αμιγώς 100%", "Full 100%") : g;
+        return (
+          <div className="rounded-xl border border-slate-200 bg-white p-2 dark:border-slate-700 dark:bg-slate-900">
+            <div className="grid grid-cols-7 gap-0.5 text-center text-[9px] font-medium text-slate-400">{["Δε", "Τρ", "Τε", "Πέ", "Πα", "Σά", "Κυ"].map((w) => <div key={w}>{w}</div>)}</div>
+            <div className="mt-0.5 grid grid-cols-7 gap-0.5">
+              {cells.map((date, ci) => {
+                if (!date) return <div key={ci} />;
+                const dnum = Number(date.slice(-2)); const d = bmap[date];
+                if (!d) return <div key={ci} className="grid place-items-center rounded py-1 text-[10px] text-slate-300 dark:text-slate-600">{dnum}</div>;
+                const done = d.checked >= d.total; const i = idxOf[date]; const isCur = i === dayIdx; const st = dayStats[date];
+                return (
+                  <div key={ci} className="group relative">
+                    <button onClick={() => setDayIdx(i)}
+                      className={`flex w-full flex-col items-center justify-center rounded py-1 leading-none transition-transform group-hover:scale-110 ${done ? "bg-emerald-500 text-white" : d.checked > 0 ? "bg-amber-100 text-amber-900 dark:bg-amber-950/40 dark:text-amber-200" : "bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-200"} ${isCur ? "ring-2 ring-emerald-500" : ""}`}>
+                      <span className="text-[11px] font-bold">{dnum}</span>
+                      <span className="text-[8px] opacity-80">{done ? "✓" : `${d.checked}/${d.total}`}</span>
+                    </button>
+                    <div className="pointer-events-none absolute left-1/2 top-full z-30 hidden w-40 -translate-x-1/2 translate-y-1 rounded-lg border border-slate-200 bg-white p-2 text-left shadow-lg group-hover:block dark:border-slate-700 dark:bg-slate-800">
+                      <div className="mb-1 text-[11px] font-bold capitalize text-slate-800 dark:text-slate-100">{fmtDayShort(date)}</div>
+                      <div className="mb-1 text-[10px] text-slate-500">{t("Εκτελέσεις", "Executions")}: <b className="text-slate-700 dark:text-slate-200">{d.total}</b> · {t("σκαναρ.", "scan.")} {d.checked}</div>
+                      {st && Object.entries(st.groups).sort((a, b) => b[1] - a[1]).map(([g, c]) => (
+                        <div key={g} className="flex justify-between gap-2 text-[10px] text-slate-600 dark:text-slate-300"><span className="truncate">{lbl(g)}</span><b>{c}</b></div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })()}
 
       {/* current day card */}
       <div className={`rounded-2xl border-2 p-5 ${dayDone ? "border-emerald-300 bg-emerald-50/50 dark:border-emerald-800 dark:bg-emerald-950/20" : "border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900"}`}>
