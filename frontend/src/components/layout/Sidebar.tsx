@@ -57,7 +57,7 @@ const GROUPS: Group[] = [
       { href: "/order-advisor", label: "βάσει πρόβλεψης", en: "by forecast" },
     ] },
     { label: "AI σύμβουλος", en: "AI Assistant", icon: Bot, href: "/copilot", module: "ai_assistant" },
-    { label: "Διατροφή", en: "Nutrition", icon: Salad, href: "/nutrition" },
+    { label: "Διατροφή", en: "Nutrition", icon: Salad, href: "/nutrition", module: "ai_assistant" },
     { label: "Κερδοφορία", en: "Profitability", icon: TrendingUp, href: "/profitability", module: "profitability" },
   ] },
   { title: "Λειτουργίες", en: "Operations", items: [

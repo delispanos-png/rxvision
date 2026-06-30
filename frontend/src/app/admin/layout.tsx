@@ -6,7 +6,7 @@ import { useEffect, useState } from "react";
 import {
   LayoutGrid, FileText, Newspaper, BookOpen, Users, UserCog, Mail,
   Server, Wrench, BarChart3, CreditCard, Receipt, LogOut, PlugZap,  Menu, X, Layers, Cloud,
-  ScrollText, KeyRound, Boxes, Settings, ChevronDown, ChevronRight, Percent, Brain,
+  ScrollText, KeyRound, Boxes, Settings, ChevronDown, ChevronRight, Percent, Brain, Bell, Sparkles,
 } from "lucide-react";
 import { adminApi, adminTokens, ApiError } from "@/lib/adminClient";
 import { LogoMark } from "@/components/brand/Logo";
@@ -18,6 +18,7 @@ const NAV = [
   { label: "Συνδρομητές", icon: Users, href: "/admin/subscribers", section: "subscribers" },
   { label: "Συνδρομές", icon: CreditCard, href: "/admin/subscriptions", section: "subscriptions" },
   { label: "Πακέτα & SLA", icon: Boxes, href: "/admin/packages", section: "subscriptions" },
+  { label: "Add-ons", icon: Sparkles, href: "/admin/addons", section: "subscriptions" },
   { label: "Τιμολόγηση", icon: Receipt, href: "/admin/billing", section: "billing" },
   { label: "Ομάδες ταμείων", icon: Layers, href: "/admin/fund-groups", section: "fund_groups" },
   { label: "Newsletter", icon: Mail, href: "/admin/newsletter", section: "newsletter" },
@@ -35,6 +36,7 @@ const SETTINGS_GROUP = {
     { label: "PharmaCat — Βάση γνώσης", icon: Brain, href: "/admin/pharmacat-kb", section: "pharmacat" },
     { label: "Υποδομή / Cloud", icon: Cloud, href: "/admin/cloud", section: "cloud" },
     { label: "Ρυθμίσεις SMTP", icon: Server, href: "/admin/smtp", section: "smtp" },
+    { label: "Ειδοποιήσεις", icon: Bell, href: "/admin/notifications", section: "notifications" },
     { label: "Συντήρηση", icon: Wrench, href: "/admin/maintenance", section: "maintenance" },
     { label: "Αρχείο ενεργειών", icon: ScrollText, href: "/admin/audit-logs", section: "audit" },
   ],

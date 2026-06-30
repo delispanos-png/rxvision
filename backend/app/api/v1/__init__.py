@@ -1,6 +1,7 @@
 from fastapi import APIRouter
 
 from app.api.v1.routers import (
+    addons,
     admin,
     advisor,
     auth,
@@ -86,6 +87,7 @@ api_router.include_router(admin.router, prefix="/admin", tags=["admin"])
 
 # Admin: subscriptions, tenant, users/roles/permissions
 api_router.include_router(subscriptions.router, prefix="/subscription", tags=["subscription"])
+api_router.include_router(addons.router, prefix="/addons", tags=["addons"])
 api_router.include_router(tenants.router, prefix="/tenant", tags=["tenant"])
 # users router declares its own /users, /roles, /permissions paths → mount at root.
 api_router.include_router(users.router, tags=["users"])

@@ -52,6 +52,12 @@ async function refreshAccessToken(): Promise<boolean> {
   return refreshing;
 }
 
+/** Force a token refresh so freshly-changed entitlements (e.g. a just-activated add-on module) land
+ * in the JWT immediately, without waiting for a 401. Returns true on success. */
+export async function refreshSession(): Promise<boolean> {
+  return refreshAccessToken();
+}
+
 function redirectToLogin() {
   if (typeof window === "undefined") return;
   window.localStorage.removeItem("access_token");

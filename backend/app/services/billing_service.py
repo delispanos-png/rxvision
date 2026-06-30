@@ -65,7 +65,10 @@ async def status(tenant_id: str) -> dict:
         "payment_status": sub.get("payment_status", "trial"),
         "trial_ends_at": _iso(sub.get("trial_ends_at")),
         "current_period_end": _iso(sub.get("current_period_end")),
-        "amount": sub.get("price_per_pharmacy", 0), "currency": sub.get("currency", CURRENCY),
+        "amount": int(sub.get("price_per_pharmacy", 0) or 0) + int(sub.get("addons_total", 0) or 0),
+        "base_amount": int(sub.get("price_per_pharmacy", 0) or 0),
+        "addons_total": int(sub.get("addons_total", 0) or 0),
+        "currency": sub.get("currency", CURRENCY),
         "card_on_file": sub.get("payment_status") in ("card_saved", "active", "past_due"),
         "revolut_configured": await rv.is_configured(),
     }
@@ -90,12 +93,16 @@ async def bill_due() -> dict:
         "status": {"$in": ["trialing", "active"]},
         "current_period_end": {"$lte": now},
         "revolut_customer_id": {"$ne": None},
-        "price_per_pharmacy": {"$gt": 0},
+        "$or": [{"price_per_pharmacy": {"$gt": 0}}, {"addons_total": {"$gt": 0}}],
     })
     async for sub in cur:
         tid = sub["tenant_id"]
+        # full recurring amount = base subscription + active à-la-carte add-ons
+        amount = int(sub.get("price_per_pharmacy", 0) or 0) + int(sub.get("addons_total", 0) or 0)
+        if amount <= 0:
+            continue
         res = await rv.charge_off_session(
-            amount=sub["price_per_pharmacy"], currency=sub.get("currency", CURRENCY),
+            amount=amount, currency=sub.get("currency", CURRENCY),
             customer_id=sub["revolut_customer_id"], tenant_id=tid,
             description=f"RxVision {sub.get('billing_cycle', 'monthly')} renewal")
         if res.get("ok"):

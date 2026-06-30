@@ -68,7 +68,9 @@ async def public_packages():
     flt = {"$or": [{"active": {"$ne": False}}, {"active": {"$exists": False}}]}
     pkgs = [p async for p in db["packages"].find(flt).sort("price_monthly", 1)]
     sla = [s async for s in db["sla_tiers"].find(flt).sort("response_hours", 1)]
-    return {"packages": jsonsafe(pkgs), "sla": jsonsafe(sla)}
+    from app.services import addon_service
+    addons = await addon_service.catalog(active_only=True)   # à-la-carte add-ons for the pricing page
+    return {"packages": jsonsafe(pkgs), "sla": jsonsafe(sla), "addons": jsonsafe(addons)}
 
 
 @router.get("/aade/{afm}",

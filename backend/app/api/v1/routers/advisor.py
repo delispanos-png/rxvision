@@ -19,6 +19,8 @@ async def nutrition(
     patient_id: str,
     ctx: TenantContext = Depends(require("patients:read", module="patient_analytics")),
 ):
+    if ctx.modules.get("ai_assistant", "locked") == "locked":   # AI diet plan → AI entitlement
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail={"error": "module_locked", "module": "ai_assistant"})
     plan = await AdvisorRepository(tenant_id=ctx.tenant_id, demo=ctx.demo).nutrition_plan(patient_id)
     if not plan:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "patient_not_found")
@@ -30,6 +32,8 @@ async def nutrition_email(
     patient_id: str,
     ctx: TenantContext = Depends(require("patients:read", module="patient_analytics")),
 ):
+    if ctx.modules.get("ai_assistant", "locked") == "locked":   # AI diet plan → AI entitlement
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail={"error": "module_locked", "module": "ai_assistant"})
     from app.services import comms
     plan = await AdvisorRepository(tenant_id=ctx.tenant_id, demo=ctx.demo).nutrition_plan(patient_id)
     if not plan:

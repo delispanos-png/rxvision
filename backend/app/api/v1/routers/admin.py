@@ -481,6 +481,65 @@ async def delete_package(code: str, _: PlatformContext = Depends(get_platform_ad
     return {"ok": True}
 
 
+# ── Add-ons catalog (à-la-carte modules sold on top of any plan) ──────────────
+@router.get("/addons")
+async def admin_addons(_: PlatformContext = Depends(get_platform_admin)):
+    """Full add-on catalog (active + inactive). _id == the module key the add-on unlocks."""
+    from app.services import addon_service
+    return {"items": jsonsafe(await addon_service.catalog(active_only=False))}
+
+
+class AddonIn(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    icon: str | None = None
+    category: str | None = None            # "ai" | "consumer"
+    price_monthly: int | None = None       # cents
+    price_yearly: int | None = None        # cents
+    features: list[str] | None = None
+    active: bool | None = None
+
+
+@router.put("/addons/{code}")
+async def update_addon(code: str, body: AddonIn,
+                       _: PlatformContext = Depends(get_platform_admin)):
+    """Create/edit an add-on. `code` is the module key it unlocks (e.g. ai_assistant, loyalty)."""
+    upd = {k: v for k, v in body.model_dump().items() if v is not None}
+    db = shared_db()
+    if upd:
+        upd["updated_at"] = datetime.now(tz=timezone.utc)
+        await db["addons"].update_one({"_id": code}, {"$set": upd}, upsert=True)  # tenant-ok: catalog
+    return {"ok": True, "addon": jsonsafe(await db["addons"].find_one({"_id": code}))}
+
+
+@router.delete("/addons/{code}")
+async def delete_addon(code: str, _: PlatformContext = Depends(get_platform_admin)):
+    await shared_db()["addons"].delete_one({"_id": code})  # tenant-ok: platform catalog
+    return {"ok": True}
+
+
+@router.get("/tenants/{tenant_id}/addons")
+async def tenant_addons(tenant_id: str, _: PlatformContext = Depends(get_platform_admin)):
+    """Add-on catalog annotated for ONE tenant (included/active/granted/available)."""
+    from app.services import addon_service
+    return jsonsafe(await addon_service.for_tenant(tenant_id))
+
+
+@router.post("/tenants/{tenant_id}/addons/{addon_id}/{op}")
+async def tenant_addon_op(tenant_id: str, addon_id: str, op: str,
+                          _: PlatformContext = Depends(get_platform_admin)):
+    """Platform-admin (de)activation of an add-on for a tenant — keeps entitlement + billing in sync
+    (same path as tenant self-service). op = activate | deactivate."""
+    from app.services import addon_service
+    if op not in ("activate", "deactivate"):
+        raise HTTPException(http_status.HTTP_400_BAD_REQUEST, "bad_op")
+    fn = addon_service.activate if op == "activate" else addon_service.deactivate
+    res = await fn(tenant_id, addon_id)
+    if not res.get("ok"):
+        raise HTTPException(http_status.HTTP_400_BAD_REQUEST, detail=res)
+    return res
+
+
 # ── SLA / support tiers (admin-managed) ──────────────────────
 _DEFAULT_SLA = [
     {"_id": "basic", "name": "Basic", "description": "Email support, απόκριση 24ω",
@@ -1320,6 +1379,38 @@ async def set_maintenance(body: MaintenanceIn, _: PlatformContext = Depends(get_
         {"$set": {"enabled": body.enabled, "message": body.message,
                   "updated_at": datetime.now(tz=timezone.utc)}}, upsert=True)
     return {"enabled": body.enabled, "message": body.message}
+
+
+# ── notifications (GLOBAL — όλοι οι tenants με την ίδια συνθήκη) ──────────────
+# auto_cancel_minutes → αιτήματα πελατών (διαθεσιμότητα/ραντεβού/ανάθεση συνταγής).
+# order_auto_cancel_minutes → ΞΕΧΩΡΙΣΤΟ όριο για παραγγελίες παραφαρμάκων/OTC.
+_NOTIF_DEFAULTS = {"sound_repeat_seconds": 30, "escalate_popup_minutes": 3,
+                   "auto_cancel_minutes": 5, "auto_cancel_enabled": True,
+                   "order_auto_cancel_minutes": 30, "order_auto_cancel_enabled": True}
+
+
+class NotificationsIn(BaseModel):
+    sound_repeat_seconds: int = Field(30, ge=5, le=600)
+    escalate_popup_minutes: int = Field(3, ge=1, le=60)
+    auto_cancel_minutes: int = Field(5, ge=1, le=1440)
+    auto_cancel_enabled: bool = True
+    order_auto_cancel_minutes: int = Field(30, ge=1, le=1440)   # παραφάρμακα/OTC — ξεχωριστό όριο
+    order_auto_cancel_enabled: bool = True
+
+
+@router.get("/notifications")
+async def get_notifications(_: PlatformContext = Depends(get_platform_admin)):
+    """Καθολικές ρυθμίσεις ειδοποιήσεων φαρμακείου — ισχύουν για ΟΛΟΥΣ τους tenants."""
+    doc = await shared_db()["platform_settings"].find_one({"_id": "notifications"}) or {}
+    return {**_NOTIF_DEFAULTS, **{k: doc[k] for k in _NOTIF_DEFAULTS if k in doc}}
+
+
+@router.put("/notifications")
+async def set_notifications(body: NotificationsIn, _: PlatformContext = Depends(get_platform_admin)):
+    await shared_db()["platform_settings"].update_one(
+        {"_id": "notifications"},
+        {"$set": {**body.model_dump(), "updated_at": datetime.now(tz=timezone.utc)}}, upsert=True)
+    return body.model_dump()
 
 
 @router.get("/idika")

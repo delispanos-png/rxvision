@@ -12,6 +12,7 @@ const TABS = [
   { href: "/settings/availability", el: "Ωράριο & Διαθεσιμότητα", en: "Hours & Availability" },
   { href: "/settings/communications", el: "Επικοινωνία", en: "Communications" },
   { href: "/settings/billing", el: "Χρέωση", en: "Billing" },
+  { href: "/settings/addons", el: "Πρόσθετα", en: "Add-ons" },
   { href: "/settings/gdpr", el: "GDPR / Απόρρητο", en: "GDPR / Privacy" },
 ];
 
