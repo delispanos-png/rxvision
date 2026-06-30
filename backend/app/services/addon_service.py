@@ -14,10 +14,12 @@ billing record) is shown as «granted» (comp) and is not billed.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from app.core.db import shared_db
 from app.services.auth_service import resolve_tenant_modules, tenant_has
+
+_TRIAL_DAYS = 14
 
 # Seeded into the `addons` collection on first read if empty. _id == module key it unlocks.
 # Prices in integer cents (project convention). Yearly ≈ 10× monthly (2 months free).
@@ -141,6 +143,34 @@ async def activate(tenant_id: str, addon_id: str) -> dict:
                                          {"$addToSet": {"addons": addon_id}}, upsert=True)
     total = await _recompute_total(tenant_id)
     return {"ok": True, "addon": addon_id, "addons_total": total}
+
+
+async def start_trial(tenant_id: str, module: str) -> dict:
+    """Self-service trial of the SMALLEST package that unlocks `module` — grants that package's
+    still-missing modules as time-limited trials (auth resolution downgrades expired trials to locked).
+    Already-owned modules are left untouched, so an expiring trial can never remove a paid feature."""
+    db = shared_db()
+    # smallest PAID active package that unlocks the module (skip the €0 free-trial package, which
+    # bundles everything — we don't want a click to trial the entire catalogue).
+    pkgs = [p async for p in db["packages"].find({"active": True}).sort("price_monthly", 1)
+            if (p.get("price_monthly") or 0) > 0]
+    target = next((p for p in pkgs if module in (p.get("modules") or [])), None)
+    grant = (target.get("modules") if target else [module]) or [module]
+    current = await resolve_tenant_modules(tenant_id)
+    exp = datetime.now(tz=timezone.utc) + timedelta(days=_TRIAL_DAYS)
+    sets: dict = {}
+    granted: list[str] = []
+    for m in grant:
+        if tenant_has(current, m):      # already owned → don't shadow with a trial that would expire
+            continue
+        sets[f"modules.{m}"] = "trial"
+        sets[f"module_trials.{m}"] = exp
+        granted.append(m)
+    if not sets:
+        return {"ok": True, "package": (target or {}).get("_id"), "trial_days": _TRIAL_DAYS, "modules": [], "already": True}
+    sets["updated_at"] = datetime.now(tz=timezone.utc)
+    await db["tenants"].update_one({"_id": tenant_id}, {"$set": sets})
+    return {"ok": True, "package": (target or {}).get("_id"), "trial_days": _TRIAL_DAYS, "modules": granted}
 
 
 async def deactivate(tenant_id: str, addon_id: str) -> dict:

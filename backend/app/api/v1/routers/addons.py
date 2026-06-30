@@ -34,3 +34,12 @@ async def deactivate(addon_id: str, ctx: TenantContext = Depends(require("billin
     if not res.get("ok"):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=res)
     return res
+
+
+@router.post("/{module}/trial")
+async def trial(module: str, ctx: TenantContext = Depends(require("billing:manage"))):
+    """Start a 14-day self-service trial of the smallest package that unlocks `module`."""
+    res = await addon_service.start_trial(ctx.tenant_id, module)
+    if not res.get("ok"):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=res)
+    return res

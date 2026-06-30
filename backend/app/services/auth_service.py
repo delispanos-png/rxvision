@@ -116,6 +116,13 @@ class AuthService:
             set((sub or {}).get("modules_included", [])),
             (tenant or {}).get("modules", {}),
         )
+        # expire self-service module trials: a "trial" override whose end date has passed → locked
+        trials = (tenant or {}).get("module_trials") or {}
+        if trials:
+            now = _utcnow()
+            for m, exp in trials.items():
+                if modules.get(m) == "trial" and exp and exp < now:
+                    modules[m] = "locked"
 
         # permissions: union of the user's roles. role_ids may be stored as strings
         # (created via the API) — coerce to ObjectId so the $in actually matches.

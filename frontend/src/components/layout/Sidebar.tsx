@@ -2,9 +2,10 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
-import { useQuery } from "@tanstack/react-query";
-import { api, queryKeys } from "@/lib/apiClient";
+import { usePathname, useRouter } from "next/navigation";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { api, queryKeys, refreshSession } from "@/lib/apiClient";
+import { appAlert } from "@/store/dialogStore";
 import { useNavStore } from "@/store/navStore";
 import { usePref, useT } from "@/store/prefStore";
 import { Logo, LogoMark } from "@/components/brand/Logo";
@@ -12,7 +13,7 @@ import { Tooltip } from "@/components/ui/Tooltip";
 import {
   Activity, BarChart3, Boxes, CalendarClock, ChevronRight, LayoutDashboard,
   Mail, Salad, PackageSearch, Settings, Sparkles, Stethoscope, TrendingUp, Users,
-  Brain, ShieldCheck, Tags, Syringe, Bot, Gift, BookOpen, Truck, type LucideIcon,
+  Brain, ShieldCheck, Tags, Syringe, Bot, Gift, BookOpen, Truck, Lock, X, type LucideIcon,
 } from "lucide-react";
 
 // A leaf (direct link). `module` gates visibility (shown only when enabled/trial).
@@ -88,6 +89,11 @@ export function Sidebar() {
     return () => window.removeEventListener("hashchange", read);
   }, [pathname]);
 
+  const router = useRouter();
+  const qc = useQueryClient();
+  const [upsell, setUpsell] = useState<{ label: string; en: string; module: string; href: string } | null>(null);
+  const [trialBusy, setTrialBusy] = useState(false);
+
   const { data: me } = useQuery({ queryKey: queryKeys.me(), queryFn: () => api<Me>("/auth/me"), retry: false });
   const modules = me?.modules;
   const allowedMod = (m?: string | string[]) => {
@@ -96,9 +102,31 @@ export function Sidebar() {
     return keys.some((k) => modules[k] === "enabled" || modules[k] === "trial");
   };
 
-  const groups = GROUPS
-    .map((g) => ({ ...g, items: g.items.filter((n) => allowedMod(n.module)) }))
-    .filter((g) => g.items.length > 0);
+  // Locked circuits STAY visible in the menu — clicking opens an upsell prompt instead of navigating.
+  function openUpsell(n: Node) {
+    const mod = Array.isArray(n.module) ? n.module[0] : n.module!;
+    const href = n.href ?? n.children?.[0]?.href ?? "/dashboard";
+    setUpsell({ label: n.label, en: n.en, module: mod, href });
+    setOpen(false);
+  }
+  async function startTrial() {
+    if (!upsell) return;
+    setTrialBusy(true);
+    try {
+      await api(`/addons/${upsell.module}/trial`, { method: "POST" });
+      await refreshSession();
+      await qc.invalidateQueries({ queryKey: queryKeys.me() });
+      const href = upsell.href;
+      setUpsell(null);
+      router.push(href);
+    } catch {
+      appAlert(t("Δεν ήταν δυνατή η έναρξη δοκιμής. Δοκίμασε ξανά.", "Could not start the trial. Please try again."));
+    } finally {
+      setTrialBusy(false);
+    }
+  }
+
+  const groups = GROUPS;   // show every circuit; locked ones become upsell prompts
 
   const leafActive = (href: string) => {
     const base = href.split(/[?#]/)[0];
@@ -157,6 +185,17 @@ export function Sidebar() {
                 {g.items.map((n) => {
                   const Icon = n.icon;
                   const active = nodeActive(n);
+                  // locked circuit → visible but dimmed; click opens the upsell prompt
+                  if (!allowedMod(n.module)) {
+                    return (
+                      <button key={n.label} onClick={() => openUpsell(n)} title={collapsed ? t(n.label, n.en) : undefined}
+                        className={`${linkCls(false)} w-full opacity-55`}>
+                        <Icon className={iconCls(false)} strokeWidth={2} />
+                        <span className={`flex-1 text-left ${hide}`}>{t(n.label, n.en)}</span>
+                        <Lock className={`h-3.5 w-3.5 shrink-0 text-slate-300 ${hide}`} />
+                      </button>
+                    );
+                  }
                   // direct link (no children)
                   if (!n.children) {
                     return (
@@ -213,6 +252,28 @@ export function Sidebar() {
           </a>
         </Tooltip>
       </aside>
+
+      {upsell && (
+        <div className="fixed inset-0 z-[60] grid place-items-center bg-black/50 p-4" onClick={() => setUpsell(null)}>
+          <div className="relative w-full max-w-sm rounded-2xl bg-white p-6 text-center shadow-xl dark:bg-slate-900" onClick={(e) => e.stopPropagation()}>
+            <button onClick={() => setUpsell(null)} className="absolute right-4 top-4 text-slate-400 hover:text-slate-600"><X className="h-5 w-5" /></button>
+            <div className="mx-auto grid h-12 w-12 place-items-center rounded-2xl bg-gradient-to-br from-violet-500 to-indigo-600 text-white shadow-lg"><Sparkles className="h-6 w-6" /></div>
+            <h3 className="mt-3 text-base font-bold text-slate-900 dark:text-slate-100">{t(upsell.label, upsell.en)}</h3>
+            <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+              {t("Δεν περιλαμβάνεται στο πακέτο σου. Δοκίμασέ το δωρεάν για 14 ημέρες ή αναβάθμισε το πλάνο σου.",
+                 "Not included in your plan. Try it free for 14 days or upgrade your plan.")}
+            </p>
+            <button onClick={startTrial} disabled={trialBusy}
+              className="mt-4 w-full rounded-xl bg-violet-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-violet-700 disabled:opacity-50">
+              {trialBusy ? t("Έναρξη…", "Starting…") : t("✨ Δωρεάν δοκιμή 14 ημερών", "✨ Free 14-day trial")}
+            </button>
+            <button onClick={() => { setUpsell(null); router.push("/settings/billing"); }}
+              className="mt-2 w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200">
+              {t("Αναβάθμιση πλάνου", "Upgrade plan")}
+            </button>
+          </div>
+        </div>
+      )}
     </>
   );
 }
