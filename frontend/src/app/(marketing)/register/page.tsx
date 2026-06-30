@@ -16,7 +16,7 @@ type Company = {
 type Admin = { full_name: string; email: string; password: string };
 type RegisterResponse = { access_token: string; refresh_token: string; tenant_id: string };
 type Aade = { ok: boolean; error?: string; name?: string; title?: string; doy?: string; address?: string; postal_code?: string; city?: string; active?: boolean };
-type Pkg = { _id: string; name?: string; description?: string; price_monthly?: number; price_yearly?: number; trial_days?: number; seats?: number; sla?: string; extra_user_price?: number; extra_user_price_yearly?: number; modules?: string[]; billing_cycles?: string[] };
+type Pkg = { _id: string; name?: string; description?: string; price_monthly?: number; price_yearly?: number; trial_days?: number; seats?: number; sla?: string; extra_user_price?: number; extra_user_price_yearly?: number; modules?: string[]; available_addons?: string[]; billing_cycles?: string[] };
 type Sla = { _id: string; name?: string; description?: string; response_hours?: number; channels?: string; price_monthly?: number; price_yearly?: number };
 type Addon = { _id: string; name?: string; description?: string; icon?: string; price_monthly?: number; price_yearly?: number; features?: string[] };
 
@@ -86,8 +86,9 @@ export default function RegisterWizard() {
   const slaPrice = (yearly ? slaObj?.price_yearly : slaObj?.price_monthly) ?? 0;
   // which billing cycles this package offers (default both)
   const cycles = (pkg?.billing_cycles && pkg.billing_cycles.length ? pkg.billing_cycles : ["monthly", "yearly"]) as ("monthly" | "yearly")[];
-  // add-ons available to buy = catalog minus those already in the package's plan
-  const availAddons = addonCat.filter((a) => !(pkg?.modules ?? []).includes(a._id));
+  // add-ons available to buy = the ones THIS package offers (legacy: all), minus those already in its plan
+  const pkgAddonIds = pkg?.available_addons ?? addonCat.map((a) => a._id);
+  const availAddons = addonCat.filter((a) => pkgAddonIds.includes(a._id) && !(pkg?.modules ?? []).includes(a._id));
   const addonsTotal = availAddons.filter((a) => selAddons.includes(a._id))
     .reduce((s, a) => s + ((yearly ? a.price_yearly : a.price_monthly) ?? 0), 0);
   const price = basePrice + slaPrice + extraTotal + addonsTotal;   // full subscription value

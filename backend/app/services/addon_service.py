@@ -95,11 +95,17 @@ async def for_tenant(tenant_id: str) -> dict:
     active = set(sub.get("addons", []) or [])
     included = set(sub.get("modules_included", []) or [])
     yearly = sub.get("billing_cycle") == "yearly"
+    cat = await catalog()
+    # which add-ons THIS tenant's package offers (legacy: field absent → all are offered)
+    pkg = await db["packages"].find_one({"_id": sub.get("plan")}) if sub.get("plan") else None
+    offered = (set(pkg.get("available_addons") or []) if (pkg and pkg.get("available_addons") is not None)
+               else {a["_id"] for a in cat})
     items = []
-    for a in await catalog():
+    for a in cat:
         key = a["_id"]
-        items.append({**a, "status": _status(key, in_plan=key in included,
-                                              in_addons=key in active, entitled=tenant_has(mods, key))})
+        items.append({**a, "offered": key in offered,
+                      "status": _status(key, in_plan=key in included,
+                                        in_addons=key in active, entitled=tenant_has(mods, key))})
     return {"addons": items, "addons_total": int(sub.get("addons_total", 0) or 0),
             "billing_cycle": "yearly" if yearly else "monthly"}
 

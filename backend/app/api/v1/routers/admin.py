@@ -460,6 +460,7 @@ class PackageIn(BaseModel):
     sla: str | None = None
     modules: list[str] | None = None  # the capabilities this package grants
     features: list[str] | None = None  # marketing bullet list shown on the pricing card
+    available_addons: list[str] | None = None  # which à-la-carte add-ons are offered ON this package
     billing_cycles: list[str] | None = None  # offered cycles: ["monthly"], ["yearly"], or both
     active: bool | None = None
 

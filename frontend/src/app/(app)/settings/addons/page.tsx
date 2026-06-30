@@ -9,7 +9,7 @@ import { appConfirm, appAlert } from "@/store/dialogStore";
 type Status = "included" | "active" | "granted" | "available";
 type Addon = {
   _id: string; name: string; description?: string; icon?: string; category?: string;
-  price_monthly: number; price_yearly: number; features?: string[]; status: Status;
+  price_monthly: number; price_yearly: number; features?: string[]; status: Status; offered?: boolean;
 };
 type AddonsRes = { addons: Addon[]; addons_total: number; billing_cycle: "monthly" | "yearly" };
 
@@ -52,8 +52,9 @@ export default function AddonsSettingsPage() {
 
   const busy = act.isPending || deact.isPending;
   const allAddons = q.data?.addons ?? [];
-  // Add-ons already bundled in the plan are NOT re-proposed — shown only as a small note.
-  const addons = allAddons.filter((a) => a.status !== "included");
+  // Show only what's relevant for this tenant's package: active/granted always, plus purchasable ones
+  // that THIS package actually offers. Bundled (included) add-ons are listed as a small note only.
+  const addons = allAddons.filter((a) => a.status === "active" || a.status === "granted" || (a.status === "available" && a.offered));
   const included = allAddons.filter((a) => a.status === "included");
 
   return (
