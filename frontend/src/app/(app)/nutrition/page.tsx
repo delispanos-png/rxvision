@@ -40,7 +40,7 @@ export default function NutritionPage() {
   const email = useMutation({ mutationFn: () => api<{ to: string }>(`/advisor/nutrition/${picked!.patient_id}/email`, { method: "POST" }), onSuccess: (r) => appAlert(t("Στάλθηκε στο ", "Sent to ") + r.to + " ✅"), onError: (e: Error) => appAlert(t("Αποτυχία: ", "Failed: ") + e.message) });
 
   return (
-    <ModuleGuard module="patient_analytics">
+    <ModuleGuard module={["nutrition", "ai_assistant"]}>
       <div className="mb-5 overflow-hidden rounded-2xl bg-gradient-to-br from-emerald-600 via-emerald-600 to-teal-700 p-5 text-white shadow-lg dark:from-emerald-700 dark:to-teal-800 print:hidden">
         <div className="flex items-center gap-2">
           <span className="relative flex h-2.5 w-2.5"><span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-white/70" /><span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-white" /></span>

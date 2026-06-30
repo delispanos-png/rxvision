@@ -16,9 +16,9 @@ import {
 } from "lucide-react";
 
 // A leaf (direct link). `module` gates visibility (shown only when enabled/trial).
-type Leaf = { href: string; label: string; en: string; module?: string };
+type Leaf = { href: string; label: string; en: string; module?: string | string[] };
 // A node is either a direct link (href) or an expandable parent (children).
-type Node = { label: string; en: string; icon: LucideIcon; href?: string; module?: string; children?: Leaf[] };
+type Node = { label: string; en: string; icon: LucideIcon; href?: string; module?: string | string[]; children?: Leaf[] };
 type Group = { title: string; en: string; items: Node[] };
 type Me = { modules?: Record<string, "enabled" | "trial" | "locked"> };
 
@@ -57,7 +57,7 @@ const GROUPS: Group[] = [
       { href: "/order-advisor", label: "βάσει πρόβλεψης", en: "by forecast" },
     ] },
     { label: "AI σύμβουλος", en: "AI Assistant", icon: Bot, href: "/copilot", module: "ai_assistant" },
-    { label: "Διατροφή", en: "Nutrition", icon: Salad, href: "/nutrition", module: "ai_assistant" },
+    { label: "Διατροφή", en: "Nutrition", icon: Salad, href: "/nutrition", module: ["nutrition", "ai_assistant"] },
     { label: "Κερδοφορία", en: "Profitability", icon: TrendingUp, href: "/profitability", module: "profitability" },
   ] },
   { title: "Λειτουργίες", en: "Operations", items: [
@@ -90,7 +90,11 @@ export function Sidebar() {
 
   const { data: me } = useQuery({ queryKey: queryKeys.me(), queryFn: () => api<Me>("/auth/me"), retry: false });
   const modules = me?.modules;
-  const allowedMod = (m?: string) => !m || !modules || modules[m] === "enabled" || modules[m] === "trial";
+  const allowedMod = (m?: string | string[]) => {
+    if (!m || !modules) return true;
+    const keys = Array.isArray(m) ? m : [m];
+    return keys.some((k) => modules[k] === "enabled" || modules[k] === "trial");
+  };
 
   const groups = GROUPS
     .map((g) => ({ ...g, items: g.items.filter((n) => allowedMod(n.module)) }))
