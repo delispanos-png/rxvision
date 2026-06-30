@@ -10,7 +10,7 @@ from bson.errors import InvalidId
 from motor.motor_asyncio import AsyncIOMotorGridFSBucket
 
 from app.repositories.base import BaseRepository, jsonsafe
-from app.services import autoscription_service, ocr_service
+from app.services import prescriptor_service, ocr_service
 
 
 def _now() -> datetime:
@@ -159,12 +159,12 @@ class ScanRepository(BaseRepository):
         stream = await self._bucket().open_download_stream(s["image_id"])
         content = await stream.read()
         ocr = ocr_service.analyze(content)
-        # Autoscription: AI reads the paper — gated by the ai_assistant module (Pro entitlement) AND
+        # Prescriptor: AI reads the paper — gated by the ai_assistant module (Pro entitlement) AND
         # a configured Anthropic key. No request/JWT here (Celery worker) → resolve the tenant's
         # modules from DB. Not entitled → skip the AI call entirely and fall back to OCR.
         from app.services.auth_service import resolve_tenant_modules, tenant_has
         _mods = await resolve_tenant_modules(self.tenant_id)
-        ai = (await autoscription_service.read(content, s.get("content_type") or "image/jpeg")
+        ai = (await prescriptor_service.read(content, s.get("content_type") or "image/jpeg")
               if tenant_has(_mods, "ai_assistant") else {"ok": False, "error": "module_locked"})
 
         async def _match(b: str | None) -> str | None:
@@ -279,7 +279,7 @@ class ScanRepository(BaseRepository):
             "quality": (s.get("ocr") or {}).get("quality"),
             "signature": (s.get("visual") or {}).get("signature"),
             "stamp": (s.get("visual") or {}).get("stamp"),
-            # Autoscription (AI eye)
+            # Prescriptor (AI eye)
             "ai": s.get("ai"), "ai_findings": s.get("ai_findings"),
             "auto_verdict": s.get("auto_verdict"), "ai_error": s.get("ai_error"),
         } for s in rows])

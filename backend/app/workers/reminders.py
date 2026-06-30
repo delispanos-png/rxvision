@@ -6,7 +6,7 @@ Reuses the patient schedule logic, VAPID push, and the per-process Mongo/loop po
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 try:
     from zoneinfo import ZoneInfo
@@ -119,4 +119,55 @@ def dispatch_refill_radar() -> dict:
                 except Exception:  # noqa: BLE001
                     continue
         return {"sent": sent}
+    return _run_async(_run())
+
+
+@celery_app.task(name="app.workers.reminders.auto_cancel_stale_requests")
+def auto_cancel_stale_requests() -> dict:
+    """Αυτόματη ακύρωση αιτημάτων πελατών που ΔΕΝ αποδέχτηκε ο φαρμακοποιός εντός του καθολικού
+    ορίου (platform_settings.notifications.auto_cancel_minutes) — ΟΛΟΙ οι tenants, ίδια συνθήκη.
+    Ειδοποιεί τον ασθενή. Τρέχει κάθε λεπτό από το beat."""
+    async def _run() -> dict:
+        from app.services import push_service
+        _client, db = _fresh_db()
+        cfg = await db["platform_settings"].find_one({"_id": "notifications"}) or {}
+        now = datetime.now(timezone.utc)
+        # (collection, open-status, status-on-cancel, μήνυμα, cutoff)·
+        # ΑΙΤΗΜΑΤΑ πελατών → auto_cancel_minutes· ΠΑΡΑΓΓΕΛΙΕΣ (παραφάρμακα/OTC) → ξεχωριστό όριο.
+        specs = []
+        mins = int(cfg.get("auto_cancel_minutes", 5) or 5)
+        if cfg.get("auto_cancel_enabled", True) and mins > 0:
+            req_cut = now - timedelta(minutes=mins)
+            specs += [
+                ("availability_requests", "open", "cancelled",
+                 "Η ερώτηση διαθεσιμότητας ακυρώθηκε αυτόματα — δεν απαντήθηκε εγκαίρως.", req_cut),
+                ("appointments", "requested", "cancelled",
+                 "Το αίτημά σου ακυρώθηκε αυτόματα — δεν επιβεβαιώθηκε εγκαίρως.", req_cut),
+                ("rx_requests", "new", "rejected",
+                 "Η ανάθεση συνταγής ακυρώθηκε αυτόματα — δεν αναλήφθηκε εγκαίρως.", req_cut),
+            ]
+        omins = int(cfg.get("order_auto_cancel_minutes", 30) or 30)
+        if cfg.get("order_auto_cancel_enabled", True) and omins > 0:
+            specs.append(("orders_delivery", "new", "cancelled",
+                          "Η παραγγελία σου ακυρώθηκε αυτόματα — δεν επιβεβαιώθηκε εγκαίρως από το φαρμακείο.",
+                          now - timedelta(minutes=omins)))
+        total = 0
+        for coll, open_status, new_status, msg, cutoff in specs:
+            stale = [d async for d in db[coll].find(
+                {"status": open_status, "created_at": {"$lt": cutoff}})]
+            if not stale:
+                continue
+            await db[coll].update_many(
+                {"_id": {"$in": [d["_id"] for d in stale]}},
+                {"$set": {"status": new_status, "updated_at": datetime.now(timezone.utc),
+                          "auto_cancelled": True}})
+            total += len(stale)
+            for d in stale:
+                if d.get("account_id"):
+                    try:
+                        await push_service.send_to_account(
+                            d["account_id"], title="🏥 Φαρμακείο", body=msg, url="/portal")
+                    except Exception:  # noqa: BLE001
+                        pass
+        return {"cancelled": total, "minutes": mins}
     return _run_async(_run())

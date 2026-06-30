@@ -22,7 +22,7 @@ const LABELS: Record<string, { el: string; en: string }> = {
   pharmacyone: { el: "PharmacyOne", en: "PharmacyOne" },
   patient_portal: { el: "Πύλη Πελατών", en: "Customer portal" },
   pharmacat: { el: "PharmaCat", en: "PharmaCat" },
-  ai_assistant: { el: "AI Βοηθός (Autoscription/PharmaCat/Copilot)", en: "AI Assistant (Autoscription/PharmaCat/Copilot)" },
+  ai_assistant: { el: "AI Βοηθός (Prescriptor/PharmaCat/Copilot)", en: "AI Assistant (Prescriptor/PharmaCat/Copilot)" },
   loyalty: { el: "Πιστότητα", en: "Loyalty" },
 };
 

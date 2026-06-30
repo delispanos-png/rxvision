@@ -51,7 +51,10 @@ export default function AddonsSettingsPage() {
   }
 
   const busy = act.isPending || deact.isPending;
-  const addons = q.data?.addons ?? [];
+  const allAddons = q.data?.addons ?? [];
+  // Add-ons already bundled in the plan are NOT re-proposed — shown only as a small note.
+  const addons = allAddons.filter((a) => a.status !== "included");
+  const included = allAddons.filter((a) => a.status === "included");
 
   return (
     <div className="max-w-4xl space-y-4">
@@ -101,6 +104,11 @@ export default function AddonsSettingsPage() {
             );
           })}
         </div>
+      )}
+      {included.length > 0 && (
+        <p className="rounded-xl border border-emerald-200 bg-emerald-50/60 px-3 py-2 text-xs text-emerald-700 dark:border-emerald-900/40 dark:bg-emerald-950/20 dark:text-emerald-300">
+          ✓ {t("Περιλαμβάνονται ήδη στο πλάνο σου:", "Already included in your plan:")} {included.map((a) => `${a.icon ?? ""} ${a.name}`).join(" · ")}
+        </p>
       )}
       <p className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-500 dark:border-slate-700 dark:bg-slate-800/60">
         💳 {t("Η χρέωση των πρόσθετων ξεκινά από τον επόμενο κύκλο και προστίθεται στη συνδρομή σου. Η ενεργοποίηση ισχύει άμεσα.", "Add-on billing starts next cycle and is added to your subscription. Activation is immediate.")}

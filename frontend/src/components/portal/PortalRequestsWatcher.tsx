@@ -21,21 +21,6 @@ function loadSeen(): Set<string> {
 function saveSeen(s: Set<string>) {
   try { window.localStorage.setItem(SEEN_KEY, JSON.stringify([...s].slice(-500))); } catch { /* quota */ }
 }
-function beep() {
-  try {
-    const Ctx = (window as unknown as { AudioContext?: typeof AudioContext; webkitAudioContext?: typeof AudioContext });
-    const AC = Ctx.AudioContext || Ctx.webkitAudioContext;
-    if (!AC) return;
-    const ctx = new AC();
-    const o = ctx.createOscillator(); const g = ctx.createGain();
-    o.connect(g); g.connect(ctx.destination);
-    o.type = "sine"; o.frequency.value = 880;
-    g.gain.setValueAtTime(0.0001, ctx.currentTime);
-    g.gain.exponentialRampToValueAtTime(0.12, ctx.currentTime + 0.02);
-    g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.35);
-    o.start(); o.stop(ctx.currentTime + 0.36);
-  } catch { /* autoplay blocked — silent */ }
-}
 
 /** Polls the pharmacy's pending-request feed and pops up a card for each NEW patient request
  * (availability question or appointment booking). Mounted once in the app layout; only active
@@ -69,7 +54,7 @@ export function PortalRequestsWatcher() {
     if (firstEver || !fresh.length) return;  // on the very first run, seed silently (don't pop the backlog)
     const made = fresh.map((it) => ({ ...it, key: ++seq.current }));
     setPopups((p) => [...made, ...p].slice(0, 5));
-    beep();
+    // ήχος: single-sourced πλέον στο NotificationBells (repeat 30s + escalation) — εδώ μόνο οι οπτικές κάρτες
     made.forEach((np) => window.setTimeout(() => setPopups((p) => p.filter((x) => x.key !== np.key)), 18000));
   }, [data]);
 

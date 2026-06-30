@@ -228,13 +228,13 @@ async def set_reimb_settings(body: ClosingPrefsIn,
 
 
 # ── Optical Audit (OCR scans) ───────────────────────────────────────────────
-@router.get("/autoscription/status")
-async def autoscription_status(ctx: TenantContext = Depends(require("closing:read", module=_MODULE))):
-    """Is the AI prescription reader (Autoscription) configured & enabled for this pharmacy?
+@router.get("/prescriptor/status")
+async def prescriptor_status(ctx: TenantContext = Depends(require("closing:read", module=_MODULE))):
+    """Is the AI prescription reader (Prescriptor) configured & enabled for this pharmacy?
     The UI uses this to show the AI verdict panels and adjust the privacy notice. Requires the
     ai_assistant module (Pro) AND a configured Anthropic key."""
-    from app.services import autoscription_service
-    st = await autoscription_service.status()
+    from app.services import prescriptor_service
+    st = await prescriptor_service.status()
     st["entitled"] = ctx.modules.get("ai_assistant", "locked") != "locked"
     st["enabled"] = bool(st.get("enabled") and st["entitled"])
     return st

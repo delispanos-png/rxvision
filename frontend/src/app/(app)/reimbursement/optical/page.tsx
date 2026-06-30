@@ -78,8 +78,8 @@ export default function OpticalAuditPage() {
   const [lightbox, setLightbox] = useState<string | null>(null);
 
   const ai = useQuery({
-    queryKey: ["autoscription-status"],
-    queryFn: () => api<{ configured: boolean; enabled: boolean; model: string }>("/reimbursement/autoscription/status"),
+    queryKey: ["prescriptor-status"],
+    queryFn: () => api<{ configured: boolean; enabled: boolean; model: string }>("/reimbursement/prescriptor/status"),
     staleTime: 60_000,
   });
   const aiOn = !!(ai.data?.configured && ai.data?.enabled);
@@ -158,7 +158,7 @@ export default function OpticalAuditPage() {
           {scan?.matched ? <div className="flex items-center gap-1 text-emerald-600"><Link2 className="h-3 w-3" /> {t("Ταυτοποιήθηκε", "Matched")}</div>
             : done && scan?.barcode ? <div className="flex items-center gap-1 text-rose-600"><AlertTriangle className="h-3 w-3" /> {t("Χωρίς αντιστοίχιση", "No match")}</div> : null}
 
-          {/* ── Autoscription: what the AI eye read ── */}
+          {/* ── Prescriptor: what the AI eye read ── */}
           {a && (
             <div className="space-y-1 rounded-lg bg-violet-50/60 p-1.5 dark:bg-violet-950/20">
               {a.patient?.name && <div className="flex items-center gap-1 truncate text-slate-600 dark:text-slate-300"><User className="h-3 w-3 shrink-0 text-violet-500" /> <span className="truncate">{a.patient.name}</span></div>}
@@ -246,7 +246,7 @@ export default function OpticalAuditPage() {
     <div className="space-y-6">
       <div className="rounded-2xl border-2 border-dashed border-emerald-300 bg-emerald-50/40 p-6 text-center dark:border-emerald-800 dark:bg-emerald-950/20">
         {aiOn ? <Sparkles className="mx-auto h-10 w-10 text-violet-600" /> : <Camera className="mx-auto h-10 w-10 text-emerald-600" />}
-        <h2 className="mt-2 text-lg font-bold text-slate-900 dark:text-slate-100">{aiOn ? t("Autoscription — AI ανάγνωση συνταγών", "Autoscription — AI reads your prescriptions") : t("Σάρωση & οπτικός έλεγχος", "Scan & optical audit")}</h2>
+        <h2 className="mt-2 text-lg font-bold text-slate-900 dark:text-slate-100">{aiOn ? t("Prescriptor — AI ανάγνωση συνταγών", "Prescriptor — AI reads your prescriptions") : t("Σάρωση & οπτικός έλεγχος", "Scan & optical audit")}</h2>
         <p className="mt-1 text-sm text-slate-500">{aiOn
           ? t("Φωτογράφισε τη συνταγή — το AI διαβάζει ασφαλισμένο, ιατρό, φάρμακα & ποσότητες, κουπόνια, υπογραφές & σφραγίδες, εντοπίζει ασυνέπειες και τις διασταυρώνει αυτόματα με τα δεδομένα ΗΔΥΚΑ. Παίρνεις έτοιμο πόρισμα.",
               "Photograph the prescription — the AI reads insured, doctor, drugs & quantities, coupons, signatures & stamps, spots inconsistencies and cross-checks them against your ΗΔΥΚΑ data automatically. You get a ready verdict.")
@@ -269,7 +269,7 @@ export default function OpticalAuditPage() {
 
       <p className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-500 dark:border-slate-700 dark:bg-slate-800/60">
         {aiOn
-          ? <>🔒 {t("Οι εικόνες αποθηκεύονται στη δική μας υποδομή (GridFS). Με ενεργό το Autoscription, η εικόνα αναλύεται από το AI (Claude) βάσει της σύμβασης/συγκατάθεσης του φαρμακείου. Απενεργοποιείται από τις ρυθμίσεις.", "Images are stored on our own infrastructure (GridFS). With Autoscription enabled, the image is analyzed by the AI (Claude) under the pharmacy's agreement/consent. Can be turned off in settings.")}</>
+          ? <>🔒 {t("Οι εικόνες αποθηκεύονται στη δική μας υποδομή (GridFS). Με ενεργό το Prescriptor, η εικόνα αναλύεται από το AI (Claude) βάσει της σύμβασης/συγκατάθεσης του φαρμακείου. Απενεργοποιείται από τις ρυθμίσεις.", "Images are stored on our own infrastructure (GridFS). With Prescriptor enabled, the image is analyzed by the AI (Claude) under the pharmacy's agreement/consent. Can be turned off in settings.")}</>
           : <>🔒 {t("Οι εικόνες αποθηκεύονται στη δική μας υποδομή (GridFS) — δεν φεύγουν σε τρίτους. OCR: Tesseract (ελληνικά), barcode/QR: zbar.", "Images stored on our own infrastructure (GridFS) — never sent to third parties. OCR: Tesseract (Greek), barcode/QR: zbar.")}</>}
       </p>
 

@@ -20,7 +20,7 @@ const MODULE_LABELS: [string, string][] = [
   ["icd10_analytics", "ICD-10"], ["profitability", "Κερδοφορία"],
   ["future_prescriptions", "Μελλοντικές συνταγές"], ["order_suggestions", "Σύμβουλος Παραγγελιών"],
   ["monthly_closing", "Αποζημίωση / Κλείσιμο"], ["ingestion", "Λήψη ΗΔΥΚΑ"], ["pharmacyone", "PharmacyOne"],
-  ["ai_assistant", "✨ AI Βοηθός (Autoscription/PharmaCat/Copilot)"],
+  ["ai_assistant", "✨ AI Βοηθός (Prescriptor/PharmaCat/Copilot)"],
   ["pharmacat", "🤖 PharmaCat"], ["patient_portal", "👥 Πύλη Πελατών"], ["loyalty", "🎁 Πιστότητα"],
 ];
 

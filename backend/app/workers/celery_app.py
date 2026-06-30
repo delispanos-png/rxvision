@@ -97,4 +97,9 @@ celery_app.conf.beat_schedule = {
         "task": "app.workers.reminders.dispatch_order_subscriptions",
         "schedule": crontab(hour=6, minute=0),
     },
+    # Auto-cancel αιτημάτων πελατών που δεν αποδέχτηκε ο φαρμακοποιός εντός του ορίου (κάθε λεπτό)
+    "auto-cancel-stale-requests": {
+        "task": "app.workers.reminders.auto_cancel_stale_requests",
+        "schedule": crontab(minute="*"),
+    },
 }

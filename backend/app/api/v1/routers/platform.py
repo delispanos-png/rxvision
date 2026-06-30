@@ -19,10 +19,14 @@ router = APIRouter()
 
 @router.get("/status")
 async def public_status():
-    """Public (no auth): maintenance banner state for the tenant app."""
-    m = await shared_db()["platform_settings"].find_one({"_id": "maintenance"})
+    """Public (no auth): maintenance banner state + καθολικά notification timings για το tenant app."""
+    db = shared_db()
+    m = await db["platform_settings"].find_one({"_id": "maintenance"})
+    n = await db["platform_settings"].find_one({"_id": "notifications"}) or {}
     return {"maintenance": {"enabled": (m or {}).get("enabled", False),
-                            "message": (m or {}).get("message", "")}}
+                            "message": (m or {}).get("message", "")},
+            "notifications": {"sound_repeat_seconds": int(n.get("sound_repeat_seconds", 30)),
+                              "escalate_popup_minutes": int(n.get("escalate_popup_minutes", 3))}}
 
 
 class LoginIn(BaseModel):

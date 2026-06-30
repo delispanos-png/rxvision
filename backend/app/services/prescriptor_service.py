@@ -1,4 +1,4 @@
-"""Autoscription — AI that *reads* a prescription/coupon photo the way a pharmacist's eye does.
+"""Prescriptor — AI that *reads* a prescription/coupon photo the way a pharmacist's eye does.
 
 Powered by Claude vision (claude-opus-4-8). It extracts the structured content of the paper —
 insured person, doctor, drugs & quantities, coupons/barcodes, signatures & stamps — and flags the
@@ -25,7 +25,7 @@ _DEFAULT_MODEL = "claude-opus-4-8"
 # All three are vision-capable. Opus best for messy handwriting/stamps; Sonnet ~6× cheaper.
 ALLOWED_MODELS = ("claude-opus-4-8", "claude-sonnet-4-6", "claude-haiku-4-5")
 
-SYSTEM = """Είσαι το «Autoscription», ο ψηφιακός οφθαλμός ενός ελληνικού φαρμακείου. Βλέπεις τη
+SYSTEM = """Είσαι το «Prescriptor», ο ψηφιακός οφθαλμός ενός ελληνικού φαρμακείου. Βλέπεις τη
 ΦΩΤΟΓΡΑΦΙΑ μιας εκτελεσμένης συνταγής / κουπονιού / γνωμάτευσης και τη ΔΙΑΒΑΖΕΙΣ με την ακρίβεια
 έμπειρου φαρμακοποιού που ελέγχει για κατάθεση στον ΕΟΠΥΥ.
 
@@ -94,15 +94,15 @@ async def _config() -> dict:
     cfg = await shared_db()["platform_settings"].find_one({"_id": "anthropic"}) or {}
     model = cfg.get("vision_model") or cfg.get("model")
     model = model if model in ALLOWED_MODELS else _DEFAULT_MODEL
-    # Autoscription is a separate opt-in from PharmaCat chat: default ON when a key exists, but a
+    # Prescriptor is a separate opt-in from PharmaCat chat: default ON when a key exists, but a
     # pharmacy can disable just the image-reading (GDPR) while keeping the chat assistant.
     return {"api_key": cfg.get("api_key"), "enabled": cfg.get("enabled", True),
-            "autoscription": cfg.get("autoscription", True), "model": model}
+            "prescriptor": cfg.get("prescriptor", True), "model": model}
 
 
 async def status() -> dict:
     c = await _config()
-    return {"configured": bool(c["api_key"]), "enabled": bool(c["enabled"] and c["autoscription"]),
+    return {"configured": bool(c["api_key"]), "enabled": bool(c["enabled"] and c["prescriptor"]),
             "model": c["model"]}
 
 
@@ -133,7 +133,7 @@ async def read(content: bytes, content_type: str) -> dict:
     c = await _config()
     if not c["api_key"]:
         return {"ok": False, "error": "not_configured"}
-    if not (c["enabled"] and c["autoscription"]):
+    if not (c["enabled"] and c["prescriptor"]):
         return {"ok": False, "error": "disabled"}
 
     import anthropic

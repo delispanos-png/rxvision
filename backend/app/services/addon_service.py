@@ -25,7 +25,7 @@ _DEFAULTS: list[dict] = [
     {"_id": "ai_assistant", "name": "AI Βοηθός", "icon": "✨", "category": "ai",
      "description": "Το AI που δουλεύει για εσένα: διαβάζει & ελέγχει συνταγές, σε συμβουλεύει κλινικά και καθοδηγεί τη χρήση.",
      "price_monthly": 3000, "price_yearly": 30000, "active": True,
-     "features": ["Autoscription — αυτόματη ανάγνωση & έλεγχος συνταγών",
+     "features": ["Prescriptor — αυτόματη ανάγνωση & έλεγχος συνταγών",
                   "PharmaCat — κλινικός σύμβουλος", "AI Copilot — βοηθός χρήσης",
                   "AI συμβουλές ασθενούς (Εικόνα 360°)"]},
     {"_id": "patient_portal", "name": "Πύλη Πελατών", "icon": "👥", "category": "consumer",
