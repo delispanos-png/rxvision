@@ -62,23 +62,48 @@ export default function PackagesAdminPage() {
       return { ...d, [code]: { ...d[code], [field]: [...cur] } };
     });
   }
-  // Toggle a module AND auto-sync its label into the pricing-card features (add on check, remove on
-  // uncheck). The text stays manually editable — an edited line just won't be auto-removed.
+  // Toggle a module AND auto-sync its label into the pricing-card features. On check the line is
+  // inserted at its CANONICAL position (MODULE_LABELS order) — so module features keep the same order
+  // across all packages even after un/re-checking — never appended at the end. On uncheck it's removed.
+  // Manually-typed (non-module) lines are preserved in place; an edited module line isn't auto-removed.
   function toggleModule(code: string, key: string, label: string) {
     setDrafts((d) => {
       const p = d[code] || {};
       const mods = new Set(p.modules ?? []);
       const feats = [...(p.features ?? [])];
       const norm = (x: string) => x.trim();
+      const order = MODULE_LABELS.map(([k]) => k);
+      const keyByLabel: Record<string, string> = Object.fromEntries(MODULE_LABELS.map(([k, l]) => [l, k]));
       if (mods.has(key)) {
         mods.delete(key);
         const i = feats.findIndex((f) => norm(f) === norm(label));
         if (i >= 0) feats.splice(i, 1);
       } else {
         mods.add(key);
-        if (!feats.some((f) => norm(f) === norm(label))) feats.push(label);
+        if (!feats.some((f) => norm(f) === norm(label))) {
+          const ti = order.indexOf(key);
+          // insert before the first existing module-line whose catalog index is greater than this one
+          let pos = feats.length;
+          for (let j = 0; j < feats.length; j++) {
+            const k2 = keyByLabel[norm(feats[j])];
+            if (k2 && order.indexOf(k2) > ti) { pos = j; break; }
+          }
+          feats.splice(pos, 0, label);
+        }
       }
       return { ...d, [code]: { ...p, modules: [...mods], features: feats } };
+    });
+  }
+  // Re-sort module-derived feature lines into canonical (MODULE_LABELS) order; keep manual lines after.
+  function tidyFeatures(code: string) {
+    setDrafts((d) => {
+      const p = d[code] || {};
+      const feats = (p.features ?? []).filter((s) => s.trim());
+      const order = MODULE_LABELS.map(([k]) => k);
+      const keyByLabel: Record<string, string> = Object.fromEntries(MODULE_LABELS.map(([k, l]) => [l, k]));
+      const moduleLines = feats.filter((f) => keyByLabel[f.trim()]).sort((a, b) => order.indexOf(keyByLabel[a.trim()]) - order.indexOf(keyByLabel[b.trim()]));
+      const manual = feats.filter((f) => !keyByLabel[f.trim()]);
+      return { ...d, [code]: { ...p, features: [...moduleLines, ...manual] } };
     });
   }
   async function savePkg(code: string) {
@@ -253,8 +278,11 @@ export default function PackagesAdminPage() {
 
                 {/* ── Κάρτα τιμολόγησης (marketing) ── */}
                 <section className="rounded-xl border border-slate-200 bg-white p-4">
-                  <h4 className="mb-1 text-[11px] font-bold uppercase tracking-wider text-slate-400">Κάρτα τιμολόγησης — χαρακτηριστικά</h4>
-                  <p className="mb-2 text-[11px] text-slate-400">Μία γραμμή ανά χαρακτηριστικό — εμφανίζονται με ✓ στη σελίδα τιμών.</p>
+                  <div className="mb-1 flex items-center justify-between gap-2">
+                    <h4 className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Κάρτα τιμολόγησης — χαρακτηριστικά</h4>
+                    <button type="button" onClick={() => tidyFeatures(p._id)} title="Βάλε τις δυνατότητες σε σταθερή σειρά (ίδια για όλα τα πακέτα)" className="rounded border border-slate-200 px-2 py-0.5 text-[11px] text-slate-500 hover:bg-slate-50">↕ Τακτοποίηση σειράς</button>
+                  </div>
+                  <p className="mb-2 text-[11px] text-slate-400">Μία γραμμή ανά χαρακτηριστικό — εμφανίζονται με ✓ στη σελίδα τιμών. Οι δυνατότητες από τα modules μπαίνουν αυτόματα σε σταθερή σειρά.</p>
                   <textarea className={`${inp} font-mono`} rows={7} value={(p.features ?? []).join("\n")} onChange={(e) => setP(p._id, { features: e.target.value.split("\n") })} placeholder={"Σύνδεση ΗΔΙΚΑ / ΓΕΣΥ\nΈλεγχος & κλείσιμο ΕΟΠΥΥ\nΈως 10 χρήστες"} />
                 </section>
 
