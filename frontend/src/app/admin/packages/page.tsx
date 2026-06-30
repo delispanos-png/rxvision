@@ -14,15 +14,24 @@ type Pkg = {
 type Sla = { _id: string; name?: string; description?: string; response_hours?: number; channels?: string; price_monthly?: number; price_yearly?: number; active?: boolean };
 type Addon = { _id: string; name?: string; icon?: string };
 
-// Capabilities a package can grant — same catalogue as the subscriber detail toggles.
-const MODULE_LABELS: [string, string][] = [
-  ["dashboard", "Πίνακας Ελέγχου"], ["prescription_analytics", "Συνταγές"],
-  ["doctor_analytics", "Ιατροί"], ["patient_analytics", "Ασθενείς / Patient Intelligence"],
-  ["icd10_analytics", "ICD-10"], ["profitability", "Κερδοφορία"],
-  ["future_prescriptions", "Μελλοντικές συνταγές"], ["order_suggestions", "Σύμβουλος Παραγγελιών"],
-  ["monthly_closing", "Αποζημίωση / Κλείσιμο"], ["ingestion", "Λήψη ΗΔΥΚΑ"], ["pharmacyone", "PharmacyOne"],
-  ["ai_assistant", "✨ AI Βοηθός (Prescriptor/PharmaCat/Copilot)"],
-  ["pharmacat", "🤖 PharmaCat"], ["patient_portal", "👥 Πύλη Πελατών"], ["loyalty", "🎁 Πιστότητα"],
+// Capabilities a package can grant — [key, label, icon]. Labels stay clean (no emoji) so the
+// auto-synced pricing-card features read nicely; the icon is rendered separately in the grid.
+const MODULE_LABELS: [string, string, string][] = [
+  ["dashboard", "Πίνακας Ελέγχου", "📊"],
+  ["prescription_analytics", "Συνταγές", "💊"],
+  ["doctor_analytics", "Ιατροί", "🩺"],
+  ["patient_analytics", "Ασθενείς / Patient Intelligence", "🧠"],
+  ["icd10_analytics", "ICD-10", "🏷️"],
+  ["profitability", "Κερδοφορία", "📈"],
+  ["future_prescriptions", "Μελλοντικές συνταγές", "🗓️"],
+  ["order_suggestions", "Σύμβουλος Παραγγελιών", "📦"],
+  ["monthly_closing", "Αποζημίωση / Κλείσιμο", "🧾"],
+  ["ingestion", "Λήψη ΗΔΥΚΑ", "🔄"],
+  ["pharmacyone", "PharmacyOne", "🏪"],
+  ["ai_assistant", "AI Βοηθός (Prescriptor/PharmaCat/Copilot)", "✨"],
+  ["pharmacat", "PharmaCat", "🤖"],
+  ["patient_portal", "Πύλη Πελατών", "👥"],
+  ["loyalty", "Πιστότητα", "🎁"],
 ];
 
 const eur = (c?: number) => ((c ?? 0) / 100).toString();
@@ -256,11 +265,11 @@ export default function PackagesAdminPage() {
                   <h4 className="mb-3 text-[11px] font-bold uppercase tracking-wider text-slate-400">Δυνατότητες που ξεκλειδώνει (modules)</h4>
                   <p className="-mt-2 mb-3 text-[11px] text-slate-400">Τα add-on-capable (AI Βοηθός, Πύλη, Πιστότητα, Παραγγελίες) ρυθμίζονται παρακάτω στην ενότητα add-ons.</p>
                   <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2 lg:grid-cols-3">
-                    {MODULE_LABELS.filter(([key]) => !allAddonIds.includes(key)).map(([key, label]) => {
+                    {MODULE_LABELS.filter(([key]) => !allAddonIds.includes(key)).map(([key, label, icon]) => {
                       const on = (p.modules ?? []).includes(key);
                       return (
                         <label key={key} className={`flex cursor-pointer items-center justify-between rounded-lg border px-3 py-1.5 text-sm ${on ? "border-indigo-200 bg-indigo-50/50" : "border-slate-200 hover:bg-slate-50"}`}>
-                          <span className="text-slate-700">{label}</span>
+                          <span className="text-slate-700">{icon} {label}</span>
                           <input type="checkbox" checked={on} onChange={() => toggleModule(p._id, key, label)} className="h-4 w-4 accent-indigo-600" />
                         </label>
                       );

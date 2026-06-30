@@ -157,15 +157,21 @@ async def _touch_serving(tenant_id: str) -> None:
         pass
 
 
-def require(permission: str, module: str | None = None):
-    """Dependency factory: enforce permission AND (optionally) module access."""
+def require(permission: str, module: str | list[str] | None = None):
+    """Dependency factory: enforce permission AND (optionally) module access.
+
+    `module` may be a single key or a list — a list passes if ANY of the modules is unlocked
+    (enabled/trial), e.g. PharmaCat is reachable via either the `ai_assistant` bundle or the
+    standalone `pharmacat` add-on."""
 
     async def _dep(ctx: TenantContext = Depends(get_current_context)) -> TenantContext:
-        if module is not None and ctx.modules.get(module, "locked") == "locked":
-            raise HTTPException(
-                status.HTTP_403_FORBIDDEN,
-                detail={"error": "module_locked", "module": module},
-            )
+        if module is not None:
+            mods = [module] if isinstance(module, str) else list(module)
+            if all(ctx.modules.get(m, "locked") == "locked" for m in mods):
+                raise HTTPException(
+                    status.HTTP_403_FORBIDDEN,
+                    detail={"error": "module_locked", "module": mods[0] if len(mods) == 1 else mods},
+                )
         if permission not in ctx.permissions and "*" not in ctx.permissions:
             raise HTTPException(status.HTTP_403_FORBIDDEN, "insufficient_permissions")
         return ctx

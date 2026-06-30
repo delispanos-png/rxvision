@@ -38,47 +38,47 @@ def _repo(ctx: TenantContext) -> PharmaCatRepository:
 
 
 @router.get("/status")
-async def status(ctx: TenantContext = Depends(require("patients:read", module="ai_assistant"))):
+async def status(ctx: TenantContext = Depends(require("patients:read", module=["ai_assistant", "pharmacat"]))):
     return await _repo(ctx).status()
 
 
 @router.post("/chat")
-async def chat(body: ChatIn, ctx: TenantContext = Depends(require("patients:read", module="ai_assistant"))):
+async def chat(body: ChatIn, ctx: TenantContext = Depends(require("patients:read", module=["ai_assistant", "pharmacat"]))):
     return await _repo(ctx).chat(ctx.user_id, [m.model_dump() for m in body.messages], body.context)
 
 
 @router.post("/interactions")
-async def interactions(body: InteractionIn, ctx: TenantContext = Depends(require("patients:read", module="ai_assistant"))):
+async def interactions(body: InteractionIn, ctx: TenantContext = Depends(require("patients:read", module=["ai_assistant", "pharmacat"]))):
     return await _repo(ctx).interactions(ctx.user_id, body.drugs, body.context)
 
 
 @router.post("/report")
-async def report_wrong(body: ReportIn, ctx: TenantContext = Depends(require("patients:read", module="ai_assistant"))):
+async def report_wrong(body: ReportIn, ctx: TenantContext = Depends(require("patients:read", module=["ai_assistant", "pharmacat"]))):
     """Flag a cached answer as wrong → shows up in the admin KB curation panel."""
     return await _repo(ctx).report_wrong(ctx.user_id, body.sig, body.reason)
 
 
 @router.get("/reports")
-async def my_reports(ctx: TenantContext = Depends(require("patients:read", module="ai_assistant"))):
+async def my_reports(ctx: TenantContext = Depends(require("patients:read", module=["ai_assistant", "pharmacat"]))):
     """The pharmacist's own reports (+ unseen-resolved count for the «διορθώθηκε» banner)."""
     return await _repo(ctx).my_reports(ctx.user_id)
 
 
 @router.post("/reports/seen")
-async def reports_seen(ctx: TenantContext = Depends(require("patients:read", module="ai_assistant"))):
+async def reports_seen(ctx: TenantContext = Depends(require("patients:read", module=["ai_assistant", "pharmacat"]))):
     return await _repo(ctx).mark_reports_seen(ctx.user_id)
 
 
 @router.get("/medicine")
-async def medicine(eof: str, ctx: TenantContext = Depends(require("patients:read", module="ai_assistant"))):
+async def medicine(eof: str, ctx: TenantContext = Depends(require("patients:read", module=["ai_assistant", "pharmacat"]))):
     return await _repo(ctx).medicine(eof)
 
 
 @router.get("/cases")
-async def cases(limit: int = 40, ctx: TenantContext = Depends(require("patients:read", module="ai_assistant"))):
+async def cases(limit: int = 40, ctx: TenantContext = Depends(require("patients:read", module=["ai_assistant", "pharmacat"]))):
     return await _repo(ctx).cases(limit)
 
 
 @router.get("/insights")
-async def insights(ctx: TenantContext = Depends(require("patients:read", module="ai_assistant"))):
+async def insights(ctx: TenantContext = Depends(require("patients:read", module=["ai_assistant", "pharmacat"]))):
     return await _repo(ctx).insights()

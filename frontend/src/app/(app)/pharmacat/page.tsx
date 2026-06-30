@@ -47,7 +47,7 @@ const URGENCY: Record<string, { cls: string; el: string }> = {
 
 export default function PharmaCatPage() {
   return (
-    <ModuleGuard module="ai_assistant">
+    <ModuleGuard module={["ai_assistant", "pharmacat"]}>
       <PharmaCatInner />
     </ModuleGuard>
   );

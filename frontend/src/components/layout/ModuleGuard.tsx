@@ -7,7 +7,7 @@ import { useT } from "@/store/prefStore";
 type Me = { modules: Record<string, "enabled" | "trial" | "locked"> };
 
 /** UI gating only — the backend always enforces module access on every request. */
-export function ModuleGuard({ module, children }: { module: string; children: React.ReactNode }) {
+export function ModuleGuard({ module, children }: { module: string | string[]; children: React.ReactNode }) {
   const t = useT();
   const { data, isLoading, isError, refetch } = useQuery({
     queryKey: queryKeys.me(),
@@ -32,13 +32,15 @@ export function ModuleGuard({ module, children }: { module: string; children: Re
     );
   }
 
-  const state = data?.modules?.[module] ?? "locked";
-  if (state === "locked") {
+  // `module` may be a single key or a list — unlocked if ANY is enabled/trial.
+  const keys = Array.isArray(module) ? module : [module];
+  const unlocked = keys.some((m) => { const st = data?.modules?.[m] ?? "locked"; return st === "enabled" || st === "trial"; });
+  if (!unlocked) {
     return (
       <div className="rounded-xl border border-brand-200 bg-brand-50 p-8 text-center">
         <h2 className="text-lg font-semibold text-brand-800">{t("Κλειδωμένο module", "Locked module")}</h2>
         <p className="mt-2 text-brand-700">
-          {t(`Το «${module}» δεν περιλαμβάνεται στο πλάνο σας. Αναβαθμίστε για πρόσβαση.`, `“${module}” is not included in your plan. Upgrade for access.`)}
+          {t(`Το «${keys.join(" / ")}» δεν περιλαμβάνεται στο πλάνο σας. Αναβαθμίστε για πρόσβαση.`, `“${keys.join(" / ")}” is not included in your plan. Upgrade for access.`)}
         </p>
         <a href="/settings/billing" className="mt-4 inline-block rounded-lg bg-brand-700 px-4 py-2 text-white">
           {t("Αναβάθμιση", "Upgrade")}
