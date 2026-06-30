@@ -681,8 +681,12 @@ export default function PhysicalCheckPage() {
       </div>
 
       {/* this day's prescriptions — μόνο στον κλασικό (στο guided μένει λιτό: μόνο σκανάρισμα) */}
-      {mode === "classic" && <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-200">{t("Συνταγές ημέρας", "Day's prescriptions")} ({dayItems.length})</h3>}
-      {mode === "classic" && <DataTable pageSize={50} columns={cols} rows={shownItems} rowKey={(r) => r.external_id} empty={onlyChecks ? t("Καμία συνταγή χρειάζεται έλεγχο 🎉", "Nothing needs checking 🎉") : t("Καμία συνταγή.", "No prescriptions.")} />}
+      {mode === "classic" && (
+        <details className="rounded-2xl border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900">
+          <summary className="cursor-pointer list-none text-sm font-semibold text-slate-700 dark:text-slate-200">▸ {t("Συνταγές ημέρας", "Day's prescriptions")} ({dayItems.length})</summary>
+          <div className="mt-2"><DataTable pageSize={50} columns={cols} rows={shownItems} rowKey={(r) => r.external_id} empty={onlyChecks ? t("Καμία συνταγή χρειάζεται έλεγχο 🎉", "Nothing needs checking 🎉") : t("Καμία συνταγή.", "No prescriptions.")} /></div>
+        </details>
+      )}
 
       {/* extras (scanned but not in data) */}
       {!!data?.extra.length && (
