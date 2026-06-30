@@ -62,13 +62,32 @@ export default function PackagesAdminPage() {
       return { ...d, [code]: { ...d[code], [field]: [...cur] } };
     });
   }
+  // Toggle a module AND auto-sync its label into the pricing-card features (add on check, remove on
+  // uncheck). The text stays manually editable — an edited line just won't be auto-removed.
+  function toggleModule(code: string, key: string, label: string) {
+    setDrafts((d) => {
+      const p = d[code] || {};
+      const mods = new Set(p.modules ?? []);
+      const feats = [...(p.features ?? [])];
+      const norm = (x: string) => x.trim();
+      if (mods.has(key)) {
+        mods.delete(key);
+        const i = feats.findIndex((f) => norm(f) === norm(label));
+        if (i >= 0) feats.splice(i, 1);
+      } else {
+        mods.add(key);
+        if (!feats.some((f) => norm(f) === norm(label))) feats.push(label);
+      }
+      return { ...d, [code]: { ...p, modules: [...mods], features: feats } };
+    });
+  }
   async function savePkg(code: string) {
     const p = drafts[code];
     await adminApi(`/admin/packages/${encodeURIComponent(code)}`, { method: "PUT", body: JSON.stringify({
       name: p.name, description: p.description, price_monthly: p.price_monthly, price_yearly: p.price_yearly,
       extra_user_price: p.extra_user_price, extra_user_price_yearly: p.extra_user_price_yearly,
       trial_days: p.trial_days, seats: p.seats, sla: p.sla,
-      modules: p.modules ?? [], features: p.features ?? [],
+      modules: p.modules ?? [], features: (p.features ?? []).map((s) => s.trim()).filter(Boolean),
       available_addons: p.available_addons ?? allAddonIds,
       billing_cycles: p.billing_cycles ?? ["monthly", "yearly"], active: p.active ?? true,
     }) });
@@ -140,78 +159,98 @@ export default function PackagesAdminPage() {
             </div>
 
             {isOpen && (
-              <div className="border-t border-slate-100 px-4 py-4">
-                <div className="mb-3 flex items-center gap-3">
-                  <label className="inline-flex items-center gap-1.5 text-xs text-slate-600"><input type="checkbox" checked={active} onChange={(e) => setP(p._id, { active: e.target.checked })} className="h-4 w-4 accent-indigo-600" /> Ενεργό</label>
-                  {!active && <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-500">δεν προτείνεται σε νέες συνδρομές</span>}
-                </div>
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                  <label className="block text-xs font-medium text-slate-500">Όνομα<input className={`mt-1 ${inp}`} value={p.name ?? ""} onChange={(e) => setP(p._id, { name: e.target.value })} /></label>
-                  <label className="block text-xs font-medium text-slate-500">Τιμή/μήνα (€)<input type="number" className={`mt-1 ${inp}`} value={eur(p.price_monthly)} onChange={(e) => setP(p._id, { price_monthly: cents(e.target.value) })} /></label>
-                  <label className="block text-xs font-medium text-slate-500">Τιμή/έτος (€)<input type="number" className={`mt-1 ${inp}`} value={eur(p.price_yearly)} onChange={(e) => setP(p._id, { price_yearly: cents(e.target.value) })} /></label>
-                  <label className="block text-xs font-medium text-slate-500">Δοκιμή (ημέρες)<input type="number" className={`mt-1 ${inp}`} value={p.trial_days ?? 0} onChange={(e) => setP(p._id, { trial_days: parseInt(e.target.value) || 0 })} /></label>
-                  <label className="block text-xs font-medium text-slate-500">Θέσεις χρηστών (έως)<input type="number" className={`mt-1 ${inp}`} value={p.seats ?? 1} onChange={(e) => setP(p._id, { seats: parseInt(e.target.value) || 1 })} /></label>
-                  <label className="block text-xs font-medium text-slate-500">SLA / Υποστήριξη
-                    <select className={`mt-1 ${inp}`} value={p.sla ?? ""} onChange={(e) => setP(p._id, { sla: e.target.value })}>
-                      <option value="">—</option>
-                      {slaTiers.filter((s) => (s.active ?? true) || s._id === p.sla).map((s) => <option key={s._id} value={s._id}>{s.name || s._id}{(s.active ?? true) ? "" : " (ανενεργό)"}</option>)}
-                    </select>
-                  </label>
-                  <label className="block text-xs font-medium text-slate-500">Κόστος επιπλέον χρήστη (€/μήνα)<input type="number" className={`mt-1 ${inp}`} value={eur(p.extra_user_price)} onChange={(e) => setP(p._id, { extra_user_price: cents(e.target.value) })} /></label>
-                  <label className="block text-xs font-medium text-slate-500">Κόστος επιπλέον χρήστη (€/έτος)<input type="number" className={`mt-1 ${inp}`} value={eur(p.extra_user_price_yearly)} onChange={(e) => setP(p._id, { extra_user_price_yearly: cents(e.target.value) })} /></label>
-                  <div className="block text-xs font-medium text-slate-500">Διαθέσιμοι κύκλοι χρέωσης
-                    <div className="mt-1 flex gap-2">
-                      {(["monthly", "yearly"] as const).map((c) => {
-                        const cyc = p.billing_cycles ?? ["monthly", "yearly"];
-                        const on = cyc.includes(c);
-                        return (
-                          <label key={c} className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-slate-200 px-2.5 py-1.5 text-sm">
-                            <input type="checkbox" checked={on} className="h-4 w-4 accent-indigo-600"
-                              onChange={() => { const next = on ? cyc.filter((x) => x !== c) : [...cyc, c]; setP(p._id, { billing_cycles: next.length ? next : cyc }); }} />
-                            {c === "monthly" ? "Μηνιαίο" : "Ετήσιο"}
-                          </label>
-                        );
-                      })}
+              <div className="space-y-4 border-t border-slate-100 bg-slate-50/40 px-4 py-4">
+                {/* ── Βασικά ── */}
+                <section className="rounded-xl border border-slate-200 bg-white p-4">
+                  <h4 className="mb-3 text-[11px] font-bold uppercase tracking-wider text-slate-400">Βασικά</h4>
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <label className="block text-xs font-medium text-slate-500">Όνομα<input className={`mt-1 ${inp}`} value={p.name ?? ""} onChange={(e) => setP(p._id, { name: e.target.value })} /></label>
+                    <label className="flex items-center gap-2 self-end pb-2 text-sm text-slate-600"><input type="checkbox" checked={active} onChange={(e) => setP(p._id, { active: e.target.checked })} className="h-4 w-4 accent-indigo-600" /> Ενεργό {!active && <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-500">δεν προτείνεται σε νέους</span>}</label>
+                    <label className="block text-xs font-medium text-slate-500 sm:col-span-2">Περιγραφή<input className={`mt-1 ${inp}`} value={p.description ?? ""} onChange={(e) => setP(p._id, { description: e.target.value })} placeholder="Σύντομη περιγραφή για την κάρτα" /></label>
+                  </div>
+                </section>
+
+                {/* ── Τιμολόγηση ── */}
+                <section className="rounded-xl border border-slate-200 bg-white p-4">
+                  <h4 className="mb-3 text-[11px] font-bold uppercase tracking-wider text-slate-400">Τιμολόγηση & Όρια</h4>
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                    <label className="block text-xs font-medium text-slate-500">Τιμή / μήνα (€)<input type="number" className={`mt-1 ${inp}`} value={eur(p.price_monthly)} onChange={(e) => setP(p._id, { price_monthly: cents(e.target.value) })} /></label>
+                    <label className="block text-xs font-medium text-slate-500">Τιμή / έτος (€)<input type="number" className={`mt-1 ${inp}`} value={eur(p.price_yearly)} onChange={(e) => setP(p._id, { price_yearly: cents(e.target.value) })} /></label>
+                    <div className="block text-xs font-medium text-slate-500">Διαθέσιμοι κύκλοι
+                      <div className="mt-1 flex gap-2">
+                        {(["monthly", "yearly"] as const).map((c) => {
+                          const cyc = p.billing_cycles ?? ["monthly", "yearly"];
+                          const on = cyc.includes(c);
+                          return (
+                            <label key={c} className="inline-flex flex-1 cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-slate-200 px-2 py-1.5 text-sm hover:bg-slate-50">
+                              <input type="checkbox" checked={on} className="h-4 w-4 accent-indigo-600"
+                                onChange={() => { const next = on ? cyc.filter((x) => x !== c) : [...cyc, c]; setP(p._id, { billing_cycles: next.length ? next : cyc }); }} />
+                              {c === "monthly" ? "Μηνιαίο" : "Ετήσιο"}
+                            </label>
+                          );
+                        })}
+                      </div>
                     </div>
+                    <label className="block text-xs font-medium text-slate-500">Δοκιμή (ημέρες)<input type="number" className={`mt-1 ${inp}`} value={p.trial_days ?? 0} onChange={(e) => setP(p._id, { trial_days: parseInt(e.target.value) || 0 })} /></label>
+                    <label className="block text-xs font-medium text-slate-500">Θέσεις χρηστών (έως)<input type="number" className={`mt-1 ${inp}`} value={p.seats ?? 1} onChange={(e) => setP(p._id, { seats: parseInt(e.target.value) || 1 })} /></label>
+                    <label className="block text-xs font-medium text-slate-500">SLA / Υποστήριξη
+                      <select className={`mt-1 ${inp}`} value={p.sla ?? ""} onChange={(e) => setP(p._id, { sla: e.target.value })}>
+                        <option value="">—</option>
+                        {slaTiers.filter((s) => (s.active ?? true) || s._id === p.sla).map((s) => <option key={s._id} value={s._id}>{s.name || s._id}{(s.active ?? true) ? "" : " (ανενεργό)"}</option>)}
+                      </select>
+                    </label>
+                    <label className="block text-xs font-medium text-slate-500">Επιπλέον χρήστης (€/μήνα)<input type="number" className={`mt-1 ${inp}`} value={eur(p.extra_user_price)} onChange={(e) => setP(p._id, { extra_user_price: cents(e.target.value) })} /></label>
+                    <label className="block text-xs font-medium text-slate-500">Επιπλέον χρήστης (€/έτος)<input type="number" className={`mt-1 ${inp}`} value={eur(p.extra_user_price_yearly)} onChange={(e) => setP(p._id, { extra_user_price_yearly: cents(e.target.value) })} /></label>
                   </div>
-                  <label className="block text-xs font-medium text-slate-500 sm:col-span-2 lg:col-span-3">Περιγραφή<input className={`mt-1 ${inp}`} value={p.description ?? ""} onChange={(e) => setP(p._id, { description: e.target.value })} /></label>
-                  <label className="block text-xs font-medium text-slate-500 sm:col-span-2 lg:col-span-3">Δυνατότητες στην κάρτα τιμολόγησης <span className="text-slate-400">(μία ανά γραμμή — εμφανίζονται με ✓)</span>
-                    <textarea className={`mt-1 ${inp}`} rows={5} value={(p.features ?? []).join("\n")} onChange={(e) => setP(p._id, { features: e.target.value.split("\n").map((s) => s.trim()).filter(Boolean) })} placeholder={"π.χ.\nΣύνδεση ΗΔΙΚΑ / ΓΕΣΥ\nΈλεγχος & κλείσιμο ΕΟΠΥΥ\nΈως 10 χρήστες"} />
-                  </label>
-                </div>
+                  <p className="mt-2 text-[11px] text-slate-400">Άφησε «Επιπλέον χρήστη» στο 0 για να κλειδώσει στο όριο «έως N». Αν θες extra χρήστες με χρέωση, βάλε τιμή.</p>
+                </section>
 
-                <div className="mt-4">
-                  <div className="mb-1.5 text-xs font-semibold text-slate-600">Δυνατότητες (modules) που δίνει το πακέτο</div>
+                {/* ── Δυνατότητες (modules) ── */}
+                <section className="rounded-xl border border-slate-200 bg-white p-4">
+                  <h4 className="mb-3 text-[11px] font-bold uppercase tracking-wider text-slate-400">Δυνατότητες που ξεκλειδώνει (modules)</h4>
                   <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2 lg:grid-cols-3">
-                    {MODULE_LABELS.map(([key, label]) => (
-                      <label key={key} className="flex cursor-pointer items-center justify-between rounded-lg border border-slate-200 px-3 py-1.5 text-sm hover:bg-slate-50">
-                        <span className="text-slate-700">{label}</span>
-                        <input type="checkbox" checked={(p.modules ?? []).includes(key)} onChange={() => toggleInList(p._id, "modules", key, [])} className="h-4 w-4 accent-indigo-600" />
-                      </label>
-                    ))}
+                    {MODULE_LABELS.map(([key, label]) => {
+                      const on = (p.modules ?? []).includes(key);
+                      return (
+                        <label key={key} className={`flex cursor-pointer items-center justify-between rounded-lg border px-3 py-1.5 text-sm ${on ? "border-indigo-200 bg-indigo-50/50" : "border-slate-200 hover:bg-slate-50"}`}>
+                          <span className="text-slate-700">{label}</span>
+                          <input type="checkbox" checked={on} onChange={() => toggleModule(p._id, key, label)} className="h-4 w-4 accent-indigo-600" />
+                        </label>
+                      );
+                    })}
                   </div>
-                </div>
+                </section>
 
+                {/* ── Add-ons ── */}
                 {addonCat.length > 0 && (
-                  <div className="mt-4">
-                    <div className="mb-1.5 text-xs font-semibold text-slate-600">Διαθέσιμα add-ons σε αυτό το πακέτο <span className="font-normal text-slate-400">(τι μπορεί να προσθέσει à la carte ο πελάτης)</span></div>
+                  <section className="rounded-xl border border-slate-200 bg-white p-4">
+                    <h4 className="mb-1 text-[11px] font-bold uppercase tracking-wider text-slate-400">Διαθέσιμα add-ons (à la carte)</h4>
+                    <p className="mb-3 text-[11px] text-slate-400">Τι μπορεί να προσθέσει επιπλέον ο πελάτης σε αυτό το πακέτο. Όσα είναι ήδη στο πλάνο εμφανίζονται γκρι.</p>
                     <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2 lg:grid-cols-3">
                       {addonCat.map((a) => {
                         const inModules = (p.modules ?? []).includes(a._id);
-                        const checked = !inModules && (p.available_addons ?? allAddonIds).includes(a._id);
+                        const on = !inModules && (p.available_addons ?? allAddonIds).includes(a._id);
                         return (
-                          <label key={a._id} className={`flex items-center justify-between rounded-lg border px-3 py-1.5 text-sm ${inModules ? "border-slate-100 bg-slate-50 text-slate-400" : "cursor-pointer border-slate-200 hover:bg-slate-50"}`}>
+                          <label key={a._id} className={`flex items-center justify-between rounded-lg border px-3 py-1.5 text-sm ${inModules ? "border-slate-100 bg-slate-50 text-slate-400" : on ? "cursor-pointer border-violet-200 bg-violet-50/50" : "cursor-pointer border-slate-200 hover:bg-slate-50"}`}>
                             <span>{a.icon} {a.name || a._id}{inModules && <span className="ml-1 text-[10px]">(στο πλάνο)</span>}</span>
-                            <input type="checkbox" disabled={inModules} checked={checked} onChange={() => toggleInList(p._id, "available_addons", a._id, allAddonIds)} className="h-4 w-4 accent-indigo-600 disabled:opacity-40" />
+                            <input type="checkbox" disabled={inModules} checked={on} onChange={() => toggleInList(p._id, "available_addons", a._id, allAddonIds)} className="h-4 w-4 accent-violet-600 disabled:opacity-40" />
                           </label>
                         );
                       })}
                     </div>
-                  </div>
+                  </section>
                 )}
 
-                <div className="mt-4 flex justify-end">
-                  <button onClick={() => savePkg(p._id)} className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700"><Save className="h-4 w-4" /> Αποθήκευση πακέτου</button>
+                {/* ── Κάρτα τιμολόγησης (marketing) ── */}
+                <section className="rounded-xl border border-slate-200 bg-white p-4">
+                  <h4 className="mb-1 text-[11px] font-bold uppercase tracking-wider text-slate-400">Κάρτα τιμολόγησης — χαρακτηριστικά</h4>
+                  <p className="mb-2 text-[11px] text-slate-400">Μία γραμμή ανά χαρακτηριστικό — εμφανίζονται με ✓ στη σελίδα τιμών.</p>
+                  <textarea className={`${inp} font-mono`} rows={7} value={(p.features ?? []).join("\n")} onChange={(e) => setP(p._id, { features: e.target.value.split("\n") })} placeholder={"Σύνδεση ΗΔΙΚΑ / ΓΕΣΥ\nΈλεγχος & κλείσιμο ΕΟΠΥΥ\nΈως 10 χρήστες"} />
+                </section>
+
+                <div className="flex justify-end gap-2">
+                  <button onClick={() => toggleOpen(p._id)} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-white">Κλείσιμο</button>
+                  <button onClick={() => savePkg(p._id)} className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-5 py-2 text-sm font-semibold text-white hover:bg-indigo-700"><Save className="h-4 w-4" /> Αποθήκευση πακέτου</button>
                 </div>
               </div>
             )}
