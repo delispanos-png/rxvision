@@ -228,6 +228,14 @@ async def set_reimb_settings(body: ClosingPrefsIn,
 
 
 # ── Optical Audit (OCR scans) ───────────────────────────────────────────────
+@router.get("/autoscription/status")
+async def autoscription_status(ctx: TenantContext = Depends(require("closing:read", module=_MODULE))):
+    """Is the AI prescription reader (Autoscription) configured & enabled for this pharmacy?
+    The UI uses this to show the AI verdict panels and adjust the privacy notice."""
+    from app.services import autoscription_service
+    return await autoscription_service.status()
+
+
 @router.post("/scans")
 async def upload_scan(file: UploadFile = File(...), doc_type: str = Form("prescription"),
                       ctx: TenantContext = Depends(require("closing:read", module=_MODULE))):
