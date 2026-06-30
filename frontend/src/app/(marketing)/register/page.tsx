@@ -16,8 +16,9 @@ type Company = {
 type Admin = { full_name: string; email: string; password: string };
 type RegisterResponse = { access_token: string; refresh_token: string; tenant_id: string };
 type Aade = { ok: boolean; error?: string; name?: string; title?: string; doy?: string; address?: string; postal_code?: string; city?: string; active?: boolean };
-type Pkg = { _id: string; name?: string; description?: string; price_monthly?: number; price_yearly?: number; trial_days?: number; seats?: number; sla?: string; extra_user_price?: number; extra_user_price_yearly?: number };
+type Pkg = { _id: string; name?: string; description?: string; price_monthly?: number; price_yearly?: number; trial_days?: number; seats?: number; sla?: string; extra_user_price?: number; extra_user_price_yearly?: number; modules?: string[]; billing_cycles?: string[] };
 type Sla = { _id: string; name?: string; description?: string; response_hours?: number; channels?: string; price_monthly?: number; price_yearly?: number };
+type Addon = { _id: string; name?: string; description?: string; icon?: string; price_monthly?: number; price_yearly?: number; features?: string[] };
 
 const eur = (c: number) => new Intl.NumberFormat("el-GR", { style: "currency", currency: "EUR", maximumFractionDigits: 0 }).format((c || 0) / 100);
 const input = "w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-brand-600 focus:outline-none focus:ring-1 focus:ring-brand-500";
@@ -45,6 +46,8 @@ export default function RegisterWizard() {
   // dynamic catalogue (only active packages/SLA are returned by the API)
   const [pkgs, setPkgs] = useState<Pkg[]>([]);
   const [slaTiers, setSlaTiers] = useState<Sla[]>([]);
+  const [addonCat, setAddonCat] = useState<Addon[]>([]);
+  const [selAddons, setSelAddons] = useState<string[]>([]);
   const [pkgCode, setPkgCode] = useState<string>("");
   const [billing, setBilling] = useState<"monthly" | "yearly">("yearly");
   const [sla, setSla] = useState<string>("");
@@ -55,9 +58,9 @@ export default function RegisterWizard() {
     // Optional deep-link preselect from the marketing site: /register?package=pro (alias: ?plan=).
     const qp = new URLSearchParams(window.location.search);
     const wanted = (qp.get("package") || qp.get("plan") || "").trim().toLowerCase();
-    api<{ packages: Pkg[]; sla: Sla[] }>("/onboarding/packages")
+    api<{ packages: Pkg[]; sla: Sla[]; addons?: Addon[] }>("/onboarding/packages")
       .then((r) => {
-        setPkgs(r.packages || []); setSlaTiers(r.sla || []);
+        setPkgs(r.packages || []); setSlaTiers(r.sla || []); setAddonCat(r.addons || []);
         if (r.packages?.length) {
           const pre = r.packages.find((p) => p._id.toLowerCase() === wanted) || r.packages[0];
           setPkgCode(pre._id); if (pre.sla) setSla(pre.sla);
@@ -73,14 +76,26 @@ export default function RegisterWizard() {
   const per = yearly ? "έτος" : "μήνα";
   const basePrice = (yearly ? pkg?.price_yearly : pkg?.price_monthly) ?? 0;
   const includedSeats = Math.max(1, pkg?.seats ?? 1);
+  // extra concurrent users are only allowed when the package prices them; otherwise seats are capped.
+  const extraAllowed = ((pkg?.extra_user_price ?? 0) > 0) || ((pkg?.extra_user_price_yearly ?? 0) > 0);
+  const maxSeats = extraAllowed ? 999 : includedSeats;
   const extraUsers = Math.max(0, seats - includedSeats);
   const extraRate = (yearly ? pkg?.extra_user_price_yearly : pkg?.extra_user_price) ?? 0;
   const extraTotal = extraUsers * extraRate;
   const slaPrice = (yearly ? slaObj?.price_yearly : slaObj?.price_monthly) ?? 0;
-  const price = basePrice + slaPrice + extraTotal;   // full subscription value
+  // which billing cycles this package offers (default both)
+  const cycles = (pkg?.billing_cycles && pkg.billing_cycles.length ? pkg.billing_cycles : ["monthly", "yearly"]) as ("monthly" | "yearly")[];
+  // add-ons available to buy = catalog minus those already in the package's plan
+  const availAddons = addonCat.filter((a) => !(pkg?.modules ?? []).includes(a._id));
+  const addonsTotal = availAddons.filter((a) => selAddons.includes(a._id))
+    .reduce((s, a) => s + ((yearly ? a.price_yearly : a.price_monthly) ?? 0), 0);
+  const price = basePrice + slaPrice + extraTotal + addonsTotal;   // full subscription value
   const trialDays = pkg?.trial_days ?? 14;
-  // keep seats ≥ what the package includes when the package changes
-  useEffect(() => { setSeats((s) => Math.max(s, includedSeats)); }, [includedSeats]);
+  // when the package changes: clamp seats into [included, max], drop add-ons now bundled in the plan,
+  // and switch the billing cycle if the package doesn't offer the current one.
+  useEffect(() => { setSeats((s) => Math.min(maxSeats, Math.max(includedSeats, s))); }, [includedSeats, maxSeats]);
+  useEffect(() => { setSelAddons((sel) => sel.filter((id) => availAddons.some((a) => a._id === id))); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [pkgCode]);
+  useEffect(() => { if (!cycles.includes(billing)) setBilling(cycles[0]); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [pkgCode]);
 
   function genPassword() {
     const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789!@#$%";
@@ -145,7 +160,7 @@ export default function RegisterWizard() {
           pharmacy_name: company.title || company.name, country: company.country,
           email: admin.email, password: admin.password, full_name: admin.full_name,
           company, package_code: pkgCode || "standard", billing_cycle: billing, sla: sla || undefined,
-          seats, payment_method: payMethod,
+          seats, payment_method: payMethod, addons: selAddons,
         }),
       });
       if (typeof window !== "undefined") {
@@ -255,17 +270,19 @@ export default function RegisterWizard() {
                     </div>
                   </div>
                 )}
-                <div>
-                  <label className={label}>Κύκλος Τιμολόγησης</label>
-                  <div className="grid grid-cols-2 gap-3">
-                    {(["monthly", "yearly"] as const).map((bc) => (
-                      <button key={bc} type="button" onClick={() => setBilling(bc)} className={`rounded-xl border-2 p-3 text-left ${billing === bc ? "border-brand-400 bg-brand-50/50" : "border-slate-200"}`}>
-                        <div className="font-medium text-slate-800">{bc === "monthly" ? "Μηνιαία" : "Ετήσια"}</div>
-                        <div className="text-xs text-slate-500">{bc === "monthly" ? eur(pkg?.price_monthly ?? 0) + "/μήνα" : eur(pkg?.price_yearly ?? 0) + "/έτος"}</div>
-                      </button>
-                    ))}
+                {cycles.length > 0 && (
+                  <div>
+                    <label className={label}>Κύκλος Τιμολόγησης</label>
+                    <div className={`grid gap-3 ${cycles.length > 1 ? "grid-cols-2" : "grid-cols-1"}`}>
+                      {cycles.map((bc) => (
+                        <button key={bc} type="button" onClick={() => setBilling(bc)} className={`rounded-xl border-2 p-3 text-left ${billing === bc ? "border-brand-400 bg-brand-50/50" : "border-slate-200"}`}>
+                          <div className="font-medium text-slate-800">{bc === "monthly" ? "Μηνιαία" : "Ετήσια"}</div>
+                          <div className="text-xs text-slate-500">{bc === "monthly" ? eur(pkg?.price_monthly ?? 0) + "/μήνα" : eur(pkg?.price_yearly ?? 0) + "/έτος"}</div>
+                        </button>
+                      ))}
+                    </div>
                   </div>
-                </div>
+                )}
                 {slaTiers.length > 0 && (
                   <div>
                     <label className={label}>SLA / Υποστήριξη</label>
@@ -279,14 +296,36 @@ export default function RegisterWizard() {
                     </div>
                   </div>
                 )}
+                {/* add-ons (à-la-carte, optional) */}
+                {availAddons.length > 0 && (
+                  <div>
+                    <label className={label}>Πρόσθετα (προαιρετικά)</label>
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      {availAddons.map((a) => {
+                        const on = selAddons.includes(a._id);
+                        const ap = (yearly ? a.price_yearly : a.price_monthly) ?? 0;
+                        return (
+                          <button key={a._id} type="button" onClick={() => setSelAddons((s) => on ? s.filter((x) => x !== a._id) : [...s, a._id])}
+                            className={`flex items-start gap-2 rounded-xl border-2 p-3 text-left transition ${on ? "border-brand-400 bg-brand-50/50" : "border-slate-200 hover:border-slate-300"}`}>
+                            <span className={`mt-0.5 grid h-4 w-4 shrink-0 place-items-center rounded border ${on ? "border-brand-600 bg-brand-600 text-white" : "border-slate-300"}`}>{on && <Check className="h-3 w-3" />}</span>
+                            <span className="min-w-0 flex-1">
+                              <span className="flex items-center justify-between gap-2"><span className="font-medium text-slate-800">{a.icon} {a.name}</span><span className="shrink-0 text-sm font-bold text-brand-700">+{eur(ap)}<span className="text-[10px] font-normal text-slate-400">/{per}</span></span></span>
+                              {a.description && <span className="mt-0.5 block text-[11px] text-slate-500">{a.description}</span>}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
                 {/* concurrent users + cost breakdown */}
                 <div>
                   <label className={label}>Ταυτόχρονοι χρήστες</label>
                   <div className="flex items-center gap-3">
                     <button type="button" onClick={() => setSeats((n) => Math.max(includedSeats, n - 1))} className="grid h-9 w-9 place-items-center rounded-lg border border-slate-300 text-lg text-slate-600 hover:bg-slate-50">−</button>
-                    <input type="number" min={includedSeats} value={seats} onChange={(e) => setSeats(Math.max(includedSeats, parseInt(e.target.value) || includedSeats))} className={`${input} w-20 text-center`} />
-                    <button type="button" onClick={() => setSeats((n) => n + 1)} className="grid h-9 w-9 place-items-center rounded-lg border border-slate-300 text-lg text-slate-600 hover:bg-slate-50">+</button>
-                    <span className="text-xs text-slate-400">Περιλαμβάνονται {includedSeats} · {extraUsers > 0 ? `+${extraUsers} έξτρα` : "χωρίς έξτρα"}</span>
+                    <input type="number" min={includedSeats} max={maxSeats} value={seats} onChange={(e) => setSeats(Math.min(maxSeats, Math.max(includedSeats, parseInt(e.target.value) || includedSeats)))} className={`${input} w-20 text-center`} />
+                    <button type="button" disabled={seats >= maxSeats} onClick={() => setSeats((n) => Math.min(maxSeats, n + 1))} className="grid h-9 w-9 place-items-center rounded-lg border border-slate-300 text-lg text-slate-600 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40">+</button>
+                    <span className="text-xs text-slate-400">{extraAllowed ? <>Περιλαμβάνονται {includedSeats} · {extraUsers > 0 ? `+${extraUsers} έξτρα` : "χωρίς έξτρα"}</> : <>Έως {includedSeats} χρήστες σε αυτό το πακέτο</>}</span>
                   </div>
                 </div>
                 <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
@@ -295,6 +334,9 @@ export default function RegisterWizard() {
                     <div className="flex justify-between"><dt className="text-slate-600">{pkg?.name || "Πακέτο"}</dt><dd className="font-medium text-slate-800">{eur(basePrice)}</dd></div>
                     <div className="flex justify-between"><dt className="text-slate-600">SLA{slaObj?.name ? ` · ${slaObj.name}` : ""}</dt><dd className="font-medium text-slate-800">{slaPrice ? eur(slaPrice) : "—"}</dd></div>
                     <div className="flex justify-between"><dt className="text-slate-600">Έξτρα χρήστες {extraUsers > 0 ? `(${extraUsers} × ${eur(extraRate)})` : ""}</dt><dd className="font-medium text-slate-800">{extraTotal ? eur(extraTotal) : "—"}</dd></div>
+                    {availAddons.filter((a) => selAddons.includes(a._id)).map((a) => (
+                      <div key={a._id} className="flex justify-between"><dt className="text-slate-600">{a.icon} {a.name}</dt><dd className="font-medium text-slate-800">{eur((yearly ? a.price_yearly : a.price_monthly) ?? 0)}</dd></div>
+                    ))}
                     <div className="mt-1 flex justify-between border-t border-slate-200 pt-2 text-base"><dt className="font-semibold text-slate-900">Σύνολο</dt><dd className="font-bold text-brand-700">{eur(price)}<span className="text-xs font-normal text-slate-400">/{per}</span></dd></div>
                   </dl>
                 </div>

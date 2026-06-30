@@ -41,6 +41,7 @@ class RegisterIn(BaseModel):
     sla: str | None = Field(None, max_length=40)
     seats: int | None = Field(None, ge=1, le=999)        # ταυτόχρονοι χρήστες
     payment_method: Literal["card", "bank"] | None = None
+    addons: list[str] | None = None                      # à-la-carte add-on ids chosen at signup
 
 
 @router.post("/register", status_code=201,
@@ -52,7 +53,7 @@ async def register(body: RegisterIn):
             email=body.email, password=body.password, full_name=body.full_name,
             company=body.company.model_dump() if body.company else None,
             package_code=body.package_code, billing_cycle=body.billing_cycle, sla=body.sla,
-            seats=body.seats, payment_method=body.payment_method)
+            seats=body.seats, payment_method=body.payment_method, addons=body.addons)
     except OnboardingError as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, detail={"error": str(exc)})
 

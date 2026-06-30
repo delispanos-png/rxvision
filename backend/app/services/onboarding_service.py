@@ -47,7 +47,8 @@ class OnboardingService:
                        password: str, full_name: str, company: dict | None = None,
                        package_code: str | None = None, billing_cycle: str | None = None,
                        sla: str | None = None, seats: int | None = None,
-                       payment_method: str | None = None) -> dict:
+                       payment_method: str | None = None,
+                       addons: list[str] | None = None) -> dict:
         country = country.upper()
         if country not in _COUNTRY_SETTINGS:
             raise OnboardingError("unsupported_country")
@@ -81,13 +82,31 @@ class OnboardingService:
         sla_doc = await db["sla_tiers"].find_one({"_id": sla_code}) or {}
         sla_price = int(sla_doc.get("price_yearly" if yearly else "price_monthly", 0) or 0)
         extra_total = extra_users * extra_rate
-        price_total = int(price) + sla_price + extra_total
+        # à-la-carte add-ons chosen at signup → validate vs catalog, skip any already in the plan
+        chosen_addons: list[str] = []
+        addons_total = 0
+        addon_overrides: dict[str, str] = {}
+        if addons:
+            from app.services import addon_service
+            cat = {a["_id"]: a for a in await addon_service.catalog()}
+            incl = set((pkg or {}).get("modules") or _MODULES)
+            for aid in addons:
+                a = cat.get(aid)
+                if not a or aid in incl or aid in chosen_addons:
+                    continue
+                chosen_addons.append(aid)
+                addons_total += int(a.get("price_yearly" if yearly else "price_monthly", 0) or 0)
+                addon_overrides[aid] = "enabled"
+        if addon_overrides:   # entitlement = tenant module overrides (same gating as everywhere)
+            await db["tenants"].update_one({"_id": tid}, {"$set": {f"modules.{k}": v for k, v in addon_overrides.items()}})
+        price_total = int(price) + sla_price + extra_total + addons_total
         await db["subscriptions"].insert_one({
             "tenant_id": tid, "plan": package_code or "free_trial",
             "status": "trialing" if trial_days else "active",
             "billing_cycle": cycle, "sla": sla_code,
             "trial_ends_at": _now() + timedelta(days=trial_days), "seats": chosen_seats,
-            "price_per_pharmacy": price, "currency": "EUR", "addons": [],
+            "price_per_pharmacy": price, "currency": "EUR",
+            "addons": chosen_addons, "addons_total": addons_total,
             # cost analysis as agreed at signup (cents, for the chosen cycle)
             "sla_price": sla_price, "extra_users": extra_users, "extra_user_rate": extra_rate,
             "extra_users_total": extra_total, "price_total": price_total,

@@ -9,7 +9,7 @@ type Pkg = {
   _id: string; name?: string; description?: string;
   price_monthly?: number; price_yearly?: number; extra_user_price?: number; extra_user_price_yearly?: number;
   trial_days?: number; seats?: number;
-  sla?: string; modules?: string[]; active?: boolean;
+  sla?: string; modules?: string[]; billing_cycles?: string[]; active?: boolean;
 };
 type Sla = { _id: string; name?: string; description?: string; response_hours?: number; channels?: string; price_monthly?: number; price_yearly?: number; active?: boolean };
 
@@ -61,7 +61,7 @@ export default function PackagesAdminPage() {
       name: p.name, description: p.description, price_monthly: p.price_monthly, price_yearly: p.price_yearly,
       extra_user_price: p.extra_user_price, extra_user_price_yearly: p.extra_user_price_yearly,
       trial_days: p.trial_days, seats: p.seats, sla: p.sla,
-      modules: p.modules ?? [], active: p.active ?? true,
+      modules: p.modules ?? [], billing_cycles: p.billing_cycles ?? ["monthly", "yearly"], active: p.active ?? true,
     }) });
     setNotice(`Αποθηκεύτηκε το πακέτο «${p.name || code}» ✓`); refresh();
   }
@@ -136,6 +136,21 @@ export default function PackagesAdminPage() {
                   {slaTiers.filter((s) => (s.active ?? true) || s._id === p.sla).map((s) => <option key={s._id} value={s._id}>{s.name || s._id}{(s.active ?? true) ? "" : " (ανενεργό)"}</option>)}
                 </select>
               </label>
+              <div className="block text-xs font-medium text-slate-500">Διαθέσιμοι κύκλοι χρέωσης
+                <div className="mt-1 flex gap-2">
+                  {(["monthly", "yearly"] as const).map((c) => {
+                    const cyc = p.billing_cycles ?? ["monthly", "yearly"];
+                    const on = cyc.includes(c);
+                    return (
+                      <label key={c} className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-slate-200 px-2.5 py-1.5 text-sm">
+                        <input type="checkbox" checked={on} className="h-4 w-4 accent-indigo-600"
+                          onChange={() => { const next = on ? cyc.filter((x) => x !== c) : [...cyc, c]; setP(p._id, { billing_cycles: next.length ? next : cyc }); }} />
+                        {c === "monthly" ? "Μηνιαίο" : "Ετήσιο"}
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
               <label className="block text-xs font-medium text-slate-500 sm:col-span-2 lg:col-span-3">Περιγραφή<input className={`mt-1 ${inp}`} value={p.description ?? ""} onChange={(e) => setP(p._id, { description: e.target.value })} /></label>
             </div>
             <div className="mt-4">
