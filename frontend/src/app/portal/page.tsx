@@ -317,7 +317,7 @@ export default function PortalHome() {
               <div className="relative">
                 <Building2 className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
                 <select value={me.active_tenant ?? ""} onChange={(e) => switchPharmacy(e.target.value)}
-                  className="max-w-[8rem] truncate rounded-xl border border-slate-200 bg-white py-2 pl-8 pr-7 text-xs font-medium text-slate-700 shadow-sm focus:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-100 sm:max-w-[16rem]">
+                  className="max-w-[8rem] appearance-none truncate rounded-xl border border-slate-200 bg-white py-2 pl-8 pr-7 text-xs font-medium text-slate-700 shadow-sm focus:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-100 sm:max-w-[16rem]">
                   {me.pharmacies.map((p) => <option key={p.tenant_id} value={p.tenant_id}>{p.pharmacy_name}</option>)}
                 </select>
                 <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
