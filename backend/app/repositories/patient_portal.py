@@ -131,11 +131,14 @@ class PatientAccountRepository:
         out: list[dict] = []
         if not oid or not amka:
             return out
+        from app.services.auth_service import resolve_tenant_modules, tenant_has
         async for t in self.db["tenants"].find(  # tenant-ok: cross-tenant discovery by design
-                {}, {"_id": 1, "name": 1, "company": 1, "modules": 1}):
+                {}, {"_id": 1, "name": 1, "company": 1}):
             tid = str(t["_id"])
-            if ((t.get("modules") or {}).get("patient_portal")) in (None, "locked"):
-                continue  # only pharmacies that turned the portal on
+            # only pharmacies that have the portal ENABLED (effective: plan modules_included OR override —
+            # not just the per-tenant override, otherwise a portal granted via the package is missed)
+            if not tenant_has(await resolve_tenant_modules(tid), "patient_portal"):
+                continue
             try:
                 pseudo = pseudonymize(amka, tenant_pepper=vault.tenant_pepper(tid))
             except Exception:  # noqa: BLE001
