@@ -56,7 +56,7 @@ const GROUPS: Group[] = [
       { href: "/orders", label: "βάσει εκτελέσεων", en: "by executions" },
       { href: "/order-advisor", label: "βάσει πρόβλεψης", en: "by forecast" },
     ] },
-    { label: "AI σύμβουλος", en: "AI Assistant", icon: Bot, href: "/copilot" },
+    { label: "AI σύμβουλος", en: "AI Assistant", icon: Bot, href: "/copilot", module: "ai_assistant" },
     { label: "Διατροφή", en: "Nutrition", icon: Salad, href: "/nutrition" },
     { label: "Κερδοφορία", en: "Profitability", icon: TrendingUp, href: "/profitability", module: "profitability" },
   ] },

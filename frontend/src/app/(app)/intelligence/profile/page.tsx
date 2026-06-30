@@ -67,6 +67,9 @@ export default function PatientProfilePage() {
   const [show, setShow] = useState<"missed" | "available" | null>(null);
   const [showExecs, setShowExecs] = useState(false);
   const [g6pd, setG6pd] = useState(false);
+  // AI advice is an ai_assistant (Pro) entitlement — hide the block entirely when not granted.
+  const meQ = useQuery({ queryKey: ["me"], queryFn: () => api<{ modules?: Record<string, string> }>("/auth/me"), staleTime: 300_000 });
+  const aiEntitled = ["enabled", "trial"].includes(meQ.data?.modules?.ai_assistant ?? "");
   const [showPortal, setShowPortal] = useState(false);
   const [portalEmail, setPortalEmail] = useState("");
   const [portalResult, setPortalResult] = useState<{ email: string; temp_password: string } | null>(null);
@@ -376,7 +379,8 @@ export default function PatientProfilePage() {
           {/* Σχόλια — log χρονολογημένων σχολίων φαρμακοποιού */}
           <PatientCommentsCard amka={p.patient.amka} />
 
-          {/* AI advice */}
+          {/* AI advice — gated by the ai_assistant (Pro) entitlement */}
+          {aiEntitled && (
           <div className="rounded-2xl border border-brand-100 bg-gradient-to-br from-brand-50 to-white p-5 dark:border-brand-900/40 dark:from-brand-950/20 dark:to-slate-900">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex flex-wrap items-center gap-2">
@@ -405,6 +409,7 @@ export default function PatientProfilePage() {
               </div>
             )}
           </div>
+          )}
           {showExecs && p.executions && (
             <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 p-4" onClick={() => setShowExecs(false)}>
               <div className="mt-8 w-full max-w-3xl rounded-2xl bg-white p-5 shadow-xl dark:bg-slate-900" onClick={(e) => e.stopPropagation()}>

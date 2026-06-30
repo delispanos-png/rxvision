@@ -105,6 +105,11 @@ async def profile_advice(body: AdviceIn,
     """AI care/retention/lifestyle advice for ONE patient, from their 360° profile (ίδιο date scope).
     Αποθηκεύεται στη βάση· καλεί ξανά το AI ΜΟΝΟ όταν οι κλινικές συνθήκες (παθήσεις/φάρμακα/
     κατηγορίες/G6PD) έχουν αλλάξει — αλλιώς επιστρέφει τις αποθηκευμένες (ταχύτητα + μικρότερο κόστος)."""
+    # AI entitlement: η συμβουλή είναι AI-feature → απαιτεί και το module ai_assistant (Pro), πέρα
+    # από το patient_analytics gate του router.
+    if ctx.modules.get("ai_assistant", "locked") == "locked":
+        raise HTTPException(status.HTTP_403_FORBIDDEN,
+                            detail={"error": "module_locked", "module": "ai_assistant"})
     repo = _repo(ctx)
 
     def _iso(d):

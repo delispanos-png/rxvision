@@ -34,6 +34,22 @@ def resolve_modules(included: set[str], overrides: dict[str, str]) -> dict[str, 
     return modules
 
 
+async def resolve_tenant_modules(tenant_id: str) -> dict[str, str]:
+    """Resolve a tenant's effective modules OUTSIDE a request (e.g. a Celery worker) — same merge
+    the login flow does (plan modules_included + tenant overrides). Use for entitlement checks
+    where there is no JWT/TenantContext available."""
+    db = shared_db()
+    tenant = await db["tenants"].find_one({"_id": tenant_id})
+    sub = await db["subscriptions"].find_one({"tenant_id": tenant_id})
+    return resolve_modules(set((sub or {}).get("modules_included", [])),
+                           (tenant or {}).get("modules", {}))
+
+
+def tenant_has(modules: dict[str, str], key: str) -> bool:
+    """True when a module is enabled or in trial (not locked / absent)."""
+    return modules.get(key, "locked") in ("enabled", "trial")
+
+
 def _as_object_id(value):
     try:
         return ObjectId(value)

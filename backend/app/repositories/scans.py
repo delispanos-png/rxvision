@@ -159,9 +159,13 @@ class ScanRepository(BaseRepository):
         stream = await self._bucket().open_download_stream(s["image_id"])
         content = await stream.read()
         ocr = ocr_service.analyze(content)
-        # Autoscription: AI reads the paper (opt-in — only when the Anthropic key is configured &
-        # autoscription enabled; otherwise returns not_configured/disabled and we fall back to OCR).
-        ai = await autoscription_service.read(content, s.get("content_type") or "image/jpeg")
+        # Autoscription: AI reads the paper — gated by the ai_assistant module (Pro entitlement) AND
+        # a configured Anthropic key. No request/JWT here (Celery worker) → resolve the tenant's
+        # modules from DB. Not entitled → skip the AI call entirely and fall back to OCR.
+        from app.services.auth_service import resolve_tenant_modules, tenant_has
+        _mods = await resolve_tenant_modules(self.tenant_id)
+        ai = (await autoscription_service.read(content, s.get("content_type") or "image/jpeg")
+              if tenant_has(_mods, "ai_assistant") else {"ok": False, "error": "module_locked"})
 
         async def _match(b: str | None) -> str | None:
             if not b or not b.isdigit():
@@ -204,7 +208,7 @@ class ScanRepository(BaseRepository):
             upd["ai_findings"] = findings
             upd["auto_verdict"] = verdict
             upd["ai_error"] = None
-        elif ai.get("error") not in (None, "not_configured", "disabled"):
+        elif ai.get("error") not in (None, "not_configured", "disabled", "module_locked"):
             upd["ai_error"] = ai.get("error")   # surface real failures (api_error/parse_error/…)
 
         await self._coll.update_one({"_id": s["_id"], "tenant_id": self.tenant_id}, {"$set": upd})

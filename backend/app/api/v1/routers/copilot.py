@@ -30,23 +30,23 @@ def _repo(ctx: TenantContext) -> CopilotRepository:
 
 
 @router.get("/status")
-async def status(ctx: TenantContext = Depends(require("patients:read"))):
+async def status(ctx: TenantContext = Depends(require("patients:read", module="ai_assistant"))):
     return await _repo(ctx).status()
 
 
 @router.post("/chat")
-async def chat(body: ChatIn, ctx: TenantContext = Depends(require("patients:read"))):
+async def chat(body: ChatIn, ctx: TenantContext = Depends(require("patients:read", module="ai_assistant"))):
     return await _repo(ctx).chat(ctx.user_id, ctx.permissions, [m.model_dump() for m in body.messages])
 
 
 @router.get("/action-plan")
-async def action_plan(ctx: TenantContext = Depends(require("patients:read"))):
+async def action_plan(ctx: TenantContext = Depends(require("patients:read", module="ai_assistant"))):
     """Προληπτικό «Πλάνο Ημέρας» — προτεραιοποιημένες ενέργειες με κουμπί εκτέλεσης."""
     return await _repo(ctx).action_plan(ctx.permissions)
 
 
 @router.post("/act")
-async def act(body: ActIn, ctx: TenantContext = Depends(require("patients:read"))):
+async def act(body: ActIn, ctx: TenantContext = Depends(require("patients:read", module="ai_assistant"))):
     """Execute a Level-3 action the user explicitly confirmed in the UI. The action's own
     permission is re-checked inside the service (the chat only PROPOSES actions)."""
     return await _repo(ctx).run_action(ctx.user_id, ctx.permissions, body.action, body.params)

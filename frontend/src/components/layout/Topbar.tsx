@@ -71,7 +71,7 @@ export function Topbar() {
 
   return (
     <header className="sticky top-0 z-10 flex h-16 items-center justify-end gap-1 border-b border-slate-200/70 bg-canvas/80 px-3 backdrop-blur dark:border-slate-800 dark:bg-slate-950/80 sm:gap-2 sm:px-6">
-      {(data?.modules?.pharmacat === "enabled" || data?.modules?.pharmacat === "trial") && (
+      {(data?.modules?.ai_assistant === "enabled" || data?.modules?.ai_assistant === "trial") && (
         <div className="pointer-events-none absolute left-1/2 top-1/2 z-20 hidden -translate-x-1/2 -translate-y-1/2 sm:block">
           <div className="pointer-events-auto"><PharmaCatLauncher /></div>
         </div>

@@ -32,6 +32,7 @@ const MODULE_LABELS: [string, string][] = [
   ["order_suggestions", "Σύμβουλος Παραγγελιών"],
   ["monthly_closing", "Αποζημίωση / Κλείσιμο"],
   ["pharmacyone", "PharmacyOne"],
+  ["ai_assistant", "✨ AI Βοηθός (Autoscription/PharmaCat/Copilot)"],
   ["pharmacat", "🤖 PharmaCat (κλινικός βοηθός)"],
   ["patient_portal", "👥 Πύλη Πελατών (ραντεβού/διαθεσιμότητα)"],
   ["loyalty", "🎁 Πιστότητα (επιβράβευση πελατών)"],

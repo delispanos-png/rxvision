@@ -8,6 +8,7 @@ import { api } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
 import { Tooltip } from "@/components/ui/Tooltip";
 import { appConfirm } from "@/store/dialogStore";
+import { ModuleGuard } from "@/components/layout/ModuleGuard";
 
 type Action =
   | { type: "navigate"; href: string; label: string }
@@ -26,7 +27,7 @@ const QUICK = [
   ["Πώς κάνω κλείσιμο μήνα;", "How do I do the monthly closing?"],
 ] as const;
 
-export default function CopilotPage() {
+function CopilotInner() {
   const t = useT();
   const router = useRouter();
   const [turns, setTurns] = useState<Turn[]>([]);
@@ -203,5 +204,13 @@ export default function CopilotPage() {
         <p className="mt-1.5 text-center text-[10px] text-slate-400">{t("Οδηγός + δεδομένα + ενέργειες. Οι ενέργειες εκτελούνται μόνο μετά από επιβεβαίωσή σου.", "Guide + data + actions. Actions run only after your confirmation.")}</p>
       </div>
     </div>
+  );
+}
+
+export default function CopilotPage() {
+  return (
+    <ModuleGuard module="ai_assistant">
+      <CopilotInner />
+    </ModuleGuard>
   );
 }
