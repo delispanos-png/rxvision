@@ -459,6 +459,7 @@ class PackageIn(BaseModel):
     seats: int | None = None
     sla: str | None = None
     modules: list[str] | None = None  # the capabilities this package grants
+    features: list[str] | None = None  # marketing bullet list shown on the pricing card
     billing_cycles: list[str] | None = None  # offered cycles: ["monthly"], ["yearly"], or both
     active: bool | None = None
 

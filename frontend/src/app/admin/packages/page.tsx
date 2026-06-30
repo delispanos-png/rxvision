@@ -9,7 +9,7 @@ type Pkg = {
   _id: string; name?: string; description?: string;
   price_monthly?: number; price_yearly?: number; extra_user_price?: number; extra_user_price_yearly?: number;
   trial_days?: number; seats?: number;
-  sla?: string; modules?: string[]; billing_cycles?: string[]; active?: boolean;
+  sla?: string; modules?: string[]; features?: string[]; billing_cycles?: string[]; active?: boolean;
 };
 type Sla = { _id: string; name?: string; description?: string; response_hours?: number; channels?: string; price_monthly?: number; price_yearly?: number; active?: boolean };
 
@@ -61,7 +61,8 @@ export default function PackagesAdminPage() {
       name: p.name, description: p.description, price_monthly: p.price_monthly, price_yearly: p.price_yearly,
       extra_user_price: p.extra_user_price, extra_user_price_yearly: p.extra_user_price_yearly,
       trial_days: p.trial_days, seats: p.seats, sla: p.sla,
-      modules: p.modules ?? [], billing_cycles: p.billing_cycles ?? ["monthly", "yearly"], active: p.active ?? true,
+      modules: p.modules ?? [], features: p.features ?? [],
+      billing_cycles: p.billing_cycles ?? ["monthly", "yearly"], active: p.active ?? true,
     }) });
     setNotice(`Αποθηκεύτηκε το πακέτο «${p.name || code}» ✓`); refresh();
   }
@@ -152,6 +153,9 @@ export default function PackagesAdminPage() {
                 </div>
               </div>
               <label className="block text-xs font-medium text-slate-500 sm:col-span-2 lg:col-span-3">Περιγραφή<input className={`mt-1 ${inp}`} value={p.description ?? ""} onChange={(e) => setP(p._id, { description: e.target.value })} /></label>
+              <label className="block text-xs font-medium text-slate-500 sm:col-span-2 lg:col-span-3">Δυνατότητες στην κάρτα τιμολόγησης <span className="text-slate-400">(μία ανά γραμμή — εμφανίζονται με ✓)</span>
+                <textarea className={`mt-1 ${inp}`} rows={5} value={(p.features ?? []).join("\n")} onChange={(e) => setP(p._id, { features: e.target.value.split("\n").map((s) => s.trim()).filter(Boolean) })} placeholder={"π.χ.\nΣύνδεση ΗΔΙΚΑ / ΓΕΣΥ\nΈλεγχος & κλείσιμο ΕΟΠΥΥ\nΈως 10 χρήστες"} />
+              </label>
             </div>
             <div className="mt-4">
               <div className="mb-1.5 text-xs font-semibold text-slate-600">Δυνατότητες (modules) που δίνει το πακέτο</div>
