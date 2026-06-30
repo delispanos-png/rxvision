@@ -778,6 +778,11 @@ async def assign_package(tenant_id: str, body: AssignPackageIn,
         "updated_at": datetime.now(tz=timezone.utc),
     }
     await db["subscriptions"].update_one({"tenant_id": tenant_id}, {"$set": upd}, upsert=True)
+    # Adapt the per-tenant capabilities to the package: clear leftover overrides so the tenant matches
+    # the package EXACTLY — but keep entitlement for any à-la-carte add-ons it has actually purchased.
+    keep = {a: "enabled" for a in (sub.get("addons") or [])}
+    await db["tenants"].update_one({"_id": tenant_id},
+                                   {"$set": {"modules": keep, "updated_at": datetime.now(tz=timezone.utc)}})
     return {"ok": True, "plan": body.package_code, "modules_included": pkg.get("modules", [])}
 
 

@@ -128,7 +128,7 @@ export default function TenantCardPage() {
   }
   async function assignPackage(code: string) {
     if (!code) return;
-    if (!(await appConfirm(`Ένταξη του πελάτη στο πακέτο «${code}»; Θα κληρονομήσει τις δυνατότητες, τιμή, θέσεις & κύκλο του πακέτου. Τυχόν εξαιρέσεις (overrides) παραμένουν.`, { title: "Αλλαγή πακέτου", confirmText: "Εφαρμογή πακέτου" }))) return;
+    if (!(await appConfirm(`Ένταξη του πελάτη στο πακέτο «${code}»; Οι δυνατότητες θα προσαρμοστούν ΑΚΡΙΒΩΣ στο πακέτο (τιμή, θέσεις, κύκλος, SLA) — κρατώντας μόνο τα add-ons που έχει αγοράσει.`, { title: "Αλλαγή πακέτου", confirmText: "Εφαρμογή πακέτου" }))) return;
     act(() => adminApi(`/admin/tenants/${encodeURIComponent(id)}/package`, { method: "POST", body: JSON.stringify({ package_code: code }) }), "Το πακέτο εφαρμόστηκε ✓ (ισχύει στο επόμενο login του πελάτη)");
   }
 
@@ -187,7 +187,7 @@ export default function TenantCardPage() {
             <option value="">— επίλεξε πακέτο —</option>
             {(pkgsQ.data?.items ?? []).map((p) => <option key={p._id} value={p._id}>{p.name || p._id}</option>)}
           </select>
-          <span className="text-xs text-slate-500">Ο πελάτης κληρονομεί αυτόματα τις δυνατότητες του πακέτου· παρακάτω κάνεις τυχόν εξαιρέσεις.</span>
+          <span className="text-xs text-slate-500">Με την επιλογή πακέτου, τα παρακάτω προσαρμόζονται στο πακέτο. Μετά μπορείς να κάνεις μεμονωμένες εξαιρέσεις.</span>
         </div>
         <p className="mb-3 text-xs text-slate-400">Ό,τι είναι κλειστό δεν εμφανίζεται καθόλου στο πάνελ του φαρμακοποιού. Οι αλλαγές ισχύουν μετά την επόμενη σύνδεσή του.</p>
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
