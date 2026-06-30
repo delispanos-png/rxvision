@@ -737,12 +737,12 @@ class ReimbursementRepository(BaseRepository):
                 "fund": glabel, "group": glabel, "is_eopyy": is_eo, "is_vaccine": is_vac,
                 "is_100": is_100, "is_fyk": bool(r.get("n3816")), "is_etyap": bool(r.get("supp")),
                 "needs_original": (not bool(r.get("intangible"))) and ((ec or 1) <= 1),
-                "needs_dose_check": bool(r.get("dose")),
+                "needs_dose_check": False,   # υπολογίζεται ΑΝΑ ΕΚΤΕΛΕΣΗ στο 2ο πέρασμα (τεμάχια φάσης > 1)
                 "has_opinion": bool(r.get("opinion")), "has_desens": bool(r.get("desens")),
                 # χρειάζεται έλεγχο = ταινία γνησιότητας (μη-QR) Ή κάποια ιδιαιτερότητα (δοσολογία/E,
                 # ΦΥΚ, γνωμάτευση, απευαισθητοποίηση, ναρκωτικό, πρωτότυπη, ή φάρμακο με σημείωση ΗΔΥΚΑ).
-                # base εδώ· τα strips + catalog-attention προστίθενται στο 2ο πέρασμα παρακάτω.
-                "needs_check": bool(r.get("dose") or r.get("n3816") or r.get("opinion") or r.get("desens")
+                # base εδώ· δοσολογία/strips/catalog-attention προστίθενται στο 2ο πέρασμα παρακάτω.
+                "needs_check": bool(r.get("n3816") or r.get("opinion") or r.get("desens")
                                     or r.get("narcotic") or ((not bool(r.get("intangible"))) and ((ec or 1) <= 1))),
                 # checked ανά εκτέλεση (νέο) ή ανά barcode-root (παλιό state) — συμβατό και τα δύο
                 "checked": (ext in checked) or (root in checked),
@@ -758,22 +758,31 @@ class ReimbursementRepository(BaseRepository):
                 {"$or": [{"info_popup": {"$ne": None}}, {"pharmacist_popup": {"$ne": None}},
                          {"withdrawn": True}, {"limited_execution": True}, {"hospital_medicine": True},
                          {"ifet": True}, {"is_heparin": True}]}, {"_id": 1})}
+            dose = {str(d["_id"]) async for d in self._db["medicine_catalog"].find(  # σκευάσματα με οπτικό έλεγχο δοσολογίας
+                {"needs_dose_check": True}, {"_id": 1})}
             async for it in self._db["prescription_items"].find(
                     {"tenant_id": self.tenant_id, "execution_id": {"$in": list(doc_map.keys())}},
-                    {"execution_id": 1, "details.eof_code": 1, "details.coupons.qr": 1}):
+                    {"execution_id": 1, "details.eof_code": 1, "details.coupons.qr": 1, "details.coupons.execution_no": 1}):
                 row = doc_map.get(it["execution_id"])
                 if not row:
                     continue
                 d = it.get("details") or {}
                 eof = str(d.get("eof_code") or "")
-                if any(c.get("qr") is False for c in (d.get("coupons") or [])):
+                coupons = d.get("coupons") or []
+                if any(c.get("qr") is False for c in coupons):
                     row["has_strip"] = True
                 if eof in narc:
                     row["is_narcotic"] = True
                 if eof in note:
                     row["hdika_note"] = True
+                # δοσολογία ΑΝΑ ΕΚΤΕΛΕΣΗ: τεμάχια ΑΥΤΗΣ της φάσης (coupons με execution_no) > 1
+                if eof in dose:
+                    exno = int(row["exec_no"]) if str(row.get("exec_no") or "").isdigit() else 1
+                    pieces = sum(1 for c in coupons if int(float(c.get("execution_no") or exno)) == exno)
+                    if pieces > 1:
+                        row["needs_dose_check"] = True
             for row in doc_map.values():
-                if row.get("has_strip") or row.get("is_narcotic") or row.get("hdika_note"):
+                if row.get("has_strip") or row.get("is_narcotic") or row.get("hdika_note") or row.get("needs_dose_check"):
                     row["needs_check"] = True
         # Αναλυτική ενημέρωση μήνα (πριν το φίλτρο ομάδας → όλος ο μήνας)
         def _cnt(f):
