@@ -749,6 +749,38 @@ async def set_tenant_modules(tenant_id: str, body: ModulesIn,
     return {"modules": (t or {}).get("modules") or {}}
 
 
+class AssignPackageIn(BaseModel):
+    package_code: str
+    billing_cycle: str | None = None   # κρατά τον τρέχοντα αν δεν δοθεί
+    seats: int | None = None
+
+
+@router.post("/tenants/{tenant_id}/package")
+async def assign_package(tenant_id: str, body: AssignPackageIn,
+                         _: PlatformContext = Depends(get_platform_admin)):
+    """Assign a tenant to a package → it INHERITS the package's capabilities (modules_included),
+    price, seats, cycle & SLA. Per-tenant module overrides remain as exceptions on top."""
+    db = shared_db()
+    pkg = await db["packages"].find_one({"_id": body.package_code})
+    if not pkg:
+        raise HTTPException(http_status.HTTP_404_NOT_FOUND, "package_not_found")
+    sub = await db["subscriptions"].find_one({"tenant_id": tenant_id}) or {}
+    cycle = body.billing_cycle or sub.get("billing_cycle") or "monthly"
+    yearly = cycle == "yearly"
+    price = int(pkg.get("price_yearly" if yearly else "price_monthly", 0) or 0)
+    seats = max(1, int(body.seats or pkg.get("seats", 1) or 1))
+    upd = {
+        "plan": body.package_code, "plan_name": pkg.get("name"),
+        "modules_included": pkg.get("modules", []),
+        "billing_cycle": cycle, "price_per_pharmacy": price, "seats": seats,
+        "sla": pkg.get("sla") or sub.get("sla"),
+        "available_addons": pkg.get("available_addons"),
+        "updated_at": datetime.now(tz=timezone.utc),
+    }
+    await db["subscriptions"].update_one({"tenant_id": tenant_id}, {"$set": upd}, upsert=True)
+    return {"ok": True, "plan": body.package_code, "modules_included": pkg.get("modules", [])}
+
+
 @router.post("/tenants/{tenant_id}/cancel")
 async def cancel_subscription(tenant_id: str, _: PlatformContext = Depends(get_platform_admin)):
     """Ακύρωση συνδρομής: subscription→cancelled, tenant→suspended (μπλοκάρει login)."""

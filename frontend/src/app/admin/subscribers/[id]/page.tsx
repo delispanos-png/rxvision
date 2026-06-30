@@ -90,6 +90,7 @@ export default function TenantCardPage() {
 
   const { data, isLoading } = useQuery({ queryKey: ["admin", "tenant", id], queryFn: () => adminApi<Detail>(`/admin/tenants/${encodeURIComponent(id)}`), retry: false });
   const creds = useQuery({ queryKey: ["admin", "tenant", id, "creds"], queryFn: () => adminApi<Creds>(`/admin/tenants/${encodeURIComponent(id)}/credentials`), retry: false });
+  const pkgsQ = useQuery({ queryKey: ["admin", "packages"], queryFn: () => adminApi<{ items: { _id: string; name?: string }[] }>("/admin/packages") });
   useEffect(() => { if (data?.tenant?.name) setName(data.tenant.name); }, [data]);
 
   async function impersonate() {
@@ -124,6 +125,11 @@ export default function TenantCardPage() {
     try { await fn(); setNotice(ok); refresh(); }
     catch { setNotice("Σφάλμα — η ενέργεια απέτυχε. Δοκιμάστε ξανά."); }
     finally { setBusy(false); }
+  }
+  async function assignPackage(code: string) {
+    if (!code) return;
+    if (!(await appConfirm(`Ένταξη του πελάτη στο πακέτο «${code}»; Θα κληρονομήσει τις δυνατότητες, τιμή, θέσεις & κύκλο του πακέτου. Τυχόν εξαιρέσεις (overrides) παραμένουν.`, { title: "Αλλαγή πακέτου", confirmText: "Εφαρμογή πακέτου" }))) return;
+    act(() => adminApi(`/admin/tenants/${encodeURIComponent(id)}/package`, { method: "POST", body: JSON.stringify({ package_code: code }) }), "Το πακέτο εφαρμόστηκε ✓ (ισχύει στο επόμενο login του πελάτη)");
   }
 
   if (isLoading || !data) return <div className="text-slate-400">Φόρτωση…</div>;
@@ -174,6 +180,15 @@ export default function TenantCardPage() {
       {/* Δυνατότητες / Modules — enable per pharmacist; locked ⇒ hidden from their panel */}
       <div className="mb-6 rounded-xl border border-slate-200 bg-white p-6">
         <div className="mb-1 text-sm font-semibold text-slate-700">Δυνατότητες (ανά φαρμακείο)</div>
+        {/* package assignment → tenant inherits the package's capabilities */}
+        <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg bg-indigo-50/60 p-3">
+          <span className="text-sm font-medium text-slate-700">📦 Πακέτο πελάτη:</span>
+          <select value={s.plan ?? ""} disabled={busy} onChange={(e) => assignPackage(e.target.value)} className="rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none">
+            <option value="">— επίλεξε πακέτο —</option>
+            {(pkgsQ.data?.items ?? []).map((p) => <option key={p._id} value={p._id}>{p.name || p._id}</option>)}
+          </select>
+          <span className="text-xs text-slate-500">Ο πελάτης κληρονομεί αυτόματα τις δυνατότητες του πακέτου· παρακάτω κάνεις τυχόν εξαιρέσεις.</span>
+        </div>
         <p className="mb-3 text-xs text-slate-400">Ό,τι είναι κλειστό δεν εμφανίζεται καθόλου στο πάνελ του φαρμακοποιού. Οι αλλαγές ισχύουν μετά την επόμενη σύνδεσή του.</p>
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
           {MODULE_LABELS.map(([key, label]) => {
