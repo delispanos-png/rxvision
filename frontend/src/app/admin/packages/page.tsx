@@ -222,10 +222,19 @@ export default function PackagesAdminPage() {
                 </section>
 
                 {/* ── Add-ons ── */}
-                {addonCat.length > 0 && (
+                {addonCat.length > 0 && (() => {
+                  const offerCount = addonCat.filter((a) => !(p.modules ?? []).includes(a._id) && (p.available_addons ?? allAddonIds).includes(a._id)).length;
+                  return (
                   <section className="rounded-xl border border-slate-200 bg-white p-4">
-                    <h4 className="mb-1 text-[11px] font-bold uppercase tracking-wider text-slate-400">Διαθέσιμα add-ons (à la carte)</h4>
-                    <p className="mb-3 text-[11px] text-slate-400">Τι μπορεί να προσθέσει επιπλέον ο πελάτης σε αυτό το πακέτο. Όσα είναι ήδη στο πλάνο εμφανίζονται γκρι.</p>
+                    <div className="mb-1 flex items-center justify-between gap-2">
+                      <h4 className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Διαθέσιμα add-ons (à la carte)</h4>
+                      <div className="flex gap-1.5 text-[11px]">
+                        <button type="button" onClick={() => setP(p._id, { available_addons: allAddonIds })} className="rounded border border-slate-200 px-2 py-0.5 text-slate-500 hover:bg-slate-50">Όλα</button>
+                        <button type="button" onClick={() => setP(p._id, { available_addons: [] })} className="rounded border border-slate-200 px-2 py-0.5 text-slate-500 hover:bg-slate-50">Κανένα</button>
+                      </div>
+                    </div>
+                    <p className="mb-3 text-[11px] text-slate-400">Τι μπορεί να προσθέσει επιπλέον ο πελάτης σε αυτό το πακέτο. Όσα είναι ήδη στο πλάνο εμφανίζονται γκρι. <b>Για να μην προσφέρεται κανένα → πάτησε «Κανένα».</b></p>
+                    {offerCount === 0 && <div className="mb-2 rounded-lg bg-amber-50 px-3 py-1.5 text-[11px] font-medium text-amber-700">✗ Δεν προσφέρεται κανένα add-on σε αυτό το πακέτο.</div>}
                     <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2 lg:grid-cols-3">
                       {addonCat.map((a) => {
                         const inModules = (p.modules ?? []).includes(a._id);
@@ -239,7 +248,8 @@ export default function PackagesAdminPage() {
                       })}
                     </div>
                   </section>
-                )}
+                  );
+                })()}
 
                 {/* ── Κάρτα τιμολόγησης (marketing) ── */}
                 <section className="rounded-xl border border-slate-200 bg-white p-4">
