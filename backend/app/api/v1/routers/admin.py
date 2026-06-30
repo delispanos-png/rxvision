@@ -475,6 +475,15 @@ async def update_package(code: str, body: PackageIn,
         upd["updated_at"] = datetime.now(tz=timezone.utc)
         await db["packages"].update_one(  # tenant-ok: platform-level catalog, explicit _id
             {"_id": code}, {"$set": upd}, upsert=True)
+        # Propagate the plan-defining fields to EXISTING subscribers on this package, so editing a
+        # package immediately changes what its tenants get (no stale modules_included snapshot).
+        prop: dict = {}
+        if body.modules is not None:
+            prop["modules_included"] = body.modules
+        if body.available_addons is not None:
+            prop["available_addons"] = body.available_addons
+        if prop:
+            await db["subscriptions"].update_many({"plan": code}, {"$set": prop})
     return {"ok": True, "package": jsonsafe(await db["packages"].find_one({"_id": code}))}
 
 
