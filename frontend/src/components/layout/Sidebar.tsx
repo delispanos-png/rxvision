@@ -101,6 +101,14 @@ export function Sidebar() {
     const keys = Array.isArray(m) ? m : [m];
     return keys.some((k) => modules[k] === "enabled" || modules[k] === "trial");
   };
+  // A locked circuit stays in the menu (with 🔒 + upsell) ONLY if it's a purchasable add-on offered by
+  // this tenant's package. Plain unselected modules (e.g. pharmacyone) just disappear from the menu.
+  const addonsQ = useQuery({ queryKey: ["addons"], queryFn: () => api<{ addons: { _id: string; status: string; offered?: boolean }[] }>("/addons"), retry: false });
+  const upsellable = new Set((addonsQ.data?.addons ?? []).filter((a) => a.status === "available" && a.offered).map((a) => a._id));
+  const canUpsell = (m?: string | string[]) => {
+    const keys = Array.isArray(m) ? m : m ? [m] : [];
+    return keys.some((k) => upsellable.has(k));
+  };
 
   // Locked circuits STAY visible in the menu — clicking opens an upsell prompt instead of navigating.
   function openUpsell(n: Node) {
@@ -126,7 +134,10 @@ export function Sidebar() {
     }
   }
 
-  const groups = GROUPS;   // show every circuit; locked ones become upsell prompts
+  // show enabled circuits + locked-but-offerable (upsell); hide plain unavailable ones + empty groups
+  const groups = GROUPS
+    .map((g) => ({ ...g, items: g.items.filter((n) => allowedMod(n.module) || canUpsell(n.module)) }))
+    .filter((g) => g.items.length > 0);
 
   const leafActive = (href: string) => {
     const base = href.split(/[?#]/)[0];
@@ -185,8 +196,10 @@ export function Sidebar() {
                 {g.items.map((n) => {
                   const Icon = n.icon;
                   const active = nodeActive(n);
-                  // locked circuit → visible but dimmed; click opens the upsell prompt
+                  // locked circuit: keep in menu (dimmed + 🔒 + upsell) ONLY if it's a purchasable
+                  // add-on offered by the package; otherwise hide it entirely.
                   if (!allowedMod(n.module)) {
+                    if (!canUpsell(n.module)) return null;
                     return (
                       <button key={n.label} onClick={() => openUpsell(n)} title={collapsed ? t(n.label, n.en) : undefined}
                         className={`${linkCls(false)} w-full opacity-55`}>
