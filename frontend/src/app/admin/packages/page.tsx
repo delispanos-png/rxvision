@@ -55,13 +55,6 @@ export default function PackagesAdminPage() {
   const toggleOpen = (code: string) => setOpen((s) => { const n = new Set(s); n.has(code) ? n.delete(code) : n.add(code); return n; });
 
   function setP(code: string, patch: Partial<Pkg>) { setDrafts((d) => ({ ...d, [code]: { ...d[code], ...patch } })); }
-  function toggleInList(code: string, field: "modules" | "available_addons", key: string, fallback: string[]) {
-    setDrafts((d) => {
-      const cur = new Set(d[code]?.[field] ?? fallback);
-      cur.has(key) ? cur.delete(key) : cur.add(key);
-      return { ...d, [code]: { ...d[code], [field]: [...cur] } };
-    });
-  }
   // Toggle a module AND auto-sync its label into the pricing-card features. On check the line is
   // inserted at its CANONICAL position (MODULE_LABELS order) — so module features keep the same order
   // across all packages even after un/re-checking — never appended at the end. On uncheck it's removed.
@@ -92,6 +85,34 @@ export default function PackagesAdminPage() {
         }
       }
       return { ...d, [code]: { ...p, modules: [...mods], features: feats } };
+    });
+  }
+  // 3-way state for an add-on-capable feature: "plan" (included module) | "addon" (sold à la carte) |
+  // "off" (neither). Keeps modules + available_addons + card features all in sync from one control.
+  function setAddonMode(code: string, addonId: string, mode: "plan" | "addon" | "off") {
+    setDrafts((d) => {
+      const p = d[code] || {};
+      const mods = new Set(p.modules ?? []);
+      const avail = new Set(p.available_addons ?? allAddonIds);
+      const feats = [...(p.features ?? [])];
+      const norm = (x: string) => x.trim();
+      const order = MODULE_LABELS.map(([k]) => k);
+      const keyByLabel: Record<string, string> = Object.fromEntries(MODULE_LABELS.map(([k, l]) => [l, k]));
+      const labelEntry = MODULE_LABELS.find(([k]) => k === addonId);
+      const label = labelEntry ? labelEntry[1] : (addonCat.find((a) => a._id === addonId)?.name || addonId);
+      const removeFeat = () => { const i = feats.findIndex((f) => norm(f) === norm(label)); if (i >= 0) feats.splice(i, 1); };
+      const addFeat = () => {
+        if (feats.some((f) => norm(f) === norm(label))) return;
+        const ti = order.indexOf(addonId);
+        if (ti < 0) { feats.push(label); return; }
+        let pos = feats.length;
+        for (let j = 0; j < feats.length; j++) { const k2 = keyByLabel[norm(feats[j])]; if (k2 && order.indexOf(k2) > ti) { pos = j; break; } }
+        feats.splice(pos, 0, label);
+      };
+      if (mode === "plan") { mods.add(addonId); avail.delete(addonId); addFeat(); }
+      else if (mode === "addon") { mods.delete(addonId); avail.add(addonId); removeFeat(); }
+      else { mods.delete(addonId); avail.delete(addonId); removeFeat(); }
+      return { ...d, [code]: { ...p, modules: [...mods], available_addons: [...avail], features: feats } };
     });
   }
   // Re-sort module-derived feature lines into canonical (MODULE_LABELS) order; keep manual lines after.
@@ -233,8 +254,9 @@ export default function PackagesAdminPage() {
                 {/* ── Δυνατότητες (modules) ── */}
                 <section className="rounded-xl border border-slate-200 bg-white p-4">
                   <h4 className="mb-3 text-[11px] font-bold uppercase tracking-wider text-slate-400">Δυνατότητες που ξεκλειδώνει (modules)</h4>
+                  <p className="-mt-2 mb-3 text-[11px] text-slate-400">Τα add-on-capable (AI Βοηθός, Πύλη, Πιστότητα, Παραγγελίες) ρυθμίζονται παρακάτω στην ενότητα add-ons.</p>
                   <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2 lg:grid-cols-3">
-                    {MODULE_LABELS.map(([key, label]) => {
+                    {MODULE_LABELS.filter(([key]) => !allAddonIds.includes(key)).map(([key, label]) => {
                       const on = (p.modules ?? []).includes(key);
                       return (
                         <label key={key} className={`flex cursor-pointer items-center justify-between rounded-lg border px-3 py-1.5 text-sm ${on ? "border-indigo-200 bg-indigo-50/50" : "border-slate-200 hover:bg-slate-50"}`}>
@@ -247,34 +269,33 @@ export default function PackagesAdminPage() {
                 </section>
 
                 {/* ── Add-ons ── */}
-                {addonCat.length > 0 && (() => {
-                  const offerCount = addonCat.filter((a) => !(p.modules ?? []).includes(a._id) && (p.available_addons ?? allAddonIds).includes(a._id)).length;
-                  return (
+                {addonCat.length > 0 && (
                   <section className="rounded-xl border border-slate-200 bg-white p-4">
-                    <div className="mb-1 flex items-center justify-between gap-2">
-                      <h4 className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Διαθέσιμα add-ons (à la carte)</h4>
-                      <div className="flex gap-1.5 text-[11px]">
-                        <button type="button" onClick={() => setP(p._id, { available_addons: allAddonIds })} className="rounded border border-slate-200 px-2 py-0.5 text-slate-500 hover:bg-slate-50">Όλα</button>
-                        <button type="button" onClick={() => setP(p._id, { available_addons: [] })} className="rounded border border-slate-200 px-2 py-0.5 text-slate-500 hover:bg-slate-50">Κανένα</button>
-                      </div>
-                    </div>
-                    <p className="mb-3 text-[11px] text-slate-400">Τι μπορεί να προσθέσει επιπλέον ο πελάτης σε αυτό το πακέτο. Όσα είναι ήδη στο πλάνο εμφανίζονται γκρι. <b>Για να μην προσφέρεται κανένα → πάτησε «Κανένα».</b></p>
-                    {offerCount === 0 && <div className="mb-2 rounded-lg bg-amber-50 px-3 py-1.5 text-[11px] font-medium text-amber-700">✗ Δεν προσφέρεται κανένα add-on σε αυτό το πακέτο.</div>}
-                    <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2 lg:grid-cols-3">
+                    <h4 className="mb-1 text-[11px] font-bold uppercase tracking-wider text-slate-400">Add-ons / πρόσθετες δυνατότητες</h4>
+                    <p className="mb-3 text-[11px] text-slate-400">Για κάθε πρόσθετο διάλεξε: <b className="text-emerald-600">Στο πλάνο</b> (περιλαμβάνεται δωρεάν) · <b className="text-violet-600">Add-on</b> (μπορεί να το αγοράσει έξτρα) · <b className="text-slate-500">Όχι</b> (ούτε περιλαμβάνεται ούτε αγοράζεται).</p>
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                       {addonCat.map((a) => {
-                        const inModules = (p.modules ?? []).includes(a._id);
-                        const on = !inModules && (p.available_addons ?? allAddonIds).includes(a._id);
+                        const inPlan = (p.modules ?? []).includes(a._id);
+                        const isAddon = !inPlan && (p.available_addons ?? allAddonIds).includes(a._id);
+                        const mode = inPlan ? "plan" : isAddon ? "addon" : "off";
+                        const opt = (m: "plan" | "addon" | "off", lbl: string, activeCls: string) => (
+                          <button type="button" onClick={() => setAddonMode(p._id, a._id, m)}
+                            className={`flex-1 rounded-md px-2 py-1 text-[11px] font-semibold transition ${mode === m ? activeCls : "text-slate-500 hover:bg-slate-200/60"}`}>{lbl}</button>
+                        );
                         return (
-                          <label key={a._id} className={`flex items-center justify-between rounded-lg border px-3 py-1.5 text-sm ${inModules ? "border-slate-100 bg-slate-50 text-slate-400" : on ? "cursor-pointer border-violet-200 bg-violet-50/50" : "cursor-pointer border-slate-200 hover:bg-slate-50"}`}>
-                            <span>{a.icon} {a.name || a._id}{inModules && <span className="ml-1 text-[10px]">(στο πλάνο)</span>}</span>
-                            <input type="checkbox" disabled={inModules} checked={on} onChange={() => toggleInList(p._id, "available_addons", a._id, allAddonIds)} className="h-4 w-4 accent-violet-600 disabled:opacity-40" />
-                          </label>
+                          <div key={a._id} className="rounded-lg border border-slate-200 p-2.5">
+                            <div className="mb-1.5 truncate text-sm font-medium text-slate-700">{a.icon} {a.name || a._id}</div>
+                            <div className="flex gap-1 rounded-lg bg-slate-100 p-0.5">
+                              {opt("plan", "Στο πλάνο", "bg-emerald-600 text-white shadow")}
+                              {opt("addon", "Add-on", "bg-violet-600 text-white shadow")}
+                              {opt("off", "Όχι", "bg-slate-500 text-white shadow")}
+                            </div>
+                          </div>
                         );
                       })}
                     </div>
                   </section>
-                  );
-                })()}
+                )}
 
                 {/* ── Κάρτα τιμολόγησης (marketing) ── */}
                 <section className="rounded-xl border border-slate-200 bg-white p-4">
