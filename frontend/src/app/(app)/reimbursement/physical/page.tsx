@@ -59,8 +59,10 @@ export default function PhysicalCheckPage() {
   const groupLabel = (g: string) => g === "all" ? t("Όλες μαζί", "All together") : g;
 
   const { data } = useQuery({ queryKey: ["reimb-physical", period, group], queryFn: () => api<Check>(`/reimbursement/physical?period=${period}&group=${encodeURIComponent(group)}`) });
-  const { data: prefs } = useQuery({ queryKey: ["reimb-settings"], queryFn: () => api<{ closing_mode: string }>("/reimbursement/settings") });
+  const { data: prefs } = useQuery({ queryKey: ["reimb-settings"], queryFn: () => api<{ closing_mode: string; list_open: boolean }>("/reimbursement/settings") });
   const mode: "classic" | "guided" | "express" = prefs?.closing_mode === "guided" ? "guided" : prefs?.closing_mode === "express" ? "express" : "classic";
+  const [listOpenLocal, setListOpenLocal] = useState<boolean | null>(null);   // session override του default από ρυθμίσεις
+  const listOpen = listOpenLocal ?? (prefs?.list_open ?? false);
   const byDay = data?.by_day ?? [];
   // ενημερωτικό παράθυρο μήνα — εμφανίζεται μία φορά ανά μήνα όταν φορτώσει η περίληψη
   useEffect(() => {   // briefing pop-up μόνο στον κλασικό· στον καθοδηγούμενο το Στάδιο 1 είναι καθαρό μέτρημα
@@ -682,7 +684,7 @@ export default function PhysicalCheckPage() {
 
       {/* this day's prescriptions — μόνο στον κλασικό (στο guided μένει λιτό: μόνο σκανάρισμα) */}
       {mode === "classic" && (
-        <details className="rounded-2xl border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900">
+        <details open={listOpen} onToggle={(e) => setListOpenLocal((e.currentTarget as HTMLDetailsElement).open)} className="rounded-2xl border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900">
           <summary className="cursor-pointer list-none text-sm font-semibold text-slate-700 dark:text-slate-200">▸ {t("Συνταγές ημέρας", "Day's prescriptions")} ({dayItems.length})</summary>
           <div className="mt-2"><DataTable pageSize={50} columns={cols} rows={shownItems} rowKey={(r) => r.external_id} empty={onlyChecks ? t("Καμία συνταγή χρειάζεται έλεγχο 🎉", "Nothing needs checking 🎉") : t("Καμία συνταγή.", "No prescriptions.")} /></div>
         </details>

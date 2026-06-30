@@ -903,17 +903,19 @@ class ReimbursementRepository(BaseRepository):
         return {"ok": True, "external_id": external_id, "visual_checked": not undo}
 
     async def closing_prefs(self) -> dict:
-        """Προτιμήσεις κλεισίματος (ανά φαρμακείο) — π.χ. τρόπος ελέγχου barcode."""
+        """Προτιμήσεις κλεισίματος (ανά φαρμακείο) — τρόπος ελέγχου barcode + αν η λίστα ξεκινά ανοιχτή."""
         s = await self._db["reimbursement_settings"].find_one({"tenant_id": self.tenant_id}) or {}
-        return {"closing_mode": s.get("closing_mode", "classic")}
+        return {"closing_mode": s.get("closing_mode", "classic"), "list_open": bool(s.get("list_open", False))}
 
-    async def set_closing_prefs(self, closing_mode: str) -> dict:
-        mode = closing_mode if closing_mode in ("guided", "express") else "classic"
+    async def set_closing_prefs(self, closing_mode: str | None = None, list_open: bool | None = None) -> dict:
+        upd: dict = {"tenant_id": self.tenant_id, "updated_at": _now()}
+        if closing_mode is not None:
+            upd["closing_mode"] = closing_mode if closing_mode in ("guided", "express") else "classic"
+        if list_open is not None:
+            upd["list_open"] = bool(list_open)
         await self._db["reimbursement_settings"].update_one(
-            {"tenant_id": self.tenant_id},
-            {"$set": {"tenant_id": self.tenant_id, "closing_mode": mode, "updated_at": _now()}},
-            upsert=True)
-        return {"ok": True, "closing_mode": mode}
+            {"tenant_id": self.tenant_id}, {"$set": upd}, upsert=True)
+        return await self.closing_prefs()
 
     # ── DAILY RECONCILIATION — amounts + execution counts per day (vs the pharmacist's program) ─
     async def daily_reconciliation(self, period: str, group: str = "all") -> dict:
