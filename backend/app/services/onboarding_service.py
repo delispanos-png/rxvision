@@ -75,10 +75,12 @@ class OnboardingService:
         price = (pkg or {}).get("price_yearly" if yearly else "price_monthly", 0) if pkg else 0
         # seats & cost breakdown: base package + chosen SLA tier + extra concurrent users
         sla_code = sla or (pkg or {}).get("sla", "basic")
-        included_seats = int((pkg or {}).get("seats", 1) or 1)
-        chosen_seats = max(int(seats or included_seats), included_seats)
-        extra_users = max(0, chosen_seats - included_seats)
+        included_seats = int((pkg or {}).get("seats", 1) or 1)   # package MAX («έως N»), not a minimum
         extra_rate = int((pkg or {}).get("extra_user_price_yearly" if yearly else "extra_user_price", 0) or 0)
+        chosen_seats = max(1, int(seats or included_seats))       # customer picks 1…N
+        if extra_rate <= 0:                                       # no extra-user pricing → hard cap at the package max
+            chosen_seats = min(chosen_seats, included_seats)
+        extra_users = max(0, chosen_seats - included_seats)
         sla_doc = await db["sla_tiers"].find_one({"_id": sla_code}) or {}
         sla_price = int(sla_doc.get("price_yearly" if yearly else "price_monthly", 0) or 0)
         extra_total = extra_users * extra_rate
