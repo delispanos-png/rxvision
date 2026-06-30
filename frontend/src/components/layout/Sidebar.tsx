@@ -67,7 +67,7 @@ const GROUPS: Group[] = [
     { label: "Πιστότητα", en: "Loyalty", icon: Gift, href: "/loyalty", module: "loyalty" },
     { label: "Κατάλογος ειδών", en: "Product Catalog", icon: Boxes, href: "/catalog", module: "order_delivery" },
     { label: "Παραγγελίες & Αποστολή", en: "Orders & Delivery", icon: Truck, href: "/orders-delivery", module: "order_delivery" },
-    { label: "PharmacyOne", en: "PharmacyOne", icon: Boxes, href: "/pharmacyone", module: "pharmacyone" },
+    // PharmacyOne is a back-office INTEGRATION (data source), not a user-facing capability → not in the menu.
     { label: "Επικοινωνία", en: "Communications", icon: Mail, href: "/communications" },
     { label: "Οδηγός δεικτών", en: "Indicators guide", icon: BookOpen, href: "/guide" },
     { label: "Ρυθμίσεις", en: "Settings", icon: Settings, href: "/settings/users" },
