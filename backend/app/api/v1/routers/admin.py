@@ -605,6 +605,13 @@ class IntegrationsIn(BaseModel):
     anthropic_enabled: bool | None = None
     anthropic_model: str | None = None        # model for pharmacist queries (cheap)
     anthropic_admin_model: str | None = None  # model for admin KB corrections (strong)
+    # Central messaging (Apifon SMS + Viber) + per-channel prices (cents) for the prepaid wallet
+    apifon_token: str | None = None
+    apifon_secret: str | None = None
+    sms_sender: str | None = None
+    price_email: int | None = None
+    price_sms: int | None = None
+    price_viber: int | None = None
 
 
 @router.get("/integrations")
@@ -614,6 +621,8 @@ async def get_integrations(_: PlatformContext = Depends(get_platform_admin)):
     aade = await db["platform_settings"].find_one({"_id": "aade"}) or {}
     rev = await db["platform_settings"].find_one({"_id": "revolut"}) or {}
     ant = await db["platform_settings"].find_one({"_id": "anthropic"}) or {}
+    comms_cfg = await db["platform_settings"].find_one({"_id": "comms"}) or {}
+    _pr = comms_cfg.get("prices") or {}
     return {
         "aade": {"username": aade.get("username"),
                  "configured": bool(aade.get("username") and aade.get("password"))},
@@ -623,6 +632,11 @@ async def get_integrations(_: PlatformContext = Depends(get_platform_admin)):
                       "enabled": ant.get("enabled", True),
                       "model": ant.get("model", "claude-opus-4-8"),
                       "admin_model": ant.get("admin_model", "claude-opus-4-8")},
+        "comms": {"apifon_token_set": bool(comms_cfg.get("apifon_token")),
+                  "apifon_secret_set": bool(comms_cfg.get("apifon_secret")),
+                  "sms_sender": comms_cfg.get("sms_sender") or "RxVision",
+                  "prices": {"email": int(_pr.get("email", 2)), "sms": int(_pr.get("sms", 6)),
+                             "viber": int(_pr.get("viber", 4))}},
     }
 
 
@@ -658,7 +672,40 @@ async def set_integrations(body: IntegrationsIn,
         ant["admin_model"] = body.anthropic_admin_model
     if ant:
         await db["platform_settings"].update_one({"_id": "anthropic"}, {"$set": ant}, upsert=True)
+    cm: dict = {}
+    if body.apifon_token:
+        cm["apifon_token"] = body.apifon_token
+    if body.apifon_secret:
+        cm["apifon_secret"] = body.apifon_secret
+    if body.sms_sender is not None:
+        cm["sms_sender"] = body.sms_sender
+    price_set = {k: v for k, v in (("email", body.price_email), ("sms", body.price_sms),
+                                   ("viber", body.price_viber)) if v is not None}
+    if price_set:
+        cm.update({f"prices.{k}": int(v) for k, v in price_set.items()})
+    if cm:
+        await db["platform_settings"].update_one({"_id": "comms"}, {"$set": cm}, upsert=True)
     return {"ok": True}
+
+
+class WalletCreditIn(BaseModel):
+    amount_cents: int
+    reason: str | None = "admin_grant"
+
+
+@router.get("/tenants/{tenant_id}/wallet")
+async def admin_wallet(tenant_id: str, _: PlatformContext = Depends(get_platform_admin)):
+    from app.services import message_wallet
+    return {**await message_wallet.usage_summary(tenant_id),
+            "ledger": await message_wallet.ledger(tenant_id, limit=50)}
+
+
+@router.post("/tenants/{tenant_id}/wallet/credit")
+async def admin_wallet_credit(tenant_id: str, body: WalletCreditIn,
+                              _: PlatformContext = Depends(get_platform_admin)):
+    """Add message credits to a pharmacy's prepaid wallet (top-up / manual grant)."""
+    from app.services import message_wallet
+    return await message_wallet.credit(tenant_id, int(body.amount_cents), reason=body.reason or "admin_grant")
 
 
 @router.post("/tenants")

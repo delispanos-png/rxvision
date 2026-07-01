@@ -43,12 +43,14 @@ async def save_smtp(cfg: dict) -> None:
     await db["platform_settings"].update_one({"_id": "smtp"}, {"$set": cfg}, upsert=True)
 
 
-def _send_one(cfg: dict, to: str, subject: str, html: str) -> None:
+def _send_one(cfg: dict, to: str, subject: str, html: str, reply_to: str | None = None) -> None:
     msg = MIMEText(html, "html", "utf-8")
     # Headers must be RFC2047-encoded or as_string() blows up on non-ASCII (Greek subjects/names).
     msg["Subject"] = Header(subject, "utf-8")
     msg["From"] = formataddr((str(Header(cfg.get("from_name", "RxVision"), "utf-8")), cfg["from_email"]))
     msg["To"] = to
+    if reply_to or cfg.get("reply_to"):
+        msg["Reply-To"] = reply_to or cfg["reply_to"]
     port = int(cfg.get("port", 587))
     ctx = ssl.create_default_context()
     # Port 465 = implicit TLS (SMTPS) → SMTP_SSL. Port 587/25 = STARTTLS upgrade.

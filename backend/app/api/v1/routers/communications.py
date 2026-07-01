@@ -12,62 +12,53 @@ from pydantic import BaseModel
 
 from app.core.db import shared_db
 from app.core.deps import TenantContext, require
-from app.services import comms, consent
+from app.services import comms, consent, message_wallet
 
 router = APIRouter()
 _MODULE = "patient_analytics"
-_SECRET_KEYS = ("smtp_password", "apifon_token", "apifon_secret")
-
-
-class SettingsIn(BaseModel):
-    from_name: str | None = None
-    from_email: str | None = None
-    smtp_host: str | None = None
-    smtp_port: int | None = 587
-    smtp_username: str | None = None
-    smtp_password: str | None = None
-    smtp_use_tls: bool = True
-    sms_sender: str | None = None
-    apifon_token: str | None = None
-    apifon_secret: str | None = None
 
 
 @router.get("/settings")
 async def get_settings(ctx: TenantContext = Depends(require("patients:read", module=_MODULE))):
-    return comms.public_view(comms.get_config(ctx.tenant_id))
+    """Central model: no per-pharmacy SMTP/SMS config anymore — just the prepaid credit wallet status."""
+    return {"central": True, **await message_wallet.usage_summary(ctx.tenant_id)}
 
 
-@router.put("/settings")
-async def put_settings(body: SettingsIn, ctx: TenantContext = Depends(require("patients:read", module=_MODULE))):
-    existing = comms.get_config(ctx.tenant_id)
-    new = body.model_dump()
-    # keep stored secrets if the form sent them blank (masked)
-    for k in _SECRET_KEYS:
-        if not new.get(k) and existing.get(k):
-            new[k] = existing[k]
-    comms.save_config(ctx.tenant_id, {k: v for k, v in new.items() if v is not None})
-    return comms.public_view(comms.get_config(ctx.tenant_id))
+@router.get("/wallet")
+async def wallet(ctx: TenantContext = Depends(require("patients:read", module=_MODULE))):
+    return {**await message_wallet.usage_summary(ctx.tenant_id),
+            "ledger": await message_wallet.ledger(ctx.tenant_id, limit=50)}
+
+
+async def _test_send(channel: str, to: str, tenant_id: str):
+    try:
+        if channel == "email":
+            await comms.send_email(tenant_id, to, "RxVision — δοκιμαστικό email",
+                                   "<p>Το κεντρικό email της πλατφόρμας λειτουργεί για το φαρμακείο σου. ✅</p>")
+        elif channel == "viber":
+            await comms.send_viber(tenant_id, to, "RxVision: δοκιμαστικό Viber από το φαρμακείο σου.")
+        else:
+            await comms.send_sms(tenant_id, to, "RxVision: δοκιμαστικό SMS από το φαρμακείο σου.")
+    except message_wallet.InsufficientCredits:
+        raise HTTPException(status.HTTP_402_PAYMENT_REQUIRED, "Ανεπαρκές υπόλοιπο μηνυμάτων.")
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+    return {"ok": True}
 
 
 @router.post("/test-email")
 async def test_email(to: str = Query(...), ctx: TenantContext = Depends(require("patients:read", module=_MODULE))):
-    cfg = comms.get_config(ctx.tenant_id)
-    try:
-        await comms.send_email(cfg, to, "RxVision — δοκιμαστικό email",
-                               "<p>Το email αποστολέα του φαρμακείου σας λειτουργεί. ✅</p>")
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
-    return {"ok": True}
+    return await _test_send("email", to, ctx.tenant_id)
 
 
 @router.post("/test-sms")
 async def test_sms(to: str = Query(...), ctx: TenantContext = Depends(require("patients:read", module=_MODULE))):
-    cfg = comms.get_config(ctx.tenant_id)
-    try:
-        await comms.send_sms(cfg, to, "RxVision: δοκιμαστικό SMS από το φαρμακείο σας.")
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
-    return {"ok": True}
+    return await _test_send("sms", to, ctx.tenant_id)
+
+
+@router.post("/test-viber")
+async def test_viber(to: str = Query(...), ctx: TenantContext = Depends(require("patients:read", module=_MODULE))):
+    return await _test_send("viber", to, ctx.tenant_id)
 
 
 async def _segment_patient_ids(tenant_id: str, segment: str, value: str | None):
@@ -132,7 +123,7 @@ async def _audience(tenant_id: str, channel: str, segment: str = "all", value: s
 
 
 @router.get("/audience")
-async def audience(channel: Literal["email", "sms"] = "email",
+async def audience(channel: Literal["email", "sms", "viber"] = "email",
                    segment: str = "all", value: str | None = None,
                    ctx: TenantContext = Depends(require("patients:read", module=_MODULE))):
     rows = await _audience(ctx.tenant_id, channel, segment, value)
@@ -140,7 +131,7 @@ async def audience(channel: Literal["email", "sms"] = "email",
 
 
 class CampaignIn(BaseModel):
-    channel: Literal["email", "sms"]
+    channel: Literal["email", "sms", "viber"]
     subject: str | None = None
     message: str
     segment: str = "all"
@@ -162,9 +153,10 @@ def _email_html(message: str, from_name: str | None) -> str:
 
 @router.post("/send", status_code=202)
 async def send_campaign(body: CampaignIn, ctx: TenantContext = Depends(require("patients:read", module=_MODULE))):
-    cfg = comms.get_config(ctx.tenant_id)
+    ph = await comms._pharmacy(ctx.tenant_id)
     rows = await _audience(ctx.tenant_id, body.channel, body.segment, body.value)
     sent = failed = 0
+    stopped = False
     field = "email" if body.channel == "email" else "mobile"
     for r in rows[:2000]:
         to = r.get(field)
@@ -172,11 +164,16 @@ async def send_campaign(body: CampaignIn, ctx: TenantContext = Depends(require("
         text = body.message.replace("{name}", r.get("name") or "").replace("{first}", first)
         try:
             if body.channel == "email":
-                await comms.send_email(cfg, to, body.subject or "Ενημέρωση φαρμακείου",
-                                       _email_html(text, cfg.get("from_name")))
+                await comms.send_email(ctx.tenant_id, to, body.subject or "Ενημέρωση φαρμακείου",
+                                       _email_html(text, ph["name"]))
+            elif body.channel == "viber":
+                await comms.send_viber(ctx.tenant_id, to, text)
             else:
-                await comms.send_sms(cfg, to, text)
+                await comms.send_sms(ctx.tenant_id, to, text)
             sent += 1
+        except message_wallet.InsufficientCredits:
+            stopped = True   # wallet empty → stop the campaign, report what went out
+            break
         except Exception:  # noqa: BLE001
             failed += 1
     await shared_db()["comms_campaigns"].insert_one({
@@ -185,7 +182,8 @@ async def send_campaign(body: CampaignIn, ctx: TenantContext = Depends(require("
         "by": ctx.email if hasattr(ctx, "email") else None,
         "created_at": datetime.now(tz=timezone.utc),
     })
-    return {"recipients": len(rows), "sent": sent, "failed": failed}
+    return {"recipients": len(rows), "sent": sent, "failed": failed,
+            "stopped_no_credits": stopped, "balance_cents": await message_wallet.balance(ctx.tenant_id)}
 
 
 @router.get("/history")

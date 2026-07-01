@@ -179,7 +179,6 @@ async def notify(body: NotifyIn, ctx: TenantContext = Depends(require(_PERM, mod
     if body.dry_run:
         return {"recipients": len(targets), "channel": body.channel, "dry_run": True}
 
-    cfg = comms.get_config(ctx.tenant_id)
     accounts = PatientAccountRepository()
     sent = failed = 0
     for r in targets[:2000]:
@@ -187,10 +186,12 @@ async def notify(body: NotifyIn, ctx: TenantContext = Depends(require(_PERM, mod
         text = (body.message or "").replace("{name}", r.get("name") or "").replace("{first}", first)
         try:
             if body.channel == "email":
-                await comms.send_email(cfg, r["email"], body.subject or "Πρόσκληση εμβολιασμού γρίπης",
-                                       _vacc_email_html(text, cfg.get("from_name")))
+                await comms.send_email(ctx.tenant_id, r["email"], body.subject or "Πρόσκληση εμβολιασμού γρίπης",
+                                       _vacc_email_html(text, None))
             elif body.channel == "sms":
-                await comms.send_sms(cfg, r["mobile"], text)
+                await comms.send_sms(ctx.tenant_id, r["mobile"], text)
+            elif body.channel == "viber":
+                await comms.send_viber(ctx.tenant_id, r["mobile"], text)
             else:
                 acc = await accounts.get_by_amka(r.get("amka") or "")
                 n = await push_service.send_to_account(

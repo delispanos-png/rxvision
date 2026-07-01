@@ -35,7 +35,7 @@ export default function CommunicationsPage() {
   const qc = useQueryClient();
   const history = useQuery({ queryKey: ["comms", "history"], queryFn: () => api<{ items: Campaign[] }>("/communications/history"), retry: false });
 
-  const [channel, setChannel] = useState<"email" | "sms">("email");
+  const [channel, setChannel] = useState<"email" | "sms" | "viber">("email");
   const [segment, setSegment] = useState("all");
   const [value, setValue] = useState("");
   const [subject, setSubject] = useState("");
@@ -78,6 +78,7 @@ export default function CommunicationsPage() {
           <div className="mb-4 flex gap-2">
             <button onClick={() => setChannel("email")} className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm font-medium ${channel === "email" ? "border-brand-300 bg-brand-50 text-brand-700" : "border-slate-300 text-slate-600"}`}><Mail className="h-4 w-4" /> Email</button>
             <button onClick={() => setChannel("sms")} className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm font-medium ${channel === "sms" ? "border-brand-300 bg-brand-50 text-brand-700" : "border-slate-300 text-slate-600"}`}><MessageSquare className="h-4 w-4" /> SMS</button>
+            <button onClick={() => setChannel("viber")} className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm font-medium ${channel === "viber" ? "border-violet-300 bg-violet-50 text-violet-700" : "border-slate-300 text-slate-600"}`}><MessageSquare className="h-4 w-4" /> Viber</button>
           </div>
 
           {/* audience builder */}
@@ -99,9 +100,9 @@ export default function CommunicationsPage() {
           </div>
 
           {channel === "email" && <input value={subject} onChange={(e) => setSubject(e.target.value)} placeholder={t("Θέμα email", "Email subject")} className={`${inp} mb-2 w-full`} />}
-          <textarea value={message} onChange={(e) => setMessage(e.target.value)} rows={5} placeholder={channel === "sms" ? t("Κείμενο SMS…", "SMS text…") : t("Μήνυμα… (μεταβλητές: {name} = πλήρες όνομα, {first} = επώνυμο)", "Message… (variables: {name} = full name, {first} = last name)")} className={`${inp} w-full`} />
+          <textarea value={message} onChange={(e) => setMessage(e.target.value)} rows={5} placeholder={channel !== "email" ? t("Κείμενο μηνύματος…", "Message text…") : t("Μήνυμα… (μεταβλητές: {name} = πλήρες όνομα, {first} = επώνυμο)", "Message… (variables: {name} = full name, {first} = last name)")} className={`${inp} w-full`} />
           <div className="mt-3 flex items-center justify-between">
-            <span className="text-xs text-slate-400">{channel === "sms" ? t(`${message.length} χαρακτήρες`, `${message.length} characters`) : t("Διαθέσιμες μεταβλητές: {name}, {first}", "Available variables: {name}, {first}")}</span>
+            <span className="text-xs text-slate-400">{channel !== "email" ? t(`${message.length} χαρακτήρες`, `${message.length} characters`) : t("Διαθέσιμες μεταβλητές: {name}, {first}", "Available variables: {name}, {first}")}</span>
             <button onClick={async () => { if (message.trim() && await appConfirm(t(`Αποστολή σε ${audience.data?.count ?? 0} παραλήπτες;`, `Send to ${audience.data?.count ?? 0} recipients?`))) send.mutate(); }}
               disabled={send.isPending || !message.trim() || !(audience.data?.count)}
               className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-5 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50">

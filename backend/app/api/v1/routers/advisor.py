@@ -30,16 +30,17 @@ async def nutrition_email(
     patient_id: str,
     ctx: TenantContext = Depends(require("patients:read", module=["nutrition", "ai_assistant"])),
 ):
-    from app.services import comms
+    from app.services import comms, message_wallet
     plan = await AdvisorRepository(tenant_id=ctx.tenant_id, demo=ctx.demo).nutrition_plan(patient_id)
     if not plan:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "patient_not_found")
     if not plan.get("email"):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Ο ασθενής δεν έχει email στην καρτέλα.")
-    cfg = comms.get_config(ctx.tenant_id)
     try:
-        await comms.send_email(cfg, plan["email"], "Διατροφικές συμβουλές από το φαρμακείο σας",
-                               nutrition_html(plan, cfg.get("from_name")))
+        await comms.send_email(ctx.tenant_id, plan["email"], "Διατροφικές συμβουλές από το φαρμακείο σας",
+                               nutrition_html(plan, None))
+    except message_wallet.InsufficientCredits:
+        raise HTTPException(status.HTTP_402_PAYMENT_REQUIRED, "Ανεπαρκές υπόλοιπο μηνυμάτων.")
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
     return {"ok": True, "to": plan["email"]}
