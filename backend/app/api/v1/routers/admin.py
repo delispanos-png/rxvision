@@ -708,6 +708,24 @@ async def admin_wallet_credit(tenant_id: str, body: WalletCreditIn,
     return await message_wallet.credit(tenant_id, int(body.amount_cents), reason=body.reason or "admin_grant")
 
 
+class CommsTestIn(BaseModel):
+    channel: str = "sms"          # sms | viber | email
+    to: str
+    text: str | None = None
+
+
+@router.post("/comms/test-send")
+async def admin_comms_test(body: CommsTestIn, _: PlatformContext = Depends(get_platform_admin)):
+    """Send a test message through the central provider (no wallet charge) to verify credentials."""
+    from app.services import comms
+    txt = body.text or "Hello from CloudOn / RxVision — δοκιμαστικό μήνυμα."
+    try:
+        await comms.admin_test_send(body.channel, body.to, txt)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(http_status.HTTP_400_BAD_REQUEST, str(exc))
+    return {"ok": True}
+
+
 @router.get("/credit-packages")
 async def admin_credit_packages(_: PlatformContext = Depends(get_platform_admin)):
     from app.services import message_wallet

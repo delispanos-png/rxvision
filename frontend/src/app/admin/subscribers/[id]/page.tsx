@@ -91,6 +91,8 @@ export default function TenantCardPage() {
   const { data, isLoading } = useQuery({ queryKey: ["admin", "tenant", id], queryFn: () => adminApi<Detail>(`/admin/tenants/${encodeURIComponent(id)}`), retry: false });
   const creds = useQuery({ queryKey: ["admin", "tenant", id, "creds"], queryFn: () => adminApi<Creds>(`/admin/tenants/${encodeURIComponent(id)}/credentials`), retry: false });
   const pkgsQ = useQuery({ queryKey: ["admin", "packages"], queryFn: () => adminApi<{ items: { _id: string; name?: string }[] }>("/admin/packages") });
+  const walletQ = useQuery({ queryKey: ["admin", "wallet", id], queryFn: () => adminApi<{ balance_cents: number; by_channel: Record<string, { count: number }> }>(`/admin/tenants/${encodeURIComponent(id)}/wallet`), retry: false });
+  const [creditEur, setCreditEur] = useState("");
   useEffect(() => { if (data?.tenant?.name) setName(data.tenant.name); }, [data]);
 
   async function impersonate() {
@@ -202,6 +204,22 @@ export default function TenantCardPage() {
               </label>
             );
           })}
+        </div>
+      </div>
+
+      {/* Υπόλοιπο μηνυμάτων (wallet) */}
+      <div className="mb-6 rounded-xl border border-slate-200 bg-white p-6">
+        <div className="mb-1 text-sm font-semibold text-slate-700">Υπόλοιπο μηνυμάτων (credits)</div>
+        <p className="mb-3 text-xs text-slate-400">Προπληρωμένο υπόλοιπο για email/SMS/Viber. 30ημ: {["email", "sms", "viber"].map((c) => `${c} ${walletQ.data?.by_channel?.[c]?.count ?? 0}`).join(" · ")}</p>
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="rounded-xl bg-emerald-50 px-4 py-2">
+            <div className="text-[11px] text-slate-500">Τρέχον υπόλοιπο</div>
+            <div className="text-xl font-extrabold text-emerald-700">{fmtEur(walletQ.data?.balance_cents ?? 0)}</div>
+          </div>
+          <div className="flex items-center gap-2">
+            <input value={creditEur} onChange={(e) => setCreditEur(e.target.value)} type="number" step="1" placeholder="€ προσθήκη" className="w-32 rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+            <button disabled={busy || !creditEur} onClick={() => act(async () => { await adminApi(`/admin/tenants/${encodeURIComponent(id)}/wallet/credit`, { method: "POST", body: JSON.stringify({ amount_cents: Math.round((parseFloat(creditEur) || 0) * 100), reason: "admin_grant" }) }); setCreditEur(""); qc.invalidateQueries({ queryKey: ["admin", "wallet", id] }); }, "Πιστώθηκε ✓")} className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50">Προσθήκη credits</button>
+          </div>
         </div>
       </div>
 

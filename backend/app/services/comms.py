@@ -105,6 +105,18 @@ async def send_viber(tenant_id: str, to: str, text: str) -> None:
         raise
 
 
+async def admin_test_send(channel: str, to: str, text: str) -> None:
+    """Platform-admin test send via the CENTRAL provider — NOT charged to any wallet. Verifies the
+    Apifon (SMS/Viber) or SMTP (email) config works."""
+    if channel == "email":
+        subj = "RxVision — δοκιμαστικό email (admin)"
+        await mailer.send_email(to, subj, f"<p>{text}</p>")
+        return
+    ap = await _apifon()
+    path = "/services/api/v1/im/send" if channel == "viber" else "/services/api/v1/sms/send"
+    await _apifon_post(path, _body(text, ap["sender"], to))
+
+
 def _json(s: str) -> str:
     return json.dumps(s, ensure_ascii=False)
 
