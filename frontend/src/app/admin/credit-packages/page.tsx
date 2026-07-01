@@ -7,6 +7,7 @@ import { adminApi } from "@/lib/adminClient";
 
 type Pkg = { _id: string; name?: string; price_cents?: number; credits_cents?: number; active?: boolean };
 type Integr = { comms?: { apifon_token_set: boolean; apifon_secret_set: boolean; sms_sender: string; prices: { email: number; sms: number; viber: number } } };
+type Smtp = { host?: string; port?: number; username?: string; from_email?: string; from_name?: string; use_tls?: boolean; has_password?: boolean };
 
 const eur = (c?: number) => ((c ?? 0) / 100).toString();
 const cents = (e: string) => Math.round((parseFloat(e) || 0) * 100);
@@ -32,6 +33,16 @@ export default function MessagesCreditsAdminPage() {
       price_email: prEmail ? cents(prEmail) : null, price_sms: prSms ? cents(prSms) : null, price_viber: prViber ? cents(prViber) : null,
     }) }),
     onSuccess: () => { setCid(""); setCsec(""); setNotice("Αποθηκεύτηκαν οι ρυθμίσεις παρόχου ✓"); qc.invalidateQueries({ queryKey: ["integrations"] }); },
+  });
+
+  // ── central email (SMTP) ──
+  const smtpQ = useQuery({ queryKey: ["admin", "smtp"], queryFn: () => adminApi<Smtp>("/admin/smtp"), retry: false });
+  const [smtp, setSmtp] = useState<Smtp>({ port: 587, use_tls: true, from_name: "RxVision" });
+  const [smtpPw, setSmtpPw] = useState("");
+  useEffect(() => { if (smtpQ.data && smtpQ.data.host) setSmtp(smtpQ.data); }, [smtpQ.data]);
+  const saveSmtp = useMutation({
+    mutationFn: () => adminApi("/admin/smtp", { method: "PUT", body: JSON.stringify({ ...smtp, ...(smtpPw ? { password: smtpPw } : {}) }) }),
+    onSuccess: () => { setSmtpPw(""); setNotice("Αποθηκεύτηκε το κεντρικό email (SMTP) ✓"); qc.invalidateQueries({ queryKey: ["admin", "smtp"] }); },
   });
 
   // ── test send ──
@@ -71,6 +82,24 @@ export default function MessagesCreditsAdminPage() {
         <p className="text-sm text-slate-500">Κεντρικός πάροχος (Apifon), τιμές ανά μήνυμα και πακέτα προπληρωμένων credits για όλα τα φαρμακεία.</p>
       </div>
       {notice && <div className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{notice}</div>}
+
+      {/* Email sender (central SMTP) */}
+      <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-700"><KeyRound className="h-4 w-4 text-indigo-600" /> Κεντρικό email (SMTP) {smtpQ.data?.host ? <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-medium text-emerald-700">ρυθμισμένο</span> : <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-medium text-amber-700">εκκρεμεί</span>}</h3>
+        <p className="mb-3 text-[11px] text-slate-400">Ο κεντρικός λογαριασμός email απ' όπου φεύγουν ΟΛΑ τα emails προς πελάτες (με εμφανιζόμενο όνομα το κάθε φαρμακείο).</p>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <label className="text-xs text-slate-500">SMTP host<input value={smtp.host ?? ""} onChange={(e) => setSmtp({ ...smtp, host: e.target.value })} placeholder="smtp.gmail.com" className={inp} /></label>
+          <label className="text-xs text-slate-500">Θύρα<input type="number" value={smtp.port ?? 587} onChange={(e) => setSmtp({ ...smtp, port: Number(e.target.value) })} className={inp} /></label>
+          <label className="text-xs text-slate-500">Username<input value={smtp.username ?? ""} onChange={(e) => setSmtp({ ...smtp, username: e.target.value })} className={inp} /></label>
+          <label className="text-xs text-slate-500">Password {smtp.has_password && <span className="text-emerald-600">✓ αποθηκευμένος</span>}<input type="password" value={smtpPw} onChange={(e) => setSmtpPw(e.target.value)} placeholder={smtp.has_password ? "•••• (κενό = αμετάβλητο)" : "app-password"} className={inp} /></label>
+          <label className="text-xs text-slate-500">From email<input value={smtp.from_email ?? ""} onChange={(e) => setSmtp({ ...smtp, from_email: e.target.value })} placeholder="noreply@rxvision.gr" className={inp} /></label>
+          <label className="text-xs text-slate-500">From name (default)<input value={smtp.from_name ?? ""} onChange={(e) => setSmtp({ ...smtp, from_name: e.target.value })} placeholder="RxVision" className={inp} /></label>
+          <label className="inline-flex items-center gap-2 pb-2 text-xs text-slate-600"><input type="checkbox" checked={smtp.use_tls ?? true} onChange={(e) => setSmtp({ ...smtp, use_tls: e.target.checked })} className="h-4 w-4 accent-indigo-600" /> STARTTLS (θύρα 587)</label>
+        </div>
+        <button onClick={() => saveSmtp.mutate()} disabled={saveSmtp.isPending} className="mt-3 inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50">
+          {saveSmtp.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : saveSmtp.isSuccess ? <Check className="h-4 w-4" /> : <Save className="h-4 w-4" />} Αποθήκευση email (SMTP)
+        </button>
+      </div>
 
       {/* Provider */}
       <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
