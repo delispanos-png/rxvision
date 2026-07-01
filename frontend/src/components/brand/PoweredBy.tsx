@@ -2,7 +2,10 @@
  * Used across every surface (app, marketing, register, patient portal, admin) for consistent branding. */
 
 // Same look as the app's sidebar footer: centered, top border, dim-on-idle. Pass extra `className`
-// for context (e.g. collapsed sidebar padding).
+// for context (e.g. collapsed sidebar padding). Logo is an inline data-URI so it renders on every
+// host (incl. adminpanel.rxvision.gr) with no external request that could 404/cache-break.
+import { CLOUDON_LOGO_DATA_URI } from "@/components/brand/cloudonLogo";
+
 export function PoweredBy({ className = "", imgClassName = "h-4 w-auto" }: { className?: string; imgClassName?: string }) {
   return (
     <a
@@ -14,7 +17,7 @@ export function PoweredBy({ className = "", imgClassName = "h-4 w-auto" }: { cla
     >
       <span className="text-[10px] font-medium uppercase tracking-wide text-slate-400">Powered by</span>
       {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src="/cloudon-logo.png" alt="CloudOn" className={imgClassName} />
+      <img src={CLOUDON_LOGO_DATA_URI} alt="CloudOn" className={imgClassName} />
     </a>
   );
 }

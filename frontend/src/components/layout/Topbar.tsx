@@ -11,6 +11,7 @@ import { InstallButton } from "@/components/pwa/InstallButton";
 import { PharmaCatLauncher } from "@/components/pharmacat/PharmaCatLauncher";
 import { NotificationBells } from "@/components/layout/NotificationBells";
 import { Tooltip } from "@/components/ui/Tooltip";
+import { CLOUDON_LOGO_DATA_URI } from "@/components/brand/cloudonLogo";
 
 type Me = {
   roles?: string[];
@@ -195,7 +196,7 @@ export function Topbar() {
               >
                 <span className="text-[10px] font-medium uppercase tracking-wide text-slate-400">Powered by</span>
                 {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src="/cloudon-logo.png" alt="CloudOn" className="h-3.5 w-auto" />
+                <img src={CLOUDON_LOGO_DATA_URI} alt="CloudOn" className="h-3.5 w-auto" />
               </a>
             </Tooltip>
           </div>
