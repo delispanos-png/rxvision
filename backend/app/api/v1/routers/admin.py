@@ -163,6 +163,7 @@ class SmtpIn(BaseModel):
     from_email: EmailStr
     from_name: str = "RxVision"
     use_tls: bool = True
+    insecure_tls: bool = False   # accept a self-signed / hostname-mismatched cert (own mail server)
 
 
 class TestEmailIn(BaseModel):

@@ -7,7 +7,7 @@ import { adminApi } from "@/lib/adminClient";
 
 type Pkg = { _id: string; name?: string; price_cents?: number; credits_cents?: number; active?: boolean };
 type Integr = { comms?: { apifon_token_set: boolean; apifon_secret_set: boolean; sms_sender: string; prices: { email: number; sms: number; viber: number } } };
-type Smtp = { host?: string; port?: number; username?: string; from_email?: string; from_name?: string; use_tls?: boolean; has_password?: boolean };
+type Smtp = { host?: string; port?: number; username?: string; from_email?: string; from_name?: string; use_tls?: boolean; insecure_tls?: boolean; has_password?: boolean };
 
 const eur = (c?: number) => ((c ?? 0) / 100).toString();
 const cents = (e: string) => Math.round((parseFloat(e) || 0) * 100);
@@ -94,7 +94,8 @@ export default function MessagesCreditsAdminPage() {
           <label className="text-xs text-slate-500">Password {smtp.has_password && <span className="text-emerald-600">✓ αποθηκευμένος</span>}<input type="password" value={smtpPw} onChange={(e) => setSmtpPw(e.target.value)} placeholder={smtp.has_password ? "•••• (κενό = αμετάβλητο)" : "app-password"} className={inp} /></label>
           <label className="text-xs text-slate-500">From email<input value={smtp.from_email ?? ""} onChange={(e) => setSmtp({ ...smtp, from_email: e.target.value })} placeholder="noreply@rxvision.gr" className={inp} /></label>
           <label className="text-xs text-slate-500">From name (default)<input value={smtp.from_name ?? ""} onChange={(e) => setSmtp({ ...smtp, from_name: e.target.value })} placeholder="RxVision" className={inp} /></label>
-          <label className="inline-flex items-center gap-2 pb-2 text-xs text-slate-600"><input type="checkbox" checked={smtp.use_tls ?? true} onChange={(e) => setSmtp({ ...smtp, use_tls: e.target.checked })} className="h-4 w-4 accent-indigo-600" /> STARTTLS (θύρα 587)</label>
+          <label className="inline-flex items-center gap-2 pb-2 text-xs text-slate-600"><input type="checkbox" checked={smtp.use_tls ?? true} onChange={(e) => setSmtp({ ...smtp, use_tls: e.target.checked })} className="h-4 w-4 accent-indigo-600" /> STARTTLS (θύρα 587· η 465 = SSL αυτόματα)</label>
+          <label className="inline-flex items-center gap-2 pb-2 text-xs text-slate-600"><input type="checkbox" checked={smtp.insecure_tls ?? false} onChange={(e) => setSmtp({ ...smtp, insecure_tls: e.target.checked })} className="h-4 w-4 accent-amber-600" /> Αποδοχή μη-έγκυρου πιστοποιητικού (self-signed)</label>
         </div>
         <button onClick={() => saveSmtp.mutate()} disabled={saveSmtp.isPending} className="mt-3 inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50">
           {saveSmtp.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : saveSmtp.isSuccess ? <Check className="h-4 w-4" /> : <Save className="h-4 w-4" />} Αποθήκευση email (SMTP)

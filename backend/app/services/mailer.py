@@ -43,6 +43,25 @@ async def save_smtp(cfg: dict) -> None:
     await db["platform_settings"].update_one({"_id": "smtp"}, {"$set": cfg}, upsert=True)
 
 
+def _smtp_login(server: smtplib.SMTP, user: str, password: str) -> None:
+    """smtplib.login() forces ASCII on the password (CRAM-MD5/PLAIN), so a non-ASCII mailbox password
+    raises UnicodeEncodeError. Fall back to a manual AUTH PLAIN with the password encoded as UTF-8."""
+    try:
+        password.encode("ascii")
+        server.login(user, password)   # ASCII password → standard path (best server compat)
+        return
+    except UnicodeEncodeError:
+        pass
+    # Non-ASCII password: do AUTH PLAIN over UTF-8 directly (NOT via login(), which would try CRAM-MD5
+    # first and leave the SASL exchange half-open → «bad protocol»).
+    import base64
+    server.ehlo_or_helo_if_needed()
+    token = base64.b64encode(b"\0" + user.encode("utf-8") + b"\0" + password.encode("utf-8")).decode("ascii")
+    code, resp = server.docmd("AUTH", "PLAIN " + token)
+    if code not in (235, 503):
+        raise smtplib.SMTPAuthenticationError(code, resp)
+
+
 def _send_one(cfg: dict, to: str, subject: str, html: str, reply_to: str | None = None) -> None:
     msg = MIMEText(html, "html", "utf-8")
     # Headers must be RFC2047-encoded or as_string() blows up on non-ASCII (Greek subjects/names).
@@ -53,6 +72,9 @@ def _send_one(cfg: dict, to: str, subject: str, html: str, reply_to: str | None 
         msg["Reply-To"] = reply_to or cfg["reply_to"]
     port = int(cfg.get("port", 587))
     ctx = ssl.create_default_context()
+    if cfg.get("insecure_tls"):   # own mail server with a self-signed / mismatched cert → encrypt but don't verify
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
     # Port 465 = implicit TLS (SMTPS) → SMTP_SSL. Port 587/25 = STARTTLS upgrade.
     if port == 465:
         server = smtplib.SMTP_SSL(cfg["host"], port, timeout=20, context=ctx)
@@ -64,7 +86,7 @@ def _send_one(cfg: dict, to: str, subject: str, html: str, reply_to: str | None 
             server.ehlo()
     try:
         if cfg.get("username"):
-            server.login(cfg["username"], cfg.get("password", ""))
+            _smtp_login(server, cfg["username"], cfg.get("password", ""))
         server.sendmail(cfg["from_email"], [to], msg.as_string())
     finally:
         try:
