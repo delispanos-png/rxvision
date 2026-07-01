@@ -277,6 +277,7 @@ async def tenants(_: PlatformContext = Depends(get_platform_admin)):
     """All tenants + plan/status/users/MRR for the back-office customer table."""
     db = shared_db()
     subs = {s["tenant_id"]: s async for s in db["subscriptions"].find({})}
+    wallets = {w["_id"]: int(w.get("balance_cents", 0) or 0) async for w in db["message_wallets"].find({})}
     user_counts: dict[str, int] = {}
     async for row in db["users"].aggregate([{"$group": {"_id": "$tenant_id", "n": {"$sum": 1}}}]):
         user_counts[row["_id"]] = row["n"]
@@ -303,6 +304,7 @@ async def tenants(_: PlatformContext = Depends(get_platform_admin)):
             "active_now": active_now.get(t["_id"], 0),
             "seats": sub.get("seats") or pharmacies,
             "mrr": mrr,
+            "msg_balance": wallets.get(t["_id"], 0),
             "created_at": t.get("created_at"),
         })
     return {"items": jsonsafe(items)}

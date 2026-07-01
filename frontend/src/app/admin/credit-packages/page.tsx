@@ -76,9 +76,9 @@ export default function MessagesCreditsAdminPage() {
       <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
         <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-700"><KeyRound className="h-4 w-4 text-indigo-600" /> Πάροχος — Apifon (SMS + Viber) {(c?.apifon_token_set && c?.apifon_secret_set) ? <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-medium text-emerald-700">ρυθμισμένο</span> : <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-medium text-amber-700">εκκρεμεί</span>}</h3>
         <div className="grid gap-3 sm:grid-cols-2">
-          <label className="text-xs text-slate-500">Client ID<input value={cid} onChange={(e) => setCid(e.target.value)} placeholder={c?.apifon_token_set ? "•••• (αποθηκευμένο)" : "TEST_CLIENT_ID"} className={inp} /></label>
-          <label className="text-xs text-slate-500">Client Secret<input type="password" value={csec} onChange={(e) => setCsec(e.target.value)} placeholder={c?.apifon_secret_set ? "•••• (αποθηκευμένο)" : "TEST_CLIENT_SECRET"} className={inp} /></label>
-          <label className="text-xs text-slate-500 sm:col-span-2">Sender ID<input value={sender} onChange={(e) => setSender(e.target.value)} placeholder="Apifon Demo" className={inp} /></label>
+          <label className="text-xs text-slate-500">Client ID (token)<input value={cid} onChange={(e) => setCid(e.target.value)} placeholder={c?.apifon_token_set ? "•••• (αποθηκευμένο)" : "π.χ. vmd6Jy2Dw3FGQOL…"} className={inp} /><span className="mt-0.5 block text-[11px] text-slate-400">Το μεγάλο token της Apifon — ΟΧΙ email.</span></label>
+          <label className="text-xs text-slate-500">Client Secret<input type="password" value={csec} onChange={(e) => setCsec(e.target.value)} placeholder={c?.apifon_secret_set ? "•••• (αποθηκευμένο)" : "π.χ. c9Cr55Eyac8…"} className={inp} /><span className="mt-0.5 block text-[11px] text-slate-400">Το secret (σύντομο) της Apifon.</span></label>
+          <label className="text-xs text-slate-500 sm:col-span-2">Sender ID (όνομα αποστολέα)<input value={sender} onChange={(e) => setSender(e.target.value)} placeholder="Apifon Demo" className={inp} /><span className="mt-0.5 block text-[11px] text-slate-400">Το όνομα που βλέπει ο παραλήπτης (π.χ. «Apifon Demo» ή «RxVision») — ΟΧΙ το token.</span></label>
         </div>
         <div className="mb-1 mt-4 text-xs font-semibold text-slate-600">Τιμές ανά μήνυμα (€) — χρέωση prepaid wallet · κενό = αμετάβλητο</div>
         <div className="grid gap-3 sm:grid-cols-3">
@@ -94,11 +94,11 @@ export default function MessagesCreditsAdminPage() {
         <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-4">
           <div className="flex overflow-hidden rounded-lg border border-slate-300 text-sm">
             {(["sms", "viber", "email"] as const).map((ch) => (
-              <button key={ch} onClick={() => setTChan(ch)} className={`px-3 py-1.5 ${tChan === ch ? "bg-indigo-600 text-white" : "text-slate-600 hover:bg-slate-50"}`}>{ch === "email" ? "Email" : ch === "viber" ? "Viber" : "SMS"}</button>
+              <button key={ch} onClick={() => { const wasEmail = tChan === "email"; setTChan(ch); if ((ch === "email") !== wasEmail) setTTo(""); }} className={`px-3 py-1.5 ${tChan === ch ? "bg-indigo-600 text-white" : "text-slate-600 hover:bg-slate-50"}`}>{ch === "email" ? "Email" : ch === "viber" ? "Viber" : "SMS"}</button>
             ))}
           </div>
-          <input value={tTo} onChange={(e) => setTTo(e.target.value)} placeholder={tChan === "email" ? "email" : "30XXXXXXXXXX"} className={`${inp} w-44`} />
-          <input value={tText} onChange={(e) => setTText(e.target.value)} placeholder="test message" className={`${inp} flex-1 min-w-[12rem]`} />
+          <input type={tChan === "email" ? "email" : "tel"} value={tTo} onChange={(e) => setTTo(e.target.value)} placeholder={tChan === "email" ? "email παραλήπτη" : "κινητό 30XXXXXXXXXX"} className={`${inp} w-52`} />
+          <input value={tText} onChange={(e) => setTText(e.target.value)} placeholder="κείμενο μηνύματος" className={`${inp} flex-1 min-w-[12rem]`} />
           <button onClick={() => testSend.mutate()} disabled={testSend.isPending || !tTo} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50">{testSend.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />} Δοκιμή</button>
         </div>
       </div>

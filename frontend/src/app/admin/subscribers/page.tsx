@@ -9,7 +9,7 @@ import { fmtEur, fmtNum, fmtDate } from "@/lib/formatters";
 import { DataTable, type Column } from "@/components/tables/DataTable";
 import { Modal } from "@/components/ui/Modal";
 
-type Tenant = { id: string; name: string; plan: string; status: string; users: number; active_now?: number; seats?: number; mrr: number; created_at: string };
+type Tenant = { id: string; name: string; plan: string; status: string; users: number; active_now?: number; seats?: number; mrr: number; msg_balance?: number; created_at: string };
 type Package = { _id: string; name: string; price_monthly: number; price_yearly?: number; modules: string[]; seats: number; trial_days: number; sla?: string; active?: boolean; extra_user_price?: number; extra_user_price_yearly?: number };
 type Sla = { _id: string; name?: string; description?: string; active?: boolean; price_monthly?: number; price_yearly?: number };
 type AadeResp = { ok: boolean; name?: string; title?: string; doy?: string; address?: string; postal_code?: string; city?: string };
@@ -50,6 +50,7 @@ export default function SubscribersPage() {
       </span>
     ) },
     { key: "mrr", header: "MRR", align: "right", render: (r) => fmtEur(r.mrr) },
+    { key: "msg_balance", header: "Credits", align: "right", render: (r) => <span className={(r.msg_balance ?? 0) < 200 ? "text-amber-600" : "text-slate-700"}>{fmtEur(r.msg_balance ?? 0)}</span> },
     { key: "created_at", header: "Εγγραφή", render: (r) => fmtDate(r.created_at) },
     {
       key: "actions", header: "", align: "right", fullWidthOnMobile: true,
