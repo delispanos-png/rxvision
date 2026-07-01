@@ -19,6 +19,26 @@ type WalletRes = {
 const eur = (c: number) => new Intl.NumberFormat("el-GR", { style: "currency", currency: "EUR" }).format((c || 0) / 100);
 const cents = (c: number) => "€" + ((c || 0) / 100).toFixed(3).replace(/0+$/, "").replace(/\.$/, "");
 
+type Pkg = { _id: string; name: string; price_cents: number; credits_cents: number };
+
+/** Open the Revolut Checkout popup for a top-up order token (loads embed.js on demand). */
+function payWithRevolut(token: string, mode: string): Promise<void> {
+  return new Promise<void>((resolve) => {
+    const w = window as unknown as { RevolutCheckout?: (t: string, m: string) => Promise<{ payWithPopup: (o: Record<string, () => void>) => void }> };
+    const run = () => {
+      if (!w.RevolutCheckout) return resolve();
+      w.RevolutCheckout(token, mode === "live" ? "prod" : "sandbox")
+        .then((rc) => rc.payWithPopup({ onSuccess: resolve, onError: resolve, onCancel: resolve }))
+        .catch(() => resolve());
+    };
+    if (w.RevolutCheckout) return run();
+    const s = document.createElement("script");
+    s.src = mode === "live" ? "https://merchant.revolut.com/embed.js" : "https://sandbox-merchant.revolut.com/embed.js";
+    s.onload = run; s.onerror = () => resolve();
+    document.body.appendChild(s);
+  });
+}
+
 export default function CommsSettingsPage() {
   const t = useT();
   const q = useQuery({ queryKey: ["comms", "wallet"], queryFn: () => api<WalletRes>("/communications/wallet"), retry: false });
@@ -29,6 +49,19 @@ export default function CommsSettingsPage() {
     onError: (e: Error) => appAlert(t("Αποτυχία: ", "Failed: ") + e.message),
     onSuccess: () => { appAlert(t("Στάλθηκε δοκιμαστικό ✅", "Test sent ✅")); q.refetch(); },
   });
+  const pkgs = useQuery({ queryKey: ["credit-packages"], queryFn: () => api<{ items: Pkg[] }>("/communications/credit-packages"), retry: false });
+  const [buying, setBuying] = useState<string | null>(null);
+  async function buy(pid: string) {
+    setBuying(pid);
+    try {
+      const r = await api<{ token: string; mode: string }>("/communications/topup", { method: "POST", body: JSON.stringify({ package_id: pid }) });
+      await payWithRevolut(r.token, r.mode);
+      setTimeout(() => q.refetch(), 3000);   // wallet is credited asynchronously by the Revolut webhook
+      appAlert(t("Η πληρωμή ολοκληρώθηκε — το υπόλοιπο ενημερώνεται σε λίγο. ✅", "Payment done — balance updates shortly. ✅"));
+    } catch (e) {
+      appAlert(t("Αποτυχία αγοράς: ", "Purchase failed: ") + (e as Error).message);
+    } finally { setBuying(null); }
+  }
   const d = q.data;
   const CH: { k: "email" | "sms" | "viber"; label: string; icon: typeof Mail }[] = [
     { k: "email", label: "Email", icon: Mail },
@@ -61,8 +94,20 @@ export default function CommsSettingsPage() {
           ))}
         </div>
 
-        <div className="mt-4 rounded-xl bg-slate-50 px-3 py-2 text-xs text-slate-500 dark:bg-slate-800/60">
-          💳 {t("Για ανανέωση υπολοίπου (αγορά credits) επικοινώνησε με την υποστήριξη — σύντομα self-service top-up.", "To top up (buy credits) contact support — self-service top-up coming soon.")}
+        {/* buy credits (top-up) */}
+        <div className="mt-4">
+          <div className="mb-2 text-xs font-semibold text-slate-600 dark:text-slate-300">💳 {t("Αγορά credits", "Buy credits")}</div>
+          <div className="grid gap-2 sm:grid-cols-4">
+            {(pkgs.data?.items ?? []).map((p) => (
+              <button key={p._id} disabled={!!buying} onClick={() => buy(p._id)}
+                className="rounded-xl border-2 border-slate-200 p-3 text-center transition hover:border-brand-400 disabled:opacity-50 dark:border-slate-700">
+                <div className="text-sm font-bold text-slate-900 dark:text-slate-100">{buying === p._id ? "…" : p.name}</div>
+                <div className="text-[11px] font-medium text-emerald-600">+{eur(p.credits_cents)} {t("credits", "credits")}</div>
+                <div className="mt-1 text-xs text-slate-500">{t("πληρωμή", "pay")} {eur(p.price_cents)}</div>
+              </button>
+            ))}
+          </div>
+          <p className="mt-2 text-[11px] text-slate-400">{t("Ασφαλής πληρωμή με κάρτα (Revolut). Το υπόλοιπο πιστώνεται αυτόματα μετά την πληρωμή.", "Secure card payment (Revolut). Balance is credited automatically after payment.")}</p>
         </div>
 
         {/* test send */}

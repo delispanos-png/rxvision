@@ -71,6 +71,30 @@ async def create_save_card_order(*, amount: int, currency: str, email: str, name
             "customer_id": (d.get("customer") or {}).get("id")}
 
 
+async def create_topup_order(*, amount: int, currency: str, email: str, name: str,
+                             tenant_id: str, description: str) -> dict:
+    """One-off checkout order for a wallet top-up (money is actually captured). Saves the card too, so
+    future top-ups/renewals can go off-session. Returns {ok, token, order_id}."""
+    base, key = await _client()
+    if not base:
+        return {"ok": False, "error": "revolut_not_configured"}
+    payload = {
+        "amount": int(amount), "currency": currency, "capture_mode": "automatic",
+        "description": description,
+        "merchant_order_data": {"reference": tenant_id},
+        "customer": {"email": email, "full_name": name},
+        "save_payment_method_for": "merchant",
+    }
+    try:
+        async with httpx.AsyncClient(timeout=20) as cl:
+            r = await cl.post(f"{base}/orders", headers=_headers(key), json=payload)
+            r.raise_for_status()
+            d = r.json()
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "error": f"revolut_error:{type(e).__name__}"}
+    return {"ok": True, "token": d.get("token"), "order_id": d.get("id")}
+
+
 async def charge_off_session(*, amount: int, currency: str, customer_id: str,
                              tenant_id: str, description: str) -> dict:
     """Charge a saved customer off-session (renewal). Returns {ok, order_id, state} / {ok: False}."""

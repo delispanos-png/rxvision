@@ -113,6 +113,56 @@ async def usage_summary(tenant_id: str, days: int = 30) -> dict:
             "prices": await prices()}
 
 
+# ── Credit packages (prepaid top-up) ────────────────────────────────────────
+# Seeded on first read. price_cents = what the pharmacy pays; credits_cents = what lands in the wallet
+# (≥ price for a bonus). Editable by the platform admin.
+_DEFAULT_PACKAGES = [
+    {"_id": "c10", "name": "10€", "price_cents": 1000, "credits_cents": 1000, "active": True},
+    {"_id": "c25", "name": "25€ (+2€ δώρο)", "price_cents": 2500, "credits_cents": 2700, "active": True},
+    {"_id": "c50", "name": "50€ (+7€ δώρο)", "price_cents": 5000, "credits_cents": 5700, "active": True},
+    {"_id": "c100", "name": "100€ (+20€ δώρο)", "price_cents": 10000, "credits_cents": 12000, "active": True},
+]
+
+
+async def _ensure_pkg_seed() -> None:
+    db = shared_db()
+    if await db["credit_packages"].count_documents({}) == 0:
+        for p in _DEFAULT_PACKAGES:
+            await db["credit_packages"].update_one({"_id": p["_id"]}, {"$setOnInsert": {**p, "updated_at": _now()}}, upsert=True)
+
+
+async def packages(active_only: bool = True) -> list[dict]:
+    await _ensure_pkg_seed()
+    flt = {"active": True} if active_only else {}
+    return [p async for p in shared_db()["credit_packages"].find(flt).sort("price_cents", 1)]
+
+
+async def get_package(package_id: str) -> dict | None:
+    await _ensure_pkg_seed()
+    return await shared_db()["credit_packages"].find_one({"_id": package_id, "active": True})
+
+
+async def record_pending_topup(tenant_id: str, pkg: dict, order_id: str) -> None:
+    await shared_db()["wallet_topups"].insert_one({
+        "order_id": order_id, "tenant_id": tenant_id, "package_id": pkg["_id"],
+        "price_cents": int(pkg["price_cents"]), "credits_cents": int(pkg["credits_cents"]),
+        "status": "pending", "created_at": _now()})
+
+
+async def complete_topup(order_id: str) -> bool:
+    """Called from the Revolut webhook on ORDER_COMPLETED. Credits the wallet exactly once (idempotent).
+    Returns True if this order_id was a (pending) top-up we handled."""
+    db = shared_db()
+    doc = await db["wallet_topups"].find_one_and_update(
+        {"order_id": order_id, "status": "pending"},
+        {"$set": {"status": "completed", "completed_at": _now()}},
+        return_document=ReturnDocument.AFTER)
+    if not doc:
+        return await db["wallet_topups"].count_documents({"order_id": order_id}) > 0
+    await credit(doc["tenant_id"], int(doc["credits_cents"]), reason="topup", ref=order_id)
+    return True
+
+
 async def ledger(tenant_id: str, limit: int = 50) -> list[dict]:
     rows = [r async for r in shared_db()["message_ledger"].find({"tenant_id": tenant_id})
             .sort("ts", -1).limit(limit)]

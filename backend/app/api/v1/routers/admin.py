@@ -708,6 +708,36 @@ async def admin_wallet_credit(tenant_id: str, body: WalletCreditIn,
     return await message_wallet.credit(tenant_id, int(body.amount_cents), reason=body.reason or "admin_grant")
 
 
+@router.get("/credit-packages")
+async def admin_credit_packages(_: PlatformContext = Depends(get_platform_admin)):
+    from app.services import message_wallet
+    return {"items": jsonsafe(await message_wallet.packages(active_only=False))}
+
+
+class CreditPackageIn(BaseModel):
+    name: str | None = None
+    price_cents: int | None = None
+    credits_cents: int | None = None
+    active: bool | None = None
+
+
+@router.put("/credit-packages/{code}")
+async def update_credit_package(code: str, body: CreditPackageIn,
+                                _: PlatformContext = Depends(get_platform_admin)):
+    upd = {k: v for k, v in body.model_dump().items() if v is not None}
+    db = shared_db()
+    if upd:
+        upd["updated_at"] = datetime.now(tz=timezone.utc)
+        await db["credit_packages"].update_one({"_id": code}, {"$set": upd}, upsert=True)  # tenant-ok: catalog
+    return {"ok": True, "package": jsonsafe(await db["credit_packages"].find_one({"_id": code}))}
+
+
+@router.delete("/credit-packages/{code}")
+async def delete_credit_package(code: str, _: PlatformContext = Depends(get_platform_admin)):
+    await shared_db()["credit_packages"].delete_one({"_id": code})  # tenant-ok: platform catalog
+    return {"ok": True}
+
+
 @router.post("/tenants")
 async def open_tenant(body: OpenTenantIn, _: PlatformContext = Depends(get_platform_admin)):
     """«Άνοιγμα» tenant από πακέτο — admin entry point ."""

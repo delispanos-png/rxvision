@@ -128,6 +128,11 @@ async def handle_webhook(event: str, order: dict) -> None:
     tid = (order.get("merchant_order_data") or {}).get("reference")
     if not tid:
         return
+    # Wallet top-up orders: credit the message wallet (idempotent) and stop — not a subscription event.
+    if event == "ORDER_COMPLETED" and order.get("id"):
+        from app.services import message_wallet
+        if await message_wallet.complete_topup(order["id"]):
+            return
     cust = (order.get("customer") or {}).get("id")
     if event in ("ORDER_COMPLETED", "ORDER_AUTHORISED"):
         upd = {"payment_status": "card_saved", "failed_attempts": 0}
