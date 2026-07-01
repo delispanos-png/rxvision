@@ -86,7 +86,7 @@ export default function MessagesCreditsAdminPage() {
       {/* Email sender (central SMTP) */}
       <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
         <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-700"><KeyRound className="h-4 w-4 text-indigo-600" /> Κεντρικό email (SMTP) {smtpQ.data?.host ? <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-medium text-emerald-700">ρυθμισμένο</span> : <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-medium text-amber-700">εκκρεμεί</span>}</h3>
-        <p className="mb-3 text-[11px] text-slate-400">Ο κεντρικός λογαριασμός email απ' όπου φεύγουν ΟΛΑ τα emails προς πελάτες (με εμφανιζόμενο όνομα το κάθε φαρμακείο).</p>
+        <p className="mb-3 text-[11px] text-slate-400">Ο κεντρικός λογαριασμός email από όπου φεύγουν ΟΛΑ τα emails προς πελάτες (με εμφανιζόμενο όνομα το κάθε φαρμακείο).</p>
         <div className="grid gap-3 sm:grid-cols-2">
           <label className="text-xs text-slate-500">SMTP host<input value={smtp.host ?? ""} onChange={(e) => setSmtp({ ...smtp, host: e.target.value })} placeholder="smtp.gmail.com" className={inp} /></label>
           <label className="text-xs text-slate-500">Θύρα<input type="number" value={smtp.port ?? 587} onChange={(e) => setSmtp({ ...smtp, port: Number(e.target.value) })} className={inp} /></label>
