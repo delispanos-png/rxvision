@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-_WINDOW_DAYS = 10
+_WINDOW_DAYS = 15        # καθημερινός έλεγχος ακυρώσεων: 15 μέρες πίσω (τι έχει/δεν έχει η ΗΔΥΚΑ vs εμείς)
 _MIN_DAYS_OK = 5          # need ≥ this many days fetched OK before acting
 _MAX_CANCEL_RATIO = 0.30  # abort if >30% of the window's active execs would be cancelled…
 _MAX_CANCEL_ABS = 5       # …unless the absolute count is small (a handful of real cancellations)

@@ -1,8 +1,13 @@
 # App-only stack for horizontal app nodes (RxVisionSRV02+). No state services here —
 # Mongo/Redis live on RxVisionDB01 (10.0.0.3); Vault stays on RxVisionSRV01, reached over
 # the private net via the socat proxy on 10.0.0.2:8200 (see PHASE1-app-node.md).
-# The node's .env must point MONGODB_URI/REDIS_URL → 10.0.0.3 and VAULT_ADDR → http://10.0.0.2:8200.
+# The node's .env must point MONGODB_URI/REDIS_URL → 10.0.0.3 and VAULT_ADDR → https://10.0.0.2:8200
+# (TLS — H-3, 2026-07-03) + VAULT_CACERT=/vault/tls/vault.crt. Ship infra/docker/vault/tls/vault.crt to
+# the node; the cert's SAN includes IP:10.0.0.2 so verification succeeds over the socat hop.
 # NOTE: no `beat` here — the Celery scheduler is a singleton and runs ONLY on SRV01.
+# RAM-rebalance (2026-07-02): the heavy ingestion workers (backfill + optical) run HERE on the
+# idle SRV01, OFF the overloaded MGMT01. --max-tasks-per-child recycles procs to cap memory creep.
+# Hardening: every app container drops ALL Linux capabilities + no-new-privileges (non-root already).
 name: rxvision-app
 services:
   api:
@@ -11,11 +16,37 @@ services:
     env_file: .env
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2
     expose: ["8000"]
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    volumes:
+      - "./infra/docker/vault/tls/vault.crt:/vault/tls/vault.crt:ro"
   worker:
     build: ./backend
     restart: unless-stopped
     env_file: .env
-    command: celery -A app.workers.celery_app worker -l info --concurrency 2
+    command: celery -A app.workers.celery_app worker -l info --concurrency 2 --max-tasks-per-child 200 -Q celery
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    volumes:
+      - "./infra/docker/vault/tls/vault.crt:/vault/tls/vault.crt:ro"
+  worker-backfill:
+    build: ./backend
+    restart: unless-stopped
+    env_file: .env
+    command: celery -A app.workers.celery_app worker -l info --concurrency 4 --max-tasks-per-child 100 -Q backfill -n backfill@%h
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    volumes:
+      - "./infra/docker/vault/tls/vault.crt:/vault/tls/vault.crt:ro"
+  optical:
+    build: ./backend
+    restart: unless-stopped
+    env_file: .env
+    command: celery -A app.workers.celery_app worker -l info --concurrency 3 --max-tasks-per-child 100 -Q optical -n optical@%h
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    volumes:
+      - "./infra/docker/vault/tls/vault.crt:/vault/tls/vault.crt:ro"
   web:
     build:
       context: ./frontend
@@ -26,13 +57,20 @@ services:
     env_file: .env
     depends_on: [api]
     expose: ["3000"]
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped
     env_file: .env
+    # Drop all caps but keep NET_BIND_SERVICE so it can still bind the privileged ports 80/443.
+    cap_drop: ["ALL"]
+    cap_add: ["NET_BIND_SERVICE"]
+    security_opt: ["no-new-privileges:true"]
     ports: ["80:80", "443:443"]
     volumes:
       - "./infra/docker/Caddyfile:/etc/caddy/Caddyfile:ro"
+      - "./infra/docker/caddy/cf-origin-pull-ca.pem:/etc/caddy/cf-origin-pull-ca.pem:ro"
       - "caddy_data:/data"
       - "caddy_config:/config"
     depends_on: [web, api]

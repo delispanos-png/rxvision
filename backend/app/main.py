@@ -55,7 +55,8 @@ def create_app() -> FastAPI:
 
     @app.get("/health")
     async def health():
-        return {"status": "ok", "version": app.version, "uptime": int(time.time() - _STARTED_AT)}
+        # Minimal, non-fingerprinting probe (M-3): no version/uptime (aids targeted CVE matching).
+        return {"status": "ok"}
 
     return app
 

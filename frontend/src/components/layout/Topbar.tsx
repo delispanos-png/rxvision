@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { KeyRound, LogOut, Menu, Settings, User, Sun, Moon, PanelLeft, PanelLeftClose, Sparkles } from "lucide-react";
-import { api, queryKeys } from "@/lib/apiClient";
+import { api, queryKeys, logoutSession } from "@/lib/apiClient";
 import { useNavStore } from "@/store/navStore";
 import { usePref, useT } from "@/store/prefStore";
 import { InstallButton } from "@/components/pwa/InstallButton";
@@ -61,12 +61,9 @@ export function Topbar() {
     router.push(path);
   }
 
-  function logout() {
+  async function logout() {
     setOpen(false);
-    if (typeof window !== "undefined") {
-      window.localStorage.removeItem("access_token");
-      window.localStorage.removeItem("refresh_token");
-    }
+    await logoutSession();   // free this session's seat immediately, then clear tokens
     router.push("/login");
   }
 

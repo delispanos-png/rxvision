@@ -4,6 +4,10 @@ services:
   mongo:
     image: mongo:7
     restart: unless-stopped
+    # HA: this node is the rs0 SECONDARY (data replica of DB01 primary). Published on the PRIVATE
+    # IP so the primary/arbiter reach it over the private net. Shares DB01's keyfile.
+    ports:
+      - "10.0.0.2:27017:27017"
     # Auth ON + replica-set keyfile (auto-generated into a named volume, chowned to
     # the mongodb user). Credentials come from MONGO_ROOT_* in .env.
     environment:
@@ -82,6 +86,8 @@ services:
         condition: service_healthy
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2
     expose: ["8000"]
+    cap_drop: ["ALL"]                      # non-root app container needs no Linux capabilities
+    security_opt: ["no-new-privileges:true"]
     # CA cert (public) so the hvac client can verify Vault's TLS — VAULT_CACERT in .env.
     volumes:
       - "./infra/docker/vault/tls/vault.crt:/vault/tls/vault.crt:ro"
@@ -92,31 +98,15 @@ services:
     env_file: .env
     depends_on: [redis, mongo]
     # default queue only — heavy/slow background jobs (ingestion, noeton, snapshots)
-    command: celery -A app.workers.celery_app worker -l info --concurrency 4 -Q celery
+    command: celery -A app.workers.celery_app worker -l info --concurrency 2 --max-tasks-per-child 200 -Q celery
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
     volumes:
       - "./infra/docker/vault/tls/vault.crt:/vault/tls/vault.crt:ro"
 
-  # Dedicated worker for user-facing Optical Audit scans — isolated queue so a scan never
-  # waits behind a slow ΗΔΙΚΑ sync. Per-scan time bounded by the OCR timeout.
-  optical:
-    build: ./backend
-    restart: unless-stopped
-    env_file: .env
-    depends_on: [redis, mongo]
-    command: celery -A app.workers.celery_app worker -l info --concurrency 3 -Q optical -n optical@%h
-    volumes:
-      - "./infra/docker/vault/tls/vault.crt:/vault/tls/vault.crt:ro"
-
-  # Dedicated worker for heavy historical backfills — isolated queue so a multi-month backfill
-  # never occupies the 4 incremental-sync slots (kept free for the fast 5-min incrementals).
-  worker-backfill:
-    build: ./backend
-    restart: unless-stopped
-    env_file: .env
-    depends_on: [redis, mongo]
-    command: celery -A app.workers.celery_app worker -l info --concurrency 1 -Q backfill -n backfill@%h
-    volumes:
-      - "./infra/docker/vault/tls/vault.crt:/vault/tls/vault.crt:ro"
+  # RAM-rebalance (2026-07-02): `optical` & `worker-backfill` ΜΕΤΑΚΙΝΗΘΗΚΑΝ στον idle SRV01
+  # (docker-compose.app.yml) για να ξεφορτώσουν τον overloaded MGMT01. Μοιράζονται το ίδιο Redis
+  # broker (backfill/optical queues) → οι tasks τρέχουν εκεί. Ο MGMT κρατά μόνο τον default worker.
 
   beat:
     build: ./backend
@@ -124,6 +114,8 @@ services:
     env_file: .env
     depends_on: [redis, mongo]
     command: celery -A app.workers.celery_app beat -l info --schedule /tmp/celerybeat-schedule
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
     volumes:
       - "./infra/docker/vault/tls/vault.crt:/vault/tls/vault.crt:ro"
 
@@ -137,6 +129,8 @@ services:
     env_file: .env
     depends_on: [api]
     expose: ["3000"]
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
 
   caddy:
     # Stock image is enough while CADDY_TLS=internal. To enable Let's Encrypt via
@@ -145,11 +139,16 @@ services:
     image: caddy:2-alpine
     restart: unless-stopped
     env_file: .env
+    # Drop all caps but keep NET_BIND_SERVICE so it can still bind the privileged ports 80/443.
+    cap_drop: ["ALL"]
+    cap_add: ["NET_BIND_SERVICE"]
+    security_opt: ["no-new-privileges:true"]
     ports:
       - "80:80"
       - "443:443"
     volumes:
       - "./infra/docker/Caddyfile:/etc/caddy/Caddyfile:ro"
+      - "./infra/docker/caddy/cf-origin-pull-ca.pem:/etc/caddy/cf-origin-pull-ca.pem:ro"
       - "caddy_data:/data"
       - "caddy_config:/config"
     depends_on: [web, api]

@@ -14,6 +14,7 @@ from app.core.security import (
     verify_password,
     verify_totp,
 )
+from app.services import session_service as sessions
 
 
 def _utcnow() -> datetime:
@@ -58,7 +59,8 @@ def _as_object_id(value):
 
 
 class AuthService:
-    async def login(self, email: str, password: str, mfa_code: str | None) -> dict | None:
+    async def login(self, email: str, password: str, mfa_code: str | None,
+                    user_agent: str | None = None) -> dict | None:
         db = shared_db()
         user = await db["users"].find_one({"email": email, "status": "active"})
         if not user or not verify_password(password, user["password_hash"]):
@@ -71,10 +73,18 @@ class AuthService:
         # Distinct signal so the client can prompt for the code after a correct password.
         if user.get("mfa_enabled") and not verify_totp(user.get("mfa_secret", ""), mfa_code or ""):
             return {"mfa_required": True}
+        # Concurrent-session (seat) cap: a NEW device/browser opens a NEW session. If the tenant
+        # already holds `seats` live sessions, block — even if it's the same username elsewhere.
+        tid = str(user["tenant_id"])
+        sub = await db["subscriptions"].find_one({"tenant_id": user["tenant_id"]})
+        seats = sessions.tenant_seats(sub)
+        if not await sessions.has_free_seat(tid, seats):
+            return {"seat_limit": True, "seats": seats}
+        sid = await sessions.open_session(tid, str(user["_id"]), ua=user_agent)
         await db["users"].update_one({"_id": user["_id"]},
-                                     {"$set": {"last_login_at": _utcnow()}})  
+                                     {"$set": {"last_login_at": _utcnow()}})
         modules, roles, perms, demo = await self._resolve(user)
-        return self._issue(user, roles, modules, perms, demo)
+        return self._issue(user, roles, modules, perms, demo, sid=sid)
 
     async def _tenant_access_ok(self, tenant_id) -> bool:
         db = shared_db()
@@ -97,14 +107,28 @@ class AuthService:
         user = await db["users"].find_one({"_id": _as_object_id(claims["sub"])})
         if not user or user.get("refresh_token_version") != claims.get("ver"):
             return None  # revoked
+        # Keep the SAME session across a refresh (no new seat). If it lapsed (idle → TTL-reaped),
+        # revive it only if a seat is free — otherwise this refresh is over the cap → force re-login.
+        tid = str(user["tenant_id"])
+        sid = claims.get("sid")
+        if sid and not await sessions.is_live(sid):
+            sub = await db["subscriptions"].find_one({"tenant_id": user["tenant_id"]})
+            if not await sessions.has_free_seat(tid, sessions.tenant_seats(sub), exclude_sid=sid):
+                return None
+        # Adopt/revive/refresh the session. Legacy refresh tokens minted before the seat system
+        # carry no sid → open_session(sid=None) gives them a fresh TRACKED session so they can no
+        # longer refresh forever outside the cap (closes the pre-`sid` escape without a mass logout).
+        sid = await sessions.open_session(tid, str(user["_id"]), sid=sid)
         modules, roles, perms, demo = await self._resolve(user)
-        return self._issue(user, roles, modules, perms, demo)
+        return self._issue(user, roles, modules, perms, demo, sid=sid)
 
     async def issue_for_user(self, user: dict) -> dict:
         """Mint tokens for a user WITHOUT a password check or last_login update — used
-        for admin impersonation. Reuses the user's own identity (no new seat/license)."""
+        for admin impersonation. Opens an impersonation session (excluded from the seat cap)."""
+        sid = await sessions.open_session(
+            str(user["tenant_id"]), str(user["_id"]), impersonation=True)
         modules, roles, perms, demo = await self._resolve(user)
-        return self._issue(user, roles, modules, perms, demo)
+        return self._issue(user, roles, modules, perms, demo, sid=sid)
 
     async def _resolve(self, user: dict) -> tuple[dict, list[str], list[str], bool]:
         db = shared_db()
@@ -143,13 +167,13 @@ class AuthService:
         return modules, roles, sorted(perms), demo
 
     def _issue(self, user: dict, roles: list[str], modules: dict, perms: list[str],
-               demo: bool = False) -> dict:
+               demo: bool = False, sid: str | None = None) -> dict:
         uid, tid = str(user["_id"]), str(user["tenant_id"])
         return {
             "access_token": create_access_token(
                 user_id=uid, tenant_id=tid, roles=roles, modules=modules, permissions=perms,
-                demo=demo),
+                demo=demo, sid=sid),
             "refresh_token": create_refresh_token(
-                user_id=uid, tenant_id=tid, version=user.get("refresh_token_version", 0)),
+                user_id=uid, tenant_id=tid, version=user.get("refresh_token_version", 0), sid=sid),
             "expires_in": 900,
         }

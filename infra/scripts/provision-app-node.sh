@@ -9,7 +9,7 @@ cd "$(dirname "$0")/../.."
 KEY="$(pwd)/infra/scaling/keys/rxvision_data"
 SSHO=(-i "$KEY" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=15)
 NET_ID=12315100; LB_ID=6614941; SSHKEY_ID=113542635; FW_APP_ID=11113679
-SRV_TYPE=ccx13; LOCATION=hel1; IMAGE=ubuntu-22.04
+SRV_TYPE=${SRV_TYPE:-ccx13}; LOCATION=${LOCATION:-hel1}; IMAGE=${IMAGE:-ubuntu-22.04}
 CMD_ID="${NODE_CMD_ID:-}"
 
 strip(){ sed -E 's/^["'"'"']//; s/["'"'"']$//'; }
@@ -17,6 +17,7 @@ URI=$(grep -E '^MONGODB_URI=' .env | cut -d= -f2- | strip)
 DB=$(grep -E '^MONGODB_DB=' .env | cut -d= -f2- | strip); DB=${DB:-rxvision}
 M(){ docker run --rm --network host mongo:7 mongosh "$URI" --quiet --eval "db=db.getSiblingDB('$DB'); $1"; }
 TOK=$(M "print((db.platform_settings.findOne({_id:'cloud'})||{}).hetzner_token||'')" 2>/dev/null | tail -1)
+[ -n "$TOK" ] && TOK=$(python3 infra/scripts/rxsecret.py "$TOK")   # decrypt Hetzner token (enc:v1:)
 progress(){ echo "[provision] $1"; [ -n "$CMD_ID" ] && M "db.ops_commands.updateOne({_id:ObjectId('$CMD_ID')},{\$set:{result:'$(printf '%s' "$1" | tr -d "'\"" | cut -c1-200)'}})" >/dev/null 2>&1 || true; }
 api(){ local m=$1 p=$2 d=${3:-}
   if [ -n "$d" ]; then curl -s -X "$m" -H "Authorization: Bearer $TOK" -H "Content-Type: application/json" -d "$d" "https://api.hetzner.cloud/v1$p"
@@ -58,7 +59,9 @@ progress "Συγχρονισμός κώδικα & ρυθμίσεων → $NAME�
 ssh "${SSHO[@]}" root@$PIP 'mkdir -p /opt/rxvision' 2>/dev/null
 rsync -az -e "ssh ${SSHO[*]}" --exclude='.git' --exclude='node_modules' --exclude='.next' --exclude='__pycache__' --exclude='backups' --exclude='*.archive.gz' --exclude='.env' /opt/rxvision/ root@$PIP:/opt/rxvision/ >/dev/null 2>&1
 scp "${SSHO[@]}" .env root@$PIP:/opt/rxvision/.env >/dev/null 2>&1
-ssh "${SSHO[@]}" root@$PIP "sed -i 's#^VAULT_ADDR=.*#VAULT_ADDR=http://10.0.0.2:8200#' /opt/rxvision/.env; sed -i 's#^NODE_NAME=.*#NODE_NAME=$NAME#' /opt/rxvision/.env; cp /opt/rxvision/infra/scaling/docker-compose.app.yml /opt/rxvision/docker-compose.app.yml" 2>/dev/null
+# Vault over TLS (H-3): https + CA cert (SAN includes IP:10.0.0.2). The cert file is rsynced above
+# (infra/docker/vault/tls/vault.crt); the app.yml mounts it into every backend service.
+ssh "${SSHO[@]}" root@$PIP "sed -i 's#^VAULT_ADDR=.*#VAULT_ADDR=https://10.0.0.2:8200#' /opt/rxvision/.env; grep -qE '^VAULT_CACERT=' /opt/rxvision/.env && sed -i 's#^VAULT_CACERT=.*#VAULT_CACERT=/vault/tls/vault.crt#' /opt/rxvision/.env || echo 'VAULT_CACERT=/vault/tls/vault.crt' >> /opt/rxvision/.env; sed -i 's#^NODE_NAME=.*#NODE_NAME=$NAME#' /opt/rxvision/.env; cp /opt/rxvision/infra/scaling/docker-compose.app.yml /opt/rxvision/docker-compose.app.yml" 2>/dev/null
 
 # 6) build api/worker on node + ship the IDENTICAL web image from SRV01, then start
 progress "Build api/worker + αποστολή web image (ίδιο build)…"

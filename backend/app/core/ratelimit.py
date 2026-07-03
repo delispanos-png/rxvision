@@ -26,14 +26,20 @@ def _redis() -> aioredis.Redis:
     return _client
 
 
-def _client_ip(request: Request) -> str:
-    # SECURITY: Cloudflare sets CF-Connecting-IP to the TRUE client and overwrites any
-    # client-supplied value, so it's authoritative. We do NOT trust the left-most
-    # X-Forwarded-For entry — a client can spoof it to rotate the key and bypass the limit.
-    cf = request.headers.get("cf-connecting-ip")
-    if cf:
-        return cf.strip()
+def client_ip(request: Request) -> str:
+    # SECURITY (C-2): trust ONLY `X-Real-Client-IP`, which our OWN Caddy sets from its
+    # trusted-proxy-verified client IP and OVERWRITES on every request. We deliberately do NOT
+    # trust a raw `CF-Connecting-IP` / `X-Forwarded-For` from the wire: since the origin can be
+    # reached directly, an attacker could spoof those to rotate the rate-limit key and bypass the
+    # limiter + account lockout. Absent the Caddy header, fall back to the socket peer.
+    real = request.headers.get("x-real-client-ip")
+    if real:
+        return real.strip()
     return request.client.host if request.client else "unknown"
+
+
+# Backwards-compatible alias (kept for any existing import).
+_client_ip = client_ip
 
 
 async def _safe_ttl(key: str) -> int:

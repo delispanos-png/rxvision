@@ -19,7 +19,8 @@ _URL = "https://www1.gsis.gr/wsaade/RgWsPublic2/RgWsPublic2"
 
 
 async def _creds() -> tuple[str | None, str | None]:
-    cfg = await shared_db()["platform_settings"].find_one({"_id": "aade"}) or {}
+    from app.services.platform_secrets import decrypt_doc
+    cfg = decrypt_doc("aade", await shared_db()["platform_settings"].find_one({"_id": "aade"})) or {}
     return cfg.get("username"), cfg.get("password")
 
 

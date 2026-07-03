@@ -157,13 +157,14 @@ export default function OnboardingPage() {
                 />
               </div>
               <div>
-                <label className="mb-1 block text-sm text-slate-600">{t("Κωδικός φαρμακείου", "Pharmacy code")}</label>
+                <label className="mb-1 block text-sm text-slate-600">{t("Κωδικός φαρμακείου (προαιρετικό)", "Pharmacy code (optional)")}</label>
                 <input
                   value={pharmacyCode}
                   onChange={(e) => setPharmacyCode(e.target.value)}
-                  required
+                  placeholder={t("Αφήστε το κενό — συμπληρώνεται αυτόματα", "Leave empty — filled automatically")}
                   className="w-full rounded-lg border border-slate-300 px-3 py-2 focus:border-brand-600 focus:outline-none"
                 />
+                <p className="mt-1 text-xs text-slate-400">{t("Δεν χρειάζεται να τον ξέρεις — τον βρίσκουμε αυτόματα από την ΗΔΥΚΑ μετά την αποθήκευση.", "You don't need to know it — we fetch it automatically from ΗΔΥΚΑ after saving.")}</p>
               </div>
               <button
                 type="submit"

@@ -69,11 +69,19 @@ export default function LoginPage() {
       }
       router.push("/dashboard");
     } catch (e) {
-      setServerError(
-        e instanceof ApiError && e.status === 401
-          ? "Λάθος email ή κωδικός."
-          : "Η σύνδεση απέτυχε. Δοκιμάστε ξανά."
-      );
+      const detail = (e instanceof ApiError ? (e.problem as { detail?: { error?: string; seats?: number } })?.detail : null) || {};
+      if (e instanceof ApiError && e.status === 403 && detail.error === "seat_limit") {
+        setServerError(
+          `Συμπληρώθηκε το όριο ταυτόχρονων χρηστών${detail.seats ? ` (${detail.seats})` : ""} της συνδρομής σας. ` +
+          "Αποσυνδεθείτε από άλλη συσκευή ή αναβαθμίστε τις θέσεις χρηστών."
+        );
+      } else {
+        setServerError(
+          e instanceof ApiError && e.status === 401
+            ? "Λάθος email ή κωδικός."
+            : "Η σύνδεση απέτυχε. Δοκιμάστε ξανά."
+        );
+      }
     }
   }
 

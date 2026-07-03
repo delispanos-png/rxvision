@@ -32,6 +32,7 @@ const withPWA = require("next-pwa")({
 module.exports = withPWA({
   reactStrictMode: true,
   output: "standalone",
+  poweredByHeader: false, // don't advertise Next.js version (L-3, fingerprinting)
   // Both gates ENABLED (2026-06-08): `tsc --noEmit` and `next lint`
   // (eslint-config-next core-web-vitals) are clean, so the build fails on type OR lint errors.
   typescript: { ignoreBuildErrors: false },

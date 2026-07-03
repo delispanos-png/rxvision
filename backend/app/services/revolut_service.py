@@ -24,7 +24,8 @@ _SANDBOX = "https://sandbox-merchant.revolut.com/api"
 
 
 async def config() -> dict:
-    return await shared_db()["platform_settings"].find_one({"_id": "revolut"}) or {}
+    from app.services.platform_secrets import decrypt_doc
+    return decrypt_doc("revolut", await shared_db()["platform_settings"].find_one({"_id": "revolut"})) or {}
 
 
 async def _client() -> tuple[str | None, str | None]:

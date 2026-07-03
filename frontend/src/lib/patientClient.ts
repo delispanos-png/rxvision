@@ -97,6 +97,24 @@ export async function patientUpload<T>(path: string, form: FormData): Promise<T>
   return res.json() as Promise<T>;
 }
 
+// Best-effort logout: revoke the refresh tokens server-side (all devices), then clear locally.
+// Never throws — a network hiccup must not block the user from logging out.
+export async function patientLogout(): Promise<void> {
+  const token = patientTokens.access;
+  if (token) {
+    try {
+      await fetch(`${API_BASE}/patient/auth/logout`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        keepalive: true,
+      });
+    } catch {
+      /* ignore */
+    }
+  }
+  patientTokens.clear();
+}
+
 // Raw helper for the auth endpoints (no token, returns the session payload).
 export async function patientAuth<T>(path: string, body: unknown): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {

@@ -22,7 +22,7 @@ mkdir -p "$TLS_DIR"
 openssl req -x509 -newkey rsa:4096 -nodes -days 3650 \
   -keyout "$KEY" -out "$CRT" \
   -subj "/CN=vault" \
-  -addext "subjectAltName=DNS:vault,DNS:localhost,IP:127.0.0.1"
+  -addext "subjectAltName=DNS:vault,DNS:localhost,IP:127.0.0.1,IP:10.0.0.2"
 
 chmod 644 "$CRT"
 # Vault runs as uid 100 in-container. Prefer keeping the key 600 owned by that uid

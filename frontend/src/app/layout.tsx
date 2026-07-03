@@ -1,6 +1,10 @@
 import "./globals.css";
 import type { Metadata, Viewport } from "next";
+import { Inter } from "next/font/google";
 import { Providers } from "./providers";
+
+// Self-hosted at build time (no runtime request to Google Fonts → no user-IP leak + tighter CSP).
+const inter = Inter({ subsets: ["latin", "greek"], display: "swap", variable: "--font-inter" });
 import { ServiceWorkerRegister } from "@/components/pwa/ServiceWorkerRegister";
 import { CookieConsent } from "@/components/legal/CookieConsent";
 
@@ -32,7 +36,7 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="el">
+    <html lang="el" className={inter.variable}>
       <body className="bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100">
         <ServiceWorkerRegister />
         <Providers>{children}</Providers>

@@ -11,7 +11,9 @@ from pydantic import BaseModel, EmailStr
 
 from app.core.db import shared_db
 from app.core.deps import PlatformContext, get_platform_admin
-from app.core.ratelimit import rate_limit
+from app.core.ratelimit import (
+    account_locked, clear_login_failures, rate_limit, record_login_failure,
+)
 from app.services.platform_auth import PlatformAuthService
 
 router = APIRouter()
@@ -47,9 +49,18 @@ class TokenOut(BaseModel):
 @router.post("/auth/login", response_model=TokenOut,
              dependencies=[Depends(rate_limit("platform_login", limit=10, window_seconds=300))])
 async def login(body: LoginIn):
+    # Per-account lockout on the MOST privileged identity — IP rate-limit alone lets a distributed
+    # credential-stuffing run continue indefinitely against the platform admin.
+    locked = await account_locked(f"padmin:{body.email}")
+    if locked:
+        raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS,
+                            detail={"error": "account_locked", "retry_after": locked},
+                            headers={"Retry-After": str(locked)})
     tokens = await PlatformAuthService().login(body.email, body.password)
     if tokens is None:
+        await record_login_failure(f"padmin:{body.email}")
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid_credentials")
+    await clear_login_failures(f"padmin:{body.email}")
     return tokens
 
 

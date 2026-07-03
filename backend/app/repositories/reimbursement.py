@@ -125,15 +125,21 @@ class ReimbursementRepository(BaseRepository):
                       {"$sort": {"_id": 1}}]).to_list(None)]
 
         # per (fund, vaccine?, ΦΥΚ?) so we can split ΕΟΠΥΥ φάρμακα/εμβόλια and isolate the rebate base.
-        # Οι αμιγώς-100% (claim=0) ΔΕΝ υποβάλλονται → εξαιρούνται από τις γραμμές ταμείων, μπαίνουν
-        # σε ξεχωριστή γραμμή «Αμιγώς 100%».
+        # «Αμιγώς 100%» (ΔΕΝ υποβάλλονται στο ΕΟΠΥΥ) = συνταγές όπου ΟΛΑ τα φάρμακα έχουν συμμετοχή
+        # ασθενή 100% (`details.full_participation=True`). Αν έστω ΕΝΑ φάρμακο <100% (0/10/20/12,5%…) →
+        # υποβάλλεται κανονικά. ΔΕΝ κρίνεται από claim==0 (25% μπορεί να έχει claim=0) ούτε από narcotic.
+        # Το flag υπολογίζεται στο ingest (_map_full) & backfilled από τα per-item participation_pct.
         by_fund_raw = await self._db["prescription_executions"].aggregate([
-            {"$match": {**match, "amount_claimed": {"$gt": 0}}},
+            {"$match": {**match, "amount_total": {"$gt": 0},
+                        "details.full_participation": {"$ne": True}}},
             {"$group": {"_id": {"fund": "$fund_id",
                                 "vac": {"$ifNull": ["$details.vaccines", False]},
                                 "fyk": {"$ifNull": ["$details.n3816", False]}},
                         "rx": {"$sum": 1}, "retail": {"$sum": "$amount_total"},
-                        "claim": {"$sum": "$amount_claimed"}, "patient": {"$sum": "$patient_share"}}},
+                        # claim ανά ταμείο = ΚΑΘΑΡΟ πρωτεύον (ΕΟΠΥΥ) = amount_claimed − ΚΥΥΑΠ κάλυψη·
+                        # το κομμάτι ΚΥΥΑΠ εμφανίζεται ΜΟΝΟ στη ξεχωριστή γραμμή «ΕΤΥΑΠ» (όχι διπλά).
+                        "claim": {"$sum": {"$subtract": ["$amount_claimed", {"$ifNull": ["$details.kyyap_covered", 0]}]}},
+                        "patient": {"$sum": "$patient_share"}}},
         ]).to_list(None)
         grouped: dict = defaultdict(lambda: {"rx": 0, "retail": 0, "claim": 0, "patient": 0,
                                              "is_eopyy": False, "is_vaccine": False})
@@ -169,9 +175,10 @@ class ReimbursementRepository(BaseRepository):
                             "rx": et[0]["rx"], "retail": 0, "claim": etyap_claim, "patient": 0,
                             "rebate": 0, "discount": 0, "receipt": etyap_claim})
 
-        # Αμιγώς 100% συμμετοχή — ο ασθενής πληρώνει όλη τη λιανική, ΔΕΝ υποβάλλονται (κρατούνται στο φαρμακείο)
+        # Αμιγώς 100% συμμετοχή — ΟΛΑ τα φάρμακα 100% συμμετοχή ασθενή (full_participation) → ΔΕΝ
+        # υποβάλλονται (κρατούνται στο φαρμακείο). Αν έστω ένα φάρμακο <100% → πάει στο ΕΟΠΥΥ (πάνω).
         h = await self._db["prescription_executions"].aggregate([
-            {"$match": {**match, "amount_total": {"$gt": 0}, "amount_claimed": 0}},
+            {"$match": {**match, "amount_total": {"$gt": 0}, "details.full_participation": True}},
             {"$group": {"_id": None, "rx": {"$sum": 1}, "retail": {"$sum": "$amount_total"},
                         "patient": {"$sum": "$patient_share"}}},
         ]).to_list(1)
@@ -224,12 +231,82 @@ class ReimbursementRepository(BaseRepository):
                        "other_claim": other_claim, "gross_profit": cur["retail"] - cur["cost"],
                        "rebate": fin["rebate"], "discount": fin["discount"], "etyap": etyap_claim,
                        "rebate_base": fin["base"], "hundred_rx": hundred["rx"], "hundred_retail": hundred["retail"],
-                       "receipt": cur["claim"] - fin["rebate"] - fin["discount"] + etyap_claim},
+                       # cur["claim"] (=Σ amount_claimed) ΠΕΡΙΕΧΕΙ ήδη το ΚΥΥΑΠ → ΔΕΝ ξαναπροσθέτουμε etyap
+                       # (αλλιώς διπλομέτρημα). Είσπραξη = συνολικό αιτούμενο − rebate − έκπτωση.
+                       "receipt": cur["claim"] - fin["rebate"] - fin["discount"]},
             "deductions": fin,  # base + per-bracket breakdown → KPI tooltip shows the formula
             "delta_prev": {k: _pct(cur[k], prev[k]) for k in ("rx", "retail", "claim", "patient")},
             "delta_yoy": {k: _pct(cur[k], yoy[k]) for k in ("rx", "retail", "claim", "patient")},
             "by_day": by_day, "by_fund": by_fund, "by_fund_day": by_fund_day,
         })
+
+    @staticmethod
+    def _invoice_line(row: dict) -> dict:
+        """Οδηγία ΤΙΜΟΛΟΓΙΟΥ ανά ταμείο — τι Τ.Π.Υ. πρέπει να εκδώσει το φαρμακείο."""
+        c = row.get("claim", 0) or 0
+        if row.get("not_submitted"):
+            return {"issue": False,
+                    "text": "ΔΕΝ εκδίδεται τιμολόγιο ταμείου — κρατιέται στο φαρμακείο (100% συμμετοχή ασθενή)."}
+        if row["fund"] == EOPYY_MED:
+            net = row.get("receipt", c)
+            return {"issue": True, "amount": net,
+                    "text": (f"Τιμολόγιο προς ΕΟΠΥΥ (Φάρμακα): αιτούμενο €{eur_gr(c)} − Rebate €{eur_gr(row.get('rebate', 0))} "
+                             f"− Έκπτωση τζίρου €{eur_gr(row.get('discount', 0))} = καθαρό €{eur_gr(net)}.")}
+        if row["fund"] == EOPYY_VAC:
+            return {"issue": True, "amount": c, "text": f"Τιμολόγιο προς ΕΟΠΥΥ (Εμβόλια): €{eur_gr(c)} (χωρίς rebate/έκπτωση)."}
+        if row["fund"] == "ΕΤΥΑΠ":
+            return {"issue": True, "amount": c, "text": f"Τιμολόγιο προς ΕΤΥΑΠ (συμπληρωματική κάλυψη): €{eur_gr(c)}."}
+        return {"issue": True, "amount": c, "text": f"Τιμολόγιο προς {row['fund']}: €{eur_gr(c)}."}
+
+    async def closing_report(self, period: str) -> dict:
+        """Αναλυτική εκτύπωση/άποψη κλεισίματος: ΑΝΑ ΤΑΜΕΙΟ × ΑΝΑ ΗΜΕΡΑ (πλήθος + αιτούμενο + λιανική +
+        συμμετοχή), σύνολα ανά ταμείο, οδηγία ΤΙΜΟΛΟΓΙΟΥ ανά ταμείο, γενικό σύνολο. Ζωντανό — δουλεύει
+        για τον τρέχοντα μήνα χωρίς να «κλείσει». Ίδιο κριτήριο υποβολής με το monthly_closing."""
+        closing = await self.monthly_closing(period)
+        start, end = _month_bounds(period)
+        meta = await self._fund_meta()
+        match = {"tenant_id": self.tenant_id, "executed_at": {"$gte": start, "$lt": end},
+                 "status": {"$ne": "cancelled"}}
+        perfund: dict = defaultdict(lambda: defaultdict(lambda: {"rx": 0, "claim": 0, "retail": 0, "patient": 0}))
+        # ΥΠΟΒΑΛΛΟΜΕΝΕΣ ανά (ταμείο, ημέρα)· claim = ΚΑΘΑΡΟ πρωτεύον (− ΚΥΥΑΠ)
+        for r in await self._db["prescription_executions"].aggregate([
+            {"$match": {**match, "amount_total": {"$gt": 0}, "details.full_participation": {"$ne": True}}},
+            {"$group": {"_id": {"fund": "$fund_id", "vac": {"$ifNull": ["$details.vaccines", False]},
+                                "day": {"$dateToString": {"format": "%Y-%m-%d", "date": "$executed_at"}}},
+                        "rx": {"$sum": 1}, "retail": {"$sum": "$amount_total"},
+                        "claim": {"$sum": {"$subtract": ["$amount_claimed", {"$ifNull": ["$details.kyyap_covered", 0]}]}},
+                        "patient": {"$sum": "$patient_share"}}},
+        ]).to_list(None):
+            label, _ = self._grp_label(meta, r["_id"]["fund"], bool(r["_id"]["vac"]))
+            e = perfund[label][r["_id"]["day"]]
+            for k in ("rx", "claim", "retail", "patient"):
+                e[k] += r[k]
+        # ΕΤΥΑΠ (ΚΥΥΑΠ κάλυψη — δευτερεύουσα υποβολή) ανά ημέρα
+        for r in await self._db["prescription_executions"].aggregate([
+            {"$match": {**match, "details.kyyap_covered": {"$gt": 0}}},
+            {"$group": {"_id": {"$dateToString": {"format": "%Y-%m-%d", "date": "$executed_at"}},
+                        "rx": {"$sum": 1}, "claim": {"$sum": "$details.kyyap_covered"}}},
+        ]).to_list(None):
+            e = perfund["ΕΤΥΑΠ"][r["_id"]]
+            e["rx"] += r["rx"]; e["claim"] += r["claim"]
+        # Αμιγώς-100% ανά ημέρα (ενημερωτικά — δεν υποβάλλονται)
+        for r in await self._db["prescription_executions"].aggregate([
+            {"$match": {**match, "amount_total": {"$gt": 0}, "details.full_participation": True}},
+            {"$group": {"_id": {"$dateToString": {"format": "%Y-%m-%d", "date": "$executed_at"}},
+                        "rx": {"$sum": 1}, "retail": {"$sum": "$amount_total"}, "patient": {"$sum": "$patient_share"}}},
+        ]).to_list(None):
+            e = perfund["Αμιγώς 100% (δεν υποβάλλονται)"][r["_id"]]
+            e["rx"] += r["rx"]; e["retail"] += r["retail"]; e["patient"] += r["patient"]
+        funds_out = []
+        for row in closing["by_fund"]:
+            days = sorted(perfund.get(row["fund"], {}).items())
+            funds_out.append({**row, "invoice": self._invoice_line(row),
+                              "days": [{"date": d, **v} for d, v in days]})
+        submitted = [f for f in closing["by_fund"] if not f.get("not_submitted")]
+        grand = {"rx": sum(f["rx"] for f in submitted), "claim": sum(f["claim"] for f in submitted),
+                 "retail": sum(f["retail"] for f in submitted),
+                 "receipt": sum(f.get("receipt", f["claim"]) for f in submitted)}
+        return jsonsafe({"period": period, "funds": funds_out, "grand": grand, "totals": closing["totals"]})
 
     # ── 2. CLAIM FORECAST ───────────────────────────────────────────────────
     async def _period_group_claims_split(self, period: str) -> dict:
@@ -720,19 +797,20 @@ class ReimbursementRepository(BaseRepository):
         allrows = []
         doc_map: dict = {}     # execution _id → row (για 2ο πέρασμα: ταινίες + σημειώσεις ΗΔΥΚΑ)
         for r in rows:
-            is_100 = (r.get("retail", 0) or 0) > 0 and (r.get("claim", 0) or 0) == 0
-            if is_100:
-                glabel, is_eo, is_vac = "Αμιγώς 100%", False, False
-            else:
-                glabel, is_eo = self._grp_label(meta, r["fund_id"], bool(r.get("vac")))
-                is_vac = is_eo and bool(r.get("vac"))
+            # ΚΑΝΟΝΙΚΗ ομαδοποίηση εδώ· το «Αμιγώς 100%» ΔΕΝ κρίνεται από claim==0 (αναξιόπιστο — π.χ.
+            # 25% συμμετοχή μπορεί να έχει claim=0) αλλά από τη ΣΥΜΜΕΤΟΧΗ ΑΝΑ ΦΑΡΜΑΚΟ: «Αμιγώς 100%» =
+            # ΟΛΑ τα φάρμακα με participation_pct==100· αν έστω ΕΝΑ <100 → κατατίθεται στον ΕΟΠΥΥ.
+            # Υπολογίζεται στο 2ο πέρασμα (per-item participation_pct) & εφαρμόζεται μετά.
+            is_100 = False
+            glabel, is_eo = self._grp_label(meta, r["fund_id"], bool(r.get("vac")))
+            is_vac = is_eo and bool(r.get("vac"))
             ec = r.get("exec_count")
             ext = str(r["_id"])
             root = ext.split(":")[0]                       # 13ψήφιο barcode συνταγής
             exno = ext.split(":")[1] if ":" in ext else None  # αριθμός εκτέλεσης/φάσης
             allrows.append({
                 "barcode": root, "external_id": ext, "exec_no": exno,
-                "claim": r["claim"], "executed_at": r["executed_at"],
+                "claim": r["claim"], "retail": r.get("retail", 0), "executed_at": r["executed_at"],
                 "day": r["executed_at"].strftime("%Y-%m-%d") if r.get("executed_at") else None,
                 "fund": glabel, "group": glabel, "is_eopyy": is_eo, "is_vaccine": is_vac,
                 "is_100": is_100, "is_fyk": bool(r.get("n3816")), "is_etyap": bool(r.get("supp")),
@@ -762,12 +840,17 @@ class ReimbursementRepository(BaseRepository):
                 {"needs_dose_check": True}, {"_id": 1})}
             async for it in self._db["prescription_items"].find(
                     {"tenant_id": self.tenant_id, "execution_id": {"$in": list(doc_map.keys())}},
-                    {"execution_id": 1, "details.eof_code": 1, "details.coupons.qr": 1, "details.coupons.execution_no": 1}):
+                    {"execution_id": 1, "details.eof_code": 1, "details.coupons.qr": 1,
+                     "details.coupons.execution_no": 1, "details.participation_pct": 1}):
                 row = doc_map.get(it["execution_id"])
                 if not row:
                     continue
                 d = it.get("details") or {}
                 eof = str(d.get("eof_code") or "")
+                # συμμετοχή ανά φάρμακο: μετράμε items & πόσα είναι 100% → «Αμιγώς 100%» μόνο αν ΟΛΑ 100%
+                row["_nit"] = row.get("_nit", 0) + 1
+                if float(d.get("participation_pct") or 0) == 100.0:
+                    row["_n100"] = row.get("_n100", 0) + 1
                 coupons = d.get("coupons") or []
                 if any(c.get("qr") is False for c in coupons):
                     row["has_strip"] = True
@@ -784,6 +867,13 @@ class ReimbursementRepository(BaseRepository):
             for row in doc_map.values():
                 if row.get("has_strip") or row.get("is_narcotic") or row.get("hdika_note") or row.get("needs_dose_check"):
                     row["needs_check"] = True
+                # «Αμιγώς 100%» = retail>0 & ΟΛΑ τα φάρμακα με 100% συμμετοχή (κανένα <100%). Αλλιώς
+                # κατατίθεται κανονικά στον ΕΟΠΥΥ → κρατά την κανονική ομάδα (δεν μπαίνει στα 100%).
+                if (row.get("retail", 0) or 0) > 0 and row.get("_nit") and row["_nit"] == row.get("_n100", 0):
+                    row["is_100"] = True
+                    row["fund"] = row["group"] = "Αμιγώς 100%"
+                    row["is_eopyy"] = False
+                    row["is_vaccine"] = False
         # Αναλυτική ενημέρωση μήνα (πριν το φίλτρο ομάδας → όλος ο μήνας)
         def _cnt(f):
             return sum(1 for r in allrows if r.get(f))
@@ -940,7 +1030,8 @@ class ReimbursementRepository(BaseRepository):
             {"tenant_id": self.tenant_id, "executed_at": {"$gte": start, "$lt": end},
              "status": {"$ne": "cancelled"}},
             {"executed_at": 1, "external_id": 1, "fund_id": 1, "amount_total": 1,
-             "amount_claimed": 1, "patient_share": 1, "details.vaccines": 1, "details.kyyap_covered": 1})
+             "amount_claimed": 1, "patient_share": 1, "details.vaccines": 1, "details.kyyap_covered": 1,
+             "details.full_participation": 1})
         async for e in cur:
             day = e["executed_at"].strftime("%Y-%m-%d")
             det = e.get("details") or {}
@@ -952,7 +1043,9 @@ class ReimbursementRepository(BaseRepository):
                 groups.add("ΕΤΥΑΠ")
             total = e.get("amount_total", 0) or 0
             claim = e.get("amount_claimed", 0) or 0
-            is_100 = total > 0 and claim == 0
+            # «Αμιγώς 100%» = ΟΛΑ τα φάρμακα με συμμετοχή ασθενή 100% (details.full_participation).
+            # ΟΧΙ claim==0 (αναξιόπιστο: 25% συμμετοχή μπορεί να έχει claim=0 & ναρκωτικά έχουν claim=0).
+            is_100 = total > 0 and det.get("full_participation") is True
             d = per[day]
             if is_100:
                 d["hundred"] += 1
@@ -1158,11 +1251,12 @@ class ReimbursementRepository(BaseRepository):
             {"tenant_id": self.tenant_id, "executed_at": {"$gte": start, "$lt": end},
              "status": {"$ne": "cancelled"}, "has_unexecuted_substances": True})
         mismatch = sum(1 for r in risk_rows if "amount_mismatch" in r["flags"])
-        # Συνταγές με αμιγώς 100% συμμετοχή (ο ασθενής πληρώνει όλη τη λιανική → ταμείο 0) — ΔΕΝ
-        # υποβάλλονται, κρατούνται στο φαρμακείο.
+        # Συνταγές «Αμιγώς 100%» = ΟΛΑ τα φάρμακα με συμμετοχή ασθενή 100% (`details.full_participation`)
+        # → ΔΕΝ υποβάλλονται. ΟΧΙ `amount_claimed==0` (25% μπορεί να έχει claim=0· έδινε 10 αντί 4).
         rx_100 = await self._db["prescription_executions"].count_documents(
             {"tenant_id": self.tenant_id, "executed_at": {"$gte": start, "$lt": end},
-             "status": {"$ne": "cancelled"}, "amount_total": {"$gt": 0}, "amount_claimed": 0})
+             "status": {"$ne": "cancelled"}, "amount_total": {"$gt": 0},
+             "details.full_participation": True})
         t = closing["totals"]
 
         insights = []

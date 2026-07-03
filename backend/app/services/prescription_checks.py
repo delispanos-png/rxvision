@@ -61,8 +61,28 @@ def _overdose_detail(item: dict, cat: dict) -> str:
             "επαρκεί/συμφωνεί με τη δοσολογία του ιατρού.")
 
 
+# Κατηγορία κάθε ελέγχου: «closing» = αφορά τη ΣΩΣΤΗ ΚΑΤΑΘΕΣΗ/κλείσιμο (κίνδυνος περικοπής ή απαιτεί
+# ενέργεια) → ο φαρμακοποιός ΠΡΕΠΕΙ να εστιάσει· «advisory» = κλινικό/ενημερωτικό από ΗΔΥΚΑ (καλό να
+# ξέρει, δεν επηρεάζει την κατάθεση). Litmus: «αν το αγνοήσω, κινδυνεύω με περικοπή/λάθος κατάθεση;»
+_CHECK_CATEGORY = {
+    "overdose": "closing",          # λάθος ποσότητα → περικοπή
+    "special_opinion": "closing",   # χρειάζεται γνωμάτευση → περικοπή αν λείπει
+    "fyk_high_value": "closing",    # υψηλή αξία → υψηλός έλεγχος, κράτα έγγραφα
+    "withdrawn": "closing",         # αποσυρμένο → περικοπή
+    "limited_execution": "closing", # περιορισμένη εκτέλεση → περικοπή
+    "hospital": "closing",          # νοσοκομειακό → περικοπή
+    "hdika_info": "advisory",       # κλινική προειδοποίηση
+    "hdika_pharmacist": "advisory", # οδηγία προς φαρμακοποιό
+    "heparin": "advisory",
+    "ultra_levure": "advisory",
+    "desensitization": "advisory",
+    "ifet": "advisory",
+}
+
+
 def check_item(item: dict, cat: dict, *, ultra_levure_enabled: bool = True) -> list[dict]:
-    """item: {barcode, name, quantity, dose, frequency, duration}; cat: medicine_catalog doc."""
+    """item: {barcode, name, quantity, dose, frequency, duration}; cat: medicine_catalog doc.
+    Κάθε check φέρει `category` ∈ {closing, advisory} (βλ. _CHECK_CATEGORY)."""
     checks: list[dict] = []
     omt = (cat.get("overdose_message_type") or "").upper()
     qty = item.get("quantity") or 1
@@ -126,4 +146,6 @@ def check_item(item: dict, cat: dict, *, ultra_levure_enabled: bool = True) -> l
         checks.append({"type": "heparin", "level": "info",
                        "title": "Ηπαρίνη",
                        "detail": "Απαιτείται ειδικός χειρισμός/φύλαξη."})
+    for c in checks:
+        c["category"] = _CHECK_CATEGORY.get(c["type"], "advisory")
     return checks

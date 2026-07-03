@@ -205,6 +205,39 @@ def deep_reconcile_task(self, tenant_id: str, days: int) -> dict:
     return _run_async(_run())
 
 
+@celery_app.task(name="app.workers.ingestion.dispatch_amount_audit")
+def dispatch_amount_audit() -> int:
+    """Beat-scheduled. Enqueue an amount-audit batch per GR tenant — verifies each execution's
+    ποσά απέναντι στο ΕΝΤΥΠΟ (PDF) της ΗΔΥΚΑ (ground truth) & διορθώνει. Runs on the backfill queue
+    so it never steals the incremental-sync slots; drains the historical backlog batch-by-batch and
+    keeps up with new executions daily."""
+    async def _run() -> list[str]:
+        client, db = _fresh_db()
+        try:
+            return [str(t["_id"]) async for t in _gr_hdika_tenants(db)]
+        finally:
+            client.close()
+    ids = _run_async(_run())
+    for tid in ids:
+        amount_audit_task.apply_async(args=[tid, settings.AMOUNT_AUDIT_BATCH], queue="backfill")
+    return len(ids)
+
+
+@celery_app.task(name="app.workers.ingestion.amount_audit",
+                 bind=True, max_retries=2, autoretry_for=(ConnectionError, TimeoutError),
+                 retry_backoff=True, retry_backoff_max=1800, retry_jitter=True)
+def amount_audit_task(self, tenant_id: str, limit: int = 150) -> dict:
+    """Audit one tenant's next batch of un-audited executions vs the ΗΔΥΚΑ printout & correct."""
+    async def _run() -> dict:
+        client, db = _fresh_db()
+        try:
+            from app.services.ingestion.amount_audit import audit_amounts_against_printout
+            return await audit_amounts_against_printout(tenant_id, db=db, limit=limit)
+        finally:
+            client.close()
+    return _run_async(_run())
+
+
 @celery_app.task(name="app.workers.ingestion.dispatch_influenza_sync")
 def dispatch_influenza_sync() -> int:
     """Beat-scheduled (daily). Enqueue a flu-vaccination sync per GR tenant with ΗΔΥΚΑ creds."""
@@ -258,21 +291,11 @@ def hdika_incremental_sync(self, tenant_id: str) -> dict:
     async def _run() -> dict:
         client, db = _fresh_db()
         try:
-            creds = dict(vault.get_secret(f"tenants/{tenant_id}/hdika") or {})
-            # merge platform ΗΔΥΚΑ config (production base_url; shared sandbox in test)
-            plat = await db["platform_settings"].find_one({"_id": "idika"})
-            if plat:
-                env = plat.get("active_environment", "test")
-                envcfg = plat.get(env) or {}
-                if envcfg.get("base_url"):
-                    creds["base_url"] = envcfg["base_url"]
-                creds["environment"] = env
-                if env == "test":
-                    for src, dst in (("integrator_username", "username"),
-                                     ("integrator_password", "password"),
-                                     ("api_key", "api_key"), ("pharmacy_id", "pharmacy_id")):
-                        if envcfg.get(src):
-                            creds[dst] = envcfg[src]
+            from app.api.v1.routers.ingestion import _effective_hdika_creds
+            # FULL effective creds — production ΚΛΗΡΟΝΟΜΕΙ platform api_key/integrator (test→sandbox).
+            # ΚΡΙΣΙΜΟ (2026-07-02): το παλιό inline building ΔΕΝ κληρονομούσε το production api_key →
+            # νέα φαρμακεία (μόνο username+password) έτρεχαν ΧΩΡΙΣ key → ΗΔΥΚΑ 911 → 0 records.
+            creds = dict(await _effective_hdika_creds(tenant_id))
             creds.setdefault("throttle", 0.1)        # gentle on ΗΔΥΚΑ
             since = await _watermark(db, tenant_id)
             now = datetime.now(tz=timezone.utc)
@@ -322,20 +345,11 @@ def hdika_backfill(self, tenant_id: str, since_iso: str, until_iso: str | None =
             if busy:
                 return {"tenant_id": tenant_id, "status": "skipped",
                         "note": "backfill already running"}
-            creds = dict(vault.get_secret(f"tenants/{tenant_id}/hdika") or {})
-            plat = await db["platform_settings"].find_one({"_id": "idika"})
-            if plat:
-                env = plat.get("active_environment", "test")
-                envcfg = plat.get(env) or {}
-                if envcfg.get("base_url"):
-                    creds["base_url"] = envcfg["base_url"]
-                creds["environment"] = env
-                if env == "test":
-                    for src, dst in (("integrator_username", "username"),
-                                     ("integrator_password", "password"),
-                                     ("api_key", "api_key"), ("pharmacy_id", "pharmacy_id")):
-                        if envcfg.get(src):
-                            creds[dst] = envcfg[src]
+            from app.api.v1.routers.ingestion import _effective_hdika_creds
+            # FULL effective creds — production ΚΛΗΡΟΝΟΜΕΙ platform api_key/integrator (test→sandbox).
+            # ΚΡΙΣΙΜΟ (2026-07-02): το παλιό inline building ΔΕΝ κληρονομούσε το production api_key →
+            # νέα φαρμακεία (μόνο username+password) το backfill έτρεχε ΧΩΡΙΣ key → 911 → 0 records.
+            creds = dict(await _effective_hdika_creds(tenant_id))
             creds["throttle"] = throttle
             cat = await load_catalog_map(db)
             since = datetime.fromisoformat(since_iso)

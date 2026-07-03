@@ -26,13 +26,15 @@ class CopilotRepository(BaseRepository):
         # No caching: answers can carry live tenant data / action proposals → must be fresh.
         if await self._today_llm_count() >= DAILY_LIMIT:
             return {"ok": False, "error": "daily_limit", "limit": DAILY_LIMIT}
-        res = await copilot_service.ask(tenant_id=self.tenant_id, perms=perms, messages=messages)
+        res = await copilot_service.ask(tenant_id=self.tenant_id, perms=perms, messages=messages,
+                                        demo=self.demo)
         if res.get("ok"):
             await self._record(user, messages, source="llm")
         return jsonsafe(res)
 
     async def action_plan(self, perms: set[str]) -> dict:
-        return jsonsafe(await copilot_service.build_action_plan(tenant_id=self.tenant_id, perms=perms))
+        return jsonsafe(await copilot_service.build_action_plan(
+            tenant_id=self.tenant_id, perms=perms, demo=self.demo))
 
     async def run_action(self, user: str, perms: set[str], action: str,
                          params: dict | None = None) -> dict:

@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, EmailStr, Field
 
 from app.core.deps import TenantContext, get_current_context
 from app.core.ratelimit import (
     account_locked, clear_login_failures, rate_limit, record_login_failure,
 )
+from app.services import session_service as sessions
 from app.services.account_service import AccountError, AccountService
 from app.services.auth_service import AuthService
 
@@ -52,20 +53,31 @@ class ResetPasswordIn(BaseModel):
 
 @router.post("/login", response_model=TokenOut,
              dependencies=[Depends(rate_limit("auth_login", limit=10, window_seconds=300))])
-async def login(body: LoginIn):
+async def login(body: LoginIn, request: Request):
     locked = await account_locked(body.email)
     if locked:
         raise HTTPException(
             status.HTTP_429_TOO_MANY_REQUESTS,
             detail={"error": "account_locked", "retry_after": locked},
             headers={"Retry-After": str(locked)})
-    result = await AuthService().login(body.email, body.password, body.mfa_code)
+    result = await AuthService().login(
+        body.email, body.password, body.mfa_code,
+        user_agent=request.headers.get("user-agent"))
     if result is None:
         await record_login_failure(body.email)  # count only true credential failures
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid_credentials")
     if result.get("mfa_required"):
         # Password OK but a valid TOTP code is required — client should prompt for it.
+        # If a code WAS submitted and rejected, count it as a failure so TOTP guessing also
+        # trips the per-account lockout (otherwise MFA bypasses brute-force protection).
+        if body.mfa_code:
+            await record_login_failure(body.email)
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail={"error": "mfa_required"})
+    if result.get("seat_limit"):
+        # Correct credentials, but the tenant's concurrent-user (seat) cap is full.
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            detail={"error": "seat_limit", "seats": result.get("seats")})
     await clear_login_failures(body.email)
     return result
 
@@ -76,6 +88,13 @@ async def refresh(body: RefreshIn):
     if tokens is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid_refresh")
     return tokens
+
+
+@router.post("/logout")
+async def logout(ctx: TenantContext = Depends(get_current_context)):
+    """Close THIS session and free its seat immediately (client also drops its tokens)."""
+    await sessions.close_session(ctx.sid)
+    return {"ok": True}
 
 
 @router.get("/me")

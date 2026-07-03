@@ -21,7 +21,9 @@ SSH=(ssh -i "$KEY" -o StrictHostKeyChecking=no -o ConnectTimeout=10)
 APP_COMPOSE=/opt/rxvision/docker-compose.app.yml
 
 # Live app nodes behind the LB — PRIVATE IPs only (public is firewalled to MGMT-only SSH).
-APP_NODES=(10.0.0.5)
+# Keep in sync with the LB targets: SRV01=10.0.0.5, SRV02=10.0.0.6 (added 2026-07-03).
+# ALL app nodes must get the SAME web image in one run, or clients hit cross-node chunk-hash 404s.
+APP_NODES=(10.0.0.5 10.0.0.6)
 # Which tiers to push. api image is shared by api+worker on the app node.
 SERVICES="${SERVICES:-api web worker}"
 
@@ -54,3 +56,10 @@ for NODE in "${APP_NODES[@]}"; do
   echo "✅ $NODE on build $A."
 done
 echo "✅ Deploy complete to: ${APP_NODES[*]}"
+
+# MGMT is NOT an LB target and no longer serves public traffic (adminpanel/my/app all go via the LB →
+# app nodes since 2026-07-03). Keep its web/caddy/worker STOPPED to save ~500MB RAM — the build/rollback
+# images stay on disk, and beat (still running on MGMT) dispatches jobs to the app-node workers. We start
+# web+worker above only to rebuild them + read the reference BUILD_ID; re-stop them so the saving is durable.
+docker compose -f docker-compose.prod.yml stop web caddy worker >/dev/null 2>&1 || true
+echo "ℹ️  MGMT web/caddy/worker stopped (RAM saver) — they run only on the app nodes now."

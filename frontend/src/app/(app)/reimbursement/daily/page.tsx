@@ -10,6 +10,7 @@ import { fmtNum, fmtEur, fmtDate } from "@/lib/formatters";
 import { KpiCard } from "@/components/kpi/KpiCard";
 import { DataTable, type Column } from "@/components/tables/DataTable";
 import { Modal } from "@/components/ui/Modal";
+import { ClosingReportModal } from "@/components/reimbursement/ClosingReportModal";
 
 type Day = { date: string; rx: number; executions: number; claim: number; retail: number; patient: number; hundred: number };
 type Daily = { period: string; group: string; groups: string[]; days: Day[]; totals: { rx: number; executions: number; claim: number; retail: number; patient: number; hundred: number; days: number } };
@@ -22,6 +23,7 @@ export default function DailyReconciliationPage() {
   const { data, isLoading } = useQuery({ queryKey: ["reimb-daily", period, group], queryFn: () => api<Daily>(`/reimbursement/daily?period=${period}&group=${encodeURIComponent(group)}`) });
   const tot = data?.totals;
   const [day, setDay] = useState<string | null>(null);
+  const [showReport, setShowReport] = useState(false);
   const groupLabel = (g: string) => g === "all" ? t("Σύνολο (όλα τα ταμεία)", "Total (all funds)") : g;
 
   // εκτελέσεις της επιλεγμένης ημέρας (UTC όρια, ίδια με τον ημερήσιο έλεγχο) — εξαιρ. ακυρωμένες
@@ -62,6 +64,7 @@ export default function DailyReconciliationPage() {
           {(data?.groups ?? ["all"]).map((g) => <option key={g} value={g}>{groupLabel(g)}</option>)}
         </select>
         {group !== "all" && <span className="text-xs text-slate-400">{t("Εμφανίζονται μόνο οι υποβαλλόμενες της επιλεγμένης ομάδας (οι 100% εξαιρούνται).", "Only submitted prescriptions of the selected group (100% excluded).")}</span>}
+        <button onClick={() => setShowReport(true)} className="ml-auto inline-flex items-center gap-1.5 rounded-lg border border-emerald-300 bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-700 hover:bg-emerald-100 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300">🖨️ {t("Αναλυτική κατάθεση (ανά ταμείο & ημέρα)", "Detailed submission (per fund & day)")}</button>
       </div>
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-6">
@@ -88,6 +91,8 @@ export default function DailyReconciliationPage() {
           </>
         )}
       </Modal>
+
+      {showReport && <ClosingReportModal period={period} t={t} onClose={() => setShowReport(false)} />}
     </div>
   );
 }

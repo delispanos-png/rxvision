@@ -118,6 +118,18 @@ INDEXES: list[tuple[str, list[tuple[str, int]], dict]] = [
     ("module_settings", [("tenant_id", 1), ("module", 1)], {"unique": True}),
     ("subscriptions", [("tenant_id", 1)], {"unique": True}),
     ("tenants", [("slug", 1)], {"unique": True}),
+    # concurrent-session tracking (seat cap): fast live-count per tenant + TTL reaper so a
+    # closed/idle browser frees its seat (delete 15′ after last activity — well past the 10′ live window).
+    ("user_sessions", [("tenant_id", 1), ("last_active_at", -1)], {}),
+    ("user_sessions", [("last_active_at", 1)], {"expireAfterSeconds": 900}),
+    # patient-registration OTP challenges — TTL-reaped at their own expiry (expires_at is a Date)
+    ("patient_otp_challenges", [("expires_at", 1)], {"expireAfterSeconds": 0}),
+    # CSP violation reports — bounded telemetry, auto-expire after 7 days
+    ("csp_reports", [("at", 1)], {"expireAfterSeconds": 7 * 24 * 3600}),
+    # Webhook replay-dedup keys (Revolut) — _id is the dedup key; reap after 24h
+    ("webhook_dedup", [("at", 1)], {"expireAfterSeconds": 24 * 3600}),
+    # Per-tenant daily LLM usage meters (Prescriptor cap) — reap after 2 days
+    ("llm_daily_usage", [("at", 1)], {"expireAfterSeconds": 2 * 24 * 3600}),
 ]
 
 

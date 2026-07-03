@@ -20,6 +20,7 @@ from datetime import datetime, timedelta, timezone
 from bson import ObjectId
 
 from app.repositories.base import BaseRepository, jsonsafe
+from app.utils.masking import mask_amka, mask_name
 
 # Age bands oldest → youngest, matching utils.anonymization.age_group() output strings.
 AGE_ORDER = ["75+", "65-74", "50-64", "35-49", "18-34", "0-17", "unknown"]
@@ -115,7 +116,9 @@ class VaccinationCampaignRepository(BaseRepository):
         from their prescription ICD-10 history. Keys are exactly the high-risk patients."""
         if not patterns:
             return {}
-        regexes = [re.compile(p) for p in patterns]
+        # ICD-10 priority codes are tenant-configured → treat as anchored LITERAL prefixes
+        # (re.escape) so a hostile/broken pattern can't ReDoS the shared cluster or 500 the endpoint.
+        regexes = [re.compile("^" + re.escape(p)) for p in patterns if p]
         rows = await self._db["prescription_executions"].aggregate([
             {"$match": {"tenant_id": self.tenant_id, "icd10": {"$in": regexes}}},
             {"$unwind": "$icd10"},
@@ -228,11 +231,15 @@ class VaccinationCampaignRepository(BaseRepository):
                 reasons.append(f"Ηλικία {ag} (≥65)")
             score = (1000 if is_high else 0) + _AGE_RANK.get(ag, 0) * 10 + (5 if ag in open_ags else 0)
             rows.append({
-                "patient_ref": str(p["_id"]), "name": p.get("full_name"), "amka": p.get("amka"),
+                # GDPR: mask patient identity + contacts for demo/mask_pii users (health advisor)
+                "patient_ref": str(p["_id"]), "name": mask_name(p.get("full_name"), self.demo),
+                "amka": mask_amka(p.get("amka"), self.demo),
                 "age_group": ag, "high_risk": is_high, "priority_reasons": reasons, "vaccinated": done,
                 "vaccinated_at": vacc.get(p.get("pseudo_id")) if done else None,
                 "open": ag in open_ags, "last_seen": p.get("last_seen_at"),
-                "mobile": c.get("mobile"), "phone": c.get("phone"), "email": c.get("email"),
+                "mobile": None if self.demo else c.get("mobile"),
+                "phone": None if self.demo else c.get("phone"),
+                "email": None if self.demo else c.get("email"),
                 "consent": bool(c.get("marketing_consent")),
                 "has_contact": bool(c.get("mobile") or c.get("phone") or c.get("email")),
                 "_score": score,

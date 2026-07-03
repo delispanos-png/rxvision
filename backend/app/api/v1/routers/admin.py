@@ -282,11 +282,12 @@ async def tenants(_: PlatformContext = Depends(get_platform_admin)):
     user_counts: dict[str, int] = {}
     async for row in db["users"].aggregate([{"$group": {"_id": "$tenant_id", "n": {"$sum": 1}}}]):
         user_counts[row["_id"]] = row["n"]
-    # concurrent active users = distinct users seen in the last 5 minutes, per tenant
+    # concurrent active sessions (= seats consumed) seen in the last 5 minutes, per tenant.
+    # Counts SESSIONS not distinct users — the same login on two PCs is two seats.
     cutoff = datetime.now(tz=timezone.utc) - timedelta(minutes=5)
     active_now: dict[str, int] = {}
-    async for row in db["users"].aggregate([
-        {"$match": {"last_active_at": {"$gte": cutoff}}},
+    async for row in db["user_sessions"].aggregate([
+        {"$match": {"last_active_at": {"$gte": cutoff}, "impersonation": {"$ne": True}}},
         {"$group": {"_id": "$tenant_id", "n": {"$sum": 1}}},
     ]):
         active_now[row["_id"]] = row["n"]
@@ -299,6 +300,7 @@ async def tenants(_: PlatformContext = Depends(get_platform_admin)):
         items.append({
             "id": t["_id"],
             "name": t.get("name", t["_id"]),
+            "afm": (t.get("company") or {}).get("afm"),
             "plan": sub.get("plan", "—"),
             "status": sub.get("status", t.get("status", "—")),
             "users": user_counts.get(t["_id"], 0),
@@ -612,20 +614,31 @@ class IntegrationsIn(BaseModel):
     apifon_token: str | None = None
     apifon_secret: str | None = None
     sms_sender: str | None = None
+    viber_sender: str | None = None
     price_email: int | None = None
     price_sms: int | None = None
     price_viber: int | None = None
+    # Κόστος μας ανά μήνυμα (cents) + ποσοστό κέρδους (%) ανά κανάλι → τιμή πελάτη = cost*(1+margin/100)
+    cost_email: int | None = None
+    cost_sms: int | None = None
+    cost_viber: int | None = None
+    margin_email: float | None = None
+    margin_sms: float | None = None
+    margin_viber: float | None = None
 
 
 @router.get("/integrations")
 async def get_integrations(_: PlatformContext = Depends(get_platform_admin)):
     """ΑΑΔΕ + Revolut credential status (secrets masked) for the admin settings screen."""
     db = shared_db()
-    aade = await db["platform_settings"].find_one({"_id": "aade"}) or {}
-    rev = await db["platform_settings"].find_one({"_id": "revolut"}) or {}
-    ant = await db["platform_settings"].find_one({"_id": "anthropic"}) or {}
-    comms_cfg = await db["platform_settings"].find_one({"_id": "comms"}) or {}
+    from app.services.platform_secrets import decrypt_doc
+    aade = decrypt_doc("aade", await db["platform_settings"].find_one({"_id": "aade"})) or {}
+    rev = decrypt_doc("revolut", await db["platform_settings"].find_one({"_id": "revolut"})) or {}
+    ant = decrypt_doc("anthropic", await db["platform_settings"].find_one({"_id": "anthropic"})) or {}
+    comms_cfg = decrypt_doc("comms", await db["platform_settings"].find_one({"_id": "comms"})) or {}
     _pr = comms_cfg.get("prices") or {}
+    _cost = comms_cfg.get("cost") or {}
+    _margin = comms_cfg.get("margin") or {}
     return {
         "aade": {"username": aade.get("username"),
                  "configured": bool(aade.get("username") and aade.get("password"))},
@@ -637,24 +650,34 @@ async def get_integrations(_: PlatformContext = Depends(get_platform_admin)):
                       "admin_model": ant.get("admin_model", "claude-opus-4-8")},
         "comms": {"apifon_token_set": bool(comms_cfg.get("apifon_token")),
                   "apifon_secret_set": bool(comms_cfg.get("apifon_secret")),
+                  "apifon_token_tail": (comms_cfg.get("apifon_token") or "")[-4:],
+                  "apifon_secret_tail": (comms_cfg.get("apifon_secret") or "")[-4:],
+                  "updated_at": comms_cfg.get("updated_at"),
                   "sms_sender": comms_cfg.get("sms_sender") or "RxVision",
+                  "viber_sender": comms_cfg.get("viber_sender") or comms_cfg.get("sms_sender") or "RxVision",
                   "prices": {"email": int(_pr.get("email", 2)), "sms": int(_pr.get("sms", 6)),
-                             "viber": int(_pr.get("viber", 4))}},
+                             "viber": int(_pr.get("viber", 4))},
+                  "cost": {"email": int(_cost.get("email", 0)), "sms": int(_cost.get("sms", 0)),
+                           "viber": int(_cost.get("viber", 0))},
+                  "margin": {"email": float(_margin.get("email", 0)), "sms": float(_margin.get("sms", 0)),
+                             "viber": float(_margin.get("viber", 0))}},
     }
 
 
 @router.put("/integrations")
 async def set_integrations(body: IntegrationsIn,
                            _: PlatformContext = Depends(get_platform_admin)):
-    """Store ΑΑΔΕ / Revolut credentials in platform_settings (never in git/logs)."""
+    """Store ΑΑΔΕ / Revolut credentials in platform_settings (encrypted at rest, never in git/logs)."""
     db = shared_db()
+    from app.services.platform_secrets import encrypt_fields
     a = {}
     if body.aade_username is not None:
         a["username"] = body.aade_username
     if body.aade_password:
         a["password"] = body.aade_password
     if a:
-        await db["platform_settings"].update_one({"_id": "aade"}, {"$set": a}, upsert=True)
+        await db["platform_settings"].update_one(
+            {"_id": "aade"}, {"$set": encrypt_fields("aade", a)}, upsert=True)
     r = {}
     if body.revolut_api_key:
         r["api_key"] = body.revolut_api_key
@@ -663,7 +686,8 @@ async def set_integrations(body: IntegrationsIn,
     if body.revolut_webhook_secret:
         r["webhook_secret"] = body.revolut_webhook_secret
     if r:
-        await db["platform_settings"].update_one({"_id": "revolut"}, {"$set": r}, upsert=True)
+        await db["platform_settings"].update_one(
+            {"_id": "revolut"}, {"$set": encrypt_fields("revolut", r)}, upsert=True)
     ant: dict = {}
     if body.anthropic_api_key:
         ant["api_key"] = body.anthropic_api_key
@@ -674,20 +698,35 @@ async def set_integrations(body: IntegrationsIn,
     if body.anthropic_admin_model:
         ant["admin_model"] = body.anthropic_admin_model
     if ant:
-        await db["platform_settings"].update_one({"_id": "anthropic"}, {"$set": ant}, upsert=True)
+        await db["platform_settings"].update_one(
+            {"_id": "anthropic"}, {"$set": encrypt_fields("anthropic", ant)}, upsert=True)
     cm: dict = {}
     if body.apifon_token:
+        if "@" in body.apifon_token:   # guard: το client_id ΔΕΝ είναι email/login
+            raise HTTPException(http_status.HTTP_400_BAD_REQUEST,
+                                "Το Client ID είναι το OAuth2 client_id της Apifon (μεγάλο αλφαριθμητικό), όχι email/login.")
         cm["apifon_token"] = body.apifon_token
     if body.apifon_secret:
         cm["apifon_secret"] = body.apifon_secret
     if body.sms_sender is not None:
         cm["sms_sender"] = body.sms_sender
+    if body.viber_sender is not None:
+        cm["viber_sender"] = body.viber_sender
     price_set = {k: v for k, v in (("email", body.price_email), ("sms", body.price_sms),
                                    ("viber", body.price_viber)) if v is not None}
     if price_set:
         cm.update({f"prices.{k}": int(v) for k, v in price_set.items()})
+    for ch in ("email", "sms", "viber"):          # κόστος μας + ποσοστό κέρδους ανά κανάλι (για display/re-edit)
+        cst = getattr(body, f"cost_{ch}")
+        mrg = getattr(body, f"margin_{ch}")
+        if cst is not None:
+            cm[f"cost.{ch}"] = int(cst)
+        if mrg is not None:
+            cm[f"margin.{ch}"] = float(mrg)
     if cm:
-        await db["platform_settings"].update_one({"_id": "comms"}, {"$set": cm}, upsert=True)
+        cm["updated_at"] = datetime.now(tz=timezone.utc)
+        await db["platform_settings"].update_one(
+            {"_id": "comms"}, {"$set": encrypt_fields("comms", cm)}, upsert=True)
     return {"ok": True}
 
 
@@ -727,6 +766,24 @@ async def admin_comms_test(body: CommsTestIn, _: PlatformContext = Depends(get_p
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(http_status.HTTP_400_BAD_REQUEST, str(exc))
     return {"ok": True}
+
+
+@router.get("/comms/apifon-balance")
+async def admin_apifon_balance(_: PlatformContext = Depends(get_platform_admin)):
+    """Το ΔΙΚΟ ΜΑΣ υπόλοιπο στον κεντρικό λογαριασμό Apifon (live)."""
+    from app.services import comms
+    try:
+        return await comms.apifon_balance()
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(http_status.HTTP_400_BAD_REQUEST, str(exc))
+
+
+@router.get("/comms/usage-by-tenant")
+async def admin_usage_by_tenant(days: int = 30, _: PlatformContext = Depends(get_platform_admin)):
+    """Κατανάλωση μηνυμάτων ανά φαρμακείο (τελευταίες `days` ημέρες) + τρέχον wallet."""
+    from app.services import message_wallet
+    return {"days": days, "prices": await message_wallet.prices(),
+            "items": await message_wallet.usage_by_tenant(days=days)}
 
 
 @router.get("/credit-packages")
@@ -1594,7 +1651,9 @@ async def put_idika(body: IdikaIn, _: PlatformContext = Depends(get_platform_adm
         doc[name] = {"base_url": inp.base_url or _IDIKA_DEFAULTS[name], "api_key": api_key,
                      "integrator_username": username, "integrator_password": password,
                      "pharmacy_id": pharmacy_id}
-    await db["platform_settings"].update_one({"_id": "idika"}, {"$set": doc}, upsert=True)
+    from app.services.platform_secrets import encrypt_fields
+    await db["platform_settings"].update_one(
+        {"_id": "idika"}, {"$set": encrypt_fields("idika", doc)}, upsert=True)
     return {"saved": True}
 
 
@@ -1863,3 +1922,60 @@ async def pharmacat_kb_regenerate(sig: str, body: KbRegenIn | None = None,
     await db["pharmacat_knowledge"].update_one({"sig": sig}, {"$set": sets})
     await _resolve_reports(db, sig)        # correction done → notify reporters
     return {"ok": True, "reply": (res.get("reply") or "")[:800]}
+
+
+# ── Amount audit vs ΗΔΥΚΑ printout (ground-truth reconciliation) ───────────────────────────────
+class AmountAuditRunIn(BaseModel):
+    tenant_id: str | None = None          # None → όλα τα ενεργά GR tenants
+    batches: int = Field(1, ge=1, le=20)  # πόσες παρτίδες να πυροδοτηθούν ανά tenant
+
+
+@router.get("/amount-audit/status")
+async def amount_audit_status(_: PlatformContext = Depends(get_platform_admin)):
+    """Ανά tenant: εκτελέσεις ΗΔΥΚΑ, πόσες ελέγχθηκαν vs το έντυπο, πόσες απομένουν, πόσες διορθώθηκαν."""
+    db = shared_db()
+    names = {str(t["_id"]): (t.get("company", {}).get("name") or t.get("name") or str(t["_id"]))
+             async for t in db["tenants"].find({}, {"company.name": 1, "name": 1})}
+    out: list[dict] = []
+    async for row in db["prescription_executions"].aggregate([
+        {"$match": {"source": "HDIKA"}},
+        {"$group": {"_id": "$tenant_id",
+                    "total": {"$sum": 1},
+                    "audited": {"$sum": {"$cond": [{"$ifNull": ["$amount_audited_at", False]}, 1, 0]}}}},
+    ]):
+        tid = row["_id"]
+        corrected = await db["amount_audit_log"].count_documents({"tenant_id": tid})
+        out.append({"tenant_id": tid, "name": names.get(tid, tid),
+                    "total": row["total"], "audited": row["audited"],
+                    "remaining": row["total"] - row["audited"], "corrected": corrected})
+    out.sort(key=lambda r: r["remaining"], reverse=True)
+    return {"tenants": out, "total_corrected": sum(r["corrected"] for r in out)}
+
+
+@router.get("/amount-audit/log")
+async def amount_audit_log(tenant_id: str | None = None, limit: int = 100,
+                           _: PlatformContext = Depends(get_platform_admin)):
+    """Οι πιο πρόσφατες διορθώσεις (old→new ποσά) — για διαφάνεια/έλεγχο."""
+    db = shared_db()
+    q = {"tenant_id": tenant_id} if tenant_id else {}
+    rows = [jsonsafe(r) async for r in db["amount_audit_log"].find(q).sort("ts", -1).limit(min(limit, 500))]
+    return {"log": rows}
+
+
+@router.post("/amount-audit/run")
+async def amount_audit_run(body: AmountAuditRunIn, _: PlatformContext = Depends(get_platform_admin)):
+    """Πυροδοτεί το audit ποσών (backfill queue). Χωρίς tenant_id → όλα τα ενεργά GR tenants."""
+    from app.core.config import settings as _s
+    from app.workers.ingestion import amount_audit_task
+    db = shared_db()
+    if body.tenant_id:
+        tids = [body.tenant_id]
+    else:
+        tids = [str(t["_id"]) async for t in db["tenants"].find(
+            {"country": "GR", "status": {"$in": ["active", "trial"]},
+             "credentials_ref.hdika": {"$ne": None},
+             "ingestion_config.hdika.sync_enabled": {"$ne": False}}, {"_id": 1})]
+    for tid in tids:
+        for _b in range(body.batches):
+            amount_audit_task.apply_async(args=[tid, _s.AMOUNT_AUDIT_BATCH], queue="backfill")
+    return {"ok": True, "tenants": len(tids), "batches_each": body.batches}

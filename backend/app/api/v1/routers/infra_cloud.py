@@ -35,14 +35,17 @@ _CONFIG = ("storage_host", "storage_user", "storage_path")
 
 
 async def _cfg() -> dict:
-    # stored in platform_settings (shared DB, auth-protected) like the SMTP config —
-    # the app's Vault policy is scoped to tenants/* only.
-    return await shared_db()["platform_settings"].find_one({"_id": "cloud"}) or {}
+    # stored in platform_settings (encrypted at rest — Fernet). bash tooling decrypts via
+    # infra/scripts/rxsecret.py using the same JWT_SECRET-derived key.
+    from app.services.platform_secrets import decrypt_doc
+    return decrypt_doc("cloud", await shared_db()["platform_settings"].find_one({"_id": "cloud"})) or {}
 
 
 async def _save(cfg: dict) -> None:
+    from app.services.platform_secrets import encrypt_fields
     cfg["_id"] = "cloud"
-    await shared_db()["platform_settings"].update_one({"_id": "cloud"}, {"$set": cfg}, upsert=True)
+    await shared_db()["platform_settings"].update_one(
+        {"_id": "cloud"}, {"$set": encrypt_fields("cloud", cfg)}, upsert=True)
 
 
 class CloudIn(BaseModel):
@@ -257,19 +260,44 @@ async def list_ops(ctx: PlatformContext = Depends(get_platform_admin)):
 @router.get("/serving")
 async def serving_distribution(ctx: PlatformContext = Depends(get_platform_admin)):
     """Load visibility: which app node last served each tenant + per-node distribution.
-    Tenants are NOT pinned — this is just where each tenant's most recent request landed."""
+    Tenants are NOT pinned — this is just where each tenant's most recent request landed.
+    The per-node `distribution` counts ONLY tenants served recently (< ACTIVE_WINDOW) AND on a
+    node that is currently reporting metrics (alive). A stale stamp (e.g. a tenant not served in
+    hours, or one pointing at a node that is now down) is NOT counted — otherwise the topology keeps
+    showing tenants on a dead/idle node long after traffic has moved elsewhere."""
     from app.repositories.base import jsonsafe
     db = shared_db()
+    now = datetime.now(tz=timezone.utc)
+    ACTIVE_WINDOW = timedelta(minutes=10)   # a tenant is "on" a node only if served this recently
+    NODE_FRESH = timedelta(minutes=2)       # a node counts as alive only if it reported this recently
+
+    def _aware(t):
+        return None if not t else (t if t.tzinfo else t.replace(tzinfo=timezone.utc))
+
+    # which app nodes are actually alive right now (fresh node_metrics)
+    live_nodes: set[str] = set()
+    async for m in db["node_metrics"].find({}, {"node": 1, "ts": 1, "at": 1}):
+        nm = m.get("node") or m.get("_id")
+        ts = _aware(m.get("ts") or m.get("at"))
+        if nm and ts and (now - ts) < NODE_FRESH:
+            live_nodes.add(nm)
+
     names = {t["_id"]: t.get("name", t["_id"]) async for t in db["tenants"].find({}, {"name": 1})}
     rows = []
     by_node: dict[str, int] = {}
     async for s in db["tenant_serving"].find({}).sort("last_at", -1):
         node = s.get("node") or "—"
-        by_node[node] = by_node.get(node, 0) + 1
+        la = _aware(s.get("last_at"))
+        active = bool(la and (now - la) < ACTIVE_WINDOW)
+        node_live = node in live_nodes
+        # count a tenant on a node only if it was served recently AND that node is alive now
+        if active and node_live:
+            by_node[node] = by_node.get(node, 0) + 1
         rows.append({"tenant_id": s["_id"], "tenant": names.get(s["_id"], s["_id"]),
-                     "node": node, "last_at": s.get("last_at"), "hits": s.get("hits", 0)})
+                     "node": node, "last_at": s.get("last_at"), "hits": s.get("hits", 0),
+                     "active": active, "node_live": node_live})
     dist = [{"node": k, "tenants": v} for k, v in sorted(by_node.items())]
-    return jsonsafe({"distribution": dist, "tenants": rows})
+    return jsonsafe({"distribution": dist, "tenants": rows, "live_nodes": sorted(live_nodes)})
 
 
 @router.get("/backups")

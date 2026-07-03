@@ -25,3 +25,6 @@ backups/
 
 # provisioning SSH keys — never commit
 infra/scaling/keys/
+
+# runtime scratch / ad-hoc analysis (not versioned)
+tmp/

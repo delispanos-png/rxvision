@@ -94,6 +94,13 @@ async def closing(period: str = Query(None),
     return await _repo(ctx).monthly_closing(period or _cur())
 
 
+@router.get("/closing/report")
+async def closing_report(period: str = Query(None),
+                         ctx: TenantContext = Depends(require("closing:read", module=_MODULE))):
+    """Αναλυτική εκτύπωση κλεισίματος (ανά ταμείο × ημέρα + σύνολα + οδηγία τιμολογίου)."""
+    return await _repo(ctx).closing_report(period or _cur())
+
+
 @router.get("/forecast")
 async def forecast(ctx: TenantContext = Depends(require("closing:read", module=_MODULE))):
     return await _repo(ctx).forecast()
@@ -196,7 +203,11 @@ async def physical(period: str = Query(None), day: str = Query(None), group: str
 @router.post("/physical/scan")
 async def physical_scan(body: BarcodeIn, period: str = Query(None), day: str = Query(None),
                         ctx: TenantContext = Depends(require("closing:read", module=_MODULE))):
-    return await _repo(ctx).physical_scan(period or _cur(), body.barcode, day=day)
+    # Το φυσικό barcode συνταγής σκανάρεται ως 16 ψηφία (13 + suffix τύπου «110») — κράτα τα 13 πρώτα
+    # (defense-in-depth· το UI το κάνει ήδη, αλλά ένας σαρωτής μπορεί να στείλει το πλήρες).
+    bc = "".join((body.barcode or "").split())
+    bc = bc[:13] if len(bc) == 16 else bc
+    return await _repo(ctx).physical_scan(period or _cur(), bc, day=day)
 
 
 @router.post("/physical/reset")

@@ -5,11 +5,14 @@ from __future__ import annotations
 
 import json
 
-from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from pydantic import BaseModel, Field
 
 from app.core.deps import TenantContext, require
 from app.repositories.pharmacy_catalog import PharmacyCatalogRepository
+
+_MAX_XML = 25 * 1024 * 1024  # 25 MB cap on the uploaded catalog XML (no unbounded in-memory read)
+_XML_CTYPES = {"application/xml", "text/xml", "application/octet-stream", ""}
 
 router = APIRouter()
 _MODULE = "order_delivery"      # opt-in module — ενεργοποιείται ανά φαρμακείο
@@ -71,5 +74,12 @@ async def import_xml(file: UploadFile = File(...), row_tag: str = Form(...),
         m = json.loads(mapping)
     except json.JSONDecodeError:
         return {"ok": False, "error": "bad_mapping_json"}
-    content = await file.read()
+    ctype = (file.content_type or "").split(";")[0].strip().lower()
+    if ctype not in _XML_CTYPES:
+        raise HTTPException(status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+                            detail={"error": "unsupported_type", "content_type": ctype})
+    content = await file.read(_MAX_XML + 1)   # read at most cap+1 → bounded memory
+    if len(content) > _MAX_XML:
+        raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                            detail={"error": "file_too_large", "max_bytes": _MAX_XML})
     return await _repo(ctx).import_xml(content, row_tag=row_tag, mapping=m, default_type=default_type)

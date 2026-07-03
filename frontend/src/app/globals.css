@@ -1,5 +1,4 @@
-@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap");
-
+/* Inter is now self-hosted via next/font/google (src/app/layout.tsx) — no external Google Fonts request. */
 @tailwind base;
 @tailwind components;
 @tailwind utilities;

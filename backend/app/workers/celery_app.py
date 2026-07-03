@@ -12,7 +12,8 @@ celery_app = Celery(
     broker=settings.CELERY_BROKER_URL,
     backend=settings.CELERY_RESULT_BACKEND,
     include=["app.workers.ingestion", "app.workers.snapshots",
-             "app.workers.billing", "app.workers.optical", "app.workers.reminders"],
+             "app.workers.billing", "app.workers.optical", "app.workers.reminders",
+             "app.workers.ops_health"],
 )
 
 celery_app.conf.update(
@@ -56,6 +57,14 @@ celery_app.conf.beat_schedule = {
         "task": "app.workers.snapshots.apply_retention",
         "schedule": crontab(hour=3, minute=0),
     },
+    # Έλεγχος ΑΚΥΡΩΣΕΩΝ — καθημερινά ΜΕΤΑ ΤΟ ΩΡΑΡΙΟ (19:00 UTC = 22:00 Αθήνα, μετά το κλείσιμο των
+    # φαρμακείων & πριν το ΗΔΥΚΑ maintenance ~23:00). Ελαφρύ: βλέπει 15 μέρες πίσω τι επιστρέφει η ΗΔΥΚΑ
+    # και ακυρώνει όσες δικές μας ΔΕΝ εμφανίζονται πλέον (η ΗΔΥΚΑ δεν δίνει λίστα ακυρωμένων). Χωρίς
+    # re-download → φθηνό ώστε να τρέχει κάθε βράδυ για όλα τα φαρμακεία.
+    "cancellation-reconcile-daily": {
+        "task": "app.workers.ingestion.dispatch_cancellation_reconcile",
+        "schedule": crontab(hour=19, minute=0),
+    },
     # Deep reconciliation — re-download the window (correct cancelled-&-re-executed-differently:
     # changed lines/quantities/amounts) + cancel ones ΗΔΥΚΑ no longer returns. Daily over today,
     # weekly over 35 days back. 05:00 UTC = 07:00/08:00 Athens, clear of ΗΔΥΚΑ post-23:00 maintenance.
@@ -66,6 +75,13 @@ celery_app.conf.beat_schedule = {
     "deep-reconcile-weekly": {
         "task": "app.workers.ingestion.dispatch_deep_reconcile_weekly",
         "schedule": crontab(hour=4, minute=0, day_of_week=0),  # Sunday
+    },
+    # Amount audit vs ΗΔΥΚΑ printout (ground truth) — verify each execution's ποσά & correct any
+    # ±λεπτό drift (repeats/partials). Hourly batch per tenant on the backfill queue: keeps up with
+    # new executions & drains the historical backlog gradually. Minute 20 = offset from the syncs.
+    "amount-audit": {
+        "task": "app.workers.ingestion.dispatch_amount_audit",
+        "schedule": crontab(minute=20),
     },
     # Seasonal-flu vaccinations sync (ΗΔΥΚΑ Influenza Registry) — daily 04:30 UTC.
     "influenza-sync": {
@@ -101,5 +117,10 @@ celery_app.conf.beat_schedule = {
     "auto-cancel-stale-requests": {
         "task": "app.workers.reminders.auto_cancel_stale_requests",
         "schedule": crontab(minute="*"),
+    },
+    # Ops watchdog — email admins on backup-fail / stale-backup / node-down (launch safety net)
+    "ops-health-check": {
+        "task": "app.workers.ops_health.check",
+        "schedule": crontab(minute="*/30"),
     },
 }

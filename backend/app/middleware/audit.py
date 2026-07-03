@@ -9,6 +9,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 
 from app.core.db import shared_db
+from app.core.ratelimit import client_ip
 
 _AUDITED_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 
@@ -34,8 +35,8 @@ class AuditMiddleware(BaseHTTPMiddleware):
                     "actor_kind": actor_kind,
                     "action": f"{request.method} {path}",
                     "request_id": request_id,
-                    "ip": (request.headers.get("cf-connecting-ip")
-                           or (request.client.host if request.client else None)),
+                    # verified client IP (Caddy trusted-proxy header) — not a spoofable raw CF header (C-2)
+                    "ip": client_ip(request),
                     "outcome": "success" if response.status_code < 400 else "error",
                     "status_code": response.status_code,
                     "at": datetime.now(tz=timezone.utc),

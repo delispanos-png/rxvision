@@ -19,7 +19,8 @@ async def _creds_for(tenant_id) -> dict | None:
     creds = dict(vault.get_secret(f"tenants/{tenant_id}/hdika") or {})
     if not creds:
         return None
-    plat = await shared_db()["platform_settings"].find_one({"_id": "idika"})
+    from app.services.platform_secrets import decrypt_doc
+    plat = decrypt_doc("idika", await shared_db()["platform_settings"].find_one({"_id": "idika"}))
     if plat:
         env = plat.get("active_environment", "test")
         envcfg = plat.get(env) or {}

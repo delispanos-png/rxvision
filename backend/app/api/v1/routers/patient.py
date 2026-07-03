@@ -10,7 +10,9 @@ from pydantic import BaseModel, EmailStr, Field
 
 from app.core.db import shared_db
 from app.core.deps import PatientContext, get_patient_context
-from app.core.ratelimit import rate_limit
+from app.core.ratelimit import (
+    account_locked, clear_login_failures, rate_limit, record_login_failure,
+)
 from app.repositories.advisor import AdvisorRepository
 from app.repositories.patient_portal import (
     AppointmentRepository, AvailabilityRepository, PatientAccountRepository,
@@ -31,6 +33,11 @@ class RegisterIn(BaseModel):
     amka: str = Field(..., min_length=6, max_length=20)
     password: str = Field(..., min_length=8, max_length=128)
     pharmacy: str | None = Field(None, max_length=40)   # «αγαπημένο» tenant from a counter QR
+
+
+class RegisterVerifyIn(BaseModel):
+    challenge_id: str = Field(..., min_length=8, max_length=64)
+    code: str = Field(..., min_length=4, max_length=8)
 
 
 class LoginIn(BaseModel):
@@ -63,23 +70,48 @@ class AppointmentIn(BaseModel):
 
 
 # ── auth ─────────────────────────────────────────────────────
-@router.post("/auth/register", status_code=201,
+@router.post("/auth/register",
              dependencies=[Depends(rate_limit("patient_register", limit=5, window_seconds=600))])
 async def register(body: RegisterIn):
+    """Step 1: send an ownership-proof OTP to a contact the pharmacy holds on file for this ΑΜΚΑ.
+    Returns {otp_required, challenge_id, channels}. No account is created until the code is verified."""
     try:
-        return await PatientAuthService().register(
+        return await PatientAuthService().start_registration(
             first_name=body.first_name, last_name=body.last_name, email=body.email,
             phone=body.phone, amka=body.amka, password=body.password, pharmacy=body.pharmacy)
     except PatientError as exc:
-        raise HTTPException(status.HTTP_409_CONFLICT, detail={"error": str(exc)})
+        err = str(exc)
+        # approval_required → the pharmacy must create the account (no on-file contact to verify against)
+        code = status.HTTP_409_CONFLICT if err in ("email_exists", "amka_exists", "approval_required") \
+            else status.HTTP_400_BAD_REQUEST
+        raise HTTPException(code, detail={"error": err})
+
+
+@router.post("/auth/register/verify", status_code=201,
+             dependencies=[Depends(rate_limit("patient_register_verify", limit=10, window_seconds=600))])
+async def register_verify(body: RegisterVerifyIn):
+    """Step 2: confirm the OTP → create the account + auto-link the patient's pharmacies + mint tokens."""
+    try:
+        return await PatientAuthService().verify_registration(body.challenge_id, body.code)
+    except PatientError as exc:
+        err = str(exc)
+        code = status.HTTP_409_CONFLICT if err == "amka_exists" else status.HTTP_400_BAD_REQUEST
+        raise HTTPException(code, detail={"error": err})
 
 
 @router.post("/auth/login",
              dependencies=[Depends(rate_limit("patient_login", limit=10, window_seconds=300))])
 async def login(body: LoginIn):
+    locked = await account_locked(f"patient:{body.email}")
+    if locked:
+        raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS,
+                            detail={"error": "account_locked", "retry_after": locked},
+                            headers={"Retry-After": str(locked)})
     res = await PatientAuthService().login(body.email, body.password)
     if res is None:
+        await record_login_failure(f"patient:{body.email}")
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid_credentials")
+    await clear_login_failures(f"patient:{body.email}")
     return res
 
 
@@ -89,6 +121,13 @@ async def refresh(body: RefreshIn):
     if res is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid_refresh")
     return res
+
+
+@router.post("/auth/logout")
+async def logout(ctx: PatientContext = Depends(get_patient_context)):
+    """Revoke this patient's refresh tokens (all devices) so a stolen token can't mint new sessions."""
+    await PatientAuthService().logout(ctx.account_id)
+    return {"ok": True}
 
 
 @router.post("/auth/select-pharmacy")
@@ -366,7 +405,7 @@ async def push_subscribe(body: PushSubIn, ctx: PatientContext = Depends(get_pati
 @router.post("/push/unsubscribe")
 async def push_unsubscribe(body: PushUnsubIn, ctx: PatientContext = Depends(get_patient_context)):
     from app.services import push_service
-    await push_service.remove_subscription(body.endpoint)
+    await push_service.remove_subscription(body.endpoint, account_id=ctx.account_id)
     return {"ok": True}
 
 
@@ -472,7 +511,7 @@ async def rx_request_photo(file: UploadFile = File(...), note: str | None = Form
                            ctx: PatientContext = Depends(get_patient_context)):
     if (file.content_type or "") not in _RX_PHOTO_TYPES:
         raise HTTPException(status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, "bad_type")
-    content = await file.read()
+    content = await file.read(_MAX_RX_PHOTO + 1)   # bounded read → no unbounded memory
     if len(content) > _MAX_RX_PHOTO:
         raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "too_large")
     target, pref, name, phone = await _target(ctx, tenant_id)

@@ -1,3 +1,11 @@
+/** Prescription barcodes scan as 16 chars (13-digit barcode + 3-char type suffix, e.g. "…110").
+ *  Everywhere we scan a prescription, keep ONLY the first 13 so it matches our stored barcode.
+ *  Non-16-length input (manual typing, partial) is returned trimmed & untouched. */
+export const scanRxBarcode = (raw: string): string => {
+  const v = (raw ?? "").replace(/\s+/g, "");
+  return v.length === 16 ? v.slice(0, 13) : v;
+};
+
 /** API money values are integer cents → divide by 100 for display. */
 export const fmtEur = (cents: number) =>
   new Intl.NumberFormat("el-GR", { style: "currency", currency: "EUR" }).format((cents ?? 0) / 100);

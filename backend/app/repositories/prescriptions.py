@@ -81,6 +81,15 @@ class PrescriptionRepository(BaseRepository):
             checks = pc.check_item(item, cat, ultra_levure_enabled=ul)
             if checks:
                 items_out.append({"name": name, "barcode": item["barcode"], "checks": checks})
+        # «Αμιγώς 100%» — ΟΛΑ τα φάρμακα με συμμετοχή ασθενή 100% → η συνταγή ΔΕΝ κατατίθεται στο ταμείο.
+        # Οδηγία στον φαρμακοποιό (prescription-level) + σύντομη αιτιολογία.
+        if any((e.get("details") or {}).get("full_participation") for e in exs):
+            items_out.insert(0, {"name": "Συνταγή 100% συμμετοχής", "barcode": None, "checks": [{
+                "type": "full_100", "level": "info", "category": "info",
+                "title": "ℹ️ ΔΕΝ κατατίθεται στο ταμείο",
+                "detail": "Όλα τα φάρμακα έχουν συμμετοχή ασθενή 100% — ο ασθενής πληρώνει όλη τη "
+                          "λιανική και ο ΕΟΠΥΥ δεν αποζημιώνει τίποτα. Η συνταγή κρατιέται στο "
+                          "φαρμακείο, ΔΕΝ υποβάλλεται στο ταμείο."}]})
         return jsonsafe({
             "items": items_out,
             "count": sum(len(i["checks"]) for i in items_out),
@@ -138,7 +147,7 @@ class PrescriptionRepository(BaseRepository):
         # ξεχωριστή εκτέλεση) — σύνολο ποσότητας/αξίας ανά προϊόν, για το tab «Συνοπτικά».
         barcode = str(external_id).split(":")[0]
         sib_ids = [e["_id"] async for e in self._coll.find(
-            self._scope({"external_id": {"$regex": "^" + barcode + "(:|$)"}}), {"_id": 1})]
+            self._scope({"external_id": {"$regex": "^" + re.escape(barcode) + "(:|$)"}}), {"_id": 1})]
         sib_items = await db["prescription_items"].find(
             {"tenant_id": self.tenant_id, "execution_id": {"$in": sib_ids}}).to_list(2000)
         pids = list({it.get("product_id") for it in sib_items if it.get("product_id")})
@@ -212,7 +221,7 @@ class PrescriptionRepository(BaseRepository):
         rows = [r async for r in self._coll.find(self._scope({"repeat_root": root}))]
         if not rows:  # fall back to same-barcode grouping (e.g. legacy rows without repeat_root)
             rows = [r async for r in self._coll.find(self._scope(
-                {"external_id": {"$regex": "^" + this_bc}}))]
+                {"external_id": {"$regex": "^" + re.escape(this_bc)}}))]
 
         by_bc: dict[str, list] = defaultdict(list)
         for r in rows:

@@ -17,6 +17,7 @@ Key locations (verified against the ΗΔΥΚΑ test environment):
 from __future__ import annotations
 
 import xml.etree.ElementTree as ET
+import defusedxml.ElementTree as _DET   # hardened parser (blocks entity-expansion / XXE DoS)
 
 
 def _ln(tag: str) -> str:
@@ -39,8 +40,8 @@ def parse_cda(text: str) -> dict:
     node just yields empty/partial data rather than raising."""
     out: dict = {"patient": {}, "doctor": {}, "icd10": [], "medicines": []}
     try:
-        root = ET.fromstring(text.encode("utf-8") if isinstance(text, str) else text)
-    except ET.ParseError:
+        root = _DET.fromstring(text.encode("utf-8") if isinstance(text, str) else text)
+    except Exception:  # noqa: BLE001 — bad/hostile XML (incl. defused entity attacks) → partial data
         return out
 
     # ── patient ──
@@ -232,8 +233,8 @@ def parse_cda_full(text: str) -> dict:
     Builds on parse_cda() (patient/doctor/icd10) and never raises."""
     out: dict = {**parse_cda(text), "details": {}, "lines": []}
     try:
-        root = ET.fromstring(text.encode("utf-8") if isinstance(text, str) else text)
-    except ET.ParseError:
+        root = _DET.fromstring(text.encode("utf-8") if isinstance(text, str) else text)
+    except Exception:  # noqa: BLE001 — bad/hostile XML (incl. defused entity attacks) → partial data
         return out
 
     # prescription-level act = first <act> whose effectiveTime <low> has a real value

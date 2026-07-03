@@ -10,7 +10,7 @@ import {
 import { QRCodeCanvas } from "qrcode.react";
 import { Tooltip } from "@/components/ui/Tooltip";
 import { LogoMark } from "@/components/brand/Logo";
-import { patientApi, patientTokens, patientUpload } from "@/lib/patientClient";
+import { patientApi, patientTokens, patientUpload, patientLogout } from "@/lib/patientClient";
 import { PharmacyPicker, MedicinePicker, type Medicine } from "@/components/portal/pickers";
 import { RenewalCard, type Renewal } from "@/components/portal/RenewalCard";
 import { ShopTab } from "@/components/portal/ShopTab";
@@ -208,7 +208,7 @@ export default function PortalHome() {
     patientTokens.set(d.access_token, window.localStorage.getItem("patient_refresh_token"));
     await load();
   }
-  function logout() { patientTokens.clear(); router.replace("/portal/login"); }
+  async function logout() { await patientLogout(); router.replace("/portal/login"); }
 
   async function toggleExpand(barcode: string) {
     if (expanded === barcode) { setExpanded(null); setDetail(null); return; }

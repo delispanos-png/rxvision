@@ -29,7 +29,8 @@ def _now() -> datetime:
 
 
 async def _comms_cfg() -> dict:
-    return await shared_db()["platform_settings"].find_one({"_id": "comms"}) or {}
+    from app.services.platform_secrets import decrypt_doc
+    return decrypt_doc("comms", await shared_db()["platform_settings"].find_one({"_id": "comms"})) or {}
 
 
 async def prices() -> dict:
@@ -111,6 +112,42 @@ async def usage_summary(tenant_id: str, days: int = 30) -> dict:
             out[r["_id"]] = {"count": int(r.get("count", 0)), "spent_cents": -int(r.get("spent", 0))}
     return {"balance_cents": await balance(tenant_id), "days": days, "by_channel": out,
             "prices": await prices()}
+
+
+async def usage_by_tenant(days: int = 30) -> list[dict]:
+    """Per-tenant consumption over the last `days` (counts + spend per channel) + current wallet balance
+    + pharmacy name — for the admin «Κατανάλωση ανά πελάτη» view. Includes tenants with a wallet but no
+    usage. Sorted by total spend desc."""
+    db = shared_db()
+    since = _now() - timedelta(days=days)
+    empty = lambda: {c: {"count": 0, "spent_cents": 0} for c in CHANNELS}   # noqa: E731
+    rows: dict[str, dict] = {}
+
+    def _row(tid: str) -> dict:
+        return rows.setdefault(tid, {"tenant_id": tid, "by_channel": empty(),
+                                     "total_count": 0, "total_spent_cents": 0, "balance_cents": 0})
+    async for r in db["message_ledger"].aggregate([
+            {"$match": {"kind": "debit", "ts": {"$gte": since}}},
+            {"$group": {"_id": {"t": "$tenant_id", "c": "$channel"},
+                        "count": {"$sum": "$count"}, "spent": {"$sum": "$amount_cents"}}}]):
+        tid, ch = r["_id"]["t"], r["_id"]["c"]
+        g = _row(tid)
+        cnt, spent = int(r.get("count", 0)), -int(r.get("spent", 0))   # debit amounts are negative
+        if ch in g["by_channel"]:
+            g["by_channel"][ch] = {"count": cnt, "spent_cents": spent}
+            g["total_count"] += cnt
+            g["total_spent_cents"] += spent
+    # tenants that have a wallet (even with zero usage) + fill current balances
+    async for w in db["message_wallets"].find({}):
+        _row(w["_id"])["balance_cents"] = int(w.get("balance_cents", 0) or 0)
+    # pharmacy names
+    tids = list(rows.keys())
+    names: dict = {}
+    async for t in db["tenants"].find({"_id": {"$in": tids}}, {"name": 1, "pharmacy_name": 1}):
+        names[t["_id"]] = t.get("name") or t.get("pharmacy_name")
+    for tid, g in rows.items():
+        g["name"] = names.get(tid) or tid
+    return sorted(rows.values(), key=lambda x: (-x["total_spent_cents"], -x["balance_cents"]))
 
 
 # ── Credit packages (prepaid top-up) ────────────────────────────────────────

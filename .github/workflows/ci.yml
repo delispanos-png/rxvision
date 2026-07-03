@@ -55,3 +55,40 @@ jobs:
         continue-on-error: true
       - name: Build
         run: npm run build
+
+  security:
+    name: Security (deps · secrets · IaC scan)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # gitleaks needs full history to scan all commits
+      # Python dependency CVE scan against the pinned lockfile (H-5).
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: pip-audit (Python deps)
+        run: |
+          pip install pip-audit
+          pip-audit -r backend/requirements.lock --strict || true   # advisory first; flip to hard gate once clean
+      # Secret scanning across the whole history — fails the build on any leaked credential.
+      - name: gitleaks (secret scan)
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITLEAKS_ENABLE_UPLOAD_ARTIFACT: "false"
+      # Filesystem + dependency + IaC (Dockerfile/compose) vulnerability scan.
+      - name: Trivy (fs + config)
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          scan-type: fs
+          scanners: vuln,secret,misconfig
+          severity: HIGH,CRITICAL
+          exit-code: "0"   # advisory first; set to "1" to enforce once triaged
+          ignore-unfixed: true
+      # SBOM (Software Bill of Materials) — inventory of every dependency, archived as a build artifact.
+      - name: Generate SBOM (Syft)
+        uses: anchore/sbom-action@v0
+        with:
+          path: .
+          format: spdx-json
+          artifact-name: rxvision-sbom.spdx.json

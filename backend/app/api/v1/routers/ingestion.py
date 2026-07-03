@@ -85,7 +85,8 @@ async def _effective_hdika_creds(tenant_id: str) -> dict:
     is routed through that sandbox account so we can develop without real pharmacies.
     """
     creds = dict(vault.get_secret(f"tenants/{tenant_id}/hdika") or {})   # pharmacy's OWN creds
-    plat = await shared_db()["platform_settings"].find_one({"_id": "idika"})
+    from app.services.platform_secrets import decrypt_doc
+    plat = decrypt_doc("idika", await shared_db()["platform_settings"].find_one({"_id": "idika"}))
     if plat:
         env = plat.get("active_environment", "test")
         envcfg = plat.get(env) or {}
@@ -163,6 +164,24 @@ async def set_hdika_credentials(
     ref = vault.set_tenant_credentials(ctx.tenant_id, "hdika", creds)
     await repo.set_credentials_ref("hdika", ref)
     await repo.set_ingestion_config("hdika", _public_config(creds))
+    # ΑΥΤΟΜΑΤΗ εύρεση pharmacy_id: ο φαρμακοποιός ΔΕΝ γνωρίζει τον «κωδικό φαρμακείου» — η ΗΔΥΚΑ τον
+    # επιστρέφει στο /user/me (<pharmacy><id>). GDPR-critical (φιλτράρει την άντληση ανά φαρμακείο).
+    if not creds.get("pharmacy_id"):
+        eff = await _effective_hdika_creds(ctx.tenant_id)
+        if eff.get("username") and eff.get("password") and eff.get("api_key"):
+            import asyncio
+
+            def _discover() -> str | None:
+                cl = HdikaClient(eff)
+                try:
+                    return cl.discover_pharmacy_id()
+                finally:
+                    cl.close()
+            pid = await asyncio.to_thread(_discover)
+            if pid:
+                creds["pharmacy_id"] = creds["pharmacy_code"] = pid
+                ref = vault.set_tenant_credentials(ctx.tenant_id, "hdika", creds)
+                await repo.set_ingestion_config("hdika", _public_config(creds))
     return CredentialsStatusOut(source="hdika", configured=True, credentials_ref=ref)
 
 

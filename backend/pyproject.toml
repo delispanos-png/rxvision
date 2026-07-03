@@ -9,7 +9,7 @@ dependencies = [
     "motor>=3.4",                # async MongoDB driver
     "pydantic[email]>=2.7",
     "pydantic-settings>=2.3",
-    "python-jose[cryptography]>=3.3",  # JWT
+    "python-jose[cryptography]>=3.4",  # JWT — >=3.4 avoids CVE-2024-33663/33664 (runtime is 3.5.0)
     "argon2-cffi>=23.1",         # password hashing
     "redis>=5.0",
     "celery>=5.4",
@@ -25,6 +25,7 @@ dependencies = [
     "anthropic>=0.49",           # Claude API — PharmaCat clinical assistant (CDSS)
     "pywebpush>=2.0",            # Web Push (VAPID) — patient portal phone notifications
     "openpyxl>=3.1",             # Excel (.xlsx) import — insured-persons contact import
+    "pdfplumber>=0.11",          # ΗΔΥΚΑ printout (PDF) parsing — ground-truth amount audit
 ]
 
 [project.optional-dependencies]

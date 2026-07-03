@@ -10,7 +10,7 @@ import { ModuleGuard } from "@/components/layout/ModuleGuard";
 import { Tooltip } from "@/components/ui/Tooltip";
 import { useUiStore, filtersToQuery } from "@/store/uiStore";
 import { prevYearRange, pctDelta } from "@/lib/compare";
-import { fmtEur, fmtNum, fmtDate, fmtDateTime, fmtMoney} from "@/lib/formatters";
+import { fmtEur, fmtNum, fmtDate, fmtDateTime, fmtMoney, scanRxBarcode } from "@/lib/formatters";
 import { downloadCsv } from "@/lib/csv";
 import { DateRangeFilter } from "@/components/filters/DateRangeFilter";
 import { MultiSelect } from "@/components/filters/MultiSelect";
@@ -176,7 +176,7 @@ export default function PrescriptionsPage() {
   const [patientName, setPatientName] = useState("");
   const [status, setStatus] = useState("");           // "" | executed | partial
   const [chars, setChars] = useState<string[]>([]);   // πολλαπλά χαρακτηριστικά (AND)
-  const bc = barcode.trim();
+  const bc = scanRxBarcode(barcode);   // 16ψήφιο σκαναρισμένο → κράτα τους 13 πρώτους (drop suffix «110»)
   // φίλτρα λίστας (πέρα από το κοινό date/fund/doctor/icd10) — αγνοούν περίοδο όταν ψάχνεις barcode/ΑΜΚΑ/όνομα
   const extra = [
     bc && `barcode=${encodeURIComponent(bc)}`,

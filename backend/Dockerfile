@@ -1,11 +1,15 @@
 # syntax=docker/dockerfile:1
-FROM python:3.12-slim AS base
+# Base image pinned by DIGEST (H-5): the floating `3.12-slim` tag moves silently on every rebuild
+# (supply-chain drift). Bump this digest deliberately when you intend to update the base.
+FROM python:3.12-slim@sha256:423ed6ab25b1921a477529254bfeeabf5855151dc2c3141699a1bfc852199fbf AS base
 ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 PIP_NO_CACHE_DIR=1
 WORKDIR /app
 
 FROM base AS deps
-COPY pyproject.toml ./
-RUN pip install --upgrade pip && pip install -e .
+# requirements.lock (H-5) pins every transitive dependency to a known-good version (generated via
+# `pip freeze` from a verified image), so a rebuild can't pull a newer/compromised upstream release.
+COPY pyproject.toml requirements.lock ./
+RUN pip install --upgrade pip && pip install -e . -c requirements.lock
 
 FROM base AS runtime
 # OCR runtime: Tesseract (+Greek) and zbar for the optical-audit pipeline

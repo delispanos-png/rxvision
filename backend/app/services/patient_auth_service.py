@@ -6,38 +6,139 @@ minted for that pharmacy (tenant + pseudonymised patient ref).
 """
 from __future__ import annotations
 
+import hashlib
+import hmac
+import secrets
+import uuid
+from datetime import datetime, timedelta, timezone
+
+from app.core.config import settings
 from app.core.security import (
     create_patient_refresh_token, create_patient_token, decode_patient_token,
     hash_password, verify_password,
 )
 from app.repositories.patient_portal import PatientAccountRepository
 
+_OTP_TTL_MIN = 10
+_OTP_MAX_ATTEMPTS = 5
+
 
 class PatientError(Exception):
     pass
+
+
+def _now() -> datetime:
+    return datetime.now(tz=timezone.utc)
+
+
+def _hash_otp(code: str) -> str:
+    return hashlib.sha256(f"{settings.JWT_SECRET}:{code}".encode()).hexdigest()
+
+
+def _mask_email(e: str) -> str:
+    e = (e or "").strip()
+    if "@" not in e:
+        return ""
+    name, _, dom = e.partition("@")
+    return f"{name[:1]}{'*' * max(1, len(name) - 1)}@{dom}"
+
+
+def _mask_phone(p: str) -> str:
+    p = "".join(ch for ch in (p or "") if ch.isdigit())
+    return f"{p[:2]}{'*' * max(0, len(p) - 4)}{p[-2:]}" if len(p) >= 4 else ""
 
 
 class PatientAuthService:
     def __init__(self):
         self.repo = PatientAccountRepository()
 
-    async def register(self, *, first_name: str, last_name: str, email: str,
-                       phone: str | None, amka: str, password: str,
-                       pharmacy: str | None = None) -> dict:
+    async def start_registration(self, *, first_name: str, last_name: str, email: str,
+                                 phone: str | None, amka: str, password: str,
+                                 pharmacy: str | None = None) -> dict:
+        """Step 1 of self-registration. We do NOT create the account or link anything yet: instead we
+        send a one-time code to a contact the PHARMACY already holds on file for this ΑΜΚΑ, proving the
+        registrant actually owns that ΑΜΚΑ (a Greek ΑΜΚΑ is semi-guessable → without this, anyone who knows
+        a victim's ΑΜΚΑ could read their medical history). The pending registration lives in a short-TTL
+        challenge; `verify_registration` creates the account once the code is confirmed."""
         email = (email or "").strip().lower()
         amka = (amka or "").strip()
         if await self.repo.get_by_email(email):
             raise PatientError("email_exists")
         if await self.repo.get_by_amka(amka):
             raise PatientError("amka_exists")
+        contacts = await self.repo.find_amka_contacts(amka)
+        emails = sorted({c["email"] for c in contacts if c.get("email")})
+        mobiles = sorted({c["mobile"] for c in contacts if c.get("mobile")})
+        if not emails and not mobiles:
+            # No on-file contact anywhere → cannot prove ownership self-service. The pharmacy must
+            # create the account at the counter (trusted `admin_create` path).
+            raise PatientError("approval_required")
+        code = f"{secrets.randbelow(1_000_000):06d}"
+        cid = uuid.uuid4().hex
+        await self.repo.create_otp_challenge({
+            "_id": cid, "code_hash": _hash_otp(code), "attempts": 0,
+            "first_name": first_name, "last_name": last_name, "email": email,
+            "phone": (phone or "").strip(), "amka": amka,
+            "password_hash": hash_password(password), "favorite_tenant_id": pharmacy,
+            "created_at": _now(), "expires_at": _now() + timedelta(minutes=_OTP_TTL_MIN),
+        })
+        channels = await self._send_otp(code, emails, mobiles)
+        if not channels:
+            await self.repo.delete_otp_challenge(cid)
+            raise PatientError("otp_send_failed")
+        return {"otp_required": True, "challenge_id": cid, "channels": channels,
+                "expires_in": _OTP_TTL_MIN * 60}
+
+    async def _send_otp(self, code: str, emails: list[str], mobiles: list[str]) -> list[dict]:
+        """Send the code to the on-file contacts. Email is free (platform SMTP); SMS goes through the
+        central Apifon without per-tenant metering (tiny security volume). Returns masked hints of where
+        it went (never the raw address — a wrong ΑΜΚΑ must not reveal a stranger's contact)."""
+        sent: list[dict] = []
+        text = (f"RxVision: ο κωδικός επιβεβαίωσης είναι {code}. Λήγει σε {_OTP_TTL_MIN} λεπτά. "
+                "Αν δεν κάνατε εσείς εγγραφή, αγνοήστε το.")
+        for e in emails[:2]:
+            try:
+                from app.services import mailer
+                await mailer.send_email(
+                    e, "RxVision — Κωδικός επιβεβαίωσης",
+                    f"<p>Ο κωδικός επιβεβαίωσης για την εγγραφή σας στο RxVision είναι:</p>"
+                    f"<p style='font-size:24px;font-weight:bold;letter-spacing:3px'>{code}</p>"
+                    f"<p>Λήγει σε {_OTP_TTL_MIN} λεπτά. Αν δεν κάνατε εσείς εγγραφή, αγνοήστε το.</p>")
+                sent.append({"type": "email", "hint": _mask_email(e)})
+            except Exception:  # noqa: BLE001
+                pass
+        for m in mobiles[:2]:
+            try:
+                from app.services import comms
+                await comms.send_otp_sms(m, text)
+                sent.append({"type": "sms", "hint": _mask_phone(m)})
+            except Exception:  # noqa: BLE001
+                pass
+        return sent
+
+    async def verify_registration(self, challenge_id: str, code: str) -> dict:
+        """Step 2: confirm the code, then create the account + auto-link the patient's pharmacies."""
+        ch = await self.repo.get_otp_challenge((challenge_id or "").strip())
+        if not ch or ch.get("expires_at") and ch["expires_at"] < _now():
+            raise PatientError("otp_expired")
+        if int(ch.get("attempts", 0)) >= _OTP_MAX_ATTEMPTS:
+            await self.repo.delete_otp_challenge(challenge_id)
+            raise PatientError("otp_locked")
+        if not hmac.compare_digest(ch.get("code_hash", ""), _hash_otp((code or "").strip())):
+            await self.repo.bump_otp_attempt(challenge_id)
+            raise PatientError("otp_invalid")
+        # Re-check uniqueness (a race could have registered the ΑΜΚΑ/email meanwhile).
+        if await self.repo.get_by_email(ch["email"]) or await self.repo.get_by_amka(ch["amka"]):
+            await self.repo.delete_otp_challenge(challenge_id)
+            raise PatientError("amka_exists")
         acc = await self.repo.create(
-            first_name=first_name, last_name=last_name, email=email,
-            phone=phone, amka=amka, password_hash=hash_password(password))
-        # came in via a pharmacy's QR → that pharmacy becomes the «αγαπημένο» (default active)
-        if pharmacy:
-            await self.repo.set_favorite(acc["_id"], pharmacy)
-            acc["favorite_tenant_id"] = pharmacy
-        links = await self.repo.refresh_links(acc["_id"], amka)
+            first_name=ch["first_name"], last_name=ch["last_name"], email=ch["email"],
+            phone=ch.get("phone"), amka=ch["amka"], password_hash=ch["password_hash"])
+        if ch.get("favorite_tenant_id"):
+            await self.repo.set_favorite(acc["_id"], ch["favorite_tenant_id"])
+            acc["favorite_tenant_id"] = ch["favorite_tenant_id"]
+        await self.repo.delete_otp_challenge(challenge_id)
+        links = await self.repo.refresh_links(acc["_id"], ch["amka"])
         return self._session(acc, links)
 
     async def admin_create(self, *, first_name: str, last_name: str, email: str,
@@ -66,6 +167,10 @@ class PatientAuthService:
             return None
         links = await self.repo.refresh_links(acc["_id"], acc.get("amka", ""))
         return self._session(acc, links)
+
+    async def logout(self, account_id: str) -> None:
+        """Revoke every refresh token for this patient account (all devices)."""
+        await self.repo.revoke_tokens(account_id)
 
     async def select_pharmacy(self, account_id: str, tenant_id: str) -> str | None:
         """Re-mint an access token for a different (already-linked) pharmacy."""

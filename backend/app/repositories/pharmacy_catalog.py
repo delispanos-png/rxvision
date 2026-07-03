@@ -9,7 +9,7 @@ the existing repeat-reservation flow.
 from __future__ import annotations
 
 import re
-import xml.etree.ElementTree as ET
+import defusedxml.ElementTree as ET   # hardened: blocks entity-expansion / XXE (billion-laughs DoS)
 from datetime import datetime, timezone
 
 from app.repositories.base import BaseRepository, jsonsafe
@@ -122,9 +122,9 @@ class PharmacyCatalogRepository(BaseRepository):
         """Flexible importer: `row_tag` = the repeating element (e.g. 'product'); `mapping` maps our
         fields → the XML tag/attribute names in THIS pharmacy's export. Upserts by barcode + stock."""
         try:
-            root = ET.fromstring(content)
-        except ET.ParseError as e:
-            return {"ok": False, "error": f"xml_parse: {e}"}
+            root = ET.fromstring(content)   # defused: raises on forbidden entities/DTDs
+        except Exception as e:  # noqa: BLE001 — bad or hostile XML → clean error, never a 500/DoS
+            return {"ok": False, "error": f"xml_parse: {type(e).__name__}"}
         rt = (row_tag or "").strip()
         rows = [el for el in root.iter() if _strip_ns(el.tag) == rt] if rt else list(root)
 

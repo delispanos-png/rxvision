@@ -1,0 +1,8 @@
+# Keep build context lean + never ship secrets/junk into the image (M-5).
+.git
+.gitignore
+.env
+.env.*
+node_modules/
+.next/
+*.md

@@ -24,8 +24,10 @@ from __future__ import annotations
 import re as _re
 import time
 import xml.etree.ElementTree as ET
+import defusedxml.ElementTree as _DET   # hardened parser (blocks entity-expansion / XXE DoS)
 from collections.abc import Iterator
 from datetime import datetime, timezone
+from decimal import Decimal, ROUND_HALF_UP, InvalidOperation
 
 import httpx
 
@@ -79,6 +81,31 @@ def _hdika_rate_gate(max_per_sec: int) -> None:
 
 def _strip_ns(tag: str) -> str:
     return tag.rsplit("}", 1)[-1]  # "{ns}Foo" → "Foo"
+
+
+def _gr_money_to_cents(s: str) -> int:
+    """«1.234,56» / «25,30» → ακέραια λεπτά (ελληνική μορφή: τελεία=χιλιάδες, κόμμα=δεκαδικά)."""
+    s = s.strip().replace(".", "").replace(",", ".")
+    return int(round(float(s) * 100))
+
+
+# Οι δύο authoritative γραμμές συνόλων στο κάτω μέρος του εντύπου εκτέλεσης της ΗΔΥΚΑ.
+_RE_PO_PATIENT = _re.compile(r"ΠΛΗΡΩΤΕΟ\s+ΠΟΣΟ\s+ΑΠΟ\s+ΑΣΦ[./]?ΝΟ[^0-9]*([0-9][0-9.]*,[0-9]{2})")
+_RE_PO_FUND = _re.compile(r"ΠΛΗΡΩΤΕΟ\s+ΠΟΣΟ\s+ΑΠΟ\s+ΤΑΜΕΙΟ[^0-9]*([0-9][0-9.]*,[0-9]{2})")
+
+
+def _parse_printout_split(pdf_bytes: bytes) -> tuple[int, int] | None:
+    """Διαβάζει από το PDF εντύπου τα ΑΚΡΙΒΗ «ΠΛΗΡΩΤΕΟ ΑΠΟ ΑΣΦ/ΝΟ» & «ΠΛΗΡΩΤΕΟ ΑΠΟ ΤΑΜΕΙΟ»
+    (ασθενής / ταμείο, ανά εκτέλεση) → (patient_cents, fund_cents). None αν λείπει κάποιο."""
+    import io
+    import pdfplumber
+    with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+        txt = "\n".join((p.extract_text() or "") for p in pdf.pages)
+    mp = _RE_PO_PATIENT.search(txt)
+    mf = _RE_PO_FUND.search(txt)
+    if not (mp and mf):
+        return None
+    return _gr_money_to_cents(mp.group(1)), _gr_money_to_cents(mf.group(1))
 
 
 def _gateway_message(text: str) -> str | None:
@@ -171,6 +198,10 @@ class HdikaClient:
         self.catalog = catalog or {}     # eofCode → price/cost (Δελτίο Τιμών) for per-med analysis
         self.throttle = float(c.get("throttle") or 0)   # seconds to pause after each call (be gentle on ΗΔΥΚΑ)
         self.max_rps = int(c.get("max_rps") or settings.HDIKA_MAX_CALLS_PER_SEC)  # global rate cap
+        # στοχευμένο fallback στο έντυπο για τα ανά-εκτέλεση ακριβή ποσά (repeats/partials)
+        self.use_printout_amounts = str(
+            c.get("printout_amounts", settings.HDIKA_PRINTOUT_AMOUNTS)
+        ).strip().lower() in ("1", "true", "yes")
         self.skipped_days = 0           # days skipped due to transient gateway errors
         headers = {"Accept": "application/xml"}
         if self.api_key:
@@ -215,6 +246,20 @@ class HdikaClient:
                 text = text.split("<description>", 1)[1].split("</description>", 1)[0]
             raise PermissionError(f"ΗΔΥΚΑ: {text[:200]}")
 
+    def discover_pharmacy_id(self) -> str | None:
+        """Αυτόματη εύρεση του κωδικού φαρμακείου (pharmacy id) από το `/user/me` — ο φαρμακοποιός
+        ΔΕΝ τον γνωρίζει, η ΗΔΥΚΑ τον επιστρέφει στο `<pharmacy><id>…`. Best-effort → None σε αποτυχία.
+        ΚΡΙΣΙΜΟ για GDPR: το pharmacy_id φιλτράρει την άντληση ώστε να μη φέρει συνταγές συστεγασμένου."""
+        try:
+            self._gate()
+            r = self._client.get(self._url("/api/v1/user/me"))
+            if r.status_code != 200:
+                return None
+            m = _re.search(r"<pharmacy>\s*<id>\s*([0-9]+)\s*</id>", r.text or "")
+            return m.group(1) if m else None
+        except Exception:  # noqa: BLE001 — auto-discovery ΠΟΤΕ δεν ρίχνει το save
+            return None
+
     def get_patient(self, amka: str) -> dict:
         """GET ΗΔΥΚΑ getpatient για έναν ΑΜΚΑ. Αν η πύλη αναγγείλει θάνατο, σηκώνει
         PatientDeceased ώστε ο caller να σημάνει τον ασθενή (mark_deceased) αντί να
@@ -241,8 +286,8 @@ class HdikaClient:
                 desc = text.split("<description>", 1)[1].split("</description>", 1)[0]
             raise PermissionError(f"ΗΔΥΚΑ getpatient: {desc[:200]}")
         try:
-            return _to_dict(ET.fromstring(text.encode("utf-8")))
-        except ET.ParseError:
+            return _to_dict(_DET.fromstring(text.encode("utf-8")))
+        except Exception:  # noqa: BLE001 — bad/hostile XML (incl. defused entity attacks)
             return {}
 
     # ── auto-discovery: pharmacy profile from ΗΔΥΚΑ ────────
@@ -339,6 +384,34 @@ class HdikaClient:
                     continue
             break
         return {}
+
+    def _printout_split(self, barcode: str, exec_no: int) -> tuple[int, int] | None:
+        """ΑΚΡΙΒΗ ανά-εκτέλεση ποσά από το ΕΝΤΥΠΟ (PDF) της ΗΔΥΚΑ — η ΜΟΝΗ πηγή που σπάει σωστά
+        τα repeats/partials (το structured CDA είναι σωρευτικό ανά barcode). Επιστρέφει
+        (patient_cents, fund_cents) από τις γραμμές «ΠΛΗΡΩΤΕΟ ΠΟΣΟ ΑΠΟ ΑΣΦ/ΝΟ»/«…ΑΠΟ ΤΑΜΕΙΟ»,
+        ή None σε οποιοδήποτε σφάλμα (best-effort — ΠΟΤΕ δεν ρίχνει τον sync· πέφτει στο aggregate)."""
+        if not barcode:
+            return None
+        params: dict = {"executionNo": exec_no}
+        if self.pharmacy_id:
+            params["pharmacyId"] = self.pharmacy_id
+        for attempt in range(3):
+            try:
+                self._gate()
+                r = self.get_pdf("/api/v1/prescriptions/print/" + barcode, params)
+                if self.throttle:
+                    time.sleep(self.throttle)
+                if r.status_code == 200 and r.content[:4] == b"%PDF":
+                    return _parse_printout_split(r.content)
+                if r.status_code in (429, 500, 502, 503, 504) and attempt < 2:
+                    time.sleep(0.4 * (attempt + 1))
+                    continue
+            except Exception:  # noqa: BLE001 — ένα κακό PDF δεν σταματά τον sync
+                if attempt < 2:
+                    time.sleep(0.4 * (attempt + 1))
+                    continue
+            break
+        return None
 
     def fetch_cda_full(self, barcode: str) -> dict:
         """Like _fetch_cda but returns the RICH portal-style detail (parse_cda_full):
@@ -506,6 +579,11 @@ class HdikaClient:
         total = total_value + total_diff
         participation = _eur_cents(_first(ex, "participationValue", default=0))
         surcharge = _eur_cents(_first(ex, "socialInsuranceSurcharge", default=0))
+        # Πληρωτέα διαφορά ασφ/νου = στρογγ. συνολική διαφορά − στρογγ. μερίδιο ταμείου (καθένα half-up):
+        # το έντυπο ΗΔΥΚΑ τυπώνει τη «ΔΙΑΦΟΡΑ ΑΠΟ ΤΑΜΕΙΟ» στρογγυλεμένη και ο ασφ/νος παίρνει το ΥΠΟΛΟΙΠΟ,
+        # ώστε οι δύο να αθροίζουν ακριβώς στη στρογγ. συνολική διαφορά. Το μόνο bug ήταν το banker's
+        # rounding (τώρα half-up στο _eur_cents)· η δομή double-round είναι σωστή (single-round έβγαζε
+        # 15,05 αντί 15,04 στη 2603235920473).
         share = (participation
                  + max(0, total_diff - soci_diff)
                  + surcharge
@@ -537,6 +615,9 @@ class HdikaClient:
         # one priced line per medicine: price + quantity come from the CDA itself (authoritative);
         # the Δελτίο Τιμών catalogue only fills the wholesale cost (and a retail fallback on a miss).
         items: list[CanonicalItem] = []
+        # Per-line accumulators (executed lines only) για την ΑΚΡΙΒΗ αντιστοίχιση ΗΔΥΚΑ (βλ. παρακάτω):
+        # συμμετοχή half-UP, διαφορά ασθενή half-DOWN, λιανική half-UP (για τον έλεγχο συμφωνίας).
+        _pl_part = _pl_pdiff = _pl_retail = 0
         for n, m in enumerate(meds):
             eof = str(m.get("eof_code") or m.get("code") or "")
             cat = self.catalog.get(eof) or {}
@@ -579,6 +660,10 @@ class HdikaClient:
             outstanding = m.get("outstanding")
             executed = (outstanding is not None and outstanding <= 0) if outstanding is not None \
                 else bool(m.get("is_executed", True))
+            if executed:
+                _pl_part += _eur_cents(m.get("patient_share") or 0)          # συμμετοχή (1.4.20) half-up
+                _pl_pdiff += _eur_cents_down(m.get("difference") or 0)       # διαφορά ασθενή (1.4.21) half-DOWN
+                _pl_retail += _eur_cents((m.get("retail_price") or m.get("execution_price") or 0) * qty)
             # Γαληνικά (ΕΟΦ «-1» = ΓΑΛΗΝΙΚΟ ΣΚΕΥΑΣΜΑ) & εισαγωγές ΙΦΕΤ («-2») είναι ΕΙΔΙΚΑ είδη: όχι
             # εμπορικά προϊόντα, χωρίς Δελτίο Τιμών (wholesale=0). ΔΕΝ πρέπει να συγχωνεύονται όλα σε
             # ένα προϊόν (το catalog δίνει κοινό barcode 280-11) — κάθε γαληνικό = δική του σύνθεση,
@@ -616,34 +701,55 @@ class HdikaClient:
         elif sum(i.retail_price * i.quantity for i in items) == 0 and total > 0:
             items[0].retail_price = total               # catalog miss → keep revenue on line 1
 
+        # ── Ακριβής αντιστοίχιση ΗΔΥΚΑ/PharmacyOne (per-line) ────────────────────────────────────
+        # Όταν οι ΕΚΤΕΛΕΣΜΕΝΕΣ γραμμές συμφωνούν με το σύνολο (πλήρης εκτέλεση), το μερίδιο ασφ/νου =
+        # Σ(συμμετοχή half-up) + Σ(διαφορά ασθενή half-DOWN — πεδίο 1.4.21, post-cap) + 1€. Αυτό μηδενίζει
+        # το ±1-2 λεπτό vs τα συγκεντρωτικά (που στρογγυλοποιούν μία φορά στο τέλος). Μερικές/repeats, όπου
+        # το CDA είναι σωρευτικό (per-line retail ≠ σύνολο), κρατούν το aggregate. Verified vs Soft1 06/2026.
+        reconciled = bool(meds and abs(_pl_retail - total) <= 2)
+        if reconciled:
+            share = _pl_part + _pl_pdiff + surcharge
+
         # ── ΚΥΥΑΠ / «ΕΤΥΑΠ» σωμάτων ασφαλείας (Ι.Κ.Α. πρώην Ο.Π.Α.Δ. - Κ.Υ.Υ.Α.Π.) ─────────────
-        # ΤΡΙΜΕΡΗΣ επιμερισμός (επαληθευμένος στο επίσημο έντυπο ΗΔΥΚΑ): ο ασφαλισμένος πληρώνει τη
-        # ΜΙΣΗ διαφορά (στρογγ. κάτω) + το 1€ ΕΟΠΥΥ· το ΚΥΥΑΠ πληρώνει τη συμμετοχή + την άλλη μισή
-        # διαφορά· το ΕΟΠΥΥ το υπόλοιπο (amount_total − ασφ/νος − ΚΥΥΑΠ, μέσω amount_claimed). Μόνο
-        # για συμβεβλημένα φαρμακεία (νομός Αττικής/Θεσσαλονίκης κ.λπ.)· αλλιώς σαν απλό ΕΟΠΥΥ.
+        # ΤΡΙΜΕΡΗΣ επιμερισμός Ασφ/νο · ΚΥΥΑΠ · ΕΟΠΥΥ. Τα ποσά του ΚΥΥΑΠ είναι AUTHORITATIVE από το CDA:
+        #   1.1.27.1 supplementary_amount = συμμετοχή που καλύπτει το ΚΥΥΑΠ
+        #   1.1.27.2 kyyap_difference     = μέρος της διαφοράς που καλύπτει το ΚΥΥΑΠ
+        # Το ΚΥΥΑΠ αναλαμβάνει μέρος όσων θα πλήρωνε ο ασφαλισμένος → ασφ/νος = normal_share − ΚΥΥΑΠ.
+        # (Επαληθευμένο 100% vs έντυπο 2606045371641: 5,48 / 14,54 / 30,72.) ΟΧΙ πλέον χειροκίνητο
+        # «μισή διαφορά ανά γραμμή» (αγνοούσε τα caps prgn/cluster & έβγαζε 5,24/13,69/31,81).
         fund_label = str(_first(fund_d, "name") or cda_pat.get("fund_name") or "").upper().replace(".", "")
         is_kyyap = "ΚΥΥΑΠ" in fund_label
         kyyap_covered = 0
         if self.etyap_contracted and is_kyyap:
-            pat_diff_half = kyy = 0
-            for it in items:
-                if not it.is_executed:
-                    continue
-                dd = it.details or {}
-                ref_unit, pct = dd.get("reference_price"), dd.get("participation_pct")
-                if not ref_unit or not pct:
-                    continue
-                ref_line = int(ref_unit) * it.quantity
-                diff_line = dd.get("difference")
-                if diff_line is None:
-                    diff_line = max(0, it.retail_price * it.quantity - ref_line)
-                participation_line = _round_half_up(ref_line * float(pct) / 100.0)
-                half = _round_half_down(diff_line / 2.0)        # ασφαλισμένου μερίδιο διαφοράς
-                pat_diff_half += half
-                kyy += participation_line + (diff_line - half)  # ΚΥΥΑΠ: συμμετοχή + άλλη μισή
-            if kyy or pat_diff_half:
-                share = pat_diff_half + surcharge               # ασφ/νος: μισή διαφορά + 1€
-                kyyap_covered = kyy
+            _cd0 = cda.get("details") or {}
+            supp_amt = _eur_cents(_cd0.get("supplementary_amount") or 0)   # single-rounded συμμετοχή (1.1.27.1)
+            kdiff = _eur_cents(_cd0.get("kyyap_difference") or 0)          # μέρος διαφοράς που καλύπτει το ΚΥΥΑΠ
+            # Το ΚΥΥΑΠ καλύπτει τη ΣΥΜΜΕΤΟΧΗ + τη διαφορά ΚΥΥΑΠ. Η ΣΥΜΜΕΤΟΧΗ πρέπει να είναι το ΑΘΡΟΙΣΜΑ
+            # των per-line συμμετοχών (όπως το τυπώνει η ΗΔΥΚΑ), ΟΧΙ το single-rounded 1.1.27.1 — που έχανε
+            # 1 λεπτό (π.χ. 3,14 αντί 3,15). Άθροισμα ΟΛΩΝ των γραμμών (το is_executed είναι αναξιόπιστο
+            # λόγω σωρευτικού CDA). Επαληθευμένο σε 6 συνταγές ΚΥΥΑΠ vs επίσημα έντυπα.
+            participation_lines = sum(((it.details or {}).get("patient_share") or 0) for it in items)
+            kyyap_covered = participation_lines + kdiff
+            if kyyap_covered:
+                # Ξαναϋπολογίζουμε ΚΑΘΑΡΑ το μερίδιο ασφ/νου (ΔΕΝ βασιζόμαστε στο normal `share`, που έχει
+                # μέσα το supplementalDifferenceAmt = διαφορά ΚΥΥΑΠ): ο ασφ/νος πληρώνει τη συμμετοχή που
+                # ΔΕΝ καλύπτει το ΚΥΥΑΠ + τη διαφορά του μείον όσο καλύπτει το ΚΥΥΑΠ + το 1€.
+                share = (max(0, participation - supp_amt)
+                         + max(0, (total_diff - soci_diff) - kdiff)
+                         + surcharge)
+
+        # ── Repeats/partials: στοχευμένο fallback στο ΕΝΤΥΠΟ για ΑΚΡΙΒΗ ανά-εκτέλεση ποσά ──────────
+        # Όταν το per-line ΔΕΝ κλείνει (σωρευτικό CDA στα repeats/partials), το aggregate έχει ±1 λεπτό
+        # στο split ασφ/ταμείου. Το έντυπο (print/{barcode}?executionNo) δίνει τα ΑΚΡΙΒΗ ΠΛΗΡΩΤΕΟ
+        # ΑΣΦ/ΤΑΜΕΙΟ ανά εκτέλεση → 100% ταύτιση με Soft1. ΜΟΝΟ εδώ (~3-4% εκτελέσεων) & ΟΧΙ ΚΥΥΑΠ
+        # (έχει δικό του verified branch). retail = ασθενής+ταμείο (επαληθευμένο: Σ ανά εκτέλεση = aggregate).
+        if (self.use_printout_amounts and not reconciled
+                and not (self.etyap_contracted and is_kyyap) and meds):
+            po = self._printout_split(barcode, exec_no)
+            if po:
+                po_patient, po_fund = po
+                share = po_patient
+                total = po_patient + po_fund
 
         def _ymd(v):
             if isinstance(v, str) and len(v) == 8 and v.isdigit():
@@ -679,6 +785,11 @@ class HdikaClient:
             "execution_case": cda.get("execution_case"),
             "n3816": (True if cda.get("n3816") else None),     # ΦΥΚ Ν.3816
             "ekas": (True if cda.get("ekas") else None),       # δικαιούχος ΕΚΑΣ
+            # «Αμιγώς 100%»: ΟΛΑ τα φάρμακα με συμμετοχή ασθενή 100% → ΔΕΝ υποβάλλεται στο ΕΟΠΥΥ.
+            # Αν έστω ένα φάρμακο <100% (0/10/20/12,5%…) → υποβάλλεται (full_participation=None→removed).
+            # Το «Κλείσιμο» & «Έλεγχος Barcode» το χρησιμοποιούν για να ξεχωρίσουν τις αμιγώς-100%.
+            "full_participation": (True if (items and all(
+                float((it.details or {}).get("participation_pct") or 0) >= 100 for it in items)) else None),
         }
         # κράτα μόνο ουσιαστικές τιμές (πέτα None/""/False/μηδενικά ποσά → λιτό doc)
         presc_details = {k: v for k, v in presc_details.items() if v not in (None, "", False, 0, 0.0)}
@@ -734,7 +845,7 @@ class HdikaClient:
                     time.sleep(wait)
                     continue
                 r.raise_for_status()
-                return ET.fromstring(r.content)
+                return _DET.fromstring(r.content)
             except PermissionError:
                 raise
             except httpx.TimeoutException as exc:
@@ -829,11 +940,30 @@ def _sex(patient: dict) -> str:
     return "M" if s.startswith(("M", "Α")) else "F" if s.startswith(("F", "Θ", "Γ")) else "U"
 
 
-def _eur_cents(v) -> int:
+def _eur(v) -> Decimal:
+    """€ value (str/float/None) → exact Decimal. Decimal(str(v)) avoids float artefacts
+    (11.065 stays 11.065, not 11.06499999…) so half-up rounding matches ΗΔΥΚΑ/PharmacyOne."""
     try:
-        return round(float(v) * 100)
-    except (TypeError, ValueError):
-        return 0
+        return Decimal(str(v))
+    except (InvalidOperation, TypeError, ValueError):
+        return Decimal(0)
+
+
+def _cents(d: Decimal) -> int:
+    """Decimal € → integer cents, rounding halves UP (ΗΔΥΚΑ/PharmacyOne CustomRound), NOT
+    Python's banker's rounding (which rounds .5 to even → 11.065€ became 1106¢ instead of 1107¢)."""
+    return int((d * 100).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+
+
+def _eur_cents(v) -> int:
+    return _cents(_eur(v))
+
+
+def _eur_cents_down(v) -> int:
+    """€ → cents, halves DOWN (υπέρ ασφαλισμένου) — η ΗΔΥΚΑ/PharmacyOne (`CustomRoundDown`) στρογγυλοποιεί
+    ΚΑΤΩ το μερίδιο διαφοράς του ασθενή. Χρήση ΜΟΝΟ για την per-line patient difference (πεδίο 1.4.21)."""
+    from decimal import ROUND_HALF_DOWN
+    return int((_eur(v) * 100).quantize(Decimal("1"), rounding=ROUND_HALF_DOWN))
 
 
 def _parse_dt(v) -> datetime:

@@ -6,7 +6,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { Search, User, Wallet, Repeat, Stethoscope, Pill, Sparkles, AlertTriangle, Salad, Target, Eye, Crown, Syringe, ChevronRight, ScanLine, Calendar, CalendarRange } from "lucide-react";
 import { api } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
-import { fmtNum, fmtEur, fmtDec } from "@/lib/formatters";
+import { fmtNum, fmtEur, fmtDec, scanRxBarcode } from "@/lib/formatters";
 import { KpiCard } from "@/components/kpi/KpiCard";
 import { ContactCard } from "@/components/patients/ContactCard";
 import { MeasurementsCard } from "@/components/patients/MeasurementsCard";
@@ -112,7 +112,7 @@ export default function PatientProfilePage() {
   const pick = (h: Hit) => { setAmka(h.name || h.amka || ""); setOpen(false); load(`patient_id=${encodeURIComponent(h.patient_id)}`); };
   const go = () => { const a = amka.trim(); if (a.length >= 3) load(`amka=${encodeURIComponent(a)}`); };
   // σάρωση συνταγής (ο σαρωτής «πληκτρολογεί» το barcode + Enter) → φόρτωση πελάτη ΧΩΡΙΣ ΑΜΚΑ
-  const scanGo = () => { const c = scan.trim(); if (c.length >= 4) { load(`barcode=${encodeURIComponent(c)}`); setScan(""); } };
+  const scanGo = () => { const c = scanRxBarcode(scan); if (c.length >= 4) { load(`barcode=${encodeURIComponent(c)}`); setScan(""); } };
   const p = search.data?.found ? search.data : null;
 
   return (

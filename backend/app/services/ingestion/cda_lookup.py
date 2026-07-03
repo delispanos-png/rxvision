@@ -13,20 +13,10 @@ from app.services.vault_service import vault
 
 
 async def _creds(tenant_id: str, db) -> dict:
-    creds = dict(vault.get_secret(f"tenants/{tenant_id}/hdika") or {})
-    plat = await db["platform_settings"].find_one({"_id": "idika"})  # tenant-ok: platform ΗΔΥΚΑ env
-    if plat:
-        env = plat.get("active_environment", "test")
-        envcfg = plat.get(env) or {}
-        if envcfg.get("base_url"):
-            creds["base_url"] = envcfg["base_url"]
-        creds["environment"] = env
-        if env == "test":
-            for src, dst in (("integrator_username", "username"), ("integrator_password", "password"),
-                             ("api_key", "api_key"), ("pharmacy_id", "pharmacy_id")):
-                if envcfg.get(src):
-                    creds[dst] = envcfg[src]
-    return creds
+    # FULL effective creds (production ΚΛΗΡΟΝΟΜΕΙ platform api_key/integrator· test→sandbox). Το παλιό
+    # inline building έλειπε το production api_key → νέα φαρμακεία (μόνο user/pass) → χωρίς key.
+    from app.api.v1.routers.ingestion import _effective_hdika_creds
+    return dict(await _effective_hdika_creds(tenant_id))
 
 
 async def fetch_cda_info(tenant_id: str, db, barcode: str) -> dict:

@@ -122,6 +122,14 @@ class PatientAccountRepository:
                 {"_id": oid}, {"$set": {"password_hash": password_hash},
                                "$inc": {"refresh_token_version": 1}})
 
+    async def revoke_tokens(self, account_id) -> None:
+        """Bump refresh_token_version → invalidate ALL of this patient's refresh tokens (logout).
+        Access tokens (15-min) lapse on their own; a stolen refresh token can no longer mint new ones."""
+        oid = _oid(account_id)
+        if oid:
+            await self.db["patient_accounts"].update_one(  # tenant-ok: global patient account
+                {"_id": oid}, {"$inc": {"refresh_token_version": 1}})
+
     # ── cross-pharmacy linking (by ΑΜΚΑ) ──────────────────────
     async def refresh_links(self, account_id, amka: str) -> list[dict]:
         """Scan every pharmacy with the portal enabled; match the patient by the per-tenant
@@ -154,6 +162,48 @@ class PatientAccountRepository:
                  "$setOnInsert": {"created_at": _now()}}, upsert=True)
             out.append({"tenant_id": tid, "patient_ref": str(pat["_id"]), "pharmacy_name": name})
         return out
+
+    async def find_amka_contacts(self, amka: str) -> list[dict]:
+        """On-file contacts (mobile/email) that a PHARMACY already holds for this ΑΜΚΑ, across every
+        portal-enabled pharmacy where the ΑΜΚΑ matches a patient record. Used to send an ownership-proof
+        OTP to a channel the registrant must already control — NOT to whatever they typed in the form."""
+        from app.services.auth_service import resolve_tenant_modules, tenant_has
+        amka = (amka or "").strip()
+        out: list[dict] = []
+        if not amka:
+            return out
+        async for t in self.db["tenants"].find({}, {"_id": 1}):  # tenant-ok: cross-tenant discovery
+            tid = str(t["_id"])
+            if not tenant_has(await resolve_tenant_modules(tid), "patient_portal"):
+                continue
+            try:
+                pseudo = pseudonymize(amka, tenant_pepper=vault.tenant_pepper(tid))
+            except Exception:  # noqa: BLE001
+                continue
+            pat = await self.db["patients_anonymized"].find_one(
+                {"tenant_id": tid, "pseudo_id": pseudo}, {"_id": 1})
+            if not pat:
+                continue
+            ct = await self.db["patient_contacts"].find_one(
+                {"tenant_id": tid, "_id": pat["_id"]}, {"mobile": 1, "phone": 1, "email": 1})
+            if ct:
+                out.append({"tenant_id": tid,
+                            "mobile": (ct.get("mobile") or ct.get("phone") or "").strip(),
+                            "email": (ct.get("email") or "").strip().lower()})
+        return out
+
+    # ── registration OTP challenges (ΑΜΚΑ ownership proof) ─────
+    async def create_otp_challenge(self, doc: dict) -> None:
+        await self.db["patient_otp_challenges"].insert_one(doc)  # tenant-ok: global, TTL-reaped
+
+    async def get_otp_challenge(self, cid: str) -> dict | None:
+        return await self.db["patient_otp_challenges"].find_one({"_id": cid})
+
+    async def bump_otp_attempt(self, cid: str) -> None:
+        await self.db["patient_otp_challenges"].update_one({"_id": cid}, {"$inc": {"attempts": 1}})
+
+    async def delete_otp_challenge(self, cid: str) -> None:
+        await self.db["patient_otp_challenges"].delete_one({"_id": cid})
 
     async def links(self, account_id) -> list[dict]:
         oid = _oid(account_id)

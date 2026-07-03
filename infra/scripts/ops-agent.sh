@@ -26,6 +26,7 @@ while true; do
           if [ ! -e "backups/$FILE" ]; then           # offsite-only: fetch the archive from the box
             CFG=$(M "print(JSON.stringify(db.platform_settings.findOne({_id:'cloud'})||{}))" 2>/dev/null | tail -1)
             read -r SH SU SP SPATH < <(python3 -c "import json,sys; c=json.loads(sys.argv[1] or '{}'); print(c.get('storage_host','-') or '-', c.get('storage_user','-') or '-', c.get('storage_password','-') or '-', (c.get('storage_path','/') or '/'))" "$CFG")
+            [ "$SP" != "-" ] && SP=$(python3 infra/scripts/rxsecret.py "$SP")   # decrypt storage password
             REL="${SPATH#/}"; [ -z "$REL" ] && REL="."
             mkdir -p backups
             printf 'get %s/%s backups/%s\nbye\n' "$REL" "$FILE" "$FILE" | sshpass -p "$SP" sftp -P 23 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "$SU@$SH" >/dev/null 2>&1 || true

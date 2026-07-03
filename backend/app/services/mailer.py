@@ -23,7 +23,8 @@ def _now() -> datetime:
 
 
 async def get_smtp(*, masked: bool = True) -> dict | None:
-    doc = await shared_db()["platform_settings"].find_one({"_id": "smtp"})
+    from app.services.platform_secrets import decrypt_doc
+    doc = decrypt_doc("smtp", await shared_db()["platform_settings"].find_one({"_id": "smtp"}))
     if not doc:
         return None
     if masked:
@@ -40,6 +41,8 @@ async def save_smtp(cfg: dict) -> None:
         cfg["password"] = existing.get("password", "")
     cfg["_id"] = "smtp"
     cfg["updated_at"] = _now()
+    from app.services.platform_secrets import encrypt_fields
+    encrypt_fields("smtp", cfg)   # encrypt the password at rest
     await db["platform_settings"].update_one({"_id": "smtp"}, {"$set": cfg}, upsert=True)
 
 

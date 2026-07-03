@@ -33,6 +33,7 @@ from app.api.v1.routers import (
     prescriptions,
     profitability,
     reimbursement,
+    security,
     subscriptions,
     vaccinations,
     tenants,
@@ -91,3 +92,4 @@ api_router.include_router(addons.router, prefix="/addons", tags=["addons"])
 api_router.include_router(tenants.router, prefix="/tenant", tags=["tenant"])
 # users router declares its own /users, /roles, /permissions paths → mount at root.
 api_router.include_router(users.router, tags=["users"])
+api_router.include_router(security.router, prefix="/security", tags=["security"])

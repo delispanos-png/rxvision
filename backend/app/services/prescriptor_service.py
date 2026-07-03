@@ -20,10 +20,26 @@ import io
 import json
 
 from app.core.db import shared_db
+from app.services.pharmacat_service import GUARDRAIL
 
 _DEFAULT_MODEL = "claude-opus-4-8"
 # All three are vision-capable. Opus best for messy handwriting/stamps; Sonnet ~6× cheaper.
 ALLOWED_MODELS = ("claude-opus-4-8", "claude-sonnet-4-6", "claude-haiku-4-5")
+
+# Per-tenant daily cap on vision-reader LLM calls (A-2) — bounds cost/abuse of the scan reader.
+PRESCRIPTOR_DAILY_LIMIT = 300
+
+
+async def _over_daily_cap(tenant_id: str) -> bool:
+    from datetime import datetime, timezone
+
+    from pymongo import ReturnDocument
+    day = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d")
+    doc = await shared_db()["llm_daily_usage"].find_one_and_update(  # tenant-ok: platform usage meter
+        {"_id": f"prescriptor:{tenant_id}:{day}"},
+        {"$inc": {"n": 1}, "$setOnInsert": {"at": datetime.now(tz=timezone.utc)}},
+        upsert=True, return_document=ReturnDocument.AFTER)
+    return int((doc or {}).get("n", 0)) > PRESCRIPTOR_DAILY_LIMIT
 
 SYSTEM = """Είσαι το «Prescriptor», ο ψηφιακός οφθαλμός ενός ελληνικού φαρμακείου. Βλέπεις τη
 ΦΩΤΟΓΡΑΦΙΑ μιας εκτελεσμένης συνταγής / κουπονιού / γνωμάτευσης και τη ΔΙΑΒΑΖΕΙΣ με την ακρίβεια
@@ -91,7 +107,8 @@ _NATIVE_IMG = {"image/jpeg", "image/png", "image/gif", "image/webp"}
 
 
 async def _config() -> dict:
-    cfg = await shared_db()["platform_settings"].find_one({"_id": "anthropic"}) or {}
+    from app.services.platform_secrets import decrypt_doc
+    cfg = decrypt_doc("anthropic", await shared_db()["platform_settings"].find_one({"_id": "anthropic"})) or {}
     model = cfg.get("vision_model") or cfg.get("model")
     model = model if model in ALLOWED_MODELS else _DEFAULT_MODEL
     # Prescriptor is a separate opt-in from PharmaCat chat: default ON when a key exists, but a
@@ -127,14 +144,16 @@ def _as_block(content: bytes, content_type: str) -> dict:
             "source": {"type": "base64", "media_type": media, "data": base64.b64encode(data).decode()}}
 
 
-async def read(content: bytes, content_type: str) -> dict:
+async def read(content: bytes, content_type: str, tenant_id: str | None = None) -> dict:
     """Read one document image. Returns the structured reading (see SCHEMA) with ok=True, or
-    {ok: False, error} when not configured / disabled / the API failed."""
+    {ok: False, error} when not configured / disabled / over the daily cap / the API failed."""
     c = await _config()
     if not c["api_key"]:
         return {"ok": False, "error": "not_configured"}
     if not (c["enabled"] and c["prescriptor"]):
         return {"ok": False, "error": "disabled"}
+    if tenant_id and await _over_daily_cap(tenant_id):
+        return {"ok": False, "error": "daily_limit", "limit": PRESCRIPTOR_DAILY_LIMIT}
 
     import anthropic
 
@@ -152,7 +171,7 @@ async def read(content: bytes, content_type: str) -> dict:
         resp = await client.messages.create(
             model=model,
             max_tokens=3072,
-            system=SYSTEM,
+            system=SYSTEM + GUARDRAIL,
             messages=[{"role": "user", "content": [
                 block,
                 {"type": "text", "text": "Διάβασε αυτό το έγγραφο και επίστρεψε το δομημένο JSON."},

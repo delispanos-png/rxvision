@@ -9,9 +9,10 @@ import {
 import { api } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
 import { useReimbPeriod } from "@/store/reimbStore";
-import { fmtEur, fmtNum } from "@/lib/formatters";
+import { fmtEur, fmtNum, scanRxBarcode } from "@/lib/formatters";
 import { DataTable, type Column } from "@/components/tables/DataTable";
 import { appConfirm, appAlert } from "@/store/dialogStore";
+import { ClosingReportModal } from "@/components/reimbursement/ClosingReportModal";
 
 type Item = { barcode: string; external_id: string; exec_no: string | null; claim: number; fund: string; group: string; is_eopyy: boolean; is_vaccine: boolean; is_100: boolean; is_fyk: boolean; is_etyap: boolean; needs_original: boolean; needs_dose_check: boolean; needs_check: boolean; executed_at: string; checked: boolean; visual_checked: boolean; day: string };
 type DayRow = { date: string; total: number; checked: number };
@@ -19,8 +20,56 @@ type Summary = { total: number; needs_check: number; clean: number; dose: number
 type Check = { period: string; group: string; groups: string[]; total: number; checked: number; remaining: number; extra: string[]; summary?: Summary; by_day: DayRow[]; items: Item[] };
 type Coupon = { name: string; barcode: string; quantity: number; category: string; executed: boolean; qr: boolean | null; qr_batch: string | null; qr_expiry: string | null; lot: string | null };
 type Detail = { ok: boolean; found: boolean; barcode: string; exec_no?: number | null; fund: string; claim: number; n_coupons: number; has_opinion: boolean | null; is_fyk: boolean; has_vaccine: boolean; has_narcotic: boolean; is_etyap?: boolean; needs_original?: boolean; partial: boolean; coupons: Coupon[] };
-type RxCheck = { type: string; level: string; title: string; detail: string };
+type RxCheck = { type: string; level: string; title: string; detail: string; category?: "closing" | "advisory" | "info" };
 type ClosingChecksRes = { items: { name: string; barcode: string | null; checks: RxCheck[] }[]; count: number; warnings: number };
+
+// Σπάει τα per-line checks σε 🔴 «Για την κατάθεση» (category=closing → κίνδυνος περικοπής/ενέργεια) και
+// 💡 «Συμβουλευτικά ΗΔΥΚΑ» (advisory → κλινικό/ενημερωτικό, collapsed). Ξεκαθαρίζει πού να εστιάσει ο ελεγκτής.
+function CategorizedChecks({ res, t }: { res: ClosingChecksRes | null; t: (el: string, en: string) => string }) {
+  if (!res || res.count === 0) return null;
+  const flat = res.items.flatMap((it) => it.checks.map((c) => ({ ...c, drug: it.name })));
+  const closing = flat.filter((c) => c.category === "closing");
+  const info = flat.filter((c) => c.category === "info");   // ενημερωτικά (π.χ. 100% → δεν υποβάλλεται) — ΟΧΙ κίνδυνος
+  const advisory = flat.filter((c) => c.category !== "closing" && c.category !== "info");
+  return (
+    <div className="space-y-2">
+      <div className="flex flex-wrap gap-1.5 text-[10px] font-bold">
+        {closing.length > 0 && <span className="rounded-full bg-rose-100 px-2 py-0.5 text-rose-700 dark:bg-rose-950/50 dark:text-rose-300">🔴 {closing.length} {t("για κατάθεση", "for submission")}</span>}
+        {info.length > 0 && <span className="rounded-full bg-amber-100 px-2 py-0.5 text-amber-800 dark:bg-amber-950/50 dark:text-amber-300">ℹ️ {info.length} {t("ενημερωτικό", "info")}</span>}
+        {advisory.length > 0 && <span className="rounded-full bg-slate-200 px-2 py-0.5 text-slate-600 dark:bg-slate-700 dark:text-slate-300">💡 {advisory.length} {t("συμβουλευτικά", "advisory")}</span>}
+      </div>
+      {info.length > 0 && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50/70 p-2.5 dark:border-amber-900/50 dark:bg-amber-950/20">
+          <div className="space-y-1">
+            {info.map((c, i) => (
+              <div key={i} className="text-[11px] text-amber-900 dark:text-amber-200"><b>{c.title}.</b> {c.detail}</div>
+            ))}
+          </div>
+        </div>
+      )}
+      {closing.length > 0 && (
+        <div className="rounded-xl border border-rose-200 bg-rose-50/60 p-2.5 dark:border-rose-900/50 dark:bg-rose-950/20">
+          <div className="mb-1 flex items-center gap-1.5 text-[11px] font-bold uppercase text-rose-700 dark:text-rose-300"><ShieldAlert className="h-3.5 w-3.5" /> {t("Για την κατάθεση — κίνδυνος περικοπής", "For submission — cut risk")}</div>
+          <div className="space-y-1">
+            {closing.map((c, i) => (
+              <div key={i} className="rounded-md bg-white/70 px-2 py-1 text-[11px] text-slate-700 dark:bg-slate-900/50 dark:text-slate-200"><span className="text-slate-400">{c.drug} · </span><b>{c.title}.</b> {c.detail}</div>
+            ))}
+          </div>
+        </div>
+      )}
+      {advisory.length > 0 && (
+        <details className="rounded-xl border border-slate-200 bg-slate-50/70 dark:border-slate-700 dark:bg-slate-800/40">
+          <summary className="flex cursor-pointer list-none items-center gap-1.5 px-2.5 py-1.5 text-[11px] font-bold uppercase text-slate-500 hover:text-slate-700 dark:hover:text-slate-300">💡 {t("Συμβουλευτικά ΗΔΥΚΑ", "ΗΔΥΚΑ advisory")} ({advisory.length}) <span className="ml-auto text-slate-400">▾</span></summary>
+          <div className="space-y-1 px-2.5 pb-2.5">
+            {advisory.map((c, i) => (
+              <div key={i} className="rounded-md bg-white px-2 py-1 text-[11px] text-slate-500 dark:bg-slate-900/60 dark:text-slate-400"><span className="text-slate-400">{c.drug} · </span><b>{c.title}.</b> {c.detail}</div>
+            ))}
+          </div>
+        </details>
+      )}
+    </div>
+  );
+}
 type ScanFlags = { is_intangible: boolean; needs_original: boolean; is_fyk: boolean; has_desensitization: boolean; has_opinion: boolean; has_vaccine: boolean; is_etyap: boolean; exec_count: number | null };
 type ScanRes = { ok: boolean; found: boolean; barcode: string; external_id?: string; wrong_day?: boolean; actual_days?: string[]; flags?: ScanFlags };
 const grDate = (d: string) => d.split("-").reverse().join("/");
@@ -39,6 +88,7 @@ export default function PhysicalCheckPage() {
   const [detail, setDetail] = useState<Detail | null>(null);
   const [checks, setChecks] = useState<ClosingChecksRes | null>(null);
   const [showBriefing, setShowBriefing] = useState(false);
+  const [showReport, setShowReport] = useState(false);
   const briefedPeriod = useRef<string | null>(null);
   // τρόπος κλεισίματος: ορίζεται από τις Ρυθμίσεις → Κλείσιμο Μήνα (tenant setting), όχι από την οθόνη
   // παραμετρικό: αυτόματο pop-up κουπονιών στο σκανάρισμα (επιλογή φαρμακοποιού, αποθηκεύεται τοπικά)
@@ -135,7 +185,7 @@ export default function PhysicalCheckPage() {
   const daysComplete = byDay.filter((d) => d.checked >= d.total).length;
 
   function submit() {
-    const v = bc.trim();
+    const v = scanRxBarcode(bc);
     if (!v) return;
     scan.mutate({ barcode: v, day: cur?.date });
     setBc("");
@@ -265,11 +315,8 @@ export default function PhysicalCheckPage() {
             {detail?.found ? (
               <div className="space-y-2">
                 {todo.length > 0 && <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-2.5 dark:border-emerald-900/50 dark:bg-emerald-950/20"><div className="mb-1 flex items-center gap-1.5 text-[11px] font-bold uppercase text-emerald-700 dark:text-emerald-400"><ClipboardList className="h-3.5 w-3.5" /> {t("Για το ταμείο", "For the fund")}</div><ul className="space-y-0.5 text-[11px] text-slate-700 dark:text-slate-200">{todo.map((x, i) => <li key={i}>{x}</li>)}</ul></div>}
-                {checks && checks.count > 0 ? checks.items.map((it, i) => (
-                  <div key={i}><div className="text-[11px] font-semibold text-slate-700 dark:text-slate-200">{it.name}</div>
-                    {it.checks.map((c, j) => <div key={j} className={`mt-0.5 rounded-md px-2 py-1 text-[11px] ${c.level === "warning" ? "bg-amber-100 text-amber-900 dark:bg-amber-950/50 dark:text-amber-200" : "bg-white text-slate-600 dark:bg-slate-900/60 dark:text-slate-300"}`}><b>{c.title}.</b> {c.detail}</div>)}
-                  </div>
-                )) : (todo.length === 0 && <p className="text-[11px] text-emerald-600">✓ {t("Καθαρή — όλα QR, καμία ιδιαιτερότητα.", "Clean — all QR, nothing special.")}</p>)}
+                {checks && checks.count > 0 ? <CategorizedChecks res={checks} t={t} />
+                  : (todo.length === 0 && <p className="text-[11px] text-emerald-600">✓ {t("Καθαρή — όλα QR, καμία ιδιαιτερότητα.", "Clean — all QR, nothing special.")}</p>)}
               </div>
             ) : <p className="py-8 text-center text-xs text-slate-400">{t("Σκάναρε μια συνταγή για να δεις τι πρέπει να κάνεις.", "Scan a prescription to see what to do.")}</p>}
           </div>
@@ -337,16 +384,7 @@ export default function PhysicalCheckPage() {
           ) : null;
         })()}
         {wizChecks && wizChecks.count > 0 ? (
-          <div className="mt-3 space-y-1.5">
-            {wizChecks.items.map((it, i) => (
-              <div key={i}>
-                <div className="text-[11px] font-semibold text-slate-700 dark:text-slate-200">{it.name}</div>
-                {it.checks.map((c, j) => (
-                  <div key={j} className={`mt-0.5 rounded-md px-2 py-1 text-[11px] ${c.level === "warning" ? "bg-amber-100 text-amber-900 dark:bg-amber-950/50 dark:text-amber-200" : "bg-slate-50 text-slate-600 dark:bg-slate-800/60 dark:text-slate-300"}`}><b>{c.title}.</b> {c.detail}</div>
-                ))}
-              </div>
-            ))}
-          </div>
+          <div className="mt-3"><CategorizedChecks res={wizChecks} t={t} /></div>
         ) : null}
         {/* κουπόνια αυτής της εκτέλεσης (inline) */}
         {wizCoupons?.coupons?.length ? (
@@ -510,24 +548,21 @@ export default function PhysicalCheckPage() {
     if (detail.is_etyap) sideTodo.push(t("🛡️ ΕΤΥΑΠ — συμπληρωματική υποβολή.", "🛡️ ΕΤΥΑΠ — supplementary submission."));
   }
   const messagesPanel = (
-    <aside className="order-2 lg:order-1 lg:sticky lg:top-4 lg:self-start">
+    <aside className="order-2 lg:order-1 lg:sticky lg:top-20 lg:self-start">
       <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-3 dark:border-slate-700 dark:bg-slate-800/40">
         <div className="mb-2 text-[11px] font-bold uppercase text-slate-500">🔎 {t("Τι να ελέγξεις / καταθέσεις", "What to check / submit")}</div>
         {detail?.found ? (
           <div className="space-y-2">
             {sideTodo.length > 0 && <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-2.5 dark:border-emerald-900/50 dark:bg-emerald-950/20"><div className="mb-1 flex items-center gap-1.5 text-[11px] font-bold uppercase text-emerald-700 dark:text-emerald-400"><ClipboardList className="h-3.5 w-3.5" /> {t("Για το ταμείο", "For the fund")}</div><ul className="space-y-0.5 text-[11px] text-slate-700 dark:text-slate-200">{sideTodo.map((x, i) => <li key={i}>{x}</li>)}</ul></div>}
-            {checks && checks.count > 0 ? checks.items.map((it, i) => (
-              <div key={i}><div className="text-[11px] font-semibold text-slate-700 dark:text-slate-200">{it.name}</div>
-                {it.checks.map((c, j) => <div key={j} className={`mt-0.5 rounded-md px-2 py-1 text-[11px] ${c.level === "warning" ? "bg-amber-100 text-amber-900 dark:bg-amber-950/50 dark:text-amber-200" : "bg-white text-slate-600 dark:bg-slate-900/60 dark:text-slate-300"}`}><b>{c.title}.</b> {c.detail}</div>)}
-              </div>
-            )) : (sideTodo.length === 0 && <p className="text-[11px] text-emerald-600">✓ {t("Καθαρή — όλα QR, καμία ιδιαιτερότητα.", "Clean — all QR, nothing special.")}</p>)}
+            {checks && checks.count > 0 ? <CategorizedChecks res={checks} t={t} />
+              : (sideTodo.length === 0 && <p className="text-[11px] text-emerald-600">✓ {t("Καθαρή — όλα QR, καμία ιδιαιτερότητα.", "Clean — all QR, nothing special.")}</p>)}
           </div>
         ) : <p className="py-10 text-center text-xs text-slate-400">{t("Σκάναρε ή πάτησε μια συνταγή για να δεις τι πρέπει να κάνεις.", "Scan or tap a prescription to see what to do.")}</p>}
       </div>
     </aside>
   );
   const couponsPanel = (
-    <aside className="order-3 lg:sticky lg:top-4 lg:self-start">
+    <aside className="order-3 lg:sticky lg:top-20 lg:self-start">
       <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-3 dark:border-slate-700 dark:bg-slate-800/40">
         <div className="mb-2 flex items-center gap-1.5 text-[11px] font-bold uppercase text-slate-500"><Ticket className="h-3.5 w-3.5" /> {t("Κουπόνια", "Coupons")}{detail?.found ? ` · ${detail.barcode}` : ""}</div>
         {detail?.found && detail.coupons ? (
@@ -561,9 +596,10 @@ export default function PhysicalCheckPage() {
       </div>}
 
       {/* month progress */}
-      <div className="flex items-center justify-between text-xs text-slate-500">
+      <div className="flex flex-wrap items-center justify-between gap-x-8 gap-y-2 text-xs text-slate-500">
         <span className="inline-flex items-center gap-1.5"><CalendarDays className="h-4 w-4" /> {t("Ημέρες ολοκληρωμένες", "Days complete")}: <b className="text-slate-700 dark:text-slate-200">{daysComplete}/{byDay.length}</b></span>
         <span className="inline-flex items-center gap-1.5">
+          <button onClick={() => setShowReport(true)} className="inline-flex items-center gap-1 rounded-lg border border-emerald-300 bg-emerald-50 px-2.5 py-1 font-semibold text-emerald-700 hover:bg-emerald-100 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300">🖨️ {t("Αναλυτική κατάθεση", "Detailed submission")}</button>
           {data?.summary && <button onClick={() => setShowBriefing(true)} className="inline-flex items-center gap-1 rounded-lg border border-slate-300 px-2.5 py-1 hover:bg-slate-50 dark:border-slate-600"><ClipboardList className="h-3 w-3" /> {t("Τι θα συναντήσω", "Briefing")}</button>}
           <button onClick={async () => { if (cur && await appConfirm(t(`Μηδενισμός ελέγχου ΜΟΝΟ για την ${grDate(cur.date)}; (η δουλειά των άλλων ημερών διατηρείται)`, `Reset check for ${cur ? grDate(cur.date) : ""} only? (other days kept)`))) reset.mutate(cur.date); }} className="inline-flex items-center gap-1 rounded-lg border border-slate-300 px-2.5 py-1 hover:bg-slate-50 dark:border-slate-600"><RotateCcw className="h-3 w-3" /> {t("Μηδενισμός ημέρας", "Reset day")}</button>
           <button onClick={async () => { if (await appConfirm(t("Μηδενισμός ΟΛΟΥ του μήνα; (χάνεται ο έλεγχος όλων των ημερών)", "Reset the WHOLE month? (all days' checks lost)"), { danger: true })) reset.mutate(undefined); }} className="rounded-lg px-2 py-1 text-slate-400 hover:bg-slate-50 hover:text-rose-600 dark:hover:bg-slate-800">{t("όλος ο μήνας", "whole month")}</button>
@@ -701,6 +737,7 @@ export default function PhysicalCheckPage() {
         </div>
         {couponsPanel}
       </div>
+      {showReport && <ClosingReportModal period={period} t={t} onClose={() => setShowReport(false)} />}
       {showBriefing && data?.summary && (
         <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4" onClick={() => setShowBriefing(false)}>
           <div className="max-h-[85vh] w-full max-w-lg overflow-y-auto rounded-2xl bg-white p-5 shadow-xl dark:bg-slate-900" onClick={(e) => e.stopPropagation()}>

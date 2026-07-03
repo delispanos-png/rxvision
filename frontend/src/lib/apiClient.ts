@@ -20,6 +20,27 @@ function buildHeaders(init: RequestInit): HeadersInit {
   };
 }
 
+/** Best-effort server logout — closes THIS session so its seat frees immediately, then clears
+ * local tokens. Never throws (a network hiccup must not block the user from logging out). */
+export async function logoutSession(): Promise<void> {
+  const token = getAccessToken();
+  if (token) {
+    try {
+      await fetch(`${API_BASE}/auth/logout`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        keepalive: true,
+      });
+    } catch {
+      /* ignore — seat will lapse via idle timeout */
+    }
+  }
+  if (typeof window !== "undefined") {
+    window.localStorage.removeItem("access_token");
+    window.localStorage.removeItem("refresh_token");
+  }
+}
+
 // Access tokens are short-lived (15 min). On a 401 we transparently refresh once
 // using the stored refresh token and retry, so an idle tab doesn't blank out.
 let refreshing: Promise<boolean> | null = null;

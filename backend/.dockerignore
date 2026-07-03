@@ -1,0 +1,14 @@
+# Keep build context lean + never ship secrets/junk into the image (M-5).
+.git
+.gitignore
+.env
+.env.*
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+tests/
+*.md

@@ -31,6 +31,11 @@ class Settings(BaseSettings):
     REDIS_URL: str = "redis://redis:6379/0"
     HDIKA_MAX_CALLS_PER_SEC: int = 40    # global cap on ΗΔΥΚΑ HTTP calls/sec across ALL workers
     HDIKA_CDA_CONCURRENCY: int = 16      # parallel CDA fetches within one tenant sync (bounded)
+    # Repeats/partials: το σωρευτικό CDA δεν σπάει τα ανά-εκτέλεση ποσά → το aggregate έχει ±1 λεπτό
+    # στο split ασφ/ταμείου. Το ΕΝΤΥΠΟ (print/{barcode}?executionNo) έχει τα ΑΚΡΙΒΗ ποσά ανά εκτέλεση.
+    # Όταν True, τραβάμε στοχευμένα το έντυπο ΜΟΝΟ γι' αυτές (~3-4% εκτελέσεων) → 100% ταύτιση με Soft1.
+    HDIKA_PRINTOUT_AMOUNTS: bool = True
+    AMOUNT_AUDIT_BATCH: int = 120        # εκτελέσεις ανά tenant/κύκλο για το ημερήσιο audit ποσών vs έντυπο
     CELERY_BROKER_URL: str = "redis://redis:6379/1"
     CELERY_RESULT_BACKEND: str = "redis://redis:6379/2"
 
@@ -43,6 +48,11 @@ class Settings(BaseSettings):
     JWT_ALG: str = "HS256"
     ACCESS_TOKEN_TTL_SECONDS: int = 900
     REFRESH_TOKEN_TTL_SECONDS: int = 60 * 60 * 24 * 30
+    # Concurrent-session cap: a tenant may hold at most `subscription.seats` LIVE sessions at once
+    # (each device/browser = 1 session, even the same username on two PCs). A session counts as
+    # live while it pinged within SESSION_IDLE_SECONDS; stale sessions free their seat (TTL-reaped).
+    CONCURRENT_SESSION_LIMIT: bool = True
+    SESSION_IDLE_SECONDS: int = 600      # 10′ χωρίς δραστηριότητα ⇒ η θέση (seat) απελευθερώνεται
 
     # Web Push (VAPID) — patient portal phone notifications. Public key is exposed to the
     # browser; private key (base64 of its PEM) signs the push. Empty ⇒ push disabled (no-op).
@@ -92,6 +102,13 @@ class Settings(BaseSettings):
                             ("REDIS_URL", self.REDIS_URL)):
             if _DEV_DEFAULT_SECRET in value:
                 weak.append(name)
+        # The three identity signing keys must be MUTUALLY DISTINCT — defense-in-depth beyond the
+        # per-identity audience, so a leak of one key can never forge another identity's tokens. (M-2)
+        if len({self.JWT_SECRET, self.JWT_PLATFORM_SECRET, self.JWT_PATIENT_SECRET}) != 3:
+            weak.append("JWT secrets (must be mutually distinct)")
+        # Vault must be reached over TLS in prod (H-3) — never plaintext across the private net.
+        if self.VAULT_ADDR and not self.VAULT_ADDR.startswith("https://"):
+            weak.append("VAULT_ADDR (must be https://)")
         if weak:
             raise RuntimeError(
                 f"Refusing to start in ENV={self.ENV!r}: insecure default(s) for "

@@ -16,6 +16,7 @@ from datetime import datetime, timedelta, timezone
 
 from app.repositories.base import jsonsafe
 from app.services import pharmacat_service  # shared Anthropic config
+from app.utils.masking import mask_name
 
 SYSTEM = """Είσαι ο «Copilot» του RxVision — ο έξυπνος βοηθός ΛΕΙΤΟΥΡΓΙΑΣ του προγράμματος (όχι κλινικός·
 γι' αυτό υπάρχει ο PharmaCat). Απαντάς ΠΑΝΤΑ στα ελληνικά, σύντομα και με ουσία.
@@ -83,7 +84,19 @@ def _as_float(v, default: float) -> float:
 
 
 # ── read tools ────────────────────────────────────────────────
-async def _read_tool(name: str, args: dict, tenant_id: str) -> dict:
+def _scrub_amka(obj):
+    """Recursively strip national IDs (ΑΜΚΑ) from any tool payload before it is egressed to the
+    LLM. The model never needs the ΑΜΚΑ; keeping it out means a patient's national health ID is
+    NEVER transmitted to Anthropic, regardless of which tool produced the data."""
+    if isinstance(obj, dict):
+        return {k: _scrub_amka(v) for k, v in obj.items()
+                if str(k).lower() not in ("amka", "αμκα", "national_id")}
+    if isinstance(obj, list):
+        return [_scrub_amka(v) for v in obj]
+    return obj
+
+
+async def _read_tool(name: str, args: dict, tenant_id: str, demo: bool = False) -> dict:
     from app.repositories.prescriptions import PrescriptionRepository
     mb = _as_int(args.get("months_back"), 1)
     if name == "get_kpis":
@@ -120,7 +133,9 @@ async def _read_tool(name: str, args: dict, tenant_id: str) -> dict:
         from app.repositories.patient_intelligence import PatientIntelligenceRepository
         meth = {"get_patient_overview": "overview", "get_today_tasks": "today", "get_winback": "winback",
                 "get_at_risk": "risk", "get_vip": "vip", "get_compliance": "compliance"}[name]
-        return jsonsafe(await getattr(PatientIntelligenceRepository(tenant_id=tenant_id), meth)())
+        # demo/mask_pii → mask patient names/ΑΜΚΑ (GDPR: a restricted advisor must not see PII)
+        return jsonsafe(await getattr(
+            PatientIntelligenceRepository(tenant_id=tenant_id, demo=demo), meth)())
     if name == "get_upcoming":
         from app.repositories.future import FuturePrescriptionRepository
         today = _now(); horizon = today + timedelta(days=_as_int(args.get("days"), 30))
@@ -138,9 +153,10 @@ async def _read_tool(name: str, args: dict, tenant_id: str) -> dict:
         return jsonsafe({
             "availability_open": len(av), "appointments_requested": len(ap),
             "availability": [{"request_id": a.get("_id"), "τι": a.get("medicine_name") or a.get("query"),
-                              "ποιος": a.get("patient_name")} for a in av[:8]],
+                              "ποιος": mask_name(a.get("patient_name"), demo)} for a in av[:8]],
             "appointments": [{"appt_id": a.get("_id"), "τι": a.get("service_name"),
-                              "kind": a.get("kind"), "ποιος": a.get("patient_name")} for a in ap[:8]]})
+                              "kind": a.get("kind"), "ποιος": mask_name(a.get("patient_name"), demo)}
+                             for a in ap[:8]]})
     if name == "get_ingestion_status":
         from app.repositories.sync_jobs import SyncJobRepository
         jobs = await SyncJobRepository(tenant_id=tenant_id).list_jobs(source=None, skip=0, limit=3)
@@ -302,7 +318,7 @@ async def status() -> dict:
     return await pharmacat_service.status()
 
 
-async def build_action_plan(*, tenant_id: str, perms: set[str]) -> dict:
+async def build_action_plan(*, tenant_id: str, perms: set[str], demo: bool = False) -> dict:
     """Proactive «Πλάνο Ημέρας»: gather live signals from the read tools → a prioritised list of
     action cards, each either directly EXECUTABLE (whitelisted action) or a deep-link to act on."""
     cards: list[dict] = []
@@ -325,7 +341,7 @@ async def build_action_plan(*, tenant_id: str, perms: set[str]) -> dict:
                           "impact": f"{refill['count']} ασθενείς", "executable": True,
                           "action": {"kind": "act", "key": "notify_refills"},
                           "cta": "Αποστολή υπενθυμίσεων"})
-        pend = await _safe(_read_tool("get_portal_pending", {}, tenant_id), {})
+        pend = await _safe(_read_tool("get_portal_pending", {}, tenant_id, demo=demo), {})
         if pend.get("availability_open"):
             cards.append({"id": "avail", "urgency": "high", "icon": "chat",
                           "title": f"{pend['availability_open']} αιτήματα διαθεσιμότητας",
@@ -362,7 +378,7 @@ async def execute_action(*, tenant_id: str, perms: set[str], action: str, params
     return {"ok": True, "reply": await spec["run"](tenant_id, params or {})}
 
 
-async def _handle_tool(name, args, tenant_id, perms, actions) -> dict:
+async def _handle_tool(name, args, tenant_id, perms, actions, demo=False) -> dict:
     if name == "open_screen":
         href = str(args.get("href", "")); label = str(args.get("label", "Άνοιγμα"))
         if href.startswith("/"):
@@ -378,10 +394,10 @@ async def _handle_tool(name, args, tenant_id, perms, actions) -> dict:
         actions.append({"type": "action", "action": action, "label": spec["label"],
                         "summary": args.get("summary", spec["label"]), "params": args.get("params") or {}})
         return {"ok": True, "proposed": True, "note": "Θα ζητηθεί επιβεβαίωση από τον χρήστη."}
-    return await _read_tool(name, args or {}, tenant_id)
+    return await _read_tool(name, args or {}, tenant_id, demo=demo)
 
 
-async def ask(*, tenant_id: str, perms: set[str], messages: list[dict]) -> dict:
+async def ask(*, tenant_id: str, perms: set[str], messages: list[dict], demo: bool = False) -> dict:
     c = await pharmacat_service._config()
     if not c["api_key"]:
         return {"ok": False, "error": "not_configured"}
@@ -394,7 +410,8 @@ async def ask(*, tenant_id: str, perms: set[str], messages: list[dict]) -> dict:
     now = _now()
     system = (f"{SYSTEM}\n\nΣΗΜΕΡΑ: {now.strftime('%d/%m/%Y')} ({_gr_month(now.strftime('%Y-%m'))}). "
               "ΧΡΗΣΙΜΟΠΟΙΗΣΕ ΤΙΣ ΗΜΕΡΟΜΗΝΙΕΣ/ΠΕΡΙΟΔΟΥΣ ΑΚΡΙΒΩΣ όπως έρχονται από τα εργαλεία "
-              "(π.χ. period/period_label/period range). ΜΗΝ εφευρίσκεις μήνα ή έτος.")
+              "(π.χ. period/period_label/period range). ΜΗΝ εφευρίσκεις μήνα ή έτος."
+              + pharmacat_service.GUARDRAIL)
     tools = _tools()
     msgs: list[dict] = [{"role": m["role"], "content": m["content"]} for m in messages]
     actions: list[dict] = []
@@ -413,11 +430,13 @@ async def ask(*, tenant_id: str, perms: set[str], messages: list[dict]) -> dict:
                 elif b.type == "tool_use":
                     assistant_content.append({"type": "tool_use", "id": b.id, "name": b.name, "input": b.input})
                     try:
-                        out = await _handle_tool(b.name, b.input or {}, tenant_id, perms, actions)
+                        out = await _handle_tool(b.name, b.input or {}, tenant_id, perms, actions, demo=demo)
                     except Exception as ex:  # noqa: BLE001 — one bad tool must not kill the turn
                         out = {"error": f"tool_failed:{type(ex).__name__}"}
+                    # GDPR: national IDs (ΑΜΚΑ) must never be egressed to the LLM
                     tool_results.append({"type": "tool_result", "tool_use_id": b.id,
-                                         "content": json.dumps(out, ensure_ascii=False, default=str)[:8000]})
+                                         "content": json.dumps(_scrub_amka(out), ensure_ascii=False,
+                                                               default=str)[:8000]})
             msgs.append({"role": "assistant", "content": assistant_content})
             msgs.append({"role": "user", "content": tool_results})
     except anthropic.APIStatusError as e:

@@ -49,7 +49,7 @@ def verify_totp(secret: str, code: str) -> bool:
 
 def create_access_token(*, user_id: str, tenant_id: str, roles: list[str],
                         modules: dict[str, str], permissions: list[str] | None = None,
-                        demo: bool = False) -> str:
+                        demo: bool = False, sid: str | None = None) -> str:
     payload = {
         "sub": user_id,
         "tid": tenant_id,
@@ -57,6 +57,7 @@ def create_access_token(*, user_id: str, tenant_id: str, roles: list[str],
         "modules": modules,
         "perms": permissions or [],
         "demo": bool(demo),          # «πελάτης παρουσίασης» → απόκρυψη PII (GDPR-safe demo)
+        "sid": sid,                  # session id → concurrent-session (seat) tracking
         "scope": "access",
         "aud": AUD_TENANT,
         "iat": _now(),
@@ -66,11 +67,13 @@ def create_access_token(*, user_id: str, tenant_id: str, roles: list[str],
     return jwt.encode(payload, settings.JWT_SECRET, algorithm=settings.JWT_ALG)
 
 
-def create_refresh_token(*, user_id: str, tenant_id: str, version: int) -> str:
+def create_refresh_token(*, user_id: str, tenant_id: str, version: int,
+                         sid: str | None = None) -> str:
     payload = {
         "sub": user_id,
         "tid": tenant_id,
         "ver": version,            # bumped on logout / password change to revoke
+        "sid": sid,                # session id → same session survives a refresh (no new seat)
         "scope": "refresh",
         "aud": AUD_TENANT,
         "iat": _now(),

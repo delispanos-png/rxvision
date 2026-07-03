@@ -20,6 +20,7 @@ class TenantContext:
     modules: dict[str, str]          # module_key -> enabled|trial|locked
     permissions: set[str]            # resolved from roles (filled by middleware/service)
     demo: bool = False               # «πελάτης παρουσίασης» → απόκρυψη PII (επίθετο/ΑΜΚΑ)
+    sid: str | None = None           # session id → concurrent-session (seat) heartbeat
 
 
 @dataclass
@@ -99,9 +100,10 @@ async def get_current_context(
         modules=claims.get("modules", {}),
         permissions=set(claims.get("perms", [])),
         demo=bool(claims.get("demo", False)),
+        sid=claims.get("sid"),
     )
     request.state.tenant = ctx
-    await _touch_activity(ctx.user_id)
+    await _touch_activity(ctx.user_id, ctx.sid)
     await _touch_serving(ctx.tenant_id)
     return ctx
 
@@ -110,22 +112,26 @@ async def get_current_context(
 _ACTIVITY_SEEN: dict[str, float] = {}
 
 
-async def _touch_activity(user_id: str) -> None:
+async def _touch_activity(user_id: str, sid: str | None = None) -> None:
     import time as _t
 
+    # throttle per (user, session) so a second device also keeps its OWN session alive
+    key = f"{user_id}:{sid}" if sid else user_id
     now = _t.time()
-    if now - _ACTIVITY_SEEN.get(user_id, 0.0) < 60:
+    if now - _ACTIVITY_SEEN.get(key, 0.0) < 60:
         return
-    _ACTIVITY_SEEN[user_id] = now
+    _ACTIVITY_SEEN[key] = now
     try:
         from datetime import datetime, timezone
 
         from bson import ObjectId
 
         from app.core.db import shared_db
+        from app.services import session_service as sessions
         oid = ObjectId(user_id) if ObjectId.is_valid(user_id) else user_id
         await shared_db()["users"].update_one(
             {"_id": oid}, {"$set": {"last_active_at": datetime.now(tz=timezone.utc)}})
+        await sessions.touch(sid)     # keep this session's seat alive
     except Exception:  # noqa: BLE001 — activity stamping must never break a request
         pass
 

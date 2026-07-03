@@ -26,7 +26,7 @@ class ActIn(BaseModel):
 
 
 def _repo(ctx: TenantContext) -> CopilotRepository:
-    return CopilotRepository(tenant_id=ctx.tenant_id)
+    return CopilotRepository(tenant_id=ctx.tenant_id, demo=ctx.demo)
 
 
 @router.get("/status")

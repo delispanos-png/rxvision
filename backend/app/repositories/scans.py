@@ -164,7 +164,8 @@ class ScanRepository(BaseRepository):
         # modules from DB. Not entitled → skip the AI call entirely and fall back to OCR.
         from app.services.auth_service import resolve_tenant_modules, tenant_has
         _mods = await resolve_tenant_modules(self.tenant_id)
-        ai = (await prescriptor_service.read(content, s.get("content_type") or "image/jpeg")
+        ai = (await prescriptor_service.read(content, s.get("content_type") or "image/jpeg",
+                                             tenant_id=self.tenant_id)
               if tenant_has(_mods, "ai_assistant") else {"ok": False, "error": "module_locked"})
 
         async def _match(b: str | None) -> str | None:

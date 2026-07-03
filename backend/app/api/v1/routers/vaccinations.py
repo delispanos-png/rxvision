@@ -82,6 +82,15 @@ async def list_vaccinations(
             q["cancelled"] = {"$ne": True}
     items = [r async for r in db["vaccinations"].find(q, {"_id": 0, "patient_ref": 0})
              .sort("executed_at", -1).skip((page - 1) * page_size).limit(page_size)]
+    if ctx.demo:   # GDPR: mask patient identity for demo/mask_pii users
+        from app.utils.masking import mask_amka, mask_name
+        for it in items:
+            if "patient_name" in it:
+                it["patient_name"] = mask_name(it.get("patient_name"), True)
+            if "name" in it:
+                it["name"] = mask_name(it.get("name"), True)
+            if "amka" in it:
+                it["amka"] = mask_amka(it.get("amka"), True)
     return {"page": page, "page_size": page_size, "items": jsonsafe(items)}
 
 
@@ -127,7 +136,7 @@ async def worklist(
     ctx: TenantContext = Depends(require(_PERM, module=_MODULE)),
 ):
     ags = [a for a in (age_groups or "").split(",") if a] or None
-    return await VaccinationCampaignRepository(tenant_id=ctx.tenant_id).worklist(
+    return await VaccinationCampaignRepository(tenant_id=ctx.tenant_id, demo=ctx.demo).worklist(
         page=page, page_size=page_size, age_groups=ags, status=status,
         open_only=open_only, high_risk_only=high_risk_only, search=search,
         vacc_from=vacc_from, vacc_to=vacc_to)

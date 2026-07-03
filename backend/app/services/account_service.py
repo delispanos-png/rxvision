@@ -76,6 +76,8 @@ class AccountService:
         await db["users"].update_one({"_id": u["_id"]}, {"$set": {
             "password_hash": hash_password(new), "updated_at": _now()},
             "$inc": {"refresh_token_version": 1}})  # invalidate other sessions
+        from app.services import session_service as _sessions
+        await _sessions.close_user_sessions(str(u["_id"]))  # drop live sessions + free seats
 
     # ── forgot / reset (public) ────────────────────────────
     async def forgot_password(self, email: str) -> None:
@@ -121,3 +123,5 @@ class AccountService:
         )
         if updated is None:
             raise AccountError("invalid_or_expired_token")
+        from app.services import session_service as _sessions
+        await _sessions.close_user_sessions(str(updated["_id"]))  # kill live sessions post-reset

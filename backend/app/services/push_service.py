@@ -63,9 +63,14 @@ async def save_subscription(account_id, sub: dict) -> bool:
     return True
 
 
-async def remove_subscription(endpoint: str) -> None:
+async def remove_subscription(endpoint: str, account_id=None) -> None:
+    # Scope the delete to the requesting account so one patient can't remove another's push
+    # subscription just by knowing its endpoint URL (IDOR).
     if endpoint:
-        await shared_db()["patient_push_subs"].delete_one({"endpoint": endpoint})  # tenant-ok: global
+        q = {"endpoint": endpoint}
+        if account_id is not None:
+            q["account_id"] = _oid(account_id)
+        await shared_db()["patient_push_subs"].delete_one(q)  # tenant-ok: global patient push sub
 
 
 async def send_to_account(account_id, *, title: str, body: str, url: str = "/portal") -> int:
