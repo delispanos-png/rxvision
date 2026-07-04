@@ -45,6 +45,7 @@ ADMIN_SECTIONS = [
 ADMIN_SECTION_KEYS = [k for k, _ in ADMIN_SECTIONS]
 # URL segment (μετά το /admin/) → section key
 _SEG_TO_SECTION = {
+    "overview": "dashboard",
     "tenants": "subscribers", "packages": "subscribers", "subscriptions": "subscriptions",
     "staff": "staff", "billing": "billing", "invoices": "billing",
     "newsletter": "newsletter", "smtp": "smtp",
@@ -311,6 +312,181 @@ async def tenants(_: PlatformContext = Depends(get_platform_admin)):
             "created_at": t.get("created_at"),
         })
     return {"items": jsonsafe(items)}
+
+
+@router.get("/overview")
+async def overview(_: PlatformContext = Depends(get_platform_admin)):
+    """Platform mission-control KPIs in ONE call: business + volume + usage/modules + ops/AI/comms.
+    Defensive by design — empty/absent collections and unknown fields degrade to 0, never 500."""
+    db = shared_db()
+    now = datetime.now(tz=timezone.utc)
+    today = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    month = today.replace(day=1)
+
+    def _aware(t):
+        return t if (isinstance(t, datetime) and t.tzinfo) else (t.replace(tzinfo=timezone.utc) if isinstance(t, datetime) else None)
+
+    async def _count(coll: str, q: dict) -> int:
+        try:
+            return await db[coll].count_documents(q)
+        except Exception:  # noqa: BLE001 — a missing coll/field must not break the dashboard
+            return 0
+
+    async def _est(coll: str) -> int:
+        try:
+            return await db[coll].estimated_document_count()
+        except Exception:  # noqa: BLE001
+            return 0
+
+    # ---------- Business & revenue ----------
+    tenants = [t async for t in db["tenants"].find({}, {"name": 1, "status": 1, "modules": 1, "created_at": 1, "demo": 1})]
+    tnames = {t["_id"]: t.get("name", t["_id"]) for t in tenants}
+    subs = {s["tenant_id"]: s async for s in db["subscriptions"].find({})}
+    by_status: dict[str, int] = {}
+    plan_dist: dict[str, int] = {}
+    module_counts: dict[str, int] = {}
+    mrr = 0
+    new_month = 0
+    for t in tenants:
+        sub = subs.get(t["_id"], {})
+        st = sub.get("status") or t.get("status") or "—"
+        by_status[st] = by_status.get(st, 0) + 1
+        pharm = (sub.get("limits") or {}).get("pharmacies", 1) or 1
+        mrr += (sub.get("price_per_pharmacy") or 0) * pharm
+        plan = sub.get("plan_name") or sub.get("plan") or "—"
+        plan_dist[plan] = plan_dist.get(plan, 0) + 1
+        ca = _aware(t.get("created_at"))
+        if ca and ca >= month:
+            new_month += 1
+        mods = t.get("modules") or {}
+        keys = [k for k, v in mods.items() if v in ("enabled", True)] if isinstance(mods, dict) else list(mods)
+        for k in keys:
+            module_counts[k] = module_counts.get(k, 0) + 1
+    business = {
+        "tenants": len(tenants),
+        "active": by_status.get("active", 0),
+        "trial": by_status.get("trial", 0),
+        "past_due": by_status.get("past_due", 0),
+        "suspended": by_status.get("suspended", 0),
+        "mrr": mrr,
+        "arr": mrr * 12,
+        "new_tenants_month": new_month,
+        "plans": [{"plan": k, "n": v} for k, v in sorted(plan_dist.items(), key=lambda x: -x[1])],
+        "invoices_month": await _count("invoices", {"issue_date": {"$gte": month}}),
+        "invoices_untransmitted": await _count("invoices", {"aade_status": "not_transmitted"}),
+    }
+
+    # ---------- Volume & activity ----------
+    volume = {
+        "executions_total": await _est("prescription_executions"),
+        "executions_month": await _count("prescription_executions", {"executed_at": {"$gte": month}}),
+        "executions_today": await _count("prescription_executions", {"executed_at": {"$gte": today}}),
+        "items_total": await _est("prescription_items"),
+        "patients_total": await _est("patients_anonymized"),
+        "vaccinations_total": await _est("vaccinations"),
+        "vaccinations_month": await _count("vaccinations", {"executed_at": {"$gte": month}}),
+    }
+
+    # ---------- Usage & module adoption ----------
+    cutoff5 = now - timedelta(minutes=5)
+    usage = {
+        "users": await _count("users", {}),
+        "sessions_now": await _count("user_sessions", {"last_active_at": {"$gte": cutoff5}, "impersonation": {"$ne": True}}),
+        "portal_accounts": await _count("patient_accounts", {}),
+        "appointments": await _count("appointments", {}),
+        "orders": await _count("orders_delivery", {}),
+        "modules": [{"module": k, "n": v} for k, v in sorted(module_counts.items(), key=lambda x: -x[1])],
+    }
+
+    # ---------- Operations, AI & comms ----------
+    sync = {"success": 0, "failed": 0, "partial": 0, "running": 0}
+    sync_errors = 0
+    try:
+        async for row in db["sync_jobs"].aggregate([
+            {"$match": {"started_at": {"$gte": today}}},
+            {"$group": {"_id": "$status", "n": {"$sum": 1}, "err": {"$sum": {"$ifNull": ["$errors", 0]}}}},
+        ]):
+            sync[row["_id"] or "?"] = row["n"]
+            sync_errors += int(row.get("err") or 0)
+    except Exception:  # noqa: BLE001
+        pass
+    bs = await db["backup_status"].find_one({"_id": "last"}) or {}
+    bts = _aware(bs.get("ts"))
+    backup = {
+        "last_at": bs.get("ts"),
+        "age_h": round((now - bts).total_seconds() / 3600, 1) if bts else None,
+        "ok": bs.get("ok"),
+        "offsite": bool(bs.get("box_used")) or ("offsite" in str(bs.get("location", "")).lower()),
+    }
+    nodes_total = nodes_fresh = 0
+    seen: set = set()
+    try:
+        async for m in db["node_metrics"].find({}, {"node": 1, "ts": 1}).sort("$natural", -1).limit(80):
+            n = m.get("node")
+            if not n or n in seen:
+                continue
+            seen.add(n)
+            nodes_total += 1
+            ts = _aware(m.get("ts"))
+            if ts and (now - ts) < timedelta(minutes=2):
+                nodes_fresh += 1
+    except Exception:  # noqa: BLE001
+        pass
+    llm_calls = llm_cost = 0
+    try:
+        async for row in db["llm_daily_usage"].aggregate([
+            {"$match": {"date": today.strftime("%Y-%m-%d")}},
+            {"$group": {"_id": None, "calls": {"$sum": {"$ifNull": ["$calls", 0]}}, "cost": {"$sum": {"$ifNull": ["$cost_cents", 0]}}}},
+        ]):
+            llm_calls, llm_cost = row.get("calls", 0), row.get("cost", 0)
+    except Exception:  # noqa: BLE001
+        pass
+    wallet_total = 0
+    try:
+        async for w in db["message_wallets"].find({}, {"balance_cents": 1}):
+            wallet_total += int(w.get("balance_cents") or 0)
+    except Exception:  # noqa: BLE001
+        pass
+    ops = {
+        "sync_today": sync,
+        "sync_errors_today": sync_errors,
+        "alerts_7d": await _count("ingestion_alerts", {"at": {"$gte": now - timedelta(days=7)}}),
+        "backup": backup,
+        "nodes_total": nodes_total,
+        "nodes_fresh": nodes_fresh,
+        "llm_calls_today": llm_calls,
+        "llm_cost_today": llm_cost,
+        "messages_today": await _count("message_ledger", {"at": {"$gte": today}}),
+        "wallet_total": wallet_total,
+    }
+
+    # ---------- Charts ----------
+    since14 = today - timedelta(days=13)
+    exec_trend = []
+    try:
+        by_day: dict[str, int] = {}
+        async for row in db["prescription_executions"].aggregate([
+            {"$match": {"executed_at": {"$gte": since14}}},
+            {"$group": {"_id": {"$dateToString": {"format": "%Y-%m-%d", "date": "$executed_at"}}, "n": {"$sum": 1}}},
+        ]):
+            by_day[row["_id"]] = row["n"]
+        for i in range(14):
+            d = (since14 + timedelta(days=i)).strftime("%Y-%m-%d")
+            exec_trend.append({"day": d, "n": by_day.get(d, 0)})
+    except Exception:  # noqa: BLE001
+        pass
+    top_tenants = []
+    try:
+        async for row in db["prescription_executions"].aggregate([
+            {"$group": {"_id": "$tenant_id", "n": {"$sum": 1}}},
+            {"$sort": {"n": -1}}, {"$limit": 8},
+        ]):
+            top_tenants.append({"tenant": tnames.get(row["_id"], row["_id"]), "n": row["n"]})
+    except Exception:  # noqa: BLE001
+        pass
+    charts = {"exec_trend": exec_trend, "top_tenants": top_tenants}
+
+    return jsonsafe({"business": business, "volume": volume, "usage": usage, "ops": ops, "charts": charts, "generated_at": now})
 
 
 @router.get("/subscriptions")

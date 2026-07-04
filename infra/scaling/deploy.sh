@@ -30,11 +30,13 @@ SERVICES="${SERVICES:-api web worker}"
 cd "$ROOT"
 
 echo "▶ 1/4  Build on MGMT01 (single source of truth)…"
-# worker/beat/optical build from ./backend too but are SEPARATE images — rebuild them or the
+# worker/beat build from ./backend too but are SEPARATE images — rebuild them or the
 # beat scheduler / workers on MGMT keep stale task code (incident 2026-06-22: new beat task missing).
-docker compose -f docker-compose.prod.yml build api web worker beat optical
+# NOTE: `optical` lives ONLY on the app nodes (docker-compose.app.yml) since the 2026-07-02 RAM
+# rebalance — it is NOT a service in docker-compose.prod.yml, so it must NOT be listed here.
+docker compose -f docker-compose.prod.yml build api web worker beat
 # keep MGMT's own containers current (build/rollback origin + the beat scheduler lives here).
-docker compose -f docker-compose.prod.yml up -d api web worker beat optical
+docker compose -f docker-compose.prod.yml up -d api web worker beat
 
 for NODE in "${APP_NODES[@]}"; do
   echo "▶ 2/4  Ship images → $NODE (private net)…"

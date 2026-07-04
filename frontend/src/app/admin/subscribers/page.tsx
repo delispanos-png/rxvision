@@ -1,36 +1,76 @@
 "use client";
 
 import { appConfirm } from "@/store/dialogStore";
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { adminApi, ApiError } from "@/lib/adminClient";
 import { fmtEur, fmtNum, fmtDate } from "@/lib/formatters";
 import { DataTable, type Column } from "@/components/tables/DataTable";
 import { Modal } from "@/components/ui/Modal";
+import { Search, X, Users2, Building2, Wallet, type LucideIcon } from "lucide-react";
 
-type Tenant = { id: string; name: string; plan: string; status: string; users: number; active_now?: number; seats?: number; mrr: number; msg_balance?: number; created_at: string };
+type Tenant = { id: string; name: string; afm?: string; plan: string; status: string; users: number; active_now?: number; seats?: number; mrr: number; msg_balance?: number; created_at: string };
 type Package = { _id: string; name: string; price_monthly: number; price_yearly?: number; modules: string[]; seats: number; trial_days: number; sla?: string; active?: boolean; extra_user_price?: number; extra_user_price_yearly?: number };
 type Sla = { _id: string; name?: string; description?: string; active?: boolean; price_monthly?: number; price_yearly?: number };
 type AadeResp = { ok: boolean; name?: string; title?: string; doy?: string; address?: string; postal_code?: string; city?: string };
 
-const STATUS_STYLE: Record<string, string> = {
-  active: "bg-emerald-100 text-emerald-700",
-  trial: "bg-sky-100 text-sky-700",
-  past_due: "bg-red-100 text-red-700",
-  suspended: "bg-slate-200 text-slate-600",
+const STATUS_META: Record<string, { label: string; cls: string }> = {
+  active: { label: "Ενεργός", cls: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/50 dark:text-emerald-300" },
+  trial: { label: "Trial", cls: "bg-sky-100 text-sky-700 dark:bg-sky-900/50 dark:text-sky-300" },
+  past_due: { label: "Past-due", cls: "bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-300" },
+  suspended: { label: "Σε αναστολή", cls: "bg-slate-200 text-slate-600 dark:bg-slate-700 dark:text-slate-300" },
 };
+const STATUS_FILTERS: [string, string][] = [
+  ["all", "Όλες"], ["active", "Ενεργοί"], ["trial", "Trial"], ["past_due", "Past-due"], ["suspended", "Αναστολή"],
+];
 function Badge({ value }: { value: string }) {
-  return <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_STYLE[value] ?? "bg-slate-100 text-slate-600"}`}>{value}</span>;
+  const m = STATUS_META[value];
+  return <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${m?.cls ?? "bg-slate-100 text-slate-600"}`}>{m?.label ?? value}</span>;
+}
+function Avatar({ name }: { name: string }) {
+  const initials = name.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]).join("").toUpperCase() || "?";
+  return <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-brand-100 text-xs font-bold text-brand-700 dark:bg-brand-900/60 dark:text-brand-300">{initials}</span>;
+}
+function StatChip({ icon: Icon, label, value, accent }: { icon: LucideIcon; label: string; value: string; accent: string }) {
+  return (
+    <div className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3 dark:border-slate-700 dark:bg-slate-900">
+      <span className={`grid h-9 w-9 shrink-0 place-items-center rounded-lg ${accent}`}><Icon className="h-4 w-4" strokeWidth={2} /></span>
+      <div className="min-w-0">
+        <div className="text-[11px] uppercase tracking-wide text-slate-400">{label}</div>
+        <div className="truncate text-lg font-bold text-slate-900 dark:text-slate-100">{value}</div>
+      </div>
+    </div>
+  );
 }
 
 export default function SubscribersPage() {
   const qc = useQueryClient();
   const router = useRouter();
   const [open, setOpen] = useState(false);
+  const [q, setQ] = useState("");
+  const [statusF, setStatusF] = useState("all");
+  const [planF, setPlanF] = useState("all");
 
   const tenants = useQuery({ queryKey: ["admin", "tenants"], queryFn: () => adminApi<{ items: Tenant[] }>("/admin/tenants"), retry: false });
   const rows = tenants.data?.items ?? [];
+
+  const plans = useMemo(() => Array.from(new Set(rows.map((r) => r.plan).filter(Boolean))).sort(), [rows]);
+  const stats = useMemo(() => ({
+    total: rows.length,
+    active: rows.filter((r) => r.status === "active").length,
+    trial: rows.filter((r) => r.status === "trial").length,
+    mrr: rows.reduce((s, r) => s + (r.mrr ?? 0), 0),
+  }), [rows]);
+  const filtered = useMemo(() => {
+    const needle = q.trim().toLowerCase();
+    return rows.filter((r) => {
+      if (statusF !== "all" && r.status !== statusF) return false;
+      if (planF !== "all" && r.plan !== planF) return false;
+      if (needle && !`${r.name} ${r.afm ?? ""}`.toLowerCase().includes(needle)) return false;
+      return true;
+    });
+  }, [rows, q, statusF, planF]);
 
   async function toggleStatus(t: Tenant) {
     const next = t.status === "suspended" ? "active" : "suspended";
@@ -40,8 +80,16 @@ export default function SubscribersPage() {
   }
 
   const columns: Column<Tenant>[] = [
-    { key: "name", header: "Tenant" },
-    { key: "plan", header: "Πλάνο" },
+    { key: "name", header: "Tenant", render: (r) => (
+      <div className="flex items-center gap-2.5">
+        <Avatar name={r.name} />
+        <div className="min-w-0">
+          <div className="truncate font-medium text-slate-800 dark:text-slate-100">{r.name}</div>
+          {r.afm && <div className="text-[11px] text-slate-400">ΑΦΜ {r.afm}</div>}
+        </div>
+      </div>
+    ) },
+    { key: "plan", header: "Πλάνο", render: (r) => <span className="capitalize text-slate-600 dark:text-slate-300">{r.plan}</span> },
     { key: "status", header: "Κατάσταση", render: (r) => <Badge value={r.status} /> },
     { key: "users", header: "Χρήστες", align: "right", render: (r) => fmtNum(r.users) },
     { key: "active_now", header: "Ενεργοί τώρα", align: "right", render: (r) => (
@@ -49,17 +97,17 @@ export default function SubscribersPage() {
         {r.active_now ? "● " : ""}{r.active_now ?? 0}{r.seats ? ` / ${r.seats}` : ""}
       </span>
     ) },
-    { key: "mrr", header: "MRR", align: "right", render: (r) => fmtEur(r.mrr) },
-    { key: "msg_balance", header: "Credits", align: "right", render: (r) => <span className={(r.msg_balance ?? 0) < 200 ? "text-amber-600" : "text-slate-700"}>{fmtEur(r.msg_balance ?? 0)}</span> },
+    { key: "mrr", header: "MRR", align: "right", render: (r) => <span className="font-medium text-slate-800 dark:text-slate-100">{fmtEur(r.mrr)}</span> },
+    { key: "msg_balance", header: "Credits", align: "right", render: (r) => <span className={(r.msg_balance ?? 0) < 200 ? "text-amber-600" : "text-slate-700 dark:text-slate-300"}>{fmtEur(r.msg_balance ?? 0)}</span> },
     { key: "created_at", header: "Εγγραφή", render: (r) => fmtDate(r.created_at) },
     {
       key: "actions", header: "", align: "right", fullWidthOnMobile: true,
       render: (r) => (
         <div className="flex flex-wrap justify-end gap-2">
           <button onClick={(e) => { e.stopPropagation(); router.push(`/admin/subscribers/${encodeURIComponent(r.id)}`); }}
-            className="rounded-md border border-slate-300 px-2 py-1 text-xs hover:bg-slate-50">Καρτέλα</button>
+            className="rounded-md border border-slate-300 px-2 py-1 text-xs hover:bg-slate-50 dark:border-slate-600 dark:hover:bg-slate-800">Καρτέλα</button>
           <button onClick={(e) => { e.stopPropagation(); toggleStatus(r); }}
-            className="rounded-md border border-slate-300 px-2 py-1 text-xs hover:bg-slate-50">
+            className="rounded-md border border-slate-300 px-2 py-1 text-xs hover:bg-slate-50 dark:border-slate-600 dark:hover:bg-slate-800">
             {r.status === "suspended" ? "Ενεργοποίηση" : "Αναστολή"}
           </button>
         </div>
@@ -69,14 +117,56 @@ export default function SubscribersPage() {
 
   return (
     <div>
-      <div className="mb-6 flex items-center justify-between">
-        <h1 className="text-xl font-bold text-slate-900">Συνδρομητές</h1>
-        <button onClick={() => setOpen(true)} className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700">
+      <div className="mb-5 flex items-center justify-between">
+        <div>
+          <h1 className="text-xl font-bold text-slate-900 dark:text-slate-100">Συνδρομητές</h1>
+          <p className="text-sm text-slate-400">Διαχείριση πελατών & συνδρομών</p>
+        </div>
+        <button onClick={() => setOpen(true)} className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-indigo-700">
           + Άνοιγμα tenant
         </button>
       </div>
 
-      {tenants.isLoading ? <div className="text-slate-400">Φόρτωση…</div> : <DataTable pageSize={20} columns={columns} rows={rows} rowKey={(r) => r.id} />}
+      {/* summary chips */}
+      <div className="mb-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <StatChip icon={Building2} label="Σύνολο" value={fmtNum(stats.total)} accent="bg-brand-50 text-brand-600" />
+        <StatChip icon={Users2} label="Ενεργοί" value={fmtNum(stats.active)} accent="bg-emerald-50 text-emerald-600" />
+        <StatChip icon={Users2} label="Trial" value={fmtNum(stats.trial)} accent="bg-sky-50 text-sky-600" />
+        <StatChip icon={Wallet} label="Συνολικό MRR" value={fmtEur(stats.mrr)} accent="bg-violet-50 text-violet-600" />
+      </div>
+
+      {/* filter bar */}
+      <div className="mb-3 flex flex-col gap-3 rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900 lg:flex-row lg:items-center">
+        <div className="relative flex-1">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Αναζήτηση με όνομα ή ΑΦΜ…"
+            className="w-full rounded-lg border border-slate-300 py-2 pl-9 pr-8 text-sm focus:border-indigo-500 focus:outline-none dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100" />
+          {q && <button onClick={() => setQ("")} aria-label="Καθάρισμα" className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"><X className="h-4 w-4" /></button>}
+        </div>
+        <div className="flex flex-wrap gap-1.5">
+          {STATUS_FILTERS.map(([v, l]) => (
+            <button key={v} onClick={() => setStatusF(v)}
+              className={`rounded-full px-3 py-1.5 text-xs font-medium transition ${statusF === v ? "bg-indigo-600 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"}`}>{l}</button>
+          ))}
+        </div>
+        <select value={planF} onChange={(e) => setPlanF(e.target.value)}
+          className="rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100">
+          <option value="all">Όλα τα πλάνα</option>
+          {plans.map((p) => <option key={p} value={p}>{p}</option>)}
+        </select>
+      </div>
+
+      <div className="mb-2 text-xs text-slate-400">{fmtNum(filtered.length)} από {fmtNum(rows.length)} πελάτες</div>
+
+      {tenants.isLoading ? (
+        <div className="text-slate-400">Φόρτωση…</div>
+      ) : filtered.length === 0 ? (
+        <div className="rounded-xl border border-dashed border-slate-300 p-10 text-center text-sm text-slate-400 dark:border-slate-700">
+          Κανένας πελάτης δεν ταιριάζει στα φίλτρα.
+        </div>
+      ) : (
+        <DataTable pageSize={20} columns={columns} rows={filtered} rowKey={(r) => r.id} />
+      )}
 
       {open && <OpenTenantModal onClose={() => setOpen(false)} onDone={() => qc.invalidateQueries({ queryKey: ["admin", "tenants"] })} />}
     </div>
