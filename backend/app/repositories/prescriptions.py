@@ -137,9 +137,16 @@ class PrescriptionRepository(BaseRepository):
             # per-line split: what the patient pays vs what the fund reimburses
             pat_share = round(line_total * (participation or 0) / 100) if participation else 0
             d = it.get("details") or {}
-            if seq is not None and d.get("coupons"):
-                d = {**d, "coupons": [c for c in d["coupons"]
-                                      if int(float(c.get("execution_no") or 0)) == seq]}
+            if seq is not None:
+                filtered = [c for c in (d.get("coupons") or [])
+                            if int(float(c.get("execution_no") or 0)) == seq]
+                d = {**d, "coupons": filtered}
+                if not filtered:
+                    # This drug was NOT dispensed in THIS partial «:N» — also drop the legacy
+                    # single-coupon fields (qr/strip), else the frontend couponsOf() falls back to
+                    # them and shows a stray coupon belonging to the OTHER partial execution.
+                    for k in ("qr", "strip", "qr_product_code", "qr_batch", "qr_expiry"):
+                        d.pop(k, None)
             items.append({
                 "name": prod.get("name"), "barcode": prod.get("barcode"),
                 "substance": cat.get("substance_name") or prod.get("substance"),
