@@ -102,6 +102,16 @@ class PrescriptionRepository(BaseRepository):
         if not ex:
             return None
         db = self._db
+        # Per partial execution «:N» → keep ONLY that execution's coupons (each coupon carries its
+        # execution_no). Data quirk: ΗΔΥΚΑ stores the FULL coupon set on EVERY partial execution of a
+        # barcode, so without this filter the coupon modal shows both executions' coupons (regression
+        # fix — mirrors closing_checks).
+        seq = None
+        if ":" in str(external_id):
+            try:
+                seq = int(str(external_id).split(":")[1])
+            except (ValueError, IndexError):
+                seq = None
         async def _get(coll, oid):
             o = _oid(oid)
             return await db[coll].find_one({"_id": o}) if o else None
@@ -126,6 +136,10 @@ class PrescriptionRepository(BaseRepository):
             participation = cat.get("participation")  # co-pay % (0/10/25…)
             # per-line split: what the patient pays vs what the fund reimburses
             pat_share = round(line_total * (participation or 0) / 100) if participation else 0
+            d = it.get("details") or {}
+            if seq is not None and d.get("coupons"):
+                d = {**d, "coupons": [c for c in d["coupons"]
+                                      if int(float(c.get("execution_no") or 0)) == seq]}
             items.append({
                 "name": prod.get("name"), "barcode": prod.get("barcode"),
                 "substance": cat.get("substance_name") or prod.get("substance"),
@@ -141,7 +155,7 @@ class PrescriptionRepository(BaseRepository):
                 "patient_share": pat_share,
                 "fund_share": line_total - pat_share,
                 "is_executed": it.get("is_executed", True),
-                "details": it.get("details") or {},   # rich ΗΔΥΚΑ/CDA per-line detail (stored)
+                "details": d,   # rich ΗΔΥΚΑ/CDA per-line detail — coupons filtered to THIS «:N» execution
             })
         # ── Συνοπτικά: άθροισμα ΟΛΩΝ των εκτελέσεων αυτής της συνταγής (ίδιο barcode, κάθε :N
         # ξεχωριστή εκτέλεση) — σύνολο ποσότητας/αξίας ανά προϊόν, για το tab «Συνοπτικά».

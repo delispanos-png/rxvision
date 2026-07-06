@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Boxes, Trash2, Plus, Save, Headphones, ChevronDown, Circle } from "lucide-react";
 import { adminApi } from "@/lib/adminClient";
+import { fmtEur } from "@/lib/formatters";
 
 type Pkg = {
   _id: string; name?: string; description?: string;
@@ -12,7 +13,7 @@ type Pkg = {
   sla?: string; modules?: string[]; features?: string[]; available_addons?: string[]; billing_cycles?: string[]; active?: boolean;
 };
 type Sla = { _id: string; name?: string; description?: string; response_hours?: number; channels?: string; price_monthly?: number; price_yearly?: number; active?: boolean };
-type Addon = { _id: string; name?: string; icon?: string };
+type Addon = { _id: string; name?: string; icon?: string; price_monthly?: number; price_yearly?: number };
 
 // Capabilities a package can grant — [key, label, icon]. Labels stay clean (no emoji) so the
 // auto-synced pricing-card features read nicely; the icon is rendered separately in the grid.
@@ -293,12 +294,18 @@ export default function PackagesAdminPage() {
                         );
                         return (
                           <div key={a._id} className="rounded-lg border border-slate-200 p-2.5">
-                            <div className="mb-1.5 truncate text-sm font-medium text-slate-700">{a.icon} {a.name || a._id}</div>
+                            <div className="mb-1.5 flex items-center justify-between gap-2">
+                              <span className="truncate text-sm font-medium text-slate-700">{a.icon} {a.name || a._id}</span>
+                              <span className="shrink-0 rounded-full bg-violet-50 px-2 py-0.5 text-[11px] font-semibold text-violet-700" title="Αξία ως add-on (τιμή που χρεώνεται έξτρα)">
+                                {a.price_monthly ? `${fmtEur(a.price_monthly)}/μ` : "δωρεάν"}
+                              </span>
+                            </div>
                             <div className="flex gap-1 rounded-lg bg-slate-100 p-0.5">
                               {opt("plan", "Στο πλάνο", "bg-emerald-600 text-white shadow")}
                               {opt("addon", "Add-on", "bg-violet-600 text-white shadow")}
                               {opt("off", "Όχι", "bg-slate-500 text-white shadow")}
                             </div>
+                            {a.price_yearly ? <div className="mt-1 text-right text-[10px] text-slate-400">ή {fmtEur(a.price_yearly)}/έτος</div> : null}
                           </div>
                         );
                       })}
