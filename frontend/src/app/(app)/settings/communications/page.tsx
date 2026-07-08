@@ -50,6 +50,14 @@ export default function CommsSettingsPage() {
     onSuccess: () => { appAlert(t("Στάλθηκε δοκιμαστικό ✅", "Test sent ✅")); q.refetch(); },
   });
   const pkgs = useQuery({ queryKey: ["credit-packages"], queryFn: () => api<{ items: Pkg[] }>("/communications/credit-packages"), retry: false });
+  type Msg = { id: string; channel: string; recipient: string; status: string; cost_cents: number; kind?: string; subject?: string | null; refunded?: boolean; created_at: string | null; delivered_at?: string | null };
+  const msgs = useQuery({ queryKey: ["comms", "messages"], queryFn: () => api<{ items: Msg[]; summary_30d: Record<string, number> }>("/communications/messages"), retry: false, refetchInterval: 30000 });
+  const ST: Record<string, { el: string; cls: string }> = {
+    sent: { el: "Εστάλη", cls: "bg-sky-100 text-sky-700" },
+    delivered: { el: "Παραδόθηκε", cls: "bg-emerald-100 text-emerald-700" },
+    failed: { el: "Απέτυχε", cls: "bg-rose-100 text-rose-700" },
+    undelivered: { el: "Δεν παραδόθηκε", cls: "bg-rose-100 text-rose-700" },
+  };
   const [buying, setBuying] = useState<string | null>(null);
   async function buy(pid: string) {
     setBuying(pid);
@@ -137,6 +145,41 @@ export default function CommsSettingsPage() {
           </div>
         </PanelCard>
       )}
+
+      {/* Ιστορικό ΑΝΑ μήνυμα — παραλήπτης, κανάλι, κόστος, κατάσταση (παραδόθηκε/όχι) */}
+      <PanelCard collapsible defaultOpen title={t("Ιστορικό μηνυμάτων", "Message history")}>
+        {msgs.data?.summary_30d && (
+          <div className="mb-3 flex flex-wrap gap-2 text-xs">
+            {Object.entries(msgs.data.summary_30d).map(([k, n]) => (
+              <span key={k} className={`rounded-full px-2 py-0.5 font-medium ${ST[k]?.cls || "bg-slate-100 text-slate-600"}`}>{ST[k]?.el || k}: {n}</span>
+            ))}
+            <span className="text-slate-400">τελευταίες 30 ημέρες</span>
+          </div>
+        )}
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead><tr className="border-b border-slate-100 text-left text-xs text-slate-400 dark:border-slate-800">
+              <th className="py-2">{t("Ημ/νία", "Date")}</th>
+              <th>{t("Παραλήπτης", "Recipient")}</th>
+              <th>{t("Κανάλι", "Channel")}</th>
+              <th className="text-right">{t("Κόστος", "Cost")}</th>
+              <th className="text-right">{t("Κατάσταση", "Status")}</th>
+            </tr></thead>
+            <tbody className="divide-y divide-slate-50 dark:divide-slate-800">
+              {(msgs.data?.items ?? []).map((m) => (
+                <tr key={m.id}>
+                  <td className="whitespace-nowrap py-2 text-slate-500">{m.created_at ? new Date(m.created_at).toLocaleString("el-GR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "—"}</td>
+                  <td className="text-slate-700 dark:text-slate-200">{m.recipient}</td>
+                  <td className="text-slate-500">{m.channel === "email" ? "✉ Email" : m.channel === "viber" ? "💬 Viber" : "📱 SMS"}</td>
+                  <td className="text-right text-slate-600">{m.refunded ? <span className="text-emerald-600">↩ {eur(m.cost_cents)}</span> : eur(m.cost_cents)}</td>
+                  <td className="text-right"><span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${ST[m.status]?.cls || "bg-slate-100 text-slate-600"}`}>{ST[m.status]?.el || m.status}</span></td>
+                </tr>
+              ))}
+              {!msgs.data?.items?.length && <tr><td colSpan={5} className="py-6 text-center text-slate-400">{msgs.isLoading ? t("Φόρτωση…", "Loading…") : t("Δεν έχουν σταλεί μηνύματα ακόμη.", "No messages sent yet.")}</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </PanelCard>
     </div>
   );
 }

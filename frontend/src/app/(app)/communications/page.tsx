@@ -53,10 +53,18 @@ export default function CommunicationsPage() {
   const seg = SEGMENTS.find((s) => s.value === segment)!;
   const qs = `channel=${channel}&segment=${segment}${value ? `&value=${encodeURIComponent(value)}` : ""}`;
   const audience = useQuery({ queryKey: ["comms", "audience", qs], queryFn: () => api<{ count: number }>(`/communications/audience?${qs}`), retry: false });
+  const wallet = useQuery({ queryKey: ["comms", "wallet"], queryFn: () => api<{ balance_cents: number; prices: Record<string, number> }>("/communications/wallet"), retry: false });
+
+  const count = audience.data?.count ?? 0;
+  const unit = wallet.data?.prices?.[channel] ?? 0;                 // κόστος/μήνυμα (cents)
+  const costCents = count * unit;
+  const balance = wallet.data?.balance_cents ?? 0;
+  const insufficient = wallet.data != null && costCents > balance;  // δεν φτάνει το υπόλοιπο
+  const eur = (c: number) => `€${(c / 100).toFixed(2)}`;
 
   const send = useMutation({
     mutationFn: () => api<{ recipients: number; sent: number; failed: number }>("/communications/send", { method: "POST", body: JSON.stringify({ channel, subject, message, segment, value: value || null }) }),
-    onSuccess: (r) => { appAlert(t(`Στάλθηκαν ${r.sent}/${r.recipients} (${r.failed} αποτυχίες)`, `Sent ${r.sent}/${r.recipients} (${r.failed} failures)`)); setMessage(""); setSubject(""); qc.invalidateQueries({ queryKey: ["comms", "history"] }); },
+    onSuccess: (r) => { appAlert(t(`Στάλθηκαν ${r.sent}/${r.recipients} (${r.failed} αποτυχίες)`, `Sent ${r.sent}/${r.recipients} (${r.failed} failures)`)); setMessage(""); setSubject(""); qc.invalidateQueries({ queryKey: ["comms", "history"] }); qc.invalidateQueries({ queryKey: ["comms", "wallet"] }); },
     onError: (e: Error) => appAlert(t("Αποτυχία: ", "Failed: ") + e.message),
   });
 
@@ -89,7 +97,13 @@ export default function CommunicationsPage() {
                 {SEGMENTS.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
               </select>
               {seg.needs && <input value={value} onChange={(e) => setValue(e.target.value)} placeholder={seg.ph} className={`${inp} w-full sm:w-72`} />}
-              <span className="ml-auto inline-flex items-center gap-1.5 rounded-lg bg-white px-3 py-2 text-sm"><Users className="h-4 w-4 text-brand-600" /> {t("Παραλήπτες:", "Recipients:")} <b className="text-slate-900">{audience.isFetching ? "…" : audience.data?.count ?? 0}</b></span>
+              <span className="ml-auto inline-flex items-center gap-1.5 rounded-lg bg-white px-3 py-2 text-sm"><Users className="h-4 w-4 text-brand-600" /> {t("Παραλήπτες:", "Recipients:")} <b className="text-slate-900">{audience.isFetching ? "…" : count}</b></span>
+            </div>
+            {/* Εκτιμώμενο κόστος πριν την αποστολή (παραλήπτες × τιμή καναλιού) + υπόλοιπο πορτοφολιού */}
+            <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
+              <span className="text-slate-500">{t("Εκτιμώμενο κόστος:", "Estimated cost:")} <b className="text-slate-800">{eur(costCents)}</b> <span className="text-slate-400">({count} × {eur(unit)})</span></span>
+              <span className="text-slate-500">{t("Υπόλοιπο:", "Balance:")} <b className={insufficient ? "text-rose-600" : "text-slate-800"}>{eur(balance)}</b></span>
+              {insufficient && <Link href="/settings/communications" className="font-semibold text-rose-600 hover:underline">{t("⚠ Ανεπαρκές υπόλοιπο — αγορά credits", "⚠ Insufficient balance — buy credits")}</Link>}
             </div>
           </div>
 
@@ -103,8 +117,8 @@ export default function CommunicationsPage() {
           <textarea value={message} onChange={(e) => setMessage(e.target.value)} rows={5} placeholder={channel !== "email" ? t("Κείμενο μηνύματος…", "Message text…") : t("Μήνυμα… (μεταβλητές: {name} = πλήρες όνομα, {first} = επώνυμο)", "Message… (variables: {name} = full name, {first} = last name)")} className={`${inp} w-full`} />
           <div className="mt-3 flex items-center justify-between">
             <span className="text-xs text-slate-400">{channel !== "email" ? t(`${message.length} χαρακτήρες`, `${message.length} characters`) : t("Διαθέσιμες μεταβλητές: {name}, {first}", "Available variables: {name}, {first}")}</span>
-            <button onClick={async () => { if (message.trim() && await appConfirm(t(`Αποστολή σε ${audience.data?.count ?? 0} παραλήπτες;`, `Send to ${audience.data?.count ?? 0} recipients?`))) send.mutate(); }}
-              disabled={send.isPending || !message.trim() || !(audience.data?.count)}
+            <button onClick={async () => { if (message.trim() && await appConfirm(t(`Αποστολή σε ${count} παραλήπτες — κόστος ${eur(costCents)};`, `Send to ${count} recipients — cost ${eur(costCents)}?`))) send.mutate(); }}
+              disabled={send.isPending || !message.trim() || !count || insufficient}
               className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-5 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50">
               {send.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />} {t("Αποστολή", "Send")}
             </button>

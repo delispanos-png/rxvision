@@ -53,17 +53,48 @@ async def has_free_seat(tenant_id: str, seats: int, exclude_sid: str | None = No
 
 
 async def open_session(tenant_id: str, user_id: str, *, sid: str | None = None,
-                       impersonation: bool = False, ua: str | None = None) -> str:
+                       impersonation: bool = False, ua: str | None = None,
+                       ip: str | None = None) -> str:
     """Create (or revive, when `sid` is given) a session and return its id."""
     sid = sid or uuid.uuid4().hex
     now = _now()
+    setf = {"tenant_id": tenant_id, "user_id": user_id, "last_active_at": now,
+            "impersonation": bool(impersonation), "ua": (ua or "")[:200]}
+    if ip:
+        setf["ip"] = ip[:64]
     await shared_db()[SESSIONS].update_one(
         {"_id": sid},
-        {"$set": {"tenant_id": tenant_id, "user_id": user_id, "last_active_at": now,
-                  "impersonation": bool(impersonation), "ua": (ua or "")[:200]},
-         "$setOnInsert": {"created_at": now}},
+        {"$set": setf, "$setOnInsert": {"created_at": now}},
         upsert=True)
     return sid
+
+
+# ── force-logout: access tokens are stateless JWT, so admin «Αποσύνδεση» sets a short-lived Redis
+# flag that get_current_context checks per-request → ο token πεθαίνει ΑΜΕΣΩΣ (όχι σε 15').
+_REVOKE_TTL = int(getattr(settings, "ACCESS_TOKEN_TTL_SECONDS", 900))
+
+
+async def mark_revoked(sid: str | None) -> None:
+    """Block this session's access token immediately + free its seat. Το flag λήγει μόνο του όταν
+    θα έληγε ούτως ή άλλως το access token."""
+    if not sid:
+        return
+    try:
+        from app.core.ratelimit import _redis
+        await _redis().setex(f"revoked:sess:{sid}", _REVOKE_TTL, "1")
+    except Exception:  # noqa: BLE001 — Redis down → μένει η ανάκληση refresh/seat (εντός 15')
+        pass
+    await close_session(sid)
+
+
+async def is_revoked(sid: str | None) -> bool:
+    if not sid:
+        return False
+    try:
+        from app.core.ratelimit import _redis
+        return bool(await _redis().exists(f"revoked:sess:{sid}"))
+    except Exception:  # noqa: BLE001 — fail-open: ποτέ μη κλειδώσεις τους πάντες σε Redis hiccup
+        return False
 
 
 async def is_live(sid: str | None) -> bool:

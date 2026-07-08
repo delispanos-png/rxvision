@@ -10,6 +10,7 @@ import { useNavStore } from "@/store/navStore";
 import { usePref, useT } from "@/store/prefStore";
 import { Logo, LogoMark } from "@/components/brand/Logo";
 import { CLOUDON_LOGO_DATA_URI } from "@/components/brand/cloudonLogo";
+import { APP_VERSION } from "@/lib/version";
 import { Tooltip } from "@/components/ui/Tooltip";
 import {
   Activity, BarChart3, Boxes, CalendarClock, ChevronRight, LayoutDashboard,
@@ -265,6 +266,7 @@ export function Sidebar() {
             <img src={CLOUDON_LOGO_DATA_URI} alt="CloudOn" className="h-4 w-auto" />
           </a>
         </Tooltip>
+        <div className={`shrink-0 pb-2 text-center text-[10px] text-slate-400 ${hide}`}>RxVision v{APP_VERSION}</div>
       </aside>
 
       {upsell && (

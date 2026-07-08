@@ -20,7 +20,7 @@ const TABS = [
   { href: "/reimbursement/submission", el: "Υποβολή", en: "Submission" },
   // «Συμφωνία» αφαιρέθηκε — καλύπτεται από τα «Ανοιχτά Υπόλοιπα».
   { href: "/reimbursement/receivables", el: "Ανοιχτά Υπόλοιπα", en: "Open Balances" },
-  { href: "/reimbursement/optical", el: "Optical Audit", en: "Optical Audit" },
+  { href: "/reimbursement/optical", el: "Optical Audit", en: "Optical Audit", beta: true },
 ];
 
 export default function ReimbursementLayout({ children }: { children: React.ReactNode }) {
@@ -48,8 +48,9 @@ export default function ReimbursementLayout({ children }: { children: React.Reac
           const active = tab.href === "/reimbursement" ? pathname === tab.href : pathname.startsWith(tab.href);
           return (
             <Link key={tab.href} href={tab.href}
-              className={`-mb-px border-b-2 px-4 py-2 text-sm ${active ? "border-emerald-600 font-semibold text-emerald-700 dark:text-emerald-400" : "border-transparent text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"}`}>
+              className={`-mb-px inline-flex items-center gap-1.5 border-b-2 px-4 py-2 text-sm ${active ? "border-emerald-600 font-semibold text-emerald-700 dark:text-emerald-400" : "border-transparent text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"}`}>
               {t(tab.el, tab.en)}
+              {tab.beta && <span className="rounded-full bg-violet-100 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-violet-700 dark:bg-violet-900/40 dark:text-violet-300">beta</span>}
             </Link>
           );
         })}

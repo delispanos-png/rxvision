@@ -160,7 +160,9 @@ async def ask(messages: list[dict], context: dict | None = None,
     try:
         resp = await client.messages.create(
             model=model,
-            max_tokens=2048,
+            # 8192 (όχι 2048): σε σύνθετα ερωτήματα (π.χ. αλληλεπιδράσεις 5-10 φαρμάκων) το structured
+            # JSON κοβόταν στο όριο → «parse_error». Χρεώνεται μόνο όσο πραγματικά παράγεται.
+            max_tokens=8192,
             system=sys + GUARDRAIL,
             messages=[{"role": m["role"], "content": m["content"]} for m in messages],
             output_config=out_cfg,

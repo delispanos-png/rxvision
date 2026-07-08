@@ -3,7 +3,8 @@
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Repeat, Printer, QrCode, X } from "lucide-react";
+import { ArrowLeft, Repeat, Printer, QrCode, X, ShieldAlert } from "lucide-react";
+import { InteractionsModal } from "@/components/clinical/InteractionsModal";
 import { api, queryKeys } from "@/lib/apiClient";
 import { PanelCard } from "@/components/ui/Card";
 import { CopyButton } from "@/components/ui/CopyButton";
@@ -358,8 +359,9 @@ export default function PrescriptionDetailPage() {
   });
 
   // «Πελάτης παρουσίασης» → κλειδώνουμε εκτυπώσεις ΗΔΥΚΑ & κουπονιών (δεν τυπώνουμε πραγματικά έγγραφα σε demo).
-  const { data: me } = useQuery({ queryKey: queryKeys.me(), queryFn: () => api<{ demo?: boolean }>("/auth/me"), retry: false });
+  const { data: me } = useQuery({ queryKey: queryKeys.me(), queryFn: () => api<{ demo?: boolean; modules?: Record<string, string> }>("/auth/me"), retry: false });
   const demo = !!me?.demo;
+  const hasInteractions = me?.modules?.drug_interactions === "enabled" || me?.modules?.drug_interactions === "trial";
 
   const idika = useQuery({
     queryKey: ["rx-idika", id],
@@ -375,6 +377,7 @@ export default function PrescriptionDetailPage() {
   const [coupon, setCoupon] = useState<Item | null>(null);
   const [couponSheet, setCouponSheet] = useState(false);
   const [execSheet, setExecSheet] = useState(false);
+  const [showInter, setShowInter] = useState(false);
   // αντιγραφή κωδικού κουπονιού στο πρόχειρο (αντί σκαναρίσματος από οθόνη)
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   async function copyCoupon(c: Coupon) {
@@ -437,6 +440,11 @@ export default function PrescriptionDetailPage() {
               <Printer className="h-4 w-4" /> {t("Εκτύπωση ΗΔΥΚΑ", "ΗΔΥΚΑ printout")}
             </button>
           )}
+          {hasInteractions && (
+            <button onClick={() => setShowInter(true)} className="inline-flex items-center gap-1.5 rounded-lg border border-orange-300 bg-orange-50 px-3 py-1.5 text-sm font-medium text-orange-700 hover:bg-orange-100">
+              <ShieldAlert className="h-4 w-4" /> {t("Έλεγχος αλληλεπιδράσεων", "Check interactions")}
+            </button>
+          )}
           <button onClick={() => setExecSheet(true)} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50">
             <Printer className="h-4 w-4" /> {t("Εκτύπωση εκτέλεσης", "Print execution")}
           </button>
@@ -447,6 +455,10 @@ export default function PrescriptionDetailPage() {
           ) : null}
         </div>
       </div>
+
+      <InteractionsModal open={showInter} onClose={() => setShowInter(false)}
+        title={t("Αλληλεπιδράσεις συνταγής", "Prescription interactions")}
+        endpoint={`/pharmacat/interactions/execution/${encodeURIComponent(id)}`} />
 
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h1 className="flex items-center gap-1.5 text-xl font-bold text-slate-900">

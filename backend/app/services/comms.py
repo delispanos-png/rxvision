@@ -71,7 +71,9 @@ async def apifon_balance() -> dict:
 
 
 # ── Email (central SMTP, pharmacy display name + reply-to) ───────────────────
-async def send_email(tenant_id: str, to: str, subject: str, html: str) -> None:
+async def send_email(tenant_id: str, to: str, subject: str, html: str, *,
+                     patient_ref: str | None = None, campaign_id: str | None = None,
+                     kind: str = "message") -> None:
     ch = await message_wallet.charge(tenant_id, "email", 1, ref=to)   # raises InsufficientCredits
     try:
         cfg = await mailer.get_smtp(masked=False)
@@ -80,9 +82,14 @@ async def send_email(tenant_id: str, to: str, subject: str, html: str) -> None:
         ph = await _pharmacy(tenant_id)
         cfg = {**cfg, "from_name": ph["name"]}                        # From shows the pharmacy name
         await asyncio.to_thread(mailer._send_one, cfg, to, subject, html, ph["reply_to"])
-    except Exception:
+    except Exception as exc:
         await message_wallet.refund(tenant_id, "email", ch["cost"], ref=to)
+        await _log_message(tenant_id, "email", to, cost_cents=0, status="failed", subject=subject,
+                           patient_ref=patient_ref, campaign_id=campaign_id, kind=kind, error=exc)
         raise
+    # email: το SMTP δέχτηκε → «sent» (bounce/παράδοση δεν ανιχνεύεται χωρίς bounce-handling)
+    await _log_message(tenant_id, "email", to, cost_cents=ch["cost"], status="sent", subject=subject,
+                       patient_ref=patient_ref, campaign_id=campaign_id, kind=kind)
 
 
 # ── Apifon transport (OAuth2 client_credentials → Bearer) — shared by SMS + Viber ────────────
@@ -112,7 +119,7 @@ async def _apifon_token(client_id: str, client_secret: str, *, force: bool = Fal
     return tok
 
 
-async def _apifon_post(path: str, body: str, cid: str, csec: str) -> None:
+async def _apifon_post(path: str, body: str, cid: str, csec: str) -> dict:
     if not (cid and csec):
         raise RuntimeError("Δεν έχει ρυθμιστεί ο πάροχος μηνυμάτων (Apifon) στην πλατφόρμα.")
     for attempt in range(2):                # refetch token once on a 401 (stale token)
@@ -128,7 +135,54 @@ async def _apifon_post(path: str, body: str, cid: str, csec: str) -> None:
             continue
         if r.status_code >= 300:
             raise RuntimeError(f"Apifon error {r.status_code}: {r.text[:200]}")
-        return
+        try:                                 # κράτα την απόκριση → provider message id (για DLR/παράδοση)
+            return r.json() if r.text else {}
+        except Exception:  # noqa: BLE001
+            return {}
+    return {}
+
+
+def _extract_msg_id(resp) -> str | None:
+    """Provider message id από την απόκριση Apifon — αμυντικά (κρατιέται για matching στο DLR webhook)."""
+    if not isinstance(resp, dict):
+        return None
+    if resp.get("request_id"):
+        return str(resp["request_id"])
+    results = resp.get("results")
+    if isinstance(results, dict):
+        for v in results.values():
+            if isinstance(v, dict) and (v.get("message_id") or v.get("id")):
+                return str(v.get("message_id") or v.get("id"))
+    if isinstance(results, list) and results and isinstance(results[0], dict):
+        r0 = results[0]
+        return str(r0.get("message_id") or r0.get("id") or "") or None
+    return str(resp.get("id") or "") or None
+
+
+async def _log_message(tenant_id: str, channel: str, recipient: str, *, cost_cents: int, status: str,
+                       provider_message_id: str | None = None, subject: str | None = None,
+                       patient_ref: str | None = None, campaign_id: str | None = None,
+                       kind: str = "message", error=None) -> None:
+    """Καταγραφή ΑΝΑ μήνυμα: ποιος, κανάλι, κόστος, status (sent/failed· delivered/undelivered από DLR)."""
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
+    doc: dict = {"tenant_id": tenant_id, "channel": channel, "recipient": recipient,
+                 "cost_cents": int(cost_cents or 0), "status": status, "kind": kind,
+                 "created_at": now, "updated_at": now}
+    if provider_message_id:
+        doc["provider_message_id"] = provider_message_id
+    if subject:
+        doc["subject"] = subject[:200]
+    if patient_ref:
+        doc["patient_ref"] = patient_ref
+    if campaign_id:
+        doc["campaign_id"] = campaign_id
+    if error is not None:
+        doc["error"] = str(error)[:300]
+    try:
+        await shared_db()["sent_messages"].insert_one(doc)
+    except Exception:  # noqa: BLE001 — το log δεν πρέπει ΠΟΤΕ να σπάσει την αποστολή
+        pass
 
 
 def _body(text: str, sender: str, to: str) -> str:
@@ -144,15 +198,21 @@ def _im_body(text: str, sender: str, to: str) -> str:
             '"im_channels":[{"id":"viber","text":' + _json(text) + ',"sender_id":' + _json(sender) + "}]}")
 
 
-async def send_sms(tenant_id: str, to: str, text: str) -> None:
+async def send_sms(tenant_id: str, to: str, text: str, *, patient_ref: str | None = None,
+                   campaign_id: str | None = None, kind: str = "message") -> None:
     ap = await _apifon()
     ch = await message_wallet.charge(tenant_id, "sms", 1, ref=to)
     try:
-        await _apifon_post("/services/api/v1/sms/send", _body(text, ap["sender"], to),
-                           ap["sms_token"], ap["sms_secret"])
-    except Exception:
+        resp = await _apifon_post("/services/api/v1/sms/send", _body(text, ap["sender"], to),
+                                  ap["sms_token"], ap["sms_secret"])
+    except Exception as exc:
         await message_wallet.refund(tenant_id, "sms", ch["cost"], ref=to)
+        await _log_message(tenant_id, "sms", to, cost_cents=0, status="failed",
+                           patient_ref=patient_ref, campaign_id=campaign_id, kind=kind, error=exc)
         raise
+    await _log_message(tenant_id, "sms", to, cost_cents=ch["cost"], status="sent",
+                       provider_message_id=_extract_msg_id(resp),
+                       patient_ref=patient_ref, campaign_id=campaign_id, kind=kind)
 
 
 async def send_otp_sms(to: str, text: str) -> None:
@@ -164,16 +224,23 @@ async def send_otp_sms(to: str, text: str) -> None:
                        ap["sms_token"], ap["sms_secret"])
 
 
-async def send_viber(tenant_id: str, to: str, text: str) -> None:
-    """Central Apifon IM (Viber). Text-only, no SMS fallback (that would double-charge)."""
+async def send_viber(tenant_id: str, to: str, text: str, *, patient_ref: str | None = None,
+                     campaign_id: str | None = None, kind: str = "message") -> None:
+    """Central Apifon IM (Viber). Text-only. Το Viber→SMS fallback γίνεται στο DLR webhook όταν το
+    Viber δεν παραδοθεί (όχι εδώ — θα ήταν διπλή χρέωση)."""
     ap = await _apifon()
     ch = await message_wallet.charge(tenant_id, "viber", 1, ref=to)
     try:
-        await _apifon_post("/services/api/v1/im/send", _im_body(text, ap["viber_sender"], to),
-                           ap["token"], ap["secret"])
-    except Exception:
+        resp = await _apifon_post("/services/api/v1/im/send", _im_body(text, ap["viber_sender"], to),
+                                  ap["token"], ap["secret"])
+    except Exception as exc:
         await message_wallet.refund(tenant_id, "viber", ch["cost"], ref=to)
+        await _log_message(tenant_id, "viber", to, cost_cents=0, status="failed",
+                           patient_ref=patient_ref, campaign_id=campaign_id, kind=kind, error=exc)
         raise
+    await _log_message(tenant_id, "viber", to, cost_cents=ch["cost"], status="sent",
+                       provider_message_id=_extract_msg_id(resp),
+                       patient_ref=patient_ref, campaign_id=campaign_id, kind=kind)
 
 
 async def admin_test_send(channel: str, to: str, text: str) -> None:

@@ -4,10 +4,10 @@
 from __future__ import annotations
 
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel
 
 from app.core.db import shared_db
@@ -188,23 +188,29 @@ def _email_html(message: str, from_name: str | None) -> str:
 
 @router.post("/send", status_code=202)
 async def send_campaign(body: CampaignIn, ctx: TenantContext = Depends(require("patients:read", module=_MODULE))):
+    from bson import ObjectId
     ph = await comms._pharmacy(ctx.tenant_id)
     rows = await _audience(ctx.tenant_id, body.channel, body.segment, body.value)
+    cid = ObjectId()                       # σταθερό campaign id → κάθε μήνυμα δένεται σε αυτό
     sent = failed = 0
     stopped = False
     field = "email" if body.channel == "email" else "mobile"
     for r in rows[:2000]:
         to = r.get(field)
+        pref = str(r.get("patient_id") or r.get("_id") or "") or None
         first = (r.get("name") or "").split(" ")[-1] if r.get("name") else ""
         text = body.message.replace("{name}", r.get("name") or "").replace("{first}", first)
         try:
             if body.channel == "email":
                 await comms.send_email(ctx.tenant_id, to, body.subject or "Ενημέρωση φαρμακείου",
-                                       _email_html(text, ph["name"]))
+                                       _email_html(text, ph["name"]),
+                                       patient_ref=pref, campaign_id=str(cid), kind="campaign")
             elif body.channel == "viber":
-                await comms.send_viber(ctx.tenant_id, to, text)
+                await comms.send_viber(ctx.tenant_id, to, text,
+                                       patient_ref=pref, campaign_id=str(cid), kind="campaign")
             else:
-                await comms.send_sms(ctx.tenant_id, to, text)
+                await comms.send_sms(ctx.tenant_id, to, text,
+                                     patient_ref=pref, campaign_id=str(cid), kind="campaign")
             sent += 1
         except message_wallet.InsufficientCredits:
             stopped = True   # wallet empty → stop the campaign, report what went out
@@ -212,6 +218,7 @@ async def send_campaign(body: CampaignIn, ctx: TenantContext = Depends(require("
         except Exception:  # noqa: BLE001
             failed += 1
     await shared_db()["comms_campaigns"].insert_one({
+        "_id": cid,
         "tenant_id": ctx.tenant_id, "channel": body.channel, "subject": body.subject,
         "recipients": len(rows), "sent": sent, "failed": failed,
         "by": ctx.email if hasattr(ctx, "email") else None,
@@ -229,3 +236,76 @@ async def history(ctx: TenantContext = Depends(require("patients:read", module=_
         d["id"] = str(d.pop("_id"))
         out.append(d)
     return {"items": out}
+
+
+@router.get("/messages")
+async def messages(status_f: str | None = Query(None, alias="status"),
+                   channel: str | None = None, limit: int = Query(150, ge=1, le=500),
+                   ctx: TenantContext = Depends(require("patients:read", module=_MODULE))):
+    """Ιστορικό ΑΝΑ μήνυμα: παραλήπτης, κανάλι, κόστος, κατάσταση (sent/delivered/undelivered), ώρα."""
+    db = shared_db()
+    q: dict = {"tenant_id": ctx.tenant_id}
+    if status_f:
+        q["status"] = status_f
+    if channel:
+        q["channel"] = channel
+    out = []
+    async for d in db["sent_messages"].find(q).sort("created_at", -1).limit(limit):
+        out.append({"id": str(d["_id"]), "channel": d.get("channel"), "recipient": d.get("recipient"),
+                    "status": d.get("status"), "cost_cents": int(d.get("cost_cents", 0) or 0),
+                    "kind": d.get("kind"), "subject": d.get("subject"), "refunded": bool(d.get("refunded")),
+                    "created_at": d.get("created_at"), "delivered_at": d.get("delivered_at")})
+    # σύνοψη ανά κατάσταση (τελευταίες 30 ημέρες)
+    since = datetime.now(tz=timezone.utc) - timedelta(days=30)
+    agg = {r["_id"]: r["n"] async for r in db["sent_messages"].aggregate([
+        {"$match": {"tenant_id": ctx.tenant_id, "created_at": {"$gte": since}}},
+        {"$group": {"_id": "$status", "n": {"$sum": 1}}}])}
+    return {"items": out, "summary_30d": agg}
+
+
+# ── Apifon delivery-receipt (DLR) webhook — ΔΗΜΟΣΙΟ (η Apifon το καλεί) ──────────────────────────
+@router.post("/apifon-dlr", include_in_schema=False)
+async def apifon_dlr(request: Request):
+    """Delivery receipts της Apifon → ενημέρωση κατάστασης ανά μήνυμα + ΕΠΙΣΤΡΟΦΗ χρημάτων για μη
+    παραδοθέντα. ⚠️ Η ΑΚΡΙΒΗΣ μορφή/υπογραφή DLR επιβεβαιώνεται με την Apifon (βλ. request list)."""
+    try:
+        payload = await request.json()
+    except Exception:  # noqa: BLE001
+        try:
+            payload = dict(await request.form())
+        except Exception:  # noqa: BLE001
+            return {"ok": False}
+    events = payload if isinstance(payload, list) else (
+        payload.get("results") or payload.get("statuses") or payload.get("delivery_receipts") or [payload])
+    db = shared_db()
+    updated = 0
+    for ev in (events if isinstance(events, list) else [events]):
+        if not isinstance(ev, dict):
+            continue
+        mid = str(ev.get("message_id") or ev.get("id") or ev.get("request_id") or "")
+        st = str(ev.get("status") or ev.get("delivery_status") or ev.get("status_code") or "").upper()
+        if not mid:
+            continue
+        delivered = st in ("DELIVERED", "DELIVRD", "READ", "SEEN")
+        failed = st in ("UNDELIVERED", "UNDELIVERABLE", "FAILED", "EXPIRED", "REJECTED", "ERROR")
+        newstatus = "delivered" if delivered else "failed" if failed else None
+        if not newstatus:
+            continue
+        doc = await db["sent_messages"].find_one({"provider_message_id": mid})
+        if not doc or doc.get("status") == newstatus:
+            continue
+        now = datetime.now(tz=timezone.utc)
+        upd: dict = {"status": newstatus, "updated_at": now}
+        if delivered:
+            upd["delivered_at"] = now
+        await db["sent_messages"].update_one({"_id": doc["_id"]}, {"$set": upd})
+        updated += 1
+        # ΕΠΙΣΤΡΟΦΗ για μη παραδοθέν (μία φορά)
+        if failed and doc.get("cost_cents") and not doc.get("refunded"):
+            try:
+                await message_wallet.refund(doc["tenant_id"], doc["channel"], int(doc["cost_cents"]),
+                                            ref=doc.get("recipient", ""))
+                await db["sent_messages"].update_one({"_id": doc["_id"]}, {"$set": {"refunded": True}})
+            except Exception:  # noqa: BLE001
+                pass
+    return {"ok": True, "updated": updated}

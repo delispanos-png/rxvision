@@ -12,10 +12,12 @@ import { BarChart } from "@/components/charts/BarChart";
 import {
   Building2, TrendingUp, UserPlus, FileText, Receipt, Activity, Users, Syringe,
   Smartphone, CalendarClock, ShoppingCart, RefreshCw, AlertTriangle, HardDrive,
-  Server, Sparkles, Mail, Boxes,
+  Server, Sparkles, Mail, Boxes, ShieldCheck,
 } from "lucide-react";
 
-type SyncHealth = { id: string; tenant: string; source: string; last_run: string; status: string; errors: number };
+type SyncHealth = { id: string; tenant: string; source: string; last_run: string; status: string; errors: number;
+  last_fetched?: number; last_inserted?: number; last_data_at?: string | null; data_age_hours?: number | null; silent_failure?: boolean };
+type SyncHealthResp = { items: SyncHealth[]; vault: { healthy: boolean }; ingest: { last_data_at: string | null; stale_hours: number | null }; alert: boolean };
 type Overview = {
   business: { tenants: number; active: number; trial: number; past_due: number; suspended: number;
     mrr: number; arr: number; new_tenants_month: number; plans: { plan: string; n: number }[];
@@ -58,13 +60,21 @@ const syncColumns: Column<SyncHealth>[] = [
   { key: "tenant", header: "Tenant" },
   { key: "source", header: "Πηγή" },
   { key: "last_run", header: "Τελευταία εκτέλεση", render: (r) => fmtDate(r.last_run) },
-  { key: "status", header: "Κατάσταση", render: (r) => <Badge value={r.status} /> },
+  { key: "status", header: "Κατάσταση", render: (r) => (
+      r.silent_failure
+        ? <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">⚠ σιωπηλή (0 δεδομένα)</span>
+        : <Badge value={r.status} />
+    ) },
+  { key: "last_fetched", header: "Έφερε", align: "right", render: (r) => fmtNum(r.last_fetched ?? 0) },
+  { key: "data_age_hours", header: "Δεδομένα πριν", align: "right", render: (r) => (
+      r.data_age_hours == null ? "—" : <span className={r.data_age_hours > 6 ? "font-semibold text-amber-600" : "text-slate-500"}>{r.data_age_hours}h</span>
+    ) },
   { key: "errors", header: "Σφάλματα", align: "right", render: (r) => <span className={r.errors > 0 ? "font-semibold text-red-600" : ""}>{fmtNum(r.errors)}</span> },
 ];
 
 export default function AdminDashboardPage() {
   const ov = useQuery({ queryKey: ["admin", "overview"], queryFn: () => adminApi<Overview>("/admin/overview"), retry: false, refetchInterval: 30000 });
-  const sync = useQuery({ queryKey: ["admin", "sync-health"], queryFn: () => adminApi<{ items: SyncHealth[] }>("/admin/sync-health"), retry: false });
+  const sync = useQuery({ queryKey: ["admin", "sync-health"], queryFn: () => adminApi<SyncHealthResp>("/admin/sync-health"), retry: false, refetchInterval: 60000 });
 
   const b = ov.data?.business, v = ov.data?.volume, u = ov.data?.usage, o = ov.data?.ops;
   const dash = (n?: number) => (n === undefined ? "…" : fmtNum(n));
@@ -169,7 +179,32 @@ export default function AdminDashboardPage() {
         </div>
       )}
 
-      <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Υγεία συγχρονισμών</h2>
+      <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Υγεία συγχρονισμών ΗΔΥΚΑ</h2>
+
+      {/* Vault + silent-failure banner — «φωνάζει» όταν οι syncs σταματούν σιωπηλά (incident 2026-07-08) */}
+      {sync.data && (() => {
+        const s = sync.data;
+        if (s.alert) {
+          const reason = !s.vault.healthy
+            ? "🔒 Το Vault δεν είναι προσβάσιμο (ληγμένο token ή sealed) — ΟΛΟΙ οι συγχρονισμοί σταματούν σιωπηλά."
+            : s.ingest.last_data_at == null
+              ? "Κανένας συγχρονισμός δεν έχει φέρει ποτέ δεδομένα."
+              : `Κανένα νέο δεδομένο ΗΔΥΚΑ εδώ και ~${s.ingest.stale_hours}h — πιθανή σιωπηλή αποτυχία (Vault/creds/δίκτυο).`;
+          return (
+            <div className="mb-3 flex items-start gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+              <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-red-600" />
+              <div><b>Προσοχή — συγχρονισμοί σε κίνδυνο.</b> {reason}</div>
+            </div>
+          );
+        }
+        return (
+          <div className="mb-3 flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-sm text-emerald-800">
+            <ShieldCheck className="h-4 w-4 text-emerald-600" />
+            Vault OK · τελευταία δεδομένα {s.ingest.stale_hours != null ? `πριν ${s.ingest.stale_hours}h` : "—"}.
+          </div>
+        );
+      })()}
+
       {sync.isLoading ? <div className="text-slate-400">Φόρτωση…</div> : <DataTable pageSize={20} columns={syncColumns} rows={sync.data?.items ?? []} rowKey={(r) => r.id} />}
     </div>
   );

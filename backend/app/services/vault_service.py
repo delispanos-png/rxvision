@@ -107,6 +107,28 @@ class VaultService:
     def has_secret(self, path: str) -> bool:
         return self.get_secret(path) is not None
 
+    def healthy(self) -> bool:
+        """Live probe: μπορούμε ΤΩΡΑ να αυθεντικοποιηθούμε στο Vault; (ληγμένο token/seal → False).
+        Το ληγμένο token σταματά ΣΙΩΠΗΛΑ όλους τους ΗΔΥΚΑ syncs — αυτό το probe το αναδεικνύει."""
+        if self._client is None:
+            return False
+        try:
+            return bool(self._client.is_authenticated())
+        except Exception:  # noqa: BLE001
+            return False
+
+    def renew_self(self) -> bool:
+        """Ανανεώνει το (periodic) token της εφαρμογής ώστε να ΜΗΝ λήξει ποτέ. Καλείται
+        καθημερινά από beat. No-op αν το Vault είναι degraded. Επιστρέφει επιτυχία."""
+        if self._client is None:
+            return False
+        try:
+            self._client.auth.token.renew_self()
+            return True
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Vault token renew-self failed: %s", exc)
+            return False
+
     # ── convenience helpers ────────────────────────────────
     def tenant_pepper(self, tenant_id: str) -> str:
         sec = self.get_secret(f"tenants/{tenant_id}/pepper")

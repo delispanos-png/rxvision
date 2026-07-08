@@ -60,7 +60,7 @@ def _as_object_id(value):
 
 class AuthService:
     async def login(self, email: str, password: str, mfa_code: str | None,
-                    user_agent: str | None = None) -> dict | None:
+                    user_agent: str | None = None, ip: str | None = None) -> dict | None:
         db = shared_db()
         user = await db["users"].find_one({"email": email, "status": "active"})
         if not user or not verify_password(password, user["password_hash"]):
@@ -80,7 +80,7 @@ class AuthService:
         seats = sessions.tenant_seats(sub)
         if not await sessions.has_free_seat(tid, seats):
             return {"seat_limit": True, "seats": seats}
-        sid = await sessions.open_session(tid, str(user["_id"]), ua=user_agent)
+        sid = await sessions.open_session(tid, str(user["_id"]), ua=user_agent, ip=ip)
         await db["users"].update_one({"_id": user["_id"]},
                                      {"$set": {"last_login_at": _utcnow()}})
         modules, roles, perms, demo = await self._resolve(user)

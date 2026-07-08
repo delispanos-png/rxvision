@@ -71,7 +71,18 @@ async def public_packages():
     sla = [s async for s in db["sla_tiers"].find(flt).sort("response_hours", 1)]
     from app.services import addon_service
     addons = await addon_service.catalog(active_only=True)   # à-la-carte add-ons for the pricing page
-    return {"packages": jsonsafe(pkgs), "sla": jsonsafe(sla), "addons": jsonsafe(addons)}
+    from app.services import payment_methods
+    methods = await payment_methods.public_methods()
+    return {"packages": jsonsafe(pkgs), "sla": jsonsafe(sla), "addons": jsonsafe(addons),
+            "payment_methods": methods}
+
+
+@router.get("/payment-methods",
+            dependencies=[Depends(rate_limit("onboarding_pm", limit=60, window_seconds=600))])
+async def public_payment_methods():
+    """Enabled payment methods — the public registration wizard adapts to these."""
+    from app.services import payment_methods
+    return {"methods": await payment_methods.public_methods()}
 
 
 @router.get("/aade/{afm}",

@@ -18,6 +18,9 @@ from app.core.db import shared_db
 # Default per-message prices (cents). Editable by the platform admin in platform_settings.comms.prices.
 _DEFAULT_PRICES = {"email": 2, "sms": 6, "viber": 4}
 CHANNELS = ("email", "sms", "viber")
+# Χαμηλό υπόλοιπο: όταν πέσει κάτω από αυτό (cents) στέλνουμε ΜΙΑ ειδοποίηση email στο φαρμακείο
+# (flag low_balance_alerted για να μη γίνεται spam· καθαρίζει με το επόμενο top-up). Editable στο comms.cfg.
+_LOW_BALANCE_CENTS = 200
 
 
 class InsufficientCredits(Exception):
@@ -67,7 +70,42 @@ async def charge(tenant_id: str, channel: str, count: int = 1, ref: str | None =
     if not doc:
         raise InsufficientCredits(channel)
     await _ledger(tenant_id, channel, "debit", count, unit, -cost, ref, doc["balance_cents"])
+    await _maybe_low_balance_alert(tenant_id, doc)
     return {"cost": cost, "unit": unit, "balance": doc["balance_cents"]}
+
+
+async def _low_threshold() -> int:
+    return int((await _comms_cfg()).get("low_balance_cents", _LOW_BALANCE_CENTS) or 0)
+
+
+async def _maybe_low_balance_alert(tenant_id: str, wallet_doc: dict) -> None:
+    """Best-effort: ΜΙΑ ειδοποίηση email στο φαρμακείο όταν το υπόλοιπο πέσει κάτω από το κατώφλι.
+    Δεν χρεώνει το πορτοφόλι (system mailer). Ποτέ δεν σπάει την αποστολή."""
+    try:
+        threshold = await _low_threshold()
+        bal = int(wallet_doc.get("balance_cents", 0) or 0)
+        if threshold <= 0 or bal >= threshold or wallet_doc.get("low_balance_alerted"):
+            return
+        # ατομικό set του flag → μόνο ένας sender στέλνει το email (idempotent)
+        claimed = await shared_db()["message_wallets"].find_one_and_update(
+            {"_id": tenant_id, "low_balance_alerted": {"$ne": True}},
+            {"$set": {"low_balance_alerted": True, "updated_at": _now()}})
+        if not claimed:
+            return
+        from app.services import comms, mailer
+        ph = await comms._pharmacy(tenant_id)
+        to = ph.get("email")
+        if not to:
+            return
+        eur = f"€{bal / 100:.2f}"
+        html = (f'<div style="font-family:Arial,sans-serif;font-size:15px;color:#0f172a;line-height:1.6">'
+                f'<p>Το υπόλοιπο μηνυμάτων του φαρμακείου σας έπεσε στα <b>{eur}</b>.</p>'
+                f'<p>Για να συνεχίσετε να στέλνετε SMS / Viber / email στους πελάτες σας χωρίς '
+                f'διακοπή, αγοράστε credits από τις <b>Ρυθμίσεις → Επικοινωνία</b> στην εφαρμογή.</p>'
+                f'<p style="color:#94a3b8;font-size:12px">RxVision</p></div>')
+        await mailer.send_email(to, "RxVision — Χαμηλό υπόλοιπο μηνυμάτων", html)
+    except Exception:  # noqa: BLE001 — η ειδοποίηση δεν πρέπει ΠΟΤΕ να σπάσει την αποστολή/χρέωση
+        pass
 
 
 async def refund(tenant_id: str, channel: str, cost: int, ref: str | None = None) -> None:
@@ -85,7 +123,9 @@ async def credit(tenant_id: str, amount_cents: int, *, reason: str = "topup", re
     """Add credits (top-up / bonus / manual grant)."""
     db = shared_db()
     doc = await db["message_wallets"].find_one_and_update(
-        {"_id": tenant_id}, {"$inc": {"balance_cents": int(amount_cents)}, "$set": {"updated_at": _now()}},
+        {"_id": tenant_id},
+        {"$inc": {"balance_cents": int(amount_cents)}, "$set": {"updated_at": _now()},
+         "$unset": {"low_balance_alerted": ""}},  # top-up → επαναφορά, ώστε να ξαναειδοποιήσει αν ξαναπέσει
         upsert=True, return_document=ReturnDocument.AFTER)
     await _ledger(tenant_id, reason, "credit", 0, 0, int(amount_cents), ref, doc["balance_cents"])
     return {"balance": doc["balance_cents"]}

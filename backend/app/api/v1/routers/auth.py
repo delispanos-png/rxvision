@@ -7,7 +7,7 @@ from pydantic import BaseModel, EmailStr, Field
 
 from app.core.deps import TenantContext, get_current_context
 from app.core.ratelimit import (
-    account_locked, clear_login_failures, rate_limit, record_login_failure,
+    account_locked, clear_login_failures, client_ip, rate_limit, record_login_failure,
 )
 from app.services import session_service as sessions
 from app.services.account_service import AccountError, AccountService
@@ -62,7 +62,7 @@ async def login(body: LoginIn, request: Request):
             headers={"Retry-After": str(locked)})
     result = await AuthService().login(
         body.email, body.password, body.mfa_code,
-        user_agent=request.headers.get("user-agent"))
+        user_agent=request.headers.get("user-agent"), ip=client_ip(request))
     if result is None:
         await record_login_failure(body.email)  # count only true credential failures
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid_credentials")

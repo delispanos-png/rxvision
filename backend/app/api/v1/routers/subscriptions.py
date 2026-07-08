@@ -1,12 +1,16 @@
-"""Subscriptions / billing router — current plan, usage, checkout."""
+"""Subscriptions / billing router — current plan, usage, plan changes (upgrade/downgrade)."""
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from typing import Literal
+
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.responses import RedirectResponse
+from pydantic import BaseModel
 
 from app.core.deps import TenantContext, get_current_context, require
 from app.repositories.subscriptions import SubscriptionRepository
-from app.schemas.subscriptions import CheckoutIn, CheckoutOut
+from app.services import plan_change_service as pcs
 
 router = APIRouter()
 
@@ -26,16 +30,60 @@ async def usage(ctx: TenantContext = Depends(get_current_context)):
     return await repo.usage()
 
 
-@router.post("/checkout", response_model=CheckoutOut)
-async def checkout(
-    body: CheckoutIn,
-    ctx: TenantContext = Depends(require("billing:manage")),
-):
-    repo = SubscriptionRepository(tenant_id=ctx.tenant_id)
-    await repo.set_checkout_pending(plan=body.plan, seats=body.seats, addons=body.addons)
-    # TODO: create a real payment-provider checkout session and return its URL.
-    return CheckoutOut(
-        checkout_url=f"https://billing.rxvision.gr/checkout/{ctx.tenant_id}",
-        plan=body.plan,
-        status="pending_checkout",
-    )
+@router.get("/receipts")
+async def receipts(ctx: TenantContext = Depends(get_current_context)):
+    """Παραστατικά — everything charged through RxVision (subscriptions, upgrades, credit top-ups)."""
+    from app.services import receipts as rc
+    return {"items": await rc.list_for_tenant(ctx.tenant_id)}
+
+
+@router.get("/payment-methods")
+async def payment_methods_public(_: TenantContext = Depends(get_current_context)):
+    """Enabled payment methods — the upgrade UI renders only these."""
+    from app.services import payment_methods
+    return {"methods": await payment_methods.public_methods()}
+
+
+# ── Plan change (upgrade via card/alpha/bank · downgrade scheduled to period end) ─────────────────
+class PlanChangeIn(BaseModel):
+    plan: str
+    method: Literal["card", "alpha", "bank"] | None = None   # required only for an upgrade
+
+
+@router.get("/plan-change")
+async def plan_change_status(ctx: TenantContext = Depends(get_current_context)):
+    """Current pending change (if any) — for the plan page banner."""
+    return await pcs.get_pending(ctx.tenant_id)
+
+
+@router.post("/plan-change")
+async def request_plan_change(body: PlanChangeIn,
+                              ctx: TenantContext = Depends(require("billing:manage"))):
+    """Request an upgrade (card → Revolut / bank → admin request) or schedule a downgrade."""
+    try:
+        return await pcs.request_change(ctx.tenant_id, body.plan, method=body.method,
+                                        by_email=getattr(ctx, "email", None))
+    except pcs.PlanChangeError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+
+
+@router.delete("/plan-change")
+async def cancel_plan_change(ctx: TenantContext = Depends(require("billing:manage"))):
+    """Cancel a not-yet-applied change (scheduled downgrade or awaiting-payment upgrade)."""
+    return await pcs.cancel_change(ctx.tenant_id)
+
+
+@router.api_route("/alpha-callback", methods=["GET", "POST"], include_in_schema=False)
+async def alpha_callback(request: Request):
+    """Alpha e-Commerce redirect-back: verify the digest, apply the upgrade on success, then send the
+    pharmacist back to the plan page. ⚠️ Exact fields/digest confirmed with Alpha (see requirements doc)."""
+    from app.services import alphabank_service as ab
+    from app.core.db import shared_db
+    params = dict(await request.form()) if request.method == "POST" else dict(request.query_params)
+    res = await ab.verify_callback(params)
+    order_id = res.get("order_id")
+    if res.get("ok") and res.get("paid") and order_id:
+        sub = await shared_db()["subscriptions"].find_one({"pending_change.alpha_order_id": order_id})
+        if sub:
+            await pcs.apply_change(sub["tenant_id"], source="alphabank")
+    return RedirectResponse("https://app.rxvision.gr/settings/modules", status_code=303)

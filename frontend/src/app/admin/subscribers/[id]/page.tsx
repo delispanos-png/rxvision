@@ -37,6 +37,7 @@ const MODULE_LABELS: [string, string][] = [
   ["patient_portal", "👥 Πύλη Πελατών (ραντεβού/διαθεσιμότητα)"],
   ["loyalty", "🎁 Πιστότητα (επιβράβευση πελατών)"],
   ["order_delivery", "🚚 Παραγγελίες & Αποστολή (κατάλογος + κύκλωμα)"],
+  ["drug_interactions", "🧪 Έλεγχος Αλληλεπιδράσεων (συνταγή + ενεργή αγωγή)"],
 ];
 type Creds = {
   users: User[];

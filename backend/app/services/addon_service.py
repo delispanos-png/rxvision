@@ -60,6 +60,11 @@ _DEFAULTS: list[dict] = [
      "price_monthly": 2900, "price_yearly": 29000, "active": True,
      "features": ["Κατάλογος OTC & παραφαρμακευτικών", "e-shop για τους πελάτες σου",
                   "Worklist παραγγελιών (delivery/pickup)"]},
+    {"_id": "drug_interactions", "name": "Έλεγχος Αλληλεπιδράσεων", "icon": "🧪", "category": "ai",
+     "description": "Έλεγχος αλληλεπιδράσεων φαρμάκων σε μία συνταγή ή σε ΟΛΗ την ενεργή αγωγή του ασθενή (DrugBank curated / AI).",
+     "price_monthly": 1500, "price_yearly": 15000, "active": True,
+     "features": ["Έλεγχος αλληλεπιδράσεων ανά συνταγή", "Έλεγχος σε όλη την ενεργή αγωγή του ασθενή",
+                  "Βαρύτητα · μηχανισμός · κίνδυνος · ενέργεια"]},
 ]
 
 
@@ -68,11 +73,12 @@ def _now() -> datetime:
 
 
 async def _ensure_seed() -> None:
+    # Upsert-missing: κάθε default μπαίνει ΜΟΝΟ αν λείπει ($setOnInsert) — έτσι νέα add-ons (π.χ.
+    # drug_interactions) σπέρνονται και σε ΗΔΗ γεμάτη addons collection, χωρίς να πειράζουν τα υπάρχοντα.
     db = shared_db()
-    if await db["addons"].count_documents({}) == 0:
-        for a in _DEFAULTS:
-            await db["addons"].update_one({"_id": a["_id"]},
-                                          {"$setOnInsert": {**a, "updated_at": _now()}}, upsert=True)
+    for a in _DEFAULTS:
+        await db["addons"].update_one({"_id": a["_id"]},
+                                      {"$setOnInsert": {**a, "updated_at": _now()}}, upsert=True)
 
 
 async def catalog(active_only: bool = True) -> list[dict]:

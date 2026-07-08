@@ -110,6 +110,11 @@ async def bill_due() -> dict:
                 "status": "active", "payment_status": "active", "failed_attempts": 0,
                 "current_period_end": _period_end(sub.get("billing_cycle", "monthly"), now),
                 "last_charged_at": now}})
+            from app.services import receipts
+            await receipts.record(tid, "subscription",
+                                  f"Συνδρομή {sub.get('plan', '')} ({sub.get('billing_cycle', 'monthly')})",
+                                  amount, method="card", provider="revolut",
+                                  provider_order_id=res.get("order_id"))
             charged += 1
         else:
             attempts = sub.get("failed_attempts", 0) + 1
@@ -132,6 +137,14 @@ async def handle_webhook(event: str, order: dict) -> None:
     if event == "ORDER_COMPLETED" and order.get("id"):
         from app.services import message_wallet
         if await message_wallet.complete_topup(order["id"]):
+            return
+        # Plan-upgrade paid by card: apply the pending change when its Revolut order completes.
+        sub = await db["subscriptions"].find_one({"tenant_id": tid}) or {}
+        pend = sub.get("pending_change") or {}
+        if (pend.get("method") == "card" and pend.get("status") == "awaiting_payment"
+                and pend.get("revolut_order_id") == order["id"]):
+            from app.services import plan_change_service
+            await plan_change_service.apply_change(tid, source="revolut")
             return
     cust = (order.get("customer") or {}).get("id")
     if event in ("ORDER_COMPLETED", "ORDER_AUTHORISED"):

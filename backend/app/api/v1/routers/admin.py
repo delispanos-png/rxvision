@@ -674,6 +674,80 @@ async def delete_package(code: str, _: PlatformContext = Depends(get_platform_ad
     return {"ok": True}
 
 
+# ── Plan-change requests (upgrade via bank transfer → admin approval; card/downgrade shown too) ───
+@router.get("/plan-changes")
+async def plan_changes(_: PlatformContext = Depends(get_platform_admin)):
+    """Pending plan changes across tenants (bank-transfer upgrades to approve first)."""
+    from app.services import plan_change_service
+    return {"items": jsonsafe(await plan_change_service.list_pending_admin())}
+
+
+@router.post("/plan-changes/{tenant_id}/approve")
+async def approve_plan_change(tenant_id: str, ctx: PlatformContext = Depends(get_platform_admin)):
+    """Confirm a bank-transfer payment was received → apply the upgrade immediately."""
+    from app.services import plan_change_service
+    res = await plan_change_service.apply_change(tenant_id, source=f"admin:{ctx.email}")
+    if not res.get("ok"):
+        raise HTTPException(http_status.HTTP_400_BAD_REQUEST, detail=res.get("error", "apply_failed"))
+    await shared_db()["audit_logs"].insert_one({
+        "tenant_id": tenant_id, "action": "plan_change_approved", "by": ctx.email,
+        "detail": res, "at": datetime.now(tz=timezone.utc)})
+    return res
+
+
+@router.post("/plan-changes/{tenant_id}/reject")
+async def reject_plan_change(tenant_id: str, ctx: PlatformContext = Depends(get_platform_admin)):
+    """Reject / cancel a pending plan change."""
+    from app.services import plan_change_service
+    await plan_change_service.cancel_change(tenant_id)
+    await shared_db()["audit_logs"].insert_one({
+        "tenant_id": tenant_id, "action": "plan_change_rejected", "by": ctx.email,
+        "at": datetime.now(tz=timezone.utc)})
+    return {"ok": True}
+
+
+class BankIn(BaseModel):
+    beneficiary: str | None = None
+    bank_name: str | None = None
+    iban: str | None = None
+    swift: str | None = None
+    notes: str | None = None
+
+
+@router.get("/billing-bank")
+async def get_billing_bank(_: PlatformContext = Depends(get_platform_admin)):
+    """Bank account shown to tenants for bank-transfer plan upgrades."""
+    from app.services import plan_change_service
+    return plan_change_service.bank_public(await plan_change_service.bank_details())
+
+
+@router.put("/billing-bank")
+async def set_billing_bank(body: BankIn, _: PlatformContext = Depends(get_platform_admin)):
+    from app.services import plan_change_service
+    return await plan_change_service.set_bank_details(body.model_dump())
+
+
+# ── Payment methods (enable/disable) — drives the tenant upgrade UI + registration wizard ────────
+@router.get("/payment-methods")
+async def get_payment_methods(_: PlatformContext = Depends(get_platform_admin)):
+    from app.services import payment_methods, alphabank_service
+    return {"methods": await payment_methods.config(),
+            "alphabank_configured": await alphabank_service.is_configured()}
+
+
+class PaymentMethodsIn(BaseModel):
+    card_revolut: bool | None = None
+    card_alpha: bool | None = None
+    bank_transfer: bool | None = None
+
+
+@router.put("/payment-methods")
+async def set_payment_methods(body: PaymentMethodsIn, _: PlatformContext = Depends(get_platform_admin)):
+    from app.services import payment_methods
+    updates = {k: v for k, v in body.model_dump().items() if v is not None}
+    return {"methods": await payment_methods.set_config(updates)}
+
+
 # ── Add-ons catalog (à-la-carte modules sold on top of any plan) ──────────────
 @router.get("/addons")
 async def admin_addons(_: PlatformContext = Depends(get_platform_admin)):
@@ -782,10 +856,17 @@ class IntegrationsIn(BaseModel):
     revolut_api_key: str | None = None
     revolut_mode: str | None = None  # sandbox | live
     revolut_webhook_secret: str | None = None
+    # Alpha Bank (Alpha e-Commerce) card gateway — alternative to Revolut
+    alphabank_merchant_id: str | None = None
+    alphabank_shared_secret: str | None = None
+    alphabank_mode: str | None = None  # test | live
     anthropic_api_key: str | None = None  # PharmaCat clinical assistant (Claude)
     anthropic_enabled: bool | None = None
     anthropic_model: str | None = None        # model for pharmacist queries (cheap)
     anthropic_admin_model: str | None = None  # model for admin KB corrections (strong)
+    drugbank_api_key: str | None = None       # DrugBank Clinical API — drug-drug interactions
+    drugbank_enabled: bool | None = None
+    drugbank_region: str | None = None        # eu | us | canada
     # Central messaging (Apifon SMS + Viber) + per-channel prices (cents) for the prepaid wallet
     apifon_token: str | None = None
     apifon_secret: str | None = None
@@ -811,6 +892,7 @@ async def get_integrations(_: PlatformContext = Depends(get_platform_admin)):
     aade = decrypt_doc("aade", await db["platform_settings"].find_one({"_id": "aade"})) or {}
     rev = decrypt_doc("revolut", await db["platform_settings"].find_one({"_id": "revolut"})) or {}
     ant = decrypt_doc("anthropic", await db["platform_settings"].find_one({"_id": "anthropic"})) or {}
+    dbk = decrypt_doc("drugbank", await db["platform_settings"].find_one({"_id": "drugbank"})) or {}
     comms_cfg = decrypt_doc("comms", await db["platform_settings"].find_one({"_id": "comms"})) or {}
     _pr = comms_cfg.get("prices") or {}
     _cost = comms_cfg.get("cost") or {}
@@ -820,10 +902,16 @@ async def get_integrations(_: PlatformContext = Depends(get_platform_admin)):
                  "configured": bool(aade.get("username") and aade.get("password"))},
         "revolut": {"mode": rev.get("mode", "sandbox"), "api_key_set": bool(rev.get("api_key")),
                     "webhook_secret_set": bool(rev.get("webhook_secret"))},
+        "alphabank": {"mode": (decrypt_doc("alphabank", await db["platform_settings"].find_one({"_id": "alphabank"})) or {}).get("mode", "test"),
+                      "merchant_id_set": bool((decrypt_doc("alphabank", await db["platform_settings"].find_one({"_id": "alphabank"})) or {}).get("merchant_id")),
+                      "shared_secret_set": bool((decrypt_doc("alphabank", await db["platform_settings"].find_one({"_id": "alphabank"})) or {}).get("shared_secret"))},
         "anthropic": {"api_key_set": bool(ant.get("api_key")),
                       "enabled": ant.get("enabled", True),
                       "model": ant.get("model", "claude-opus-4-8"),
                       "admin_model": ant.get("admin_model", "claude-opus-4-8")},
+        "drugbank": {"api_key_set": bool(dbk.get("api_key")),
+                     "enabled": dbk.get("enabled", True),
+                     "region": dbk.get("region") or "eu"},
         "comms": {"apifon_token_set": bool(comms_cfg.get("apifon_token")),
                   "apifon_secret_set": bool(comms_cfg.get("apifon_secret")),
                   "apifon_token_tail": (comms_cfg.get("apifon_token") or "")[-4:],
@@ -864,6 +952,11 @@ async def set_integrations(body: IntegrationsIn,
     if r:
         await db["platform_settings"].update_one(
             {"_id": "revolut"}, {"$set": encrypt_fields("revolut", r)}, upsert=True)
+    if body.alphabank_merchant_id is not None or body.alphabank_shared_secret or body.alphabank_mode:
+        from app.services import alphabank_service
+        await alphabank_service.save_config(
+            merchant_id=body.alphabank_merchant_id, shared_secret=body.alphabank_shared_secret,
+            mode=body.alphabank_mode)
     ant: dict = {}
     if body.anthropic_api_key:
         ant["api_key"] = body.anthropic_api_key
@@ -876,6 +969,16 @@ async def set_integrations(body: IntegrationsIn,
     if ant:
         await db["platform_settings"].update_one(
             {"_id": "anthropic"}, {"$set": encrypt_fields("anthropic", ant)}, upsert=True)
+    dbk: dict = {}
+    if body.drugbank_api_key:
+        dbk["api_key"] = body.drugbank_api_key
+    if body.drugbank_enabled is not None:
+        dbk["enabled"] = body.drugbank_enabled
+    if body.drugbank_region:
+        dbk["region"] = body.drugbank_region
+    if dbk:
+        await db["platform_settings"].update_one(
+            {"_id": "drugbank"}, {"$set": encrypt_fields("drugbank", dbk)}, upsert=True)
     cm: dict = {}
     if body.apifon_token:
         if "@" in body.apifon_token:   # guard: το client_id ΔΕΝ είναι email/login
@@ -1692,10 +1795,23 @@ async def platform_health(_: PlatformContext = Depends(get_platform_admin)):
               for j in sorted((x for x in jobs if x.get("status") == "failed"),
                               key=lambda x: x.get("started_at") or since, reverse=True)[:10]]
     active = await db["subscriptions"].count_documents({"status": "active"})
+    # Vault health + ingestion freshness — αναδεικνύει τη ΣΙΩΠΗΛΗ αποτυχία (ληγμένο token → syncs
+    # «success» με 0 εγγραφές· incident 2026-07-08). Χωρίς αυτό, η σελίδα δείχνει 99% uptime ενώ
+    # στην πραγματικότητα δεν έρχονται δεδομένα.
+    from app.services.vault_service import vault
+    vault_ok = vault.healthy()
+    newest_data = max((j["started_at"] for j in jobs
+                       if (j.get("stats") or {}).get("fetched", 0) > 0 and j.get("started_at")),
+                      default=None)
+    stale_h = round((now - newest_data).total_seconds() / 3600, 1) if newest_data else None
+    alert = (not vault_ok) or (stale_h is not None and stale_h > 6) or (newest_data is None)
     return {
         "summary": {"syncs_30d": runs, "failed_30d": failed, "active_tenants": active,
                     "success_rate": round((runs - failed) / runs * 100, 2) if runs else 100.0},
         "services": jsonsafe(services), "recent_failures": jsonsafe(recent),
+        "vault": {"healthy": vault_ok},
+        "ingest": {"last_data_at": jsonsafe(newest_data), "stale_hours": stale_h},
+        "alert": alert,
     }
 
 
@@ -1882,8 +1998,13 @@ async def recompute_markup(background: BackgroundTasks,
 
 @router.get("/sync-health")
 async def sync_health(_: PlatformContext = Depends(get_platform_admin)):
-    """Latest ingestion sync per (tenant, source) with status + recent error count."""
+    """Latest ingestion sync per (tenant, source) + Vault health + silent-failure detection.
+
+    Silent failure (incident 2026-07-08): ληγμένο Vault token → syncs «success» με 0 εγγραφές.
+    Εδώ το αναδεικνύουμε: Vault status + last_fetched + πότε ήρθαν τελευταία δεδομένα ανά tenant."""
+    from app.services.vault_service import vault
     db = shared_db()
+    now = datetime.now(tz=timezone.utc)
     names = {t["_id"]: t.get("name", t["_id"]) async for t in db["tenants"].find({})}
     pipeline = [
         {"$sort": {"started_at": -1}},
@@ -1891,22 +2012,93 @@ async def sync_health(_: PlatformContext = Depends(get_platform_admin)):
             "_id": {"tenant": "$tenant_id", "source": "$source"},
             "last_run": {"$first": "$started_at"},
             "status": {"$first": "$status"},
+            "last_fetched": {"$first": {"$ifNull": ["$stats.fetched", 0]}},
+            "last_inserted": {"$first": {"$ifNull": ["$stats.inserted", 0]}},
+            # πιο πρόσφατο job που ΕΦΕΡΕ δεδομένα (fetched>0)
+            "last_data_at": {"$max": {"$cond": [{"$gt": [{"$ifNull": ["$stats.fetched", 0]}, 0]},
+                                                "$started_at", None]}},
             "errors": {"$sum": {"$cond": [{"$eq": ["$status", "failed"]}, 1, 0]}},
         }},
         {"$sort": {"last_run": -1}},
     ]
     items = []
+    newest_data = None
     async for row in db["sync_jobs"].aggregate(pipeline):
         key = row["_id"]
+        lda = row.get("last_data_at")
+        if lda and (newest_data is None or lda > newest_data):
+            newest_data = lda
+        data_age_h = round((now - lda).total_seconds() / 3600, 1) if lda else None
+        # «σιωπηλή αποτυχία»: πετυχαίνει αλλά δεν φέρνει δεδομένα εδώ και >6h
+        silent = bool(row.get("status") == "success" and (data_age_h is None or data_age_h > 6))
         items.append({
             "id": f'{key["tenant"]}:{key["source"]}',
             "tenant": names.get(key["tenant"], key["tenant"]),
             "source": key["source"],
             "last_run": row["last_run"],
             "status": row["status"],
+            "last_fetched": row.get("last_fetched", 0),
+            "last_inserted": row.get("last_inserted", 0),
+            "last_data_at": lda,
+            "data_age_hours": data_age_h,
+            "silent_failure": silent,
             "errors": row["errors"],
         })
+    vault_ok = vault.healthy()
+    overall_stale_h = round((now - newest_data).total_seconds() / 3600, 1) if newest_data else None
+    return jsonsafe({
+        "items": items,
+        "vault": {"healthy": vault_ok},
+        "ingest": {"last_data_at": newest_data, "stale_hours": overall_stale_h},
+        # κόκκινος συναγερμός στο adminpanel αν το Vault έπεσε ή δεν ήρθαν δεδομένα εδώ και >6h
+        "alert": (not vault_ok) or (overall_stale_h is not None and overall_stale_h > 6) or (newest_data is None),
+        "checked_at": now,
+    })
+
+
+@router.get("/sessions")
+async def list_sessions(_: PlatformContext = Depends(get_platform_admin)):
+    """Ποιοι είναι ΣΥΝΔΕΔΕΜΕΝΟΙ τώρα: session ανά συσκευή με username, IP, tenant, τελευταία δραστηριότητα."""
+    db = shared_db()
+    names = {t["_id"]: t.get("name", t["_id"]) async for t in db["tenants"].find({}, {"name": 1})}
+    items = []
+    async for s in db["user_sessions"].find({}).sort("last_active_at", -1).limit(500):
+        u = None
+        try:
+            u = await db["users"].find_one({"_id": _oid(s.get("user_id"))}, {"email": 1, "full_name": 1})
+        except Exception:  # noqa: BLE001
+            u = None
+        items.append({
+            "sid": s["_id"],
+            "tenant": names.get(s.get("tenant_id"), s.get("tenant_id")),
+            "tenant_id": s.get("tenant_id"),
+            "username": (u or {}).get("email") or s.get("user_id"),
+            "full_name": (u or {}).get("full_name"),
+            "ip": s.get("ip") or "—",
+            "ua": s.get("ua") or "",
+            "impersonation": bool(s.get("impersonation")),
+            "last_active_at": s.get("last_active_at"),
+            "created_at": s.get("created_at"),
+        })
     return {"items": jsonsafe(items)}
+
+
+@router.post("/sessions/{sid}/revoke")
+async def revoke_session(sid: str, _: PlatformContext = Depends(get_platform_admin)):
+    """Force-logout ΜΙΑΣ session: μπλοκάρει άμεσα το access token (Redis flag) + κόβει το refresh
+    (bump refresh_token_version) → η συσκευή αποσυνδέεται και δεν ξανασυνδέεται με το παλιό token."""
+    from app.services import session_service as sessions
+    db = shared_db()
+    s = await db["user_sessions"].find_one({"_id": sid})
+    if not s:
+        raise HTTPException(http_status.HTTP_404_NOT_FOUND, "session_not_found")
+    await sessions.mark_revoked(sid)                     # Redis flag (άμεσο) + delete session doc
+    try:                                                  # και ανάκληση refresh token της συσκευής
+        await db["users"].update_one({"_id": _oid(s.get("user_id"))},
+                                     {"$inc": {"refresh_token_version": 1}})
+    except Exception:  # noqa: BLE001
+        pass
+    return {"ok": True, "sid": sid}
 
 
 @router.get("/audit-logs")

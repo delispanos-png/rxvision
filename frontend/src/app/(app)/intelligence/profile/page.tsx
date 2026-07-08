@@ -1,9 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Search, User, Wallet, Repeat, Stethoscope, Pill, Sparkles, AlertTriangle, Salad, Target, Eye, Crown, Syringe, ChevronRight, ScanLine, Calendar, CalendarRange } from "lucide-react";
+import { Search, User, Wallet, Repeat, Stethoscope, Pill, Sparkles, AlertTriangle, Salad, Target, Eye, Crown, Syringe, ChevronRight, ScanLine, Calendar, CalendarRange, ShieldAlert } from "lucide-react";
+import { InteractionsModal } from "@/components/clinical/InteractionsModal";
 import { api } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
 import { fmtNum, fmtEur, fmtDec, scanRxBarcode } from "@/lib/formatters";
@@ -66,10 +67,12 @@ export default function PatientProfilePage() {
   const [advice, setAdvice] = useState<Advice | null>(null);
   const [show, setShow] = useState<"missed" | "available" | null>(null);
   const [showExecs, setShowExecs] = useState(false);
+  const [showInter, setShowInter] = useState(false);
   const [g6pd, setG6pd] = useState(false);
   // AI advice is an ai_assistant (Pro) entitlement — hide the block entirely when not granted.
   const meQ = useQuery({ queryKey: ["me"], queryFn: () => api<{ modules?: Record<string, string> }>("/auth/me"), staleTime: 300_000 });
   const aiEntitled = ["enabled", "trial"].includes(meQ.data?.modules?.ai_assistant ?? "");
+  const hasInteractions = ["enabled", "trial"].includes(meQ.data?.modules?.drug_interactions ?? "");
   const [showPortal, setShowPortal] = useState(false);
   const [portalEmail, setPortalEmail] = useState("");
   const [portalResult, setPortalResult] = useState<{ email: string; temp_password: string } | null>(null);
@@ -111,8 +114,16 @@ export default function PatientProfilePage() {
   const changeRange = (m: number) => { setRangeMonths(m); if (identity) search.mutate(`${identity}${rangeParam(m)}`); };
   const pick = (h: Hit) => { setAmka(h.name || h.amka || ""); setOpen(false); load(`patient_id=${encodeURIComponent(h.patient_id)}`); };
   const go = () => { const a = amka.trim(); if (a.length >= 3) load(`amka=${encodeURIComponent(a)}`); };
-  // σάρωση συνταγής (ο σαρωτής «πληκτρολογεί» το barcode + Enter) → φόρτωση πελάτη ΧΩΡΙΣ ΑΜΚΑ
+  // σάρωση συνταγής (ο σαρωτής «πληκτρολογεί» το barcode) → φόρτωση πελάτη ΧΩΡΙΣ ΑΜΚΑ
   const scanGo = () => { const c = scanRxBarcode(scan); if (c.length >= 4) { load(`barcode=${encodeURIComponent(c)}`); setScan(""); } };
+  // Πολλοί σαρωτές ΔΕΝ στέλνουν Enter — μόλις σταματήσει η εισαγωγή ενός πλήρους barcode, ψάξε μόνο του.
+  useEffect(() => {
+    const c = scanRxBarcode(scan);
+    if (c.length < 12) return;                 // πλήρες barcode συνταγής (~13 ψηφία)
+    const id = window.setTimeout(() => { load(`barcode=${encodeURIComponent(c)}`); setScan(""); }, 400);
+    return () => window.clearTimeout(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scan]);
   const p = search.data?.found ? search.data : null;
 
   return (
@@ -146,11 +157,17 @@ export default function PatientProfilePage() {
         {/* Σάρωση συνταγής: ο πελάτης μπαίνει στο φαρμακείο, ο φαρμακοποιός σκανάρει μια συνταγή του
             και βλέπει αμέσως τη συνολική του εικόνα — χωρίς να ρωτήσει ΑΜΚΑ. */}
         <label className="text-xs font-medium text-slate-500">{t("Σάρωση συνταγής", "Scan prescription")}
-          <div className="relative mt-1">
-            <ScanLine className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-brand-500" />
-            <input value={scan} autoFocus onChange={(e) => setScan(e.target.value)} onKeyDown={(e) => e.key === "Enter" && scanGo()}
-              placeholder={t("σκανάρετε το barcode…", "scan the barcode…")}
-              className="w-64 rounded-lg border border-brand-300 bg-brand-50/40 py-2 pl-8 pr-3 text-sm focus:border-brand-500 focus:outline-none dark:border-brand-700 dark:bg-slate-800" />
+          <div className="mt-1 flex items-center gap-1.5">
+            <div className="relative">
+              <ScanLine className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-brand-500" />
+              <input value={scan} autoFocus onChange={(e) => setScan(e.target.value)} onKeyDown={(e) => e.key === "Enter" && scanGo()}
+                placeholder={t("σκανάρετε ή πληκτρολογήστε…", "scan or type…")}
+                className="w-64 rounded-lg border border-brand-300 bg-brand-50/40 py-2 pl-8 pr-3 text-sm focus:border-brand-500 focus:outline-none dark:border-brand-700 dark:bg-slate-800" />
+            </div>
+            <button onClick={scanGo} disabled={scanRxBarcode(scan).length < 4}
+              className="rounded-lg border border-brand-300 px-3 py-2 text-sm font-semibold text-brand-700 hover:bg-brand-50 disabled:opacity-40 dark:border-brand-700 dark:text-brand-300">
+              {t("Εντοπισμός", "Find")}
+            </button>
           </div>
         </label>
       </div>
@@ -318,6 +335,19 @@ export default function PatientProfilePage() {
               </button>
             ))}
           </div>
+
+          {/* Έλεγχος αλληλεπιδράσεων σε ΟΛΗ την ενεργή αγωγή του ασθενή — add-on «drug_interactions» */}
+          {hasInteractions && (
+            <>
+              <button onClick={() => setShowInter(true)}
+                className="inline-flex items-center gap-2 self-start rounded-lg border border-orange-300 bg-orange-50 px-4 py-2 text-sm font-semibold text-orange-700 hover:bg-orange-100 dark:border-orange-800 dark:bg-orange-950/30 dark:text-orange-300">
+                <ShieldAlert className="h-4 w-4" /> {t("Έλεγχος αλληλεπιδράσεων ενεργής αγωγής", "Check active-regimen interactions")}
+              </button>
+              <InteractionsModal open={showInter} onClose={() => setShowInter(false)}
+                title={t("Αλληλεπιδράσεις ενεργής αγωγής", "Active-regimen interactions")}
+                endpoint="/pharmacat/interactions/patient" body={{ patient_id: p.patient.id }} />
+            </>
+          )}
 
           <div className="grid gap-5 lg:grid-cols-2">
             {/* segments + conditions */}

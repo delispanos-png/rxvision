@@ -52,6 +52,23 @@ async def interactions(body: InteractionIn, ctx: TenantContext = Depends(require
     return await _repo(ctx).interactions(ctx.user_id, body.drugs, body.context)
 
 
+@router.post("/interactions/execution/{external_id}")
+async def interactions_execution(external_id: str, ctx: TenantContext = Depends(require("patients:read", module="drug_interactions"))):
+    """Έλεγχος αλληλεπιδράσεων για τα φάρμακα ΜΙΑΣ συνταγής (add-on «drug_interactions»)."""
+    return await _repo(ctx).interactions_for_execution(ctx.user_id, external_id)
+
+
+class PatientInteractionIn(BaseModel):
+    amka: str | None = None
+    patient_id: str | None = None
+
+
+@router.post("/interactions/patient")
+async def interactions_patient(body: PatientInteractionIn, ctx: TenantContext = Depends(require("patients:read", module="drug_interactions"))):
+    """Έλεγχος αλληλεπιδράσεων σε ΟΛΗ την ενεργή αγωγή του ασθενή (add-on «drug_interactions»)."""
+    return await _repo(ctx).interactions_for_patient(ctx.user_id, patient_id=body.patient_id, amka=body.amka)
+
+
 @router.post("/report")
 async def report_wrong(body: ReportIn, ctx: TenantContext = Depends(require("patients:read", module=["ai_assistant", "pharmacat"]))):
     """Flag a cached answer as wrong → shows up in the admin KB curation panel."""

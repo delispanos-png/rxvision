@@ -87,6 +87,30 @@ def check() -> dict:
                 issues.append(("sec-5xx-burst",
                                f"💥 {n5xx} σφάλματα 5xx σε {_SEC_WINDOW_MIN}′ — πιθανή επίθεση ή βλάβη."))
 
+            # 4) Vault reachability — ληγμένο token / seal σταματά ΣΙΩΠΗΛΑ όλους τους ΗΔΥΚΑ syncs
+            #    (φαίνονται success με 0 εγγραφές — incident 2026-07-08).
+            from app.services.vault_service import vault
+            if not vault.healthy():
+                issues.append(("vault-degraded",
+                               "🔒 Το Vault δεν είναι προσβάσιμο (ληγμένο token ή sealed) — ΟΛΟΙ οι ΗΔΥΚΑ "
+                               "συγχρονισμοί σταματούν ΣΙΩΠΗΛΑ (φαίνονται «success» με 0 εγγραφές). Άμεση ενέργεια!"))
+
+            # 5) Ingestion freshness — αν ΚΑΝΕΝΑΣ sync δεν έφερε δεδομένα εδώ και ώρες, σε ώρες λειτουργίας
+            try:
+                from zoneinfo import ZoneInfo
+                ath_hour = now.astimezone(ZoneInfo("Europe/Athens")).hour
+            except Exception:  # noqa: BLE001
+                ath_hour = now.hour
+            if 9 <= ath_hour <= 21:
+                last_data = await db["sync_jobs"].find_one(
+                    {"stats.fetched": {"$gt": 0}}, sort=[("started_at", -1)])
+                ld = _as_dt((last_data or {}).get("started_at"))
+                age_h = ((now - ld).total_seconds() / 3600) if ld else 999
+                if age_h > 6:
+                    issues.append(("ingest-stale",
+                                   f"📥 Κανένας ΗΔΥΚΑ συγχρονισμός δεν έφερε δεδομένα εδώ και ~{age_h:.0f}h "
+                                   "(ώρες λειτουργίας) — πιθανή σιωπηλή αποτυχία (Vault/creds/δίκτυο)."))
+
             if not issues:
                 return {"ok": True, "issues": 0}
 

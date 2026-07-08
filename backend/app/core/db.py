@@ -130,6 +130,9 @@ INDEXES: list[tuple[str, list[tuple[str, int]], dict]] = [
     ("webhook_dedup", [("at", 1)], {"expireAfterSeconds": 24 * 3600}),
     # Per-tenant daily LLM usage meters (Prescriptor cap) — reap after 2 days
     ("llm_daily_usage", [("at", 1)], {"expireAfterSeconds": 2 * 24 * 3600}),
+    # Per-message delivery log (SMS/Viber/email via central Apifon): history UI + DLR lookup.
+    ("sent_messages", [("tenant_id", 1), ("created_at", -1)], {}),
+    ("sent_messages", [("provider_message_id", 1)], {"sparse": True}),
 ]
 
 

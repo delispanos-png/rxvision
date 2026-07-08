@@ -14,6 +14,9 @@ type Health = {
   summary: { syncs_30d: number; failed_30d: number; active_tenants: number; success_rate: number };
   services: Service[];
   recent_failures: Failure[];
+  vault?: { healthy: boolean };
+  ingest?: { last_data_at: string | null; stale_hours: number | null };
+  alert?: boolean;
 };
 
 const STATUS_LABEL: Record<string, { text: string; cls: string }> = {
@@ -67,6 +70,26 @@ export default function HealthPage() {
   return (
     <div>
       <h1 className="mb-6 text-xl font-bold text-slate-900">Κατάσταση πλατφόρμας</h1>
+
+      {/* Vault + σιωπηλή αποτυχία — «φωνάζει» όταν οι ΗΔΥΚΑ syncs σταματούν χωρίς να φαίνεται (incident 2026-07-08) */}
+      {data && (data.alert ? (
+        <div className="mb-6 rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800">
+          <div className="font-bold">🔴 Προσοχή — συγχρονισμοί ΗΔΥΚΑ σε κίνδυνο</div>
+          <div className="mt-0.5">
+            {data.vault && !data.vault.healthy
+              ? "Το Vault δεν είναι προσβάσιμο (ληγμένο token ή sealed) — ΟΛΟΙ οι συγχρονισμοί σταματούν ΣΙΩΠΗΛΑ (φαίνονται «success» με 0 εγγραφές)."
+              : data.ingest?.last_data_at == null
+                ? "Κανένας συγχρονισμός δεν έχει φέρει δεδομένα (30 ημέρες)."
+                : `Κανένα νέο δεδομένο ΗΔΥΚΑ εδώ και ~${data.ingest?.stale_hours}h — πιθανή σιωπηλή αποτυχία (Vault/creds/δίκτυο).`}
+          </div>
+        </div>
+      ) : (
+        <div className="mb-6 flex flex-wrap items-center gap-x-4 gap-y-1 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-sm text-emerald-800">
+          <span className="font-semibold">🟢 Ροή δεδομένων ΗΔΥΚΑ OK</span>
+          <span>Vault: {data.vault?.healthy ? "προσβάσιμο ✓" : "—"}</span>
+          <span>Τελευταία δεδομένα: {data.ingest?.stale_hours != null ? `πριν ${data.ingest.stale_hours}h` : "—"}</span>
+        </div>
+      ))}
 
       {anyDegraded && (
         <div className="mb-6 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-800">

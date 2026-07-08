@@ -103,6 +103,11 @@ async def get_current_context(
         sid=claims.get("sid"),
     )
     request.state.tenant = ctx
+    # Force-logout: an admin «Αποσύνδεση» sets a Redis flag → ο token πεθαίνει ΑΜΕΣΩΣ (fail-open αν Redis down).
+    if ctx.sid:
+        from app.services import session_service as sessions
+        if await sessions.is_revoked(ctx.sid):
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "session_revoked")
     await _touch_activity(ctx.user_id, ctx.sid)
     await _touch_serving(ctx.tenant_id)
     return ctx

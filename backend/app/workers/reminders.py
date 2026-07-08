@@ -171,3 +171,11 @@ def auto_cancel_stale_requests() -> dict:
                         pass
         return {"cancelled": total, "minutes": mins}
     return _run_async(_run())
+
+
+@celery_app.task(name="app.workers.reminders.renew_vault_token")
+def renew_vault_token() -> dict:
+    """Καθημερινή ανανέωση του Vault token της εφαρμογής (periodic) ώστε να μη λήγει ποτέ —
+    το ληγμένο token σταματά ΣΙΩΠΗΛΑ όλους τους ΗΔΥΚΑ syncs (incident 2026-07-08)."""
+    from app.services.vault_service import vault
+    return {"renewed": vault.renew_self()}

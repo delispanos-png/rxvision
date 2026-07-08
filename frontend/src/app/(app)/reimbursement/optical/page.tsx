@@ -246,7 +246,10 @@ export default function OpticalAuditPage() {
     <div className="space-y-6">
       <div className="rounded-2xl border-2 border-dashed border-emerald-300 bg-emerald-50/40 p-6 text-center dark:border-emerald-800 dark:bg-emerald-950/20">
         {aiOn ? <Sparkles className="mx-auto h-10 w-10 text-violet-600" /> : <Camera className="mx-auto h-10 w-10 text-emerald-600" />}
-        <h2 className="mt-2 text-lg font-bold text-slate-900 dark:text-slate-100">{aiOn ? t("Prescriptor — AI ανάγνωση συνταγών", "Prescriptor — AI reads your prescriptions") : t("Σάρωση & οπτικός έλεγχος", "Scan & optical audit")}</h2>
+        <h2 className="mt-2 flex items-center justify-center gap-2 text-lg font-bold text-slate-900 dark:text-slate-100">
+          {aiOn ? t("Prescriptor — AI ανάγνωση συνταγών", "Prescriptor — AI reads your prescriptions") : t("Σάρωση & οπτικός έλεγχος", "Scan & optical audit")}
+          <span className="rounded-full bg-violet-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-violet-700 dark:bg-violet-900/40 dark:text-violet-300">beta</span>
+        </h2>
         <p className="mt-1 text-sm text-slate-500">{aiOn
           ? t("Φωτογράφισε τη συνταγή — το AI διαβάζει ασφαλισμένο, ιατρό, φάρμακα & ποσότητες, κουπόνια, υπογραφές & σφραγίδες, εντοπίζει ασυνέπειες και τις διασταυρώνει αυτόματα με τα δεδομένα ΗΔΥΚΑ. Παίρνεις έτοιμο πόρισμα.",
               "Photograph the prescription — the AI reads insured, doctor, drugs & quantities, coupons, signatures & stamps, spots inconsistencies and cross-checks them against your ΗΔΥΚΑ data automatically. You get a ready verdict.")

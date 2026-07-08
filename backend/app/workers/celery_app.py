@@ -93,6 +93,11 @@ celery_app.conf.beat_schedule = {
         "task": "app.workers.billing.bill_subscriptions",
         "schedule": crontab(hour=6, minute=0),
     },
+    # Εφαρμογή προγραμματισμένων υποβαθμίσεων πακέτου στο τέλος περιόδου/ανανέωση (καθημερινά 05:30 UTC)
+    "apply-scheduled-plan-changes": {
+        "task": "app.workers.billing.apply_scheduled_changes",
+        "schedule": crontab(hour=5, minute=30),
+    },
     # self-heal stuck optical scans (worker death/redeploy) — never leave one hanging
     "reap-stuck-scans": {
         "task": "app.workers.optical.reap_stuck_scans",
@@ -122,5 +127,10 @@ celery_app.conf.beat_schedule = {
     "ops-health-check": {
         "task": "app.workers.ops_health.check",
         "schedule": crontab(minute="*/30"),
+    },
+    # Ανανέωση Vault token (periodic) — να μη λήξει & σταματήσουν σιωπηλά οι ΗΔΥΚΑ syncs (01:00 UTC)
+    "renew-vault-token": {
+        "task": "app.workers.reminders.renew_vault_token",
+        "schedule": crontab(hour=1, minute=0),
     },
 }

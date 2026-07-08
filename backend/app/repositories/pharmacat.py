@@ -134,6 +134,66 @@ class PharmaCatRepository(BaseRepository):
         return await self._cached_ask(ctx_user, [{"role": "user", "content": prompt}], context,
                                       kind="interaction", drugs=drugs)
 
+    async def _ddi(self, ctx_user: str, drugs: list[str], context: dict) -> dict:
+        """Επιλογή πηγής: DrugBank (curated, σταθερό κόστος) όταν έχει ρυθμιστεί κλειδί· αλλιώς/σε
+        σφάλμα → PharmaCat AI (interim). Επιστρέφει την ίδια μορφή {interactions[], checked_drugs}."""
+        from app.services import drugbank_service
+        if await drugbank_service.configured():
+            res = await drugbank_service.check(drugs)
+            if res.get("ok"):
+                res["checked_drugs"] = res.get("checked_drugs") or drugs
+                return res
+            # DrugBank ρυθμισμένο αλλά έσφαλε → AI fallback (σπάνιο· clinical feature να μη μένει χωρίς απάντηση)
+        res = await self.interactions(ctx_user, drugs, context)
+        if isinstance(res, dict):
+            res["checked_drugs"] = drugs
+        return res
+
+    @staticmethod
+    def _dedup(names: list[str]) -> list[str]:
+        seen: set[str] = set()
+        out: list[str] = []
+        for n in names:
+            n = (n or "").strip()
+            if n and n.lower() not in seen:
+                seen.add(n.lower()); out.append(n)
+        return out
+
+    async def interactions_for_execution(self, ctx_user: str, external_id: str) -> dict:
+        """Αλληλεπιδράσεις των φαρμάκων ΜΙΑΣ συνταγής/εκτέλεσης (εκτελεσμένα είδη)."""
+        from app.repositories.prescriptions import PrescriptionRepository
+        detail = await PrescriptionRepository(tenant_id=self.tenant_id).execution_detail(external_id)
+        if not detail:
+            return {"ok": False, "error": "not_found"}
+        drugs = self._dedup([(it.get("substance") or it.get("name") or "")
+                             for it in (detail.get("items") or []) if it.get("is_executed", True)])
+        if not drugs:
+            return {"ok": True, "interactions": [], "checked_drugs": [], "note": "no_drugs"}
+        return await self._ddi(ctx_user, drugs, {"πηγή": "συνταγή", "barcode": external_id})
+
+    async def interactions_for_patient(self, ctx_user: str, *, patient_id: str | None = None,
+                                       amka: str | None = None) -> dict:
+        """Αλληλεπιδράσεις σε ΟΛΗ την ΕΝΕΡΓΗ αγωγή του ασθενή (τρέχουσες θεραπείες, όχι ιστορικό)."""
+        from bson import ObjectId
+        from app.repositories.patient_portal import PatientRxRepository
+        pid = None
+        if patient_id:
+            try:
+                pid = ObjectId(patient_id)
+            except Exception:  # noqa: BLE001
+                pid = None
+        if pid is None and amka:
+            pa = await self._db["patients_anonymized"].find_one(
+                {"tenant_id": self.tenant_id, "amka": (amka or "").strip()})
+            pid = pa["_id"] if pa else None
+        if pid is None:
+            return {"ok": False, "error": "patient_not_found"}
+        sched = await PatientRxRepository(tenant_id=self.tenant_id).medication_schedule(str(pid))
+        drugs = self._dedup([t.get("name") or "" for t in (sched.get("therapies") or [])])
+        if not drugs:
+            return {"ok": True, "interactions": [], "checked_drugs": [], "note": "no_active"}
+        return await self._ddi(ctx_user, drugs, {"πηγή": "ενεργή αγωγή ασθενή"})
+
     async def _record(self, user: str, messages: list[dict], context: dict | None,
                       res: dict, *, kind: str, drugs: list[str] | None = None,
                       source: str = "llm") -> None:

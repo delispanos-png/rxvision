@@ -37,11 +37,3 @@ class SubscriptionRepository(BaseRepository):
             "modules_included": sub.get("modules_included", []),
             "addons": sub.get("addons", []),
         }
-
-    async def set_checkout_pending(self, *, plan: str, seats: int, addons: list[str]) -> None:
-        await self.update_one(
-            {},
-            {"$set": {"pending_change": {"plan": plan, "seats": seats, "addons": addons},
-                      "status": "pending_checkout"}},
-            upsert=True,
-        )
