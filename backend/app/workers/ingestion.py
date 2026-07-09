@@ -10,6 +10,7 @@ configured; each runs an incremental sync. Idempotent via natural key + content 
 from __future__ import annotations
 
 import asyncio
+import re
 from datetime import datetime, timedelta, timezone
 
 import redis as _redis
@@ -559,3 +560,60 @@ def reap_stalled_sync(stall_minutes: int = 10) -> dict:
 def gesy_xml_ingest(tenant_id: str, object_ref: str) -> dict:
     """ΓΕΣΥ (CY) — step 2. Parse stored XML via the same engine. Placeholder."""
     return {"tenant_id": tenant_id, "status": "stub", "note": "GESY automation = step 2"}
+
+
+@celery_app.task(name="app.workers.ingestion.heal_missing_cda")
+def heal_missing_cda(limit_per_tenant: int = 25) -> dict:
+    """SELF-HEAL: εκτελέσεις που μπήκαν με ΠΑΛΙΟΤΕΡΟ parser δεν έχουν κάποια CDA-πεδία (π.χ.
+    `details.intangible` «άυλη συνταγή» = 1.5.10). Ξανα-ανακτούμε την CDA & γεμίζουμε το πεδίο ΟΤΑΝ η
+    ΗΔΥΚΑ είναι διαθέσιμη — best-effort & throttled: αν η CDA πέφτει (503) σταματάμε νωρίς και
+    ξαναδοκιμάζουμε στο επόμενο run. Παύει για tenants σε auth-pause (μη χτυπάμε με λάθος κωδικό)."""
+    from app.services.ingestion.hdika_client import HdikaClient
+
+    async def _run() -> dict:
+        client, db = _fresh_db()
+        try:
+            from app.api.v1.routers.ingestion import _effective_hdika_creds
+            healed = scanned = 0
+            tenants = [str(t["_id"]) async for t in db["tenants"].find(
+                {"country": "GR", "status": {"$in": ["active", "trial"]},
+                 "credentials_ref.hdika": {"$ne": None},
+                 "ingestion_config.hdika.auth_paused": {"$ne": True}}, {"_id": 1})]
+            for tid in tenants:
+                seen, barcodes = set(), []
+                async for e in db["prescription_executions"].find(
+                        {"tenant_id": tid, "details.intangible": {"$exists": False}},
+                        {"external_id": 1}).sort("executed_at", -1).limit(limit_per_tenant * 4):
+                    bc = str(e["external_id"]).split(":")[0]
+                    if bc not in seen:
+                        seen.add(bc)
+                        barcodes.append(bc)
+                    if len(barcodes) >= limit_per_tenant:
+                        break
+                if not barcodes:
+                    continue
+                creds = dict(await _effective_hdika_creds(tid))
+                creds.setdefault("throttle", 0.15)
+                cl = HdikaClient(creds)
+                fails = 0
+                try:
+                    for bc in barcodes:
+                        scanned += 1
+                        cda = await asyncio.to_thread(cl._fetch_cda, bc)  # sync → thread (best-effort)
+                        if cda and "intangible" in cda:
+                            await db["prescription_executions"].update_many(
+                                {"tenant_id": tid, "external_id": {"$regex": "^" + re.escape(bc)}},
+                                {"$set": {"details.intangible": bool(cda.get("intangible"))}})
+                            healed += 1
+                            fails = 0
+                        else:
+                            fails += 1
+                            if fails >= 5:      # η ΗΔΥΚΑ μάλλον down → σταμάτα, ξαναδοκίμασε αργότερα
+                                break
+                finally:
+                    cl.close()
+            return {"healed_barcodes": healed, "scanned": scanned}
+        finally:
+            client.close()
+
+    return _run_async(_run())

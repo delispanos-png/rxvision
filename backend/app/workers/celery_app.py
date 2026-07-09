@@ -88,6 +88,12 @@ celery_app.conf.beat_schedule = {
         "task": "app.workers.ingestion.dispatch_influenza_sync",
         "schedule": crontab(hour=4, minute=30),
     },
+    # Self-heal ΗΔΥΚΑ CDA-πεδία που έλειψαν από παλιότερο parser (π.χ. «άυλη»/intangible) — κάθε 2 ώρες,
+    # best-effort/throttled (σταματά αν η CDA είναι 503· ξαναδοκιμάζει). Offset από τους syncs.
+    "heal-missing-cda": {
+        "task": "app.workers.ingestion.heal_missing_cda",
+        "schedule": crontab(minute=40, hour="*/2"),
+    },
     # Subscription billing — charge due trials/renewals; auto-suspend on failure (no-op w/o Revolut)
     "bill-subscriptions": {
         "task": "app.workers.billing.bill_subscriptions",
