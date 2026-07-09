@@ -42,6 +42,20 @@ def _form_auto_checked(form_code: str | None, package_form: str | None, name: st
     return False
 
 
+def _oral_multidose_vial(form_code: str | None, package_form: str | None, name: str | None) -> bool:
+    """Πόσιμο διάλυμα/εναιώρημα σε ΠΟΛΛΑΠΛΕΣ αμπούλες/φιαλίδια (π.χ. VIOFER PS.OR.SOL BTx10 VIALS): η
+    δόση είναι ΑΝΑ ΑΜΠΟΥΛΑ → ο φαρμακοποιός ΠΡΕΠΕΙ να ελέγξει πόσες αμπούλες/ημέρα, ΑΝΕΞΑΡΤΗΤΑ από το
+    overdoseMessageType της ΗΔΥΚΑ («E») — που για αυτές τις μορφές ΔΕΝ υποκαθιστά τον οπτικό έλεγχο
+    (σε αντίθεση με το σιρόπι σε ΕΝΑ μπουκάλι). ΕΞΑΙΡΟΥΝΤΑΙ οι ΑΝΑΠΝΕΥΣΤΙΚΕΣ αμπούλες (τις ελέγχει η ΗΔΥΚΑ)."""
+    f = (form_code or "").upper()
+    pf = (package_form or "").upper()
+    n = (name or "").upper()
+    oral = "OR.SOL" in f or "OR.SUSP" in f or "OR.SO" in f or "POS" in f or "ΠΟΣΙΜ" in n
+    vial = "VIAL" in pf or "VIAL" in n or "AMP" in pf or "ΑΜΠ" in n or "ΦΙΑΛ" in n
+    resp = "NEB" in f or "ΑΝΑΠΝΕΥΣ" in n or "ΕΙΣΠΝ" in n
+    return oral and vial and not resp
+
+
 def _overdose_detail(item: dict, cat: dict) -> str:
     d = item.get("dose")
     freq = item.get("frequency")
@@ -87,9 +101,12 @@ def check_item(item: dict, cat: dict, *, ultra_levure_enabled: bool = True) -> l
     omt = (cat.get("overdose_message_type") or "").upper()
     qty = item.get("quantity") or 1
     auto = _form_auto_checked(cat.get("form_code"), cat.get("package_form"), item.get("name"))
+    # Πόσιμη αμπούλα/φιαλίδιο (π.χ. VIOFER): χρειάζεται οπτικό έλεγχο δοσολογίας ΑΚΟΜΗ κι αν omt=="E"
+    # (η ΗΔΥΚΑ «E» δεν πιάνει τη δόση ανά αμπούλα). Root fix: ισχύει για ΟΛΕΣ τις πόσιμες αμπούλες.
+    oral_vial = _oral_multidose_vial(cat.get("form_code"), cat.get("package_form"), item.get("name"))
 
     # ── 1. Υπερδοσολογία ── (μόνο αν ποσότητα > 1· με 1 τεμάχιο δίνουμε το ελάχιστο → χωρίς έλεγχο)
-    if omt != "E" and not auto and qty > 1:
+    if (omt != "E" or oral_vial) and not auto and qty > 1:
         checks.append({"type": "overdose", "level": "warning",
                        "title": "Οπτικός έλεγχος υπερδοσολογίας",
                        "detail": _overdose_detail(item, cat)})
