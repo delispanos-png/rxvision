@@ -859,18 +859,21 @@ class ReimbursementRepository(BaseRepository):
                 if float(d.get("participation_pct") or 0) == 100.0:
                     row["_n100"] = row.get("_n100", 0) + 1
                 coupons = d.get("coupons") or []
-                if any(c.get("qr") is False for c in coupons):
+                # ΑΝΑ ΕΚΤΕΛΕΣΗ (μερική εκτέλεση): κράτα ΜΟΝΟ τα κουπόνια αυτής της φάσης — η CDA αποθηκεύει
+                # ΟΛΑ τα κουπόνια σε ΚΑΘΕ φάση, οπότε χωρίς φιλτράρισμα μια ΑΥΛΗ (all-QR) φάση φαινόταν
+                # λάθος ότι έχει ταινία (has_strip) από κουπόνι άλλης φάσης.
+                exno = int(row["exec_no"]) if str(row.get("exec_no") or "").isdigit() else None
+                pc = [c for c in coupons if exno is None
+                      or int(float(c.get("execution_no") or 0)) == exno]
+                if any(c.get("qr") is False for c in pc):
                     row["has_strip"] = True
                 if eof in narc:
                     row["is_narcotic"] = True
                 if eof in note:
                     row["hdika_note"] = True
-                # δοσολογία ΑΝΑ ΕΚΤΕΛΕΣΗ: τεμάχια ΑΥΤΗΣ της φάσης (coupons με execution_no) > 1
-                if eof in dose:
-                    exno = int(row["exec_no"]) if str(row.get("exec_no") or "").isdigit() else 1
-                    pieces = sum(1 for c in coupons if int(float(c.get("execution_no") or exno)) == exno)
-                    if pieces > 1:
-                        row["needs_dose_check"] = True
+                # δοσολογία ΑΝΑ ΕΚΤΕΛΕΣΗ: τεμάχια ΑΥΤΗΣ της φάσης (pc = κουπόνια της φάσης) > 1
+                if eof in dose and len(pc) > 1:
+                    row["needs_dose_check"] = True
             for row in doc_map.values():
                 if row.get("has_strip") or row.get("is_narcotic") or row.get("hdika_note") or row.get("needs_dose_check"):
                     row["needs_check"] = True
