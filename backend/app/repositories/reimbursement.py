@@ -1213,7 +1213,11 @@ class ReimbursementRepository(BaseRepository):
         # consistent, no eof-collision) + opinion (cached). The scan path uses our stored items.
         opinion = scoped[0].get("has_opinion")
         cda_lines: list = []
-        if live:
+        # PERF: για ΣΥΓΚΕΚΡΙΜΕΝΗ εκτέλεση (scope_exec) τα κουπόνια έρχονται από τα ΑΠΟΘΗΚΕΥΜΕΝΑ items —
+        # το live CDA χρειάζεται ΜΟΝΟ για τη γνωμάτευση, που είναι prescription-level & cache-άρεται στο
+        # 1ο άνοιγμα. Άρα παρακάμπτουμε την αργή κλήση ΗΔΥΚΑ όταν η γνωμάτευση είναι ήδη γνωστή (π.χ. 2η
+        # εκτέλεση της ίδιας συνταγής) → χωρίς καθυστέρηση. (Unscoped/άγνωστη γνωμάτευση → κανονικά.)
+        if live and not (scope_exec is not None and opinion is not None):
             from app.services.ingestion.cda_lookup import fetch_cda_info
             try:
                 info = await fetch_cda_info(self.tenant_id, self._db, bc)
