@@ -808,20 +808,25 @@ class ReimbursementRepository(BaseRepository):
             ext = str(r["_id"])
             root = ext.split(":")[0]                       # 13ψήφιο barcode συνταγής
             exno = ext.split(":")[1] if ":" in ext else None  # αριθμός εκτέλεσης/φάσης
+            # Πρωτότυπη χάρτινη: η μη-άυλη συνταγή χρειάζεται την πρωτότυπη του ιατρού στη ΦΑΣΗ 1
+            # (πρώτη εκτέλεση) — ΟΧΙ μόνο όταν είναι μονή. Σε επαναλαμβανόμενη έντυπη, η πρωτότυπη
+            # κατατίθεται μία φορά (στη φάση 1)· οι επόμενες φάσες την αναφέρουν. (ec δεν κρίνει πλέον.)
+            first_phase = (exno is None) or (str(exno) == "1")
+            needs_orig = (not bool(r.get("intangible"))) and first_phase
             allrows.append({
                 "barcode": root, "external_id": ext, "exec_no": exno,
                 "claim": r["claim"], "retail": r.get("retail", 0), "executed_at": r["executed_at"],
                 "day": r["executed_at"].strftime("%Y-%m-%d") if r.get("executed_at") else None,
                 "fund": glabel, "group": glabel, "is_eopyy": is_eo, "is_vaccine": is_vac,
                 "is_100": is_100, "is_fyk": bool(r.get("n3816")), "is_etyap": bool(r.get("supp")),
-                "needs_original": (not bool(r.get("intangible"))) and ((ec or 1) <= 1),
+                "needs_original": needs_orig,
                 "needs_dose_check": False,   # υπολογίζεται ΑΝΑ ΕΚΤΕΛΕΣΗ στο 2ο πέρασμα (τεμάχια φάσης > 1)
                 "has_opinion": bool(r.get("opinion")), "has_desens": bool(r.get("desens")),
                 # χρειάζεται έλεγχο = ταινία γνησιότητας (μη-QR) Ή κάποια ιδιαιτερότητα (δοσολογία/E,
                 # ΦΥΚ, γνωμάτευση, απευαισθητοποίηση, ναρκωτικό, πρωτότυπη, ή φάρμακο με σημείωση ΗΔΥΚΑ).
                 # base εδώ· δοσολογία/strips/catalog-attention προστίθενται στο 2ο πέρασμα παρακάτω.
                 "needs_check": bool(r.get("n3816") or r.get("opinion") or r.get("desens")
-                                    or r.get("narcotic") or ((not bool(r.get("intangible"))) and ((ec or 1) <= 1))),
+                                    or r.get("narcotic") or needs_orig),
                 # checked ανά εκτέλεση (νέο) ή ανά barcode-root (παλιό state) — συμβατό και τα δύο
                 "checked": (ext in checked) or (root in checked),
                 "visual_checked": (ext in vchecked) or (root in vchecked)})
@@ -927,10 +932,14 @@ class ReimbursementRepository(BaseRepository):
         d = ex.get("details") or {}
         intangible = bool(d.get("intangible"))            # 1.5.10
         exec_count = d.get("exec_count")                  # 1.1.19
+        ext = str(ex.get("external_id") or "")
+        exno = ext.split(":")[1] if ":" in ext else None  # φάση εκτέλεσης
+        first_phase = (exno is None) or (str(exno) == "1")
         return {
             "is_intangible": intangible,
-            # α) μη άυλη + πρώτη/μοναδική εκτέλεση → χρειάζεται η πρωτότυπη χάρτινη συνταγή ιατρού
-            "needs_original": (not intangible) and ((exec_count or 1) <= 1),
+            # α) μη άυλη + ΦΑΣΗ 1 (πρώτη εκτέλεση) → χρειάζεται η πρωτότυπη χάρτινη συνταγή ιατρού. Σε
+            # επαναλαμβανόμενη έντυπη η πρωτότυπη κατατίθεται ΜΙΑ φορά (φάση 1)· ΟΧΙ μόνο όταν είναι μονή.
+            "needs_original": (not intangible) and first_phase,
             "is_fyk": bool(d.get("n3816")),               # β) ΦΥΚ Ν.3816/10 (1.1.14)
             "has_desensitization": bool(d.get("desensitization")),  # γ) εμβόλιο απευαισθητοποίησης (1.1.8)
             "has_opinion": bool(d.get("opinion")),        # δ) γνωμάτευση (1.1.23)
@@ -949,6 +958,12 @@ class ReimbursementRepository(BaseRepository):
         bc = digits[:13]
         if not bc:
             return {"ok": False, "error": "empty"}
+        # Άκυρο ΜΗΚΟΣ: τα barcode συνταγών ΗΔΥΚΑ είναι 13 ψηφία (προαιρετικά +3 για τη φάση εκτέλεσης).
+        # Λιγότερα ψηφία = ΚΟΜΜΕΝΟ/λάθος σκανάρισμα (π.χ. έπεσε ένα ψηφίο: 2607061395384 → 267061395384).
+        # ΔΕΝ το καταγράφουμε ως «extra» (θα φαινόταν λανθασμένα «εκτός δεδομένων») — ζητάμε ξανασκανάρισμα.
+        if len(digits) < 13:
+            return {"ok": False, "found": False, "invalid_length": True,
+                    "barcode": digits, "digits": len(digits), "n_executions": 0}
         # αριθμός μερικής εκτέλεσης: από χειροκίνητο «:N» ή από το 16ο ψηφίο
         if ":" in orig and orig.split(":", 1)[1][:1].isdigit():
             seq = int(orig.split(":", 1)[1][0])
@@ -1002,6 +1017,12 @@ class ReimbursementRepository(BaseRepository):
         total_exec = len([e for e in all_exs if start <= e["executed_at"] < end])
         res = {"ok": True, "found": True, "barcode": bc, "n_executions": total_exec}
         res["flags"] = self._submission_flags(targets[0])
+        # Ασφαλιστικός φορέας — να ΤΟΝΙΖΕΤΑΙ ΟΤΑΝ ΔΕΝ είναι ΕΟΠΥΥ (π.χ. Ένοπλες Δυνάμεις/ΓΕΣ, ΤΥΠΕΤ):
+        # αυτές οι συνταγές κατατίθενται ΞΕΧΩΡΙΣΤΑ στο δικό τους ταμείο, όχι στον ΕΟΠΥΥ.
+        fmeta = (await self._fund_meta()).get(targets[0].get("fund_id")) or {}
+        res["flags"]["is_eopyy"] = bool(fmeta.get("is_eopyy"))
+        res["flags"]["fund"] = fmeta.get("group") or fmeta.get("name") or "—"
+        res["flags"]["fund_name"] = fmeta.get("name") or "—"
         if len(targets) == 1:         # μία μερική εκτέλεση → popup με τα κουπόνια ΑΥΤΗΣ (scope ανά :N)
             res["external_id"] = targets[0]["external_id"]
             if ":" in targets[0]["external_id"]:
@@ -1264,6 +1285,7 @@ class ReimbursementRepository(BaseRepository):
             "ok": True, "found": True, "barcode": bc,
             "exec_no": scope_exec,
             "fund": meta.get(scoped[0].get("fund_id"), {}).get("group", "—"),
+            "is_eopyy": bool(meta.get(scoped[0].get("fund_id"), {}).get("is_eopyy")),
             "claim": sum(e.get("amount_claimed", 0) for e in scoped),
             "n_coupons": sum(ln.get("quantity", 1) for ln in lines if ln.get("executed", True)),
             "has_opinion": opinion,                    # prescription-level γνωμάτευση (None=unknown)

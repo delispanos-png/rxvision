@@ -600,10 +600,13 @@ def heal_missing_cda(limit_per_tenant: int = 25) -> dict:
                     for bc in barcodes:
                         scanned += 1
                         cda = await asyncio.to_thread(cl._fetch_cda, bc)  # sync → thread (best-effort)
-                        if cda and "intangible" in cda:
+                        # parse_cda_full βάζει το «άυλη» (1.5.10) στο cda["details"]["intangible"]
+                        # — ΟΧΙ top-level. Διαβάζουμε τη ΣΩΣΤΗ (πραγματική) τιμή True/False από την CDA.
+                        cda_det = (cda or {}).get("details") or {}
+                        if cda and "intangible" in cda_det:
                             await db["prescription_executions"].update_many(
                                 {"tenant_id": tid, "external_id": {"$regex": "^" + re.escape(bc)}},
-                                {"$set": {"details.intangible": bool(cda.get("intangible"))}})
+                                {"$set": {"details.intangible": bool(cda_det.get("intangible"))}})
                             healed += 1
                             fails = 0
                         else:

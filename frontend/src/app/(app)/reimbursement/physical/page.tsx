@@ -19,7 +19,7 @@ type DayRow = { date: string; total: number; checked: number };
 type Summary = { total: number; needs_check: number; clean: number; dose: number; fyk: number; narcotic: number; needs_original: number; opinion: number; desensitization: number; strips: number; hdika_note: number; vaccine: number };
 type Check = { period: string; group: string; groups: string[]; total: number; checked: number; remaining: number; extra: string[]; summary?: Summary; by_day: DayRow[]; items: Item[] };
 type Coupon = { name: string; barcode: string; quantity: number; category: string; executed: boolean; qr: boolean | null; qr_batch: string | null; qr_expiry: string | null; lot: string | null };
-type Detail = { ok: boolean; found: boolean; barcode: string; exec_no?: number | null; fund: string; claim: number; n_coupons: number; has_opinion: boolean | null; is_fyk: boolean; has_vaccine: boolean; has_narcotic: boolean; is_etyap?: boolean; needs_original?: boolean; partial: boolean; coupons: Coupon[] };
+type Detail = { ok: boolean; found: boolean; barcode: string; exec_no?: number | null; fund: string; is_eopyy?: boolean; claim: number; n_coupons: number; has_opinion: boolean | null; is_fyk: boolean; has_vaccine: boolean; has_narcotic: boolean; is_etyap?: boolean; needs_original?: boolean; partial: boolean; coupons: Coupon[] };
 type RxCheck = { type: string; level: string; title: string; detail: string; category?: "closing" | "advisory" | "info" };
 type ClosingChecksRes = { items: { name: string; barcode: string | null; checks: RxCheck[] }[]; count: number; warnings: number };
 
@@ -70,8 +70,8 @@ function CategorizedChecks({ res, t }: { res: ClosingChecksRes | null; t: (el: s
     </div>
   );
 }
-type ScanFlags = { is_intangible: boolean; needs_original: boolean; is_fyk: boolean; has_desensitization: boolean; has_opinion: boolean; has_vaccine: boolean; is_etyap: boolean; exec_count: number | null };
-type ScanRes = { ok: boolean; found: boolean; barcode: string; external_id?: string; exec_no?: string; n_executions?: number; wrong_day?: boolean; actual_days?: string[]; flags?: ScanFlags };
+type ScanFlags = { is_intangible: boolean; needs_original: boolean; is_fyk: boolean; has_desensitization: boolean; has_opinion: boolean; has_vaccine: boolean; is_etyap: boolean; exec_count: number | null; is_eopyy?: boolean; fund?: string; fund_name?: string };
+type ScanRes = { ok: boolean; found: boolean; barcode: string; external_id?: string; exec_no?: string; n_executions?: number; wrong_day?: boolean; actual_days?: string[]; invalid_length?: boolean; digits?: number; flags?: ScanFlags };
 const grDate = (d: string) => d.split("-").reverse().join("/");
 
 function fmtDay(d: string) { try { return new Date(d + "T00:00:00").toLocaleDateString("el-GR", { weekday: "long", day: "numeric", month: "long" }); } catch { return d; } }
@@ -149,6 +149,13 @@ export default function PhysicalCheckPage() {
     mutationFn: ({ barcode, day }: { barcode: string; day?: string }) =>
       api<ScanRes>(`/reimbursement/physical/scan?period=${period}${day ? `&day=${encodeURIComponent(day)}` : ""}`, { method: "POST", body: JSON.stringify({ barcode }) }),
     onSuccess: (r) => {
+      if (r.invalid_length) {   // κομμένο/λάθος σκανάρισμα (λιγότερα από 13 ψηφία) → ΔΕΝ το καταγράφουμε
+        appAlert(
+          t(`Άκυρο σκανάρισμα: ${r.digits ?? "<13"} ψηφία αντί για 13. Το barcode διαβάστηκε κομμένο (έπεσε ψηφίο) — ξανασκάναρε τη συνταγή ή πληκτρολόγησε το 13ψήφιο barcode.`,
+            `Invalid scan: ${r.digits ?? "<13"} digits instead of 13. The barcode was read truncated — re-scan the prescription or type the 13-digit barcode.`),
+          { title: t("⚠️ Κομμένο barcode", "⚠️ Truncated barcode") });
+        return;
+      }
       if (r.wrong_day) {     // βρέθηκε στον μήνα αλλά ΟΧΙ σε αυτή την ημέρα → ειδοποίηση, χωρίς μαρκάρισμα
         const days = (r.actual_days || []).map(grDate).join(", ");
         appAlert(
@@ -268,6 +275,7 @@ export default function PhysicalCheckPage() {
     const tot = data?.total ?? 0; const scn = data?.checked ?? 0; const rem = data?.remaining ?? (tot - scn);
     const todo: string[] = [];
     if (detail?.found) {
+      if (detail.is_eopyy === false && detail.fund && detail.fund !== "—") todo.push(t(`🏛️ ΔΕΝ είναι ΕΟΠΥΥ — ${detail.fund}: ξεχωριστή κατάθεση στο ταμείο.`, `🏛️ NOT ΕΟΠΥΥ — ${detail.fund}: separate submission.`));
       if (detail.needs_original) todo.push(t("📄 Επισύναψε την ΠΡΩΤΟΤΥΠΗ χάρτινη συνταγή.", "📄 Attach the ORIGINAL paper Rx."));
       if (detail.has_opinion) todo.push(t("📋 Επισύναψε τη ΓΝΩΜΑΤΕΥΣΗ.", "📋 Attach the medical opinion."));
       if (detail.is_fyk) todo.push(t("💊 ΦΥΚ — αντίγραφο τιμολογίου.", "💊 High-cost — invoice copy."));
@@ -557,6 +565,7 @@ export default function PhysicalCheckPage() {
   // ── Πλαϊνά panels (αντικαθιστούν το pop-up): κουπόνια ΔΕΞΙΑ, μηνύματα/τι-να-κάνεις ΑΡΙΣΤΕΡΑ ──
   const sideTodo: string[] = [];
   if (detail?.found) {
+    if (detail.is_eopyy === false && detail.fund && detail.fund !== "—") sideTodo.push(t(`🏛️ ΔΕΝ είναι ΕΟΠΥΥ — ${detail.fund}: ξεχωριστή κατάθεση στο ταμείο.`, `🏛️ NOT ΕΟΠΥΥ — ${detail.fund}: separate submission.`));
     if (detail.needs_original) sideTodo.push(t("📄 Επισύναψε την ΠΡΩΤΟΤΥΠΗ χάρτινη συνταγή.", "📄 Attach the ORIGINAL paper Rx."));
     if (detail.has_opinion) sideTodo.push(t("📋 Επισύναψε τη ΓΝΩΜΑΤΕΥΣΗ.", "📋 Attach the medical opinion."));
     if (detail.is_fyk) sideTodo.push(t("💊 ΦΥΚ — αντίγραφο τιμολογίου.", "💊 High-cost — invoice copy."));
@@ -721,6 +730,7 @@ export default function PhysicalCheckPage() {
             </div>
             {last.found && last.flags && (
               <div className="flex flex-wrap gap-1.5">
+                {last.flags.is_eopyy === false && last.flags.fund && <span className="rounded-md bg-orange-100 px-2 py-1 text-xs font-bold text-orange-800 ring-1 ring-orange-300">🏛️ {t(`ΔΕΝ είναι ΕΟΠΥΥ · ${last.flags.fund} — ξεχωριστή κατάθεση`, `NOT ΕΟΠΥΥ · ${last.flags.fund} — separate submission`)}</span>}
                 {last.flags.needs_original && <span className="rounded-md bg-amber-100 px-2 py-1 text-xs font-semibold text-amber-800">📄 {t("Χρειάζεται πρωτότυπη συνταγή ιατρού", "Needs original paper Rx")}</span>}
                 {last.flags.is_fyk && <span className="rounded-md bg-fuchsia-100 px-2 py-1 text-xs font-semibold text-fuchsia-800">💊 {t("ΦΥΚ (Ν.3816)", "High-cost (L.3816)")}</span>}
                 {last.flags.has_desensitization && <span className="rounded-md bg-rose-100 px-2 py-1 text-xs font-semibold text-rose-800">🧪 {t("Εμβόλιο απευαισθητοποίησης — βάλε & αντίγραφο τιμολογίου παραλαβής", "Desensitization vaccine — include purchase invoice copy")}</span>}
