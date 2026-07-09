@@ -839,11 +839,11 @@ class ReimbursementRepository(BaseRepository):
             dose = {str(d["_id"]) async for d in self._db["medicine_catalog"].find(  # σκευάσματα με οπτικό έλεγχο δοσολογίας
                 {"$or": [
                     {"needs_dose_check": True},
-                    # Πόσιμες αμπούλες/φιαλίδια (π.χ. VIOFER PS.OR.SOL BTx10 VIALS): έλεγχος δόσης ΑΝΑ
-                    # αμπούλα, ακόμη κι αν omt=="E" — ίδια λογική με prescription_checks (root fix).
-                    {"$and": [{"form_code": {"$regex": r"OR\.SO|OR\.SUSP|POS", "$options": "i"}},
+                    # Αμπούλες/φιαλίδια — πόσιμες (VIOFER PS.OR.SOL) ή ΕΝΕΣΙΜΕΣ (BRIKLIN INJ.SOL): έλεγχος
+                    # δόσης ΑΝΑ αμπούλα ακόμη κι αν omt=="E" — ίδια λογική με prescription_checks (root fix).
+                    {"$and": [{"form_code": {"$regex": r"INJ|OR\.SO|OR\.SUSP|SUSP|POS", "$options": "i"}},
                               {"package_form": {"$regex": "VIAL|AMP|ΦΙΑΛ", "$options": "i"}},
-                              {"form_code": {"$not": {"$regex": "NEB", "$options": "i"}}}]}]},
+                              {"form_code": {"$not": {"$regex": "NEB|INHAL", "$options": "i"}}}]}]},
                 {"_id": 1})}
             async for it in self._db["prescription_items"].find(
                     {"tenant_id": self.tenant_id, "execution_id": {"$in": list(doc_map.keys())}},
