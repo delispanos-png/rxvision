@@ -845,6 +845,11 @@ class ReimbursementRepository(BaseRepository):
                               {"package_form": {"$regex": "VIAL|AMP|ΦΙΑΛ", "$options": "i"}},
                               {"form_code": {"$not": {"$regex": "NEB|INHAL", "$options": "i"}}}]}]},
                 {"_id": 1})}
+            # Πολυδοσικοί περιέκτες (σταγόνες/σιρόπι σε μπουκάλι — π.χ. SIMBRINZA EY.DRO.SUS): 1 τεμάχιο =
+            # πολλές δόσεις → έλεγχος δοσολογίας ΑΚΟΜΗ κι αν το κουπόνι είναι ΕΝΑ (δεν ισχύει το >1).
+            multidose = {str(d["_id"]) async for d in self._db["medicine_catalog"].find(
+                {"form_code": {"$regex": r"DRO|DROP|ΣΤΑΓ|SYR|OR\.SO|OR\.SUSP", "$options": "i"},
+                 "$nor": [{"form_code": {"$regex": "INJ", "$options": "i"}}]}, {"_id": 1})}
             async for it in self._db["prescription_items"].find(
                     {"tenant_id": self.tenant_id, "execution_id": {"$in": list(doc_map.keys())}},
                     {"execution_id": 1, "details.eof_code": 1, "details.coupons.qr": 1,
@@ -871,8 +876,9 @@ class ReimbursementRepository(BaseRepository):
                     row["is_narcotic"] = True
                 if eof in note:
                     row["hdika_note"] = True
-                # δοσολογία ΑΝΑ ΕΚΤΕΛΕΣΗ: τεμάχια ΑΥΤΗΣ της φάσης (pc = κουπόνια της φάσης) > 1
-                if eof in dose and len(pc) > 1:
+                # δοσολογία ΑΝΑ ΕΚΤΕΛΕΣΗ: >1 τεμάχιο ΑΥΤΗΣ της φάσης· ΕΞΑΙΡΕΣΗ πολυδοσικού περιέκτη
+                # (σταγόνες/σιρόπι) → έλεγχος & με 1 τεμάχιο (1 μπουκάλι = πολλές δόσεις).
+                if eof in dose and (len(pc) > 1 or eof in multidose):
                     row["needs_dose_check"] = True
             for row in doc_map.values():
                 if row.get("has_strip") or row.get("is_narcotic") or row.get("hdika_note") or row.get("needs_dose_check"):

@@ -57,6 +57,17 @@ def _vial_dose_check(form_code: str | None, package_form: str | None, name: str 
     return liquid and vial and not resp
 
 
+def _multidose_container(form_code: str | None, name: str | None) -> bool:
+    """Πολυδοσικός περιέκτης — 1 τεμάχιο = ΠΟΛΛΕΣ δόσεις (οφθαλμικές/ωτικές/ρινικές ΣΤΑΓΟΝΕΣ, ΣΙΡΟΠΙ,
+    ΠΟΣΙΜΟ διάλυμα/εναιώρημα σε μπουκάλι/φιάλη — π.χ. SIMBRINZA EY.DRO.SUS): ο έλεγχος δόσης-vs-διάρκειας
+    χρειάζεται ΑΚΟΜΗ κι αν qty==1 (η ΗΔΥΚΑ δεν πιάνει πόσες σταγόνες/ml/ημέρα). Τα ενέσιμα/αμπούλες τα
+    πιάνει το _vial_dose_check (ανά τεμάχιο), ΟΧΙ εδώ."""
+    f = (form_code or "").upper()
+    n = (name or "").upper()
+    return ("INJ" not in f) and ("DRO" in f or "DROP" in f or "ΣΤΑΓ" in n
+            or "SYR" in f or "ΣΙΡΟΠ" in n or "OR.SO" in f or "OR.SUSP" in f)
+
+
 def _overdose_detail(item: dict, cat: dict) -> str:
     d = item.get("dose")
     freq = item.get("frequency")
@@ -105,9 +116,11 @@ def check_item(item: dict, cat: dict, *, ultra_levure_enabled: bool = True) -> l
     # Αμπούλα/φιαλίδιο (πόσιμη π.χ. VIOFER ή ενέσιμη π.χ. BRIKLIN): οπτικός έλεγχος δόσης ΑΚΟΜΗ κι αν
     # omt=="E" (η ΗΔΥΚΑ «E» δεν πιάνει τη δόση ανά αμπούλα). Root fix: ΟΛΑ τα διαλύματα σε αμπούλες.
     vial_dose = _vial_dose_check(cat.get("form_code"), cat.get("package_form"), item.get("name"))
+    # Πολυδοσικός περιέκτης (σταγόνες/σιρόπι σε μπουκάλι): 1 τεμάχιο = πολλές δόσεις → έλεγχος & με qty==1
+    multidose = _multidose_container(cat.get("form_code"), item.get("name"))
 
-    # ── 1. Υπερδοσολογία ── (μόνο αν ποσότητα > 1· με 1 τεμάχιο δίνουμε το ελάχιστο → χωρίς έλεγχο)
-    if (omt != "E" or vial_dose) and not auto and qty > 1:
+    # ── 1. Υπερδοσολογία ── (τεμάχια>1· ΕΞΑΙΡΕΣΗ: πολυδοσικός περιέκτης → έλεγχος & με 1 τεμάχιο)
+    if (omt != "E" or vial_dose) and not auto and (qty > 1 or multidose):
         checks.append({"type": "overdose", "level": "warning",
                        "title": "Οπτικός έλεγχος υπερδοσολογίας",
                        "detail": _overdose_detail(item, cat)})
