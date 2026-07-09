@@ -28,6 +28,9 @@ type Config = {
   history_from?: string | null;
   last_test?: { at: string; ok: boolean; message: string } | null;
   last_sync?: { at: string; status: string; stats: Record<string, number> } | null;
+  auth_paused?: boolean;
+  auth_error_msg?: string | null;
+  auth_error_at?: string | null;
 };
 type Tenant = { country?: string };
 type TestRes = { ok: boolean; mode: string; message: string };
@@ -199,6 +202,22 @@ export default function IngestionSettingsPage() {
 
   return (
     <div className="space-y-4">
+      {/* ΠΑΥΣΗ λόγω λάθους/ληγμένου κωδικού ΗΔΥΚΑ — προτεραιότητα, ζητά νέο κωδικό */}
+      {c?.auth_paused && (
+        <div className="rounded-xl border-2 border-amber-400 bg-amber-50 p-4 dark:border-amber-600/70 dark:bg-amber-950/20">
+          <div className="flex items-start gap-3">
+            <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-amber-400/20 text-amber-700 dark:text-amber-300 text-lg">🔒</span>
+            <div className="min-w-0">
+              <div className="font-bold text-amber-800 dark:text-amber-300">{t("Ο συγχρονισμός με την ΗΔΥΚΑ σταμάτησε — απαιτείται νέος κωδικός", "ΗΔΥΚΑ sync paused — new password required")}</div>
+              <p className="mt-1 text-sm text-amber-700 dark:text-amber-200/90">
+                {t("Η ΗΔΥΚΑ απέρριψε τα credentials — πιθανότατα άλλαξε ο μηνιαίος κωδικός του φαρμακείου. Σταματήσαμε αυτόματα κάθε επικοινωνία με την ΗΔΥΚΑ ώστε να ΜΗΝ κλειδωθεί ο λογαριασμός σας. Καταχωρίστε τον νέο κωδικό παρακάτω για να συνεχιστεί ο συγχρονισμός.",
+                   "ΗΔΥΚΑ rejected the credentials — the monthly password likely changed. We automatically stopped all ΗΔΥΚΑ communication to avoid locking your account. Enter the new password below to resume syncing.")}
+              </p>
+              {c.auth_error_msg && <p className="mt-1 text-xs text-amber-600/90">{c.auth_error_msg}</p>}
+            </div>
+          </div>
+        </div>
+      )}
       {/* status banner */}
       <div className="rx-card flex flex-wrap items-center gap-3 p-4">
         <span className={`grid h-10 w-10 place-items-center rounded-xl ${c?.configured ? "bg-emerald-50 text-emerald-600" : "bg-slate-100 text-slate-400"}`}>

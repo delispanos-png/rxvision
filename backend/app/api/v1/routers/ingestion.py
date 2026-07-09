@@ -182,6 +182,9 @@ async def set_hdika_credentials(
                 creds["pharmacy_id"] = creds["pharmacy_code"] = pid
                 ref = vault.set_tenant_credentials(ctx.tenant_id, "hdika", creds)
                 await repo.set_ingestion_config("hdika", _public_config(creds))
+    # Καταχώρηση νέου κωδικού → ΑΡΣΗ της αυτόματης παύσης (αν ο tenant είχε μπει σε παύση λόγω λάθους
+    # κωδικού). Ο επόμενος sync ξαναδοκιμάζει· αν ο κωδικός είναι σωστός συνεχίζει, αλλιώς ξανα-παύει.
+    await repo.patch_ingestion_config("hdika", {"auth_paused": False, "auth_error_msg": None, "auth_error_at": None})
     return CredentialsStatusOut(source="hdika", configured=True, credentials_ref=ref)
 
 

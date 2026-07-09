@@ -166,6 +166,13 @@ def _round_half_down(x: float) -> int:
     return int(math.ceil(x - 0.5))
 
 
+class HdikaAuthError(PermissionError):
+    """Τα credentials ΗΔΥΚΑ απορρίφθηκαν (λάθος κωδικός/κλειδί = 401/403) ή ο λογαριασμός κλειδώθηκε
+    από την πύλη. ΞΕΧΩΡΙΣΤΟ από transient σφάλματα ώστε ο sync να ΣΤΑΜΑΤΑ ΑΜΕΣΩΣ (μία προσπάθεια) —
+    οι φαρμακοποιοί αλλάζουν υποχρεωτικά κωδικό ΗΔΥΚΑ κάθε μήνα, και οι επαναλαμβανόμενες αποτυχημένες
+    συνδέσεις ΚΛΕΙΔΩΝΟΥΝ τον λογαριασμό. Ο caller (worker) βάζει τον tenant σε παύση & ειδοποιεί."""
+
+
 class PatientDeceased(Exception):
     """Η ΗΔΥΚΑ αναγγέλλει θάνατο για το ΑΜΚΑ (getpatient) → ο caller σημαίνει τον ασθενή
     ως θανόντα (services.patient_lifecycle.mark_deceased) αντί να το χειριστεί ως σφάλμα."""
@@ -235,11 +242,11 @@ class HdikaClient:
         text = r.text or ""
         gw = _gateway_message(text)
         if gw:                       # IBM gateway HTML (lockout / error page)
-            raise PermissionError(gw)
+            raise HdikaAuthError(gw)
         if r.status_code in (401, 403, 404):
-            raise PermissionError(
-                f"Η πύλη ΗΔΥΚΑ απέρριψε το αίτημα (HTTP {r.status_code}). Συνήθως σημαίνει "
-                "λάθος περιβάλλον (test/production) ή μη έγκυρα credentials/endpoint γι' αυτό το περιβάλλον.")
+            raise HdikaAuthError(
+                f"Η πύλη ΗΔΥΚΑ απέρριψε τα credentials (HTTP {r.status_code}). Πιθανότατα άλλαξε ο "
+                "μηνιαίος κωδικός ΗΔΥΚΑ του φαρμακείου — καταχωρίστε τον νέο κωδικό στις Ρυθμίσεις.")
         # app-level XML ApiError (π.χ. 911 invalid key) → ανέδειξε το <description>
         if r.status_code >= 400:
             if "<description>" in text:
@@ -471,6 +478,10 @@ class HdikaClient:
             raise PermissionError(
                 "ΗΔΥΚΑ sync refused: δεν έχει οριστεί pharmacy_id — αφιλτράριστη άντληση μπορεί "
                 "να φέρει συνταγές άλλου φαρμακείου (GDPR). Ρύθμισε το pharmacy_id του φαρμακείου.")
+        # FAIL-FAST auth: μία κλήση /user/me πριν το day-loop. Λάθος/ληγμένος μηνιαίος κωδικός →
+        # HdikaAuthError ΕΔΩ (μία προσπάθεια) αντί για ένα 401 ΑΝΑ ΗΜΕΡΑ μέσα στο loop → ο worker
+        # βάζει τον tenant σε παύση πριν κλειδώσει ο λογαριασμός στην πύλη.
+        self.authenticate()
         from datetime import timedelta
         end = (until.date() if until else datetime.now(tz=timezone.utc).date())
         start = since.date() if since else end
@@ -494,6 +505,8 @@ class HdikaClient:
                     params["pharmacyId"] = self.pharmacy_id
                 try:
                     data = _to_dict(self._get_xml("/api/v1/prescription-execution/search", params))
+                except HdikaAuthError:   # λάθος credentials/lockout → ΣΤΑΜΑΤΑ ΟΛΟΝ τον sync (μη σιωπάς)
+                    raise
                 except Exception:  # noqa: BLE001 — one bad day must not abort the backfill
                     self.skipped_days += 1
                     break
@@ -837,7 +850,12 @@ class HdikaClient:
                     time.sleep(self.throttle)
                 gw = _gateway_message(r.text)
                 if gw:               # gateway HTML (e.g. lockout) even with HTTP 200
-                    raise PermissionError(gw)
+                    raise HdikaAuthError(gw)
+                # Λάθος credentials (401/403) → ΣΤΑΜΑΤΑ ΑΜΕΣΩΣ (μην ξαναδοκιμάζεις ανά ημέρα → lockout).
+                if r.status_code in (401, 403):
+                    raise HdikaAuthError(
+                        f"Η πύλη ΗΔΥΚΑ απέρριψε τα credentials (HTTP {r.status_code}). Πιθανότατα "
+                        "άλλαξε ο μηνιαίος κωδικός — καταχωρίστε τον νέο στις Ρυθμίσεις.")
                 if r.status_code in (429, 500, 502, 503, 504) and attempt < 3:
                     ra = r.headers.get("Retry-After")
                     wait = (float(ra) if (ra or "").isdigit()

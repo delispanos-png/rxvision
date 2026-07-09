@@ -6,6 +6,7 @@ Non-secret config + status is stored on the tenant for display in Settings.
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -67,6 +68,11 @@ class HdikaConfigOut(BaseModel):
     history_from: str | None = None
     last_test: dict | None = None            # {at, ok, message}
     last_sync: dict | None = None            # {at, status, stats}
+    # Auto-pause λόγω απόρριψης credentials (μηνιαία αλλαγή κωδικού ΗΔΥΚΑ / lockout): ο sync σταματά
+    # μέχρι να καταχωρηθεί νέος κωδικός. Το UI δείχνει banner «καταχωρίστε νέο κωδικό».
+    auth_paused: bool = False
+    auth_error_msg: str | None = None
+    auth_error_at: datetime | None = None
 
 
 class CredentialsStatusOut(BaseModel):

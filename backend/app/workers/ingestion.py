@@ -18,8 +18,29 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from app.core.config import settings
 from app.services.ingestion.engine import IngestionEngine
 from app.services.ingestion.hdika import HdikaAdapter
+from app.services.ingestion.hdika_client import HdikaAuthError
 from app.services.vault_service import vault
 from app.workers.celery_app import celery_app
+
+
+async def _pause_hdika_auth(db, tenant_id: str, message: str) -> dict:
+    """ΗΔΥΚΑ credentials απορρίφθηκαν (λάθος/ληγμένος μηνιαίος κωδικός) ή lockout → ΠΑΥΣΗ αυτού του
+    tenant: ο dispatcher τον εξαιρεί από ΚΑΘΕ επικοινωνία με την ΗΔΥΚΑ μέχρι να καταχωρηθεί νέος
+    κωδικός (ώστε να μη κλειδωθεί ο λογαριασμός από επαναλαμβανόμενες αποτυχίες). Ειδοποιεί τον
+    φαρμακοποιό μέσω του status στη σελίδα «Διασύνδεση ΗΔΥΚΑ»."""
+    now = datetime.now(tz=timezone.utc)
+    await db["tenants"].update_one({"_id": tenant_id}, {"$set": {
+        "ingestion_config.hdika.auth_paused": True,
+        "ingestion_config.hdika.auth_error_at": now,
+        "ingestion_config.hdika.auth_error_msg": str(message)[:300]}})
+    try:   # ίχνος στο sync-health (ΟΧΙ σαν επιτυχία) — ορατό και στο adminpanel
+        await db["sync_jobs"].insert_one({
+            "tenant_id": tenant_id, "source": "HDIKA", "type": "incremental",
+            "status": "auth_error", "error": str(message)[:300],
+            "stats": {"fetched": 0}, "started_at": now, "updated_at": now})
+    except Exception:  # noqa: BLE001
+        pass
+    return {"tenant_id": tenant_id, "status": "auth_paused", "error": str(message)[:200]}
 
 
 # ── Pool reuse: ΕΝΑ persistent event loop + ΕΝΑΣ Motor client ΑΝΑ worker process ──────────────
@@ -110,7 +131,8 @@ def dispatch_incremental_sync() -> int:
             cursor = db["tenants"].find(
                 {"country": "GR", "status": {"$in": ["active", "trial"]},
                  "credentials_ref.hdika": {"$ne": None},
-                 "ingestion_config.hdika.sync_enabled": {"$ne": False}},
+                 "ingestion_config.hdika.sync_enabled": {"$ne": False},
+                 "ingestion_config.hdika.auth_paused": {"$ne": True}},
                 {"_id": 1})
             async for t in cursor:
                 ids.append(str(t["_id"]))
@@ -133,7 +155,8 @@ def dispatch_cancellation_reconcile() -> int:
             return [str(t["_id"]) async for t in db["tenants"].find(
                 {"country": "GR", "status": {"$in": ["active", "trial"]},
                  "credentials_ref.hdika": {"$ne": None},
-                 "ingestion_config.hdika.sync_enabled": {"$ne": False}}, {"_id": 1})]
+                 "ingestion_config.hdika.sync_enabled": {"$ne": False},
+                 "ingestion_config.hdika.auth_paused": {"$ne": True}}, {"_id": 1})]
         finally:
             client.close()
 
@@ -153,6 +176,8 @@ def reconcile_cancellations_task(self, tenant_id: str) -> dict:
         try:
             from app.services.ingestion.cancellations import reconcile_tenant
             return await reconcile_tenant(tenant_id, db=db, dry_run=False)
+        except HdikaAuthError as e:   # λάθος/ληγμένος κωδικός → ΠΑΥΣΗ tenant (μη retry)
+            return await _pause_hdika_auth(db, tenant_id, str(e))
         finally:
             client.close()
     return _run_async(_run())
@@ -162,7 +187,8 @@ def _gr_hdika_tenants(db):
     return db["tenants"].find(
         {"country": "GR", "status": {"$in": ["active", "trial"]},
          "credentials_ref.hdika": {"$ne": None},
-         "ingestion_config.hdika.sync_enabled": {"$ne": False}}, {"_id": 1})
+         "ingestion_config.hdika.sync_enabled": {"$ne": False},
+                 "ingestion_config.hdika.auth_paused": {"$ne": True}}, {"_id": 1})
 
 
 def _dispatch_deep(days: int) -> int:
@@ -247,7 +273,8 @@ def dispatch_influenza_sync() -> int:
             return [str(t["_id"]) async for t in db["tenants"].find(
                 {"country": "GR", "status": {"$in": ["active", "trial"]},
                  "credentials_ref.hdika": {"$ne": None},
-                 "ingestion_config.hdika.sync_enabled": {"$ne": False}}, {"_id": 1})]
+                 "ingestion_config.hdika.sync_enabled": {"$ne": False},
+                 "ingestion_config.hdika.auth_paused": {"$ne": True}}, {"_id": 1})]
         finally:
             client.close()
     tenant_ids = _run_async(_run())
@@ -304,6 +331,8 @@ def hdika_incremental_sync(self, tenant_id: str) -> dict:
                 source="HDIKA", job_type="incremental", records=records,
                 window=(since, now), task_id=self.request.id)
             return {"tenant_id": tenant_id, "status": job["status"], "stats": job["stats"]}
+        except HdikaAuthError as e:   # λάθος/ληγμένος κωδικός → ΠΑΥΣΗ tenant + ειδοποίηση (μη retry)
+            return await _pause_hdika_auth(db, tenant_id, str(e))
         finally:
             client.close()
 
@@ -384,6 +413,8 @@ def hdika_backfill(self, tenant_id: str, since_iso: str, until_iso: str | None =
                 else:
                     result["historical_complete"] = True
             return result
+        except HdikaAuthError as e:   # λάθος/ληγμένος κωδικός → ΠΑΥΣΗ tenant (μη retry/chain)
+            return await _pause_hdika_auth(db, tenant_id, str(e))
         finally:
             client.close()
 
@@ -439,7 +470,8 @@ def dispatch_historical_continue() -> int:
             todo = []
             async for t in db["tenants"].find(
                     {"country": "GR", "status": {"$in": ["active", "trial"]},
-                     "credentials_ref.hdika": {"$ne": None}}, {"_id": 1}):
+                     "credentials_ref.hdika": {"$ne": None},
+                     "ingestion_config.hdika.auth_paused": {"$ne": True}}, {"_id": 1}):
                 tid = str(t["_id"])
                 hf = (vault.get_secret(f"tenants/{tid}/hdika") or {}).get("history_from")
                 if not hf:
