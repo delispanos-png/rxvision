@@ -71,7 +71,7 @@ function CategorizedChecks({ res, t }: { res: ClosingChecksRes | null; t: (el: s
   );
 }
 type ScanFlags = { is_intangible: boolean; needs_original: boolean; is_fyk: boolean; has_desensitization: boolean; has_opinion: boolean; has_vaccine: boolean; is_etyap: boolean; exec_count: number | null };
-type ScanRes = { ok: boolean; found: boolean; barcode: string; external_id?: string; wrong_day?: boolean; actual_days?: string[]; flags?: ScanFlags };
+type ScanRes = { ok: boolean; found: boolean; barcode: string; external_id?: string; exec_no?: string; n_executions?: number; wrong_day?: boolean; actual_days?: string[]; flags?: ScanFlags };
 const grDate = (d: string) => d.split("-").reverse().join("/");
 
 function fmtDay(d: string) { try { return new Date(d + "T00:00:00").toLocaleDateString("el-GR", { weekday: "long", day: "numeric", month: "long" }); } catch { return d; } }
@@ -84,7 +84,7 @@ export default function PhysicalCheckPage() {
   const inputRef = useRef<HTMLInputElement>(null);
   const [bc, setBc] = useState("");
   const [dayIdx, setDayIdx] = useState(0);
-  const [last, setLast] = useState<{ found: boolean; barcode: string; flags?: ScanFlags } | null>(null);
+  const [last, setLast] = useState<{ found: boolean; barcode: string; flags?: ScanFlags; exec_no?: string; n_executions?: number } | null>(null);
   const [detail, setDetail] = useState<Detail | null>(null);
   const [checks, setChecks] = useState<ClosingChecksRes | null>(null);
   const [showBriefing, setShowBriefing] = useState(false);
@@ -157,7 +157,7 @@ export default function PhysicalCheckPage() {
           { title: t("⚠️ Λάθος ημέρα", "⚠️ Wrong day") });
         return;
       }
-      setLast({ found: r.found, barcode: r.barcode, flags: r.flags });
+      setLast({ found: r.found, barcode: r.barcode, flags: r.flags, exec_no: r.exec_no, n_executions: r.n_executions });
       qc.invalidateQueries({ queryKey: ["reimb-physical", period] });
       if (r.found && (mode === "express" || (mode === "classic" && localStorage.getItem("rxv_coupons_on_scan") === "1"))) openDetail(r.external_id || r.barcode);
     },
@@ -523,7 +523,7 @@ export default function PhysicalCheckPage() {
                 <button onClick={submit} className="rounded-lg bg-violet-600 px-5 text-sm font-semibold text-white hover:bg-violet-700">{t("Έλεγχος", "Check")}</button>
               </div>
             )}
-            {last && <div className={`mt-3 inline-flex items-center gap-2 rounded-lg px-3 py-1.5 text-sm font-medium ${last.found ? "bg-emerald-100 text-emerald-700" : "bg-rose-100 text-rose-700"}`}>{last.found ? <CheckCircle2 className="h-4 w-4" /> : <XCircle className="h-4 w-4" />}<span className="font-mono">{last.barcode}</span> — {last.found ? t("βρέθηκε ✓", "found ✓") : t("εκτός λίστας!", "not in list!")}</div>}
+            {last && <div className={`mt-3 inline-flex items-center gap-2 rounded-lg px-3 py-1.5 text-sm font-medium ${last.found ? "bg-emerald-100 text-emerald-700" : "bg-rose-100 text-rose-700"}`}>{last.found ? <CheckCircle2 className="h-4 w-4" /> : <XCircle className="h-4 w-4" />}<span className="font-mono">{last.barcode}</span> — {last.found ? t("βρέθηκε ✓", "found ✓") : t("εκτός λίστας!", "not in list!")}{last.found && last.exec_no && (last.n_executions ?? 1) > 1 && <span className="ml-1 rounded bg-emerald-200/70 px-1.5 py-0.5 text-[11px] font-bold">{t(`Εκτέλεση ${last.exec_no}/${last.n_executions} — σκάναρε ξανά για την επόμενη`, `Execution ${last.exec_no}/${last.n_executions} — scan again for the next`)}</span>}</div>}
           </div>
         )}
         <p className="text-center text-xs text-slate-400">{t("Μόλις ολοκληρωθούν όλες οι μέρες → Στάδιο 2: οπτικός έλεγχος. (Αλλαγή τρόπου: Ρυθμίσεις → Κλείσιμο Μήνα)", "When all days are done → Stage 2: visual check. (Change mode: Settings → Month Closing)")}</p>

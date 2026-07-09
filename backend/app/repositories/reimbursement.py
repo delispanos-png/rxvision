@@ -965,14 +965,29 @@ class ReimbursementRepository(BaseRepository):
                 actual = sorted({e["executed_at"].strftime("%Y-%m-%d") for e in all_exs})
                 return {"ok": True, "found": True, "wrong_day": True, "barcode": bc,
                         "actual_days": actual, "n_executions": len(all_exs)}
+            # ΕΛΕΓΧΟΣ ΑΝΑ ΕΚΤΕΛΕΣΗ: μερική εκτέλεση με ΠΟΛΛΕΣ φάσεις (κάθε φάση = δικό της φάρμακο/κουπόνι)
+            # που σκαναρίστηκε με το 13ψήφιο (χωρίς φάση) → μαρκάρουμε ΜΙΑ φάση τη φορά (την επόμενη
+            # ανέλεγκτη), ώστε ο φαρμακοποιός να ελέγχει ανά εκτέλεση & να βλέπει ΤΟ 1 κουπόνι της φάσης —
+            # όχι όλες μαζί/όλα τα κουπόνια. (Σε διαφορετικές μέρες/μήνες ήδη ταιριάζει 1 φάση.)
+            if len(targets) > 1:
+                chk = await self._db["barcode_check"].find_one(
+                    {"tenant_id": self.tenant_id, "period": period}) or {}
+                done = set(chk.get("checked", []))
+                pending = sorted((e for e in targets if e["external_id"] not in done and bc not in done),
+                                 key=lambda e: e["external_id"])
+                if pending:            # μαρκάρισε ΜΙΑ φάση· επόμενο σκανάρισμα → η επόμενη φάση
+                    targets = [pending[0]]
         await self._db["barcode_check"].update_one(
             {"tenant_id": self.tenant_id, "period": period},
             {"$addToSet": {"checked": {"$each": [e["external_id"] for e in targets]}},
              "$set": {"updated_at": _now()}}, upsert=True)
-        res = {"ok": True, "found": True, "barcode": bc, "n_executions": len(targets)}
+        total_exec = len([e for e in all_exs if start <= e["executed_at"] < end])
+        res = {"ok": True, "found": True, "barcode": bc, "n_executions": total_exec}
         res["flags"] = self._submission_flags(targets[0])
         if len(targets) == 1:         # μία μερική εκτέλεση → popup με τα κουπόνια ΑΥΤΗΣ (scope ανά :N)
             res["external_id"] = targets[0]["external_id"]
+            if ":" in targets[0]["external_id"]:
+                res["exec_no"] = targets[0]["external_id"].split(":")[1]
         return res
 
     async def physical_reset(self, period: str, day: str | None = None) -> dict:
