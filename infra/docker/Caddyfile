@@ -62,10 +62,10 @@
 		remote_ip 10.0.0.0/16
 	}
 	handle @lbhealth {
-		rewrite * /health
-		reverse_proxy api:8000 {
-			header_up X-Real-Client-IP {client_ip}
-		}
+		# → web /healthz, which returns 200 only when the web server is up AND it can reach the api.
+		# So the node is "healthy" only when it can truly serve (web + api), not just when caddy is up.
+		rewrite * /healthz
+		reverse_proxy web:3000
 	}
 	# ORIGIN AUTH (C-1): reject any request that does NOT bear Cloudflare's injected X-Origin-Auth secret
 	# (set by a Cloudflare Transform Rule; value from .env ORIGIN_AUTH_SECRET). Cloudflare-fronted traffic
