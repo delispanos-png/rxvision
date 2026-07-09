@@ -233,7 +233,7 @@ export default function PhysicalCheckPage() {
 
   const cols: Column<Item>[] = [
     { key: "checked", header: "", render: (r) => r.checked ? <CheckCircle2 className="h-4 w-4 text-emerald-600" /> : <span className="inline-block h-4 w-4 rounded-full border-2 border-slate-300" /> },
-    { key: "barcode", header: "Barcode", render: (r) => <button onClick={() => openDetail(r.external_id)} className={`font-mono text-xs hover:text-emerald-600 hover:underline ${r.checked ? "text-slate-400 line-through" : "text-slate-700 dark:text-slate-200"}`}>{r.barcode}</button> },
+    { key: "barcode", header: "Barcode", render: (r) => <button onClick={() => openDetail(r.external_id)} className={`font-mono text-xs hover:text-emerald-600 hover:underline ${r.checked ? "text-slate-400 line-through" : "text-slate-700 dark:text-slate-200"}`}>{r.barcode}{r.exec_no ? <span className="ml-1 rounded bg-slate-200 px-1 py-0.5 text-[10px] font-bold not-italic text-slate-600 no-underline dark:bg-slate-700 dark:text-slate-300">Εκτ. {r.exec_no}</span> : ""}</button> },
     { key: "group", header: t("Ομάδα / Ενδείξεις", "Group / Flags"), render: (r) => {
       const badge = r.is_100 ? "bg-amber-100 text-amber-800" : r.is_vaccine ? "bg-sky-100 text-sky-700" : r.is_eopyy ? "bg-emerald-100 text-emerald-700" : "bg-violet-100 text-violet-700";
       const lbl = r.group === "ΕΟΠΥΥ - Φάρμακα" ? "ΕΟΠΥΥ Φάρμ." : r.group === "ΕΟΠΥΥ - Εμβόλια" ? "Εμβόλια" : r.group === "Αμιγώς 100%" ? "100%" : r.group;

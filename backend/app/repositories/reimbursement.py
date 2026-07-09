@@ -973,10 +973,12 @@ class ReimbursementRepository(BaseRepository):
                 chk = await self._db["barcode_check"].find_one(
                     {"tenant_id": self.tenant_id, "period": period}) or {}
                 done = set(chk.get("checked", []))
-                pending = sorted((e for e in targets if e["external_id"] not in done and bc not in done),
-                                 key=lambda e: e["external_id"])
-                if pending:            # μαρκάρισε ΜΙΑ φάση· επόμενο σκανάρισμα → η επόμενη φάση
-                    targets = [pending[0]]
+                ordered = sorted(targets, key=lambda e: e["external_id"])
+                pending = [e for e in ordered if e["external_id"] not in done and bc not in done]
+                # ΠΑΝΤΑ scope σε ΜΙΑ εκτέλεση (σαν ξεχωριστή συνταγή): την επόμενη ανέλεγκτη· αν όλες
+                # είναι ήδη ελεγμένες → την πρώτη. Έτσι το popup δείχνει ΠΑΝΤΑ 1 κουπόνι/εκτέλεση,
+                # ποτέ και τα δύο μαζί — ακόμη και σε επανασκανάρισμα ελεγμένης συνταγής.
+                targets = [pending[0]] if pending else [ordered[0]]
         await self._db["barcode_check"].update_one(
             {"tenant_id": self.tenant_id, "period": period},
             {"$addToSet": {"checked": {"$each": [e["external_id"] for e in targets]}},
