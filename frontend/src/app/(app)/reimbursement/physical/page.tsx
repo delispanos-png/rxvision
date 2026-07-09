@@ -174,9 +174,12 @@ export default function PhysicalCheckPage() {
 
   const cur = byDay[dayIdx];
   const dayItems = (data?.items ?? []).filter((i) => i.day === cur?.date).sort((a, b) => (a.checked === b.checked ? b.claim - a.claim : a.checked ? 1 : -1));
-  // φίλτρο «μόνο όσες χρειάζονται έλεγχο»: κρύβει τις all-QR χωρίς ιδιαιτερότητα
+  // φίλτρο «μόνο όσες χρειάζονται έλεγχο»: κρύβει τις all-QR χωρίς ιδιαιτερότητα (για την ΠΡΟΟΔΟ/μετρητές)
   const shownItems = onlyChecks ? dayItems.filter((i) => i.needs_check) : dayItems;
   const shownChecked = shownItems.filter((i) => i.checked).length;
+  // ΓΡΑΜΜΕΣ ΠΙΝΑΚΑ: όπως shownItems ΑΛΛΑ κρατά ΠΑΝΤΑ όσες έχουν ήδη ελεγχθεί (σκαναριστεί) — ώστε μια
+  // καθαρή all-QR συνταγή που σκάναρε να ΕΜΦΑΝΙΖΕΤΑΙ μαρκαρισμένη ως ελεγμένη (αντί να «εξαφανίζεται»).
+  const tableRows = onlyChecks ? dayItems.filter((i) => i.needs_check || i.checked) : dayItems;
   // ανάλυση ανά ημέρα (για το hover στο ημερολόγιο): σύνολο + ανά κατηγορία/ταμείο
   const dayStats: Record<string, { total: number; checked: number; groups: Record<string, number> }> = {};
   (data?.items ?? []).forEach((i) => { const s = (dayStats[i.day] ||= { total: 0, checked: 0, groups: {} }); s.total++; if (i.checked) s.checked++; s.groups[i.group] = (s.groups[i.group] || 0) + 1; });
@@ -724,11 +727,11 @@ export default function PhysicalCheckPage() {
           {/* Ο μετρητής ΠΡΕΠΕΙ να ταιριάζει με ό,τι εμφανίζει ο πίνακας (shownItems), όχι με το σύνολο
               ημέρας — αλλιώς μια all-QR/καθαρή συνταγή (needs_check=false) «λείπει» ενώ ο τίτλος λέει π.χ. 45.
               Όταν το φίλτρο κρύβει καθαρές, το λέμε ρητά ώστε να είναι ξεκάθαρο ότι δεν χάθηκε τίποτα. */}
-          <summary className="cursor-pointer list-none text-sm font-semibold text-slate-700 dark:text-slate-200">▸ {t("Συνταγές ημέρας", "Day's prescriptions")} ({shownItems.length}{onlyChecks && dayItems.length > shownItems.length ? ` ${t("από", "of")} ${dayItems.length} · ${dayItems.length - shownItems.length} ${t("all-QR κρυφές", "all-QR hidden")}` : ""})</summary>
-          {onlyChecks && dayItems.length > shownItems.length && (
-            <p className="mt-1 text-xs text-slate-400">{t("Οι all-QR χωρίς ιδιαιτερότητα είναι αυτόματα ΟΚ και κρύβονται. Κλείσε τον διακόπτη «Μόνο όσες χρειάζονται έλεγχο» για να δεις ΟΛΕΣ τις συνταγές της ημέρας.", "All-QR with no specialness are auto-OK and hidden. Turn off «Only those needing a check» to see ALL of the day's prescriptions.")}</p>
+          <summary className="cursor-pointer list-none text-sm font-semibold text-slate-700 dark:text-slate-200">▸ {t("Συνταγές ημέρας", "Day's prescriptions")} ({tableRows.length}{onlyChecks && dayItems.length > tableRows.length ? ` ${t("από", "of")} ${dayItems.length} · ${dayItems.length - tableRows.length} ${t("all-QR κρυφές", "all-QR hidden")}` : ""})</summary>
+          {onlyChecks && dayItems.length > tableRows.length && (
+            <p className="mt-1 text-xs text-slate-400">{t("Οι all-QR χωρίς ιδιαιτερότητα είναι αυτόματα ΟΚ και κρύβονται (όσες σκανάρεις εμφανίζονται ελεγμένες). Κλείσε τον διακόπτη «Μόνο όσες χρειάζονται έλεγχο» για να δεις ΟΛΕΣ τις συνταγές της ημέρας.", "All-QR with no specialness are auto-OK and hidden (any you scan appear as checked). Turn off «Only those needing a check» to see ALL of the day's prescriptions.")}</p>
           )}
-          <div className="mt-2"><DataTable pageSize={50} columns={cols} rows={shownItems} rowKey={(r) => r.external_id} empty={onlyChecks ? t("Καμία συνταγή χρειάζεται έλεγχο 🎉", "Nothing needs checking 🎉") : t("Καμία συνταγή.", "No prescriptions.")} /></div>
+          <div className="mt-2"><DataTable pageSize={50} columns={cols} rows={tableRows} rowKey={(r) => r.external_id} empty={onlyChecks ? t("Καμία συνταγή χρειάζεται έλεγχο 🎉", "Nothing needs checking 🎉") : t("Καμία συνταγή.", "No prescriptions.")} /></div>
         </details>
       )}
 
