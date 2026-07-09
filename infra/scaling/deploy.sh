@@ -45,6 +45,15 @@ for NODE in "${APP_NODES[@]}"; do
   docker save rxvision-web:latest | gzip -1 | "${SSH[@]}" "root@$NODE" \
     'gunzip | docker load && docker tag rxvision-web:latest rxvision-app-web:latest'
 
+  # Keep the reverse-proxy config in sync (bind-mounted from the node's checkout). Ships the repo
+  # Caddyfile + validates + hot-reloads — so the LB /lb-health probe and routing never drift per node.
+  echo "▶ 2b/4  Sync Caddyfile + reload on $NODE…"
+  scp -i "$KEY" -o StrictHostKeyChecking=no infra/docker/Caddyfile "root@$NODE:/opt/rxvision/infra/docker/Caddyfile"
+  "${SSH[@]}" "root@$NODE" \
+    'docker exec rxvision-app-caddy-1 caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null 2>&1 \
+       && docker exec rxvision-app-caddy-1 caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null 2>&1 \
+       && echo "   caddy reloaded" || echo "   ⚠️ caddy validate/reload failed — check config"'
+
   echo "▶ 3/4  Recreate [$SERVICES] on $NODE (no rebuild)…"
   "${SSH[@]}" "root@$NODE" \
     "docker compose --project-directory /opt/rxvision -f $APP_COMPOSE up -d --no-build --force-recreate $SERVICES"

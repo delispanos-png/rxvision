@@ -50,6 +50,23 @@
 
 (api_and_app) {
 	import security_headers
+	# LOAD-BALANCER HEALTH PROBE — reflects REAL app readiness (proxied to the api /health endpoint),
+	# so a node whose caddy is up but whose app isn't ready/serving is marked UNHEALTHY and pulled from
+	# rotation. Reachable ONLY from the internal network (Hetzner LB private IP, 10.0.0.0/16) → it is
+	# exempt from the origin-auth guard below (the LB can't inject the Cloudflare secret), while a public
+	# hit on the open LB IP still falls through to the 403. This replaces the old TCP-443 health check,
+	# whose false-positives (caddy binds :443 before the app is ready) broke failover during a
+	# node reboot/redeploy — the LB kept routing ~50% of traffic to the not-yet-ready node.
+	@lbhealth {
+		path /lb-health
+		remote_ip 10.0.0.0/16
+	}
+	handle @lbhealth {
+		rewrite * /health
+		reverse_proxy api:8000 {
+			header_up X-Real-Client-IP {client_ip}
+		}
+	}
 	# ORIGIN AUTH (C-1): reject any request that does NOT bear Cloudflare's injected X-Origin-Auth secret
 	# (set by a Cloudflare Transform Rule; value from .env ORIGIN_AUTH_SECRET). Cloudflare-fronted traffic
 	# always carries it (verified 100%); a direct hit to the open LB (65.109.43.125) does not → 403. This
