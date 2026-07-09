@@ -173,7 +173,15 @@ export default function PhysicalCheckPage() {
   });
 
   const cur = byDay[dayIdx];
-  const dayItems = (data?.items ?? []).filter((i) => i.day === cur?.date).sort((a, b) => (a.checked === b.checked ? b.claim - a.claim : a.checked ? 1 : -1));
+  const _dayRaw = (data?.items ?? []).filter((i) => i.day === cur?.date);
+  const _topClaim: Record<string, number> = {};   // κορυφαία αξία ανά barcode → ομαδοποίηση φάσεων μαζί
+  _dayRaw.forEach((i) => { _topClaim[i.barcode] = Math.max(_topClaim[i.barcode] ?? 0, i.claim); });
+  const dayItems = [..._dayRaw].sort((a, b) =>
+    // ελεγμένες κάτω· ομάδες (ίδιο barcode) μαζί ανά κορυφαία αξία· μέσα στην ομάδα κατά εκτέλεση (1→2)
+    (a.checked !== b.checked ? (a.checked ? 1 : -1) : 0)
+    || (_topClaim[b.barcode] - _topClaim[a.barcode])
+    || (a.barcode < b.barcode ? -1 : a.barcode > b.barcode ? 1 : 0)
+    || (parseInt(a.exec_no || "0") - parseInt(b.exec_no || "0")));
   // φίλτρο «μόνο όσες χρειάζονται έλεγχο»: κρύβει τις all-QR χωρίς ιδιαιτερότητα (για την ΠΡΟΟΔΟ/μετρητές)
   const shownItems = onlyChecks ? dayItems.filter((i) => i.needs_check) : dayItems;
   const shownChecked = shownItems.filter((i) => i.checked).length;
@@ -233,7 +241,12 @@ export default function PhysicalCheckPage() {
 
   const cols: Column<Item>[] = [
     { key: "checked", header: "", render: (r) => r.checked ? <CheckCircle2 className="h-4 w-4 text-emerald-600" /> : <span className="inline-block h-4 w-4 rounded-full border-2 border-slate-300" /> },
-    { key: "barcode", header: "Barcode", render: (r) => <button onClick={() => openDetail(r.external_id)} className={`font-mono text-xs hover:text-emerald-600 hover:underline ${r.checked ? "text-slate-400 line-through" : "text-slate-700 dark:text-slate-200"}`}>{r.barcode}{r.exec_no ? <span className="ml-1 rounded bg-slate-200 px-1 py-0.5 text-[10px] font-bold not-italic text-slate-600 no-underline dark:bg-slate-700 dark:text-slate-300">Εκτ. {r.exec_no}</span> : ""}</button> },
+    { key: "barcode", header: "Barcode", render: (r) => (
+      <span className="inline-flex items-center gap-1.5">
+        <button onClick={() => openDetail(r.external_id)} className={`font-mono text-xs hover:text-emerald-600 hover:underline ${r.checked ? "text-slate-400 line-through" : "text-slate-700 dark:text-slate-200"}`}>{r.barcode}</button>
+        {r.exec_no && <span className="shrink-0 rounded-full bg-indigo-100 px-2 py-0.5 text-[10px] font-bold text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300">{t(`Εκτέλεση ${r.exec_no}`, `Execution ${r.exec_no}`)}</span>}
+      </span>
+    ) },
     { key: "group", header: t("Ομάδα / Ενδείξεις", "Group / Flags"), render: (r) => {
       const badge = r.is_100 ? "bg-amber-100 text-amber-800" : r.is_vaccine ? "bg-sky-100 text-sky-700" : r.is_eopyy ? "bg-emerald-100 text-emerald-700" : "bg-violet-100 text-violet-700";
       const lbl = r.group === "ΕΟΠΥΥ - Φάρμακα" ? "ΕΟΠΥΥ Φάρμ." : r.group === "ΕΟΠΥΥ - Εμβόλια" ? "Εμβόλια" : r.group === "Αμιγώς 100%" ? "100%" : r.group;
@@ -567,7 +580,7 @@ export default function PhysicalCheckPage() {
   const couponsPanel = (
     <aside className="order-3 lg:sticky lg:top-20 lg:self-start">
       <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-3 dark:border-slate-700 dark:bg-slate-800/40">
-        <div className="mb-2 flex items-center gap-1.5 text-[11px] font-bold uppercase text-slate-500"><Ticket className="h-3.5 w-3.5" /> {t("Κουπόνια", "Coupons")}{detail?.found ? ` · ${detail.barcode}` : ""}</div>
+        <div className="mb-2 flex flex-wrap items-center gap-1.5 text-[11px] font-bold uppercase text-slate-500"><Ticket className="h-3.5 w-3.5" /> {t("Κουπόνια", "Coupons")}{detail?.found ? ` · ${detail.barcode}` : ""}{detail?.found && detail.exec_no != null && <span className="rounded bg-emerald-600 px-1.5 py-0.5 text-[10px] font-bold text-white">{t(`Εκτέλεση ${detail.exec_no}`, `Execution ${detail.exec_no}`)}</span>}</div>
         {detail?.found && detail.coupons ? (
           <div className="space-y-1.5">
             {detail.coupons.map((c, i) => { const strip = c.qr === false; return (
@@ -704,7 +717,7 @@ export default function PhysicalCheckPage() {
           <div className="mt-3 space-y-2">
             <div className={`inline-flex items-center gap-2 rounded-lg px-3 py-1.5 text-sm font-medium ${last.found ? "bg-emerald-100 text-emerald-700" : "bg-rose-100 text-rose-700"}`}>
               {last.found ? <CheckCircle2 className="h-4 w-4" /> : <XCircle className="h-4 w-4" />}
-              <span className="font-mono">{last.barcode}</span> — {last.found ? t("βρέθηκε ✓", "found ✓") : t("ΔΕΝ υπάρχει στα δεδομένα — έλεγξε το barcode ή τη συνταγή!", "NOT in our data — check the barcode/prescription!")}
+              <span className="font-mono">{last.barcode}</span> — {last.found ? t("βρέθηκε ✓", "found ✓") : t("ΔΕΝ υπάρχει στα δεδομένα — έλεγξε το barcode ή τη συνταγή!", "NOT in our data — check the barcode/prescription!")}{last.found && last.exec_no && (last.n_executions ?? 1) > 1 && <span className="ml-1 rounded bg-emerald-200/70 px-1.5 py-0.5 text-[11px] font-bold">{t(`Εκτέλεση ${last.exec_no}/${last.n_executions} — σκάναρε ξανά για την επόμενη`, `Execution ${last.exec_no}/${last.n_executions} — scan again for the next`)}</span>}
             </div>
             {last.found && last.flags && (
               <div className="flex flex-wrap gap-1.5">
