@@ -721,7 +721,13 @@ export default function PhysicalCheckPage() {
       {/* this day's prescriptions — μόνο στον κλασικό (στο guided μένει λιτό: μόνο σκανάρισμα) */}
       {mode === "classic" && (
         <details open={listOpen} onToggle={(e) => setListOpenLocal((e.currentTarget as HTMLDetailsElement).open)} className="rounded-2xl border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900">
-          <summary className="cursor-pointer list-none text-sm font-semibold text-slate-700 dark:text-slate-200">▸ {t("Συνταγές ημέρας", "Day's prescriptions")} ({dayItems.length})</summary>
+          {/* Ο μετρητής ΠΡΕΠΕΙ να ταιριάζει με ό,τι εμφανίζει ο πίνακας (shownItems), όχι με το σύνολο
+              ημέρας — αλλιώς μια all-QR/καθαρή συνταγή (needs_check=false) «λείπει» ενώ ο τίτλος λέει π.χ. 45.
+              Όταν το φίλτρο κρύβει καθαρές, το λέμε ρητά ώστε να είναι ξεκάθαρο ότι δεν χάθηκε τίποτα. */}
+          <summary className="cursor-pointer list-none text-sm font-semibold text-slate-700 dark:text-slate-200">▸ {t("Συνταγές ημέρας", "Day's prescriptions")} ({shownItems.length}{onlyChecks && dayItems.length > shownItems.length ? ` ${t("από", "of")} ${dayItems.length} · ${dayItems.length - shownItems.length} ${t("all-QR κρυφές", "all-QR hidden")}` : ""})</summary>
+          {onlyChecks && dayItems.length > shownItems.length && (
+            <p className="mt-1 text-xs text-slate-400">{t("Οι all-QR χωρίς ιδιαιτερότητα είναι αυτόματα ΟΚ και κρύβονται. Κλείσε τον διακόπτη «Μόνο όσες χρειάζονται έλεγχο» για να δεις ΟΛΕΣ τις συνταγές της ημέρας.", "All-QR with no specialness are auto-OK and hidden. Turn off «Only those needing a check» to see ALL of the day's prescriptions.")}</p>
+          )}
           <div className="mt-2"><DataTable pageSize={50} columns={cols} rows={shownItems} rowKey={(r) => r.external_id} empty={onlyChecks ? t("Καμία συνταγή χρειάζεται έλεγχο 🎉", "Nothing needs checking 🎉") : t("Καμία συνταγή.", "No prescriptions.")} /></div>
         </details>
       )}
