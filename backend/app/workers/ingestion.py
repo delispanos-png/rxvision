@@ -23,6 +23,14 @@ from app.services.vault_service import vault
 from app.workers.celery_app import celery_app
 
 
+async def _hdika_auth_paused(db, tenant_id: str) -> bool:
+    """Re-check την παύση ΤΗ ΣΤΙΓΜΗ ΕΚΤΕΛΕΣΗΣ (όχι μόνο στο dispatch): αν ένα άλλο task μόλις μπήκε
+    σε παύση λόγω λάθους κωδικού, τα υπόλοιπα δεν κάνουν ΚΑΜΙΑ κλήση στην ΗΔΥΚΑ → το πολύ ΜΙΑ
+    αποτυχημένη σύνδεση συνολικά, ώστε να μη κλειδώσει ο λογαριασμός."""
+    t = await db["tenants"].find_one({"_id": tenant_id}, {"ingestion_config.hdika.auth_paused": 1})
+    return bool(((t or {}).get("ingestion_config", {}).get("hdika", {}) or {}).get("auth_paused"))
+
+
 async def _pause_hdika_auth(db, tenant_id: str, message: str) -> dict:
     """ΗΔΥΚΑ credentials απορρίφθηκαν (λάθος/ληγμένος μηνιαίος κωδικός) ή lockout → ΠΑΥΣΗ αυτού του
     tenant: ο dispatcher τον εξαιρεί από ΚΑΘΕ επικοινωνία με την ΗΔΥΚΑ μέχρι να καταχωρηθεί νέος
@@ -174,6 +182,8 @@ def reconcile_cancellations_task(self, tenant_id: str) -> dict:
     async def _run() -> dict:
         client, db = _fresh_db()
         try:
+            if await _hdika_auth_paused(db, tenant_id):   # παύση λόγω λάθους κωδικού → skip
+                return {"tenant_id": tenant_id, "status": "skipped", "note": "auth_paused"}
             from app.services.ingestion.cancellations import reconcile_tenant
             return await reconcile_tenant(tenant_id, db=db, dry_run=False)
         except HdikaAuthError as e:   # λάθος/ληγμένος κωδικός → ΠΑΥΣΗ tenant (μη retry)
@@ -318,6 +328,8 @@ def hdika_incremental_sync(self, tenant_id: str) -> dict:
     async def _run() -> dict:
         client, db = _fresh_db()
         try:
+            if await _hdika_auth_paused(db, tenant_id):   # μπήκε σε παύση από άλλο task → μη ξαναδοκιμάσεις
+                return {"tenant_id": tenant_id, "status": "skipped", "note": "auth_paused"}
             from app.api.v1.routers.ingestion import _effective_hdika_creds
             # FULL effective creds — production ΚΛΗΡΟΝΟΜΕΙ platform api_key/integrator (test→sandbox).
             # ΚΡΙΣΙΜΟ (2026-07-02): το παλιό inline building ΔΕΝ κληρονομούσε το production api_key →
@@ -363,6 +375,8 @@ def hdika_backfill(self, tenant_id: str, since_iso: str, until_iso: str | None =
     async def _run() -> dict:
         client, db = _fresh_db()
         try:
+            if await _hdika_auth_paused(db, tenant_id):   # παύση λόγω λάθους κωδικού → μη χτυπάς την ΗΔΥΚΑ
+                return {"tenant_id": tenant_id, "status": "skipped", "note": "auth_paused"}
             before_min = await _oldest(db)
             # Guard: never run two backfills for one tenant at once (they'd race over the
             # same window). Skip if one is already running with a live heartbeat (<10min).
