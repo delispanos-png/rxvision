@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
+import { DateInput } from "@/components/ui/DateInput";
 import { useRouter } from "next/navigation";
 import {
   Pill, Wallet, ShieldCheck, RefreshCw, Stethoscope, Bell, LogOut, Building2,
@@ -961,9 +962,7 @@ export default function PortalHome() {
               <div className="grid grid-cols-2 gap-2">
                 <div>
                   <div className="mb-1 text-xs font-medium text-slate-500">Ημερομηνία</div>
-                  <input type="date" required value={appt.date} min={new Date().toISOString().slice(0, 10)}
-                    onChange={(e) => setAppt({ ...appt, date: e.target.value })}
-                    className="w-full min-w-0 appearance-none rounded-xl border border-slate-300 px-3 py-2.5 text-sm focus:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-100" />
+                  <DateInput required value={appt.date} min={new Date().toISOString().slice(0, 10)} onChange={(v) => setAppt({ ...appt, date: v })} className="w-full" />
                 </div>
                 <div>
                   <div className="mb-1 text-xs font-medium text-slate-500">Ώρα</div>

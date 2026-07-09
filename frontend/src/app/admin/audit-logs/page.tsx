@@ -1,5 +1,6 @@
 "use client";
 
+import { DateInput } from "@/components/ui/DateInput";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { adminApi } from "@/lib/adminClient";
@@ -57,10 +58,10 @@ export default function AuditLogsPage() {
 
       <form onSubmit={search} className="mb-4 flex flex-wrap items-end gap-2">
         <label className="text-xs text-slate-500">Από
-          <input type="date" className={`${inp} block`} value={form.date_from} onChange={(e) => setField("date_from", e.target.value)} />
+          <DateInput className="mt-0.5 block" value={form.date_from} onChange={(v) => setField("date_from", v)} />
         </label>
         <label className="text-xs text-slate-500">Έως
-          <input type="date" className={`${inp} block`} value={form.date_to} onChange={(e) => setField("date_to", e.target.value)} />
+          <DateInput className="mt-0.5 block" value={form.date_to} onChange={(v) => setField("date_to", v)} />
         </label>
         <label className="text-xs text-slate-500">Tenant
           <input className={`${inp} block`} placeholder="tenant_id" value={form.tenant_id} onChange={(e) => setField("tenant_id", e.target.value)} />

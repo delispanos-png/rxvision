@@ -8,6 +8,7 @@ import { fmtEur, fmtNum, fmtDate } from "@/lib/formatters";
 import { KpiCard } from "@/components/kpi/KpiCard";
 import { DataTable, type Column } from "@/components/tables/DataTable";
 import { Modal } from "@/components/ui/Modal";
+import { DateInput } from "@/components/ui/DateInput";
 
 type Sub = {
   tenant_id: string; tenant: string; plan: string; status: string;
@@ -173,9 +174,9 @@ function SubDrawer({ tenantId, onClose }: { tenantId: string; onClose: () => voi
             <label className={lbl}>Κόστος επιπλέον χρήστη (€/μήνα)<input type="number" className={`mt-1 ${inp}`} value={f.extra_user_price} onChange={(e) => setF({ ...f, extra_user_price: e.target.value })} /></label>
             <label className={lbl}>Κόστος επιπλέον χρήστη (€/έτος)<input type="number" className={`mt-1 ${inp}`} value={f.extra_user_price_yearly} onChange={(e) => setF({ ...f, extra_user_price_yearly: e.target.value })} /></label>
             <label className={lbl}>Θέσεις<input type="number" className={`mt-1 ${inp}`} value={f.seats} onChange={(e) => setF({ ...f, seats: e.target.value })} /></label>
-            <label className={lbl}>Έναρξη<input type="date" className={`mt-1 ${inp}`} value={f.started_at} onChange={(e) => setF({ ...f, started_at: e.target.value })} /></label>
-            <label className={lbl}>Λήξη συνδρομής<input type="date" className={`mt-1 ${inp}`} value={f.current_period_end} onChange={(e) => setF({ ...f, current_period_end: e.target.value })} /></label>
-            <label className={lbl}>Λήξη Trial<input type="date" className={`mt-1 ${inp}`} value={f.trial_ends_at} onChange={(e) => setF({ ...f, trial_ends_at: e.target.value })} /></label>
+            <label className={lbl}>Έναρξη<DateInput className="mt-1 w-full" value={f.started_at} onChange={(v) => setF({ ...f, started_at: v })} /></label>
+            <label className={lbl}>Λήξη συνδρομής<DateInput className="mt-1 w-full" value={f.current_period_end} onChange={(v) => setF({ ...f, current_period_end: v })} /></label>
+            <label className={lbl}>Λήξη Trial<DateInput className="mt-1 w-full" value={f.trial_ends_at} onChange={(v) => setF({ ...f, trial_ends_at: v })} /></label>
             <label className={lbl}>SLA<select className={`mt-1 ${inp}`} value={f.sla} onChange={(e) => setF({ ...f, sla: e.target.value })}>
               <option value="">—</option>
               {(slaListQ.data?.items ?? []).map((s) => <option key={s._id} value={s._id}>{s.name || s._id}</option>)}

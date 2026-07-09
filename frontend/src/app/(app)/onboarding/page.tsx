@@ -1,6 +1,7 @@
 "use client";
 
 import { appAlert } from "@/store/dialogStore";
+import { DateInput } from "@/components/ui/DateInput";
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
@@ -189,11 +190,11 @@ export default function OnboardingPage() {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="mb-1 block text-xs font-medium text-slate-600">{t("Από", "From")}</label>
-                  <input type="date" value={dateFrom} max={dateTo} onChange={(e) => setDateFrom(e.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+                  <DateInput value={dateFrom} max={dateTo} onChange={(v) => setDateFrom(v)} className="w-full" />
                 </div>
                 <div>
                   <label className="mb-1 block text-xs font-medium text-slate-600">{t("Έως", "To")}</label>
-                  <input type="date" value={dateTo} min={dateFrom} max={today} onChange={(e) => setDateTo(e.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+                  <DateInput value={dateTo} min={dateFrom} max={today} onChange={(v) => setDateTo(v)} className="w-full" />
                 </div>
               </div>
               <button

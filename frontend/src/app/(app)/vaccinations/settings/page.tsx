@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { DateInput } from "@/components/ui/DateInput";
 import { useQuery } from "@tanstack/react-query";
 import { Save } from "lucide-react";
 import { api } from "@/lib/apiClient";
@@ -71,10 +72,10 @@ export default function VaccinationSettingsPage() {
               <input value={name} onChange={(e) => setName(e.target.value)} className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-800" />
             </label>
             <label className="block text-xs font-medium text-slate-500">{t("Έναρξη περιόδου", "Period start")}
-              <input type="date" value={start} onChange={(e) => setStart(e.target.value)} className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-800" />
+              <DateInput value={start} onChange={(v) => setStart(v)} className="mt-1 w-full" />
             </label>
             <label className="block text-xs font-medium text-slate-500">{t("Λήξη περιόδου", "Period end")}
-              <input type="date" value={end} onChange={(e) => setEnd(e.target.value)} className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-800" />
+              <DateInput value={end} onChange={(v) => setEnd(v)} className="mt-1 w-full" />
             </label>
           </div>
         </section>
@@ -90,12 +91,8 @@ export default function VaccinationSettingsPage() {
             {AGE_BANDS.map((a) => (
               <div key={a} className="flex items-center gap-3">
                 <span className="w-16 text-sm font-semibold text-slate-700 dark:text-slate-200">{a}</span>
-                <input type="date" value={rollout[a]?.from || ""}
-                  onChange={(e) => setRollout((r) => ({...r, [a]: { from: e.target.value, to: r[a]?.to || "" } }))}
-                  className="w-[8.5rem] rounded-lg border border-slate-300 px-3 py-1.5 text-sm dark:border-slate-600 dark:bg-slate-800" />
-                <input type="date" value={rollout[a]?.to || ""}
-                  onChange={(e) => setRollout((r) => ({...r, [a]: { from: r[a]?.from || "", to: e.target.value } }))}
-                  className="w-[8.5rem] rounded-lg border border-slate-300 px-3 py-1.5 text-sm dark:border-slate-600 dark:bg-slate-800" />
+                <DateInput value={rollout[a]?.from || ""} onChange={(v) => setRollout((r) => ({...r, [a]: { from: v, to: r[a]?.to || "" } }))} className="w-[8.5rem]" />
+                <DateInput value={rollout[a]?.to || ""} onChange={(v) => setRollout((r) => ({...r, [a]: { from: r[a]?.from || "", to: v } }))} className="w-[8.5rem]" />
               </div>
             ))}
           </div>

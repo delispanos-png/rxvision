@@ -33,22 +33,36 @@ export function DateInput({
   onChange,
   className = "",
   disabled = false,
+  min,
+  max,
+  required = false,
+  id,
+  name,
 }: {
   value: string;
   onChange: (v: string) => void;
   className?: string;
   disabled?: boolean;
+  min?: string;                 // YYYY-MM-DD — passed to the calendar picker
+  max?: string;                 // YYYY-MM-DD
+  required?: boolean;
+  id?: string;
+  name?: string;
 }) {
   const t = useT();
   const [text, setText] = useState(toDisplay(value));
   const nativeRef = useRef<HTMLInputElement>(null);
   useEffect(() => setText(toDisplay(value)), [value]);
+  const clamp = (iso: string) => (min && iso < min) || (max && iso > max) ? false : true;
 
   return (
-    <div className={`relative inline-flex items-center rounded-lg border border-slate-300 bg-white focus-within:border-brand-500 focus-within:ring-1 focus-within:ring-brand-500 dark:border-slate-600 dark:bg-slate-800 ${className}`}>
+    <div className={`relative inline-flex min-w-[8.5rem] items-center rounded-lg border border-slate-300 bg-white focus-within:border-brand-500 focus-within:ring-1 focus-within:ring-brand-500 dark:border-slate-600 dark:bg-slate-800 ${className}`}>
       <input
         type="text"
         inputMode="numeric"
+        id={id}
+        name={name}
+        required={required}
         value={text}
         disabled={disabled}
         placeholder={t("ΗΗ/ΜΜ/ΕΕΕΕ", "DD/MM/YYYY")}
@@ -56,14 +70,14 @@ export function DateInput({
           const masked = mask(e.target.value);   // βάζει τα «/» μόνα τους καθώς πληκτρολογείς
           setText(masked);
           const iso = parse(masked);
-          if (iso) onChange(iso);
+          if (iso && clamp(iso)) onChange(iso);
         }}
         onBlur={(e) => {
           const iso = parse(e.target.value);
-          if (iso) onChange(iso);
-          else setText(toDisplay(value));   // επανέφερε αν είναι μισοτελειωμένο/άκυρο
+          if (iso && clamp(iso)) onChange(iso);
+          else setText(toDisplay(value));   // επανέφερε αν είναι μισοτελειωμένο/άκυρο/εκτός ορίων
         }}
-        className="w-[7.5rem] bg-transparent px-3 py-2 text-sm text-slate-900 outline-none disabled:cursor-not-allowed dark:text-slate-200"
+        className="min-w-0 flex-1 bg-transparent px-3 py-2 text-sm text-slate-900 outline-none disabled:cursor-not-allowed dark:text-slate-200"
       />
       <button
         type="button"
@@ -74,11 +88,13 @@ export function DateInput({
       >
         <Calendar className="h-4 w-4" />
       </button>
-      {/* κρυφό native input — ανοίγει με το κουμπί ημερολογίου */}
+      {/* κρυφό native input — ανοίγει με το κουμπί ημερολογίου (dd/mm/yyyy μέσω του text πεδίου πάνω) */}
       <input
         ref={nativeRef}
         type="date"
         value={value}
+        min={min}
+        max={max}
         disabled={disabled}
         tabIndex={-1}
         onChange={(e) => onChange(e.target.value)}

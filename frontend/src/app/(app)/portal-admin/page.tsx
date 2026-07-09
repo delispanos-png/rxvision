@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
+import { DateInput } from "@/components/ui/DateInput";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { QRCodeCanvas } from "qrcode.react";
 import { Users, MessageSquare, CalendarClock, Stethoscope, FileText, ZoomIn, Trash2, Heart, Copy, Printer } from "lucide-react";
@@ -329,7 +330,7 @@ function RxRequestsTab() {
                   className="w-full rounded-lg border border-slate-300 px-3 py-1.5 text-sm dark:border-slate-700 dark:bg-slate-800" />
                 <div className="flex flex-wrap items-center gap-2">
                   <label className="text-xs text-slate-500">{t("Ημ. διαθεσιμότητας", "Available date")}:</label>
-                  <input type="date" value={dates[id] ?? ""} onChange={(e) => setDates({...dates, [id]: e.target.value })} className="rounded-lg border border-slate-300 px-2 py-1 text-sm dark:border-slate-700 dark:bg-slate-800" />
+                  <DateInput value={dates[id] ?? ""} onChange={(v) => setDates({...dates, [id]: v })} />
                   <button onClick={() => { const rep = replies[id]?.trim() || (dates[id] ? `${t("Θα είναι διαθέσιμο", "Available on")} ${dates[id]}` : ""); if (rep) reply.mutate({ id, reply: rep, available_date: dates[id] }); }}
                     className="rounded-lg bg-brand-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-700">{t("Στείλε απάντηση", "Send reply")}</button>
                 </div>

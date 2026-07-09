@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { DateInput } from "@/components/ui/DateInput";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Clock, Plus, Trash2, Copy, Calendar, AlertTriangle, Moon, Sun, Upload, CheckCircle2, XCircle } from "lucide-react";
 import { api } from "@/lib/apiClient";
@@ -135,7 +136,7 @@ export default function AvailabilityPage() {
       {/* DUTIES */}
       <PanelCard title={t("Εφημερίες & διανυκτερεύσεις", "On-duty & overnight")}>
         <div className="mb-3 flex flex-wrap items-end gap-2">
-          <div><label className="mb-1 block text-xs text-slate-500">{t("Ημερομηνία", "Date")}</label><input type="date" value={d.date} onChange={(ev) => setD({ ...d, date: ev.target.value })} className="rounded-lg border border-slate-300 px-2 py-1.5 text-sm dark:border-slate-600 dark:bg-slate-800" /></div>
+          <div><label className="mb-1 block text-xs text-slate-500">{t("Ημερομηνία", "Date")}</label><DateInput value={d.date} onChange={(v) => setD({ ...d, date: v })} /></div>
           <div><label className="mb-1 block text-xs text-slate-500">{t("Έναρξη", "Start")}</label><input type="time" value={d.start} onChange={(ev) => setD({ ...d, start: ev.target.value })} className="rounded-lg border border-slate-300 px-2 py-1.5 text-sm dark:border-slate-600 dark:bg-slate-800" /></div>
           <div><label className="mb-1 block text-xs text-slate-500">{t("Λήξη", "End")}</label><input type="time" value={d.end} onChange={(ev) => setD({ ...d, end: ev.target.value })} className="rounded-lg border border-slate-300 px-2 py-1.5 text-sm dark:border-slate-600 dark:bg-slate-800" /></div>
           <div><label className="mb-1 block text-xs text-slate-500">{t("Τύπος", "Type")}</label><select value={d.kind} onChange={(ev) => setD({ ...d, kind: ev.target.value })} className="rounded-lg border border-slate-300 px-2 py-1.5 text-sm dark:border-slate-600 dark:bg-slate-800"><option value="duty">{t("Απλή εφημερία", "Duty")}</option><option value="overnight">{t("Διανυκτέρευση", "Overnight")}</option></select></div>
@@ -180,7 +181,7 @@ export default function AvailabilityPage() {
       <PanelCard title={t("Εξαιρέσεις & ειδικές ημέρες", "Exceptions & special days")}>
         <p className="mb-2 text-xs text-slate-400">{t("Υπερισχύουν του εβδομαδιαίου ωραρίου για τη συγκεκριμένη ημερομηνία.", "Override the weekly schedule for that date.")}</p>
         <div className="mb-3 flex flex-wrap items-end gap-2">
-          <div><label className="mb-1 block text-xs text-slate-500">{t("Ημερομηνία", "Date")}</label><input type="date" value={e.date} onChange={(ev) => setE({ ...e, date: ev.target.value })} className="rounded-lg border border-slate-300 px-2 py-1.5 text-sm dark:border-slate-600 dark:bg-slate-800" /></div>
+          <div><label className="mb-1 block text-xs text-slate-500">{t("Ημερομηνία", "Date")}</label><DateInput value={e.date} onChange={(v) => setE({ ...e, date: v })} /></div>
           <div><label className="mb-1 block text-xs text-slate-500">{t("Τύπος", "Type")}</label><select value={e.type} onChange={(ev) => setE({ ...e, type: ev.target.value })} className="rounded-lg border border-slate-300 px-2 py-1.5 text-sm dark:border-slate-600 dark:bg-slate-800">{EXC_TYPES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></div>
           <div className="flex-1 min-w-[120px]"><label className="mb-1 block text-xs text-slate-500">{t("Περιγραφή", "Label")}</label><input value={e.label} onChange={(ev) => setE({ ...e, label: ev.target.value })} className="w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm dark:border-slate-600 dark:bg-slate-800" /></div>
           <button onClick={() => addExc.mutate()} disabled={!e.date || addExc.isPending} className="inline-flex items-center gap-1.5 rounded-lg bg-amber-600 px-3 py-2 text-sm font-semibold text-white hover:bg-amber-700 disabled:opacity-50"><Plus className="h-4 w-4" /> {t("Προσθήκη", "Add")}</button>
