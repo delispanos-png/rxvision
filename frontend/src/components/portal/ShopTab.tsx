@@ -1,45 +1,56 @@
 "use client";
 
 import { Fragment, useEffect, useState } from "react";
-import { Search, ShoppingCart, Plus, Minus, Trash2, Truck, Store, ShieldCheck, Pill, Package, ChevronLeft, Loader2, MapPin, Check, XCircle, PackageCheck, RefreshCcw } from "lucide-react";
-import { patientApi } from "@/lib/patientClient";
+import { Search, ShoppingCart, Plus, Minus, Trash2, Truck, Store, ShieldCheck, Pill, Package, ChevronLeft, Loader2, MapPin, Check, XCircle, PackageCheck, RefreshCcw, Star } from "lucide-react";
+import { patientApi, API_BASE } from "@/lib/patientClient";
 
-type Product = { barcode: string; name: string; description_long?: string | null; photo_url?: string | null; price_cents: number; type: string; category?: string | null; discount_pct: number; stock_qty: number };
+type Product = { barcode: string; name: string; description_long?: string | null; photo_url?: string | null; image_id?: string | null; price_cents: number; type: string; category?: string | null; tags?: string[]; featured?: boolean; discount_pct: number; stock_qty: number };
+const isBackorder = (p: Product) => (p.stock_qty ?? 0) <= 0;             // χωρίς απόθεμα → κατόπιν παραγγελίας
+const capOf = (p: Product) => isBackorder(p) ? 99 : p.stock_qty;        // backorder → επιτρέπεται προσθήκη
 type Settings = { delivery_enabled: boolean; pickup_enabled: boolean; delivery_fee_cents: number; free_over_cents: number; min_order_cents: number; pps_cert: string; subscription_enabled: boolean; subscription_discount_pct: number };
+const LOW_STOCK = 5;
+const imgSrc = (p: Product) => p.image_id ? `${API_BASE}/catalog/image/${p.image_id}` : (p.photo_url || "");
+const TAG_STYLE: Record<string, string> = { "Προσφορά": "bg-rose-100 text-rose-700", "Νέο": "bg-emerald-100 text-emerald-700", "Δημοφιλές": "bg-amber-100 text-amber-800", "Bestseller": "bg-amber-100 text-amber-800", "Βιολογικό": "bg-green-100 text-green-700", "Vegan": "bg-green-100 text-green-700" };
+const tagCls = (t: string) => TAG_STYLE[t] || "bg-slate-100 text-slate-600";
+const SORTS: [string, string][] = [["featured", "Προτεινόμενα"], ["newest", "Νεότερα"], ["price_asc", "Φθηνότερα"], ["price_desc", "Ακριβότερα"]];
 type Sub = { _id: string; items?: { barcode: string; qty: number }[]; lines?: { barcode: string; qty: number }[]; mode: string; interval_days: number; next_run: string };
 const FREQ: [number, string][] = [[0, "Μία φορά"], [14, "Κάθε 2 εβδομάδες"], [30, "Κάθε μήνα"], [60, "Κάθε 2 μήνες"], [90, "Κάθε 3 μήνες"]];
-type OrderItem = { barcode: string; name: string; qty: number; line_cents: number; discount_pct?: number };
+type OrderItem = { barcode: string; name: string; qty: number; line_cents: number; discount_pct?: number; backorder?: boolean };
 type OrderAddr = { street?: string; area?: string; postal?: string; phone?: string; notes?: string } | null;
-type Order = { _id: string; items: OrderItem[]; subtotal_cents: number; delivery_fee_cents: number; total_cents: number; mode: string; status: string; created_at: string; address?: OrderAddr };
+type Order = { _id: string; items: OrderItem[]; subtotal_cents: number; delivery_fee_cents: number; total_cents: number; mode: string; status: string; created_at: string; address?: OrderAddr; has_backorder?: boolean; available_date?: string | null };
 const eur = (c: number) => (c / 100).toLocaleString("el-GR", { minimumFractionDigits: 2 }) + " €";
-const final = (p: Product) => Math.round(p.price_cents * (100 - (p.type === "otc_medicine" ? 0 : p.discount_pct)) / 100);
-const ST: Record<string, string> = { new: "Νέα", preparing: "Ετοιμάζεται", ready: "Έτοιμη", shipped: "Καθ' οδόν", delivered: "Παραδόθηκε", cancelled: "Ακυρώθηκε" };
+const isMed = (t: string) => t === "rx_medicine" || t === "otc_medicine";
+const noDisc = (t: string) => t === "rx_medicine";   // μόνο τα συνταγογραφούμενα → 0% έκπτωση
+const final = (p: Product) => Math.round(p.price_cents * (100 - (noDisc(p.type) ? 0 : p.discount_pct)) / 100);
+const ST: Record<string, string> = { pending: "Σε αναμονή έγκρισης", new: "Νέα", preparing: "Ετοιμάζεται", ready: "Έτοιμη", shipped: "Καθ' οδόν", delivered: "Παραδόθηκε", declined: "Απορρίφθηκε", cancelled: "Ακυρώθηκε" };
 
 export function ShopTab() {
   const [view, setView] = useState<"browse" | "cart" | "orders" | "subs">("browse");
   const [products, setProducts] = useState<Product[]>([]);
   const [q, setQ] = useState("");
   const [cat, setCat] = useState("");
-  const [meta, setMeta] = useState<{ categories: string[]; settings: Settings } | null>(null);
+  const [tag, setTag] = useState("");
+  const [sort, setSort] = useState("featured");
+  const [meta, setMeta] = useState<{ categories: string[]; tags: string[]; settings: Settings } | null>(null);
   const [cart, setCart] = useState<Record<string, { p: Product; qty: number }>>({});
   const [orders, setOrders] = useState<Order[]>([]);
 
-  useEffect(() => { patientApi<{ categories: string[]; settings: Settings }>("/patient/shop/meta").then(setMeta).catch(() => {}); }, []);
+  useEffect(() => { patientApi<{ categories: string[]; tags: string[]; settings: Settings }>("/patient/shop/meta").then(setMeta).catch(() => {}); }, []);
   useEffect(() => {
     const tmo = setTimeout(() => {
-      patientApi<{ items: Product[] }>(`/patient/shop?q=${encodeURIComponent(q)}&category=${encodeURIComponent(cat)}`).then((d) => setProducts(d.items)).catch(() => {});
+      patientApi<{ items: Product[] }>(`/patient/shop?q=${encodeURIComponent(q)}&category=${encodeURIComponent(cat)}&tag=${encodeURIComponent(tag)}&sort=${sort}`).then((d) => setProducts(d.items)).catch(() => {});
     }, 250);
     return () => clearTimeout(tmo);
-  }, [q, cat]);
+  }, [q, cat, tag, sort]);
 
-  function add(p: Product) { setCart((c) => ({ ...c, [p.barcode]: { p, qty: Math.min((c[p.barcode]?.qty ?? 0) + 1, p.stock_qty) } })); }
+  function add(p: Product) { setCart((c) => ({ ...c, [p.barcode]: { p, qty: Math.min((c[p.barcode]?.qty ?? 0) + 1, capOf(p)) } })); }
   function dec(bc: string) { setCart((c) => { const q2 = (c[bc]?.qty ?? 0) - 1; const n = { ...c }; if (q2 <= 0) delete n[bc]; else n[bc] = { ...n[bc], qty: q2 }; return n; }); }
   async function reorder(o: Order) {
     try {
       const d = await patientApi<{ items: Product[] }>("/patient/shop");
       const by: Record<string, Product> = {}; d.items.forEach((p) => { by[p.barcode] = p; });
       const next: Record<string, { p: Product; qty: number }> = {}; let missing = 0;
-      o.items.forEach((it) => { const p = by[it.barcode]; if (p && p.stock_qty > 0) next[p.barcode] = { p, qty: Math.min(it.qty, p.stock_qty) }; else missing++; });
+      o.items.forEach((it) => { const p = by[it.barcode]; if (p && capOf(p) > 0) next[p.barcode] = { p, qty: Math.min(it.qty, capOf(p)) }; else missing++; });
       if (Object.keys(next).length === 0) { alert("Τα είδη δεν είναι διαθέσιμα αυτή τη στιγμή."); return; }
       setCart(next); setView("cart");
       if (missing) alert(`${missing} είδη δεν είναι πλέον διαθέσιμα και παραλείφθηκαν.`);
@@ -69,20 +80,33 @@ export function ShopTab() {
           {meta.categories.map((c) => <button key={c} onClick={() => setCat(c)} className={`rounded-full px-2.5 py-1 text-xs ${cat === c ? "bg-violet-600 text-white" : "border border-slate-200 text-slate-600"}`}>{c}</button>)}
         </div>
       )}
+      {!!meta?.tags?.length && (
+        <div className="flex flex-wrap items-center gap-1.5">
+          {meta.tags.map((tg) => <button key={tg} onClick={() => setTag(tag === tg ? "" : tg)} className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${tag === tg ? "bg-slate-800 text-white" : tagCls(tg)}`}>{tg}</button>)}
+        </div>
+      )}
+      <div className="flex items-center justify-end">
+        <select value={sort} onChange={(e) => setSort(e.target.value)} className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-600">{SORTS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select>
+      </div>
 
       <div className="grid grid-cols-2 gap-2 pb-20">
         {products.map((p) => {
-          const med = p.type === "otc_medicine"; const fc = final(p); const inCart = cart[p.barcode]?.qty ?? 0;
+          const med = isMed(p.type); const fc = final(p); const inCart = cart[p.barcode]?.qty ?? 0;
           return (
-            <div key={p.barcode} className="flex flex-col rounded-2xl border border-slate-200 bg-white p-2.5">
-              <div className="mb-1 grid h-24 place-items-center overflow-hidden rounded-xl bg-slate-50">
-                {p.photo_url ? <img src={p.photo_url} alt="" className="h-full w-full object-contain" /> : (med ? <Pill className="h-7 w-7 text-slate-300" /> : <Package className="h-7 w-7 text-slate-300" />)}
+            <div key={p.barcode} className={`flex flex-col rounded-2xl border bg-white p-2.5 ${p.featured ? "border-amber-300 ring-1 ring-amber-100" : "border-slate-200"}`}>
+              <div className="relative mb-1 grid h-24 place-items-center overflow-hidden rounded-xl bg-slate-50">
+                {imgSrc(p) ? <img src={imgSrc(p)} alt="" className="h-full w-full object-contain" /> : (med ? <Pill className="h-7 w-7 text-slate-300" /> : <Package className="h-7 w-7 text-slate-300" />)}
+                {!noDisc(p.type) && p.discount_pct > 0 && <span className="absolute left-1 top-1 rounded-md bg-rose-600 px-1.5 py-0.5 text-[10px] font-bold text-white">-{p.discount_pct}%</span>}
+                {p.featured && <Star className="absolute right-1 top-1 h-4 w-4 fill-amber-400 text-amber-500" />}
+                {p.stock_qty > 0 && p.stock_qty <= LOW_STOCK && <span className="absolute bottom-1 left-1 rounded bg-orange-100 px-1.5 py-0.5 text-[9px] font-semibold text-orange-700">τελευταία {p.stock_qty}</span>}
+                {isBackorder(p) && <span className="absolute bottom-1 left-1 rounded bg-amber-100 px-1.5 py-0.5 text-[9px] font-semibold text-amber-700">Κατόπιν παραγγελίας</span>}
               </div>
               <div className="line-clamp-2 min-h-[2.2rem] text-xs font-semibold text-slate-800">{p.name}</div>
+              {!!p.tags?.length && <div className="mt-0.5 flex flex-wrap gap-0.5">{p.tags.slice(0, 3).map((t) => <span key={t} className={`rounded px-1 py-0.5 text-[9px] font-semibold ${tagCls(t)}`}>{t}</span>)}</div>}
               <div className="mt-1 flex items-end justify-between">
                 <div>
                   {fc < p.price_cents && <div className="text-[10px] text-slate-400 line-through">{eur(p.price_cents)}</div>}
-                  <div className="text-sm font-bold text-slate-900">{eur(fc)}{!med && p.discount_pct > 0 && <span className="ml-1 text-[10px] font-semibold text-emerald-600">-{p.discount_pct}%</span>}</div>
+                  <div className="text-sm font-bold text-slate-900">{eur(fc)}{!noDisc(p.type) && p.discount_pct > 0 && <span className="ml-1 text-[10px] font-semibold text-emerald-600">-{p.discount_pct}%</span>}</div>
                 </div>
                 {inCart ? (
                   <div className="flex items-center gap-1.5 rounded-full bg-violet-600 px-1 text-white">
@@ -113,7 +137,8 @@ function Checkout({ cart, subtotal, settings, onBack, onDone, dec, add }: {
   onBack: () => void; onDone: () => void; dec: (bc: string) => void; add: (p: Product) => void;
 }) {
   const items = Object.values(cart);
-  const hasMed = items.some((x) => x.p.type === "otc_medicine");
+  const hasMed = items.some((x) => isMed(x.p.type));
+  const hasBackorder = items.some((x) => isBackorder(x.p));
   const [mode, setMode] = useState<"delivery" | "pickup">(settings?.delivery_enabled ? "delivery" : "pickup");
   const [addr, setAddr] = useState({ street: "", area: "", postal: "", phone: "", notes: "" });
   const [courier, setCourier] = useState(false);
@@ -201,10 +226,11 @@ function Checkout({ cart, subtotal, settings, onBack, onDone, dec, add }: {
         <p className="mt-1 text-[11px] text-slate-400">Πληρωμή κατά την παράδοση/παραλαβή. Τα φάρμακα δεν επιστρέφονται.</p>
       </div>
 
+      {hasBackorder && <div className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">📦 Κάποια είδη είναι <b>κατόπιν παραγγελίας</b>. Η παραγγελία θα σταλεί στο φαρμακείο για <b>έγκριση</b> — θα σου δηλώσει πότε θα είναι διαθέσιμα.</div>}
       {belowMin && <div className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700">Ελάχιστη παραγγελία {eur(settings?.min_order_cents ?? 0)}.</div>}
       {err && <div className="rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">{err}</div>}
       <button onClick={place} disabled={busy || belowMin} className="flex w-full items-center justify-center gap-2 rounded-2xl bg-violet-600 py-3 font-semibold text-white disabled:opacity-50">
-        {busy ? <Loader2 className="h-5 w-5 animate-spin" /> : null} Ολοκλήρωση παραγγελίας · {eur(total)}
+        {busy ? <Loader2 className="h-5 w-5 animate-spin" /> : null} {hasBackorder ? "Αποστολή για έγκριση" : "Ολοκλήρωση παραγγελίας"} · {eur(total)}
       </button>
     </div>
   );
@@ -237,22 +263,29 @@ function OrderCard({ o, onReorder }: { o: Order; onReorder?: (o: Order) => void 
   const steps = o.mode === "delivery" ? STEPS_DELIVERY : STEPS_PICKUP;
   const cur = STEP_OF[o.status] ?? 0;
   const cancelled = o.status === "cancelled";
+  const declined = o.status === "declined";
+  const pending = o.status === "pending";
+  const dead = cancelled || declined;
   const done = o.status === "delivered";
   return (
-    <div className={`overflow-hidden rounded-2xl border bg-white ${cancelled ? "border-slate-200 opacity-70" : done ? "border-emerald-200" : "border-violet-200"}`}>
+    <div className={`overflow-hidden rounded-2xl border bg-white ${dead ? "border-slate-200 opacity-70" : done ? "border-emerald-200" : pending ? "border-amber-300" : "border-violet-200"}`}>
       <button onClick={() => setOpen((v) => !v)} className="flex w-full items-center justify-between gap-2 p-3 text-left">
         <span className="flex items-center gap-2 text-sm font-semibold text-slate-800">
           {o.mode === "delivery" ? <Truck className="h-4 w-4 text-violet-500" /> : <Store className="h-4 w-4 text-sky-500" />}
           {eur(o.total_cents)} <span className="text-xs font-normal text-slate-400">· {o.items.length} είδη</span>
         </span>
-        <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${cancelled ? "bg-slate-200 text-slate-500" : done ? "bg-emerald-100 text-emerald-700" : "bg-violet-100 text-violet-700"}`}>{ST[o.status] ?? o.status}</span>
+        <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${dead ? "bg-slate-200 text-slate-500" : done ? "bg-emerald-100 text-emerald-700" : pending ? "bg-amber-100 text-amber-800" : "bg-violet-100 text-violet-700"}`}>{ST[o.status] ?? o.status}</span>
       </button>
 
-      {cancelled ? (
+      {pending ? (
+        <div className="flex items-center gap-2 px-3 pb-3 text-xs text-amber-700">⏳ Κατόπιν παραγγελίας — αναμονή έγκρισης & ημερομηνίας από το φαρμακείο.</div>
+      ) : declined ? (
+        <div className="flex items-center gap-2 px-3 pb-3 text-xs text-rose-600"><XCircle className="h-4 w-4" /> Το φαρμακείο δεν μπόρεσε να εκτελέσει την παραγγελία.</div>
+      ) : cancelled ? (
         <div className="flex items-center gap-2 px-3 pb-3 text-xs text-rose-600"><XCircle className="h-4 w-4" /> Η παραγγελία ακυρώθηκε.</div>
-      ) : <div className="px-3 pb-2"><Stepper steps={steps} cur={cur} /></div>}
+      ) : <div className="px-3 pb-2"><Stepper steps={steps} cur={cur} />{o.available_date && <div className="mt-1 text-center text-[11px] font-medium text-emerald-700">📦 Διαθέσιμο ~{new Date(o.available_date).toLocaleDateString("el-GR")}</div>}</div>}
 
-      {(done || cancelled) && onReorder && (
+      {(done || dead) && onReorder && (
         <div className="px-3 pb-3">
           <button onClick={() => onReorder(o)} className="inline-flex items-center gap-1.5 rounded-full bg-violet-600 px-4 py-2 text-xs font-semibold text-white hover:bg-violet-700">
             <ShoppingCart className="h-3.5 w-3.5" /> Παράγγειλε ξανά
@@ -265,7 +298,7 @@ function OrderCard({ o, onReorder }: { o: Order; onReorder?: (o: Order) => void 
           <div className="space-y-0.5">
             {o.items.map((it, i) => (
               <div key={i} className="flex justify-between text-slate-600">
-                <span>{it.qty}× {it.name}{it.discount_pct ? <span className="ml-1 text-emerald-600">-{it.discount_pct}%</span> : null}</span>
+                <span>{it.qty}× {it.name}{it.discount_pct ? <span className="ml-1 text-emerald-600">-{it.discount_pct}%</span> : null}{it.backorder ? <span className="ml-1 text-amber-600">· κατόπιν παραγγελίας</span> : null}</span>
                 <span>{eur(it.line_cents)}</span>
               </div>
             ))}
@@ -323,8 +356,8 @@ function Orders({ orders, setOrders, onBack, onReorder }: { orders: Order[]; set
     const id = window.setInterval(() => patientApi<{ items: Order[] }>("/patient/shop/orders").then((d) => setOrders(d.items)).catch(() => {}), 20000);
     return () => window.clearInterval(id);
   }, [setOrders]);
-  const active = orders.filter((o) => !["delivered", "cancelled"].includes(o.status));
-  const past = orders.filter((o) => ["delivered", "cancelled"].includes(o.status));
+  const active = orders.filter((o) => !["delivered", "cancelled", "declined"].includes(o.status));
+  const past = orders.filter((o) => ["delivered", "cancelled", "declined"].includes(o.status));
   return (
     <div className="space-y-3">
       <button onClick={onBack} className="inline-flex items-center gap-1 text-sm text-slate-500"><ChevronLeft className="h-4 w-4" /> Στο κατάστημα</button>

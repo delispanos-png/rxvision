@@ -182,6 +182,10 @@ class PatientDeceased(Exception):
         super().__init__(f"ΗΔΥΚΑ: αναγγελθείς θάνατος για ΑΜΚΑ {amka}")
 
 
+class HdikaInvalidAmka(ValueError):
+    """Η ΗΔΥΚΑ απαντά «Δώσατε λάθος ΑΜΚΑ» (getpatient, 400) — validation, ΟΧΙ σφάλμα auth."""
+
+
 def _is_deceased_announcement(text: str) -> bool:
     """True αν το σώμα (JSON/XML) της ΗΔΥΚΑ είναι αναγγελία θανάτου — μήνυμα τύπου
     «έχει αναγγελθεί Θάνατος στο Εθνικό Μητρώο ΑΜΚΑ-ΕΜΑΕΣ»."""
@@ -291,6 +295,9 @@ class HdikaClient:
             desc = text
             if "<description>" in text:
                 desc = text.split("<description>", 1)[1].split("</description>", 1)[0]
+            # «Δώσατε λάθος ΑΜΚΑ» = λάθος στοιχείο χρήστη, όχι πρόβλημα auth/κλειδώματος.
+            if "ΑΜΚΑ" in desc or "αμκα" in desc.lower():
+                raise HdikaInvalidAmka(desc[:200])
             raise PermissionError(f"ΗΔΥΚΑ getpatient: {desc[:200]}")
         try:
             return _to_dict(_DET.fromstring(text.encode("utf-8")))

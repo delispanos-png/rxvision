@@ -1,7 +1,7 @@
 // Patient-portal API client — SEPARATE identity & token storage from the tenant/admin apps.
 // Uses a `pat` token from /patient/auth/login|register, refreshed via /patient/auth/refresh.
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8000/api/v1";
+export const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8000/api/v1";
 
 const ACCESS_KEY = "patient_access_token";
 const REFRESH_KEY = "patient_refresh_token";

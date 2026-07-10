@@ -22,6 +22,61 @@ _DIM_FIELD = {
 class PatientRepository(BaseRepository):
     collection_name = "patients_anonymized"
 
+    async def onboard(self, *, amka: str, full_name: str | None = None, sex: str | None = None,
+                      birth_year: int | None = None, area: str | None = None,
+                      mobile: str | None = None, phone: str | None = None, email: str | None = None,
+                      address: str | None = None, city: str | None = None,
+                      postal_code: str | None = None) -> dict:
+        """Δημιουργεί/ενημερώνει «καρτέλα χωρίς κίνηση» (patients_anonymized, rx_count μένει 0) για έναν
+        ΑΜΚΑ — ώστε ο πελάτης να συνδεθεί & να χρησιμοποιήσει την πύλη ΧΩΡΙΣ εκτέλεση συνταγής. Ίδιο
+        κλειδί (pseudo_id) με τις εγγραφές από συνταγές → αν υπάρχει ήδη, απλώς ενημερώνεται (χωρίς διπλό)."""
+        from datetime import timezone
+        from bson import ObjectId  # noqa: F401
+        from pymongo import ReturnDocument
+        from app.utils.anonymization import age_group, pseudonymize
+        from app.services.vault_service import vault
+
+        amka = (amka or "").strip()
+        pseudo = pseudonymize(amka, tenant_pepper=vault.tenant_pepper(self.tenant_id))
+        now = datetime.now(tz=timezone.utc)
+        ag = age_group(birth_year, today=now.date()) if birth_year else "unknown"
+        set_fields: dict = {"age_group": ag}
+        if sex:
+            set_fields["sex"] = sex
+        if birth_year:
+            set_fields["birth_year"] = birth_year
+        if area:
+            set_fields["residence_area"] = area
+        if full_name:
+            set_fields["full_name"] = full_name
+        if amka.isdigit():            # controller-φαρμακείο βλέπει τα δικά του (tenant-isolated, όπως το ingestion)
+            set_fields["amka"] = amka
+        existing = await self._db["patients_anonymized"].find_one(
+            self._scope({"pseudo_id": pseudo}), {"_id": 1})
+        res = await self._db["patients_anonymized"].find_one_and_update(
+            self._scope({"pseudo_id": pseudo}),
+            {"$set": set_fields,
+             "$min": {"first_seen_at": now}, "$max": {"last_seen_at": now},
+             "$setOnInsert": {"tenant_id": self.tenant_id, "pseudo_id": pseudo,
+                              "rx_count": 0, "rx_value_total": 0, "lifecycle": "new",
+                              "source": "onboarded", "created_at": now}},
+            upsert=True, return_document=ReturnDocument.AFTER)
+        pid = res["_id"]
+        # Στοιχεία επικοινωνίας/διεύθυνσης (από ΗΔΥΚΑ ή χειροκίνητα) → patient_contacts. Το κινητό
+        # επιτρέπει self-εγγραφή στην πύλη (OTP στο on-file κινητό).
+        contact = {k: v.strip() for k, v in {
+            "mobile": mobile, "phone": phone, "email": email,
+            "address": address, "city": city, "postal_code": postal_code,
+        }.items() if v and v.strip()}
+        if contact:
+            contact["updated_at"] = now
+            await self._db["patient_contacts"].update_one(
+                self._scope({"_id": pid}),
+                {"$set": contact,
+                 "$setOnInsert": {"tenant_id": self.tenant_id, "_id": pid, "created_at": now}},
+                upsert=True)
+        return {"ok": True, "patient_ref": str(pid), "already_existed": existing is not None}
+
     async def aggregate_by(self, *, by: str) -> list[dict]:
         field = _DIM_FIELD.get(by, "$lifecycle")
         pipeline = [

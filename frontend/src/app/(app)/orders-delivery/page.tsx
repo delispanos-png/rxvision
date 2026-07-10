@@ -2,26 +2,30 @@
 
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Truck, Package, MapPin, Phone, Check, Loader2, Settings as Cog } from "lucide-react";
+import { Truck, Package, MapPin, Phone, Check, Loader2, Clock, X } from "lucide-react";
 import { api } from "@/lib/apiClient";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
+import { DateInput } from "@/components/ui/DateInput";
 
-type Item = { barcode: string; name: string; qty: number; line_cents: number; discount_pct: number; type: string };
+type Item = { barcode: string; name: string; qty: number; line_cents: number; discount_pct: number; type: string; backorder?: boolean };
 type Order = {
   _id: string; patient_name: string; patient_phone: string; items: Item[];
   subtotal_cents: number; delivery_fee_cents: number; total_cents: number; mode: string;
   address?: { street?: string; area?: string; postal?: string; phone?: string; notes?: string } | null;
-  has_medicine: boolean; status: string; created_at: string;
+  has_medicine: boolean; has_backorder?: boolean; available_date?: string | null; status: string; created_at: string;
 };
 const eur = (c: number) => (c / 100).toLocaleString("el-GR", { minimumFractionDigits: 2 }) + " €";
 const ST: Record<string, { label: string; cls: string }> = {
+  pending: { label: "Σε αναμονή έγκρισης", cls: "bg-amber-100 text-amber-800" },
   new: { label: "Νέα", cls: "bg-rose-100 text-rose-700" },
   preparing: { label: "Σε ετοιμασία", cls: "bg-amber-100 text-amber-700" },
   ready: { label: "Έτοιμη", cls: "bg-sky-100 text-sky-700" },
   shipped: { label: "Καθ' οδόν", cls: "bg-violet-100 text-violet-700" },
   delivered: { label: "Παραδόθηκε", cls: "bg-emerald-100 text-emerald-700" },
+  declined: { label: "Απορρίφθηκε", cls: "bg-slate-200 text-slate-500" },
   cancelled: { label: "Ακυρώθηκε", cls: "bg-slate-200 text-slate-500" },
 };
+const DONE_ST = ["delivered", "cancelled", "declined"];
 const NEXT: Record<string, { to: string; label: string }[]> = {
   new: [{ to: "preparing", label: "Ετοιμασία" }, { to: "cancelled", label: "Ακύρωση" }],
   preparing: [{ to: "ready", label: "Έτοιμη (παραλαβή)" }, { to: "shipped", label: "Απεστάλη (αποστολή)" }],
@@ -37,13 +41,19 @@ function Orders() {
   const [tab, setTab] = useState<"orders" | "done" | "settings">("orders");
   const list = useQuery({ queryKey: ["od-orders"], queryFn: () => api<{ items: Order[] }>("/orders/delivery"), refetchInterval: 20000, retry: false });
   const [busy, setBusy] = useState<string | null>(null);
+  const [dates, setDates] = useState<Record<string, string>>({});
   async function advance(id: string, status: string) {
     setBusy(id);
     try { await api(`/orders/delivery/${id}/status`, { method: "POST", body: JSON.stringify({ status }) }); await list.refetch(); }
     finally { setBusy(null); }
   }
-  const orders = (list.data?.items ?? []).filter((o) => !["delivered", "cancelled"].includes(o.status));
-  const done = (list.data?.items ?? []).filter((o) => ["delivered", "cancelled"].includes(o.status));
+  async function respond(id: string, accept: boolean) {
+    setBusy(id);
+    try { await api(`/orders/delivery/${id}/backorder`, { method: "POST", body: JSON.stringify({ accept, available_date: dates[id] || null }) }); await list.refetch(); }
+    finally { setBusy(null); }
+  }
+  const orders = (list.data?.items ?? []).filter((o) => !DONE_ST.includes(o.status));
+  const done = (list.data?.items ?? []).filter((o) => DONE_ST.includes(o.status));
 
   return (
     <div className="mx-auto max-w-4xl">
@@ -74,7 +84,7 @@ function Orders() {
                 <div className="text-right"><div className="text-base font-bold text-slate-800">{eur(o.total_cents)}</div>{o.delivery_fee_cents > 0 && <div className="text-[11px] text-slate-400">(+{eur(o.delivery_fee_cents)} μεταφορικά)</div>}</div>
               </div>
               <div className="mt-2 space-y-0.5 text-sm text-slate-600">
-                {o.items.map((it, i) => <div key={i} className="flex justify-between"><span>{it.qty}× {it.name}{it.discount_pct > 0 && <span className="ml-1 text-emerald-600">-{it.discount_pct}%</span>}</span><span>{eur(it.line_cents)}</span></div>)}
+                {o.items.map((it, i) => <div key={i} className="flex justify-between"><span>{it.qty}× {it.name}{it.discount_pct > 0 && <span className="ml-1 text-emerald-600">-{it.discount_pct}%</span>}{it.backorder && <span className="ml-1 rounded bg-amber-100 px-1 text-[10px] font-semibold text-amber-700">κατόπιν παραγγελίας</span>}</span><span>{eur(it.line_cents)}</span></div>)}
               </div>
               {o.mode === "delivery" && o.address && (
                 <div className="mt-2 rounded-lg bg-violet-50 px-3 py-2 text-xs text-violet-800">
@@ -83,14 +93,27 @@ function Orders() {
                   {o.address.notes && <div className="mt-0.5 italic">«{o.address.notes}»</div>}
                 </div>
               )}
-              <div className="mt-3 flex flex-wrap gap-2">
-                {(NEXT[o.status] ?? []).map((n) => (
-                  <button key={n.to} onClick={() => advance(o._id, n.to)} disabled={busy === o._id}
-                    className={`inline-flex items-center gap-1 rounded-lg px-3 py-1.5 text-xs font-semibold disabled:opacity-50 ${n.to === "cancelled" ? "border border-rose-300 text-rose-600 hover:bg-rose-50" : "bg-brand-600 text-white hover:bg-brand-700"}`}>
-                    {busy === o._id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />} {n.label}
-                  </button>
-                ))}
-              </div>
+              {o.status === "pending" ? (
+                <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50/60 p-3">
+                  <div className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-amber-800"><Clock className="h-3.5 w-3.5" /> Κατόπιν παραγγελίας — αποδέξου (με ημερομηνία διαθεσιμότητας) ή απόρριψε.</div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-xs text-slate-500">Διαθέσιμο:</span>
+                    <DateInput value={dates[o._id] ?? ""} onChange={(v) => setDates((d) => ({ ...d, [o._id]: v }))} />
+                    <button onClick={() => respond(o._id, true)} disabled={busy === o._id} className="inline-flex items-center gap-1 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50">{busy === o._id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />} Αποδοχή</button>
+                    <button onClick={() => respond(o._id, false)} disabled={busy === o._id} className="inline-flex items-center gap-1 rounded-lg border border-rose-300 px-3 py-1.5 text-xs font-semibold text-rose-600 hover:bg-rose-50 disabled:opacity-50"><X className="h-3.5 w-3.5" /> Απόρριψη</button>
+                  </div>
+                </div>
+              ) : (
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  {o.available_date && <span className="rounded-lg bg-emerald-50 px-2 py-1 text-[11px] font-medium text-emerald-700">📦 Διαθέσιμο ~{new Date(o.available_date).toLocaleDateString("el-GR")}</span>}
+                  {(NEXT[o.status] ?? []).map((n) => (
+                    <button key={n.to} onClick={() => advance(o._id, n.to)} disabled={busy === o._id}
+                      className={`inline-flex items-center gap-1 rounded-lg px-3 py-1.5 text-xs font-semibold disabled:opacity-50 ${n.to === "cancelled" ? "border border-rose-300 text-rose-600 hover:bg-rose-50" : "bg-brand-600 text-white hover:bg-brand-700"}`}>
+                      {busy === o._id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />} {n.label}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
           ))}
         </div>

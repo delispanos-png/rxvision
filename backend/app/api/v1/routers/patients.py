@@ -45,6 +45,55 @@ async def search_patients(
     return {"items": await PatientExecutionsRepository(tenant_id=ctx.tenant_id, demo=ctx.demo).search(q)}
 
 
+# ── Νέος πελάτης με ΑΜΚΑ (άντληση ΗΔΥΚΑ + καρτέλα χωρίς κίνηση, για την πύλη) ──────────────
+class AmkaLookupIn(BaseModel):
+    amka: str
+
+
+class OnboardIn(BaseModel):
+    amka: str
+    full_name: str | None = None
+    sex: str | None = None
+    birth_year: int | None = None
+    area: str | None = None
+    mobile: str | None = None
+    phone: str | None = None
+    email: str | None = None
+    address: str | None = None
+    city: str | None = None
+    postal_code: str | None = None
+    consent: bool = False
+
+
+def _valid_amka(a: str) -> bool:
+    a = (a or "").strip()
+    return a.isdigit() and len(a) == 11
+
+
+@router.post("/lookup")
+async def lookup_patient(body: AmkaLookupIn,
+                         ctx: TenantContext = Depends(require("patients:read", module=_MODULE))):
+    """Άντληση στοιχείων πελάτη από ΗΔΥΚΑ με ΑΜΚΑ (ΧΩΡΙΣ εγγραφή) — για preview στο onboarding."""
+    if not _valid_amka(body.amka):
+        return {"found": False, "error": "bad_amka_format"}
+    from app.services.patient_lookup import fetch_hdika_patient
+    return await fetch_hdika_patient(ctx.tenant_id, body.amka.strip())
+
+
+@router.post("/onboard")
+async def onboard_patient(body: OnboardIn,
+                          ctx: TenantContext = Depends(require("patients:read", module=_MODULE))):
+    """Δημιουργία «καρτέλας χωρίς κίνηση» για νέο πελάτη (πύλη). Απαιτεί συγκατάθεση πελάτη (GDPR)."""
+    if not _valid_amka(body.amka):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "bad_amka_format")
+    if not body.consent:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "consent_required")
+    return await PatientRepository(tenant_id=ctx.tenant_id).onboard(
+        amka=body.amka.strip(), full_name=body.full_name, sex=body.sex,
+        birth_year=body.birth_year, area=body.area, mobile=body.mobile, phone=body.phone,
+        email=body.email, address=body.address, city=body.city, postal_code=body.postal_code)
+
+
 @router.get("/{patient_id}/contact")
 async def get_contact(
     patient_id: str,

@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useHashView } from "@/lib/useHashView";
 import { useQuery } from "@tanstack/react-query";
-import { Users, Wallet, TrendingUp, Activity, Search, Phone, MessageSquare, Mail, FileSpreadsheet } from "lucide-react";
+import { Users, Wallet, TrendingUp, Activity, Search, Phone, MessageSquare, Mail, FileSpreadsheet, UserPlus } from "lucide-react";
 import { api, queryKeys } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
@@ -20,6 +20,7 @@ import { PanelCard } from "@/components/ui/Card";
 import { QueryState } from "@/components/ui/QueryState";
 import { Tooltip } from "@/components/ui/Tooltip";
 import { ImportInsuredModal } from "@/components/patients/ImportInsuredModal";
+import { NewPatientModal } from "@/components/patients/NewPatientModal";
 
 type AggRow = { label: string; value: number };
 type RetentionPoint = { period: string; retained_pct: number };
@@ -122,6 +123,7 @@ export default function PatientsPage() {
   const [showAllAreas, setShowAllAreas] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
+  const [newOpen, setNewOpen] = useState(false);
   const view = useHashView();              // #list → μόνο λίστα · #kpi → μόνο δείκτες · κενό → όλα
   const showKpi = view !== "list", showList = view !== "kpi";
   const EMPTY_FLT = { sex: "", ages: [] as string[], area: "", lifecycle: "", status: "", reason: "", rxMin: "", valueMin: "", profitMin: "", hasContact: false, consent: false, sort: "value" };
@@ -210,11 +212,17 @@ export default function PatientsPage() {
           <h1 className="text-2xl font-bold tracking-tight text-slate-900">{t("Ασφαλισμένοι", "Patients")}</h1>
           <p className="mt-1 text-sm text-slate-500">{t("Κατανομές, διατήρηση & αξία ανά ασφαλισμένο", "Distributions, retention & value per patient")}</p>
         </div>
-        <button onClick={() => setImportOpen(true)} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200">
-          <FileSpreadsheet className="h-4 w-4 text-emerald-600" /> {t("Εισαγωγή από Excel", "Import from Excel")}
-        </button>
+        <div className="flex flex-wrap gap-2">
+          <button onClick={() => setNewOpen(true)} className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700">
+            <UserPlus className="h-4 w-4" /> {t("Νέος πελάτης", "New patient")}
+          </button>
+          <button onClick={() => setImportOpen(true)} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200">
+            <FileSpreadsheet className="h-4 w-4 text-emerald-600" /> {t("Εισαγωγή από Excel", "Import from Excel")}
+          </button>
+        </div>
       </div>
       <ImportInsuredModal open={importOpen} onClose={() => setImportOpen(false)} />
+      <NewPatientModal open={newOpen} onClose={() => setNewOpen(false)} />
 
       <div className="mb-4">
         <DateRangeFilter />

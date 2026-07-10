@@ -40,6 +40,18 @@ async def set_status(order_id: str, body: StatusIn,
     return await _repo(ctx).set_status(order_id, body.status)
 
 
+class BackorderIn(BaseModel):
+    accept: bool
+    available_date: str | None = None   # YYYY-MM-DD (πότε θα είναι διαθέσιμο)
+
+
+@router.post("/{order_id}/backorder")
+async def respond_backorder(order_id: str, body: BackorderIn,
+                            ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+    """Αποδοχή (+ ημερομηνία) ή απόρριψη μιας «σε αναμονή έγκρισης» παραγγελίας (κατόπιν παραγγελίας)."""
+    return await _repo(ctx).respond_backorder(order_id, body.accept, body.available_date)
+
+
 @router.get("/settings")
 async def get_settings(ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
     return await _repo(ctx).settings()

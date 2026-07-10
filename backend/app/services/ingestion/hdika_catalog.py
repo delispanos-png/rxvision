@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 
 from pymongo import UpdateOne
 
+from app.services.catalog_taxonomy import medicine_category
 from app.services.ingestion.hdika_client import _to_dict
 
 _PAGE = 150
@@ -132,6 +133,8 @@ async def refresh_catalog(db, client) -> int:
                                      or str(r.get("onlyByProtocol", "")).lower() == "true"),
                 "atc": r.get("atcCode"),
                 "drug_category": r.get("drugCategoryId"),
+                # Θεραπευτική κατηγορία e-shop (ATC→κατηγορία) — για το «προς πώληση» μενού φαρμάκων.
+                "sale_category": medicine_category(r.get("atcCode")),
                 # ── πεδία για τον έλεγχο κλεισίματος συνταγών (υπερδοσολογία + ειδικά φάρμακα) ──
                 "overdose_message_type": (r.get("overdoseMessageType") or "").strip() or None,
                 "val_overdose_thres": _num(r.get("valOverdoseThres")),

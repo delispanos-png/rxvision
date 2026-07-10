@@ -33,8 +33,6 @@ type Config = {
   auth_error_at?: string | null;
 };
 type Tenant = { country?: string };
-type TestRes = { ok: boolean; mode: string; message: string };
-type SyncRes = { status: string; stats: Record<string, number> };
 type Progress = {
   initialization: {
     enabled: boolean; total_executions: number; oldest: string | null; newest: string | null;
@@ -137,29 +135,12 @@ export default function IngestionSettingsPage() {
     mutationFn: () => api("/ingestion/credentials/hdika", { method: "PUT", body: JSON.stringify(f) }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["hdika-config"] }),
   });
-  const test = useMutation({
-    // αποθήκευση τρέχουσας φόρμας πρώτα → έλεγχος με το επιλεγμένο περιβάλλον (όχι το παλιό)
-    mutationFn: async () => {
-      await api("/ingestion/credentials/hdika", { method: "PUT", body: JSON.stringify(f) });
-      return api<TestRes>("/ingestion/hdika/test", { method: "POST" });
-    },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["hdika-config"] }),
-  });
   const discover = useMutation({
-    // αποθήκευση credentials πρώτα → μετά άντληση στοιχείων φαρμακείου από ΗΔΥΚΑ
-    mutationFn: async () => {
-      await api("/ingestion/credentials/hdika", { method: "PUT", body: JSON.stringify(f) });
-      return api<{ ok: boolean; discovered: Record<string, string> }>("/ingestion/hdika/discover", { method: "POST" });
-    },
+    // ΜΟΝΟ άντληση στοιχείων φαρμακείου — χρησιμοποιεί τα ΑΠΟΘΗΚΕΥΜΕΝΑ credentials (μία φορά). ΔΕΝ
+    // αποθηκεύει (η αποθήκευση γίνεται με «Αποθήκευση αλλαγών»)· ενεργό ΜΟΝΟ όταν έχουν σωθεί user/pass
+    // (ασφάλεια — να μη χτυπηθεί η ΗΔΥΚΑ με μη-αποθηκευμένα/λάθος στοιχεία & κλειδωθεί ο λογαριασμός).
+    mutationFn: () => api<{ ok: boolean; discovered: Record<string, string> }>("/ingestion/hdika/discover", { method: "POST" }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["hdika-config"] }),
-  });
-  const sync = useMutation({
-    mutationFn: () => api<SyncRes>("/ingestion/hdika/sync", { method: "POST" }),
-    onSuccess: () => {
-      syncStartRef.current = Date.now();
-      setSyncing(true);
-      qc.invalidateQueries({ queryKey: ["ingestion-jobs"] });
-    },
   });
   // historical download for a chosen date range
   const [dlFrom, setDlFrom] = useState(`${new Date().getFullYear()}-01-01`);
@@ -220,7 +201,7 @@ export default function IngestionSettingsPage() {
       )}
       {/* status banner */}
       <div className="rx-card flex flex-wrap items-center gap-3 p-4">
-        <span className={`grid h-10 w-10 place-items-center rounded-xl ${c?.configured ? "bg-emerald-50 text-emerald-600" : "bg-slate-100 text-slate-400"}`}>
+        <span className={`grid h-10 w-10 place-items-center rounded-xl ${(c?.configured && !c?.auth_paused) ? "bg-emerald-50 text-emerald-600" : "bg-rose-50 text-rose-600"}`} title={(c?.configured && !c?.auth_paused) ? t("Συνδεδεμένο", "Connected") : t("Μη συνδεδεμένο", "Not connected")}>
           <PlugZap className="h-5 w-5" />
         </span>
         <div className="mr-auto">
@@ -236,14 +217,6 @@ export default function IngestionSettingsPage() {
               : t("Καταχωρήστε τα στοιχεία e-Συνταγογράφησης για άντληση συνταγών.", "Enter your e-Prescription credentials to fetch prescriptions.")}
           </div>
         </div>
-        <button onClick={() => test.mutate()} disabled={test.isPending}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
-          {test.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <ShieldCheck className="h-4 w-4" />} {t("Έλεγχος σύνδεσης", "Test connection")}
-        </button>
-        <button onClick={() => sync.mutate()} disabled={syncing || sync.isPending || !c?.configured}
-          className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-3 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-40">
-          {(syncing || sync.isPending) ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />} {t("Συγχρονισμός τώρα", "Sync now")}
-        </button>
       </div>
 
       {/* ── ΔΥΟ ΜΠΑΡΕΣ ΠΡΟΟΔΟΥ: αρχικοποίηση ιστορικού + καθημερινός (incremental) ── */}
@@ -382,14 +355,6 @@ export default function IngestionSettingsPage() {
       </>
       )}
 
-      {test.data && (
-        <div className={`rx-card p-3 text-sm ${test.data.ok ? "text-emerald-700" : "text-rose-700"}`}>
-          <span className="inline-flex items-center gap-1.5">
-            {test.data.ok ? <CheckCircle2 className="h-4 w-4" /> : <XCircle className="h-4 w-4" />}
-            {test.data.message}
-          </span>
-        </div>
-      )}
       {!syncing && latestJob && latestJob.type === "incremental" && latestJob.status !== "running" && (
         <div className="rx-card p-3 text-sm text-emerald-700">
           <span className="inline-flex items-center gap-1.5">
@@ -432,7 +397,7 @@ export default function IngestionSettingsPage() {
 
         <PanelCard title={t("Στοιχεία φαρμακείου (ανακτώνται αυτόματα από ΗΔΥΚΑ)", "Pharmacy details (fetched automatically from ΗΔΥΚΑ)")}>
           <p className="mb-4 flex items-center gap-1.5 rounded-lg bg-emerald-50 px-3 py-2 text-xs text-emerald-700">
-            <Link2 className="h-3.5 w-3.5" /> {t("Δεν χρειάζεται να τα πληκτρολογήσετε — πατήστε «Σύνδεση & άντληση στοιχείων» και συμπληρώνονται από την ΗΔΥΚΑ (λιγότερα λάθη).", "No need to type them — click «Connect & fetch details» and they are filled in from ΗΔΥΚΑ (fewer errors).")}
+            <Link2 className="h-3.5 w-3.5" /> {t("Δεν χρειάζεται να τα πληκτρολογήσετε — πατήστε «Άντληση στοιχείων φαρμακείου από ΗΔΥΚΑ» και συμπληρώνονται αυτόματα (λιγότερα λάθη).", "No need to type them — click «Fetch pharmacy details from ΗΔΥΚΑ» and they are filled in automatically (fewer errors).")}
           </p>
           {(c?.pharmacy_name || c?.pharmacy_id) && (
             <div className="mb-4 rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-700">
@@ -507,17 +472,19 @@ export default function IngestionSettingsPage() {
         </PanelCard>
 
         <div className="flex flex-wrap items-center gap-3">
-          {/* κύριο κουμπί: αποθηκεύει & αντλεί αυτόματα τα στοιχεία φαρμακείου από ΗΔΥΚΑ */}
-          <button type="button" onClick={() => discover.mutate()} disabled={discover.isPending || !f.username}
-            className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-40">
-            {discover.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Link2 className="h-4 w-4" />} {t("Αποθήκευση & αυτόματη άντληση", "Save & auto-fetch")}
+          {/* ΜΟΝΟ άντληση στοιχείων φαρμακείου — ενεργό μόνο όταν έχουν αποθηκευτεί username+password */}
+          <button type="button" onClick={() => discover.mutate()} disabled={discover.isPending || !c?.configured}
+            title={!c?.configured ? t("Αποθήκευσε πρώτα username & password (ασφάλεια — να μην κλειδωθεί ο λογαριασμός ΗΔΥΚΑ).", "Save username & password first (safety — avoid locking the ΗΔΥΚΑ account).") : ""}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-40">
+            {discover.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Link2 className="h-4 w-4" />} {t("Άντληση στοιχείων φαρμακείου από ΗΔΥΚΑ", "Fetch pharmacy details from ΗΔΥΚΑ")}
           </button>
           <button type="submit" disabled={save.isPending}
             className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-4 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50">
-            {save.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />} {t("Μόνο αποθήκευση", "Save only")}
+            {save.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />} {t("Αποθήκευση αλλαγών", "Save changes")}
           </button>
           {(save.isSuccess || discover.isSuccess) && <span className="text-sm text-emerald-600">{t("Αποθηκεύτηκε ✓", "Saved ✓")}</span>}
           {(save.isError || discover.isError) && <span className="text-sm text-rose-600">{t("Σφάλμα", "Error")}</span>}
+          {!c?.configured && <p className="w-full text-[11px] text-amber-600">{t("🔒 Αποθήκευσε πρώτα username & password· μετά ενεργοποιείται η «Άντληση στοιχείων» (ασφάλεια — να μην κλειδωθεί ο λογαριασμός ΗΔΥΚΑ).", "🔒 Save username & password first; then «Fetch details» is enabled (safety — avoid locking the ΗΔΥΚΑ account).")}</p>}
         </div>
       </form>
 

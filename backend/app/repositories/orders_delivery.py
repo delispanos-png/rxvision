@@ -11,10 +11,11 @@ from datetime import datetime, timezone
 from app.repositories.base import BaseRepository, jsonsafe
 from app.repositories.pharmacy_catalog import PharmacyCatalogRepository
 
-_OPEN = ("new", "preparing", "ready", "shipped")
+_OPEN = ("pending", "new", "preparing", "ready", "shipped")
 STATUS_LABELS = {
-    "new": "Νέα", "preparing": "Σε ετοιμασία", "ready": "Έτοιμη για παραλαβή",
-    "shipped": "Καθ' οδόν", "delivered": "Παραδόθηκε", "cancelled": "Ακυρώθηκε",
+    "pending": "Σε αναμονή έγκρισης", "new": "Νέα", "preparing": "Σε ετοιμασία",
+    "ready": "Έτοιμη για παραλαβή", "shipped": "Καθ' οδόν", "delivered": "Παραδόθηκε",
+    "declined": "Απορρίφθηκε", "cancelled": "Ακυρώθηκε",
 }
 
 
@@ -68,24 +69,37 @@ class OrdersDeliveryRepository(BaseRepository):
             return {"ok": False, "error": "courier_auth_required"}
         cat = PharmacyCatalogRepository(tenant_id=self.tenant_id)
         items: list[dict] = []
+        reserve_items: list[dict] = []          # είδη με επαρκές απόθεμα → δεσμεύονται άμεσα
         subtotal = 0
         has_medicine = False
+        has_backorder = False                   # ≥1 είδος «κατόπιν παραγγελίας» → η παραγγελία θέλει έγκριση
         for ln in lines:
             prod = await cat.get(str(ln.get("barcode")))
             qty = max(1, int(ln.get("qty") or 1))
-            if not prod or not prod.get("active", True) or prod.get("stock_qty", 0) < qty:
+            if not prod or not prod.get("active", True):
                 return {"ok": False, "error": "unavailable", "barcode": ln.get("barcode")}
+            # Δεν επαρκεί το απόθεμα → ΚΑΤΟΠΙΝ ΠΑΡΑΓΓΕΛΙΑΣ (backorder): επιτρέπεται, αλλά η παραγγελία
+            # μπαίνει «σε αναμονή έγκρισης» — ο φαρμακοποιός αποδέχεται/απορρίπτει & δηλώνει ημερομηνία.
+            backorder = prod.get("stock_qty", 0) < qty
+            if backorder:
+                has_backorder = True
+            else:
+                reserve_items.append({"barcode": prod["barcode"], "qty": qty})
             unit = int(prod["price_cents"])
-            if prod.get("type") == "otc_medicine":
-                disc = 0                                    # φάρμακα: ποτέ έκπτωση
+            ptype = prod.get("type")
+            if ptype in ("rx_medicine", "otc_medicine"):
                 has_medicine = True
+            if ptype == "rx_medicine":
+                disc = 0                                    # συνταγογραφούμενα: ΠΟΤΕ έκπτωση
+            elif ptype == "otc_medicine":
+                disc = min(90, int(prod.get("discount_pct") or 0))            # OTC: δική του έκπτωση
             else:                                           # παραφάρμακα: + έκπτωση συνδρομής
                 disc = min(90, int(prod.get("discount_pct") or 0) + max(0, int(sub_discount_pct)))
             line_cents = round(unit * qty * (100 - disc) / 100)
             subtotal += line_cents
             items.append({"barcode": prod["barcode"], "name": prod["name"], "qty": qty,
                           "unit_cents": unit, "discount_pct": disc, "line_cents": line_cents,
-                          "type": prod.get("type")})
+                          "type": prod.get("type"), "backorder": backorder})
         if not items:
             return {"ok": False, "error": "empty"}
         st = await self.settings()
@@ -98,6 +112,13 @@ class OrdersDeliveryRepository(BaseRepository):
         fee = 0
         if mode == "delivery":
             fee = 0 if (st["free_over_cents"] and subtotal >= st["free_over_cents"]) else st["delivery_fee_cents"]
+        # «Σε αναμονή έγκρισης» αν έχει backorder (ο φαρμακοποιός αποφασίζει)· αλλιώς «Νέα» άμεσα.
+        status = "pending" if has_backorder else "new"
+        # ΑΤΟΜΙΚΗ δέσμευση αποθέματος για τα ΑΜΕΣΑ είδη (όχι σε pending — δεσμεύεται στην έγκριση).
+        if status == "new" and reserve_items:
+            reserve = await cat.reserve_stock(reserve_items)
+            if not reserve.get("ok"):
+                return {"ok": False, "error": "unavailable", "barcode": reserve.get("barcode")}
         doc = {
             "tenant_id": self.tenant_id, "account_id": account_id, "patient_ref": patient_ref,
             "patient_name": patient_name, "patient_phone": patient_phone,
@@ -105,18 +126,21 @@ class OrdersDeliveryRepository(BaseRepository):
             "total_cents": subtotal + fee, "mode": mode,
             "address": address if mode == "delivery" else None,
             "courier_authorized": bool(courier_authorized), "gdpr_consent": True,
-            "has_medicine": has_medicine, "status": "new", "subscription_id": subscription_id,
-            "status_history": [{"status": "new", "at": _now()}],
+            "has_medicine": has_medicine, "has_backorder": has_backorder, "available_date": None,
+            "status": status, "subscription_id": subscription_id,
+            "status_history": [{"status": status, "at": _now()}],
             "created_at": _now(), "updated_at": _now(),
         }
         res = await self.insert_one(doc)
         # επιβεβαίωση παραλαβής παραγγελίας (1ο στάδιο) — μετά ακολουθούν push σε κάθε αλλαγή status
         if account_id:
             from app.services import push_service
+            body = ("Κάποια είδη είναι κατόπιν παραγγελίας — στάλθηκε στο φαρμακείο για έγκριση & ημερομηνία."
+                    if has_backorder else "Στάλθηκε στο φαρμακείο σου. Θα ενημερώνεσαι σε κάθε βήμα.")
             await push_service.send_to_account(
-                account_id, title="🛍️ Η παραγγελία σου ελήφθη",
-                body="Στάλθηκε στο φαρμακείο σου. Θα ενημερώνεσαι σε κάθε βήμα.", url="/portal")
-        return {"ok": True, "order_id": str(res), "total_cents": subtotal + fee}
+                account_id, title="🛍️ Η παραγγελία σου ελήφθη", body=body, url="/portal")
+        return {"ok": True, "order_id": str(res), "total_cents": subtotal + fee,
+                "status": status, "has_backorder": has_backorder}
 
     # ── subscriptions (recurring orders) ────────────────────────────────────
     async def create_subscription(self, *, account_id, patient_ref, patient_name, patient_phone,
@@ -183,7 +207,40 @@ class OrdersDeliveryRepository(BaseRepository):
         return jsonsafe(await self.find(q, sort=[("created_at", -1)], limit=limit))
 
     async def pending_count(self) -> int:
-        return await self.count({"status": {"$in": ["new", "preparing"]}})
+        return await self.count({"status": {"$in": ["pending", "new", "preparing"]}})
+
+    async def respond_backorder(self, order_id: str, accept: bool, available_date: str | None = None) -> dict:
+        """Ο φαρμακοποιός αποδέχεται (+ ημερομηνία διαθεσιμότητας) ή απορρίπτει μια «σε αναμονή» παραγγελία."""
+        from bson import ObjectId
+        try:
+            oid = ObjectId(order_id)
+        except Exception:  # noqa: BLE001
+            return {"ok": False, "error": "bad_id"}
+        order = await self.find_one({"_id": oid})
+        if not order or order.get("status") != "pending":
+            return {"ok": False, "error": "not_pending"}
+        if accept:
+            # δέσμευσε ό,τι είναι ΗΔΗ σε απόθεμα (τα backorder θα έρθουν) → «Νέα» πλέον
+            cat = PharmacyCatalogRepository(tenant_id=self.tenant_id)
+            in_stock = [{"barcode": it["barcode"], "qty": it["qty"]}
+                        for it in order.get("items", []) if not it.get("backorder")]
+            if in_stock:
+                await cat.reserve_stock(in_stock)   # best-effort (backorder ούτως ή άλλως έρχεται)
+            await self.update_one({"_id": oid}, {
+                "$set": {"status": "new", "available_date": available_date, "updated_at": _now()},
+                "$push": {"status_history": {"status": "new", "at": _now()}}})
+            msg = (f"Η παραγγελία σου εγκρίθηκε! Διαθέσιμη ~{available_date}." if available_date
+                   else "Η παραγγελία σου εγκρίθηκε! Θα ενημερωθείς μόλις είναι έτοιμη.")
+        else:
+            await self.update_one({"_id": oid}, {
+                "$set": {"status": "declined", "updated_at": _now()},
+                "$push": {"status_history": {"status": "declined", "at": _now()}}})
+            msg = "Δυστυχώς το φαρμακείο δεν μπορεί να εκτελέσει την παραγγελία σου αυτή τη στιγμή."
+        if order.get("account_id"):
+            from app.services import push_service
+            await push_service.send_to_account(order["account_id"],
+                                               title="🛍️ Παραγγελία φαρμακείου", body=msg, url="/portal")
+        return {"ok": True, "status": "new" if accept else "declined", "available_date": available_date}
 
     async def set_status(self, order_id: str, status: str) -> dict:
         from bson import ObjectId
@@ -196,6 +253,10 @@ class OrdersDeliveryRepository(BaseRepository):
         order = await self.find_one({"_id": oid})
         if not order:
             return {"ok": False, "error": "not_found"}
+        # Ακύρωση → επέστρεψε το δεσμευμένο απόθεμα (μόνο μία φορά: αν δεν ήταν ήδη ακυρωμένη).
+        if status == "cancelled" and order.get("status") != "cancelled":
+            await PharmacyCatalogRepository(tenant_id=self.tenant_id).restore_stock(
+                [{"barcode": it.get("barcode"), "qty": it.get("qty", 1)} for it in order.get("items", [])])
         await self.update_one({"_id": oid}, {"$set": {"status": status, "updated_at": _now()},
                                              "$push": {"status_history": {"status": status, "at": _now()}}})
         # notify the patient

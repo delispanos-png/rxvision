@@ -1,13 +1,12 @@
 "use client";
 
-import Link from "next/link";
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, queryKeys, refreshSession, ApiError } from "@/lib/apiClient";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
 import { useT } from "@/store/prefStore";
 import { appAlert, appConfirm } from "@/store/dialogStore";
-import { Check, ArrowUp, ArrowDown, Sparkles, Crown, Loader2, Users, Star, CreditCard, Building2, X, Clock } from "lucide-react";
+import { Check, ArrowUp, ArrowDown, Sparkles, Crown, Loader2, Users, Star, CreditCard, Building2, X, Clock, Plus } from "lucide-react";
 
 // ── types (defensive: fields may be absent on older docs) ──────────────────────
 type Pkg = {
@@ -98,6 +97,31 @@ export default function ModulesPlanPage() {
   const sub = subQ.data;
   const yearly = (sub?.billing_cycle ?? addonsQ.data?.billing_cycle) === "yearly";
   const per = yearly ? t("έτος", "yr") : t("μήνα", "mo");
+  // ── Ενεργοποίηση/απενεργοποίηση add-ons ΕΔΩ (ενοποιήθηκαν με το «Modules/Πλάνο») ──
+  const refreshAddons = async () => {
+    await refreshSession();   // φέρε το νέο entitlement στο JWT άμεσα
+    qc.invalidateQueries({ queryKey: ["addons"] });
+    qc.invalidateQueries({ queryKey: ["me"] });
+    qc.invalidateQueries({ queryKey: ["billing-status"] });
+  };
+  const actAddon = useMutation({
+    mutationFn: (id: string) => api(`/addons/${id}/activate`, { method: "POST" }),
+    onSuccess: refreshAddons,
+    onError: () => appAlert(t("Η ενεργοποίηση απέτυχε. Δοκίμασε ξανά.", "Activation failed. Please try again.")),
+  });
+  const deactAddon = useMutation({
+    mutationFn: (id: string) => api(`/addons/${id}/deactivate`, { method: "POST" }),
+    onSuccess: refreshAddons,
+  });
+  const addonBusy = actAddon.isPending || deactAddon.isPending;
+  async function activateAddon(a: AddonLite) {
+    const price = yearly ? a.price_yearly : a.price_monthly;
+    if (await appConfirm(t(`Ενεργοποίηση «${a.name}» με επιπλέον ${eur(price)}/${per}; Η χρέωση ξεκινά από τον επόμενο κύκλο. Μπορείς να το απενεργοποιήσεις όποτε θες.`,
+      `Activate «${a.name}» for +${eur(price)}/${per}? Billing starts next cycle. You can turn it off anytime.`))) actAddon.mutate(a._id);
+  }
+  async function deactivateAddon(a: AddonLite) {
+    if (await appConfirm(t(`Απενεργοποίηση «${a.name}»;`, `Deactivate «${a.name}»?`), { danger: true })) deactAddon.mutate(a._id);
+  }
   const priceOf = (p?: Pkg) => (yearly ? p?.price_yearly ?? p?.price_monthly : p?.price_monthly) ?? 0;
 
   const packages = [...(pkgsQ.data?.packages ?? [])].sort((a, b) => (a.price_monthly ?? 0) - (b.price_monthly ?? 0));
@@ -301,11 +325,8 @@ export default function ModulesPlanPage() {
 
         {/* ── Διαθέσιμα Add-ons για τη συνδρομή σου ─────────────────────── */}
         <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-700 dark:bg-slate-900">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <h3 className="flex items-center gap-2 text-sm font-bold text-slate-800 dark:text-slate-100"><Sparkles className="h-4 w-4 text-violet-500" /> {t("Διαθέσιμα πρόσθετα (Add-ons)", "Available add-ons")}</h3>
-            <Link href="/settings/addons" className="rounded-lg border border-violet-300 px-3 py-1.5 text-xs font-semibold text-violet-700 hover:bg-violet-50 dark:border-violet-700 dark:text-violet-300">{t("Διαχείριση πρόσθετων →", "Manage add-ons →")}</Link>
-          </div>
-          <p className="mt-1 text-sm text-slate-500">{t("Πρόσθετες δυνατότητες à la carte που προσφέρει το πλάνο σου. Η ενεργοποίηση γίνεται από το tab «Πρόσθετα».", "À-la-carte capabilities your plan offers. Activate them from the «Add-ons» tab.")}</p>
+          <h3 className="flex items-center gap-2 text-sm font-bold text-slate-800 dark:text-slate-100"><Sparkles className="h-4 w-4 text-violet-500" /> {t("Πρόσθετα (Add-ons)", "Add-ons")}</h3>
+          <p className="mt-1 text-sm text-slate-500">{t("Πρόσθεσε δυνατότητες à la carte πάνω στο πλάνο σου — ενεργοποίηση/απενεργοποίηση όποτε θες. Η χρέωση ξεκινά από τον επόμενο κύκλο.", "Add à-la-carte capabilities on top of your plan — turn on/off anytime. Billing starts next cycle.")}</p>
 
           {addonsQ.isLoading ? (
             <div className="mt-3 text-slate-400"><Loader2 className="inline h-4 w-4 animate-spin" /> {t("Φόρτωση…", "Loading…")}</div>
@@ -321,11 +342,11 @@ export default function ModulesPlanPage() {
                       <div className="truncate text-sm font-medium text-slate-800 dark:text-slate-100">{a.icon} {a.name}</div>
                       {a.description && <div className="truncate text-xs text-slate-400">{a.description}</div>}
                     </div>
-                    <div className="shrink-0 text-right">
+                    <div className="flex shrink-0 flex-col items-end gap-1 text-right">
                       <div className="text-sm font-semibold text-slate-800 dark:text-slate-100">{price === 0 ? t("Δωρεάν", "Free") : `${eur(price)}/${per}`}</div>
-                      {a.status === "active" && <span className="text-[10px] font-bold text-violet-600">{t("Ενεργό", "Active")}</span>}
                       {a.status === "granted" && <span className="text-[10px] font-semibold text-emerald-600">{t("Παραχωρημένο", "Granted")}</span>}
-                      {a.status === "available" && <span className="inline-flex items-center gap-0.5 text-[10px] font-medium text-slate-400"><Star className="h-3 w-3" /> {t("Διαθέσιμο", "Available")}</span>}
+                      {a.status === "available" && <button disabled={addonBusy} onClick={() => activateAddon(a)} className="inline-flex items-center gap-1 rounded-lg bg-violet-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-violet-700 disabled:opacity-50"><Plus className="h-3.5 w-3.5" /> {t("Ενεργοποίηση", "Activate")}</button>}
+                      {a.status === "active" && <button disabled={addonBusy} onClick={() => deactivateAddon(a)} className="inline-flex items-center gap-1 rounded-lg border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-500 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-600"><X className="h-3.5 w-3.5" /> {t("Απενεργοποίηση", "Deactivate")}</button>}
                     </div>
                   </div>
                 );

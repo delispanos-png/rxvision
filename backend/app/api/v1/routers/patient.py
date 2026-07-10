@@ -230,19 +230,22 @@ async def meds_times(body: SlotTimesIn, ctx: PatientContext = Depends(get_patien
 # ── Κατάστημα φαρμακείου (OTC + παραφάρμακα) — παραγγελία στο δικό σου φαρμακείο ──────────────
 @router.get("/shop")
 async def shop(q: str = "", category: str | None = None, type: str | None = None,
+               tag: str | None = None, sort: str = "featured",
                ctx: PatientContext = Depends(get_patient_context)):
     from app.repositories.pharmacy_catalog import PharmacyCatalogRepository
+    # in_stock_only=False → δείχνουμε ΚΑΙ τα «κατόπιν παραγγελίας» (χωρίς απόθεμα)· ο πελάτης τα
+    # παραγγέλνει ως αίτημα και ο φαρμακοποιός εγκρίνει/απορρίπτει + δηλώνει ημερομηνία.
     return await PharmacyCatalogRepository(tenant_id=ctx.tenant_id).list(
-        q=q, category=category, ptype=type, in_stock_only=True, page_size=60)
+        q=q, category=category, ptype=type, tag=tag, sort=sort, in_stock_only=False, page_size=60)
 
 
 @router.get("/shop/meta")
 async def shop_meta(ctx: PatientContext = Depends(get_patient_context)):
     from app.repositories.pharmacy_catalog import PharmacyCatalogRepository
     from app.repositories.orders_delivery import OrdersDeliveryRepository
-    cats = await PharmacyCatalogRepository(tenant_id=ctx.tenant_id).categories()
+    cat = PharmacyCatalogRepository(tenant_id=ctx.tenant_id)
     settings = await OrdersDeliveryRepository(tenant_id=ctx.tenant_id).settings()
-    return {"categories": cats, "settings": settings}
+    return {"categories": await cat.categories(), "tags": await cat.tags(), "settings": settings}
 
 
 class AddressIn(BaseModel):
