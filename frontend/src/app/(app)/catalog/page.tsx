@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useRef, useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Truck, Search, Plus, Pencil, Trash2, Upload, X, Loader2, Sparkles, Package, Pill, Star, ImagePlus, ArrowDownUp, Database, Check } from "lucide-react";
 import { api, apiUpload, API_BASE } from "@/lib/apiClient";
@@ -47,16 +47,21 @@ function Catalog() {
   const [term, setTerm] = useState("");
   const [type, setType] = useState("");
   const [sort, setSort] = useState("featured");
+  const [page, setPage] = useState(1);
+  useEffect(() => { setPage(1); }, [term, type, sort]);   // νέα αναζήτηση/φίλτρο → σελίδα 1
   const [edit, setEdit] = useState<Product | null>(null);
   const [importing, setImporting] = useState(false);
   const [registry, setRegistry] = useState(false);
   const [busy, setBusy] = useState(false);
 
+  const PAGE_SIZE = 60;
   const list = useQuery({
-    queryKey: ["catalog", term, type, sort],
-    queryFn: () => api<ListRes>(`/catalog?page_size=60&q=${encodeURIComponent(term)}&type=${type}&sort=${sort}`),
+    queryKey: ["catalog", term, type, sort, page],
+    queryFn: () => api<ListRes>(`/catalog?page_size=${PAGE_SIZE}&page=${page}&q=${encodeURIComponent(term)}&type=${type}&sort=${sort}`),
     retry: false,
   });
+  const total = list.data?.total ?? 0;
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const tax = useQuery({ queryKey: ["catalog-taxonomy"], queryFn: () => api<Taxonomy>("/catalog/taxonomy"), staleTime: 3600_000, retry: false });
 
   async function save(p: Product) {
@@ -134,6 +139,14 @@ function Catalog() {
         })}
         {!list.isLoading && items.length === 0 && <div className="col-span-full rounded-xl border border-dashed border-slate-300 p-8 text-center text-sm text-slate-400">Άδειος κατάλογος — πρόσθεσε είδη ή κάνε εισαγωγή XML.</div>}
       </div>
+
+      {totalPages > 1 && (
+        <div className="mt-4 flex items-center justify-center gap-3 text-sm">
+          <button disabled={page <= 1} onClick={() => { setPage((p) => Math.max(1, p - 1)); window.scrollTo({ top: 0, behavior: "smooth" }); }} className="rounded-lg border border-slate-300 px-3 py-1.5 font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-40">← Προηγούμενη</button>
+          <span className="text-slate-500">Σελίδα {page} από {totalPages}</span>
+          <button disabled={page >= totalPages} onClick={() => { setPage((p) => Math.min(totalPages, p + 1)); window.scrollTo({ top: 0, behavior: "smooth" }); }} className="rounded-lg border border-slate-300 px-3 py-1.5 font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-40">Επόμενη →</button>
+        </div>
+      )}
 
       {edit && <EditModal product={edit} busy={busy} tax={tax.data} onClose={() => setEdit(null)} onSave={save} />}
       {importing && <ImportModal onClose={() => setImporting(false)} onDone={() => { setImporting(false); list.refetch(); }} />}
