@@ -349,18 +349,24 @@ class IngestionEngine:
             wholesale, wsource = await self._effective_wholesale(it)
             margin = it.retail_price - wholesale
             margin_pct = round((margin / it.retail_price) * 100, 2) if it.retail_price else 0
-            set_fields = {"name": it.name, "retail_price": it.retail_price, "margin": margin,
-                          "margin_pct": margin_pct, "category": it.category,
-                          "substance": it.substance, "updated_at": _now()}
-            # Never clobber a known masterdata wholesale price with 0/unknown.
-            if wholesale > 0:
-                set_fields["wholesale_price"] = wholesale
-                set_fields["wholesale_source"] = wsource
+            # Product aggregate: ΚΡΑΤΑ τη ΜΕΓΙΣΤΗ γνωστή λιανική — ΠΟΤΕ clobber σε 0/χαμηλότερη από
+            # μη-εκτελεσμένη/μερική γραμμή (αλλιώς το retail_price μηδενιζόταν → ψευδο-αρνητικό περιθώριο,
+            # π.χ. OPRAZIUM retail 0 ενώ items 14€). margin/margin_pct από την ΤΕΛΙΚΗ (max) λιανική.
+            stage1 = {"name": it.name, "category": it.category, "substance": it.substance,
+                      "updated_at": _now(), "tenant_id": self.tenant_id, "barcode": it.barcode,
+                      "rx_frequency": {"$ifNull": ["$rx_frequency", 0]},
+                      "retail_price": {"$max": [{"$ifNull": ["$retail_price", 0]}, it.retail_price]}}
+            if wholesale > 0:   # μην clobber γνωστή masterdata wholesale με 0/unknown
+                stage1["wholesale_price"] = wholesale
+                stage1["wholesale_source"] = wsource
             res = await self.db["products"].find_one_and_update(
                 {"tenant_id": self.tenant_id, "barcode": it.barcode},
-                {"$set": set_fields,
-                 "$setOnInsert": {"tenant_id": self.tenant_id, "barcode": it.barcode,
-                                  "rx_frequency": 0}},
+                [{"$set": stage1},
+                 {"$set": {"margin": {"$subtract": ["$retail_price", {"$ifNull": ["$wholesale_price", 0]}]},
+                           "margin_pct": {"$cond": [{"$gt": ["$retail_price", 0]},
+                               {"$round": [{"$multiply": [{"$divide": [
+                                   {"$subtract": ["$retail_price", {"$ifNull": ["$wholesale_price", 0]}]},
+                                   "$retail_price"]}, 100]}, 2]}, 0]}}}],
                 upsert=True, return_document=ReturnDocument.AFTER)
             product_id = res["_id"]
             amount_total += it.retail_price * it.quantity
