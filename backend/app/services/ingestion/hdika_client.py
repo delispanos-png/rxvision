@@ -108,21 +108,33 @@ def _parse_printout_split(pdf_bytes: bytes) -> tuple[int, int] | None:
     return _gr_money_to_cents(mp.group(1)), _gr_money_to_cents(mf.group(1))
 
 
-def _gateway_message(text: str) -> str | None:
-    """If the body is an IBM gateway HTML page (not app XML), return a clear Greek
-    message. Detects the ISAM account-lockout (HPDIA0306W) explicitly so the operator
-    knows to WAIT rather than retry (retries extend the lockout)."""
+# Παροδικά σφάλματα υποδομής της πύλης ΗΔΥΚΑ (Application Gateway 5xx) — ΔΕΝ είναι auth: να
+# ξαναδοκιμάζονται, ΟΧΙ να παγώνουν τον tenant (incident 2026-07-13: ένα «Application Gateway could
+# not complete your request» πάγωσε φαρμακείο για 4 ημέρες). Δες [[hdika-auth-autopause]].
+_GATEWAY_TRANSIENT = ("application gateway", "could not complete", "unexpected error",
+                      "server error", "bad gateway", "service unavailable", "gateway timeout")
+
+
+def _gateway_message(text: str) -> tuple[str, bool] | None:
+    """If the body is an IBM gateway HTML page (not app XML), return `(greek_message, is_auth)`.
+    `is_auth=True` ΜΟΝΟ για lockout/credential σελίδες (→ παύση tenant)· τα παροδικά σφάλματα
+    υποδομής (Application Gateway 5xx / «Server Error») είναι `is_auth=False` (→ retry, καμία παύση).
+    Άγνωστη gateway σελίδα → conservative `is_auth=True` (ασφάλεια έναντι lockout)."""
     head = (text or "")[:400].lower()
     if not (head.lstrip().startswith(("<!doctype", "<html")) or "<html" in head):
         return None
     visible = _re.sub(r"<[^>]*>", " ", text or "")
     visible = _re.sub(r"\s+", " ", visible).strip()
-    if "hpdia0306w" in visible.lower() or "locked out" in visible.lower() or "κλειδ" in visible.lower():
+    low = visible.lower()
+    if "hpdia0306w" in low or "locked out" in low or "κλειδ" in low:
         return ("Ο λογαριασμός ΗΔΥΚΑ κλειδώθηκε προσωρινά από την πύλη λόγω πολλών "
                 "αποτυχημένων προσπαθειών σύνδεσης. Περιμένετε ~15–30 λεπτά και "
-                "δοκιμάστε ΜΙΑ φορά (μην επαναλαμβάνετε — οι προσπάθειες παρατείνουν το κλείδωμα).")
-    # generic gateway page → surface its visible text (helps diagnose)
-    return f"Η πύλη ΗΔΥΚΑ επέστρεψε σελίδα σφάλματος: {visible[:180]}" if visible else None
+                "δοκιμάστε ΜΙΑ φορά (μην επαναλαμβάνετε — οι προσπάθειες παρατείνουν το κλείδωμα).", True)
+    if not visible:
+        return None
+    # Παροδικό σφάλμα υποδομής → retry, όχι auth-pause. Αλλιώς (άγνωστη) → conservative auth.
+    is_auth = not any(sig in low for sig in _GATEWAY_TRANSIENT)
+    return (f"Η πύλη ΗΔΥΚΑ επέστρεψε σελίδα σφάλματος: {visible[:180]}", is_auth)
 
 
 def _to_dict(el: ET.Element) -> dict:
@@ -164,6 +176,12 @@ def _round_half_down(x: float) -> int:
     half of a ΚΥΥΑΠ price difference rounds in the patient's favour."""
     import math
     return int(math.ceil(x - 0.5))
+
+
+class HdikaGatewayError(RuntimeError):
+    """Παροδικό σφάλμα υποδομής της πύλης ΗΔΥΚΑ (Application Gateway 5xx / «Server Error»,
+    ενίοτε ως HTML με HTTP 200) — ΔΕΝ είναι auth. Ο sync αποτυγχάνει αυτό το run αλλά
+    ΞΑΝΑΔΟΚΙΜΑΖΕΤΑΙ στο επόμενο (καμία παύση tenant — δεν υπάρχει κίνδυνος lockout από 5xx)."""
 
 
 class HdikaAuthError(PermissionError):
@@ -245,8 +263,9 @@ class HdikaClient:
             raise ConnectionError(f"ΗΔΥΚΑ auth transport error: {exc}") from exc
         text = r.text or ""
         gw = _gateway_message(text)
-        if gw:                       # IBM gateway HTML (lockout / error page)
-            raise HdikaAuthError(gw)
+        if gw:                       # IBM gateway HTML: lockout/credential → pause· παροδικό → retry
+            msg, is_auth = gw
+            raise HdikaAuthError(msg) if is_auth else HdikaGatewayError(msg)
         if r.status_code in (401, 403, 404):
             raise HdikaAuthError(
                 f"Η πύλη ΗΔΥΚΑ απέρριψε τα credentials (HTTP {r.status_code}). Πιθανότατα άλλαξε ο "
@@ -290,7 +309,8 @@ class HdikaClient:
             raise PatientDeceased(amka)
         gw = _gateway_message(text)
         if gw:
-            raise PermissionError(gw)
+            msg, is_auth = gw
+            raise HdikaAuthError(msg) if is_auth else HdikaGatewayError(msg)
         if r.status_code >= 400:
             desc = text
             if "<description>" in text:
@@ -856,8 +876,14 @@ class HdikaClient:
                 if self.throttle:
                     time.sleep(self.throttle)
                 gw = _gateway_message(r.text)
-                if gw:               # gateway HTML (e.g. lockout) even with HTTP 200
-                    raise HdikaAuthError(gw)
+                if gw:               # gateway HTML (lockout ή παροδικό σφάλμα) even with HTTP 200
+                    msg, is_auth = gw
+                    if is_auth:
+                        raise HdikaAuthError(msg)
+                    if attempt < 3:  # παροδικό gateway 5xx → backoff & retry (όπως τα HTTP 5xx)
+                        time.sleep(min(2 ** attempt, 30))
+                        continue
+                    raise HdikaGatewayError(msg)
                 # Λάθος credentials (401/403) → ΣΤΑΜΑΤΑ ΑΜΕΣΩΣ (μην ξαναδοκιμάζεις ανά ημέρα → lockout).
                 if r.status_code in (401, 403):
                     raise HdikaAuthError(
