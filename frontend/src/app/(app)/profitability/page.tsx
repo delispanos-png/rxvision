@@ -35,6 +35,9 @@ type LowMarginRow = {
   units: number;
   margin_pct: number;
   gross_profit: number; // cents
+  retail_price?: number;      // cents — λιανική/τεμάχιο
+  wholesale_price?: number;   // cents — χονδρική/τεμάχιο
+  wholesale_source?: string;  // real | masterdata | estimated | unavailable
 };
 
 export default function ProfitabilityPage() {
@@ -54,6 +57,8 @@ export default function ProfitabilityPage() {
   const lowMarginColumns: Column<LowMarginRow>[] = [
     { key: "product_name", header: t("Σκεύασμα", "Product") },
     { key: "units", header: t("Τεμάχια", "Units"), align: "right", render: (r) => fmtNum(r.units) },
+    { key: "wholesale_price", header: t("Χονδρική", "Wholesale"), align: "right", render: (r) => r.wholesale_price ? `${fmtEur(r.wholesale_price)}${r.wholesale_source === "estimated" ? " ~" : ""}` : "—" },
+    { key: "retail_price", header: t("Λιανική", "Retail"), align: "right", render: (r) => r.retail_price ? fmtEur(r.retail_price) : "—" },
     { key: "margin_pct", header: t("Περιθώριο", "Margin"), align: "right", render: (r) => fmtPct(r.margin_pct) },
     { key: "gross_profit", header: t("Κέρδος", "Profit"), align: "right", render: (r) => fmtEur(r.gross_profit) },
   ];

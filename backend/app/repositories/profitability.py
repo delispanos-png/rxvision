@@ -231,6 +231,8 @@ class ProductRepository(BaseRepository):
             {"$project": {"_id": 0, "product_id": {"$toString": "$_id"},
                           "product_name": "$name", "category": 1,
                           "units": "$rx_frequency", "margin_pct": 1,
+                          # χονδρική + λιανική (cents) + πηγή χονδρικής (real/estimated) για διαφάνεια
+                          "retail_price": 1, "wholesale_price": 1, "wholesale_source": 1,
                           "gross_profit": {"$multiply": [{"$ifNull": ["$margin", 0]},
                                                          {"$ifNull": ["$rx_frequency", 0]}]}}},
         ]
