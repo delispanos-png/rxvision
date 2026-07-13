@@ -263,7 +263,7 @@ class AdvisorRepository(BaseRepository):
         d_gp = _pct(cur["gross_profit"], prev["gross_profit"])
         if d_gp is not None and d_gp <= -10:
             add("warning", "wallet", "Πτώση μεικτού κέρδους",
-                f"Το μεικτό κέρδος έπεσε {abs(d_gp):.0f}% vs πέρσι — έλεγξε μείγμα προϊόντων, χονδρικές τιμές & χαμηλά περιθώρια.",
+                f"Το μεικτό κέρδος έπεσε {abs(d_gp):.0f}% vs πέρσι — έλεγξε μείγμα προϊόντων, εκπτώσεις χονδρικής & γενόσημα (η λιανική Rx είναι διατιμημένη).",
                 f"{d_gp:+.0f}%", {"label": "Κερδοφορία", "href": "/profitability"})
         elif d_gp is not None and d_gp >= 15:
             add("positive", "wallet", "Άνοδος κερδοφορίας",
@@ -282,7 +282,7 @@ class AdvisorRepository(BaseRepository):
         # 2) margin
         if cur["margin_pct"] < 18 and cur["revenue"] > 0:
             add("warning", "percent", "Χαμηλό περιθώριο",
-                f"Το μεικτό περιθώριο είναι {cur['margin_pct']:.1f}% — κάτω από το υγιές ~20%. Δες ποια σκευάσματα το πιέζουν.",
+                f"Το μεικτό περιθώριο είναι {cur['margin_pct']:.1f}% — κάτω από το υγιές ~20%. Στα Rx η τιμή είναι διατιμημένη· οι μοχλοί είναι γενόσημα, έκπτωση χονδρικής & ΜΗΣΥΦΑ/παραφάρμακα (ελεύθερη τιμή). Δες ποια σκευάσματα το πιέζουν.",
                 f"{cur['margin_pct']:.1f}%", {"label": "Κερδοφορία", "href": "/profitability"})
         else:
             d_m = (cur["margin_pct"] - prev["margin_pct"])
