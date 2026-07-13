@@ -110,29 +110,39 @@ def _parse_printout_split(pdf_bytes: bytes) -> tuple[int, int] | None:
 
 # Παροδικά σφάλματα υποδομής της πύλης ΗΔΥΚΑ (Application Gateway 5xx) — ΔΕΝ είναι auth: να
 # ξαναδοκιμάζονται, ΟΧΙ να παγώνουν τον tenant (incident 2026-07-13: ένα «Application Gateway could
-# not complete your request» πάγωσε φαρμακείο για 4 ημέρες). Δες [[hdika-auth-autopause]].
-_GATEWAY_TRANSIENT = ("application gateway", "could not complete", "unexpected error",
-                      "server error", "bad gateway", "service unavailable", "gateway timeout")
+# not complete your request due to an unexpected error» πάγωσε φαρμακείο για 4 ημέρες).
+# ΠΡΟΣΟΧΗ: ΜΗΝ βάλεις εδώ σκέτο «application gateway» — η σελίδα «Login Required» (γνήσιο 401 auth
+# failure) γράφει «secured by an Application Gateway» → θα ταξινομούνταν λάθος ως transient (κίνδυνος
+# lockout από επαναλαμβανόμενα retries με λάθος κωδικό). Δες [[hdika-auth-autopause]].
+_GATEWAY_TRANSIENT = ("could not complete", "unexpected error", "server error",
+                      "bad gateway", "service unavailable", "gateway timeout")
+# Σελίδες που ΣΗΜΑΙΝΟΥΝ ότι χρειάζεται (ξανα)σύνδεση = auth failure (λάθος/ληγμένος κωδικός) → παύση.
+_GATEWAY_AUTH = ("login required", "you must login", "log in with a valid account",
+                 "hpdia0306w", "locked out", "κλειδ")
 
 
 def _gateway_message(text: str) -> tuple[str, bool] | None:
     """If the body is an IBM gateway HTML page (not app XML), return `(greek_message, is_auth)`.
-    `is_auth=True` ΜΟΝΟ για lockout/credential σελίδες (→ παύση tenant)· τα παροδικά σφάλματα
-    υποδομής (Application Gateway 5xx / «Server Error») είναι `is_auth=False` (→ retry, καμία παύση).
-    Άγνωστη gateway σελίδα → conservative `is_auth=True` (ασφάλεια έναντι lockout)."""
+    `is_auth=True` για lockout/login-required/credential σελίδες (→ παύση tenant)· τα παροδικά
+    σφάλματα υποδομής (5xx «could not complete / unexpected error») είναι `is_auth=False` (→ retry,
+    καμία παύση). Άγνωστη gateway σελίδα → conservative `is_auth=True` (ασφάλεια έναντι lockout).
+    ΣΗΜ: το status 401/403 ελέγχεται ΞΕΧΩΡΙΣΤΑ στα call sites — εδώ πιάνουμε και HTML-με-HTTP-200."""
     head = (text or "")[:400].lower()
     if not (head.lstrip().startswith(("<!doctype", "<html")) or "<html" in head):
         return None
     visible = _re.sub(r"<[^>]*>", " ", text or "")
     visible = _re.sub(r"\s+", " ", visible).strip()
+    if not visible:
+        return None
     low = visible.lower()
     if "hpdia0306w" in low or "locked out" in low or "κλειδ" in low:
         return ("Ο λογαριασμός ΗΔΥΚΑ κλειδώθηκε προσωρινά από την πύλη λόγω πολλών "
                 "αποτυχημένων προσπαθειών σύνδεσης. Περιμένετε ~15–30 λεπτά και "
                 "δοκιμάστε ΜΙΑ φορά (μην επαναλαμβάνετε — οι προσπάθειες παρατείνουν το κλείδωμα).", True)
-    if not visible:
-        return None
-    # Παροδικό σφάλμα υποδομής → retry, όχι auth-pause. Αλλιώς (άγνωστη) → conservative auth.
+    if any(sig in low for sig in _GATEWAY_AUTH):   # login-required → λάθος/ληγμένος κωδικός → παύση
+        return ("Η πύλη ΗΔΥΚΑ ζητά (εκ νέου) σύνδεση — πιθανότατα άλλαξε ο μηνιαίος κωδικός ΗΔΥΚΑ "
+                "του φαρμακείου. Καταχωρίστε τον νέο κωδικό στις Ρυθμίσεις.", True)
+    # Παροδικό σφάλμα υποδομής → retry (is_auth=False). Άγνωστη σελίδα → conservative auth.
     is_auth = not any(sig in low for sig in _GATEWAY_TRANSIENT)
     return (f"Η πύλη ΗΔΥΚΑ επέστρεψε σελίδα σφάλματος: {visible[:180]}", is_auth)
 
@@ -262,14 +272,14 @@ class HdikaClient:
         except httpx.TransportError as exc:
             raise ConnectionError(f"ΗΔΥΚΑ auth transport error: {exc}") from exc
         text = r.text or ""
-        gw = _gateway_message(text)
-        if gw:                       # IBM gateway HTML: lockout/credential → pause· παροδικό → retry
-            msg, is_auth = gw
-            raise HdikaAuthError(msg) if is_auth else HdikaGatewayError(msg)
-        if r.status_code in (401, 403, 404):
+        if r.status_code in (401, 403, 404):   # status = αυθεντικό auth signal (πριν την HTML ταξινόμηση)
             raise HdikaAuthError(
                 f"Η πύλη ΗΔΥΚΑ απέρριψε τα credentials (HTTP {r.status_code}). Πιθανότατα άλλαξε ο "
                 "μηνιαίος κωδικός ΗΔΥΚΑ του φαρμακείου — καταχωρίστε τον νέο κωδικό στις Ρυθμίσεις.")
+        gw = _gateway_message(text)
+        if gw:                       # gateway HTML με HTTP 200: lockout/login → pause· παροδικό → retry
+            msg, is_auth = gw
+            raise HdikaAuthError(msg) if is_auth else HdikaGatewayError(msg)
         # app-level XML ApiError (π.χ. 911 invalid key) → ανέδειξε το <description>
         if r.status_code >= 400:
             if "<description>" in text:
@@ -875,8 +885,14 @@ class HdikaClient:
                 r = self._client.get(self._url(path), params=params)
                 if self.throttle:
                     time.sleep(self.throttle)
+                # Λάθος credentials (401/403) → ΣΤΑΜΑΤΑ ΑΜΕΣΩΣ (status = αυθεντικό auth signal, πριν
+                # την HTML ταξινόμηση· μην ξαναδοκιμάζεις ανά ημέρα → lockout).
+                if r.status_code in (401, 403):
+                    raise HdikaAuthError(
+                        f"Η πύλη ΗΔΥΚΑ απέρριψε τα credentials (HTTP {r.status_code}). Πιθανότατα "
+                        "άλλαξε ο μηνιαίος κωδικός — καταχωρίστε τον νέο στις Ρυθμίσεις.")
                 gw = _gateway_message(r.text)
-                if gw:               # gateway HTML (lockout ή παροδικό σφάλμα) even with HTTP 200
+                if gw:               # gateway HTML (lockout/login ή παροδικό σφάλμα) even with HTTP 200
                     msg, is_auth = gw
                     if is_auth:
                         raise HdikaAuthError(msg)
@@ -884,11 +900,6 @@ class HdikaClient:
                         time.sleep(min(2 ** attempt, 30))
                         continue
                     raise HdikaGatewayError(msg)
-                # Λάθος credentials (401/403) → ΣΤΑΜΑΤΑ ΑΜΕΣΩΣ (μην ξαναδοκιμάζεις ανά ημέρα → lockout).
-                if r.status_code in (401, 403):
-                    raise HdikaAuthError(
-                        f"Η πύλη ΗΔΥΚΑ απέρριψε τα credentials (HTTP {r.status_code}). Πιθανότατα "
-                        "άλλαξε ο μηνιαίος κωδικός — καταχωρίστε τον νέο στις Ρυθμίσεις.")
                 if r.status_code in (429, 500, 502, 503, 504) and attempt < 3:
                     ra = r.headers.get("Retry-After")
                     wait = (float(ra) if (ra or "").isdigit()
