@@ -262,14 +262,17 @@ class PatientAccountRepository:
     async def nearby_pharmacies(self, lat: float, lon: float, *, limit: int = 25) -> list[dict]:
         """Portal-enabled pharmacies that published a location, sorted by distance (Haversine).
         A patient may ask availability / book at ANY of these — not only where they have history."""
+        from app.services.auth_service import resolve_tenant_modules, tenant_has
         out: list[dict] = []
         async for t in self.db["tenants"].find(  # tenant-ok: public pharmacy directory
-                {}, {"_id": 1, "name": 1, "company": 1, "contact_phone": 1, "modules": 1, "location": 1}):
-            if ((t.get("modules") or {}).get("patient_portal")) in (None, "locked"):
-                continue
+                {"status": {"$in": ["active", "trial"]}},
+                {"_id": 1, "name": 1, "company": 1, "contact_phone": 1, "location": 1}):
             loc = t.get("location") or {}
             la, lo = loc.get("lat"), loc.get("lon")
             if la is None or lo is None:
+                continue
+            # portal ΕΝΕΡΓΟ effective (plan OR override) — όχι το raw modules (που δεν το έχει)
+            if not tenant_has(await resolve_tenant_modules(str(t["_id"])), "patient_portal"):
                 continue
             d = _haversine_km(lat, lon, float(la), float(lo))
             comp = t.get("company") or {}
@@ -322,8 +325,10 @@ class PatientAccountRepository:
         return out[:limit]
 
     async def pharmacy_has_portal(self, tenant_id: str) -> bool:
-        t = await self.db["tenants"].find_one({"_id": tenant_id}, {"modules": 1})  # tenant-ok
-        return bool(t and (t.get("modules") or {}).get("patient_portal") not in (None, "locked"))
+        # effective module resolution (plan modules_included OR override) — το raw tenants.modules
+        # κρατά ΜΟΝΟ overrides, οπότε το patient_portal (που έρχεται από το πλάνο) έλειπε.
+        from app.services.auth_service import resolve_tenant_modules, tenant_has
+        return tenant_has(await resolve_tenant_modules(tenant_id), "patient_portal")
 
     # ── medicine catalogue (shared) ───────────────────────────
     async def search_medicines(self, q: str, *, limit: int = 15) -> list[dict]:
