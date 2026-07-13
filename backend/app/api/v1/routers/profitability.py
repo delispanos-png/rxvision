@@ -42,6 +42,17 @@ async def by_dimension(
     return {"dim": dim, "rows": rows}
 
 
+@router.get("/by-category")
+async def by_category(
+    date_from: datetime = Query(...),
+    date_to: datetime = Query(...),
+    ctx: TenantContext = Depends(require("profitability:read", module=_MODULE)),
+):
+    """Κέρδος ανά θεραπευτική κατηγορία (ATC-based), για την περίοδο."""
+    repo = ProfitabilityLiveRepository(tenant_id=ctx.tenant_id)
+    return {"rows": await repo.by_medicine_category(date_from=date_from, date_to=date_to)}
+
+
 @router.get("/low-margin")
 async def low_margin(
     threshold_pct: float = 10.0,

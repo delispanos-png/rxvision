@@ -217,6 +217,43 @@ class ProfitabilityLiveRepository(BaseRepository):
                 pipe += [{"$set": {"label": {"$ifNull": ["$_id", "—"]}}}, proj]
         return await self.aggregate(pipe)
 
+    async def by_medicine_category(self, *, date_from: datetime, date_to: datetime,
+                                   limit: int = 20) -> list[dict]:
+        """Κέρδος ανά ΘΕΡΑΠΕΥΤΙΚΗ κατηγορία (ATC → medicine_category), όχι το χορηγητικό
+        `it.category` (normal/narcotic/galenic). Χρησιμοποιεί τις ΔΙΟΡΘΩΜΕΝΕΣ τιμές του
+        προϊόντος (retail/wholesale από [[profitability-retail-bug]]) × πραγματικά εκτελεσμένα
+        τεμάχια. Το ATC→κατηγορία mapping είναι Python (prefix-based) → fold εκτός pipeline."""
+        from app.services.catalog_taxonomy import medicine_category
+
+        rows = await self.aggregate([
+            {"$match": {"executed_at": {"$gte": date_from, "$lt": date_to}}},
+            {"$lookup": {"from": "prescription_items", "localField": "_id",
+                         "foreignField": "execution_id", "as": "it"}},
+            {"$unwind": "$it"},
+            {"$match": {"it.is_executed": True}},
+            {"$group": {"_id": "$it.product_id", "units": {"$sum": "$it.quantity"}}},
+            {"$lookup": {"from": "products", "localField": "_id",
+                         "foreignField": "_id", "as": "_p"}},
+            {"$set": {"atc": {"$first": "$_p.atc"},
+                      "retail": {"$ifNull": [{"$first": "$_p.retail_price"}, 0]},
+                      "wholesale": {"$ifNull": [{"$first": "$_p.wholesale_price"}, 0]}}},
+            {"$project": {"_id": 0, "atc": 1, "units": 1, "retail": 1, "wholesale": 1}},
+        ])
+        cats: dict[str, dict] = {}
+        for r in rows:
+            units = r.get("units") or 0
+            cat = medicine_category(r.get("atc"))
+            g = cats.setdefault(cat, {"label": cat, "value": 0, "cost": 0, "units": 0})
+            g["value"] += (r.get("retail") or 0) * units
+            g["cost"] += (r.get("wholesale") or 0) * units
+            g["units"] += units
+        out = [{"label": g["label"], "units": g["units"], "value": g["value"],
+                "gross_profit": g["value"] - g["cost"],
+                "margin_pct": ((g["value"] - g["cost"]) / g["value"] * 100) if g["value"] else 0}
+               for g in cats.values()]
+        out.sort(key=lambda x: x["gross_profit"], reverse=True)
+        return out[:limit]
+
 
 class ProductRepository(BaseRepository):
     collection_name = "products"

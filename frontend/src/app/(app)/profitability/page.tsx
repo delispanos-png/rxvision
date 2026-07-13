@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { TrendingUp, Percent, Coins, AlertTriangle } from "lucide-react";
+import { TrendingUp, Percent, Coins, AlertTriangle, Layers } from "lucide-react";
 import { api } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
@@ -29,6 +29,13 @@ type AgingBucket = { bucket: string; claimed: number; rx: number };
 type Aging = { buckets: AgingBucket[]; total_claimed: number; overdue_claimed: number };
 
 type ByRow = { label: string; gross_profit: number; margin_pct: number };
+type CategoryRow = {
+  label: string;
+  units: number;
+  value: number;        // cents — έσοδα (λιανική)
+  gross_profit: number; // cents
+  margin_pct: number;
+};
 type LowMarginRow = {
   product_id: string;
   product_name: string;
@@ -79,6 +86,11 @@ export default function ProfitabilityPage() {
     queryFn: () => api<{ rows: ByRow[] }>(`/profitability/by?dim=${dim}&${q}`),
   });
 
+  const byCategory = useQuery({
+    queryKey: ["profitability", "by-category", q],
+    queryFn: () => api<{ rows: CategoryRow[] }>(`/profitability/by-category?${q}`),
+  });
+
   const lowMargin = useQuery({
     queryKey: ["profitability", "low-margin", 10],
     queryFn: () => api<{ items: LowMarginRow[] }>(`/profitability/low-margin?threshold_pct=10`),
@@ -94,6 +106,16 @@ export default function ProfitabilityPage() {
   const rows = byDim.data?.rows ?? [];
   const ag = aging.data;
   const lowItems = lowMargin.data?.items ?? [];
+  const catRows = byCategory.data?.rows ?? [];
+  const topCat = catRows[0];
+
+  const categoryColumns: Column<CategoryRow>[] = [
+    { key: "label", header: t("Κατηγορία", "Category") },
+    { key: "units", header: t("Τεμάχια", "Units"), align: "right", render: (r) => fmtNum(r.units) },
+    { key: "value", header: t("Έσοδα", "Revenue"), align: "right", render: (r) => fmtEur(r.value) },
+    { key: "gross_profit", header: t("Κέρδος", "Profit"), align: "right", render: (r) => fmtEur(r.gross_profit) },
+    { key: "margin_pct", header: t("Περιθώριο", "Margin"), align: "right", render: (r) => fmtPct(r.margin_pct) },
+  ];
 
   return (
     <ModuleGuard module="profitability">
@@ -113,10 +135,18 @@ export default function ProfitabilityPage() {
 
       <div className="space-y-4">
         {/* KPI row */}
-        <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
+        <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-5">
           <KpiCard label={t("Μεικτό κέρδος", "Gross profit")} help={t("Αιτούμενο/αξία − κόστος χονδρικής των φαρμάκων.", "Claimed/value − wholesale cost.")} value={s ? fmtEur(s.gross_profit) : "—"} sub={t("αιτούμενα − κόστος", "claimed − cost")} icon={TrendingUp} accent="green" trend={pctDelta(s?.gross_profit, p?.gross_profit)} />
           <KpiCard label={t("Περιθώριο", "Margin")} help={t("Περιθώριο κέρδους = μεικτό κέρδος / λιανική αξία.", "Margin = gross profit / retail value.")} value={s ? fmtPct(s.margin_pct) : "—"} sub={t("μεικτό περιθώριο", "gross margin")} icon={Percent} accent="violet" trend={pctDelta(s?.margin_pct, p?.margin_pct)} />
           <KpiCard label={t("Έσοδα", "Revenue")} help={t("Συνολικά έσοδα της περιόδου.", "Total revenue for the period.")} value={s ? fmtEur(s.revenue) : "—"} sub={t("σύνολο περιόδου", "period total")} icon={Coins} accent="amber" trend={pctDelta(s?.revenue, p?.revenue)} />
+          <KpiCard
+            label={t("Κορυφαία κατηγορία", "Top category")}
+            help={t("Θεραπευτική κατηγορία (βάσει ATC) με το μεγαλύτερο μεικτό κέρδος στην περίοδο.", "Therapeutic category (by ATC) with the highest gross profit in the period.")}
+            value={topCat ? fmtEur(topCat.gross_profit) : "—"}
+            sub={topCat ? topCat.label : t("κέρδος ανά κατηγορία", "profit by category")}
+            icon={Layers}
+            accent="sky"
+          />
           <KpiCard
             label={t("Είδη χαμηλής κερδοφορίας", "Low-margin items")}
             value={fmtNum(lowItems.length)}
@@ -148,6 +178,45 @@ export default function ProfitabilityPage() {
             horizontal
             height={Math.max(220, rows.length * 36)}
           />
+        </PanelCard>
+
+        {/* profit by therapeutic category */}
+        <PanelCard
+          title={t("Κέρδος ανά κατηγορία", "Profit by category")}
+          action={
+            <div className="flex items-center gap-3">
+              {topCat && (
+                <span className="text-sm text-slate-500">
+                  {t("Κορυφαία", "Top")}: <b className="text-slate-800 dark:text-slate-200">{topCat.label}</b> · <b className="text-emerald-600 dark:text-emerald-400">{fmtEur(topCat.gross_profit)}</b>
+                </span>
+              )}
+              <ExportMenu filename="kerdos-ana-katigoria" title={t("Κέρδος ανά κατηγορία", "Profit by category")} rows={catRows} columns={[
+                { key: "label", header: t("Κατηγορία", "Category") },
+                { key: "units", header: t("Τεμάχια", "Units"), value: (r) => fmtNum(r.units) },
+                { key: "value", header: t("Έσοδα (€)", "Revenue (€)"), value: (r) => fmtMoney(r.value || 0) },
+                { key: "gross_profit", header: t("Κέρδος (€)", "Profit (€)"), value: (r) => fmtMoney(r.gross_profit || 0) },
+                { key: "margin_pct", header: t("Περιθώριο %", "Margin %"), value: (r) => fmtDec(r.margin_pct ?? 0, 1) },
+              ]} />
+            </div>
+          }
+        >
+          <QueryState
+            isLoading={byCategory.isLoading}
+            isError={byCategory.isError}
+            isEmpty={catRows.length === 0}
+            onRetry={() => byCategory.refetch()}
+          >
+            <BarChart
+              labels={catRows.map((r) => r.label)}
+              data={catRows.map((r) => Math.round(r.gross_profit / 100))}
+              name={t("Κέρδος", "Profit")}
+              horizontal
+              height={Math.max(240, catRows.length * 34)}
+            />
+            <div className="mt-4">
+              <DataTable pageSize={20} columns={categoryColumns} rows={catRows} rowKey={(r) => r.label} />
+            </div>
+          </QueryState>
         </PanelCard>
 
         {/* aging chart */}
