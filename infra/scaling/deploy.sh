@@ -40,8 +40,15 @@ docker compose -f docker-compose.prod.yml up -d api web worker beat
 
 for NODE in "${APP_NODES[@]}"; do
   echo "▶ 2/4  Ship images → $NODE (private net)…"
+  # api image is shared by ALL backend services: api, worker, AND the app-node-only
+  # worker-backfill + optical (docker-compose.app.yml). Tag them ALL or those extra workers
+  # keep running stale code — incident 2026-07-13: worker-backfill ran 4-day-old ingest code and
+  # re-clobbered corrected retail prices on every sync. See [[profitability-retail-bug]].
   docker save rxvision-api:latest | gzip -1 | "${SSH[@]}" "root@$NODE" \
-    'gunzip | docker load && docker tag rxvision-api:latest rxvision-app-api:latest && docker tag rxvision-api:latest rxvision-app-worker:latest'
+    'gunzip | docker load && docker tag rxvision-api:latest rxvision-app-api:latest \
+       && docker tag rxvision-api:latest rxvision-app-worker:latest \
+       && docker tag rxvision-api:latest rxvision-app-worker-backfill:latest \
+       && docker tag rxvision-api:latest rxvision-app-optical:latest'
   docker save rxvision-web:latest | gzip -1 | "${SSH[@]}" "root@$NODE" \
     'gunzip | docker load && docker tag rxvision-web:latest rxvision-app-web:latest'
 
@@ -54,9 +61,12 @@ for NODE in "${APP_NODES[@]}"; do
        && docker exec rxvision-app-caddy-1 caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null 2>&1 \
        && echo "   caddy reloaded" || echo "   ⚠️ caddy validate/reload failed — check config"'
 
-  echo "▶ 3/4  Recreate [$SERVICES] on $NODE (no rebuild)…"
+  # Recreate the standard services + any app-node-only extra workers (worker-backfill/optical)
+  # that actually exist on THIS node — so they pick up the freshly-tagged image too (see above).
+  echo "▶ 3/4  Recreate [$SERVICES +extra workers] on $NODE (no rebuild)…"
   "${SSH[@]}" "root@$NODE" \
-    "docker compose --project-directory /opt/rxvision -f $APP_COMPOSE up -d --no-build --force-recreate $SERVICES"
+    "docker compose --project-directory /opt/rxvision -f $APP_COMPOSE up -d --no-build --force-recreate $SERVICES \
+       \$(for X in worker-backfill optical; do docker ps -a --format '{{.Names}}' | grep -q \"rxvision-app-\$X-1\" && echo \$X; done)"
 
   echo "▶ 4/4  Verify $NODE serves the SAME web build as MGMT…"
   A=$(docker compose -f docker-compose.prod.yml exec -T web cat /app/.next/BUILD_ID)

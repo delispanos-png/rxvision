@@ -59,6 +59,7 @@ class IngestionEngine:
         self._fund_cache: dict = {}
         self._flu_eof_set: set | None = None    # eofCodes αντιγριπικών (lazy, ανά sync)
         self._dose_eof_set: set | None = None    # eofCodes που χρειάζονται οπτικό έλεγχο δοσολογίας
+        self._catalog_retail_cache: dict = {}   # barcode/eofCode → ρυθμιζόμενη λιανική (Δελτίο Τιμών)
 
     async def ingest(self, *, source: str, job_type: str,
                      records: Iterable[CanonicalExecution],
@@ -342,6 +343,21 @@ class IngestionEngine:
             return round(it.retail_price * (1 - markup_pct(it.retail_price, self._bands) / 100)), "estimated"
         return 0, "unknown"
 
+    async def _catalog_retail(self, barcode: str | None) -> int:
+        """Ρυθμιζόμενη λιανική (Δελτίο Τιμών ΗΔΥΚΑ) από το global medicine_catalog, ανά barcode ή
+        eofCode(_id). Είναι η ΕΠΙΣΗΜΗ λιανική reimbursed φαρμάκων (ταιριάζει με την εκτέλεση όπου
+        αυτή είναι αξιόπιστη) → χρησιμεύει ως floor όταν το per-line CDA retail υποτιμά και η εκτέλεση
+        είναι multi-item (δεν σπάει per-item). Cache ανά sync. Δες [[profitability-retail-bug]]."""
+        if not barcode:
+            return 0
+        if barcode in self._catalog_retail_cache:
+            return self._catalog_retail_cache[barcode]
+        doc = await self.db["medicine_catalog"].find_one(
+            {"$or": [{"barcode": barcode}, {"_id": barcode}]}, {"retail_cents": 1})
+        val = int((doc or {}).get("retail_cents") or 0)
+        self._catalog_retail_cache[barcode] = val
+        return val
+
     async def _resolve_items(self, ex: CanonicalExecution) -> tuple[list[dict], int, int]:
         docs: list[dict] = []
         amount_total = wholesale_cost = 0
@@ -357,6 +373,10 @@ class IngestionEngine:
             eff_retail = it.retail_price
             if single_retail is not None and it is executed[0]:
                 eff_retail = max(eff_retail, single_retail)
+            # floor στη ρυθμιζόμενη λιανική (Δελτίο Τιμών): πιάνει τα multi-item-only είδη όπου το CDA
+            # line υποτιμά κι δεν υπάρχει single-item εκτέλεση για την πλήρη τιμή (π.χ. ALOPERIDIN
+            # line 2,70€ ενώ ρυθμιζόμενη 12,35€). Ποτέ δεν χαμηλώνει (max) → σέβεται υψηλότερη πραγματική.
+            eff_retail = max(eff_retail, await self._catalog_retail(it.barcode))
             wholesale, wsource = await self._effective_wholesale(it)
             margin = eff_retail - wholesale
             # Product aggregate: ΚΡΑΤΑ τη ΜΕΓΙΣΤΗ γνωστή λιανική — ΠΟΤΕ clobber σε 0/χαμηλότερη από
