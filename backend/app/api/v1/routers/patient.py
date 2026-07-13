@@ -418,6 +418,14 @@ async def nearby(lat: float, lon: float, ctx: PatientContext = Depends(get_patie
     return {"items": await PatientAccountRepository().nearby_pharmacies(lat, lon)}
 
 
+@router.get("/pharmacies/directory")
+async def pharmacies_directory(ctx: PatientContext = Depends(get_patient_context)):
+    """Κατάλογος ΟΛΩΝ των φαρμακείων του δικτύου (με ενεργή πύλη) + ζωντανή κατάσταση + «δικό μου»."""
+    repo = PatientAccountRepository()
+    linked = {l["tenant_id"] for l in await repo.links(ctx.account_id)}
+    return {"items": await repo.directory(linked_ids=linked)}
+
+
 @router.get("/medicines/search")
 async def medicines_search(q: str, ctx: PatientContext = Depends(get_patient_context)):
     return {"items": await PatientAccountRepository().search_medicines(q)}

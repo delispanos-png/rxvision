@@ -283,6 +283,44 @@ class PatientAccountRepository:
         out.sort(key=lambda x: x["distance_km"])
         return out[:limit]
 
+    async def directory(self, *, linked_ids: set[str] | None = None, limit: int = 200) -> list[dict]:
+        """Δημόσιος κατάλογος ΟΛΩΝ των φαρμακείων του δικτύου με ενεργή πύλη πελατών — με ζωντανή
+        κατάσταση (ανοιχτό/κλειστό/εφημερία) & badge αν είναι «δικό μου» (έχω ιστορικό εκεί).
+        Ο ασθενής μπορεί να δει/επικοινωνήσει με οποιοδήποτε, όχι μόνο όπου έχει συνταγές."""
+        from app.repositories.pharmacy_availability import PharmacyAvailabilityRepository
+        from app.services.auth_service import resolve_tenant_modules, tenant_has
+        linked = linked_ids or set()
+        out: list[dict] = []
+        async for t in self.db["tenants"].find(  # tenant-ok: public pharmacy directory (no PII)
+                {"status": {"$in": ["active", "trial"]}},
+                {"_id": 1, "name": 1, "company": 1, "contact_phone": 1, "location": 1}):
+            tid = str(t["_id"])
+            # portal ΕΝΕΡΓΟ effective (plan modules_included OR override) — όχι μόνο το per-tenant override.
+            if not tenant_has(await resolve_tenant_modules(tid), "patient_portal"):
+                continue
+            comp = t.get("company") or {}
+            loc = t.get("location") or {}
+            try:
+                st = await PharmacyAvailabilityRepository(tenant_id=tid).status()
+            except Exception:  # noqa: BLE001 — μη-διαθέσιμο ωράριο δεν πρέπει να κρύβει το φαρμακείο
+                st = None
+            out.append({
+                "tenant_id": tid,
+                "name": comp.get("name") or t.get("name") or tid,
+                "address": loc.get("address") or comp.get("address"),
+                "city": loc.get("city") or comp.get("city"),
+                "phone": t.get("contact_phone") or comp.get("phone"),
+                "status": st,
+                "mine": tid in linked,
+            })
+        # ανοιχτά/εφημερεύοντα πρώτα, μετά «δικά μου», μετά αλφαβητικά
+        def _rank(p: dict) -> tuple:
+            s = p.get("status") or {}
+            return (0 if (s.get("isOpen") or s.get("isOnDuty")) else 1,
+                    0 if p.get("mine") else 1, (p.get("name") or "").upper())
+        out.sort(key=_rank)
+        return out[:limit]
+
     async def pharmacy_has_portal(self, tenant_id: str) -> bool:
         t = await self.db["tenants"].find_one({"_id": tenant_id}, {"modules": 1})  # tenant-ok
         return bool(t and (t.get("modules") or {}).get("patient_portal") not in (None, "locked"))

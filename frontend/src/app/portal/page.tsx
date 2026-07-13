@@ -6,8 +6,9 @@ import { useRouter } from "next/navigation";
 import {
   Pill, Wallet, ShieldCheck, RefreshCw, Stethoscope, Bell, LogOut, Building2,
   Calendar, ChevronDown, ChevronUp, CheckCircle2, Clock, Sparkles, X, Search, CalendarPlus, AlertCircle,
-  PackageCheck, Gift,
+  PackageCheck, Gift, FileText, ShoppingBag, HeartPulse, FilePlus, MoreHorizontal, MapPin,
 } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import { QRCodeCanvas } from "qrcode.react";
 import { Tooltip } from "@/components/ui/Tooltip";
 import { LogoMark } from "@/components/brand/Logo";
@@ -22,6 +23,7 @@ import { fmtDate, fmtDateTime } from "@/lib/formatters";
 type Pharmacy = { tenant_id: string; pharmacy_name: string };
 type Pharm = { status: { isOpen: boolean; isOnDuty: boolean; isOvernightDuty: boolean; closingSoon: boolean; statusText: string }; schedule: { week: { day: number; status: string; intervals: { start: string; end: string }[] }[] } };
 type Me = { profile: { first_name: string; last_name: string }; active_tenant: string | null; pharmacies: Pharmacy[] };
+type DirPharmacy = { tenant_id: string; name: string; address?: string | null; city?: string | null; phone?: string | null; mine?: boolean; status?: { isOpen: boolean; isOnDuty: boolean; isOvernightDuty: boolean; closingSoon: boolean; statusText: string } | null };
 type Summary = { rx_count: number; paid_cents: number; total_cents: number; covered_cents: number; doctors: number; medicines: number; repeats_active: number; next_open_date?: string | null; first_at?: string | null; last_at?: string | null };
 type Rx = { barcode: string; executed_at: string; status?: string; patient_share?: number; repeat_current?: number; repeat_total?: number; repeat_root?: string | null; next_open_date?: string | null; medicines: string[]; pending?: string[]; partial?: boolean; doctor?: string | null; specialty?: string | null };
 type RepeatMed = { name: string; dosage?: string | null };
@@ -47,7 +49,17 @@ const dt = (s?: string | null) => (s ? fmtDate(s) : "—");
 const dtl = (s?: string | null) => (s ? fmtDateTime(s) : "—");
 const eur = (c?: number) => new Intl.NumberFormat("el-GR", { style: "currency", currency: "EUR", maximumFractionDigits: 2 }).format((c || 0) / 100);
 
-const TABS = [["rx", "Συνταγές"], ["shop", "Κατάστημα"], ["meds", "Πρόγραμμα λήψης"], ["health", "Υγεία"], ["wallet", "Επιβράβευση"], ["repeats", "Επαναλήψεις"], ["renewals", "Ανεκτέλεστα"], ["assign", "Ανάθεση συνταγής"], ["availability", "Διαθεσιμότητα"], ["appointments", "Ραντεβού"]] as const;
+const TABS = [["rx", "Συνταγές"], ["shop", "Κατάστημα"], ["meds", "Πρόγραμμα λήψης"], ["health", "Υγεία"], ["wallet", "Επιβράβευση"], ["repeats", "Επαναλήψεις"], ["renewals", "Ανεκτέλεστα"], ["assign", "Ανάθεση συνταγής"], ["availability", "Διαθεσιμότητα"], ["appointments", "Ραντεβού"], ["pharmacies", "Φαρμακεία"]] as const;
+
+// Εικονίδιο ανά καρτέλα + οι 4 ΒΑΣΙΚΕΣ που μπαίνουν στην κάτω μπάρα (mobile). Οι υπόλοιπες
+// ζουν στο φύλλο «Περισσότερα» ώστε να μη γεμίζει η οθόνη με 10 κουμπιά.
+const TAB_ICON: Record<string, LucideIcon> = {
+  rx: FileText, shop: ShoppingBag, meds: Pill, health: HeartPulse, wallet: Gift,
+  repeats: RefreshCw, renewals: AlertCircle, assign: FilePlus, availability: Search, appointments: CalendarPlus,
+  pharmacies: MapPin,
+};
+const PRIMARY_TABS = ["rx", "shop", "meds", "health"] as const;
+const TAB_LABEL: Record<string, string> = Object.fromEntries(TABS.map(([k, l]) => [k, l]));
 
 const DOW = ["Δευ", "Τρί", "Τετ", "Πέμ", "Παρ", "Σάβ", "Κυρ"];
 type Therapy = { med_key: string; name: string; dose: string | null; dosage_text: string | null; kind: string; per_day: number; runout: string | null; days_left: number | null; enabled: boolean; reservable: boolean };
@@ -80,6 +92,9 @@ export default function PortalHome() {
   const [summary, setSummary] = useState<Summary | null>(null);
   const [noPharmacy, setNoPharmacy] = useState(false);
   const [tab, setTab] = useState<string>("rx");
+  const [showMore, setShowMore] = useState(false);   // φύλλο «Περισσότερα» (mobile bottom nav)
+  const [directory, setDirectory] = useState<DirPharmacy[]>([]);
+  const [dirQuery, setDirQuery] = useState("");
   const [rx, setRx] = useState<Rx[]>([]);
   const [repeats, setRepeats] = useState<Repeat[]>([]);
   const [avail, setAvail] = useState<Avail[]>([]);
@@ -155,6 +170,7 @@ export default function PortalHome() {
     if (tab === "health") patientApi<Health>("/patient/health").then(setHealth).catch(() => {});
     if (tab === "renewals") patientApi<{ items: Renewal[] }>("/patient/renewals").then((d) => setRenewals(d.items)).catch(() => {});
     if (tab === "wallet") patientApi<Loyalty>("/patient/loyalty").then(setLoyalty).catch(() => {});
+    if (tab === "pharmacies") patientApi<{ items: DirPharmacy[] }>("/patient/pharmacies/directory").then((d) => setDirectory(d.items)).catch(() => {});
     if (tab === "assign") patientApi<{ items: RxReq[] }>("/patient/rx-requests").then((d) => setRxReqs(d.items)).catch(() => {});
     if (tab === "availability") patientApi<{ items: Avail[] }>("/patient/availability").then((d) => setAvail(d.items)).catch(() => {});
     if (tab === "appointments") {
@@ -334,7 +350,7 @@ export default function PortalHome() {
         </div>
       </header>
 
-      <main className="mx-auto max-w-5xl px-4 py-6">
+      <main className="mx-auto max-w-5xl px-4 py-6 pb-24 sm:pb-6">
         {/* ── ζωντανή κατάσταση φαρμακείου ───────────────────── */}
         {pharm && (
           <div className={`mb-5 flex flex-wrap items-center justify-between gap-2 rounded-2xl px-4 py-3 text-white ${pharm.status.isOnDuty ? (pharm.status.isOvernightDuty ? "bg-indigo-600" : "bg-violet-600") : pharm.status.isOpen ? (pharm.status.closingSoon ? "bg-amber-500" : "bg-emerald-600") : "bg-slate-500"}`}>
@@ -411,10 +427,10 @@ export default function PortalHome() {
           </div>
         )}
 
-        {/* ── tabs ───────────────────────────────────────────── */}
-        {/* Μία οριζόντια κυλιόμενη μπάρα (app-like) — δεν αναδιπλώνεται/δεν στοιβάζεται στο κινητό.
-            Edge-to-edge scroll, κρυφό scrollbar, η ενεργή καρτέλα μένει ευδιάκριτη. */}
-        <div className="mb-5 -mx-4 flex gap-2 overflow-x-auto px-4 pb-1.5 sm:mx-0 sm:flex-wrap sm:px-0 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        {/* ── tabs (desktop/tablet) ──────────────────────────────
+            Στο ΚΙΝΗΤΟ κρύβονται — η πλοήγηση γίνεται από τη σταθερή κάτω μπάρα (βλ. τέλος).
+            Σε sm+ αναδιπλώνονται κανονικά ως pills. */}
+        <div className="mb-5 hidden flex-wrap gap-2 sm:flex">
           {TABS.map(([k, label]) => (
             <button key={k} onClick={() => setTab(k)}
               className={`shrink-0 whitespace-nowrap rounded-full border px-3.5 py-2 text-sm font-semibold transition ${tab === k
@@ -424,26 +440,31 @@ export default function PortalHome() {
             </button>
           ))}
         </div>
+        {/* Στο κινητό: τίτλος ενεργής ενότητας (η μπάρα είναι κάτω) */}
+        <div className="mb-4 flex items-center gap-2 sm:hidden">
+          {(() => { const I = TAB_ICON[tab] || FileText; return <I className="h-5 w-5 text-brand-600" />; })()}
+          <h2 className="text-lg font-extrabold tracking-tight text-slate-900">{TAB_LABEL[tab]}</h2>
+        </div>
 
         {/* ── PRESCRIPTIONS ──────────────────────────────────── */}
         {tab === "rx" && (
-          <div className="space-y-3">
+          <div className="space-y-2">
             {rx.length === 0 && <Empty icon={Pill} text="Δεν υπάρχουν συνταγές ακόμα." />}
             {rx.map((p) => {
               const open = expanded === p.barcode;
               return (
                 <div key={p.barcode} className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition hover:shadow-md">
-                  <button onClick={() => toggleExpand(p.barcode)} className="flex w-full items-center gap-3 p-4 text-left">
-                    <span className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl ${p.partial ? "bg-amber-50 text-amber-600" : "bg-emerald-50 text-emerald-600"}`}><Pill className="h-5 w-5" /></span>
+                  <button onClick={() => toggleExpand(p.barcode)} className="flex w-full items-center gap-2.5 p-2.5 text-left sm:p-3">
+                    <span className={`grid h-8 w-8 shrink-0 place-items-center rounded-lg ${p.partial ? "bg-amber-50 text-amber-600" : "bg-emerald-50 text-emerald-600"}`}><Pill className="h-4 w-4" /></span>
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
                         <span className="font-mono text-sm font-semibold text-slate-800">#{p.barcode.split(":")[0]}</span>
                         {p.partial
-                          ? <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-700"><AlertCircle className="h-3 w-3" /> Μερική</span>
-                          : <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-700"><CheckCircle2 className="h-3 w-3" /> Πλήρης</span>}
+                          ? <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-700"><AlertCircle className="h-3 w-3" /> Μερική</span>
+                          : <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700"><CheckCircle2 className="h-3 w-3" /> Πλήρης</span>}
                       </div>
-                      <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-slate-500">
-                        <span className="inline-flex items-center gap-1"><Calendar className="h-3 w-3 text-slate-400" /> εκτέλεση {dt(p.executed_at)}</span>
+                      <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-slate-500">
+                        <span className="inline-flex items-center gap-1"><Calendar className="h-3 w-3 text-slate-400" /> {dt(p.executed_at)}</span>
                         {p.next_open_date && <span className="inline-flex items-center gap-1 text-emerald-600"><Clock className="h-3 w-3" /> ανοίγει {dt(p.next_open_date)}</span>}
                       </div>
                     </div>
@@ -987,8 +1008,97 @@ export default function PortalHome() {
           </div>
         )}
 
+        {/* ── NETWORK PHARMACY DIRECTORY ─────────────────────── */}
+        {tab === "pharmacies" && (
+          <div className="space-y-3">
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-3.5 top-1/2 h-[18px] w-[18px] -translate-y-1/2 text-slate-400" />
+              <input value={dirQuery} onChange={(e) => setDirQuery(e.target.value)} placeholder="Αναζήτηση φαρμακείου ή περιοχής…"
+                className="w-full rounded-2xl border border-slate-300 bg-white py-2.5 pl-11 pr-3 text-[15px] shadow-sm focus:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-100" />
+            </div>
+            {(() => {
+              const qn = dirQuery.trim().toLowerCase();
+              const list = directory.filter((d) => !qn || d.name.toLowerCase().includes(qn) || (d.city || "").toLowerCase().includes(qn) || (d.address || "").toLowerCase().includes(qn));
+              if (directory.length === 0) return <Empty icon={MapPin} text="Δεν βρέθηκαν φαρμακεία δικτύου." />;
+              if (list.length === 0) return <Empty icon={Search} text="Κανένα φαρμακείο για αυτή την αναζήτηση." />;
+              return list.map((d) => {
+                const s = d.status;
+                const emoji = s?.isOvernightDuty ? "🌙" : s?.isOnDuty ? "🚑" : s?.isOpen ? "🟢" : "🔴";
+                const isActive = d.tenant_id === me.active_tenant;
+                return (
+                  <div key={d.tenant_id} className={`rounded-2xl border bg-white p-3.5 shadow-sm ${isActive ? "border-brand-300 ring-1 ring-brand-100" : "border-slate-200"}`}>
+                    <div className="flex items-start gap-3">
+                      <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-slate-50 text-lg">{emoji}</span>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <span className="font-semibold text-slate-800">{d.name}</span>
+                          {d.mine && <span className="rounded-full bg-brand-50 px-1.5 py-0.5 text-[10px] font-bold text-brand-600">Δικό μου</span>}
+                          {isActive && <span className="rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700">Ενεργό</span>}
+                        </div>
+                        {(d.address || d.city) && <div className="mt-0.5 flex items-center gap-1 text-xs text-slate-500"><MapPin className="h-3 w-3 shrink-0 text-slate-400" />{[d.address, d.city].filter(Boolean).join(", ")}</div>}
+                        {s && <div className={`mt-0.5 text-xs font-medium ${s.isOnDuty ? "text-indigo-600" : s.isOpen ? (s.closingSoon ? "text-amber-600" : "text-emerald-600") : "text-slate-400"}`}>{s.statusText}</div>}
+                        <div className="mt-2 flex flex-wrap items-center gap-2">
+                          {d.phone && <a href={`tel:${d.phone}`} className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50"><Bell className="h-3.5 w-3.5" /> {d.phone}</a>}
+                          {d.mine && !isActive && <button onClick={() => switchPharmacy(d.tenant_id)} className="inline-flex items-center gap-1 rounded-lg bg-brand-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-brand-700"><Building2 className="h-3.5 w-3.5" /> Άνοιξε</button>}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              });
+            })()}
+          </div>
+        )}
+
         <p className="mt-8 text-center text-[11px] text-slate-300">RxVision · Πύλη Πελατών</p>
       </main>
+
+      {/* ── κάτω μπάρα πλοήγησης (ΜΟΝΟ κινητό) ─────────────────────
+          4 βασικές + «Περισσότερα». Σταθερή, μεγάλα targets για τον αντίχειρα. */}
+      <nav className="fixed inset-x-0 bottom-0 z-30 flex border-t border-slate-200 bg-white/95 pb-[env(safe-area-inset-bottom)] backdrop-blur-md sm:hidden">
+        {PRIMARY_TABS.map((k) => {
+          const I = TAB_ICON[k]; const on = tab === k;
+          return (
+            <button key={k} onClick={() => { setTab(k); setShowMore(false); }}
+              className={`flex flex-1 flex-col items-center gap-0.5 py-2 text-[10px] font-semibold transition ${on ? "text-brand-600" : "text-slate-400"}`}>
+              <I className={`h-[22px] w-[22px] ${on ? "" : "stroke-[1.75]"}`} />
+              <span className="truncate">{TAB_LABEL[k]}</span>
+            </button>
+          );
+        })}
+        <button onClick={() => setShowMore(true)}
+          className={`flex flex-1 flex-col items-center gap-0.5 py-2 text-[10px] font-semibold transition ${(!PRIMARY_TABS.includes(tab as typeof PRIMARY_TABS[number]) || showMore) ? "text-brand-600" : "text-slate-400"}`}>
+          <MoreHorizontal className="h-[22px] w-[22px]" />
+          <span>Περισσότερα</span>
+        </button>
+      </nav>
+
+      {/* Φύλλο «Περισσότερα» — οι υπόλοιπες ενότητες σε πλέγμα με εικονίδια */}
+      {showMore && (
+        <div className="fixed inset-0 z-40 sm:hidden" onClick={() => setShowMore(false)}>
+          <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm" />
+          <div onClick={(e) => e.stopPropagation()}
+            className="absolute inset-x-0 bottom-0 rounded-t-3xl border-t border-slate-200 bg-white p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] shadow-2xl">
+            <div className="mx-auto mb-3 h-1.5 w-10 rounded-full bg-slate-200" />
+            <div className="mb-3 flex items-center justify-between">
+              <h3 className="text-base font-extrabold text-slate-900">Όλες οι ενότητες</h3>
+              <button onClick={() => setShowMore(false)} className="grid h-8 w-8 place-items-center rounded-lg text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button>
+            </div>
+            <div className="grid grid-cols-3 gap-2">
+              {TABS.map(([k, label]) => {
+                const I = TAB_ICON[k] || FileText; const on = tab === k;
+                return (
+                  <button key={k} onClick={() => { setTab(k); setShowMore(false); }}
+                    className={`flex flex-col items-center gap-1.5 rounded-2xl border p-3 text-center text-xs font-semibold transition ${on ? "border-brand-500 bg-brand-50 text-brand-700" : "border-slate-200 bg-white text-slate-600 active:bg-slate-50"}`}>
+                    <I className="h-6 w-6" />
+                    <span className="leading-tight">{label}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

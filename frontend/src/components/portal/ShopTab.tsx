@@ -1,7 +1,7 @@
 "use client";
 
 import { Fragment, useEffect, useState } from "react";
-import { Search, ShoppingCart, Plus, Minus, Trash2, Truck, Store, ShieldCheck, Pill, Package, ChevronLeft, Loader2, MapPin, Check, XCircle, PackageCheck, RefreshCcw, Star } from "lucide-react";
+import { Search, ShoppingCart, Plus, Minus, Trash2, Truck, Store, ShieldCheck, Pill, Package, ChevronLeft, ChevronDown, Loader2, MapPin, Check, XCircle, PackageCheck, RefreshCcw, Star } from "lucide-react";
 import { patientApi, API_BASE } from "@/lib/patientClient";
 
 type Product = { barcode: string; name: string; description_long?: string | null; photo_url?: string | null; image_id?: string | null; price_cents: number; type: string; category?: string | null; tags?: string[]; featured?: boolean; discount_pct: number; stock_qty: number };
@@ -66,28 +66,37 @@ export function ShopTab() {
 
   return (
     <div className="space-y-3">
+      {/* Αναζήτηση — ευδιάκριτη, μεγάλη· δίπλα οι «παραγγελίες μου» & «συνδρομές» */}
       <div className="flex items-center gap-2">
         <div className="relative flex-1">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Αναζήτηση προϊόντος…" className="w-full rounded-xl border border-slate-300 py-2 pl-9 pr-3 text-sm" />
+          <Search className="pointer-events-none absolute left-3.5 top-1/2 h-[18px] w-[18px] -translate-y-1/2 text-slate-400" />
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Αναζήτηση προϊόντος…" className="w-full rounded-2xl border border-slate-300 bg-white py-2.5 pl-11 pr-3 text-[15px] shadow-sm focus:border-violet-400 focus:outline-none focus:ring-2 focus:ring-violet-100" />
         </div>
-        <button onClick={() => { patientApi<{ items: Order[] }>("/patient/shop/orders").then((d) => setOrders(d.items)).catch(() => {}); setView("orders"); }} title="Οι παραγγελίες μου" className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-slate-300 text-slate-600"><Package className="h-5 w-5" /></button>
-        {meta?.settings.subscription_enabled && <button onClick={() => setView("subs")} title="Οι συνδρομές μου" className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-violet-300 text-violet-600"><RefreshCcw className="h-5 w-5" /></button>}
+        <button onClick={() => { patientApi<{ items: Order[] }>("/patient/shop/orders").then((d) => setOrders(d.items)).catch(() => {}); setView("orders"); }} title="Οι παραγγελίες μου" className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl border border-slate-300 bg-white text-slate-600 shadow-sm"><Package className="h-5 w-5" /></button>
+        {meta?.settings.subscription_enabled && <button onClick={() => setView("subs")} title="Οι συνδρομές μου" className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl border border-violet-300 bg-white text-violet-600 shadow-sm"><RefreshCcw className="h-5 w-5" /></button>}
       </div>
-      {!!meta?.categories.length && (
-        <div className="flex flex-wrap gap-1.5">
-          <button onClick={() => setCat("")} className={`rounded-full px-2.5 py-1 text-xs ${!cat ? "bg-violet-600 text-white" : "border border-slate-200 text-slate-600"}`}>Όλα</button>
-          {meta.categories.map((c) => <button key={c} onClick={() => setCat(c)} className={`rounded-full px-2.5 py-1 text-xs ${cat === c ? "bg-violet-600 text-white" : "border border-slate-200 text-slate-600"}`}>{c}</button>)}
+      {/* Κατηγορία + ταξινόμηση σε ΜΙΑ συμπαγή σειρά (αντί για ~18 chips που γέμιζαν την οθόνη) */}
+      <div className="flex items-center gap-2">
+        {!!meta?.categories.length && (
+          <div className="relative flex-1">
+            <select value={cat} onChange={(e) => setCat(e.target.value)} className="w-full appearance-none rounded-xl border border-slate-200 bg-white py-2 pl-3 pr-8 text-sm font-medium text-slate-700 shadow-sm focus:border-violet-400 focus:outline-none focus:ring-2 focus:ring-violet-100">
+              <option value="">Όλες οι κατηγορίες</option>
+              {meta.categories.map((c) => <option key={c} value={c}>{c}</option>)}
+            </select>
+            <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+          </div>
+        )}
+        <div className="relative">
+          <select value={sort} onChange={(e) => setSort(e.target.value)} className="appearance-none rounded-xl border border-slate-200 bg-white py-2 pl-3 pr-8 text-sm text-slate-600 shadow-sm focus:border-violet-400 focus:outline-none focus:ring-2 focus:ring-violet-100">{SORTS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select>
+          <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
         </div>
-      )}
+      </div>
+      {/* Ετικέτες — μία κυλιόμενη σειρά (χωρίς αναδίπλωση) */}
       {!!meta?.tags?.length && (
-        <div className="flex flex-wrap items-center gap-1.5">
-          {meta.tags.map((tg) => <button key={tg} onClick={() => setTag(tag === tg ? "" : tg)} className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${tag === tg ? "bg-slate-800 text-white" : tagCls(tg)}`}>{tg}</button>)}
+        <div className="-mx-4 flex gap-1.5 overflow-x-auto px-4 pb-1 [-ms-overflow-style:none] [scrollbar-width:none] sm:mx-0 sm:flex-wrap sm:px-0 [&::-webkit-scrollbar]:hidden">
+          {meta.tags.map((tg) => <button key={tg} onClick={() => setTag(tag === tg ? "" : tg)} className={`shrink-0 whitespace-nowrap rounded-full px-2.5 py-1 text-[11px] font-semibold ${tag === tg ? "bg-slate-800 text-white" : tagCls(tg)}`}>{tg}</button>)}
         </div>
       )}
-      <div className="flex items-center justify-end">
-        <select value={sort} onChange={(e) => setSort(e.target.value)} className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-600">{SORTS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select>
-      </div>
 
       <div className="grid grid-cols-2 gap-2 pb-20">
         {products.map((p) => {
