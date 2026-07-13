@@ -345,17 +345,27 @@ class IngestionEngine:
     async def _resolve_items(self, ex: CanonicalExecution) -> tuple[list[dict], int, int]:
         docs: list[dict] = []
         amount_total = wholesale_cost = 0
+        # ΠΛΗΡΗΣ λιανική από την ΕΚΤΕΛΕΣΗ: το CDA per-line retail (2.10.11) συχνά υποτιμά — δίνει
+        # μόνο τη συμμετοχή ασφαλισμένου (π.χ. SALOSPIR line=1,17€ ενώ πλήρης λιανική 2,08€). Όταν
+        # η εκτέλεση έχει ΕΝΑ εκτελεσμένο είδος, όλο το amount_total της είναι η λιανική του (claimed +
+        # συμμετοχή). Το χρησιμοποιούμε ως αυθεντική λιανική. Δες [[profitability-retail-bug]].
+        executed = [it for it in ex.items if it.is_executed]
+        single_retail = None
+        if ex.amount_total and len(executed) == 1 and executed[0].quantity:
+            single_retail = round(ex.amount_total / executed[0].quantity)
         for it in ex.items:
+            eff_retail = it.retail_price
+            if single_retail is not None and it is executed[0]:
+                eff_retail = max(eff_retail, single_retail)
             wholesale, wsource = await self._effective_wholesale(it)
-            margin = it.retail_price - wholesale
-            margin_pct = round((margin / it.retail_price) * 100, 2) if it.retail_price else 0
+            margin = eff_retail - wholesale
             # Product aggregate: ΚΡΑΤΑ τη ΜΕΓΙΣΤΗ γνωστή λιανική — ΠΟΤΕ clobber σε 0/χαμηλότερη από
             # μη-εκτελεσμένη/μερική γραμμή (αλλιώς το retail_price μηδενιζόταν → ψευδο-αρνητικό περιθώριο,
             # π.χ. OPRAZIUM retail 0 ενώ items 14€). margin/margin_pct από την ΤΕΛΙΚΗ (max) λιανική.
             stage1 = {"name": it.name, "category": it.category, "substance": it.substance,
                       "updated_at": _now(), "tenant_id": self.tenant_id, "barcode": it.barcode,
                       "rx_frequency": {"$ifNull": ["$rx_frequency", 0]},
-                      "retail_price": {"$max": [{"$ifNull": ["$retail_price", 0]}, it.retail_price]}}
+                      "retail_price": {"$max": [{"$ifNull": ["$retail_price", 0]}, eff_retail]}}
             if wholesale > 0:   # μην clobber γνωστή masterdata wholesale με 0/unknown
                 stage1["wholesale_price"] = wholesale
                 stage1["wholesale_source"] = wsource
@@ -369,13 +379,13 @@ class IngestionEngine:
                                    "$retail_price"]}, 100]}, 2]}, 0]}}}],
                 upsert=True, return_document=ReturnDocument.AFTER)
             product_id = res["_id"]
-            amount_total += it.retail_price * it.quantity
+            amount_total += eff_retail * it.quantity
             wholesale_cost += wholesale * it.quantity
             docs.append({"product_id": product_id, "active_substance_id": None,
-                         "quantity": it.quantity, "retail_price": it.retail_price,
+                         "quantity": it.quantity, "retail_price": eff_retail,
                          "wholesale_price": wholesale, "wholesale_source": wsource,
                          "margin": margin,
-                         "amount_claimed": it.retail_price * it.quantity, "patient_share": 0,
+                         "amount_claimed": eff_retail * it.quantity, "patient_share": 0,
                          "is_executed": it.is_executed, "category": it.category,
                          "details": it.details or {}})
         return docs, amount_total, wholesale_cost

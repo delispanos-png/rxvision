@@ -225,7 +225,10 @@ class ProductRepository(BaseRepository):
         """ANALYTICS.md §10 — low margin but frequently prescribed → priority.
         Field names match the frontend table (product_name/units/gross_profit)."""
         pipeline = [
-            {"$match": {"margin_pct": {"$lt": threshold_pct}, "rx_frequency": {"$gt": 0}}},
+            # retail_price > 0: χωρίς γνωστή λιανική ΔΕΝ υπάρχει περιθώριο — μην δείχνεις
+            # «0% / 0€» (παραπλανητικό· αφορά μη-εκτελεσμένα/χωρίς πηγή τιμής είδη).
+            {"$match": {"margin_pct": {"$lt": threshold_pct}, "rx_frequency": {"$gt": 0},
+                        "retail_price": {"$gt": 0}}},
             {"$sort": {"rx_frequency": -1}},
             {"$limit": limit},
             {"$project": {"_id": 0, "product_id": {"$toString": "$_id"},
