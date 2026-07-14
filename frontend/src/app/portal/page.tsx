@@ -96,6 +96,10 @@ export default function PortalHome() {
   const [directory, setDirectory] = useState<DirPharmacy[]>([]);
   const [dirQuery, setDirQuery] = useState("");
   const [rx, setRx] = useState<Rx[]>([]);
+  const [rxQuery, setRxQuery] = useState("");   // αναζήτηση αρ. συνταγής (barcode)
+  const [rxFrom, setRxFrom] = useState("");     // ημ/νιακό διάστημα από (YYYY-MM-DD)
+  const [rxTo, setRxTo] = useState("");         // …έως
+  const [rxShowAll, setRxShowAll] = useState(false);
   const [repeats, setRepeats] = useState<Repeat[]>([]);
   const [avail, setAvail] = useState<Avail[]>([]);
   const [services, setServices] = useState<Service[]>([]);
@@ -447,10 +451,54 @@ export default function PortalHome() {
         </div>
 
         {/* ── PRESCRIPTIONS ──────────────────────────────────── */}
-        {tab === "rx" && (
-          <div className="space-y-2">
+        {tab === "rx" && (() => {
+          const qn = rxQuery.trim();
+          const filtered = rx.filter((p) => {
+            const bc = p.barcode.split(":")[0];
+            if (qn && !bc.includes(qn)) return false;
+            const d = (p.executed_at || "").slice(0, 10);
+            if (rxFrom && d < rxFrom) return false;
+            if (rxTo && d > rxTo) return false;
+            return true;
+          });
+          const active = !!(qn || rxFrom || rxTo);
+          // Χωρίς φίλτρο: οι 5 πιο πρόσφατες (εκτός αν «όλες»). Με φίλτρο: όλα τα αποτελέσματα.
+          const shown = active || rxShowAll ? filtered : filtered.slice(0, 5);
+          return (
+          <div className="space-y-3">
+            {/* Αναζήτηση: αριθμός συνταγής + ημερομηνιακό διάστημα */}
+            <div className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
+              <div className="relative mb-2">
+                <Search className="pointer-events-none absolute left-3.5 top-1/2 h-[18px] w-[18px] -translate-y-1/2 text-slate-400" />
+                <input value={rxQuery} onChange={(e) => setRxQuery(e.target.value)} inputMode="numeric" placeholder="Αναζήτηση με αριθμό συνταγής…"
+                  className="w-full rounded-xl border border-slate-300 bg-white py-2.5 pl-11 pr-3 text-[15px] focus:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-100" />
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="mb-0.5 block text-[11px] font-medium text-slate-500">Από</label>
+                  <DateInput value={rxFrom} onChange={setRxFrom} className="w-full" />
+                </div>
+                <div>
+                  <label className="mb-0.5 block text-[11px] font-medium text-slate-500">Έως</label>
+                  <DateInput value={rxTo} onChange={setRxTo} className="w-full" />
+                </div>
+              </div>
+              {active && (
+                <button onClick={() => { setRxQuery(""); setRxFrom(""); setRxTo(""); }} className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-brand-600 hover:text-brand-700"><X className="h-3.5 w-3.5" /> Καθαρισμός</button>
+              )}
+            </div>
+            {/* πλαίσιο πλοήγησης: πόσα δείχνουμε */}
+            {!active && rx.length > 5 && (
+              <div className="flex items-center justify-between px-1 text-xs text-slate-500">
+                <span>{rxShowAll ? `Όλες οι συνταγές (${filtered.length})` : "Οι 5 πιο πρόσφατες εκτελέσεις"}</span>
+                <button onClick={() => setRxShowAll((v) => !v)} className="font-semibold text-brand-600 hover:text-brand-700">{rxShowAll ? "Δείξε λιγότερες" : "Δείξε όλες"}</button>
+              </div>
+            )}
+            {active && <div className="px-1 text-xs text-slate-500">{filtered.length} {filtered.length === 1 ? "αποτέλεσμα" : "αποτελέσματα"}</div>}
+
             {rx.length === 0 && <Empty icon={Pill} text="Δεν υπάρχουν συνταγές ακόμα." />}
-            {rx.map((p) => {
+            {rx.length > 0 && shown.length === 0 && <Empty icon={Search} text="Καμία συνταγή για αυτά τα κριτήρια." />}
+            {shown.map((p) => {
               const open = expanded === p.barcode;
               return (
                 <div key={p.barcode} className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition hover:shadow-md">
@@ -514,7 +562,8 @@ export default function PortalHome() {
               );
             })}
           </div>
-        )}
+          );
+        })()}
 
         {/* ── REPEATS ────────────────────────────────────────── */}
         {tab === "repeats" && (

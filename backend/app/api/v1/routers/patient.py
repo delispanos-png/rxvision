@@ -156,8 +156,10 @@ async def me(ctx: PatientContext = Depends(get_patient_context)):
 
 @router.get("/prescriptions")
 async def my_prescriptions(ctx: PatientContext = Depends(get_patient_context)):
+    # 200 ώστε η αναζήτηση (αρ. συνταγής / ημ. διάστημα) στην πύλη να καλύπτει αρκετό ιστορικό·
+    # η προβολή δείχνει by default μόνο τις 5 πιο πρόσφατες.
     repo = PatientRxRepository(tenant_id=ctx.tenant_id)
-    return {"items": await repo.my_prescriptions(ctx.patient_ref)}
+    return {"items": await repo.my_prescriptions(ctx.patient_ref, limit=200)}
 
 
 @router.get("/repeats")
