@@ -794,10 +794,12 @@ export default function PortalHome() {
                   dueKeys.forEach((mk) => {
                     const th = thMap[mk]; if (!th) return;
                     const pd = th.per_day || 1; const start = th.time || "08:00";
-                    if (pd <= 1) { out.push({ time: start, med_key: mk, name: th.name, dose: th.dose, meal: th.meal }); return; }
+                    // 1×/μέρα Ή «συγκεκριμένη ώρα» (interval_hours===0) → μία δόση στην ώρα
+                    if (pd <= 1 || th.interval_hours === 0) { out.push({ time: start, med_key: mk, name: th.name, dose: th.dose, meal: th.meal }); return; }
+                    // «κάθε iv ώρες» → δόσεις μέσα στο 24ωρο: start, +iv, +2iv, … (π.χ. iv=8 → 08:00, 16:00, 00:00)
                     const iv = th.interval_hours || Math.max(1, Math.round(24 / pd));
                     const [h, mn] = start.split(":").map(Number);
-                    for (let i = 0; i < pd; i++) { const tot = (h * 60 + mn + i * iv * 60) % 1440; out.push({ time: `${String(Math.floor(tot / 60)).padStart(2, "0")}:${String(tot % 60).padStart(2, "0")}`, med_key: mk, name: th.name, dose: th.dose, meal: th.meal }); }
+                    for (let i = 0; i * iv < 24; i++) { const tot = (h * 60 + mn + i * iv * 60) % 1440; out.push({ time: `${String(Math.floor(tot / 60)).padStart(2, "0")}:${String(tot % 60).padStart(2, "0")}`, med_key: mk, name: th.name, dose: th.dose, meal: th.meal }); }
                   });
                   return out.sort((a, b) => a.time.localeCompare(b.time));
                 };
@@ -887,42 +889,38 @@ export default function PortalHome() {
                       {/* φόρμα ρύθμισης (εμφανίζεται στην ενεργοποίηση ή στην «αλλαγή») */}
                       {medCfg?.med_key === th.med_key && (
                         <div className="mt-2 space-y-2 rounded-xl border border-violet-200 bg-violet-50/50 p-2.5">
-                          {medCfg.per_day > 1 ? (
-                            <div className="space-y-2">
-                              <div className="text-[11px] font-medium text-violet-700">💊 {medCfg.per_day} λήψεις/ημέρα</div>
-                              <div>
-                                <div className="mb-1 text-[11px] font-medium text-slate-600">🔁 Κάθε πόσες ώρες;</div>
-                                <select value={medCfg.interval} onChange={(e) => setMedCfg({ ...medCfg, interval: +e.target.value })} className="w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm focus:border-violet-400 focus:outline-none">
-                                  {[4, 6, 8, 12].map((h) => <option key={h} value={h}>κάθε {h} ώρες</option>)}
-                                </select>
-                              </div>
-                              <div>
-                                <div className="mb-1 text-[11px] font-medium text-slate-600">⏰ Ώρα 1ης λήψης (24ωρο)</div>
-                                <div className="flex items-center gap-1.5">
-                                  <select value={(medCfg.time || "08:00").split(":")[0]} onChange={(e) => setMedCfg({ ...medCfg, time: `${e.target.value}:${(medCfg.time || "08:00").split(":")[1] || "00"}` })} className="flex-1 rounded-lg border border-slate-300 px-2 py-1.5 text-sm focus:border-violet-400 focus:outline-none">
-                                    {Array.from({ length: 24 }, (_, h) => String(h).padStart(2, "0")).map((h) => <option key={h} value={h}>{h}</option>)}
-                                  </select>
-                                  <span className="font-bold text-slate-400">:</span>
-                                  <select value={(medCfg.time || "08:00").split(":")[1] || "00"} onChange={(e) => setMedCfg({ ...medCfg, time: `${(medCfg.time || "08:00").split(":")[0]}:${e.target.value}` })} className="flex-1 rounded-lg border border-slate-300 px-2 py-1.5 text-sm focus:border-violet-400 focus:outline-none">
-                                    {["00", "05", "10", "15", "20", "25", "30", "35", "40", "45", "50", "55"].map((mn) => <option key={mn} value={mn}>{mn}</option>)}
-                                  </select>
-                                </div>
-                              </div>
-                              <div className="rounded-lg bg-white/70 px-2 py-1 text-[10px] text-slate-500">Δόσεις: {Array.from({ length: medCfg.per_day }, (_, i) => { const [h, mn] = medCfg.time.split(":").map(Number); const tot = ((h * 60 + mn + i * medCfg.interval * 60) % 1440); return `${String(Math.floor(tot / 60)).padStart(2, "0")}:${String(tot % 60).padStart(2, "0")}`; }).join(" · ")}</div>
+                          {medCfg.per_day > 1 && <div className="text-[11px] font-medium text-violet-700">💊 {medCfg.per_day} λήψεις/ημέρα — διάλεξε τρόπο:</div>}
+                          {/* toggle ΜΟΝΟ για >1×/μέρα — είτε συγκεκριμένη ώρα ΕΙΤΕ κάθε X ώρες (όχι μαζί) */}
+                          {medCfg.per_day > 1 && (
+                            <div className="flex gap-1.5">
+                              {([["time", "Συγκεκριμένη ώρα"], ["interval", "Κάθε X ώρες"]] as const).map(([mv, ml]) => (
+                                <button key={mv} onClick={() => setMedCfg({ ...medCfg, mode: mv })} className={`flex-1 rounded-lg border px-2 py-1.5 text-[11px] font-semibold ${medCfg.mode === mv ? "border-violet-500 bg-violet-600 text-white" : "border-slate-200 bg-white text-slate-600"}`}>{ml}</button>
+                              ))}
                             </div>
-                          ) : (
+                          )}
+                          {medCfg.per_day > 1 && medCfg.mode === "interval" && (
                             <div>
-                              <div className="mb-1 text-[11px] font-medium text-slate-600">⏰ Ώρα λήψης (24ωρο)</div>
-                              <div className="flex items-center gap-1.5">
-                                <select value={(medCfg.time || "08:00").split(":")[0]} onChange={(e) => setMedCfg({ ...medCfg, time: `${e.target.value}:${(medCfg.time || "08:00").split(":")[1] || "00"}` })} className="flex-1 rounded-lg border border-slate-300 px-2 py-1.5 text-sm focus:border-violet-400 focus:outline-none">
-                                  {Array.from({ length: 24 }, (_, h) => String(h).padStart(2, "0")).map((h) => <option key={h} value={h}>{h}</option>)}
-                                </select>
-                                <span className="font-bold text-slate-400">:</span>
-                                <select value={(medCfg.time || "08:00").split(":")[1] || "00"} onChange={(e) => setMedCfg({ ...medCfg, time: `${(medCfg.time || "08:00").split(":")[0]}:${e.target.value}` })} className="flex-1 rounded-lg border border-slate-300 px-2 py-1.5 text-sm focus:border-violet-400 focus:outline-none">
-                                  {["00", "05", "10", "15", "20", "25", "30", "35", "40", "45", "50", "55"].map((mn) => <option key={mn} value={mn}>{mn}</option>)}
-                                </select>
-                              </div>
+                              <div className="mb-1 text-[11px] font-medium text-slate-600">🔁 Κάθε πόσες ώρες;</div>
+                              <select value={medCfg.interval} onChange={(e) => setMedCfg({ ...medCfg, interval: +e.target.value })} className="w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm focus:border-violet-400 focus:outline-none">
+                                {[3, 4, 6, 8, 12].map((h) => <option key={h} value={h}>κάθε {h} ώρες</option>)}
+                              </select>
                             </div>
+                          )}
+                          {/* ώρα (πάντα): «Ώρα λήψης» στη συγκεκριμένη ώρα, «Ώρα 1ης λήψης» στο interval */}
+                          <div>
+                            <div className="mb-1 text-[11px] font-medium text-slate-600">⏰ {medCfg.per_day > 1 && medCfg.mode === "interval" ? "Ώρα 1ης λήψης" : "Ώρα λήψης"} (24ωρο)</div>
+                            <div className="flex items-center gap-1.5">
+                              <select value={(medCfg.time || "08:00").split(":")[0]} onChange={(e) => setMedCfg({ ...medCfg, time: `${e.target.value}:${(medCfg.time || "08:00").split(":")[1] || "00"}` })} className="flex-1 rounded-lg border border-slate-300 px-2 py-1.5 text-sm focus:border-violet-400 focus:outline-none">
+                                {Array.from({ length: 24 }, (_, h) => String(h).padStart(2, "0")).map((h) => <option key={h} value={h}>{h}</option>)}
+                              </select>
+                              <span className="font-bold text-slate-400">:</span>
+                              <select value={(medCfg.time || "08:00").split(":")[1] || "00"} onChange={(e) => setMedCfg({ ...medCfg, time: `${(medCfg.time || "08:00").split(":")[0]}:${e.target.value}` })} className="flex-1 rounded-lg border border-slate-300 px-2 py-1.5 text-sm focus:border-violet-400 focus:outline-none">
+                                {["00", "05", "10", "15", "20", "25", "30", "35", "40", "45", "50", "55"].map((mn) => <option key={mn} value={mn}>{mn}</option>)}
+                              </select>
+                            </div>
+                          </div>
+                          {medCfg.per_day > 1 && medCfg.mode === "interval" && (
+                            <div className="rounded-lg bg-white/70 px-2 py-1 text-[10px] text-slate-500">Δόσεις: {Array.from({ length: Math.ceil(24 / medCfg.interval) }, (_, i) => { const [h, mn] = medCfg.time.split(":").map(Number); const tot = ((h * 60 + mn + i * medCfg.interval * 60) % 1440); return `${String(Math.floor(tot / 60)).padStart(2, "0")}:${String(tot % 60).padStart(2, "0")}`; }).join(" · ")}</div>
                           )}
                           <div>
                             <div className="mb-1 text-[11px] font-medium text-slate-600">🍽️ Σε σχέση με το γεύμα</div>
