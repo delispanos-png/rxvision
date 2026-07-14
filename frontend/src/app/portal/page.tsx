@@ -70,7 +70,7 @@ const TAB_ICON: Record<string, LucideIcon> = {
 const TAB_LABEL: Record<string, string> = Object.fromEntries(TABS.map(([k, l]) => [k, l]));
 
 const DOW = ["Δευ", "Τρί", "Τετ", "Πέμ", "Παρ", "Σάβ", "Κυρ"];
-type Therapy = { med_key: string; name: string; dose: string | null; dosage_text: string | null; kind: string; per_day: number; runout: string | null; days_left: number | null; enabled: boolean; reservable: boolean };
+type Therapy = { med_key: string; name: string; dose: string | null; dosage_text: string | null; kind: string; per_day: number; runout: string | null; days_left: number | null; enabled: boolean; reservable: boolean; time?: string | null; meal?: string | null };
 type SlotCell = { slot: string; label: string; time: string; meds: { med_key: string; name: string; dose: string | null; time: string }[] };
 type Schedule = { therapies: Therapy[]; week: { dow: number; slots: SlotCell[] }[]; slot_times: Record<string, string>; streak: number; taken_today?: { med_key: string; slot: string | null }[] };
 type HMeas = { _id?: string; kind: string; systolic?: number; diastolic?: number; value?: number; at: string };
@@ -125,6 +125,7 @@ export default function PortalHome() {
   const [assignBusy, setAssignBusy] = useState(false);
   const [assignMsg, setAssignMsg] = useState<string | null>(null);
   const [availTarget, setAvailTarget] = useState("");
+  const [apptView, setApptView] = useState<"open" | "closed">("open");   // Ραντεβού: Ανοιχτά | Κλειστά
   const [availMed, setAvailMed] = useState<Medicine | null>(null);
   const [availNote, setAvailNote] = useState("");
   const [apptTarget, setApptTarget] = useState("");
@@ -223,6 +224,10 @@ export default function PortalHome() {
     setSched((s) => s ? { ...s, therapies: s.therapies.map((t) => t.med_key === med_key ? { ...t, enabled } : t) } : s);
     try {
       await patientApi("/patient/meds/reminder", { method: "POST", body: JSON.stringify({ med_key, enabled }) });
+      if (enabled) {   // μόλις ενεργοποιήθηκε → ρώτα ώρα λήψης + σχέση με γεύμα
+        const th = sched?.therapies.find((t) => t.med_key === med_key);
+        setMedCfg({ med_key, time: th?.time || "08:00", meal: th?.meal || "none" });
+      } else { setMedCfg((c) => c?.med_key === med_key ? null : c); }
       setSched(await patientApi<Schedule>("/patient/meds/schedule"));   // refresh grid
     } catch { /* revert on next fetch */ }
   }
@@ -241,11 +246,15 @@ export default function PortalHome() {
       if (!taken && r.points_awarded && r.points_awarded > 0) alert(`✓ Κέρδισες ${r.points_awarded} πόντους 🎁`);
     } catch { try { setSched(await patientApi<Schedule>("/patient/meds/schedule")); } catch { /* ignore */ } }
   }
-  const [slotEdit, setSlotEdit] = useState<Record<string, string> | null>(null);
-  async function saveSlotTimes() {
-    if (!slotEdit) return;
-    try { await patientApi("/patient/meds/times", { method: "POST", body: JSON.stringify(slotEdit) }); setSched(await patientApi<Schedule>("/patient/meds/schedule")); setSlotEdit(null); alert("✓ Οι ώρες αποθηκεύτηκαν."); }
-    catch { alert("Κάτι πήγε στραβά — δοκίμασε ξανά."); }
+  // Ρύθμιση φαρμάκου κατά την ΕΝΕΡΓΟΠΟΙΗΣΗ: ώρα λήψης + σχέση με γεύμα (πριν/μετά).
+  const [medCfg, setMedCfg] = useState<{ med_key: string; time: string; meal: string } | null>(null);
+  async function saveMedCfg() {
+    if (!medCfg) return;
+    try {
+      await patientApi("/patient/meds/reminder", { method: "POST", body: JSON.stringify({ med_key: medCfg.med_key, enabled: true, time: medCfg.time || null, meal: medCfg.meal }) });
+      setSched(await patientApi<Schedule>("/patient/meds/schedule"));
+    } catch { /* ignore */ }
+    setMedCfg(null);
   }
   async function reserveMed(med_name: string) {
     if (!confirm(`Κράτηση επανάληψης για «${med_name}» στο φαρμακείο σου;`)) return;
@@ -751,7 +760,7 @@ export default function PortalHome() {
         )}
 
         {/* ── ΥΓΕΙΑ / ΜΕΤΡΗΣΕΙΣ ─────────────────────────────── */}
-        {tab === "shop" && <ShopTab key={me.active_tenant ?? "none"} />}
+        {tab === "shop" && <ShopTab key={me.active_tenant ?? "none"} tenantKey={me.active_tenant ?? "none"} />}
 
         {tab === "meds" && (
           <div className="space-y-4">
@@ -773,6 +782,7 @@ export default function PortalHome() {
               {sched.week.some((d) => d.slots.length > 0) ? (() => {
                 const todayDow = (new Date().getDay() + 6) % 7;
                 const takenSet = new Set((sched.taken_today ?? []).map((t) => `${t.med_key}|${t.slot ?? ""}`));
+                const tmeta: Record<string, { time?: string | null; meal?: string | null }> = Object.fromEntries(sched.therapies.map((t) => [t.med_key, { time: t.time, meal: t.meal }]));
                 // ΣΗΜΕΡΑ πρώτη & ανοιχτή· οι υπόλοιπες κλειστές (accordion) — κλικ για άνοιγμα.
                 const days = sched.week.filter((d) => d.slots.length > 0)
                   .sort((a, b) => (a.dow === todayDow ? -1 : b.dow === todayDow ? 1 : a.dow - b.dow));
@@ -803,11 +813,15 @@ export default function PortalHome() {
                                 <div className="flex min-w-0 flex-1 flex-col gap-1">
                                   {sl.meds.map((m, i) => {
                                     const taken = today && takenSet.has(`${m.med_key}|${sl.slot}`);
+                                    const meal = tmeta[m.med_key]?.meal; const mtime = tmeta[m.med_key]?.time;
                                     return (
                                       <button key={i} onClick={() => { if (today) toggleIntake(m.med_key, sl.slot, taken); }} disabled={!today}
                                         title={taken ? "Πάτα για αναίρεση" : "Πάτα «Το πήρα»"}
                                         className={`flex items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs transition ${taken ? "bg-emerald-50 text-emerald-700" : today ? "bg-violet-50 text-violet-800 hover:bg-violet-100" : "bg-white text-slate-600"}`}>
-                                        <span className={`min-w-0 truncate ${taken ? "line-through opacity-70" : ""}`}>{m.dose ? `${m.dose} · ` : ""}{m.name}</span>
+                                        <span className="min-w-0">
+                                          <span className={`block truncate ${taken ? "line-through opacity-70" : ""}`}>{m.dose ? `${m.dose} · ` : ""}{m.name}</span>
+                                          {(mtime || (meal && meal !== "none")) && <span className="text-[10px] opacity-70">{mtime ? `⏰ ${mtime}` : ""}{mtime && meal && meal !== "none" ? " · " : ""}{meal === "before" ? "🍽️ πριν το γεύμα" : meal === "after" ? "🍽️ μετά το γεύμα" : ""}</span>}
+                                        </span>
                                         {today && (taken
                                           ? <span className="shrink-0 text-[11px] font-bold">✓ το πήρα · ↺</span>
                                           : <span className="shrink-0 rounded-full bg-violet-600 px-2 py-0.5 text-[10px] font-bold text-white">Το πήρα</span>)}
@@ -831,25 +845,6 @@ export default function PortalHome() {
                 <div className="text-sm font-semibold text-violet-900">💊 Ποιες αγωγές να σου θυμίζουμε;</div>
                 <p className="mt-1 text-xs text-violet-700">Φτιαγμένο από τις <b>οδηγίες του γιατρού σου</b> (όπως καταχωρήθηκαν στην ΗΔΥΚΑ). Άναψε τον διακόπτη σε όσες θες υπενθύμιση — θα εμφανιστούν στο <b>Ημερολόγιο</b>. <span className="opacity-70">Ακολούθα πάντα τις οδηγίες του γιατρού/φαρμακοποιού σου.</span></p>
               </div>
-              {/* Ώρες λήψης — ο πελάτης ορίζει πότε είναι πρωί/μεσημέρι/βράδυ/νύχτα */}
-              <div className="rounded-2xl border border-slate-200 bg-white p-4">
-                <div className="mb-2 flex items-center justify-between">
-                  <div className="flex items-center gap-1.5 text-sm font-semibold text-slate-800"><Clock className="h-4 w-4 text-violet-500" /> Ώρες λήψης</div>
-                  {!slotEdit
-                    ? <button onClick={() => setSlotEdit({ ...{ morning: "08:00", noon: "14:00", evening: "20:00", night: "23:00" }, ...sched.slot_times })} className="text-xs font-semibold text-violet-600 hover:text-violet-700">Επεξεργασία</button>
-                    : <div className="flex gap-2"><button onClick={() => setSlotEdit(null)} className="text-xs text-slate-400">Άκυρο</button><button onClick={saveSlotTimes} className="text-xs font-semibold text-violet-600">Αποθήκευση</button></div>}
-                </div>
-                <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-                  {([["morning", "🌅 Πρωί"], ["noon", "☀️ Μεσημέρι"], ["evening", "🌇 Βράδυ"], ["night", "🌙 Νύχτα"]] as const).map(([k, label]) => (
-                    <div key={k}>
-                      <div className="mb-0.5 text-[11px] font-medium text-slate-500">{label}</div>
-                      {slotEdit
-                        ? <input type="time" value={slotEdit[k] ?? ""} onChange={(e) => setSlotEdit((s) => ({ ...(s ?? {}), [k]: e.target.value }))} className="w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm focus:border-violet-400 focus:outline-none" />
-                        : <div className="rounded-lg bg-slate-50 px-2 py-1.5 text-center text-sm font-semibold text-slate-700">{sched.slot_times?.[k] ?? "—"}</div>}
-                    </div>
-                  ))}
-                </div>
-              </div>
               <div className="space-y-2">
                 {sched.therapies.map((th) => {
                   const warn = th.days_left !== null && th.days_left <= 7;
@@ -870,6 +865,37 @@ export default function PortalHome() {
                           <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white transition-all ${th.enabled ? "left-[1.45rem]" : "left-0.5"}`} />
                         </button>
                       </div>
+                      {/* όταν ενεργό: ώρα λήψης + σχέση με γεύμα (πάτα για αλλαγή) */}
+                      {th.enabled && medCfg?.med_key !== th.med_key && (
+                        <button onClick={() => setMedCfg({ med_key: th.med_key, time: th.time || "08:00", meal: th.meal || "none" })}
+                          className="mt-2 inline-flex flex-wrap items-center gap-2 rounded-lg bg-violet-50 px-2.5 py-1 text-xs text-violet-700 hover:bg-violet-100">
+                          <span className="inline-flex items-center gap-1"><Clock className="h-3.5 w-3.5" /> {th.time || "—"}</span>
+                          <span>{th.meal === "before" ? "🍽️ πριν το γεύμα" : th.meal === "after" ? "🍽️ μετά το γεύμα" : "άσχετο με γεύμα"}</span>
+                          <span className="text-[10px] text-violet-400">· αλλαγή</span>
+                        </button>
+                      )}
+                      {/* φόρμα ρύθμισης (εμφανίζεται στην ενεργοποίηση ή στην «αλλαγή») */}
+                      {medCfg?.med_key === th.med_key && (
+                        <div className="mt-2 space-y-2 rounded-xl border border-violet-200 bg-violet-50/50 p-2.5">
+                          <div>
+                            <div className="mb-1 text-[11px] font-medium text-slate-600">⏰ Ώρα λήψης</div>
+                            <input type="time" value={medCfg.time} onChange={(e) => setMedCfg({ ...medCfg, time: e.target.value })} className="w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm focus:border-violet-400 focus:outline-none" />
+                          </div>
+                          <div>
+                            <div className="mb-1 text-[11px] font-medium text-slate-600">🍽️ Σε σχέση με το γεύμα</div>
+                            <div className="flex gap-1.5">
+                              {([["before", "Πριν"], ["after", "Μετά"], ["none", "Άσχετο"]] as const).map(([v, l]) => (
+                                <button key={v} onClick={() => setMedCfg({ ...medCfg, meal: v })}
+                                  className={`flex-1 rounded-lg border px-2 py-1.5 text-xs font-semibold ${medCfg.meal === v ? "border-violet-500 bg-violet-600 text-white" : "border-slate-200 bg-white text-slate-600"}`}>{l}</button>
+                              ))}
+                            </div>
+                          </div>
+                          <div className="flex justify-end gap-2">
+                            <button onClick={() => setMedCfg(null)} className="px-2 py-1 text-xs text-slate-400">Άκυρο</button>
+                            <button onClick={saveMedCfg} className="rounded-lg bg-violet-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-violet-700">Αποθήκευση</button>
+                          </div>
+                        </div>
+                      )}
                       {th.reservable && (
                         <div className="mt-2">
                           <button onClick={() => reserveMed(th.name)} className="inline-flex items-center gap-1 rounded-lg border border-amber-300 bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-700 hover:bg-amber-100">
@@ -1235,19 +1261,21 @@ export default function PortalHome() {
                 );
               };
               if (appts.length === 0) return <Empty icon={Calendar} text="Δεν έχεις ραντεβού." />;
+              const list = apptView === "open" ? activeA : pastA;
               return (
-                <div className="space-y-4">
-                  <div>
-                    <div className="mb-2 flex items-center gap-2 text-sm font-bold text-slate-700"><Clock className="h-4 w-4 text-emerald-500" /> Ενεργά ραντεβού {activeA.length > 0 && <span className="rounded-full bg-emerald-100 px-1.5 text-[11px] text-emerald-700">{activeA.length}</span>}</div>
-                    {activeA.length === 0 ? <p className="rounded-xl border border-dashed border-slate-300 p-3 text-center text-xs text-slate-400">Κανένα ενεργό ραντεβού.</p>
-                     : <div className="space-y-2">{activeA.map(Card)}</div>}
+                <div className="space-y-3">
+                  {/* διαχωρισμός: ΑΝΟΙΧΤΑ vs ΚΛΕΙΣΤΑ */}
+                  <div className="flex gap-1.5 rounded-xl bg-slate-100 p-1">
+                    {([["open", "Ανοιχτά", activeA.length], ["closed", "Κλειστά", pastA.length]] as const).map(([k, label, n]) => (
+                      <button key={k} onClick={() => setApptView(k)}
+                        className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg py-1.5 text-sm font-semibold transition ${apptView === k ? "bg-white text-violet-700 shadow-sm" : "text-slate-500"}`}>
+                        {label}<span className={`grid h-5 min-w-[20px] place-items-center rounded-full px-1 text-[10px] font-bold ${apptView === k ? "bg-violet-100 text-violet-700" : "bg-slate-200 text-slate-500"}`}>{n}</span>
+                      </button>
+                    ))}
                   </div>
-                  {pastA.length > 0 && (
-                    <div>
-                      <div className="mb-2 flex items-center gap-2 text-sm font-bold text-slate-400"><CheckCircle2 className="h-4 w-4" /> Ολοκληρωμένα / κλεισμένα</div>
-                      <div className="space-y-2 opacity-80">{pastA.map(Card)}</div>
-                    </div>
-                  )}
+                  {list.length === 0
+                    ? <p className="py-8 text-center text-sm text-slate-400">{apptView === "open" ? "Κανένα ανοιχτό ραντεβού." : "Δεν υπάρχει ιστορικό ραντεβού."}</p>
+                    : <div className={`space-y-2 ${apptView === "closed" ? "opacity-80" : ""}`}>{list.map(Card)}</div>}
                 </div>
               );
             })()}

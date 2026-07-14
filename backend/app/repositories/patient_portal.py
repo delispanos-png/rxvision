@@ -257,6 +257,50 @@ class PatientAccountRepository:
              "$setOnInsert": {"created_at": now}}, upsert=True)
         return {"tenant_id": tenant_id, "patient_ref": str(pat["_id"]), "pharmacy_name": name}
 
+    async def toggle_shop_favorite(self, account_id, tenant_id: str, barcode: str) -> bool:
+        """Αγαπημένο ΠΡΟΪΟΝ e-shop (toggle). Κρατά την τιμή/απόθεμα τη στιγμή που το πρόσθεσε ώστε
+        να ειδοποιούμε για πτώση τιμής / επιστροφή σε απόθεμα. Επιστρέφει την ΝΕΑ κατάσταση (fav;)."""
+        oid = _oid(account_id)
+        if not oid or not barcode:
+            return False
+        ex = await self.db["shop_favorites"].find_one(
+            {"account_id": oid, "tenant_id": tenant_id, "barcode": barcode})
+        if ex:
+            await self.db["shop_favorites"].delete_one({"_id": ex["_id"]})
+            return False
+        from app.repositories.pharmacy_catalog import PharmacyCatalogRepository
+        p = await PharmacyCatalogRepository(tenant_id=tenant_id).get(barcode) or {}
+        await self.db["shop_favorites"].insert_one({
+            "account_id": oid, "tenant_id": tenant_id, "barcode": barcode,
+            "price_at_add": p.get("price_cents"), "stock_at_add": p.get("stock_qty") or 0,
+            "added_at": _now()})
+        return True
+
+    async def shop_favorites(self, account_id, tenant_id: str) -> list[dict]:
+        """Αγαπημένα προϊόντα του ΕΝΕΡΓΟΥ φαρμακείου με ΤΡΕΧΟΝΤΑ στοιχεία + σημαίες αλλαγών."""
+        oid = _oid(account_id)
+        if not oid:
+            return []
+        from app.repositories.pharmacy_catalog import PharmacyCatalogRepository
+        cat = PharmacyCatalogRepository(tenant_id=tenant_id)
+        out: list[dict] = []
+        async for f in self.db["shop_favorites"].find({"account_id": oid, "tenant_id": tenant_id}):
+            p = await cat.get(f["barcode"])
+            if not p:
+                continue
+            pat, sat = f.get("price_at_add"), f.get("stock_at_add") or 0
+            out.append({**p, "favorite": True, "price_at_add": pat,
+                        "price_dropped": bool(pat) and (p.get("price_cents") or 0) < pat,
+                        "back_in_stock": sat == 0 and (p.get("stock_qty") or 0) > 0})
+        return jsonsafe(out)
+
+    async def shop_favorite_barcodes(self, account_id, tenant_id: str) -> list[str]:
+        oid = _oid(account_id)
+        if not oid:
+            return []
+        return [f["barcode"] async for f in self.db["shop_favorites"].find(
+            {"account_id": oid, "tenant_id": tenant_id}, {"barcode": 1})]
+
     async def set_favorite(self, account_id, tenant_id: str) -> str | None:
         """Δήλωση «αγαπημένου» φαρμακείου (toggle) — γίνεται το προεπιλεγμένο active στο login."""
         oid = _oid(account_id)
@@ -508,6 +552,22 @@ class PatientAccountRepository:
             body = label + (f" — {when.strftime('%d/%m %H:%M')}" if when else "")
             out.append({"id": f"apst-{a['_id']}-{a.get('status')}", "type": "appointment_status",
                         "when": a.get("updated_at"), "title": title, "body": body})
+        # 5) αγαπημένα προϊόντα e-shop — πτώση τιμής / επιστροφή σε απόθεμα (σε ΟΛΑ τα φαρμακεία)
+        from app.repositories.pharmacy_catalog import PharmacyCatalogRepository
+        async for f in self.db["shop_favorites"].find({"account_id": oid}):  # tenant-ok: patient's own
+            p = await PharmacyCatalogRepository(tenant_id=f["tenant_id"]).get(f.get("barcode"))
+            if not p:
+                continue
+            nm = p.get("name") or f.get("barcode")
+            price, pat = p.get("price_cents") or 0, f.get("price_at_add")
+            if pat and price < pat:   # id με την τιμή → νέα πτώση ξανα-ειδοποιεί
+                out.append({"id": f"favdrop-{f['barcode']}-{price}", "type": "fav_price", "when": now,
+                            "title": "💶 Πτώση τιμής σε αγαπημένο",
+                            "body": f"{nm}: {price/100:.2f}€ (από {pat/100:.2f}€)"})
+            if (f.get("stock_at_add") or 0) == 0 and (p.get("stock_qty") or 0) > 0:
+                out.append({"id": f"favstock-{f['barcode']}", "type": "fav_stock", "when": now,
+                            "title": "📦 Διαθέσιμο ξανά",
+                            "body": f"{nm} — ήρθε ξανά σε απόθεμα"})
         out = [o for o in out if o["id"] not in dismissed]   # κρύψε τις «ειδωμένες»
         out.sort(key=lambda x: x.get("when") or now)
         return jsonsafe(out)
@@ -635,9 +695,11 @@ class PatientRxRepository(BaseRepository):
                     "runout": ro, "last_dispensed": ex.get("executed_at"),
                     "days_left": ((ro - now).days if ro else None)}
         enabled = set()
+        rem_cfg: dict = {}   # med_key → {time, meal} (ανά φάρμακο, ό,τι όρισε ο ασθενής στην ενεργοποίηση)
         async for r in self._db["med_reminders"].find(
                 {"tenant_id": self.tenant_id, "patient_ref": pid, "enabled": True}):
             enabled.add(r.get("med_key"))
+            rem_cfg[r.get("med_key")] = {"time": r.get("time"), "meal": r.get("meal")}
         setting = await self._db["med_settings"].find_one(
             {"tenant_id": self.tenant_id, "patient_ref": pid})
         slot_times = {**ms.SLOT_TIMES, **((setting or {}).get("slot_times") or {})}
@@ -652,6 +714,9 @@ class PatientRxRepository(BaseRepository):
         for t in ths:
             t["enabled"] = t["med_key"] in enabled
             t["reservable"] = t["days_left"] is not None and t["days_left"] <= 7
+            cfg = rem_cfg.get(t["med_key"]) or {}
+            t["time"] = cfg.get("time")      # custom ώρα λήψης (ή None → slot time)
+            t["meal"] = cfg.get("meal")      # before/after/none
         plans = [{"med_key": t["med_key"], "name": t["name"], "dose": t["dose"], "plan": t["plan"]}
                  for t in ths if t["enabled"]]
         return jsonsafe({"therapies": ths, "week": ms.weekly_grid(plans, slot_times),
@@ -745,13 +810,19 @@ class PatientRxRepository(BaseRepository):
                           patient_ref=patient_ref, patient_name=patient_name)
         return {"ok": True}
 
-    async def set_reminder(self, patient_ref: str, med_key: str, enabled: bool) -> dict:
+    async def set_reminder(self, patient_ref: str, med_key: str, enabled: bool,
+                           time: str | None = None, meal: str | None = None) -> dict:
         pid = _oid(patient_ref)
         if not pid or not med_key:
             return {"ok": False}
+        upd: dict = {"enabled": enabled, "updated_at": datetime.now(tz=timezone.utc)}
+        if time and re.match(r"^\d{1,2}:\d{2}$", str(time)):   # ώρα λήψης (custom ανά φάρμακο)
+            upd["time"] = str(time)
+        if meal in ("before", "after", "none"):                # σε σχέση με το γεύμα
+            upd["meal"] = meal
         await self._db["med_reminders"].update_one(
             {"tenant_id": self.tenant_id, "patient_ref": pid, "med_key": med_key},
-            {"$set": {"enabled": enabled, "updated_at": datetime.now(tz=timezone.utc)}}, upsert=True)
+            {"$set": upd}, upsert=True)
         return {"ok": True}
 
     async def summary(self, patient_ref: str) -> dict:

@@ -1,7 +1,7 @@
 "use client";
 
 import { Fragment, useEffect, useState } from "react";
-import { Search, ShoppingCart, ShoppingBag, Plus, Minus, Trash2, Truck, Store, ShieldCheck, Pill, Package, ChevronLeft, ChevronDown, Loader2, MapPin, Check, XCircle, PackageCheck, RefreshCcw, Star } from "lucide-react";
+import { Search, ShoppingCart, ShoppingBag, Plus, Minus, Trash2, Truck, Store, ShieldCheck, Pill, Package, ChevronLeft, ChevronDown, Loader2, MapPin, Check, XCircle, PackageCheck, RefreshCcw, Star, Heart } from "lucide-react";
 import { patientApi, API_BASE } from "@/lib/patientClient";
 
 // Emoji ανά θεραπευτική/εμπορική κατηγορία (keyword match) — «εικονίδιο» μέσα στο native select.
@@ -44,20 +44,31 @@ const noDisc = (t: string) => t === "rx_medicine";   // μόνο τα συντα
 const final = (p: Product) => Math.round(p.price_cents * (100 - (noDisc(p.type) ? 0 : p.discount_pct)) / 100);
 const ST: Record<string, string> = { pending: "Σε αναμονή έγκρισης", new: "Νέα", preparing: "Ετοιμάζεται", ready: "Έτοιμη", shipped: "Καθ' οδόν", delivered: "Παραδόθηκε", declined: "Απορρίφθηκε", cancelled: "Ακυρώθηκε" };
 
-export function ShopTab() {
-  const [view, setView] = useState<"browse" | "cart" | "orders" | "subs">("browse");
+export function ShopTab({ tenantKey = "x" }: { tenantKey?: string }) {
+  const CART_KEY = `rxv_cart_${tenantKey}`;
+  const [view, setView] = useState<"browse" | "cart" | "orders" | "subs" | "favorites">("browse");
   const [products, setProducts] = useState<Product[]>([]);
+  const [favBarcodes, setFavBarcodes] = useState<Set<string>>(new Set());
   const [q, setQ] = useState("");
   const [cat, setCat] = useState("");
   const [tag, setTag] = useState("");
   const [sort, setSort] = useState("featured");
   const [meta, setMeta] = useState<{ categories: string[]; tags: string[]; settings: Settings } | null>(null);
-  const [cart, setCart] = useState<Record<string, { p: Product; qty: number }>>({});
+  // Καλάθι: αρχικοποίηση ΑΠΟ localStorage (ανά φαρμακείο) ώστε να ΜΗΝ χάνεται σε refresh.
+  const [cart, setCart] = useState<Record<string, { p: Product; qty: number }>>(() => {
+    try { return JSON.parse(localStorage.getItem(CART_KEY) || "{}"); } catch { return {}; }
+  });
   const [orders, setOrders] = useState<Order[]>([]);
 
+  useEffect(() => { try { localStorage.setItem(CART_KEY, JSON.stringify(cart)); } catch { /* full/blocked */ } }, [cart, CART_KEY]);
   useEffect(() => { patientApi<{ categories: string[]; tags: string[]; settings: Settings }>("/patient/shop/meta").then(setMeta).catch(() => {}); }, []);
   // Φόρτωσε τις παραγγελίες στην αρχή ώστε το κουμπί «Οι παραγγελίες μου» να δείχνει badge ενεργών.
   useEffect(() => { patientApi<{ items: Order[] }>("/patient/shop/orders").then((d) => setOrders(d.items)).catch(() => {}); }, []);
+  useEffect(() => { patientApi<{ barcodes: string[] }>("/patient/shop/favorites").then((d) => setFavBarcodes(new Set(d.barcodes))).catch(() => {}); }, []);
+  async function toggleFav(barcode: string) {
+    setFavBarcodes((s) => { const n = new Set(s); if (n.has(barcode)) n.delete(barcode); else n.add(barcode); return n; });
+    try { await patientApi("/patient/shop/favorite", { method: "POST", body: JSON.stringify({ barcode }) }); } catch { /* ignore */ }
+  }
   useEffect(() => {
     const tmo = setTimeout(() => {
       patientApi<{ items: Product[] }>(`/patient/shop?q=${encodeURIComponent(q)}&category=${encodeURIComponent(cat)}&tag=${encodeURIComponent(tag)}&sort=${sort}`).then((d) => setProducts(d.items)).catch(() => {});
@@ -85,6 +96,7 @@ export function ShopTab() {
   if (view === "subs") return <Subscriptions onBack={() => setView("browse")} />;
   if (view === "orders") return <Orders orders={orders} setOrders={setOrders} onBack={() => setView("browse")} onReorder={reorder} />;
   if (view === "cart") return <Checkout cart={cart} subtotal={subtotal} settings={meta?.settings} onBack={() => setView("browse")} onDone={() => { setCart({}); setView("orders"); }} dec={dec} add={add} />;
+  if (view === "favorites") return <Favorites onBack={() => setView("browse")} favBarcodes={favBarcodes} toggleFav={toggleFav} add={add} cart={cart} dec={dec} />;
 
   const activeOrders = orders.filter((o) => !["delivered", "cancelled", "declined"].includes(o.status)).length;
 
@@ -124,6 +136,7 @@ export function ShopTab() {
           <Search className="pointer-events-none absolute left-3.5 top-1/2 h-[18px] w-[18px] -translate-y-1/2 text-slate-400" />
           <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Αναζήτηση προϊόντος…" className="w-full rounded-2xl border border-slate-300 bg-white py-2.5 pl-11 pr-3 text-[15px] shadow-sm focus:border-violet-400 focus:outline-none focus:ring-2 focus:ring-violet-100" />
         </div>
+        <button onClick={() => setView("favorites")} title="Τα αγαπημένα μου" className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl border border-rose-200 bg-white text-rose-500 shadow-sm"><Heart className="h-5 w-5" /></button>
         {meta?.settings.subscription_enabled && <button onClick={() => setView("subs")} title="Οι συνδρομές μου" className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl border border-violet-300 bg-white text-violet-600 shadow-sm"><RefreshCcw className="h-5 w-5" /></button>}
       </div>
       {/* Κατηγορία + ταξινόμηση σε ΜΙΑ συμπαγή σειρά (αντί για ~18 chips που γέμιζαν την οθόνη) */}
@@ -157,7 +170,11 @@ export function ShopTab() {
               <div className="relative mb-1 grid h-24 place-items-center overflow-hidden rounded-xl bg-slate-50">
                 {imgSrc(p) ? <img src={imgSrc(p)} alt="" className="h-full w-full object-contain" /> : (med ? <Pill className="h-7 w-7 text-slate-300" /> : <Package className="h-7 w-7 text-slate-300" />)}
                 {!noDisc(p.type) && p.discount_pct > 0 && <span className="absolute left-1 top-1 rounded-md bg-rose-600 px-1.5 py-0.5 text-[10px] font-bold text-white">-{p.discount_pct}%</span>}
-                {p.featured && <Star className="absolute right-1 top-1 h-4 w-4 fill-amber-400 text-amber-500" />}
+                {/* αγαπημένο προϊόν (καρδιά) — ειδοποιήσεις για πτώση τιμής / επιστροφή σε απόθεμα */}
+                <button onClick={() => toggleFav(p.barcode)} title={favBarcodes.has(p.barcode) ? "Αφαίρεση αγαπημένου" : "Αγαπημένο"}
+                  className="absolute right-1 top-1 grid h-7 w-7 place-items-center rounded-full bg-white/90 shadow-sm">
+                  <Heart className={`h-4 w-4 ${favBarcodes.has(p.barcode) ? "fill-rose-500 text-rose-500" : "text-slate-400"}`} />
+                </button>
                 {p.stock_qty > 0 && p.stock_qty <= LOW_STOCK && <span className="absolute bottom-1 left-1 rounded bg-orange-100 px-1.5 py-0.5 text-[9px] font-semibold text-orange-700">τελευταία {p.stock_qty}</span>}
                 {isBackorder(p) && <span className="absolute bottom-1 left-1 rounded bg-amber-100 px-1.5 py-0.5 text-[9px] font-semibold text-amber-700">Κατόπιν παραγγελίας</span>}
               </div>
@@ -376,6 +393,51 @@ function OrderCard({ o, onReorder }: { o: Order; onReorder?: (o: Order) => void 
           <div className="text-[11px] text-slate-400">Παραγγέλθηκε {new Date(o.created_at).toLocaleString("el-GR")}</div>
         </div>
       )}
+    </div>
+  );
+}
+
+type FavProduct = Product & { price_at_add?: number | null; price_dropped?: boolean; back_in_stock?: boolean };
+function Favorites({ onBack, favBarcodes, toggleFav, add, cart, dec }: {
+  onBack: () => void; favBarcodes: Set<string>; toggleFav: (bc: string) => void;
+  add: (p: Product) => void; cart: Record<string, { p: Product; qty: number }>; dec: (bc: string) => void;
+}) {
+  const [items, setItems] = useState<FavProduct[]>([]);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => { patientApi<{ items: FavProduct[] }>("/patient/shop/favorites").then((d) => setItems(d.items)).catch(() => {}).finally(() => setLoading(false)); }, []);
+  const shown = items.filter((p) => favBarcodes.has(p.barcode));   // κρύψε αυτά που μόλις αφαίρεσε
+  return (
+    <div className="space-y-3">
+      <button onClick={onBack} className="inline-flex items-center gap-1 text-sm text-slate-500"><ChevronLeft className="h-4 w-4" /> Στο e-Κατάστημα</button>
+      <div className="flex items-center gap-1.5 text-base font-bold text-slate-800"><Heart className="h-4 w-4 fill-rose-500 text-rose-500" /> Τα αγαπημένα μου</div>
+      <p className="text-xs text-slate-400">Σε ειδοποιούμε για <b>πτώση τιμής</b> ή <b>επιστροφή σε απόθεμα</b> (στις Ειδοποιήσεις της Αρχικής).</p>
+      {loading && <div className="py-8 text-center text-sm text-slate-400">Φόρτωση…</div>}
+      {!loading && shown.length === 0 && <div className="py-10 text-center text-sm text-slate-400"><Heart className="mx-auto mb-2 h-8 w-8 text-slate-300" />Δεν έχεις αγαπημένα ακόμη. Πάτα την ❤️ σε ένα προϊόν.</div>}
+      {shown.map((p) => {
+        const fc = final(p); const inCart = cart[p.barcode]?.qty ?? 0;
+        return (
+          <div key={p.barcode} className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
+            <span className="grid h-12 w-12 shrink-0 place-items-center overflow-hidden rounded-xl bg-slate-50">{imgSrc(p) ? <img src={imgSrc(p)} alt="" className="h-full w-full object-contain" /> : <Pill className="h-5 w-5 text-slate-300" />}</span>
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-sm font-semibold text-slate-800">{p.name}</div>
+              <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
+                <span className="text-sm font-bold text-slate-900">{eur(fc)}</span>
+                {p.price_dropped && <span className="rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700">↓ πτώση τιμής</span>}
+                {p.back_in_stock && <span className="rounded-full bg-sky-100 px-1.5 py-0.5 text-[10px] font-bold text-sky-700">📦 διαθέσιμο</span>}
+                {isBackorder(p) && <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700">κατόπιν παραγγελίας</span>}
+              </div>
+            </div>
+            <button onClick={() => toggleFav(p.barcode)} title="Αφαίρεση" className="grid h-8 w-8 shrink-0 place-items-center"><Heart className="h-[18px] w-[18px] fill-rose-500 text-rose-500" /></button>
+            {inCart ? (
+              <div className="flex shrink-0 items-center gap-1.5 rounded-full bg-violet-600 px-1 text-white">
+                <button onClick={() => dec(p.barcode)} className="grid h-6 w-6 place-items-center"><Minus className="h-3.5 w-3.5" /></button>
+                <span className="text-xs font-bold">{inCart}</span>
+                <button onClick={() => add(p)} className="grid h-6 w-6 place-items-center"><Plus className="h-3.5 w-3.5" /></button>
+              </div>
+            ) : <button onClick={() => add(p)} className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-violet-600 text-white"><Plus className="h-4 w-4" /></button>}
+          </div>
+        );
+      })}
     </div>
   );
 }

@@ -194,12 +194,15 @@ async def meds_schedule(ctx: PatientContext = Depends(get_patient_context)):
 class ReminderIn(BaseModel):
     med_key: str
     enabled: bool
+    time: str | None = None      # ώρα λήψης (HH:MM) — custom ανά φάρμακο
+    meal: str | None = None      # before | after | none — σε σχέση με το γεύμα
 
 
 @router.post("/meds/reminder")
 async def meds_reminder(body: ReminderIn, ctx: PatientContext = Depends(get_patient_context)):
-    """Ο ασθενής ενεργοποιεί/απενεργοποιεί ενημερώσεις λήψης για μια συγκεκριμένη αγωγή."""
-    return await PatientRxRepository(tenant_id=ctx.tenant_id).set_reminder(ctx.patient_ref, body.med_key, body.enabled)
+    """Ενεργοποίηση/απενεργοποίηση ενημερώσεων + (προαιρετικά) ώρα λήψης & σχέση με το γεύμα."""
+    return await PatientRxRepository(tenant_id=ctx.tenant_id).set_reminder(
+        ctx.patient_ref, body.med_key, body.enabled, body.time, body.meal)
 
 
 class IntakeIn(BaseModel):
@@ -256,6 +259,26 @@ async def shop(q: str = "", category: str | None = None, type: str | None = None
     # παραγγέλνει ως αίτημα και ο φαρμακοποιός εγκρίνει/απορρίπτει + δηλώνει ημερομηνία.
     return await PharmacyCatalogRepository(tenant_id=ctx.tenant_id).list(
         q=q, category=category, ptype=type, tag=tag, sort=sort, in_stock_only=False, page_size=60)
+
+
+class ShopFavIn(BaseModel):
+    barcode: str
+
+
+@router.post("/shop/favorite")
+async def shop_favorite(body: ShopFavIn, ctx: PatientContext = Depends(get_patient_context)):
+    """Αγαπημένο προϊόν (toggle) — ειδοποιήσεις για πτώση τιμής / επιστροφή σε απόθεμα."""
+    from app.repositories.patient_portal import PatientAccountRepository
+    fav = await PatientAccountRepository().toggle_shop_favorite(ctx.account_id, ctx.tenant_id, body.barcode.strip())
+    return {"favorite": fav}
+
+
+@router.get("/shop/favorites")
+async def shop_favorites(ctx: PatientContext = Depends(get_patient_context)):
+    from app.repositories.patient_portal import PatientAccountRepository
+    repo = PatientAccountRepository()
+    return {"items": await repo.shop_favorites(ctx.account_id, ctx.tenant_id),
+            "barcodes": await repo.shop_favorite_barcodes(ctx.account_id, ctx.tenant_id)}
 
 
 @router.get("/shop/meta")
