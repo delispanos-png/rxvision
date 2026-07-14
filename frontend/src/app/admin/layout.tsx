@@ -7,7 +7,7 @@ import {
   LayoutGrid, Users, UserCog, Mail, Server, Wrench, BarChart3, CreditCard, Receipt,
   LogOut, PlugZap, Menu, X, Layers, Cloud, ScrollText, Boxes, Settings, ChevronDown,
   ChevronRight, Percent, Brain, Bell, Sparkles, MessageSquare, Activity, ArrowUpCircle,
-  Landmark, Bot, Wallet,
+  Landmark, Bot, Wallet, Smartphone,
 } from "lucide-react";
 import { adminApi, adminTokens, ApiError } from "@/lib/adminClient";
 import { PoweredBy } from "@/components/brand/PoweredBy";
@@ -64,6 +64,7 @@ const GROUPS: { label: string; icon: typeof LayoutGrid; items: { label: string; 
       { label: "Ομάδες ταμείων", icon: Layers, href: "/admin/fund-groups", section: "fund_groups" },
       { label: "Υποδομή / Cloud", icon: Cloud, href: "/admin/cloud", section: "cloud" },
       { label: "Ρυθμίσεις SMTP", icon: Server, href: "/admin/smtp", section: "smtp" },
+      { label: "Πύλη Πελατών", icon: Smartphone, href: "/admin/portal", section: "maintenance" },
       { label: "Συντήρηση", icon: Wrench, href: "/admin/maintenance", section: "maintenance" },
     ],
   },

@@ -24,6 +24,15 @@ from app.services.patient_auth_service import PatientAuthService, PatientError
 router = APIRouter()
 
 
+async def portal_mode() -> str:
+    """Καθολικός τρόπος λειτουργίας της πύλης (platform_settings._id='portal'):
+      • 'network' (default) — ο πελάτης βλέπει ΟΛΑ τα φαρμακεία του δικτύου (κατάλογος/εναλλαγή/cross).
+      • 'single'  — ο πελάτης «κλειδώνεται» στο φαρμακείο που τον ενέγραψε (καμία cross-pharmacy λειτουργία)."""
+    doc = await shared_db()["platform_settings"].find_one({"_id": "portal"})
+    m = (doc or {}).get("mode", "network")
+    return m if m in ("network", "single") else "network"
+
+
 # ── schemas ──────────────────────────────────────────────────
 class RegisterIn(BaseModel):
     first_name: str = Field(..., min_length=1, max_length=80)
@@ -132,6 +141,8 @@ async def logout(ctx: PatientContext = Depends(get_patient_context)):
 
 @router.post("/auth/select-pharmacy")
 async def select_pharmacy(body: SelectIn, ctx: PatientContext = Depends(get_patient_context)):
+    if await portal_mode() == "single" and body.tenant_id != ctx.tenant_id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "single_pharmacy_mode")   # καμία εναλλαγή/self-onboarding
     token = await PatientAuthService().select_pharmacy(ctx.account_id, body.tenant_id)
     if token is None:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "not_linked_to_pharmacy")
@@ -154,12 +165,17 @@ async def me(ctx: PatientContext = Depends(get_patient_context)):
         loy_on = bool((await LoyaltyRepository(tenant_id=ctx.tenant_id).config()).get("enabled"))
     except Exception:  # noqa: BLE001
         loy_on = False
+    mode = await portal_mode()
+    links = await repo.links(ctx.account_id)
+    if mode == "single":   # κλείδωμα στο ενεργό (φαρμακείο εγγραφής) — κρύβεται εναλλαγή/κατάλογος
+        links = [l for l in links if l.get("tenant_id") == ctx.tenant_id]
     return {
         "profile": {"first_name": acc.get("first_name"), "last_name": acc.get("last_name"),
                     "email": acc.get("email"), "phone": acc.get("phone")},
         "active_tenant": ctx.tenant_id,
         "favorite_tenant": acc.get("favorite_tenant_id"),
-        "pharmacies": await repo.links(ctx.account_id),
+        "pharmacies": links,
+        "portal_mode": mode,
         "caps": {"shop": tenant_has(mods, "order_delivery"), "loyalty": loy_on},
     }
 
@@ -494,8 +510,10 @@ async def pharmacies_directory(ctx: PatientContext = Depends(get_patient_context
     linked = {l["tenant_id"] for l in await repo.links(ctx.account_id)}
     acc = await repo.get(ctx.account_id)
     fav = (acc or {}).get("favorite_tenant_id")
-    return {"items": await repo.directory(linked_ids=linked, favorite_id=fav), "favorite": fav,
-            "active_tenant": ctx.tenant_id}
+    items = await repo.directory(linked_ids=linked, favorite_id=fav)
+    if await portal_mode() == "single":   # single: μόνο το φαρμακείο εγγραφής (κλειδώνει PharmacyPicker)
+        items = [p for p in items if p.get("tenant_id") == ctx.tenant_id]
+    return {"items": items, "favorite": fav, "active_tenant": ctx.tenant_id}
 
 
 class FavoriteIn(BaseModel):

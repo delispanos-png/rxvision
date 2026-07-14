@@ -11,6 +11,7 @@ import re
 import secrets
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
+from typing import Literal
 
 from bson import ObjectId
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status as http_status
@@ -1875,6 +1876,26 @@ async def set_maintenance(body: MaintenanceIn, _: PlatformContext = Depends(get_
         {"$set": {"enabled": body.enabled, "message": body.message,
                   "updated_at": datetime.now(tz=timezone.utc)}}, upsert=True)
     return {"enabled": body.enabled, "message": body.message}
+
+
+# ── portal mode (GLOBAL) — δίκτυο (όλα τα φαρμακεία) vs μεμονωμένο (μόνο το φαρμακείο εγγραφής) ──
+class PortalModeIn(BaseModel):
+    mode: Literal["network", "single"]
+
+
+@router.get("/portal-mode")
+async def get_portal_mode(_: PlatformContext = Depends(get_platform_admin)):
+    doc = await shared_db()["platform_settings"].find_one({"_id": "portal"})
+    m = (doc or {}).get("mode", "network")
+    return {"mode": m if m in ("network", "single") else "network"}
+
+
+@router.put("/portal-mode")
+async def set_portal_mode(body: PortalModeIn, _: PlatformContext = Depends(get_platform_admin)):
+    await shared_db()["platform_settings"].update_one(
+        {"_id": "portal"},
+        {"$set": {"mode": body.mode, "updated_at": datetime.now(tz=timezone.utc)}}, upsert=True)
+    return {"mode": body.mode}
 
 
 # ── notifications (GLOBAL — όλοι οι tenants με την ίδια συνθήκη) ──────────────

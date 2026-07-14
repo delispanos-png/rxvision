@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import {
   Pill, Wallet, ShieldCheck, RefreshCw, Stethoscope, Bell, LogOut, Building2,
   Calendar, ChevronDown, ChevronUp, CheckCircle2, Clock, Sparkles, X, Search, CalendarPlus, AlertCircle,
-  PackageCheck, Gift, FileText, ShoppingBag, HeartPulse, FilePlus, MapPin, Home, Percent, Camera, Upload, Star, Navigation, Plus,
+  PackageCheck, Gift, FileText, ShoppingBag, HeartPulse, FilePlus, MapPin, Home, Percent, Camera, Upload, Star, Navigation, Plus, Check,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { QRCodeCanvas } from "qrcode.react";
@@ -23,7 +23,7 @@ import { fmtDate, fmtDateTime } from "@/lib/formatters";
 
 type Pharmacy = { tenant_id: string; pharmacy_name: string };
 type Pharm = { status: { isOpen: boolean; isOnDuty: boolean; isOvernightDuty: boolean; closingSoon: boolean; statusText: string }; schedule: { week: { day: number; status: string; intervals: { start: string; end: string }[] }[] } };
-type Me = { profile: { first_name: string; last_name: string }; active_tenant: string | null; pharmacies: Pharmacy[]; caps?: { shop: boolean; loyalty: boolean } };
+type Me = { profile: { first_name: string; last_name: string }; active_tenant: string | null; pharmacies: Pharmacy[]; portal_mode?: "network" | "single"; caps?: { shop: boolean; loyalty: boolean } };
 type DirPharmacy = { tenant_id: string; name: string; address?: string | null; city?: string | null; phone?: string | null; lat?: number | null; lon?: number | null; mine?: boolean; favorite?: boolean; status?: { isOpen: boolean; isOnDuty: boolean; isOvernightDuty: boolean; closingSoon: boolean; statusText: string } | null };
 type Summary = { rx_count: number; paid_cents: number; total_cents: number; covered_cents: number; doctors: number; medicines: number; repeats_active: number; next_open_date?: string | null; first_at?: string | null; last_at?: string | null };
 type Rx = { barcode: string; executed_at: string; status?: string; patient_share?: number; repeat_current?: number; repeat_total?: number; repeat_root?: string | null; next_open_date?: string | null; medicines: string[]; pending?: string[]; partial?: boolean; doctor?: string | null; specialty?: string | null };
@@ -136,6 +136,7 @@ export default function PortalHome() {
   const [appt, setAppt] = useState({ service_name: "", date: "", time: "" });
   const [notifs, setNotifs] = useState<Notif[]>([]);
   const [showNotifs, setShowNotifs] = useState(false);
+  const [switchOpen, setSwitchOpen] = useState(false);   // custom dropdown πάνω επιλογέα φαρμακείου
   const [pickupDate, setPickupDate] = useState("");   // ημ/νία παραλαβής για ειδοποίηση διαθεσιμότητας
   const [expanded, setExpanded] = useState<string | null>(null);
   const [detail, setDetail] = useState<RxDetail | null>(null);
@@ -197,7 +198,7 @@ export default function PortalHome() {
     if (tab === "health") patientApi<Health>("/patient/health").then(setHealth).catch(() => {});
     if (tab === "renewals") patientApi<{ items: Renewal[] }>("/patient/renewals").then((d) => setRenewals(d.items)).catch(() => {});
     if (tab === "wallet") patientApi<Loyalty>("/patient/loyalty").then(setLoyalty).catch(() => {});
-    if (tab === "pharmacies") patientApi<{ items: DirPharmacy[] }>("/patient/pharmacies/directory").then((d) => setDirectory(d.items)).catch(() => {});
+    if (tab === "pharmacies" || directory.length === 0) patientApi<{ items: DirPharmacy[] }>("/patient/pharmacies/directory").then((d) => setDirectory(d.items)).catch(() => {});
     if (tab === "assign") patientApi<{ items: RxReq[] }>("/patient/rx-requests").then((d) => setRxReqs(d.items)).catch(() => {});
     if (tab === "availability") patientApi<{ items: Avail[] }>("/patient/availability").then((d) => setAvail(d.items)).catch(() => {});
     if (tab === "appointments") {
@@ -395,7 +396,9 @@ export default function PortalHome() {
   const activeName = me.pharmacies.find((p) => p.tenant_id === me.active_tenant)?.pharmacy_name;
   // Δυνατότητες ενεργού φαρμακείου → κρύψε καρτέλες που δεν προσφέρει (Κατάστημα/Επιβράβευση).
   const caps = me.caps ?? { shop: true, loyalty: true };
-  const visibleTabs = TABS.filter(([k]) => (k !== "shop" || caps.shop) && (k !== "wallet" || caps.loyalty));
+  // Καθολική λειτουργία «μεμονωμένο φαρμακείο» → κρύψε τον κατάλογο δικτύου + τον επιλογέα εναλλαγής.
+  const single = me.portal_mode === "single";
+  const visibleTabs = TABS.filter(([k]) => (k !== "shop" || caps.shop) && (k !== "wallet" || caps.loyalty) && (k !== "pharmacies" || !single));
 
   return (
     <div className="min-h-screen">
@@ -410,16 +413,66 @@ export default function PortalHome() {
             </div>
           </a>
           <div className="flex items-center gap-2">
-            {me.pharmacies.length > 0 && (
-              <div className="relative">
-                <Building2 className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-                <select value={me.active_tenant ?? ""} onChange={(e) => switchPharmacy(e.target.value)}
-                  className="max-w-[8rem] appearance-none truncate rounded-xl border border-slate-200 bg-white py-2 pl-8 pr-7 text-xs font-medium text-slate-700 shadow-sm focus:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-100 sm:max-w-[16rem]">
-                  {me.pharmacies.map((p) => <option key={p.tenant_id} value={p.tenant_id}>➕ {p.pharmacy_name}</option>)}
-                </select>
-                <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
-              </div>
-            )}
+            {!single && me.pharmacies.length > 0 && (() => {
+              // custom dropdown: μικρά γράμματα + ★αγαπημένο + πόλη/χιλιομετρική απόσταση (native select αγνοεί το CSS στα options)
+              const meta = (tid: string) => directory.find((d) => d.tenant_id === tid);
+              const rows = me.pharmacies.map((p) => {
+                const m = meta(p.tenant_id);
+                const dist = geo && m?.lat != null && m?.lon != null ? haversineKm(geo, m.lat, m.lon) : null;
+                return { tenant_id: p.tenant_id, name: p.pharmacy_name, city: m?.city ?? null, favorite: m?.favorite ?? false, dist };
+              }).sort((a, b) => {
+                const f = (a.favorite ? 0 : 1) - (b.favorite ? 0 : 1); if (f) return f;
+                const da = a.dist ?? Infinity, db = b.dist ?? Infinity; if (da !== db) return da - db;
+                return a.name.localeCompare(b.name, "el");
+              });
+              const distText = (d: number) => (d < 1 ? `${Math.round(d * 1000)} μ` : `${d.toFixed(1)} χλμ`);
+              const active = rows.find((r) => r.tenant_id === me.active_tenant) ?? rows[0];
+              return (
+                <div className="relative">
+                  <button type="button" onClick={() => setSwitchOpen((v) => !v)}
+                    className="flex max-w-[10rem] items-center gap-1.5 rounded-xl border border-slate-200 bg-white py-2 pl-2.5 pr-2 text-[11px] font-semibold text-slate-700 shadow-sm hover:bg-slate-50 sm:max-w-[15rem]">
+                    <Building2 className="h-4 w-4 shrink-0 text-brand-500" />
+                    <span className="min-w-0 flex-1 truncate text-left">{active?.name ?? "—"}</span>
+                    <ChevronDown className={`h-3.5 w-3.5 shrink-0 text-slate-400 transition ${switchOpen ? "rotate-180" : ""}`} />
+                  </button>
+                  {switchOpen && (
+                    <>
+                      <div className="fixed inset-0 z-40" onClick={() => setSwitchOpen(false)} />
+                      <div className="absolute right-0 z-50 mt-1.5 max-h-[70vh] w-[min(20rem,calc(100vw-1.5rem))] overflow-auto rounded-xl border border-slate-200 bg-white p-1 shadow-xl">
+                        <div className="flex items-center justify-between px-2 py-1">
+                          <span className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Φαρμακεία δικτύου</span>
+                          {!geo && <button type="button" onClick={() => requestGeo()} disabled={geoBusy}
+                            className="inline-flex items-center gap-1 rounded-lg bg-brand-50 px-1.5 py-0.5 text-[10px] font-semibold text-brand-600 hover:bg-brand-100 disabled:opacity-60">
+                            <Navigation className={`h-3 w-3 ${geoBusy ? "animate-pulse" : ""}`} /> Κοντινά</button>}
+                        </div>
+                        {rows.map((r) => {
+                          const isActive = r.tenant_id === me.active_tenant;
+                          return (
+                            <button key={r.tenant_id} type="button"
+                              onClick={() => { setSwitchOpen(false); if (!isActive) switchPharmacy(r.tenant_id); }}
+                              className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left ${isActive ? "bg-brand-50" : "hover:bg-slate-50"}`}>
+                              {r.favorite
+                                ? <Star className="h-3.5 w-3.5 shrink-0 fill-amber-400 text-amber-400" />
+                                : <span className="h-3.5 w-3.5 shrink-0" />}
+                              <span className="min-w-0 flex-1">
+                                <span className={`block break-words text-[11px] font-semibold leading-snug ${isActive ? "text-brand-700" : "text-slate-700"}`}>{r.name}</span>
+                                {(r.dist != null || r.city) && (
+                                  <span className="block truncate text-[10px] text-slate-400">
+                                    {r.dist != null ? distText(r.dist) : r.city}
+                                    {r.dist != null && r.city ? ` · ${r.city}` : ""}
+                                  </span>
+                                )}
+                              </span>
+                              {isActive && <Check className="h-3.5 w-3.5 shrink-0 text-brand-500" />}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </>
+                  )}
+                </div>
+              );
+            })()}
             <Tooltip label="Ειδοποιήσεις"><button onClick={() => { setTab("home"); setShowNotifs(true); }}
               className="relative grid h-9 w-9 place-items-center rounded-xl border border-slate-200 bg-white text-slate-500 shadow-sm hover:bg-slate-50">
               <Bell className="h-[18px] w-[18px]" />

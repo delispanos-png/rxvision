@@ -12,7 +12,7 @@ declare global {
 }
 
 export type Pharmacy = { tenant_id: string; pharmacy_name?: string; name?: string; distance_km?: number };
-type DirItem = { tenant_id: string; name: string; mine?: boolean; favorite?: boolean; lat?: number | null; lon?: number | null; status?: { isOpen: boolean; isOnDuty: boolean } | null; dist?: number | null };
+type DirItem = { tenant_id: string; name: string; city?: string | null; mine?: boolean; favorite?: boolean; lat?: number | null; lon?: number | null; status?: { isOpen: boolean; isOnDuty: boolean } | null; dist?: number | null };
 export type Medicine = { barcode: string | null; name: string };
 
 const _hav = (aLat: number, aLon: number, bLat: number, bLon: number) => {
@@ -57,13 +57,18 @@ export function PharmacyPicker({ linked, value, onChange }: {
     const da = a.dist ?? Infinity, db = b.dist ?? Infinity; if (da !== db) return da - db;
     return a.name.localeCompare(b.name, "el");
   });
-  const label = (p: DirItem) => `${p.favorite ? "★ " : ""}${p.name}${p.dist != null ? ` · ${p.dist < 1 ? Math.round(p.dist * 1000) + " μ" : p.dist.toFixed(1) + " χλμ"}` : ""}`;
+  const label = (p: DirItem) => {
+    const tail = p.dist != null
+      ? ` · ${p.dist < 1 ? Math.round(p.dist * 1000) + " μ" : p.dist.toFixed(1) + " χλμ"}`
+      : (p.city ? ` · ${p.city}` : "");   // αν δεν υπάρχει απόσταση, δείξε πόλη ώστε να φαίνεται πάντα κάτι
+    return `${p.favorite ? "★ " : ""}${p.name}${tail}`;
+  };
 
   return (
     <div className="space-y-1">
       <div className="flex gap-2">
         <select value={value} onChange={(e) => onChange(e.target.value)}
-          className="min-w-0 flex-1 truncate rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800">
+          className="min-w-0 flex-1 truncate rounded-lg border border-slate-300 px-2.5 py-2 text-xs dark:border-slate-700 dark:bg-slate-800">
           {opts.length === 0 && <option value="">— Επίλεξε φαρμακείο —</option>}
           {opts.map((p) => <option key={p.tenant_id} value={p.tenant_id}>{label(p)}</option>)}
         </select>
