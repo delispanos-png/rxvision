@@ -642,6 +642,12 @@ class PatientRxRepository(BaseRepository):
             {"tenant_id": self.tenant_id, "patient_ref": pid})
         slot_times = {**ms.SLOT_TIMES, **((setting or {}).get("slot_times") or {})}
         streak = await self._intake_streak(pid)
+        # ποιες δόσεις (med_key + slot) πάρθηκαν ΣΗΜΕΡΑ — persisted, per-slot (πρωί≠βράδυ)
+        today = now.strftime("%Y-%m-%d")
+        taken_today = [{"med_key": r.get("med_key"), "slot": r.get("slot")}
+                       async for r in self._db["med_intake_log"].find(
+                           {"tenant_id": self.tenant_id, "patient_ref": pid, "date": today},
+                           {"med_key": 1, "slot": 1})]
         ths = list(therapies.values())
         for t in ths:
             t["enabled"] = t["med_key"] in enabled
@@ -649,7 +655,7 @@ class PatientRxRepository(BaseRepository):
         plans = [{"med_key": t["med_key"], "name": t["name"], "dose": t["dose"], "plan": t["plan"]}
                  for t in ths if t["enabled"]]
         return jsonsafe({"therapies": ths, "week": ms.weekly_grid(plans, slot_times),
-                         "slot_times": slot_times, "streak": streak})
+                         "slot_times": slot_times, "streak": streak, "taken_today": taken_today})
 
     async def _intake_streak(self, pid) -> int:
         dates: set = set()
@@ -663,16 +669,28 @@ class PatientRxRepository(BaseRepository):
             d -= timedelta(days=1)
         return streak
 
-    async def log_intake(self, patient_ref: str, med_key: str) -> dict:
-        """«✓ Το πήρα» → record (idempotent/day), update streak, και (ΜΟΝΟ αν ο φαρμακοποιός το έχει
-        ενεργοποιήσει + ο ασθενής είναι μέλος) δίνει πόντους συμμόρφωσης."""
+    async def delete_intake(self, patient_ref: str, med_key: str, slot: str | None = None) -> dict:
+        """Αναίρεση «✓ Το πήρα» — σβήνει την εγγραφή λήψης της συγκεκριμένης δόσης (med_key+slot) σήμερα."""
+        pid = _oid(patient_ref)
+        if not pid:
+            return {"ok": False}
+        today = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d")
+        q = {"tenant_id": self.tenant_id, "patient_ref": pid, "med_key": med_key, "date": today}
+        if slot is not None:
+            q["slot"] = slot
+        await self._db["med_intake_log"].delete_many(q)
+        return {"ok": True, "streak": await self._intake_streak(pid)}
+
+    async def log_intake(self, patient_ref: str, med_key: str, slot: str | None = None) -> dict:
+        """«✓ Το πήρα» → record ΑΝΑ ΔΟΣΗ (med_key+slot, idempotent/μέρα), update streak, και (ΜΟΝΟ αν ο
+        φαρμακοποιός το έχει ενεργοποιήσει + ο ασθενής είναι μέλος) δίνει πόντους συμμόρφωσης."""
         pid = _oid(patient_ref)
         if not pid:
             return {"ok": False}
         now = datetime.now(tz=timezone.utc)
         today = now.strftime("%Y-%m-%d")
         await self._db["med_intake_log"].update_one(
-            {"tenant_id": self.tenant_id, "patient_ref": pid, "med_key": med_key, "date": today},
+            {"tenant_id": self.tenant_id, "patient_ref": pid, "med_key": med_key, "slot": slot, "date": today},
             {"$set": {"at": now}}, upsert=True)
         streak = await self._intake_streak(pid)
         from app.repositories.loyalty import LoyaltyRepository
@@ -693,8 +711,8 @@ class PatientRxRepository(BaseRepository):
                     days = (t.get("plan") or {}).get("days")
                     return days == "all" or (isinstance(days, list) and dow in days)
                 due = [t for t in sched.get("therapies", []) if _due(t)]   # ΟΛΕΣ οι ενεργές, όχι μόνο opt-in
-                confirmed = await self._db["med_intake_log"].count_documents(
-                    {"tenant_id": self.tenant_id, "patient_ref": pid, "date": today})
+                confirmed = len(await self._db["med_intake_log"].distinct(  # distinct φάρμακα (όχι δόσεις)
+                    "med_key", {"tenant_id": self.tenant_id, "patient_ref": pid, "date": today}))
                 if due and confirmed >= len(due):
                     award = (base + bonus, f"adh:{pid}:{today}", f"Πλήρης λήψη ημέρας (σερί {streak})")
             else:                          # per_day — μία λήψη/ημέρα αρκεί

@@ -204,12 +204,19 @@ async def meds_reminder(body: ReminderIn, ctx: PatientContext = Depends(get_pati
 
 class IntakeIn(BaseModel):
     med_key: str
+    slot: str | None = None   # πρωί/μεσημέρι/βράδυ/νύχτα — per-δόση (None = γενικά για τη μέρα)
 
 
 @router.post("/meds/taken")
 async def meds_taken(body: IntakeIn, ctx: PatientContext = Depends(get_patient_context)):
-    """«✓ Το πήρα» → σερί συνέπειας (+ πόντοι ΜΟΝΟ αν το φαρμακείο το έχει ενεργοποιήσει)."""
-    return await PatientRxRepository(tenant_id=ctx.tenant_id).log_intake(ctx.patient_ref, body.med_key)
+    """«✓ Το πήρα» ΑΝΑ ΔΟΣΗ → σερί συνέπειας (+ πόντοι ΜΟΝΟ αν το φαρμακείο το έχει ενεργοποιήσει)."""
+    return await PatientRxRepository(tenant_id=ctx.tenant_id).log_intake(ctx.patient_ref, body.med_key, body.slot)
+
+
+@router.post("/meds/untaken")
+async def meds_untaken(body: IntakeIn, ctx: PatientContext = Depends(get_patient_context)):
+    """Αναίρεση «✓ Το πήρα» για τη συγκεκριμένη δόση (med_key+slot) σήμερα."""
+    return await PatientRxRepository(tenant_id=ctx.tenant_id).delete_intake(ctx.patient_ref, body.med_key, body.slot)
 
 
 class ReserveIn(BaseModel):
