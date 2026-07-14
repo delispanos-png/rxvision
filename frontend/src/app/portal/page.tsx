@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import {
   Pill, Wallet, ShieldCheck, RefreshCw, Stethoscope, Bell, LogOut, Building2,
   Calendar, ChevronDown, ChevronUp, CheckCircle2, Clock, Sparkles, X, Search, CalendarPlus, AlertCircle,
-  PackageCheck, Gift, FileText, ShoppingBag, HeartPulse, FilePlus, MoreHorizontal, MapPin,
+  PackageCheck, Gift, FileText, ShoppingBag, HeartPulse, FilePlus, MoreHorizontal, MapPin, Home, Percent,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { QRCodeCanvas } from "qrcode.react";
@@ -49,18 +49,18 @@ const dt = (s?: string | null) => (s ? fmtDate(s) : "—");
 const dtl = (s?: string | null) => (s ? fmtDateTime(s) : "—");
 const eur = (c?: number) => new Intl.NumberFormat("el-GR", { style: "currency", currency: "EUR", maximumFractionDigits: 2 }).format((c || 0) / 100);
 
-const TABS = [["rx", "Συνταγές"], ["shop", "e-Κατάστημα"], ["meds", "Πρόγραμμα λήψης"], ["health", "Υγεία"], ["wallet", "Επιβράβευση"], ["repeats", "Επαναλήψεις"], ["renewals", "Ανεκτέλεστα"], ["assign", "Ανάθεση συνταγής"], ["availability", "Διαθεσιμότητα"], ["appointments", "Ραντεβού"], ["pharmacies", "Φαρμακεία"]] as const;
+const TABS = [["home", "Αρχική"], ["rx", "Συνταγές"], ["shop", "e-Κατάστημα"], ["meds", "Πρόγραμμα λήψης"], ["health", "Υγεία"], ["wallet", "Επιβράβευση"], ["repeats", "Επαναλήψεις"], ["renewals", "Ανεκτέλεστα"], ["assign", "Ανάθεση συνταγής"], ["availability", "Διαθεσιμότητα"], ["appointments", "Ραντεβού"], ["pharmacies", "Φαρμακεία"]] as const;
 // Σύντομες ετικέτες για τη στενή κάτω μπάρα (mobile) — αλλιώς κόβονται άσχημα.
 const NAV_SHORT: Record<string, string> = { shop: "Κατάστημα", meds: "Πρόγραμμα" };
 
 // Εικονίδιο ανά καρτέλα + οι 4 ΒΑΣΙΚΕΣ που μπαίνουν στην κάτω μπάρα (mobile). Οι υπόλοιπες
 // ζουν στο φύλλο «Περισσότερα» ώστε να μη γεμίζει η οθόνη με 10 κουμπιά.
 const TAB_ICON: Record<string, LucideIcon> = {
-  rx: FileText, shop: ShoppingBag, meds: Pill, health: HeartPulse, wallet: Gift,
+  home: Home, rx: FileText, shop: ShoppingBag, meds: Pill, health: HeartPulse, wallet: Gift,
   repeats: RefreshCw, renewals: AlertCircle, assign: FilePlus, availability: Search, appointments: CalendarPlus,
   pharmacies: MapPin,
 };
-const PRIMARY_TABS = ["rx", "shop", "meds", "health"] as const;
+const PRIMARY_TABS = ["home", "rx", "shop", "meds"] as const;
 const TAB_LABEL: Record<string, string> = Object.fromEntries(TABS.map(([k, l]) => [k, l]));
 
 const DOW = ["Δευ", "Τρί", "Τετ", "Πέμ", "Παρ", "Σάβ", "Κυρ"];
@@ -93,7 +93,7 @@ export default function PortalHome() {
   const [pharm, setPharm] = useState<Pharm | null>(null);
   const [summary, setSummary] = useState<Summary | null>(null);
   const [noPharmacy, setNoPharmacy] = useState(false);
-  const [tab, setTab] = useState<string>("rx");
+  const [tab, setTab] = useState<string>("home");
   const [showMore, setShowMore] = useState(false);   // φύλλο «Περισσότερα» (mobile bottom nav)
   const [directory, setDirectory] = useState<DirPharmacy[]>([]);
   const [dirQuery, setDirQuery] = useState("");
@@ -173,6 +173,10 @@ export default function PortalHome() {
 
   useEffect(() => {
     if (!me) return;
+    if (tab === "home") {   // KPI της Αρχικής χρειάζονται renewals (διαθέσιμες τώρα) + loyalty (πόντοι)
+      patientApi<{ items: Renewal[] }>("/patient/renewals").then((d) => setRenewals(d.items)).catch(() => {});
+      patientApi<Loyalty>("/patient/loyalty").then(setLoyalty).catch(() => {});
+    }
     if (tab === "meds") patientApi<Schedule>("/patient/meds/schedule").then(setSched).catch(() => {});
     if (tab === "health") patientApi<Health>("/patient/health").then(setHealth).catch(() => {});
     if (tab === "renewals") patientApi<{ items: Renewal[] }>("/patient/renewals").then((d) => setRenewals(d.items)).catch(() => {});
@@ -359,7 +363,7 @@ export default function PortalHome() {
                 <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
               </div>
             )}
-            <Tooltip label="Ειδοποιήσεις"><button onClick={() => setShowNotifs((v) => !v)}
+            <Tooltip label="Ειδοποιήσεις"><button onClick={() => { setTab("home"); setShowNotifs(true); }}
               className="relative grid h-9 w-9 place-items-center rounded-xl border border-slate-200 bg-white text-slate-500 shadow-sm hover:bg-slate-50">
               <Bell className="h-[18px] w-[18px]" />
               {notifs.length > 0 && <span className="absolute -right-1 -top-1 grid h-4 min-w-[16px] place-items-center rounded-full bg-rose-500 px-1 text-[10px] font-bold text-white">{notifs.length}</span>}
@@ -370,6 +374,8 @@ export default function PortalHome() {
       </header>
 
       <main className="mx-auto max-w-5xl px-4 py-6 pb-24 sm:pb-6">
+        {/* ══ ΑΡΧΙΚΗ (Home): όλο το ενημερωτικό — μόνο εδώ, όχι σε κάθε καρτέλα (εξοικονόμηση χώρου) ══ */}
+        {tab === "home" && (<>
         {/* ── ζωντανή κατάσταση φαρμακείου ───────────────────── */}
         {pharm && (
           <div className={`mb-5 flex flex-wrap items-center justify-between gap-2 rounded-2xl px-4 py-3 text-white ${pharm.status.isOnDuty ? (pharm.status.isOvernightDuty ? "bg-indigo-600" : "bg-violet-600") : pharm.status.isOpen ? (pharm.status.closingSoon ? "bg-amber-500" : "bg-emerald-600") : "bg-slate-500"}`}>
@@ -454,7 +460,11 @@ export default function PortalHome() {
         )}
 
         {/* ── KPI cards ──────────────────────────────────────── */}
-        {summary && (
+        {summary && (() => {
+          const coverPct = summary.total_cents > 0 ? Math.round((summary.covered_cents / summary.total_cents) * 100) : 0;
+          const availNow = renewals?.length ?? 0;
+          const points = loyalty?.member?.points ?? 0;
+          return (
           <div className="mb-7 grid grid-cols-2 gap-2.5 sm:gap-3 lg:grid-cols-4">
             <Kpi icon={Pill} tint="indigo" label="Συνταγές" value={String(summary.rx_count)}
               sub={summary.last_at ? `τελευταία ${dt(summary.last_at)}` : "—"} />
@@ -464,8 +474,22 @@ export default function PortalHome() {
               sub={`από ${eur(summary.total_cents)} σύνολο`} />
             <Kpi icon={RefreshCw} tint="violet" label="Ενεργές επαναλήψεις" value={String(summary.repeats_active)}
               sub={summary.next_open_date ? `επόμενη ${dt(summary.next_open_date)}` : "καμία προγραμματισμένη"} />
+            {/* νέα KPI που ενδιαφέρουν τον πελάτη */}
+            <Kpi icon={Percent} tint="sky" label="Κάλυψη ταμείου" value={`${coverPct}%`}
+              sub="της αξίας των φαρμάκων σου" />
+            <Kpi icon={PackageCheck} tint="emerald" label="Διαθέσιμες τώρα" value={String(availNow)}
+              sub={availNow > 0 ? "έτοιμες προς εκτέλεση" : "καμία εκκρεμής"} />
+            {loyalty?.enabled
+              ? <Kpi icon={Gift} tint="rose" label="Πόντοι επιβράβευσης" value={String(points)}
+                  sub={loyalty.member ? "για εκπτώσεις & δώρα" : "μπες στο πρόγραμμα"} />
+              : <Kpi icon={Pill} tint="sky" label="Διαφορετικά φάρμακα" value={String(summary.medicines)}
+                  sub="στο ιστορικό σου" />}
+            <Kpi icon={Stethoscope} tint="indigo" label="Γιατροί" value={String(summary.doctors)}
+              sub="συνταγογράφησαν για σένα" />
           </div>
-        )}
+          );
+        })()}
+        </>)}
 
         {/* ── tabs (desktop/tablet) ──────────────────────────────
             Στο ΚΙΝΗΤΟ κρύβονται — η πλοήγηση γίνεται από τη σταθερή κάτω μπάρα (βλ. τέλος).
@@ -480,11 +504,11 @@ export default function PortalHome() {
             </button>
           ))}
         </div>
-        {/* Στο κινητό: τίτλος ενεργής ενότητας (η μπάρα είναι κάτω) */}
-        <div className="mb-4 flex items-center gap-2 sm:hidden">
+        {/* Στο κινητό: τίτλος ενεργής ενότητας (η μπάρα είναι κάτω)· στην Αρχική ο χαιρετισμός είναι ο τίτλος */}
+        {tab !== "home" && <div className="mb-4 flex items-center gap-2 sm:hidden">
           {(() => { const I = TAB_ICON[tab] || FileText; return <I className="h-5 w-5 text-brand-600" />; })()}
           <h2 className="text-lg font-extrabold tracking-tight text-slate-900">{TAB_LABEL[tab]}</h2>
-        </div>
+        </div>}
 
         {/* ── PRESCRIPTIONS ──────────────────────────────────── */}
         {tab === "rx" && (() => {
@@ -1193,6 +1217,8 @@ const TINTS: Record<string, string> = {
   emerald: "bg-emerald-50 text-emerald-600",
   amber: "bg-amber-50 text-amber-600",
   violet: "bg-violet-50 text-violet-600",
+  sky: "bg-sky-50 text-sky-600",
+  rose: "bg-rose-50 text-rose-600",
 };
 
 function Kpi({ icon: Icon, label, value, sub, tint, highlight }: {
