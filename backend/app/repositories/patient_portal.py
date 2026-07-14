@@ -699,7 +699,7 @@ class PatientRxRepository(BaseRepository):
         async for r in self._db["med_reminders"].find(
                 {"tenant_id": self.tenant_id, "patient_ref": pid, "enabled": True}):
             enabled.add(r.get("med_key"))
-            rem_cfg[r.get("med_key")] = {"time": r.get("time"), "meal": r.get("meal")}
+            rem_cfg[r.get("med_key")] = {"time": r.get("time"), "meal": r.get("meal"), "interval_hours": r.get("interval_hours")}
         setting = await self._db["med_settings"].find_one(
             {"tenant_id": self.tenant_id, "patient_ref": pid})
         slot_times = {**ms.SLOT_TIMES, **((setting or {}).get("slot_times") or {})}
@@ -717,6 +717,7 @@ class PatientRxRepository(BaseRepository):
             cfg = rem_cfg.get(t["med_key"]) or {}
             t["time"] = cfg.get("time")      # custom ώρα λήψης (ή None → slot time)
             t["meal"] = cfg.get("meal")      # before/after/none
+            t["interval_hours"] = cfg.get("interval_hours")  # «κάθε X ώρες» (ή None/0)
         plans = [{"med_key": t["med_key"], "name": t["name"], "dose": t["dose"], "plan": t["plan"]}
                  for t in ths if t["enabled"]]
         return jsonsafe({"therapies": ths, "week": ms.weekly_grid(plans, slot_times),
@@ -811,15 +812,18 @@ class PatientRxRepository(BaseRepository):
         return {"ok": True}
 
     async def set_reminder(self, patient_ref: str, med_key: str, enabled: bool,
-                           time: str | None = None, meal: str | None = None) -> dict:
+                           time: str | None = None, meal: str | None = None,
+                           interval_hours: int | None = None) -> dict:
         pid = _oid(patient_ref)
         if not pid or not med_key:
             return {"ok": False}
         upd: dict = {"enabled": enabled, "updated_at": datetime.now(tz=timezone.utc)}
-        if time and re.match(r"^\d{1,2}:\d{2}$", str(time)):   # ώρα λήψης (custom ανά φάρμακο)
+        if time and re.match(r"^\d{1,2}:\d{2}$", str(time)):   # ώρα (πρώτης) λήψης
             upd["time"] = str(time)
         if meal in ("before", "after", "none"):                # σε σχέση με το γεύμα
             upd["meal"] = meal
+        if interval_hours is not None:                         # «κάθε X ώρες» (0/None = συγκεκριμένη ώρα)
+            upd["interval_hours"] = max(0, min(24, int(interval_hours)))
         await self._db["med_reminders"].update_one(
             {"tenant_id": self.tenant_id, "patient_ref": pid, "med_key": med_key},
             {"$set": upd}, upsert=True)

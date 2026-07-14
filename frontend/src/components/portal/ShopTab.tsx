@@ -3,6 +3,7 @@
 import { Fragment, useEffect, useState } from "react";
 import { Search, ShoppingCart, ShoppingBag, Plus, Minus, Trash2, Truck, Store, ShieldCheck, Pill, Package, ChevronLeft, ChevronDown, Loader2, MapPin, Check, XCircle, PackageCheck, RefreshCcw, Star, Heart } from "lucide-react";
 import { patientApi, API_BASE } from "@/lib/patientClient";
+import { toast, confirmDialog } from "@/components/portal/Toaster";
 
 // Emoji ανά θεραπευτική/εμπορική κατηγορία (keyword match) — «εικονίδιο» μέσα στο native select.
 const _CAT_EMOJI: [string, string][] = [
@@ -84,10 +85,10 @@ export function ShopTab({ tenantKey = "x" }: { tenantKey?: string }) {
       const by: Record<string, Product> = {}; d.items.forEach((p) => { by[p.barcode] = p; });
       const next: Record<string, { p: Product; qty: number }> = {}; let missing = 0;
       o.items.forEach((it) => { const p = by[it.barcode]; if (p && capOf(p) > 0) next[p.barcode] = { p, qty: Math.min(it.qty, capOf(p)) }; else missing++; });
-      if (Object.keys(next).length === 0) { alert("Τα είδη δεν είναι διαθέσιμα αυτή τη στιγμή."); return; }
+      if (Object.keys(next).length === 0) { toast("Τα είδη δεν είναι διαθέσιμα αυτή τη στιγμή.", "error"); return; }
       setCart(next); setView("cart");
-      if (missing) alert(`${missing} είδη δεν είναι πλέον διαθέσιμα και παραλείφθηκαν.`);
-    } catch { alert("Κάτι πήγε στραβά — δοκίμασε ξανά."); }
+      if (missing) toast(`${missing} είδη δεν είναι πλέον διαθέσιμα και παραλείφθηκαν.`, "info");
+    } catch { toast("Κάτι πήγε στραβά — δοκίμασε ξανά.", "error"); }
   }
   const cartItems = Object.values(cart);
   const subtotal = cartItems.reduce((s, x) => s + final(x.p) * x.qty, 0);
@@ -447,7 +448,7 @@ function Subscriptions({ onBack }: { onBack: () => void }) {
   const [loading, setLoading] = useState(true);
   async function load() { try { const d = await patientApi<{ items: Sub[] }>("/patient/shop/subscriptions"); setSubs(d.items); } finally { setLoading(false); } }
   useEffect(() => { load(); }, []);
-  async function cancel(id: string) { if (!confirm("Ακύρωση της συνδρομής;")) return; await patientApi(`/patient/shop/subscriptions/${id}/cancel`, { method: "POST" }); load(); }
+  async function cancel(id: string) { if (!(await confirmDialog("Να ακυρωθεί η συνδρομή;"))) return; await patientApi(`/patient/shop/subscriptions/${id}/cancel`, { method: "POST" }); load(); }
   const freq = (d: number) => FREQ.find(([n]) => n === d)?.[1] ?? `κάθε ${d} ημέρες`;
   return (
     <div className="space-y-3">

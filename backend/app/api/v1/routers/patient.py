@@ -194,15 +194,16 @@ async def meds_schedule(ctx: PatientContext = Depends(get_patient_context)):
 class ReminderIn(BaseModel):
     med_key: str
     enabled: bool
-    time: str | None = None      # ώρα λήψης (HH:MM) — custom ανά φάρμακο
+    time: str | None = None      # ώρα (πρώτης) λήψης (HH:MM)
     meal: str | None = None      # before | after | none — σε σχέση με το γεύμα
+    interval_hours: int | None = None   # «κάθε X ώρες» (0/None = συγκεκριμένη ώρα)
 
 
 @router.post("/meds/reminder")
 async def meds_reminder(body: ReminderIn, ctx: PatientContext = Depends(get_patient_context)):
     """Ενεργοποίηση/απενεργοποίηση ενημερώσεων + (προαιρετικά) ώρα λήψης & σχέση με το γεύμα."""
     return await PatientRxRepository(tenant_id=ctx.tenant_id).set_reminder(
-        ctx.patient_ref, body.med_key, body.enabled, body.time, body.meal)
+        ctx.patient_ref, body.med_key, body.enabled, body.time, body.meal, body.interval_hours)
 
 
 class IntakeIn(BaseModel):

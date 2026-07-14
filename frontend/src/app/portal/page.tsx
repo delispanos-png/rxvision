@@ -16,6 +16,7 @@ import { patientApi, patientTokens, patientUpload, patientLogout } from "@/lib/p
 import { PharmacyPicker, MedicinePicker, type Medicine } from "@/components/portal/pickers";
 import { RenewalCard, type Renewal } from "@/components/portal/RenewalCard";
 import { ShopTab } from "@/components/portal/ShopTab";
+import { Toaster, toast, confirmDialog } from "@/components/portal/Toaster";
 import { pushSupported, isPushSubscribed, enablePush } from "@/lib/push";
 import { BellRing } from "lucide-react";
 import { fmtDate, fmtDateTime } from "@/lib/formatters";
@@ -48,6 +49,8 @@ const RTYPE_EMOJI: Record<string, string> = { product: "🛍️", service: "💉
 const dt = (s?: string | null) => (s ? fmtDate(s) : "—");
 const dtl = (s?: string | null) => (s ? fmtDateTime(s) : "—");
 const eur = (c?: number) => new Intl.NumberFormat("el-GR", { style: "currency", currency: "EUR", maximumFractionDigits: 2 }).format((c || 0) / 100);
+const bpShow = (v?: number | null) => (v == null ? "—" : (v / 10).toFixed(1).replace(".", ","));  // 154 → «15,4»
+const wShow = (v?: number | null) => (v == null ? "—" : v.toFixed(2).replace(".", ","));            // βάρος 2 δεκαδικά
 // χιλιομετρική (ευθεία) απόσταση — Haversine
 const haversineKm = (a: { lat: number; lon: number }, lat2: number, lon2: number) => {
   const r = 6371, toRad = (d: number) => (d * Math.PI) / 180;
@@ -70,7 +73,7 @@ const TAB_ICON: Record<string, LucideIcon> = {
 const TAB_LABEL: Record<string, string> = Object.fromEntries(TABS.map(([k, l]) => [k, l]));
 
 const DOW = ["Δευ", "Τρί", "Τετ", "Πέμ", "Παρ", "Σάβ", "Κυρ"];
-type Therapy = { med_key: string; name: string; dose: string | null; dosage_text: string | null; kind: string; per_day: number; runout: string | null; days_left: number | null; enabled: boolean; reservable: boolean; time?: string | null; meal?: string | null };
+type Therapy = { med_key: string; name: string; dose: string | null; dosage_text: string | null; kind: string; per_day: number; runout: string | null; days_left: number | null; enabled: boolean; reservable: boolean; time?: string | null; meal?: string | null; interval_hours?: number | null };
 type SlotCell = { slot: string; label: string; time: string; meds: { med_key: string; name: string; dose: string | null; time: string }[] };
 type Schedule = { therapies: Therapy[]; week: { dow: number; slots: SlotCell[] }[]; slot_times: Record<string, string>; streak: number; taken_today?: { med_key: string; slot: string | null }[] };
 type HMeas = { _id?: string; kind: string; systolic?: number; diastolic?: number; value?: number; at: string };
@@ -227,7 +230,7 @@ export default function PortalHome() {
       await patientApi("/patient/meds/reminder", { method: "POST", body: JSON.stringify({ med_key, enabled }) });
       if (enabled) {   // μόλις ενεργοποιήθηκε → ρώτα ώρα λήψης + σχέση με γεύμα
         const th = sched?.therapies.find((t) => t.med_key === med_key);
-        setMedCfg({ med_key, time: th?.time || "08:00", meal: th?.meal || "none" });
+        setMedCfg({ med_key, time: th?.time || "08:00", meal: th?.meal || "none", mode: th?.interval_hours ? "interval" : "time", interval: th?.interval_hours || 8 });
       } else { setMedCfg((c) => c?.med_key === med_key ? null : c); }
       setSched(await patientApi<Schedule>("/patient/meds/schedule"));   // refresh grid
     } catch { /* revert on next fetch */ }
@@ -244,23 +247,23 @@ export default function PortalHome() {
     try {
       const r = await patientApi<{ streak: number; points_awarded?: number }>(taken ? "/patient/meds/untaken" : "/patient/meds/taken", { method: "POST", body: JSON.stringify({ med_key, slot }) });
       setSched((s) => s ? { ...s, streak: r.streak } : s);
-      if (!taken && r.points_awarded && r.points_awarded > 0) alert(`✓ Κέρδισες ${r.points_awarded} πόντους 🎁`);
+      if (!taken && r.points_awarded && r.points_awarded > 0) toast(`✓ Κέρδισες ${r.points_awarded} πόντους 🎁`);
     } catch { try { setSched(await patientApi<Schedule>("/patient/meds/schedule")); } catch { /* ignore */ } }
   }
-  // Ρύθμιση φαρμάκου κατά την ΕΝΕΡΓΟΠΟΙΗΣΗ: ώρα λήψης + σχέση με γεύμα (πριν/μετά).
-  const [medCfg, setMedCfg] = useState<{ med_key: string; time: string; meal: string } | null>(null);
+  // Ρύθμιση φαρμάκου κατά την ΕΝΕΡΓΟΠΟΙΗΣΗ: ώρα λήψης (24ωρο) ή «κάθε X ώρες» + σχέση με γεύμα.
+  const [medCfg, setMedCfg] = useState<{ med_key: string; time: string; meal: string; mode: "time" | "interval"; interval: number } | null>(null);
   async function saveMedCfg() {
     if (!medCfg) return;
     try {
-      await patientApi("/patient/meds/reminder", { method: "POST", body: JSON.stringify({ med_key: medCfg.med_key, enabled: true, time: medCfg.time || null, meal: medCfg.meal }) });
+      await patientApi("/patient/meds/reminder", { method: "POST", body: JSON.stringify({ med_key: medCfg.med_key, enabled: true, time: medCfg.time || null, meal: medCfg.meal, interval_hours: medCfg.mode === "interval" ? medCfg.interval : 0 }) });
       setSched(await patientApi<Schedule>("/patient/meds/schedule"));
     } catch { /* ignore */ }
     setMedCfg(null);
   }
   async function reserveMed(med_name: string) {
-    if (!confirm(`Κράτηση επανάληψης για «${med_name}» στο φαρμακείο σου;`)) return;
-    try { await patientApi("/patient/meds/reserve", { method: "POST", body: JSON.stringify({ med_name }) }); alert("✓ Η κράτηση στάλθηκε στο φαρμακείο σου. Θα ειδοποιηθείς όταν είναι έτοιμη."); }
-    catch { alert("Κάτι πήγε στραβά — δοκίμασε ξανά."); }
+    if (!(await confirmDialog(`Κράτηση επανάληψης για «${med_name}» στο φαρμακείο σου;`))) return;
+    try { await patientApi("/patient/meds/reserve", { method: "POST", body: JSON.stringify({ med_name }) }); toast("✓ Η κράτηση στάλθηκε στο φαρμακείο σου. Θα ειδοποιηθείς όταν είναι έτοιμη."); }
+    catch { toast("Κάτι πήγε στραβά — δοκίμασε ξανά.", "error"); }
   }
 
   async function switchPharmacy(tenant_id: string, gotoTab?: string) {
@@ -271,7 +274,7 @@ export default function PortalHome() {
       setAvailTarget(tenant_id); setApptTarget(tenant_id);
       if (gotoTab) setTab(gotoTab);
       await load();
-    } catch { alert("Δεν ήταν δυνατή η επιλογή του φαρμακείου — δοκίμασε ξανά."); }
+    } catch { toast("Δεν ήταν δυνατή η επιλογή του φαρμακείου — δοκίμασε ξανά.", "error"); }
   }
   async function setFavoritePharmacy(tenant_id: string) {
     const prev = directory;
@@ -280,11 +283,11 @@ export default function PortalHome() {
     catch { setDirectory(prev); }
   }
   function requestGeo() {
-    if (!navigator.geolocation) { alert("Η συσκευή δεν υποστηρίζει εντοπισμό τοποθεσίας."); return; }
+    if (!navigator.geolocation) { toast("Η συσκευή δεν υποστηρίζει εντοπισμό τοποθεσίας.", "error"); return; }
     setGeoBusy(true);
     navigator.geolocation.getCurrentPosition(
       (p) => { setGeo({ lat: p.coords.latitude, lon: p.coords.longitude }); setGeoBusy(false); },
-      () => { setGeoBusy(false); alert("Δεν ήταν δυνατός ο εντοπισμός τοποθεσίας — έλεγξε τα δικαιώματα."); },
+      () => { setGeoBusy(false); toast("Δεν ήταν δυνατός ο εντοπισμός τοποθεσίας — έλεγξε τα δικαιώματα.", "error"); },
       { enableHighAccuracy: false, timeout: 8000, maximumAge: 300000 });
   }
   async function logout() { await patientLogout(); router.replace("/portal/login"); }
@@ -810,7 +813,6 @@ export default function PortalHome() {
                           <div className="space-y-1.5 border-t border-slate-100 bg-slate-50/40 px-3.5 py-3">
                             {d.slots.map((sl) => (
                               <div key={sl.slot} className="flex items-start gap-2">
-                                <span className="mt-0.5 w-14 shrink-0 rounded-md bg-white px-1.5 py-1 text-center text-[11px] font-semibold text-slate-600 shadow-sm">{sl.time}</span>
                                 <div className="flex min-w-0 flex-1 flex-col gap-1">
                                   {sl.meds.map((m, i) => {
                                     const taken = today && takenSet.has(`${m.med_key}|${sl.slot}`);
@@ -819,13 +821,13 @@ export default function PortalHome() {
                                       <button key={i} onClick={() => { if (today) toggleIntake(m.med_key, sl.slot, taken); }} disabled={!today}
                                         title={taken ? "Πάτα για αναίρεση" : "Πάτα «Το πήρα»"}
                                         className={`flex items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs transition ${taken ? "bg-emerald-50 text-emerald-700" : today ? "bg-violet-50 text-violet-800 hover:bg-violet-100" : "bg-white text-slate-600"}`}>
-                                        <span className="min-w-0">
-                                          <span className={`block truncate ${taken ? "line-through opacity-70" : ""}`}>{m.dose ? `${m.dose} · ` : ""}{m.name}</span>
-                                          {(mtime || (meal && meal !== "none")) && <span className="text-[10px] opacity-70">{mtime ? `⏰ ${mtime}` : ""}{mtime && meal && meal !== "none" ? " · " : ""}{meal === "before" ? "🍽️ πριν το γεύμα" : meal === "after" ? "🍽️ μετά το γεύμα" : ""}</span>}
+                                        <span className="min-w-0 flex-1">
+                                          <span className={`block truncate text-sm font-bold ${taken ? "line-through opacity-60" : ""}`}>{m.name}</span>
+                                          <span className="mt-0.5 block truncate text-[11px] text-slate-500">⏰ {mtime || sl.time}{m.dose ? ` · ${m.dose}` : ""}{meal === "before" ? " · 🍽️ πριν" : meal === "after" ? " · 🍽️ μετά" : ""}</span>
                                         </span>
                                         {today && (taken
-                                          ? <span className="shrink-0 text-[11px] font-bold">✓ το πήρα · ↺</span>
-                                          : <span className="shrink-0 rounded-full bg-violet-600 px-2 py-0.5 text-[10px] font-bold text-white">Το πήρα</span>)}
+                                          ? <span className="shrink-0 self-center text-[11px] font-bold">✓ · ↺</span>
+                                          : <span className="shrink-0 self-center rounded-full bg-violet-600 px-2.5 py-1 text-[11px] font-bold text-white">Το πήρα</span>)}
                                       </button>
                                     );
                                   })}
@@ -868,9 +870,9 @@ export default function PortalHome() {
                       </div>
                       {/* όταν ενεργό: ώρα λήψης + σχέση με γεύμα (πάτα για αλλαγή) */}
                       {th.enabled && medCfg?.med_key !== th.med_key && (
-                        <button onClick={() => setMedCfg({ med_key: th.med_key, time: th.time || "08:00", meal: th.meal || "none" })}
+                        <button onClick={() => setMedCfg({ med_key: th.med_key, time: th.time || "08:00", meal: th.meal || "none", mode: th.interval_hours ? "interval" : "time", interval: th.interval_hours || 8 })}
                           className="mt-2 inline-flex flex-wrap items-center gap-2 rounded-lg bg-violet-50 px-2.5 py-1 text-xs text-violet-700 hover:bg-violet-100">
-                          <span className="inline-flex items-center gap-1"><Clock className="h-3.5 w-3.5" /> {th.time || "—"}</span>
+                          <span className="inline-flex items-center gap-1"><Clock className="h-3.5 w-3.5" /> {th.interval_hours ? `κάθε ${th.interval_hours} ώρες` : (th.time || "—")}</span>
                           <span>{th.meal === "before" ? "🍽️ πριν το γεύμα" : th.meal === "after" ? "🍽️ μετά το γεύμα" : "άσχετο με γεύμα"}</span>
                           <span className="text-[10px] text-violet-400">· αλλαγή</span>
                         </button>
@@ -879,8 +881,36 @@ export default function PortalHome() {
                       {medCfg?.med_key === th.med_key && (
                         <div className="mt-2 space-y-2 rounded-xl border border-violet-200 bg-violet-50/50 p-2.5">
                           <div>
-                            <div className="mb-1 text-[11px] font-medium text-slate-600">⏰ Ώρα λήψης</div>
-                            <input type="time" value={medCfg.time} onChange={(e) => setMedCfg({ ...medCfg, time: e.target.value })} className="w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm focus:border-violet-400 focus:outline-none" />
+                            {/* τρόπος: συγκεκριμένη ώρα (24ωρο) ή «κάθε X ώρες» από την 1η λήψη */}
+                            <div className="mb-1.5 flex gap-1.5">
+                              {([["time", "Συγκεκριμένη ώρα"], ["interval", "Κάθε X ώρες"]] as const).map(([mv, ml]) => (
+                                <button key={mv} onClick={() => setMedCfg({ ...medCfg, mode: mv })} className={`flex-1 rounded-lg border px-2 py-1.5 text-[11px] font-semibold ${medCfg.mode === mv ? "border-violet-500 bg-violet-600 text-white" : "border-slate-200 bg-white text-slate-600"}`}>{ml}</button>
+                              ))}
+                            </div>
+                            {medCfg.mode === "time" ? (
+                              <div>
+                                <div className="mb-1 text-[11px] font-medium text-slate-600">⏰ Ώρα λήψης (24ωρο)</div>
+                                <div className="flex items-center gap-1.5">
+                                  <select value={(medCfg.time || "08:00").split(":")[0]} onChange={(e) => setMedCfg({ ...medCfg, time: `${e.target.value}:${(medCfg.time || "08:00").split(":")[1] || "00"}` })} className="flex-1 rounded-lg border border-slate-300 px-2 py-1.5 text-sm focus:border-violet-400 focus:outline-none">
+                                    {Array.from({ length: 24 }, (_, h) => String(h).padStart(2, "0")).map((h) => <option key={h} value={h}>{h}</option>)}
+                                  </select>
+                                  <span className="font-bold text-slate-400">:</span>
+                                  <select value={(medCfg.time || "08:00").split(":")[1] || "00"} onChange={(e) => setMedCfg({ ...medCfg, time: `${(medCfg.time || "08:00").split(":")[0]}:${e.target.value}` })} className="flex-1 rounded-lg border border-slate-300 px-2 py-1.5 text-sm focus:border-violet-400 focus:outline-none">
+                                    {["00", "05", "10", "15", "20", "25", "30", "35", "40", "45", "50", "55"].map((mn) => <option key={mn} value={mn}>{mn}</option>)}
+                                  </select>
+                                </div>
+                              </div>
+                            ) : (
+                              <div>
+                                <div className="mb-1 text-[11px] font-medium text-slate-600">🔁 Κάθε πόσες ώρες;</div>
+                                <div className="flex items-center gap-2">
+                                  <select value={medCfg.interval} onChange={(e) => setMedCfg({ ...medCfg, interval: +e.target.value })} className="flex-1 rounded-lg border border-slate-300 px-2 py-1.5 text-sm focus:border-violet-400 focus:outline-none">
+                                    {[4, 6, 8, 12, 24].map((h) => <option key={h} value={h}>κάθε {h} ώρες</option>)}
+                                  </select>
+                                </div>
+                                <div className="mt-1 text-[10px] text-slate-400">Οι δόσεις υπολογίζονται από την ώρα που θα δηλώσεις ότι πήρες την 1η.</div>
+                              </div>
+                            )}
                           </div>
                           <div>
                             <div className="mb-1 text-[11px] font-medium text-slate-600">🍽️ Σε σχέση με το γεύμα</div>
@@ -925,9 +955,9 @@ export default function PortalHome() {
             return { d, better: k === "weight" ? null : d < 0 };  // πίεση/ζάχαρο: μείωση = βελτίωση
           };
           const tiles = [
-            { k: "bp" as const, label: "Πίεση", val: bp ? `${bp.systolic}/${bp.diastolic}` : "—", sub: bp ? dt(bp.at) : "—", cls: hStat("bp", bp), watch: bp && !hStat("bp", bp).includes("emerald") },
+            { k: "bp" as const, label: "Πίεση", val: bp ? `${bpShow(bp.systolic)}/${bpShow(bp.diastolic)}` : "—", sub: bp ? dt(bp.at) : "—", cls: hStat("bp", bp), watch: bp && !hStat("bp", bp).includes("emerald") },
             { k: "glucose" as const, label: "Ζάχαρο", val: gl ? `${gl.value}` : "—", sub: gl ? `mg/dL` : "—", cls: hStat("glucose", gl), watch: gl && !hStat("glucose", gl).includes("emerald") },
-            { k: "weight" as const, label: "Βάρος", val: wt ? `${wt.value}` : "—", sub: wt ? "kg" : "—", cls: "bg-slate-50 text-slate-700", watch: false },
+            { k: "weight" as const, label: "Βάρος", val: wt ? wShow(wt.value) : "—", sub: wt ? "kg" : "—", cls: "bg-slate-50 text-slate-700", watch: false },
           ];
           const watchList = tiles.filter((t) => t.watch).map((t) => t.label);
           // όλες οι ημερομηνίες μέτρησης (ενοποιημένες) — κάτω, με drill-down
@@ -939,7 +969,7 @@ export default function PortalHome() {
           const dates = Object.keys(byDate).sort().reverse();
           const sel = healthDate && byDate[healthDate] ? healthDate : dates[0];
           const anyHist = dates.length > 0;
-          const fmtM = (k: "bp" | "glucose" | "weight", m?: HMeas) => !m ? "—" : k === "bp" ? `${m.systolic}/${m.diastolic}` : k === "glucose" ? `${m.value} mg/dL` : `${m.value} kg`;
+          const fmtM = (k: "bp" | "glucose" | "weight", m?: HMeas) => !m ? "—" : k === "bp" ? `${bpShow(m.systolic)}/${bpShow(m.diastolic)}` : k === "glucose" ? `${m.value} mg/dL` : `${wShow(m.value)} kg`;
           return (
             <div className="space-y-4">
               {/* ΤΡΕΧΟΥΣΕΣ (τελευταίες) μετρήσεις + σύγκριση με προηγούμενη */}
@@ -954,7 +984,7 @@ export default function PortalHome() {
                         <div className={`mt-1 inline-flex rounded px-1.5 text-xl font-bold ${tl.cls}`}>{tl.val}</div>
                         <div className="mt-0.5 flex items-center gap-1.5 text-[11px]">
                           <span className="text-slate-400">{tl.sub}</span>
-                          {tr && tr.d !== 0 && <span className={`font-bold ${tr.better === null ? "text-slate-500" : tr.better ? "text-emerald-600" : "text-rose-600"}`}>{tr.d > 0 ? "▲" : "▼"}{Math.abs(tr.d).toFixed(tl.k === "weight" ? 1 : 0)}{tr.better === true ? " ✓" : tr.better === false ? " !" : ""}</span>}
+                          {tr && tr.d !== 0 && <span className={`font-bold ${tr.better === null ? "text-slate-500" : tr.better ? "text-emerald-600" : "text-rose-600"}`}>{tr.d > 0 ? "▲" : "▼"}{tl.k === "bp" ? (Math.abs(tr.d) / 10).toFixed(1).replace(".", ",") : tl.k === "weight" ? Math.abs(tr.d).toFixed(2).replace(".", ",") : Math.abs(tr.d).toFixed(0)}{tr.better === true ? " ✓" : tr.better === false ? " !" : ""}</span>}
                         </div>
                       </div>
                     );
@@ -962,7 +992,7 @@ export default function PortalHome() {
                   <div className="rounded-2xl border border-slate-200 bg-white p-4">
                     <div className="text-xs text-slate-500">ΔΜΣ</div>
                     <div className={`mt-1 inline-flex rounded px-1.5 text-xl font-bold ${bmi ? (bmi >= 30 ? "bg-rose-50 text-rose-700" : (bmi >= 25 || bmi < 18.5) ? "bg-amber-50 text-amber-700" : "bg-emerald-50 text-emerald-700") : "bg-slate-50 text-slate-500"}`}>{bmi ? bmi.toFixed(1) : "—"}</div>
-                    <div className="mt-0.5 text-[11px] text-slate-400">{health?.height_cm ? `ύψος ${health.height_cm}cm` : "—"}</div>
+                    <div className="mt-0.5 text-[11px] text-slate-400">{health?.height_cm ? `ύψος ${(health.height_cm / 100).toFixed(2).replace(".", ",")}μ` : "—"}</div>
                   </div>
                 </div>
                 {watchList.length > 0 && <div className="mt-2 rounded-xl bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800">⚠️ Χρειάζονται προσοχή: <b>{watchList.join(", ")}</b> — συζήτησέ το με τον φαρμακοποιό/γιατρό σου.</div>}
@@ -1027,7 +1057,7 @@ export default function PortalHome() {
                       <span className="rounded-full bg-white/20 px-2.5 py-0.5 text-xs font-bold">{TIER_GR[m.tier] ?? m.tier}</span>
                     </div>
                     <div className="mt-1 text-4xl font-extrabold">{eur(m.balance_cents)}</div>
-                    <div className="text-sm opacity-90">{m.points} πόντοι · για αγορές στο φαρμακείο</div>
+                    <div className="text-sm font-medium opacity-90">{m.balance_cents > 0 ? "διαθέσιμα για εξαργύρωση στο φαρμακείο" : "μάζεψε πόντους σε κάθε αγορά/επίσκεψη"}{m.points > 0 ? ` · ${m.points} πόντοι` : ""}</div>
                   </div>
 
                   {/* κάρτα μέλους με QR — ο πελάτης τη δείχνει στο φαρμακείο για ταυτοποίηση/εξαργύρωση */}
@@ -1420,6 +1450,7 @@ export default function PortalHome() {
           );
         })}
       </nav>
+      <Toaster />
     </div>
   );
 }

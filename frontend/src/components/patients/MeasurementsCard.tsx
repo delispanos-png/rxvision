@@ -11,6 +11,12 @@ type M = { _id?: string; kind: string; systolic?: number; diastolic?: number; va
 type Data = { latest: Record<string, M>; history: Record<string, M[]> };
 
 const dmy = (s?: string) => (s ? new Date(s).toLocaleDateString("el-GR") : "—");
+// Πίεση σε ελληνική μορφή «15,4» (αποθηκευμένο mmHg 154 ÷10)· είσοδος «15,4» → 154.
+const bpShow = (v?: number) => (v == null ? "—" : (v / 10).toFixed(1).replace(".", ","));
+const bpParse = (s: string) => Math.round((parseFloat(String(s).replace(",", ".")) || 0) * 10);
+const numParse = (s: string) => parseFloat(String(s).replace(",", ".")) || 0;
+const wShow = (v?: number) => (v == null ? "—" : v.toFixed(2).replace(".", ","));   // βάρος 2 δεκαδικά
+const mShow = (cm?: number) => (cm == null ? "" : (cm / 100).toFixed(2).replace(".", ","));  // ύψος σε μέτρα
 const bpStatus = (s?: number, d?: number) => (!s || !d ? "neutral" : s >= 140 || d >= 90 ? "high" : s >= 130 || d >= 85 ? "warn" : "ok");
 const glStatus = (v?: number) => (!v ? "neutral" : v >= 126 ? "high" : v >= 100 ? "warn" : "ok");
 const bmiStatus = (b?: number) => (!b ? "neutral" : b >= 30 ? "high" : b >= 25 || b < 18.5 ? "warn" : "ok");
@@ -34,7 +40,7 @@ export function MeasurementsCard({ patientId }: { patientId: string }) {
   const heightCm = contact?.height_cm || undefined;
   const [h, setH] = useState("");
   const saveH = useMutation({
-    mutationFn: () => api(`/patients/${encodeURIComponent(patientId)}/height`, { method: "PATCH", body: JSON.stringify({ height_cm: h ? Number(h) : null }) }),
+    mutationFn: () => api(`/patients/${encodeURIComponent(patientId)}/height`, { method: "PATCH", body: JSON.stringify({ height_cm: h ? Math.round(numParse(h) * 100) : null }) }),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["patient-contact", patientId] }); setH(""); },
   });
   const [open, setOpen] = useState(false);
@@ -44,7 +50,7 @@ export function MeasurementsCard({ patientId }: { patientId: string }) {
   const [hist, setHist] = useState<string | null>(null);
 
   const add = useMutation({
-    mutationFn: () => api(`/patients/${encodeURIComponent(patientId)}/measurements`, { method: "POST", body: JSON.stringify(kind === "bp" ? { kind, systolic: +sys, diastolic: +dia, at } : { kind, value: +val, at }) }),
+    mutationFn: () => api(`/patients/${encodeURIComponent(patientId)}/measurements`, { method: "POST", body: JSON.stringify(kind === "bp" ? { kind, systolic: bpParse(sys), diastolic: bpParse(dia), at } : { kind, value: numParse(val), at }) }),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["patient-measurements", patientId] }); setOpen(false); setSys(""); setDia(""); setVal(""); },
   });
   const del = useMutation({
@@ -62,16 +68,16 @@ export function MeasurementsCard({ patientId }: { patientId: string }) {
       <button onClick={() => setOpen((o) => !o)} className="inline-flex items-center gap-1 rounded-lg bg-brand-600 px-2.5 py-1.5 text-xs font-medium text-white hover:bg-brand-700"><Plus className="h-3.5 w-3.5" />{t("Νέα μέτρηση", "Add")}</button>
     }>
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-        <Tile icon={HeartPulse} label={t("Πίεση", "Blood pressure")} value={bp ? `${bp.systolic}/${bp.diastolic}` : "—"} sub={bp ? dmy(bp.at) : t("καμία μέτρηση", "no data")} status={bpStatus(bp?.systolic, bp?.diastolic)} onClick={() => setHist(hist === "bp" ? null : "bp")} />
+        <Tile icon={HeartPulse} label={t("Πίεση", "Blood pressure")} value={bp ? `${bpShow(bp.systolic)}/${bpShow(bp.diastolic)}` : "—"} sub={bp ? dmy(bp.at) : t("καμία μέτρηση", "no data")} status={bpStatus(bp?.systolic, bp?.diastolic)} onClick={() => setHist(hist === "bp" ? null : "bp")} />
         <Tile icon={Droplet} label={t("Ζάχαρο", "Glucose")} value={gl ? `${gl.value}` : "—"} sub={gl ? `mg/dL · ${dmy(gl.at)}` : t("καμία μέτρηση", "no data")} status={glStatus(gl?.value)} onClick={() => setHist(hist === "glucose" ? null : "glucose")} />
-        <Tile icon={Scale} label={t("Βάρος", "Weight")} value={wt ? `${wt.value}` : "—"} sub={wt ? `kg · ${dmy(wt.at)}` : t("καμία μέτρηση", "no data")} status="neutral" onClick={() => setHist(hist === "weight" ? null : "weight")} />
-        <Tile icon={Activity} label={t("ΔΜΣ (BMI)", "BMI")} value={bmi ? bmi.toFixed(1) : "—"} sub={heightCm ? `${t("ύψος", "height")} ${heightCm}cm` : t("όρισε ύψος →", "set height →")} status={bmiStatus(bmi)} />
+        <Tile icon={Scale} label={t("Βάρος", "Weight")} value={wt ? wShow(wt.value) : "—"} sub={wt ? `kg · ${dmy(wt.at)}` : t("καμία μέτρηση", "no data")} status="neutral" onClick={() => setHist(hist === "weight" ? null : "weight")} />
+        <Tile icon={Activity} label={t("ΔΜΣ (BMI)", "BMI")} value={bmi ? bmi.toFixed(1) : "—"} sub={heightCm ? `${t("ύψος", "height")} ${mShow(heightCm)}μ` : t("όρισε ύψος →", "set height →")} status={bmiStatus(bmi)} />
       </div>
 
       {/* ύψος — σταθερό σωματομετρικό (για BMI) */}
       <div className="mt-2 flex items-center gap-2 text-sm">
-        <span className="text-xs text-slate-500">{t("Ύψος (cm)", "Height (cm)")}:</span>
-        <input type="number" value={h} onChange={(e) => setH(e.target.value)} placeholder={heightCm ? String(heightCm) : "175"}
+        <span className="text-xs text-slate-500">{t("Ύψος (μ)", "Height (m)")}:</span>
+        <input type="text" inputMode="decimal" value={h} onChange={(e) => setH(e.target.value)} placeholder={heightCm ? mShow(heightCm) : "1,75"}
           className="w-24 rounded-lg border border-slate-300 px-2 py-1 text-sm dark:border-slate-600 dark:bg-slate-800" />
         <button onClick={() => saveH.mutate()} disabled={saveH.isPending || !h} className="rounded-lg border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700">{t("Αποθήκευση", "Save")}</button>
       </div>
@@ -82,12 +88,12 @@ export function MeasurementsCard({ patientId }: { patientId: string }) {
             <label className="text-xs text-slate-500">{t("Τύπος", "Type")}<select value={kind} onChange={(e) => setKind(e.target.value)} className={`mt-0.5 block ${inp}`}><option value="bp">{t("Πίεση", "BP")}</option><option value="glucose">{t("Ζάχαρο", "Glucose")}</option><option value="weight">{t("Βάρος", "Weight")}</option></select></label>
             {kind === "bp" ? (
               <>
-                <label className="text-xs text-slate-500">{t("Συστολική", "Systolic")}<input type="number" value={sys} onChange={(e) => setSys(e.target.value)} className={`mt-0.5 block w-20 ${inp}`} /></label>
+                <label className="text-xs text-slate-500">{t("Συστολική", "Systolic")}<input type="text" inputMode="decimal" placeholder="15,4" value={sys} onChange={(e) => setSys(e.target.value)} className={`mt-0.5 block w-20 ${inp}`} /></label>
                 <span className="pb-2 text-slate-400">/</span>
-                <label className="text-xs text-slate-500">{t("Διαστολική", "Diastolic")}<input type="number" value={dia} onChange={(e) => setDia(e.target.value)} className={`mt-0.5 block w-20 ${inp}`} /></label>
+                <label className="text-xs text-slate-500">{t("Διαστολική", "Diastolic")}<input type="text" inputMode="decimal" placeholder="9,2" value={dia} onChange={(e) => setDia(e.target.value)} className={`mt-0.5 block w-20 ${inp}`} /></label>
               </>
             ) : (
-              <label className="text-xs text-slate-500">{kind === "glucose" ? "mg/dL" : "kg"}<input type="number" step="0.1" value={val} onChange={(e) => setVal(e.target.value)} className={`mt-0.5 block w-24 ${inp}`} /></label>
+              <label className="text-xs text-slate-500">{kind === "glucose" ? "mg/dL" : "kg"}<input type="text" inputMode="decimal" placeholder={kind === "weight" ? "85,30" : ""} value={val} onChange={(e) => setVal(e.target.value)} className={`mt-0.5 block w-24 ${inp}`} /></label>
             )}
             <label className="text-xs text-slate-500">{t("Ημ/νία", "Date")}<input type="date" value={at} onChange={(e) => setAt(e.target.value)} className={`mt-0.5 block ${inp}`} /></label>
             <button onClick={() => add.mutate()} disabled={add.isPending || !canSave} className="rounded-lg bg-brand-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50">{t("Καταχώρηση", "Save")}</button>
@@ -101,7 +107,7 @@ export function MeasurementsCard({ patientId }: { patientId: string }) {
           <div className="space-y-1">
             {data.history[hist].map((m, i) => (
               <div key={m._id ?? i} className="flex items-center justify-between rounded-lg border border-slate-100 px-2.5 py-1.5 text-sm dark:border-slate-800">
-                <span className="font-medium text-slate-700 dark:text-slate-200">{m.kind === "bp" ? `${m.systolic}/${m.diastolic}` : m.value}{m.kind === "glucose" ? " mg/dL" : m.kind === "weight" ? " kg" : ""}</span>
+                <span className="font-medium text-slate-700 dark:text-slate-200">{m.kind === "bp" ? `${bpShow(m.systolic)}/${bpShow(m.diastolic)}` : m.kind === "weight" ? wShow(m.value) : m.value}{m.kind === "glucose" ? " mg/dL" : m.kind === "weight" ? " kg" : ""}</span>
                 <span className="flex items-center gap-2 text-xs text-slate-400">{dmy(m.at)}<button onClick={() => m._id && del.mutate(m._id)} className="text-rose-400 hover:text-rose-600"><Trash2 className="h-3.5 w-3.5" /></button></span>
               </div>
             ))}
