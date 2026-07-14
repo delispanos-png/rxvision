@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import {
   Pill, Wallet, ShieldCheck, RefreshCw, Stethoscope, Bell, LogOut, Building2,
   Calendar, ChevronDown, ChevronUp, CheckCircle2, Clock, Sparkles, X, Search, CalendarPlus, AlertCircle,
-  PackageCheck, Gift, FileText, ShoppingBag, HeartPulse, FilePlus, MoreHorizontal, MapPin, Home, Percent,
+  PackageCheck, Gift, FileText, ShoppingBag, HeartPulse, FilePlus, MoreHorizontal, MapPin, Home, Percent, Camera, Upload,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { QRCodeCanvas } from "qrcode.react";
@@ -990,9 +990,21 @@ export default function PortalHome() {
             <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
               <h3 className="mb-1 text-sm font-semibold text-slate-800">2) Φωτογραφία συνταγής ιατρού</h3>
               <p className="mb-3 text-xs text-slate-500">Φωτογράφισε τη χάρτινη συνταγή του γιατρού και στείλε την στο φαρμακείο.</p>
-              <input type="file" accept="image/*,application/pdf" capture="environment" disabled={assignBusy}
-                onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) submitPhoto(f); }}
-                className="block w-full text-sm text-slate-600 file:mr-3 file:rounded-lg file:border-0 file:bg-indigo-600 file:px-4 file:py-2 file:text-sm file:font-semibold file:text-white hover:file:bg-indigo-700" />
+              <div className={`grid grid-cols-2 gap-2 ${assignBusy ? "pointer-events-none opacity-60" : ""}`}>
+                {/* Άνοιξε ΚΑΜΕΡΑ κατευθείαν (capture) */}
+                <label className="flex cursor-pointer items-center justify-center gap-2 rounded-xl bg-indigo-600 px-3 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700">
+                  <Camera className="h-[18px] w-[18px]" /> Άνοιξε κάμερα
+                  <input type="file" accept="image/*" capture="environment" className="hidden"
+                    onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) submitPhoto(f); }} />
+                </label>
+                {/* Επίλεξε αρχείο/φωτογραφία (χωρίς capture → gallery/αρχεία) */}
+                <label className="flex cursor-pointer items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50">
+                  <Upload className="h-[18px] w-[18px]" /> Επίλεξε αρχείο
+                  <input type="file" accept="image/*,application/pdf" className="hidden"
+                    onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) submitPhoto(f); }} />
+                </label>
+              </div>
+              {assignBusy && <div className="mt-2 flex items-center gap-2 text-xs text-slate-400"><RefreshCw className="h-3.5 w-3.5 animate-spin" /> Αποστολή…</div>}
             </div>
 
             {/* σημείωση + 3η μελλοντική επιλογή */}
