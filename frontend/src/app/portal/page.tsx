@@ -49,7 +49,9 @@ const dt = (s?: string | null) => (s ? fmtDate(s) : "—");
 const dtl = (s?: string | null) => (s ? fmtDateTime(s) : "—");
 const eur = (c?: number) => new Intl.NumberFormat("el-GR", { style: "currency", currency: "EUR", maximumFractionDigits: 2 }).format((c || 0) / 100);
 
-const TABS = [["rx", "Συνταγές"], ["shop", "Κατάστημα"], ["meds", "Πρόγραμμα λήψης"], ["health", "Υγεία"], ["wallet", "Επιβράβευση"], ["repeats", "Επαναλήψεις"], ["renewals", "Ανεκτέλεστα"], ["assign", "Ανάθεση συνταγής"], ["availability", "Διαθεσιμότητα"], ["appointments", "Ραντεβού"], ["pharmacies", "Φαρμακεία"]] as const;
+const TABS = [["rx", "Συνταγές"], ["shop", "e-Κατάστημα"], ["meds", "Πρόγραμμα λήψης"], ["health", "Υγεία"], ["wallet", "Επιβράβευση"], ["repeats", "Επαναλήψεις"], ["renewals", "Ανεκτέλεστα"], ["assign", "Ανάθεση συνταγής"], ["availability", "Διαθεσιμότητα"], ["appointments", "Ραντεβού"], ["pharmacies", "Φαρμακεία"]] as const;
+// Σύντομες ετικέτες για τη στενή κάτω μπάρα (mobile) — αλλιώς κόβονται άσχημα.
+const NAV_SHORT: Record<string, string> = { shop: "Κατάστημα", meds: "Πρόγραμμα" };
 
 // Εικονίδιο ανά καρτέλα + οι 4 ΒΑΣΙΚΕΣ που μπαίνουν στην κάτω μπάρα (mobile). Οι υπόλοιπες
 // ζουν στο φύλλο «Περισσότερα» ώστε να μη γεμίζει η οθόνη με 10 κουμπιά.
@@ -1111,7 +1113,7 @@ export default function PortalHome() {
             <button key={k} onClick={() => { setTab(k); setShowMore(false); }}
               className={`flex flex-1 flex-col items-center gap-0.5 py-2 text-[10px] font-semibold transition ${on ? "text-brand-600" : "text-slate-400"}`}>
               <I className={`h-[22px] w-[22px] ${on ? "" : "stroke-[1.75]"}`} />
-              <span className="truncate">{TAB_LABEL[k]}</span>
+              <span className="truncate">{NAV_SHORT[k] ?? TAB_LABEL[k]}</span>
             </button>
           );
         })}

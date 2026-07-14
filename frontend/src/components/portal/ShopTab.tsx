@@ -1,7 +1,7 @@
 "use client";
 
 import { Fragment, useEffect, useState } from "react";
-import { Search, ShoppingCart, Plus, Minus, Trash2, Truck, Store, ShieldCheck, Pill, Package, ChevronLeft, ChevronDown, Loader2, MapPin, Check, XCircle, PackageCheck, RefreshCcw, Star } from "lucide-react";
+import { Search, ShoppingCart, ShoppingBag, Plus, Minus, Trash2, Truck, Store, ShieldCheck, Pill, Package, ChevronLeft, ChevronDown, Loader2, MapPin, Check, XCircle, PackageCheck, RefreshCcw, Star } from "lucide-react";
 import { patientApi, API_BASE } from "@/lib/patientClient";
 
 type Product = { barcode: string; name: string; description_long?: string | null; photo_url?: string | null; image_id?: string | null; price_cents: number; type: string; category?: string | null; tags?: string[]; featured?: boolean; discount_pct: number; stock_qty: number };
@@ -36,6 +36,8 @@ export function ShopTab() {
   const [orders, setOrders] = useState<Order[]>([]);
 
   useEffect(() => { patientApi<{ categories: string[]; tags: string[]; settings: Settings }>("/patient/shop/meta").then(setMeta).catch(() => {}); }, []);
+  // Φόρτωσε τις παραγγελίες στην αρχή ώστε το κουμπί «Οι παραγγελίες μου» να δείχνει badge ενεργών.
+  useEffect(() => { patientApi<{ items: Order[] }>("/patient/shop/orders").then((d) => setOrders(d.items)).catch(() => {}); }, []);
   useEffect(() => {
     const tmo = setTimeout(() => {
       patientApi<{ items: Product[] }>(`/patient/shop?q=${encodeURIComponent(q)}&category=${encodeURIComponent(cat)}&tag=${encodeURIComponent(tag)}&sort=${sort}`).then((d) => setProducts(d.items)).catch(() => {});
@@ -64,15 +66,30 @@ export function ShopTab() {
   if (view === "orders") return <Orders orders={orders} setOrders={setOrders} onBack={() => setView("browse")} onReorder={reorder} />;
   if (view === "cart") return <Checkout cart={cart} subtotal={subtotal} settings={meta?.settings} onBack={() => setView("browse")} onDone={() => { setCart({}); setView("orders"); }} dec={dec} add={add} />;
 
+  const activeOrders = orders.filter((o) => !["delivered", "cancelled", "declined"].includes(o.status)).length;
+
   return (
     <div className="space-y-3">
-      {/* Αναζήτηση — ευδιάκριτη, μεγάλη· δίπλα οι «παραγγελίες μου» & «συνδρομές» */}
+      {/* e-Κατάστημα — branding + εύκολη, ευδιάκριτη πρόσβαση στις παραγγελίες μου */}
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-gradient-to-br from-violet-500 to-indigo-500 text-white shadow-sm"><ShoppingBag className="h-5 w-5" /></span>
+          <div className="leading-tight">
+            <div className="text-lg font-extrabold tracking-tight text-slate-900">e-Κατάστημα</div>
+            <div className="text-[11px] text-slate-400">Παράγγειλε online από το φαρμακείο σου</div>
+          </div>
+        </div>
+        <button onClick={() => setView("orders")} className="relative inline-flex shrink-0 items-center gap-1.5 rounded-xl border border-violet-200 bg-violet-50 px-3 py-2 text-xs font-semibold text-violet-700 shadow-sm hover:bg-violet-100">
+          <Package className="h-4 w-4" /> <span className="hidden sm:inline">Οι παραγγελίες μου</span><span className="sm:hidden">Παραγγελίες</span>
+          {activeOrders > 0 && <span className="absolute -right-1.5 -top-1.5 grid h-5 min-w-[20px] place-items-center rounded-full bg-rose-500 px-1 text-[10px] font-bold text-white">{activeOrders}</span>}
+        </button>
+      </div>
+      {/* Αναζήτηση — ευδιάκριτη, μεγάλη· δίπλα οι «συνδρομές» */}
       <div className="flex items-center gap-2">
         <div className="relative flex-1">
           <Search className="pointer-events-none absolute left-3.5 top-1/2 h-[18px] w-[18px] -translate-y-1/2 text-slate-400" />
           <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Αναζήτηση προϊόντος…" className="w-full rounded-2xl border border-slate-300 bg-white py-2.5 pl-11 pr-3 text-[15px] shadow-sm focus:border-violet-400 focus:outline-none focus:ring-2 focus:ring-violet-100" />
         </div>
-        <button onClick={() => { patientApi<{ items: Order[] }>("/patient/shop/orders").then((d) => setOrders(d.items)).catch(() => {}); setView("orders"); }} title="Οι παραγγελίες μου" className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl border border-slate-300 bg-white text-slate-600 shadow-sm"><Package className="h-5 w-5" /></button>
         {meta?.settings.subscription_enabled && <button onClick={() => setView("subs")} title="Οι συνδρομές μου" className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl border border-violet-300 bg-white text-violet-600 shadow-sm"><RefreshCcw className="h-5 w-5" /></button>}
       </div>
       {/* Κατηγορία + ταξινόμηση σε ΜΙΑ συμπαγή σειρά (αντί για ~18 chips που γέμιζαν την οθόνη) */}
@@ -360,6 +377,7 @@ function Subscriptions({ onBack }: { onBack: () => void }) {
 }
 
 function Orders({ orders, setOrders, onBack, onReorder }: { orders: Order[]; setOrders: (o: Order[]) => void; onBack: () => void; onReorder: (o: Order) => void }) {
+  const [oview, setOView] = useState<"active" | "history">("active");
   useEffect(() => {
     patientApi<{ items: Order[] }>("/patient/shop/orders").then((d) => setOrders(d.items)).catch(() => {});
     const id = window.setInterval(() => patientApi<{ items: Order[] }>("/patient/shop/orders").then((d) => setOrders(d.items)).catch(() => {}), 20000);
@@ -367,16 +385,27 @@ function Orders({ orders, setOrders, onBack, onReorder }: { orders: Order[]; set
   }, [setOrders]);
   const active = orders.filter((o) => !["delivered", "cancelled", "declined"].includes(o.status));
   const past = orders.filter((o) => ["delivered", "cancelled", "declined"].includes(o.status));
+  const list = oview === "active" ? active : past;
   return (
     <div className="space-y-3">
-      <button onClick={onBack} className="inline-flex items-center gap-1 text-sm text-slate-500"><ChevronLeft className="h-4 w-4" /> Στο κατάστημα</button>
+      <button onClick={onBack} className="inline-flex items-center gap-1 text-sm text-slate-500"><ChevronLeft className="h-4 w-4" /> Στο e-Κατάστημα</button>
       <div className="text-base font-bold text-slate-800">Οι παραγγελίες μου</div>
+      {/* Διαχωρισμός: ΕΝΕΡΓΕΣ vs ΙΣΤΟΡΙΚΟ */}
+      <div className="flex gap-1.5 rounded-xl bg-slate-100 p-1">
+        {([["active", "Ενεργές", active.length], ["history", "Ιστορικό", past.length]] as const).map(([k, label, n]) => (
+          <button key={k} onClick={() => setOView(k)}
+            className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg py-1.5 text-sm font-semibold transition ${oview === k ? "bg-white text-violet-700 shadow-sm" : "text-slate-500"}`}>
+            {label}<span className={`grid h-5 min-w-[20px] place-items-center rounded-full px-1 text-[10px] font-bold ${oview === k ? (k === "active" ? "bg-violet-100 text-violet-700" : "bg-slate-200 text-slate-600") : "bg-slate-200 text-slate-500"}`}>{n}</span>
+          </button>
+        ))}
+      </div>
       {orders.length === 0 && <div className="py-10 text-center text-sm text-slate-400"><PackageCheck className="mx-auto mb-2 h-8 w-8 text-slate-300" />Δεν έχεις παραγγελίες ακόμη.</div>}
-      {active.length > 0 && <div className="space-y-2">{active.map((o) => <OrderCard key={o._id} o={o} onReorder={onReorder} />)}</div>}
-      {past.length > 0 && <>
-        <div className="pt-1 text-xs font-semibold text-slate-400">Ολοκληρωμένες</div>
-        <div className="space-y-2">{past.map((o) => <OrderCard key={o._id} o={o} onReorder={onReorder} />)}</div>
-      </>}
+      {orders.length > 0 && list.length === 0 && (
+        <div className="py-10 text-center text-sm text-slate-400">
+          {oview === "active" ? <><Package className="mx-auto mb-2 h-8 w-8 text-slate-300" />Καμία ενεργή παραγγελία.</> : <><PackageCheck className="mx-auto mb-2 h-8 w-8 text-slate-300" />Δεν υπάρχει ιστορικό ακόμη.</>}
+        </div>
+      )}
+      {list.length > 0 && <div className="space-y-2">{list.map((o) => <OrderCard key={o._id} o={o} onReorder={onReorder} />)}</div>}
     </div>
   );
 }
