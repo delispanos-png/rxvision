@@ -118,6 +118,7 @@ export default function PortalHome() {
   const [health, setHealth] = useState<Health | null>(null);
   const [sched, setSched] = useState<Schedule | null>(null);
   const [medsView, setMedsView] = useState<"calendar" | "settings">("calendar");  // Πρόγραμμα: Ημερολόγιο | Ρυθμίσεις
+  const [healthDate, setHealthDate] = useState<string | null>(null);   // Υγεία: επιλεγμένη ημερομηνία μετρήσεων
   const [openDay, setOpenDay] = useState<number | null>(() => (new Date().getDay() + 6) % 7);  // accordion: σήμερα ανοιχτή
   const [renewals, setRenewals] = useState<Renewal[] | null>(null);
   const [assignBc, setAssignBc] = useState("");
@@ -914,38 +915,83 @@ export default function PortalHome() {
         {tab === "health" && (() => {
           const lt = health?.latest ?? {}; const bp = lt.bp; const gl = lt.glucose; const wt = lt.weight;
           const bmi = health?.height_cm && wt?.value ? (wt.value / ((health.height_cm / 100) ** 2)) : undefined;
+          const hist = health?.history ?? {};
+          // σύγκριση τρέχουσας vs προηγούμενης (χαμηλότερα = καλύτερα για πίεση/ζάχαρο· βάρος = ουδέτερο)
+          const trend = (k: "bp" | "glucose" | "weight") => {
+            const h = hist[k] ?? []; if (h.length < 2) return null;
+            const cur = k === "bp" ? (h[0].systolic ?? 0) : (h[0].value ?? 0);
+            const prev = k === "bp" ? (h[1].systolic ?? 0) : (h[1].value ?? 0);
+            const d = cur - prev; if (d === 0) return { d, better: null as boolean | null };
+            return { d, better: k === "weight" ? null : d < 0 };  // πίεση/ζάχαρο: μείωση = βελτίωση
+          };
           const tiles = [
-            { k: "bp", label: "Πίεση", val: bp ? `${bp.systolic}/${bp.diastolic}` : "—", sub: bp ? dt(bp.at) : "—", cls: hStat("bp", bp) },
-            { k: "glucose", label: "Ζάχαρο", val: gl ? `${gl.value}` : "—", sub: gl ? `mg/dL · ${dt(gl.at)}` : "—", cls: hStat("glucose", gl) },
-            { k: "weight", label: "Βάρος", val: wt ? `${wt.value}` : "—", sub: wt ? `kg · ${dt(wt.at)}` : "—", cls: "bg-slate-50 text-slate-700" },
-            { k: "bmi", label: "ΔΜΣ", val: bmi ? bmi.toFixed(1) : "—", sub: health?.height_cm ? `ύψος ${health.height_cm}cm` : "—", cls: bmi ? (bmi >= 30 ? "bg-rose-50 text-rose-700" : (bmi >= 25 || bmi < 18.5) ? "bg-amber-50 text-amber-700" : "bg-emerald-50 text-emerald-700") : "bg-slate-50 text-slate-500" },
+            { k: "bp" as const, label: "Πίεση", val: bp ? `${bp.systolic}/${bp.diastolic}` : "—", sub: bp ? dt(bp.at) : "—", cls: hStat("bp", bp), watch: bp && !hStat("bp", bp).includes("emerald") },
+            { k: "glucose" as const, label: "Ζάχαρο", val: gl ? `${gl.value}` : "—", sub: gl ? `mg/dL` : "—", cls: hStat("glucose", gl), watch: gl && !hStat("glucose", gl).includes("emerald") },
+            { k: "weight" as const, label: "Βάρος", val: wt ? `${wt.value}` : "—", sub: wt ? "kg" : "—", cls: "bg-slate-50 text-slate-700", watch: false },
           ];
-          const anyHist = ["bp", "glucose", "weight"].some((k) => (health?.history?.[k]?.length ?? 0) > 0);
+          const watchList = tiles.filter((t) => t.watch).map((t) => t.label);
+          // όλες οι ημερομηνίες μέτρησης (ενοποιημένες) — κάτω, με drill-down
+          const byDate: Record<string, { bp?: HMeas; glucose?: HMeas; weight?: HMeas }> = {};
+          (["bp", "glucose", "weight"] as const).forEach((k) => (hist[k] ?? []).forEach((m) => {
+            const day = (m.at || "").slice(0, 10); if (!day) return;
+            (byDate[day] ??= {})[k] = m;
+          }));
+          const dates = Object.keys(byDate).sort().reverse();
+          const sel = healthDate && byDate[healthDate] ? healthDate : dates[0];
+          const anyHist = dates.length > 0;
+          const fmtM = (k: "bp" | "glucose" | "weight", m?: HMeas) => !m ? "—" : k === "bp" ? `${m.systolic}/${m.diastolic}` : k === "glucose" ? `${m.value} mg/dL` : `${m.value} kg`;
           return (
             <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                {tiles.map((tl) => (
-                  <div key={tl.k} className="rounded-2xl border border-slate-200 bg-white p-4">
-                    <div className="text-xs text-slate-500">{tl.label}</div>
-                    <div className={`mt-1 inline-flex rounded px-1.5 text-xl font-bold ${tl.cls}`}>{tl.val}</div>
-                    <div className="mt-0.5 text-[11px] text-slate-400">{tl.sub}</div>
-                  </div>
-                ))}
-              </div>
-              {(["bp", "glucose", "weight"] as const).map((k) => (health?.history?.[k]?.length ? (
-                <div key={k}>
-                  <div className="mb-1 text-xs font-semibold text-slate-500">{k === "bp" ? "Πίεση" : k === "glucose" ? "Ζάχαρο" : "Βάρος"} — εξέλιξη</div>
-                  <div className="space-y-1">
-                    {health.history[k].map((m, i) => (
-                      <div key={m._id ?? i} className="flex items-center justify-between rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-sm">
-                        <span className="font-medium text-slate-700">{m.kind === "bp" ? `${m.systolic}/${m.diastolic}` : m.value}{m.kind === "glucose" ? " mg/dL" : m.kind === "weight" ? " kg" : ""}</span>
-                        <span className="text-xs text-slate-400">{dt(m.at)}</span>
+              {/* ΤΡΕΧΟΥΣΕΣ (τελευταίες) μετρήσεις + σύγκριση με προηγούμενη */}
+              <div>
+                <div className="mb-2 text-sm font-bold text-slate-700">Τελευταίες μετρήσεις</div>
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                  {tiles.map((tl) => {
+                    const tr = trend(tl.k);
+                    return (
+                      <div key={tl.k} className="rounded-2xl border border-slate-200 bg-white p-4">
+                        <div className="flex items-center justify-between"><span className="text-xs text-slate-500">{tl.label}</span>{tl.watch ? <span className="text-[10px] font-bold text-amber-600">⚠️ προσοχή</span> : tl.val !== "—" && <span className="text-[10px] font-bold text-emerald-600">✓</span>}</div>
+                        <div className={`mt-1 inline-flex rounded px-1.5 text-xl font-bold ${tl.cls}`}>{tl.val}</div>
+                        <div className="mt-0.5 flex items-center gap-1.5 text-[11px]">
+                          <span className="text-slate-400">{tl.sub}</span>
+                          {tr && tr.d !== 0 && <span className={`font-bold ${tr.better === null ? "text-slate-500" : tr.better ? "text-emerald-600" : "text-rose-600"}`}>{tr.d > 0 ? "▲" : "▼"}{Math.abs(tr.d).toFixed(tl.k === "weight" ? 1 : 0)}{tr.better === true ? " ✓" : tr.better === false ? " !" : ""}</span>}
+                        </div>
                       </div>
-                    ))}
+                    );
+                  })}
+                  <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                    <div className="text-xs text-slate-500">ΔΜΣ</div>
+                    <div className={`mt-1 inline-flex rounded px-1.5 text-xl font-bold ${bmi ? (bmi >= 30 ? "bg-rose-50 text-rose-700" : (bmi >= 25 || bmi < 18.5) ? "bg-amber-50 text-amber-700" : "bg-emerald-50 text-emerald-700") : "bg-slate-50 text-slate-500"}`}>{bmi ? bmi.toFixed(1) : "—"}</div>
+                    <div className="mt-0.5 text-[11px] text-slate-400">{health?.height_cm ? `ύψος ${health.height_cm}cm` : "—"}</div>
                   </div>
                 </div>
-              ) : null))}
-              {!anyHist && <Empty icon={Pill} text="Δεν υπάρχουν μετρήσεις ακόμη — καταχωρούνται από το φαρμακείο σου." />}
+                {watchList.length > 0 && <div className="mt-2 rounded-xl bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800">⚠️ Χρειάζονται προσοχή: <b>{watchList.join(", ")}</b> — συζήτησέ το με τον φαρμακοποιό/γιατρό σου.</div>}
+              </div>
+
+              {/* ΗΜΕΡΟΜΗΝΙΕΣ μετρήσεων — κλικ για να δεις τις μετρήσεις εκείνης της μέρας */}
+              {anyHist ? (
+                <div>
+                  <div className="mb-2 text-sm font-bold text-slate-700">Ιστορικό ανά ημερομηνία</div>
+                  <div className="-mx-4 mb-3 flex gap-1.5 overflow-x-auto px-4 pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                    {dates.map((d) => (
+                      <button key={d} onClick={() => setHealthDate(d)} className={`shrink-0 whitespace-nowrap rounded-full border px-3 py-1.5 text-xs font-semibold ${sel === d ? "border-brand-600 bg-brand-600 text-white" : "border-slate-200 bg-white text-slate-600"}`}>{dt(d)}</button>
+                    ))}
+                  </div>
+                  {sel && (
+                    <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                      <div className="mb-2 text-xs font-semibold text-slate-500">Μετρήσεις {dt(sel)}</div>
+                      <div className="grid grid-cols-3 gap-2 text-center">
+                        {(["bp", "glucose", "weight"] as const).map((k) => (
+                          <div key={k} className="rounded-xl bg-slate-50 p-2.5">
+                            <div className="text-[11px] text-slate-500">{k === "bp" ? "Πίεση" : k === "glucose" ? "Ζάχαρο" : "Βάρος"}</div>
+                            <div className={`mt-0.5 text-sm font-bold ${byDate[sel][k] ? "text-slate-800" : "text-slate-300"}`}>{fmtM(k, byDate[sel][k])}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ) : <Empty icon={Pill} text="Δεν υπάρχουν μετρήσεις ακόμη — καταχωρούνται από το φαρμακείο σου." />}
             </div>
           );
         })()}
