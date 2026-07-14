@@ -230,7 +230,7 @@ export default function PortalHome() {
       await patientApi("/patient/meds/reminder", { method: "POST", body: JSON.stringify({ med_key, enabled }) });
       if (enabled) {   // μόλις ενεργοποιήθηκε → ρώτα ώρα λήψης + σχέση με γεύμα
         const th = sched?.therapies.find((t) => t.med_key === med_key);
-        setMedCfg({ med_key, time: th?.time || "08:00", meal: th?.meal || "none", mode: th?.interval_hours ? "interval" : "time", interval: th?.interval_hours || 8 });
+        const pd = th?.per_day || 1; setMedCfg({ med_key, time: th?.time || "08:00", meal: th?.meal || "none", mode: pd > 1 ? "interval" : "time", interval: th?.interval_hours || Math.max(1, Math.round(24 / pd)), per_day: pd });
       } else { setMedCfg((c) => c?.med_key === med_key ? null : c); }
       setSched(await patientApi<Schedule>("/patient/meds/schedule"));   // refresh grid
     } catch { /* revert on next fetch */ }
@@ -251,7 +251,7 @@ export default function PortalHome() {
     } catch { try { setSched(await patientApi<Schedule>("/patient/meds/schedule")); } catch { /* ignore */ } }
   }
   // Ρύθμιση φαρμάκου κατά την ΕΝΕΡΓΟΠΟΙΗΣΗ: ώρα λήψης (24ωρο) ή «κάθε X ώρες» + σχέση με γεύμα.
-  const [medCfg, setMedCfg] = useState<{ med_key: string; time: string; meal: string; mode: "time" | "interval"; interval: number } | null>(null);
+  const [medCfg, setMedCfg] = useState<{ med_key: string; time: string; meal: string; mode: "time" | "interval"; interval: number; per_day: number } | null>(null);
   async function saveMedCfg() {
     if (!medCfg) return;
     try {
@@ -786,7 +786,21 @@ export default function PortalHome() {
               {sched.week.some((d) => d.slots.length > 0) ? (() => {
                 const todayDow = (new Date().getDay() + 6) % 7;
                 const takenSet = new Set((sched.taken_today ?? []).map((t) => `${t.med_key}|${t.slot ?? ""}`));
-                const tmeta: Record<string, { time?: string | null; meal?: string | null }> = Object.fromEntries(sched.therapies.map((t) => [t.med_key, { time: t.time, meal: t.meal }]));
+                const thMap: Record<string, Therapy> = Object.fromEntries(sched.therapies.map((t) => [t.med_key, t]));
+                // Γεννήτρια δόσεων ανά ημέρα: 1×/μέρα → μία ώρα· >1×/μέρα → «κάθε X ώρες» από την ώρα 1ης λήψης.
+                const genDoses = (d: { slots: SlotCell[] }) => {
+                  const dueKeys = Array.from(new Set(d.slots.flatMap((sl) => sl.meds.map((m) => m.med_key))));
+                  const out: { time: string; med_key: string; name: string; dose: string | null; meal?: string | null }[] = [];
+                  dueKeys.forEach((mk) => {
+                    const th = thMap[mk]; if (!th) return;
+                    const pd = th.per_day || 1; const start = th.time || "08:00";
+                    if (pd <= 1) { out.push({ time: start, med_key: mk, name: th.name, dose: th.dose, meal: th.meal }); return; }
+                    const iv = th.interval_hours || Math.max(1, Math.round(24 / pd));
+                    const [h, mn] = start.split(":").map(Number);
+                    for (let i = 0; i < pd; i++) { const tot = (h * 60 + mn + i * iv * 60) % 1440; out.push({ time: `${String(Math.floor(tot / 60)).padStart(2, "0")}:${String(tot % 60).padStart(2, "0")}`, med_key: mk, name: th.name, dose: th.dose, meal: th.meal }); }
+                  });
+                  return out.sort((a, b) => a.time.localeCompare(b.time));
+                };
                 // ΣΗΜΕΡΑ πρώτη & ανοιχτή· οι υπόλοιπες κλειστές (accordion) — κλικ για άνοιγμα.
                 const days = sched.week.filter((d) => d.slots.length > 0)
                   .sort((a, b) => (a.dow === todayDow ? -1 : b.dow === todayDow ? 1 : a.dow - b.dow));
@@ -795,9 +809,9 @@ export default function PortalHome() {
                   {days.map((d) => {
                     const today = d.dow === todayDow;
                     const open = openDay === d.dow;
-                    // πλήθος «να πάρω» σήμερα (ανά ΔΟΣΗ = slot+φάρμακο, μη-ειλημμένα)
-                    const doses = d.slots.flatMap((sl) => sl.meds.map((m) => `${m.med_key}|${sl.slot}`));
-                    const pending = today ? doses.filter((k) => !takenSet.has(k)).length : 0;
+                    // δόσεις της μέρας (γεννημένες ανά ώρα)· πλήθος «να πάρω» = μη-ειλημμένες
+                    const doses = genDoses(d);
+                    const pending = today ? doses.filter((x) => !takenSet.has(`${x.med_key}|${x.time}`)).length : 0;
                     return (
                       <div key={d.dow} className={`overflow-hidden rounded-2xl border ${today ? "border-violet-300 ring-1 ring-violet-200" : "border-slate-200"}`}>
                         <button onClick={() => setOpenDay(open ? null : d.dow)} className="flex w-full items-center justify-between gap-2 bg-white px-3.5 py-2.5 text-left">
@@ -811,29 +825,22 @@ export default function PortalHome() {
                         </button>
                         {open && (
                           <div className="space-y-1.5 border-t border-slate-100 bg-slate-50/40 px-3.5 py-3">
-                            {d.slots.map((sl) => (
-                              <div key={sl.slot} className="flex items-start gap-2">
-                                <div className="flex min-w-0 flex-1 flex-col gap-1">
-                                  {sl.meds.map((m, i) => {
-                                    const taken = today && takenSet.has(`${m.med_key}|${sl.slot}`);
-                                    const meal = tmeta[m.med_key]?.meal; const mtime = tmeta[m.med_key]?.time;
-                                    return (
-                                      <button key={i} onClick={() => { if (today) toggleIntake(m.med_key, sl.slot, taken); }} disabled={!today}
-                                        title={taken ? "Πάτα για αναίρεση" : "Πάτα «Το πήρα»"}
-                                        className={`flex items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs transition ${taken ? "bg-emerald-50 text-emerald-700" : today ? "bg-violet-50 text-violet-800 hover:bg-violet-100" : "bg-white text-slate-600"}`}>
-                                        <span className="min-w-0 flex-1">
-                                          <span className={`block truncate text-sm font-bold ${taken ? "line-through opacity-60" : ""}`}>{m.name}</span>
-                                          <span className="mt-0.5 block truncate text-[11px] text-slate-500">⏰ {mtime || sl.time}{m.dose ? ` · ${m.dose}` : ""}{meal === "before" ? " · 🍽️ πριν" : meal === "after" ? " · 🍽️ μετά" : ""}</span>
-                                        </span>
-                                        {today && (taken
-                                          ? <span className="shrink-0 self-center text-[11px] font-bold">✓ · ↺</span>
-                                          : <span className="shrink-0 self-center rounded-full bg-violet-600 px-2.5 py-1 text-[11px] font-bold text-white">Το πήρα</span>)}
-                                      </button>
-                                    );
-                                  })}
-                                </div>
-                              </div>
-                            ))}
+                            {doses.map((x, i) => {
+                              const taken = today && takenSet.has(`${x.med_key}|${x.time}`);
+                              return (
+                                <button key={i} onClick={() => { if (today) toggleIntake(x.med_key, x.time, taken); }} disabled={!today}
+                                  title={taken ? "Πάτα για αναίρεση" : "Πάτα «Το πήρα»"}
+                                  className={`flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-left transition ${taken ? "bg-emerald-50 text-emerald-700" : today ? "bg-violet-50 text-violet-800 hover:bg-violet-100" : "bg-white text-slate-600"}`}>
+                                  <span className="min-w-0 flex-1">
+                                    <span className={`block truncate text-sm font-bold ${taken ? "line-through opacity-60" : ""}`}>{x.name}</span>
+                                    <span className="mt-0.5 block truncate text-[11px] text-slate-500">⏰ {x.time}{x.dose ? ` · ${x.dose}` : ""}{x.meal === "before" ? " · 🍽️ πριν" : x.meal === "after" ? " · 🍽️ μετά" : ""}</span>
+                                  </span>
+                                  {today && (taken
+                                    ? <span className="shrink-0 self-center text-[11px] font-bold">✓ · ↺</span>
+                                    : <span className="shrink-0 self-center rounded-full bg-violet-600 px-2.5 py-1 text-[11px] font-bold text-white">Το πήρα</span>)}
+                                </button>
+                              );
+                            })}
                           </div>
                         )}
                       </div>
@@ -870,7 +877,7 @@ export default function PortalHome() {
                       </div>
                       {/* όταν ενεργό: ώρα λήψης + σχέση με γεύμα (πάτα για αλλαγή) */}
                       {th.enabled && medCfg?.med_key !== th.med_key && (
-                        <button onClick={() => setMedCfg({ med_key: th.med_key, time: th.time || "08:00", meal: th.meal || "none", mode: th.interval_hours ? "interval" : "time", interval: th.interval_hours || 8 })}
+                        <button onClick={() => setMedCfg({ med_key: th.med_key, time: th.time || "08:00", meal: th.meal || "none", mode: th.interval_hours ? "interval" : "time", interval: th.interval_hours || Math.max(1, Math.round(24 / (th.per_day || 1))), per_day: th.per_day || 1 })}
                           className="mt-2 inline-flex flex-wrap items-center gap-2 rounded-lg bg-violet-50 px-2.5 py-1 text-xs text-violet-700 hover:bg-violet-100">
                           <span className="inline-flex items-center gap-1"><Clock className="h-3.5 w-3.5" /> {th.interval_hours ? `κάθε ${th.interval_hours} ώρες` : (th.time || "—")}</span>
                           <span>{th.meal === "before" ? "🍽️ πριν το γεύμα" : th.meal === "after" ? "🍽️ μετά το γεύμα" : "άσχετο με γεύμα"}</span>
@@ -880,16 +887,17 @@ export default function PortalHome() {
                       {/* φόρμα ρύθμισης (εμφανίζεται στην ενεργοποίηση ή στην «αλλαγή») */}
                       {medCfg?.med_key === th.med_key && (
                         <div className="mt-2 space-y-2 rounded-xl border border-violet-200 bg-violet-50/50 p-2.5">
-                          <div>
-                            {/* τρόπος: συγκεκριμένη ώρα (24ωρο) ή «κάθε X ώρες» από την 1η λήψη */}
-                            <div className="mb-1.5 flex gap-1.5">
-                              {([["time", "Συγκεκριμένη ώρα"], ["interval", "Κάθε X ώρες"]] as const).map(([mv, ml]) => (
-                                <button key={mv} onClick={() => setMedCfg({ ...medCfg, mode: mv })} className={`flex-1 rounded-lg border px-2 py-1.5 text-[11px] font-semibold ${medCfg.mode === mv ? "border-violet-500 bg-violet-600 text-white" : "border-slate-200 bg-white text-slate-600"}`}>{ml}</button>
-                              ))}
-                            </div>
-                            {medCfg.mode === "time" ? (
+                          {medCfg.per_day > 1 ? (
+                            <div className="space-y-2">
+                              <div className="text-[11px] font-medium text-violet-700">💊 {medCfg.per_day} λήψεις/ημέρα</div>
                               <div>
-                                <div className="mb-1 text-[11px] font-medium text-slate-600">⏰ Ώρα λήψης (24ωρο)</div>
+                                <div className="mb-1 text-[11px] font-medium text-slate-600">🔁 Κάθε πόσες ώρες;</div>
+                                <select value={medCfg.interval} onChange={(e) => setMedCfg({ ...medCfg, interval: +e.target.value })} className="w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm focus:border-violet-400 focus:outline-none">
+                                  {[4, 6, 8, 12].map((h) => <option key={h} value={h}>κάθε {h} ώρες</option>)}
+                                </select>
+                              </div>
+                              <div>
+                                <div className="mb-1 text-[11px] font-medium text-slate-600">⏰ Ώρα 1ης λήψης (24ωρο)</div>
                                 <div className="flex items-center gap-1.5">
                                   <select value={(medCfg.time || "08:00").split(":")[0]} onChange={(e) => setMedCfg({ ...medCfg, time: `${e.target.value}:${(medCfg.time || "08:00").split(":")[1] || "00"}` })} className="flex-1 rounded-lg border border-slate-300 px-2 py-1.5 text-sm focus:border-violet-400 focus:outline-none">
                                     {Array.from({ length: 24 }, (_, h) => String(h).padStart(2, "0")).map((h) => <option key={h} value={h}>{h}</option>)}
@@ -900,18 +908,22 @@ export default function PortalHome() {
                                   </select>
                                 </div>
                               </div>
-                            ) : (
-                              <div>
-                                <div className="mb-1 text-[11px] font-medium text-slate-600">🔁 Κάθε πόσες ώρες;</div>
-                                <div className="flex items-center gap-2">
-                                  <select value={medCfg.interval} onChange={(e) => setMedCfg({ ...medCfg, interval: +e.target.value })} className="flex-1 rounded-lg border border-slate-300 px-2 py-1.5 text-sm focus:border-violet-400 focus:outline-none">
-                                    {[4, 6, 8, 12, 24].map((h) => <option key={h} value={h}>κάθε {h} ώρες</option>)}
-                                  </select>
-                                </div>
-                                <div className="mt-1 text-[10px] text-slate-400">Οι δόσεις υπολογίζονται από την ώρα που θα δηλώσεις ότι πήρες την 1η.</div>
+                              <div className="rounded-lg bg-white/70 px-2 py-1 text-[10px] text-slate-500">Δόσεις: {Array.from({ length: medCfg.per_day }, (_, i) => { const [h, mn] = medCfg.time.split(":").map(Number); const tot = ((h * 60 + mn + i * medCfg.interval * 60) % 1440); return `${String(Math.floor(tot / 60)).padStart(2, "0")}:${String(tot % 60).padStart(2, "0")}`; }).join(" · ")}</div>
+                            </div>
+                          ) : (
+                            <div>
+                              <div className="mb-1 text-[11px] font-medium text-slate-600">⏰ Ώρα λήψης (24ωρο)</div>
+                              <div className="flex items-center gap-1.5">
+                                <select value={(medCfg.time || "08:00").split(":")[0]} onChange={(e) => setMedCfg({ ...medCfg, time: `${e.target.value}:${(medCfg.time || "08:00").split(":")[1] || "00"}` })} className="flex-1 rounded-lg border border-slate-300 px-2 py-1.5 text-sm focus:border-violet-400 focus:outline-none">
+                                  {Array.from({ length: 24 }, (_, h) => String(h).padStart(2, "0")).map((h) => <option key={h} value={h}>{h}</option>)}
+                                </select>
+                                <span className="font-bold text-slate-400">:</span>
+                                <select value={(medCfg.time || "08:00").split(":")[1] || "00"} onChange={(e) => setMedCfg({ ...medCfg, time: `${(medCfg.time || "08:00").split(":")[0]}:${e.target.value}` })} className="flex-1 rounded-lg border border-slate-300 px-2 py-1.5 text-sm focus:border-violet-400 focus:outline-none">
+                                  {["00", "05", "10", "15", "20", "25", "30", "35", "40", "45", "50", "55"].map((mn) => <option key={mn} value={mn}>{mn}</option>)}
+                                </select>
                               </div>
-                            )}
-                          </div>
+                            </div>
+                          )}
                           <div>
                             <div className="mb-1 text-[11px] font-medium text-slate-600">🍽️ Σε σχέση με το γεύμα</div>
                             <div className="flex gap-1.5">
