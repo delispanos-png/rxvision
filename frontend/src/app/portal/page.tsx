@@ -246,6 +246,8 @@ export default function PortalHome() {
     try {
       const d = await patientApi<{ access_token: string }>("/patient/auth/select-pharmacy", { method: "POST", body: JSON.stringify({ tenant_id }) });
       patientTokens.set(d.access_token, window.localStorage.getItem("patient_refresh_token"));
+      // η επιλογή φαρμακείου ισχύει ΠΑΝΤΟΥ: ερωτήματα διαθεσιμότητας & ραντεβού στοχεύουν το ίδιο
+      setAvailTarget(tenant_id); setApptTarget(tenant_id);
       if (gotoTab) setTab(gotoTab);
       await load();
     } catch { alert("Δεν ήταν δυνατή η επιλογή του φαρμακείου — δοκίμασε ξανά."); }
@@ -738,7 +740,7 @@ export default function PortalHome() {
         )}
 
         {/* ── ΥΓΕΙΑ / ΜΕΤΡΗΣΕΙΣ ─────────────────────────────── */}
-        {tab === "shop" && <ShopTab />}
+        {tab === "shop" && <ShopTab key={me.active_tenant ?? "none"} />}
 
         {tab === "meds" && (
           <div className="space-y-4">
