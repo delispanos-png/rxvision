@@ -10,7 +10,7 @@ import { useT } from "@/store/prefStore";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
 import { fmtDateTime } from "@/lib/formatters";
 
-type Avail = { id?: string; _id?: string; query: string; medicine_name?: string | null; patient_name?: string; patient_phone?: string; status: string; answer?: string | null; created_at: string };
+type Avail = { id?: string; _id?: string; query: string; medicine_name?: string | null; patient_name?: string; patient_phone?: string; status: string; answer?: string | null; created_at: string; pickup_intent?: { coming: boolean; date?: string | null; at?: string } | null };
 type Appt = { id?: string; _id?: string; service_name: string; kind?: string; note?: string; patient_name?: string; patient_phone?: string; requested_at: string; status: string };
 type Slot = { day: number; start: string; end: string };
 type DateRange = { start_date: string; end_date: string; start: string; end: string };
@@ -165,6 +165,20 @@ function AvailabilityTab() {
             {a.answer ? (
               <div className="mt-1 text-sm text-emerald-700">{t("Απάντησες", "Answered")}: {a.answer}</div>
             ) : (
+              <></>
+            )}
+            {a.pickup_intent && (
+              a.pickup_intent.coming ? (
+                <div className="mt-1.5 inline-flex items-center gap-1.5 rounded-lg bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">
+                  🛍️ {t("Ο πελάτης θα περάσει να το πάρει", "Customer will pick it up")}{a.pickup_intent.date ? ` · ${a.pickup_intent.date.split("-").reverse().join("/")}` : ""}
+                </div>
+              ) : (
+                <div className="mt-1.5 inline-flex items-center gap-1.5 rounded-lg bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-500 dark:bg-slate-800">
+                  {t("Ο πελάτης δεν θα περάσει", "Customer won't pick it up")}
+                </div>
+              )
+            )}
+            {!a.answer && (
               <div className="mt-2 flex gap-2">
                 <input value={answers[id] ?? ""} onChange={(e) => setAnswers({...answers, [id]: e.target.value })}
                   placeholder={t("Απάντηση (π.χ. Ναι, διαθέσιμο)", "Answer (e.g. Yes, in stock)")}

@@ -379,6 +379,32 @@ async def notifications(ctx: PatientContext = Depends(get_patient_context)):
     return {"items": await PatientAccountRepository().notifications(ctx.account_id)}
 
 
+class NotifDismissIn(BaseModel):
+    id: str = Field(..., max_length=120)
+
+
+@router.post("/notifications/dismiss")
+async def dismiss_notification(body: NotifDismissIn, ctx: PatientContext = Depends(get_patient_context)):
+    """«Το είδα» — να μην ξαναεμφανιστεί αυτή η ειδοποίηση."""
+    return {"ok": await PatientAccountRepository().dismiss_notification(ctx.account_id, body.id)}
+
+
+class PickupIntentIn(BaseModel):
+    id: str = Field(..., max_length=120)     # notif id (av-<reqid>)
+    coming: bool = True                       # θα περάσω να το πάρω;
+    date: str | None = None                   # ISO ημερομηνία (YYYY-MM-DD), προαιρετικά
+
+
+@router.post("/notifications/pickup")
+async def notification_pickup(body: PickupIntentIn, ctx: PatientContext = Depends(get_patient_context)):
+    """Απάντηση διαθεσιμότητας: ο ασθενής δηλώνει αν θα περάσει να το πάρει (+πότε)."""
+    ok = await PatientAccountRepository().set_pickup_intent(
+        ctx.account_id, body.id, coming=body.coming, date=body.date)
+    if not ok:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "bad_notif")
+    return {"ok": True}
+
+
 # ── web push (VAPID) — phone notifications even when the app is closed ──
 class PushKeys(BaseModel):
     p256dh: str = Field(..., max_length=200)

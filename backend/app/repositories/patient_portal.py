@@ -368,11 +368,43 @@ class PatientAccountRepository:
         return jsonsafe(rows)
 
     # ── on-demand notifications feed (across the patient's pharmacies) ──
+    async def dismiss_notification(self, account_id, notif_id: str) -> bool:
+        """Ο ασθενής «είδε» μια ειδοποίηση → μη την ξαναδείξεις. Οι ειδοποιήσεις υπολογίζονται
+        on-demand (δεν αποθηκεύονται), οπότε κρατάμε ΜΟΝΟ τα dismissed ids ανά account."""
+        oid = _oid(account_id)
+        if not oid or not notif_id:
+            return False
+        await self.db["patient_notif_dismissed"].update_one(  # tenant-ok: patient's own by account
+            {"account_id": oid, "notif_id": str(notif_id)},
+            {"$set": {"account_id": oid, "notif_id": str(notif_id),
+                      "at": datetime.now(tz=timezone.utc)}}, upsert=True)
+        return True
+
+    async def set_pickup_intent(self, account_id, notif_id: str, *, coming: bool,
+                                date: str | None) -> bool:
+        """Απάντηση διαθεσιμότητας (`av-<reqid>`): ο ασθενής δηλώνει αν θα περάσει να το πάρει
+        (+ πότε) → γράφεται στο availability_request ώστε να το δει ο φαρμακοποιός, και η
+        ειδοποίηση θεωρείται «ειδωμένη» (dismiss)."""
+        oid = _oid(account_id)
+        if not oid or not str(notif_id).startswith("av-"):
+            return False
+        rid = _oid(str(notif_id)[3:])
+        if not rid:
+            return False
+        await self.db["availability_requests"].update_one(  # tenant-ok: patient's own by account
+            {"_id": rid, "account_id": oid},
+            {"$set": {"pickup_intent": {"coming": bool(coming), "date": date or None,
+                                        "at": datetime.now(tz=timezone.utc)}}})
+        await self.dismiss_notification(account_id, notif_id)
+        return True
+
     async def notifications(self, account_id) -> list[dict]:
         oid = _oid(account_id)
         if not oid:
             return []
         now = datetime.now(tz=timezone.utc)
+        dismissed = {d["notif_id"] async for d in                    # ήδη «ειδωμένες» → εξαίρεση
+                     self.db["patient_notif_dismissed"].find({"account_id": oid}, {"notif_id": 1})}
         out: list[dict] = []
         # 1) repeats opening within 7 days (per linked pharmacy)
         for ln in await self.links(account_id):
@@ -416,6 +448,7 @@ class PatientAccountRepository:
             body = label + (f" — {when.strftime('%d/%m %H:%M')}" if when else "")
             out.append({"id": f"apst-{a['_id']}-{a.get('status')}", "type": "appointment_status",
                         "when": a.get("updated_at"), "title": title, "body": body})
+        out = [o for o in out if o["id"] not in dismissed]   # κρύψε τις «ειδωμένες»
         out.sort(key=lambda x: x.get("when") or now)
         return jsonsafe(out)
 

@@ -122,6 +122,7 @@ export default function PortalHome() {
   const [appt, setAppt] = useState({ service_name: "", date: "", time: "" });
   const [notifs, setNotifs] = useState<Notif[]>([]);
   const [showNotifs, setShowNotifs] = useState(false);
+  const [pickupDate, setPickupDate] = useState("");   // ημ/νία παραλαβής για ειδοποίηση διαθεσιμότητας
   const [expanded, setExpanded] = useState<string | null>(null);
   const [detail, setDetail] = useState<RxDetail | null>(null);
   const [pickupFor, setPickupFor] = useState<string | null>(null);
@@ -252,6 +253,18 @@ export default function PortalHome() {
     patientApi<{ items: Avail[] }>("/patient/availability").then((d) => setAvail(d.items));
   }
   const reloadRxReqs = () => patientApi<{ items: RxReq[] }>("/patient/rx-requests").then((d) => setRxReqs(d.items)).catch(() => {});
+  // «Το είδα» — κρύψε τοπικά αμέσως + μόνιμα στο backend (δεν ξαναεμφανίζεται).
+  async function dismissNotif(id: string) {
+    setNotifs((ns) => ns.filter((n) => n.id !== id));
+    if (pickupFor === id) { setPickupFor(null); setPickupDate(""); }
+    try { await patientApi("/patient/notifications/dismiss", { method: "POST", body: JSON.stringify({ id }) }); } catch { /* ignore */ }
+  }
+  // Απάντηση διαθεσιμότητας → «θα περάσω να το πάρω» (+ημ/νία) ή «δεν θα περάσω»· ενημερώνει το φαρμακείο & το κλείνει.
+  async function notifPickup(id: string, coming: boolean, date?: string) {
+    setNotifs((ns) => ns.filter((n) => n.id !== id));
+    setPickupFor(null); setPickupDate("");
+    try { await patientApi("/patient/notifications/pickup", { method: "POST", body: JSON.stringify({ id, coming, date: date || null }) }); } catch { /* ignore */ }
+  }
   async function joinLoyalty() {
     setAssignBusy(true);
     try { await patientApi("/patient/loyalty/join", { method: "POST" }); setLoyalty(await patientApi<Loyalty>("/patient/loyalty")); }
@@ -407,12 +420,33 @@ export default function PortalHome() {
             </div>
             <ul className="divide-y divide-brand-100/60">
               {notifs.map((n) => (
-                <li key={n.id} className="flex items-start gap-3 px-4 py-3">
-                  <span className="mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-white text-brand-600 shadow-sm"><Sparkles className="h-3.5 w-3.5" /></span>
-                  <div className="min-w-0">
-                    <div className="break-words text-sm font-semibold text-slate-800">{n.title}</div>
-                    <div className="break-words text-sm text-slate-600">{n.body}</div>
+                <li key={n.id} className="px-4 py-3">
+                  <div className="flex items-start gap-3">
+                    <span className="mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-white text-brand-600 shadow-sm"><Sparkles className="h-3.5 w-3.5" /></span>
+                    <div className="min-w-0 flex-1">
+                      <div className="break-words text-sm font-semibold text-slate-800">{n.title}</div>
+                      <div className="break-words text-sm text-slate-600">{n.body}</div>
+                    </div>
+                    <button onClick={() => dismissNotif(n.id)} title="Το είδα" className="grid h-6 w-6 shrink-0 place-items-center rounded-lg text-slate-400 hover:bg-white/70 hover:text-slate-600"><X className="h-4 w-4" /></button>
                   </div>
+                  {/* ενέργειες */}
+                  {n.type === "answer" && pickupFor !== n.id && (
+                    <div className="mt-2 flex flex-wrap items-center gap-2 pl-10">
+                      <button onClick={() => { setPickupFor(n.id); setPickupDate(""); }} className="inline-flex items-center gap-1 rounded-lg bg-brand-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-brand-700"><CalendarPlus className="h-3.5 w-3.5" /> Θα περάσω να το πάρω</button>
+                      <button onClick={() => dismissNotif(n.id)} className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50"><CheckCircle2 className="h-3.5 w-3.5" /> Το είδα</button>
+                    </div>
+                  )}
+                  {n.type === "answer" && pickupFor === n.id && (
+                    <div className="mt-2 space-y-2 rounded-xl border border-brand-200 bg-white/70 p-2.5 pl-3">
+                      <div className="text-xs font-medium text-slate-600">Πότε θα περάσεις; <span className="text-slate-400">(προαιρετικό)</span></div>
+                      <DateInput value={pickupDate} onChange={setPickupDate} min={new Date().toISOString().slice(0, 10)} className="w-full" />
+                      <div className="flex flex-wrap gap-2">
+                        <button onClick={() => notifPickup(n.id, true, pickupDate)} className="inline-flex items-center gap-1 rounded-lg bg-brand-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand-700"><CheckCircle2 className="h-3.5 w-3.5" /> Στείλε στο φαρμακείο</button>
+                        <button onClick={() => notifPickup(n.id, false)} className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50">Δεν θα περάσω</button>
+                        <button onClick={() => { setPickupFor(null); setPickupDate(""); }} className="px-2 py-1.5 text-xs text-slate-400 hover:text-slate-600">Άκυρο</button>
+                      </div>
+                    </div>
+                  )}
                 </li>
               ))}
             </ul>
