@@ -142,16 +142,25 @@ async def select_pharmacy(body: SelectIn, ctx: PatientContext = Depends(get_pati
 @router.get("/me")
 async def me(ctx: PatientContext = Depends(get_patient_context)):
     from app.repositories.patient_portal import PatientAccountRepository
+    from app.services.auth_service import resolve_tenant_modules, tenant_has
+    from app.repositories.loyalty import LoyaltyRepository
     repo = PatientAccountRepository()
     acc = await repo.get(ctx.account_id)
     if not acc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "account_not_found")
+    # Δυνατότητες του ΕΝΕΡΓΟΥ φαρμακείου → η πύλη κρύβει καρτέλες που δεν προσφέρει (Κατάστημα/Επιβράβευση).
+    mods = await resolve_tenant_modules(ctx.tenant_id)
+    try:
+        loy_on = bool((await LoyaltyRepository(tenant_id=ctx.tenant_id).config()).get("enabled"))
+    except Exception:  # noqa: BLE001
+        loy_on = False
     return {
         "profile": {"first_name": acc.get("first_name"), "last_name": acc.get("last_name"),
                     "email": acc.get("email"), "phone": acc.get("phone")},
         "active_tenant": ctx.tenant_id,
         "favorite_tenant": acc.get("favorite_tenant_id"),
         "pharmacies": await repo.links(ctx.account_id),
+        "caps": {"shop": tenant_has(mods, "order_delivery"), "loyalty": loy_on},
     }
 
 

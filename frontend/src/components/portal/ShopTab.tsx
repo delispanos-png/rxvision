@@ -4,6 +4,26 @@ import { Fragment, useEffect, useState } from "react";
 import { Search, ShoppingCart, ShoppingBag, Plus, Minus, Trash2, Truck, Store, ShieldCheck, Pill, Package, ChevronLeft, ChevronDown, Loader2, MapPin, Check, XCircle, PackageCheck, RefreshCcw, Star } from "lucide-react";
 import { patientApi, API_BASE } from "@/lib/patientClient";
 
+// Emoji ανά θεραπευτική/εμπορική κατηγορία (keyword match) — «εικονίδιο» μέσα στο native select.
+const _CAT_EMOJI: [string, string][] = [
+  ["καρδι", "❤️"], ["αντιβιοτ", "🦠"], ["αντιλοιμ", "🦠"], ["ψυχοφ", "🧠"], ["νευρολογ", "🧠"],
+  ["αναλγητ", "💊"], ["αντιπυρετ", "🌡️"], ["αντιφλεγμον", "🦴"], ["μυοσκελετ", "🦴"], ["ορθοπεδ", "🦴"],
+  ["γαστρεντ", "🫄"], ["διαβητ", "🩸"], ["μεταβολ", "🩸"], ["αναπνευστ", "🫁"], ["ασθμα", "🫁"],
+  ["βηχ", "🤧"], ["κρυολ", "🤧"], ["δερματολογ", "🧴"], ["οφθαλμ", "👁️"], ["ωρλ", "👂"],
+  ["ορμον", "🦋"], ["θυρεοειδ", "🦋"], ["ουρογεν", "🚻"], ["γυναικολογ", "🌸"], ["αιμα", "🩸"],
+  ["αντιπηκτ", "🩸"], ["ογκολογ", "🎗️"], ["ανοσολογ", "🎗️"], ["εμβολ", "💉"], ["βιταμιν", "🍊"],
+  ["συμπληρ", "🍊"], ["καλλυντ", "💄"], ["αντηλιακ", "☀️"], ["προσωπ", "🧖"], ["σωματ", "🧴"],
+  ["μαλλι", "💇"], ["βρεφ", "🍼"], ["παιδ", "🧸"], ["εγκυμ", "🤰"], ["μαμα", "🤱"],
+  ["στοματ", "🦷"], ["πιεσομ", "🩺"], ["ιατροτεχν", "🩺"], ["αντισηπτ", "🧼"], ["υγιειν", "🧼"],
+  ["σεξουαλ", "💗"], ["διαιτητ", "🥗"], ["γλουτεν", "🥗"], ["φυτικ", "🌿"], ["ομοιοπαθ", "🌿"],
+  ["επιδεσμ", "🩹"], ["διαφορα", "📦"], ["λοιπα", "📦"],
+];
+function catEmoji(c: string): string {
+  const s = (c || "").toLowerCase();
+  for (const [kw, e] of _CAT_EMOJI) if (s.includes(kw)) return e;
+  return "💊";
+}
+
 type Product = { barcode: string; name: string; description_long?: string | null; photo_url?: string | null; image_id?: string | null; price_cents: number; type: string; category?: string | null; tags?: string[]; featured?: boolean; discount_pct: number; stock_qty: number };
 const isBackorder = (p: Product) => (p.stock_qty ?? 0) <= 0;             // χωρίς απόθεμα → κατόπιν παραγγελίας
 const capOf = (p: Product) => isBackorder(p) ? 99 : p.stock_qty;        // backorder → επιτρέπεται προσθήκη
@@ -97,8 +117,8 @@ export function ShopTab() {
         {!!meta?.categories.length && (
           <div className="relative flex-1">
             <select value={cat} onChange={(e) => setCat(e.target.value)} className="w-full appearance-none rounded-xl border border-slate-200 bg-white py-2 pl-3 pr-8 text-sm font-medium text-slate-700 shadow-sm focus:border-violet-400 focus:outline-none focus:ring-2 focus:ring-violet-100">
-              <option value="">Όλες οι κατηγορίες</option>
-              {meta.categories.map((c) => <option key={c} value={c}>{c}</option>)}
+              <option value="">🗂️ Όλες οι κατηγορίες</option>
+              {meta.categories.map((c) => <option key={c} value={c}>{catEmoji(c)} {c}</option>)}
             </select>
             <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
           </div>
