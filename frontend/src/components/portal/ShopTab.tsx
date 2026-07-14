@@ -90,6 +90,20 @@ export function ShopTab() {
 
   return (
     <div className="space-y-3">
+      {/* ΚΑΛΑΘΙ — ευδιάκριτο, sticky πάνω-πάνω μόλις προσθέσεις είδος (πριν ήταν αόρατο) */}
+      {count > 0 && (
+        <button onClick={() => setView("cart")}
+          className="sticky top-2 z-20 flex w-full items-center justify-between gap-2 rounded-2xl bg-gradient-to-r from-violet-600 to-indigo-600 px-4 py-3 text-white shadow-lg shadow-violet-500/30 ring-1 ring-white/20">
+          <span className="flex items-center gap-2 text-sm font-bold">
+            <span className="relative grid h-8 w-8 place-items-center rounded-xl bg-white/20">
+              <ShoppingCart className="h-[18px] w-[18px]" />
+              <span className="absolute -right-1.5 -top-1.5 grid h-5 min-w-[20px] place-items-center rounded-full bg-rose-500 px-1 text-[10px] font-bold">{count}</span>
+            </span>
+            Το καλάθι μου
+          </span>
+          <span className="flex items-center gap-2 text-sm font-extrabold">{eur(subtotal)} <span className="rounded-lg bg-white/20 px-2.5 py-1 text-xs">Ολοκλήρωση →</span></span>
+        </button>
+      )}
       {/* e-Κατάστημα — branding + εύκολη, ευδιάκριτη πρόσβαση στις παραγγελίες μου */}
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-2">

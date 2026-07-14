@@ -118,6 +118,7 @@ export default function PortalHome() {
   const [health, setHealth] = useState<Health | null>(null);
   const [sched, setSched] = useState<Schedule | null>(null);
   const [medsView, setMedsView] = useState<"calendar" | "settings">("calendar");  // Πρόγραμμα: Ημερολόγιο | Ρυθμίσεις
+  const [openDay, setOpenDay] = useState<number | null>(() => (new Date().getDay() + 6) % 7);  // accordion: σήμερα ανοιχτή
   const [renewals, setRenewals] = useState<Renewal[] | null>(null);
   const [assignBc, setAssignBc] = useState("");
   const [assignNote, setAssignNote] = useState("");
@@ -756,32 +757,59 @@ export default function PortalHome() {
              : medsView === "calendar" ? (<>
               {/* ── ΗΜΕΡΟΛΟΓΙΟ ── */}
               {!!sched.streak && <div className="inline-flex items-center gap-1.5 rounded-full bg-orange-100 px-3 py-1 text-xs font-bold text-orange-700">🔥 {sched.streak} {sched.streak === 1 ? "μέρα" : "μέρες"} συνεπής λήψη στη σειρά!</div>}
-              {sched.week.some((d) => d.slots.length > 0) ? (
-                <div>
-                  <div className="mb-2 text-sm font-semibold text-slate-700">📅 Εβδομαδιαίο πρόγραμμα</div>
-                  <div className="space-y-2">
-                    {sched.week.map((d) => {
-                      const today = ((new Date().getDay() + 6) % 7) === d.dow;
-                      if (!d.slots.length) return null;
-                      return (
-                        <div key={d.dow} className={`rounded-2xl border p-3 ${today ? "border-violet-300 ring-1 ring-violet-200" : "border-slate-200"}`}>
-                          <div className="mb-1.5 text-xs font-bold text-slate-700">{DOW[d.dow]}{today && <span className="ml-1 rounded-full bg-violet-600 px-1.5 text-[10px] text-white">σήμερα</span>}</div>
-                          <div className="space-y-1.5">
+              {sched.week.some((d) => d.slots.length > 0) ? (() => {
+                const todayDow = (new Date().getDay() + 6) % 7;
+                // ΣΗΜΕΡΑ πρώτη & ανοιχτή· οι υπόλοιπες κλειστές (accordion) — κλικ για άνοιγμα.
+                const days = sched.week.filter((d) => d.slots.length > 0)
+                  .sort((a, b) => (a.dow === todayDow ? -1 : b.dow === todayDow ? 1 : a.dow - b.dow));
+                return (
+                <div className="space-y-2">
+                  {days.map((d) => {
+                    const today = d.dow === todayDow;
+                    const open = openDay === d.dow;
+                    // πλήθος «να πάρω» σήμερα (μη-ειλημμένα)
+                    const meds = d.slots.flatMap((sl) => sl.meds);
+                    const pending = today ? meds.filter((m) => !tookToday[m.med_key]).length : 0;
+                    return (
+                      <div key={d.dow} className={`overflow-hidden rounded-2xl border ${today ? "border-violet-300 ring-1 ring-violet-200" : "border-slate-200"}`}>
+                        <button onClick={() => setOpenDay(open ? null : d.dow)} className="flex w-full items-center justify-between gap-2 bg-white px-3.5 py-2.5 text-left">
+                          <span className="flex items-center gap-2 text-sm font-bold text-slate-700">
+                            {DOW[d.dow]}
+                            {today && <span className="rounded-full bg-violet-600 px-1.5 py-0.5 text-[10px] text-white">σήμερα</span>}
+                            {today && pending > 0 && <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-700">{pending} να πάρω</span>}
+                            {today && pending === 0 && <span className="rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700">✓ όλα</span>}
+                          </span>
+                          {open ? <ChevronUp className="h-4 w-4 shrink-0 text-slate-400" /> : <ChevronDown className="h-4 w-4 shrink-0 text-slate-400" />}
+                        </button>
+                        {open && (
+                          <div className="space-y-1.5 border-t border-slate-100 bg-slate-50/40 px-3.5 py-3">
                             {d.slots.map((sl) => (
                               <div key={sl.slot} className="flex items-start gap-2">
-                                <span className="mt-0.5 w-14 shrink-0 rounded-md bg-slate-100 px-1.5 py-0.5 text-center text-[11px] font-semibold text-slate-600">{sl.time}</span>
-                                <div className="flex flex-wrap gap-1">
-                                  {sl.meds.map((m, i) => <span key={i} className="rounded-md bg-violet-50 px-2 py-0.5 text-[11px] text-violet-700">{m.dose ? `${m.dose} · ` : ""}{m.name}</span>)}
+                                <span className="mt-0.5 w-14 shrink-0 rounded-md bg-white px-1.5 py-1 text-center text-[11px] font-semibold text-slate-600 shadow-sm">{sl.time}</span>
+                                <div className="flex min-w-0 flex-1 flex-col gap-1">
+                                  {sl.meds.map((m, i) => {
+                                    const taken = today && !!tookToday[m.med_key];
+                                    return (
+                                      <button key={i} onClick={() => { if (today && !taken) takeMed(m.med_key); }} disabled={!today || taken}
+                                        className={`flex items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs transition ${taken ? "bg-emerald-50 text-emerald-700" : today ? "bg-violet-50 text-violet-800 hover:bg-violet-100" : "bg-white text-slate-600"}`}>
+                                        <span className={`min-w-0 truncate ${taken ? "line-through opacity-70" : ""}`}>{m.dose ? `${m.dose} · ` : ""}{m.name}</span>
+                                        {today && (taken
+                                          ? <span className="shrink-0 text-[11px] font-bold">✓ το πήρα</span>
+                                          : <span className="shrink-0 rounded-full bg-violet-600 px-2 py-0.5 text-[10px] font-bold text-white">Το πήρα</span>)}
+                                      </button>
+                                    );
+                                  })}
                                 </div>
                               </div>
                             ))}
                           </div>
-                        </div>
-                      );
-                    })}
-                  </div>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
-              ) : <p className="rounded-xl border border-dashed border-slate-300 p-6 text-center text-sm text-slate-400">Δεν έχεις ενεργές υπενθυμίσεις.<br />Πήγαινε στις <b>Ρυθμίσεις</b> και ενεργοποίησε ποιες αγωγές θες να σου θυμίζουμε.</p>}
+                );
+              })() : <p className="rounded-xl border border-dashed border-slate-300 p-6 text-center text-sm text-slate-400">Δεν έχεις ενεργές υπενθυμίσεις.<br />Πήγαινε στις <b>Ρυθμίσεις</b> και ενεργοποίησε ποιες αγωγές θες να σου θυμίζουμε.</p>}
              </>) : (<>
               {/* ── ΡΥΘΜΙΣΕΙΣ (ποια αγωγή θέλω ενημέρωση) ── */}
               <div className="rounded-2xl bg-gradient-to-br from-violet-50 to-indigo-50 p-4">
