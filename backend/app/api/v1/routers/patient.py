@@ -150,6 +150,7 @@ async def me(ctx: PatientContext = Depends(get_patient_context)):
         "profile": {"first_name": acc.get("first_name"), "last_name": acc.get("last_name"),
                     "email": acc.get("email"), "phone": acc.get("phone")},
         "active_tenant": ctx.tenant_id,
+        "favorite_tenant": acc.get("favorite_tenant_id"),
         "pharmacies": await repo.links(ctx.account_id),
     }
 
@@ -448,10 +449,23 @@ async def nearby(lat: float, lon: float, ctx: PatientContext = Depends(get_patie
 
 @router.get("/pharmacies/directory")
 async def pharmacies_directory(ctx: PatientContext = Depends(get_patient_context)):
-    """Κατάλογος ΟΛΩΝ των φαρμακείων του δικτύου (με ενεργή πύλη) + ζωντανή κατάσταση + «δικό μου»."""
+    """Κατάλογος ΟΛΩΝ των φαρμακείων του δικτύου (με ενεργή πύλη) + κατάσταση + «δικό μου»/«αγαπημένο»."""
     repo = PatientAccountRepository()
     linked = {l["tenant_id"] for l in await repo.links(ctx.account_id)}
-    return {"items": await repo.directory(linked_ids=linked)}
+    acc = await repo.get(ctx.account_id)
+    fav = (acc or {}).get("favorite_tenant_id")
+    return {"items": await repo.directory(linked_ids=linked, favorite_id=fav), "favorite": fav,
+            "active_tenant": ctx.tenant_id}
+
+
+class FavoriteIn(BaseModel):
+    tenant_id: str = Field(..., max_length=80)
+
+
+@router.post("/pharmacies/favorite")
+async def set_favorite_pharmacy(body: FavoriteIn, ctx: PatientContext = Depends(get_patient_context)):
+    """Δήλωση/αναίρεση «αγαπημένου» φαρμακείου (toggle) — γίνεται προεπιλεγμένο active στο login."""
+    return {"favorite": await PatientAccountRepository().set_favorite(ctx.account_id, body.tenant_id)}
 
 
 @router.get("/medicines/search")

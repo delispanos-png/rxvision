@@ -173,8 +173,11 @@ class PatientAuthService:
         await self.repo.revoke_tokens(account_id)
 
     async def select_pharmacy(self, account_id: str, tenant_id: str) -> str | None:
-        """Re-mint an access token for a different (already-linked) pharmacy."""
-        link = await self.repo.link_for(account_id, tenant_id)
+        """Re-mint an access token for another pharmacy. Λειτουργεί για ΟΠΟΙΟΔΗΠΟΤΕ φαρμακείο με
+        ενεργή πύλη: αν ο πελάτης δεν είναι ήδη linked (δεν έχει ιστορικό εκεί), δημιουργείται
+        «καρτέλα χωρίς κίνηση» + link on-the-fly ώστε να μπορεί να το εξυπηρετηθεί (ερωτήματα/
+        αγορές/ανάθεση). Το ιστορικό μένει ανά φαρμακείο (tenant-scoped)."""
+        link = await self.repo.link_or_create(account_id, tenant_id)
         if not link:
             return None
         return create_patient_token(account_id=str(account_id), tenant_id=tenant_id,

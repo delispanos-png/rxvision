@@ -220,6 +220,54 @@ class PatientAccountRepository:
         return await self.db["patient_links"].find_one(  # tenant-ok
             {"account_id": oid, "tenant_id": tenant_id})
 
+    async def link_or_create(self, account_id, tenant_id: str) -> dict | None:
+        """Link του account με το φαρμακείο· αν ΔΕΝ υπάρχει και το φαρμακείο έχει ενεργή πύλη,
+        δημιουργεί «καρτέλα χωρίς κίνηση» (patients_anonymized, rx_count 0) + link — ο πελάτης
+        επιλέγει ΝΕΟ φαρμακείο για να το εξυπηρετηθεί (ερωτήματα/αγορές/ανάθεση). Ίδιο μοτίβο
+        ψευδωνυμοποίησης με το onboarding — κάθε tenant έχει δικό του pepper (καμία διαρροή)."""
+        existing = await self.link_for(account_id, tenant_id)
+        if existing:
+            return {"tenant_id": tenant_id, "patient_ref": str(existing["patient_ref"]),
+                    "pharmacy_name": existing.get("pharmacy_name")}
+        from app.services.auth_service import resolve_tenant_modules, tenant_has
+        oid = _oid(account_id)
+        acc = await self.get(account_id)
+        amka = ((acc or {}).get("amka") or "").strip()
+        if not oid or not amka or not tenant_has(await resolve_tenant_modules(tenant_id), "patient_portal"):
+            return None
+        try:
+            pseudo = pseudonymize(amka, tenant_pepper=vault.tenant_pepper(tenant_id))
+        except Exception:  # noqa: BLE001
+            return None
+        now = _now()
+        await self.db["patients_anonymized"].update_one(  # tenant-ok: explicit tenant_id
+            {"tenant_id": tenant_id, "pseudo_id": pseudo},
+            {"$setOnInsert": {"tenant_id": tenant_id, "pseudo_id": pseudo, "rx_count": 0,
+                              "rx_value_total": 0, "lifecycle": "new", "source": "portal_selected",
+                              "created_at": now}}, upsert=True)
+        pat = await self.db["patients_anonymized"].find_one(
+            {"tenant_id": tenant_id, "pseudo_id": pseudo}, {"_id": 1})
+        if not pat:
+            return None
+        t = await self.db["tenants"].find_one({"_id": tenant_id}, {"name": 1, "company": 1})
+        name = ((t or {}).get("company") or {}).get("name") or (t or {}).get("name") or tenant_id
+        await self.db["patient_links"].update_one(  # tenant-ok: global link doc
+            {"account_id": oid, "tenant_id": tenant_id},
+            {"$set": {"patient_ref": pat["_id"], "pharmacy_name": name, "updated_at": now},
+             "$setOnInsert": {"created_at": now}}, upsert=True)
+        return {"tenant_id": tenant_id, "patient_ref": str(pat["_id"]), "pharmacy_name": name}
+
+    async def set_favorite(self, account_id, tenant_id: str) -> str | None:
+        """Δήλωση «αγαπημένου» φαρμακείου (toggle) — γίνεται το προεπιλεγμένο active στο login."""
+        oid = _oid(account_id)
+        if not oid:
+            return None
+        acc = await self.get(account_id)
+        new = None if (acc or {}).get("favorite_tenant_id") == tenant_id else tenant_id
+        await self.db["patient_accounts"].update_one(  # tenant-ok: global patient account
+            {"_id": oid}, {"$set": {"favorite_tenant_id": new}})
+        return new
+
     async def portal_customers(self, tenant_id: str, *, limit: int = 300) -> dict:
         """Pharmacist view: how many of THIS pharmacy's patients are registered in the portal
         («favourite» customers) vs how many remain to invite. patient_links.patient_ref ==
@@ -286,10 +334,11 @@ class PatientAccountRepository:
         out.sort(key=lambda x: x["distance_km"])
         return out[:limit]
 
-    async def directory(self, *, linked_ids: set[str] | None = None, limit: int = 200) -> list[dict]:
-        """Δημόσιος κατάλογος ΟΛΩΝ των φαρμακείων του δικτύου με ενεργή πύλη πελατών — με ζωντανή
-        κατάσταση (ανοιχτό/κλειστό/εφημερία) & badge αν είναι «δικό μου» (έχω ιστορικό εκεί).
-        Ο ασθενής μπορεί να δει/επικοινωνήσει με οποιοδήποτε, όχι μόνο όπου έχει συνταγές."""
+    async def directory(self, *, linked_ids: set[str] | None = None,
+                        favorite_id: str | None = None, limit: int = 200) -> list[dict]:
+        """Δημόσιος κατάλογος ΟΛΩΝ των φαρμακείων του δικτύου με ενεργή πύλη πελατών — ζωντανή
+        κατάσταση + διεύθυνση/τηλέφωνο/lat-lon (για χιλιομετρική απόσταση client-side) + badges
+        «αγαπημένο»/«δικό μου». Σειρά: αγαπημένο → δικά μου → υπόλοιπα (ανοιχτά πρώτα)."""
         from app.repositories.pharmacy_availability import PharmacyAvailabilityRepository
         from app.services.auth_service import resolve_tenant_modules, tenant_has
         linked = linked_ids or set()
@@ -313,14 +362,16 @@ class PatientAccountRepository:
                 "address": loc.get("address") or comp.get("address"),
                 "city": loc.get("city") or comp.get("city"),
                 "phone": t.get("contact_phone") or comp.get("phone"),
+                "lat": loc.get("lat"), "lon": loc.get("lon"),
                 "status": st,
                 "mine": tid in linked,
+                "favorite": bool(favorite_id) and tid == favorite_id,
             })
-        # ανοιχτά/εφημερεύοντα πρώτα, μετά «δικά μου», μετά αλφαβητικά
+        # αγαπημένο → δικά μου → υπόλοιπα· μέσα σε κάθε ομάδα ανοιχτά/εφημερεύοντα πρώτα, μετά αλφαβητικά
         def _rank(p: dict) -> tuple:
             s = p.get("status") or {}
-            return (0 if (s.get("isOpen") or s.get("isOnDuty")) else 1,
-                    0 if p.get("mine") else 1, (p.get("name") or "").upper())
+            return (0 if p.get("favorite") else 1, 0 if p.get("mine") else 1,
+                    0 if (s.get("isOpen") or s.get("isOnDuty")) else 1, (p.get("name") or "").upper())
         out.sort(key=_rank)
         return out[:limit]
 

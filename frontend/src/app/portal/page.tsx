@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import {
   Pill, Wallet, ShieldCheck, RefreshCw, Stethoscope, Bell, LogOut, Building2,
   Calendar, ChevronDown, ChevronUp, CheckCircle2, Clock, Sparkles, X, Search, CalendarPlus, AlertCircle,
-  PackageCheck, Gift, FileText, ShoppingBag, HeartPulse, FilePlus, MoreHorizontal, MapPin, Home, Percent, Camera, Upload,
+  PackageCheck, Gift, FileText, ShoppingBag, HeartPulse, FilePlus, MoreHorizontal, MapPin, Home, Percent, Camera, Upload, Star, Navigation,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { QRCodeCanvas } from "qrcode.react";
@@ -23,7 +23,7 @@ import { fmtDate, fmtDateTime } from "@/lib/formatters";
 type Pharmacy = { tenant_id: string; pharmacy_name: string };
 type Pharm = { status: { isOpen: boolean; isOnDuty: boolean; isOvernightDuty: boolean; closingSoon: boolean; statusText: string }; schedule: { week: { day: number; status: string; intervals: { start: string; end: string }[] }[] } };
 type Me = { profile: { first_name: string; last_name: string }; active_tenant: string | null; pharmacies: Pharmacy[] };
-type DirPharmacy = { tenant_id: string; name: string; address?: string | null; city?: string | null; phone?: string | null; mine?: boolean; status?: { isOpen: boolean; isOnDuty: boolean; isOvernightDuty: boolean; closingSoon: boolean; statusText: string } | null };
+type DirPharmacy = { tenant_id: string; name: string; address?: string | null; city?: string | null; phone?: string | null; lat?: number | null; lon?: number | null; mine?: boolean; favorite?: boolean; status?: { isOpen: boolean; isOnDuty: boolean; isOvernightDuty: boolean; closingSoon: boolean; statusText: string } | null };
 type Summary = { rx_count: number; paid_cents: number; total_cents: number; covered_cents: number; doctors: number; medicines: number; repeats_active: number; next_open_date?: string | null; first_at?: string | null; last_at?: string | null };
 type Rx = { barcode: string; executed_at: string; status?: string; patient_share?: number; repeat_current?: number; repeat_total?: number; repeat_root?: string | null; next_open_date?: string | null; medicines: string[]; pending?: string[]; partial?: boolean; doctor?: string | null; specialty?: string | null };
 type RepeatMed = { name: string; dosage?: string | null };
@@ -48,6 +48,13 @@ const RTYPE_EMOJI: Record<string, string> = { product: "🛍️", service: "💉
 const dt = (s?: string | null) => (s ? fmtDate(s) : "—");
 const dtl = (s?: string | null) => (s ? fmtDateTime(s) : "—");
 const eur = (c?: number) => new Intl.NumberFormat("el-GR", { style: "currency", currency: "EUR", maximumFractionDigits: 2 }).format((c || 0) / 100);
+// χιλιομετρική (ευθεία) απόσταση — Haversine
+const haversineKm = (a: { lat: number; lon: number }, lat2: number, lon2: number) => {
+  const r = 6371, toRad = (d: number) => (d * Math.PI) / 180;
+  const dLat = toRad(lat2 - a.lat), dLon = toRad(lon2 - a.lon);
+  const s = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(a.lat)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+  return 2 * r * Math.asin(Math.min(1, Math.sqrt(s)));
+};
 
 const TABS = [["home", "Αρχική"], ["rx", "Συνταγές"], ["shop", "e-Κατάστημα"], ["meds", "Πρόγραμμα λήψης"], ["health", "Υγεία"], ["wallet", "Επιβράβευση"], ["repeats", "Επαναλήψεις"], ["renewals", "Ανεκτέλεστα"], ["assign", "Ανάθεση συνταγής"], ["availability", "Διαθεσιμότητα"], ["appointments", "Ραντεβού"], ["pharmacies", "Φαρμακεία"]] as const;
 // Σύντομες ετικέτες για τη στενή κάτω μπάρα (mobile) — αλλιώς κόβονται άσχημα.
@@ -97,6 +104,8 @@ export default function PortalHome() {
   const [showMore, setShowMore] = useState(false);   // φύλλο «Περισσότερα» (mobile bottom nav)
   const [directory, setDirectory] = useState<DirPharmacy[]>([]);
   const [dirQuery, setDirQuery] = useState("");
+  const [geo, setGeo] = useState<{ lat: number; lon: number } | null>(null);
+  const [geoBusy, setGeoBusy] = useState(false);
   const [rx, setRx] = useState<Rx[]>([]);
   const [rxQuery, setRxQuery] = useState("");   // αναζήτηση αρ. συνταγής (barcode)
   const [rxFrom, setRxFrom] = useState("");     // ημ/νιακό διάστημα από (YYYY-MM-DD)
@@ -232,10 +241,27 @@ export default function PortalHome() {
     catch { alert("Κάτι πήγε στραβά — δοκίμασε ξανά."); }
   }
 
-  async function switchPharmacy(tenant_id: string) {
-    const d = await patientApi<{ access_token: string }>("/patient/auth/select-pharmacy", { method: "POST", body: JSON.stringify({ tenant_id }) });
-    patientTokens.set(d.access_token, window.localStorage.getItem("patient_refresh_token"));
-    await load();
+  async function switchPharmacy(tenant_id: string, gotoTab?: string) {
+    try {
+      const d = await patientApi<{ access_token: string }>("/patient/auth/select-pharmacy", { method: "POST", body: JSON.stringify({ tenant_id }) });
+      patientTokens.set(d.access_token, window.localStorage.getItem("patient_refresh_token"));
+      if (gotoTab) setTab(gotoTab);
+      await load();
+    } catch { alert("Δεν ήταν δυνατή η επιλογή του φαρμακείου — δοκίμασε ξανά."); }
+  }
+  async function setFavoritePharmacy(tenant_id: string) {
+    const prev = directory;
+    setDirectory((ds) => ds.map((d) => ({ ...d, favorite: d.tenant_id === tenant_id ? !d.favorite : false })));
+    try { await patientApi("/patient/pharmacies/favorite", { method: "POST", body: JSON.stringify({ tenant_id }) }); }
+    catch { setDirectory(prev); }
+  }
+  function requestGeo() {
+    if (!navigator.geolocation) { alert("Η συσκευή δεν υποστηρίζει εντοπισμό τοποθεσίας."); return; }
+    setGeoBusy(true);
+    navigator.geolocation.getCurrentPosition(
+      (p) => { setGeo({ lat: p.coords.latitude, lon: p.coords.longitude }); setGeoBusy(false); },
+      () => { setGeoBusy(false); alert("Δεν ήταν δυνατός ο εντοπισμός τοποθεσίας — έλεγξε τα δικαιώματα."); },
+      { enableHighAccuracy: false, timeout: 8000, maximumAge: 300000 });
   }
   async function logout() { await patientLogout(); router.replace("/portal/login"); }
 
@@ -1142,14 +1168,32 @@ export default function PortalHome() {
         {/* ── NETWORK PHARMACY DIRECTORY ─────────────────────── */}
         {tab === "pharmacies" && (
           <div className="space-y-3">
-            <div className="relative">
-              <Search className="pointer-events-none absolute left-3.5 top-1/2 h-[18px] w-[18px] -translate-y-1/2 text-slate-400" />
-              <input value={dirQuery} onChange={(e) => setDirQuery(e.target.value)} placeholder="Αναζήτηση φαρμακείου ή περιοχής…"
-                className="w-full rounded-2xl border border-slate-300 bg-white py-2.5 pl-11 pr-3 text-[15px] shadow-sm focus:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-100" />
+            <div className="rounded-xl border border-brand-200 bg-brand-50/60 px-3 py-2 text-xs text-brand-800">
+              Διάλεξε φαρμακείο για να το <b>εξυπηρετηθείς</b> — ερωτήματα διαθεσιμότητας, αγορές, ανάθεση συνταγής. Το ιστορικό (συνταγές, παραγγελίες, ερωτήματα) είναι <b>ξεχωριστό ανά φαρμακείο</b>.
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="relative flex-1">
+                <Search className="pointer-events-none absolute left-3.5 top-1/2 h-[18px] w-[18px] -translate-y-1/2 text-slate-400" />
+                <input value={dirQuery} onChange={(e) => setDirQuery(e.target.value)} placeholder="Αναζήτηση φαρμακείου ή περιοχής…"
+                  className="w-full rounded-2xl border border-slate-300 bg-white py-2.5 pl-11 pr-3 text-[15px] shadow-sm focus:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-100" />
+              </div>
+              <button onClick={requestGeo} disabled={geoBusy} title="Ταξινόμηση κατά απόσταση"
+                className={`inline-flex shrink-0 items-center gap-1.5 rounded-2xl border px-3 py-2.5 text-xs font-semibold shadow-sm ${geo ? "border-brand-300 bg-brand-50 text-brand-700" : "border-slate-300 bg-white text-slate-600"}`}>
+                <Navigation className={`h-4 w-4 ${geoBusy ? "animate-pulse" : ""}`} /> {geo ? "Κοντινά" : "Βρες κοντινά"}
+              </button>
             </div>
             {(() => {
               const qn = dirQuery.trim().toLowerCase();
-              const list = directory.filter((d) => !qn || d.name.toLowerCase().includes(qn) || (d.city || "").toLowerCase().includes(qn) || (d.address || "").toLowerCase().includes(qn));
+              const list = directory
+                .filter((d) => !qn || d.name.toLowerCase().includes(qn) || (d.city || "").toLowerCase().includes(qn) || (d.address || "").toLowerCase().includes(qn))
+                .map((d) => ({ ...d, dist: geo && d.lat != null && d.lon != null ? haversineKm(geo, d.lat, d.lon) : null }));
+              // αγαπημένο → δικά μου → υπόλοιπα· μέσα σε κάθε ομάδα κατά απόσταση (αν υπάρχει τοποθεσία)
+              list.sort((a, b) => {
+                const fa = (a.favorite ? 0 : 1) - (b.favorite ? 0 : 1); if (fa) return fa;
+                const ma = (a.mine ? 0 : 1) - (b.mine ? 0 : 1); if (ma) return ma;
+                const da = a.dist ?? Infinity, db = b.dist ?? Infinity; if (da !== db) return da - db;
+                return a.name.localeCompare(b.name, "el");
+              });
               if (directory.length === 0) return <Empty icon={MapPin} text="Δεν βρέθηκαν φαρμακεία δικτύου." />;
               if (list.length === 0) return <Empty icon={Search} text="Κανένα φαρμακείο για αυτή την αναζήτηση." />;
               return list.map((d) => {
@@ -1157,22 +1201,36 @@ export default function PortalHome() {
                 const emoji = s?.isOvernightDuty ? "🌙" : s?.isOnDuty ? "🚑" : s?.isOpen ? "🟢" : "🔴";
                 const isActive = d.tenant_id === me.active_tenant;
                 return (
-                  <div key={d.tenant_id} className={`rounded-2xl border bg-white p-3.5 shadow-sm ${isActive ? "border-brand-300 ring-1 ring-brand-100" : "border-slate-200"}`}>
+                  <div key={d.tenant_id} className={`rounded-2xl border bg-white p-3.5 shadow-sm ${isActive ? "border-brand-300 ring-1 ring-brand-100" : d.favorite ? "border-amber-200" : "border-slate-200"}`}>
                     <div className="flex items-start gap-3">
                       <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-slate-50 text-lg">{emoji}</span>
-                      <div className="min-w-0 flex-1">
+                      <div className="min-w-0 flex-1 cursor-pointer" role="button" onClick={() => { if (!isActive) switchPharmacy(d.tenant_id); }}>
                         <div className="flex flex-wrap items-center gap-1.5">
                           <span className="font-semibold text-slate-800">{d.name}</span>
+                          {d.favorite && <span className="inline-flex items-center gap-0.5 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-700"><Star className="h-2.5 w-2.5 fill-amber-500 text-amber-500" /> Αγαπημένο</span>}
                           {d.mine && <span className="rounded-full bg-brand-50 px-1.5 py-0.5 text-[10px] font-bold text-brand-600">Δικό μου</span>}
                           {isActive && <span className="rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700">Ενεργό</span>}
                         </div>
-                        {(d.address || d.city) && <div className="mt-0.5 flex items-center gap-1 text-xs text-slate-500"><MapPin className="h-3 w-3 shrink-0 text-slate-400" />{[d.address, d.city].filter(Boolean).join(", ")}</div>}
-                        {s && <div className={`mt-0.5 text-xs font-medium ${s.isOnDuty ? "text-indigo-600" : s.isOpen ? (s.closingSoon ? "text-amber-600" : "text-emerald-600") : "text-slate-400"}`}>{s.statusText}</div>}
-                        <div className="mt-2 flex flex-wrap items-center gap-2">
-                          {d.phone && <a href={`tel:${d.phone}`} className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50"><Bell className="h-3.5 w-3.5" /> {d.phone}</a>}
-                          {d.mine && !isActive && <button onClick={() => switchPharmacy(d.tenant_id)} className="inline-flex items-center gap-1 rounded-lg bg-brand-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-brand-700"><Building2 className="h-3.5 w-3.5" /> Άνοιξε</button>}
+                        <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-slate-500">
+                          {(d.address || d.city) && <span className="inline-flex items-center gap-1"><MapPin className="h-3 w-3 shrink-0 text-slate-400" />{[d.address, d.city].filter(Boolean).join(", ")}</span>}
+                          {d.dist != null && <span className="inline-flex items-center gap-1 font-medium text-brand-600"><Navigation className="h-3 w-3" />{d.dist < 1 ? `${Math.round(d.dist * 1000)} μ` : `${d.dist.toFixed(1)} χλμ`}</span>}
                         </div>
+                        {s && <div className={`mt-0.5 text-xs font-medium ${s.isOnDuty ? "text-indigo-600" : s.isOpen ? (s.closingSoon ? "text-amber-600" : "text-emerald-600") : "text-slate-400"}`}>{s.statusText}</div>}
                       </div>
+                      <button onClick={() => setFavoritePharmacy(d.tenant_id)} title={d.favorite ? "Αφαίρεση αγαπημένου" : "Όρισε αγαπημένο"}
+                        className="grid h-8 w-8 shrink-0 place-items-center rounded-lg hover:bg-slate-50">
+                        <Star className={`h-[18px] w-[18px] ${d.favorite ? "fill-amber-400 text-amber-400" : "text-slate-300"}`} />
+                      </button>
+                    </div>
+                    {/* ενέργειες: επιλογή + γρήγορες δράσεις (σε αυτό το φαρμακείο) */}
+                    <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
+                      {isActive
+                        ? <span className="inline-flex items-center gap-1 rounded-lg bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700"><CheckCircle2 className="h-3.5 w-3.5" /> Ενεργό φαρμακείο</span>
+                        : <button onClick={() => switchPharmacy(d.tenant_id)} className="inline-flex items-center gap-1 rounded-lg bg-brand-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-brand-700"><Building2 className="h-3.5 w-3.5" /> Επίλεξε</button>}
+                      <button onClick={() => switchPharmacy(d.tenant_id, "availability")} className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50"><Search className="h-3.5 w-3.5" /> Διαθεσιμότητα</button>
+                      <button onClick={() => switchPharmacy(d.tenant_id, "shop")} className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50"><ShoppingBag className="h-3.5 w-3.5" /> Κατάστημα</button>
+                      <button onClick={() => switchPharmacy(d.tenant_id, "assign")} className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50"><FilePlus className="h-3.5 w-3.5" /> Ανάθεση</button>
+                      {d.phone && <a href={`tel:${d.phone}`} onClick={(e) => e.stopPropagation()} className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50">📞 {d.phone}</a>}
                     </div>
                   </div>
                 );
