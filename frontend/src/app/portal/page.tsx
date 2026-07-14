@@ -110,6 +110,7 @@ export default function PortalHome() {
   const [loyalty, setLoyalty] = useState<Loyalty | null>(null);
   const [health, setHealth] = useState<Health | null>(null);
   const [sched, setSched] = useState<Schedule | null>(null);
+  const [medsView, setMedsView] = useState<"calendar" | "settings">("calendar");  // Πρόγραμμα: Ημερολόγιο | Ρυθμίσεις
   const [renewals, setRenewals] = useState<Renewal[] | null>(null);
   const [assignBc, setAssignBc] = useState("");
   const [assignNote, setAssignNote] = useState("");
@@ -710,17 +711,54 @@ export default function PortalHome() {
         {tab === "shop" && <ShopTab />}
 
         {tab === "meds" && (
-          <div className="space-y-5">
-            <div className="rounded-2xl bg-gradient-to-br from-violet-50 to-indigo-50 p-4">
-              <div className="text-sm font-semibold text-violet-900">💊 Το πρόγραμμα λήψης σου</div>
-              <p className="mt-1 text-xs text-violet-700">Φτιαγμένο από τις <b>οδηγίες του γιατρού σου</b> (όπως καταχωρήθηκαν στην ΗΔΥΚΑ). Ενεργοποίησε ποιες αγωγές θέλεις να σου θυμίζουμε. <span className="opacity-70">Ακολούθα πάντα τις οδηγίες του γιατρού/φαρμακοποιού σου.</span></p>
-              {!!sched?.streak && <div className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-orange-100 px-3 py-1 text-xs font-bold text-orange-700">🔥 {sched.streak} {sched.streak === 1 ? "μέρα" : "μέρες"} συνεπής λήψη στη σειρά!</div>}
+          <div className="space-y-4">
+            {/* δύο όψεις: Ημερολόγιο (πότε) & Ρυθμίσεις (ποια αγωγή θέλω ενημέρωση) */}
+            <div className="flex gap-1.5 rounded-xl bg-slate-100 p-1">
+              {([["calendar", "Ημερολόγιο", Calendar], ["settings", "Ρυθμίσεις", BellRing]] as const).map(([k, label, Icon]) => (
+                <button key={k} onClick={() => setMedsView(k)}
+                  className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg py-1.5 text-sm font-semibold transition ${medsView === k ? "bg-white text-violet-700 shadow-sm" : "text-slate-500"}`}>
+                  <Icon className="h-4 w-4" />{label}
+                </button>
+              ))}
             </div>
 
             {!sched ? <div className="py-10 text-center text-sm text-slate-400">Φόρτωση…</div>
              : sched.therapies.length === 0 ? <Empty icon={BellRing} text="Δεν βρέθηκαν ενεργές αγωγές αυτή τη στιγμή." />
-             : (<>
-              {/* active therapies — opt-in per therapy */}
+             : medsView === "calendar" ? (<>
+              {/* ── ΗΜΕΡΟΛΟΓΙΟ ── */}
+              {!!sched.streak && <div className="inline-flex items-center gap-1.5 rounded-full bg-orange-100 px-3 py-1 text-xs font-bold text-orange-700">🔥 {sched.streak} {sched.streak === 1 ? "μέρα" : "μέρες"} συνεπής λήψη στη σειρά!</div>}
+              {sched.week.some((d) => d.slots.length > 0) ? (
+                <div>
+                  <div className="mb-2 text-sm font-semibold text-slate-700">📅 Εβδομαδιαίο πρόγραμμα</div>
+                  <div className="space-y-2">
+                    {sched.week.map((d) => {
+                      const today = ((new Date().getDay() + 6) % 7) === d.dow;
+                      if (!d.slots.length) return null;
+                      return (
+                        <div key={d.dow} className={`rounded-2xl border p-3 ${today ? "border-violet-300 ring-1 ring-violet-200" : "border-slate-200"}`}>
+                          <div className="mb-1.5 text-xs font-bold text-slate-700">{DOW[d.dow]}{today && <span className="ml-1 rounded-full bg-violet-600 px-1.5 text-[10px] text-white">σήμερα</span>}</div>
+                          <div className="space-y-1.5">
+                            {d.slots.map((sl) => (
+                              <div key={sl.slot} className="flex items-start gap-2">
+                                <span className="mt-0.5 w-14 shrink-0 rounded-md bg-slate-100 px-1.5 py-0.5 text-center text-[11px] font-semibold text-slate-600">{sl.time}</span>
+                                <div className="flex flex-wrap gap-1">
+                                  {sl.meds.map((m, i) => <span key={i} className="rounded-md bg-violet-50 px-2 py-0.5 text-[11px] text-violet-700">{m.dose ? `${m.dose} · ` : ""}{m.name}</span>)}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : <p className="rounded-xl border border-dashed border-slate-300 p-6 text-center text-sm text-slate-400">Δεν έχεις ενεργές υπενθυμίσεις.<br />Πήγαινε στις <b>Ρυθμίσεις</b> και ενεργοποίησε ποιες αγωγές θες να σου θυμίζουμε.</p>}
+             </>) : (<>
+              {/* ── ΡΥΘΜΙΣΕΙΣ (ποια αγωγή θέλω ενημέρωση) ── */}
+              <div className="rounded-2xl bg-gradient-to-br from-violet-50 to-indigo-50 p-4">
+                <div className="text-sm font-semibold text-violet-900">💊 Ποιες αγωγές να σου θυμίζουμε;</div>
+                <p className="mt-1 text-xs text-violet-700">Φτιαγμένο από τις <b>οδηγίες του γιατρού σου</b> (όπως καταχωρήθηκαν στην ΗΔΥΚΑ). Άναψε τον διακόπτη σε όσες θες υπενθύμιση — θα εμφανιστούν στο <b>Ημερολόγιο</b>. <span className="opacity-70">Ακολούθα πάντα τις οδηγίες του γιατρού/φαρμακοποιού σου.</span></p>
+              </div>
               <div className="space-y-2">
                 {sched.therapies.map((th) => {
                   const warn = th.days_left !== null && th.days_left <= 7;
@@ -756,34 +794,6 @@ export default function PortalHome() {
                   );
                 })}
               </div>
-
-              {/* weekly calendar — only enabled therapies */}
-              {sched.week.some((d) => d.slots.length > 0) ? (
-                <div>
-                  <div className="mb-2 mt-1 text-sm font-semibold text-slate-700">📅 Εβδομαδιαίο πρόγραμμα</div>
-                  <div className="space-y-2">
-                    {sched.week.map((d) => {
-                      const today = ((new Date().getDay() + 6) % 7) === d.dow;
-                      if (!d.slots.length) return null;
-                      return (
-                        <div key={d.dow} className={`rounded-2xl border p-3 ${today ? "border-violet-300 ring-1 ring-violet-200" : "border-slate-200"}`}>
-                          <div className="mb-1.5 text-xs font-bold text-slate-700">{DOW[d.dow]}{today && <span className="ml-1 rounded-full bg-violet-600 px-1.5 text-[10px] text-white">σήμερα</span>}</div>
-                          <div className="space-y-1.5">
-                            {d.slots.map((sl) => (
-                              <div key={sl.slot} className="flex items-start gap-2">
-                                <span className="mt-0.5 w-14 shrink-0 rounded-md bg-slate-100 px-1.5 py-0.5 text-center text-[11px] font-semibold text-slate-600">{sl.time}</span>
-                                <div className="flex flex-wrap gap-1">
-                                  {sl.meds.map((m, i) => <span key={i} className="rounded-md bg-violet-50 px-2 py-0.5 text-[11px] text-violet-700">{m.dose ? `${m.dose} · ` : ""}{m.name}</span>)}
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              ) : <p className="rounded-xl border border-dashed border-slate-300 p-4 text-center text-xs text-slate-400">Ενεργοποίησε μια αγωγή παραπάνω για να δεις το εβδομαδιαίο πρόγραμμα.</p>}
              </>)}
           </div>
         )}
