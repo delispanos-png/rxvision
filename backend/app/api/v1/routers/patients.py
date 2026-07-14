@@ -185,6 +185,30 @@ async def delete_measurement(patient_id: str, measurement_id: str,
     return res or {}
 
 
+# ── πρόγραμμα λήψης φαρμάκων — ο ΦΑΡΜΑΚΟΠΟΙΟΣ το ρυθμίζει για τον ασθενή (ίδια λογική με την πύλη) ──
+@router.get("/{patient_id}/med-schedule")
+async def get_med_schedule(patient_id: str,
+                           ctx: TenantContext = Depends(require("patients:read", module=_MODULE))):
+    from app.repositories.patient_portal import PatientRxRepository
+    return await PatientRxRepository(tenant_id=ctx.tenant_id).medication_schedule(patient_id)
+
+
+class MedReminderIn(BaseModel):
+    med_key: str
+    enabled: bool
+    time: str | None = None
+    meal: str | None = None
+    interval_hours: int | None = None
+
+
+@router.post("/{patient_id}/med-reminder")
+async def set_med_reminder(patient_id: str, body: MedReminderIn,
+                           ctx: TenantContext = Depends(require("patients:read", module=_MODULE))):
+    from app.repositories.patient_portal import PatientRxRepository
+    return await PatientRxRepository(tenant_id=ctx.tenant_id).set_reminder(
+        patient_id, body.med_key, body.enabled, body.time, body.meal, body.interval_hours)
+
+
 @router.get("/detail/{patient_id}")
 async def patient_detail(
     patient_id: str,

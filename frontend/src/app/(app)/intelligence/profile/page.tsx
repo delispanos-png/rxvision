@@ -11,6 +11,7 @@ import { fmtNum, fmtEur, fmtDec, scanRxBarcode } from "@/lib/formatters";
 import { KpiCard } from "@/components/kpi/KpiCard";
 import { ContactCard } from "@/components/patients/ContactCard";
 import { MeasurementsCard } from "@/components/patients/MeasurementsCard";
+import { MedScheduleCard } from "@/components/patients/MedScheduleCard";
 import { PatientCommentsCard } from "@/components/patients/PatientCommentsCard";
 import { BarChart } from "@/components/charts/BarChart";
 
@@ -395,6 +396,9 @@ export default function PatientProfilePage() {
 
           {/* μετρήσεις & σωματομετρικά (πίεση/ζάχαρο/βάρος/BMI + ιστορικό) */}
           <MeasurementsCard patientId={p.patient.id} />
+
+          {/* πρόγραμμα λήψης φαρμάκων — ο φαρμακοποιός το ρυθμίζει για τον ασθενή (φαίνεται στην πύλη) */}
+          <MedScheduleCard patientId={p.patient.id} />
 
           {/* Κλινικό flag G6PD */}
           <div className={`flex flex-wrap items-center gap-3 rounded-2xl border p-4 ${g6pd ? "border-rose-200 bg-rose-50 dark:border-rose-900/40 dark:bg-rose-950/20" : "border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900"}`}>
