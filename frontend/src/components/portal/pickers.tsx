@@ -12,30 +12,52 @@ declare global {
 }
 
 export type Pharmacy = { tenant_id: string; pharmacy_name?: string; name?: string; distance_km?: number };
+type DirItem = { tenant_id: string; name: string; mine?: boolean; favorite?: boolean; lat?: number | null; lon?: number | null; status?: { isOpen: boolean; isOnDuty: boolean } | null; dist?: number | null };
 export type Medicine = { barcode: string | null; name: string };
 
-// ── Pharmacy picker: linked pharmacies + "find nearby" (browser geolocation) ──
+const _hav = (aLat: number, aLon: number, bLat: number, bLon: number) => {
+  const r = 6371, rad = (d: number) => (d * Math.PI) / 180;
+  const dLat = rad(bLat - aLat), dLon = rad(bLon - aLon);
+  const s = Math.sin(dLat / 2) ** 2 + Math.cos(rad(aLat)) * Math.cos(rad(bLat)) * Math.sin(dLon / 2) ** 2;
+  return 2 * r * Math.asin(Math.min(1, Math.sqrt(s)));
+};
+
+// ── Pharmacy picker: ΟΛΑ τα φαρμακεία δικτύου (default = αγαπημένο) + «Κοντινά» (απόσταση) ──
 export function PharmacyPicker({ linked, value, onChange }: {
   linked: Pharmacy[]; value: string; onChange: (tenantId: string) => void;
 }) {
-  const [nearby, setNearby] = useState<Pharmacy[]>([]);
+  const [dir, setDir] = useState<DirItem[]>([]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+
+  useEffect(() => {   // φόρτωσε ΟΛΟΝ τον κατάλογο + default το αγαπημένο (μετά δικά μου, μετά 1ο)
+    patientApi<{ items: DirItem[]; favorite?: string | null }>("/patient/pharmacies/directory").then((d) => {
+      setDir(d.items);
+      if (!value && d.items.length) {
+        const def = d.items.find((p) => p.favorite) || d.items.find((p) => p.mine) || d.items[0];
+        if (def) onChange(def.tenant_id);
+      }
+    }).catch(() => {});
+  }, []);   // eslint-disable-line react-hooks/exhaustive-deps
 
   function findNearby() {
     setErr(""); setBusy(true);
     if (!navigator.geolocation) { setErr("Η τοποθεσία δεν υποστηρίζεται."); setBusy(false); return; }
-    navigator.geolocation.getCurrentPosition(async (pos) => {
-      try {
-        const d = await patientApi<{ items: Pharmacy[] }>(`/patient/pharmacies/nearby?lat=${pos.coords.latitude}&lon=${pos.coords.longitude}`);
-        setNearby(d.items);
-        if (d.items[0]) onChange(d.items[0].tenant_id);
-      } catch { setErr("Αποτυχία εύρεσης φαρμακείων."); } finally { setBusy(false); }
+    navigator.geolocation.getCurrentPosition((pos) => {
+      setDir((ds) => ds.map((p) => ({ ...p, dist: p.lat != null && p.lon != null ? _hav(pos.coords.latitude, pos.coords.longitude, p.lat, p.lon) : null })));
+      setBusy(false);
     }, () => { setErr("Δεν δόθηκε άδεια τοποθεσίας."); setBusy(false); });
   }
 
-  const opts = nearby.length ? nearby : linked;
-  const label = (p: Pharmacy) => `🏥 ${p.name ?? p.pharmacy_name ?? p.tenant_id}${p.distance_km != null ? ` · ${p.distance_km} km` : ""}`;
+  // σειρά: αγαπημένο → δικά μου → υπόλοιπα· μέσα σε κάθε ομάδα κατά απόσταση (αν υπάρχει)
+  const base: DirItem[] = dir.length ? dir : linked.map((l) => ({ tenant_id: l.tenant_id, name: l.pharmacy_name ?? l.name ?? l.tenant_id, mine: true }));
+  const opts = [...base].sort((a, b) => {
+    const f = (a.favorite ? 0 : 1) - (b.favorite ? 0 : 1); if (f) return f;
+    const m = (a.mine ? 0 : 1) - (b.mine ? 0 : 1); if (m) return m;
+    const da = a.dist ?? Infinity, db = b.dist ?? Infinity; if (da !== db) return da - db;
+    return a.name.localeCompare(b.name, "el");
+  });
+  const label = (p: DirItem) => `${p.favorite ? "★ " : ""}${p.name}${p.dist != null ? ` · ${p.dist < 1 ? Math.round(p.dist * 1000) + " μ" : p.dist.toFixed(1) + " χλμ"}` : ""}`;
 
   return (
     <div className="space-y-1">

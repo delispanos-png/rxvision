@@ -411,11 +411,20 @@ class PatientAccountRepository:
         return jsonsafe(rows)
 
     async def my_appointments(self, account_id) -> list[dict]:
+        """ΟΛΑ τα ραντεβού του πελάτη σε ΟΛΑ τα φαρμακεία (account-scoped), με το όνομα του κάθε
+        φαρμακείου ανά ραντεβού — ώστε να ξεχωρίζει «αυτό αφορά το φαρμακείο Χ»."""
         oid = _oid(account_id)
         if not oid:
             return []
         rows = [r async for r in self.db["appointments"]  # tenant-ok: patient's own by account
                 .find({"account_id": oid}).sort("requested_at", -1).limit(100)]
+        names = {l["tenant_id"]: l.get("pharmacy_name") for l in await self.links(account_id)}
+        for r in rows:
+            tid = r.get("tenant_id")
+            if tid and tid not in names:
+                t = await self.db["tenants"].find_one({"_id": tid}, {"name": 1, "company": 1})
+                names[tid] = ((t or {}).get("company") or {}).get("name") or (t or {}).get("name") or tid
+            r["pharmacy_name"] = names.get(tid)
         return jsonsafe(rows)
 
     # ── on-demand notifications feed (across the patient's pharmacies) ──

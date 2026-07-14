@@ -37,7 +37,7 @@ type Service = { _id?: string; name: string; kind?: string; description?: string
 const PDAYS = ["Δευ", "Τρί", "Τετ", "Πέμ", "Παρ", "Σάβ", "Κυρ"];
 const pdmy = (iso: string) => { const [y, m, d] = iso.split("-"); return d && m ? `${d}/${m}${y ? "/" + y.slice(2) : ""}` : iso; };
 const prange = (r: PRange) => (r.start_date === r.end_date ? pdmy(r.start_date) : `${pdmy(r.start_date)}–${pdmy(r.end_date)}`) + ` ${r.start}–${r.end}`;
-type Appt = { _id?: string; service_name: string; requested_at: string; status: string };
+type Appt = { _id?: string; service_name: string; requested_at: string; status: string; tenant_id?: string; pharmacy_name?: string | null };
 type Cda = { available?: boolean; found?: boolean; doctor?: string | null; medicines?: string[]; issue_date?: string | null; deadline_date?: string | null; intangible?: boolean; exec_count?: number | null; is_fyk?: boolean; has_vaccine?: boolean };
 type RxReq = { _id?: string; kind: string; barcode?: string | null; note?: string | null; status: string; created_at: string; cda?: Cda | null; reply?: string | null; available_date?: string | null };
 type LoyaltyMember = { patient_ref: string; name?: string; points: number; balance_cents: number; tier: string; next_tier: string | null; to_next: number; progress_pct: number; compliance: number | null; refills: number; expected: number; open_refills: number; potential_points: number; points_per_refill: number; cents_per_point: number; ledger: { type: string; cents: number; kind?: string; reason?: string; at: string }[] };
@@ -1151,17 +1151,45 @@ export default function PortalHome() {
               </div>
               <button className="w-full rounded-xl bg-brand-600 py-3 text-sm font-semibold text-white shadow-sm shadow-brand-500/30 hover:bg-brand-700">Κλείσε ραντεβού</button>
             </form>
-            {appts.length === 0 && <Empty icon={Calendar} text="Δεν έχεις ραντεβού." />}
-            {appts.map((a, i) => (
-              <div key={a._id ?? i} className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-                <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-violet-50 text-violet-600"><Calendar className="h-5 w-5" /></span>
-                <div className="min-w-0 flex-1">
-                  <div className="truncate text-sm font-semibold text-slate-800">{a.service_name}</div>
-                  <div className="text-xs text-slate-500">{dtl(a.requested_at)}</div>
+            {/* ΟΛΑ τα ραντεβού σε ΟΛΑ τα φαρμακεία — Ενεργά πρώτα, μετά ολοκληρωμένα· κάθε ένα
+                με ΣΑΦΗ ένδειξη σε ποιο φαρμακείο αφορά (προσωπικό «ημερολόγιο» του πελάτη). */}
+            {(() => {
+              const DONE = ["done", "cancelled", "declined", "completed"];
+              const activeA = appts.filter((a) => !DONE.includes(a.status));
+              const pastA = appts.filter((a) => DONE.includes(a.status));
+              const activeName = me.pharmacies.find((p) => p.tenant_id === me.active_tenant)?.pharmacy_name;
+              const Card = (a: Appt, i: number) => {
+                const forActive = !a.tenant_id || a.tenant_id === me.active_tenant;
+                const phName = a.pharmacy_name || (forActive ? activeName : null);
+                return (
+                  <div key={a._id ?? i} className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white p-3.5 shadow-sm">
+                    <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-violet-50 text-violet-600"><Calendar className="h-5 w-5" /></span>
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-sm font-semibold text-slate-800">{a.service_name}</div>
+                      <div className="text-xs text-slate-500">{dtl(a.requested_at)}</div>
+                      {phName && <div className="mt-0.5 flex items-center gap-1 text-[11px] font-medium text-brand-600"><Building2 className="h-3 w-3" /> {phName}</div>}
+                    </div>
+                    <span className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-semibold ${statusCls(a.status)}`}>{STATUS_LABEL[a.status] ?? a.status}</span>
+                  </div>
+                );
+              };
+              if (appts.length === 0) return <Empty icon={Calendar} text="Δεν έχεις ραντεβού." />;
+              return (
+                <div className="space-y-4">
+                  <div>
+                    <div className="mb-2 flex items-center gap-2 text-sm font-bold text-slate-700"><Clock className="h-4 w-4 text-emerald-500" /> Ενεργά ραντεβού {activeA.length > 0 && <span className="rounded-full bg-emerald-100 px-1.5 text-[11px] text-emerald-700">{activeA.length}</span>}</div>
+                    {activeA.length === 0 ? <p className="rounded-xl border border-dashed border-slate-300 p-3 text-center text-xs text-slate-400">Κανένα ενεργό ραντεβού.</p>
+                     : <div className="space-y-2">{activeA.map(Card)}</div>}
+                  </div>
+                  {pastA.length > 0 && (
+                    <div>
+                      <div className="mb-2 flex items-center gap-2 text-sm font-bold text-slate-400"><CheckCircle2 className="h-4 w-4" /> Ολοκληρωμένα / κλεισμένα</div>
+                      <div className="space-y-2 opacity-80">{pastA.map(Card)}</div>
+                    </div>
+                  )}
                 </div>
-                <span className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-semibold ${statusCls(a.status)}`}>{STATUS_LABEL[a.status] ?? a.status}</span>
-              </div>
-            ))}
+              );
+            })()}
           </div>
         )}
 
