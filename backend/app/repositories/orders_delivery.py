@@ -10,6 +10,9 @@ from datetime import datetime, timezone
 
 from app.repositories.base import BaseRepository, jsonsafe
 from app.repositories.pharmacy_catalog import PharmacyCatalogRepository
+from app.repositories.shop_campaigns import ShopCampaignRepository, campaign_pct_for
+from app.repositories.shop_promos import ShopBundleRepository, ShopCouponRepository
+from app.services.shop_pricing import bundle_savings, coupon_discount, tier_discount
 
 _OPEN = ("pending", "new", "preparing", "ready", "shipped")
 STATUS_LABELS = {
@@ -21,6 +24,20 @@ STATUS_LABELS = {
 
 def _now() -> datetime:
     return datetime.now(tz=timezone.utc)
+
+
+def _clean_tiers(v) -> list[dict]:
+    """Κλίμακες καλαθιού → ταξινομημένες, χωρίς διπλά όρια, με λογικά όρια τιμών."""
+    out: dict[int, int] = {}
+    for t in (v or []):
+        try:
+            mc = max(0, int((t or {}).get("min_cents") or 0))
+            pct = max(1, min(90, int((t or {}).get("pct") or 0)))
+        except (TypeError, ValueError):
+            continue
+        if mc > 0:
+            out[mc] = pct
+    return [{"min_cents": k, "pct": out[k]} for k in sorted(out)][:6]
 
 
 class OrdersDeliveryRepository(BaseRepository):
@@ -40,6 +57,11 @@ class OrdersDeliveryRepository(BaseRepository):
             # Επιπλέον έκπτωση (μόνο παραφάρμακα) για επαναλαμβανόμενες παραγγελίες/συνδρομές.
             "subscription_discount_pct": d.get("subscription_discount_pct", 0),
             "subscription_enabled": d.get("subscription_enabled", True),
+            # Κλιμακωτή έκπτωση καλαθιού: [{min_cents, pct}] — ΜΟΝΟ σε μη-συνταγογραφούμενα.
+            "cart_tiers": d.get("cart_tiers", []),
+            # Υπενθύμιση «ξεχασμένου καλαθιού» — opt-in (στέλνει push στον πελάτη).
+            "abandoned_cart_enabled": d.get("abandoned_cart_enabled", False),
+            "abandoned_cart_hours": d.get("abandoned_cart_hours", 6),
         }
 
     async def save_settings(self, cfg: dict) -> dict:
@@ -52,6 +74,9 @@ class OrdersDeliveryRepository(BaseRepository):
             "pps_cert": str(cfg.get("pps_cert") or "")[:300],
             "subscription_discount_pct": max(0, min(90, int(cfg.get("subscription_discount_pct") or 0))),
             "subscription_enabled": bool(cfg.get("subscription_enabled", True)),
+            "cart_tiers": _clean_tiers(cfg.get("cart_tiers")),
+            "abandoned_cart_enabled": bool(cfg.get("abandoned_cart_enabled", False)),
+            "abandoned_cart_hours": max(1, min(72, int(cfg.get("abandoned_cart_hours") or 6))),
             "updated_at": _now(),
         }
         await self._db["order_settings"].update_one(
@@ -62,15 +87,29 @@ class OrdersDeliveryRepository(BaseRepository):
     async def create_order(self, *, account_id, patient_ref: str | None, patient_name: str,
                            patient_phone: str, lines: list[dict], mode: str, address: dict | None,
                            courier_authorized: bool, gdpr_consent: bool,
+                           courier_auth: dict | None = None, loyalty_redeem_cents: int = 0,
+                           coupon_code: str | None = None,
                            sub_discount_pct: int = 0, subscription_id: str | None = None) -> dict:
         if not gdpr_consent:
             return {"ok": False, "error": "consent_required"}
+        # Παραλαβή από το κατάστημα → καμία εξουσιοδότηση. Αποστολή με μεταφορέα → εξουσιοδότηση
+        # + στοιχεία εξουσιοδοτούμενου (ονοματεπώνυμο & αρ. ταυτότητας/διαβατηρίου).
         if mode == "delivery" and not courier_authorized:
             return {"ok": False, "error": "courier_auth_required"}
+        if mode == "delivery":
+            ca_name = ((courier_auth or {}).get("name") or "").strip()
+            ca_id = ((courier_auth or {}).get("id_number") or "").strip()
+            if not ca_name or not ca_id:
+                return {"ok": False, "error": "courier_auth_details_required"}
+            courier_auth = {"name": ca_name, "id_number": ca_id}
+        else:
+            courier_auth = None
         cat = PharmacyCatalogRepository(tenant_id=self.tenant_id)
+        campaigns = await ShopCampaignRepository(tenant_id=self.tenant_id).active_now()
         items: list[dict] = []
         reserve_items: list[dict] = []          # είδη με επαρκές απόθεμα → δεσμεύονται άμεσα
         subtotal = 0
+        redeemable = 0                          # αξία ΜΗ-συνταγογραφούμενων → πάνω της «πέφτουν» οι πόντοι
         has_medicine = False
         has_backorder = False                   # ≥1 είδος «κατόπιν παραγγελίας» → η παραγγελία θέλει έγκριση
         for ln in lines:
@@ -89,17 +128,22 @@ class OrdersDeliveryRepository(BaseRepository):
             ptype = prod.get("type")
             if ptype in ("rx_medicine", "otc_medicine"):
                 has_medicine = True
+            # Έκπτωση: καλύτερη ανάμεσα σε «δική του» και «καμπάνιας ομάδας» (ΔΕΝ αθροίζονται)·
+            # τα συνταγογραφούμενα εξαιρούνται πάντα (campaign_pct_for → 0).
+            camp_pct = campaign_pct_for(prod, campaigns)
             if ptype == "rx_medicine":
                 disc = 0                                    # συνταγογραφούμενα: ΠΟΤΕ έκπτωση
             elif ptype == "otc_medicine":
-                disc = min(90, int(prod.get("discount_pct") or 0))            # OTC: δική του έκπτωση
+                disc = min(90, max(int(prod.get("discount_pct") or 0), camp_pct))
             else:                                           # παραφάρμακα: + έκπτωση συνδρομής
-                disc = min(90, int(prod.get("discount_pct") or 0) + max(0, int(sub_discount_pct)))
+                disc = min(90, max(int(prod.get("discount_pct") or 0), camp_pct) + max(0, int(sub_discount_pct)))
             line_cents = round(unit * qty * (100 - disc) / 100)
             subtotal += line_cents
+            if ptype != "rx_medicine":
+                redeemable += line_cents
             items.append({"barcode": prod["barcode"], "name": prod["name"], "qty": qty,
                           "unit_cents": unit, "discount_pct": disc, "line_cents": line_cents,
-                          "type": prod.get("type"), "backorder": backorder})
+                          "campaign_pct": camp_pct, "type": prod.get("type"), "backorder": backorder})
         if not items:
             return {"ok": False, "error": "empty"}
         st = await self.settings()
@@ -109,9 +153,51 @@ class OrdersDeliveryRepository(BaseRepository):
             return {"ok": False, "error": "pickup_disabled"}
         if subtotal < st["min_order_cents"]:
             return {"ok": False, "error": "below_min", "min_cents": st["min_order_cents"]}
+        # ── (2) ΠΑΚΕΤΑ → όφελος σε τεμάχια/γραμμές (μόνο μη-συνταγογραφούμενα) ──
+        bundles = await ShopBundleRepository(tenant_id=self.tenant_id).active_now()
+        bundle_cents, bundle_names = bundle_savings(items, bundles)
+        bundle_cents = min(bundle_cents, redeemable)
+        redeemable -= bundle_cents          # η βάση για τα επόμενα βήματα μικραίνει
+        # ── (3) ΚΑΛΑΘΙ: ΚΑΛΥΤΕΡΟ από «κλιμακωτή» ή «κουπόνι» — όχι και τα δύο ──
+        tier_cents, tier_pct = tier_discount(redeemable, st.get("cart_tiers") or [])
+        coupon_doc, coupon_cents = None, 0
+        if coupon_code:
+            crepo = ShopCouponRepository(tenant_id=self.tenant_id)
+            v = await crepo.validate(coupon_code, redeemable)
+            if not v.get("ok"):
+                return {"ok": False, "error": v.get("error"), "min_cents": v.get("min_cents")}
+            coupon_doc = v["coupon"]
+            coupon_cents = coupon_discount(coupon_doc, redeemable)
+        if coupon_cents >= tier_cents:
+            cart_cents, cart_kind, tier_pct = coupon_cents, "coupon", 0
+        else:
+            cart_cents, cart_kind, coupon_doc, coupon_cents = tier_cents, "tier", None, 0
+        cart_cents = min(cart_cents, redeemable)
+        redeemable -= cart_cents            # ό,τι μένει είναι το ταβάνι για τους πόντους
         fee = 0
         if mode == "delivery":
-            fee = 0 if (st["free_over_cents"] and subtotal >= st["free_over_cents"]) else st["delivery_fee_cents"]
+            base_for_fee = subtotal - bundle_cents - cart_cents
+            fee = 0 if (st["free_over_cents"] and base_for_fee >= st["free_over_cents"]) else st["delivery_fee_cents"]
+        # ── (4) εξαργύρωση πόντων: ΜΟΝΟ πάνω στην αξία των ΜΗ-συνταγογραφούμενων ειδών ──
+        redeem_cents = max(0, int(loyalty_redeem_cents or 0))
+        loy = None
+        if redeem_cents:
+            from app.repositories.loyalty import LoyaltyRepository
+            loy = LoyaltyRepository(tenant_id=self.tenant_id)
+            lcfg = await loy.config()
+            if not lcfg.get("enabled") or not patient_ref:
+                return {"ok": False, "error": "loyalty_off"}
+            member = await loy.member(str(patient_ref))
+            if not member:
+                return {"ok": False, "error": "loyalty_not_member"}
+            if redeem_cents > redeemable:
+                return {"ok": False, "error": "redeem_exceeds_eligible", "eligible_cents": redeemable}
+            if redeem_cents > int(member.get("balance_cents") or 0):
+                return {"ok": False, "error": "redeem_insufficient",
+                        "balance_cents": int(member.get("balance_cents") or 0)}
+            min_r = int(lcfg.get("min_redeem_cents") or 0)
+            if min_r and redeem_cents < min_r:
+                return {"ok": False, "error": "redeem_below_min", "min_cents": min_r}
         # «Σε αναμονή έγκρισης» αν έχει backorder (ο φαρμακοποιός αποφασίζει)· αλλιώς «Νέα» άμεσα.
         status = "pending" if has_backorder else "new"
         # ΑΤΟΜΙΚΗ δέσμευση αποθέματος για τα ΑΜΕΣΑ είδη (όχι σε pending — δεσμεύεται στην έγκριση).
@@ -119,19 +205,35 @@ class OrdersDeliveryRepository(BaseRepository):
             reserve = await cat.reserve_stock(reserve_items)
             if not reserve.get("ok"):
                 return {"ok": False, "error": "unavailable", "barcode": reserve.get("barcode")}
+        # Χρέωση πόντων ΜΟΝΟ αφού εξασφαλιστεί το απόθεμα (αλλιώς θα «καίγονταν» σε αποτυχία).
+        if redeem_cents and loy:
+            r = await loy.redeem(str(patient_ref), redeem_cents, reason="Παραγγελία e-shop", kind="shop")
+            if not r.get("ok"):
+                if status == "new" and reserve_items:
+                    await cat.restore_stock(reserve_items)      # ξε-δέσμευσε ό,τι μόλις δεσμεύτηκε
+                return {"ok": False, "error": "redeem_failed"}
+        if coupon_doc:                       # «κλείδωσε» τη χρήση του κουπονιού (επιστρέφεται σε ακύρωση)
+            await ShopCouponRepository(tenant_id=self.tenant_id).consume(str(coupon_doc["code"]))
         doc = {
             "tenant_id": self.tenant_id, "account_id": account_id, "patient_ref": patient_ref,
             "patient_name": patient_name, "patient_phone": patient_phone,
             "items": items, "subtotal_cents": subtotal, "delivery_fee_cents": fee,
-            "total_cents": subtotal + fee, "mode": mode,
+            "bundle_discount_cents": bundle_cents, "bundle_names": bundle_names,
+            "cart_discount_cents": cart_cents, "cart_discount_kind": cart_kind if cart_cents else None,
+            "cart_tier_pct": tier_pct, "coupon_code": (coupon_doc or {}).get("code"),
+            "loyalty_redeem_cents": redeem_cents,
+            "total_cents": max(0, subtotal - bundle_cents - cart_cents + fee - redeem_cents), "mode": mode,
             "address": address if mode == "delivery" else None,
-            "courier_authorized": bool(courier_authorized), "gdpr_consent": True,
+            "courier_authorized": bool(courier_authorized), "courier_auth": courier_auth,
+            "gdpr_consent": True,
             "has_medicine": has_medicine, "has_backorder": has_backorder, "available_date": None,
             "status": status, "subscription_id": subscription_id,
             "status_history": [{"status": status, "at": _now()}],
             "created_at": _now(), "updated_at": _now(),
         }
         res = await self.insert_one(doc)
+        if account_id:
+            await self.clear_cart(account_id)     # παραγγέλθηκε → δεν είναι πια «ξεχασμένο καλάθι»
         # επιβεβαίωση παραλαβής παραγγελίας (1ο στάδιο) — μετά ακολουθούν push σε κάθε αλλαγή status
         if account_id:
             from app.services import push_service
@@ -142,9 +244,29 @@ class OrdersDeliveryRepository(BaseRepository):
         return {"ok": True, "order_id": str(res), "total_cents": subtotal + fee,
                 "status": status, "has_backorder": has_backorder}
 
+    # ── ενεργό καλάθι (server-side) → υπενθύμιση «ξεχασμένου καλαθιού» ──────
+    # Το καλάθι ζει στο localStorage του πελάτη· κρατάμε ΑΝΤΙΓΡΑΦΟ (barcode+qty μόνο, χωρίς PII)
+    # ώστε ο beat να μπορεί να στείλει push αν μείνει ασυμπλήρωτο.
+    async def save_cart(self, account_id, lines: list[dict]) -> dict:
+        clean = [{"barcode": str(ln.get("barcode")), "qty": max(1, int(ln.get("qty") or 1))}
+                 for ln in (lines or []) if ln.get("barcode")][:50]
+        if not clean:
+            return await self.clear_cart(account_id)
+        await self._db["shop_carts"].update_one(
+            {"tenant_id": self.tenant_id, "account_id": account_id},
+            {"$set": {"items": clean, "updated_at": _now(), "reminded_at": None},
+             "$setOnInsert": {"tenant_id": self.tenant_id, "account_id": account_id}},
+            upsert=True)
+        return {"ok": True, "items": len(clean)}
+
+    async def clear_cart(self, account_id) -> dict:
+        await self._db["shop_carts"].delete_one({"tenant_id": self.tenant_id, "account_id": account_id})
+        return {"ok": True, "items": 0}
+
     # ── subscriptions (recurring orders) ────────────────────────────────────
     async def create_subscription(self, *, account_id, patient_ref, patient_name, patient_phone,
-                                  lines, mode, address, courier_authorized, interval_days) -> dict:
+                                  lines, mode, address, courier_authorized, interval_days,
+                                  courier_auth: dict | None = None) -> dict:
         from datetime import timedelta
         iv = max(7, int(interval_days))
         doc = {
@@ -152,6 +274,7 @@ class OrdersDeliveryRepository(BaseRepository):
             "patient_name": patient_name, "patient_phone": patient_phone,
             "lines": [{"barcode": str(ln.get("barcode")), "qty": max(1, int(ln.get("qty") or 1))} for ln in lines],
             "mode": mode, "address": address, "courier_authorized": bool(courier_authorized),
+            "courier_auth": courier_auth if mode == "delivery" else None,
             "interval_days": iv, "active": True, "next_run": _now() + timedelta(days=iv),
             "created_at": _now(),
         }
@@ -182,7 +305,8 @@ class OrdersDeliveryRepository(BaseRepository):
             account_id=sub.get("account_id"), patient_ref=sub.get("patient_ref"),
             patient_name=sub.get("patient_name", ""), patient_phone=sub.get("patient_phone", ""),
             lines=sub.get("lines", []), mode=sub.get("mode", "pickup"), address=sub.get("address"),
-            courier_authorized=sub.get("courier_authorized", False), gdpr_consent=True,
+            courier_authorized=sub.get("courier_authorized", False),
+            courier_auth=sub.get("courier_auth"), gdpr_consent=True,
             sub_discount_pct=st.get("subscription_discount_pct", 0), subscription_id=str(sub["_id"]))
         nxt = _now() + timedelta(days=int(sub.get("interval_days", 30)))
         await self._db["order_subscriptions"].update_one(
@@ -235,12 +359,27 @@ class OrdersDeliveryRepository(BaseRepository):
             await self.update_one({"_id": oid}, {
                 "$set": {"status": "declined", "updated_at": _now()},
                 "$push": {"status_history": {"status": "declined", "at": _now()}}})
+            await self._refund_loyalty(order)     # απόρριψη → γύρνα πίσω τους πόντους
             msg = "Δυστυχώς το φαρμακείο δεν μπορεί να εκτελέσει την παραγγελία σου αυτή τη στιγμή."
         if order.get("account_id"):
             from app.services import push_service
             await push_service.send_to_account(order["account_id"],
                                                title="🛍️ Παραγγελία φαρμακείου", body=msg, url="/portal")
         return {"ok": True, "status": "new" if accept else "declined", "available_date": available_date}
+
+    async def _refund_loyalty(self, order: dict) -> None:
+        """Επιστροφή πόντων + χρήσης κουπονιού σε ακύρωση/απόρριψη — ΜΙΑ φορά (idempotent)."""
+        if order.get("loyalty_refunded"):
+            return
+        cents = int(order.get("loyalty_redeem_cents") or 0)
+        if cents > 0 and order.get("patient_ref"):
+            from app.repositories.loyalty import LoyaltyRepository
+            await LoyaltyRepository(tenant_id=self.tenant_id).adjust(
+                str(order["patient_ref"]), cents, reason="Επιστροφή πόντων — ακυρωμένη παραγγελία")
+        if order.get("coupon_code"):          # ξανα-δώσε τη χρήση του κουπονιού
+            await ShopCouponRepository(tenant_id=self.tenant_id).release(str(order["coupon_code"]))
+        if cents > 0 or order.get("coupon_code"):
+            await self.update_one({"_id": order["_id"]}, {"$set": {"loyalty_refunded": True}})
 
     async def set_status(self, order_id: str, status: str) -> dict:
         from bson import ObjectId
@@ -257,6 +396,7 @@ class OrdersDeliveryRepository(BaseRepository):
         if status == "cancelled" and order.get("status") != "cancelled":
             await PharmacyCatalogRepository(tenant_id=self.tenant_id).restore_stock(
                 [{"barcode": it.get("barcode"), "qty": it.get("qty", 1)} for it in order.get("items", [])])
+            await self._refund_loyalty(order)     # ακύρωση → γύρνα πίσω τους πόντους
         await self.update_one({"_id": oid}, {"$set": {"status": status, "updated_at": _now()},
                                              "$push": {"status_history": {"status": status, "at": _now()}}})
         # notify the patient

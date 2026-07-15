@@ -15,7 +15,12 @@ _PERM = "portal:manage"
 
 @router.get("")
 async def overview(ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
-    return await LoyaltyRepository(tenant_id=ctx.tenant_id).overview()
+    data = await LoyaltyRepository(tenant_id=ctx.tenant_id).overview()
+    # Όνομα φαρμακείου → τυπώνεται πάνω στη φυσική κάρτα πιστότητας.
+    from app.core.db import shared_db
+    t = await shared_db()["tenants"].find_one({"_id": ctx.tenant_id}) or {}   # tenant-ok: own tenant
+    data["pharmacy_name"] = (t.get("company") or {}).get("name") or t.get("name") or ""
+    return data
 
 
 @router.get("/member/{patient_ref}")

@@ -11,12 +11,14 @@ import { InstallButton } from "@/components/pwa/InstallButton";
 import { PharmaCatLauncher } from "@/components/pharmacat/PharmaCatLauncher";
 import { NotificationBells } from "@/components/layout/NotificationBells";
 import { Tooltip } from "@/components/ui/Tooltip";
+import { PharmacySwitcher, type Pharmacy } from "@/components/layout/PharmacySwitcher";
 import { CLOUDON_LOGO_DATA_URI } from "@/components/brand/cloudonLogo";
 
 type Me = {
   roles?: string[];
   user_id?: string;
   tenant_id?: string;
+  pharmacies?: Pharmacy[];   // δίκτυο φαρμακείων → επιλογέας (μόνο αν >1)
   full_name?: string;
   email?: string;
   modules?: Record<string, "enabled" | "trial" | "locked">;
@@ -74,22 +76,29 @@ export function Topbar() {
           <div className="pointer-events-auto"><PharmaCatLauncher /></div>
         </div>
       )}
-      <button
-        onClick={() => useNavStore.getState().setOpen(true)}
-        aria-label={t("Μενού", "Menu")}
-        className="mr-auto grid h-10 w-10 place-items-center rounded-lg text-slate-600 hover:bg-white dark:text-slate-300 dark:hover:bg-slate-800 md:hidden"
-      >
-        <Menu className="h-5 w-5" />
-      </button>
-      <Tooltip label={collapsed ? t("Ανάπτυξη μενού", "Expand menu") : t("Σύμπτυξη μενού", "Collapse menu")}>
+      {/* ΑΡΙΣΤΕΡΟ cluster (mr-auto στο wrapper, όχι στα κουμπιά): μενού + σύμπτυξη + επιλογέας
+          φαρμακείου. Ο επιλογέας ΠΡΕΠΕΙ να είναι εδώ — αν μείνει δεξιά, πέφτει πάνω στο
+          απόλυτα κεντραρισμένο PharmaCat και σκεπάζεται. */}
+      <div className="mr-auto flex min-w-0 items-center gap-1 sm:gap-2">
         <button
-          onClick={toggleCollapsed}
-          aria-label={collapsed ? t("Ανάπτυξη μενού", "Expand menu") : t("Σύμπτυξη μενού", "Collapse menu")}
-          className="mr-auto hidden h-9 w-9 place-items-center rounded-lg text-slate-500 hover:bg-white dark:text-slate-300 dark:hover:bg-slate-800 md:grid"
+          onClick={() => useNavStore.getState().setOpen(true)}
+          aria-label={t("Μενού", "Menu")}
+          className="grid h-10 w-10 shrink-0 place-items-center rounded-lg text-slate-600 hover:bg-white dark:text-slate-300 dark:hover:bg-slate-800 md:hidden"
         >
-          {collapsed ? <PanelLeft className="h-[18px] w-[18px]" /> : <PanelLeftClose className="h-[18px] w-[18px]" />}
+          <Menu className="h-5 w-5" />
         </button>
-      </Tooltip>
+        <Tooltip label={collapsed ? t("Ανάπτυξη μενού", "Expand menu") : t("Σύμπτυξη μενού", "Collapse menu")}>
+          <button
+            onClick={toggleCollapsed}
+            aria-label={collapsed ? t("Ανάπτυξη μενού", "Expand menu") : t("Σύμπτυξη μενού", "Collapse menu")}
+            className="hidden h-9 w-9 shrink-0 place-items-center rounded-lg text-slate-500 hover:bg-white dark:text-slate-300 dark:hover:bg-slate-800 md:grid"
+          >
+            {collapsed ? <PanelLeft className="h-[18px] w-[18px]" /> : <PanelLeftClose className="h-[18px] w-[18px]" />}
+          </button>
+        </Tooltip>
+        {/* Δίκτυο φαρμακείων: εμφανίζεται ΜΟΝΟ αν ο χρήστης έχει πρόσβαση σε >1 φαρμακείο */}
+        <PharmacySwitcher pharmacies={data?.pharmacies ?? []} activeId={data?.tenant_id} />
+      </div>
       <Tooltip label={t("Σκούρο/Φωτεινό θέμα", "Dark/Light theme")}>
         <button
           onClick={() => setTheme(theme === "dark" ? "light" : "dark")}

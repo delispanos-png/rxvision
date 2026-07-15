@@ -26,6 +26,21 @@ def _now() -> datetime:
     return datetime.now(tz=timezone.utc)
 
 
+def _exec_ts(row: dict) -> float:
+    """Χρονική σφραγίδα εκτέλεσης για ταξινόμηση ΔΙΑ-φαρμακειακά. Ανθεκτικό σε datetime (naive ή
+    aware), ISO string ή τίποτα — αλλιώς η ένωση λιστών από διαφορετικά tenants σκάει με TypeError."""
+    v = row.get("executed_at")
+    if isinstance(v, datetime):
+        return (v if v.tzinfo else v.replace(tzinfo=timezone.utc)).timestamp()
+    if isinstance(v, str):
+        try:
+            d = datetime.fromisoformat(v.replace("Z", "+00:00"))
+            return (d if d.tzinfo else d.replace(tzinfo=timezone.utc)).timestamp()
+        except ValueError:
+            return 0.0
+    return 0.0
+
+
 def _oid(v):
     if isinstance(v, ObjectId):
         return v
@@ -212,6 +227,27 @@ class PatientAccountRepository:
         rows = [r async for r in self.db["patient_links"].find({"account_id": oid})]  # tenant-ok
         return [{"tenant_id": r["tenant_id"], "patient_ref": str(r["patient_ref"]),
                  "pharmacy_name": r.get("pharmacy_name")} for r in rows]
+
+    async def all_prescriptions(self, account_id, *, limit: int = 200) -> list[dict]:
+        """ΟΛΕΣ οι εκτελέσεις του πελάτη, από ΟΛΑ τα φαρμακεία του, με ΕΤΙΚΕΤΑ φαρμακείου.
+
+        Η συνταγή είναι του πελάτη → βλέπει τα δικά του παντού. Κάθε ερώτημα παραμένει
+        tenant-scoped (ένα PatientRxRepository ανά link) — δεν σπάει η απομόνωση: κανένα
+        φαρμακείο δεν βλέπει τα δεδομένα άλλου, μόνο ο ίδιος ο πελάτης.
+        """
+        out: list[dict] = []
+        for ln in await self.links(account_id):
+            try:
+                rows = await PatientRxRepository(tenant_id=ln["tenant_id"]).my_prescriptions(
+                    ln["patient_ref"], limit=limit)
+            except Exception:  # noqa: BLE001
+                continue                      # ένα προβληματικό φαρμακείο δεν ρίχνει όλη τη λίστα
+            for r in rows:
+                r["tenant_id"] = ln["tenant_id"]
+                r["pharmacy_name"] = ln.get("pharmacy_name")
+                out.append(r)
+        out.sort(key=_exec_ts, reverse=True)
+        return out[:limit]
 
     async def link_for(self, account_id, tenant_id: str) -> dict | None:
         oid = _oid(account_id)

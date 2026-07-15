@@ -2368,3 +2368,68 @@ async def amount_audit_run(body: AmountAuditRunIn, _: PlatformContext = Depends(
         for _b in range(body.batches):
             amount_audit_task.apply_async(args=[tid, _s.AMOUNT_AUDIT_BATCH], queue="backfill")
     return {"ok": True, "tenants": len(tids), "batches_each": body.batches}
+
+
+# ── Δίκτυο φαρμακείων: σε ποια φαρμακεία μπορεί να συνδεθεί ΕΝΑΣ χρήστης ────────────────────
+# Π.χ. ιδιοκτήτης 5 φαρμακείων (ίδιο ή διαφορετικό ΑΦΜ) → ένα login, επιλογέας πάνω-πάνω.
+# ΑΣΦΑΛΕΙΑ: γράφεται ΜΟΝΟ από εδώ (πλατφόρμα). Αν το άλλαζε ο διαχειριστής του φαρμακείου,
+# θα έδινε στον εαυτό του πρόσβαση σε ξένο φαρμακείο.
+@router.get("/network/users")
+async def network_users(q: str = "", owners_only: bool = True,
+                        _: PlatformContext = Depends(get_platform_admin)):
+    """owners_only (default): μόνο χρήστες με ρόλο ιδιοκτήτη — η πρόσβαση σε πολλά φαρμακεία
+    αφορά ιδιοκτήτες. Ένας υπάλληλος του Α δεν πρέπει να «βρεθεί» εύκολα με πρόσβαση στο Β."""
+    db = shared_db()
+    query: dict = {"status": "active"}
+    if q.strip():
+        rx = {"$regex": re.escape(q.strip()), "$options": "i"}
+        query["$or"] = [{"email": rx}, {"full_name": rx}]
+    tmap = {t["_id"]: t async for t in db["tenants"].find({})}
+    names = {k: ((v.get("company") or {}).get("name") or v.get("name") or k) for k, v in tmap.items()}
+    owner_ids = {r["_id"] async for r in db["roles"].find({"key": "owner"}, {"_id": 1})}
+    out = []
+    # Το φιλτράρισμα γίνεται σε Python (όχι $in στο query): τα role_ids άλλοτε είναι ObjectId και
+    # άλλοτε string (όσα φτιάχτηκαν από το API) — ένα $in με ObjectIds θα έχανε τα δεύτερα.
+    async for u in db["users"].find(query).limit(300):
+        extra = [str(x) for x in (u.get("tenant_ids") or [])]
+        home = tmap.get(u.get("tenant_id")) or {}
+        afm = str(((home.get("company") or {}).get("afm") or "")).strip()
+        is_owner = any(_oid(r) in owner_ids for r in (u.get("role_ids") or []))
+        # Κράτα και μη-ιδιοκτήτες που ΗΔΗ έχουν πρόσβαση — αλλιώς «εξαφανίζονται» και δεν αφαιρείται.
+        if owners_only and not is_owner and not extra:
+            continue
+        if len(out) >= 50:
+            break
+        # ΑΥΤΟΜΑΤΗ πρόσβαση: ίδιο (έγκυρο) ΑΦΜ + ρόλος ιδιοκτήτη → δεν χρειάζεται χειροκίνητη δήλωση
+        auto = []
+        if is_owner and re.fullmatch(r"\d{9}", afm):
+            auto = [k for k, v in tmap.items()
+                    if str(((v.get("company") or {}).get("afm") or "")).strip() == afm
+                    and k != u.get("tenant_id")]
+        out.append({
+            "id": str(u["_id"]), "email": u.get("email"), "name": u.get("full_name", ""),
+            "tenant_id": u.get("tenant_id"), "tenant_name": names.get(u.get("tenant_id"), ""),
+            "afm": afm, "is_owner": is_owner,
+            "tenant_ids": extra,
+            "extra_names": [names.get(t, t) for t in extra],
+            "auto_names": [names.get(t, t) for t in auto],   # από ίδιο ΑΦΜ — αυτόματα
+        })
+    return {"items": out}
+
+
+class NetworkAccessIn(BaseModel):
+    tenant_ids: list[str] = Field(default_factory=list, max_length=50)
+
+
+@router.put("/network/users/{user_id}")
+async def set_network_access(user_id: str, body: NetworkAccessIn,
+                             _: PlatformContext = Depends(get_platform_admin)):
+    db = shared_db()
+    user = await db["users"].find_one({"_id": _oid(user_id)})
+    if not user:
+        raise HTTPException(http_status.HTTP_404_NOT_FOUND, "user_not_found")
+    valid = {t["_id"] async for t in db["tenants"].find({}, {"_id": 1})}
+    # Το κύριο φαρμακείο δεν χρειάζεται να επαναληφθεί εδώ (μπαίνει πάντα από το allowed_tenants).
+    clean = [t for t in dict.fromkeys(body.tenant_ids) if t in valid and t != user.get("tenant_id")]
+    await db["users"].update_one({"_id": user["_id"]}, {"$set": {"tenant_ids": clean}})
+    return {"ok": True, "user_id": user_id, "tenant_ids": clean}

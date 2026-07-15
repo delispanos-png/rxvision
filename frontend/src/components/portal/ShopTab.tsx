@@ -28,7 +28,10 @@ function catEmoji(c: string): string {
 type Product = { barcode: string; name: string; description_long?: string | null; photo_url?: string | null; image_id?: string | null; price_cents: number; type: string; category?: string | null; tags?: string[]; featured?: boolean; discount_pct: number; stock_qty: number };
 const isBackorder = (p: Product) => (p.stock_qty ?? 0) <= 0;             // χωρίς απόθεμα → κατόπιν παραγγελίας
 const capOf = (p: Product) => isBackorder(p) ? 99 : p.stock_qty;        // backorder → επιτρέπεται προσθήκη
-type Settings = { delivery_enabled: boolean; pickup_enabled: boolean; delivery_fee_cents: number; free_over_cents: number; min_order_cents: number; pps_cert: string; subscription_enabled: boolean; subscription_discount_pct: number };
+type Tier = { min_cents: number; pct: number };
+type Settings = { delivery_enabled: boolean; pickup_enabled: boolean; delivery_fee_cents: number; free_over_cents: number; min_order_cents: number; pps_cert: string; subscription_enabled: boolean; subscription_discount_pct: number; cart_tiers?: Tier[] };
+type BundleLine = { barcode: string; qty: number };
+type Bundle = { name: string; kind: "combo" | "nplusm"; barcode?: string | null; buy_qty?: number; free_qty?: number; lines?: BundleLine[]; discount_pct?: number };
 const LOW_STOCK = 5;
 const imgSrc = (p: Product) => p.image_id ? `${API_BASE}/catalog/image/${p.image_id}` : (p.photo_url || "");
 const TAG_STYLE: Record<string, string> = { "Προσφορά": "bg-rose-100 text-rose-700", "Νέο": "bg-emerald-100 text-emerald-700", "Δημοφιλές": "bg-amber-100 text-amber-800", "Bestseller": "bg-amber-100 text-amber-800", "Βιολογικό": "bg-green-100 text-green-700", "Vegan": "bg-green-100 text-green-700" };
@@ -42,7 +45,72 @@ type Order = { _id: string; items: OrderItem[]; subtotal_cents: number; delivery
 const eur = (c: number) => (c / 100).toLocaleString("el-GR", { minimumFractionDigits: 2 }) + " €";
 const isMed = (t: string) => t === "rx_medicine" || t === "otc_medicine";
 const noDisc = (t: string) => t === "rx_medicine";   // μόνο τα συνταγογραφούμενα → 0% έκπτωση
-const final = (p: Product) => Math.round(p.price_cents * (100 - (noDisc(p.type) ? 0 : p.discount_pct)) / 100);
+// Εκπτωτική καμπάνια σε ομάδα ειδών (κατηγορίες/ετικέτες). Καθρεφτίζει τη μηχανή του server
+// (shop_campaigns.campaign_pct_for) — ΜΟΝΟ για εμφάνιση· η τιμή υπολογίζεται πάντα server-side.
+type Campaign = { name: string; discount_pct: number; categories: string[]; tags: string[] };
+type Loyalty = { enabled: boolean; balance_cents: number; min_redeem_cents: number; member?: boolean };
+const campPct = (p: Product, camps: Campaign[] = []) => {
+  if (noDisc(p.type)) return 0;                       // συνταγογραφούμενα: ποτέ έκπτωση καμπάνιας
+  const cat = (p.category || "").trim().toLowerCase();
+  const tags = new Set((p.tags || []).map((t) => t.trim().toLowerCase()));
+  let best = 0;
+  for (const c of camps) {
+    const cs = (c.categories || []).map((s) => s.toLowerCase());
+    const ts = (c.tags || []).map((s) => s.toLowerCase());
+    const match = (cs.length === 0 && ts.length === 0) || cs.includes(cat) || ts.some((t) => tags.has(t));
+    if (match) best = Math.max(best, c.discount_pct || 0);
+  }
+  return Math.min(90, best);
+};
+// Καλύτερη έκπτωση: δική του ή καμπάνιας (ΔΕΝ αθροίζονται).
+const effDisc = (p: Product, camps: Campaign[] = []) => noDisc(p.type) ? 0 : Math.max(p.discount_pct || 0, campPct(p, camps));
+const final = (p: Product, camps: Campaign[] = []) => Math.round(p.price_cents * (100 - effDisc(p, camps)) / 100);
+
+// ── Καθρέφτης της μηχανής του server (services/shop_pricing.py) — ΜΟΝΟ για εμφάνιση.
+// Η τελική τιμή υπολογίζεται πάντα ξανά server-side κατά την παραγγελία.
+type CartLine = { barcode: string; type: string; qty: number; line_cents: number };
+const bundleSavings = (lines: CartLine[], bundles: Bundle[]) => {
+  const byBc: Record<string, CartLine> = {};
+  lines.filter((l) => !noDisc(l.type)).forEach((l) => { byBc[l.barcode] = l; });   // rx εκτός
+  let total = 0; const names: string[] = [];
+  for (const b of bundles) {
+    if (b.kind === "nplusm") {
+      const it = byBc[b.barcode || ""]; if (!it) continue;
+      const buy = Math.max(1, b.buy_qty ?? 2), free = Math.max(1, b.free_qty ?? 1);
+      const sets = Math.floor(it.qty / (buy + free)); if (sets <= 0) continue;
+      const unit = Math.floor(it.line_cents / Math.max(1, it.qty));
+      const save = sets * free * unit;
+      if (save > 0) { total += save; names.push(b.name); }
+    } else {
+      const ls = b.lines || []; if (!ls.length) continue;
+      let sets: number | null = null;
+      for (const ln of ls) {
+        const it = byBc[ln.barcode]; const need = Math.max(1, ln.qty || 1);
+        const s = Math.floor((it?.qty ?? 0) / need);
+        sets = sets === null ? s : Math.min(sets, s);
+        if (!sets) break;
+      }
+      if (!sets) continue;
+      const pct = Math.max(1, Math.min(90, b.discount_pct ?? 0));
+      let save = 0;
+      for (const ln of ls) {
+        const it = byBc[ln.barcode]; const need = Math.max(1, ln.qty || 1);
+        const unit = Math.floor(it.line_cents / Math.max(1, it.qty));
+        save += Math.round(unit * need * sets * pct / 100);
+      }
+      if (save > 0) { total += save; names.push(b.name); }
+    }
+  }
+  return { total, names };
+};
+const tierDiscount = (base: number, tiers: Tier[] = []) => {
+  let pct = 0;
+  for (const t of tiers) if (base >= (t.min_cents || 0)) pct = Math.max(pct, Math.max(0, Math.min(90, t.pct || 0)));
+  return { cents: pct ? Math.round(base * pct / 100) : 0, pct };
+};
+type AppliedCoupon = { code: string; kind: "pct" | "amount"; value: number };
+const couponCentsOf = (c: AppliedCoupon | null, base: number) =>
+  !c || base <= 0 ? 0 : (c.kind === "amount" ? Math.min(base, c.value) : Math.round(base * Math.max(0, Math.min(90, c.value)) / 100));
 const ST: Record<string, string> = { pending: "Σε αναμονή έγκρισης", new: "Νέα", preparing: "Ετοιμάζεται", ready: "Έτοιμη", shipped: "Καθ' οδόν", delivered: "Παραδόθηκε", declined: "Απορρίφθηκε", cancelled: "Ακυρώθηκε" };
 
 export function ShopTab({ tenantKey = "x" }: { tenantKey?: string }) {
@@ -54,7 +122,7 @@ export function ShopTab({ tenantKey = "x" }: { tenantKey?: string }) {
   const [cat, setCat] = useState("");
   const [tag, setTag] = useState("");
   const [sort, setSort] = useState("featured");
-  const [meta, setMeta] = useState<{ categories: string[]; tags: string[]; settings: Settings } | null>(null);
+  const [meta, setMeta] = useState<{ categories: string[]; tags: string[]; settings: Settings; campaigns?: Campaign[]; bundles?: Bundle[]; loyalty?: Loyalty } | null>(null);
   // Καλάθι: αρχικοποίηση ΑΠΟ localStorage (ανά φαρμακείο) ώστε να ΜΗΝ χάνεται σε refresh.
   const [cart, setCart] = useState<Record<string, { p: Product; qty: number }>>(() => {
     try { return JSON.parse(localStorage.getItem(CART_KEY) || "{}"); } catch { return {}; }
@@ -62,7 +130,16 @@ export function ShopTab({ tenantKey = "x" }: { tenantKey?: string }) {
   const [orders, setOrders] = useState<Order[]>([]);
 
   useEffect(() => { try { localStorage.setItem(CART_KEY, JSON.stringify(cart)); } catch { /* full/blocked */ } }, [cart, CART_KEY]);
-  useEffect(() => { patientApi<{ categories: string[]; tags: string[]; settings: Settings }>("/patient/shop/meta").then(setMeta).catch(() => {}); }, []);
+  // Αντίγραφο καλαθιού στον server (debounced) → επιτρέπει υπενθύμιση «ξεχασμένου καλαθιού».
+  // Στέλνει μόνο barcode+qty. Κάθε αλλαγή μηδενίζει το reminded_at ώστε να μην σπαμάρει.
+  useEffect(() => {
+    const tmo = setTimeout(() => {
+      const lines = Object.values(cart).map((x) => ({ barcode: x.p.barcode, qty: x.qty }));
+      patientApi("/patient/shop/cart", { method: "POST", body: JSON.stringify({ lines }) }).catch(() => {});
+    }, 1500);
+    return () => clearTimeout(tmo);
+  }, [cart]);
+  useEffect(() => { patientApi<{ categories: string[]; tags: string[]; settings: Settings; campaigns?: Campaign[]; bundles?: Bundle[]; loyalty?: Loyalty }>("/patient/shop/meta").then(setMeta).catch(() => {}); }, []);
   // Φόρτωσε τις παραγγελίες στην αρχή ώστε το κουμπί «Οι παραγγελίες μου» να δείχνει badge ενεργών.
   useEffect(() => { patientApi<{ items: Order[] }>("/patient/shop/orders").then((d) => setOrders(d.items)).catch(() => {}); }, []);
   useEffect(() => { patientApi<{ barcodes: string[] }>("/patient/shop/favorites").then((d) => setFavBarcodes(new Set(d.barcodes))).catch(() => {}); }, []);
@@ -90,14 +167,15 @@ export function ShopTab({ tenantKey = "x" }: { tenantKey?: string }) {
       if (missing) toast(`${missing} είδη δεν είναι πλέον διαθέσιμα και παραλείφθηκαν.`, "info");
     } catch { toast("Κάτι πήγε στραβά — δοκίμασε ξανά.", "error"); }
   }
+  const camps = meta?.campaigns ?? [];
   const cartItems = Object.values(cart);
-  const subtotal = cartItems.reduce((s, x) => s + final(x.p) * x.qty, 0);
+  const subtotal = cartItems.reduce((s, x) => s + final(x.p, camps) * x.qty, 0);
   const count = cartItems.reduce((s, x) => s + x.qty, 0);
 
   if (view === "subs") return <Subscriptions onBack={() => setView("browse")} />;
   if (view === "orders") return <Orders orders={orders} setOrders={setOrders} onBack={() => setView("browse")} onReorder={reorder} />;
-  if (view === "cart") return <Checkout cart={cart} subtotal={subtotal} settings={meta?.settings} onBack={() => setView("browse")} onDone={() => { setCart({}); setView("orders"); }} dec={dec} add={add} />;
-  if (view === "favorites") return <Favorites onBack={() => setView("browse")} favBarcodes={favBarcodes} toggleFav={toggleFav} add={add} cart={cart} dec={dec} />;
+  if (view === "cart") return <Checkout cart={cart} subtotal={subtotal} settings={meta?.settings} camps={camps} bundles={meta?.bundles ?? []} loyalty={meta?.loyalty} onBack={() => setView("browse")} onDone={() => { setCart({}); setView("orders"); }} dec={dec} add={add} />;
+  if (view === "favorites") return <Favorites onBack={() => setView("browse")} favBarcodes={favBarcodes} toggleFav={toggleFav} add={add} cart={cart} dec={dec} camps={camps} />;
 
   const activeOrders = orders.filter((o) => !["delivered", "cancelled", "declined"].includes(o.status)).length;
 
@@ -106,7 +184,8 @@ export function ShopTab({ tenantKey = "x" }: { tenantKey?: string }) {
       {/* ΚΑΛΑΘΙ — ευδιάκριτο, sticky πάνω-πάνω μόλις προσθέσεις είδος (πριν ήταν αόρατο) */}
       {count > 0 && (
         <button onClick={() => setView("cart")}
-          className="sticky top-2 z-20 flex w-full items-center justify-between gap-2 rounded-2xl bg-gradient-to-r from-violet-600 to-indigo-600 px-4 py-3 text-white shadow-lg shadow-violet-500/30 ring-1 ring-white/20">
+          /* top-[4.5rem]: ακριβώς κάτω από το sticky header (h-16) — αλλιώς το σκέπαζε */
+          className="sticky top-[4.5rem] z-10 flex w-full items-center justify-between gap-2 rounded-2xl bg-gradient-to-r from-violet-600 to-indigo-600 px-4 py-3 text-white shadow-lg shadow-violet-500/30 ring-1 ring-white/20">
           <span className="flex items-center gap-2 text-sm font-bold">
             <span className="relative grid h-8 w-8 place-items-center rounded-xl bg-white/20">
               <ShoppingCart className="h-[18px] w-[18px]" />
@@ -163,14 +242,15 @@ export function ShopTab({ tenantKey = "x" }: { tenantKey?: string }) {
         </div>
       )}
 
-      <div className="grid grid-cols-2 gap-2 pb-20">
+      <div className="grid grid-cols-2 gap-2 pb-20 sm:grid-cols-3 sm:gap-3 sm:pb-6 lg:grid-cols-4 xl:grid-cols-5">
         {products.map((p) => {
-          const med = isMed(p.type); const fc = final(p); const inCart = cart[p.barcode]?.qty ?? 0;
+          const med = isMed(p.type); const fc = final(p, camps); const inCart = cart[p.barcode]?.qty ?? 0;
+          const dPct = effDisc(p, camps);
           return (
             <div key={p.barcode} className={`flex flex-col rounded-2xl border bg-white p-2.5 ${p.featured ? "border-amber-300 ring-1 ring-amber-100" : "border-slate-200"}`}>
-              <div className="relative mb-1 grid h-24 place-items-center overflow-hidden rounded-xl bg-slate-50">
+              <div className="relative mb-1 grid h-24 place-items-center overflow-hidden rounded-xl bg-slate-50 sm:h-32">
                 {imgSrc(p) ? <img src={imgSrc(p)} alt="" className="h-full w-full object-contain" /> : (med ? <Pill className="h-7 w-7 text-slate-300" /> : <Package className="h-7 w-7 text-slate-300" />)}
-                {!noDisc(p.type) && p.discount_pct > 0 && <span className="absolute left-1 top-1 rounded-md bg-rose-600 px-1.5 py-0.5 text-[10px] font-bold text-white">-{p.discount_pct}%</span>}
+                {dPct > 0 && <span className="absolute left-1 top-1 rounded-md bg-rose-600 px-1.5 py-0.5 text-[10px] font-bold text-white">-{dPct}%</span>}
                 {/* αγαπημένο προϊόν (καρδιά) — ειδοποιήσεις για πτώση τιμής / επιστροφή σε απόθεμα */}
                 <button onClick={() => toggleFav(p.barcode)} title={favBarcodes.has(p.barcode) ? "Αφαίρεση αγαπημένου" : "Αγαπημένο"}
                   className="absolute right-1 top-1 grid h-7 w-7 place-items-center rounded-full bg-white/90 shadow-sm">
@@ -184,7 +264,7 @@ export function ShopTab({ tenantKey = "x" }: { tenantKey?: string }) {
               <div className="mt-1 flex items-end justify-between">
                 <div>
                   {fc < p.price_cents && <div className="text-[10px] text-slate-400 line-through">{eur(p.price_cents)}</div>}
-                  <div className="text-sm font-bold text-slate-900">{eur(fc)}{!noDisc(p.type) && p.discount_pct > 0 && <span className="ml-1 text-[10px] font-semibold text-emerald-600">-{p.discount_pct}%</span>}</div>
+                  <div className="text-sm font-bold text-slate-900">{eur(fc)}{dPct > 0 && <span className="ml-1 text-[10px] font-semibold text-emerald-600">-{dPct}%</span>}</div>
                 </div>
                 {inCart ? (
                   <div className="flex items-center gap-1.5 rounded-full bg-violet-600 px-1 text-white">
@@ -200,18 +280,15 @@ export function ShopTab({ tenantKey = "x" }: { tenantKey?: string }) {
         {products.length === 0 && <div className="col-span-2 py-10 text-center text-sm text-slate-400">Δεν βρέθηκαν προϊόντα.</div>}
       </div>
 
-      {count > 0 && (
-        <button onClick={() => setView("cart")} className="fixed inset-x-4 bottom-4 z-20 mx-auto flex max-w-md items-center justify-between rounded-2xl bg-violet-600 px-5 py-3 text-white shadow-lg">
-          <span className="flex items-center gap-2 font-semibold"><ShoppingCart className="h-5 w-5" /> {count} {count === 1 ? "προϊόν" : "προϊόντα"}</span>
-          <span className="font-bold">{eur(subtotal)} →</span>
-        </button>
-      )}
+      {/* (Το πλωτό κάτω κουμπί καλαθιού αφαιρέθηκε: ήταν διπλό με το sticky πάνω και έπεφτε
+          πάνω στην κάτω μπάρα πλοήγησης στο κινητό.) */}
     </div>
   );
 }
 
-function Checkout({ cart, subtotal, settings, onBack, onDone, dec, add }: {
+function Checkout({ cart, subtotal, settings, camps, bundles, loyalty, onBack, onDone, dec, add }: {
   cart: Record<string, { p: Product; qty: number }>; subtotal: number; settings?: Settings;
+  camps: Campaign[]; bundles: Bundle[]; loyalty?: Loyalty;
   onBack: () => void; onDone: () => void; dec: (bc: string) => void; add: (p: Product) => void;
 }) {
   const items = Object.values(cart);
@@ -220,36 +297,92 @@ function Checkout({ cart, subtotal, settings, onBack, onDone, dec, add }: {
   const [mode, setMode] = useState<"delivery" | "pickup">(settings?.delivery_enabled ? "delivery" : "pickup");
   const [addr, setAddr] = useState({ street: "", area: "", postal: "", phone: "", notes: "" });
   const [courier, setCourier] = useState(false);
+  const [cauth, setCauth] = useState({ name: "", id_number: "" });   // εξουσιοδοτούμενος (μόνο για αποστολή)
   const [gdpr, setGdpr] = useState(false);
   const [repeat, setRepeat] = useState(0);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const fee = mode === "delivery" ? (settings?.free_over_cents && subtotal >= settings.free_over_cents ? 0 : (settings?.delivery_fee_cents ?? 0)) : 0;
-  const total = subtotal + fee;
   const belowMin = (settings?.min_order_cents ?? 0) > subtotal;
+  const [coupon, setCoupon] = useState<AppliedCoupon | null>(null);
+  const [couponIn, setCouponIn] = useState("");
+  const [couponErr, setCouponErr] = useState("");
+  const [couponBusy, setCouponBusy] = useState(false);
+  const [useP, setUseP] = useState(false);
+  const [redeem, setRedeem] = useState(0);              // σε cents
+
+  // ── Σειρά εκπτώσεων (ίδια με server): γραμμή → πακέτα → καλάθι(καλύτερο tier/κουπόνι) → πόντοι.
+  // ΒΑΣΗ παντού: μόνο τα ΜΗ-συνταγογραφούμενα.
+  const lines: CartLine[] = items.map((x) => ({ barcode: x.p.barcode, type: x.p.type, qty: x.qty, line_cents: final(x.p, camps) * x.qty }));
+  const eligible0 = lines.filter((l) => !noDisc(l.type)).reduce((s, l) => s + l.line_cents, 0);
+  const bs = bundleSavings(lines, bundles);
+  const bundleCents = Math.min(bs.total, eligible0);
+  const afterBundles = eligible0 - bundleCents;
+  const td = tierDiscount(afterBundles, settings?.cart_tiers);
+  const cCents = couponCentsOf(coupon, afterBundles);
+  const useCoupon = cCents >= td.cents && cCents > 0;
+  const cartCents = Math.min(useCoupon ? cCents : td.cents, afterBundles);
+  const eligible = afterBundles - cartCents;           // ταβάνι για τους πόντους
+
+  const canRedeem = !!loyalty?.enabled && !!loyalty?.member && loyalty.balance_cents > 0 && eligible > 0;
+  const maxRedeem = Math.min(loyalty?.balance_cents ?? 0, eligible);
+  const minRedeem = loyalty?.min_redeem_cents ?? 0;
+  const redeemApplied = useP ? Math.min(redeem, maxRedeem) : 0;
+  const baseForFee = subtotal - bundleCents - cartCents;
+  const fee = mode === "delivery" ? (settings?.free_over_cents && baseForFee >= settings.free_over_cents ? 0 : (settings?.delivery_fee_cents ?? 0)) : 0;
+  const total = Math.max(0, subtotal - bundleCents - cartCents + fee - redeemApplied);
+
+  async function applyCoupon() {
+    setCouponErr(""); setCouponBusy(true);
+    try {
+      const r = await patientApi<{ ok: boolean; error?: string; code?: string; kind?: "pct" | "amount"; value?: number; min_cents?: number }>(
+        "/patient/shop/coupon/check", { method: "POST", body: JSON.stringify({ code: couponIn, eligible_cents: afterBundles }) });
+      if (!r.ok) {
+        setCoupon(null);
+        setCouponErr({
+          coupon_invalid: "Άκυρος κωδικός.", coupon_expired: "Το κουπόνι έληξε.",
+          coupon_exhausted: "Το κουπόνι εξαντλήθηκε.",
+          coupon_no_eligible_items: "Το κουπόνι δεν ισχύει σε συνταγογραφούμενα.",
+          coupon_below_min: `Ελάχιστη αξία ${eur(r.min_cents ?? 0)}.`,
+        }[r.error ?? ""] ?? "Άκυρος κωδικός.");
+        return;
+      }
+      setCoupon({ code: r.code!, kind: r.kind!, value: r.value! });
+      toast("Το κουπόνι εφαρμόστηκε!", "success");
+    } catch { setCouponErr("Σφάλμα δικτύου."); } finally { setCouponBusy(false); }
+  }
 
   async function place() {
     setErr(null);
     if (!gdpr) { setErr("Χρειάζεται η συγκατάθεση επεξεργασίας."); return; }
     if (mode === "delivery" && !courier) { setErr("Χρειάζεται η εξουσιοδότηση μεταφορέα."); return; }
+    if (mode === "delivery" && courier && (cauth.name.trim().length < 3 || cauth.id_number.trim().length < 4)) {
+      setErr("Συμπλήρωσε ονοματεπώνυμο & αρ. ταυτότητας/διαβατηρίου του εξουσιοδοτούμενου."); return;
+    }
     if (mode === "delivery" && (!addr.street || !addr.area)) { setErr("Συμπλήρωσε διεύθυνση."); return; }
+    if (redeemApplied > 0 && minRedeem && redeemApplied < minRedeem) { setErr(`Ελάχιστη εξαργύρωση ${eur(minRedeem)}.`); return; }
     setBusy(true);
     try {
       const r = await patientApi<{ ok: boolean; error?: string }>("/patient/shop/order", { method: "POST", body: JSON.stringify({
         lines: items.map((x) => ({ barcode: x.p.barcode, qty: x.qty })),
-        mode, address: mode === "delivery" ? addr : null, courier_authorized: courier, gdpr_consent: gdpr, repeat_days: repeat,
+        mode, address: mode === "delivery" ? addr : null, courier_authorized: courier,
+        courier_auth: mode === "delivery" ? { name: cauth.name.trim(), id_number: cauth.id_number.trim() } : null,
+        loyalty_redeem_cents: redeemApplied, coupon_code: useCoupon ? coupon?.code ?? null : null,
+        gdpr_consent: gdpr, repeat_days: repeat,
       }) });
       if (r.ok) onDone(); else setErr("Σφάλμα: " + (r.error || "δοκίμασε ξανά"));
     } catch { setErr("Σφάλμα δικτύου."); } finally { setBusy(false); }
   }
 
   return (
-    <div className="space-y-3 pb-6">
+    // Desktop: 2 στήλες — αριστερά είδη/παράδοση/στοιχεία, δεξιά «κολλημένο» το σύνολο & η ολοκλήρωση.
+    <div className="pb-6">
       <button onClick={onBack} className="inline-flex items-center gap-1 text-sm text-slate-500"><ChevronLeft className="h-4 w-4" /> Συνέχεια αγορών</button>
+      <div className="mt-3 grid items-start gap-3 lg:grid-cols-[minmax(0,1fr)_22rem]">
+      <div className="space-y-3">
       <div className="rounded-2xl border border-slate-200 bg-white p-3">
         {items.map((x) => (
           <div key={x.p.barcode} className="flex items-center justify-between border-b border-slate-100 py-2 last:border-0">
-            <div className="min-w-0"><div className="truncate text-sm font-medium text-slate-800">{x.p.name}</div><div className="text-xs text-slate-400">{eur(final(x.p))} × {x.qty}</div></div>
+            <div className="min-w-0"><div className="truncate text-sm font-medium text-slate-800">{x.p.name}</div><div className="text-xs text-slate-400">{eur(final(x.p, camps))} × {x.qty}</div></div>
             <div className="flex items-center gap-2">
               <button onClick={() => dec(x.p.barcode)} className="grid h-7 w-7 place-items-center rounded-full bg-slate-100">{x.qty === 1 ? <Trash2 className="h-3.5 w-3.5 text-rose-500" /> : <Minus className="h-3.5 w-3.5" />}</button>
               <span className="w-4 text-center text-sm font-bold">{x.qty}</span>
@@ -295,21 +428,85 @@ function Checkout({ cart, subtotal, settings, onBack, onDone, dec, add }: {
         <div className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800"><ShieldCheck className="h-4 w-4 shrink-0" /> Πιστοποιημένο φαρμακείο (ΠΦΣ): {settings.pps_cert}. Νόμιμη διάθεση ΜΗ.ΣΥ.ΦΑ. βάσει του κοινού λογοτύπου ΕΕ.</div>
       )}
       <label className="flex items-start gap-2 text-xs text-slate-600"><input type="checkbox" checked={gdpr} onChange={(e) => setGdpr(e.target.checked)} className="mt-0.5" /> Συναινώ στην επεξεργασία των στοιχείων μου για την εκτέλεση της παραγγελίας (GDPR).</label>
-      {mode === "delivery" && <label className="flex items-start gap-2 text-xs text-slate-600"><input type="checkbox" checked={courier} onChange={(e) => setCourier(e.target.checked)} className="mt-0.5" /> Εξουσιοδοτώ τον μεταφορέα να παραλάβει και να μου παραδώσει την παραγγελία στη διεύθυνσή μου.</label>}
+      {mode === "delivery" && (
+        <div className="space-y-2">
+          <label className="flex items-start gap-2 text-xs text-slate-600"><input type="checkbox" checked={courier} onChange={(e) => setCourier(e.target.checked)} className="mt-0.5" /> Εξουσιοδοτώ τον μεταφορέα να παραλάβει και να μου παραδώσει την παραγγελία στη διεύθυνσή μου.</label>
+          {courier && (
+            <div className="space-y-2 rounded-2xl border border-amber-200 bg-amber-50/60 p-3">
+              <div className="text-sm font-semibold text-amber-900">Στοιχεία εξουσιοδοτούμενου</div>
+              <p className="text-[11px] text-amber-800">Το άτομο που εξουσιοδοτείς να παραλάβει τα φάρμακα για λογαριασμό σου. Θα ζητηθεί ταυτοποίηση κατά την παράδοση.</p>
+              <input value={cauth.name} onChange={(e) => setCauth({ ...cauth, name: e.target.value })} placeholder="Ονοματεπώνυμο εξουσιοδοτούμενου" className="w-full rounded-lg border border-amber-300 bg-white px-3 py-2 text-sm" />
+              <input value={cauth.id_number} onChange={(e) => setCauth({ ...cauth, id_number: e.target.value })} placeholder="Αρ. ταυτότητας ή διαβατηρίου" className="w-full rounded-lg border border-amber-300 bg-white px-3 py-2 text-sm" />
+            </div>
+          )}
+        </div>
+      )}
+
+      </div>{/* ── τέλος αριστερής στήλης ── */}
+
+      {/* ── δεξιά στήλη: προσφορές + σύνολο + ολοκλήρωση (sticky σε desktop) ── */}
+      <div className="space-y-3 lg:sticky lg:top-20">
+      {/* Κουπόνι έκπτωσης */}
+      <div className="rounded-2xl border border-slate-200 bg-white p-3">
+        <div className="mb-1.5 text-sm font-semibold text-slate-700">🎟️ Κουπόνι έκπτωσης</div>
+        {coupon ? (
+          <div className="flex items-center justify-between gap-2 rounded-xl bg-violet-50 px-3 py-2">
+            <span className="text-sm text-violet-800">Ενεργό: <code className="font-bold">{coupon.code}</code> {coupon.kind === "pct" ? `(−${coupon.value}%)` : `(−${eur(coupon.value)})`}</span>
+            <button onClick={() => { setCoupon(null); setCouponIn(""); }} className="text-xs font-semibold text-slate-400">Αφαίρεση</button>
+          </div>
+        ) : (
+          <div className="flex gap-2">
+            <input value={couponIn} onChange={(e) => setCouponIn(e.target.value.toUpperCase())} placeholder="Κωδικός" className="min-w-0 flex-1 rounded-lg border border-slate-300 px-3 py-2 font-mono text-sm uppercase" />
+            <button onClick={applyCoupon} disabled={couponIn.trim().length < 3 || couponBusy} className="shrink-0 rounded-lg bg-slate-800 px-3 py-2 text-sm font-semibold text-white disabled:opacity-50">{couponBusy ? "…" : "Εφαρμογή"}</button>
+          </div>
+        )}
+        {couponErr && <div className="mt-1.5 text-xs text-rose-600">{couponErr}</div>}
+        {coupon && !useCoupon && cartCents > 0 && <div className="mt-1.5 text-[11px] text-amber-700">Η κλιμακωτή έκπτωση ({td.pct}%) σε συμφέρει περισσότερο — εφαρμόστηκε αυτή.</div>}
+      </div>
+
+      {/* Εξαργύρωση πόντων — ΜΟΝΟ σε μη-συνταγογραφούμενα (τα συνταγογραφούμενα εξαιρούνται) */}
+      {canRedeem && (
+        <div className="rounded-2xl border border-emerald-200 bg-emerald-50/70 p-3">
+          <label className="flex items-start gap-2 text-sm font-semibold text-emerald-900">
+            <input type="checkbox" checked={useP} onChange={(e) => { setUseP(e.target.checked); setRedeem(e.target.checked ? maxRedeem : 0); }} className="mt-0.5" />
+            🎁 Χρήση πόντων — διαθέσιμα {eur(loyalty!.balance_cents)}
+          </label>
+          {useP && (
+            <div className="mt-2 space-y-1.5">
+              <input type="range" min={0} max={maxRedeem} step={10} value={Math.min(redeem, maxRedeem)}
+                onChange={(e) => setRedeem(+e.target.value)} className="w-full accent-emerald-600" />
+              <div className="flex items-center justify-between text-xs text-emerald-800">
+                <span>Εξαργύρωση: <b>{eur(redeemApplied)}</b></span>
+                <button type="button" onClick={() => setRedeem(maxRedeem)} className="rounded-lg bg-emerald-600 px-2 py-0.5 text-[11px] font-semibold text-white">Μέγιστο ({eur(maxRedeem)})</button>
+              </div>
+              <p className="text-[10px] text-emerald-700">Οι πόντοι ισχύουν μόνο για μη συνταγογραφούμενα είδη — εδώ έως {eur(eligible)}.{minRedeem ? ` Ελάχιστη εξαργύρωση ${eur(minRedeem)}.` : ""}</p>
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="rounded-2xl border border-slate-200 bg-white p-3 text-sm">
         <div className="flex justify-between text-slate-600"><span>Υποσύνολο</span><span>{eur(subtotal)}</span></div>
+        {bundleCents > 0 && <div className="flex justify-between font-semibold text-emerald-700"><span>📦 {bs.names.join(", ")}</span><span>−{eur(bundleCents)}</span></div>}
+        {cartCents > 0 && <div className="flex justify-between font-semibold text-violet-700"><span>{useCoupon ? `🎟️ Κουπόνι ${coupon?.code}` : `📈 Έκπτωση καλαθιού (${td.pct}%)`}</span><span>−{eur(cartCents)}</span></div>}
         {mode === "delivery" && <div className="flex justify-between text-slate-600"><span>Μεταφορικά</span><span>{fee === 0 ? "Δωρεάν" : eur(fee)}</span></div>}
+        {redeemApplied > 0 && <div className="flex justify-between font-semibold text-emerald-700"><span>🎁 Πόντοι επιβράβευσης</span><span>−{eur(redeemApplied)}</span></div>}
         <div className="mt-1 flex justify-between border-t border-slate-100 pt-1 text-base font-bold text-slate-900"><span>Σύνολο</span><span>{eur(total)}</span></div>
         <p className="mt-1 text-[11px] text-slate-400">Πληρωμή κατά την παράδοση/παραλαβή. Τα φάρμακα δεν επιστρέφονται.</p>
       </div>
 
+      {(() => {   // κίνητρο: πόσο λείπει για την επόμενη κλίμακα έκπτωσης
+        const next = (settings?.cart_tiers ?? []).filter((t) => afterBundles < t.min_cents).sort((a, b) => a.min_cents - b.min_cents)[0];
+        return next ? <div className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">📈 Πρόσθεσε <b>{eur(next.min_cents - afterBundles)}</b> ακόμη σε μη-συνταγογραφούμενα και κερδίζεις <b>−{next.pct}%</b> στο καλάθι!</div> : null;
+      })()}
       {hasBackorder && <div className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">📦 Κάποια είδη είναι <b>κατόπιν παραγγελίας</b>. Η παραγγελία θα σταλεί στο φαρμακείο για <b>έγκριση</b> — θα σου δηλώσει πότε θα είναι διαθέσιμα.</div>}
       {belowMin && <div className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700">Ελάχιστη παραγγελία {eur(settings?.min_order_cents ?? 0)}.</div>}
       {err && <div className="rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">{err}</div>}
       <button onClick={place} disabled={busy || belowMin} className="flex w-full items-center justify-center gap-2 rounded-2xl bg-violet-600 py-3 font-semibold text-white disabled:opacity-50">
         {busy ? <Loader2 className="h-5 w-5 animate-spin" /> : null} {hasBackorder ? "Αποστολή για έγκριση" : "Ολοκλήρωση παραγγελίας"} · {eur(total)}
       </button>
+      </div>{/* ── τέλος δεξιάς στήλης ── */}
+      </div>
     </div>
   );
 }
@@ -399,9 +596,10 @@ function OrderCard({ o, onReorder }: { o: Order; onReorder?: (o: Order) => void 
 }
 
 type FavProduct = Product & { price_at_add?: number | null; price_dropped?: boolean; back_in_stock?: boolean };
-function Favorites({ onBack, favBarcodes, toggleFav, add, cart, dec }: {
+function Favorites({ onBack, favBarcodes, toggleFav, add, cart, dec, camps }: {
   onBack: () => void; favBarcodes: Set<string>; toggleFav: (bc: string) => void;
   add: (p: Product) => void; cart: Record<string, { p: Product; qty: number }>; dec: (bc: string) => void;
+  camps: Campaign[];
 }) {
   const [items, setItems] = useState<FavProduct[]>([]);
   const [loading, setLoading] = useState(true);
@@ -415,7 +613,7 @@ function Favorites({ onBack, favBarcodes, toggleFav, add, cart, dec }: {
       {loading && <div className="py-8 text-center text-sm text-slate-400">Φόρτωση…</div>}
       {!loading && shown.length === 0 && <div className="py-10 text-center text-sm text-slate-400"><Heart className="mx-auto mb-2 h-8 w-8 text-slate-300" />Δεν έχεις αγαπημένα ακόμη. Πάτα την ❤️ σε ένα προϊόν.</div>}
       {shown.map((p) => {
-        const fc = final(p); const inCart = cart[p.barcode]?.qty ?? 0;
+        const fc = final(p, camps); const inCart = cart[p.barcode]?.qty ?? 0;
         return (
           <div key={p.barcode} className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
             <span className="grid h-12 w-12 shrink-0 place-items-center overflow-hidden rounded-xl bg-slate-50">{imgSrc(p) ? <img src={imgSrc(p)} alt="" className="h-full w-full object-contain" /> : <Pill className="h-5 w-5 text-slate-300" />}</span>

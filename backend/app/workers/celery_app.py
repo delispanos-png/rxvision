@@ -124,6 +124,11 @@ celery_app.conf.beat_schedule = {
         "task": "app.workers.reminders.dispatch_order_subscriptions",
         "schedule": crontab(hour=6, minute=0),
     },
+    # Ξεχασμένο καλάθι — έλεγχος κάθε 30′ (το «πόσες ώρες» το ορίζει κάθε φαρμακείο)
+    "abandoned-carts": {
+        "task": "app.workers.reminders.dispatch_abandoned_carts",
+        "schedule": crontab(minute="0,30"),
+    },
     # Auto-cancel αιτημάτων πελατών που δεν αποδέχτηκε ο φαρμακοποιός εντός του ορίου (κάθε λεπτό)
     "auto-cancel-stale-requests": {
         "task": "app.workers.reminders.auto_cancel_stale_requests",

@@ -4,12 +4,15 @@ Gated by the `order_delivery` module; the pharmacist manages it manually or via 
 from __future__ import annotations
 
 import json
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response, UploadFile, status
 from pydantic import BaseModel, Field
 
 from app.core.deps import TenantContext, require
 from app.repositories.pharmacy_catalog import PharmacyCatalogRepository
+from app.repositories.shop_campaigns import ShopCampaignRepository
+from app.repositories.shop_promos import ShopBundleRepository, ShopCouponRepository
 
 _MAX_XML = 25 * 1024 * 1024  # 25 MB cap on the uploaded catalog XML (no unbounded in-memory read)
 _XML_CTYPES = {"application/xml", "text/xml", "application/octet-stream", ""}
@@ -142,3 +145,105 @@ async def import_xml(file: UploadFile = File(...), row_tag: str = Form(...),
         raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
                             detail={"error": "file_too_large", "max_bytes": _MAX_XML})
     return await _repo(ctx).import_xml(content, row_tag=row_tag, mapping=m, default_type=default_type)
+
+
+# ── Εκπτωτικές καμπάνιες (έκπτωση σε ΟΜΑΔΑ ειδών: κατηγορίες ή/και ετικέτες) ──────────────
+# ΚΑΝΟΝΑΣ: τα συνταγογραφούμενα ΔΕΝ παίρνουν ΠΟΤΕ έκπτωση καμπάνιας — επιβάλλεται
+# server-side στη μηχανή τιμολόγησης (orders_delivery.create_order → campaign_pct_for).
+class CampaignIn(BaseModel):
+    id: str | None = None
+    name: str = Field(..., min_length=1, max_length=120)
+    discount_pct: int = Field(..., ge=1, le=90)
+    categories: list[str] = []
+    tags: list[str] = []
+    active: bool = True
+    starts_at: datetime | None = None
+    ends_at: datetime | None = None
+
+
+def _crepo(ctx: TenantContext) -> ShopCampaignRepository:
+    return ShopCampaignRepository(tenant_id=ctx.tenant_id)
+
+
+@router.get("/campaigns")
+async def list_campaigns(ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+    return {"items": await _crepo(ctx).list()}
+
+
+@router.post("/campaigns")
+async def save_campaign(body: CampaignIn, ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+    data = body.model_dump()
+    data["_id"] = data.pop("id", None)
+    return await _crepo(ctx).upsert(data)
+
+
+@router.delete("/campaigns/{campaign_id}")
+async def delete_campaign(campaign_id: str, ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+    return await _crepo(ctx).delete(campaign_id)
+
+
+# ── Κουπόνια έκπτωσης ────────────────────────────────────────────────────────────────────
+# Ισχύουν ΜΟΝΟ πάνω στην αξία των μη-συνταγογραφούμενων ειδών (server-side).
+class CouponIn(BaseModel):
+    id: str | None = None
+    code: str = Field(..., min_length=3, max_length=32)
+    kind: str = Field("pct", pattern="^(pct|amount)$")
+    value: int = Field(..., ge=1)
+    min_order_cents: int = Field(0, ge=0)
+    max_uses: int = Field(0, ge=0)          # 0 = απεριόριστο
+    expires_at: datetime | None = None
+    active: bool = True
+
+
+@router.get("/coupons")
+async def list_coupons(ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+    return {"items": await ShopCouponRepository(tenant_id=ctx.tenant_id).list()}
+
+
+@router.post("/coupons")
+async def save_coupon(body: CouponIn, ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+    data = body.model_dump()
+    data["_id"] = data.pop("id", None)
+    return await ShopCouponRepository(tenant_id=ctx.tenant_id).upsert(data)
+
+
+@router.delete("/coupons/{coupon_id}")
+async def delete_coupon(coupon_id: str, ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+    return await ShopCouponRepository(tenant_id=ctx.tenant_id).delete(coupon_id)
+
+
+# ── Πακέτα (bundles): «2+1» ή combo ──────────────────────────────────────────────────────
+class BundleLineIn(BaseModel):
+    barcode: str
+    qty: int = Field(1, ge=1)
+
+
+class BundleIn(BaseModel):
+    id: str | None = None
+    name: str = Field(..., min_length=1, max_length=120)
+    kind: str = Field("combo", pattern="^(combo|nplusm)$")
+    active: bool = True
+    # nplusm
+    barcode: str | None = None
+    buy_qty: int = Field(2, ge=1)
+    free_qty: int = Field(1, ge=1)
+    # combo
+    lines: list[BundleLineIn] = []
+    discount_pct: int = Field(10, ge=1, le=90)
+
+
+@router.get("/bundles")
+async def list_bundles(ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+    return {"items": await ShopBundleRepository(tenant_id=ctx.tenant_id).list()}
+
+
+@router.post("/bundles")
+async def save_bundle(body: BundleIn, ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+    data = body.model_dump()
+    data["_id"] = data.pop("id", None)
+    return await ShopBundleRepository(tenant_id=ctx.tenant_id).upsert(data)
+
+
+@router.delete("/bundles/{bundle_id}")
+async def delete_bundle(bundle_id: str, ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+    return await ShopBundleRepository(tenant_id=ctx.tenant_id).delete(bundle_id)

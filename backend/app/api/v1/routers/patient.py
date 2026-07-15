@@ -184,8 +184,8 @@ async def me(ctx: PatientContext = Depends(get_patient_context)):
 async def my_prescriptions(ctx: PatientContext = Depends(get_patient_context)):
     # 200 ώστε η αναζήτηση (αρ. συνταγής / ημ. διάστημα) στην πύλη να καλύπτει αρκετό ιστορικό·
     # η προβολή δείχνει by default μόνο τις 5 πιο πρόσφατες.
-    repo = PatientRxRepository(tenant_id=ctx.tenant_id)
-    return {"items": await repo.my_prescriptions(ctx.patient_ref, limit=200)}
+    # ΟΛΑ τα φαρμακεία του πελάτη — κάθε εκτέλεση με ετικέτα «πού έγινε» (η συνταγή είναι δική του).
+    return {"items": await PatientAccountRepository().all_prescriptions(ctx.account_id, limit=200)}
 
 
 @router.get("/repeats")
@@ -302,9 +302,52 @@ async def shop_favorites(ctx: PatientContext = Depends(get_patient_context)):
 async def shop_meta(ctx: PatientContext = Depends(get_patient_context)):
     from app.repositories.pharmacy_catalog import PharmacyCatalogRepository
     from app.repositories.orders_delivery import OrdersDeliveryRepository
+    from app.repositories.shop_campaigns import ShopCampaignRepository
+    from app.repositories.loyalty import LoyaltyRepository
     cat = PharmacyCatalogRepository(tenant_id=ctx.tenant_id)
     settings = await OrdersDeliveryRepository(tenant_id=ctx.tenant_id).settings()
-    return {"categories": await cat.categories(), "tags": await cat.tags(), "settings": settings}
+    camps = await ShopCampaignRepository(tenant_id=ctx.tenant_id).active_now()
+    # Πόντοι: υπόλοιπο + ελάχιστη εξαργύρωση (το καλάθι δείχνει «διαθέσιμα X €»).
+    loyalty = {"enabled": False, "balance_cents": 0, "min_redeem_cents": 0}
+    try:
+        lrepo = LoyaltyRepository(tenant_id=ctx.tenant_id)
+        lcfg = await lrepo.config()
+        if lcfg.get("enabled"):
+            m = await lrepo.member(ctx.patient_ref) if ctx.patient_ref else None
+            loyalty = {"enabled": True, "balance_cents": int((m or {}).get("balance_cents") or 0),
+                       "min_redeem_cents": int(lcfg.get("min_redeem_cents") or 0),
+                       "member": bool(m)}
+    except Exception:  # noqa: BLE001
+        pass
+    from app.repositories.shop_promos import ShopBundleRepository
+    bundles = await ShopBundleRepository(tenant_id=ctx.tenant_id).active_now()
+    return {"categories": await cat.categories(), "tags": await cat.tags(), "settings": settings,
+            "campaigns": [{"name": c.get("name"), "discount_pct": c.get("discount_pct"),
+                           "categories": c.get("categories") or [], "tags": c.get("tags") or []}
+                          for c in camps],
+            "bundles": [{"name": b.get("name"), "kind": b.get("kind"), "barcode": b.get("barcode"),
+                         "buy_qty": b.get("buy_qty"), "free_qty": b.get("free_qty"),
+                         "lines": b.get("lines") or [], "discount_pct": b.get("discount_pct")}
+                        for b in bundles],
+            "loyalty": loyalty}
+
+
+class CouponCheckIn(BaseModel):
+    code: str = Field(..., max_length=32)
+    eligible_cents: int = Field(0, ge=0)
+
+
+@router.post("/shop/coupon/check")
+async def check_coupon(body: CouponCheckIn, ctx: PatientContext = Depends(get_patient_context)):
+    """Προέλεγχος κουπονιού για το καλάθι. Η ΤΕΛΙΚΗ ισχύς κρίνεται ξανά κατά την παραγγελία."""
+    from app.repositories.shop_promos import ShopCouponRepository
+    from app.services.shop_pricing import coupon_discount
+    v = await ShopCouponRepository(tenant_id=ctx.tenant_id).validate(body.code, body.eligible_cents)
+    if not v.get("ok"):
+        return v
+    c = v["coupon"]
+    return {"ok": True, "code": c["code"], "kind": c["kind"], "value": c["value"],
+            "discount_cents": coupon_discount(c, body.eligible_cents)}
 
 
 class AddressIn(BaseModel):
@@ -320,11 +363,33 @@ class OrderLineIn(BaseModel):
     qty: int = 1
 
 
+class CourierAuthIn(BaseModel):
+    """Στοιχεία εξουσιοδοτούμενου — ΜΟΝΟ για αποστολή με μεταφορέα (η παραλαβή από το
+    κατάστημα δεν χρειάζεται εξουσιοδότηση)."""
+    name: str = Field(..., min_length=3, max_length=120)        # ονοματεπώνυμο
+    id_number: str = Field(..., min_length=4, max_length=40)    # αρ. ταυτότητας ή διαβατηρίου
+
+
+class CartSyncIn(BaseModel):
+    lines: list[OrderLineIn] = []
+
+
+@router.post("/shop/cart")
+async def sync_cart(body: CartSyncIn, ctx: PatientContext = Depends(get_patient_context)):
+    """Αντίγραφο του ενεργού καλαθιού (barcode+qty) → επιτρέπει υπενθύμιση «ξεχασμένου καλαθιού»."""
+    from app.repositories.orders_delivery import OrdersDeliveryRepository
+    return await OrdersDeliveryRepository(tenant_id=ctx.tenant_id).save_cart(
+        ctx.account_id, [ln.model_dump() for ln in body.lines])
+
+
 class OrderIn(BaseModel):
     lines: list[OrderLineIn]
     mode: str = "delivery"                  # delivery | pickup
     address: AddressIn | None = None
     courier_authorized: bool = False
+    courier_auth: CourierAuthIn | None = None
+    loyalty_redeem_cents: int = Field(0, ge=0)   # εξαργύρωση πόντων (μόνο σε μη-συνταγογραφούμενα)
+    coupon_code: str | None = Field(None, max_length=32)
     gdpr_consent: bool = False
     repeat_days: int = 0                     # 0 = εφάπαξ· >0 = συνδρομή κάθε N ημέρες
 
@@ -340,15 +405,19 @@ async def place_order(body: OrderIn, ctx: PatientContext = Depends(get_patient_c
     addr = body.address.model_dump() if body.address else None
     st = await repo.settings()
     sub_disc = st.get("subscription_discount_pct", 0) if body.repeat_days > 0 else 0
+    cauth = body.courier_auth.model_dump() if body.courier_auth else None
     res = await repo.create_order(
         account_id=ctx.account_id, patient_ref=ctx.patient_ref, patient_name=name, patient_phone=phone,
         lines=[ln.model_dump() for ln in body.lines], mode=body.mode, address=addr,
-        courier_authorized=body.courier_authorized, gdpr_consent=body.gdpr_consent, sub_discount_pct=sub_disc)
+        courier_authorized=body.courier_authorized, courier_auth=cauth,
+        loyalty_redeem_cents=body.loyalty_redeem_cents, coupon_code=body.coupon_code,
+        gdpr_consent=body.gdpr_consent, sub_discount_pct=sub_disc)
     if res.get("ok") and body.repeat_days > 0 and st.get("subscription_enabled", True):
         sub = await repo.create_subscription(
             account_id=ctx.account_id, patient_ref=ctx.patient_ref, patient_name=name, patient_phone=phone,
             lines=[ln.model_dump() for ln in body.lines], mode=body.mode, address=addr,
-            courier_authorized=body.courier_authorized, interval_days=body.repeat_days)
+            courier_authorized=body.courier_authorized, courier_auth=cauth,
+            interval_days=body.repeat_days)
         res["subscription_id"] = sub.get("subscription_id")
     return res
 
@@ -424,11 +493,41 @@ async def respond_renewal(body: RenewalRespondIn, ctx: PatientContext = Depends(
 
 
 @router.get("/prescriptions/{barcode}")
-async def prescription_detail(barcode: str, ctx: PatientContext = Depends(get_patient_context)):
-    d = await PatientRxRepository(tenant_id=ctx.tenant_id).my_prescription_detail(ctx.patient_ref, barcode)
+async def prescription_detail(barcode: str, tenant_id: str | None = None,
+                              ctx: PatientContext = Depends(get_patient_context)):
+    """Λεπτομέρειες ΜΙΑΣ εκτέλεσης. Με `tenant_id` ανοίγει εκτέλεση άλλου φαρμακείου του πελάτη —
+    ΜΟΝΟ αν είναι όντως linked εκεί (αλλιώς 403) και μόνο τη ΔΙΚΗ ΤΟΥ καρτέλα (patient_ref του link)."""
+    tid, pref = ctx.tenant_id, ctx.patient_ref
+    if tenant_id and tenant_id != ctx.tenant_id:
+        link = await PatientAccountRepository().link_for(ctx.account_id, tenant_id)
+        if not link:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "not_linked_to_pharmacy")
+        tid, pref = tenant_id, str(link["patient_ref"])
+    d = await PatientRxRepository(tenant_id=tid).my_prescription_detail(pref, barcode)
     if d is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "not_found")
     return d
+
+
+# ── μεταφορά σε άλλο φαρμακείο — ο ΠΕΛΑΤΗΣ εγκρίνει (το αίτημα το κάνει το νέο φαρμακείο) ──
+@router.get("/transfers")
+async def my_transfers(ctx: PatientContext = Depends(get_patient_context)):
+    from app.repositories.patient_transfer import PatientTransferRepository
+    return {"items": await PatientTransferRepository().pending_for_account(ctx.account_id)}
+
+
+class TransferDecideIn(BaseModel):
+    transfer_id: str = Field(..., max_length=40)
+    accept: bool
+
+
+@router.post("/transfers/decide")
+async def decide_transfer(body: TransferDecideIn, ctx: PatientContext = Depends(get_patient_context)):
+    from app.repositories.patient_transfer import PatientTransferRepository
+    res = await PatientTransferRepository().decide(body.transfer_id, ctx.account_id, body.accept)
+    if not res.get("ok"):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, res.get("error", "failed"))
+    return res
 
 
 @router.get("/notifications")

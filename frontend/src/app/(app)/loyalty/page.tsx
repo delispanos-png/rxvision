@@ -7,12 +7,13 @@ import { api } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
 import { appConfirm } from "@/store/dialogStore";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
+import { PrintCardButton } from "@/components/loyalty/PrintCard";
 
 type Cfg = { enabled: boolean; points_per_refill: number; cents_per_point: number; min_redeem_cents: number; welcome_cents: number; terms?: string; adherence_points_enabled: boolean; adherence_rule: string; points_per_adherence: number; adherence_streak_bonus: number };
 type Candidate = { patient_ref: string; name: string; compliance: number | null };
 type Redemption = { _id?: string; id?: string; patient_ref: string; patient_name?: string; cents: number; kind?: string; reason?: string; at: string; voided?: boolean };
 type Member = { patient_ref: string; name: string; compliance: number | null; refills: number; expected: number; open_refills: number; points: number; balance_cents: number; redeemed_cents: number; tier: string; next_tier: string | null; to_next: number; progress_pct: number };
-type Overview = { config: Cfg; kpis: { members: number; total_points: number; liability_cents: number; redeemed_cents: number; avg_compliance: number; open_refills: number }; members: Member[] };
+type Overview = { pharmacy_name?: string; config: Cfg; kpis: { members: number; total_points: number; liability_cents: number; redeemed_cents: number; avg_compliance: number; open_refills: number }; members: Member[] };
 
 type Reward = { _id?: string; id?: string; title: string; type: string; cost_points: number; cost_cents: number; note?: string; active?: boolean };
 
@@ -141,9 +142,13 @@ export default function LoyaltyPage() {
                     <td className="px-3 py-2 text-right font-semibold tabular-nums">{m.points}</td>
                     <td className="px-3 py-2"><span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${TIER_CLS[m.tier] ?? "bg-slate-100 text-slate-600"}`}>{m.tier}</span></td>
                     <td className="px-3 py-2 text-right font-semibold tabular-nums text-emerald-700">{eur(m.balance_cents)}</td>
-                    <td className="px-3 py-2 text-right">
-                      <button onClick={(e) => { e.stopPropagation(); setRedeemFor(m); }} disabled={m.balance_cents <= 0}
-                        className="rounded-lg bg-brand-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-brand-700 disabled:opacity-40">{t("Εξαργύρωση", "Redeem")}</button>
+                    <td className="px-3 py-2">
+                      <div className="flex items-center justify-end gap-1.5">
+                        {/* φυσική κάρτα — για πελάτες χωρίς κινητό· ίδιος κωδικός με την ψηφιακή */}
+                        <PrintCardButton member={m} pharmacyName={data?.pharmacy_name ?? ""} />
+                        <button onClick={(e) => { e.stopPropagation(); setRedeemFor(m); }} disabled={m.balance_cents <= 0}
+                          className="rounded-lg bg-brand-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-brand-700 disabled:opacity-40">{t("Εξαργύρωση", "Redeem")}</button>
+                      </div>
                     </td>
                   </tr>
                 ))}

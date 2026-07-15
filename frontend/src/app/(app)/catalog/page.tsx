@@ -5,6 +5,8 @@ import { useQuery } from "@tanstack/react-query";
 import { Truck, Search, Plus, Pencil, Trash2, Upload, X, Loader2, Sparkles, Package, Pill, Star, ImagePlus, ArrowDownUp, Database, Check } from "lucide-react";
 import { api, apiUpload, API_BASE } from "@/lib/apiClient";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
+import { CampaignsCard } from "@/components/catalog/CampaignsCard";
+import { PromosCard } from "@/components/catalog/PromosCard";
 
 type Product = {
   barcode: string; name: string; description_short?: string | null; description_long?: string | null;
@@ -79,10 +81,16 @@ function Catalog() {
   }
 
   const items = list.data?.items ?? [];
+  // Κατηγορίες που μπορούν να μπουν σε καμπάνια — τα συνταγογραφούμενα εξαιρούνται εξ ορισμού.
+  const campCats = Array.from(new Set((tax.data?.classes ?? [])
+    .filter((c) => c.type !== "rx_medicine").flatMap((c) => c.categories)));
   return (
     <div className="mx-auto max-w-5xl">
       <div className="mb-1 flex items-center gap-2 text-xl font-semibold text-slate-800"><Truck className="h-6 w-6 text-brand-600" /> Παραγγελίες & Κατάλογος</div>
-      <p className="mb-4 text-sm text-slate-500">Ο κατάλογος ειδών του φαρμακείου σου (OTC φάρμακα + παραφάρμακα) — οι πελάτες παραγγέλνουν από εδώ. <b>Στα φάρμακα δεν επιτρέπονται εκπτώσεις.</b></p>
+      <p className="mb-4 text-sm text-slate-500">Ο κατάλογος ειδών του φαρμακείου σου (OTC φάρμακα + παραφάρμακα) — οι πελάτες παραγγέλνουν από εδώ. <b>Στα συνταγογραφούμενα δεν επιτρέπονται εκπτώσεις.</b></p>
+
+      <div className="mb-4"><CampaignsCard categories={campCats} tags={QUICK_TAGS} /></div>
+      <div className="mb-4"><PromosCard /></div>
 
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <form onSubmit={(e) => { e.preventDefault(); setTerm(q.trim()); }} className="relative flex-1 min-w-[200px]">

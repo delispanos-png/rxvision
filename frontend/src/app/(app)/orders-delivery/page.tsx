@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Truck, Package, MapPin, Phone, Check, Loader2, Clock, X } from "lucide-react";
+import { Truck, Package, MapPin, Phone, Check, Loader2, Clock, X, Trash2, Plus } from "lucide-react";
 import { api } from "@/lib/apiClient";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
 import { DateInput } from "@/components/ui/DateInput";
@@ -12,6 +12,7 @@ type Order = {
   _id: string; patient_name: string; patient_phone: string; items: Item[];
   subtotal_cents: number; delivery_fee_cents: number; total_cents: number; mode: string;
   address?: { street?: string; area?: string; postal?: string; phone?: string; notes?: string } | null;
+  courier_auth?: { name?: string; id_number?: string } | null;
   has_medicine: boolean; has_backorder?: boolean; available_date?: string | null; status: string; created_at: string;
 };
 const eur = (c: number) => (c / 100).toLocaleString("el-GR", { minimumFractionDigits: 2 }) + " €";
@@ -93,6 +94,12 @@ function Orders() {
                   {o.address.notes && <div className="mt-0.5 italic">«{o.address.notes}»</div>}
                 </div>
               )}
+              {o.mode === "delivery" && o.courier_auth?.name && (
+                <div className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                  <div className="font-semibold">Εξουσιοδότηση παραλαβής</div>
+                  <div className="mt-0.5">{o.courier_auth.name} · Ταυτ./Διαβατ.: <b>{o.courier_auth.id_number}</b></div>
+                </div>
+              )}
               {o.status === "pending" ? (
                 <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50/60 p-3">
                   <div className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-amber-800"><Clock className="h-3.5 w-3.5" /> Κατόπιν παραγγελίας — αποδέξου (με ημερομηνία διαθεσιμότητας) ή απόρριψε.</div>
@@ -133,13 +140,18 @@ function Orders() {
   );
 }
 
+type Tier = { min_cents: number; pct: number };
+type Settings = Record<string, number | boolean | string | Tier[]>;
+
 function SettingsTab() {
-  const s = useQuery({ queryKey: ["od-settings"], queryFn: () => api<Record<string, number | boolean | string>>("/orders/delivery/settings"), retry: false });
-  const [f, setF] = useState<Record<string, number | boolean | string> | null>(null);
+  const s = useQuery({ queryKey: ["od-settings"], queryFn: () => api<Settings>("/orders/delivery/settings"), retry: false });
+  const [f, setF] = useState<Settings | null>(null);
   const cur = f ?? s.data;
   const [saved, setSaved] = useState(false);
   if (!cur) return <div className="py-8 text-center text-sm text-slate-400">Φόρτωση…</div>;
-  const set = (k: string, v: number | boolean | string) => { setF({ ...cur, [k]: v }); setSaved(false); };
+  const set = (k: string, v: number | boolean | string | Tier[]) => { setF({ ...cur, [k]: v }); setSaved(false); };
+  const tiers: Tier[] = Array.isArray(cur.cart_tiers) ? (cur.cart_tiers as Tier[]) : [];
+  const setTier = (i: number, patch: Partial<Tier>) => set("cart_tiers", tiers.map((t, j) => j === i ? { ...t, ...patch } : t));
   async function save() { await api("/orders/delivery/settings", { method: "POST", body: JSON.stringify(cur) }); setSaved(true); }
   const eurIn = (k: string) => (
     <input type="number" step="0.01" value={Number(cur[k] as number) / 100} onChange={(e) => set(k, Math.round(+e.target.value * 100))} className="mt-1 w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm" />
@@ -163,6 +175,39 @@ function SettingsTab() {
         {!!cur.subscription_enabled && (
           <label className="mt-2 block text-xs text-slate-500">Επιπλέον έκπτωση συνδρομής % (στα παραφάρμακα)
             <input type="number" value={Number(cur.subscription_discount_pct ?? 0)} onChange={(e) => set("subscription_discount_pct", Math.max(0, Math.min(90, +e.target.value)))} className="mt-1 w-32 rounded-lg border border-slate-300 px-2 py-1.5 text-sm" /></label>
+        )}
+      </div>
+
+      {/* Κλιμακωτή έκπτωση καλαθιού — ΜΟΝΟ στα μη-συνταγογραφούμενα (επιβάλλεται server-side) */}
+      <div className="rounded-lg border border-amber-200 bg-amber-50/60 p-3">
+        <div className="text-sm font-semibold text-amber-900">📈 Κλιμακωτή έκπτωση καλαθιού</div>
+        <p className="mt-1 text-[11px] text-amber-800">Όσο μεγαλώνει το καλάθι, μεγαλύτερη έκπτωση (π.χ. άνω των 30 € → −5%). Μετράει και ισχύει <b>μόνο η αξία των μη-συνταγογραφούμενων</b>. Αν ο πελάτης έχει και κουπόνι, εφαρμόζεται <b>το καλύτερο από τα δύο</b> — όχι και τα δύο μαζί.</p>
+        <div className="mt-2 space-y-1.5">
+          {tiers.map((t, i) => (
+            <div key={i} className="flex items-center gap-1.5">
+              <span className="text-xs text-slate-500">άνω των</span>
+              <input type="number" step="0.01" value={t.min_cents / 100} onChange={(e) => setTier(i, { min_cents: Math.round(+e.target.value * 100) })} className="w-24 rounded-lg border border-slate-300 px-2 py-1.5 text-sm" />
+              <span className="text-xs text-slate-500">€ →</span>
+              <input type="number" value={t.pct} onChange={(e) => setTier(i, { pct: Math.max(1, Math.min(90, +e.target.value)) })} className="w-16 rounded-lg border border-slate-300 px-2 py-1.5 text-sm" />
+              <span className="text-xs text-slate-500">%</span>
+              <button onClick={() => set("cart_tiers", tiers.filter((_, j) => j !== i))} className="ml-auto grid h-8 w-8 place-items-center rounded-lg border border-slate-200 bg-white text-rose-500"><Trash2 className="h-3.5 w-3.5" /></button>
+            </div>
+          ))}
+        </div>
+        {tiers.length < 6 && (
+          <button onClick={() => set("cart_tiers", [...tiers, { min_cents: 3000, pct: 5 }])} className="mt-2 inline-flex items-center gap-1 rounded-lg border border-amber-300 bg-white px-2 py-1 text-xs font-medium text-amber-800"><Plus className="h-3 w-3" /> Κλίμακα</button>
+        )}
+      </div>
+
+      {/* Υπενθύμιση ξεχασμένου καλαθιού — opt-in (στέλνει push στον πελάτη) */}
+      <div className="rounded-lg border border-sky-200 bg-sky-50/60 p-3">
+        <label className="flex items-center gap-2 text-sm font-semibold text-sky-900">
+          <input type="checkbox" checked={!!cur.abandoned_cart_enabled} onChange={(e) => set("abandoned_cart_enabled", e.target.checked)} /> 🛒 Υπενθύμιση ξεχασμένου καλαθιού
+        </label>
+        <p className="mt-1 text-[11px] text-sky-800">Αν ο πελάτης αφήσει είδη στο καλάθι χωρίς να παραγγείλει, του στέλνουμε <b>ένα</b> push. Σταματά αυτόματα μόλις παραγγείλει ή αδειάσει το καλάθι.</p>
+        {!!cur.abandoned_cart_enabled && (
+          <label className="mt-2 block text-xs text-slate-500">Μετά από πόσες ώρες
+            <input type="number" min={1} max={72} value={Number(cur.abandoned_cart_hours ?? 6)} onChange={(e) => set("abandoned_cart_hours", Math.max(1, Math.min(72, +e.target.value)))} className="mt-1 w-24 rounded-lg border border-slate-300 px-2 py-1.5 text-sm" /></label>
         )}
       </div>
 

@@ -97,12 +97,34 @@ async def logout(ctx: TenantContext = Depends(get_current_context)):
     return {"ok": True}
 
 
+class SelectTenantIn(BaseModel):
+    tenant_id: str = Field(..., max_length=80)
+
+
+@router.post("/select-tenant", response_model=TokenOut)
+async def select_tenant(body: SelectTenantIn, ctx: TenantContext = Depends(get_current_context)):
+    """Δίκτυο φαρμακείων: εναλλαγή ενεργού φαρμακείου — ΜΟΝΟ σε όσα έχουν δηλωθεί στον χρήστη."""
+    res = await AuthService().select_tenant(ctx.user_id, body.tenant_id, sid=ctx.sid)
+    if res is None:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "no_access_to_pharmacy")
+    if res.get("seat_limit"):
+        raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS,
+                            detail={"error": "seat_limit", "seats": res.get("seats")})
+    return res
+
+
 @router.get("/me")
 async def me(ctx: TenantContext = Depends(get_current_context)):
     profile = await AccountService().get_profile(ctx.user_id)
+    # Δίκτυο φαρμακείων: τα φαρμακεία στα οποία επιτρέπεται να μπει ΑΥΤΟΣ ο χρήστης (>1 → επιλογέας).
+    from app.core.db import shared_db
+    from app.services.auth_service import _as_object_id
+    u = await shared_db()["users"].find_one({"_id": _as_object_id(ctx.user_id)})
+    pharmacies = await AuthService().accessible_pharmacies(u) if u else []
     return {
         "user_id": ctx.user_id,
         "tenant_id": ctx.tenant_id,
+        "pharmacies": pharmacies,
         "roles": ctx.roles,
         "modules": ctx.modules,
         "demo": ctx.demo,                # «πελάτης παρουσίασης» → frontend κλειδώνει εκτυπώσεις ΗΔΥΚΑ/κουπονιών

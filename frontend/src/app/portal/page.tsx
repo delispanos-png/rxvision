@@ -17,6 +17,7 @@ import { PharmacyPicker, MedicinePicker, type Medicine } from "@/components/port
 import { RenewalCard, type Renewal } from "@/components/portal/RenewalCard";
 import { ShopTab } from "@/components/portal/ShopTab";
 import { Toaster, toast, confirmDialog } from "@/components/portal/Toaster";
+import { TransferCard } from "@/components/portal/TransferCard";
 import { pushSupported, isPushSubscribed, enablePush } from "@/lib/push";
 import { BellRing } from "lucide-react";
 import { fmtDate, fmtDateTime } from "@/lib/formatters";
@@ -26,7 +27,8 @@ type Pharm = { status: { isOpen: boolean; isOnDuty: boolean; isOvernightDuty: bo
 type Me = { profile: { first_name: string; last_name: string }; active_tenant: string | null; pharmacies: Pharmacy[]; portal_mode?: "network" | "single"; caps?: { shop: boolean; loyalty: boolean } };
 type DirPharmacy = { tenant_id: string; name: string; address?: string | null; city?: string | null; phone?: string | null; lat?: number | null; lon?: number | null; mine?: boolean; favorite?: boolean; status?: { isOpen: boolean; isOnDuty: boolean; isOvernightDuty: boolean; closingSoon: boolean; statusText: string } | null };
 type Summary = { rx_count: number; paid_cents: number; total_cents: number; covered_cents: number; doctors: number; medicines: number; repeats_active: number; next_open_date?: string | null; first_at?: string | null; last_at?: string | null };
-type Rx = { barcode: string; executed_at: string; status?: string; patient_share?: number; repeat_current?: number; repeat_total?: number; repeat_root?: string | null; next_open_date?: string | null; medicines: string[]; pending?: string[]; partial?: boolean; doctor?: string | null; specialty?: string | null };
+// tenant_id/pharmacy_name: κάθε εκτέλεση φέρει ΠΟΥ έγινε — ο πελάτης βλέπει όλων των φαρμακείων του.
+type Rx = { barcode: string; executed_at: string; status?: string; patient_share?: number; repeat_current?: number; repeat_total?: number; repeat_root?: string | null; next_open_date?: string | null; medicines: string[]; pending?: string[]; partial?: boolean; doctor?: string | null; specialty?: string | null; tenant_id?: string; pharmacy_name?: string | null };
 type RepeatMed = { name: string; dosage?: string | null };
 type Repeat = Omit<Rx, "medicines"> & { medicines: RepeatMed[] };
 type RxItem = { name?: string | null; quantity?: number; retail_price?: number; is_executed?: boolean; dosage?: string | null };
@@ -76,6 +78,27 @@ const DOW = ["Δευ", "Τρί", "Τετ", "Πέμ", "Παρ", "Σάβ", "Κυρ
 type Therapy = { med_key: string; name: string; dose: string | null; dosage_text: string | null; kind: string; per_day: number; runout: string | null; days_left: number | null; enabled: boolean; reservable: boolean; time?: string | null; meal?: string | null; interval_hours?: number | null };
 type SlotCell = { slot: string; label: string; time: string; meds: { med_key: string; name: string; dose: string | null; time: string }[] };
 type Schedule = { therapies: Therapy[]; week: { dow: number; slots: SlotCell[] }[]; slot_times: Record<string, string>; streak: number; taken_today?: { med_key: string; slot: string | null }[] };
+// τελικές καταστάσεις ραντεβού → «κλειστά» (κοινό σε Αρχική & καρτέλα Ραντεβού)
+const DONE = ["done", "cancelled", "declined", "completed"];
+type Dose = { time: string; med_key: string; name: string; dose: string | null; meal?: string | null };
+// Γεννήτρια δόσεων ημέρας: 1×/μέρα (ή «συγκεκριμένη ώρα») → μία δόση· >1×/μέρα → «κάθε X ώρες»
+// από την ώρα 1ης λήψης (π.χ. iv=8 → 08:00, 16:00, 00:00). Κοινή για Ημερολόγιο & Αρχική.
+const genDosesFor = (slots: SlotCell[], thMap: Record<string, Therapy>): Dose[] => {
+  const dueKeys = Array.from(new Set(slots.flatMap((sl) => sl.meds.map((m) => m.med_key))));
+  const out: Dose[] = [];
+  dueKeys.forEach((mk) => {
+    const th = thMap[mk]; if (!th) return;
+    const pd = th.per_day || 1; const start = th.time || "08:00";
+    if (pd <= 1 || th.interval_hours === 0) { out.push({ time: start, med_key: mk, name: th.name, dose: th.dose, meal: th.meal }); return; }
+    const iv = th.interval_hours || Math.max(1, Math.round(24 / pd));
+    const [h, mn] = start.split(":").map(Number);
+    for (let i = 0; i * iv < 24; i++) {
+      const tot = (h * 60 + mn + i * iv * 60) % 1440;
+      out.push({ time: `${String(Math.floor(tot / 60)).padStart(2, "0")}:${String(tot % 60).padStart(2, "0")}`, med_key: mk, name: th.name, dose: th.dose, meal: th.meal });
+    }
+  });
+  return out.sort((a, b) => a.time.localeCompare(b.time));
+};
 type HMeas = { _id?: string; kind: string; systolic?: number; diastolic?: number; value?: number; at: string };
 type Health = { height_cm?: number | null; latest: Record<string, HMeas>; history: Record<string, HMeas[]> };
 const hStat = (k: string, m?: HMeas) => {
@@ -102,7 +125,11 @@ export default function PortalHome() {
   const [pharm, setPharm] = useState<Pharm | null>(null);
   const [summary, setSummary] = useState<Summary | null>(null);
   const [noPharmacy, setNoPharmacy] = useState(false);
-  const [tab, setTab] = useState<string>("home");
+  // deep-link «/portal?tab=shop» → τα push (π.χ. ξεχασμένο καλάθι) ανοίγουν τη σωστή καρτέλα
+  const [tab, setTab] = useState<string>(() => {
+    if (typeof window === "undefined") return "home";
+    return new URLSearchParams(window.location.search).get("tab") || "home";
+  });
   const [directory, setDirectory] = useState<DirPharmacy[]>([]);
   const [dirQuery, setDirQuery] = useState("");
   const [geo, setGeo] = useState<{ lat: number; lon: number } | null>(null);
@@ -193,6 +220,9 @@ export default function PortalHome() {
     if (tab === "home") {   // KPI της Αρχικής χρειάζονται renewals (διαθέσιμες τώρα) + loyalty (πόντοι)
       patientApi<{ items: Renewal[] }>("/patient/renewals").then((d) => setRenewals(d.items)).catch(() => {});
       patientApi<Loyalty>("/patient/loyalty").then(setLoyalty).catch(() => {});
+      // Πάνελ «κονσόλας» — ΜΟΝΟ σε desktop φαίνονται, αλλά τα δεδομένα είναι ήδη cached για τις καρτέλες.
+      patientApi<Schedule>("/patient/meds/schedule").then(setSched).catch(() => {});
+      patientApi<{ items: Appt[] }>("/patient/appointments").then((d) => setAppts(d.items)).catch(() => {});
     }
     if (tab === "meds") patientApi<Schedule>("/patient/meds/schedule").then(setSched).catch(() => {});
     if (tab === "health") patientApi<Health>("/patient/health").then(setHealth).catch(() => {});
@@ -293,10 +323,12 @@ export default function PortalHome() {
   }
   async function logout() { await patientLogout(); router.replace("/portal/login"); }
 
-  async function toggleExpand(barcode: string) {
+  // tenantId: η εκτέλεση μπορεί να έγινε σε ΑΛΛΟ φαρμακείο του πελάτη → πες στο API πού να ψάξει.
+  async function toggleExpand(barcode: string, tenantId?: string) {
     if (expanded === barcode) { setExpanded(null); setDetail(null); return; }
     setExpanded(barcode); setDetail(null);
-    try { setDetail(await patientApi<RxDetail>(`/patient/prescriptions/${encodeURIComponent(barcode)}`)); } catch { /* ignore */ }
+    const q = tenantId ? `?tenant_id=${encodeURIComponent(tenantId)}` : "";
+    try { setDetail(await patientApi<RxDetail>(`/patient/prescriptions/${encodeURIComponent(barcode)}${q}`)); } catch { /* ignore */ }
   }
 
   async function askAvailability(e: React.FormEvent) {
@@ -404,7 +436,7 @@ export default function PortalHome() {
     <div className="min-h-screen">
       {/* ── top bar ───────────────────────────────────────────── */}
       <header className="sticky top-0 z-20 border-b border-slate-200/80 bg-white/85 backdrop-blur-md">
-        <div className="mx-auto flex h-16 max-w-5xl items-center justify-between gap-1.5 px-3 sm:gap-3 sm:px-4">
+        <div className="mx-auto flex h-16 max-w-7xl items-center justify-between gap-1.5 px-3 sm:gap-3 sm:px-4 lg:px-6">
           <a href="https://rxvision.gr" title="rxvision.gr" className="flex items-center gap-2 transition hover:opacity-80">
             <LogoMark className="h-9 w-9" />
             <div className="leading-tight">
@@ -483,9 +515,35 @@ export default function PortalHome() {
         </div>
       </header>
 
-      <main className="mx-auto max-w-5xl px-4 py-6 pb-24 sm:pb-6">
+      {/* Desktop (lg+): σταθερό πλαϊνό μενού αριστερά + περιεχόμενο δεξιά.
+          Tablet (sm–lg): pills πάνω από το περιεχόμενο.  Κινητό: σταθερή κάτω μπάρα. */}
+      <div className="mx-auto flex max-w-7xl gap-6 px-4 lg:px-6">
+        <aside className="hidden w-56 shrink-0 py-6 lg:block">
+          <nav className="sticky top-20 space-y-1">
+            {visibleTabs.map(([k, label]) => {
+              const Icon = TAB_ICON[k] ?? Home;
+              const on = tab === k;
+              return (
+                <button key={k} onClick={() => setTab(k)}
+                  className={`flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-sm font-semibold transition ${on
+                    ? "bg-brand-600 text-white shadow-sm shadow-brand-500/30"
+                    : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"}`}>
+                  <Icon className={`h-4 w-4 shrink-0 ${on ? "" : "text-slate-400"}`} />
+                  <span className="min-w-0 flex-1 truncate">{label}</span>
+                  {k === "renewals" && (renewals?.length ?? 0) > 0 && (
+                    <span className={`grid h-5 min-w-[20px] shrink-0 place-items-center rounded-full px-1 text-[10px] font-bold ${on ? "bg-white/25 text-white" : "bg-rose-500 text-white"}`}>{renewals!.length}</span>
+                  )}
+                </button>
+              );
+            })}
+          </nav>
+        </aside>
+
+        <main className="min-w-0 flex-1 py-6 pb-24 sm:pb-6">
         {/* ══ ΑΡΧΙΚΗ (Home): όλο το ενημερωτικό — μόνο εδώ, όχι σε κάθε καρτέλα (εξοικονόμηση χώρου) ══ */}
         {tab === "home" && (<>
+        {/* Εκκρεμές αίτημα μεταφοράς σε άλλο φαρμακείο — ο πελάτης εγκρίνει/απορρίπτει */}
+        <TransferCard onDone={() => load()} />
         {/* ── ζωντανή κατάσταση φαρμακείου ───────────────────── */}
         {pharm && (
           <div className={`mb-5 flex flex-wrap items-center justify-between gap-2 rounded-2xl px-4 py-3 text-white ${pharm.status.isOnDuty ? (pharm.status.isOvernightDuty ? "bg-indigo-600" : "bg-violet-600") : pharm.status.isOpen ? (pharm.status.closingSoon ? "bg-amber-500" : "bg-emerald-600") : "bg-slate-500"}`}>
@@ -599,12 +657,85 @@ export default function PortalHome() {
           </div>
           );
         })()}
+
+        {/* ── Κονσόλα (ΜΟΝΟ desktop) ─────────────────────────────
+            Στο κινητό η Αρχική είναι ήδη γεμάτη & τα δεδομένα είναι ένα tap μακριά· σε desktop
+            έμενε μεγάλο κενό, οπότε φέρνουμε εδώ ό,τι κοιτάει καθημερινά ο πελάτης. */}
+        <div className="mb-7 hidden gap-4 lg:grid lg:grid-cols-3">
+          {/* 1) σημερινές λήψεις */}
+          <HomePanel icon={Pill} tint="violet" title="Οι λήψεις σου σήμερα"
+            action={visibleTabs.some(([k]) => k === "meds") ? () => setTab("meds") : undefined}>
+            {(() => {
+              if (!sched) return <PanelHint text="Φόρτωση…" />;
+              const todayDow = (new Date().getDay() + 6) % 7;
+              const day = sched.week.find((d) => d.dow === todayDow);
+              const thMap: Record<string, Therapy> = Object.fromEntries(sched.therapies.map((t) => [t.med_key, t]));
+              const doses = day ? genDosesFor(day.slots, thMap) : [];
+              if (doses.length === 0) return <PanelHint text="Καμία προγραμματισμένη λήψη σήμερα." />;
+              const taken = new Set((sched.taken_today ?? []).map((t) => `${t.med_key}|${t.slot ?? ""}`));
+              const left = doses.filter((d) => !taken.has(`${d.med_key}|${d.time}`)).length;
+              return (
+                <>
+                  <div className="mb-2 text-xs font-semibold text-violet-700">
+                    {left === 0 ? "✓ Τα πήρες όλα σήμερα!" : `Απομένουν ${left} από ${doses.length}`}
+                  </div>
+                  <ul className="space-y-1.5">
+                    {doses.slice(0, 5).map((d, i) => {
+                      const on = taken.has(`${d.med_key}|${d.time}`);
+                      return (
+                        <li key={i} className="flex items-center gap-2 text-sm">
+                          <span className={`w-11 shrink-0 rounded-md px-1 py-0.5 text-center text-[11px] font-bold ${on ? "bg-emerald-100 text-emerald-700" : "bg-violet-100 text-violet-700"}`}>{d.time}</span>
+                          <span className={`min-w-0 flex-1 truncate ${on ? "text-slate-400 line-through" : "text-slate-700"}`}>{d.name}</span>
+                          {on && <Check className="h-3.5 w-3.5 shrink-0 text-emerald-600" />}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                  {doses.length > 5 && <div className="mt-1.5 text-[11px] text-slate-400">+{doses.length - 5} ακόμη</div>}
+                </>
+              );
+            })()}
+          </HomePanel>
+
+          {/* 2) τελευταίες συνταγές */}
+          <HomePanel icon={FileText} tint="indigo" title="Τελευταίες συνταγές"
+            action={visibleTabs.some(([k]) => k === "rx") ? () => setTab("rx") : undefined}>
+            {rx.length === 0 ? <PanelHint text="Δεν υπάρχουν συνταγές ακόμη." /> : (
+              <ul className="space-y-1.5">
+                {rx.slice(0, 5).map((p) => (
+                  <li key={p.barcode} className="flex items-center justify-between gap-2 text-sm">
+                    <span className="min-w-0 truncate font-mono text-[13px] text-slate-700">#{p.barcode.split(":")[0]}</span>
+                    <span className="shrink-0 text-[11px] text-slate-400">{new Date(p.executed_at).toLocaleDateString("el-GR")}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </HomePanel>
+
+          {/* 3) ανοιχτά ραντεβού */}
+          <HomePanel icon={CalendarPlus} tint="sky" title="Ανοιχτά ραντεβού"
+            action={visibleTabs.some(([k]) => k === "appointments") ? () => setTab("appointments") : undefined}>
+            {(() => {
+              const open = appts.filter((a) => !DONE.includes(a.status));
+              if (open.length === 0) return <PanelHint text="Δεν έχεις ανοιχτά ραντεβού." />;
+              return (
+                <ul className="space-y-1.5">
+                  {open.slice(0, 5).map((a, i) => (
+                    <li key={a._id ?? i} className="flex items-center justify-between gap-2 text-sm">
+                      <span className="min-w-0 truncate text-slate-700">{a.service_name}</span>
+                      <span className="shrink-0 text-[11px] text-slate-400">{new Date(a.requested_at).toLocaleDateString("el-GR")}</span>
+                    </li>
+                  ))}
+                </ul>
+              );
+            })()}
+          </HomePanel>
+        </div>
         </>)}
 
-        {/* ── tabs (desktop/tablet) ──────────────────────────────
-            Στο ΚΙΝΗΤΟ κρύβονται — η πλοήγηση γίνεται από τη σταθερή κάτω μπάρα (βλ. τέλος).
-            Σε sm+ αναδιπλώνονται κανονικά ως pills. */}
-        <div className="mb-5 hidden flex-wrap gap-2 sm:flex">
+        {/* ── tabs (ΜΟΝΟ tablet) ─────────────────────────────────
+            Κινητό: σταθερή κάτω μπάρα (βλ. τέλος). Desktop (lg+): πλαϊνό μενού — εδώ κρύβονται. */}
+        <div className="mb-5 hidden flex-wrap gap-2 sm:flex lg:hidden">
           {visibleTabs.map(([k, label]) => (
             <button key={k} onClick={() => setTab(k)}
               className={`shrink-0 whitespace-nowrap rounded-full border px-3.5 py-2 text-sm font-semibold transition ${tab === k
@@ -672,7 +803,7 @@ export default function PortalHome() {
               const open = expanded === p.barcode;
               return (
                 <div key={p.barcode} className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition hover:shadow-md">
-                  <button onClick={() => toggleExpand(p.barcode)} className="flex w-full items-center gap-2.5 p-2.5 text-left sm:p-3">
+                  <button onClick={() => toggleExpand(p.barcode, p.tenant_id)} className="flex w-full items-center gap-2.5 p-2.5 text-left sm:p-3">
                     <span className={`grid h-8 w-8 shrink-0 place-items-center rounded-lg ${p.partial ? "bg-amber-50 text-amber-600" : "bg-emerald-50 text-emerald-600"}`}><Pill className="h-4 w-4" /></span>
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
@@ -683,6 +814,13 @@ export default function PortalHome() {
                       </div>
                       <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-slate-500">
                         <span className="inline-flex items-center gap-1"><Calendar className="h-3 w-3 text-slate-400" /> {dt(p.executed_at)}</span>
+                        {/* ΠΟΥ έγινε η εκτέλεση — ο πελάτης βλέπει εκτελέσεις από όλα τα φαρμακεία του */}
+                        {p.pharmacy_name && (
+                          <span className="inline-flex min-w-0 items-center gap-1 text-slate-500">
+                            <Building2 className="h-3 w-3 shrink-0 text-slate-400" />
+                            <span className="truncate">{p.pharmacy_name}</span>
+                          </span>
+                        )}
                         {p.next_open_date && <span className="inline-flex items-center gap-1 text-emerald-600"><Clock className="h-3 w-3" /> ανοίγει {dt(p.next_open_date)}</span>}
                       </div>
                     </div>
@@ -840,22 +978,7 @@ export default function PortalHome() {
                 const todayDow = (new Date().getDay() + 6) % 7;
                 const takenSet = new Set((sched.taken_today ?? []).map((t) => `${t.med_key}|${t.slot ?? ""}`));
                 const thMap: Record<string, Therapy> = Object.fromEntries(sched.therapies.map((t) => [t.med_key, t]));
-                // Γεννήτρια δόσεων ανά ημέρα: 1×/μέρα → μία ώρα· >1×/μέρα → «κάθε X ώρες» από την ώρα 1ης λήψης.
-                const genDoses = (d: { slots: SlotCell[] }) => {
-                  const dueKeys = Array.from(new Set(d.slots.flatMap((sl) => sl.meds.map((m) => m.med_key))));
-                  const out: { time: string; med_key: string; name: string; dose: string | null; meal?: string | null }[] = [];
-                  dueKeys.forEach((mk) => {
-                    const th = thMap[mk]; if (!th) return;
-                    const pd = th.per_day || 1; const start = th.time || "08:00";
-                    // 1×/μέρα Ή «συγκεκριμένη ώρα» (interval_hours===0) → μία δόση στην ώρα
-                    if (pd <= 1 || th.interval_hours === 0) { out.push({ time: start, med_key: mk, name: th.name, dose: th.dose, meal: th.meal }); return; }
-                    // «κάθε iv ώρες» → δόσεις μέσα στο 24ωρο: start, +iv, +2iv, … (π.χ. iv=8 → 08:00, 16:00, 00:00)
-                    const iv = th.interval_hours || Math.max(1, Math.round(24 / pd));
-                    const [h, mn] = start.split(":").map(Number);
-                    for (let i = 0; i * iv < 24; i++) { const tot = (h * 60 + mn + i * iv * 60) % 1440; out.push({ time: `${String(Math.floor(tot / 60)).padStart(2, "0")}:${String(tot % 60).padStart(2, "0")}`, med_key: mk, name: th.name, dose: th.dose, meal: th.meal }); }
-                  });
-                  return out.sort((a, b) => a.time.localeCompare(b.time));
-                };
+                const genDoses = (d: { slots: SlotCell[] }) => genDosesFor(d.slots, thMap);   // βλ. genDosesFor
                 // ΣΗΜΕΡΑ πρώτη & ανοιχτή· οι υπόλοιπες κλειστές (accordion) — κλικ για άνοιγμα.
                 const days = sched.week.filter((d) => d.slots.length > 0)
                   .sort((a, b) => (a.dow === todayDow ? -1 : b.dow === todayDow ? 1 : a.dow - b.dow));
@@ -1380,7 +1503,6 @@ export default function PortalHome() {
             {/* ΟΛΑ τα ραντεβού σε ΟΛΑ τα φαρμακεία — Ενεργά πρώτα, μετά ολοκληρωμένα· κάθε ένα
                 με ΣΑΦΗ ένδειξη σε ποιο φαρμακείο αφορά (προσωπικό «ημερολόγιο» του πελάτη). */}
             {(() => {
-              const DONE = ["done", "cancelled", "declined", "completed"];
               const activeA = appts.filter((a) => !DONE.includes(a.status));
               const pastA = appts.filter((a) => DONE.includes(a.status));
               const activeName = me.pharmacies.find((p) => p.tenant_id === me.active_tenant)?.pharmacy_name;
@@ -1452,7 +1574,8 @@ export default function PortalHome() {
               });
               if (directory.length === 0) return <Empty icon={MapPin} text="Δεν βρέθηκαν φαρμακεία δικτύου." />;
               if (list.length === 0) return <Empty icon={Search} text="Κανένα φαρμακείο για αυτή την αναζήτηση." />;
-              return list.map((d) => {
+              return (
+                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">{list.map((d) => {
                 const s = d.status;
                 const crossBg = s?.isOnDuty ? "bg-indigo-500" : s?.isOpen ? (s.closingSoon ? "bg-amber-500" : "bg-emerald-500") : "bg-slate-300";
                 const isActive = d.tenant_id === me.active_tenant;
@@ -1491,13 +1614,15 @@ export default function PortalHome() {
                     </div>
                   </div>
                 );
-              });
+              })}</div>
+              );
             })()}
           </div>
         )}
 
         <p className="mt-8 text-center text-[11px] text-slate-300">RxVision · Πύλη Πελατών</p>
-      </main>
+        </main>
+      </div>
 
       {/* ── κάτω μπάρα πλοήγησης (ΜΟΝΟ κινητό) — ΚΥΛΙΟΜΕΝΗ λωρίδα όλων των διαθέσιμων ενοτήτων ──
           Σέρνεις με το δάχτυλο αριστερά/δεξιά· η ενεργή έρχεται στο κέντρο. Χωρίς «...» που κρύβει. */}
@@ -1538,6 +1663,29 @@ function Kpi({ icon: Icon, label, value, sub, tint, highlight }: {
       <div className="mt-0.5 truncate text-[11px] text-slate-400">{sub}</div>
     </div>
   );
+}
+
+// Πάνελ «κονσόλας» Αρχικής (desktop) — κάρτα με τίτλο, εικονίδιο & προαιρετικό «Όλα →».
+function HomePanel({ icon: Icon, title, tint, action, children }: {
+  icon: React.ComponentType<{ className?: string }>; title: string; tint: string;
+  action?: () => void; children: React.ReactNode;
+}) {
+  return (
+    <div className="flex flex-col rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+      <div className="mb-3 flex items-center gap-2">
+        <span className={`grid h-8 w-8 shrink-0 place-items-center rounded-xl ${TINTS[tint]}`}><Icon className="h-4 w-4" /></span>
+        <span className="min-w-0 flex-1 truncate text-[13px] font-bold text-slate-800">{title}</span>
+        {action && (
+          <button onClick={action} className="shrink-0 rounded-lg px-1.5 py-0.5 text-[11px] font-semibold text-brand-600 hover:bg-brand-50">Όλα →</button>
+        )}
+      </div>
+      <div className="min-h-0 flex-1">{children}</div>
+    </div>
+  );
+}
+
+function PanelHint({ text }: { text: string }) {
+  return <p className="py-4 text-center text-xs text-slate-400">{text}</p>;
 }
 
 function Empty({ icon: Icon, text }: { icon: React.ComponentType<{ className?: string }>; text: string }) {

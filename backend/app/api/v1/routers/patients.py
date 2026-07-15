@@ -282,3 +282,53 @@ async def per_patient(
     items = await repo.per_patient(date_from=date_from, date_to=date_to,
                                    sort=sort, limit=limit, filters=filters)
     return {"sort": sort, "items": items}
+
+
+# ── Μεταφορά πελάτη ΣΕ ΕΜΑΣ — το ΝΕΟ φαρμακείο κάνει το αίτημα, ο ΠΕΛΑΤΗΣ το εγκρίνει ──────
+# Δεν μεταφέρονται εκτελέσεις (μένουν στο φαρμακείο όπου έγιναν)· αντιγράφονται πρόγραμμα
+# λήψης / μετρήσεις / στοιχεία επικοινωνίας μόλις ο πελάτης δώσει τη συγκατάθεσή του.
+class TransferRequestIn(BaseModel):
+    amka: str = Field(..., min_length=11, max_length=11)
+    reason: Literal["moved", "customer_choice", "proximity", "other"]   # υποχρεωτική αιτιολόγηση
+    note: str | None = Field(None, max_length=300)                      # προαιρετικό σχόλιο
+
+
+@router.get("/transfer-reasons")
+async def transfer_reasons(ctx: TenantContext = Depends(require("patients:read", module=_MODULE))):
+    from app.repositories.patient_transfer import REASONS
+    return {"items": [{"value": k, "label": v} for k, v in REASONS.items()]}
+
+
+@router.post("/transfer-request", status_code=201)
+async def request_transfer(body: TransferRequestIn,
+                           ctx: TenantContext = Depends(require("patients:read", module=_MODULE))):
+    if not _valid_amka(body.amka):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "bad_amka_format")
+    from app.repositories.patient_transfer import PatientTransferRepository
+    res = await PatientTransferRepository().request(
+        to_tenant_id=ctx.tenant_id, amka=body.amka.strip(),
+        reason=body.reason, note=body.note,
+        requested_by=getattr(ctx, "user_id", None))
+    if not res.get("ok"):
+        raise HTTPException(status.HTTP_409_CONFLICT, detail={"error": res.get("error")})
+    return res
+
+
+@router.get("/transfer-requests")
+async def list_transfers(ctx: TenantContext = Depends(require("patients:read", module=_MODULE))):
+    from app.repositories.patient_transfer import PatientTransferRepository
+    return {"items": await PatientTransferRepository().list_for_tenant(ctx.tenant_id)}
+
+
+# ── Ενημερώσεις ΠΡΟΣ ΕΜΑΣ: πελάτης μας άλλαξε φαρμακείο εξυπηρέτησης ──
+@router.get("/transfer-notices")
+async def transfer_notices(ctx: TenantContext = Depends(require("patients:read", module=_MODULE))):
+    from app.repositories.patient_transfer import PatientTransferRepository
+    return {"items": await PatientTransferRepository().notices_for_tenant(ctx.tenant_id)}
+
+
+@router.post("/transfer-notices/{notice_id}/read")
+async def read_notice(notice_id: str,
+                      ctx: TenantContext = Depends(require("patients:read", module=_MODULE))):
+    from app.repositories.patient_transfer import PatientTransferRepository
+    return await PatientTransferRepository().mark_notice_read(notice_id, ctx.tenant_id)

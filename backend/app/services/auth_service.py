@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 
 from bson import ObjectId
@@ -33,6 +34,59 @@ def resolve_modules(included: set[str], overrides: dict[str, str]) -> dict[str, 
     modules = {m: overrides.get(m, "enabled") for m in keys}
     modules.update(overrides)
     return modules
+
+
+def allowed_tenants(user: dict) -> list[str]:
+    """Φαρμακεία στα οποία επιτρέπεται να συνδεθεί ο χρήστης: το κύριο (`tenant_id`) + όσα έχει
+    δηλώσει ΡΗΤΑ η πλατφόρμα στο `tenant_ids` (δίκτυο φαρμακείων — ίδιο ή διαφορετικό ΑΦΜ).
+
+    ΑΣΦΑΛΕΙΑ: το `tenant_ids` το γράφει ΜΟΝΟ το adminpanel. Αν μπορούσε να το θέσει ο διαχειριστής
+    του φαρμακείου, θα έδινε στον εαυτό του πρόσβαση σε ξένο φαρμακείο.
+    """
+    out = [str(user["tenant_id"])]
+    for t in (user.get("tenant_ids") or []):
+        if str(t) not in out:
+            out.append(str(t))
+    return out
+
+
+_AFM_RE = re.compile(r"^\d{9}$")
+
+
+async def _has_owner_role(user: dict) -> bool:
+    """Έχει ο χρήστης ρόλο ΙΔΙΟΚΤΗΤΗ στο δικό του φαρμακείο; (roles.key == 'owner')"""
+    ids = [_as_object_id(r) for r in (user.get("role_ids") or [])]
+    if not ids:
+        return False
+    r = await shared_db()["roles"].find_one(
+        {"_id": {"$in": ids}, "tenant_id": user["tenant_id"], "key": "owner"})
+    return bool(r)
+
+
+async def resolve_allowed_tenants(user: dict) -> list[str]:
+    """Πλήρης λίστα φαρμακείων στα οποία επιτρέπεται να συνδεθεί ο χρήστης:
+
+      1. Το κύριο του + όσα δήλωσε ΡΗΤΑ η πλατφόρμα (`tenant_ids`) → για δίκτυα με ΔΙΑΦΟΡΕΤΙΚΑ ΑΦΜ.
+      2. ΑΥΤΟΜΑΤΑ: όλα τα φαρμακεία με το ΙΔΙΟ ΑΦΜ — αλλά ΜΟΝΟ αν ο χρήστης είναι ΙΔΙΟΚΤΗΤΗΣ.
+         Ίδιο ΑΦΜ = ίδια νομική οντότητα, άρα ο ιδιοκτήτης δικαιούται να τα βλέπει όλα.
+
+    ΑΣΦΑΛΕΙΑ (μη το χαλαρώσεις): το ταίριασμα γίνεται ΜΟΝΟ σε έγκυρο 9ψήφιο ΑΦΜ. Στην παραγωγή τα
+    tenants μπορεί να έχουν ΚΕΝΟ ΑΦΜ — ένα `find({"company.afm": ""})` θα τα τσουβάλιαζε ΟΛΑ μαζί
+    και θα έδινε σε κάθε ιδιοκτήτη πρόσβαση σε ξένα φαρμακεία.
+    """
+    out = allowed_tenants(user)
+    if not await _has_owner_role(user):
+        return out
+    db = shared_db()
+    home = await db["tenants"].find_one({"_id": user["tenant_id"]}, {"company.afm": 1})
+    afm = str(((home or {}).get("company") or {}).get("afm") or "").strip()
+    if not _AFM_RE.match(afm):
+        return out                      # κενό/άκυρο ΑΦΜ → ΚΑΝΕΝΑ αυτόματο ταίριασμα
+    async for t in db["tenants"].find({"company.afm": afm}, {"_id": 1}):
+        tid = str(t["_id"])
+        if tid not in out:
+            out.append(tid)
+    return out
 
 
 async def resolve_tenant_modules(tenant_id: str) -> dict[str, str]:
@@ -84,7 +138,48 @@ class AuthService:
         await db["users"].update_one({"_id": user["_id"]},
                                      {"$set": {"last_login_at": _utcnow()}})
         modules, roles, perms, demo = await self._resolve(user)
+        # (Η λίστα φαρμακείων του χρήστη δίνεται από το /auth/me — το TokenOut είναι αυστηρό.)
         return self._issue(user, roles, modules, perms, demo, sid=sid)
+
+    async def accessible_pharmacies(self, user: dict) -> list[dict]:
+        """Τα φαρμακεία στα οποία επιτρέπεται να συνδεθεί ΑΥΤΟΣ ο χρήστης (για τον επιλογέα).
+        Φιλτράρονται όσα είναι σε αναστολή/ληγμένη συνδρομή."""
+        db = shared_db()
+        out = []
+        for tid in await resolve_allowed_tenants(user):
+            if not await self._tenant_access_ok(tid):
+                continue
+            t = await db["tenants"].find_one({"_id": tid}) or {}
+            out.append({"tenant_id": tid,
+                        "name": (t.get("company") or {}).get("name") or t.get("name") or tid,
+                        "primary": tid == str(user["tenant_id"])})
+        return out
+
+    async def select_tenant(self, user_id: str, tenant_id: str, sid: str | None = None) -> dict | None:
+        """Εναλλαγή ενεργού φαρμακείου για χρήστη ΔΙΚΤΥΟΥ (π.χ. ιδιοκτήτης 5 φαρμακείων).
+
+        Η απομόνωση δεν σπάει: το νέο token κουβαλά ΕΝΑ `tid` — απλά άλλο. Επιτρέπεται μόνο σε
+        φαρμακείο που έχει δηλωθεί ΡΗΤΑ πάνω στον χρήστη (από την πλατφόρμα, όχι από το φαρμακείο).
+        """
+        db = shared_db()
+        user = await db["users"].find_one({"_id": _as_object_id(user_id), "status": "active"})
+        if not user:
+            return None
+        tid = str(tenant_id)
+        if tid not in await resolve_allowed_tenants(user):
+            return None
+        if not await self._tenant_access_ok(tid):
+            return None
+        # Θέση (seat) ανά ΦΑΡΜΑΚΕΙΟ: κλείνει η συνεδρία στο παλιό, ανοίγει στο νέο → τίμια μέτρηση.
+        sub = await db["subscriptions"].find_one({"tenant_id": tid})
+        if not await sessions.has_free_seat(tid, sessions.tenant_seats(sub)):
+            return {"seat_limit": True, "seats": sessions.tenant_seats(sub)}
+        await sessions.close_session(sid)
+        new_sid = await sessions.open_session(tid, str(user["_id"]))
+        modules, roles, perms, demo = await self._resolve(user, tid)
+        res = self._issue(user, roles, modules, perms, demo, sid=new_sid, tid=tid)
+        res["active_tenant"] = tid
+        return res
 
     async def _tenant_access_ok(self, tenant_id) -> bool:
         db = shared_db()
@@ -109,18 +204,22 @@ class AuthService:
             return None  # revoked
         # Keep the SAME session across a refresh (no new seat). If it lapsed (idle → TTL-reaped),
         # revive it only if a seat is free — otherwise this refresh is over the cap → force re-login.
-        tid = str(user["tenant_id"])
+        # ΔΙΚΤΥΟ: κράτα το ΕΠΙΛΕΓΜΕΝΟ φαρμακείο (claim `tid`) — αλλιώς κάθε refresh θα τον γύριζε
+        # στο κύριο και θα «πεταγόταν» από αυτό που δουλεύει. Αν έπαψε να επιτρέπεται → κύριο.
+        claim_tid = str(claims.get("tid") or "")
+        tid = claim_tid if (claim_tid in await resolve_allowed_tenants(user)
+                            and await self._tenant_access_ok(claim_tid)) else str(user["tenant_id"])
         sid = claims.get("sid")
         if sid and not await sessions.is_live(sid):
-            sub = await db["subscriptions"].find_one({"tenant_id": user["tenant_id"]})
+            sub = await db["subscriptions"].find_one({"tenant_id": tid})   # seats του ΕΝΕΡΓΟΥ
             if not await sessions.has_free_seat(tid, sessions.tenant_seats(sub), exclude_sid=sid):
                 return None
         # Adopt/revive/refresh the session. Legacy refresh tokens minted before the seat system
         # carry no sid → open_session(sid=None) gives them a fresh TRACKED session so they can no
         # longer refresh forever outside the cap (closes the pre-`sid` escape without a mass logout).
         sid = await sessions.open_session(tid, str(user["_id"]), sid=sid)
-        modules, roles, perms, demo = await self._resolve(user)
-        return self._issue(user, roles, modules, perms, demo, sid=sid)
+        modules, roles, perms, demo = await self._resolve(user, tid)
+        return self._issue(user, roles, modules, perms, demo, sid=sid, tid=tid)
 
     async def issue_for_user(self, user: dict) -> dict:
         """Mint tokens for a user WITHOUT a password check or last_login update — used
@@ -130,10 +229,17 @@ class AuthService:
         modules, roles, perms, demo = await self._resolve(user)
         return self._issue(user, roles, modules, perms, demo, sid=sid)
 
-    async def _resolve(self, user: dict) -> tuple[dict, list[str], list[str], bool]:
+    async def _resolve(self, user: dict, tid: str | None = None) -> tuple[dict, list[str], list[str], bool]:
+        """tid = ΕΝΕΡΓΟ φαρμακείο (default: το κύριο του χρήστη).
+
+        ΠΡΟΣΟΧΗ στα δύο διαφορετικά scopes:
+          • modules/συνδρομή → του ΦΑΡΜΑΚΕΙΟΥ-ΣΤΟΧΟΥ (μπορεί να μην έχει π.χ. loyalty)
+          • ρόλοι/δικαιώματα → του ΚΥΡΙΟΥ φαρμακείου του χρήστη (εκεί ζουν τα role docs του)
+        """
         db = shared_db()
-        tenant = await db["tenants"].find_one({"_id": user["tenant_id"]})
-        sub = await db["subscriptions"].find_one({"tenant_id": user["tenant_id"]})
+        tid = tid or str(user["tenant_id"])
+        tenant = await db["tenants"].find_one({"_id": tid})
+        sub = await db["subscriptions"].find_one({"tenant_id": tid})
 
         # modules: plan + core modules, with tenant overrides applied
         modules = resolve_modules(
@@ -167,8 +273,9 @@ class AuthService:
         return modules, roles, sorted(perms), demo
 
     def _issue(self, user: dict, roles: list[str], modules: dict, perms: list[str],
-               demo: bool = False, sid: str | None = None) -> dict:
-        uid, tid = str(user["_id"]), str(user["tenant_id"])
+               demo: bool = False, sid: str | None = None, tid: str | None = None) -> dict:
+        uid = str(user["_id"])
+        tid = tid or str(user["tenant_id"])   # ΕΝΕΡΓΟ φαρμακείο → μπαίνει στο claim `tid`
         return {
             "access_token": create_access_token(
                 user_id=uid, tenant_id=tid, roles=roles, modules=modules, permissions=perms,

@@ -43,6 +43,7 @@ const GROUPS: Group[] = [
     { label: "Ασφαλισμένοι", en: "Patients", icon: Users, module: "patient_analytics", children: [
       { href: "/patients#list", label: "Λίστα", en: "List" },
       { href: "/patients#kpi", label: "Δείκτες", en: "Indicators" },
+      { href: "/patients/transfers", label: "Μεταφορά πελάτη", en: "Patient transfer" },
     ] },
     { label: "Ιατροί", en: "Doctors", icon: Stethoscope, module: "doctor_analytics", children: [
       { href: "/doctors#list", label: "Λίστα", en: "List" },

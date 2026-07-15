@@ -179,3 +179,42 @@ def renew_vault_token() -> dict:
     το ληγμένο token σταματά ΣΙΩΠΗΛΑ όλους τους ΗΔΥΚΑ syncs (incident 2026-07-08)."""
     from app.services.vault_service import vault
     return {"renewed": vault.renew_self()}
+
+
+@celery_app.task(name="app.workers.reminders.dispatch_abandoned_carts")
+def dispatch_abandoned_carts() -> dict:
+    """Υπενθύμιση «ξεχασμένου καλαθιού»: καλάθι που έμεινε ασυμπλήρωτο πέρα από το όριο του
+    φαρμακείου → ΕΝΑ push. Opt-in ανά φαρμακείο (abandoned_cart_enabled)· στέλνεται μία φορά
+    ανά καλάθι (reminded_at) και μηδενίζεται σε κάθε αλλαγή του καλαθιού."""
+    async def _run() -> dict:
+        from app.repositories.orders_delivery import OrdersDeliveryRepository
+        from app.services import push_service
+        client, db = _fresh_db()
+        now = datetime.now(timezone.utc)
+        sent = 0
+        carts = [c async for c in db["shop_carts"].find({"reminded_at": None}).limit(1000)]
+        settings_cache: dict[str, dict] = {}
+        for c in carts:
+            try:
+                tid = c["tenant_id"]
+                if tid not in settings_cache:
+                    settings_cache[tid] = await OrdersDeliveryRepository(tenant_id=tid).settings()
+                st = settings_cache[tid]
+                if not st.get("abandoned_cart_enabled"):
+                    continue
+                hours = max(1, int(st.get("abandoned_cart_hours") or 6))
+                if c.get("updated_at") and c["updated_at"] > now - timedelta(hours=hours):
+                    continue                       # δεν «ωρίμασε» ακόμη
+                n = int(sum(i.get("qty", 1) for i in c.get("items", [])))
+                if n <= 0:
+                    continue
+                await push_service.send_to_account(
+                    str(c["account_id"]), title="🛒 Ξέχασες κάτι στο καλάθι σου",
+                    body=f"{n} {'είδος' if n == 1 else 'είδη'} σε περιμένουν. Ολοκλήρωσε την παραγγελία σου!",
+                    url="/portal?tab=shop")
+                await db["shop_carts"].update_one({"_id": c["_id"]}, {"$set": {"reminded_at": now}})
+                sent += 1
+            except Exception:  # noqa: BLE001
+                continue
+        return {"sent": sent, "carts": len(carts)}
+    return _run_async(_run())
