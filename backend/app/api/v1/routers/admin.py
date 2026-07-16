@@ -1953,10 +1953,13 @@ async def ai_limits(_: PlatformContext = Depends(get_platform_admin)):
     rows = []
     async for t in db["tenants"].find({}, {"_id": 1, "name": 1}):
         tid = t["_id"]
+        bd = await ai_quota.usage_breakdown_today(db, tid)
         rows.append({
             "tenant_id": str(tid), "name": t.get("name"),
             "ai_daily_limit": await ai_quota.tenant_daily_limit(db, tid),
-            "ai_used_today": await ai_quota.usage_today(db, tid),
+            "ai_used_today": bd["total"],
+            "ai_used_ai": bd["ai"],        # πραγματικές AI κλήσεις (μόνο για εμάς)
+            "ai_used_local": bd["local"],  # σερβιρίστηκαν από την τοπική βάση (μόνο για εμάς)
             "ai_surcharge_cents": await ai_quota.ai_surcharge_monthly(db, tid),
             "card_on_file": await billing_service.card_on_file(tid),
         })

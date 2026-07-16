@@ -127,6 +127,11 @@ async def profile_advice(body: AdviceIn,
     coll = repo._db["ai_advice_kb"]
     cached = await coll.find_one({"_id": kb_key})
     if cached and cached.get("sig") == sig and not body.force and cached.get("advice", {}).get("ok"):
+        # και η τοπική (cached) απάντηση μετράει στο ημερήσιο όριο (breakdown source=cache, μόνο για εμάς)
+        from app.services import ai_quota
+        allowed, _u, limit, reason = await ai_quota.check_and_consume(ctx.tenant_id, source="cache")
+        if not allowed:
+            return {"ok": False, "error": reason or "quota_exceeded", "limit": limit}
         return {**cached["advice"], "cached": True, "shared": bool(amka), "generated_at": _iso(cached.get("generated_at"))}
 
     # 2) MISS (ή force) → χτίσε το προφίλ ΜΟΝΟ για κλινικά (παθήσεις/φάρμακα/δημογραφικά), κάλεσε AI,

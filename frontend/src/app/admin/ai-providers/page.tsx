@@ -9,7 +9,7 @@ type Integrations = {
   anthropic?: { api_key_set: boolean; enabled: boolean; model: string; admin_model: string };
   drugbank?: { api_key_set: boolean; enabled: boolean; region: string };
 };
-type AiTenant = { tenant_id: string; name?: string | null; ai_daily_limit: number; ai_used_today: number; ai_surcharge_cents: number; card_on_file: boolean };
+type AiTenant = { tenant_id: string; name?: string | null; ai_daily_limit: number; ai_used_today: number; ai_used_ai: number; ai_used_local: number; ai_surcharge_cents: number; card_on_file: boolean };
 type AiLimits = { tenants: AiTenant[]; price_per_block_cents: number; block: number; default: number; max: number };
 
 const inp = "w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none";
@@ -100,7 +100,7 @@ export default function AiProvidersPage() {
             Ενεργή υπηρεσία {!antEnabled && <span className="text-rose-500">(απενεργοποιημένη για όλους)</span>}
           </label>
         </div>
-        <p className="mt-3 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-500">Τροφοδοτεί το <b>PharmaCat Clinical Assistant</b> (κοινό κεντρικό κλειδί). Cache: επαναλαμβανόμενες ερωτήσεις = δωρεάν. Βασικό όριο <b>50 ερωτ./φαρμακείο/ημέρα</b> — ρυθμίζεται & χρεώνεται ανά φαρμακείο παρακάτω ↓</p>
+        <p className="mt-3 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-500">Τροφοδοτεί το <b>PharmaCat Clinical Assistant</b> (κοινό κεντρικό κλειδί). <b>Όλα</b> τα ερωτήματα μετρούν στο όριο — και όσα σερβίρονται από την τοπική βάση (ο πελάτης βλέπει μόνο το σύνολο· εμείς βλέπουμε AI vs τοπική στον πίνακα παρακάτω). Βασικό όριο <b>50 ερωτ./φαρμακείο/ημέρα</b> — ρυθμίζεται & χρεώνεται ανά φαρμακείο παρακάτω ↓</p>
       </div>
 
       {/* Όρια AI ερωτημάτων ανά φαρμακείο */}
@@ -148,6 +148,7 @@ export default function AiProvidersPage() {
                     <td className="px-3 py-2 text-right tabular-nums text-slate-600">
                       <span className={t.ai_used_today >= t.ai_daily_limit ? "font-semibold text-rose-600" : ""}>{t.ai_used_today}</span>
                       <span className="text-slate-300"> / {t.ai_daily_limit}</span>
+                      <div className="text-[10px] text-slate-400" title="Ανάλυση μόνο για εμάς — ο πελάτης βλέπει μόνο το σύνολο.">AI {t.ai_used_ai} · τοπική {t.ai_used_local}</div>
                     </td>
                     <td className="px-3 py-2 text-right tabular-nums">
                       {t.ai_surcharge_cents > 0

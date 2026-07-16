@@ -95,7 +95,11 @@ class PharmaCatRepository(BaseRepository):
         sig = _sig(messages, context)
         kb = self._db["pharmacat_knowledge"]  # tenant-ok: shared clinical KB (generic, no patient PII)
         hit = await kb.find_one({"sig": sig})
-        if hit:  # FREE, instant — serve from our growing knowledge base
+        if hit:  # serve from our knowledge base — μετράει στο ημερήσιο όριο (και οι τοπικές απαντήσεις)
+            from app.services import ai_quota
+            allowed, _u, limit, reason = await ai_quota.check_and_consume(self.tenant_id, source="cache")
+            if not allowed:
+                return {"ok": False, "error": reason or "quota_exceeded", "limit": limit}
             await kb.update_one({"sig": sig}, {"$inc": {"hits": 1}, "$set": {"last_at": _now()}})
             res = dict(hit["result"]); res["ok"] = True; res["source"] = "cache"; res["sig"] = sig
             res["products"] = await self.products_for(res.get("substances") or [])

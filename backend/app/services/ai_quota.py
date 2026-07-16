@@ -45,6 +45,13 @@ async def usage_today(db, tenant_id: str) -> int:
     return int((doc or {}).get("n", 0))
 
 
+async def usage_breakdown_today(db, tenant_id: str) -> dict:
+    """Σημερινή χρήση σπασμένη ανά πηγή: total (μετράει στο όριο), ai (πραγματική AI κλήση),
+    local (σερβιρίστηκε από την τοπική βάση γνώσεων). Και τα δύο μετρούν στο ημερήσιο όριο."""
+    doc = await db["llm_daily_usage"].find_one({"_id": f"ai:{tenant_id}:{_day()}"}) or {}
+    return {"total": int(doc.get("n", 0)), "ai": int(doc.get("n_llm", 0)), "local": int(doc.get("n_cache", 0))}
+
+
 async def effective_limit(db, tenant_id: str) -> tuple[int, bool]:
     """Πραγματικό ημερήσιο όριο + αν υπάρχει κάρτα. Χωρίς αποθηκευμένη κάρτα το όριο ΚΑΠΑΡΕΤΑΙ
     στο βασικό (τα χρεώσιμα extras ξεκλειδώνουν μόνο με κάρτα)."""
@@ -54,22 +61,24 @@ async def effective_limit(db, tenant_id: str) -> tuple[int, bool]:
     return (stored if has_card else min(stored, AI_DEFAULT_DAILY)), has_card
 
 
-async def check_and_consume(tenant_id: str) -> tuple[bool, int, int, str | None]:
-    """Χρέωσε 1 ερώτημα για σήμερα. Επιστρέφει (allowed, used, limit, reason).
-    reason: None όταν επιτρέπεται· "card_required" (χωρίς κάρτα → βάλε κάρτα για περισσότερα)·
-    "quota_exceeded" (έχει κάρτα αλλά έφτασε το δικό του ταβάνι → ανέβασε όριο).
+async def check_and_consume(tenant_id: str, source: str = "llm") -> tuple[bool, int, int, str | None]:
+    """Χρέωσε 1 ερώτημα για σήμερα. `source`: "llm" (πραγματική AI κλήση) ή "cache" (τοπική βάση) —
+    και τα δύο μετρούν στο ίδιο ημερήσιο όριο, αλλά κρατάμε breakdown ΓΙΑ ΕΜΑΣ (n_llm/n_cache· ο
+    πελάτης βλέπει μόνο το σύνολο). Επιστρέφει (allowed, used, limit, reason).
+    reason: None όταν επιτρέπεται· "card_required" (χωρίς κάρτα)· "quota_exceeded" (έφτασε το ταβάνι).
     Αν ξεπερνά το όριο → allowed=False και ΔΕΝ καταναλώνεται (rollback)."""
     if not tenant_id:
         return (True, 0, AI_DEFAULT_DAILY, None)   # χωρίς tenant → μη περιοριστικό (ασφάλεια)
     db = shared_db()
     limit, has_card = await effective_limit(db, tenant_id)
     key = f"ai:{tenant_id}:{_day()}"
+    sub = "n_cache" if source == "cache" else "n_llm"
     doc = await db["llm_daily_usage"].find_one_and_update(   # tenant-ok: platform usage meter
-        {"_id": key}, {"$inc": {"n": 1}, "$setOnInsert": {"at": datetime.now(tz=timezone.utc)}},
+        {"_id": key}, {"$inc": {"n": 1, sub: 1}, "$setOnInsert": {"at": datetime.now(tz=timezone.utc)}},
         upsert=True, return_document=ReturnDocument.AFTER)
     used = int((doc or {}).get("n", 0))
     if used > limit:
-        await db["llm_daily_usage"].update_one({"_id": key}, {"$inc": {"n": -1}})   # μη μετρήσεις το μπλοκαρισμένο
+        await db["llm_daily_usage"].update_one({"_id": key}, {"$inc": {"n": -1, sub: -1}})   # rollback το μπλοκαρισμένο
         return (False, limit, limit, "quota_exceeded" if has_card else "card_required")
     return (True, used, limit, None)
 
