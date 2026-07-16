@@ -73,6 +73,42 @@ async def cancel_plan_change(ctx: TenantContext = Depends(require("billing:manag
     return await pcs.cancel_change(ctx.tenant_id)
 
 
+# ── Self-service extras (αυξημένο AI όριο & extended διατήρηση — ξεκλειδώνουν με κάρτα) ────────────
+@router.get("/extras")
+async def get_extras(ctx: TenantContext = Depends(get_current_context)):
+    """Τρέχοντα όρια + τιμές + κατάσταση κάρτας — για τη σελίδα «Χρέωση → Extras»."""
+    from app.services import extras_service
+    return await extras_service.get_extras(ctx.tenant_id)
+
+
+class AiLimitIn(BaseModel):
+    daily_limit: int
+
+
+class RetentionIn(BaseModel):
+    months: int
+
+
+@router.put("/extras/ai-limit")
+async def set_ai_limit(body: AiLimitIn, ctx: TenantContext = Depends(require("billing:manage"))):
+    """Ο φαρμακοποιός ανεβάζει το ημερήσιο AI όριό του (>50 ⇒ απαιτείται κάρτα)."""
+    from app.services import extras_service
+    try:
+        return await extras_service.set_ai_limit(ctx.tenant_id, body.daily_limit)
+    except extras_service.CardRequired:
+        raise HTTPException(status.HTTP_402_PAYMENT_REQUIRED, "card_required")
+
+
+@router.put("/extras/retention")
+async def set_retention(body: RetentionIn, ctx: TenantContext = Depends(require("billing:manage"))):
+    """Ο φαρμακοποιός ανεβάζει το παράθυρο διατήρησης (>36μ ⇒ απαιτείται κάρτα)."""
+    from app.services import extras_service
+    try:
+        return await extras_service.set_retention(ctx.tenant_id, body.months)
+    except extras_service.CardRequired:
+        raise HTTPException(status.HTTP_402_PAYMENT_REQUIRED, "card_required")
+
+
 @router.api_route("/alpha-callback", methods=["GET", "POST"], include_in_schema=False)
 async def alpha_callback(request: Request):
     """Alpha e-Commerce redirect-back: verify the digest, apply the upgrade on success, then send the

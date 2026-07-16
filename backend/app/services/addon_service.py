@@ -97,6 +97,13 @@ async def _recompute_total(tenant_id: str) -> int:
     if ids:
         async for a in db["addons"].find({"_id": {"$in": ids}}):
             total += int(a.get("price_yearly" if yearly else "price_monthly", 0) or 0)
+    # extended retention (>36μ) + extended AI όριο (>50/μέρα) — κλιμακωτές επιβαρύνσεις, μπαίνουν
+    # στο ίδιο addons_total ώστε το billing (base + addons_total) να τις πιάνει χωρίς αλλαγή.
+    # Μηνιαίες τιμές × 12 σε yearly cycle.
+    from app.services.data_retention import retention_surcharge_monthly
+    from app.services.ai_quota import ai_surcharge_monthly
+    extra = await retention_surcharge_monthly(db, tenant_id) + await ai_surcharge_monthly(db, tenant_id)
+    total += extra * 12 if yearly else extra
     await db["subscriptions"].update_one({"tenant_id": tenant_id}, {"$set": {"addons_total": total}})
     return total
 

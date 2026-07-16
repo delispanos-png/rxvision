@@ -218,3 +218,14 @@ def dispatch_abandoned_carts() -> dict:
                 continue
         return {"sent": sent, "carts": len(carts)}
     return _run_async(_run())
+
+
+@celery_app.task(name="app.workers.reminders.purge_old_data")
+def purge_old_data() -> dict:
+    """Μηνιαίος καθαρισμός δεδομένων εκτός του παραθύρου διατήρησης ΑΝΑ φαρμακείο (rolling,
+    default 36μ· μεγαλύτερο για όσους το έχουν αγοράσει). Οριστική διαγραφή — GDPR minimization."""
+    async def _run() -> dict:
+        from app.services.data_retention import purge_old
+        client, db = _fresh_db()
+        return await purge_old(db)
+    return _run_async(_run())

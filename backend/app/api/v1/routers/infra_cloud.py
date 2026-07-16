@@ -136,6 +136,66 @@ async def verify(ctx: PlatformContext = Depends(get_platform_admin)):
     return out
 
 
+@router.get("/server-options")
+async def server_options(ctx: PlatformContext = Depends(get_platform_admin)):
+    """ΔΙΑΘΕΣΙΜΟΙ τύποι/τοποθεσίες για νέο app server — ζωντανά από το Hetzner, όχι σταθερή λίστα.
+    Δείχνει μόνο ό,τι παραγγέλνεται ΤΩΡΑ ανά τοποθεσία (datacenters.available), με πραγματική τιμή,
+    χωρίς deprecated τύπους. Έτσι ο διαχειριστής δεν διαλέγει κάτι μη-διαθέσιμο."""
+    c = await _cfg()
+    tok = c.get("hetzner_token")
+    if not tok:
+        return {"locations": [], "types_by_location": {}}
+    h = {"Authorization": f"Bearer {tok}"}
+    try:
+        async with httpx.AsyncClient(timeout=15) as cl:
+            dc_r, st_r = await asyncio.gather(
+                cl.get("https://api.hetzner.cloud/v1/datacenters", headers=h),
+                cl.get("https://api.hetzner.cloud/v1/server_types", headers=h))
+    except Exception:  # noqa: BLE001
+        return {"locations": [], "types_by_location": {}}
+    if dc_r.status_code != 200 or st_r.status_code != 200:
+        return {"locations": [], "types_by_location": {}}
+    types = {t["id"]: t for t in st_r.json().get("server_types", [])}
+    avail: dict[str, set[int]] = {}   # location name → orderable type ids
+    locs: dict[str, str] = {}         # location name → label
+    for dc in dc_r.json().get("datacenters", []):
+        loc = dc.get("location", {}) or {}
+        ln = loc.get("name")
+        if not ln:
+            continue
+        locs[ln] = f"{loc.get('city', ln)} ({ln})"
+        for tid in (dc.get("server_types", {}) or {}).get("available", []):
+            avail.setdefault(ln, set()).add(tid)
+    types_by_location: dict[str, list] = {}
+    for ln, tids in avail.items():
+        rows = []
+        for tid in tids:
+            t = types.get(tid)
+            if not t or t.get("deprecated") or t.get("deprecation"):   # skip deprecated (old bool / new obj)
+                continue
+            price = None
+            for p in t.get("prices", []):
+                if p.get("location") == ln:
+                    try:
+                        price = round(float((p.get("price_monthly") or {}).get("gross", 0)))
+                    except (TypeError, ValueError):
+                        price = None
+                    break
+            cores, mem = t.get("cores"), t.get("memory")
+            arch = t.get("architecture")
+            rows.append({"id": t["name"], "eur": price,
+                         "category": t.get("category") or "other", "arch": arch,
+                         "label": f"{t['name'].upper()} · {cores} vCPU · {int(mem) if mem else '?'} GB"
+                                  + (" · Arm" if arch == "arm" else "")})
+        # ταξινόμηση: πρώτα κατηγορία (Hetzner order), μετά τιμή
+        _corder = {"cost_optimized": 0, "regular_purpose": 1, "general_purpose": 2}
+        rows.sort(key=lambda r: (_corder.get(r["category"], 9), r["eur"] if r["eur"] is not None else 9999))
+        if rows:
+            types_by_location[ln] = rows
+    locations = [{"id": ln, "label": locs[ln]} for ln in sorted(types_by_location)]
+    return {"locations": locations, "types_by_location": types_by_location}
+
+
 async def _hetzner_cpu(cl: httpx.AsyncClient, h: dict, sid: int) -> float | None:
     """Last CPU% data-point from Hetzner's metrics API (best-effort)."""
     now = datetime.now(tz=timezone.utc)
@@ -213,9 +273,11 @@ async def _hetzner_topology(token: str, live: dict) -> tuple[list, list, list]:
 
 
 class OpsIn(BaseModel):
-    type: str            # "prune" | "backup" | "restore"
+    type: str            # "prune" | "backup" | "restore" | "add_node"
     target: str = "all"  # "all" or a specific node name
     file: str | None = None  # for restore: the backup archive filename
+    server_type: str | None = None   # add_node: Hetzner server type (default ccx13)
+    location: str | None = None      # add_node: Hetzner location (default hel1)
 
 
 @router.post("/ops")
@@ -235,6 +297,10 @@ async def enqueue_op(body: OpsIn, ctx: PlatformContext = Depends(get_platform_ad
         extra["file"] = body.file
     elif body.type == "add_node":
         nodes = [_MGMT_NODE]   # provisioning runs on the mgmt node (deploy key + token + repo)
+        if body.server_type:   # ο διαχειριστής διαλέγει τι αγοράζει (αλλιώς default ccx13/hel1)
+            extra["server_type"] = body.server_type
+        if body.location:
+            extra["location"] = body.location
     elif body.type == "backup":
         nodes = [_MGMT_NODE]                            # backup runs on the mgmt node
     elif body.target == "all":

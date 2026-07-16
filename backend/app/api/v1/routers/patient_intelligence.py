@@ -143,7 +143,7 @@ async def profile_advice(body: AdviceIn,
         "βασικά_φάρμακα": [m["name"] for m in prof["medicines"][:8]],
         "έλλειψη_ενζύμου_G6PD": "ΝΑΙ — προσοχή σε οξειδωτικά φάρμακα" if prof.get("clinical", {}).get("g6pd_deficiency") else "όχι",
     }
-    res = await patient_advice.advise(facts)
+    res = await patient_advice.advise(facts, ctx.tenant_id)
     if not res.get("ok"):
         if cached and cached.get("advice", {}).get("ok"):    # AI κάτω → fallback στα αποθηκευμένα
             return {**cached["advice"], "cached": True, "stale": True, "generated_at": _iso(cached.get("generated_at"))}

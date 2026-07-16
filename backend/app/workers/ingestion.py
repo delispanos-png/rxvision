@@ -110,7 +110,7 @@ def _sync_lock(key: str, ttl: int):
 
 
 def _history_floor(creds: dict):
-    """Earliest allowed sync date (Άντληση ιστορικού από) — caps how far back we pull."""
+    """«Άντληση ιστορικού από» (per-tenant ρύθμιση) — parsed ή None."""
     s = (creds or {}).get("history_from")
     if not s:
         return None
@@ -121,13 +121,17 @@ def _history_floor(creds: dict):
 
 
 async def _watermark(db, tenant_id: str) -> datetime:
+    from app.services.data_retention import tenant_cutoff
     last = await db["prescription_executions"].find_one(
         {"tenant_id": tenant_id, "source": "HDIKA"}, sort=[("executed_at", -1)])
-    floor = _history_floor(vault.get_secret(f"tenants/{tenant_id}/hdika") or {})
+    creds_floor = _history_floor(vault.get_secret(f"tenants/{tenant_id}/hdika") or {})
+    # ΠΟΤΕ πιο πίσω από το retention cutoff του ΦΑΡΜΑΚΕΙΟΥ — αλλιώς η ΗΔΥΚΑ ξανακατεβάζει ό,τι καθαρίσαμε.
+    rc = await tenant_cutoff(db, tenant_id)
+    floor = max(creds_floor, rc) if creds_floor else rc
     if last and last.get("executed_at"):
         wm = last["executed_at"] - timedelta(days=1)
-        return max(wm, floor) if floor else wm
-    return floor or datetime(2024, 1, 1, tzinfo=timezone.utc)
+        return max(wm, floor)
+    return floor                        # νέος tenant → ξεκινά από το retention cutoff
 
 
 @celery_app.task(name="app.workers.ingestion.dispatch_incremental_sync")
@@ -495,6 +499,9 @@ def dispatch_historical_continue() -> int:
                     floor = datetime.strptime(str(hf)[:10], "%Y-%m-%d").replace(tzinfo=timezone.utc)
                 except ValueError:
                     continue
+                # μη πας πιο πίσω από το retention παράθυρο του φαρμακείου (αλλιώς re-download καθαρισμένων)
+                from app.services.data_retention import tenant_cutoff
+                floor = max(floor, await tenant_cutoff(db, tid))
                 d = await db["prescription_executions"].find_one(
                     {"tenant_id": tid}, sort=[("executed_at", 1)], projection={"executed_at": 1})
                 oldest = d.get("executed_at") if d else None

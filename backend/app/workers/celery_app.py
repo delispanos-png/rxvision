@@ -144,4 +144,9 @@ celery_app.conf.beat_schedule = {
         "task": "app.workers.reminders.renew_vault_token",
         "schedule": crontab(hour=1, minute=0),
     },
+    # Διατήρηση δεδομένων — 1η κάθε μήνα 03:30 UTC καθαρίζει ό,τι βγήκε εκτός παραθύρου ανά φαρμακείο
+    "data-retention-purge": {
+        "task": "app.workers.reminders.purge_old_data",
+        "schedule": crontab(day_of_month=1, hour=3, minute=30),
+    },
 }

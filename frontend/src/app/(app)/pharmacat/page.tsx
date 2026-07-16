@@ -206,9 +206,11 @@ function PharmaCatInner() {
             <span className="mt-1 grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-violet-100 text-violet-600 dark:bg-violet-900/40"><Cat className="h-4 w-4" /></span>
             <div className="min-w-0 flex-1 space-y-2">
               {turn.result && !turn.result.ok ? (
-                <div className={`rounded-xl px-3 py-2 text-sm ${turn.result.error === "daily_limit" ? "bg-amber-50 text-amber-800 dark:bg-amber-950/30" : "bg-rose-50 text-rose-700 dark:bg-rose-950/30"}`}>
-                  {turn.result.error === "daily_limit"
-                    ? `${t("Εξαντλήθηκε το ημερήσιο όριο νέων ερωτήσεων", "Daily new-question limit reached")} (${turn.result.limit ?? 50}). ${t("Οι αποθηκευμένες απαντήσεις παραμένουν διαθέσιμες — δοκιμάστε ξανά αύριο.", "Saved answers remain available — try again tomorrow.")}`
+                <div className={`rounded-xl px-3 py-2 text-sm ${["daily_limit", "quota_exceeded", "card_required"].includes(turn.result.error || "") ? "bg-amber-50 text-amber-800 dark:bg-amber-950/30" : "bg-rose-50 text-rose-700 dark:bg-rose-950/30"}`}>
+                  {turn.result.error === "card_required"
+                    ? <>{t("Έφτασες το βασικό ημερήσιο όριο", "You reached the base daily limit")} ({turn.result.limit ?? 50}). {t("Πρόσθεσε κάρτα στις", "Add a card in")} <a href="/settings/billing" className="font-semibold underline">{t("Ρυθμίσεις → Χρέωση", "Settings → Billing")}</a> {t("για περισσότερα ερωτήματα. Οι αποθηκευμένες απαντήσεις παραμένουν δωρεάν.", "for more questions. Saved answers stay free.")}</>
+                    : turn.result.error === "quota_exceeded" || turn.result.error === "daily_limit"
+                    ? <>{t("Εξαντλήθηκε το ημερήσιο όριο", "Daily limit reached")} ({turn.result.limit ?? 50}). {t("Ανέβασέ το στις", "Raise it in")} <a href="/settings/billing" className="font-semibold underline">{t("Ρυθμίσεις → Χρέωση", "Settings → Billing")}</a>. {t("Οι αποθηκευμένες απαντήσεις παραμένουν διαθέσιμες.", "Saved answers remain available.")}</>
                     : turn.result.error === "disabled" ? t("Η υπηρεσία είναι απενεργοποιημένη.", "The service is disabled.")
                     : turn.result.error === "not_configured" ? t("Μη ρυθμισμένο (λείπει το API key).", "Not configured (missing API key).")
                     : t("Σφάλμα επικοινωνίας — δοκιμάστε ξανά.", "Communication error — try again.")}

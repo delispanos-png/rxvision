@@ -21,9 +21,9 @@ SSH=(ssh -i "$KEY" -o StrictHostKeyChecking=no -o ConnectTimeout=10)
 APP_COMPOSE=/opt/rxvision/docker-compose.app.yml
 
 # Live app nodes behind the LB — PRIVATE IPs only (public is firewalled to MGMT-only SSH).
-# Keep in sync with the LB targets: SRV01=10.0.0.5, SRV02=10.0.0.6 (added 2026-07-03).
+# Keep in sync with the LB targets: SRV01=10.0.0.5, SRV02=10.0.0.6, SRV03=10.0.0.7 (adopted 2026-07-15).
 # ALL app nodes must get the SAME web image in one run, or clients hit cross-node chunk-hash 404s.
-APP_NODES=(10.0.0.5 10.0.0.6)
+APP_NODES=(10.0.0.5 10.0.0.6 10.0.0.7)
 # Which tiers to push. api image is shared by api+worker on the app node.
 SERVICES="${SERVICES:-api web worker}"
 

@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Search, User, Wallet, Repeat, Stethoscope, Pill, Sparkles, AlertTriangle, Salad, Target, Eye, Crown, Syringe, ChevronRight, ScanLine, Calendar, CalendarRange, ShieldAlert } from "lucide-react";
 import { InteractionsModal } from "@/components/clinical/InteractionsModal";
-import { api } from "@/lib/apiClient";
+import { api, ApiError } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
 import { fmtNum, fmtEur, fmtDec, scanRxBarcode } from "@/lib/formatters";
 import { KpiCard } from "@/components/kpi/KpiCard";
@@ -39,7 +39,7 @@ type Profile = {
   executions?: Exec[];
   clinical?: { g6pd_deficiency: boolean };
 };
-type Advice = { ok: boolean; summary?: string; approach?: string[]; lifestyle?: string[]; opportunities?: string[]; watch?: string[]; cached?: boolean; generated_at?: string | null };
+type Advice = { ok: boolean; error?: string; limit?: number; summary?: string; approach?: string[]; lifestyle?: string[]; opportunities?: string[]; watch?: string[]; cached?: boolean; generated_at?: string | null };
 
 const TIER: Record<string, { label: string; cls: string }> = {
   platinum: { label: "Platinum", cls: "bg-violet-100 text-violet-700" },
@@ -426,7 +426,25 @@ export default function PatientProfilePage() {
               {!advice && <button onClick={() => ask.mutate({ a: p.patient!.amka })} disabled={ask.isPending} className="rounded-lg bg-brand-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-50">{ask.isPending ? t("Ανάλυση…", "Analyzing…") : t("Δημιουργία συμβουλών", "Generate")}</button>}
               {advice?.ok && <button onClick={() => ask.mutate({ a: p.patient!.amka, force: true })} disabled={ask.isPending} className="rounded-lg border border-brand-300 px-3 py-1.5 text-xs font-medium text-brand-700 hover:bg-brand-50 disabled:opacity-50 dark:border-brand-700 dark:text-brand-300" title={t("Αναγκαστική αναδημιουργία από το AI", "Force AI regeneration")}>{ask.isPending ? t("Ανάλυση…", "Analyzing…") : t("🔄 Ανανέωση", "🔄 Refresh")}</button>}
             </div>
-            {ask.isError && <div className="mt-3 text-sm text-rose-600">{t("Η AI δεν είναι διαθέσιμη/ρυθμισμένη. Ρύθμισε το κλειδί στο admin.", "AI not available/configured. Set the key in admin.")}</div>}
+            {ask.isError && (() => {
+              // module_locked = ο χρήστης έχει ΠΑΛΙΟ token (login πριν ενεργοποιηθεί το AI) → re-login,
+              // ΟΧΙ πρόβλημα κλειδιού. Διάκρινε τις περιπτώσεις για σωστή καθοδήγηση.
+              const err = ask.error as ApiError;
+              const code = (err?.problem as { detail?: { error?: string } })?.detail?.error;
+              const locked = err?.status === 403 && code === "module_locked";
+              return <div className="mt-3 text-sm text-rose-600">
+                {locked
+                  ? t("Οι AI Συμβουλές δεν είναι ενεργές στη συνεδρία σου. Αν μόλις ενεργοποιήθηκε το AI, αποσυνδέσου και ξανασυνδέσου.", "AI advice isn't active in your session. If AI was just enabled, log out and back in.")
+                  : t("Η AI δεν είναι διαθέσιμη αυτή τη στιγμή — δοκίμασε ξανά ή ρύθμισε το κλειδί AI στο admin.", "AI unavailable right now — retry, or set the AI key in admin.")}
+              </div>;
+            })()}
+            {advice && !advice.ok && ["card_required", "quota_exceeded", "daily_limit"].includes(advice.error || "") && (
+              <div className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:bg-amber-950/30">
+                {advice.error === "card_required"
+                  ? <>{t("Έφτασες το βασικό ημερήσιο όριο AI", "You reached the base daily AI limit")} ({advice.limit ?? 50}). {t("Πρόσθεσε κάρτα στις", "Add a card in")} <a href="/settings/billing" className="font-semibold underline">{t("Ρυθμίσεις → Χρέωση", "Settings → Billing")}</a> {t("για περισσότερα.", "for more.")}</>
+                  : <>{t("Εξαντλήθηκε το ημερήσιο όριο AI", "Daily AI limit reached")} ({advice.limit ?? 50}). {t("Ανέβασέ το στις", "Raise it in")} <a href="/settings/billing" className="font-semibold underline">{t("Ρυθμίσεις → Χρέωση", "Settings → Billing")}</a>.</>}
+              </div>
+            )}
             {advice?.ok && (
               <div className="mt-3 space-y-3">
                 {advice.summary && <p className="rounded-xl bg-white/70 px-4 py-3 text-sm text-slate-700 dark:bg-slate-800/60 dark:text-slate-200">{advice.summary}</p>}

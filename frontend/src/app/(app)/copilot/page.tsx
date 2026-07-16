@@ -167,8 +167,12 @@ function CopilotInner() {
             <span className="mt-1 grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-sky-100 text-sky-600 dark:bg-sky-900/40"><Sparkles className="h-4 w-4" /></span>
             <div className="min-w-0 flex-1 space-y-2">
               {turn.result && !turn.result.ok ? (
-                <div className="rounded-xl bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:bg-rose-950/30">
-                  {turn.result.error === "daily_limit" ? `${t("Εξαντλήθηκε το ημερήσιο όριο", "Daily limit reached")} (${turn.result.limit ?? 50}).` : t("Σφάλμα — δοκιμάστε ξανά.", "Error — try again.")}
+                <div className={`rounded-xl px-3 py-2 text-sm ${["daily_limit", "quota_exceeded", "card_required"].includes(turn.result.error || "") ? "bg-amber-50 text-amber-800 dark:bg-amber-950/30" : "bg-rose-50 text-rose-700 dark:bg-rose-950/30"}`}>
+                  {turn.result.error === "card_required"
+                    ? <>{t("Έφτασες το βασικό όριο", "Base limit reached")} ({turn.result.limit ?? 50}). {t("Πρόσθεσε κάρτα στις", "Add a card in")} <a href="/settings/billing" className="font-semibold underline">{t("Ρυθμίσεις → Χρέωση", "Settings → Billing")}</a> {t("για περισσότερα.", "for more.")}</>
+                    : turn.result.error === "quota_exceeded" || turn.result.error === "daily_limit"
+                    ? <>{t("Εξαντλήθηκε το ημερήσιο όριο", "Daily limit reached")} ({turn.result.limit ?? 50}). {t("Ανέβασέ το στις", "Raise it in")} <a href="/settings/billing" className="font-semibold underline">{t("Ρυθμίσεις → Χρέωση", "Settings → Billing")}</a>.</>
+                    : t("Σφάλμα — δοκιμάστε ξανά.", "Error — try again.")}
                 </div>
               ) : (
                 <>

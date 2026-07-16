@@ -422,6 +422,10 @@ async def ask(*, tenant_id: str, perms: set[str], messages: list[dict], demo: bo
         return {"ok": False, "error": "not_configured"}
     if not c["enabled"]:
         return {"ok": False, "error": "disabled"}
+    from app.services import ai_quota   # ημερήσιο όριο ερωτημάτων ανά φαρμακείο
+    allowed, _used, limit, reason = await ai_quota.check_and_consume(tenant_id)
+    if not allowed:
+        return {"ok": False, "error": reason or "quota_exceeded", "limit": limit}
 
     import anthropic
 

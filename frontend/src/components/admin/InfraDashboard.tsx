@@ -23,6 +23,18 @@ type Infra = { servers: Srv[]; load_balancers: LB[]; networks: Net[]; storage: S
 
 const barColor = (p: number) => (p >= 85 ? "bg-rose-500" : p >= 60 ? "bg-amber-500" : "bg-emerald-500");
 
+// Οι διαθέσιμοι τύποι/τοποθεσίες έρχονται ΖΩΝΤΑΝΑ από το Hetzner (/cloud/server-options) —
+// μόνο ό,τι παραγγέλνεται τώρα ανά τοποθεσία, με πραγματική τιμή. Καμία σταθερή λίστα εδώ.
+type SrvType = { id: string; label: string; eur: number | null; category: string; arch: string };
+type SrvLoc = { id: string; label: string };
+type ServerOptions = { locations: SrvLoc[]; types_by_location: Record<string, SrvType[]> };
+// Οι 3 κατηγορίες του Hetzner (ίδια σειρά με το panel του), με ελληνική περιγραφή.
+const CATEGORIES: { id: string; label: string }[] = [
+  { id: "cost_optimized", label: "Οικονομικοί — κοινόχρηστοι (περιορισμένη διαθεσιμότητα)" },
+  { id: "regular_purpose", label: "Κανονικής απόδοσης — κοινόχρηστοι AMD" },
+  { id: "general_purpose", label: "Γενικής χρήσης — αποκλειστικοί πόροι (dedicated)" },
+];
+
 function Metric({ icon, label, pct, suffix }: { icon: React.ReactNode; label: string; pct: number | null; suffix?: string }) {
   return (
     <div>
@@ -175,10 +187,13 @@ export function InfraDashboard() {
   const qc = useQueryClient();
   const [backupsOpen, setBackupsOpen] = useState(false);
   const [servingOpen, setServingOpen] = useState(false);
+  const [newType, setNewType] = useState("");   // επιλογή τύπου/τοποθεσίας νέου server (live)
+  const [newLoc, setNewLoc] = useState("");
   const q = useQuery({ queryKey: ["infra"], queryFn: () => adminApi<Infra>("/platform/cloud/infra"), refetchInterval: 12000, retry: false });
+  const optQ = useQuery({ queryKey: ["server-options"], queryFn: () => adminApi<ServerOptions>("/platform/cloud/server-options"), staleTime: 300_000, retry: false });
   const opsQ = useQuery({ queryKey: ["ops"], queryFn: () => adminApi<{ items: Op[] }>("/platform/cloud/ops"), refetchInterval: 5000, retry: false });
   const op = useMutation({
-    mutationFn: (b: { type: string; target: string; file?: string }) => adminApi("/platform/cloud/ops", { method: "POST", body: JSON.stringify(b) }),
+    mutationFn: (b: { type: string; target: string; file?: string; server_type?: string; location?: string }) => adminApi("/platform/cloud/ops", { method: "POST", body: JSON.stringify(b) }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["ops"] }),
   });
   const backupsQ = useQuery({ queryKey: ["backups"], queryFn: () => adminApi<{ items: { file: string; size?: string; ts?: string; ok?: boolean }[] }>("/platform/cloud/backups"), refetchInterval: 15000, retry: false });
@@ -200,9 +215,19 @@ export function InfraDashboard() {
   const OP_LABEL: Record<string, string> = { prune: "Καθάρισμα cache", backup: "Backup", restore: "Επαναφορά", add_node: "Νέος app server" };
   const loadedNodes = infra.servers.filter((s) => s.role === "app" && Math.max(s.cpu ?? 0, s.ram_pct ?? 0, s.disk_pct ?? 0) >= 80);
   const addingNode = op.isPending || (opsQ.data?.items ?? []).some((o) => o.type === "add_node" && o.status !== "done");
+  // Διαθέσιμα (ζωντανά από Hetzner). effLoc/effType = η επιλογή του χρήστη ΑΝ ισχύει, αλλιώς το 1ο διαθέσιμο.
+  const availLocs = optQ.data?.locations ?? [];
+  const effLoc = availLocs.some((l) => l.id === newLoc) ? newLoc : (availLocs[0]?.id ?? "");
+  const availTypes = optQ.data?.types_by_location?.[effLoc] ?? [];
+  const effType = availTypes.some((t) => t.id === newType) ? newType : (availTypes[0]?.id ?? "");
+  const optsLoading = optQ.isLoading;
+  const noOpts = !optsLoading && availLocs.length === 0;
   async function addNode() {
-    if (!(await appConfirm("Θα δημιουργηθεί ΝΕΟΣ Hetzner server (ccx13 · χρέωση/μήνα), θα στηθεί αυτόματα και θα μπει στον Load Balancer (~3–5 λεπτά). Συνέχεια;", { title: "Προσθήκη app server", confirmText: "Δημιουργία" }))) return;
-    op.mutate({ type: "add_node", target: "all" });
+    const st = availTypes.find((t) => t.id === effType);
+    const lc = availLocs.find((l) => l.id === effLoc);
+    if (!effType || !effLoc) return;
+    if (!(await appConfirm(`Θα δημιουργηθεί ΝΕΟΣ Hetzner server (${st?.label ?? effType} · ~${st?.eur ?? "?"}€/μήνα · ${lc?.label ?? effLoc}), θα στηθεί αυτόματα και θα μπει στον Load Balancer (~3–5 λεπτά). Συνέχεια;`, { title: "Προσθήκη app server", confirmText: "Δημιουργία" }))) return;
+    op.mutate({ type: "add_node", target: "all", server_type: effType, location: effLoc });
   }
 
   return (
@@ -231,9 +256,30 @@ export function InfraDashboard() {
               className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-600 dark:text-slate-200"><Trash2 className="h-4 w-4" /> Καθάρισε Docker cache (όλοι)</button>
             <button onClick={() => op.mutate({ type: "backup", target: "all" })} disabled={backingUp}
               className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"><HardDrive className="h-4 w-4" /> {backingUp ? "Backup…" : "Backup τώρα"}</button>
-            <button onClick={addNode} disabled={addingNode}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"><Server className="h-4 w-4" /> {addingNode ? "Δημιουργία…" : "➕ Προσθήκη app server"}</button>
+            <div className="flex flex-wrap items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50/60 p-1.5 dark:border-emerald-800 dark:bg-emerald-950/40">
+              {/* Τοποθεσία ΠΡΩΤΑ — καθορίζει ποιοι τύποι είναι διαθέσιμοι εκεί */}
+              <select value={effLoc} onChange={(e) => { setNewLoc(e.target.value); setNewType(""); }} disabled={addingNode || noOpts}
+                className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs dark:border-slate-600 dark:bg-slate-800" title="Τοποθεσία">
+                {availLocs.map((l) => <option key={l.id} value={l.id}>{l.label}</option>)}
+              </select>
+              <select value={effType} onChange={(e) => setNewType(e.target.value)} disabled={addingNode || noOpts}
+                className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs dark:border-slate-600 dark:bg-slate-800" title="Τύπος server">
+                {/* ομαδοποίηση στις 3 κατηγορίες του Hetzner (+ τυχόν άγνωστες στο τέλος) */}
+                {[...CATEGORIES, { id: "other", label: "Λοιποί" }].map((c) => {
+                  const items = availTypes.filter((t) => t.category === c.id);
+                  return items.length ? (
+                    <optgroup key={c.id} label={c.label}>
+                      {items.map((t) => <option key={t.id} value={t.id}>{t.label}{t.eur != null ? ` · ~${t.eur}€/μ` : ""}</option>)}
+                    </optgroup>
+                  ) : null;
+                })}
+              </select>
+              <button onClick={addNode} disabled={addingNode || noOpts || !effType}
+                className="inline-flex items-center gap-1.5 rounded-md bg-emerald-600 px-3 py-1 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"><Server className="h-4 w-4" /> {addingNode ? "Δημιουργία…" : optsLoading ? "Φόρτωση…" : "➕ Νέος app server"}</button>
+            </div>
+            {noOpts && <p className="mt-1 text-[11px] text-amber-600">Δεν φορτώθηκαν διαθέσιμοι τύποι — έλεγξε το Hetzner token.</p>}
           </div>
+          <p className="mt-1.5 text-[11px] text-slate-400">💡 Έχεις ήδη αγοράσει server; Ένταξέ τον χωρίς νέα αγορά: <code className="rounded bg-slate-100 px-1 dark:bg-slate-800">bash infra/scaling/adopt-node.sh &lt;server-id&gt;</code> στο MGMT.</p>
         </div>
         {loadedNodes.length > 0 && (
           <div className="mt-3 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-200">

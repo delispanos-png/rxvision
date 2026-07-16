@@ -105,6 +105,8 @@ class StatusIn(BaseModel):
 class TenantEditIn(BaseModel):
     name: str | None = None
     demo: bool | None = None        # «πελάτης παρουσίασης» → απόκρυψη PII (ισχύει στο επόμενο login)
+    retention_months: int | None = None   # παράθυρο διατήρησης δεδομένων (default 36· >36 = πρόσθετη υπηρεσία)
+    ai_daily_limit: int | None = None      # ημερήσιο όριο AI ερωτημάτων (default 50· >50 = πρόσθετη υπηρεσία)
 
 
 class InvoiceIn(BaseModel):
@@ -1165,10 +1167,19 @@ async def edit_tenant(tenant_id: str, body: TenantEditIn,
     patch = {k: v for k, v in body.model_dump().items() if v is not None}
     if not patch:
         return {"id": tenant_id, "updated": False}
+    if "retention_months" in patch:      # ασφαλή όρια (36–120)
+        from app.services.data_retention import clamp_months
+        patch["retention_months"] = clamp_months(patch["retention_months"])
+    if "ai_daily_limit" in patch:        # ασφαλή όρια (50–2000)
+        from app.services.ai_quota import clamp_limit
+        patch["ai_daily_limit"] = clamp_limit(patch["ai_daily_limit"])
     patch["updated_at"] = datetime.now(tz=timezone.utc)
     res = await db["tenants"].update_one({"_id": tenant_id}, {"$set": patch})
     if not res.matched_count:
         raise HTTPException(http_status.HTTP_404_NOT_FOUND, "not_found")
+    if "retention_months" in patch or "ai_daily_limit" in patch:   # κλιμακωτή επιβάρυνση → recurring
+        from app.services import addon_service
+        await addon_service._recompute_total(tenant_id)
     return {"id": tenant_id, "updated": True}
 
 
@@ -1896,6 +1907,86 @@ async def set_portal_mode(body: PortalModeIn, _: PlatformContext = Depends(get_p
         {"_id": "portal"},
         {"$set": {"mode": body.mode, "updated_at": datetime.now(tz=timezone.utc)}}, upsert=True)
     return {"mode": body.mode}
+
+
+# ── Διατήρηση δεδομένων (rolling window ανά φαρμακείο) ──────────────────────────────
+@router.get("/data-retention")
+async def data_retention_preview(_: PlatformContext = Depends(get_platform_admin)):
+    """Προεπισκόπηση: τι ΘΑ διαγραφόταν τώρα (ανά φαρμακείο) + εκτίμηση χώρου/φαρμακείο. Καμία διαγραφή."""
+    from app.services.data_retention import (
+        purge_old, storage_by_tenant, tenant_retention_months, retention_surcharge_monthly,
+        retention_price_per_year, DEFAULT_RETENTION_MONTHS, MAX_RETENTION_MONTHS)
+    db = shared_db()
+    res = await purge_old(dry_run=True)
+    storage = await storage_by_tenant(db)
+    price = await retention_price_per_year(db)
+    for s in storage:
+        s["retention_months"] = await tenant_retention_months(db, s["tenant_id"])
+        s["surcharge_cents"] = await retention_surcharge_monthly(db, s["tenant_id"])
+    return {**res, "storage": storage, "price_per_year_cents": price,
+            "default_months": DEFAULT_RETENTION_MONTHS, "max_months": MAX_RETENTION_MONTHS}
+
+
+class RetentionPriceIn(BaseModel):
+    price_per_year_cents: int = Field(..., ge=0, le=100000)
+
+
+@router.put("/data-retention/pricing")
+async def set_retention_pricing(body: RetentionPriceIn, _: PlatformContext = Depends(get_platform_admin)):
+    """Μηνιαία τιμή ανά ΕΠΙΠΛΕΟΝ έτος retention (πάνω από 36μ). Ξαναϋπολογίζει όλες τις συνδρομές."""
+    db = shared_db()
+    await db["platform_settings"].update_one(
+        {"_id": "retention"}, {"$set": {"price_per_year_cents": body.price_per_year_cents,
+                                        "updated_at": datetime.now(tz=timezone.utc)}}, upsert=True)
+    # όσα φαρμακεία έχουν >36μ → ενημέρωσε τη χρέωσή τους με τη νέα τιμή
+    from app.services import addon_service
+    async for t in db["tenants"].find({"retention_months": {"$gt": 36}}, {"_id": 1}):
+        await addon_service._recompute_total(t["_id"])
+    return {"ok": True, "price_per_year_cents": body.price_per_year_cents}
+
+
+@router.get("/ai-limits")
+async def ai_limits(_: PlatformContext = Depends(get_platform_admin)):
+    """Ημερήσια όρια AI ερωτημάτων ανά φαρμακείο + τρέχουσα χρήση + επιβάρυνση (για το κύκλωμα AI)."""
+    from app.services import ai_quota, billing_service
+    db = shared_db()
+    rows = []
+    async for t in db["tenants"].find({}, {"_id": 1, "name": 1}):
+        tid = t["_id"]
+        rows.append({
+            "tenant_id": str(tid), "name": t.get("name"),
+            "ai_daily_limit": await ai_quota.tenant_daily_limit(db, tid),
+            "ai_used_today": await ai_quota.usage_today(db, tid),
+            "ai_surcharge_cents": await ai_quota.ai_surcharge_monthly(db, tid),
+            "card_on_file": await billing_service.card_on_file(tid),
+        })
+    rows.sort(key=lambda r: (-r["ai_surcharge_cents"], (r["name"] or "").lower()))
+    return {"tenants": rows, "price_per_block_cents": await ai_quota.price_per_block(db),
+            "block": ai_quota.AI_BLOCK, "default": ai_quota.AI_DEFAULT_DAILY, "max": ai_quota.AI_MAX_DAILY}
+
+
+class AiPriceIn(BaseModel):
+    price_per_block_cents: int = Field(..., ge=0, le=100000)
+
+
+@router.put("/ai-pricing")
+async def set_ai_pricing(body: AiPriceIn, _: PlatformContext = Depends(get_platform_admin)):
+    """Μηνιαία τιμή ανά μπλοκ επιπλέον AI ορίου (πάνω από 50/μέρα). Ξαναϋπολογίζει τις συνδρομές."""
+    db = shared_db()
+    await db["platform_settings"].update_one(
+        {"_id": "ai_quota"}, {"$set": {"price_per_block_cents": body.price_per_block_cents,
+                                       "updated_at": datetime.now(tz=timezone.utc)}}, upsert=True)
+    from app.services import addon_service
+    async for t in db["tenants"].find({"ai_daily_limit": {"$gt": 50}}, {"_id": 1}):
+        await addon_service._recompute_total(t["_id"])
+    return {"ok": True, "price_per_block_cents": body.price_per_block_cents}
+
+
+@router.post("/data-retention/purge")
+async def data_retention_purge(_: PlatformContext = Depends(get_platform_admin)):
+    """Χειροκίνητη ΟΡΙΣΤΙΚΗ διαγραφή δεδομένων εκτός παραθύρου (ανά φαρμακείο). Μη αναστρέψιμο."""
+    from app.services.data_retention import purge_old
+    return await purge_old()
 
 
 # ── notifications (GLOBAL — όλοι οι tenants με την ίδια συνθήκη) ──────────────

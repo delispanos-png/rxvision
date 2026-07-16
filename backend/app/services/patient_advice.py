@@ -40,12 +40,17 @@ SCHEMA = {
 }
 
 
-async def advise(facts: dict) -> dict:
+async def advise(facts: dict, tenant_id: str | None = None) -> dict:
     c = await pharmacat_service._config()
     if not c["api_key"]:
         return {"ok": False, "error": "not_configured"}
     if not c["enabled"]:
         return {"ok": False, "error": "disabled"}
+    # ΝΕΑ κλήση AI (το cache την έχει ήδη παρακάμψει) → μέτρα το ημερήσιο όριο του φαρμακείου
+    from app.services import ai_quota
+    allowed, used, limit, reason = await ai_quota.check_and_consume(tenant_id)
+    if not allowed:
+        return {"ok": False, "error": reason or "quota_exceeded", "limit": limit}
 
     import anthropic
 

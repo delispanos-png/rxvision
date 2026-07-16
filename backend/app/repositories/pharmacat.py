@@ -17,8 +17,8 @@ from datetime import datetime, timezone
 from app.repositories.base import BaseRepository, jsonsafe
 from app.services import pharmacat_service
 
-# New (non-cached) LLM queries allowed per pharmacy per day. Cache hits are FREE and uncounted.
-DAILY_LIMIT = 50
+# Το ημερήσιο όριο νέων ερωτημάτων επιβάλλεται πλέον κεντρικά (services/ai_quota, ρυθμιζόμενο ανά
+# φαρμακείο). Τα cache hits είναι ΔΩΡΕΑΝ & δεν μετρώνται (γίνεται στο _cached_ask πριν το service).
 
 
 def _now() -> datetime:
@@ -90,11 +90,6 @@ class PharmaCatRepository(BaseRepository):
             "narcotic": bool(d.get("narcotic")), "high_cost": bool(d.get("high_cost")),
             "category": d.get("drug_category")})
 
-    async def _today_llm_count(self) -> int:
-        day0 = _now().replace(hour=0, minute=0, second=0, microsecond=0)
-        return await self._coll.count_documents(
-            {"tenant_id": self.tenant_id, "source": "llm", "at": {"$gte": day0}})
-
     async def _cached_ask(self, user: str, messages: list[dict], context: dict | None,
                           *, kind: str, drugs: list[str] | None = None) -> dict:
         sig = _sig(messages, context)
@@ -106,9 +101,8 @@ class PharmaCatRepository(BaseRepository):
             res["products"] = await self.products_for(res.get("substances") or [])
             await self._record(user, messages, context, res, kind=kind, drugs=drugs, source="cache")
             return jsonsafe(res)
-        if await self._today_llm_count() >= DAILY_LIMIT:
-            return {"ok": False, "error": "daily_limit", "limit": DAILY_LIMIT}
-        res = await pharmacat_service.ask(messages, context)
+        # Το ημερήσιο όριο επιβάλλεται πλέον κεντρικά στο service (ai_quota, ρυθμιζόμενο ανά φαρμακείο).
+        res = await pharmacat_service.ask(messages, context, tenant_id=self.tenant_id)
         if not res.get("ok"):
             return res
         store = {k: v for k, v in res.items() if k != "ok"}  # products re-matched fresh each serve
@@ -297,6 +291,7 @@ class PharmaCatRepository(BaseRepository):
 
     async def status(self) -> dict:
         s = await pharmacat_service.status()
-        s["today_used"] = await self._today_llm_count()
-        s["daily_limit"] = DAILY_LIMIT
+        from app.services import ai_quota
+        s["today_used"] = await ai_quota.usage_today(self._db, self.tenant_id)
+        s["daily_limit"] = await ai_quota.tenant_daily_limit(self._db, self.tenant_id)
         return s

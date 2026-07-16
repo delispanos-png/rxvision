@@ -13,13 +13,14 @@ M() { docker run --rm --network host mongo:7 mongosh "$URI" --quiet --eval "db =
 jget() { python3 -c "import sys,json; d=sys.stdin.read().strip(); print(json.loads(d).get('$1','') if d else '')" 2>/dev/null; }
 
 while true; do
-  CMD=$(M "const c=db.ops_commands.findOneAndUpdate({status:'pending',node:'$NODE'},{\$set:{status:'running',started_at:new Date()}},{returnDocument:'after'}); print(c?JSON.stringify({id:c._id.toString(),type:c.type,file:c.file||''}):'')" 2>/dev/null | tail -1)
+  CMD=$(M "const c=db.ops_commands.findOneAndUpdate({status:'pending',node:'$NODE'},{\$set:{status:'running',started_at:new Date()}},{returnDocument:'after'}); print(c?JSON.stringify({id:c._id.toString(),type:c.type,file:c.file||'',server_type:c.server_type||'',location:c.location||''}):'')" 2>/dev/null | tail -1)
   ID=$(printf '%s' "$CMD" | jget id); TYPE=$(printf '%s' "$CMD" | jget type); FILE=$(printf '%s' "$CMD" | jget file)
+  STY=$(printf '%s' "$CMD" | jget server_type); LOC=$(printf '%s' "$CMD" | jget location)
   if [ -n "$ID" ]; then
     case "$TYPE" in
       prune)    OUT=$( { docker builder prune -f; docker image prune -f; } 2>&1 | grep -i 'reclaimed' | paste -sd'; ' );;
       backup)   OUT=$(bash infra/scripts/mongo-backup.sh 2>&1 | tail -1);;
-      add_node) OUT=$(NODE_CMD_ID="$ID" bash infra/scripts/provision-app-node.sh 2>&1 | tail -1);;
+      add_node) OUT=$(NODE_CMD_ID="$ID" SRV_TYPE="${STY:-ccx13}" LOCATION="${LOC:-hel1}" bash infra/scripts/provision-app-node.sh 2>&1 | tail -1);;
       restore)
         if [[ "$FILE" =~ ^rxvision-[A-Za-z0-9._-]+\.archive\.gz$ ]]; then
           dl=false

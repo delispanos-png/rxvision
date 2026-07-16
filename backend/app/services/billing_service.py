@@ -46,6 +46,20 @@ async def start_card_capture(tenant_id: str) -> dict:
     return res
 
 
+# Καταστάσεις πληρωμής που σημαίνουν «υπάρχει αποθηκευμένη κάρτα που μπορούμε να χρεώσουμε off-session».
+CARD_ON_FILE_STATES = ("card_saved", "active", "past_due")
+
+
+async def card_on_file(tenant_id: str) -> bool:
+    """True αν το φαρμακείο έχει αποθηκευμένη κάρτα (ξεκλειδώνει τα χρεώσιμα extras).
+    Single source of truth για το gate — το χρησιμοποιούν και ai_quota και οι self-service endpoints."""
+    if not tenant_id:
+        return False
+    sub = await shared_db()["subscriptions"].find_one(
+        {"tenant_id": tenant_id}, {"payment_status": 1, "revolut_customer_id": 1}) or {}
+    return sub.get("payment_status") in CARD_ON_FILE_STATES and bool(sub.get("revolut_customer_id"))
+
+
 async def mark_card_saved(tenant_id: str, customer_id: str | None = None) -> None:
     upd = {"payment_status": "card_saved", "failed_attempts": 0}
     if customer_id:

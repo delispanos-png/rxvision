@@ -6,7 +6,6 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from app.repositories.base import BaseRepository, jsonsafe
-from app.repositories.pharmacat import DAILY_LIMIT  # shared daily cap
 from app.services import copilot_service
 
 
@@ -17,15 +16,9 @@ def _now() -> datetime:
 class CopilotRepository(BaseRepository):
     collection_name = "copilot_cases"
 
-    async def _today_llm_count(self) -> int:
-        day0 = _now().replace(hour=0, minute=0, second=0, microsecond=0)
-        return await self._coll.count_documents(
-            {"tenant_id": self.tenant_id, "source": "llm", "at": {"$gte": day0}})
-
     async def chat(self, user: str, perms: set[str], messages: list[dict]) -> dict:
         # No caching: answers can carry live tenant data / action proposals → must be fresh.
-        if await self._today_llm_count() >= DAILY_LIMIT:
-            return {"ok": False, "error": "daily_limit", "limit": DAILY_LIMIT}
+        # Το ημερήσιο όριο επιβάλλεται κεντρικά στο service (ai_quota, ρυθμιζόμενο ανά φαρμακείο).
         res = await copilot_service.ask(tenant_id=self.tenant_id, perms=perms, messages=messages,
                                         demo=self.demo)
         if res.get("ok"):
@@ -54,6 +47,7 @@ class CopilotRepository(BaseRepository):
 
     async def status(self) -> dict:
         s = await copilot_service.status()
-        s["today_used"] = await self._today_llm_count()
-        s["daily_limit"] = DAILY_LIMIT
+        from app.services import ai_quota
+        s["today_used"] = await ai_quota.usage_today(self._db, self.tenant_id)
+        s["daily_limit"] = await ai_quota.tenant_daily_limit(self._db, self.tenant_id)
         return s
