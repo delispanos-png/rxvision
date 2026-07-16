@@ -195,8 +195,8 @@ function SubDrawer({ tenantId, onClose }: { tenantId: string; onClose: () => voi
           <div className="mt-6">
             <div className="mb-2 text-sm font-semibold text-slate-700">Παραστατικά ({d.invoices.length})</div>
             {d.invoices.length === 0 ? <div className="text-sm text-slate-400">Δεν έχουν εκδοθεί παραστατικά.</div> : (
-              <div className="overflow-hidden rounded-xl border border-slate-200">
-                <table className="w-full text-sm">
+              <div className="overflow-x-auto rounded-xl border border-slate-200">
+                <table className="w-full min-w-[640px] text-sm">
                   <thead className="bg-slate-50 text-xs text-slate-500"><tr>
                     <th className="px-3 py-2 text-left">Αριθμός</th><th className="px-3 py-2 text-left">Τύπος</th>
                     <th className="px-3 py-2 text-left">Ημ/νία</th><th className="px-3 py-2 text-right">Σύνολο</th><th className="px-3 py-2 text-left">ΑΑΔΕ</th>

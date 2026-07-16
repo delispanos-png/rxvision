@@ -38,7 +38,7 @@ export default function NetworkPage() {
   const toggle = (id: string) => setSel((s) => s.includes(id) ? s.filter((x) => x !== id) : [...s, id]);
 
   return (
-    <div className="max-w-4xl">
+    <div className="max-w-6xl">
       <h1 className="mb-1 text-xl font-bold text-slate-900">Δίκτυο φαρμακείων</h1>
       <p className="mb-3 text-sm text-slate-500">
         Ένα login, επιλογέας φαρμακείου πάνω-πάνω. Η χρέωση παραμένει <b>ανά φαρμακείο</b>.

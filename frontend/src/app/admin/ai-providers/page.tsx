@@ -71,7 +71,7 @@ export default function AiProvidersPage() {
 
   const s = status.data;
   return (
-    <div className="max-w-3xl space-y-6">
+    <div className="max-w-5xl space-y-6">
       <div>
         <h1 className="flex items-center gap-2 text-2xl font-bold text-slate-900"><Bot className="h-6 w-6 text-brand-600" /> AI Providers</h1>
         <p className="mt-1 text-sm text-slate-500">Κλειδιά AI: <b>Anthropic</b> (PharmaCat) & <b>DrugBank</b> (αλληλεπιδράσεις). Κρυπτογραφημένα — δεν εμφανίζονται ξανά.</p>
@@ -122,8 +122,8 @@ export default function AiProvidersPage() {
         </div>
 
         {limits.isLoading ? <div className="py-6 text-center text-sm text-slate-400">Φόρτωση…</div> : (
-          <div className="overflow-hidden rounded-xl border border-slate-200">
-            <table className="w-full text-sm">
+          <div className="overflow-x-auto rounded-xl border border-slate-200">
+            <table className="w-full min-w-[560px] text-sm">
               <thead className="bg-slate-50 text-left text-xs text-slate-500">
                 <tr>
                   <th className="px-3 py-2">Φαρμακείο</th>
