@@ -70,7 +70,7 @@ function CategorizedChecks({ res, t }: { res: ClosingChecksRes | null; t: (el: s
     </div>
   );
 }
-type ScanFlags = { is_intangible: boolean; needs_original: boolean; is_fyk: boolean; has_desensitization: boolean; has_opinion: boolean; has_vaccine: boolean; is_etyap: boolean; exec_count: number | null; is_eopyy?: boolean; fund?: string; fund_name?: string };
+type ScanFlags = { is_intangible: boolean; is_full_participation?: boolean; needs_original: boolean; is_fyk: boolean; has_desensitization: boolean; has_opinion: boolean; has_vaccine: boolean; is_etyap: boolean; exec_count: number | null; is_eopyy?: boolean; fund?: string; fund_name?: string };
 type ScanRes = { ok: boolean; found: boolean; barcode: string; external_id?: string; exec_no?: string; n_executions?: number; wrong_day?: boolean; actual_days?: string[]; invalid_length?: boolean; digits?: number; flags?: ScanFlags };
 const grDate = (d: string) => d.split("-").reverse().join("/");
 
@@ -730,7 +730,8 @@ export default function PhysicalCheckPage() {
             </div>
             {last.found && last.flags && (
               <div className="flex flex-wrap gap-1.5">
-                {last.flags.is_eopyy === false && last.flags.fund && <span className="rounded-md bg-orange-100 px-2 py-1 text-xs font-bold text-orange-800 ring-1 ring-orange-300">🏛️ {t(`ΔΕΝ είναι ΕΟΠΥΥ · ${last.flags.fund} — ξεχωριστή κατάθεση`, `NOT ΕΟΠΥΥ · ${last.flags.fund} — separate submission`)}</span>}
+                {last.flags.is_full_participation && <span className="rounded-md bg-amber-100 px-2 py-1 text-xs font-bold text-amber-800 ring-1 ring-amber-300">💯 {t("100% συμμετοχή ασθενή — ΔΕΝ υποβάλλεται στο ταμείο (κρατείται στο φαρμακείο)", "100% patient share — NOT submitted (kept at the pharmacy)")}</span>}
+                {last.flags.is_eopyy === false && last.flags.fund && !last.flags.is_full_participation && <span className="rounded-md bg-orange-100 px-2 py-1 text-xs font-bold text-orange-800 ring-1 ring-orange-300">🏛️ {t(`ΔΕΝ είναι ΕΟΠΥΥ · ${last.flags.fund} — ξεχωριστή κατάθεση`, `NOT ΕΟΠΥΥ · ${last.flags.fund} — separate submission`)}</span>}
                 {last.flags.needs_original && <span className="rounded-md bg-amber-100 px-2 py-1 text-xs font-semibold text-amber-800">📄 {t("Χρειάζεται πρωτότυπη συνταγή ιατρού", "Needs original paper Rx")}</span>}
                 {last.flags.is_fyk && <span className="rounded-md bg-fuchsia-100 px-2 py-1 text-xs font-semibold text-fuchsia-800">💊 {t("ΦΥΚ (Ν.3816)", "High-cost (L.3816)")}</span>}
                 {last.flags.has_desensitization && <span className="rounded-md bg-rose-100 px-2 py-1 text-xs font-semibold text-rose-800">🧪 {t("Εμβόλιο απευαισθητοποίησης — βάλε & αντίγραφο τιμολογίου παραλαβής", "Desensitization vaccine — include purchase invoice copy")}</span>}

@@ -783,6 +783,7 @@ class ReimbursementRepository(BaseRepository):
                         "exec_count": {"$first": "$details.exec_count"},
                         "n3816": {"$first": {"$ifNull": ["$details.n3816", False]}},
                         "supp": {"$first": {"$ifNull": ["$details.supplementary_cover", False]}},
+                        "full_part": {"$first": {"$ifNull": ["$details.full_participation", False]}},
                         "dose": {"$max": {"$ifNull": ["$needs_dose_check", False]}},
                         "opinion": {"$first": {"$ifNull": ["$details.opinion", False]}},
                         "desens": {"$first": {"$ifNull": ["$details.desensitization", False]}},
@@ -819,6 +820,7 @@ class ReimbursementRepository(BaseRepository):
                 "day": r["executed_at"].strftime("%Y-%m-%d") if r.get("executed_at") else None,
                 "fund": glabel, "group": glabel, "is_eopyy": is_eo, "is_vaccine": is_vac,
                 "is_100": is_100, "is_fyk": bool(r.get("n3816")), "is_etyap": bool(r.get("supp")),
+                "full_participation": bool(r.get("full_part")),
                 "needs_original": needs_orig,
                 "needs_dose_check": False,   # υπολογίζεται ΑΝΑ ΕΚΤΕΛΕΣΗ στο 2ο πέρασμα (τεμάχια φάσης > 1)
                 "has_opinion": bool(r.get("opinion")), "has_desens": bool(r.get("desens")),
@@ -888,9 +890,13 @@ class ReimbursementRepository(BaseRepository):
             for row in doc_map.values():
                 if row.get("has_strip") or row.get("is_narcotic") or row.get("hdika_note") or row.get("needs_dose_check"):
                     row["needs_check"] = True
-                # «Αμιγώς 100%» = retail>0 & ΟΛΑ τα φάρμακα με 100% συμμετοχή (κανένα <100%). Αλλιώς
-                # κατατίθεται κανονικά στον ΕΟΠΥΥ → κρατά την κανονική ομάδα (δεν μπαίνει στα 100%).
-                if (row.get("retail", 0) or 0) > 0 and row.get("_nit") and row["_nit"] == row.get("_n100", 0):
+                # «Αμιγώς 100%» = retail>0 & ΟΛΑ τα φάρμακα με 100% συμμετοχή (κανένα <100%). Το
+                # `details.full_participation` (από την ΗΔΥΚΑ, στο ingest) είναι ΑUTHORITATIVE — το ίδιο
+                # σήμα με το summary — και υπερισχύει όταν λείπει το per-item participation_pct (π.χ.
+                # εκτέλεση που ανακτήθηκε με degraded item από στιγμιαία αποτυχία CDA).
+                if (row.get("retail", 0) or 0) > 0 and (
+                        row.get("full_participation")
+                        or (row.get("_nit") and row["_nit"] == row.get("_n100", 0))):
                     row["is_100"] = True
                     row["fund"] = row["group"] = "Αμιγώς 100%"
                     row["is_eopyy"] = False
@@ -949,6 +955,8 @@ class ReimbursementRepository(BaseRepository):
         first_phase = (exno is None) or (str(exno) == "1")
         return {
             "is_intangible": intangible,
+            # Αμιγώς 100% συμμετοχή ασθενή → ΔΕΝ υποβάλλεται στο ταμείο (authoritative από ΗΔΥΚΑ).
+            "is_full_participation": bool(d.get("full_participation")),
             # α) μη άυλη + ΦΑΣΗ 1 (πρώτη εκτέλεση) → χρειάζεται η πρωτότυπη χάρτινη συνταγή ιατρού. Σε
             # επαναλαμβανόμενη έντυπη η πρωτότυπη κατατίθεται ΜΙΑ φορά (φάση 1)· ΟΧΙ μόνο όταν είναι μονή.
             "needs_original": (not intangible) and first_phase,
