@@ -918,10 +918,22 @@ class ReimbursementRepository(BaseRepository):
         items = [i for i in allrows if i["day"] == day] if day else allrows
         items.sort(key=lambda x: (x["checked"], -x["claim"]))  # unchecked, by € first
         checked_n = sum(1 for i in items if i["checked"])
+        # «extra» = σκαναρισμένα που ΔΕΝ έχουμε. Καθαρίζουμε (α) ΜΗ-έγκυρα barcodes (≠13 ψηφία —
+        # κομμένα σκαναρίσματα πριν τον invalid_length guard) και (β) όσα ΠΛΕΟΝ υπάρχουν στα δεδομένα
+        # (π.χ. ανακτήθηκαν από reconciliation/backfill) → self-heal, δεν μένουν «κολλημένα κάτω».
+        extra13 = [b for b in session.get("extra", []) if len(re.sub(r"\D", "", str(b))) == 13]
+        if extra13:
+            present = set()
+            rx = "^(" + "|".join(re.escape(str(b)) for b in extra13) + ")"
+            async for e in self._db["prescription_executions"].find(  # tenant-ok
+                    {"tenant_id": self.tenant_id, "external_id": {"$regex": rx}}, {"external_id": 1}):
+                present.add(str(e["external_id"]).split(":")[0])
+            extra13 = [b for b in extra13 if str(b) not in present]
         return jsonsafe({
             "period": period, "day": day, "group": group, "groups": groups,
             "total": len(items), "checked": checked_n,
-            "remaining": len(items) - checked_n, "extra": session.get("extra", []),
+            "remaining": len(items) - checked_n,
+            "extra": extra13,
             "summary": summary,
             "by_day": sorted(by_day.values(), key=lambda x: x["date"] or ""), "items": items})
 

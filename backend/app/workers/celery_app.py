@@ -76,6 +76,12 @@ celery_app.conf.beat_schedule = {
         "task": "app.workers.ingestion.dispatch_deep_reconcile_weekly",
         "schedule": crontab(hour=4, minute=0, day_of_week=0),  # Sunday
     },
+    # Gap-finder (daily): φθηνός έλεγχος 40 ημερών — εντοπίζει εκτελέσεις που ΥΠΑΡΧΟΥΝ στην ΗΔΥΚΑ αλλά
+    # ΛΕΙΠΟΥΝ τοπικά (late registrations που το forward-only sync δεν ξαναπιάνει) & στοχευμένο recovery.
+    "reconcile-gaps-daily": {
+        "task": "app.workers.ingestion.dispatch_reconcile_gaps",
+        "schedule": crontab(hour=6, minute=15),
+    },
     # Amount audit vs ΗΔΥΚΑ printout (ground truth) — verify each execution's ποσά & correct any
     # ±λεπτό drift (repeats/partials). Hourly batch per tenant on the backfill queue: keeps up with
     # new executions & drains the historical backlog gradually. Minute 20 = offset from the syncs.
