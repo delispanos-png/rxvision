@@ -30,6 +30,7 @@ _PREFIX = "enc:v1:"
 SECRET_FIELDS: dict[str, tuple[str, ...]] = {
     "anthropic": ("api_key",),
     "revolut": ("api_key", "webhook_secret"),
+    "viva": ("api_key", "client_secret"),
     "comms": ("apifon_token", "apifon_secret", "apifon_sms_token", "apifon_sms_secret"),
     "aade": ("password",),
     "smtp": ("password", "pass"),

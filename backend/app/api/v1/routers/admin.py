@@ -859,6 +859,13 @@ class IntegrationsIn(BaseModel):
     revolut_api_key: str | None = None
     revolut_mode: str | None = None  # sandbox | live
     revolut_webhook_secret: str | None = None
+    # Viva Wallet (Smart Checkout) — κάρτα + IRIS· εναλλακτική του Revolut για τις συνδρομές
+    viva_client_id: str | None = None
+    viva_client_secret: str | None = None
+    viva_merchant_id: str | None = None
+    viva_api_key: str | None = None
+    viva_source_code: str | None = None
+    viva_mode: str | None = None  # demo | live
     # Alpha Bank (Alpha e-Commerce) card gateway — alternative to Revolut
     alphabank_merchant_id: str | None = None
     alphabank_shared_secret: str | None = None
@@ -894,6 +901,7 @@ async def get_integrations(_: PlatformContext = Depends(get_platform_admin)):
     from app.services.platform_secrets import decrypt_doc
     aade = decrypt_doc("aade", await db["platform_settings"].find_one({"_id": "aade"})) or {}
     rev = decrypt_doc("revolut", await db["platform_settings"].find_one({"_id": "revolut"})) or {}
+    viva = decrypt_doc("viva", await db["platform_settings"].find_one({"_id": "viva"})) or {}
     ant = decrypt_doc("anthropic", await db["platform_settings"].find_one({"_id": "anthropic"})) or {}
     dbk = decrypt_doc("drugbank", await db["platform_settings"].find_one({"_id": "drugbank"})) or {}
     comms_cfg = decrypt_doc("comms", await db["platform_settings"].find_one({"_id": "comms"})) or {}
@@ -905,6 +913,14 @@ async def get_integrations(_: PlatformContext = Depends(get_platform_admin)):
                  "configured": bool(aade.get("username") and aade.get("password"))},
         "revolut": {"mode": rev.get("mode", "sandbox"), "api_key_set": bool(rev.get("api_key")),
                     "webhook_secret_set": bool(rev.get("webhook_secret"))},
+        "viva": {"mode": viva.get("mode", "demo"),
+                 "client_id_set": bool(viva.get("client_id")),
+                 "client_secret_set": bool(viva.get("client_secret")),
+                 "merchant_id_set": bool(viva.get("merchant_id")),
+                 "api_key_set": bool(viva.get("api_key")),
+                 "source_code": viva.get("source_code") or "",
+                 "checkout_ready": bool(viva.get("client_id") and viva.get("client_secret") and viva.get("source_code")),
+                 "recurring_ready": bool(viva.get("merchant_id") and viva.get("api_key"))},
         "alphabank": {"mode": (decrypt_doc("alphabank", await db["platform_settings"].find_one({"_id": "alphabank"})) or {}).get("mode", "test"),
                       "merchant_id_set": bool((decrypt_doc("alphabank", await db["platform_settings"].find_one({"_id": "alphabank"})) or {}).get("merchant_id")),
                       "shared_secret_set": bool((decrypt_doc("alphabank", await db["platform_settings"].find_one({"_id": "alphabank"})) or {}).get("shared_secret"))},
@@ -955,6 +971,22 @@ async def set_integrations(body: IntegrationsIn,
     if r:
         await db["platform_settings"].update_one(
             {"_id": "revolut"}, {"$set": encrypt_fields("revolut", r)}, upsert=True)
+    v = {}
+    if body.viva_client_id is not None:
+        v["client_id"] = body.viva_client_id
+    if body.viva_client_secret:
+        v["client_secret"] = body.viva_client_secret
+    if body.viva_merchant_id is not None:
+        v["merchant_id"] = body.viva_merchant_id
+    if body.viva_api_key:
+        v["api_key"] = body.viva_api_key
+    if body.viva_source_code is not None:
+        v["source_code"] = body.viva_source_code
+    if body.viva_mode:
+        v["mode"] = body.viva_mode
+    if v:
+        await db["platform_settings"].update_one(
+            {"_id": "viva"}, {"$set": encrypt_fields("viva", v)}, upsert=True)
     if body.alphabank_merchant_id is not None or body.alphabank_shared_secret or body.alphabank_mode:
         from app.services import alphabank_service
         await alphabank_service.save_config(

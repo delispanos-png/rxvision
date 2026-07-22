@@ -7,6 +7,7 @@ import { Wallet, Save, Loader2, Check, CreditCard, Building2 } from "lucide-reac
 
 type Integrations = {
   revolut: { mode: string; api_key_set: boolean; webhook_secret_set: boolean };
+  viva?: { mode: string; client_id_set: boolean; client_secret_set: boolean; merchant_id_set: boolean; api_key_set: boolean; source_code: string; checkout_ready: boolean; recurring_ready: boolean };
   alphabank?: { mode: string; merchant_id_set: boolean; shared_secret_set: boolean };
 };
 type PayMethods = { methods: Record<string, { enabled: boolean; label: { el: string; en: string } }>; alphabank_configured: boolean };
@@ -24,12 +25,18 @@ export default function PaymentsSettingsPage() {
   const [revKey, setRevKey] = useState("");
   const [revMode, setRevMode] = useState("sandbox");
   const [revSecret, setRevSecret] = useState("");
+  const [vivaCid, setVivaCid] = useState("");
+  const [vivaCsec, setVivaCsec] = useState("");
+  const [vivaMid, setVivaMid] = useState("");
+  const [vivaKey, setVivaKey] = useState("");
+  const [vivaSrc, setVivaSrc] = useState("");
+  const [vivaMode, setVivaMode] = useState("demo");
   const [abMid, setAbMid] = useState("");
   const [abSecret, setAbSecret] = useState("");
   const [abMode, setAbMode] = useState("test");
   const [bank, setBank] = useState<Bank>({});
 
-  useEffect(() => { if (status.data?.alphabank) setAbMode(status.data.alphabank.mode || "test"); }, [status.data]);
+  useEffect(() => { if (status.data?.alphabank) setAbMode(status.data.alphabank.mode || "test"); if (status.data?.viva) { setVivaMode(status.data.viva.mode || "demo"); setVivaSrc(status.data.viva.source_code || ""); } }, [status.data]);
   useEffect(() => { if (bankQ.data) setBank(bankQ.data); }, [bankQ.data]);
 
   const togglePm = useMutation({
@@ -39,9 +46,11 @@ export default function PaymentsSettingsPage() {
   const saveCreds = useMutation({
     mutationFn: () => adminApi("/admin/integrations", { method: "PUT", body: JSON.stringify({
       revolut_api_key: revKey || null, revolut_mode: revMode || null, revolut_webhook_secret: revSecret || null,
+      viva_client_id: vivaCid || null, viva_client_secret: vivaCsec || null, viva_merchant_id: vivaMid || null,
+      viva_api_key: vivaKey || null, viva_source_code: vivaSrc || null, viva_mode: vivaMode || null,
       alphabank_merchant_id: abMid || null, alphabank_shared_secret: abSecret || null, alphabank_mode: abMode || null,
     }) }),
-    onSuccess: () => { setRevKey(""); setRevSecret(""); setAbMid(""); setAbSecret(""); qc.invalidateQueries({ queryKey: ["integrations"] }); qc.invalidateQueries({ queryKey: ["admin", "payment-methods"] }); },
+    onSuccess: () => { setRevKey(""); setRevSecret(""); setVivaCid(""); setVivaCsec(""); setVivaMid(""); setVivaKey(""); setAbMid(""); setAbSecret(""); qc.invalidateQueries({ queryKey: ["integrations"] }); qc.invalidateQueries({ queryKey: ["admin", "payment-methods"] }); },
   });
   const saveBank = useMutation({
     mutationFn: () => adminApi("/admin/billing-bank", { method: "PUT", body: JSON.stringify(bank) }),
@@ -53,7 +62,7 @@ export default function PaymentsSettingsPage() {
     <div className="max-w-5xl space-y-6">
       <div>
         <h1 className="flex items-center gap-2 text-2xl font-bold text-slate-900"><Wallet className="h-6 w-6 text-brand-600" /> Τρόποι πληρωμής</h1>
-        <p className="mt-1 text-sm text-slate-500">Πάροχοι καρτών (Revolut, Alpha Bank), ενεργοί τρόποι πληρωμής, τραπεζικός λογαριασμός κατάθεσης & τιμές συνδρομής. Τα διαπιστευτήρια αποθηκεύονται κρυπτογραφημένα.</p>
+        <p className="mt-1 text-sm text-slate-500">Πάροχοι πληρωμών (Revolut, <b>Viva — κάρτα/IRIS</b>, Alpha Bank), ενεργοί τρόποι πληρωμής, τραπεζικός λογαριασμός κατάθεσης & τιμές συνδρομής. Τα διαπιστευτήρια αποθηκεύονται κρυπτογραφημένα.</p>
       </div>
 
       {/* Ενεργοί τρόποι πληρωμής */}
@@ -62,12 +71,12 @@ export default function PaymentsSettingsPage() {
         <p className="mb-3 text-xs text-slate-500">Ό,τι ενεργοποιήσεις εδώ εμφανίζεται στους πελάτες (αναβάθμιση) και προσαρμόζει τη διαδικασία εγγραφής.</p>
         <div className="space-y-2">
           {Object.entries(pmQ.data?.methods ?? {}).map(([id, m]) => {
-            const disabled = id === "card_alpha" && !pmQ.data?.alphabank_configured;
+            const disabled = (id === "card_alpha" && !pmQ.data?.alphabank_configured) || (id === "card_viva" && !status.data?.viva?.checkout_ready);
             return (
               <div key={id} className="flex items-center justify-between rounded-lg border border-slate-200 px-3 py-2">
                 <div>
                   <div className="text-sm font-medium text-slate-800">{m.label.el}</div>
-                  {disabled && <div className="text-[11px] text-amber-600">Ρύθμισε πρώτα τα διαπιστευτήρια Alpha Bank παρακάτω</div>}
+                  {disabled && <div className="text-[11px] text-amber-600">Ρύθμισε πρώτα τα διαπιστευτήρια {id === "card_viva" ? "Viva Wallet" : "Alpha Bank"} παρακάτω</div>}
                 </div>
                 <button type="button" disabled={togglePm.isPending || disabled} onClick={() => togglePm.mutate({ [id]: !m.enabled })}
                   className={`relative h-6 w-11 rounded-full transition ${m.enabled ? "bg-emerald-500" : "bg-slate-300"} disabled:opacity-40`}>
@@ -93,6 +102,29 @@ export default function PaymentsSettingsPage() {
             <input type="password" value={revSecret} onChange={(e) => setRevSecret(e.target.value)} placeholder={s?.revolut.webhook_secret_set ? "•••• (αποθηκευμένο)" : "wsk_..."} className={inp} /></label>
         </div>
         <p className="mt-3 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-500">Webhook URL: <code className="text-brand-700">https://app.rxvision.gr/api/v1/billing/webhook/revolut</code></p>
+      </div>
+
+      {/* Viva Wallet */}
+      <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <h3 className="mb-1 flex items-center gap-2 text-sm font-semibold text-slate-700"><CreditCard className="h-4 w-4 text-indigo-600" /> Viva Wallet — Smart Checkout (κάρτα + IRIS) <Badge ok={s?.viva?.checkout_ready} /></h3>
+        <p className="mb-3 text-xs text-slate-500">Εναλλακτική του Revolut για τις συνδρομές. Ένα integration → <b>κάρτα & IRIS</b>. Το IRIS εμφανίζεται αυτόματα αν είναι ενεργό στον λογαριασμό Viva.</p>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <label className="text-xs text-slate-500">Smart Checkout Client ID <Badge ok={s?.viva?.client_id_set} />
+            <input value={vivaCid} onChange={(e) => setVivaCid(e.target.value)} placeholder={s?.viva?.client_id_set ? "•••• (αποθηκευμένο)" : "Client ID"} className={inp} /></label>
+          <label className="text-xs text-slate-500">Smart Checkout Client Secret <Badge ok={s?.viva?.client_secret_set} />
+            <input type="password" value={vivaCsec} onChange={(e) => setVivaCsec(e.target.value)} placeholder={s?.viva?.client_secret_set ? "•••• (αποθηκευμένο)" : "Client Secret"} className={inp} /></label>
+          <label className="text-xs text-slate-500">Source Code (πηγή πληρωμών)
+            <input value={vivaSrc} onChange={(e) => setVivaSrc(e.target.value)} placeholder="π.χ. 1234" className={inp} /></label>
+          <label className="text-xs text-slate-500">Περιβάλλον
+            <select value={vivaMode} onChange={(e) => setVivaMode(e.target.value)} className={inp}>
+              <option value="demo">Demo (δοκιμές)</option><option value="live">Live (πραγματικές χρεώσεις)</option>
+            </select></label>
+          <label className="text-xs text-slate-500">Merchant ID <Badge ok={s?.viva?.merchant_id_set} /> <span className="text-slate-400">(για recurring συνδρομές)</span>
+            <input value={vivaMid} onChange={(e) => setVivaMid(e.target.value)} placeholder={s?.viva?.merchant_id_set ? "•••• (αποθηκευμένο)" : "Merchant ID"} className={inp} /></label>
+          <label className="text-xs text-slate-500">API key (Basic) <Badge ok={s?.viva?.api_key_set} /> <span className="text-slate-400">(για recurring)</span>
+            <input type="password" value={vivaKey} onChange={(e) => setVivaKey(e.target.value)} placeholder={s?.viva?.api_key_set ? "•••• (αποθηκευμένο)" : "API key"} className={inp} /></label>
+        </div>
+        <p className="mt-3 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-500">Smart Checkout (Client ID/Secret + Source) → κάρτα/IRIS. Recurring συνδρομές → Merchant ID + API key. {s?.viva?.recurring_ready ? "✓ Recurring έτοιμο." : "Recurring όχι ακόμη ρυθμισμένο."}</p>
       </div>
 
       {/* Alpha Bank */}

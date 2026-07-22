@@ -15,17 +15,19 @@ from __future__ import annotations
 
 from app.core.db import shared_db
 
-METHODS = ("card_revolut", "card_alpha", "bank_transfer")
+METHODS = ("card_revolut", "card_viva", "card_alpha", "bank_transfer")
 
-# Sensible defaults if never configured: Revolut card + bank transfer on, Alpha off (no creds yet).
+# Sensible defaults if never configured: Revolut card + bank transfer on, Viva/Alpha off (no creds yet).
 _DEFAULTS = {
     "card_revolut": {"enabled": True},
+    "card_viva": {"enabled": False},
     "card_alpha": {"enabled": False},
     "bank_transfer": {"enabled": True},
 }
 
 _LABELS = {
     "card_revolut": {"el": "Κάρτα (Revolut)", "en": "Card (Revolut)"},
+    "card_viva": {"el": "Κάρτα / IRIS (Viva)", "en": "Card / IRIS (Viva)"},
     "card_alpha": {"el": "Κάρτα (Alpha Bank)", "en": "Card (Alpha Bank)"},
     "bank_transfer": {"el": "Τραπεζική κατάθεση", "en": "Bank transfer"},
 }
