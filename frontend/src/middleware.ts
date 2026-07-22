@@ -19,7 +19,7 @@ const CSP = [
   "connect-src 'self'",
   "manifest-src 'self'",
   "worker-src 'self' blob:",
-  "frame-src 'self' blob:",
+  "frame-src 'self' blob: https://www.youtube.com https://www.youtube-nocookie.com https://player.vimeo.com",
   "object-src 'none'",
   "base-uri 'self'",
   "form-action 'self'",

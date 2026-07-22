@@ -62,7 +62,29 @@ class OrdersDeliveryRepository(BaseRepository):
             # Υπενθύμιση «ξεχασμένου καλαθιού» — opt-in (στέλνει push στον πελάτη).
             "abandoned_cart_enabled": d.get("abandoned_cart_enabled", False),
             "abandoned_cart_hours": d.get("abandoned_cart_hours", 6),
+            # Online πληρωμή e-shop (Viva: κάρτα + IRIS) — ανά φαρμακείο, τα λεφτά πάνε στο φαρμακείο.
+            "online_payment_enabled": d.get("online_payment_enabled", False),
+            "viva": self._viva_masked(d.get("viva") or {}),
+            "tenant_id": self.tenant_id,   # για το webhook URL στο UI
         }
+
+    @staticmethod
+    def _viva_masked(v: dict) -> dict:
+        """Μασκαρισμένη εικόνα Viva creds για το UI (χωρίς secrets)."""
+        return {"client_id": v.get("client_id") or "", "source_code": v.get("source_code") or "",
+                "merchant_id": v.get("merchant_id") or "", "mode": v.get("mode") or "demo",
+                "client_secret_set": bool(v.get("client_secret")), "api_key_set": bool(v.get("api_key")),
+                "checkout_ready": bool(v.get("client_id") and v.get("client_secret") and v.get("source_code"))}
+
+    async def viva_creds(self) -> dict:
+        """Αποκρυπτογραφημένα Viva creds του φαρμακείου (για πραγματική πληρωμή). Ποτέ στο UI."""
+        from app.services.platform_secrets import pdec
+        d = await self._db["order_settings"].find_one({"tenant_id": self.tenant_id}) or {}
+        v = dict(d.get("viva") or {})
+        for f in ("client_secret", "api_key"):
+            if v.get(f):
+                v[f] = pdec(v[f])
+        return v
 
     async def save_settings(self, cfg: dict) -> dict:
         clean = {
@@ -77,8 +99,21 @@ class OrdersDeliveryRepository(BaseRepository):
             "cart_tiers": _clean_tiers(cfg.get("cart_tiers")),
             "abandoned_cart_enabled": bool(cfg.get("abandoned_cart_enabled", False)),
             "abandoned_cart_hours": max(1, min(72, int(cfg.get("abandoned_cart_hours") or 6))),
+            "online_payment_enabled": bool(cfg.get("online_payment_enabled", False)),
             "updated_at": _now(),
         }
+        # Viva creds ανά φαρμακείο — κρυπτογράφησε τα secrets· κενό secret = αμετάβλητο.
+        vin = cfg.get("viva") or {}
+        if vin:
+            from app.services.platform_secrets import penc
+            cur = (await self._db["order_settings"].find_one({"tenant_id": self.tenant_id}) or {}).get("viva") or {}
+            v = {"client_id": str(vin.get("client_id") or cur.get("client_id") or ""),
+                 "source_code": str(vin.get("source_code") or cur.get("source_code") or ""),
+                 "merchant_id": str(vin.get("merchant_id") or cur.get("merchant_id") or ""),
+                 "mode": vin.get("mode") or cur.get("mode") or "demo",
+                 "client_secret": penc(vin["client_secret"]) if vin.get("client_secret") else cur.get("client_secret"),
+                 "api_key": penc(vin["api_key"]) if vin.get("api_key") else cur.get("api_key")}
+            clean["viva"] = v
         await self._db["order_settings"].update_one(
             {"tenant_id": self.tenant_id}, {"$set": {**clean, "tenant_id": self.tenant_id}}, upsert=True)
         return await self.settings()
@@ -88,7 +123,7 @@ class OrdersDeliveryRepository(BaseRepository):
                            patient_phone: str, lines: list[dict], mode: str, address: dict | None,
                            courier_authorized: bool, gdpr_consent: bool,
                            courier_auth: dict | None = None, loyalty_redeem_cents: int = 0,
-                           coupon_code: str | None = None,
+                           coupon_code: str | None = None, payment_method: str = "pickup",
                            sub_discount_pct: int = 0, subscription_id: str | None = None) -> dict:
         if not gdpr_consent:
             return {"ok": False, "error": "consent_required"}
@@ -229,9 +264,30 @@ class OrdersDeliveryRepository(BaseRepository):
             "has_medicine": has_medicine, "has_backorder": has_backorder, "available_date": None,
             "status": status, "subscription_id": subscription_id,
             "status_history": [{"status": status, "at": _now()}],
+            # πληρωμή: pickup/cod = στο κατάστημα (unpaid)· online = Viva (κάρτα/IRIS)
+            "payment_method": payment_method if payment_method in ("online", "pickup", "cod") else "pickup",
+            "payment_status": "unpaid",
             "created_at": _now(), "updated_at": _now(),
         }
         res = await self.insert_one(doc)
+        order_total = doc["total_cents"]
+        # Online πληρωμή → Viva Smart Checkout (κάρτα/IRIS). Επιστρέφει checkout_url για redirect.
+        if payment_method == "online" and order_total > 0:
+            st = await self.settings()
+            creds = await self.viva_creds()
+            if st.get("online_payment_enabled") and (creds.get("client_id") and creds.get("client_secret") and creds.get("source_code")):
+                from app.services import viva_service
+                vres = await viva_service.create_checkout_order(
+                    amount=order_total, ref=str(res), description=f"RxVision e-shop #{str(res)[-6:]}",
+                    full_name=patient_name, phone=patient_phone, creds=creds)
+                if vres.get("ok"):
+                    await self.update_one({"_id": res}, {"$set": {
+                        "payment_status": "pending", "viva_order_code": vres.get("order_code")}})
+                    if account_id:
+                        await self.clear_cart(account_id)
+                    return {"ok": True, "order_id": str(res), "total_cents": order_total,
+                            "status": status, "has_backorder": has_backorder,
+                            "payment": "viva", "checkout_url": vres.get("checkout_url")}
         if account_id:
             await self.clear_cart(account_id)     # παραγγέλθηκε → δεν είναι πια «ξεχασμένο καλάθι»
         # επιβεβαίωση παραλαβής παραγγελίας (1ο στάδιο) — μετά ακολουθούν push σε κάθε αλλαγή status
@@ -411,3 +467,31 @@ class OrdersDeliveryRepository(BaseRepository):
                 await push_service.send_to_account(order["account_id"],
                                                    title="🛍️ Παραγγελία φαρμακείου", body=msg, url="/portal")
         return {"ok": True, "status": status}
+
+
+# ── Viva e-shop webhook (public, cross-tenant lookup) ───────────────────────────────────────────
+async def confirm_viva_payment(*, order_code: str, transaction_id: str | None = None) -> bool:
+    """Επιβεβαίωση e-shop πληρωμής Viva. Βρίσκει την παραγγελία από το order_code (μοναδικό),
+    ξανα-ρωτά το Viva με τα creds ΤΟΥ ΦΑΡΜΑΚΕΙΟΥ (source of truth), και μαρκάρει paid + ειδοποιεί."""
+    from app.core.db import shared_db
+    from app.services import viva_service
+    if not order_code:
+        return False
+    db = shared_db()
+    order = await db["orders_delivery"].find_one({"viva_order_code": str(order_code)})
+    if not order or order.get("payment_status") == "paid":
+        return bool(order and order.get("payment_status") == "paid")
+    tid = order.get("tenant_id")
+    repo = OrdersDeliveryRepository(tenant_id=tid)
+    creds = await repo.viva_creds()
+    if transaction_id:
+        info = await viva_service.get_transaction(str(transaction_id), creds=creds)
+        if info and str(info.get("StatusId") or "") not in ("", "F"):
+            return False           # όχι επιτυχής → μη μαρκάρεις
+    await repo.update_one({"_id": order["_id"]}, {"$set": {
+        "payment_status": "paid", "viva_transaction_id": transaction_id, "paid_at": _now()}})
+    if order.get("account_id"):
+        from app.services import push_service
+        await push_service.send_to_account(order["account_id"], title="✅ Η πληρωμή ολοκληρώθηκε",
+                                           body="Η online πληρωμή της παραγγελίας σου ελήφθη.", url="/portal")
+    return True

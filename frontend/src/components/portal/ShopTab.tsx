@@ -25,11 +25,21 @@ function catEmoji(c: string): string {
   return "💊";
 }
 
-type Product = { barcode: string; name: string; description_long?: string | null; photo_url?: string | null; image_id?: string | null; price_cents: number; type: string; category?: string | null; tags?: string[]; featured?: boolean; discount_pct: number; stock_qty: number };
+type Product = { barcode: string; name: string; description_long?: string | null; photo_url?: string | null; image_id?: string | null; usage_video_url?: string | null; price_cents: number; type: string; category?: string | null; tags?: string[]; featured?: boolean; discount_pct: number; stock_qty: number };
+
+// YouTube/Vimeo URL → ασφαλές embed URL (whitelist· αλλιώς null)
+function videoEmbed(url?: string | null): string | null {
+  const u = (url || "").trim();
+  let m = u.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([\w-]{6,})/i);
+  if (m) return `https://www.youtube.com/embed/${m[1]}`;
+  m = u.match(/vimeo\.com\/(?:video\/)?(\d+)/i);
+  if (m) return `https://player.vimeo.com/video/${m[1]}`;
+  return null;
+}
 const isBackorder = (p: Product) => (p.stock_qty ?? 0) <= 0;             // χωρίς απόθεμα → κατόπιν παραγγελίας
 const capOf = (p: Product) => isBackorder(p) ? 99 : p.stock_qty;        // backorder → επιτρέπεται προσθήκη
 type Tier = { min_cents: number; pct: number };
-type Settings = { delivery_enabled: boolean; pickup_enabled: boolean; delivery_fee_cents: number; free_over_cents: number; min_order_cents: number; pps_cert: string; subscription_enabled: boolean; subscription_discount_pct: number; cart_tiers?: Tier[] };
+type Settings = { delivery_enabled: boolean; pickup_enabled: boolean; delivery_fee_cents: number; free_over_cents: number; min_order_cents: number; pps_cert: string; subscription_enabled: boolean; subscription_discount_pct: number; cart_tiers?: Tier[]; online_payment_enabled?: boolean };
 type BundleLine = { barcode: string; qty: number };
 type Bundle = { name: string; kind: "combo" | "nplusm"; barcode?: string | null; buy_qty?: number; free_qty?: number; lines?: BundleLine[]; discount_pct?: number };
 const LOW_STOCK = 5;
@@ -117,6 +127,7 @@ export function ShopTab({ tenantKey = "x" }: { tenantKey?: string }) {
   const CART_KEY = `rxv_cart_${tenantKey}`;
   const [view, setView] = useState<"browse" | "cart" | "orders" | "subs" | "favorites">("browse");
   const [products, setProducts] = useState<Product[]>([]);
+  const [video, setVideo] = useState<string | null>(null);   // embed URL οδηγιών χρήσης
   const [favBarcodes, setFavBarcodes] = useState<Set<string>>(new Set());
   const [q, setQ] = useState("");
   const [cat, setCat] = useState("");
@@ -181,6 +192,17 @@ export function ShopTab({ tenantKey = "x" }: { tenantKey?: string }) {
 
   return (
     <div className="space-y-3">
+      {/* Player οδηγιών χρήσης (YouTube/Vimeo embed) */}
+      {video && (
+        <div onClick={() => setVideo(null)} className="fixed inset-0 z-[130] grid place-items-center bg-black/70 p-4">
+          <div onClick={(e) => e.stopPropagation()} className="w-full max-w-2xl overflow-hidden rounded-2xl bg-black shadow-2xl">
+            <div className="flex items-center justify-between bg-slate-900 px-3 py-2 text-sm font-semibold text-white">🎬 Οδηγίες χρήσης<button onClick={() => setVideo(null)} className="rounded-lg px-2 py-0.5 text-slate-300 hover:bg-white/10">✕</button></div>
+            <div className="relative w-full" style={{ paddingBottom: "56.25%" }}>
+              <iframe src={video} title="Οδηγίες χρήσης" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowFullScreen className="absolute inset-0 h-full w-full" />
+            </div>
+          </div>
+        </div>
+      )}
       {/* ΚΑΛΑΘΙ — ευδιάκριτο, sticky πάνω-πάνω μόλις προσθέσεις είδος (πριν ήταν αόρατο) */}
       {count > 0 && (
         <button onClick={() => setView("cart")}
@@ -256,6 +278,7 @@ export function ShopTab({ tenantKey = "x" }: { tenantKey?: string }) {
                   className="absolute right-1 top-1 grid h-7 w-7 place-items-center rounded-full bg-white/90 shadow-sm">
                   <Heart className={`h-4 w-4 ${favBarcodes.has(p.barcode) ? "fill-rose-500 text-rose-500" : "text-slate-400"}`} />
                 </button>
+                {videoEmbed(p.usage_video_url) && <button onClick={() => setVideo(videoEmbed(p.usage_video_url))} title="Οδηγίες χρήσης" className="absolute bottom-1 right-1 inline-flex items-center gap-1 rounded-full bg-black/70 px-2 py-0.5 text-[10px] font-semibold text-white hover:bg-black/85">▶ Οδηγίες</button>}
                 {p.stock_qty > 0 && p.stock_qty <= LOW_STOCK && <span className="absolute bottom-1 left-1 rounded bg-orange-100 px-1.5 py-0.5 text-[9px] font-semibold text-orange-700">τελευταία {p.stock_qty}</span>}
                 {isBackorder(p) && <span className="absolute bottom-1 left-1 rounded bg-amber-100 px-1.5 py-0.5 text-[9px] font-semibold text-amber-700">Κατόπιν παραγγελίας</span>}
               </div>
@@ -295,6 +318,7 @@ function Checkout({ cart, subtotal, settings, camps, bundles, loyalty, onBack, o
   const hasMed = items.some((x) => isMed(x.p.type));
   const hasBackorder = items.some((x) => isBackorder(x.p));
   const [mode, setMode] = useState<"delivery" | "pickup">(settings?.delivery_enabled ? "delivery" : "pickup");
+  const [pay, setPay] = useState<"store" | "online">("store");
   const [addr, setAddr] = useState({ street: "", area: "", postal: "", phone: "", notes: "" });
   const [courier, setCourier] = useState(false);
   const [cauth, setCauth] = useState({ name: "", id_number: "" });   // εξουσιοδοτούμενος (μόνο για αποστολή)
@@ -362,13 +386,15 @@ function Checkout({ cart, subtotal, settings, camps, bundles, loyalty, onBack, o
     if (redeemApplied > 0 && minRedeem && redeemApplied < minRedeem) { setErr(`Ελάχιστη εξαργύρωση ${eur(minRedeem)}.`); return; }
     setBusy(true);
     try {
-      const r = await patientApi<{ ok: boolean; error?: string }>("/patient/shop/order", { method: "POST", body: JSON.stringify({
+      const r = await patientApi<{ ok: boolean; error?: string; payment?: string; checkout_url?: string }>("/patient/shop/order", { method: "POST", body: JSON.stringify({
         lines: items.map((x) => ({ barcode: x.p.barcode, qty: x.qty })),
         mode, address: mode === "delivery" ? addr : null, courier_authorized: courier,
         courier_auth: mode === "delivery" ? { name: cauth.name.trim(), id_number: cauth.id_number.trim() } : null,
         loyalty_redeem_cents: redeemApplied, coupon_code: useCoupon ? coupon?.code ?? null : null,
         gdpr_consent: gdpr, repeat_days: repeat,
+        payment_method: pay === "online" ? "online" : (mode === "delivery" ? "cod" : "pickup"),
       }) });
+      if (r.ok && r.payment === "viva" && r.checkout_url) { window.location.href = r.checkout_url; return; }  // κάρτα/IRIS
       if (r.ok) onDone(); else setErr("Σφάλμα: " + (r.error || "δοκίμασε ξανά"));
     } catch { setErr("Σφάλμα δικτύου."); } finally { setBusy(false); }
   }
@@ -397,6 +423,17 @@ function Checkout({ cart, subtotal, settings, camps, bundles, loyalty, onBack, o
         {settings?.delivery_enabled && <button onClick={() => setMode("delivery")} className={`flex items-center gap-2 rounded-xl border p-3 text-sm font-medium ${mode === "delivery" ? "border-violet-500 bg-violet-50 text-violet-700" : "border-slate-200 text-slate-600"}`}><Truck className="h-4 w-4" /> Αποστολή</button>}
         {settings?.pickup_enabled && <button onClick={() => setMode("pickup")} className={`flex items-center gap-2 rounded-xl border p-3 text-sm font-medium ${mode === "pickup" ? "border-violet-500 bg-violet-50 text-violet-700" : "border-slate-200 text-slate-600"}`}><Store className="h-4 w-4" /> Παραλαβή</button>}
       </div>
+
+      {/* τρόπος πληρωμής (online Viva = κάρτα/IRIS· αλλιώς στο κατάστημα/παράδοση) */}
+      {settings?.online_payment_enabled && (
+        <div>
+          <div className="mb-1.5 text-xs font-semibold text-slate-500">Τρόπος πληρωμής</div>
+          <div className="grid grid-cols-2 gap-2">
+            <button onClick={() => setPay("store")} className={`rounded-xl border p-3 text-sm font-medium ${pay === "store" ? "border-violet-500 bg-violet-50 text-violet-700" : "border-slate-200 text-slate-600"}`}>🏪 {mode === "delivery" ? "Με την παράδοση" : "Στο κατάστημα"}</button>
+            <button onClick={() => setPay("online")} className={`rounded-xl border p-3 text-sm font-medium ${pay === "online" ? "border-violet-500 bg-violet-50 text-violet-700" : "border-slate-200 text-slate-600"}`}>💳 Online (κάρτα / IRIS)</button>
+          </div>
+        </div>
+      )}
 
       {mode === "delivery" && (
         <div className="space-y-2 rounded-2xl border border-slate-200 bg-white p-3">

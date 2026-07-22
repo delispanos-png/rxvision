@@ -211,6 +211,39 @@ function SettingsTab() {
         )}
       </div>
 
+      {/* Online πληρωμή e-shop — Viva (κάρτα + IRIS), ανά φαρμακείο */}
+      {(() => {
+        const viva = (cur.viva as unknown as Record<string, unknown>) || {};
+        const setViva = (k: string, v: string) => { setF({ ...cur, viva: { ...viva, [k]: v } as unknown as Tier[] }); setSaved(false); };
+        const inp = "mt-1 w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm";
+        return (
+          <div className="rounded-xl border border-indigo-200 bg-indigo-50/50 p-3">
+            <label className="flex items-center gap-2 text-sm font-semibold text-indigo-900">
+              <input type="checkbox" checked={!!cur.online_payment_enabled} onChange={(e) => set("online_payment_enabled", e.target.checked)} /> 💳 Online πληρωμή (κάρτα / IRIS μέσω Viva)
+            </label>
+            <p className="mt-1 text-[11px] text-indigo-700">Τα χρήματα πάνε <b>κατευθείαν στον δικό σου λογαριασμό Viva</b>. Το IRIS εμφανίζεται αυτόματα αν είναι ενεργό στο Viva σου.</p>
+            {!!cur.online_payment_enabled && (
+              <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                <label className="text-xs text-slate-500">Smart Checkout Client ID
+                  <input value={String(viva.client_id ?? "")} onChange={(e) => setViva("client_id", e.target.value)} className={inp} /></label>
+                <label className="text-xs text-slate-500">Client Secret {viva.client_secret_set ? <span className="text-emerald-600">✓ αποθηκευμένο</span> : ""}
+                  <input type="password" value={String(viva.client_secret ?? "")} onChange={(e) => setViva("client_secret", e.target.value)} placeholder={viva.client_secret_set ? "•••• (κενό = αμετάβλητο)" : ""} className={inp} /></label>
+                <label className="text-xs text-slate-500">Source Code
+                  <input value={String(viva.source_code ?? "")} onChange={(e) => setViva("source_code", e.target.value)} className={inp} /></label>
+                <label className="text-xs text-slate-500">Περιβάλλον
+                  <select value={String(viva.mode ?? "demo")} onChange={(e) => setViva("mode", e.target.value)} className={inp}>
+                    <option value="demo">Demo (δοκιμές)</option><option value="live">Live</option></select></label>
+                <label className="text-xs text-slate-500">Merchant ID <span className="text-slate-400">(για επιβεβαίωση)</span>
+                  <input value={String(viva.merchant_id ?? "")} onChange={(e) => setViva("merchant_id", e.target.value)} className={inp} /></label>
+                <label className="text-xs text-slate-500">API key {viva.api_key_set ? <span className="text-emerald-600">✓</span> : ""}
+                  <input type="password" value={String(viva.api_key ?? "")} onChange={(e) => setViva("api_key", e.target.value)} placeholder={viva.api_key_set ? "•••• (κενό = αμετάβλητο)" : ""} className={inp} /></label>
+                <p className="text-[11px] text-slate-500 sm:col-span-2">Webhook URL (βάλε το στο Viva): <code className="text-indigo-700">https://app.rxvision.gr/api/v1/patient/shop/viva-webhook?t={String((cur.tenant_id ?? "TENANT"))}</code></p>
+              </div>
+            )}
+          </div>
+        );
+      })()}
+
       <button onClick={save} className="rounded-lg bg-brand-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-brand-700">{saved ? "✓ Αποθηκεύτηκε" : "Αποθήκευση"}</button>
     </div>
   );

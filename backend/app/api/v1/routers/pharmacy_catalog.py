@@ -112,6 +112,7 @@ class ProductIn(BaseModel):
     tags: list[str] = Field(default_factory=list)
     featured: bool = False
     image_id: str | None = None
+    usage_video_url: str | None = None      # οδηγίες χρήσης (YouTube/Vimeo) — ο πελάτης το βλέπει
     discount_pct: int = Field(0, ge=0, le=90)
     stock_qty: int = Field(0, ge=0)
     active: bool = True

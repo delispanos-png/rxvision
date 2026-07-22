@@ -10,7 +10,7 @@ import { PromosCard } from "@/components/catalog/PromosCard";
 
 type Product = {
   barcode: string; name: string; description_short?: string | null; description_long?: string | null;
-  photo_url?: string | null; image_id?: string | null; price_cents: number; wholesale_cents?: number; type: string; category?: string | null;
+  photo_url?: string | null; image_id?: string | null; usage_video_url?: string | null; price_cents: number; wholesale_cents?: number; type: string; category?: string | null;
   tags?: string[]; featured?: boolean; is_fyk?: boolean; participation?: number; discount_pct: number; stock_qty: number; active?: boolean;
 };
 type ListRes = { items: Product[]; total: number };
@@ -308,6 +308,10 @@ function EditModal({ product, busy, tax, onClose, onSave }: { product: Product; 
             </div>
             <div className="mt-1 flex flex-wrap gap-1">{QUICK_TAGS.filter((t) => !tags.includes(t)).map((t) => <button key={t} onClick={() => addTag(t)} className="rounded-full border border-slate-200 px-2 py-0.5 text-[11px] text-slate-500 hover:bg-slate-50">+ {t}</button>)}</div>
           </div>
+
+          <label className="text-xs text-slate-500">🎬 Βίντεο οδηγιών χρήσης (YouTube/Vimeo)
+            <input value={f.usage_video_url ?? ""} onChange={(e) => set("usage_video_url", e.target.value || null)} placeholder="https://youtu.be/… ή https://vimeo.com/…" className="mt-1 w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm" />
+            <span className="mt-0.5 block text-[11px] text-slate-400">Ο πελάτης το βλέπει στο e-shop. Δεκτά μόνο YouTube/Vimeo.</span></label>
 
           <label className="flex items-center gap-2 text-sm text-slate-700"><input type="checkbox" checked={!!f.featured} onChange={(e) => set("featured", e.target.checked)} /> <Star className={`h-4 w-4 ${f.featured ? "fill-amber-400 text-amber-500" : "text-slate-300"}`} /> Προτεινόμενο (πρώτο στη βιτρίνα)</label>
 

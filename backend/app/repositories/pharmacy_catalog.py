@@ -41,6 +41,15 @@ def _clean_tags(v) -> list[str]:
     return out[:_MAX_TAGS]
 
 
+_VIDEO_HOSTS = re.compile(r"^https://(www\.)?(youtube\.com/|youtu\.be/|m\.youtube\.com/|vimeo\.com/)", re.I)
+
+
+def _safe_video_url(url) -> str | None:
+    """Δέξου ΜΟΝΟ YouTube/Vimeo (whitelist) → ασφαλές embed. Ό,τι άλλο → None (όχι αυθαίρετα iframes)."""
+    u = str(url or "").strip()[:500]
+    return u if u and _VIDEO_HOSTS.match(u) else None
+
+
 def _now() -> datetime:
     return datetime.now(tz=timezone.utc)
 
@@ -116,6 +125,7 @@ class PharmacyCatalogRepository(BaseRepository):
             "description_long": (data.get("description_long") or "").strip()[:6000] or None,
             "photo_url": (data.get("photo_url") or "").strip()[:1000] or None,
             "image_id": (str(data.get("image_id")).strip() or None) if data.get("image_id") else None,
+            "usage_video_url": _safe_video_url(data.get("usage_video_url")),
             "price_cents": max(0, _int(data.get("price_cents")) or 0),
             "wholesale_cents": max(0, _int(data.get("wholesale_cents")) or 0),  # χονδρική → κερδοφορία
             "is_fyk": bool(data.get("is_fyk", False)),                          # ΦΥΚ (εξαιρείται από rebate note)

@@ -57,6 +57,15 @@ async def get_settings(ctx: TenantContext = Depends(require(_PERM, module=_MODUL
     return await _repo(ctx).settings()
 
 
+class VivaShopIn(BaseModel):
+    client_id: str | None = None
+    client_secret: str | None = None
+    merchant_id: str | None = None
+    api_key: str | None = None
+    source_code: str | None = None
+    mode: str | None = None  # demo | live
+
+
 class SettingsIn(BaseModel):
     delivery_enabled: bool = False      # αποστολή κλειστή by default
     pickup_enabled: bool = True
@@ -66,6 +75,8 @@ class SettingsIn(BaseModel):
     pps_cert: str = ""
     subscription_enabled: bool = True
     subscription_discount_pct: int = Field(0, ge=0, le=90)
+    online_payment_enabled: bool = False    # Viva e-shop (κάρτα/IRIS)
+    viva: VivaShopIn | None = None
 
 
 @router.post("/settings")

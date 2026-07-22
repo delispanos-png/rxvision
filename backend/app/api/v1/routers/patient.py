@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, status
 from fastapi.responses import Response
 from pydantic import BaseModel, EmailStr, Field
 
@@ -392,6 +392,7 @@ class OrderIn(BaseModel):
     coupon_code: str | None = Field(None, max_length=32)
     gdpr_consent: bool = False
     repeat_days: int = 0                     # 0 = εφάπαξ· >0 = συνδρομή κάθε N ημέρες
+    payment_method: str = "pickup"           # pickup/cod = στο κατάστημα· online = Viva (κάρτα/IRIS)
 
 
 @router.post("/shop/order")
@@ -411,7 +412,7 @@ async def place_order(body: OrderIn, ctx: PatientContext = Depends(get_patient_c
         lines=[ln.model_dump() for ln in body.lines], mode=body.mode, address=addr,
         courier_authorized=body.courier_authorized, courier_auth=cauth,
         loyalty_redeem_cents=body.loyalty_redeem_cents, coupon_code=body.coupon_code,
-        gdpr_consent=body.gdpr_consent, sub_discount_pct=sub_disc)
+        payment_method=body.payment_method, gdpr_consent=body.gdpr_consent, sub_discount_pct=sub_disc)
     if res.get("ok") and body.repeat_days > 0 and st.get("subscription_enabled", True):
         sub = await repo.create_subscription(
             account_id=ctx.account_id, patient_ref=ctx.patient_ref, patient_name=name, patient_phone=phone,
@@ -420,6 +421,35 @@ async def place_order(body: OrderIn, ctx: PatientContext = Depends(get_patient_c
             interval_days=body.repeat_days)
         res["subscription_id"] = sub.get("subscription_id")
     return res
+
+
+@router.get("/shop/viva-webhook", include_in_schema=False)
+async def shop_viva_webhook_verify(t: str | None = None):
+    """Viva GET-verification handshake ανά φαρμακείο. Κάθε φαρμακείο ρυθμίζει το webhook URL με ?t=<tenant>."""
+    from fastapi.responses import JSONResponse
+    from app.repositories.orders_delivery import OrdersDeliveryRepository
+    from app.services import viva_service
+    key = ""
+    if t:
+        creds = await OrdersDeliveryRepository(tenant_id=t).viva_creds()
+        key = (await viva_service.webhook_verification_key(creds=creds)) or ""
+    return JSONResponse({"Key": key})
+
+
+@router.post("/shop/viva-webhook", include_in_schema=False)
+async def shop_viva_webhook(request: Request):
+    """Viva event webhook (e-shop) → επιβεβαίωση πληρωμής παραγγελίας (match by order_code, re-fetch txn)."""
+    from app.repositories.orders_delivery import confirm_viva_payment
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        return {"ok": True}
+    ev = body.get("EventData") or body.get("eventData") or {}
+    code = ev.get("OrderCode") or ev.get("orderCode")
+    if code:
+        await confirm_viva_payment(order_code=str(code),
+                                   transaction_id=ev.get("TransactionId") or ev.get("transactionId"))
+    return {"ok": True}
 
 
 @router.get("/shop/orders")
