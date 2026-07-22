@@ -9,6 +9,7 @@ type Integrations = {
   revolut: { mode: string; api_key_set: boolean; webhook_secret_set: boolean };
   viva?: { mode: string; client_id_set: boolean; client_secret_set: boolean; merchant_id_set: boolean; api_key_set: boolean; source_code: string; checkout_ready: boolean; recurring_ready: boolean };
   alphabank?: { mode: string; merchant_id_set: boolean; shared_secret_set: boolean };
+  subscription_provider?: string;
 };
 type PayMethods = { methods: Record<string, { enabled: boolean; label: { el: string; en: string } }>; alphabank_configured: boolean };
 type Bank = { beneficiary?: string; bank_name?: string; iban?: string; swift?: string; notes?: string };
@@ -34,9 +35,10 @@ export default function PaymentsSettingsPage() {
   const [abMid, setAbMid] = useState("");
   const [abSecret, setAbSecret] = useState("");
   const [abMode, setAbMode] = useState("test");
+  const [subProvider, setSubProvider] = useState("revolut");
   const [bank, setBank] = useState<Bank>({});
 
-  useEffect(() => { if (status.data?.alphabank) setAbMode(status.data.alphabank.mode || "test"); if (status.data?.viva) { setVivaMode(status.data.viva.mode || "demo"); setVivaSrc(status.data.viva.source_code || ""); } }, [status.data]);
+  useEffect(() => { if (status.data?.alphabank) setAbMode(status.data.alphabank.mode || "test"); if (status.data?.viva) { setVivaMode(status.data.viva.mode || "demo"); setVivaSrc(status.data.viva.source_code || ""); } if (status.data?.subscription_provider) setSubProvider(status.data.subscription_provider); }, [status.data]);
   useEffect(() => { if (bankQ.data) setBank(bankQ.data); }, [bankQ.data]);
 
   const togglePm = useMutation({
@@ -48,6 +50,7 @@ export default function PaymentsSettingsPage() {
       revolut_api_key: revKey || null, revolut_mode: revMode || null, revolut_webhook_secret: revSecret || null,
       viva_client_id: vivaCid || null, viva_client_secret: vivaCsec || null, viva_merchant_id: vivaMid || null,
       viva_api_key: vivaKey || null, viva_source_code: vivaSrc || null, viva_mode: vivaMode || null,
+      subscription_provider: subProvider || null,
       alphabank_merchant_id: abMid || null, alphabank_shared_secret: abSecret || null, alphabank_mode: abMode || null,
     }) }),
     onSuccess: () => { setRevKey(""); setRevSecret(""); setVivaCid(""); setVivaCsec(""); setVivaMid(""); setVivaKey(""); setAbMid(""); setAbSecret(""); qc.invalidateQueries({ queryKey: ["integrations"] }); qc.invalidateQueries({ queryKey: ["admin", "payment-methods"] }); },
@@ -63,6 +66,19 @@ export default function PaymentsSettingsPage() {
       <div>
         <h1 className="flex items-center gap-2 text-2xl font-bold text-slate-900"><Wallet className="h-6 w-6 text-brand-600" /> Τρόποι πληρωμής</h1>
         <p className="mt-1 text-sm text-slate-500">Πάροχοι πληρωμών (Revolut, <b>Viva — κάρτα/IRIS</b>, Alpha Bank), ενεργοί τρόποι πληρωμής, τραπεζικός λογαριασμός κατάθεσης & τιμές συνδρομής. Τα διαπιστευτήρια αποθηκεύονται κρυπτογραφημένα.</p>
+      </div>
+
+      {/* Πάροχος χρέωσης συνδρομών */}
+      <div className="rounded-2xl border border-indigo-200 bg-indigo-50/50 p-5 shadow-sm">
+        <h3 className="mb-1 flex items-center gap-2 text-sm font-semibold text-slate-800"><CreditCard className="h-4 w-4 text-indigo-600" /> Πάροχος χρέωσης συνδρομών</h3>
+        <p className="mb-3 text-xs text-slate-500">Ποιος πάροχος χρεώνει τις <b>δικές μας συνδρομές</b> (card-on-file + αυτόματη ανανέωση). Άλλαξέ το σε Viva όσο ο λογαριασμός Revolut δεν είναι ενεργός.</p>
+        <div className="flex items-center gap-3">
+          <select value={subProvider} onChange={(e) => setSubProvider(e.target.value)} className={`${inp} max-w-xs`}>
+            <option value="revolut">Revolut</option>
+            <option value="viva">Viva Wallet (κάρτα / IRIS)</option>
+          </select>
+          <span className="text-[11px] text-slate-500">{subProvider === "viva" ? (s?.viva?.recurring_ready ? "✓ Viva recurring έτοιμο" : "⚠️ Χρειάζεται Merchant ID + API key παρακάτω") : (s?.revolut?.api_key_set ? "✓ Revolut ρυθμισμένο" : "⚠️ Revolut μη ρυθμισμένο")}</span>
+        </div>
       </div>
 
       {/* Ενεργοί τρόποι πληρωμής */}

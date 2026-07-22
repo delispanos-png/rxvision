@@ -866,6 +866,7 @@ class IntegrationsIn(BaseModel):
     viva_api_key: str | None = None
     viva_source_code: str | None = None
     viva_mode: str | None = None  # demo | live
+    subscription_provider: str | None = None  # revolut | viva — ποιος χρεώνει τις συνδρομές
     # Alpha Bank (Alpha e-Commerce) card gateway — alternative to Revolut
     alphabank_merchant_id: str | None = None
     alphabank_shared_secret: str | None = None
@@ -902,6 +903,7 @@ async def get_integrations(_: PlatformContext = Depends(get_platform_admin)):
     aade = decrypt_doc("aade", await db["platform_settings"].find_one({"_id": "aade"})) or {}
     rev = decrypt_doc("revolut", await db["platform_settings"].find_one({"_id": "revolut"})) or {}
     viva = decrypt_doc("viva", await db["platform_settings"].find_one({"_id": "viva"})) or {}
+    billing_cfg = await db["platform_settings"].find_one({"_id": "billing"}) or {}
     ant = decrypt_doc("anthropic", await db["platform_settings"].find_one({"_id": "anthropic"})) or {}
     dbk = decrypt_doc("drugbank", await db["platform_settings"].find_one({"_id": "drugbank"})) or {}
     comms_cfg = decrypt_doc("comms", await db["platform_settings"].find_one({"_id": "comms"})) or {}
@@ -921,6 +923,7 @@ async def get_integrations(_: PlatformContext = Depends(get_platform_admin)):
                  "source_code": viva.get("source_code") or "",
                  "checkout_ready": bool(viva.get("client_id") and viva.get("client_secret") and viva.get("source_code")),
                  "recurring_ready": bool(viva.get("merchant_id") and viva.get("api_key"))},
+        "subscription_provider": billing_cfg.get("active_provider") or "revolut",
         "alphabank": {"mode": (decrypt_doc("alphabank", await db["platform_settings"].find_one({"_id": "alphabank"})) or {}).get("mode", "test"),
                       "merchant_id_set": bool((decrypt_doc("alphabank", await db["platform_settings"].find_one({"_id": "alphabank"})) or {}).get("merchant_id")),
                       "shared_secret_set": bool((decrypt_doc("alphabank", await db["platform_settings"].find_one({"_id": "alphabank"})) or {}).get("shared_secret"))},
@@ -987,6 +990,9 @@ async def set_integrations(body: IntegrationsIn,
     if v:
         await db["platform_settings"].update_one(
             {"_id": "viva"}, {"$set": encrypt_fields("viva", v)}, upsert=True)
+    if body.subscription_provider in ("revolut", "viva"):
+        await db["platform_settings"].update_one(
+            {"_id": "billing"}, {"$set": {"active_provider": body.subscription_provider}}, upsert=True)
     if body.alphabank_merchant_id is not None or body.alphabank_shared_secret or body.alphabank_mode:
         from app.services import alphabank_service
         await alphabank_service.save_config(

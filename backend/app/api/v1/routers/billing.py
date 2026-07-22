@@ -9,11 +9,34 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from pymongo.errors import DuplicateKeyError
 
+from fastapi.responses import JSONResponse
+
 from app.core.db import shared_db
 from app.core.deps import TenantContext, get_current_context
-from app.services import billing_service, revolut_service
+from app.services import billing_service, revolut_service, viva_service
 
 router = APIRouter()
+
+
+@router.get("/webhook/viva")
+async def viva_webhook_verify():
+    """Viva GET-verification handshake — επιστρέφει {"Key": ...} από τον λογαριασμό Viva."""
+    key = await viva_service.webhook_verification_key()
+    return JSONResponse({"Key": key or ""})
+
+
+@router.post("/webhook/viva")
+async def viva_webhook(request: Request):
+    """Viva event webhook (Transaction Payment Created) → επιβεβαίωση & αποθήκευση recurring seed.
+    Δεν υπάρχει HMAC· εμπιστευόμαστε ΜΟΝΟ μετά από re-fetch της συναλλαγής (γίνεται στο service)."""
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        return {"ok": True}
+    ev = body.get("EventData") or body.get("eventData") or {}
+    if ev:
+        await billing_service.handle_viva_webhook(ev)
+    return {"ok": True}
 
 
 @router.post("/card-capture")

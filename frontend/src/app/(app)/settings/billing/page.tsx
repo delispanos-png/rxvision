@@ -89,7 +89,11 @@ export default function BillingSettingsPage() {
   async function addCard() {
     setCardBusy(true); setNotice(null);
     try {
-      const cc = await api<{ ok: boolean; token?: string; mode?: string; error?: string }>("/billing/card-capture", { method: "POST" });
+      const cc = await api<{ ok: boolean; token?: string; mode?: string; error?: string; provider?: string; checkout_url?: string }>("/billing/card-capture", { method: "POST" });
+      if (cc.ok && cc.provider === "viva" && cc.checkout_url) {
+        window.location.href = cc.checkout_url;   // Viva Smart Checkout (κάρτα ή IRIS) → επιστροφή μετά
+        return;
+      }
       if (cc.ok && cc.token) {
         await payWithRevolut(cc.token, cc.mode || "sandbox");
         setNotice(t("Η κάρτα αποθηκεύτηκε. Ξεκλείδωσες τις επιπλέον δυνατότητες ✓", "Card saved. Extras unlocked ✓"));

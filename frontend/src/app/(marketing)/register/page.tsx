@@ -169,12 +169,13 @@ export default function RegisterWizard() {
         window.localStorage.setItem("access_token", res.access_token);
         window.localStorage.setItem("refresh_token", res.refresh_token);
       }
-      // card → capture via Revolut if configured; bank → skip (invoice with IBAN follows). Trial proceeds either way.
+      // card → capture via ενεργό πάροχο (Revolut widget ή Viva redirect κάρτα/IRIS)· bank → invoice με IBAN.
       if (payMethod === "card") {
         try {
-          const cc = await api<{ ok: boolean; token?: string; mode?: string }>("/billing/card-capture", { method: "POST" });
+          const cc = await api<{ ok: boolean; token?: string; mode?: string; provider?: string; checkout_url?: string }>("/billing/card-capture", { method: "POST" });
+          if (cc.ok && cc.provider === "viva" && cc.checkout_url) { window.location.href = cc.checkout_url; return; }
           if (cc.ok && cc.token) await payWithRevolut(cc.token, cc.mode || "sandbox");
-        } catch { /* Revolut not configured → trial only */ }
+        } catch { /* πάροχος μη ρυθμισμένος → trial only */ }
       }
       router.push("/onboarding");
     } catch (e) {

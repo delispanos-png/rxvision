@@ -140,6 +140,22 @@ async def charge_recurring(*, original_transaction_id: str, amount: int, descrip
     return {"ok": ok, "transaction_id": tid, "raw_state": d.get("StatusId")}
 
 
+async def webhook_verification_key(creds: dict | None = None) -> str | None:
+    """Viva GET-verification: όταν καταχωρείς webhook URL, το Viva κάνει GET & περιμένει {"Key": ...}.
+    Το key αντλείται από /api/messages/config/token (Basic auth)."""
+    c = await _creds(creds)
+    if not can_recurring(c):
+        return None
+    try:
+        async with httpx.AsyncClient(timeout=15) as cl:
+            r = await cl.get(f"{_urls(c)['api']}/api/messages/config/token",
+                             headers={"Authorization": _basic(c)})
+            r.raise_for_status()
+            return r.json().get("Key")
+    except Exception:  # noqa: BLE001
+        return None
+
+
 async def get_transaction(transaction_id: str, creds: dict | None = None) -> dict | None:
     """Ανάκτηση συναλλαγής (επιβεβαίωση πληρωμής μετά το redirect/webhook)."""
     c = await _creds(creds)
