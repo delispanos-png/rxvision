@@ -740,6 +740,7 @@ async def get_payment_methods(_: PlatformContext = Depends(get_platform_admin)):
 
 class PaymentMethodsIn(BaseModel):
     card_revolut: bool | None = None
+    card_viva: bool | None = None
     card_alpha: bool | None = None
     bank_transfer: bool | None = None
 
