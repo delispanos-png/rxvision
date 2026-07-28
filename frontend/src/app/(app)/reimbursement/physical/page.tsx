@@ -71,7 +71,7 @@ function CategorizedChecks({ res, t }: { res: ClosingChecksRes | null; t: (el: s
   );
 }
 type ScanFlags = { is_intangible: boolean; is_full_participation?: boolean; needs_original: boolean; is_fyk: boolean; has_desensitization: boolean; has_opinion: boolean; has_vaccine: boolean; is_etyap: boolean; exec_count: number | null; is_eopyy?: boolean; fund?: string; fund_name?: string };
-type ScanRes = { ok: boolean; found: boolean; barcode: string; external_id?: string; exec_no?: string; n_executions?: number; wrong_day?: boolean; actual_days?: string[]; invalid_length?: boolean; digits?: number; flags?: ScanFlags };
+type ScanRes = { ok: boolean; found: boolean; barcode: string; external_id?: string; exec_no?: string; n_executions?: number; wrong_day?: boolean; actual_days?: string[]; invalid_length?: boolean; digits?: number; other_tenant?: boolean; flags?: ScanFlags };
 const grDate = (d: string) => d.split("-").reverse().join("/");
 
 function fmtDay(d: string) { try { return new Date(d + "T00:00:00").toLocaleDateString("el-GR", { weekday: "long", day: "numeric", month: "long" }); } catch { return d; } }
@@ -154,6 +154,13 @@ export default function PhysicalCheckPage() {
           t(`Άκυρο σκανάρισμα: ${r.digits ?? "<13"} ψηφία αντί για 13. Το barcode διαβάστηκε κομμένο (έπεσε ψηφίο) — ξανασκάναρε τη συνταγή ή πληκτρολόγησε το 13ψήφιο barcode.`,
             `Invalid scan: ${r.digits ?? "<13"} digits instead of 13. The barcode was read truncated — re-scan the prescription or type the 13-digit barcode.`),
           { title: t("⚠️ Κομμένο barcode", "⚠️ Truncated barcode") });
+        return;
+      }
+      if (r.other_tenant) {  // ανήκει σε ΑΛΛΟ φαρμακείο (λάθος tenant) → ΔΕΝ μπαίνει στο «δεν υπάρχουν»
+        appAlert(
+          t(`Η συνταγή ${r.barcode} ΔΕΝ ανήκει σε αυτό το φαρμακείο (εκτελέστηκε σε άλλο). Έλεγξε ότι είσαι στο σωστό φαρμακείο.`,
+            `Rx ${r.barcode} does NOT belong to this pharmacy (executed at another). Check you are on the correct pharmacy.`),
+          { title: t("⚠️ Άλλο φαρμακείο", "⚠️ Different pharmacy") });
         return;
       }
       if (r.wrong_day) {     // βρέθηκε στον μήνα αλλά ΟΧΙ σε αυτή την ημέρα → ειδοποίηση, χωρίς μαρκάρισμα

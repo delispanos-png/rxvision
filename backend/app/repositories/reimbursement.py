@@ -931,8 +931,12 @@ class ReimbursementRepository(BaseRepository):
         if extra13:
             present = set()
             rx = "^(" + "|".join(re.escape(str(b)) for b in extra13) + ")"
-            async for e in self._db["prescription_executions"].find(  # tenant-ok
-                    {"tenant_id": self.tenant_id, "external_id": {"$regex": rx}}, {"external_id": 1}):
+            # ΔΙΑΣΤΑΥΡΟΥΜΕΝΟΣ έλεγχος ύπαρξης (ΟΛΟΙ οι tenants — ΟΧΙ tenant-scoped, σκόπιμα): κρύβει
+            # (α) όσα ανακτήθηκαν στο ΔΙΚΟ μας tenant ΚΑΙ (β) όσα ανήκουν σε ΑΛΛΟ φαρμακείο (μις-
+            # σκανάρισμα σε λάθος tenant). Δεν εκτίθεται κανένα δεδομένο άλλου tenant — μόνο ύπαρξη
+            # barcode που ο ίδιος ο χρήστης πληκτρολόγησε. Μένει μόνο ό,τι ΔΕΝ υπάρχει πουθενά.
+            async for e in self._db["prescription_executions"].find(
+                    {"external_id": {"$regex": rx}, "status": {"$ne": "cancelled"}}, {"external_id": 1}):
                 present.add(str(e["external_id"]).split(":")[0])
             extra13 = [b for b in extra13 if str(b) not in present]
         return jsonsafe({
@@ -994,7 +998,13 @@ class ReimbursementRepository(BaseRepository):
         all_exs = [e async for e in self._db["prescription_executions"].find(  # tenant-ok
             {"tenant_id": self.tenant_id, "status": {"$ne": "cancelled"},
              "external_id": {"$regex": f"^{re.escape(bc)}"}})]
-        if not all_exs:               # δεν υπάρχει καθόλου στα δεδομένα → extra
+        if not all_exs:               # δεν υπάρχει σε ΑΥΤΟ το φαρμακείο
+            # μήπως ανήκει σε ΑΛΛΟ φαρμακείο (μις-σκανάρισμα σε λάθος tenant, π.χ. χρήστης δικτύου που
+            # έχει επιλέξει λάθος φαρμακείο); → ΜΗ το βάλεις στο «δεν υπάρχουν», ενημέρωσε ξεκάθαρα.
+            other = await self._db["prescription_executions"].count_documents(
+                {"external_id": {"$regex": f"^{re.escape(bc)}"}, "status": {"$ne": "cancelled"}})
+            if other > 0:
+                return {"ok": True, "found": False, "other_tenant": True, "barcode": bc, "n_executions": 0}
             await self._db["barcode_check"].update_one(
                 {"tenant_id": self.tenant_id, "period": period},
                 {"$addToSet": {"extra": bc}, "$set": {"updated_at": _now()}}, upsert=True)
