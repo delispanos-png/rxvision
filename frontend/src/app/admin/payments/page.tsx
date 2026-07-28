@@ -215,29 +215,59 @@ function SubNotifCard() {
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
       <h3 className="mb-1 flex items-center gap-2 text-sm font-semibold text-slate-700"><Wallet className="h-4 w-4 text-brand-600" /> Ειδοποιήσεις συνδρομής (email)</h3>
-      <p className="mb-3 text-xs text-slate-500">Προειδοποίηση πριν τη λήξη + καθημερινό «έχει λήξει» μετά. Placeholders: <code>{"{name}"}</code>, <code>{"{days}"}</code>, <code>{"{sales}"}</code>.</p>
+      <p className="mb-3 text-xs text-slate-500">Το σύστημα στέλνει αυτόματα email: <b>προειδοποίηση πριν</b> τη λήξη και <b>υπενθύμιση κάθε μέρα μετά</b> τη λήξη. Εδώ ρυθμίζεις πότε και τι γράφουν.</p>
       {msg && <div className="mb-3 rounded-lg bg-slate-100 px-3 py-2 text-xs text-slate-700">{msg}</div>}
 
-      <div className="grid gap-3 sm:grid-cols-4">
-        <label className="text-xs text-slate-500">Περιθώριο δοκιμαστικών (μέρες)<input type="number" className={ta} value={cur.trial_grace_days} onChange={(e) => set("trial_grace_days", +e.target.value)} /></label>
-        <label className="text-xs text-slate-500">Περιθώριο ενεργών (μέρες)<input type="number" className={ta} value={cur.active_grace_days} onChange={(e) => set("active_grace_days", +e.target.value)} /></label>
-        <label className="text-xs text-slate-500">Μέρες προειδοποίησης (π.χ. 7,3,1)<input className={ta} value={(cur.warn_days || []).join(",")} onChange={(e) => set("warn_days", e.target.value.split(",").map((x) => parseInt(x.trim(), 10)).filter((n) => n > 0))} /></label>
-        <label className="text-xs text-slate-500">Όριο καθημερινών μετά (μέρες)<input type="number" className={ta} value={cur.expired_max_days} onChange={(e) => set("expired_max_days", +e.target.value)} /></label>
+      <div className="mb-4 rounded-xl border border-slate-200 bg-slate-50/60 p-3">
+        <div className="mb-2 text-xs font-semibold text-slate-600">⏳ Πότε κλειδώνει η πρόσβαση μετά τη λήξη</div>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <label className="text-xs font-medium text-slate-700">Δοκιμαστικές (trial) — ημέρες χάριτος
+            <input type="number" className={ta} value={cur.trial_grace_days} onChange={(e) => set("trial_grace_days", +e.target.value)} />
+            <span className="mt-0.5 block text-[11px] font-normal text-slate-400">Πόσες μέρες μετά τη λήξη της δωρεάν δοκιμής κρατά ακόμα πρόσβαση. <b>0 = κλειδώνει αμέσως</b> στη λήξη.</span></label>
+          <label className="text-xs font-medium text-slate-700">Πληρωμένες (ενεργές) — ημέρες χάριτος
+            <input type="number" className={ta} value={cur.active_grace_days} onChange={(e) => set("active_grace_days", +e.target.value)} />
+            <span className="mt-0.5 block text-[11px] font-normal text-slate-400">Πόσες μέρες μετά τη λήξη πληρωμένης συνδρομής συνεχίζει να δουλεύει, πριν κλειδώσει (π.χ. 10).</span></label>
+        </div>
       </div>
-      <div className="mt-3 grid gap-3 sm:grid-cols-2">
-        <label className="text-xs text-slate-500">Email τμήματος πωλήσεων<input className={ta} value={cur.sales_email} onChange={(e) => set("sales_email", e.target.value)} placeholder="sales@rxvision.gr" /></label>
-        <label className="text-xs text-slate-500">Τηλέφωνο πωλήσεων<input className={ta} value={cur.sales_phone} onChange={(e) => set("sales_phone", e.target.value)} placeholder="21X…" /></label>
+
+      <div className="mb-4 rounded-xl border border-slate-200 bg-slate-50/60 p-3">
+        <div className="mb-2 text-xs font-semibold text-slate-600">📧 Πότε φεύγουν τα email</div>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <label className="text-xs font-medium text-slate-700">Προειδοποίηση — πόσες μέρες ΠΡΙΝ
+            <input className={ta} value={(cur.warn_days || []).join(",")} onChange={(e) => set("warn_days", e.target.value.split(",").map((x) => parseInt(x.trim(), 10)).filter((n) => n > 0))} />
+            <span className="mt-0.5 block text-[11px] font-normal text-slate-400">Γράψε τις μέρες χωρισμένες με κόμμα. Π.χ. <b>7,3,1</b> = στέλνει email 7 μέρες, 3 μέρες και 1 μέρα πριν λήξει.</span></label>
+          <label className="text-xs font-medium text-slate-700">Υπενθύμιση «έληξε» — για πόσες μέρες μετά
+            <input type="number" className={ta} value={cur.expired_max_days} onChange={(e) => set("expired_max_days", +e.target.value)} />
+            <span className="mt-0.5 block text-[11px] font-normal text-slate-400">Μετά τη λήξη στέλνει καθημερινό email «έχει λήξει». Για πόσες μέρες να το συνεχίσει και μετά να σταματήσει (π.χ. 30).</span></label>
+        </div>
+      </div>
+
+      <div className="mb-4 rounded-xl border border-slate-200 bg-slate-50/60 p-3">
+        <div className="mb-2 text-xs font-semibold text-slate-600">☎️ Στοιχεία επικοινωνίας (μπαίνουν αυτόματα στο μήνυμα)</div>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <label className="text-xs font-medium text-slate-700">Email τμήματος πωλήσεων
+            <input className={ta} value={cur.sales_email} onChange={(e) => set("sales_email", e.target.value)} placeholder="sales@rxvision.gr" /></label>
+          <label className="text-xs font-medium text-slate-700">Τηλέφωνο πωλήσεων
+            <input className={ta} value={cur.sales_phone} onChange={(e) => set("sales_phone", e.target.value)} placeholder="π.χ. 2101234567" /></label>
+        </div>
+        <span className="mt-1 block text-[11px] text-slate-400">Όπου βάλεις <code>{"{sales}"}</code> μέσα στο κείμενο, μπαίνουν αυτόματα αυτά τα στοιχεία. Αν τα αφήσεις κενά, δεν εμφανίζεται τίποτα.</span>
+      </div>
+
+      <div className="mb-2 rounded-lg bg-indigo-50 px-3 py-2 text-[11px] text-indigo-800">
+        💡 Στα κείμενα παρακάτω μπορείς να βάλεις: <code>{"{name}"}</code> = όνομα φαρμακείου · <code>{"{days}"}</code> = πόσες μέρες μένουν (π.χ. «3 ημέρες») · <code>{"{sales}"}</code> = τα στοιχεία επικοινωνίας από πάνω. Θα αντικατασταθούν αυτόματα σε κάθε email.
       </div>
 
       <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50/50 p-3">
-        <div className="text-xs font-semibold text-amber-900">📣 Προειδοποίηση (πριν τη λήξη)</div>
-        <label className="text-xs text-slate-500">Θέμα<input className={ta} value={cur.warn_subject} onChange={(e) => set("warn_subject", e.target.value)} /></label>
-        <label className="mt-2 block text-xs text-slate-500">Κείμενο<textarea rows={4} className={ta} value={cur.warn_body} onChange={(e) => set("warn_body", e.target.value)} /></label>
+        <div className="text-xs font-semibold text-amber-900">📣 Email «Προειδοποίηση»</div>
+        <div className="mb-2 text-[11px] text-amber-700">Στέλνεται ΠΡΙΝ τη λήξη, τις μέρες που όρισες παραπάνω (π.χ. 7/3/1).</div>
+        <label className="text-xs text-slate-500">Θέμα του email<input className={ta} value={cur.warn_subject} onChange={(e) => set("warn_subject", e.target.value)} /></label>
+        <label className="mt-2 block text-xs text-slate-500">Κείμενο του email<textarea rows={4} className={ta} value={cur.warn_body} onChange={(e) => set("warn_body", e.target.value)} /></label>
       </div>
       <div className="mt-3 rounded-xl border border-rose-200 bg-rose-50/50 p-3">
-        <div className="text-xs font-semibold text-rose-900">⛔ Έχει λήξει (καθημερινά μετά)</div>
-        <label className="text-xs text-slate-500">Θέμα<input className={ta} value={cur.expired_subject} onChange={(e) => set("expired_subject", e.target.value)} /></label>
-        <label className="mt-2 block text-xs text-slate-500">Κείμενο<textarea rows={4} className={ta} value={cur.expired_body} onChange={(e) => set("expired_body", e.target.value)} /></label>
+        <div className="text-xs font-semibold text-rose-900">⛔ Email «Έχει λήξει»</div>
+        <div className="mb-2 text-[11px] text-rose-700">Στέλνεται ΚΑΘΕ ΜΕΡΑ μετά τη λήξη (μέχρι το όριο που όρισες παραπάνω).</div>
+        <label className="text-xs text-slate-500">Θέμα του email<input className={ta} value={cur.expired_subject} onChange={(e) => set("expired_subject", e.target.value)} /></label>
+        <label className="mt-2 block text-xs text-slate-500">Κείμενο του email<textarea rows={4} className={ta} value={cur.expired_body} onChange={(e) => set("expired_body", e.target.value)} /></label>
       </div>
 
       <div className="mt-4 flex flex-wrap items-center gap-2">
