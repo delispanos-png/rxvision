@@ -1187,6 +1187,26 @@ async def admin_comms_profit(days: int = 30, _: PlatformContext = Depends(get_pl
             "margin_pct": round(100 * (t_rev - t_cost) / t_rev, 1) if t_rev else 0}
 
 
+@router.get("/comms/senders")
+async def admin_comms_senders(_: PlatformContext = Depends(get_platform_admin)):
+    """Φαρμακεία που ζήτησαν δικό τους όνομα αποστολέα (Sender ID) — για έγκριση (αφού δηλωθεί Apifon)."""
+    from app.services import comms
+    return {"items": await comms.pending_sender_requests()}
+
+
+class SenderApproveIn(BaseModel):
+    tenant_id: str
+    channel: str = "sms"      # sms | viber
+    approved: bool = True
+
+
+@router.post("/comms/senders/approve")
+async def admin_approve_sender(body: SenderApproveIn, _: PlatformContext = Depends(get_platform_admin)):
+    """Έγκριση/απόρριψη ονόματος αποστολέα φαρμακείου. Μόνο εγκεκριμένο → χρησιμοποιείται στα SMS/Viber."""
+    from app.services import comms
+    return await comms.approve_tenant_sender(body.tenant_id, body.channel, body.approved)
+
+
 @router.get("/credit-packages")
 async def admin_credit_packages(_: PlatformContext = Depends(get_platform_admin)):
     from app.services import message_wallet

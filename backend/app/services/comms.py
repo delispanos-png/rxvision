@@ -238,12 +238,65 @@ def _im_body(text: str, sender: str, to: str) -> str:
             '"im_channels":[{"id":"viber","text":' + _json(text) + ',"sender_id":' + _json(sender) + "}]}")
 
 
+# ── Per-tenant sender IDs (η επωνυμία ΚΑΘΕ φαρμακείου ως αποστολέας — απαιτεί έγκριση Apifon) ──────
+async def tenant_sender_config(tenant_id: str) -> dict:
+    """Sender IDs του φαρμακείου + κατάσταση έγκρισης (για UI φαρμακείου/admin)."""
+    d = await shared_db()["tenant_comms"].find_one({"_id": tenant_id}) or {}
+    return {"sms_sender": d.get("sms_sender") or "", "sms_sender_approved": bool(d.get("sms_sender_approved")),
+            "viber_sender": d.get("viber_sender") or "", "viber_sender_approved": bool(d.get("viber_sender_approved"))}
+
+
+async def _resolved_sender(tenant_id: str, channel: str, default: str) -> str:
+    """Ο ΕΓΚΕΚΡΙΜΕΝΟΣ sender του φαρμακείου (αν υπάρχει), αλλιώς ο κεντρικός default (RxVision).
+    Ένας μη-εγκεκριμένος sender ΔΕΝ χρησιμοποιείται (η Apifon θα τον απέρριπτε)."""
+    d = await shared_db()["tenant_comms"].find_one({"_id": tenant_id}) or {}
+    key = "sms" if channel == "sms" else "viber"
+    if d.get(f"{key}_sender") and d.get(f"{key}_sender_approved"):
+        return d[f"{key}_sender"]
+    return default
+
+
+async def request_tenant_sender(tenant_id: str, channel: str, sender: str) -> dict:
+    """Το φαρμακείο ΖΗΤΑΕΙ όνομα αποστολέα → αποθηκεύεται ως pending (approved=False) μέχρι ο admin το
+    εγκρίνει (αφού το δηλώσει στην Apifon). Κενό = επαναφορά στον κεντρικό."""
+    key = "sms" if channel == "sms" else "viber"
+    s = (sender or "").strip()[:20]
+    await shared_db()["tenant_comms"].update_one(
+        {"_id": tenant_id}, {"$set": {f"{key}_sender": s, f"{key}_sender_approved": False,
+                                      f"{key}_sender_requested_at": _now()}}, upsert=True)
+    return await tenant_sender_config(tenant_id)
+
+
+async def approve_tenant_sender(tenant_id: str, channel: str, approved: bool) -> dict:
+    """Ο platform admin εγκρίνει/απορρίπτει τον sender ενός φαρμακείου (αφού εγκριθεί στην Apifon)."""
+    key = "sms" if channel == "sms" else "viber"
+    await shared_db()["tenant_comms"].update_one(
+        {"_id": tenant_id}, {"$set": {f"{key}_sender_approved": bool(approved), f"{key}_sender_approved_at": _now()}},
+        upsert=True)
+    return await tenant_sender_config(tenant_id)
+
+
+async def pending_sender_requests() -> list[dict]:
+    """Όλα τα φαρμακεία με sender που περιμένει έγκριση (για το admin)."""
+    db = shared_db()
+    out = []
+    async for d in db["tenant_comms"].find({"$or": [
+            {"sms_sender": {"$nin": [None, ""]}, "sms_sender_approved": {"$ne": True}},
+            {"viber_sender": {"$nin": [None, ""]}, "viber_sender_approved": {"$ne": True}}]}):
+        t = await db["tenants"].find_one({"_id": d["_id"]}, {"name": 1})
+        out.append({"tenant_id": d["_id"], "name": (t or {}).get("name"),
+                    "sms_sender": d.get("sms_sender") or "", "sms_sender_approved": bool(d.get("sms_sender_approved")),
+                    "viber_sender": d.get("viber_sender") or "", "viber_sender_approved": bool(d.get("viber_sender_approved"))})
+    return out
+
+
 async def send_sms(tenant_id: str, to: str, text: str, *, patient_ref: str | None = None,
                    campaign_id: str | None = None, kind: str = "message") -> None:
     ap = await _apifon()
+    sender = await _resolved_sender(tenant_id, "sms", ap["sender"])
     ch = await message_wallet.charge(tenant_id, "sms", 1, ref=to)
     try:
-        resp = await _apifon_post("/services/api/v1/sms/send", _body(text, ap["sender"], to),
+        resp = await _apifon_post("/services/api/v1/sms/send", _body(text, sender, to),
                                   ap["sms_token"], ap["sms_secret"])
     except Exception as exc:
         await message_wallet.refund(tenant_id, "sms", ch["cost"], ref=to)

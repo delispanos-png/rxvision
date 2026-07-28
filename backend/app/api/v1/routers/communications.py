@@ -30,6 +30,26 @@ async def wallet(ctx: TenantContext = Depends(require("patients:read", module=_M
             "ledger": await message_wallet.ledger(ctx.tenant_id, limit=50)}
 
 
+@router.get("/sender")
+async def get_sender(ctx: TenantContext = Depends(require("patients:read", module=_MODULE))):
+    """Όνομα αποστολέα (Sender ID) του φαρμακείου + κατάσταση έγκρισης. Default = RxVision."""
+    from app.services import comms
+    return await comms.tenant_sender_config(ctx.tenant_id)
+
+
+class SenderIn(BaseModel):
+    channel: str = "sms"   # sms | viber
+    sender: str = ""       # κενό = επαναφορά στο RxVision
+
+
+@router.put("/sender")
+async def set_sender(body: SenderIn, ctx: TenantContext = Depends(require("billing:manage"))):
+    """Αίτημα ονόματος αποστολέα από το φαρμακείο → pending μέχρι έγκριση από τον admin (αφού δηλωθεί
+    στην Apifon). Μέχρι να εγκριθεί, τα μηνύματα φεύγουν από RxVision."""
+    from app.services import comms
+    return await comms.request_tenant_sender(ctx.tenant_id, body.channel, body.sender)
+
+
 @router.get("/credit-packages")
 async def credit_packages(ctx: TenantContext = Depends(require("patients:read", module=_MODULE))):
     return {"items": await message_wallet.packages()}

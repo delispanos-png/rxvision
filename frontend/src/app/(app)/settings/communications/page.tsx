@@ -56,6 +56,13 @@ export default function CommsSettingsPage() {
   type ChargesRes = { items: Charge[]; days: number; total_cents: number; count: number; by_channel: Record<string, number>; refunded_cents: number };
   const [chDays, setChDays] = useState(30);
   const charges = useQuery({ queryKey: ["comms", "charges", chDays], queryFn: () => api<ChargesRes>(`/communications/charges?days=${chDays}`), retry: false });
+  type SenderCfg = { sms_sender: string; sms_sender_approved: boolean; viber_sender: string; viber_sender_approved: boolean };
+  const senderQ = useQuery({ queryKey: ["comms", "sender"], queryFn: () => api<SenderCfg>("/communications/sender"), retry: false });
+  const [senderIn, setSenderIn] = useState("");
+  const saveSender = useMutation({
+    mutationFn: () => api("/communications/sender", { method: "PUT", body: JSON.stringify({ channel: "sms", sender: senderIn }) }),
+    onSuccess: () => { setSenderIn(""); senderQ.refetch(); appAlert(t("Το αίτημα καταχωρήθηκε — αναμονή έγκρισης.", "Request saved — pending approval.")); },
+  });
   const ST: Record<string, { el: string; cls: string }> = {
     sent: { el: "Εστάλη", cls: "bg-sky-100 text-sky-700" },
     delivered: { el: "Παραδόθηκε", cls: "bg-emerald-100 text-emerald-700" },
@@ -152,6 +159,27 @@ export default function CommsSettingsPage() {
       )}
 
       {/* Ιστορικό ΑΝΑ μήνυμα — παραλήπτης, κανάλι, κόστος, κατάσταση (παραδόθηκε/όχι) */}
+      {/* Όνομα αποστολέα (Sender ID) — default RxVision, προαιρετικά το όνομα του φαρμακείου (με έγκριση) */}
+      <PanelCard collapsible title={t("Όνομα αποστολέα SMS", "SMS sender name")}>
+        {(() => {
+          const s = senderQ.data;
+          const active = s?.sms_sender && s.sms_sender_approved ? s.sms_sender : "RxVision";
+          return (
+            <div className="space-y-2">
+              <p className="text-sm text-slate-600 dark:text-slate-300">{t("Τα SMS σου φαίνονται τώρα από:", "Your SMS currently show as from:")} <b className="text-brand-700">{active}</b></p>
+              {s?.sms_sender && !s.sms_sender_approved && <p className="text-xs text-amber-600">⏳ {t("Ζήτησες", "Requested")}: <b>{s.sms_sender}</b> — {t("σε αναμονή έγκρισης (μέχρι τότε φεύγει από RxVision).", "pending approval (until then, sent as RxVision).")}</p>}
+              <label className="block text-xs text-slate-500">{t("Ζήτησε δικό σου όνομα (≤11 χαρ.)", "Request your own name (≤11 chars)")}
+                <div className="mt-1 flex gap-2">
+                  <input value={senderIn} onChange={(e) => setSenderIn(e.target.value)} maxLength={11} placeholder={s?.sms_sender || t("π.χ. το όνομα του φαρμακείου", "e.g. your pharmacy name")} className="w-56 rounded-lg border border-slate-300 px-2 py-1.5 text-sm" />
+                  <button onClick={() => saveSender.mutate()} disabled={saveSender.isPending} className="rounded-lg bg-brand-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-50">{saveSender.isPending ? "…" : t("Υποβολή αιτήματος", "Submit request")}</button>
+                </div>
+              </label>
+              <p className="text-[11px] text-slate-400">{t("Απαιτείται έγκριση από τον πάροχο (Apifon). Μέχρι να εγκριθεί, φεύγει από RxVision. Κενό = επαναφορά στο RxVision.", "Needs provider (Apifon) approval. Until approved, sent as RxVision. Empty = reset to RxVision.")}</p>
+            </div>
+          );
+        })()}
+      </PanelCard>
+
       <PanelCard collapsible defaultOpen title={t("Ιστορικό μηνυμάτων", "Message history")}>
         {msgs.data?.summary_30d && (
           <div className="mb-3 flex flex-wrap gap-2 text-xs">

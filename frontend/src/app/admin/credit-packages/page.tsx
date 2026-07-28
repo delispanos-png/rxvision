@@ -157,6 +157,12 @@ export default function MessagesCreditsAdminPage() {
   type Profit = { days: number; by_channel: Record<string, ChProfit>; count: number; revenue_cents: number; cost_cents: number; profit_cents: number; margin_pct: number };
   const [profitDays, setProfitDays] = useState(30);
   const profitQ = useQuery({ queryKey: ["admin", "profit", profitDays], queryFn: () => adminApi<Profit>(`/admin/comms/profit?days=${profitDays}`), enabled: tab === "profit", retry: false });
+  type SenderReq = { tenant_id: string; name?: string; sms_sender: string; sms_sender_approved: boolean; viber_sender: string; viber_sender_approved: boolean };
+  const sendersQ = useQuery({ queryKey: ["admin", "senders"], queryFn: () => adminApi<{ items: SenderReq[] }>("/admin/comms/senders"), enabled: tab === "sms" || tab === "viber", retry: false });
+  const approveSender = useMutation({
+    mutationFn: (v: { tenant_id: string; channel: string; approved: boolean }) => adminApi("/admin/comms/senders/approve", { method: "POST", body: JSON.stringify(v) }),
+    onSuccess: () => sendersQ.refetch(),
+  });
   async function topUp(row: UsageRow) {
     const v = prompt(`Προσθήκη credits (€) στο «${row.name}»:`)?.trim();
     const amt = cents(v || "");
@@ -218,6 +224,31 @@ export default function MessagesCreditsAdminPage() {
           <PriceCalc cost={costSms} setCost={setCostSms} margin={marginSms} setMargin={setMarginSms} current={c?.prices.sms} />
           {saveBtn(() => saveChannel("sms", smsSender, costSms, marginSms), saveIntegr.isPending, "Αποθήκευση SMS")}
           <TestSend channel="sms" />
+
+          {/* Αιτήματα ονόματος αποστολέα ανά φαρμακείο (default: RxVision· εγκεκριμένο → φαίνεται το φαρμακείο) */}
+          <div className="mt-4 rounded-xl border border-slate-200 p-3">
+            <div className="mb-1 text-xs font-semibold text-slate-700">Δικά τους ονόματα αποστολέα (φαρμακεία)</div>
+            <p className="mb-2 text-[11px] text-slate-400">Default: όλα φεύγουν από <b>RxVision</b>. Ένα φαρμακείο μπορεί να ζητήσει δικό του όνομα — δήλωσέ το στην Apifon και μετά <b>ενέκρινέ</b> το εδώ.</p>
+            {(sendersQ.data?.items ?? []).filter((x) => x.sms_sender).length === 0 ? (
+              <p className="text-xs text-slate-400">Κανένα αίτημα.</p>
+            ) : (
+              <div className="space-y-1.5">
+                {(sendersQ.data?.items ?? []).filter((x) => x.sms_sender).map((x) => (
+                  <div key={x.tenant_id} className="flex flex-wrap items-center gap-2 rounded-lg bg-slate-50 px-2.5 py-1.5 text-sm">
+                    <span className="font-medium text-slate-700">{x.name || x.tenant_id}</span>
+                    <span className="rounded bg-white px-2 py-0.5 font-mono text-xs text-slate-600 ring-1 ring-slate-200">{x.sms_sender}</span>
+                    {x.sms_sender_approved
+                      ? <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">✓ Εγκεκριμένο</span>
+                      : <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-700">⏳ Αναμονή</span>}
+                    <span className="ml-auto flex gap-1.5">
+                      {!x.sms_sender_approved && <button onClick={() => approveSender.mutate({ tenant_id: x.tenant_id, channel: "sms", approved: true })} className="rounded-lg bg-emerald-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-emerald-700">Έγκριση</button>}
+                      {x.sms_sender_approved && <button onClick={() => approveSender.mutate({ tenant_id: x.tenant_id, channel: "sms", approved: false })} className="rounded-lg border border-slate-300 px-2.5 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-50">Ανάκληση</button>}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       )}
 
