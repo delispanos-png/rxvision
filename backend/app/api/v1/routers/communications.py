@@ -100,13 +100,18 @@ async def topup(body: TopupIn, ctx: TenantContext = Depends(require("billing:man
 
 async def _test_send(channel: str, to: str, tenant_id: str):
     try:
+        # Δοκιμαστική αποστολή = επαλήθευση ρύθμισης → ΔΕΝ χρεώνεται το wallet (charge=False), ώστε το
+        # φαρμακείο να μπορεί να δοκιμάσει ΠΡΙΝ αγοράσει credits.
         if channel == "email":
             await comms.send_email(tenant_id, to, "RxVision — δοκιμαστικό email",
-                                   "<p>Το κεντρικό email της πλατφόρμας λειτουργεί για το φαρμακείο σου. ✅</p>")
+                                   "<p>Το κεντρικό email της πλατφόρμας λειτουργεί για το φαρμακείο σου. ✅</p>",
+                                   kind="test", charge=False)
         elif channel == "viber":
-            await comms.send_viber(tenant_id, to, "RxVision: δοκιμαστικό Viber από το φαρμακείο σου.")
+            await comms.send_viber(tenant_id, to, "RxVision: δοκιμαστικό Viber από το φαρμακείο σου.",
+                                   kind="test", charge=False)
         else:
-            await comms.send_sms(tenant_id, to, "RxVision: δοκιμαστικό SMS από το φαρμακείο σου.")
+            await comms.send_sms(tenant_id, to, "RxVision: δοκιμαστικό SMS από το φαρμακείο σου.",
+                                 kind="test", charge=False)
     except message_wallet.InsufficientCredits:
         raise HTTPException(status.HTTP_402_PAYMENT_REQUIRED, "Ανεπαρκές υπόλοιπο μηνυμάτων.")
     except Exception as exc:  # noqa: BLE001

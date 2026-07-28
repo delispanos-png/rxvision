@@ -113,8 +113,8 @@ async def check_central_balance() -> dict:
 # ── Email (central SMTP, pharmacy display name + reply-to) ───────────────────
 async def send_email(tenant_id: str, to: str, subject: str, html: str, *,
                      patient_ref: str | None = None, campaign_id: str | None = None,
-                     kind: str = "message") -> None:
-    ch = await message_wallet.charge(tenant_id, "email", 1, ref=to)   # raises InsufficientCredits
+                     kind: str = "message", charge: bool = True) -> None:
+    ch = await message_wallet.charge(tenant_id, "email", 1, ref=to) if charge else {"cost": 0}  # raises InsufficientCredits
     try:
         cfg = await mailer.get_smtp(masked=False)
         if not cfg or not cfg.get("host"):
@@ -123,7 +123,8 @@ async def send_email(tenant_id: str, to: str, subject: str, html: str, *,
         cfg = {**cfg, "from_name": ph["name"]}                        # From shows the pharmacy name
         await asyncio.to_thread(mailer._send_one, cfg, to, subject, html, ph["reply_to"])
     except Exception as exc:
-        await message_wallet.refund(tenant_id, "email", ch["cost"], ref=to)
+        if charge:
+            await message_wallet.refund(tenant_id, "email", ch["cost"], ref=to)
         await _log_message(tenant_id, "email", to, cost_cents=0, status="failed", subject=subject,
                            patient_ref=patient_ref, campaign_id=campaign_id, kind=kind, error=exc)
         raise
@@ -301,15 +302,16 @@ async def clear_tenant_sender(tenant_id: str, channel: str) -> dict:
 
 
 async def send_sms(tenant_id: str, to: str, text: str, *, patient_ref: str | None = None,
-                   campaign_id: str | None = None, kind: str = "message") -> None:
+                   campaign_id: str | None = None, kind: str = "message", charge: bool = True) -> None:
     ap = await _apifon()
     sender = await _resolved_sender(tenant_id, "sms", ap["sender"])
-    ch = await message_wallet.charge(tenant_id, "sms", 1, ref=to)
+    ch = await message_wallet.charge(tenant_id, "sms", 1, ref=to) if charge else {"cost": 0}
     try:
         resp = await _apifon_post("/services/api/v1/sms/send", _body(text, sender, to),
                                   ap["sms_token"], ap["sms_secret"])
     except Exception as exc:
-        await message_wallet.refund(tenant_id, "sms", ch["cost"], ref=to)
+        if charge:
+            await message_wallet.refund(tenant_id, "sms", ch["cost"], ref=to)
         await _log_message(tenant_id, "sms", to, cost_cents=0, status="failed",
                            patient_ref=patient_ref, campaign_id=campaign_id, kind=kind, error=exc)
         raise
@@ -328,16 +330,18 @@ async def send_otp_sms(to: str, text: str) -> None:
 
 
 async def send_viber(tenant_id: str, to: str, text: str, *, patient_ref: str | None = None,
-                     campaign_id: str | None = None, kind: str = "message") -> None:
+                     campaign_id: str | None = None, kind: str = "message", charge: bool = True) -> None:
     """Central Apifon IM (Viber). Text-only. Το Viber→SMS fallback γίνεται στο DLR webhook όταν το
     Viber δεν παραδοθεί (όχι εδώ — θα ήταν διπλή χρέωση)."""
     ap = await _apifon()
-    ch = await message_wallet.charge(tenant_id, "viber", 1, ref=to)
+    sender = await _resolved_sender(tenant_id, "viber", ap["viber_sender"])
+    ch = await message_wallet.charge(tenant_id, "viber", 1, ref=to) if charge else {"cost": 0}
     try:
-        resp = await _apifon_post("/services/api/v1/im/send", _im_body(text, ap["viber_sender"], to),
+        resp = await _apifon_post("/services/api/v1/im/send", _im_body(text, sender, to),
                                   ap["token"], ap["secret"])
     except Exception as exc:
-        await message_wallet.refund(tenant_id, "viber", ch["cost"], ref=to)
+        if charge:
+            await message_wallet.refund(tenant_id, "viber", ch["cost"], ref=to)
         await _log_message(tenant_id, "viber", to, cost_cents=0, status="failed",
                            patient_ref=patient_ref, campaign_id=campaign_id, kind=kind, error=exc)
         raise
