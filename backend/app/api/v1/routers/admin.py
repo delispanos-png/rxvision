@@ -752,6 +752,49 @@ async def set_payment_methods(body: PaymentMethodsIn, _: PlatformContext = Depen
     return {"methods": await payment_methods.set_config(updates)}
 
 
+# ── Ειδοποιήσεις συνδρομής (κείμενα email + περιθώρια + επαφή πωλήσεων) ─────────────
+@router.get("/subscription-notifications")
+async def get_subscription_notifications(_: PlatformContext = Depends(get_platform_admin)):
+    from app.services import billing_service
+    return await billing_service.notification_config()
+
+
+class SubNotifIn(BaseModel):
+    trial_grace_days: int | None = Field(None, ge=0, le=90)
+    active_grace_days: int | None = Field(None, ge=0, le=180)
+    warn_days: list[int] | None = None
+    expired_max_days: int | None = Field(None, ge=0, le=365)
+    sales_email: str | None = None
+    sales_phone: str | None = None
+    warn_subject: str | None = None
+    warn_body: str | None = None
+    expired_subject: str | None = None
+    expired_body: str | None = None
+
+
+@router.put("/subscription-notifications")
+async def set_subscription_notifications(body: SubNotifIn, _: PlatformContext = Depends(get_platform_admin)):
+    upd = {k: v for k, v in body.model_dump().items() if v is not None}
+    if "warn_days" in upd:
+        upd["warn_days"] = sorted({int(x) for x in upd["warn_days"] if 0 < int(x) <= 90}, reverse=True)[:6]
+    if upd:
+        await shared_db()["platform_settings"].update_one(
+            {"_id": "billing"}, {"$set": upd}, upsert=True)
+    from app.services import billing_service
+    return await billing_service.notification_config()
+
+
+class SubNotifTestIn(BaseModel):
+    email: str
+    kind: str = "expired"  # warn | expired
+
+
+@router.post("/subscription-notifications/test")
+async def test_subscription_notification(body: SubNotifTestIn, _: PlatformContext = Depends(get_platform_admin)):
+    from app.services import billing_service
+    return await billing_service.send_test_reminder(body.email, body.kind)
+
+
 # ── Add-ons catalog (à-la-carte modules sold on top of any plan) ──────────────
 @router.get("/addons")
 async def admin_addons(_: PlatformContext = Depends(get_platform_admin)):

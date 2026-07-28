@@ -239,29 +239,61 @@ async def _billing_email(db, tid: str, tenant: dict) -> str | None:
     return email or None
 
 
-def _sub_email_html(name: str, days_left: int) -> tuple[str, str]:
-    """(subject, html). days_left>0 = προειδοποίηση πριν· <=0 = έχει λήξει."""
-    salu = f"Αγαπητέ/ή {name}," if name else "Αγαπητέ/ή πελάτη,"
-    if days_left > 0:
-        d = "1 ημέρα" if days_left == 1 else f"{days_left} ημέρες"
-        return (f"Η συνδρομή σας λήγει σε {d}",
-                f"<p>{salu}</p><p>Η συνδρομή σας στο <b>RxVision</b> λήγει σε <b>{d}</b>. "
-                "Για να συνεχίσετε χωρίς διακοπή, ανανεώστε τη συνδρομή σας ή επικοινωνήστε με το "
-                "<b>τμήμα πωλήσεων</b>.</p><p>— RxVision</p>")
-    return ("Η συνδρομή σας έχει λήξει",
-            f"<p>{salu}</p><p>Η συνδρομή σας στο <b>RxVision</b> <b>έχει λήξει</b>. "
-            "Παρακαλούμε <b>επικοινωνήστε με το τμήμα πωλήσεων</b> για ενεργοποίηση/ανανέωση, ώστε να "
-            "αποκατασταθεί η πρόσβασή σας.</p><p>— RxVision</p>")
+# Προεπιλογές ειδοποιήσεων συνδρομής — ό,τι ΔΕΝ ρυθμιστεί στο adminpanel πέφτει εδώ (ίδιο κείμενο με πριν).
+NOTIF_DEFAULTS = {
+    "trial_grace_days": 0, "active_grace_days": 10,
+    "warn_days": [7, 3, 1], "expired_max_days": 30,
+    "sales_email": "", "sales_phone": "",
+    "warn_subject": "Η συνδρομή σας λήγει σε {days}",
+    "warn_body": ("Αγαπητέ/ή {name},\n\nΗ συνδρομή σας στο RxVision λήγει σε {days}. Για να συνεχίσετε "
+                  "χωρίς διακοπή, ανανεώστε τη συνδρομή σας ή επικοινωνήστε με το τμήμα πωλήσεων.{sales}"
+                  "\n\n— RxVision"),
+    "expired_subject": "Η συνδρομή σας έχει λήξει",
+    "expired_body": ("Αγαπητέ/ή {name},\n\nΗ συνδρομή σας στο RxVision έχει λήξει. Παρακαλούμε "
+                     "επικοινωνήστε με το τμήμα πωλήσεων για ενεργοποίηση/ανανέωση, ώστε να αποκατασταθεί "
+                     "η πρόσβασή σας.{sales}\n\n— RxVision"),
+}
+
+
+async def notification_config() -> dict:
+    """Ρυθμίσεις ειδοποιήσεων συνδρομής (adminpanel) πάνω στα NOTIF_DEFAULTS."""
+    cfg = await shared_db()["platform_settings"].find_one({"_id": "billing"}) or {}
+    out = dict(NOTIF_DEFAULTS)
+    for k in NOTIF_DEFAULTS:
+        if cfg.get(k) not in (None, ""):
+            out[k] = cfg[k]
+    return out
+
+
+def _sales_line(cfg: dict) -> str:
+    parts = [p for p in [cfg.get("sales_email"), cfg.get("sales_phone")] if p]
+    return f" (Τμήμα πωλήσεων: {' · '.join(parts)})" if parts else ""
+
+
+def _sub_email_html(name: str, days_left: int, cfg: dict) -> tuple[str, str]:
+    """(subject, html) από τα ρυθμιζόμενα templates. days_left>0 = προειδοποίηση· <=0 = έχει λήξει."""
+    d = ("1 ημέρα" if days_left == 1 else f"{days_left} ημέρες") if days_left > 0 else ""
+    repl = {"{name}": name or "πελάτη", "{days}": d, "{sales}": _sales_line(cfg),
+            "{sales_email}": cfg.get("sales_email", ""), "{sales_phone}": cfg.get("sales_phone", "")}
+    key = "warn" if days_left > 0 else "expired"
+    subject = cfg.get(f"{key}_subject") or NOTIF_DEFAULTS[f"{key}_subject"]
+    body = cfg.get(f"{key}_body") or NOTIF_DEFAULTS[f"{key}_body"]
+    for a, b in repl.items():
+        subject = subject.replace(a, b); body = body.replace(a, b)
+    html = "<p>" + body.replace("\n\n", "</p><p>").replace("\n", "<br>") + "</p>"
+    return subject, html
 
 
 async def subscription_reminders() -> dict:
-    """Ημερήσια emails: προειδοποίηση 7/3/1 ημέρες ΠΡΙΝ τη λήξη· και ΚΑΘΗΜΕΡΙΝΑ ΜΕΤΑ τη λήξη
-    («η συνδρομή σας έχει λήξει — επικοινωνήστε με το τμήμα πωλήσεων»), μέχρι 30μ. Idempotent/ημέρα."""
+    """Ημερήσια emails: προειδοποίηση ΠΡΙΝ τη λήξη (ρυθμιζόμενες μέρες) + ΚΑΘΗΜΕΡΙΝΑ ΜΕΤΑ (έως όριο).
+    Κείμενα/μέρες/επαφή ρυθμίζονται στο adminpanel. Idempotent ανά ημέρα (last_reminder_date)."""
     from app.services import mailer
     db = shared_db()
     now = _now()
     today = now.date().isoformat()
-    warn = {7, 3, 1}
+    cfg = await notification_config()
+    warn = {int(x) for x in (cfg.get("warn_days") or [])}
+    max_after = int(cfg.get("expired_max_days") or 30)
     sent = 0
     async for sub in db["subscriptions"].find({
             "status": {"$in": ["trial", "trialing", "active", "past_due", "expired"]},
@@ -270,7 +302,8 @@ async def subscription_reminders() -> dict:
         if not pend:
             continue
         days = (pend.date() - now.date()).days      # >0 πριν, <=0 μετά
-        if not ((days in warn and sub.get("status") in ("trial", "trialing", "active")) or (-30 <= days <= 0)):
+        if not ((days in warn and sub.get("status") in ("trial", "trialing", "active"))
+                or (-max_after <= days <= 0)):
             continue
         if sub.get("last_reminder_date") == today:   # ήδη στάλθηκε σήμερα
             continue
@@ -279,7 +312,7 @@ async def subscription_reminders() -> dict:
         email = await _billing_email(db, tid, tenant)
         if not email:
             continue
-        subject, html = _sub_email_html(tenant.get("name") or "", days)
+        subject, html = _sub_email_html(tenant.get("name") or "", days, cfg)
         try:
             await mailer.send_email(email, subject, html)
             await db["subscriptions"].update_one({"tenant_id": tid}, {"$set": {"last_reminder_date": today}})
@@ -287,6 +320,18 @@ async def subscription_reminders() -> dict:
         except Exception:  # noqa: BLE001 — ένα αποτυχημένο email δεν ρίχνει το batch
             pass
     return {"sent": sent}
+
+
+async def send_test_reminder(to_email: str, kind: str = "expired") -> dict:
+    """Στείλε ΔΟΚΙΜΑΣΤΙΚΟ email (προεπισκόπηση) στη διεύθυνση που δίνει ο admin."""
+    from app.services import mailer
+    cfg = await notification_config()
+    subject, html = _sub_email_html("Δοκιμαστικό Φαρμακείο", (3 if kind == "warn" else 0), cfg)
+    try:
+        await mailer.send_email(to_email, "[ΔΟΚΙΜΗ] " + subject, html)
+        return {"ok": True}
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "error": str(e)[:200]}
 
 
 async def handle_viva_webhook(event_data: dict) -> None:

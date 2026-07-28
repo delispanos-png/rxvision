@@ -179,7 +179,76 @@ export default function PaymentsSettingsPage() {
         </button>
       </div>
 
+      {/* Ειδοποιήσεις συνδρομής (κείμενα email + περιθώρια + επαφή) */}
+      <SubNotifCard />
+
       <div className="rounded-xl bg-slate-50 px-3 py-2 text-xs text-slate-500">💡 Οι <b>τιμές & τα πακέτα συνδρομής</b> ρυθμίζονται στην «Πακέτα & SLA». Ο πάροχος μηνυμάτων (Apifon) & τα credits στην «Μηνύματα & Credits». Η ΑΑΔΕ στο «Κρατικές διασυνδέσεις».</div>
+    </div>
+  );
+}
+
+type SubNotif = {
+  trial_grace_days: number; active_grace_days: number; warn_days: number[]; expired_max_days: number;
+  sales_email: string; sales_phone: string;
+  warn_subject: string; warn_body: string; expired_subject: string; expired_body: string;
+};
+
+function SubNotifCard() {
+  const qc = useQueryClient();
+  const q = useQuery({ queryKey: ["admin", "sub-notif"], queryFn: () => adminApi<SubNotif>("/admin/subscription-notifications"), retry: false });
+  const [f, setF] = useState<SubNotif | null>(null);
+  const [testEmail, setTestEmail] = useState("");
+  const [msg, setMsg] = useState<string | null>(null);
+  useEffect(() => { if (q.data && !f) setF(q.data); }, [q.data, f]);
+  const cur = f;
+  const set = (k: keyof SubNotif, v: SubNotif[keyof SubNotif]) => { if (cur) setF({ ...cur, [k]: v }); };
+  const save = useMutation({
+    mutationFn: () => adminApi("/admin/subscription-notifications", { method: "PUT", body: JSON.stringify(cur) }),
+    onSuccess: () => { setMsg("Αποθηκεύτηκε ✓"); qc.invalidateQueries({ queryKey: ["admin", "sub-notif"] }); },
+  });
+  const test = useMutation({
+    mutationFn: (kind: string) => adminApi<{ ok: boolean; error?: string }>("/admin/subscription-notifications/test", { method: "POST", body: JSON.stringify({ email: testEmail, kind }) }),
+    onSuccess: (r) => setMsg(r.ok ? "Στάλθηκε δοκιμαστικό ✓" : "Αποτυχία αποστολής: " + (r.error || "")),
+  });
+  if (!cur) return <div className="rounded-2xl border border-slate-200 bg-white p-5 text-sm text-slate-400 shadow-sm">Φόρτωση…</div>;
+  const ta = "mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none";
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+      <h3 className="mb-1 flex items-center gap-2 text-sm font-semibold text-slate-700"><Wallet className="h-4 w-4 text-brand-600" /> Ειδοποιήσεις συνδρομής (email)</h3>
+      <p className="mb-3 text-xs text-slate-500">Προειδοποίηση πριν τη λήξη + καθημερινό «έχει λήξει» μετά. Placeholders: <code>{"{name}"}</code>, <code>{"{days}"}</code>, <code>{"{sales}"}</code>.</p>
+      {msg && <div className="mb-3 rounded-lg bg-slate-100 px-3 py-2 text-xs text-slate-700">{msg}</div>}
+
+      <div className="grid gap-3 sm:grid-cols-4">
+        <label className="text-xs text-slate-500">Περιθώριο δοκιμαστικών (μέρες)<input type="number" className={ta} value={cur.trial_grace_days} onChange={(e) => set("trial_grace_days", +e.target.value)} /></label>
+        <label className="text-xs text-slate-500">Περιθώριο ενεργών (μέρες)<input type="number" className={ta} value={cur.active_grace_days} onChange={(e) => set("active_grace_days", +e.target.value)} /></label>
+        <label className="text-xs text-slate-500">Μέρες προειδοποίησης (π.χ. 7,3,1)<input className={ta} value={(cur.warn_days || []).join(",")} onChange={(e) => set("warn_days", e.target.value.split(",").map((x) => parseInt(x.trim(), 10)).filter((n) => n > 0))} /></label>
+        <label className="text-xs text-slate-500">Όριο καθημερινών μετά (μέρες)<input type="number" className={ta} value={cur.expired_max_days} onChange={(e) => set("expired_max_days", +e.target.value)} /></label>
+      </div>
+      <div className="mt-3 grid gap-3 sm:grid-cols-2">
+        <label className="text-xs text-slate-500">Email τμήματος πωλήσεων<input className={ta} value={cur.sales_email} onChange={(e) => set("sales_email", e.target.value)} placeholder="sales@rxvision.gr" /></label>
+        <label className="text-xs text-slate-500">Τηλέφωνο πωλήσεων<input className={ta} value={cur.sales_phone} onChange={(e) => set("sales_phone", e.target.value)} placeholder="21X…" /></label>
+      </div>
+
+      <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50/50 p-3">
+        <div className="text-xs font-semibold text-amber-900">📣 Προειδοποίηση (πριν τη λήξη)</div>
+        <label className="text-xs text-slate-500">Θέμα<input className={ta} value={cur.warn_subject} onChange={(e) => set("warn_subject", e.target.value)} /></label>
+        <label className="mt-2 block text-xs text-slate-500">Κείμενο<textarea rows={4} className={ta} value={cur.warn_body} onChange={(e) => set("warn_body", e.target.value)} /></label>
+      </div>
+      <div className="mt-3 rounded-xl border border-rose-200 bg-rose-50/50 p-3">
+        <div className="text-xs font-semibold text-rose-900">⛔ Έχει λήξει (καθημερινά μετά)</div>
+        <label className="text-xs text-slate-500">Θέμα<input className={ta} value={cur.expired_subject} onChange={(e) => set("expired_subject", e.target.value)} /></label>
+        <label className="mt-2 block text-xs text-slate-500">Κείμενο<textarea rows={4} className={ta} value={cur.expired_body} onChange={(e) => set("expired_body", e.target.value)} /></label>
+      </div>
+
+      <div className="mt-4 flex flex-wrap items-center gap-2">
+        <button onClick={() => save.mutate()} disabled={save.isPending} className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50">
+          {save.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} Αποθήκευση
+        </button>
+        <span className="mx-2 h-5 w-px bg-slate-200" />
+        <input value={testEmail} onChange={(e) => setTestEmail(e.target.value)} placeholder="email για δοκιμή" className="w-52 rounded-lg border border-slate-300 px-2 py-1.5 text-sm" />
+        <button onClick={() => test.mutate("warn")} disabled={!testEmail || test.isPending} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-50">Δοκιμή «προειδοποίηση»</button>
+        <button onClick={() => test.mutate("expired")} disabled={!testEmail || test.isPending} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-50">Δοκιμή «έληξε»</button>
+      </div>
     </div>
   );
 }
