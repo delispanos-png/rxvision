@@ -277,17 +277,27 @@ async def approve_tenant_sender(tenant_id: str, channel: str, approved: bool) ->
 
 
 async def pending_sender_requests() -> list[dict]:
-    """Όλα τα φαρμακεία με sender που περιμένει έγκριση (για το admin)."""
+    """ΟΛΑ τα φαρμακεία που έχουν ζητήσει sender (εκκρεμή Ή εγκεκριμένα) — ώστε ο admin να συνεχίζει να
+    τα βλέπει, να τα ανακαλεί ή να τα διαγράφει (π.χ. αν το φαρμακείο θέλει αλλαγή ονόματος)."""
     db = shared_db()
     out = []
     async for d in db["tenant_comms"].find({"$or": [
-            {"sms_sender": {"$nin": [None, ""]}, "sms_sender_approved": {"$ne": True}},
-            {"viber_sender": {"$nin": [None, ""]}, "viber_sender_approved": {"$ne": True}}]}):
+            {"sms_sender": {"$nin": [None, ""]}},
+            {"viber_sender": {"$nin": [None, ""]}}]}):
         t = await db["tenants"].find_one({"_id": d["_id"]}, {"name": 1})
         out.append({"tenant_id": d["_id"], "name": (t or {}).get("name"),
                     "sms_sender": d.get("sms_sender") or "", "sms_sender_approved": bool(d.get("sms_sender_approved")),
                     "viber_sender": d.get("viber_sender") or "", "viber_sender_approved": bool(d.get("viber_sender_approved"))})
     return out
+
+
+async def clear_tenant_sender(tenant_id: str, channel: str) -> dict:
+    """Διαγραφή του custom sender ενός φαρμακείου → επαναφορά στο κεντρικό (RxVision)."""
+    key = "sms" if channel == "sms" else "viber"
+    await shared_db()["tenant_comms"].update_one(
+        {"_id": tenant_id}, {"$unset": {f"{key}_sender": "", f"{key}_sender_approved": "",
+                                        f"{key}_sender_requested_at": "", f"{key}_sender_approved_at": ""}})
+    return await tenant_sender_config(tenant_id)
 
 
 async def send_sms(tenant_id: str, to: str, text: str, *, patient_ref: str | None = None,

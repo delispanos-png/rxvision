@@ -1207,6 +1207,18 @@ async def admin_approve_sender(body: SenderApproveIn, _: PlatformContext = Depen
     return await comms.approve_tenant_sender(body.tenant_id, body.channel, body.approved)
 
 
+class SenderClearIn(BaseModel):
+    tenant_id: str
+    channel: str = "sms"
+
+
+@router.post("/comms/senders/clear")
+async def admin_clear_sender(body: SenderClearIn, _: PlatformContext = Depends(get_platform_admin)):
+    """Διαγραφή custom sender φαρμακείου → επαναφορά στο κεντρικό (RxVision)."""
+    from app.services import comms
+    return await comms.clear_tenant_sender(body.tenant_id, body.channel)
+
+
 @router.get("/credit-packages")
 async def admin_credit_packages(_: PlatformContext = Depends(get_platform_admin)):
     from app.services import message_wallet

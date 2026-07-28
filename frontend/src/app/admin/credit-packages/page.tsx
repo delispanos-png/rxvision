@@ -163,6 +163,10 @@ export default function MessagesCreditsAdminPage() {
     mutationFn: (v: { tenant_id: string; channel: string; approved: boolean }) => adminApi("/admin/comms/senders/approve", { method: "POST", body: JSON.stringify(v) }),
     onSuccess: () => sendersQ.refetch(),
   });
+  const clearSender = useMutation({
+    mutationFn: (v: { tenant_id: string; channel: string }) => adminApi("/admin/comms/senders/clear", { method: "POST", body: JSON.stringify(v) }),
+    onSuccess: () => sendersQ.refetch(),
+  });
   async function topUp(row: UsageRow) {
     const v = prompt(`Προσθήκη credits (€) στο «${row.name}»:`)?.trim();
     const amt = cents(v || "");
@@ -243,6 +247,7 @@ export default function MessagesCreditsAdminPage() {
                     <span className="ml-auto flex gap-1.5">
                       {!x.sms_sender_approved && <button onClick={() => approveSender.mutate({ tenant_id: x.tenant_id, channel: "sms", approved: true })} className="rounded-lg bg-emerald-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-emerald-700">Έγκριση</button>}
                       {x.sms_sender_approved && <button onClick={() => approveSender.mutate({ tenant_id: x.tenant_id, channel: "sms", approved: false })} className="rounded-lg border border-slate-300 px-2.5 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-50">Ανάκληση</button>}
+                      <button onClick={() => clearSender.mutate({ tenant_id: x.tenant_id, channel: "sms" })} title="Διαγραφή — επαναφορά στο RxVision" className="rounded-lg border border-rose-200 px-2.5 py-1 text-xs font-semibold text-rose-600 hover:bg-rose-50">Διαγραφή</button>
                     </span>
                   </div>
                 ))}
