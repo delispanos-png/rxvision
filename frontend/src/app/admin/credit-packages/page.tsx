@@ -37,6 +37,7 @@ const TABS = [
   { id: "email", label: "Email", Icon: Mail },
   { id: "packages", label: "Πακέτα", Icon: Package },
   { id: "usage", label: "Κατανάλωση ανά πελάτη", Icon: BarChart3 },
+  { id: "profit", label: "Κέρδος", Icon: BarChart3 },
   { id: "apifon", label: "Πορτοφόλι Apifon", Icon: Wallet },
 ] as const;
 type TabId = (typeof TABS)[number]["id"];
@@ -152,6 +153,10 @@ export default function MessagesCreditsAdminPage() {
   // usage per tenant
   const [usageDays, setUsageDays] = useState(30);
   const usageQ = useQuery({ queryKey: ["admin", "usage", usageDays], queryFn: () => adminApi<Usage>(`/admin/comms/usage-by-tenant?days=${usageDays}`), enabled: tab === "usage" });
+  type ChProfit = { count: number; revenue_cents: number; cost_cents: number; profit_cents: number; unit_cost_cents: number };
+  type Profit = { days: number; by_channel: Record<string, ChProfit>; count: number; revenue_cents: number; cost_cents: number; profit_cents: number; margin_pct: number };
+  const [profitDays, setProfitDays] = useState(30);
+  const profitQ = useQuery({ queryKey: ["admin", "profit", profitDays], queryFn: () => adminApi<Profit>(`/admin/comms/profit?days=${profitDays}`), enabled: tab === "profit", retry: false });
   async function topUp(row: UsageRow) {
     const v = prompt(`Προσθήκη credits (€) στο «${row.name}»:`)?.trim();
     const amt = cents(v || "");
@@ -322,6 +327,50 @@ export default function MessagesCreditsAdminPage() {
             </div>
           )}
         </div>
+        </div>
+      )}
+
+      {/* ── Κέρδος μηνυμάτων (έσοδα − κόστος μας) ── */}
+      {tab === "profit" && (
+        <div className={card}>
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <h3 className="flex items-center gap-2 text-sm font-semibold text-slate-700"><BarChart3 className="h-4 w-4 text-emerald-600" /> Κέρδος μηνυμάτων</h3>
+            <div className="flex gap-1">{[30, 90, 365].map((dd) => <button key={dd} onClick={() => setProfitDays(dd)} className={`rounded-full px-2.5 py-1 text-xs font-semibold ${profitDays === dd ? "bg-emerald-600 text-white" : "border border-slate-200 text-slate-600 hover:bg-slate-50"}`}>{dd === 365 ? "12 μήνες" : `${dd} ημ.`}</button>)}</div>
+          </div>
+          {profitQ.isLoading ? <div className="py-6 text-center text-slate-400">Φόρτωση…</div> : (() => {
+            const p = profitQ.data;
+            return (
+              <>
+                <div className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                  <div className="rounded-xl bg-slate-50 p-3"><div className="text-[11px] uppercase text-slate-400">Έσοδα (χρεώσαμε)</div><div className="text-lg font-bold text-slate-700">{money(p?.revenue_cents ?? 0)}</div></div>
+                  <div className="rounded-xl bg-slate-50 p-3"><div className="text-[11px] uppercase text-slate-400">Κόστος μας</div><div className="text-lg font-bold text-slate-700">{money(p?.cost_cents ?? 0)}</div></div>
+                  <div className="rounded-xl bg-emerald-50 p-3"><div className="text-[11px] uppercase text-emerald-600">Κέρδος</div><div className="text-xl font-extrabold text-emerald-700">{money(p?.profit_cents ?? 0)}</div></div>
+                  <div className="rounded-xl bg-slate-50 p-3"><div className="text-[11px] uppercase text-slate-400">Περιθώριο</div><div className="text-lg font-bold text-slate-700">{p?.margin_pct ?? 0}%</div><div className="text-[11px] text-slate-400">{p?.count ?? 0} μηνύματα</div></div>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead><tr className="border-b border-slate-100 text-left text-xs text-slate-400">
+                      <th className="py-2">Κανάλι</th><th className="text-right">Πλήθος</th><th className="text-right">Έσοδα</th><th className="text-right">Κόστος μας</th><th className="text-right">Κέρδος</th>
+                    </tr></thead>
+                    <tbody className="divide-y divide-slate-50">
+                      {(["sms", "viber", "email"] as const).map((ch) => {
+                        const r = p?.by_channel?.[ch]; if (!r || !r.count) return null;
+                        return <tr key={ch}>
+                          <td className="py-2 font-medium text-slate-700">{ch === "email" ? "✉ Email" : ch === "viber" ? "💬 Viber" : "📱 SMS"}</td>
+                          <td className="text-right tabular-nums text-slate-600">{r.count}</td>
+                          <td className="text-right tabular-nums text-slate-600">{money(r.revenue_cents)}</td>
+                          <td className="text-right tabular-nums text-slate-600">{money(r.cost_cents)}</td>
+                          <td className="text-right tabular-nums font-semibold text-emerald-700">{money(r.profit_cents)}</td>
+                        </tr>;
+                      })}
+                      {!p?.count && <tr><td colSpan={5} className="py-6 text-center text-slate-400">Καμία χρέωση στην περίοδο.</td></tr>}
+                    </tbody>
+                  </table>
+                </div>
+                <p className="mt-3 text-[11px] text-slate-400">Κόστος = πλήθος × «κόστος/κανάλι» που έχεις ορίσει (tab κάθε καναλιού). Έσοδα = τι χρεώσαμε στα φαρμακεία. Εξαιρούνται τα επιστραφέντα (μη παραδοθέντα).</p>
+              </>
+            );
+          })()}
         </div>
       )}
 

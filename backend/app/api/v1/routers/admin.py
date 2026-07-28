@@ -1160,6 +1160,33 @@ async def admin_usage_by_tenant(days: int = 30, _: PlatformContext = Depends(get
             "items": await message_wallet.usage_by_tenant(days=days)}
 
 
+@router.get("/comms/profit")
+async def admin_comms_profit(days: int = 30, _: PlatformContext = Depends(get_platform_admin)):
+    """Κέρδος μηνυμάτων (ΓΙΑ ΕΜΑΣ): έσοδα (τι χρεώσαμε στα φαρμακεία) − κόστος μας (τι μας χρεώνει ο
+    πάροχος) ανά κανάλι + σύνολο & margin. Το κόστος = πλήθος × κόστος/κανάλι (platform_settings.comms.cost)."""
+    db = shared_db()
+    from app.services.platform_secrets import decrypt_doc
+    cfg = decrypt_doc("comms", await db["platform_settings"].find_one({"_id": "comms"})) or {}
+    our_cost = cfg.get("cost") or {}
+    since = datetime.now(tz=timezone.utc) - timedelta(days=int(days))
+    rows: dict = {}
+    async for r in db["sent_messages"].aggregate([
+            {"$match": {"created_at": {"$gte": since}, "cost_cents": {"$gt": 0}, "refunded": {"$ne": True}}},
+            {"$group": {"_id": "$channel", "count": {"$sum": 1}, "revenue": {"$sum": "$cost_cents"}}}]):
+        ch = r["_id"]
+        cnt, rev = int(r["count"] or 0), int(r["revenue"] or 0)
+        unit = int(our_cost.get(ch, 0) or 0)
+        cost = unit * cnt
+        rows[ch] = {"count": cnt, "revenue_cents": rev, "cost_cents": cost,
+                    "profit_cents": rev - cost, "unit_cost_cents": unit}
+    t_cnt = sum(v["count"] for v in rows.values())
+    t_rev = sum(v["revenue_cents"] for v in rows.values())
+    t_cost = sum(v["cost_cents"] for v in rows.values())
+    return {"days": int(days), "by_channel": rows, "count": t_cnt,
+            "revenue_cents": t_rev, "cost_cents": t_cost, "profit_cents": t_rev - t_cost,
+            "margin_pct": round(100 * (t_rev - t_cost) / t_rev, 1) if t_rev else 0}
+
+
 @router.get("/credit-packages")
 async def admin_credit_packages(_: PlatformContext = Depends(get_platform_admin)):
     from app.services import message_wallet
