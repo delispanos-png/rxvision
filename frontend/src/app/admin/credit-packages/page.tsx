@@ -21,10 +21,16 @@ type ApifonBal = { balance?: string; reserved?: string; plafon?: string; subscri
 
 const eur = (c?: number) => ((c ?? 0) / 100).toString();
 const cents = (e: string) => Math.round((parseFloat(e) || 0) * 100);
+// δέχεται και κόμμα (ελληνικό πληκτρολόγιο) και τελεία → αριθμός
+const numOf = (s: string) => parseFloat(String(s ?? "").replace(",", ".").trim());
+// Κόστος μας: κρατάμε 3 δεκαδικά € (= 1 δεκαδικό λεπτού, π.χ. 0.034 € → 3.4 λεπτά) για ακριβές κέρδος
+const costCents = (e: string) => Math.round((numOf(e) || 0) * 1000) / 10;
+// λεπτά(δεκαδικά) → € string με έως 3 δεκαδικά, χωρίς floating-point θόρυβο (3.4 → "0.034")
+const costEur = (c?: number) => (c ? String(Math.round((c || 0) * 10) / 1000) : "");
 const money = (c?: number) => ((c ?? 0) / 100).toLocaleString("el-GR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " €";
 // τιμή πελάτη (cents) = κόστος(€) × (1 + κέρδος%/100) · null αν λείπει κόστος/κέρδος
 const computedPrice = (costStr: string, marginStr: string): number | null => {
-  const co = parseFloat(costStr), m = parseFloat(marginStr);
+  const co = numOf(costStr), m = numOf(marginStr);
   if (!co || isNaN(m)) return null;
   return Math.round(co * 100 * (1 + m / 100));
 };
@@ -70,7 +76,7 @@ function PriceCalc({ cost, setCost, margin, setMargin, current }: { cost: string
   const p = computedPrice(cost, margin);
   return (
     <div className="mt-2 grid items-end gap-3 sm:grid-cols-3">
-      <label className="text-xs text-slate-500">Κόστος μας ανά μήνυμα (€)<input type="number" step="0.001" value={cost} onChange={(e) => setCost(e.target.value)} placeholder="π.χ. 0.04" className={inp} /></label>
+      <label className="text-xs text-slate-500">Κόστος μας ανά μήνυμα (€) <span className="text-slate-400">— έως 3 δεκαδικά</span><input type="text" inputMode="decimal" value={cost} onChange={(e) => setCost(e.target.value.replace(/[^0-9.,]/g, ""))} placeholder="π.χ. 0,034" className={inp} /></label>
       <label className="text-xs text-slate-500">% Κέρδος<input type="number" step="1" value={margin} onChange={(e) => setMargin(e.target.value)} placeholder="π.χ. 50" className={inp} /></label>
       <div className="text-xs text-slate-500">Τιμή πελάτη (χρέωση wallet)<div className="mt-1 rounded-lg bg-indigo-50 px-3 py-2 text-sm font-bold text-indigo-700">{money(p ?? current)}{p == null && <span className="ml-1 text-[10px] font-normal text-slate-400">(τρέχουσα)</span>}</div></div>
     </div>
@@ -100,15 +106,15 @@ export default function MessagesCreditsAdminPage() {
   const [costEmail, setCostEmail] = useState(""); const [marginEmail, setMarginEmail] = useState("");
   useEffect(() => { if (c) {
     setSmsSender(c.sms_sender || ""); setViberSender(c.viber_sender || "");
-    setCostSms(c.cost.sms ? String(c.cost.sms / 100) : ""); setMarginSms(c.margin.sms ? String(c.margin.sms) : "");
-    setCostViber(c.cost.viber ? String(c.cost.viber / 100) : ""); setMarginViber(c.margin.viber ? String(c.margin.viber) : "");
-    setCostEmail(c.cost.email ? String(c.cost.email / 100) : ""); setMarginEmail(c.margin.email ? String(c.margin.email) : "");
+    setCostSms(costEur(c.cost.sms)); setMarginSms(c.margin.sms ? String(c.margin.sms) : "");
+    setCostViber(costEur(c.cost.viber)); setMarginViber(c.margin.viber ? String(c.margin.viber) : "");
+    setCostEmail(costEur(c.cost.email)); setMarginEmail(c.margin.email ? String(c.margin.email) : "");
   } }, [c]);
   // αποθήκευση ρυθμίσεων καναλιού (sender + κόστος/κέρδος → τιμή πελάτη)
   const saveChannel = (ch: "sms" | "viber" | "email", sender: string | null, costStr: string, marginStr: string) => {
     const price = computedPrice(costStr, marginStr);
     const body: Record<string, unknown> = {
-      [`cost_${ch}`]: costStr ? cents(costStr) : null,
+      [`cost_${ch}`]: costStr ? costCents(costStr) : null,
       [`margin_${ch}`]: marginStr !== "" ? parseFloat(marginStr) : null,
     };
     if (ch !== "email") body[`${ch}_sender`] = sender || null;

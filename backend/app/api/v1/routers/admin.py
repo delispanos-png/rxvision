@@ -930,10 +930,12 @@ class IntegrationsIn(BaseModel):
     price_email: int | None = None
     price_sms: int | None = None
     price_viber: int | None = None
-    # Κόστος μας ανά μήνυμα (cents) + ποσοστό κέρδους (%) ανά κανάλι → τιμή πελάτη = cost*(1+margin/100)
-    cost_email: int | None = None
-    cost_sms: int | None = None
-    cost_viber: int | None = None
+    # Κόστος μας ανά μήνυμα (cents, δεκαδικά επιτρεπτά — π.χ. 3.4 λεπτά = €0,034) + ποσοστό κέρδους (%)
+    # ανά κανάλι → τιμή πελάτη = cost*(1+margin/100). Το κόστος είναι ΜΟΝΟ για το report κέρδους· η
+    # πραγματική χρέωση wallet (`prices`) μένει σε ακέραια λεπτά.
+    cost_email: float | None = None
+    cost_sms: float | None = None
+    cost_viber: float | None = None
     margin_email: float | None = None
     margin_sms: float | None = None
     margin_viber: float | None = None
@@ -989,8 +991,8 @@ async def get_integrations(_: PlatformContext = Depends(get_platform_admin)):
                   "viber_sender": comms_cfg.get("viber_sender") or comms_cfg.get("sms_sender") or "RxVision",
                   "prices": {"email": int(_pr.get("email", 2)), "sms": int(_pr.get("sms", 6)),
                              "viber": int(_pr.get("viber", 4))},
-                  "cost": {"email": int(_cost.get("email", 0)), "sms": int(_cost.get("sms", 0)),
-                           "viber": int(_cost.get("viber", 0))},
+                  "cost": {"email": float(_cost.get("email", 0)), "sms": float(_cost.get("sms", 0)),
+                           "viber": float(_cost.get("viber", 0))},
                   "margin": {"email": float(_margin.get("email", 0)), "sms": float(_margin.get("sms", 0)),
                              "viber": float(_margin.get("viber", 0))},
                   "central_low_balance": float(comms_cfg.get("central_low_balance") or 0),
@@ -1090,7 +1092,7 @@ async def set_integrations(body: IntegrationsIn,
         cst = getattr(body, f"cost_{ch}")
         mrg = getattr(body, f"margin_{ch}")
         if cst is not None:
-            cm[f"cost.{ch}"] = int(cst)
+            cm[f"cost.{ch}"] = round(float(cst), 1)   # έως 1 δεκαδικό λεπτού = 3 δεκαδικά €
         if mrg is not None:
             cm[f"margin.{ch}"] = float(mrg)
     if body.central_low_balance is not None:      # όριο κεντρικού υπολοίπου Apifon για alert
@@ -1175,10 +1177,10 @@ async def admin_comms_profit(days: int = 30, _: PlatformContext = Depends(get_pl
             {"$group": {"_id": "$channel", "count": {"$sum": 1}, "revenue": {"$sum": "$cost_cents"}}}]):
         ch = r["_id"]
         cnt, rev = int(r["count"] or 0), int(r["revenue"] or 0)
-        unit = int(our_cost.get(ch, 0) or 0)
-        cost = unit * cnt
+        unit = float(our_cost.get(ch, 0) or 0)     # κόστος/μονάδα σε λεπτά (δεκαδικά, π.χ. 3.4)
+        cost = round(unit * cnt)                    # συνολικό κόστος σε ακέραια λεπτά
         rows[ch] = {"count": cnt, "revenue_cents": rev, "cost_cents": cost,
-                    "profit_cents": rev - cost, "unit_cost_cents": unit}
+                    "profit_cents": rev - cost, "unit_cost_cents": round(unit, 1)}
     t_cnt = sum(v["count"] for v in rows.values())
     t_rev = sum(v["revenue_cents"] for v in rows.values())
     t_cost = sum(v["cost_cents"] for v in rows.values())
