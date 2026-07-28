@@ -10,8 +10,16 @@ from app.workers.celery_app import celery_app
 
 @celery_app.task(name="app.workers.billing.bill_subscriptions")
 def bill_subscriptions() -> dict:
-    from app.services.billing_service import bill_due
-    return asyncio.run(bill_due())
+    """Ημερήσιο: (1) χρέωσε όσες έχουν κάρτα & έληξε η περίοδος (bill_due), μετά (2) λήξε ΟΠΟΙΑΔΗΠΟΤΕ
+    συνδρομή πέρασε την περίοδό της χωρίς ανανέωση (expire_overdue) — ανεξάρτητα τρόπου πληρωμής."""
+    from app.services.billing_service import bill_due, expire_overdue
+
+    async def _run() -> dict:
+        charged = await bill_due()
+        expired = await expire_overdue()
+        return {"bill_due": charged, "expire_overdue": expired}
+
+    return asyncio.run(_run())
 
 
 @celery_app.task(name="app.workers.billing.apply_scheduled_changes")

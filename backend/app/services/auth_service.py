@@ -122,7 +122,7 @@ class AuthService:
         # Enforce subscription/tenant access (kept fresh locally) —
         # a suspended/expired tenant cannot log in, no external call at login time.
         if not await self._tenant_access_ok(user["tenant_id"]):
-            return None
+            return {"access_blocked": True}   # διακριτό σήμα (λήξη συνδρομής/αναστολή) — όχι «λάθος κωδικός»
         # MFA: if enabled, require a valid TOTP code (previously the code was ignored).
         # Distinct signal so the client can prompt for the code after a correct password.
         if user.get("mfa_enabled") and not verify_totp(user.get("mfa_secret", ""), mfa_code or ""):
@@ -209,6 +209,9 @@ class AuthService:
         claim_tid = str(claims.get("tid") or "")
         tid = claim_tid if (claim_tid in await resolve_allowed_tenants(user)
                             and await self._tenant_access_ok(claim_tid)) else str(user["tenant_id"])
+        # Επιβολή περιόδου & σε ΕΝΕΡΓΕΣ συνεδρίες: αν έληξε/ανασταλεί η πρόσβαση → force re-login (μπλόκο).
+        if not await self._tenant_access_ok(tid):
+            return None
         sid = claims.get("sid")
         if sid and not await sessions.is_live(sid):
             sub = await db["subscriptions"].find_one({"tenant_id": tid})   # seats του ΕΝΕΡΓΟΥ

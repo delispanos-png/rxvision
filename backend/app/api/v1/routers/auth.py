@@ -66,6 +66,9 @@ async def login(body: LoginIn, request: Request):
     if result is None:
         await record_login_failure(body.email)  # count only true credential failures
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid_credentials")
+    if result.get("access_blocked"):
+        # Σωστός κωδικός, αλλά η συνδρομή/δοκιμαστική έχει λήξει ή ο λογαριασμός είναι σε αναστολή.
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail={"error": "access_blocked"})
     if result.get("mfa_required"):
         # Password OK but a valid TOTP code is required — client should prompt for it.
         # If a code WAS submitted and rejected, count it as a failure so TOTP guessing also

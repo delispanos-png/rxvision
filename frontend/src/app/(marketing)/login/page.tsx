@@ -75,6 +75,11 @@ export default function LoginPage() {
           `Συμπληρώθηκε το όριο ταυτόχρονων χρηστών${detail.seats ? ` (${detail.seats})` : ""} της συνδρομής σας. ` +
           "Αποσυνδεθείτε από άλλη συσκευή ή αναβαθμίστε τις θέσεις χρηστών."
         );
+      } else if (e instanceof ApiError && e.status === 403 && detail.error === "access_blocked") {
+        setServerError(
+          "Η συνδρομή ή η δοκιμαστική περίοδος του λογαριασμού σας έχει λήξει (ή είναι σε αναστολή). " +
+          "Επικοινωνήστε μαζί μας για ενεργοποίηση/ανανέωση συνδρομής."
+        );
       } else {
         setServerError(
           e instanceof ApiError && e.status === 401

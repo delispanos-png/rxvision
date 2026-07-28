@@ -154,7 +154,7 @@ async def bill_due() -> dict:
     now = _now()
     charged = failed = suspended = 0
     cur = db["subscriptions"].find({"$and": [
-        {"status": {"$in": ["trialing", "active"]}},
+        {"status": {"$in": ["trial", "trialing", "active"]}},
         {"current_period_end": {"$lte": now}},
         {"$or": [{"revolut_customer_id": {"$ne": None}}, {"viva_transaction_id": {"$ne": None}}]},
         {"$or": [{"price_per_pharmacy": {"$gt": 0}}, {"addons_total": {"$gt": 0}}]},
@@ -186,6 +186,32 @@ async def bill_due() -> dict:
                 await _suspend(tid, "payment_failed")
                 suspended += 1
     return {"charged": charged, "failed": failed, "suspended": suspended}
+
+
+async def expire_overdue() -> dict:
+    """ΚΑΘΕ συνδρομή (δοκιμαστική / με κάρτα / χωρίς κάρτα) έχει περίοδο αρχή–τέλος. Όταν λήξει η
+    περίοδος (current_period_end / trial_ends_at) και ΔΕΝ ανανεωθεί μετά την περίοδο χάριτος → 'expired'
+    → μπλοκάρεται η πρόσβαση. ΑΝΕΞΑΡΤΗΤΑ τρόπου πληρωμής.
+
+    Τρέχει ΜΕΤΑ το bill_due (που ανανεώνει όσες έχουν κάρτα με επιτυχή χρέωση, ή τις κάνει past_due→
+    suspend στη δυσπραγία). Εδώ πιάνουμε όσες ΔΕΝ έχουν κάρτα να χρεωθεί (trial/χωρίς κάρτα/τραπεζική
+    που δεν ανανεώθηκε) — η ανανέωση γίνεται με επέκταση της period από τον admin (π.χ. έγκριση κατάθεσης)."""
+    db = shared_db()
+    now = _now()
+    cfg = await db["platform_settings"].find_one({"_id": "billing"}) or {}
+    grace = max(0, int(cfg.get("trial_grace_days", 3)))     # ημέρες χάριτος μετά τη λήξη
+    cutoff = now - timedelta(days=grace)
+    expired = 0
+    cur = db["subscriptions"].find({
+        "status": {"$in": ["trial", "trialing", "active", "past_due"]},
+        "current_period_end": {"$lte": cutoff},
+        "revolut_customer_id": None, "viva_transaction_id": None,   # όσες ΔΕΝ αναλαμβάνει το bill_due
+    })
+    async for sub in cur:
+        await db["subscriptions"].update_one({"tenant_id": sub["tenant_id"]}, {"$set": {
+            "status": "expired", "payment_status": "expired", "expired_at": now}})
+        expired += 1
+    return {"expired": expired, "grace_days": grace}
 
 
 async def handle_viva_webhook(event_data: dict) -> None:
