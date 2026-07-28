@@ -22,6 +22,13 @@ def bill_subscriptions() -> dict:
     return asyncio.run(_run())
 
 
+@celery_app.task(name="app.workers.billing.subscription_reminders")
+def subscription_reminders() -> dict:
+    """Ημερήσιο: προειδοποιητικά email πριν τη λήξη + καθημερινά «η συνδρομή σας έχει λήξει» μετά."""
+    from app.services.billing_service import subscription_reminders as _run
+    return asyncio.run(_run())
+
+
 @celery_app.task(name="app.workers.billing.apply_scheduled_changes")
 def apply_scheduled_changes() -> dict:
     """Apply plan downgrades whose scheduled effective date (period end / renewal) has arrived."""

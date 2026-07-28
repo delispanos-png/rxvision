@@ -188,30 +188,105 @@ async def bill_due() -> dict:
     return {"charged": charged, "failed": failed, "suspended": suspended}
 
 
-async def expire_overdue() -> dict:
-    """ΚΑΘΕ συνδρομή (δοκιμαστική / με κάρτα / χωρίς κάρτα) έχει περίοδο αρχή–τέλος. Όταν λήξει η
-    περίοδος (current_period_end / trial_ends_at) και ΔΕΝ ανανεωθεί μετά την περίοδο χάριτος → 'expired'
-    → μπλοκάρεται η πρόσβαση. ΑΝΕΞΑΡΤΗΤΑ τρόπου πληρωμής.
+async def _grace_cfg() -> tuple[int, int]:
+    """(trial_grace, active_grace) σε ημέρες. Trials: 0 (λήγουν άμεσα). Ενεργές: 10μ περιθώριο."""
+    cfg = await shared_db()["platform_settings"].find_one({"_id": "billing"}) or {}
+    return max(0, int(cfg.get("trial_grace_days", 0))), max(0, int(cfg.get("active_grace_days", 10)))
 
-    Τρέχει ΜΕΤΑ το bill_due (που ανανεώνει όσες έχουν κάρτα με επιτυχή χρέωση, ή τις κάνει past_due→
-    suspend στη δυσπραγία). Εδώ πιάνουμε όσες ΔΕΝ έχουν κάρτα να χρεωθεί (trial/χωρίς κάρτα/τραπεζική
-    που δεν ανανεώθηκε) — η ανανέωση γίνεται με επέκταση της period από τον admin (π.χ. έγκριση κατάθεσης)."""
+
+async def expire_overdue() -> dict:
+    """ΚΑΘΕ συνδρομή έχει περίοδο αρχή–τέλος· η επιβολή είναι ΑΝΕΞΑΡΤΗΤΗ τρόπου πληρωμής.
+    • Δοκιμαστική (trial/trialing): λήγει ΑΜΕΣΩΣ στο τέλος (grace 0) → 'expired' (μπλόκο).
+    • Ενεργή (active): μετά τη λήξη μπαίνει σε ΠΕΡΙΘΩΡΙΟ (past_due, ΚΡΑΤΑ πρόσβαση) για `active_grace`
+      ημέρες· αν δεν ανανεωθεί → 'expired' (μπλόκο).
+    Πιάνει όσες ΔΕΝ έχουν κάρτα να χρεωθεί (το bill_due αναλαμβάνει τις κάρτες). Ανανέωση = επέκταση
+    της period από τον admin (π.χ. έγκριση κατάθεσης)."""
     db = shared_db()
     now = _now()
-    cfg = await db["platform_settings"].find_one({"_id": "billing"}) or {}
-    grace = max(0, int(cfg.get("trial_grace_days", 3)))     # ημέρες χάριτος μετά τη λήξη
-    cutoff = now - timedelta(days=grace)
-    expired = 0
-    cur = db["subscriptions"].find({
-        "status": {"$in": ["trial", "trialing", "active", "past_due"]},
-        "current_period_end": {"$lte": cutoff},
-        "revolut_customer_id": None, "viva_transaction_id": None,   # όσες ΔΕΝ αναλαμβάνει το bill_due
-    })
-    async for sub in cur:
+    trial_grace, active_grace = await _grace_cfg()
+    no_card = {"revolut_customer_id": None, "viva_transaction_id": None}
+    expired = graced = 0
+    # 1) Δοκιμαστικές → λήξη άμεσα (grace 0 by default)
+    async for sub in db["subscriptions"].find({
+            "status": {"$in": ["trial", "trialing"]},
+            "current_period_end": {"$lte": now - timedelta(days=trial_grace)}, **no_card}):
         await db["subscriptions"].update_one({"tenant_id": sub["tenant_id"]}, {"$set": {
             "status": "expired", "payment_status": "expired", "expired_at": now}})
         expired += 1
-    return {"expired": expired, "grace_days": grace}
+    # 2) Ενεργές → περιθώριο 10μ (past_due, κρατά πρόσβαση) → μετά expired
+    async for sub in db["subscriptions"].find({
+            "status": {"$in": ["active", "past_due"]},
+            "current_period_end": {"$lte": now}, **no_card}):
+        days_over = (now - sub["current_period_end"]).days
+        if days_over > active_grace:
+            await db["subscriptions"].update_one({"tenant_id": sub["tenant_id"]}, {"$set": {
+                "status": "expired", "payment_status": "expired", "expired_at": now}})
+            expired += 1
+        elif sub.get("status") != "past_due":
+            await db["subscriptions"].update_one({"tenant_id": sub["tenant_id"]}, {"$set": {
+                "status": "past_due", "payment_status": "past_due"}})   # μπαίνει σε περιθώριο
+            graced += 1
+    return {"expired": expired, "graced": graced, "trial_grace": trial_grace, "active_grace": active_grace}
+
+
+async def _billing_email(db, tid: str, tenant: dict) -> str | None:
+    """Email χρέωσης του φαρμακείου: billing_profile → αλλιώς ο ιδιοκτήτης χρήστης."""
+    bp = tenant.get("billing_profile") or {}
+    email = bp.get("email") or bp.get("billing_email")
+    if not email:
+        u = await db["users"].find_one({"tenant_id": tid}, {"email": 1}, sort=[("created_at", 1)])
+        email = (u or {}).get("email")
+    return email or None
+
+
+def _sub_email_html(name: str, days_left: int) -> tuple[str, str]:
+    """(subject, html). days_left>0 = προειδοποίηση πριν· <=0 = έχει λήξει."""
+    salu = f"Αγαπητέ/ή {name}," if name else "Αγαπητέ/ή πελάτη,"
+    if days_left > 0:
+        d = "1 ημέρα" if days_left == 1 else f"{days_left} ημέρες"
+        return (f"Η συνδρομή σας λήγει σε {d}",
+                f"<p>{salu}</p><p>Η συνδρομή σας στο <b>RxVision</b> λήγει σε <b>{d}</b>. "
+                "Για να συνεχίσετε χωρίς διακοπή, ανανεώστε τη συνδρομή σας ή επικοινωνήστε με το "
+                "<b>τμήμα πωλήσεων</b>.</p><p>— RxVision</p>")
+    return ("Η συνδρομή σας έχει λήξει",
+            f"<p>{salu}</p><p>Η συνδρομή σας στο <b>RxVision</b> <b>έχει λήξει</b>. "
+            "Παρακαλούμε <b>επικοινωνήστε με το τμήμα πωλήσεων</b> για ενεργοποίηση/ανανέωση, ώστε να "
+            "αποκατασταθεί η πρόσβασή σας.</p><p>— RxVision</p>")
+
+
+async def subscription_reminders() -> dict:
+    """Ημερήσια emails: προειδοποίηση 7/3/1 ημέρες ΠΡΙΝ τη λήξη· και ΚΑΘΗΜΕΡΙΝΑ ΜΕΤΑ τη λήξη
+    («η συνδρομή σας έχει λήξει — επικοινωνήστε με το τμήμα πωλήσεων»), μέχρι 30μ. Idempotent/ημέρα."""
+    from app.services import mailer
+    db = shared_db()
+    now = _now()
+    today = now.date().isoformat()
+    warn = {7, 3, 1}
+    sent = 0
+    async for sub in db["subscriptions"].find({
+            "status": {"$in": ["trial", "trialing", "active", "past_due", "expired"]},
+            "current_period_end": {"$ne": None}}):
+        pend = sub.get("current_period_end")
+        if not pend:
+            continue
+        days = (pend.date() - now.date()).days      # >0 πριν, <=0 μετά
+        if not ((days in warn and sub.get("status") in ("trial", "trialing", "active")) or (-30 <= days <= 0)):
+            continue
+        if sub.get("last_reminder_date") == today:   # ήδη στάλθηκε σήμερα
+            continue
+        tid = sub["tenant_id"]
+        tenant = await db["tenants"].find_one({"_id": tid}) or {}
+        email = await _billing_email(db, tid, tenant)
+        if not email:
+            continue
+        subject, html = _sub_email_html(tenant.get("name") or "", days)
+        try:
+            await mailer.send_email(email, subject, html)
+            await db["subscriptions"].update_one({"tenant_id": tid}, {"$set": {"last_reminder_date": today}})
+            sent += 1
+        except Exception:  # noqa: BLE001 — ένα αποτυχημένο email δεν ρίχνει το batch
+            pass
+    return {"sent": sent}
 
 
 async def handle_viva_webhook(event_data: dict) -> None:

@@ -105,6 +105,11 @@ celery_app.conf.beat_schedule = {
         "task": "app.workers.billing.bill_subscriptions",
         "schedule": crontab(hour=6, minute=0),
     },
+    # Ειδοποιήσεις συνδρομής — προειδοποίηση πριν τη λήξη + καθημερινά «έχει λήξει» μετά (08:00 UTC)
+    "subscription-reminders": {
+        "task": "app.workers.billing.subscription_reminders",
+        "schedule": crontab(hour=8, minute=0),
+    },
     # Εφαρμογή προγραμματισμένων υποβαθμίσεων πακέτου στο τέλος περιόδου/ανανέωση (καθημερινά 05:30 UTC)
     "apply-scheduled-plan-changes": {
         "task": "app.workers.billing.apply_scheduled_changes",
