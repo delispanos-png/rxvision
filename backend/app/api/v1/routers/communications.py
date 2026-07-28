@@ -41,28 +41,41 @@ class TopupIn(BaseModel):
 
 @router.post("/topup")
 async def topup(body: TopupIn, ctx: TenantContext = Depends(require("billing:manage"))):
-    """Buy a message-credit package. Creates a Revolut checkout order; the webhook credits the wallet
-    on ORDER_COMPLETED. Returns the widget token + mode for the client-side Revolut popup."""
-    from app.services import revolut_service
+    """Αγορά πακέτου credits μηνυμάτων μέσω του ΕΝΕΡΓΟΥ παρόχου. Το webhook πιστώνει το wallet όταν
+    ολοκληρωθεί η πληρωμή. Viva → {ok, provider:"viva", checkout_url} (redirect, κάρτα/IRIS)·
+    Revolut → {ok, token, mode} (widget)."""
+    from app.services import revolut_service, viva_service, billing_service
     pkg = await message_wallet.get_package(body.package_id)
     if not pkg:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "unknown_package")
-    if not await revolut_service.is_configured():
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "revolut_not_configured")
     t = await shared_db()["tenants"].find_one(
         {"_id": ctx.tenant_id}, {"name": 1, "company": 1, "billing_profile": 1}) or {}
     comp, bill = t.get("company") or {}, t.get("billing_profile") or {}
     email = bill.get("email") or comp.get("email") or bill.get("billing_email") or "billing@rxvision.gr"
     name = comp.get("name") or bill.get("name") or t.get("name") or ctx.tenant_id
+    desc = f"RxVision — μηνύματα {pkg.get('name', '')}"
+    if await billing_service.active_provider() == "viva":
+        if not await viva_service.is_configured():
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "viva_not_configured")
+        res = await viva_service.create_checkout_order(
+            amount=int(pkg["price_cents"]), ref=f"topup:{ctx.tenant_id}", description=desc,
+            email=email, full_name=name)
+        if not res.get("ok"):
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, res.get("error", "viva_error"))
+        await message_wallet.record_pending_topup(ctx.tenant_id, pkg, res["order_code"])
+        return {"ok": True, "provider": "viva", "checkout_url": res["checkout_url"],
+                "credits_cents": int(pkg["credits_cents"])}
+    if not await revolut_service.is_configured():
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "no_payment_provider")
     res = await revolut_service.create_topup_order(
         amount=int(pkg["price_cents"]), currency="EUR", email=email, name=name,
-        tenant_id=ctx.tenant_id, description=f"RxVision — μηνύματα {pkg.get('name', '')}")
+        tenant_id=ctx.tenant_id, description=desc)
     if not res.get("ok"):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, res.get("error", "revolut_error"))
     await message_wallet.record_pending_topup(ctx.tenant_id, pkg, res["order_id"])
     mode = (await revolut_service.config()).get("mode", "sandbox")
-    return {"ok": True, "token": res["token"], "order_id": res["order_id"], "mode": mode,
-            "credits_cents": int(pkg["credits_cents"])}
+    return {"ok": True, "provider": "revolut", "token": res["token"], "order_id": res["order_id"],
+            "mode": mode, "credits_cents": int(pkg["credits_cents"])}
 
 
 async def _test_send(channel: str, to: str, tenant_id: str):

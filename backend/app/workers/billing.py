@@ -29,6 +29,13 @@ def subscription_reminders() -> dict:
     return asyncio.run(_run())
 
 
+@celery_app.task(name="app.workers.billing.check_central_balance")
+def check_central_balance() -> dict:
+    """Έλεγχος κεντρικού υπολοίπου Apifon → ειδοποίηση admin αν πέσει κάτω από όριο (να μη στερέψει)."""
+    from app.services.comms import check_central_balance as _run
+    return asyncio.run(_run())
+
+
 @celery_app.task(name="app.workers.billing.apply_scheduled_changes")
 def apply_scheduled_changes() -> dict:
     """Apply plan downgrades whose scheduled effective date (period end / renewal) has arrived."""

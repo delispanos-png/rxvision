@@ -937,6 +937,8 @@ class IntegrationsIn(BaseModel):
     margin_email: float | None = None
     margin_sms: float | None = None
     margin_viber: float | None = None
+    central_low_balance: float | None = None    # όριο κεντρικού υπολοίπου Apifon → alert
+    admin_alert_email: str | None = None        # που στέλνεται το alert
 
 
 @router.get("/integrations")
@@ -990,7 +992,11 @@ async def get_integrations(_: PlatformContext = Depends(get_platform_admin)):
                   "cost": {"email": int(_cost.get("email", 0)), "sms": int(_cost.get("sms", 0)),
                            "viber": int(_cost.get("viber", 0))},
                   "margin": {"email": float(_margin.get("email", 0)), "sms": float(_margin.get("sms", 0)),
-                             "viber": float(_margin.get("viber", 0))}},
+                             "viber": float(_margin.get("viber", 0))},
+                  "central_low_balance": float(comms_cfg.get("central_low_balance") or 0),
+                  "admin_alert_email": comms_cfg.get("admin_alert_email") or "",
+                  "central_balance_last": comms_cfg.get("central_balance_last"),
+                  "central_low_alerted": bool(comms_cfg.get("central_low_alerted"))},
     }
 
 
@@ -1087,6 +1093,10 @@ async def set_integrations(body: IntegrationsIn,
             cm[f"cost.{ch}"] = int(cst)
         if mrg is not None:
             cm[f"margin.{ch}"] = float(mrg)
+    if body.central_low_balance is not None:      # όριο κεντρικού υπολοίπου Apifon για alert
+        cm["central_low_balance"] = float(body.central_low_balance)
+    if body.admin_alert_email is not None:
+        cm["admin_alert_email"] = body.admin_alert_email
     if cm:
         cm["updated_at"] = datetime.now(tz=timezone.utc)
         await db["platform_settings"].update_one(

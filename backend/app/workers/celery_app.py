@@ -110,6 +110,11 @@ celery_app.conf.beat_schedule = {
         "task": "app.workers.billing.subscription_reminders",
         "schedule": crontab(hour=8, minute=0),
     },
+    # Κεντρικό υπόλοιπο Apifon — έλεγχος & ειδοποίηση admin αν πέσει χαμηλά (κάθε 6 ώρες)
+    "check-central-balance": {
+        "task": "app.workers.billing.check_central_balance",
+        "schedule": crontab(minute=10, hour="*/6"),
+    },
     # Εφαρμογή προγραμματισμένων υποβαθμίσεων πακέτου στο τέλος περιόδου/ανανέωση (καθημερινά 05:30 UTC)
     "apply-scheduled-plan-changes": {
         "task": "app.workers.billing.apply_scheduled_changes",

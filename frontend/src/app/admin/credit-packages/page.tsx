@@ -10,7 +10,7 @@ import { adminApi } from "@/lib/adminClient";
 
 type Pkg = { _id: string; name?: string; price_cents?: number; credits_cents?: number; active?: boolean };
 type PriceMap = { email: number; sms: number; viber: number };
-type Comms = { apifon_token_set: boolean; apifon_secret_set: boolean; apifon_token_tail?: string; apifon_secret_tail?: string; updated_at?: string; sms_sender: string; viber_sender: string; prices: PriceMap; cost: PriceMap; margin: PriceMap };
+type Comms = { apifon_token_set: boolean; apifon_secret_set: boolean; apifon_token_tail?: string; apifon_secret_tail?: string; updated_at?: string; sms_sender: string; viber_sender: string; prices: PriceMap; cost: PriceMap; margin: PriceMap; central_low_balance?: number; admin_alert_email?: string; central_balance_last?: number; central_low_alerted?: boolean };
 type Integr = { comms?: Comms };
 type Tenant = { id: string; name: string; afm?: string | null; msg_balance?: number };
 type Smtp = { host?: string; port?: number; username?: string; from_email?: string; from_name?: string; use_tls?: boolean; insecure_tls?: boolean; has_password?: boolean };
@@ -117,6 +117,7 @@ export default function MessagesCreditsAdminPage() {
 
   // Apifon account creds
   const [cid, setCid] = useState(""); const [csec, setCsec] = useState("");
+  const [lowBal, setLowBal] = useState(""); const [alertEmail, setAlertEmail] = useState("");
 
   // central email (SMTP)
   const smtpQ = useQuery({ queryKey: ["admin", "smtp"], queryFn: () => adminApi<Smtp>("/admin/smtp"), retry: false });
@@ -343,6 +344,17 @@ export default function MessagesCreditsAdminPage() {
               </div>
             )}
             <p className="mt-3 text-[11px] text-slate-400">Αυτό είναι το υπόλοιπο του ΚΕΝΤΡΙΚΟΥ λογαριασμού μας στην Apifon (SMS/Viber). Όταν πέφτει, γεμίζουμε τον λογαριασμό Apifon — ανεξάρτητο από τα credits των φαρμακείων.</p>
+
+            {/* Ειδοποίηση χαμηλού κεντρικού υπολοίπου */}
+            <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50/60 p-3">
+              <div className="text-xs font-semibold text-amber-900">🔔 Ειδοποίηση χαμηλού υπολοίπου (σε εμάς)</div>
+              <p className="mt-0.5 text-[11px] text-amber-700">Όταν το κεντρικό υπόλοιπο πέσει κάτω από το όριο, στέλνουμε email να ξαναγεμίσεις — για να μη διακοπούν τα μηνύματα ΟΛΩΝ των φαρμακείων. {c?.central_low_alerted ? <b className="text-rose-600">· Ενεργή ειδοποίηση τώρα!</b> : ""}{typeof c?.central_balance_last === "number" ? ` · Τελευταία μέτρηση: €${c.central_balance_last}` : ""}</p>
+              <div className="mt-2 flex flex-wrap items-end gap-2">
+                <label className="text-xs text-slate-500">Όριο (€)<input type="number" step="1" value={lowBal} onChange={(e) => setLowBal(e.target.value)} placeholder={String(c?.central_low_balance ?? 0)} className={`${inp} w-28`} /></label>
+                <label className="text-xs text-slate-500">Email ειδοποίησης<input value={alertEmail} onChange={(e) => setAlertEmail(e.target.value)} placeholder={c?.admin_alert_email || "delis.panos@gmail.com"} className={`${inp} w-64`} /></label>
+                {saveBtn(() => saveIntegr.mutate({ central_low_balance: lowBal !== "" ? +lowBal : null, admin_alert_email: alertEmail || null }), saveIntegr.isPending, "Αποθήκευση")}
+              </div>
+            </div>
           </div>
 
           <div className={card}>

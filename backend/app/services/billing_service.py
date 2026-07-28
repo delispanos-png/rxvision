@@ -338,18 +338,27 @@ async def handle_viva_webhook(event_data: dict) -> None:
     """Viva «Transaction Payment Created» webhook → αποθήκευσε το transaction id (recurring seed) &
     μάρκαρε card_saved. tenant = MerchantTrns· επιβεβαίωση με re-fetch της συναλλαγής (StatusId 'F')."""
     db = shared_db()
-    tid = event_data.get("MerchantTrns") or event_data.get("merchantTrns")
     order_code = str(event_data.get("OrderCode") or "")
     txn = event_data.get("TransactionId") or event_data.get("transactionId")
-    if not tid and order_code:
-        sub = await db["subscriptions"].find_one({"viva_order_code": order_code}, {"tenant_id": 1})
-        tid = (sub or {}).get("tenant_id")
-    if not tid or not txn:
+    if not txn:
         return
     # επιβεβαίωση: re-fetch της συναλλαγής από το Viva (source of truth) — μη εμπιστεύεσαι το payload
     info = await viva_service.get_transaction(str(txn))
     status_id = str((info or {}).get("StatusId") or event_data.get("StatusId") or "")
     if status_id and status_id != "F":       # F = Finished (επιτυχής)
+        return
+    # (1) top-up μηνυμάτων (order_code = viva order_code, αποθηκευμένο ως order_id στο pending) → πίστωση wallet
+    if order_code:
+        from app.services import message_wallet
+        if await message_wallet.complete_topup(order_code):
+            return
+    # (2) συνδρομή: card-save + recurring seed. MerchantTrns = tenant_id (τα top-up έχουν "topup:…" → αγνόησε)
+    mt = event_data.get("MerchantTrns") or event_data.get("merchantTrns")
+    tid = mt if (mt and not str(mt).startswith("topup:")) else None
+    if not tid and order_code:
+        sub = await db["subscriptions"].find_one({"viva_order_code": order_code}, {"tenant_id": 1})
+        tid = (sub or {}).get("tenant_id")
+    if not tid:
         return
     await db["subscriptions"].update_one({"tenant_id": tid}, {"$set": {
         "payment_provider": "viva", "viva_transaction_id": str(txn),

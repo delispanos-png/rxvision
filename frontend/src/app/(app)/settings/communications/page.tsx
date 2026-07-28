@@ -62,9 +62,10 @@ export default function CommsSettingsPage() {
   async function buy(pid: string) {
     setBuying(pid);
     try {
-      const r = await api<{ token: string; mode: string }>("/communications/topup", { method: "POST", body: JSON.stringify({ package_id: pid }) });
-      await payWithRevolut(r.token, r.mode);
-      setTimeout(() => q.refetch(), 3000);   // wallet is credited asynchronously by the Revolut webhook
+      const r = await api<{ token?: string; mode?: string; provider?: string; checkout_url?: string }>("/communications/topup", { method: "POST", body: JSON.stringify({ package_id: pid }) });
+      if (r.provider === "viva" && r.checkout_url) { window.location.href = r.checkout_url; return; }  // κάρτα/IRIS
+      await payWithRevolut(r.token!, r.mode!);
+      setTimeout(() => q.refetch(), 3000);   // wallet is credited asynchronously by the webhook
       appAlert(t("Η πληρωμή ολοκληρώθηκε — το υπόλοιπο ενημερώνεται σε λίγο. ✅", "Payment done — balance updates shortly. ✅"));
     } catch (e) {
       appAlert(t("Αποτυχία αγοράς: ", "Purchase failed: ") + (e as Error).message);

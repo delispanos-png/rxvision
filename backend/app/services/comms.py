@@ -13,10 +13,15 @@ from __future__ import annotations
 
 import asyncio
 import json
+from datetime import datetime, timezone
 
 import httpx
 
 from app.core.db import shared_db
+
+
+def _now() -> datetime:
+    return datetime.now(tz=timezone.utc)
 from app.services import mailer, message_wallet
 
 _APIFON_BASE = "https://ars.apifon.com"
@@ -68,6 +73,41 @@ async def apifon_balance() -> dict:
     if r.status_code >= 300:
         raise RuntimeError(f"Apifon balance error {r.status_code}: {r.text[:200]}")
     return r.json()
+
+
+async def check_central_balance() -> dict:
+    """Ειδοποίησε τον platform admin όταν το ΚΕΝΤΡΙΚΟ υπόλοιπο Apifon πέσει κάτω από όριο, ώστε να μη
+    «στερέψει» ο κοινός λογαριασμός και διακοπούν ΟΛΑ τα φαρμακεία. Idempotent: μία ειδοποίηση μέχρι
+    να ανακάμψει (flag `central_low_alerted`). Όριο & email admin: platform_settings.comms."""
+    from app.services.platform_secrets import decrypt_doc
+    db = shared_db()
+    cfg = decrypt_doc("comms", await db["platform_settings"].find_one({"_id": "comms"})) or {}
+    threshold = float(cfg.get("central_low_balance") or 0)
+    if threshold <= 0:
+        return {"skipped": "no_threshold"}
+    try:
+        bal = await apifon_balance()
+    except Exception as e:  # noqa: BLE001
+        return {"error": str(e)[:150]}
+    balance = float(bal.get("balance") or 0)
+    alerted = bool(cfg.get("central_low_alerted"))
+    upd = {"central_balance_last": balance, "central_balance_checked_at": _now()}
+    if balance < threshold and not alerted:
+        admin_email = cfg.get("admin_alert_email") or "delis.panos@gmail.com"
+        from app.services import mailer
+        try:
+            await mailer.send_email(
+                admin_email, "⚠️ RxVision — Χαμηλό κεντρικό υπόλοιπο Apifon",
+                f"<p>Το <b>κεντρικό</b> υπόλοιπο Apifon έπεσε στα <b>{balance}</b> (όριο {threshold}).</p>"
+                "<p>Κάνε ανανέωση μονάδων στον λογαριασμό Apifon για να μη διακοπούν τα μηνύματα των "
+                "φαρμακείων (όλα αντλούν από αυτόν τον κοινό λογαριασμό).</p><p>— RxVision</p>")
+        except Exception:  # noqa: BLE001
+            pass
+        upd["central_low_alerted"] = True
+    elif balance >= threshold and alerted:
+        upd["central_low_alerted"] = False   # ανάκαμψη → reset (θα ξαναειδοποιήσει αν ξαναπέσει)
+    await db["platform_settings"].update_one({"_id": "comms"}, {"$set": upd}, upsert=True)
+    return {"balance": balance, "threshold": threshold, "low": balance < threshold}
 
 
 # ── Email (central SMTP, pharmacy display name + reply-to) ───────────────────
