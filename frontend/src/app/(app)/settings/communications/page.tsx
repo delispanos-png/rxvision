@@ -52,6 +52,10 @@ export default function CommsSettingsPage() {
   const pkgs = useQuery({ queryKey: ["credit-packages"], queryFn: () => api<{ items: Pkg[] }>("/communications/credit-packages"), retry: false });
   type Msg = { id: string; channel: string; recipient: string; status: string; cost_cents: number; kind?: string; subject?: string | null; refunded?: boolean; created_at: string | null; delivered_at?: string | null };
   const msgs = useQuery({ queryKey: ["comms", "messages"], queryFn: () => api<{ items: Msg[]; summary_30d: Record<string, number> }>("/communications/messages"), retry: false, refetchInterval: 30000 });
+  type Charge = { id: string; channel: string; recipient: string; status: string; cost_cents: number; refunded: boolean; created_at: string | null };
+  type ChargesRes = { items: Charge[]; days: number; total_cents: number; count: number; by_channel: Record<string, number>; refunded_cents: number };
+  const [chDays, setChDays] = useState(30);
+  const charges = useQuery({ queryKey: ["comms", "charges", chDays], queryFn: () => api<ChargesRes>(`/communications/charges?days=${chDays}`), retry: false });
   const ST: Record<string, { el: string; cls: string }> = {
     sent: { el: "Εστάλη", cls: "bg-sky-100 text-sky-700" },
     delivered: { el: "Παραδόθηκε", cls: "bg-emerald-100 text-emerald-700" },
@@ -177,6 +181,44 @@ export default function CommsSettingsPage() {
                 </tr>
               ))}
               {!msgs.data?.items?.length && <tr><td colSpan={5} className="py-6 text-center text-slate-400">{msgs.isLoading ? t("Φόρτωση…", "Loading…") : t("Δεν έχουν σταλεί μηνύματα ακόμη.", "No messages sent yet.")}</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </PanelCard>
+
+      {/* Χρεώσεις αποστολών — έλεγχος των χρεώσεών μας ανά αποστολή, με σύνολα */}
+      <PanelCard collapsible title={t("Χρεώσεις αποστολών", "Send charges")}>
+        <div className="mb-3 flex flex-wrap items-center gap-2">
+          <span className="text-xs text-slate-500">{t("Περίοδος", "Period")}:</span>
+          {[30, 90, 365].map((dd) => (
+            <button key={dd} onClick={() => setChDays(dd)} className={`rounded-full px-2.5 py-1 text-xs font-semibold ${chDays === dd ? "bg-brand-600 text-white" : "border border-slate-200 text-slate-600 hover:bg-slate-50"}`}>{dd === 365 ? t("12 μήνες", "12 mo") : `${dd} ${t("ημέρες", "days")}`}</button>
+          ))}
+        </div>
+        <div className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <div className="rounded-xl bg-brand-50 p-3"><div className="text-[11px] uppercase text-brand-600">{t("Σύνολο χρεώσεων", "Total charged")}</div><div className="text-xl font-extrabold text-brand-700">{eur(charges.data?.total_cents ?? 0)}</div><div className="text-[11px] text-slate-400">{charges.data?.count ?? 0} {t("αποστολές", "sends")}</div></div>
+          {(["email", "sms", "viber"] as const).map((ch) => (
+            <div key={ch} className="rounded-xl bg-slate-50 p-3"><div className="text-[11px] uppercase text-slate-400">{ch === "email" ? "✉ Email" : ch === "viber" ? "💬 Viber" : "📱 SMS"}</div><div className="text-lg font-bold text-slate-700">{eur(charges.data?.by_channel?.[ch] ?? 0)}</div></div>
+          ))}
+        </div>
+        {(charges.data?.refunded_cents ?? 0) > 0 && <p className="mb-2 text-[11px] text-emerald-600">↩ {t("Επιστροφές (μη παραδοθέντα)", "Refunds (undelivered)")}: {eur(charges.data!.refunded_cents)} — δεν προσμετρώνται στο σύνολο.</p>}
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead><tr className="border-b border-slate-100 text-left text-xs text-slate-400 dark:border-slate-800">
+              <th className="py-2">{t("Ημ/νία", "Date")}</th>
+              <th>{t("Παραλήπτης", "Recipient")}</th>
+              <th>{t("Κανάλι", "Channel")}</th>
+              <th className="text-right">{t("Χρέωση", "Charge")}</th>
+            </tr></thead>
+            <tbody className="divide-y divide-slate-50 dark:divide-slate-800">
+              {(charges.data?.items ?? []).map((m) => (
+                <tr key={m.id} className={m.refunded ? "opacity-60" : ""}>
+                  <td className="whitespace-nowrap py-2 text-slate-500">{m.created_at ? new Date(m.created_at).toLocaleString("el-GR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "—"}</td>
+                  <td className="text-slate-700 dark:text-slate-200">{m.recipient}</td>
+                  <td className="text-slate-500">{m.channel === "email" ? "✉ Email" : m.channel === "viber" ? "💬 Viber" : "📱 SMS"}</td>
+                  <td className="text-right font-medium text-slate-700">{m.refunded ? <span className="text-emerald-600 line-through">{eur(m.cost_cents)}</span> : eur(m.cost_cents)}</td>
+                </tr>
+              ))}
+              {!charges.data?.items?.length && <tr><td colSpan={4} className="py-6 text-center text-slate-400">{charges.isLoading ? t("Φόρτωση…", "Loading…") : t("Καμία χρέωση στην περίοδο.", "No charges in this period.")}</td></tr>}
             </tbody>
           </table>
         </div>

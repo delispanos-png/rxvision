@@ -276,6 +276,40 @@ async def messages(status_f: str | None = Query(None, alias="status"),
     return {"items": out, "summary_30d": agg}
 
 
+@router.get("/charges")
+async def charges(days: int = Query(30, ge=1, le=365), channel: str | None = None,
+                  limit: int = Query(300, ge=1, le=1000),
+                  ctx: TenantContext = Depends(require("patients:read", module=_MODULE))):
+    """Λίστα ΧΡΕΩΣΕΩΝ ανά αποστολή (για έλεγχο των δικών μας χρεώσεων): ημ/νία, κανάλι, παραλήπτης,
+    χρέωση (cents), κατάσταση, αν έγινε επιστροφή. + ΣΥΝΟΛΑ ανά κανάλι & γενικό (καθαρό, χωρίς refunds)."""
+    db = shared_db()
+    since = datetime.now(tz=timezone.utc) - timedelta(days=days)
+    q: dict = {"tenant_id": ctx.tenant_id, "created_at": {"$gte": since}, "cost_cents": {"$gt": 0}}
+    if channel:
+        q["channel"] = channel
+    items = []
+    async for d in db["sent_messages"].find(q).sort("created_at", -1).limit(limit):
+        items.append({"id": str(d["_id"]), "channel": d.get("channel"), "recipient": d.get("recipient"),
+                      "status": d.get("status"), "cost_cents": int(d.get("cost_cents", 0) or 0),
+                      "refunded": bool(d.get("refunded")), "kind": d.get("kind"),
+                      "created_at": d.get("created_at")})
+    # ΣΥΝΟΛΑ σε ΟΛΗ την περίοδο (όχι μόνο στο limit) — καθαρή χρέωση = εκτός refunded
+    by_channel: dict = {}
+    total = count = 0
+    async for r in db["sent_messages"].aggregate([
+            {"$match": {**q, "refunded": {"$ne": True}}},
+            {"$group": {"_id": "$channel", "sum": {"$sum": "$cost_cents"}, "n": {"$sum": 1}}}]):
+        by_channel[r["_id"]] = int(r["sum"] or 0)
+        total += int(r["sum"] or 0); count += int(r["n"] or 0)
+    refunded_cents = 0
+    async for r in db["sent_messages"].aggregate([
+            {"$match": {**q, "refunded": True}},
+            {"$group": {"_id": None, "sum": {"$sum": "$cost_cents"}}}]):
+        refunded_cents = int(r["sum"] or 0)
+    return {"items": items, "days": days, "total_cents": total, "count": count,
+            "by_channel": by_channel, "refunded_cents": refunded_cents}
+
+
 # ── Apifon delivery-receipt (DLR) webhook — ΔΗΜΟΣΙΟ (η Apifon το καλεί) ──────────────────────────
 @router.post("/apifon-dlr", include_in_schema=False)
 async def apifon_dlr(request: Request):
