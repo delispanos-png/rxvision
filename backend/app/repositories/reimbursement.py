@@ -129,17 +129,24 @@ class ReimbursementRepository(BaseRepository):
         # ασθενή 100% (`details.full_participation=True`). Αν έστω ΕΝΑ φάρμακο <100% (0/10/20/12,5%…) →
         # υποβάλλεται κανονικά. ΔΕΝ κρίνεται από claim==0 (25% μπορεί να έχει claim=0) ούτε από narcotic.
         # Το flag υπολογίζεται στο ingest (_map_full) & backfilled από τα per-item participation_pct.
+        # claim ανά ταμείο = ΚΑΘΑΡΟ πρωτεύον (ΕΟΠΥΥ) = amount_claimed − ΚΥΥΑΠ κάλυψη (το ΚΥΥΑΠ κομμάτι
+        # εμφανίζεται ΜΟΝΟ στη ξεχωριστή γραμμή «ΕΤΥΑΠ»). ΤΟ ΚΥΥΑΠ ΕΙΝΑΙ ΑΝΑ ΣΥΝΤΑΓΗ (visit), γραμμένο
+        # σε ΚΑΘΕ εκτέλεση/είδος → αφαιρείται ΜΙΑ φορά ανά visit (αλλιώς διπλή αφαίρεση σε πολυ-εκτελέσεις).
         by_fund_raw = await self._db["prescription_executions"].aggregate([
             {"$match": {**match, "amount_total": {"$gt": 0},
                         "details.full_participation": {"$ne": True}}},
             {"$group": {"_id": {"fund": "$fund_id",
                                 "vac": {"$ifNull": ["$details.vaccines", False]},
-                                "fyk": {"$ifNull": ["$details.n3816", False]}},
+                                "fyk": {"$ifNull": ["$details.n3816", False]},
+                                "visit": {"$ifNull": ["$details.visit_id", "$_id"]}},
                         "rx": {"$sum": 1}, "retail": {"$sum": "$amount_total"},
-                        # claim ανά ταμείο = ΚΑΘΑΡΟ πρωτεύον (ΕΟΠΥΥ) = amount_claimed − ΚΥΥΑΠ κάλυψη·
-                        # το κομμάτι ΚΥΥΑΠ εμφανίζεται ΜΟΝΟ στη ξεχωριστή γραμμή «ΕΤΥΑΠ» (όχι διπλά).
-                        "claim": {"$sum": {"$subtract": ["$amount_claimed", {"$ifNull": ["$details.kyyap_covered", 0]}]}},
+                        "amount_claimed": {"$sum": "$amount_claimed"},
+                        "kyyap": {"$max": {"$ifNull": ["$details.kyyap_covered", 0]}},
                         "patient": {"$sum": "$patient_share"}}},
+            {"$group": {"_id": {"fund": "$_id.fund", "vac": "$_id.vac", "fyk": "$_id.fyk"},
+                        "rx": {"$sum": "$rx"}, "retail": {"$sum": "$retail"},
+                        "claim": {"$sum": {"$subtract": ["$amount_claimed", "$kyyap"]}},
+                        "patient": {"$sum": "$patient"}}},
         ]).to_list(None)
         grouped: dict = defaultdict(lambda: {"rx": 0, "retail": 0, "claim": 0, "patient": 0,
                                              "is_eopyy": False, "is_vaccine": False})
@@ -274,13 +281,20 @@ class ReimbursementRepository(BaseRepository):
                  "status": {"$ne": "cancelled"}}
         perfund: dict = defaultdict(lambda: defaultdict(lambda: {"rx": 0, "claim": 0, "retail": 0, "patient": 0}))
         # ΥΠΟΒΑΛΛΟΜΕΝΕΣ ανά (ταμείο, ημέρα)· claim = ΚΑΘΑΡΟ πρωτεύον (− ΚΥΥΑΠ)
+        # claim = ΚΑΘΑΡΟ πρωτεύον (− ΚΥΥΑΠ)· το ΚΥΥΑΠ ανά ΣΥΝΤΑΓΗ (visit) → αφαιρείται ΜΙΑ φορά ανά visit
         for r in await self._db["prescription_executions"].aggregate([
             {"$match": {**match, "amount_total": {"$gt": 0}, "details.full_participation": {"$ne": True}}},
             {"$group": {"_id": {"fund": "$fund_id", "vac": {"$ifNull": ["$details.vaccines", False]},
-                                "day": {"$dateToString": {"format": "%Y-%m-%d", "date": "$executed_at"}}},
+                                "day": {"$dateToString": {"format": "%Y-%m-%d", "date": "$executed_at"}},
+                                "visit": {"$ifNull": ["$details.visit_id", "$_id"]}},
                         "rx": {"$sum": 1}, "retail": {"$sum": "$amount_total"},
-                        "claim": {"$sum": {"$subtract": ["$amount_claimed", {"$ifNull": ["$details.kyyap_covered", 0]}]}},
+                        "amount_claimed": {"$sum": "$amount_claimed"},
+                        "kyyap": {"$max": {"$ifNull": ["$details.kyyap_covered", 0]}},
                         "patient": {"$sum": "$patient_share"}}},
+            {"$group": {"_id": {"fund": "$_id.fund", "vac": "$_id.vac", "day": "$_id.day"},
+                        "rx": {"$sum": "$rx"}, "retail": {"$sum": "$retail"},
+                        "claim": {"$sum": {"$subtract": ["$amount_claimed", "$kyyap"]}},
+                        "patient": {"$sum": "$patient"}}},
         ]).to_list(None):
             label, _ = self._grp_label(meta, r["_id"]["fund"], bool(r["_id"]["vac"]))
             e = perfund[label][r["_id"]["day"]]
