@@ -1377,7 +1377,8 @@ async def assign_package(tenant_id: str, body: AssignPackageIn,
     cycle = body.billing_cycle or sub.get("billing_cycle") or "monthly"
     yearly = cycle == "yearly"
     price = int(pkg.get("price_yearly" if yearly else "price_monthly", 0) or 0)
-    seats = max(1, int(body.seats or pkg.get("seats", 1) or 1))
+    # ΒΑΣΗ 1 δωρεάν χρήστης· default 1 (όχι το max του πλάνου)· cap στο max του πλάνου («έως N»)
+    seats = min(int(pkg.get("seats", 1) or 1), max(1, int(body.seats or 1)))
     upd = {
         "plan": body.package_code, "plan_name": pkg.get("name"),
         "modules_included": pkg.get("modules", []),

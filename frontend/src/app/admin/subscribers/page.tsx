@@ -201,7 +201,7 @@ function OpenTenantModal({ onClose, onDone }: { onClose: () => void; onDone: () 
   function choosePkg(code: string) {
     setPkgCode(code);
     const p = pkgs.find((x) => x._id === code);
-    if (p) { if (p.sla) setSla(p.sla); setSeats(p.seats ?? 1); }
+    if (p) { if (p.sla) setSla(p.sla); setSeats(1); }   // ΒΑΣΗ: 1 χρήστης· έξτρα ο admin τους προσθέτει χειροκίνητα
   }
   function genPassword() {
     const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789!@#$%";
@@ -247,10 +247,9 @@ function OpenTenantModal({ onClose, onDone }: { onClose: () => void; onDone: () 
   const yearly = billing === "yearly";
   const per = yearly ? "έτος" : "μήνα";
   const basePrice = pkg ? (yearly ? (pkg.price_yearly ?? 0) : pkg.price_monthly) : 0;
-  const maxIncluded = Math.max(1, pkg?.seats ?? 1);   // package MAX («έως N»), not a minimum
-  const extraAllowed = ((pkg?.extra_user_price ?? 0) > 0) || ((pkg?.extra_user_price_yearly ?? 0) > 0);
-  const maxSeats = extraAllowed ? 999 : maxIncluded;
-  const extraUsers = Math.max(0, seats - maxIncluded);
+  const includedFree = 1;                             // ΒΑΣΗ: 1 δωρεάν ταυτόχρονος χρήστης σε ΚΑΘΕ πλάνο
+  const maxSeats = Math.max(1, pkg?.seats ?? 1);      // ΜΕΓΙΣΤΟ όριο πλάνου («έως N»)
+  const extraUsers = Math.max(0, seats - includedFree);   // έξτρα πάνω από τη βάση (1) → χρεώσιμα
   const extraRate = (yearly ? pkg?.extra_user_price_yearly : pkg?.extra_user_price) ?? 0;
   const extraTotal = extraUsers * extraRate;
   const slaPrice = (yearly ? slaObj?.price_yearly : slaObj?.price_monthly) ?? 0;
@@ -328,7 +327,7 @@ function OpenTenantModal({ onClose, onDone }: { onClose: () => void; onDone: () 
                   <button type="button" onClick={() => setSeats((n) => Math.max(1, n - 1))} className="grid h-9 w-9 place-items-center rounded-lg border border-slate-300 text-lg text-slate-600 hover:bg-slate-50">−</button>
                   <input type="number" min={1} max={maxSeats} value={seats} onChange={(e) => setSeats(Math.min(maxSeats, Math.max(1, parseInt(e.target.value) || 1)))} className={`${inpc} w-20 text-center`} />
                   <button type="button" disabled={seats >= maxSeats} onClick={() => setSeats((n) => Math.min(maxSeats, n + 1))} className="grid h-9 w-9 place-items-center rounded-lg border border-slate-300 text-lg text-slate-600 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40">+</button>
-                  <span className="text-xs text-slate-400">{extraAllowed && extraUsers > 0 ? `Έως ${maxIncluded} + ${extraUsers} έξτρα` : `Έως ${maxIncluded} χρήστες σε αυτό το πακέτο`}</span>
+                  <span className="text-xs text-slate-400">{extraUsers > 0 ? `1 βάση + ${extraUsers} έξτρα (έως ${maxSeats})` : `1 χρήστης (έως ${maxSeats} στο πακέτο)`}</span>
                 </div>
               </div>
               <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">

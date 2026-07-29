@@ -100,12 +100,11 @@ class TenantProvisioningService:
         price = package.get("price_yearly", 0) if yearly else package.get("price_monthly", 0)
         # seats & cost breakdown: base package + chosen SLA tier + extra concurrent users
         sla_code = sla or package.get("sla")
-        included_seats = int(package.get("seats", 1) or 1)   # package MAX («έως N»), not a minimum
+        max_seats = int(package.get("seats", 1) or 1)        # ΜΕΓΙΣΤΟ όριο πλάνου («έως N»)
         extra_rate = int(package.get("extra_user_price_yearly" if yearly else "extra_user_price", 0) or 0)
-        chosen_seats = max(1, int(seats or included_seats))   # 1…N
-        if extra_rate <= 0:                                    # no extra-user pricing → hard cap at the package max
-            chosen_seats = min(chosen_seats, included_seats)
-        extra_users = max(0, chosen_seats - included_seats)
+        included_free = 1                                     # ΒΑΣΗ: 1 δωρεάν ταυτόχρονος χρήστης σε ΚΑΘΕ πλάνο
+        chosen_seats = min(max_seats, max(1, int(seats or 1)))  # default 1· πάντα cap στο max του πλάνου
+        extra_users = max(0, chosen_seats - included_free)   # extra = πάνω από τη βάση (1) → χρεώσιμα
         sla_doc = await db["sla_tiers"].find_one({"_id": sla_code}) if sla_code else None
         sla_price = int((sla_doc or {}).get("price_yearly" if yearly else "price_monthly", 0) or 0)
         extra_total = extra_users * extra_rate

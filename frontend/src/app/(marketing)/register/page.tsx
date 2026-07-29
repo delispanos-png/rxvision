@@ -75,12 +75,10 @@ export default function RegisterWizard() {
   const yearly = billing === "yearly";
   const per = yearly ? "έτος" : "μήνα";
   const basePrice = (yearly ? pkg?.price_yearly : pkg?.price_monthly) ?? 0;
-  // pkg.seats = το ΑΝΩΤΑΤΟ όριο χρηστών του πακέτου («έως N»), όχι ελάχιστο: ο πελάτης διαλέγει 1…N.
-  const maxIncluded = Math.max(1, pkg?.seats ?? 1);
-  // extra concurrent users beyond the package max are only allowed when the package prices them.
-  const extraAllowed = ((pkg?.extra_user_price ?? 0) > 0) || ((pkg?.extra_user_price_yearly ?? 0) > 0);
-  const maxSeats = extraAllowed ? 999 : maxIncluded;
-  const extraUsers = Math.max(0, seats - maxIncluded);
+  // ΒΑΣΗ: 1 δωρεάν ταυτόχρονος χρήστης σε ΚΑΘΕ πλάνο. pkg.seats = το ΑΝΩΤΑΤΟ όριο («έως N»).
+  const includedFree = 1;
+  const maxSeats = Math.max(1, pkg?.seats ?? 1);      // ΜΕΓΙΣΤΟ όριο πλάνου («έως N»)
+  const extraUsers = Math.max(0, seats - includedFree);   // έξτρα πάνω από τη βάση (1) → χρεώσιμα
   const extraRate = (yearly ? pkg?.extra_user_price_yearly : pkg?.extra_user_price) ?? 0;
   const extraTotal = extraUsers * extraRate;
   const slaPrice = (yearly ? slaObj?.price_yearly : slaObj?.price_monthly) ?? 0;
@@ -93,9 +91,9 @@ export default function RegisterWizard() {
     .reduce((s, a) => s + ((yearly ? a.price_yearly : a.price_monthly) ?? 0), 0);
   const price = basePrice + slaPrice + extraTotal + addonsTotal;   // full subscription value
   const trialDays = pkg?.trial_days ?? 14;
-  // when the package changes: default seats to the package's max allowance (the customer can lower to 1),
-  // drop add-ons now bundled in the plan, and switch the billing cycle if not offered.
-  useEffect(() => { setSeats(maxIncluded); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [pkgCode, maxIncluded]);
+  // when the package changes: default seats to 1 (base), drop add-ons now bundled in the plan,
+  // and switch the billing cycle if not offered. Ο πελάτης ανεβάζει έξτρα χρήστες χειροκίνητα (χρεώσιμοι).
+  useEffect(() => { setSeats(1); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [pkgCode]);
   useEffect(() => { setSelAddons((sel) => sel.filter((id) => availAddons.some((a) => a._id === id))); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [pkgCode]);
   useEffect(() => { if (!cycles.includes(billing)) setBilling(cycles[0]); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [pkgCode]);
 
@@ -328,7 +326,7 @@ export default function RegisterWizard() {
                     <button type="button" onClick={() => setSeats((n) => Math.max(1, n - 1))} className="grid h-9 w-9 place-items-center rounded-lg border border-slate-300 text-lg text-slate-600 hover:bg-slate-50">−</button>
                     <input type="number" min={1} max={maxSeats} value={seats} onChange={(e) => setSeats(Math.min(maxSeats, Math.max(1, parseInt(e.target.value) || 1)))} className={`${input} w-20 text-center`} />
                     <button type="button" disabled={seats >= maxSeats} onClick={() => setSeats((n) => Math.min(maxSeats, n + 1))} className="grid h-9 w-9 place-items-center rounded-lg border border-slate-300 text-lg text-slate-600 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40">+</button>
-                    <span className="text-xs text-slate-400">{extraAllowed && extraUsers > 0 ? <>Έως {maxIncluded} + {extraUsers} έξτρα</> : <>Έως {maxIncluded} χρήστες σε αυτό το πακέτο</>}</span>
+                    <span className="text-xs text-slate-400">{extraUsers > 0 ? <>1 βάση + {extraUsers} έξτρα (έως {maxSeats})</> : <>1 χρήστης (έως {maxSeats} στο πακέτο)</>}</span>
                   </div>
                 </div>
                 <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
