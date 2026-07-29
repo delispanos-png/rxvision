@@ -165,9 +165,14 @@ class ReimbursementRepository(BaseRepository):
             by_fund.append(row)
         # ΕΤΥΑΠ: secondary-fund coverage (details.kyyap_covered) — a SEPARATE αιτούμενο that
         # contracted pharmacies claim on top of ΕΟΠΥΥ. No rebate/discount, no patient share.
+        # kyyap_covered = ποσό ΑΝΑ ΣΥΝΤΑΓΗ (visit), γραμμένο σε ΚΑΘΕ εκτέλεση/είδος της → το αιτούμενο
+        # ΕΤΥΑΠ μετριέται ΜΙΑ φορά ανά visit (αλλιώς διπλομέτρηση όταν η συνταγή έχει >1 εκτελέσεις).
+        # Το πλήθος (rx) παραμένει σε εκτελέσεις.
         et = await self._db["prescription_executions"].aggregate([
             {"$match": {**match, "details.kyyap_covered": {"$gt": 0}}},
-            {"$group": {"_id": None, "rx": {"$sum": 1}, "claim": {"$sum": "$details.kyyap_covered"}}},
+            {"$group": {"_id": {"$ifNull": ["$details.visit_id", "$_id"]},
+                        "kyyap": {"$first": "$details.kyyap_covered"}, "n": {"$sum": 1}}},
+            {"$group": {"_id": None, "rx": {"$sum": "$n"}, "claim": {"$sum": "$kyyap"}}},
         ]).to_list(1)
         etyap_claim = (et[0]["claim"] if et else 0) or 0
         if etyap_claim > 0:
@@ -250,13 +255,13 @@ class ReimbursementRepository(BaseRepository):
         if row["fund"] == EOPYY_MED:
             net = row.get("receipt", c)
             return {"issue": True, "amount": net,
-                    "text": (f"Τιμολόγιο προς ΕΟΠΥΥ (Φάρμακα): αιτούμενο €{eur_gr(c)} − Rebate €{eur_gr(row.get('rebate', 0))} "
-                             f"− Έκπτωση τζίρου €{eur_gr(row.get('discount', 0))} = καθαρό €{eur_gr(net)}.")}
+                    "text": (f"Τιμολόγιο προς ΕΟΠΥΥ (Φάρμακα): αιτούμενο €{eur_gr(c, 2)} − Rebate €{eur_gr(row.get('rebate', 0), 2)} "
+                             f"− Έκπτωση τζίρου €{eur_gr(row.get('discount', 0), 2)} = καθαρό €{eur_gr(net, 2)}.")}
         if row["fund"] == EOPYY_VAC:
-            return {"issue": True, "amount": c, "text": f"Τιμολόγιο προς ΕΟΠΥΥ (Εμβόλια): €{eur_gr(c)} (χωρίς rebate/έκπτωση)."}
+            return {"issue": True, "amount": c, "text": f"Τιμολόγιο προς ΕΟΠΥΥ (Εμβόλια): €{eur_gr(c, 2)} (χωρίς rebate/έκπτωση)."}
         if row["fund"] == "ΕΤΥΑΠ":
-            return {"issue": True, "amount": c, "text": f"Τιμολόγιο προς ΕΤΥΑΠ (συμπληρωματική κάλυψη): €{eur_gr(c)}."}
-        return {"issue": True, "amount": c, "text": f"Τιμολόγιο προς {row['fund']}: €{eur_gr(c)}."}
+            return {"issue": True, "amount": c, "text": f"Τιμολόγιο προς ΕΤΥΑΠ (συμπληρωματική κάλυψη): €{eur_gr(c, 2)}."}
+        return {"issue": True, "amount": c, "text": f"Τιμολόγιο προς {row['fund']}: €{eur_gr(c, 2)}."}
 
     async def closing_report(self, period: str) -> dict:
         """Αναλυτική εκτύπωση/άποψη κλεισίματος: ΑΝΑ ΤΑΜΕΙΟ × ΑΝΑ ΗΜΕΡΑ (πλήθος + αιτούμενο + λιανική +
@@ -282,10 +287,13 @@ class ReimbursementRepository(BaseRepository):
             for k in ("rx", "claim", "retail", "patient"):
                 e[k] += r[k]
         # ΕΤΥΑΠ (ΚΥΥΑΠ κάλυψη — δευτερεύουσα υποβολή) ανά ημέρα
+        # ΕΤΥΑΠ ανά ημέρα: το kyyap μετριέται ΜΙΑ φορά ανά ΣΥΝΤΑΓΗ (visit) — dedup· πλήθος σε εκτελέσεις.
         for r in await self._db["prescription_executions"].aggregate([
             {"$match": {**match, "details.kyyap_covered": {"$gt": 0}}},
-            {"$group": {"_id": {"$dateToString": {"format": "%Y-%m-%d", "date": "$executed_at"}},
-                        "rx": {"$sum": 1}, "claim": {"$sum": "$details.kyyap_covered"}}},
+            {"$group": {"_id": {"visit": {"$ifNull": ["$details.visit_id", "$_id"]},
+                                "day": {"$dateToString": {"format": "%Y-%m-%d", "date": "$executed_at"}}},
+                        "kyyap": {"$first": "$details.kyyap_covered"}, "n": {"$sum": 1}}},
+            {"$group": {"_id": "$_id.day", "rx": {"$sum": "$n"}, "claim": {"$sum": "$kyyap"}}},
         ]).to_list(None):
             e = perfund["ΕΤΥΑΠ"][r["_id"]]
             e["rx"] += r["rx"]; e["claim"] += r["claim"]
