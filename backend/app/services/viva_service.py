@@ -23,9 +23,11 @@ from app.core.db import shared_db
 _URLS = {
     "live": {"accounts": "https://accounts.vivapayments.com",
              "api": "https://api.vivapayments.com",
+             "web": "https://www.vivapayments.com",
              "checkout": "https://www.vivapayments.com/web/checkout?ref="},
     "demo": {"accounts": "https://demo-accounts.vivapayments.com",
              "api": "https://demo-api.vivapayments.com",
+             "web": "https://demo.vivapayments.com",
              "checkout": "https://demo.vivapayments.com/web/checkout?ref="},
 }
 
@@ -40,8 +42,10 @@ async def platform_config() -> dict:
 
 
 async def _creds(creds: dict | None) -> dict:
-    """Χρησιμοποίησε τα δοσμένα creds (e-shop, ανά φαρμακείο) ή τα platform creds (συνδρομές)."""
-    return creds if creds is not None else await platform_config()
+    """Χρησιμοποίησε τα δοσμένα creds (e-shop, ανά φαρμακείο) ή τα platform creds (συνδρομές).
+    Trim σε κάθε string πεδίο — κρυφά κενά/tabs από copy-paste (π.χ. API key) σπάνε το Basic/OAuth auth."""
+    c = creds if creds is not None else await platform_config()
+    return {k: (v.strip() if isinstance(v, str) else v) for k, v in (c or {}).items()}
 
 
 def is_ready(creds: dict) -> bool:
@@ -148,7 +152,8 @@ async def webhook_verification_key(creds: dict | None = None) -> str | None:
         return None
     try:
         async with httpx.AsyncClient(timeout=15) as cl:
-            r = await cl.get(f"{_urls(c)['api']}/api/messages/config/token",
+            # Το webhook verification-key ζει στον MAIN host (www./demo.vivapayments.com), όχι στο api.
+            r = await cl.get(f"{_urls(c)['web']}/api/messages/config/token",
                              headers={"Authorization": _basic(c)})
             r.raise_for_status()
             return r.json().get("Key")

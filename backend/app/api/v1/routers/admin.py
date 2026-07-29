@@ -1027,16 +1027,17 @@ async def set_integrations(body: IntegrationsIn,
         await db["platform_settings"].update_one(
             {"_id": "revolut"}, {"$set": encrypt_fields("revolut", r)}, upsert=True)
     v = {}
+    # trim: κρυφά κενά/tabs από copy-paste (ιδίως στο API key) σπάνε το Basic/OAuth auth της Viva
     if body.viva_client_id is not None:
-        v["client_id"] = body.viva_client_id
+        v["client_id"] = body.viva_client_id.strip()
     if body.viva_client_secret:
-        v["client_secret"] = body.viva_client_secret
+        v["client_secret"] = body.viva_client_secret.strip()
     if body.viva_merchant_id is not None:
-        v["merchant_id"] = body.viva_merchant_id
+        v["merchant_id"] = body.viva_merchant_id.strip()
     if body.viva_api_key:
-        v["api_key"] = body.viva_api_key
+        v["api_key"] = body.viva_api_key.strip()
     if body.viva_source_code is not None:
-        v["source_code"] = body.viva_source_code
+        v["source_code"] = body.viva_source_code.strip()
     if body.viva_mode:
         v["mode"] = body.viva_mode
     if v:
