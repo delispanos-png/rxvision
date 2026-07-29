@@ -58,6 +58,91 @@ async def register(body: RegisterIn):
         raise HTTPException(status.HTTP_409_CONFLICT, detail={"error": str(exc)})
 
 
+# ── Φάση 1: πληρωμή-πρώτα (pending → Viva → materialize) ────────────────────────────────
+class IntentIn(BaseModel):
+    pharmacy_name: str = Field(..., min_length=2, max_length=120)
+    country: Literal["GR", "CY"] = "GR"
+    owner_email: EmailStr
+    owner_name: str = Field(..., min_length=2, max_length=120)
+    company: CompanyIn | None = None
+    package_code: str | None = Field(None, max_length=40)
+    billing_cycle: Literal["monthly", "yearly"] | None = None
+    sla: str | None = Field(None, max_length=40)
+    seats: int | None = Field(None, ge=1, le=999)
+    payment_method: Literal["card", "bank"] = "card"
+    addons: list[str] | None = None
+
+
+class CompleteIn(BaseModel):
+    pending_id: str = Field(..., min_length=8, max_length=64)
+    password: str = Field(..., min_length=8, max_length=128)
+    full_name: str | None = Field(None, max_length=120)
+
+
+@router.get("/check-afm/{afm}",
+            dependencies=[Depends(rate_limit("onboarding_afm", limit=60, window_seconds=600))])
+async def check_afm(afm: str):
+    """Υπάρχει ήδη συνδρομή για αυτό το ΑΦΜ; → μπλοκ διπλής εγγραφής (boolean, χωρίς διαρροή στοιχείων)."""
+    return {"exists": await OnboardingService().afm_exists(afm)}
+
+
+@router.post("/register-intent", status_code=201,
+             dependencies=[Depends(rate_limit("onboarding_intent", limit=10, window_seconds=600))])
+async def register_intent(body: IntentIn):
+    """Δημιουργεί προσωρινή εγγραφή (ΧΩΡΙΣ λογαριασμό) & ξεκινά την πληρωμή. Κάρτα → Viva checkout_url."""
+    svc = OnboardingService()
+    try:
+        pending = await svc.create_pending(
+            pharmacy_name=body.pharmacy_name, country=body.country,
+            owner_email=body.owner_email, owner_name=body.owner_name,
+            company=body.company.model_dump() if body.company else {},
+            package_code=body.package_code, billing_cycle=body.billing_cycle,
+            sla=body.sla, seats=body.seats, addons=body.addons,
+            payment_method=body.payment_method)
+    except OnboardingError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, detail={"error": str(exc)})
+    pid = pending["pending_id"]
+    if body.payment_method == "card":
+        from app.core.db import shared_db
+        from app.services import viva_service
+        order = await viva_service.create_checkout_order(
+            amount=pending["amount_cents"], ref=f"signup:{pid}",
+            description=f"RxVision {body.billing_cycle or 'monthly'} — {body.pharmacy_name}",
+            email=body.owner_email, full_name=body.owner_name, allow_recurring=True)
+        if not order.get("ok"):
+            raise HTTPException(status.HTTP_502_BAD_GATEWAY, detail={"error": order.get("error", "viva_error")})
+        await shared_db()["pending_registrations"].update_one(
+            {"_id": pid}, {"$set": {"viva_order_code": order.get("order_code")}})
+        return {"pending_id": pid, "checkout_url": order["checkout_url"], "amount_cents": pending["amount_cents"]}
+    # bank → αναμονή έγκρισης admin (Φάση 2)
+    return {"pending_id": pid, "status": "awaiting_bank_approval", "amount_cents": pending["amount_cents"]}
+
+
+@router.get("/register-status/{pending_id}",
+            dependencies=[Depends(rate_limit("onboarding_status", limit=120, window_seconds=600))])
+async def register_status(pending_id: str):
+    """Poll κατάστασης προσωρινής εγγραφής μετά την επιστροφή από Viva."""
+    p = await OnboardingService().get_pending(pending_id)
+    if not p:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail={"error": "not_found"})
+    return {"status": p.get("status"), "payment_method": p.get("payment_method"),
+            "owner_email": p.get("owner_email"), "owner_name": p.get("owner_name")}
+
+
+@router.post("/register-complete", status_code=201,
+             dependencies=[Depends(rate_limit("onboarding_complete", limit=10, window_seconds=600))])
+async def register_complete(body: CompleteIn):
+    """Ολοκλήρωση: ο πελάτης βάζει κωδικό ΜΟΝΟ αφού επιβεβαιωθεί η πληρωμή → δημιουργείται ο λογαριασμός."""
+    try:
+        return await OnboardingService().materialize(
+            pending_id=body.pending_id, password=body.password, full_name=body.full_name)
+    except OnboardingError as exc:
+        code = (status.HTTP_409_CONFLICT if str(exc) in ("payment_not_confirmed", "already_completed",
+                                                         "email_already_registered")
+                else status.HTTP_400_BAD_REQUEST)
+        raise HTTPException(code, detail={"error": str(exc)})
+
+
 @router.get("/packages",
             dependencies=[Depends(rate_limit("onboarding_packages", limit=60, window_seconds=600))])
 async def public_packages():

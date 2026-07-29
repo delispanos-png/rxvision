@@ -48,7 +48,11 @@ class OnboardingService:
                        package_code: str | None = None, billing_cycle: str | None = None,
                        sla: str | None = None, seats: int | None = None,
                        payment_method: str | None = None,
-                       addons: list[str] | None = None) -> dict:
+                       addons: list[str] | None = None,
+                       activate: bool = False,
+                       viva_transaction_id: str | None = None) -> dict:
+        """Δημιουργεί tenant + συνδρομή + owner + tokens. activate=True → ΠΛΗΡΩΜΕΝΗ, ενεργή συνδρομή
+        (χωρίς trial· κάρτα αποθηκευμένη μέσω viva_transaction_id). activate=False → legacy trial."""
         country = country.upper()
         if country not in _COUNTRY_SETTINGS:
             raise OnboardingError("unsupported_country")
@@ -61,7 +65,7 @@ class OnboardingService:
 
         await db["tenants"].insert_one({
             "_id": tid, "name": pharmacy_name, "slug": tid, "country": country,
-            "status": "trial", "isolation_tier": "shared", "settings": settings,
+            "status": "active" if activate else "trial", "isolation_tier": "shared", "settings": settings,
             "modules": {}, "credentials_ref": {"hdika": None, "gesy": None},
             "billing_profile": company or {},
             "created_at": _now(), "updated_at": _now(),
@@ -71,7 +75,9 @@ class OnboardingService:
         pkg = await db["packages"].find_one({"_id": package_code}) if package_code else None
         cycle = billing_cycle or "monthly"
         yearly = cycle == "yearly"
-        trial_days = int((pkg or {}).get("trial_days", _TRIAL_DAYS))
+        # paid activation → ΚΑΜΙΑ δοκιμή· η περίοδος τρέχει από τώρα (μήνας/έτος). Αλλιώς legacy trial.
+        trial_days = 0 if activate else int((pkg or {}).get("trial_days", _TRIAL_DAYS))
+        period_days = (365 if yearly else 30) if activate else trial_days
         price = (pkg or {}).get("price_yearly" if yearly else "price_monthly", 0) if pkg else 0
         # seats & cost breakdown: base package + chosen SLA tier + extra concurrent users
         sla_code = sla or (pkg or {}).get("sla", "basic")
@@ -103,9 +109,9 @@ class OnboardingService:
         price_total = int(price) + sla_price + extra_total + addons_total
         await db["subscriptions"].insert_one({
             "tenant_id": tid, "plan": package_code or "free_trial",
-            "status": "trialing" if trial_days else "active",
+            "status": "active" if activate else ("trialing" if trial_days else "active"),
             "billing_cycle": cycle, "sla": sla_code,
-            "trial_ends_at": _now() + timedelta(days=trial_days), "seats": chosen_seats,
+            "trial_ends_at": None if activate else _now() + timedelta(days=trial_days), "seats": chosen_seats,
             "price_per_pharmacy": price, "currency": "EUR",
             "addons": chosen_addons, "addons_total": addons_total,
             # cost analysis as agreed at signup (cents, for the chosen cycle)
@@ -113,9 +119,13 @@ class OnboardingService:
             "extra_users_total": extra_total, "price_total": price_total,
             "modules_included": (pkg or {}).get("modules") or _MODULES,
             "limits": {"pharmacies": 1, "history_months": 36, "api_sync": True},
-            "current_period_end": _now() + timedelta(days=trial_days), "created_at": _now(),
-            "payment_provider": None, "payment_status": "trial",
-            # how the customer chose to pay at signup: "card" (Revolut capture) or "bank" (manual transfer)
+            "current_period_end": _now() + timedelta(days=period_days), "created_at": _now(),
+            # paid activation → κάρτα αποθηκευμένη στη Viva (recurring seed = viva_transaction_id)
+            "payment_provider": "viva" if activate else None,
+            "payment_status": "card_saved" if activate else "trial",
+            "viva_transaction_id": viva_transaction_id if activate else None,
+            "started_at": _now(),
+            # how the customer chose to pay at signup: "card" (Viva) or "bank" (manual transfer)
             "payment_method": payment_method or "card",
         })
         await seed_rbac(tenant_id=tid)
@@ -133,3 +143,92 @@ class OnboardingService:
             "ingestion_source": "HDIKA" if country == "GR" else "GESY",
             **(tokens or {}),
         }
+
+    # ── Φάση 1: πληρωμή-πρώτα (pending registration → materialize μετά την πληρωμή) ──────────
+    async def afm_exists(self, afm: str) -> bool:
+        """Υπάρχει ήδη tenant με αυτό το ΑΦΜ; (για μπλοκ διπλής εγγραφής)."""
+        afm = (afm or "").strip()
+        if not afm:
+            return False
+        return await shared_db()["tenants"].count_documents({"billing_profile.afm": afm}) > 0
+
+    async def get_pending(self, pending_id: str) -> dict | None:
+        return await shared_db()["pending_registrations"].find_one({"_id": pending_id})
+
+    async def create_pending(self, *, pharmacy_name: str, country: str, owner_email: str,
+                             owner_name: str, company: dict, package_code: str | None,
+                             billing_cycle: str | None, sla: str | None, seats: int | None,
+                             addons: list[str] | None, payment_method: str) -> dict:
+        """Προσωρινή εγγραφή ΠΡΙΝ την πληρωμή — ΔΕΝ δημιουργεί λογαριασμό. Επιστρέφει {pending_id,
+        amount_cents}. Ο λογαριασμός υλοποιείται με `materialize()` μετά την επιβεβαίωση πληρωμής."""
+        country = (country or "GR").upper()
+        if country not in _COUNTRY_SETTINGS:
+            raise OnboardingError("unsupported_country")
+        db = shared_db()
+        if await db["users"].find_one({"email": owner_email}):
+            raise OnboardingError("email_already_registered")
+        afm = ((company or {}).get("afm") or "").strip()
+        if afm and await self.afm_exists(afm):
+            raise OnboardingError("afm_already_registered")
+        pkg = await db["packages"].find_one({"_id": package_code}) if package_code else None
+        yearly = (billing_cycle == "yearly")
+        price = int((pkg or {}).get("price_yearly" if yearly else "price_monthly", 0) or 0)
+        max_seats = int((pkg or {}).get("seats", 1) or 1)
+        chosen_seats = min(max_seats, max(1, int(seats or 1)))
+        extra_rate = int((pkg or {}).get("extra_user_price_yearly" if yearly else "extra_user_price", 0) or 0)
+        extra_total = max(0, chosen_seats - 1) * extra_rate
+        sla_code = sla or (pkg or {}).get("sla", "basic")
+        sla_doc = await db["sla_tiers"].find_one({"_id": sla_code}) or {}
+        sla_price = int(sla_doc.get("price_yearly" if yearly else "price_monthly", 0) or 0)
+        addons_total = 0
+        if addons:
+            from app.services import addon_service
+            cat = {a["_id"]: a for a in await addon_service.catalog()}
+            for aid in addons:
+                a = cat.get(aid)
+                if a:
+                    addons_total += int(a.get("price_yearly" if yearly else "price_monthly", 0) or 0)
+        amount = int(price) + sla_price + extra_total + addons_total
+        pid = uuid.uuid4().hex
+        await db["pending_registrations"].insert_one({
+            "_id": pid,
+            "status": "awaiting_payment" if payment_method == "card" else "awaiting_bank_approval",
+            "pharmacy_name": pharmacy_name, "country": country,
+            "owner_email": owner_email, "owner_name": owner_name, "company": company or {},
+            "package_code": package_code, "billing_cycle": billing_cycle or "monthly", "sla": sla_code,
+            "seats": chosen_seats, "addons": addons or [], "payment_method": payment_method,
+            "amount_cents": amount, "created_at": _now(),
+            "expires_at": _now() + timedelta(hours=2),
+        })
+        return {"pending_id": pid, "amount_cents": amount}
+
+    async def mark_pending_paid(self, pending_id: str, viva_transaction_id: str | None = None) -> bool:
+        """Καλείται από το Viva webhook (signup:<id>) → η pending γίνεται `paid` (idempotent)."""
+        r = await shared_db()["pending_registrations"].update_one(
+            {"_id": pending_id, "status": {"$in": ["awaiting_payment", "awaiting_bank_approval"]}},
+            {"$set": {"status": "paid", "viva_transaction_id": viva_transaction_id, "paid_at": _now()}})
+        return r.modified_count > 0
+
+    async def materialize(self, *, pending_id: str, password: str, full_name: str | None = None) -> dict:
+        """Δημιουργεί ΤΕΛΙΚΑ τον λογαριασμό (μετά από επιβεβαιωμένη πληρωμή) βάζοντας ο πελάτης κωδικό."""
+        db = shared_db()
+        p = await db["pending_registrations"].find_one({"_id": pending_id})
+        if not p:
+            raise OnboardingError("pending_not_found")
+        if p.get("status") not in ("paid", "approved"):
+            raise OnboardingError("payment_not_confirmed")
+        if p.get("completed_tenant_id"):
+            raise OnboardingError("already_completed")
+        res = await self.register(
+            pharmacy_name=p["pharmacy_name"], country=p["country"],
+            email=p["owner_email"], password=password,
+            full_name=full_name or p.get("owner_name") or p["owner_email"],
+            company=p.get("company"), package_code=p.get("package_code"),
+            billing_cycle=p.get("billing_cycle"), sla=p.get("sla"),
+            seats=p.get("seats"), payment_method=p.get("payment_method") or "card",
+            addons=p.get("addons"), activate=True,
+            viva_transaction_id=p.get("viva_transaction_id"))
+        await db["pending_registrations"].update_one(
+            {"_id": pending_id}, {"$set": {"status": "completed",
+                                           "completed_tenant_id": res["tenant_id"], "completed_at": _now()}})
+        return res

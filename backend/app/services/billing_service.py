@@ -347,6 +347,13 @@ async def handle_viva_webhook(event_data: dict) -> None:
     status_id = str((info or {}).get("StatusId") or event_data.get("StatusId") or "")
     if status_id and status_id != "F":       # F = Finished (επιτυχής)
         return
+    # (0) signup «πληρωμή-πρώτα»: MerchantTrns = "signup:<pending_id>" → μαρκάρισε την pending ως paid
+    #     (ο λογαριασμός δημιουργείται όταν ο πελάτης βάλει κωδικό στο /register-complete)
+    mt0 = str(event_data.get("MerchantTrns") or event_data.get("merchantTrns") or "")
+    if mt0.startswith("signup:"):
+        from app.services.onboarding_service import OnboardingService
+        await OnboardingService().mark_pending_paid(mt0[len("signup:"):], str(txn))
+        return
     # (1) top-up μηνυμάτων (order_code = viva order_code, αποθηκευμένο ως order_id στο pending) → πίστωση wallet
     if order_code:
         from app.services import message_wallet
