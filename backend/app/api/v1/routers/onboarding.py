@@ -102,6 +102,8 @@ async def register_intent(body: IntentIn):
     except OnboardingError as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, detail={"error": str(exc)})
     pid = pending["pending_id"]
+    if pending.get("is_trial"):     # δωρεάν trial → καμία πληρωμή, κατευθείαν στο βήμα κωδικού
+        return {"pending_id": pid, "status": "paid", "trial": True, "amount_cents": 0}
     if body.payment_method == "card":
         from app.core.db import shared_db
         from app.services import viva_service
@@ -126,6 +128,7 @@ async def register_status(pending_id: str):
     if not p:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail={"error": "not_found"})
     return {"status": p.get("status"), "payment_method": p.get("payment_method"),
+            "is_trial": bool(p.get("is_trial")),
             "owner_email": p.get("owner_email"), "owner_name": p.get("owner_name")}
 
 

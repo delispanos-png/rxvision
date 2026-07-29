@@ -189,10 +189,12 @@ class OnboardingService:
                 if a:
                     addons_total += int(a.get("price_yearly" if yearly else "price_monthly", 0) or 0)
         amount = int(price) + sla_price + extra_total + addons_total
+        # Δωρεάν trial πακέτο (μηδενικό κόστος): καμία πληρωμή → pending «paid» κατευθείαν (→ credentials).
+        is_trial = amount <= 0
+        status = "paid" if is_trial else ("awaiting_payment" if payment_method == "card" else "awaiting_bank_approval")
         pid = uuid.uuid4().hex
         await db["pending_registrations"].insert_one({
-            "_id": pid,
-            "status": "awaiting_payment" if payment_method == "card" else "awaiting_bank_approval",
+            "_id": pid, "status": status, "is_trial": is_trial,
             "pharmacy_name": pharmacy_name, "country": country,
             "owner_email": owner_email, "owner_name": owner_name, "company": company or {},
             "package_code": package_code, "billing_cycle": billing_cycle or "monthly", "sla": sla_code,
@@ -200,7 +202,7 @@ class OnboardingService:
             "amount_cents": amount, "created_at": _now(),
             "expires_at": _now() + timedelta(hours=2),
         })
-        return {"pending_id": pid, "amount_cents": amount}
+        return {"pending_id": pid, "amount_cents": amount, "is_trial": is_trial}
 
     async def mark_pending_paid(self, pending_id: str, viva_transaction_id: str | None = None) -> bool:
         """Καλείται από το Viva webhook (signup:<id>) → η pending γίνεται `paid` (idempotent).
@@ -246,7 +248,9 @@ class OnboardingService:
             company=p.get("company"), package_code=p.get("package_code"),
             billing_cycle=p.get("billing_cycle"), sla=p.get("sla"),
             seats=p.get("seats"), payment_method=p.get("payment_method") or "card",
-            addons=p.get("addons"), activate=True,
+            addons=p.get("addons"),
+            # trial πακέτο → trialing (activate=False)· paid → active με αποθηκευμένη κάρτα
+            activate=not p.get("is_trial"),
             viva_transaction_id=p.get("viva_transaction_id"))
         await db["pending_registrations"].update_one(
             {"_id": pending_id}, {"$set": {"status": "completed",
