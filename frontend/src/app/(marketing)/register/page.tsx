@@ -52,15 +52,19 @@ export default function RegisterWizard() {
   const [billing, setBilling] = useState<"monthly" | "yearly">("yearly");
   const [sla, setSla] = useState<string>("");
   const [seats, setSeats] = useState<number>(1);
-  const [payMethod, setPayMethod] = useState<"card" | "bank">("card");
+  // Ενεργοί τρόποι πληρωμής — δυναμικά από το adminpanel (public_methods), όχι hardcoded.
+  const [payMethods, setPayMethods] = useState<{ id: string; label: { el: string; en: string } }[]>([]);
+  const [payChoice, setPayChoice] = useState<string>("");   // επιλεγμένο method id (π.χ. card_viva)
 
   useEffect(() => {
     // Optional deep-link preselect from the marketing site: /register?package=pro (alias: ?plan=).
     const qp = new URLSearchParams(window.location.search);
     const wanted = (qp.get("package") || qp.get("plan") || "").trim().toLowerCase();
-    api<{ packages: Pkg[]; sla: Sla[]; addons?: Addon[] }>("/onboarding/packages")
+    api<{ packages: Pkg[]; sla: Sla[]; addons?: Addon[]; payment_methods?: { id: string; label: { el: string; en: string } }[] }>("/onboarding/packages")
       .then((r) => {
         setPkgs(r.packages || []); setSlaTiers(r.sla || []); setAddonCat(r.addons || []);
+        const pm = r.payment_methods || [];
+        setPayMethods(pm); if (pm.length) setPayChoice(pm[0].id);
         if (r.packages?.length) {
           const pre = r.packages.find((p) => p._id.toLowerCase() === wanted) || r.packages[0];
           setPkgCode(pre._id); if (pre.sla) setSla(pre.sla);
@@ -79,6 +83,9 @@ export default function RegisterWizard() {
   const includedFree = 1;
   const maxSeats = Math.max(1, pkg?.seats ?? 1);      // ΜΕΓΙΣΤΟ όριο πλάνου («έως N»)
   const extraUsers = Math.max(0, seats - includedFree);   // έξτρα πάνω από τη βάση (1) → χρεώσιμα
+  // κάθε card_* → ροή «card» (card-capture ανά ενεργό πάροχο)· bank_transfer → «bank» (τιμολόγιο IBAN)
+  const payMethod: "card" | "bank" = payChoice.startsWith("card") ? "card" : "bank";
+  const cardProviderName = payChoice === "card_viva" ? "Viva (κάρτα / IRIS)" : payChoice === "card_revolut" ? "Revolut" : payChoice === "card_alpha" ? "Alpha Bank" : "τον πάροχο πληρωμής";
   const extraRate = (yearly ? pkg?.extra_user_price_yearly : pkg?.extra_user_price) ?? 0;
   const extraTotal = extraUsers * extraRate;
   const slaPrice = (yearly ? slaObj?.price_yearly : slaObj?.price_monthly) ?? 0;
@@ -367,18 +374,22 @@ export default function RegisterWizard() {
                 <h2 className="text-xl font-bold text-slate-900">Τρόπος Πληρωμής</h2>
                 <p className="text-sm text-slate-500"><b>{trialDays} ημέρες δωρεάν.</b> Επίλεξε πώς θα πληρώνεις μετά τη δοκιμή — καμία χρέωση τώρα. Ακύρωση οποτεδήποτε.</p>
                 <div className="grid gap-3 sm:grid-cols-2">
-                  <button type="button" onClick={() => setPayMethod("card")} className={`rounded-xl border-2 p-4 text-left ${payMethod === "card" ? "border-brand-400 bg-brand-50/50" : "border-slate-200 hover:border-slate-300"}`}>
-                    <div className="flex items-center gap-2 font-semibold text-slate-900"><CreditCard className="h-4 w-4 text-brand-600" /> Κάρτα {payMethod === "card" && <Check className="ml-auto h-4 w-4 text-brand-600" />}</div>
-                    <div className="mt-1 text-xs text-slate-500">Ασφαλής αποθήκευση μέσω Revolut. Αυτόματη χρέωση στη λήξη της δοκιμής.</div>
-                  </button>
-                  <button type="button" onClick={() => setPayMethod("bank")} className={`rounded-xl border-2 p-4 text-left ${payMethod === "bank" ? "border-brand-400 bg-brand-50/50" : "border-slate-200 hover:border-slate-300"}`}>
-                    <div className="flex items-center gap-2 font-semibold text-slate-900"><Landmark className="h-4 w-4 text-brand-600" /> Τραπεζικό έμβασμα {payMethod === "bank" && <Check className="ml-auto h-4 w-4 text-brand-600" />}</div>
-                    <div className="mt-1 text-xs text-slate-500">Θα λάβεις τιμολόγιο με IBAN στο email τιμολόγησης πριν τη λήξη της δοκιμής.</div>
-                  </button>
+                  {payMethods.map((m) => {
+                    const card = m.id.startsWith("card"); const active = payChoice === m.id;
+                    return (
+                      <button key={m.id} type="button" onClick={() => setPayChoice(m.id)} className={`rounded-xl border-2 p-4 text-left ${active ? "border-brand-400 bg-brand-50/50" : "border-slate-200 hover:border-slate-300"}`}>
+                        <div className="flex items-center gap-2 font-semibold text-slate-900">{card ? <CreditCard className="h-4 w-4 text-brand-600" /> : <Landmark className="h-4 w-4 text-brand-600" />} {m.label.el} {active && <Check className="ml-auto h-4 w-4 text-brand-600" />}</div>
+                        <div className="mt-1 text-xs text-slate-500">{card ? "Ασφαλής αποθήκευση κάρτας. Αυτόματη χρέωση στη λήξη της δοκιμής." : "Θα λάβεις τιμολόγιο με IBAN στο email τιμολόγησης πριν τη λήξη της δοκιμής."}</div>
+                      </button>
+                    );
+                  })}
                 </div>
+                {payMethods.length === 0 && (
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-500">Θα ξεκινήσεις με δωρεάν δοκιμή — ο τρόπος πληρωμής θα ρυθμιστεί αργότερα.</div>
+                )}
 
-                {payMethod === "card" && (
-                  <div className="rounded-xl border border-slate-200 p-3 text-xs text-slate-500">Στην «Ενεργοποίηση» θα ανοίξει ασφαλές παράθυρο Revolut για να καταχωρήσεις την κάρτα. Χρέωση {eur(price)}/{per} μόνο μετά τη λήξη της δωρεάν δοκιμής.</div>
+                {payMethod === "card" && payChoice && (
+                  <div className="rounded-xl border border-slate-200 p-3 text-xs text-slate-500">Στην «Ενεργοποίηση» θα ανοίξει ασφαλές περιβάλλον {cardProviderName} για να καταχωρήσεις την κάρτα. Χρέωση {eur(price)}/{per} μόνο μετά τη λήξη της δωρεάν δοκιμής.</div>
                 )}
                 {payMethod === "bank" && (
                   <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">

@@ -348,7 +348,7 @@ function OpenTenantModal({ onClose, onDone }: { onClose: () => void; onDone: () 
               <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                 <button type="button" onClick={() => setPayMethod("card")} className={`rounded-xl border-2 p-3 text-left ${payMethod === "card" ? "border-indigo-400 bg-indigo-50/50" : "border-slate-200 hover:border-slate-300"}`}>
                   <div className="flex items-center gap-2 font-semibold text-slate-900">💳 Κάρτα {payMethod === "card" && <span className="ml-auto text-indigo-600">✓</span>}</div>
-                  <div className="mt-1 text-xs text-slate-500">Ασφαλής αποθήκευση μέσω Revolut· αυτόματη χρέωση στη λήξη της δοκιμής.</div>
+                  <div className="mt-1 text-xs text-slate-500">Ασφαλής αποθήκευση κάρτας (ενεργός πάροχος: Viva/Revolut)· αυτόματη χρέωση στη λήξη της δοκιμής.</div>
                 </button>
                 <button type="button" onClick={() => setPayMethod("bank")} className={`rounded-xl border-2 p-3 text-left ${payMethod === "bank" ? "border-indigo-400 bg-indigo-50/50" : "border-slate-200 hover:border-slate-300"}`}>
                   <div className="flex items-center gap-2 font-semibold text-slate-900">🏦 Τραπεζικό έμβασμα {payMethod === "bank" && <span className="ml-auto text-indigo-600">✓</span>}</div>
