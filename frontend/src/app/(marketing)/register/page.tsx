@@ -262,7 +262,9 @@ export default function RegisterWizard() {
               <div className="space-y-3 py-6 text-center">
                 <Loader2 className="mx-auto h-8 w-8 animate-spin text-brand-600" />
                 <h2 className="text-lg font-bold text-slate-900">Επιβεβαιώνουμε την πληρωμή…</h2>
-                <p className="text-sm text-slate-500">Μόλις επιβεβαιωθεί, θα ορίσεις τον κωδικό σου. Μην κλείσεις τη σελίδα.</p>
+                <p className="text-sm text-slate-500">Με κάρτα είναι άμεσο. Με <b>IRIS</b> μπορεί να χρειαστούν λίγα λεπτά — μπορείς να περιμένεις εδώ ή να κλείσεις: θα λάβεις <b>email με σύνδεσμο</b> για να ορίσεις τον κωδικό σου μόλις επιβεβαιωθεί.</p>
+                <p className="text-xs text-slate-400">Ακύρωσες ή δεν ολοκλήρωσες την πληρωμή;</p>
+                <button type="button" onClick={() => { if (typeof window !== "undefined") window.localStorage.removeItem("signup_pending"); window.location.href = "/register"; }} className="text-sm font-medium text-brand-600 hover:underline">Ξεκίνα ξανά</button>
               </div>
             )}
           </div>

@@ -203,11 +203,31 @@ class OnboardingService:
         return {"pending_id": pid, "amount_cents": amount}
 
     async def mark_pending_paid(self, pending_id: str, viva_transaction_id: str | None = None) -> bool:
-        """Καλείται από το Viva webhook (signup:<id>) → η pending γίνεται `paid` (idempotent)."""
-        r = await shared_db()["pending_registrations"].update_one(
+        """Καλείται από το Viva webhook (signup:<id>) → η pending γίνεται `paid` (idempotent).
+        Στέλνει email με link ολοκλήρωσης — καλύπτει IRIS (ασύγχρονο, έως 20') & τυχόν εγκατάλειψη."""
+        db = shared_db()
+        r = await db["pending_registrations"].update_one(
             {"_id": pending_id, "status": {"$in": ["awaiting_payment", "awaiting_bank_approval"]}},
             {"$set": {"status": "paid", "viva_transaction_id": viva_transaction_id, "paid_at": _now()}})
+        if r.modified_count > 0:
+            await self._send_completion_email(await db["pending_registrations"].find_one({"_id": pending_id}))
         return r.modified_count > 0
+
+    async def _send_completion_email(self, p: dict | None) -> None:
+        """Email «η πληρωμή επιβεβαιώθηκε — όρισε κωδικό & ολοκλήρωσε». Best-effort (ποτέ δεν σπάει)."""
+        if not p or not p.get("owner_email"):
+            return
+        try:
+            from app.services import mailer
+            link = f"https://app.rxvision.gr/register?pending={p['_id']}"
+            html = (f"<p>Γεια σας {p.get('owner_name') or ''},</p>"
+                    f"<p>Η πληρωμή για τη συνδρομή <b>{p.get('pharmacy_name') or ''}</b> στο RxVision "
+                    f"επιβεβαιώθηκε. Ολοκληρώστε την εγγραφή ορίζοντας τον κωδικό σας:</p>"
+                    f"<p><a href=\"{link}\">Ολοκλήρωση εγγραφής</a></p>"
+                    f"<p style=\"color:#64748b;font-size:12px\">Ή αντιγράψτε τον σύνδεσμο: {link}</p>")
+            await mailer.send_email(p["owner_email"], "RxVision — Ολοκληρώστε την εγγραφή σας", html)
+        except Exception:  # noqa: BLE001
+            pass
 
     async def materialize(self, *, pending_id: str, password: str, full_name: str | None = None) -> dict:
         """Δημιουργεί ΤΕΛΙΚΑ τον λογαριασμό (μετά από επιβεβαιωμένη πληρωμή) βάζοντας ο πελάτης κωδικό."""
