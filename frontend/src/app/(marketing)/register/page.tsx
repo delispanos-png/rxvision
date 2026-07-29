@@ -27,11 +27,12 @@ const label = "mb-1 block text-xs font-medium text-slate-600";
 const STEPS = [
   { icon: Building2, title: "Στοιχεία Πελάτη", sub: "Επωνυμία, ΑΦΜ, επικοινωνία" },
   { icon: Package, title: "Πακέτο & Χρήστες", sub: "Πακέτο, SLA, χρήστες, κόστος" },
-  { icon: CreditCard, title: "Τρόπος Πληρωμής", sub: "Κάρτα ή τραπεζικό έμβασμα" },
-  { icon: UserCog, title: "Λογαριασμός Owner", sub: "Username, email & κωδικός" },
+  { icon: UserCog, title: "Στοιχεία Owner", sub: "Ονοματεπώνυμο & email" },
+  { icon: CreditCard, title: "Πληρωμή", sub: "Πλήρωσε για να ενεργοποιηθεί" },
 ];
 const N = STEPS.length;
-const STEP = { COMPANY: 0, PACKAGE: 1, PAYMENT: 2, OWNER: 3 } as const;
+// Ο κωδικός (credentials) μπαίνει ΤΕΛΕΥΤΑΙΟΣ, μετά την πληρωμή (βλ. completion mode).
+const STEP = { COMPANY: 0, PACKAGE: 1, OWNER: 2, PAYMENT: 3 } as const;
 
 export default function RegisterWizard() {
   const router = useRouter();
@@ -55,10 +56,18 @@ export default function RegisterWizard() {
   // Ενεργοί τρόποι πληρωμής — δυναμικά από το adminpanel (public_methods), όχι hardcoded.
   const [payMethods, setPayMethods] = useState<{ id: string; label: { el: string; en: string } }[]>([]);
   const [payChoice, setPayChoice] = useState<string>("");   // επιλεγμένο method id (π.χ. card_viva)
+  // «πληρωμή-πρώτα»: μετά την επιστροφή από Viva μπαίνουμε σε completion mode (?pending=<id>)
+  const [pendingId, setPendingId] = useState<string>("");   // completion mode αν != ""
+  const [pendingStatus, setPendingStatus] = useState<string>("");
+  const [bankSubmitted, setBankSubmitted] = useState(false); // τράπεζα → αναμονή έγκρισης
+  const [afmErr, setAfmErr] = useState<string | null>(null); // διπλότυπο ΑΦΜ
 
   useEffect(() => {
     // Optional deep-link preselect from the marketing site: /register?package=pro (alias: ?plan=).
     const qp = new URLSearchParams(window.location.search);
+    // Επιστροφή από Viva (ή email link τράπεζας): ?pending=<id> → μπες σε completion mode (κωδικός).
+    const pend = (qp.get("pending") || "").trim() || (typeof window !== "undefined" ? window.localStorage.getItem("signup_pending") || "" : "");
+    if (pend) setPendingId(pend);
     const wanted = (qp.get("package") || qp.get("plan") || "").trim().toLowerCase();
     api<{ packages: Pkg[]; sla: Sla[]; addons?: Addon[]; payment_methods?: { id: string; label: { el: string; en: string } }[] }>("/onboarding/packages")
       .then((r) => {
@@ -97,7 +106,6 @@ export default function RegisterWizard() {
   const addonsTotal = availAddons.filter((a) => selAddons.includes(a._id))
     .reduce((s, a) => s + ((yearly ? a.price_yearly : a.price_monthly) ?? 0), 0);
   const price = basePrice + slaPrice + extraTotal + addonsTotal;   // full subscription value
-  const trialDays = pkg?.trial_days ?? 14;
   // when the package changes: default seats to 1 (base), drop add-ons now bundled in the plan,
   // and switch the billing cycle if not offered. Ο πελάτης ανεβάζει έξτρα χρήστες χειροκίνητα (χρεώσιμοι).
   useEffect(() => { setSeats(1); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [pkgCode]);
@@ -138,53 +146,85 @@ export default function RegisterWizard() {
 
   const step0ok = company.name.trim().length > 1 && company.email.includes("@");
   const step1ok = !!pkgCode;
-  const ownerOk = !!admin.full_name.trim() && admin.email.includes("@") && admin.password.length >= 8;
-  const canNext = step === STEP.COMPANY ? step0ok : step === STEP.PACKAGE ? step1ok : true;
+  const ownerInfoOk = !!admin.full_name.trim() && admin.email.includes("@");   // κωδικός ΟΧΙ εδώ
+  const canNext = step === STEP.COMPANY ? step0ok : step === STEP.PACKAGE ? step1ok : step === STEP.OWNER ? ownerInfoOk : true;
 
-  async function payWithRevolut(token: string, mode: string): Promise<void> {
-    return new Promise<void>((resolve) => {
-      const w = window as unknown as { RevolutCheckout?: (t: string, m: string) => Promise<{ payWithPopup: (o: Record<string, () => void>) => void }> };
-      const run = () => {
-        if (!w.RevolutCheckout) return resolve();
-        w.RevolutCheckout(token, mode === "live" ? "prod" : "sandbox")
-          .then((rc) => rc.payWithPopup({ onSuccess: resolve, onError: resolve, onCancel: resolve }))
-          .catch(() => resolve());
-      };
-      if (w.RevolutCheckout) return run();
-      const s = document.createElement("script");
-      s.src = mode === "live" ? "https://merchant.revolut.com/embed.js" : "https://sandbox-merchant.revolut.com/embed.js";
-      s.onload = run; s.onerror = () => resolve();
-      document.body.appendChild(s);
-    });
+  // completion mode: poll την κατάσταση της pending μέχρι «paid» (μετά την επιστροφή από Viva)
+  useEffect(() => {
+    if (!pendingId) return;
+    let stop = false;
+    const poll = async () => {
+      try {
+        const s = await api<{ status: string; owner_email?: string; owner_name?: string }>(`/onboarding/register-status/${pendingId}`);
+        if (stop) return;
+        setPendingStatus(s.status);
+        if (s.owner_email) setAdmin((a) => ({ ...a, email: s.owner_email!, full_name: a.full_name || s.owner_name || "" }));
+        if (s.status !== "paid" && s.status !== "approved" && s.status !== "completed") setTimeout(poll, 2500);
+      } catch { if (!stop) setTimeout(poll, 3000); }
+    };
+    poll();
+    return () => { stop = true; };
+  }, [pendingId]);
+
+  // βήμα «Επόμενο» — στο βήμα εταιρείας ελέγχει διπλότυπο ΑΦΜ πριν προχωρήσει
+  async function goNext() {
+    setAfmErr(null);
+    if (step === STEP.COMPANY) {
+      const afm = company.afm.trim();
+      if (/^\d{9}$/.test(afm)) {
+        try {
+          const r = await api<{ exists: boolean }>(`/onboarding/check-afm/${afm}`);
+          if (r.exists) { setAfmErr("Υπάρχει ήδη συνδρομή για αυτό το ΑΦΜ."); return; }
+        } catch { /* μη-blocking: ο server ξαναελέγχει στο intent */ }
+      }
+    }
+    setStep((s) => s + 1);
   }
 
-  async function activate() {
+  // ΠΛΗΡΩΜΗ-ΠΡΩΤΑ: δημιουργεί pending & πάει Viva (κάρτα) ή αναμονή έγκρισης (τράπεζα). ΚΑΝΕΝΑΣ λογαριασμός ακόμα.
+  async function startPayment() {
     setErr(null); setBusy(true);
     try {
-      const res = await api<RegisterResponse>("/onboarding/register", {
+      const r = await api<{ pending_id: string; checkout_url?: string; status?: string }>("/onboarding/register-intent", {
         method: "POST",
         body: JSON.stringify({
           pharmacy_name: company.title || company.name, country: company.country,
-          email: admin.email, password: admin.password, full_name: admin.full_name,
+          owner_email: admin.email, owner_name: admin.full_name,
           company, package_code: pkgCode || "standard", billing_cycle: billing, sla: sla || undefined,
           seats, payment_method: payMethod, addons: selAddons,
         }),
       });
+      if (typeof window !== "undefined" && r.pending_id) window.localStorage.setItem("signup_pending", r.pending_id);
+      if (r.checkout_url) { window.location.href = r.checkout_url; return; }   // κάρτα → Viva
+      setBankSubmitted(true); setBusy(false);                                  // τράπεζα → αναμονή έγκρισης
+    } catch (e) {
+      const detail = e instanceof ApiError ? ((e.problem as { detail?: { error?: string } })?.detail?.error) : "";
+      setErr(detail === "afm_already_registered" ? "Υπάρχει ήδη συνδρομή για αυτό το ΑΦΜ."
+        : detail === "email_already_registered" ? "Το email χρησιμοποιείται ήδη."
+        : "Δεν ξεκίνησε η πληρωμή. Δοκίμασε ξανά.");
+      setBusy(false);
+    }
+  }
+
+  // ΤΕΛΙΚΟ ΒΗΜΑ (μετά την πληρωμή): ο πελάτης βάζει κωδικό → δημιουργείται ο λογαριασμός & μπαίνει.
+  async function completeRegistration() {
+    setErr(null); setBusy(true);
+    try {
+      const res = await api<RegisterResponse>("/onboarding/register-complete", {
+        method: "POST",
+        body: JSON.stringify({ pending_id: pendingId, password: admin.password, full_name: admin.full_name || undefined }),
+      });
       if (typeof window !== "undefined") {
         window.localStorage.setItem("access_token", res.access_token);
         window.localStorage.setItem("refresh_token", res.refresh_token);
-      }
-      // card → capture via ενεργό πάροχο (Revolut widget ή Viva redirect κάρτα/IRIS)· bank → invoice με IBAN.
-      if (payMethod === "card") {
-        try {
-          const cc = await api<{ ok: boolean; token?: string; mode?: string; provider?: string; checkout_url?: string }>("/billing/card-capture", { method: "POST" });
-          if (cc.ok && cc.provider === "viva" && cc.checkout_url) { window.location.href = cc.checkout_url; return; }
-          if (cc.ok && cc.token) await payWithRevolut(cc.token, cc.mode || "sandbox");
-        } catch { /* πάροχος μη ρυθμισμένος → trial only */ }
+        window.localStorage.removeItem("signup_pending");
       }
       router.push("/onboarding");
     } catch (e) {
-      setErr(e instanceof ApiError && e.status === 409 ? "Το email χρησιμοποιείται ήδη." : "Η ενεργοποίηση απέτυχε. Δοκίμασε ξανά.");
+      const detail = e instanceof ApiError ? ((e.problem as { detail?: { error?: string } })?.detail?.error) : "";
+      setErr(detail === "payment_not_confirmed" ? "Η πληρωμή δεν έχει επιβεβαιωθεί ακόμη — περίμενε λίγο."
+        : detail === "already_completed" ? "Ο λογαριασμός δημιουργήθηκε ήδη — πήγαινε στη Σύνδεση."
+        : "Η ολοκλήρωση απέτυχε. Δοκίμασε ξανά.");
       setBusy(false);
     }
   }
@@ -197,6 +237,36 @@ export default function RegisterWizard() {
           <a href="/login" className="text-sm text-slate-500 hover:text-slate-700">← Σύνδεση</a>
           <Logo subtitle={false} markClassName="h-8 w-8" />
         </div>
+        {pendingId ? (
+          <div className="mx-auto max-w-lg rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+            {(pendingStatus === "paid" || pendingStatus === "approved") ? (
+              <div className="space-y-4">
+                <div className="flex items-center gap-2 text-emerald-700"><Check className="h-5 w-5" /><h2 className="text-xl font-bold">Η πληρωμή ολοκληρώθηκε ✓</h2></div>
+                <p className="text-sm text-slate-500">Όρισε τον κωδικό σου για να ενεργοποιηθεί ο λογαριασμός. Θα συνδέεσαι με το email <b>{admin.email || "—"}</b>.</p>
+                {!admin.full_name && <div><label className={label}>Ονοματεπώνυμο *</label><input className={input} {...A("full_name")} autoComplete="name" /></div>}
+                <div>
+                  <div className="flex items-center justify-between"><label className={label}>Κωδικός *</label><button type="button" onClick={genPassword} className="mb-1 text-[11px] font-medium text-brand-600 hover:underline">Αυτόματη δημιουργία</button></div>
+                  <div className="relative"><input className={`${input} pr-10`} {...A("password")} type={showPw ? "text" : "password"} autoComplete="new-password" /><button type="button" onClick={() => setShowPw((s) => !s)} className="absolute inset-y-0 right-0 grid w-10 place-items-center text-slate-400">{showPw ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}</button></div>
+                  <p className="mt-1 text-[11px] text-slate-400">Τουλάχιστον 8 χαρακτήρες — ή «Αυτόματη δημιουργία».</p>
+                </div>
+                {err && <div role="alert" className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{err}</div>}
+                <button type="button" disabled={admin.password.length < 8 || busy} onClick={completeRegistration} className="inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-emerald-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50">{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />} Ολοκλήρωση & Είσοδος</button>
+              </div>
+            ) : pendingStatus === "completed" ? (
+              <div className="space-y-3 py-4 text-center">
+                <Check className="mx-auto h-8 w-8 text-emerald-600" />
+                <h2 className="text-lg font-bold text-slate-900">Ο λογαριασμός δημιουργήθηκε ήδη</h2>
+                <a href="/login" className="inline-block rounded-lg bg-brand-700 px-5 py-2.5 text-sm font-medium text-white">Σύνδεση</a>
+              </div>
+            ) : (
+              <div className="space-y-3 py-6 text-center">
+                <Loader2 className="mx-auto h-8 w-8 animate-spin text-brand-600" />
+                <h2 className="text-lg font-bold text-slate-900">Επιβεβαιώνουμε την πληρωμή…</h2>
+                <p className="text-sm text-slate-500">Μόλις επιβεβαιωθεί, θα ορίσεις τον κωδικό σου. Μην κλείσεις τη σελίδα.</p>
+              </div>
+            )}
+          </div>
+        ) : (<>
         <div className="mb-1 h-1.5 overflow-hidden rounded-full bg-slate-200">
           <div className="h-full rounded-full bg-brand-600 transition-all" style={{ width: `${((step + 1) / N) * 100}%` }} />
         </div>
@@ -237,6 +307,11 @@ export default function RegisterWizard() {
                   <div><label className={label}>Χώρα *</label><select className={input} {...C("country")}><option value="GR">Ελλάδα</option><option value="CY">Κύπρος</option></select></div>
                 </div>
                 {aade.msg && <p className="text-xs text-slate-500">{aade.msg}</p>}
+                {afmErr && (
+                  <div role="alert" className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                    {afmErr} <a href="/login" className="font-semibold underline">Σύνδεση</a> · <a href="/forgot-password" className="font-semibold underline">Ξέχασα τον κωδικό</a>
+                  </div>
+                )}
                 <p className="text-[11px] text-brand-600">Πληκτρολόγησε ΑΦΜ και πάτησε αναζήτηση για αυτόματη συμπλήρωση από ΑΑΔΕ.</p>
                 <hr className="border-slate-100" />
                 <div className="grid gap-4 sm:grid-cols-2">
@@ -353,63 +428,58 @@ export default function RegisterWizard() {
 
             {step === STEP.OWNER && (
               <div className="space-y-4">
-                <h2 className="text-xl font-bold text-slate-900">Λογαριασμός Owner</h2>
-                <div className="rounded-xl bg-brand-50 p-3 text-sm text-brand-800"><b>Στοιχεία σύνδεσης</b> — με αυτά θα μπαίνεις (owner) στην πλατφόρμα RxVision.</div>
+                <h2 className="text-xl font-bold text-slate-900">Στοιχεία Owner</h2>
+                <div className="rounded-xl bg-brand-50 p-3 text-sm text-brand-800"><b>Ο κύριος χρήστης (owner).</b> Ο κωδικός σύνδεσης θα οριστεί <b>στο τέλος, μετά την πληρωμή</b>.</div>
                 <div><label className={label}>Ονοματεπώνυμο *</label><input className={input} {...A("full_name")} autoComplete="name" /></div>
                 <div><label className={label}>Email (username) *</label><input className={input} {...A("email")} type="email" autoComplete="email" /><p className="mt-1 text-[11px] text-slate-400">Θα χρησιμοποιηθεί για σύνδεση & ειδοποιήσεις.</p></div>
-                <div>
-                  <div className="flex items-center justify-between"><label className={label}>Κωδικός *</label><button type="button" onClick={genPassword} className="mb-1 text-[11px] font-medium text-brand-600 hover:underline">Αυτόματη δημιουργία</button></div>
-                  <div className="relative"><input className={`${input} pr-10`} {...A("password")} type={showPw ? "text" : "password"} autoComplete="new-password" /><button type="button" onClick={() => setShowPw((s) => !s)} className="absolute inset-y-0 right-0 grid w-10 place-items-center text-slate-400">{showPw ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}</button></div>
-                  <p className="mt-1 text-[11px] text-slate-400">Τουλάχιστον 8 χαρακτήρες — ή πάτησε «Αυτόματη δημιουργία» για ισχυρό κωδικό.</p>
-                </div>
-                <div className="rounded-xl bg-brand-50/60 p-3 text-xs text-brand-800">
-                  <b>Σύνοψη:</b> {company.title || company.name || "—"} · {pkg?.name || pkgCode} · {yearly ? "ετήσια" : "μηνιαία"} · {seats} χρήστες · <b>{eur(price)}/{per}</b> · SLA: {slaObj?.name || sla || "—"} · Πληρωμή: {payMethod === "card" ? "κάρτα" : "τράπεζα"}
-                </div>
-                {err && <div role="alert" className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{err}</div>}
               </div>
             )}
 
             {step === STEP.PAYMENT && (
               <div className="space-y-4">
-                <h2 className="text-xl font-bold text-slate-900">Τρόπος Πληρωμής</h2>
-                <p className="text-sm text-slate-500"><b>{trialDays} ημέρες δωρεάν.</b> Επίλεξε πώς θα πληρώνεις μετά τη δοκιμή — καμία χρέωση τώρα. Ακύρωση οποτεδήποτε.</p>
+                <h2 className="text-xl font-bold text-slate-900">Πληρωμή</h2>
+                <p className="text-sm text-slate-500">Ο λογαριασμός <b>ενεργοποιείται μόλις ολοκληρωθεί η πληρωμή</b>. Ο κωδικός σύνδεσης ορίζεται αμέσως μετά.</p>
                 <div className="grid gap-3 sm:grid-cols-2">
                   {payMethods.map((m) => {
                     const card = m.id.startsWith("card"); const active = payChoice === m.id;
                     return (
                       <button key={m.id} type="button" onClick={() => setPayChoice(m.id)} className={`rounded-xl border-2 p-4 text-left ${active ? "border-brand-400 bg-brand-50/50" : "border-slate-200 hover:border-slate-300"}`}>
                         <div className="flex items-center gap-2 font-semibold text-slate-900">{card ? <CreditCard className="h-4 w-4 text-brand-600" /> : <Landmark className="h-4 w-4 text-brand-600" />} {m.label.el} {active && <Check className="ml-auto h-4 w-4 text-brand-600" />}</div>
-                        <div className="mt-1 text-xs text-slate-500">{card ? "Ασφαλής αποθήκευση κάρτας. Αυτόματη χρέωση στη λήξη της δοκιμής." : "Θα λάβεις τιμολόγιο με IBAN στο email τιμολόγησης πριν τη λήξη της δοκιμής."}</div>
+                        <div className="mt-1 text-xs text-slate-500">{card ? "Πληρωμή τώρα (κάρτα ή IRIS). Η κάρτα αποθηκεύεται για ανανεώσεις & χρεώσεις υπηρεσιών." : "Θα ελεγχθεί/πιστοποιηθεί η κατάθεση από εμάς και θα λάβεις link στο email για να ολοκληρώσεις."}</div>
                       </button>
                     );
                   })}
                 </div>
                 {payMethods.length === 0 && (
-                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-500">Θα ξεκινήσεις με δωρεάν δοκιμή — ο τρόπος πληρωμής θα ρυθμιστεί αργότερα.</div>
+                  <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-700">Δεν υπάρχει διαθέσιμος τρόπος πληρωμής αυτή τη στιγμή — επικοινώνησε μαζί μας.</div>
                 )}
-
+                <div className="rounded-xl bg-brand-50/60 p-3 text-xs text-brand-800">
+                  <b>Σύνοψη:</b> {company.title || company.name || "—"} · {pkg?.name || pkgCode} · {yearly ? "ετήσια" : "μηνιαία"} · {seats} χρήστες · SLA: {slaObj?.name || sla || "—"} · <b>Πληρωτέο τώρα: {eur(price)}</b>
+                </div>
                 {payMethod === "card" && payChoice && (
-                  <div className="rounded-xl border border-slate-200 p-3 text-xs text-slate-500">Στην «Ενεργοποίηση» θα ανοίξει ασφαλές περιβάλλον {cardProviderName} για να καταχωρήσεις την κάρτα. Χρέωση {eur(price)}/{per} μόνο μετά τη λήξη της δωρεάν δοκιμής.</div>
+                  <div className="rounded-xl border border-slate-200 p-3 text-xs text-slate-500">Θα μεταφερθείς σε ασφαλές περιβάλλον {cardProviderName} για την πληρωμή <b>{eur(price)}</b>. Μόλις ολοκληρωθεί, επιστρέφεις για να ορίσεις τον κωδικό σου.</div>
                 )}
-                {payMethod === "bank" && (
-                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
-                    Θα σου σταλεί τιμολόγιο ({eur(price)}/{per}) με τα στοιχεία τραπεζικού λογαριασμού (IBAN) στο <b>{company.billing_email || company.email || "email τιμολόγησης"}</b>. Η δοκιμή ξεκινά αμέσως.
-                  </div>
+                {bankSubmitted && (
+                  <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800">Το αίτημα καταχωρήθηκε. Μόλις <b>πιστοποιήσουμε την κατάθεση</b>, θα λάβεις email με link για να ολοκληρώσεις την εγγραφή.</div>
                 )}
+                {err && <div role="alert" className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{err}</div>}
               </div>
             )}
 
             {/* nav */}
+            {!bankSubmitted && (
             <div className="mt-6 flex items-center justify-between">
               <button type="button" onClick={() => setStep((s) => Math.max(0, s - 1))} className={`inline-flex items-center gap-1 text-sm text-slate-500 hover:text-slate-700 ${step === 0 ? "invisible" : ""}`}><ArrowLeft className="h-4 w-4" /> Προηγούμενο</button>
               {step < N - 1 ? (
-                <button type="button" disabled={!canNext} onClick={() => setStep((s) => s + 1)} className="inline-flex items-center gap-1.5 rounded-lg bg-brand-700 px-5 py-2.5 text-sm font-medium text-white hover:bg-brand-800 disabled:opacity-50">Επόμενο <ArrowRight className="h-4 w-4" /></button>
+                <button type="button" disabled={!canNext} onClick={goNext} className="inline-flex items-center gap-1.5 rounded-lg bg-brand-700 px-5 py-2.5 text-sm font-medium text-white hover:bg-brand-800 disabled:opacity-50">Επόμενο <ArrowRight className="h-4 w-4" /></button>
               ) : (
-                <button type="button" disabled={!ownerOk || busy} onClick={activate} className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50">{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />} Ενεργοποίηση & Έναρξη Δοκιμής</button>
+                <button type="button" disabled={!payChoice || busy} onClick={startPayment} className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50">{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <CreditCard className="h-4 w-4" />} {payMethod === "card" ? `Πλήρωσε ${eur(price)}` : "Καταχώρηση αιτήματος"}</button>
               )}
             </div>
+            )}
           </div>
         </div>
+        </>)}
         <div className="mt-8">
           <PoweredBy />
         </div>
