@@ -36,6 +36,13 @@ def check_central_balance() -> dict:
     return asyncio.run(_run())
 
 
+@celery_app.task(name="app.workers.billing.trial_feedback")
+def trial_feedback() -> dict:
+    """Email αξιολόγησης σε ληγμένα trials (10μ μετά, μη-ανανεωμένα). Idempotent."""
+    from app.services.feedback_service import send_feedback_emails
+    return asyncio.run(send_feedback_emails())
+
+
 @celery_app.task(name="app.workers.billing.apply_scheduled_changes")
 def apply_scheduled_changes() -> dict:
     """Apply plan downgrades whose scheduled effective date (period end / renewal) has arrived."""

@@ -120,6 +120,11 @@ celery_app.conf.beat_schedule = {
         "task": "app.workers.billing.apply_scheduled_changes",
         "schedule": crontab(hour=5, minute=30),
     },
+    # Email αξιολόγησης σε ληγμένα trials (10μ μετά, μη-ανανεωμένα) — καθημερινά 09:00 UTC
+    "trial-feedback": {
+        "task": "app.workers.billing.trial_feedback",
+        "schedule": crontab(hour=9, minute=0),
+    },
     # self-heal stuck optical scans (worker death/redeploy) — never leave one hanging
     "reap-stuck-scans": {
         "task": "app.workers.optical.reap_stuck_scans",

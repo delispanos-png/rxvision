@@ -1190,6 +1190,30 @@ async def admin_comms_profit(days: int = 30, _: PlatformContext = Depends(get_pl
             "margin_pct": round(100 * (t_rev - t_cost) / t_rev, 1) if t_rev else 0}
 
 
+# ── Αξιολογήσεις churned trials + χειροκίνητα coupons ──────────────────────────────────────
+@router.get("/feedback")
+async def admin_feedback(_: PlatformContext = Depends(get_platform_admin)):
+    from app.services import feedback_service
+    return {"items": jsonsafe(await feedback_service.list_feedback())}
+
+
+class CouponIn(BaseModel):
+    discount_pct: int = Field(..., ge=1, le=90)
+    days: int = Field(14, ge=1, le=365)
+
+
+@router.post("/feedback/{token}/coupon")
+async def admin_feedback_coupon(token: str, body: CouponIn,
+                                _: PlatformContext = Depends(get_platform_admin)):
+    """Ο admin στέλνει χειροκίνητα εκπτωτικό coupon στο φαρμακείο αυτής της αξιολόγησης."""
+    from app.services import feedback_service
+    fb = await shared_db()["feedback"].find_one({"_id": token})
+    if not fb:
+        raise HTTPException(http_status.HTTP_404_NOT_FOUND, detail={"error": "not_found"})
+    return await feedback_service.issue_coupon(fb["tenant_id"], body.discount_pct, body.days,
+                                               feedback_token=token)
+
+
 @router.get("/comms/senders")
 async def admin_comms_senders(_: PlatformContext = Depends(get_platform_admin)):
     """Φαρμακεία που ζήτησαν δικό τους όνομα αποστολέα (Sender ID) — για έγκριση (αφού δηλωθεί Apifon)."""
