@@ -152,7 +152,7 @@ export default function BillingSettingsPage() {
         ) : (
           <div className="space-y-2 text-sm text-amber-900">
             <p>{t("Δεν έχεις καταχωρήσει κάρτα. Πρόσθεσε μία για να ξεκλειδώσεις τις επιπλέον δυνατότητες (περισσότερα AI ερωτήματα, μεγαλύτερη διατήρηση δεδομένων και ό,τι νέο προστεθεί).", "No card on file. Add one to unlock extras (more AI questions, longer data retention, and anything new).")}</p>
-            <p className="text-xs text-amber-700">{t("Ασφαλής αποθήκευση μέσω Revolut. Χρεώνεσαι μόνο για ό,τι επιλέξεις — μπαίνει στη συνδρομή σου.", "Secure storage via Revolut. You are charged only for what you choose — added to your subscription.")}</p>
+            <p className="text-xs text-amber-700">{t("Ασφαλής αποθήκευση κάρτας μέσω Viva (κάρτα ή IRIS). Χρεώνεσαι μόνο για ό,τι επιλέξεις — μπαίνει στη συνδρομή σου.", "Secure card storage via Viva (card or IRIS). You are charged only for what you choose — added to your subscription.")}</p>
             <button onClick={addCard} disabled={cardBusy} className="inline-flex items-center gap-1.5 rounded-lg bg-amber-600 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-700 disabled:opacity-50">
               {cardBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <CreditCard className="h-4 w-4" />} {t("Πρόσθεσε κάρτα", "Add card")}
             </button>

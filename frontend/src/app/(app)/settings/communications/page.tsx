@@ -127,7 +127,7 @@ export default function CommsSettingsPage() {
               </button>
             ))}
           </div>
-          <p className="mt-2 text-[11px] text-slate-400">{t("Ασφαλής πληρωμή με κάρτα (Revolut). Το υπόλοιπο πιστώνεται αυτόματα μετά την πληρωμή.", "Secure card payment (Revolut). Balance is credited automatically after payment.")}</p>
+          <p className="mt-2 text-[11px] text-slate-400">{t("Ασφαλής πληρωμή με κάρτα ή IRIS (Viva). Το υπόλοιπο πιστώνεται αυτόματα μετά την πληρωμή.", "Secure card or IRIS payment (Viva). Balance is credited automatically after payment.")}</p>
         </div>
 
         {/* test send */}

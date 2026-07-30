@@ -47,11 +47,13 @@ async def start_card_capture(tenant_id: str) -> dict:
     bp = tenant.get("billing_profile") or {}
     email = bp.get("email") or bp.get("billing_email") or ""
     name = bp.get("name") or tenant.get("name") or tenant_id
-    amount = sub.get("price_per_pharmacy", 0) or 100  # min auth if amount unknown
+    # ΑΠΟΘΗΚΕΥΣΗ κάρτας (card-on-file): ΜΙΚΡΗ επαλήθευση/tokenization — ΟΧΙ χρέωση συνδρομής.
+    # (Το amount αποθηκεύει την κάρτα για μελλοντικές off-session χρεώσεις: extras, top-ups, ανανέωση.)
+    amount = 30  # €0,30
     prov = await active_provider()
     if prov == "viva":
         res = await viva_service.create_checkout_order(
-            amount=amount, ref=tenant_id, description=f"RxVision {sub.get('billing_cycle', 'monthly')} — card setup",
+            amount=amount, ref=tenant_id, description="RxVision — αποθήκευση κάρτας (επαλήθευση)",
             email=email, full_name=name, allow_recurring=True)
         if res.get("ok"):
             await db["subscriptions"].update_one({"tenant_id": tenant_id}, {"$set": {

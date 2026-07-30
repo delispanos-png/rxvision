@@ -377,7 +377,7 @@ export default function ModulesPlanPage() {
                 if (m.id === "card_revolut") return (
                   <button key={m.id} disabled={busy} onClick={() => doUpgrade(upgradeFor, "card")} className="flex w-full items-center gap-3 rounded-xl border border-brand-300 bg-brand-50 px-4 py-3 text-left hover:bg-brand-100 disabled:opacity-50 dark:border-brand-700 dark:bg-brand-950/30">
                     <CreditCard className="h-5 w-5 text-brand-600" />
-                    <div className="flex-1"><div className="text-sm font-semibold text-slate-900 dark:text-slate-100">{t("Κάρτα — Revolut (άμεση ενεργοποίηση)", "Card — Revolut (instant)")}</div><div className="text-xs text-slate-500">{t("Ασφαλής πληρωμή — η αναβάθμιση ισχύει αμέσως.", "Secure payment — upgrade applies immediately.")}</div></div>
+                    <div className="flex-1"><div className="text-sm font-semibold text-slate-900 dark:text-slate-100">{t("Κάρτα / IRIS — Viva (άμεση ενεργοποίηση)", "Card / IRIS — Viva (instant)")}</div><div className="text-xs text-slate-500">{t("Ασφαλής πληρωμή — η αναβάθμιση ισχύει αμέσως.", "Secure payment — upgrade applies immediately.")}</div></div>
                     {busy && <Loader2 className="h-4 w-4 animate-spin text-brand-600" />}
                   </button>
                 );
