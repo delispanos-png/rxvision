@@ -181,11 +181,11 @@ export default function LoginPage() {
             <div className="mb-1.5 text-xs font-semibold text-slate-600">Τι περιλαμβάνει το «{sel.name || sel._id}»:</div>
             <div className="flex flex-wrap gap-1.5">
               {(sel.modules || []).map((m) => {
-                const isNew = renew.currentPlan && !curMods.has(m);
+                const isNew = !!curPkg && sel._id !== renew.currentPlan && !curMods.has(m);   // ＋ μόνο vs πραγματικό paid πακέτο
                 return <span key={m} className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${isNew ? "bg-emerald-100 text-emerald-700" : "bg-white text-slate-600 ring-1 ring-slate-200"}`}>{isNew ? "＋ " : ""}{modLabel(m)}</span>;
               })}
             </div>
-            {renew.currentPlan && sel._id !== renew.currentPlan && (sel.modules || []).some((m) => !curMods.has(m)) && (
+            {curPkg && sel._id !== renew.currentPlan && (sel.modules || []).some((m) => !curMods.has(m)) && (
               <div className="mt-2 text-[11px] text-emerald-700">＋ = επιπλέον σε σχέση με το προηγούμενο πακέτο σου</div>
             )}
           </div>
