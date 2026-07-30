@@ -49,7 +49,7 @@ async def start_card_capture(tenant_id: str) -> dict:
     name = bp.get("name") or tenant.get("name") or tenant_id
     # ΑΠΟΘΗΚΕΥΣΗ κάρτας (card-on-file): ΜΙΚΡΗ επαλήθευση/tokenization — ΟΧΙ χρέωση συνδρομής.
     # (Το amount αποθηκεύει την κάρτα για μελλοντικές off-session χρεώσεις: extras, top-ups, ανανέωση.)
-    amount = 30  # €0,30
+    amount = 10  # €0,10 — μικρή επαλήθευση για αποθήκευση κάρτας
     prov = await active_provider()
     if prov == "viva":
         res = await viva_service.create_checkout_order(
