@@ -121,8 +121,13 @@ class AuthService:
             return None
         # Enforce subscription/tenant access (kept fresh locally) —
         # a suspended/expired tenant cannot log in, no external call at login time.
-        if not await self._tenant_access_ok(user["tenant_id"]):
-            return {"access_blocked": True}   # διακριτό σήμα (λήξη συνδρομής/αναστολή) — όχι «λάθος κωδικός»
+        _state = await self._access_state(user["tenant_id"])
+        if _state == "blocked":               # αναστολή/ακύρωση → σκληρό μπλόκο
+            return {"access_blocked": True}
+        if _state == "expired":               # ΛΗΓΜΕΝΗ → επιτρέπεται ΑΝΑΝΕΩΣΗ (renew token, όχι πρόσβαση)
+            from app.core.security import create_renew_token
+            return {"access_blocked": True, "reason": "expired",
+                    "renew_token": create_renew_token(tenant_id=str(user["tenant_id"]))}
         # MFA: if enabled, require a valid TOTP code (previously the code was ignored).
         # Distinct signal so the client can prompt for the code after a correct password.
         if user.get("mfa_enabled") and not verify_totp(user.get("mfa_secret", ""), mfa_code or ""):
@@ -182,14 +187,23 @@ class AuthService:
         return res
 
     async def _tenant_access_ok(self, tenant_id) -> bool:
+        return (await self._access_state(tenant_id)) == "ok"
+
+    async def _access_state(self, tenant_id) -> str:
+        """"ok" (πρόσβαση) · "expired" (ληγμένη → ΑΝΑΝΕΩΣΙΜΗ, soft στο login) · "blocked" (αναστολή/ακύρωση)."""
         db = shared_db()
         tenant = await db["tenants"].find_one({"_id": tenant_id})
         if tenant and tenant.get("status") == "suspended":
-            return False
+            return "blocked"
         sub = await db["subscriptions"].find_one({"tenant_id": tenant_id})
-        if sub and sub.get("status") in ("suspended", "cancelled", "expired"):
-            return False
-        return True
+        if not sub:
+            return "ok"
+        st = sub.get("status")
+        if st in ("suspended", "cancelled"):
+            return "blocked"
+        if st == "expired":
+            return "expired"
+        return "ok"
 
     async def refresh(self, refresh_token: str) -> dict | None:
         try:

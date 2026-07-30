@@ -21,6 +21,12 @@ export default function PayReturn() {
       else router.replace(`/register?pending=${encodeURIComponent(pend)}`);
       return;
     }
+    // ανανέωση ληγμένης συνδρομής (pre-auth): μετά την πληρωμή → login (τώρα ενεργή)
+    if (window.localStorage.getItem("renew_pending")) {
+      window.localStorage.removeItem("renew_pending");
+      router.replace(failed ? "/login?renew=fail" : "/login?renewed=1");
+      return;
+    }
     router.replace(failed ? "/settings/billing?pay=fail" : "/settings/billing?pay=ok");
   }, [router]);
 

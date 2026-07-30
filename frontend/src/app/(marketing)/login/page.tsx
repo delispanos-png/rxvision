@@ -20,9 +20,37 @@ type LoginResponse = {
   expires_in: number;
 };
 
+type RenewPkg = { _id: string; name?: string; price_monthly?: number; price_yearly?: number };
+type RenewState = { token: string; pkgs: RenewPkg[]; choice: string; yearly: boolean; busy: boolean };
+const eur = (c?: number) => new Intl.NumberFormat("el-GR", { style: "currency", currency: "EUR", maximumFractionDigits: 0 }).format((c || 0) / 100);
+
 export default function LoginPage() {
   const router = useRouter();
   const [serverError, setServerError] = useState<string | null>(null);
+  const [renew, setRenew] = useState<RenewState | null>(null);   // ληγμένη συνδρομή → οθόνη ανανέωσης
+  const [notice, setNotice] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const qp = new URLSearchParams(window.location.search);
+    if (qp.get("renewed")) setNotice("Η ανανέωση ολοκληρώθηκε ✓ — συνδέσου για να συνεχίσεις.");
+  }, []);
+
+  async function startRenewal() {
+    if (!renew || !renew.choice) return;
+    setRenew({ ...renew, busy: true });
+    try {
+      const r = await api<{ ok: boolean; checkout_url?: string }>("/billing/renew", {
+        method: "POST",
+        body: JSON.stringify({ renew_token: renew.token, package_code: renew.choice, billing_cycle: renew.yearly ? "yearly" : "monthly" }),
+      });
+      if (r.checkout_url) {
+        if (typeof window !== "undefined") window.localStorage.setItem("renew_pending", "1");
+        window.location.href = r.checkout_url; return;
+      }
+      setServerError("Δεν ξεκίνησε η ανανέωση. Δοκιμάστε ξανά."); setRenew({ ...renew, busy: false });
+    } catch { setServerError("Η ανανέωση απέτυχε. Δοκιμάστε ξανά."); setRenew({ ...renew, busy: false }); }
+  }
 
   // Admin impersonation hand-off: #imp=<access>~<refresh> → store & enter the app.
   useEffect(() => {
@@ -69,16 +97,24 @@ export default function LoginPage() {
       }
       router.push("/dashboard");
     } catch (e) {
-      const detail = (e instanceof ApiError ? (e.problem as { detail?: { error?: string; seats?: number } })?.detail : null) || {};
+      const detail = (e instanceof ApiError ? (e.problem as { detail?: { error?: string; seats?: number; reason?: string; renew_token?: string } })?.detail : null) || {};
       if (e instanceof ApiError && e.status === 403 && detail.error === "seat_limit") {
         setServerError(
           `Συμπληρώθηκε το όριο ταυτόχρονων χρηστών${detail.seats ? ` (${detail.seats})` : ""} της συνδρομής σας. ` +
           "Αποσυνδεθείτε από άλλη συσκευή ή αναβαθμίστε τις θέσεις χρηστών."
         );
+      } else if (e instanceof ApiError && e.status === 403 && detail.error === "access_blocked" && detail.reason === "expired" && detail.renew_token) {
+        // ΛΗΓΜΕΝΗ συνδρομή → οθόνη ανανέωσης (διάλεξε πακέτο & πλήρωσε)
+        try {
+          const cfg = await api<{ packages: RenewPkg[] }>("/onboarding/packages");
+          const paid = (cfg.packages || []).filter((p) => (p.price_monthly || 0) > 0 || (p.price_yearly || 0) > 0);
+          setRenew({ token: detail.renew_token, pkgs: paid, choice: paid[0]?._id || "", yearly: true, busy: false });
+        } catch {
+          setRenew({ token: detail.renew_token, pkgs: [], choice: "", yearly: true, busy: false });
+        }
       } else if (e instanceof ApiError && e.status === 403 && detail.error === "access_blocked") {
         setServerError(
-          "Η συνδρομή ή η δοκιμαστική περίοδος του λογαριασμού σας έχει λήξει (ή είναι σε αναστολή). " +
-          "Επικοινωνήστε μαζί μας για ενεργοποίηση/ανανέωση συνδρομής."
+          "Ο λογαριασμός σας είναι σε αναστολή. Επικοινωνήστε μαζί μας."
         );
       } else {
         setServerError(
@@ -90,6 +126,38 @@ export default function LoginPage() {
     }
   }
 
+  if (renew) {
+    const p = renew.pkgs.find((x) => x._id === renew.choice);
+    const price = renew.yearly ? p?.price_yearly : p?.price_monthly;
+    return (
+      <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+        <div className="mb-4 flex justify-center"><Logo markClassName="h-10 w-10" subtitle={false} /></div>
+        <h1 className="mb-1 text-lg font-bold text-slate-900">Η συνδρομή σου έληξε</h1>
+        <p className="mb-4 text-sm text-slate-500">Διάλεξε πακέτο και ανανέωσε για να συνεχίσεις. Ο κωδικός σου παραμένει ο ίδιος.</p>
+        <div className="mb-3 inline-flex rounded-lg bg-slate-100 p-0.5 text-xs">
+          <button type="button" onClick={() => setRenew({ ...renew, yearly: true })} className={`rounded-md px-3 py-1.5 font-medium ${renew.yearly ? "bg-white text-brand-700 shadow-sm" : "text-slate-500"}`}>Ετήσια</button>
+          <button type="button" onClick={() => setRenew({ ...renew, yearly: false })} className={`rounded-md px-3 py-1.5 font-medium ${!renew.yearly ? "bg-white text-brand-700 shadow-sm" : "text-slate-500"}`}>Μηνιαία</button>
+        </div>
+        <div className="space-y-2">
+          {renew.pkgs.map((pk) => {
+            const pr = renew.yearly ? pk.price_yearly : pk.price_monthly;
+            const active = renew.choice === pk._id;
+            return (
+              <button key={pk._id} type="button" onClick={() => setRenew({ ...renew, choice: pk._id })} className={`flex w-full items-center justify-between rounded-xl border-2 p-3 text-left ${active ? "border-brand-400 bg-brand-50/50" : "border-slate-200 hover:border-slate-300"}`}>
+                <span className="font-medium text-slate-800">{pk.name || pk._id}</span>
+                <span className="text-sm font-bold text-brand-700">{eur(pr)}<span className="text-[10px] font-normal text-slate-400">/{renew.yearly ? "έτος" : "μήνα"}</span></span>
+              </button>
+            );
+          })}
+          {renew.pkgs.length === 0 && <div className="rounded-lg bg-amber-50 p-3 text-xs text-amber-700">Δεν φορτώθηκαν πακέτα — δοκίμασε ανανέωση σελίδας.</div>}
+        </div>
+        {serverError && <div role="alert" className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{serverError}</div>}
+        <button type="button" disabled={!renew.choice || renew.busy} onClick={startRenewal} className="mt-4 w-full rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-50">{renew.busy ? "Άνοιγμα πληρωμής…" : `Πλήρωσε ${eur(price)} & Ανανέωσε`}</button>
+        <button type="button" onClick={() => { setRenew(null); setServerError(null); }} className="mt-2 w-full text-center text-xs text-slate-400 hover:text-slate-600">← Πίσω στη σύνδεση</button>
+      </div>
+    );
+  }
+
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
       <div className="mb-5 flex justify-center">
@@ -97,6 +165,8 @@ export default function LoginPage() {
       </div>
       <h1 className="mb-1 text-lg font-bold text-slate-900">Σύνδεση</h1>
       <p className="mb-5 text-sm text-slate-500">Στατιστική ανάλυση εκτελέσεων συνταγών</p>
+
+      {notice && <div className="mb-4 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-800">{notice}</div>}
 
       <form className="space-y-4" onSubmit={handleSubmit(onSubmit)} noValidate>
         <div>

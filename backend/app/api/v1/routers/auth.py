@@ -68,7 +68,10 @@ async def login(body: LoginIn, request: Request):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid_credentials")
     if result.get("access_blocked"):
         # Σωστός κωδικός, αλλά η συνδρομή/δοκιμαστική έχει λήξει ή ο λογαριασμός είναι σε αναστολή.
-        raise HTTPException(status.HTTP_403_FORBIDDEN, detail={"error": "access_blocked"})
+        # ΛΗΓΜΕΝΗ → επιστρέφουμε reason=expired + renew_token ώστε ο client να δείξει ανανέωση πακέτου.
+        raise HTTPException(status.HTTP_403_FORBIDDEN,
+                            detail={"error": "access_blocked", "reason": result.get("reason"),
+                                    "renew_token": result.get("renew_token")})
     if result.get("mfa_required"):
         # Password OK but a valid TOTP code is required — client should prompt for it.
         # If a code WAS submitted and rejected, count it as a failure so TOTP guessing also

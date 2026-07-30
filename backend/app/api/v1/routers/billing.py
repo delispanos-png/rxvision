@@ -6,7 +6,10 @@ import hashlib
 import json
 from datetime import datetime, timezone
 
+from typing import Literal
+
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from pydantic import BaseModel, Field
 from pymongo.errors import DuplicateKeyError
 
 from fastapi.responses import JSONResponse
@@ -43,6 +46,28 @@ async def viva_webhook(request: Request):
 async def card_capture(ctx: TenantContext = Depends(get_current_context)):
     """Start Revolut card capture for the current tenant → {ok, token} for the checkout widget."""
     return await billing_service.start_card_capture(ctx.tenant_id)
+
+
+class RenewIn(BaseModel):
+    renew_token: str
+    package_code: str = Field(..., max_length=40)
+    billing_cycle: Literal["monthly", "yearly"] = "yearly"
+
+
+@router.post("/renew")
+async def renew(body: RenewIn):
+    """Ανανέωση ΛΗΓΜΕΝΗΣ συνδρομής (pre-auth, με renew_token από το login) → Viva checkout_url."""
+    from app.core.security import decode_token
+    try:
+        claims = decode_token(body.renew_token)
+    except Exception:  # noqa: BLE001
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail={"error": "invalid_token"})
+    if claims.get("scope") != "renew" or not claims.get("tid"):
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail={"error": "invalid_scope"})
+    res = await billing_service.start_renewal(claims["tid"], body.package_code, body.billing_cycle)
+    if not res.get("ok"):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail={"error": res.get("error")})
+    return res
 
 
 @router.get("/status")

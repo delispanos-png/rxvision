@@ -83,6 +83,16 @@ def create_refresh_token(*, user_id: str, tenant_id: str, version: int,
     return jwt.encode(payload, settings.JWT_SECRET, algorithm=settings.JWT_ALG)
 
 
+def create_renew_token(*, tenant_id: str) -> str:
+    """Βραχύβιο token (30') για ανανέωση ΛΗΓΜΕΝΗΣ συνδρομής — εκδίδεται στο login μετά από σωστό
+    κωδικό. ΔΕΝ δίνει πρόσβαση στην εφαρμογή· χρησιμεύει ΜΟΝΟ στο /billing/renew (Viva checkout)."""
+    payload = {
+        "tid": tenant_id, "scope": "renew", "aud": AUD_TENANT,
+        "iat": _now(), "exp": _now() + timedelta(minutes=30), "jti": str(uuid.uuid4()),
+    }
+    return jwt.encode(payload, settings.JWT_SECRET, algorithm=settings.JWT_ALG)
+
+
 def create_platform_token(*, admin_id: str, email: str) -> str:
     """Access token for a CloudOn platform admin — NO tenant, marked `padmin`."""
     payload = {

@@ -73,6 +73,59 @@ async def start_card_capture(tenant_id: str) -> dict:
     return res
 
 
+async def start_renewal(tenant_id: str, package_code: str, billing_cycle: str = "yearly") -> dict:
+    """Ανανέωση ΛΗΓΜΕΝΗΣ συνδρομής: ο πελάτης διαλέγει πακέτο & πληρώνει μέσω Viva. Αποθηκεύει
+    `pending_renewal` στη συνδρομή· η ενεργοποίηση γίνεται στο webhook (complete_renewal)."""
+    db = shared_db()
+    pkg = await db["packages"].find_one({"_id": package_code})
+    if not pkg:
+        return {"ok": False, "error": "package_not_found"}
+    yearly = billing_cycle == "yearly"
+    amount = int(pkg.get("price_yearly" if yearly else "price_monthly", 0) or 0)
+    if amount <= 0:
+        return {"ok": False, "error": "invalid_amount"}
+    if await active_provider() != "viva":
+        return {"ok": False, "error": "provider_not_viva"}
+    tenant = await db["tenants"].find_one({"_id": tenant_id}) or {}
+    bp = tenant.get("billing_profile") or {}
+    email = bp.get("email") or bp.get("billing_email") or ""
+    name = bp.get("name") or tenant.get("name") or tenant_id
+    order = await viva_service.create_checkout_order(
+        amount=amount, ref=f"renew:{tenant_id}",
+        description=f"RxVision ανανέωση {billing_cycle} — {name}"[:2048],
+        email=email, full_name=name, allow_recurring=True)
+    if not order.get("ok"):
+        return {"ok": False, "error": order.get("error", "viva_error")}
+    await db["subscriptions"].update_one({"tenant_id": tenant_id}, {"$set": {
+        "pending_renewal": {"plan": package_code, "billing_cycle": billing_cycle, "amount": amount},
+        "viva_order_code": order.get("order_code")}})
+    return {"ok": True, "checkout_url": order["checkout_url"], "amount_cents": amount}
+
+
+async def complete_renewal(tenant_id: str, viva_transaction_id: str) -> None:
+    """Viva webhook (renew:<tid>) → ενεργοποιεί τη συνδρομή με το επιλεγμένο πακέτο (idempotent)."""
+    db = shared_db()
+    sub = await db["subscriptions"].find_one({"tenant_id": tenant_id})
+    if not sub:
+        return
+    pr = sub.get("pending_renewal") or {}
+    plan = pr.get("plan") or sub.get("plan")
+    cycle = pr.get("billing_cycle") or sub.get("billing_cycle") or "yearly"
+    pkg = await db["packages"].find_one({"_id": plan}) or {}
+    yearly = cycle == "yearly"
+    price = int(pkg.get("price_yearly" if yearly else "price_monthly", 0) or 0)
+    now = _now()
+    await db["subscriptions"].update_one({"tenant_id": tenant_id}, {
+        "$set": {"status": "active", "plan": plan, "plan_name": pkg.get("name"),
+                 "billing_cycle": cycle, "price_per_pharmacy": price,
+                 "modules_included": pkg.get("modules", sub.get("modules_included", [])),
+                 "current_period_end": now + (timedelta(days=365) if yearly else timedelta(days=30)),
+                 "started_at": now, "payment_provider": "viva", "payment_status": "card_saved",
+                 "viva_transaction_id": viva_transaction_id, "failed_attempts": 0},
+        "$unset": {"pending_renewal": ""}})
+    await db["tenants"].update_one({"_id": tenant_id}, {"$set": {"status": "active"}})
+
+
 # Καταστάσεις πληρωμής που σημαίνουν «υπάρχει αποθηκευμένη κάρτα που μπορούμε να χρεώσουμε off-session».
 CARD_ON_FILE_STATES = ("card_saved", "active", "past_due")
 
@@ -353,6 +406,9 @@ async def handle_viva_webhook(event_data: dict) -> None:
     if mt0.startswith("signup:"):
         from app.services.onboarding_service import OnboardingService
         await OnboardingService().mark_pending_paid(mt0[len("signup:"):], str(txn))
+        return
+    if mt0.startswith("renew:"):     # ανανέωση ληγμένης συνδρομής → ενεργοποίηση
+        await complete_renewal(mt0[len("renew:"):], str(txn))
         return
     # (1) top-up μηνυμάτων (order_code = viva order_code, αποθηκευμένο ως order_id στο pending) → πίστωση wallet
     if order_code:
