@@ -21,7 +21,7 @@ type LoginResponse = {
 };
 
 type RenewPkg = { _id: string; name?: string; price_monthly?: number; price_yearly?: number; modules?: string[]; seats?: number; sla?: string; billing_cycles?: string[] };
-type RenewState = { token: string; pkgs: RenewPkg[]; choice: string; yearly: boolean; busy: boolean; currentPlan?: string; currentPlanName?: string };
+type RenewState = { token: string; pkgs: RenewPkg[]; choice: string; yearly: boolean; busy: boolean; coupon: string; currentPlan?: string; currentPlanName?: string };
 const eur = (c?: number) => new Intl.NumberFormat("el-GR", { style: "currency", currency: "EUR", maximumFractionDigits: 0 }).format((c || 0) / 100);
 
 const MODULE_LABELS: Record<string, string> = {
@@ -51,7 +51,7 @@ export default function LoginPage() {
     try {
       const r = await api<{ ok: boolean; checkout_url?: string }>("/billing/renew", {
         method: "POST",
-        body: JSON.stringify({ renew_token: renew.token, package_code: renew.choice, billing_cycle: renew.yearly ? "yearly" : "monthly" }),
+        body: JSON.stringify({ renew_token: renew.token, package_code: renew.choice, billing_cycle: renew.yearly ? "yearly" : "monthly", coupon_code: renew.coupon.trim() || undefined }),
       });
       if (r.checkout_url) {
         if (typeof window !== "undefined") window.localStorage.setItem("renew_pending", "1");
@@ -119,10 +119,10 @@ export default function LoginPage() {
           const paid = (cfg.packages || []).filter((p) => (p.price_monthly || 0) > 0 || (p.price_yearly || 0) > 0);
           const hasYearly = paid.some((p) => (p.billing_cycles ? p.billing_cycles.includes("yearly") : (p.price_yearly || 0) > 0));
           const preferred = paid.find((p) => p._id === detail.current_plan) || paid[0];   // preselect το τρέχον
-          setRenew({ token: detail.renew_token, pkgs: paid, choice: preferred?._id || "", yearly: hasYearly, busy: false,
+          setRenew({ token: detail.renew_token, pkgs: paid, choice: preferred?._id || "", yearly: hasYearly, busy: false, coupon: "",
                      currentPlan: detail.current_plan, currentPlanName: detail.current_plan_name });
         } catch {
-          setRenew({ token: detail.renew_token, pkgs: [], choice: "", yearly: true, busy: false });
+          setRenew({ token: detail.renew_token, pkgs: [], choice: "", yearly: true, busy: false, coupon: "" });
         }
       } else if (e instanceof ApiError && e.status === 403 && detail.error === "access_blocked") {
         setServerError(
@@ -191,7 +191,8 @@ export default function LoginPage() {
           </div>
         )}
         {serverError && <div role="alert" className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{serverError}</div>}
-        <button type="button" disabled={!renew.choice || renew.busy} onClick={startRenewal} className="mt-4 w-full rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-50">{renew.busy ? "Άνοιγμα πληρωμής…" : `Πλήρωσε ${eur(price)} & Ανανέωσε`}</button>
+        <input value={renew.coupon} onChange={(e) => setRenew({ ...renew, coupon: e.target.value })} placeholder="Κωδικός έκπτωσης (προαιρετικό)" className="mt-3 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-400" />
+        <button type="button" disabled={!renew.choice || renew.busy} onClick={startRenewal} className="mt-3 w-full rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-50">{renew.busy ? "Άνοιγμα πληρωμής…" : `Πλήρωσε ${eur(price)} & Ανανέωσε`}</button>
         <button type="button" onClick={() => { setRenew(null); setServerError(null); }} className="mt-2 w-full text-center text-xs text-slate-400 hover:text-slate-600">← Πίσω στη σύνδεση</button>
       </div>
     );

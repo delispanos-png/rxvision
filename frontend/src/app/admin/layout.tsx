@@ -29,6 +29,7 @@ const GROUPS: { label: string; icon: typeof LayoutGrid; items: { label: string; 
       { label: "Add-ons", icon: Sparkles, href: "/admin/addons", section: "subscriptions" },
       { label: "Αιτήματα αναβάθμισης", icon: ArrowUpCircle, href: "/admin/plan-changes", section: "subscriptions" },
       { label: "Newsletter", icon: Mail, href: "/admin/newsletter", section: "newsletter" },
+      { label: "Αξιολογήσεις", icon: MessageSquare, href: "/admin/feedback", section: "subscribers" },
     ],
   },
   {

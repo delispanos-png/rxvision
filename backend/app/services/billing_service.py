@@ -75,9 +75,10 @@ async def start_card_capture(tenant_id: str) -> dict:
     return res
 
 
-async def start_renewal(tenant_id: str, package_code: str, billing_cycle: str = "yearly") -> dict:
-    """Ανανέωση ΛΗΓΜΕΝΗΣ συνδρομής: ο πελάτης διαλέγει πακέτο & πληρώνει μέσω Viva. Αποθηκεύει
-    `pending_renewal` στη συνδρομή· η ενεργοποίηση γίνεται στο webhook (complete_renewal)."""
+async def start_renewal(tenant_id: str, package_code: str, billing_cycle: str = "yearly",
+                        coupon_code: str | None = None) -> dict:
+    """Ανανέωση ΛΗΓΜΕΝΗΣ συνδρομής: ο πελάτης διαλέγει πακέτο (+ προαιρετικό coupon) & πληρώνει μέσω
+    Viva. Αποθηκεύει `pending_renewal`· η ενεργοποίηση + εξαργύρωση coupon γίνεται στο webhook."""
     db = shared_db()
     pkg = await db["packages"].find_one({"_id": package_code})
     if not pkg:
@@ -88,6 +89,8 @@ async def start_renewal(tenant_id: str, package_code: str, billing_cycle: str = 
         return {"ok": False, "error": "invalid_amount"}
     if await active_provider() != "viva":
         return {"ok": False, "error": "provider_not_viva"}
+    from app.services import feedback_service
+    amount, coupon = await feedback_service.apply_discount(amount, coupon_code, tenant_id)
     tenant = await db["tenants"].find_one({"_id": tenant_id}) or {}
     bp = tenant.get("billing_profile") or {}
     email = bp.get("email") or bp.get("billing_email") or ""
@@ -98,10 +101,13 @@ async def start_renewal(tenant_id: str, package_code: str, billing_cycle: str = 
         email=email, full_name=name, allow_recurring=True)
     if not order.get("ok"):
         return {"ok": False, "error": order.get("error", "viva_error")}
+    pending = {"plan": package_code, "billing_cycle": billing_cycle, "amount": amount}
+    if coupon:
+        pending["coupon"] = coupon["code"]
     await db["subscriptions"].update_one({"tenant_id": tenant_id}, {"$set": {
-        "pending_renewal": {"plan": package_code, "billing_cycle": billing_cycle, "amount": amount},
-        "viva_order_code": order.get("order_code")}})
-    return {"ok": True, "checkout_url": order["checkout_url"], "amount_cents": amount}
+        "pending_renewal": pending, "viva_order_code": order.get("order_code")}})
+    return {"ok": True, "checkout_url": order["checkout_url"], "amount_cents": amount,
+            "discount_pct": (coupon or {}).get("discount_pct")}
 
 
 async def complete_renewal(tenant_id: str, viva_transaction_id: str) -> None:
@@ -126,6 +132,9 @@ async def complete_renewal(tenant_id: str, viva_transaction_id: str) -> None:
                  "viva_transaction_id": viva_transaction_id, "failed_attempts": 0},
         "$unset": {"pending_renewal": ""}})
     await db["tenants"].update_one({"_id": tenant_id}, {"$set": {"status": "active"}})
+    if pr.get("coupon"):     # εξαργύρωσε το coupon (single-use)
+        from app.services import feedback_service
+        await feedback_service.redeem_coupon(pr["coupon"])
 
 
 # Καταστάσεις πληρωμής που σημαίνουν «υπάρχει αποθηκευμένη κάρτα που μπορούμε να χρεώσουμε off-session».

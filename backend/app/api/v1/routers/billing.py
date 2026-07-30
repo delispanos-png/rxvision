@@ -52,6 +52,7 @@ class RenewIn(BaseModel):
     renew_token: str
     package_code: str = Field(..., max_length=40)
     billing_cycle: Literal["monthly", "yearly"] = "yearly"
+    coupon_code: str | None = Field(None, max_length=40)
 
 
 @router.post("/renew")
@@ -64,7 +65,8 @@ async def renew(body: RenewIn):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail={"error": "invalid_token"})
     if claims.get("scope") != "renew" or not claims.get("tid"):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail={"error": "invalid_scope"})
-    res = await billing_service.start_renewal(claims["tid"], body.package_code, body.billing_cycle)
+    res = await billing_service.start_renewal(claims["tid"], body.package_code, body.billing_cycle,
+                                              coupon_code=body.coupon_code)
     if not res.get("ok"):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail={"error": res.get("error")})
     return res
