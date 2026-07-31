@@ -300,7 +300,7 @@ async def tenants(_: PlatformContext = Depends(get_platform_admin)):
     async for t in db["tenants"].find({}).sort("created_at", -1):
         sub = subs.get(t["_id"], {})
         pharmacies = (sub.get("limits") or {}).get("pharmacies", 1) or 1
-        mrr = (sub.get("price_per_pharmacy") or 0) * pharmacies
+        mrr = 0 if sub.get("complimentary") else (sub.get("price_per_pharmacy") or 0) * pharmacies
         items.append({
             "id": t["_id"],
             "name": t.get("name", t["_id"]),
@@ -355,7 +355,7 @@ async def overview(_: PlatformContext = Depends(get_platform_admin)):
         st = sub.get("status") or t.get("status") or "—"
         by_status[st] = by_status.get(st, 0) + 1
         pharm = (sub.get("limits") or {}).get("pharmacies", 1) or 1
-        mrr += (sub.get("price_per_pharmacy") or 0) * pharm
+        mrr += 0 if sub.get("complimentary") else (sub.get("price_per_pharmacy") or 0) * pharm
         plan = sub.get("plan_name") or sub.get("plan") or "—"
         plan_dist[plan] = plan_dist.get(plan, 0) + 1
         ca = _aware(t.get("created_at"))
@@ -526,7 +526,7 @@ async def subscriptions(_: PlatformContext = Depends(get_platform_admin)):
             "billing_cycle": s.get("billing_cycle"),
             "seats": s.get("seats", pharmacies),
             "active_now": active_now.get(s["tenant_id"], 0),
-            "mrr": (s.get("price_per_pharmacy") or 0) * pharmacies,
+            "mrr": 0 if s.get("complimentary") else (s.get("price_per_pharmacy") or 0) * pharmacies,
             "started_at": s.get("created_at") or created.get(s["tenant_id"]),
             "current_period_end": s.get("current_period_end"),
             "days_to_expiry": d2e,
@@ -573,7 +573,7 @@ async def subscription_detail(tenant_id: str, _: PlatformContext = Depends(get_p
         "sla": s.get("sla"), "seats": s.get("seats", pharmacies),
         "users": users, "active_now": active_now,
         "price_per_pharmacy": s.get("price_per_pharmacy"),
-        "mrr": (s.get("price_per_pharmacy") or 0) * pharmacies,
+        "mrr": 0 if s.get("complimentary") else (s.get("price_per_pharmacy") or 0) * pharmacies,
         # subscription-level override wins over the package default (admin can edit per-tenant)
         "extra_user_price": s.get("extra_user_price") if "extra_user_price" in s else pkg.get("extra_user_price"),
         "extra_user_price_yearly": s.get("extra_user_price_yearly") if "extra_user_price_yearly" in s else pkg.get("extra_user_price_yearly"),
@@ -1381,7 +1381,7 @@ async def tenant_detail(tenant_id: str, _: PlatformContext = Depends(get_platfor
             "status": sub.get("status"), "product_code": sub.get("product_code"),
             "features": sub.get("features", {}), "limits": sub.get("limits", {}),
             "billing_cycle": sub.get("billing_cycle"), "seats": sub.get("seats"),
-            "mrr": (sub.get("price_per_pharmacy") or 0) * pharmacies,
+            "mrr": 0 if sub.get("complimentary") else (sub.get("price_per_pharmacy") or 0) * pharmacies,
             "trial_ends_at": sub.get("trial_ends_at"),
             "current_period_end": sub.get("current_period_end"),
             "source": sub.get("source")},
@@ -1747,8 +1747,8 @@ async def billing(_: PlatformContext = Depends(get_platform_admin)):
         st = s.get("status", "—")
         counts[st] = counts.get(st, 0) + 1
         pharmacies = (s.get("limits") or {}).get("pharmacies", 1) or 1
-        m = (s.get("price_per_pharmacy") or 0) * pharmacies
-        billed = st in ("active", "past_due")
+        m = 0 if s.get("complimentary") else (s.get("price_per_pharmacy") or 0) * pharmacies
+        billed = st in ("active", "past_due") and not s.get("complimentary")
         if billed:
             mrr += m
             d2e = _days_until(s.get("current_period_end"), now)
