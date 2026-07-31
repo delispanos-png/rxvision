@@ -910,6 +910,19 @@ class IntegrationsIn(BaseModel):
     viva_api_key: str | None = None
     viva_source_code: str | None = None
     viva_mode: str | None = None  # demo | live
+    # SoftOne / myDATA (παραγωγή παραστατικών → διαβίβαση myDATA μέσω SoftOne)
+    softone_base_url: str | None = None
+    softone_app_id: str | None = None
+    softone_username: str | None = None
+    softone_password: str | None = None
+    softone_company: str | None = None
+    softone_branch: str | None = None
+    softone_module: str | None = None
+    softone_refid: str | None = None
+    softone_series: str | None = None
+    softone_form: str | None = None
+    softone_issuer_afm: str | None = None
+    softone_issuer_name: str | None = None
     subscription_provider: str | None = None  # revolut | viva — ποιος χρεώνει τις συνδρομές
     # Alpha Bank (Alpha e-Commerce) card gateway — alternative to Revolut
     alphabank_merchant_id: str | None = None
@@ -951,6 +964,7 @@ async def get_integrations(_: PlatformContext = Depends(get_platform_admin)):
     aade = decrypt_doc("aade", await db["platform_settings"].find_one({"_id": "aade"})) or {}
     rev = decrypt_doc("revolut", await db["platform_settings"].find_one({"_id": "revolut"})) or {}
     viva = decrypt_doc("viva", await db["platform_settings"].find_one({"_id": "viva"})) or {}
+    softone = decrypt_doc("softone", await db["platform_settings"].find_one({"_id": "softone"})) or {}
     billing_cfg = await db["platform_settings"].find_one({"_id": "billing"}) or {}
     ant = decrypt_doc("anthropic", await db["platform_settings"].find_one({"_id": "anthropic"})) or {}
     dbk = decrypt_doc("drugbank", await db["platform_settings"].find_one({"_id": "drugbank"})) or {}
@@ -971,6 +985,14 @@ async def get_integrations(_: PlatformContext = Depends(get_platform_admin)):
                  "source_code": viva.get("source_code") or "",
                  "checkout_ready": bool(viva.get("client_id") and viva.get("client_secret") and viva.get("source_code")),
                  "recurring_ready": bool(viva.get("merchant_id") and viva.get("api_key"))},
+        "softone": {"base_url": softone.get("base_url") or "", "app_id": softone.get("app_id") or "",
+                    "username": softone.get("username") or "", "password_set": bool(softone.get("password")),
+                    "company": softone.get("company") or "", "branch": softone.get("branch") or "",
+                    "module": softone.get("module") or "", "refid": softone.get("refid") or "",
+                    "series": softone.get("series") or "", "form": softone.get("form") or "",
+                    "issuer_afm": softone.get("issuer_afm") or "", "issuer_name": softone.get("issuer_name") or "",
+                    "configured": bool(softone.get("base_url") and softone.get("username")
+                                       and softone.get("password") and softone.get("app_id"))},
         "subscription_provider": billing_cfg.get("active_provider") or "revolut",
         "alphabank": {"mode": (decrypt_doc("alphabank", await db["platform_settings"].find_one({"_id": "alphabank"})) or {}).get("mode", "test"),
                       "merchant_id_set": bool((decrypt_doc("alphabank", await db["platform_settings"].find_one({"_id": "alphabank"})) or {}).get("merchant_id")),
@@ -1043,6 +1065,22 @@ async def set_integrations(body: IntegrationsIn,
     if v:
         await db["platform_settings"].update_one(
             {"_id": "viva"}, {"$set": encrypt_fields("viva", v)}, upsert=True)
+    # SoftOne / myDATA
+    s1 = {}
+    _s1map = (("base_url", body.softone_base_url), ("app_id", body.softone_app_id),
+              ("username", body.softone_username), ("company", body.softone_company),
+              ("branch", body.softone_branch), ("module", body.softone_module),
+              ("refid", body.softone_refid), ("series", body.softone_series),
+              ("form", body.softone_form), ("issuer_afm", body.softone_issuer_afm),
+              ("issuer_name", body.softone_issuer_name))
+    for k, val in _s1map:
+        if val is not None:
+            s1[k] = val.strip()
+    if body.softone_password:            # secret — μόνο αν δόθηκε (αλλιώς κρατά το υπάρχον)
+        s1["password"] = body.softone_password
+    if s1:
+        await db["platform_settings"].update_one(
+            {"_id": "softone"}, {"$set": encrypt_fields("softone", s1)}, upsert=True)
     if body.subscription_provider in ("revolut", "viva"):
         await db["platform_settings"].update_one(
             {"_id": "billing"}, {"$set": {"active_provider": body.subscription_provider}}, upsert=True)
@@ -1212,6 +1250,13 @@ async def admin_feedback_coupon(token: str, body: CouponIn,
         raise HTTPException(http_status.HTTP_404_NOT_FOUND, detail={"error": "not_found"})
     return await feedback_service.issue_coupon(fb["tenant_id"], body.discount_pct, body.days,
                                                feedback_token=token)
+
+
+@router.post("/integrations/softone/test")
+async def admin_softone_test(_: PlatformContext = Depends(get_platform_admin)):
+    """Δοκιμή σύνδεσης SoftOne (login + authenticate)."""
+    from app.services import softone_service
+    return await softone_service.test_connection()
 
 
 @router.get("/comms/senders")

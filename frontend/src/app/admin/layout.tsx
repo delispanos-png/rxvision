@@ -36,6 +36,7 @@ const GROUPS: { label: string; icon: typeof LayoutGrid; items: { label: string; 
     label: "Χρεώσεις & Πληρωμές", icon: Wallet, items: [
       { label: "Τιμολόγηση", icon: Receipt, href: "/admin/billing", section: "billing" },
       { label: "Τρόποι πληρωμής", icon: Wallet, href: "/admin/payments", section: "integrations" },
+      { label: "SoftOne / myDATA", icon: Receipt, href: "/admin/softone", section: "integrations" },
       { label: "Διατίμηση / Κέρδος", icon: Percent, href: "/admin/markup", section: "markup" },
       { label: "Μηνύματα & Credits", icon: MessageSquare, href: "/admin/credit-packages", section: "subscriptions" },
     ],
