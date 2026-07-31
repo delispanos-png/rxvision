@@ -100,6 +100,15 @@ class PhoneVerifyConfirmIn(BaseModel):
     code: str = Field(..., min_length=4, max_length=8)
 
 
+class EmailVerifyStartIn(BaseModel):
+    email: EmailStr
+
+
+class EmailVerifyConfirmIn(BaseModel):
+    challenge_id: str = Field(..., min_length=8, max_length=64)
+    code: str = Field(..., min_length=4, max_length=8)
+
+
 class AvailabilityIn(BaseModel):
     tenant_id: str | None = None                          # target pharmacy (defaults to active)
     medicine_barcode: str | None = Field(None, max_length=40)
@@ -282,6 +291,27 @@ async def phone_verify_confirm(body: PhoneVerifyConfirmIn, ctx: PatientContext =
     res = await PatientAuthService().confirm_phone_verify(ctx.account_id, body.challenge_id, body.code)
     if res.get("error"):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail={"error": res["error"]})
+    return res
+
+
+@router.post("/me/email/verify/start",
+             dependencies=[Depends(rate_limit("patient_email_verify", limit=5, window_seconds=600))])
+async def email_verify_start(body: EmailVerifyStartIn, ctx: PatientContext = Depends(get_patient_context)):
+    """Στέλνει OTP στο νέο/τρέχον email για επιβεβαίωση/αλλαγή (το email είναι το login)."""
+    res = await PatientAuthService().start_email_verify(ctx.account_id, str(body.email))
+    if res.get("error"):
+        code = status.HTTP_409_CONFLICT if res["error"] == "email_exists" else status.HTTP_400_BAD_REQUEST
+        raise HTTPException(code, detail={"error": res["error"]})
+    return res
+
+
+@router.post("/me/email/verify/confirm",
+             dependencies=[Depends(rate_limit("patient_email_confirm", limit=10, window_seconds=600))])
+async def email_verify_confirm(body: EmailVerifyConfirmIn, ctx: PatientContext = Depends(get_patient_context)):
+    res = await PatientAuthService().confirm_email_verify(ctx.account_id, body.challenge_id, body.code)
+    if res.get("error"):
+        code = status.HTTP_409_CONFLICT if res["error"] == "email_exists" else status.HTTP_400_BAD_REQUEST
+        raise HTTPException(code, detail={"error": res["error"]})
     return res
 
 

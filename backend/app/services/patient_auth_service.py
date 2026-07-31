@@ -267,6 +267,60 @@ class PatientAuthService:
         await self.repo.delete_otp_challenge(challenge_id)
         return {"ok": True, "phone": ch["phone"]}
 
+    async def start_email_verify(self, account_id: str, email: str) -> dict:
+        """Στέλνει OTP στο ΝΕΟ (ή τρέχον) email για επιβεβαίωση/αλλαγή. Απόδειξη ελέγχου του email."""
+        email = (email or "").strip().lower()
+        if "@" not in email or "." not in email.split("@")[-1]:
+            return {"error": "bad_email"}
+        acc = await self.repo.get(account_id)
+        if not acc:
+            return {"error": "not_found"}
+        if email != (acc.get("email") or "").lower():
+            other = await self.repo.get_by_email(email)
+            if other and str(other.get("_id")) != str(account_id):
+                return {"error": "email_exists"}
+        code = f"{secrets.randbelow(1_000_000):06d}"
+        cid = uuid.uuid4().hex
+        await self.repo.create_otp_challenge({
+            "_id": cid, "purpose": "email_verify", "account_id": str(account_id), "email": email,
+            "code_hash": _hash_otp(code), "attempts": 0,
+            "created_at": _now(), "expires_at": _now() + timedelta(minutes=_OTP_TTL_MIN)})
+        try:
+            from app.services import mailer
+            await mailer.send_email(
+                email, "RxVision — Επιβεβαίωση email",
+                f"<p>Ο κωδικός επιβεβαίωσης του email σας στο RxVision είναι:</p>"
+                f"<p style='font-size:24px;font-weight:bold;letter-spacing:3px'>{code}</p>"
+                f"<p>Λήγει σε {_OTP_TTL_MIN} λεπτά. Αν δεν το ζητήσατε εσείς, αγνοήστε το.</p>")
+        except Exception:  # noqa: BLE001
+            await self.repo.delete_otp_challenge(cid)
+            return {"error": "email_send_failed"}
+        return {"ok": True, "challenge_id": cid, "hint": _mask_email(email),
+                "expires_in": _OTP_TTL_MIN * 60}
+
+    async def confirm_email_verify(self, account_id: str, challenge_id: str, code: str) -> dict:
+        """Επιβεβαιώνει τον OTP → θέτει email (+email_verified=True). Αλλάζει και το login email."""
+        ch = await self.repo.get_otp_challenge((challenge_id or "").strip())
+        if not ch or ch.get("purpose") != "email_verify" or ch.get("account_id") != str(account_id):
+            return {"error": "invalid"}
+        if ch.get("expires_at") and ch["expires_at"] < _now():
+            await self.repo.delete_otp_challenge(challenge_id)
+            return {"error": "expired"}
+        if int(ch.get("attempts", 0)) >= _OTP_MAX_ATTEMPTS:
+            await self.repo.delete_otp_challenge(challenge_id)
+            return {"error": "locked"}
+        if not hmac.compare_digest(ch.get("code_hash", ""), _hash_otp((code or "").strip())):
+            await self.repo.bump_otp_attempt(challenge_id)
+            return {"error": "wrong_code"}
+        # re-check uniqueness (race μεταξύ start→confirm)
+        other = await self.repo.get_by_email(ch["email"])
+        if other and str(other.get("_id")) != str(account_id):
+            await self.repo.delete_otp_challenge(challenge_id)
+            return {"error": "email_exists"}
+        await self.repo.set_email_verified(account_id, ch["email"])
+        await self.repo.delete_otp_challenge(challenge_id)
+        return {"ok": True, "email": ch["email"]}
+
     async def change_password(self, account_id: str, current: str, new: str) -> dict | str | None:
         """Αλλαγή κωδικού από το προφίλ — απαιτεί τον ΤΡΕΧΟΝΤΑ κωδικό. Επιστρέφει νέο session,
         'bad_current' αν λάθος τρέχων, ή None αν δεν βρεθεί ο λογαριασμός."""

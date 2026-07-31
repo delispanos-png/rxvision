@@ -185,6 +185,12 @@ class PatientAccountRepository:
             await self.db["patient_accounts"].update_one(  # tenant-ok: global patient account
                 {"_id": oid}, {"$set": {"phone": (phone or "").strip(), "phone_verified": True}})
 
+    async def set_email_verified(self, account_id, email: str) -> None:
+        oid = _oid(account_id)
+        if oid:
+            await self.db["patient_accounts"].update_one(  # tenant-ok: global patient account
+                {"_id": oid}, {"$set": {"email": (email or "").strip().lower(), "email_verified": True}})
+
     async def save_avatar(self, account_id, raw: bytes, content_type: str) -> str | None:
         """Resize σε ≤400px + JPEG, αποθήκευση σε `patient_avatars`· θέτει avatar_id στον λογαριασμό."""
         oid = _oid(account_id)
