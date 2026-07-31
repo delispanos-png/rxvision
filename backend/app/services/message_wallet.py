@@ -78,13 +78,66 @@ async def _low_threshold() -> int:
     return int((await _comms_cfg()).get("low_balance_cents", _LOW_BALANCE_CENTS) or 0)
 
 
+async def set_auto_recharge(tenant_id: str, enabled: bool, threshold_cents: int,
+                            package_id: str | None) -> None:
+    """Ρύθμιση αυτόματης αναπλήρωσης credits με κάρτα-on-file όταν πέσει το υπόλοιπο."""
+    await shared_db()["message_wallets"].update_one(
+        {"_id": tenant_id},
+        {"$set": {"auto_recharge": {"enabled": bool(enabled),
+                                    "threshold_cents": int(threshold_cents or 0),
+                                    "package_id": package_id}}}, upsert=True)
+
+
+async def _try_auto_recharge(tenant_id: str, ar: dict) -> bool:
+    """Χρεώνει την κάρτα-on-file για ένα πακέτο credits & πιστώνει το wallet. Anti-double-charge με
+    ατομικό claim. Best-effort — αποτυχία → False (θα σταλεί το κανονικό email alert)."""
+    db = shared_db()
+    thr = int(ar.get("threshold_cents") or 0)
+    if thr > 0 and await balance(tenant_id) >= thr:
+        return True   # ήδη επαρκές (race)
+    claimed = await db["message_wallets"].find_one_and_update(
+        {"_id": tenant_id, "auto_recharge_charging": {"$ne": True}},
+        {"$set": {"auto_recharge_charging": True}})
+    if not claimed:
+        return False
+    try:
+        pkg = await db["credit_packages"].find_one({"_id": ar.get("package_id")})
+        sub = await db["subscriptions"].find_one({"tenant_id": tenant_id})
+        if not pkg or not sub or not (sub.get("viva_transaction_id") or sub.get("revolut_customer_id")):
+            return False
+        from app.services.billing_service import _charge_recurring
+        res = await _charge_recurring(sub, int(pkg["price_cents"]), tenant_id)
+        if not res.get("ok"):
+            return False
+        await credit(tenant_id, int(pkg["credits_cents"]), reason="auto_recharge", ref=res.get("order_id"))
+        from app.services import invoice_service
+        await invoice_service.create_for_payment(
+            tenant_id=tenant_id, kind="topup", gross_cents=int(pkg["price_cents"]),
+            description="Αυτόματη αναπλήρωση credits μηνυμάτων RxVision",
+            payment={"method": "card", "provider": res.get("provider"),
+                     "transaction_id": res.get("order_id")})
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+    finally:
+        await db["message_wallets"].update_one(
+            {"_id": tenant_id}, {"$unset": {"auto_recharge_charging": ""}})
+
+
 async def _maybe_low_balance_alert(tenant_id: str, wallet_doc: dict) -> None:
     """Best-effort: ΜΙΑ ειδοποίηση email στο φαρμακείο όταν το υπόλοιπο πέσει κάτω από το κατώφλι.
     Δεν χρεώνει το πορτοφόλι (system mailer). Ποτέ δεν σπάει την αποστολή."""
     try:
         threshold = await _low_threshold()
         bal = int(wallet_doc.get("balance_cents", 0) or 0)
-        if threshold <= 0 or bal >= threshold or wallet_doc.get("low_balance_alerted"):
+        if threshold <= 0 or bal >= threshold:
+            return
+        # 1) Αυτόματη αναπλήρωση (κάρτα) αν ενεργό → γέμισμα ΧΩΡΙΣ ειδοποίηση
+        if (wallet_doc.get("auto_recharge") or {}).get("enabled"):
+            if await _try_auto_recharge(tenant_id, wallet_doc.get("auto_recharge") or {}):
+                return
+        # 2) αλλιώς → email ειδοποίηση (idempotent)
+        if wallet_doc.get("low_balance_alerted"):
             return
         # ατομικό set του flag → μόνο ένας sender στέλνει το email (idempotent)
         claimed = await shared_db()["message_wallets"].find_one_and_update(

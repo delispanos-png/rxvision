@@ -2,8 +2,8 @@
 
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { Mail, MessageSquare, Send, Loader2, Wallet, Info } from "lucide-react";
-import { api } from "@/lib/apiClient";
+import { Mail, MessageSquare, Send, Loader2, Wallet, Info, Download, RefreshCw } from "lucide-react";
+import { api, API_BASE } from "@/lib/apiClient";
 import { PanelCard } from "@/components/ui/Card";
 import { appAlert } from "@/store/dialogStore";
 import { useT } from "@/store/prefStore";
@@ -14,6 +14,8 @@ type WalletRes = {
   prices: { email: number; sms: number; viber: number };
   by_channel: { email: Chan; sms: Chan; viber: Chan };
   ledger?: { channel: string; kind: string; count: number; amount_cents: number; balance_after: number; ts: string | null }[];
+  auto_recharge?: { enabled?: boolean; threshold_cents?: number; package_id?: string | null };
+  card_on_file?: boolean;
 };
 
 const eur = (c: number) => new Intl.NumberFormat("el-GR", { style: "currency", currency: "EUR" }).format((c || 0) / 100);
@@ -82,6 +84,16 @@ export default function CommsSettingsPage() {
       appAlert(t("Αποτυχία αγοράς: ", "Purchase failed: ") + (e as Error).message);
     } finally { setBuying(null); }
   }
+  async function downloadCsv() {
+    const token = typeof window !== "undefined" ? window.localStorage.getItem("access_token") : null;
+    const res = await fetch(`${API_BASE}/communications/charges?days=${chDays}&format=csv`,
+      { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a"); a.href = url; a.download = `charges_${chDays}d.csv`;
+    document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+  }
+  const [arForm, setArForm] = useState<{ enabled: boolean; threshold: string; package_id: string } | null>(null);
   const d = q.data;
   const CH: { k: "email" | "sms" | "viber"; label: string; icon: typeof Mail }[] = [
     { k: "email", label: "Email", icon: Mail },
@@ -89,6 +101,11 @@ export default function CommsSettingsPage() {
     { k: "viber", label: "Viber", icon: MessageSquare },
   ];
   const low = (d?.balance_cents ?? 0) < 200;
+  const arCur = arForm ?? { enabled: !!d?.auto_recharge?.enabled, threshold: String((d?.auto_recharge?.threshold_cents ?? 200) / 100), package_id: d?.auto_recharge?.package_id ?? "" };
+  const saveAr = useMutation({
+    mutationFn: () => api("/communications/auto-recharge", { method: "PUT", body: JSON.stringify({ enabled: arCur.enabled, threshold_cents: Math.round((parseFloat(arCur.threshold) || 0) * 100), package_id: arCur.package_id || null }) }),
+    onSuccess: () => { q.refetch(); appAlert(t("Αποθηκεύτηκε.", "Saved.")); },
+  });
 
   return (
     <div className="space-y-4">
@@ -214,6 +231,28 @@ export default function CommsSettingsPage() {
         </div>
       </PanelCard>
 
+      {/* Αυτόματη αναπλήρωση credits με κάρτα-on-file */}
+      <PanelCard collapsible title={t("Αυτόματη αναπλήρωση credits", "Auto-recharge credits")}>
+        <p className="mb-3 text-sm text-slate-500 dark:text-slate-400">{t("Όταν το υπόλοιπο πέσει κάτω από το όριο, χρεώνεται αυτόματα η αποθηκευμένη κάρτα για ένα πακέτο credits — ώστε να μη διακόπτονται τα μηνύματα.", "When the balance drops below the threshold, the saved card is auto-charged for a credit package — so messaging never stops.")}</p>
+        {!d?.card_on_file && <div className="mb-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700">{t("Χρειάζεται αποθηκευμένη κάρτα (συνδρομή με κάρτα) για να ενεργοποιηθεί.", "Requires a saved card (card subscription) to enable.")}</div>}
+        <label className="mb-3 flex items-center gap-2 text-sm">
+          <input type="checkbox" disabled={!d?.card_on_file} checked={arCur.enabled} onChange={(e) => setArForm({ ...arCur, enabled: e.target.checked })} className="h-4 w-4 rounded border-slate-300 text-brand-600" />
+          <span className="font-medium text-slate-800 dark:text-slate-100">{t("Ενεργή αυτόματη αναπλήρωση", "Enable auto-recharge")}</span>
+        </label>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <label className="block text-xs font-medium text-slate-500 dark:text-slate-400">{t("Όριο (€)", "Threshold (€)")}
+            <input type="number" step="0.5" min="0" value={arCur.threshold} onChange={(e) => setArForm({ ...arCur, threshold: e.target.value })} className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-800" />
+          </label>
+          <label className="block text-xs font-medium text-slate-500 dark:text-slate-400">{t("Πακέτο αναπλήρωσης", "Recharge package")}
+            <select value={arCur.package_id} onChange={(e) => setArForm({ ...arCur, package_id: e.target.value })} className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-800">
+              <option value="">—</option>
+              {(pkgs.data?.items ?? []).map((p) => <option key={p._id} value={p._id}>{p.name} · {eur(p.price_cents)}</option>)}
+            </select>
+          </label>
+        </div>
+        <button onClick={() => saveAr.mutate()} disabled={saveAr.isPending || (arCur.enabled && !arCur.package_id)} className="mt-3 inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-50">{saveAr.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : null} {t("Αποθήκευση", "Save")}</button>
+      </PanelCard>
+
       {/* Χρεώσεις αποστολών — έλεγχος των χρεώσεών μας ανά αποστολή, με σύνολα */}
       <PanelCard collapsible title={t("Χρεώσεις αποστολών", "Send charges")}>
         <div className="mb-3 flex flex-wrap items-center gap-2">
@@ -221,6 +260,7 @@ export default function CommsSettingsPage() {
           {[30, 90, 365].map((dd) => (
             <button key={dd} onClick={() => setChDays(dd)} className={`rounded-full px-2.5 py-1 text-xs font-semibold ${chDays === dd ? "bg-brand-600 text-white" : "border border-slate-200 text-slate-600 hover:bg-slate-50"}`}>{dd === 365 ? t("12 μήνες", "12 mo") : `${dd} ${t("ημέρες", "days")}`}</button>
           ))}
+          <button onClick={downloadCsv} className="ml-auto inline-flex items-center gap-1 rounded-lg border border-slate-300 px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50"><Download className="h-3.5 w-3.5" /> {t("Εξαγωγή CSV", "Export CSV")}</button>
         </div>
         <div className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
           <div className="rounded-xl bg-brand-50 p-3"><div className="text-[11px] uppercase text-brand-600">{t("Σύνολο χρεώσεων", "Total charged")}</div><div className="text-xl font-extrabold text-brand-700">{eur(charges.data?.total_cents ?? 0)}</div><div className="text-[11px] text-slate-400">{charges.data?.count ?? 0} {t("αποστολές", "sends")}</div></div>

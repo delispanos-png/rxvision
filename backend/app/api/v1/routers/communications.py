@@ -26,8 +26,27 @@ async def get_settings(ctx: TenantContext = Depends(require("patients:read", mod
 
 @router.get("/wallet")
 async def wallet(ctx: TenantContext = Depends(require("patients:read", module=_MODULE))):
+    from app.services.billing_service import card_on_file
+    w = await shared_db()["message_wallets"].find_one({"_id": ctx.tenant_id}) or {}
     return {**await message_wallet.usage_summary(ctx.tenant_id),
-            "ledger": await message_wallet.ledger(ctx.tenant_id, limit=50)}
+            "ledger": await message_wallet.ledger(ctx.tenant_id, limit=50),
+            "auto_recharge": w.get("auto_recharge") or {"enabled": False},
+            "card_on_file": await card_on_file(ctx.tenant_id)}
+
+
+class AutoRechargeIn(BaseModel):
+    enabled: bool = False
+    threshold_cents: int = 200
+    package_id: str | None = None
+
+
+@router.put("/auto-recharge")
+async def set_auto_recharge(body: AutoRechargeIn,
+                            ctx: TenantContext = Depends(require("billing:manage"))):
+    """Αυτόματη αναπλήρωση credits με κάρτα-on-file όταν το υπόλοιπο πέσει κάτω από όριο."""
+    await message_wallet.set_auto_recharge(ctx.tenant_id, body.enabled,
+                                           body.threshold_cents, body.package_id)
+    return {"ok": True}
 
 
 @router.get("/sender")
@@ -303,21 +322,37 @@ async def messages(status_f: str | None = Query(None, alias="status"),
 
 @router.get("/charges")
 async def charges(days: int = Query(30, ge=1, le=365), channel: str | None = None,
-                  limit: int = Query(300, ge=1, le=1000),
+                  limit: int = Query(300, ge=1, le=1000), format: str = Query("json"),
                   ctx: TenantContext = Depends(require("patients:read", module=_MODULE))):
     """Λίστα ΧΡΕΩΣΕΩΝ ανά αποστολή (για έλεγχο των δικών μας χρεώσεων): ημ/νία, κανάλι, παραλήπτης,
-    χρέωση (cents), κατάσταση, αν έγινε επιστροφή. + ΣΥΝΟΛΑ ανά κανάλι & γενικό (καθαρό, χωρίς refunds)."""
+    χρέωση (cents), κατάσταση, αν έγινε επιστροφή. + ΣΥΝΟΛΑ ανά κανάλι & γενικό (καθαρό, χωρίς refunds).
+    format=csv → κατέβασμα CSV (με BOM για ελληνικά στο Excel)."""
     db = shared_db()
     since = datetime.now(tz=timezone.utc) - timedelta(days=days)
     q: dict = {"tenant_id": ctx.tenant_id, "created_at": {"$gte": since}, "cost_cents": {"$gt": 0}}
     if channel:
         q["channel"] = channel
+    csv_cap = 5000 if format == "csv" else limit
     items = []
-    async for d in db["sent_messages"].find(q).sort("created_at", -1).limit(limit):
+    async for d in db["sent_messages"].find(q).sort("created_at", -1).limit(csv_cap):
         items.append({"id": str(d["_id"]), "channel": d.get("channel"), "recipient": d.get("recipient"),
                       "status": d.get("status"), "cost_cents": int(d.get("cost_cents", 0) or 0),
                       "refunded": bool(d.get("refunded")), "kind": d.get("kind"),
                       "created_at": d.get("created_at")})
+    if format == "csv":
+        import csv as _csv
+        import io as _io
+        from fastapi.responses import Response
+        buf = _io.StringIO()
+        buf.write("﻿")   # BOM → σωστά ελληνικά στο Excel
+        w = _csv.writer(buf, delimiter=";")
+        w.writerow(["Ημερομηνία", "Κανάλι", "Παραλήπτης", "Κατάσταση", "Χρέωση (€)", "Επιστροφή", "Είδος"])
+        for it in items:
+            w.writerow([str(it["created_at"])[:19], it["channel"] or "", it["recipient"] or "",
+                        it["status"] or "", f'{it["cost_cents"] / 100:.3f}'.replace(".", ","),
+                        "ναι" if it["refunded"] else "όχι", it.get("kind") or ""])
+        return Response(content=buf.getvalue(), media_type="text/csv; charset=utf-8",
+                        headers={"Content-Disposition": f'attachment; filename="charges_{days}d.csv"'})
     # ΣΥΝΟΛΑ σε ΟΛΗ την περίοδο (όχι μόνο στο limit) — καθαρή χρέωση = εκτός refunded
     by_channel: dict = {}
     total = count = 0
