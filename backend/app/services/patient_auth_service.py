@@ -21,6 +21,7 @@ from app.repositories.patient_portal import PatientAccountRepository
 
 _OTP_TTL_MIN = 10
 _OTP_MAX_ATTEMPTS = 5
+_PORTAL_BASE = "https://my.rxvision.gr"
 
 
 class PatientError(Exception):
@@ -29,6 +30,21 @@ class PatientError(Exception):
 
 def _now() -> datetime:
     return datetime.now(tz=timezone.utc)
+
+
+def _friendly_password(length: int = 10) -> str:
+    """Εύκολος κωδικός για πληκτρολόγηση σε κινητό: μόνο αριθμοί + μικρά/κεφαλαία, ΧΩΡΙΣ σύμβολα
+    και ΧΩΡΙΣ μπερδεμένους χαρακτήρες (0/O, 1/l/I). Εγγυάται ≥1 από κάθε κατηγορία."""
+    import random
+    lower = "abcdefghijkmnpqrstuvwxyz"   # χωρίς l
+    upper = "ABCDEFGHJKLMNPQRSTUVWXYZ"   # χωρίς I, O
+    digits = "23456789"                  # χωρίς 0, 1
+    pool = lower + upper + digits
+    rng = random.SystemRandom()
+    chars = [rng.choice(lower), rng.choice(upper), rng.choice(digits)]
+    chars += [rng.choice(pool) for _ in range(max(0, length - 3))]
+    rng.shuffle(chars)
+    return "".join(chars)
 
 
 def _hash_otp(code: str) -> str:
@@ -143,8 +159,9 @@ class PatientAuthService:
 
     async def admin_create(self, *, first_name: str, last_name: str, email: str,
                            phone: str | None, amka: str) -> dict:
-        """Pharmacist-initiated account creation for a patient (my.rxvision.gr). Generates a temp
-        password to hand to the patient; returns it ONCE. Auto-links the patient's pharmacies."""
+        """Pharmacist-initiated account creation (my.rxvision.gr). Στέλνει στον πελάτη link «όρισε
+        κωδικό» (email + SMS) ώστε να βάλει δικό του κωδικό, ΚΑΙ επιστρέφει έναν εύκολο προσωρινό
+        κωδικό (χωρίς σύμβολα) ως εφεδρεία + υποχρεωτική αλλαγή στο 1ο login. Auto-links pharmacies."""
         email = (email or "").strip().lower()
         amka = (amka or "").strip()
         if not email or "@" not in email:
@@ -153,13 +170,63 @@ class PatientAuthService:
             return {"ok": False, "error": "amka_exists"}
         if await self.repo.get_by_email(email):
             return {"ok": False, "error": "email_exists"}
-        import secrets
-        pw = secrets.token_urlsafe(8)
+        pw = _friendly_password()
         acc = await self.repo.create(
             first_name=first_name, last_name=last_name, email=email,
-            phone=phone, amka=amka, password_hash=hash_password(pw))
+            phone=phone, amka=amka, password_hash=hash_password(pw),
+            must_change_password=True)
         await self.repo.refresh_links(acc["_id"], amka)
-        return {"ok": True, "email": email, "temp_password": pw}
+        token = await self.repo.create_set_password_token(acc["_id"])
+        link = f"{_PORTAL_BASE}/portal/set-password?token={token}" if token else None
+        sent = await self._send_set_password_link(email, phone, link) if link else []
+        return {"ok": True, "email": email, "temp_password": pw, "link_sent": sent}
+
+    async def _send_set_password_link(self, email: str, phone: str | None, link: str) -> list[dict]:
+        """Στέλνει το link «όρισε κωδικό» σε email (δωρεάν SMTP) + SMS (κεντρικό Apifon). Best-effort."""
+        sent: list[dict] = []
+        if email:
+            try:
+                from app.services import mailer
+                await mailer.send_email(
+                    email, "RxVision — Ορισμός κωδικού πρόσβασης",
+                    f"<p>Δημιουργήθηκε ο λογαριασμός σας στην Πύλη Πελατών RxVision.</p>"
+                    f"<p>Πατήστε για να ορίσετε τον δικό σας κωδικό πρόσβασης:</p>"
+                    f"<p><a href='{link}' style='display:inline-block;padding:11px 20px;background:#4f46e5;"
+                    f"color:#fff;text-decoration:none;border-radius:8px;font-weight:bold'>Ορισμός κωδικού</a></p>"
+                    f"<p style='font-size:12px;color:#64748b'>ή αντιγράψτε: {link}</p>"
+                    f"<p style='font-size:12px;color:#64748b'>Ο σύνδεσμος λήγει σε 7 ημέρες.</p>")
+                sent.append({"type": "email", "hint": _mask_email(email)})
+            except Exception:  # noqa: BLE001
+                pass
+        if phone:
+            try:
+                from app.services import comms
+                await comms.send_otp_sms(
+                    phone, f"RxVision: ορίστε τον κωδικό πρόσβασής σας: {link}")
+                sent.append({"type": "sms", "hint": _mask_phone(phone)})
+            except Exception:  # noqa: BLE001
+                pass
+        return sent
+
+    async def set_password_by_token(self, token: str, new_password: str) -> dict | None:
+        """Link flow (email/SMS): ο πελάτης ορίζει δικό του κωδικό μέσω single-use token → session."""
+        acc = await self.repo.get_by_set_password_token((token or "").strip())
+        if not acc:
+            return None
+        await self.repo.set_password(acc["_id"], hash_password(new_password))
+        acc["must_change_password"] = False
+        links = await self.repo.refresh_links(acc["_id"], acc.get("amka", ""))
+        return self._session(acc, links)
+
+    async def set_own_password(self, account_id: str, new_password: str) -> dict | None:
+        """Υποχρεωτική αλλαγή στο 1ο login: ο ήδη-συνδεδεμένος πελάτης ορίζει δικό του κωδικό → νέο session."""
+        acc = await self.repo.get(account_id)
+        if not acc:
+            return None
+        await self.repo.set_password(acc["_id"], hash_password(new_password))
+        acc["must_change_password"] = False
+        links = await self.repo.refresh_links(acc["_id"], acc.get("amka", ""))
+        return self._session(acc, links)
 
     async def login(self, email: str, password: str) -> dict | None:
         acc = await self.repo.get_by_email((email or "").strip().lower())
@@ -209,6 +276,7 @@ class PatientAuthService:
             "access_token": access,
             "refresh_token": refresh,
             "active_tenant": active["tenant_id"] if active else None,
+            "must_change_password": bool(acc.get("must_change_password")),
             "pharmacies": links,
             "profile": {
                 "first_name": acc.get("first_name"), "last_name": acc.get("last_name"),

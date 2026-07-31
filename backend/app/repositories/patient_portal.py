@@ -10,8 +10,10 @@ through BaseRepository. Every read of a pharmacy's data still carries an explici
 """
 from __future__ import annotations
 
+import hashlib
 import math
 import re
+import secrets
 from datetime import datetime, timedelta, timezone
 
 from bson import ObjectId
@@ -110,7 +112,8 @@ class PatientAccountRepository:
         return await self.db["patient_accounts"].find_one({"_id": oid}) if oid else None  # tenant-ok
 
     async def create(self, *, first_name: str, last_name: str, email: str,
-                     phone: str | None, amka: str, password_hash: str) -> dict:
+                     phone: str | None, amka: str, password_hash: str,
+                     must_change_password: bool = False) -> dict:
         # NB: raw ΑΜΚΑ stored — it is the universal matching key and is needed to (re)derive each
         # pharmacy's pseudonym when the patient is served at a new pharmacy. Encrypt-at-rest is a
         # follow-up (consistent with the existing controller AMKA-at-rest decision).
@@ -118,6 +121,7 @@ class PatientAccountRepository:
             "first_name": (first_name or "").strip(), "last_name": (last_name or "").strip(),
             "email": (email or "").strip().lower(), "phone": (phone or "").strip(),
             "amka": (amka or "").strip(), "password_hash": password_hash,
+            "must_change_password": bool(must_change_password),
             "refresh_token_version": 0, "created_at": _now(),
         }
         res = await self.db["patient_accounts"].insert_one(doc)  # tenant-ok
@@ -131,11 +135,32 @@ class PatientAccountRepository:
                 {"_id": oid}, {"$set": {"favorite_tenant_id": tenant_id}})
 
     async def set_password(self, account_id, password_hash: str) -> None:
+        """Ορίζει κωδικό, καθαρίζει το must_change_password + τυχόν set-password token, και ακυρώνει
+        παλιά refresh tokens (bump version)."""
         oid = _oid(account_id)
         if oid:
             await self.db["patient_accounts"].update_one(  # tenant-ok
-                {"_id": oid}, {"$set": {"password_hash": password_hash},
-                               "$inc": {"refresh_token_version": 1}})
+                {"_id": oid},
+                {"$set": {"password_hash": password_hash, "must_change_password": False},
+                 "$inc": {"refresh_token_version": 1},
+                 "$unset": {"set_pw_token_hash": "", "set_pw_expires": ""}})
+
+    async def create_set_password_token(self, account_id, ttl_hours: int = 168) -> str | None:
+        """Δημιουργεί single-use token «ορισμού κωδικού» (7 ημέρες). Αποθηκεύεται SHA-256-hashed."""
+        oid = _oid(account_id)
+        if not oid:
+            return None
+        token = secrets.token_urlsafe(32)
+        await self.db["patient_accounts"].update_one(  # tenant-ok: global patient account
+            {"_id": oid},
+            {"$set": {"set_pw_token_hash": hashlib.sha256(token.encode()).hexdigest(),
+                      "set_pw_expires": _now() + timedelta(hours=ttl_hours)}})
+        return token
+
+    async def get_by_set_password_token(self, token: str) -> dict | None:
+        h = hashlib.sha256((token or "").strip().encode()).hexdigest()
+        return await self.db["patient_accounts"].find_one(  # tenant-ok: global patient account
+            {"set_pw_token_hash": h, "set_pw_expires": {"$gt": _now()}})
 
     async def revoke_tokens(self, account_id) -> None:
         """Bump refresh_token_version → invalidate ALL of this patient's refresh tokens (logout).

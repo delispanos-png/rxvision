@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { Pill, Mail, Lock } from "lucide-react";
 import { patientAuth, patientTokens, ApiError } from "@/lib/patientClient";
 
-type Session = { access_token: string | null; refresh_token: string; active_tenant: string | null };
+type Session = { access_token: string | null; refresh_token: string; active_tenant: string | null; must_change_password?: boolean };
 
 export default function PortalLogin() {
   const router = useRouter();
@@ -21,7 +21,7 @@ export default function PortalLogin() {
     try {
       const s = await patientAuth<Session>("/patient/auth/login", { email, password });
       patientTokens.set(s.access_token, s.refresh_token);
-      router.replace("/portal");
+      router.replace(s.must_change_password ? "/portal/set-password" : "/portal");
     } catch (e) {
       setErr(e instanceof ApiError && e.status === 401 ? "Λάθος email ή κωδικός." : "Κάτι πήγε στραβά.");
     } finally {

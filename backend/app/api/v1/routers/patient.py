@@ -62,6 +62,15 @@ class SelectIn(BaseModel):
     tenant_id: str
 
 
+class SetPasswordIn(BaseModel):
+    token: str = Field(..., min_length=16, max_length=128)
+    password: str = Field(..., min_length=8, max_length=128)
+
+
+class SetOwnPasswordIn(BaseModel):
+    password: str = Field(..., min_length=8, max_length=128)
+
+
 class AvailabilityIn(BaseModel):
     tenant_id: str | None = None                          # target pharmacy (defaults to active)
     medicine_barcode: str | None = Field(None, max_length=40)
@@ -121,6 +130,26 @@ async def login(body: LoginIn):
         await record_login_failure(f"patient:{body.email}")
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid_credentials")
     await clear_login_failures(f"patient:{body.email}")
+    return res
+
+
+@router.post("/auth/set-password",
+             dependencies=[Depends(rate_limit("patient_set_password", limit=10, window_seconds=600))])
+async def set_password(body: SetPasswordIn):
+    """Ορισμός κωδικού μέσω link (email/SMS) — λογαριασμοί που δημιούργησε φαρμακείο. Επιστρέφει session."""
+    res = await PatientAuthService().set_password_by_token(body.token, body.password)
+    if res is None:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail={"error": "invalid_or_expired_token"})
+    return res
+
+
+@router.post("/auth/set-password/self")
+async def set_password_self(body: SetOwnPasswordIn,
+                            ctx: PatientContext = Depends(get_patient_context)):
+    """Υποχρεωτική αλλαγή κωδικού στο 1ο login (ο πελάτης είναι ήδη συνδεδεμένος). Επιστρέφει νέο session."""
+    res = await PatientAuthService().set_own_password(ctx.account_id, body.password)
+    if res is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail={"error": "not_found"})
     return res
 
 

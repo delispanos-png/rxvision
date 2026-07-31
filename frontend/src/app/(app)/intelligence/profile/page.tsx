@@ -76,7 +76,7 @@ export default function PatientProfilePage() {
   const hasInteractions = ["enabled", "trial"].includes(meQ.data?.modules?.drug_interactions ?? "");
   const [showPortal, setShowPortal] = useState(false);
   const [portalEmail, setPortalEmail] = useState("");
-  const [portalResult, setPortalResult] = useState<{ email: string; temp_password: string } | null>(null);
+  const [portalResult, setPortalResult] = useState<{ email: string; temp_password: string; link_sent?: { type: string; hint: string }[] } | null>(null);
   // περίοδος για Διαγνώσεις & Φάρμακα (μήνες· 0 = όλα). Default 12μ ώστε το AI/διαγνώσεις να εστιάζουν στο πρόσφατο.
   const [rangeMonths, setRangeMonths] = useState(12);
   const [identity, setIdentity] = useState<string | null>(null);   // πώς φορτώθηκε ο πελάτης (amka/patient_id/barcode)
@@ -97,7 +97,7 @@ export default function PatientProfilePage() {
     mutationFn: (v: boolean) => api("/patient-intelligence/profile/g6pd", { method: "POST", body: JSON.stringify({ amka: search.data?.patient?.amka, g6pd_deficiency: v }) }),
   });
   const createAcc = useMutation({
-    mutationFn: () => api<{ email: string; temp_password: string }>("/patient-intelligence/profile/portal-account", { method: "POST", body: JSON.stringify({ amka: search.data?.patient?.amka, email: portalEmail.trim() }) }),
+    mutationFn: () => api<{ email: string; temp_password: string; link_sent?: { type: string; hint: string }[] }>("/patient-intelligence/profile/portal-account", { method: "POST", body: JSON.stringify({ amka: search.data?.patient?.amka, email: portalEmail.trim() }) }),
     onSuccess: (d) => setPortalResult(d),
   });
 
@@ -526,17 +526,26 @@ export default function PatientProfilePage() {
                 <div className="mb-3 text-sm text-slate-600 dark:text-slate-300">{p.patient.name} · <span className="font-mono text-xs">{p.patient.amka}</span></div>
                 {portalResult ? (
                   <div className="space-y-3">
-                    <div className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{t("Ο λογαριασμός δημιουργήθηκε! Δώσε στον πελάτη τα παρακάτω στοιχεία:", "Account created! Give the patient these credentials:")}</div>
+                    <div className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{t("Ο λογαριασμός δημιουργήθηκε!", "Account created!")}</div>
+                    {portalResult.link_sent && portalResult.link_sent.length > 0 ? (
+                      <div className="rounded-lg bg-indigo-50 px-3 py-2 text-sm text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300">
+                        📩 {t("Στάλθηκε στον πελάτη σύνδεσμος «όρισε κωδικό»", "A “set your password” link was sent to the patient")}: <b>{portalResult.link_sent.map((c) => `${c.type === "sms" ? "SMS" : "email"} ${c.hint}`).join(" · ")}</b>. {t("Ο πελάτης πατά τον σύνδεσμο και βάζει δικό του κωδικό.", "The patient taps it and sets their own password.")}
+                      </div>
+                    ) : (
+                      <div className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-700">{t("Δεν στάλθηκε σύνδεσμος (λείπει email/κινητό). Δώσε τον προσωρινό κωδικό στον πελάτη.", "No link sent (missing email/phone). Give the patient the temporary password.")}</div>
+                    )}
                     <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800">
+                      <div className="mb-1 text-xs font-medium text-slate-500">{t("Εφεδρεία — αν θέλει να μπει τώρα στο ταμείο:", "Fallback — if they want to log in now at the counter:")}</div>
                       <div>{t("Σύνδεση", "Login")}: <b>my.rxvision.gr</b></div>
                       <div>Email: <b className="font-mono">{portalResult.email}</b></div>
                       <div>{t("Προσωρινός κωδικός", "Temp password")}: <b className="font-mono">{portalResult.temp_password}</b></div>
+                      <div className="mt-1 text-[11px] text-slate-400">{t("Θα του ζητηθεί να ορίσει δικό του κωδικό στην πρώτη σύνδεση.", "They’ll be asked to set their own password on first login.")}</div>
                     </div>
                     <button onClick={() => navigator.clipboard?.writeText(`my.rxvision.gr\nEmail: ${portalResult.email}\n${t("Κωδικός", "Password")}: ${portalResult.temp_password}`)} className="w-full rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200">{t("Αντιγραφή στοιχείων", "Copy credentials")}</button>
                   </div>
                 ) : (
                   <div className="space-y-3">
-                    <p className="text-xs text-slate-500">{t("Δημιουργείται λογαριασμός πελάτη· θα δοθεί προσωρινός κωδικός να τον δώσεις στον πελάτη.", "Creates a patient account; a temp password will be shown to hand to the patient.")}</p>
+                    <p className="text-xs text-slate-500">{t("Δημιουργείται λογαριασμός πελάτη. Θα σταλεί στον πελάτη σύνδεσμος «όρισε κωδικό» (email + SMS) — δεν χρειάζεται να πληκτρολογήσει δύσκολο κωδικό. Εμφανίζεται και ένας εύκολος προσωρινός ως εφεδρεία.", "Creates a patient account. A “set your password” link is sent to the patient (email + SMS) — no hard password to type. An easy temporary one is also shown as fallback.")}</p>
                     <label className="block text-xs font-medium text-slate-500">Email
                       <input type="email" value={portalEmail} onChange={(e) => setPortalEmail(e.target.value)} placeholder="patient@email.gr"
                         className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-800" />
