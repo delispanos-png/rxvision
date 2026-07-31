@@ -23,6 +23,40 @@ def _now() -> datetime:
     return datetime.now(tz=timezone.utc)
 
 
+def _annotate_medicines(medicines: list[dict]) -> None:
+    """In-place εμπλουτισμός των «συχνότερων φαρμάκων»:
+    • `days_since` — μέρες από την τελευταία εκτέλεση (None αν άγνωστη) → flag «τρέχον/πρόσφατο».
+    • `changed_from` — αν το πιο ΠΡΟΣΦΑΤΟ προϊόν μιας δραστικής διαφέρει από το προηγούμενο
+      (π.χ. Lipitor 20mg → Lipitor 10mg, ή αλλαγή σκευάσματος), μπαίνει εδώ το παλαιότερο όνομα.
+    Η ομαδοποίηση γίνεται ανά δραστική (substance)· διαφορετικές περιεκτικότητες είναι ήδη
+    ξεχωριστές γραμμές (η περιεκτικότητα περιέχεται στο όνομα προϊόντος)."""
+    from collections import defaultdict
+    now = _now()
+    epoch = datetime(1970, 1, 1, tzinfo=timezone.utc)
+
+    def _aware(d: datetime | None) -> datetime | None:
+        if d is None:
+            return None
+        return d.replace(tzinfo=timezone.utc) if d.tzinfo is None else d
+
+    for m in medicines:
+        last = _aware(m.get("last"))
+        m["days_since"] = (now - last).days if last else None
+
+    by_subst: dict[str, list] = defaultdict(list)
+    for m in medicines:
+        if m.get("substance"):
+            by_subst[m["substance"]].append(m)
+    for grp in by_subst.values():
+        if len(grp) < 2:
+            continue
+        ordered = sorted(grp, key=lambda x: _aware(x.get("last")) or epoch, reverse=True)
+        current = ordered[0]
+        prev = next((x for x in ordered[1:] if x["name"] != current["name"]), None)
+        if prev:
+            current["changed_from"] = prev["name"]
+
+
 def _addm(d: datetime, n: int) -> datetime:
     y, mo = d.year + (d.month - 1 + n) // 12, (d.month - 1 + n) % 12 + 1
     return d.replace(year=y, month=mo, day=min(d.day, calendar.monthrange(y, mo)[1]))
@@ -572,13 +606,15 @@ class PatientIntelligenceRepository(BaseRepository):
             {"$set": {"pname": {"$first": "$p.name"}, "subst": {"$first": "$p.substance"},
                       "atc": {"$toUpper": {"$ifNull": [{"$first": "$p.atc"}, ""]}}}},
             {"$group": {"_id": "$pname", "atc": {"$first": "$atc"}, "subst": {"$first": "$subst"},
-                        "times": {"$sum": 1},
+                        "times": {"$sum": 1}, "last": {"$max": "$executed_at"},
                         "value": {"$sum": {"$multiply": ["$it.retail_price",
                                                          {"$ifNull": ["$it.quantity", 1]}]}}}},
             {"$sort": {"times": -1}},
         ])
         medicines = [{"name": m["_id"], "atc": m.get("atc"), "substance": m.get("subst"),
-                      "times": m["times"], "value": m["value"]} for m in med_rows if m["_id"]]
+                      "times": m["times"], "value": m["value"], "last": m.get("last")}
+                     for m in med_rows if m["_id"]]
+        _annotate_medicines(medicines)
         segments = [{"key": s["key"], "label": s["label"]} for s in SEGMENTS
                     if any(any((m.get("atc") or "").startswith(pfx) for pfx in s["atc"])
                            for m in medicines)]

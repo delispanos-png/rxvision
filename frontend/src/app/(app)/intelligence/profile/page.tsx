@@ -17,7 +17,7 @@ import { BarChart } from "@/components/charts/BarChart";
 
 type Seg = { key: string; label: string };
 type Cond = { code: string; title: string | null; times: number };
-type Med = { name: string; atc: string | null; substance: string | null; times: number; value: number };
+type Med = { name: string; atc: string | null; substance: string | null; times: number; value: number; last?: string | null; days_since?: number | null; changed_from?: string | null };
 type Doc = { name: string; specialty: string | null; times: number };
 type Renewal = { root: string; medicines: string[]; count: number; value: number; last_executed: string | null; due?: string | null; until?: string | null };
 type Flu = { season: string; vaccinated: boolean; date: string | null; vaccine: string | null };
@@ -370,12 +370,27 @@ export default function PatientProfilePage() {
             <div className="rx-card p-5">
               <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-700 dark:text-slate-200"><Pill className="h-4 w-4 text-brand-600" /> {t("Συχνότερα φάρμακα", "Top medicines")}</h3>
               <div className="space-y-1.5">
-                {p.medicines!.slice(0, 8).map((m, i) => (
-                  <div key={i} className="flex items-center justify-between text-sm">
-                    <span className="truncate pr-2 text-slate-600 dark:text-slate-300" title={`${m.name}${m.atc ? ` · ${m.atc}` : ""}`}>{m.name}</span>
-                    <span className="shrink-0 text-xs text-slate-400">×{m.times} · {fmtEur(m.value)}</span>
-                  </div>
-                ))}
+                {p.medicines!.slice(0, 8).map((m, i) => {
+                  const ds = m.days_since;
+                  const cur = ds != null && ds <= 30;          // τρέχον
+                  const rec = ds != null && ds > 30 && ds <= 60; // πρόσφατο (δίμηνη συνταγή)
+                  const ago = ds != null ? ` · ${t("τελευταία", "last")} ${ds}${t("ημ. πριν", "d ago")}` : "";
+                  return (
+                    <div key={i} className="flex items-center justify-between gap-2 text-sm">
+                      <span className="flex min-w-0 items-center gap-1.5">
+                        {(cur || rec) && <span title={cur ? t("Ελήφθη τις τελευταίες 30 ημέρες", "Taken in last 30 days") : t("Ελήφθη τις τελευταίες 60 ημέρες (δίμηνη)", "Taken in last 60 days")} className={`h-2 w-2 shrink-0 rounded-full ${cur ? "bg-emerald-500" : "bg-amber-400"}`} />}
+                        <span className="truncate text-slate-600 dark:text-slate-300" title={`${m.name}${m.atc ? ` · ${m.atc}` : ""}${ago}`}>{m.name}</span>
+                        {m.changed_from && <span title={`${t("Άλλαξε από", "Changed from")}: ${m.changed_from}`} className="shrink-0 rounded bg-indigo-100 px-1 py-0.5 text-[10px] font-semibold text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300">⇄ {t("άλλαξε", "changed")}</span>}
+                      </span>
+                      <span className="shrink-0 text-xs text-slate-400">×{m.times} · {fmtEur(m.value)}</span>
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-slate-400">
+                <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-emerald-500" /> {t("≤30 ημ.", "≤30d")}</span>
+                <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-amber-400" /> {t("≤60 ημ. (δίμηνη)", "≤60d")}</span>
+                <span className="flex items-center gap-1">⇄ {t("άλλαξε δόση/φάρμακο", "dose/med changed")}</span>
               </div>
               {p.doctors!.length > 0 && (
                 <div className="mt-4 border-t border-slate-100 pt-3 dark:border-slate-800">
