@@ -8,6 +8,8 @@ myDATA και επιστρέφει MARK/υπογραφές. Τα credentials α�
 
 from __future__ import annotations
 
+import json
+
 import httpx
 
 from app.core.db import shared_db
@@ -22,21 +24,57 @@ def is_configured(cfg: dict) -> bool:
     return bool(cfg.get("base_url") and cfg.get("username") and cfg.get("password") and cfg.get("app_id"))
 
 
-async def _post(base_url: str, payload: dict, timeout: int = 30) -> dict:
+def _gateway(base_url: str) -> str:
+    """Το JSON gateway (login/authenticate/setData) ζει στο `/s1services`. Ανεκτικό σε λάθος input:
+    ο χρήστης συχνά κολλάει `.../s1services/JS` ή `.../s1services/JS/` (το path των custom JS) —
+    το κόβουμε ώστε login/authenticate να πάνε στο σωστό endpoint (αλλιώς SoftOne → "No data")."""
+    b = (base_url or "").strip().rstrip("/")
+    if b.upper().endswith("/JS"):
+        b = b[:-3].rstrip("/")
+    return b
+
+
+def _js_path(js_endpoint: str) -> str:
+    """Μόνο το `<module>/<function>` μετά το `/JS/`. Ανεκτικό σε pasted prefixes
+    (`s1services/JS/…`, `JS/…`, leading `/`)."""
+    p = (js_endpoint or "").strip().strip("/")
+    low = p.lower()
+    for pre in ("s1services/js/", "js/"):
+        if low.startswith(pre):
+            p = p[len(pre):]
+            low = p.lower()
+    return p
+
+
+def _parse(r: httpx.Response) -> dict:
+    """SoftOne απαντά συχνά σε **windows-1253** (ελληνικά ονόματα εταιρειών/ειδών). Το httpx `.json()`
+    μπορεί να αποτύχει στο decode → δοκίμασε ρητά το δηλωμένο charset, μετά windows-1253 / utf-8."""
+    try:
+        return r.json()
+    except Exception:  # noqa: BLE001
+        pass
+    for enc in (r.encoding, "windows-1253", "utf-8", "latin-1"):
+        if not enc:
+            continue
+        try:
+            return json.loads(r.content.decode(enc))
+        except Exception:  # noqa: BLE001
+            continue
+    return {"success": False, "error": "invalid_json", "raw": r.text[:300]}
+
+
+async def _post(url: str, payload: dict, timeout: int = 30) -> dict:
     """POST JSON στο SoftOne WS endpoint. Επιστρέφει το JSON (ή {success:False,error:...})."""
     async with httpx.AsyncClient(timeout=timeout) as cl:
-        r = await cl.post(base_url, json=payload,
+        r = await cl.post(url, json=payload,
                           headers={"Content-Type": "application/json; charset=utf-8"})
         r.raise_for_status()
-        try:
-            return r.json()
-        except Exception:  # noqa: BLE001
-            return {"success": False, "error": "invalid_json", "raw": r.text[:300]}
+        return _parse(r)
 
 
 async def _login(cfg: dict) -> dict:
     """service=login → {clientID, objs (εταιρείες/υποκαταστήματα)}."""
-    return await _post(cfg["base_url"], {
+    return await _post(_gateway(cfg["base_url"]), {
         "service": "login", "username": cfg["username"],
         "password": cfg["password"], "appId": cfg["app_id"]})
 
@@ -48,7 +86,7 @@ async def _authenticate(cfg: dict, client_id: str) -> dict:
     for key in ("company", "branch", "module", "refid"):
         if cfg.get(key):
             body[key] = cfg[key]
-    return await _post(cfg["base_url"], body)
+    return await _post(_gateway(cfg["base_url"]), body)
 
 
 async def get_client_id(cfg: dict | None = None) -> str | None:
@@ -97,13 +135,13 @@ async def issue(payload: dict) -> dict:
     cfg = await platform_config()
     if not is_configured(cfg):
         return {"ok": False, "error": "not_configured"}
-    js_path = (cfg.get("js_endpoint") or "").strip().strip("/")
+    js_path = _js_path(cfg.get("js_endpoint"))
     if not js_path:
-        return {"ok": False, "error": "no_js_endpoint"}   # π.χ. "RXVISION/createInvoice"
+        return {"ok": False, "error": "no_js_endpoint"}   # π.χ. "rxvision/connector.createInvoice"
     client_id = await get_client_id(cfg)
     if not client_id:
         return {"ok": False, "error": "auth_failed"}
-    url = cfg["base_url"].rstrip("/") + "/JS/" + js_path
+    url = _gateway(cfg["base_url"]) + "/JS/" + js_path
     body = {"clientID": client_id, "appId": cfg.get("app_id"), **payload}
     try:
         res = await _post(url, body)
