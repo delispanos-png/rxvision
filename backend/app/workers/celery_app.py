@@ -125,6 +125,11 @@ celery_app.conf.beat_schedule = {
         "task": "app.workers.billing.trial_feedback",
         "schedule": crontab(hour=9, minute=0),
     },
+    # Αυτόματη έκδοση παραστατικών: pending → SoftOne → myDATA (κάθε 5′· off χωρίς auto_invoicing)
+    "process-pending-invoices": {
+        "task": "app.workers.billing.process_pending_invoices",
+        "schedule": crontab(minute="*/5"),
+    },
     # self-heal stuck optical scans (worker death/redeploy) — never leave one hanging
     "reap-stuck-scans": {
         "task": "app.workers.optical.reap_stuck_scans",

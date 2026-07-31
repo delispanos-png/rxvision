@@ -237,6 +237,12 @@ async def complete_topup(order_id: str) -> bool:
     if not doc:
         return await db["wallet_topups"].count_documents({"order_id": order_id}) > 0
     await credit(doc["tenant_id"], int(doc["credits_cents"]), reason="topup", ref=order_id)
+    # Παραστατικό top-up — χρεώθηκε το price_cents (όχι το credits_cents που μπορεί να έχει bonus).
+    from app.services import invoice_service
+    await invoice_service.create_for_payment(
+        tenant_id=doc["tenant_id"], kind="topup", gross_cents=int(doc.get("price_cents", 0) or 0),
+        description="Αγορά credits μηνυμάτων RxVision",
+        payment={"method": "card", "provider": doc.get("provider"), "transaction_id": order_id})
     return True
 
 

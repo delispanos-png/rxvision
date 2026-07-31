@@ -220,6 +220,12 @@ async def apply_change(tenant_id: str, *, source: str = "system") -> dict:
                               f"Αναβάθμιση σε {pend.get('plan_name') or pend['plan']}",
                               int(pend.get("new_price", 0) or 0), method=method, provider=provider,
                               provider_order_id=pend.get("revolut_order_id"))
+        from app.services import invoice_service
+        await invoice_service.create_for_payment(
+            tenant_id=tenant_id, kind="upgrade", gross_cents=int(pend.get("new_price", 0) or 0),
+            description=f"Αναβάθμιση σε {pend.get('plan_name') or pend['plan']}",
+            payment={"method": method, "provider": provider,
+                     "transaction_id": pend.get("revolut_order_id")})
     return {"ok": True, "plan": pend["plan"], "kind": pend.get("kind")}
 
 

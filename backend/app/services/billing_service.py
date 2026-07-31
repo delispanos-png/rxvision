@@ -135,6 +135,13 @@ async def complete_renewal(tenant_id: str, viva_transaction_id: str) -> None:
     if pr.get("coupon"):     # εξαργύρωσε το coupon (single-use)
         from app.services import feedback_service
         await feedback_service.redeem_coupon(pr["coupon"])
+    # Παραστατικό ανανέωσης — πραγματικό χρεωμένο ποσό (με τυχόν coupon), αλλιώς τιμή πακέτου.
+    from app.services import invoice_service
+    await invoice_service.create_for_payment(
+        tenant_id=tenant_id, kind="renewal",
+        gross_cents=int(pr.get("amount") or price or 0),
+        description=f"Ανανέωση συνδρομής RxVision — {pkg.get('name') or plan}",
+        payment={"method": "card", "provider": "viva", "transaction_id": viva_transaction_id})
 
 
 # Καταστάσεις πληρωμής που σημαίνουν «υπάρχει αποθηκευμένη κάρτα που μπορούμε να χρεώσουμε off-session».
@@ -240,6 +247,13 @@ async def bill_due() -> dict:
                                   f"Συνδρομή {sub.get('plan', '')} ({sub.get('billing_cycle', 'monthly')})",
                                   amount, method="card", provider=res.get("provider", "revolut"),
                                   provider_order_id=res.get("order_id"))
+            from app.services import invoice_service
+            await invoice_service.create_for_payment(
+                tenant_id=tid, kind="renewal", gross_cents=amount,
+                description=f"Ανανέωση συνδρομής RxVision {sub.get('plan', '')} "
+                            f"({sub.get('billing_cycle', 'monthly')})",
+                payment={"method": "card", "provider": res.get("provider", "revolut"),
+                         "transaction_id": res.get("order_id")})
             charged += 1
         else:
             attempts = sub.get("failed_attempts", 0) + 1

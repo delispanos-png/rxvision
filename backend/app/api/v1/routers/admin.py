@@ -924,6 +924,7 @@ class IntegrationsIn(BaseModel):
     softone_js_endpoint: str | None = None   # custom JS web service: "<module>/<function>"
     softone_issuer_afm: str | None = None
     softone_issuer_name: str | None = None
+    softone_auto_invoicing: bool | None = None   # master switch: αυτόματη έκδοση παραστατικών
     subscription_provider: str | None = None  # revolut | viva — ποιος χρεώνει τις συνδρομές
     # Alpha Bank (Alpha e-Commerce) card gateway — alternative to Revolut
     alphabank_merchant_id: str | None = None
@@ -993,6 +994,7 @@ async def get_integrations(_: PlatformContext = Depends(get_platform_admin)):
                     "series": softone.get("series") or "", "form": softone.get("form") or "",
                     "js_endpoint": softone.get("js_endpoint") or "",
                     "issuer_afm": softone.get("issuer_afm") or "", "issuer_name": softone.get("issuer_name") or "",
+                    "auto_invoicing": bool(softone.get("auto_invoicing")),
                     "configured": bool(softone.get("base_url") and softone.get("username")
                                        and softone.get("password") and softone.get("app_id"))},
         "subscription_provider": billing_cfg.get("active_provider") or "revolut",
@@ -1080,6 +1082,8 @@ async def set_integrations(body: IntegrationsIn,
             s1[k] = val.strip()
     if body.softone_password:            # secret — μόνο αν δόθηκε (αλλιώς κρατά το υπάρχον)
         s1["password"] = body.softone_password
+    if body.softone_auto_invoicing is not None:   # master switch (bool, όχι secret)
+        s1["auto_invoicing"] = bool(body.softone_auto_invoicing)
     if s1:
         await db["platform_settings"].update_one(
             {"_id": "softone"}, {"$set": encrypt_fields("softone", s1)}, upsert=True)
@@ -1782,6 +1786,12 @@ def _invoice_public(inv: dict, tenant_name: str | None = None) -> dict:
         "aade_status": inv.get("aade_status", "not_transmitted"),
         "aade_mark": inv.get("aade_mark"), "aade_transmitted_at": inv.get("aade_transmitted_at"),
         "created_at": inv.get("created_at"),
+        # Φάση 3 — αυτόματο κύκλωμα
+        "auto": bool(inv.get("auto")), "kind": inv.get("kind"),
+        "status": inv.get("status"), "blocked_reason": inv.get("blocked_reason"),
+        "softone_findoc": inv.get("softone_findoc"), "mydata_aa": inv.get("mydata_aa"),
+        "attempts": inv.get("attempts", 0), "last_error": inv.get("last_error"),
+        "customer_afm": (inv.get("customer") or {}).get("afm"),
     }
 
 
@@ -1870,20 +1880,20 @@ async def delete_invoice(invoice_id: str, _: PlatformContext = Depends(get_platf
 
 @router.post("/invoices/{invoice_id}/transmit")
 async def transmit_invoice(invoice_id: str, _: PlatformContext = Depends(get_platform_admin)):
-    """Διαβίβαση στην ΑΑΔΕ (myDATA). Μετά το κλείδωμα δεν επιτρέπεται edit/delete.
-    Placeholder MARK — η πραγματική σύνδεση myDATA θα μπει εδώ."""
-    db = shared_db()
-    inv = await db["invoices"].find_one({"_id": _oid(invoice_id)})
+    """Πραγματική έκδοση/διαβίβαση μέσω SoftOne → myDATA. Μετά το κλείδωμα: όχι edit/delete."""
+    from app.services import invoice_service
+    inv = await shared_db()["invoices"].find_one({"_id": _oid(invoice_id)})
     if not inv:
         raise HTTPException(http_status.HTTP_404_NOT_FOUND, "not_found")
     if _aade_locked(inv):
-        return {"id": invoice_id, "aade_status": "transmitted", "aade_mark": inv.get("aade_mark")}
-    now = datetime.now(tz=timezone.utc)
-    mark = f"4000{int(now.timestamp())}"  # placeholder MARK μέχρι τη σύνδεση myDATA
-    await db["invoices"].update_one({"_id": inv["_id"]}, {"$set": {
-        "aade_status": "transmitted", "aade_mark": mark, "aade_transmitted_at": now,
-        "updated_at": now}})
-    return {"id": invoice_id, "aade_status": "transmitted", "aade_mark": mark}
+        return {"id": invoice_id, "aade_status": "transmitted", "aade_mark": inv.get("aade_mark"),
+                "softone_findoc": inv.get("softone_findoc")}
+    r = await invoice_service.issue_invoice_by_id(inv["_id"])
+    if not r.get("ok"):
+        raise HTTPException(http_status.HTTP_502_BAD_GATEWAY,
+                            {"error": r.get("error") or "softone_failed"})
+    return {"id": invoice_id, "aade_status": "transmitted", "aade_mark": r.get("aade_mark"),
+            "softone_findoc": r.get("softone_findoc")}
 
 
 # ── SMTP settings + newsletter ─────────────────────────────

@@ -255,4 +255,12 @@ class OnboardingService:
         await db["pending_registrations"].update_one(
             {"_id": pending_id}, {"$set": {"status": "completed",
                                            "completed_tenant_id": res["tenant_id"], "completed_at": _now()}})
+        # Παραστατικό πρώτης συνδρομής (μόνο paid — όχι δωρεάν trial).
+        if not p.get("is_trial") and p.get("amount_cents"):
+            from app.services import invoice_service
+            await invoice_service.create_for_payment(
+                tenant_id=res["tenant_id"], kind="subscription", gross_cents=int(p["amount_cents"]),
+                description="Συνδρομή RxVision (πρώτη περίοδος)",
+                payment={"method": p.get("payment_method") or "card", "provider": "viva",
+                         "transaction_id": p.get("viva_transaction_id")})
         return res

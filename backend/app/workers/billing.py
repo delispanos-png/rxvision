@@ -48,3 +48,13 @@ def apply_scheduled_changes() -> dict:
     """Apply plan downgrades whose scheduled effective date (period end / renewal) has arrived."""
     from app.services.plan_change_service import apply_due_downgrades
     return asyncio.run(apply_due_downgrades())
+
+
+@celery_app.task(name="app.workers.billing.process_pending_invoices", bind=True,
+                 max_retries=3, autoretry_for=(ConnectionError, TimeoutError),
+                 retry_backoff=True, retry_backoff_max=1800, retry_jitter=True)
+def process_pending_invoices(self) -> dict:
+    """Κάθε λίγα λεπτά: pending παραστατικά → SoftOne (issue) → myDATA· retry/backoff ανά εγγραφή.
+    No-op μέχρι να ενεργοποιηθεί το auto_invoicing στο adminpanel ΚΑΙ να ανέβει η JS του SoftOne."""
+    from app.services.invoice_service import process_pending
+    return asyncio.run(process_pending())

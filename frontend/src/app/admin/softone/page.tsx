@@ -8,7 +8,8 @@ import { Receipt, Check, Loader2, PlugZap } from "lucide-react";
 type S1 = {
   base_url?: string; app_id?: string; username?: string; password_set?: boolean;
   company?: string; branch?: string; module?: string; refid?: string;
-  series?: string; form?: string; js_endpoint?: string; issuer_afm?: string; issuer_name?: string; configured?: boolean;
+  series?: string; form?: string; js_endpoint?: string; issuer_afm?: string; issuer_name?: string;
+  auto_invoicing?: boolean; configured?: boolean;
 };
 type Integr = { softone?: S1 };
 
@@ -19,12 +20,14 @@ export default function AdminSoftonePage() {
   const q = useQuery({ queryKey: ["integrations"], queryFn: () => adminApi<Integr>("/admin/integrations") });
   const s1 = q.data?.softone;
   const [f, setF] = useState({ base_url: "", app_id: "", username: "", password: "", company: "", branch: "", module: "", refid: "", series: "", form: "", js_endpoint: "", issuer_afm: "", issuer_name: "" });
+  const [autoInv, setAutoInv] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [test, setTest] = useState<string | null>(null);
 
   useEffect(() => {
     if (!s1) return;
     setF((p) => ({ ...p, base_url: s1.base_url || "", app_id: s1.app_id || "", username: s1.username || "", company: s1.company || "", branch: s1.branch || "", module: s1.module || "", refid: s1.refid || "", series: s1.series || "", form: s1.form || "", js_endpoint: s1.js_endpoint || "", issuer_afm: s1.issuer_afm || "", issuer_name: s1.issuer_name || "" }));
+    setAutoInv(!!s1.auto_invoicing);
   }, [s1]);
 
   const set = (k: keyof typeof f, v: string) => setF((p) => ({ ...p, [k]: v }));
@@ -35,6 +38,7 @@ export default function AdminSoftonePage() {
       ...(f.password ? { softone_password: f.password } : {}),
       softone_company: f.company, softone_branch: f.branch, softone_module: f.module, softone_refid: f.refid,
       softone_series: f.series, softone_form: f.form, softone_js_endpoint: f.js_endpoint, softone_issuer_afm: f.issuer_afm, softone_issuer_name: f.issuer_name,
+      softone_auto_invoicing: autoInv,
     }) }),
     onSuccess: () => { setNotice("Αποθηκεύτηκε ✓"); setF((p) => ({ ...p, password: "" })); q.refetch(); },
     onError: () => setNotice("Σφάλμα αποθήκευσης"),
@@ -80,6 +84,16 @@ export default function AdminSoftonePage() {
             <div><label className={lbl}>ΑΦΜ εκδότη (CloudOn)</label><input className={inp} value={f.issuer_afm} onChange={(e) => set("issuer_afm", e.target.value)} /></div>
             <div><label className={lbl}>Επωνυμία εκδότη</label><input className={inp} value={f.issuer_name} onChange={(e) => set("issuer_name", e.target.value)} /></div>
           </div>
+        </div>
+
+        <div className="border-t border-slate-100 pt-4">
+          <label className="flex items-start gap-3 cursor-pointer">
+            <input type="checkbox" checked={autoInv} onChange={(e) => setAutoInv(e.target.checked)} className="mt-0.5 h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500" />
+            <span>
+              <span className="block text-sm font-medium text-slate-800">Αυτόματη έκδοση τιμολογίων</span>
+              <span className="block text-xs text-slate-500">Όταν είναι ενεργό, κάθε επιτυχής χρέωση (συνδρομή/ανανέωση/αναβάθμιση/top-up) παράγει αυτόματα παραστατικό και το διαβιβάζει στο SoftOne → myDATA (το SoftOne στέλνει το τιμολόγιο στον πελάτη). <b>Άφησέ το κλειστό μέχρι να ανέβει η JS του SoftOne</b> και να γίνει δοκιμαστική έκδοση.</span>
+            </span>
+          </label>
         </div>
 
         {notice && <div className="rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-600">{notice}</div>}
