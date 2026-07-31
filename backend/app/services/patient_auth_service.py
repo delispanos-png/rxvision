@@ -294,7 +294,8 @@ class PatientAuthService:
             "profile": {
                 "first_name": acc.get("first_name"), "last_name": acc.get("last_name"),
                 "email": acc.get("email"), "phone": acc.get("phone"),
-                "address": acc.get("address"), "theme": acc.get("theme"),
+                "address": acc.get("address"), "city": acc.get("city"),
+                "postal_code": acc.get("postal_code"), "theme": acc.get("theme"),
                 "avatar_url": f"/patient/avatar/{acc['avatar_id']}" if acc.get("avatar_id") else None,
             },
         }

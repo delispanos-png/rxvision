@@ -26,7 +26,7 @@ import { fmtDate, fmtDateTime } from "@/lib/formatters";
 
 type Pharmacy = { tenant_id: string; pharmacy_name: string };
 type Pharm = { status: { isOpen: boolean; isOnDuty: boolean; isOvernightDuty: boolean; closingSoon: boolean; statusText: string }; schedule: { week: { day: number; status: string; intervals: { start: string; end: string }[] }[] } };
-type Me = { profile: { first_name: string; last_name: string; email?: string; phone?: string; address?: string; theme?: "light" | "dark" | null; avatar_url?: string | null }; active_tenant: string | null; pharmacies: Pharmacy[]; portal_mode?: "network" | "single"; caps?: { shop: boolean; loyalty: boolean } };
+type Me = { profile: { first_name: string; last_name: string; email?: string; phone?: string; address?: string; city?: string; postal_code?: string; theme?: "light" | "dark" | null; avatar_url?: string | null }; active_tenant: string | null; pharmacies: Pharmacy[]; portal_mode?: "network" | "single"; caps?: { shop: boolean; loyalty: boolean } };
 const PF_INP = "mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100";
 type DirPharmacy = { tenant_id: string; name: string; address?: string | null; city?: string | null; phone?: string | null; lat?: number | null; lon?: number | null; mine?: boolean; favorite?: boolean; status?: { isOpen: boolean; isOnDuty: boolean; isOvernightDuty: boolean; closingSoon: boolean; statusText: string } | null };
 type Summary = { rx_count: number; paid_cents: number; total_cents: number; covered_cents: number; doctors: number; medicines: number; repeats_active: number; next_open_date?: string | null; first_at?: string | null; last_at?: string | null };
@@ -167,7 +167,7 @@ export default function PortalHome() {
   const [notifs, setNotifs] = useState<Notif[]>([]);
   const [showNotifs, setShowNotifs] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
-  const [pf, setPf] = useState({ first_name: "", last_name: "", phone: "", address: "" });
+  const [pf, setPf] = useState({ first_name: "", last_name: "", phone: "", address: "", city: "", postal_code: "" });
   const [pwd, setPwd] = useState({ current: "", next: "" });
   const [profileBusy, setProfileBusy] = useState(false);
   const { theme, setTheme } = usePref();
@@ -340,7 +340,8 @@ export default function PortalHome() {
   function openProfile() {
     if (!me) return;
     setPf({ first_name: me.profile.first_name || "", last_name: me.profile.last_name || "",
-            phone: me.profile.phone || "", address: me.profile.address || "" });
+            phone: me.profile.phone || "", address: me.profile.address || "",
+            city: me.profile.city || "", postal_code: me.profile.postal_code || "" });
     setPwd({ current: "", next: "" });
     setShowProfile(true);
   }
@@ -614,19 +615,25 @@ export default function PortalHome() {
 
             <div className="space-y-3">
               <div className="grid grid-cols-2 gap-3">
-                <label className="block text-xs font-medium text-slate-500 dark:text-slate-400">Όνομα<input value={pf.first_name} onChange={(e) => setPf({ ...pf, first_name: e.target.value })} className={PF_INP} /></label>
-                <label className="block text-xs font-medium text-slate-500 dark:text-slate-400">Επώνυμο<input value={pf.last_name} onChange={(e) => setPf({ ...pf, last_name: e.target.value })} className={PF_INP} /></label>
+                <label className="block text-xs font-medium text-slate-500 dark:text-slate-400">Όνομα<input autoComplete="given-name" value={pf.first_name} onChange={(e) => setPf({ ...pf, first_name: e.target.value })} className={PF_INP} /></label>
+                <label className="block text-xs font-medium text-slate-500 dark:text-slate-400">Επώνυμο<input autoComplete="family-name" value={pf.last_name} onChange={(e) => setPf({ ...pf, last_name: e.target.value })} className={PF_INP} /></label>
               </div>
-              <label className="block text-xs font-medium text-slate-500 dark:text-slate-400">Τηλέφωνο<input value={pf.phone} onChange={(e) => setPf({ ...pf, phone: e.target.value })} className={PF_INP} /></label>
-              <label className="block text-xs font-medium text-slate-500 dark:text-slate-400">Διεύθυνση<input value={pf.address} onChange={(e) => setPf({ ...pf, address: e.target.value })} className={PF_INP} /></label>
+              <label className="block text-xs font-medium text-slate-500 dark:text-slate-400">Τηλέφωνο<input autoComplete="tel" inputMode="tel" value={pf.phone} onChange={(e) => setPf({ ...pf, phone: e.target.value })} className={PF_INP} /></label>
+
+              <div className="pt-1 text-xs font-semibold uppercase tracking-wide text-slate-400">Διεύθυνση κατοικίας</div>
+              <label className="block text-xs font-medium text-slate-500 dark:text-slate-400">Οδός & αριθμός<input autoComplete="street-address" value={pf.address} onChange={(e) => setPf({ ...pf, address: e.target.value })} className={PF_INP} placeholder="π.χ. Ερμού 15" /></label>
+              <div className="grid grid-cols-2 gap-3">
+                <label className="block text-xs font-medium text-slate-500 dark:text-slate-400">Πόλη<input autoComplete="address-level2" value={pf.city} onChange={(e) => setPf({ ...pf, city: e.target.value })} className={PF_INP} /></label>
+                <label className="block text-xs font-medium text-slate-500 dark:text-slate-400">Τ.Κ.<input autoComplete="postal-code" inputMode="numeric" value={pf.postal_code} onChange={(e) => setPf({ ...pf, postal_code: e.target.value })} className={PF_INP} /></label>
+              </div>
               <button onClick={saveProfile} disabled={profileBusy} className="w-full rounded-xl bg-brand-600 py-2.5 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-60">Αποθήκευση στοιχείων</button>
             </div>
 
             <div className="mt-5 border-t border-slate-100 pt-4 dark:border-slate-800">
               <div className="mb-2 text-sm font-semibold text-slate-700 dark:text-slate-200">Αλλαγή κωδικού</div>
               <div className="space-y-3">
-                <input type="password" placeholder="Τρέχων κωδικός" value={pwd.current} onChange={(e) => setPwd({ ...pwd, current: e.target.value })} className={PF_INP} />
-                <input type="password" placeholder="Νέος κωδικός (≥8 χαρακτήρες)" value={pwd.next} onChange={(e) => setPwd({ ...pwd, next: e.target.value })} className={PF_INP} />
+                <input type="password" autoComplete="current-password" placeholder="Τρέχων κωδικός" value={pwd.current} onChange={(e) => setPwd({ ...pwd, current: e.target.value })} className={PF_INP} />
+                <input type="password" autoComplete="new-password" placeholder="Νέος κωδικός (≥8 χαρακτήρες)" value={pwd.next} onChange={(e) => setPwd({ ...pwd, next: e.target.value })} className={PF_INP} />
                 <button onClick={changePwd} disabled={profileBusy || !pwd.current || pwd.next.length < 8} className="w-full rounded-xl border border-slate-300 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800">Αλλαγή κωδικού</button>
               </div>
             </div>

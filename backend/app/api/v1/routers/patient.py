@@ -75,7 +75,9 @@ class ProfileUpdateIn(BaseModel):
     first_name: str | None = Field(None, min_length=1, max_length=80)
     last_name: str | None = Field(None, min_length=1, max_length=80)
     phone: str | None = Field(None, max_length=40)
-    address: str | None = Field(None, max_length=300)
+    address: str | None = Field(None, max_length=200)     # οδός & αριθμός
+    city: str | None = Field(None, max_length=100)        # πόλη
+    postal_code: str | None = Field(None, max_length=20)  # Τ.Κ.
     theme: str | None = Field(None, pattern="^(light|dark)$")
 
 
@@ -214,7 +216,8 @@ async def me(ctx: PatientContext = Depends(get_patient_context)):
     return {
         "profile": {"first_name": acc.get("first_name"), "last_name": acc.get("last_name"),
                     "email": acc.get("email"), "phone": acc.get("phone"),
-                    "address": acc.get("address"), "theme": acc.get("theme"),
+                    "address": acc.get("address"), "city": acc.get("city"),
+                    "postal_code": acc.get("postal_code"), "theme": acc.get("theme"),
                     "avatar_url": f"/patient/avatar/{acc['avatar_id']}" if acc.get("avatar_id") else None},
         "active_tenant": ctx.tenant_id,
         "favorite_tenant": acc.get("favorite_tenant_id"),
@@ -230,7 +233,8 @@ async def update_me(body: ProfileUpdateIn, ctx: PatientContext = Depends(get_pat
     from app.repositories.patient_portal import PatientAccountRepository
     await PatientAccountRepository().update_profile(
         ctx.account_id, first_name=body.first_name, last_name=body.last_name,
-        phone=body.phone, address=body.address, theme=body.theme)
+        phone=body.phone, address=body.address, city=body.city,
+        postal_code=body.postal_code, theme=body.theme)
     return {"ok": True}
 
 

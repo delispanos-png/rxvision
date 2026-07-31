@@ -167,7 +167,8 @@ class PatientAccountRepository:
         """Ενημέρωση επεξεργάσιμων πεδίων προφίλ (ΟΧΙ email/ΑΜΚΑ — ταυτότητα)."""
         oid = _oid(account_id)
         allowed = {k: v for k, v in fields.items()
-                   if k in ("first_name", "last_name", "phone", "address", "theme") and v is not None}
+                   if k in ("first_name", "last_name", "phone", "address", "city",
+                            "postal_code", "theme") and v is not None}
         if oid and allowed:
             await self.db["patient_accounts"].update_one(  # tenant-ok: global patient account
                 {"_id": oid}, {"$set": allowed})
