@@ -29,6 +29,13 @@ type Pharm = { status: { isOpen: boolean; isOnDuty: boolean; isOvernightDuty: bo
 type Consent = { granted: boolean; at?: string | null };
 type Me = { profile: { first_name: string; last_name: string; email?: string; phone?: string; amka?: string; phone_verified?: boolean; email_verified?: boolean; consents?: { health_data?: Consent; marketing?: Consent }; address?: string; city?: string; postal_code?: string; theme?: "light" | "dark" | null; avatar_url?: string | null }; active_tenant: string | null; pharmacies: Pharmacy[]; portal_mode?: "network" | "single"; caps?: { shop: boolean; loyalty: boolean } };
 const PF_INP = "mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100";
+type Sess = { id: string; current: boolean; user_agent?: string | null; ip?: string | null; created_at?: string | null; last_seen?: string | null };
+function deviceLabel(ua?: string | null): string {
+  if (!ua) return "Άγνωστη συσκευή";
+  const os = /iPhone|iPad/.test(ua) ? "iPhone/iPad" : /Android/.test(ua) ? "Android" : /Windows/.test(ua) ? "Windows" : /Mac OS X|Macintosh/.test(ua) ? "Mac" : /Linux/.test(ua) ? "Linux" : "";
+  const br = /Edg\//.test(ua) ? "Edge" : /Chrome\//.test(ua) ? "Chrome" : /Firefox\//.test(ua) ? "Firefox" : /Safari\//.test(ua) ? "Safari" : "";
+  return [br, os].filter(Boolean).join(" · ") || "Πρόγραμμα περιήγησης";
+}
 type DirPharmacy = { tenant_id: string; name: string; address?: string | null; city?: string | null; phone?: string | null; lat?: number | null; lon?: number | null; mine?: boolean; favorite?: boolean; status?: { isOpen: boolean; isOnDuty: boolean; isOvernightDuty: boolean; closingSoon: boolean; statusText: string } | null };
 type Summary = { rx_count: number; paid_cents: number; total_cents: number; covered_cents: number; doctors: number; medicines: number; repeats_active: number; next_open_date?: string | null; first_at?: string | null; last_at?: string | null };
 // tenant_id/pharmacy_name: κάθε εκτέλεση φέρει ΠΟΥ έγινε — ο πελάτης βλέπει όλων των φαρμακείων του.
@@ -176,6 +183,7 @@ export default function PortalHome() {
   const [emailInput, setEmailInput] = useState("");
   const [emailOtp, setEmailOtp] = useState<{ cid: string; hint: string } | null>(null);
   const [emailCode, setEmailCode] = useState("");
+  const [sessions, setSessions] = useState<Sess[] | null>(null);
   const { theme, setTheme } = usePref();
   const [switchOpen, setSwitchOpen] = useState(false);   // custom dropdown πάνω επιλογέα φαρμακείου
   const [pickupDate, setPickupDate] = useState("");   // ημ/νία παραλαβής για ειδοποίηση διαθεσιμότητας
@@ -342,6 +350,27 @@ export default function PortalHome() {
     const th = me?.profile.theme;
     if (th === "light" || th === "dark") setTheme(th);
   }, [me?.profile.theme, setTheme]);
+
+  // φόρτωσε ενεργές συνεδρίες όταν ανοίγει το προφίλ
+  useEffect(() => {
+    if (!showProfile) return;
+    setSessions(null);
+    patientApi<{ items: Sess[] }>("/patient/me/sessions").then((r) => setSessions(r.items)).catch(() => setSessions([]));
+  }, [showProfile]);
+  async function revokeSession(id: string) {
+    try {
+      await patientApi(`/patient/me/sessions/${encodeURIComponent(id)}/revoke`, { method: "POST" });
+      setSessions((s) => s?.filter((x) => x.id !== id) ?? null);
+      toast("Η συσκευή αποσυνδέθηκε.", "success");
+    } catch { toast("Αποτυχία.", "error"); }
+  }
+  async function revokeOtherSessions() {
+    try {
+      await patientApi("/patient/me/sessions/revoke-others", { method: "POST" });
+      setSessions((s) => s?.filter((x) => x.current) ?? null);
+      toast("Αποσυνδέθηκαν οι άλλες συσκευές.", "success");
+    } catch { toast("Αποτυχία.", "error"); }
+  }
 
   function openProfile() {
     if (!me) return;
@@ -765,6 +794,26 @@ export default function PortalHome() {
                   </div>
                 );
               })}
+            </div>
+
+            <div className="mt-5 border-t border-slate-100 pt-4 dark:border-slate-800">
+              <div className="mb-2 flex items-center justify-between">
+                <div className="text-sm font-semibold text-slate-700 dark:text-slate-200">Ενεργές συνεδρίες</div>
+                {sessions && sessions.some((s) => !s.current) && <button onClick={revokeOtherSessions} className="text-xs font-semibold text-rose-600 hover:underline">Αποσύνδεση όλων των άλλων</button>}
+              </div>
+              {!sessions ? <div className="text-xs text-slate-400">Φόρτωση…</div> : sessions.length === 0 ? <div className="text-xs text-slate-400">—</div> : (
+                <div className="space-y-2">
+                  {sessions.map((s) => (
+                    <div key={s.id} className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 px-3 py-2 dark:border-slate-700">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1.5 text-sm text-slate-700 dark:text-slate-200"><span className="truncate">{deviceLabel(s.user_agent)}</span> {s.current && <span className="shrink-0 rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700">τρέχουσα</span>}</div>
+                        <div className="truncate text-[11px] text-slate-400">{s.ip || "—"}{s.last_seen ? ` · ${fmtDateTime(s.last_seen)}` : ""}</div>
+                      </div>
+                      {!s.current && <button onClick={() => revokeSession(s.id)} className="shrink-0 rounded-lg border border-rose-200 px-2 py-1 text-xs font-semibold text-rose-600 hover:bg-rose-50 dark:border-rose-800 dark:hover:bg-rose-900/20">Αποσύνδεση</button>}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         </div>

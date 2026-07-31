@@ -122,10 +122,12 @@ def create_platform_refresh_token(*, admin_id: str, version: int) -> str:
     return jwt.encode(payload, settings.JWT_PLATFORM_SECRET, algorithm=settings.JWT_ALG)
 
 
-def create_patient_token(*, account_id: str, tenant_id: str, patient_ref: str) -> str:
+def create_patient_token(*, account_id: str, tenant_id: str, patient_ref: str,
+                          sid: str | None = None) -> str:
     """Access token for a PATIENT (pharmacy customer). Carries the active pharmacy (`tid`) and
     that pharmacy's pseudonymised patient record (`pref`) so the API scopes to the patient's own
-    data only. Signed with JWT_PATIENT_SECRET + audience rxvision/patient (isolated from tenant/admin)."""
+    data only. `sid` = session id (ενεργές συνεδρίες/ανά-συσκευή revoke). Signed with
+    JWT_PATIENT_SECRET + audience rxvision/patient (isolated from tenant/admin)."""
     payload = {
         "sub": account_id,
         "pat": True,
@@ -137,10 +139,12 @@ def create_patient_token(*, account_id: str, tenant_id: str, patient_ref: str) -
         "exp": _now() + timedelta(seconds=settings.ACCESS_TOKEN_TTL_SECONDS),
         "jti": str(uuid.uuid4()),
     }
+    if sid:
+        payload["sid"] = sid
     return jwt.encode(payload, settings.JWT_PATIENT_SECRET, algorithm=settings.JWT_ALG)
 
 
-def create_patient_refresh_token(*, account_id: str, version: int) -> str:
+def create_patient_refresh_token(*, account_id: str, version: int, sid: str | None = None) -> str:
     payload = {
         "sub": account_id,
         "ver": version,
@@ -151,6 +155,8 @@ def create_patient_refresh_token(*, account_id: str, version: int) -> str:
         "exp": _now() + timedelta(seconds=settings.REFRESH_TOKEN_TTL_SECONDS),
         "jti": str(uuid.uuid4()),
     }
+    if sid:
+        payload["sid"] = sid
     return jwt.encode(payload, settings.JWT_PATIENT_SECRET, algorithm=settings.JWT_ALG)
 
 

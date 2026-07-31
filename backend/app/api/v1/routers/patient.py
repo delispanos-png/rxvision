@@ -33,6 +33,13 @@ async def portal_mode() -> str:
     return m if m in ("network", "single") else "network"
 
 
+def _req_meta(request: Request) -> dict:
+    """User-agent + IP (X-Forwarded-For πίσω από Caddy) για την «ενεργή συνεδρία»."""
+    xff = request.headers.get("x-forwarded-for", "")
+    ip = xff.split(",")[0].strip() if xff else (request.client.host if request.client else None)
+    return {"user_agent": request.headers.get("user-agent", ""), "ip": ip}
+
+
 # ── schemas ──────────────────────────────────────────────────
 class RegisterIn(BaseModel):
     first_name: str = Field(..., min_length=1, max_length=80)
@@ -145,10 +152,11 @@ async def register(body: RegisterIn):
 
 @router.post("/auth/register/verify", status_code=201,
              dependencies=[Depends(rate_limit("patient_register_verify", limit=10, window_seconds=600))])
-async def register_verify(body: RegisterVerifyIn):
+async def register_verify(body: RegisterVerifyIn, request: Request):
     """Step 2: confirm the OTP → create the account + auto-link the patient's pharmacies + mint tokens."""
     try:
-        return await PatientAuthService().verify_registration(body.challenge_id, body.code)
+        return await PatientAuthService().verify_registration(body.challenge_id, body.code,
+                                                              meta=_req_meta(request))
     except PatientError as exc:
         err = str(exc)
         code = status.HTTP_409_CONFLICT if err == "amka_exists" else status.HTTP_400_BAD_REQUEST
@@ -157,13 +165,13 @@ async def register_verify(body: RegisterVerifyIn):
 
 @router.post("/auth/login",
              dependencies=[Depends(rate_limit("patient_login", limit=10, window_seconds=300))])
-async def login(body: LoginIn):
+async def login(body: LoginIn, request: Request):
     locked = await account_locked(f"patient:{body.email}")
     if locked:
         raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS,
                             detail={"error": "account_locked", "retry_after": locked},
                             headers={"Retry-After": str(locked)})
-    res = await PatientAuthService().login(body.email, body.password)
+    res = await PatientAuthService().login(body.email, body.password, meta=_req_meta(request))
     if res is None:
         await record_login_failure(f"patient:{body.email}")
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid_credentials")
@@ -192,8 +200,8 @@ async def set_password_self(body: SetOwnPasswordIn,
 
 
 @router.post("/auth/refresh")
-async def refresh(body: RefreshIn):
-    res = await PatientAuthService().refresh(body.refresh_token)
+async def refresh(body: RefreshIn, request: Request):
+    res = await PatientAuthService().refresh(body.refresh_token, meta=_req_meta(request))
     if res is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid_refresh")
     return res
@@ -210,7 +218,8 @@ async def logout(ctx: PatientContext = Depends(get_patient_context)):
 async def select_pharmacy(body: SelectIn, ctx: PatientContext = Depends(get_patient_context)):
     if await portal_mode() == "single" and body.tenant_id != ctx.tenant_id:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "single_pharmacy_mode")   # καμία εναλλαγή/self-onboarding
-    token = await PatientAuthService().select_pharmacy(ctx.account_id, body.tenant_id)
+    token = await PatientAuthService().select_pharmacy(ctx.account_id, body.tenant_id,
+                                                       sid=ctx.session_id)
     if token is None:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "not_linked_to_pharmacy")
     return {"access_token": token, "active_tenant": body.tenant_id}
@@ -313,6 +322,33 @@ async def email_verify_confirm(body: EmailVerifyConfirmIn, ctx: PatientContext =
         code = status.HTTP_409_CONFLICT if res["error"] == "email_exists" else status.HTTP_400_BAD_REQUEST
         raise HTTPException(code, detail={"error": res["error"]})
     return res
+
+
+@router.get("/me/sessions")
+async def list_sessions(ctx: PatientContext = Depends(get_patient_context)):
+    """Ενεργές συνεδρίες (συσκευές) του πελάτη — η τρέχουσα σημειώνεται."""
+    from app.repositories.patient_portal import PatientAccountRepository
+    rows = await PatientAccountRepository().list_sessions(ctx.account_id)
+    items = [{"id": s["_id"], "current": s["_id"] == ctx.session_id,
+              "user_agent": s.get("user_agent"), "ip": s.get("ip"),
+              "created_at": s.get("created_at"), "last_seen": s.get("last_seen")} for s in rows]
+    return {"items": items, "current": ctx.session_id}
+
+
+@router.post("/me/sessions/revoke-others")
+async def revoke_other_sessions(ctx: PatientContext = Depends(get_patient_context)):
+    """Αποσύνδεση από ΟΛΕΣ τις άλλες συσκευές (κρατά την τρέχουσα)."""
+    from app.repositories.patient_portal import PatientAccountRepository
+    n = await PatientAccountRepository().revoke_other_sessions(ctx.account_id, ctx.session_id)
+    return {"ok": True, "revoked": n}
+
+
+@router.post("/me/sessions/{sid}/revoke")
+async def revoke_session(sid: str, ctx: PatientContext = Depends(get_patient_context)):
+    """Αποσύνδεση συγκεκριμένης συσκευής (revoke της συνεδρίας)."""
+    from app.repositories.patient_portal import PatientAccountRepository
+    ok = await PatientAccountRepository().revoke_session(ctx.account_id, sid)
+    return {"ok": ok}
 
 
 @router.post("/me/change-password")

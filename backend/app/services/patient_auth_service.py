@@ -132,7 +132,7 @@ class PatientAuthService:
                 pass
         return sent
 
-    async def verify_registration(self, challenge_id: str, code: str) -> dict:
+    async def verify_registration(self, challenge_id: str, code: str, *, meta: dict | None = None) -> dict:
         """Step 2: confirm the code, then create the account + auto-link the patient's pharmacies."""
         ch = await self.repo.get_otp_challenge((challenge_id or "").strip())
         if not ch or ch.get("expires_at") and ch["expires_at"] < _now():
@@ -155,7 +155,7 @@ class PatientAuthService:
             acc["favorite_tenant_id"] = ch["favorite_tenant_id"]
         await self.repo.delete_otp_challenge(challenge_id)
         links = await self.repo.refresh_links(acc["_id"], ch["amka"])
-        return self._session(acc, links)
+        return await self._start_session(acc, links, meta)
 
     async def admin_create(self, *, first_name: str, last_name: str, email: str,
                            phone: str | None, amka: str) -> dict:
@@ -215,8 +215,9 @@ class PatientAuthService:
             return None
         await self.repo.set_password(acc["_id"], hash_password(new_password))
         acc["must_change_password"] = False
+        await self.repo.revoke_other_sessions(acc["_id"], None)   # αλλαγή κωδικού → έξοδος από ΟΛΕΣ τις συσκευές
         links = await self.repo.refresh_links(acc["_id"], acc.get("amka", ""))
-        return self._session(acc, links)
+        return await self._start_session(acc, links)
 
     async def set_own_password(self, account_id: str, new_password: str) -> dict | None:
         """Υποχρεωτική αλλαγή στο 1ο login: ο ήδη-συνδεδεμένος πελάτης ορίζει δικό του κωδικό → νέο session."""
@@ -225,8 +226,9 @@ class PatientAuthService:
             return None
         await self.repo.set_password(acc["_id"], hash_password(new_password))
         acc["must_change_password"] = False
+        await self.repo.revoke_other_sessions(acc["_id"], None)
         links = await self.repo.refresh_links(acc["_id"], acc.get("amka", ""))
-        return self._session(acc, links)
+        return await self._start_session(acc, links)
 
     async def start_phone_verify(self, account_id: str, phone: str) -> dict:
         """Στέλνει OTP (SMS, κεντρικό Apifon) για επιβεβαίωση κινητού. Επιστρέφει masked hint."""
@@ -331,21 +333,22 @@ class PatientAuthService:
             return "bad_current"
         await self.repo.set_password(acc["_id"], hash_password(new))
         acc["must_change_password"] = False
+        await self.repo.revoke_other_sessions(acc["_id"], None)
         links = await self.repo.refresh_links(acc["_id"], acc.get("amka", ""))
-        return self._session(acc, links)
+        return await self._start_session(acc, links)
 
-    async def login(self, email: str, password: str) -> dict | None:
+    async def login(self, email: str, password: str, *, meta: dict | None = None) -> dict | None:
         acc = await self.repo.get_by_email((email or "").strip().lower())
         if not acc or not verify_password(password, acc.get("password_hash", "")):
             return None
         links = await self.repo.refresh_links(acc["_id"], acc.get("amka", ""))
-        return self._session(acc, links)
+        return await self._start_session(acc, links, meta)
 
     async def logout(self, account_id: str) -> None:
         """Revoke every refresh token for this patient account (all devices)."""
         await self.repo.revoke_tokens(account_id)
 
-    async def select_pharmacy(self, account_id: str, tenant_id: str) -> str | None:
+    async def select_pharmacy(self, account_id: str, tenant_id: str, *, sid: str | None = None) -> str | None:
         """Re-mint an access token for another pharmacy. Λειτουργεί για ΟΠΟΙΟΔΗΠΟΤΕ φαρμακείο με
         ενεργή πύλη: αν ο πελάτης δεν είναι ήδη linked (δεν έχει ιστορικό εκεί), δημιουργείται
         «καρτέλα χωρίς κίνηση» + link on-the-fly ώστε να μπορεί να το εξυπηρετηθεί (ερωτήματα/
@@ -354,9 +357,9 @@ class PatientAuthService:
         if not link:
             return None
         return create_patient_token(account_id=str(account_id), tenant_id=tenant_id,
-                                    patient_ref=str(link["patient_ref"]))
+                                    patient_ref=str(link["patient_ref"]), sid=sid)
 
-    async def refresh(self, refresh_token: str) -> dict | None:
+    async def refresh(self, refresh_token: str, *, meta: dict | None = None) -> dict | None:
         try:
             claims = decode_patient_token(refresh_token)
         except ValueError:
@@ -366,22 +369,36 @@ class PatientAuthService:
         acc = await self.repo.get(claims.get("sub"))
         if not acc or claims.get("ver", 0) != acc.get("refresh_token_version", 0):
             return None
+        sid = claims.get("sid")
+        if sid:  # per-session revoke: αν η συνεδρία ανακλήθηκε → απόρριψη refresh (logout συσκευής)
+            ok = await self.repo.touch_session(sid, user_agent=(meta or {}).get("user_agent"),
+                                               ip=(meta or {}).get("ip"))
+            if not ok:
+                return None
         links = await self.repo.refresh_links(acc["_id"], acc.get("amka", ""))
-        return self._session(acc, links)
+        return self._session(acc, links, sid=sid)
 
-    def _session(self, acc: dict, links: list[dict]) -> dict:
+    async def _start_session(self, acc: dict, links: list[dict], meta: dict | None = None) -> dict:
+        """Νέα συνεδρία (login/register/password-change): φτιάχνει session record + tokens με sid."""
+        sid = uuid.uuid4().hex
+        await self.repo.create_session(acc["_id"], sid, user_agent=(meta or {}).get("user_agent"),
+                                       ip=(meta or {}).get("ip"))
+        return self._session(acc, links, sid=sid)
+
+    def _session(self, acc: dict, links: list[dict], *, sid: str | None = None) -> dict:
         account_id = str(acc["_id"])
         # prefer the «αγαπημένο» pharmacy (set via a counter QR) as the default active one
         fav = acc.get("favorite_tenant_id")
         active = next((l for l in links if l.get("tenant_id") == fav), None) or (links[0] if links else None)
         access = (create_patient_token(account_id=account_id, tenant_id=active["tenant_id"],
-                                       patient_ref=active["patient_ref"]) if active else None)
+                                       patient_ref=active["patient_ref"], sid=sid) if active else None)
         refresh = create_patient_refresh_token(account_id=account_id,
-                                               version=acc.get("refresh_token_version", 0))
+                                               version=acc.get("refresh_token_version", 0), sid=sid)
         return {
             "access_token": access,
             "refresh_token": refresh,
             "active_tenant": active["tenant_id"] if active else None,
+            "session_id": sid,
             "must_change_password": bool(acc.get("must_change_password")),
             "pharmacies": links,
             "profile": {

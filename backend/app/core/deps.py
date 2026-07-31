@@ -39,6 +39,7 @@ class PatientContext:
     account_id: str
     tenant_id: str
     patient_ref: str
+    session_id: str | None = None
 
 
 async def get_platform_admin(
@@ -72,7 +73,8 @@ async def get_patient_context(
     tid, pref = claims.get("tid"), claims.get("pref")
     if not tid or not pref:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "incomplete_patient_token")
-    return PatientContext(account_id=claims["sub"], tenant_id=tid, patient_ref=pref)
+    return PatientContext(account_id=claims["sub"], tenant_id=tid, patient_ref=pref,
+                          session_id=claims.get("sid"))
 
 
 async def get_current_context(

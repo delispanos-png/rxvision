@@ -329,6 +329,41 @@ class PatientAccountRepository:
     async def delete_otp_challenge(self, cid: str) -> None:
         await self.db["patient_otp_challenges"].delete_one({"_id": cid})
 
+    # ── ενεργές συνεδρίες (per-device) ─────────────────────────
+    async def create_session(self, account_id, sid: str, *, user_agent: str | None = None,
+                             ip: str | None = None) -> None:
+        await self.db["patient_sessions"].insert_one({  # tenant-ok: global patient account
+            "_id": sid, "account_id": str(account_id), "created_at": _now(), "last_seen": _now(),
+            "user_agent": (user_agent or "")[:300], "ip": ip, "revoked": False})
+
+    async def touch_session(self, sid: str, *, user_agent: str | None = None,
+                            ip: str | None = None) -> bool:
+        """Ενημερώνει last_seen· επιστρέφει False αν η συνεδρία δεν υπάρχει ή έχει ανακληθεί."""
+        upd: dict = {"last_seen": _now()}
+        if user_agent:
+            upd["user_agent"] = user_agent[:300]
+        if ip:
+            upd["ip"] = ip
+        r = await self.db["patient_sessions"].find_one_and_update(
+            {"_id": sid, "revoked": {"$ne": True}}, {"$set": upd})
+        return r is not None
+
+    async def list_sessions(self, account_id) -> list[dict]:
+        return [s async for s in self.db["patient_sessions"].find(
+            {"account_id": str(account_id), "revoked": {"$ne": True}}).sort("last_seen", -1)]
+
+    async def revoke_session(self, account_id, sid: str) -> bool:
+        r = await self.db["patient_sessions"].update_one(
+            {"_id": sid, "account_id": str(account_id)},
+            {"$set": {"revoked": True, "revoked_at": _now()}})
+        return r.modified_count > 0
+
+    async def revoke_other_sessions(self, account_id, keep_sid: str | None) -> int:
+        r = await self.db["patient_sessions"].update_many(
+            {"account_id": str(account_id), "_id": {"$ne": keep_sid}, "revoked": {"$ne": True}},
+            {"$set": {"revoked": True, "revoked_at": _now()}})
+        return r.modified_count
+
     async def links(self, account_id) -> list[dict]:
         oid = _oid(account_id)
         if not oid:
