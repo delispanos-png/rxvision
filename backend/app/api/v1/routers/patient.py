@@ -91,6 +91,15 @@ class ConsentIn(BaseModel):
     granted: bool
 
 
+class PhoneVerifyStartIn(BaseModel):
+    phone: str = Field(..., min_length=8, max_length=40)
+
+
+class PhoneVerifyConfirmIn(BaseModel):
+    challenge_id: str = Field(..., min_length=8, max_length=64)
+    code: str = Field(..., min_length=4, max_length=8)
+
+
 class AvailabilityIn(BaseModel):
     tenant_id: str | None = None                          # target pharmacy (defaults to active)
     medicine_barcode: str | None = Field(None, max_length=40)
@@ -255,6 +264,25 @@ async def set_consent(body: ConsentIn, ctx: PatientContext = Depends(get_patient
     if entry is None:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail={"error": "bad_consent"})
     return {"ok": True, "kind": body.kind, "consent": entry}
+
+
+@router.post("/me/phone/verify/start",
+             dependencies=[Depends(rate_limit("patient_phone_verify", limit=5, window_seconds=600))])
+async def phone_verify_start(body: PhoneVerifyStartIn, ctx: PatientContext = Depends(get_patient_context)):
+    """Στέλνει OTP στο κινητό για επιβεβαίωση (ώστε ειδοποιήσεις «η συνταγή σου είναι έτοιμη» να πάνε σε επιβεβαιωμένο)."""
+    res = await PatientAuthService().start_phone_verify(ctx.account_id, body.phone)
+    if res.get("error"):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail={"error": res["error"]})
+    return res
+
+
+@router.post("/me/phone/verify/confirm",
+             dependencies=[Depends(rate_limit("patient_phone_confirm", limit=10, window_seconds=600))])
+async def phone_verify_confirm(body: PhoneVerifyConfirmIn, ctx: PatientContext = Depends(get_patient_context)):
+    res = await PatientAuthService().confirm_phone_verify(ctx.account_id, body.challenge_id, body.code)
+    if res.get("error"):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail={"error": res["error"]})
+    return res
 
 
 @router.post("/me/change-password")

@@ -171,6 +171,8 @@ export default function PortalHome() {
   const [pf, setPf] = useState({ first_name: "", last_name: "", phone: "", address: "", city: "", postal_code: "" });
   const [pwd, setPwd] = useState({ current: "", next: "" });
   const [profileBusy, setProfileBusy] = useState(false);
+  const [phoneOtp, setPhoneOtp] = useState<{ cid: string; hint: string } | null>(null);
+  const [phoneCode, setPhoneCode] = useState("");
   const { theme, setTheme } = usePref();
   const [switchOpen, setSwitchOpen] = useState(false);   // custom dropdown πάνω επιλογέα φαρμακείου
   const [pickupDate, setPickupDate] = useState("");   // ημ/νία παραλαβής για ειδοποίηση διαθεσιμότητας
@@ -381,6 +383,32 @@ export default function PortalHome() {
     const t = theme === "dark" ? "light" : "dark";
     setTheme(t);
     patientApi("/patient/me", { method: "PATCH", body: JSON.stringify({ theme: t }) }).catch(() => {});
+  }
+  async function startPhoneVerify() {
+    if (!pf.phone || pf.phone.length < 8) { toast("Βάλε έγκυρο κινητό πρώτα.", "error"); return; }
+    try {
+      const r = await patientApi<{ challenge_id: string; hint: string }>(
+        "/patient/me/phone/verify/start", { method: "POST", body: JSON.stringify({ phone: pf.phone }) });
+      setPhoneOtp({ cid: r.challenge_id, hint: r.hint }); setPhoneCode("");
+      toast(`Στάλθηκε κωδικός στο ${r.hint}.`, "success");
+    } catch (e) {
+      const code = e instanceof ApiError ? (e.problem as { detail?: { error?: string } })?.detail?.error : null;
+      toast(code === "sms_failed" ? "Αποτυχία αποστολής SMS." : "Κάτι πήγε στραβά.", "error");
+    }
+  }
+  async function confirmPhoneVerify() {
+    if (!phoneOtp) return;
+    try {
+      const r = await patientApi<{ phone: string }>(
+        "/patient/me/phone/verify/confirm", { method: "POST", body: JSON.stringify({ challenge_id: phoneOtp.cid, code: phoneCode }) });
+      setMe((m) => (m ? { ...m, profile: { ...m.profile, phone: r.phone, phone_verified: true } } : m));
+      setPf((p) => ({ ...p, phone: r.phone }));
+      setPhoneOtp(null); setPhoneCode("");
+      toast("Το κινητό επιβεβαιώθηκε ✓", "success");
+    } catch (e) {
+      const code = e instanceof ApiError ? (e.problem as { detail?: { error?: string } })?.detail?.error : null;
+      toast(code === "wrong_code" ? "Λάθος κωδικός." : code === "expired" ? "Ο κωδικός έληξε — ζήτησε νέον." : "Αποτυχία επιβεβαίωσης.", "error");
+    }
   }
   async function setConsent(kind: "health_data" | "marketing", granted: boolean) {
     try {
@@ -633,7 +661,24 @@ export default function PortalHome() {
               <label className="block text-xs font-medium text-slate-500 dark:text-slate-400">ΑΜΚΑ <span className="font-normal text-slate-400">· κλειδί ηλεκτρονικής συνταγογράφησης</span>
                 <input value={me.profile.amka || ""} readOnly className={`${PF_INP} cursor-not-allowed font-mono opacity-70`} />
               </label>
-              <label className="block text-xs font-medium text-slate-500 dark:text-slate-400">Τηλέφωνο {me.profile.phone && !me.profile.phone_verified && <span className="text-amber-600">ανεπιβεβαίωτο</span>}<input autoComplete="tel" inputMode="tel" value={pf.phone} onChange={(e) => setPf({ ...pf, phone: e.target.value })} className={PF_INP} /></label>
+              <div>
+                {(() => { const verified = !!me.profile.phone_verified && pf.phone === me.profile.phone; return (<>
+                  <label className="block text-xs font-medium text-slate-500 dark:text-slate-400">Τηλέφωνο {verified ? <span className="text-emerald-600">✓ επιβεβαιωμένο</span> : pf.phone && <span className="text-amber-600">ανεπιβεβαίωτο</span>}</label>
+                  <div className="mt-1 flex gap-2">
+                    <input autoComplete="tel" inputMode="tel" value={pf.phone} onChange={(e) => { setPf({ ...pf, phone: e.target.value }); setPhoneOtp(null); }} className={`${PF_INP} !mt-0`} />
+                    {!verified && pf.phone.length >= 8 && <button type="button" onClick={startPhoneVerify} className="shrink-0 rounded-lg bg-brand-600 px-3 text-xs font-semibold text-white hover:bg-brand-700">Επιβεβαίωση</button>}
+                  </div>
+                  {phoneOtp && (
+                    <div className="mt-2 rounded-lg border border-brand-200 bg-brand-50 p-2 dark:border-brand-800 dark:bg-brand-900/20">
+                      <div className="mb-1 text-[11px] text-slate-500 dark:text-slate-400">Κωδικός που στάλθηκε στο {phoneOtp.hint}:</div>
+                      <div className="flex gap-2">
+                        <input inputMode="numeric" maxLength={6} value={phoneCode} onChange={(e) => setPhoneCode(e.target.value.replace(/\D/g, ""))} placeholder="6ψήφιος κωδικός" className={`${PF_INP} !mt-0`} />
+                        <button type="button" onClick={confirmPhoneVerify} disabled={phoneCode.length < 4} className="shrink-0 rounded-lg bg-emerald-600 px-4 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50">OK</button>
+                      </div>
+                    </div>
+                  )}
+                </>); })()}
+              </div>
 
               <div className="pt-1 text-xs font-semibold uppercase tracking-wide text-slate-400">Διεύθυνση κατοικίας</div>
               <label className="block text-xs font-medium text-slate-500 dark:text-slate-400">Οδός & αριθμός<input autoComplete="street-address" value={pf.address} onChange={(e) => setPf({ ...pf, address: e.target.value })} className={PF_INP} placeholder="π.χ. Ερμού 15" /></label>

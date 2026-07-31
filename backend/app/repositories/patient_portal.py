@@ -169,9 +169,21 @@ class PatientAccountRepository:
         allowed = {k: v for k, v in fields.items()
                    if k in ("first_name", "last_name", "phone", "address", "city",
                             "postal_code", "theme") and v is not None}
-        if oid and allowed:
+        if not oid or not allowed:
+            return
+        # αλλαγή τηλεφώνου → ακυρώνει την επιβεβαίωση (το νέο νούμερο πρέπει να ξανα-επιβεβαιωθεί)
+        if "phone" in allowed:
+            cur = await self.db["patient_accounts"].find_one({"_id": oid}, {"phone": 1})
+            if (cur or {}).get("phone") != allowed["phone"]:
+                allowed["phone_verified"] = False
+        await self.db["patient_accounts"].update_one(  # tenant-ok: global patient account
+            {"_id": oid}, {"$set": allowed})
+
+    async def set_phone_verified(self, account_id, phone: str) -> None:
+        oid = _oid(account_id)
+        if oid:
             await self.db["patient_accounts"].update_one(  # tenant-ok: global patient account
-                {"_id": oid}, {"$set": allowed})
+                {"_id": oid}, {"$set": {"phone": (phone or "").strip(), "phone_verified": True}})
 
     async def save_avatar(self, account_id, raw: bytes, content_type: str) -> str | None:
         """Resize σε ≤400px + JPEG, αποθήκευση σε `patient_avatars`· θέτει avatar_id στον λογαριασμό."""

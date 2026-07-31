@@ -228,6 +228,45 @@ class PatientAuthService:
         links = await self.repo.refresh_links(acc["_id"], acc.get("amka", ""))
         return self._session(acc, links)
 
+    async def start_phone_verify(self, account_id: str, phone: str) -> dict:
+        """Στέλνει OTP (SMS, κεντρικό Apifon) για επιβεβαίωση κινητού. Επιστρέφει masked hint."""
+        phone = (phone or "").strip()
+        if len(phone) < 8:
+            return {"error": "bad_phone"}
+        code = f"{secrets.randbelow(1_000_000):06d}"
+        cid = uuid.uuid4().hex
+        await self.repo.create_otp_challenge({
+            "_id": cid, "purpose": "phone_verify", "account_id": str(account_id), "phone": phone,
+            "code_hash": _hash_otp(code), "attempts": 0,
+            "created_at": _now(), "expires_at": _now() + timedelta(minutes=_OTP_TTL_MIN)})
+        try:
+            from app.services import comms
+            await comms.send_otp_sms(
+                phone, f"RxVision: κωδικός επιβεβαίωσης κινητού {code}. Λήγει σε {_OTP_TTL_MIN} λεπτά.")
+        except Exception:  # noqa: BLE001
+            await self.repo.delete_otp_challenge(cid)
+            return {"error": "sms_failed"}
+        return {"ok": True, "challenge_id": cid, "hint": _mask_phone(phone),
+                "expires_in": _OTP_TTL_MIN * 60}
+
+    async def confirm_phone_verify(self, account_id: str, challenge_id: str, code: str) -> dict:
+        """Επιβεβαιώνει τον OTP → θέτει phone (+phone_verified=True) στον λογαριασμό."""
+        ch = await self.repo.get_otp_challenge((challenge_id or "").strip())
+        if not ch or ch.get("purpose") != "phone_verify" or ch.get("account_id") != str(account_id):
+            return {"error": "invalid"}
+        if ch.get("expires_at") and ch["expires_at"] < _now():
+            await self.repo.delete_otp_challenge(challenge_id)
+            return {"error": "expired"}
+        if int(ch.get("attempts", 0)) >= _OTP_MAX_ATTEMPTS:
+            await self.repo.delete_otp_challenge(challenge_id)
+            return {"error": "locked"}
+        if not hmac.compare_digest(ch.get("code_hash", ""), _hash_otp((code or "").strip())):
+            await self.repo.bump_otp_attempt(challenge_id)
+            return {"error": "wrong_code"}
+        await self.repo.set_phone_verified(account_id, ch["phone"])
+        await self.repo.delete_otp_challenge(challenge_id)
+        return {"ok": True, "phone": ch["phone"]}
+
     async def change_password(self, account_id: str, current: str, new: str) -> dict | str | None:
         """Αλλαγή κωδικού από το προφίλ — απαιτεί τον ΤΡΕΧΟΝΤΑ κωδικό. Επιστρέφει νέο session,
         'bad_current' αν λάθος τρέχων, ή None αν δεν βρεθεί ο λογαριασμός."""
