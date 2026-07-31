@@ -202,6 +202,20 @@ class PatientAccountRepository:
             {"_id": oid}, {"$set": {"avatar_id": res.inserted_id}})
         return str(res.inserted_id)
 
+    async def set_consent(self, account_id, kind: str, granted: bool) -> dict | None:
+        """Θέτει μια συγκατάθεση GDPR (health_data | marketing) + καταγράφει σε append-only log
+        (ημερομηνία + ανάκληση = πλήρες ίχνος). Επιστρέφει την τρέχουσα εγγραφή {granted, at}."""
+        oid = _oid(account_id)
+        if not oid or kind not in ("health_data", "marketing"):
+            return None
+        now = _now()
+        entry = {"granted": bool(granted), "at": now}
+        await self.db["patient_accounts"].update_one(  # tenant-ok: global patient account
+            {"_id": oid}, {"$set": {f"consents.{kind}": entry}})
+        await self.db["patient_consent_log"].insert_one(  # tenant-ok: global GDPR audit trail
+            {"account_id": str(account_id), "kind": kind, "granted": bool(granted), "at": now})
+        return entry
+
     @staticmethod
     async def get_avatar(image_id: str) -> tuple[bytes, str] | None:
         """Public read by opaque id (η δική του φωτογραφία· ObjectId μη-μαντεύσιμο, όπως τα product images)."""

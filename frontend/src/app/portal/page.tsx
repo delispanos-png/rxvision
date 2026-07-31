@@ -26,7 +26,8 @@ import { fmtDate, fmtDateTime } from "@/lib/formatters";
 
 type Pharmacy = { tenant_id: string; pharmacy_name: string };
 type Pharm = { status: { isOpen: boolean; isOnDuty: boolean; isOvernightDuty: boolean; closingSoon: boolean; statusText: string }; schedule: { week: { day: number; status: string; intervals: { start: string; end: string }[] }[] } };
-type Me = { profile: { first_name: string; last_name: string; email?: string; phone?: string; address?: string; city?: string; postal_code?: string; theme?: "light" | "dark" | null; avatar_url?: string | null }; active_tenant: string | null; pharmacies: Pharmacy[]; portal_mode?: "network" | "single"; caps?: { shop: boolean; loyalty: boolean } };
+type Consent = { granted: boolean; at?: string | null };
+type Me = { profile: { first_name: string; last_name: string; email?: string; phone?: string; amka?: string; phone_verified?: boolean; email_verified?: boolean; consents?: { health_data?: Consent; marketing?: Consent }; address?: string; city?: string; postal_code?: string; theme?: "light" | "dark" | null; avatar_url?: string | null }; active_tenant: string | null; pharmacies: Pharmacy[]; portal_mode?: "network" | "single"; caps?: { shop: boolean; loyalty: boolean } };
 const PF_INP = "mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100";
 type DirPharmacy = { tenant_id: string; name: string; address?: string | null; city?: string | null; phone?: string | null; lat?: number | null; lon?: number | null; mine?: boolean; favorite?: boolean; status?: { isOpen: boolean; isOnDuty: boolean; isOvernightDuty: boolean; closingSoon: boolean; statusText: string } | null };
 type Summary = { rx_count: number; paid_cents: number; total_cents: number; covered_cents: number; doctors: number; medicines: number; repeats_active: number; next_open_date?: string | null; first_at?: string | null; last_at?: string | null };
@@ -381,6 +382,14 @@ export default function PortalHome() {
     setTheme(t);
     patientApi("/patient/me", { method: "PATCH", body: JSON.stringify({ theme: t }) }).catch(() => {});
   }
+  async function setConsent(kind: "health_data" | "marketing", granted: boolean) {
+    try {
+      const r = await patientApi<{ consent: Consent }>("/patient/me/consent",
+        { method: "POST", body: JSON.stringify({ kind, granted }) });
+      setMe((m) => (m ? { ...m, profile: { ...m.profile, consents: { ...(m.profile.consents || {}), [kind]: r.consent } } } : m));
+      toast(granted ? "Καταχωρήθηκε η συγκατάθεση." : "Ανακλήθηκε η συγκατάθεση.", "success");
+    } catch { toast("Κάτι πήγε στραβά — δοκίμασε ξανά.", "error"); }
+  }
 
   // tenantId: η εκτέλεση μπορεί να έγινε σε ΑΛΛΟ φαρμακείο του πελάτη → πες στο API πού να ψάξει.
   async function toggleExpand(barcode: string, tenantId?: string) {
@@ -618,7 +627,13 @@ export default function PortalHome() {
                 <label className="block text-xs font-medium text-slate-500 dark:text-slate-400">Όνομα<input autoComplete="given-name" value={pf.first_name} onChange={(e) => setPf({ ...pf, first_name: e.target.value })} className={PF_INP} /></label>
                 <label className="block text-xs font-medium text-slate-500 dark:text-slate-400">Επώνυμο<input autoComplete="family-name" value={pf.last_name} onChange={(e) => setPf({ ...pf, last_name: e.target.value })} className={PF_INP} /></label>
               </div>
-              <label className="block text-xs font-medium text-slate-500 dark:text-slate-400">Τηλέφωνο<input autoComplete="tel" inputMode="tel" value={pf.phone} onChange={(e) => setPf({ ...pf, phone: e.target.value })} className={PF_INP} /></label>
+              <label className="block text-xs font-medium text-slate-500 dark:text-slate-400">Email {me.profile.email_verified ? <span className="text-emerald-600">✓ επιβεβαιωμένο</span> : <span className="text-amber-600">ανεπιβεβαίωτο</span>}
+                <input type="email" autoComplete="email" value={me.profile.email || ""} readOnly title="Αλλαγή email με επιβεβαίωση — σύντομα" className={`${PF_INP} cursor-not-allowed opacity-70`} />
+              </label>
+              <label className="block text-xs font-medium text-slate-500 dark:text-slate-400">ΑΜΚΑ <span className="font-normal text-slate-400">· κλειδί ηλεκτρονικής συνταγογράφησης</span>
+                <input value={me.profile.amka || ""} readOnly className={`${PF_INP} cursor-not-allowed font-mono opacity-70`} />
+              </label>
+              <label className="block text-xs font-medium text-slate-500 dark:text-slate-400">Τηλέφωνο {me.profile.phone && !me.profile.phone_verified && <span className="text-amber-600">ανεπιβεβαίωτο</span>}<input autoComplete="tel" inputMode="tel" value={pf.phone} onChange={(e) => setPf({ ...pf, phone: e.target.value })} className={PF_INP} /></label>
 
               <div className="pt-1 text-xs font-semibold uppercase tracking-wide text-slate-400">Διεύθυνση κατοικίας</div>
               <label className="block text-xs font-medium text-slate-500 dark:text-slate-400">Οδός & αριθμός<input autoComplete="street-address" value={pf.address} onChange={(e) => setPf({ ...pf, address: e.target.value })} className={PF_INP} placeholder="π.χ. Ερμού 15" /></label>
@@ -636,6 +651,30 @@ export default function PortalHome() {
                 <input type="password" autoComplete="new-password" placeholder="Νέος κωδικός (≥8 χαρακτήρες)" value={pwd.next} onChange={(e) => setPwd({ ...pwd, next: e.target.value })} className={PF_INP} />
                 <button onClick={changePwd} disabled={profileBusy || !pwd.current || pwd.next.length < 8} className="w-full rounded-xl border border-slate-300 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800">Αλλαγή κωδικού</button>
               </div>
+            </div>
+
+            <div className="mt-5 border-t border-slate-100 pt-4 dark:border-slate-800">
+              <div className="mb-1 text-sm font-semibold text-slate-700 dark:text-slate-200">Συγκαταθέσεις (GDPR)</div>
+              <p className="mb-3 text-[11px] text-slate-400">Ξεχωριστές & ανακλητές ανά πάσα στιγμή. Η επεξεργασία δεδομένων υγείας είναι διακριτή από το marketing.</p>
+              {([
+                { k: "health_data", label: "Επεξεργασία δεδομένων υγείας", sub: "Απαραίτητη για να βλέπεις συνταγές & ιστορικό στην πύλη." },
+                { k: "marketing", label: "Ενημερώσεις & προσφορές (newsletter)", sub: "Email/SMS με νέα, προσφορές & χρήσιμες υπενθυμίσεις." },
+              ] as const).map((c) => {
+                const cur = me.profile.consents?.[c.k];
+                const on = !!cur?.granted;
+                return (
+                  <div key={c.k} className="mb-3 flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="text-sm font-medium text-slate-700 dark:text-slate-200">{c.label}</div>
+                      <div className="text-[11px] text-slate-400">{c.sub}</div>
+                      {cur?.at && <div className="text-[10px] text-slate-400">{on ? "Συγκατάθεση" : "Ανάκληση"}: {fmtDate(cur.at)}</div>}
+                    </div>
+                    <button onClick={() => setConsent(c.k, !on)} className={`relative mt-0.5 h-6 w-11 shrink-0 rounded-full transition ${on ? "bg-emerald-500" : "bg-slate-300 dark:bg-slate-600"}`}>
+                      <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all ${on ? "left-[22px]" : "left-0.5"}`} />
+                    </button>
+                  </div>
+                );
+              })}
             </div>
           </div>
         </div>

@@ -7,6 +7,7 @@ Throttled to at most one email per issue-signature per 3h (state in `ops_alerts`
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
 
 from app.workers.celery_app import celery_app
@@ -90,7 +91,18 @@ def check() -> dict:
             # 4) Vault reachability — ληγμένο token / seal σταματά ΣΙΩΠΗΛΑ όλους τους ΗΔΥΚΑ syncs
             #    (φαίνονται success με 0 εγγραφές — incident 2026-07-08).
             from app.services.vault_service import vault
-            if not vault.healthy():
+            vault_ok = vault.healthy()
+            if not vault_ok:
+                # Self-heal + απόσβεση παροδικού blip: δοκίμασε renew (ανανεώνει το periodic token
+                # επιτόπου) + retry ΠΡΙΝ ειδοποιήσεις — ώστε ένα στιγμιαίο network/TLS hiccup να μη
+                # στέλνει false alarm, και ένα token κοντά στη λήξη να ανανεώνεται σιωπηλά.
+                for _ in range(3):
+                    await asyncio.sleep(2)
+                    vault.renew_self()
+                    if vault.healthy():
+                        vault_ok = True
+                        break
+            if not vault_ok:
                 issues.append(("vault-degraded",
                                "🔒 Το Vault δεν είναι προσβάσιμο (ληγμένο token ή sealed) — ΟΛΟΙ οι ΗΔΥΚΑ "
                                "συγχρονισμοί σταματούν ΣΙΩΠΗΛΑ (φαίνονται «success» με 0 εγγραφές). Άμεση ενέργεια!"))

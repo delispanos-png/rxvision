@@ -86,6 +86,11 @@ class ChangePasswordIn(BaseModel):
     new_password: str = Field(..., min_length=8, max_length=128)
 
 
+class ConsentIn(BaseModel):
+    kind: str = Field(..., pattern="^(health_data|marketing)$")
+    granted: bool
+
+
 class AvailabilityIn(BaseModel):
     tenant_id: str | None = None                          # target pharmacy (defaults to active)
     medicine_barcode: str | None = Field(None, max_length=40)
@@ -216,6 +221,9 @@ async def me(ctx: PatientContext = Depends(get_patient_context)):
     return {
         "profile": {"first_name": acc.get("first_name"), "last_name": acc.get("last_name"),
                     "email": acc.get("email"), "phone": acc.get("phone"),
+                    "amka": acc.get("amka"), "phone_verified": bool(acc.get("phone_verified")),
+                    "email_verified": bool(acc.get("email_verified")),
+                    "consents": acc.get("consents") or {},
                     "address": acc.get("address"), "city": acc.get("city"),
                     "postal_code": acc.get("postal_code"), "theme": acc.get("theme"),
                     "avatar_url": f"/patient/avatar/{acc['avatar_id']}" if acc.get("avatar_id") else None},
@@ -236,6 +244,17 @@ async def update_me(body: ProfileUpdateIn, ctx: PatientContext = Depends(get_pat
         phone=body.phone, address=body.address, city=body.city,
         postal_code=body.postal_code, theme=body.theme)
     return {"ok": True}
+
+
+@router.post("/me/consent")
+async def set_consent(body: ConsentIn, ctx: PatientContext = Depends(get_patient_context)):
+    """Καταχώρηση/ανάκληση συγκατάθεσης GDPR (επεξεργασία δεδομένων υγείας | marketing/newsletter),
+    ξεχωριστά, με ημερομηνία & πλήρες audit trail (patient_consent_log)."""
+    from app.repositories.patient_portal import PatientAccountRepository
+    entry = await PatientAccountRepository().set_consent(ctx.account_id, body.kind, body.granted)
+    if entry is None:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail={"error": "bad_consent"})
+    return {"ok": True, "kind": body.kind, "consent": entry}
 
 
 @router.post("/me/change-password")
