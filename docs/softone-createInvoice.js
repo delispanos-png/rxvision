@@ -1,0 +1,106 @@
+/* ============================================================================
+ * RxVision → SoftOne — Custom Web Service (Advanced JavaScript)  [SoftOne BlackBook ver.3.5]
+ * ----------------------------------------------------------------------------
+ * Δημιουργεί ΤΙΜΟΛΟΓΙΟ ΠΑΡΟΧΗΣ ΥΠΗΡΕΣΙΩΝ (SALDOC) από το payload του RxVision και το
+ * διαβιβάζει στο myDATA (η CloudOn/SoftOne είναι πιστοποιημένος πάροχος). Επιστρέφει findoc/MARK.
+ *
+ * ΕΓΚΑΤΑΣΤΑΣΗ (ομάδα SoftOne):
+ *   1) Advanced JavaScript module (π.χ. RXVISION) → επικόλληση αυτού του κώδικα.
+ *   2) Register: AddCode('...', 'RXVISION');  (κατά τα πρότυπα του BlackBook, Chapter K)
+ *   3) Κλήση εξωτερικά:  POST https://<name>.oncloud.gr/s1services/JS/RXVISION/createInvoice
+ *   4) Στο RxVision adminpanel → SoftOne: js_endpoint = "RXVISION/createInvoice".
+ *
+ * ΠΡΟΣΟΧΗ — τα CFG.* εξαρτώνται από την ΕΓΚΑΤΑΣΤΑΣΗ CloudOn (σειρές/ΦΠΑ/είδος/πεδίο MARK).
+ * Συμπληρώστε/επιβεβαιώστε τα — ΔΕΝ είναι μαντεμένα, είναι placeholders της εγκατάστασης.
+ * ============================================================================ */
+
+var CFG = {
+  APPID:            3001,        // appId του SoftOne Web Account (ίδιο με το adminpanel)
+  SERIES:           7001,        // ΣΕΙΡΑ Τιμολογίου Παροχής Υπηρεσιών (χαρτογραφημένη σε myDATA 2.1) — ΕΠΙΒΕΒΑΙΩΣΤΕ
+  SODTYPE_CUSTOMER: 13,          // 13 = Πελάτες (SoftOne standard)
+  SERVICE_MTRL:     0,           // MTRL «Υπηρεσία συνδρομής RxVision». 0 = γραμμή υπηρεσίας χωρίς είδος — ΕΠΙΒΕΒΑΙΩΣΤΕ
+  VAT:              1420,        // id κατηγορίας ΦΠΑ 24% στη SoftOne — ΕΠΙΒΕΒΑΙΩΣΤΕ
+  // SQL για ανάγνωση myDATA MARK/UID από το παραστατικό (εξαρτάται από το myDATA module) — ΕΠΙΒΕΒΑΙΩΣΤΕ
+  MARK_SQL:         "SELECT MARK, UID, AA FROM FINDOC WHERE FINDOC="
+};
+
+/* Locate-or-create πελάτη με ΑΦΜ → επιστρέφει TRDR (primary key). */
+function _findOrCreateCustomer(c) {
+  // 1) εντοπισμός με ΑΦΜ (internal getData) — clientID κενό στα internal calls (ήδη σε session)
+  var q = { SERVICE: "getData", OBJECT: "CUSTOMER", appId: CFG.APPID,
+            LIST: "CUSTOMER:TRDR", FILTERS: "CUSTOMER.AFM=" + c.afm + "&CUSTOMER.SODTYPE=" + CFG.SODTYPE_CUSTOMER };
+  var found = JSON.parse(X.WEBREQUEST(JSON.stringify(q)));
+  if (found && found.success && found.totalcount > 0 && found.rows && found.rows.length > 0) {
+    return found.rows[0].TRDR;
+  }
+  // 2) δημιουργία νέου πελάτη
+  var ins = { SERVICE: "setData", OBJECT: "CUSTOMER", appId: CFG.APPID,
+              DATA: { CUSTOMER: [{
+                NAME: c.name || "", AFM: c.afm || "", IRSDATA: c.doy || "",
+                ADDRESS: c.address || "", CITY: c.city || "", ZIP: c.zip || "",
+                PHONE01: c.phone || "", EMAIL: c.email || "", COUNTRY: c.country || "GR"
+              }] } };
+  var res = JSON.parse(X.WEBREQUEST(JSON.stringify(ins)));
+  return (res && res.success) ? res.id : 0;
+}
+
+/* Ανάγνωση myDATA MARK/UID/AA μετά την έκδοση. */
+function _getMyData(findoc) {
+  try {
+    var rows = X.GETSQLDATASET(CFG.MARK_SQL + findoc, null);   // BlackBook: εκτέλεση SQL & λήψη dataset
+    if (rows && rows.length > 0) {
+      return { mark: rows[0].MARK, uid: rows[0].UID, aa: rows[0].AA };
+    }
+  } catch (e) { /* το πεδίο εξαρτάται από το myDATA module — γύρνα κενό αν δεν βρεθεί */ }
+  return { mark: "", uid: "", aa: "" };
+}
+
+/* ── Το custom web service (κλήση: /s1services/JS/RXVISION/createInvoice) ── */
+function createInvoice(obj) {
+  var resp = { success: false };
+  if (!obj || !obj.clientID || obj.clientID === "") { resp.error = "Authenticate failed: missing clientID"; return resp; }
+  if (!obj.customer || !obj.customer.afm) { resp.error = "missing customer AFM"; return resp; }
+  if (!obj.lines || obj.lines.length === 0) { resp.error = "missing lines"; return resp; }
+  try {
+    // 1) πελάτης
+    var trdr = _findOrCreateCustomer(obj.customer);
+    if (!trdr) { resp.error = "customer_locate_or_create_failed"; return resp; }
+
+    // 2) γραμμές (MTRLINES). Κάθε γραμμή: είδος/υπηρεσία, ποσότητα, καθαρή τιμή, ΦΠΑ.
+    var lines = [];
+    for (var i = 0; i < obj.lines.length; i++) {
+      var ln = obj.lines[i];
+      var qty = ln.qty || 1;
+      lines.push({
+        MTRL:     CFG.SERVICE_MTRL,
+        QTY1:     qty,
+        PRICE:    ln.net,                 // καθαρή τιμή μονάδας
+        VAT:      CFG.VAT,
+        LINEVAL:  ln.net * qty,           // καθαρή αξία γραμμής
+        COMMENTS: ln.description || ""
+      });
+    }
+
+    // 3) κεφαλίδα SALDOC + setData (το SoftOne διαβιβάζει myDATA στο post)
+    var doc = { SERIES: obj.series || CFG.SERIES, TRDR: trdr, COMMENTS: obj.ref || "" };
+    if (obj.issue_date) doc.TRNDATE = obj.issue_date;     // ημ/νία έκδοσης (YYYY-MM-DD)
+    var ws = { SERVICE: "setData", OBJECT: "SALDOC", appId: CFG.APPID,
+               DATA: { SALDOC: [doc], MTRLINES: lines } };
+    var r = JSON.parse(X.WEBREQUEST(JSON.stringify(ws)));
+    if (!r || !r.success) { resp.error = (r && r.error) ? r.error : "saldoc_setData_failed"; return resp; }
+    var findoc = r.id;
+
+    // 4) myDATA MARK
+    var md = _getMyData(findoc);
+
+    resp.success = true;
+    resp.findoc  = findoc;
+    resp.mark    = md.mark;
+    resp.uid     = md.uid;
+    resp.aa      = md.aa;
+    resp.ref     = obj.ref || "";
+  } catch (e) {
+    resp.error = e.message;
+  }
+  return resp;
+}
