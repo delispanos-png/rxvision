@@ -71,7 +71,7 @@ export default function GuidePage() {
   const groups = GROUPS.map((g) => ({...g, items: s ? g.items.filter((i) => (i.kpi + i.what + i.how).toLowerCase().includes(s)) : g.items })).filter((g) => g.items.length);
 
   return (
-    <div className="mx-auto max-w-4xl">
+    <div className="w-full">
       <div className="mb-4 flex items-center gap-3">
         <span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-gradient-to-br from-brand-600 to-indigo-600 text-white shadow-lg"><BookOpen className="h-6 w-6" /></span>
         <div>
@@ -86,7 +86,7 @@ export default function GuidePage() {
           className="w-full rounded-xl border border-slate-300 py-2.5 pl-9 pr-3 text-sm focus:border-brand-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800" />
       </div>
 
-      <div className="space-y-3">
+      <div className="grid items-start gap-3 lg:grid-cols-2 2xl:grid-cols-3">
         {groups.map((g) => {
           const expanded = !!s || open === g.title;
           return (

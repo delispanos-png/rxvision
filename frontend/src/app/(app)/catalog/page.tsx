@@ -85,7 +85,7 @@ function Catalog() {
   const campCats = Array.from(new Set((tax.data?.classes ?? [])
     .filter((c) => c.type !== "rx_medicine").flatMap((c) => c.categories)));
   return (
-    <div className="mx-auto max-w-5xl">
+    <div className="w-full">
       <div className="mb-1 flex items-center gap-2 text-xl font-semibold text-slate-800"><Truck className="h-6 w-6 text-brand-600" /> Παραγγελίες & Κατάλογος</div>
       <p className="mb-4 text-sm text-slate-500">Ο κατάλογος ειδών του φαρμακείου σου (OTC φάρμακα + παραφάρμακα) — οι πελάτες παραγγέλνουν από εδώ. <b>Στα συνταγογραφούμενα δεν επιτρέπονται εκπτώσεις.</b></p>
 
@@ -111,7 +111,7 @@ function Catalog() {
 
       <div className="mb-3 text-xs text-slate-400">{list.isLoading ? "Φόρτωση…" : `${list.data?.total ?? 0} είδη`}</div>
 
-      <div className="grid gap-2 sm:grid-cols-2">
+      <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
         {items.map((p) => {
           const med = isMed(p.type);
           return (

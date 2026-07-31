@@ -57,7 +57,7 @@ function Orders() {
   const done = (list.data?.items ?? []).filter((o) => DONE_ST.includes(o.status));
 
   return (
-    <div className="mx-auto max-w-4xl">
+    <div className="w-full">
       <div className="mb-1 flex items-center gap-2 text-xl font-semibold text-slate-800"><Truck className="h-6 w-6 text-brand-600" /> Παραγγελίες & Αποστολή</div>
       <p className="mb-4 text-sm text-slate-500">Παραγγελίες πελατών από τον κατάλογό σου (OTC + παραφάρμακα).</p>
 
@@ -69,9 +69,9 @@ function Orders() {
 
       {tab === "settings" && <SettingsTab />}
       {tab === "orders" && (
-        <div className="space-y-3">
-          {list.isLoading && <div className="py-8 text-center text-sm text-slate-400">Φόρτωση…</div>}
-          {!list.isLoading && orders.length === 0 && <div className="rounded-xl border border-dashed border-slate-300 p-8 text-center text-sm text-slate-400">Καμία ενεργή παραγγελία.</div>}
+        <div className="grid items-start gap-3 xl:grid-cols-2">
+          {list.isLoading && <div className="py-8 text-center text-sm text-slate-400 xl:col-span-2">Φόρτωση…</div>}
+          {!list.isLoading && orders.length === 0 && <div className="rounded-xl border border-dashed border-slate-300 p-8 text-center text-sm text-slate-400 xl:col-span-2">Καμία ενεργή παραγγελία.</div>}
           {orders.map((o) => (
             <div key={o._id} className="rounded-xl border border-slate-200 bg-white p-4">
               <div className="flex items-start justify-between gap-3">
@@ -126,8 +126,8 @@ function Orders() {
         </div>
       )}
       {tab === "done" && (
-        <div className="space-y-2">
-          {done.length === 0 && <div className="rounded-xl border border-dashed border-slate-300 p-8 text-center text-sm text-slate-400">Καμία ολοκληρωμένη παραγγελία ακόμη.</div>}
+        <div className="grid items-start gap-2 xl:grid-cols-2">
+          {done.length === 0 && <div className="rounded-xl border border-dashed border-slate-300 p-8 text-center text-sm text-slate-400 xl:col-span-2">Καμία ολοκληρωμένη παραγγελία ακόμη.</div>}
           {done.map((o) => (
             <div key={o._id} className="flex items-center justify-between rounded-lg border border-slate-100 bg-slate-50/60 px-3 py-2.5 text-sm text-slate-500">
               <span className="min-w-0 truncate">{o.patient_name} · {o.items.length} είδη · {new Date(o.created_at).toLocaleDateString("el-GR")}</span>
