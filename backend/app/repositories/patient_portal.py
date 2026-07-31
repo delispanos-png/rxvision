@@ -11,12 +11,13 @@ through BaseRepository. Every read of a pharmacy's data still carries an explici
 from __future__ import annotations
 
 import hashlib
+import io
 import math
 import re
 import secrets
 from datetime import datetime, timedelta, timezone
 
-from bson import ObjectId
+from bson import Binary, ObjectId
 
 from app.core.db import shared_db
 from app.repositories.base import BaseRepository, jsonsafe
@@ -161,6 +162,56 @@ class PatientAccountRepository:
         h = hashlib.sha256((token or "").strip().encode()).hexdigest()
         return await self.db["patient_accounts"].find_one(  # tenant-ok: global patient account
             {"set_pw_token_hash": h, "set_pw_expires": {"$gt": _now()}})
+
+    async def update_profile(self, account_id, **fields) -> None:
+        """Ενημέρωση επεξεργάσιμων πεδίων προφίλ (ΟΧΙ email/ΑΜΚΑ — ταυτότητα)."""
+        oid = _oid(account_id)
+        allowed = {k: v for k, v in fields.items()
+                   if k in ("first_name", "last_name", "phone", "address", "theme") and v is not None}
+        if oid and allowed:
+            await self.db["patient_accounts"].update_one(  # tenant-ok: global patient account
+                {"_id": oid}, {"$set": allowed})
+
+    async def save_avatar(self, account_id, raw: bytes, content_type: str) -> str | None:
+        """Resize σε ≤400px + JPEG, αποθήκευση σε `patient_avatars`· θέτει avatar_id στον λογαριασμό."""
+        oid = _oid(account_id)
+        if not oid:
+            return None
+        try:
+            from PIL import Image
+            im = Image.open(io.BytesIO(raw))
+            im.thumbnail((400, 400))
+            if im.mode == "P":
+                im = im.convert("RGBA")
+            if im.mode in ("RGBA", "LA"):
+                bg = Image.new("RGB", im.size, (255, 255, 255))
+                bg.paste(im, mask=im.split()[-1])
+                im = bg
+            elif im.mode != "RGB":
+                im = im.convert("RGB")
+            buf = io.BytesIO()
+            im.save(buf, format="JPEG", quality=82, optimize=True)
+            data = buf.getvalue()
+        except Exception:  # noqa: BLE001 — κακή/εχθρική εικόνα → None, ποτέ 500
+            return None
+        res = await self.db["patient_avatars"].insert_one(  # tenant-ok: global, opaque id
+            {"account_id": str(account_id), "content_type": "image/jpeg",
+             "data": Binary(data), "created_at": _now()})
+        await self.db["patient_accounts"].update_one(  # tenant-ok: global patient account
+            {"_id": oid}, {"$set": {"avatar_id": res.inserted_id}})
+        return str(res.inserted_id)
+
+    @staticmethod
+    async def get_avatar(image_id: str) -> tuple[bytes, str] | None:
+        """Public read by opaque id (η δική του φωτογραφία· ObjectId μη-μαντεύσιμο, όπως τα product images)."""
+        try:
+            oid = ObjectId(image_id)
+        except Exception:  # noqa: BLE001
+            return None
+        d = await shared_db()["patient_avatars"].find_one({"_id": oid})
+        if not d or not d.get("data"):
+            return None
+        return bytes(d["data"]), d.get("content_type") or "image/jpeg"
 
     async def revoke_tokens(self, account_id) -> None:
         """Bump refresh_token_version → invalidate ALL of this patient's refresh tokens (logout).

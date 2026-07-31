@@ -228,6 +228,19 @@ class PatientAuthService:
         links = await self.repo.refresh_links(acc["_id"], acc.get("amka", ""))
         return self._session(acc, links)
 
+    async def change_password(self, account_id: str, current: str, new: str) -> dict | str | None:
+        """Αλλαγή κωδικού από το προφίλ — απαιτεί τον ΤΡΕΧΟΝΤΑ κωδικό. Επιστρέφει νέο session,
+        'bad_current' αν λάθος τρέχων, ή None αν δεν βρεθεί ο λογαριασμός."""
+        acc = await self.repo.get(account_id)
+        if not acc:
+            return None
+        if not verify_password(current, acc.get("password_hash", "")):
+            return "bad_current"
+        await self.repo.set_password(acc["_id"], hash_password(new))
+        acc["must_change_password"] = False
+        links = await self.repo.refresh_links(acc["_id"], acc.get("amka", ""))
+        return self._session(acc, links)
+
     async def login(self, email: str, password: str) -> dict | None:
         acc = await self.repo.get_by_email((email or "").strip().lower())
         if not acc or not verify_password(password, acc.get("password_hash", "")):
@@ -281,5 +294,7 @@ class PatientAuthService:
             "profile": {
                 "first_name": acc.get("first_name"), "last_name": acc.get("last_name"),
                 "email": acc.get("email"), "phone": acc.get("phone"),
+                "address": acc.get("address"), "theme": acc.get("theme"),
+                "avatar_url": f"/patient/avatar/{acc['avatar_id']}" if acc.get("avatar_id") else None,
             },
         }

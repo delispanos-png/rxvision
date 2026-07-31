@@ -7,12 +7,14 @@ import {
   Pill, Wallet, ShieldCheck, RefreshCw, Stethoscope, Bell, LogOut, Building2,
   Calendar, ChevronDown, ChevronUp, CheckCircle2, Clock, Sparkles, X, Search, CalendarPlus, AlertCircle,
   PackageCheck, Gift, FileText, ShoppingBag, HeartPulse, FilePlus, MapPin, Home, Percent, Camera, Upload, Star, Navigation, Plus, Check,
+  Sun, Moon, User,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { QRCodeCanvas } from "qrcode.react";
 import { Tooltip } from "@/components/ui/Tooltip";
 import { LogoMark } from "@/components/brand/Logo";
-import { patientApi, patientTokens, patientUpload, patientLogout } from "@/lib/patientClient";
+import { patientApi, patientTokens, patientUpload, patientLogout, API_BASE, ApiError } from "@/lib/patientClient";
+import { usePref } from "@/store/prefStore";
 import { PharmacyPicker, MedicinePicker, type Medicine } from "@/components/portal/pickers";
 import { RenewalCard, type Renewal } from "@/components/portal/RenewalCard";
 import { ShopTab } from "@/components/portal/ShopTab";
@@ -24,7 +26,8 @@ import { fmtDate, fmtDateTime } from "@/lib/formatters";
 
 type Pharmacy = { tenant_id: string; pharmacy_name: string };
 type Pharm = { status: { isOpen: boolean; isOnDuty: boolean; isOvernightDuty: boolean; closingSoon: boolean; statusText: string }; schedule: { week: { day: number; status: string; intervals: { start: string; end: string }[] }[] } };
-type Me = { profile: { first_name: string; last_name: string }; active_tenant: string | null; pharmacies: Pharmacy[]; portal_mode?: "network" | "single"; caps?: { shop: boolean; loyalty: boolean } };
+type Me = { profile: { first_name: string; last_name: string; email?: string; phone?: string; address?: string; theme?: "light" | "dark" | null; avatar_url?: string | null }; active_tenant: string | null; pharmacies: Pharmacy[]; portal_mode?: "network" | "single"; caps?: { shop: boolean; loyalty: boolean } };
+const PF_INP = "mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100";
 type DirPharmacy = { tenant_id: string; name: string; address?: string | null; city?: string | null; phone?: string | null; lat?: number | null; lon?: number | null; mine?: boolean; favorite?: boolean; status?: { isOpen: boolean; isOnDuty: boolean; isOvernightDuty: boolean; closingSoon: boolean; statusText: string } | null };
 type Summary = { rx_count: number; paid_cents: number; total_cents: number; covered_cents: number; doctors: number; medicines: number; repeats_active: number; next_open_date?: string | null; first_at?: string | null; last_at?: string | null };
 // tenant_id/pharmacy_name: κάθε εκτέλεση φέρει ΠΟΥ έγινε — ο πελάτης βλέπει όλων των φαρμακείων του.
@@ -163,6 +166,11 @@ export default function PortalHome() {
   const [appt, setAppt] = useState({ service_name: "", date: "", time: "" });
   const [notifs, setNotifs] = useState<Notif[]>([]);
   const [showNotifs, setShowNotifs] = useState(false);
+  const [showProfile, setShowProfile] = useState(false);
+  const [pf, setPf] = useState({ first_name: "", last_name: "", phone: "", address: "" });
+  const [pwd, setPwd] = useState({ current: "", next: "" });
+  const [profileBusy, setProfileBusy] = useState(false);
+  const { theme, setTheme } = usePref();
   const [switchOpen, setSwitchOpen] = useState(false);   // custom dropdown πάνω επιλογέα φαρμακείου
   const [pickupDate, setPickupDate] = useState("");   // ημ/νία παραλαβής για ειδοποίηση διαθεσιμότητας
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -323,6 +331,56 @@ export default function PortalHome() {
   }
   async function logout() { await patientLogout(); router.replace("/portal/login"); }
 
+  // εφάρμοσε το αποθηκευμένο (server-side) θέμα του πελάτη όταν φορτώσει το προφίλ
+  useEffect(() => {
+    const th = me?.profile.theme;
+    if (th === "light" || th === "dark") setTheme(th);
+  }, [me?.profile.theme, setTheme]);
+
+  function openProfile() {
+    if (!me) return;
+    setPf({ first_name: me.profile.first_name || "", last_name: me.profile.last_name || "",
+            phone: me.profile.phone || "", address: me.profile.address || "" });
+    setPwd({ current: "", next: "" });
+    setShowProfile(true);
+  }
+  async function saveProfile() {
+    setProfileBusy(true);
+    try {
+      await patientApi("/patient/me", { method: "PATCH", body: JSON.stringify(pf) });
+      setMe((m) => (m ? { ...m, profile: { ...m.profile, ...pf } } : m));
+      toast("Το προφίλ ενημερώθηκε", "success");
+    } catch { toast("Κάτι πήγε στραβά — δοκίμασε ξανά.", "error"); } finally { setProfileBusy(false); }
+  }
+  async function changePwd() {
+    if (pwd.next.length < 8) { toast("Ο νέος κωδικός πρέπει να έχει ≥8 χαρακτήρες.", "error"); return; }
+    setProfileBusy(true);
+    try {
+      const s = await patientApi<{ access_token: string | null; refresh_token: string }>(
+        "/patient/me/change-password",
+        { method: "POST", body: JSON.stringify({ current_password: pwd.current, new_password: pwd.next }) });
+      patientTokens.set(s.access_token, s.refresh_token);
+      setPwd({ current: "", next: "" });
+      toast("Ο κωδικός άλλαξε.", "success");
+    } catch (e) {
+      const code = e instanceof ApiError ? (e.problem as { detail?: { error?: string } })?.detail?.error : null;
+      toast(code === "bad_current_password" ? "Λάθος τρέχων κωδικός." : "Η αλλαγή απέτυχε.", "error");
+    } finally { setProfileBusy(false); }
+  }
+  async function uploadAvatar(file: File) {
+    const fd = new FormData(); fd.append("file", file);
+    try {
+      const r = await patientUpload<{ url: string }>("/patient/avatar", fd);
+      setMe((m) => (m ? { ...m, profile: { ...m.profile, avatar_url: r.url } } : m));
+      toast("Η φωτογραφία ενημερώθηκε.", "success");
+    } catch { toast("Αποτυχία ανεβάσματος φωτογραφίας.", "error"); }
+  }
+  function toggleTheme() {
+    const t = theme === "dark" ? "light" : "dark";
+    setTheme(t);
+    patientApi("/patient/me", { method: "PATCH", body: JSON.stringify({ theme: t }) }).catch(() => {});
+  }
+
   // tenantId: η εκτέλεση μπορεί να έγινε σε ΑΛΛΟ φαρμακείο του πελάτη → πες στο API πού να ψάξει.
   async function toggleExpand(barcode: string, tenantId?: string) {
     if (expanded === barcode) { setExpanded(null); setDetail(null); return; }
@@ -435,12 +493,12 @@ export default function PortalHome() {
   return (
     <div className="min-h-screen">
       {/* ── top bar ───────────────────────────────────────────── */}
-      <header className="sticky top-0 z-20 border-b border-slate-200/80 bg-white/85 backdrop-blur-md">
+      <header className="sticky top-0 z-20 border-b border-slate-200/80 bg-white/85 backdrop-blur-md dark:border-slate-800/80 dark:bg-slate-900/85">
         <div className="mx-auto flex h-16 max-w-7xl items-center justify-between gap-1.5 px-3 sm:gap-3 sm:px-4 lg:px-6">
           <a href="https://rxvision.gr" title="rxvision.gr" className="flex items-center gap-2 transition hover:opacity-80">
             <LogoMark className="h-9 w-9" />
             <div className="leading-tight">
-              <div className="text-sm font-extrabold tracking-tight text-slate-900">RxVision</div>
+              <div className="text-sm font-extrabold tracking-tight text-slate-900 dark:text-slate-100">RxVision</div>
               <div className="text-[10px] font-medium uppercase tracking-wider text-slate-400">Πύλη Πελατών</div>
             </div>
           </a>
@@ -506,14 +564,75 @@ export default function PortalHome() {
               );
             })()}
             <Tooltip label="Ειδοποιήσεις"><button onClick={() => { setTab("home"); setShowNotifs(true); }}
-              className="relative grid h-9 w-9 place-items-center rounded-xl border border-slate-200 bg-white text-slate-500 shadow-sm hover:bg-slate-50">
+              className="relative grid h-9 w-9 place-items-center rounded-xl border border-slate-200 bg-white text-slate-500 shadow-sm hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700">
               <Bell className="h-[18px] w-[18px]" />
               {notifs.length > 0 && <span className="absolute -right-1 -top-1 grid h-4 min-w-[16px] place-items-center rounded-full bg-rose-500 px-1 text-[10px] font-bold text-white">{notifs.length}</span>}
             </button></Tooltip>
-            <Tooltip label="Έξοδος"><button onClick={logout} className="grid h-9 w-9 place-items-center rounded-xl border border-slate-200 bg-white text-slate-500 shadow-sm hover:bg-slate-50"><LogOut className="h-[18px] w-[18px]" /></button></Tooltip>
+            <Tooltip label="Το προφίλ μου"><button onClick={openProfile}
+              className="grid h-9 w-9 place-items-center overflow-hidden rounded-xl border border-slate-200 bg-white text-brand-600 shadow-sm hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:hover:bg-slate-700">
+              {me.profile.avatar_url
+                ? <img src={`${API_BASE}${me.profile.avatar_url}`} alt="" className="h-full w-full object-cover" />
+                : (me.profile.first_name || me.profile.last_name)
+                  ? <span className="text-xs font-bold">{(me.profile.first_name?.[0] || "") + (me.profile.last_name?.[0] || "")}</span>
+                  : <User className="h-[18px] w-[18px]" />}
+            </button></Tooltip>
+            <Tooltip label="Έξοδος"><button onClick={logout} className="grid h-9 w-9 place-items-center rounded-xl border border-slate-200 bg-white text-slate-500 shadow-sm hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"><LogOut className="h-[18px] w-[18px]" /></button></Tooltip>
           </div>
         </div>
       </header>
+
+      {showProfile && me && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4" onClick={() => setShowProfile(false)}>
+          <div className="max-h-[90vh] w-full max-w-md overflow-auto rounded-2xl bg-white p-5 shadow-xl dark:bg-slate-900" onClick={(e) => e.stopPropagation()}>
+            <div className="mb-4 flex items-center justify-between">
+              <h3 className="text-lg font-bold text-slate-900 dark:text-slate-100">Το προφίλ μου</h3>
+              <button onClick={() => setShowProfile(false)} className="grid h-8 w-8 place-items-center rounded-lg text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"><X className="h-4 w-4" /></button>
+            </div>
+
+            <div className="mb-5 flex items-center gap-4">
+              <div className="relative">
+                <div className="grid h-20 w-20 place-items-center overflow-hidden rounded-full border border-slate-200 bg-slate-100 dark:border-slate-700 dark:bg-slate-800">
+                  {me.profile.avatar_url
+                    ? <img src={`${API_BASE}${me.profile.avatar_url}`} alt="" className="h-full w-full object-cover" />
+                    : <User className="h-9 w-9 text-slate-400" />}
+                </div>
+                <label className="absolute -bottom-1 -right-1 grid h-7 w-7 cursor-pointer place-items-center rounded-full bg-brand-600 text-white shadow hover:bg-brand-700" title="Αλλαγή φωτογραφίας">
+                  <Camera className="h-3.5 w-3.5" />
+                  <input type="file" accept="image/*" className="hidden" onChange={(e) => e.target.files?.[0] && uploadAvatar(e.target.files[0])} />
+                </label>
+              </div>
+              <div className="min-w-0">
+                <div className="truncate font-semibold text-slate-900 dark:text-slate-100">{me.profile.first_name} {me.profile.last_name}</div>
+                <div className="truncate text-sm text-slate-500 dark:text-slate-400">{me.profile.email}</div>
+              </div>
+            </div>
+
+            <button onClick={toggleTheme} className="mb-5 flex w-full items-center justify-between rounded-xl border border-slate-200 px-4 py-3 text-sm dark:border-slate-700">
+              <span className="flex items-center gap-2 font-medium text-slate-700 dark:text-slate-200">{theme === "dark" ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4" />} {theme === "dark" ? "Σκοτεινό θέμα" : "Φωτεινό θέμα"}</span>
+              <span className={`relative h-6 w-11 rounded-full transition ${theme === "dark" ? "bg-brand-600" : "bg-slate-300"}`}><span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all ${theme === "dark" ? "left-[22px]" : "left-0.5"}`} /></span>
+            </button>
+
+            <div className="space-y-3">
+              <div className="grid grid-cols-2 gap-3">
+                <label className="block text-xs font-medium text-slate-500 dark:text-slate-400">Όνομα<input value={pf.first_name} onChange={(e) => setPf({ ...pf, first_name: e.target.value })} className={PF_INP} /></label>
+                <label className="block text-xs font-medium text-slate-500 dark:text-slate-400">Επώνυμο<input value={pf.last_name} onChange={(e) => setPf({ ...pf, last_name: e.target.value })} className={PF_INP} /></label>
+              </div>
+              <label className="block text-xs font-medium text-slate-500 dark:text-slate-400">Τηλέφωνο<input value={pf.phone} onChange={(e) => setPf({ ...pf, phone: e.target.value })} className={PF_INP} /></label>
+              <label className="block text-xs font-medium text-slate-500 dark:text-slate-400">Διεύθυνση<input value={pf.address} onChange={(e) => setPf({ ...pf, address: e.target.value })} className={PF_INP} /></label>
+              <button onClick={saveProfile} disabled={profileBusy} className="w-full rounded-xl bg-brand-600 py-2.5 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-60">Αποθήκευση στοιχείων</button>
+            </div>
+
+            <div className="mt-5 border-t border-slate-100 pt-4 dark:border-slate-800">
+              <div className="mb-2 text-sm font-semibold text-slate-700 dark:text-slate-200">Αλλαγή κωδικού</div>
+              <div className="space-y-3">
+                <input type="password" placeholder="Τρέχων κωδικός" value={pwd.current} onChange={(e) => setPwd({ ...pwd, current: e.target.value })} className={PF_INP} />
+                <input type="password" placeholder="Νέος κωδικός (≥8 χαρακτήρες)" value={pwd.next} onChange={(e) => setPwd({ ...pwd, next: e.target.value })} className={PF_INP} />
+                <button onClick={changePwd} disabled={profileBusy || !pwd.current || pwd.next.length < 8} className="w-full rounded-xl border border-slate-300 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800">Αλλαγή κωδικού</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Desktop (lg+): σταθερό πλαϊνό μενού αριστερά + περιεχόμενο δεξιά.
           Tablet (sm–lg): pills πάνω από το περιεχόμενο.  Κινητό: σταθερή κάτω μπάρα. */}
@@ -527,7 +646,7 @@ export default function PortalHome() {
                 <button key={k} onClick={() => setTab(k)}
                   className={`flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-sm font-semibold transition ${on
                     ? "bg-brand-600 text-white shadow-sm shadow-brand-500/30"
-                    : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"}`}>
+                    : "text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-slate-100"}`}>
                   <Icon className={`h-4 w-4 shrink-0 ${on ? "" : "text-slate-400"}`} />
                   <span className="min-w-0 flex-1 truncate">{label}</span>
                   {k === "renewals" && (renewals?.length ?? 0) > 0 && (
@@ -1626,7 +1745,7 @@ export default function PortalHome() {
 
       {/* ── κάτω μπάρα πλοήγησης (ΜΟΝΟ κινητό) — ΚΥΛΙΟΜΕΝΗ λωρίδα όλων των διαθέσιμων ενοτήτων ──
           Σέρνεις με το δάχτυλο αριστερά/δεξιά· η ενεργή έρχεται στο κέντρο. Χωρίς «...» που κρύβει. */}
-      <nav className="fixed inset-x-0 bottom-0 z-30 flex gap-1 overflow-x-auto border-t border-slate-200 bg-white/95 px-1 pb-[env(safe-area-inset-bottom)] backdrop-blur-md [-ms-overflow-style:none] [scrollbar-width:none] sm:hidden [&::-webkit-scrollbar]:hidden">
+      <nav className="fixed inset-x-0 bottom-0 z-30 flex gap-1 overflow-x-auto border-t border-slate-200 bg-white/95 px-1 pb-[env(safe-area-inset-bottom)] backdrop-blur-md [-ms-overflow-style:none] [scrollbar-width:none] sm:hidden [&::-webkit-scrollbar]:hidden dark:border-slate-800 dark:bg-slate-900/95">
         {visibleTabs.map(([k, label]) => {
           const I = TAB_ICON[k] || FileText; const on = tab === k;
           return (

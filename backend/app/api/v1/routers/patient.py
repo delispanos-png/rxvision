@@ -71,6 +71,19 @@ class SetOwnPasswordIn(BaseModel):
     password: str = Field(..., min_length=8, max_length=128)
 
 
+class ProfileUpdateIn(BaseModel):
+    first_name: str | None = Field(None, min_length=1, max_length=80)
+    last_name: str | None = Field(None, min_length=1, max_length=80)
+    phone: str | None = Field(None, max_length=40)
+    address: str | None = Field(None, max_length=300)
+    theme: str | None = Field(None, pattern="^(light|dark)$")
+
+
+class ChangePasswordIn(BaseModel):
+    current_password: str = Field(..., min_length=1, max_length=128)
+    new_password: str = Field(..., min_length=8, max_length=128)
+
+
 class AvailabilityIn(BaseModel):
     tenant_id: str | None = None                          # target pharmacy (defaults to active)
     medicine_barcode: str | None = Field(None, max_length=40)
@@ -200,13 +213,64 @@ async def me(ctx: PatientContext = Depends(get_patient_context)):
         links = [l for l in links if l.get("tenant_id") == ctx.tenant_id]
     return {
         "profile": {"first_name": acc.get("first_name"), "last_name": acc.get("last_name"),
-                    "email": acc.get("email"), "phone": acc.get("phone")},
+                    "email": acc.get("email"), "phone": acc.get("phone"),
+                    "address": acc.get("address"), "theme": acc.get("theme"),
+                    "avatar_url": f"/patient/avatar/{acc['avatar_id']}" if acc.get("avatar_id") else None},
         "active_tenant": ctx.tenant_id,
         "favorite_tenant": acc.get("favorite_tenant_id"),
         "pharmacies": links,
         "portal_mode": mode,
         "caps": {"shop": tenant_has(mods, "order_delivery"), "loyalty": loy_on},
     }
+
+
+@router.patch("/me")
+async def update_me(body: ProfileUpdateIn, ctx: PatientContext = Depends(get_patient_context)):
+    """Ενημέρωση προφίλ πελάτη (όνομα/τηλέφωνο/διεύθυνση/θέμα). Email & ΑΜΚΑ δεν αλλάζουν εδώ."""
+    from app.repositories.patient_portal import PatientAccountRepository
+    await PatientAccountRepository().update_profile(
+        ctx.account_id, first_name=body.first_name, last_name=body.last_name,
+        phone=body.phone, address=body.address, theme=body.theme)
+    return {"ok": True}
+
+
+@router.post("/me/change-password")
+async def change_password(body: ChangePasswordIn, ctx: PatientContext = Depends(get_patient_context)):
+    """Αλλαγή κωδικού από το προφίλ — απαιτεί τον τρέχοντα κωδικό. Επιστρέφει νέο session."""
+    res = await PatientAuthService().change_password(
+        ctx.account_id, body.current_password, body.new_password)
+    if res == "bad_current":
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail={"error": "bad_current_password"})
+    if res is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "account_not_found")
+    return res
+
+
+@router.post("/avatar")
+async def upload_avatar(file: UploadFile = File(...),
+                        ctx: PatientContext = Depends(get_patient_context)):
+    """Ανέβασμα φωτογραφίας προφίλ (resize + JPEG). Επιστρέφει το url εξυπηρέτησης."""
+    if not (file.content_type or "").startswith("image/"):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail={"error": "not_an_image"})
+    raw = await file.read()
+    if len(raw) > 8 * 1024 * 1024:
+        raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail={"error": "too_large"})
+    from app.repositories.patient_portal import PatientAccountRepository
+    img_id = await PatientAccountRepository().save_avatar(ctx.account_id, raw, file.content_type)
+    if not img_id:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail={"error": "bad_image"})
+    return {"avatar_id": img_id, "url": f"/patient/avatar/{img_id}"}
+
+
+@router.get("/avatar/{image_id}")
+async def get_avatar(image_id: str):
+    """Public serve φωτογραφίας προφίλ (opaque id — τα <img> δεν στέλνουν bearer token)."""
+    from app.repositories.patient_portal import PatientAccountRepository
+    got = await PatientAccountRepository.get_avatar(image_id)
+    if not got:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "not_found")
+    data, ctype = got
+    return Response(content=data, media_type=ctype, headers={"Cache-Control": "public, max-age=86400"})
 
 
 @router.get("/prescriptions")
