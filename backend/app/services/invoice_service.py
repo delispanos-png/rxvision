@@ -86,7 +86,7 @@ async def _next_number(db, series: str) -> int:
 
 async def create_for_payment(*, tenant_id: str, kind: str, gross_cents: int,
                              description: str | None = None, payment: dict | None = None,
-                             series: str | None = None) -> dict | None:
+                             series: str | None = None, item_key: str | None = None) -> dict | None:
     """Δημιουργεί εγγραφή `invoices` (pending) για μια ΕΠΙΤΥΧΗ χρέωση. Idempotent στο payment ref.
     Best-effort — δεν κάνει raise (καλείται στο hot path της πληρωμής)."""
     try:
@@ -98,7 +98,7 @@ async def create_for_payment(*, tenant_id: str, kind: str, gross_cents: int,
         txn = (pay.get("transaction_id") or "").strip()
 
         # Δωρεάν πελάτης (χαρακτηρισμένος στη συνδρομή) → ΚΑΝΕΝΑ παραστατικό.
-        sub = await db["subscriptions"].find_one({"tenant_id": tenant_id}, {"complimentary": 1})
+        sub = await db["subscriptions"].find_one({"tenant_id": tenant_id}, {"complimentary": 1, "plan": 1})
         if sub and sub.get("complimentary"):
             log.info("invoice skipped — complimentary tenant: %s (%s)", tenant_id, kind)
             return None
@@ -121,6 +121,14 @@ async def create_for_payment(*, tenant_id: str, kind: str, gross_cents: int,
 
         cfg = await softone_service.platform_config()
         series = series or cfg.get("series") or "Α"
+        # SoftOne MTRL (είδος) από την κεντρική αντιστοίχιση· subscription/renewal/upgrade → pkg:<plan>·
+        # αλλιώς το item_key του caller (credit:/addon:/ai/retention)· fallback → default (αλλιώς η JS
+        # χρησιμοποιεί το δικό της CFG.SERVICE_MTRL) → το παραστατικό δεν σπάει ποτέ.
+        mm = cfg.get("mtrl_map") or {}
+        ik = item_key
+        if not ik and kind in ("subscription", "renewal", "upgrade") and sub and sub.get("plan"):
+            ik = f"pkg:{sub['plan']}"
+        mtrl = mm.get(ik or "") or mm.get("default") or None
         now = _now()
         number = await _next_number(db, series)
         blocked = None if customer["afm"] else "missing_afm"
@@ -130,6 +138,7 @@ async def create_for_payment(*, tenant_id: str, kind: str, gross_cents: int,
             "issue_date": now.date().isoformat(),
             "description": description or KIND_LABELS.get(kind, "Υπηρεσία RxVision"),
             "net_amount": net, "vat_rate": rate, "vat_amount": vat, "total": gross,
+            "mtrl": mtrl, "item_key": ik,
             "customer": customer,
             "payment": {"method": pay.get("method"), "provider": pay.get("provider"),
                         "transaction_id": txn or None},
@@ -164,6 +173,7 @@ def _build_payload(inv: dict) -> dict:
             "qty": 1,
             "net": round((inv.get("net_amount", 0) or 0) / 100, 2),
             "vat_rate": inv.get("vat_rate", DEFAULT_VAT),
+            "mtrl": inv.get("mtrl"),
         }],
         "payment": inv.get("payment") or {},
     }

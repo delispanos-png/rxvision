@@ -72,7 +72,8 @@ function createInvoice(obj) {
       var ln = obj.lines[i];
       var qty = ln.qty || 1;
       lines.push({
-        MTRL:     CFG.SERVICE_MTRL,
+        // MTRL ανά γραμμή από το RxVision (κεντρική αντιστοίχιση ειδών)· fallback στο CFG default.
+        MTRL:     (ln.mtrl !== undefined && ln.mtrl !== null && ln.mtrl !== "") ? ln.mtrl : CFG.SERVICE_MTRL,
         QTY1:     qty,
         PRICE:    ln.net,                 // καθαρή τιμή μονάδας
         VAT:      CFG.VAT,

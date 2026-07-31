@@ -104,6 +104,59 @@ export default function AdminSoftonePage() {
           <button onClick={() => doTest.mutate()} disabled={doTest.isPending} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50">{doTest.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <PlugZap className="h-4 w-4" />} Δοκιμή σύνδεσης</button>
         </div>
       </div>
+      <MtrlMap />
+    </div>
+  );
+}
+
+function MtrlMap() {
+  type Item = { key: string; group: string; name: string; mtrl: string };
+  const q = useQuery({ queryKey: ["softone-items"], queryFn: () => adminApi<{ items: Item[]; default_mtrl: string }>("/admin/softone/items") });
+  const [map, setMap] = useState<Record<string, string>>({});
+  const [def, setDef] = useState("");
+  const [notice, setNotice] = useState<string | null>(null);
+  useEffect(() => {
+    if (!q.data) return;
+    const m: Record<string, string> = {};
+    q.data.items.forEach((i) => { m[i.key] = i.mtrl || ""; });
+    setMap(m); setDef(q.data.default_mtrl || "");
+  }, [q.data]);
+  const save = useMutation({
+    mutationFn: () => adminApi("/admin/softone/items", { method: "PUT", body: JSON.stringify({ map, default_mtrl: def }) }),
+    onSuccess: () => { setNotice("Αποθηκεύτηκε ✓"); q.refetch(); },
+    onError: () => setNotice("Σφάλμα αποθήκευσης"),
+  });
+  const items = q.data?.items ?? [];
+  const groups = Array.from(new Set(items.map((i) => i.group)));
+  return (
+    <div className="mt-6 space-y-4 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+      <div>
+        <h2 className="text-lg font-bold text-slate-900">Αντιστοίχιση ειδών → SoftOne (MTRL)</h2>
+        <p className="text-sm text-slate-500">Κάθε τιμολογήσιμο είδος (συνδρομές, credits μηνυμάτων, add-ons, extras) χρειάζεται τον <b>κωδικό είδους (MTRL)</b> του SoftOne για να καταχωρηθεί σωστά το παραστατικό. Το <b>Default</b> χρησιμοποιείται όπου δεν έχει οριστεί ειδικό — ώστε να μη σπάει ποτέ η έκδοση.</p>
+      </div>
+      {q.isLoading ? <div className="text-slate-400">Φόρτωση…</div> : items.length === 0 ? <div className="text-sm text-slate-400">Δεν βρέθηκαν είδη.</div> : (
+        <>
+          {groups.map((g) => (
+            <div key={g}>
+              <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">{g}</div>
+              <div className="space-y-1.5">
+                {items.filter((i) => i.group === g).map((i) => (
+                  <div key={i.key} className="flex items-center gap-3">
+                    <span className="min-w-0 flex-1 truncate text-sm text-slate-700">{i.name}</span>
+                    <input value={map[i.key] ?? ""} onChange={(e) => setMap({ ...map, [i.key]: e.target.value })} placeholder="MTRL" className="w-36 rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm focus:border-brand-500 focus:outline-none" />
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+          <div className="flex items-center gap-3 border-t border-slate-100 pt-3">
+            <span className="min-w-0 flex-1 text-sm font-semibold text-slate-700">Default (fallback)</span>
+            <input value={def} onChange={(e) => setDef(e.target.value)} placeholder="MTRL" className="w-36 rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm focus:border-brand-500 focus:outline-none" />
+          </div>
+        </>
+      )}
+      {notice && <div className="rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-600">{notice}</div>}
+      <button onClick={() => save.mutate()} disabled={save.isPending} className="inline-flex items-center gap-1.5 rounded-lg bg-brand-700 px-5 py-2.5 text-sm font-medium text-white hover:bg-brand-800 disabled:opacity-50">{save.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />} Αποθήκευση αντιστοίχισης</button>
     </div>
   );
 }

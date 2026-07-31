@@ -1269,6 +1269,45 @@ async def admin_softone_test(_: PlatformContext = Depends(get_platform_admin)):
     return await softone_service.test_connection()
 
 
+class MtrlMapIn(BaseModel):
+    map: dict[str, str] = {}
+    default_mtrl: str | None = None
+
+
+@router.get("/softone/items")
+async def softone_items(_: PlatformContext = Depends(get_platform_admin)):
+    """ΚΕΝΤΡΙΚΗ λίστα όλων των τιμολογήσιμων ειδών → κωδικός SoftOne (MTRL). Ένα σημείο αλήθειας:
+    συνδρομές, credits μηνυμάτων, add-ons/modules, extras (AI/retention) + default fallback."""
+    from app.services.platform_secrets import decrypt_doc
+    db = shared_db()
+    cfg = decrypt_doc("softone", await db["platform_settings"].find_one({"_id": "softone"})) or {}
+    mm = cfg.get("mtrl_map") or {}
+    items: list[dict] = []
+    async for p in db["packages"].find({}).sort("price_monthly", 1):
+        k = f"pkg:{p['_id']}"
+        items.append({"key": k, "group": "Συνδρομές", "name": p.get("name") or p["_id"], "mtrl": mm.get(k, "")})
+    async for c in db["credit_packages"].find({}).sort("price_cents", 1):
+        k = f"credit:{c['_id']}"
+        items.append({"key": k, "group": "Credits μηνυμάτων", "name": c.get("name") or c["_id"], "mtrl": mm.get(k, "")})
+    async for a in db["addons"].find({}):
+        k = f"addon:{a['_id']}"
+        items.append({"key": k, "group": "Add-ons / Modules", "name": a.get("name") or a["_id"], "mtrl": mm.get(k, "")})
+    for k, nm in (("ai", "Επιπλέον όριο AI"), ("retention", "Επέκταση διατήρησης δεδομένων")):
+        items.append({"key": k, "group": "Extras", "name": nm, "mtrl": mm.get(k, "")})
+    return {"items": items, "default_mtrl": mm.get("default", "")}
+
+
+@router.put("/softone/items")
+async def set_softone_items(body: MtrlMapIn, _: PlatformContext = Depends(get_platform_admin)):
+    """Αποθήκευση της αντιστοίχισης ειδών → MTRL (+ default fallback)."""
+    mm = {k: str(v).strip() for k, v in (body.map or {}).items() if str(v or "").strip()}
+    if body.default_mtrl and body.default_mtrl.strip():
+        mm["default"] = body.default_mtrl.strip()
+    await shared_db()["platform_settings"].update_one(
+        {"_id": "softone"}, {"$set": {"mtrl_map": mm}}, upsert=True)
+    return {"ok": True, "count": len(mm)}
+
+
 @router.get("/comms/senders")
 async def admin_comms_senders(_: PlatformContext = Depends(get_platform_admin)):
     """Φαρμακεία που ζήτησαν δικό τους όνομα αποστολέα (Sender ID) — για έγκριση (αφού δηλωθεί Apifon)."""
