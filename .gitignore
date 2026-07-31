@@ -28,3 +28,6 @@ infra/scaling/keys/
 
 # runtime scratch / ad-hoc analysis (not versioned)
 tmp/
+
+# SoftOne BlackBook (τεχνικό εγχειρίδιο 25MB — όχι στο git)
+softone Black Book/
