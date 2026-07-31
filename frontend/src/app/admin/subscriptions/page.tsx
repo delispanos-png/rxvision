@@ -15,6 +15,7 @@ type Sub = {
   billing_cycle?: string | null; seats: number; active_now?: number;
   mrr: number; started_at?: string | null; current_period_end: string | null;
   days_to_expiry: number | null; trial_ends_at: string | null; trial_days_left: number | null;
+  complimentary?: boolean;
 };
 type Summary = { total: number; expiring_30d: number; expired: number; trials_ending_14d: number; past_due: number; mrr: number };
 type Invoice = { id: string; full_number: string; doc_type: string; issue_date: string; total: number; aade_status: string; description: string };
@@ -23,6 +24,7 @@ type SubDetail = {
   billing_cycle: string; sla?: string; seats: number; users: number; active_now: number;
   price_per_pharmacy?: number; mrr: number; extra_user_price?: number; extra_user_price_yearly?: number;
   started_at?: string | null; current_period_end?: string | null; trial_ends_at?: string | null;
+  complimentary?: boolean;
   invoices: Invoice[];
 };
 
@@ -45,7 +47,11 @@ function Expiry({ row }: { row: Sub }) {
 }
 
 const columns: Column<Sub>[] = [
-  { key: "tenant", header: "Tenant" },
+  { key: "tenant", header: "Tenant", render: (r) => (
+    <span className="flex items-center gap-1.5">{r.tenant}
+      {r.complimentary && <span className="rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700">Δωρεάν</span>}
+    </span>
+  ) },
   { key: "plan", header: "Πλάνο" },
   { key: "status", header: "Κατάσταση", render: (r) => <StatusBadge value={r.status} /> },
   { key: "billing_cycle", header: "Κύκλος", render: (r) => cycleEl(r.billing_cycle) },
@@ -98,7 +104,7 @@ function SubDrawer({ tenantId, onClose }: { tenantId: string; onClose: () => voi
   });
   const pkgsQ = useQuery({ queryKey: ["admin", "packages"], queryFn: () => adminApi<{ items: { _id: string; name?: string }[] }>("/admin/packages"), retry: false });
   const slaListQ = useQuery({ queryKey: ["admin", "sla"], queryFn: () => adminApi<{ items: { _id: string; name?: string }[] }>("/admin/sla"), retry: false });
-  const [f, setF] = useState({ billing_cycle: "monthly", price_per_pharmacy: "", current_period_end: "", started_at: "", trial_ends_at: "", seats: "", status: "", sla: "", plan: "", plan_name: "", extra_user_price: "", extra_user_price_yearly: "" });
+  const [f, setF] = useState({ billing_cycle: "monthly", price_per_pharmacy: "", current_period_end: "", started_at: "", trial_ends_at: "", seats: "", status: "", sla: "", plan: "", plan_name: "", extra_user_price: "", extra_user_price_yearly: "", complimentary: false });
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   useEffect(() => {
@@ -110,6 +116,7 @@ function SubDrawer({ tenantId, onClose }: { tenantId: string; onClose: () => voi
       trial_ends_at: (d.trial_ends_at || "").slice(0, 10),
       seats: String(d.seats ?? 1), status: d.status || "", sla: d.sla || "", plan: d.plan || "",
       plan_name: d.plan_name || "", extra_user_price: eur(d.extra_user_price), extra_user_price_yearly: eur(d.extra_user_price_yearly),
+      complimentary: !!d.complimentary,
     });
   }, [d]);
 
@@ -123,6 +130,7 @@ function SubDrawer({ tenantId, onClose }: { tenantId: string; onClose: () => voi
         status: f.status || undefined, sla: f.sla || undefined, plan: f.plan || undefined,
         plan_name: f.plan_name || undefined,
         extra_user_price: toCents(f.extra_user_price), extra_user_price_yearly: toCents(f.extra_user_price_yearly),
+        complimentary: f.complimentary,
         ...extra,
       };
       await adminApi(`/admin/subscriptions/${encodeURIComponent(tenantId)}`, { method: "PATCH", body: JSON.stringify(body) });
@@ -186,6 +194,15 @@ function SubDrawer({ tenantId, onClose }: { tenantId: string; onClose: () => voi
               {["active", "trial", "past_due", "suspended", "cancelled"].map((x) => <option key={x} value={x}>{x}</option>)}
             </select></label>
           </div>
+
+          <label className={`mt-4 flex items-start gap-3 rounded-xl border p-3 cursor-pointer ${f.complimentary ? "border-emerald-300 bg-emerald-50" : "border-slate-200 bg-slate-50"}`}>
+            <input type="checkbox" checked={f.complimentary} onChange={(e) => setF({ ...f, complimentary: e.target.checked })} className="mt-0.5 h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500" />
+            <span>
+              <span className="block text-sm font-medium text-slate-800">Δωρεάν πελάτης (χορηγία / χωρίς χρέωση)</span>
+              <span className="block text-xs text-slate-500">Κρατά το πλάνο & την πρόσβαση που έχει, αλλά <b>δεν χρεώνεται</b>, <b>δεν λήγει</b> για μη-πληρωμή και <b>δεν παράγονται παραστατικά</b>.</span>
+            </span>
+          </label>
+
           <div className="mt-4 flex flex-wrap items-center gap-2">
             <button onClick={() => save()} disabled={busy} className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-60">{busy ? "Αποθήκευση…" : "Αποθήκευση"}</button>
             <button onClick={suspend} disabled={busy} className="rounded-lg border border-rose-300 bg-rose-50 px-4 py-2 text-sm font-medium text-rose-700 hover:bg-rose-100">⛔ Απενεργοποίηση (μη πληρωμή)</button>

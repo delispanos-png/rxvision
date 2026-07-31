@@ -532,6 +532,7 @@ async def subscriptions(_: PlatformContext = Depends(get_platform_admin)):
             "days_to_expiry": d2e,
             "trial_ends_at": s.get("trial_ends_at"),
             "trial_days_left": trial_left,
+            "complimentary": bool(s.get("complimentary")),
         })
     items.sort(key=lambda x: (x["days_to_expiry"] is None, x["days_to_expiry"] or 0))
 
@@ -579,6 +580,7 @@ async def subscription_detail(tenant_id: str, _: PlatformContext = Depends(get_p
         "started_at": s.get("started_at") or s.get("created_at") or t.get("created_at"),
         "current_period_end": s.get("current_period_end"),
         "trial_ends_at": s.get("trial_ends_at"),
+        "complimentary": bool(s.get("complimentary")),
         "invoices": invoices,
     })
 
@@ -596,6 +598,7 @@ class SubEditIn(BaseModel):
     extra_user_price: int | None = None        # cents/μήνα — override του πακέτου
     extra_user_price_yearly: int | None = None # cents/έτος — override του πακέτου
     status: str | None = None                  # active|suspended|cancelled|past_due|trial
+    complimentary: bool | None = None          # δωρεάν πελάτης → χωρίς χρέωση & χωρίς παραστατικά
 
 
 @router.patch("/subscriptions/{tenant_id}")

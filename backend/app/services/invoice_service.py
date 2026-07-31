@@ -97,6 +97,12 @@ async def create_for_payment(*, tenant_id: str, kind: str, gross_cents: int,
         pay = payment or {}
         txn = (pay.get("transaction_id") or "").strip()
 
+        # Δωρεάν πελάτης (χαρακτηρισμένος στη συνδρομή) → ΚΑΝΕΝΑ παραστατικό.
+        sub = await db["subscriptions"].find_one({"tenant_id": tenant_id}, {"complimentary": 1})
+        if sub and sub.get("complimentary"):
+            log.info("invoice skipped — complimentary tenant: %s (%s)", tenant_id, kind)
+            return None
+
         # idempotency: ένα παραστατικό ανά (kind, transaction) — αντέχει webhook retries
         if txn:
             existing = await db["invoices"].find_one({"source_ref": f"{kind}:{txn}"})

@@ -232,6 +232,11 @@ async def bill_due() -> dict:
     ]})
     async for sub in cur:
         tid = sub["tenant_id"]
+        if sub.get("complimentary"):     # δωρεάν πελάτης → καμία χρέωση/παραστατικό· κράτα ζωντανή την περίοδο
+            await db["subscriptions"].update_one({"tenant_id": tid}, {"$set": {
+                "current_period_end": _period_end(sub.get("billing_cycle", "monthly"), now),
+                "payment_status": "complimentary"}})
+            continue
         # full recurring amount = base subscription + active à-la-carte add-ons
         amount = int(sub.get("price_per_pharmacy", 0) or 0) + int(sub.get("addons_total", 0) or 0)
         if amount <= 0:
@@ -282,7 +287,9 @@ async def expire_overdue() -> dict:
     db = shared_db()
     now = _now()
     trial_grace, active_grace = await _grace_cfg()
-    no_card = {"revolut_customer_id": None, "viva_transaction_id": None}
+    # δωρεάν πελάτες δεν χρεώνονται & δεν λήγουν ποτέ (χαρακτηρισμένοι στη συνδρομή)
+    no_card = {"revolut_customer_id": None, "viva_transaction_id": None,
+               "complimentary": {"$ne": True}}
     expired = graced = 0
     # 1) Δοκιμαστικές → λήξη άμεσα (grace 0 by default)
     async for sub in db["subscriptions"].find({
