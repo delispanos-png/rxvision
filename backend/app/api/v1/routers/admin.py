@@ -921,6 +921,7 @@ class IntegrationsIn(BaseModel):
     softone_refid: str | None = None
     softone_series: str | None = None
     softone_form: str | None = None
+    softone_js_endpoint: str | None = None   # custom JS web service: "<module>/<function>"
     softone_issuer_afm: str | None = None
     softone_issuer_name: str | None = None
     subscription_provider: str | None = None  # revolut | viva — ποιος χρεώνει τις συνδρομές
@@ -990,6 +991,7 @@ async def get_integrations(_: PlatformContext = Depends(get_platform_admin)):
                     "company": softone.get("company") or "", "branch": softone.get("branch") or "",
                     "module": softone.get("module") or "", "refid": softone.get("refid") or "",
                     "series": softone.get("series") or "", "form": softone.get("form") or "",
+                    "js_endpoint": softone.get("js_endpoint") or "",
                     "issuer_afm": softone.get("issuer_afm") or "", "issuer_name": softone.get("issuer_name") or "",
                     "configured": bool(softone.get("base_url") and softone.get("username")
                                        and softone.get("password") and softone.get("app_id"))},
@@ -1071,8 +1073,8 @@ async def set_integrations(body: IntegrationsIn,
               ("username", body.softone_username), ("company", body.softone_company),
               ("branch", body.softone_branch), ("module", body.softone_module),
               ("refid", body.softone_refid), ("series", body.softone_series),
-              ("form", body.softone_form), ("issuer_afm", body.softone_issuer_afm),
-              ("issuer_name", body.softone_issuer_name))
+              ("form", body.softone_form), ("js_endpoint", body.softone_js_endpoint),
+              ("issuer_afm", body.softone_issuer_afm), ("issuer_name", body.softone_issuer_name))
     for k, val in _s1map:
         if val is not None:
             s1[k] = val.strip()

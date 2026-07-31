@@ -42,11 +42,12 @@ async def _login(cfg: dict) -> dict:
 
 
 async def _authenticate(cfg: dict, client_id: str) -> dict:
-    """service=authenticate → authenticated clientID (με company/branch/module/refid)."""
+    """service=authenticate → authenticated clientID. Το SoftOne BlackBook (σελ.468) θέλει ΠΕΖΑ κλειδιά:
+    service, clientID, company, branch, module, refid."""
     body = {"service": "authenticate", "clientID": client_id}
-    for k, key in (("company", "company"), ("branch", "branch"), ("module", "module"), ("refid", "refid")):
+    for key in ("company", "branch", "module", "refid"):
         if cfg.get(key):
-            body[k.upper() if k in ("company", "branch", "module", "refid") else k] = cfg[key]
+            body[key] = cfg[key]
     return await _post(cfg["base_url"], body)
 
 
@@ -87,6 +88,30 @@ async def test_connection() -> dict:
     return {"ok": True, "companies": companies, "authenticated": auth_ok}
 
 
-async def issue(invoice: dict) -> dict:
-    """ΦΑΣΗ 2: setData(SALDOC) → myDATA. TODO: mapping SALDOC/ITELINES + επιστροφή findoc/MARK."""
-    return {"ok": False, "error": "not_implemented"}
+async def issue(payload: dict) -> dict:
+    """Έκδοση παραστατικού μέσω **custom JS web service** του SoftOne (Advanced JavaScript).
+    BlackBook: εξωτερική κλήση σε `POST <base_url>/JS/<module>/<function>` με `clientID` (από
+    authenticate) + το payload μας. Το SoftOne JS δημιουργεί SALDOC + διαβιβάζει myDATA & επιστρέφει
+    το αποτέλεσμα (findoc/MARK). Το endpoint (module/function) ΔΕΝ είναι hardcoded — από adminpanel.
+    `payload` = το συμβόλαιο δεδομένων που περιμένει η JS συνάρτηση (βλ. spec §JS contract)."""
+    cfg = await platform_config()
+    if not is_configured(cfg):
+        return {"ok": False, "error": "not_configured"}
+    js_path = (cfg.get("js_endpoint") or "").strip().strip("/")
+    if not js_path:
+        return {"ok": False, "error": "no_js_endpoint"}   # π.χ. "RXVISION/createInvoice"
+    client_id = await get_client_id(cfg)
+    if not client_id:
+        return {"ok": False, "error": "auth_failed"}
+    url = cfg["base_url"].rstrip("/") + "/JS/" + js_path
+    body = {"clientID": client_id, "appId": cfg.get("app_id"), **payload}
+    try:
+        res = await _post(url, body)
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "error": f"connect_error:{type(e).__name__}"}
+    if not res.get("success"):
+        return {"ok": False, "error": res.get("error") or "js_failed", "code": res.get("errorcode"), "raw": res}
+    # Το ακριβές schema απόκρισης το ορίζει η JS συνάρτηση της SoftOne (findoc/mark/uid/aa).
+    return {"ok": True, "findoc": res.get("findoc") or res.get("id"),
+            "mark": res.get("mark") or res.get("MARK"), "uid": res.get("uid") or res.get("UID"),
+            "aa": res.get("aa") or res.get("AA"), "raw": res}
