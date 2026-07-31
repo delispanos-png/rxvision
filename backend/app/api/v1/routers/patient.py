@@ -59,6 +59,7 @@ class RegisterVerifyIn(BaseModel):
 class LoginIn(BaseModel):
     email: EmailStr
     password: str
+    totp: str | None = Field(None, max_length=20)   # 2FA (TOTP ή recovery code), αν είναι ενεργό
 
 
 class RefreshIn(BaseModel):
@@ -116,6 +117,10 @@ class EmailVerifyConfirmIn(BaseModel):
     code: str = Field(..., min_length=4, max_length=8)
 
 
+class TwoFACodeIn(BaseModel):
+    code: str = Field(..., min_length=4, max_length=20)   # TOTP (6) ή recovery code (XXXX-XXXX)
+
+
 class AvailabilityIn(BaseModel):
     tenant_id: str | None = None                          # target pharmacy (defaults to active)
     medicine_barcode: str | None = Field(None, max_length=40)
@@ -171,10 +176,13 @@ async def login(body: LoginIn, request: Request):
         raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS,
                             detail={"error": "account_locked", "retry_after": locked},
                             headers={"Retry-After": str(locked)})
-    res = await PatientAuthService().login(body.email, body.password, meta=_req_meta(request))
+    res = await PatientAuthService().login(body.email, body.password,
+                                           meta=_req_meta(request), totp=body.totp)
     if res is None:
         await record_login_failure(f"patient:{body.email}")
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid_credentials")
+    if res.get("twofa_required"):   # σωστός κωδικός, χρειάζεται 2ος παράγοντας (ή λάθος TOTP)
+        return {"twofa_required": True, "error": res.get("error")}
     await clear_login_failures(f"patient:{body.email}")
     return res
 
@@ -250,6 +258,7 @@ async def me(ctx: PatientContext = Depends(get_patient_context)):
                     "email": acc.get("email"), "phone": acc.get("phone"),
                     "amka": acc.get("amka"), "phone_verified": bool(acc.get("phone_verified")),
                     "email_verified": bool(acc.get("email_verified")),
+                    "twofa_enabled": bool(acc.get("twofa_enabled")),
                     "consents": acc.get("consents") or {},
                     "address": acc.get("address"), "city": acc.get("city"),
                     "postal_code": acc.get("postal_code"), "theme": acc.get("theme"),
@@ -349,6 +358,35 @@ async def revoke_session(sid: str, ctx: PatientContext = Depends(get_patient_con
     from app.repositories.patient_portal import PatientAccountRepository
     ok = await PatientAccountRepository().revoke_session(ctx.account_id, sid)
     return {"ok": ok}
+
+
+@router.post("/me/2fa/setup")
+async def twofa_setup(ctx: PatientContext = Depends(get_patient_context)):
+    """Ξεκινά ενεργοποίηση 2FA — επιστρέφει secret + otpauth URI (για QR σε authenticator app)."""
+    res = await PatientAuthService().start_2fa_setup(ctx.account_id)
+    if res.get("error"):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail={"error": res["error"]})
+    return res
+
+
+@router.post("/me/2fa/confirm",
+             dependencies=[Depends(rate_limit("patient_2fa", limit=10, window_seconds=600))])
+async def twofa_confirm(body: TwoFACodeIn, ctx: PatientContext = Depends(get_patient_context)):
+    """Επιβεβαιώνει τον 1ο κωδικό → ενεργοποιεί 2FA & επιστρέφει εφεδρικά codes (ΜΙΑ φορά)."""
+    res = await PatientAuthService().confirm_2fa(ctx.account_id, body.code)
+    if res.get("error"):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail={"error": res["error"]})
+    return res
+
+
+@router.post("/me/2fa/disable",
+             dependencies=[Depends(rate_limit("patient_2fa", limit=10, window_seconds=600))])
+async def twofa_disable(body: TwoFACodeIn, ctx: PatientContext = Depends(get_patient_context)):
+    """Απενεργοποιεί 2FA (απαιτεί έγκυρο TOTP ή εφεδρικό code)."""
+    res = await PatientAuthService().disable_2fa(ctx.account_id, body.code)
+    if res.get("error"):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail={"error": res["error"]})
+    return res
 
 
 @router.post("/me/change-password")

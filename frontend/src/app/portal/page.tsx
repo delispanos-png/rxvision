@@ -27,8 +27,8 @@ import { fmtDate, fmtDateTime } from "@/lib/formatters";
 type Pharmacy = { tenant_id: string; pharmacy_name: string };
 type Pharm = { status: { isOpen: boolean; isOnDuty: boolean; isOvernightDuty: boolean; closingSoon: boolean; statusText: string }; schedule: { week: { day: number; status: string; intervals: { start: string; end: string }[] }[] } };
 type Consent = { granted: boolean; at?: string | null };
-type Me = { profile: { first_name: string; last_name: string; email?: string; phone?: string; amka?: string; phone_verified?: boolean; email_verified?: boolean; consents?: { health_data?: Consent; marketing?: Consent }; address?: string; city?: string; postal_code?: string; theme?: "light" | "dark" | null; avatar_url?: string | null }; active_tenant: string | null; pharmacies: Pharmacy[]; portal_mode?: "network" | "single"; caps?: { shop: boolean; loyalty: boolean } };
-const PF_INP = "mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100";
+type Me = { profile: { first_name: string; last_name: string; email?: string; phone?: string; amka?: string; phone_verified?: boolean; email_verified?: boolean; twofa_enabled?: boolean; consents?: { health_data?: Consent; marketing?: Consent }; address?: string; city?: string; postal_code?: string; theme?: "light" | "dark" | null; avatar_url?: string | null }; active_tenant: string | null; pharmacies: Pharmacy[]; portal_mode?: "network" | "single"; caps?: { shop: boolean; loyalty: boolean } };
+const PF_INP = "mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 dark:text-slate-100 focus:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100";
 type Sess = { id: string; current: boolean; user_agent?: string | null; ip?: string | null; created_at?: string | null; last_seen?: string | null };
 function deviceLabel(ua?: string | null): string {
   if (!ua) return "Άγνωστη συσκευή";
@@ -113,10 +113,10 @@ const genDosesFor = (slots: SlotCell[], thMap: Record<string, Therapy>): Dose[] 
 type HMeas = { _id?: string; kind: string; systolic?: number; diastolic?: number; value?: number; at: string };
 type Health = { height_cm?: number | null; latest: Record<string, HMeas>; history: Record<string, HMeas[]> };
 const hStat = (k: string, m?: HMeas) => {
-  if (!m) return "bg-slate-50 text-slate-500";
+  if (!m) return "bg-slate-50 dark:bg-slate-800/60 text-slate-500 dark:text-slate-400";
   if (k === "bp") return (m.systolic! >= 140 || m.diastolic! >= 90) ? "bg-rose-50 text-rose-700" : (m.systolic! >= 130 || m.diastolic! >= 85) ? "bg-amber-50 text-amber-700" : "bg-emerald-50 text-emerald-700";
   if (k === "glucose") return m.value! >= 126 ? "bg-rose-50 text-rose-700" : m.value! >= 100 ? "bg-amber-50 text-amber-700" : "bg-emerald-50 text-emerald-700";
-  return "bg-slate-50 text-slate-700";
+  return "bg-slate-50 dark:bg-slate-800/60 text-slate-700 dark:text-slate-200";
 };
 const TIER_GR: Record<string, string> = { Bronze: "Χάλκινο", Silver: "Ασημένιο", Gold: "Χρυσό", Platinum: "Πλατινένιο" };
 
@@ -184,6 +184,10 @@ export default function PortalHome() {
   const [emailOtp, setEmailOtp] = useState<{ cid: string; hint: string } | null>(null);
   const [emailCode, setEmailCode] = useState("");
   const [sessions, setSessions] = useState<Sess[] | null>(null);
+  const [twofaSetup, setTwofaSetup] = useState<{ secret: string; uri: string } | null>(null);
+  const [twofaCode, setTwofaCode] = useState("");
+  const [twofaRecovery, setTwofaRecovery] = useState<string[] | null>(null);
+  const [twofaDisable, setTwofaDisable] = useState<string | null>(null);
   const { theme, setTheme } = usePref();
   const [switchOpen, setSwitchOpen] = useState(false);   // custom dropdown πάνω επιλογέα φαρμακείου
   const [pickupDate, setPickupDate] = useState("");   // ημ/νία παραλαβής για ειδοποίηση διαθεσιμότητας
@@ -379,7 +383,29 @@ export default function PortalHome() {
             city: me.profile.city || "", postal_code: me.profile.postal_code || "" });
     setPwd({ current: "", next: "" });
     setEmailInput(me.profile.email || ""); setEmailOtp(null); setPhoneOtp(null);
+    setTwofaSetup(null); setTwofaRecovery(null); setTwofaCode(""); setTwofaDisable(null);
     setShowProfile(true);
+  }
+  async function start2fa() {
+    try { const r = await patientApi<{ secret: string; uri: string }>("/patient/me/2fa/setup", { method: "POST" }); setTwofaSetup(r); setTwofaCode(""); }
+    catch { toast("Κάτι πήγε στραβά.", "error"); }
+  }
+  async function confirm2fa() {
+    try {
+      const r = await patientApi<{ recovery_codes: string[] }>("/patient/me/2fa/confirm", { method: "POST", body: JSON.stringify({ code: twofaCode }) });
+      setTwofaRecovery(r.recovery_codes); setTwofaSetup(null); setTwofaCode("");
+      setMe((m) => (m ? { ...m, profile: { ...m.profile, twofa_enabled: true } } : m));
+      toast("Το 2FA ενεργοποιήθηκε ✓", "success");
+    } catch (e) { const c = e instanceof ApiError ? (e.problem as { detail?: { error?: string } })?.detail?.error : null; toast(c === "wrong_code" ? "Λάθος κωδικός." : "Αποτυχία.", "error"); }
+  }
+  async function disable2fa() {
+    if (!twofaDisable) return;
+    try {
+      await patientApi("/patient/me/2fa/disable", { method: "POST", body: JSON.stringify({ code: twofaDisable }) });
+      setMe((m) => (m ? { ...m, profile: { ...m.profile, twofa_enabled: false } } : m));
+      setTwofaDisable(null);
+      toast("Το 2FA απενεργοποιήθηκε.", "success");
+    } catch (e) { const c = e instanceof ApiError ? (e.problem as { detail?: { error?: string } })?.detail?.error : null; toast(c === "wrong_code" ? "Λάθος κωδικός." : "Αποτυχία.", "error"); }
   }
   async function saveProfile() {
     setProfileBusy(true);
@@ -566,10 +592,10 @@ export default function PortalHome() {
 
   if (noPharmacy) return (
     <div className="flex min-h-screen items-center justify-center px-4">
-      <div className="w-full max-w-md rounded-3xl border border-slate-200 bg-white p-8 text-center shadow-xl shadow-slate-200/50">
+      <div className="w-full max-w-md rounded-3xl border border-slate-200 dark:border-slate-800 bg-white p-8 text-center shadow-xl shadow-slate-200/50">
         <div className="mx-auto mb-4 grid h-14 w-14 place-items-center rounded-2xl bg-brand-100 text-brand-600"><CheckCircle2 className="h-7 w-7" /></div>
-        <h1 className="text-lg font-bold text-slate-900">Ο λογαριασμός σου είναι έτοιμος</h1>
-        <p className="mt-2 text-sm text-slate-500">Δεν βρέθηκε ακόμα ιστορικό σε φαρμακείο. Μόλις εξυπηρετηθείς σε φαρμακείο του δικτύου με το ΑΜΚΑ σου, οι συνταγές σου θα εμφανιστούν εδώ αυτόματα.</p>
+        <h1 className="text-lg font-bold text-slate-900 dark:text-slate-100">Ο λογαριασμός σου είναι έτοιμος</h1>
+        <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">Δεν βρέθηκε ακόμα ιστορικό σε φαρμακείο. Μόλις εξυπηρετηθείς σε φαρμακείο του δικτύου με το ΑΜΚΑ σου, οι συνταγές σου θα εμφανιστούν εδώ αυτόματα.</p>
         <button onClick={logout} className="mt-6 inline-flex items-center gap-1.5 text-sm font-medium text-brand-600 hover:underline"><LogOut className="h-4 w-4" /> Αποσύνδεση</button>
       </div>
     </div>
@@ -617,7 +643,7 @@ export default function PortalHome() {
               return (
                 <div className="relative">
                   <button type="button" onClick={() => setSwitchOpen((v) => !v)}
-                    className="flex max-w-[10rem] items-center gap-1.5 rounded-xl border border-slate-200 bg-white py-2 pl-2.5 pr-2 text-[11px] font-semibold text-slate-700 shadow-sm hover:bg-slate-50 sm:max-w-[15rem]">
+                    className="flex max-w-[10rem] items-center gap-1.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white py-2 pl-2.5 pr-2 text-[11px] font-semibold text-slate-700 dark:text-slate-200 shadow-sm hover:bg-slate-50 dark:hover:bg-slate-800 sm:max-w-[15rem]">
                     <Building2 className="h-4 w-4 shrink-0 text-brand-500" />
                     <span className="min-w-0 flex-1 truncate text-left">{active?.name ?? "—"}</span>
                     <ChevronDown className={`h-3.5 w-3.5 shrink-0 text-slate-400 transition ${switchOpen ? "rotate-180" : ""}`} />
@@ -625,7 +651,7 @@ export default function PortalHome() {
                   {switchOpen && (
                     <>
                       <div className="fixed inset-0 z-40" onClick={() => setSwitchOpen(false)} />
-                      <div className="absolute right-0 z-50 mt-1.5 max-h-[70vh] w-[min(20rem,calc(100vw-1.5rem))] overflow-auto rounded-xl border border-slate-200 bg-white p-1 shadow-xl">
+                      <div className="absolute right-0 z-50 mt-1.5 max-h-[70vh] w-[min(20rem,calc(100vw-1.5rem))] overflow-auto rounded-xl border border-slate-200 dark:border-slate-800 bg-white p-1 shadow-xl">
                         <div className="flex items-center justify-between px-2 py-1">
                           <span className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Φαρμακεία δικτύου</span>
                           {!geo && <button type="button" onClick={() => requestGeo()} disabled={geoBusy}
@@ -637,12 +663,12 @@ export default function PortalHome() {
                           return (
                             <button key={r.tenant_id} type="button"
                               onClick={() => { setSwitchOpen(false); if (!isActive) switchPharmacy(r.tenant_id); }}
-                              className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left ${isActive ? "bg-brand-50" : "hover:bg-slate-50"}`}>
+                              className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left ${isActive ? "bg-brand-50" : "hover:bg-slate-50 dark:hover:bg-slate-800"}`}>
                               {r.favorite
                                 ? <Star className="h-3.5 w-3.5 shrink-0 fill-amber-400 text-amber-400" />
                                 : <span className="h-3.5 w-3.5 shrink-0" />}
                               <span className="min-w-0 flex-1">
-                                <span className={`block break-words text-[11px] font-semibold leading-snug ${isActive ? "text-brand-700" : "text-slate-700"}`}>{r.name}</span>
+                                <span className={`block break-words text-[11px] font-semibold leading-snug ${isActive ? "text-brand-700" : "text-slate-700 dark:text-slate-200"}`}>{r.name}</span>
                                 {(r.dist != null || r.city) && (
                                   <span className="block truncate text-[10px] text-slate-400">
                                     {r.dist != null ? distText(r.dist) : r.city}
@@ -661,19 +687,19 @@ export default function PortalHome() {
               );
             })()}
             <Tooltip label="Ειδοποιήσεις"><button onClick={() => { setTab("home"); setShowNotifs(true); }}
-              className="relative grid h-9 w-9 place-items-center rounded-xl border border-slate-200 bg-white text-slate-500 shadow-sm hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700">
+              className="relative grid h-9 w-9 place-items-center rounded-xl border border-slate-200 dark:border-slate-800 bg-white text-slate-500 dark:text-slate-400 shadow-sm hover:bg-slate-50 dark:hover:bg-slate-800 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700">
               <Bell className="h-[18px] w-[18px]" />
               {notifs.length > 0 && <span className="absolute -right-1 -top-1 grid h-4 min-w-[16px] place-items-center rounded-full bg-rose-500 px-1 text-[10px] font-bold text-white">{notifs.length}</span>}
             </button></Tooltip>
             <Tooltip label="Το προφίλ μου"><button onClick={openProfile}
-              className="grid h-9 w-9 place-items-center overflow-hidden rounded-xl border border-slate-200 bg-white text-brand-600 shadow-sm hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:hover:bg-slate-700">
+              className="grid h-9 w-9 place-items-center overflow-hidden rounded-xl border border-slate-200 dark:border-slate-800 bg-white text-brand-600 shadow-sm hover:bg-slate-50 dark:hover:bg-slate-800 dark:border-slate-700 dark:bg-slate-800 dark:hover:bg-slate-700">
               {me.profile.avatar_url
                 ? <img src={`${API_BASE}${me.profile.avatar_url}`} alt="" className="h-full w-full object-cover" />
                 : (me.profile.first_name || me.profile.last_name)
                   ? <span className="text-xs font-bold">{(me.profile.first_name?.[0] || "") + (me.profile.last_name?.[0] || "")}</span>
                   : <User className="h-[18px] w-[18px]" />}
             </button></Tooltip>
-            <Tooltip label="Έξοδος"><button onClick={logout} className="grid h-9 w-9 place-items-center rounded-xl border border-slate-200 bg-white text-slate-500 shadow-sm hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"><LogOut className="h-[18px] w-[18px]" /></button></Tooltip>
+            <Tooltip label="Έξοδος"><button onClick={logout} className="grid h-9 w-9 place-items-center rounded-xl border border-slate-200 dark:border-slate-800 bg-white text-slate-500 dark:text-slate-400 shadow-sm hover:bg-slate-50 dark:hover:bg-slate-800 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"><LogOut className="h-[18px] w-[18px]" /></button></Tooltip>
           </div>
         </div>
       </header>
@@ -688,7 +714,7 @@ export default function PortalHome() {
 
             <div className="mb-5 flex items-center gap-4">
               <div className="relative">
-                <div className="grid h-20 w-20 place-items-center overflow-hidden rounded-full border border-slate-200 bg-slate-100 dark:border-slate-700 dark:bg-slate-800">
+                <div className="grid h-20 w-20 place-items-center overflow-hidden rounded-full border border-slate-200 dark:border-slate-800 bg-slate-100 dark:bg-slate-800 dark:border-slate-700 dark:bg-slate-800">
                   {me.profile.avatar_url
                     ? <img src={`${API_BASE}${me.profile.avatar_url}`} alt="" className="h-full w-full object-cover" />
                     : <User className="h-9 w-9 text-slate-400" />}
@@ -704,7 +730,7 @@ export default function PortalHome() {
               </div>
             </div>
 
-            <button onClick={toggleTheme} className="mb-5 flex w-full items-center justify-between rounded-xl border border-slate-200 px-4 py-3 text-sm dark:border-slate-700">
+            <button onClick={toggleTheme} className="mb-5 flex w-full items-center justify-between rounded-xl border border-slate-200 dark:border-slate-800 px-4 py-3 text-sm dark:border-slate-700">
               <span className="flex items-center gap-2 font-medium text-slate-700 dark:text-slate-200">{theme === "dark" ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4" />} {theme === "dark" ? "Σκοτεινό θέμα" : "Φωτεινό θέμα"}</span>
               <span className={`relative h-6 w-11 rounded-full transition ${theme === "dark" ? "bg-brand-600" : "bg-slate-300"}`}><span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all ${theme === "dark" ? "left-[22px]" : "left-0.5"}`} /></span>
             </button>
@@ -763,16 +789,16 @@ export default function PortalHome() {
               <button onClick={saveProfile} disabled={profileBusy} className="w-full rounded-xl bg-brand-600 py-2.5 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-60">Αποθήκευση στοιχείων</button>
             </div>
 
-            <div className="mt-5 border-t border-slate-100 pt-4 dark:border-slate-800">
+            <div className="mt-5 border-t border-slate-100 dark:border-slate-800 pt-4 dark:border-slate-800">
               <div className="mb-2 text-sm font-semibold text-slate-700 dark:text-slate-200">Αλλαγή κωδικού</div>
               <div className="space-y-3">
                 <input type="password" autoComplete="current-password" placeholder="Τρέχων κωδικός" value={pwd.current} onChange={(e) => setPwd({ ...pwd, current: e.target.value })} className={PF_INP} />
                 <input type="password" autoComplete="new-password" placeholder="Νέος κωδικός (≥8 χαρακτήρες)" value={pwd.next} onChange={(e) => setPwd({ ...pwd, next: e.target.value })} className={PF_INP} />
-                <button onClick={changePwd} disabled={profileBusy || !pwd.current || pwd.next.length < 8} className="w-full rounded-xl border border-slate-300 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800">Αλλαγή κωδικού</button>
+                <button onClick={changePwd} disabled={profileBusy || !pwd.current || pwd.next.length < 8} className="w-full rounded-xl border border-slate-300 py-2.5 text-sm font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800">Αλλαγή κωδικού</button>
               </div>
             </div>
 
-            <div className="mt-5 border-t border-slate-100 pt-4 dark:border-slate-800">
+            <div className="mt-5 border-t border-slate-100 dark:border-slate-800 pt-4 dark:border-slate-800">
               <div className="mb-1 text-sm font-semibold text-slate-700 dark:text-slate-200">Συγκαταθέσεις (GDPR)</div>
               <p className="mb-3 text-[11px] text-slate-400">Ξεχωριστές & ανακλητές ανά πάσα στιγμή. Η επεξεργασία δεδομένων υγείας είναι διακριτή από το marketing.</p>
               {([
@@ -796,7 +822,7 @@ export default function PortalHome() {
               })}
             </div>
 
-            <div className="mt-5 border-t border-slate-100 pt-4 dark:border-slate-800">
+            <div className="mt-5 border-t border-slate-100 dark:border-slate-800 pt-4 dark:border-slate-800">
               <div className="mb-2 flex items-center justify-between">
                 <div className="text-sm font-semibold text-slate-700 dark:text-slate-200">Ενεργές συνεδρίες</div>
                 {sessions && sessions.some((s) => !s.current) && <button onClick={revokeOtherSessions} className="text-xs font-semibold text-rose-600 hover:underline">Αποσύνδεση όλων των άλλων</button>}
@@ -804,7 +830,7 @@ export default function PortalHome() {
               {!sessions ? <div className="text-xs text-slate-400">Φόρτωση…</div> : sessions.length === 0 ? <div className="text-xs text-slate-400">—</div> : (
                 <div className="space-y-2">
                   {sessions.map((s) => (
-                    <div key={s.id} className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 px-3 py-2 dark:border-slate-700">
+                    <div key={s.id} className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 dark:border-slate-800 px-3 py-2 dark:border-slate-700">
                       <div className="min-w-0">
                         <div className="flex items-center gap-1.5 text-sm text-slate-700 dark:text-slate-200"><span className="truncate">{deviceLabel(s.user_agent)}</span> {s.current && <span className="shrink-0 rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700">τρέχουσα</span>}</div>
                         <div className="truncate text-[11px] text-slate-400">{s.ip || "—"}{s.last_seen ? ` · ${fmtDateTime(s.last_seen)}` : ""}</div>
@@ -812,6 +838,44 @@ export default function PortalHome() {
                       {!s.current && <button onClick={() => revokeSession(s.id)} className="shrink-0 rounded-lg border border-rose-200 px-2 py-1 text-xs font-semibold text-rose-600 hover:bg-rose-50 dark:border-rose-800 dark:hover:bg-rose-900/20">Αποσύνδεση</button>}
                     </div>
                   ))}
+                </div>
+              )}
+            </div>
+
+            <div className="mt-5 border-t border-slate-100 dark:border-slate-800 pt-4 dark:border-slate-800">
+              <div className="mb-2 flex items-center justify-between">
+                <div className="text-sm font-semibold text-slate-700 dark:text-slate-200">Έλεγχος 2 παραγόντων (2FA)</div>
+                {me.profile.twofa_enabled && <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">✓ Ενεργό</span>}
+              </div>
+              {twofaRecovery ? (
+                <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 dark:border-amber-800 dark:bg-amber-900/20">
+                  <div className="mb-2 text-xs font-semibold text-amber-800 dark:text-amber-300">Φύλαξε τους εφεδρικούς κωδικούς (εμφανίζονται ΜΙΑ φορά — χρησιμεύουν αν χάσεις το κινητό):</div>
+                  <div className="grid grid-cols-2 gap-1 font-mono text-sm text-slate-700 dark:text-slate-200">{twofaRecovery.map((c) => <div key={c}>{c}</div>)}</div>
+                  <button onClick={() => setTwofaRecovery(null)} className="mt-3 w-full rounded-lg bg-brand-600 py-2 text-xs font-semibold text-white hover:bg-brand-700">Τους αποθήκευσα</button>
+                </div>
+              ) : twofaSetup ? (
+                <div className="rounded-lg border border-slate-200 dark:border-slate-800 p-3 dark:border-slate-700">
+                  <div className="mb-2 text-[11px] text-slate-500 dark:text-slate-400">Σκάναρε με εφαρμογή authenticator (Google Authenticator, Authy…):</div>
+                  <div className="mb-2 flex justify-center rounded-lg bg-white p-2"><QRCodeCanvas value={twofaSetup.uri} size={150} /></div>
+                  <div className="mb-2 break-all text-center font-mono text-[10px] text-slate-400">{twofaSetup.secret}</div>
+                  <div className="flex gap-2">
+                    <input inputMode="numeric" maxLength={6} value={twofaCode} onChange={(e) => setTwofaCode(e.target.value.replace(/\D/g, ""))} placeholder="6ψήφιος κωδικός" className={`${PF_INP} !mt-0`} />
+                    <button onClick={confirm2fa} disabled={twofaCode.length < 6} className="shrink-0 rounded-lg bg-emerald-600 px-4 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50">Ενεργοποίηση</button>
+                  </div>
+                </div>
+              ) : me.profile.twofa_enabled ? (
+                twofaDisable !== null ? (
+                  <div className="flex gap-2">
+                    <input inputMode="numeric" value={twofaDisable} onChange={(e) => setTwofaDisable(e.target.value)} placeholder="Κωδικός 2FA ή εφεδρικός" className={`${PF_INP} !mt-0`} />
+                    <button onClick={disable2fa} className="shrink-0 rounded-lg bg-rose-600 px-3 text-xs font-semibold text-white hover:bg-rose-700">Απενεργοποίηση</button>
+                  </div>
+                ) : (
+                  <button onClick={() => setTwofaDisable("")} className="text-xs font-semibold text-rose-600 hover:underline">Απενεργοποίηση 2FA</button>
+                )
+              ) : (
+                <div>
+                  <p className="mb-2 text-[11px] text-slate-400">Δεύτερο επίπεδο ασφάλειας με εφαρμογή authenticator — για τα δεδομένα υγείας σου.</p>
+                  <button onClick={start2fa} className="rounded-lg bg-brand-600 px-4 py-2 text-xs font-semibold text-white hover:bg-brand-700">Ενεργοποίηση 2FA</button>
                 </div>
               )}
             </div>
@@ -831,7 +895,7 @@ export default function PortalHome() {
                 <button key={k} onClick={() => setTab(k)}
                   className={`flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-sm font-semibold transition ${on
                     ? "bg-brand-600 text-white shadow-sm shadow-brand-500/30"
-                    : "text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-slate-100"}`}>
+                    : "text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 hover:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-slate-100"}`}>
                   <Icon className={`h-4 w-4 shrink-0 ${on ? "" : "text-slate-400"}`} />
                   <span className="min-w-0 flex-1 truncate">{label}</span>
                   {k === "renewals" && (renewals?.length ?? 0) > 0 && (
@@ -868,8 +932,8 @@ export default function PortalHome() {
 
         {/* ── hero ───────────────────────────────────────────── */}
         <div className="mb-6">
-          <h1 className="text-xl font-extrabold tracking-tight text-slate-900 sm:text-2xl">Γεια σου, {me.profile.first_name} 👋</h1>
-          <p className="mt-1 flex items-center gap-1.5 text-sm text-slate-500">
+          <h1 className="text-xl font-extrabold tracking-tight text-slate-900 dark:text-slate-100 sm:text-2xl">Γεια σου, {me.profile.first_name} 👋</h1>
+          <p className="mt-1 flex items-center gap-1.5 text-sm text-slate-500 dark:text-slate-400">
             {activeName ? <><Building2 className="h-4 w-4 text-brand-500" /> {activeName}</> : "Η υγεία σου, οργανωμένη."}
           </p>
         </div>
@@ -887,7 +951,7 @@ export default function PortalHome() {
             </button>
           </div>
         )}
-        {pushMsg && <div className="mb-4 rounded-xl bg-slate-100 px-4 py-2.5 text-sm text-slate-700">{pushMsg}</div>}
+        {pushMsg && <div className="mb-4 rounded-xl bg-slate-100 dark:bg-slate-800 px-4 py-2.5 text-sm text-slate-700 dark:text-slate-200">{pushMsg}</div>}
 
         {/* ── notifications ──────────────────────────────────── */}
         {showNotifs && notifs.length > 0 && (
@@ -902,8 +966,8 @@ export default function PortalHome() {
                   <div className="flex items-start gap-3">
                     <span className="mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-white text-brand-600 shadow-sm"><Sparkles className="h-3.5 w-3.5" /></span>
                     <div className="min-w-0 flex-1">
-                      <div className="break-words text-sm font-semibold text-slate-800">{n.title}</div>
-                      <div className="break-words text-sm text-slate-600">{n.body}</div>
+                      <div className="break-words text-sm font-semibold text-slate-800 dark:text-slate-100">{n.title}</div>
+                      <div className="break-words text-sm text-slate-600 dark:text-slate-300">{n.body}</div>
                     </div>
                     <button onClick={() => dismissNotif(n.id)} title="Το είδα" className="grid h-6 w-6 shrink-0 place-items-center rounded-lg text-slate-400 hover:bg-white/70 hover:text-slate-600"><X className="h-4 w-4" /></button>
                   </div>
@@ -911,16 +975,16 @@ export default function PortalHome() {
                   {n.type === "answer" && pickupFor !== n.id && (
                     <div className="mt-2 flex flex-wrap items-center gap-2 pl-10">
                       <button onClick={() => { setPickupFor(n.id); setPickupDate(""); }} className="inline-flex items-center gap-1 rounded-lg bg-brand-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-brand-700"><CalendarPlus className="h-3.5 w-3.5" /> Θα περάσω να το πάρω</button>
-                      <button onClick={() => dismissNotif(n.id)} className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50"><CheckCircle2 className="h-3.5 w-3.5" /> Το είδα</button>
+                      <button onClick={() => dismissNotif(n.id)} className="inline-flex items-center gap-1 rounded-lg border border-slate-200 dark:border-slate-800 bg-white px-2.5 py-1 text-xs font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800"><CheckCircle2 className="h-3.5 w-3.5" /> Το είδα</button>
                     </div>
                   )}
                   {n.type === "answer" && pickupFor === n.id && (
                     <div className="mt-2 space-y-2 rounded-xl border border-brand-200 bg-white/70 p-2.5 pl-3">
-                      <div className="text-xs font-medium text-slate-600">Πότε θα περάσεις; <span className="text-slate-400">(προαιρετικό)</span></div>
+                      <div className="text-xs font-medium text-slate-600 dark:text-slate-300">Πότε θα περάσεις; <span className="text-slate-400">(προαιρετικό)</span></div>
                       <DateInput value={pickupDate} onChange={setPickupDate} min={new Date().toISOString().slice(0, 10)} className="w-full" />
                       <div className="flex flex-wrap gap-2">
                         <button onClick={() => notifPickup(n.id, true, pickupDate)} className="inline-flex items-center gap-1 rounded-lg bg-brand-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand-700"><CheckCircle2 className="h-3.5 w-3.5" /> Στείλε στο φαρμακείο</button>
-                        <button onClick={() => notifPickup(n.id, false)} className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50">Δεν θα περάσω</button>
+                        <button onClick={() => notifPickup(n.id, false)} className="inline-flex items-center gap-1 rounded-lg border border-slate-200 dark:border-slate-800 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800">Δεν θα περάσω</button>
                         <button onClick={() => { setPickupFor(null); setPickupDate(""); }} className="px-2 py-1.5 text-xs text-slate-400 hover:text-slate-600">Άκυρο</button>
                       </div>
                     </div>
@@ -989,7 +1053,7 @@ export default function PortalHome() {
                       return (
                         <li key={i} className="flex items-center gap-2 text-sm">
                           <span className={`w-11 shrink-0 rounded-md px-1 py-0.5 text-center text-[11px] font-bold ${on ? "bg-emerald-100 text-emerald-700" : "bg-violet-100 text-violet-700"}`}>{d.time}</span>
-                          <span className={`min-w-0 flex-1 truncate ${on ? "text-slate-400 line-through" : "text-slate-700"}`}>{d.name}</span>
+                          <span className={`min-w-0 flex-1 truncate ${on ? "text-slate-400 line-through" : "text-slate-700 dark:text-slate-200"}`}>{d.name}</span>
                           {on && <Check className="h-3.5 w-3.5 shrink-0 text-emerald-600" />}
                         </li>
                       );
@@ -1008,7 +1072,7 @@ export default function PortalHome() {
               <ul className="space-y-1.5">
                 {rx.slice(0, 5).map((p) => (
                   <li key={p.barcode} className="flex items-center justify-between gap-2 text-sm">
-                    <span className="min-w-0 truncate font-mono text-[13px] text-slate-700">#{p.barcode.split(":")[0]}</span>
+                    <span className="min-w-0 truncate font-mono text-[13px] text-slate-700 dark:text-slate-200">#{p.barcode.split(":")[0]}</span>
                     <span className="shrink-0 text-[11px] text-slate-400">{new Date(p.executed_at).toLocaleDateString("el-GR")}</span>
                   </li>
                 ))}
@@ -1026,7 +1090,7 @@ export default function PortalHome() {
                 <ul className="space-y-1.5">
                   {open.slice(0, 5).map((a, i) => (
                     <li key={a._id ?? i} className="flex items-center justify-between gap-2 text-sm">
-                      <span className="min-w-0 truncate text-slate-700">{a.service_name}</span>
+                      <span className="min-w-0 truncate text-slate-700 dark:text-slate-200">{a.service_name}</span>
                       <span className="shrink-0 text-[11px] text-slate-400">{new Date(a.requested_at).toLocaleDateString("el-GR")}</span>
                     </li>
                   ))}
@@ -1044,7 +1108,7 @@ export default function PortalHome() {
             <button key={k} onClick={() => setTab(k)}
               className={`shrink-0 whitespace-nowrap rounded-full border px-3.5 py-2 text-sm font-semibold transition ${tab === k
                 ? "border-brand-600 bg-brand-600 text-white shadow-sm shadow-brand-500/30"
-                : "border-slate-200 bg-white text-slate-700 shadow-sm hover:border-brand-300 hover:bg-brand-50 hover:text-brand-700"}`}>
+                : "border-slate-200 dark:border-slate-800 bg-white text-slate-700 dark:text-slate-200 shadow-sm hover:border-brand-300 hover:bg-brand-50 hover:text-brand-700"}`}>
               {label}
             </button>
           ))}
@@ -1052,7 +1116,7 @@ export default function PortalHome() {
         {/* Στο κινητό: τίτλος ενεργής ενότητας (η μπάρα είναι κάτω)· στην Αρχική ο χαιρετισμός είναι ο τίτλος */}
         {tab !== "home" && <div className="mb-4 flex items-center gap-2 sm:hidden">
           {(() => { const I = TAB_ICON[tab] || FileText; return <I className="h-5 w-5 text-brand-600" />; })()}
-          <h2 className="text-lg font-extrabold tracking-tight text-slate-900">{TAB_LABEL[tab]}</h2>
+          <h2 className="text-lg font-extrabold tracking-tight text-slate-900 dark:text-slate-100">{TAB_LABEL[tab]}</h2>
         </div>}
 
         {/* ── PRESCRIPTIONS ──────────────────────────────────── */}
@@ -1072,19 +1136,19 @@ export default function PortalHome() {
           return (
           <div className="space-y-3">
             {/* Αναζήτηση: αριθμός συνταγής + ημερομηνιακό διάστημα */}
-            <div className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
+            <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:border-slate-800 dark:bg-slate-900 p-3 shadow-sm">
               <div className="relative mb-2">
                 <Search className="pointer-events-none absolute left-3.5 top-1/2 h-[18px] w-[18px] -translate-y-1/2 text-slate-400" />
                 <input value={rxQuery} onChange={(e) => setRxQuery(e.target.value)} inputMode="numeric" placeholder="Αναζήτηση με αριθμό συνταγής…"
-                  className="w-full rounded-xl border border-slate-300 bg-white py-2.5 pl-11 pr-3 text-[15px] focus:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-100" />
+                  className="w-full rounded-xl border border-slate-300 bg-white dark:border-slate-600 dark:bg-slate-800 py-2.5 pl-11 pr-3 text-[15px] focus:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-100" />
               </div>
               <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <label className="mb-0.5 block text-[11px] font-medium text-slate-500">Από</label>
+                  <label className="mb-0.5 block text-[11px] font-medium text-slate-500 dark:text-slate-400">Από</label>
                   <DateInput value={rxFrom} onChange={setRxFrom} className="w-full" />
                 </div>
                 <div>
-                  <label className="mb-0.5 block text-[11px] font-medium text-slate-500">Έως</label>
+                  <label className="mb-0.5 block text-[11px] font-medium text-slate-500 dark:text-slate-400">Έως</label>
                   <DateInput value={rxTo} onChange={setRxTo} className="w-full" />
                 </div>
               </div>
@@ -1094,33 +1158,33 @@ export default function PortalHome() {
             </div>
             {/* πλαίσιο πλοήγησης: πόσα δείχνουμε */}
             {!active && rx.length > 5 && (
-              <div className="flex items-center justify-between px-1 text-xs text-slate-500">
+              <div className="flex items-center justify-between px-1 text-xs text-slate-500 dark:text-slate-400">
                 <span>{rxShowAll ? `Όλες οι συνταγές (${filtered.length})` : "Οι 5 πιο πρόσφατες εκτελέσεις"}</span>
                 <button onClick={() => setRxShowAll((v) => !v)} className="font-semibold text-brand-600 hover:text-brand-700">{rxShowAll ? "Δείξε λιγότερες" : "Δείξε όλες"}</button>
               </div>
             )}
-            {active && <div className="px-1 text-xs text-slate-500">{filtered.length} {filtered.length === 1 ? "αποτέλεσμα" : "αποτελέσματα"}</div>}
+            {active && <div className="px-1 text-xs text-slate-500 dark:text-slate-400">{filtered.length} {filtered.length === 1 ? "αποτέλεσμα" : "αποτελέσματα"}</div>}
 
             {rx.length === 0 && <Empty icon={Pill} text="Δεν υπάρχουν συνταγές ακόμα." />}
             {rx.length > 0 && shown.length === 0 && <Empty icon={Search} text="Καμία συνταγή για αυτά τα κριτήρια." />}
             {shown.map((p) => {
               const open = expanded === p.barcode;
               return (
-                <div key={p.barcode} className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition hover:shadow-md">
+                <div key={p.barcode} className="overflow-hidden rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:border-slate-800 dark:bg-slate-900 shadow-sm transition hover:shadow-md">
                   <button onClick={() => toggleExpand(p.barcode, p.tenant_id)} className="flex w-full items-center gap-2.5 p-2.5 text-left sm:p-3">
                     <span className={`grid h-8 w-8 shrink-0 place-items-center rounded-lg ${p.partial ? "bg-amber-50 text-amber-600" : "bg-emerald-50 text-emerald-600"}`}><Pill className="h-4 w-4" /></span>
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
-                        <span className="font-mono text-sm font-semibold text-slate-800">#{p.barcode.split(":")[0]}</span>
+                        <span className="font-mono text-sm font-semibold text-slate-800 dark:text-slate-100">#{p.barcode.split(":")[0]}</span>
                         {p.partial
                           ? <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-700"><AlertCircle className="h-3 w-3" /> Μερική</span>
                           : <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700"><CheckCircle2 className="h-3 w-3" /> Πλήρης</span>}
                       </div>
-                      <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-slate-500">
+                      <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-slate-500 dark:text-slate-400">
                         <span className="inline-flex items-center gap-1"><Calendar className="h-3 w-3 text-slate-400" /> {dt(p.executed_at)}</span>
                         {/* ΠΟΥ έγινε η εκτέλεση — ο πελάτης βλέπει εκτελέσεις από όλα τα φαρμακεία του */}
                         {p.pharmacy_name && (
-                          <span className="inline-flex min-w-0 items-center gap-1 text-slate-500">
+                          <span className="inline-flex min-w-0 items-center gap-1 text-slate-500 dark:text-slate-400">
                             <Building2 className="h-3 w-3 shrink-0 text-slate-400" />
                             <span className="truncate">{p.pharmacy_name}</span>
                           </span>
@@ -1131,10 +1195,10 @@ export default function PortalHome() {
                     {open ? <ChevronUp className="h-4 w-4 shrink-0 text-slate-400" /> : <ChevronDown className="h-4 w-4 shrink-0 text-slate-400" />}
                   </button>
                   {open && (
-                    <div className="border-t border-slate-100 bg-slate-50/60 px-4 py-3">
+                    <div className="border-t border-slate-100 dark:border-slate-800 bg-slate-50/60 px-4 py-3">
                       {!detail ? <div className="flex items-center gap-2 text-xs text-slate-400"><RefreshCw className="h-3.5 w-3.5 animate-spin" /> Φόρτωση…</div> : (
                         <>
-                          <div className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500">
+                          <div className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500 dark:text-slate-400">
                             {activeName && <span className="inline-flex items-center gap-1"><Building2 className="h-3.5 w-3.5 text-slate-400" /> {activeName}</span>}
                             {detail.doctor && <span className="inline-flex items-center gap-1"><Stethoscope className="h-3.5 w-3.5 text-slate-400" /> {detail.doctor}{detail.specialty ? ` · ${detail.specialty}` : ""}</span>}
                             {detail.repeat_total && detail.repeat_total > 1 ? <span className="inline-flex items-center gap-1"><RefreshCw className="h-3.5 w-3.5 text-slate-400" /> επανάληψη {detail.repeat_current}/{detail.repeat_total}</span> : null}
@@ -1142,7 +1206,7 @@ export default function PortalHome() {
                           <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">Φάρμακα</div>
                           <ul className="divide-y divide-slate-200/70">
                             {detail.items.map((it, i) => (
-                              <li key={i} className={`flex items-start justify-between gap-3 py-2 text-sm ${it.is_executed ? "text-slate-700" : "text-slate-400"}`}>
+                              <li key={i} className={`flex items-start justify-between gap-3 py-2 text-sm ${it.is_executed ? "text-slate-700 dark:text-slate-200" : "text-slate-400"}`}>
                                 <span className="flex min-w-0 items-start gap-2">
                                   {it.is_executed
                                     ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-500" />
@@ -1152,7 +1216,7 @@ export default function PortalHome() {
                                       <span className={it.is_executed ? "" : "line-through"}>{it.name}{it.quantity && it.quantity > 1 ? ` ×${it.quantity}` : ""}</span>
                                       {!it.is_executed && <span className="rounded-full bg-rose-50 px-1.5 py-0.5 text-[10px] font-medium text-rose-600">δεν παραλήφθηκε</span>}
                                     </span>
-                                    {it.dosage && <span className="mt-0.5 block text-xs text-slate-500">💊 {it.dosage}</span>}
+                                    {it.dosage && <span className="mt-0.5 block text-xs text-slate-500 dark:text-slate-400">💊 {it.dosage}</span>}
                                   </span>
                                 </span>
                                 {it.is_executed && <span className="shrink-0 font-medium">{eur(it.retail_price)}</span>}
@@ -1163,7 +1227,7 @@ export default function PortalHome() {
                             <div className="mt-3 text-xs text-slate-400">Διάγνωση: {detail.icd10.join(", ")}</div>
                           )}
                           <div className="mt-3 flex items-center justify-end gap-4 border-t border-slate-200/70 pt-3 text-xs">
-                            <span className="text-slate-500">Σύνολο: <b className="text-slate-700">{eur(detail.amount_total)}</b></span>
+                            <span className="text-slate-500 dark:text-slate-400">Σύνολο: <b className="text-slate-700 dark:text-slate-200">{eur(detail.amount_total)}</b></span>
                             <span className="text-amber-600">Πλήρωσες: <b>{eur(detail.patient_share)}</b></span>
                           </div>
                         </>
@@ -1184,29 +1248,29 @@ export default function PortalHome() {
             {repeats.map((p) => {
               const open = expanded === p.barcode;
               return (
-              <div key={p.barcode} className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+              <div key={p.barcode} className="overflow-hidden rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:border-slate-800 dark:bg-slate-900 shadow-sm">
                 <button onClick={() => toggleExpand(p.barcode)} className="flex w-full items-center gap-3 p-4 text-left">
                   <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-emerald-50 text-emerald-600"><RefreshCw className="h-5 w-5" /></span>
                   <div className="min-w-0 flex-1">
-                    <div className="font-mono text-sm font-semibold text-slate-800">#{p.barcode.split(":")[0]}</div>
+                    <div className="font-mono text-sm font-semibold text-slate-800 dark:text-slate-100">#{p.barcode.split(":")[0]}</div>
                   </div>
                   <div className="shrink-0 text-right">
                     <div className="flex items-center justify-end gap-1 text-[11px] font-medium uppercase tracking-wide text-emerald-600"><Clock className="h-3 w-3" /> ανοίγει</div>
-                    <div className="text-sm font-bold text-slate-800">{dt(p.next_open_date)}</div>
+                    <div className="text-sm font-bold text-slate-800 dark:text-slate-100">{dt(p.next_open_date)}</div>
                   </div>
                   {open ? <ChevronUp className="h-4 w-4 shrink-0 text-slate-400" /> : <ChevronDown className="h-4 w-4 shrink-0 text-slate-400" />}
                 </button>
                 {open && (
-                  <div className="border-t border-slate-100 bg-slate-50/60 px-4 py-3">
+                  <div className="border-t border-slate-100 dark:border-slate-800 bg-slate-50/60 px-4 py-3">
                     <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">Φάρμακα συνταγής</div>
                     {p.medicines.length === 0 ? <div className="text-xs text-slate-400">—</div> : (
                       <ul className="divide-y divide-slate-200/70">
                         {p.medicines.map((m, i) => (
-                          <li key={i} className="flex items-start gap-2 py-2 text-sm text-slate-700">
+                          <li key={i} className="flex items-start gap-2 py-2 text-sm text-slate-700 dark:text-slate-200">
                             <Pill className="mt-0.5 h-4 w-4 shrink-0 text-emerald-500" />
                             <div className="min-w-0">
                               <div className="font-medium">{m.name}</div>
-                              {m.dosage && <div className="text-xs text-slate-500">💊 {m.dosage}</div>}
+                              {m.dosage && <div className="text-xs text-slate-500 dark:text-slate-400">💊 {m.dosage}</div>}
                             </div>
                           </li>
                         ))}
@@ -1216,23 +1280,23 @@ export default function PortalHome() {
                   </div>
                 )}
                 {pickupDone[p.barcode] ? (
-                  <div className="flex items-center gap-1.5 border-t border-slate-100 bg-emerald-50 px-4 py-2.5 text-sm font-medium text-emerald-700">
+                  <div className="flex items-center gap-1.5 border-t border-slate-100 dark:border-slate-800 bg-emerald-50 px-4 py-2.5 text-sm font-medium text-emerald-700">
                     <CheckCircle2 className="h-4 w-4" /> Θα περάσεις να την παραλάβεις {dtl(pickupDone[p.barcode])}
                   </div>
                 ) : pickupFor === p.barcode ? (
-                  <div className="border-t border-slate-100 bg-slate-50 px-4 py-3">
+                  <div className="border-t border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/60 px-4 py-3">
                     <input type="datetime-local" value={pickupAt} min={new Date().toISOString().slice(0, 16)} onChange={(e) => setPickupAt(e.target.value)}
                       className="mb-2 w-full min-w-0 appearance-none rounded-xl border border-slate-300 px-3 py-2.5 text-sm focus:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-100" />
                     <div className="flex gap-2">
                       <button onClick={() => bookPickup(p)} disabled={!pickupAt}
                         className="flex-1 rounded-xl bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-50">Στείλε</button>
                       <button onClick={() => { setPickupFor(null); setPickupAt(""); }}
-                        className="shrink-0 rounded-xl px-3 py-2.5 text-sm text-slate-500 hover:bg-slate-100">Άκυρο</button>
+                        className="shrink-0 rounded-xl px-3 py-2.5 text-sm text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700">Άκυρο</button>
                     </div>
                   </div>
                 ) : (
                   <button onClick={() => { setPickupFor(p.barcode); setPickupAt(""); }}
-                    className="flex w-full items-center justify-center gap-1.5 border-t border-slate-100 bg-white py-2.5 text-sm font-semibold text-brand-700 hover:bg-slate-50">
+                    className="flex w-full items-center justify-center gap-1.5 border-t border-slate-100 dark:border-slate-800 bg-white py-2.5 text-sm font-semibold text-brand-700 hover:bg-slate-50 dark:hover:bg-slate-800">
                     <PackageCheck className="h-4 w-4" /> Θα περάσω να την παραλάβω
                   </button>
                 )}
@@ -1245,11 +1309,11 @@ export default function PortalHome() {
         {/* ── ΑΝΕΚΤΕΛΕΣΤΑ (διαθέσιμες ανανεώσεις) ───────────── */}
         {tab === "renewals" && (
           <div className="space-y-3">
-            <p className="text-sm text-slate-500">Χρόνιες επαναλαμβανόμενες συνταγές σου που είναι <b>διαθέσιμες προς εκτέλεση</b> στο φαρμακείο σου. Δήλωσε αν θα τις παραλάβεις (& πότε θα περάσεις) ή όχι — έτσι ο φαρμακοποιός προγραμματίζει διαθεσιμότητα & παράδοση.</p>
+            <p className="text-sm text-slate-500 dark:text-slate-400">Χρόνιες επαναλαμβανόμενες συνταγές σου που είναι <b>διαθέσιμες προς εκτέλεση</b> στο φαρμακείο σου. Δήλωσε αν θα τις παραλάβεις (& πότε θα περάσεις) ή όχι — έτσι ο φαρμακοποιός προγραμματίζει διαθεσιμότητα & παράδοση.</p>
             {renewals === null ? (
               <div className="p-6 text-center text-slate-400">Φόρτωση…</div>
             ) : renewals.length === 0 ? (
-              <div className="rounded-xl border border-slate-200 bg-white p-6 text-center text-sm text-slate-400">Δεν υπάρχουν ανεκτέλεστα αυτή τη στιγμή. 👍</div>
+              <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white p-6 text-center text-sm text-slate-400">Δεν υπάρχουν ανεκτέλεστα αυτή τη στιγμή. 👍</div>
             ) : (
               renewals.map((r, i) => (
                 <RenewalCard key={r.key || i} r={r} onDone={() => patientApi<{ items: Renewal[] }>("/patient/renewals").then((d) => setRenewals(d.items)).catch(() => {})} />
@@ -1264,10 +1328,10 @@ export default function PortalHome() {
         {tab === "meds" && (
           <div className="space-y-4">
             {/* δύο όψεις: Ημερολόγιο (πότε) & Ρυθμίσεις (ποια αγωγή θέλω ενημέρωση) */}
-            <div className="flex gap-1.5 rounded-xl bg-slate-100 p-1">
+            <div className="flex gap-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 p-1">
               {([["calendar", "Ημερολόγιο", Calendar], ["settings", "Ρυθμίσεις", BellRing]] as const).map(([k, label, Icon]) => (
                 <button key={k} onClick={() => setMedsView(k)}
-                  className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg py-1.5 text-sm font-semibold transition ${medsView === k ? "bg-white text-violet-700 shadow-sm" : "text-slate-500"}`}>
+                  className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg py-1.5 text-sm font-semibold transition ${medsView === k ? "bg-white text-violet-700 shadow-sm" : "text-slate-500 dark:text-slate-400"}`}>
                   <Icon className="h-4 w-4" />{label}
                 </button>
               ))}
@@ -1295,9 +1359,9 @@ export default function PortalHome() {
                     const doses = genDoses(d);
                     const pending = today ? doses.filter((x) => !takenSet.has(`${x.med_key}|${x.time}`)).length : 0;
                     return (
-                      <div key={d.dow} className={`overflow-hidden rounded-2xl border ${today ? "border-violet-300 ring-1 ring-violet-200" : "border-slate-200"}`}>
+                      <div key={d.dow} className={`overflow-hidden rounded-2xl border ${today ? "border-violet-300 ring-1 ring-violet-200" : "border-slate-200 dark:border-slate-800"}`}>
                         <button onClick={() => setOpenDay(open ? null : d.dow)} className="flex w-full items-center justify-between gap-2 bg-white px-3.5 py-2.5 text-left">
-                          <span className="flex items-center gap-2 text-sm font-bold text-slate-700">
+                          <span className="flex items-center gap-2 text-sm font-bold text-slate-700 dark:text-slate-200">
                             {DOW[d.dow]}
                             {today && <span className="rounded-full bg-violet-600 px-1.5 py-0.5 text-[10px] text-white">σήμερα</span>}
                             {today && pending > 0 && <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-700">{pending} να πάρω</span>}
@@ -1306,16 +1370,16 @@ export default function PortalHome() {
                           {open ? <ChevronUp className="h-4 w-4 shrink-0 text-slate-400" /> : <ChevronDown className="h-4 w-4 shrink-0 text-slate-400" />}
                         </button>
                         {open && (
-                          <div className="space-y-1.5 border-t border-slate-100 bg-slate-50/40 px-3.5 py-3">
+                          <div className="space-y-1.5 border-t border-slate-100 dark:border-slate-800 bg-slate-50/40 px-3.5 py-3">
                             {doses.map((x, i) => {
                               const taken = today && takenSet.has(`${x.med_key}|${x.time}`);
                               return (
                                 <button key={i} onClick={() => { if (today) toggleIntake(x.med_key, x.time, taken); }} disabled={!today}
                                   title={taken ? "Πάτα για αναίρεση" : "Πάτα «Το πήρα»"}
-                                  className={`flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-left transition ${taken ? "bg-emerald-50 text-emerald-700" : today ? "bg-violet-50 text-violet-800 hover:bg-violet-100" : "bg-white text-slate-600"}`}>
+                                  className={`flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-left transition ${taken ? "bg-emerald-50 text-emerald-700" : today ? "bg-violet-50 text-violet-800 hover:bg-violet-100" : "bg-white text-slate-600 dark:text-slate-300"}`}>
                                   <span className="min-w-0 flex-1">
                                     <span className={`block truncate text-sm font-bold ${taken ? "line-through opacity-60" : ""}`}>{x.name}</span>
-                                    <span className="mt-0.5 block truncate text-[11px] text-slate-500">⏰ {x.time}{x.dose ? ` · ${x.dose}` : ""}{x.meal === "before" ? " · 🍽️ πριν" : x.meal === "after" ? " · 🍽️ μετά" : ""}</span>
+                                    <span className="mt-0.5 block truncate text-[11px] text-slate-500 dark:text-slate-400">⏰ {x.time}{x.dose ? ` · ${x.dose}` : ""}{x.meal === "before" ? " · 🍽️ πριν" : x.meal === "after" ? " · 🍽️ μετά" : ""}</span>
                                   </span>
                                   {today && (taken
                                     ? <span className="shrink-0 self-center text-[11px] font-bold">✓ · ↺</span>
@@ -1341,11 +1405,11 @@ export default function PortalHome() {
                 {sched.therapies.map((th) => {
                   const warn = th.days_left !== null && th.days_left <= 7;
                   return (
-                    <div key={th.med_key} className={`rounded-2xl border p-3 ${th.enabled ? "border-violet-200 bg-white" : "border-slate-200 bg-slate-50"}`}>
+                    <div key={th.med_key} className={`rounded-2xl border p-3 ${th.enabled ? "border-violet-200 bg-white" : "border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/60"}`}>
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
-                          <div className="truncate text-sm font-semibold text-slate-800">{th.name}</div>
-                          {th.dosage_text && <div className="mt-0.5 text-xs text-slate-500">{th.dosage_text}</div>}
+                          <div className="truncate text-sm font-semibold text-slate-800 dark:text-slate-100">{th.name}</div>
+                          {th.dosage_text && <div className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">{th.dosage_text}</div>}
                           {th.days_left !== null && (
                             <div className={`mt-1 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium ${warn ? "bg-amber-100 text-amber-700" : "bg-emerald-50 text-emerald-600"}`}>
                               {warn ? "⏳" : "✓"} {th.days_left <= 0 ? "τελειώνει σήμερα" : `απομένουν ${th.days_left} ημέρες`}
@@ -1374,13 +1438,13 @@ export default function PortalHome() {
                           {medCfg.per_day > 1 && (
                             <div className="flex gap-1.5">
                               {([["time", "Συγκεκριμένη ώρα"], ["interval", "Κάθε X ώρες"]] as const).map(([mv, ml]) => (
-                                <button key={mv} onClick={() => setMedCfg({ ...medCfg, mode: mv })} className={`flex-1 rounded-lg border px-2 py-1.5 text-[11px] font-semibold ${medCfg.mode === mv ? "border-violet-500 bg-violet-600 text-white" : "border-slate-200 bg-white text-slate-600"}`}>{ml}</button>
+                                <button key={mv} onClick={() => setMedCfg({ ...medCfg, mode: mv })} className={`flex-1 rounded-lg border px-2 py-1.5 text-[11px] font-semibold ${medCfg.mode === mv ? "border-violet-500 bg-violet-600 text-white" : "border-slate-200 dark:border-slate-800 bg-white text-slate-600 dark:text-slate-300"}`}>{ml}</button>
                               ))}
                             </div>
                           )}
                           {medCfg.per_day > 1 && medCfg.mode === "interval" && (
                             <div>
-                              <div className="mb-1 text-[11px] font-medium text-slate-600">🔁 Κάθε πόσες ώρες;</div>
+                              <div className="mb-1 text-[11px] font-medium text-slate-600 dark:text-slate-300">🔁 Κάθε πόσες ώρες;</div>
                               <select value={medCfg.interval} onChange={(e) => setMedCfg({ ...medCfg, interval: +e.target.value })} className="w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm focus:border-violet-400 focus:outline-none">
                                 {[3, 4, 6, 8, 12].map((h) => <option key={h} value={h}>κάθε {h} ώρες</option>)}
                               </select>
@@ -1388,7 +1452,7 @@ export default function PortalHome() {
                           )}
                           {/* ώρα (πάντα): «Ώρα λήψης» στη συγκεκριμένη ώρα, «Ώρα 1ης λήψης» στο interval */}
                           <div>
-                            <div className="mb-1 text-[11px] font-medium text-slate-600">⏰ {medCfg.per_day > 1 && medCfg.mode === "interval" ? "Ώρα 1ης λήψης" : "Ώρα λήψης"} (24ωρο)</div>
+                            <div className="mb-1 text-[11px] font-medium text-slate-600 dark:text-slate-300">⏰ {medCfg.per_day > 1 && medCfg.mode === "interval" ? "Ώρα 1ης λήψης" : "Ώρα λήψης"} (24ωρο)</div>
                             <div className="flex items-center gap-1.5">
                               <select value={(medCfg.time || "08:00").split(":")[0]} onChange={(e) => setMedCfg({ ...medCfg, time: `${e.target.value}:${(medCfg.time || "08:00").split(":")[1] || "00"}` })} className="flex-1 rounded-lg border border-slate-300 px-2 py-1.5 text-sm focus:border-violet-400 focus:outline-none">
                                 {Array.from({ length: 24 }, (_, h) => String(h).padStart(2, "0")).map((h) => <option key={h} value={h}>{h}</option>)}
@@ -1400,14 +1464,14 @@ export default function PortalHome() {
                             </div>
                           </div>
                           {medCfg.per_day > 1 && medCfg.mode === "interval" && (
-                            <div className="rounded-lg bg-white/70 px-2 py-1 text-[10px] text-slate-500">Δόσεις: {Array.from({ length: Math.ceil(24 / medCfg.interval) }, (_, i) => { const [h, mn] = medCfg.time.split(":").map(Number); const tot = ((h * 60 + mn + i * medCfg.interval * 60) % 1440); return `${String(Math.floor(tot / 60)).padStart(2, "0")}:${String(tot % 60).padStart(2, "0")}`; }).join(" · ")}</div>
+                            <div className="rounded-lg bg-white/70 px-2 py-1 text-[10px] text-slate-500 dark:text-slate-400">Δόσεις: {Array.from({ length: Math.ceil(24 / medCfg.interval) }, (_, i) => { const [h, mn] = medCfg.time.split(":").map(Number); const tot = ((h * 60 + mn + i * medCfg.interval * 60) % 1440); return `${String(Math.floor(tot / 60)).padStart(2, "0")}:${String(tot % 60).padStart(2, "0")}`; }).join(" · ")}</div>
                           )}
                           <div>
-                            <div className="mb-1 text-[11px] font-medium text-slate-600">🍽️ Σε σχέση με το γεύμα</div>
+                            <div className="mb-1 text-[11px] font-medium text-slate-600 dark:text-slate-300">🍽️ Σε σχέση με το γεύμα</div>
                             <div className="flex gap-1.5">
                               {([["before", "Πριν"], ["after", "Μετά"], ["none", "Άσχετο"]] as const).map(([v, l]) => (
                                 <button key={v} onClick={() => setMedCfg({ ...medCfg, meal: v })}
-                                  className={`flex-1 rounded-lg border px-2 py-1.5 text-xs font-semibold ${medCfg.meal === v ? "border-violet-500 bg-violet-600 text-white" : "border-slate-200 bg-white text-slate-600"}`}>{l}</button>
+                                  className={`flex-1 rounded-lg border px-2 py-1.5 text-xs font-semibold ${medCfg.meal === v ? "border-violet-500 bg-violet-600 text-white" : "border-slate-200 dark:border-slate-800 bg-white text-slate-600 dark:text-slate-300"}`}>{l}</button>
                               ))}
                             </div>
                           </div>
@@ -1447,7 +1511,7 @@ export default function PortalHome() {
           const tiles = [
             { k: "bp" as const, label: "Πίεση", val: bp ? `${bpShow(bp.systolic)}/${bpShow(bp.diastolic)}` : "—", sub: bp ? dt(bp.at) : "—", cls: hStat("bp", bp), watch: bp && !hStat("bp", bp).includes("emerald") },
             { k: "glucose" as const, label: "Ζάχαρο", val: gl ? `${gl.value}` : "—", sub: gl ? `mg/dL` : "—", cls: hStat("glucose", gl), watch: gl && !hStat("glucose", gl).includes("emerald") },
-            { k: "weight" as const, label: "Βάρος", val: wt ? wShow(wt.value) : "—", sub: wt ? "kg" : "—", cls: "bg-slate-50 text-slate-700", watch: false },
+            { k: "weight" as const, label: "Βάρος", val: wt ? wShow(wt.value) : "—", sub: wt ? "kg" : "—", cls: "bg-slate-50 dark:bg-slate-800/60 text-slate-700 dark:text-slate-200", watch: false },
           ];
           const watchList = tiles.filter((t) => t.watch).map((t) => t.label);
           // όλες οι ημερομηνίες μέτρησης (ενοποιημένες) — κάτω, με drill-down
@@ -1464,24 +1528,24 @@ export default function PortalHome() {
             <div className="space-y-4">
               {/* ΤΡΕΧΟΥΣΕΣ (τελευταίες) μετρήσεις + σύγκριση με προηγούμενη */}
               <div>
-                <div className="mb-2 text-sm font-bold text-slate-700">Τελευταίες μετρήσεις</div>
+                <div className="mb-2 text-sm font-bold text-slate-700 dark:text-slate-200">Τελευταίες μετρήσεις</div>
                 <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                   {tiles.map((tl) => {
                     const tr = trend(tl.k);
                     return (
-                      <div key={tl.k} className="rounded-2xl border border-slate-200 bg-white p-4">
-                        <div className="flex items-center justify-between"><span className="text-xs text-slate-500">{tl.label}</span>{tl.watch ? <span className="text-[10px] font-bold text-amber-600">⚠️ προσοχή</span> : tl.val !== "—" && <span className="text-[10px] font-bold text-emerald-600">✓</span>}</div>
+                      <div key={tl.k} className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:border-slate-800 dark:bg-slate-900 p-4">
+                        <div className="flex items-center justify-between"><span className="text-xs text-slate-500 dark:text-slate-400">{tl.label}</span>{tl.watch ? <span className="text-[10px] font-bold text-amber-600">⚠️ προσοχή</span> : tl.val !== "—" && <span className="text-[10px] font-bold text-emerald-600">✓</span>}</div>
                         <div className={`mt-1 inline-flex rounded px-1.5 text-xl font-bold ${tl.cls}`}>{tl.val}</div>
                         <div className="mt-0.5 flex items-center gap-1.5 text-[11px]">
                           <span className="text-slate-400">{tl.sub}</span>
-                          {tr && tr.d !== 0 && <span className={`font-bold ${tr.better === null ? "text-slate-500" : tr.better ? "text-emerald-600" : "text-rose-600"}`}>{tr.d > 0 ? "▲" : "▼"}{tl.k === "bp" ? (Math.abs(tr.d) / 10).toFixed(1).replace(".", ",") : tl.k === "weight" ? Math.abs(tr.d).toFixed(2).replace(".", ",") : Math.abs(tr.d).toFixed(0)}{tr.better === true ? " ✓" : tr.better === false ? " !" : ""}</span>}
+                          {tr && tr.d !== 0 && <span className={`font-bold ${tr.better === null ? "text-slate-500 dark:text-slate-400" : tr.better ? "text-emerald-600" : "text-rose-600"}`}>{tr.d > 0 ? "▲" : "▼"}{tl.k === "bp" ? (Math.abs(tr.d) / 10).toFixed(1).replace(".", ",") : tl.k === "weight" ? Math.abs(tr.d).toFixed(2).replace(".", ",") : Math.abs(tr.d).toFixed(0)}{tr.better === true ? " ✓" : tr.better === false ? " !" : ""}</span>}
                         </div>
                       </div>
                     );
                   })}
-                  <div className="rounded-2xl border border-slate-200 bg-white p-4">
-                    <div className="text-xs text-slate-500">ΔΜΣ</div>
-                    <div className={`mt-1 inline-flex rounded px-1.5 text-xl font-bold ${bmi ? (bmi >= 30 ? "bg-rose-50 text-rose-700" : (bmi >= 25 || bmi < 18.5) ? "bg-amber-50 text-amber-700" : "bg-emerald-50 text-emerald-700") : "bg-slate-50 text-slate-500"}`}>{bmi ? bmi.toFixed(1) : "—"}</div>
+                  <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:border-slate-800 dark:bg-slate-900 p-4">
+                    <div className="text-xs text-slate-500 dark:text-slate-400">ΔΜΣ</div>
+                    <div className={`mt-1 inline-flex rounded px-1.5 text-xl font-bold ${bmi ? (bmi >= 30 ? "bg-rose-50 text-rose-700" : (bmi >= 25 || bmi < 18.5) ? "bg-amber-50 text-amber-700" : "bg-emerald-50 text-emerald-700") : "bg-slate-50 dark:bg-slate-800/60 text-slate-500 dark:text-slate-400"}`}>{bmi ? bmi.toFixed(1) : "—"}</div>
                     <div className="mt-0.5 text-[11px] text-slate-400">{health?.height_cm ? `ύψος ${(health.height_cm / 100).toFixed(2).replace(".", ",")}μ` : "—"}</div>
                   </div>
                 </div>
@@ -1491,20 +1555,20 @@ export default function PortalHome() {
               {/* ΗΜΕΡΟΜΗΝΙΕΣ μετρήσεων — κλικ για να δεις τις μετρήσεις εκείνης της μέρας */}
               {anyHist ? (
                 <div>
-                  <div className="mb-2 text-sm font-bold text-slate-700">Ιστορικό ανά ημερομηνία</div>
+                  <div className="mb-2 text-sm font-bold text-slate-700 dark:text-slate-200">Ιστορικό ανά ημερομηνία</div>
                   <div className="-mx-4 mb-3 flex gap-1.5 overflow-x-auto px-4 pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
                     {dates.map((d) => (
-                      <button key={d} onClick={() => setHealthDate(d)} className={`shrink-0 whitespace-nowrap rounded-full border px-3 py-1.5 text-xs font-semibold ${sel === d ? "border-brand-600 bg-brand-600 text-white" : "border-slate-200 bg-white text-slate-600"}`}>{dt(d)}</button>
+                      <button key={d} onClick={() => setHealthDate(d)} className={`shrink-0 whitespace-nowrap rounded-full border px-3 py-1.5 text-xs font-semibold ${sel === d ? "border-brand-600 bg-brand-600 text-white" : "border-slate-200 dark:border-slate-800 bg-white text-slate-600 dark:text-slate-300"}`}>{dt(d)}</button>
                     ))}
                   </div>
                   {sel && (
-                    <div className="rounded-2xl border border-slate-200 bg-white p-4">
-                      <div className="mb-2 text-xs font-semibold text-slate-500">Μετρήσεις {dt(sel)}</div>
+                    <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:border-slate-800 dark:bg-slate-900 p-4">
+                      <div className="mb-2 text-xs font-semibold text-slate-500 dark:text-slate-400">Μετρήσεις {dt(sel)}</div>
                       <div className="grid grid-cols-3 gap-2 text-center">
                         {(["bp", "glucose", "weight"] as const).map((k) => (
-                          <div key={k} className="rounded-xl bg-slate-50 p-2.5">
-                            <div className="text-[11px] text-slate-500">{k === "bp" ? "Πίεση" : k === "glucose" ? "Ζάχαρο" : "Βάρος"}</div>
-                            <div className={`mt-0.5 text-sm font-bold ${byDate[sel][k] ? "text-slate-800" : "text-slate-300"}`}>{fmtM(k, byDate[sel][k])}</div>
+                          <div key={k} className="rounded-xl bg-slate-50 dark:bg-slate-800/60 p-2.5">
+                            <div className="text-[11px] text-slate-500 dark:text-slate-400">{k === "bp" ? "Πίεση" : k === "glucose" ? "Ζάχαρο" : "Βάρος"}</div>
+                            <div className={`mt-0.5 text-sm font-bold ${byDate[sel][k] ? "text-slate-800 dark:text-slate-100" : "text-slate-300"}`}>{fmtM(k, byDate[sel][k])}</div>
                           </div>
                         ))}
                       </div>
@@ -1526,9 +1590,9 @@ export default function PortalHome() {
                   <div className="text-lg font-extrabold">🎁 Μπες στο πρόγραμμα επιβράβευσης!</div>
                   <p className="mt-1 text-sm opacity-90">Κέρδισε πόντους με κάθε εκτέλεση των επαναλαμβανόμενων συνταγών σου & εξαργύρωσέ τους σε προϊόντα, υπηρεσίες και εκπτώσεις.</p>
                 </div>
-                <div className="rounded-2xl border border-slate-200 bg-white p-4">
-                  <div className="mb-1 text-sm font-semibold text-slate-700">Όροι συμμετοχής</div>
-                  <pre className="max-h-52 overflow-y-auto whitespace-pre-wrap rounded-lg bg-slate-50 p-3 text-xs leading-relaxed text-slate-600">{loyalty.terms}</pre>
+                <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:border-slate-800 dark:bg-slate-900 p-4">
+                  <div className="mb-1 text-sm font-semibold text-slate-700 dark:text-slate-200">Όροι συμμετοχής</div>
+                  <pre className="max-h-52 overflow-y-auto whitespace-pre-wrap rounded-lg bg-slate-50 dark:bg-slate-800/60 p-3 text-xs leading-relaxed text-slate-600 dark:text-slate-300">{loyalty.terms}</pre>
                   <button onClick={joinLoyalty} disabled={assignBusy}
                     className="mt-3 w-full rounded-xl bg-brand-600 py-3 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-60">✓ Αποδέχομαι τους όρους & εγγραφή</button>
                   <p className="mt-1 text-center text-[11px] text-slate-400">Οι πόντοι ξεκινούν να μετρούν από τη στιγμή της εγγραφής σου.</p>
@@ -1551,25 +1615,25 @@ export default function PortalHome() {
                   </div>
 
                   {/* κάρτα μέλους με QR — ο πελάτης τη δείχνει στο φαρμακείο για ταυτοποίηση/εξαργύρωση */}
-                  <div className="flex items-center gap-4 rounded-2xl border border-slate-200 bg-white p-4">
+                  <div className="flex items-center gap-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:border-slate-800 dark:bg-slate-900 p-4">
                     <div className="grid shrink-0 place-items-center rounded-xl bg-white p-2 ring-1 ring-slate-200">
                       <QRCodeCanvas value={`RXVL:${m.patient_ref}`} size={104} level="M" includeMargin />
                     </div>
                     <div className="min-w-0">
-                      <div className="text-sm font-bold text-slate-800">🪪 Κάρτα μέλους</div>
-                      <p className="mt-0.5 text-xs text-slate-500">Δείξε αυτόν τον κωδικό στο φαρμακείο — ο φαρμακοποιός τον σκανάρει για να σε ταυτοποιήσει & να εξαργυρώσεις πόντους.</p>
+                      <div className="text-sm font-bold text-slate-800 dark:text-slate-100">🪪 Κάρτα μέλους</div>
+                      <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">Δείξε αυτόν τον κωδικό στο φαρμακείο — ο φαρμακοποιός τον σκανάρει για να σε ταυτοποιήσει & να εξαργυρώσεις πόντους.</p>
                       <div className="mt-1 font-mono text-[10px] tracking-wide text-slate-400">{m.patient_ref}</div>
                     </div>
                   </div>
 
                   {/* στόχος / πρόοδος */}
                   {m.next_tier && (
-                    <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                    <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:border-slate-800 dark:bg-slate-900 p-4">
                       <div className="flex items-center justify-between text-sm">
-                        <span className="font-semibold text-slate-800">🎯 Επόμενος στόχος: {TIER_GR[m.next_tier] ?? m.next_tier}</span>
-                        <span className="text-slate-500">{m.to_next} πόντοι ακόμη</span>
+                        <span className="font-semibold text-slate-800 dark:text-slate-100">🎯 Επόμενος στόχος: {TIER_GR[m.next_tier] ?? m.next_tier}</span>
+                        <span className="text-slate-500 dark:text-slate-400">{m.to_next} πόντοι ακόμη</span>
                       </div>
-                      <div className="mt-2 h-2.5 w-full overflow-hidden rounded-full bg-slate-100">
+                      <div className="mt-2 h-2.5 w-full overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
                         <div className="h-full rounded-full bg-gradient-to-r from-rose-400 to-amber-400" style={{ width: `${m.progress_pct}%` }} />
                       </div>
                       <div className="mt-1 text-xs text-slate-400">{Math.ceil(m.to_next / Math.max(1, m.points_per_refill))} εκτελέσεις ακόμη για το επόμενο επίπεδο</div>
@@ -1586,13 +1650,13 @@ export default function PortalHome() {
 
                   {/* συνέπεια */}
                   <div className="grid grid-cols-2 gap-3">
-                    <div className="rounded-2xl border border-slate-200 bg-white p-4 text-center">
+                    <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:border-slate-800 dark:bg-slate-900 p-4 text-center">
                       <div className="text-2xl font-bold text-sky-600">{m.compliance ?? "—"}%</div>
-                      <div className="text-xs text-slate-500">Συνέπεια στις επαναλήψεις</div>
+                      <div className="text-xs text-slate-500 dark:text-slate-400">Συνέπεια στις επαναλήψεις</div>
                     </div>
-                    <div className="rounded-2xl border border-slate-200 bg-white p-4 text-center">
+                    <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:border-slate-800 dark:bg-slate-900 p-4 text-center">
                       <div className="text-2xl font-bold text-rose-600">{m.refills}</div>
-                      <div className="text-xs text-slate-500">Εκτελέσεις που μέτρησαν</div>
+                      <div className="text-xs text-slate-500 dark:text-slate-400">Εκτελέσεις που μέτρησαν</div>
                     </div>
                   </div>
 
@@ -1605,15 +1669,15 @@ export default function PortalHome() {
                     return (
                       <div>
                         <div className="mb-1 flex items-center justify-between">
-                          <div className="text-xs font-semibold text-slate-500">🎁 Τα δώρα σου</div>
+                          <div className="text-xs font-semibold text-slate-500 dark:text-slate-400">🎁 Τα δώρα σου</div>
                           {unlocked > 0 && <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-bold text-emerald-700">{unlocked} διαθέσιμα τώρα</span>}
                         </div>
                         <div className="space-y-1.5">
                           {ranked.map((r, i) => (
-                            <div key={r._id ?? i} className={`flex items-center justify-between gap-2 rounded-xl border px-3 py-2 text-sm ${r.afford ? "border-emerald-300 bg-emerald-50" : "border-slate-200 bg-white"}`}>
-                              <span className={r.afford ? "font-medium text-slate-800" : "text-slate-500"}>{RTYPE_EMOJI[r.type] ?? "🎁"} {r.title}</span>
+                            <div key={r._id ?? i} className={`flex items-center justify-between gap-2 rounded-xl border px-3 py-2 text-sm ${r.afford ? "border-emerald-300 bg-emerald-50" : "border-slate-200 dark:border-slate-800 bg-white"}`}>
+                              <span className={r.afford ? "font-medium text-slate-800 dark:text-slate-100" : "text-slate-500 dark:text-slate-400"}>{RTYPE_EMOJI[r.type] ?? "🎁"} {r.title}</span>
                               <div className="shrink-0 text-right">
-                                <div className="text-xs font-semibold text-slate-600">{r.cost_points} π. · {eur(r.cost_cents)}</div>
+                                <div className="text-xs font-semibold text-slate-600 dark:text-slate-300">{r.cost_points} π. · {eur(r.cost_cents)}</div>
                                 {r.afford
                                   ? <div className="text-[11px] font-bold text-emerald-700">✓ Μπορείς να το πάρεις</div>
                                   : <div className="text-[11px] text-slate-400">🔒 σου λείπουν {r.need} πόντοι</div>}
@@ -1627,18 +1691,18 @@ export default function PortalHome() {
                   })()}
 
                   {/* πώς κερδίζω */}
-                  <div className="rounded-2xl bg-slate-50 p-4 text-sm text-slate-600">
-                    <div className="font-semibold text-slate-700">💡 Πώς μαζεύω πόντους</div>
+                  <div className="rounded-2xl bg-slate-50 dark:bg-slate-800/60 p-4 text-sm text-slate-600 dark:text-slate-300">
+                    <div className="font-semibold text-slate-700 dark:text-slate-200">💡 Πώς μαζεύω πόντους</div>
                     <p className="mt-1">Κάθε φορά που εκτελείς εγκαίρως μια επαναλαμβανόμενη συνταγή σου, κερδίζεις <b>{m.points_per_refill} πόντους</b>. Όσο πιο συνεπής, τόσο πιο γρήγορα ανεβαίνεις επίπεδο & γεμίζει το πορτοφόλι σου!</p>
                   </div>
 
                   {/* ιστορικό */}
                   {!!m.ledger?.length && (
                     <div>
-                      <div className="mb-1 text-xs font-semibold text-slate-500">Κινήσεις</div>
+                      <div className="mb-1 text-xs font-semibold text-slate-500 dark:text-slate-400">Κινήσεις</div>
                       {m.ledger.map((l, i) => (
-                        <div key={i} className="flex items-center justify-between rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm">
-                          <span className="text-slate-700">{l.type === "redeem" ? `🛍️ Εξαργύρωση${l.kind === "parapharma" ? " (παραφάρμακα)" : l.kind === "service" ? " (υπηρεσία)" : ""}` : "🎁 Πίστωση"}<span className="ml-2 text-xs text-slate-400">{dt(l.at)}</span></span>
+                        <div key={i} className="flex items-center justify-between rounded-xl border border-slate-200 dark:border-slate-800 bg-white px-3 py-2 text-sm">
+                          <span className="text-slate-700 dark:text-slate-200">{l.type === "redeem" ? `🛍️ Εξαργύρωση${l.kind === "parapharma" ? " (παραφάρμακα)" : l.kind === "service" ? " (υπηρεσία)" : ""}` : "🎁 Πίστωση"}<span className="ml-2 text-xs text-slate-400">{dt(l.at)}</span></span>
                           <span className={`font-semibold ${l.type === "redeem" ? "text-rose-600" : "text-emerald-600"}`}>{l.type === "redeem" ? "−" : "+"}{eur(Math.abs(l.cents))}</span>
                         </div>
                       ))}
@@ -1656,9 +1720,9 @@ export default function PortalHome() {
             {assignMsg && <div className="rounded-xl bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{assignMsg}</div>}
 
             {/* 1) με barcode */}
-            <form onSubmit={submitBarcode} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-              <h3 className="mb-1 text-sm font-semibold text-slate-800">1) Με barcode συνταγής</h3>
-              <p className="mb-3 text-xs text-slate-500">Πληκτρολόγησε ή σκάναρε το barcode της συνταγής για να την αναθέσεις στο φαρμακείο.</p>
+            <form onSubmit={submitBarcode} className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:border-slate-800 dark:bg-slate-900 p-4 shadow-sm">
+              <h3 className="mb-1 text-sm font-semibold text-slate-800 dark:text-slate-100">1) Με barcode συνταγής</h3>
+              <p className="mb-3 text-xs text-slate-500 dark:text-slate-400">Πληκτρολόγησε ή σκάναρε το barcode της συνταγής για να την αναθέσεις στο φαρμακείο.</p>
               <input value={assignBc} onChange={(e) => setAssignBc(e.target.value)} placeholder="π.χ. 2602120442459"
                 className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none" />
               <button type="submit" disabled={assignBusy || assignBc.trim().length < 4}
@@ -1666,9 +1730,9 @@ export default function PortalHome() {
             </form>
 
             {/* 2) φωτογραφία συνταγής ιατρού */}
-            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-              <h3 className="mb-1 text-sm font-semibold text-slate-800">2) Φωτογραφία συνταγής ιατρού</h3>
-              <p className="mb-3 text-xs text-slate-500">Φωτογράφισε τη χάρτινη συνταγή του γιατρού και στείλε την στο φαρμακείο.</p>
+            <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:border-slate-800 dark:bg-slate-900 p-4 shadow-sm">
+              <h3 className="mb-1 text-sm font-semibold text-slate-800 dark:text-slate-100">2) Φωτογραφία συνταγής ιατρού</h3>
+              <p className="mb-3 text-xs text-slate-500 dark:text-slate-400">Φωτογράφισε τη χάρτινη συνταγή του γιατρού και στείλε την στο φαρμακείο.</p>
               <div className={`grid grid-cols-2 gap-2 ${assignBusy ? "pointer-events-none opacity-60" : ""}`}>
                 {/* Άνοιξε ΚΑΜΕΡΑ κατευθείαν (capture) */}
                 <label className="flex cursor-pointer items-center justify-center gap-2 rounded-xl bg-indigo-600 px-3 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700">
@@ -1677,7 +1741,7 @@ export default function PortalHome() {
                     onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) submitPhoto(f); }} />
                 </label>
                 {/* Επίλεξε αρχείο/φωτογραφία (χωρίς capture → gallery/αρχεία) */}
-                <label className="flex cursor-pointer items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50">
+                <label className="flex cursor-pointer items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white dark:border-slate-600 dark:bg-slate-800 px-3 py-2.5 text-sm font-semibold text-slate-700 dark:text-slate-200 shadow-sm hover:bg-slate-50 dark:hover:bg-slate-800">
                   <Upload className="h-[18px] w-[18px]" /> Επίλεξε αρχείο
                   <input type="file" accept="image/*,application/pdf" className="hidden"
                     onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) submitPhoto(f); }} />
@@ -1689,18 +1753,18 @@ export default function PortalHome() {
             {/* σημείωση + 3η μελλοντική επιλογή */}
             <textarea value={assignNote} onChange={(e) => setAssignNote(e.target.value)} rows={2} placeholder="Σημείωση προς το φαρμακείο (προαιρετικό)"
               className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none" />
-            <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 px-3 py-2 text-xs text-slate-500">
+            <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 dark:bg-slate-800/60 px-3 py-2 text-xs text-slate-500 dark:text-slate-400">
               3) Σύνδεση στην εθνική πύλη συνταγών (άυλες) — <b>σύντομα</b>: θα μπορείς να αντλείς τις άυλες συνταγές σου και να τις αναθέτεις απευθείας.
             </div>
 
             {/* οι αναθέσεις μου */}
             {rxReqs.length > 0 && (
               <div className="space-y-2">
-                <div className="text-xs font-semibold text-slate-500">Οι αναθέσεις μου</div>
+                <div className="text-xs font-semibold text-slate-500 dark:text-slate-400">Οι αναθέσεις μου</div>
                 {rxReqs.map((r) => (
-                  <div key={r._id} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm">
+                  <div key={r._id} className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white px-3 py-2 text-sm">
                     <div className="flex items-center justify-between">
-                      <span className="text-slate-700">{r.kind === "barcode" ? <>📋 Barcode <span className="font-mono text-xs">{r.barcode}</span></> : <>📷 Φωτογραφία συνταγής</>}<span className="ml-2 text-xs text-slate-400">{dt(r.created_at)}</span></span>
+                      <span className="text-slate-700 dark:text-slate-200">{r.kind === "barcode" ? <>📋 Barcode <span className="font-mono text-xs">{r.barcode}</span></> : <>📷 Φωτογραφία συνταγής</>}<span className="ml-2 text-xs text-slate-400">{dt(r.created_at)}</span></span>
                       <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${statusCls(r.status)}`}>{STATUS_LABEL[r.status] ?? r.status}</span>
                     </div>
                     {r.cda?.found && (
@@ -1733,14 +1797,14 @@ export default function PortalHome() {
         {/* ── AVAILABILITY ───────────────────────────────────── */}
         {tab === "availability" && (
           <div className="space-y-4">
-            <form onSubmit={askAvailability} className="space-y-3 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-              <div className="flex items-center gap-2 text-sm font-bold text-slate-800"><Search className="h-4 w-4 text-brand-500" /> Ρώτα για διαθεσιμότητα</div>
+            <form onSubmit={askAvailability} className="space-y-3 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:border-slate-800 dark:bg-slate-900 p-5 shadow-sm">
+              <div className="flex items-center gap-2 text-sm font-bold text-slate-800 dark:text-slate-100"><Search className="h-4 w-4 text-brand-500" /> Ρώτα για διαθεσιμότητα</div>
               <div>
-                <div className="mb-1 text-xs font-medium text-slate-500">Φαρμακείο</div>
+                <div className="mb-1 text-xs font-medium text-slate-500 dark:text-slate-400">Φαρμακείο</div>
                 <PharmacyPicker linked={me.pharmacies} value={availTarget} onChange={setAvailTarget} />
               </div>
               <div>
-                <div className="mb-1 text-xs font-medium text-slate-500">Φάρμακο (λίστα / barcode / σάρωση)</div>
+                <div className="mb-1 text-xs font-medium text-slate-500 dark:text-slate-400">Φάρμακο (λίστα / barcode / σάρωση)</div>
                 <MedicinePicker value={availMed} onChange={setAvailMed} />
               </div>
               <input value={availNote} onChange={(e) => setAvailNote(e.target.value)} placeholder="Σχόλιο (προαιρετικό)"
@@ -1749,10 +1813,10 @@ export default function PortalHome() {
             </form>
             {avail.length === 0 && <Empty icon={Search} text="Δεν έχεις στείλει ερωτήσεις διαθεσιμότητας." />}
             {avail.map((a, i) => (
-              <div key={a._id ?? i} className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+              <div key={a._id ?? i} className="flex items-center gap-3 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:border-slate-800 dark:bg-slate-900 p-4 shadow-sm">
                 <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-sky-50 text-sky-600"><Pill className="h-5 w-5" /></span>
                 <div className="min-w-0 flex-1">
-                  <div className="truncate text-sm font-semibold text-slate-800">{a.medicine_name || a.query}</div>
+                  <div className="truncate text-sm font-semibold text-slate-800 dark:text-slate-100">{a.medicine_name || a.query}</div>
                   {a.answer ? <div className="mt-0.5 text-sm text-emerald-700">{a.answer}</div> : <div className="mt-0.5 text-xs text-amber-600">Σε αναμονή απάντησης…</div>}
                 </div>
                 <span className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-semibold ${statusCls(a.answer ? "answered" : a.status)}`}>{a.answer ? "Απαντήθηκε" : (STATUS_LABEL[a.status] ?? a.status)}</span>
@@ -1764,14 +1828,14 @@ export default function PortalHome() {
         {/* ── APPOINTMENTS ───────────────────────────────────── */}
         {tab === "appointments" && (
           <div className="space-y-4">
-            <form onSubmit={bookAppt} className="space-y-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
-              <div className="flex items-center gap-2 text-sm font-bold text-slate-800"><CalendarPlus className="h-4 w-4 text-brand-500" /> Κλείσε ραντεβού</div>
+            <form onSubmit={bookAppt} className="space-y-3 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:border-slate-800 dark:bg-slate-900 p-4 shadow-sm sm:p-5">
+              <div className="flex items-center gap-2 text-sm font-bold text-slate-800 dark:text-slate-100"><CalendarPlus className="h-4 w-4 text-brand-500" /> Κλείσε ραντεβού</div>
               <div>
-                <div className="mb-1 text-xs font-medium text-slate-500">Φαρμακείο</div>
+                <div className="mb-1 text-xs font-medium text-slate-500 dark:text-slate-400">Φαρμακείο</div>
                 <PharmacyPicker linked={me.pharmacies} value={apptTarget} onChange={setApptTarget} />
               </div>
               <div>
-                <div className="mb-1 text-xs font-medium text-slate-500">Υπηρεσία</div>
+                <div className="mb-1 text-xs font-medium text-slate-500 dark:text-slate-400">Υπηρεσία</div>
                 <select required value={appt.service_name} onChange={(e) => setAppt({ ...appt, service_name: e.target.value })}
                   className="w-full min-w-0 rounded-xl border border-slate-300 px-3 py-2.5 text-sm focus:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-100">
                   <option value="">— Επίλεξε υπηρεσία —</option>
@@ -1792,11 +1856,11 @@ export default function PortalHome() {
               </div>
               <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <div className="mb-1 text-xs font-medium text-slate-500">Ημερομηνία</div>
+                  <div className="mb-1 text-xs font-medium text-slate-500 dark:text-slate-400">Ημερομηνία</div>
                   <DateInput required value={appt.date} min={new Date().toISOString().slice(0, 10)} onChange={(v) => setAppt({ ...appt, date: v })} className="w-full" />
                 </div>
                 <div>
-                  <div className="mb-1 text-xs font-medium text-slate-500">Ώρα</div>
+                  <div className="mb-1 text-xs font-medium text-slate-500 dark:text-slate-400">Ώρα</div>
                   <input type="time" required value={appt.time}
                     onChange={(e) => setAppt({ ...appt, time: e.target.value })}
                     className="w-full min-w-0 appearance-none rounded-xl border border-slate-300 px-3 py-2.5 text-sm focus:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-100" />
@@ -1814,11 +1878,11 @@ export default function PortalHome() {
                 const forActive = !a.tenant_id || a.tenant_id === me.active_tenant;
                 const phName = a.pharmacy_name || (forActive ? activeName : null);
                 return (
-                  <div key={a._id ?? i} className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white p-3.5 shadow-sm">
+                  <div key={a._id ?? i} className="flex items-center gap-3 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:border-slate-800 dark:bg-slate-900 p-3.5 shadow-sm">
                     <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-violet-50 text-violet-600"><Calendar className="h-5 w-5" /></span>
                     <div className="min-w-0 flex-1">
-                      <div className="truncate text-sm font-semibold text-slate-800">{a.service_name}</div>
-                      <div className="text-xs text-slate-500">{dtl(a.requested_at)}</div>
+                      <div className="truncate text-sm font-semibold text-slate-800 dark:text-slate-100">{a.service_name}</div>
+                      <div className="text-xs text-slate-500 dark:text-slate-400">{dtl(a.requested_at)}</div>
                       {phName && <div className="mt-0.5 flex items-center gap-1 text-[11px] font-medium text-brand-600"><Building2 className="h-3 w-3" /> {phName}</div>}
                     </div>
                     <span className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-semibold ${statusCls(a.status)}`}>{STATUS_LABEL[a.status] ?? a.status}</span>
@@ -1830,11 +1894,11 @@ export default function PortalHome() {
               return (
                 <div className="space-y-3">
                   {/* διαχωρισμός: ΑΝΟΙΧΤΑ vs ΚΛΕΙΣΤΑ */}
-                  <div className="flex gap-1.5 rounded-xl bg-slate-100 p-1">
+                  <div className="flex gap-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 p-1">
                     {([["open", "Ανοιχτά", activeA.length], ["closed", "Κλειστά", pastA.length]] as const).map(([k, label, n]) => (
                       <button key={k} onClick={() => setApptView(k)}
-                        className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg py-1.5 text-sm font-semibold transition ${apptView === k ? "bg-white text-violet-700 shadow-sm" : "text-slate-500"}`}>
-                        {label}<span className={`grid h-5 min-w-[20px] place-items-center rounded-full px-1 text-[10px] font-bold ${apptView === k ? "bg-violet-100 text-violet-700" : "bg-slate-200 text-slate-500"}`}>{n}</span>
+                        className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg py-1.5 text-sm font-semibold transition ${apptView === k ? "bg-white text-violet-700 shadow-sm" : "text-slate-500 dark:text-slate-400"}`}>
+                        {label}<span className={`grid h-5 min-w-[20px] place-items-center rounded-full px-1 text-[10px] font-bold ${apptView === k ? "bg-violet-100 text-violet-700" : "bg-slate-200 text-slate-500 dark:text-slate-400"}`}>{n}</span>
                       </button>
                     ))}
                   </div>
@@ -1857,10 +1921,10 @@ export default function PortalHome() {
               <div className="relative flex-1">
                 <Search className="pointer-events-none absolute left-3.5 top-1/2 h-[18px] w-[18px] -translate-y-1/2 text-slate-400" />
                 <input value={dirQuery} onChange={(e) => setDirQuery(e.target.value)} placeholder="Αναζήτηση φαρμακείου ή περιοχής…"
-                  className="w-full rounded-2xl border border-slate-300 bg-white py-2.5 pl-11 pr-3 text-[15px] shadow-sm focus:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-100" />
+                  className="w-full rounded-2xl border border-slate-300 bg-white dark:border-slate-600 dark:bg-slate-800 py-2.5 pl-11 pr-3 text-[15px] shadow-sm focus:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-100" />
               </div>
               <button onClick={requestGeo} disabled={geoBusy} title="Ταξινόμηση κατά απόσταση"
-                className={`inline-flex shrink-0 items-center gap-1.5 rounded-2xl border px-3 py-2.5 text-xs font-semibold shadow-sm ${geo ? "border-brand-300 bg-brand-50 text-brand-700" : "border-slate-300 bg-white text-slate-600"}`}>
+                className={`inline-flex shrink-0 items-center gap-1.5 rounded-2xl border px-3 py-2.5 text-xs font-semibold shadow-sm ${geo ? "border-brand-300 bg-brand-50 text-brand-700" : "border-slate-300 bg-white dark:border-slate-600 dark:bg-slate-800 text-slate-600 dark:text-slate-300"}`}>
                 <Navigation className={`h-4 w-4 ${geoBusy ? "animate-pulse" : ""}`} /> {geo ? "Κοντινά" : "Βρες κοντινά"}
               </button>
             </div>
@@ -1884,25 +1948,25 @@ export default function PortalHome() {
                 const crossBg = s?.isOnDuty ? "bg-indigo-500" : s?.isOpen ? (s.closingSoon ? "bg-amber-500" : "bg-emerald-500") : "bg-slate-300";
                 const isActive = d.tenant_id === me.active_tenant;
                 return (
-                  <div key={d.tenant_id} className={`rounded-2xl border bg-white p-3.5 shadow-sm ${isActive ? "border-brand-300 ring-1 ring-brand-100" : d.favorite ? "border-amber-200" : "border-slate-200"}`}>
+                  <div key={d.tenant_id} className={`rounded-2xl border bg-white p-3.5 shadow-sm ${isActive ? "border-brand-300 ring-1 ring-brand-100" : d.favorite ? "border-amber-200" : "border-slate-200 dark:border-slate-800"}`}>
                     <div className="flex items-start gap-3">
                       {/* σύμβολο φαρμακείου (σταυρός) — χρώμα κατά κατάσταση: πράσινο ανοιχτό, μπλε εφημερία, γκρι κλειστό */}
                       <span className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl ${crossBg} shadow-sm`}><Plus className="h-6 w-6 text-white" strokeWidth={3} /></span>
                       <div className="min-w-0 flex-1 cursor-pointer" role="button" onClick={() => { if (!isActive) switchPharmacy(d.tenant_id); }}>
                         <div className="flex flex-wrap items-center gap-1.5">
-                          <span className="font-semibold text-slate-800">{d.name}</span>
+                          <span className="font-semibold text-slate-800 dark:text-slate-100">{d.name}</span>
                           {d.favorite && <span className="inline-flex items-center gap-0.5 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-700"><Star className="h-2.5 w-2.5 fill-amber-500 text-amber-500" /> Αγαπημένο</span>}
                           {d.mine && <span className="rounded-full bg-brand-50 px-1.5 py-0.5 text-[10px] font-bold text-brand-600">Δικό μου</span>}
                           {isActive && <span className="rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700">Ενεργό</span>}
                         </div>
-                        <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-slate-500">
+                        <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-slate-500 dark:text-slate-400">
                           {(d.address || d.city) && <span className="inline-flex items-center gap-1"><MapPin className="h-3 w-3 shrink-0 text-slate-400" />{[d.address, d.city].filter(Boolean).join(", ")}</span>}
                           {d.dist != null && <span className="inline-flex items-center gap-1 font-medium text-brand-600"><Navigation className="h-3 w-3" />{d.dist < 1 ? `${Math.round(d.dist * 1000)} μ` : `${d.dist.toFixed(1)} χλμ`}</span>}
                         </div>
                         {s && <div className={`mt-0.5 text-xs font-medium ${s.isOnDuty ? "text-indigo-600" : s.isOpen ? (s.closingSoon ? "text-amber-600" : "text-emerald-600") : "text-slate-400"}`}>{s.statusText}</div>}
                       </div>
                       <button onClick={() => setFavoritePharmacy(d.tenant_id)} title={d.favorite ? "Αφαίρεση αγαπημένου" : "Όρισε αγαπημένο"}
-                        className="grid h-8 w-8 shrink-0 place-items-center rounded-lg hover:bg-slate-50">
+                        className="grid h-8 w-8 shrink-0 place-items-center rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800">
                         <Star className={`h-[18px] w-[18px] ${d.favorite ? "fill-amber-400 text-amber-400" : "text-slate-300"}`} />
                       </button>
                     </div>
@@ -1911,10 +1975,10 @@ export default function PortalHome() {
                       {isActive
                         ? <span className="inline-flex items-center gap-1 rounded-lg bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700"><CheckCircle2 className="h-3.5 w-3.5" /> Ενεργό φαρμακείο</span>
                         : <button onClick={() => switchPharmacy(d.tenant_id)} className="inline-flex items-center gap-1 rounded-lg bg-brand-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-brand-700"><Building2 className="h-3.5 w-3.5" /> Επίλεξε</button>}
-                      <button onClick={() => switchPharmacy(d.tenant_id, "availability")} className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50"><Search className="h-3.5 w-3.5" /> Διαθεσιμότητα</button>
-                      <button onClick={() => switchPharmacy(d.tenant_id, "shop")} className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50"><ShoppingBag className="h-3.5 w-3.5" /> Κατάστημα</button>
-                      <button onClick={() => switchPharmacy(d.tenant_id, "assign")} className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50"><FilePlus className="h-3.5 w-3.5" /> Ανάθεση</button>
-                      {d.phone && <a href={`tel:${d.phone}`} onClick={(e) => e.stopPropagation()} className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50">📞 {d.phone}</a>}
+                      <button onClick={() => switchPharmacy(d.tenant_id, "availability")} className="inline-flex items-center gap-1 rounded-lg border border-slate-200 dark:border-slate-800 bg-white px-2.5 py-1 text-xs font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800"><Search className="h-3.5 w-3.5" /> Διαθεσιμότητα</button>
+                      <button onClick={() => switchPharmacy(d.tenant_id, "shop")} className="inline-flex items-center gap-1 rounded-lg border border-slate-200 dark:border-slate-800 bg-white px-2.5 py-1 text-xs font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800"><ShoppingBag className="h-3.5 w-3.5" /> Κατάστημα</button>
+                      <button onClick={() => switchPharmacy(d.tenant_id, "assign")} className="inline-flex items-center gap-1 rounded-lg border border-slate-200 dark:border-slate-800 bg-white px-2.5 py-1 text-xs font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800"><FilePlus className="h-3.5 w-3.5" /> Ανάθεση</button>
+                      {d.phone && <a href={`tel:${d.phone}`} onClick={(e) => e.stopPropagation()} className="inline-flex items-center gap-1 rounded-lg border border-slate-200 dark:border-slate-800 bg-white px-2.5 py-1 text-xs font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800">📞 {d.phone}</a>}
                     </div>
                   </div>
                 );
@@ -1930,7 +1994,7 @@ export default function PortalHome() {
 
       {/* ── κάτω μπάρα πλοήγησης (ΜΟΝΟ κινητό) — ΚΥΛΙΟΜΕΝΗ λωρίδα όλων των διαθέσιμων ενοτήτων ──
           Σέρνεις με το δάχτυλο αριστερά/δεξιά· η ενεργή έρχεται στο κέντρο. Χωρίς «...» που κρύβει. */}
-      <nav className="fixed inset-x-0 bottom-0 z-30 flex gap-1 overflow-x-auto border-t border-slate-200 bg-white/95 px-1 pb-[env(safe-area-inset-bottom)] backdrop-blur-md [-ms-overflow-style:none] [scrollbar-width:none] sm:hidden [&::-webkit-scrollbar]:hidden dark:border-slate-800 dark:bg-slate-900/95">
+      <nav className="fixed inset-x-0 bottom-0 z-30 flex gap-1 overflow-x-auto border-t border-slate-200 dark:border-slate-800 bg-white/95 px-1 pb-[env(safe-area-inset-bottom)] backdrop-blur-md [-ms-overflow-style:none] [scrollbar-width:none] sm:hidden [&::-webkit-scrollbar]:hidden dark:border-slate-800 dark:bg-slate-900/95">
         {visibleTabs.map(([k, label]) => {
           const I = TAB_ICON[k] || FileText; const on = tab === k;
           return (
@@ -1960,10 +2024,10 @@ function Kpi({ icon: Icon, label, value, sub, tint, highlight }: {
   icon: React.ComponentType<{ className?: string }>; label: string; value: string; sub: string; tint: string; highlight?: boolean;
 }) {
   return (
-    <div className={`overflow-hidden rounded-2xl border p-3 shadow-sm transition hover:shadow-md sm:p-4 ${highlight ? "border-emerald-200 bg-gradient-to-br from-emerald-50 to-white" : "border-slate-200 bg-white"}`}>
+    <div className={`overflow-hidden rounded-2xl border p-3 shadow-sm transition hover:shadow-md sm:p-4 ${highlight ? "border-emerald-200 bg-gradient-to-br from-emerald-50 to-white" : "border-slate-200 dark:border-slate-800 bg-white"}`}>
       <span className={`grid h-8 w-8 place-items-center rounded-xl sm:h-9 sm:w-9 ${TINTS[tint]}`}><Icon className="h-4 w-4 sm:h-[18px] sm:w-[18px]" /></span>
-      <div className="mt-2 truncate text-lg font-extrabold tracking-tight text-slate-900 sm:mt-3 sm:text-2xl">{value}</div>
-      <div className="truncate text-xs font-semibold text-slate-600 sm:text-[13px]">{label}</div>
+      <div className="mt-2 truncate text-lg font-extrabold tracking-tight text-slate-900 dark:text-slate-100 sm:mt-3 sm:text-2xl">{value}</div>
+      <div className="truncate text-xs font-semibold text-slate-600 dark:text-slate-300 sm:text-[13px]">{label}</div>
       <div className="mt-0.5 truncate text-[11px] text-slate-400">{sub}</div>
     </div>
   );
@@ -1975,10 +2039,10 @@ function HomePanel({ icon: Icon, title, tint, action, children }: {
   action?: () => void; children: React.ReactNode;
 }) {
   return (
-    <div className="flex flex-col rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+    <div className="flex flex-col rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:border-slate-800 dark:bg-slate-900 p-4 shadow-sm">
       <div className="mb-3 flex items-center gap-2">
         <span className={`grid h-8 w-8 shrink-0 place-items-center rounded-xl ${TINTS[tint]}`}><Icon className="h-4 w-4" /></span>
-        <span className="min-w-0 flex-1 truncate text-[13px] font-bold text-slate-800">{title}</span>
+        <span className="min-w-0 flex-1 truncate text-[13px] font-bold text-slate-800 dark:text-slate-100">{title}</span>
         {action && (
           <button onClick={action} className="shrink-0 rounded-lg px-1.5 py-0.5 text-[11px] font-semibold text-brand-600 hover:bg-brand-50">Όλα →</button>
         )}
@@ -1994,7 +2058,7 @@ function PanelHint({ text }: { text: string }) {
 
 function Empty({ icon: Icon, text }: { icon: React.ComponentType<{ className?: string }>; text: string }) {
   return (
-    <div className="rounded-2xl border border-dashed border-slate-200 bg-white py-12 text-center">
+    <div className="rounded-2xl border border-dashed border-slate-200 dark:border-slate-800 bg-white py-12 text-center">
       <Icon className="mx-auto h-8 w-8 text-slate-300" />
       <p className="mt-2 text-sm text-slate-400">{text}</p>
     </div>

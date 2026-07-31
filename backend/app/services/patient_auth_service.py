@@ -12,6 +12,8 @@ import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
 
+import pyotp
+
 from app.core.config import settings
 from app.core.security import (
     create_patient_refresh_token, create_patient_token, decode_patient_token,
@@ -30,6 +32,17 @@ class PatientError(Exception):
 
 def _now() -> datetime:
     return datetime.now(tz=timezone.utc)
+
+
+def _norm_recovery(code: str) -> str:
+    return "".join(ch for ch in (code or "").upper() if ch.isalnum())
+
+
+def _gen_recovery(n: int = 8) -> list[str]:
+    """Εφεδρικά codes (μιας χρήσης) — χωρίς μπερδεμένους χαρακτήρες."""
+    alph = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+    return ["".join(secrets.choice(alph) for _ in range(4)) + "-" +
+            "".join(secrets.choice(alph) for _ in range(4)) for _ in range(n)]
 
 
 def _friendly_password(length: int = 10) -> str:
@@ -323,6 +336,53 @@ class PatientAuthService:
         await self.repo.delete_otp_challenge(challenge_id)
         return {"ok": True, "email": ch["email"]}
 
+    # ── 2FA (TOTP) ─────────────────────────────────────────────
+    async def start_2fa_setup(self, account_id: str) -> dict:
+        acc = await self.repo.get(account_id)
+        if not acc:
+            return {"error": "not_found"}
+        if acc.get("twofa_enabled"):
+            return {"error": "already_enabled"}
+        secret = pyotp.random_base32()
+        await self.repo.set_2fa_pending(account_id, secret)
+        uri = pyotp.TOTP(secret).provisioning_uri(name=acc.get("email") or "RxVision",
+                                                  issuer_name="RxVision")
+        return {"ok": True, "secret": secret, "uri": uri}
+
+    async def confirm_2fa(self, account_id: str, code: str) -> dict:
+        acc = await self.repo.get(account_id)
+        if not acc:
+            return {"error": "not_found"}
+        secret = acc.get("twofa_pending_secret")
+        if not secret:
+            return {"error": "no_pending"}
+        if not pyotp.TOTP(secret).verify((code or "").strip(), valid_window=1):
+            return {"error": "wrong_code"}
+        codes = _gen_recovery()
+        hashes = [hashlib.sha256(_norm_recovery(c).encode()).hexdigest() for c in codes]
+        await self.repo.enable_2fa(account_id, secret, hashes)
+        return {"ok": True, "recovery_codes": codes}
+
+    async def disable_2fa(self, account_id: str, code: str) -> dict:
+        acc = await self.repo.get(account_id)
+        if not acc or not acc.get("twofa_enabled"):
+            return {"error": "not_enabled"}
+        if not await self._check_2fa(acc, code):
+            return {"error": "wrong_code"}
+        await self.repo.disable_2fa(account_id)
+        return {"ok": True}
+
+    async def _check_2fa(self, acc: dict, code: str) -> bool:
+        """Επαληθεύει TOTP ή εφεδρικό code (single-use → αφαιρείται)."""
+        code = (code or "").strip()
+        if acc.get("twofa_secret") and pyotp.TOTP(acc["twofa_secret"]).verify(code, valid_window=1):
+            return True
+        h = hashlib.sha256(_norm_recovery(code).encode()).hexdigest()
+        if h in (acc.get("twofa_recovery") or []):
+            await self.repo.consume_recovery(acc["_id"], h)
+            return True
+        return False
+
     async def change_password(self, account_id: str, current: str, new: str) -> dict | str | None:
         """Αλλαγή κωδικού από το προφίλ — απαιτεί τον ΤΡΕΧΟΝΤΑ κωδικό. Επιστρέφει νέο session,
         'bad_current' αν λάθος τρέχων, ή None αν δεν βρεθεί ο λογαριασμός."""
@@ -337,10 +397,16 @@ class PatientAuthService:
         links = await self.repo.refresh_links(acc["_id"], acc.get("amka", ""))
         return await self._start_session(acc, links)
 
-    async def login(self, email: str, password: str, *, meta: dict | None = None) -> dict | None:
+    async def login(self, email: str, password: str, *, meta: dict | None = None,
+                    totp: str | None = None) -> dict | None:
         acc = await self.repo.get_by_email((email or "").strip().lower())
         if not acc or not verify_password(password, acc.get("password_hash", "")):
             return None
+        if acc.get("twofa_enabled"):
+            if not totp:
+                return {"twofa_required": True}
+            if not await self._check_2fa(acc, totp):
+                return {"twofa_required": True, "error": "wrong_code"}
         links = await self.repo.refresh_links(acc["_id"], acc.get("amka", ""))
         return await self._start_session(acc, links, meta)
 
@@ -406,6 +472,7 @@ class PatientAuthService:
                 "email": acc.get("email"), "phone": acc.get("phone"),
                 "amka": acc.get("amka"), "phone_verified": bool(acc.get("phone_verified")),
                 "email_verified": bool(acc.get("email_verified")),
+                "twofa_enabled": bool(acc.get("twofa_enabled")),
                 "consents": acc.get("consents") or {},
                 "address": acc.get("address"), "city": acc.get("city"),
                 "postal_code": acc.get("postal_code"), "theme": acc.get("theme"),

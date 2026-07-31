@@ -191,6 +191,34 @@ class PatientAccountRepository:
             await self.db["patient_accounts"].update_one(  # tenant-ok: global patient account
                 {"_id": oid}, {"$set": {"email": (email or "").strip().lower(), "email_verified": True}})
 
+    # ── 2FA (TOTP) ─────────────────────────────────────────────
+    async def set_2fa_pending(self, account_id, secret: str) -> None:
+        oid = _oid(account_id)
+        if oid:
+            await self.db["patient_accounts"].update_one(  # tenant-ok: global patient account
+                {"_id": oid}, {"$set": {"twofa_pending_secret": secret}})
+
+    async def enable_2fa(self, account_id, secret: str, recovery_hashes: list[str]) -> None:
+        oid = _oid(account_id)
+        if oid:
+            await self.db["patient_accounts"].update_one(  # tenant-ok: global patient account
+                {"_id": oid},
+                {"$set": {"twofa_secret": secret, "twofa_enabled": True, "twofa_recovery": recovery_hashes},
+                 "$unset": {"twofa_pending_secret": ""}})
+
+    async def disable_2fa(self, account_id) -> None:
+        oid = _oid(account_id)
+        if oid:
+            await self.db["patient_accounts"].update_one(  # tenant-ok: global patient account
+                {"_id": oid}, {"$set": {"twofa_enabled": False},
+                               "$unset": {"twofa_secret": "", "twofa_recovery": "", "twofa_pending_secret": ""}})
+
+    async def consume_recovery(self, account_id, code_hash: str) -> None:
+        oid = _oid(account_id)
+        if oid:
+            await self.db["patient_accounts"].update_one(  # tenant-ok: global patient account
+                {"_id": oid}, {"$pull": {"twofa_recovery": code_hash}})
+
     async def save_avatar(self, account_id, raw: bytes, content_type: str) -> str | None:
         """Resize σε ≤400px + JPEG, αποθήκευση σε `patient_avatars`· θέτει avatar_id στον λογαριασμό."""
         oid = _oid(account_id)

@@ -3,15 +3,17 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Pill, Mail, Lock } from "lucide-react";
+import { Pill, Mail, Lock, ShieldCheck } from "lucide-react";
 import { patientAuth, patientTokens, ApiError } from "@/lib/patientClient";
 
-type Session = { access_token: string | null; refresh_token: string; active_tenant: string | null; must_change_password?: boolean };
+type Session = { access_token?: string | null; refresh_token?: string; active_tenant?: string | null; must_change_password?: boolean; twofa_required?: boolean; error?: string };
 
 export default function PortalLogin() {
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [need2fa, setNeed2fa] = useState(false);
+  const [totp, setTotp] = useState("");
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -19,8 +21,15 @@ export default function PortalLogin() {
     e.preventDefault();
     setErr(""); setBusy(true);
     try {
-      const s = await patientAuth<Session>("/patient/auth/login", { email, password });
-      patientTokens.set(s.access_token, s.refresh_token);
+      const s = await patientAuth<Session>("/patient/auth/login",
+        { email, password, ...(need2fa ? { totp } : {}) });
+      if (s.twofa_required) {
+        setNeed2fa(true);
+        if (s.error === "wrong_code") setErr("Λάθος κωδικός επαλήθευσης.");
+        setBusy(false);
+        return;
+      }
+      patientTokens.set(s.access_token ?? null, s.refresh_token ?? "");
       router.replace(s.must_change_password ? "/portal/set-password" : "/portal");
     } catch (e) {
       setErr(e instanceof ApiError && e.status === 401 ? "Λάθος email ή κωδικός." : "Κάτι πήγε στραβά.");
@@ -48,9 +57,17 @@ export default function PortalLogin() {
           <input type="password" required placeholder="Κωδικός" value={password} onChange={(e) => setPassword(e.target.value)}
             className="w-full rounded-xl border border-slate-300 py-2.5 pl-10 pr-3 text-sm focus:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-100" />
         </div>
+        {need2fa && (
+          <div className="relative">
+            <ShieldCheck className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            <input inputMode="numeric" autoFocus required placeholder="Κωδικός επαλήθευσης (2FA)" value={totp} onChange={(e) => setTotp(e.target.value)}
+              className="w-full rounded-xl border border-slate-300 py-2.5 pl-10 pr-3 text-sm focus:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-100" />
+            <p className="mt-1 text-[11px] text-slate-400">Από την εφαρμογή authenticator — ή εφεδρικός κωδικός.</p>
+          </div>
+        )}
         <button type="submit" disabled={busy}
           className="w-full rounded-xl bg-brand-600 py-3 text-sm font-semibold text-white shadow-sm shadow-brand-500/30 hover:bg-brand-700 disabled:opacity-60">
-          {busy ? "Σύνδεση…" : "Σύνδεση"}
+          {busy ? "Σύνδεση…" : need2fa ? "Επαλήθευση & Σύνδεση" : "Σύνδεση"}
         </button>
         <p className="text-center text-sm text-slate-500">
           Δεν έχεις λογαριασμό; <Link href="/portal/register" className="font-semibold text-brand-600 hover:underline">Εγγραφή</Link>
