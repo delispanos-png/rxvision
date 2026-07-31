@@ -210,10 +210,30 @@ class OnboardingService:
         db = shared_db()
         r = await db["pending_registrations"].update_one(
             {"_id": pending_id, "status": {"$in": ["awaiting_payment", "awaiting_bank_approval"]}},
-            {"$set": {"status": "paid", "viva_transaction_id": viva_transaction_id, "paid_at": _now()}})
+            # paid → επέκταση παραθύρου (7μέρες) ώστε να ΜΗΝ χαθεί αν ο πελάτης δεν ολοκληρώσει άμεσα
+            {"$set": {"status": "paid", "viva_transaction_id": viva_transaction_id, "paid_at": _now(),
+                      "expires_at": _now() + timedelta(days=7)}})
         if r.modified_count > 0:
             await self._send_completion_email(await db["pending_registrations"].find_one({"_id": pending_id}))
         return r.modified_count > 0
+
+    async def list_incomplete(self) -> list[dict]:
+        """Εκκρεμείς εγγραφές (δεν ολοκληρώθηκαν): πλήρωσαν αλλά δεν όρισαν κωδικό, ή εκκρεμεί πληρωμή."""
+        db = shared_db()
+        return [r async for r in db["pending_registrations"].find(
+            {"completed_tenant_id": {"$exists": False}, "status": {"$ne": "completed"},
+             "is_trial": {"$ne": True}}).sort("created_at", -1).limit(300)]
+
+    async def resend_completion(self, pending_id: str) -> bool:
+        """Ξαναστέλνει το link ολοκλήρωσης σε PAID εκκρεμή εγγραφή (+ επεκτείνει το παράθυρο)."""
+        db = shared_db()
+        p = await db["pending_registrations"].find_one({"_id": pending_id})
+        if not p or p.get("completed_tenant_id") or p.get("status") != "paid":
+            return False
+        await db["pending_registrations"].update_one(
+            {"_id": pending_id}, {"$set": {"expires_at": _now() + timedelta(days=7)}})
+        await self._send_completion_email(p)
+        return True
 
     async def _send_completion_email(self, p: dict | None) -> None:
         """Email «η πληρωμή επιβεβαιώθηκε — όρισε κωδικό & ολοκλήρωσε». Best-effort (ποτέ δεν σπάει)."""

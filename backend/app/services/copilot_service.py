@@ -226,13 +226,34 @@ async def _a_pickup_ready(tenant_id, p):
     aid = (p or {}).get("appt_id")
     if not aid:
         return "Λείπει το appt_id."
-    from app.repositories.patient_portal import AppointmentRepository
+    from app.repositories.patient_portal import AppointmentRepository, PatientAccountRepository
     doc = await AppointmentRepository(tenant_id=tenant_id).set_status(str(aid), "ready")
+    notified: list[str] = []
     if doc and doc.get("account_id"):
+        what = doc.get("service_name") or "Η συνταγή σου"
         from app.services import push_service
-        await push_service.send_to_account(doc["account_id"], title="📦 Έτοιμη για παραλαβή",
-                                           body=doc.get("service_name") or "Η συνταγή σου", url="/portal")
-    return "Σημειώθηκε ως έτοιμη για παραλαβή και ειδοποιήθηκε ο πελάτης."
+        if await push_service.send_to_account(doc["account_id"], title="📦 Έτοιμη για παραλαβή",
+                                               body=what, url="/portal"):
+            notified.append("push")
+        # SMS «η συνταγή σου είναι έτοιμη» — ΜΟΝΟ σε ΕΠΙΒΕΒΑΙΩΜΕΝΟ κινητό, μετρημένο από το wallet
+        # (best-effort: αν δεν υπάρχει υπόλοιπο ή επιβεβαιωμένο νούμερο, μένει μόνο το push).
+        acc = await PatientAccountRepository().get(doc["account_id"])
+        if acc and acc.get("phone_verified") and acc.get("phone"):
+            from app.services import comms, message_wallet
+            try:
+                await comms.send_sms(
+                    tenant_id, acc["phone"],
+                    f"RxVision: {what} είναι έτοιμη για παραλαβή από το φαρμακείο. Πέρνα να την παραλάβεις.",
+                    kind="notify")
+                notified.append("SMS")
+            except message_wallet.InsufficientCredits:
+                pass
+            except Exception:  # noqa: BLE001 — η σήμανση «ready» δεν πρέπει να σπάσει από αποτυχία SMS
+                pass
+    if notified:
+        return f"Σημειώθηκε ως έτοιμη και ειδοποιήθηκε ο πελάτης ({' + '.join(notified)})."
+    return ("Σημειώθηκε ως έτοιμη. Δεν στάλθηκε ειδοποίηση (ο πελάτης δεν έχει ενεργό push "
+            "ούτε επιβεβαιωμένο κινητό/υπόλοιπο SMS).")
 
 
 async def _refill_candidates(tenant_id: str) -> dict:

@@ -79,13 +79,21 @@ export default function SubscribersPage() {
     qc.invalidateQueries({ queryKey: ["admin", "tenants"] });
   }
 
+  async function addAfm(t: Tenant) {
+    const afm = window.prompt(`ΑΦΜ για «${t.name}» (τα στοιχεία θα συμπληρωθούν αυτόματα από ΑΑΔΕ):`)?.trim();
+    if (!afm || afm.length < 9) return;
+    await adminApi(`/admin/tenants/${t.id}`, { method: "PATCH", body: JSON.stringify({ afm }) });
+    qc.invalidateQueries({ queryKey: ["admin", "tenants"] });
+  }
+
   const columns: Column<Tenant>[] = [
     { key: "name", header: "Tenant", render: (r) => (
       <div className="flex items-center gap-2.5">
         <Avatar name={r.name} />
         <div className="min-w-0">
           <div className="truncate font-medium text-slate-800 dark:text-slate-100">{r.name}</div>
-          {r.afm && <div className="text-[11px] text-slate-400">ΑΦΜ {r.afm}</div>}
+          {r.afm ? <div className="text-[11px] text-slate-400">ΑΦΜ {r.afm}</div>
+                 : <button onClick={(e) => { e.stopPropagation(); addAfm(r); }} className="text-[11px] font-semibold text-amber-600 hover:underline">+ Συμπλήρωση ΑΦΜ</button>}
         </div>
       </div>
     ) },

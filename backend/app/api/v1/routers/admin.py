@@ -107,6 +107,7 @@ class TenantEditIn(BaseModel):
     demo: bool | None = None        # «πελάτης παρουσίασης» → απόκρυψη PII (ισχύει στο επόμενο login)
     retention_months: int | None = None   # παράθυρο διατήρησης δεδομένων (default 36· >36 = πρόσθετη υπηρεσία)
     ai_daily_limit: int | None = None      # ημερήσιο όριο AI ερωτημάτων (default 50· >50 = πρόσθετη υπηρεσία)
+    afm: str | None = None                 # συμπλήρωση/διόρθωση ΑΦΜ (billing_profile) + auto-enrich ΑΑΔΕ
 
 
 class InvoiceIn(BaseModel):
@@ -1397,6 +1398,17 @@ async def edit_tenant(tenant_id: str, body: TenantEditIn,
                       _: PlatformContext = Depends(get_platform_admin)):
     db = shared_db()
     patch = {k: v for k, v in body.model_dump().items() if v is not None}
+    afm = (patch.pop("afm", None) or "").strip()
+    if afm:      # ΑΦΜ → billing_profile.afm + auto-enrich (επωνυμία/ΔΟΥ/διεύθυνση) από ΑΑΔΕ
+        patch["billing_profile.afm"] = afm
+        patch["company.afm"] = afm       # συνέπεια με τα views που διαβάζουν company.afm
+        from app.services.aade_service import lookup as aade_lookup
+        info = await aade_lookup(afm)
+        if info.get("ok"):
+            for src, dst in (("name", "name"), ("doy", "doy"), ("address", "address"),
+                             ("city", "city"), ("postal_code", "postal_code")):
+                if info.get(src):
+                    patch.setdefault(f"billing_profile.{dst}", info[src])
     if not patch:
         return {"id": tenant_id, "updated": False}
     if "retention_months" in patch:      # ασφαλή όρια (36–120)
@@ -1897,6 +1909,30 @@ async def transmit_invoice(invoice_id: str, _: PlatformContext = Depends(get_pla
                             {"error": r.get("error") or "softone_failed"})
     return {"id": invoice_id, "aade_status": "transmitted", "aade_mark": r.get("aade_mark"),
             "softone_findoc": r.get("softone_findoc")}
+
+
+# ── εκκρεμείς εγγραφές (πλήρωσαν αλλά δεν ολοκλήρωσαν) ──────────
+@router.get("/pending-registrations")
+async def pending_registrations(_: PlatformContext = Depends(get_platform_admin)):
+    """Δίχτυ ασφαλείας: εγγραφές που πλήρωσαν αλλά δεν όρισαν κωδικό (ή εκκρεμεί πληρωμή)."""
+    from app.services.onboarding_service import OnboardingService
+    rows = await OnboardingService().list_incomplete()
+    items = [{"id": r["_id"], "pharmacy_name": r.get("pharmacy_name"), "owner_email": r.get("owner_email"),
+              "owner_name": r.get("owner_name"), "status": r.get("status"),
+              "amount_cents": r.get("amount_cents", 0), "package_code": r.get("package_code"),
+              "payment_method": r.get("payment_method"), "created_at": r.get("created_at"),
+              "paid_at": r.get("paid_at"), "afm": (r.get("company") or {}).get("afm")} for r in rows]
+    return {"items": jsonsafe(items)}
+
+
+@router.post("/pending-registrations/{pending_id}/resend")
+async def resend_pending_completion(pending_id: str, _: PlatformContext = Depends(get_platform_admin)):
+    """Ξαναστέλνει το link ολοκλήρωσης σε PAID εκκρεμή εγγραφή."""
+    from app.services.onboarding_service import OnboardingService
+    ok = await OnboardingService().resend_completion(pending_id)
+    if not ok:
+        raise HTTPException(http_status.HTTP_400_BAD_REQUEST, detail={"error": "not_resendable"})
+    return {"ok": True}
 
 
 # ── SMTP settings + newsletter ─────────────────────────────
