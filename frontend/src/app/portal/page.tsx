@@ -614,9 +614,9 @@ export default function PortalHome() {
   const visibleTabs = TABS.filter(([k]) => (k !== "shop" || caps.shop) && (k !== "wallet" || caps.loyalty) && (k !== "pharmacies" || !single));
 
   return (
-    <div className="min-h-screen">
+    <div className="flex min-h-0 flex-1 flex-col">
       {/* ── top bar ───────────────────────────────────────────── */}
-      <header className="sticky top-0 z-20 border-b border-slate-200/80 bg-white/85 backdrop-blur-md dark:border-slate-800/80 dark:bg-slate-900/85">
+      <header className="shrink-0 z-20 border-b border-slate-200/80 bg-white/85 backdrop-blur-md dark:border-slate-800/80 dark:bg-slate-900/85">
         <div className="mx-auto flex h-16 max-w-7xl items-center justify-between gap-1.5 px-3 sm:gap-3 sm:px-4 lg:px-6">
           <a href="https://rxvision.gr" title="rxvision.gr" className="flex items-center gap-2 transition hover:opacity-80">
             <LogoMark className="h-9 w-9" />
@@ -885,7 +885,8 @@ export default function PortalHome() {
 
       {/* Desktop (lg+): σταθερό πλαϊνό μενού αριστερά + περιεχόμενο δεξιά.
           Tablet (sm–lg): pills πάνω από το περιεχόμενο.  Κινητό: σταθερή κάτω μπάρα. */}
-      <div className="mx-auto flex max-w-7xl gap-6 px-4 lg:px-6">
+      <div className="min-h-0 flex-1 overflow-y-auto">
+      <div className="mx-auto flex w-full max-w-7xl gap-6 px-4 lg:px-6">
         <aside className="hidden w-56 shrink-0 py-6 lg:block">
           <nav className="sticky top-20 space-y-1">
             {visibleTabs.map(([k, label]) => {
@@ -907,7 +908,7 @@ export default function PortalHome() {
           </nav>
         </aside>
 
-        <main className="min-w-0 flex-1 overflow-x-clip py-6 pb-24 sm:pb-6">
+        <main className="min-w-0 flex-1 overflow-x-clip py-6">
         {/* ══ ΑΡΧΙΚΗ (Home): όλο το ενημερωτικό — μόνο εδώ, όχι σε κάθε καρτέλα (εξοικονόμηση χώρου) ══ */}
         {tab === "home" && (<>
         {/* Εκκρεμές αίτημα μεταφοράς σε άλλο φαρμακείο — ο πελάτης εγκρίνει/απορρίπτει */}
@@ -1991,10 +1992,11 @@ export default function PortalHome() {
         <p className="mt-8 text-center text-[11px] text-slate-300">RxVision · Πύλη Πελατών</p>
         </main>
       </div>
+      </div>
 
-      {/* ── κάτω μπάρα πλοήγησης (ΜΟΝΟ κινητό) — ΚΥΛΙΟΜΕΝΗ λωρίδα όλων των διαθέσιμων ενοτήτων ──
-          Σέρνεις με το δάχτυλο αριστερά/δεξιά· η ενεργή έρχεται στο κέντρο. Χωρίς «...» που κρύβει. */}
-      <nav className="fixed inset-x-0 bottom-0 z-30 flex gap-1 overflow-x-auto border-t border-slate-200 dark:border-slate-800 bg-white/95 px-1 pb-[env(safe-area-inset-bottom)] backdrop-blur-md [-ms-overflow-style:none] [scrollbar-width:none] sm:hidden [&::-webkit-scrollbar]:hidden dark:border-slate-800 dark:bg-slate-900/95">
+      {/* ── κάτω μπάρα πλοήγησης (ΜΟΝΟ κινητό) — flex-item ΕΞΩ από το scroll → μένει μόνιμα κάτω.
+          ΚΥΛΙΟΜΕΝΗ λωρίδα ενοτήτων· σέρνεις αριστερά/δεξιά· η ενεργή έρχεται στο κέντρο. */}
+      <nav className="shrink-0 z-30 flex gap-1 overflow-x-auto border-t border-slate-200 dark:border-slate-800 bg-white/95 px-1 pb-[env(safe-area-inset-bottom)] backdrop-blur-md [-ms-overflow-style:none] [scrollbar-width:none] sm:hidden [&::-webkit-scrollbar]:hidden dark:border-slate-800 dark:bg-slate-900/95">
         {visibleTabs.map(([k, label]) => {
           const I = TAB_ICON[k] || FileText; const on = tab === k;
           return (
