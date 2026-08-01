@@ -907,7 +907,7 @@ export default function PortalHome() {
           </nav>
         </aside>
 
-        <main className="min-w-0 flex-1 py-6 pb-24 sm:pb-6">
+        <main className="min-w-0 flex-1 overflow-x-clip py-6 pb-24 sm:pb-6">
         {/* ══ ΑΡΧΙΚΗ (Home): όλο το ενημερωτικό — μόνο εδώ, όχι σε κάθε καρτέλα (εξοικονόμηση χώρου) ══ */}
         {tab === "home" && (<>
         {/* Εκκρεμές αίτημα μεταφοράς σε άλλο φαρμακείο — ο πελάτης εγκρίνει/απορρίπτει */}
