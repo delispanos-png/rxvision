@@ -885,7 +885,7 @@ export default function PortalHome() {
 
       {/* Desktop (lg+): σταθερό πλαϊνό μενού αριστερά + περιεχόμενο δεξιά.
           Tablet (sm–lg): pills πάνω από το περιεχόμενο.  Κινητό: σταθερή κάτω μπάρα. */}
-      <div className="min-h-0 flex-1 overflow-y-auto">
+      <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain [-webkit-overflow-scrolling:touch]">
       <div className="mx-auto flex w-full max-w-7xl gap-6 px-4 lg:px-6">
         <aside className="hidden w-56 shrink-0 py-6 lg:block">
           <nav className="sticky top-20 space-y-1">
@@ -908,7 +908,7 @@ export default function PortalHome() {
           </nav>
         </aside>
 
-        <main className="min-w-0 flex-1 overflow-x-clip py-6">
+        <main className="min-w-0 flex-1 py-6">
         {/* ══ ΑΡΧΙΚΗ (Home): όλο το ενημερωτικό — μόνο εδώ, όχι σε κάθε καρτέλα (εξοικονόμηση χώρου) ══ */}
         {tab === "home" && (<>
         {/* Εκκρεμές αίτημα μεταφοράς σε άλλο φαρμακείο — ο πελάτης εγκρίνει/απορρίπτει */}
