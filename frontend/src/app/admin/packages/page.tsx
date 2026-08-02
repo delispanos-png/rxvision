@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { appConfirm } from "@/store/dialogStore";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Boxes, Trash2, Plus, Save, Headphones, ChevronDown, Circle } from "lucide-react";
 import { adminApi } from "@/lib/adminClient";
@@ -150,7 +151,7 @@ export default function PackagesAdminPage() {
     setNotice(`Αποθηκεύτηκε το πακέτο «${p.name || code}» ✓`); refresh();
   }
   async function delPkg(code: string) {
-    if (!window.confirm(`Διαγραφή πακέτου «${code}»;`)) return;
+    if (!(await appConfirm(`Διαγραφή πακέτου «${code}»;`, { title: "Διαγραφή πακέτου", danger: true, confirmText: "Διαγραφή" }))) return;
     await adminApi(`/admin/packages/${encodeURIComponent(code)}`, { method: "DELETE" });
     setNotice("Διαγράφηκε."); refresh();
   }
@@ -173,7 +174,7 @@ export default function PackagesAdminPage() {
     }) });
     setNotice(`Αποθηκεύτηκε το SLA «${s.name || code}» ✓`); refresh();
   }
-  async function delSla(code: string) { if (window.confirm(`Διαγραφή SLA «${code}»;`)) { await adminApi(`/admin/sla/${encodeURIComponent(code)}`, { method: "DELETE" }); refresh(); } }
+  async function delSla(code: string) { if (await appConfirm(`Διαγραφή SLA «${code}»;`, { title: "Διαγραφή SLA", danger: true, confirmText: "Διαγραφή" })) { await adminApi(`/admin/sla/${encodeURIComponent(code)}`, { method: "DELETE" }); refresh(); } }
   const [newSla, setNewSla] = useState("");
   async function createSla() {
     const code = newSla.trim().toLowerCase().replace(/[^a-z0-9_-]/g, "");

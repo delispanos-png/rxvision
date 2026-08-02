@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { appAlert, appConfirm, appPrompt } from "@/store/dialogStore";
 import { useQuery } from "@tanstack/react-query";
 import { Brain, Search, Trash2, Pencil, Save, X, Loader2, RefreshCw, ThumbsDown, AlertTriangle } from "lucide-react";
 import { adminApi } from "@/lib/adminClient";
@@ -40,7 +41,7 @@ export default function PharmaCatKbPage() {
   });
 
   async function dismiss(sig: string) {
-    if (!confirm("Απόρριψη της αναφοράς (χωρίς διόρθωση); Θα θεωρηθεί ότι η απάντηση ήταν σωστή.")) return;
+    if (!(await appConfirm("Απόρριψη της αναφοράς (χωρίς διόρθωση); Θα θεωρηθεί ότι η απάντηση ήταν σωστή.", { title: "Απόρριψη αναφοράς", confirmText: "Απόρριψη" }))) return;
     setBusy(sig);
     try { await adminApi("/admin/pharmacat-kb/" + sig + "/resolve", { method: "POST" }); await list.refetch(); }
     finally { setBusy(null); }
@@ -71,10 +72,10 @@ export default function PharmaCatKbPage() {
   async function regen(e: Entry) {
     let question = e.query || "";
     if (!question) {
-      const typed = prompt("Δεν υπάρχει αποθηκευμένη ερώτηση. Γράψε την ερώτηση που να ξαναρωτηθεί το AI (π.χ. «Αλλεργία»):", "");
+      const typed = await appPrompt("Δεν υπάρχει αποθηκευμένη ερώτηση. Γράψε την ερώτηση που να ξαναρωτηθεί το AI (π.χ. «Αλλεργία»):", { title: "Επαναδημιουργία απάντησης", placeholder: "Αλλεργία", confirmText: "Ερώτηση στο AI" });
       if (typed === null || !typed.trim()) return;
       question = typed.trim();
-    } else if (!confirm("Να ξαναρωτηθεί το AI για «" + question + "» και να αντικατασταθεί η αποθηκευμένη απάντηση με τη νέα;")) {
+    } else if (!(await appConfirm("Να ξαναρωτηθεί το AI για «" + question + "» και να αντικατασταθεί η αποθηκευμένη απάντηση με τη νέα;", { title: "Επαναδημιουργία απάντησης", confirmText: "Επαναδημιουργία" }))) {
       return;
     }
     setBusy(e.sig);
@@ -82,12 +83,12 @@ export default function PharmaCatKbPage() {
       await adminApi("/admin/pharmacat-kb/" + e.sig + "/regenerate", { method: "POST", body: JSON.stringify({ question }) });
       await list.refetch();
     } catch {
-      alert("Αποτυχία — το AI δεν απάντησε (ή έχει εξαντληθεί το όριο). Δοκίμασε ξανά.");
+      await appAlert("Αποτυχία — το AI δεν απάντησε (ή έχει εξαντληθεί το όριο). Δοκίμασε ξανά.", { title: "Αποτυχία" });
     } finally { setBusy(null); }
   }
 
   async function del(sig: string) {
-    if (!confirm("Διαγραφή αυτής της αποθηκευμένης απάντησης; Την επόμενη φορά θα ξαναρωτηθεί το AI από την αρχή.")) return;
+    if (!(await appConfirm("Διαγραφή αυτής της αποθηκευμένης απάντησης; Την επόμενη φορά θα ξαναρωτηθεί το AI από την αρχή.", { title: "Διαγραφή απάντησης", danger: true, confirmText: "Διαγραφή" }))) return;
     setBusy(sig);
     try {
       await adminApi("/admin/pharmacat-kb/" + sig, { method: "DELETE" });

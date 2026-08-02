@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { appConfirm, appPrompt } from "@/store/dialogStore";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Sparkles, Trash2, Plus, Save } from "lucide-react";
 import { adminApi } from "@/lib/adminClient";
@@ -34,11 +35,11 @@ export default function AddonsAdminPage() {
     setNotice(`Αποθηκεύτηκε: ${a.name || id}`); refresh();
   }
   async function del(id: string) {
-    if (!confirm(`Διαγραφή add-on «${id}»;`)) return;
+    if (!(await appConfirm(`Διαγραφή add-on «${id}»;`, { title: "Διαγραφή add-on", danger: true, confirmText: "Διαγραφή" }))) return;
     await adminApi(`/admin/addons/${id}`, { method: "DELETE" }); refresh();
   }
   async function create() {
-    const id = prompt("Module key του add-on (π.χ. ai_assistant, loyalty):")?.trim();
+    const id = (await appPrompt("Module key του add-on (π.χ. ai_assistant, loyalty):", { title: "Νέο add-on", placeholder: "ai_assistant" }))?.trim();
     if (!id) return;
     await adminApi(`/admin/addons/${id}`, { method: "PUT", body: JSON.stringify({ name: id, active: false, price_monthly: 0 }) });
     refresh();

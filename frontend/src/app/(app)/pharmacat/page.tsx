@@ -7,6 +7,7 @@ import {
   HelpCircle, Sparkles, Lightbulb, FlaskConical, Mic, X, Info, Trash2, ThumbsDown, CheckCircle2,
 } from "lucide-react";
 import { api } from "@/lib/apiClient";
+import { appPrompt } from "@/store/dialogStore";
 import { useT } from "@/store/prefStore";
 import { fmtEur } from "@/lib/formatters";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
@@ -68,7 +69,7 @@ function PharmaCatInner() {
     refetchInterval: 60000,
   });
   async function reportWrong(sig: string) {
-    const reason = prompt(t("Τι είναι λάθος σε αυτή την απάντηση; (προαιρετικό — βοηθά τη διόρθωση)", "What's wrong with this answer? (optional — helps the fix)"), "");
+    const reason = await appPrompt(t("Τι είναι λάθος σε αυτή την απάντηση; (προαιρετικό — βοηθά τη διόρθωση)", "What's wrong with this answer? (optional — helps the fix)"), { title: t("Αναφορά λάθους", "Report issue"), confirmText: t("Αποστολή", "Send") });
     if (reason === null) return;   // ακύρωση
     setReported((s) => ({ ...s, [sig]: true }));
     try { await api("/pharmacat/report", { method: "POST", body: JSON.stringify({ sig, reason }) }); }

@@ -1,6 +1,6 @@
 "use client";
 
-import { appConfirm } from "@/store/dialogStore";
+import { appConfirm, appPrompt } from "@/store/dialogStore";
 import { useState, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -80,7 +80,7 @@ export default function SubscribersPage() {
   }
 
   async function addAfm(t: Tenant) {
-    const afm = window.prompt(`ΑΦΜ για «${t.name}» (τα στοιχεία θα συμπληρωθούν αυτόματα από ΑΑΔΕ):`)?.trim();
+    const afm = (await appPrompt(`ΑΦΜ για «${t.name}» — τα στοιχεία θα συμπληρωθούν αυτόματα από ΑΑΔΕ.`, { title: "Συμπλήρωση ΑΦΜ", placeholder: "123456789", confirmText: "Αποθήκευση" }))?.trim();
     if (!afm || afm.length < 9) return;
     await adminApi(`/admin/tenants/${t.id}`, { method: "PATCH", body: JSON.stringify({ afm }) });
     qc.invalidateQueries({ queryKey: ["admin", "tenants"] });

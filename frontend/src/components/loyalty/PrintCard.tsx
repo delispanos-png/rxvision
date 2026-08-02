@@ -6,6 +6,7 @@
 import { useRef, useState } from "react";
 import { QRCodeCanvas } from "qrcode.react";
 import { Printer, X } from "lucide-react";
+import { appAlert } from "@/store/dialogStore";
 
 export type CardMember = { patient_ref: string; name: string; tier?: string };
 
@@ -35,14 +36,14 @@ function PrintCardDialog({ member, pharmacyName, onClose }: {
   const [busy, setBusy] = useState(false);
   const code = `RXVL:${member.patient_ref}`;
 
-  function print() {
+  async function print() {
     setBusy(true);
     // Το QR είναι <canvas> → το κάνουμε dataURL και το στέλνουμε σε ΚΑΘΑΡΟ παράθυρο εκτύπωσης.
     // (Έτσι δεν παλεύουμε με το layout/sidebar του app σε print CSS.)
     const canvas = qrRef.current?.querySelector("canvas");
     const qr = canvas?.toDataURL("image/png") ?? "";
     const w = window.open("", "_blank", "width=700,height=560");
-    if (!w) { setBusy(false); alert("Ο browser μπλόκαρε το παράθυρο εκτύπωσης — επίτρεψε τα pop-ups."); return; }
+    if (!w) { setBusy(false); await appAlert("Ο browser μπλόκαρε το παράθυρο εκτύπωσης — επίτρεψε τα pop-ups.", { title: "Αποκλείστηκε" }); return; }
     w.document.write(`<!doctype html><html lang="el"><head><meta charset="utf-8">
 <title>Κάρτα πιστότητας — ${esc(member.name)}</title>
 <style>

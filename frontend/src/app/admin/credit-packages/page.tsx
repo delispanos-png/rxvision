@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { appConfirm, appPrompt } from "@/store/dialogStore";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   MessageSquare, Trash2, Plus, Save, Info, Send, Loader2, Check, KeyRound,
@@ -147,9 +148,9 @@ export default function MessagesCreditsAdminPage() {
     await adminApi(`/admin/credit-packages/${id}`, { method: "PUT", body: JSON.stringify({ name: p.name, price_cents: p.price_cents, credits_cents: p.credits_cents, active: p.active }) });
     setNotice(`Αποθηκεύτηκε: ${p.name || id}`); refreshPkg();
   }
-  async function delPkg(id: string) { if (confirm(`Διαγραφή πακέτου «${id}»;`)) { await adminApi(`/admin/credit-packages/${id}`, { method: "DELETE" }); refreshPkg(); } }
+  async function delPkg(id: string) { if (await appConfirm(`Διαγραφή πακέτου «${id}»;`, { title: "Διαγραφή πακέτου", danger: true, confirmText: "Διαγραφή" })) { await adminApi(`/admin/credit-packages/${id}`, { method: "DELETE" }); refreshPkg(); } }
   async function createPkg() {
-    const id = prompt("Κωδικός νέου πακέτου (π.χ. c200):")?.trim();
+    const id = (await appPrompt("Κωδικός νέου πακέτου (π.χ. c200):", { title: "Νέο πακέτο credits", placeholder: "c200" }))?.trim();
     if (!id) return;
     await adminApi(`/admin/credit-packages/${id}`, { method: "PUT", body: JSON.stringify({ name: id, price_cents: 0, credits_cents: 0, active: true }) });
     refreshPkg();
@@ -174,7 +175,7 @@ export default function MessagesCreditsAdminPage() {
     onSuccess: () => sendersQ.refetch(),
   });
   async function topUp(row: UsageRow) {
-    const v = prompt(`Προσθήκη credits (€) στο «${row.name}»:`)?.trim();
+    const v = (await appPrompt(`Προσθήκη credits (€) στο «${row.name}»:`, { title: "Προσθήκη credits", placeholder: "0,00" }))?.trim();
     const amt = cents(v || "");
     if (!amt) return;
     await adminApi(`/admin/tenants/${row.tenant_id}/wallet/credit`, { method: "POST", body: JSON.stringify({ amount_cents: amt, reason: "admin_grant" }) });

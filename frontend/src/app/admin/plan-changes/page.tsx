@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { appConfirm } from "@/store/dialogStore";
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { adminApi } from "@/lib/adminClient";
@@ -23,8 +24,8 @@ export default function PlanChangesPage() {
   const q = useQuery({ queryKey: ["admin", "plan-changes"], queryFn: () => adminApi<{ items: Req[] }>("/admin/plan-changes"), retry: false, refetchInterval: 30000 });
 
   const act = async (tid: string, action: "approve" | "reject") => {
-    if (action === "approve" && !window.confirm("Επιβεβαίωση λήψης κατάθεσης & ενεργοποίηση της αναβάθμισης;")) return;
-    if (action === "reject" && !window.confirm("Απόρριψη/ακύρωση του αιτήματος;")) return;
+    if (action === "approve" && !(await appConfirm("Επιβεβαίωση λήψης κατάθεσης & ενεργοποίηση της αναβάθμισης;", { title: "Έγκριση αναβάθμισης", confirmText: "Έγκριση" }))) return;
+    if (action === "reject" && !(await appConfirm("Απόρριψη/ακύρωση του αιτήματος;", { title: "Απόρριψη", danger: true, confirmText: "Απόρριψη" }))) return;
     setBusy(tid);
     try { await adminApi(`/admin/plan-changes/${tid}/${action}`, { method: "POST" }); }
     finally { setBusy(null); qc.invalidateQueries({ queryKey: ["admin", "plan-changes"] }); }

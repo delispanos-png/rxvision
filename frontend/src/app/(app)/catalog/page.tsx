@@ -4,6 +4,7 @@ import { useRef, useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Truck, Search, Plus, Pencil, Trash2, Upload, X, Loader2, Sparkles, Package, Pill, Star, ImagePlus, ArrowDownUp, Database, Check } from "lucide-react";
 import { api, apiUpload, API_BASE } from "@/lib/apiClient";
+import { appAlert, appConfirm } from "@/store/dialogStore";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
 import { CampaignsCard } from "@/components/catalog/CampaignsCard";
 import { PromosCard } from "@/components/catalog/PromosCard";
@@ -76,7 +77,7 @@ function Catalog() {
     } finally { setBusy(false); }
   }
   async function del(barcode: string) {
-    if (!confirm("Διαγραφή του είδους από τον κατάλογο;")) return;
+    if (!(await appConfirm("Διαγραφή του είδους από τον κατάλογο;", { title: "Διαγραφή είδους", danger: true, confirmText: "Διαγραφή" }))) return;
     await api(`/catalog/${encodeURIComponent(barcode)}`, { method: "DELETE" }); list.refetch();
   }
 
@@ -188,9 +189,9 @@ function RegistryModal({ tax, onClose, onDone }: { tax?: Taxonomy; onClose: () =
   }
   async function activateCat() {
     if (!cat) return;
-    if (!confirm(`Ενεργοποίηση ΟΛΗΣ της κατηγορίας «${cat}» προς πώληση; (μπορεί να είναι πολλά είδη)`)) return;
+    if (!(await appConfirm(`Ενεργοποίηση ΟΛΗΣ της κατηγορίας «${cat}» προς πώληση; (μπορεί να είναι πολλά είδη)`, { title: "Ενεργοποίηση κατηγορίας", confirmText: "Ενεργοποίηση" }))) return;
     setBusy("cat");
-    try { const r = await api<{ activated: number }>("/catalog/activate", { method: "POST", body: JSON.stringify({ category: cat, type: ptype, stock_qty: stock }) }); alert(`Ενεργοποιήθηκαν ${r.activated} είδη.`); reg.refetch(); onDone(); }
+    try { const r = await api<{ activated: number }>("/catalog/activate", { method: "POST", body: JSON.stringify({ category: cat, type: ptype, stock_qty: stock }) }); await appAlert(`Ενεργοποιήθηκαν ${r.activated} είδη.`, { title: "Ολοκληρώθηκε" }); reg.refetch(); onDone(); }
     finally { setBusy(""); }
   }
   return (
@@ -253,7 +254,7 @@ function EditModal({ product, busy, tax, onClose, onSave }: { product: Product; 
     if (!f.barcode) return;
     const d = await api<{ found: boolean; name?: string; price_cents?: number; category?: string; type?: string }>(`/catalog/prefill?barcode=${encodeURIComponent(f.barcode)}`);
     if (d.found) setF((s) => ({ ...s, name: d.name || s.name, price_eur: d.price_cents ? d.price_cents / 100 : s.price_eur, category: d.category || s.category, type: d.type || s.type }));
-    else alert("Δεν βρέθηκε στο μητρώο ΗΔΙΚΑ — συμπλήρωσέ το χειροκίνητα.");
+    else await appAlert("Δεν βρέθηκε στο μητρώο ΗΔΥΚΑ — συμπλήρωσέ το χειροκίνητα.", { title: "Δεν βρέθηκε" });
   }
   async function upload(file: File) {
     setUp(true);
@@ -261,8 +262,8 @@ function EditModal({ product, busy, tax, onClose, onSave }: { product: Product; 
       const fd = new FormData(); fd.append("file", file);
       const r = await apiUpload<{ ok: boolean; image_id?: string; error?: string }>("/catalog/image", fd);
       if (r.ok && r.image_id) setF((s) => ({ ...s, image_id: r.image_id, photo_url: null }));
-      else alert("Η φωτογραφία δεν φορτώθηκε — δοκίμασε άλλη (JPG/PNG, ως 8MB).");
-    } catch { alert("Σφάλμα ανεβάσματος."); } finally { setUp(false); }
+      else await appAlert("Η φωτογραφία δεν φορτώθηκε — δοκίμασε άλλη (JPG/PNG, ως 8MB).", { title: "Αποτυχία ανεβάσματος" });
+    } catch { await appAlert("Σφάλμα ανεβάσματος.", { title: "Σφάλμα" }); } finally { setUp(false); }
   }
   const preview = f.image_id ? `${API_BASE}/catalog/image/${f.image_id}` : (f.photo_url || "");
   return (

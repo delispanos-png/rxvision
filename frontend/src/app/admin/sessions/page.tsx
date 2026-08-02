@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { appConfirm } from "@/store/dialogStore";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { adminApi } from "@/lib/adminClient";
 import { fmtDateTime } from "@/lib/formatters";
@@ -36,8 +37,8 @@ export default function SessionsPage() {
   });
   const rows = q.data?.items ?? [];
 
-  const kick = (s: Session) => {
-    if (!window.confirm(`Αποσύνδεση του χρήστη ${s.username}${s.full_name ? ` (${s.full_name})` : ""} από ${s.ip};\n\nΗ συσκευή αποσυνδέεται άμεσα.`)) return;
+  const kick = async (s: Session) => {
+    if (!(await appConfirm(`Αποσύνδεση του χρήστη ${s.username}${s.full_name ? ` (${s.full_name})` : ""} από ${s.ip}; Η συσκευή αποσυνδέεται άμεσα.`, { title: "Αποσύνδεση χρήστη", danger: true, confirmText: "Αποσύνδεση" }))) return;
     setBusy(s.sid); revoke.mutate(s.sid);
   };
 
