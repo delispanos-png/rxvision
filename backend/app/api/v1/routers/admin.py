@@ -108,6 +108,16 @@ class TenantEditIn(BaseModel):
     retention_months: int | None = None   # παράθυρο διατήρησης δεδομένων (default 36· >36 = πρόσθετη υπηρεσία)
     ai_daily_limit: int | None = None      # ημερήσιο όριο AI ερωτημάτων (default 50· >50 = πρόσθετη υπηρεσία)
     afm: str | None = None                 # συμπλήρωση/διόρθωση ΑΦΜ (billing_profile) + auto-enrich ΑΑΔΕ
+    # ── στοιχεία εταιρείας (τιμολόγηση) + επικοινωνία ──
+    # Γράφονται ΚΑΙ σε company.* ΚΑΙ σε billing_profile.* ώστε κάρτα/comms/auth (company) και
+    # τιμολόγια/SoftOne (billing_profile) να διαβάζουν πάντα τα ίδια. "" = καθαρισμός πεδίου.
+    company_name: str | None = None        # επωνυμία τιμολόγησης (νομική)
+    company_doy: str | None = None         # ΔΟΥ
+    company_address: str | None = None
+    company_city: str | None = None
+    company_postal_code: str | None = None
+    contact_email: str | None = None
+    contact_phone: str | None = None
 
 
 class InvoiceIn(BaseModel):
@@ -1413,7 +1423,8 @@ async def tenant_detail(tenant_id: str, _: PlatformContext = Depends(get_platfor
                    "country": t.get("country"), "opened_via": t.get("opened_via"),
                    "external_ref": t.get("external_ref"), "created_at": t.get("created_at"),
                    "contact_email": t.get("contact_email"), "contact_phone": t.get("contact_phone"),
-                   "company": t.get("company"), "store": t.get("store"),
+                   "company": t.get("company"), "billing_profile": t.get("billing_profile"),
+                   "store": t.get("store"),
                    "demo": bool(t.get("demo"))},
         "modules": resolve_modules(set(sub.get("modules_included", [])), t.get("modules") or {}),
         "subscription": {
@@ -1437,6 +1448,22 @@ async def edit_tenant(tenant_id: str, body: TenantEditIn,
                       _: PlatformContext = Depends(get_platform_admin)):
     db = shared_db()
     patch = {k: v for k, v in body.model_dump().items() if v is not None}
+    # στοιχεία εταιρείας + επικοινωνία → mirror σε company.* ΚΑΙ billing_profile.* (single source of truth)
+    for src, dst in (("company_name", "name"), ("company_doy", "doy"), ("company_address", "address"),
+                     ("company_city", "city"), ("company_postal_code", "postal_code")):
+        if src in patch:
+            v = patch.pop(src)
+            patch[f"company.{dst}"] = v
+            patch[f"billing_profile.{dst}"] = v
+    if "contact_email" in patch:            # top-level (κάρτα) + billing_email (το SoftOne στέλνει εκεί)
+        v = patch["contact_email"]
+        patch["company.email"] = v
+        patch["billing_profile.email"] = v
+        patch["billing_profile.billing_email"] = v
+    if "contact_phone" in patch:
+        v = patch["contact_phone"]
+        patch["company.phone"] = v
+        patch["billing_profile.phone"] = v
     afm = (patch.pop("afm", None) or "").strip()
     if afm:      # ΑΦΜ → billing_profile.afm + auto-enrich (επωνυμία/ΔΟΥ/διεύθυνση) από ΑΑΔΕ
         patch["billing_profile.afm"] = afm
@@ -1446,8 +1473,9 @@ async def edit_tenant(tenant_id: str, body: TenantEditIn,
         if info.get("ok"):
             for src, dst in (("name", "name"), ("doy", "doy"), ("address", "address"),
                              ("city", "city"), ("postal_code", "postal_code")):
-                if info.get(src):
+                if info.get(src):     # setdefault: δεν κλωτσάει ό,τι έδωσε ρητά ο admin παραπάνω
                     patch.setdefault(f"billing_profile.{dst}", info[src])
+                    patch.setdefault(f"company.{dst}", info[src])
     if not patch:
         return {"id": tenant_id, "updated": False}
     if "retention_months" in patch:      # ασφαλή όρια (36–120)

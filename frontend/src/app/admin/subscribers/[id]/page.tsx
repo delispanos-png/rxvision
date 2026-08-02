@@ -12,8 +12,9 @@ import { KpiCard } from "@/components/kpi/KpiCard";
 import { DataTable, type Column } from "@/components/tables/DataTable";
 
 type User = { external_user_id: string; email: string; first_name: string; last_name: string; role: string; is_active: boolean; last_login_at: string | null };
+type BillingInfo = { name?: string; afm?: string; doy?: string; address?: string; city?: string; postal_code?: string; email?: string; billing_email?: string; phone?: string };
 type Detail = {
-  tenant: { id: string; name: string; status: string; country: string; opened_via: string; external_ref: string; created_at: string; contact_email?: string; contact_phone?: string; company?: { name?: string; legal_name?: string; tax_id?: string; tax_office?: string; address?: string; city?: string; postal_code?: string }; store?: { name?: string; code?: string }; demo?: boolean };
+  tenant: { id: string; name: string; status: string; country: string; opened_via: string; external_ref: string; created_at: string; contact_email?: string; contact_phone?: string; company?: BillingInfo; billing_profile?: BillingInfo; store?: { name?: string; code?: string }; demo?: boolean };
   subscription: { plan: string; plan_name: string; status: string; product_code: string; features: Record<string, unknown>; limits: Record<string, unknown>; billing_cycle: string; seats: number; mrr: number; trial_ends_at: string | null; current_period_end: string | null; source: string };
   modules?: Record<string, "enabled" | "trial" | "locked">;
   users: User[];
@@ -95,6 +96,35 @@ export default function TenantCardPage() {
   const walletQ = useQuery({ queryKey: ["admin", "wallet", id], queryFn: () => adminApi<{ balance_cents: number; by_channel: Record<string, { count: number }> }>(`/admin/tenants/${encodeURIComponent(id)}/wallet`), retry: false });
   const [creditEur, setCreditEur] = useState("");
   useEffect(() => { if (data?.tenant?.name) setName(data.tenant.name); }, [data]);
+
+  // ── Στοιχεία εταιρείας (τιμολόγηση) + επικοινωνία ──
+  type CFields = { afm: string; company_name: string; company_doy: string; company_address: string; company_city: string; company_postal_code: string; contact_email: string; contact_phone: string };
+  const EMPTY_CF: CFields = { afm: "", company_name: "", company_doy: "", company_address: "", company_city: "", company_postal_code: "", contact_email: "", contact_phone: "" };
+  const [cf, setCf] = useState<CFields>(EMPTY_CF);
+  const [cf0, setCf0] = useState<CFields>(EMPTY_CF);   // αρχικές τιμές — για να στέλνουμε μόνο ό,τι άλλαξε
+  useEffect(() => {
+    if (!data) return;
+    const bp = data.tenant.billing_profile || {}, co = data.tenant.company || {};
+    const init: CFields = {
+      afm: bp.afm || co.afm || "",
+      company_name: bp.name || co.name || "",
+      company_doy: bp.doy || co.doy || "",
+      company_address: bp.address || co.address || "",
+      company_city: bp.city || co.city || "",
+      company_postal_code: bp.postal_code || co.postal_code || "",
+      contact_email: data.tenant.contact_email || bp.billing_email || bp.email || co.email || "",
+      contact_phone: data.tenant.contact_phone || bp.phone || co.phone || "",
+    };
+    setCf(init); setCf0(init);
+  }, [data]);
+  const cfDirty = (Object.keys(cf) as (keyof CFields)[]).some((k) => cf[k] !== cf0[k]);
+  async function saveCompany() {
+    const patch: Partial<CFields> = {};
+    (Object.keys(cf) as (keyof CFields)[]).forEach((k) => { if (cf[k] !== cf0[k]) patch[k] = cf[k].trim(); });
+    if (!Object.keys(patch).length) return;
+    await act(() => adminApi(`/admin/tenants/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(patch) }),
+      "Τα στοιχεία εταιρείας & επικοινωνίας αποθηκεύτηκαν ✓" + (patch.afm ? " (ΑΦΜ → αυτόματη συμπλήρωση από ΑΑΔΕ)" : ""));
+  }
 
   async function impersonate() {
     setBusy(true); setNotice(null);
@@ -224,25 +254,42 @@ export default function TenantCardPage() {
         </div>
       </div>
 
-      {/* Στοιχεία Τιμολόγησης */}
-      {t.company && t.company.tax_id && (
-        <div className="mb-6 rounded-xl border border-slate-200 bg-white p-6">
-          <div className="mb-3 text-sm font-semibold text-slate-700">Στοιχεία Τιμολόγησης</div>
-          <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm text-slate-600 md:grid-cols-3">
-            <div><span className="text-slate-400">ΑΦΜ:</span> <code className="font-mono text-xs">{t.company.tax_id}</code></div>
-            <div><span className="text-slate-400">ΔΟΥ:</span> {t.company.tax_office || "—"}</div>
-            <div><span className="text-slate-400">Νομ. Επωνυμία:</span> {t.company.legal_name || "—"}</div>
-            {t.company.address && <div><span className="text-slate-400">Διεύθυνση:</span> {t.company.address}</div>}
-            {t.company.city && <div><span className="text-slate-400">Πόλη:</span> {t.company.city} {t.company.postal_code || ""}</div>}
-          </div>
-          {(t.contact_email || t.contact_phone) && (
-            <div className="mt-3 grid grid-cols-2 gap-x-6 text-sm text-slate-600 md:grid-cols-3">
-              {t.contact_email && <div><span className="text-slate-400">Email:</span> {t.contact_email}</div>}
-              {t.contact_phone && <div><span className="text-slate-400">Τηλ:</span> {t.contact_phone}</div>}
-            </div>
-          )}
+      {/* Στοιχεία εταιρείας (τιμολόγηση) + επικοινωνία — editable */}
+      <div className="mb-6 rounded-xl border border-slate-200 bg-white p-6">
+        <div className="mb-1 text-sm font-semibold text-slate-700">Στοιχεία εταιρείας & επικοινωνίας</div>
+        <p className="mb-4 text-xs text-slate-400">Χρησιμοποιούνται στα παραστατικά (SoftOne/myDATA) και στην επικοινωνία. Με τη συμπλήρωση ΑΦΜ, τα υπόλοιπα πεδία συμπληρώνονται αυτόματα από την ΑΑΔΕ.</p>
+        <div className="grid grid-cols-1 gap-x-6 gap-y-4 sm:grid-cols-2 lg:grid-cols-3">
+          <label className="text-sm"><span className="mb-1 block text-slate-600">ΑΦΜ</span>
+            <input value={cf.afm} onChange={(e) => setCf((s) => ({ ...s, afm: e.target.value }))} placeholder="123456789" inputMode="numeric"
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 font-mono text-sm focus:border-indigo-500 focus:outline-none" /></label>
+          <label className="text-sm sm:col-span-2 lg:col-span-2"><span className="mb-1 block text-slate-600">Επωνυμία τιμολόγησης</span>
+            <input value={cf.company_name} onChange={(e) => setCf((s) => ({ ...s, company_name: e.target.value }))} placeholder="π.χ. ΠΕΤΡΙΔΗ ΕΙΡΗΝΗ ΚΑΙ ΣΙΑ ΕΕ"
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none" /></label>
+          <label className="text-sm"><span className="mb-1 block text-slate-600">ΔΟΥ</span>
+            <input value={cf.company_doy} onChange={(e) => setCf((s) => ({ ...s, company_doy: e.target.value }))} placeholder="π.χ. Α΄ Θεσσαλονίκης"
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none" /></label>
+          <label className="text-sm sm:col-span-2"><span className="mb-1 block text-slate-600">Διεύθυνση</span>
+            <input value={cf.company_address} onChange={(e) => setCf((s) => ({ ...s, company_address: e.target.value }))} placeholder="Οδός & αριθμός"
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none" /></label>
+          <label className="text-sm"><span className="mb-1 block text-slate-600">Πόλη</span>
+            <input value={cf.company_city} onChange={(e) => setCf((s) => ({ ...s, company_city: e.target.value }))} placeholder="Πόλη"
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none" /></label>
+          <label className="text-sm"><span className="mb-1 block text-slate-600">Τ.Κ.</span>
+            <input value={cf.company_postal_code} onChange={(e) => setCf((s) => ({ ...s, company_postal_code: e.target.value }))} placeholder="00000" inputMode="numeric"
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none" /></label>
+          <label className="text-sm"><span className="mb-1 block text-slate-600">Email επικοινωνίας</span>
+            <input value={cf.contact_email} onChange={(e) => setCf((s) => ({ ...s, contact_email: e.target.value }))} placeholder="name@example.com" type="email"
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none" /></label>
+          <label className="text-sm"><span className="mb-1 block text-slate-600">Τηλέφωνο</span>
+            <input value={cf.contact_phone} onChange={(e) => setCf((s) => ({ ...s, contact_phone: e.target.value }))} placeholder="2310000000" inputMode="tel"
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none" /></label>
         </div>
-      )}
+        <div className="mt-4 flex items-center gap-3">
+          <button disabled={busy || !cfDirty} onClick={saveCompany}
+            className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50">Αποθήκευση στοιχείων</button>
+          {cfDirty && <span className="text-xs text-amber-600">Μη αποθηκευμένες αλλαγές</span>}
+        </div>
+      </div>
 
       {/* Χρήστες */}
       <h2 className="mb-3 text-sm font-semibold text-slate-700">Χρήστες</h2>
