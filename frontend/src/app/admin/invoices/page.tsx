@@ -3,7 +3,7 @@
 import { appConfirm } from "@/store/dialogStore";
 import { Tooltip } from "@/components/ui/Tooltip";
 import { DateInput } from "@/components/ui/DateInput";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { adminApi, ApiError } from "@/lib/adminClient";
 import { fmtEur, fmtDate, fmtMoney } from "@/lib/formatters";
@@ -23,7 +23,8 @@ type Invoice = {
   customer?: InvCustomer | null; lines?: InvLine[] | null; mtrl?: string | null;
   subtotal_net?: number | null; discount?: InvDiscount | null;
 };
-type InvLine = { description: string; mtrl?: string | null; qty: number; unit_net: number; vat_rate: number; disc_kind?: string; disc_value?: number; gross?: number; discount?: number; net: number; vat: number; total: number };
+type InvLine = { description: string; item_key?: string | null; mtrl?: string | null; qty: number; unit_net: number; vat_rate: number; disc_kind?: string; disc_value?: number; gross?: number; discount?: number; net: number; vat: number; total: number };
+type SoftoneItem = { key: string; group: string; name: string; mtrl: string };
 type InvDiscount = { kind: "pct" | "amount"; value: number; amount: number };
 type InvCustomer = { afm?: string; name?: string; doy?: string; address?: string; city?: string; zip?: string; country?: string; email?: string; phone?: string };
 type Tenant = { id: string; name: string };
@@ -153,8 +154,8 @@ export default function InvoicesPage() {
   );
 }
 
-type DraftLine = { description: string; mtrl: string; qty: string; unit_eur: string; vat_rate: string; disc_kind: "pct" | "amount"; disc_value: string };
-const emptyLine = (): DraftLine => ({ description: "", mtrl: "", qty: "1", unit_eur: "", vat_rate: "24", disc_kind: "pct", disc_value: "" });
+type DraftLine = { item_key: string; description: string; mtrl: string; qty: string; unit_eur: string; vat_rate: string; disc_kind: "pct" | "amount"; disc_value: string };
+const emptyLine = (): DraftLine => ({ item_key: "", description: "", mtrl: "", qty: "1", unit_eur: "", vat_rate: "24", disc_kind: "pct", disc_value: "" });
 const eur = (c: number) => fmtEur(c);
 const num = (s: string) => parseFloat(s || "0") || 0;
 // έκπτωση σε cents (δεν ξεπερνά τη βάση). pct=ποσοστό· amount=€ (→cents)
@@ -178,12 +179,32 @@ function InvoiceModal({ modal, tenants, onClose, onDone }:
     doc_type: inv?.doc_type ?? "ΤΠΥ", series: inv?.series ?? "Α",
     issue_date: inv?.issue_date ?? new Date().toISOString().slice(0, 10),
   });
+  // κεντρική λίστα τιμολογήσιμων ειδών → dropdown (όχι ελεύθερο κείμενο, ώστε το MTRL να έχει νόημα)
+  const itemsQ = useQuery({ queryKey: ["admin", "softone-items"], queryFn: () => adminApi<{ items: SoftoneItem[]; default_mtrl: string }>("/admin/softone/items"), retry: false, staleTime: 60000 });
+  const catalog = itemsQ.data?.items ?? [];
+  const defaultMtrl = itemsQ.data?.default_mtrl ?? "";
+  const groups = Array.from(new Set(catalog.map((i) => i.group)));
+
   // γραμμές: από inv.lines → αλλιώς (legacy μονή αξία) μία γραμμή → αλλιώς (create) μία κενή
   const [lines, setLines] = useState<DraftLine[]>(() => {
-    if (inv?.lines?.length) return inv.lines.map((l) => ({ description: l.description || "", mtrl: l.mtrl || "", qty: String(l.qty ?? 1), unit_eur: fmtMoney(l.unit_net ?? 0), vat_rate: String(l.vat_rate ?? 24), disc_kind: (l.disc_kind === "amount" ? "amount" : "pct") as "pct" | "amount", disc_value: l.disc_value ? (l.disc_kind === "amount" ? fmtMoney(l.disc_value) : String(l.disc_value)) : "" }));
-    if (inv) return [{ description: inv.description || "", mtrl: inv.mtrl || "", qty: "1", unit_eur: fmtMoney(inv.net_amount || 0), vat_rate: String(inv.vat_rate ?? 24), disc_kind: "pct" as const, disc_value: "" }];
+    if (inv?.lines?.length) return inv.lines.map((l) => ({ item_key: l.item_key || "", description: l.description || "", mtrl: l.mtrl || "", qty: String(l.qty ?? 1), unit_eur: fmtMoney(l.unit_net ?? 0), vat_rate: String(l.vat_rate ?? 24), disc_kind: (l.disc_kind === "amount" ? "amount" : "pct") as "pct" | "amount", disc_value: l.disc_value ? (l.disc_kind === "amount" ? fmtMoney(l.disc_value) : String(l.disc_value)) : "" }));
+    if (inv) return [{ item_key: "", description: inv.description || "", mtrl: inv.mtrl || "", qty: "1", unit_eur: fmtMoney(inv.net_amount || 0), vat_rate: String(inv.vat_rate ?? 24), disc_kind: "pct" as const, disc_value: "" }];
     return [emptyLine()];
   });
+  // παλιές γραμμές χωρίς item_key → match με βάση MTRL ή όνομα (μία φορά, όταν φορτώσει η λίστα)
+  useEffect(() => {
+    if (!catalog.length) return;
+    setLines((ls) => ls.map((l) => {
+      if (l.item_key || (!l.mtrl && !l.description)) return l;
+      const m = catalog.find((c) => (l.mtrl && c.mtrl === l.mtrl) || c.name === l.description);
+      return m ? { ...l, item_key: m.key, description: m.name, mtrl: m.mtrl } : l;
+    }));
+  }, [catalog.length]);   // eslint-disable-line react-hooks/exhaustive-deps
+
+  const pickItem = (i: number, key: string) => {
+    const it = catalog.find((c) => c.key === key);
+    setLines((ls) => ls.map((l, j) => (j === i ? { ...l, item_key: key, description: it?.name || "", mtrl: it?.mtrl || "" } : l)));
+  };
   // έκπτωση συνόλου
   const [hdiscKind, setHdiscKind] = useState<"pct" | "amount">(inv?.discount?.kind === "amount" ? "amount" : "pct");
   const [hdiscValue, setHdiscValue] = useState<string>(inv?.discount?.value ? (inv.discount.kind === "amount" ? fmtMoney(inv.discount.value) : String(inv.discount.value)) : "");
@@ -230,11 +251,13 @@ function InvoiceModal({ modal, tenants, onClose, onDone }:
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-    if (!lines.some((l) => (parseFloat(l.unit_eur || "0") || 0) > 0)) { setError("Πρόσθεσε τουλάχιστον μία γραμμή με αξία."); return; }
+    const chosen = lines.filter((l) => l.item_key);   // μόνο γραμμές με επιλεγμένο είδος
+    if (!chosen.length) { setError("Επίλεξε είδος σε τουλάχιστον μία γραμμή."); return; }
+    if (!chosen.some((l) => num(l.unit_eur) > 0)) { setError("Δώσε τιμή σε τουλάχιστον μία γραμμή."); return; }
     setBusy(true); setError(null);
     try {
-      const payloadLines = lines.map((l) => ({
-        description: l.description.trim(), mtrl: l.mtrl.trim() || null,
+      const payloadLines = chosen.map((l) => ({
+        description: l.description.trim(), item_key: l.item_key || null, mtrl: l.mtrl.trim() || null,
         qty: num(l.qty) || 1, unit_net: Math.round(num(l.unit_eur) * 100),
         vat_rate: num(l.vat_rate),
         disc_kind: l.disc_kind, disc_value: l.disc_kind === "amount" ? Math.round(num(l.disc_value) * 100) : num(l.disc_value),
@@ -323,8 +346,19 @@ function InvoiceModal({ modal, tenants, onClose, onDone }:
                   const c = lineNet(l);
                   return (
                     <tr key={i} className="align-top">
-                      <td className="px-2 py-1.5"><input disabled={view} value={l.description} onChange={(e) => setLine(i, { description: e.target.value })} placeholder="Περιγραφή είδους/υπηρεσίας" className={`${cell} w-full`} /></td>
-                      <td className="px-2 py-1.5"><input disabled={view} value={l.mtrl} onChange={(e) => setLine(i, { mtrl: e.target.value })} placeholder="—" className={`${cell} w-full`} /></td>
+                      <td className="px-2 py-1.5">
+                        {view ? <span className="block px-1 py-1.5 text-slate-700">{l.description || "—"}</span> : (
+                          <select value={l.item_key} onChange={(e) => pickItem(i, e.target.value)} className={`${cell} w-full`}>
+                            <option value="">— επίλεξε είδος —</option>
+                            {groups.map((g) => (
+                              <optgroup key={g} label={g}>
+                                {catalog.filter((c) => c.group === g).map((c) => <option key={c.key} value={c.key}>{c.name}{c.mtrl ? "" : " (χωρίς MTRL)"}</option>)}
+                              </optgroup>
+                            ))}
+                          </select>
+                        )}
+                      </td>
+                      <td className="px-2 py-1.5"><span className="block px-1 py-1.5 text-right font-mono text-xs text-slate-500" title={l.mtrl ? "" : `Χωρίς ειδικό MTRL → default (${defaultMtrl || "—"})`}>{l.mtrl || (defaultMtrl ? "default" : "—")}</span></td>
                       <td className="px-2 py-1.5"><input disabled={view} value={l.qty} onChange={(e) => setLine(i, { qty: e.target.value })} type="number" step="any" className={`${cell} w-full text-right`} /></td>
                       <td className="px-2 py-1.5"><input disabled={view} value={l.unit_eur} onChange={(e) => setLine(i, { unit_eur: e.target.value })} type="number" step="0.01" placeholder="0.00" className={`${cell} w-full text-right`} /></td>
                       <td className="px-2 py-1.5">

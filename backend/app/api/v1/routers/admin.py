@@ -122,7 +122,8 @@ class TenantEditIn(BaseModel):
 
 class InvoiceLineIn(BaseModel):
     description: str = ""
-    mtrl: str | None = None        # SoftOne κωδικός είδους (προαιρετικό — fallback default)
+    item_key: str | None = None    # κλειδί κεντρικής λίστας ειδών (pkg:/credit:/addon:/ai/retention)
+    mtrl: str | None = None        # SoftOne κωδικός είδους (προκύπτει από το item_key· fallback default)
     qty: float = 1.0
     unit_net: int = 0              # καθαρή τιμή μονάδας σε cents
     vat_rate: float = 24.0
@@ -175,7 +176,7 @@ def _compute_invoice(lines_in: list[dict], hdisc_kind: str = "pct", hdisc_value:
         gross = round(qty * unit)
         ldisc = _line_discount(gross, ln.get("disc_kind") or "pct", float(ln.get("disc_value") or 0))
         net = gross - ldisc
-        lines.append({"description": (ln.get("description") or "").strip(), "mtrl": (ln.get("mtrl") or None),
+        lines.append({"description": (ln.get("description") or "").strip(), "item_key": (ln.get("item_key") or None), "mtrl": (ln.get("mtrl") or None),
                       "qty": qty, "unit_net": unit, "vat_rate": rate,
                       "disc_kind": ln.get("disc_kind") or "pct", "disc_value": float(ln.get("disc_value") or 0),
                       "gross": gross, "discount": ldisc, "net": net, "vat": round(net * rate / 100), "total": net + round(net * rate / 100)})
