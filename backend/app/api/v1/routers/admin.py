@@ -708,6 +708,7 @@ class PackageIn(BaseModel):
     description: str | None = None
     price_monthly: int | None = None  # cents
     price_yearly: int | None = None   # cents
+    price_includes_vat: bool | None = None   # True = οι τιμές περιλαμβάνουν ΦΠΑ· False/None = καθαρές (+ΦΠΑ)
     extra_user_price: int | None = None         # cents — cost per extra user/seat beyond `seats`, per MONTH
     extra_user_price_yearly: int | None = None   # cents — cost per extra user/seat beyond `seats`, per YEAR
     trial_days: int | None = None
@@ -1375,17 +1376,19 @@ async def softone_items(_: PlatformContext = Depends(get_platform_admin)):
     async for p in db["packages"].find({}).sort("price_monthly", 1):
         k = f"pkg:{p['_id']}"
         items.append({"key": k, "group": "Συνδρομές", "name": p.get("name") or p["_id"], "mtrl": mm.get(k, ""),
-                      "price": int(p.get("price_monthly") or 0), "price_yearly": int(p.get("price_yearly") or 0)})
+                      "price": int(p.get("price_monthly") or 0), "price_yearly": int(p.get("price_yearly") or 0),
+                      "price_includes_vat": bool(p.get("price_includes_vat"))})
     async for c in db["credit_packages"].find({}).sort("price_cents", 1):
         k = f"credit:{c['_id']}"
         items.append({"key": k, "group": "Credits μηνυμάτων", "name": c.get("name") or c["_id"], "mtrl": mm.get(k, ""),
-                      "price": int(c.get("price_cents") or 0)})
+                      "price": int(c.get("price_cents") or 0), "price_includes_vat": bool(c.get("price_includes_vat"))})
     async for a in db["addons"].find({}):
         k = f"addon:{a['_id']}"
         items.append({"key": k, "group": "Add-ons / Modules", "name": a.get("name") or a["_id"], "mtrl": mm.get(k, ""),
-                      "price": int(a.get("price_monthly") or 0), "price_yearly": int(a.get("price_yearly") or 0)})
+                      "price": int(a.get("price_monthly") or 0), "price_yearly": int(a.get("price_yearly") or 0),
+                      "price_includes_vat": bool(a.get("price_includes_vat"))})
     for k, nm in (("ai", "Επιπλέον όριο AI"), ("retention", "Επέκταση διατήρησης δεδομένων")):
-        items.append({"key": k, "group": "Extras", "name": nm, "mtrl": mm.get(k, ""), "price": 0})
+        items.append({"key": k, "group": "Extras", "name": nm, "mtrl": mm.get(k, ""), "price": 0, "price_includes_vat": False})
     return {"items": items, "default_mtrl": mm.get("default", "")}
 
 

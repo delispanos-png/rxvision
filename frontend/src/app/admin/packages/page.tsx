@@ -9,7 +9,7 @@ import { fmtEur } from "@/lib/formatters";
 
 type Pkg = {
   _id: string; name?: string; description?: string;
-  price_monthly?: number; price_yearly?: number; extra_user_price?: number; extra_user_price_yearly?: number;
+  price_monthly?: number; price_yearly?: number; price_includes_vat?: boolean; extra_user_price?: number; extra_user_price_yearly?: number;
   trial_days?: number; seats?: number;
   sla?: string; modules?: string[]; features?: string[]; available_addons?: string[]; billing_cycles?: string[]; active?: boolean;
 };
@@ -142,6 +142,7 @@ export default function PackagesAdminPage() {
     const p = drafts[code];
     await adminApi(`/admin/packages/${encodeURIComponent(code)}`, { method: "PUT", body: JSON.stringify({
       name: p.name, description: p.description, price_monthly: p.price_monthly, price_yearly: p.price_yearly,
+      price_includes_vat: !!p.price_includes_vat,
       extra_user_price: p.extra_user_price, extra_user_price_yearly: p.extra_user_price_yearly,
       trial_days: p.trial_days, seats: p.seats, sla: p.sla,
       modules: p.modules ?? [], features: (p.features ?? []).map((s) => s.trim()).filter(Boolean),
@@ -233,6 +234,10 @@ export default function PackagesAdminPage() {
                   <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
                     <label className="block text-xs font-medium text-slate-500">Τιμή / μήνα (€)<input type="number" className={`mt-1 ${inp}`} value={eur(p.price_monthly)} onChange={(e) => setP(p._id, { price_monthly: cents(e.target.value) })} /></label>
                     <label className="block text-xs font-medium text-slate-500">Τιμή / έτος (€)<input type="number" className={`mt-1 ${inp}`} value={eur(p.price_yearly)} onChange={(e) => setP(p._id, { price_yearly: cents(e.target.value) })} /></label>
+                    <label className="flex items-center gap-2 self-end pb-2 text-xs font-medium text-slate-600 sm:col-span-2 lg:col-span-3">
+                      <input type="checkbox" checked={!!p.price_includes_vat} onChange={(e) => setP(p._id, { price_includes_vat: e.target.checked })} className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" />
+                      Οι τιμές <b>περιλαμβάνουν</b> ΦΠΑ (αν είναι ξεκλείδωτο = καθαρές τιμές, ο ΦΠΑ προστίθεται στο παραστατικό)
+                    </label>
                     <div className="block text-xs font-medium text-slate-500">Διαθέσιμοι κύκλοι
                       <div className="mt-1 flex gap-2">
                         {(["monthly", "yearly"] as const).map((c) => {

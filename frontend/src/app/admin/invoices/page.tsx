@@ -24,7 +24,7 @@ type Invoice = {
   subtotal_net?: number | null; discount?: InvDiscount | null;
 };
 type InvLine = { description: string; item_key?: string | null; mtrl?: string | null; qty: number; unit_net: number; vat_rate: number; disc_kind?: string; disc_value?: number; gross?: number; discount?: number; net: number; vat: number; total: number };
-type SoftoneItem = { key: string; group: string; name: string; mtrl: string; price?: number; price_yearly?: number };
+type SoftoneItem = { key: string; group: string; name: string; mtrl: string; price?: number; price_yearly?: number; price_includes_vat?: boolean };
 type InvDiscount = { kind: "pct" | "amount"; value: number; amount: number };
 type InvCustomer = { afm?: string; name?: string; doy?: string; address?: string; city?: string; zip?: string; country?: string; email?: string; phone?: string };
 type Tenant = { id: string; name: string };
@@ -159,8 +159,11 @@ const emptyLine = (): DraftLine => ({ item_key: "", description: "", mtrl: "", q
 // καθαρή τιμή μονάδας (€) από την τιμή ΜΕ ΦΠΑ του είδους, για τη ζητούμενη περίοδο
 const unitEurFor = (it: SoftoneItem | undefined, period: "month" | "year", rate: number) => {
   // ετήσια: ρητή τιμή έτους· αν λείπει → 12× μηνιαία (ώστε να συμπληρώνεται πάντα)
-  const gross = it ? (period === "year" ? (it.price_yearly || (it.price || 0) * 12) : (it.price || 0)) : 0;
-  return gross ? eurInput(Math.round(gross / (1 + rate / 100))) : "";
+  const raw = it ? (period === "year" ? (it.price_yearly || (it.price || 0) * 12) : (it.price || 0)) : 0;
+  if (!raw) return "";
+  // αν η τιμή ΠΕΡΙΛΑΜΒΑΝΕΙ ΦΠΑ → αφαιρούμε για να βρούμε την καθαρή· αλλιώς η τιμή ΕΙΝΑΙ ήδη καθαρή (+ΦΠΑ επάνω)
+  const netCents = it?.price_includes_vat ? Math.round(raw / (1 + rate / 100)) : raw;
+  return eurInput(netCents);
 };
 const eur = (c: number) => fmtEur(c);
 const num = (s: string) => parseFloat(s || "0") || 0;
