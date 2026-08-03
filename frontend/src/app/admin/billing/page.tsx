@@ -6,7 +6,7 @@ import { fmtEur, fmtNum } from "@/lib/formatters";
 import { KpiCard } from "@/components/kpi/KpiCard";
 import { DataTable, type Column } from "@/components/tables/DataTable";
 import { BarChart } from "@/components/charts/BarChart";
-import Invoices from "./Invoices";
+import Link from "next/link";
 
 type Summary = { mrr: number; arr: number; at_risk_mrr: number; active: number; trial: number; past_due: number };
 type PlanRow = { plan: string; tenants: number; mrr: number };
@@ -61,7 +61,13 @@ export default function BillingPage() {
       <h2 className="mb-3 text-sm font-semibold text-slate-700">Συνεισφορά MRR ανά tenant</h2>
       {isLoading ? <div className="text-slate-400">Φόρτωση…</div> : <DataTable pageSize={20} columns={tenantColumns} rows={data?.tenants ?? []} rowKey={(r) => r.tenant} />}
 
-      <Invoices />
+      <div className="mt-8 flex items-center justify-between rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+        <div>
+          <div className="text-sm font-semibold text-slate-700">Παραστατικά</div>
+          <div className="text-xs text-slate-500">Τα παραστατικά (έκδοση & ενημέρωση SoftOne/myDATA) μεταφέρθηκαν σε ξεχωριστή σελίδα.</div>
+        </div>
+        <Link href="/admin/invoices" className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700">Άνοιγμα Παραστατικών →</Link>
+      </div>
     </div>
   );
 }
