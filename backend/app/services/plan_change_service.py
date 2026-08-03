@@ -99,12 +99,22 @@ async def request_change(tenant_id: str, plan: str, *, method: str | None = None
     sub, pkg, yearly, kind, new_price = c["sub"], c["pkg"], c["yearly"], c["kind"], c["new_price"]
     cycle = sub.get("billing_cycle", "monthly")
     plan_name = pkg.get("name") or plan
-    # καθαρή τιμή πλάνου → χρεώσιμο ΜΕ ΦΠΑ (αν καθαρές). new_price=καθαρή (σύγκριση/εμφάνιση), charge_amount=gross.
     from app.services.invoice_service import gross_from_price
     tenant = await db["tenants"].find_one({"_id": tenant_id}) or {}
-    charge_amount = gross_from_price(new_price, bool(pkg.get("price_includes_vat")), tenant.get("country"))
+    # ── ΑΝΑΛΟΓΙΚΗ (prorated) χρέωση upgrade: μόνο η ΔΙΑΦΟΡΑ για τους εναπομείναντες μήνες ──
+    # Η περίοδος ΔΕΝ αλλάζει (αναβάθμιση για το υπόλοιπο)· στην ανανέωση χρεώνεται η πλήρης νέα τιμή.
+    now = _now()
+    period_end = sub.get("current_period_end")
+    period_days = 365 if yearly else 30
+    remaining_days = max(0, (period_end - now).days) if period_end else period_days
+    remaining_frac = min(1.0, max(0.0, remaining_days / period_days))
+    # καθαρή διαφορά (νέο − τρέχον) × αναλογία υπολοίπου· ό,τι πλήρωσε ήδη πιστώνεται
+    prorated_net = max(0, round((new_price - int(c["current_price"] or 0)) * remaining_frac))
+    charge_base = prorated_net if kind == "upgrade" else new_price
+    charge_amount = gross_from_price(charge_base, bool(pkg.get("price_includes_vat")), tenant.get("country"))
     base = {"plan": plan, "plan_name": plan_name, "kind": kind, "billing_cycle": cycle,
-            "new_price": new_price, "charge_amount": charge_amount, "requested_at": _now(), "requested_by": by_email}
+            "new_price": new_price, "charge_amount": charge_amount, "prorated": kind == "upgrade",
+            "remaining_days": remaining_days, "requested_at": now, "requested_by": by_email}
 
     # ── DOWNGRADE — schedule at period end / yearly renewal, no payment ──
     if kind == "downgrade":
@@ -207,10 +217,10 @@ async def apply_change(tenant_id: str, *, source: str = "system") -> dict:
                                       "from": sub.get("plan"), "to": pend["plan"]}}
     if pkg.get("sla"):
         upd["sla"] = pkg["sla"]
-    # An upgrade is paid now → start a fresh paid period + mark active. A downgrade rolls at the
-    # existing period boundary (bill_due advances the period), so we don't touch current_period_end.
+    # Upgrade = αναλογική χρέωση διαφοράς για το ΥΠΟΛΟΙΠΟ της περιόδου → ΔΕΝ αλλάζει το renewal date
+    # (στην ανανέωση χρεώνεται η πλήρης νέα τιμή, ήδη αποθηκευμένη στο price_per_pharmacy). Downgrade:
+    # κυλάει στο όριο περιόδου (bill_due), οπότε ούτε εκεί αγγίζουμε το current_period_end.
     if pend.get("kind") == "upgrade":
-        upd["current_period_end"] = _period_end(sub.get("billing_cycle", "monthly"), _now())
         upd["status"] = "active"
         upd["payment_status"] = "active"
     await db["subscriptions"].update_one({"tenant_id": tenant_id},

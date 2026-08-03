@@ -149,13 +149,34 @@ async def register_complete(body: CompleteIn):
 @router.get("/packages",
             dependencies=[Depends(rate_limit("onboarding_packages", limit=60, window_seconds=600))])
 async def public_packages():
-    """Active subscription packages + active SLA tiers for the public /register wizard. Only
-    `active` items are exposed, so deactivated packages are never offered to new customers."""
+    """Active subscription packages + active SLA tiers for the public /register wizard & Lovable
+    pricing page. Only `active` items are exposed. Στέλνει ΜΟΝΟ τους διαθέσιμους κύκλους χρέωσης
+    (billing_cycles): αν ένα πακέτο είναι μόνο ετήσιο → μόνο η ετήσια τιμή (όχι μηνιαία), ώστε η
+    σελίδα να δείχνει μόνο ό,τι χρειάζεται."""
     from app.core.db import shared_db
     from app.repositories.base import jsonsafe
     db = shared_db()
     flt = {"$or": [{"active": {"$ne": False}}, {"active": {"$exists": False}}]}
-    pkgs = [p async for p in db["packages"].find(flt).sort("price_monthly", 1)]
+
+    def _public_pkg(p: dict) -> dict:
+        cycles = [c for c in (p.get("billing_cycles") or ["monthly", "yearly"]) if c in ("monthly", "yearly")] or ["monthly", "yearly"]
+        out = {
+            "_id": p["_id"], "name": p.get("name"), "description": p.get("description"),
+            "seats": p.get("seats"), "trial_days": p.get("trial_days"), "sla": p.get("sla"),
+            "modules": p.get("modules", []), "features": p.get("features", []),
+            "available_addons": p.get("available_addons", []),
+            "billing_cycles": cycles, "price_includes_vat": bool(p.get("price_includes_vat")),
+        }
+        # μόνο οι τιμές των προσφερόμενων κύκλων (+ τιμή επιπλέον χρήστη αντίστοιχα)
+        if "monthly" in cycles:
+            out["price_monthly"] = int(p.get("price_monthly") or 0)
+            out["extra_user_price"] = int(p.get("extra_user_price") or 0)
+        if "yearly" in cycles:
+            out["price_yearly"] = int(p.get("price_yearly") or 0)
+            out["extra_user_price_yearly"] = int(p.get("extra_user_price_yearly") or 0)
+        return out
+
+    pkgs = [_public_pkg(p) async for p in db["packages"].find(flt).sort("price_monthly", 1)]
     sla = [s async for s in db["sla_tiers"].find(flt).sort("response_hours", 1)]
     from app.services import addon_service
     addons = await addon_service.catalog(active_only=True)   # à-la-carte add-ons for the pricing page

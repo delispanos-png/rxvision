@@ -16,7 +16,7 @@ type Company = {
 type Admin = { full_name: string; email: string; password: string };
 type RegisterResponse = { access_token: string; refresh_token: string; tenant_id: string };
 type Aade = { ok: boolean; error?: string; name?: string; title?: string; doy?: string; address?: string; postal_code?: string; city?: string; active?: boolean };
-type Pkg = { _id: string; name?: string; description?: string; price_monthly?: number; price_yearly?: number; trial_days?: number; seats?: number; sla?: string; extra_user_price?: number; extra_user_price_yearly?: number; modules?: string[]; available_addons?: string[]; billing_cycles?: string[] };
+type Pkg = { _id: string; name?: string; description?: string; price_monthly?: number; price_yearly?: number; price_includes_vat?: boolean; trial_days?: number; seats?: number; sla?: string; extra_user_price?: number; extra_user_price_yearly?: number; modules?: string[]; available_addons?: string[]; billing_cycles?: string[] };
 type Sla = { _id: string; name?: string; description?: string; response_hours?: number; channels?: string; price_monthly?: number; price_yearly?: number };
 type Addon = { _id: string; name?: string; description?: string; icon?: string; price_monthly?: number; price_yearly?: number; features?: string[] };
 
@@ -106,8 +106,14 @@ export default function RegisterWizard() {
   const availAddons = addonCat.filter((a) => pkgAddonIds.includes(a._id) && !(pkg?.modules ?? []).includes(a._id));
   const addonsTotal = availAddons.filter((a) => selAddons.includes(a._id))
     .reduce((s, a) => s + ((yearly ? a.price_yearly : a.price_monthly) ?? 0), 0);
-  const price = basePrice + slaPrice + extraTotal + addonsTotal;   // full subscription value
+  const price = basePrice + slaPrice + extraTotal + addonsTotal;   // καθαρό σύνολο (αν οι τιμές είναι καθαρές)
   const isTrial = price === 0;   // δωρεάν trial πακέτο (μηδενικό κόστος) → καμία πληρωμή
+  // ΦΠΑ: οι τιμές πακέτων είναι καθαρές → προσθέτουμε ΦΠΑ χώρας· η ΤΕΛΙΚΗ τιμή (gross) χρεώνεται στην κάρτα
+  const vatRate = company.country === "CY" ? 19 : 24;
+  const incVat = !!pkg?.price_includes_vat;
+  const grossPrice = incVat ? price : Math.round(price * (1 + vatRate / 100));
+  const netPrice = incVat ? Math.round(price / (1 + vatRate / 100)) : price;
+  const vatAmount = grossPrice - netPrice;
   // when the package changes: default seats to 1 (base), drop add-ons now bundled in the plan,
   // and switch the billing cycle if not offered. Ο πελάτης ανεβάζει έξτρα χρήστες χειροκίνητα (χρεώσιμοι).
   useEffect(() => { setSeats(1); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [pkgCode]);
@@ -354,7 +360,7 @@ export default function RegisterWizard() {
                           <button key={p._id} type="button" onClick={() => choosePkg(p._id)} className={`rounded-xl border-2 p-4 text-left transition ${sel ? "border-brand-400 bg-brand-50/50" : "border-slate-200 hover:border-slate-300"}`}>
                             <div className="flex items-center justify-between"><div className="font-semibold text-slate-900">{p.name || p._id}</div>{sel && <Check className="h-4 w-4 text-brand-600" />}</div>
                             {p.description && <div className="mt-0.5 text-xs text-slate-500">{p.description}</div>}
-                            <div className="mt-2 text-xl font-bold text-brand-700">{eur(pp)}<span className="text-xs font-normal text-slate-400">/{billing === "yearly" ? "έτος" : "μήνα"}</span></div>
+                            <div className="mt-2 text-xl font-bold text-brand-700">{eur(pp)}<span className="text-xs font-normal text-slate-400">/{billing === "yearly" ? "έτος" : "μήνα"}{p.price_includes_vat ? "" : " + ΦΠΑ"}</span></div>
                             {(p.trial_days ?? 0) > 0 && <div className="mt-1 text-[11px] text-emerald-600">✓ {p.trial_days} ημέρες δωρεάν δοκιμή</div>}
                           </button>
                         );
@@ -429,7 +435,13 @@ export default function RegisterWizard() {
                     {availAddons.filter((a) => selAddons.includes(a._id)).map((a) => (
                       <div key={a._id} className="flex justify-between"><dt className="text-slate-600">{a.icon} {a.name}</dt><dd className="font-medium text-slate-800">{eur((yearly ? a.price_yearly : a.price_monthly) ?? 0)}</dd></div>
                     ))}
-                    <div className="mt-1 flex justify-between border-t border-slate-200 pt-2 text-base"><dt className="font-semibold text-slate-900">Σύνολο</dt><dd className="font-bold text-brand-700">{eur(price)}<span className="text-xs font-normal text-slate-400">/{per}</span></dd></div>
+                    {!isTrial && (
+                      <>
+                        <div className="flex justify-between border-t border-slate-200 pt-2"><dt className="text-slate-600">Καθαρή αξία</dt><dd className="font-medium text-slate-800">{eur(netPrice)}</dd></div>
+                        <div className="flex justify-between"><dt className="text-slate-600">Φ.Π.Α {vatRate}%</dt><dd className="font-medium text-slate-800">{eur(vatAmount)}</dd></div>
+                      </>
+                    )}
+                    <div className="mt-1 flex justify-between border-t border-slate-200 pt-2 text-base"><dt className="font-semibold text-slate-900">Τελική τιμή</dt><dd className="font-bold text-brand-700">{eur(isTrial ? 0 : grossPrice)}<span className="text-xs font-normal text-slate-400">/{per}</span></dd></div>
                   </dl>
                 </div>
               </div>
@@ -473,7 +485,7 @@ export default function RegisterWizard() {
                   <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-700">Δεν υπάρχει διαθέσιμος τρόπος πληρωμής αυτή τη στιγμή — επικοινώνησε μαζί μας.</div>
                 )}
                 <div className="rounded-xl bg-brand-50/60 p-3 text-xs text-brand-800">
-                  <b>Σύνοψη:</b> {company.title || company.name || "—"} · {pkg?.name || pkgCode} · {yearly ? "ετήσια" : "μηνιαία"} · {seats} χρήστες · SLA: {slaObj?.name || sla || "—"} · <b>Πληρωτέο τώρα: {eur(price)}</b>
+                  <b>Σύνοψη:</b> {company.title || company.name || "—"} · {pkg?.name || pkgCode} · {yearly ? "ετήσια" : "μηνιαία"} · {seats} χρήστες · SLA: {slaObj?.name || sla || "—"} · <b>Πληρωτέο τώρα: {eur(isTrial ? 0 : grossPrice)}</b> (με ΦΠΑ)
                 </div>
                 {payMethod === "card" && payChoice && (
                   <div className="rounded-xl border border-slate-200 p-3 text-xs text-slate-500">Θα μεταφερθείς σε ασφαλές περιβάλλον {cardProviderName} για την πληρωμή <b>{eur(price)}</b>. Μόλις ολοκληρωθεί, επιστρέφεις για να ορίσεις τον κωδικό σου.</div>
