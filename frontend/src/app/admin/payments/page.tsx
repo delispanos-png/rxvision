@@ -62,7 +62,7 @@ export default function PaymentsSettingsPage() {
 
   const s = status.data;
   return (
-    <div className="max-w-5xl space-y-6">
+    <div className="w-full space-y-6">
       <div>
         <h1 className="flex items-center gap-2 text-2xl font-bold text-slate-900"><Wallet className="h-6 w-6 text-brand-600" /> Τρόποι πληρωμής</h1>
         <p className="mt-1 text-sm text-slate-500">Πάροχοι πληρωμών (Revolut, <b>Viva — κάρτα/IRIS</b>, Alpha Bank), ενεργοί τρόποι πληρωμής, τραπεζικός λογαριασμός κατάθεσης & τιμές συνδρομής. Τα διαπιστευτήρια αποθηκεύονται κρυπτογραφημένα.</p>

@@ -169,7 +169,7 @@ export default function TenantCardPage() {
   const t = data.tenant, s = data.subscription;
 
   return (
-    <div className="max-w-6xl">
+    <div className="w-full">
       <Link href="/admin/subscribers" className="mb-4 inline-block text-sm text-indigo-700 hover:underline">← Πίσω στους συνδρομητές</Link>
       <div className="mb-6 flex items-center justify-between">
         <h1 className="text-xl font-bold text-slate-900">{t.name}</h1>

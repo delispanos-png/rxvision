@@ -36,7 +36,7 @@ export default function PlanChangesPage() {
   const others = rows.filter((r) => !(r.method === "bank" && r.status === "awaiting_payment"));
 
   return (
-    <div className="max-w-5xl space-y-6">
+    <div className="w-full space-y-6">
       <div>
         <h1 className="text-xl font-bold text-slate-900">Αιτήματα αναβάθμισης πλάνου</h1>
         <p className="mt-1 text-sm text-slate-500">Αναβαθμίσεις με τραπεζική κατάθεση προς έγκριση, και όλες οι εκκρεμείς αλλαγές πλάνου. Ο τραπεζικός λογαριασμός ρυθμίζεται στο <Link href="/admin/payments" className="text-brand-600 hover:underline">Τρόποι πληρωμής</Link>.</p>

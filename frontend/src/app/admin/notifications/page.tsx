@@ -57,7 +57,7 @@ export default function NotificationsPage() {
   );
 
   return (
-    <div className="max-w-4xl">
+    <div className="w-full">
       <h1 className="text-2xl font-bold text-slate-900">Ειδοποιήσεις φαρμακείου</h1>
       <p className="mt-1 text-sm text-slate-500">Καθολικές ρυθμίσεις — ισχύουν για <b>όλους τους συνδρομητές</b> με την ίδια συνθήκη.</p>
 

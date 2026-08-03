@@ -50,7 +50,7 @@ export default function SmtpPage() {
   const ssl465 = Number(form.port) === 465;
   const inp = "w-full rounded-lg border border-slate-300 px-3 py-2 focus:border-indigo-500 focus:outline-none";
   return (
-    <div className="max-w-4xl">
+    <div className="w-full">
       <h1 className="mb-6 text-xl font-bold text-slate-900">Ρυθμίσεις SMTP</h1>
       {notice && <div className="mb-4 rounded-lg bg-slate-100 px-4 py-2 text-sm text-slate-700">{notice}</div>}
       <form onSubmit={save} className="space-y-4 rounded-xl border border-slate-200 bg-white p-6">

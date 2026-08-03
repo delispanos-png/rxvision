@@ -29,7 +29,7 @@ export default function AdminPendingPage() {
   const rows = q.data?.items ?? [];
 
   return (
-    <div className="mx-auto max-w-5xl px-4 py-6">
+    <div className="w-full px-4 py-6">
       <div className="mb-1 flex items-center gap-2"><Clock className="h-6 w-6 text-brand-600" /><h1 className="text-xl font-bold text-slate-900">Εκκρεμείς εγγραφές</h1></div>
       <p className="mb-5 text-sm text-slate-500">Εγγραφές που <b>πλήρωσαν αλλά δεν όρισαν κωδικό</b> (ή εκκρεμεί πληρωμή). Ξαναστείλε το link ολοκλήρωσης για να μη χαθεί ο πελάτης.</p>
 

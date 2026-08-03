@@ -24,7 +24,7 @@ export default function MaintenancePage() {
   }
 
   return (
-    <div className="max-w-4xl">
+    <div className="w-full">
       <h1 className="mb-6 text-xl font-bold text-slate-900">Συντήρηση</h1>
       {notice && <div className="mb-4 rounded-lg bg-slate-100 px-4 py-2 text-sm text-slate-700">{notice}</div>}
 

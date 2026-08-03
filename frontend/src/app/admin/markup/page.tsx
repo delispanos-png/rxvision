@@ -39,7 +39,7 @@ export default function MarkupConfigPage() {
   }
 
   return (
-    <div className="max-w-4xl">
+    <div className="w-full">
       <div className="mb-1 flex items-center gap-2">
         <Percent className="h-5 w-5 text-brand-600" />
         <h1 className="text-xl font-bold text-slate-900">Διατίμηση — Κλιμακωτό μεικτό κέρδος φαρμακείου</h1>

@@ -99,7 +99,7 @@ export default function PharmaCatKbPage() {
   const items = list.data?.items ?? [];
 
   return (
-    <div className="mx-auto max-w-5xl">
+    <div className="w-full">
       <div className="mb-1 flex items-center gap-2 text-xl font-semibold text-slate-800">
         <Brain className="h-6 w-6 text-brand-600" /> PharmaCat — Βάση γνώσης
       </div>

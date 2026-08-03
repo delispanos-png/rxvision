@@ -57,7 +57,7 @@ export default function DataRetentionPage() {
   const totalMb = rows.reduce((s, r) => s + r.mb, 0);
 
   return (
-    <div className="max-w-6xl">
+    <div className="w-full">
       <h1 className="mb-1 flex items-center gap-2 text-xl font-bold text-slate-900"><Database className="h-5 w-5 text-indigo-600" /> Διατήρηση δεδομένων</h1>
       <p className="mb-4 text-sm text-slate-500">
         Κυλιόμενο παράθυρο <b>ανά φαρμακείο</b>. Βασικό: <b>{data?.default_months ?? 36} μήνες</b> (χωρίς χρέωση). Μεγαλύτερο = πρόσθετη υπηρεσία.

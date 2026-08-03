@@ -184,7 +184,7 @@ export default function PackagesAdminPage() {
   }
 
   return (
-    <div className="max-w-5xl">
+    <div className="w-full">
       <div className="mb-6 flex items-center gap-3">
         <span className="grid h-11 w-11 place-items-center rounded-2xl bg-gradient-to-br from-indigo-500 to-violet-600 text-white shadow-lg"><Boxes className="h-6 w-6" /></span>
         <div>

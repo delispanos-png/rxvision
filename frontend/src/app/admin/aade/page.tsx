@@ -21,7 +21,7 @@ export default function AadeSettingsPage() {
   });
   const s = status.data;
   return (
-    <div className="max-w-5xl space-y-6">
+    <div className="w-full space-y-6">
       <div>
         <h1 className="flex items-center gap-2 text-2xl font-bold text-slate-900"><Landmark className="h-6 w-6 text-brand-600" /> ΑΑΔΕ</h1>
         <p className="mt-1 text-sm text-slate-500">Διαπιστευτήρια ΑΑΔΕ (RgWsPublic2) για auto-fill στοιχείων επιχείρησης κατά την εγγραφή. Αποθηκεύονται κρυπτογραφημένα — δεν εμφανίζονται ξανά, δεν μπαίνουν σε git/logs.</p>

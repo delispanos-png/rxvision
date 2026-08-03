@@ -71,7 +71,7 @@ export default function IdikaConfigPage() {
   ) : null;
 
   return (
-    <div className="max-w-5xl">
+    <div className="w-full">
       <h1 className="mb-2 text-xl font-bold text-slate-900">Διασύνδεση ΗΔΥΚΑ</h1>
       <p className="mb-6 text-sm text-slate-500">
         Στο <b>production</b> κάθε φαρμακείο είναι αυτόνομη οντότητα: χρησιμοποιεί τα <b>δικά του</b> username/password/

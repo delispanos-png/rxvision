@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { adminApi } from "@/lib/adminClient";
-import { Receipt, Check, Loader2, PlugZap } from "lucide-react";
+import { Receipt, Check, Loader2, PlugZap, Boxes } from "lucide-react";
 
 type S1 = {
   base_url?: string; app_id?: string; username?: string; password_set?: boolean;
@@ -53,10 +53,11 @@ export default function AdminSoftonePage() {
   });
 
   return (
-    <div className="mx-auto max-w-3xl px-4 py-6">
+    <div className="w-full">
       <div className="mb-1 flex items-center gap-2"><Receipt className="h-6 w-6 text-brand-600" /><h1 className="text-xl font-bold text-slate-900">SoftOne / myDATA</h1></div>
       <p className="mb-5 text-sm text-slate-500">Διαπιστευτήρια SoftOne για έκδοση παραστατικών & διαβίβαση στο myDATA. Τα δεδομένα αποθηκεύονται κρυπτογραφημένα. {s1?.configured && <span className="ml-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">ρυθμισμένο</span>}</p>
 
+      <div className="grid gap-6 xl:grid-cols-2 xl:items-start">
       <div className="space-y-5 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
         <div className="grid gap-4 sm:grid-cols-2">
           <div className="sm:col-span-2"><label className={lbl}>Base URL (S1 Web Services)</label><input className={inp} value={f.base_url} onChange={(e) => set("base_url", e.target.value)} placeholder="https://<host>/s1services" /></div>
@@ -105,6 +106,7 @@ export default function AdminSoftonePage() {
         </div>
       </div>
       <MtrlMap />
+      </div>
     </div>
   );
 }
@@ -129,10 +131,13 @@ function MtrlMap() {
   const items = q.data?.items ?? [];
   const groups = Array.from(new Set(items.map((i) => i.group)));
   return (
-    <div className="mt-6 space-y-4 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-      <div>
-        <h2 className="text-lg font-bold text-slate-900">Αντιστοίχιση ειδών → SoftOne (MTRL)</h2>
-        <p className="text-sm text-slate-500">Κάθε τιμολογήσιμο είδος (συνδρομές, credits μηνυμάτων, add-ons, extras) χρειάζεται τον <b>κωδικό είδους (MTRL)</b> του SoftOne για να καταχωρηθεί σωστά το παραστατικό. Το <b>Default</b> χρησιμοποιείται όπου δεν έχει οριστεί ειδικό — ώστε να μη σπάει ποτέ η έκδοση.</p>
+    <div className="space-y-4 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+      <div className="flex items-start gap-2">
+        <Boxes className="mt-0.5 h-5 w-5 shrink-0 text-brand-600" />
+        <div>
+          <h2 className="text-lg font-bold text-slate-900">Είδη SoftOne (MTRL)</h2>
+          <p className="text-sm text-slate-500">Κάθε τιμολογήσιμο είδος (συνδρομές, credits μηνυμάτων, add-ons, extras) χρειάζεται τον <b>κωδικό είδους (MTRL)</b> του SoftOne για να καταχωρηθεί σωστά το παραστατικό. Το <b>Default</b> χρησιμοποιείται όπου δεν έχει οριστεί ειδικό — ώστε να μη σπάει ποτέ η έκδοση.</p>
+        </div>
       </div>
       {q.isLoading ? <div className="text-slate-400">Φόρτωση…</div> : items.length === 0 ? <div className="text-sm text-slate-400">Δεν βρέθηκαν είδη.</div> : (
         <>

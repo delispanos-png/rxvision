@@ -76,7 +76,7 @@ export default function AdminFeedbackPage() {
   const items = q.data?.items || [];
   const answered = items.filter((f) => f.status === "submitted").length;
   return (
-    <div className="mx-auto max-w-4xl px-4 py-6">
+    <div className="w-full px-4 py-6">
       <div className="mb-1 flex items-center gap-2"><MessageSquare className="h-6 w-6 text-brand-600" /><h1 className="text-xl font-bold text-slate-900">Αξιολογήσεις δοκιμαστικών</h1></div>
       <p className="mb-5 text-sm text-slate-500">Φαρμακεία με ληγμένο trial που δεν ανανέωσαν — γνώμες & χειροκίνητα εκπτωτικά coupons. <b>{answered}</b>/{items.length} απαντήθηκαν.</p>
       {q.isLoading ? <div className="grid place-items-center py-20"><Loader2 className="h-8 w-8 animate-spin text-brand-600" /></div>

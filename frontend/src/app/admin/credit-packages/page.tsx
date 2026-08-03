@@ -210,7 +210,7 @@ export default function MessagesCreditsAdminPage() {
   );
 
   return (
-    <div className="max-w-6xl space-y-4">
+    <div className="w-full space-y-4">
       <div>
         <h1 className="flex items-center gap-2 text-xl font-bold text-slate-900"><MessageSquare className="h-5 w-5 text-indigo-600" /> Μηνύματα & Credits</h1>
         <p className="text-sm text-slate-500">Ρυθμίσεις ανά υπηρεσία, κατανάλωση ανά φαρμακείο και το δικό μας υπόλοιπο στην Apifon.</p>
