@@ -6,7 +6,7 @@ import { DateInput } from "@/components/ui/DateInput";
 import { useState, useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { adminApi, ApiError } from "@/lib/adminClient";
-import { fmtEur, fmtDate, fmtMoney } from "@/lib/formatters";
+import { fmtEur, fmtDate } from "@/lib/formatters";
 import { DataTable, type Column } from "@/components/tables/DataTable";
 import { Modal } from "@/components/ui/Modal";
 import { Receipt, Send, CheckCircle2, Clock, AlertTriangle, Ban, Plus, Trash2 } from "lucide-react";
@@ -158,11 +158,14 @@ type DraftLine = { item_key: string; description: string; mtrl: string; qty: str
 const emptyLine = (): DraftLine => ({ item_key: "", description: "", mtrl: "", qty: "1", unit_eur: "", vat_rate: "24", disc_kind: "pct", disc_value: "", period: "month" });
 // καθαρή τιμή μονάδας (€) από την τιμή ΜΕ ΦΠΑ του είδους, για τη ζητούμενη περίοδο
 const unitEurFor = (it: SoftoneItem | undefined, period: "month" | "year", rate: number) => {
-  const gross = it ? (period === "year" ? (it.price_yearly || 0) : (it.price || 0)) : 0;
-  return gross ? fmtMoney(Math.round(gross / (1 + rate / 100))) : "";
+  // ετήσια: ρητή τιμή έτους· αν λείπει → 12× μηνιαία (ώστε να συμπληρώνεται πάντα)
+  const gross = it ? (period === "year" ? (it.price_yearly || (it.price || 0) * 12) : (it.price || 0)) : 0;
+  return gross ? eurInput(Math.round(gross / (1 + rate / 100))) : "";
 };
 const eur = (c: number) => fmtEur(c);
 const num = (s: string) => parseFloat(s || "0") || 0;
+// cents → τιμή για <input type="number"> (dot-decimal, ΧΩΡΙΣ διαχωριστικά χιλιάδων — αλλιώς το input μένει κενό)
+const eurInput = (cents?: number | null) => (Math.round(cents || 0) / 100).toFixed(2);
 // έκπτωση σε cents (δεν ξεπερνά τη βάση). pct=ποσοστό· amount=€ (→cents)
 const discCents = (base: number, kind: "pct" | "amount", value: number) => {
   if (value <= 0 || base <= 0) return 0;
@@ -192,8 +195,8 @@ function InvoiceModal({ modal, tenants, onClose, onDone }:
 
   // γραμμές: από inv.lines → αλλιώς (legacy μονή αξία) μία γραμμή → αλλιώς (create) μία κενή
   const [lines, setLines] = useState<DraftLine[]>(() => {
-    if (inv?.lines?.length) return inv.lines.map((l) => ({ item_key: l.item_key || "", description: l.description || "", mtrl: l.mtrl || "", qty: String(l.qty ?? 1), unit_eur: fmtMoney(l.unit_net ?? 0), vat_rate: String(l.vat_rate ?? 24), disc_kind: (l.disc_kind === "amount" ? "amount" : "pct") as "pct" | "amount", disc_value: l.disc_value ? (l.disc_kind === "amount" ? fmtMoney(l.disc_value) : String(l.disc_value)) : "", period: "month" as const }));
-    if (inv) return [{ item_key: "", description: inv.description || "", mtrl: inv.mtrl || "", qty: "1", unit_eur: fmtMoney(inv.net_amount || 0), vat_rate: String(inv.vat_rate ?? 24), disc_kind: "pct" as const, disc_value: "", period: "month" as const }];
+    if (inv?.lines?.length) return inv.lines.map((l) => ({ item_key: l.item_key || "", description: l.description || "", mtrl: l.mtrl || "", qty: String(l.qty ?? 1), unit_eur: eurInput(l.unit_net), vat_rate: String(l.vat_rate ?? 24), disc_kind: (l.disc_kind === "amount" ? "amount" : "pct") as "pct" | "amount", disc_value: l.disc_value ? (l.disc_kind === "amount" ? eurInput(l.disc_value) : String(l.disc_value)) : "", period: "month" as const }));
+    if (inv) return [{ item_key: "", description: inv.description || "", mtrl: inv.mtrl || "", qty: "1", unit_eur: eurInput(inv.net_amount), vat_rate: String(inv.vat_rate ?? 24), disc_kind: "pct" as const, disc_value: "", period: "month" as const }];
     return [emptyLine()];
   });
   // παλιές γραμμές χωρίς item_key → match με βάση MTRL ή όνομα (μία φορά, όταν φορτώσει η λίστα)
@@ -227,7 +230,7 @@ function InvoiceModal({ modal, tenants, onClose, onDone }:
   };
   // έκπτωση συνόλου
   const [hdiscKind, setHdiscKind] = useState<"pct" | "amount">(inv?.discount?.kind === "amount" ? "amount" : "pct");
-  const [hdiscValue, setHdiscValue] = useState<string>(inv?.discount?.value ? (inv.discount.kind === "amount" ? fmtMoney(inv.discount.value) : String(inv.discount.value)) : "");
+  const [hdiscValue, setHdiscValue] = useState<string>(inv?.discount?.value ? (inv.discount.kind === "amount" ? eurInput(inv.discount.value) : String(inv.discount.value)) : "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -401,7 +404,11 @@ function InvoiceModal({ modal, tenants, onClose, onDone }:
                           <select disabled={view} value={l.disc_kind} onChange={(e) => setLine(i, { disc_kind: e.target.value as "pct" | "amount" })} className={`${cell} px-1`}><option value="pct">%</option><option value="amount">€</option></select>
                         </div>
                       </td>
-                      <td className="px-2 py-1.5"><input disabled={view} value={l.vat_rate} onChange={(e) => setLine(i, { vat_rate: e.target.value })} type="number" step="any" className={`${cell} w-full text-right`} /></td>
+                      <td className="px-2 py-1.5">
+                        <select disabled={view} value={l.vat_rate} onChange={(e) => setLine(i, { vat_rate: e.target.value })} className={`${cell} w-full text-right`}>
+                          {Array.from(new Set(["24", "13", "6", "0", l.vat_rate])).map((r) => <option key={r} value={r}>{r}%</option>)}
+                        </select>
+                      </td>
                       <td className="px-2 py-1.5 text-right font-medium text-slate-700">{eur(c.net)}</td>
                       {!view && <td className="px-2 py-1.5 text-center"><button type="button" onClick={() => rmLine(i)} className="text-slate-400 hover:text-rose-600" aria-label="Διαγραφή γραμμής"><Trash2 className="h-4 w-4" /></button></td>}
                     </tr>
