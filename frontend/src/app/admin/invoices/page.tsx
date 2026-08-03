@@ -9,7 +9,7 @@ import { adminApi, ApiError } from "@/lib/adminClient";
 import { fmtEur, fmtDate, fmtMoney } from "@/lib/formatters";
 import { DataTable, type Column } from "@/components/tables/DataTable";
 import { Modal } from "@/components/ui/Modal";
-import { Receipt, Send, CheckCircle2, Clock, AlertTriangle, Ban } from "lucide-react";
+import { Receipt, Send, CheckCircle2, Clock, AlertTriangle, Ban, Plus, Trash2 } from "lucide-react";
 
 type Invoice = {
   id: string; tenant_id: string; tenant_name: string | null; doc_type: string; series: string;
@@ -20,7 +20,10 @@ type Invoice = {
   status?: "pending" | "blocked" | "issued" | "failed"; blocked_reason?: string | null;
   softone_findoc?: string | null; mydata_aa?: string | null;
   attempts?: number; last_error?: string | null; auto?: boolean; kind?: string | null;
+  customer?: InvCustomer | null; lines?: InvLine[] | null; mtrl?: string | null;
 };
+type InvLine = { description: string; mtrl?: string | null; qty: number; unit_net: number; vat_rate: number; net: number; vat: number; total: number };
+type InvCustomer = { afm?: string; name?: string; doy?: string; address?: string; city?: string; zip?: string; country?: string; email?: string; phone?: string };
 type Tenant = { id: string; name: string };
 
 /** Είναι ενημερωμένο το SoftOne; (findoc ή διαβίβαση ΑΑΔΕ ολοκληρωμένη) */
@@ -148,6 +151,17 @@ export default function InvoicesPage() {
   );
 }
 
+type DraftLine = { description: string; mtrl: string; qty: string; unit_eur: string; vat_rate: string };
+const emptyLine = (): DraftLine => ({ description: "", mtrl: "", qty: "1", unit_eur: "", vat_rate: "24" });
+const eur = (c: number) => fmtEur(c);
+const lineCents = (l: DraftLine) => {
+  const unit = Math.round((parseFloat(l.unit_eur || "0") || 0) * 100);
+  const qty = parseFloat(l.qty || "1") || 1;
+  const net = Math.round(qty * unit);
+  const vat = Math.round(net * ((parseFloat(l.vat_rate || "0") || 0) / 100));
+  return { net, vat, total: net + vat };
+};
+
 function InvoiceModal({ modal, tenants, onClose, onDone }:
   { modal: { mode: "create" | "edit" | "view"; inv?: Invoice }; tenants: Tenant[]; onClose: () => void; onDone: (msg: string) => void }) {
   const { mode, inv } = modal;
@@ -156,69 +170,158 @@ function InvoiceModal({ modal, tenants, onClose, onDone }:
     tenant_id: inv?.tenant_id ?? tenants[0]?.id ?? "",
     doc_type: inv?.doc_type ?? "ΤΠΥ", series: inv?.series ?? "Α",
     issue_date: inv?.issue_date ?? new Date().toISOString().slice(0, 10),
-    description: inv?.description ?? "",
-    net_eur: inv ? fmtMoney(inv.net_amount) : "", vat_rate: String(inv?.vat_rate ?? 24),
+  });
+  // γραμμές: από inv.lines → αλλιώς (legacy μονή αξία) μία γραμμή → αλλιώς (create) μία κενή
+  const [lines, setLines] = useState<DraftLine[]>(() => {
+    if (inv?.lines?.length) return inv.lines.map((l) => ({ description: l.description || "", mtrl: l.mtrl || "", qty: String(l.qty ?? 1), unit_eur: fmtMoney(l.unit_net ?? 0), vat_rate: String(l.vat_rate ?? 24) }));
+    if (inv) return [{ description: inv.description || "", mtrl: inv.mtrl || "", qty: "1", unit_eur: fmtMoney(inv.net_amount || 0), vat_rate: String(inv.vat_rate ?? 24) }];
+    return [emptyLine()];
   });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const net = Math.round(parseFloat(form.net_eur || "0") * 100);
-  const vat = Math.round(net * (parseFloat(form.vat_rate || "0") / 100));
+  // Header: εκδότης (από ρυθμίσεις SoftOne) + λήπτης (snapshot του παραστατικού ή στοιχεία πελάτη)
+  const issuerQ = useQuery({ queryKey: ["admin", "integrations", "issuer"], queryFn: () => adminApi<{ softone?: { issuer_afm?: string; issuer_name?: string } }>("/admin/integrations"), retry: false, staleTime: 60000 });
+  const issuer = issuerQ.data?.softone;
+  const tenantDetailQ = useQuery({
+    queryKey: ["admin", "tenant", form.tenant_id, "billing"],
+    queryFn: () => adminApi<{ tenant?: { name?: string; billing_profile?: InvCustomer & { postal_code?: string }; company?: InvCustomer & { postal_code?: string } } }>(`/admin/tenants/${encodeURIComponent(form.tenant_id)}`),
+    enabled: !inv?.customer && !!form.tenant_id, retry: false,
+  });
+  const fetched = tenantDetailQ.data?.tenant;
+  const cust: InvCustomer = inv?.customer ?? (fetched ? {
+    name: fetched.billing_profile?.name || fetched.company?.name || fetched.name,
+    afm: fetched.billing_profile?.afm || fetched.company?.afm,
+    doy: fetched.billing_profile?.doy || fetched.company?.doy,
+    address: fetched.billing_profile?.address || fetched.company?.address,
+    city: fetched.billing_profile?.city || fetched.company?.city,
+    zip: fetched.billing_profile?.postal_code || fetched.company?.postal_code,
+  } : { name: tenants.find((t) => t.id === form.tenant_id)?.name });
+
+  const totals = view && inv && !inv.lines
+    ? { net: inv.net_amount, vat: inv.vat_amount, total: inv.total }
+    : lines.reduce((a, l) => { const c = lineCents(l); return { net: a.net + c.net, vat: a.vat + c.vat, total: a.total + c.total }; }, { net: 0, vat: 0, total: 0 });
+
+  const setLine = (i: number, patch: Partial<DraftLine>) => setLines((ls) => ls.map((l, j) => (j === i ? { ...l, ...patch } : l)));
+  const addLine = () => setLines((ls) => [...ls, emptyLine()]);
+  const rmLine = (i: number) => setLines((ls) => (ls.length > 1 ? ls.filter((_, j) => j !== i) : ls));
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
+    if (!lines.some((l) => (parseFloat(l.unit_eur || "0") || 0) > 0)) { setError("Πρόσθεσε τουλάχιστον μία γραμμή με αξία."); return; }
     setBusy(true); setError(null);
     try {
-      const payload = { doc_type: form.doc_type, series: form.series, issue_date: form.issue_date,
-        description: form.description, net_amount: net, vat_rate: parseFloat(form.vat_rate || "0") };
+      const payloadLines = lines.map((l) => ({
+        description: l.description.trim(), mtrl: l.mtrl.trim() || null,
+        qty: parseFloat(l.qty || "1") || 1, unit_net: Math.round((parseFloat(l.unit_eur || "0") || 0) * 100),
+        vat_rate: parseFloat(l.vat_rate || "0") || 0,
+      }));
+      const payload = { doc_type: form.doc_type, series: form.series, issue_date: form.issue_date, lines: payloadLines };
       if (mode === "create") await adminApi("/admin/invoices", { method: "POST", body: JSON.stringify({ tenant_id: form.tenant_id, ...payload }) });
       else await adminApi(`/admin/invoices/${inv!.id}`, { method: "PATCH", body: JSON.stringify(payload) });
       onDone(mode === "create" ? "Δημιουργήθηκε παραστατικό ✓" : "Αποθηκεύτηκε ✓");
     } catch (e) {
-      setError(e instanceof ApiError ? ((e.problem as { detail?: { message?: string } })?.detail?.message ?? "Σφάλμα.") : "Σφάλμα.");
+      const d = e instanceof ApiError ? (e.problem as { detail?: { message?: string; error?: string } })?.detail : null;
+      setError(d?.message || d?.error || "Σφάλμα.");
     } finally { setBusy(false); }
   }
 
   const inp = "w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none disabled:bg-slate-50";
+  const cell = "rounded-lg border border-slate-300 px-2 py-1.5 text-sm focus:border-indigo-500 focus:outline-none disabled:bg-slate-50 disabled:text-slate-500";
   return (
-    <Modal
-      open
-      onClose={onClose}
-      size="lg"
-      title={mode === "create" ? "Νέο παραστατικό" : mode === "edit" ? `Επεξεργασία ${inv?.full_number}` : `Παραστατικό ${inv?.full_number}`}
-    >
-      <form onSubmit={submit}>
+    <Modal open onClose={onClose} size="3xl"
+      title={mode === "create" ? "Νέο παραστατικό" : mode === "edit" ? `Επεξεργασία ${inv?.doc_type} ${inv?.full_number}` : `Παραστατικό ${inv?.doc_type} ${inv?.full_number}`}>
+      <form onSubmit={submit} className="space-y-4">
         {view && inv && isSynced(inv) && (
-          <div className="mb-3 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+          <div className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
             Ενημερωμένο SoftOne{inv.softone_findoc ? <> · findoc: <code>{inv.softone_findoc}</code></> : null}
             {inv.aade_mark ? <> · ΑΑΔΕ MARK: <code>{inv.aade_mark}</code></> : null}
           </div>
         )}
         {view && inv && !isSynced(inv) && inv.last_error && (
-          <div className="mb-3 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">Τελευταίο σφάλμα SoftOne: {inv.last_error}</div>
+          <div className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">Τελευταίο σφάλμα SoftOne: {inv.last_error}</div>
         )}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <label className="col-span-2 block text-sm"><span className="mb-1 block text-slate-600">Πελάτης</span>
-            <select disabled={view || mode === "edit"} value={form.tenant_id} onChange={(e) => setForm({ ...form, tenant_id: e.target.value })} className={inp}>
-              {tenants.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-            </select></label>
+
+        {/* ── HEADER: εκδότης / λήπτης ── */}
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-3 text-sm">
+            <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">Εκδότης</div>
+            <div className="font-medium text-slate-800">{issuer?.issuer_name || "—"}</div>
+            <div className="text-slate-500">ΑΦΜ: {issuer?.issuer_afm || "—"}</div>
+          </div>
+          <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-3 text-sm">
+            <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">Λήπτης (πελάτης)</div>
+            {!view && mode === "create" ? (
+              <select value={form.tenant_id} onChange={(e) => setForm({ ...form, tenant_id: e.target.value })} className={`${inp} mb-1`}>
+                {tenants.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+              </select>
+            ) : <div className="font-medium text-slate-800">{cust.name || inv?.tenant_name || "—"}</div>}
+            <div className="text-slate-500">ΑΦΜ: {cust.afm || <span className="text-rose-600">— (χωρίς ΑΦΜ δεν διαβιβάζεται)</span>}{cust.doy ? ` · ΔΟΥ: ${cust.doy}` : ""}</div>
+            {(cust.address || cust.city) && <div className="text-slate-500">{[cust.address, cust.city, cust.zip].filter(Boolean).join(", ")}</div>}
+          </div>
+        </div>
+
+        {/* ── HEADER: στοιχεία παραστατικού ── */}
+        <div className="grid gap-3 sm:grid-cols-3">
           <label className="block text-sm"><span className="mb-1 block text-slate-600">Τύπος</span>
             <input disabled={view} value={form.doc_type} onChange={(e) => setForm({ ...form, doc_type: e.target.value })} className={inp} /></label>
           <label className="block text-sm"><span className="mb-1 block text-slate-600">Σειρά</span>
             <input disabled={view} value={form.series} onChange={(e) => setForm({ ...form, series: e.target.value })} className={inp} /></label>
           <label className="block text-sm"><span className="mb-1 block text-slate-600">Ημ/νία</span>
             <DateInput disabled={view} value={form.issue_date} onChange={(v) => setForm({ ...form, issue_date: v })} /></label>
-          <label className="block text-sm"><span className="mb-1 block text-slate-600">ΦΠΑ %</span>
-            <input type="number" step="any" disabled={view} value={form.vat_rate} onChange={(e) => setForm({ ...form, vat_rate: e.target.value })} className={inp} /></label>
-          <label className="col-span-2 block text-sm"><span className="mb-1 block text-slate-600">Περιγραφή</span>
-            <input disabled={view} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} className={inp} /></label>
-          <label className="block text-sm"><span className="mb-1 block text-slate-600">Καθαρή αξία (€)</span>
-            <input type="number" step="0.01" disabled={view} value={form.net_eur} onChange={(e) => setForm({ ...form, net_eur: e.target.value })} className={inp} /></label>
-          <div className="text-sm"><span className="mb-1 block text-slate-600">ΦΠΑ / Σύνολο</span>
-            <div className="rounded-lg bg-slate-50 px-3 py-2 text-slate-700">{fmtEur(view && inv ? inv.vat_amount : vat)} / <b>{fmtEur(view && inv ? inv.total : net + vat)}</b></div></div>
         </div>
-        {error && <div className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}
-        <div className="mt-5 flex gap-2">
+
+        {/* ── ΓΡΑΜΜΕΣ ΕΙΔΩΝ ── */}
+        <div className="rounded-xl border border-slate-200">
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[640px] text-sm">
+              <thead>
+                <tr className="border-b border-slate-100 bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-400">
+                  <th className="px-2 py-2 font-medium">Είδος / Περιγραφή</th>
+                  <th className="w-28 px-2 py-2 font-medium">MTRL</th>
+                  <th className="w-16 px-2 py-2 text-right font-medium">Ποσ.</th>
+                  <th className="w-28 px-2 py-2 text-right font-medium">Τιμή μον. €</th>
+                  <th className="w-20 px-2 py-2 text-right font-medium">ΦΠΑ %</th>
+                  <th className="w-24 px-2 py-2 text-right font-medium">Καθαρή</th>
+                  {!view && <th className="w-8 px-2 py-2" />}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-50">
+                {lines.map((l, i) => {
+                  const c = lineCents(l);
+                  return (
+                    <tr key={i} className="align-top">
+                      <td className="px-2 py-1.5"><input disabled={view} value={l.description} onChange={(e) => setLine(i, { description: e.target.value })} placeholder="Περιγραφή είδους/υπηρεσίας" className={`${cell} w-full`} /></td>
+                      <td className="px-2 py-1.5"><input disabled={view} value={l.mtrl} onChange={(e) => setLine(i, { mtrl: e.target.value })} placeholder="—" className={`${cell} w-full`} /></td>
+                      <td className="px-2 py-1.5"><input disabled={view} value={l.qty} onChange={(e) => setLine(i, { qty: e.target.value })} type="number" step="any" className={`${cell} w-full text-right`} /></td>
+                      <td className="px-2 py-1.5"><input disabled={view} value={l.unit_eur} onChange={(e) => setLine(i, { unit_eur: e.target.value })} type="number" step="0.01" placeholder="0.00" className={`${cell} w-full text-right`} /></td>
+                      <td className="px-2 py-1.5"><input disabled={view} value={l.vat_rate} onChange={(e) => setLine(i, { vat_rate: e.target.value })} type="number" step="any" className={`${cell} w-full text-right`} /></td>
+                      <td className="px-2 py-1.5 text-right font-medium text-slate-700">{eur(c.net)}</td>
+                      {!view && <td className="px-2 py-1.5 text-center"><button type="button" onClick={() => rmLine(i)} className="text-slate-400 hover:text-rose-600" aria-label="Διαγραφή γραμμής"><Trash2 className="h-4 w-4" /></button></td>}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          {!view && (
+            <div className="border-t border-slate-100 p-2">
+              <button type="button" onClick={addLine} className="inline-flex items-center gap-1 rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"><Plus className="h-3.5 w-3.5" /> Προσθήκη γραμμής</button>
+            </div>
+          )}
+        </div>
+
+        {/* ── FOOTER: σύνολα ── */}
+        <div className="flex justify-end">
+          <div className="w-full max-w-xs space-y-1 text-sm">
+            <div className="flex justify-between text-slate-600"><span>Καθαρή αξία</span><span>{eur(totals.net)}</span></div>
+            <div className="flex justify-between text-slate-600"><span>ΦΠΑ</span><span>{eur(totals.vat)}</span></div>
+            <div className="flex justify-between border-t border-slate-200 pt-1 text-base font-bold text-slate-900"><span>Σύνολο</span><span>{eur(totals.total)}</span></div>
+          </div>
+        </div>
+
+        {error && <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}
+        <div className="flex gap-2">
           <button type="button" onClick={onClose} className="flex-1 rounded-lg border border-slate-300 py-2 text-sm">{view ? "Κλείσιμο" : "Άκυρο"}</button>
           {!view && <button type="submit" disabled={busy} className="flex-1 rounded-lg bg-indigo-600 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-60">{busy ? "…" : "Αποθήκευση"}</button>}
         </div>

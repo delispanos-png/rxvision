@@ -120,14 +120,23 @@ class TenantEditIn(BaseModel):
     contact_phone: str | None = None
 
 
+class InvoiceLineIn(BaseModel):
+    description: str = ""
+    mtrl: str | None = None        # SoftOne κωδικός είδους (προαιρετικό — fallback default)
+    qty: float = 1.0
+    unit_net: int = 0              # καθαρή τιμή μονάδας σε cents
+    vat_rate: float = 24.0
+
+
 class InvoiceIn(BaseModel):
     tenant_id: str
     doc_type: str = "ΤΠΥ"          # τύπος παραστατικού
     series: str = "Α"             # σειρά
     issue_date: str | None = None  # ISO· default σήμερα
     description: str = ""
-    net_amount: int = 0            # καθαρή αξία σε cents
+    net_amount: int = 0            # legacy μονή αξία (cents) — αν δεν δοθούν γραμμές
     vat_rate: float = 24.0
+    lines: list[InvoiceLineIn] | None = None   # πολυγραμμικό παραστατικό (header/γραμμές/σύνολα)
 
 
 class InvoiceEditIn(BaseModel):
@@ -137,6 +146,24 @@ class InvoiceEditIn(BaseModel):
     description: str | None = None
     net_amount: int | None = None
     vat_rate: float | None = None
+    lines: list[InvoiceLineIn] | None = None
+
+
+def _lines_totals(lines: list[dict]) -> tuple[list[dict], int, int, int]:
+    """Υπολογισμός ανά γραμμή (net/vat/total σε cents) + σύνολα. Money = integer cents."""
+    out: list[dict] = []
+    net_t = vat_t = tot_t = 0
+    for ln in lines:
+        qty = float(ln.get("qty") or 0) or 1.0
+        unit = int(ln.get("unit_net") or 0)
+        rate = float(ln.get("vat_rate") or 0)
+        net = round(qty * unit)
+        vat = round(net * rate / 100)
+        out.append({"description": (ln.get("description") or "").strip(), "mtrl": (ln.get("mtrl") or None),
+                    "qty": qty, "unit_net": unit, "vat_rate": rate,
+                    "net": net, "vat": vat, "total": net + vat})
+        net_t += net; vat_t += vat; tot_t += net + vat
+    return out, net_t, vat_t, tot_t
 
 
 # tenant-scoped collections wiped on hard delete
@@ -1874,6 +1901,8 @@ def _invoice_public(inv: dict, tenant_name: str | None = None) -> dict:
         "softone_findoc": inv.get("softone_findoc"), "mydata_aa": inv.get("mydata_aa"),
         "attempts": inv.get("attempts", 0), "last_error": inv.get("last_error"),
         "customer_afm": (inv.get("customer") or {}).get("afm"),
+        "customer": inv.get("customer") or None,
+        "lines": inv.get("lines") or None, "mtrl": inv.get("mtrl"),
     }
 
 
@@ -1899,21 +1928,40 @@ async def list_invoices(tenant_id: str | None = None, aade: str | None = None,
 @router.post("/invoices")
 async def create_invoice(body: InvoiceIn, _: PlatformContext = Depends(get_platform_admin)):
     db = shared_db()
-    if not await db["tenants"].find_one({"_id": body.tenant_id}):
+    tenant = await db["tenants"].find_one({"_id": body.tenant_id})
+    if not tenant:
         raise HTTPException(http_status.HTTP_404_NOT_FOUND, "tenant_not_found")
     last = await db["invoices"].find_one({"series": body.series}, sort=[("number", -1)])
     number = (last.get("number", 0) if last else 0) + 1
-    vat, total = _invoice_totals(body.net_amount, body.vat_rate)
     now = datetime.now(tz=timezone.utc)
-    doc = {"tenant_id": body.tenant_id, "doc_type": body.doc_type, "series": body.series,
+    # Πολυγραμμικό: αν δοθούν γραμμές, τα σύνολα προκύπτουν από αυτές· αλλιώς legacy μονή αξία.
+    if body.lines:
+        lines, net, vat, total = _lines_totals([ln.model_dump() for ln in body.lines])
+        vat_rate = body.lines[0].vat_rate if len({ln.vat_rate for ln in body.lines}) == 1 else 0.0
+        description = body.description or (lines[0]["description"] if lines else "")
+    else:
+        lines = None
+        net, vat_rate = body.net_amount, body.vat_rate
+        vat, total = _invoice_totals(net, vat_rate)
+        description = body.description
+    # Snapshot στοιχείων πελάτη (λήπτη) — ώστε η διαβίβαση SoftOne να έχει ΑΦΜ/επωνυμία.
+    from app.services.invoice_service import _customer_from_tenant
+    customer = _customer_from_tenant(tenant)
+    blocked = None if customer.get("afm") else "missing_afm"
+    doc = {"tenant_id": body.tenant_id, "tenant_name": tenant.get("name"),
+           "doc_type": body.doc_type, "series": body.series,
            "number": number, "issue_date": body.issue_date or now.date().isoformat(),
-           "description": body.description, "net_amount": body.net_amount,
-           "vat_rate": body.vat_rate, "vat_amount": vat, "total": total,
+           "description": description, "net_amount": net,
+           "vat_rate": vat_rate, "vat_amount": vat, "total": total,
+           "lines": lines, "customer": customer,
+           "status": "blocked" if blocked else "pending", "blocked_reason": blocked,
+           "attempts": 0, "last_error": None, "next_attempt_at": now,
            "aade_status": "not_transmitted", "aade_mark": None, "aade_transmitted_at": None,
+           "softone_findoc": None, "mydata_uid": None, "mydata_aa": None,
            "created_at": now, "updated_at": now}
     res = await db["invoices"].insert_one(doc)
     doc["_id"] = res.inserted_id
-    return jsonsafe(_invoice_public(doc))
+    return jsonsafe(_invoice_public(doc, tenant.get("name")))
 
 
 @router.get("/invoices/{invoice_id}")
@@ -1937,7 +1985,11 @@ async def edit_invoice(invoice_id: str, body: InvoiceEditIn,
         raise HTTPException(http_status.HTTP_409_CONFLICT,
                             {"error": "aade_transmitted", "message": "Διαβιβασμένο στην ΑΑΔΕ — δεν τροποποιείται."})
     patch = {k: v for k, v in body.model_dump().items() if v is not None}
-    if "net_amount" in patch or "vat_rate" in patch:
+    if body.lines is not None:      # πολυγραμμικό: ξαναϋπολογισμός γραμμών & συνόλων
+        lines, net, vat, total = _lines_totals([ln.model_dump() for ln in body.lines])
+        rate = body.lines[0].vat_rate if body.lines and len({ln.vat_rate for ln in body.lines}) == 1 else 0.0
+        patch.update({"lines": lines, "net_amount": net, "vat_amount": vat, "total": total, "vat_rate": rate})
+    elif "net_amount" in patch or "vat_rate" in patch:
         net = patch.get("net_amount", inv.get("net_amount", 0))
         rate = patch.get("vat_rate", inv.get("vat_rate", 0))
         patch["vat_amount"], patch["total"] = _invoice_totals(net, rate)

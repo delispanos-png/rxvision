@@ -161,20 +161,32 @@ async def create_for_payment(*, tenant_id: str, kind: str, gross_cents: int,
 
 def _build_payload(inv: dict) -> dict:
     """Χαρτογράφηση invoice doc → JS Bridge Contract που περιμένει η SoftOne JS συνάρτηση.
-    `net` σε ευρώ (float, όχι cents)· το clientID/appId τα βάζει μόνο του το `softone_service.issue()`."""
+    `net` σε ευρώ (float, όχι cents)· το clientID/appId τα βάζει μόνο του το `softone_service.issue()`.
+    Πολυγραμμικό: αν το παραστατικό έχει `lines`, τις στέλνει όλες· αλλιώς μονή γραμμή (legacy)."""
+    lines = inv.get("lines") or []
+    if lines:
+        out_lines = [{
+            "description": ln.get("description", ""),
+            "qty": ln.get("qty", 1),
+            "net": round((ln.get("net", 0) or 0) / 100, 2),
+            "vat_rate": ln.get("vat_rate", DEFAULT_VAT),
+            "mtrl": ln.get("mtrl"),
+        } for ln in lines]
+    else:
+        out_lines = [{
+            "description": inv.get("description", ""),
+            "qty": 1,
+            "net": round((inv.get("net_amount", 0) or 0) / 100, 2),
+            "vat_rate": inv.get("vat_rate", DEFAULT_VAT),
+            "mtrl": inv.get("mtrl"),
+        }]
     return {
         "ref": str(inv["_id"]),
         "kind": inv.get("kind"),
         "issue_date": inv.get("issue_date"),
         "series": inv.get("series"),
         "customer": inv.get("customer") or {},
-        "lines": [{
-            "description": inv.get("description", ""),
-            "qty": 1,
-            "net": round((inv.get("net_amount", 0) or 0) / 100, 2),
-            "vat_rate": inv.get("vat_rate", DEFAULT_VAT),
-            "mtrl": inv.get("mtrl"),
-        }],
+        "lines": out_lines,
         "payment": inv.get("payment") or {},
     }
 
