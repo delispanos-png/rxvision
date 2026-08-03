@@ -21,6 +21,13 @@ type Sla = { _id: string; name?: string; description?: string; response_hours?: 
 type Addon = { _id: string; name?: string; description?: string; icon?: string; price_monthly?: number; price_yearly?: number; features?: string[] };
 
 const eur = (c: number) => new Intl.NumberFormat("el-GR", { style: "currency", currency: "EUR", maximumFractionDigits: 0 }).format((c || 0) / 100);
+// Προτεινόμενο SLA: το «Basic» (id ή όνομα)· αλλιώς το φθηνότερο / με τη μεγαλύτερη ώρα απόκρισης (πιο βασικό)
+const defaultSla = (tiers: Sla[]): string => {
+  if (!tiers?.length) return "";
+  const basic = tiers.find((s) => s._id === "basic" || (s.name || "").toLowerCase().includes("basic"));
+  if (basic) return basic._id;
+  return [...tiers].sort((a, b) => ((a.price_monthly ?? 0) - (b.price_monthly ?? 0)) || ((b.response_hours ?? 0) - (a.response_hours ?? 0)))[0]._id;
+};
 const input = "w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-brand-600 focus:outline-none focus:ring-1 focus:ring-brand-500";
 const label = "mb-1 block text-xs font-medium text-slate-600";
 
@@ -77,9 +84,10 @@ export default function RegisterWizard() {
         setPayMethods(pm); if (pm.length) setPayChoice(pm[0].id);
         if (r.packages?.length) {
           const pre = r.packages.find((p) => p._id.toLowerCase() === wanted) || r.packages[0];
-          setPkgCode(pre._id); if (pre.sla) setSla(pre.sla);
+          setPkgCode(pre._id);
         }
-        if (!r.packages?.[0]?.sla && r.sla?.length) setSla(r.sla[0]._id);
+        // Προτεινόμενο SLA από default = Basic (αλλιώς φθηνότερο/αργότερο tier)
+        if (r.sla?.length) setSla(defaultSla(r.sla));
       })
       .catch(() => { /* leave empty → manual */ });
   }, []);
@@ -133,8 +141,9 @@ export default function RegisterWizard() {
 
   function choosePkg(code: string) {
     setPkgCode(code);
-    const p = pkgs.find((x) => x._id === code);
-    if (p?.sla) setSla(p.sla);
+    // Δεν επιβάλλουμε το SLA του πακέτου — κρατάμε το προτεινόμενο (Basic) ή την επιλογή του χρήστη·
+    // αν για κάποιο λόγο δεν έχει οριστεί SLA, επανάφερε στο Basic.
+    if (!sla) setSla(defaultSla(slaTiers));
   }
 
   async function lookupAade() {
