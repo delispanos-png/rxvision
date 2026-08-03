@@ -113,6 +113,7 @@ class OnboardingService:
             "billing_cycle": cycle, "sla": sla_code,
             "trial_ends_at": None if activate else _now() + timedelta(days=trial_days), "seats": chosen_seats,
             "price_per_pharmacy": price, "currency": "EUR",
+            "price_includes_vat": bool((pkg or {}).get("price_includes_vat")),   # καθαρές τιμές → +ΦΠΑ στη χρέωση
             "addons": chosen_addons, "addons_total": addons_total,
             # cost analysis as agreed at signup (cents, for the chosen cycle)
             "sla_price": sla_price, "extra_users": extra_users, "extra_user_rate": extra_rate,
@@ -188,7 +189,10 @@ class OnboardingService:
                 a = cat.get(aid)
                 if a:
                     addons_total += int(a.get("price_yearly" if yearly else "price_monthly", 0) or 0)
-        amount = int(price) + sla_price + extra_total + addons_total
+        # Καθαρό σύνολο → χρεώσιμο ΜΕ ΦΠΑ (αν οι τιμές είναι καθαρές). create_for_payment αφαιρεί ΦΠΑ στο παραστατικό.
+        from app.services.invoice_service import gross_from_price
+        amount = gross_from_price(int(price) + sla_price + extra_total + addons_total,
+                                  bool((pkg or {}).get("price_includes_vat")), country)
         # Δωρεάν trial πακέτο (μηδενικό κόστος): καμία πληρωμή → pending «paid» κατευθείαν (→ credentials).
         is_trial = amount <= 0
         status = "paid" if is_trial else ("awaiting_payment" if payment_method == "card" else "awaiting_bank_approval")

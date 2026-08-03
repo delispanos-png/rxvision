@@ -92,6 +92,9 @@ async def start_renewal(tenant_id: str, package_code: str, billing_cycle: str = 
     from app.services import feedback_service
     amount, coupon = await feedback_service.apply_discount(amount, coupon_code, tenant_id)
     tenant = await db["tenants"].find_one({"_id": tenant_id}) or {}
+    # καθαρό → χρεώσιμο ΜΕ ΦΠΑ (αν οι τιμές είναι καθαρές)
+    from app.services.invoice_service import gross_from_price
+    amount = gross_from_price(amount, bool(pkg.get("price_includes_vat")), tenant.get("country"))
     bp = tenant.get("billing_profile") or {}
     email = bp.get("email") or bp.get("billing_email") or ""
     name = bp.get("name") or tenant.get("name") or tenant_id
@@ -126,6 +129,7 @@ async def complete_renewal(tenant_id: str, viva_transaction_id: str) -> None:
     await db["subscriptions"].update_one({"tenant_id": tenant_id}, {
         "$set": {"status": "active", "plan": plan, "plan_name": pkg.get("name"),
                  "billing_cycle": cycle, "price_per_pharmacy": price,
+                 "price_includes_vat": bool(pkg.get("price_includes_vat")),
                  "modules_included": pkg.get("modules", sub.get("modules_included", [])),
                  "current_period_end": now + (timedelta(days=365) if yearly else timedelta(days=30)),
                  "started_at": now, "payment_provider": "viva", "payment_status": "card_saved",
@@ -237,10 +241,16 @@ async def bill_due() -> dict:
                 "current_period_end": _period_end(sub.get("billing_cycle", "monthly"), now),
                 "payment_status": "complimentary"}})
             continue
-        # full recurring amount = base subscription + active à-la-carte add-ons
-        amount = int(sub.get("price_per_pharmacy", 0) or 0) + int(sub.get("addons_total", 0) or 0)
-        if amount <= 0:
+        # full recurring amount = base subscription + active à-la-carte add-ons (καθαρά) → +ΦΠΑ
+        net_total = int(sub.get("price_per_pharmacy", 0) or 0) + int(sub.get("addons_total", 0) or 0)
+        if net_total <= 0:
             continue
+        from app.services import invoice_service
+        tcountry = (await db["tenants"].find_one({"_id": tid}, {"country": 1}) or {}).get("country")
+        # flag από το τρέχον πακέτο (single source)· fallback στο αποθηκευμένο της συνδρομής
+        _pkg = await db["packages"].find_one({"_id": sub.get("plan")}, {"price_includes_vat": 1}) if sub.get("plan") else None
+        _inc_vat = bool(_pkg.get("price_includes_vat")) if _pkg else bool(sub.get("price_includes_vat"))
+        amount = invoice_service.gross_from_price(net_total, _inc_vat, tcountry)
         res = await _charge_recurring(sub, amount, tid)
         if res.get("ok"):
             await db["subscriptions"].update_one({"tenant_id": tid}, {"$set": {

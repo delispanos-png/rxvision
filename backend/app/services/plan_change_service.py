@@ -99,8 +99,12 @@ async def request_change(tenant_id: str, plan: str, *, method: str | None = None
     sub, pkg, yearly, kind, new_price = c["sub"], c["pkg"], c["yearly"], c["kind"], c["new_price"]
     cycle = sub.get("billing_cycle", "monthly")
     plan_name = pkg.get("name") or plan
+    # καθαρή τιμή πλάνου → χρεώσιμο ΜΕ ΦΠΑ (αν καθαρές). new_price=καθαρή (σύγκριση/εμφάνιση), charge_amount=gross.
+    from app.services.invoice_service import gross_from_price
+    tenant = await db["tenants"].find_one({"_id": tenant_id}) or {}
+    charge_amount = gross_from_price(new_price, bool(pkg.get("price_includes_vat")), tenant.get("country"))
     base = {"plan": plan, "plan_name": plan_name, "kind": kind, "billing_cycle": cycle,
-            "new_price": new_price, "requested_at": _now(), "requested_by": by_email}
+            "new_price": new_price, "charge_amount": charge_amount, "requested_at": _now(), "requested_by": by_email}
 
     # ── DOWNGRADE — schedule at period end / yearly renewal, no payment ──
     if kind == "downgrade":
@@ -117,10 +121,9 @@ async def request_change(tenant_id: str, plan: str, *, method: str | None = None
         raise PlanChangeError("method_disabled")
 
     if method == "card":   # Revolut hosted checkout (instant)
-        tenant = await db["tenants"].find_one({"_id": tenant_id}) or {}
         bp = tenant.get("billing_profile") or {}
         res = await rv.create_topup_order(
-            amount=new_price, currency=CURRENCY,
+            amount=charge_amount, currency=CURRENCY,
             email=bp.get("email") or bp.get("billing_email") or "",
             name=bp.get("name") or tenant.get("name") or tenant_id,
             tenant_id=tenant_id, description=f"RxVision αναβάθμιση σε {plan_name}")
@@ -132,7 +135,7 @@ async def request_change(tenant_id: str, plan: str, *, method: str | None = None
         return {"kind": "upgrade", "method": "card", "status": "awaiting_payment",
                 "token": res.get("token"), "order_id": res.get("order_id"),
                 "mode": (await rv.config()).get("mode", "sandbox"),
-                "amount": new_price, "plan": plan, "plan_name": plan_name}
+                "amount": charge_amount, "plan": plan, "plan_name": plan_name}
 
     if method == "alpha":  # Alpha Bank hosted payment page (redirect)
         from app.services import alphabank_service as ab
@@ -140,7 +143,7 @@ async def request_change(tenant_id: str, plan: str, *, method: str | None = None
         tenant = await db["tenants"].find_one({"_id": tenant_id}) or {}
         bp = tenant.get("billing_profile") or {}
         res = await ab.create_payment(
-            amount_cents=new_price, currency=CURRENCY, order_id=order_id,
+            amount_cents=charge_amount, currency=CURRENCY, order_id=order_id,
             description=f"RxVision αναβάθμιση σε {plan_name}",
             confirm_url="https://app.rxvision.gr/api/v1/subscription/alpha-callback",
             cancel_url="https://app.rxvision.gr/settings/modules",
@@ -152,7 +155,7 @@ async def request_change(tenant_id: str, plan: str, *, method: str | None = None
         await db["subscriptions"].update_one({"tenant_id": tenant_id}, {"$set": {"pending_change": pend}})
         return {"kind": "upgrade", "method": "alpha", "status": "awaiting_payment",
                 "action": res["action"], "fields": res["fields"], "order_id": order_id,
-                "amount": new_price, "plan": plan, "plan_name": plan_name}
+                "amount": charge_amount, "plan": plan, "plan_name": plan_name}
 
     # bank transfer → admin request
     reference = f"{tenant_id}-{plan}".upper()
@@ -160,7 +163,7 @@ async def request_change(tenant_id: str, plan: str, *, method: str | None = None
             "reference": reference, "effective_at": None}
     await db["subscriptions"].update_one({"tenant_id": tenant_id}, {"$set": {"pending_change": pend}})
     return {"kind": "upgrade", "method": "bank", "status": "awaiting_payment",
-            "amount": new_price, "reference": reference, "bank": bank_public(await bank_details()),
+            "amount": charge_amount, "reference": reference, "bank": bank_public(await bank_details()),
             "plan": plan, "plan_name": plan_name}
 
 
@@ -198,6 +201,7 @@ async def apply_change(tenant_id: str, *, source: str = "system") -> dict:
         return {"ok": False, "error": "unknown_plan"}
     yearly = (pend.get("billing_cycle") or sub.get("billing_cycle")) == "yearly"
     upd: dict = {"plan": pend["plan"], "price_per_pharmacy": _price(pkg, yearly),
+                 "price_includes_vat": bool(pkg.get("price_includes_vat")),
                  "modules_included": pkg.get("modules", []), "updated_at": _now(),
                  "last_plan_change": {"kind": pend.get("kind"), "at": _now(), "source": source,
                                       "from": sub.get("plan"), "to": pend["plan"]}}
@@ -216,13 +220,14 @@ async def apply_change(tenant_id: str, *, source: str = "system") -> dict:
         from app.services import receipts
         method = {"card": "card", "bank": "bank_transfer"}.get(pend.get("method"), pend.get("method"))
         provider = {"card": "revolut", "alpha": "alphabank"}.get(pend.get("method"))
+        _charged = int(pend.get("charge_amount", pend.get("new_price", 0)) or 0)   # gross (με ΦΠΑ)
         await receipts.record(tenant_id, "upgrade",
                               f"Αναβάθμιση σε {pend.get('plan_name') or pend['plan']}",
-                              int(pend.get("new_price", 0) or 0), method=method, provider=provider,
+                              _charged, method=method, provider=provider,
                               provider_order_id=pend.get("revolut_order_id"))
         from app.services import invoice_service
         await invoice_service.create_for_payment(
-            tenant_id=tenant_id, kind="upgrade", gross_cents=int(pend.get("new_price", 0) or 0),
+            tenant_id=tenant_id, kind="upgrade", gross_cents=_charged,
             description=f"Αναβάθμιση σε {pend.get('plan_name') or pend['plan']}",
             payment={"method": method, "provider": provider,
                      "transaction_id": pend.get("revolut_order_id")})

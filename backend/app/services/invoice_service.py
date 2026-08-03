@@ -50,6 +50,16 @@ def _split_gross(gross_cents: int, rate: float) -> tuple[int, int]:
     return net, gross_cents - net
 
 
+def gross_from_price(price_cents: int, includes_vat: bool, country: str | None = "GR") -> int:
+    """Ποσό ΜΕ ΦΠΑ που ΧΡΕΩΝΕΤΑΙ. Αν οι τιμές είναι καθαρές (includes_vat=False) → προσθέτει ΦΠΑ
+    χώρας· αν ήδη περιλαμβάνουν ΦΠΑ → επιστρέφει ως έχει. Ενιαία πηγή αλήθειας για κάθε χρέωση."""
+    price = int(price_cents or 0)
+    if includes_vat or price <= 0:
+        return price
+    rate = VAT_BY_COUNTRY.get(country or "GR", DEFAULT_VAT)
+    return round(price * (1 + rate / 100))
+
+
 def _customer_from_tenant(tenant: dict) -> dict:
     """Στοιχεία πελάτη για το παραστατικό (snapshot). Country top-level, τα υπόλοιπα από billing_profile."""
     bp = (tenant or {}).get("billing_profile") or {}

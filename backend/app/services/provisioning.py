@@ -114,6 +114,7 @@ class TenantProvisioningService:
             "status": "trial" if trial_days else "active", "seats": chosen_seats,
             "billing_cycle": cycle, "sla": sla_code,
             "price_per_pharmacy": price, "currency": "EUR",
+            "price_includes_vat": bool(package.get("price_includes_vat")),   # καθαρές τιμές → +ΦΠΑ στη χρέωση
             "sla_price": sla_price, "extra_users": extra_users, "extra_user_rate": extra_rate,
             "extra_users_total": extra_total, "price_total": price_total,
             "payment_method": payment_method or "card",
