@@ -24,7 +24,7 @@ type Invoice = {
   subtotal_net?: number | null; discount?: InvDiscount | null;
 };
 type InvLine = { description: string; item_key?: string | null; mtrl?: string | null; qty: number; unit_net: number; vat_rate: number; disc_kind?: string; disc_value?: number; gross?: number; discount?: number; net: number; vat: number; total: number };
-type SoftoneItem = { key: string; group: string; name: string; mtrl: string };
+type SoftoneItem = { key: string; group: string; name: string; mtrl: string; price?: number; price_yearly?: number };
 type InvDiscount = { kind: "pct" | "amount"; value: number; amount: number };
 type InvCustomer = { afm?: string; name?: string; doy?: string; address?: string; city?: string; zip?: string; country?: string; email?: string; phone?: string };
 type Tenant = { id: string; name: string };
@@ -203,7 +203,13 @@ function InvoiceModal({ modal, tenants, onClose, onDone }:
 
   const pickItem = (i: number, key: string) => {
     const it = catalog.find((c) => c.key === key);
-    setLines((ls) => ls.map((l, j) => (j === i ? { ...l, item_key: key, description: it?.name || "", mtrl: it?.mtrl || "" } : l)));
+    setLines((ls) => ls.map((l, j) => {
+      if (j !== i) return l;
+      // αυτόματη καθαρή τιμή μονάδας από την τιμή (ΜΕ ΦΠΑ) του είδους → Σύνολο = τιμή πακέτου
+      const rate = num(l.vat_rate) || 24;
+      const unit_eur = it?.price ? fmtMoney(Math.round(it.price / (1 + rate / 100))) : l.unit_eur;
+      return { ...l, item_key: key, description: it?.name || "", mtrl: it?.mtrl || "", unit_eur };
+    }));
   };
   // έκπτωση συνόλου
   const [hdiscKind, setHdiscKind] = useState<"pct" | "amount">(inv?.discount?.kind === "amount" ? "amount" : "pct");

@@ -1370,18 +1370,22 @@ async def softone_items(_: PlatformContext = Depends(get_platform_admin)):
     db = shared_db()
     cfg = decrypt_doc("softone", await db["platform_settings"].find_one({"_id": "softone"})) or {}
     mm = cfg.get("mtrl_map") or {}
+    # price = προτεινόμενη τιμή ΜΕ ΦΠΑ (gross, cents) — το billing χρεώνει gross· 0 = μεταβλητή/χωρίς σταθερή τιμή.
     items: list[dict] = []
     async for p in db["packages"].find({}).sort("price_monthly", 1):
         k = f"pkg:{p['_id']}"
-        items.append({"key": k, "group": "Συνδρομές", "name": p.get("name") or p["_id"], "mtrl": mm.get(k, "")})
+        items.append({"key": k, "group": "Συνδρομές", "name": p.get("name") or p["_id"], "mtrl": mm.get(k, ""),
+                      "price": int(p.get("price_monthly") or 0), "price_yearly": int(p.get("price_yearly") or 0)})
     async for c in db["credit_packages"].find({}).sort("price_cents", 1):
         k = f"credit:{c['_id']}"
-        items.append({"key": k, "group": "Credits μηνυμάτων", "name": c.get("name") or c["_id"], "mtrl": mm.get(k, "")})
+        items.append({"key": k, "group": "Credits μηνυμάτων", "name": c.get("name") or c["_id"], "mtrl": mm.get(k, ""),
+                      "price": int(c.get("price_cents") or 0)})
     async for a in db["addons"].find({}):
         k = f"addon:{a['_id']}"
-        items.append({"key": k, "group": "Add-ons / Modules", "name": a.get("name") or a["_id"], "mtrl": mm.get(k, "")})
+        items.append({"key": k, "group": "Add-ons / Modules", "name": a.get("name") or a["_id"], "mtrl": mm.get(k, ""),
+                      "price": int(a.get("price_monthly") or 0), "price_yearly": int(a.get("price_yearly") or 0)})
     for k, nm in (("ai", "Επιπλέον όριο AI"), ("retention", "Επέκταση διατήρησης δεδομένων")):
-        items.append({"key": k, "group": "Extras", "name": nm, "mtrl": mm.get(k, "")})
+        items.append({"key": k, "group": "Extras", "name": nm, "mtrl": mm.get(k, ""), "price": 0})
     return {"items": items, "default_mtrl": mm.get("default", "")}
 
 
