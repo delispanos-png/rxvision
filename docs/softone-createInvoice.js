@@ -66,18 +66,22 @@ function createInvoice(obj) {
     var trdr = _findOrCreateCustomer(obj.customer);
     if (!trdr) { resp.error = "customer_locate_or_create_failed"; return resp; }
 
-    // 2) γραμμές (MTRLINES). Κάθε γραμμή: είδος/υπηρεσία, ποσότητα, καθαρή τιμή, ΦΠΑ.
+    // 2) γραμμές (MTRLINES). Κάθε γραμμή περιέχει (ΟΛΑ σε ευρώ, ΜΕΤΑ τις εκπτώσεις):
+    //    qty=ποσότητα · unit_net=καθαρή ΤΙΜΗ ΜΟΝΑΔΑΣ · net=καθαρή ΑΞΙΑ ΓΡΑΜΜΗΣ · discount=έκπτωση γραμμής · gross=μικτή προ έκπτωσης.
+    //    ⚠ Το `net` είναι η καθαρή αξία ΓΡΑΜΜΗΣ (όχι μονάδας) — μη το πολλαπλασιάζεις με qty.
     var lines = [];
     for (var i = 0; i < obj.lines.length; i++) {
       var ln = obj.lines[i];
       var qty = ln.qty || 1;
+      var unit = (ln.unit_net !== undefined && ln.unit_net !== null) ? ln.unit_net : ln.net;
       lines.push({
         // MTRL ανά γραμμή από το RxVision (κεντρική αντιστοίχιση ειδών)· fallback στο CFG default.
         MTRL:     (ln.mtrl !== undefined && ln.mtrl !== null && ln.mtrl !== "") ? ln.mtrl : CFG.SERVICE_MTRL,
         QTY1:     qty,
-        PRICE:    ln.net,                 // καθαρή τιμή μονάδας
+        PRICE:    unit,                   // καθαρή τιμή μονάδας (μετά την έκπτωση)
         VAT:      CFG.VAT,
-        LINEVAL:  ln.net * qty,           // καθαρή αξία γραμμής
+        LINEVAL:  ln.net,                 // καθαρή ΑΞΙΑ γραμμής (μετά τις εκπτώσεις) — authoritative
+        DISCV:    ln.discount || 0,       // έκπτωση γραμμής σε ευρώ (για εμφάνιση στο παραστατικό) — ΕΠΙΒΕΒΑΙΩΣΤΕ πεδίο
         COMMENTS: ln.description || ""
       });
     }

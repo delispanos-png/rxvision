@@ -163,30 +163,51 @@ def _build_payload(inv: dict) -> dict:
     """Χαρτογράφηση invoice doc → JS Bridge Contract που περιμένει η SoftOne JS συνάρτηση.
     `net` σε ευρώ (float, όχι cents)· το clientID/appId τα βάζει μόνο του το `softone_service.issue()`.
     Πολυγραμμικό: αν το παραστατικό έχει `lines`, τις στέλνει όλες· αλλιώς μονή γραμμή (legacy)."""
+    c = lambda x: round((x or 0) / 100, 2)  # noqa: E731 — cents → euros (2 δεκαδικά)
     lines = inv.get("lines") or []
     if lines:
-        out_lines = [{
-            "description": ln.get("description", ""),
-            "qty": ln.get("qty", 1),
-            "net": round((ln.get("net", 0) or 0) / 100, 2),
-            "vat_rate": ln.get("vat_rate", DEFAULT_VAT),
-            "mtrl": ln.get("mtrl"),
-        } for ln in lines]
+        # έκπτωση συνόλου κατανεμημένη αναλογικά στις γραμμές (ώστε το άθροισμα καθαρών = τελικό net)
+        hdisc = int((inv.get("discount") or {}).get("amount") or 0)
+        subtotal = int(inv.get("subtotal_net") or sum(int(ln.get("net") or 0) for ln in lines)) or 0
+        out_lines = []
+        remaining = hdisc
+        n = len(lines)
+        for i, ln in enumerate(lines):
+            line_net = int(ln.get("net") or 0)                 # καθαρή γραμμής μετά την έκπτωση γραμμής
+            share = (round(line_net * hdisc / subtotal) if i < n - 1 else remaining) if (subtotal and hdisc) else 0
+            remaining -= share
+            final_net = line_net - share                       # καθαρή μετά ΚΑΙ την έκπτωση συνόλου
+            qty = float(ln.get("qty") or 1) or 1
+            gross = int(ln.get("gross") or line_net)
+            out_lines.append({
+                "description": ln.get("description", ""),
+                "mtrl": ln.get("mtrl"),
+                "qty": qty,
+                "unit_net": round(final_net / qty / 100, 4),   # τιμή μονάδας (μετά εκπτώσεις) → PRICE
+                "net": c(final_net),                           # καθαρή αξία γραμμής (μετά εκπτώσεις) → LINEVAL
+                "gross": c(gross),                             # μικτή αξία γραμμής προ έκπτωσης
+                "discount": c(gross - final_net),              # συνολική έκπτωση γραμμής (γραμμής + μερίδιο συνόλου)
+                "vat_rate": ln.get("vat_rate", DEFAULT_VAT),
+            })
     else:
+        net = int(inv.get("net_amount", 0) or 0)
         out_lines = [{
             "description": inv.get("description", ""),
-            "qty": 1,
-            "net": round((inv.get("net_amount", 0) or 0) / 100, 2),
-            "vat_rate": inv.get("vat_rate", DEFAULT_VAT),
             "mtrl": inv.get("mtrl"),
+            "qty": 1, "unit_net": c(net), "net": c(net), "gross": c(net), "discount": 0.0,
+            "vat_rate": inv.get("vat_rate", DEFAULT_VAT),
         }]
     return {
         "ref": str(inv["_id"]),
         "kind": inv.get("kind"),
         "issue_date": inv.get("issue_date"),
         "series": inv.get("series"),
+        "number": inv.get("number"),
+        "doc_type": inv.get("doc_type"),
         "customer": inv.get("customer") or {},
         "lines": out_lines,
+        "totals": {"net": c(inv.get("net_amount")), "vat": c(inv.get("vat_amount")),
+                   "total": c(inv.get("total")), "discount": c((inv.get("discount") or {}).get("amount"))},
         "payment": inv.get("payment") or {},
     }
 

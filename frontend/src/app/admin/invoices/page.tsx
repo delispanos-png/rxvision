@@ -21,8 +21,10 @@ type Invoice = {
   softone_findoc?: string | null; mydata_aa?: string | null;
   attempts?: number; last_error?: string | null; auto?: boolean; kind?: string | null;
   customer?: InvCustomer | null; lines?: InvLine[] | null; mtrl?: string | null;
+  subtotal_net?: number | null; discount?: InvDiscount | null;
 };
-type InvLine = { description: string; mtrl?: string | null; qty: number; unit_net: number; vat_rate: number; net: number; vat: number; total: number };
+type InvLine = { description: string; mtrl?: string | null; qty: number; unit_net: number; vat_rate: number; disc_kind?: string; disc_value?: number; gross?: number; discount?: number; net: number; vat: number; total: number };
+type InvDiscount = { kind: "pct" | "amount"; value: number; amount: number };
 type InvCustomer = { afm?: string; name?: string; doy?: string; address?: string; city?: string; zip?: string; country?: string; email?: string; phone?: string };
 type Tenant = { id: string; name: string };
 
@@ -151,15 +153,20 @@ export default function InvoicesPage() {
   );
 }
 
-type DraftLine = { description: string; mtrl: string; qty: string; unit_eur: string; vat_rate: string };
-const emptyLine = (): DraftLine => ({ description: "", mtrl: "", qty: "1", unit_eur: "", vat_rate: "24" });
+type DraftLine = { description: string; mtrl: string; qty: string; unit_eur: string; vat_rate: string; disc_kind: "pct" | "amount"; disc_value: string };
+const emptyLine = (): DraftLine => ({ description: "", mtrl: "", qty: "1", unit_eur: "", vat_rate: "24", disc_kind: "pct", disc_value: "" });
 const eur = (c: number) => fmtEur(c);
-const lineCents = (l: DraftLine) => {
-  const unit = Math.round((parseFloat(l.unit_eur || "0") || 0) * 100);
-  const qty = parseFloat(l.qty || "1") || 1;
-  const net = Math.round(qty * unit);
-  const vat = Math.round(net * ((parseFloat(l.vat_rate || "0") || 0) / 100));
-  return { net, vat, total: net + vat };
+const num = (s: string) => parseFloat(s || "0") || 0;
+// έκπτωση σε cents (δεν ξεπερνά τη βάση). pct=ποσοστό· amount=€ (→cents)
+const discCents = (base: number, kind: "pct" | "amount", value: number) => {
+  if (value <= 0 || base <= 0) return 0;
+  const d = kind === "pct" ? Math.round(base * value / 100) : Math.round(value * 100);
+  return Math.max(0, Math.min(d, base));
+};
+// καθαρή γραμμής (μετά την έκπτωση γραμμής, ΠΡΙΝ την έκπτωση συνόλου)
+const lineNet = (l: DraftLine) => {
+  const gross = Math.round((num(l.qty) || 1) * Math.round(num(l.unit_eur) * 100));
+  return { gross, net: gross - discCents(gross, l.disc_kind, num(l.disc_value)) };
 };
 
 function InvoiceModal({ modal, tenants, onClose, onDone }:
@@ -173,10 +180,13 @@ function InvoiceModal({ modal, tenants, onClose, onDone }:
   });
   // γραμμές: από inv.lines → αλλιώς (legacy μονή αξία) μία γραμμή → αλλιώς (create) μία κενή
   const [lines, setLines] = useState<DraftLine[]>(() => {
-    if (inv?.lines?.length) return inv.lines.map((l) => ({ description: l.description || "", mtrl: l.mtrl || "", qty: String(l.qty ?? 1), unit_eur: fmtMoney(l.unit_net ?? 0), vat_rate: String(l.vat_rate ?? 24) }));
-    if (inv) return [{ description: inv.description || "", mtrl: inv.mtrl || "", qty: "1", unit_eur: fmtMoney(inv.net_amount || 0), vat_rate: String(inv.vat_rate ?? 24) }];
+    if (inv?.lines?.length) return inv.lines.map((l) => ({ description: l.description || "", mtrl: l.mtrl || "", qty: String(l.qty ?? 1), unit_eur: fmtMoney(l.unit_net ?? 0), vat_rate: String(l.vat_rate ?? 24), disc_kind: (l.disc_kind === "amount" ? "amount" : "pct") as "pct" | "amount", disc_value: l.disc_value ? (l.disc_kind === "amount" ? fmtMoney(l.disc_value) : String(l.disc_value)) : "" }));
+    if (inv) return [{ description: inv.description || "", mtrl: inv.mtrl || "", qty: "1", unit_eur: fmtMoney(inv.net_amount || 0), vat_rate: String(inv.vat_rate ?? 24), disc_kind: "pct" as const, disc_value: "" }];
     return [emptyLine()];
   });
+  // έκπτωση συνόλου
+  const [hdiscKind, setHdiscKind] = useState<"pct" | "amount">(inv?.discount?.kind === "amount" ? "amount" : "pct");
+  const [hdiscValue, setHdiscValue] = useState<string>(inv?.discount?.value ? (inv.discount.kind === "amount" ? fmtMoney(inv.discount.value) : String(inv.discount.value)) : "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -198,9 +208,21 @@ function InvoiceModal({ modal, tenants, onClose, onDone }:
     zip: fetched.billing_profile?.postal_code || fetched.company?.postal_code,
   } : { name: tenants.find((t) => t.id === form.tenant_id)?.name });
 
-  const totals = view && inv && !inv.lines
-    ? { net: inv.net_amount, vat: inv.vat_amount, total: inv.total }
-    : lines.reduce((a, l) => { const c = lineCents(l); return { net: a.net + c.net, vat: a.vat + c.vat, total: a.total + c.total }; }, { net: 0, vat: 0, total: 0 });
+  // σύνολα (live): μερικό σύνολο γραμμών → έκπτωση συνόλου (κατανεμημένη για σωστό ΦΠΑ) → καθαρή/ΦΠΑ/σύνολο
+  const totals = (() => {
+    if (view && inv && !inv.lines) return { subtotal: inv.net_amount, hdisc: 0, net: inv.net_amount, vat: inv.vat_amount, total: inv.total };
+    const nets = lines.map((l) => lineNet(l).net);
+    const subtotal = nets.reduce((a, b) => a + b, 0);
+    const hdisc = discCents(subtotal, hdiscKind, num(hdiscValue));
+    let vat = 0, remaining = hdisc;
+    nets.forEach((n, i) => {
+      const share = (subtotal && hdisc) ? (i < nets.length - 1 ? Math.round(n * hdisc / subtotal) : remaining) : 0;
+      remaining -= share;
+      vat += Math.round((n - share) * (num(lines[i].vat_rate) / 100));
+    });
+    const net = subtotal - hdisc;
+    return { subtotal, hdisc, net, vat, total: net + vat };
+  })();
 
   const setLine = (i: number, patch: Partial<DraftLine>) => setLines((ls) => ls.map((l, j) => (j === i ? { ...l, ...patch } : l)));
   const addLine = () => setLines((ls) => [...ls, emptyLine()]);
@@ -213,10 +235,14 @@ function InvoiceModal({ modal, tenants, onClose, onDone }:
     try {
       const payloadLines = lines.map((l) => ({
         description: l.description.trim(), mtrl: l.mtrl.trim() || null,
-        qty: parseFloat(l.qty || "1") || 1, unit_net: Math.round((parseFloat(l.unit_eur || "0") || 0) * 100),
-        vat_rate: parseFloat(l.vat_rate || "0") || 0,
+        qty: num(l.qty) || 1, unit_net: Math.round(num(l.unit_eur) * 100),
+        vat_rate: num(l.vat_rate),
+        disc_kind: l.disc_kind, disc_value: l.disc_kind === "amount" ? Math.round(num(l.disc_value) * 100) : num(l.disc_value),
       }));
-      const payload = { doc_type: form.doc_type, series: form.series, issue_date: form.issue_date, lines: payloadLines };
+      const payload = {
+        doc_type: form.doc_type, series: form.series, issue_date: form.issue_date, lines: payloadLines,
+        discount_kind: hdiscKind, discount_value: hdiscKind === "amount" ? Math.round(num(hdiscValue) * 100) : num(hdiscValue),
+      };
       if (mode === "create") await adminApi("/admin/invoices", { method: "POST", body: JSON.stringify({ tenant_id: form.tenant_id, ...payload }) });
       else await adminApi(`/admin/invoices/${inv!.id}`, { method: "PATCH", body: JSON.stringify(payload) });
       onDone(mode === "create" ? "Δημιουργήθηκε παραστατικό ✓" : "Αποθηκεύτηκε ✓");
@@ -265,11 +291,13 @@ function InvoiceModal({ modal, tenants, onClose, onDone }:
         </div>
 
         {/* ── HEADER: στοιχεία παραστατικού ── */}
-        <div className="grid gap-3 sm:grid-cols-3">
+        <div className="grid gap-3 sm:grid-cols-4">
           <label className="block text-sm"><span className="mb-1 block text-slate-600">Τύπος</span>
             <input disabled={view} value={form.doc_type} onChange={(e) => setForm({ ...form, doc_type: e.target.value })} className={inp} /></label>
           <label className="block text-sm"><span className="mb-1 block text-slate-600">Σειρά</span>
             <input disabled={view} value={form.series} onChange={(e) => setForm({ ...form, series: e.target.value })} className={inp} /></label>
+          <label className="block text-sm"><span className="mb-1 block text-slate-600">Αριθμός</span>
+            <input disabled value={inv?.number != null ? `${inv.series}-${inv.number}` : "αυτόματος"} className={`${inp} font-medium text-slate-700`} /></label>
           <label className="block text-sm"><span className="mb-1 block text-slate-600">Ημ/νία</span>
             <DateInput disabled={view} value={form.issue_date} onChange={(v) => setForm({ ...form, issue_date: v })} /></label>
         </div>
@@ -277,27 +305,34 @@ function InvoiceModal({ modal, tenants, onClose, onDone }:
         {/* ── ΓΡΑΜΜΕΣ ΕΙΔΩΝ ── */}
         <div className="rounded-xl border border-slate-200">
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[640px] text-sm">
+            <table className="w-full min-w-[760px] text-sm">
               <thead>
                 <tr className="border-b border-slate-100 bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-400">
                   <th className="px-2 py-2 font-medium">Είδος / Περιγραφή</th>
-                  <th className="w-28 px-2 py-2 font-medium">MTRL</th>
-                  <th className="w-16 px-2 py-2 text-right font-medium">Ποσ.</th>
-                  <th className="w-28 px-2 py-2 text-right font-medium">Τιμή μον. €</th>
-                  <th className="w-20 px-2 py-2 text-right font-medium">ΦΠΑ %</th>
+                  <th className="w-24 px-2 py-2 font-medium">MTRL</th>
+                  <th className="w-14 px-2 py-2 text-right font-medium">Ποσ.</th>
+                  <th className="w-24 px-2 py-2 text-right font-medium">Τιμή μον. €</th>
+                  <th className="w-32 px-2 py-2 text-right font-medium">Έκπτωση</th>
+                  <th className="w-16 px-2 py-2 text-right font-medium">ΦΠΑ %</th>
                   <th className="w-24 px-2 py-2 text-right font-medium">Καθαρή</th>
                   {!view && <th className="w-8 px-2 py-2" />}
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-50">
                 {lines.map((l, i) => {
-                  const c = lineCents(l);
+                  const c = lineNet(l);
                   return (
                     <tr key={i} className="align-top">
                       <td className="px-2 py-1.5"><input disabled={view} value={l.description} onChange={(e) => setLine(i, { description: e.target.value })} placeholder="Περιγραφή είδους/υπηρεσίας" className={`${cell} w-full`} /></td>
                       <td className="px-2 py-1.5"><input disabled={view} value={l.mtrl} onChange={(e) => setLine(i, { mtrl: e.target.value })} placeholder="—" className={`${cell} w-full`} /></td>
                       <td className="px-2 py-1.5"><input disabled={view} value={l.qty} onChange={(e) => setLine(i, { qty: e.target.value })} type="number" step="any" className={`${cell} w-full text-right`} /></td>
                       <td className="px-2 py-1.5"><input disabled={view} value={l.unit_eur} onChange={(e) => setLine(i, { unit_eur: e.target.value })} type="number" step="0.01" placeholder="0.00" className={`${cell} w-full text-right`} /></td>
+                      <td className="px-2 py-1.5">
+                        <div className="flex gap-1">
+                          <input disabled={view} value={l.disc_value} onChange={(e) => setLine(i, { disc_value: e.target.value })} type="number" step="any" placeholder="0" className={`${cell} w-full text-right`} />
+                          <select disabled={view} value={l.disc_kind} onChange={(e) => setLine(i, { disc_kind: e.target.value as "pct" | "amount" })} className={`${cell} px-1`}><option value="pct">%</option><option value="amount">€</option></select>
+                        </div>
+                      </td>
                       <td className="px-2 py-1.5"><input disabled={view} value={l.vat_rate} onChange={(e) => setLine(i, { vat_rate: e.target.value })} type="number" step="any" className={`${cell} w-full text-right`} /></td>
                       <td className="px-2 py-1.5 text-right font-medium text-slate-700">{eur(c.net)}</td>
                       {!view && <td className="px-2 py-1.5 text-center"><button type="button" onClick={() => rmLine(i)} className="text-slate-400 hover:text-rose-600" aria-label="Διαγραφή γραμμής"><Trash2 className="h-4 w-4" /></button></td>}
@@ -314,9 +349,20 @@ function InvoiceModal({ modal, tenants, onClose, onDone }:
           )}
         </div>
 
-        {/* ── FOOTER: σύνολα ── */}
+        {/* ── FOOTER: σύνολα (με έκπτωση συνόλου) ── */}
         <div className="flex justify-end">
-          <div className="w-full max-w-xs space-y-1 text-sm">
+          <div className="w-full max-w-sm space-y-1.5 text-sm">
+            <div className="flex items-center justify-between text-slate-600"><span>Μερικό σύνολο</span><span>{eur(totals.subtotal)}</span></div>
+            <div className="flex items-center justify-between gap-2 text-slate-600">
+              <span className="shrink-0">Έκπτωση συνόλου</span>
+              {view ? <span>−{eur(totals.hdisc)}</span> : (
+                <div className="flex items-center gap-1">
+                  <input value={hdiscValue} onChange={(e) => setHdiscValue(e.target.value)} type="number" step="any" placeholder="0" className={`${cell} w-20 text-right`} />
+                  <select value={hdiscKind} onChange={(e) => setHdiscKind(e.target.value as "pct" | "amount")} className={`${cell} px-1`}><option value="pct">%</option><option value="amount">€</option></select>
+                  <span className="w-20 text-right text-rose-600">−{eur(totals.hdisc)}</span>
+                </div>
+              )}
+            </div>
             <div className="flex justify-between text-slate-600"><span>Καθαρή αξία</span><span>{eur(totals.net)}</span></div>
             <div className="flex justify-between text-slate-600"><span>ΦΠΑ</span><span>{eur(totals.vat)}</span></div>
             <div className="flex justify-between border-t border-slate-200 pt-1 text-base font-bold text-slate-900"><span>Σύνολο</span><span>{eur(totals.total)}</span></div>

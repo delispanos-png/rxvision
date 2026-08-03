@@ -126,6 +126,8 @@ class InvoiceLineIn(BaseModel):
     qty: float = 1.0
     unit_net: int = 0              # καθαρή τιμή μονάδας σε cents
     vat_rate: float = 24.0
+    disc_kind: str = "pct"         # "pct" (ποσοστό) | "amount" (ποσό σε cents)
+    disc_value: float = 0.0        # ποσοστό 0-100 αν pct· cents αν amount
 
 
 class InvoiceIn(BaseModel):
@@ -137,6 +139,8 @@ class InvoiceIn(BaseModel):
     net_amount: int = 0            # legacy μονή αξία (cents) — αν δεν δοθούν γραμμές
     vat_rate: float = 24.0
     lines: list[InvoiceLineIn] | None = None   # πολυγραμμικό παραστατικό (header/γραμμές/σύνολα)
+    discount_kind: str = "pct"     # έκπτωση συνόλου: "pct" | "amount" (cents)
+    discount_value: float = 0.0
 
 
 class InvoiceEditIn(BaseModel):
@@ -147,23 +151,48 @@ class InvoiceEditIn(BaseModel):
     net_amount: int | None = None
     vat_rate: float | None = None
     lines: list[InvoiceLineIn] | None = None
+    discount_kind: str | None = None
+    discount_value: float | None = None
 
 
-def _lines_totals(lines: list[dict]) -> tuple[list[dict], int, int, int]:
-    """Υπολογισμός ανά γραμμή (net/vat/total σε cents) + σύνολα. Money = integer cents."""
-    out: list[dict] = []
-    net_t = vat_t = tot_t = 0
-    for ln in lines:
+def _line_discount(gross: int, kind: str, value: float) -> int:
+    """Έκπτωση γραμμής σε cents (δεν ξεπερνά το μικτό). pct=ποσοστό, amount=cents."""
+    if value <= 0 or gross <= 0:
+        return 0
+    d = round(gross * value / 100) if kind == "pct" else int(round(value))
+    return max(0, min(d, gross))
+
+
+def _compute_invoice(lines_in: list[dict], hdisc_kind: str = "pct", hdisc_value: float = 0.0) -> dict:
+    """Πλήρης υπολογισμός παραστατικού με εκπτώσεις (γραμμής + συνόλου). Money = integer cents.
+    Η έκπτωση συνόλου κατανέμεται αναλογικά στις γραμμές ώστε το ΦΠΑ ανά συντελεστή να είναι σωστό."""
+    lines: list[dict] = []
+    subtotal = 0
+    for ln in lines_in:
         qty = float(ln.get("qty") or 0) or 1.0
         unit = int(ln.get("unit_net") or 0)
         rate = float(ln.get("vat_rate") or 0)
-        net = round(qty * unit)
-        vat = round(net * rate / 100)
-        out.append({"description": (ln.get("description") or "").strip(), "mtrl": (ln.get("mtrl") or None),
-                    "qty": qty, "unit_net": unit, "vat_rate": rate,
-                    "net": net, "vat": vat, "total": net + vat})
-        net_t += net; vat_t += vat; tot_t += net + vat
-    return out, net_t, vat_t, tot_t
+        gross = round(qty * unit)
+        ldisc = _line_discount(gross, ln.get("disc_kind") or "pct", float(ln.get("disc_value") or 0))
+        net = gross - ldisc
+        lines.append({"description": (ln.get("description") or "").strip(), "mtrl": (ln.get("mtrl") or None),
+                      "qty": qty, "unit_net": unit, "vat_rate": rate,
+                      "disc_kind": ln.get("disc_kind") or "pct", "disc_value": float(ln.get("disc_value") or 0),
+                      "gross": gross, "discount": ldisc, "net": net, "vat": round(net * rate / 100), "total": net + round(net * rate / 100)})
+        subtotal += net
+    # έκπτωση συνόλου (πάνω στο μερικό σύνολο μετά τις εκπτώσεις γραμμών)
+    hdisc = _line_discount(subtotal, hdisc_kind, hdisc_value)
+    net_total = subtotal - hdisc
+    # ΦΠΑ: κατανομή της έκπτωσης συνόλου αναλογικά ανά γραμμή (σωστό ανά συντελεστή)
+    vat_total = 0
+    remaining = hdisc
+    for i, ln in enumerate(lines):
+        share = (round(ln["net"] * hdisc / subtotal) if i < len(lines) - 1 else remaining) if (subtotal and hdisc) else 0
+        remaining -= share
+        vat_total += round((ln["net"] - share) * ln["vat_rate"] / 100)
+    return {"lines": lines, "subtotal_net": subtotal,
+            "discount": {"kind": hdisc_kind, "value": hdisc_value, "amount": hdisc},
+            "net_amount": net_total, "vat_amount": vat_total, "total": net_total + vat_total}
 
 
 # tenant-scoped collections wiped on hard delete
@@ -1924,6 +1953,7 @@ def _invoice_public(inv: dict, tenant_name: str | None = None) -> dict:
         "customer_afm": (inv.get("customer") or {}).get("afm"),
         "customer": inv.get("customer") or None,
         "lines": inv.get("lines") or None, "mtrl": inv.get("mtrl"),
+        "subtotal_net": inv.get("subtotal_net"), "discount": inv.get("discount") or None,
     }
 
 
@@ -1955,13 +1985,16 @@ async def create_invoice(body: InvoiceIn, _: PlatformContext = Depends(get_platf
     last = await db["invoices"].find_one({"series": body.series}, sort=[("number", -1)])
     number = (last.get("number", 0) if last else 0) + 1
     now = datetime.now(tz=timezone.utc)
-    # Πολυγραμμικό: αν δοθούν γραμμές, τα σύνολα προκύπτουν από αυτές· αλλιώς legacy μονή αξία.
+    # Πολυγραμμικό: αν δοθούν γραμμές, τα σύνολα προκύπτουν από αυτές (με εκπτώσεις)· αλλιώς legacy.
+    disc = None
     if body.lines:
-        lines, net, vat, total = _lines_totals([ln.model_dump() for ln in body.lines])
+        c = _compute_invoice([ln.model_dump() for ln in body.lines], body.discount_kind, body.discount_value)
+        lines, net, vat, total = c["lines"], c["net_amount"], c["vat_amount"], c["total"]
+        subtotal_net, disc = c["subtotal_net"], c["discount"]
         vat_rate = body.lines[0].vat_rate if len({ln.vat_rate for ln in body.lines}) == 1 else 0.0
         description = body.description or (lines[0]["description"] if lines else "")
     else:
-        lines = None
+        lines = subtotal_net = None
         net, vat_rate = body.net_amount, body.vat_rate
         vat, total = _invoice_totals(net, vat_rate)
         description = body.description
@@ -1974,7 +2007,7 @@ async def create_invoice(body: InvoiceIn, _: PlatformContext = Depends(get_platf
            "number": number, "issue_date": body.issue_date or now.date().isoformat(),
            "description": description, "net_amount": net,
            "vat_rate": vat_rate, "vat_amount": vat, "total": total,
-           "lines": lines, "customer": customer,
+           "lines": lines, "subtotal_net": subtotal_net, "discount": disc, "customer": customer,
            "status": "blocked" if blocked else "pending", "blocked_reason": blocked,
            "attempts": 0, "last_error": None, "next_attempt_at": now,
            "aade_status": "not_transmitted", "aade_mark": None, "aade_transmitted_at": None,
@@ -2006,10 +2039,14 @@ async def edit_invoice(invoice_id: str, body: InvoiceEditIn,
         raise HTTPException(http_status.HTTP_409_CONFLICT,
                             {"error": "aade_transmitted", "message": "Διαβιβασμένο στην ΑΑΔΕ — δεν τροποποιείται."})
     patch = {k: v for k, v in body.model_dump().items() if v is not None}
-    if body.lines is not None:      # πολυγραμμικό: ξαναϋπολογισμός γραμμών & συνόλων
-        lines, net, vat, total = _lines_totals([ln.model_dump() for ln in body.lines])
+    if body.lines is not None:      # πολυγραμμικό: ξαναϋπολογισμός γραμμών, εκπτώσεων & συνόλων
+        hk = body.discount_kind if body.discount_kind is not None else (inv.get("discount") or {}).get("kind", "pct")
+        hv = body.discount_value if body.discount_value is not None else (inv.get("discount") or {}).get("value", 0.0)
+        c = _compute_invoice([ln.model_dump() for ln in body.lines], hk, hv)
         rate = body.lines[0].vat_rate if body.lines and len({ln.vat_rate for ln in body.lines}) == 1 else 0.0
-        patch.update({"lines": lines, "net_amount": net, "vat_amount": vat, "total": total, "vat_rate": rate})
+        patch.update({"lines": c["lines"], "subtotal_net": c["subtotal_net"], "discount": c["discount"],
+                      "net_amount": c["net_amount"], "vat_amount": c["vat_amount"], "total": c["total"], "vat_rate": rate})
+        patch.pop("discount_kind", None); patch.pop("discount_value", None)
     elif "net_amount" in patch or "vat_rate" in patch:
         net = patch.get("net_amount", inv.get("net_amount", 0))
         rate = patch.get("vat_rate", inv.get("vat_rate", 0))
