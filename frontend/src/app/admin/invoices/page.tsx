@@ -181,7 +181,7 @@ function InvoiceModal({ modal, tenants, onClose, onDone }:
   const [error, setError] = useState<string | null>(null);
 
   // Header: εκδότης (από ρυθμίσεις SoftOne) + λήπτης (snapshot του παραστατικού ή στοιχεία πελάτη)
-  const issuerQ = useQuery({ queryKey: ["admin", "integrations", "issuer"], queryFn: () => adminApi<{ softone?: { issuer_afm?: string; issuer_name?: string } }>("/admin/integrations"), retry: false, staleTime: 60000 });
+  const issuerQ = useQuery({ queryKey: ["admin", "integrations", "issuer"], queryFn: () => adminApi<{ softone?: { issuer_afm?: string; issuer_name?: string; issuer_doy?: string; issuer_activity?: string; issuer_address?: string; issuer_postal_code?: string; issuer_city?: string; issuer_region?: string; issuer_phone?: string; issuer_email?: string } }>("/admin/integrations"), retry: false, staleTime: 60000 });
   const issuer = issuerQ.data?.softone;
   const tenantDetailQ = useQuery({
     queryKey: ["admin", "tenant", form.tenant_id, "billing"],
@@ -247,7 +247,10 @@ function InvoiceModal({ modal, tenants, onClose, onDone }:
           <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-3 text-sm">
             <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">Εκδότης</div>
             <div className="font-medium text-slate-800">{issuer?.issuer_name || "—"}</div>
-            <div className="text-slate-500">ΑΦΜ: {issuer?.issuer_afm || "—"}</div>
+            {issuer?.issuer_activity && <div className="text-slate-500">{issuer.issuer_activity}</div>}
+            <div className="text-slate-500">ΑΦΜ: {issuer?.issuer_afm || "—"}{issuer?.issuer_doy ? ` · ΔΟΥ: ${issuer.issuer_doy}` : ""}</div>
+            {(issuer?.issuer_address || issuer?.issuer_city) && <div className="text-slate-500">{[issuer?.issuer_address, issuer?.issuer_city, issuer?.issuer_postal_code].filter(Boolean).join(", ")}</div>}
+            {(issuer?.issuer_phone || issuer?.issuer_email) && <div className="text-slate-500">{[issuer?.issuer_phone, issuer?.issuer_email].filter(Boolean).join(" · ")}</div>}
           </div>
           <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-3 text-sm">
             <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">Λήπτης (πελάτης)</div>

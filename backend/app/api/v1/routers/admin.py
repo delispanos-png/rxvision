@@ -965,6 +965,17 @@ class IntegrationsIn(BaseModel):
     softone_js_endpoint: str | None = None   # custom JS web service: "<module>/<function>"
     softone_issuer_afm: str | None = None
     softone_issuer_name: str | None = None
+    # πλήρη στοιχεία εκδότη (CloudOn) για το παραστατικό
+    softone_issuer_doy: str | None = None
+    softone_issuer_activity: str | None = None
+    softone_issuer_legal_form: str | None = None
+    softone_issuer_gemi: str | None = None
+    softone_issuer_address: str | None = None
+    softone_issuer_postal_code: str | None = None
+    softone_issuer_city: str | None = None
+    softone_issuer_region: str | None = None
+    softone_issuer_phone: str | None = None
+    softone_issuer_email: str | None = None
     softone_auto_invoicing: bool | None = None   # master switch: αυτόματη έκδοση παραστατικών
     subscription_provider: str | None = None  # revolut | viva — ποιος χρεώνει τις συνδρομές
     # Alpha Bank (Alpha e-Commerce) card gateway — alternative to Revolut
@@ -1035,6 +1046,11 @@ async def get_integrations(_: PlatformContext = Depends(get_platform_admin)):
                     "series": softone.get("series") or "", "form": softone.get("form") or "",
                     "js_endpoint": softone.get("js_endpoint") or "",
                     "issuer_afm": softone.get("issuer_afm") or "", "issuer_name": softone.get("issuer_name") or "",
+                    "issuer_doy": softone.get("issuer_doy") or "", "issuer_activity": softone.get("issuer_activity") or "",
+                    "issuer_legal_form": softone.get("issuer_legal_form") or "", "issuer_gemi": softone.get("issuer_gemi") or "",
+                    "issuer_address": softone.get("issuer_address") or "", "issuer_postal_code": softone.get("issuer_postal_code") or "",
+                    "issuer_city": softone.get("issuer_city") or "", "issuer_region": softone.get("issuer_region") or "",
+                    "issuer_phone": softone.get("issuer_phone") or "", "issuer_email": softone.get("issuer_email") or "",
                     "auto_invoicing": bool(softone.get("auto_invoicing")),
                     "configured": bool(softone.get("base_url") and softone.get("username")
                                        and softone.get("password") and softone.get("app_id"))},
@@ -1117,7 +1133,12 @@ async def set_integrations(body: IntegrationsIn,
               ("branch", body.softone_branch), ("module", body.softone_module),
               ("refid", body.softone_refid), ("series", body.softone_series),
               ("form", body.softone_form), ("js_endpoint", body.softone_js_endpoint),
-              ("issuer_afm", body.softone_issuer_afm), ("issuer_name", body.softone_issuer_name))
+              ("issuer_afm", body.softone_issuer_afm), ("issuer_name", body.softone_issuer_name),
+              ("issuer_doy", body.softone_issuer_doy), ("issuer_activity", body.softone_issuer_activity),
+              ("issuer_legal_form", body.softone_issuer_legal_form), ("issuer_gemi", body.softone_issuer_gemi),
+              ("issuer_address", body.softone_issuer_address), ("issuer_postal_code", body.softone_issuer_postal_code),
+              ("issuer_city", body.softone_issuer_city), ("issuer_region", body.softone_issuer_region),
+              ("issuer_phone", body.softone_issuer_phone), ("issuer_email", body.softone_issuer_email))
     for k, val in _s1map:
         if val is not None:
             s1[k] = val.strip()
