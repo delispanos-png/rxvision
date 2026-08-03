@@ -154,8 +154,13 @@ export default function InvoicesPage() {
   );
 }
 
-type DraftLine = { item_key: string; description: string; mtrl: string; qty: string; unit_eur: string; vat_rate: string; disc_kind: "pct" | "amount"; disc_value: string };
-const emptyLine = (): DraftLine => ({ item_key: "", description: "", mtrl: "", qty: "1", unit_eur: "", vat_rate: "24", disc_kind: "pct", disc_value: "" });
+type DraftLine = { item_key: string; description: string; mtrl: string; qty: string; unit_eur: string; vat_rate: string; disc_kind: "pct" | "amount"; disc_value: string; period: "month" | "year" };
+const emptyLine = (): DraftLine => ({ item_key: "", description: "", mtrl: "", qty: "1", unit_eur: "", vat_rate: "24", disc_kind: "pct", disc_value: "", period: "month" });
+// καθαρή τιμή μονάδας (€) από την τιμή ΜΕ ΦΠΑ του είδους, για τη ζητούμενη περίοδο
+const unitEurFor = (it: SoftoneItem | undefined, period: "month" | "year", rate: number) => {
+  const gross = it ? (period === "year" ? (it.price_yearly || 0) : (it.price || 0)) : 0;
+  return gross ? fmtMoney(Math.round(gross / (1 + rate / 100))) : "";
+};
 const eur = (c: number) => fmtEur(c);
 const num = (s: string) => parseFloat(s || "0") || 0;
 // έκπτωση σε cents (δεν ξεπερνά τη βάση). pct=ποσοστό· amount=€ (→cents)
@@ -187,8 +192,8 @@ function InvoiceModal({ modal, tenants, onClose, onDone }:
 
   // γραμμές: από inv.lines → αλλιώς (legacy μονή αξία) μία γραμμή → αλλιώς (create) μία κενή
   const [lines, setLines] = useState<DraftLine[]>(() => {
-    if (inv?.lines?.length) return inv.lines.map((l) => ({ item_key: l.item_key || "", description: l.description || "", mtrl: l.mtrl || "", qty: String(l.qty ?? 1), unit_eur: fmtMoney(l.unit_net ?? 0), vat_rate: String(l.vat_rate ?? 24), disc_kind: (l.disc_kind === "amount" ? "amount" : "pct") as "pct" | "amount", disc_value: l.disc_value ? (l.disc_kind === "amount" ? fmtMoney(l.disc_value) : String(l.disc_value)) : "" }));
-    if (inv) return [{ item_key: "", description: inv.description || "", mtrl: inv.mtrl || "", qty: "1", unit_eur: fmtMoney(inv.net_amount || 0), vat_rate: String(inv.vat_rate ?? 24), disc_kind: "pct" as const, disc_value: "" }];
+    if (inv?.lines?.length) return inv.lines.map((l) => ({ item_key: l.item_key || "", description: l.description || "", mtrl: l.mtrl || "", qty: String(l.qty ?? 1), unit_eur: fmtMoney(l.unit_net ?? 0), vat_rate: String(l.vat_rate ?? 24), disc_kind: (l.disc_kind === "amount" ? "amount" : "pct") as "pct" | "amount", disc_value: l.disc_value ? (l.disc_kind === "amount" ? fmtMoney(l.disc_value) : String(l.disc_value)) : "", period: "month" as const }));
+    if (inv) return [{ item_key: "", description: inv.description || "", mtrl: inv.mtrl || "", qty: "1", unit_eur: fmtMoney(inv.net_amount || 0), vat_rate: String(inv.vat_rate ?? 24), disc_kind: "pct" as const, disc_value: "", period: "month" as const }];
     return [emptyLine()];
   });
   // παλιές γραμμές χωρίς item_key → match με βάση MTRL ή όνομα (μία φορά, όταν φορτώσει η λίστα)
@@ -207,8 +212,17 @@ function InvoiceModal({ modal, tenants, onClose, onDone }:
       if (j !== i) return l;
       // αυτόματη καθαρή τιμή μονάδας από την τιμή (ΜΕ ΦΠΑ) του είδους → Σύνολο = τιμή πακέτου
       const rate = num(l.vat_rate) || 24;
-      const unit_eur = it?.price ? fmtMoney(Math.round(it.price / (1 + rate / 100))) : l.unit_eur;
-      return { ...l, item_key: key, description: it?.name || "", mtrl: it?.mtrl || "", unit_eur };
+      const unit_eur = it?.price ? unitEurFor(it, "month", rate) : l.unit_eur;
+      return { ...l, item_key: key, description: it?.name || "", mtrl: it?.mtrl || "", period: "month", unit_eur };
+    }));
+  };
+  // αλλαγή περιόδου (μηνιαία/ετήσια) → ξαναγεμίζει την τιμή μονάδας
+  const setPeriod = (i: number, period: "month" | "year") => {
+    setLines((ls) => ls.map((l, j) => {
+      if (j !== i) return l;
+      const it = catalog.find((c) => c.key === l.item_key);
+      const rate = num(l.vat_rate) || 24;
+      return { ...l, period, unit_eur: it ? unitEurFor(it, period, rate) : l.unit_eur };
     }));
   };
   // έκπτωση συνόλου
@@ -284,7 +298,7 @@ function InvoiceModal({ modal, tenants, onClose, onDone }:
   const inp = "w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none disabled:bg-slate-50";
   const cell = "rounded-lg border border-slate-300 px-2 py-1.5 text-sm focus:border-indigo-500 focus:outline-none disabled:bg-slate-50 disabled:text-slate-500";
   return (
-    <Modal open onClose={onClose} size="3xl"
+    <Modal open onClose={onClose} size="4xl"
       title={mode === "create" ? "Νέο παραστατικό" : mode === "edit" ? `Επεξεργασία ${inv?.doc_type} ${inv?.full_number}` : `Παραστατικό ${inv?.doc_type} ${inv?.full_number}`}>
       <form onSubmit={submit} className="space-y-4">
         {view && inv && isSynced(inv) && (
@@ -334,13 +348,13 @@ function InvoiceModal({ modal, tenants, onClose, onDone }:
         {/* ── ΓΡΑΜΜΕΣ ΕΙΔΩΝ ── */}
         <div className="rounded-xl border border-slate-200">
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[760px] text-sm">
+            <table className="w-full min-w-[820px] text-sm">
               <thead>
                 <tr className="border-b border-slate-100 bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-400">
                   <th className="px-2 py-2 font-medium">Είδος / Περιγραφή</th>
-                  <th className="w-24 px-2 py-2 font-medium">MTRL</th>
-                  <th className="w-14 px-2 py-2 text-right font-medium">Ποσ.</th>
-                  <th className="w-24 px-2 py-2 text-right font-medium">Τιμή μον. €</th>
+                  <th className="w-20 px-2 py-2 font-medium">MTRL</th>
+                  <th className="w-20 px-2 py-2 text-right font-medium">Ποσ.</th>
+                  <th className="w-28 px-2 py-2 text-right font-medium">Τιμή μον. €</th>
                   <th className="w-32 px-2 py-2 text-right font-medium">Έκπτωση</th>
                   <th className="w-16 px-2 py-2 text-right font-medium">ΦΠΑ %</th>
                   <th className="w-24 px-2 py-2 text-right font-medium">Καθαρή</th>
@@ -350,18 +364,32 @@ function InvoiceModal({ modal, tenants, onClose, onDone }:
               <tbody className="divide-y divide-slate-50">
                 {lines.map((l, i) => {
                   const c = lineNet(l);
+                  const selItem = catalog.find((x) => x.key === l.item_key);
+                  const hasYearly = !!(selItem?.price_yearly);
                   return (
                     <tr key={i} className="align-top">
                       <td className="px-2 py-1.5">
                         {view ? <span className="block px-1 py-1.5 text-slate-700">{l.description || "—"}</span> : (
-                          <select value={l.item_key} onChange={(e) => pickItem(i, e.target.value)} className={`${cell} w-full`}>
-                            <option value="">— επίλεξε είδος —</option>
-                            {groups.map((g) => (
-                              <optgroup key={g} label={g}>
-                                {catalog.filter((c) => c.group === g).map((c) => <option key={c.key} value={c.key}>{c.name}{c.mtrl ? "" : " (χωρίς MTRL)"}</option>)}
-                              </optgroup>
-                            ))}
-                          </select>
+                          <>
+                            <select value={l.item_key} onChange={(e) => pickItem(i, e.target.value)} className={`${cell} w-full`}>
+                              <option value="">— επίλεξε είδος —</option>
+                              {groups.map((g) => (
+                                <optgroup key={g} label={g}>
+                                  {catalog.filter((c) => c.group === g).map((c) => <option key={c.key} value={c.key}>{c.name}{c.mtrl ? "" : " (χωρίς MTRL)"}</option>)}
+                                </optgroup>
+                              ))}
+                            </select>
+                            {hasYearly && (
+                              <div className="mt-1 flex items-center gap-1 text-xs text-slate-500">
+                                <span>Χρέωση:</span>
+                                <select value={l.period} onChange={(e) => setPeriod(i, e.target.value as "month" | "year")} className={`${cell} px-1 py-1`}>
+                                  <option value="month">Μηνιαία</option>
+                                  <option value="year">Ετήσια</option>
+                                </select>
+                                <span className="text-slate-400">× ποσότητα {l.period === "month" ? "(μήνες)" : "(έτη)"}</span>
+                              </div>
+                            )}
+                          </>
                         )}
                       </td>
                       <td className="px-2 py-1.5"><span className="block px-1 py-1.5 text-right font-mono text-xs text-slate-500" title={l.mtrl ? "" : `Χωρίς ειδικό MTRL → default (${defaultMtrl || "—"})`}>{l.mtrl || (defaultMtrl ? "default" : "—")}</span></td>
