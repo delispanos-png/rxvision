@@ -1,6 +1,6 @@
 /* ============================================================================
  * RxVision → SoftOne — Custom Web Service (Advanced JavaScript)  [SoftOne BlackBook ver.3.5]
- * ★ ΤΕΛΕΥΤΑΙΑ ΕΝΗΜΕΡΩΣΗ: 2026-08-04 15:02 (EEST)  ← η πιο πρόσφατη έκδοση (ΔΙΑΓΝΩΣΤΙΚΗ)
+ * ★ ΤΕΛΕΥΤΑΙΑ ΕΝΗΜΕΡΩΣΗ: 2026-08-04 15:07 (EEST)  ← η πιο πρόσφατη έκδοση (πελάτης OK· VAT ανά συντελεστή)
  * ----------------------------------------------------------------------------
  * Δημιουργεί ΤΙΜΟΛΟΓΙΟ ΠΑΡΟΧΗΣ ΥΠΗΡΕΣΙΩΝ (SALDOC) από το payload του RxVision και το
  * διαβιβάζει στο myDATA (η CloudOn/SoftOne είναι πιστοποιημένος πάροχος). Επιστρέφει findoc/MARK.
@@ -22,7 +22,10 @@ var CFG = {
   COUNTRY_CODE: 1000,        // κωδικός ΧΩΡΑΣ SoftOne για δημιουργία πελάτη (Ελλάδα) — ΕΠΙΒΕΒΑΙΩΣΤΕ (ΟΧΙ "GR")
   TRDCATEGORY: 0,           // (προαιρετικό) κατηγορία πελάτη· βάλτε αν το SoftOne την απαιτεί στη δημιουργία
   SERVICE_MTRL: 0,           // MTRL «Υπηρεσία συνδρομής RxVision». 0 = γραμμή υπηρεσίας χωρίς είδος — ΕΠΙΒΕΒΑΙΩΣΤΕ
-  VAT: 1420,        // id κατηγορίας ΦΠΑ 24% στη SoftOne — ΕΠΙΒΕΒΑΙΩΣΤΕ
+  VAT: 1420,        // (fallback) id κατηγορίας ΦΠΑ — ΕΠΙΒΕΒΑΙΩΣΤΕ
+  // ⚠ ΣΥΜΠΛΗΡΩΣΤΕ τα ΠΡΑΓΜΑΤΙΚΑ id κατηγοριών ΦΠΑ της εγκατάστασης ΑΝΑ συντελεστή (πίνακας VAT).
+  //   Βρείτε τα με: SELECT VAT, PERCNT, NAME FROM VAT WHERE COMPANY=<company> (ή Κατηγορίες ΦΠΑ).
+  VAT_BY_RATE: { "24": 1420, "13": 0, "6": 0, "0": 0 },   // key = συντελεστής % → value = id κατηγορίας
   // SQL για ανάγνωση myDATA MARK/UID από το παραστατικό (εξαρτάται από το myDATA module) — ΕΠΙΒΕΒΑΙΩΣΤΕ
   MARK_SQL: "SELECT MARK, UID, AA FROM FINDOC WHERE FINDOC="
 };
@@ -94,12 +97,15 @@ function createInvoice(obj) {
       var ln = obj.lines[i];
       var qty = ln.qty || 1;
       var unit = (ln.unit_net !== undefined && ln.unit_net !== null) ? ln.unit_net : ln.net;
+      // id κατηγορίας ΦΠΑ ΑΝΑ συντελεστή γραμμής (24/13/6/0) → fallback CFG.VAT
+      var rateKey = "" + Math.round(ln.vat_rate != null ? ln.vat_rate : 24);
+      var vatId = (CFG.VAT_BY_RATE && CFG.VAT_BY_RATE[rateKey]) ? CFG.VAT_BY_RATE[rateKey] : CFG.VAT;
       lines.push({
         // MTRL ανά γραμμή από το RxVision (κεντρική αντιστοίχιση ειδών)· fallback στο CFG default.
         MTRL: (ln.mtrl !== undefined && ln.mtrl !== null && ln.mtrl !== "") ? ln.mtrl : CFG.SERVICE_MTRL,
         QTY1: qty,
         PRICE: unit,                   // καθαρή τιμή μονάδας (μετά την έκπτωση)
-        VAT: CFG.VAT,
+        VAT: vatId,                    // id κατηγορίας ΦΠΑ (από VAT_BY_RATE)
         LINEVAL: ln.net,                 // καθαρή ΑΞΙΑ γραμμής (μετά τις εκπτώσεις) — authoritative
         DISCV: ln.discount || 0,       // έκπτωση γραμμής σε ευρώ (για εμφάνιση στο παραστατικό) — ΕΠΙΒΕΒΑΙΩΣΤΕ πεδίο
         COMMENTS: ln.description || ""
