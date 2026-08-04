@@ -994,6 +994,7 @@ class IntegrationsIn(BaseModel):
     softone_module: str | None = None
     softone_refid: str | None = None
     softone_series: str | None = None
+    softone_salesman: str | None = None      # κωδικός Πωλητή για το παραστατικό
     softone_form: str | None = None
     softone_js_endpoint: str | None = None   # custom JS web service: "<module>/<function>"
     softone_issuer_afm: str | None = None
@@ -1076,7 +1077,8 @@ async def get_integrations(_: PlatformContext = Depends(get_platform_admin)):
                     "username": softone.get("username") or "", "password_set": bool(softone.get("password")),
                     "company": softone.get("company") or "", "branch": softone.get("branch") or "",
                     "module": softone.get("module") or "", "refid": softone.get("refid") or "",
-                    "series": softone.get("series") or "", "form": softone.get("form") or "",
+                    "series": softone.get("series") or "", "salesman": softone.get("salesman") or "",
+                    "form": softone.get("form") or "",
                     "js_endpoint": softone.get("js_endpoint") or "",
                     "issuer_afm": softone.get("issuer_afm") or "", "issuer_name": softone.get("issuer_name") or "",
                     "issuer_doy": softone.get("issuer_doy") or "", "issuer_activity": softone.get("issuer_activity") or "",
@@ -1165,6 +1167,7 @@ async def set_integrations(body: IntegrationsIn,
               ("username", body.softone_username), ("company", body.softone_company),
               ("branch", body.softone_branch), ("module", body.softone_module),
               ("refid", body.softone_refid), ("series", body.softone_series),
+              ("salesman", body.softone_salesman),
               ("form", body.softone_form), ("js_endpoint", body.softone_js_endpoint),
               ("issuer_afm", body.softone_issuer_afm), ("issuer_name", body.softone_issuer_name),
               ("issuer_doy", body.softone_issuer_doy), ("issuer_activity", body.softone_issuer_activity),

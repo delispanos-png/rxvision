@@ -1,6 +1,6 @@
 /* ============================================================================
  * RxVision → SoftOne — Custom Web Service (Advanced JavaScript)  [SoftOne BlackBook ver.3.5]
- * ★ ΤΕΛΕΥΤΑΙΑ ΕΝΗΜΕΡΩΣΗ: 2026-08-04 15:24 (EEST)  ← σειρά ΠΑΡΑΜΕΤΡΙΚΗ (adminpanel) + αιτιολογία (obj.comments)
+ * ★ ΤΕΛΕΥΤΑΙΑ ΕΝΗΜΕΡΩΣΗ: 2026-08-04 16:08 (EEST)  ← + ΠΩΛΗΤΗΣ (παραμετρικά) · αιτιολογία=obj.comments · σειρά παραμετρική
  * ----------------------------------------------------------------------------
  * Δημιουργεί ΤΙΜΟΛΟΓΙΟ ΠΑΡΟΧΗΣ ΥΠΗΡΕΣΙΩΝ (SALDOC) από το payload του RxVision και το
  * διαβιβάζει στο myDATA (η CloudOn/SoftOne είναι πιστοποιημένος πάροχος). Επιστρέφει findoc/MARK.
@@ -26,11 +26,22 @@ var CFG = {
   TRDCATEGORY: 0,           // (προαιρετικό) κατηγορία πελάτη· βάλτε αν το SoftOne την απαιτεί στη δημιουργία
   // Είδος «Υπηρεσία συνδρομής RxVision» με κατηγορία ΦΠΑ 24% → το ΦΠΑ προκύπτει ΑΥΤΟΜΑΤΑ από το είδος.
   SERVICE_MTRL: 0,           // MTRL υπηρεσίας — ΕΠΙΒΕΒΑΙΩΣΤΕ (πρέπει να έχει ΦΠΑ 24%)
+  SALESMAN: "020",           // ΠΩΛΗΤΗΣ (κωδικός)· παραμετρικά και από adminpanel (obj.softone_salesman) — ΕΠΙΒΕΒΑΙΩΣΤΕ
   MARK_SQL: "SELECT MARK, UID, AA FROM FINDOC WHERE FINDOC="   // ανάγνωση myDATA MARK/UID — ΕΠΙΒΕΒΑΙΩΣΤΕ
 };
 
 /* Locate-or-create πελάτη με ΑΦΜ → επιστρέφει TRDR (primary key). */
 function _hasNum(v) { return v !== null && v !== undefined && ("" + v).replace(/[^0-9]/g, "") !== ""; }
+
+/* Πωλητής: κωδικός → εσωτερικό id (πίνακας SALESMAN)· fallback στην τιμή ως έχει. */
+function _salesmanId(code) {
+  if (code === undefined || code === null || ("" + code) === "") return null;
+  try {
+    var s = X.SQL("SELECT TOP 1 SALESMAN FROM SALESMAN WHERE COMPANY=:X.SYS.COMPANY AND CODE=:1", "" + code);
+    if (_hasNum(s)) return ("" + s).split(",")[0];
+  } catch (e) { /* πέσε στην τιμή ως έχει */ }
+  return code;
+}
 
 function _findOrCreateCustomer(c) {
   var afm = (c && c.afm) ? ("" + c.afm) : "";
@@ -102,7 +113,9 @@ function createInvoice(obj) {
     h.SERIES = (obj.softone_series !== undefined && obj.softone_series !== null && ("" + obj.softone_series) !== "") ? obj.softone_series : CFG.SERIES;
     h.TRDR = cust.trdr;
     if (obj.issue_date) h.TRNDATE = obj.issue_date;   // YYYY-MM-DD
-    h.COMMENTS = obj.comments || obj.ref || "";       // ΑΙΤΙΟΛΟΓΙΑ (π.χ. περίοδος συνδρομής)
+    h.COMMENTS = obj.comments || "";                  // ΑΙΤΙΟΛΟΓΙΑ (π.χ. περίοδος συνδρομής)· ΟΧΙ το εσωτερικό ref
+    var sm = _salesmanId((obj.softone_salesman !== undefined && obj.softone_salesman !== null && ("" + obj.softone_salesman) !== "") ? obj.softone_salesman : CFG.SALESMAN);
+    if (sm !== null) h.SALESMAN = sm;                 // ΠΩΛΗΤΗΣ
 
     for (var i = 0; i < obj.lines.length; i++) {
       var ln = obj.lines[i];

@@ -108,7 +108,8 @@ async def create_for_payment(*, tenant_id: str, kind: str, gross_cents: int,
         txn = (pay.get("transaction_id") or "").strip()
 
         # Δωρεάν πελάτης (χαρακτηρισμένος στη συνδρομή) → ΚΑΝΕΝΑ παραστατικό.
-        sub = await db["subscriptions"].find_one({"tenant_id": tenant_id}, {"complimentary": 1, "plan": 1})
+        sub = await db["subscriptions"].find_one({"tenant_id": tenant_id},
+              {"complimentary": 1, "plan": 1, "started_at": 1, "current_period_end": 1, "billing_cycle": 1})
         if sub and sub.get("complimentary"):
             log.info("invoice skipped — complimentary tenant: %s (%s)", tenant_id, kind)
             return None
@@ -142,11 +143,19 @@ async def create_for_payment(*, tenant_id: str, kind: str, gross_cents: int,
         now = _now()
         number = await _next_number(db, series)
         blocked = None if customer["afm"] else "missing_afm"
+        # ΑΙΤΙΟΛΟΓΙΑ = περίοδος συνδρομής (για subscription/renewal/upgrade) → SoftOne COMMENTS
+        comments = ""
+        if kind in ("subscription", "renewal", "upgrade") and sub:
+            _f = lambda d: d.strftime("%d/%m/%Y") if hasattr(d, "strftime") else ""  # noqa: E731
+            st, en = sub.get("started_at"), sub.get("current_period_end")
+            if en:
+                comments = "Περίοδος συνδρομής: " + (f"{_f(st)} έως " if st else "έως ") + _f(en)
         doc = {
             "tenant_id": tenant_id, "tenant_name": tenant.get("name"),
             "auto": True, "kind": kind, "doc_type": "ΤΠΥ", "series": series, "number": number,
             "issue_date": now.date().isoformat(),
             "description": description or KIND_LABELS.get(kind, "Υπηρεσία RxVision"),
+            "comments": comments,
             "net_amount": net, "vat_rate": rate, "vat_amount": vat, "total": gross,
             "mtrl": mtrl, "item_key": ik,
             "customer": customer,
