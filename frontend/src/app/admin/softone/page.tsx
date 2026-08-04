@@ -85,7 +85,7 @@ export default function AdminSoftonePage() {
           <div className="mb-2 text-xs font-semibold text-slate-500">Παραστατικό (τιμολόγιο παροχής υπηρεσιών)</div>
           <div className="mb-4 sm:col-span-2"><label className={lbl}>Custom JS Web Service (module/function)</label><input className={inp} value={f.js_endpoint} onChange={(e) => set("js_endpoint", e.target.value)} placeholder="π.χ. RXVISION/createInvoice" /><p className="mt-1 text-[11px] text-slate-400">Το endpoint που θα καλέσουμε: <code>&lt;base_url&gt;/JS/&lt;αυτό&gt;</code>. Το γράφει η ομάδα SoftOne σε Advanced JavaScript.</p></div>
           <div className="grid gap-4 sm:grid-cols-2">
-            <div><label className={lbl}>SERIES (σειρά — τύπος Τ.Π.Υ.)</label><input className={inp} value={f.series} onChange={(e) => set("series", e.target.value)} placeholder="7002" /></div>
+            <div><label className={lbl}>SERIES (internal id σειράς)</label><input className={inp} value={f.series} onChange={(e) => set("series", e.target.value)} placeholder="7767" /><p className="mt-1 text-[11px] text-amber-600">⚠ Βάλε το <b>internal id ΣΕΙΡΑΣ</b>, όχι της φόρμας (FPRMS). π.χ. Τ.Π.Υ.=<code>7767</code>, Τ.Π.Υ. Ε.Ε.=<code>7069</code>, Προτιμολόγιο=<code>7002</code>. Άκυρο/κενό → πέφτει 7002.</p></div>
             <div><label className={lbl}>Πωλητής (κωδικός)</label><input className={inp} value={f.salesman} onChange={(e) => set("salesman", e.target.value)} placeholder="020" /></div>
             <div><label className={lbl}>FORM</label><input className={inp} value={f.form} onChange={(e) => set("form", e.target.value)} /></div>
           </div>

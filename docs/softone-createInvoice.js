@@ -1,6 +1,9 @@
 /* ============================================================================
  * RxVision → SoftOne — Custom Web Service (Advanced JavaScript)  [SoftOne BlackBook ver.3.5]
- * ★ ΤΕΛΕΥΤΑΙΑ ΕΝΗΜΕΡΩΣΗ: 2026-08-04 19:20 (EEST)  ← αιτιολογία fix (ΞΕΧΩΡΙΣΤΑ setData COMMENTS/POSGUID) + series διαγνωστικό (__diag_series) + version marker resp.v
+ * ★ ΤΕΛΕΥΤΑΙΑ ΕΝΗΜΕΡΩΣΗ: 2026-08-04 19:35 (EEST)  ← αιτιολογία fix (ΞΕΧΩΡΙΣΤΑ setData COMMENTS/POSGUID) + idempotency (POSGUID) + καθαρισμός διαγνωστικών
+ *
+ * ΣΕΙΡΑ (SERIES): το adminpanel param πρέπει να είναι το internal SERIES id (ΟΧΙ FPRMS/φόρμα!).
+ *   π.χ. Τ.Π.Υ.=7767 (φόρμα 7067), Τ.Π.Υ. Ε.Ε.=7069. Κενό/άκυρο → default 7002 (Προτιμολόγιο).
  * ----------------------------------------------------------------------------
  * Δημιουργεί ΤΙΜΟΛΟΓΙΟ ΠΑΡΟΧΗΣ ΥΠΗΡΕΣΙΩΝ (SALDOC) από το payload του RxVision και το
  * διαβιβάζει στο myDATA (η CloudOn/SoftOne είναι πιστοποιημένος πάροχος). Επιστρέφει findoc/MARK.
@@ -80,30 +83,8 @@ function _getMyData(findoc) {
 
 /* ── Το custom web service (κλήση: /s1services/JS/RXVISION/createInvoice) ── */
 function createInvoice(obj) {
-  var resp = { success: false, v: "1920" };   // ← ΔΙΑΓΝΩΣΤΙΚΟ: επιβεβαιώνει ΠΟΙΑ έκδοση γέφυρας τρέχει
-  try {
-    resp.diag = { lines: (obj && obj.lines) ? obj.lines.length : -1,
-      mtrl0: (obj && obj.lines && obj.lines[0]) ? obj.lines[0].mtrl : null,
-      ser: (obj ? obj.softone_series : null), hasRef: !!(obj && obj.ref) };
-  } catch (e) { }
+  var resp = { success: false, v: "1935" };   // δείκτης έκδοσης γέφυρας (επιβεβαιώνει ΟΤΙ τρέχει η σωστή)
   if (!obj || !obj.clientID || obj.clientID === "") { resp.error = "Authenticate failed: missing clientID"; return resp; }
-  // ── ΔΙΑΓΝΩΣΤΙΚΟ ΣΕΙΡΩΝ: βρίσκει το σωστό internal SERIES id (π.χ. για Τ.Π.Υ./ΤΠΥΕΕ). Καλείς με __diag_series:true.
-  if (obj.__diag_series) {
-    var probes = [
-      "SELECT SERIES, CODE, NAME, SODTYPE, ITEDOCTYPE FROM FPRMS ORDER BY SERIES",
-      "SELECT SERIES, CODE, NAME, SODTYPE FROM MTRSERIES ORDER BY SERIES",
-      "SELECT TOP 60 FINDOC, SERIES, SERIESNUM, FPRMS, SODTYPE FROM FINDOC WHERE COMPANY=" + X.SYS.COMPANY + " ORDER BY FINDOC DESC"
-    ];
-    resp.probes = [];
-    for (var pi = 0; pi < probes.length; pi++) {
-      try {
-        var ds = X.GETSQLDATASET(probes[pi], null);
-        resp.probes.push({ q: probes[pi], n: (ds ? ds.length : 0), rows: ds || [] });
-      } catch (ex) { resp.probes.push({ q: probes[pi], err: ex.message }); }
-    }
-    resp.success = true;
-    return resp;
-  }
   if (!obj.customer || !obj.customer.afm) { resp.error = "missing customer AFM"; return resp; }
   if (!obj.lines || obj.lines.length === 0) { resp.error = "missing lines"; return resp; }
   var myObj = null;
