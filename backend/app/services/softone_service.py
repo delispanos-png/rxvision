@@ -142,7 +142,9 @@ async def issue(payload: dict) -> dict:
     if not client_id:
         return {"ok": False, "error": "auth_failed"}
     url = _gateway(cfg["base_url"]) + "/JS/" + js_path
-    body = {"clientID": client_id, "appId": cfg.get("app_id"), **payload}
+    # softone_series από το adminpanel (παραμετρικά) → η γέφυρα το χρησιμοποιεί ως σειρά (τύπος Τ.Π.Υ.)
+    body = {"clientID": client_id, "appId": cfg.get("app_id"),
+            "softone_series": cfg.get("series") or None, **payload}
     try:
         res = await _post(url, body)
     except Exception as e:  # noqa: BLE001

@@ -1,6 +1,6 @@
 /* ============================================================================
  * RxVision → SoftOne — Custom Web Service (Advanced JavaScript)  [SoftOne BlackBook ver.3.5]
- * ★ ΤΕΛΕΥΤΑΙΑ ΕΝΗΜΕΡΩΣΗ: 2026-08-04 15:15 (EEST)  ← object approach (CreateObj/DBPOST): ΦΠΑ/σύνολα/αριθμός/myDATA αυτόματα
+ * ★ ΤΕΛΕΥΤΑΙΑ ΕΝΗΜΕΡΩΣΗ: 2026-08-04 15:24 (EEST)  ← σειρά ΠΑΡΑΜΕΤΡΙΚΗ (adminpanel) + αιτιολογία (obj.comments)
  * ----------------------------------------------------------------------------
  * Δημιουργεί ΤΙΜΟΛΟΓΙΟ ΠΑΡΟΧΗΣ ΥΠΗΡΕΣΙΩΝ (SALDOC) από το payload του RxVision και το
  * διαβιβάζει στο myDATA (η CloudOn/SoftOne είναι πιστοποιημένος πάροχος). Επιστρέφει findoc/MARK.
@@ -20,7 +20,7 @@ var CFG = {
   // ⚠ ΤΟ ΠΙΟ ΣΗΜΑΝΤΙΚΟ: η ΣΕΙΡΑ ΟΡΙΖΕΙ τον ΤΥΠΟ (Τιμολόγιο Παροχής Υπηρεσιών) και μαζί ΦΠΑ,
   //   ΑΡΙΘΜΗΣΗ & χαρτογράφηση myDATA. Βάλτε τη σειρά «τιμ. παροχής υπηρεσιών». Όλα τα υπόλοιπα
   //   (ΦΠΑ, σύνολα, αριθμός, myDATA) τα υπολογίζει ΜΟΝΟ του το SoftOne στο DBPOST.
-  SERIES: 7001,        // ΣΕΙΡΑ Τ.Π.Υ. — ΕΠΙΒΕΒΑΙΩΣΤΕ
+  SERIES: 7002,        // ΣΕΙΡΑ Τιμολογίου Παροχής Υπηρεσιών (ΟΧΙ 7001 = προσφορά) — ΕΠΙΒΕΒΑΙΩΣΤΕ
   SODTYPE_CUSTOMER: 13,          // 13 = Πελάτες (SoftOne standard)
   COUNTRY_CODE: 1000,        // κωδικός ΧΩΡΑΣ SoftOne για δημιουργία πελάτη (Ελλάδα) — ΕΠΙΒΕΒΑΙΩΣΤΕ (ΟΧΙ "GR")
   TRDCATEGORY: 0,           // (προαιρετικό) κατηγορία πελάτη· βάλτε αν το SoftOne την απαιτεί στη δημιουργία
@@ -97,10 +97,12 @@ function createInvoice(obj) {
     var d = myObj.FindTable("ITELINES");   // γραμμές ειδών
 
     h.Edit;
-    h.SERIES = CFG.SERIES;                 // η ΣΕΙΡΑ ορίζει τύπο + ΦΠΑ default + αρίθμηση + myDATA
+    // ΣΕΙΡΑ: από το adminpanel (obj.softone_series) → αλλιώς το CFG.SERIES. Η σειρά ορίζει
+    // τύπο (Τ.Π.Υ.) + ΦΠΑ default + αρίθμηση + myDATA. Παραμετρική χωρίς re-upload της JS.
+    h.SERIES = (obj.softone_series !== undefined && obj.softone_series !== null && ("" + obj.softone_series) !== "") ? obj.softone_series : CFG.SERIES;
     h.TRDR = cust.trdr;
     if (obj.issue_date) h.TRNDATE = obj.issue_date;   // YYYY-MM-DD
-    if (obj.ref) h.COMMENTS = obj.ref;
+    h.COMMENTS = obj.comments || obj.ref || "";       // ΑΙΤΙΟΛΟΓΙΑ (π.χ. περίοδος συνδρομής)
 
     for (var i = 0; i < obj.lines.length; i++) {
       var ln = obj.lines[i];

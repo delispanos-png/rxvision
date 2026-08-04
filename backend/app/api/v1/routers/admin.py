@@ -137,6 +137,7 @@ class InvoiceIn(BaseModel):
     series: str = "Α"             # σειρά
     issue_date: str | None = None  # ISO· default σήμερα
     description: str = ""
+    comments: str = ""             # αιτιολογία παραστατικού (π.χ. περίοδος συνδρομής) → SoftOne COMMENTS
     net_amount: int = 0            # legacy μονή αξία (cents) — αν δεν δοθούν γραμμές
     vat_rate: float = 24.0
     lines: list[InvoiceLineIn] | None = None   # πολυγραμμικό παραστατικό (header/γραμμές/σύνολα)
@@ -149,6 +150,7 @@ class InvoiceEditIn(BaseModel):
     series: str | None = None
     issue_date: str | None = None
     description: str | None = None
+    comments: str | None = None
     net_amount: int | None = None
     vat_rate: float | None = None
     lines: list[InvoiceLineIn] | None = None
@@ -1948,6 +1950,7 @@ def _invoice_public(inv: dict, tenant_name: str | None = None) -> dict:
         "doc_type": inv.get("doc_type"), "series": inv.get("series"),
         "number": inv.get("number"), "full_number": f"{inv.get('series')}-{inv.get('number')}",
         "issue_date": inv.get("issue_date"), "description": inv.get("description", ""),
+        "comments": inv.get("comments", ""),
         "net_amount": inv.get("net_amount", 0), "vat_rate": inv.get("vat_rate", 0),
         "vat_amount": inv.get("vat_amount", 0), "total": inv.get("total", 0),
         "aade_status": inv.get("aade_status", "not_transmitted"),
@@ -2013,7 +2016,7 @@ async def create_invoice(body: InvoiceIn, _: PlatformContext = Depends(get_platf
     doc = {"tenant_id": body.tenant_id, "tenant_name": tenant.get("name"),
            "doc_type": body.doc_type, "series": body.series,
            "number": number, "issue_date": body.issue_date or now.date().isoformat(),
-           "description": description, "net_amount": net,
+           "description": description, "comments": body.comments or "", "net_amount": net,
            "vat_rate": vat_rate, "vat_amount": vat, "total": total,
            "lines": lines, "subtotal_net": subtotal_net, "discount": disc, "customer": customer,
            "status": "blocked" if blocked else "pending", "blocked_reason": blocked,

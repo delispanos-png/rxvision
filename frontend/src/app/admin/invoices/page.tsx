@@ -13,7 +13,7 @@ import { Receipt, Send, CheckCircle2, Clock, AlertTriangle, Ban, Plus, Trash2 } 
 
 type Invoice = {
   id: string; tenant_id: string; tenant_name: string | null; doc_type: string; series: string;
-  number: number; full_number: string; issue_date: string; description: string;
+  number: number; full_number: string; issue_date: string; description: string; comments?: string;
   net_amount: number; vat_rate: number; vat_amount: number; total: number;
   aade_status: "transmitted" | "not_transmitted"; aade_mark: string | null; aade_transmitted_at: string | null;
   // Φάση 3 — αυτόματο κύκλωμα SoftOne → myDATA
@@ -201,6 +201,7 @@ function InvoiceModal({ modal, tenants, onClose, onDone }:
     tenant_id: inv?.tenant_id ?? prefill?.tenant_id ?? tenants[0]?.id ?? "",
     doc_type: inv?.doc_type ?? "ΤΠΥ", series: inv?.series ?? "Α",
     issue_date: inv?.issue_date ?? new Date().toISOString().slice(0, 10),
+    comments: inv?.comments ?? "",
   });
   // κεντρική λίστα τιμολογήσιμων ειδών → dropdown (όχι ελεύθερο κείμενο, ώστε το MTRL να έχει νόημα)
   const itemsQ = useQuery({ queryKey: ["admin", "softone-items"], queryFn: () => adminApi<{ items: SoftoneItem[]; default_mtrl: string }>("/admin/softone/items"), retry: false, staleTime: 60000 });
@@ -310,7 +311,7 @@ function InvoiceModal({ modal, tenants, onClose, onDone }:
         disc_kind: l.disc_kind, disc_value: l.disc_kind === "amount" ? Math.round(num(l.disc_value) * 100) : num(l.disc_value),
       }));
       const payload = {
-        doc_type: form.doc_type, series: form.series, issue_date: form.issue_date, lines: payloadLines,
+        doc_type: form.doc_type, series: form.series, issue_date: form.issue_date, comments: form.comments.trim(), lines: payloadLines,
         discount_kind: hdiscKind, discount_value: hdiscKind === "amount" ? Math.round(num(hdiscValue) * 100) : num(hdiscValue),
       };
       if (mode === "create") await adminApi("/admin/invoices", { method: "POST", body: JSON.stringify({ tenant_id: form.tenant_id, ...payload }) });
@@ -371,6 +372,12 @@ function InvoiceModal({ modal, tenants, onClose, onDone }:
           <label className="block text-sm"><span className="mb-1 block text-slate-600">Ημ/νία</span>
             <DateInput disabled={view} value={form.issue_date} onChange={(v) => setForm({ ...form, issue_date: v })} /></label>
         </div>
+
+        {/* Αιτιολογία (→ SoftOne COMMENTS)· π.χ. περίοδος συνδρομής */}
+        <label className="block text-sm"><span className="mb-1 block text-slate-600">Αιτιολογία</span>
+          <input disabled={view} value={form.comments} onChange={(e) => setForm({ ...form, comments: e.target.value })}
+            placeholder="π.χ. Συνδρομή RxVision Growth — περίοδος 04/08/2026 έως 03/08/2027"
+            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none disabled:bg-slate-50" /></label>
 
         {/* ── ΓΡΑΜΜΕΣ ΕΙΔΩΝ ── */}
         <div className="rounded-xl border border-slate-200">

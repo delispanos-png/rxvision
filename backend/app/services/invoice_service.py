@@ -214,6 +214,7 @@ def _build_payload(inv: dict) -> dict:
         "series": inv.get("series"),
         "number": inv.get("number"),
         "doc_type": inv.get("doc_type"),
+        "comments": inv.get("comments") or inv.get("description") or "",   # ΑΙΤΙΟΛΟΓΙΑ (π.χ. περίοδος συνδρομής)
         "customer": inv.get("customer") or {},
         "lines": out_lines,
         "totals": {"net": c(inv.get("net_amount")), "vat": c(inv.get("vat_amount")),
