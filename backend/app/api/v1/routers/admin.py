@@ -2023,6 +2023,17 @@ async def create_invoice(body: InvoiceIn, _: PlatformContext = Depends(get_platf
            "created_at": now, "updated_at": now}
     res = await db["invoices"].insert_one(doc)
     doc["_id"] = res.inserted_id
+    # Άμεση διαβίβαση στο SoftOne (αν είναι ρυθμισμένο & έχει ανέβει η JS)· αλλιώς μένει pending
+    # για το batch (κάθε 5') ή το κουμπί «Αποστολή SoftOne».
+    if not blocked:
+        try:
+            from app.services import softone_service
+            scfg = await softone_service.platform_config()
+            if softone_service.is_configured(scfg) and (scfg.get("js_endpoint") or "").strip():
+                from app.workers.billing import transmit_invoice
+                transmit_invoice.delay(str(doc["_id"]))
+        except Exception:   # noqa: BLE001 — best-effort· η δημιουργία δεν σπάει
+            pass
     return jsonsafe(_invoice_public(doc, tenant.get("name")))
 
 

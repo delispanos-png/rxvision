@@ -58,3 +58,13 @@ def process_pending_invoices(self) -> dict:
     No-op μέχρι να ενεργοποιηθεί το auto_invoicing στο adminpanel ΚΑΙ να ανέβει η JS του SoftOne."""
     from app.services.invoice_service import process_pending
     return asyncio.run(process_pending())
+
+
+@celery_app.task(name="app.workers.billing.transmit_invoice", bind=True,
+                 max_retries=3, autoretry_for=(ConnectionError, TimeoutError),
+                 retry_backoff=True, retry_backoff_max=600, retry_jitter=True)
+def transmit_invoice(self, invoice_id: str) -> dict:
+    """Άμεση διαβίβαση ΕΝΟΣ παραστατικού στο SoftOne (μόλις δημιουργηθεί χειροκίνητα) — δεν περιμένει
+    το batch. Σε αποτυχία η εγγραφή μπαίνει σε retry (κάθε 5' από το process_pending_invoices)."""
+    from app.services.invoice_service import issue_invoice_by_id
+    return asyncio.run(issue_invoice_by_id(invoice_id))

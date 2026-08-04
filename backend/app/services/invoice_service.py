@@ -235,7 +235,7 @@ async def _issue_one(db, inv: dict) -> bool:
         log.info("invoice issued: %s findoc=%s mark=%s", inv["_id"], r.get("findoc"), r.get("mark"))
         return True
     attempts = int(inv.get("attempts", 0)) + 1
-    backoff_min = min(2 ** attempts, 720)           # εκθετικό, cap 12h
+    backoff_min = 5                                  # σταθερό retry κάθε 5 λεπτά (έως MAX_ATTEMPTS)
     status = "failed" if attempts >= MAX_ATTEMPTS else "pending"
     await db["invoices"].update_one({"_id": inv["_id"]}, {"$set": {
         "attempts": attempts, "last_error": str(r.get("error"))[:300], "status": status,
@@ -252,14 +252,16 @@ async def process_pending() -> dict:
     cfg = await softone_service.platform_config()
     if not softone_service.is_configured(cfg):
         return {"skipped": "softone_not_configured"}
-    if not cfg.get("auto_invoicing"):
-        return {"skipped": "auto_invoicing_off"}
     if not (cfg.get("js_endpoint") or "").strip():
         return {"skipped": "no_js_endpoint"}
     now = _now()
     issued = failed = 0
-    cur = db["invoices"].find({"status": "pending", "auto": True,
-                               "next_attempt_at": {"$lte": now}}).sort("created_at", 1).limit(BATCH)
+    # Τα ΧΕΙΡΟΚΙΝΗΤΑ παραστατικά (auto != True) στέλνονται πάντα (ρητή ενέργεια admin)· τα ΑΥΤΟΜΑΤΑ
+    # (από χρεώσεις) μόνο όταν είναι ON το master switch «Αυτόματη έκδοση τιμολογίων».
+    q: dict = {"status": "pending", "next_attempt_at": {"$lte": now}}
+    if not cfg.get("auto_invoicing"):
+        q["auto"] = {"$ne": True}
+    cur = db["invoices"].find(q).sort("created_at", 1).limit(BATCH)
     async for inv in cur:
         ok = await _issue_one(db, inv)
         issued += int(ok)
