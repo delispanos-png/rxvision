@@ -234,8 +234,22 @@ def _build_payload(inv: dict) -> dict:
 
 async def _issue_one(db, inv: dict) -> bool:
     """Στέλνει ΕΝΑ invoice στο SoftOne· ενημερώνει την εγγραφή (issued ή retry/backoff)."""
-    r = await softone_service.issue(_build_payload(inv))
+    payload = _build_payload(inv)
     now = _now()
+    # IDEMPOTENCY (ΞΕΧΩΡΙΣΤΗ κλήση): ρώτα πρώτα αν υπάρχει ΗΔΗ doc με αυτό το ref (POSGUID). Αυτό ΠΡΕΠΕΙ
+    # να γίνεται σε άλλη κλήση από την έκδοση — το X.SQL στο ίδιο context με το CreateObj χαλάει το MTRL.
+    # Έτσι, μετά από timeout όπου το SoftOne είχε ήδη φτιάξει το doc, το retry το ΒΡΙΣΚΕΙ → κανένα διπλό.
+    if payload.get("ref"):
+        found = await softone_service.issue({**payload, "mode": "find"})
+        if found.get("ok") and found.get("findoc"):
+            await db["invoices"].update_one({"_id": inv["_id"]}, {"$set": {
+                "status": "issued", "softone_findoc": found.get("findoc"),
+                "aade_mark": found.get("mark"), "mydata_uid": found.get("uid"), "mydata_aa": found.get("aa"),
+                "aade_status": "transmitted", "aade_transmitted_at": now,
+                "issued_at": now, "last_error": None, "updated_at": now}})
+            log.info("invoice already in SoftOne (idempotent): %s findoc=%s", inv["_id"], found.get("findoc"))
+            return True
+    r = await softone_service.issue(payload)
     if r.get("ok"):
         await db["invoices"].update_one({"_id": inv["_id"]}, {"$set": {
             "status": "issued", "softone_findoc": r.get("findoc"),

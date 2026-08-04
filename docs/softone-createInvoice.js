@@ -1,6 +1,7 @@
 /* ============================================================================
  * RxVision → SoftOne — Custom Web Service (Advanced JavaScript)  [SoftOne BlackBook ver.3.5]
- * ★ ΤΕΛΕΥΤΑΙΑ ΕΝΗΜΕΡΩΣΗ: 2026-08-04 19:35 (EEST)  ← αιτιολογία fix (ΞΕΧΩΡΙΣΤΑ setData COMMENTS/POSGUID) + idempotency (POSGUID) + καθαρισμός διαγνωστικών
+ * ★ ΤΕΛΕΥΤΑΙΑ ΕΝΗΜΕΡΩΣΗ: 2026-08-04 20:10 (EEST)  ← FIX «Υλικό κενό» ΟΡΙΣΤΙΚΑ: το idempotency X.SQL βγήκε ΕΞΩ από τη δημιουργία
+ *   (mode "find" = ξεχωριστή κλήση). Καθαρή διαδρομή δημιουργίας (μόνο customer X.SQL) → αξιόπιστο MTRL. + αιτιολογία fix
  *
  * ΣΕΙΡΑ (SERIES): το adminpanel param πρέπει να είναι το internal SERIES id (ΟΧΙ FPRMS/φόρμα!).
  *   π.χ. Τ.Π.Υ.=7767 (φόρμα 7067), Τ.Π.Υ. Ε.Ε.=7069. Κενό/άκυρο → default 7002 (Προτιμολόγιο).
@@ -83,32 +84,35 @@ function _getMyData(findoc) {
 
 /* ── Το custom web service (κλήση: /s1services/JS/RXVISION/createInvoice) ── */
 function createInvoice(obj) {
-  var resp = { success: false, v: "1935" };   // δείκτης έκδοσης γέφυρας (επιβεβαιώνει ΟΤΙ τρέχει η σωστή)
+  var resp = { success: false, v: "2010" };   // δείκτης έκδοσης γέφυρας (επιβεβαιώνει ΟΤΙ τρέχει η σωστή)
   if (!obj || !obj.clientID || obj.clientID === "") { resp.error = "Authenticate failed: missing clientID"; return resp; }
+
+  // ⛔ IDEMPOTENCY — mode "find": ΜΟΝΟ X.SQL lookup (POSGUID), ΚΑΜΙΑ δημιουργία. Το backend το καλεί
+  //    ΞΕΧΩΡΙΣΤΑ πριν την έκδοση. Κρίσιμο: το X.SQL ΔΕΝ πρέπει να τρέχει στο ΙΔΙΟ context με το CreateObj
+  //    (δεύτερο X.SQL πριν το CreateObj χαλάει το ενεργό dataset → «Δεν συμπληρώσατε το πεδίο Υλικό»).
+  if (obj.mode === "find") {
+    var fr = { success: true, findoc: 0 };
+    if (obj.ref) {
+      try {
+        var ex = X.SQL("SELECT FINDOC FROM FINDOC WHERE COMPANY=:X.SYS.COMPANY AND POSGUID=:1", "" + obj.ref);
+        if (ex !== null && ("" + ex) !== "" && parseInt("" + ex, 10) > 0) {
+          fr.findoc = parseInt("" + ex, 10);
+          var fmd = _getMyData(fr.findoc);
+          fr.mark = fmd.mark; fr.uid = fmd.uid; fr.aa = fmd.aa;
+        }
+      } catch (e) { fr.error = e.message; }
+    }
+    return fr;
+  }
+
   if (!obj.customer || !obj.customer.afm) { resp.error = "missing customer AFM"; return resp; }
   if (!obj.lines || obj.lines.length === 0) { resp.error = "missing lines"; return resp; }
   var myObj = null;
   try {
-    // ⚠ ΟΛΑ τα X.SQL lookups ΠΡΙΝ ανοίξουμε το object! Κλήση X.SQL ΜΕΣΑ στη συναλλαγή (μετά το
-    //   DBINSERT/Append) «χαλάει» το ενεργό dataset → χάνεται το MTRL. Οπότε τα προϋπολογίζουμε εδώ.
-
-    // ⛔ IDEMPOTENCY (κρίσιμο): αν υπάρχει ΗΔΗ παραστατικό με αυτό το ref (POSGUID) → επέστρεψέ το ΩΣ ΕΧΕΙ,
-    //    ΜΗΝ ξαναδημιουργείς. Έτσι το retry κάθε 5' (π.χ. μετά από timeout όπου το SoftOne το είχε ήδη
-    //    δημιουργήσει) ΔΕΝ βγάζει διπλό. ΠΡΩΤΑ αυτό, ΜΕΤΑ το customer lookup (ώστε το customer X.SQL να
-    //    μένει το ΤΕΛΕΥΤΑΙΟ πριν το CreateObj — όπως στην έκδοση που δούλευε).
-    if (obj.ref) {
-      var existing = null;
-      try { existing = X.SQL("SELECT FINDOC FROM FINDOC WHERE COMPANY=:X.SYS.COMPANY AND POSGUID=:1", "" + obj.ref); } catch (e) { existing = null; }
-      if (existing !== null && ("" + existing) !== "" && parseInt("" + existing, 10) > 0) {
-        var ef = parseInt("" + existing, 10);
-        var emd = _getMyData(ef);
-        resp.success = true; resp.idempotent = true; resp.findoc = ef;
-        resp.mark = emd.mark; resp.uid = emd.uid; resp.aa = emd.aa; resp.ref = obj.ref;
-        return resp;
-      }
-    }
-
-    var cust = _findOrCreateCustomer(obj.customer);   // ΤΕΛΕΥΤΑΙΟ X.SQL πριν το CreateObj (αποδεδειγμένα safe)
+    // ⚠ ΚΑΘΑΡΗ διαδρομή δημιουργίας: το ΜΟΝΟ X.SQL πριν το CreateObj είναι το customer lookup (όπως στην
+    //   έκδοση ★17 που ήταν αξιόπιστη). Ο έλεγχος idempotency γίνεται ΞΕΧΩΡΙΣΤΑ (mode "find"), ΠΟΤΕ εδώ —
+    //   δεύτερο X.SQL εδώ χαλάει το dataset και χάνεται το MTRL στο DBPOST.
+    var cust = _findOrCreateCustomer(obj.customer);   // ΤΕΛΕΥΤΑΙΟ (& μόνο) X.SQL πριν το CreateObj
     if (!cust.trdr) { resp.error = "customer: " + (cust.error || "locate_or_create_failed"); return resp; }
     var seriesVal = (obj.softone_series !== undefined && obj.softone_series !== null && ("" + obj.softone_series) !== "") ? obj.softone_series : CFG.SERIES;
 
