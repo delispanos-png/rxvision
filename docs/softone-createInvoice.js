@@ -1,6 +1,6 @@
 /* ============================================================================
  * RxVision → SoftOne — Custom Web Service (Advanced JavaScript)  [SoftOne BlackBook ver.3.5]
- * ★ ΤΕΛΕΥΤΑΙΑ ΕΝΗΜΕΡΩΣΗ: 2026-08-04 18:22 (EEST)  ← IDEMPOTENCY (POSGUID=ref, pre-check → ΜΗΝ διπλοδημιουργείς) + αιτιολογία setData + σειρά 7067 + d.VAT
+ * ★ ΤΕΛΕΥΤΑΙΑ ΕΝΗΜΕΡΩΣΗ: 2026-08-04 18:41 (EEST)  ← FIX «Υλικό κενό»: αφαιρέθηκε το h.POSGUID από το build (χάλαγε το MTRL)· POSGUID+αιτιολογία ΜΟΝΟ με setData μετά· pre-check idempotency ΠΡΙΝ το customer lookup
  * ----------------------------------------------------------------------------
  * Δημιουργεί ΤΙΜΟΛΟΓΙΟ ΠΑΡΟΧΗΣ ΥΠΗΡΕΣΙΩΝ (SALDOC) από το payload του RxVision και το
  * διαβιβάζει στο myDATA (η CloudOn/SoftOne είναι πιστοποιημένος πάροχος). Επιστρέφει findoc/MARK.
@@ -88,13 +88,11 @@ function createInvoice(obj) {
   try {
     // ⚠ ΟΛΑ τα X.SQL lookups ΠΡΙΝ ανοίξουμε το object! Κλήση X.SQL ΜΕΣΑ στη συναλλαγή (μετά το
     //   DBINSERT/Append) «χαλάει» το ενεργό dataset → χάνεται το MTRL. Οπότε τα προϋπολογίζουμε εδώ.
-    var cust = _findOrCreateCustomer(obj.customer);
-    if (!cust.trdr) { resp.error = "customer: " + (cust.error || "locate_or_create_failed"); return resp; }
-    var seriesVal = (obj.softone_series !== undefined && obj.softone_series !== null && ("" + obj.softone_series) !== "") ? obj.softone_series : CFG.SERIES;
 
     // ⛔ IDEMPOTENCY (κρίσιμο): αν υπάρχει ΗΔΗ παραστατικό με αυτό το ref (POSGUID) → επέστρεψέ το ΩΣ ΕΧΕΙ,
     //    ΜΗΝ ξαναδημιουργείς. Έτσι το retry κάθε 5' (π.χ. μετά από timeout όπου το SoftOne το είχε ήδη
-    //    δημιουργήσει) ΔΕΝ βγάζει διπλό παραστατικό. Το X.SQL γίνεται ΠΡΙΝ ανοίξουμε το object.
+    //    δημιουργήσει) ΔΕΝ βγάζει διπλό. ΠΡΩΤΑ αυτό, ΜΕΤΑ το customer lookup (ώστε το customer X.SQL να
+    //    μένει το ΤΕΛΕΥΤΑΙΟ πριν το CreateObj — όπως στην έκδοση που δούλευε).
     if (obj.ref) {
       var existing = null;
       try { existing = X.SQL("SELECT FINDOC FROM FINDOC WHERE COMPANY=:X.SYS.COMPANY AND POSGUID=:1", "" + obj.ref); } catch (e) { existing = null; }
@@ -107,6 +105,10 @@ function createInvoice(obj) {
       }
     }
 
+    var cust = _findOrCreateCustomer(obj.customer);   // ΤΕΛΕΥΤΑΙΟ X.SQL πριν το CreateObj (αποδεδειγμένα safe)
+    if (!cust.trdr) { resp.error = "customer: " + (cust.error || "locate_or_create_failed"); return resp; }
+    var seriesVal = (obj.softone_series !== undefined && obj.softone_series !== null && ("" + obj.softone_series) !== "") ? obj.softone_series : CFG.SERIES;
+
     // ΔΗΜΙΟΥΡΓΙΑ ΠΑΡΑΣΤΑΤΙΚΟΥ ως OBJECT (BlackBook σ.284): σειρά+πελάτης+γραμμές (είδος/ποσ/τιμή/ΦΠΑ).
     // Το SoftOne κάνει σύνολα/αρίθμηση/myDATA στο DBPOST. ΣΕΙΡΑ & MTRL ως ΑΡΙΘΜΟΙ· ΦΠΑ ρητά (d.VAT).
     myObj = X.CreateObj("SALDOC");
@@ -118,9 +120,9 @@ function createInvoice(obj) {
     h.SERIES = parseInt("" + seriesVal, 10);   // ΣΕΙΡΑ ως ΑΡΙΘΜΟΣ (ορίζει τύπο + αρίθμηση + myDATA)· από adminpanel
     h.TRDR = cust.trdr;
     if (obj.issue_date) h.TRNDATE = obj.issue_date;   // YYYY-MM-DD
-    if (obj.ref) { try { h.POSGUID = "" + obj.ref; } catch (e) { } }   // idempotency key (belt· ξανά με setData μετά)
-    // ΣΗΜ: η ΑΙΤΙΟΛΟΓΙΑ (SALDOC.COMMENTS) δεν κολλάει με h.COMMENTS στο object approach →
-    //      την γράφουμε ΜΕΤΑ το DBPOST με setData (βλ. παρακάτω).
+    // ⚠ ΜΗΝ βάζεις h.POSGUID / h.COMMENTS εδώ! Set σε «περίεργα» header πεδία μέσα στο object edit
+    //   χαλάει το state → η γραμμή χάνει το MTRL στο DBPOST («Δεν συμπληρώσατε το πεδίο Υλικό»).
+    //   POSGUID (idempotency) & COMMENTS (αιτιολογία) → ΜΟΝΟ με setData ΜΕΤΑ το DBPOST (παρακάτω).
 
     for (var i = 0; i < obj.lines.length; i++) {
       var ln = obj.lines[i];
