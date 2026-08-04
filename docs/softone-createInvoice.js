@@ -1,6 +1,6 @@
 /* ============================================================================
  * RxVision → SoftOne — Custom Web Service (Advanced JavaScript)  [SoftOne BlackBook ver.3.5]
- * ★ ΤΕΛΕΥΤΑΙΑ ΕΝΗΜΕΡΩΣΗ: 2026-08-04 17:21 (EEST)  ← MTRL/QTY/PRICE ως ΑΡΙΘΜΟΙ (cascade ΦΠΑ από το είδος)· ΦΠΑ/σύνολα/αριθμός/myDATA αυτόματα
+ * ★ ΤΕΛΕΥΤΑΙΑ ΕΝΗΜΕΡΩΣΗ: 2026-08-04 17:36 (EEST)  ← d.VAT=1410 ΡΗΤΑ + ΣΕΙΡΑ/MTRL ως ΑΡΙΘΜΟΙ (adminpanel series 7067)
  * ----------------------------------------------------------------------------
  * Δημιουργεί ΤΙΜΟΛΟΓΙΟ ΠΑΡΟΧΗΣ ΥΠΗΡΕΣΙΩΝ (SALDOC) από το payload του RxVision και το
  * διαβιβάζει στο myDATA (η CloudOn/SoftOne είναι πιστοποιημένος πάροχος). Επιστρέφει findoc/MARK.
@@ -24,8 +24,10 @@ var CFG = {
   SODTYPE_CUSTOMER: 13,          // 13 = Πελάτες (SoftOne standard)
   COUNTRY_CODE: 1000,        // κωδικός ΧΩΡΑΣ SoftOne για δημιουργία πελάτη (Ελλάδα) — ΕΠΙΒΕΒΑΙΩΣΤΕ (ΟΧΙ "GR")
   TRDCATEGORY: 0,           // (προαιρετικό) κατηγορία πελάτη· βάλτε αν το SoftOne την απαιτεί στη δημιουργία
-  // Το είδος (MTRL) στο SoftOne ΠΡΕΠΕΙ να έχει κατηγορία ΦΠΑ 24% → το ΦΠΑ προκύπτει ΑΥΤΟΜΑΤΑ.
   SERVICE_MTRL: 0,           // MTRL υπηρεσίας (fallback αν η γραμμή δεν έχει MTRL) — ΕΠΙΒΕΒΑΙΩΣΤΕ
+  // id κατηγορίας ΦΠΑ 24% (το web-service ΔΕΝ «τραβάει» αυτόματα το ΦΠΑ του είδους → το βάζουμε ρητά).
+  // 1410 = το VAT id του είδους 9563 (ΦΠΑ 24%). ΕΠΙΒΕΒΑΙΩΣΤΕ/αλλάξτε αν διαφέρει.
+  VAT: 1410,
   MARK_SQL: "SELECT MARK, UID, AA FROM FINDOC WHERE FINDOC="   // ανάγνωση myDATA MARK/UID — ΕΠΙΒΕΒΑΙΩΣΤΕ
 };
 
@@ -99,7 +101,7 @@ function createInvoice(obj) {
     var d = myObj.FindTable("ITELINES");   // γραμμές ειδών
 
     h.Edit;
-    h.SERIES = seriesVal;                  // η ΣΕΙΡΑ ορίζει τύπο + ΦΠΑ default + αρίθμηση + myDATA
+    h.SERIES = parseInt("" + seriesVal, 10);   // ΣΕΙΡΑ ως ΑΡΙΘΜΟΣ (ορίζει τύπο + αρίθμηση + myDATA)· από adminpanel
     h.TRDR = cust.trdr;
     if (obj.issue_date) h.TRNDATE = obj.issue_date;   // YYYY-MM-DD
     h.COMMENTS = obj.comments || "";                  // ΑΙΤΙΟΛΟΓΙΑ (π.χ. «Πώληση από RxVision site - περίοδος»)
@@ -113,6 +115,7 @@ function createInvoice(obj) {
       d.MTRL = mtrlNum;
       d.QTY1 = (typeof ln.qty === "number") ? ln.qty : (parseFloat(ln.qty) || 1);
       d.PRICE = (typeof unit === "number") ? unit : (parseFloat(unit) || 0);
+      if (CFG.VAT) d.VAT = CFG.VAT;   // ΦΠΑ ΡΗΤΑ (σταθερή τιμή, ΧΩΡΙΣ X.SQL) — το web-service δεν το τραβάει μόνο του
       d.Post;
     }
 
