@@ -1,7 +1,6 @@
 /* ============================================================================
  * RxVision → SoftOne — Custom Web Service (Advanced JavaScript)  [SoftOne BlackBook ver.3.5]
  * ★ ΤΕΛΕΥΤΑΙΑ ΕΝΗΜΕΡΩΣΗ: 2026-08-04 21:30 (EEST)  ← BlackBook-grounded: (1) canonical SALDOC create ΑΚΡΙΒΩΣ (σ.284), (2) υποστήριξη ΦΟΡΜΑΣ `CreateObj("SALDOC;FORM")`. Είδος 9563 επιβεβαιωμένο έγκυρο.
- *   (β) φρέσκο fetch του ITELINES μετά την κεφαλίδα. + idempotency (mode "find" ξεχωριστά) + αιτιολογία (setData)
  *
  * ΣΕΙΡΑ (SERIES): το adminpanel param πρέπει να είναι το internal SERIES id (ΟΧΙ FPRMS/φόρμα!).
  *   π.χ. Τ.Π.Υ.=7767 (φόρμα 7067), Τ.Π.Υ. Ε.Ε.=7069. Κενό/άκυρο → default 7002 (Προτιμολόγιο).
