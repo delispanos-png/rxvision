@@ -1,6 +1,6 @@
 /* ============================================================================
  * RxVision → SoftOne — Custom Web Service (Advanced JavaScript)  [SoftOne BlackBook ver.3.5]
- * ★ ΤΕΛΕΥΤΑΙΑ ΕΝΗΜΕΡΩΣΗ: 2026-08-04 18:41 (EEST)  ← FIX «Υλικό κενό»: αφαιρέθηκε το h.POSGUID από το build (χάλαγε το MTRL)· POSGUID+αιτιολογία ΜΟΝΟ με setData μετά· pre-check idempotency ΠΡΙΝ το customer lookup
+ * ★ ΤΕΛΕΥΤΑΙΑ ΕΝΗΜΕΡΩΣΗ: 2026-08-04 19:20 (EEST)  ← αιτιολογία fix (ΞΕΧΩΡΙΣΤΑ setData COMMENTS/POSGUID) + series διαγνωστικό (__diag_series) + version marker resp.v
  * ----------------------------------------------------------------------------
  * Δημιουργεί ΤΙΜΟΛΟΓΙΟ ΠΑΡΟΧΗΣ ΥΠΗΡΕΣΙΩΝ (SALDOC) από το payload του RxVision και το
  * διαβιβάζει στο myDATA (η CloudOn/SoftOne είναι πιστοποιημένος πάροχος). Επιστρέφει findoc/MARK.
@@ -80,13 +80,30 @@ function _getMyData(findoc) {
 
 /* ── Το custom web service (κλήση: /s1services/JS/RXVISION/createInvoice) ── */
 function createInvoice(obj) {
-  var resp = { success: false, v: "1841" };   // ← ΔΙΑΓΝΩΣΤΙΚΟ: επιβεβαιώνει ΠΟΙΑ έκδοση γέφυρας τρέχει
+  var resp = { success: false, v: "1920" };   // ← ΔΙΑΓΝΩΣΤΙΚΟ: επιβεβαιώνει ΠΟΙΑ έκδοση γέφυρας τρέχει
   try {
     resp.diag = { lines: (obj && obj.lines) ? obj.lines.length : -1,
       mtrl0: (obj && obj.lines && obj.lines[0]) ? obj.lines[0].mtrl : null,
       ser: (obj ? obj.softone_series : null), hasRef: !!(obj && obj.ref) };
   } catch (e) { }
   if (!obj || !obj.clientID || obj.clientID === "") { resp.error = "Authenticate failed: missing clientID"; return resp; }
+  // ── ΔΙΑΓΝΩΣΤΙΚΟ ΣΕΙΡΩΝ: βρίσκει το σωστό internal SERIES id (π.χ. για Τ.Π.Υ./ΤΠΥΕΕ). Καλείς με __diag_series:true.
+  if (obj.__diag_series) {
+    var probes = [
+      "SELECT SERIES, CODE, NAME, SODTYPE, ITEDOCTYPE FROM FPRMS ORDER BY SERIES",
+      "SELECT SERIES, CODE, NAME, SODTYPE FROM MTRSERIES ORDER BY SERIES",
+      "SELECT TOP 60 FINDOC, SERIES, SERIESNUM, FPRMS, SODTYPE FROM FINDOC WHERE COMPANY=" + X.SYS.COMPANY + " ORDER BY FINDOC DESC"
+    ];
+    resp.probes = [];
+    for (var pi = 0; pi < probes.length; pi++) {
+      try {
+        var ds = X.GETSQLDATASET(probes[pi], null);
+        resp.probes.push({ q: probes[pi], n: (ds ? ds.length : 0), rows: ds || [] });
+      } catch (ex) { resp.probes.push({ q: probes[pi], err: ex.message }); }
+    }
+    resp.success = true;
+    return resp;
+  }
   if (!obj.customer || !obj.customer.afm) { resp.error = "missing customer AFM"; return resp; }
   if (!obj.lines || obj.lines.length === 0) { resp.error = "missing lines"; return resp; }
   var myObj = null;
@@ -148,16 +165,19 @@ function createInvoice(obj) {
       return resp;
     }
 
-    // 3) ΜΕΤΑ την έκδοση, με setData (αξιόπιστο): (α) ΑΙΤΙΟΛΟΓΙΑ (SALDOC.COMMENTS — το h.COMMENTS δεν κολλάει)
-    //    και (β) POSGUID = ref (suspenders για το idempotency, ώστε το επόμενο retry να βρει το doc).
-    var patch = { FINDOC: findoc };
-    if (obj.comments) patch.COMMENTS = obj.comments;
-    if (obj.ref) patch.POSGUID = "" + obj.ref;
-    if (obj.comments || obj.ref) {
+    // 3) ΜΕΤΑ την έκδοση, με setData (αξιόπιστο). ⚠ ΞΕΧΩΡΙΣΤΑ setData: όταν COMMENTS & POSGUID μπουν
+    //    ΜΑΖΙ στο ίδιο patch, το SoftOne κρατά μόνο το ένα (το COMMENTS χάνεται). Δύο κλήσεις → κολλάνε και τα δύο.
+    if (obj.comments) {
       try {
         X.WEBREQUEST(JSON.stringify({ SERVICE: "setData", OBJECT: "SALDOC", appid: CFG.APPID,
-          KEY: "" + findoc, DATA: { SALDOC: [patch] } }));
-      } catch (e) { /* μη κρίσιμο — δεν σπάει την έκδοση */ }
+          KEY: "" + findoc, DATA: { SALDOC: [{ FINDOC: findoc, COMMENTS: obj.comments }] } }));
+      } catch (e) { /* μη κρίσιμο */ }
+    }
+    if (obj.ref) {   // POSGUID = idempotency key (ώστε το επόμενο retry να βρει το doc, όχι διπλό)
+      try {
+        X.WEBREQUEST(JSON.stringify({ SERVICE: "setData", OBJECT: "SALDOC", appid: CFG.APPID,
+          KEY: "" + findoc, DATA: { SALDOC: [{ FINDOC: findoc, POSGUID: "" + obj.ref }] } }));
+      } catch (e) { /* μη κρίσιμο */ }
     }
 
     // 4) myDATA MARK/UID/AA
