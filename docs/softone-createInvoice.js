@@ -1,6 +1,6 @@
 /* ============================================================================
  * RxVision → SoftOne — Custom Web Service (Advanced JavaScript)  [SoftOne BlackBook ver.3.5]
- * ★ ΤΕΛΕΥΤΑΙΑ ΕΝΗΜΕΡΩΣΗ: 2026-08-04 21:30 (EEST)  ← BlackBook-grounded: (1) canonical SALDOC create ΑΚΡΙΒΩΣ (σ.284), (2) υποστήριξη ΦΟΡΜΑΣ `CreateObj("SALDOC;FORM")`. Είδος 9563 επιβεβαιωμένο έγκυρο.
+ * ★ ΤΕΛΕΥΤΑΙΑ ΕΝΗΜΕΡΩΣΗ: 2026-08-04 22:00 (EEST)  ← ΤΟ ΚΛΕΙΔΙ: LINENUM > 9000000 ανά γραμμή (BlackBook σ.494 «don't forget LINENUM»). ΑΥΤΟ έλειπε → «Υλικό κενό». + φόρμα + canonical
  *
  * ΣΕΙΡΑ (SERIES): το adminpanel param πρέπει να είναι το internal SERIES id (ΟΧΙ FPRMS/φόρμα!).
  *   π.χ. Τ.Π.Υ.=7767 (φόρμα 7067), Τ.Π.Υ. Ε.Ε.=7069. Κενό/άκυρο → default 7002 (Προτιμολόγιο).
@@ -83,7 +83,7 @@ function _getMyData(findoc) {
 
 /* ── Το custom web service (κλήση: /s1services/JS/RXVISION/createInvoice) ── */
 function createInvoice(obj) {
-  var resp = { success: false, v: "2130" };   // δείκτης έκδοσης γέφυρας (επιβεβαιώνει ΟΤΙ τρέχει η σωστή)
+  var resp = { success: false, v: "2200" };   // δείκτης έκδοσης γέφυρας (επιβεβαιώνει ΟΤΙ τρέχει η σωστή)
   if (!obj || !obj.clientID || obj.clientID === "") { resp.error = "Authenticate failed: missing clientID"; return resp; }
 
   // ⛔ IDEMPOTENCY — mode "find": ΜΟΝΟ X.SQL lookup (POSGUID), ΚΑΜΙΑ δημιουργία. Το backend το καλεί
@@ -138,6 +138,10 @@ function createInvoice(obj) {
       var unit = (ln.unit_net !== undefined && ln.unit_net !== null) ? ln.unit_net : ln.net;  // καθαρή τιμή μονάδας
       var mtrlNum = parseInt("" + ((ln.mtrl !== undefined && ln.mtrl !== null && ln.mtrl !== "") ? ln.mtrl : CFG.SERVICE_MTRL), 10);
       d.Append;
+      // ⭐⭐ LINENUM > 9000000 ΑΝΑ ΓΡΑΜΜΗ — ΥΠΟΧΡΕΩΤΙΚΟ (BlackBook σ.494: «don't forget to add data to
+      //   the field LINENUM using numbers greater than 9000000»). ΧΩΡΙΣ αυτό η γραμμή ΔΕΝ καταχωρείται
+      //   → «Δεν συμπληρώσατε το πεδίο Υλικό». ΑΥΤΟ έλειπε!
+      d.LINENUM = 9000001 + i;
       d.MTRL = mtrlNum;   // αριθμητικό MTRL id (επιβεβαιωμένο: 9563 = κωδ.726, SODTYPE 51)
       d.QTY1 = (typeof ln.qty === "number") ? ln.qty : (parseFloat(ln.qty) || 1);
       d.PRICE = (typeof unit === "number") ? unit : (parseFloat(unit) || 0);
