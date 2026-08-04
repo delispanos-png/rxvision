@@ -1,6 +1,6 @@
 /* ============================================================================
  * RxVision → SoftOne — Custom Web Service (Advanced JavaScript)  [SoftOne BlackBook ver.3.5]
- * ★ ΤΕΛΕΥΤΑΙΑ ΕΝΗΜΕΡΩΣΗ: 2026-08-04 22:00 (EEST)  ← ΤΟ ΚΛΕΙΔΙ: LINENUM > 9000000 ανά γραμμή (BlackBook σ.494 «don't forget LINENUM»). ΑΥΤΟ έλειπε → «Υλικό κενό». + φόρμα + canonical
+ * ★ ΤΕΛΕΥΤΑΙΑ ΕΝΗΜΕΡΩΣΗ: 2026-08-04 22:45 (EEST)  ← REVERT πυρήνα δημιουργίας στην ★17:36 ΠΟΥ ΔΟΥΛΕΥΕ (αφαιρέθηκαν φόρμα + d.LINENUM που πρόσθεσα εγώ· επανήλθε h.COMMENTS). Idempotency (find) + αιτιολογία (setData) μένουν.
  *
  * ΣΕΙΡΑ (SERIES): το adminpanel param πρέπει να είναι το internal SERIES id (ΟΧΙ FPRMS/φόρμα!).
  *   π.χ. Τ.Π.Υ.=7767 (φόρμα 7067), Τ.Π.Υ. Ε.Ε.=7069. Κενό/άκυρο → default 7002 (Προτιμολόγιο).
@@ -83,7 +83,7 @@ function _getMyData(findoc) {
 
 /* ── Το custom web service (κλήση: /s1services/JS/RXVISION/createInvoice) ── */
 function createInvoice(obj) {
-  var resp = { success: false, v: "2200" };   // δείκτης έκδοσης γέφυρας (επιβεβαιώνει ΟΤΙ τρέχει η σωστή)
+  var resp = { success: false, v: "2245" };   // δείκτης έκδοσης γέφυρας (επιβεβαιώνει ΟΤΙ τρέχει η σωστή)
   if (!obj || !obj.clientID || obj.clientID === "") { resp.error = "Authenticate failed: missing clientID"; return resp; }
 
   // ⛔ IDEMPOTENCY — mode "find": ΜΟΝΟ X.SQL lookup (POSGUID), ΚΑΜΙΑ δημιουργία. Το backend το καλεί
@@ -117,35 +117,29 @@ function createInvoice(obj) {
 
     // ΔΗΜΙΟΥΡΓΙΑ ΠΑΡΑΣΤΑΤΙΚΟΥ ως OBJECT (BlackBook σ.284): σειρά+πελάτης+γραμμές (είδος/ποσ/τιμή/ΦΠΑ).
     // Το SoftOne κάνει σύνολα/αρίθμηση/myDATA στο DBPOST. ΣΕΙΡΑ & MTRL ως ΑΡΙΘΜΟΙ· ΦΠΑ ρητά (d.VAT).
-    // ⭐ ΦΟΡΜΑ (BlackBook σ.284: `CreateObj('SALDOC;MYSALESVIEW')`). Χωρίς σωστή φόρμα, ο πίνακας
-    //   γραμμών ITELINES δεν «στήνεται» σωστά → η γραμμή χάνει το MTRL («Δεν συμπληρώσατε το πεδίο Υλικό»).
-    //   Η φόρμα έρχεται από adminpanel (softone_form). Κενή → σκέτο "SALDOC" (default φόρμα).
-    var objName = (obj.softone_form !== undefined && obj.softone_form !== null && ("" + obj.softone_form) !== "")
-      ? ("SALDOC;" + obj.softone_form) : "SALDOC";
-    myObj = X.CreateObj(objName);
+    // ★ ΕΠΑΝΑΦΟΡΑ ΣΤΗΝ ΕΚΔΟΣΗ ★17:36 ΠΟΥ ΔΟΥΛΕΥΕ (τα παραστατικά έπεφταν κανονικά). ΧΩΡΙΣ φόρμα,
+    //   ΧΩΡΙΣ d.LINENUM (αυτά τα πρόσθεσα εγώ μετά και τα χάλασαν)· ΜΕ h.COMMENTS στην κεφαλίδα.
+    myObj = X.CreateObj("SALDOC");
     myObj.DBINSERT;
-    var h = myObj.FindTable("FINDOC");     // κεφαλίδα
-    var d = myObj.FindTable("ITELINES");   // γραμμές — fetch ΠΡΙΝ το Edit (ακριβώς όπως το canonical παράδειγμα)
+    var h = myObj.FindTable("FINDOC");     // κεφαλίδα παραστατικού
+    var d = myObj.FindTable("ITELINES");   // γραμμές ειδών
 
     h.Edit;
     h.SERIES = parseInt("" + seriesVal, 10);   // ΣΕΙΡΑ ως ΑΡΙΘΜΟΣ (ορίζει τύπο + αρίθμηση + myDATA)· από adminpanel
     h.TRDR = cust.trdr;
     if (obj.issue_date) h.TRNDATE = obj.issue_date;   // YYYY-MM-DD
-    // (POSGUID/COMMENTS → ΜΟΝΟ με setData ΜΕΤΑ το DBPOST — όχι εδώ στην κεφαλίδα)
+    h.COMMENTS = obj.comments || "";                  // ΑΙΤΙΟΛΟΓΙΑ στην κεφαλίδα (όπως στην ★17:36 που δούλευε)
 
     for (var i = 0; i < obj.lines.length; i++) {
       var ln = obj.lines[i];
       var unit = (ln.unit_net !== undefined && ln.unit_net !== null) ? ln.unit_net : ln.net;  // καθαρή τιμή μονάδας
+      // ⚠ MTRL ως ΑΡΙΘΜΟΣ (όχι string) → το SoftOne «τραβάει» ΦΠΑ/τιμή από το ΕΙΔΟΣ (cascade).
       var mtrlNum = parseInt("" + ((ln.mtrl !== undefined && ln.mtrl !== null && ln.mtrl !== "") ? ln.mtrl : CFG.SERVICE_MTRL), 10);
       d.Append;
-      // ⭐⭐ LINENUM > 9000000 ΑΝΑ ΓΡΑΜΜΗ — ΥΠΟΧΡΕΩΤΙΚΟ (BlackBook σ.494: «don't forget to add data to
-      //   the field LINENUM using numbers greater than 9000000»). ΧΩΡΙΣ αυτό η γραμμή ΔΕΝ καταχωρείται
-      //   → «Δεν συμπληρώσατε το πεδίο Υλικό». ΑΥΤΟ έλειπε!
-      d.LINENUM = 9000001 + i;
-      d.MTRL = mtrlNum;   // αριθμητικό MTRL id (επιβεβαιωμένο: 9563 = κωδ.726, SODTYPE 51)
+      d.MTRL = mtrlNum;
       d.QTY1 = (typeof ln.qty === "number") ? ln.qty : (parseFloat(ln.qty) || 1);
       d.PRICE = (typeof unit === "number") ? unit : (parseFloat(unit) || 0);
-      if (CFG.VAT) d.VAT = CFG.VAT;   // ΦΠΑ ρητά (το web-service δεν το τραβάει μόνο του)
+      if (CFG.VAT) d.VAT = CFG.VAT;   // ΦΠΑ ΡΗΤΑ (σταθερή τιμή, ΧΩΡΙΣ X.SQL) — το web-service δεν το τραβάει μόνο του
       d.Post;
     }
 
