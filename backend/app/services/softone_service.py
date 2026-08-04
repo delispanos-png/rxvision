@@ -142,9 +142,11 @@ async def issue(payload: dict) -> dict:
     if not client_id:
         return {"ok": False, "error": "auth_failed"}
     url = _gateway(cfg["base_url"]) + "/JS/" + js_path
-    # softone_series από το adminpanel (παραμετρικά) → η γέφυρα το χρησιμοποιεί ως σειρά (τύπος Τ.Π.Υ.)
+    # softone_series/softone_form από το adminpanel (παραμετρικά). Η γέφυρα: σειρά = τύπος παραστατικού,
+    # φόρμα = SALDOC view (BlackBook: CreateObj('SALDOC;FORM') — χωρίς σωστή φόρμα «σπάει» η γραμμή/MTRL).
     body = {"clientID": client_id, "appId": cfg.get("app_id"),
-            "softone_series": cfg.get("series") or None, **payload}
+            "softone_series": cfg.get("series") or None,
+            "softone_form": cfg.get("form") or None, **payload}
     try:
         res = await _post(url, body)
     except Exception as e:  # noqa: BLE001

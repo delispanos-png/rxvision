@@ -1,6 +1,6 @@
 /* ============================================================================
  * RxVision → SoftOne — Custom Web Service (Advanced JavaScript)  [SoftOne BlackBook ver.3.5]
- * ★ ΤΕΛΕΥΤΑΙΑ ΕΝΗΜΕΡΩΣΗ: 2026-08-04 20:50 (EEST)  ← FIX «Υλικό κενό»: (α) καθάρισμα άδειας γραμμής-φαντάσματος πριν το DBPOST,
+ * ★ ΤΕΛΕΥΤΑΙΑ ΕΝΗΜΕΡΩΣΗ: 2026-08-04 21:30 (EEST)  ← BlackBook-grounded: (1) canonical SALDOC create ΑΚΡΙΒΩΣ (σ.284), (2) υποστήριξη ΦΟΡΜΑΣ `CreateObj("SALDOC;FORM")`. Είδος 9563 επιβεβαιωμένο έγκυρο.
  *   (β) φρέσκο fetch του ITELINES μετά την κεφαλίδα. + idempotency (mode "find" ξεχωριστά) + αιτιολογία (setData)
  *
  * ΣΕΙΡΑ (SERIES): το adminpanel param πρέπει να είναι το internal SERIES id (ΟΧΙ FPRMS/φόρμα!).
@@ -84,7 +84,7 @@ function _getMyData(findoc) {
 
 /* ── Το custom web service (κλήση: /s1services/JS/RXVISION/createInvoice) ── */
 function createInvoice(obj) {
-  var resp = { success: false, v: "2050" };   // δείκτης έκδοσης γέφυρας (επιβεβαιώνει ΟΤΙ τρέχει η σωστή)
+  var resp = { success: false, v: "2130" };   // δείκτης έκδοσης γέφυρας (επιβεβαιώνει ΟΤΙ τρέχει η σωστή)
   if (!obj || !obj.clientID || obj.clientID === "") { resp.error = "Authenticate failed: missing clientID"; return resp; }
 
   // ⛔ IDEMPOTENCY — mode "find": ΜΟΝΟ X.SQL lookup (POSGUID), ΚΑΜΙΑ δημιουργία. Το backend το καλεί
@@ -118,46 +118,33 @@ function createInvoice(obj) {
 
     // ΔΗΜΙΟΥΡΓΙΑ ΠΑΡΑΣΤΑΤΙΚΟΥ ως OBJECT (BlackBook σ.284): σειρά+πελάτης+γραμμές (είδος/ποσ/τιμή/ΦΠΑ).
     // Το SoftOne κάνει σύνολα/αρίθμηση/myDATA στο DBPOST. ΣΕΙΡΑ & MTRL ως ΑΡΙΘΜΟΙ· ΦΠΑ ρητά (d.VAT).
-    myObj = X.CreateObj("SALDOC");
+    // ⭐ ΦΟΡΜΑ (BlackBook σ.284: `CreateObj('SALDOC;MYSALESVIEW')`). Χωρίς σωστή φόρμα, ο πίνακας
+    //   γραμμών ITELINES δεν «στήνεται» σωστά → η γραμμή χάνει το MTRL («Δεν συμπληρώσατε το πεδίο Υλικό»).
+    //   Η φόρμα έρχεται από adminpanel (softone_form). Κενή → σκέτο "SALDOC" (default φόρμα).
+    var objName = (obj.softone_form !== undefined && obj.softone_form !== null && ("" + obj.softone_form) !== "")
+      ? ("SALDOC;" + obj.softone_form) : "SALDOC";
+    myObj = X.CreateObj(objName);
     myObj.DBINSERT;
-    var h = myObj.FindTable("FINDOC");     // κεφαλίδα παραστατικού
+    var h = myObj.FindTable("FINDOC");     // κεφαλίδα
+    var d = myObj.FindTable("ITELINES");   // γραμμές — fetch ΠΡΙΝ το Edit (ακριβώς όπως το canonical παράδειγμα)
 
     h.Edit;
     h.SERIES = parseInt("" + seriesVal, 10);   // ΣΕΙΡΑ ως ΑΡΙΘΜΟΣ (ορίζει τύπο + αρίθμηση + myDATA)· από adminpanel
     h.TRDR = cust.trdr;
     if (obj.issue_date) h.TRNDATE = obj.issue_date;   // YYYY-MM-DD
-    // ⚠ ΜΗΝ βάζεις h.POSGUID / h.COMMENTS εδώ! Set σε «περίεργα» header πεδία μέσα στο object edit
-    //   χαλάει το state → η γραμμή χάνει το MTRL στο DBPOST. POSGUID/COMMENTS → setData ΜΕΤΑ το DBPOST.
-
-    // Ο πίνακας γραμμών ΞΑΝΑ-φέρνεται ΕΔΩ (μετά τη ρύθμιση κεφαλίδας) — ώστε το reference να είναι φρέσκο.
-    var d = myObj.FindTable("ITELINES");   // γραμμές ειδών
+    // (POSGUID/COMMENTS → ΜΟΝΟ με setData ΜΕΤΑ το DBPOST — όχι εδώ στην κεφαλίδα)
 
     for (var i = 0; i < obj.lines.length; i++) {
       var ln = obj.lines[i];
       var unit = (ln.unit_net !== undefined && ln.unit_net !== null) ? ln.unit_net : ln.net;  // καθαρή τιμή μονάδας
-      // ⚠ MTRL ως ΑΡΙΘΜΟΣ (όχι string) → το SoftOne «τραβάει» ΦΠΑ/τιμή από το ΕΙΔΟΣ (cascade).
       var mtrlNum = parseInt("" + ((ln.mtrl !== undefined && ln.mtrl !== null && ln.mtrl !== "") ? ln.mtrl : CFG.SERVICE_MTRL), 10);
       d.Append;
-      d.MTRL = mtrlNum;
+      d.MTRL = mtrlNum;   // αριθμητικό MTRL id (επιβεβαιωμένο: 9563 = κωδ.726, SODTYPE 51)
       d.QTY1 = (typeof ln.qty === "number") ? ln.qty : (parseFloat(ln.qty) || 1);
       d.PRICE = (typeof unit === "number") ? unit : (parseFloat(unit) || 0);
-      if (CFG.VAT) d.VAT = CFG.VAT;   // ΦΠΑ ΡΗΤΑ (σταθερή τιμή, ΧΩΡΙΣ X.SQL) — το web-service δεν το τραβάει μόνο του
+      if (CFG.VAT) d.VAT = CFG.VAT;   // ΦΠΑ ρητά (το web-service δεν το τραβάει μόνο του)
       d.Post;
     }
-
-    // ⚠ ΚΑΘΑΡΙΣΜΑ ΓΡΑΜΜΗΣ-ΦΑΝΤΑΣΜΑ: κάποιες εγκαταστάσεις κάνουν auto-insert ΚΕΝΗ γραμμή στο DBINSERT·
-    //   η δική μας μπαίνει 2η και η 1η (κενή) κόβει το DBPOST με «Δεν συμπληρώσατε το πεδίο Υλικό».
-    //   Σβήνουμε ΟΠΟΙΑΔΗΠΟΤΕ γραμμή χωρίς έγκυρο MTRL (η δική μας με MTRL>0 μένει ανέπαφη).
-    try {
-      var dc = myObj.FindTable("ITELINES");
-      dc.First;
-      var guard = 0;
-      while (!dc.EOF && guard < 50) {
-        guard++;
-        if (!(parseInt("" + dc.MTRL, 10) > 0)) { dc.Delete; }   // Delete μεταφέρει το cursor στην επόμενη
-        else { dc.Next; }
-      }
-    } catch (eClean) { /* αν δεν υποστηρίζεται iteration/delete, συνέχισε κανονικά */ }
 
     var findoc = myObj.DBPOST;             // αποθήκευση → SoftOne αριθμεί + διαβιβάζει myDATA
     if (!(findoc > 0)) {
