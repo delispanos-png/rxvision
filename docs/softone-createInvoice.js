@@ -1,6 +1,6 @@
 /* ============================================================================
  * RxVision → SoftOne — Custom Web Service (Advanced JavaScript)  [SoftOne BlackBook ver.3.5]
- * ★ ΤΕΛΕΥΤΑΙΑ ΕΝΗΜΕΡΩΣΗ: 2026-08-04 17:58 (EEST)  ← αιτιολογία via X.SETFIELDVALUE(SALDOC.COMMENTS) + d.VAT + σειρά/MTRL αριθμοί
+ * ★ ΤΕΛΕΥΤΑΙΑ ΕΝΗΜΕΡΩΣΗ: 2026-08-04 18:13 (EEST)  ← αιτιολογία via setData ΜΕΤΑ το DBPOST (confirmed) + σειρά 7067/MTRL αριθμοί + d.VAT
  * ----------------------------------------------------------------------------
  * Δημιουργεί ΤΙΜΟΛΟΓΙΟ ΠΑΡΟΧΗΣ ΥΠΗΡΕΣΙΩΝ (SALDOC) από το payload του RxVision και το
  * διαβιβάζει στο myDATA (η CloudOn/SoftOne είναι πιστοποιημένος πάροχος). Επιστρέφει findoc/MARK.
@@ -103,9 +103,8 @@ function createInvoice(obj) {
     h.SERIES = parseInt("" + seriesVal, 10);   // ΣΕΙΡΑ ως ΑΡΙΘΜΟΣ (ορίζει τύπο + αρίθμηση + myDATA)· από adminpanel
     h.TRDR = cust.trdr;
     if (obj.issue_date) h.TRNDATE = obj.issue_date;   // YYYY-MM-DD
-    // ΑΙΤΙΟΛΟΓΙΑ: full name SALDOC.COMMENTS. Το h.COMMENTS (FindTable) ΔΕΝ κόλλαγε → X.SETFIELDVALUE (BlackBook σ.280).
-    h.COMMENTS = obj.comments || "";
-    try { X.SETFIELDVALUE("SALDOC.COMMENTS", "" + (obj.comments || "")); } catch (e) { /* fallback στο h.COMMENTS */ }
+    // ΣΗΜ: η ΑΙΤΙΟΛΟΓΙΑ (SALDOC.COMMENTS) δεν κολλάει με h.COMMENTS στο object approach →
+    //      την γράφουμε ΜΕΤΑ το DBPOST με setData (βλ. παρακάτω).
 
     for (var i = 0; i < obj.lines.length; i++) {
       var ln = obj.lines[i];
@@ -126,7 +125,15 @@ function createInvoice(obj) {
       return resp;
     }
 
-    // 3) myDATA MARK/UID/AA
+    // 3) ΑΙΤΙΟΛΟΓΙΑ (SALDOC.COMMENTS) με setData ΜΕΤΑ την έκδοση — ο αξιόπιστος τρόπος (το h.COMMENTS δεν κολλάει).
+    if (obj.comments) {
+      try {
+        X.WEBREQUEST(JSON.stringify({ SERVICE: "setData", OBJECT: "SALDOC", appid: CFG.APPID,
+          KEY: "" + findoc, DATA: { SALDOC: [{ FINDOC: findoc, COMMENTS: obj.comments }] } }));
+      } catch (e) { /* μη κρίσιμο — δεν σπάει την έκδοση */ }
+    }
+
+    // 4) myDATA MARK/UID/AA
     var md = _getMyData(findoc);
     resp.success = true;
     resp.findoc = findoc;
