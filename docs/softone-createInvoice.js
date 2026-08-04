@@ -1,7 +1,7 @@
 /* ============================================================================
  * RxVision → SoftOne — Custom Web Service (Advanced JavaScript)  [SoftOne BlackBook ver.3.5]
- * ★ ΤΕΛΕΥΤΑΙΑ ΕΝΗΜΕΡΩΣΗ: 2026-08-04 20:10 (EEST)  ← FIX «Υλικό κενό» ΟΡΙΣΤΙΚΑ: το idempotency X.SQL βγήκε ΕΞΩ από τη δημιουργία
- *   (mode "find" = ξεχωριστή κλήση). Καθαρή διαδρομή δημιουργίας (μόνο customer X.SQL) → αξιόπιστο MTRL. + αιτιολογία fix
+ * ★ ΤΕΛΕΥΤΑΙΑ ΕΝΗΜΕΡΩΣΗ: 2026-08-04 20:50 (EEST)  ← FIX «Υλικό κενό»: (α) καθάρισμα άδειας γραμμής-φαντάσματος πριν το DBPOST,
+ *   (β) φρέσκο fetch του ITELINES μετά την κεφαλίδα. + idempotency (mode "find" ξεχωριστά) + αιτιολογία (setData)
  *
  * ΣΕΙΡΑ (SERIES): το adminpanel param πρέπει να είναι το internal SERIES id (ΟΧΙ FPRMS/φόρμα!).
  *   π.χ. Τ.Π.Υ.=7767 (φόρμα 7067), Τ.Π.Υ. Ε.Ε.=7069. Κενό/άκυρο → default 7002 (Προτιμολόγιο).
@@ -84,7 +84,7 @@ function _getMyData(findoc) {
 
 /* ── Το custom web service (κλήση: /s1services/JS/RXVISION/createInvoice) ── */
 function createInvoice(obj) {
-  var resp = { success: false, v: "2025" };   // δείκτης έκδοσης γέφυρας (επιβεβαιώνει ΟΤΙ τρέχει η σωστή)
+  var resp = { success: false, v: "2050" };   // δείκτης έκδοσης γέφυρας (επιβεβαιώνει ΟΤΙ τρέχει η σωστή)
   if (!obj || !obj.clientID || obj.clientID === "") { resp.error = "Authenticate failed: missing clientID"; return resp; }
 
   // ⛔ IDEMPOTENCY — mode "find": ΜΟΝΟ X.SQL lookup (POSGUID), ΚΑΜΙΑ δημιουργία. Το backend το καλεί
@@ -121,15 +121,16 @@ function createInvoice(obj) {
     myObj = X.CreateObj("SALDOC");
     myObj.DBINSERT;
     var h = myObj.FindTable("FINDOC");     // κεφαλίδα παραστατικού
-    var d = myObj.FindTable("ITELINES");   // γραμμές ειδών
 
     h.Edit;
     h.SERIES = parseInt("" + seriesVal, 10);   // ΣΕΙΡΑ ως ΑΡΙΘΜΟΣ (ορίζει τύπο + αρίθμηση + myDATA)· από adminpanel
     h.TRDR = cust.trdr;
     if (obj.issue_date) h.TRNDATE = obj.issue_date;   // YYYY-MM-DD
     // ⚠ ΜΗΝ βάζεις h.POSGUID / h.COMMENTS εδώ! Set σε «περίεργα» header πεδία μέσα στο object edit
-    //   χαλάει το state → η γραμμή χάνει το MTRL στο DBPOST («Δεν συμπληρώσατε το πεδίο Υλικό»).
-    //   POSGUID (idempotency) & COMMENTS (αιτιολογία) → ΜΟΝΟ με setData ΜΕΤΑ το DBPOST (παρακάτω).
+    //   χαλάει το state → η γραμμή χάνει το MTRL στο DBPOST. POSGUID/COMMENTS → setData ΜΕΤΑ το DBPOST.
+
+    // Ο πίνακας γραμμών ΞΑΝΑ-φέρνεται ΕΔΩ (μετά τη ρύθμιση κεφαλίδας) — ώστε το reference να είναι φρέσκο.
+    var d = myObj.FindTable("ITELINES");   // γραμμές ειδών
 
     for (var i = 0; i < obj.lines.length; i++) {
       var ln = obj.lines[i];
@@ -144,17 +145,19 @@ function createInvoice(obj) {
       d.Post;
     }
 
-    // ── DIAGNOSTIC: τι βλέπει το object στις γραμμές ΠΡΙΝ το DBPOST (πόσες, τι MTRL) ──
-    resp.linfo = { rc: null, mtrls: [] };
+    // ⚠ ΚΑΘΑΡΙΣΜΑ ΓΡΑΜΜΗΣ-ΦΑΝΤΑΣΜΑ: κάποιες εγκαταστάσεις κάνουν auto-insert ΚΕΝΗ γραμμή στο DBINSERT·
+    //   η δική μας μπαίνει 2η και η 1η (κενή) κόβει το DBPOST με «Δεν συμπληρώσατε το πεδίο Υλικό».
+    //   Σβήνουμε ΟΠΟΙΑΔΗΠΟΤΕ γραμμή χωρίς έγκυρο MTRL (η δική μας με MTRL>0 μένει ανέπαφη).
     try {
-      var dd = myObj.FindTable("ITELINES");
-      try { resp.linfo.rc = dd.RECORDCOUNT; } catch (e1) { resp.linfo.rc_err = ("" + e1.message).substring(0, 60); }
-      try {
-        dd.First;
-        var g = 0;
-        while (!dd.EOF && g < 25) { resp.linfo.mtrls.push("" + dd.MTRL); dd.Next; g++; }
-      } catch (e2) { resp.linfo.iter_err = ("" + e2.message).substring(0, 60); }
-    } catch (e3) { resp.linfo.err = ("" + e3.message).substring(0, 60); }
+      var dc = myObj.FindTable("ITELINES");
+      dc.First;
+      var guard = 0;
+      while (!dc.EOF && guard < 50) {
+        guard++;
+        if (!(parseInt("" + dc.MTRL, 10) > 0)) { dc.Delete; }   // Delete μεταφέρει το cursor στην επόμενη
+        else { dc.Next; }
+      }
+    } catch (eClean) { /* αν δεν υποστηρίζεται iteration/delete, συνέχισε κανονικά */ }
 
     var findoc = myObj.DBPOST;             // αποθήκευση → SoftOne αριθμεί + διαβιβάζει myDATA
     if (!(findoc > 0)) {
