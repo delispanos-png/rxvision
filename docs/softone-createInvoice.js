@@ -1,6 +1,6 @@
 /* ============================================================================
  * RxVision → SoftOne — Custom Web Service (Advanced JavaScript)  [SoftOne BlackBook ver.3.5]
- * ★ ΤΕΛΕΥΤΑΙΑ ΕΝΗΜΕΡΩΣΗ: 2026-08-04 17:36 (EEST)  ← d.VAT=1410 ΡΗΤΑ + ΣΕΙΡΑ/MTRL ως ΑΡΙΘΜΟΙ (adminpanel series 7067)
+ * ★ ΤΕΛΕΥΤΑΙΑ ΕΝΗΜΕΡΩΣΗ: 2026-08-04 17:58 (EEST)  ← αιτιολογία via X.SETFIELDVALUE(SALDOC.COMMENTS) + d.VAT + σειρά/MTRL αριθμοί
  * ----------------------------------------------------------------------------
  * Δημιουργεί ΤΙΜΟΛΟΓΙΟ ΠΑΡΟΧΗΣ ΥΠΗΡΕΣΙΩΝ (SALDOC) από το payload του RxVision και το
  * διαβιβάζει στο myDATA (η CloudOn/SoftOne είναι πιστοποιημένος πάροχος). Επιστρέφει findoc/MARK.
@@ -92,9 +92,8 @@ function createInvoice(obj) {
     if (!cust.trdr) { resp.error = "customer: " + (cust.error || "locate_or_create_failed"); return resp; }
     var seriesVal = (obj.softone_series !== undefined && obj.softone_series !== null && ("" + obj.softone_series) !== "") ? obj.softone_series : CFG.SERIES;
 
-    // ΔΗΜΙΟΥΡΓΙΑ ΠΑΡΑΣΤΑΤΙΚΟΥ ως OBJECT (BlackBook σ.284). Δίνουμε ΜΟΝΟ σειρά(=τύπος Τ.Π.Υ.)+πελάτη+
-    // γραμμές (είδος/ποσότητα/τιμή)· το SoftOne κάνει ΦΠΑ/σύνολα/αρίθμηση/myDATA ΜΟΝΟ του στο DBPOST.
-    // ⚠ ΔΕΝ βάζουμε d.VAT — το ΦΠΑ προκύπτει από το ΕΙΔΟΣ (MTRL). Το d.VAT «έσβηνε» το MTRL.
+    // ΔΗΜΙΟΥΡΓΙΑ ΠΑΡΑΣΤΑΤΙΚΟΥ ως OBJECT (BlackBook σ.284): σειρά+πελάτης+γραμμές (είδος/ποσ/τιμή/ΦΠΑ).
+    // Το SoftOne κάνει σύνολα/αρίθμηση/myDATA στο DBPOST. ΣΕΙΡΑ & MTRL ως ΑΡΙΘΜΟΙ· ΦΠΑ ρητά (d.VAT).
     myObj = X.CreateObj("SALDOC");
     myObj.DBINSERT;
     var h = myObj.FindTable("FINDOC");     // κεφαλίδα παραστατικού
@@ -104,7 +103,9 @@ function createInvoice(obj) {
     h.SERIES = parseInt("" + seriesVal, 10);   // ΣΕΙΡΑ ως ΑΡΙΘΜΟΣ (ορίζει τύπο + αρίθμηση + myDATA)· από adminpanel
     h.TRDR = cust.trdr;
     if (obj.issue_date) h.TRNDATE = obj.issue_date;   // YYYY-MM-DD
-    h.COMMENTS = obj.comments || "";                  // ΑΙΤΙΟΛΟΓΙΑ (π.χ. «Πώληση από RxVision site - περίοδος»)
+    // ΑΙΤΙΟΛΟΓΙΑ: full name SALDOC.COMMENTS. Το h.COMMENTS (FindTable) ΔΕΝ κόλλαγε → X.SETFIELDVALUE (BlackBook σ.280).
+    h.COMMENTS = obj.comments || "";
+    try { X.SETFIELDVALUE("SALDOC.COMMENTS", "" + (obj.comments || "")); } catch (e) { /* fallback στο h.COMMENTS */ }
 
     for (var i = 0; i < obj.lines.length; i++) {
       var ln = obj.lines[i];
