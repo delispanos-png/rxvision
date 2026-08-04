@@ -68,7 +68,8 @@ export default function RegisterWizard() {
   const [pendingStatus, setPendingStatus] = useState<string>("");
   const [pendingTrial, setPendingTrial] = useState(false);   // completion για δωρεάν trial (χωρίς πληρωμή)
   const [bankSubmitted, setBankSubmitted] = useState(false); // τράπεζα → αναμονή έγκρισης
-  const [afmErr, setAfmErr] = useState<string | null>(null); // διπλότυπο ΑΦΜ
+  const [afmErr, setAfmErr] = useState<string | null>(null); // διπλότυπο ΑΦΜ (ενεργή συνδρομή)
+  const [reactivation, setReactivation] = useState(false);   // υπάρχων λογαριασμός με ληγμένο/trial → αγορά κανονικού πακέτου
 
   useEffect(() => {
     // Optional deep-link preselect from the marketing site: /register?package=pro (alias: ?plan=).
@@ -190,8 +191,10 @@ export default function RegisterWizard() {
       const afm = company.afm.trim();
       if (/^\d{9}$/.test(afm)) {
         try {
-          const r = await api<{ exists: boolean }>(`/onboarding/check-afm/${afm}`);
-          if (r.exists) { setAfmErr("Υπάρχει ήδη συνδρομή για αυτό το ΑΦΜ."); return; }
+          const r = await api<{ exists: boolean; blocked?: boolean; reactivation?: boolean }>(`/onboarding/check-afm/${afm}`);
+          // ενεργή πληρωμένη συνδρομή → μπλοκ (σύνδεση). Ληγμένο/trial → επιτρέπεται (reactivation).
+          if (r.blocked) { setAfmErr("Υπάρχει ήδη ενεργή συνδρομή για αυτό το ΑΦΜ."); return; }
+          setReactivation(!!r.reactivation);
         } catch { /* μη-blocking: ο server ξαναελέγχει στο intent */ }
       }
     }
@@ -202,7 +205,7 @@ export default function RegisterWizard() {
   async function startPayment() {
     setErr(null); setBusy(true);
     try {
-      const r = await api<{ pending_id: string; checkout_url?: string; status?: string; trial?: boolean }>("/onboarding/register-intent", {
+      const r = await api<{ pending_id: string; checkout_url?: string; status?: string; trial?: boolean; reactivation?: boolean }>("/onboarding/register-intent", {
         method: "POST",
         body: JSON.stringify({
           pharmacy_name: company.title || company.name, country: company.country,
@@ -211,6 +214,7 @@ export default function RegisterWizard() {
           seats, payment_method: payMethod, addons: selAddons,
         }),
       });
+      if (r.reactivation) setReactivation(true);
       if (r.checkout_url) {                                                    // κάρτα → Viva
         if (typeof window !== "undefined" && r.pending_id) window.localStorage.setItem("signup_pending", r.pending_id);
         window.location.href = r.checkout_url; return;
@@ -221,8 +225,9 @@ export default function RegisterWizard() {
       setBankSubmitted(true); setBusy(false);                                  // (bank fallback — ανενεργό)
     } catch (e) {
       const detail = e instanceof ApiError ? ((e.problem as { detail?: { error?: string } })?.detail?.error) : "";
-      setErr(detail === "afm_already_registered" ? "Υπάρχει ήδη συνδρομή για αυτό το ΑΦΜ."
-        : detail === "email_already_registered" ? "Το email χρησιμοποιείται ήδη."
+      setErr(detail === "already_had_trial" ? "Έχεις ήδη χρησιμοποιήσει τη δωρεάν δοκιμή — επίλεξε ένα πληρωμένο πακέτο για να συνεχίσεις."
+        : detail === "afm_already_registered" ? "Υπάρχει ήδη ενεργή συνδρομή για αυτό το ΑΦΜ."
+        : detail === "email_already_registered" ? "Υπάρχει ήδη ενεργή συνδρομή με αυτό το email. Συνδέσου στον λογαριασμό σου."
         : "Δεν ξεκίνησε η πληρωμή. Δοκίμασε ξανά.");
       setBusy(false);
     }
@@ -259,6 +264,11 @@ export default function RegisterWizard() {
           <a href="/login" className="text-sm text-slate-500 hover:text-slate-700">← Σύνδεση</a>
           <Logo subtitle={false} markClassName="h-8 w-8" />
         </div>
+        {reactivation && (
+          <div className="mx-auto mb-4 max-w-2xl rounded-xl border border-brand-200 bg-brand-50 px-4 py-3 text-sm text-brand-800">
+            <b>Καλώς ήρθες πάλι!</b> Βρήκαμε τον λογαριασμό σου με ληγμένη/δοκιμαστική συνδρομή. Επίλεξε ένα πληρωμένο πακέτο και μετά την πληρωμή <b>ο ΙΔΙΟΣ λογαριασμός σου ενεργοποιείται ξανά</b> (δεν δημιουργείται νέος). Η δωρεάν δοκιμή δεν είναι διαθέσιμη ξανά.
+          </div>
+        )}
         {pendingId ? (
           <div className="mx-auto max-w-lg rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
             {(pendingStatus === "paid" || pendingStatus === "approved") ? (

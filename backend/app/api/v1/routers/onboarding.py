@@ -82,8 +82,12 @@ class CompleteIn(BaseModel):
 @router.get("/check-afm/{afm}",
             dependencies=[Depends(rate_limit("onboarding_afm", limit=60, window_seconds=600))])
 async def check_afm(afm: str):
-    """Υπάρχει ήδη συνδρομή για αυτό το ΑΦΜ; → μπλοκ διπλής εγγραφής (boolean, χωρίς διαρροή στοιχείων)."""
-    return {"exists": await OnboardingService().afm_exists(afm)}
+    """Υπάρχει ήδη συνδρομή για αυτό το ΑΦΜ; `blocked`=ενεργή πληρωμένη (μπλοκ διπλής εγγραφής)·
+    `reactivation`=υπάρχει αλλά ληγμένο/trial → επιτρέπεται αγορά κανονικού πακέτου (ίδιος tenant)."""
+    tgt = await OnboardingService().reactivation_target("", afm)
+    if not tgt:
+        return {"exists": False, "blocked": False, "reactivation": False}
+    return {"exists": True, "blocked": tgt["blocked"], "reactivation": not tgt["blocked"]}
 
 
 @router.post("/register-intent", status_code=201,

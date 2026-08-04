@@ -50,26 +50,36 @@ class OnboardingService:
                        payment_method: str | None = None,
                        addons: list[str] | None = None,
                        activate: bool = False,
-                       viva_transaction_id: str | None = None) -> dict:
+                       viva_transaction_id: str | None = None,
+                       reactivate_tenant_id: str | None = None) -> dict:
         """Δημιουργεί tenant + συνδρομή + owner + tokens. activate=True → ΠΛΗΡΩΜΕΝΗ, ενεργή συνδρομή
-        (χωρίς trial· κάρτα αποθηκευμένη μέσω viva_transaction_id). activate=False → legacy trial."""
+        (χωρίς trial· κάρτα αποθηκευμένη μέσω viva_transaction_id). activate=False → legacy trial.
+        reactivate_tenant_id → ΔΕΝ φτιάχνει νέο tenant· επαναφέρει ΥΠΑΡΧΟΝΤΑ (ληγμένο/trial) σε ενεργή
+        πληρωμένη συνδρομή (ο πελάτης που το trial του έληξε & αγοράζει κανονικό πακέτο)."""
         country = country.upper()
         if country not in _COUNTRY_SETTINGS:
             raise OnboardingError("unsupported_country")
         db = shared_db()
-        if await db["users"].find_one({"email": email}):
+        reactivating = bool(reactivate_tenant_id)
+        existing_user = await db["users"].find_one({"email": email})
+        if existing_user and not reactivating:
             raise OnboardingError("email_already_registered")
 
-        tid = _slugify(pharmacy_name)
+        tid = reactivate_tenant_id or _slugify(pharmacy_name)
         settings = {**_COUNTRY_SETTINGS[country], "fiscal_month_close_day": 31}
 
-        await db["tenants"].insert_one({
-            "_id": tid, "name": pharmacy_name, "slug": tid, "country": country,
+        tenant_doc = {
+            "name": pharmacy_name, "slug": tid, "country": country,
             "status": "active" if activate else "trial", "isolation_tier": "shared", "settings": settings,
-            "modules": {}, "credentials_ref": {"hdika": None, "gesy": None},
-            "billing_profile": company or {},
-            "created_at": _now(), "updated_at": _now(),
-        })
+            "billing_profile": company or {}, "updated_at": _now(),
+        }
+        if reactivating:
+            await db["tenants"].update_one({"_id": tid}, {"$set": tenant_doc})
+        else:
+            await db["tenants"].insert_one({
+                "_id": tid, "modules": {}, "credentials_ref": {"hdika": None, "gesy": None},
+                "created_at": _now(), **tenant_doc,
+            })
 
         # subscription — from the chosen package (else the legacy free trial)
         pkg = await db["packages"].find_one({"_id": package_code}) if package_code else None
@@ -107,8 +117,8 @@ class OnboardingService:
         if addon_overrides:   # entitlement = tenant module overrides (same gating as everywhere)
             await db["tenants"].update_one({"_id": tid}, {"$set": {f"modules.{k}": v for k, v in addon_overrides.items()}})
         price_total = int(price) + sla_price + extra_total + addons_total
-        await db["subscriptions"].insert_one({
-            "tenant_id": tid, "plan": package_code or "free_trial",
+        sub_fields = {
+            "plan": package_code or "free_trial",
             "status": "active" if activate else ("trialing" if trial_days else "active"),
             "billing_cycle": cycle, "sla": sla_code,
             "trial_ends_at": None if activate else _now() + timedelta(days=trial_days), "seats": chosen_seats,
@@ -120,7 +130,7 @@ class OnboardingService:
             "extra_users_total": extra_total, "price_total": price_total,
             "modules_included": (pkg or {}).get("modules") or _MODULES,
             "limits": {"pharmacies": 1, "history_months": 36, "api_sync": True},
-            "current_period_end": _now() + timedelta(days=period_days), "created_at": _now(),
+            "current_period_end": _now() + timedelta(days=period_days),
             # paid activation → κάρτα αποθηκευμένη στη Viva (recurring seed = viva_transaction_id)
             "payment_provider": "viva" if activate else None,
             "payment_status": "card_saved" if activate else "trial",
@@ -128,19 +138,36 @@ class OnboardingService:
             "started_at": _now(),
             # how the customer chose to pay at signup: "card" (Viva) or "bank" (manual transfer)
             "payment_method": payment_method or "card",
-        })
-        await seed_rbac(tenant_id=tid)
+        }
+        if reactivating:
+            # καθάρισε προηγούμενα κλειδώματα λήξης· βάλε το νέο πακέτο ως ενεργό (upsert για ασφάλεια)
+            await db["subscriptions"].update_one(
+                {"tenant_id": tid}, {"$set": {**sub_fields, "reactivated_at": _now()},
+                                     "$unset": {"expired_at": "", "failed_attempts": ""}}, upsert=True)
+        else:
+            await db["subscriptions"].insert_one({"tenant_id": tid, "created_at": _now(), **sub_fields})
+
         owner_role = await db["roles"].find_one({"tenant_id": tid, "key": "owner"})
-        await db["users"].insert_one({
-            "tenant_id": tid, "email": email, "password_hash": hash_password(password),
-            "full_name": full_name, "role_ids": [owner_role["_id"]], "pharmacy_ids": [],
-            "status": "active", "mfa_enabled": False, "refresh_token_version": 0,
-            "created_at": _now(), "updated_at": _now(),
-        })
+        if not owner_role:                       # νέος tenant (ή reactivation χωρίς roles) → seed RBAC
+            await seed_rbac(tenant_id=tid)
+            owner_role = await db["roles"].find_one({"tenant_id": tid, "key": "owner"})
+        if reactivating and existing_user:       # υπάρχων χρήστης → νέος κωδικός + ενεργός + owner ρόλος
+            await db["users"].update_one({"_id": existing_user["_id"]}, {"$set": {
+                "password_hash": hash_password(password), "status": "active",
+                "full_name": full_name or existing_user.get("full_name"),
+                "role_ids": list({*(existing_user.get("role_ids") or []), owner_role["_id"]}),
+                "updated_at": _now()}, "$inc": {"refresh_token_version": 1}})
+        else:                                    # νέος χρήστης (νέα εγγραφή ή reactivation με νέο email)
+            await db["users"].insert_one({
+                "tenant_id": tid, "email": email, "password_hash": hash_password(password),
+                "full_name": full_name, "role_ids": [owner_role["_id"]], "pharmacy_ids": [],
+                "status": "active", "mfa_enabled": False, "refresh_token_version": 0,
+                "created_at": _now(), "updated_at": _now(),
+            })
 
         tokens = await AuthService().login(email, password, None)
         return {
-            "tenant_id": tid, "country": country,
+            "tenant_id": tid, "country": country, "reactivated": reactivating,
             "ingestion_source": "HDIKA" if country == "GR" else "GESY",
             **(tokens or {}),
         }
@@ -152,6 +179,32 @@ class OnboardingService:
         if not afm:
             return False
         return await shared_db()["tenants"].count_documents({"billing_profile.afm": afm}) > 0
+
+    async def reactivation_target(self, email: str, afm: str = "") -> dict | None:
+        """Βρίσκει υπάρχοντα λογαριασμό (με email ή ΑΦΜ) και λέει αν ΔΙΚΑΙΟΥΤΑΙ επανενεργοποίηση.
+        Επιστρέφει {tenant_id, blocked, had_trial}:
+          • blocked=True → έχει ΕΝΕΡΓΗ ΠΛΗΡΩΜΕΝΗ συνδρομή (δεν ξαναγράφεται· να μπει από το app).
+          • blocked=False → trial/ληγμένος → επιτρέπεται αγορά κανονικού πακέτου στον ΙΔΙΟ tenant.
+        None αν δεν υπάρχει καθόλου (κανονική νέα εγγραφή)."""
+        db = shared_db()
+        tid = None
+        if email:
+            u = await db["users"].find_one({"email": email}, {"tenant_id": 1})
+            if u:
+                tid = u.get("tenant_id")
+        afm = (afm or "").strip()
+        if not tid and afm:
+            t = await db["tenants"].find_one({"billing_profile.afm": afm}, {"_id": 1})
+            tid = t.get("_id") if t else None
+        if not tid:
+            return None
+        sub = await db["subscriptions"].find_one({"tenant_id": tid})
+        pend = sub.get("current_period_end") if sub else None
+        paid_active = bool(sub and sub.get("status") == "active"
+                           and sub.get("plan") not in (None, "free_trial")
+                           and sub.get("payment_status") not in ("trial", "expired", None)
+                           and (pend is None or pend > _now()))
+        return {"tenant_id": tid, "blocked": paid_active, "had_trial": bool(sub)}
 
     async def get_pending(self, pending_id: str) -> dict | None:
         return await shared_db()["pending_registrations"].find_one({"_id": pending_id})
@@ -166,11 +219,16 @@ class OnboardingService:
         if country not in _COUNTRY_SETTINGS:
             raise OnboardingError("unsupported_country")
         db = shared_db()
-        if await db["users"].find_one({"email": owner_email}):
-            raise OnboardingError("email_already_registered")
         afm = ((company or {}).get("afm") or "").strip()
-        if afm and await self.afm_exists(afm):
-            raise OnboardingError("afm_already_registered")
+        # REACTIVATION: αν υπάρχει ήδη λογαριασμός με ληγμένο/trial → επιτρέπεται αγορά ΚΑΝΟΝΙΚΟΥ πακέτου
+        # στον ΙΔΙΟ tenant (ο πελάτης που το trial του έληξε & θέλει να συνεχίσει). ΜΟΝΟ ενεργή πληρωμένη
+        # συνδρομή μπλοκάρει (τότε να το κάνει μέσα από το app, όχι νέα εγγραφή).
+        reactivate_tid = None
+        existing = await self.reactivation_target(owner_email, afm)
+        if existing:
+            if existing["blocked"]:
+                raise OnboardingError("email_already_registered")
+            reactivate_tid = existing["tenant_id"]
         pkg = await db["packages"].find_one({"_id": package_code}) if package_code else None
         yearly = (billing_cycle == "yearly")
         price = int((pkg or {}).get("price_yearly" if yearly else "price_monthly", 0) or 0)
@@ -195,6 +253,9 @@ class OnboardingService:
                                   bool((pkg or {}).get("price_includes_vat")), country)
         # Δωρεάν trial πακέτο (μηδενικό κόστος): καμία πληρωμή → pending «paid» κατευθείαν (→ credentials).
         is_trial = amount <= 0
+        # Reactivation ΔΕΝ ξαναδίνει δωρεάν trial — ο πελάτης πρέπει να επιλέξει ΠΛΗΡΩΜΕΝΟ πακέτο.
+        if reactivate_tid and is_trial:
+            raise OnboardingError("already_had_trial")
         status = "paid" if is_trial else ("awaiting_payment" if payment_method == "card" else "awaiting_bank_approval")
         pid = uuid.uuid4().hex
         await db["pending_registrations"].insert_one({
@@ -204,9 +265,11 @@ class OnboardingService:
             "package_code": package_code, "billing_cycle": billing_cycle or "monthly", "sla": sla_code,
             "seats": chosen_seats, "addons": addons or [], "payment_method": payment_method,
             "amount_cents": amount, "created_at": _now(),
+            "reactivate_tenant_id": reactivate_tid,   # → materialize επαναφέρει τον ΥΠΑΡΧΟΝΤΑ tenant
             "expires_at": _now() + timedelta(hours=2),
         })
-        return {"pending_id": pid, "amount_cents": amount, "is_trial": is_trial}
+        return {"pending_id": pid, "amount_cents": amount, "is_trial": is_trial,
+                "reactivation": bool(reactivate_tid)}
 
     async def mark_pending_paid(self, pending_id: str, viva_transaction_id: str | None = None) -> bool:
         """Καλείται από το Viva webhook (signup:<id>) → η pending γίνεται `paid` (idempotent).
@@ -275,7 +338,8 @@ class OnboardingService:
             addons=p.get("addons"),
             # trial πακέτο → trialing (activate=False)· paid → active με αποθηκευμένη κάρτα
             activate=not p.get("is_trial"),
-            viva_transaction_id=p.get("viva_transaction_id"))
+            viva_transaction_id=p.get("viva_transaction_id"),
+            reactivate_tenant_id=p.get("reactivate_tenant_id"))
         await db["pending_registrations"].update_one(
             {"_id": pending_id}, {"$set": {"status": "completed",
                                            "completed_tenant_id": res["tenant_id"], "completed_at": _now()}})
