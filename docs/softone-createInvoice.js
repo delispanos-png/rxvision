@@ -1,6 +1,6 @@
 /* ============================================================================
  * RxVision → SoftOne — Custom Web Service (Advanced JavaScript)  [SoftOne BlackBook ver.3.5]
- * ★ ΤΕΛΕΥΤΑΙΑ ΕΝΗΜΕΡΩΣΗ: 2026-08-04 13:42 (EEST)  ← η πιο πρόσφατη έκδοση
+ * ★ ΤΕΛΕΥΤΑΙΑ ΕΝΗΜΕΡΩΣΗ: 2026-08-04 14:43 (EEST)  ← η πιο πρόσφατη έκδοση
  * ----------------------------------------------------------------------------
  * Δημιουργεί ΤΙΜΟΛΟΓΙΟ ΠΑΡΟΧΗΣ ΥΠΗΡΕΣΙΩΝ (SALDOC) από το payload του RxVision και το
  * διαβιβάζει στο myDATA (η CloudOn/SoftOne είναι πιστοποιημένος πάροχος). Επιστρέφει findoc/MARK.
@@ -31,17 +31,16 @@ var CFG = {
 function _findOrCreateCustomer(c) {
   var afm = (c && c.afm) ? ("" + c.afm) : "";
   if (!afm) return { error: "missing_afm" };
-  // 1) ΕΝΤΟΠΙΣΜΟΣ με ΑΦΜ — ο πελάτης συνήθως ΥΠΑΡΧΕΙ ήδη. Φίλτρο ΜΟΝΟ στο ΑΦΜ
-  //    (ο συνδυασμός AFM+SODTYPE στο ίδιο FILTERS σπάει την αναζήτηση σε αρκετές εγκαταστάσεις).
-  var q = { SERVICE: "getData", OBJECT: "CUSTOMER", appId: CFG.APPID,
-            LIST: "CUSTOMER:TRDR", FILTERS: "CUSTOMER.AFM=" + afm };
-  var found = JSON.parse(X.WEBREQUEST(JSON.stringify(q)));
-  if (found && found.success && found.rows && found.rows.length > 0) {
-    var row = found.rows[0];
-    var trdr = row.TRDR || row.trdr || row["CUSTOMER.TRDR"];
-    if (trdr) return { trdr: trdr };
-  }
+  // 1) ΕΝΤΟΠΙΣΜΟΣ με ΑΦΜ μέσω **SQL** — ο πελάτης συνήθως ΥΠΑΡΧΕΙ ήδη.
+  //    ⚠ ΠΡΟΣΟΧΗ: το getData ΔΕΝ κάνει αναζήτηση/φίλτρα — ανοίγει ΜΙΑ εγγραφή με KEY (TRDR) &
+  //    επιστρέφει `data` (όχι `rows`). Για αναζήτηση με ΑΦΜ → X.GETSQLDATASET (BlackBook).
+  try {
+    var sql = "SELECT TOP 1 TRDR FROM CUSTOMER WHERE SODTYPE=" + CFG.SODTYPE_CUSTOMER + " AND AFM='" + afm + "'";
+    var rows = X.GETSQLDATASET(sql, null);
+    if (rows && rows.length > 0 && rows[0].TRDR) return { trdr: rows[0].TRDR };
+  } catch (e) { /* πέσε στη δημιουργία */ }
   // 2) Δεν βρέθηκε → ΔΗΜΙΟΥΡΓΙΑ νέου πελάτη (SODTYPE υποχρεωτικό· COUNTRY = ΚΩΔΙΚΟΣ SoftOne, όχι "GR")
+  //    ΣΗΜ: αν το SoftOne απαιτεί χειροκίνητο «Κωδικός», ενεργοποιήστε ΑΥΤΟΜΑΤΗ ΑΡΙΘΜΗΣΗ στον πελάτη.
   var cust = { SODTYPE: CFG.SODTYPE_CUSTOMER, NAME: c.name || "", AFM: afm, IRSDATA: c.doy || "",
                ADDRESS: c.address || "", CITY: c.city || "", ZIP: c.zip || "",
                PHONE01: c.phone || "", EMAIL: c.email || "", COUNTRY: CFG.COUNTRY_CODE };
