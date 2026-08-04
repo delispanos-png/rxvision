@@ -157,3 +157,23 @@ async def issue(payload: dict) -> dict:
     return {"ok": True, "findoc": res.get("findoc") or res.get("id"),
             "mark": res.get("mark") or res.get("MARK"), "uid": res.get("uid") or res.get("UID"),
             "aa": res.get("aa") or res.get("AA"), "raw": res}
+
+
+async def call_js(payload: dict) -> dict:
+    """Γενική κλήση στο custom JS web service με οποιοδήποτε payload/mode (π.χ. mode:"status" για
+    παρακολούθηση μετασχηματισμού). Επιστρέφει το raw JSON της JS συνάρτησης (ή {success:False,error})."""
+    cfg = await platform_config()
+    if not is_configured(cfg):
+        return {"success": False, "error": "not_configured"}
+    js_path = _js_path(cfg.get("js_endpoint"))
+    if not js_path:
+        return {"success": False, "error": "no_js_endpoint"}
+    client_id = await get_client_id(cfg)
+    if not client_id:
+        return {"success": False, "error": "auth_failed"}
+    url = _gateway(cfg["base_url"]) + "/JS/" + js_path
+    body = {"clientID": client_id, "appId": cfg.get("app_id"), **payload}
+    try:
+        return await _post(url, body)
+    except Exception as e:  # noqa: BLE001
+        return {"success": False, "error": f"connect_error:{type(e).__name__}"}

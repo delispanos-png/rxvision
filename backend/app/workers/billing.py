@@ -68,3 +68,13 @@ def transmit_invoice(self, invoice_id: str) -> dict:
     το batch. Σε αποτυχία η εγγραφή μπαίνει σε retry (κάθε 5' από το process_pending_invoices)."""
     from app.services.invoice_service import issue_invoice_by_id
     return asyncio.run(issue_invoice_by_id(invoice_id))
+
+
+@celery_app.task(name="app.workers.billing.check_invoice_transformations", bind=True,
+                 max_retries=3, autoretry_for=(ConnectionError, TimeoutError),
+                 retry_backoff=True, retry_backoff_max=1800, retry_jitter=True)
+def check_invoice_transformations(self) -> dict:
+    """ΜΕΤΑΣΧΗΜΑΤΙΣΜΟΣ: τα προτιμολόγια που ρίξαμε μετασχηματίζονται σε τελικά Τ.Π.Υ. στο SoftOne και
+    διαβιβάζονται στην ΑΑΔΕ. Περιοδικά ρωτάμε αν έγινε ο μετασχηματισμός → αποθηκεύουμε τελικό MARK/κατάσταση."""
+    from app.services.invoice_service import check_transformations
+    return asyncio.run(check_transformations())

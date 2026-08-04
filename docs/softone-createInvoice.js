@@ -1,6 +1,6 @@
 /* ============================================================================
  * RxVision → SoftOne — Custom Web Service (Advanced JavaScript)  [SoftOne BlackBook ver.3.5]
- * ★ ΤΕΛΕΥΤΑΙΑ ΕΝΗΜΕΡΩΣΗ: 2026-08-04 22:45 (EEST)  ← REVERT πυρήνα δημιουργίας στην ★17:36 ΠΟΥ ΔΟΥΛΕΥΕ (αφαιρέθηκαν φόρμα + d.LINENUM που πρόσθεσα εγώ· επανήλθε h.COMMENTS). Idempotency (find) + αιτιολογία (setData) μένουν.
+ * ★ ΤΕΛΕΥΤΑΙΑ ΕΝΗΜΕΡΩΣΗ: 2026-08-04 23:10 (EEST)  ← + mode "status" (παρακολούθηση ΜΕΤΑΣΧΗΜΑΤΙΣΜΟΥ: FULLYTRANSF + τελικό findoc/MARK μέσω MTRLINES.FINDOCS). Σειρά 7002 (έγκυρη) = δουλεύει.
  *
  * ΣΕΙΡΑ (SERIES): το adminpanel param πρέπει να είναι το internal SERIES id (ΟΧΙ FPRMS/φόρμα!).
  *   π.χ. Τ.Π.Υ.=7767 (φόρμα 7067), Τ.Π.Υ. Ε.Ε.=7069. Κενό/άκυρο → default 7002 (Προτιμολόγιο).
@@ -83,7 +83,7 @@ function _getMyData(findoc) {
 
 /* ── Το custom web service (κλήση: /s1services/JS/RXVISION/createInvoice) ── */
 function createInvoice(obj) {
-  var resp = { success: false, v: "2245" };   // δείκτης έκδοσης γέφυρας (επιβεβαιώνει ΟΤΙ τρέχει η σωστή)
+  var resp = { success: false, v: "2310" };   // δείκτης έκδοσης γέφυρας (επιβεβαιώνει ΟΤΙ τρέχει η σωστή)
   if (!obj || !obj.clientID || obj.clientID === "") { resp.error = "Authenticate failed: missing clientID"; return resp; }
 
   // ⛔ IDEMPOTENCY — mode "find": ΜΟΝΟ X.SQL lookup (POSGUID), ΚΑΜΙΑ δημιουργία. Το backend το καλεί
@@ -102,6 +102,31 @@ function createInvoice(obj) {
       } catch (e) { fr.error = e.message; }
     }
     return fr;
+  }
+
+  // 🔄 ΜΕΤΑΣΧΗΜΑΤΙΣΜΟΣ — mode "status": δίνει το ref (POSGUID) → επιστρέφει την κατάσταση του
+  //    προτιμολογίου μας ΚΑΙ, αν μετασχηματίστηκε σε τελικό Τ.Π.Υ., το findoc + MARK του τελικού.
+  //    Σύνδεση πηγής→στόχου: MTRLINES.FINDOCS = <findoc πηγής> (BlackBook: DelConvertedDocs). ΜΟΝΟ X.SQL.
+  if (obj.mode === "status") {
+    var st = { success: true, findoc: 0, fullytransf: null, target_findoc: 0, target_series: "", mark: "", uid: "", aa: "" };
+    if (obj.ref) {
+      try {
+        var src = X.SQL("SELECT FINDOC FROM FINDOC WHERE COMPANY=:X.SYS.COMPANY AND POSGUID=:1", "" + obj.ref);
+        if (src !== null && ("" + src) !== "" && parseInt("" + src, 10) > 0) {
+          st.findoc = parseInt("" + src, 10);
+          try { st.fullytransf = "" + X.SQL("SELECT FULLYTRANSF FROM FINDOC WHERE FINDOC=:1", "" + st.findoc); } catch (e1) { }
+          // βρες το μετασχηματισμένο (target) doc — οι γραμμές του δείχνουν στο πηγαίο findoc
+          var tgt = X.SQL("SELECT MIN(FINDOC) FROM MTRLINES WHERE COMPANY=:X.SYS.COMPANY AND FINDOCS=:1", "" + st.findoc);
+          if (tgt !== null && ("" + tgt) !== "" && parseInt("" + tgt, 10) > 0) {
+            st.target_findoc = parseInt("" + tgt, 10);
+            try { st.target_series = "" + X.SQL("SELECT SERIES FROM FINDOC WHERE FINDOC=:1", "" + st.target_findoc); } catch (e2) { }
+            var tmd = _getMyData(st.target_findoc);
+            st.mark = tmd.mark; st.uid = tmd.uid; st.aa = tmd.aa;
+          }
+        }
+      } catch (e) { st.error = e.message; }
+    }
+    return st;
   }
 
   if (!obj.customer || !obj.customer.afm) { resp.error = "missing customer AFM"; return resp; }

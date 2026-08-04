@@ -318,3 +318,40 @@ async def issue_invoice_by_id(invoice_id) -> dict:
     return {"ok": ok, "aade_status": inv.get("aade_status"), "aade_mark": inv.get("aade_mark"),
             "softone_findoc": inv.get("softone_findoc"),
             "error": None if ok else inv.get("last_error")}
+
+
+async def check_transformations() -> dict:
+    """ΜΕΤΑΣΧΗΜΑΤΙΣΜΟΣ: το παραστατικό που ρίχνουμε είναι ΠΡΟΤΙΜΟΛΟΓΙΟ. Στο SoftOne μετασχηματίζεται σε
+    τελικό Τ.Π.Υ. και ΤΟΤΕ διαβιβάζεται στην ΑΑΔΕ (παίρνει MARK). Εδώ, για κάθε εκδομένο invoice που δεν
+    έχει ακόμα τελικό MARK, ρωτάμε το SoftOne (mode "status") αν μετασχηματίστηκε· αν ναι, αποθηκεύουμε
+    το findoc/σειρά του τελικού + το MARK, ώστε το RxVision να ξέρει την ΤΕΛΙΚΗ κατάσταση."""
+    db = shared_db()
+    cfg = await softone_service.platform_config()
+    if not softone_service.is_configured(cfg) or not (cfg.get("js_endpoint") or "").strip():
+        return {"skipped": "softone_not_configured"}
+    now = _now()
+    q = {"status": "issued", "softone_findoc": {"$ne": None},
+         "aade_mark": {"$in": [None, ""]}, "transformed": {"$ne": True}}
+    updated = 0
+    async for inv in db["invoices"].find(q).sort("issued_at", 1).limit(BATCH):
+        res = await softone_service.call_js({"mode": "status", "ref": str(inv["_id"])})
+        if not res.get("success"):
+            continue
+        tgt = res.get("target_findoc")
+        try:
+            tgt_i = int(tgt) if tgt is not None else 0
+        except (TypeError, ValueError):
+            tgt_i = 0
+        set_doc: dict = {"fullytransf": res.get("fullytransf"), "updated_at": now}
+        if tgt_i > 0:   # μετασχηματίστηκε σε τελικό παραστατικό
+            mark = res.get("mark") or None
+            set_doc.update({"transformed": True, "transformed_findoc": tgt_i,
+                            "transformed_series": res.get("target_series") or None,
+                            "aade_mark": mark, "mydata_uid": res.get("uid") or None,
+                            "mydata_aa": res.get("aa") or None,
+                            "aade_status": "transmitted" if mark else "transformed",
+                            "transformed_at": now})
+            updated += 1
+            log.info("invoice transformed: %s → target=%s mark=%s", inv["_id"], tgt_i, mark)
+        await db["invoices"].update_one({"_id": inv["_id"]}, {"$set": set_doc})
+    return {"checked": True, "updated": updated}
