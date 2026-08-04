@@ -1,6 +1,6 @@
 /* ============================================================================
  * RxVision → SoftOne — Custom Web Service (Advanced JavaScript)  [SoftOne BlackBook ver.3.5]
- * ★ ΤΕΛΕΥΤΑΙΑ ΕΝΗΜΕΡΩΣΗ: 2026-08-04 14:55 (EEST)  ← η πιο πρόσφατη έκδοση
+ * ★ ΤΕΛΕΥΤΑΙΑ ΕΝΗΜΕΡΩΣΗ: 2026-08-04 15:02 (EEST)  ← η πιο πρόσφατη έκδοση (ΔΙΑΓΝΩΣΤΙΚΗ)
  * ----------------------------------------------------------------------------
  * Δημιουργεί ΤΙΜΟΛΟΓΙΟ ΠΑΡΟΧΗΣ ΥΠΗΡΕΣΙΩΝ (SALDOC) από το payload του RxVision και το
  * διαβιβάζει στο myDATA (η CloudOn/SoftOne είναι πιστοποιημένος πάροχος). Επιστρέφει findoc/MARK.
@@ -16,41 +16,51 @@
  * ============================================================================ */
 
 var CFG = {
-  APPID:            3001,        // appId του SoftOne Web Account (ίδιο με το adminpanel)
-  SERIES:           7001,        // ΣΕΙΡΑ Τιμολογίου Παροχής Υπηρεσιών (χαρτογραφημένη σε myDATA 2.1) — ΕΠΙΒΕΒΑΙΩΣΤΕ
+  APPID: 3001,        // appId του SoftOne Web Account (ίδιο με το adminpanel)
+  SERIES: 7001,        // ΣΕΙΡΑ Τιμολογίου Παροχής Υπηρεσιών (χαρτογραφημένη σε myDATA 2.1) — ΕΠΙΒΕΒΑΙΩΣΤΕ
   SODTYPE_CUSTOMER: 13,          // 13 = Πελάτες (SoftOne standard)
-  COUNTRY_CODE:     1000,        // κωδικός ΧΩΡΑΣ SoftOne για δημιουργία πελάτη (Ελλάδα) — ΕΠΙΒΕΒΑΙΩΣΤΕ (ΟΧΙ "GR")
-  TRDCATEGORY:      0,           // (προαιρετικό) κατηγορία πελάτη· βάλτε αν το SoftOne την απαιτεί στη δημιουργία
-  SERVICE_MTRL:     0,           // MTRL «Υπηρεσία συνδρομής RxVision». 0 = γραμμή υπηρεσίας χωρίς είδος — ΕΠΙΒΕΒΑΙΩΣΤΕ
-  VAT:              1420,        // id κατηγορίας ΦΠΑ 24% στη SoftOne — ΕΠΙΒΕΒΑΙΩΣΤΕ
+  COUNTRY_CODE: 1000,        // κωδικός ΧΩΡΑΣ SoftOne για δημιουργία πελάτη (Ελλάδα) — ΕΠΙΒΕΒΑΙΩΣΤΕ (ΟΧΙ "GR")
+  TRDCATEGORY: 0,           // (προαιρετικό) κατηγορία πελάτη· βάλτε αν το SoftOne την απαιτεί στη δημιουργία
+  SERVICE_MTRL: 0,           // MTRL «Υπηρεσία συνδρομής RxVision». 0 = γραμμή υπηρεσίας χωρίς είδος — ΕΠΙΒΕΒΑΙΩΣΤΕ
+  VAT: 1420,        // id κατηγορίας ΦΠΑ 24% στη SoftOne — ΕΠΙΒΕΒΑΙΩΣΤΕ
   // SQL για ανάγνωση myDATA MARK/UID από το παραστατικό (εξαρτάται από το myDATA module) — ΕΠΙΒΕΒΑΙΩΣΤΕ
-  MARK_SQL:         "SELECT MARK, UID, AA FROM FINDOC WHERE FINDOC="
+  MARK_SQL: "SELECT MARK, UID, AA FROM FINDOC WHERE FINDOC="
 };
 
 /* Locate-or-create πελάτη με ΑΦΜ → επιστρέφει TRDR (primary key). */
+function _hasNum(v) { return v !== null && v !== undefined && ("" + v).replace(/[^0-9]/g, "") !== ""; }
+
 function _findOrCreateCustomer(c) {
   var afm = (c && c.afm) ? ("" + c.afm) : "";
   if (!afm) return { error: "missing_afm" };
-  // 1) ΕΝΤΟΠΙΣΜΟΣ με ΑΦΜ — BlackBook σ.303 (X.SQL): πίνακας **TRDR** (όχι CUSTOMER!) + φίλτρο
-  //    **COMPANY=:X.SYS.COMPANY** (ο TRDR είναι πολυ-εταιρικός). Το X.SQL επιστρέφει την τιμή (TRDR) ή "".
+  var diag = [];
+  // A) ΕΝΤΟΠΙΣΜΟΣ με ΑΦΜ στην εταιρεία σύνδεσης (BlackBook σ.303 — πίνακας TRDR + COMPANY).
   try {
-    var sql = "SELECT TRDR FROM TRDR WHERE COMPANY=:X.SYS.COMPANY AND SODTYPE=" + CFG.SODTYPE_CUSTOMER + " AND AFM=:1";
-    var trdr = X.SQL(sql, afm);
-    if (trdr !== null && trdr !== undefined && ("" + trdr).replace(/[^0-9]/g, "") !== "")
-      return { trdr: ("" + trdr).split(",")[0] };
-  } catch (e) { /* πέσε στη δημιουργία */ }
-  // 2) Δεν βρέθηκε → ΔΗΜΙΟΥΡΓΙΑ νέου πελάτη (SODTYPE υποχρεωτικό· COUNTRY = ΚΩΔΙΚΟΣ SoftOne, όχι "GR")
-  //    ΣΗΜ: αν το SoftOne απαιτεί χειροκίνητο «Κωδικός», ενεργοποιήστε ΑΥΤΟΜΑΤΗ ΑΡΙΘΜΗΣΗ στον πελάτη.
-  var cust = { SODTYPE: CFG.SODTYPE_CUSTOMER, NAME: c.name || "", AFM: afm, IRSDATA: c.doy || "",
-               ADDRESS: c.address || "", CITY: c.city || "", ZIP: c.zip || "",
-               PHONE01: c.phone || "", EMAIL: c.email || "", COUNTRY: CFG.COUNTRY_CODE };
+    var tA = X.SQL("SELECT TRDR FROM TRDR WHERE COMPANY=:X.SYS.COMPANY AND SODTYPE=" + CFG.SODTYPE_CUSTOMER + " AND AFM=:1", afm);
+    diag.push("A='" + tA + "'");
+    if (_hasNum(tA)) return { trdr: ("" + tA).split(",")[0] };
+  } catch (e) { diag.push("Aex=" + e.message); }
+  // B) fallback ΧΩΡΙΣ φίλτρο εταιρείας (μήπως ο πελάτης είναι σε άλλη εταιρεία· το TRDR είναι global).
+  try {
+    var tB = X.SQL("SELECT TRDR FROM TRDR WHERE SODTYPE=" + CFG.SODTYPE_CUSTOMER + " AND AFM=:1", afm);
+    diag.push("B='" + tB + "'");
+    if (_hasNum(tB)) return { trdr: ("" + tB).split(",")[0] };
+  } catch (e) { diag.push("Bex=" + e.message); }
+  // Διάγνωση: ποια εταιρεία «βλέπει» το session.
+  try { diag.push("comp=" + X.SQL("SELECT :X.SYS.COMPANY", null)); } catch (e) { diag.push("compEx=" + e.message); }
+  // Γ) ΔΗΜΙΟΥΡΓΙΑ νέου πελάτη (αν χρειάζεται «Κωδικός», ενεργοποιήστε ΑΥΤΟΜΑΤΗ ΑΡΙΘΜΗΣΗ στον πελάτη).
+  var cust = {
+    SODTYPE: CFG.SODTYPE_CUSTOMER, NAME: c.name || "", AFM: afm, IRSDATA: c.doy || "",
+    ADDRESS: c.address || "", CITY: c.city || "", ZIP: c.zip || "",
+    PHONE01: c.phone || "", EMAIL: c.email || "", COUNTRY: CFG.COUNTRY_CODE
+  };
   if (CFG.TRDCATEGORY) cust.TRDCATEGORY = CFG.TRDCATEGORY;
   var res = JSON.parse(X.WEBREQUEST(JSON.stringify(
     { SERVICE: "setData", OBJECT: "CUSTOMER", appid: CFG.APPID, DATA: { CUSTOMER: [cust] } })));
   if (res && res.success && res.id) return { trdr: res.id };
-  // Επιστροφή ΠΡΑΓΜΑΤΙΚΟΥ σφάλματος δημιουργίας (η αναζήτηση SQL δεν βρήκε πελάτη) για διάγνωση.
+  // Επιστροφή ΑΝΑΛΥΤΙΚΗΣ διάγνωσης (τι επέστρεψε κάθε αναζήτηση + εταιρεία session) + σφάλμα δημιουργίας.
   var ce = (res && res.error) ? res.error : "create_failed";
-  return { error: "find[not_found] create[" + ce + "]" };
+  return { error: "find[" + diag.join(" ") + "] create[" + ce + "]" };
 }
 
 /* Ανάγνωση myDATA MARK/UID/AA μετά την έκδοση. */
@@ -86,12 +96,12 @@ function createInvoice(obj) {
       var unit = (ln.unit_net !== undefined && ln.unit_net !== null) ? ln.unit_net : ln.net;
       lines.push({
         // MTRL ανά γραμμή από το RxVision (κεντρική αντιστοίχιση ειδών)· fallback στο CFG default.
-        MTRL:     (ln.mtrl !== undefined && ln.mtrl !== null && ln.mtrl !== "") ? ln.mtrl : CFG.SERVICE_MTRL,
-        QTY1:     qty,
-        PRICE:    unit,                   // καθαρή τιμή μονάδας (μετά την έκπτωση)
-        VAT:      CFG.VAT,
-        LINEVAL:  ln.net,                 // καθαρή ΑΞΙΑ γραμμής (μετά τις εκπτώσεις) — authoritative
-        DISCV:    ln.discount || 0,       // έκπτωση γραμμής σε ευρώ (για εμφάνιση στο παραστατικό) — ΕΠΙΒΕΒΑΙΩΣΤΕ πεδίο
+        MTRL: (ln.mtrl !== undefined && ln.mtrl !== null && ln.mtrl !== "") ? ln.mtrl : CFG.SERVICE_MTRL,
+        QTY1: qty,
+        PRICE: unit,                   // καθαρή τιμή μονάδας (μετά την έκπτωση)
+        VAT: CFG.VAT,
+        LINEVAL: ln.net,                 // καθαρή ΑΞΙΑ γραμμής (μετά τις εκπτώσεις) — authoritative
+        DISCV: ln.discount || 0,       // έκπτωση γραμμής σε ευρώ (για εμφάνιση στο παραστατικό) — ΕΠΙΒΕΒΑΙΩΣΤΕ πεδίο
         COMMENTS: ln.description || ""
       });
     }
@@ -99,8 +109,10 @@ function createInvoice(obj) {
     // 3) κεφαλίδα SALDOC + setData (το SoftOne διαβιβάζει myDATA στο post)
     var doc = { SERIES: obj.series || CFG.SERIES, TRDR: trdr, COMMENTS: obj.ref || "" };
     if (obj.issue_date) doc.TRNDATE = obj.issue_date;     // ημ/νία έκδοσης (YYYY-MM-DD)
-    var ws = { SERVICE: "setData", OBJECT: "SALDOC", appId: CFG.APPID,
-               DATA: { SALDOC: [doc], MTRLINES: lines } };
+    var ws = {
+      SERVICE: "setData", OBJECT: "SALDOC", appId: CFG.APPID,
+      DATA: { SALDOC: [doc], MTRLINES: lines }
+    };
     var r = JSON.parse(X.WEBREQUEST(JSON.stringify(ws)));
     if (!r || !r.success) { resp.error = (r && r.error) ? r.error : "saldoc_setData_failed"; return resp; }
     var findoc = r.id;
@@ -109,11 +121,11 @@ function createInvoice(obj) {
     var md = _getMyData(findoc);
 
     resp.success = true;
-    resp.findoc  = findoc;
-    resp.mark    = md.mark;
-    resp.uid     = md.uid;
-    resp.aa      = md.aa;
-    resp.ref     = obj.ref || "";
+    resp.findoc = findoc;
+    resp.mark = md.mark;
+    resp.uid = md.uid;
+    resp.aa = md.aa;
+    resp.ref = obj.ref || "";
   } catch (e) {
     resp.error = e.message;
   }
