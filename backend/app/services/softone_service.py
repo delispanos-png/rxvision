@@ -144,8 +144,7 @@ async def issue(payload: dict) -> dict:
     url = _gateway(cfg["base_url"]) + "/JS/" + js_path
     # softone_series από το adminpanel (παραμετρικά) → η γέφυρα το χρησιμοποιεί ως σειρά (τύπος Τ.Π.Υ.)
     body = {"clientID": client_id, "appId": cfg.get("app_id"),
-            "softone_series": cfg.get("series") or None,
-            "softone_salesman": cfg.get("salesman") or None, **payload}
+            "softone_series": cfg.get("series") or None, **payload}
     try:
         res = await _post(url, body)
     except Exception as e:  # noqa: BLE001
