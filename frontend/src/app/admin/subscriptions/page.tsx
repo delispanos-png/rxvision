@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { adminApi } from "@/lib/adminClient";
 import { appConfirm } from "@/store/dialogStore";
@@ -225,7 +226,13 @@ function SubDrawer({ tenantId, onClose }: { tenantId: string; onClose: () => voi
 
           {/* invoices */}
           <div className="mt-6">
-            <div className="mb-2 text-sm font-semibold text-slate-700">Παραστατικά ({d.invoices.length})</div>
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <div className="text-sm font-semibold text-slate-700">Παραστατικά ({d.invoices.length})</div>
+              <Link href={`/admin/invoices?tenant=${encodeURIComponent(tenantId)}${f.plan ? `&plan=${encodeURIComponent(f.plan)}` : ""}`}
+                className="inline-flex items-center gap-1 rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-700">
+                + Δημιουργία τιμολογίου
+              </Link>
+            </div>
             {d.invoices.length === 0 ? <div className="text-sm text-slate-400">Δεν έχουν εκδοθεί παραστατικά.</div> : (
               <div className="overflow-x-auto rounded-xl border border-slate-200">
                 <table className="w-full min-w-[640px] text-sm">

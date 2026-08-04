@@ -58,8 +58,9 @@ function SoftoneBadge({ inv }: { inv: Invoice }) {
 
 export default function InvoicesPage() {
   const qc = useQueryClient();
-  const [modal, setModal] = useState<{ mode: "create" | "edit" | "view"; inv?: Invoice } | null>(null);
+  const [modal, setModal] = useState<{ mode: "create" | "edit" | "view"; inv?: Invoice; prefill?: { tenant_id?: string; item_key?: string } } | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [autoOpened, setAutoOpened] = useState(false);
   const [filter, setFilter] = useState<"all" | "synced" | "unsynced">("all");
   const [busyId, setBusyId] = useState<string | null>(null);
 
@@ -69,6 +70,17 @@ export default function InvoicesPage() {
   const rows = filter === "all" ? all : all.filter((i) => (filter === "synced" ? isSynced(i) : !isSynced(i)));
   const unsyncedCount = all.filter((i) => !isSynced(i)).length;
   const refresh = () => qc.invalidateQueries({ queryKey: ["admin", "invoices"] });
+
+  // Άνοιγμα φόρμας δημιουργίας προ-συμπληρωμένη από ?tenant=&plan= (κουμπί «Δημιουργία τιμολογίου» από τη συνδρομή)
+  useEffect(() => {
+    if (autoOpened || !tenants.data || typeof window === "undefined") return;
+    const q = new URLSearchParams(window.location.search);
+    const t = q.get("tenant");
+    if (!t) return;
+    const pl = q.get("plan");
+    setModal({ mode: "create", prefill: { tenant_id: t, item_key: pl ? `pkg:${pl}` : undefined } });
+    setAutoOpened(true);
+  }, [tenants.data, autoOpened]);
 
   function errMsg(e: unknown): string {
     if (e instanceof ApiError) {
@@ -182,11 +194,11 @@ const lineNet = (l: DraftLine) => {
 };
 
 function InvoiceModal({ modal, tenants, onClose, onDone }:
-  { modal: { mode: "create" | "edit" | "view"; inv?: Invoice }; tenants: Tenant[]; onClose: () => void; onDone: (msg: string) => void }) {
-  const { mode, inv } = modal;
+  { modal: { mode: "create" | "edit" | "view"; inv?: Invoice; prefill?: { tenant_id?: string; item_key?: string } }; tenants: Tenant[]; onClose: () => void; onDone: (msg: string) => void }) {
+  const { mode, inv, prefill } = modal;
   const view = mode === "view";
   const [form, setForm] = useState({
-    tenant_id: inv?.tenant_id ?? tenants[0]?.id ?? "",
+    tenant_id: inv?.tenant_id ?? prefill?.tenant_id ?? tenants[0]?.id ?? "",
     doc_type: inv?.doc_type ?? "ΤΠΥ", series: inv?.series ?? "Α",
     issue_date: inv?.issue_date ?? new Date().toISOString().slice(0, 10),
   });
@@ -200,15 +212,24 @@ function InvoiceModal({ modal, tenants, onClose, onDone }:
   const [lines, setLines] = useState<DraftLine[]>(() => {
     if (inv?.lines?.length) return inv.lines.map((l) => ({ item_key: l.item_key || "", description: l.description || "", mtrl: l.mtrl || "", qty: String(l.qty ?? 1), unit_eur: eurInput(l.unit_net), vat_rate: String(l.vat_rate ?? 24), disc_kind: (l.disc_kind === "amount" ? "amount" : "pct") as "pct" | "amount", disc_value: l.disc_value ? (l.disc_kind === "amount" ? eurInput(l.disc_value) : String(l.disc_value)) : "", period: "month" as const }));
     if (inv) return [{ item_key: "", description: inv.description || "", mtrl: inv.mtrl || "", qty: "1", unit_eur: eurInput(inv.net_amount), vat_rate: String(inv.vat_rate ?? 24), disc_kind: "pct" as const, disc_value: "", period: "month" as const }];
+    if (prefill?.item_key) return [{ ...emptyLine(), item_key: prefill.item_key }];   // από «Δημιουργία τιμολογίου»
     return [emptyLine()];
   });
   // παλιές γραμμές χωρίς item_key → match με βάση MTRL ή όνομα (μία φορά, όταν φορτώσει η λίστα)
   useEffect(() => {
     if (!catalog.length) return;
     setLines((ls) => ls.map((l) => {
-      if (l.item_key || (!l.mtrl && !l.description)) return l;
-      const m = catalog.find((c) => (l.mtrl && c.mtrl === l.mtrl) || c.name === l.description);
-      return m ? { ...l, item_key: m.key, description: m.name, mtrl: m.mtrl } : l;
+      // prefill: γραμμή με επιλεγμένο είδος αλλά χωρίς τιμή → γέμισε περιγραφή/MTRL/τιμή από το πακέτο
+      if (l.item_key && !l.unit_eur) {
+        const it = catalog.find((c) => c.key === l.item_key);
+        if (it) return { ...l, description: l.description || it.name, mtrl: l.mtrl || it.mtrl, unit_eur: unitEurFor(it, l.period, num(l.vat_rate) || 24) };
+      }
+      // match παλιών γραμμών (edit) χωρίς item_key, με βάση MTRL/όνομα
+      if (!l.item_key && (l.mtrl || l.description)) {
+        const m = catalog.find((c) => (l.mtrl && c.mtrl === l.mtrl) || c.name === l.description);
+        if (m) return { ...l, item_key: m.key, description: m.name, mtrl: m.mtrl };
+      }
+      return l;
     }));
   }, [catalog.length]);   // eslint-disable-line react-hooks/exhaustive-deps
 
