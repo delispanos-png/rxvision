@@ -102,7 +102,7 @@ function SubDrawer({ tenantId, onClose }: { tenantId: string; onClose: () => voi
     queryKey: ["admin", "subscription", tenantId],
     queryFn: () => adminApi<SubDetail>(`/admin/subscriptions/${encodeURIComponent(tenantId)}`), retry: false,
   });
-  const pkgsQ = useQuery({ queryKey: ["admin", "packages"], queryFn: () => adminApi<{ items: { _id: string; name?: string }[] }>("/admin/packages"), retry: false });
+  const pkgsQ = useQuery({ queryKey: ["admin", "packages"], queryFn: () => adminApi<{ items: { _id: string; name?: string; price_monthly?: number; price_yearly?: number; extra_user_price?: number; extra_user_price_yearly?: number; sla?: string }[] }>("/admin/packages"), retry: false });
   const slaListQ = useQuery({ queryKey: ["admin", "sla"], queryFn: () => adminApi<{ items: { _id: string; name?: string }[] }>("/admin/sla"), retry: false });
   const [f, setF] = useState({ billing_cycle: "monthly", price_per_pharmacy: "", current_period_end: "", started_at: "", trial_ends_at: "", seats: "", status: "", sla: "", plan: "", plan_name: "", extra_user_price: "", extra_user_price_yearly: "", complimentary: false });
   const [busy, setBusy] = useState(false);
@@ -171,13 +171,28 @@ function SubDrawer({ tenantId, onClose }: { tenantId: string; onClose: () => voi
           {/* edit — όλα τα πεδία είναι επεξεργάσιμα (admin) */}
           <div className="mb-3 text-sm font-semibold text-slate-700">Επεξεργασία</div>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-            <label className={lbl}>Πλάνο<select className={`mt-1 ${inp}`} value={f.plan} onChange={(e) => { const p = (pkgsQ.data?.items ?? []).find((x) => x._id === e.target.value); setF({ ...f, plan: e.target.value, plan_name: p?.name || f.plan_name }); }}>
+            <label className={lbl}>Πλάνο<select className={`mt-1 ${inp}`} value={f.plan} onChange={(e) => {
+              const p = (pkgsQ.data?.items ?? []).find((x) => x._id === e.target.value);
+              if (!p) { setF({ ...f, plan: e.target.value }); return; }
+              // αυτόματη ενημέρωση πεδίων τιμών από το επιλεγμένο πακέτο (τιμές = καθαρές)
+              const base = f.billing_cycle === "yearly" ? p.price_yearly : p.price_monthly;
+              setF({ ...f, plan: e.target.value, plan_name: p.name || f.plan_name,
+                price_per_pharmacy: eur(base ?? 0),
+                extra_user_price: eur(p.extra_user_price ?? 0),
+                extra_user_price_yearly: eur(p.extra_user_price_yearly ?? 0),
+                sla: p.sla || f.sla });
+            }}>
               <option value="">—</option>
               {(pkgsQ.data?.items ?? []).map((p) => <option key={p._id} value={p._id}>{p.name || p._id}</option>)}
               {f.plan && !(pkgsQ.data?.items ?? []).some((p) => p._id === f.plan) && <option value={f.plan}>{f.plan_name || f.plan}</option>}
             </select></label>
             <label className={lbl}>Όνομα πλάνου<input className={`mt-1 ${inp}`} value={f.plan_name} onChange={(e) => setF({ ...f, plan_name: e.target.value })} /></label>
-            <label className={lbl}>Κύκλος<select className={`mt-1 ${inp}`} value={f.billing_cycle} onChange={(e) => setF({ ...f, billing_cycle: e.target.value })}><option value="monthly">Μηνιαία</option><option value="yearly">Ετήσια</option></select></label>
+            <label className={lbl}>Κύκλος<select className={`mt-1 ${inp}`} value={f.billing_cycle} onChange={(e) => {
+              const cycle = e.target.value;
+              const p = (pkgsQ.data?.items ?? []).find((x) => x._id === f.plan);
+              const base = p ? (cycle === "yearly" ? p.price_yearly : p.price_monthly) : undefined;
+              setF({ ...f, billing_cycle: cycle, ...(base != null ? { price_per_pharmacy: eur(base) } : {}) });
+            }}><option value="monthly">Μηνιαία</option><option value="yearly">Ετήσια</option></select></label>
             <label className={lbl}>Τιμή/φαρμακείο (€)<input type="number" className={`mt-1 ${inp}`} value={f.price_per_pharmacy} onChange={(e) => setF({ ...f, price_per_pharmacy: e.target.value })} /></label>
             <label className={lbl}>Κόστος επιπλέον χρήστη (€/μήνα)<input type="number" className={`mt-1 ${inp}`} value={f.extra_user_price} onChange={(e) => setF({ ...f, extra_user_price: e.target.value })} /></label>
             <label className={lbl}>Κόστος επιπλέον χρήστη (€/έτος)<input type="number" className={`mt-1 ${inp}`} value={f.extra_user_price_yearly} onChange={(e) => setF({ ...f, extra_user_price_yearly: e.target.value })} /></label>
