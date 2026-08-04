@@ -1,6 +1,6 @@
 /* ============================================================================
  * RxVision → SoftOne — Custom Web Service (Advanced JavaScript)  [SoftOne BlackBook ver.3.5]
- * ★ ΤΕΛΕΥΤΑΙΑ ΕΝΗΜΕΡΩΣΗ: 2026-08-04 14:43 (EEST)  ← η πιο πρόσφατη έκδοση
+ * ★ ΤΕΛΕΥΤΑΙΑ ΕΝΗΜΕΡΩΣΗ: 2026-08-04 14:55 (EEST)  ← η πιο πρόσφατη έκδοση
  * ----------------------------------------------------------------------------
  * Δημιουργεί ΤΙΜΟΛΟΓΙΟ ΠΑΡΟΧΗΣ ΥΠΗΡΕΣΙΩΝ (SALDOC) από το payload του RxVision και το
  * διαβιβάζει στο myDATA (η CloudOn/SoftOne είναι πιστοποιημένος πάροχος). Επιστρέφει findoc/MARK.
@@ -31,13 +31,13 @@ var CFG = {
 function _findOrCreateCustomer(c) {
   var afm = (c && c.afm) ? ("" + c.afm) : "";
   if (!afm) return { error: "missing_afm" };
-  // 1) ΕΝΤΟΠΙΣΜΟΣ με ΑΦΜ μέσω **SQL** — ο πελάτης συνήθως ΥΠΑΡΧΕΙ ήδη.
-  //    ⚠ ΠΡΟΣΟΧΗ: το getData ΔΕΝ κάνει αναζήτηση/φίλτρα — ανοίγει ΜΙΑ εγγραφή με KEY (TRDR) &
-  //    επιστρέφει `data` (όχι `rows`). Για αναζήτηση με ΑΦΜ → X.GETSQLDATASET (BlackBook).
+  // 1) ΕΝΤΟΠΙΣΜΟΣ με ΑΦΜ — BlackBook σ.303 (X.SQL): πίνακας **TRDR** (όχι CUSTOMER!) + φίλτρο
+  //    **COMPANY=:X.SYS.COMPANY** (ο TRDR είναι πολυ-εταιρικός). Το X.SQL επιστρέφει την τιμή (TRDR) ή "".
   try {
-    var sql = "SELECT TOP 1 TRDR FROM CUSTOMER WHERE SODTYPE=" + CFG.SODTYPE_CUSTOMER + " AND AFM='" + afm + "'";
-    var rows = X.GETSQLDATASET(sql, null);
-    if (rows && rows.length > 0 && rows[0].TRDR) return { trdr: rows[0].TRDR };
+    var sql = "SELECT TRDR FROM TRDR WHERE COMPANY=:X.SYS.COMPANY AND SODTYPE=" + CFG.SODTYPE_CUSTOMER + " AND AFM=:1";
+    var trdr = X.SQL(sql, afm);
+    if (trdr !== null && trdr !== undefined && ("" + trdr).replace(/[^0-9]/g, "") !== "")
+      return { trdr: ("" + trdr).split(",")[0] };
   } catch (e) { /* πέσε στη δημιουργία */ }
   // 2) Δεν βρέθηκε → ΔΗΜΙΟΥΡΓΙΑ νέου πελάτη (SODTYPE υποχρεωτικό· COUNTRY = ΚΩΔΙΚΟΣ SoftOne, όχι "GR")
   //    ΣΗΜ: αν το SoftOne απαιτεί χειροκίνητο «Κωδικός», ενεργοποιήστε ΑΥΤΟΜΑΤΗ ΑΡΙΘΜΗΣΗ στον πελάτη.
@@ -46,7 +46,7 @@ function _findOrCreateCustomer(c) {
                PHONE01: c.phone || "", EMAIL: c.email || "", COUNTRY: CFG.COUNTRY_CODE };
   if (CFG.TRDCATEGORY) cust.TRDCATEGORY = CFG.TRDCATEGORY;
   var res = JSON.parse(X.WEBREQUEST(JSON.stringify(
-    { SERVICE: "setData", OBJECT: "CUSTOMER", appId: CFG.APPID, DATA: { CUSTOMER: [cust] } })));
+    { SERVICE: "setData", OBJECT: "CUSTOMER", appid: CFG.APPID, DATA: { CUSTOMER: [cust] } })));
   if (res && res.success && res.id) return { trdr: res.id };
   // Επιστροφή ΠΡΑΓΜΑΤΙΚΟΥ σφάλματος δημιουργίας (η αναζήτηση SQL δεν βρήκε πελάτη) για διάγνωση.
   var ce = (res && res.error) ? res.error : "create_failed";
