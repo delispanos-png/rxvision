@@ -192,7 +192,7 @@ function SubDrawer({ tenantId, onClose }: { tenantId: string; onClose: () => voi
                 extra_user_price: eur(p.extra_user_price ?? 0),
                 extra_user_price_yearly: eur(p.extra_user_price_yearly ?? 0),
                 sla: p.sla || f.sla,
-                ...(paid ? { started_at: today, current_period_end: addPeriod(today, f.billing_cycle) } : {}) });
+                ...(paid ? { started_at: today, current_period_end: addPeriod(today, f.billing_cycle), status: "active" } : {}) });
             }}>
               <option value="">—</option>
               {(pkgsQ.data?.items ?? []).map((p) => <option key={p._id} value={p._id}>{p.name || p._id}</option>)}
