@@ -18,6 +18,8 @@ var CFG = {
   APPID:            3001,        // appId του SoftOne Web Account (ίδιο με το adminpanel)
   SERIES:           7001,        // ΣΕΙΡΑ Τιμολογίου Παροχής Υπηρεσιών (χαρτογραφημένη σε myDATA 2.1) — ΕΠΙΒΕΒΑΙΩΣΤΕ
   SODTYPE_CUSTOMER: 13,          // 13 = Πελάτες (SoftOne standard)
+  COUNTRY_CODE:     1000,        // κωδικός ΧΩΡΑΣ SoftOne για δημιουργία πελάτη (Ελλάδα) — ΕΠΙΒΕΒΑΙΩΣΤΕ (ΟΧΙ "GR")
+  TRDCATEGORY:      0,           // (προαιρετικό) κατηγορία πελάτη· βάλτε αν το SoftOne την απαιτεί στη δημιουργία
   SERVICE_MTRL:     0,           // MTRL «Υπηρεσία συνδρομής RxVision». 0 = γραμμή υπηρεσίας χωρίς είδος — ΕΠΙΒΕΒΑΙΩΣΤΕ
   VAT:              1420,        // id κατηγορίας ΦΠΑ 24% στη SoftOne — ΕΠΙΒΕΒΑΙΩΣΤΕ
   // SQL για ανάγνωση myDATA MARK/UID από το παραστατικό (εξαρτάται από το myDATA module) — ΕΠΙΒΕΒΑΙΩΣΤΕ
@@ -26,22 +28,30 @@ var CFG = {
 
 /* Locate-or-create πελάτη με ΑΦΜ → επιστρέφει TRDR (primary key). */
 function _findOrCreateCustomer(c) {
-  // 1) εντοπισμός με ΑΦΜ (internal getData) — clientID κενό στα internal calls (ήδη σε session)
+  var afm = (c && c.afm) ? ("" + c.afm) : "";
+  if (!afm) return { error: "missing_afm" };
+  // 1) ΕΝΤΟΠΙΣΜΟΣ με ΑΦΜ — ο πελάτης συνήθως ΥΠΑΡΧΕΙ ήδη. Φίλτρο ΜΟΝΟ στο ΑΦΜ
+  //    (ο συνδυασμός AFM+SODTYPE στο ίδιο FILTERS σπάει την αναζήτηση σε αρκετές εγκαταστάσεις).
   var q = { SERVICE: "getData", OBJECT: "CUSTOMER", appId: CFG.APPID,
-            LIST: "CUSTOMER:TRDR", FILTERS: "CUSTOMER.AFM=" + c.afm + "&CUSTOMER.SODTYPE=" + CFG.SODTYPE_CUSTOMER };
+            LIST: "CUSTOMER:TRDR", FILTERS: "CUSTOMER.AFM=" + afm };
   var found = JSON.parse(X.WEBREQUEST(JSON.stringify(q)));
-  if (found && found.success && found.totalcount > 0 && found.rows && found.rows.length > 0) {
-    return found.rows[0].TRDR;
+  if (found && found.success && found.rows && found.rows.length > 0) {
+    var row = found.rows[0];
+    var trdr = row.TRDR || row.trdr || row["CUSTOMER.TRDR"];
+    if (trdr) return { trdr: trdr };
   }
-  // 2) δημιουργία νέου πελάτη
-  var ins = { SERVICE: "setData", OBJECT: "CUSTOMER", appId: CFG.APPID,
-              DATA: { CUSTOMER: [{
-                NAME: c.name || "", AFM: c.afm || "", IRSDATA: c.doy || "",
-                ADDRESS: c.address || "", CITY: c.city || "", ZIP: c.zip || "",
-                PHONE01: c.phone || "", EMAIL: c.email || "", COUNTRY: c.country || "GR"
-              }] } };
-  var res = JSON.parse(X.WEBREQUEST(JSON.stringify(ins)));
-  return (res && res.success) ? res.id : 0;
+  // 2) Δεν βρέθηκε → ΔΗΜΙΟΥΡΓΙΑ νέου πελάτη (SODTYPE υποχρεωτικό· COUNTRY = ΚΩΔΙΚΟΣ SoftOne, όχι "GR")
+  var cust = { SODTYPE: CFG.SODTYPE_CUSTOMER, NAME: c.name || "", AFM: afm, IRSDATA: c.doy || "",
+               ADDRESS: c.address || "", CITY: c.city || "", ZIP: c.zip || "",
+               PHONE01: c.phone || "", EMAIL: c.email || "", COUNTRY: CFG.COUNTRY_CODE };
+  if (CFG.TRDCATEGORY) cust.TRDCATEGORY = CFG.TRDCATEGORY;
+  var res = JSON.parse(X.WEBREQUEST(JSON.stringify(
+    { SERVICE: "setData", OBJECT: "CUSTOMER", appId: CFG.APPID, DATA: { CUSTOMER: [cust] } })));
+  if (res && res.success && res.id) return { trdr: res.id };
+  // Επιστροφή ΠΡΑΓΜΑΤΙΚΟΥ σφάλματος (αναζήτηση + δημιουργία) για διάγνωση.
+  var fe = (found && found.error) ? found.error : ((found && found.success) ? "not_found" : "find_failed");
+  var ce = (res && res.error) ? res.error : "create_failed";
+  return { error: "find[" + fe + "] create[" + ce + "]" };
 }
 
 /* Ανάγνωση myDATA MARK/UID/AA μετά την έκδοση. */
@@ -63,8 +73,9 @@ function createInvoice(obj) {
   if (!obj.lines || obj.lines.length === 0) { resp.error = "missing lines"; return resp; }
   try {
     // 1) πελάτης
-    var trdr = _findOrCreateCustomer(obj.customer);
-    if (!trdr) { resp.error = "customer_locate_or_create_failed"; return resp; }
+    var cust = _findOrCreateCustomer(obj.customer);
+    if (!cust.trdr) { resp.error = "customer: " + (cust.error || "locate_or_create_failed"); return resp; }
+    var trdr = cust.trdr;
 
     // 2) γραμμές (MTRLINES). Κάθε γραμμή περιέχει (ΟΛΑ σε ευρώ, ΜΕΤΑ τις εκπτώσεις):
     //    qty=ποσότητα · unit_net=καθαρή ΤΙΜΗ ΜΟΝΑΔΑΣ · net=καθαρή ΑΞΙΑ ΓΡΑΜΜΗΣ · discount=έκπτωση γραμμής · gross=μικτή προ έκπτωσης.
