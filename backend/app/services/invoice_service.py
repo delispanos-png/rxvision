@@ -149,7 +149,7 @@ async def create_for_payment(*, tenant_id: str, kind: str, gross_cents: int,
             _f = lambda d: d.strftime("%d/%m/%Y") if hasattr(d, "strftime") else ""  # noqa: E731
             st, en = sub.get("started_at"), sub.get("current_period_end")
             if en:
-                comments = "Πώληση από RxVision site - Περίοδος: " + (f"{_f(st)} έως " if st else "έως ") + _f(en)
+                comments = "Πώληση από το website της RxVision - Περίοδος: " + (f"{_f(st)} έως " if st else "έως ") + _f(en)
         doc = {
             "tenant_id": tenant_id, "tenant_name": tenant.get("name"),
             "auto": True, "kind": kind, "doc_type": "ΤΠΥ", "series": series, "number": number,

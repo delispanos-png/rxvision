@@ -1,6 +1,6 @@
 /* ============================================================================
  * RxVision → SoftOne — Custom Web Service (Advanced JavaScript)  [SoftOne BlackBook ver.3.5]
- * ★ ΤΕΛΕΥΤΑΙΑ ΕΝΗΜΕΡΩΣΗ: 2026-08-04 16:55 (EEST)  ← MINIMAL (proven): ΧΩΡΙΣ d.VAT/πωλητή· MTRL+QTY+PRICE· ΦΠΑ από το είδος
+ * ★ ΤΕΛΕΥΤΑΙΑ ΕΝΗΜΕΡΩΣΗ: 2026-08-04 17:21 (EEST)  ← MTRL/QTY/PRICE ως ΑΡΙΘΜΟΙ (cascade ΦΠΑ από το είδος)· ΦΠΑ/σύνολα/αριθμός/myDATA αυτόματα
  * ----------------------------------------------------------------------------
  * Δημιουργεί ΤΙΜΟΛΟΓΙΟ ΠΑΡΟΧΗΣ ΥΠΗΡΕΣΙΩΝ (SALDOC) από το payload του RxVision και το
  * διαβιβάζει στο myDATA (η CloudOn/SoftOne είναι πιστοποιημένος πάροχος). Επιστρέφει findoc/MARK.
@@ -107,10 +107,12 @@ function createInvoice(obj) {
     for (var i = 0; i < obj.lines.length; i++) {
       var ln = obj.lines[i];
       var unit = (ln.unit_net !== undefined && ln.unit_net !== null) ? ln.unit_net : ln.net;  // καθαρή τιμή μονάδας
+      // ⚠ MTRL ως ΑΡΙΘΜΟΣ (όχι string) → το SoftOne «τραβάει» ΦΠΑ/τιμή από το ΕΙΔΟΣ (cascade).
+      var mtrlNum = parseInt("" + ((ln.mtrl !== undefined && ln.mtrl !== null && ln.mtrl !== "") ? ln.mtrl : CFG.SERVICE_MTRL), 10);
       d.Append;
-      d.MTRL = (ln.mtrl !== undefined && ln.mtrl !== null && ln.mtrl !== "") ? ln.mtrl : CFG.SERVICE_MTRL;
-      d.QTY1 = ln.qty || 1;
-      d.PRICE = unit;
+      d.MTRL = mtrlNum;
+      d.QTY1 = (typeof ln.qty === "number") ? ln.qty : (parseFloat(ln.qty) || 1);
+      d.PRICE = (typeof unit === "number") ? unit : (parseFloat(unit) || 0);
       d.Post;
     }
 
