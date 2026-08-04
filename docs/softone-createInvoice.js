@@ -1,6 +1,6 @@
 /* ============================================================================
  * RxVision → SoftOne — Custom Web Service (Advanced JavaScript)  [SoftOne BlackBook ver.3.5]
- * ★ ΤΕΛΕΥΤΑΙΑ ΕΝΗΜΕΡΩΣΗ: 2026-08-04 16:08 (EEST)  ← + ΠΩΛΗΤΗΣ (παραμετρικά) · αιτιολογία=obj.comments · σειρά παραμετρική
+ * ★ ΤΕΛΕΥΤΑΙΑ ΕΝΗΜΕΡΩΣΗ: 2026-08-04 16:30 (EEST)  ← + ΦΠΑ γραμμής (dynamic από πίνακα VAT) λύνει «Υλικό Φ.Π.Α.»
  * ----------------------------------------------------------------------------
  * Δημιουργεί ΤΙΜΟΛΟΓΙΟ ΠΑΡΟΧΗΣ ΥΠΗΡΕΣΙΩΝ (SALDOC) από το payload του RxVision και το
  * διαβιβάζει στο myDATA (η CloudOn/SoftOne είναι πιστοποιημένος πάροχος). Επιστρέφει findoc/MARK.
@@ -25,13 +25,28 @@ var CFG = {
   COUNTRY_CODE: 1000,        // κωδικός ΧΩΡΑΣ SoftOne για δημιουργία πελάτη (Ελλάδα) — ΕΠΙΒΕΒΑΙΩΣΤΕ (ΟΧΙ "GR")
   TRDCATEGORY: 0,           // (προαιρετικό) κατηγορία πελάτη· βάλτε αν το SoftOne την απαιτεί στη δημιουργία
   // Είδος «Υπηρεσία συνδρομής RxVision» με κατηγορία ΦΠΑ 24% → το ΦΠΑ προκύπτει ΑΥΤΟΜΑΤΑ από το είδος.
-  SERVICE_MTRL: 0,           // MTRL υπηρεσίας — ΕΠΙΒΕΒΑΙΩΣΤΕ (πρέπει να έχει ΦΠΑ 24%)
+  SERVICE_MTRL: 0,           // MTRL υπηρεσίας — ΕΠΙΒΕΒΑΙΩΣΤΕ (ιδανικά με ΦΠΑ 24% ώστε να προκύπτει μόνο του)
   SALESMAN: "020",           // ΠΩΛΗΤΗΣ (κωδικός)· παραμετρικά και από adminpanel (obj.softone_salesman) — ΕΠΙΒΕΒΑΙΩΣΤΕ
+  VAT: 0,                    // (fallback) id κατηγορίας ΦΠΑ 24% αν ΑΠΟΤΥΧΕΙ το dynamic lookup — 0 = μόνο dynamic
   MARK_SQL: "SELECT MARK, UID, AA FROM FINDOC WHERE FINDOC="   // ανάγνωση myDATA MARK/UID — ΕΠΙΒΕΒΑΙΩΣΤΕ
 };
 
 /* Locate-or-create πελάτη με ΑΦΜ → επιστρέφει TRDR (primary key). */
 function _hasNum(v) { return v !== null && v !== undefined && ("" + v).replace(/[^0-9]/g, "") !== ""; }
+
+/* id κατηγορίας ΦΠΑ από τον συντελεστή (πίνακας VAT)· fallback CFG.VAT. Λύνει το «Υλικό Φ.Π.Α.». */
+function _vatId(rate) {
+  var r = "" + Math.round(rate !== undefined && rate !== null ? rate : 24);
+  var qs = [
+    "SELECT TOP 1 VAT FROM VAT WHERE COMPANY=:X.SYS.COMPANY AND PERCNT=:1",
+    "SELECT TOP 1 VAT FROM VAT WHERE COMPANY=:X.SYS.COMPANY AND PERC=:1",
+    "SELECT TOP 1 VAT FROM VAT WHERE PERCNT=:1"
+  ];
+  for (var i = 0; i < qs.length; i++) {
+    try { var v = X.SQL(qs[i], r); if (_hasNum(v)) return ("" + v).split(",")[0]; } catch (e) { /* try next */ }
+  }
+  return CFG.VAT ? CFG.VAT : null;
+}
 
 /* Πωλητής: κωδικός → εσωτερικό id (πίνακας SALESMAN)· fallback στην τιμή ως έχει. */
 function _salesmanId(code) {
@@ -123,7 +138,9 @@ function createInvoice(obj) {
       d.Append;
       d.MTRL = (ln.mtrl !== undefined && ln.mtrl !== null && ln.mtrl !== "") ? ln.mtrl : CFG.SERVICE_MTRL;
       d.QTY1 = ln.qty || 1;
-      d.PRICE = unit;                      // ΦΠΑ & αξία γραμμής υπολογίζονται ΑΥΤΟΜΑΤΑ από το είδος/σειρά
+      d.PRICE = unit;                      // καθαρή τιμή μονάδας (μετά εκπτώσεις)
+      var vid = _vatId(ln.vat_rate);       // «Υλικό Φ.Π.Α.»: id κατηγορίας ΦΠΑ (αν το είδος δεν το έχει)
+      if (vid) d.VAT = vid;
       d.Post;
     }
 
