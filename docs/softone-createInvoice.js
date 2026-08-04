@@ -1,6 +1,6 @@
 /* ============================================================================
  * RxVision → SoftOne — Custom Web Service (Advanced JavaScript)  [SoftOne BlackBook ver.3.5]
- * ★ ΤΕΛΕΥΤΑΙΑ ΕΝΗΜΕΡΩΣΗ: 2026-08-04 16:30 (EEST)  ← + ΦΠΑ γραμμής (dynamic από πίνακα VAT) λύνει «Υλικό Φ.Π.Α.»
+ * ★ ΤΕΛΕΥΤΑΙΑ ΕΝΗΜΕΡΩΣΗ: 2026-08-04 16:38 (EEST)  ← FIX: όλα τα X.SQL lookups ΠΡΙΝ το object (αλλιώς χάνεται το MTRL)
  * ----------------------------------------------------------------------------
  * Δημιουργεί ΤΙΜΟΛΟΓΙΟ ΠΑΡΟΧΗΣ ΥΠΗΡΕΣΙΩΝ (SALDOC) από το payload του RxVision και το
  * διαβιβάζει στο myDATA (η CloudOn/SoftOne είναι πιστοποιημένος πάροχος). Επιστρέφει findoc/MARK.
@@ -110,37 +110,37 @@ function createInvoice(obj) {
   if (!obj.lines || obj.lines.length === 0) { resp.error = "missing lines"; return resp; }
   var myObj = null;
   try {
-    // 1) πελάτης (TRDR) με ΑΦΜ
+    // ⚠ ΟΛΑ τα X.SQL lookups ΠΡΙΝ ανοίξουμε το object! Κλήση X.SQL ΜΕΣΑ στη συναλλαγή (μετά το
+    //   DBINSERT/Append) «χαλάει» το ενεργό dataset → χάνεται το MTRL. Οπότε τα προϋπολογίζουμε εδώ.
     var cust = _findOrCreateCustomer(obj.customer);
     if (!cust.trdr) { resp.error = "customer: " + (cust.error || "locate_or_create_failed"); return resp; }
+    var seriesVal = (obj.softone_series !== undefined && obj.softone_series !== null && ("" + obj.softone_series) !== "") ? obj.softone_series : CFG.SERIES;
+    var salesmanId = _salesmanId((obj.softone_salesman !== undefined && obj.softone_salesman !== null && ("" + obj.softone_salesman) !== "") ? obj.softone_salesman : CFG.SALESMAN);
+    var vatIds = [];   // id κατηγορίας ΦΠΑ ανά γραμμή (προϋπολογισμένο)
+    for (var j = 0; j < obj.lines.length; j++) vatIds.push(_vatId(obj.lines[j].vat_rate));
 
-    // 2) ΔΗΜΙΟΥΡΓΙΑ ΠΑΡΑΣΤΑΤΙΚΟΥ ως OBJECT (BlackBook σ.284 — CreateObj('SALDOC') + DBINSERT/DBPOST).
-    //    Δίνουμε ΜΟΝΟ: ΣΕΙΡΑ (=τύπος: Τ.Π.Υ.), πελάτη & γραμμές (είδος/ποσότητα/τιμή). Το SoftOne
-    //    υπολογίζει ΜΟΝΟ του ΦΠΑ, σύνολα, ΑΡΙΘΜΗΣΗ & διαβίβαση myDATA στο DBPOST.
+    // ΔΗΜΙΟΥΡΓΙΑ ΠΑΡΑΣΤΑΤΙΚΟΥ ως OBJECT (BlackBook σ.284) — ΧΩΡΙΣ X.SQL ενδιάμεσα. Δίνουμε ΜΟΝΟ
+    // σειρά(=τύπος Τ.Π.Υ.)+πελάτη+γραμμές· το SoftOne κάνει ΦΠΑ/σύνολα/αρίθμηση/myDATA στο DBPOST.
     myObj = X.CreateObj("SALDOC");
     myObj.DBINSERT;
     var h = myObj.FindTable("FINDOC");     // κεφαλίδα παραστατικού
     var d = myObj.FindTable("ITELINES");   // γραμμές ειδών
 
     h.Edit;
-    // ΣΕΙΡΑ: από το adminpanel (obj.softone_series) → αλλιώς το CFG.SERIES. Η σειρά ορίζει
-    // τύπο (Τ.Π.Υ.) + ΦΠΑ default + αρίθμηση + myDATA. Παραμετρική χωρίς re-upload της JS.
-    h.SERIES = (obj.softone_series !== undefined && obj.softone_series !== null && ("" + obj.softone_series) !== "") ? obj.softone_series : CFG.SERIES;
+    h.SERIES = seriesVal;                  // η ΣΕΙΡΑ ορίζει τύπο + ΦΠΑ default + αρίθμηση + myDATA
     h.TRDR = cust.trdr;
     if (obj.issue_date) h.TRNDATE = obj.issue_date;   // YYYY-MM-DD
-    h.COMMENTS = obj.comments || "";                  // ΑΙΤΙΟΛΟΓΙΑ (π.χ. περίοδος συνδρομής)· ΟΧΙ το εσωτερικό ref
-    var sm = _salesmanId((obj.softone_salesman !== undefined && obj.softone_salesman !== null && ("" + obj.softone_salesman) !== "") ? obj.softone_salesman : CFG.SALESMAN);
-    if (sm !== null) h.SALESMAN = sm;                 // ΠΩΛΗΤΗΣ
+    h.COMMENTS = obj.comments || "";                  // ΑΙΤΙΟΛΟΓΙΑ (π.χ. περίοδος συνδρομής)
+    if (salesmanId !== null) h.SALESMAN = salesmanId; // ΠΩΛΗΤΗΣ
 
     for (var i = 0; i < obj.lines.length; i++) {
       var ln = obj.lines[i];
-      var unit = (ln.unit_net !== undefined && ln.unit_net !== null) ? ln.unit_net : ln.net;  // καθαρή τιμή μονάδας (μετά εκπτώσεις)
+      var unit = (ln.unit_net !== undefined && ln.unit_net !== null) ? ln.unit_net : ln.net;  // καθαρή τιμή μονάδας
       d.Append;
       d.MTRL = (ln.mtrl !== undefined && ln.mtrl !== null && ln.mtrl !== "") ? ln.mtrl : CFG.SERVICE_MTRL;
       d.QTY1 = ln.qty || 1;
-      d.PRICE = unit;                      // καθαρή τιμή μονάδας (μετά εκπτώσεις)
-      var vid = _vatId(ln.vat_rate);       // «Υλικό Φ.Π.Α.»: id κατηγορίας ΦΠΑ (αν το είδος δεν το έχει)
-      if (vid) d.VAT = vid;
+      d.PRICE = unit;
+      if (vatIds[i]) d.VAT = vatIds[i];    // «Υλικό Φ.Π.Α.»: id κατηγορίας ΦΠΑ (αν το είδος δεν το έχει)
       d.Post;
     }
 
