@@ -96,6 +96,13 @@ const inp = "w-full rounded-lg border border-slate-300 px-2.5 py-2 text-sm focus
 const lbl = "block text-xs font-medium text-slate-500";
 const eur = (c?: number) => ((c ?? 0) / 100).toString();
 const toCents = (e: string) => Math.round((parseFloat(e) || 0) * 100);
+const todayISO = () => new Date().toISOString().slice(0, 10);
+// ημερομηνία + κύκλος → λήξη (έτος/μήνας)
+const addPeriod = (isoDate: string, cycle: string) => {
+  const d = new Date((isoDate || todayISO()) + "T00:00:00");
+  if (cycle === "yearly") d.setFullYear(d.getFullYear() + 1); else d.setMonth(d.getMonth() + 1);
+  return d.toISOString().slice(0, 10);
+};
 
 function SubDrawer({ tenantId, onClose }: { tenantId: string; onClose: () => void }) {
   const qc = useQueryClient();
@@ -177,11 +184,15 @@ function SubDrawer({ tenantId, onClose }: { tenantId: string; onClose: () => voi
               if (!p) { setF({ ...f, plan: e.target.value }); return; }
               // αυτόματη ενημέρωση πεδίων τιμών από το επιλεγμένο πακέτο (τιμές = καθαρές)
               const base = f.billing_cycle === "yearly" ? p.price_yearly : p.price_monthly;
+              // μετάβαση από trial σε ΠΛΗΡΩΜΕΝΟ πακέτο → Έναρξη = σήμερα, Λήξη = σήμερα + κύκλος
+              const paid = (p.price_monthly ?? 0) > 0 || (p.price_yearly ?? 0) > 0;
+              const today = todayISO();
               setF({ ...f, plan: e.target.value, plan_name: p.name || f.plan_name,
                 price_per_pharmacy: eur(base ?? 0),
                 extra_user_price: eur(p.extra_user_price ?? 0),
                 extra_user_price_yearly: eur(p.extra_user_price_yearly ?? 0),
-                sla: p.sla || f.sla });
+                sla: p.sla || f.sla,
+                ...(paid ? { started_at: today, current_period_end: addPeriod(today, f.billing_cycle) } : {}) });
             }}>
               <option value="">—</option>
               {(pkgsQ.data?.items ?? []).map((p) => <option key={p._id} value={p._id}>{p.name || p._id}</option>)}
@@ -192,7 +203,9 @@ function SubDrawer({ tenantId, onClose }: { tenantId: string; onClose: () => voi
               const cycle = e.target.value;
               const p = (pkgsQ.data?.items ?? []).find((x) => x._id === f.plan);
               const base = p ? (cycle === "yearly" ? p.price_yearly : p.price_monthly) : undefined;
-              setF({ ...f, billing_cycle: cycle, ...(base != null ? { price_per_pharmacy: eur(base) } : {}) });
+              // αλλαγή κύκλου → ξαναϋπολογισμός λήξης από την έναρξη (ή σήμερα)
+              setF({ ...f, billing_cycle: cycle, ...(base != null ? { price_per_pharmacy: eur(base) } : {}),
+                current_period_end: addPeriod(f.started_at || todayISO(), cycle) });
             }}><option value="monthly">Μηνιαία</option><option value="yearly">Ετήσια</option></select></label>
             <label className={lbl}>Τιμή/φαρμακείο (€)<input type="number" className={`mt-1 ${inp}`} value={f.price_per_pharmacy} onChange={(e) => setF({ ...f, price_per_pharmacy: e.target.value })} /></label>
             <label className={lbl}>Κόστος επιπλέον χρήστη (€/μήνα)<input type="number" className={`mt-1 ${inp}`} value={f.extra_user_price} onChange={(e) => setF({ ...f, extra_user_price: e.target.value })} /></label>
