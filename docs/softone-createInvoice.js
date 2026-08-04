@@ -1,6 +1,6 @@
 /* ============================================================================
  * RxVision → SoftOne — Custom Web Service (Advanced JavaScript)  [SoftOne BlackBook ver.3.5]
- * ★ ΤΕΛΕΥΤΑΙΑ ΕΝΗΜΕΡΩΣΗ: 2026-08-04 16:38 (EEST)  ← FIX: όλα τα X.SQL lookups ΠΡΙΝ το object (αλλιώς χάνεται το MTRL)
+ * ★ ΤΕΛΕΥΤΑΙΑ ΕΝΗΜΕΡΩΣΗ: 2026-08-04 16:55 (EEST)  ← MINIMAL (proven): ΧΩΡΙΣ d.VAT/πωλητή· MTRL+QTY+PRICE· ΦΠΑ από το είδος
  * ----------------------------------------------------------------------------
  * Δημιουργεί ΤΙΜΟΛΟΓΙΟ ΠΑΡΟΧΗΣ ΥΠΗΡΕΣΙΩΝ (SALDOC) από το payload του RxVision και το
  * διαβιβάζει στο myDATA (η CloudOn/SoftOne είναι πιστοποιημένος πάροχος). Επιστρέφει findoc/MARK.
@@ -24,39 +24,13 @@ var CFG = {
   SODTYPE_CUSTOMER: 13,          // 13 = Πελάτες (SoftOne standard)
   COUNTRY_CODE: 1000,        // κωδικός ΧΩΡΑΣ SoftOne για δημιουργία πελάτη (Ελλάδα) — ΕΠΙΒΕΒΑΙΩΣΤΕ (ΟΧΙ "GR")
   TRDCATEGORY: 0,           // (προαιρετικό) κατηγορία πελάτη· βάλτε αν το SoftOne την απαιτεί στη δημιουργία
-  // Είδος «Υπηρεσία συνδρομής RxVision» με κατηγορία ΦΠΑ 24% → το ΦΠΑ προκύπτει ΑΥΤΟΜΑΤΑ από το είδος.
-  SERVICE_MTRL: 0,           // MTRL υπηρεσίας — ΕΠΙΒΕΒΑΙΩΣΤΕ (ιδανικά με ΦΠΑ 24% ώστε να προκύπτει μόνο του)
-  SALESMAN: "020",           // ΠΩΛΗΤΗΣ (κωδικός)· παραμετρικά και από adminpanel (obj.softone_salesman) — ΕΠΙΒΕΒΑΙΩΣΤΕ
-  VAT: 0,                    // (fallback) id κατηγορίας ΦΠΑ 24% αν ΑΠΟΤΥΧΕΙ το dynamic lookup — 0 = μόνο dynamic
+  // Το είδος (MTRL) στο SoftOne ΠΡΕΠΕΙ να έχει κατηγορία ΦΠΑ 24% → το ΦΠΑ προκύπτει ΑΥΤΟΜΑΤΑ.
+  SERVICE_MTRL: 0,           // MTRL υπηρεσίας (fallback αν η γραμμή δεν έχει MTRL) — ΕΠΙΒΕΒΑΙΩΣΤΕ
   MARK_SQL: "SELECT MARK, UID, AA FROM FINDOC WHERE FINDOC="   // ανάγνωση myDATA MARK/UID — ΕΠΙΒΕΒΑΙΩΣΤΕ
 };
 
 /* Locate-or-create πελάτη με ΑΦΜ → επιστρέφει TRDR (primary key). */
 function _hasNum(v) { return v !== null && v !== undefined && ("" + v).replace(/[^0-9]/g, "") !== ""; }
-
-/* id κατηγορίας ΦΠΑ από τον συντελεστή (πίνακας VAT)· fallback CFG.VAT. Λύνει το «Υλικό Φ.Π.Α.». */
-function _vatId(rate) {
-  var r = "" + Math.round(rate !== undefined && rate !== null ? rate : 24);
-  var qs = [
-    "SELECT TOP 1 VAT FROM VAT WHERE COMPANY=:X.SYS.COMPANY AND PERCNT=:1",
-    "SELECT TOP 1 VAT FROM VAT WHERE COMPANY=:X.SYS.COMPANY AND PERC=:1",
-    "SELECT TOP 1 VAT FROM VAT WHERE PERCNT=:1"
-  ];
-  for (var i = 0; i < qs.length; i++) {
-    try { var v = X.SQL(qs[i], r); if (_hasNum(v)) return ("" + v).split(",")[0]; } catch (e) { /* try next */ }
-  }
-  return CFG.VAT ? CFG.VAT : null;
-}
-
-/* Πωλητής: κωδικός → εσωτερικό id (πίνακας SALESMAN)· fallback στην τιμή ως έχει. */
-function _salesmanId(code) {
-  if (code === undefined || code === null || ("" + code) === "") return null;
-  try {
-    var s = X.SQL("SELECT TOP 1 SALESMAN FROM SALESMAN WHERE COMPANY=:X.SYS.COMPANY AND CODE=:1", "" + code);
-    if (_hasNum(s)) return ("" + s).split(",")[0];
-  } catch (e) { /* πέσε στην τιμή ως έχει */ }
-  return code;
-}
 
 function _findOrCreateCustomer(c) {
   var afm = (c && c.afm) ? ("" + c.afm) : "";
@@ -115,12 +89,10 @@ function createInvoice(obj) {
     var cust = _findOrCreateCustomer(obj.customer);
     if (!cust.trdr) { resp.error = "customer: " + (cust.error || "locate_or_create_failed"); return resp; }
     var seriesVal = (obj.softone_series !== undefined && obj.softone_series !== null && ("" + obj.softone_series) !== "") ? obj.softone_series : CFG.SERIES;
-    var salesmanId = _salesmanId((obj.softone_salesman !== undefined && obj.softone_salesman !== null && ("" + obj.softone_salesman) !== "") ? obj.softone_salesman : CFG.SALESMAN);
-    var vatIds = [];   // id κατηγορίας ΦΠΑ ανά γραμμή (προϋπολογισμένο)
-    for (var j = 0; j < obj.lines.length; j++) vatIds.push(_vatId(obj.lines[j].vat_rate));
 
-    // ΔΗΜΙΟΥΡΓΙΑ ΠΑΡΑΣΤΑΤΙΚΟΥ ως OBJECT (BlackBook σ.284) — ΧΩΡΙΣ X.SQL ενδιάμεσα. Δίνουμε ΜΟΝΟ
-    // σειρά(=τύπος Τ.Π.Υ.)+πελάτη+γραμμές· το SoftOne κάνει ΦΠΑ/σύνολα/αρίθμηση/myDATA στο DBPOST.
+    // ΔΗΜΙΟΥΡΓΙΑ ΠΑΡΑΣΤΑΤΙΚΟΥ ως OBJECT (BlackBook σ.284). Δίνουμε ΜΟΝΟ σειρά(=τύπος Τ.Π.Υ.)+πελάτη+
+    // γραμμές (είδος/ποσότητα/τιμή)· το SoftOne κάνει ΦΠΑ/σύνολα/αρίθμηση/myDATA ΜΟΝΟ του στο DBPOST.
+    // ⚠ ΔΕΝ βάζουμε d.VAT — το ΦΠΑ προκύπτει από το ΕΙΔΟΣ (MTRL). Το d.VAT «έσβηνε» το MTRL.
     myObj = X.CreateObj("SALDOC");
     myObj.DBINSERT;
     var h = myObj.FindTable("FINDOC");     // κεφαλίδα παραστατικού
@@ -130,8 +102,7 @@ function createInvoice(obj) {
     h.SERIES = seriesVal;                  // η ΣΕΙΡΑ ορίζει τύπο + ΦΠΑ default + αρίθμηση + myDATA
     h.TRDR = cust.trdr;
     if (obj.issue_date) h.TRNDATE = obj.issue_date;   // YYYY-MM-DD
-    h.COMMENTS = obj.comments || "";                  // ΑΙΤΙΟΛΟΓΙΑ (π.χ. περίοδος συνδρομής)
-    if (salesmanId !== null) h.SALESMAN = salesmanId; // ΠΩΛΗΤΗΣ
+    h.COMMENTS = obj.comments || "";                  // ΑΙΤΙΟΛΟΓΙΑ (π.χ. «Πώληση από RxVision site - περίοδος»)
 
     for (var i = 0; i < obj.lines.length; i++) {
       var ln = obj.lines[i];
@@ -140,7 +111,6 @@ function createInvoice(obj) {
       d.MTRL = (ln.mtrl !== undefined && ln.mtrl !== null && ln.mtrl !== "") ? ln.mtrl : CFG.SERVICE_MTRL;
       d.QTY1 = ln.qty || 1;
       d.PRICE = unit;
-      if (vatIds[i]) d.VAT = vatIds[i];    // «Υλικό Φ.Π.Α.»: id κατηγορίας ΦΠΑ (αν το είδος δεν το έχει)
       d.Post;
     }
 
