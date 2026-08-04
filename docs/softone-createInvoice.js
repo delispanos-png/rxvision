@@ -84,7 +84,7 @@ function _getMyData(findoc) {
 
 /* ── Το custom web service (κλήση: /s1services/JS/RXVISION/createInvoice) ── */
 function createInvoice(obj) {
-  var resp = { success: false, v: "2010" };   // δείκτης έκδοσης γέφυρας (επιβεβαιώνει ΟΤΙ τρέχει η σωστή)
+  var resp = { success: false, v: "2025" };   // δείκτης έκδοσης γέφυρας (επιβεβαιώνει ΟΤΙ τρέχει η σωστή)
   if (!obj || !obj.clientID || obj.clientID === "") { resp.error = "Authenticate failed: missing clientID"; return resp; }
 
   // ⛔ IDEMPOTENCY — mode "find": ΜΟΝΟ X.SQL lookup (POSGUID), ΚΑΜΙΑ δημιουργία. Το backend το καλεί
@@ -143,6 +143,18 @@ function createInvoice(obj) {
       if (CFG.VAT) d.VAT = CFG.VAT;   // ΦΠΑ ΡΗΤΑ (σταθερή τιμή, ΧΩΡΙΣ X.SQL) — το web-service δεν το τραβάει μόνο του
       d.Post;
     }
+
+    // ── DIAGNOSTIC: τι βλέπει το object στις γραμμές ΠΡΙΝ το DBPOST (πόσες, τι MTRL) ──
+    resp.linfo = { rc: null, mtrls: [] };
+    try {
+      var dd = myObj.FindTable("ITELINES");
+      try { resp.linfo.rc = dd.RECORDCOUNT; } catch (e1) { resp.linfo.rc_err = ("" + e1.message).substring(0, 60); }
+      try {
+        dd.First;
+        var g = 0;
+        while (!dd.EOF && g < 25) { resp.linfo.mtrls.push("" + dd.MTRL); dd.Next; g++; }
+      } catch (e2) { resp.linfo.iter_err = ("" + e2.message).substring(0, 60); }
+    } catch (e3) { resp.linfo.err = ("" + e3.message).substring(0, 60); }
 
     var findoc = myObj.DBPOST;             // αποθήκευση → SoftOne αριθμεί + διαβιβάζει myDATA
     if (!(findoc > 0)) {
