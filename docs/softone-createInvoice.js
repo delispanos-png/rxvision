@@ -1,6 +1,6 @@
 /* ============================================================================
  * RxVision → SoftOne — Custom Web Service (Advanced JavaScript)  [SoftOne BlackBook ver.3.5]
- * ★ ΤΕΛΕΥΤΑΙΑ ΕΝΗΜΕΡΩΣΗ: 2026-08-04 18:13 (EEST)  ← αιτιολογία via setData ΜΕΤΑ το DBPOST (confirmed) + σειρά 7067/MTRL αριθμοί + d.VAT
+ * ★ ΤΕΛΕΥΤΑΙΑ ΕΝΗΜΕΡΩΣΗ: 2026-08-04 18:22 (EEST)  ← IDEMPOTENCY (POSGUID=ref, pre-check → ΜΗΝ διπλοδημιουργείς) + αιτιολογία setData + σειρά 7067 + d.VAT
  * ----------------------------------------------------------------------------
  * Δημιουργεί ΤΙΜΟΛΟΓΙΟ ΠΑΡΟΧΗΣ ΥΠΗΡΕΣΙΩΝ (SALDOC) από το payload του RxVision και το
  * διαβιβάζει στο myDATA (η CloudOn/SoftOne είναι πιστοποιημένος πάροχος). Επιστρέφει findoc/MARK.
@@ -92,6 +92,21 @@ function createInvoice(obj) {
     if (!cust.trdr) { resp.error = "customer: " + (cust.error || "locate_or_create_failed"); return resp; }
     var seriesVal = (obj.softone_series !== undefined && obj.softone_series !== null && ("" + obj.softone_series) !== "") ? obj.softone_series : CFG.SERIES;
 
+    // ⛔ IDEMPOTENCY (κρίσιμο): αν υπάρχει ΗΔΗ παραστατικό με αυτό το ref (POSGUID) → επέστρεψέ το ΩΣ ΕΧΕΙ,
+    //    ΜΗΝ ξαναδημιουργείς. Έτσι το retry κάθε 5' (π.χ. μετά από timeout όπου το SoftOne το είχε ήδη
+    //    δημιουργήσει) ΔΕΝ βγάζει διπλό παραστατικό. Το X.SQL γίνεται ΠΡΙΝ ανοίξουμε το object.
+    if (obj.ref) {
+      var existing = null;
+      try { existing = X.SQL("SELECT FINDOC FROM FINDOC WHERE COMPANY=:X.SYS.COMPANY AND POSGUID=:1", "" + obj.ref); } catch (e) { existing = null; }
+      if (existing !== null && ("" + existing) !== "" && parseInt("" + existing, 10) > 0) {
+        var ef = parseInt("" + existing, 10);
+        var emd = _getMyData(ef);
+        resp.success = true; resp.idempotent = true; resp.findoc = ef;
+        resp.mark = emd.mark; resp.uid = emd.uid; resp.aa = emd.aa; resp.ref = obj.ref;
+        return resp;
+      }
+    }
+
     // ΔΗΜΙΟΥΡΓΙΑ ΠΑΡΑΣΤΑΤΙΚΟΥ ως OBJECT (BlackBook σ.284): σειρά+πελάτης+γραμμές (είδος/ποσ/τιμή/ΦΠΑ).
     // Το SoftOne κάνει σύνολα/αρίθμηση/myDATA στο DBPOST. ΣΕΙΡΑ & MTRL ως ΑΡΙΘΜΟΙ· ΦΠΑ ρητά (d.VAT).
     myObj = X.CreateObj("SALDOC");
@@ -103,6 +118,7 @@ function createInvoice(obj) {
     h.SERIES = parseInt("" + seriesVal, 10);   // ΣΕΙΡΑ ως ΑΡΙΘΜΟΣ (ορίζει τύπο + αρίθμηση + myDATA)· από adminpanel
     h.TRDR = cust.trdr;
     if (obj.issue_date) h.TRNDATE = obj.issue_date;   // YYYY-MM-DD
+    if (obj.ref) { try { h.POSGUID = "" + obj.ref; } catch (e) { } }   // idempotency key (belt· ξανά με setData μετά)
     // ΣΗΜ: η ΑΙΤΙΟΛΟΓΙΑ (SALDOC.COMMENTS) δεν κολλάει με h.COMMENTS στο object approach →
     //      την γράφουμε ΜΕΤΑ το DBPOST με setData (βλ. παρακάτω).
 
@@ -125,11 +141,15 @@ function createInvoice(obj) {
       return resp;
     }
 
-    // 3) ΑΙΤΙΟΛΟΓΙΑ (SALDOC.COMMENTS) με setData ΜΕΤΑ την έκδοση — ο αξιόπιστος τρόπος (το h.COMMENTS δεν κολλάει).
-    if (obj.comments) {
+    // 3) ΜΕΤΑ την έκδοση, με setData (αξιόπιστο): (α) ΑΙΤΙΟΛΟΓΙΑ (SALDOC.COMMENTS — το h.COMMENTS δεν κολλάει)
+    //    και (β) POSGUID = ref (suspenders για το idempotency, ώστε το επόμενο retry να βρει το doc).
+    var patch = { FINDOC: findoc };
+    if (obj.comments) patch.COMMENTS = obj.comments;
+    if (obj.ref) patch.POSGUID = "" + obj.ref;
+    if (obj.comments || obj.ref) {
       try {
         X.WEBREQUEST(JSON.stringify({ SERVICE: "setData", OBJECT: "SALDOC", appid: CFG.APPID,
-          KEY: "" + findoc, DATA: { SALDOC: [{ FINDOC: findoc, COMMENTS: obj.comments }] } }));
+          KEY: "" + findoc, DATA: { SALDOC: [patch] } }));
       } catch (e) { /* μη κρίσιμο — δεν σπάει την έκδοση */ }
     }
 

@@ -268,11 +268,19 @@ async def process_pending() -> dict:
     issued = failed = 0
     # Τα ΧΕΙΡΟΚΙΝΗΤΑ παραστατικά (auto != True) στέλνονται πάντα (ρητή ενέργεια admin)· τα ΑΥΤΟΜΑΤΑ
     # (από χρεώσεις) μόνο όταν είναι ON το master switch «Αυτόματη έκδοση τιμολογίων».
-    q: dict = {"status": "pending", "next_attempt_at": {"$lte": now}}
-    if not cfg.get("auto_invoicing"):
-        q["auto"] = {"$ne": True}
-    cur = db["invoices"].find(q).sort("created_at", 1).limit(BATCH)
-    async for inv in cur:
+    # ΑΤΟΜΙΚΟ CLAIM (pending→sending) ανά παραστατικό: αποτρέπει διπλή αποστολή από επικαλυπτόμενα
+    # beat-runs. Μαζεύουμε και κολλημένα «sending» >10' (crash στο ενδιάμεσο) — ΑΣΦΑΛΕΣ, γιατί η γέφυρα
+    # είναι idempotent (POSGUID): αν το SoftOne το είχε ήδη φτιάξει, το βρίσκει, δεν το ξαναδημιουργεί.
+    stale = now - timedelta(minutes=10)
+    ready = {"$or": [{"status": "pending", "next_attempt_at": {"$lte": now}},
+                     {"status": "sending", "sending_at": {"$lte": stale}}]}
+    claim_q: dict = ready if cfg.get("auto_invoicing") else {"$and": [ready, {"auto": {"$ne": True}}]}
+    for _ in range(BATCH):
+        inv = await db["invoices"].find_one_and_update(
+            claim_q, {"$set": {"status": "sending", "sending_at": now}},
+            sort=[("created_at", 1)])
+        if not inv:
+            break
         ok = await _issue_one(db, inv)
         issued += int(ok)
         failed += int(not ok)
