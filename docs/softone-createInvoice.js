@@ -48,10 +48,9 @@ function _findOrCreateCustomer(c) {
   var res = JSON.parse(X.WEBREQUEST(JSON.stringify(
     { SERVICE: "setData", OBJECT: "CUSTOMER", appId: CFG.APPID, DATA: { CUSTOMER: [cust] } })));
   if (res && res.success && res.id) return { trdr: res.id };
-  // Επιστροφή ΠΡΑΓΜΑΤΙΚΟΥ σφάλματος (αναζήτηση + δημιουργία) για διάγνωση.
-  var fe = (found && found.error) ? found.error : ((found && found.success) ? "not_found" : "find_failed");
+  // Επιστροφή ΠΡΑΓΜΑΤΙΚΟΥ σφάλματος δημιουργίας (η αναζήτηση SQL δεν βρήκε πελάτη) για διάγνωση.
   var ce = (res && res.error) ? res.error : "create_failed";
-  return { error: "find[" + fe + "] create[" + ce + "]" };
+  return { error: "find[not_found] create[" + ce + "]" };
 }
 
 /* Ανάγνωση myDATA MARK/UID/AA μετά την έκδοση. */
