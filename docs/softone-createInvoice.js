@@ -80,7 +80,12 @@ function _getMyData(findoc) {
 
 /* ── Το custom web service (κλήση: /s1services/JS/RXVISION/createInvoice) ── */
 function createInvoice(obj) {
-  var resp = { success: false };
+  var resp = { success: false, v: "1841" };   // ← ΔΙΑΓΝΩΣΤΙΚΟ: επιβεβαιώνει ΠΟΙΑ έκδοση γέφυρας τρέχει
+  try {
+    resp.diag = { lines: (obj && obj.lines) ? obj.lines.length : -1,
+      mtrl0: (obj && obj.lines && obj.lines[0]) ? obj.lines[0].mtrl : null,
+      ser: (obj ? obj.softone_series : null), hasRef: !!(obj && obj.ref) };
+  } catch (e) { }
   if (!obj || !obj.clientID || obj.clientID === "") { resp.error = "Authenticate failed: missing clientID"; return resp; }
   if (!obj.customer || !obj.customer.afm) { resp.error = "missing customer AFM"; return resp; }
   if (!obj.lines || obj.lines.length === 0) { resp.error = "missing lines"; return resp; }
