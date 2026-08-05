@@ -62,7 +62,10 @@ function RenewModal({ current, onClose }: { current?: Status; onClose: () => voi
   const [err, setErr] = useState<string | null>(null);
 
   const sel = items.find((p) => p.code === plan) || (plan ? undefined : items[0]);
-  const price = sel ? (cycle === "yearly" ? sel.price_yearly : sel.price_monthly) : 0;
+  // ΜΟΝΟ οι κύκλοι που προσφέρει το πακέτο (π.χ. αν είναι μόνο ετήσιο, δεν δείχνουμε μηνιαίο)
+  const cycles = (sel?.billing_cycles?.length ? sel.billing_cycles : ["yearly"]) as ("monthly" | "yearly")[];
+  const effCycle: "monthly" | "yearly" = cycles.includes(cycle) ? cycle : cycles[0];
+  const price = sel ? (effCycle === "yearly" ? sel.price_yearly : sel.price_monthly) : 0;
   const inp = "w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800";
 
   async function renew() {
@@ -71,7 +74,7 @@ function RenewModal({ current, onClose }: { current?: Status; onClose: () => voi
     setBusy(true); setErr(null);
     try {
       const r = await api<{ checkout_url?: string }>("/billing/renew-now", {
-        method: "POST", body: JSON.stringify({ package_code: code, billing_cycle: cycle }),
+        method: "POST", body: JSON.stringify({ package_code: code, billing_cycle: effCycle }),
       });
       if (r.checkout_url) { window.location.href = r.checkout_url; return; }
       setErr("Δεν ξεκίνησε η πληρωμή. Δοκίμασε ξανά.");
@@ -89,19 +92,24 @@ function RenewModal({ current, onClose }: { current?: Status; onClose: () => voi
             {items.map((p) => <option key={p.code} value={p.code}>{p.name}</option>)}
           </select>
         </div>
-        <div>
-          <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Κύκλος χρέωσης</label>
-          <div className="flex gap-2">
-            {(["yearly", "monthly"] as const).map((c) => (
-              <button key={c} type="button" onClick={() => setCycle(c)}
-                className={`flex-1 rounded-lg border px-3 py-2 text-sm font-medium ${cycle === c ? "border-brand-500 bg-brand-50 text-brand-700" : "border-slate-300 text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300"}`}>
-                {c === "yearly" ? "Ετήσια" : "Μηνιαία"}
-              </button>
-            ))}
+        {cycles.length > 1 && (
+          <div>
+            <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Κύκλος χρέωσης</label>
+            <div className="flex gap-2">
+              {cycles.map((c) => (
+                <button key={c} type="button" onClick={() => setCycle(c)}
+                  className={`flex-1 rounded-lg border px-3 py-2 text-sm font-medium ${effCycle === c ? "border-brand-500 bg-brand-50 text-brand-700" : "border-slate-300 text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300"}`}>
+                  {c === "yearly" ? "Ετήσια" : "Μηνιαία"}
+                </button>
+              ))}
+            </div>
           </div>
-        </div>
+        )}
         <div className="flex items-center justify-between rounded-lg bg-slate-50 px-4 py-3 dark:bg-slate-800">
-          <span className="text-sm text-slate-500">Σύνολο (καθαρό, + ΦΠΑ)</span>
+          <div>
+            <div className="text-sm text-slate-600 dark:text-slate-300">Αξία <span className="text-xs text-slate-400">(δεν περιλαμβάνει ΦΠΑ)</span></div>
+            <div className="text-[11px] text-slate-400">Ο ΦΠΑ προστίθεται στο παραστατικό.</div>
+          </div>
           <span className="text-lg font-bold text-slate-900 dark:text-slate-100">{eur(price)}</span>
         </div>
         {err && <div role="alert" className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{err}</div>}
