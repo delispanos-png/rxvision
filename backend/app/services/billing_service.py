@@ -36,6 +36,31 @@ def _period_end(cycle: str, frm: datetime) -> datetime:
     return frm + (timedelta(days=365) if cycle == "yearly" else timedelta(days=30))
 
 
+def effective_status(sub: dict | None) -> str:
+    """ΜΙΑ συνεκτική κατάσταση πελάτη, από τη ΣΥΝΔΡΟΜΗ (πηγή αλήθειας). Ο κανόνας που ζήτησε ο ιδιοκτήτης:
+    ενεργός ⇔ η συνδρομή είναι ΕΝΤΟΣ περιόδου ΚΑΙ πληρωμένη/δοκιμαστική/δωρεάν· αλλιώς ληγμένος.
+      active · trial · past_due (περιθώριο, κρατά πρόσβαση) · expired · suspended · cancelled · none
+    Δεν βασίζεται στο (συχνά μη-συγχρονισμένο) tenant.status — υπολογίζει από period_end + status."""
+    if not sub:
+        return "none"
+    st = (sub.get("status") or "").lower()
+    if st in ("cancelled", "canceled"):
+        return "cancelled"
+    if sub.get("complimentary"):
+        return "active"                          # δωρεάν πελάτης → πάντα ενεργός (δεν λήγει)
+    if st == "suspended":
+        return "suspended"
+    pend = sub.get("current_period_end")
+    in_period = pend is None or pend > _now()
+    if st == "expired" or not in_period:         # ληγμένη περίοδος → expired (έστω κι αν το status ξέμεινε)
+        return "expired"
+    if st in ("trial", "trialing"):
+        return "trial"
+    if st == "past_due":
+        return "past_due"
+    return "active"                              # εντός περιόδου & όχι-ληγμένη → ενεργός
+
+
 async def start_card_capture(tenant_id: str) -> dict:
     """Ξεκίνα αποθήκευση κάρτας για τη συνδρομή, μέσω του ΕΝΕΡΓΟΥ παρόχου.
     Revolut → {ok, token, mode} (widget). Viva → {ok, checkout_url} (redirect· κάρτα ή IRIS)."""

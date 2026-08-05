@@ -568,6 +568,7 @@ async def subscriptions(_: PlatformContext = Depends(get_platform_admin)):
 
     `days_to_expiry` < 0 = ληγμένη· 0..30 = λήγει σύντομα· trial_days_left for trials.
     """
+    from app.services import billing_service
     db = shared_db()
     now = datetime.now(tz=timezone.utc)
     names = {t["_id"]: t.get("name", t["_id"]) async for t in db["tenants"].find({})}
@@ -592,7 +593,7 @@ async def subscriptions(_: PlatformContext = Depends(get_platform_admin)):
             "tenant_id": s["tenant_id"],
             "tenant": names.get(s["tenant_id"], s["tenant_id"]),
             "plan": s.get("plan", "—"),
-            "status": s.get("status", "—"),
+            "status": billing_service.effective_status(s),   # ΜΙΑ συνεκτική κατάσταση (ενεργός/ληγμένος)
             "billing_cycle": s.get("billing_cycle"),
             "seats": s.get("seats", pharmacies),
             "active_now": active_now.get(s["tenant_id"], 0),
@@ -1496,6 +1497,7 @@ async def set_tenant_status(tenant_id: str, body: StatusIn,
 @router.get("/tenants/{tenant_id}")
 async def tenant_detail(tenant_id: str, _: PlatformContext = Depends(get_platform_admin)):
     """Καρτέλα πελάτη: tenant + subscription + χρήστες + πρόσφατα sync jobs."""
+    from app.services import billing_service
     db = shared_db()
     t = await db["tenants"].find_one({"_id": tenant_id})
     if not t:
@@ -1519,7 +1521,10 @@ async def tenant_detail(tenant_id: str, _: PlatformContext = Depends(get_platfor
         "modules": resolve_modules(set(sub.get("modules_included", [])), t.get("modules") or {}),
         "subscription": {
             "plan": sub.get("plan"), "plan_name": sub.get("plan_name"),
-            "status": sub.get("status"), "product_code": sub.get("product_code"),
+            "status": sub.get("status"),
+            # ΜΙΑ συνεκτική κατάσταση πελάτη (ενεργός/ληγμένος) από τη συνδρομή — πηγή αλήθειας για το badge
+            "effective_status": billing_service.effective_status(sub),
+            "product_code": sub.get("product_code"),
             "features": sub.get("features", {}), "limits": sub.get("limits", {}),
             "billing_cycle": sub.get("billing_cycle"), "seats": sub.get("seats"),
             "mrr": 0 if sub.get("complimentary") else (sub.get("price_per_pharmacy") or 0) * pharmacies,

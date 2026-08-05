@@ -15,7 +15,7 @@ type User = { external_user_id: string; email: string; first_name: string; last_
 type BillingInfo = { name?: string; afm?: string; doy?: string; address?: string; city?: string; postal_code?: string; email?: string; billing_email?: string; phone?: string };
 type Detail = {
   tenant: { id: string; name: string; status: string; country: string; opened_via: string; external_ref: string; created_at: string; contact_email?: string; contact_phone?: string; company?: BillingInfo; billing_profile?: BillingInfo; store?: { name?: string; code?: string }; demo?: boolean };
-  subscription: { plan: string; plan_name: string; status: string; product_code: string; features: Record<string, unknown>; limits: Record<string, unknown>; billing_cycle: string; seats: number; mrr: number; trial_ends_at: string | null; current_period_end: string | null; source: string };
+  subscription: { plan: string; plan_name: string; status: string; effective_status: string; product_code: string; features: Record<string, unknown>; limits: Record<string, unknown>; billing_cycle: string; seats: number; mrr: number; trial_ends_at: string | null; current_period_end: string | null; source: string };
   modules?: Record<string, "enabled" | "trial" | "locked">;
   users: User[];
   active_now?: number;
@@ -47,7 +47,8 @@ type Creds = {
 
 const STATUS_STYLE: Record<string, string> = {
   active: "bg-emerald-100 text-emerald-700", trial: "bg-sky-100 text-sky-700",
-  past_due: "bg-red-100 text-red-700", suspended: "bg-slate-200 text-slate-600", cancelled: "bg-red-100 text-red-700",
+  past_due: "bg-amber-100 text-amber-700", expired: "bg-rose-100 text-rose-700",
+  suspended: "bg-slate-200 text-slate-600", cancelled: "bg-red-100 text-red-700",
 };
 const SYNC_STAT_LABELS: Record<string, string> = {
   fetched: "ελήφθησαν", inserted: "νέες", updated: "ενημερώσεις",
@@ -173,13 +174,13 @@ export default function TenantCardPage() {
       <Link href="/admin/subscribers" className="mb-4 inline-block text-sm text-indigo-700 hover:underline">← Πίσω στους συνδρομητές</Link>
       <div className="mb-6 flex items-center justify-between">
         <h1 className="text-xl font-bold text-slate-900">{t.name}</h1>
-        <Badge value={t.status} />
+        <Badge value={s.effective_status} />
       </div>
       {notice && <div className="mb-4 rounded-lg bg-slate-100 px-4 py-2 text-sm text-slate-700">{notice}</div>}
 
       <div className="mb-6 grid grid-cols-2 gap-4 md:grid-cols-4">
         <KpiCard label="Πλάνο" value={s.plan_name || s.plan?.split("-").pop() || "—"} />
-        <KpiCard label="Κατάσταση συνδρομής" value={s.status ?? "—"} />
+        <KpiCard label="Κατάσταση συνδρομής" value={s.effective_status ?? s.status ?? "—"} />
         <KpiCard label="MRR" value={fmtEur(s.mrr)} accent="violet" />
         <KpiCard label="Χρήστες" value={`${data.active_now ?? 0} / ${fmtNum(data.users.length)}`} sub={`${data.active_now ?? 0} ενεργοί τώρα · ${s.seats ?? "—"} θέσεις`} accent="sky" />
       </div>
