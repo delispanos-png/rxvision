@@ -50,15 +50,14 @@ def effective_status(sub: dict | None) -> str:
         return "active"                          # δωρεάν πελάτης → πάντα ενεργός (δεν λήγει)
     if st == "suspended":
         return "suspended"
+    now = _now()
+    if st in ("trial", "trialing"):              # ΔΟΚΙΜΑΣΤΙΚΗ → μετράει η ΛΗΞΗ TRIAL (μία περίοδος)
+        tend = sub.get("trial_ends_at") or sub.get("current_period_end")
+        return "expired" if (tend is not None and tend <= now) else "trial"
     pend = sub.get("current_period_end")
-    if pend is not None:                         # η ΠΕΡΙΟΔΟΣ αποφασίζει (όχι το ξεχασμένο status)
-        if pend > _now():
-            return "trial" if st in ("trial", "trialing") else "active"   # ΕΝΤΟΣ περιόδου → ενεργός
-        return "past_due" if st == "past_due" else "expired"              # ΕΚΤΟΣ περιόδου → ληγμένος
-    # χωρίς ημερομηνία λήξης → πέσε στο raw status
-    if st in ("trial", "trialing"):
-        return "trial"
-    if st in ("expired", "past_due"):
+    if pend is not None:                         # ΠΛΗΡΩΜΕΝΗ → η ΠΕΡΙΟΔΟΣ αποφασίζει (όχι το ξεχασμένο status)
+        return "active" if pend > now else ("past_due" if st == "past_due" else "expired")
+    if st in ("expired", "past_due"):            # χωρίς ημερομηνία → raw status
         return st
     return "active"
 

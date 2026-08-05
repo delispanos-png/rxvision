@@ -131,13 +131,19 @@ function SubDrawer({ tenantId, onClose }: { tenantId: string; onClose: () => voi
   async function save(extra?: Record<string, unknown>) {
     setBusy(true); setNotice(null);
     try {
+      // Δοκιμαστική → ΜΙΑ περίοδος (= λήξη trial) & μηδενικές τιμές. Πληρωμένη → κανονική περίοδος & τιμές.
+      const trial = f.status === "trial" || f.status === "trialing";
       const body: Record<string, unknown> = {
-        billing_cycle: f.billing_cycle, price_per_pharmacy: toCents(f.price_per_pharmacy),
-        current_period_end: f.current_period_end || undefined, seats: parseInt(f.seats) || 1,
-        started_at: f.started_at || undefined, trial_ends_at: f.trial_ends_at || undefined,
+        billing_cycle: f.billing_cycle,
+        price_per_pharmacy: trial ? 0 : toCents(f.price_per_pharmacy),
+        current_period_end: (trial ? f.trial_ends_at : f.current_period_end) || undefined,
+        seats: parseInt(f.seats) || 1,
+        started_at: f.started_at || undefined,
+        trial_ends_at: trial ? (f.trial_ends_at || undefined) : undefined,
         status: f.status || undefined, sla: f.sla || undefined, plan: f.plan || undefined,
         plan_name: f.plan_name || undefined,
-        extra_user_price: toCents(f.extra_user_price), extra_user_price_yearly: toCents(f.extra_user_price_yearly),
+        extra_user_price: trial ? 0 : toCents(f.extra_user_price),
+        extra_user_price_yearly: trial ? 0 : toCents(f.extra_user_price_yearly),
         complimentary: f.complimentary,
         ...extra,
       };
@@ -152,6 +158,11 @@ function SubDrawer({ tenantId, onClose }: { tenantId: string; onClose: () => voi
     setF((s) => ({ ...s, status: "suspended" }));
     await save({ status: "suspended" });
   }
+
+  // Δοκιμαστική (trial) → μετράει ΜΟΝΟ η «Λήξη Trial»· τα πεδία πληρωμένης συνδρομής (τιμές + Λήξη συνδρομής)
+  // γκριζάρουν. Πληρωμένη → γκριζάρει η «Λήξη Trial». Έτσι είναι ξεκάθαρο τι ισχύει κάθε φορά.
+  const isTrial = f.status === "trial" || f.status === "trialing";
+  const dim = (off: boolean) => (off ? " pointer-events-none opacity-40" : "");
 
   return (
     <Modal open onClose={onClose} size="2xl">
@@ -192,7 +203,9 @@ function SubDrawer({ tenantId, onClose }: { tenantId: string; onClose: () => voi
                 extra_user_price: eur(p.extra_user_price ?? 0),
                 extra_user_price_yearly: eur(p.extra_user_price_yearly ?? 0),
                 sla: p.sla || f.sla,
-                ...(paid ? { started_at: today, current_period_end: addPeriod(today, f.billing_cycle), status: "active" } : {}) });
+                // πληρωμένο → ενεργή περίοδος + καθάρισε τη λήξη trial· δωρεάν/δοκιμή → κατάσταση trial
+                ...(paid ? { started_at: today, current_period_end: addPeriod(today, f.billing_cycle), status: "active", trial_ends_at: "" }
+                         : { status: "trial" }) });
             }}>
               <option value="">—</option>
               {(pkgsQ.data?.items ?? []).map((p) => <option key={p._id} value={p._id}>{p.name || p._id}</option>)}
@@ -207,13 +220,13 @@ function SubDrawer({ tenantId, onClose }: { tenantId: string; onClose: () => voi
               setF({ ...f, billing_cycle: cycle, ...(base != null ? { price_per_pharmacy: eur(base) } : {}),
                 current_period_end: addPeriod(f.started_at || todayISO(), cycle) });
             }}><option value="monthly">Μηνιαία</option><option value="yearly">Ετήσια</option></select></label>
-            <label className={lbl}>Τιμή/φαρμακείο (€)<input type="number" className={`mt-1 ${inp}`} value={f.price_per_pharmacy} onChange={(e) => setF({ ...f, price_per_pharmacy: e.target.value })} /></label>
-            <label className={lbl}>Κόστος επιπλέον χρήστη (€/μήνα)<input type="number" className={`mt-1 ${inp}`} value={f.extra_user_price} onChange={(e) => setF({ ...f, extra_user_price: e.target.value })} /></label>
-            <label className={lbl}>Κόστος επιπλέον χρήστη (€/έτος)<input type="number" className={`mt-1 ${inp}`} value={f.extra_user_price_yearly} onChange={(e) => setF({ ...f, extra_user_price_yearly: e.target.value })} /></label>
+            <label className={`${lbl}${dim(isTrial)}`}>Τιμή/φαρμακείο (€)<input type="number" disabled={isTrial} className={`mt-1 ${inp}`} value={f.price_per_pharmacy} onChange={(e) => setF({ ...f, price_per_pharmacy: e.target.value })} /></label>
+            <label className={`${lbl}${dim(isTrial)}`}>Κόστος επιπλέον χρήστη (€/μήνα)<input type="number" disabled={isTrial} className={`mt-1 ${inp}`} value={f.extra_user_price} onChange={(e) => setF({ ...f, extra_user_price: e.target.value })} /></label>
+            <label className={`${lbl}${dim(isTrial)}`}>Κόστος επιπλέον χρήστη (€/έτος)<input type="number" disabled={isTrial} className={`mt-1 ${inp}`} value={f.extra_user_price_yearly} onChange={(e) => setF({ ...f, extra_user_price_yearly: e.target.value })} /></label>
             <label className={lbl}>Θέσεις<input type="number" className={`mt-1 ${inp}`} value={f.seats} onChange={(e) => setF({ ...f, seats: e.target.value })} /></label>
             <label className={lbl}>Έναρξη<DateInput className="mt-1 w-full" value={f.started_at} onChange={(v) => setF({ ...f, started_at: v })} /></label>
-            <label className={lbl}>Λήξη συνδρομής<DateInput className="mt-1 w-full" value={f.current_period_end} onChange={(v) => setF({ ...f, current_period_end: v })} /></label>
-            <label className={lbl}>Λήξη Trial<DateInput className="mt-1 w-full" value={f.trial_ends_at} onChange={(v) => setF({ ...f, trial_ends_at: v })} /></label>
+            <label className={`${lbl}${dim(isTrial)}`}>Λήξη συνδρομής<DateInput className="mt-1 w-full" value={isTrial ? "" : f.current_period_end} onChange={(v) => setF({ ...f, current_period_end: v })} /></label>
+            <label className={`${lbl}${dim(!isTrial)}`}>Λήξη Trial<DateInput className="mt-1 w-full" value={!isTrial ? "" : f.trial_ends_at} onChange={(v) => setF({ ...f, trial_ends_at: v })} /></label>
             <label className={lbl}>SLA<select className={`mt-1 ${inp}`} value={f.sla} onChange={(e) => setF({ ...f, sla: e.target.value })}>
               <option value="">—</option>
               {(slaListQ.data?.items ?? []).map((s) => <option key={s._id} value={s._id}>{s.name || s._id}</option>)}
