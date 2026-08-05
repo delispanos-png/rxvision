@@ -192,7 +192,10 @@ class AuthService:
         return (await self._access_state(tenant_id)) == "ok"
 
     async def _access_state(self, tenant_id) -> str:
-        """"ok" (πρόσβαση) · "expired" (ληγμένη → ΑΝΑΝΕΩΣΙΜΗ, soft στο login) · "blocked" (αναστολή/ακύρωση)."""
+        """"ok" (πρόσβαση) · "expired" (ληγμένη → ΑΝΑΝΕΩΣΙΜΗ, soft στο login) · "blocked" (αναστολή/ακύρωση).
+        Βασίζεται στο ΕΝΟΠΟΙΗΜΕΝΟ effective_status (πηγή αλήθειας η ΠΕΡΙΟΔΟΣ) — ΟΧΙ στο ξεχασμένο raw status·
+        έτσι πελάτης με ΜΕΛΛΟΝΤΙΚΗ λήξη ΔΕΝ μπλοκάρεται ακόμη κι αν το status είχε μείνει "expired"."""
+        from app.services import billing_service
         db = shared_db()
         tenant = await db["tenants"].find_one({"_id": tenant_id})
         if tenant and tenant.get("status") == "suspended":
@@ -200,12 +203,12 @@ class AuthService:
         sub = await db["subscriptions"].find_one({"tenant_id": tenant_id})
         if not sub:
             return "ok"
-        st = sub.get("status")
-        if st in ("suspended", "cancelled"):
+        eff = billing_service.effective_status(sub)
+        if eff in ("suspended", "cancelled"):
             return "blocked"
-        if st == "expired":
+        if eff == "expired":
             return "expired"
-        return "ok"
+        return "ok"                              # active · trial · past_due → πρόσβαση
 
     async def refresh(self, refresh_token: str) -> dict | None:
         try:
