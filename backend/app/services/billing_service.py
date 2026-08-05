@@ -152,12 +152,16 @@ async def complete_renewal(tenant_id: str, viva_transaction_id: str) -> None:
     yearly = cycle == "yearly"
     price = int(pkg.get("price_yearly" if yearly else "price_monthly", 0) or 0)
     now = _now()
+    # Επέκταση: αν η τρέχουσα λήξη είναι ΜΕΛΛΟΝΤΙΚΗ (προληπτική ανανέωση), συνεχίζουμε ΑΠΟ ΕΚΕΙ ώστε ο
+    # πελάτης να ΜΗ χάσει τις υπόλοιπες μέρες· αν έχει λήξει, ξεκινά από τώρα.
+    cur_end = sub.get("current_period_end")
+    base = cur_end if (cur_end and cur_end > now) else now
     await db["subscriptions"].update_one({"tenant_id": tenant_id}, {
         "$set": {"status": "active", "plan": plan, "plan_name": pkg.get("name"),
                  "billing_cycle": cycle, "price_per_pharmacy": price,
                  "price_includes_vat": bool(pkg.get("price_includes_vat")),
                  "modules_included": pkg.get("modules", sub.get("modules_included", [])),
-                 "current_period_end": now + (timedelta(days=365) if yearly else timedelta(days=30)),
+                 "current_period_end": base + (timedelta(days=365) if yearly else timedelta(days=30)),
                  "started_at": now, "payment_provider": "viva", "payment_status": "card_saved",
                  "viva_transaction_id": viva_transaction_id, "failed_attempts": 0},
         "$unset": {"pending_renewal": ""}})
@@ -201,10 +205,22 @@ def _iso(v):
     return v.isoformat() if hasattr(v, "isoformat") else (v or None)
 
 
+def _days_left(sub: dict) -> int | None:
+    """Μέρες μέχρι τη λήξη (trial → trial_ends_at, αλλιώς current_period_end). <0 = ληγμένη."""
+    end = (sub.get("trial_ends_at") if (sub.get("status") in ("trial", "trialing")) else None) \
+        or sub.get("current_period_end")
+    if not end:
+        return None
+    return (end.date() - _now().date()).days
+
+
 async def status(tenant_id: str) -> dict:
     sub = await shared_db()["subscriptions"].find_one({"tenant_id": tenant_id}) or {}
     return {
         "plan": sub.get("plan"), "status": sub.get("status"),
+        # ΜΙΑ ενοποιημένη κατάσταση + μέρες μέχρι λήξη → για in-app banner ανανέωσης
+        "effective_status": effective_status(sub) if sub else "none",
+        "days_to_expiry": _days_left(sub) if sub else None,
         "billing_cycle": sub.get("billing_cycle"),
         "payment_status": sub.get("payment_status", "trial"),
         "trial_ends_at": _iso(sub.get("trial_ends_at")),
@@ -363,7 +379,7 @@ async def _billing_email(db, tid: str, tenant: dict) -> str | None:
 # Προεπιλογές ειδοποιήσεων συνδρομής — ό,τι ΔΕΝ ρυθμιστεί στο adminpanel πέφτει εδώ (ίδιο κείμενο με πριν).
 NOTIF_DEFAULTS = {
     "trial_grace_days": 0, "active_grace_days": 10,
-    "warn_days": [7, 3, 1], "expired_max_days": 30,
+    "warn_days": [30, 14, 7, 3, 1], "expired_max_days": 30,   # ειδοποίηση ΑΠΟ 1 μήνα πριν
     "sales_email": "", "sales_phone": "",
     "warn_subject": "Η συνδρομή σας λήγει σε {days}",
     "warn_body": ("Αγαπητέ/ή {name},\n\nΗ συνδρομή σας στο RxVision λήγει σε {days}. Για να συνεχίσετε "

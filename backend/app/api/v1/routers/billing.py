@@ -72,6 +72,36 @@ async def renew(body: RenewIn):
     return res
 
 
+class RenewNowIn(BaseModel):
+    package_code: str = Field(..., max_length=40)
+    billing_cycle: Literal["monthly", "yearly"] = "yearly"
+    coupon_code: str | None = Field(None, max_length=40)
+
+
+@router.post("/renew-now")
+async def renew_now(body: RenewNowIn, ctx: TenantContext = Depends(get_current_context)):
+    """Προληπτική ανανέωση από ΣΥΝΔΕΔΕΜΕΝΟ (ενεργό) πελάτη — διαλέγει πακέτο (ίδιο/άλλο) & κύκλο →
+    Viva checkout. Η επέκταση περιόδου + το παραστατικό γίνονται στο webhook (complete_renewal)."""
+    res = await billing_service.start_renewal(ctx.tenant_id, body.package_code, body.billing_cycle,
+                                              coupon_code=body.coupon_code)
+    if not res.get("ok"):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail={"error": res.get("error")})
+    return res
+
+
+@router.get("/packages")
+async def billing_packages(_: TenantContext = Depends(get_current_context)):
+    """Ενεργά πακέτα (για τον picker ανανέωσης μέσα στην εφαρμογή)."""
+    from app.core.db import shared_db
+    flt = {"$or": [{"active": {"$ne": False}}, {"active": {"$exists": False}}]}
+    items = [{"code": p["_id"], "name": p.get("name") or p["_id"],
+              "price_monthly": int(p.get("price_monthly", 0) or 0),
+              "price_yearly": int(p.get("price_yearly", 0) or 0),
+              "billing_cycles": p.get("billing_cycles") or ["monthly", "yearly"]}
+             async for p in shared_db()["packages"].find(flt).sort("price_monthly", 1)]
+    return {"items": items}
+
+
 @router.get("/status")
 async def billing_status(ctx: TenantContext = Depends(get_current_context)):
     """Subscription + payment status for the current tenant."""
