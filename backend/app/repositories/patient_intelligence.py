@@ -595,7 +595,11 @@ class PatientIntelligenceRepository(BaseRepository):
                 rng["$lt"] = date_to
             clin_match["executed_at"] = rng
 
-        # medicines (top) + ATC-derived therapeutic segments
+        # medicines (top) + ATC-derived therapeutic segments.
+        # ⚠ Ομαδοποίηση κατά ATC (ΟΧΙ κατά όνομα προϊόντος): το ίδιο φάρμακο υπάρχει με πολλές ονομασίες/
+        #   substance στον κατάλογο (π.χ. «CRESTOR 10MG/TAB» vs «CRESTOR F.C.TAB 10MG/TAB BTx14», ίδιο
+        #   C10AA07) → με group-by-name έσπαγε σε πολλές εγγραφές & το «τελευταία λήψη» έχανε την πρόσφατη
+        #   εκτέλεση. Με ATC ενοποιείται· εμφανιζόμενο όνομα = το ΣΥΧΝΟΤΕΡΟ της ομάδας. (Χωρίς ATC → όνομα.)
         med_rows = await self.aggregate([
             {"$match": clin_match},
             {"$lookup": {"from": "prescription_items", "localField": "_id",
@@ -605,15 +609,21 @@ class PatientIntelligenceRepository(BaseRepository):
                          "foreignField": "_id", "as": "p"}},
             {"$set": {"pname": {"$first": "$p.name"}, "subst": {"$first": "$p.substance"},
                       "atc": {"$toUpper": {"$ifNull": [{"$first": "$p.atc"}, ""]}}}},
-            {"$group": {"_id": "$pname", "atc": {"$first": "$atc"}, "subst": {"$first": "$subst"},
-                        "times": {"$sum": 1}, "last": {"$max": "$executed_at"},
+            {"$set": {"gkey": {"$cond": [{"$eq": ["$atc", ""]}, "$pname", "$atc"]}}},
+            {"$group": {"_id": {"g": "$gkey", "name": "$pname"},
+                        "n": {"$sum": 1}, "last": {"$max": "$executed_at"},
+                        "atc": {"$first": "$atc"}, "subst": {"$first": "$subst"},
                         "value": {"$sum": {"$multiply": ["$it.retail_price",
                                                          {"$ifNull": ["$it.quantity", 1]}]}}}},
+            {"$sort": {"n": -1}},   # ώστε το ΣΥΧΝΟΤΕΡΟ όνομα να γίνει το $first της ομάδας ATC
+            {"$group": {"_id": "$_id.g", "name": {"$first": "$_id.name"},
+                        "atc": {"$first": "$atc"}, "subst": {"$first": "$subst"},
+                        "times": {"$sum": "$n"}, "last": {"$max": "$last"}, "value": {"$sum": "$value"}}},
             {"$sort": {"times": -1}},
         ])
-        medicines = [{"name": m["_id"], "atc": m.get("atc"), "substance": m.get("subst"),
+        medicines = [{"name": m.get("name"), "atc": m.get("atc"), "substance": m.get("subst"),
                       "times": m["times"], "value": m["value"], "last": m.get("last")}
-                     for m in med_rows if m["_id"]]
+                     for m in med_rows if m.get("name")]
         _annotate_medicines(medicines)
         segments = [{"key": s["key"], "label": s["label"]} for s in SEGMENTS
                     if any(any((m.get("atc") or "").startswith(pfx) for pfx in s["atc"])
@@ -636,6 +646,10 @@ class PatientIntelligenceRepository(BaseRepository):
             {"$sort": {"executed_at": -1}}, {"$limit": 2000},  # «όλες οι συνταγές του πελάτη»
             {"$lookup": {"from": "prescription_items", "localField": "_id",
                          "foreignField": "execution_id", "as": "it"}},
+            # ΜΟΝΟ οι ΕΚΤΕΛΕΣΜΕΝΕΣ γραμμές → δείχνουμε ΟΛΑ τα φάρμακα που πραγματικά εκτελέστηκαν στη
+            # συνταγή (fallback: αν καμία δεν είναι flagged executed, κράτα όλες για να μη χαθεί η γραμμή).
+            {"$set": {"itx": {"$filter": {"input": "$it", "cond": {"$eq": ["$$this.is_executed", True]}}}}},
+            {"$set": {"it": {"$cond": [{"$gt": [{"$size": "$itx"}, 0]}, "$itx", "$it"]}}},
             {"$lookup": {"from": "products", "localField": "it.product_id",
                          "foreignField": "_id", "as": "prods"}},
             {"$lookup": {"from": "doctors", "localField": "doctor_id",

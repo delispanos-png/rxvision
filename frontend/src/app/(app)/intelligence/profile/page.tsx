@@ -499,9 +499,10 @@ export default function PatientProfilePage() {
                           <td className="whitespace-nowrap px-3 py-2 text-slate-600 dark:text-slate-300">{fmtDate(e.executed_at)}</td>
                           <td className="px-3 py-2 font-mono text-[11px] text-slate-500">{e.barcode.split(":")[0]}</td>
                           <td className="px-3 py-2 text-slate-700 dark:text-slate-200">
-                            <span className="inline-flex items-center gap-1.5">
-                              {e.kind === "vaccine" && <span className="rounded bg-sky-100 px-1.5 py-0.5 text-[9px] font-semibold text-sky-700">💉 ΕΜΒΟΛΙΟ</span>}
-                              <span className="line-clamp-1">{e.medicines.join(", ") || "—"}</span>
+                            <span className="flex items-start gap-1.5">
+                              {e.kind === "vaccine" && <span className="mt-0.5 shrink-0 rounded bg-sky-100 px-1.5 py-0.5 text-[9px] font-semibold text-sky-700">💉 ΕΜΒΟΛΙΟ</span>}
+                              {/* ΟΛΑ τα εκτελεσμένα φάρμακα της συνταγής (χωρίς line-clamp — δείχνει και τις 7 γραμμές) */}
+                              <span className="whitespace-normal break-words">{e.medicines.join(", ") || "—"}</span>
                             </span>
                           </td>
                           <td className="px-3 py-2 text-xs text-slate-500">{e.doctor || "—"}</td>
