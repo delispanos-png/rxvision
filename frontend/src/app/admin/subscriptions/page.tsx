@@ -132,11 +132,20 @@ function SubDrawer({ tenantId, onClose }: { tenantId: string; onClose: () => voi
     });
   }, [d]);
 
+  // ΔΟΚΙΜΑΣΤΙΚΗ = το ΠΛΑΝΟ είναι δωρεάν (μηδενική τιμή) ή status trial — ΟΧΙ μόνο το status (μπορεί να έχει
+  // ξεμείνει λάθος). Σε trial μετράει ΜΟΝΟ η «Λήξη Trial»· τα πεδία πληρωμένης συνδρομής γκριζάρουν.
+  const selPkg = (pkgsQ.data?.items ?? []).find((p) => p._id === f.plan);
+  // trial ⇔ ΔΟΚΙΜΑΣΤΙΚΟ ΠΑΚΕΤΟ (μηδενική τιμή). Αλλάζει ΜΟΝΟ όταν επιλεγεί άλλο (πληρωμένο) πακέτο.
+  const isTrial = selPkg ? ((selPkg.price_monthly ?? 0) === 0 && (selPkg.price_yearly ?? 0) === 0)
+                         : (f.status === "trial" || f.status === "trialing");
+  const dim = (off: boolean) => (off ? " pointer-events-none opacity-40" : "");
+
   async function save(extra?: Record<string, unknown>) {
     setBusy(true); setNotice(null);
     try {
-      // Δοκιμαστική → ΜΙΑ περίοδος (= λήξη trial) & μηδενικές τιμές. Πληρωμένη → κανονική περίοδος & τιμές.
-      const trial = f.status === "trial" || f.status === "trialing";
+      // Δοκιμαστική (= δοκιμαστικό πακέτο) → ΜΙΑ περίοδος (= λήξη trial), μηδενικές τιμές & κατάσταση trial.
+      // Πληρωμένη → κανονική περίοδος & τιμές.
+      const trial = isTrial;
       const body: Record<string, unknown> = {
         billing_cycle: f.billing_cycle,
         price_per_pharmacy: trial ? 0 : toCents(f.price_per_pharmacy),
@@ -144,7 +153,9 @@ function SubDrawer({ tenantId, onClose }: { tenantId: string; onClose: () => voi
         seats: parseInt(f.seats) || 1,
         started_at: f.started_at || undefined,
         trial_ends_at: trial ? (f.trial_ends_at || undefined) : undefined,
-        status: f.status || undefined, sla: f.sla || undefined, plan: f.plan || undefined,
+        // δοκιμαστικό πακέτο → κατάσταση trial (εκτός αν έχει μπει ρητά σε αναστολή/ακύρωση)
+        status: (trial && !["suspended", "cancelled"].includes(f.status)) ? "trial" : (f.status || undefined),
+        sla: f.sla || undefined, plan: f.plan || undefined,
         plan_name: f.plan_name || undefined,
         extra_user_price: trial ? 0 : toCents(f.extra_user_price),
         extra_user_price_yearly: trial ? 0 : toCents(f.extra_user_price_yearly),
@@ -162,11 +173,6 @@ function SubDrawer({ tenantId, onClose }: { tenantId: string; onClose: () => voi
     setF((s) => ({ ...s, status: "suspended" }));
     await save({ status: "suspended" });
   }
-
-  // Δοκιμαστική (trial) → μετράει ΜΟΝΟ η «Λήξη Trial»· τα πεδία πληρωμένης συνδρομής (τιμές + Λήξη συνδρομής)
-  // γκριζάρουν. Πληρωμένη → γκριζάρει η «Λήξη Trial». Έτσι είναι ξεκάθαρο τι ισχύει κάθε φορά.
-  const isTrial = f.status === "trial" || f.status === "trialing";
-  const dim = (off: boolean) => (off ? " pointer-events-none opacity-40" : "");
 
   return (
     <Modal open onClose={onClose} size="2xl">
