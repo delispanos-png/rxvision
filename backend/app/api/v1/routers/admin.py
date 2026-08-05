@@ -678,17 +678,34 @@ async def edit_subscription(tenant_id: str, body: SubEditIn,
     """Edit a subscription (cycle/price/dates/seats/sla/plan/status). A status change also
     flips the tenant active/suspended — so «απενεργοποίηση λόγω μη πληρωμής» blocks login."""
     db = shared_db()
-    upd = {k: v for k, v in body.model_dump().items() if v is not None}
-    if not await db["subscriptions"].find_one({"tenant_id": tenant_id}):
+    cur = await db["subscriptions"].find_one({"tenant_id": tenant_id})
+    if not cur:
         raise HTTPException(http_status.HTTP_404_NOT_FOUND, "subscription_not_found")
+    upd = {k: v for k, v in body.model_dump().items() if v is not None}
     if upd:
         upd["updated_at"] = datetime.now(tz=timezone.utc)
+        # ⭐ ΑΛΛΑΓΗ ΠΛΑΝΟΥ → συγχρόνισε ΚΑΙ τα δικαιώματα (modules_included) από το νέο πακέτο, ώστε ο
+        #   πελάτης να ΜΗΝ κρατά τα δικαιώματα του παλιού (full) πλάνου. Ενοποίηση με το assign_package.
+        sync_pkg = None
+        if body.plan and body.plan != cur.get("plan"):
+            pkg = await db["packages"].find_one({"_id": body.plan})
+            if pkg:
+                upd["modules_included"] = pkg.get("modules", [])
+                upd.setdefault("plan_name", pkg.get("name"))
+                if pkg.get("available_addons") is not None:
+                    upd["available_addons"] = pkg.get("available_addons")
+                sync_pkg = pkg
         await db["subscriptions"].update_one({"tenant_id": tenant_id}, {"$set": upd})
+        if sync_pkg is not None:
+            # τα per-tenant overrides «πέφτουν» στο νέο πλάνο — κράτα μόνο τυχόν αγορασμένα add-ons
+            keep = {a: "enabled" for a in (cur.get("addons") or [])}
+            await db["tenants"].update_one({"_id": tenant_id},
+                                           {"$set": {"modules": keep, "updated_at": upd["updated_at"]}})
         if body.status:
             tstatus = "active" if body.status in ("active", "trial", "past_due") else "suspended"
             await db["tenants"].update_one(  # tenant-ok: platform admin, explicit _id
                 {"_id": tenant_id}, {"$set": {"status": tstatus, "updated_at": upd["updated_at"]}})
-    return {"ok": True}
+    return {"ok": True, "modules_synced": bool(body.plan and body.plan != cur.get("plan"))}
 
 
 @router.get("/aade/{afm}")
