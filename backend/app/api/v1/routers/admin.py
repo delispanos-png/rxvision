@@ -350,6 +350,7 @@ def _days_until(when, now: datetime) -> int | None:
 @router.get("/tenants")
 async def tenants(_: PlatformContext = Depends(get_platform_admin)):
     """All tenants + plan/status/users/MRR for the back-office customer table."""
+    from app.services import billing_service
     db = shared_db()
     subs = {s["tenant_id"]: s async for s in db["subscriptions"].find({})}
     wallets = {w["_id"]: int(w.get("balance_cents", 0) or 0) async for w in db["message_wallets"].find({})}
@@ -376,7 +377,7 @@ async def tenants(_: PlatformContext = Depends(get_platform_admin)):
             "name": t.get("name", t["_id"]),
             "afm": (t.get("company") or {}).get("afm"),
             "plan": sub.get("plan", "—"),
-            "status": sub.get("status", t.get("status", "—")),
+            "status": billing_service.effective_status(sub) if sub else (t.get("status") or "—"),
             "users": user_counts.get(t["_id"], 0),
             "active_now": active_now.get(t["_id"], 0),
             "seats": sub.get("seats") or pharmacies,

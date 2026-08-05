@@ -50,6 +50,10 @@ const STATUS_STYLE: Record<string, string> = {
   past_due: "bg-amber-100 text-amber-700", expired: "bg-rose-100 text-rose-700",
   suspended: "bg-slate-200 text-slate-600", cancelled: "bg-red-100 text-red-700",
 };
+const STATUS_LABEL: Record<string, string> = {
+  active: "Ενεργός", trial: "Trial", past_due: "Σε καθυστέρηση",
+  expired: "Ληγμένη", suspended: "Σε αναστολή", cancelled: "Ακυρωμένη", none: "—",
+};
 const SYNC_STAT_LABELS: Record<string, string> = {
   fetched: "ελήφθησαν", inserted: "νέες", updated: "ενημερώσεις",
   duplicates: "αμετάβλητες", invalid: "άκυρες", cancelled: "ακυρώσεις", deleted: "διαγραφές",
@@ -70,7 +74,7 @@ function SyncStats({ stats }: { stats: Record<string, number> }) {
 }
 
 function Badge({ value }: { value: string }) {
-  return <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_STYLE[value] ?? "bg-slate-100 text-slate-600"}`}>{value}</span>;
+  return <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_STYLE[value] ?? "bg-slate-100 text-slate-600"}`}>{STATUS_LABEL[value] ?? value}</span>;
 }
 
 const userColumns: Column<User>[] = [

@@ -31,11 +31,15 @@ type SubDetail = {
 
 const STATUS_STYLE: Record<string, string> = {
   active: "bg-emerald-100 text-emerald-700", trial: "bg-sky-100 text-sky-700",
-  past_due: "bg-red-100 text-red-700", suspended: "bg-slate-200 text-slate-600",
-  cancelled: "bg-rose-100 text-rose-700",
+  past_due: "bg-amber-100 text-amber-700", expired: "bg-rose-100 text-rose-700",
+  suspended: "bg-slate-200 text-slate-600", cancelled: "bg-red-100 text-red-700",
+};
+const STATUS_LABEL: Record<string, string> = {
+  active: "Ενεργός", trial: "Trial", past_due: "Σε καθυστέρηση",
+  expired: "Ληγμένη", suspended: "Σε αναστολή", cancelled: "Ακυρωμένη", none: "—",
 };
 const StatusBadge = ({ value }: { value: string }) => (
-  <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_STYLE[value] ?? "bg-slate-100 text-slate-600"}`}>{value}</span>
+  <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_STYLE[value] ?? "bg-slate-100 text-slate-600"}`}>{STATUS_LABEL[value] ?? value}</span>
 );
 const cycleEl = (c?: string | null) => (c === "yearly" ? "Ετήσια" : c === "monthly" ? "Μηνιαία" : "—");
 

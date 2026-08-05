@@ -18,11 +18,13 @@ type AadeResp = { ok: boolean; name?: string; title?: string; doy?: string; addr
 const STATUS_META: Record<string, { label: string; cls: string }> = {
   active: { label: "Ενεργός", cls: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/50 dark:text-emerald-300" },
   trial: { label: "Trial", cls: "bg-sky-100 text-sky-700 dark:bg-sky-900/50 dark:text-sky-300" },
-  past_due: { label: "Past-due", cls: "bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-300" },
+  past_due: { label: "Σε καθυστέρηση", cls: "bg-amber-100 text-amber-700 dark:bg-amber-900/50 dark:text-amber-300" },
+  expired: { label: "Ληγμένη", cls: "bg-rose-100 text-rose-700 dark:bg-rose-900/50 dark:text-rose-300" },
   suspended: { label: "Σε αναστολή", cls: "bg-slate-200 text-slate-600 dark:bg-slate-700 dark:text-slate-300" },
+  cancelled: { label: "Ακυρωμένη", cls: "bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-300" },
 };
 const STATUS_FILTERS: [string, string][] = [
-  ["all", "Όλες"], ["active", "Ενεργοί"], ["trial", "Trial"], ["past_due", "Past-due"], ["suspended", "Αναστολή"],
+  ["all", "Όλες"], ["active", "Ενεργοί"], ["trial", "Trial"], ["past_due", "Καθυστέρηση"], ["expired", "Ληγμένες"], ["suspended", "Αναστολή"],
 ];
 function Badge({ value }: { value: string }) {
   const m = STATUS_META[value];
