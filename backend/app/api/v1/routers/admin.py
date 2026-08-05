@@ -2317,6 +2317,23 @@ async def platform_health(_: PlatformContext = Depends(get_platform_admin)):
                       default=None)
     stale_h = round((now - newest_data).total_seconds() / 3600, 1) if newest_data else None
     alert = (not vault_ok) or (stale_h is not None and stale_h > 6) or (newest_data is None)
+    # ── GDPR: cross-tenant διαρροές — αυτόματες μεταφορές (30ημ) + τυχόν ΕΚΚΡΕΜΕΙΣ (από τη σάρωση) ──
+    xt_transfers = []
+    async for a in db["ingestion_alerts"].find(
+            {"kind": "cross_tenant_transferred", "at": {"$gte": since}}).sort("at", -1).limit(50):
+        xt_transfers.append({"external_id": a.get("external_id"),
+                             "from": names.get(a.get("from_tenant"), a.get("from_tenant")),
+                             "to": names.get(a.get("to_tenant"), a.get("to_tenant")),
+                             "patient_removed": bool(a.get("patient_removed")), "at": a.get("at")})
+    xt_count = await db["ingestion_alerts"].count_documents(
+        {"kind": "cross_tenant_transferred", "at": {"$gte": since}})
+    pending_leaks = 0
+    last_scan = None
+    async for sc in db["ingestion_alerts"].find({"kind": "cross_tenant_leak_scan"}):
+        pending_leaks += int(sc.get("leaks") or 0)
+        u = sc.get("updated_at")
+        if u and (last_scan is None or u > last_scan):
+            last_scan = u
     return {
         "summary": {"syncs_30d": runs, "failed_30d": failed, "active_tenants": active,
                     "success_rate": round((runs - failed) / runs * 100, 2) if runs else 100.0},
@@ -2324,6 +2341,8 @@ async def platform_health(_: PlatformContext = Depends(get_platform_admin)):
         "vault": {"healthy": vault_ok},
         "ingest": {"last_data_at": jsonsafe(newest_data), "stale_hours": stale_h},
         "alert": alert,
+        "cross_tenant": {"transfers_30d": xt_count, "recent_transfers": jsonsafe(xt_transfers),
+                         "pending_leaks": pending_leaks, "last_scan_at": jsonsafe(last_scan)},
     }
 
 

@@ -317,6 +317,78 @@ def dispatch_reconcile_gaps() -> int:
     return len(ids)
 
 
+@celery_app.task(name="app.workers.ingestion.reconcile_cross_tenant_leaks",
+                 bind=True, max_retries=2, autoretry_for=(ConnectionError, TimeoutError),
+                 retry_backoff=True, retry_backoff_max=1800, retry_jitter=True)
+def reconcile_cross_tenant_leaks_task(self, tenant_id: str, days: int = 120) -> dict:
+    """GDPR φρουρός: ανιχνεύει ΔΙΑΡΡΟΕΣ — εκτελέσεις που ΑΝΗΚΟΥΝ σε ΑΥΤΟΝ τον tenant (το scoped ΗΔΥΚΑ
+    feed του τις επιστρέφει) αλλά κάθονται σε ΑΛΛΟΝ tenant (κρατώντας raw ΑΜΚΑ ασθενή) — και τις
+    ΜΕΤΑΦΕΡΕΙ στον σωστό. Αυθεντικός εντοπισμός = `find_missing` (feed vs βάση)· ΠΡΑΓΜΑΤΙΚΗ διαρροή =
+    missing που ΥΠΑΡΧΕΙ σε άλλον tenant (τα υπόλοιπα missing = late registrations → reconcile_gaps).
+    Η μεταφορά γίνεται με στοχευμένο backfill → ο `engine._release_cross_tenant_clash` σβήνει το
+    αντίγραφο-διαρροή (backup + καθαρισμός ορφανού ασθενή/γιατρού) & γράφει στον σωστό με το δικό του
+    pepper. Τρέχει daily ανά tenant — καμία διαρροή δεν μένει πάνω από μία μέρα."""
+    async def _run() -> dict:
+        _, db = _fresh_db()
+        if await _hdika_auth_paused(db, tenant_id):
+            return {"tenant_id": tenant_id, "status": "skipped", "note": "auth_paused"}
+        from app.api.v1.routers.ingestion import _effective_hdika_creds
+        from app.services.ingestion.hdika_client import HdikaClient
+        from app.services.ingestion.reconcile import find_missing
+        creds = await _effective_hdika_creds(tenant_id)
+        if not creds or not creds.get("api_key") or not creds.get("pharmacy_id"):
+            return {"tenant_id": tenant_id, "status": "skipped", "note": "no_creds_or_pharmacy_id"}
+        client = HdikaClient(dict(creds, throttle=0.05))
+        try:
+            end = datetime.now(tz=timezone.utc).date()
+            res = await find_missing(db, client, tenant_id, end - timedelta(days=days), end)
+        except HdikaAuthError as e:
+            return await _pause_hdika_auth(db, tenant_id, str(e))
+        finally:
+            client.close()
+        # ΠΡΑΓΜΑΤΙΚΗ διαρροή = missing που υπάρχει ΤΩΡΑ σε ΑΛΛΟΝ tenant (όχι απλή late registration)
+        leaks: dict = {}
+        for ext, day in res["missing"].items():
+            other = await db["prescription_executions"].find_one(
+                {"source": "HDIKA", "external_id": ext, "tenant_id": {"$ne": tenant_id}},
+                {"tenant_id": 1})
+            if other:
+                leaks[ext] = day
+        now = datetime.now(tz=timezone.utc)
+        window = None
+        if leaks:
+            mdays = sorted(set(leaks.values()))
+            since_iso = mdays[0]
+            until_iso = (date.fromisoformat(mdays[-1]) + timedelta(days=1)).isoformat()
+            # στοχευμένο backfill στα leaked days → _persist κάνει AUTO-TRANSFER στον σωστό (εμάς)
+            hdika_backfill.apply_async((tenant_id, since_iso, until_iso),
+                                       kwargs={"throttle": 0.05}, queue="backfill")
+            window = [since_iso, until_iso]
+        await db["ingestion_alerts"].update_one(
+            {"kind": "cross_tenant_leak_scan", "tenant_id": tenant_id},
+            {"$set": {"kind": "cross_tenant_leak_scan", "tenant_id": tenant_id,
+                      "leaks": len(leaks), "leak_ids": sorted(leaks)[:100],
+                      "recovery_window": window, "hdika": res["hdika"], "ours": res["ours"],
+                      "updated_at": now},
+             "$setOnInsert": {"created_at": now}}, upsert=True)
+        return {"tenant_id": tenant_id, "status": "ok", "leaks": len(leaks),
+                "triggered_transfer": bool(leaks), "window": window}
+    return _run_async(_run())
+
+
+@celery_app.task(name="app.workers.ingestion.dispatch_cross_tenant_leaks")
+def dispatch_cross_tenant_leaks() -> int:
+    """Beat (daily): ανά GR/ΗΔΥΚΑ tenant, σάρωση για διαρροές cross-tenant & αυτόματη μεταφορά στον
+    σωστό. Ουρά backfill ώστε να μην κλέβει slots από τον incremental sync."""
+    async def _run() -> list[str]:
+        _, db = _fresh_db()
+        return [str(t["_id"]) async for t in _gr_hdika_tenants(db)]
+    ids = _run_async(_run())
+    for tid in ids:
+        reconcile_cross_tenant_leaks_task.apply_async(args=[tid, 120], queue="backfill")
+    return len(ids)
+
+
 @celery_app.task(name="app.workers.ingestion.dispatch_amount_audit")
 def dispatch_amount_audit() -> int:
     """Beat-scheduled. Enqueue an amount-audit batch per GR tenant — verifies each execution's

@@ -6,8 +6,9 @@
 για κάθε εκτέλεση (μία φορά· flag `amount_audited_at`), συγκρίνει και ΔΙΟΡΘΩΝΕΙ όπου διαφέρει,
 κρατώντας ίχνος στο `amount_audit_log`. Τρέχει σε batches από beat → 100% ταύτιση με Soft1.
 
-ΚΥΥΑΠ/ΕΤΥΑΠ εκτελέσεις ΕΞΑΙΡΟΥΝΤΑΙ: το έντυπο δίνει διμερή split ενώ ο επιμερισμός είναι τριμερής
-(ασφ/νος·ΚΥΥΑΠ·ΕΟΠΥΥ) → patient+fund ≠ retail. Έχουν δικό τους επαληθευμένο branch στο _map_full.
+ΚΥΥΑΠ/ΕΤΥΑΠ (ΤΡΙΜΕΡΗΣ) ΕΛΕΓΧΟΝΤΑΙ ΚΑΝΟΝΙΚΑ: το έντυπο δίνει po_patient (ασφ/νος) & po_fund (ΚΑΘΑΡΟ
+ΕΟΠΥΥ, χωρίς ΚΥΥΑΠ). Αποθηκεύουμε patient_share=po_patient, amount_claimed=amount_total−po_patient
+(περιέχει ΚΥΥΑΠ)· ο «Κλείσιμο» αφαιρεί το kyyap_covered ΜΙΑ φορά ανά visit → καθαρό ΕΟΠΥΥ=po_fund.
 """
 from __future__ import annotations
 
@@ -50,26 +51,20 @@ async def audit_amounts_against_printout(
     # πρέπει να ξαναδοκιμάζονται ατέρμονα → όποια ξεπέρασε το όριο αποτυχιών εξαιρείται.
     q["amount_audit_fails"] = {"$not": {"$gte": 5}}   # ΝΒ: πιάνει & τα docs χωρίς το πεδίο (missing)
     docs = await coll.find(
-        q, {"external_id": 1, "patient_share": 1, "amount_total": 1, "fund": 1,
-            "details.kyyap_covered": 1},
+        q, {"external_id": 1, "patient_share": 1, "amount_total": 1, "amount_claimed": 1},
     ).sort("executed_at", -1).limit(limit).to_list(length=limit)
 
     checked = corrected = failed = skipped = 0
     now = datetime.now(tz=timezone.utc)
     for d in docs:
         ext = str(d.get("external_id") or "")
-        fund_name = str(((d.get("fund") or {}).get("name")) or "").upper().replace(".", "")
-        # ΚΥΥΑΠ/ΕΤΥΑΠ → ΤΡΙΜΕΡΗΣ· το διμερές έντυπο δεν το εκφράζει σωστά → ΕΞΑΙΡΟΥΝΤΑΙ. ⚠ ΚΡΙΣΙΜΟ: το
-        # όνομα ταμείου (fund.name) συχνά ΔΕΝ είναι αποθηκευμένο (=None) → ο έλεγχος «ΚΥΥΑΠ in fund_name»
-        # έχανε πραγματικά ΚΥΥΑΠ scripts → ελέγχονταν με διμερές έντυπο → ΜΕΤΑΤΟΠΙΖΟΤΑΝ η χρέωση ταμείου
-        # κατά λεπτά (πάγιο bug). Αξιόπιστος δείκτης = `details.kyyap_covered` (το βάζει το ingestion branch).
-        is_kyyap = ("ΚΥΥΑΠ" in fund_name) or bool((d.get("details") or {}).get("kyyap_covered"))
-        if is_kyyap:
-            skipped += 1
-            if not dry_run:
-                await coll.update_one({"_id": d["_id"]},
-                                      {"$set": {"amount_audited_at": now, "amount_audit_skip": "kyyap"}})
-            continue
+        # ⚠ ΚΥΥΑΠ/ΕΤΥΑΠ (ΤΡΙΜΕΡΗΣ split) ΔΕΝ εξαιρούνται πλέον. Το ΕΟΠΥΥ έντυπο (`_printout_split`) δίνει
+        # ΣΩΣΤΑ το τριμερές: po_patient = ΠΛΗΡΩΤΕΟ ΑΠΟ ΑΣΦ/ΝΟ, po_fund = ΚΑΘΑΡΟ ΕΟΠΥΥ (χωρίς το ΚΥΥΑΠ).
+        # Το μοντέλο αποθήκευσης: patient_share = po_patient· amount_claimed = amount_total − po_patient
+        # (ΠΕΡΙΕΧΕΙ το ΚΥΥΑΠ)· ο «Κλείσιμο» αφαιρεί το `details.kyyap_covered` ΜΙΑ φορά ανά visit → καθαρό
+        # ΕΟΠΥΥ = po_fund (επαληθευμένο vs έντυπο). Δηλαδή ο audit είναι AUTHORITATIVE και για τα ΚΥΥΑΠ.
+        # (Ιστορικό: παλαιότερη «εξαίρεση ΚΥΥΑΠ + restore σε ingestion τιμές» μετατόπιζε τη χρέωση ταμείου
+        # κατά λεπτά — αφαιρέθηκε 2026-08-05· βλ. memory kyyap-audit-fund-charge-bug.)
         barcode, _, exn = ext.rpartition(":")
         try:
             exec_no = int(exn)

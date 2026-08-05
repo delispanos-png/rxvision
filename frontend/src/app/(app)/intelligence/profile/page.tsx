@@ -21,7 +21,9 @@ type Med = { name: string; atc: string | null; substance: string | null; times: 
 type Doc = { name: string; specialty: string | null; times: number };
 type Renewal = { root: string; medicines: string[]; count: number; value: number; last_executed: string | null; due?: string | null; until?: string | null };
 type Flu = { season: string; vaccinated: boolean; date: string | null; vaccine: string | null };
-type Exec = { kind?: string; barcode: string; executed_at: string | null; amount_total: number; patient_share: number; doctor: string | null; cancelled?: boolean; medicines: string[] };
+const EXECS_PER_PAGE = 8;   // σελιδοποίηση modal εκτελέσεων — ανά εκτέλεση (κάθε εκτέλεση ολόκληρη)
+type ExecMed = { name: string; quantity?: number | null };
+type Exec = { kind?: string; barcode: string; executed_at: string | null; amount_total: number; patient_share: number; doctor: string | null; cancelled?: boolean; medicines: ExecMed[] };
 type Profile = {
   found: boolean;
   patient?: { id: string; name: string; amka: string; age_group: string; sex: string; area: string; birth_year: number; lifecycle: string; deceased: boolean; first_seen: string; last_seen: string; gap_days: number | null };
@@ -68,6 +70,7 @@ export default function PatientProfilePage() {
   const [advice, setAdvice] = useState<Advice | null>(null);
   const [show, setShow] = useState<"missed" | "available" | null>(null);
   const [showExecs, setShowExecs] = useState(false);
+  const [execPage, setExecPage] = useState(0);   // σελιδοποίηση λίστας εκτελέσεων (ανά εκτέλεση)
   const [showInter, setShowInter] = useState(false);
   const [g6pd, setG6pd] = useState(false);
   // AI advice is an ai_assistant (Pro) entitlement — hide the block entirely when not granted.
@@ -209,7 +212,7 @@ export default function PatientProfilePage() {
           {/* financial KPIs */}
           <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
             <KpiCard label={t("Αξία πελάτη (LTV)", "Lifetime value")} value={fmtEur(p.financials!.value)} icon={Wallet} accent="green" help={t("Συνολική λιανική αξία όλων των εκτελέσεων.", "Total retail value of all executions.")} />
-            <KpiCard label={t("Αριθμός εκτελέσεων", "Executions")} help={t("Πλήθος εκτελέσεων συνταγών του ασθενή.", "Number of the patient's executions.")} value={fmtNum(p.financials!.rx_count)} icon={Repeat} accent="indigo" sub={t(`μ.ο. ${fmtEur(p.financials!.avg_per_visit)}/εκτέλεση · κλικ για λίστα`, `avg ${fmtEur(p.financials!.avg_per_visit)}/exec · click for list`)} onClick={() => p.executions?.length && setShowExecs(true)} />
+            <KpiCard label={t("Αριθμός εκτελέσεων", "Executions")} help={t("Πλήθος εκτελέσεων συνταγών του ασθενή.", "Number of the patient's executions.")} value={fmtNum(p.financials!.rx_count)} icon={Repeat} accent="indigo" sub={t(`μ.ο. ${fmtEur(p.financials!.avg_per_visit)}/εκτέλεση · κλικ για λίστα`, `avg ${fmtEur(p.financials!.avg_per_visit)}/exec · click for list`)} onClick={() => p.executions?.length && (setExecPage(0), setShowExecs(true))} />
             <KpiCard label={t("Μικτό κέρδος", "Gross profit")} value={fmtEur(p.financials!.profit)} icon={Wallet} accent="violet" help={t("Λιανική − κόστος αγοράς.", "Retail − cost of goods.")} />
             <KpiCard label={t("Συμμόρφωση", "Adherence")} value={p.adherence!.compliance != null ? `${p.adherence!.compliance}%` : "—"} icon={Target} accent={p.adherence!.compliance != null && p.adherence!.compliance < 50 ? "rose" : "amber"} sub={p.adherence!.band ?? undefined} help={t("Εκτελεσμένες / αναμενόμενες ανανεώσεις επαναλαμβανόμενης θεραπείας.", "Executed / expected repeat renewals.")} />
           </div>
@@ -479,7 +482,7 @@ export default function PatientProfilePage() {
           )}
           {showExecs && p.executions && (
             <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 p-4" onClick={() => setShowExecs(false)}>
-              <div className="mt-8 w-full max-w-3xl rounded-2xl bg-white p-5 shadow-xl dark:bg-slate-900" onClick={(e) => e.stopPropagation()}>
+              <div className="mt-8 w-full max-w-7xl rounded-2xl bg-white p-5 shadow-xl dark:bg-slate-900" onClick={(e) => e.stopPropagation()}>
                 <div className="mb-3 flex items-center justify-between">
                   <h3 className="text-lg font-bold text-slate-900 dark:text-slate-100">{t("Εκτελέσεις πελάτη", "Patient executions")} <span className="text-sm font-normal text-slate-400">({p.executions.length})</span></h3>
                   <button onClick={() => setShowExecs(false)} className="text-slate-400 hover:text-slate-600">✕</button>
@@ -489,30 +492,51 @@ export default function PatientProfilePage() {
                     <thead className="sticky top-0 bg-slate-50 text-xs text-slate-500 dark:bg-slate-800"><tr>
                       <th className="px-3 py-2 text-left">{t("Ημ/νία", "Date")}</th>
                       <th className="px-3 py-2 text-left">Barcode</th>
-                      <th className="px-3 py-2 text-left">{t("Φάρμακα", "Medicines")}</th>
+                      <th className="px-3 py-2 text-left">{t("Φάρμακο", "Medicine")}</th>
+                      <th className="px-3 py-2 text-right">{t("Ποσ.", "Qty")}</th>
                       <th className="px-3 py-2 text-left">{t("Ιατρός", "Doctor")}</th>
                       <th className="px-3 py-2 text-right">{t("Αξία", "Amount")}</th>
                     </tr></thead>
                     <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                      {p.executions.map((e, i) => (
-                        <tr key={i} onClick={() => router.push(e.kind === "vaccine" ? `/vaccinations?barcode=${encodeURIComponent(e.barcode)}` : `/prescriptions/${encodeURIComponent(e.barcode)}`)} className={`cursor-pointer hover:bg-brand-50/50 dark:hover:bg-slate-800 ${e.cancelled ? "opacity-50" : ""}`}>
-                          <td className="whitespace-nowrap px-3 py-2 text-slate-600 dark:text-slate-300">{fmtDate(e.executed_at)}</td>
-                          <td className="px-3 py-2 font-mono text-[11px] text-slate-500">{e.barcode.split(":")[0]}</td>
-                          <td className="px-3 py-2 text-slate-700 dark:text-slate-200">
-                            <span className="flex items-start gap-1.5">
-                              {e.kind === "vaccine" && <span className="mt-0.5 shrink-0 rounded bg-sky-100 px-1.5 py-0.5 text-[9px] font-semibold text-sky-700">💉 ΕΜΒΟΛΙΟ</span>}
-                              {/* ΟΛΑ τα εκτελεσμένα φάρμακα της συνταγής (χωρίς line-clamp — δείχνει και τις 7 γραμμές) */}
-                              <span className="whitespace-normal break-words">{e.medicines.join(", ") || "—"}</span>
-                            </span>
-                          </td>
-                          <td className="px-3 py-2 text-xs text-slate-500">{e.doctor || "—"}</td>
-                          <td className="whitespace-nowrap px-3 py-2 text-right font-medium">{e.amount_total ? fmtEur(e.amount_total) : "—"}</td>
-                        </tr>
-                      ))}
+                      {/* ΕΝΑ φάρμακο ανά γραμμή, με την ημερομηνία μπροστά σε ΚΑΘΕ γραμμή (όχι όλα με κόμματα).
+                          Barcode/Ιατρός/Αξία είναι ανά ΕΚΤΕΛΕΣΗ → δείχνονται μόνο στην 1η γραμμή της εκτέλεσης. */}
+                      {p.executions.slice(execPage * EXECS_PER_PAGE, execPage * EXECS_PER_PAGE + EXECS_PER_PAGE).flatMap((e, i) => {
+                        const meds: ExecMed[] = e.medicines && e.medicines.length ? e.medicines : [{ name: "—" }];
+                        const href = e.kind === "vaccine" ? `/vaccinations?barcode=${encodeURIComponent(e.barcode)}` : `/prescriptions/${encodeURIComponent(e.barcode)}`;
+                        return meds.map((med, j) => (
+                          <tr key={`${i}-${j}`} onClick={() => router.push(href)} className={`cursor-pointer [&>td]:align-top hover:bg-brand-50/50 dark:hover:bg-slate-800 ${e.cancelled ? "opacity-50" : ""} ${j === 0 && i > 0 ? "border-t-2 border-slate-200 dark:border-slate-700" : ""}`}>
+                            <td className="whitespace-nowrap px-3 py-2 text-slate-600 dark:text-slate-300">{fmtDate(e.executed_at)}</td>
+                            <td className="px-3 py-2 font-mono text-[11px] text-slate-500">{j === 0 ? e.barcode.split(":")[0] : ""}</td>
+                            <td className="px-3 py-2 text-slate-700 dark:text-slate-200">
+                              <span className="flex items-start gap-1.5">
+                                {j === 0 && e.kind === "vaccine" && <span className="mt-0.5 shrink-0 rounded bg-sky-100 px-1.5 py-0.5 text-[9px] font-semibold text-sky-700">💉 ΕΜΒΟΛΙΟ</span>}
+                                <span className="whitespace-normal break-words">{med.name}</span>
+                              </span>
+                            </td>
+                            <td className="whitespace-nowrap px-3 py-2 text-right tabular-nums text-slate-600 dark:text-slate-300">{med.quantity != null ? `×${med.quantity}` : ""}</td>
+                            <td className="px-3 py-2 text-xs text-slate-500">{j === 0 ? (e.doctor || "—") : ""}</td>
+                            <td className="whitespace-nowrap px-3 py-2 text-right font-medium">{j === 0 ? (e.amount_total ? fmtEur(e.amount_total) : "—") : ""}</td>
+                          </tr>
+                        ));
+                      })}
                     </tbody>
                   </table>
                 </div>
-                <p className="mt-2 text-[11px] text-slate-400">{t("Κλικ σε γραμμή για τη λεπτομέρεια της συνταγής.", "Click a row for the prescription detail.")}</p>
+                <div className="mt-3 flex items-center justify-between gap-3">
+                  <p className="text-[11px] text-slate-400">{t("Κλικ σε γραμμή για τη λεπτομέρεια της συνταγής.", "Click a row for the prescription detail.")}</p>
+                  {p.executions.length > EXECS_PER_PAGE && (() => {
+                    const total = Math.ceil(p.executions.length / EXECS_PER_PAGE);
+                    return (
+                      <div className="flex shrink-0 items-center gap-2 text-sm">
+                        <button onClick={() => setExecPage((n) => Math.max(0, n - 1))} disabled={execPage === 0}
+                          className="rounded-lg border border-slate-300 px-3 py-1 font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-40 dark:border-slate-700 dark:text-slate-300">‹ {t("Προηγ.", "Prev")}</button>
+                        <span className="whitespace-nowrap text-xs text-slate-500">{t("Σελίδα", "Page")} {execPage + 1}/{total}</span>
+                        <button onClick={() => setExecPage((n) => Math.min(total - 1, n + 1))} disabled={execPage >= total - 1}
+                          className="rounded-lg border border-slate-300 px-3 py-1 font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-40 dark:border-slate-700 dark:text-slate-300">{t("Επόμ.", "Next")} ›</button>
+                      </div>
+                    );
+                  })()}
+                </div>
               </div>
             </div>
           )}

@@ -82,6 +82,12 @@ celery_app.conf.beat_schedule = {
         "task": "app.workers.ingestion.dispatch_reconcile_gaps",
         "schedule": crontab(hour=6, minute=15),
     },
+    # GDPR: ΔΙΑΡΡΟΕΣ cross-tenant — εκτελέσεις που ανήκουν στον tenant (scoped feed) αλλά κάθονται σε
+    # ΑΛΛΟΝ (raw ΑΜΚΑ σε λάθος φαρμακείο). Καθημερινή σάρωση + ΑΥΤΟΜΑΤΗ μεταφορά στον σωστό.
+    "cross-tenant-leaks-daily": {
+        "task": "app.workers.ingestion.dispatch_cross_tenant_leaks",
+        "schedule": crontab(hour=6, minute=45),
+    },
     # Amount audit vs ΗΔΥΚΑ printout (ground truth) — verify each execution's ποσά & correct any
     # ±λεπτό drift (repeats/partials). Hourly batch per tenant on the backfill queue: keeps up with
     # new executions & drains the historical backlog gradually. Minute 20 = offset from the syncs.

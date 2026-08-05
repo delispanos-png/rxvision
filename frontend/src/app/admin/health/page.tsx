@@ -10,6 +10,8 @@ import { DataTable, type Column } from "@/components/tables/DataTable";
 type Day = { date: string; ratio: number | null };
 type Service = { source: string; runs: number; failed: number; uptime_pct: number; status: string; daily: Day[] };
 type Failure = { tenant: string; source: string; error: string; at: string };
+type Transfer = { external_id: string; from: string; to: string; patient_removed: boolean; at: string };
+type CrossTenant = { transfers_30d: number; recent_transfers: Transfer[]; pending_leaks: number; last_scan_at: string | null };
 type Health = {
   summary: { syncs_30d: number; failed_30d: number; active_tenants: number; success_rate: number };
   services: Service[];
@@ -17,6 +19,7 @@ type Health = {
   vault?: { healthy: boolean };
   ingest?: { last_data_at: string | null; stale_hours: number | null };
   alert?: boolean;
+  cross_tenant?: CrossTenant;
 };
 
 const STATUS_LABEL: Record<string, { text: string; cls: string }> = {
@@ -59,6 +62,14 @@ const failColumns: Column<Failure>[] = [
   { key: "tenant", header: "Tenant" },
   { key: "source", header: "Πηγή" },
   { key: "error", header: "Σφάλμα", render: (r) => <span className="text-red-600">{r.error}</span> },
+];
+
+const xferColumns: Column<Transfer>[] = [
+  { key: "at", header: "Ημ/νία", render: (r) => fmtDate(r.at) },
+  { key: "external_id", header: "Barcode", render: (r) => <span className="font-mono text-xs">{r.external_id}</span> },
+  { key: "from", header: "Από (λάθος)", render: (r) => <span className="text-red-600">{r.from}</span> },
+  { key: "to", header: "Προς (σωστό)", render: (r) => <span className="text-emerald-700">{r.to}</span> },
+  { key: "patient_removed", header: "ΑΜΚΑ", render: (r) => r.patient_removed ? <span className="text-emerald-700">αφαιρέθηκε ✓</span> : <span className="text-slate-400">—</span> },
 ];
 
 export default function HealthPage() {
@@ -110,6 +121,26 @@ export default function HealthPage() {
           <div className="py-6 text-center text-slate-400">Δεν υπάρχουν δεδομένα sync.</div>
         ) : services.map((x) => <ServiceRow key={x.source} s={x} />)}
       </div>
+
+      {/* GDPR: cross-tenant διαρροές — αυτόματος έλεγχος & μεταφορά στο σωστό φαρμακείο */}
+      {data?.cross_tenant && (
+        <div className="mb-8">
+          <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-700">
+            🔀 Διαρροές μεταξύ φαρμακείων (GDPR)
+            {data.cross_tenant.pending_leaks > 0 ? (
+              <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700">{data.cross_tenant.pending_leaks} εκκρεμείς — μεταφέρονται</span>
+            ) : (
+              <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-700">καμία εκκρεμής ✓</span>
+            )}
+          </h2>
+          <div className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-1 rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-600">
+            <span>Αυτόματος ημερήσιος έλεγχος: κάθε εκτέλεση που βρεθεί σε λάθος φαρμακείο <b>μεταφέρεται</b> στον σωστό (και το ΑΜΚΑ φεύγει από το λάθος).</span>
+            <span className="text-slate-400">Μεταφορές 30ημ: <b className="text-slate-700">{fmtNum(data.cross_tenant.transfers_30d)}</b></span>
+            {data.cross_tenant.last_scan_at && <span className="text-slate-400">Τελευταία σάρωση: {fmtDate(data.cross_tenant.last_scan_at)}</span>}
+          </div>
+          <DataTable pageSize={10} columns={xferColumns} rows={data.cross_tenant.recent_transfers ?? []} rowKey={(r, i) => `${r.external_id}-${i}`} empty="Καμία μεταφορά διαρροής — τα δεδομένα είναι καθαρά 🎉" />
+        </div>
+      )}
 
       <h2 className="mb-3 text-sm font-semibold text-slate-700">Πρόσφατες αποτυχίες</h2>
       <DataTable pageSize={20} columns={failColumns} rows={data?.recent_failures ?? []} rowKey={(r, i) => `${r.tenant}-${i}`} empty="Καμία αποτυχία 🎉" />

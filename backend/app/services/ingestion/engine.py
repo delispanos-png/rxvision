@@ -133,25 +133,70 @@ class IngestionEngine:
         return job
 
     # ── per-record persist ─────────────────────────────────
+    async def _release_cross_tenant_clash(self, ex: CanonicalExecution, other_tenant: str,
+                                          job_id: ObjectId) -> None:
+        """Το `ex` ανήκει σε ΕΜΑΣ (scoped feed) αλλά υπάρχει αντίγραφο-διαρροή στον `other_tenant`.
+        Το αφαιρούμε ΟΡΙΣΤΙΚΑ από εκεί (με backup) + καθαρίζουμε ορφανό ασθενή (raw ΑΜΚΑ = GDPR) &
+        γιατρό & rx_frequency προϊόντων. Μετά ο caller συνεχίζει να το γράψει στο δικό μας tenant."""
+        db = self.db
+        victim = await db["prescription_executions"].find_one(
+            {"source": ex.source, "external_id": ex.external_id, "tenant_id": other_tenant})
+        if not victim:
+            return
+        vid = victim["_id"]
+        items = await db["prescription_items"].find({"execution_id": vid}).to_list(None)
+        pref = victim.get("patient_ref")
+        did = victim.get("doctor_id")
+        # ορφανός; = καμία ΑΛΛΗ εκτέλεση του other_tenant δεν τον χρησιμοποιεί (αφού βγει αυτή)
+        patient_orphan = bool(pref) and await db["prescription_executions"].count_documents(
+            {"tenant_id": other_tenant, "patient_ref": pref, "_id": {"$ne": vid}}) == 0
+        doctor_orphan = bool(did) and await db["prescription_executions"].count_documents(
+            {"tenant_id": other_tenant, "doctor_id": did, "_id": {"$ne": vid}}) == 0
+        pdoc = await db["patients_anonymized"].find_one({"_id": pref}) if patient_orphan else None
+        ddoc = await db["doctors"].find_one({"_id": did}) if doctor_orphan else None
+        # BACKUP (αναστρέψιμο) πριν οτιδήποτε σβηστεί
+        await db["cleanup_backups"].insert_one({
+            "reason": "cross_tenant_transfer", "at": _now(), "job_id": job_id,
+            "source": ex.source, "external_id": ex.external_id,
+            "from_tenant": other_tenant, "to_tenant": self.tenant_id,
+            "execution": victim, "items": items, "patient": pdoc, "doctor": ddoc})
+        # ΔΙΑΓΡΑΦΗ από τον λάθος tenant
+        await db["prescription_items"].delete_many({"execution_id": vid})
+        await db["prescription_executions"].delete_one({"_id": vid})
+        if patient_orphan:               # GDPR: φεύγει το raw ΑΜΚΑ από το λάθος φαρμακείο
+            await db["patients_anonymized"].delete_one({"_id": pref})
+        if doctor_orphan:
+            await db["doctors"].delete_one({"_id": did})
+        for it in items:                 # διόρθωσε συχνότητα προϊόντων του λάθος tenant
+            if it.get("product_id"):
+                await db["products"].update_one(
+                    {"_id": it["product_id"], "tenant_id": other_tenant},
+                    {"$inc": {"rx_frequency": -1}})
+        # καθάρισε τυχόν παλιό block alert & γράψε ίχνος μεταφοράς (audit)
+        await db["ingestion_alerts"].delete_many(
+            {"kind": "cross_tenant_barcode", "external_id": ex.external_id})
+        await db["ingestion_alerts"].insert_one({
+            "kind": "cross_tenant_transferred", "external_id": ex.external_id, "source": ex.source,
+            "from_tenant": other_tenant, "to_tenant": self.tenant_id, "job_id": job_id,
+            "patient_removed": patient_orphan, "doctor_removed": doctor_orphan, "at": _now()})
+        log.warning("cross_tenant_transfer external_id=%s from=%s to=%s (patient_orphan=%s)",
+                    ex.external_id, other_tenant, self.tenant_id, patient_orphan)
+
     async def _persist(self, ex: CanonicalExecution, job_id: ObjectId) -> str:
-        # ── ΦΡΟΥΡΟΣ cross-tenant ───────────────────────────────────────────────────────────
-        # Μια συνταγή (barcode) ανήκει σε ΕΝΑ φαρμακείο. Αν αυτό το external_id υπάρχει ήδη σε
-        # ΑΛΛΟΝ tenant, είναι διασταυρούμενη μόλυνση (αστάθεια ΗΔΥΚΑ / λάθος ρύθμιση) → ΔΕΝ το
-        # γράφουμε ΠΟΤΕ· καταγράφουμε alert για έλεγχο. Προστασία προσωπικών δεδομένων (GDPR).
+        # ── ΦΡΟΥΡΟΣ cross-tenant → AUTO-TRANSFER στον αυθεντικό ιδιοκτήτη ───────────────────────
+        # Μια συνταγή/εκτέλεση (external_id = barcode:execNo) συμβαίνει σε ΕΝΑ φαρμακείο. Αν υπάρχει
+        # ήδη σε ΑΛΛΟΝ tenant → διασταυρούμενη μόλυνση. ΑΥΘΕΝΤΙΚΟΣ ΙΔΙΟΚΤΗΤΗΣ = ΕΜΕΙΣ: το
+        # `iter_executions` ΑΡΝΕΙΤΑΙ να τρέξει χωρίς pharmacy_id (hdika_client ~γρ.514) → το ΗΔΥΚΑ feed
+        # μας είναι scoped στο δικό μας pharmacyId, άρα μας επέστρεψε ΑΥΤΗ την εκτέλεση = είναι δική μας.
+        # Το αντίγραφο στον άλλο tenant είναι ΔΙΑΡΡΟΗ (κρατά raw ΑΜΚΑ ασθενή = GDPR). Παλιά το μπλοκάραμε
+        # ΜΟΝΙΜΑ (first-come-wins) → ο σωστός ιδιοκτήτης το έχανε για πάντα & η διαρροή έμενε. Τώρα:
+        # ΑΦΑΙΡΟΥΜΕ το αντίγραφο-διαρροή (backup + καθαρισμός ορφανών ασθενή/γιατρού) και ΣΥΝΕΧΙΖΟΥΜΕ
+        # να γράψουμε ΕΔΩ με τη ΣΩΣΤΗ ψευδωνυμοποίηση (pepper) του δικού μας φαρμακείου.
         clash = await self.db["prescription_executions"].find_one(
             {"source": ex.source, "external_id": ex.external_id,
              "tenant_id": {"$ne": self.tenant_id}}, {"tenant_id": 1})
         if clash:
-            await self.db["ingestion_alerts"].update_one(
-                {"kind": "cross_tenant_barcode", "external_id": ex.external_id,
-                 "tenant_id": self.tenant_id},
-                {"$set": {"kind": "cross_tenant_barcode", "external_id": ex.external_id,
-                          "source": ex.source, "blocked_tenant_id": self.tenant_id,
-                          "owner_tenant_id": clash["tenant_id"], "job_id": job_id,
-                          "at": _now()}}, upsert=True)
-            log.warning("cross_tenant_block external_id=%s blocked=%s owner=%s",
-                        ex.external_id, self.tenant_id, clash["tenant_id"])
-            return "cross_tenant_skip"
+            await self._release_cross_tenant_clash(ex, clash["tenant_id"], job_id)
         patient_ref = await self._resolve_patient(ex)
         doctor_id = await self._resolve_doctor(ex)
         fund_id = await self._resolve_fund(ex)
@@ -197,8 +242,12 @@ class IngestionEngine:
             "sync_job_id": job_id, "details": ex.details or {},
             "needs_dose_check": await self._needs_dose_check(ex),
         }
+        # Content άλλαξε (περάσαμε το hash-equal early-return) → οι τιμές CDA ξαναγράφονται. ΚΑΘΑΡΙΣΕ
+        # τα audit flags ώστε ο amount_audit να ΞΑΝΑ-επαληθεύσει vs έντυπο ΕΟΠΥΥ — αλλιώς ένα re-parse
+        # «θάβει» τη διόρθωση εντύπου (patient_share γυρίζει σε ingestion) και δεν ξαναελέγχεται ποτέ.
         res = await self.db["prescription_executions"].find_one_and_update(  # tenant-ok: nat_key carries tenant_id
-            nat_key, {"$set": doc}, upsert=True, return_document=ReturnDocument.AFTER)
+            nat_key, {"$set": doc, "$unset": {"amount_audited_at": "", "amount_audit_fails": ""}},
+            upsert=True, return_document=ReturnDocument.AFTER)
         exec_id = res["_id"]
         is_new = existing is None
 

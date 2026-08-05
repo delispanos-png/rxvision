@@ -657,13 +657,20 @@ class PatientIntelligenceRepository(BaseRepository):
             {"$project": {"_id": 0, "barcode": "$external_id", "executed_at": 1,
                           "amount_total": 1, "patient_share": 1,
                           "doctor": {"$ifNull": [{"$first": "$doc.full_name"}, None]},
-                          "medicines": {"$map": {"input": "$prods", "as": "p", "in": "$$p.name"}}}},
+                          # ΕΝΑ αντικείμενο ανά εκτελεσμένη γραμμή: όνομα (από products) + ποσότητα
+                          # (από την ίδια τη γραμμή prescription_items) → η φόρμα δείχνει «φάρμακο × ποσότητα».
+                          "medicines": {"$map": {"input": "$it", "as": "line", "in": {
+                              "name": {"$let": {"vars": {"pr": {"$first": {"$filter": {
+                                  "input": "$prods", "as": "p",
+                                  "cond": {"$eq": ["$$p._id", "$$line.product_id"]}}}}},
+                                  "in": "$$pr.name"}},
+                              "quantity": {"$ifNull": ["$$line.quantity", None]}}}}}},
         ])
         # keep the FULL external_id ("barcode:execNo") — the detail endpoint matches it EXACTLY
         executions = [{"kind": "rx", "barcode": str(e.get("barcode", "")), "executed_at": e.get("executed_at"),
                        "amount_total": e.get("amount_total", 0), "patient_share": e.get("patient_share", 0),
                        "doctor": e.get("doctor"), "cancelled": False,
-                       "medicines": [m for m in (e.get("medicines") or []) if m]}
+                       "medicines": [m for m in (e.get("medicines") or []) if m.get("name")]}
                       for e in exec_rows]
         # ALSO merge the patient's flu vaccinations (separate ΗΔΥΚΑ INFLUENZA registry) so the execution
         # list is complete. Ο εμβολιασμός έχει ΔΙΚΗ του τιμή (total_price / insurance_part / patient_part)·
@@ -688,7 +695,7 @@ class PatientIntelligenceRepository(BaseRepository):
                 "kind": "vaccine", "barcode": v.get("barcode") or v.get("external_id") or "",
                 "executed_at": v.get("executed_at"), "amount_total": vt, "patient_share": vp,
                 "doctor": None, "cancelled": cancelled,
-                "medicines": [v.get("vaccine_name") or "Εμβόλιο γρίπης"]})
+                "medicines": [{"name": v.get("vaccine_name") or "Εμβόλιο γρίπης", "quantity": 1}]})
         # εμβολιασμοί → στον τζίρο/αιτούμενο/συμμετοχή του πελάτη (LTV, μέσος όρος ανά εκτέλεση)
         value += vac_value; claimed += vac_claimed; paid += vac_paid
         executions.sort(key=lambda x: x.get("executed_at") or datetime(1970, 1, 1, tzinfo=timezone.utc),

@@ -59,12 +59,15 @@ async def open_session(tenant_id: str, user_id: str, *, sid: str | None = None,
     sid = sid or uuid.uuid4().hex
     now = _now()
     setf = {"tenant_id": tenant_id, "user_id": user_id, "last_active_at": now,
-            "impersonation": bool(impersonation), "ua": (ua or "")[:200]}
+            "ua": (ua or "")[:200]}
     if ip:
         setf["ip"] = ip[:64]
+    # ⚠ Το `impersonation` ορίζεται ΜΟΝΟ στη ΓΕΝΝΗΣΗ της συνεδρίας ($setOnInsert) — ΠΟΤΕ σε revive/
+    # refresh. Αλλιώς το πρώτο refresh του admin token (που καλεί open_session(sid=sid) χωρίς το flag)
+    # θα «βάφτιζε» την impersonation ως ΚΑΝΟΝΙΚΗ → θα έπιανε seat → θα μπλόκαρε τον πραγματικό πελάτη.
     await shared_db()[SESSIONS].update_one(
         {"_id": sid},
-        {"$set": setf, "$setOnInsert": {"created_at": now}},
+        {"$set": setf, "$setOnInsert": {"created_at": now, "impersonation": bool(impersonation)}},
         upsert=True)
     return sid
 
