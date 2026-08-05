@@ -37,10 +37,10 @@ def _period_end(cycle: str, frm: datetime) -> datetime:
 
 
 def effective_status(sub: dict | None) -> str:
-    """ΜΙΑ συνεκτική κατάσταση πελάτη, από τη ΣΥΝΔΡΟΜΗ (πηγή αλήθειας). Ο κανόνας που ζήτησε ο ιδιοκτήτης:
-    ενεργός ⇔ η συνδρομή είναι ΕΝΤΟΣ περιόδου ΚΑΙ πληρωμένη/δοκιμαστική/δωρεάν· αλλιώς ληγμένος.
-      active · trial · past_due (περιθώριο, κρατά πρόσβαση) · expired · suspended · cancelled · none
-    Δεν βασίζεται στο (συχνά μη-συγχρονισμένο) tenant.status — υπολογίζει από period_end + status."""
+    """ΜΙΑ συνεκτική κατάσταση πελάτη — η **ΠΕΡΙΟΔΟΣ** (current_period_end) είναι η πηγή αλήθειας, όπως
+    ζήτησε ο ιδιοκτήτης: ΕΝΤΟΣ περιόδου → ενεργός· ΕΚΤΟΣ → ληγμένος. ΔΕΝ εμπιστεύεται παλιό/ξεχασμένο
+    status="expired" όταν η λήξη είναι στο μέλλον (π.χ. μετά από επέκταση/αλλαγή πλάνου).
+      active · trial · past_due (περιθώριο) · expired · suspended · cancelled · none"""
     if not sub:
         return "none"
     st = (sub.get("status") or "").lower()
@@ -51,14 +51,16 @@ def effective_status(sub: dict | None) -> str:
     if st == "suspended":
         return "suspended"
     pend = sub.get("current_period_end")
-    in_period = pend is None or pend > _now()
-    if st == "expired" or not in_period:         # ληγμένη περίοδος → expired (έστω κι αν το status ξέμεινε)
-        return "expired"
+    if pend is not None:                         # η ΠΕΡΙΟΔΟΣ αποφασίζει (όχι το ξεχασμένο status)
+        if pend > _now():
+            return "trial" if st in ("trial", "trialing") else "active"   # ΕΝΤΟΣ περιόδου → ενεργός
+        return "past_due" if st == "past_due" else "expired"              # ΕΚΤΟΣ περιόδου → ληγμένος
+    # χωρίς ημερομηνία λήξης → πέσε στο raw status
     if st in ("trial", "trialing"):
         return "trial"
-    if st == "past_due":
-        return "past_due"
-    return "active"                              # εντός περιόδου & όχι-ληγμένη → ενεργός
+    if st in ("expired", "past_due"):
+        return st
+    return "active"
 
 
 async def start_card_capture(tenant_id: str) -> dict:
