@@ -50,7 +50,8 @@ async def audit_amounts_against_printout(
     # πρέπει να ξαναδοκιμάζονται ατέρμονα → όποια ξεπέρασε το όριο αποτυχιών εξαιρείται.
     q["amount_audit_fails"] = {"$not": {"$gte": 5}}   # ΝΒ: πιάνει & τα docs χωρίς το πεδίο (missing)
     docs = await coll.find(
-        q, {"external_id": 1, "patient_share": 1, "amount_total": 1, "fund": 1},
+        q, {"external_id": 1, "patient_share": 1, "amount_total": 1, "fund": 1,
+            "details.kyyap_covered": 1},
     ).sort("executed_at", -1).limit(limit).to_list(length=limit)
 
     checked = corrected = failed = skipped = 0
@@ -58,8 +59,12 @@ async def audit_amounts_against_printout(
     for d in docs:
         ext = str(d.get("external_id") or "")
         fund_name = str(((d.get("fund") or {}).get("name")) or "").upper().replace(".", "")
-        # ΚΥΥΑΠ → τριμερής· το διμερές έντυπο δεν το εκφράζει σωστά. Μαρκάρουμε ελεγμένο & προσπερνάμε.
-        if "ΚΥΥΑΠ" in fund_name:
+        # ΚΥΥΑΠ/ΕΤΥΑΠ → ΤΡΙΜΕΡΗΣ· το διμερές έντυπο δεν το εκφράζει σωστά → ΕΞΑΙΡΟΥΝΤΑΙ. ⚠ ΚΡΙΣΙΜΟ: το
+        # όνομα ταμείου (fund.name) συχνά ΔΕΝ είναι αποθηκευμένο (=None) → ο έλεγχος «ΚΥΥΑΠ in fund_name»
+        # έχανε πραγματικά ΚΥΥΑΠ scripts → ελέγχονταν με διμερές έντυπο → ΜΕΤΑΤΟΠΙΖΟΤΑΝ η χρέωση ταμείου
+        # κατά λεπτά (πάγιο bug). Αξιόπιστος δείκτης = `details.kyyap_covered` (το βάζει το ingestion branch).
+        is_kyyap = ("ΚΥΥΑΠ" in fund_name) or bool((d.get("details") or {}).get("kyyap_covered"))
+        if is_kyyap:
             skipped += 1
             if not dry_run:
                 await coll.update_one({"_id": d["_id"]},

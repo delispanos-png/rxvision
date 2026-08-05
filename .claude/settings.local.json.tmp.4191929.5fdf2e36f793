@@ -1,0 +1,28 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep -oE \"rounded-2xl border border-slate-[0-9]+ bg-white[^\\\\\"]{0,30}\" src/app/portal/page.tsx)",
+      "Bash([ -f \"$TXT\" ])",
+      "Bash(awk 'NR>=910 && NR<=1760 && \\(/<\\\\/main>/ || /fixed inset-x-0 bottom-0/ || /<nav /\\)' page.tsx)",
+      "Bash(awk 'NR>=910 && NR<=1992 && /className=\"[^\"]*fixed[^\"]*\"/{print NR\": \"substr\\($0,1,90\\)}' page.tsx)",
+      "Bash(cd /opt/rxvision *)",
+      "Bash(awk 'NR>=540 && NR<=595 && /async def /{print NR\": \"$0}' backend/app/api/v1/routers/admin.py)",
+      "Bash(python3 -c \"import ast; [ast.parse\\(open\\(f\\).read\\(\\)\\) for f in ['backend/app/services/billing_service.py','backend/app/api/v1/routers/admin.py']]; print\\('✅ backend syntax OK'\\)\")",
+      "Bash(sed -i 's/export const APP_VERSION = \"1.32.74\";/export const APP_VERSION = \"1.32.75\";/' frontend/src/lib/version.ts)",
+      "Bash(python3 -c \"import ast; ast.parse\\(open\\('backend/app/services/billing_service.py'\\).read\\(\\)\\); print\\('✅ syntax OK'\\)\")",
+      "Bash(grep -rn \"subscriptions/\\\\${\\\\|PATCH.*subscription\\\\|plan:\\\\|modules\" \"frontend/src/app/admin/subscribers/[id]/page.tsx\")",
+      "Bash(python3 -c \"import ast; ast.parse\\(open\\('backend/app/api/v1/routers/admin.py'\\).read\\(\\)\\); print\\('✅ syntax OK'\\)\")",
+      "Bash(python3 -c \"import ast; ast.parse\\(open\\('backend/app/services/billing_service.py'\\).read\\(\\)\\); print\\('✅ backend OK'\\)\")",
+      "Bash(sed -i 's/export const APP_VERSION = \"1.32.75\";/export const APP_VERSION = \"1.32.76\";/' frontend/src/lib/version.ts)",
+      "Bash(awk 'NR>=300 && NR<=370 && /async def /{print NR\": \"$0}' backend/app/api/v1/routers/admin.py)",
+      "Bash(python3 -c \"import ast; ast.parse\\(open\\('backend/app/api/v1/routers/admin.py'\\).read\\(\\)\\); print\\('✅ backend OK'\\)\")",
+      "Bash(sed -i 's/export const APP_VERSION = \"1.32.76\";/export const APP_VERSION = \"1.32.77\";/' frontend/src/lib/version.ts)",
+      "Bash(python3 -c \"import ast; ast.parse\\(open\\('backend/app/services/auth_service.py'\\).read\\(\\)\\); print\\('✅ syntax OK'\\)\")",
+      "Bash(python3 -c \"import ast; [ast.parse\\(open\\(f\\).read\\(\\)\\) for f in ['backend/app/services/billing_service.py','backend/app/api/v1/routers/billing.py']]; print\\('✅ backend syntax OK'\\)\")",
+      "Bash(python3 -c \"import ast; ast.parse\\(open\\('backend/app/services/ingestion/amount_audit.py'\\).read\\(\\)\\); print\\('✅ syntax OK'\\)\")"
+    ],
+    "additionalDirectories": [
+      "/opt/rxvision/frontend/src/app/admin/subscribers/[id]"
+    ]
+  }
+}
