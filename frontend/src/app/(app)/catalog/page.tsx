@@ -8,10 +8,11 @@ import { appAlert, appConfirm } from "@/store/dialogStore";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
 import { CampaignsCard } from "@/components/catalog/CampaignsCard";
 import { PromosCard } from "@/components/catalog/PromosCard";
+import { ServiceOffersCard } from "@/components/catalog/ServiceOffersCard";
 
 type Product = {
   barcode: string; name: string; description_short?: string | null; description_long?: string | null;
-  photo_url?: string | null; image_id?: string | null; usage_video_url?: string | null; price_cents: number; wholesale_cents?: number; type: string; category?: string | null;
+  photo_url?: string | null; image_id?: string | null; images?: string[]; usage_video_url?: string | null; price_cents: number; wholesale_cents?: number; type: string; category?: string | null;
   tags?: string[]; featured?: boolean; is_fyk?: boolean; participation?: number; discount_pct: number; stock_qty: number; active?: boolean;
 };
 type ListRes = { items: Product[]; total: number };
@@ -90,8 +91,16 @@ function Catalog() {
       <div className="mb-1 flex items-center gap-2 text-xl font-semibold text-slate-800"><Truck className="h-6 w-6 text-brand-600" /> Παραγγελίες & Κατάλογος</div>
       <p className="mb-4 text-sm text-slate-500">Ο κατάλογος ειδών του φαρμακείου σου (OTC φάρμακα + παραφάρμακα) — οι πελάτες παραγγέλνουν από εδώ. <b>Στα συνταγογραφούμενα δεν επιτρέπονται εκπτώσεις.</b></p>
 
-      <div className="mb-4"><CampaignsCard categories={campCats} tags={QUICK_TAGS} /></div>
-      <div className="mb-4"><PromosCard /></div>
+      {/* ── Ενότητα «Προσφορές & προωθητικές ενέργειες» — ομαδοποιημένη ώστε να μη χάνεται ο φαρμακοποιός ── */}
+      <section className="mb-5 rounded-2xl border border-slate-200 bg-slate-50/60 p-4">
+        <div className="mb-1 flex items-center gap-2 text-base font-semibold text-slate-800">🎯 Προσφορές &amp; προωθητικές ενέργειες</div>
+        <p className="mb-3 text-xs text-slate-500">Ό,τι δημιουργείς εδώ εμφανίζεται στο κύκλωμα <b>«🔥 Προσφορές»</b> της πύλης πελατών (my.rxvision.gr), ώστε ο πελάτης να βλέπει γρήγορα τι προμηθεύεται/κλείνει με προσφορά. <b>Τα συνταγογραφούμενα δεν παίρνουν ποτέ έκπτωση.</b></p>
+        <div className="grid items-start gap-4 xl:grid-cols-2">
+          <CampaignsCard categories={campCats} tags={QUICK_TAGS} />
+          <PromosCard />
+          <div className="xl:col-span-2"><ServiceOffersCard /></div>
+        </div>
+      </section>
 
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <form onSubmit={(e) => { e.preventDefault(); setTerm(q.trim()); }} className="relative flex-1 min-w-[200px]">
@@ -266,6 +275,16 @@ function EditModal({ product, busy, tax, onClose, onSave }: { product: Product; 
     } catch { await appAlert("Σφάλμα ανεβάσματος.", { title: "Σφάλμα" }); } finally { setUp(false); }
   }
   const preview = f.image_id ? `${API_BASE}/catalog/image/${f.image_id}` : (f.photo_url || "");
+  const gallery = f.images ?? [];
+  const galRef = useRef<HTMLInputElement>(null);
+  async function uploadGallery(file: File) {
+    setUp(true);
+    try {
+      const fd = new FormData(); fd.append("file", file);
+      const r = await apiUpload<{ ok: boolean; image_id?: string }>("/catalog/image", fd);
+      if (r.ok && r.image_id) setF((s) => ({ ...s, images: [...(s.images ?? []), r.image_id!].slice(0, 8) }));
+    } catch { await appAlert("Σφάλμα ανεβάσματος.", { title: "Σφάλμα" }); } finally { setUp(false); }
+  }
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4" onClick={onClose}>
       <div className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl bg-white p-5 shadow-xl" onClick={(e) => e.stopPropagation()}>
@@ -289,6 +308,24 @@ function EditModal({ product, busy, tax, onClose, onSave }: { product: Product; 
                 <button onClick={() => fileRef.current?.click()} disabled={up} className="inline-flex items-center gap-1.5 rounded-lg border border-brand-200 bg-brand-50 px-3 py-1.5 text-xs font-medium text-brand-700 hover:bg-brand-100 disabled:opacity-50">{up ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ImagePlus className="h-3.5 w-3.5" />} {preview ? "Αλλαγή φωτό" : "Ανέβασμα φωτό"}</button>
                 {preview && <button onClick={() => setF((s) => ({ ...s, image_id: null, photo_url: null }))} className="text-left text-[11px] text-rose-500 hover:underline">Αφαίρεση</button>}
               </div>
+            </div>
+          </div>
+
+          {/* Επιπλέον εικόνες (gallery) — ο πελάτης τις βλέπει στη σελίδα προϊόντος */}
+          <div className="text-xs text-slate-500">Επιπλέον εικόνες (gallery)
+            <div className="mt-1 flex flex-wrap items-center gap-2">
+              {gallery.map((id) => (
+                <div key={id} className="relative h-14 w-14 overflow-hidden rounded-lg border border-slate-200">
+                  <img src={`${API_BASE}/catalog/image/${id}`} alt="" className="h-full w-full object-cover" />
+                  <button onClick={() => setF((s) => ({ ...s, images: (s.images ?? []).filter((x) => x !== id) }))} className="absolute right-0 top-0 grid h-4 w-4 place-items-center rounded-bl bg-black/60 text-white"><X className="h-3 w-3" /></button>
+                </div>
+              ))}
+              {gallery.length < 8 && (
+                <>
+                  <input ref={galRef} type="file" accept="image/*" hidden onChange={(e) => { const fl = e.target.files?.[0]; if (fl) uploadGallery(fl); if (galRef.current) galRef.current.value = ""; }} />
+                  <button onClick={() => galRef.current?.click()} disabled={up} className="grid h-14 w-14 place-items-center rounded-lg border border-dashed border-slate-300 text-slate-400 hover:bg-slate-50 disabled:opacity-50"><Plus className="h-5 w-5" /></button>
+                </>
+              )}
             </div>
           </div>
 

@@ -56,7 +56,9 @@ type Cda = { available?: boolean; found?: boolean; doctor?: string | null; medic
 type RxReq = { _id?: string; kind: string; barcode?: string | null; note?: string | null; status: string; created_at: string; cda?: Cda | null; reply?: string | null; available_date?: string | null };
 type LoyaltyMember = { patient_ref: string; name?: string; points: number; balance_cents: number; tier: string; next_tier: string | null; to_next: number; progress_pct: number; compliance: number | null; refills: number; expected: number; open_refills: number; potential_points: number; points_per_refill: number; cents_per_point: number; ledger: { type: string; cents: number; kind?: string; reason?: string; at: string }[] };
 type LReward = { _id?: string; title: string; type: string; cost_points: number; cost_cents: number; note?: string };
-type Loyalty = { enabled: boolean; enrolled?: boolean; terms?: string; member?: LoyaltyMember | null; rewards?: LReward[] };
+type Reservation = { code: string; reward: string; cost_points: number; expires_at: string | null };
+type Referral = { code: string | null; referrer_cents: number; referred_cents: number };
+type Loyalty = { enabled: boolean; enrolled?: boolean; terms?: string; member?: LoyaltyMember | null; rewards?: LReward[]; reservation?: Reservation | null; referral?: Referral | null };
 const RTYPE_EMOJI: Record<string, string> = { product: "🛍️", service: "💉", percent: "🏷️", cash: "💶" };
 
 const dt = (s?: string | null) => (s ? fmtDate(s) : "—");
@@ -158,6 +160,7 @@ export default function PortalHome() {
   const [rxReqs, setRxReqs] = useState<RxReq[]>([]);
   const [loyalty, setLoyalty] = useState<Loyalty | null>(null);
   const [showCard, setShowCard] = useState(false);   // modal κάρτας πιστότητας (QR) — γρήγορη πρόσβαση από Αρχική
+  const [refCodeInput, setRefCodeInput] = useState("");   // κωδικός σύστασης φίλου (κατά την εγγραφή)
   const [health, setHealth] = useState<Health | null>(null);
   const [sched, setSched] = useState<Schedule | null>(null);
   const [medsView, setMedsView] = useState<"calendar" | "settings">("calendar");  // Πρόγραμμα: Ημερολόγιο | Ρυθμίσεις
@@ -543,7 +546,18 @@ export default function PortalHome() {
   }
   async function joinLoyalty() {
     setAssignBusy(true);
-    try { await patientApi("/patient/loyalty/join", { method: "POST" }); setLoyalty(await patientApi<Loyalty>("/patient/loyalty")); }
+    try { await patientApi("/patient/loyalty/join", { method: "POST", body: JSON.stringify({ referred_by_code: refCodeInput.trim().toUpperCase() || null }) }); setLoyalty(await patientApi<Loyalty>("/patient/loyalty")); }
+    catch { /* ignore */ } finally { setAssignBusy(false); }
+  }
+  // Self-redeem: ο πελάτης δεσμεύει δώρο → κωδικός για το φαρμακείο· ακύρωση → επιστροφή πόντων.
+  async function redeemReward(rewardId: string) {
+    setAssignBusy(true);
+    try { await patientApi("/patient/loyalty/redeem-request", { method: "POST", body: JSON.stringify({ reward_id: rewardId }) }); setLoyalty(await patientApi<Loyalty>("/patient/loyalty")); }
+    catch { toast("Δεν ήταν δυνατή η δέσμευση — έλεγξε τους πόντους σου."); } finally { setAssignBusy(false); }
+  }
+  async function cancelReservation(code: string) {
+    setAssignBusy(true);
+    try { await patientApi("/patient/loyalty/cancel-request", { method: "POST", body: JSON.stringify({ code }) }); setLoyalty(await patientApi<Loyalty>("/patient/loyalty")); }
     catch { /* ignore */ } finally { setAssignBusy(false); }
   }
   async function submitBarcode(e: React.FormEvent) {
@@ -1646,6 +1660,9 @@ export default function PortalHome() {
                 <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:border-slate-800 dark:bg-slate-900 p-4">
                   <div className="mb-1 text-sm font-semibold text-slate-700 dark:text-slate-200">Όροι συμμετοχής</div>
                   <pre className="max-h-52 overflow-y-auto whitespace-pre-wrap rounded-lg bg-slate-50 dark:bg-slate-800/60 p-3 text-xs leading-relaxed text-slate-600 dark:text-slate-300">{loyalty.terms}</pre>
+                  <label className="mt-3 block text-xs font-medium text-slate-600 dark:text-slate-300">Σε έφερε φίλος; Κωδικός σύστασης (προαιρετικό)
+                    <input value={refCodeInput} onChange={(e) => setRefCodeInput(e.target.value.toUpperCase().slice(0, 6))} placeholder="π.χ. AB3K9P"
+                      className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-center font-mono text-sm tracking-widest dark:border-slate-700 dark:bg-slate-800" /></label>
                   <button onClick={joinLoyalty} disabled={assignBusy}
                     className="mt-3 w-full rounded-xl bg-brand-600 py-3 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-60">✓ Αποδέχομαι τους όρους & εγγραφή</button>
                   <p className="mt-1 text-center text-[11px] text-slate-400">Οι πόντοι ξεκινούν να μετρούν από τη στιγμή της εγγραφής σου.</p>
@@ -1678,6 +1695,19 @@ export default function PortalHome() {
                       <div className="mt-1 font-mono text-[10px] tracking-wide text-slate-400">{m.patient_ref}</div>
                     </div>
                   </div>
+
+                  {/* Σύστησε φίλο — μοιράσου τον κωδικό σου, κερδίστε κι οι δύο πόντους */}
+                  {loyalty.referral?.code && (
+                    <div className="rounded-2xl border border-sky-200 bg-sky-50 p-4 dark:border-sky-900/40 dark:bg-sky-950/20">
+                      <div className="text-sm font-bold text-sky-900 dark:text-sky-200">👥 Σύστησε έναν φίλο</div>
+                      <p className="mt-0.5 text-xs text-sky-700 dark:text-sky-300">Μοιράσου τον κωδικό σου. Όταν εγγραφεί, κερδίζετε πόντους και οι δύο{loyalty.referral.referrer_cents ? ` (εσύ +${eur(loyalty.referral.referrer_cents)})` : ""}.</p>
+                      <div className="mt-2 flex items-center gap-2">
+                        <span className="flex-1 rounded-lg border border-sky-300 bg-white px-3 py-2 text-center font-mono text-lg font-bold tracking-widest text-sky-800 dark:bg-slate-900">{loyalty.referral.code}</span>
+                        <button onClick={() => { const c = loyalty.referral!.code!; const share = `Μπες στο πρόγραμμα επιβράβευσης του φαρμακείου με τον κωδικό μου: ${c}`; if (navigator.share) { navigator.share({ text: share }).catch(() => {}); } else { navigator.clipboard?.writeText(c); toast("Ο κωδικός αντιγράφηκε!"); } }}
+                          className="shrink-0 rounded-lg bg-sky-600 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-700">Μοιράσου</button>
+                      </div>
+                    </div>
+                  )}
 
                   {/* στόχος / πρόοδος */}
                   {m.next_tier && (
@@ -1714,6 +1744,18 @@ export default function PortalHome() {
                   </div>
 
                   {/* δώρα — τι δικαιούται ο πελάτης με βάση τα στάνταρ του φαρμακείου */}
+                  {/* Ενεργή δέσμευση δώρου — κωδικός για το φαρμακείο */}
+                  {loyalty.reservation && (
+                    <div className="rounded-2xl border-2 border-amber-300 bg-amber-50 p-4 dark:border-amber-500/40 dark:bg-amber-500/10">
+                      <div className="text-sm font-bold text-amber-900 dark:text-amber-200">🎁 Δεσμευμένο δώρο: {loyalty.reservation.reward}</div>
+                      <div className="mt-1 text-xs text-amber-800 dark:text-amber-300">Δείξε αυτόν τον κωδικό στο φαρμακείο για να το παραλάβεις:</div>
+                      <div className="mt-2 flex items-center gap-3">
+                        <span className="rounded-xl bg-white px-4 py-2 font-mono text-2xl font-extrabold tracking-widest text-amber-700 shadow-sm dark:bg-slate-900">{loyalty.reservation.code}</span>
+                        <button onClick={() => loyalty.reservation && cancelReservation(loyalty.reservation.code)} disabled={assignBusy} className="text-xs font-semibold text-amber-700 underline hover:text-amber-900 disabled:opacity-50">Ακύρωση</button>
+                      </div>
+                      <div className="mt-1 text-[11px] text-amber-600">Οι πόντοι είναι δεσμευμένοι μέχρι την παραλαβή· η κράτηση λήγει σε 48 ώρες.</div>
+                    </div>
+                  )}
                   {!!loyalty.rewards?.length && (() => {
                     const cpp = m.cents_per_point || 1;
                     const ranked = [...loyalty.rewards].map((r) => ({ ...r, afford: m.balance_cents >= r.cost_cents, need: Math.max(0, Math.ceil((r.cost_cents - m.balance_cents) / cpp)) }))
@@ -1732,13 +1774,13 @@ export default function PortalHome() {
                               <div className="shrink-0 text-right">
                                 <div className="text-xs font-semibold text-slate-600 dark:text-slate-300">{r.cost_points} π. · {eur(r.cost_cents)}</div>
                                 {r.afford
-                                  ? <div className="text-[11px] font-bold text-emerald-700">✓ Μπορείς να το πάρεις</div>
+                                  ? <button onClick={() => r._id && redeemReward(r._id)} disabled={assignBusy || !!loyalty.reservation} title={loyalty.reservation ? "Έχεις ήδη ενεργή δέσμευση" : "Δέσμευσέ το"} className="rounded-lg bg-emerald-600 px-2.5 py-1 text-[11px] font-bold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-40">Δέσμευσέ το</button>
                                   : <div className="text-[11px] text-slate-400">🔒 σου λείπουν {r.need} πόντοι</div>}
                               </div>
                             </div>
                           ))}
                         </div>
-                        <p className="mt-1.5 text-[11px] text-slate-400">Δείξε την κάρτα μέλους σου στο φαρμακείο για να παραλάβεις όσα δικαιούσαι.</p>
+                        <p className="mt-1.5 text-[11px] text-slate-400">Πάτα «Δέσμευσέ το» για να κρατήσεις ένα δώρο — θα πάρεις κωδικό που δείχνεις στο φαρμακείο για την παραλαβή.</p>
                       </div>
                     );
                   })()}

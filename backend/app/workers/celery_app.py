@@ -156,6 +156,16 @@ celery_app.conf.beat_schedule = {
         "task": "app.workers.reminders.dispatch_refill_radar",
         "schedule": crontab(hour=7, minute=0),
     },
+    # Loyalty — «έχεις πόντους, εξαργύρωσε» εβδομαδιαία υπενθύμιση (Δευτέρα 08:00 UTC)
+    "loyalty-rewards-nudge": {
+        "task": "app.workers.reminders.dispatch_loyalty_rewards",
+        "schedule": crontab(hour=8, minute=0, day_of_week=1),
+    },
+    # Loyalty — δώρο γενεθλίων (καθημερινά 08:10 UTC· dedup ανά έτος στον repo)
+    "loyalty-birthday-bonus": {
+        "task": "app.workers.reminders.dispatch_birthday_bonus",
+        "schedule": crontab(hour=8, minute=10),
+    },
     # Recurring order subscriptions — create the next order when due (daily 06:00 UTC)
     "order-subscriptions": {
         "task": "app.workers.reminders.dispatch_order_subscriptions",

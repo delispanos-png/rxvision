@@ -481,23 +481,24 @@ export default function PortalAdminPage() {
     ["appointments", t("Ραντεβού", "Appointments"), CalendarClock],
     ["services", t("Υπηρεσίες", "Services"), Stethoscope],
   ];
+  // Η καρτέλα οδηγείται ΚΑΙ από το URL hash → κάθε tab = αυτόνομο entry στο μενού «Πύλη πελατών».
+  useEffect(() => {
+    const valid = TABS.map((x) => x[0]);
+    const read = () => { const h = window.location.hash.slice(1); if (valid.includes(h)) setTab(h); };
+    read();
+    window.addEventListener("hashchange", read);
+    return () => window.removeEventListener("hashchange", read);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   return (
     <ModuleGuard module="patient_portal">
       <div className="mb-4 flex items-center gap-3">
         <span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-gradient-to-br from-brand-600 to-emerald-500 text-white shadow-lg"><Users className="h-6 w-6" /></span>
         <div>
-          <h1 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-slate-100">{t("Πύλη Πελατών", "Customer Portal")}</h1>
-          <p className="text-sm text-slate-500">{t("Διαχειρίσου ερωτήσεις διαθεσιμότητας, ραντεβού & υπηρεσίες των πελατών σου.", "Manage your customers' availability questions, appointments & services.")}</p>
+          <h1 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-slate-100">{t("Πύλη Πελατών", "Customer Portal")} <span className="text-slate-300">·</span> <span className="text-brand-700 dark:text-brand-400">{TABS.find(([k]) => k === tab)?.[1]}</span></h1>
+          <p className="text-sm text-slate-500">{t("Επίλεξε ενότητα από το μενού «Πύλη πελατών» αριστερά.", "Pick a section from the «Customer Portal» menu on the left.")}</p>
         </div>
       </div>
-      <nav className="mb-6 flex gap-1 overflow-x-auto border-b border-slate-200 dark:border-slate-700">
-        {TABS.map(([k, label, Icon]) => (
-          <button key={k} onClick={() => setTab(k)}
-            className={`-mb-px inline-flex items-center gap-1.5 whitespace-nowrap border-b-2 px-4 py-2 text-sm ${tab === k ? "border-brand-600 font-semibold text-brand-700 dark:text-brand-400" : "border-transparent text-slate-500"}`}>
-            <Icon className="h-4 w-4" /> {label}
-          </button>
-        ))}
-      </nav>
       {tab === "customers" && <PortalCustomersTab />}
       {tab === "rx" && <RxRequestsTab />}
       {tab === "availability" && <AvailabilityTab />}

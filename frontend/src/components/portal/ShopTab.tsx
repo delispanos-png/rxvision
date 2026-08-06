@@ -1,9 +1,10 @@
 "use client";
 
 import { Fragment, useEffect, useState } from "react";
-import { Search, ShoppingCart, ShoppingBag, Plus, Minus, Trash2, Truck, Store, ShieldCheck, Pill, Package, ChevronLeft, ChevronDown, Loader2, MapPin, Check, XCircle, PackageCheck, RefreshCcw, Star, Heart } from "lucide-react";
+import { Search, ShoppingCart, ShoppingBag, Plus, Minus, Trash2, Truck, Store, ShieldCheck, Pill, Package, ChevronLeft, ChevronRight, ChevronDown, Loader2, MapPin, Check, XCircle, PackageCheck, RefreshCcw, Star, Heart, Flame, Sparkles, CalendarCheck } from "lucide-react";
 import { patientApi, API_BASE } from "@/lib/patientClient";
 import { toast, confirmDialog } from "@/components/portal/Toaster";
+import { DateInput } from "@/components/ui/DateInput";
 
 // Emoji ανά θεραπευτική/εμπορική κατηγορία (keyword match) — «εικονίδιο» μέσα στο native select.
 const _CAT_EMOJI: [string, string][] = [
@@ -25,7 +26,7 @@ function catEmoji(c: string): string {
   return "💊";
 }
 
-type Product = { barcode: string; name: string; description_long?: string | null; photo_url?: string | null; image_id?: string | null; usage_video_url?: string | null; price_cents: number; type: string; category?: string | null; tags?: string[]; featured?: boolean; discount_pct: number; stock_qty: number };
+type Product = { barcode: string; name: string; description_short?: string | null; description_long?: string | null; photo_url?: string | null; image_id?: string | null; images?: string[]; usage_video_url?: string | null; price_cents: number; type: string; category?: string | null; tags?: string[]; featured?: boolean; discount_pct: number; stock_qty: number };
 
 // YouTube/Vimeo URL → ασφαλές embed URL (whitelist· αλλιώς null)
 function videoEmbed(url?: string | null): string | null {
@@ -39,11 +40,18 @@ function videoEmbed(url?: string | null): string | null {
 const isBackorder = (p: Product) => (p.stock_qty ?? 0) <= 0;             // χωρίς απόθεμα → κατόπιν παραγγελίας
 const capOf = (p: Product) => isBackorder(p) ? 99 : p.stock_qty;        // backorder → επιτρέπεται προσθήκη
 type Tier = { min_cents: number; pct: number };
-type Settings = { delivery_enabled: boolean; pickup_enabled: boolean; delivery_fee_cents: number; free_over_cents: number; min_order_cents: number; pps_cert: string; subscription_enabled: boolean; subscription_discount_pct: number; cart_tiers?: Tier[]; online_payment_enabled?: boolean };
+type Settings = { delivery_enabled: boolean; pickup_enabled: boolean; delivery_fee_cents: number; free_over_cents: number; min_order_cents: number; pps_cert: string; subscription_enabled: boolean; subscription_discount_pct: number; cart_tiers?: Tier[]; online_payment_enabled?: boolean; hero_enabled?: boolean; hero_image_id?: string | null; hero_title?: string; hero_subtitle?: string };
 type BundleLine = { barcode: string; qty: number };
 type Bundle = { name: string; kind: "combo" | "nplusm"; barcode?: string | null; buy_qty?: number; free_qty?: number; lines?: BundleLine[]; discount_pct?: number };
 const LOW_STOCK = 5;
 const imgSrc = (p: Product) => p.image_id ? `${API_BASE}/catalog/image/${p.image_id}` : (p.photo_url || "");
+// Πλήρες gallery (κύρια + επιπλέον)· dedup, ώστε το PDP να δείχνει όλες τις εικόνες.
+const imgList = (p: Product): string[] => {
+  const ids = [p.image_id, ...(p.images ?? [])].filter(Boolean) as string[];
+  const urls = ids.map((id) => `${API_BASE}/catalog/image/${id}`);
+  if (!urls.length && p.photo_url) urls.push(p.photo_url);
+  return Array.from(new Set(urls));
+};
 const TAG_STYLE: Record<string, string> = { "Προσφορά": "bg-rose-100 text-rose-700", "Νέο": "bg-emerald-100 text-emerald-700", "Δημοφιλές": "bg-amber-100 text-amber-800", "Bestseller": "bg-amber-100 text-amber-800", "Βιολογικό": "bg-green-100 text-green-700", "Vegan": "bg-green-100 text-green-700" };
 const tagCls = (t: string) => TAG_STYLE[t] || "bg-slate-100 text-slate-600";
 const SORTS: [string, string][] = [["featured", "Προτεινόμενα"], ["newest", "Νεότερα"], ["price_asc", "Φθηνότερα"], ["price_desc", "Ακριβότερα"]];
@@ -125,9 +133,10 @@ const ST: Record<string, string> = { pending: "Σε αναμονή έγκρισ�
 
 export function ShopTab({ tenantKey = "x" }: { tenantKey?: string }) {
   const CART_KEY = `rxv_cart_${tenantKey}`;
-  const [view, setView] = useState<"browse" | "cart" | "orders" | "subs" | "favorites">("browse");
+  const [view, setView] = useState<"browse" | "cart" | "orders" | "subs" | "favorites" | "offers">("browse");
   const [products, setProducts] = useState<Product[]>([]);
   const [video, setVideo] = useState<string | null>(null);   // embed URL οδηγιών χρήσης
+  const [pdp, setPdp] = useState<Product | null>(null);       // σελίδα προϊόντος (detail modal)
   const [favBarcodes, setFavBarcodes] = useState<Set<string>>(new Set());
   const [q, setQ] = useState("");
   const [cat, setCat] = useState("");
@@ -187,6 +196,7 @@ export function ShopTab({ tenantKey = "x" }: { tenantKey?: string }) {
   if (view === "orders") return <Orders orders={orders} setOrders={setOrders} onBack={() => setView("browse")} onReorder={reorder} />;
   if (view === "cart") return <Checkout cart={cart} subtotal={subtotal} settings={meta?.settings} camps={camps} bundles={meta?.bundles ?? []} loyalty={meta?.loyalty} onBack={() => setView("browse")} onDone={() => { setCart({}); setView("orders"); }} dec={dec} add={add} />;
   if (view === "favorites") return <Favorites onBack={() => setView("browse")} favBarcodes={favBarcodes} toggleFav={toggleFav} add={add} cart={cart} dec={dec} camps={camps} />;
+  if (view === "offers") return <Offers onBack={() => setView("browse")} add={add} goCart={() => setView("cart")} cartCount={count} />;
 
   const activeOrders = orders.filter((o) => !["delivered", "cancelled", "declined"].includes(o.status)).length;
 
@@ -203,6 +213,7 @@ export function ShopTab({ tenantKey = "x" }: { tenantKey?: string }) {
           </div>
         </div>
       )}
+      {pdp && <ProductModal product={pdp} camps={camps} inCart={cart[pdp.barcode]?.qty ?? 0} add={add} dec={dec} onClose={() => setPdp(null)} onVideo={(u) => setVideo(u)} isFav={favBarcodes.has(pdp.barcode)} toggleFav={toggleFav} />}
       {/* e-Κατάστημα — branding + εύκολη, ευδιάκριτη πρόσβαση στις παραγγελίες μου */}
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-2">
@@ -217,6 +228,29 @@ export function ShopTab({ tenantKey = "x" }: { tenantKey?: string }) {
           {activeOrders > 0 && <span className="absolute -right-1.5 -top-1.5 grid h-5 min-w-[20px] place-items-center rounded-full bg-rose-500 px-1 text-[10px] font-bold text-white">{activeOrders}</span>}
         </button>
       </div>
+      {/* Hero banner — merchandising που ρυθμίζει ο φαρμακοποιός (εικόνα + τίτλος), οδηγεί στις Προσφορές */}
+      {meta?.settings.hero_enabled && (meta.settings.hero_image_id || meta.settings.hero_title) && (
+        <button onClick={() => setView("offers")} className="relative block w-full overflow-hidden rounded-2xl text-left shadow-sm">
+          {meta.settings.hero_image_id
+            ? <img src={`${API_BASE}/catalog/image/${meta.settings.hero_image_id}`} alt="" className="h-32 w-full object-cover sm:h-44" />
+            : <div className="h-32 w-full bg-gradient-to-r from-violet-600 to-indigo-600 sm:h-44" />}
+          {(meta.settings.hero_title || meta.settings.hero_subtitle) && (
+            <div className="absolute inset-0 flex flex-col justify-end bg-gradient-to-t from-black/60 to-transparent p-4 text-white">
+              {meta.settings.hero_title && <div className="text-lg font-extrabold drop-shadow sm:text-2xl">{meta.settings.hero_title}</div>}
+              {meta.settings.hero_subtitle && <div className="text-xs opacity-90 drop-shadow sm:text-sm">{meta.settings.hero_subtitle}</div>}
+            </div>
+          )}
+        </button>
+      )}
+      {/* «🔥 Προσφορές» — ευδιάκριτη είσοδος στο κύκλωμα προσφορών (προϊόντα + υπηρεσίες) */}
+      <button onClick={() => setView("offers")} className="flex w-full items-center gap-3 rounded-2xl bg-gradient-to-r from-rose-500 via-orange-500 to-amber-500 px-4 py-3 text-left text-white shadow-sm transition hover:brightness-105">
+        <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-white/20"><Flame className="h-5 w-5" /></span>
+        <span className="min-w-0 flex-1">
+          <span className="block text-sm font-extrabold">Προσφορές του φαρμακείου</span>
+          <span className="block text-[11px] opacity-90">Προϊόντα σε έκπτωση & υπηρεσίες με ραντεβού — δες τι προμηθεύεσαι με προσφορά</span>
+        </span>
+        <ChevronRight className="h-5 w-5 shrink-0 opacity-90" />
+      </button>
       {/* Αναζήτηση — ευδιάκριτη, μεγάλη· δίπλα οι «συνδρομές» */}
       <div className="flex items-center gap-2">
         <div className="relative flex-1">
@@ -269,19 +303,20 @@ export function ShopTab({ tenantKey = "x" }: { tenantKey?: string }) {
           const dPct = effDisc(p, camps);
           return (
             <div key={p.barcode} className={`flex flex-col rounded-2xl border bg-white p-2.5 ${p.featured ? "border-amber-300 ring-1 ring-amber-100" : "border-slate-200"}`}>
-              <div className="relative mb-1 grid h-24 place-items-center overflow-hidden rounded-xl bg-slate-50 sm:h-32">
+              <div onClick={() => setPdp(p)} title="Δες λεπτομέρειες" className="relative mb-1 grid h-24 cursor-pointer place-items-center overflow-hidden rounded-xl bg-slate-50 sm:h-32">
                 {imgSrc(p) ? <img src={imgSrc(p)} alt="" className="h-full w-full object-contain" /> : (med ? <Pill className="h-7 w-7 text-slate-300" /> : <Package className="h-7 w-7 text-slate-300" />)}
+                {(imgList(p).length > 1) && <span className="absolute bottom-1 right-8 rounded bg-black/60 px-1 text-[9px] font-semibold text-white">📷 {imgList(p).length}</span>}
                 {dPct > 0 && <span className="absolute left-1 top-1 rounded-md bg-rose-600 px-1.5 py-0.5 text-[10px] font-bold text-white">-{dPct}%</span>}
                 {/* αγαπημένο προϊόν (καρδιά) — ειδοποιήσεις για πτώση τιμής / επιστροφή σε απόθεμα */}
-                <button onClick={() => toggleFav(p.barcode)} title={favBarcodes.has(p.barcode) ? "Αφαίρεση αγαπημένου" : "Αγαπημένο"}
+                <button onClick={(e) => { e.stopPropagation(); toggleFav(p.barcode); }} title={favBarcodes.has(p.barcode) ? "Αφαίρεση αγαπημένου" : "Αγαπημένο"}
                   className="absolute right-1 top-1 grid h-7 w-7 place-items-center rounded-full bg-white/90 shadow-sm">
                   <Heart className={`h-4 w-4 ${favBarcodes.has(p.barcode) ? "fill-rose-500 text-rose-500" : "text-slate-400"}`} />
                 </button>
-                {videoEmbed(p.usage_video_url) && <button onClick={() => setVideo(videoEmbed(p.usage_video_url))} title="Οδηγίες χρήσης" className="absolute bottom-1 right-1 inline-flex items-center gap-1 rounded-full bg-black/70 px-2 py-0.5 text-[10px] font-semibold text-white hover:bg-black/85">▶ Οδηγίες</button>}
+                {videoEmbed(p.usage_video_url) && <button onClick={(e) => { e.stopPropagation(); setVideo(videoEmbed(p.usage_video_url)); }} title="Οδηγίες χρήσης" className="absolute bottom-1 right-1 inline-flex items-center gap-1 rounded-full bg-black/70 px-2 py-0.5 text-[10px] font-semibold text-white hover:bg-black/85">▶</button>}
                 {p.stock_qty > 0 && p.stock_qty <= LOW_STOCK && <span className="absolute bottom-1 left-1 rounded bg-orange-100 px-1.5 py-0.5 text-[9px] font-semibold text-orange-700">τελευταία {p.stock_qty}</span>}
                 {isBackorder(p) && <span className="absolute bottom-1 left-1 rounded bg-amber-100 px-1.5 py-0.5 text-[9px] font-semibold text-amber-700">Κατόπιν παραγγελίας</span>}
               </div>
-              <div className="line-clamp-2 min-h-[2.2rem] text-xs font-semibold text-slate-800">{p.name}</div>
+              <div onClick={() => setPdp(p)} className="line-clamp-2 min-h-[2.2rem] cursor-pointer text-xs font-semibold text-slate-800 hover:text-violet-700">{p.name}</div>
               {!!p.tags?.length && <div className="mt-0.5 flex flex-wrap gap-0.5">{p.tags.slice(0, 3).map((t) => <span key={t} className={`rounded px-1 py-0.5 text-[9px] font-semibold ${tagCls(t)}`}>{t}</span>)}</div>}
               <div className="mt-1 flex items-end justify-between">
                 <div>
@@ -737,6 +772,209 @@ function Orders({ orders, setOrders, onBack, onReorder }: { orders: Order[]; set
         </div>
       )}
       {list.length > 0 && <div className="space-y-2">{list.map((o) => <OrderCard key={o._id} o={o} onReorder={onReorder} />)}</div>}
+    </div>
+  );
+}
+
+// ── Κύκλωμα «Προσφορές» (my.rxvision.gr) — προϊόντα σε έκπτωση + πακέτα + προσφορές υπηρεσιών ──
+type DealProduct = Product & { eff_discount_pct: number; sale_cents: number };
+type SvcOffer = { id: string; title: string; description?: string | null; photo_url?: string | null; image_id?: string | null; is_free: boolean; price_cents: number; compare_cents: number; cta: "reserve" | "info" };
+const svcImg = (o: SvcOffer) => o.image_id ? `${API_BASE}/catalog/image/${o.image_id}` : (o.photo_url || "");
+const TIMES = Array.from({ length: 23 }, (_, i) => { const m = 9 * 60 + i * 30; return `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`; });
+
+function Offers({ onBack, add, goCart, cartCount }: { onBack: () => void; add: (p: Product) => void; goCart: () => void; cartCount: number }) {
+  const [data, setData] = useState<{ products: DealProduct[]; bundles: Bundle[]; services: SvcOffer[] } | null>(null);
+  const [reserve, setReserve] = useState<SvcOffer | null>(null);
+  useEffect(() => { patientApi<{ products: DealProduct[]; bundles: Bundle[]; services: SvcOffer[] }>("/patient/shop/offers").then(setData).catch(() => setData({ products: [], bundles: [], services: [] })); }, []);
+  const empty = data && data.products.length === 0 && data.bundles.length === 0 && data.services.length === 0;
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <button onClick={onBack} className="inline-flex items-center gap-1 text-sm font-medium text-slate-500 hover:text-slate-700"><ChevronLeft className="h-4 w-4" /> Πίσω στο κατάστημα</button>
+        {cartCount > 0 && <button onClick={goCart} className="inline-flex items-center gap-1.5 rounded-xl bg-violet-600 px-3 py-1.5 text-xs font-semibold text-white"><ShoppingCart className="h-4 w-4" /> Καλάθι ({cartCount})</button>}
+      </div>
+      <div className="flex items-center gap-2">
+        <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-gradient-to-br from-rose-500 to-amber-500 text-white shadow-sm"><Flame className="h-5 w-5" /></span>
+        <div className="leading-tight"><div className="text-lg font-extrabold text-slate-900">Προσφορές</div><div className="text-[11px] text-slate-400">Ό,τι μπορείς να προμηθευτείς ή να κλείσεις με προσφορά, τώρα</div></div>
+      </div>
+
+      {!data && <div className="py-10 text-center text-sm text-slate-400"><Loader2 className="mx-auto mb-2 h-5 w-5 animate-spin" /> Φόρτωση…</div>}
+      {empty && <div className="rounded-2xl border border-dashed border-slate-300 p-10 text-center text-sm text-slate-400">Δεν υπάρχουν ενεργές προσφορές αυτή τη στιγμή.</div>}
+
+      {/* Προϊόντα σε έκπτωση */}
+      {!!data?.products.length && (
+        <section>
+          <div className="mb-2 flex items-center gap-1.5 text-sm font-bold text-slate-700"><Flame className="h-4 w-4 text-rose-500" /> Προϊόντα σε έκπτωση</div>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+            {data.products.map((p) => (
+              <div key={p.barcode} className="flex flex-col overflow-hidden rounded-2xl border border-rose-100 bg-white shadow-sm">
+                <div className="relative aspect-square bg-slate-50">
+                  {imgSrc(p) ? <img src={imgSrc(p)} alt="" className="h-full w-full object-cover" /> : <span className="grid h-full w-full place-items-center text-slate-300"><Pill className="h-8 w-8" /></span>}
+                  <span className="absolute left-1.5 top-1.5 rounded-md bg-rose-600 px-1.5 py-0.5 text-[11px] font-bold text-white">−{p.eff_discount_pct}%</span>
+                </div>
+                <div className="flex flex-1 flex-col p-2.5">
+                  <div className="line-clamp-2 text-xs font-semibold text-slate-800">{p.name}</div>
+                  <div className="mt-1 flex items-baseline gap-1.5">
+                    <span className="text-sm font-extrabold text-rose-600">{eur(p.sale_cents)}</span>
+                    <span className="text-[11px] text-slate-400 line-through">{eur(p.price_cents)}</span>
+                  </div>
+                  <button onClick={() => { add(p); toast("Προστέθηκε στο καλάθι", "success"); }} className="mt-2 inline-flex items-center justify-center gap-1 rounded-lg bg-violet-600 px-2 py-1.5 text-xs font-semibold text-white hover:bg-violet-700"><Plus className="h-3.5 w-3.5" /> Στο καλάθι</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* Πακέτα */}
+      {!!data?.bundles.length && (
+        <section>
+          <div className="mb-2 flex items-center gap-1.5 text-sm font-bold text-slate-700"><Package className="h-4 w-4 text-amber-500" /> Πακέτα προσφορών</div>
+          <div className="grid gap-2 sm:grid-cols-2">
+            {data.bundles.map((b, i) => (
+              <div key={i} className="flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50/60 p-3">
+                <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-amber-100 text-amber-600"><Package className="h-5 w-5" /></span>
+                <div className="min-w-0"><div className="truncate text-sm font-semibold text-slate-800">{b.name}</div>
+                  <div className="text-[11px] text-amber-700">{b.kind === "nplusm" ? `${b.buy_qty}+${b.free_qty} δώρο` : `Πακέτο −${b.discount_pct}%`}</div></div>
+              </div>
+            ))}
+          </div>
+          <p className="mt-1 text-[11px] text-slate-400">Τα πακέτα εφαρμόζονται αυτόματα στο καλάθι όταν προσθέσεις τα είδη τους.</p>
+        </section>
+      )}
+
+      {/* Υπηρεσίες σε προσφορά → κράτηση ραντεβού */}
+      {!!data?.services.length && (
+        <section>
+          <div className="mb-2 flex items-center gap-1.5 text-sm font-bold text-slate-700"><Sparkles className="h-4 w-4 text-fuchsia-500" /> Υπηρεσίες σε προσφορά</div>
+          <div className="grid gap-2 sm:grid-cols-2">
+            {data.services.map((o) => (
+              <div key={o.id} className="flex items-start gap-3 rounded-2xl border border-fuchsia-200 bg-white p-3 shadow-sm">
+                {svcImg(o) ? <img src={svcImg(o)} alt="" className="h-16 w-16 shrink-0 rounded-lg object-cover" /> : <span className="grid h-16 w-16 shrink-0 place-items-center rounded-lg bg-fuchsia-100 text-fuchsia-500"><Sparkles className="h-6 w-6" /></span>}
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm font-semibold text-slate-800">{o.title}</div>
+                  <div className="mt-0.5 text-sm">
+                    {o.is_free ? <span className="font-bold text-emerald-600">Δωρεάν</span> : (<><span className="font-extrabold text-fuchsia-600">{eur(o.price_cents)}</span>{o.compare_cents > 0 && <span className="ml-1.5 text-xs text-slate-400 line-through">{eur(o.compare_cents)}</span>}</>)}
+                  </div>
+                  {o.description && <p className="mt-0.5 line-clamp-2 text-xs text-slate-500">{o.description}</p>}
+                  {o.cta === "reserve"
+                    ? <button onClick={() => setReserve(o)} className="mt-2 inline-flex items-center gap-1 rounded-lg bg-fuchsia-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-fuchsia-700"><CalendarCheck className="h-3.5 w-3.5" /> Κλείσε ραντεβού</button>
+                    : <div className="mt-2 text-[11px] text-slate-400">Ρώτησε στο φαρμακείο</div>}
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {reserve && <ReserveModal offer={reserve} onClose={() => setReserve(null)} />}
+    </div>
+  );
+}
+
+function ReserveModal({ offer, onClose }: { offer: SvcOffer; onClose: () => void }) {
+  const [date, setDate] = useState("");
+  const [time, setTime] = useState("10:00");
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  async function submit() {
+    if (!date) { toast("Διάλεξε ημερομηνία", "error"); return; }
+    setBusy(true);
+    try {
+      const requested_at = new Date(`${date}T${time}:00`).toISOString();
+      await patientApi("/patient/appointments", { method: "POST", body: JSON.stringify({ service_id: offer.id, service_name: offer.title, kind: "service", requested_at, note: note || null }) });
+      toast("Το αίτημα ραντεβού στάλθηκε — το φαρμακείο θα επιβεβαιώσει.", "success");
+      onClose();
+    } catch { toast("Κάτι πήγε στραβά — δοκίμασε ξανά.", "error"); } finally { setBusy(false); }
+  }
+  return (
+    <div className="fixed inset-0 z-[130] grid place-items-center bg-black/50 p-4" onClick={onClose}>
+      <div className="w-full max-w-sm rounded-2xl bg-white p-5 shadow-xl" onClick={(e) => e.stopPropagation()}>
+        <div className="mb-1 text-base font-bold text-slate-800">Κράτηση ραντεβού</div>
+        <div className="mb-3 text-sm text-fuchsia-600">{offer.title}{!offer.is_free && ` · ${eur(offer.price_cents)}`}{offer.is_free && " · Δωρεάν"}</div>
+        <div className="space-y-3">
+          <div><label className="text-xs text-slate-500">Ημερομηνία</label><DateInput value={date} onChange={setDate} /></div>
+          <label className="block text-xs text-slate-500">Ώρα
+            <select value={time} onChange={(e) => setTime(e.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm">{TIMES.map((t) => <option key={t} value={t}>{t}</option>)}</select></label>
+          <label className="block text-xs text-slate-500">Σημείωση (προαιρετικό)
+            <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={2} className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" /></label>
+        </div>
+        <div className="mt-4 flex justify-end gap-2">
+          <button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-600 hover:bg-slate-50">Άκυρο</button>
+          <button onClick={submit} disabled={busy} className="rounded-lg bg-fuchsia-600 px-4 py-2 text-sm font-semibold text-white hover:bg-fuchsia-700 disabled:opacity-50">{busy ? "Αποστολή…" : "Κλείσε ραντεβού"}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Σελίδα προϊόντος (PDP) — gallery + πλήρης περιγραφή + τιμή/προσφορά + στο καλάθι ──
+function ProductModal({ product, camps, inCart, add, dec, onClose, onVideo, isFav, toggleFav }: {
+  product: Product; camps: Campaign[]; inCart: number; add: (p: Product) => void; dec: (bc: string) => void;
+  onClose: () => void; onVideo: (url: string) => void; isFav: boolean; toggleFav: (bc: string) => void;
+}) {
+  const [full, setFull] = useState<Product>(product);
+  const [idx, setIdx] = useState(0);
+  useEffect(() => {   // φέρε το πλήρες προϊόν (gallery + long description) — η κάρτα έχει μόνο περίληψη
+    patientApi<Product>(`/patient/shop/product/${encodeURIComponent(product.barcode)}`).then(setFull).catch(() => {});
+  }, [product.barcode]);
+  const gallery = imgList(full);
+  const dPct = effDisc(full, camps);
+  const fc = final(full, camps);
+  const vid = videoEmbed(full.usage_video_url);
+  const back = isBackorder(full);
+  return (
+    <div className="fixed inset-0 z-[135] grid place-items-center bg-black/50 p-3" onClick={onClose}>
+      <div className="max-h-[92vh] w-full max-w-3xl overflow-y-auto rounded-2xl bg-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
+          <div className="truncate pr-2 text-sm font-bold text-slate-800">{full.name}</div>
+          <button onClick={onClose} className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-slate-400 hover:bg-slate-100"><XCircle className="h-5 w-5" /></button>
+        </div>
+        <div className="grid gap-4 p-4 sm:grid-cols-2">
+          {/* Gallery */}
+          <div>
+            <div className="relative grid aspect-square place-items-center overflow-hidden rounded-xl bg-slate-50">
+              {gallery.length ? <img src={gallery[idx]} alt="" className="h-full w-full object-contain" /> : <Package className="h-12 w-12 text-slate-300" />}
+              {dPct > 0 && <span className="absolute left-2 top-2 rounded-md bg-rose-600 px-2 py-0.5 text-xs font-bold text-white">−{dPct}%</span>}
+              <button onClick={() => toggleFav(full.barcode)} className="absolute right-2 top-2 grid h-9 w-9 place-items-center rounded-full bg-white/90 shadow"><Heart className={`h-5 w-5 ${isFav ? "fill-rose-500 text-rose-500" : "text-slate-400"}`} /></button>
+            </div>
+            {gallery.length > 1 && (
+              <div className="mt-2 flex gap-2 overflow-x-auto">
+                {gallery.map((g, i) => (
+                  <button key={i} onClick={() => setIdx(i)} className={`h-14 w-14 shrink-0 overflow-hidden rounded-lg border-2 ${i === idx ? "border-violet-500" : "border-transparent"}`}><img src={g} alt="" className="h-full w-full object-cover" /></button>
+                ))}
+              </div>
+            )}
+            {vid && <button onClick={() => onVideo(vid)} className="mt-2 inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white">▶ Οδηγίες χρήσης (βίντεο)</button>}
+          </div>
+          {/* Πληροφορίες */}
+          <div className="flex flex-col">
+            {full.category && <div className="text-[11px] font-medium uppercase tracking-wide text-slate-400">{full.category}</div>}
+            {!!full.tags?.length && <div className="mt-1 flex flex-wrap gap-1">{full.tags.map((t) => <span key={t} className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${tagCls(t)}`}>{t}</span>)}</div>}
+            <div className="mt-2 flex items-baseline gap-2">
+              <span className="text-2xl font-extrabold text-slate-900">{eur(fc)}</span>
+              {fc < full.price_cents && <span className="text-sm text-slate-400 line-through">{eur(full.price_cents)}</span>}
+            </div>
+            {back ? <div className="mt-1 text-xs font-semibold text-amber-700">Κατόπιν παραγγελίας — το φαρμακείο επιβεβαιώνει διαθεσιμότητα</div>
+                  : full.stock_qty <= LOW_STOCK && full.stock_qty > 0 ? <div className="mt-1 text-xs font-semibold text-orange-600">Τελευταία {full.stock_qty} τεμάχια</div> : null}
+            {(full.description_long || full.description_short) && (
+              <p className="mt-3 whitespace-pre-wrap text-sm leading-relaxed text-slate-600">{full.description_long || full.description_short}</p>
+            )}
+            <div className="mt-auto pt-4">
+              {inCart ? (
+                <div className="flex items-center justify-between rounded-xl bg-violet-600 px-2 py-1.5 text-white">
+                  <button onClick={() => dec(full.barcode)} className="grid h-9 w-9 place-items-center rounded-lg hover:bg-white/10"><Minus className="h-5 w-5" /></button>
+                  <span className="font-bold">{inCart} στο καλάθι</span>
+                  <button onClick={() => add(full)} className="grid h-9 w-9 place-items-center rounded-lg hover:bg-white/10"><Plus className="h-5 w-5" /></button>
+                </div>
+              ) : (
+                <button onClick={() => { add(full); toast("Προστέθηκε στο καλάθι", "success"); }} className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-violet-600 py-3 text-sm font-bold text-white hover:bg-violet-700"><Plus className="h-5 w-5" /> Προσθήκη στο καλάθι</button>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

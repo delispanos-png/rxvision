@@ -38,11 +38,13 @@ class EnrollIn(BaseModel):
     patient_ref: str
     method: str = Field("physical", pattern="^(physical|electronic)$")
     name: str | None = None
+    referred_by_code: str | None = Field(None, max_length=16)
 
 
 @router.post("/enroll")
 async def enroll(body: EnrollIn, ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
-    return await LoyaltyRepository(tenant_id=ctx.tenant_id).enroll(body.patient_ref, method=body.method, name=body.name)
+    return await LoyaltyRepository(tenant_id=ctx.tenant_id).enroll(
+        body.patient_ref, method=body.method, name=body.name, referred_by_code=body.referred_by_code)
 
 
 @router.post("/unenroll")
@@ -77,6 +79,18 @@ class ConfigIn(BaseModel):
     adherence_rule: str = Field("per_day", pattern="^(per_med|per_day|full_day)$")  # συνθήκη κέρδισης
     points_per_adherence: int = Field(1, ge=0, le=100)        # πόντοι ανά γεγονός κέρδισης
     adherence_streak_bonus: int = Field(5, ge=0, le=1000)     # bonus κάθε 7-μερο σερί
+    # Tier multipliers (percent, 100 = ×1.0) — υψηλότερα tiers κερδίζουν περισσότερους πόντους/εκτέλεση
+    tier_multipliers_enabled: bool = False
+    tier_multipliers: dict[str, int] | None = None
+    # Καμπάνιες διπλών πόντων + λήξη πόντων (κυλιόμενο παράθυρο μηνών, 0 = ποτέ)
+    campaigns: list[dict] | None = None
+    points_expire_months: int = Field(0, ge=0, le=120)
+    # Referral «σύστησε φίλο» + δώρο γενεθλίων
+    referral_enabled: bool = False
+    referral_referrer_cents: int = Field(500, ge=0, le=100000)
+    referral_referred_cents: int = Field(300, ge=0, le=100000)
+    birthday_enabled: bool = False
+    birthday_bonus_cents: int = Field(500, ge=0, le=100000)
 
 
 @router.post("/config")
@@ -147,3 +161,19 @@ class RedeemRewardIn(BaseModel):
 @router.post("/redeem-reward")
 async def redeem_reward(body: RedeemRewardIn, ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
     return await LoyaltyRepository(tenant_id=ctx.tenant_id).redeem_reward(body.patient_ref, body.reward_id)
+
+
+class ConfirmCodeIn(BaseModel):
+    code: str
+
+
+@router.get("/pending")
+async def pending_redemptions(ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+    """Ενεργές δεσμεύσεις δώρων που έκαναν οι πελάτες από την πύλη (self-redeem) — προς επιβεβαίωση."""
+    return {"items": await LoyaltyRepository(tenant_id=ctx.tenant_id).pending_redemptions()}
+
+
+@router.post("/confirm-redeem")
+async def confirm_redeem(body: ConfirmCodeIn, ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+    """Ο φαρμακοποιός επιβεβαιώνει δέσμευση με τον 6ψήφιο κωδικό → οριστική εξαργύρωση."""
+    return await LoyaltyRepository(tenant_id=ctx.tenant_id).confirm_reward(body.code)

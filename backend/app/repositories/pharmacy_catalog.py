@@ -30,6 +30,19 @@ _SORTS: dict = {
 }
 
 
+def _clean_images(v) -> list[str]:
+    """Gallery: λίστα image_id (uploaded). Καθαρίζει διπλότυπα/κενά, cap 8. Η κύρια εικόνα του
+    προϊόντος παραμένει το `image_id` (backward compat)· το `images` είναι το πλήρες gallery."""
+    if isinstance(v, str):
+        v = [v]
+    out: list[str] = []
+    for x in (v or []):
+        s = str(x or "").strip()[:64]
+        if s and s not in out:
+            out.append(s)
+    return out[:8]
+
+
 def _clean_tags(v) -> list[str]:
     if isinstance(v, str):
         v = [v]
@@ -111,6 +124,25 @@ class PharmacyCatalogRepository(BaseRepository):
         d = await self.find_one({"barcode": str(barcode)})
         return jsonsafe(d) if d else None
 
+    async def deals(self, campaigns: list[dict], *, limit: int = 200) -> list[dict]:
+        """Προϊόντα ΣΕ ΠΡΟΣΦΟΡΑ ΤΩΡΑ: effective έκπτωση = max(δική του, καλύτερης καμπάνιας) > 0.
+        Καθρεφτίζει τη μηχανή τιμολόγησης (τα rx εξαιρούνται ήδη). Κάθε είδος αποκτά eff_discount_pct
+        & sale_cents («τώρα») ώστε η βιτρίνα να δείχνει «πριν/τώρα» χωρίς client-side λογική τιμών."""
+        from app.repositories.shop_campaigns import campaign_pct_for
+        rows = await self.find({"active": {"$ne": False}}, limit=1000)
+        out: list[dict] = []
+        for p in rows:
+            eff = max(int(p.get("discount_pct") or 0), campaign_pct_for(p, campaigns))
+            if eff <= 0:
+                continue
+            price = int(p.get("price_cents") or 0)
+            p = dict(p)
+            p["eff_discount_pct"] = eff
+            p["sale_cents"] = round(price * (100 - eff) / 100)
+            out.append(p)
+        out.sort(key=lambda x: (-x["eff_discount_pct"], not x.get("featured"), x.get("name") or ""))
+        return jsonsafe(out[:limit])
+
     async def upsert(self, data: dict) -> dict:
         bc = str(data.get("barcode") or "").strip()
         if not bc:
@@ -125,6 +157,7 @@ class PharmacyCatalogRepository(BaseRepository):
             "description_long": (data.get("description_long") or "").strip()[:6000] or None,
             "photo_url": (data.get("photo_url") or "").strip()[:1000] or None,
             "image_id": (str(data.get("image_id")).strip() or None) if data.get("image_id") else None,
+            "images": _clean_images(data.get("images")),      # gallery (πολλαπλές εικόνες)
             "usage_video_url": _safe_video_url(data.get("usage_video_url")),
             "price_cents": max(0, _int(data.get("price_cents")) or 0),
             "wholesale_cents": max(0, _int(data.get("wholesale_cents")) or 0),  # χονδρική → κερδοφορία
@@ -142,7 +175,7 @@ class PharmacyCatalogRepository(BaseRepository):
         }
         # Τα tags/featured/image_id τα διαχειρίζεται ΜΟΝΟ ο φαρμακοποιός (edit). Το XML import δεν τα
         # στέλνει → μην τα σβήνεις σε επανα-εισαγωγή (διατήρησε ό,τι έχει ήδη μπει χειροκίνητα).
-        for k in ("tags", "featured", "image_id", "wholesale_cents", "is_fyk", "participation"):
+        for k in ("tags", "featured", "image_id", "images", "wholesale_cents", "is_fyk", "participation"):
             if k not in data:
                 doc.pop(k, None)
         await self.update_one({"barcode": bc},

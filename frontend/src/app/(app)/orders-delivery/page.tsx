@@ -1,9 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Truck, Package, MapPin, Phone, Check, Loader2, Clock, X, Trash2, Plus } from "lucide-react";
-import { api } from "@/lib/apiClient";
+import { Truck, Package, MapPin, Phone, Check, Loader2, Clock, X, Trash2, Plus, ImagePlus } from "lucide-react";
+import { api, apiUpload, API_BASE } from "@/lib/apiClient";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
 import { DateInput } from "@/components/ui/DateInput";
 
@@ -40,6 +40,13 @@ export default function OrdersDeliveryPage() {
 
 function Orders() {
   const [tab, setTab] = useState<"orders" | "done" | "settings">("orders");
+  // Η καρτέλα οδηγείται ΚΑΙ από το URL hash → κάθε tab = αυτόνομο entry στο μενού «eShop».
+  useEffect(() => {
+    const read = () => { const h = window.location.hash.slice(1); if (h === "orders" || h === "done" || h === "settings") setTab(h); };
+    read();
+    window.addEventListener("hashchange", read);
+    return () => window.removeEventListener("hashchange", read);
+  }, []);
   const list = useQuery({ queryKey: ["od-orders"], queryFn: () => api<{ items: Order[] }>("/orders/delivery"), refetchInterval: 20000, retry: false });
   const [busy, setBusy] = useState<string | null>(null);
   const [dates, setDates] = useState<Record<string, string>>({});
@@ -58,14 +65,8 @@ function Orders() {
 
   return (
     <div className="w-full">
-      <div className="mb-1 flex items-center gap-2 text-xl font-semibold text-slate-800"><Truck className="h-6 w-6 text-brand-600" /> Παραγγελίες & Αποστολή</div>
-      <p className="mb-4 text-sm text-slate-500">Παραγγελίες πελατών από τον κατάλογό σου (OTC + παραφάρμακα).</p>
-
-      <div className="mb-4 flex gap-2">
-        {([["orders", `Ενεργές${orders.length ? ` (${orders.length})` : ""}`], ["done", `Ολοκληρωμένες${done.length ? ` (${done.length})` : ""}`], ["settings", "Ρυθμίσεις αποστολής"]] as const).map(([k, l]) => (
-          <button key={k} onClick={() => setTab(k)} className={`rounded-lg px-3 py-1.5 text-sm font-medium ${tab === k ? "bg-brand-600 text-white" : "border border-slate-200 text-slate-600 hover:bg-slate-50"}`}>{l}</button>
-        ))}
-      </div>
+      <div className="mb-1 flex items-center gap-2 text-xl font-semibold text-slate-800"><Truck className="h-6 w-6 text-brand-600" /> Παραγγελίες & Αποστολή <span className="text-slate-300">·</span> <span className="text-brand-700">{tab === "orders" ? `Ενεργές${orders.length ? ` (${orders.length})` : ""}` : tab === "done" ? `Ολοκληρωμένες${done.length ? ` (${done.length})` : ""}` : "Ρυθμίσεις αποστολής"}</span></div>
+      <p className="mb-4 text-sm text-slate-500">Επίλεξε ενότητα από το μενού «eShop» αριστερά.</p>
 
       {tab === "settings" && <SettingsTab />}
       {tab === "orders" && (
@@ -148,16 +149,28 @@ function SettingsTab() {
   const [f, setF] = useState<Settings | null>(null);
   const cur = f ?? s.data;
   const [saved, setSaved] = useState(false);
+  const [heroUp, setHeroUp] = useState(false);
   if (!cur) return <div className="py-8 text-center text-sm text-slate-400">Φόρτωση…</div>;
   const set = (k: string, v: number | boolean | string | Tier[]) => { setF({ ...cur, [k]: v }); setSaved(false); };
   const tiers: Tier[] = Array.isArray(cur.cart_tiers) ? (cur.cart_tiers as Tier[]) : [];
   const setTier = (i: number, patch: Partial<Tier>) => set("cart_tiers", tiers.map((t, j) => j === i ? { ...t, ...patch } : t));
   async function save() { await api("/orders/delivery/settings", { method: "POST", body: JSON.stringify(cur) }); setSaved(true); }
+  async function uploadHero(file: File) {
+    setHeroUp(true);
+    try {
+      const fd = new FormData(); fd.append("file", file);
+      const r = await apiUpload<{ ok: boolean; image_id?: string }>("/catalog/image", fd);
+      if (r.ok && r.image_id) set("hero_image_id", r.image_id);
+    } finally { setHeroUp(false); }
+  }
   const eurIn = (k: string) => (
     <input type="number" step="0.01" value={Number(cur[k] as number) / 100} onChange={(e) => set(k, Math.round(+e.target.value * 100))} className="mt-1 w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm" />
   );
   return (
-    <div className="max-w-md space-y-3 rounded-xl border border-slate-200 bg-white p-4">
+    <div className="w-full space-y-4">
+      {/* responsive masonry: 1 στήλη (mobile) → 2 (lg) → 3 (2xl)· κάθε ενότητα δεν σπάει μεταξύ στηλών */}
+      <div className="gap-4 [column-fill:balance] sm:columns-1 lg:columns-2 2xl:columns-3 [&>*]:mb-4 [&>*]:break-inside-avoid">
+      <div className="rounded-xl border border-slate-200 bg-white p-4 space-y-3">
       <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={!!cur.delivery_enabled} onChange={(e) => set("delivery_enabled", e.target.checked)} /> Αποστολή κατ’ οίκον</label>
       <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={!!cur.pickup_enabled} onChange={(e) => set("pickup_enabled", e.target.checked)} /> Παραλαβή από το φαρμακείο</label>
       <div className="grid grid-cols-2 gap-3">
@@ -168,8 +181,9 @@ function SettingsTab() {
       <label className="block text-xs text-slate-500">Αναφορά πιστοποίησης ΠΦΣ (e-φαρμακείο — εμφανίζεται με το λογότυπο ΕΕ)
         <input value={String(cur.pps_cert ?? "")} onChange={(e) => set("pps_cert", e.target.value)} placeholder="π.χ. αρ. μητρώου / σύνδεσμος" className="mt-1 w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm" /></label>
       <p className="text-[11px] text-slate-400">Για online πώληση φαρμάκων (OTC) απαιτείται πιστοποίηση ΠΦΣ + το κοινό λογότυπο ΕΕ. Τα παραφάρμακα δεν το χρειάζονται.</p>
+      </div>
 
-      <div className="rounded-lg border border-violet-200 bg-violet-50/60 p-3">
+      <div className="rounded-xl border border-violet-200 bg-violet-50/60 p-3">
         <label className="flex items-center gap-2 text-sm font-semibold text-violet-900"><input type="checkbox" checked={!!cur.subscription_enabled} onChange={(e) => set("subscription_enabled", e.target.checked)} /> 🔁 Επαναλαμβανόμενες παραγγελίες (συνδρομές)</label>
         <p className="mt-1 text-[11px] text-violet-700">Ο πελάτης μπορεί να ορίσει παραγγελία που επαναλαμβάνεται αυτόματα. Δώσε επιπλέον κίνητρο με μεγαλύτερη έκπτωση (μόνο σε παραφάρμακα — τα φάρμακα μένουν χωρίς έκπτωση).</p>
         {!!cur.subscription_enabled && (
@@ -179,7 +193,7 @@ function SettingsTab() {
       </div>
 
       {/* Κλιμακωτή έκπτωση καλαθιού — ΜΟΝΟ στα μη-συνταγογραφούμενα (επιβάλλεται server-side) */}
-      <div className="rounded-lg border border-amber-200 bg-amber-50/60 p-3">
+      <div className="rounded-xl border border-amber-200 bg-amber-50/60 p-3">
         <div className="text-sm font-semibold text-amber-900">📈 Κλιμακωτή έκπτωση καλαθιού</div>
         <p className="mt-1 text-[11px] text-amber-800">Όσο μεγαλώνει το καλάθι, μεγαλύτερη έκπτωση (π.χ. άνω των 30 € → −5%). Μετράει και ισχύει <b>μόνο η αξία των μη-συνταγογραφούμενων</b>. Αν ο πελάτης έχει και κουπόνι, εφαρμόζεται <b>το καλύτερο από τα δύο</b> — όχι και τα δύο μαζί.</p>
         <div className="mt-2 space-y-1.5">
@@ -200,7 +214,7 @@ function SettingsTab() {
       </div>
 
       {/* Υπενθύμιση ξεχασμένου καλαθιού — opt-in (στέλνει push στον πελάτη) */}
-      <div className="rounded-lg border border-sky-200 bg-sky-50/60 p-3">
+      <div className="rounded-xl border border-sky-200 bg-sky-50/60 p-3">
         <label className="flex items-center gap-2 text-sm font-semibold text-sky-900">
           <input type="checkbox" checked={!!cur.abandoned_cart_enabled} onChange={(e) => set("abandoned_cart_enabled", e.target.checked)} /> 🛒 Υπενθύμιση ξεχασμένου καλαθιού
         </label>
@@ -211,6 +225,32 @@ function SettingsTab() {
         )}
       </div>
 
+      {/* Hero banner — merchandising στην αρχική του e-shop (πύλη πελατών) */}
+      <div className="rounded-xl border border-indigo-200 bg-indigo-50/40 p-3">
+        <label className="flex items-center gap-2 text-sm font-semibold text-indigo-900">
+          <input type="checkbox" checked={!!cur.hero_enabled} onChange={(e) => set("hero_enabled", e.target.checked)} /> 🖼️ Banner προβολής (hero)
+        </label>
+        <p className="mt-1 text-[11px] text-indigo-700">Μεγάλη εικόνα στην κορυφή του e-Καταστήματος (πύλη). Με το κλικ ο πελάτης πάει στις «Προσφορές».</p>
+        {!!cur.hero_enabled && (
+          <div className="mt-2 space-y-2">
+            <div className="flex items-center gap-3">
+              <div className="grid h-16 w-28 shrink-0 place-items-center overflow-hidden rounded-lg border border-slate-200 bg-slate-50">
+                {cur.hero_image_id ? <img src={`${API_BASE}/catalog/image/${String(cur.hero_image_id)}`} alt="" className="h-full w-full object-cover" /> : <ImagePlus className="h-6 w-6 text-slate-300" />}
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-xs text-slate-600 hover:bg-slate-50">
+                  {heroUp ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ImagePlus className="h-3.5 w-3.5" />} Εικόνα banner
+                  <input type="file" accept="image/*" hidden onChange={(e) => { const fl = e.target.files?.[0]; if (fl) uploadHero(fl); }} /></label>
+                {cur.hero_image_id ? <button onClick={() => set("hero_image_id", "")} className="text-left text-[11px] text-rose-500 hover:underline">Αφαίρεση</button> : null}
+              </div>
+            </div>
+            <label className="block text-xs text-slate-500">Τίτλος
+              <input value={String(cur.hero_title ?? "")} onChange={(e) => set("hero_title", e.target.value)} placeholder="π.χ. Καλοκαιρινές προσφορές" className="mt-1 w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm" /></label>
+            <label className="block text-xs text-slate-500">Υπότιτλος
+              <input value={String(cur.hero_subtitle ?? "")} onChange={(e) => set("hero_subtitle", e.target.value)} placeholder="π.χ. Έως −40% σε αντηλιακά" className="mt-1 w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm" /></label>
+          </div>
+        )}
+      </div>
       {/* Online πληρωμή e-shop — Viva (κάρτα + IRIS), ανά φαρμακείο */}
       {(() => {
         const viva = (cur.viva as unknown as Record<string, unknown>) || {};
@@ -243,8 +283,11 @@ function SettingsTab() {
           </div>
         );
       })()}
+      </div>
 
-      <button onClick={save} className="rounded-lg bg-brand-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-brand-700">{saved ? "✓ Αποθηκεύτηκε" : "Αποθήκευση"}</button>
+      <div className="sticky bottom-0 -mx-1 flex justify-end border-t border-slate-100 bg-white/80 px-1 py-3 backdrop-blur">
+        <button onClick={save} className="rounded-lg bg-brand-600 px-5 py-2 text-sm font-medium text-white hover:bg-brand-700">{saved ? "✓ Αποθηκεύτηκε" : "Αποθήκευση"}</button>
+      </div>
     </div>
   );
 }

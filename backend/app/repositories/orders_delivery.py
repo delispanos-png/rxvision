@@ -65,6 +65,11 @@ class OrdersDeliveryRepository(BaseRepository):
             # Online πληρωμή e-shop (Viva: κάρτα + IRIS) — ανά φαρμακείο, τα λεφτά πάνε στο φαρμακείο.
             "online_payment_enabled": d.get("online_payment_enabled", False),
             "viva": self._viva_masked(d.get("viva") or {}),
+            # Merchandising: hero banner στην αρχική του e-shop (ρυθμίζει ο φαρμακοποιός).
+            "hero_enabled": d.get("hero_enabled", False),
+            "hero_image_id": d.get("hero_image_id") or None,
+            "hero_title": d.get("hero_title", ""),
+            "hero_subtitle": d.get("hero_subtitle", ""),
             "tenant_id": self.tenant_id,   # για το webhook URL στο UI
         }
 
@@ -100,6 +105,10 @@ class OrdersDeliveryRepository(BaseRepository):
             "abandoned_cart_enabled": bool(cfg.get("abandoned_cart_enabled", False)),
             "abandoned_cart_hours": max(1, min(72, int(cfg.get("abandoned_cart_hours") or 6))),
             "online_payment_enabled": bool(cfg.get("online_payment_enabled", False)),
+            "hero_enabled": bool(cfg.get("hero_enabled", False)),
+            "hero_image_id": (str(cfg.get("hero_image_id")).strip() or None) if cfg.get("hero_image_id") else None,
+            "hero_title": str(cfg.get("hero_title") or "")[:120],
+            "hero_subtitle": str(cfg.get("hero_subtitle") or "")[:200],
             "updated_at": _now(),
         }
         # Viva creds ανά φαρμακείο — κρυπτογράφησε τα secrets· κενό secret = αμετάβλητο.

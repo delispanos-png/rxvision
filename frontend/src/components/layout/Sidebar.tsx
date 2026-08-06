@@ -15,7 +15,7 @@ import { Tooltip } from "@/components/ui/Tooltip";
 import {
   Activity, BarChart3, Boxes, CalendarClock, ChevronRight, LayoutDashboard,
   Mail, Salad, PackageSearch, Settings, Sparkles, Stethoscope, TrendingUp, Users,
-  Brain, ShieldCheck, Tags, Syringe, Bot, Gift, BookOpen, ScrollText, Truck, Lock, X, type LucideIcon,
+  Brain, ShieldCheck, Tags, Syringe, Bot, Gift, BookOpen, ScrollText, Truck, Lock, X, UserPlus, Ticket, SlidersHorizontal, Heart, FileText, MessageSquare, PackageCheck, type LucideIcon,
 } from "lucide-react";
 
 // A leaf (direct link). `module` gates visibility (shown only when enabled/trial).
@@ -64,12 +64,30 @@ const GROUPS: Group[] = [
     { label: "Διατροφή", en: "Nutrition", icon: Salad, href: "/nutrition", module: ["nutrition", "ai_assistant"] },
     { label: "Κερδοφορία", en: "Profitability", icon: TrendingUp, href: "/profitability", module: "profitability" },
   ] },
+  // eShop — όλα τα κυκλώματα του ηλεκτρονικού καταστήματος (κατάλογος, παραγγελίες, προσφορές, πιστότητα, πύλη).
+  { title: "eShop", en: "eShop", items: [
+    { label: "Κατάλογος ειδών", en: "Product Catalog", icon: Boxes, href: "/catalog", module: "order_delivery" },
+    { label: "Ενεργές παραγγελίες", en: "Active orders", icon: Truck, href: "/orders-delivery#orders", module: "order_delivery" },
+    { label: "Ολοκληρωμένες", en: "Completed", icon: PackageCheck, href: "/orders-delivery#done", module: "order_delivery" },
+    { label: "Ρυθμίσεις αποστολής", en: "Delivery settings", icon: SlidersHorizontal, href: "/orders-delivery#settings", module: "order_delivery" },
+  ] },
+  // Πύλη πελατών — δικό της κύκλωμα· κάθε εσωτερική καρτέλα = αυτόνομο entry (URL hash).
+  { title: "Πύλη πελατών", en: "Customer Portal", items: [
+    { label: "Πελάτες πύλης", en: "Portal customers", icon: Heart, href: "/portal-admin#customers", module: "patient_portal" },
+    { label: "Αιτήματα συνταγών", en: "Rx requests", icon: FileText, href: "/portal-admin#rx", module: "patient_portal" },
+    { label: "Διαθεσιμότητα", en: "Availability", icon: MessageSquare, href: "/portal-admin#availability", module: "patient_portal" },
+    { label: "Ραντεβού", en: "Appointments", icon: CalendarClock, href: "/portal-admin#appointments", module: "patient_portal" },
+    { label: "Υπηρεσίες", en: "Services", icon: Stethoscope, href: "/portal-admin#services", module: "patient_portal" },
+  ] },
+  // Κάρτες πιστότητας — δικό του κύκλωμα· κάθε καρτέλα του προγράμματος = αυτόνομο entry (URL hash).
+  { title: "Κάρτες πιστότητας", en: "Loyalty Cards", items: [
+    { label: "Μέλη", en: "Members", icon: Users, href: "/loyalty#members", module: "loyalty" },
+    { label: "Εγγραφή", en: "Enrol", icon: UserPlus, href: "/loyalty#enroll", module: "loyalty" },
+    { label: "Εξαργυρώσεις", en: "Redemptions", icon: Ticket, href: "/loyalty#redemptions", module: "loyalty" },
+    { label: "Ρυθμίσεις & Δώρα", en: "Settings & Rewards", icon: SlidersHorizontal, href: "/loyalty#settings", module: "loyalty" },
+  ] },
   { title: "Λειτουργίες", en: "Operations", items: [
     { label: "Έλεγχος συνταγών", en: "Rx Audit", icon: ShieldCheck, href: "/reimbursement", module: "monthly_closing" },
-    { label: "Πύλη πελατών", en: "Customer Portal", icon: Users, href: "/portal-admin", module: "patient_portal" },
-    { label: "Πιστότητα", en: "Loyalty", icon: Gift, href: "/loyalty", module: "loyalty" },
-    { label: "Κατάλογος ειδών", en: "Product Catalog", icon: Boxes, href: "/catalog", module: "order_delivery" },
-    { label: "Παραγγελίες & Αποστολή", en: "Orders & Delivery", icon: Truck, href: "/orders-delivery", module: "order_delivery" },
     // PharmacyOne is a back-office INTEGRATION (data source), not a user-facing capability → not in the menu.
     { label: "Επικοινωνία", en: "Communications", icon: Mail, href: "/communications" },
     { label: "Οδηγός δεικτών", en: "Indicators guide", icon: BookOpen, href: "/guide" },
@@ -171,6 +189,17 @@ export function Sidebar() {
     const next = new Set(prev); next.has(label) ? next.delete(label) : next.add(label); return next;
   });
 
+  // Πτυσσόμενες ΟΜΑΔΕΣ (Ανάλυση/Σύμβουλοι/eShop/Λειτουργίες…) — άνοιγμα/κλείσιμο & μνήμη ανά χρήστη.
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    try { const raw = localStorage.getItem("rxv-nav-groups"); if (raw) setCollapsedGroups(new Set(JSON.parse(raw) as string[])); } catch { /* ignore */ }
+  }, []);
+  const toggleGroup = (title: string) => setCollapsedGroups((prev) => {
+    const next = new Set(prev); next.has(title) ? next.delete(title) : next.add(title);
+    try { localStorage.setItem("rxv-nav-groups", JSON.stringify([...next])); } catch { /* ignore */ }
+    return next;
+  });
+
   const hide = collapsed ? "md:hidden" : "";
   const linkCls = (active: boolean) =>
     `group flex items-center gap-3 rounded-xl px-3 py-2 text-sm font-medium transition-colors ${collapsed ? "md:justify-center md:px-0" : ""} ${
@@ -192,11 +221,17 @@ export function Sidebar() {
         </div>
 
         <nav className="flex-1 space-y-6 overflow-y-auto px-3 py-4">
-          {groups.map((g) => (
+          {groups.map((g) => {
+            const gCollapsed = collapsedGroups.has(g.title);
+            return (
             <div key={g.title}>
-              <div className={`px-3 pb-2 text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500 ${hide}`}>
-                {t(g.title, g.en)}
-              </div>
+              {/* Επικεφαλίδα ομάδας = κουμπί πτύξης (κρύβεται όταν το sidebar είναι σε λειτουργία εικονιδίων) */}
+              <button onClick={() => toggleGroup(g.title)}
+                className={`flex w-full items-center justify-between px-3 pb-2 text-[10px] font-bold uppercase tracking-wider text-slate-400 transition-colors hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300 ${hide}`}>
+                <span>{t(g.title, g.en)}</span>
+                <ChevronRight className={`h-3 w-3 shrink-0 transition-transform ${gCollapsed ? "" : "rotate-90"}`} />
+              </button>
+              {(collapsed || !gCollapsed) && (
               <div className="space-y-1">
                 {g.items.map((n) => {
                   const Icon = n.icon;
@@ -214,14 +249,13 @@ export function Sidebar() {
                       </button>
                     );
                   }
-                  // direct link (no children)
+                  // direct link (no children) — hash links (#tab) use <a>: Next <Link> uses pushState
+                  // που ΔΕΝ πυροδοτεί `hashchange`, οπότε η σελίδα δεν θα άλλαζε καρτέλα.
                   if (!n.children) {
-                    return (
-                      <Link key={n.label} href={n.href!} title={collapsed ? t(n.label, n.en) : undefined} className={linkCls(active)}>
-                        <Icon className={iconCls(active)} strokeWidth={2} />
-                        <span className={hide}>{t(n.label, n.en)}</span>
-                      </Link>
-                    );
+                    const inner = (<><Icon className={iconCls(active)} strokeWidth={2} /><span className={hide}>{t(n.label, n.en)}</span></>);
+                    return n.href!.includes("#")
+                      ? <a key={n.label} href={n.href!} title={collapsed ? t(n.label, n.en) : undefined} className={linkCls(active)} onClick={() => setOpen(false)}>{inner}</a>
+                      : <Link key={n.label} href={n.href!} title={collapsed ? t(n.label, n.en) : undefined} className={linkCls(active)}>{inner}</Link>;
                   }
                   // collapsed desktop → parent acts as a link to its first child (no nesting)
                   if (collapsed) {
@@ -257,8 +291,10 @@ export function Sidebar() {
                   );
                 })}
               </div>
+              )}
             </div>
-          ))}
+            );
+          })}
         </nav>
 
         <Tooltip label="Powered by CloudOn">

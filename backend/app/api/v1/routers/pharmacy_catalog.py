@@ -13,6 +13,7 @@ from app.core.deps import TenantContext, require
 from app.repositories.pharmacy_catalog import PharmacyCatalogRepository
 from app.repositories.shop_campaigns import ShopCampaignRepository
 from app.repositories.shop_promos import ShopBundleRepository, ShopCouponRepository
+from app.repositories.shop_service_offers import ShopServiceOffersRepository
 
 _MAX_XML = 25 * 1024 * 1024  # 25 MB cap on the uploaded catalog XML (no unbounded in-memory read)
 _XML_CTYPES = {"application/xml", "text/xml", "application/octet-stream", ""}
@@ -112,6 +113,7 @@ class ProductIn(BaseModel):
     tags: list[str] = Field(default_factory=list)
     featured: bool = False
     image_id: str | None = None
+    images: list[str] = Field(default_factory=list)   # gallery (image_id list)· κύρια = image_id/images[0]
     usage_video_url: str | None = None      # οδηγίες χρήσης (YouTube/Vimeo) — ο πελάτης το βλέπει
     discount_pct: int = Field(0, ge=0, le=90)
     stock_qty: int = Field(0, ge=0)
@@ -248,3 +250,41 @@ async def save_bundle(body: BundleIn, ctx: TenantContext = Depends(require(_PERM
 @router.delete("/bundles/{bundle_id}")
 async def delete_bundle(bundle_id: str, ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
     return await ShopBundleRepository(tenant_id=ctx.tenant_id).delete(bundle_id)
+
+
+# ── Προσφορές ΥΠΗΡΕΣΙΩΝ (π.χ. «−30% σπιρομέτρηση») — φαίνονται στο κύκλωμα «Προσφορές» της πύλης.
+# Δεν μπαίνουν στο καλάθι· ο πελάτης τις «κλείνει» ως ραντεβού (reuse appointments).
+class ServiceOfferIn(BaseModel):
+    id: str | None = None
+    title: str = Field(..., min_length=2, max_length=120)
+    description: str | None = Field(None, max_length=600)
+    photo_url: str | None = None
+    image_id: str | None = None
+    is_free: bool = False
+    price_cents: int = Field(0, ge=0)       # «τώρα» (0 αν δωρεάν)
+    compare_cents: int = Field(0, ge=0)     # «πριν» (προαιρετικό)
+    cta: str = Field("reserve", pattern="^(reserve|info)$")
+    active: bool = True
+    starts_at: datetime | None = None
+    ends_at: datetime | None = None
+
+
+def _sorepo(ctx: TenantContext) -> ShopServiceOffersRepository:
+    return ShopServiceOffersRepository(tenant_id=ctx.tenant_id)
+
+
+@router.get("/service-offers")
+async def list_service_offers(ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+    return {"items": await _sorepo(ctx).list()}
+
+
+@router.post("/service-offers")
+async def save_service_offer(body: ServiceOfferIn, ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+    data = body.model_dump()
+    data["_id"] = data.pop("id", None)
+    return await _sorepo(ctx).upsert(data)
+
+
+@router.delete("/service-offers/{offer_id}")
+async def delete_service_offer(offer_id: str, ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+    return await _sorepo(ctx).delete(offer_id)

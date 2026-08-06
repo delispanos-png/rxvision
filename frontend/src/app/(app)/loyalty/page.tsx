@@ -8,12 +8,14 @@ import { useT } from "@/store/prefStore";
 import { appConfirm } from "@/store/dialogStore";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
 import { PrintCardButton } from "@/components/loyalty/PrintCard";
+import { DateInput } from "@/components/ui/DateInput";
 
-type Cfg = { enabled: boolean; points_per_refill: number; cents_per_point: number; min_redeem_cents: number; welcome_cents: number; terms?: string; adherence_points_enabled: boolean; adherence_rule: string; points_per_adherence: number; adherence_streak_bonus: number };
+type Cfg = { enabled: boolean; points_per_refill: number; cents_per_point: number; min_redeem_cents: number; welcome_cents: number; terms?: string; adherence_points_enabled: boolean; adherence_rule: string; points_per_adherence: number; adherence_streak_bonus: number; tier_multipliers_enabled: boolean; tier_multipliers: Record<string, number>; campaigns?: Campaign[]; points_expire_months?: number; referral_enabled?: boolean; referral_referrer_cents?: number; referral_referred_cents?: number; birthday_enabled?: boolean; birthday_bonus_cents?: number };
+type Campaign = { name: string; start: string; end: string; multiplier_pct: number };
 type Candidate = { patient_ref: string; name: string; compliance: number | null };
 type Redemption = { _id?: string; id?: string; patient_ref: string; patient_name?: string; cents: number; kind?: string; reason?: string; at: string; voided?: boolean };
-type Member = { patient_ref: string; name: string; compliance: number | null; refills: number; expected: number; open_refills: number; points: number; balance_cents: number; redeemed_cents: number; tier: string; next_tier: string | null; to_next: number; progress_pct: number };
-type Overview = { pharmacy_name?: string; config: Cfg; kpis: { members: number; total_points: number; liability_cents: number; redeemed_cents: number; avg_compliance: number; open_refills: number }; members: Member[] };
+type Member = { patient_ref: string; name: string; compliance: number | null; refills: number; expected: number; open_refills: number; points: number; balance_cents: number; redeemed_cents: number; tier: string; tier_multiplier?: number; next_tier: string | null; to_next: number; progress_pct: number };
+type Overview = { pharmacy_name?: string; config: Cfg; kpis: { members: number; total_points: number; liability_cents: number; earned_cents?: number; redeemed_cents: number; redemption_rate?: number; avg_compliance: number; open_refills: number; tier_counts?: Record<string, number> }; members: Member[] };
 
 type Reward = { _id?: string; id?: string; title: string; type: string; cost_points: number; cost_cents: number; note?: string; active?: boolean };
 
@@ -39,7 +41,15 @@ export default function LoyaltyPage() {
   const t = useT();
   const qc = useQueryClient();
   const { data } = useQuery({ queryKey: ["loyalty"], queryFn: () => api<Overview>("/loyalty") });
-  const [tab, setTab] = useState("members");
+  const [tab, setTab] = useState<string>("members");
+  // Η καρτέλα οδηγείται ΚΑΙ από το URL hash → κάθε tab = αυτόνομο entry στο μενού «Κάρτες πιστότητας».
+  useEffect(() => {
+    const valid = ["members", "enroll", "redemptions", "settings"];
+    const read = () => { const h = window.location.hash.slice(1); if (valid.includes(h)) setTab(h); };
+    read();
+    window.addEventListener("hashchange", read);
+    return () => window.removeEventListener("hashchange", read);
+  }, []);
   const [q, setQ] = useState("");
   const [redeemFor, setRedeemFor] = useState<Member | null>(null);
   const [scanOpen, setScanOpen] = useState(false);
@@ -66,8 +76,8 @@ export default function LoyaltyPage() {
       <div className="mb-4 flex items-center gap-3">
         <span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-gradient-to-br from-rose-500 to-amber-500 text-white shadow-lg"><Gift className="h-6 w-6" /></span>
         <div>
-          <h1 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-slate-100">{t("Πιστότητα Πελατών", "Loyalty")}</h1>
-          <p className="text-sm text-slate-500">{t("Επιβράβευση χρόνιων ασθενών για τη συνέπεια στις επαναλαμβανόμενες συνταγές τους.", "Reward chronic patients for adherence to their repeat prescriptions.")}</p>
+          <h1 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-slate-100">{t("Πιστότητα Πελατών", "Loyalty")} <span className="text-slate-300">·</span> <span className="text-brand-700 dark:text-brand-400">{({ members: t("Μέλη", "Members"), enroll: t("Εγγραφή", "Enrol"), redemptions: t("Εξαργυρώσεις", "Redemptions"), settings: t("Ρυθμίσεις & Δώρα", "Settings & Rewards") } as Record<string, string>)[tab]}</span></h1>
+          <p className="text-sm text-slate-500">{t("Επίλεξε ενότητα από το μενού «Κάρτες πιστότητας» αριστερά.", "Pick a section from the «Loyalty Cards» menu on the left.")}</p>
         </div>
       </div>
 
@@ -83,13 +93,6 @@ export default function LoyaltyPage() {
         <Kpi icon={Gift} label={t("Ανοιχτές επαναλήψεις", "Open refills")} value={String(data?.kpis.open_refills ?? "—")} tint="bg-violet-50 text-violet-600" />
       </div>
 
-      {/* υποσελίδες */}
-      <nav className="mb-4 flex gap-1 overflow-x-auto border-b border-slate-200 dark:border-slate-700">
-        {([["members", t("Μέλη", "Members")], ["enroll", t("Εγγραφή", "Enrol")], ["redemptions", t("Εξαργυρώσεις", "Redemptions")], ["settings", t("Ρυθμίσεις & Δώρα", "Settings & Rewards")]] as const).map(([k, label]) => (
-          <button key={k} onClick={() => setTab(k)}
-            className={`-mb-px whitespace-nowrap border-b-2 px-4 py-2 text-sm ${tab === k ? "border-brand-600 font-semibold text-brand-700 dark:text-brand-400" : "border-transparent text-slate-500 hover:text-slate-700"}`}>{label}</button>
-        ))}
-      </nav>
 
       {tab === "members" && (
         <div className="space-y-4">
@@ -105,6 +108,28 @@ export default function LoyaltyPage() {
             </div>
             {findErr && <div className="mt-2 text-xs text-rose-600">{findErr}</div>}
           </div>
+
+          <ReservationsBox />
+
+          {/* 📊 Ανάλυση προγράμματος — κατανομή βαθμίδων + αξιοποίηση πόντων */}
+          {data && (data.kpis.members > 0) && (
+            <div className="rx-card p-4">
+              <div className="text-sm font-semibold text-slate-800 dark:text-slate-200">📊 {t("Ανάλυση προγράμματος", "Program analytics")}</div>
+              <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
+                <div><div className="text-xs text-slate-500">{t("Κερδισμένη αξία", "Value earned")}</div><div className="text-lg font-bold text-slate-800 dark:text-slate-100">{eur(data.kpis.earned_cents ?? 0)}</div></div>
+                <div><div className="text-xs text-slate-500">{t("Εξαργυρωμένα", "Redeemed")}</div><div className="text-lg font-bold text-slate-800 dark:text-slate-100">{eur(data.kpis.redeemed_cents)}</div></div>
+                <div><div className="text-xs text-slate-500">{t("Ποσοστό αξιοποίησης", "Utilisation rate")}</div><div className="text-lg font-bold text-emerald-600">{data.kpis.redemption_rate ?? 0}%</div></div>
+                <div><div className="text-xs text-slate-500">{t("Ανοιχτές επαναλήψεις", "Open refills")}</div><div className="text-lg font-bold text-violet-600">{data.kpis.open_refills}</div></div>
+              </div>
+              {data.kpis.tier_counts && (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {(["Bronze", "Silver", "Gold", "Platinum"] as const).map((tr) => (
+                    <span key={tr} className={`rounded-full px-2.5 py-1 text-xs font-semibold ${TIER_CLS[tr]}`}>{tr}: {data.kpis.tier_counts?.[tr] ?? 0}</span>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
 
           <div className="mb-2 flex items-center gap-2">
             <div className="relative flex-1">
@@ -268,6 +293,80 @@ function ConfigCard({ cfg }: { cfg: Cfg }) {
             </div>
             <p className="text-[11px] text-slate-400">{t("Π.χ. «Πλήρης ημέρα» = ο ασθενής κερδίζει μόνο αν επιβεβαιώσει ΟΛΑ τα φάρμακα της ημέρας — επιβραβεύει την πραγματική συνέπεια.", "e.g. 'Full day' rewards real adherence — only if all of the day's meds are confirmed.")}</p>
           </div>
+        )}
+      </div>
+      {/* Tier multipliers — υψηλότερα tiers κερδίζουν περισσότερους πόντους/εκτέλεση (opt-in) */}
+      <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50/60 p-3 dark:border-amber-900/40 dark:bg-amber-950/20">
+        <label className="inline-flex cursor-pointer items-center gap-2 text-sm font-semibold text-amber-900 dark:text-amber-200">
+          <input type="checkbox" checked={!!f.tier_multipliers_enabled} onChange={(e) => setF({ ...f, tier_multipliers_enabled: e.target.checked })} />
+          🏆 {t("Πολλαπλασιαστές βαθμίδας (VIP)", "Tier multipliers (VIP)")}
+        </label>
+        <p className="mt-1 text-[11px] text-amber-700 dark:text-amber-300">{t("Όσο ανεβαίνει ο πελάτης βαθμίδα, κερδίζει περισσότερους πόντους ανά εκτέλεση — π.χ. Gold ×1,25. Η βαθμίδα κρίνεται πάντα από τους βασικούς πόντους (η ενίσχυση δεν αλλοιώνει τη σκάλα).", "Higher tiers earn more points per refill — e.g. Gold ×1.25. The ladder itself stays on base points.")}</p>
+        {f.tier_multipliers_enabled && (
+          <div className="mt-2 grid grid-cols-2 gap-3 sm:grid-cols-4">
+            {(["Bronze", "Silver", "Gold", "Platinum"] as const).map((tier) => (
+              <label key={tier} className="text-xs text-slate-500">{tier} (%)
+                <input type="number" value={f.tier_multipliers?.[tier] ?? 100}
+                  onChange={(e) => setF({ ...f, tier_multipliers: { ...(f.tier_multipliers ?? {}), [tier]: Math.max(0, Math.round(+e.target.value)) } })}
+                  className="mt-1 w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm dark:border-slate-700 dark:bg-slate-800" /></label>
+            ))}
+          </div>
+        )}
+      </div>
+      {/* Καμπάνιες διπλών πόντων + λήξη πόντων */}
+      <div className="mt-4 rounded-xl border border-rose-200 bg-rose-50/60 p-3 dark:border-rose-900/40 dark:bg-rose-950/20">
+        <div className="flex items-center justify-between">
+          <div className="text-sm font-semibold text-rose-900 dark:text-rose-200">🎉 {t("Καμπάνιες διπλών πόντων", "Double-point campaigns")}</div>
+          <button type="button" onClick={() => setF({ ...f, campaigns: [...(f.campaigns ?? []), { name: "", start: "", end: "", multiplier_pct: 200 }] })}
+            className="rounded-lg border border-rose-300 bg-white px-2.5 py-1 text-xs font-medium text-rose-700 hover:bg-rose-50 dark:bg-slate-800">+ {t("Καμπάνια", "Campaign")}</button>
+        </div>
+        <p className="mt-1 text-[11px] text-rose-700 dark:text-rose-300">{t("Εκτελέσεις μέσα στο διάστημα κερδίζουν πολλαπλάσιους πόντους (π.χ. 200% = διπλοί). Ιδανικό για γιορτές/προωθήσεις.", "Refills within the window earn multiplied points (e.g. 200% = double). Great for holidays/promos.")}</p>
+        <div className="mt-2 space-y-2">
+          {(f.campaigns ?? []).map((c, i) => {
+            const upd = (patch: Partial<Campaign>) => setF({ ...f, campaigns: (f.campaigns ?? []).map((x, j) => j === i ? { ...x, ...patch } : x) });
+            return (
+              <div key={i} className="grid grid-cols-2 gap-2 rounded-lg border border-rose-200 bg-white p-2 dark:border-rose-900/40 dark:bg-slate-800 sm:grid-cols-5">
+                <input value={c.name} onChange={(e) => upd({ name: e.target.value })} placeholder={t("Όνομα", "Name")} className="rounded-lg border border-slate-300 px-2 py-1.5 text-sm dark:border-slate-700 dark:bg-slate-900 sm:col-span-2" />
+                <DateInput value={c.start} onChange={(v) => upd({ start: v })} />
+                <DateInput value={c.end} onChange={(v) => upd({ end: v })} />
+                <div className="flex items-center gap-1">
+                  <input type="number" value={c.multiplier_pct} onChange={(e) => upd({ multiplier_pct: Math.max(0, Math.round(+e.target.value)) })} className="w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm dark:border-slate-700 dark:bg-slate-900" />
+                  <span className="text-xs text-slate-400">%</span>
+                  <button type="button" onClick={() => setF({ ...f, campaigns: (f.campaigns ?? []).filter((_, j) => j !== i) })} className="shrink-0 rounded-md px-1.5 py-1 text-rose-500 hover:bg-rose-100"><X className="h-4 w-4" /></button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        <label className="mt-3 block text-xs text-slate-500">{t("Λήξη πόντων — κυλιόμενο παράθυρο μηνών (0 = ποτέ)", "Point expiry — rolling months (0 = never)")}
+          <input type="number" value={f.points_expire_months ?? 0} onChange={num("points_expire_months")} className="mt-1 w-32 rounded-lg border border-slate-300 px-2 py-1.5 text-sm dark:border-slate-700 dark:bg-slate-800" /></label>
+      </div>
+      {/* Referral «σύστησε φίλο» */}
+      <div className="mt-4 rounded-xl border border-sky-200 bg-sky-50/60 p-3 dark:border-sky-900/40 dark:bg-sky-950/20">
+        <label className="inline-flex cursor-pointer items-center gap-2 text-sm font-semibold text-sky-900 dark:text-sky-200">
+          <input type="checkbox" checked={!!f.referral_enabled} onChange={(e) => setF({ ...f, referral_enabled: e.target.checked })} />
+          👥 {t("Σύστησε φίλο (referral)", "Refer a friend")}
+        </label>
+        <p className="mt-1 text-[11px] text-sky-700 dark:text-sky-300">{t("Κάθε μέλος αποκτά μοναδικό κωδικό σύστασης. Όταν ένας νέος πελάτης εγγραφεί με τον κωδικό, πιστώνονται και οι δύο.", "Each member gets a referral code. When a new customer joins with it, both are credited.")}</p>
+        {f.referral_enabled && (
+          <div className="mt-2 grid grid-cols-2 gap-3">
+            <label className="text-xs text-slate-500">{t("Bonus συστήνοντα (λεπτά)", "Referrer bonus (cents)")}
+              <input type="number" value={f.referral_referrer_cents ?? 0} onChange={num("referral_referrer_cents")} className="mt-1 w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm dark:border-slate-700 dark:bg-slate-800" /></label>
+            <label className="text-xs text-slate-500">{t("Έξτρα welcome νέου (λεπτά)", "New-member extra (cents)")}
+              <input type="number" value={f.referral_referred_cents ?? 0} onChange={num("referral_referred_cents")} className="mt-1 w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm dark:border-slate-700 dark:bg-slate-800" /></label>
+          </div>
+        )}
+      </div>
+      {/* Δώρο γενεθλίων */}
+      <div className="mt-4 rounded-xl border border-fuchsia-200 bg-fuchsia-50/60 p-3 dark:border-fuchsia-900/40 dark:bg-fuchsia-950/20">
+        <label className="inline-flex cursor-pointer items-center gap-2 text-sm font-semibold text-fuchsia-900 dark:text-fuchsia-200">
+          <input type="checkbox" checked={!!f.birthday_enabled} onChange={(e) => setF({ ...f, birthday_enabled: e.target.checked })} />
+          🎂 {t("Δώρο γενεθλίων", "Birthday gift")}
+        </label>
+        <p className="mt-1 text-[11px] text-fuchsia-700 dark:text-fuchsia-300">{t("Bonus πόντων τον μήνα των γενεθλίων κάθε μέλους (μία φορά τον χρόνο). Ο μήνας προκύπτει αυτόματα από τον ΑΜΚΑ.", "Bonus points in each member's birthday month (once a year). The month is derived automatically from the AMKA.")}</p>
+        {f.birthday_enabled && (
+          <label className="mt-2 block text-xs text-slate-500">{t("Δώρο γενεθλίων (λεπτά)", "Birthday bonus (cents)")}
+            <input type="number" value={f.birthday_bonus_cents ?? 0} onChange={num("birthday_bonus_cents")} className="mt-1 w-40 rounded-lg border border-slate-300 px-2 py-1.5 text-sm dark:border-slate-700 dark:bg-slate-800" /></label>
         )}
       </div>
       <div className="mt-3">
@@ -476,6 +575,51 @@ function RedeemModal({ member, cfg, onClose, onDone }: { member: Member; cfg: Cf
           disabled={unenroll.isPending}
           className="mt-3 w-full rounded-lg border border-rose-200 py-2 text-xs font-medium text-rose-600 hover:bg-rose-50 disabled:opacity-50">{t("Διαγραφή από το πρόγραμμα", "Remove from programme")}</button>
       </div>
+    </div>
+  );
+}
+
+type Pending = { code: string; reward: string; name: string; cost_cents: number; at: string; expires_at: string | null };
+
+// Self-redeem: ο πελάτης δεσμεύει δώρο από την πύλη → 6ψήφιος κωδικός· ο φαρμακοποιός τον επιβεβαιώνει εδώ.
+function ReservationsBox() {
+  const t = useT();
+  const qc = useQueryClient();
+  const [code, setCode] = useState("");
+  const [msg, setMsg] = useState<string | null>(null);
+  const { data } = useQuery({ queryKey: ["loyalty-pending"], queryFn: () => api<{ items: Pending[] }>("/loyalty/pending"), retry: false, refetchInterval: 60_000 });
+  const items = data?.items ?? [];
+  const confirm = useMutation({
+    mutationFn: (c: string) => api<{ ok: boolean; error?: string; reward?: string; name?: string }>("/loyalty/confirm-redeem", { method: "POST", body: JSON.stringify({ code: c }) }),
+    onSuccess: (r) => {
+      setMsg(r.ok ? t(`✓ Επιβεβαιώθηκε: ${r.reward} — ${r.name}`, `✓ Confirmed: ${r.reward} — ${r.name}`) : t("Ο κωδικός δεν βρέθηκε ή έληξε.", "Code not found or expired."));
+      setCode(""); qc.invalidateQueries({ queryKey: ["loyalty-pending"] }); qc.invalidateQueries({ queryKey: ["loyalty"] });
+    },
+    onError: () => setMsg(t("Σφάλμα — δοκίμασε ξανά.", "Error — try again.")),
+  });
+  return (
+    <div className="rx-card p-4">
+      <div className="text-sm font-semibold text-slate-800 dark:text-slate-200">🎁 {t("Επιβεβαίωση κράτησης δώρου", "Confirm reserved reward")}</div>
+      <p className="mt-0.5 text-xs text-slate-500">{t("Ο πελάτης δέσμευσε δώρο από την πύλη & δείχνει 6ψήφιο κωδικό. Πληκτρολόγησέ τον για οριστική εξαργύρωση.", "The customer reserved a reward from the portal and shows a 6-digit code. Enter it to finalize.")}</p>
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        <input value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))} onKeyDown={(e) => e.key === "Enter" && code && confirm.mutate(code)} inputMode="numeric" placeholder={t("6ψήφιος κωδικός", "6-digit code")}
+          className="w-40 rounded-lg border border-slate-300 px-3 py-2 text-center font-mono text-lg tracking-widest dark:border-slate-700 dark:bg-slate-800" />
+        <button onClick={() => code && confirm.mutate(code)} disabled={code.length < 4 || confirm.isPending} className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-50">{t("Επιβεβαίωση", "Confirm")}</button>
+      </div>
+      {msg && <div className="mt-2 text-xs font-medium text-slate-700 dark:text-slate-300">{msg}</div>}
+      {items.length > 0 && (
+        <div className="mt-3 border-t border-slate-100 pt-2 text-sm dark:border-slate-800">
+          <div className="pb-1 text-xs font-semibold text-slate-500">{t("Ενεργές κρατήσεις", "Active reservations")} ({items.length})</div>
+          <div className="divide-y divide-slate-100 dark:divide-slate-800">
+            {items.map((r) => (
+              <div key={r.code} className="flex items-center justify-between gap-2 py-2">
+                <span className="min-w-0 truncate text-slate-700 dark:text-slate-200">{r.name} · {r.reward} <span className="text-xs text-slate-400">({eur(r.cost_cents)})</span></span>
+                <button onClick={() => confirm.mutate(r.code)} className="shrink-0 rounded-lg border border-emerald-300 bg-emerald-50 px-2.5 py-1 font-mono text-xs font-bold text-emerald-700 hover:bg-emerald-100">{r.code} ✓</button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

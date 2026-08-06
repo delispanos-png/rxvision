@@ -592,6 +592,49 @@ async def shop_meta(ctx: PatientContext = Depends(get_patient_context)):
             "loyalty": loyalty}
 
 
+@router.get("/shop/offers")
+async def shop_offers(ctx: PatientContext = Depends(get_patient_context)):
+    """Κύκλωμα «Προσφορές» της πύλης: όλα όσα είναι σε προσφορά ΤΩΡΑ στο φαρμακείο — προϊόντα με
+    έκπτωση (δική τους ή καμπάνιας), πακέτα, και προσφορές ΥΠΗΡΕΣΙΩΝ (ραντεβού). Ο πελάτης βλέπει
+    γρήγορα τι μπορεί να προμηθευτεί/κλείσει με προσφορά."""
+    from app.repositories.pharmacy_catalog import PharmacyCatalogRepository
+    from app.repositories.shop_campaigns import ShopCampaignRepository
+    from app.repositories.shop_promos import ShopBundleRepository
+    from app.repositories.shop_service_offers import ShopServiceOffersRepository
+    camps = await ShopCampaignRepository(tenant_id=ctx.tenant_id).active_now()
+    products = await PharmacyCatalogRepository(tenant_id=ctx.tenant_id).deals(camps)
+    bundles = await ShopBundleRepository(tenant_id=ctx.tenant_id).active_now()
+    services = await ShopServiceOffersRepository(tenant_id=ctx.tenant_id).active_now()
+    return {
+        "products": products,
+        "bundles": [{"name": b.get("name"), "kind": b.get("kind"), "barcode": b.get("barcode"),
+                     "buy_qty": b.get("buy_qty"), "free_qty": b.get("free_qty"),
+                     "lines": b.get("lines") or [], "discount_pct": b.get("discount_pct")}
+                    for b in bundles],
+        "services": [{"id": str(s.get("_id")), "title": s.get("title"),
+                      "description": s.get("description"), "photo_url": s.get("photo_url"),
+                      "image_id": s.get("image_id"), "is_free": bool(s.get("is_free")),
+                      "price_cents": int(s.get("price_cents") or 0),
+                      "compare_cents": int(s.get("compare_cents") or 0), "cta": s.get("cta") or "reserve"}
+                     for s in services],
+    }
+
+
+@router.get("/shop/product/{barcode}")
+async def shop_product(barcode: str, ctx: PatientContext = Depends(get_patient_context)):
+    """Σελίδα προϊόντος (PDP): πλήρες προϊόν + effective έκπτωση (δική του ή καμπάνιας) για «πριν/τώρα»."""
+    from app.repositories.pharmacy_catalog import PharmacyCatalogRepository
+    from app.repositories.shop_campaigns import ShopCampaignRepository, campaign_pct_for
+    p = await PharmacyCatalogRepository(tenant_id=ctx.tenant_id).get(barcode)
+    if not p or p.get("active") is False:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "not_found")
+    camps = await ShopCampaignRepository(tenant_id=ctx.tenant_id).active_now()
+    eff = max(int(p.get("discount_pct") or 0), campaign_pct_for(p, camps))
+    p["eff_discount_pct"] = eff
+    p["sale_cents"] = round(int(p.get("price_cents") or 0) * (100 - eff) / 100)
+    return p
+
+
 class CouponCheckIn(BaseModel):
     code: str = Field(..., max_length=32)
     eligible_cents: int = Field(0, ge=0)
@@ -1048,15 +1091,56 @@ async def my_loyalty(ctx: PatientContext = Depends(get_patient_context)):
         return {"enabled": True, "enrolled": False, "terms": cfg.get("terms")}
     member = await repo.member(ctx.patient_ref)
     rewards = await repo.rewards(only_active=True)
-    return {"enabled": True, "enrolled": True, "member": member, "rewards": rewards, "terms": cfg.get("terms")}
+    reservation = await repo.active_reservation(ctx.patient_ref)
+    referral = None
+    if cfg.get("referral_enabled"):
+        referral = {"code": await repo.referral_code_for(ctx.patient_ref),
+                    "referrer_cents": cfg.get("referral_referrer_cents", 0),
+                    "referred_cents": cfg.get("referral_referred_cents", 0)}
+    return {"enabled": True, "enrolled": True, "member": member, "rewards": rewards,
+            "reservation": reservation, "referral": referral, "terms": cfg.get("terms")}
+
+
+class JoinLoyaltyIn(BaseModel):
+    referred_by_code: str | None = Field(None, max_length=16)
 
 
 @router.post("/loyalty/join", status_code=201)
-async def join_loyalty(ctx: PatientContext = Depends(get_patient_context)):
-    """Patient accepts the terms electronically and joins the programme."""
+async def join_loyalty(body: JoinLoyaltyIn | None = None,
+                       ctx: PatientContext = Depends(get_patient_context)):
+    """Patient accepts the terms electronically and joins the programme (optional referral code)."""
     from app.repositories.loyalty import LoyaltyRepository
     repo = LoyaltyRepository(tenant_id=ctx.tenant_id)
     cfg = await repo.config()
     if not cfg.get("enabled"):
         raise HTTPException(status.HTTP_409_CONFLICT, "loyalty_off")
-    return await repo.enroll(ctx.patient_ref, method="electronic")
+    return await repo.enroll(ctx.patient_ref, method="electronic",
+                             referred_by_code=(body.referred_by_code if body else None))
+
+
+class LoyaltyRedeemIn(BaseModel):
+    reward_id: str = Field(..., min_length=1, max_length=64)
+
+
+@router.post("/loyalty/redeem-request", status_code=201)
+async def loyalty_redeem_request(body: LoyaltyRedeemIn, ctx: PatientContext = Depends(get_patient_context)):
+    """Ο πελάτης ΔΕΣΜΕΥΕΙ δώρο (self-service) → κρατά τους πόντους & παίρνει κωδικό για το φαρμακείο."""
+    from app.repositories.loyalty import LoyaltyRepository
+    repo = LoyaltyRepository(tenant_id=ctx.tenant_id)
+    if not (await repo.config()).get("enabled") or not await repo.is_enrolled(ctx.patient_ref):
+        raise HTTPException(status.HTTP_409_CONFLICT, "loyalty_off_or_not_member")
+    res = await repo.request_reward(ctx.patient_ref, body.reward_id)
+    if not res.get("ok"):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=res)
+    return res
+
+
+class LoyaltyCancelIn(BaseModel):
+    code: str = Field(..., min_length=4, max_length=12)
+
+
+@router.post("/loyalty/cancel-request")
+async def loyalty_cancel_request(body: LoyaltyCancelIn, ctx: PatientContext = Depends(get_patient_context)):
+    """Ακύρωση δέσμευσης δώρου από τον πελάτη → επιστροφή πόντων."""
+    from app.repositories.loyalty import LoyaltyRepository
+    return await LoyaltyRepository(tenant_id=ctx.tenant_id).cancel_request(body.code, ctx.patient_ref)

@@ -220,6 +220,95 @@ def dispatch_abandoned_carts() -> dict:
     return _run_async(_run())
 
 
+@celery_app.task(name="app.workers.reminders.dispatch_loyalty_rewards")
+def dispatch_loyalty_rewards() -> dict:
+    """«🎁 Έχεις πόντους — εξαργύρωσέ τους»: εβδομαδιαία υπενθύμιση σε εγγεγραμμένα μέλη πιστότητας
+    που ΜΠΟΡΟΥΝ ήδη να εξαργυρώσουν τουλάχιστον ένα ενεργό δώρο και δεν έχουν εκκρεμή κράτηση.
+    Ένα push ανά μέλος/εβδομάδα ανά «κατώφλι δώρου» (dedup key με το κόστος του καλύτερου δώρου),
+    ώστε να ξαναειδοποιείται όταν ξεκλειδώσει ακριβότερο δώρο, χωρίς spam. Opt-in = το ίδιο το module."""
+    async def _run() -> dict:
+        from app.repositories.patient_portal import PatientAccountRepository
+        from app.repositories.loyalty import LoyaltyRepository
+        from app.services import push_service
+        _client, db = _fresh_db()
+        accrepo = PatientAccountRepository()
+        yr, wk, _ = datetime.now(_ATH).isocalendar()
+        stamp = f"{yr}-{wk:02d}"
+        sent = 0
+        for cfg in [c async for c in db["loyalty_config"].find({"enabled": True})]:
+            tid = cfg["tenant_id"]
+            try:
+                repo = LoyaltyRepository(tenant_id=tid)
+                rewards = [r for r in await repo.rewards() if r.get("active", True) and r.get("cost_cents", 0) > 0]
+                if not rewards:
+                    continue
+                ov = await repo.overview()
+                for m in ov.get("members", []):
+                    try:
+                        pref = m["patient_ref"]
+                        bal = m.get("balance_cents", 0)
+                        affordable = [r for r in rewards if bal >= r["cost_cents"]]
+                        if not affordable:
+                            continue
+                        if await repo.active_reservation(pref):
+                            continue                       # έχει ήδη δεσμεύσει δώρο
+                        acc = await _account_for(db, accrepo, pref)
+                        if not acc:
+                            continue                       # χωρίς λογαριασμό πύλης — δεν λαμβάνει push
+                        best = max(affordable, key=lambda r: r["cost_cents"])
+                        dk = f"loyalty:{pref}:{best['cost_cents']}:{stamp}"
+                        if await db["reminder_sent"].find_one({"_id": dk}):
+                            continue
+                        await db["reminder_sent"].insert_one({"_id": dk, "at": datetime.now(timezone.utc)})
+                        eur = f"{bal / 100:.2f}".replace(".", ",")
+                        n = await push_service.send_to_account(
+                            str(acc["_id"]), title="🎁 Έχεις πόντους πιστότητας!",
+                            body=f"{m.get('points', 0)} πόντοι ({eur}€) — εξαργύρωσέ τους σε «{best['title']}». Δες τα δώρα σου!",
+                            url="/portal?tab=wallet")
+                        sent += n
+                    except Exception:  # noqa: BLE001
+                        continue
+            except Exception:  # noqa: BLE001
+                continue
+        return {"sent": sent}
+    return _run_async(_run())
+
+
+@celery_app.task(name="app.workers.reminders.dispatch_birthday_bonus")
+def dispatch_birthday_bonus() -> dict:
+    """«🎂 Χρόνια πολλά» — bonus πόντων στα μέλη πιστότητας με γενέθλια αυτόν τον μήνα (μία φορά/έτος,
+    dedup στον repo). Ο μήνας προκύπτει από το ωμό ΑΜΚΑ (ΗΗΜΜΕΕ). Opt-in ανά φαρμακείο. Τρέχει
+    καθημερινά (φθηνό) → πιάνει & όσους εγγράφονται μέσα στον μήνα των γενεθλίων τους."""
+    async def _run() -> dict:
+        from app.repositories.patient_portal import PatientAccountRepository
+        from app.repositories.loyalty import LoyaltyRepository
+        from app.services import push_service
+        _client, db = _fresh_db()
+        accrepo = PatientAccountRepository()
+        now = datetime.now(_ATH)
+        month, year = now.month, now.year
+        credited = 0
+        for cfg in [c async for c in db["loyalty_config"].find({"enabled": True, "birthday_enabled": True})]:
+            tid = cfg["tenant_id"]
+            try:
+                refs = await LoyaltyRepository(tenant_id=tid).award_birthdays(month, year)
+                for pref in refs:
+                    credited += 1
+                    try:
+                        acc = await _account_for(db, accrepo, pref)
+                        if acc:
+                            await push_service.send_to_account(
+                                str(acc["_id"]), title="🎂 Χρόνια πολλά!",
+                                body="Σου χαρίσαμε πόντους πιστότητας για τα γενέθλιά σου. Δες το πορτοφόλι σου!",
+                                url="/portal?tab=wallet")
+                    except Exception:  # noqa: BLE001
+                        continue
+            except Exception:  # noqa: BLE001
+                continue
+        return {"credited": credited}
+    return _run_async(_run())
+
+
 @celery_app.task(name="app.workers.reminders.purge_old_data")
 def purge_old_data() -> dict:
     """Μηνιαίος καθαρισμός δεδομένων εκτός του παραθύρου διατήρησης ΑΝΑ φαρμακείο (rolling,
