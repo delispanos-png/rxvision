@@ -8,7 +8,8 @@ import { ModuleGuard } from "@/components/layout/ModuleGuard";
 import { fmtEur, fmtNum } from "@/lib/formatters";
 import { KpiCard } from "@/components/kpi/KpiCard";
 import { useT } from "@/store/prefStore";
-import { CreditCard, Sparkles, Database, Check, Loader2, Lock } from "lucide-react";
+import { CreditCard, Sparkles, Database, Check, Loader2, Lock, Users } from "lucide-react";
+import { appConfirm } from "@/store/dialogStore";
 
 type Subscription = {
   plan: string;
@@ -36,6 +37,15 @@ type Extras = {
   retention: { months: number; default: number; max: number; price_per_year_cents: number; surcharge_cents: number };
 };
 
+type Seats = {
+  seats: number; included_free: number; max_seats: number; extra_users: number;
+  per_seat_price_cents: number; billing_cycle: string; currency: string;
+  card_on_file: boolean; live_sessions: number;
+  pending_decrease: { seats: number; effective_at: string | null } | null;
+};
+type SeatPreview = { new_seats: number; current_seats: number; delta: number; direction: string;
+  immediate_charge_gross_cents: number; recurring_delta_net_cents: number; remaining_days?: number };
+
 const AI_LIMIT_OPTS = [50, 75, 100, 150, 200, 300, 500, 1000];
 const RET_OPTS = [36, 48, 60, 72, 84, 96, 120];
 
@@ -60,13 +70,57 @@ export default function BillingSettingsPage() {
     queryFn: () => api<Extras>(`/subscription/extras`),
     retry: false,
   });
+  const seats = useQuery({
+    queryKey: ["subscription", "seats"],
+    queryFn: () => api<Seats>(`/subscription/seats`),
+    retry: false,
+  });
 
   const s = subscription.data;
   const x = extras.data;
   const [cardBusy, setCardBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
 
-  const refresh = () => { qc.invalidateQueries({ queryKey: ["subscription", "extras"] }); qc.invalidateQueries({ queryKey: queryKeys.subscription() }); };
+  const refresh = () => { qc.invalidateQueries({ queryKey: ["subscription", "extras"] }); qc.invalidateQueries({ queryKey: ["subscription", "seats"] }); qc.invalidateQueries({ queryKey: queryKeys.subscription() }); };
+
+  // Αλλαγή αριθμού χρηστών: αύξηση → προεπισκόπηση αναλογικής χρέωσης + επιβεβαίωση· μείωση → στην ανανέωση.
+  const [seatBusy, setSeatBusy] = useState(false);
+  async function changeSeats(target: number) {
+    const se = seats.data;
+    if (!se || target === se.seats) return;
+    const per = perLabel;
+    if (target > se.seats) {
+      let pv: SeatPreview | null = null;
+      try { pv = await api<SeatPreview>("/subscription/seats/preview", { method: "POST", body: JSON.stringify({ seats: target }) }); } catch { /* fallthrough */ }
+      const now = pv ? fmtEur(pv.immediate_charge_gross_cents) : "—";
+      const rec = pv ? fmtEur(pv.recurring_delta_net_cents) : "—";
+      const ok = await appConfirm(
+        t(`Αύξηση σε ${target} χρήστες. Θα χρεωθεί ΤΩΡΑ αναλογικά ${now} (με ΦΠΑ) για το υπόλοιπο της περιόδου, και +${rec}/${per} (καθαρά) στην ανανέωση. Συνέχεια;`,
+          `Increase to ${target} users. You will be charged ${now} now (incl. VAT) for the rest of the period, and +${rec}/${per} (net) at renewal. Continue?`),
+        { title: t("Αγορά επιπλέον χρηστών", "Buy more users"), confirmText: t("Αγορά & χρέωση", "Buy & charge") });
+      if (!ok) return;
+    } else {
+      const eff = seats.data?.pending_decrease?.effective_at;
+      const ok = await appConfirm(
+        t(`Μείωση σε ${target} χρήστες. Θα εφαρμοστεί στην ΑΝΑΝΕΩΣΗ (κρατάς τους τρέχοντες μέχρι τότε). Συνέχεια;`,
+          `Reduce to ${target} users. Applies at RENEWAL (you keep current until then). Continue?`),
+        { title: t("Μείωση χρηστών", "Reduce users"), confirmText: t("Προγραμματισμός", "Schedule") });
+      if (!ok) return;
+      void eff;
+    }
+    setSeatBusy(true); setNotice(null);
+    try {
+      await api<Seats>("/subscription/seats", { method: "PUT", body: JSON.stringify({ seats: target }) });
+      setNotice(target > se.seats
+        ? t("Οι επιπλέον χρήστες ενεργοποιήθηκαν ✓", "Extra users activated ✓")
+        : t("Η μείωση προγραμματίστηκε για την ανανέωση ✓", "Reduction scheduled for renewal ✓"));
+      refresh();
+    } catch (e) {
+      setNotice((e as ApiError)?.status === 402
+        ? t("Πρόσθεσε κάρτα για να αγοράσεις επιπλέον χρήστες.", "Add a card to buy more users.")
+        : t("Δεν ήταν δυνατή η αλλαγή χρηστών.", "Could not change users."));
+    } finally { setSeatBusy(false); }
+  }
 
   // Revolut save-card popup (ίδιο pattern με την εγγραφή)
   async function payWithRevolut(token: string, mode: string): Promise<void> {
@@ -151,7 +205,7 @@ export default function BillingSettingsPage() {
           </div>
         ) : (
           <div className="space-y-2 text-sm text-amber-900">
-            <p>{t("Δεν έχεις καταχωρήσει κάρτα. Πρόσθεσε μία για να ξεκλειδώσεις τις επιπλέον δυνατότητες (περισσότερα AI ερωτήματα, μεγαλύτερη διατήρηση δεδομένων και ό,τι νέο προστεθεί).", "No card on file. Add one to unlock extras (more AI questions, longer data retention, and anything new).")}</p>
+            <p>{t("Δεν έχεις καταχωρήσει κάρτα. Πρόσθεσε μία για να ξεκλειδώσεις τις επιπλέον δυνατότητες: top-up μηνυμάτων (SMS / Viber / email), περισσότερα AI ερωτήματα, μεγαλύτερη διατήρηση δεδομένων, επιπλέον χρήστες και ό,τι νέο προστεθεί.", "No card on file. Add one to unlock extras: message top-up (SMS / Viber / email), more AI questions, longer data retention, extra users, and anything new.")}</p>
             <p className="text-xs text-amber-700">{t("Ασφαλής αποθήκευση κάρτας μέσω Viva (κάρτα ή IRIS). Χρεώνεσαι μόνο για ό,τι επιλέξεις — μπαίνει στη συνδρομή σου.", "Secure card storage via Viva (card or IRIS). You are charged only for what you choose — added to your subscription.")}</p>
             <button onClick={addCard} disabled={cardBusy} className="inline-flex items-center gap-1.5 rounded-lg bg-amber-600 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-700 disabled:opacity-50">
               {cardBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <CreditCard className="h-4 w-4" />} {t("Πρόσθεσε κάρτα", "Add card")}
@@ -208,6 +262,45 @@ export default function BillingSettingsPage() {
             </div>
           </div>
         )}
+        {/* ── Χρήστες / άδειες (αύξηση άμεση/αναλογική, μείωση στην ανανέωση) ── */}
+        {seats.data && (() => {
+          const se = seats.data!;
+          const opts = Array.from({ length: se.max_seats - se.included_free + 1 }, (_, i) => se.included_free + i);
+          return (
+            <div className="mt-4 rounded-xl border border-slate-200 p-4">
+              <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-slate-700"><Users className="h-4 w-4 text-sky-500" /> {t("Χρήστες (άδειες ταυτόχρονης σύνδεσης)", "Users (concurrent-session seats)")}</div>
+              <div className="mb-2 text-xs text-slate-500">
+                {t("Τρέχοντες", "Current")}: <b>{se.seats}</b> / {se.max_seats} {t("μέγιστο πακέτου", "plan max")}
+                <span className="ml-1 text-slate-400">· {t("συνδεδεμένοι τώρα", "online now")}: {se.live_sessions}</span>
+                {se.extra_users > 0 && <span className="ml-1 text-sky-600">· +{fmtEur(se.extra_users * se.per_seat_price_cents)}/{perLabel}</span>}
+              </div>
+              <div className="flex items-center gap-2">
+                <select value={se.seats} disabled={seatBusy}
+                  onChange={(e) => changeSeats(+e.target.value)}
+                  className="w-full rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-sm">
+                  {opts.map((n) => {
+                    const locked = n > se.included_free && se.per_seat_price_cents > 0 && !se.card_on_file;
+                    const extra = (n - se.included_free) * se.per_seat_price_cents;
+                    return <option key={n} value={n} disabled={locked}>
+                      {n} {t("χρήστες", "users")}{n === se.included_free ? ` · ${t("βασικό", "base")}` : ` · +${fmtEur(extra)}/${perLabel}`}{locked ? " 🔒" : ""}
+                    </option>;
+                  })}
+                </select>
+                {seatBusy && <Loader2 className="h-4 w-4 animate-spin text-slate-400" />}
+              </div>
+              {se.pending_decrease && (
+                <p className="mt-2 rounded-lg bg-amber-50 px-3 py-1.5 text-[11px] text-amber-800">
+                  {t("Προγραμματισμένη μείωση σε", "Scheduled reduction to")} <b>{se.pending_decrease.seats}</b> {t("χρήστες στην ανανέωση", "users at renewal")}
+                  {se.pending_decrease.effective_at ? ` (${new Date(se.pending_decrease.effective_at).toLocaleDateString("el-GR")})` : ""}.
+                </p>
+              )}
+              {!se.card_on_file && se.per_seat_price_cents > 0
+                ? <p className="mt-2 flex items-center gap-1 text-[11px] text-amber-700"><Lock className="h-3 w-3" /> {t("Πρόσθεσε κάρτα για περισσότερους από", "Add a card for more than")} {se.included_free} {t("χρήστη", "user")}.</p>
+                : <p className="mt-2 text-[11px] text-slate-400">{t("Η αύξηση χρεώνεται αναλογικά τώρα· η μείωση εφαρμόζεται στην ανανέωση.", "Increases are charged pro-rata now; decreases apply at renewal.")}</p>}
+            </div>
+          );
+        })()}
+
         {x && x.addons_total_cents > 0 && (
           <p className="mt-3 rounded-lg bg-violet-50 px-3 py-2 text-xs text-violet-800">{t("Σύνολο επιπλέον χρεώσεων", "Total extras")}: <b>+{fmtEur(x.addons_total_cents)}/{perLabel}</b> — {t("μπαίνει στην επόμενη χρέωση της συνδρομής σου.", "added to your next subscription charge.")}</p>
         )}

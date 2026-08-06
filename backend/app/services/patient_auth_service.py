@@ -221,6 +221,41 @@ class PatientAuthService:
                 pass
         return sent
 
+    async def request_password_reset(self, email: str) -> dict:
+        """Self-service «ξέχασα κωδικό»: αν υπάρχει λογαριασμός με αυτό το email, στέλνει σύνδεσμο
+        ορισμού νέου κωδικού (email + SMS). ΠΑΝΤΑ επιστρέφει ok — δεν αποκαλύπτει αν το email υπάρχει."""
+        email = (email or "").strip().lower()
+        acc = await self.repo.get_by_email(email) if email and "@" in email else None
+        if acc:
+            token = await self.repo.create_set_password_token(acc["_id"])
+            if token:
+                link = f"{_PORTAL_BASE}/portal/set-password?token={token}"
+                await self._send_password_reset_link(acc.get("email"), acc.get("phone"), link)
+        return {"ok": True}
+
+    async def _send_password_reset_link(self, email: str | None, phone: str | None, link: str) -> None:
+        """Στέλνει σύνδεσμο ανάκτησης κωδικού (email δωρεάν SMTP + SMS κεντρικό Apifon). Best-effort."""
+        if email:
+            try:
+                from app.services import mailer
+                await mailer.send_email(
+                    email, "RxVision — Ανάκτηση κωδικού πρόσβασης",
+                    "<p>Λάβαμε αίτημα ανάκτησης κωδικού για τον λογαριασμό σας στην Πύλη Πελατών RxVision.</p>"
+                    "<p>Πατήστε για να ορίσετε νέο κωδικό πρόσβασης:</p>"
+                    f"<p><a href='{link}' style='display:inline-block;padding:11px 20px;background:#4f46e5;"
+                    f"color:#fff;text-decoration:none;border-radius:8px;font-weight:bold'>Ορισμός νέου κωδικού</a></p>"
+                    f"<p style='font-size:12px;color:#64748b'>ή αντιγράψτε: {link}</p>"
+                    "<p style='font-size:12px;color:#64748b'>Αν δεν το ζητήσατε εσείς, αγνοήστε το μήνυμα. "
+                    "Ο σύνδεσμος λήγει σε 7 ημέρες.</p>")
+            except Exception:  # noqa: BLE001
+                pass
+        if phone:
+            try:
+                from app.services import comms
+                await comms.send_otp_sms(phone, f"RxVision: ορίστε νέο κωδικό πρόσβασης: {link}")
+            except Exception:  # noqa: BLE001
+                pass
+
     async def set_password_by_token(self, token: str, new_password: str) -> dict | None:
         """Link flow (email/SMS): ο πελάτης ορίζει δικό του κωδικό μέσω single-use token → session."""
         acc = await self.repo.get_by_set_password_token((token or "").strip())

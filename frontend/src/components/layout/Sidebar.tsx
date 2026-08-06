@@ -15,7 +15,7 @@ import { Tooltip } from "@/components/ui/Tooltip";
 import {
   Activity, BarChart3, Boxes, CalendarClock, ChevronRight, LayoutDashboard,
   Mail, Salad, PackageSearch, Settings, Sparkles, Stethoscope, TrendingUp, Users,
-  Brain, ShieldCheck, Tags, Syringe, Bot, Gift, BookOpen, Truck, Lock, X, type LucideIcon,
+  Brain, ShieldCheck, Tags, Syringe, Bot, Gift, BookOpen, ScrollText, Truck, Lock, X, type LucideIcon,
 } from "lucide-react";
 
 // A leaf (direct link). `module` gates visibility (shown only when enabled/trial).
@@ -73,6 +73,8 @@ const GROUPS: Group[] = [
     // PharmacyOne is a back-office INTEGRATION (data source), not a user-facing capability → not in the menu.
     { label: "Επικοινωνία", en: "Communications", icon: Mail, href: "/communications" },
     { label: "Οδηγός δεικτών", en: "Indicators guide", icon: BookOpen, href: "/guide" },
+    { label: "Όροι Χρήσης", en: "Terms of Use", icon: ScrollText, href: "/terms-of-use" },
+    { label: "GDPR", en: "GDPR", icon: Lock, href: "/gdpr" },
     { label: "Ρυθμίσεις", en: "Settings", icon: Settings, href: "/settings/users" },
   ] },
 ];

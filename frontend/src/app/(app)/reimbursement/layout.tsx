@@ -6,6 +6,7 @@ import { ShieldCheck, CalendarRange } from "lucide-react";
 import { useT } from "@/store/prefStore";
 import { useReimbPeriod } from "@/store/reimbStore";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
+import { ReimbursementDisclaimer } from "@/components/reimbursement/Disclaimer";
 
 function curMonth() { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`; }
 
@@ -56,6 +57,7 @@ export default function ReimbursementLayout({ children }: { children: React.Reac
         })}
       </nav>
       {children}
+      <ReimbursementDisclaimer />
     </ModuleGuard>
   );
 }

@@ -102,7 +102,7 @@ class TenantProvisioningService:
         sla_code = sla or package.get("sla")
         max_seats = int(package.get("seats", 1) or 1)        # ΜΕΓΙΣΤΟ όριο πλάνου («έως N»)
         extra_rate = int(package.get("extra_user_price_yearly" if yearly else "extra_user_price", 0) or 0)
-        included_free = 1                                     # ΒΑΣΗ: 1 δωρεάν ταυτόχρονος χρήστης σε ΚΑΘΕ πλάνο
+        included_free = int(package.get("included_users") or 1)  # δωρεάν χρήστες που περιλαμβάνει η τιμή (ανά πακέτο)
         chosen_seats = min(max_seats, max(1, int(seats or 1)))  # default 1· πάντα cap στο max του πλάνου
         extra_users = max(0, chosen_seats - included_free)   # extra = πάνω από τη βάση (1) → χρεώσιμα
         sla_doc = await db["sla_tiers"].find_one({"_id": sla_code}) if sla_code else None

@@ -104,6 +104,10 @@ async def _recompute_total(tenant_id: str) -> int:
     from app.services.ai_quota import ai_surcharge_monthly
     extra = await retention_surcharge_monthly(db, tenant_id) + await ai_surcharge_monthly(db, tenant_id)
     total += extra * 12 if yearly else extra
+    # επιπλέον χρήστες (seats) — η τιμή/χρήστη είναι ΤΟΥ ΠΑΚΕΤΟΥ του πελάτη & ήδη ανά κύκλο
+    # (ετήσια τιμή ανά έτος), οπότε προστίθεται ΑΠΕΥΘΕΙΑΣ (όχι ×12).
+    from app.services.seats_service import seat_surcharge_for_cycle
+    total += await seat_surcharge_for_cycle(db, tenant_id)
     await db["subscriptions"].update_one({"tenant_id": tenant_id}, {"$set": {"addons_total": total}})
     return total
 
@@ -161,8 +165,16 @@ async def activate(tenant_id: str, addon_id: str) -> dict:
 async def start_trial(tenant_id: str, module: str) -> dict:
     """Self-service trial of the SMALLEST package that unlocks `module` — grants that package's
     still-missing modules as time-limited trials (auth resolution downgrades expired trials to locked).
-    Already-owned modules are left untouched, so an expiring trial can never remove a paid feature."""
+    Already-owned modules are left untouched, so an expiring trial can never remove a paid feature.
+
+    ΦΡΟΥΡΟΣ: όποιος ΕΧΕΙ ΗΔΗ χρησιμοποιήσει δοκιμαστική περίοδο (η συνδρομή του έχει/είχε trial_ends_at)
+    ΔΕΝ δικαιούται νέα δωρεάν δοκιμή σε extra δυνατότητες — τις αγοράζει απευθείας. Μία δοκιμή ανά πελάτη."""
     db = shared_db()
+    sub = await db["subscriptions"].find_one({"tenant_id": tenant_id}, {"trial_ends_at": 1}) or {}
+    if sub.get("trial_ends_at") is not None:
+        return {"ok": False, "error": "trial_used",
+                "message": "Έχεις ήδη χρησιμοποιήσει δοκιμαστική περίοδο — οι επιπλέον δυνατότητες "
+                           "αγοράζονται απευθείας (χωρίς δοκιμή)."}
     # smallest PAID active package that unlocks the module (skip the €0 free-trial package, which
     # bundles everything — we don't want a click to trial the entire catalogue).
     pkgs = [p async for p in db["packages"].find({"active": True}).sort("price_monthly", 1)

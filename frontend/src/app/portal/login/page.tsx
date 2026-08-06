@@ -43,7 +43,7 @@ export default function PortalLogin() {
       <form onSubmit={submit} className="w-full max-w-sm space-y-4 rounded-3xl border border-slate-200 bg-white p-6 shadow-xl shadow-slate-200/60 sm:p-8">
         <div className="text-center">
           <span className="mx-auto mb-3 grid h-12 w-12 place-items-center rounded-2xl bg-gradient-to-br from-brand-500 to-indigo-600 text-white shadow-lg shadow-brand-500/30"><Pill className="h-6 w-6" /></span>
-          <h1 className="text-xl font-extrabold tracking-tight text-slate-900">Καλώς ήρθες πίσω</h1>
+          <h1 className="text-xl font-extrabold tracking-tight text-slate-900">Καλώς ήρθες</h1>
           <p className="mt-1 text-sm text-slate-500">Σύνδεση στην Πύλη Πελατών RxVision</p>
         </div>
         {err && <div className="rounded-xl bg-rose-50 px-3 py-2 text-sm text-rose-700">{err}</div>}
@@ -69,6 +69,9 @@ export default function PortalLogin() {
           className="w-full rounded-xl bg-brand-600 py-3 text-sm font-semibold text-white shadow-sm shadow-brand-500/30 hover:bg-brand-700 disabled:opacity-60">
           {busy ? "Σύνδεση…" : need2fa ? "Επαλήθευση & Σύνδεση" : "Σύνδεση"}
         </button>
+        <p className="text-center text-sm">
+          <Link href="/portal/forgot-password" className="font-medium text-slate-500 hover:text-brand-600 hover:underline">Ξέχασες τον κωδικό σου;</Link>
+        </p>
         <p className="text-center text-sm text-slate-500">
           Δεν έχεις λογαριασμό; <Link href="/portal/register" className="font-semibold text-brand-600 hover:underline">Εγγραφή</Link>
         </p>

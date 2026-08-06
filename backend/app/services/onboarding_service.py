@@ -51,7 +51,9 @@ class OnboardingService:
                        addons: list[str] | None = None,
                        activate: bool = False,
                        viva_transaction_id: str | None = None,
-                       reactivate_tenant_id: str | None = None) -> dict:
+                       reactivate_tenant_id: str | None = None,
+                       accepted_terms: bool | None = None,
+                       terms_version: str | None = None) -> dict:
         """Δημιουργεί tenant + συνδρομή + owner + tokens. activate=True → ΠΛΗΡΩΜΕΝΗ, ενεργή συνδρομή
         (χωρίς trial· κάρτα αποθηκευμένη μέσω viva_transaction_id). activate=False → legacy trial.
         reactivate_tenant_id → ΔΕΝ φτιάχνει νέο tenant· επαναφέρει ΥΠΑΡΧΟΝΤΑ (ληγμένο/trial) σε ενεργή
@@ -136,6 +138,10 @@ class OnboardingService:
             "payment_status": "card_saved" if activate else "trial",
             "viva_transaction_id": viva_transaction_id if activate else None,
             "started_at": _now(),
+            # αποδοχή Όρων Χρήσης κατά τη δημιουργία της συνδρομής (GDPR/νομική τεκμηρίωση)
+            "accepted_terms": bool(accepted_terms),
+            "terms_version": terms_version,
+            "terms_accepted_at": _now() if accepted_terms else None,
             # how the customer chose to pay at signup: "card" (Viva) or "bank" (manual transfer)
             "payment_method": payment_method or "card",
         }
@@ -212,7 +218,8 @@ class OnboardingService:
     async def create_pending(self, *, pharmacy_name: str, country: str, owner_email: str,
                              owner_name: str, company: dict, package_code: str | None,
                              billing_cycle: str | None, sla: str | None, seats: int | None,
-                             addons: list[str] | None, payment_method: str) -> dict:
+                             addons: list[str] | None, payment_method: str,
+                             accepted_terms: bool = False, terms_version: str | None = None) -> dict:
         """Προσωρινή εγγραφή ΠΡΙΝ την πληρωμή — ΔΕΝ δημιουργεί λογαριασμό. Επιστρέφει {pending_id,
         amount_cents}. Ο λογαριασμός υλοποιείται με `materialize()` μετά την επιβεβαίωση πληρωμής."""
         country = (country or "GR").upper()
@@ -265,6 +272,8 @@ class OnboardingService:
             "package_code": package_code, "billing_cycle": billing_cycle or "monthly", "sla": sla_code,
             "seats": chosen_seats, "addons": addons or [], "payment_method": payment_method,
             "amount_cents": amount, "created_at": _now(),
+            "accepted_terms": bool(accepted_terms), "terms_version": terms_version,
+            "terms_accepted_at": _now() if accepted_terms else None,
             "reactivate_tenant_id": reactivate_tid,   # → materialize επαναφέρει τον ΥΠΑΡΧΟΝΤΑ tenant
             "expires_at": _now() + timedelta(hours=2),
         })
@@ -339,7 +348,8 @@ class OnboardingService:
             # trial πακέτο → trialing (activate=False)· paid → active με αποθηκευμένη κάρτα
             activate=not p.get("is_trial"),
             viva_transaction_id=p.get("viva_transaction_id"),
-            reactivate_tenant_id=p.get("reactivate_tenant_id"))
+            reactivate_tenant_id=p.get("reactivate_tenant_id"),
+            accepted_terms=p.get("accepted_terms"), terms_version=p.get("terms_version"))
         await db["pending_registrations"].update_one(
             {"_id": pending_id}, {"$set": {"status": "completed",
                                            "completed_tenant_id": res["tenant_id"], "completed_at": _now()}})

@@ -12,6 +12,7 @@ import { PharmaCatLauncher } from "@/components/pharmacat/PharmaCatLauncher";
 import { NotificationBells } from "@/components/layout/NotificationBells";
 import { Tooltip } from "@/components/ui/Tooltip";
 import { PharmacySwitcher, type Pharmacy } from "@/components/layout/PharmacySwitcher";
+import { CardReminder } from "@/components/layout/CardReminder";
 import { CLOUDON_LOGO_DATA_URI } from "@/components/brand/cloudonLogo";
 
 type Me = {
@@ -98,6 +99,8 @@ export function Topbar() {
         </Tooltip>
         {/* Δίκτυο φαρμακείων: εμφανίζεται ΜΟΝΟ αν ο χρήστης έχει πρόσβαση σε >1 φαρμακείο */}
         <PharmacySwitcher pharmacies={data?.pharmacies ?? []} activeId={data?.tenant_id} />
+        {/* Διακριτική ένδειξη «Χωρίς κάρτα» → Ρυθμίσεις/Χρεώσεις (κρύβεται όταν υπάρχει κάρτα/δωρεάν) */}
+        <CardReminder />
       </div>
       <Tooltip label={t("Σκούρο/Φωτεινό θέμα", "Dark/Light theme")}>
         <button

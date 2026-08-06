@@ -71,6 +71,8 @@ class IntentIn(BaseModel):
     seats: int | None = Field(None, ge=1, le=999)
     payment_method: Literal["card", "bank"] = "card"
     addons: list[str] | None = None
+    accepted_terms: bool = False               # αποδοχή Όρων Χρήσης (υποχρεωτική στο frontend)
+    terms_version: str | None = Field(None, max_length=40)
 
 
 class CompleteIn(BaseModel):
@@ -102,7 +104,8 @@ async def register_intent(body: IntentIn):
             company=body.company.model_dump() if body.company else {},
             package_code=body.package_code, billing_cycle=body.billing_cycle,
             sla=body.sla, seats=body.seats, addons=body.addons,
-            payment_method=body.payment_method)
+            payment_method=body.payment_method,
+            accepted_terms=body.accepted_terms, terms_version=body.terms_version)
     except OnboardingError as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, detail={"error": str(exc)})
     pid = pending["pending_id"]
@@ -166,7 +169,8 @@ async def public_packages():
         cycles = [c for c in (p.get("billing_cycles") or ["monthly", "yearly"]) if c in ("monthly", "yearly")] or ["monthly", "yearly"]
         out = {
             "_id": p["_id"], "name": p.get("name"), "description": p.get("description"),
-            "seats": p.get("seats"), "trial_days": p.get("trial_days"), "sla": p.get("sla"),
+            "seats": p.get("seats"), "included_users": int(p.get("included_users") or 1),
+            "trial_days": p.get("trial_days"), "sla": p.get("sla"),
             "modules": p.get("modules", []), "features": p.get("features", []),
             "available_addons": p.get("available_addons", []),
             "billing_cycles": cycles, "price_includes_vat": bool(p.get("price_includes_vat")),

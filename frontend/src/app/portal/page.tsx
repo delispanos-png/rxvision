@@ -4,9 +4,9 @@ import { useEffect, useState, useCallback } from "react";
 import { DateInput } from "@/components/ui/DateInput";
 import { useRouter } from "next/navigation";
 import {
-  Pill, Wallet, ShieldCheck, RefreshCw, Stethoscope, Bell, LogOut, Building2,
-  Calendar, ChevronDown, ChevronUp, CheckCircle2, Clock, Sparkles, X, Search, CalendarPlus, AlertCircle,
-  PackageCheck, Gift, FileText, ShoppingBag, HeartPulse, FilePlus, MapPin, Home, Percent, Camera, Upload, Star, Navigation, Plus, Check,
+  Pill, RefreshCw, Stethoscope, Bell, LogOut, Building2,
+  Calendar, ChevronDown, ChevronUp, ChevronRight, CheckCircle2, Clock, Sparkles, X, Search, CalendarPlus, AlertCircle,
+  PackageCheck, Gift, FileText, ShoppingBag, HeartPulse, FilePlus, MapPin, Home, Camera, Upload, Star, Navigation, Plus, Check,
   Sun, Moon, User,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
@@ -135,6 +135,7 @@ export default function PortalHome() {
   const [me, setMe] = useState<Me | null>(null);
   const [pharm, setPharm] = useState<Pharm | null>(null);
   const [summary, setSummary] = useState<Summary | null>(null);
+  const [readyOrders, setReadyOrders] = useState(0);   // έτοιμες παραγγελίες προς παράδοση (KPI Αρχικής)
   const [noPharmacy, setNoPharmacy] = useState(false);
   // deep-link «/portal?tab=shop» → τα push (π.χ. ξεχασμένο καλάθι) ανοίγουν τη σωστή καρτέλα
   const [tab, setTab] = useState<string>(() => {
@@ -156,6 +157,7 @@ export default function PortalHome() {
   const [appts, setAppts] = useState<Appt[]>([]);
   const [rxReqs, setRxReqs] = useState<RxReq[]>([]);
   const [loyalty, setLoyalty] = useState<Loyalty | null>(null);
+  const [showCard, setShowCard] = useState(false);   // modal κάρτας πιστότητας (QR) — γρήγορη πρόσβαση από Αρχική
   const [health, setHealth] = useState<Health | null>(null);
   const [sched, setSched] = useState<Schedule | null>(null);
   const [medsView, setMedsView] = useState<"calendar" | "settings">("calendar");  // Πρόγραμμα: Ημερολόγιο | Ρυθμίσεις
@@ -233,7 +235,6 @@ export default function PortalHome() {
       ]);
       setSummary(s); setRx(p.items); setRepeats(r.items); setNotifs(n.items);
       patientApi<Pharm>("/patient/pharmacy-hours").then(setPharm).catch(() => setPharm(null));
-      if (n.items.length) setShowNotifs(true);
     } catch { /* patientApi redirects to /portal/login on 401 */ }
   }, [router]);
 
@@ -249,6 +250,10 @@ export default function PortalHome() {
       // Πάνελ «κονσόλας» — ΜΟΝΟ σε desktop φαίνονται, αλλά τα δεδομένα είναι ήδη cached για τις καρτέλες.
       patientApi<Schedule>("/patient/meds/schedule").then(setSched).catch(() => {});
       patientApi<{ items: Appt[] }>("/patient/appointments").then((d) => setAppts(d.items)).catch(() => {});
+      // έτοιμες παραγγελίες προς παράδοση (ready = προς παραλαβή, shipped = καθ' οδόν)
+      patientApi<{ items: { status: string }[] }>("/patient/shop/orders")
+        .then((d) => setReadyOrders((d.items ?? []).filter((o) => o.status === "ready" || o.status === "shipped").length))
+        .catch(() => {});
     }
     if (tab === "meds") patientApi<Schedule>("/patient/meds/schedule").then(setSched).catch(() => {});
     if (tab === "health") patientApi<Health>("/patient/health").then(setHealth).catch(() => {});
@@ -272,7 +277,6 @@ export default function PortalHome() {
       try {
         const n = await patientApi<{ items: Notif[] }>("/patient/notifications");
         setNotifs(n.items);
-        if (n.items.length) setShowNotifs(true);
         if (tab === "availability") setAvail((await patientApi<{ items: Avail[] }>("/patient/availability")).items);
         if (tab === "appointments") setAppts((await patientApi<{ items: Appt[] }>("/patient/appointments")).items);
       } catch { /* ignore transient errors */ }
@@ -686,11 +690,59 @@ export default function PortalHome() {
                 </div>
               );
             })()}
-            <Tooltip label="Ειδοποιήσεις"><button onClick={() => { setTab("home"); setShowNotifs(true); }}
-              className="relative grid h-9 w-9 place-items-center rounded-xl border border-slate-200 dark:border-slate-800 bg-white text-slate-500 dark:text-slate-400 shadow-sm hover:bg-slate-50 dark:hover:bg-slate-800 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700">
-              <Bell className="h-[18px] w-[18px]" />
-              {notifs.length > 0 && <span className="absolute -right-1 -top-1 grid h-4 min-w-[16px] place-items-center rounded-full bg-rose-500 px-1 text-[10px] font-bold text-white">{notifs.length}</span>}
-            </button></Tooltip>
+            <div className="relative">
+              <Tooltip label="Ειδοποιήσεις"><button onClick={() => setShowNotifs((v) => !v)}
+                className="relative grid h-9 w-9 place-items-center rounded-xl border border-slate-200 dark:border-slate-800 bg-white text-slate-500 dark:text-slate-400 shadow-sm hover:bg-slate-50 dark:hover:bg-slate-800 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700">
+                <Bell className="h-[18px] w-[18px]" />
+                {notifs.length > 0 && <span className="absolute -right-1 -top-1 grid h-4 min-w-[16px] place-items-center rounded-full bg-rose-500 px-1 text-[10px] font-bold text-white">{notifs.length}</span>}
+              </button></Tooltip>
+              {showNotifs && (
+                <>
+                  <div className="fixed inset-0 z-40" onClick={() => setShowNotifs(false)} />
+                  <div className="absolute right-0 top-full z-50 mt-2 w-[min(23rem,calc(100vw-1.5rem))] overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xl dark:border-slate-700 dark:bg-slate-900">
+                    <div className="flex items-center justify-between border-b border-slate-100 px-4 py-2.5 dark:border-slate-800">
+                      <span className="flex items-center gap-1.5 text-sm font-bold text-slate-700 dark:text-slate-200"><Bell className="h-4 w-4" /> Ειδοποιήσεις</span>
+                      <button onClick={() => setShowNotifs(false)} className="grid h-6 w-6 place-items-center rounded-lg text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"><X className="h-4 w-4" /></button>
+                    </div>
+                    {notifs.length === 0 ? (
+                      <div className="px-4 py-8 text-center text-sm text-slate-400">Καμία ειδοποίηση 🎉</div>
+                    ) : (
+                      <ul className="max-h-[70vh] divide-y divide-slate-100 overflow-y-auto dark:divide-slate-800">
+                        {notifs.map((n) => (
+                          <li key={n.id} className="px-4 py-3">
+                            <div className="flex items-start gap-3">
+                              <span className="mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-brand-50 text-brand-600 dark:bg-slate-800"><Sparkles className="h-3.5 w-3.5" /></span>
+                              <div className="min-w-0 flex-1">
+                                <div className="break-words text-sm font-semibold text-slate-800 dark:text-slate-100">{n.title}</div>
+                                <div className="break-words text-sm text-slate-600 dark:text-slate-300">{n.body}</div>
+                              </div>
+                              <button onClick={() => dismissNotif(n.id)} title="Το είδα — αφαίρεση" className="grid h-6 w-6 shrink-0 place-items-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800"><X className="h-4 w-4" /></button>
+                            </div>
+                            {n.type === "answer" && pickupFor !== n.id && (
+                              <div className="mt-2 flex flex-wrap items-center gap-2 pl-10">
+                                <button onClick={() => { setPickupFor(n.id); setPickupDate(""); }} className="inline-flex items-center gap-1 rounded-lg bg-brand-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-brand-700"><CalendarPlus className="h-3.5 w-3.5" /> Θα περάσω να το πάρω</button>
+                                <button onClick={() => dismissNotif(n.id)} className="inline-flex items-center gap-1 rounded-lg border border-slate-200 dark:border-slate-800 bg-white px-2.5 py-1 text-xs font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800"><CheckCircle2 className="h-3.5 w-3.5" /> Το είδα</button>
+                              </div>
+                            )}
+                            {n.type === "answer" && pickupFor === n.id && (
+                              <div className="mt-2 space-y-2 rounded-xl border border-brand-200 bg-brand-50/60 p-2.5 pl-3 dark:border-slate-700 dark:bg-slate-800/60">
+                                <div className="text-xs font-medium text-slate-600 dark:text-slate-300">Πότε θα περάσεις; <span className="text-slate-400">(προαιρετικό)</span></div>
+                                <DateInput value={pickupDate} onChange={setPickupDate} min={new Date().toISOString().slice(0, 10)} className="w-full" />
+                                <div className="flex flex-wrap gap-2">
+                                  <button onClick={() => notifPickup(n.id, true, pickupDate)} className="inline-flex items-center gap-1 rounded-lg bg-brand-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand-700"><CheckCircle2 className="h-3.5 w-3.5" /> Στείλε στο φαρμακείο</button>
+                                  <button onClick={() => notifPickup(n.id, false)} className="inline-flex items-center gap-1 rounded-lg border border-slate-200 dark:border-slate-800 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800">Δεν θα περάσω</button>
+                                  <button onClick={() => { setPickupFor(null); setPickupDate(""); }} className="px-2 py-1.5 text-xs text-slate-400 hover:text-slate-600">Άκυρο</button>
+                                </div>
+                              </div>
+                            )}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
             <Tooltip label="Το προφίλ μου"><button onClick={openProfile}
               className="grid h-9 w-9 place-items-center overflow-hidden rounded-xl border border-slate-200 dark:border-slate-800 bg-white text-brand-600 shadow-sm hover:bg-slate-50 dark:hover:bg-slate-800 dark:border-slate-700 dark:bg-slate-800 dark:hover:bg-slate-700">
               {me.profile.avatar_url
@@ -954,75 +1006,70 @@ export default function PortalHome() {
         )}
         {pushMsg && <div className="mb-4 rounded-xl bg-slate-100 dark:bg-slate-800 px-4 py-2.5 text-sm text-slate-700 dark:text-slate-200">{pushMsg}</div>}
 
-        {/* ── notifications ──────────────────────────────────── */}
-        {showNotifs && notifs.length > 0 && (
-          <div className="mb-6 overflow-hidden rounded-2xl border border-brand-200 bg-gradient-to-br from-brand-50 to-indigo-50 shadow-sm">
-            <div className="flex items-center justify-between border-b border-brand-100/70 px-4 py-2.5">
-              <span className="flex items-center gap-1.5 text-sm font-bold text-brand-700"><Bell className="h-4 w-4" /> Ειδοποιήσεις</span>
-              <button onClick={() => setShowNotifs(false)} className="grid h-6 w-6 place-items-center rounded-lg text-brand-400 hover:bg-white/60"><X className="h-4 w-4" /></button>
+
+        {/* Κάρτα πιστότητας — γρήγορη πρόσβαση από την Αρχική (ο πελάτης δεν την ψάχνει) */}
+        {loyalty?.enabled && loyalty.member && (
+          <button onClick={() => setShowCard(true)}
+            className="mb-4 flex w-full items-center gap-3 rounded-2xl bg-gradient-to-r from-amber-400 to-rose-400 px-4 py-3 text-left text-white shadow-lg shadow-amber-500/30 transition hover:brightness-105">
+            <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-white/20"><Gift className="h-5 w-5" /></span>
+            <span className="min-w-0 flex-1">
+              <span className="block text-sm font-extrabold">🪪 Κάρτα πιστότητας</span>
+              <span className="block truncate text-[11px] text-white/85">Δείξε το QR στο φαρμακείο · {loyalty.member.points} πόντοι</span>
+            </span>
+            <span className="shrink-0 rounded-lg bg-white/20 px-2.5 py-1 text-xs font-bold">Εμφάνιση →</span>
+          </button>
+        )}
+        {showCard && loyalty?.member && (
+          <div onClick={() => setShowCard(false)} className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+            <div onClick={(e) => e.stopPropagation()} className="w-full max-w-xs rounded-3xl bg-white p-6 text-center shadow-2xl dark:bg-slate-900">
+              <div className="text-sm font-bold text-slate-800 dark:text-slate-100">🪪 Κάρτα μέλους</div>
+              <div className="mb-4 text-xs text-slate-400">Δείξε το QR στο φαρμακείο για πόντους & εξαργύρωση</div>
+              <div className="mx-auto w-fit rounded-2xl bg-white p-3 ring-1 ring-slate-200"><QRCodeCanvas value={`RXVL:${loyalty.member.patient_ref}`} size={190} level="M" includeMargin /></div>
+              <div className="mt-2 font-mono text-[11px] tracking-wide text-slate-400">{loyalty.member.patient_ref}</div>
+              <div className="mt-2 text-2xl font-extrabold text-slate-900 dark:text-slate-100">{loyalty.member.points} <span className="text-sm font-semibold text-slate-500">πόντοι</span></div>
+              <button onClick={() => setShowCard(false)} className="mt-5 w-full rounded-xl bg-slate-100 py-2.5 text-sm font-semibold text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300">Κλείσιμο</button>
             </div>
-            <ul className="divide-y divide-brand-100/60">
-              {notifs.map((n) => (
-                <li key={n.id} className="px-4 py-3">
-                  <div className="flex items-start gap-3">
-                    <span className="mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-white text-brand-600 shadow-sm"><Sparkles className="h-3.5 w-3.5" /></span>
-                    <div className="min-w-0 flex-1">
-                      <div className="break-words text-sm font-semibold text-slate-800 dark:text-slate-100">{n.title}</div>
-                      <div className="break-words text-sm text-slate-600 dark:text-slate-300">{n.body}</div>
-                    </div>
-                    <button onClick={() => dismissNotif(n.id)} title="Το είδα" className="grid h-6 w-6 shrink-0 place-items-center rounded-lg text-slate-400 hover:bg-white/70 hover:text-slate-600"><X className="h-4 w-4" /></button>
-                  </div>
-                  {/* ενέργειες */}
-                  {n.type === "answer" && pickupFor !== n.id && (
-                    <div className="mt-2 flex flex-wrap items-center gap-2 pl-10">
-                      <button onClick={() => { setPickupFor(n.id); setPickupDate(""); }} className="inline-flex items-center gap-1 rounded-lg bg-brand-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-brand-700"><CalendarPlus className="h-3.5 w-3.5" /> Θα περάσω να το πάρω</button>
-                      <button onClick={() => dismissNotif(n.id)} className="inline-flex items-center gap-1 rounded-lg border border-slate-200 dark:border-slate-800 bg-white px-2.5 py-1 text-xs font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800"><CheckCircle2 className="h-3.5 w-3.5" /> Το είδα</button>
-                    </div>
-                  )}
-                  {n.type === "answer" && pickupFor === n.id && (
-                    <div className="mt-2 space-y-2 rounded-xl border border-brand-200 bg-white/70 p-2.5 pl-3">
-                      <div className="text-xs font-medium text-slate-600 dark:text-slate-300">Πότε θα περάσεις; <span className="text-slate-400">(προαιρετικό)</span></div>
-                      <DateInput value={pickupDate} onChange={setPickupDate} min={new Date().toISOString().slice(0, 10)} className="w-full" />
-                      <div className="flex flex-wrap gap-2">
-                        <button onClick={() => notifPickup(n.id, true, pickupDate)} className="inline-flex items-center gap-1 rounded-lg bg-brand-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand-700"><CheckCircle2 className="h-3.5 w-3.5" /> Στείλε στο φαρμακείο</button>
-                        <button onClick={() => notifPickup(n.id, false)} className="inline-flex items-center gap-1 rounded-lg border border-slate-200 dark:border-slate-800 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800">Δεν θα περάσω</button>
-                        <button onClick={() => { setPickupFor(null); setPickupDate(""); }} className="px-2 py-1.5 text-xs text-slate-400 hover:text-slate-600">Άκυρο</button>
-                      </div>
-                    </div>
-                  )}
-                </li>
-              ))}
-            </ul>
           </div>
         )}
 
         {/* ── KPI cards ──────────────────────────────────────── */}
         {summary && (() => {
-          const coverPct = summary.total_cents > 0 ? Math.round((summary.covered_cents / summary.total_cents) * 100) : 0;
-          const availNow = renewals?.length ?? 0;
           const points = loyalty?.member?.points ?? 0;
+          // Πρόγραμμα λήψης «σήμερα»: πόσες δόσεις πρέπει να πάρει vs πόσες πήρε
+          const todayDow = (new Date().getDay() + 6) % 7;
+          const thMap = Object.fromEntries((sched?.therapies ?? []).map((t) => [t.med_key, t]));
+          const todaySlots = sched?.week.find((w) => w.dow === todayDow)?.slots ?? [];
+          const dosesList = genDosesFor(todaySlots, thMap);
+          const dosesToday = dosesList.length;
+          const takenToday = sched?.taken_today?.length ?? 0;
+          // «Έπρεπε να πάρω» = δόσεις που ΠΕΡΑΣΕ η ώρα λήψης τους & δεν πάρθηκαν (overdue)
+          const nowD = new Date();
+          const nowHM = `${String(nowD.getHours()).padStart(2, "0")}:${String(nowD.getMinutes()).padStart(2, "0")}`;
+          const duePassed = dosesList.filter((d) => d.time <= nowHM).length;
+          const overdue = Math.max(0, duePassed - takenToday);
+          // Παραπομπή: μόνο αν η καρτέλα-στόχος είναι διαθέσιμη → η κάρτα γίνεται clickable
+          const go = (k: string) => (visibleTabs.some(([t]) => t === k) ? () => setTab(k) : undefined);
           return (
           <div className="mb-7 grid grid-cols-2 gap-2.5 sm:gap-3 lg:grid-cols-4">
             <Kpi icon={Pill} tint="indigo" label="Συνταγές" value={String(summary.rx_count)}
-              sub={summary.last_at ? `τελευταία ${dt(summary.last_at)}` : "—"} />
-            <Kpi icon={ShieldCheck} tint="emerald" label="Σε κάλυψε το ταμείο" value={eur(summary.covered_cents)}
-              sub={`σε ${summary.rx_count} συνταγές`} highlight />
-            <Kpi icon={Wallet} tint="amber" label="Πλήρωσες" value={eur(summary.paid_cents)}
-              sub={`από ${eur(summary.total_cents)} σύνολο`} />
+              sub={summary.last_at ? `τελευταία ${dt(summary.last_at)}` : "—"} onClick={go("rx")} />
+            <Kpi icon={Clock} tint="sky" label="Να πάρω σήμερα" value={String(dosesToday)}
+              sub={dosesToday > 0 ? "συνολικά για σήμερα" : "καμία δόση σήμερα"} onClick={go("meds")} />
+            <Kpi icon={CheckCircle2} tint="emerald" label="Πήρα σήμερα" value={String(takenToday)}
+              sub={dosesToday > 0 ? `${takenToday}/${dosesToday} δόσεις` : "—"} highlight onClick={go("meds")} />
+            <Kpi icon={AlertCircle} tint="amber" label="Έπρεπε να πάρω" value={String(overdue)}
+              sub={overdue > 0 ? "πέρασε η ώρα λήψης" : "όλα στην ώρα τους"} onClick={go("meds")} />
             <Kpi icon={RefreshCw} tint="violet" label="Ενεργές επαναλήψεις" value={String(summary.repeats_active)}
-              sub={summary.next_open_date ? `επόμενη ${dt(summary.next_open_date)}` : "καμία προγραμματισμένη"} />
-            {/* νέα KPI που ενδιαφέρουν τον πελάτη */}
-            <Kpi icon={Percent} tint="sky" label="Κάλυψη ταμείου" value={`${coverPct}%`}
-              sub="της αξίας των φαρμάκων σου" />
-            <Kpi icon={PackageCheck} tint="emerald" label="Διαθέσιμες τώρα" value={String(availNow)}
-              sub={availNow > 0 ? "έτοιμες προς εκτέλεση" : "καμία εκκρεμής"} />
+              sub={summary.next_open_date ? `επόμενη ${dt(summary.next_open_date)}` : "καμία προγραμματισμένη"} onClick={go("repeats")} />
+            <Kpi icon={PackageCheck} tint="emerald" label="Έτοιμες παραγγελίες" value={String(readyOrders)}
+              sub={readyOrders > 0 ? "προς παράδοση / παραλαβή" : "καμία εκκρεμής"} onClick={go("shop")} />
             {loyalty?.enabled
               ? <Kpi icon={Gift} tint="rose" label="Πόντοι επιβράβευσης" value={String(points)}
-                  sub={loyalty.member ? "για εκπτώσεις & δώρα" : "μπες στο πρόγραμμα"} />
+                  sub={loyalty.member ? "για εκπτώσεις & δώρα" : "μπες στο πρόγραμμα"} onClick={go("wallet")} />
               : <Kpi icon={Pill} tint="sky" label="Διαφορετικά φάρμακα" value={String(summary.medicines)}
-                  sub="στο ιστορικό σου" />}
+                  sub="στο ιστορικό σου" onClick={go("rx")} />}
             <Kpi icon={Stethoscope} tint="indigo" label="Γιατροί" value={String(summary.doctors)}
-              sub="συνταγογράφησαν για σένα" />
+              sub="συνταγογράφησαν για σένα" onClick={go("rx")} />
           </div>
           );
         })()}
@@ -1345,6 +1392,8 @@ export default function PortalHome() {
               {!!sched.streak && <div className="inline-flex items-center gap-1.5 rounded-full bg-orange-100 px-3 py-1 text-xs font-bold text-orange-700">🔥 {sched.streak} {sched.streak === 1 ? "μέρα" : "μέρες"} συνεπής λήψη στη σειρά!</div>}
               {sched.week.some((d) => d.slots.length > 0) ? (() => {
                 const todayDow = (new Date().getDay() + 6) % 7;
+                const _n = new Date();
+                const nowHM = `${String(_n.getHours()).padStart(2, "0")}:${String(_n.getMinutes()).padStart(2, "0")}`;
                 const takenSet = new Set((sched.taken_today ?? []).map((t) => `${t.med_key}|${t.slot ?? ""}`));
                 const thMap: Record<string, Therapy> = Object.fromEntries(sched.therapies.map((t) => [t.med_key, t]));
                 const genDoses = (d: { slots: SlotCell[] }) => genDosesFor(d.slots, thMap);   // βλ. genDosesFor
@@ -1359,12 +1408,14 @@ export default function PortalHome() {
                     // δόσεις της μέρας (γεννημένες ανά ώρα)· πλήθος «να πάρω» = μη-ειλημμένες
                     const doses = genDoses(d);
                     const pending = today ? doses.filter((x) => !takenSet.has(`${x.med_key}|${x.time}`)).length : 0;
+                    const overdueCount = today ? doses.filter((x) => !takenSet.has(`${x.med_key}|${x.time}`) && x.time <= nowHM).length : 0;
                     return (
                       <div key={d.dow} className={`overflow-hidden rounded-2xl border ${today ? "border-violet-300 ring-1 ring-violet-200" : "border-slate-200 dark:border-slate-800"}`}>
                         <button onClick={() => setOpenDay(open ? null : d.dow)} className="flex w-full items-center justify-between gap-2 bg-white px-3.5 py-2.5 text-left">
                           <span className="flex items-center gap-2 text-sm font-bold text-slate-700 dark:text-slate-200">
                             {DOW[d.dow]}
                             {today && <span className="rounded-full bg-violet-600 px-1.5 py-0.5 text-[10px] text-white">σήμερα</span>}
+                            {today && overdueCount > 0 && <span className="rounded-full bg-rose-100 px-1.5 py-0.5 text-[10px] font-bold text-rose-700">⚠ {overdueCount} ληξιπρόθεσμα</span>}
                             {today && pending > 0 && <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-700">{pending} να πάρω</span>}
                             {today && pending === 0 && <span className="rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700">✓ όλα</span>}
                           </span>
@@ -1374,17 +1425,18 @@ export default function PortalHome() {
                           <div className="space-y-1.5 border-t border-slate-100 dark:border-slate-800 bg-slate-50/40 px-3.5 py-3">
                             {doses.map((x, i) => {
                               const taken = today && takenSet.has(`${x.med_key}|${x.time}`);
+                              const overdue = today && !taken && x.time <= nowHM;   // πέρασε η ώρα & δεν πάρθηκε → ληξιπρόθεσμο
                               return (
                                 <button key={i} onClick={() => { if (today) toggleIntake(x.med_key, x.time, taken); }} disabled={!today}
-                                  title={taken ? "Πάτα για αναίρεση" : "Πάτα «Το πήρα»"}
-                                  className={`flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-left transition ${taken ? "bg-emerald-50 text-emerald-700" : today ? "bg-violet-50 text-violet-800 hover:bg-violet-100" : "bg-white text-slate-600 dark:text-slate-300"}`}>
+                                  title={taken ? "Πάτα για αναίρεση" : overdue ? "Ληξιπρόθεσμο — πάτα «Το πήρα»" : "Πάτα «Το πήρα»"}
+                                  className={`flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-left transition ${taken ? "bg-emerald-50 text-emerald-700" : overdue ? "bg-rose-50 text-rose-800 ring-1 ring-rose-300" : today ? "bg-violet-50 text-violet-800 hover:bg-violet-100" : "bg-white text-slate-600 dark:text-slate-300"}`}>
                                   <span className="min-w-0 flex-1">
-                                    <span className={`block truncate text-sm font-bold ${taken ? "line-through opacity-60" : ""}`}>{x.name}</span>
-                                    <span className="mt-0.5 block truncate text-[11px] text-slate-500 dark:text-slate-400">⏰ {x.time}{x.dose ? ` · ${x.dose}` : ""}{x.meal === "before" ? " · 🍽️ πριν" : x.meal === "after" ? " · 🍽️ μετά" : ""}</span>
+                                    <span className={`block truncate text-sm font-bold ${taken ? "line-through opacity-60" : ""}`}>{x.name}{overdue && <span className="ml-1.5 rounded-full bg-rose-600 px-1.5 py-0.5 align-middle text-[9px] font-bold tracking-wide text-white">ΛΗΞΙΠΡΟΘΕΣΜΟ</span>}</span>
+                                    <span className={`mt-0.5 block truncate text-[11px] ${overdue ? "font-semibold text-rose-600" : "text-slate-500 dark:text-slate-400"}`}>⏰ {x.time}{overdue ? " · πέρασε η ώρα" : ""}{x.dose ? ` · ${x.dose}` : ""}{x.meal === "before" ? " · 🍽️ πριν" : x.meal === "after" ? " · 🍽️ μετά" : ""}</span>
                                   </span>
                                   {today && (taken
                                     ? <span className="shrink-0 self-center text-[11px] font-bold">✓ · ↺</span>
-                                    : <span className="shrink-0 self-center rounded-full bg-violet-600 px-2.5 py-1 text-[11px] font-bold text-white">Το πήρα</span>)}
+                                    : <span className={`shrink-0 self-center rounded-full px-2.5 py-1 text-[11px] font-bold text-white ${overdue ? "bg-rose-600" : "bg-violet-600"}`}>Το πήρα</span>)}
                                 </button>
                               );
                             })}
@@ -2022,17 +2074,23 @@ const TINTS: Record<string, string> = {
   rose: "bg-rose-50 text-rose-600",
 };
 
-function Kpi({ icon: Icon, label, value, sub, tint, highlight }: {
+function Kpi({ icon: Icon, label, value, sub, tint, highlight, onClick }: {
   icon: React.ComponentType<{ className?: string }>; label: string; value: string; sub: string; tint: string; highlight?: boolean;
+  onClick?: () => void;   // αν δοθεί → η κάρτα γίνεται παραπομπή (clickable) στη σχετική καρτέλα
 }) {
-  return (
-    <div className={`overflow-hidden rounded-2xl border p-3 shadow-sm transition hover:shadow-md sm:p-4 ${highlight ? "border-emerald-200 bg-gradient-to-br from-emerald-50 to-white" : "border-slate-200 dark:border-slate-800 bg-white"}`}>
+  const cls = `group relative overflow-hidden rounded-2xl border p-3 text-left shadow-sm transition hover:shadow-md sm:p-4 ${highlight ? "border-emerald-200 bg-gradient-to-br from-emerald-50 to-white" : "border-slate-200 dark:border-slate-800 bg-white"} ${onClick ? "cursor-pointer hover:-translate-y-0.5 hover:border-brand-300" : ""}`;
+  const inner = (
+    <>
       <span className={`grid h-8 w-8 place-items-center rounded-xl sm:h-9 sm:w-9 ${TINTS[tint]}`}><Icon className="h-4 w-4 sm:h-[18px] sm:w-[18px]" /></span>
+      {onClick && <ChevronRight className="absolute right-2.5 top-2.5 h-4 w-4 text-slate-300 opacity-0 transition group-hover:translate-x-0.5 group-hover:text-brand-500 group-hover:opacity-100" />}
       <div className="mt-2 truncate text-lg font-extrabold tracking-tight text-slate-900 dark:text-slate-100 sm:mt-3 sm:text-2xl">{value}</div>
       <div className="truncate text-xs font-semibold text-slate-600 dark:text-slate-300 sm:text-[13px]">{label}</div>
       <div className="mt-0.5 truncate text-[11px] text-slate-400">{sub}</div>
-    </div>
+    </>
   );
+  return onClick
+    ? <button type="button" onClick={onClick} className={`${cls} w-full`}>{inner}</button>
+    : <div className={cls}>{inner}</div>;
 }
 
 // Πάνελ «κονσόλας» Αρχικής (desktop) — κάρτα με τίτλο, εικονίδιο & προαιρετικό «Όλα →».

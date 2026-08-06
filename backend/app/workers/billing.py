@@ -45,9 +45,14 @@ def trial_feedback() -> dict:
 
 @celery_app.task(name="app.workers.billing.apply_scheduled_changes")
 def apply_scheduled_changes() -> dict:
-    """Apply plan downgrades whose scheduled effective date (period end / renewal) has arrived."""
+    """Apply plan downgrades + seat decreases whose scheduled date (period end / renewal) has arrived."""
     from app.services.plan_change_service import apply_due_downgrades
-    return asyncio.run(apply_due_downgrades())
+    from app.services.seats_service import apply_due_seat_changes
+
+    async def _run() -> dict:
+        return {"plan_downgrades": await apply_due_downgrades(),
+                "seat_changes": await apply_due_seat_changes()}
+    return asyncio.run(_run())
 
 
 @celery_app.task(name="app.workers.billing.process_pending_invoices", bind=True,

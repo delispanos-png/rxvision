@@ -231,6 +231,7 @@ async def status(tenant_id: str) -> dict:
         "currency": sub.get("currency", CURRENCY),
         "card_on_file": (sub.get("payment_status") in CARD_ON_FILE_STATES
                          and bool(sub.get("revolut_customer_id") or sub.get("viva_transaction_id"))),
+        "complimentary": bool(sub.get("complimentary")),   # δωρεάν πελάτης → δεν χρειάζεται κάρτα
         "payment_provider": sub.get("payment_provider") or await active_provider(),
         "revolut_configured": await rv.is_configured(),
         "viva_configured": await viva_service.is_configured(),

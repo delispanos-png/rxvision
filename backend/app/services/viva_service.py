@@ -14,10 +14,13 @@ Auth Viva (δύο μηχανισμοί):
 from __future__ import annotations
 
 import base64
+import logging
 
 import httpx
 
 from app.core.db import shared_db
+
+log = logging.getLogger(__name__)
 
 # Live vs demo (sandbox) endpoints
 _URLS = {
@@ -76,7 +79,13 @@ async def _oauth_token(creds: dict) -> str | None:
                               data={"grant_type": "client_credentials"})
             r.raise_for_status()
             return r.json().get("access_token")
-    except Exception:  # noqa: BLE001
+    except httpx.HTTPStatusError as e:
+        # π.χ. 400 invalid_client → λάθος/ανακληθέν client_id ή client_secret στο adminpanel → Πληρωμές.
+        log.warning("viva_oauth_failed mode=%s status=%s body=%s",
+                    creds.get("mode"), e.response.status_code, e.response.text[:200])
+        return None
+    except Exception as e:  # noqa: BLE001
+        log.warning("viva_oauth_error mode=%s err=%r", creds.get("mode"), e)
         return None
 
 

@@ -109,6 +109,37 @@ async def set_retention(body: RetentionIn, ctx: TenantContext = Depends(require(
         raise HTTPException(status.HTTP_402_PAYMENT_REQUIRED, "card_required")
 
 
+# ── Self-service αριθμός χρηστών (seats) — αύξηση άμεση/prorated, μείωση στην ανανέωση ─────────────
+@router.get("/seats")
+async def get_seats(ctx: TenantContext = Depends(get_current_context)):
+    """Τρέχοντες/ανώτατοι χρήστες + τιμή ανά χρήστη (του πακέτου) + κατάσταση κάρτας/εκκρεμής μείωση."""
+    from app.services import seats_service
+    return await seats_service.get_seats(ctx.tenant_id)
+
+
+class SeatsIn(BaseModel):
+    seats: int
+
+
+@router.post("/seats/preview")
+async def preview_seats(body: SeatsIn, ctx: TenantContext = Depends(get_current_context)):
+    """Προεπισκόπηση: τι θα χρεωθεί ΤΩΡΑ (αναλογικά) για αύξηση σε `seats` — χωρίς εφαρμογή."""
+    from app.services import seats_service
+    return await seats_service.preview(ctx.tenant_id, body.seats)
+
+
+@router.put("/seats")
+async def set_seats(body: SeatsIn, ctx: TenantContext = Depends(require("billing:manage"))):
+    """Αλλαγή αριθμού χρηστών: αύξηση = ΑΜΕΣΗ αναλογική χρέωση κάρτας· μείωση = στην ανανέωση."""
+    from app.services import seats_service
+    try:
+        return await seats_service.change_seats(ctx.tenant_id, body.seats)
+    except seats_service.CardRequired:
+        raise HTTPException(status.HTTP_402_PAYMENT_REQUIRED, "card_required")
+    except seats_service.SeatError as e:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e))
+
+
 @router.api_route("/alpha-callback", methods=["GET", "POST"], include_in_schema=False)
 async def alpha_callback(request: Request):
     """Alpha e-Commerce redirect-back: verify the digest, apply the upgrade on success, then send the

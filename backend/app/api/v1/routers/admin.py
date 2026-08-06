@@ -734,6 +734,7 @@ class PackageIn(BaseModel):
     extra_user_price_yearly: int | None = None   # cents — cost per extra user/seat beyond `seats`, per YEAR
     trial_days: int | None = None
     seats: int | None = None
+    included_users: int | None = None  # πόσους ταυτόχρονους χρήστες περιλαμβάνει ΔΩΡΕΑΝ η τιμή (default 1)
     sla: str | None = None
     modules: list[str] | None = None  # the capabilities this package grants
     features: list[str] | None = None  # marketing bullet list shown on the pricing card

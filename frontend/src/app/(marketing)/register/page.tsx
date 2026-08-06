@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Building2, Package, UserCog, Search, Check, ArrowRight, ArrowLeft, Eye, EyeOff, Loader2, CreditCard, Landmark } from "lucide-react";
+import { Building2, Package, UserCog, Search, Check, ArrowRight, ArrowLeft, Eye, EyeOff, Loader2, CreditCard, Landmark, Printer } from "lucide-react";
 import { api, ApiError } from "@/lib/apiClient";
 import { Tooltip } from "@/components/ui/Tooltip";
 import { Logo } from "@/components/brand/Logo";
@@ -16,11 +16,23 @@ type Company = {
 type Admin = { full_name: string; email: string; password: string };
 type RegisterResponse = { access_token: string; refresh_token: string; tenant_id: string };
 type Aade = { ok: boolean; error?: string; name?: string; title?: string; doy?: string; address?: string; postal_code?: string; city?: string; active?: boolean };
-type Pkg = { _id: string; name?: string; description?: string; price_monthly?: number; price_yearly?: number; price_includes_vat?: boolean; trial_days?: number; seats?: number; sla?: string; extra_user_price?: number; extra_user_price_yearly?: number; modules?: string[]; available_addons?: string[]; billing_cycles?: string[] };
+type Pkg = { _id: string; name?: string; description?: string; price_monthly?: number; price_yearly?: number; price_includes_vat?: boolean; trial_days?: number; seats?: number; included_users?: number; sla?: string; extra_user_price?: number; extra_user_price_yearly?: number; modules?: string[]; available_addons?: string[]; billing_cycles?: string[] };
 type Sla = { _id: string; name?: string; description?: string; response_hours?: number; channels?: string; price_monthly?: number; price_yearly?: number };
 type Addon = { _id: string; name?: string; description?: string; icon?: string; price_monthly?: number; price_yearly?: number; features?: string[] };
 
 const eur = (c: number) => new Intl.NumberFormat("el-GR", { style: "currency", currency: "EUR", maximumFractionDigits: 0 }).format((c || 0) / 100);
+// 2 δεκαδικά — για ΦΠΑ & τελικά ποσά που ΔΕΝ είναι στρογγυλά (π.χ. ΦΠΑ 29,76 €)
+const eur2 = (c: number) => new Intl.NumberFormat("el-GR", { style: "currency", currency: "EUR", minimumFractionDigits: 2, maximumFractionDigits: 2 }).format((c || 0) / 100);
+const TERMS_VERSION = "2026-08";   // έκδοση Όρων Χρήσης που αποδέχθηκε το φαρμακείο (καταγράφεται στη συνδρομή)
+// Κείμενο Όρων — κοινό για το modal ανάγνωσης & την εκτύπωση σύμβασης (μία πηγή αλήθειας).
+const TERMS_SECTIONS: [string, string][] = [
+  ["1. Φύση της υπηρεσίας", "Το RxVision είναι λογισμικό υποστήριξης λειτουργίας φαρμακείου (βοηθητικό εργαλείο). Δεν αποτελεί ιατρική, φαρμακευτική, λογιστική ή νομική συμβουλή."],
+  ["2. Ευθύνη του φαρμακοποιού", "Ο φαρμακοποιός/υπεύθυνος του φαρμακείου παραμένει ο μόνος υπεύθυνος για τον έλεγχο των συνταγών, την ορθότητα των στοιχείων και κάθε ενέργεια ή απόφαση. Οι ενδείξεις του RxVision είναι υποστηρικτικές και επαληθεύονται από τον χρήστη πριν από κάθε ενέργεια."],
+  ["3. Έλεγχοι συνταγών & Κλείσιμο μήνα", "Οι λειτουργίες ελέγχου συνταγών, κλεισίματος μήνα, πρόβλεψης και υποβολής είναι αποκλειστικά υποβοηθητικές. Η τελική απόφαση για την κατάθεση/υποβολή των συνταγών στα ταμεία (ΕΟΠΥΥ κ.λπ.) ανήκει αποκλειστικά στον φαρμακοποιό."],
+  ["4. PharmaCat & τεχνητή νοημοσύνη (AI)", "Το PharmaCat και κάθε λειτουργία AI είναι υποστηρικτικά εργαλεία, δεν αποτελούν ιατρική/φαρμακευτική συμβουλή και δεν υποκαθιστούν τη συμβουλή του φαρμακοποιού και του ιατρού."],
+  ["5. Προστασία δεδομένων (GDPR)", "Τα δεδομένα υγείας/PII υφίστανται επεξεργασία σύμφωνα με τον ΓΚΠΔ. Το φαρμακείο είναι ο Υπεύθυνος Επεξεργασίας των δεδομένων του. Τα αναγνωριστικά ασθενών ψευδωνυμοποιούνται."],
+  ["6. Περιορισμός ευθύνης", "Το RxVision παρέχεται «ως έχει». Στον μέγιστο βαθμό που επιτρέπει ο νόμος, ο Πάροχος δεν φέρει ευθύνη για αποφάσεις, ενέργειες ή ζημίες που προκύπτουν από τη χρήση ή την εμπιστοσύνη στις ενδείξεις του εργαλείου."],
+];
 // Προτεινόμενο SLA: το «Basic» (id ή όνομα)· αλλιώς το φθηνότερο / με τη μεγαλύτερη ώρα απόκρισης (πιο βασικό)
 const defaultSla = (tiers: Sla[]): string => {
   if (!tiers?.length) return "";
@@ -70,6 +82,8 @@ export default function RegisterWizard() {
   const [bankSubmitted, setBankSubmitted] = useState(false); // τράπεζα → αναμονή έγκρισης
   const [afmErr, setAfmErr] = useState<string | null>(null); // διπλότυπο ΑΦΜ (ενεργή συνδρομή)
   const [reactivation, setReactivation] = useState(false);   // υπάρχων λογαριασμός με ληγμένο/trial → αγορά κανονικού πακέτου
+  const [acceptedTerms, setAcceptedTerms] = useState(false); // αποδοχή Όρων Χρήσης (υποχρεωτική πριν την ολοκλήρωση)
+  const [showTerms, setShowTerms] = useState(false);         // modal ανάγνωσης όρων ΜΕΣΑ στην εγγραφή (χωρίς πλοήγηση)
 
   useEffect(() => {
     // Optional deep-link preselect from the marketing site: /register?package=pro (alias: ?plan=).
@@ -98,8 +112,8 @@ export default function RegisterWizard() {
   const yearly = billing === "yearly";
   const per = yearly ? "έτος" : "μήνα";
   const basePrice = (yearly ? pkg?.price_yearly : pkg?.price_monthly) ?? 0;
-  // ΒΑΣΗ: 1 δωρεάν ταυτόχρονος χρήστης σε ΚΑΘΕ πλάνο. pkg.seats = το ΑΝΩΤΑΤΟ όριο («έως N»).
-  const includedFree = 1;
+  // ΒΑΣΗ: δωρεάν χρήστες που περιλαμβάνει η τιμή (ρυθμιζόμενο ανά πακέτο· default 1). pkg.seats = ΑΝΩΤΑΤΟ («έως N»).
+  const includedFree = Math.max(1, pkg?.included_users ?? 1);
   const maxSeats = Math.max(1, pkg?.seats ?? 1);      // ΜΕΓΙΣΤΟ όριο πλάνου («έως N»)
   const extraUsers = Math.max(0, seats - includedFree);   // έξτρα πάνω από τη βάση (1) → χρεώσιμα
   // κάθε card_* → ροή «card» (card-capture ανά ενεργό πάροχο)· bank_transfer → «bank» (τιμολόγιο IBAN)
@@ -125,7 +139,7 @@ export default function RegisterWizard() {
   const vatAmount = grossPrice - netPrice;
   // when the package changes: default seats to 1 (base), drop add-ons now bundled in the plan,
   // and switch the billing cycle if not offered. Ο πελάτης ανεβάζει έξτρα χρήστες χειροκίνητα (χρεώσιμοι).
-  useEffect(() => { setSeats(1); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [pkgCode]);
+  useEffect(() => { setSeats(Math.max(1, pkgs.find((p) => p._id === pkgCode)?.included_users ?? 1)); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [pkgCode]);
   useEffect(() => { setSelAddons((sel) => sel.filter((id) => availAddons.some((a) => a._id === id))); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [pkgCode]);
   useEffect(() => { if (!cycles.includes(billing)) setBilling(cycles[0]); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [pkgCode]);
 
@@ -139,6 +153,42 @@ export default function RegisterWizard() {
 
   const C = (k: keyof Company) => ({ value: company[k], onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => setCompany((c) => ({ ...c, [k]: e.target.value })) });
   const A = (k: keyof Admin) => ({ value: admin[k], onChange: (e: React.ChangeEvent<HTMLInputElement>) => setAdmin((a) => ({ ...a, [k]: e.target.value })) });
+
+  // Εκτύπωση των Όρων Χρήσης ως ΣΥΜΒΑΣΗ ΑΠΟΔΟΧΗΣ — με τα στοιχεία του φαρμακείου, του Παρόχου (CloudOn)
+  // & θέσεις υπογραφής και των δύο μερών. Ανοίγει νέο παράθυρο εκτύπωσης (best-effort).
+  function printTerms() {
+    const today = new Date().toLocaleDateString("el-GR");
+    const esc = (s: string) => (s || "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c] || c));
+    const cust = [
+      ["Επωνυμία", company.name || company.title || "—"],
+      ["Διακριτικός Τίτλος", company.title || "—"],
+      ["ΑΦΜ", company.afm || "—"], ["ΔΟΥ", company.doy || "—"],
+      ["Διεύθυνση", [company.address, company.postal_code, company.city].filter(Boolean).join(", ") || "—"],
+      ["Email", company.email || "—"], ["Νόμιμος εκπρόσωπος", admin.full_name || "—"],
+    ];
+    const terms = TERMS_SECTIONS;
+    const html = `<!doctype html><html lang="el"><head><meta charset="utf-8"><title>Όροι Χρήσης RxVision — Σύμβαση Αποδοχής</title>
+      <style>*{font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#0f172a}body{margin:32px;line-height:1.5;font-size:12px}
+      h1{font-size:18px;margin:0 0 2px}h2{font-size:13px;margin:14px 0 4px}.sub{color:#64748b;font-size:11px}
+      table{border-collapse:collapse;width:100%;margin:8px 0 4px}td{border:1px solid #e2e8f0;padding:5px 8px;vertical-align:top}td.k{background:#f8fafc;font-weight:600;width:170px}
+      .box{border:1px solid #e2e8f0;border-radius:8px;padding:10px 12px;margin-top:6px}
+      .sig{display:flex;gap:24px;margin-top:36px}.sig>div{flex:1;border-top:1px solid #94a3b8;padding-top:6px;font-size:11px;color:#334155}
+      .warn{background:#fffbeb;border:1px solid #fcd34d;border-radius:8px;padding:8px 12px;margin:10px 0;font-size:11px}</style></head><body>
+      <h1>RxVision — Σύμβαση Αποδοχής Όρων Χρήσης</h1>
+      <div class="sub">Έκδοση όρων: ${esc(TERMS_VERSION)} · Ημερομηνία αποδοχής: ${esc(today)}</div>
+      <div class="warn"><b>Το RxVision είναι βοηθητικό εργαλείο.</b> Η ευθύνη ορθής χρήσης και οι τελικές αποφάσεις — ιδίως η κατάθεση/υποβολή συνταγών στα ταμεία — ανήκουν αποκλειστικά στον φαρμακοποιό.</div>
+      <h2>Συμβαλλόμενα μέρη</h2>
+      <table><tr><td class="k">Πάροχος</td><td>CLOUDON ΙΔΙΩΤΙΚΗ ΚΕΦΑΛΑΙΟΥΧΙΚΗ ΕΤΑΙΡΕΙΑ (CloudOn Ι.Κ.Ε.) — λειτουργός της πλατφόρμας RxVision</td></tr></table>
+      <table>${cust.map(([k, v]) => `<tr><td class="k">${esc(k)}</td><td>${esc(v)}</td></tr>`).join("")}</table>
+      ${terms.map(([h, b]) => `<h2>${esc(h)}</h2><div>${esc(b)}</div>`).join("")}
+      <div class="box">Ο πελάτης δηλώνει ότι διάβασε, κατανόησε και αποδέχεται τους παρόντες Όρους Χρήσης.</div>
+      <div class="sig"><div>Για τον Πάροχο (CloudOn Ι.Κ.Ε.)<br><br>Υπογραφή / Σφραγίδα</div><div>Για το Φαρμακείο (${esc(company.title || company.name || "")})<br><br>Υπογραφή / Σφραγίδα</div></div>
+      </body></html>`;
+    const w = window.open("", "_blank");
+    if (!w) return;
+    w.document.write(html); w.document.close(); w.focus();
+    setTimeout(() => w.print(), 350);
+  }
 
   function choosePkg(code: string) {
     setPkgCode(code);
@@ -165,7 +215,7 @@ export default function RegisterWizard() {
   const step0ok = company.name.trim().length > 1 && company.email.includes("@");
   const step1ok = !!pkgCode;
   const ownerInfoOk = !!admin.full_name.trim() && admin.email.includes("@");   // κωδικός ΟΧΙ εδώ
-  const canNext = step === STEP.COMPANY ? step0ok : step === STEP.PACKAGE ? step1ok : step === STEP.OWNER ? ownerInfoOk : true;
+  const canNext = step === STEP.COMPANY ? (step0ok && acceptedTerms) : step === STEP.PACKAGE ? step1ok : step === STEP.OWNER ? ownerInfoOk : true;
 
   // completion mode: poll την κατάσταση της pending μέχρι «paid» (μετά την επιστροφή από Viva)
   useEffect(() => {
@@ -212,6 +262,7 @@ export default function RegisterWizard() {
           owner_email: admin.email, owner_name: admin.full_name,
           company, package_code: pkgCode || "standard", billing_cycle: billing, sla: sla || undefined,
           seats, payment_method: payMethod, addons: selAddons,
+          accepted_terms: acceptedTerms, terms_version: TERMS_VERSION,
         }),
       });
       if (r.reactivation) setReactivation(true);
@@ -360,6 +411,23 @@ export default function RegisterWizard() {
                   <div><label className={label}>Πόλη</label><input className={input} {...C("city")} /></div>
                   <div><label className={label}>Περιοχή</label><input className={input} {...C("region")} /></div>
                 </div>
+                {/* Αποδοχή Όρων Χρήσης — ΥΠΟΧΡΕΩΤΙΚΗ σε αυτό το βήμα· χωρίς αυτήν δεν προχωράει στο επόμενο */}
+                <hr className="border-slate-100" />
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-3.5">
+                  <label className="flex items-start gap-2 text-xs text-slate-700">
+                    <input type="checkbox" checked={acceptedTerms} onChange={(e) => setAcceptedTerms(e.target.checked)} className="mt-0.5 h-4 w-4 shrink-0 rounded border-slate-300 text-brand-600 focus:ring-brand-500" />
+                    <span>Αποδέχομαι τους <button type="button" onClick={(e) => { e.preventDefault(); e.stopPropagation(); setShowTerms(true); }} className="font-semibold text-brand-600 underline">Όρους Χρήσης</button> και κατανοώ ότι το RxVision είναι <b>βοηθητικό εργαλείο</b> — η ευθύνη ορθής χρήσης και οι <b>τελικές αποφάσεις (π.χ. κατάθεση συνταγών στα ταμεία)</b> ανήκουν στον φαρμακοποιό.</span>
+                  </label>
+                  <div className="mt-2.5 flex flex-wrap items-center gap-2">
+                    <button type="button" onClick={printTerms} disabled={!acceptedTerms || !(company.name || company.title).trim()}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40">
+                      <Printer className="h-3.5 w-3.5" /> Εκτύπωση υπογεγραμμένων όρων
+                    </button>
+                    {!acceptedTerms
+                      ? <span className="text-[11px] text-amber-600">Αποδέξου τους όρους για να συνεχίσεις.</span>
+                      : !(company.name || company.title).trim() && <span className="text-[11px] text-amber-600">Συμπλήρωσε την Επωνυμία για να εκτυπωθεί στη σύμβαση.</span>}
+                  </div>
+                </div>
               </div>
             )}
 
@@ -439,10 +507,10 @@ export default function RegisterWizard() {
                 <div>
                   <label className={label}>Ταυτόχρονοι χρήστες</label>
                   <div className="flex items-center gap-3">
-                    <button type="button" onClick={() => setSeats((n) => Math.max(1, n - 1))} className="grid h-9 w-9 place-items-center rounded-lg border border-slate-300 text-lg text-slate-600 hover:bg-slate-50">−</button>
-                    <input type="number" min={1} max={maxSeats} value={seats} onChange={(e) => setSeats(Math.min(maxSeats, Math.max(1, parseInt(e.target.value) || 1)))} className={`${input} w-20 text-center`} />
+                    <button type="button" disabled={seats <= includedFree} onClick={() => setSeats((n) => Math.max(includedFree, n - 1))} className="grid h-9 w-9 place-items-center rounded-lg border border-slate-300 text-lg text-slate-600 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40">−</button>
+                    <input type="number" min={includedFree} max={maxSeats} value={seats} onChange={(e) => setSeats(Math.min(maxSeats, Math.max(includedFree, parseInt(e.target.value) || includedFree)))} className={`${input} w-20 text-center`} />
                     <button type="button" disabled={seats >= maxSeats} onClick={() => setSeats((n) => Math.min(maxSeats, n + 1))} className="grid h-9 w-9 place-items-center rounded-lg border border-slate-300 text-lg text-slate-600 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40">+</button>
-                    <span className="text-xs text-slate-400">{extraUsers > 0 ? <>1 βάση + {extraUsers} έξτρα (έως {maxSeats})</> : <>1 χρήστης (έως {maxSeats} στο πακέτο)</>}</span>
+                    <span className="text-xs text-slate-400">{extraUsers > 0 ? <>{includedFree} περιλαμβάνονται + {extraUsers} έξτρα (έως {maxSeats})</> : <>{includedFree} {includedFree === 1 ? "χρήστης" : "χρήστες"} περιλαμβάνονται στην τιμή (έως {maxSeats})</>}</span>
                   </div>
                 </div>
                 <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
@@ -456,11 +524,11 @@ export default function RegisterWizard() {
                     ))}
                     {!isTrial && (
                       <>
-                        <div className="flex justify-between border-t border-slate-200 pt-2"><dt className="text-slate-600">Καθαρή αξία</dt><dd className="font-medium text-slate-800">{eur(netPrice)}</dd></div>
-                        <div className="flex justify-between"><dt className="text-slate-600">Φ.Π.Α {vatRate}%</dt><dd className="font-medium text-slate-800">{eur(vatAmount)}</dd></div>
+                        <div className="flex justify-between border-t border-slate-200 pt-2"><dt className="text-slate-600">Καθαρή αξία</dt><dd className="font-medium text-slate-800">{eur2(netPrice)}</dd></div>
+                        <div className="flex justify-between"><dt className="text-slate-600">Φ.Π.Α {vatRate}%</dt><dd className="font-medium text-slate-800">{eur2(vatAmount)}</dd></div>
                       </>
                     )}
-                    <div className="mt-1 flex justify-between border-t border-slate-200 pt-2 text-base"><dt className="font-semibold text-slate-900">Τελική τιμή</dt><dd className="font-bold text-brand-700">{eur(isTrial ? 0 : grossPrice)}<span className="text-xs font-normal text-slate-400">/{per}</span></dd></div>
+                    <div className="mt-1 flex justify-between border-t border-slate-200 pt-2 text-base"><dt className="font-semibold text-slate-900">Τελική τιμή</dt><dd className="font-bold text-brand-700">{eur2(isTrial ? 0 : grossPrice)}<span className="text-xs font-normal text-slate-400">/{per}</span></dd></div>
                   </dl>
                 </div>
               </div>
@@ -504,7 +572,7 @@ export default function RegisterWizard() {
                   <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-700">Δεν υπάρχει διαθέσιμος τρόπος πληρωμής αυτή τη στιγμή — επικοινώνησε μαζί μας.</div>
                 )}
                 <div className="rounded-xl bg-brand-50/60 p-3 text-xs text-brand-800">
-                  <b>Σύνοψη:</b> {company.title || company.name || "—"} · {pkg?.name || pkgCode} · {yearly ? "ετήσια" : "μηνιαία"} · {seats} χρήστες · SLA: {slaObj?.name || sla || "—"} · <b>Πληρωτέο τώρα: {eur(isTrial ? 0 : grossPrice)}</b> (με ΦΠΑ)
+                  <b>Σύνοψη:</b> {company.title || company.name || "—"} · {pkg?.name || pkgCode} · {yearly ? "ετήσια" : "μηνιαία"} · {seats} χρήστες · SLA: {slaObj?.name || sla || "—"} · <b>Πληρωτέο τώρα: {eur2(isTrial ? 0 : grossPrice)}</b> (με ΦΠΑ)
                 </div>
                 {payMethod === "card" && payChoice && (
                   <div className="rounded-xl border border-slate-200 p-3 text-xs text-slate-500">Θα μεταφερθείς σε ασφαλές περιβάλλον {cardProviderName} για την πληρωμή <b>{eur(price)}</b>. Μόλις ολοκληρωθεί, επιστρέφεις για να ορίσεις τον κωδικό σου.</div>
@@ -512,6 +580,7 @@ export default function RegisterWizard() {
                 {bankSubmitted && (
                   <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800">Το αίτημα καταχωρήθηκε. Μόλις <b>πιστοποιήσουμε την κατάθεση</b>, θα λάβεις email με link για να ολοκληρώσεις την εγγραφή.</div>
                 )}
+                <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">✓ Οι <button type="button" onClick={() => setShowTerms(true)} className="font-semibold underline">Όροι Χρήσης</button> έχουν γίνει αποδεκτοί στο 1ο βήμα.</div>
                 {err && <div role="alert" className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{err}</div>}
               </div>
             )}
@@ -523,7 +592,7 @@ export default function RegisterWizard() {
               {step < N - 1 ? (
                 <button type="button" disabled={!canNext} onClick={goNext} className="inline-flex items-center gap-1.5 rounded-lg bg-brand-700 px-5 py-2.5 text-sm font-medium text-white hover:bg-brand-800 disabled:opacity-50">Επόμενο <ArrowRight className="h-4 w-4" /></button>
               ) : (
-                <button type="button" disabled={(!isTrial && !payChoice) || busy} onClick={startPayment} className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50">{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <CreditCard className="h-4 w-4" />} {isTrial ? "Ξεκίνα δωρεάν δοκιμή" : payMethod === "card" ? `Πλήρωσε ${eur(price)}` : "Καταχώρηση αιτήματος"}</button>
+                <button type="button" disabled={(!isTrial && !payChoice) || busy || !acceptedTerms} onClick={startPayment} className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50">{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <CreditCard className="h-4 w-4" />} {isTrial ? "Ξεκίνα δωρεάν δοκιμή" : payMethod === "card" ? `Πλήρωσε ${eur(price)}` : "Καταχώρηση αιτήματος"}</button>
               )}
             </div>
             )}
@@ -534,6 +603,31 @@ export default function RegisterWizard() {
           <PoweredBy />
         </div>
       </div>
+
+      {/* Modal ανάγνωσης Όρων ΜΕΣΑ στην εγγραφή — «Κλείσιμο» επιστρέφει ακριβώς εκεί που ήταν (χωρίς πλοήγηση) */}
+      {showTerms && (
+        <div onClick={() => setShowTerms(false)} className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/50 p-4">
+          <div onClick={(e) => e.stopPropagation()} className="my-8 w-full max-w-2xl rounded-2xl bg-white p-6 shadow-2xl">
+            <div className="mb-3 flex items-center justify-between">
+              <h3 className="text-lg font-bold text-slate-900">Όροι Χρήσης</h3>
+              <button type="button" onClick={() => setShowTerms(false)} className="text-slate-400 hover:text-slate-600">✕</button>
+            </div>
+            <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800"><b>Το RxVision είναι βοηθητικό εργαλείο.</b> Η ευθύνη ορθής χρήσης & οι τελικές αποφάσεις (π.χ. κατάθεση συνταγών στα ταμεία) ανήκουν στον φαρμακοποιό.</div>
+            <div className="max-h-[55vh] space-y-3 overflow-y-auto pr-1">
+              {TERMS_SECTIONS.map(([h, b]) => (
+                <div key={h}>
+                  <div className="text-sm font-semibold text-slate-800">{h}</div>
+                  <p className="mt-0.5 text-sm leading-relaxed text-slate-600">{b}</p>
+                </div>
+              ))}
+            </div>
+            <div className="mt-5 flex flex-wrap items-center justify-between gap-2">
+              <button type="button" onClick={printTerms} disabled={!acceptedTerms} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-40"><Printer className="h-3.5 w-3.5" /> Εκτύπωση</button>
+              <button type="button" onClick={() => setShowTerms(false)} className="rounded-lg bg-brand-700 px-5 py-2 text-sm font-semibold text-white hover:bg-brand-800">Κλείσιμο & επιστροφή</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

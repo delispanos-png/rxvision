@@ -187,6 +187,18 @@ async def login(body: LoginIn, request: Request):
     return res
 
 
+class ForgotPasswordIn(BaseModel):
+    email: EmailStr
+
+
+@router.post("/auth/forgot-password",
+             dependencies=[Depends(rate_limit("patient_forgot_password", limit=5, window_seconds=600))])
+async def forgot_password(body: ForgotPasswordIn):
+    """Self-service «ξέχασα κωδικό»: στέλνει σύνδεσμο ανάκτησης (email/SMS) αν υπάρχει λογαριασμός.
+    ΠΑΝΤΑ επιστρέφει ok — δεν αποκαλύπτει αν το email υπάρχει (anti-enumeration)."""
+    return await PatientAuthService().request_password_reset(body.email)
+
+
 @router.post("/auth/set-password",
              dependencies=[Depends(rate_limit("patient_set_password", limit=10, window_seconds=600))])
 async def set_password(body: SetPasswordIn):
