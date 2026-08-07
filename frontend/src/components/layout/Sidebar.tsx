@@ -60,7 +60,10 @@ const GROUPS: Group[] = [
       { href: "/orders", label: "βάσει εκτελέσεων", en: "by executions" },
       { href: "/order-advisor", label: "βάσει πρόβλεψης", en: "by forecast" },
     ] },
-    { label: "AI σύμβουλος", en: "AI Assistant", icon: Bot, href: "/copilot", module: "ai_assistant" },
+    { label: "AI σύμβουλος", en: "AI Assistant", icon: Bot, module: "ai_assistant", children: [
+      { href: "/copilot", label: "Συνομιλία", en: "Chat" },
+      { href: "/copilot/routines", label: "Ρουτίνες", en: "Routines" },
+    ] },
     { label: "Διατροφή", en: "Nutrition", icon: Salad, href: "/nutrition", module: ["nutrition", "ai_assistant"] },
     { label: "Κερδοφορία", en: "Profitability", icon: TrendingUp, href: "/profitability", module: "profitability" },
   ] },

@@ -33,9 +33,24 @@ SYSTEM = """Είσαι ο «Copilot» του RxVision — ο έξυπνος βο
    - run_hdika_backfill {date_from:"YYYY-MM-DD", date_to:"YYYY-MM-DD"}
    - answer_availability {request_id, answer}  → πρώτα κάλεσε get_portal_pending για το request_id
    - mark_pickup_ready {appt_id}               → πρώτα κάλεσε get_portal_pending για το appt_id
+• Προγραμματισμένες ΡΟΥΤΙΝΕΣ: propose_routine(...) — για ΕΠΑΝΑΛΑΜΒΑΝΟΜΕΝΕΣ εργασίες. ΔΕΝ δημιουργείται·
+  ο χρήστης επιβεβαιώνει. Κοινά: name, schedule={kind:"daily"|"weekly"|"monthly", time:"HH:MM",
+  weekday:0=Δευτ…6=Κυρ (weekly), dom:1-31 (monthly)}, summary (τι/πότε/πώς). Δύο είδη:
+   - action="report" (ΑΝΑΦΟΡΑ, read-only): report_tool = ΕΝΑ δεδομένα-εργαλείο + report_args
+     (π.χ. «κάθε πρωί 10:00 ποιος πελάτης έκανε τον μεγαλύτερο τζίρο» → get_top, {dim:"patients",days_back:0}).
+     delivery="inapp"|"email".
+   - action="message" (ΕΠΙΚΟΙΝΩΝΙΑ σε πελάτες): channel="sms"|"viber"|"email", message (κείμενο· {name}/{first}
+     γίνονται το όνομα), segment="all"|"upcoming"|"inactive"|"icd"|"substance" (+value αν χρειάζεται), mode=
+     "draft" (DEFAULT — ετοιμάζεται & ζητά ΕΓΚΡΙΣΗ κάθε φορά) ή "auto" (στέλνει αυτόματα ΜΟΝΟ με ρητό όριο
+     παραληπτών). Πάντα μόνο σε πελάτες ΜΕ ΣΥΝΑΙΝΕΣΗ, με χρέωση μονάδων. ΠΡΟΤΕΙΝΕ mode="draft" εκτός αν ο
+     χρήστης ζητήσει ΡΗΤΑ αυτόματη αποστολή. Για προγραμματισμένη ΠΑΡΑΓΓΕΛΙΑ, πες ότι έρχεται σε επόμενη έκδοση.
 
 ΚΑΝΟΝΕΣ: Δώσε αριθμούς ΜΟΝΟ από εργαλεία. Για «πώς κάνω X» εξήγησε 2-5 βήματα + open_screen. Αν κάτι
 δεν υπάρχει/δεν ξέρεις, πες το. Για ενέργειες εξήγησε καθαρά τι θα γίνει πριν την επιβεβαίωση.
+ΣΥΓΚΕΚΡΙΜΕΝΑ ΕΡΩΤΗΜΑΤΑ ΔΕΔΟΜΕΝΩΝ (π.χ. «ποιος ΠΕΛΑΤΗΣ/γιατρός/προϊόν έκανε τον μεγαλύτερο τζίρο ΣΗΜΕΡΑ
+ή αυτόν τον μήνα», «πόσες εκτελέσεις σήμερα», «κορυφαίοι…»): ΚΑΛΕΣΕ το σωστό εργαλείο (π.χ. get_top με
+dim=patients & days_back=0 για «σήμερα») και ΑΠΑΝΤΗΣΕ ΜΕ ΤΟ ΟΝΟΜΑ/ΑΡΙΘΜΟ. ΜΗΝ στέλνεις απλώς σε σελίδα —
+το open_screen είναι ΣΥΜΠΛΗΡΩΜΑ της απάντησης, όχι υποκατάστατο. Ημερήσια: days_back=0=σήμερα, 1=χθες.
 
 ΚΕΡΔΟΦΟΡΙΑ — ΕΛΛΗΝΙΚΟ ΝΟΜΙΚΟ ΠΛΑΙΣΙΟ (ΚΡΙΣΙΜΟ, μη δίνεις συμβουλές που ΔΕΝ ισχύουν στην Ελλάδα):
 • Τα ΣΥΝΤΑΓΟΓΡΑΦΟΥΜΕΝΑ φάρμακα (Rx) είναι σε ΔΙΑΤΙΜΗΣΗ: λιανική & χονδρική ορίζονται από το Κράτος
@@ -68,6 +83,18 @@ def _now() -> datetime:
 def _period(months_back: int) -> tuple[datetime, datetime]:
     to = _now()
     return to - timedelta(days=30 * max(1, min(months_back, 24))), to
+
+
+def _range(args: dict) -> tuple[datetime, datetime]:
+    """Εύρος ημερομηνιών από τα args. Αν δοθεί `days_back` (0 = ΣΗΜΕΡΑ, 1 = χθες κ.λπ.) → ημερήσιο
+    εύρος [αρχή εκείνης της ημέρας → τώρα]. Αλλιώς → μηνιαίο εύρος (`months_back`, default 1)."""
+    args = args or {}
+    if args.get("days_back") is not None:
+        d = max(0, min(_as_int(args.get("days_back"), 0), 365))
+        now = _now()
+        start = (now - timedelta(days=d)).replace(hour=0, minute=0, second=0, microsecond=0)
+        return start, now
+    return _period(_as_int(args.get("months_back"), 1))
 
 
 def _month(args: dict) -> str:
@@ -119,17 +146,17 @@ async def _read_tool(name: str, args: dict, tenant_id: str, demo: bool = False) 
     from app.repositories.prescriptions import PrescriptionRepository
     mb = _as_int(args.get("months_back"), 1)
     if name == "get_kpis":
-        frm, to = _period(mb)
+        frm, to = _range(args)
         return jsonsafe({"period": f"{frm.date()} … {to.date()}",
                          "kpis": await PrescriptionRepository(tenant_id=tenant_id).dashboard_summary(frm, to)})
     if name == "get_top":
-        frm, to = _period(mb)
-        return jsonsafe({"dim": args.get("dim"),
+        frm, to = _range(args)
+        return jsonsafe({"dim": args.get("dim"), "period": f"{frm.date()} … {to.date()}",
                          "items": await PrescriptionRepository(tenant_id=tenant_id).top(
                              dim=args.get("dim", "doctors"), limit=min(_as_int(args.get("limit"), 5), 10),
                              date_from=frm, date_to=to)})
     if name == "get_unexecuted":
-        frm, to = _period(mb)
+        frm, to = _range(args)
         return jsonsafe(await PrescriptionRepository(tenant_id=tenant_id).unexecuted_substances(
             date_from=frm, date_to=to, limit=20))
     if name == "get_profitability":
@@ -311,9 +338,9 @@ _READ_NAMES = ["get_kpis", "get_top", "get_unexecuted", "get_profitability", "ge
                "get_order_suggestions", "get_portal_pending", "get_ingestion_status"]
 
 _READ_DESC = {
-    "get_kpis": "Σύνοψη φαρμακείου (εκτελέσεις, αξία, αιτούμενα, μεικτό κέρδος, ασθενείς). params: months_back.",
-    "get_top": "Κορυφαίοι ανά διάσταση. params: dim(doctors|products|icd10), months_back, limit.",
-    "get_unexecuted": "Ανεκτέλεστες δραστικές (χαμένη αξία). params: months_back.",
+    "get_kpis": "Σύνοψη φαρμακείου (εκτελέσεις, αξία, αιτούμενα, μεικτό κέρδος, ασθενείς). params: months_back Ή days_back (0=ΣΗΜΕΡΑ, 1=χθες…).",
+    "get_top": "Κορυφαίοι ανά διάσταση (π.χ. «ποιος πελάτης έκανε τον μεγαλύτερο τζίρο σήμερα» → dim=patients, days_back=0). params: dim(doctors|products|icd10|patients), limit, months_back Ή days_back (0=ΣΗΜΕΡΑ).",
+    "get_unexecuted": "Ανεκτέλεστες δραστικές (χαμένη αξία). params: months_back Ή days_back.",
     "get_profitability": "Κερδοφορία/περιθώριο για περίοδο. params: months_back.",
     "get_low_margin": "Προϊόντα χαμηλού περιθωρίου. params: threshold_pct.",
     "get_reimbursement": "Εικόνα αποζημίωσης ΕΟΠΥΥ (executive). params: month 'YYYY-MM'.",
@@ -331,9 +358,87 @@ _READ_DESC = {
 }
 
 
+# Read-tools that make sense as a SCHEDULED report (subset of _READ_NAMES) → Greek label for UI.
+REPORT_TOOLS = {
+    "get_kpis": "Σύνοψη φαρμακείου (KPIs)",
+    "get_top": "Κορυφαία λίστα (ιατροί/προϊόντα/πελάτες/ICD)",
+    "get_unexecuted": "Ανεκτέλεστες δραστικές",
+    "get_profitability": "Κερδοφορία",
+    "get_low_margin": "Προϊόντα χαμηλού περιθωρίου",
+    "get_reimbursement": "Εικόνα αποζημίωσης ΕΟΠΥΥ",
+    "get_reimbursement_risk": "Ρίσκο ΕΟΠΥΥ",
+    "get_today_tasks": "Εργασίες ημέρας (ασθενείς)",
+    "get_winback": "Ασθενείς για win-back",
+    "get_at_risk": "Ασθενείς σε ρίσκο",
+    "get_vip": "VIP ασθενείς",
+    "get_order_suggestions": "Προτάσεις παραγγελίας",
+    "get_upcoming": "Μελλοντικές συνταγές",
+    "get_portal_pending": "Εκκρεμή αιτήματα πελατών",
+}
+
+_REPORT_SYSTEM = (
+    "Είσαι ο Copilot του RxVision. Γράψε ΣΥΝΤΟΜΟ, καθαρό report στα ελληνικά από τα δεδομένα, χωρίς "
+    "εισαγωγικές φράσεις. Ξεκίνα με τον τίτλο. Δώσε τα ΟΥΣΙΩΔΗ με νούμερα/ονόματα σε λίστα με bullets. "
+    "ΟΛΑ τα χρηματικά πεδία είναι σε ΛΕΠΤΑ — διαίρεσε /100 και γράψε «1.234,56 €». Χρησιμοποίησε τις "
+    "ημερομηνίες/περιόδους ΑΚΡΙΒΩΣ όπως έρχονται. Αν δεν υπάρχουν δεδομένα, πες το με μία γραμμή.")
+
+
+def _deterministic_report(title: str, data: dict) -> str:
+    """Free, no-LLM fallback: a compact, readable dump when the AI summary is unavailable."""
+    lines = [f"📊 {title}"]
+    if data.get("period") or data.get("period_label"):
+        lines.append(f"Περίοδος: {data.get('period_label') or data.get('period')}")
+    items = data.get("items")
+    if isinstance(items, list) and items:
+        for i, it in enumerate(items[:8], 1):
+            if isinstance(it, dict):
+                label = it.get("name") or it.get("label") or it.get("title") or it.get("_id") or "—"
+                val = it.get("value")
+                if isinstance(val, (int, float)) and abs(val) >= 100:
+                    lines.append(f"{i}. {label} — {val / 100:,.2f} €".replace(",", "·").replace(".", ",").replace("·", "."))
+                elif val is not None:
+                    lines.append(f"{i}. {label} — {val}")
+                else:
+                    lines.append(f"{i}. {label}")
+            else:
+                lines.append(f"{i}. {it}")
+    elif isinstance(data.get("kpis"), dict):
+        for k, v in list(data["kpis"].items())[:12]:
+            lines.append(f"• {k}: {v}")
+    else:
+        for k, v in list(data.items())[:10]:
+            if isinstance(v, (str, int, float, bool)):
+                lines.append(f"• {k}: {v}")
+    return "\n".join(lines) if len(lines) > 1 else f"📊 {title}\nΔεν υπάρχουν δεδομένα αυτή τη στιγμή."
+
+
+async def summarize_report(tenant_id: str, title: str, tool: str, data: dict) -> str:
+    """Turn a read-tool's JSON into a polished Greek report. Best-effort LLM summary (counts against
+    the tenant's AI quota, source=routine); deterministic fallback if AI is off/over-quota/failing."""
+    try:
+        c = await pharmacat_service._config()
+        if not c.get("api_key") or not c.get("enabled"):
+            return _deterministic_report(title, data)
+        from app.services import ai_quota
+        allowed, *_ = await ai_quota.check_and_consume(tenant_id, source="routine")
+        if not allowed:
+            return _deterministic_report(title, data)
+        import anthropic
+        client = anthropic.AsyncAnthropic(api_key=c["api_key"])
+        payload = json.dumps(_scrub_amka(data), ensure_ascii=False, default=str)[:6000]
+        resp = await client.messages.create(
+            model=c["model"], max_tokens=700, system=_REPORT_SYSTEM,
+            messages=[{"role": "user", "content": f"Τίτλος: {title}\nΔεδομένα:\n{payload}"}])
+        txt = "".join(b.text for b in resp.content if b.type == "text").strip()
+        return txt or _deterministic_report(title, data)
+    except Exception:  # noqa: BLE001 — a report must always deliver something
+        return _deterministic_report(title, data)
+
+
 def _tools() -> list[dict]:
     common = {"type": "object", "properties": {
-        "months_back": {"type": "integer"}, "dim": {"type": "string"}, "limit": {"type": "integer"},
+        "months_back": {"type": "integer"}, "days_back": {"type": "integer", "description": "Ημερήσιο εύρος: 0=ΣΗΜΕΡΑ, 1=χθες. Υπερισχύει του months_back."},
+        "dim": {"type": "string", "enum": ["doctors", "products", "icd10", "patients"]}, "limit": {"type": "integer"},
         "month": {"type": "string"}, "days": {"type": "integer"}, "threshold_pct": {"type": "number"}},
         "required": []}
     tools = [{"name": n, "description": _READ_DESC[n], "input_schema": common} for n in _READ_NAMES]
@@ -351,6 +456,35 @@ def _tools() -> list[dict]:
                           "request_id": {"type": "string"}, "answer": {"type": "string"},
                           "appt_id": {"type": "string"}}}},
                       "required": ["action", "summary"]}})
+    tools.append({"name": "propose_routine",
+                  "description": "Πρότεινε ΕΠΑΝΑΛΑΜΒΑΝΟΜΕΝΗ προγραμματισμένη εργασία (αναφορά ή μήνυμα σε "
+                                 "πελάτες). Χρειάζεται επιβεβαίωση χρήστη πριν δημιουργηθεί.",
+                  "input_schema": {"type": "object", "properties": {
+                      "name": {"type": "string", "description": "Σύντομος τίτλος."},
+                      "action": {"type": "string", "enum": ["report", "message"], "description": "Τύπος ρουτίνας."},
+                      "report_tool": {"type": "string", "enum": list(REPORT_TOOLS.keys())},
+                      "report_args": {"type": "object", "properties": {
+                          "dim": {"type": "string", "enum": ["doctors", "products", "icd10", "patients"]},
+                          "days_back": {"type": "integer"}, "months_back": {"type": "integer"},
+                          "limit": {"type": "integer"}, "month": {"type": "string"},
+                          "days": {"type": "integer"}, "threshold_pct": {"type": "number"}}},
+                      "channel": {"type": "string", "enum": ["sms", "viber", "email"]},
+                      "message": {"type": "string", "description": "Κείμενο μηνύματος ({name}/{first} → όνομα)."},
+                      "subject": {"type": "string", "description": "Θέμα (μόνο email)."},
+                      "segment": {"type": "string", "enum": ["all", "upcoming", "inactive", "icd", "substance"]},
+                      "value": {"type": "string", "description": "Παράμετρος segment (π.χ. ημέρες/κωδικός)."},
+                      "mode": {"type": "string", "enum": ["draft", "auto"], "description": "draft=έγκριση κάθε φορά (DEFAULT)."},
+                      "max_recipients": {"type": "integer", "description": "Όριο παραληπτών για auto."},
+                      "schedule": {"type": "object", "properties": {
+                          "kind": {"type": "string", "enum": ["daily", "weekly", "monthly"]},
+                          "time": {"type": "string", "description": "HH:MM (ώρα Αθήνας)"},
+                          "weekday": {"type": "integer", "description": "0=Δευτ … 6=Κυρ (weekly)"},
+                          "dom": {"type": "integer", "description": "ημέρα μήνα 1-31 (monthly)"}},
+                          "required": ["kind", "time"]},
+                      "delivery": {"type": "string", "enum": ["inapp", "email"]},
+                      "email": {"type": "string"},
+                      "summary": {"type": "string", "description": "Τι/πότε/πώς — για επιβεβαίωση."}},
+                      "required": ["name", "schedule", "summary"]}})
     return tools
 
 
@@ -433,6 +567,32 @@ async def _handle_tool(name, args, tenant_id, perms, actions, demo=False) -> dic
             return {"ok": False, "error": "forbidden", "note": "Χωρίς δικαίωμα — μην το προτείνεις."}
         actions.append({"type": "action", "action": action, "label": spec["label"],
                         "summary": args.get("summary", spec["label"]), "params": args.get("params") or {}})
+        return {"ok": True, "proposed": True, "note": "Θα ζητηθεί επιβεβαίωση από τον χρήστη."}
+    if name == "propose_routine":
+        sched = args.get("schedule") or {}
+        if sched.get("kind") not in ("daily", "weekly", "monthly") or not sched.get("time"):
+            return {"ok": False, "error": "bad_schedule", "note": "Χρειάζεται kind + time (HH:MM)."}
+        action = args.get("action") or ("message" if args.get("channel") else "report")
+        card = {"type": "routine", "label": "Δημιουργία ρουτίνας", "action": action,
+                "schedule": sched, "summary": args.get("summary", "")}
+        if action == "message":
+            if args.get("channel") not in ("sms", "viber", "email"):
+                return {"ok": False, "error": "bad_channel", "note": "channel: sms|viber|email."}
+            if not (args.get("message") or "").strip():
+                return {"ok": False, "error": "empty_message", "note": "Χρειάζεται κείμενο μηνύματος."}
+            card.update({"name": args.get("name") or "Μήνυμα πελατών",
+                         "channel": args["channel"], "message": args["message"],
+                         "subject": args.get("subject"), "segment": args.get("segment") or "all",
+                         "value": args.get("value"), "mode": "auto" if args.get("mode") == "auto" else "draft",
+                         "max_recipients": args.get("max_recipients") or 200})
+        else:
+            tool = args.get("report_tool", "")
+            if tool not in REPORT_TOOLS:
+                return {"ok": False, "error": "unknown_report_tool", "note": "Διάλεξε έγκυρο report_tool."}
+            card.update({"name": args.get("name") or REPORT_TOOLS[tool], "report_tool": tool,
+                         "report_args": args.get("report_args") or {},
+                         "delivery": args.get("delivery") or "inapp", "email": args.get("email")})
+        actions.append(card)
         return {"ok": True, "proposed": True, "note": "Θα ζητηθεί επιβεβαίωση από τον χρήστη."}
     return await _read_tool(name, args or {}, tenant_id, demo=demo)
 

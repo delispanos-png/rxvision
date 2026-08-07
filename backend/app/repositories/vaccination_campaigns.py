@@ -26,24 +26,45 @@ from app.utils.masking import mask_amka, mask_name
 AGE_ORDER = ["75+", "65-74", "50-64", "35-49", "18-34", "0-17", "unknown"]
 _AGE_RANK = {ag: len(AGE_ORDER) - i for i, ag in enumerate(AGE_ORDER)}  # 75+ highest
 
-# Default TOP-priority ICD-10 patterns (anchored prefixes): respiratory (J), diabetes (E10–E14),
-# circulatory/hypertension (I), chronic kidney disease (N18). Configurable per campaign.
-DEFAULT_PRIORITY_ICD = ["^J", "^E1[0-4]", "^I", "^N18"]
+# Default TOP-priority ICD-10 patterns — BARE anchored prefixes (matched as ^<prefix>): respiratory
+# (J), diabetes (E10–E14), circulatory/hypertension (I), chronic kidney disease (N18). Configurable
+# per campaign via the settings UI (named categories). NB: patterns are stored WITHOUT a leading «^»
+# — the matcher anchors them (re.escape + «^»). Legacy values with «^» are tolerated on read.
+DEFAULT_PRIORITY_ICD = ["J", "E10", "E11", "E12", "E13", "E14", "I", "N18"]
+
+
+def _norm_prefix(p: str) -> str:
+    """Bare ICD-10 prefix: strip any legacy «^» anchor and whitespace (the matcher re-anchors)."""
+    return (p or "").lstrip("^").strip()
 
 
 def _icd_category(code: str) -> str:
     """Human label for why an ICD-10 code grants vaccination priority (Greek)."""
-    c = (code or "").upper()
+    c = _norm_prefix((code or "").upper())
     if c.startswith("J"):
         return "Αναπνευστικό"
     if c[:3] in ("E10", "E11", "E12", "E13", "E14"):
         return "Διαβήτης"
+    if c.startswith("E66"):
+        return "Παχυσαρκία"
     if c.startswith("I"):
         return "Καρδιαγγειακό"
     if c.startswith("N18"):
         return "Χρόνια νεφρική"
+    if c[:3] in ("K70", "K71", "K72", "K73", "K74", "K75", "K76", "K77"):
+        return "Χρόνια ηπατική"
+    if c[:3] in ("B20", "B21", "B22", "B23", "B24"):
+        return "HIV / ανοσοκαταστολή"
+    if c[:3] in ("D80", "D81", "D82", "D83", "D84"):
+        return "Ανοσοανεπάρκεια"
+    if c[:3] in ("D56", "D57", "D58"):
+        return "Αιμοσφαιρινοπάθεια"
     if c.startswith("C"):
         return "Ογκολογικό"
+    if c.startswith("G"):
+        return "Νευρολογικό / νευρομυϊκό"
+    if c[:3] in ("M05", "M06", "M32", "M33", "M34", "M35"):
+        return "Αυτοάνοσο / ρευματολογικό"
     return "Χρόνια πάθηση"
 
 
@@ -118,7 +139,7 @@ class VaccinationCampaignRepository(BaseRepository):
             return {}
         # ICD-10 priority codes are tenant-configured → treat as anchored LITERAL prefixes
         # (re.escape) so a hostile/broken pattern can't ReDoS the shared cluster or 500 the endpoint.
-        regexes = [re.compile("^" + re.escape(p)) for p in patterns if p]
+        regexes = [re.compile("^" + re.escape(np)) for p in patterns if (np := _norm_prefix(p))]
         rows = await self._db["prescription_executions"].aggregate([
             {"$match": {"tenant_id": self.tenant_id, "icd10": {"$in": regexes}}},
             {"$unwind": "$icd10"},

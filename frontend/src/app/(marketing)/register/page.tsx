@@ -114,8 +114,7 @@ export default function RegisterWizard() {
   const basePrice = (yearly ? pkg?.price_yearly : pkg?.price_monthly) ?? 0;
   // ΒΑΣΗ: δωρεάν χρήστες που περιλαμβάνει η τιμή (ρυθμιζόμενο ανά πακέτο· default 1). pkg.seats = ΑΝΩΤΑΤΟ («έως N»).
   const includedFree = Math.max(1, pkg?.included_users ?? 1);
-  const maxSeats = Math.max(1, pkg?.seats ?? 1);      // ΜΕΓΙΣΤΟ όριο πλάνου («έως N»)
-  const extraUsers = Math.max(0, seats - includedFree);   // έξτρα πάνω από τη βάση (1) → χρεώσιμα
+  const extraUsers = Math.max(0, seats - includedFree);   // έξτρα πάνω από τους περιλαμβανόμενους → χρεώσιμα
   // κάθε card_* → ροή «card» (card-capture ανά ενεργό πάροχο)· bank_transfer → «bank» (τιμολόγιο IBAN)
   const payMethod: "card" | "bank" = payChoice.startsWith("card") ? "card" : "bank";
   const cardProviderName = payChoice === "card_viva" ? "Viva (κάρτα / IRIS)" : payChoice === "card_revolut" ? "Revolut" : payChoice === "card_alpha" ? "Alpha Bank" : "τον πάροχο πληρωμής";
@@ -506,12 +505,14 @@ export default function RegisterWizard() {
                 {/* concurrent users + cost breakdown */}
                 <div>
                   <label className={label}>Ταυτόχρονοι χρήστες</label>
-                  <div className="flex items-center gap-3">
-                    <button type="button" disabled={seats <= includedFree} onClick={() => setSeats((n) => Math.max(includedFree, n - 1))} className="grid h-11 w-11 shrink-0 place-items-center rounded-lg border border-slate-300 text-lg text-slate-600 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40 sm:h-9 sm:w-9">−</button>
-                    <input type="number" min={includedFree} max={maxSeats} value={seats} onChange={(e) => setSeats(Math.min(maxSeats, Math.max(includedFree, parseInt(e.target.value) || includedFree)))} className={`${input} w-20 shrink-0 text-center`} />
-                    <button type="button" disabled={seats >= maxSeats} onClick={() => setSeats((n) => Math.min(maxSeats, n + 1))} className="grid h-11 w-11 shrink-0 place-items-center rounded-lg border border-slate-300 text-lg text-slate-600 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40 sm:h-9 sm:w-9">+</button>
+                  {/* Compact bordered pill (inline-flex → αγκαλιάζει το περιεχόμενο· ΠΟΤΕ overflow).
+                      Ξεκινά από τους περιλαμβανόμενους χρήστες του πακέτου· ΧΩΡΙΣ ανώτατο όριο. */}
+                  <div className="mt-1 inline-flex items-center gap-1 rounded-xl border border-slate-300 p-1">
+                    <button type="button" disabled={seats <= includedFree} onClick={() => setSeats((n) => Math.max(includedFree, n - 1))} className="grid h-9 w-9 shrink-0 place-items-center rounded-lg text-lg text-slate-600 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-30">−</button>
+                    <input type="number" min={includedFree} value={seats} onChange={(e) => setSeats(Math.max(includedFree, parseInt(e.target.value) || includedFree))} className="w-16 border-0 bg-transparent text-center text-sm font-medium text-slate-900 focus:outline-none focus:ring-0 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none" />
+                    <button type="button" onClick={() => setSeats((n) => n + 1)} className="grid h-9 w-9 shrink-0 place-items-center rounded-lg text-lg text-slate-600 hover:bg-slate-100">+</button>
                   </div>
-                  <p className="mt-1.5 text-xs text-slate-400">{extraUsers > 0 ? <>{includedFree} περιλαμβάνονται + {extraUsers} έξτρα (έως {maxSeats})</> : <>{includedFree} {includedFree === 1 ? "χρήστης" : "χρήστες"} περιλαμβάνονται στην τιμή (έως {maxSeats})</>}</p>
+                  <p className="mt-1.5 text-xs text-slate-400">{includedFree} {includedFree === 1 ? "χρήστης περιλαμβάνεται" : "χρήστες περιλαμβάνονται"} στην τιμή{extraUsers > 0 ? <> · +{extraUsers} έξτρα</> : null}</p>
                 </div>
                 <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
                   <div className="mb-2 text-xs font-semibold text-slate-500">Ανάλυση κόστους ({yearly ? "ετήσια" : "μηνιαία"})</div>

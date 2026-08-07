@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
-import { Sparkles, Send, Loader2, ArrowUpRight, Compass, Mic, Zap } from "lucide-react";
+import { Sparkles, Send, Loader2, ArrowUpRight, Compass, Mic, Zap, CalendarClock } from "lucide-react";
 import { api } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
 import { Tooltip } from "@/components/ui/Tooltip";
@@ -12,7 +12,8 @@ import { ModuleGuard } from "@/components/layout/ModuleGuard";
 
 type Action =
   | { type: "navigate"; href: string; label: string }
-  | { type: "action"; action: string; label: string; summary: string; params?: Record<string, unknown> };
+  | { type: "action"; action: string; label: string; summary: string; params?: Record<string, unknown> }
+  | { type: "routine"; label: string; name: string; action?: string; report_tool?: string; report_args?: Record<string, unknown>; schedule: Record<string, unknown>; delivery?: string; email?: string | null; channel?: string; message?: string; subject?: string; segment?: string; value?: string | null; mode?: string; max_recipients?: number; summary: string };
 type Result = { ok: boolean; error?: string; limit?: number; reply: string; actions?: Action[] };
 type PlanCard = { id: string; urgency: "high" | "medium" | "low"; icon: string; title: string; why: string; impact: string; executable?: boolean; action: { kind: "act"; key: string } | { kind: "navigate"; href: string }; cta: string };
 type Plan = { cards: PlanCard[]; count: number; generated_at: string };
@@ -44,25 +45,35 @@ function CopilotInner() {
   const recogRef = useRef<any>(null);
   const [listening, setListening] = useState(false);
   const [micOk, setMicOk] = useState(false);
+  const [micErr, setMicErr] = useState("");
   useEffect(() => {
     const w = window as any;
+    setMicOk(!!(w.SpeechRecognition || w.webkitSpeechRecognition));
+  }, []);
+  function micErrText(code: string): string {
+    switch (code) {
+      case "not-allowed": return t("Δώσε άδεια μικροφώνου στον browser (εικονίδιο 🔒 στη μπάρα διεύθυνσης).", "Allow microphone access in your browser (lock icon in the address bar).");
+      case "service-not-allowed": return t("Ο browser μπλοκάρει τη ΦΩΝΗΤΙΚΗ ΥΠΗΡΕΣΙΑ (ξεχωριστή από την άδεια μικροφώνου). Στο Safari: Ρυθμίσεις → Πληκτρολόγιο → «Υπαγόρευση» ΟΝ. Ή δοκίμασε Chrome.", "The browser blocks the SPEECH SERVICE (separate from mic permission). On Safari: Settings → Keyboard → Dictation ON. Or try Chrome.");
+      case "no-speech": return t("Δεν άκουσα κάτι — δοκίμασε ξανά.", "Didn't catch that — try again.");
+      case "audio-capture": return t("Δεν βρέθηκε μικρόφωνο.", "No microphone found.");
+      case "no-support": return t("Ο browser σου δεν υποστηρίζει φωνητική εισαγωγή (δοκίμασε Chrome).", "Your browser doesn't support voice input (try Chrome).");
+      default: return t("Η φωνητική εισαγωγή δεν λειτούργησε — δοκίμασε ξανά ή γράψε την εντολή.", "Voice input failed — try again or type the command.");
+    }
+  }
+  function toggleMic() {
+    if (listening) { try { recogRef.current?.stop(); } catch { /* ignore */ } setListening(false); return; }
+    const w = window as any;
     const SR = w.SpeechRecognition || w.webkitSpeechRecognition;
-    if (!SR) return;
-    setMicOk(true);
+    if (!SR) { setMicErr(micErrText("no-support")); return; }
+    // ΦΡΕΣΚΟ instance ανά χρήση — η επαναχρησιμοποίηση του ίδιου object μετά από onend/error κολλάει σε Safari/Chrome.
     const r = new SR();
-    r.lang = "el-GR";
-    r.interimResults = true;
-    r.continuous = false;
+    r.lang = "el-GR"; r.interimResults = true; r.continuous = false;
     r.onresult = (e: any) => setInput(Array.from(e.results).map((res: any) => res[0].transcript).join(""));
     r.onend = () => setListening(false);
-    r.onerror = () => setListening(false);
+    r.onerror = (e: any) => { setListening(false); setMicErr(micErrText(e?.error || "")); };
     recogRef.current = r;
-  }, []);
-  function toggleMic() {
-    const r = recogRef.current;
-    if (!r) return;
-    if (listening) { r.stop(); setListening(false); }
-    else { setInput(""); try { r.start(); setListening(true); } catch { /* already started */ } }
+    setMicErr(""); setInput("");
+    try { r.start(); setListening(true); } catch { setMicErr(micErrText("")); setListening(false); }
   }
   /* eslint-enable */
 
@@ -88,6 +99,27 @@ function CopilotInner() {
       const r = await api<{ ok: boolean; reply?: string; error?: string }>("/copilot/act", { method: "POST", body: JSON.stringify({ action: a.action, params: a.params ?? {} }) });
       const reply = r.reply || (r.ok ? "Έγινε." : t("Η ενέργεια απέτυχε.", "The action failed."));
       setTurns((s) => [...s, { role: "assistant", content: "", result: { ok: true, reply } }]);
+    } catch {
+      setTurns((s) => [...s, { role: "assistant", content: "", result: { ok: false, error: "network", reply: "" } }]);
+    }
+    setBusy(false);
+  }
+
+  async function createRoutine(a: Extract<Action, { type: "routine" }>) {
+    if (busy) return;
+    if (!(await appConfirm(`${a.summary || a.name}\n\n${t("Να δημιουργηθεί αυτή η προγραμματισμένη ρουτίνα;", "Create this scheduled routine?")}`))) return;
+    setBusy(true);
+    try {
+      const { type: _t, label: _l, summary: _s, ...body } = a;   // send everything except UI-only fields
+      void _t; void _l; void _s;
+      const r = await api<{ ok: boolean; schedule_label?: string }>("/copilot/routines", {
+        method: "POST",
+        body: JSON.stringify({ action: "report", ...body }),
+      });
+      const reply = r.ok
+        ? t(`Έτοιμη η ρουτίνα «${a.name}» ✓ ${r.schedule_label || ""}. Δες/διαχειρίσου την στις Ρουτίνες.`, `Routine «${a.name}» is set ✓. Manage it in Routines.`)
+        : t("Δεν ήταν δυνατή η δημιουργία.", "Could not create it.");
+      setTurns((s) => [...s, { role: "assistant", content: "", result: { ok: r.ok, reply, actions: r.ok ? [{ type: "navigate", href: "/copilot/routines", label: t("Ρουτίνες", "Routines") }] : undefined } }]);
     } catch {
       setTurns((s) => [...s, { role: "assistant", content: "", result: { ok: false, error: "network", reply: "" } }]);
     }
@@ -181,6 +213,8 @@ function CopilotInner() {
                     <div className="flex flex-wrap gap-1.5">
                       {turn.result.actions.map((a, j) => a.type === "navigate" ? (
                         <button key={j} onClick={() => router.push(a.href)} className="inline-flex items-center gap-1 rounded-lg border border-sky-200 bg-sky-50 px-3 py-1.5 text-xs font-semibold text-sky-700 hover:border-sky-400 hover:bg-sky-100 dark:border-sky-800 dark:bg-sky-950/40 dark:text-sky-300">{a.label} <ArrowUpRight className="h-3 w-3" /></button>
+                      ) : a.type === "routine" ? (
+                        <button key={j} onClick={() => createRoutine(a)} disabled={busy} className="inline-flex items-center gap-1 rounded-lg border border-sky-300 bg-sky-50 px-3 py-1.5 text-xs font-semibold text-sky-700 hover:border-sky-400 hover:bg-sky-100 disabled:opacity-50 dark:border-sky-800 dark:bg-sky-950/40 dark:text-sky-300"><CalendarClock className="h-3 w-3" /> {a.summary || a.label}</button>
                       ) : (
                         <button key={j} onClick={() => runAction(a)} disabled={busy} className="inline-flex items-center gap-1 rounded-lg border border-amber-300 bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-700 hover:border-amber-400 hover:bg-amber-100 disabled:opacity-50 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-300"><Zap className="h-3 w-3" /> {a.label}</button>
                       ))}
@@ -205,6 +239,7 @@ function CopilotInner() {
           )}
           <button onClick={() => send(input)} disabled={busy || blocked || !input.trim()} className="grid place-items-center rounded-xl bg-sky-600 px-4 text-white hover:bg-sky-700 disabled:opacity-40"><Send className="h-4 w-4" /></button>
         </div>
+        {micErr && <p className="mt-1.5 text-center text-[11px] font-medium text-rose-600 dark:text-rose-400">🎤 {micErr}</p>}
         <p className="mt-1.5 text-center text-[10px] text-slate-400">{t("Οδηγός + δεδομένα + ενέργειες. Οι ενέργειες εκτελούνται μόνο μετά από επιβεβαίωσή σου.", "Guide + data + actions. Actions run only after your confirmation.")}</p>
       </div>
     </div>

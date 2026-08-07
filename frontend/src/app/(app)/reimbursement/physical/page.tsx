@@ -185,6 +185,11 @@ export default function PhysicalCheckPage() {
       api(`/reimbursement/physical/visual?period=${period}${undo ? "&undo=true" : ""}`, { method: "POST", body: JSON.stringify({ barcode: external_id }) }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["reimb-physical", period] }),
   });
+  const removeExtra = useMutation({
+    mutationFn: (barcode: string) =>
+      api(`/reimbursement/physical/extra/remove?period=${period}`, { method: "POST", body: JSON.stringify({ barcode }) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["reimb-physical", period] }),
+  });
 
   const cur = byDay[dayIdx];
   const _dayRaw = (data?.items ?? []).filter((i) => i.day === cur?.date);
@@ -770,7 +775,17 @@ export default function PhysicalCheckPage() {
       {!!data?.extra.length && (
         <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 dark:border-rose-900/50 dark:bg-rose-950/40">
           <div className="mb-1 text-sm font-semibold text-rose-700 dark:text-rose-300">{t("Σκαναρίστηκαν αλλά ΔΕΝ υπάρχουν στα δεδομένα μας:", "Scanned but NOT in our data:")}</div>
-          <div className="flex flex-wrap gap-1.5">{data.extra.map((b) => <span key={b} className="rounded bg-white px-2 py-0.5 font-mono text-xs text-rose-700 dark:bg-slate-900">{b}</span>)}</div>
+          <div className="flex flex-wrap gap-1.5">{data.extra.map((b) => (
+            <span key={b} className="inline-flex items-center gap-1 rounded bg-white px-2 py-0.5 font-mono text-xs text-rose-700 dark:bg-slate-900">
+              {b}
+              <button
+                onClick={async () => { if (await appConfirm(t(`Διαγραφή του σκαναρισμένου barcode ${b} από τη λίστα;`, `Remove scanned barcode ${b} from the list?`))) removeExtra.mutate(b); }}
+                title={t("Διαγραφή", "Remove")}
+                aria-label={t("Διαγραφή", "Remove")}
+                className="ml-0.5 grid h-4 w-4 place-items-center rounded-full text-rose-400 hover:bg-rose-100 hover:text-rose-700 dark:hover:bg-rose-900/40"
+              ><X className="h-3 w-3" /></button>
+            </span>
+          ))}</div>
         </div>
       )}
 

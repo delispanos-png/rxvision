@@ -1982,6 +1982,17 @@ def _invoice_public(inv: dict, tenant_name: str | None = None) -> dict:
         "vat_amount": inv.get("vat_amount", 0), "total": inv.get("total", 0),
         "aade_status": inv.get("aade_status", "not_transmitted"),
         "aade_mark": inv.get("aade_mark"), "aade_transmitted_at": inv.get("aade_transmitted_at"),
+        # myDATA/e-invoicing απόδειξη μετά τον μετασχηματισμό (s1ecos): υπογραφή, QR URL, τελικός αριθμός.
+        "aade_sign": inv.get("aade_sign"), "aade_qr": inv.get("aade_qr"),
+        "mydata_uid": inv.get("mydata_uid"), "transformed": bool(inv.get("transformed")),
+        "transformed_number": inv.get("transformed_number"), "transformed_findoc": inv.get("transformed_findoc"),
+        # Κατάσταση πληρωμής: paid = υπάρχει επιτυχής χρέωση (transaction)· settled = χειροκίνητος
+        # χαρακτηρισμός «εξοφλημένο»· αλλιώς unpaid.
+        "payment_status": ("paid" if (inv.get("payment") or {}).get("transaction_id")
+                           else ("settled" if inv.get("settled") else "unpaid")),
+        "payment_method": (inv.get("payment") or {}).get("method"),
+        "payment_provider": (inv.get("payment") or {}).get("provider"),
+        "settled_at": inv.get("settled_at"),
         "created_at": inv.get("created_at"),
         # Φάση 3 — αυτόματο κύκλωμα
         "auto": bool(inv.get("auto")), "kind": inv.get("kind"),
@@ -1996,7 +2007,10 @@ def _invoice_public(inv: dict, tenant_name: str | None = None) -> dict:
 
 
 def _aade_locked(inv: dict) -> bool:
-    return inv.get("aade_status") == "transmitted"
+    # Κλείδωμα ΜΟΝΟ όταν υπάρχει πραγματικό ΑΑΔΕ MARK (οριστικό στο myDATA). Όσο το MARK είναι κενό —
+    # ακόμη κι αν έχει περάσει προσωρινό doc στο SoftOne (findoc χωρίς MARK)— επιτρέπονται
+    # διόρθωση / διαγραφή / επαναποστολή.
+    return bool(inv.get("aade_mark"))
 
 
 @router.get("/invoices")
@@ -2101,7 +2115,15 @@ async def edit_invoice(invoice_id: str, body: InvoiceEditIn,
         rate = patch.get("vat_rate", inv.get("vat_rate", 0))
         patch["vat_amount"], patch["total"] = _invoice_totals(net, rate)
     if patch:
-        patch["updated_at"] = datetime.now(tz=timezone.utc)
+        now = datetime.now(tz=timezone.utc)
+        # Η διόρθωση ακυρώνει την προηγούμενη (προσωρινή, ΧΩΡΙΣ MARK) διαβίβαση SoftOne → το παραστατικό
+        # ξαναγίνεται «εκκρεμές» ώστε να επανεκδοθεί καθαρά (νέο SoftOne doc) στην επόμενη αποστολή.
+        if inv.get("softone_findoc") or inv.get("aade_status") == "transmitted":
+            patch.update({"softone_findoc": None, "aade_status": "not_transmitted",
+                          "aade_transmitted_at": None, "mydata_uid": None, "mydata_aa": None,
+                          "status": "blocked" if inv.get("status") == "blocked" else "pending",
+                          "attempts": 0, "last_error": None, "next_attempt_at": now})
+        patch["updated_at"] = now
         await db["invoices"].update_one({"_id": inv["_id"]}, {"$set": patch})
     return {"id": invoice_id, "updated": bool(patch)}
 
@@ -2135,6 +2157,25 @@ async def transmit_invoice(invoice_id: str, _: PlatformContext = Depends(get_pla
                             {"error": r.get("error") or "softone_failed"})
     return {"id": invoice_id, "aade_status": "transmitted", "aade_mark": r.get("aade_mark"),
             "softone_findoc": r.get("softone_findoc")}
+
+
+class SettleIn(BaseModel):
+    settled: bool = True
+
+
+@router.post("/invoices/{invoice_id}/settle")
+async def settle_invoice(invoice_id: str, body: SettleIn,
+                         _: PlatformContext = Depends(get_platform_admin)):
+    """Χειροκίνητος χαρακτηρισμός παραστατικού ως «εξοφλημένο» (ή αναίρεση). Για παραστατικά χωρίς
+    αυτόματη πληρωμή (π.χ. τραπεζική κατάθεση). Τα auto (με transaction) είναι ήδη «Πληρωμένα»."""
+    db = shared_db()
+    inv = await db["invoices"].find_one({"_id": _oid(invoice_id)})
+    if not inv:
+        raise HTTPException(http_status.HTTP_404_NOT_FOUND, "not_found")
+    now = datetime.now(tz=timezone.utc)
+    await db["invoices"].update_one({"_id": inv["_id"]}, {"$set": {
+        "settled": bool(body.settled), "settled_at": now if body.settled else None, "updated_at": now}})
+    return {"id": invoice_id, "settled": bool(body.settled)}
 
 
 # ── εκκρεμείς εγγραφές (πλήρωσαν αλλά δεν ολοκλήρωσαν) ──────────

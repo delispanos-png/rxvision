@@ -13,7 +13,7 @@ celery_app = Celery(
     backend=settings.CELERY_RESULT_BACKEND,
     include=["app.workers.ingestion", "app.workers.snapshots",
              "app.workers.billing", "app.workers.optical", "app.workers.reminders",
-             "app.workers.ops_health"],
+             "app.workers.ops_health", "app.workers.copilot_routines"],
 )
 
 celery_app.conf.update(
@@ -180,6 +180,11 @@ celery_app.conf.beat_schedule = {
     "auto-cancel-stale-requests": {
         "task": "app.workers.reminders.auto_cancel_stale_requests",
         "schedule": crontab(minute="*"),
+    },
+    # Copilot Routines — προγραμματισμένες αναφορές (Φάση 1)· due-check κάθε 10′ (ώρα Αθήνας ανά ρουτίνα)
+    "copilot-routines": {
+        "task": "app.workers.copilot_routines.run_due_routines",
+        "schedule": crontab(minute="*/10"),
     },
     # Ops watchdog — email admins on backup-fail / stale-backup / node-down (launch safety net)
     "ops-health-check": {

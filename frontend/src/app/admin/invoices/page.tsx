@@ -15,7 +15,9 @@ type Invoice = {
   id: string; tenant_id: string; tenant_name: string | null; doc_type: string; series: string;
   number: number; full_number: string; issue_date: string; description: string; comments?: string;
   net_amount: number; vat_rate: number; vat_amount: number; total: number;
-  aade_status: "transmitted" | "not_transmitted"; aade_mark: string | null; aade_transmitted_at: string | null;
+  aade_status: "transmitted" | "not_transmitted" | "transformed"; aade_mark: string | null; aade_transmitted_at: string | null;
+  aade_sign?: string | null; aade_qr?: string | null; mydata_uid?: string | null; transformed?: boolean; transformed_number?: string | null;
+  payment_status?: "paid" | "settled" | "unpaid"; payment_method?: string | null; payment_provider?: string | null; settled_at?: string | null;
   // Φάση 3 — αυτόματο κύκλωμα SoftOne → myDATA
   status?: "pending" | "blocked" | "issued" | "failed"; blocked_reason?: string | null;
   softone_findoc?: string | null; mydata_aa?: string | null;
@@ -106,27 +108,59 @@ export default function InvoicesPage() {
     try { await act(() => adminApi(`/admin/invoices/${i.id}/transmit`, { method: "POST" }), "Ενημερώθηκε το SoftOne ✓"); }
     finally { setBusyId(null); }
   };
-  const del = async (i: Invoice) => { if (await appConfirm(`Διαγραφή του παραστατικού ${i.full_number};`, { title: "Διαγραφή παραστατικού", danger: true, confirmText: "Διαγραφή" })) act(() => adminApi(`/admin/invoices/${i.id}`, { method: "DELETE" }), "Διαγράφηκε."); };
+  const del = async (i: Invoice) => {
+    const inSoftone = !!i.softone_findoc;
+    const msg = `Διαγραφή του παραστατικού ${i.full_number || `${i.series}-${i.number}`};`
+      + (inSoftone ? `\n\n⚠ Έχει ήδη περάσει προσωρινό doc στο SoftOne (findoc ${i.softone_findoc}) χωρίς ΑΑΔΕ MARK. Η διαγραφή εδώ ΔΕΝ το αφαιρεί από το SoftOne — αν χρειάζεται, ακύρωσέ το κι εκεί.` : "");
+    if (await appConfirm(msg, { title: "Διαγραφή παραστατικού", danger: true, confirmText: "Διαγραφή" }))
+      act(() => adminApi(`/admin/invoices/${i.id}`, { method: "DELETE" }), "Διαγράφηκε.");
+  };
+  const settle = (i: Invoice) => {
+    const on = i.payment_status !== "settled";
+    act(() => adminApi(`/admin/invoices/${i.id}/settle`, { method: "POST", body: JSON.stringify({ settled: on }) }),
+      on ? "Χαρακτηρίστηκε εξοφλημένο." : "Αναιρέθηκε ο χαρακτηρισμός.");
+  };
 
   const columns: Column<Invoice>[] = [
     { key: "full_number", header: "Αρ.", render: (r) => <span className="font-medium">{r.doc_type} {r.full_number}</span> },
     { key: "tenant_name", header: "Πελάτης", render: (r) => r.tenant_name ?? r.tenant_id },
     { key: "issue_date", header: "Ημ/νία", render: (r) => fmtDate(r.issue_date) },
     { key: "total", header: "Σύνολο", align: "right", render: (r) => fmtEur(r.total) },
+    { key: "payment", header: "Πληρωμή", render: (r) => {
+      const st = r.payment_status ?? "unpaid";
+      if (st === "paid") return <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700" title={[r.payment_method, r.payment_provider].filter(Boolean).join(" · ")}>✓ Πληρωμένο</span>;
+      if (st === "settled") return <span className="inline-flex items-center gap-1 rounded-full bg-sky-100 px-2 py-0.5 text-xs font-medium text-sky-700">Εξοφλημένο</span>;
+      return <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">Όχι</span>;
+    } },
     { key: "softone", header: "SoftOne", render: (r) => <SoftoneBadge inv={r} /> },
-    { key: "aade_mark", header: "ΑΑΔΕ MARK", render: (r) => r.aade_mark ? <code className="text-xs text-slate-600">{r.aade_mark}</code> : <span className="text-slate-300">—</span> },
+    { key: "aade_mark", header: "ΑΑΔΕ MARK", render: (r) => r.aade_mark ? (
+      <div className="flex flex-col gap-0.5">
+        <Tooltip label={r.aade_sign ? `Υπογραφή: ${r.aade_sign}` : ""}><code className="max-w-[160px] truncate text-xs text-slate-600" title={r.aade_mark}>{r.aade_mark}</code></Tooltip>
+        <span className="flex items-center gap-1.5 text-[11px] text-slate-400">
+          {r.transformed_number && <span>→ {r.transformed_number}</span>}
+          {r.aade_qr && <a href={r.aade_qr} target="_blank" rel="noopener noreferrer" className="text-brand-600 hover:underline">QR/παραστατικό ↗</a>}
+        </span>
+      </div>
+    ) : <span className="text-slate-300">—</span> },
     {
       key: "actions", header: "", align: "right",
       render: (r) => {
-        const locked = isSynced(r);
+        // Κλείδωμα ΜΟΝΟ με πραγματικό ΑΑΔΕ MARK. Όσο το MARK είναι κενό → διόρθωση/διαγραφή/επαναποστολή.
+        const locked = !!r.aade_mark;
         const busy = busyId === r.id;
         return (
           <div className="flex justify-end gap-1.5">
             <button onClick={() => setModal({ mode: "view", inv: r })} className="rounded-md border border-slate-300 px-2 py-1 text-xs hover:bg-slate-50">Προβολή</button>
-            <Tooltip label={locked ? "Ενημερωμένο SoftOne — κλειδωμένο" : ""}><button onClick={() => setModal({ mode: "edit", inv: r })} disabled={locked}
+            <Tooltip label={locked ? "Διαβιβασμένο στην ΑΑΔΕ (MARK) — κλειδωμένο" : ""}><button onClick={() => setModal({ mode: "edit", inv: r })} disabled={locked}
               className="rounded-md border border-slate-300 px-2 py-1 text-xs hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40">Edit</button></Tooltip>
             <button onClick={() => del(r)} disabled={locked}
               className="rounded-md border border-red-200 px-2 py-1 text-xs text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-40">Διαγραφή</button>
+            {r.payment_status !== "paid" && (
+              <button onClick={() => settle(r)} title="Χειροκίνητος χαρακτηρισμός εξόφλησης"
+                className="rounded-md border border-sky-200 px-2 py-1 text-xs text-sky-700 hover:bg-sky-50">
+                {r.payment_status === "settled" ? "Αναίρεση εξόφλησης" : "Εξοφλημένο"}
+              </button>
+            )}
             {!locked && (
               <button onClick={() => send(r)} disabled={busy}
                 className="inline-flex items-center gap-1 rounded-md border border-emerald-300 px-2 py-1 text-xs font-medium text-emerald-700 hover:bg-emerald-50 disabled:opacity-50">

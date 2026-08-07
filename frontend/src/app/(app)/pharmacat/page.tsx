@@ -86,26 +86,35 @@ function PharmaCatInner() {
   const recogRef = useRef<any>(null);
   const [listening, setListening] = useState(false);
   const [micOk, setMicOk] = useState(false);
+  const [micErr, setMicErr] = useState("");
   useEffect(() => {
     const w = window as any;
-    const SR = w.SpeechRecognition || w.webkitSpeechRecognition;
-    if (!SR) return;
-    setMicOk(true);
-    const r = new SR();
-    r.lang = "el-GR";
-    r.interimResults = true;
-    r.continuous = false;
-    r.onresult = (e: any) => setInput(Array.from(e.results).map((res: any) => res[0].transcript).join(""));
-    r.onend = () => setListening(false);
-    r.onerror = () => setListening(false);
-    recogRef.current = r;
+    setMicOk(!!(w.SpeechRecognition || w.webkitSpeechRecognition));
   }, []);
   /* eslint-enable */
+  function micErrText(code: string): string {
+    switch (code) {
+      case "not-allowed": return t("Δώσε άδεια μικροφώνου στον browser (εικονίδιο 🔒 στη μπάρα διεύθυνσης).", "Allow microphone access in your browser (lock icon in the address bar).");
+      case "service-not-allowed": return t("Ο browser μπλοκάρει τη ΦΩΝΗΤΙΚΗ ΥΠΗΡΕΣΙΑ (ξεχωριστή από την άδεια μικροφώνου). Στο Safari: Ρυθμίσεις → Πληκτρολόγιο → «Υπαγόρευση» ΟΝ. Ή δοκίμασε Chrome.", "The browser blocks the SPEECH SERVICE (separate from mic permission). On Safari: Settings → Keyboard → Dictation ON. Or try Chrome.");
+      case "no-speech": return t("Δεν άκουσα κάτι — δοκίμασε ξανά.", "Didn't catch that — try again.");
+      case "audio-capture": return t("Δεν βρέθηκε μικρόφωνο.", "No microphone found.");
+      case "no-support": return t("Ο browser σου δεν υποστηρίζει φωνητική εισαγωγή (δοκίμασε Chrome).", "Your browser doesn't support voice input (try Chrome).");
+      default: return t("Η φωνητική εισαγωγή δεν λειτούργησε — δοκίμασε ξανά ή γράψε.", "Voice input failed — try again or type.");
+    }
+  }
   function toggleMic() {
-    const r = recogRef.current;
-    if (!r) return;
-    if (listening) { r.stop(); setListening(false); }
-    else { setInput(""); try { r.start(); setListening(true); } catch { /* already started */ } }
+    if (listening) { try { recogRef.current?.stop(); } catch { /* ignore */ } setListening(false); return; }
+    const w = window as any;
+    const SR = w.SpeechRecognition || w.webkitSpeechRecognition;
+    if (!SR) { setMicErr(micErrText("no-support")); return; }
+    const r = new SR();   // ΦΡΕΣΚΟ instance ανά χρήση (η επαναχρησιμοποίηση κολλάει σε Safari/Chrome)
+    r.lang = "el-GR"; r.interimResults = true; r.continuous = false;
+    r.onresult = (e: any) => setInput(Array.from(e.results).map((res: any) => res[0].transcript).join(""));
+    r.onend = () => setListening(false);
+    r.onerror = (e: any) => { setListening(false); setMicErr(micErrText(e?.error || "")); };
+    recogRef.current = r;
+    setMicErr(""); setInput("");
+    try { r.start(); setListening(true); } catch { setMicErr(micErrText("")); setListening(false); }
   }
 
   // Medicine info popup (ΗΔΥΚΑ catalogue) — click a product
@@ -236,6 +245,7 @@ function PharmaCatInner() {
           <Tooltip label={t("Έλεγχος αλληλεπιδράσεων (φάρμακα χωρισμένα με κόμμα)", "Interaction check (comma-separated drugs)")}><button onClick={() => send(input, "interactions")} disabled={busy || blocked || !input.trim()} className="grid place-items-center rounded-xl border border-slate-300 px-3 text-slate-500 hover:bg-slate-50 disabled:opacity-40 dark:border-slate-600"><FlaskConical className="h-4 w-4" /></button></Tooltip>
           <button onClick={() => send(input)} disabled={busy || blocked || !input.trim()} className="grid place-items-center rounded-xl bg-violet-600 px-4 text-white hover:bg-violet-700 disabled:opacity-40"><Send className="h-4 w-4" /></button>
         </div>
+        {micErr && <p className="mt-1.5 text-center text-[11px] font-medium text-rose-600 dark:text-rose-400">🎤 {micErr}</p>}
         <p className="mt-1.5 text-center text-[10px] text-slate-400">{t("Υποστήριξη απόφασης για επαγγελματία υγείας. Δεν υποκαθιστά την κλινική κρίση ή τον ιατρό.", "Decision support for a health professional. Does not replace clinical judgment or a physician.")}</p>
       </div>
 

@@ -177,3 +177,37 @@ async def call_js(payload: dict) -> dict:
         return await _post(url, body)
     except Exception as e:  # noqa: BLE001
         return {"success": False, "error": f"connect_error:{type(e).__name__}"}
+
+
+async def get_einvoice(findoc) -> dict:
+    """Απόδειξη διαβίβασης myDATA/e-invoicing ενός SoftOne doc μέσω STANDARD getData (ΧΩΡΙΣ τη γέφυρα JS).
+    Ο πάροχος s1ecos ΔΕΝ γράφει αριθμητικό MARK στο `FINDOC.MARK`· η νόμιμη απόδειξη είναι:
+    `FINDOC.EINVOICESIGN` (υπογραφή), `MTRDOC.SOSIGNE` (UID), `MTRDOC.SOSIGNQR` (QR URL).
+    Επιστρέφει αυτά + τον τελικό αριθμό (CMPFINCODE) & τύπο myDATA (INVOICETYPE)."""
+    cfg = await platform_config()
+    if not is_configured(cfg):
+        return {"ok": False, "error": "not_configured"}
+    cid = await get_client_id(cfg)
+    if not cid:
+        return {"ok": False, "error": "auth_failed"}
+    try:
+        r = await _post(_gateway(cfg["base_url"]),
+                        {"service": "getData", "clientID": cid, "appId": cfg.get("app_id"),
+                         "OBJECT": "SALDOC", "KEY": str(findoc)}, timeout=45)
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "error": f"connect_error:{type(e).__name__}"}
+    if not r.get("success"):
+        return {"ok": False, "error": r.get("error") or "getdata_failed"}
+    data = r.get("data") or {}
+
+    def _first(key):
+        v = data.get(key)
+        return v[0] if isinstance(v, list) and v else (v if isinstance(v, dict) else {})
+    hdr, mtr = _first("SALDOC"), _first("MTRDOC")
+    sign = (str(hdr.get("EINVOICESIGN") or "")).strip()
+    uid = (str(mtr.get("SOSIGNE") or "")).strip()
+    qr = (str(mtr.get("SOSIGNQR") or "")).strip()
+    return {"ok": True, "sign": sign or None, "uid": uid or None, "qr": qr or None,
+            "final_number": (str(hdr.get("CMPFINCODE") or "")).strip() or None,
+            "invoice_type": (str(hdr.get("INVOICETYPE") or "")).strip() or None,
+            "transmitted": bool(sign or uid or qr)}

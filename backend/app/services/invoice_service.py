@@ -308,7 +308,7 @@ async def issue_invoice_by_id(invoice_id) -> dict:
     inv = await db["invoices"].find_one({"_id": oid})
     if not inv:
         return {"ok": False, "error": "not_found"}
-    if inv.get("aade_status") == "transmitted":
+    if inv.get("aade_mark"):   # πραγματικό ΑΑΔΕ MARK = οριστικό στο myDATA· χωρίς MARK επιτρέπεται επανέκδοση
         return {"ok": True, "already": True, "aade_mark": inv.get("aade_mark"),
                 "softone_findoc": inv.get("softone_findoc")}
     if not (inv.get("customer") or {}).get("afm"):
@@ -330,8 +330,11 @@ async def check_transformations() -> dict:
     if not softone_service.is_configured(cfg) or not (cfg.get("js_endpoint") or "").strip():
         return {"skipped": "softone_not_configured"}
     now = _now()
+    # ΠΡΟΣΟΧΗ: ΔΕΝ εξαιρούμε τα ήδη transformed — το προτιμολόγιο μπορεί να μετασχηματίστηκε σε τελικό
+    # Τ.Π.Υ. που ΑΚΟΜΗ δεν έχει διαβιβαστεί στο myDATA (MARK κενό). Πρέπει να συνεχίσουμε να ρωτάμε
+    # μέχρι να εμφανιστεί το MARK. Έξοδος ΜΟΝΟ όταν υπάρχει aade_mark.
     q = {"status": "issued", "softone_findoc": {"$ne": None},
-         "aade_mark": {"$in": [None, ""]}, "transformed": {"$ne": True}}
+         "aade_mark": {"$in": [None, ""]}}
     updated = 0
     async for inv in db["invoices"].find(q).sort("issued_at", 1).limit(BATCH):
         res = await softone_service.call_js({"mode": "status", "ref": str(inv["_id"])})
@@ -344,12 +347,22 @@ async def check_transformations() -> dict:
             tgt_i = 0
         set_doc: dict = {"fullytransf": res.get("fullytransf"), "updated_at": now}
         if tgt_i > 0:   # μετασχηματίστηκε σε τελικό παραστατικό
-            mark = res.get("mark") or None
+            # Ο πάροχος s1ecos ΔΕΝ γράφει αριθμητικό MARK στη γέφυρα (FINDOC.MARK κενό). Διαβάζουμε την
+            # πραγματική απόδειξη e-invoicing (υπογραφή/UID/QR/τελικό αριθμό) απευθείας από το SoftOne (getData).
+            einv = await softone_service.get_einvoice(tgt_i)
+            eok = einv.get("ok")
+            mark = res.get("mark") or (einv.get("uid") if eok else None) or None
+            transmitted = bool(mark or (eok and einv.get("transmitted")))
             set_doc.update({"transformed": True, "transformed_findoc": tgt_i,
                             "transformed_series": res.get("target_series") or None,
-                            "aade_mark": mark, "mydata_uid": res.get("uid") or None,
+                            "transformed_number": einv.get("final_number") if eok else None,
+                            "aade_mark": mark,
+                            "aade_sign": einv.get("sign") if eok else None,
+                            "aade_qr": einv.get("qr") if eok else None,
+                            "mydata_uid": (einv.get("uid") if eok else None) or res.get("uid") or None,
                             "mydata_aa": res.get("aa") or None,
-                            "aade_status": "transmitted" if mark else "transformed",
+                            "aade_status": "transmitted" if transmitted else "transformed",
+                            "aade_transmitted_at": now if transmitted else None,
                             "transformed_at": now})
             updated += 1
             log.info("invoice transformed: %s → target=%s mark=%s", inv["_id"], tgt_i, mark)

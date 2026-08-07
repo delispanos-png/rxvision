@@ -377,3 +377,118 @@ def _normalize(num: str) -> str:
     if not n.startswith("+") and n.startswith("69"):
         n = "+30" + n  # Greek mobile
     return n.lstrip("+")
+
+
+# ── reusable campaign engine (shared by the /communications router AND Copilot routines) ──────────
+def _campaign_email_html(message: str, from_name: str | None) -> str:
+    body = message.replace("\n", "<br/>")
+    return (f'<div style="background:#f1f5f9;padding:24px;font-family:Arial,Helvetica,sans-serif;">'
+            f'<div style="max-width:560px;margin:0 auto;background:#fff;border-radius:14px;overflow:hidden;'
+            f'box-shadow:0 1px 4px rgba(0,0,0,.08);">'
+            f'<div style="background:#4f46e5;padding:18px 24px;color:#fff;font-size:18px;font-weight:700;">'
+            f'{from_name or "Το φαρμακείο σας"}</div>'
+            f'<div style="padding:24px;color:#0f172a;font-size:15px;line-height:1.6;">{body}</div>'
+            f'<div style="padding:16px 24px;border-top:1px solid #e2e8f0;color:#94a3b8;font-size:12px;">'
+            f'Λάβατε αυτό το μήνυμα επειδή είστε πελάτης του φαρμακείου μας. Για διαγραφή, απαντήστε «ΔΙΑΓΡΑΦΗ».'
+            f'</div></div></div>')
+
+
+async def segment_patient_ids(tenant_id: str, segment: str, value: str | None):
+    """Set of patient _ids matching a smart segment, or None = no restriction (all)."""
+    import re
+    from datetime import timedelta
+    db = shared_db()
+    now = _now()
+    if not segment or segment == "all":
+        return None
+    if segment == "upcoming":
+        days = int(value or 30)
+        ids = await db["future_prescriptions"].distinct("patient_ref", {
+            "tenant_id": tenant_id, "status": "pending",
+            "expected_open_date": {"$gte": now, "$lt": now + timedelta(days=days)}})
+        return set(ids)
+    if segment == "icd":
+        ids = await db["prescription_executions"].distinct("patient_ref", {"tenant_id": tenant_id, "icd10": value})
+        return set(ids)
+    if segment == "inactive":
+        cutoff = now - timedelta(days=int(value or 180))
+        recent = set(await db["prescription_executions"].distinct("patient_ref", {"tenant_id": tenant_id, "executed_at": {"$gte": cutoff}}))
+        allp = set(await db["prescription_executions"].distinct("patient_ref", {"tenant_id": tenant_id}))
+        return allp - recent
+    if segment == "substance":
+        val = re.escape((value or "").upper())
+        rows = await db["prescription_executions"].aggregate([
+            {"$match": {"tenant_id": tenant_id}},
+            {"$lookup": {"from": "prescription_items", "localField": "_id", "foreignField": "execution_id", "as": "it"}},
+            {"$unwind": "$it"},
+            {"$lookup": {"from": "products", "localField": "it.product_id", "foreignField": "_id", "as": "p"}},
+            {"$set": {"atc": {"$toUpper": {"$ifNull": [{"$first": "$p.atc"}, ""]}},
+                      "sub": {"$toUpper": {"$ifNull": [{"$first": "$p.substance"}, ""]}}}},
+            {"$match": {"$or": [{"atc": {"$regex": "^" + val}}, {"sub": {"$regex": val}}]}},
+            {"$group": {"_id": "$patient_ref"}},
+        ]).to_list(length=None)
+        return {r["_id"] for r in rows}
+    return None
+
+
+async def campaign_audience(tenant_id: str, channel: str, segment: str = "all", value: str | None = None) -> list[dict]:
+    """Consented recipients (marketing_consent + NOT in the withdrawal ledger for this channel) with a
+    contact for `channel`, restricted to a smart segment. GDPR: the consent ledger is authoritative."""
+    from app.services import consent
+    field = "email" if channel == "email" else "mobile"
+    q: dict = {"tenant_id": tenant_id, "marketing_consent": True, field: {"$nin": [None, ""]}}
+    seg = await segment_patient_ids(tenant_id, segment, value)
+    withdrawn = await consent.withdrawn_patient_ids(tenant_id, channel)
+    id_filter: dict = {}
+    if seg is not None:
+        id_filter["$in"] = list(seg)
+    if withdrawn:
+        id_filter["$nin"] = list(withdrawn)
+    if id_filter:
+        q["_id"] = id_filter
+    return await shared_db()["patient_contacts"].aggregate([
+        {"$match": q},
+        {"$lookup": {"from": "patients_anonymized", "localField": "_id", "foreignField": "_id", "as": "pp"}},
+        {"$set": {"name": {"$first": "$pp.full_name"}, "patient_id": "$_id"}},
+        {"$project": {"_id": 0, field: 1, "name": 1, "patient_id": 1}},
+    ]).to_list(length=None)
+
+
+async def run_campaign(tenant_id: str, *, channel: str, message: str, subject: str | None = None,
+                       segment: str = "all", value: str | None = None, by: str | None = None,
+                       source: str = "campaign", limit: int = 2000) -> dict:
+    """Resolve the consented audience and send `message` to each via `channel`. Charges the wallet per
+    message and stops cleanly if credits run out. Logs a comms_campaigns row. Returns a send summary."""
+    from bson import ObjectId
+    ph = await _pharmacy(tenant_id)
+    rows = await campaign_audience(tenant_id, channel, segment, value)
+    cid = ObjectId()
+    field = "email" if channel == "email" else "mobile"
+    sent = failed = 0
+    stopped = False
+    for r in rows[:limit]:
+        to = r.get(field)
+        pref = str(r.get("patient_id") or "") or None
+        first = (r.get("name") or "").split(" ")[-1] if r.get("name") else ""
+        text = (message or "").replace("{name}", r.get("name") or "").replace("{first}", first)
+        try:
+            if channel == "email":
+                await send_email(tenant_id, to, subject or "Ενημέρωση φαρμακείου",
+                                 _campaign_email_html(text, ph.get("name")),
+                                 patient_ref=pref, campaign_id=str(cid), kind=source)
+            elif channel == "viber":
+                await send_viber(tenant_id, to, text, patient_ref=pref, campaign_id=str(cid), kind=source)
+            else:
+                await send_sms(tenant_id, to, text, patient_ref=pref, campaign_id=str(cid), kind=source)
+            sent += 1
+        except message_wallet.InsufficientCredits:
+            stopped = True
+            break
+        except Exception:  # noqa: BLE001
+            failed += 1
+    await shared_db()["comms_campaigns"].insert_one({
+        "_id": cid, "tenant_id": tenant_id, "channel": channel, "subject": subject,
+        "recipients": len(rows), "sent": sent, "failed": failed, "source": source,
+        "by": by, "created_at": _now()})
+    return {"campaign_id": str(cid), "recipients": len(rows), "sent": sent, "failed": failed,
+            "stopped_no_credits": stopped, "balance_cents": await message_wallet.balance(tenant_id)}

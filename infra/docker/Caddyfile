@@ -42,8 +42,9 @@
 		X-Frame-Options "DENY"
 		Referrer-Policy "strict-origin-when-cross-origin"
 		# Lock down powerful browser features to only what the app uses (camera = barcode scanner,
-		# geolocation = nearby-pharmacy). CSP itself is set per-request (with a nonce) by Next middleware.
-		Permissions-Policy "camera=(self), geolocation=(self), microphone=(), payment=(), usb=(), interest-cohort=()"
+		# geolocation = nearby-pharmacy, microphone = φωνητική εντολή σε Copilot/PharmaCat). CSP itself
+		# is set per-request (with a nonce) by Next middleware.
+		Permissions-Policy "camera=(self), geolocation=(self), microphone=(self), payment=(), usb=(), interest-cohort=()"
 		-Server
 	}
 }

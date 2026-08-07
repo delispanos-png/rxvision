@@ -1099,6 +1099,17 @@ class ReimbursementRepository(BaseRepository):
                  "$set": {"updated_at": _now()}})
         return {"ok": True, "day": day, "cleared": len(ids)}
 
+    async def physical_extra_remove(self, period: str, barcode: str) -> dict:
+        """Ο φαρμακοποιός απορρίπτει ένα «σκαναρίστηκε αλλά ΔΕΝ υπάρχει» barcode (π.χ. λάθος σκανάρισμα ή
+        συνταγή άλλου φαρμακείου) ώστε να μη μένει στη λίστα ελέγχου. Αφαιρεί ΜΟΝΟ το συγκεκριμένο."""
+        bc = re.sub(r"\D", "", str(barcode or ""))[:13]
+        if not bc:
+            return {"ok": False, "error": "empty"}
+        r = await self._db["barcode_check"].update_one(
+            {"tenant_id": self.tenant_id, "period": period},
+            {"$pull": {"extra": bc}, "$set": {"updated_at": _now()}})
+        return {"ok": True, "barcode": bc, "removed": r.modified_count}
+
     async def physical_visual(self, period: str, external_id: str, undo: bool = False) -> dict:
         """Ποιοτικό στάδιο: σημείωση μιας εκτέλεσης ως οπτικά ελεγμένης (ή αναίρεση)."""
         op = "$pull" if undo else "$addToSet"

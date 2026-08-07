@@ -93,7 +93,7 @@ export default function PatientProfilePage() {
     onSuccess: (d) => { setAdvice(null); setShow(null); setShowExecs(false); setOpen(false); setShowPortal(false); setPortalResult(null); setG6pd(!!(d.found && d.clinical?.g6pd_deficiency)); },
   });
   const ask = useMutation({
-    mutationFn: (v: { a: string; force?: boolean }) => api<Advice>("/patient-intelligence/profile/advice", { method: "POST", body: JSON.stringify({ amka: v.a, date_from: rangeMonths ? monthsAgoISO(rangeMonths) : null, force: v.force }) }),
+    mutationFn: (v: { a: string; force?: boolean }) => api<Advice>("/patient-intelligence/profile/advice", { method: "POST", body: JSON.stringify({ amka: v.a || null, patient_id: search.data?.patient?.id ?? null, date_from: rangeMonths ? monthsAgoISO(rangeMonths) : null, force: v.force }) }),
     onSuccess: (d) => setAdvice(d),
   });
   const g6pdMut = useMutation({

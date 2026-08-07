@@ -216,6 +216,12 @@ async def physical_reset(period: str = Query(None), day: str = Query(None),
     return await _repo(ctx).physical_reset(period or _cur(), day=day)
 
 
+@router.post("/physical/extra/remove")
+async def physical_extra_remove(body: BarcodeIn, period: str = Query(None),
+                                ctx: TenantContext = Depends(require("closing:read", module=_MODULE))):
+    return await _repo(ctx).physical_extra_remove(period or _cur(), body.barcode)
+
+
 @router.post("/physical/visual")
 async def physical_visual(body: BarcodeIn, period: str = Query(None), undo: bool = Query(False),
                           ctx: TenantContext = Depends(require("closing:read", module=_MODULE))):

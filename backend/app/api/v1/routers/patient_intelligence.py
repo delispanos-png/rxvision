@@ -93,7 +93,9 @@ async def profile(amka: str | None = Query(None),
 
 
 class AdviceIn(BaseModel):
-    amka: str
+    amka: str | None = None
+    patient_id: str | None = None   # σταθερό patient_ref — δουλεύει ΚΑΙ όταν το ΑΜΚΑ είναι masked/ανωνυμοποιημένο
+    barcode: str | None = None
     date_from: datetime | None = None
     date_to: datetime | None = None
     force: bool = False     # αναγκαστική αναδημιουργία (αγνοεί την αποθηκευμένη)
@@ -116,7 +118,9 @@ async def profile_advice(body: AdviceIn,
         return d.isoformat() if d else None
 
     # 1) ΦΘΗΝΗ υπογραφή κλινικών συνθηκών (χωρίς το βαρύ προφίλ 360°). Cache-hit → ΑΜΕΣΗ απάντηση.
-    pid, amka, sig_src = await repo.advice_signature(body.amka, date_from=body.date_from, date_to=body.date_to)
+    pid, amka, sig_src = await repo.advice_signature(
+        body.amka, patient_id=body.patient_id, barcode=body.barcode,
+        date_from=body.date_from, date_to=body.date_to)
     if not pid:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "patient_not_found")
     sig = hashlib.sha256(json.dumps(sig_src, ensure_ascii=False, sort_keys=True).encode()).hexdigest()

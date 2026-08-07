@@ -604,6 +604,15 @@ class PrescriptionRepository(BaseRepository):
                                      "foreignField": "_id", "as": "d"}},
                         {"$set": {"name": {"$first": "$d.full_name"}}},
                         {"$project": {"d": 0}}]
+        elif dim in ("patients", "customers"):   # top πελάτες ανά τζίρο (αξία εκτελέσεων)
+            pipeline = [match,
+                        {"$group": {"_id": "$patient_ref", "rx": {"$sum": 1},
+                                    "value": {"$sum": "$amount_total"}}},
+                        {"$sort": {"value": -1}}, {"$limit": limit},
+                        {"$lookup": {"from": "patients_anonymized", "localField": "_id",
+                                     "foreignField": "_id", "as": "p"}},
+                        {"$set": {"name": {"$first": "$p.full_name"}}},
+                        {"$project": {"p": 0}}]
         else:  # products — aggregate from items
             return await self._top_products(limit, date_from, date_to)
         return await self.aggregate(pipeline)

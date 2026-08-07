@@ -12,7 +12,7 @@ from pydantic import BaseModel
 
 from app.core.db import shared_db
 from app.core.deps import TenantContext, require
-from app.services import comms, consent, message_wallet
+from app.services import comms, message_wallet
 
 router = APIRouter()
 _MODULE = "patient_analytics"
@@ -154,64 +154,12 @@ async def test_viber(to: str = Query(...), ctx: TenantContext = Depends(require(
 
 
 async def _segment_patient_ids(tenant_id: str, segment: str, value: str | None):
-    """Set of patient _ids matching a smart segment, or None = no restriction (all)."""
-    db = shared_db()
-    now = datetime.now(tz=timezone.utc)
-    if not segment or segment == "all":
-        return None
-    if segment == "upcoming":
-        from datetime import timedelta
-        days = int(value or 30)
-        ids = await db["future_prescriptions"].distinct("patient_ref", {
-            "tenant_id": tenant_id, "status": "pending",
-            "expected_open_date": {"$gte": now, "$lt": now + timedelta(days=days)}})
-        return set(ids)
-    if segment == "icd":
-        ids = await db["prescription_executions"].distinct("patient_ref", {"tenant_id": tenant_id, "icd10": value})
-        return set(ids)
-    if segment == "inactive":
-        from datetime import timedelta
-        cutoff = now - timedelta(days=int(value or 180))
-        recent = set(await db["prescription_executions"].distinct("patient_ref", {"tenant_id": tenant_id, "executed_at": {"$gte": cutoff}}))
-        allp = set(await db["prescription_executions"].distinct("patient_ref", {"tenant_id": tenant_id}))
-        return allp - recent
-    if segment == "substance":
-        val = re.escape((value or "").upper())  # escape → no ReDoS on shared Mongo
-        rows = await db["prescription_executions"].aggregate([
-            {"$match": {"tenant_id": tenant_id}},
-            {"$lookup": {"from": "prescription_items", "localField": "_id", "foreignField": "execution_id", "as": "it"}},
-            {"$unwind": "$it"},
-            {"$lookup": {"from": "products", "localField": "it.product_id", "foreignField": "_id", "as": "p"}},
-            {"$set": {"atc": {"$toUpper": {"$ifNull": [{"$first": "$p.atc"}, ""]}},
-                      "sub": {"$toUpper": {"$ifNull": [{"$first": "$p.substance"}, ""]}}}},
-            {"$match": {"$or": [{"atc": {"$regex": "^" + val}}, {"sub": {"$regex": val}}]}},
-            {"$group": {"_id": "$patient_ref"}},
-        ]).to_list(length=None)
-        return {r["_id"] for r in rows}
-    return None
+    """Set of patient _ids matching a smart segment, or None = no restriction. See comms service."""
+    return await comms.segment_patient_ids(tenant_id, segment, value)
 
 
 async def _audience(tenant_id: str, channel: str, segment: str = "all", value: str | None = None) -> list[dict]:
-    field = "email" if channel == "email" else "mobile"
-    q: dict = {"tenant_id": tenant_id, "marketing_consent": True, field: {"$nin": [None, ""]}}
-    seg = await _segment_patient_ids(tenant_id, segment, value)
-    # Consent ledger is authoritative: exclude anyone whose latest event for this channel
-    # is a withdrawal/objection, even if a stale contact flag still says consented (GDPR).
-    withdrawn = await consent.withdrawn_patient_ids(tenant_id, channel)
-    id_filter: dict = {}
-    if seg is not None:
-        id_filter["$in"] = list(seg)
-    if withdrawn:
-        id_filter["$nin"] = list(withdrawn)
-    if id_filter:
-        q["_id"] = id_filter
-    rows = await shared_db()["patient_contacts"].aggregate([
-        {"$match": q},
-        {"$lookup": {"from": "patients_anonymized", "localField": "_id", "foreignField": "_id", "as": "pp"}},
-        {"$set": {"name": {"$first": "$pp.full_name"}}},
-        {"$project": {"_id": 0, field: 1, "name": 1}},
-    ]).to_list(length=None)
-    return rows
+    return await comms.campaign_audience(tenant_id, channel, segment, value)
 
 
 @router.get("/audience")
@@ -230,59 +178,12 @@ class CampaignIn(BaseModel):
     value: str | None = None
 
 
-def _email_html(message: str, from_name: str | None) -> str:
-    body = message.replace("\n", "<br/>")
-    return f"""<div style="background:#f1f5f9;padding:24px;font-family:Arial,Helvetica,sans-serif;">
-      <div style="max-width:560px;margin:0 auto;background:#fff;border-radius:14px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.08);">
-        <div style="background:#4f46e5;padding:18px 24px;color:#fff;font-size:18px;font-weight:700;">{from_name or "Το φαρμακείο σας"}</div>
-        <div style="padding:24px;color:#0f172a;font-size:15px;line-height:1.6;">{body}</div>
-        <div style="padding:16px 24px;border-top:1px solid #e2e8f0;color:#94a3b8;font-size:12px;">
-          Λάβατε αυτό το μήνυμα επειδή είστε πελάτης του φαρμακείου μας. Για διαγραφή, απαντήστε «ΔΙΑΓΡΑΦΗ».
-        </div>
-      </div>
-    </div>"""
-
-
 @router.post("/send", status_code=202)
 async def send_campaign(body: CampaignIn, ctx: TenantContext = Depends(require("patients:read", module=_MODULE))):
-    from bson import ObjectId
-    ph = await comms._pharmacy(ctx.tenant_id)
-    rows = await _audience(ctx.tenant_id, body.channel, body.segment, body.value)
-    cid = ObjectId()                       # σταθερό campaign id → κάθε μήνυμα δένεται σε αυτό
-    sent = failed = 0
-    stopped = False
-    field = "email" if body.channel == "email" else "mobile"
-    for r in rows[:2000]:
-        to = r.get(field)
-        pref = str(r.get("patient_id") or r.get("_id") or "") or None
-        first = (r.get("name") or "").split(" ")[-1] if r.get("name") else ""
-        text = body.message.replace("{name}", r.get("name") or "").replace("{first}", first)
-        try:
-            if body.channel == "email":
-                await comms.send_email(ctx.tenant_id, to, body.subject or "Ενημέρωση φαρμακείου",
-                                       _email_html(text, ph["name"]),
-                                       patient_ref=pref, campaign_id=str(cid), kind="campaign")
-            elif body.channel == "viber":
-                await comms.send_viber(ctx.tenant_id, to, text,
-                                       patient_ref=pref, campaign_id=str(cid), kind="campaign")
-            else:
-                await comms.send_sms(ctx.tenant_id, to, text,
-                                     patient_ref=pref, campaign_id=str(cid), kind="campaign")
-            sent += 1
-        except message_wallet.InsufficientCredits:
-            stopped = True   # wallet empty → stop the campaign, report what went out
-            break
-        except Exception:  # noqa: BLE001
-            failed += 1
-    await shared_db()["comms_campaigns"].insert_one({
-        "_id": cid,
-        "tenant_id": ctx.tenant_id, "channel": body.channel, "subject": body.subject,
-        "recipients": len(rows), "sent": sent, "failed": failed,
-        "by": ctx.email if hasattr(ctx, "email") else None,
-        "created_at": datetime.now(tz=timezone.utc),
-    })
-    return {"recipients": len(rows), "sent": sent, "failed": failed,
-            "stopped_no_credits": stopped, "balance_cents": await message_wallet.balance(ctx.tenant_id)}
+    return await comms.run_campaign(
+        ctx.tenant_id, channel=body.channel, message=body.message, subject=body.subject,
+        segment=body.segment, value=body.value,
+        by=ctx.email if hasattr(ctx, "email") else None)
 
 
 @router.get("/history")
