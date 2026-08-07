@@ -68,6 +68,8 @@ async def advise(facts: dict, tenant_id: str | None = None) -> dict:
     except Exception as e:  # noqa: BLE001
         return {"ok": False, "error": f"unavailable:{type(e).__name__}"}
 
+    from app.services import ai_cost
+    await ai_cost.record(tenant_id, c["model"], getattr(resp, "usage", None))
     text = next((b.text for b in resp.content if b.type == "text"), "").strip()
     if text.startswith("```"):  # defensive: strip markdown fences if a model adds them
         text = text.split("```")[1].removeprefix("json").strip() if "```" in text[3:] else text.strip("`")

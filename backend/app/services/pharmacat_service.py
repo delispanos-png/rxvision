@@ -176,6 +176,8 @@ async def ask(messages: list[dict], context: dict | None = None,
     except Exception as e:  # noqa: BLE001
         return {"ok": False, "error": f"unavailable:{type(e).__name__}"}
 
+    from app.services import ai_cost
+    await ai_cost.record(tenant_id, model, getattr(resp, "usage", None))
     text = next((b.text for b in resp.content if b.type == "text"), "")
     try:
         data = json.loads(text)

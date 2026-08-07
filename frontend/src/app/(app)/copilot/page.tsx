@@ -38,7 +38,8 @@ function CopilotInner() {
 
   const status = useQuery({ queryKey: ["copilot-status"], queryFn: () => api<Status>("/copilot/status") });
   const plan = useQuery({ queryKey: ["copilot-plan"], queryFn: () => api<Plan>("/copilot/action-plan"), refetchInterval: 120000 });
-  useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [turns, busy]);
+  // Scroll στο τέλος ΜΟΝΟ όταν υπάρχει συνομιλία — αλλιώς το άδειο Copilot «πηδάει» στο κάτω μέρος στο mount.
+  useEffect(() => { if (turns.length) endRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" }); }, [turns, busy]);
 
   // Voice input — browser-native Greek speech-to-text (no backend, no Anthropic credits)
   /* eslint-disable */
@@ -201,7 +202,7 @@ function CopilotInner() {
               {turn.result && !turn.result.ok ? (
                 <div className={`rounded-xl px-3 py-2 text-sm ${["daily_limit", "quota_exceeded", "card_required"].includes(turn.result.error || "") ? "bg-amber-50 text-amber-800 dark:bg-amber-950/30" : "bg-rose-50 text-rose-700 dark:bg-rose-950/30"}`}>
                   {turn.result.error === "card_required"
-                    ? <>{t("Έφτασες το βασικό όριο", "Base limit reached")} ({turn.result.limit ?? 50}). {t("Πρόσθεσε κάρτα στις", "Add a card in")} <a href="/settings/billing" className="font-semibold underline">{t("Ρυθμίσεις → Χρέωση", "Settings → Billing")}</a> {t("για περισσότερα.", "for more.")}</>
+                    ? <><div className="font-semibold">✋ {t(`Έφτασες το δωρεάν ημερήσιο όριο των ${turn.result.limit ?? 5} ερωτημάτων`, `You've reached today's free limit of ${turn.result.limit ?? 5} questions`)}.</div><div className="mt-0.5">{t("Για να συνεχίσεις, πρόσθεσε κάρτα στις", "To keep going, add a card in")} <a href="/settings/billing" className="font-semibold underline">{t("Ρυθμίσεις → Χρέωση", "Settings → Billing")}</a> {t("και διάλεξε περισσότερες ερωτήσεις ή μεγαλύτερο πακέτο.", "and pick more questions or a bigger package.")}</div></>
                     : turn.result.error === "quota_exceeded" || turn.result.error === "daily_limit"
                     ? <>{t("Εξαντλήθηκε το ημερήσιο όριο", "Daily limit reached")} ({turn.result.limit ?? 50}). {t("Ανέβασέ το στις", "Raise it in")} <a href="/settings/billing" className="font-semibold underline">{t("Ρυθμίσεις → Χρέωση", "Settings → Billing")}</a>.</>
                     : t("Σφάλμα — δοκιμάστε ξανά.", "Error — try again.")}

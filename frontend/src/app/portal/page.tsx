@@ -94,6 +94,10 @@ type Schedule = { therapies: Therapy[]; week: { dow: number; slots: SlotCell[] }
 // τελικές καταστάσεις ραντεβού → «κλειστά» (κοινό σε Αρχική & καρτέλα Ραντεβού)
 const DONE = ["done", "cancelled", "declined", "completed"];
 type Dose = { time: string; med_key: string; name: string; dose: string | null; meal?: string | null };
+// Μια δόση θεωρείται ΛΗΞΙΠΡΟΘΕΣΜΗ μόλις περάσουν 20' από την κανονική ώρα λήψης (grace) & δεν πάρθηκε.
+const OVERDUE_GRACE_MIN = 20;
+const hhmmToMin = (hm: string) => { const [h, m] = (hm || "0:0").split(":").map(Number); return (h || 0) * 60 + (m || 0); };
+const isOverdue = (time: string, nowMin: number) => nowMin >= hhmmToMin(time) + OVERDUE_GRACE_MIN;
 // Γεννήτρια δόσεων ημέρας: 1×/μέρα (ή «συγκεκριμένη ώρα») → μία δόση· >1×/μέρα → «κάθε X ώρες»
 // από την ώρα 1ης λήψης (π.χ. iv=8 → 08:00, 16:00, 00:00). Κοινή για Ημερολόγιο & Αρχική.
 const genDosesFor = (slots: SlotCell[], thMap: Record<string, Therapy>): Dose[] => {
@@ -1055,12 +1059,15 @@ export default function PortalHome() {
           const todaySlots = sched?.week.find((w) => w.dow === todayDow)?.slots ?? [];
           const dosesList = genDosesFor(todaySlots, thMap);
           const dosesToday = dosesList.length;
-          const takenToday = sched?.taken_today?.length ?? 0;
-          // «Έπρεπε να πάρω» = δόσεις που ΠΕΡΑΣΕ η ώρα λήψης τους & δεν πάρθηκαν (overdue)
           const nowD = new Date();
-          const nowHM = `${String(nowD.getHours()).padStart(2, "0")}:${String(nowD.getMinutes()).padStart(2, "0")}`;
-          const duePassed = dosesList.filter((d) => d.time <= nowHM).length;
-          const overdue = Math.max(0, duePassed - takenToday);
+          const nowMin = nowD.getHours() * 60 + nowD.getMinutes();
+          const takenKeys = new Set((sched?.taken_today ?? []).map((tk) => `${tk.med_key}|${tk.slot ?? ""}`));
+          // ΟΛΑ ΑΝΑ ΔΟΣΗ της ΣΗΜΕΡΙΝΗΣ λίστας — ώστε τα 3 νούμερα να είναι πάντα συνεπή (taken+overdue+pending):
+          // «Πήρα» = δόσεις της λίστας που πάρθηκαν (αγνοεί ορφανά taken records που φούσκωναν το νούμερο).
+          const takenToday = dosesList.filter((d) => takenKeys.has(`${d.med_key}|${d.time}`)).length;
+          // «Έπρεπε να πάρω» = πέρασαν 20' από την ώρα & ΑΥΤΗ η δόση δεν πάρθηκε (όχι καθαρή αφαίρεση —
+          // μια νωρίς-ειλημμένη μελλοντική δόση δεν «ακυρώνει» μια εκπρόθεσμη).
+          const overdue = dosesList.filter((d) => isOverdue(d.time, nowMin) && !takenKeys.has(`${d.med_key}|${d.time}`)).length;
           // Παραπομπή: μόνο αν η καρτέλα-στόχος είναι διαθέσιμη → η κάρτα γίνεται clickable
           const go = (k: string) => (visibleTabs.some(([t]) => t === k) ? () => setTab(k) : undefined);
           return (
@@ -1407,7 +1414,7 @@ export default function PortalHome() {
               {sched.week.some((d) => d.slots.length > 0) ? (() => {
                 const todayDow = (new Date().getDay() + 6) % 7;
                 const _n = new Date();
-                const nowHM = `${String(_n.getHours()).padStart(2, "0")}:${String(_n.getMinutes()).padStart(2, "0")}`;
+                const nowMin = _n.getHours() * 60 + _n.getMinutes();
                 const takenSet = new Set((sched.taken_today ?? []).map((t) => `${t.med_key}|${t.slot ?? ""}`));
                 const thMap: Record<string, Therapy> = Object.fromEntries(sched.therapies.map((t) => [t.med_key, t]));
                 const genDoses = (d: { slots: SlotCell[] }) => genDosesFor(d.slots, thMap);   // βλ. genDosesFor
@@ -1422,7 +1429,7 @@ export default function PortalHome() {
                     // δόσεις της μέρας (γεννημένες ανά ώρα)· πλήθος «να πάρω» = μη-ειλημμένες
                     const doses = genDoses(d);
                     const pending = today ? doses.filter((x) => !takenSet.has(`${x.med_key}|${x.time}`)).length : 0;
-                    const overdueCount = today ? doses.filter((x) => !takenSet.has(`${x.med_key}|${x.time}`) && x.time <= nowHM).length : 0;
+                    const overdueCount = today ? doses.filter((x) => !takenSet.has(`${x.med_key}|${x.time}`) && isOverdue(x.time, nowMin)).length : 0;
                     return (
                       <div key={d.dow} className={`overflow-hidden rounded-2xl border ${today ? "border-violet-300 ring-1 ring-violet-200" : "border-slate-200 dark:border-slate-800"}`}>
                         <button onClick={() => setOpenDay(open ? null : d.dow)} className="flex w-full items-center justify-between gap-2 bg-white px-3.5 py-2.5 text-left">
@@ -1439,7 +1446,7 @@ export default function PortalHome() {
                           <div className="space-y-1.5 border-t border-slate-100 dark:border-slate-800 bg-slate-50/40 px-3.5 py-3">
                             {doses.map((x, i) => {
                               const taken = today && takenSet.has(`${x.med_key}|${x.time}`);
-                              const overdue = today && !taken && x.time <= nowHM;   // πέρασε η ώρα & δεν πάρθηκε → ληξιπρόθεσμο
+                              const overdue = today && !taken && isOverdue(x.time, nowMin);   // 20' μετά την ώρα & δεν πάρθηκε → ληξιπρόθεσμο
                               return (
                                 <button key={i} onClick={() => { if (today) toggleIntake(x.med_key, x.time, taken); }} disabled={!today}
                                   title={taken ? "Πάτα για αναίρεση" : overdue ? "Ληξιπρόθεσμο — πάτα «Το πήρα»" : "Πάτα «Το πήρα»"}
