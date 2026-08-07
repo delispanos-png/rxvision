@@ -60,12 +60,14 @@ export function KpiCard({
               </Tooltip>
             )}
           </div>
-          <div className="mt-2 flex items-baseline gap-2">
-            <div className="truncate text-xl font-bold leading-none text-slate-900 dark:text-slate-100 sm:text-[26px]">{value}</div>
+          {/* Η τιμή ΔΕΝ κόβεται ποτέ (χωρίς truncate)· το trend badge τυλίγεται από κάτω σε στενές
+              κάρτες (flex-wrap)· μεγάλα νούμερα μικραίνουν font ανά πλάτος & σπάνε αντί να ξεχειλίζουν. */}
+          <div className="mt-2 flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+            <div className="text-lg font-bold leading-tight tabular-nums text-slate-900 [overflow-wrap:anywhere] dark:text-slate-100 sm:text-xl lg:text-[26px]">{value}</div>
             {trend !== undefined && (
               <Tooltip label={t("Δ vs πέρσι (ίδια περίοδος)", "Δ vs last year (same period)")}>
                 <span
-                  className={`text-xs font-semibold ${trend >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400"}`}>
+                  className={`shrink-0 text-xs font-semibold ${trend >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400"}`}>
                   {trend >= 0 ? "▲" : "▼"} {fmtDec(Math.abs(trend), 1)}%
                 </span>
               </Tooltip>

@@ -1,7 +1,27 @@
 # Project State — RxVision
 
 > Living snapshot for session continuity. Update at the end of each work session.
-> Last updated: **2026-06-08**.
+> Last updated: **2026-08-07**.
+
+## 🆕 Feature additions (2026-08, τεχνικό)
+
+Νέα υποσυστήματα μετά το 2026-06 (app v1.37.x). Λεπτομέρειες: memory files + docs.
+
+- **e-commerce / eShop** — κατάλογος `pharmacy_products` (PharmacyCatalogRepository· τύποι Rx/OTC/parapharma,
+  κατηγορίες string, `images[]` gallery, `deals()`), προσφορές: `shop_campaigns` / `shop_coupons` / `shop_bundles`
+  / `shop_service_offers` (νέο, → ραντεβού), pricing engine `services/shop_pricing.py` (Rx ποτέ έκπτωση),
+  παραγγελίες `orders_delivery` (+ `order_settings` hero banner, Viva κάρτα/IRIS, `order_subscriptions`,
+  `shop_carts` abandoned). Customer: `/patient/shop*` (+ `/shop/offers`, `/shop/product/{barcode}` PDP),
+  frontend `components/portal/ShopTab.tsx` + `(app)/catalog` + `(app)/orders-delivery`.
+- **Loyalty v2** — `repositories/loyalty.py`: earnings recomputed από `prescription_executions` (per-execution),
+  `loyalty_ledger` (redeem/adjust/welcome/referral/birthday). Self-redeem (request/confirm reward + 6ψήφιος κωδικός),
+  referral (`apply_referral`), γενέθλια (`award_birthdays` από ΑΜΚΑ, beat daily), καμπάνιες/expiry (config +
+  `_refills_since` weighted), tier multipliers, analytics (overview kpis). Workers: `dispatch_loyalty_rewards`,
+  `dispatch_birthday_bonus`.
+- **Μενού/UX** — `components/layout/Sidebar.tsx`: ομάδες eShop / Πύλη πελατών / Κάρτες πιστότητας, πτυσσόμενες
+  (localStorage), εσωτερικές καρτέλες → αυτόνομα hash entries (`#tab`, hash-driven pages).
+- **Responsive** — `KpiCard` (χωρίς truncate, flex-wrap, responsive font), dashboard KPI grid, Topbar PharmaCat
+  (centered ≥xl, in-flow σε tablet), auth screens `min-h-screen`→`min-h-dvh` (iOS toolbar fix).
 
 ## ✅ Status (2026-06-08, end of day)
 **All quick-wins work is MERGED into `main` (`9bb5f25`) and LIVE-VALIDATED.** PR #1 merged.

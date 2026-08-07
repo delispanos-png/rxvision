@@ -120,8 +120,9 @@ export default function DashboardPage() {
         <DateRangeFilter />
       </div>
 
-      {/* KPI row */}
-      <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-5">
+      {/* KPI row — 2 στήλες σε κινητό/tablet-portrait (πλατιές κάρτες → μεγάλα ευρώ σε μία γραμμή),
+          3 σε μεσαία, 5 σε πλατιά. Αποφεύγει το «σπάσιμο» του αριθμού στη μέση. */}
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-3 xl:grid-cols-5">
         <KpiCard label={t("Εκτελέσεις", "Executions")} value={num(s?.executions ?? 0)} sub={t("συνταγές περιόδου · δες λίστα", "prescriptions in period · see list")} icon={Receipt} accent="indigo" trend={delta(s?.executions, prev?.executions)}
           help={t("Πλήθος εκτελέσεων συνταγών με ημερομηνία εντός της περιόδου του φίλτρου.", "Count of executions within the selected period.")}
           onClick={() => setModal({ title: t("Εκτελέσεις περιόδου", "Executions in period"), kind: "rx", qs: `${qs}&page_size=300&sort=executed_at&dir=-1` })} />

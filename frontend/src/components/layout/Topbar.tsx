@@ -72,11 +72,6 @@ export function Topbar() {
 
   return (
     <header className="sticky top-0 z-10 flex h-16 items-center justify-end gap-1 border-b border-slate-200/70 bg-canvas/80 px-3 backdrop-blur dark:border-slate-800 dark:bg-slate-950/80 sm:gap-2 sm:px-6">
-      {(["enabled", "trial"].includes(data?.modules?.ai_assistant ?? "") || ["enabled", "trial"].includes(data?.modules?.pharmacat ?? "")) && (
-        <div className="pointer-events-none absolute left-1/2 top-1/2 z-20 hidden -translate-x-1/2 -translate-y-1/2 sm:block">
-          <div className="pointer-events-auto"><PharmaCatLauncher /></div>
-        </div>
-      )}
       {/* ΑΡΙΣΤΕΡΟ cluster (mr-auto στο wrapper, όχι στα κουμπιά): μενού + σύμπτυξη + επιλογέας
           φαρμακείου. Ο επιλογέας ΠΡΕΠΕΙ να είναι εδώ — αν μείνει δεξιά, πέφτει πάνω στο
           απόλυτα κεντραρισμένο PharmaCat και σκεπάζεται. */}
@@ -102,6 +97,13 @@ export function Topbar() {
         {/* Διακριτική ένδειξη «Χωρίς κάρτα» → Ρυθμίσεις/Χρεώσεις (κρύβεται όταν υπάρχει κάρτα/δωρεάν) */}
         <CardReminder />
       </div>
+      {/* PharmaCat: σε ≥lg απόλυτα ΚΕΝΤΡΑΡΙΣΜΕΝΟ (πλατύ topbar)· σε tablet/στενό είναι IN-FLOW ώστε
+          να ΜΗΝ πέφτει πάνω στα δεξιά κουμπιά (καμπανάκι/Βοηθός). Ένα instance — αλλάζει μόνο θέση. */}
+      {(["enabled", "trial"].includes(data?.modules?.ai_assistant ?? "") || ["enabled", "trial"].includes(data?.modules?.pharmacat ?? "")) && (
+        <div className="z-20 hidden shrink-0 sm:block xl:pointer-events-none xl:absolute xl:left-1/2 xl:top-1/2 xl:-translate-x-1/2 xl:-translate-y-1/2">
+          <div className="xl:pointer-events-auto"><PharmaCatLauncher /></div>
+        </div>
+      )}
       <Tooltip label={t("Σκούρο/Φωτεινό θέμα", "Dark/Light theme")}>
         <button
           onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
@@ -127,7 +129,7 @@ export function Topbar() {
           aria-label="Copilot"
           className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-sky-200 bg-sky-50 px-2.5 text-xs font-semibold text-sky-700 hover:bg-sky-100 dark:border-sky-800 dark:bg-sky-950/40 dark:text-sky-300"
         >
-          <Sparkles className="h-4 w-4" /> <span className="hidden sm:inline">{t("Βοηθός", "Copilot")}</span>
+          <Sparkles className="h-4 w-4" /> <span className="hidden xl:inline">{t("Βοηθός", "Copilot")}</span>
         </button>
       </Tooltip>
       <InstallButton />
@@ -143,7 +145,7 @@ export function Topbar() {
           <span className="grid h-9 w-9 place-items-center rounded-full bg-brand-100 text-xs font-bold text-brand-700 dark:bg-brand-900/40 dark:text-brand-300">
             {initials(name)}
           </span>
-          <div className="hidden leading-tight sm:block">
+          <div className="hidden leading-tight xl:block">
             <div className="text-sm font-semibold text-slate-800">{name}</div>
             <div className="text-[11px] text-slate-400">{data?.tenant_id ?? ""}</div>
           </div>

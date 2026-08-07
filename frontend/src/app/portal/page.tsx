@@ -609,7 +609,7 @@ export default function PortalHome() {
   }
 
   if (noPharmacy) return (
-    <div className="flex min-h-screen items-center justify-center px-4">
+    <div className="flex min-h-dvh items-center justify-center px-4">
       <div className="w-full max-w-md rounded-3xl border border-slate-200 dark:border-slate-800 bg-white p-8 text-center shadow-xl shadow-slate-200/50">
         <div className="mx-auto mb-4 grid h-14 w-14 place-items-center rounded-2xl bg-brand-100 text-brand-600"><CheckCircle2 className="h-7 w-7" /></div>
         <h1 className="text-lg font-bold text-slate-900 dark:text-slate-100">Ο λογαριασμός σου είναι έτοιμος</h1>
@@ -619,7 +619,7 @@ export default function PortalHome() {
     </div>
   );
   if (!me) return (
-    <div className="flex min-h-screen items-center justify-center text-slate-400">
+    <div className="flex min-h-dvh items-center justify-center text-slate-400">
       <div className="flex items-center gap-2 text-sm"><RefreshCw className="h-4 w-4 animate-spin" /> Φόρτωση…</div>
     </div>
   );

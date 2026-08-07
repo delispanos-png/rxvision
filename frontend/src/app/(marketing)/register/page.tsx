@@ -372,7 +372,7 @@ export default function RegisterWizard() {
           </nav>
 
           {/* step content */}
-          <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
             {step === 0 && (
               <div className="space-y-4">
                 <h2 className="text-xl font-bold text-slate-900">Στοιχεία Πελάτη</h2>
@@ -507,25 +507,25 @@ export default function RegisterWizard() {
                 <div>
                   <label className={label}>Ταυτόχρονοι χρήστες</label>
                   <div className="flex items-center gap-3">
-                    <button type="button" disabled={seats <= includedFree} onClick={() => setSeats((n) => Math.max(includedFree, n - 1))} className="grid h-9 w-9 place-items-center rounded-lg border border-slate-300 text-lg text-slate-600 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40">−</button>
-                    <input type="number" min={includedFree} max={maxSeats} value={seats} onChange={(e) => setSeats(Math.min(maxSeats, Math.max(includedFree, parseInt(e.target.value) || includedFree)))} className={`${input} w-20 text-center`} />
-                    <button type="button" disabled={seats >= maxSeats} onClick={() => setSeats((n) => Math.min(maxSeats, n + 1))} className="grid h-9 w-9 place-items-center rounded-lg border border-slate-300 text-lg text-slate-600 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40">+</button>
-                    <span className="text-xs text-slate-400">{extraUsers > 0 ? <>{includedFree} περιλαμβάνονται + {extraUsers} έξτρα (έως {maxSeats})</> : <>{includedFree} {includedFree === 1 ? "χρήστης" : "χρήστες"} περιλαμβάνονται στην τιμή (έως {maxSeats})</>}</span>
+                    <button type="button" disabled={seats <= includedFree} onClick={() => setSeats((n) => Math.max(includedFree, n - 1))} className="grid h-11 w-11 shrink-0 place-items-center rounded-lg border border-slate-300 text-lg text-slate-600 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40 sm:h-9 sm:w-9">−</button>
+                    <input type="number" min={includedFree} max={maxSeats} value={seats} onChange={(e) => setSeats(Math.min(maxSeats, Math.max(includedFree, parseInt(e.target.value) || includedFree)))} className={`${input} w-20 shrink-0 text-center`} />
+                    <button type="button" disabled={seats >= maxSeats} onClick={() => setSeats((n) => Math.min(maxSeats, n + 1))} className="grid h-11 w-11 shrink-0 place-items-center rounded-lg border border-slate-300 text-lg text-slate-600 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40 sm:h-9 sm:w-9">+</button>
                   </div>
+                  <p className="mt-1.5 text-xs text-slate-400">{extraUsers > 0 ? <>{includedFree} περιλαμβάνονται + {extraUsers} έξτρα (έως {maxSeats})</> : <>{includedFree} {includedFree === 1 ? "χρήστης" : "χρήστες"} περιλαμβάνονται στην τιμή (έως {maxSeats})</>}</p>
                 </div>
                 <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
                   <div className="mb-2 text-xs font-semibold text-slate-500">Ανάλυση κόστους ({yearly ? "ετήσια" : "μηνιαία"})</div>
                   <dl className="space-y-1.5 text-sm">
-                    <div className="flex justify-between"><dt className="text-slate-600">{pkg?.name || "Πακέτο"}</dt><dd className="font-medium text-slate-800">{eur(basePrice)}</dd></div>
-                    <div className="flex justify-between"><dt className="text-slate-600">SLA{slaObj?.name ? ` · ${slaObj.name}` : ""}</dt><dd className="font-medium text-slate-800">{slaPrice ? eur(slaPrice) : "—"}</dd></div>
-                    <div className="flex justify-between"><dt className="text-slate-600">Έξτρα χρήστες {extraUsers > 0 ? `(${extraUsers} × ${eur(extraRate)})` : ""}</dt><dd className="font-medium text-slate-800">{extraTotal ? eur(extraTotal) : "—"}</dd></div>
+                    <div className="flex justify-between"><dt className="text-slate-600">{pkg?.name || "Πακέτο"}</dt><dd className="shrink-0 pl-3 font-medium text-slate-800">{eur(basePrice)}</dd></div>
+                    <div className="flex justify-between"><dt className="text-slate-600">SLA{slaObj?.name ? ` · ${slaObj.name}` : ""}</dt><dd className="shrink-0 pl-3 font-medium text-slate-800">{slaPrice ? eur(slaPrice) : "—"}</dd></div>
+                    <div className="flex justify-between"><dt className="text-slate-600">Έξτρα χρήστες {extraUsers > 0 ? `(${extraUsers} × ${eur(extraRate)})` : ""}</dt><dd className="shrink-0 pl-3 font-medium text-slate-800">{extraTotal ? eur(extraTotal) : "—"}</dd></div>
                     {availAddons.filter((a) => selAddons.includes(a._id)).map((a) => (
-                      <div key={a._id} className="flex justify-between"><dt className="text-slate-600">{a.icon} {a.name}</dt><dd className="font-medium text-slate-800">{eur((yearly ? a.price_yearly : a.price_monthly) ?? 0)}</dd></div>
+                      <div key={a._id} className="flex justify-between"><dt className="text-slate-600">{a.icon} {a.name}</dt><dd className="shrink-0 pl-3 font-medium text-slate-800">{eur((yearly ? a.price_yearly : a.price_monthly) ?? 0)}</dd></div>
                     ))}
                     {!isTrial && (
                       <>
-                        <div className="flex justify-between border-t border-slate-200 pt-2"><dt className="text-slate-600">Καθαρή αξία</dt><dd className="font-medium text-slate-800">{eur2(netPrice)}</dd></div>
-                        <div className="flex justify-between"><dt className="text-slate-600">Φ.Π.Α {vatRate}%</dt><dd className="font-medium text-slate-800">{eur2(vatAmount)}</dd></div>
+                        <div className="flex justify-between border-t border-slate-200 pt-2"><dt className="text-slate-600">Καθαρή αξία</dt><dd className="shrink-0 pl-3 font-medium text-slate-800">{eur2(netPrice)}</dd></div>
+                        <div className="flex justify-between"><dt className="text-slate-600">Φ.Π.Α {vatRate}%</dt><dd className="shrink-0 pl-3 font-medium text-slate-800">{eur2(vatAmount)}</dd></div>
                       </>
                     )}
                     <div className="mt-1 flex justify-between border-t border-slate-200 pt-2 text-base"><dt className="font-semibold text-slate-900">Τελική τιμή</dt><dd className="font-bold text-brand-700">{eur2(isTrial ? 0 : grossPrice)}<span className="text-xs font-normal text-slate-400">/{per}</span></dd></div>
