@@ -3,14 +3,14 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { adminApi } from "@/lib/adminClient";
-import { Bot, Save, Loader2, Check, Gauge } from "lucide-react";
+import { Bot, Save, Loader2, Check, Gauge, Sparkles } from "lucide-react";
 
 type Integrations = {
   anthropic?: { api_key_set: boolean; enabled: boolean; model: string; admin_model: string };
   drugbank?: { api_key_set: boolean; enabled: boolean; region: string };
 };
 // Στη γλώσσα των ΠΑΚΕΤΩΝ: κάθε φαρμακείο δικαιούται `included` ερωτήσεις (ανά period) από το πακέτο του.
-type AiTenant = { tenant_id: string; name?: string | null; plan?: string | null; plan_name?: string | null; included: number; period: string; used: number; remaining: number; ai_used_today: number; ai_used_ai: number; ai_used_local: number; card_on_file: boolean };
+type AiTenant = { tenant_id: string; name?: string | null; plan?: string | null; plan_name?: string | null; included: number; period: string; used: number; remaining: number; credits: number; ai_used_today: number; ai_used_ai: number; ai_used_local: number; card_on_file: boolean };
 type ModelPrice = { in: number; out: number; cin: number };
 type AiCost = {
   margin_pct: number; models: Record<string, ModelPrice>;
@@ -18,12 +18,13 @@ type AiCost = {
   suggested_price_per_q_cents: number | null;
 };
 type AiLimits = { tenants: AiTenant[]; default: number; cost?: AiCost };
+type AiPack = { _id: string; name?: string; questions: number; price_cents: number; active?: boolean };
 
 const inp = "w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none";
 const Badge = ({ ok }: { ok?: boolean }) => <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${ok ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-500"}`}>{ok ? "Αποθηκευμένο" : "Μη ρυθμισμένο"}</span>;
 
 const eur = (c: number) => (c / 100).toLocaleString("el-GR", { minimumFractionDigits: 2 }) + " €";
-const periodLabel = (p: string) => (p === "month" ? "/μήνα" : "/μέρα");
+const periodLabel = (p: string) => (p === "month" ? "/μήνα" : p === "year" ? "/έτος" : "/μέρα");
 
 export default function AiProvidersPage() {
   const qc = useQueryClient();
@@ -78,6 +79,18 @@ export default function AiProvidersPage() {
   const cpq = cost?.measured?.cost_cents_per_q ?? null;   // πραγματικό κόστος/ερώτηση (cents)
   const marginNow = margin === "" ? (cost?.margin_pct ?? 40) : parseFloat(margin || "0");
   const suggQ = cpq != null ? cpq * (1 + marginNow / 100) : null;   // προτεινόμενη τιμή/ερώτηση
+
+  // AI credit packs (overage) — διαχείριση καταλόγου πακέτων
+  const packsQ = useQuery({ queryKey: ["ai-credit-packs"], queryFn: () => adminApi<{ items: AiPack[] }>("/admin/ai-credit-packs"), retry: false });
+  const [packDraft, setPackDraft] = useState<Record<string, AiPack>>({});
+  const pk = (p: AiPack) => packDraft[p._id] ?? p;
+  const setPk = (id: string, patch: Partial<AiPack>) => setPackDraft((d) => ({ ...d, [id]: { ...(d[id] ?? packsQ.data?.items.find((x) => x._id === id) ?? { _id: id, questions: 0, price_cents: 0, active: true }), ...patch } }));
+  const savePack = useMutation({
+    mutationFn: (p: AiPack) => adminApi(`/admin/ai-credit-packs/${encodeURIComponent(p._id)}`, { method: "PUT", body: JSON.stringify({ name: p.name, questions: p.questions, price_cents: p.price_cents, active: p.active }) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["ai-credit-packs"] }),
+  });
+  const delPack = useMutation({ mutationFn: (id: string) => adminApi(`/admin/ai-credit-packs/${encodeURIComponent(id)}`, { method: "DELETE" }), onSuccess: () => qc.invalidateQueries({ queryKey: ["ai-credit-packs"] }) });
+  const [newPackId, setNewPackId] = useState("");
 
   const s = status.data;
   return (
@@ -205,7 +218,7 @@ export default function AiProvidersPage() {
                   <tr key={t.tenant_id} className="border-t border-slate-100">
                     <td className="px-3 py-2 font-medium text-slate-800">{t.name || t.tenant_id}</td>
                     <td className="px-3 py-2 text-xs text-slate-600">{t.plan_name || t.plan || <span className="text-slate-300">—</span>}</td>
-                    <td className="px-3 py-2 text-right tabular-nums font-semibold text-slate-700">{t.included}<span className="text-[11px] font-normal text-slate-400">{periodLabel(t.period)}</span></td>
+                    <td className="px-3 py-2 text-right tabular-nums font-semibold text-slate-700">{t.included}<span className="text-[11px] font-normal text-slate-400">{periodLabel(t.period)}</span>{t.credits > 0 && <div className="text-[10px] font-normal text-violet-600">+{t.credits} credits</div>}</td>
                     <td className="px-3 py-2 text-right tabular-nums text-slate-600">
                       <span className={over ? "font-semibold text-rose-600" : ""}>{t.used}</span>
                       <span className="text-slate-300"> / {t.included}</span>
@@ -221,6 +234,40 @@ export default function AiProvidersPage() {
             </table>
           </div>
         )}
+      </div>
+
+      {/* AI credit packs (overage) */}
+      <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <h3 className="mb-1 flex items-center gap-2 text-sm font-semibold text-slate-700"><Sparkles className="h-4 w-4 text-violet-600" /> Πακέτα AI credits (αγορά επιπλέον ερωτήσεων)</h3>
+        <p className="mb-3 text-xs text-slate-500">Το φαρμακείο τα αγοράζει όταν εξαντλήσει το included του πακέτου του. Τιμή = cost-plus (βλ. πάνω).</p>
+        <div className="overflow-x-auto rounded-xl border border-slate-200">
+          <table className="w-full min-w-[520px] text-sm">
+            <thead className="bg-slate-50 text-left text-xs text-slate-500"><tr>
+              <th className="px-3 py-2">Κωδικός</th><th className="px-3 py-2">Όνομα</th><th className="px-3 py-2">Ερωτήσεις</th><th className="px-3 py-2">Τιμή (€)</th><th className="px-3 py-2">Ενεργό</th><th className="px-3 py-2"></th>
+            </tr></thead>
+            <tbody>
+              {(packsQ.data?.items ?? []).map((p0) => { const p = pk(p0); return (
+                <tr key={p._id} className="border-t border-slate-100">
+                  <td className="px-3 py-2 font-mono text-[11px] text-slate-500">{p._id}</td>
+                  <td className="px-3 py-2"><input value={p.name ?? ""} onChange={(e) => setPk(p._id, { name: e.target.value })} className="w-full rounded border border-slate-300 px-2 py-1 text-xs" /></td>
+                  <td className="px-3 py-2"><input type="number" min={1} value={p.questions} onChange={(e) => setPk(p._id, { questions: parseInt(e.target.value) || 0 })} className="w-24 rounded border border-slate-300 px-2 py-1 text-xs" /></td>
+                  <td className="px-3 py-2"><input type="number" step="0.5" min={0} value={(p.price_cents / 100).toString()} onChange={(e) => setPk(p._id, { price_cents: Math.round(parseFloat(e.target.value || "0") * 100) })} className="w-24 rounded border border-slate-300 px-2 py-1 text-xs" /></td>
+                  <td className="px-3 py-2"><input type="checkbox" checked={p.active !== false} onChange={(e) => setPk(p._id, { active: e.target.checked })} /></td>
+                  <td className="px-3 py-2 text-right">
+                    <button onClick={() => savePack.mutate(p)} className="mr-2 rounded bg-violet-600 px-2 py-1 text-xs font-semibold text-white hover:bg-violet-700">Αποθήκευση</button>
+                    <button onClick={() => delPack.mutate(p._id)} className="text-xs text-slate-400 hover:text-rose-600">✕</button>
+                  </td>
+                </tr>
+              );})}
+              {(packsQ.data?.items ?? []).length === 0 && <tr><td colSpan={6} className="px-3 py-4 text-center text-xs text-slate-400">Καμία — πρόσθεσε ένα παρακάτω.</td></tr>}
+            </tbody>
+          </table>
+        </div>
+        <div className="mt-3 flex items-center gap-2">
+          <input value={newPackId} onChange={(e) => setNewPackId(e.target.value)} placeholder="κωδικός (π.χ. ai300)" className="w-40 rounded-lg border border-slate-300 px-2 py-1 text-sm" />
+          <button onClick={() => { if (newPackId.trim()) { savePack.mutate({ _id: newPackId.trim(), name: "", questions: 100, price_cents: 500, active: true }); setNewPackId(""); } }}
+            className="rounded-lg border border-violet-300 bg-violet-50 px-3 py-1 text-xs font-semibold text-violet-700 hover:bg-violet-100">+ Νέο πακέτο</button>
+        </div>
       </div>
 
       {/* DrugBank */}

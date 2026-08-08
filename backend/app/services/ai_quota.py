@@ -48,7 +48,7 @@ async def included_allowance(db, tenant_id: str) -> tuple[int, str]:
     if plan:
         pkg = await db["packages"].find_one({"_id": plan}, {"ai_included": 1, "ai_included_period": 1})
         if pkg and pkg.get("ai_included") is not None:
-            period = pkg.get("ai_included_period") if pkg.get("ai_included_period") in ("month", "day") else "month"
+            period = pkg.get("ai_included_period") if pkg.get("ai_included_period") in ("month", "day", "year") else "month"
             try:
                 return max(0, int(pkg["ai_included"])), period
             except (TypeError, ValueError):
@@ -57,8 +57,9 @@ async def included_allowance(db, tenant_id: str) -> tuple[int, str]:
 
 
 async def _used_in_period(db, tenant_id: str, period: str) -> int:
-    if period == "month":
-        prefix = f"ai:{tenant_id}:{datetime.now(tz=timezone.utc).strftime('%Y-%m')}"
+    if period in ("month", "year"):
+        fmt = "%Y-%m" if period == "month" else "%Y"
+        prefix = f"ai:{tenant_id}:{datetime.now(tz=timezone.utc).strftime(fmt)}"
         rows = await db["llm_daily_usage"].aggregate([
             {"$match": {"_id": {"$regex": "^" + re.escape(prefix)}}},
             {"$group": {"_id": None, "n": {"$sum": "$n"}}}]).to_list(length=1)
@@ -83,8 +84,9 @@ async def status_for(db, tenant_id: str) -> dict:
     περίοδό του και πόσα έχει καταναλώσει (used) στην ΤΡΕΧΟΥΣΑ περίοδο."""
     included, period = await included_allowance(db, tenant_id)
     used = await _used_in_period(db, tenant_id, period)
+    from app.services import ai_credits
     return {"included": included, "period": period, "used": used,
-            "remaining": max(0, included - used)}
+            "remaining": max(0, included - used), "credits": await ai_credits.balance(tenant_id)}
 
 
 async def check_and_consume(tenant_id: str, source: str = "llm") -> tuple[bool, int, int, str | None]:
@@ -100,8 +102,13 @@ async def check_and_consume(tenant_id: str, source: str = "llm") -> tuple[bool, 
     doc = await db["llm_daily_usage"].find_one_and_update(   # tenant-ok: platform usage meter
         {"_id": key}, {"$inc": {"n": 1, sub: 1}, "$setOnInsert": {"at": datetime.now(tz=timezone.utc)}},
         upsert=True, return_document=ReturnDocument.AFTER)
-    used = await _used_in_period(db, tenant_id, period) if period == "month" else int((doc or {}).get("n", 0))
+    used = await _used_in_period(db, tenant_id, period) if period in ("month", "year") else int((doc or {}).get("n", 0))
     if used > included:
+        # Πάνω από το included → τράβα 1 AI credit (prepaid). Αν υπάρχει → επιτρέπεται (source="credit").
+        from app.services import ai_credits
+        if await ai_credits.consume(tenant_id, 1):
+            return (True, used, included, "credit")
         await db["llm_daily_usage"].update_one({"_id": key}, {"$inc": {"n": -1, sub: -1}})   # rollback
         return (False, included, included, "quota_exceeded")
     return (True, used, included, None)
+

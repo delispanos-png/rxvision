@@ -1491,6 +1491,37 @@ async def delete_credit_package(code: str, _: PlatformContext = Depends(get_plat
     return {"ok": True}
 
 
+# ── AI credit packs (Phase C — overage πέρα από το included του πακέτου) ──────────────────────────
+@router.get("/ai-credit-packs")
+async def admin_ai_credit_packs(_: PlatformContext = Depends(get_platform_admin)):
+    from app.services import ai_credits
+    return {"items": jsonsafe(await ai_credits.packs(active_only=False))}
+
+
+class AiCreditPackIn(BaseModel):
+    name: str | None = None
+    questions: int | None = None
+    price_cents: int | None = None
+    active: bool | None = None
+
+
+@router.put("/ai-credit-packs/{code}")
+async def update_ai_credit_pack(code: str, body: AiCreditPackIn,
+                                _: PlatformContext = Depends(get_platform_admin)):
+    upd = {k: v for k, v in body.model_dump().items() if v is not None}
+    db = shared_db()
+    if upd:
+        upd["updated_at"] = datetime.now(tz=timezone.utc)
+        await db["ai_credit_packs"].update_one({"_id": code}, {"$set": upd}, upsert=True)  # tenant-ok: catalog
+    return {"ok": True, "pack": jsonsafe(await db["ai_credit_packs"].find_one({"_id": code}))}
+
+
+@router.delete("/ai-credit-packs/{code}")
+async def delete_ai_credit_pack(code: str, _: PlatformContext = Depends(get_platform_admin)):
+    await shared_db()["ai_credit_packs"].delete_one({"_id": code})  # tenant-ok: platform catalog
+    return {"ok": True}
+
+
 @router.post("/tenants")
 async def open_tenant(body: OpenTenantIn, _: PlatformContext = Depends(get_platform_admin)):
     """«Άνοιγμα» tenant από πακέτο — admin entry point ."""
@@ -2520,7 +2551,7 @@ async def ai_limits(_: PlatformContext = Depends(get_platform_admin)):
             "tenant_id": str(tid), "name": t.get("name"),
             "plan": (sub or {}).get("plan"), "plan_name": (sub or {}).get("plan_name"),
             "included": st["included"], "period": st["period"],
-            "used": st["used"], "remaining": st["remaining"],
+            "used": st["used"], "remaining": st["remaining"], "credits": st.get("credits", 0),
             "ai_used_today": bd["total"],
             "ai_used_ai": bd["ai"],        # πραγματικές AI κλήσεις (μόνο για εμάς)
             "ai_used_local": bd["local"],  # σερβιρίστηκαν από την τοπική βάση (μόνο για εμάς)

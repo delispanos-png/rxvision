@@ -202,7 +202,7 @@ function CopilotInner() {
               {turn.result && !turn.result.ok ? (
                 <div className={`rounded-xl px-3 py-2 text-sm ${["daily_limit", "quota_exceeded", "card_required"].includes(turn.result.error || "") ? "bg-amber-50 text-amber-800 dark:bg-amber-950/30" : "bg-rose-50 text-rose-700 dark:bg-rose-950/30"}`}>
                   {["card_required", "quota_exceeded", "daily_limit"].includes(turn.result.error || "")
-                    ? <><div className="font-semibold">✋ {t(`Εξάντλησες τα ${turn.result.limit ?? 0} ερωτήματα του πακέτου σου${status.data?.ai_period === "month" ? " αυτόν τον μήνα" : " σήμερα"}`, `You've used your plan's ${turn.result.limit ?? 0} questions${status.data?.ai_period === "month" ? " this month" : " today"}`)}.</div><div className="mt-0.5 text-xs">{t("Σύντομα θα μπορείς να αγοράσεις επιπλέον ερωτήσεις (AI credits) ή να αναβαθμίσεις πακέτο.", "You'll soon be able to buy extra questions (AI credits) or upgrade your plan.")}</div></>
+                    ? <><div className="font-semibold">✋ {t(`Εξάντλησες τα ${turn.result.limit ?? 0} ερωτήματα του πακέτου σου${status.data?.ai_period === "month" ? " αυτόν τον μήνα" : status.data?.ai_period === "year" ? " φέτος" : " σήμερα"}`, `You've used your plan's ${turn.result.limit ?? 0} questions${status.data?.ai_period === "month" ? " this month" : status.data?.ai_period === "year" ? " this year" : " today"}`)}.</div><div className="mt-0.5 text-xs">{t("Σύντομα θα μπορείς να αγοράσεις επιπλέον ερωτήσεις (AI credits) ή να αναβαθμίσεις πακέτο.", "You'll soon be able to buy extra questions (AI credits) or upgrade your plan.")}</div></>
                     : t("Σφάλμα — δοκιμάστε ξανά.", "Error — try again.")}
                 </div>
               ) : (

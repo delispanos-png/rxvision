@@ -9,7 +9,26 @@ import { fmtEur, fmtNum } from "@/lib/formatters";
 import { KpiCard } from "@/components/kpi/KpiCard";
 import { useT } from "@/store/prefStore";
 import { CreditCard, Sparkles, Database, Check, Loader2, Lock, Users } from "lucide-react";
-import { appConfirm } from "@/store/dialogStore";
+import { appConfirm, appAlert } from "@/store/dialogStore";
+
+/** Άνοιγμα του Revolut Checkout popup για ένα order token (φορτώνει το embed.js on demand). */
+function payWithRevolut(token: string, mode: string): Promise<void> {
+  return new Promise<void>((resolve) => {
+    const w = window as unknown as { RevolutCheckout?: (t: string, m: string) => Promise<{ payWithPopup: (o: Record<string, () => void>) => void }> };
+    const run = () => {
+      if (!w.RevolutCheckout) return resolve();
+      w.RevolutCheckout(token, mode === "live" ? "prod" : "sandbox")
+        .then((rc) => rc.payWithPopup({ onSuccess: resolve, onError: resolve, onCancel: resolve }))
+        .catch(() => resolve());
+    };
+    if (w.RevolutCheckout) return run();
+    const s = document.createElement("script");
+    s.src = mode === "live" ? "https://merchant.revolut.com/embed.js" : "https://sandbox-merchant.revolut.com/embed.js";
+    s.onload = run; s.onerror = () => resolve();
+    document.body.appendChild(s);
+  });
+}
+type AiPack = { _id: string; name?: string; questions: number; price_cents: number };
 
 type Subscription = {
   plan: string;
@@ -33,7 +52,7 @@ type Extras = {
   billing_cycle: string;
   currency: string;
   addons_total_cents: number;
-  ai: { included: number; period: string; used: number; remaining: number };
+  ai: { included: number; period: string; used: number; remaining: number; credits: number };
   retention: { months: number; default: number; max: number; price_per_year_cents: number; surcharge_cents: number };
 };
 
@@ -74,10 +93,29 @@ export default function BillingSettingsPage() {
     retry: false,
   });
 
+  const aiPacks = useQuery({
+    queryKey: ["subscription", "ai-credit-packs"],
+    queryFn: () => api<{ items: AiPack[]; balance: number }>(`/subscription/ai-credit-packs`),
+    retry: false,
+  });
+
   const s = subscription.data;
   const x = extras.data;
   const [cardBusy, setCardBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [buyingAi, setBuyingAi] = useState<string | null>(null);
+  async function buyAiCredits(packId: string) {
+    setBuyingAi(packId);
+    try {
+      const r = await api<{ token?: string; mode?: string; provider?: string; checkout_url?: string }>("/subscription/ai-credits/topup", { method: "POST", body: JSON.stringify({ pack_id: packId }) });
+      if (r.provider === "viva" && r.checkout_url) { window.location.href = r.checkout_url; return; }
+      await payWithRevolut(r.token!, r.mode!);
+      setTimeout(() => { aiPacks.refetch(); refresh(); }, 3000);
+      appAlert(t("Η πληρωμή ολοκληρώθηκε — τα credits ενημερώνονται σε λίγο. ✅", "Payment done — credits update shortly. ✅"));
+    } catch (e) {
+      appAlert(t("Αποτυχία αγοράς: ", "Purchase failed: ") + (e as Error).message);
+    } finally { setBuyingAi(null); }
+  }
 
   const refresh = () => { qc.invalidateQueries({ queryKey: ["subscription", "extras"] }); qc.invalidateQueries({ queryKey: ["subscription", "seats"] }); qc.invalidateQueries({ queryKey: queryKeys.subscription() }); };
 
@@ -214,12 +252,24 @@ export default function BillingSettingsPage() {
             {/* AI ερωτήματα — περιλαμβάνονται στο πακέτο (read-only) */}
             <div className="rounded-xl border border-slate-200 p-4">
               <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-slate-700"><Sparkles className="h-4 w-4 text-violet-500" /> {t("AI ερωτήματα", "AI questions")}</div>
-              <div className="text-xs text-slate-500">{t("Το πλάνο σου περιλαμβάνει", "Your plan includes")} <b>{x.ai.included}</b> {x.ai.period === "month" ? t("ερωτήσεις/μήνα", "questions/month") : t("ερωτήσεις/μέρα", "questions/day")}.</div>
+              <div className="text-xs text-slate-500">{t("Το πλάνο σου περιλαμβάνει", "Your plan includes")} <b>{x.ai.included}</b> {x.ai.period === "month" ? t("ερωτήσεις/μήνα", "questions/month") : x.ai.period === "year" ? t("ερωτήσεις/έτος", "questions/year") : t("ερωτήσεις/μέρα", "questions/day")}.</div>
               <div className="mt-1 text-xs text-slate-500">{t("Κατανάλωσες", "Used")}: <b>{x.ai.used}</b> / {x.ai.included} · {t("απομένουν", "remaining")} <b className="text-emerald-700">{x.ai.remaining}</b></div>
               <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
                 <div className="h-full rounded-full bg-emerald-500" style={{ width: `${x.ai.included > 0 ? Math.min(100, Math.round((x.ai.used / x.ai.included) * 100)) : 0}%` }} />
               </div>
-              <p className="mt-2 text-[11px] text-slate-400">{t("Χρειάζεσαι περισσότερα; Σύντομα θα μπορείς να αγοράσεις επιπλέον ερωτήσεις (AI credits).", "Need more? You'll soon be able to buy extra questions (AI credits).")}</p>
+              {/* AI credits (overage) — αγορά επιπλέον ερωτήσεων πάνω από το included */}
+              <div className="mt-3 border-t border-slate-100 pt-2">
+                <div className="mb-1.5 text-xs text-slate-500">{t("Επιπλέον ερωτήσεις (credits)", "Extra questions (credits)")}: <b className="text-violet-700">{x.ai.credits ?? 0}</b></div>
+                <div className="flex flex-wrap gap-1.5">
+                  {(aiPacks.data?.items ?? []).map((p) => (
+                    <button key={p._id} onClick={() => buyAiCredits(p._id)} disabled={buyingAi !== null}
+                      className="inline-flex items-center gap-1 rounded-lg border border-violet-300 bg-violet-50 px-2.5 py-1 text-xs font-semibold text-violet-700 hover:bg-violet-100 disabled:opacity-50">
+                      {buyingAi === p._id ? <Loader2 className="h-3 w-3 animate-spin" /> : "+"} {p.questions} · {fmtEur(p.price_cents)}
+                    </button>
+                  ))}
+                </div>
+                <p className="mt-1.5 text-[11px] text-slate-400">{t("Όταν εξαντληθούν τα ερωτήματα του πακέτου, τραβάμε από τα credits.", "When your plan's questions run out, we draw from credits.")}</p>
+              </div>
             </div>
 
             {/* Διατήρηση δεδομένων */}

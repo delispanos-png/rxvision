@@ -36,6 +36,7 @@ KIND_LABELS = {
     "renewal": "Ανανέωση συνδρομής RxVision",
     "upgrade": "Αναβάθμιση πακέτου RxVision",
     "topup": "Αγορά credits μηνυμάτων RxVision",
+    "ai_credits": "Αγορά AI credits RxVision",
     "extra": "Χρεώσιμη δυνατότητα RxVision",
 }
 

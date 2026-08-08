@@ -495,14 +495,16 @@ async def handle_viva_webhook(event_data: dict) -> None:
     if mt0.startswith("renew:"):     # ανανέωση ληγμένης συνδρομής → ενεργοποίηση
         await complete_renewal(mt0[len("renew:"):], str(txn))
         return
-    # (1) top-up μηνυμάτων (order_code = viva order_code, αποθηκευμένο ως order_id στο pending) → πίστωση wallet
+    # (1) top-up μηνυμάτων Ή AI credits (order_code = viva order_code) → πίστωση του αντίστοιχου wallet
     if order_code:
-        from app.services import message_wallet
+        from app.services import ai_credits, message_wallet
+        if await ai_credits.complete_topup(order_code):
+            return
         if await message_wallet.complete_topup(order_code):
             return
-    # (2) συνδρομή: card-save + recurring seed. MerchantTrns = tenant_id (τα top-up έχουν "topup:…" → αγνόησε)
+    # (2) συνδρομή: card-save + recurring seed. MerchantTrns = tenant_id (τα top-up έχουν "topup:"/"ai_topup:" → αγνόησε)
     mt = event_data.get("MerchantTrns") or event_data.get("merchantTrns")
-    tid = mt if (mt and not str(mt).startswith("topup:")) else None
+    tid = mt if (mt and not str(mt).startswith(("topup:", "ai_topup:"))) else None
     if not tid and order_code:
         sub = await db["subscriptions"].find_one({"viva_order_code": order_code}, {"tenant_id": 1})
         tid = (sub or {}).get("tenant_id")
@@ -526,7 +528,9 @@ async def handle_webhook(event: str, order: dict) -> None:
         return
     # Wallet top-up orders: credit the message wallet (idempotent) and stop — not a subscription event.
     if event == "ORDER_COMPLETED" and order.get("id"):
-        from app.services import message_wallet
+        from app.services import ai_credits, message_wallet
+        if await ai_credits.complete_topup(order["id"]):
+            return
         if await message_wallet.complete_topup(order["id"]):
             return
         # Plan-upgrade paid by card: apply the pending change when its Revolut order completes.

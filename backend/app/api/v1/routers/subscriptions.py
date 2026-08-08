@@ -95,6 +95,55 @@ async def set_retention(body: RetentionIn, ctx: TenantContext = Depends(require(
         raise HTTPException(status.HTTP_402_PAYMENT_REQUIRED, "card_required")
 
 
+# ── AI credits (Phase C): αγορά επιπλέον ερωτήσεων πάνω από το included του πακέτου ────────────────
+@router.get("/ai-credit-packs")
+async def get_ai_credit_packs(ctx: TenantContext = Depends(get_current_context)):
+    from app.services import ai_credits
+    return {"items": await ai_credits.packs(), "balance": await ai_credits.balance(ctx.tenant_id)}
+
+
+class AiTopupIn(BaseModel):
+    pack_id: str
+
+
+@router.post("/ai-credits/topup")
+async def ai_credits_topup(body: AiTopupIn, ctx: TenantContext = Depends(require("billing:manage"))):
+    """Αγορά πακέτου AI credits μέσω του ΕΝΕΡΓΟΥ παρόχου. Το webhook πιστώνει τις ερωτήσεις + βγάζει
+    παραστατικό όταν ολοκληρωθεί η πληρωμή (ίδια ροή με τα credits μηνυμάτων)."""
+    from app.core.db import shared_db
+    from app.services import ai_credits, billing_service, revolut_service, viva_service
+    pkg = await ai_credits.get_pack(body.pack_id)
+    if not pkg:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "unknown_pack")
+    t = await shared_db()["tenants"].find_one(
+        {"_id": ctx.tenant_id}, {"name": 1, "company": 1, "billing_profile": 1}) or {}
+    comp, bill = t.get("company") or {}, t.get("billing_profile") or {}
+    email = bill.get("email") or comp.get("email") or bill.get("billing_email") or "billing@rxvision.gr"
+    name = comp.get("name") or bill.get("name") or t.get("name") or ctx.tenant_id
+    desc = f"RxVision — AI credits {pkg.get('name', '')}"
+    if await billing_service.active_provider() == "viva":
+        if not await viva_service.is_configured():
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "viva_not_configured")
+        res = await viva_service.create_checkout_order(
+            amount=int(pkg["price_cents"]), ref=f"ai_topup:{ctx.tenant_id}", description=desc,
+            email=email, full_name=name)
+        if not res.get("ok"):
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, res.get("error", "viva_error"))
+        await ai_credits.record_pending_topup(ctx.tenant_id, pkg, res["order_code"])
+        return {"ok": True, "provider": "viva", "checkout_url": res["checkout_url"], "questions": int(pkg["questions"])}
+    if not await revolut_service.is_configured():
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "no_payment_provider")
+    res = await revolut_service.create_topup_order(
+        amount=int(pkg["price_cents"]), currency="EUR", email=email, name=name,
+        tenant_id=ctx.tenant_id, description=desc)
+    if not res.get("ok"):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, res.get("error", "revolut_error"))
+    await ai_credits.record_pending_topup(ctx.tenant_id, pkg, res["order_id"])
+    mode = (await revolut_service.config()).get("mode", "sandbox")
+    return {"ok": True, "provider": "revolut", "token": res["token"], "order_id": res["order_id"],
+            "mode": mode, "questions": int(pkg["questions"])}
+
+
 # ── Self-service αριθμός χρηστών (seats) — αύξηση άμεση/prorated, μείωση στην ανανέωση ─────────────
 @router.get("/seats")
 async def get_seats(ctx: TenantContext = Depends(get_current_context)):

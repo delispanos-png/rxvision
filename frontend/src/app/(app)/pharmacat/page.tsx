@@ -169,7 +169,7 @@ function PharmaCatInner() {
           <p className="text-xs text-slate-500">{t("Επιστημονικός βοηθός φαρμακοποιού (CDSS) — δεν διαγιγνώσκει, δεν αντικαθιστά ιατρό.", "Pharmacist's scientific assistant (CDSS) — not diagnosis, not a doctor replacement.")}</p>
         </div>
         {status.data?.configured && status.data?.enabled && (
-          <Tooltip label={t("Ερωτήματα του πακέτου σου (μετρούν όλα)", "Your plan's questions (all count)")}><span className="hidden shrink-0 rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-medium text-slate-500 sm:inline dark:bg-slate-800">{status.data.ai_used ?? 0}/{status.data.ai_included ?? 0} {status.data.ai_period === "month" ? t("αυτόν τον μήνα", "this month") : t("σήμερα", "today")}</span></Tooltip>
+          <Tooltip label={t("Ερωτήματα του πακέτου σου (μετρούν όλα)", "Your plan's questions (all count)")}><span className="hidden shrink-0 rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-medium text-slate-500 sm:inline dark:bg-slate-800">{status.data.ai_used ?? 0}/{status.data.ai_included ?? 0} {status.data.ai_period === "month" ? t("αυτόν τον μήνα", "this month") : status.data.ai_period === "year" ? t("φέτος", "this year") : t("σήμερα", "today")}</span></Tooltip>
         )}
         {turns.length > 0 && (
           <Tooltip label={t("Καθαρισμός συνομιλίας", "Clear conversation")}><button onClick={() => { setTurns([]); setInput(""); setMed(null); }}
@@ -219,7 +219,7 @@ function PharmaCatInner() {
               {turn.result && !turn.result.ok ? (
                 <div className={`rounded-xl px-3 py-2 text-sm ${["daily_limit", "quota_exceeded", "card_required"].includes(turn.result.error || "") ? "bg-amber-50 text-amber-800 dark:bg-amber-950/30" : "bg-rose-50 text-rose-700 dark:bg-rose-950/30"}`}>
                   {["card_required", "quota_exceeded", "daily_limit"].includes(turn.result.error || "")
-                    ? <><div className="font-semibold">✋ {t(`Εξάντλησες τα ${turn.result.limit ?? 0} ερωτήματα του πακέτου σου${status.data?.ai_period === "month" ? " αυτόν τον μήνα" : " σήμερα"}`, `You've used your plan's ${turn.result.limit ?? 0} questions${status.data?.ai_period === "month" ? " this month" : " today"}`)}.</div><div className="mt-0.5 text-xs">{t("Σύντομα θα μπορείς να αγοράσεις επιπλέον ερωτήσεις (AI credits) ή να αναβαθμίσεις πακέτο.", "You'll soon be able to buy extra questions (AI credits) or upgrade your plan.")}</div></>
+                    ? <><div className="font-semibold">✋ {t(`Εξάντλησες τα ${turn.result.limit ?? 0} ερωτήματα του πακέτου σου${status.data?.ai_period === "month" ? " αυτόν τον μήνα" : status.data?.ai_period === "year" ? " φέτος" : " σήμερα"}`, `You've used your plan's ${turn.result.limit ?? 0} questions${status.data?.ai_period === "month" ? " this month" : status.data?.ai_period === "year" ? " this year" : " today"}`)}.</div><div className="mt-0.5 text-xs">{t("Σύντομα θα μπορείς να αγοράσεις επιπλέον ερωτήσεις (AI credits) ή να αναβαθμίσεις πακέτο.", "You'll soon be able to buy extra questions (AI credits) or upgrade your plan.")}</div></>
                     : turn.result.error === "disabled" ? t("Η υπηρεσία είναι απενεργοποιημένη.", "The service is disabled.")
                     : turn.result.error === "not_configured" ? t("Μη ρυθμισμένο (λείπει το API key).", "Not configured (missing API key).")
                     : t("Σφάλμα επικοινωνίας — δοκιμάστε ξανά.", "Communication error — try again.")}
