@@ -109,16 +109,12 @@ async def measured(db=None, days: int = 30) -> dict:
 
 
 async def pricing_suggestion(db=None, days: int = 30) -> dict:
-    """Measured cost/question + cost-plus suggested customer price/question and per-25 block."""
+    """Measured cost/question + cost-plus suggested customer price/question (για την τιμολόγηση credits)."""
     db = db if db is not None else shared_db()
     cfg = await config(db)
     m = await measured(db, days)
     cpq = m.get("cost_cents_per_q")
     factor = 1 + cfg["margin_pct"] / 100
     suggested_q = round(cpq * factor, 4) if cpq is not None else None
-    from app.services.ai_quota import AI_BLOCK
     return {"margin_pct": cfg["margin_pct"], "models": cfg["models"], "measured": m,
-            "block": AI_BLOCK,
-            "suggested_price_per_q_cents": suggested_q,
-            # τιμή μπλοκ αν χρεωνόταν ΟΛΗ η ημερήσια χωρητικότητα του μπλοκ (25/μέρα × 30) cost-plus
-            "suggested_block_full_month_cents": round(suggested_q * AI_BLOCK * 30) if suggested_q else None}
+            "suggested_price_per_q_cents": suggested_q}

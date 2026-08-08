@@ -33,7 +33,7 @@ type Extras = {
   billing_cycle: string;
   currency: string;
   addons_total_cents: number;
-  ai: { limit: number; used_today: number; default: number; max: number; block: number; price_per_block_cents: number; surcharge_cents: number };
+  ai: { included: number; period: string; used: number; remaining: number };
   retention: { months: number; default: number; max: number; price_per_year_cents: number; surcharge_cents: number };
 };
 
@@ -45,8 +45,6 @@ type Seats = {
 };
 type SeatPreview = { new_seats: number; current_seats: number; delta: number; direction: string;
   immediate_charge_gross_cents: number; recurring_delta_net_cents: number; remaining_days?: number };
-
-const AI_LIMIT_OPTS = [50, 75, 100, 150, 200, 300, 500, 1000];
 const RET_OPTS = [36, 48, 60, 72, 84, 96, 120];
 
 export default function BillingSettingsPage() {
@@ -159,13 +157,6 @@ export default function BillingSettingsPage() {
     finally { setCardBusy(false); }
   }
 
-  const setAiLimit = useMutation({
-    mutationFn: (limit: number) => api<Extras>("/subscription/extras/ai-limit", { method: "PUT", body: JSON.stringify({ daily_limit: limit }) }),
-    onSuccess: () => { setNotice(t("Το όριο AI ενημερώθηκε ✓", "AI limit updated ✓")); refresh(); },
-    onError: (e) => setNotice((e as ApiError)?.status === 402
-      ? t("Πρόσθεσε κάρτα για να ανεβάσεις το όριο AI πάνω από το βασικό.", "Add a card to raise the AI limit above the base.")
-      : t("Δεν ήταν δυνατή η αλλαγή του ορίου.", "Could not change the limit.")),
-  });
   const setRetention = useMutation({
     mutationFn: (months: number) => api<Extras>("/subscription/extras/retention", { method: "PUT", body: JSON.stringify({ months }) }),
     onSuccess: () => { setNotice(t("Το παράθυρο διατήρησης ενημερώθηκε ✓", "Retention window updated ✓")); refresh(); },
@@ -177,8 +168,7 @@ export default function BillingSettingsPage() {
   const KIND_ICON: Record<string, string> = { subscription: "🔄", upgrade: "⬆️", addon: "✨", topup: "💬" };
   const STCLS: Record<string, string> = { paid: "bg-emerald-100 text-emerald-700", pending: "bg-amber-100 text-amber-700", failed: "bg-rose-100 text-rose-700" };
 
-  // helpers τιμής (τοπικά, από τις τιμές του server) για ζωντανή προεπισκόπηση στα dropdowns
-  const aiSurcharge = (v: number) => x ? Math.max(0, Math.ceil((v - x.ai.default) / x.ai.block)) * x.ai.price_per_block_cents : 0;
+  // helper τιμής (τοπικά) για ζωντανή προεπισκόπηση στο dropdown διατήρησης
   const retSurcharge = (m: number) => x ? Math.max(0, Math.ceil((m - x.retention.default) / 12)) * x.retention.price_per_year_cents : 0;
   const perLabel = x?.billing_cycle === "yearly" ? t("έτος", "yr") : t("μήνα", "mo");
 
@@ -221,24 +211,15 @@ export default function BillingSettingsPage() {
 
         {extras.isLoading ? <div className="py-4 text-sm text-slate-400">{t("Φόρτωση…", "Loading…")}</div> : x && (
           <div className="grid gap-4 sm:grid-cols-2">
-            {/* AI ερωτήματα/μέρα */}
+            {/* AI ερωτήματα — περιλαμβάνονται στο πακέτο (read-only) */}
             <div className="rounded-xl border border-slate-200 p-4">
-              <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-slate-700"><Sparkles className="h-4 w-4 text-violet-500" /> {t("AI ερωτήματα ανά ημέρα", "AI questions per day")}</div>
-              <div className="mb-1 text-xs text-slate-500">{t("Σήμερα", "Today")}: <b>{x.ai.used_today}</b> / {x.ai.limit}{x.ai.surcharge_cents > 0 && <span className="ml-1 text-violet-600">· +{fmtEur(x.ai.surcharge_cents)}/{perLabel}</span>}</div>
-              <div className="flex items-center gap-2">
-                <select value={x.ai.limit} disabled={setAiLimit.isPending}
-                  onChange={(e) => setAiLimit.mutate(+e.target.value)}
-                  className="w-full rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-sm">
-                  {AI_LIMIT_OPTS.map((v) => {
-                    const locked = v > x.ai.default && !x.card_on_file;
-                    return <option key={v} value={v} disabled={locked}>
-                      {v}/{t("μέρα", "day")}{v === x.ai.default ? ` · ${t("βασικό", "base")}` : ` · +${fmtEur(aiSurcharge(v))}/${perLabel}`}{locked ? " 🔒" : ""}
-                    </option>;
-                  })}
-                </select>
-                {setAiLimit.isPending && <Loader2 className="h-4 w-4 animate-spin text-slate-400" />}
+              <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-slate-700"><Sparkles className="h-4 w-4 text-violet-500" /> {t("AI ερωτήματα", "AI questions")}</div>
+              <div className="text-xs text-slate-500">{t("Το πλάνο σου περιλαμβάνει", "Your plan includes")} <b>{x.ai.included}</b> {x.ai.period === "month" ? t("ερωτήσεις/μήνα", "questions/month") : t("ερωτήσεις/μέρα", "questions/day")}.</div>
+              <div className="mt-1 text-xs text-slate-500">{t("Κατανάλωσες", "Used")}: <b>{x.ai.used}</b> / {x.ai.included} · {t("απομένουν", "remaining")} <b className="text-emerald-700">{x.ai.remaining}</b></div>
+              <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
+                <div className="h-full rounded-full bg-emerald-500" style={{ width: `${x.ai.included > 0 ? Math.min(100, Math.round((x.ai.used / x.ai.included) * 100)) : 0}%` }} />
               </div>
-              {!x.card_on_file && <p className="mt-2 flex items-center gap-1 text-[11px] text-amber-700"><Lock className="h-3 w-3" /> {t("Πρόσθεσε κάρτα για πάνω από", "Add a card for more than")} {x.ai.default}/{t("μέρα", "day")}.</p>}
+              <p className="mt-2 text-[11px] text-slate-400">{t("Χρειάζεσαι περισσότερα; Σύντομα θα μπορείς να αγοράσεις επιπλέον ερωτήσεις (AI credits).", "Need more? You'll soon be able to buy extra questions (AI credits).")}</p>
             </div>
 
             {/* Διατήρηση δεδομένων */}

@@ -296,6 +296,6 @@ class PharmaCatRepository(BaseRepository):
     async def status(self) -> dict:
         s = await pharmacat_service.status()
         from app.services import ai_quota
-        s["today_used"] = await ai_quota.usage_today(self._db, self.tenant_id)
-        s["daily_limit"] = await ai_quota.tenant_daily_limit(self._db, self.tenant_id)
+        st = await ai_quota.status_for(self._db, self.tenant_id)
+        s["ai_used"], s["ai_included"], s["ai_period"] = st["used"], st["included"], st["period"]
         return s

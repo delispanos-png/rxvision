@@ -106,7 +106,6 @@ class TenantEditIn(BaseModel):
     name: str | None = None
     demo: bool | None = None        # «πελάτης παρουσίασης» → απόκρυψη PII (ισχύει στο επόμενο login)
     retention_months: int | None = None   # παράθυρο διατήρησης δεδομένων (default 36· >36 = πρόσθετη υπηρεσία)
-    ai_daily_limit: int | None = None      # ημερήσιο όριο AI ερωτημάτων (default 50· >50 = πρόσθετη υπηρεσία)
     afm: str | None = None                 # συμπλήρωση/διόρθωση ΑΦΜ (billing_profile) + auto-enrich ΑΑΔΕ
     # ── στοιχεία εταιρείας (τιμολόγηση) + επικοινωνία ──
     # Γράφονται ΚΑΙ σε company.* ΚΑΙ σε billing_profile.* ώστε κάρτα/comms/auth (company) και
@@ -1597,15 +1596,11 @@ async def edit_tenant(tenant_id: str, body: TenantEditIn,
     if "retention_months" in patch:      # ασφαλή όρια (36–120)
         from app.services.data_retention import clamp_months
         patch["retention_months"] = clamp_months(patch["retention_months"])
-    if "ai_daily_limit" in patch:        # ασφαλή όρια (βασικό–2000)
-        from app.services import ai_quota
-        base = await ai_quota.base_daily_free(db)
-        patch["ai_daily_limit"] = ai_quota.clamp_limit(patch["ai_daily_limit"], base)
     patch["updated_at"] = datetime.now(tz=timezone.utc)
     res = await db["tenants"].update_one({"_id": tenant_id}, {"$set": patch})
     if not res.matched_count:
         raise HTTPException(http_status.HTTP_404_NOT_FOUND, "not_found")
-    if "retention_months" in patch or "ai_daily_limit" in patch:   # κλιμακωτή επιβάρυνση → recurring
+    if "retention_months" in patch:   # κλιμακωτή επιβάρυνση διατήρησης → recurring
         from app.services import addon_service
         await addon_service._recompute_total(tenant_id)
     return {"id": tenant_id, "updated": True}
@@ -2511,66 +2506,55 @@ async def set_retention_pricing(body: RetentionPriceIn, _: PlatformContext = Dep
 
 @router.get("/ai-limits")
 async def ai_limits(_: PlatformContext = Depends(get_platform_admin)):
-    """Ημερήσια όρια AI ερωτημάτων ανά φαρμακείο + τρέχουσα χρήση + επιβάρυνση (για το κύκλωμα AI)."""
-    from app.services import ai_quota, billing_service
+    """Όρια AI ΣΤΗ ΓΛΩΣΣΑ ΤΩΝ ΠΑΚΕΤΩΝ: ανά φαρμακείο → πακέτο, δικαιούμενα (included/period) & κατανάλωση
+    τρέχουσας περιόδου. Το επιπλέον αγοράζεται ως AI credits (Phase C) — καμία μπλοκ-επιβάρυνση."""
+    from app.services import ai_quota, ai_cost, billing_service
     db = shared_db()
     rows = []
     async for t in db["tenants"].find({}, {"_id": 1, "name": 1}):
         tid = t["_id"]
+        st = await ai_quota.status_for(db, tid)
         bd = await ai_quota.usage_breakdown_today(db, tid)
+        sub = await db["subscriptions"].find_one({"tenant_id": tid}, {"plan": 1, "plan_name": 1})
         rows.append({
             "tenant_id": str(tid), "name": t.get("name"),
-            "ai_daily_limit": await ai_quota.tenant_daily_limit(db, tid),
+            "plan": (sub or {}).get("plan"), "plan_name": (sub or {}).get("plan_name"),
+            "included": st["included"], "period": st["period"],
+            "used": st["used"], "remaining": st["remaining"],
             "ai_used_today": bd["total"],
             "ai_used_ai": bd["ai"],        # πραγματικές AI κλήσεις (μόνο για εμάς)
             "ai_used_local": bd["local"],  # σερβιρίστηκαν από την τοπική βάση (μόνο για εμάς)
-            "ai_surcharge_cents": await ai_quota.ai_surcharge_monthly(db, tid),
             "card_on_file": await billing_service.card_on_file(tid),
         })
-    rows.sort(key=lambda r: (-r["ai_surcharge_cents"], (r["name"] or "").lower()))
-    from app.services import ai_cost
-    return {"tenants": rows, "price_per_block_cents": await ai_quota.price_per_block(db),
-            "block": ai_quota.AI_BLOCK, "default": await ai_quota.base_daily_free(db),
-            "max": ai_quota.AI_MAX_DAILY, "cost": await ai_cost.pricing_suggestion(db)}
+    rows.sort(key=lambda r: (-(r["used"] or 0), (r["name"] or "").lower()))
+    return {"tenants": rows, "default": await ai_quota.base_daily_free(db),
+            "cost": await ai_cost.pricing_suggestion(db)}
 
 
 class AiPriceIn(BaseModel):
-    price_per_block_cents: int | None = Field(None, ge=0, le=100000)
-    base_daily_free: int | None = Field(None, ge=0, le=2000)
-    margin_pct: int | None = Field(None, ge=0, le=1000)               # cost-plus περιθώριο
+    base_daily_free: int | None = Field(None, ge=0, le=20000)         # καθολικό fallback (πακέτα χωρίς included)
+    margin_pct: int | None = Field(None, ge=0, le=1000)               # cost-plus περιθώριο (τιμολόγηση credits)
     models: dict[str, dict[str, int]] | None = None                   # per-model τιμές (cents/1M tokens)
 
 
 @router.put("/ai-pricing")
 async def set_ai_pricing(body: AiPriceIn, _: PlatformContext = Depends(get_platform_admin)):
-    """Ρυθμίζει: (α) βασικό δωρεάν όριο + τιμή μπλοκ (platform_settings.ai_quota)· (β) cost-plus περιθώριο
-    + τιμές μοντέλων (platform_settings.ai_pricing). Ξαναϋπολογίζει τις συνδρομές όταν αλλάζει κατώφλι."""
+    """Ρυθμίζει: (α) καθολικό δωρεάν fallback (platform_settings.ai_quota.base_daily_free)· (β) cost-plus
+    περιθώριο + τιμές μοντέλων (platform_settings.ai_pricing). Το AI ΔΕΝ επιβαρύνει τη συνδρομή."""
     db = shared_db()
     now = datetime.now(tz=timezone.utc)
-    quota_upd: dict = {}
-    if body.price_per_block_cents is not None:
-        quota_upd["price_per_block_cents"] = body.price_per_block_cents
     if body.base_daily_free is not None:
-        quota_upd["base_daily_free"] = body.base_daily_free
-    if quota_upd:
         await db["platform_settings"].update_one(
-            {"_id": "ai_quota"}, {"$set": {**quota_upd, "updated_at": now}}, upsert=True)
+            {"_id": "ai_quota"}, {"$set": {"base_daily_free": body.base_daily_free, "updated_at": now}}, upsert=True)
     pricing_upd: dict = {}
     if body.margin_pct is not None:
         pricing_upd["margin_pct"] = body.margin_pct
     if body.models is not None:
-        # sanitise: keep only known keys, non-negative ints
-        clean = {m: {k: max(0, int(v)) for k, v in p.items() if k in ("in", "out", "cin")}
-                 for m, p in body.models.items()}
-        pricing_upd["models"] = clean
+        pricing_upd["models"] = {m: {k: max(0, int(v)) for k, v in p.items() if k in ("in", "out", "cin")}
+                                 for m, p in body.models.items()}
     if pricing_upd:
         await db["platform_settings"].update_one(
             {"_id": "ai_pricing"}, {"$set": {**pricing_upd, "updated_at": now}}, upsert=True)
-    # Αλλαγή τιμής μπλοκ ή βάσης → recompute συνδρομών (το κατώφλι/τιμή μετακινήθηκε).
-    if quota_upd:
-        from app.services import addon_service
-        async for t in db["tenants"].find({"ai_daily_limit": {"$ne": None}}, {"_id": 1}):
-            await addon_service._recompute_total(t["_id"])
     return {"ok": True}
 
 

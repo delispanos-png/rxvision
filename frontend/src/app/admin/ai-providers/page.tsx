@@ -9,26 +9,21 @@ type Integrations = {
   anthropic?: { api_key_set: boolean; enabled: boolean; model: string; admin_model: string };
   drugbank?: { api_key_set: boolean; enabled: boolean; region: string };
 };
-type AiTenant = { tenant_id: string; name?: string | null; ai_daily_limit: number; ai_used_today: number; ai_used_ai: number; ai_used_local: number; ai_surcharge_cents: number; card_on_file: boolean };
+// Στη γλώσσα των ΠΑΚΕΤΩΝ: κάθε φαρμακείο δικαιούται `included` ερωτήσεις (ανά period) από το πακέτο του.
+type AiTenant = { tenant_id: string; name?: string | null; plan?: string | null; plan_name?: string | null; included: number; period: string; used: number; remaining: number; ai_used_today: number; ai_used_ai: number; ai_used_local: number; card_on_file: boolean };
 type ModelPrice = { in: number; out: number; cin: number };
 type AiCost = {
-  margin_pct: number; models: Record<string, ModelPrice>; block: number;
+  margin_pct: number; models: Record<string, ModelPrice>;
   measured: { days: number; ai_questions: number; cost_cents_total: number; cost_cents_per_q: number | null };
-  suggested_price_per_q_cents: number | null; suggested_block_full_month_cents: number | null;
+  suggested_price_per_q_cents: number | null;
 };
-type AiLimits = { tenants: AiTenant[]; price_per_block_cents: number; block: number; default: number; max: number; cost?: AiCost };
+type AiLimits = { tenants: AiTenant[]; default: number; cost?: AiCost };
 
 const inp = "w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none";
 const Badge = ({ ok }: { ok?: boolean }) => <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${ok ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-500"}`}>{ok ? "Αποθηκευμένο" : "Μη ρυθμισμένο"}</span>;
 
-// Επιλογές ορίου = βάση + πολλαπλάσια μπλοκ (κλιμακωτά). Αναπροσαρμόζονται στο ρυθμιζόμενο δωρεάν βασικό.
-const limitOpts = (base: number, block: number) => [0, 1, 2, 4, 6, 10, 18, 38].map((k) => base + k * block);
 const eur = (c: number) => (c / 100).toLocaleString("el-GR", { minimumFractionDigits: 2 }) + " €";
-// επιβάρυνση/μήνα = ceil((limit-base)/block) × price/μπλοκ
-const limitLabel = (v: number, base: number, block: number, ppb: number) => {
-  const extra = Math.max(0, Math.ceil((v - base) / block));
-  return `${v}/μέρα${v === base ? " · βασικό" : ` · +${eur(extra * ppb)}/μ`}`;
-};
+const periodLabel = (p: string) => (p === "month" ? "/μήνα" : "/μέρα");
 
 export default function AiProvidersPage() {
   const qc = useQueryClient();
@@ -62,20 +57,9 @@ export default function AiProvidersPage() {
     onSuccess: () => { setAntKey(""); setDbKey(""); qc.invalidateQueries({ queryKey: ["integrations"] }); },
   });
 
-  // Όρια AI ερωτημάτων ανά φαρμακείο (κεντρικό κλειδί, ημερήσιο όριο· >50 = πρόσθετη υπηρεσία)
+  // Όρια AI στη γλώσσα των ΠΑΚΕΤΩΝ: ανά φαρμακείο → included (δικαιούμενα) & κατανάλωση περιόδου.
   const limits = useQuery({ queryKey: ["ai-limits"], queryFn: () => adminApi<AiLimits>("/admin/ai-limits"), retry: false });
-  const setLimit = useMutation({
-    mutationFn: (v: { id: string; limit: number }) => adminApi(`/admin/tenants/${v.id}`, { method: "PATCH", body: JSON.stringify({ ai_daily_limit: v.limit }) }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["ai-limits"] }),
-  });
-  const ppb = limits.data?.price_per_block_cents ?? 500;
-  const block = limits.data?.block ?? 25;
   const base = limits.data?.default ?? 50;
-  const [ppbEur, setPpbEur] = useState<string>("");
-  const savePpb = useMutation({
-    mutationFn: () => adminApi("/admin/ai-pricing", { method: "PUT", body: JSON.stringify({ price_per_block_cents: Math.round(parseFloat(ppbEur || "0") * 100) }) }),
-    onSuccess: () => { setPpbEur(""); qc.invalidateQueries({ queryKey: ["ai-limits"] }); },
-  });
   const [baseFree, setBaseFree] = useState<string>("");
   const saveBase = useMutation({
     mutationFn: () => adminApi("/admin/ai-pricing", { method: "PUT", body: JSON.stringify({ base_daily_free: Math.max(0, Math.round(parseFloat(baseFree || "0"))) }) }),
@@ -126,38 +110,25 @@ export default function AiProvidersPage() {
             Ενεργή υπηρεσία {!antEnabled && <span className="text-rose-500">(απενεργοποιημένη για όλους)</span>}
           </label>
         </div>
-        <p className="mt-3 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-500">Τροφοδοτεί το <b>PharmaCat Clinical Assistant</b> (κοινό κεντρικό κλειδί). <b>Όλα</b> τα ερωτήματα μετρούν στο όριο — και όσα σερβίρονται από την τοπική βάση (ο πελάτης βλέπει μόνο το σύνολο· εμείς βλέπουμε AI vs τοπική στον πίνακα παρακάτω). Βασικό όριο <b>{base} ερωτ./φαρμακείο/ημέρα</b> — ρυθμίζεται & χρεώνεται ανά φαρμακείο παρακάτω ↓</p>
+        <p className="mt-3 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-500">Τροφοδοτεί το <b>PharmaCat Clinical Assistant</b> (κοινό κεντρικό κλειδί). <b>Όλα</b> τα ερωτήματα μετρούν (και όσα σερβίρονται από την τοπική βάση· εμείς βλέπουμε AI vs τοπική στον πίνακα). Τα δικαιούμενα ερωτήματα <b>ορίζονται ανά ΠΑΚΕΤΟ</b> (Ρυθμίσεις → Πακέτα) — εδώ βλέπεις τι δικαιούται & τι κατανάλωσε κάθε φαρμακείο ↓</p>
       </div>
 
       {/* Όρια AI ερωτημάτων ανά φαρμακείο */}
       <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
         <h3 className="mb-1 flex items-center gap-2 text-sm font-semibold text-slate-700"><Gauge className="h-4 w-4 text-violet-600" /> Όρια AI ερωτημάτων ανά φαρμακείο</h3>
-        <p className="mb-3 text-xs text-slate-500">Κοινό κεντρικό κλειδί για όλους. Κάθε φαρμακείο έχει ημερήσιο όριο ερωτημάτων. Βασικό: <b>{limits.data?.default ?? 50}/μέρα</b> (χωρίς χρέωση). Μεγαλύτερο = πρόσθετη υπηρεσία (μπαίνει αυτόματα στη συνδρομή).</p>
+        <p className="mb-3 text-xs text-slate-500">Τα δικαιούμενα ερωτήματα ορίζονται <b>ανά πακέτο</b> (Πακέτα → «🤖 Δωρεάν AI ερωτήσεις»). Πάνω από αυτά → αγορά επιπλέον (AI credits). Το παρακάτω <b>καθολικό όριο</b> ισχύει μόνο ως fallback για πακέτα χωρίς ρυθμισμένο included.</p>
 
-        {/* Τιμολόγηση: δωρεάν βασικό όριο + τιμή ανά μπλοκ των {block} επιπλέον ερωτημάτων */}
-        <div className="mb-4 grid gap-2 rounded-xl border border-violet-200 bg-violet-50/60 p-3 text-sm sm:grid-cols-2">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="font-semibold text-violet-900">🎁 Δωρεάν βασικό όριο (χωρίς χρέωση):</span>
-            <div className="flex items-center gap-1">
-              <input type="number" step="5" min="0" value={baseFree} onChange={(e) => setBaseFree(e.target.value)}
-                placeholder={base.toString()} className="w-20 rounded-lg border border-slate-300 px-2 py-1 text-sm" />
-              <span className="text-slate-500">ερωτ./μέρα</span>
-            </div>
-            <button onClick={() => saveBase.mutate()} disabled={!baseFree || saveBase.isPending}
-              className="rounded-lg bg-violet-600 px-3 py-1 text-xs font-semibold text-white hover:bg-violet-700 disabled:opacity-50">Αποθήκευση</button>
-            <span className="w-full text-[11px] text-violet-700">Τώρα: <b>{base}/μέρα</b> δωρεάν. Πάνω από αυτό χρεώνεται ανά μπλοκ.</span>
+        {/* Καθολικό fallback (για πακέτα χωρίς included) */}
+        <div className="mb-4 flex flex-wrap items-center gap-2 rounded-xl border border-violet-200 bg-violet-50/60 p-3 text-sm">
+          <span className="font-semibold text-violet-900">🎁 Καθολικό δωρεάν fallback:</span>
+          <div className="flex items-center gap-1">
+            <input type="number" step="5" min="0" value={baseFree} onChange={(e) => setBaseFree(e.target.value)}
+              placeholder={base.toString()} className="w-20 rounded-lg border border-slate-300 px-2 py-1 text-sm" />
+            <span className="text-slate-500">ερωτ./μέρα</span>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="font-semibold text-violet-900">💶 Τιμή ανά μπλοκ (+{block} ερωτ./μέρα):</span>
-            <div className="flex items-center gap-1">
-              <input type="number" step="0.5" min="0" value={ppbEur} onChange={(e) => setPpbEur(e.target.value)}
-                placeholder={(ppb / 100).toString()} className="w-20 rounded-lg border border-slate-300 px-2 py-1 text-sm" />
-              <span className="text-slate-500">€/μήνα</span>
-            </div>
-            <button onClick={() => savePpb.mutate()} disabled={!ppbEur || savePpb.isPending}
-              className="rounded-lg bg-violet-600 px-3 py-1 text-xs font-semibold text-white hover:bg-violet-700 disabled:opacity-50">Αποθήκευση</button>
-            <span className="w-full text-[11px] text-violet-700">Τώρα: <b>{eur(ppb)}/μήνα</b> ανά μπλοκ των {block} πάνω από τα {base}/μέρα.</span>
-          </div>
+          <button onClick={() => saveBase.mutate()} disabled={!baseFree || saveBase.isPending}
+            className="rounded-lg bg-violet-600 px-3 py-1 text-xs font-semibold text-white hover:bg-violet-700 disabled:opacity-50">Αποθήκευση</button>
+          <span className="w-full text-[11px] text-violet-700">Τώρα: <b>{base}/μέρα</b> — ισχύει μόνο για πακέτα που ΔΕΝ έχουν ορίσει δικά τους included.</span>
         </div>
 
         {/* Cost-plus: πραγματικό κόστος/ερώτηση + περιθώριο → προτεινόμενη τιμή */}
@@ -210,47 +181,41 @@ export default function AiProvidersPage() {
             <button onClick={() => saveCost.mutate()} disabled={saveCost.isPending}
               className="rounded-lg bg-emerald-600 px-3 py-1 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50">Αποθήκευση περιθωρίου & τιμών</button>
             {suggQ != null && (
-              <span className="text-[11px] text-slate-500">💡 Ενδεικτική τιμή μπλοκ (αν χρεωνόταν όλη η χωρητικότητα {block}/μέρα×30): <b>{eur(cost?.suggested_block_full_month_cents ?? 0)}</b>. Οι περισσότεροι δεν την εξαντλούν — άρα η ασφαλής επιλογή είναι <b>χρέωση ανά ερώτηση</b> (κατανάλωση), όχι πλαφόν.</span>
+              <span className="text-[11px] text-slate-500">💡 Αυτή η τιμή/ερώτηση θα χρησιμοποιηθεί για την τιμολόγηση των <b>AI credits</b> (αγορά επιπλέον πάνω από το included του πακέτου).</span>
             )}
           </div>
         </div>
 
         {limits.isLoading ? <div className="py-6 text-center text-sm text-slate-400">Φόρτωση…</div> : (
           <div className="overflow-x-auto rounded-xl border border-slate-200">
-            <table className="w-full min-w-[560px] text-sm">
+            <table className="w-full min-w-[620px] text-sm">
               <thead className="bg-slate-50 text-left text-xs text-slate-500">
                 <tr>
                   <th className="px-3 py-2">Φαρμακείο</th>
-                  <th className="px-3 py-2">Ημερήσιο όριο</th>
-                  <th className="px-3 py-2 text-right">Σήμερα</th>
-                  <th className="px-3 py-2 text-right">Χρέωση/μήνα</th>
+                  <th className="px-3 py-2">Πακέτο</th>
+                  <th className="px-3 py-2 text-right">Δικαιούται</th>
+                  <th className="px-3 py-2 text-right">Κατανάλωσε (περίοδος)</th>
                 </tr>
               </thead>
               <tbody>
-                {(limits.data?.tenants ?? []).map((t) => (
+                {(limits.data?.tenants ?? []).map((t) => {
+                  const over = t.used >= t.included && t.included > 0;
+                  const pct = t.included > 0 ? Math.min(100, Math.round((t.used / t.included) * 100)) : 0;
+                  return (
                   <tr key={t.tenant_id} className="border-t border-slate-100">
-                    <td className="px-3 py-2 font-medium text-slate-800">{t.name || t.tenant_id}
-                      {!t.card_on_file && <span className="ml-1.5 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700" title={`Χωρίς αποθηκευμένη κάρτα — το πραγματικό όριο καπάρεται στο βασικό (${base}) μέχρι να μπει κάρτα.`}>🔒 χωρίς κάρτα</span>}
-                    </td>
-                    <td className="px-3 py-2">
-                      <select value={t.ai_daily_limit} onChange={(e) => setLimit.mutate({ id: t.tenant_id, limit: +e.target.value })}
-                        className="rounded-lg border border-slate-300 bg-white px-2 py-1 text-xs">
-                        {limitOpts(base, block).map((v) => <option key={v} value={v}>{limitLabel(v, base, block, ppb)}</option>)}
-                      </select>
-                      {!t.card_on_file && t.ai_daily_limit > base && <div className="mt-0.5 text-[10px] text-amber-600">ενεργό: {base} (χωρίς κάρτα)</div>}
-                    </td>
+                    <td className="px-3 py-2 font-medium text-slate-800">{t.name || t.tenant_id}</td>
+                    <td className="px-3 py-2 text-xs text-slate-600">{t.plan_name || t.plan || <span className="text-slate-300">—</span>}</td>
+                    <td className="px-3 py-2 text-right tabular-nums font-semibold text-slate-700">{t.included}<span className="text-[11px] font-normal text-slate-400">{periodLabel(t.period)}</span></td>
                     <td className="px-3 py-2 text-right tabular-nums text-slate-600">
-                      <span className={t.ai_used_today >= t.ai_daily_limit ? "font-semibold text-rose-600" : ""}>{t.ai_used_today}</span>
-                      <span className="text-slate-300"> / {t.ai_daily_limit}</span>
-                      <div className="text-[10px] text-slate-400" title="Ανάλυση μόνο για εμάς — ο πελάτης βλέπει μόνο το σύνολο.">AI {t.ai_used_ai} · τοπική {t.ai_used_local}</div>
-                    </td>
-                    <td className="px-3 py-2 text-right tabular-nums">
-                      {t.ai_surcharge_cents > 0
-                        ? <span className="font-semibold text-violet-700">+{eur(t.ai_surcharge_cents)}</span>
-                        : <span className="text-xs text-slate-300">—</span>}
+                      <span className={over ? "font-semibold text-rose-600" : ""}>{t.used}</span>
+                      <span className="text-slate-300"> / {t.included}</span>
+                      <div className="mt-1 ml-auto h-1.5 w-24 overflow-hidden rounded-full bg-slate-100">
+                        <div className={`h-full rounded-full ${over ? "bg-rose-500" : pct > 80 ? "bg-amber-500" : "bg-emerald-500"}`} style={{ width: `${pct}%` }} />
+                      </div>
+                      <div className="mt-0.5 text-[10px] text-slate-400" title="Ανάλυση μόνο για εμάς — ο πελάτης βλέπει μόνο το σύνολο.">σήμερα: AI {t.ai_used_ai} · τοπική {t.ai_used_local}</div>
                     </td>
                   </tr>
-                ))}
+                );})}
                 {(limits.data?.tenants ?? []).length === 0 && <tr><td colSpan={4} className="px-3 py-6 text-center text-sm text-slate-400">Δεν υπάρχουν φαρμακεία.</td></tr>}
               </tbody>
             </table>

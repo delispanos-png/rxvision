@@ -29,7 +29,6 @@ async def get_extras(tenant_id: str) -> dict:
     """Πλήρης εικόνα για τη σελίδα «Χρέωση → Extras» του φαρμακοποιού."""
     db = shared_db()
     has_card = await billing_service.card_on_file(tenant_id)
-    ai_limit = await ai_quota.tenant_daily_limit(db, tenant_id)
     months = await dr.tenant_retention_months(db, tenant_id)
     sub = await db["subscriptions"].find_one(
         {"tenant_id": tenant_id}, {"billing_cycle": 1, "currency": 1, "addons_total": 1}) or {}
@@ -38,15 +37,9 @@ async def get_extras(tenant_id: str) -> dict:
         "billing_cycle": sub.get("billing_cycle", "monthly"),
         "currency": sub.get("currency", "EUR"),
         "addons_total_cents": int(sub.get("addons_total", 0) or 0),
-        "ai": {
-            "limit": ai_limit,
-            "used_today": await ai_quota.usage_today(db, tenant_id),
-            "default": ai_quota.AI_DEFAULT_DAILY,
-            "max": ai_quota.AI_MAX_DAILY,
-            "block": ai_quota.AI_BLOCK,
-            "price_per_block_cents": await ai_quota.price_per_block(db),
-            "surcharge_cents": await ai_quota.ai_surcharge_monthly(db, tenant_id),
-        },
+        # AI: read-only εικόνα στη γλώσσα του ΠΑΚΕΤΟΥ (δικαιούμενα included + κατανάλωση περιόδου).
+        # Το «ανέβασμα ορίου» καταργήθηκε — το επιπλέον θα αγοράζεται ως AI credits (Phase C).
+        "ai": await ai_quota.status_for(db, tenant_id),
         "retention": {
             "months": months,
             "default": dr.DEFAULT_RETENTION_MONTHS,
@@ -55,18 +48,6 @@ async def get_extras(tenant_id: str) -> dict:
             "surcharge_cents": await dr.retention_surcharge_monthly(db, tenant_id),
         },
     }
-
-
-async def set_ai_limit(tenant_id: str, limit: int) -> dict:
-    """Ο φαρμακοποιός αλλάζει το ημερήσιο AI όριό του. >βασικό ⇒ απαιτείται κάρτα."""
-    clamped = ai_quota.clamp_limit(limit)
-    if clamped > ai_quota.AI_DEFAULT_DAILY and not await billing_service.card_on_file(tenant_id):
-        raise CardRequired("ai_limit")
-    await shared_db()["tenants"].update_one(
-        {"_id": tenant_id}, {"$set": {"ai_daily_limit": clamped, "updated_at": _now()}})
-    from app.services import addon_service
-    await addon_service._recompute_total(tenant_id)
-    return await get_extras(tenant_id)
 
 
 async def set_retention(tenant_id: str, months: int) -> dict:

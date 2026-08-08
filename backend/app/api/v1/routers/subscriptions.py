@@ -81,22 +81,8 @@ async def get_extras(ctx: TenantContext = Depends(get_current_context)):
     return await extras_service.get_extras(ctx.tenant_id)
 
 
-class AiLimitIn(BaseModel):
-    daily_limit: int
-
-
 class RetentionIn(BaseModel):
     months: int
-
-
-@router.put("/extras/ai-limit")
-async def set_ai_limit(body: AiLimitIn, ctx: TenantContext = Depends(require("billing:manage"))):
-    """Ο φαρμακοποιός ανεβάζει το ημερήσιο AI όριό του (>50 ⇒ απαιτείται κάρτα)."""
-    from app.services import extras_service
-    try:
-        return await extras_service.set_ai_limit(ctx.tenant_id, body.daily_limit)
-    except extras_service.CardRequired:
-        raise HTTPException(status.HTTP_402_PAYMENT_REQUIRED, "card_required")
 
 
 @router.put("/extras/retention")
