@@ -1526,15 +1526,21 @@ async def admin_leads(status: str | None = None, _: PlatformContext = Depends(ge
             "counts": await trial_leads.counts(), "config": await trial_leads.config()}
 
 
-class LeadStatusIn(BaseModel):
-    status: str
+class LeadPatchIn(BaseModel):
+    status: str | None = None
+    trial_allowed: bool | None = None   # True = ο admin επιτρέπει trial ξανά σε αυτό το ΑΦΜ
 
 
 @router.patch("/leads/{lead_id}")
-async def admin_lead_status(lead_id: str, body: LeadStatusIn,
-                            _: PlatformContext = Depends(get_platform_admin)):
+async def admin_lead_patch(lead_id: str, body: LeadPatchIn,
+                           _: PlatformContext = Depends(get_platform_admin)):
     from app.services import trial_leads
-    return await trial_leads.set_status(lead_id, body.status)
+    out: dict = {"ok": True}
+    if body.status is not None:
+        out["status"] = await trial_leads.set_status(lead_id, body.status)
+    if body.trial_allowed is not None:
+        out["trial"] = await trial_leads.set_trial_allowed(lead_id, body.trial_allowed)
+    return out
 
 
 @router.delete("/leads/{lead_id}")

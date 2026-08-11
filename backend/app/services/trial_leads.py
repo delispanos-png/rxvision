@@ -77,7 +77,8 @@ async def archive_from_tenant(tenant_id: str, *, db=None, reason: str = "trial_p
 
 
 async def afm_had_trial(afm: str | None, email: str | None = None) -> bool:
-    """Έχει ΑΥΤΟ το ΑΦΜ (ή email) πάρει ΗΔΗ δοκιμαστική στο παρελθόν; (μπλοκ επανα-trial)."""
+    """Έχει ΑΥΤΟ το ΑΦΜ (ή email) πάρει ΗΔΗ δοκιμαστική & ΠΑΡΑΜΕΝΕΙ μπλοκαρισμένο; Δεν μπλοκάρει όσα
+    ο admin έχει ΞΕΜΠΛΟΚΑΡΕΙ ρητά (`trial_allowed=True`) ή έχουν γίνει πελάτες (`status=converted`)."""
     db = shared_db()
     ors = []
     if (afm or "").strip():
@@ -86,7 +87,16 @@ async def afm_had_trial(afm: str | None, email: str | None = None) -> bool:
         ors.append({"email": email.strip().lower()})
     if not ors:
         return False
-    return await db["trial_leads"].count_documents({"$or": ors, "status": {"$ne": "converted"}}) > 0
+    return await db["trial_leads"].count_documents(
+        {"$or": ors, "status": {"$ne": "converted"}, "trial_allowed": {"$ne": True}}) > 0
+
+
+async def set_trial_allowed(lead_id: str, allowed: bool) -> dict:
+    """Ξεμπλοκάρει (ή ξανα-μπλοκάρει) ένα ΑΦΜ ώστε να ΜΠΟΡΕΙ (ή όχι) να πάρει δωρεάν trial ξανά,
+    ΧΩΡΙΣ να χαθεί η εγγραφή lead."""
+    r = await shared_db()["trial_leads"].update_one(
+        {"_id": lead_id}, {"$set": {"trial_allowed": bool(allowed), "updated_at": _now()}})
+    return {"ok": bool(r.matched_count), "trial_allowed": bool(allowed)}
 
 
 # ── admin: λίστα / προσφορές / status ────────────────────────────────────────

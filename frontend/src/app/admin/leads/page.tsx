@@ -10,7 +10,7 @@ type Lead = {
   _id: string; afm?: string | null; email?: string | null; phone?: string | null;
   contact_name?: string | null; pharmacy_name?: string | null; country?: string;
   status: string; offers_sent?: number; last_offer_at?: string | null;
-  trial_expired?: string | null; purged_at?: string | null; reason?: string;
+  trial_expired?: string | null; purged_at?: string | null; reason?: string; trial_allowed?: boolean;
 };
 type LeadCfg = { purge_days: number; purge_enabled: boolean; offer_subject: string; offer_body: string };
 type LeadsRes = { items: Lead[]; counts: Record<string, number>; config: LeadCfg };
@@ -35,6 +35,7 @@ export default function AdminLeadsPage() {
   const offer = useMutation({ mutationFn: (id: string) => { setBusyId(id); return adminApi(`/admin/leads/${encodeURIComponent(id)}/offer`, { method: "POST", body: JSON.stringify({}) }); }, onSettled: () => setBusyId(null), onSuccess: inv });
   const setStatus = useMutation({ mutationFn: (v: { id: string; status: string }) => adminApi(`/admin/leads/${encodeURIComponent(v.id)}`, { method: "PATCH", body: JSON.stringify({ status: v.status }) }), onSuccess: inv });
   const del = useMutation({ mutationFn: (id: string) => adminApi(`/admin/leads/${encodeURIComponent(id)}`, { method: "DELETE" }), onSuccess: inv });
+  const allowTrial = useMutation({ mutationFn: (v: { id: string; allowed: boolean }) => adminApi(`/admin/leads/${encodeURIComponent(v.id)}`, { method: "PATCH", body: JSON.stringify({ trial_allowed: v.allowed }) }), onSuccess: inv });
   const bulk = useMutation({ mutationFn: () => adminApi(`/admin/leads/offer-bulk`, { method: "POST", body: JSON.stringify({}) }), onSuccess: inv });
 
   // config + manual purge
@@ -104,11 +105,11 @@ export default function AdminLeadsPage() {
         <table className="w-full min-w-[760px] text-sm">
           <thead className="bg-slate-50 text-left text-xs text-slate-500"><tr>
             <th className="px-3 py-2">Φαρμακείο</th><th className="px-3 py-2">ΑΦΜ</th><th className="px-3 py-2">Επικοινωνία</th>
-            <th className="px-3 py-2">Κατάσταση</th><th className="px-3 py-2 text-center">Προσφορές</th><th className="px-3 py-2">Λήξη trial</th><th className="px-3 py-2 text-right">Ενέργειες</th>
+            <th className="px-3 py-2">Κατάσταση</th><th className="px-3 py-2">Επανα-trial</th><th className="px-3 py-2 text-center">Προσφορές</th><th className="px-3 py-2">Λήξη trial</th><th className="px-3 py-2 text-right">Ενέργειες</th>
           </tr></thead>
           <tbody>
-            {q.isLoading ? <tr><td colSpan={7} className="px-3 py-6 text-center text-slate-400">Φόρτωση…</td></tr>
-              : items.length === 0 ? <tr><td colSpan={7} className="px-3 py-8 text-center text-slate-400">Κανένα lead ακόμη.</td></tr>
+            {q.isLoading ? <tr><td colSpan={8} className="px-3 py-6 text-center text-slate-400">Φόρτωση…</td></tr>
+              : items.length === 0 ? <tr><td colSpan={8} className="px-3 py-8 text-center text-slate-400">Κανένα lead ακόμη.</td></tr>
               : items.map((l) => (
                 <tr key={l._id} className="border-t border-slate-100">
                   <td className="px-3 py-2 font-medium text-slate-800">{l.pharmacy_name || l.contact_name || l._id}</td>
@@ -118,6 +119,19 @@ export default function AdminLeadsPage() {
                     <select value={l.status} onChange={(e) => setStatus.mutate({ id: l._id, status: e.target.value })} className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${STATUS[l.status]?.cls || "bg-slate-100 text-slate-500"}`}>
                       {Object.entries(STATUS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
                     </select>
+                  </td>
+                  <td className="px-3 py-2">
+                    {l.trial_allowed ? (
+                      <span className="inline-flex items-center gap-1.5">
+                        <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">✓ επιτρέπεται</span>
+                        <button onClick={() => allowTrial.mutate({ id: l._id, allowed: false })} className="text-[11px] text-slate-400 hover:text-rose-600">μπλόκαρε</button>
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1.5">
+                        <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-700">🔒 μπλοκαρισμένο</span>
+                        <button onClick={() => allowTrial.mutate({ id: l._id, allowed: true })} className="text-[11px] font-semibold text-brand-600 hover:underline">επίτρεψε ξανά</button>
+                      </span>
+                    )}
                   </td>
                   <td className="px-3 py-2 text-center tabular-nums text-slate-600">{l.offers_sent || 0}</td>
                   <td className="px-3 py-2 text-xs text-slate-500">{fmt(l.trial_expired)}</td>
