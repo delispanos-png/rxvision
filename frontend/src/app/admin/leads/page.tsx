@@ -36,6 +36,7 @@ export default function AdminLeadsPage() {
   const setStatus = useMutation({ mutationFn: (v: { id: string; status: string }) => adminApi(`/admin/leads/${encodeURIComponent(v.id)}`, { method: "PATCH", body: JSON.stringify({ status: v.status }) }), onSuccess: inv });
   const del = useMutation({ mutationFn: (id: string) => adminApi(`/admin/leads/${encodeURIComponent(id)}`, { method: "DELETE" }), onSuccess: inv });
   const allowTrial = useMutation({ mutationFn: (v: { id: string; allowed: boolean }) => adminApi(`/admin/leads/${encodeURIComponent(v.id)}`, { method: "PATCH", body: JSON.stringify({ trial_allowed: v.allowed }) }), onSuccess: inv });
+  const saveEmail = useMutation({ mutationFn: (v: { id: string; email: string }) => adminApi(`/admin/leads/${encodeURIComponent(v.id)}`, { method: "PATCH", body: JSON.stringify({ email: v.email }) }), onSuccess: inv });
   const bulk = useMutation({ mutationFn: () => adminApi(`/admin/leads/offer-bulk`, { method: "POST", body: JSON.stringify({}) }), onSuccess: inv });
 
   // config + manual purge
@@ -114,7 +115,13 @@ export default function AdminLeadsPage() {
                 <tr key={l._id} className="border-t border-slate-100">
                   <td className="px-3 py-2 font-medium text-slate-800">{l.pharmacy_name || l.contact_name || l._id}</td>
                   <td className="px-3 py-2 font-mono text-[11px] text-slate-500">{l.afm || "—"}</td>
-                  <td className="px-3 py-2 text-xs text-slate-600">{l.email || <span className="text-slate-300">χωρίς email</span>}{l.phone ? <div className="text-slate-400">{l.phone}</div> : null}</td>
+                  <td className="px-3 py-2 text-xs text-slate-600">
+                    <input key={l.email || ""} type="email" defaultValue={l.email || ""} placeholder="πρόσθεσε email…"
+                      onBlur={(e) => { const v = e.target.value.trim(); if (v !== (l.email || "")) saveEmail.mutate({ id: l._id, email: v }); }}
+                      onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+                      className="w-44 rounded border border-transparent px-1.5 py-0.5 hover:border-slate-300 focus:border-brand-400 focus:outline-none" />
+                    {l.phone ? <div className="text-slate-400">{l.phone}</div> : null}
+                  </td>
                   <td className="px-3 py-2">
                     <select value={l.status} onChange={(e) => setStatus.mutate({ id: l._id, status: e.target.value })} className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${STATUS[l.status]?.cls || "bg-slate-100 text-slate-500"}`}>
                       {Object.entries(STATUS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}

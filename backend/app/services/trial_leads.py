@@ -64,6 +64,12 @@ async def archive_from_tenant(tenant_id: str, *, db=None, reason: str = "trial_p
         return None
     sub = await db["subscriptions"].find_one({"tenant_id": tenant_id})
     c = _contact_from_tenant(t, sub)
+    if not c["email"]:
+        # Το email του πελάτη ζει συνήθως στον OWNER USER (όχι στον tenant) — πάρ' το ΠΡΙΝ διαγραφεί.
+        u = await db["users"].find_one({"tenant_id": tenant_id}, {"email": 1, "full_name": 1})
+        if u:
+            c["email"] = (u.get("email") or "").strip().lower() or None
+            c["contact_name"] = c["contact_name"] or u.get("full_name")
     key = _lead_key(c["afm"], c["email"])
     if not key:
         key = f"tid:{tenant_id}"      # χωρίς ΑΦΜ/email → κράτα κάτι μοναδικό
@@ -89,6 +95,23 @@ async def afm_had_trial(afm: str | None, email: str | None = None) -> bool:
         return False
     return await db["trial_leads"].count_documents(
         {"$or": ors, "status": {"$ne": "converted"}, "trial_allowed": {"$ne": True}}) > 0
+
+
+async def update_contact(lead_id: str, *, email: str | None = None, phone: str | None = None,
+                         contact_name: str | None = None) -> dict:
+    """Χειροκίνητη συμπλήρωση/διόρθωση στοιχείων επικοινωνίας ενός lead (π.χ. email που έλειπε)."""
+    upd: dict = {}
+    if email is not None:
+        upd["email"] = email.strip().lower() or None
+    if phone is not None:
+        upd["phone"] = phone.strip() or None
+    if contact_name is not None:
+        upd["contact_name"] = contact_name.strip() or None
+    if not upd:
+        return {"ok": True}
+    upd["updated_at"] = _now()
+    r = await shared_db()["trial_leads"].update_one({"_id": lead_id}, {"$set": upd})
+    return {"ok": bool(r.matched_count)}
 
 
 async def set_trial_allowed(lead_id: str, allowed: bool) -> dict:

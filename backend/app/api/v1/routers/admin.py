@@ -1529,6 +1529,9 @@ async def admin_leads(status: str | None = None, _: PlatformContext = Depends(ge
 class LeadPatchIn(BaseModel):
     status: str | None = None
     trial_allowed: bool | None = None   # True = ο admin επιτρέπει trial ξανά σε αυτό το ΑΦΜ
+    email: str | None = None            # χειροκίνητη συμπλήρωση/διόρθωση επικοινωνίας
+    phone: str | None = None
+    contact_name: str | None = None
 
 
 @router.patch("/leads/{lead_id}")
@@ -1540,6 +1543,9 @@ async def admin_lead_patch(lead_id: str, body: LeadPatchIn,
         out["status"] = await trial_leads.set_status(lead_id, body.status)
     if body.trial_allowed is not None:
         out["trial"] = await trial_leads.set_trial_allowed(lead_id, body.trial_allowed)
+    if body.email is not None or body.phone is not None or body.contact_name is not None:
+        out["contact"] = await trial_leads.update_contact(
+            lead_id, email=body.email, phone=body.phone, contact_name=body.contact_name)
     return out
 
 
