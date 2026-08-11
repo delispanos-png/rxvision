@@ -131,6 +131,11 @@ celery_app.conf.beat_schedule = {
         "task": "app.workers.billing.trial_feedback",
         "schedule": crontab(hour=9, minute=0),
     },
+    # Καθαρισμός ληγμένων trials >20 ημ. → αρχειοθέτηση ΑΦΜ στη βάση leads + διαγραφή (καθημερινά 05:45 UTC)
+    "purge-expired-trials": {
+        "task": "app.workers.billing.purge_expired_trials",
+        "schedule": crontab(hour=5, minute=45),
+    },
     # Αυτόματη έκδοση παραστατικών: pending → SoftOne → myDATA (κάθε 5′· off χωρίς auto_invoicing)
     "process-pending-invoices": {
         "task": "app.workers.billing.process_pending_invoices",

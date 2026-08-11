@@ -88,6 +88,10 @@ async def check_afm(afm: str):
     `reactivation`=υπάρχει αλλά ληγμένο/trial → επιτρέπεται αγορά κανονικού πακέτου (ίδιος tenant)."""
     tgt = await OnboardingService().reactivation_target("", afm)
     if not tgt:
+        # Ο tenant μπορεί να διαγράφηκε (ληγμένο trial) — αλλά κρατάμε το ΑΦΜ στα leads → μπλοκ επανα-trial.
+        from app.services import trial_leads
+        if await trial_leads.afm_had_trial(afm):
+            return {"exists": True, "blocked": False, "reactivation": False, "trial_used": True}
         return {"exists": False, "blocked": False, "reactivation": False}
     return {"exists": True, "blocked": tgt["blocked"], "reactivation": not tgt["blocked"]}
 

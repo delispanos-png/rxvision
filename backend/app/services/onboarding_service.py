@@ -263,6 +263,12 @@ class OnboardingService:
         # Reactivation ΔΕΝ ξαναδίνει δωρεάν trial — ο πελάτης πρέπει να επιλέξει ΠΛΗΡΩΜΕΝΟ πακέτο.
         if reactivate_tid and is_trial:
             raise OnboardingError("already_had_trial")
+        # Το ΙΔΙΟ ΑΦΜ/email δεν ξαναπαίρνει ΔΩΡΕΑΝ trial ακόμη κι αν ο παλιός (ληγμένος) λογαριασμός
+        # διαγράφηκε — κρατάμε το ΑΦΜ στη βάση leads. Μπορεί όμως να αγοράσει ΠΛΗΡΩΜΕΝΟ πακέτο.
+        if is_trial and not reactivate_tid:
+            from app.services import trial_leads
+            if await trial_leads.afm_had_trial(afm, owner_email):
+                raise OnboardingError("already_had_trial")
         status = "paid" if is_trial else ("awaiting_payment" if payment_method == "card" else "awaiting_bank_approval")
         pid = uuid.uuid4().hex
         await db["pending_registrations"].insert_one({

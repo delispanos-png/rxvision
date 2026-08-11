@@ -22,6 +22,18 @@ def bill_subscriptions() -> dict:
     return asyncio.run(_run())
 
 
+@celery_app.task(name="app.workers.billing.purge_expired_trials")
+def purge_expired_trials() -> dict:
+    """Ημερήσιο: διαγράφει δοκιμαστικές συνδρομές που έληξαν >N ημέρες (default 20) & δεν μετατράπηκαν,
+    αφού πρώτα αρχειοθετήσει ΑΦΜ/επικοινωνία στη βάση leads (μπλοκ επανα-trial + προσφορές)."""
+    from app.services.billing_service import purge_expired_trials as _purge
+
+    async def _run() -> dict:
+        return await _purge()
+
+    return asyncio.run(_run())
+
+
 @celery_app.task(name="app.workers.billing.subscription_reminders")
 def subscription_reminders() -> dict:
     """Ημερήσιο: προειδοποιητικά email πριν τη λήξη + καθημερινά «η συνδρομή σας έχει λήξει» μετά."""

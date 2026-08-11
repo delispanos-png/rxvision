@@ -39,6 +39,7 @@ def _oid(value):
 # Canonical sidebar sections (key → ελληνική ετικέτα for the UI).
 ADMIN_SECTIONS = [
     ("dashboard", "Πίνακας"), ("subscribers", "Συνδρομητές"), ("subscriptions", "Συνδρομές"),
+    ("leads", "Leads (πρώην trials)"),
     ("staff", "Χρήστες (staff)"), ("billing", "Τιμολόγηση"), ("newsletter", "Newsletter"),
     ("smtp", "Ρυθμίσεις SMTP"), ("idika", "Διασύνδεση ΗΔΥΚΑ"),
     ("content", "Περιεχόμενο"), ("maintenance", "Συντήρηση"), ("health", "Επισκεψιμότητα"),
@@ -52,6 +53,7 @@ _SEG_TO_SECTION = {
     "newsletter": "newsletter", "smtp": "smtp",
     "idika": "idika", "posts": "content", "maintenance": "maintenance",
     "health": "health", "sync-health": "health",
+    "leads": "leads", "trials": "leads",
 }
 # read-only endpoints που χρειάζεται και ο «dashboard»-only χρήστης
 _DASHBOARD_GET = {"tenants", "packages", "sync-health"}
@@ -198,12 +200,6 @@ def _compute_invoice(lines_in: list[dict], hdisc_kind: str = "pct", hdisc_value:
 
 
 # tenant-scoped collections wiped on hard delete
-_TENANT_COLLECTIONS = ["subscriptions", "users", "roles", "audit_logs", "doctors",
-                       "future_prescriptions", "patients_anonymized", "pharmacyone_sales",
-                       "prescription_executions", "prescription_items", "products",
-                       "sellers", "sync_jobs", "icd10_codes", "insurance_funds"]
-
-
 class StaffIn(BaseModel):
     email: EmailStr
     full_name: str
@@ -1522,6 +1518,80 @@ async def delete_ai_credit_pack(code: str, _: PlatformContext = Depends(get_plat
     return {"ok": True}
 
 
+# ── Trial leads (πρώην δοκιμαστικοί) — βάση + προσφορές + block επανα-trial ───────────────────────
+@router.get("/leads")
+async def admin_leads(status: str | None = None, _: PlatformContext = Depends(get_platform_admin)):
+    from app.services import trial_leads
+    return {"items": jsonsafe(await trial_leads.list_leads(status)),
+            "counts": await trial_leads.counts(), "config": await trial_leads.config()}
+
+
+class LeadStatusIn(BaseModel):
+    status: str
+
+
+@router.patch("/leads/{lead_id}")
+async def admin_lead_status(lead_id: str, body: LeadStatusIn,
+                            _: PlatformContext = Depends(get_platform_admin)):
+    from app.services import trial_leads
+    return await trial_leads.set_status(lead_id, body.status)
+
+
+@router.delete("/leads/{lead_id}")
+async def admin_lead_delete(lead_id: str, _: PlatformContext = Depends(get_platform_admin)):
+    from app.services import trial_leads
+    return await trial_leads.delete_lead(lead_id)
+
+
+class LeadOfferIn(BaseModel):
+    subject: str | None = None
+    body: str | None = None
+    lead_ids: list[str] | None = None   # None → μεμονωμένο (path)· λίστα → bulk
+
+
+@router.post("/leads/{lead_id}/offer")
+async def admin_lead_offer(lead_id: str, body: LeadOfferIn,
+                           _: PlatformContext = Depends(get_platform_admin)):
+    from app.services import trial_leads
+    return await trial_leads.send_offer(lead_id, body.subject, body.body)
+
+
+@router.post("/leads/offer-bulk")
+async def admin_leads_offer_bulk(body: LeadOfferIn, _: PlatformContext = Depends(get_platform_admin)):
+    from app.services import trial_leads
+    ids = body.lead_ids or [x["_id"] for x in await trial_leads.list_leads(status="lead")]
+    sent = failed = 0
+    for lid in ids:
+        r = await trial_leads.send_offer(lid, body.subject, body.body)
+        sent += 1 if r.get("ok") else 0
+        failed += 0 if r.get("ok") else 1
+    return {"ok": True, "sent": sent, "failed": failed}
+
+
+class LeadCfgIn(BaseModel):
+    purge_days: int | None = Field(None, ge=1, le=365)
+    purge_enabled: bool | None = None
+    offer_subject: str | None = None
+    offer_body: str | None = None
+
+
+@router.put("/leads-config")
+async def admin_leads_config(body: LeadCfgIn, _: PlatformContext = Depends(get_platform_admin)):
+    upd = {k: v for k, v in body.model_dump().items() if v is not None}
+    if upd:
+        upd["updated_at"] = datetime.now(tz=timezone.utc)
+        await shared_db()["platform_settings"].update_one({"_id": "trial_leads"}, {"$set": upd}, upsert=True)
+    from app.services import trial_leads
+    return {"ok": True, "config": await trial_leads.config()}
+
+
+@router.post("/trials/purge")
+async def admin_trials_purge(dry_run: bool = True, _: PlatformContext = Depends(get_platform_admin)):
+    """Χειροκίνητη εκτέλεση του καθαρισμού ληγμένων trials (dry_run=True → μόνο προεπισκόπηση)."""
+    from app.services import billing_service
+    return await billing_service.purge_expired_trials(dry_run=dry_run)
+
+
 @router.post("/tenants")
 async def open_tenant(body: OpenTenantIn, _: PlatformContext = Depends(get_platform_admin)):
     """«Άνοιγμα» tenant από πακέτο — admin entry point ."""
@@ -1792,17 +1862,15 @@ async def send_tenant_credentials(tenant_id: str, body: SendCredsIn,
 
 @router.delete("/tenants/{tenant_id}")
 async def delete_tenant(tenant_id: str, _: PlatformContext = Depends(get_platform_admin)):
-    """ΟΡΙΣΤΙΚΗ διαγραφή πελάτη + όλων των δεδομένων του (admin-initiated)."""
+    """ΟΡΙΣΤΙΚΗ διαγραφή πελάτη + όλων των δεδομένων του (admin-initiated). Αρχειοθετεί πρώτα το ΑΦΜ
+    στη βάση leads (ώστε να μη χαθεί & να μπλοκάρει επανα-trial)."""
     db = shared_db()
     if not await db["tenants"].find_one({"_id": tenant_id}):
         raise HTTPException(http_status.HTTP_404_NOT_FOUND, "not_found")
-    deleted = {}
-    for c in _TENANT_COLLECTIONS:
-        r = await db[c].delete_many({"tenant_id": tenant_id})
-        if r.deleted_count:
-            deleted[c] = r.deleted_count
-    await db["tenants"].delete_one({"_id": tenant_id})
-    return {"id": tenant_id, "deleted": True, "removed": deleted}
+    from app.services import billing_service, trial_leads
+    await trial_leads.archive_from_tenant(tenant_id, db=db, reason="admin_deleted")
+    removed = await billing_service.delete_tenant_fully(tenant_id)
+    return {"id": tenant_id, "deleted": True, "removed": removed}
 
 
 # ── platform staff (CloudOn admins) ────────────────────────

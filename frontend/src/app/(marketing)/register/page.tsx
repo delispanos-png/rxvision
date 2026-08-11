@@ -82,6 +82,7 @@ export default function RegisterWizard() {
   const [bankSubmitted, setBankSubmitted] = useState(false); // τράπεζα → αναμονή έγκρισης
   const [afmErr, setAfmErr] = useState<string | null>(null); // διπλότυπο ΑΦΜ (ενεργή συνδρομή)
   const [reactivation, setReactivation] = useState(false);   // υπάρχων λογαριασμός με ληγμένο/trial → αγορά κανονικού πακέτου
+  const [trialUsed, setTrialUsed] = useState(false);         // ΑΦΜ που έχει ήδη χρησιμοποιήσει δωρεάν δοκιμή
   const [acceptedTerms, setAcceptedTerms] = useState(false); // αποδοχή Όρων Χρήσης (υποχρεωτική πριν την ολοκλήρωση)
   const [showTerms, setShowTerms] = useState(false);         // modal ανάγνωσης όρων ΜΕΣΑ στην εγγραφή (χωρίς πλοήγηση)
 
@@ -240,10 +241,11 @@ export default function RegisterWizard() {
       const afm = company.afm.trim();
       if (/^\d{9}$/.test(afm)) {
         try {
-          const r = await api<{ exists: boolean; blocked?: boolean; reactivation?: boolean }>(`/onboarding/check-afm/${afm}`);
+          const r = await api<{ exists: boolean; blocked?: boolean; reactivation?: boolean; trial_used?: boolean }>(`/onboarding/check-afm/${afm}`);
           // ενεργή πληρωμένη συνδρομή → μπλοκ (σύνδεση). Ληγμένο/trial → επιτρέπεται (reactivation).
           if (r.blocked) { setAfmErr("Υπάρχει ήδη ενεργή συνδρομή για αυτό το ΑΦΜ."); return; }
-          setReactivation(!!r.reactivation);
+          // ΑΦΜ που έχει ήδη χρησιμοποιήσει δωρεάν δοκιμή (ακόμη κι αν ο λογαριασμός διαγράφηκε) → μόνο πληρωμένο.
+          if (r.trial_used) { setTrialUsed(true); setReactivation(true); } else { setReactivation(!!r.reactivation); }
         } catch { /* μη-blocking: ο server ξαναελέγχει στο intent */ }
       }
     }
@@ -314,9 +316,14 @@ export default function RegisterWizard() {
           <a href="/login" className="text-sm text-slate-500 hover:text-slate-700">← Σύνδεση</a>
           <Logo subtitle={false} markClassName="h-8 w-8" />
         </div>
-        {reactivation && (
+        {reactivation && !trialUsed && (
           <div className="mx-auto mb-4 max-w-2xl rounded-xl border border-brand-200 bg-brand-50 px-4 py-3 text-sm text-brand-800">
             <b>Καλώς ήρθες πάλι!</b> Βρήκαμε τον λογαριασμό σου με ληγμένη/δοκιμαστική συνδρομή. Επίλεξε ένα πληρωμένο πακέτο και μετά την πληρωμή <b>ο ΙΔΙΟΣ λογαριασμός σου ενεργοποιείται ξανά</b> (δεν δημιουργείται νέος). Η δωρεάν δοκιμή δεν είναι διαθέσιμη ξανά.
+          </div>
+        )}
+        {trialUsed && (
+          <div className="mx-auto mb-4 max-w-2xl rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+            Αυτό το ΑΦΜ έχει <b>ήδη χρησιμοποιήσει τη δωρεάν δοκιμή</b>. Μπορείς να συνεχίσεις επιλέγοντας ένα <b>πληρωμένο πακέτο</b>.
           </div>
         )}
         {pendingId ? (

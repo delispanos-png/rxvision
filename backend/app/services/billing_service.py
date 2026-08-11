@@ -367,6 +367,52 @@ async def expire_overdue() -> dict:
     return {"expired": expired, "graced": graced, "trial_grace": trial_grace, "active_grace": active_grace}
 
 
+# Πλήρης κατάλογος tenant-scoped collections (μία πηγή αλήθειας για ΟΡΙΣΤΙΚΗ διαγραφή πελάτη).
+TENANT_COLLECTIONS = ["subscriptions", "users", "roles", "audit_logs", "doctors",
+                      "future_prescriptions", "patients_anonymized", "pharmacyone_sales",
+                      "prescription_executions", "prescription_items", "products",
+                      "sellers", "sync_jobs", "icd10_codes", "insurance_funds"]
+
+
+async def delete_tenant_fully(tenant_id: str) -> dict:
+    """ΟΡΙΣΤΙΚΗ διαγραφή πελάτη + όλων των tenant-scoped δεδομένων του. Επιστρέφει τι διαγράφηκε."""
+    db = shared_db()
+    removed: dict = {}
+    for c in TENANT_COLLECTIONS:
+        r = await db[c].delete_many({"tenant_id": tenant_id})
+        if r.deleted_count:
+            removed[c] = r.deleted_count
+    await db["tenants"].delete_one({"_id": tenant_id})
+    return removed
+
+
+async def purge_expired_trials(*, dry_run: bool = False) -> dict:
+    """ΔΟΚΙΜΑΣΤΙΚΕΣ συνδρομές που έληξαν >N ημέρες (default 20) & δεν μετατράπηκαν → αρχειοθέτηση ΑΦΜ/
+    επικοινωνίας στη βάση leads και ΔΙΑΓΡΑΦΗ του λογαριασμού. Δεν αγγίζει πληρωμένους/με κάρτα."""
+    from app.services import trial_leads
+    db = shared_db()
+    cfg = await trial_leads.config(db)
+    if not cfg["purge_enabled"] and not dry_run:
+        return {"enabled": False, "purged": 0}
+    cutoff = _now() - timedelta(days=cfg["purge_days"])
+    no_card = {"revolut_customer_id": None, "viva_transaction_id": None, "complimentary": {"$ne": True}}
+    q = {"plan": {"$in": ["trial", "free_trial", None]},
+         "status": {"$in": ["expired", "trial", "trialing"]},
+         "current_period_end": {"$lte": cutoff}, **no_card}
+    targets = [s["tenant_id"] async for s in db["subscriptions"].find(q, {"tenant_id": 1})]
+    purged, archived = 0, []
+    for tid in targets:
+        if dry_run:
+            continue                       # προεπισκόπηση: ΜΟΝΟ μέτρηση, καμία αλλαγή
+        key = await trial_leads.archive_from_tenant(tid, db=db)   # 1ο αρχειοθέτηση (ΑΦΜ + επικοινωνία)
+        archived.append(key)
+        await delete_tenant_fully(tid)                            # 2ο διαγραφή λογαριασμού
+        purged += 1
+    return {"enabled": cfg["purge_enabled"], "purge_days": cfg["purge_days"],
+            "candidates": len(targets), "purged": purged, "archived": [k for k in archived if k],
+            "dry_run": dry_run}
+
+
 async def _billing_email(db, tid: str, tenant: dict) -> str | None:
     """Email χρέωσης του φαρμακείου: billing_profile → αλλιώς ο ιδιοκτήτης χρήστης."""
     bp = tenant.get("billing_profile") or {}
