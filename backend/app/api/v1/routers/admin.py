@@ -370,7 +370,7 @@ async def tenants(_: PlatformContext = Depends(get_platform_admin)):
         items.append({
             "id": t["_id"],
             "name": t.get("name", t["_id"]),
-            "afm": (t.get("company") or {}).get("afm"),
+            "afm": (t.get("company") or {}).get("afm") or (t.get("billing_profile") or {}).get("afm"),
             "plan": sub.get("plan", "—"),
             "status": billing_service.effective_status(sub) if sub else (t.get("status") or "—"),
             "users": user_counts.get(t["_id"], 0),

@@ -70,10 +70,14 @@ class OnboardingService:
         tid = reactivate_tenant_id or _slugify(pharmacy_name)
         settings = {**_COUNTRY_SETTINGS[country], "fiscal_month_close_day": 31}
 
+        # Τα στοιχεία εταιρείας μπαίνουν ΚΑΙ στο billing_profile ΚΑΙ στο company (views/παραστατικά
+        # διαβάζουν από company.afm — να είναι συνεπή από την 1η στιγμή).
         tenant_doc = {
             "name": pharmacy_name, "slug": tid, "country": country,
             "status": "active" if activate else "trial", "isolation_tier": "shared", "settings": settings,
-            "billing_profile": company or {}, "updated_at": _now(),
+            "billing_profile": company or {}, "company": company or {},
+            "contact_email": (company or {}).get("email") or (company or {}).get("billing_email"),
+            "updated_at": _now(),
         }
         if reactivating:
             await db["tenants"].update_one({"_id": tid}, {"$set": tenant_doc})
