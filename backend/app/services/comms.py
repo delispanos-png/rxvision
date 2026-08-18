@@ -478,6 +478,9 @@ async def run_campaign(tenant_id: str, *, channel: str, message: str, subject: s
     message and stops cleanly if credits run out. Logs a comms_campaigns row. Returns a send summary."""
     from bson import ObjectId
     ph = await _pharmacy(tenant_id)
+    if channel == "push":     # ΔΩΡΕΑΝ κανάλι (PWA Web Push) — δεν χρεώνει wallet
+        return await _run_push_campaign(tenant_id, message=message, subject=subject, segment=segment,
+                                        value=value, by=by, source=source, limit=limit, ph=ph)
     rows = await campaign_audience(tenant_id, channel, segment, value)
     cid = ObjectId()
     field = "email" if channel == "email" else "mobile"
@@ -509,3 +512,78 @@ async def run_campaign(tenant_id: str, *, channel: str, message: str, subject: s
         "by": by, "created_at": _now()})
     return {"campaign_id": str(cid), "recipients": len(rows), "sent": sent, "failed": failed,
             "stopped_no_credits": stopped, "balance_cents": await message_wallet.balance(tenant_id)}
+
+
+# ── ΔΩΡΕΑΝ κανάλι: Push (PWA Web Push) — audience mapping + αποστολή χωρίς χρέωση ─────────────────
+async def push_audience(tenant_id: str, segment: str = "all", value: str | None = None) -> list[dict]:
+    """Ασθενείς του φαρμακείου (με συναίνεση marketing) που έχουν λογαριασμό πύλης ΜΕ ενεργό push.
+    Αλυσίδα: patient_contacts → patients_anonymized.amka → patient_accounts(amka) → patient_push_subs."""
+    from app.services import consent
+    db = shared_db()
+    seg = await segment_patient_ids(tenant_id, segment, value)
+    withdrawn = await consent.withdrawn_patient_ids(tenant_id, "push")
+    q: dict = {"tenant_id": tenant_id, "marketing_consent": True}
+    idf: dict = {}
+    if seg is not None:
+        idf["$in"] = list(seg)
+    if withdrawn:
+        idf["$nin"] = list(withdrawn)
+    if idf:
+        q["_id"] = idf
+    rows = await db["patient_contacts"].aggregate([
+        {"$match": q},
+        {"$lookup": {"from": "patients_anonymized", "localField": "_id", "foreignField": "_id", "as": "pp"}},
+        {"$set": {"amka": {"$first": "$pp.amka"}, "name": {"$first": "$pp.full_name"}}},
+        {"$match": {"amka": {"$nin": [None, ""]}}},
+        {"$project": {"_id": 0, "patient_id": "$_id", "amka": 1, "name": 1}},
+    ]).to_list(length=None)
+    if not rows:
+        return []
+    amkas = list({r["amka"] for r in rows})
+    accounts = {a["amka"]: a async for a in db["patient_accounts"].find(
+        {"amka": {"$in": amkas}}, {"amka": 1, "first_name": 1, "last_name": 1})}
+    if not accounts:
+        return []
+    acc_ids = [a["_id"] for a in accounts.values()]
+    have_push = {str(s["account_id"]) async for s in
+                 db["patient_push_subs"].find({"account_id": {"$in": acc_ids}}, {"account_id": 1})}
+    out, seen = [], set()
+    for r in rows:
+        a = accounts.get(r["amka"])
+        if not a:
+            continue
+        aid = str(a["_id"])
+        if aid in have_push and aid not in seen:
+            seen.add(aid)
+            out.append({"account_id": aid, "patient_id": str(r["patient_id"]),
+                        "name": r.get("name") or f"{a.get('first_name', '')} {a.get('last_name', '')}".strip()})
+    return out
+
+
+async def _run_push_campaign(tenant_id: str, *, message: str, subject: str | None, segment: str,
+                             value: str | None, by: str | None, source: str, limit: int, ph: dict) -> dict:
+    from bson import ObjectId
+    from app.services import push_service
+    rows = await push_audience(tenant_id, segment, value)
+    cid = ObjectId()
+    title = subject or ph.get("name") or "Το φαρμακείο σας"
+    sent = failed = 0
+    for r in rows[:limit]:
+        first = (r.get("name") or "").split(" ")[-1] if r.get("name") else ""
+        text = (message or "").replace("{name}", r.get("name") or "").replace("{first}", first)
+        try:
+            n = await push_service.send_to_account(r["account_id"], title=title, body=text, url="/portal")
+            ok = n > 0
+            sent += 1 if ok else 0
+            failed += 0 if ok else 1
+            await _log_message(tenant_id, "push", r["account_id"], cost_cents=0,
+                               status="sent" if ok else "failed", patient_ref=r.get("patient_id"),
+                               campaign_id=str(cid), kind=source, subject=title)
+        except Exception:  # noqa: BLE001
+            failed += 1
+    await shared_db()["comms_campaigns"].insert_one({
+        "_id": cid, "tenant_id": tenant_id, "channel": "push", "subject": subject,
+        "recipients": len(rows), "sent": sent, "failed": failed, "source": source,
+        "by": by, "created_at": _now()})
+    return {"campaign_id": str(cid), "recipients": len(rows), "sent": sent, "failed": failed,
+            "stopped_no_credits": False, "balance_cents": await message_wallet.balance(tenant_id)}

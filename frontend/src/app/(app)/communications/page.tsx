@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Mail, MessageSquare, Send, Loader2, Users, Settings, Target } from "lucide-react";
+import { Mail, MessageSquare, Send, Loader2, Users, Settings, Target, Smartphone } from "lucide-react";
 import { api } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
@@ -42,7 +42,7 @@ export default function CommunicationsPage() {
   const qc = useQueryClient();
   const history = useQuery({ queryKey: ["comms", "history"], queryFn: () => api<{ items: Campaign[] }>("/communications/history"), retry: false });
 
-  const [channel, setChannel] = useState<"email" | "sms" | "viber">("email");
+  const [channel, setChannel] = useState<"email" | "sms" | "viber" | "push">("email");
   const [segment, setSegment] = useState("all");
   const [value, setValue] = useState("");
   const [subject, setSubject] = useState("");
@@ -94,6 +94,7 @@ export default function CommunicationsPage() {
             <button onClick={() => setChannel("email")} className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm font-medium ${channel === "email" ? "border-brand-300 bg-brand-50 text-brand-700" : "border-slate-300 text-slate-600"}`}><Mail className="h-4 w-4" /> Email</button>
             <button onClick={() => setChannel("sms")} className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm font-medium ${channel === "sms" ? "border-brand-300 bg-brand-50 text-brand-700" : "border-slate-300 text-slate-600"}`}><MessageSquare className="h-4 w-4" /> SMS</button>
             <button onClick={() => setChannel("viber")} className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm font-medium ${channel === "viber" ? "border-violet-300 bg-violet-50 text-violet-700" : "border-slate-300 text-slate-600"}`}><MessageSquare className="h-4 w-4" /> Viber</button>
+            <button onClick={() => setChannel("push")} className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm font-medium ${channel === "push" ? "border-emerald-300 bg-emerald-50 text-emerald-700" : "border-slate-300 text-slate-600"}`}><Smartphone className="h-4 w-4" /> Push <span className="rounded-full bg-emerald-100 px-1.5 text-[10px] font-bold text-emerald-700">ΔΩΡΕΑΝ</span></button>
           </div>
 
           {/* audience builder */}
@@ -113,9 +114,13 @@ export default function CommunicationsPage() {
             </div>
             {/* Εκτιμώμενο κόστος πριν την αποστολή (παραλήπτες × τιμή καναλιού) + υπόλοιπο πορτοφολιού */}
             <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
-              <span className="text-slate-500">{t("Εκτιμώμενο κόστος:", "Estimated cost:")} <b className="text-slate-800">{eur(costCents)}</b> <span className="text-slate-400">({count} × {eur(unit)})</span></span>
-              <span className="text-slate-500">{t("Υπόλοιπο:", "Balance:")} <b className={insufficient ? "text-rose-600" : "text-slate-800"}>{eur(balance)}</b></span>
-              {insufficient && <Link href="/settings/communications" className="font-semibold text-rose-600 hover:underline">{t("⚠ Ανεπαρκές υπόλοιπο — αγορά credits", "⚠ Insufficient balance — buy credits")}</Link>}
+              {channel === "push" ? (
+                <span className="font-semibold text-emerald-600">📱 {t("Δωρεάν — μόνο σε ασθενείς με την εφαρμογή & ενεργό push", "Free — only patients with the app & push enabled")}</span>
+              ) : (<>
+                <span className="text-slate-500">{t("Εκτιμώμενο κόστος:", "Estimated cost:")} <b className="text-slate-800">{eur(costCents)}</b> <span className="text-slate-400">({count} × {eur(unit)})</span></span>
+                <span className="text-slate-500">{t("Υπόλοιπο:", "Balance:")} <b className={insufficient ? "text-rose-600" : "text-slate-800"}>{eur(balance)}</b></span>
+                {insufficient && <Link href="/settings/communications" className="font-semibold text-rose-600 hover:underline">{t("⚠ Ανεπαρκές υπόλοιπο — αγορά credits", "⚠ Insufficient balance — buy credits")}</Link>}
+              </>)}
             </div>
           </div>
 
@@ -125,11 +130,11 @@ export default function CommunicationsPage() {
             {TEMPLATES.map((t) => <button key={t.label} onClick={() => setMessage(t.text)} className="rounded-full border border-slate-200 px-2.5 py-1 text-xs text-slate-600 hover:bg-slate-50">{t.label}</button>)}
           </div>
 
-          {channel === "email" && <input value={subject} onChange={(e) => setSubject(e.target.value)} placeholder={t("Θέμα email", "Email subject")} className={`${inp} mb-2 w-full`} />}
+          {(channel === "email" || channel === "push") && <input value={subject} onChange={(e) => setSubject(e.target.value)} placeholder={channel === "push" ? t("Τίτλος ειδοποίησης (προαιρετικό)", "Notification title (optional)") : t("Θέμα email", "Email subject")} className={`${inp} mb-2 w-full`} />}
           <textarea value={message} onChange={(e) => setMessage(e.target.value)} rows={5} placeholder={channel !== "email" ? t("Κείμενο μηνύματος…", "Message text…") : t("Μήνυμα… (μεταβλητές: {name} = πλήρες όνομα, {first} = επώνυμο)", "Message… (variables: {name} = full name, {first} = last name)")} className={`${inp} w-full`} />
           <div className="mt-3 flex items-center justify-between">
             <span className="text-xs text-slate-400">{channel !== "email" ? t(`${message.length} χαρακτήρες`, `${message.length} characters`) : t("Διαθέσιμες μεταβλητές: {name}, {first}", "Available variables: {name}, {first}")}</span>
-            <button onClick={async () => { if (message.trim() && await appConfirm(t(`Αποστολή σε ${count} παραλήπτες — κόστος ${eur(costCents)};`, `Send to ${count} recipients — cost ${eur(costCents)}?`))) send.mutate(); }}
+            <button onClick={async () => { if (message.trim() && await appConfirm(channel === "push" ? t(`Δωρεάν push σε ${count} ασθενείς;`, `Free push to ${count} patients?`) : t(`Αποστολή σε ${count} παραλήπτες — κόστος ${eur(costCents)};`, `Send to ${count} recipients — cost ${eur(costCents)}?`))) send.mutate(); }}
               disabled={send.isPending || !message.trim() || !count || insufficient}
               className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-5 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50">
               {send.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />} {t("Αποστολή", "Send")}

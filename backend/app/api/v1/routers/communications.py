@@ -163,15 +163,16 @@ async def _audience(tenant_id: str, channel: str, segment: str = "all", value: s
 
 
 @router.get("/audience")
-async def audience(channel: Literal["email", "sms", "viber"] = "email",
+async def audience(channel: Literal["email", "sms", "viber", "push"] = "email",
                    segment: str = "all", value: str | None = None,
                    ctx: TenantContext = Depends(require("patients:read", module=_MODULE))):
-    rows = await _audience(ctx.tenant_id, channel, segment, value)
+    rows = (await comms.push_audience(ctx.tenant_id, segment, value) if channel == "push"
+            else await _audience(ctx.tenant_id, channel, segment, value))
     return {"channel": channel, "segment": segment, "count": len(rows)}
 
 
 class CampaignIn(BaseModel):
-    channel: Literal["email", "sms", "viber"]
+    channel: Literal["email", "sms", "viber", "push"]
     subject: str | None = None
     message: str
     segment: str = "all"
