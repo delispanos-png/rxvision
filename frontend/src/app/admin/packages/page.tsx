@@ -34,6 +34,7 @@ const MODULE_LABELS: [string, string, string][] = [
   ["pharmacat", "PharmaCat", "🤖"],
   ["patient_portal", "Πύλη Πελατών", "👥"],
   ["loyalty", "Πιστότητα", "🎁"],
+  ["marketing", "Στοχευμένη Προώθηση", "📣"],
 ];
 
 const eur = (c?: number) => ((c ?? 0) / 100).toString();

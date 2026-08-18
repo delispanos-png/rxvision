@@ -415,6 +415,23 @@ async def segment_patient_ids(tenant_id: str, segment: str, value: str | None):
         recent = set(await db["prescription_executions"].distinct("patient_ref", {"tenant_id": tenant_id, "executed_at": {"$gte": cutoff}}))
         allp = set(await db["prescription_executions"].distinct("patient_ref", {"tenant_id": tenant_id}))
         return allp - recent
+    if segment == "therapy":
+        # value = κλειδί θεραπευτικής κατηγορίας → ATC prefixes (Στοχευμένη Προώθηση)
+        from app.services.marketing import THERAPY_ATC
+        prefixes = THERAPY_ATC.get((value or "").strip())
+        if not prefixes:
+            return set()
+        rx = "^(" + "|".join(re.escape(p) for p in prefixes) + ")"
+        rows = await db["prescription_executions"].aggregate([
+            {"$match": {"tenant_id": tenant_id, "status": {"$ne": "cancelled"}}},
+            {"$lookup": {"from": "prescription_items", "localField": "_id", "foreignField": "execution_id", "as": "it"}},
+            {"$unwind": "$it"},
+            {"$lookup": {"from": "products", "localField": "it.product_id", "foreignField": "_id", "as": "p"}},
+            {"$set": {"atc": {"$toUpper": {"$ifNull": [{"$first": "$p.atc"}, ""]}}}},
+            {"$match": {"atc": {"$regex": rx}}},
+            {"$group": {"_id": "$patient_ref"}},
+        ]).to_list(length=None)
+        return {r["_id"] for r in rows}
     if segment == "substance":
         val = re.escape((value or "").upper())
         rows = await db["prescription_executions"].aggregate([

@@ -14,7 +14,7 @@ import { APP_VERSION } from "@/lib/version";
 import { Tooltip } from "@/components/ui/Tooltip";
 import {
   Activity, BarChart3, Boxes, CalendarClock, ChevronRight, LayoutDashboard,
-  Mail, Salad, PackageSearch, Settings, Sparkles, Stethoscope, TrendingUp, Users,
+  Mail, Megaphone, Salad, PackageSearch, Settings, Sparkles, Stethoscope, TrendingUp, Target, Users,
   Brain, ShieldCheck, Tags, Syringe, Bot, Gift, BookOpen, ScrollText, Truck, Lock, X, UserPlus, Ticket, SlidersHorizontal, Heart, FileText, MessageSquare, PackageCheck, type LucideIcon,
 } from "lucide-react";
 
@@ -89,10 +89,15 @@ const GROUPS: Group[] = [
     { label: "Εξαργυρώσεις", en: "Redemptions", icon: Ticket, href: "/loyalty#redemptions", module: "loyalty" },
     { label: "Ρυθμίσεις & Δώρα", en: "Settings & Rewards", icon: SlidersHorizontal, href: "/loyalty#settings", module: "loyalty" },
   ] },
+  // Στοχευμένη Προώθηση — δικό του εμπορικό κύκλωμα (module `marketing`, ενεργό ανά συνδρομή).
+  { title: "Προώθηση", en: "Marketing", items: [
+    { label: "Πίνακας", en: "Dashboard", icon: Megaphone, href: "/marketing", module: "marketing" },
+    { label: "Θεραπευτικές κατηγορίες", en: "Therapeutic categories", icon: Target, href: "/marketing#categories", module: "marketing" },
+    { label: "Καμπάνιες", en: "Campaigns", icon: Mail, href: "/communications", module: "patient_analytics" },
+  ] },
   { title: "Λειτουργίες", en: "Operations", items: [
     { label: "Έλεγχος συνταγών", en: "Rx Audit", icon: ShieldCheck, href: "/reimbursement", module: "monthly_closing" },
     // PharmacyOne is a back-office INTEGRATION (data source), not a user-facing capability → not in the menu.
-    { label: "Επικοινωνία", en: "Communications", icon: Mail, href: "/communications" },
     { label: "Οδηγός δεικτών", en: "Indicators guide", icon: BookOpen, href: "/guide" },
     { label: "Όροι Χρήσης", en: "Terms of Use", icon: ScrollText, href: "/terms-of-use" },
     { label: "GDPR", en: "GDPR", icon: Lock, href: "/gdpr" },

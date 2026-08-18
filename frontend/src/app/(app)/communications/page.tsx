@@ -14,8 +14,15 @@ import { fmtDate } from "@/lib/formatters";
 type Campaign = { id: string; channel: string; subject?: string | null; recipients: number; sent: number; failed: number; created_at: string };
 
 type T = (el: string, en: string) => string;
+// Θεραπευτικές κατηγορίες (ίδια κλειδιά με services/marketing.py) — για στόχευση 1-κλικ.
+const THERAPY_CATS: [string, string][] = [
+  ["diabetes", "🩸 Διαβήτης"], ["hypertension", "❤️ Υπέρταση"], ["cardio", "🫀 Καρδιολογικά"],
+  ["cholesterol", "🧈 Χοληστερίνη"], ["thyroid", "🦋 Θυρεοειδής"], ["respiratory", "🫁 Αναπνευστικά"],
+  ["allergy", "🤧 Αλλεργίες"], ["psych", "🧠 Νευρο/Ψυχ."], ["osteo", "🦴 Οστεοπόρωση"], ["gastro", "🩹 Γαστρεντερικά"],
+];
 const makeSegments = (t: T) => [
   { value: "all", label: t("Όλοι (με συγκατάθεση)", "Everyone (with consent)"), needs: null },
+  { value: "therapy", label: t("Θεραπευτική κατηγορία", "Therapeutic category"), needs: "therapy", ph: "" },
   { value: "upcoming", label: t("Με επερχόμενη συνταγή", "With upcoming prescription"), needs: "days", ph: t("ημέρες (π.χ. 30)", "days (e.g. 30)") },
   { value: "substance", label: t("Σε δραστική / θεραπεία", "On active substance / therapy"), needs: "text", ph: t("ATC ή ουσία (π.χ. C10AA ή ATORVASTATIN)", "ATC or substance (e.g. C10AA or ATORVASTATIN)") },
   { value: "icd", label: t("Με διάγνωση (ICD-10)", "With diagnosis (ICD-10)"), needs: "text", ph: t("κωδικός ICD (π.χ. I10)", "ICD code (e.g. I10)") },
@@ -96,7 +103,12 @@ export default function CommunicationsPage() {
               <select value={segment} onChange={(e) => { setSegment(e.target.value); setValue(""); }} className={inp}>
                 {SEGMENTS.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
               </select>
-              {seg.needs && <input value={value} onChange={(e) => setValue(e.target.value)} placeholder={seg.ph} className={`${inp} w-full sm:w-72`} />}
+              {seg.needs === "therapy"
+                ? <select value={value} onChange={(e) => setValue(e.target.value)} className={`${inp} w-full sm:w-72`}>
+                    <option value="">{t("— διάλεξε κατηγορία —", "— pick a category —")}</option>
+                    {THERAPY_CATS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+                  </select>
+                : seg.needs ? <input value={value} onChange={(e) => setValue(e.target.value)} placeholder={seg.ph} className={`${inp} w-full sm:w-72`} /> : null}
               <span className="ml-auto inline-flex items-center gap-1.5 rounded-lg bg-white px-3 py-2 text-sm"><Users className="h-4 w-4 text-brand-600" /> {t("Παραλήπτες:", "Recipients:")} <b className="text-slate-900">{audience.isFetching ? "…" : count}</b></span>
             </div>
             {/* Εκτιμώμενο κόστος πριν την αποστολή (παραλήπτες × τιμή καναλιού) + υπόλοιπο πορτοφολιού */}

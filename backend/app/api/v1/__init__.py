@@ -18,6 +18,7 @@ from app.api.v1.routers import (
     icd10,
     ingestion,
     loyalty,
+    marketing,
     monthly_closing,
     onboarding,
     orders,
@@ -59,6 +60,7 @@ api_router.include_router(orders_delivery.router, prefix="/orders/delivery", tag
 api_router.include_router(dashboard.router, prefix="/dashboard", tags=["dashboard"])
 api_router.include_router(advisor.router, prefix="/advisor", tags=["advisor"])
 api_router.include_router(communications.router, prefix="/communications", tags=["communications"])
+api_router.include_router(marketing.router, prefix="/marketing", tags=["marketing"])
 api_router.include_router(gdpr.router, prefix="/gdpr", tags=["gdpr"])
 api_router.include_router(prescriptions.router, prefix="/prescriptions", tags=["prescriptions"])
 api_router.include_router(vaccinations.router, prefix="/vaccinations", tags=["vaccinations"])
