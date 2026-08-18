@@ -49,7 +49,8 @@ async def _pause_hdika_auth(db, tenant_id: str, message: str) -> dict:
             "stats": {"fetched": 0}, "started_at": now, "updated_at": now})
     except Exception:  # noqa: BLE001
         pass
-    await _admin_hdika_alert(db, tenant_id, f"⚠️ ΗΔΥΚΑ πρόβλημα — λάθος/ληγμένος κωδικός")
+    # ΟΧΙ SMS ανά φαρμακείο εδώ (θα ήταν spam σε κάθε λήξη μηνιαίου κωδικού). Ο owner ειδοποιείται
+    # ΜΟΝΟ για ΣΥΣΤΗΜΙΚΟ πρόβλημα (κανένας sync >1ώρα) μέσω ops_health — δες [[infra-health-sms-alerts]].
     return {"tenant_id": tenant_id, "status": "auth_paused", "error": str(message)[:200]}
 
 
@@ -85,7 +86,7 @@ async def _record_hdika_config_error(db, tenant_id: str, message: str) -> dict:
     await db["tenants"].update_one({"_id": tenant_id}, {"$set": {
         "ingestion_config.hdika.config_error_at": now,
         "ingestion_config.hdika.config_error_msg": str(message)[:300]}})
-    await _admin_hdika_alert(db, tenant_id, f"⚠️ ΗΔΥΚΑ πρόβλημα — {str(message)[:120]}")
+    # ΟΧΙ SMS ανά φαρμακείο (anti-spam)· ο owner ειδοποιείται μόνο για ΣΥΣΤΗΜΙΚΟ πρόβλημα (ops_health).
     return {"tenant_id": tenant_id, "status": "config_error", "error": str(message)[:200]}
 
 
