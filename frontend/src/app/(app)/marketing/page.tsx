@@ -96,26 +96,6 @@ export default function MarketingDashboard() {
                   )}
                 </section>
 
-                {/* ── ΘΕΡΑΠΕΥΤΙΚΕΣ ΚΑΤΗΓΟΡΙΕΣ ── */}
-                <section id="categories">
-                  <h2 className="mb-2 flex items-center gap-1.5 text-sm font-bold text-slate-700 dark:text-slate-200">💊 {t("Θεραπευτικές κατηγορίες", "Therapeutic categories")} <span className="text-xs font-normal text-slate-400">· {t("στόχευσε με 1 κλικ", "target in 1 click")}</span></h2>
-                  <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-4">
-                    {d.categories.filter((c) => c.patients > 0).map((c) => (
-                      <button key={c.key} onClick={() => go("therapy", c.key)}
-                        className="group rounded-2xl border border-slate-200 bg-white p-3 text-left shadow-sm transition hover:border-violet-300 hover:shadow dark:border-slate-700 dark:bg-slate-900">
-                        <div className="flex items-center justify-between">
-                          <span className="text-lg">{c.icon}</span>
-                          <span className="text-2xl font-extrabold text-slate-800 dark:text-slate-100">{c.patients}</span>
-                        </div>
-                        <div className="mt-1 text-sm font-semibold text-slate-700 dark:text-slate-200">{c.label}</div>
-                        <div className="text-[11px] text-slate-400">{t("ασθενείς", "patients")} · {eur(c.value)}</div>
-                        <div className="mt-1.5 inline-flex items-center gap-1 text-[11px] font-semibold text-violet-600 opacity-0 transition group-hover:opacity-100"><Target className="h-3 w-3" /> {t("Στόχευσε", "Target")}</div>
-                      </button>
-                    ))}
-                    {d.categories.every((c) => c.patients === 0) && <div className="col-span-full py-6 text-center text-sm text-slate-400">{t("Δεν υπάρχουν ακόμη δεδομένα κατηγοριών.", "No category data yet.")}</div>}
-                  </div>
-                </section>
-
                 {/* ── ΕΞΑΡΓΥΡΩΣΗ ΚΟΥΠΟΝΙΟΥ (ταμείο) ── */}
                 <section className="rounded-2xl border border-violet-200 bg-violet-50/40 p-3.5 dark:border-violet-900/40 dark:bg-violet-950/20">
                   <div className="mb-2 flex items-center gap-1.5 text-sm font-bold text-slate-700 dark:text-slate-200"><Ticket className="h-4 w-4 text-violet-500" /> {t("Εξαργύρωση κουπονιού", "Redeem coupon")} <span className="text-xs font-normal text-slate-400">{t("· στο ταμείο", "· at the counter")}</span></div>

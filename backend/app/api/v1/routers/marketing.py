@@ -17,6 +17,10 @@ class RedeemIn(BaseModel):
     amount_cents: int = 0       # ποσό αγοράς στο ταμείο (προαιρετικό — για υπολογισμό έκπτωσης & αξίας)
 
 
+class SettingsIn(BaseModel):
+    frequency_cap: int = 0      # μέγιστα προωθητικά μηνύματα/ασθενή/μήνα (0 = ανενεργό)
+
+
 @router.get("/dashboard")
 async def dashboard(ctx: TenantContext = Depends(require("patients:read", module=_MODULE))):
     """Βασικό dashboard: αποδοτικότητα καμπανιών + προτάσεις στοχευμένων ενεργειών."""
@@ -43,3 +47,14 @@ async def redeem(body: RedeemIn, ctx: TenantContext = Depends(require("patients:
     return await marketing.redeem_coupon(
         ctx.tenant_id, body.code, amount_cents=body.amount_cents,
         by=getattr(ctx, "user_id", None))
+
+
+@router.get("/settings")
+async def get_settings(ctx: TenantContext = Depends(require("patients:read", module=_MODULE))):
+    return await marketing.get_settings(ctx.tenant_id)
+
+
+@router.put("/settings")
+async def set_settings(body: SettingsIn, ctx: TenantContext = Depends(require("patients:read", module=_MODULE))):
+    """Anti-fatigue: όριο προωθητικών μηνυμάτων ανά ασθενή/μήνα."""
+    return await marketing.set_settings(ctx.tenant_id, frequency_cap=body.frequency_cap)

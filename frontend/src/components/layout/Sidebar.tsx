@@ -92,7 +92,7 @@ const GROUPS: Group[] = [
   // Στοχευμένη Προώθηση — δικό του εμπορικό κύκλωμα (module `marketing`, ενεργό ανά συνδρομή).
   { title: "Προώθηση", en: "Marketing", items: [
     { label: "Πίνακας", en: "Dashboard", icon: Megaphone, href: "/marketing", module: "marketing" },
-    { label: "Θεραπευτικές κατηγορίες", en: "Therapeutic categories", icon: Target, href: "/marketing#categories", module: "marketing" },
+    { label: "Θεραπευτικές κατηγορίες", en: "Therapeutic categories", icon: Target, href: "/marketing/categories", module: "marketing" },
     { label: "Καμπάνιες", en: "Campaigns", icon: Mail, href: "/communications", module: "patient_analytics" },
   ] },
   { title: "Λειτουργίες", en: "Operations", items: [

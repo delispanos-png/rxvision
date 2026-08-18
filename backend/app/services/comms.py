@@ -448,14 +448,48 @@ async def segment_patient_ids(tenant_id: str, segment: str, value: str | None):
     return None
 
 
+async def _frequency_cap(tenant_id: str) -> int:
+    """Μέγιστα ΠΡΟΩΘΗΤΙΚΑ μηνύματα ανά ασθενή/μήνα (0 = ανενεργό). Ρυθμίζεται ανά φαρμακείο."""
+    t = await shared_db()["tenants"].find_one({"_id": tenant_id}, {"marketing_frequency_cap": 1})
+    try:
+        return max(0, int((t or {}).get("marketing_frequency_cap") or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+async def frequency_capped_patients(tenant_id: str, cap: int | None = None) -> set:
+    """Ασθενείς που έχουν ΗΔΗ λάβει ≥ cap προωθητικά μηνύματα ΑΥΤΟΝ ΤΟΝ ΜΗΝΑ (→ εξαιρούνται, anti-fatigue)."""
+    from bson import ObjectId
+    if cap is None:
+        cap = await _frequency_cap(tenant_id)
+    if cap <= 0:
+        return set()
+    month_start = _now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    rows = await shared_db()["sent_messages"].aggregate([
+        {"$match": {"tenant_id": tenant_id, "kind": {"$in": ["campaign", "routine"]}, "status": "sent",
+                    "created_at": {"$gte": month_start}, "patient_ref": {"$nin": [None, ""]}}},
+        {"$group": {"_id": "$patient_ref", "n": {"$sum": 1}}},
+        {"$match": {"n": {"$gte": cap}}},
+    ]).to_list(length=None)
+    out = set()
+    for r in rows:
+        try:
+            out.add(ObjectId(r["_id"]))
+        except Exception:  # noqa: BLE001
+            pass
+    return out
+
+
 async def campaign_audience(tenant_id: str, channel: str, segment: str = "all", value: str | None = None) -> list[dict]:
     """Consented recipients (marketing_consent + NOT in the withdrawal ledger for this channel) with a
-    contact for `channel`, restricted to a smart segment. GDPR: the consent ledger is authoritative."""
+    contact for `channel`, restricted to a smart segment. GDPR: the consent ledger is authoritative.
+    Εξαιρεί όσους έπιασαν το frequency cap (anti-fatigue)."""
     from app.services import consent
     field = "email" if channel == "email" else "mobile"
     q: dict = {"tenant_id": tenant_id, "marketing_consent": True, field: {"$nin": [None, ""]}}
     seg = await segment_patient_ids(tenant_id, segment, value)
-    withdrawn = await consent.withdrawn_patient_ids(tenant_id, channel)
+    withdrawn = set(await consent.withdrawn_patient_ids(tenant_id, channel))
+    withdrawn |= await frequency_capped_patients(tenant_id)
     id_filter: dict = {}
     if seg is not None:
         id_filter["$in"] = list(seg)
@@ -524,7 +558,8 @@ async def push_audience(tenant_id: str, segment: str = "all", value: str | None 
     from app.services import consent
     db = shared_db()
     seg = await segment_patient_ids(tenant_id, segment, value)
-    withdrawn = await consent.withdrawn_patient_ids(tenant_id, "push")
+    withdrawn = set(await consent.withdrawn_patient_ids(tenant_id, "push"))
+    withdrawn |= await frequency_capped_patients(tenant_id)
     q: dict = {"tenant_id": tenant_id, "marketing_consent": True}
     idf: dict = {}
     if seg is not None:

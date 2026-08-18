@@ -229,3 +229,16 @@ async def campaigns_with_roi(tenant_id: str, days: int = 90, limit: int = 60) ->
             "conversion_pct": round(red / sent * 100, 1) if sent else 0.0,
         })
     return out
+
+
+# ── Ρυθμίσεις κυκλώματος (anti-fatigue frequency cap) ─────────────────────────
+async def get_settings(tenant_id: str) -> dict:
+    t = await shared_db()["tenants"].find_one({"_id": tenant_id}, {"marketing_frequency_cap": 1})
+    return {"frequency_cap": int((t or {}).get("marketing_frequency_cap") or 0)}
+
+
+async def set_settings(tenant_id: str, *, frequency_cap: int) -> dict:
+    cap = max(0, min(int(frequency_cap), 60))
+    await shared_db()["tenants"].update_one(
+        {"_id": tenant_id}, {"$set": {"marketing_frequency_cap": cap, "updated_at": _now()}})
+    return {"ok": True, "frequency_cap": cap}
