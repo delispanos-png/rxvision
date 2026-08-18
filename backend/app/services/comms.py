@@ -329,6 +329,29 @@ async def send_otp_sms(to: str, text: str) -> None:
                        ap["sms_token"], ap["sms_secret"])
 
 
+async def admin_alert(text: str) -> None:
+    """Ops SMS στο κινητό του ιδιοκτήτη (κεντρικός Apifon, ΧΩΡΙΣ χρέωση φαρμακείου) για γεγονότα
+    πλατφόρμας: νέα εγγραφή πελάτη, έναρξη ή πρόβλημα συγχρονισμού ΗΔΥΚΑ. Αριθμός: `platform_settings.
+    comms.admin_alert_phone`. Best-effort — ΠΟΤΕ δεν ρίχνει (δεν πρέπει να μπλοκάρει provisioning/sync)."""
+    try:
+        from app.services.platform_secrets import decrypt_doc
+        cfg = decrypt_doc("comms", await shared_db()["platform_settings"].find_one({"_id": "comms"})) or {}
+        phones = list(cfg.get("admin_alert_phones") or [])
+        single = str(cfg.get("admin_alert_phone") or "").strip()   # legacy single → συμπεριλαμβάνεται
+        if single and single not in phones:
+            phones.append(single)
+        for p in phones:
+            p = str(p or "").strip()
+            if not p:
+                continue
+            try:
+                await send_otp_sms(p, text[:600])
+            except Exception:  # noqa: BLE001 — μία αποτυχία δεν σταματά τους υπόλοιπους
+                pass
+    except Exception:  # noqa: BLE001
+        pass
+
+
 async def send_viber(tenant_id: str, to: str, text: str, *, patient_ref: str | None = None,
                      campaign_id: str | None = None, kind: str = "message", charge: bool = True) -> None:
     """Central Apifon IM (Viber). Text-only. Το Viber→SMS fallback γίνεται στο DLR webhook όταν το

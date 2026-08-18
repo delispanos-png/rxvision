@@ -61,6 +61,7 @@ const GROUPS: { label: string; icon: typeof LayoutGrid; items: { label: string; 
       { label: "Επισκεψιμότητα", icon: BarChart3, href: "/admin/health", section: "health" },
       { label: "Συνδεδεμένοι", icon: Activity, href: "/admin/sessions", section: "health" },
       { label: "Ειδοποιήσεις", icon: Bell, href: "/admin/notifications", section: "notifications" },
+      { label: "SMS ιδιοκτήτη", icon: Smartphone, href: "/admin/alerts", section: "notifications" },
       { label: "Αρχείο ενεργειών", icon: ScrollText, href: "/admin/audit-logs", section: "audit" },
     ],
   },

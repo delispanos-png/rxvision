@@ -124,6 +124,18 @@ class TenantProvisioningService:
             "current_period_end": _now() + timedelta(days=trial_days or 30),
             "external_ref": external_ref, "created_at": _now(), "updated_at": _now()})
 
+        # Ειδοποίηση ιδιοκτήτη (SMS) για ΚΑΘΕ νέα εγγραφή — δοκιμαστική ή πληρωμένη. Best-effort.
+        try:
+            from app.services.comms import admin_alert
+            kind_label = "ΔΟΚΙΜΑΣΤΙΚΗ" if trial_days else "ΠΛΗΡΩΜΕΝΗ"
+            afm = (company or {}).get("afm") or "-"
+            phone = (company or {}).get("phone") or (company or {}).get("telephone") or "-"
+            await admin_alert(
+                f"🆕 Νέα εγγραφή RxVision\n{name}\nΣυνδρομή: {kind_label} ({package_code})\n"
+                f"ΑΦΜ: {afm} · {owner_email} · Τηλ: {phone}")
+        except Exception:  # noqa: BLE001
+            pass
+
         return {
             "tenant_id": tid, "name": name, "owner_email": owner_email,
             "package": package_code,

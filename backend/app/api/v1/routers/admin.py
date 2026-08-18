@@ -1061,6 +1061,48 @@ class IntegrationsIn(BaseModel):
     admin_alert_email: str | None = None        # που στέλνεται το alert
 
 
+class AlertRecipientsIn(BaseModel):
+    phones: list[str] = []
+
+
+@router.get("/alert-recipients")
+async def get_alert_recipients(_: PlatformContext = Depends(get_platform_admin)):
+    """Λίστα κινητών που λαμβάνουν SMS ειδοποιήσεις ιδιοκτήτη (νέα εγγραφή / έναρξη-πρόβλημα ΗΔΥΚΑ)."""
+    from app.services.platform_secrets import decrypt_doc
+    cfg = decrypt_doc("comms", await shared_db()["platform_settings"].find_one({"_id": "comms"})) or {}
+    phones = list(cfg.get("admin_alert_phones") or [])
+    single = str(cfg.get("admin_alert_phone") or "").strip()
+    if single and single not in phones:
+        phones.append(single)
+    return {"phones": phones}
+
+
+@router.put("/alert-recipients")
+async def set_alert_recipients(body: AlertRecipientsIn, _: PlatformContext = Depends(get_platform_admin)):
+    """Αποθήκευση λίστας κινητών (μέχρι 20). Κρατούνται στο platform_settings.comms.admin_alert_phones."""
+    from datetime import datetime, timezone
+    phones, seen = [], set()
+    for p in body.phones:
+        p = str(p or "").strip()
+        if p and p not in seen:
+            seen.add(p)
+            phones.append(p)
+    phones = phones[:20]
+    await shared_db()["platform_settings"].update_one(
+        {"_id": "comms"},
+        {"$set": {"admin_alert_phones": phones, "updated_at": datetime.now(tz=timezone.utc)},
+         "$unset": {"admin_alert_phone": ""}}, upsert=True)   # migrate legacy single → list
+    return {"ok": True, "phones": phones}
+
+
+@router.post("/alert-recipients/test")
+async def test_alert_recipients(_: PlatformContext = Depends(get_platform_admin)):
+    """Δοκιμαστικό SMS σε όλα τα καταχωρημένα κινητά — για επιβεβαίωση ρύθμισης."""
+    from app.services.comms import admin_alert
+    await admin_alert("🔔 RxVision — δοκιμαστική ειδοποίηση. Οι ειδοποιήσεις ιδιοκτήτη λειτουργούν.")
+    return {"ok": True}
+
+
 @router.get("/integrations")
 async def get_integrations(_: PlatformContext = Depends(get_platform_admin)):
     """ΑΑΔΕ + Revolut credential status (secrets masked) for the admin settings screen."""

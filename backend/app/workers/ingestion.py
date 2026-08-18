@@ -49,7 +49,32 @@ async def _pause_hdika_auth(db, tenant_id: str, message: str) -> dict:
             "stats": {"fetched": 0}, "started_at": now, "updated_at": now})
     except Exception:  # noqa: BLE001
         pass
+    await _admin_hdika_alert(db, tenant_id, f"⚠️ ΗΔΥΚΑ πρόβλημα — λάθος/ληγμένος κωδικός")
     return {"tenant_id": tenant_id, "status": "auth_paused", "error": str(message)[:200]}
+
+
+async def _admin_hdika_alert(db, tenant_id: str, headline: str) -> None:
+    """Ειδοποίηση ιδιοκτήτη (SMS) για γεγονός ΗΔΥΚΑ ενός φαρμακείου. Best-effort."""
+    try:
+        t = await db["tenants"].find_one({"_id": tenant_id}, {"name": 1})
+        from app.services.comms import admin_alert
+        await admin_alert(f"{headline}\nΦαρμακείο: {(t or {}).get('name') or tenant_id}")
+    except Exception:  # noqa: BLE001
+        pass
+
+
+async def _maybe_first_sync_alert(db, tenant_id: str, inserted: int) -> None:
+    """Πρώτος επιτυχημένος συγχρονισμός ΗΔΥΚΑ με δεδομένα → ΜΙΑ ειδοποίηση «ξεκίνησε». Idempotent (flag)."""
+    if not inserted:
+        return
+    try:
+        r = await db["tenants"].update_one(
+            {"_id": tenant_id, "ingestion_config.hdika.first_sync_alerted": {"$ne": True}},
+            {"$set": {"ingestion_config.hdika.first_sync_alerted": True}})
+        if r.modified_count:
+            await _admin_hdika_alert(db, tenant_id, f"✅ ΗΔΥΚΑ — ξεκίνησε ο συγχρονισμός ({inserted} εγγραφές)")
+    except Exception:  # noqa: BLE001
+        pass
 
 
 async def _record_hdika_config_error(db, tenant_id: str, message: str) -> dict:
@@ -60,6 +85,7 @@ async def _record_hdika_config_error(db, tenant_id: str, message: str) -> dict:
     await db["tenants"].update_one({"_id": tenant_id}, {"$set": {
         "ingestion_config.hdika.config_error_at": now,
         "ingestion_config.hdika.config_error_msg": str(message)[:300]}})
+    await _admin_hdika_alert(db, tenant_id, f"⚠️ ΗΔΥΚΑ πρόβλημα — {str(message)[:120]}")
     return {"tenant_id": tenant_id, "status": "config_error", "error": str(message)[:200]}
 
 
@@ -501,6 +527,7 @@ def hdika_incremental_sync(self, tenant_id: str) -> dict:
             job = await IngestionEngine(tenant_id, db=db).ingest(
                 source="HDIKA", job_type="incremental", records=records,
                 window=(since, now), task_id=self.request.id)
+            await _maybe_first_sync_alert(db, tenant_id, int(job["stats"].get("inserted", 0)))
             return {"tenant_id": tenant_id, "status": job["status"], "stats": job["stats"]}
         except HdikaAuthError as e:   # λάθος/ληγμένος κωδικός → ΠΑΥΣΗ tenant + ειδοποίηση (μη retry)
             return await _pause_hdika_auth(db, tenant_id, str(e))
@@ -568,6 +595,7 @@ def hdika_backfill(self, tenant_id: str, since_iso: str, until_iso: str | None =
             job = await IngestionEngine(tenant_id, db=db).ingest(
                 source="HDIKA", job_type="backfill", records=records, window=(since, until),
                 task_id=self.request.id)
+            await _maybe_first_sync_alert(db, tenant_id, int(job["stats"].get("inserted", 0)))
             result = {"tenant_id": tenant_id, "status": job["status"], "stats": job["stats"]}
             # AUTO-CHAIN: αν ζητήθηκε ιστορική συνέχιση & κατεβάσαμε παλαιότερα δεδομένα και υπάρχει
             # ακόμη ιστορία πάνω από το floor → enqueue το επόμενο (παλαιότερο) chunk.
