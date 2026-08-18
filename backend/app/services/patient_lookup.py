@@ -36,6 +36,12 @@ async def fetch_hdika_patient(tenant_id: str, amka: str) -> dict:
     except Exception:  # noqa: BLE001 — timeout/auth/transport → μη διαθέσιμη, χειρόγραφη συμπλήρωση
         return {"found": False, "error": "hdika_unavailable"}
 
+    return normalize_hdika_patient(d)
+
+
+def normalize_hdika_patient(d: dict) -> dict:
+    """Μετατρέπει την ωμή απάντηση της ΗΔΥΚΑ getpatient σε normalized dict (ονοματεπώνυμο + φύλο +
+    διεύθυνση + στοιχεία επικοινωνίας). Κοινό μεταξύ on-demand lookup & μαζικού backfill."""
     patient = d.get("patient") if isinstance(d.get("patient"), dict) else d
     if not isinstance(patient, dict):
         return {"found": False, "error": "empty"}

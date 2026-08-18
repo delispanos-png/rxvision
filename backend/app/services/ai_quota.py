@@ -22,10 +22,32 @@ from app.core.db import shared_db
 
 AI_DEFAULT_DAILY = 50            # καθολικό fallback (χωρίς ρύθμιση) — ημερήσιο
 AI_MAX_DAILY = 20000            # ασφαλές ταβάνι για το ρυθμιζόμενο base
+TRIAL_AI_CAP = 30               # ΣΥΝΟΛΙΚΟ όριο AI ερωτήσεων για ΟΛΗ τη δοκιμαστική (όλα τα AI μαζί)
 
 
 def _day() -> str:
     return datetime.now(tz=timezone.utc).strftime("%Y-%m-%d")
+
+
+async def trial_ai_cap(db=None) -> int:
+    """Συνολικό όριο AI ερωτήσεων για ΟΛΗ τη δοκιμαστική περίοδο (διατροφή + PharmaCat + Copilot μαζί).
+    Ρυθμιζόμενο από platform admin (`platform_settings._id="ai_quota".trial_ai_cap`)· default TRIAL_AI_CAP."""
+    db = db if db is not None else shared_db()
+    doc = await db["platform_settings"].find_one({"_id": "ai_quota"})
+    v = (doc or {}).get("trial_ai_cap")
+    try:
+        return max(0, int(v))
+    except (TypeError, ValueError):
+        return TRIAL_AI_CAP
+
+
+async def _is_trial(db, tenant_id: str) -> bool:
+    """True όταν η συνδρομή του φαρμακείου είναι σε δοκιμαστική (effective_status == 'trial')."""
+    from app.services.billing_service import effective_status
+    sub = await db["subscriptions"].find_one(
+        {"tenant_id": tenant_id},
+        {"status": 1, "trial_ends_at": 1, "current_period_end": 1, "plan": 1})
+    return effective_status(sub) == "trial"
 
 
 async def base_daily_free(db=None) -> int:
@@ -42,7 +64,10 @@ async def base_daily_free(db=None) -> int:
 
 async def included_allowance(db, tenant_id: str) -> tuple[int, str]:
     """Δωρεάν AI allowance ΑΠΟ ΤΟ ΠΑΚΕΤΟ του φαρμακείου: (πλήθος, περίοδος 'month'|'day'). Αν το πακέτο
-    δεν έχει ορίσει `ai_included` → fallback στο καθολικό base_daily_free (ημερήσιο)."""
+    δεν έχει ορίσει `ai_included` → fallback στο καθολικό base_daily_free (ημερήσιο).
+    ΔΟΚΙΜΑΣΤΙΚΗ: αγνοεί το πακέτο — ισχύει ΕΝΑ συνολικό όριο (period 'trial') για όλη τη δοκιμαστική."""
+    if await _is_trial(db, tenant_id):
+        return await trial_ai_cap(db), "trial"
     sub = await db["subscriptions"].find_one({"tenant_id": tenant_id}, {"plan": 1})
     plan = (sub or {}).get("plan")
     if plan:
@@ -57,6 +82,11 @@ async def included_allowance(db, tenant_id: str) -> tuple[int, str]:
 
 
 async def _used_in_period(db, tenant_id: str, period: str) -> int:
+    if period == "trial":                       # ΣΥΝΟΛΟ όλης της δοκιμαστικής (κάθε ημέρα)
+        rows = await db["llm_daily_usage"].aggregate([
+            {"$match": {"_id": {"$regex": "^" + re.escape(f"ai:{tenant_id}:")}}},
+            {"$group": {"_id": None, "n": {"$sum": "$n"}}}]).to_list(length=1)
+        return int(rows[0]["n"]) if rows else 0
     if period in ("month", "year"):
         fmt = "%Y-%m" if period == "month" else "%Y"
         prefix = f"ai:{tenant_id}:{datetime.now(tz=timezone.utc).strftime(fmt)}"
@@ -102,8 +132,12 @@ async def check_and_consume(tenant_id: str, source: str = "llm") -> tuple[bool, 
     doc = await db["llm_daily_usage"].find_one_and_update(   # tenant-ok: platform usage meter
         {"_id": key}, {"$inc": {"n": 1, sub: 1}, "$setOnInsert": {"at": datetime.now(tz=timezone.utc)}},
         upsert=True, return_document=ReturnDocument.AFTER)
-    used = await _used_in_period(db, tenant_id, period) if period in ("month", "year") else int((doc or {}).get("n", 0))
+    used = await _used_in_period(db, tenant_id, period) if period in ("month", "year", "trial") else int((doc or {}).get("n", 0))
     if used > included:
+        if period == "trial":
+            # ΔΟΚΙΜΑΣΤΙΚΗ: σκληρό συνολικό όριο — ΟΧΙ credits (αγορά μόνο με πληρωμένη συνδρομή).
+            await db["llm_daily_usage"].update_one({"_id": key}, {"$inc": {"n": -1, sub: -1}})   # rollback
+            return (False, included, included, "trial_exhausted")
         # Πάνω από το included → τράβα 1 AI credit (prepaid). Αν υπάρχει → επιτρέπεται (source="credit").
         from app.services import ai_credits
         if await ai_credits.consume(tenant_id, 1):

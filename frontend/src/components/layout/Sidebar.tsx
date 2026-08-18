@@ -22,14 +22,14 @@ import {
 type Leaf = { href: string; label: string; en: string; module?: string | string[] };
 // A node is either a direct link (href) or an expandable parent (children).
 type Node = { label: string; en: string; icon: LucideIcon; href?: string; module?: string | string[]; children?: Leaf[] };
-type Group = { title: string; en: string; items: Node[] };
+type Group = { title: string; en: string; icon: LucideIcon; items: Node[] };
 type Me = { modules?: Record<string, "enabled" | "trial" | "locked"> };
 
 const GROUPS: Group[] = [
-  { title: "Patient Intelligence", en: "Patient Intelligence", items: [
+  { title: "Patient Intelligence", en: "Patient Intelligence", icon: Brain, items: [
     { label: "Patient Intelligence", en: "Patient Intelligence", icon: Brain, href: "/intelligence", module: "patient_analytics" },
   ] },
-  { title: "Ανάλυση", en: "Analysis", items: [
+  { title: "Ανάλυση", en: "Analysis", icon: BarChart3, items: [
     { label: "Dashboard", en: "Dashboard", icon: LayoutDashboard, href: "/dashboard" },
     { label: "Συνταγές", en: "Prescriptions", icon: BarChart3, module: "prescription_analytics", children: [
       { href: "/prescriptions", label: "Λίστα", en: "List" },
@@ -43,6 +43,8 @@ const GROUPS: Group[] = [
     { label: "Ασφαλισμένοι", en: "Patients", icon: Users, module: "patient_analytics", children: [
       { href: "/patients#list", label: "Λίστα", en: "List" },
       { href: "/patients#kpi", label: "Δείκτες", en: "Indicators" },
+      { href: "/patients/verify-contacts", label: "Επιβεβαίωση στοιχείων", en: "Confirm contacts" },
+      { href: "/patients/deceased", label: "Θανόντες & υπόλοιπα", en: "Deceased & balances" },
       { href: "/patients/transfers", label: "Μεταφορά πελάτη", en: "Patient transfer" },
     ] },
     { label: "Ιατροί", en: "Doctors", icon: Stethoscope, module: "doctor_analytics", children: [
@@ -54,7 +56,7 @@ const GROUPS: Group[] = [
       { href: "/icd10#kpi", label: "Δείκτες", en: "Indicators" },
     ] },
   ] },
-  { title: "Σύμβουλοι", en: "Advisors", items: [
+  { title: "Σύμβουλοι", en: "Advisors", icon: Stethoscope, items: [
     { label: "Επιχειρησιακά", en: "Business", icon: Sparkles, href: "/advisor" },
     { label: "Παραγγελία", en: "Ordering", icon: PackageSearch, module: "order_suggestions", children: [
       { href: "/orders", label: "βάσει εκτελέσεων", en: "by executions" },
@@ -68,14 +70,14 @@ const GROUPS: Group[] = [
     { label: "Κερδοφορία", en: "Profitability", icon: TrendingUp, href: "/profitability", module: "profitability" },
   ] },
   // eShop — όλα τα κυκλώματα του ηλεκτρονικού καταστήματος (κατάλογος, παραγγελίες, προσφορές, πιστότητα, πύλη).
-  { title: "eShop", en: "eShop", items: [
+  { title: "eShop", en: "eShop", icon: PackageSearch, items: [
     { label: "Κατάλογος ειδών", en: "Product Catalog", icon: Boxes, href: "/catalog", module: "order_delivery" },
     { label: "Ενεργές παραγγελίες", en: "Active orders", icon: Truck, href: "/orders-delivery#orders", module: "order_delivery" },
     { label: "Ολοκληρωμένες", en: "Completed", icon: PackageCheck, href: "/orders-delivery#done", module: "order_delivery" },
     { label: "Ρυθμίσεις αποστολής", en: "Delivery settings", icon: SlidersHorizontal, href: "/orders-delivery#settings", module: "order_delivery" },
   ] },
   // Πύλη πελατών — δικό της κύκλωμα· κάθε εσωτερική καρτέλα = αυτόνομο entry (URL hash).
-  { title: "Πύλη πελατών", en: "Customer Portal", items: [
+  { title: "Πύλη πελατών", en: "Customer Portal", icon: Users, items: [
     { label: "Πελάτες πύλης", en: "Portal customers", icon: Heart, href: "/portal-admin#customers", module: "patient_portal" },
     { label: "Αιτήματα συνταγών", en: "Rx requests", icon: FileText, href: "/portal-admin#rx", module: "patient_portal" },
     { label: "Διαθεσιμότητα", en: "Availability", icon: MessageSquare, href: "/portal-admin#availability", module: "patient_portal" },
@@ -83,19 +85,20 @@ const GROUPS: Group[] = [
     { label: "Υπηρεσίες", en: "Services", icon: Stethoscope, href: "/portal-admin#services", module: "patient_portal" },
   ] },
   // Κάρτες πιστότητας — δικό του κύκλωμα· κάθε καρτέλα του προγράμματος = αυτόνομο entry (URL hash).
-  { title: "Κάρτες πιστότητας", en: "Loyalty Cards", items: [
+  { title: "Κάρτες πιστότητας", en: "Loyalty Cards", icon: Gift, items: [
     { label: "Μέλη", en: "Members", icon: Users, href: "/loyalty#members", module: "loyalty" },
     { label: "Εγγραφή", en: "Enrol", icon: UserPlus, href: "/loyalty#enroll", module: "loyalty" },
     { label: "Εξαργυρώσεις", en: "Redemptions", icon: Ticket, href: "/loyalty#redemptions", module: "loyalty" },
     { label: "Ρυθμίσεις & Δώρα", en: "Settings & Rewards", icon: SlidersHorizontal, href: "/loyalty#settings", module: "loyalty" },
   ] },
   // Στοχευμένη Προώθηση — δικό του εμπορικό κύκλωμα (module `marketing`, ενεργό ανά συνδρομή).
-  { title: "Προώθηση", en: "Marketing", items: [
+  { title: "Προώθηση", en: "Marketing", icon: Megaphone, items: [
     { label: "Πίνακας", en: "Dashboard", icon: Megaphone, href: "/marketing", module: "marketing" },
     { label: "Θεραπευτικές κατηγορίες", en: "Therapeutic categories", icon: Target, href: "/marketing/categories", module: "marketing" },
     { label: "Καμπάνιες", en: "Campaigns", icon: Mail, href: "/communications", module: "patient_analytics" },
+    { label: "Κουπόνια", en: "Coupons", icon: Ticket, href: "/marketing/coupons", module: "marketing" },
   ] },
-  { title: "Λειτουργίες", en: "Operations", items: [
+  { title: "Λειτουργίες", en: "Operations", icon: SlidersHorizontal, items: [
     { label: "Έλεγχος συνταγών", en: "Rx Audit", icon: ShieldCheck, href: "/reimbursement", module: "monthly_closing" },
     // PharmacyOne is a back-office INTEGRATION (data source), not a user-facing capability → not in the menu.
     { label: "Οδηγός δεικτών", en: "Indicators guide", icon: BookOpen, href: "/guide" },
@@ -198,7 +201,8 @@ export function Sidebar() {
   });
 
   // Πτυσσόμενες ΟΜΑΔΕΣ (Ανάλυση/Σύμβουλοι/eShop/Λειτουργίες…) — άνοιγμα/κλείσιμο & μνήμη ανά χρήστη.
-  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
+  // Οι ενότητες ξεκινούν ΟΛΕΣ ΚΛΕΙΣΤΕΣ σε κάθε άνοιγμα — ο χρήστης ανοίγει όποια θέλει.
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => new Set(GROUPS.map((g) => g.title)));
   useEffect(() => {
     try { const raw = localStorage.getItem("rxv-nav-groups"); if (raw) setCollapsedGroups(new Set(JSON.parse(raw) as string[])); } catch { /* ignore */ }
   }, []);
@@ -231,13 +235,17 @@ export function Sidebar() {
         <nav className="flex-1 space-y-6 overflow-y-auto px-3 py-4">
           {groups.map((g) => {
             const gCollapsed = collapsedGroups.has(g.title);
+            const GroupIcon = g.icon;
             return (
             <div key={g.title}>
               {/* Επικεφαλίδα ομάδας = κουμπί πτύξης (κρύβεται όταν το sidebar είναι σε λειτουργία εικονιδίων) */}
               <button onClick={() => toggleGroup(g.title)}
-                className={`flex w-full items-center justify-between px-3 pb-2 text-[10px] font-bold uppercase tracking-wider text-slate-400 transition-colors hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300 ${hide}`}>
-                <span>{t(g.title, g.en)}</span>
-                <ChevronRight className={`h-3 w-3 shrink-0 transition-transform ${gCollapsed ? "" : "rotate-90"}`} />
+                className={`flex w-full items-center justify-between px-3 pb-2 text-[13px] font-bold uppercase tracking-wide text-slate-500 transition-colors hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 ${hide}`}>
+                <span className="flex items-center gap-2">
+                  <GroupIcon className="h-4 w-4 shrink-0 text-brand-500" strokeWidth={2} />
+                  {t(g.title, g.en)}
+                </span>
+                <ChevronRight className={`h-3.5 w-3.5 shrink-0 transition-transform ${gCollapsed ? "" : "rotate-90"}`} />
               </button>
               {(collapsed || !gCollapsed) && (
               <div className="space-y-1">

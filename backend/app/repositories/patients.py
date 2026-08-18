@@ -22,6 +22,18 @@ _DIM_FIELD = {
 class PatientRepository(BaseRepository):
     collection_name = "patients_anonymized"
 
+    async def get_amka(self, patient_id: str) -> str | None:
+        """Raw ΑΜΚΑ ενός ασθενή (για κλήση ΗΔΥΚΑ getpatient). Ο φαρμακοποιός είναι data controller."""
+        from bson import ObjectId
+        from bson.errors import InvalidId
+        try:
+            oid = ObjectId(patient_id)
+        except (InvalidId, TypeError):
+            return None
+        doc = await self._coll.find_one({"_id": oid, "tenant_id": self.tenant_id}, {"amka": 1})
+        amka = str((doc or {}).get("amka") or "").strip()
+        return amka or None
+
     async def onboard(self, *, amka: str, full_name: str | None = None, sex: str | None = None,
                       birth_year: int | None = None, area: str | None = None,
                       mobile: str | None = None, phone: str | None = None, email: str | None = None,
@@ -79,6 +91,10 @@ class PatientRepository(BaseRepository):
 
     async def aggregate_by(self, *, by: str) -> list[dict]:
         field = _DIM_FIELD.get(by, "$lifecycle")
+        # Περιοχή: ομαδοποίηση στο ΚΑΝΟΝΙΚΟΠΟΙΗΜΕΝΟ τοπωνύμιο (μία περιοχή = μία γραμμή)· fallback στο
+        # raw για ασθενείς που δεν έχουν ακόμη canonical (ο βρόχος refresh τους πιάνει σύντομα).
+        if by == "area":
+            field = {"$ifNull": ["$residence_area_canonical", "$residence_area"]}
         pipeline = [
             {"$group": {
                 "_id": field,
@@ -92,31 +108,37 @@ class PatientRepository(BaseRepository):
         ]
         return await self.aggregate(pipeline)
 
-    async def retention(self, *, cohort: str | None) -> list[dict]:
-        """Retention by lifecycle within a first-seen cohort (YYYY-MM).
-
-        Buckets the cohort's patients by lifecycle (new/active/inactive) so the
-        client can render retention vs churn.
-        """
-        match: dict = {}
+    async def retention(self, *, cohort: str | None = None) -> list[dict]:
+        """Καμπύλη διατήρησης: % ασθενών που παρέμειναν ΕΝΕΡΓΟΙ στους 1/3/6/12 μήνες από την ΠΡΩΤΗ
+        τους εμφάνιση. «Ενεργός στον ορίζοντα Η» = διάρκεια ζωής (last−first) ≥ Η μήνες. Ο παρονομαστής
+        ΚΑΘΕ ορίζοντα μετρά ΜΟΝΟ όσους είχαν αρκετό χρόνο (age ≥ Η) → αμερόληπτη καμπύλη (όχι
+        παραμόρφωση από πρόσφατους πελάτες). Προαιρετικά περιορίζεται σε ένα cohort (YYYY-MM)."""
+        from datetime import datetime, timezone
+        now = datetime.now(tz=timezone.utc)
+        horizons = [1, 3, 6, 12]
+        match: dict = {"first_seen_at": {"$ne": None}, "last_seen_at": {"$ne": None}}
         if cohort:
             match["$expr"] = {"$eq": [
-                {"$dateToString": {"format": "%Y-%m", "date": "$first_seen_at"}},
-                cohort,
-            ]}
-        pipeline: list[dict] = []
-        if match:
-            pipeline.append({"$match": match})
-        pipeline += [
-            {"$group": {"_id": "$lifecycle", "patients": {"$sum": 1}}},
-            {"$sort": {"_id": 1}},
-            {"$project": {"_id": 0, "lifecycle": "$_id", "patients": 1}},
+                {"$dateToString": {"format": "%Y-%m", "date": "$first_seen_at"}}, cohort]}
+        grp: dict = {"_id": None, "total": {"$sum": 1}}
+        for h in horizons:
+            grp[f"e{h}"] = {"$sum": {"$cond": [{"$gte": ["$age_m", h]}, 1, 0]}}
+            grp[f"r{h}"] = {"$sum": {"$cond": [
+                {"$and": [{"$gte": ["$age_m", h]}, {"$gte": ["$span_m", h]}]}, 1, 0]}}
+        pipeline = [
+            {"$match": match},
+            {"$project": {
+                "age_m": {"$dateDiff": {"startDate": "$first_seen_at", "endDate": now, "unit": "month"}},
+                "span_m": {"$dateDiff": {"startDate": "$first_seen_at", "endDate": "$last_seen_at", "unit": "month"}}}},
+            {"$group": grp},
         ]
-        rows = await self.aggregate(pipeline)
-        total = sum(r["patients"] for r in rows)
-        for r in rows:
-            r["pct"] = round(r["patients"] / total * 100, 2) if total else 0.0
-        return rows
+        res = await self.aggregate(pipeline)
+        d = res[0] if res else {}
+        out = [{"months": 0, "pct": 100.0, "eligible": int(d.get("total", 0))}]
+        for h in horizons:
+            e, r = int(d.get(f"e{h}", 0)), int(d.get(f"r{h}", 0))
+            out.append({"months": h, "pct": round(r / e * 100, 1) if e else 0.0, "eligible": e})
+        return out
 
 
 _PATIENT_SORT = {"value": "value", "claimed": "claimed", "profit": "profit", "rx": "rx"}
@@ -167,7 +189,9 @@ class PatientExecutionsRepository(BaseRepository):
                       "age_group": {"$first": "$p.age_group"},
                       "sex": {"$first": "$p.sex"},
                       "area": {"$first": "$p.residence_area"},
+                      "area_canonical": {"$first": "$p.residence_area_canonical"},
                       "lifecycle": {"$first": "$p.lifecycle"}}},
+            {"$set": {"area_eff": {"$ifNull": ["$area_canonical", "$area"]}}},
         ]
         demo: dict = {}
         if f.get("sex"):
@@ -177,7 +201,8 @@ class PatientExecutionsRepository(BaseRepository):
         if f.get("lifecycle"):
             demo["lifecycle"] = f["lifecycle"]
         if f.get("area"):
-            demo["area"] = {"$regex": re.escape(str(f["area"])), "$options": "i"}
+            # φιλτράρισμα στο ΚΑΝΟΝΙΚΟΠΟΙΗΜΕΝΟ τοπωνύμιο (το dropdown στέλνει canonical label)
+            demo["area_eff"] = str(f["area"])
         if demo:
             pipeline.append({"$match": demo})
         # contact + pharmacist lifecycle (separate collection, survives ΗΔΙΚΑ re-ingest)

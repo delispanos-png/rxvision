@@ -6,6 +6,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { Search, User, Wallet, Repeat, Stethoscope, Pill, Sparkles, AlertTriangle, Salad, Target, Eye, Crown, Syringe, ChevronRight, ScanLine, Calendar, CalendarRange, ShieldAlert } from "lucide-react";
 import { InteractionsModal } from "@/components/clinical/InteractionsModal";
 import { api, ApiError } from "@/lib/apiClient";
+import { appConfirm } from "@/store/dialogStore";
 import { useT } from "@/store/prefStore";
 import { fmtNum, fmtEur, fmtDec, scanRxBarcode } from "@/lib/formatters";
 import { KpiCard } from "@/components/kpi/KpiCard";
@@ -83,6 +84,8 @@ export default function PatientProfilePage() {
   // περίοδος για Διαγνώσεις & Φάρμακα (μήνες· 0 = όλα). Default 12μ ώστε το AI/διαγνώσεις να εστιάζουν στο πρόσφατο.
   const [rangeMonths, setRangeMonths] = useState(12);
   const [identity, setIdentity] = useState<string | null>(null);   // πώς φορτώθηκε ο πελάτης (amka/patient_id/barcode)
+  const [editSignal, setEditSignal] = useState(0);                 // σήμα ανοίγματος φόρμας επικοινωνίας (από pop-up)
+  const [promptedId, setPromptedId] = useState<string | null>(null); // ώστε το pop-up να μη ξαναβγαίνει για τον ίδιο
 
   // date_from ISO για το επιλεγμένο παράθυρο μηνών (κενό όταν «Όλα»)
   const monthsAgoISO = (m: number) => { const d = new Date(); d.setMonth(d.getMonth() - m); return d.toISOString(); };
@@ -103,6 +106,38 @@ export default function PatientProfilePage() {
     mutationFn: () => api<{ email: string; temp_password: string; link_sent?: { type: string; hint: string }[] }>("/patient-intelligence/profile/portal-account", { method: "POST", body: JSON.stringify({ amka: search.data?.patient?.amka, email: portalEmail.trim() }) }),
     onSuccess: (d) => setPortalResult(d),
   });
+
+  // Κατάσταση στοιχείων επικοινωνίας του φορτωμένου πελάτη (για μόνιμο banner + pop-up).
+  const loadedPid = search.data?.found ? (search.data?.patient?.id ?? null) : null;
+  const contactSt = useQuery({
+    queryKey: ["patient-contact-status", loadedPid],   // ίδιο key με ContactCard → κοινή ανανέωση μετά την αποθήκευση
+    queryFn: () => api<{ needs_confirmation?: boolean; source?: string | null; has_contact?: boolean }>(`/patients/${encodeURIComponent(loadedPid!)}/contact-status`),
+    enabled: !!loadedPid,
+  });
+  const needsUpdateMsg = () => {
+    const st = contactSt.data;
+    if (!st) return "";
+    return st.source === "idyka"
+      ? t("Ο πελάτης έχει στοιχεία επικοινωνίας μόνο από ΗΔΥΚΑ (παγωμένα από την εγγραφή). Ρώτησέ τον και επιβεβαίωσε/ενημέρωσέ τα.", "The patient has ΗΔΥΚΑ-only contact details (frozen at registration). Ask them and confirm/update.")
+      : st.has_contact
+        ? t("Τα στοιχεία επικοινωνίας του πελάτη θέλουν (επαν)επιβεβαίωση. Ρώτησέ τον και ενημέρωσέ τα.", "The patient's contact details need (re)confirmation. Ask them and update.")
+        : t("Δεν υπάρχουν στοιχεία επικοινωνίας. Ρώτησε τον πελάτη και καταχώρησέ τα.", "No contact details on file. Ask the patient and enter them.");
+  };
+  const openContactForm = () => { setEditSignal((s) => s + 1); document.getElementById("contact-card-anchor")?.scrollIntoView({ behavior: "smooth", block: "center" }); };
+
+  // Pop-up ταμείου: μόλις φορτωθεί πελάτης με ανεπιβεβαίωτα/μόνο-ΗΔΥΚΑ στοιχεία, ρώτα να τα επιβεβαιώσεις.
+  useEffect(() => {
+    const pid = loadedPid;
+    const st = contactSt.data;
+    if (!pid || !st || promptedId === pid) return;
+    setPromptedId(pid);
+    if (!st.needs_confirmation) return;
+    (async () => {
+      const ok = await appConfirm(needsUpdateMsg(), { title: t("Επιβεβαίωση στοιχείων", "Confirm details"), confirmText: t("Άνοιγμα φόρμας", "Open form"), cancelText: t("Αργότερα", "Later") });
+      if (ok) openContactForm();
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loadedPid, contactSt.data]);
 
   // live αναζήτηση με όνομα Ή ΑΜΚΑ (το /patients/search ψάχνει name/amka/τηλ/email & είναι demo-masked)
   type Hit = { patient_id: string; name: string | null; amka: string | null };
@@ -208,6 +243,20 @@ export default function PatientProfilePage() {
               {p.vip && <div className="mt-1 text-xs text-slate-500">{t("Κατάταξη αξίας", "Value rank")}: #{p.vip.rank}/{fmtNum(p.vip.of)} ({t("top", "top")} {(p.vip.rank / p.vip.of * 100).toFixed(1)}%)</div>}
             </div>
           </div>
+
+          {/* Μόνιμη ειδοποίηση: τα στοιχεία επικοινωνίας θέλουν ενημέρωση/επιβεβαίωση */}
+          {contactSt.data?.needs_confirmation && (
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 dark:border-amber-800 dark:bg-amber-950/40">
+              <div className="flex items-center gap-2.5">
+                <ShieldAlert className="h-5 w-5 shrink-0 text-amber-600" />
+                <span className="text-sm font-medium text-amber-800 dark:text-amber-200">{needsUpdateMsg()}</span>
+              </div>
+              <button onClick={openContactForm}
+                className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-amber-600 px-3.5 py-1.5 text-sm font-semibold text-white hover:bg-amber-700">
+                {t("Επιβεβαίωση/ενημέρωση", "Confirm/update")}
+              </button>
+            </div>
+          )}
 
           {/* financial KPIs */}
           <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
@@ -405,12 +454,14 @@ export default function PatientProfilePage() {
           </div>
 
           {/* contact — κλειστή σύνοψη· το κουμπί λογαριασμού my.rxvision ζει στο header της κάρτας */}
-          <ContactCard patientId={p.patient.id} collapsible extraAction={
+          <div id="contact-card-anchor">
+          <ContactCard patientId={p.patient.id} collapsible openEditSignal={editSignal} extraAction={
             <button onClick={() => { setPortalEmail(p.contact?.email || ""); setPortalResult(null); setShowPortal(true); }}
               className="inline-flex items-center gap-1.5 rounded-lg border border-brand-300 bg-brand-50 px-2.5 py-1.5 text-xs font-medium text-brand-700 hover:bg-brand-100 dark:border-brand-800 dark:bg-brand-950/30">
               <User className="h-3.5 w-3.5" /> {t("Λογαριασμός my.rxvision", "my.rxvision account")}
             </button>
           } />
+          </div>
 
           {/* μετρήσεις & σωματομετρικά (πίεση/ζάχαρο/βάρος/BMI + ιστορικό) */}
           <MeasurementsCard patientId={p.patient.id} />
@@ -456,9 +507,11 @@ export default function PatientProfilePage() {
                   : t("Η AI δεν είναι διαθέσιμη αυτή τη στιγμή — δοκίμασε ξανά ή ρύθμισε το κλειδί AI στο admin.", "AI unavailable right now — retry, or set the AI key in admin.")}
               </div>;
             })()}
-            {advice && !advice.ok && ["card_required", "quota_exceeded", "daily_limit"].includes(advice.error || "") && (
+            {advice && !advice.ok && ["card_required", "quota_exceeded", "daily_limit", "trial_exhausted"].includes(advice.error || "") && (
               <div className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:bg-amber-950/30">
-                {advice.error === "card_required"
+                {advice.error === "trial_exhausted"
+                  ? <>{t("Έφτασες το όριο των", "You reached the")} {advice.limit ?? 30} {t("δοκιμαστικών ερωτήσεων AI (διατροφή, PharmaCat & Copilot μαζί).", "trial AI questions (nutrition, PharmaCat & Copilot combined).")} {t("Αναβάθμισε σε πληρωμένο πακέτο", "Upgrade to a paid plan")}.</>
+                  : advice.error === "card_required"
                   ? <>{t("Έφτασες το βασικό ημερήσιο όριο AI", "You reached the base daily AI limit")} ({advice.limit ?? 50}). {t("Πρόσθεσε κάρτα στις", "Add a card in")} <a href="/settings/billing" className="font-semibold underline">{t("Ρυθμίσεις → Χρέωση", "Settings → Billing")}</a> {t("για περισσότερα.", "for more.")}</>
                   : <>{t("Εξαντλήθηκε το ημερήσιο όριο AI", "Daily AI limit reached")} ({advice.limit ?? 50}). {t("Ανέβασέ το στις", "Raise it in")} <a href="/settings/billing" className="font-semibold underline">{t("Ρυθμίσεις → Χρέωση", "Settings → Billing")}</a>.</>}
               </div>

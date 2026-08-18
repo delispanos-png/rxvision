@@ -291,6 +291,9 @@ async def update_me(body: ProfileUpdateIn, ctx: PatientContext = Depends(get_pat
         ctx.account_id, first_name=body.first_name, last_name=body.last_name,
         phone=body.phone, address=body.address, city=body.city,
         postal_code=body.postal_code, theme=body.theme)
+    # Φάση C: διάδοση στην καρτέλα κάθε φαρμακείου (source=patient, επιβεβαιωμένα από τον ίδιο).
+    from app.services.patient_contact_sync import sync_from_account
+    await sync_from_account(ctx.account_id, verify=True)
     return {"ok": True}
 
 
@@ -302,6 +305,9 @@ async def set_consent(body: ConsentIn, ctx: PatientContext = Depends(get_patient
     entry = await PatientAccountRepository().set_consent(ctx.account_id, body.kind, body.granted)
     if entry is None:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail={"error": "bad_consent"})
+    if body.kind == "marketing":     # Φάση C: συγχρόνισε τη συγκατάθεση marketing στις καρτέλες φαρμακείων
+        from app.services.patient_contact_sync import sync_from_account
+        await sync_from_account(ctx.account_id, verify=True, include_consent=True)
     return {"ok": True, "kind": body.kind, "consent": entry}
 
 
@@ -321,6 +327,8 @@ async def phone_verify_confirm(body: PhoneVerifyConfirmIn, ctx: PatientContext =
     res = await PatientAuthService().confirm_phone_verify(ctx.account_id, body.challenge_id, body.code)
     if res.get("error"):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail={"error": res["error"]})
+    from app.services.patient_contact_sync import sync_from_account   # Φάση C: OTP-επιβεβαιωμένο κινητό → καρτέλα
+    await sync_from_account(ctx.account_id, verify=True)
     return res
 
 
@@ -342,6 +350,8 @@ async def email_verify_confirm(body: EmailVerifyConfirmIn, ctx: PatientContext =
     if res.get("error"):
         code = status.HTTP_409_CONFLICT if res["error"] == "email_exists" else status.HTTP_400_BAD_REQUEST
         raise HTTPException(code, detail={"error": res["error"]})
+    from app.services.patient_contact_sync import sync_from_account   # Φάση C: OTP-επιβεβαιωμένο email → καρτέλα
+    await sync_from_account(ctx.account_id, verify=True)
     return res
 
 

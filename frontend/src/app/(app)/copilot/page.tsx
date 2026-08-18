@@ -200,8 +200,10 @@ function CopilotInner() {
             <span className="mt-1 grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-sky-100 text-sky-600 dark:bg-sky-900/40"><Sparkles className="h-4 w-4" /></span>
             <div className="min-w-0 flex-1 space-y-2">
               {turn.result && !turn.result.ok ? (
-                <div className={`rounded-xl px-3 py-2 text-sm ${["daily_limit", "quota_exceeded", "card_required"].includes(turn.result.error || "") ? "bg-amber-50 text-amber-800 dark:bg-amber-950/30" : "bg-rose-50 text-rose-700 dark:bg-rose-950/30"}`}>
-                  {["card_required", "quota_exceeded", "daily_limit"].includes(turn.result.error || "")
+                <div className={`rounded-xl px-3 py-2 text-sm ${["daily_limit", "quota_exceeded", "card_required", "trial_exhausted"].includes(turn.result.error || "") ? "bg-amber-50 text-amber-800 dark:bg-amber-950/30" : "bg-rose-50 text-rose-700 dark:bg-rose-950/30"}`}>
+                  {turn.result.error === "trial_exhausted"
+                    ? <><div className="font-semibold">✋ {t(`Έφτασες το όριο των ${turn.result.limit ?? 30} δοκιμαστικών ερωτήσεων AI`, `You've reached the ${turn.result.limit ?? 30} trial AI questions limit`)}.</div><div className="mt-0.5 text-xs">{t("Αναβάθμισε σε πληρωμένο πακέτο για περισσότερες ερωτήσεις (διατροφή, PharmaCat & Copilot).", "Upgrade to a paid plan for more questions (nutrition, PharmaCat & Copilot).")}</div></>
+                    : ["card_required", "quota_exceeded", "daily_limit"].includes(turn.result.error || "")
                     ? <><div className="font-semibold">✋ {t(`Εξάντλησες τα ${turn.result.limit ?? 0} ερωτήματα του πακέτου σου${status.data?.ai_period === "month" ? " αυτόν τον μήνα" : status.data?.ai_period === "year" ? " φέτος" : " σήμερα"}`, `You've used your plan's ${turn.result.limit ?? 0} questions${status.data?.ai_period === "month" ? " this month" : status.data?.ai_period === "year" ? " this year" : " today"}`)}.</div><div className="mt-0.5 text-xs">{t("Σύντομα θα μπορείς να αγοράσεις επιπλέον ερωτήσεις (AI credits) ή να αναβαθμίσεις πακέτο.", "You'll soon be able to buy extra questions (AI credits) or upgrade your plan.")}</div></>
                     : t("Σφάλμα — δοκιμάστε ξανά.", "Error — try again.")}
                 </div>

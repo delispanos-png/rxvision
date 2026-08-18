@@ -23,7 +23,7 @@ import { ImportInsuredModal } from "@/components/patients/ImportInsuredModal";
 import { NewPatientModal } from "@/components/patients/NewPatientModal";
 
 type AggRow = { label: string; value: number };
-type RetentionPoint = { period: string; retained_pct: number };
+type RetentionPoint = { months: number; retained_pct: number; eligible: number };
 type PatientRow = {
   patient_ref: string;
   pseudo_id: string;
@@ -44,29 +44,9 @@ type PatientRow = {
   inactive_reason?: string | null;
 };
 
-const CURRENT_COHORT = new Date().toISOString().slice(0, 7);
 
-// Merge area spelling variants (ΑΓ.ΔΗΜΗΤΡΙΟΣ / ΑΓ ΔΗΜΗΤΡΙΟΣ / ΑΓΙΟΥ ΔΗΜΗΤΡΙΟΥ → one).
-function normAreaKey(s: string) {
-  return (s || "")
-   .toUpperCase()
-   .normalize("NFD").replace(/[̀-ͯ]/g, "") // strip accents
-   .replace(/[.\-,]/g, " ")
-   .replace(/\bΑΓΙΟΥ\b/g, "ΑΓ").replace(/\bΑΓΙΟΣ\b/g, "ΑΓ").replace(/\bΑΓ\b/g, "ΑΓ")
-   .replace(/\bΠΑΛΑΙΟΥ?\b/g, "Π").replace(/\bΝΕΑΣ?\b/g, "Ν").replace(/\bΝ\b/g, "Ν")
-   .replace(/ΟΥ\b/g, "ΟΣ") // crude genitive→nominative
-   .replace(/\s+/g, " ").trim();
-}
-function mergeAreas(rows: AggRow[]) {
-  const m = new Map<string, { label: string; value: number }>();
-  for (const r of rows) {
-    const k = normAreaKey(r.label);
-    const cur = m.get(k);
-    if (cur) cur.value += r.value;
-    else m.set(k, { label: r.label.trim(), value: r.value });
-  }
-  return [...m.values()].sort((a, b) => b.value - a.value);
-}
+// Η κανονικοποίηση περιοχής γίνεται πλέον στο backend (residence_area_canonical + area_aliases +
+// AI batch/βρόχος). Το /patients/aggregate?by=area επιστρέφει ΗΔΗ ενοποιημένες περιοχές.
 
 type Hit = { patient_id: string; name?: string | null; amka?: string | null; age_group?: string | null; birth_year?: number | null; rx_count?: number; last_seen?: string | null; mobile?: string | null; phone?: string | null; email?: string | null; consent?: boolean };
 
@@ -86,12 +66,6 @@ const ContactCell = ({ r }: { r: { mobile?: string | null; phone?: string | null
 export default function PatientsPage() {
   const t = useT();
   const router = useRouter();
-  const LIFECYCLE: Record<string, string> = {
-    active: t("Ενεργοί", "Active"),
-    new: t("Νέοι", "New"),
-    inactive: t("Ανενεργοί", "Inactive"),
-    churned: t("Απωλεσθέντες", "Churned"),
-  };
   const searchColumns: Column<Hit>[] = [
     { key: "name", header: t("Ασφαλισμένος", "Patient"), render: (r) => r.name || "—" },
     { key: "amka", header: "ΑΜΚΑ", render: (r) => r.amka || "—" },
@@ -164,8 +138,8 @@ export default function PatientsPage() {
     queryFn: () => api<{ rows: AggRow[] }>(`/patients/aggregate?by=area&${q}`),
   });
   const retention = useQuery({
-    queryKey: queryKeys.patientsRetention(CURRENT_COHORT),
-    queryFn: () => api<{ points: RetentionPoint[] }>(`/patients/retention?cohort=${CURRENT_COHORT}`),
+    queryKey: queryKeys.patientsRetention("all"),   // καμπύλη σε ΟΛΑ τα cohorts (όχι τρέχων μήνας)
+    queryFn: () => api<{ points: RetentionPoint[] }>(`/patients/retention`),
   });
   const perPatient = useQuery({
     queryKey: ["patients", "list", q, fqStr],
@@ -189,10 +163,12 @@ export default function PatientsPage() {
     enabled: searching, retry: false,
   });
 
-  const age = byAge.data?.rows ?? [];
+  // Ταξινόμηση κατά πλήθος (φθίνουσα)· το «unknown» πάντα τελευταίο.
+  const age = (byAge.data?.rows ?? []).slice().sort((a, b) =>
+    (a.label === "unknown" ? 1 : 0) - (b.label === "unknown" ? 1 : 0) || b.value - a.value);
   const sex = bySex.data?.rows ?? [];
-  const area = byArea.data?.rows ?? [];
-  const areaMerged = mergeAreas(area);
+  const area = byArea.data?.rows ?? [];       // ήδη ενοποιημένες (canonical) από το backend
+  const areaMerged = area;
   const areaShown = showAllAreas ? areaMerged : areaMerged.slice(0, 20);
   const ret = retention.data?.points ?? [];
   const patients = perPatient.data?.items ?? [];
@@ -236,9 +212,10 @@ export default function PatientsPage() {
           <KpiCard label={t("Αξία (top 100)", "Value (top 100)")} help={t("Άθροισμα λιανικής αξίας των εκτελέσεων της περιόδου.", "Sum of retail value of executions.")} value={fmtEur(totalValue)} sub={t("κορυφαίοι ασφαλισμένοι", "top patients")} icon={Wallet} accent="violet" trend={hasPrev ? pctDelta(totalValue, pValue) : undefined} />
           <KpiCard label={t("Κερδοφορία (top 100)", "Profitability (top 100)")} help={t("Μεικτό κέρδος = αιτούμενο − κόστος χονδρικής.", "Gross profit = claimed − wholesale cost.")} value={fmtEur(totalProfit)} sub={t("μεικτό κέρδος", "gross profit")} icon={TrendingUp} accent="green" />
           <KpiCard
-            label={t("Διατήρηση", "Retention")}
+            label={t("Διατήρηση (12μ)", "Retention (12m)")}
+            help={t("% ασθενών που παρέμειναν ενεργοί 12 μήνες μετά την πρώτη τους εμφάνιση (μόνο όσοι είχαν 12μ χρόνο).", "% of patients still active 12 months after first visit (only those with ≥12m of history).")}
             value={`${fmtNum(Math.round(lastRetention))}%`}
-            sub={`cohort ${CURRENT_COHORT}`}
+            sub={t("στους 12 μήνες", "at 12 months")}
             icon={Activity}
             accent="sky"
           />
@@ -365,11 +342,12 @@ export default function PatientsPage() {
               height={Math.max(220, areaShown.length * 32)}
             />
           </PanelCard>
-          <PanelCard collapsible defaultOpen={view === "kpi"} title={`${t("Διατήρηση", "Retention")} — cohort ${CURRENT_COHORT}`}>
+          <PanelCard collapsible defaultOpen={view === "kpi"} title={t("Καμπύλη διατήρησης", "Retention curve")}>
+            <p className="-mt-1 mb-3 text-xs text-slate-400">{t("% ασθενών που παραμένουν ενεργοί μετά την πρώτη τους εμφάνιση (μόνο όσοι είχαν αρκετό χρόνο σε κάθε ορίζοντα).", "% of patients still active after their first visit (only those with enough history at each horizon).")}</p>
             <BarChart
-              labels={ret.map((p) => LIFECYCLE[p.period] || p.period)}
+              labels={ret.map((p) => p.months === 0 ? t("Έναρξη", "Start") : t(`${p.months} μήνες`, `${p.months} months`))}
               data={ret.map((p) => p.retained_pct)}
-              name={t("% Ασθενών", "% of patients")}
+              name={t("% ενεργών", "% active")}
               height={280}
             />
           </PanelCard>

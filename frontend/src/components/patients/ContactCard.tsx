@@ -2,9 +2,10 @@
 
 import { useEffect, useState, type ReactNode } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Phone, Mail, MessageSquare, Save, Loader2, Check, Pencil, X } from "lucide-react";
-import { api } from "@/lib/apiClient";
+import { Phone, Mail, MessageSquare, Save, Loader2, Check, Pencil, X, ShieldCheck, AlertTriangle, DownloadCloud } from "lucide-react";
+import { api, API_BASE } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
+import { appAlert } from "@/store/dialogStore";
 import { PanelCard } from "@/components/ui/Card";
 import { Tooltip } from "@/components/ui/Tooltip";
 
@@ -17,11 +18,25 @@ type Contact = {
   updated_at?: string | null;
 };
 
+type ContactStatus = {
+  verified?: boolean; needs_confirmation?: boolean; source?: string | null;
+  contact_updated_at?: string | null; idyka_fetched_at?: string | null;
+  has_email?: boolean; has_mobile?: boolean; has_contact?: boolean;
+  avatar_url?: string | null;
+};
+
+const ddmmyyyy = (iso?: string | null) => {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return null;
+  return `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}/${d.getFullYear()}`;
+};
+
 const empty: Contact = { marketing_consent: false, preferred_channel: "mobile", active: true };
 
 /** Στοιχεία επικοινωνίας πελάτη (pharmacist-controlled). Με `collapsible` ξεκινά κλειστή
  *  (μόνο σύνοψη) και ανοίγει η φόρμα με «Επεξεργασία» — για αλλαγή μόνο όταν χρειάζεται. */
-export function ContactCard({ patientId, collapsible = false, extraAction }: { patientId: string; collapsible?: boolean; extraAction?: ReactNode }) {
+export function ContactCard({ patientId, collapsible = false, extraAction, openEditSignal = 0 }: { patientId: string; collapsible?: boolean; extraAction?: ReactNode; openEditSignal?: number }) {
   const t = useT();
   const qc = useQueryClient();
   const { data } = useQuery({
@@ -32,14 +47,79 @@ export function ContactCard({ patientId, collapsible = false, extraAction }: { p
   const [f, setF] = useState<Contact>(empty);
   const [editing, setEditing] = useState(!collapsible);
   useEffect(() => { if (data) setF({ ...empty, ...data }); }, [data]);
+  // Εξωτερικό σήμα (π.χ. pop-up ταμείου) για να ανοίξει η φόρμα σε λειτουργία επεξεργασίας.
+  useEffect(() => { if (openEditSignal > 0) setEditing(true); }, [openEditSignal]);
   const set = (k: keyof Contact, v: string | boolean) => setF((s) => ({ ...s, [k]: v }));
 
   const save = useMutation({
     mutationFn: () => api<Contact>(`/patients/${encodeURIComponent(patientId)}/contact`, { method: "PUT", body: JSON.stringify({ ...f, height_cm: f.height_cm ? Number(f.height_cm) : null }) }),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["patient-contact", patientId] }); if (collapsible) setEditing(false); },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["patient-contact", patientId] });
+      qc.invalidateQueries({ queryKey: ["patient-contact-status", patientId] });
+      if (collapsible) setEditing(false);
+    },
+  });
+
+  // Κατάσταση επιβεβαίωσης (verified / μόνο-ΗΔΥΚΑ / παλιά) + ημ/νία τελευταίας ενημέρωσης.
+  const { data: st } = useQuery({
+    queryKey: ["patient-contact-status", patientId],
+    queryFn: () => api<ContactStatus>(`/patients/${encodeURIComponent(patientId)}/contact-status`),
+    retry: false,
+  });
+
+  // Άντληση στοιχείων από ΗΔΥΚΑ (γεμίζει μόνο κενά· χωρίς συγκατάθεση/επιβεβαίωση).
+  const pull = useMutation({
+    mutationFn: () => api<{ found: boolean; error?: string; filled?: string[] }>(`/patients/${encodeURIComponent(patientId)}/contact/from-hdika`, { method: "POST" }),
+    onSuccess: async (r) => {
+      qc.invalidateQueries({ queryKey: ["patient-contact", patientId] });
+      qc.invalidateQueries({ queryKey: ["patient-contact-status", patientId] });
+      if (!r.found) {
+        const msg: Record<string, string> = {
+          not_configured: t("Δεν έχουν ρυθμιστεί διαπιστευτήρια ΗΔΥΚΑ.", "ΗΔΥΚΑ credentials not configured."),
+          invalid_amka: t("Μη έγκυρο ΑΜΚΑ.", "Invalid ΑΜΚΑ."),
+          deceased: t("Η ΗΔΥΚΑ επισημαίνει αποβίωση.", "ΗΔΥΚΑ marks the patient as deceased."),
+          hdika_unavailable: t("Η ΗΔΥΚΑ δεν είναι διαθέσιμη αυτή τη στιγμή.", "ΗΔΥΚΑ is currently unavailable."),
+        };
+        await appAlert(msg[r.error || ""] || t("Δεν βρέθηκαν στοιχεία στη ΗΔΥΚΑ.", "No details found in ΗΔΥΚΑ."), { title: t("Άντληση από ΗΔΥΚΑ", "Fetch from ΗΔΥΚΑ") });
+      } else if (!(r.filled || []).length) {
+        await appAlert(t("Δεν προστέθηκε κάτι — τα πεδία ήταν ήδη συμπληρωμένα.", "Nothing added — fields were already filled."), { title: t("Άντληση από ΗΔΥΚΑ", "Fetch from ΗΔΥΚΑ") });
+      }
+    },
   });
 
   const tel = (data?.mobile || data?.phone) ?? null;
+
+  // Badge κατάστασης επιβεβαίωσης — για σύνοψη & φόρμα.
+  const statusBadge = st && (data?.mobile || data?.phone || data?.email) ? (
+    st.needs_confirmation ? (
+      <Tooltip label={st.source === "idyka" ? t("Στοιχεία μόνο από ΗΔΥΚΑ — ζήτησε επιβεβαίωση από τον πελάτη.", "ΗΔΥΚΑ-only data — ask the patient to confirm.") : t("Τα στοιχεία θέλουν (επαν)επιβεβαίωση.", "Details need (re)confirmation.")}>
+        <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-700 dark:bg-amber-950/50 dark:text-amber-300">
+          <AlertTriangle className="h-3 w-3" />{st.source === "idyka" ? t("Μόνο ΗΔΥΚΑ", "ΗΔΥΚΑ-only") : t("Θέλει επιβεβαίωση", "Needs confirmation")}
+        </span>
+      </Tooltip>
+    ) : (
+      <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300">
+        <ShieldCheck className="h-3 w-3" />{t("Επιβεβαιωμένα", "Verified")}{ddmmyyyy(st.contact_updated_at) ? ` · ${ddmmyyyy(st.contact_updated_at)}` : ""}
+      </span>
+    )
+  ) : null;
+
+  // Φωτογραφία προφίλ που ανέβασε ο πελάτης από την πύλη my.rxvision.
+  const avatar = st?.avatar_url ? (
+    <Tooltip label={t("Φωτογραφία από my.rxvision (ανέβασμα πελάτη)", "Photo from my.rxvision (patient upload)")}>
+      <img src={`${API_BASE}${st.avatar_url}`} alt="" className="h-10 w-10 shrink-0 rounded-full object-cover ring-2 ring-brand-200 dark:ring-brand-800" />
+    </Tooltip>
+  ) : null;
+
+  // Κουμπί «Άντληση από ΗΔΥΚΑ»
+  const hdikaBtn = (
+    <Tooltip label={t("Συμπλήρωση κενών στοιχείων από ΗΔΥΚΑ", "Fill empty details from ΗΔΥΚΑ")}>
+      <button onClick={() => pull.mutate()} disabled={pull.isPending}
+        className="inline-flex items-center gap-1.5 rounded-lg border border-brand-200 bg-brand-50 px-2.5 py-1.5 text-xs font-medium text-brand-700 hover:bg-brand-100 disabled:opacity-50 dark:border-brand-800 dark:bg-brand-950/40 dark:text-brand-300">
+        {pull.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <DownloadCloud className="h-3.5 w-3.5" />} {t("Άντληση ΗΔΥΚΑ", "Fetch ΗΔΥΚΑ")}
+      </button>
+    </Tooltip>
+  );
 
   // quick call/SMS/email actions (κοινά και στις δύο προβολές)
   const quickActions = (
@@ -58,6 +138,7 @@ export function ContactCard({ patientId, collapsible = false, extraAction }: { p
         <div className="flex flex-wrap items-center gap-1.5">
           {quickActions}
           {extraAction}
+          {hdikaBtn}
           <button onClick={() => setEditing(true)}
             className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300">
             <Pencil className="h-3.5 w-3.5" /> {t("Επεξεργασία", "Edit")}
@@ -65,13 +146,15 @@ export function ContactCard({ patientId, collapsible = false, extraAction }: { p
         </div>
       }>
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-sm text-slate-600 dark:text-slate-300">
+          {avatar}
           <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${data?.active === false ? "bg-rose-100 text-rose-700" : "bg-emerald-100 text-emerald-700"}`}>
             {data?.active === false ? t("Ανενεργός", "Inactive") : t("Ενεργός", "Active")}
           </span>
+          {statusBadge}
           {tel && <span className="inline-flex items-center gap-1.5"><Phone className="h-4 w-4 text-slate-400" />{tel}</span>}
           {data?.email && <span className="inline-flex items-center gap-1.5"><Mail className="h-4 w-4 text-slate-400" />{data.email}</span>}
           {data?.marketing_consent && <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] text-emerald-700">{t("Συγκατάθεση marketing", "Marketing consent")}</span>}
-          {!hasAny && <span className="text-slate-400">{t("Χωρίς στοιχεία — «Επεξεργασία» για προσθήκη.", "No details — click Edit to add.")}</span>}
+          {!hasAny && <span className="text-slate-400">{t("Χωρίς στοιχεία — «Επεξεργασία» ή «Άντληση ΗΔΥΚΑ».", "No details — Edit or Fetch ΗΔΥΚΑ.")}</span>}
         </div>
       </PanelCard>
     );
@@ -91,6 +174,7 @@ export function ContactCard({ patientId, collapsible = false, extraAction }: { p
       <div className="flex flex-wrap items-center gap-1.5">
         {quickActions}
         {extraAction}
+        {hdikaBtn}
         {collapsible && (
           <Tooltip label={t("Κλείσιμο", "Close")}>
             <button onClick={() => { setEditing(false); if (data) setF({ ...empty, ...data }); }} aria-label={t("Κλείσιμο", "Close")}
@@ -99,7 +183,18 @@ export function ContactCard({ patientId, collapsible = false, extraAction }: { p
         )}
       </div>
     }>
-      <p className="-mt-1 mb-3 text-xs text-slate-400">{t("Καταχωρείς εσύ", "You enter it")} — <b>{t("δεν επηρεάζονται", "not affected")}</b> {t("από συγχρονισμό ΗΔΥΚΑ.", "by ΗΔΥΚΑ sync.")}</p>
+      <div className="-mt-1 mb-3 flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-2.5">
+          {avatar}
+          <p className="text-xs text-slate-400">{t("Καταχωρείς εσύ", "You enter it")} — <b>{t("δεν επηρεάζονται", "not affected")}</b> {t("από συγχρονισμό ΗΔΥΚΑ.", "by ΗΔΥΚΑ sync.")}</p>
+        </div>
+        {statusBadge}
+      </div>
+      {st?.needs_confirmation && st?.source === "idyka" && (
+        <p className="mb-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700 dark:bg-amber-950/40 dark:text-amber-300">
+          {t("Τα στοιχεία προέρχονται μόνο από τη ΗΔΥΚΑ (παγωμένα από την εγγραφή). Επιβεβαίωσέ τα με τον πελάτη και πάτησε «Αποθήκευση».", "Details come only from ΗΔΥΚΑ (frozen at registration). Confirm them with the patient and click Save.")}
+        </p>
+      )}
 
       {/* lifecycle — pharmacist-controlled, survives ΗΔΥΚΑ re-ingest */}
       <div className={`mb-3 rounded-lg border p-3 ${f.active === false ? "border-amber-200 bg-amber-50 dark:border-amber-800 dark:bg-amber-950/40" : "border-slate-200 dark:border-slate-700"}`}>

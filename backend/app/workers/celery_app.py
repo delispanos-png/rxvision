@@ -13,7 +13,9 @@ celery_app = Celery(
     backend=settings.CELERY_RESULT_BACKEND,
     include=["app.workers.ingestion", "app.workers.snapshots",
              "app.workers.billing", "app.workers.optical", "app.workers.reminders",
-             "app.workers.ops_health", "app.workers.copilot_routines"],
+             "app.workers.ops_health", "app.workers.copilot_routines",
+             "app.workers.contacts_backfill", "app.workers.death_sweep",
+             "app.workers.area_canonical"],
 )
 
 celery_app.conf.update(
@@ -105,6 +107,17 @@ celery_app.conf.beat_schedule = {
     "heal-missing-cda": {
         "task": "app.workers.ingestion.heal_missing_cda",
         "schedule": crontab(minute=40, hour="*/2"),
+    },
+    # Κανονικοποίηση περιοχής — εβδομαδιαίο AI πέρασμα για νέες/άγνωστες τιμές (Κυριακή 04:10 UTC)
+    "refresh-area-canonical": {
+        "task": "app.workers.area_canonical.refresh_area_canonical",
+        "schedule": crontab(hour=4, minute=10, day_of_week=0),
+    },
+    # Death-sweep ΗΔΥΚΑ — έλεγχος θανόντων (ΚΑΘΗΜΕΡΙΝΑ 03:20 UTC για γρήγορη αρχική κάλυψη· rotation
+    # με death_checked_at → μετά την κάλυψη απλώς επανελέγχει τους πιο παλιά ελεγμένους/νέους θανόντες)
+    "dispatch-death-sweep": {
+        "task": "app.workers.death_sweep.dispatch_death_sweep",
+        "schedule": crontab(hour=3, minute=20),
     },
     # Subscription billing — charge due trials/renewals; auto-suspend on failure (no-op w/o Revolut)
     "bill-subscriptions": {

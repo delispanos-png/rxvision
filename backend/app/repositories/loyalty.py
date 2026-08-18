@@ -165,6 +165,17 @@ class LoyaltyRepository(BaseRepository):
             })
         return out
 
+    async def balances_for_refs(self, refs) -> dict:
+        """{patient_ref: {points, balance_cents}} για συγκεκριμένους ασθενείς με ΘΕΤΙΚΟ υπόλοιπο.
+        Μία δόμηση όλων των μελών & φιλτράρισμα (για τη λίστα υπολοίπων θανόντων)."""
+        want = {str(r) for r in refs}
+        if not want:
+            return {}
+        cfg = await self.config()
+        members = await self._build_members(cfg)
+        return {m["patient_ref"]: {"points": m["points"], "balance_cents": m["balance_cents"]}
+                for m in members if m["patient_ref"] in want and (m.get("balance_cents") or 0) > 0}
+
     # ── enrollment (opt-in με αποδοχή όρων) ─────────────────────────────────
     async def is_enrolled(self, patient_ref: str) -> dict | None:
         return await self._db["loyalty_members"].find_one(

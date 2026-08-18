@@ -2615,6 +2615,33 @@ async def set_retention_pricing(body: RetentionPriceIn, _: PlatformContext = Dep
     return {"ok": True, "price_per_year_cents": body.price_per_year_cents}
 
 
+class AreaOverrideIn(BaseModel):
+    raw_or_key: str
+    canonical: str
+
+
+@router.get("/area-aliases")
+async def area_aliases(q: str | None = None, _: PlatformContext = Depends(get_platform_admin)):
+    """Χάρτης κανονικοποίησης περιοχών (raw key → canonical δήμος) — επισκόπηση & χειροκίνητη διόρθωση."""
+    from app.repositories.base import jsonsafe
+    db = shared_db()
+    query: dict = {}
+    if q:
+        import re as _re
+        rx = _re.escape(q.strip())
+        query = {"$or": [{"_id": {"$regex": rx, "$options": "i"}},
+                         {"canonical": {"$regex": rx, "$options": "i"}}]}
+    rows = [jsonsafe(d) async for d in db["area_aliases"].find(query).sort("_id", 1).limit(1000)]
+    return {"items": rows, "total": await db["area_aliases"].count_documents(query)}
+
+
+@router.post("/area-aliases/override")
+async def area_alias_override(body: AreaOverrideIn, _: PlatformContext = Depends(get_platform_admin)):
+    """Χειροκίνητη υπερίσχυση αντιστοίχισης περιοχής (κλειδώνεται· το AI δεν την ξαναγγίζει)."""
+    from app.services import area_canonical
+    return await area_canonical.set_override(body.raw_or_key, body.canonical)
+
+
 @router.get("/ai-limits")
 async def ai_limits(_: PlatformContext = Depends(get_platform_admin)):
     """Όρια AI ΣΤΗ ΓΛΩΣΣΑ ΤΩΝ ΠΑΚΕΤΩΝ: ανά φαρμακείο → πακέτο, δικαιούμενα (included/period) & κατανάλωση

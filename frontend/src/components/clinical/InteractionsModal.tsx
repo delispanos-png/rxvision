@@ -41,7 +41,8 @@ export function InteractionsModal({ open, onClose, title, endpoint, body }: {
       )}
       {r && r.ok === false && (
         <div className="rounded-lg bg-amber-50 px-4 py-3 text-sm text-amber-700">
-          {r.error === "daily_limit" ? t("Έφτασες το ημερήσιο όριο AI ερωτημάτων.", "Daily AI limit reached.")
+          {r.error === "trial_exhausted" ? t("Έφτασες το όριο των 30 δοκιμαστικών ερωτήσεων AI. Αναβάθμισε σε πληρωμένο πακέτο.", "You reached the 30 trial AI questions limit. Upgrade to a paid plan.")
+            : r.error === "daily_limit" ? t("Έφτασες το ημερήσιο όριο AI ερωτημάτων.", "Daily AI limit reached.")
             : r.error === "patient_not_found" ? t("Δεν βρέθηκε ασθενής.", "Patient not found.")
             : r.error === "not_configured" ? t("Το AI δεν είναι ρυθμισμένο (κλειδί στο admin).", "AI not configured (set key in admin).")
             : t("Δεν ήταν δυνατός ο έλεγχος.", "Could not run the check.")}

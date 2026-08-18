@@ -8,7 +8,7 @@ import { useT } from "@/store/prefStore";
 import { QueryState } from "@/components/ui/QueryState";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
 
-type Cat = { key: string; label: string; icon: string; offer: string; patients: number; value: number };
+type Cat = { key: string; label: string; icon: string; offer: string; patients: number; reachable: number; value: number };
 type Res = { items: Cat[]; catalog: { key: string; label: string; icon: string; offer: string }[] };
 
 const eur = (c: number) => `${((c || 0) / 100).toLocaleString("el-GR", { maximumFractionDigits: 0 })} €`;
@@ -34,12 +34,14 @@ export default function TherapyCategoriesPage() {
           {q.data && (() => {
             const cats = [...q.data.items].sort((a, b) => b.patients - a.patients);
             const totalPatients = cats.reduce((s, c) => s + c.patients, 0);
+            const totalReachable = cats.reduce((s, c) => s + c.reachable, 0);
             const totalValue = cats.reduce((s, c) => s + c.value, 0);
             return (
               <>
-                <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3">
+                <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
                   <Kpi label={t("Κατηγορίες με ασθενείς", "Categories with patients")} value={String(cats.filter((c) => c.patients > 0).length)} />
                   <Kpi label={t("Σύνολο (με επικάλυψη)", "Total (with overlap)")} value={totalPatients.toLocaleString("el-GR")} />
+                  <Kpi label={t("Προσεγγίσιμοι", "Reachable")} value={totalReachable.toLocaleString("el-GR")} tint="emerald" />
                   <Kpi label={t("Αξία εκτελέσεων", "Executions value")} value={eur(totalValue)} tint="emerald" />
                 </div>
 
@@ -57,6 +59,11 @@ export default function TherapyCategoriesPage() {
                         <div className="text-right">
                           <div className="text-2xl font-extrabold text-slate-800 dark:text-slate-100">{c.patients}</div>
                           <div className="text-[11px] text-slate-400">{t("ασθενείς", "patients")}</div>
+                          {c.patients > 0 && (
+                            <div className="text-[11px] font-semibold text-emerald-600" title={t("Με συγκατάθεση επικοινωνίας + κανάλι — αυτοί λαμβάνουν το μήνυμα", "With consent + a channel — these actually receive")}>
+                              {c.reachable} {t("προσεγγίσιμοι", "reachable")}
+                            </div>
+                          )}
                         </div>
                       </div>
                       <div className="mt-2 flex items-center justify-between">

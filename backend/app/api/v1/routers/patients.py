@@ -108,10 +108,141 @@ async def put_contact(
     body: ContactIn,
     ctx: TenantContext = Depends(require("patients:read", module=_MODULE)),
 ):
-    saved = await PatientContactRepository(tenant_id=ctx.tenant_id).upsert(patient_id, body.model_dump())
+    # Χειροκίνητη αποθήκευση από φαρμακοποιό = ρητή επιβεβαίωση στοιχείων (source=pharmacist, verified).
+    saved = await PatientContactRepository(tenant_id=ctx.tenant_id).save_contact(
+        patient_id, body.model_dump(), source="pharmacist", verify=True)
     if saved is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "patient_not_found")
     return saved
+
+
+@router.get("/{patient_id}/contact-status")
+async def contact_status(
+    patient_id: str,
+    ctx: TenantContext = Depends(require("patients:read", module=_MODULE)),
+):
+    """Κατάσταση στοιχείων επικοινωνίας (verified / needs_confirmation / προέλευση / ημ/νία) —
+    για badge καρτέλας & απόφαση pop-up ταμείου."""
+    return await PatientContactRepository(tenant_id=ctx.tenant_id, demo=ctx.demo).contact_status(patient_id)
+
+
+@router.post("/{patient_id}/contact/from-hdika")
+async def contact_from_hdika(
+    patient_id: str,
+    ctx: TenantContext = Depends(require("patients:read", module=_MODULE)),
+):
+    """Άντληση στοιχείων επικοινωνίας από ΗΔΥΚΑ για ΕΝΑΝ ασθενή → γεμίζει μόνο κενά πεδία
+    (ΧΩΡΙΣ συγκατάθεση, ΧΩΡΙΣ επιβεβαίωση). Χρειάζεται το ΑΜΚΑ του ασθενή."""
+    from app.repositories.patients import PatientRepository
+    pa = await PatientRepository(tenant_id=ctx.tenant_id).get_amka(patient_id)
+    if not pa:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "patient_or_amka_not_found")
+    from app.services.patient_lookup import fetch_hdika_patient
+    res = await fetch_hdika_patient(ctx.tenant_id, pa)
+    if not res.get("found"):
+        if res.get("error") == "deceased":     # ΗΔΥΚΑ δηλώνει θάνατο → κάρτα ανενεργή «θανών»
+            from app.services.patient_lifecycle import mark_deceased
+            await mark_deceased(ctx.tenant_id, pa)
+            return {"found": False, "error": "deceased", "deceased": True, "filled": []}
+        return {"found": False, "error": res.get("error"), "filled": []}
+    repo = PatientContactRepository(tenant_id=ctx.tenant_id, demo=ctx.demo)
+    applied = await repo.apply_idyka(patient_id, res)
+    status_now = await repo.contact_status(patient_id)
+    return {"found": True, **(applied or {}), "status": status_now}
+
+
+@router.get("/contacts/needs-confirmation")
+async def contacts_needs_confirmation(
+    q: str | None = Query(None),
+    limit: int = Query(300, ge=1, le=1000),
+    skip: int = Query(0, ge=0),
+    ctx: TenantContext = Depends(require("patients:read", module=_MODULE)),
+):
+    """Λίστα πελατών που θέλουν (επαν)επιβεβαίωση στοιχείων επικοινωνίας (μόνο-ΗΔΥΚΑ/ανεπιβεβαίωτα/παλιά)."""
+    return await PatientContactRepository(tenant_id=ctx.tenant_id, demo=ctx.demo).needs_confirmation_list(
+        limit=limit, skip=skip, q=q)
+
+
+@router.get("/contacts/bulk-hdika")
+async def bulk_hdika_status(ctx: TenantContext = Depends(require("patients:read", module=_MODULE))):
+    """Κατάσταση/πρόοδος του μαζικού ΗΔΥΚΑ backfill στοιχείων επικοινωνίας."""
+    from app.core.db import shared_db
+    from app.repositories.base import jsonsafe
+    job = await shared_db()["contact_backfill_jobs"].find_one({"_id": ctx.tenant_id})
+    return jsonsafe(job) or {"status": "idle"}
+
+
+@router.post("/contacts/bulk-hdika")
+async def bulk_hdika_start(ctx: TenantContext = Depends(require("patients:read", module=_MODULE))):
+    """Έναρξη μαζικής αρχικοποίησης στοιχείων επικοινωνίας από ΗΔΥΚΑ — ΜΟΝΟ για όσους λείπουν
+    στοιχεία, background & throttled. Δεν ξεκινά δεύτερο αν τρέχει ήδη."""
+    from datetime import datetime, timezone, timedelta
+    from app.core.db import shared_db
+    db = shared_db()
+    job = await db["contact_backfill_jobs"].find_one({"_id": ctx.tenant_id})
+    if job and job.get("status") in ("running", "queued"):
+        fresh = job.get("updated_at") and job["updated_at"] > datetime.now(tz=timezone.utc) - timedelta(minutes=15)
+        if fresh:
+            return {"status": "already_running", "job": {"done": job.get("done"), "total": job.get("total")}}
+    await db["contact_backfill_jobs"].update_one(
+        {"_id": ctx.tenant_id},
+        {"$set": {"status": "queued", "queued_at": datetime.now(tz=timezone.utc),
+                  "updated_at": datetime.now(tz=timezone.utc)}}, upsert=True)
+    from app.workers.contacts_backfill import backfill_contacts_from_hdika
+    backfill_contacts_from_hdika.delay(ctx.tenant_id)
+    return {"status": "queued"}
+
+
+# ── Θανόντες: έλεγχος ΗΔΥΚΑ + λίστα ανοιχτών υπολοίπων ──────────────────────────────────────
+@router.get("/deaths/sweep")
+async def death_sweep_status(ctx: TenantContext = Depends(require("patients:read", module=_MODULE))):
+    """Κατάσταση/πρόοδος του ελέγχου θανόντων από ΗΔΥΚΑ."""
+    from app.core.db import shared_db
+    from app.repositories.base import jsonsafe
+    job = await shared_db()["death_sweep_jobs"].find_one({"_id": ctx.tenant_id})
+    return jsonsafe(job) or {"status": "idle"}
+
+
+@router.post("/deaths/sweep")
+async def death_sweep_start(ctx: TenantContext = Depends(require("patients:read", module=_MODULE))):
+    """Έναρξη ελέγχου θανόντων από ΗΔΥΚΑ (background, throttled). Δεν ξεκινά δεύτερο αν τρέχει ήδη."""
+    from datetime import datetime, timezone, timedelta
+    from app.core.db import shared_db
+    db = shared_db()
+    job = await db["death_sweep_jobs"].find_one({"_id": ctx.tenant_id})
+    if job and job.get("status") in ("running", "queued"):
+        fresh = job.get("updated_at") and job["updated_at"] > datetime.now(tz=timezone.utc) - timedelta(minutes=15)
+        if fresh:
+            return {"status": "already_running", "job": {"done": job.get("done"), "total": job.get("total")}}
+    await db["death_sweep_jobs"].update_one(
+        {"_id": ctx.tenant_id}, {"$set": {"status": "queued", "updated_at": datetime.now(tz=timezone.utc)}}, upsert=True)
+    from app.workers.death_sweep import death_sweep
+    death_sweep.delay(ctx.tenant_id)
+    return {"status": "queued"}
+
+
+@router.get("/deaths/balances")
+async def deceased_balances_list(
+    include_settled: bool = Query(False),
+    ctx: TenantContext = Depends(require("patients:read", module=_MODULE)),
+):
+    """Θανόντες με ανοιχτό υπόλοιπο (loyalty + ανεξόφλητες παραγγελίες) — για διεκδίκηση/κλείσιμο."""
+    from app.services.deceased_balances import deceased_balances
+    return await deceased_balances(ctx.tenant_id, include_settled=include_settled, demo=ctx.demo)
+
+
+class SettleIn(BaseModel):
+    settled: bool = True
+
+
+@router.post("/deaths/{patient_id}/settle")
+async def deceased_settle(
+    patient_id: str, body: SettleIn,
+    ctx: TenantContext = Depends(require("patients:read", module=_MODULE)),
+):
+    """Σημείωσε το υπόλοιπο ενός θανόντα ως τακτοποιημένο (διεκδικήθηκε/κλείστηκε)."""
+    from app.services.deceased_balances import set_settled
+    return await set_settled(ctx.tenant_id, patient_id, body.settled, by=getattr(ctx, "user_id", None))
 
 
 # ── Εισαγωγή ασφαλισμένων από Excel — ταίριασμα με ΑΜΚΑ, ενημέρωση υπαρχόντων ──
@@ -241,7 +372,9 @@ async def retention(
 ):
     repo = PatientRepository(tenant_id=ctx.tenant_id, demo=ctx.demo)
     rows = await repo.retention(cohort=cohort)
-    points = [{"period": r.get("lifecycle") or "—", "retained_pct": r.get("pct", 0.0)} for r in rows]
+    # Καμπύλη διατήρησης: σημείο ανά ορίζοντα (μήνες) με % που παρέμειναν ενεργοί + βάση (eligible).
+    points = [{"months": r.get("months", 0), "retained_pct": r.get("pct", 0.0),
+               "eligible": r.get("eligible", 0)} for r in rows]
     return {"cohort": cohort, "points": points}
 
 
