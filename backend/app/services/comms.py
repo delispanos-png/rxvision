@@ -473,16 +473,19 @@ async def campaign_audience(tenant_id: str, channel: str, segment: str = "all", 
 
 async def run_campaign(tenant_id: str, *, channel: str, message: str, subject: str | None = None,
                        segment: str = "all", value: str | None = None, by: str | None = None,
-                       source: str = "campaign", limit: int = 2000) -> dict:
+                       source: str = "campaign", limit: int = 2000,
+                       campaign_id: str | None = None, coupon_code: str | None = None) -> dict:
     """Resolve the consented audience and send `message` to each via `channel`. Charges the wallet per
-    message and stops cleanly if credits run out. Logs a comms_campaigns row. Returns a send summary."""
+    message and stops cleanly if credits run out. Logs a comms_campaigns row. Returns a send summary.
+    `coupon_code` αντικαθιστά το {coupon} στο κείμενο· `campaign_id` δένει σε προ-δημιουργημένη καμπάνια."""
     from bson import ObjectId
     ph = await _pharmacy(tenant_id)
     if channel == "push":     # ΔΩΡΕΑΝ κανάλι (PWA Web Push) — δεν χρεώνει wallet
         return await _run_push_campaign(tenant_id, message=message, subject=subject, segment=segment,
-                                        value=value, by=by, source=source, limit=limit, ph=ph)
+                                        value=value, by=by, source=source, limit=limit, ph=ph,
+                                        campaign_id=campaign_id, coupon_code=coupon_code)
     rows = await campaign_audience(tenant_id, channel, segment, value)
-    cid = ObjectId()
+    cid = ObjectId(campaign_id) if campaign_id else ObjectId()
     field = "email" if channel == "email" else "mobile"
     sent = failed = 0
     stopped = False
@@ -490,7 +493,7 @@ async def run_campaign(tenant_id: str, *, channel: str, message: str, subject: s
         to = r.get(field)
         pref = str(r.get("patient_id") or "") or None
         first = (r.get("name") or "").split(" ")[-1] if r.get("name") else ""
-        text = (message or "").replace("{name}", r.get("name") or "").replace("{first}", first)
+        text = (message or "").replace("{name}", r.get("name") or "").replace("{first}", first).replace("{coupon}", coupon_code or "")
         try:
             if channel == "email":
                 await send_email(tenant_id, to, subject or "Ενημέρωση φαρμακείου",
@@ -561,16 +564,17 @@ async def push_audience(tenant_id: str, segment: str = "all", value: str | None 
 
 
 async def _run_push_campaign(tenant_id: str, *, message: str, subject: str | None, segment: str,
-                             value: str | None, by: str | None, source: str, limit: int, ph: dict) -> dict:
+                             value: str | None, by: str | None, source: str, limit: int, ph: dict,
+                             campaign_id: str | None = None, coupon_code: str | None = None) -> dict:
     from bson import ObjectId
     from app.services import push_service
     rows = await push_audience(tenant_id, segment, value)
-    cid = ObjectId()
+    cid = ObjectId(campaign_id) if campaign_id else ObjectId()
     title = subject or ph.get("name") or "Το φαρμακείο σας"
     sent = failed = 0
     for r in rows[:limit]:
         first = (r.get("name") or "").split(" ")[-1] if r.get("name") else ""
-        text = (message or "").replace("{name}", r.get("name") or "").replace("{first}", first)
+        text = (message or "").replace("{name}", r.get("name") or "").replace("{first}", first).replace("{coupon}", coupon_code or "")
         try:
             n = await push_service.send_to_account(r["account_id"], title=title, body=text, url="/portal")
             ok = n > 0

@@ -1,19 +1,23 @@
 "use client";
 
+import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { useQuery } from "@tanstack/react-query";
-import { Megaphone, Send, Target, Mail, Clock, RefreshCw, Smartphone, TrendingUp } from "lucide-react";
+import { useQuery, useMutation } from "@tanstack/react-query";
+import { Megaphone, Send, Target, Mail, Clock, RefreshCw, Smartphone, TrendingUp, Ticket, BarChart3 } from "lucide-react";
 import { api } from "@/lib/apiClient";
+import { appAlert } from "@/store/dialogStore";
 import { useT } from "@/store/prefStore";
 import { QueryState } from "@/components/ui/QueryState";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
 
 type Cat = { key: string; label: string; icon: string; offer: string; patients: number; value: number };
 type Card = { id: string; icon: string; urgency: string; title: string; why: string; count: number; cta: string; segment: string; value: string | null };
+type Campaign = { id: string; channel: string; subject?: string | null; recipients: number; sent: number; created_at: string | null; coupon: string | null; redemptions: number; redeemed_value_cents: number; conversion_pct: number };
 type Dash = {
   performance: { days: number; total: { campaigns: number; recipients: number; sent: number; failed: number }; by_channel: Record<string, { campaigns: number; recipients: number; sent: number; failed: number }> };
   categories: Cat[];
   suggestions: Card[];
+  campaigns: Campaign[];
   totals: { upcoming: number; winback: number; at_risk: number; push_reach: number };
 };
 
@@ -25,6 +29,17 @@ export default function MarketingDashboard() {
   const router = useRouter();
   const q = useQuery({ queryKey: ["marketing-dash"], queryFn: () => api<Dash>("/marketing/dashboard"), refetchInterval: 300_000 });
   const go = (segment: string, value: string | null) => router.push(`/communications?segment=${segment}${value ? `&value=${encodeURIComponent(value)}` : ""}`);
+  // εξαργύρωση κουπονιού στο ταμείο
+  const [rc, setRc] = useState("");
+  const [ramt, setRamt] = useState("");
+  const redeem = useMutation({
+    mutationFn: () => api<{ ok: boolean; error?: string; discount_cents?: number }>("/marketing/coupons/redeem", { method: "POST", body: JSON.stringify({ code: rc.trim().toUpperCase(), amount_cents: ramt ? Math.round(parseFloat(ramt) * 100) : 0 }) }),
+    onSuccess: (r) => {
+      if (r.ok) { appAlert(t(`✅ Έγκυρο! Έκπτωση: ${eur(r.discount_cents || 0)}`, `✅ Valid! Discount: ${eur(r.discount_cents || 0)}`)); setRc(""); setRamt(""); q.refetch(); }
+      else appAlert({ not_found: t("Δεν βρέθηκε κουπόνι.", "Coupon not found."), expired: t("Έληξε.", "Expired."), max_reached: t("Εξαντλήθηκαν οι εξαργυρώσεις.", "Max redemptions reached."), inactive: t("Ανενεργό.", "Inactive.") }[r.error || ""] || t("Μη έγκυρο.", "Invalid."));
+    },
+    onError: (e: Error) => appAlert(t("Αποτυχία: ", "Failed: ") + e.message),
+  });
 
   return (
     <ModuleGuard module="marketing">
@@ -100,6 +115,44 @@ export default function MarketingDashboard() {
                     {d.categories.every((c) => c.patients === 0) && <div className="col-span-full py-6 text-center text-sm text-slate-400">{t("Δεν υπάρχουν ακόμη δεδομένα κατηγοριών.", "No category data yet.")}</div>}
                   </div>
                 </section>
+
+                {/* ── ΕΞΑΡΓΥΡΩΣΗ ΚΟΥΠΟΝΙΟΥ (ταμείο) ── */}
+                <section className="rounded-2xl border border-violet-200 bg-violet-50/40 p-3.5 dark:border-violet-900/40 dark:bg-violet-950/20">
+                  <div className="mb-2 flex items-center gap-1.5 text-sm font-bold text-slate-700 dark:text-slate-200"><Ticket className="h-4 w-4 text-violet-500" /> {t("Εξαργύρωση κουπονιού", "Redeem coupon")} <span className="text-xs font-normal text-slate-400">{t("· στο ταμείο", "· at the counter")}</span></div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <input value={rc} onChange={(e) => setRc(e.target.value)} placeholder={t("Κωδικός (π.χ. RX3F9A1C)", "Code (e.g. RX3F9A1C)")} className="w-44 rounded-lg border border-slate-300 px-3 py-2 font-mono text-sm uppercase dark:border-slate-600 dark:bg-slate-800" />
+                    <input value={ramt} onChange={(e) => setRamt(e.target.value)} type="number" min={0} placeholder={t("ποσό αγοράς €", "purchase € amount")} className="w-40 rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-800" />
+                    <button onClick={() => rc.trim() && redeem.mutate()} disabled={!rc.trim() || redeem.isPending} className="inline-flex items-center gap-1.5 rounded-lg bg-violet-600 px-4 py-2 text-sm font-semibold text-white hover:bg-violet-700 disabled:opacity-50">{t("Εξαργύρωση", "Redeem")}</button>
+                  </div>
+                </section>
+
+                {/* ── ΑΠΟΔΟΣΗ ΚΑΜΠΑΝΙΩΝ (ROI) ── */}
+                {d.campaigns.length > 0 && (
+                  <section>
+                    <h2 className="mb-2 flex items-center gap-1.5 text-sm font-bold text-slate-700 dark:text-slate-200"><BarChart3 className="h-4 w-4 text-emerald-500" /> {t("Απόδοση καμπανιών", "Campaign performance")}</h2>
+                    <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-900">
+                      <table className="w-full min-w-[620px] text-sm">
+                        <thead className="bg-slate-50 text-left text-xs text-slate-500 dark:bg-slate-800"><tr>
+                          <th className="px-3 py-2">{t("Καμπάνια", "Campaign")}</th><th className="px-3 py-2">{t("Κανάλι", "Channel")}</th><th className="px-3 py-2">{t("Κουπόνι", "Coupon")}</th>
+                          <th className="px-3 py-2 text-right">{t("Στάλθηκαν", "Sent")}</th><th className="px-3 py-2 text-right">{t("Εξαργυρώθηκαν", "Redeemed")}</th><th className="px-3 py-2 text-right">{t("Αξία", "Value")}</th><th className="px-3 py-2 text-right">{t("Conversion", "Conversion")}</th>
+                        </tr></thead>
+                        <tbody>
+                          {d.campaigns.map((c) => (
+                            <tr key={c.id} className="border-t border-slate-100 dark:border-slate-800">
+                              <td className="px-3 py-2 text-slate-700 dark:text-slate-200">{c.subject || <span className="text-slate-400">—</span>}</td>
+                              <td className="px-3 py-2 text-xs">{CHAN[c.channel] || c.channel}</td>
+                              <td className="px-3 py-2 font-mono text-[11px] text-slate-500">{c.coupon || "—"}</td>
+                              <td className="px-3 py-2 text-right tabular-nums text-slate-600">{c.sent}</td>
+                              <td className="px-3 py-2 text-right tabular-nums font-semibold text-slate-800 dark:text-slate-100">{c.coupon ? c.redemptions : "—"}</td>
+                              <td className="px-3 py-2 text-right tabular-nums text-emerald-600">{c.coupon ? eur(c.redeemed_value_cents) : "—"}</td>
+                              <td className="px-3 py-2 text-right tabular-nums">{c.coupon ? <span className={c.conversion_pct >= 5 ? "font-semibold text-emerald-600" : "text-slate-500"}>{c.conversion_pct}%</span> : <span className="text-slate-300">—</span>}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </section>
+                )}
 
                 {/* γρήγορες αφορμές */}
                 <section className="grid gap-2.5 sm:grid-cols-3">

@@ -47,6 +47,11 @@ export default function CommunicationsPage() {
   const [value, setValue] = useState("");
   const [subject, setSubject] = useState("");
   const [message, setMessage] = useState("");
+  // κουπόνι (προαιρετικό) — μετρά την απόδοση: {coupon} στο κείμενο γίνεται ο κωδικός
+  const [cpOn, setCpOn] = useState(false);
+  const [cpType, setCpType] = useState<"pct" | "fixed">("pct");
+  const [cpVal, setCpVal] = useState("10");
+  const [cpDays, setCpDays] = useState("30");
 
   // prefill from a "Δημιουργία καμπάνιας" deep-link (e.g. from the cross-sell drill-down)
   useEffect(() => {
@@ -70,7 +75,7 @@ export default function CommunicationsPage() {
   const eur = (c: number) => `€${(c / 100).toFixed(2)}`;
 
   const send = useMutation({
-    mutationFn: () => api<{ recipients: number; sent: number; failed: number }>("/communications/send", { method: "POST", body: JSON.stringify({ channel, subject, message, segment, value: value || null }) }),
+    mutationFn: () => api<{ recipients: number; sent: number; failed: number }>("/communications/send", { method: "POST", body: JSON.stringify({ channel, subject, message, segment, value: value || null, coupon: cpOn ? { enabled: true, discount_type: cpType, discount_value: cpType === "fixed" ? Math.round(parseFloat(cpVal || "0") * 100) : Math.round(parseFloat(cpVal || "0")), valid_days: parseInt(cpDays) || 30 } : null }) }),
     onSuccess: (r) => { appAlert(t(`Στάλθηκαν ${r.sent}/${r.recipients} (${r.failed} αποτυχίες)`, `Sent ${r.sent}/${r.recipients} (${r.failed} failures)`)); setMessage(""); setSubject(""); qc.invalidateQueries({ queryKey: ["comms", "history"] }); qc.invalidateQueries({ queryKey: ["comms", "wallet"] }); },
     onError: (e: Error) => appAlert(t("Αποτυχία: ", "Failed: ") + e.message),
   });
@@ -130,6 +135,28 @@ export default function CommunicationsPage() {
             {TEMPLATES.map((t) => <button key={t.label} onClick={() => setMessage(t.text)} className="rounded-full border border-slate-200 px-2.5 py-1 text-xs text-slate-600 hover:bg-slate-50">{t.label}</button>)}
           </div>
 
+          {/* Κουπόνι — μετρά την απόδοση (στάλθηκε → εξαργυρώθηκε → αξία) */}
+          <div className="mb-2 rounded-xl border border-slate-200 bg-slate-50/60 p-3">
+            <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
+              <input type="checkbox" checked={cpOn} onChange={(e) => setCpOn(e.target.checked)} className="h-4 w-4 rounded border-slate-300" />
+              🎟️ {t("Πρόσθεσε κουπόνι", "Attach a coupon")} <span className="text-xs font-normal text-slate-400">{t("(για να μετράς τι απέδωσε)", "(to measure what it earned)")}</span>
+            </label>
+            {cpOn && (
+              <div className="mt-2 flex flex-wrap items-center gap-2 text-sm">
+                <select value={cpType} onChange={(e) => setCpType(e.target.value as "pct" | "fixed")} className={inp}>
+                  <option value="pct">{t("Έκπτωση %", "% discount")}</option>
+                  <option value="fixed">{t("Έκπτωση €", "€ discount")}</option>
+                </select>
+                <input type="number" min={1} value={cpVal} onChange={(e) => setCpVal(e.target.value)} className={`${inp} w-24`} />
+                <span className="text-slate-400">{cpType === "pct" ? "%" : "€"}</span>
+                <span className="text-slate-400">·</span>
+                <span className="text-slate-500">{t("ισχύς", "valid")}</span>
+                <input type="number" min={1} value={cpDays} onChange={(e) => setCpDays(e.target.value)} className={`${inp} w-20`} />
+                <span className="text-slate-400">{t("ημέρες", "days")}</span>
+                {!message.includes("{coupon}") && <button onClick={() => setMessage((m) => `${m}${m ? " " : ""}${t("Κωδικός:", "Code:")} {coupon}`)} className="rounded-lg border border-violet-300 bg-violet-50 px-2 py-1 text-xs font-semibold text-violet-700 hover:bg-violet-100">{t("+ βάλε {coupon} στο μήνυμα", "+ insert {coupon}")}</button>}
+              </div>
+            )}
+          </div>
           {(channel === "email" || channel === "push") && <input value={subject} onChange={(e) => setSubject(e.target.value)} placeholder={channel === "push" ? t("Τίτλος ειδοποίησης (προαιρετικό)", "Notification title (optional)") : t("Θέμα email", "Email subject")} className={`${inp} mb-2 w-full`} />}
           <textarea value={message} onChange={(e) => setMessage(e.target.value)} rows={5} placeholder={channel !== "email" ? t("Κείμενο μηνύματος…", "Message text…") : t("Μήνυμα… (μεταβλητές: {name} = πλήρες όνομα, {first} = επώνυμο)", "Message… (variables: {name} = full name, {first} = last name)")} className={`${inp} w-full`} />
           <div className="mt-3 flex items-center justify-between">

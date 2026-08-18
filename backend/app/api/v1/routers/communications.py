@@ -171,19 +171,38 @@ async def audience(channel: Literal["email", "sms", "viber", "push"] = "email",
     return {"channel": channel, "segment": segment, "count": len(rows)}
 
 
+class CouponIn(BaseModel):
+    enabled: bool = False
+    discount_type: str = "pct"           # "pct" (%) ή "fixed" (cents)
+    discount_value: int = 0
+    valid_days: int = 30
+    max_redemptions: int = 0             # 0 = χωρίς όριο
+
+
 class CampaignIn(BaseModel):
     channel: Literal["email", "sms", "viber", "push"]
     subject: str | None = None
     message: str
     segment: str = "all"
     value: str | None = None
+    coupon: CouponIn | None = None       # προαιρετικό κουπόνι — {coupon} στο κείμενο γίνεται ο κωδικός
 
 
 @router.post("/send", status_code=202)
 async def send_campaign(body: CampaignIn, ctx: TenantContext = Depends(require("patients:read", module=_MODULE))):
+    from bson import ObjectId
+    cid = ObjectId()
+    coupon_code = None
+    if body.coupon and body.coupon.enabled and body.coupon.discount_value > 0:
+        from app.services import marketing
+        cp = await marketing.create_coupon(
+            ctx.tenant_id, campaign_id=str(cid), discount_type=body.coupon.discount_type,
+            discount_value=body.coupon.discount_value, valid_days=body.coupon.valid_days,
+            max_redemptions=body.coupon.max_redemptions)
+        coupon_code = cp["code"]
     return await comms.run_campaign(
         ctx.tenant_id, channel=body.channel, message=body.message, subject=body.subject,
-        segment=body.segment, value=body.value,
+        segment=body.segment, value=body.value, campaign_id=str(cid), coupon_code=coupon_code,
         by=ctx.email if hasattr(ctx, "email") else None)
 
 

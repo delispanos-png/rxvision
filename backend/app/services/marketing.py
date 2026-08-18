@@ -140,7 +140,92 @@ async def dashboard(tenant_id: str, *, demo: bool = False) -> dict:
         "performance": perf,
         "categories": cats,
         "suggestions": cards,
+        "campaigns": await campaigns_with_roi(tenant_id),
         "totals": {"upcoming": upcoming_n, "winback": winback_n, "at_risk": risk_n,
                    "push_reach": int(push_reach)},
         "generated_at": _now().isoformat(),
     }
+
+
+# ── Κουπόνια ανά καμπάνια + μέτρηση απόδοσης (κλείσιμο κύκλου: στάλθηκε → εξαργυρώθηκε → αξία) ──────
+import secrets  # noqa: E402
+
+
+def _gen_code() -> str:
+    return "RX" + secrets.token_hex(3).upper()   # π.χ. RX3F9A1C
+
+
+async def create_coupon(tenant_id: str, *, campaign_id: str, discount_type: str = "pct",
+                        discount_value: int = 0, valid_days: int = 30,
+                        max_redemptions: int = 0) -> dict:
+    """Κουπόνι συνδεδεμένο με καμπάνια. discount_type: 'pct' (%) ή 'fixed' (cents). max_redemptions=0 = χωρίς όριο."""
+    db = shared_db()
+    code = _gen_code()
+    for _ in range(5):                                   # σπάνιο collision → ξαναδοκίμασε
+        if not await db["campaign_coupons"].find_one({"_id": code}):
+            break
+        code = _gen_code()
+    doc = {
+        "_id": code, "tenant_id": tenant_id, "campaign_id": campaign_id,
+        "discount_type": "fixed" if discount_type == "fixed" else "pct",
+        "discount_value": max(0, int(discount_value)),
+        "valid_until": _now() + timedelta(days=max(1, int(valid_days))),
+        "max_redemptions": max(0, int(max_redemptions)),
+        "redemptions": 0, "redeemed_value_cents": 0, "status": "active", "created_at": _now(),
+    }
+    await db["campaign_coupons"].insert_one(doc)
+    return {"code": code, "discount_type": doc["discount_type"], "discount_value": doc["discount_value"],
+            "valid_until": doc["valid_until"].isoformat()}
+
+
+async def redeem_coupon(tenant_id: str, code: str, *, amount_cents: int = 0, by: str | None = None) -> dict:
+    """Εξαργύρωση στο ταμείο (ή e-shop): επιβεβαιώνει ισχύ, αυξάνει μετρητές, καταγράφει το event & αξία."""
+    db = shared_db()
+    code = (code or "").strip().upper()
+    c = await db["campaign_coupons"].find_one({"_id": code, "tenant_id": tenant_id})
+    if not c:
+        return {"ok": False, "error": "not_found"}
+    if c.get("status") != "active":
+        return {"ok": False, "error": "inactive"}
+    if c.get("valid_until") and c["valid_until"] < _now():
+        return {"ok": False, "error": "expired"}
+    if c.get("max_redemptions") and c.get("redemptions", 0) >= c["max_redemptions"]:
+        return {"ok": False, "error": "max_reached"}
+    # υπολογισμός έκπτωσης (ενημερωτικά για το ταμείο)
+    amt = max(0, int(amount_cents or 0))
+    disc = round(amt * c["discount_value"] / 100) if c["discount_type"] == "pct" else min(amt, c["discount_value"])
+    upd = await db["campaign_coupons"].find_one_and_update(
+        {"_id": code, "tenant_id": tenant_id,
+         **({"redemptions": {"$lt": c["max_redemptions"]}} if c.get("max_redemptions") else {})},
+        {"$inc": {"redemptions": 1, "redeemed_value_cents": amt}, "$set": {"updated_at": _now()}})
+    if not upd:
+        return {"ok": False, "error": "max_reached"}
+    await db["coupon_redemptions"].insert_one({
+        "code": code, "tenant_id": tenant_id, "campaign_id": c.get("campaign_id"),
+        "amount_cents": amt, "discount_cents": disc, "by": by, "at": _now()})
+    return {"ok": True, "code": code, "discount_type": c["discount_type"],
+            "discount_value": c["discount_value"], "discount_cents": disc, "amount_cents": amt}
+
+
+async def campaigns_with_roi(tenant_id: str, days: int = 90, limit: int = 60) -> list[dict]:
+    """Λίστα καμπανιών με απόδοση: στάλθηκε → εξαργυρώθηκε → αξία (conversion %). Join με τα κουπόνια."""
+    db = shared_db()
+    cutoff = _now() - timedelta(days=days)
+    coupons = {c["campaign_id"]: c async for c in db["campaign_coupons"].find({"tenant_id": tenant_id})}
+    out = []
+    async for c in db["comms_campaigns"].find(
+            {"tenant_id": tenant_id, "created_at": {"$gte": cutoff}}).sort("created_at", -1).limit(limit):
+        cid = str(c["_id"])
+        cp = coupons.get(cid)
+        sent = int(c.get("sent", 0) or 0)
+        red = int(cp.get("redemptions", 0)) if cp else 0
+        out.append({
+            "id": cid, "channel": c.get("channel"), "subject": c.get("subject"),
+            "recipients": int(c.get("recipients", 0) or 0), "sent": sent,
+            "created_at": c.get("created_at").isoformat() if c.get("created_at") else None,
+            "coupon": cp["_id"] if cp else None,
+            "redemptions": red,
+            "redeemed_value_cents": int(cp.get("redeemed_value_cents", 0)) if cp else 0,
+            "conversion_pct": round(red / sent * 100, 1) if sent else 0.0,
+        })
+    return out
