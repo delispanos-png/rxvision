@@ -52,6 +52,17 @@ async def _pause_hdika_auth(db, tenant_id: str, message: str) -> dict:
     return {"tenant_id": tenant_id, "status": "auth_paused", "error": str(message)[:200]}
 
 
+async def _record_hdika_config_error(db, tenant_id: str, message: str) -> dict:
+    """Σφάλμα ρύθμισης ΗΔΥΚΑ που ΔΕΝ είναι λάθος κωδικός (π.χ. δεν βρέθηκε pharmacy_id λόγω GDPR guard).
+    Καταγράφεται ΩΣ ΜΗΝΥΜΑ (ορατό στη «Διασύνδεση ΗΔΥΚΑ») ΧΩΡΙΣ πλήρη παύση — ώστε ο φαρμακοποιός να
+    δει τι φταίει αντί να «κολλάει» σιωπηλά ο συγχρονισμός."""
+    now = datetime.now(tz=timezone.utc)
+    await db["tenants"].update_one({"_id": tenant_id}, {"$set": {
+        "ingestion_config.hdika.config_error_at": now,
+        "ingestion_config.hdika.config_error_msg": str(message)[:300]}})
+    return {"tenant_id": tenant_id, "status": "config_error", "error": str(message)[:200]}
+
+
 # ── Pool reuse: ΕΝΑ persistent event loop + ΕΝΑΣ Motor client ΑΝΑ worker process ──────────────
 # Πριν: κάθε task έφτιαχνε νέο loop (asyncio.run) + νέο Motor pool → connection churn με πολλούς
 # tenants. Τώρα: persistent loop ανά process· ο Motor client δένεται σε αυτό & επαναχρησιμοποιείται.
@@ -493,6 +504,8 @@ def hdika_incremental_sync(self, tenant_id: str) -> dict:
             return {"tenant_id": tenant_id, "status": job["status"], "stats": job["stats"]}
         except HdikaAuthError as e:   # λάθος/ληγμένος κωδικός → ΠΑΥΣΗ tenant + ειδοποίηση (μη retry)
             return await _pause_hdika_auth(db, tenant_id, str(e))
+        except PermissionError as e:  # GDPR guard (δεν βρέθηκε pharmacy_id) → καθαρό μήνυμα, όχι σιωπηλό stall
+            return await _record_hdika_config_error(db, tenant_id, str(e))
         finally:
             client.close()
 
@@ -577,6 +590,8 @@ def hdika_backfill(self, tenant_id: str, since_iso: str, until_iso: str | None =
             return result
         except HdikaAuthError as e:   # λάθος/ληγμένος κωδικός → ΠΑΥΣΗ tenant (μη retry/chain)
             return await _pause_hdika_auth(db, tenant_id, str(e))
+        except PermissionError as e:  # GDPR guard (δεν βρέθηκε pharmacy_id) → καθαρό μήνυμα, όχι σιωπηλό stall
+            return await _record_hdika_config_error(db, tenant_id, str(e))
         finally:
             client.close()
 

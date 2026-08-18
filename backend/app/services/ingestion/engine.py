@@ -82,35 +82,46 @@ class IngestionEngine:
             "error": None, "started_at": _now(), "updated_at": _now(), "finished_at": None,
         })
 
-        for ex in records:
-            stats["fetched"] += 1
-            verrs = validate_execution(ex)
-            if verrs:
-                stats["invalid"] += 1
-                errors.append({"external_id": ex.external_id, "errors": verrs})
-                continue
-            try:
-                outcome = await self._persist(ex, job_id)
-                stats[outcome] += 1
-            except Exception as exc:  # noqa: BLE001
-                stats["invalid"] += 1
-                errors.append({"external_id": ex.external_id, "errors": [f"persist: {exc}"]})
-            # live progress so the UI can show a REAL % progress bar while it runs
-            if first_cursor is None and getattr(ex, "executed_at", None):
-                first_cursor = ex.executed_at
-            if stats["fetched"] % 20 == 0:
-                upd = {"stats": stats, "updated_at": _now()}  # heartbeat → detect orphans
-                cur = getattr(ex, "executed_at", None)
-                if cur is not None:
-                    upd["cursor_date"] = cur
-                    if span and first_cursor is not None:
-                        upd["progress"] = min(1.0, abs((cur - first_cursor).total_seconds()) / span)
-                await self.db["sync_jobs"].update_one({"_id": job_id}, {"$set": upd})
-                # cooperative stop: the API sets cancel_requested on this running job
-                j = await self.db["sync_jobs"].find_one({"_id": job_id}, {"cancel_requested": 1})
-                if j and j.get("cancel_requested"):
-                    cancelled = True
-                    break
+        # ΚΡΙΣΙΜΟ: η άντληση (authenticate/paging/GDPR-guard pharmacy_id) γίνεται ΤΕΜΠΕΛΙΚΑ καθώς
+        # καταναλώνεται ο generator ΕΔΩ. Αν σκάσει (λάθος κωδικός → HdikaAuthError, ή δεν βρέθηκε
+        # pharmacy_id → PermissionError), ΠΡΕΠΕΙ να μαρκάρουμε το job «failed» με το ΠΡΑΓΜΑΤΙΚΟ μήνυμα
+        # (όχι να το αφήσουμε «running» να το σκοτώσει ο watchdog ως «stalled» — ο πελάτης δεν μαθαίνει
+        # ποτέ γιατί). Μετά ξανα-πετάμε ώστε ο caller (task) να βάλει auth_paused/banner όπου χρειάζεται.
+        try:
+            for ex in records:
+                stats["fetched"] += 1
+                verrs = validate_execution(ex)
+                if verrs:
+                    stats["invalid"] += 1
+                    errors.append({"external_id": ex.external_id, "errors": verrs})
+                    continue
+                try:
+                    outcome = await self._persist(ex, job_id)
+                    stats[outcome] += 1
+                except Exception as exc:  # noqa: BLE001
+                    stats["invalid"] += 1
+                    errors.append({"external_id": ex.external_id, "errors": [f"persist: {exc}"]})
+                # live progress so the UI can show a REAL % progress bar while it runs
+                if first_cursor is None and getattr(ex, "executed_at", None):
+                    first_cursor = ex.executed_at
+                if stats["fetched"] % 20 == 0:
+                    upd = {"stats": stats, "updated_at": _now()}  # heartbeat → detect orphans
+                    cur = getattr(ex, "executed_at", None)
+                    if cur is not None:
+                        upd["cursor_date"] = cur
+                        if span and first_cursor is not None:
+                            upd["progress"] = min(1.0, abs((cur - first_cursor).total_seconds()) / span)
+                    await self.db["sync_jobs"].update_one({"_id": job_id}, {"$set": upd})
+                    # cooperative stop: the API sets cancel_requested on this running job
+                    j = await self.db["sync_jobs"].find_one({"_id": job_id}, {"cancel_requested": 1})
+                    if j and j.get("cancel_requested"):
+                        cancelled = True
+                        break
+        except Exception as exc:  # noqa: BLE001 — άντληση απέτυχε → κλείσε το job ΚΑΘΑΡΑ με το μήνυμα
+            await self.db["sync_jobs"].update_one({"_id": job_id}, {"$set": {
+                "status": "failed", "error": str(exc)[:500], "stats": stats,
+                "updated_at": _now(), "finished_at": _now()}})
+            raise
 
         # Keep products' catalog-derived fields fresh after any ingest that created/updated products
         # (atc/category/substance/πλήρες όνομα). Χωρίς αυτό, μετά από backfill τα products έχουν κενό
