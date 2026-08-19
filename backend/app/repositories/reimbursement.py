@@ -1243,13 +1243,16 @@ class ReimbursementRepository(BaseRepository):
                     if sk and dk in seen:
                         continue
                     seen.add(dk)
-                    # ανεκτέλεστη γραμμή → ΔΕΝ έχει κουπόνι/QR (δεν χορηγήθηκε ποτέ)
+                    # ΤΟ ΚΟΥΠΟΝΙ ΕΙΝΑΙ AUTHORITATIVE: qr != False → το είδος ΕΚΤΕΛΕΣΤΗΚΕ (έχει QR),
+                    # ΑΚΟΜΗ κι αν το item.is_executed είναι λάθος/False (π.χ. μερική εκτέλεση). Μόνο
+                    # qr == False = ανεκτέλεστη ουσία. (Αλλιώς QR'd φάρμακα φαίνονταν λάθος «ανεκτέλεστα».)
+                    cp_exec = cp.get("qr") is not False
                     lines.append({"name": name, "barcode": bc, "eof": eof, "quantity": 1,
-                                  "category": cat, "executed": executed,
-                                  "qr": cp.get("qr") if executed else None,
-                                  "qr_batch": cp.get("qr_batch") if executed else None,
-                                  "qr_expiry": cp.get("qr_expiry") if executed else None,
-                                  "lot": cp.get("strip") if executed else None})
+                                  "category": cat, "executed": cp_exec,
+                                  "qr": cp.get("qr") if cp_exec else None,
+                                  "qr_batch": cp.get("qr_batch") if cp_exec else None,
+                                  "qr_expiry": cp.get("qr_expiry") if cp_exec else None,
+                                  "lot": cp.get("strip") if cp_exec else None})
             else:
                 dk = (eof, "_noc")
                 if dk in seen:

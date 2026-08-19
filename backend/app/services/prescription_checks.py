@@ -28,11 +28,24 @@ def _num(s):
         return None
 
 
+def _is_prefilled_syringe(form_code: str | None, package_form: str | None, name: str | None) -> bool:
+    """Προγεμισμένη σύριγγα = ΕΝΕΣΙΜΟ (π.χ. FRAXIPARINE …PF,SYR, CLEXANE). ΠΡΟΣΟΧΗ: το «SYR» εδώ
+    σημαίνει SYRinge (σύριγγα), ΟΧΙ SYRup (σιρόπι) — να ΜΗ συγχέεται. Η δόση είναι ανά σύριγγα →
+    χρειάζεται οπτικός έλεγχος ποσότητας (όπως αμπούλες), ΔΕΝ είναι auto-checked όπως το σιρόπι."""
+    blob = f"{form_code or ''} {package_form or ''} {name or ''}".upper()
+    if "ΣΥΡΙΓΓ" in blob or "SYRINGE" in blob or "ΠΡΟΓΕΜ" in blob:
+        return True
+    # «SYR» ως σύριγγα (όχι σιρόπι) όταν συνοδεύεται από PF (pre-filled) ή INJ (ενέσιμο)
+    return "SYR" in blob and ("PF" in blob or "P.F" in blob or "INJ" in blob)
+
+
 def _form_auto_checked(form_code: str | None, package_form: str | None, name: str | None) -> bool:
     """ΗΔΥΚΑ ελέγχει υπερδοσολογία στη συνταγογράφηση για: δισκία/ταμπλέτες/κάψουλες/σιρόπι/
     αναπνευστικές αμπούλες. Όλα τα υπόλοιπα → οπτικός έλεγχος από τον φαρμακοποιό."""
     f = (form_code or "").upper()
     n = (name or "").upper()
+    if _is_prefilled_syringe(form_code, package_form, name):   # ενέσιμη σύριγγα → ΟΧΙ auto (θέλει έλεγχο)
+        return False
     if "TAB" in f or "CAP" in f or "ΔΙΣΚΙ" in n or "ΚΑΨΟΥΛ" in n or "ΤΑΜΠΛΕΤ" in n or "ΔΙΣΠ" in f:
         return True
     if "SYR" in f or "ΣΙΡΟΠ" in n or "SYRUP" in n or "POS" in f:           # σιρόπι / πόσιμο διάλυμα
@@ -50,10 +63,13 @@ def _vial_dose_check(form_code: str | None, package_form: str | None, name: str 
     f = (form_code or "").upper()
     pf = (package_form or "").upper()
     n = (name or "").upper()
+    resp = "NEB" in f or "ΑΝΑΠΝΕΥΣ" in n or "ΕΙΣΠΝ" in n or "INHAL" in f
+    # Προγεμισμένη σύριγγα (ενέσιμο) → δόση ανά σύριγγα → πάντα οπτικός έλεγχος ποσότητας.
+    if _is_prefilled_syringe(form_code, package_form, name) and not resp:
+        return True
     liquid = ("INJ" in f or "OR.SO" in f or "OR.SUSP" in f or "SUSP" in f or "POS" in f
               or "ΠΟΣΙΜ" in n or "ΕΝΕΣ" in n)
     vial = "VIAL" in pf or "VIAL" in n or "AMP" in pf or "ΑΜΠ" in n or "ΦΙΑΛ" in n
-    resp = "NEB" in f or "ΑΝΑΠΝΕΥΣ" in n or "ΕΙΣΠΝ" in n or "INHAL" in f
     return liquid and vial and not resp
 
 
@@ -106,7 +122,8 @@ _CHECK_CATEGORY = {
 }
 
 
-def check_item(item: dict, cat: dict, *, ultra_levure_enabled: bool = True) -> list[dict]:
+def check_item(item: dict, cat: dict, *, ultra_levure_enabled: bool = True,
+               has_opinion: bool | None = None) -> list[dict]:
     """item: {barcode, name, quantity, dose, frequency, duration}; cat: medicine_catalog doc.
     Κάθε check φέρει `category` ∈ {closing, advisory} (βλ. _CHECK_CATEGORY)."""
     checks: list[dict] = []
@@ -138,9 +155,18 @@ def check_item(item: dict, cat: dict, *, ultra_levure_enabled: bool = True) -> l
                                  "πριν την εκτέλεση. (Παραμετρικός έλεγχος — μπορείς να τον απενεργοποιήσεις.)"})
     gi = cat.get("group_info")
     if gi:
-        checks.append({"type": "special_opinion", "level": "info",
-                       "title": "Ειδική γνωμάτευση / περιορισμός αποζημίωσης",
-                       "detail": gi[:400]})
+        # ΠΡΟΣΟΧΗ διάκριση: αυτό είναι ΠΕΡΙΟΡΙΣΜΟΣ ΑΠΟΖΗΜΙΩΣΗΣ του ΦΑΡΜΑΚΟΥ (group_info) — ΟΧΙ «λείπει
+        # γνωμάτευση». Αν η ΣΥΝΤΑΓΗ φέρει ήδη γνωμάτευση (has_opinion, ΗΔΥΚΑ 1.1.23) → μη λες «χρειάζεται»
+        # (ήταν αντιφατικό με το badge «Έχει γνωμάτευση»)· ζήτα επιβεβαίωση ότι ΚΑΛΥΠΤΕΙ τις προϋποθέσεις.
+        if has_opinion:
+            title = "Περιορισμός αποζημίωσης — υπάρχει γνωμάτευση"
+            detail = ("✓ Η συνταγή φέρει γνωμάτευση. Επιβεβαίωσε ότι ΚΑΛΥΠΤΕΙ τις προϋποθέσεις "
+                      "αποζημίωσης του φαρμάκου: " + gi[:340])
+        else:
+            title = "Περιορισμός αποζημίωσης — έλεγξε προϋποθέσεις/γνωμάτευση"
+            detail = ("Το φάρμακο αποζημιώνεται ΥΠΟ ΠΡΟΫΠΟΘΕΣΕΙΣ. Έλεγξε ότι πληρούνται (π.χ. υπάρχει/"
+                      "αναφέρεται η απαιτούμενη γνωμάτευση ειδικού): " + gi[:320])
+        checks.append({"type": "special_opinion", "level": "info", "title": title, "detail": detail})
     if cat.get("high_cost") and (cat.get("retail_cents") or 0) > FYK_HIGH_VALUE_CENTS:
         checks.append({"type": "fyk_high_value", "level": "info",
                        "title": "ΦΥΚ υψηλής αξίας",

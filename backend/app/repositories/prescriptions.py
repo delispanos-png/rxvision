@@ -50,6 +50,8 @@ class PrescriptionRepository(BaseRepository):
             return None
         setting = await self._db["rx_check_settings"].find_one({"tenant_id": self.tenant_id}) or {}
         ul = setting.get("ultra_levure_check", True)
+        # γνωμάτευση = prescription-level flag (ΗΔΥΚΑ 1.1.23) — για μη-αντιφατικό μήνυμα περιορισμού.
+        has_opinion = any((e.get("details") or {}).get("opinion") for e in exs)
         ex_ids = [e["_id"] for e in exs]
         by_eof: dict = {}
         async for it in self._db["prescription_items"].find(
@@ -78,7 +80,7 @@ class PrescriptionRepository(BaseRepository):
             qty = len(g["strips"]) or g["max_qty"]   # διακριτά εκτελεσμένα τεμάχια (true σύνολο)
             item = {"barcode": cat.get("barcode"), "name": name, "quantity": qty,
                     "dose": d.get("dose"), "frequency": d.get("frequency"), "duration": d.get("duration")}
-            checks = pc.check_item(item, cat, ultra_levure_enabled=ul)
+            checks = pc.check_item(item, cat, ultra_levure_enabled=ul, has_opinion=has_opinion)
             if checks:
                 items_out.append({"name": name, "barcode": item["barcode"], "checks": checks})
         # «Αμιγώς 100%» — ΟΛΑ τα φάρμακα με συμμετοχή ασθενή 100% → η συνταγή ΔΕΝ κατατίθεται στο ταμείο.
