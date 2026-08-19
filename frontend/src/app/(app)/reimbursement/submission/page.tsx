@@ -1,9 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
-import { Building2, Send, Plus, Trash2, FileText } from "lucide-react";
+import { Building2, Send, Plus, Trash2, FileText, ShieldCheck, AlertTriangle, CheckCircle2 } from "lucide-react";
 import { api } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
 import { useReimbPeriod } from "@/store/reimbStore";
@@ -42,6 +42,26 @@ export default function SubmissionPage() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["reimb-sub", period] }),
   });
 
+  // ── Έλεγχος πριν την υποβολή (95% προκαταβολή — ΠΦΣ): ποσό ΗΔΥΚΑ που ελέγχει ο ΕΟΠΥΥ + checklist ──
+  const eopyyExpected = (data?.batches ?? []).filter((b) => b.is_eopyy).reduce((s, b) => s + (b.expected_claim || 0), 0);
+  const [invoiceAmt, setInvoiceAmt] = useState("");
+  const [checks, setChecks] = useState({ clearance: false, finalized: false, ssy: false });
+  useEffect(() => {   // per-period persistence (workflow aid — localStorage)
+    try {
+      const raw = localStorage.getItem(`reimb-precheck:${period}`);
+      const s = raw ? JSON.parse(raw) : {};
+      setInvoiceAmt(s.invoiceAmt || "");
+      setChecks({ clearance: !!s.clearance, finalized: !!s.finalized, ssy: !!s.ssy });
+    } catch { setInvoiceAmt(""); setChecks({ clearance: false, finalized: false, ssy: false }); }
+  }, [period]);
+  const persist = (patch: object) => {
+    const next = { invoiceAmt, ...checks, ...patch };
+    try { localStorage.setItem(`reimb-precheck:${period}`, JSON.stringify(next)); } catch { /* noop */ }
+  };
+  const enteredCents = invoiceAmt.trim() ? Math.round(parseFloat(invoiceAmt.replace(",", ".")) * 100) : null;
+  const amountMatch = enteredCents == null ? null : Math.abs(enteredCents - eopyyExpected) <= 1;
+  const diffCents = enteredCents == null ? 0 : enteredCents - eopyyExpected;
+
   const cols: Column<Batch>[] = [
     { key: "fund", header: t("Ταμείο / Παραστατικό", "Fund / Document"), render: (r) => (
       <span className="inline-flex items-center gap-1.5">
@@ -64,6 +84,46 @@ export default function SubmissionPage() {
 
   return (
     <div className="space-y-5">
+      {/* ── Έλεγχος πριν την υποβολή — 95% προκαταβολή (τα συνηθέστερα λάθη ΠΦΣ/ΚΜΕΣ) ── */}
+      <div className="rounded-2xl border border-emerald-200 bg-emerald-50/50 p-5 dark:border-emerald-800 dark:bg-emerald-950/20">
+        <h3 className="mb-3 inline-flex items-center gap-2 text-sm font-bold text-emerald-800 dark:text-emerald-200"><ShieldCheck className="h-5 w-5" /> {t("Έλεγχος πριν την υποβολή — για να πληρωθεί το 95%", "Pre-submission check — so the 95% is paid")}</h3>
+
+        {/* 1. Amount match — ο ΕΟΠΥΥ ελέγχει με τα ΔΙΚΑ ΤΟΥ (ΗΔΥΚΑ) ποσά */}
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
+            <div className="text-xs text-slate-500">{t("Ο ΕΟΠΥΥ αναμένει (από δεδομένα ΗΔΥΚΑ)", "ΕΟΠΥΥ expects (from ΗΔΥΚΑ data)")}</div>
+            <div className="text-2xl font-extrabold text-emerald-700 dark:text-emerald-300">{fmtEur(eopyyExpected)}</div>
+            <div className="mt-1 text-[11px] text-slate-400">{t("Τιμολόγησε ΑΚΡΙΒΩΣ αυτό. Ο ΕΟΠΥΥ διασταυρώνει το τιμολόγιο με τα ποσά ΗΔΥΚΑ.", "Invoice EXACTLY this. ΕΟΠΥΥ cross-checks your invoice against ΗΔΥΚΑ.")}</div>
+          </div>
+          <div className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
+            <label className="mb-1 block text-xs text-slate-500">{t("Ποσό στο τιμολόγιό μου (€)", "My invoice amount (€)")}</label>
+            <input value={invoiceAmt} onChange={(e) => { setInvoiceAmt(e.target.value); persist({ invoiceAmt: e.target.value }); }} inputMode="decimal" placeholder={fmtEur(eopyyExpected).replace(" €", "")}
+              className={`w-full rounded-lg border px-3 py-2 text-sm focus:outline-none dark:bg-slate-800 ${amountMatch === false ? "border-rose-400" : amountMatch ? "border-emerald-400" : "border-slate-300 dark:border-slate-600"}`} />
+            {amountMatch === true && <div className="mt-1.5 inline-flex items-center gap-1 text-xs font-semibold text-emerald-600"><CheckCircle2 className="h-4 w-4" /> {t("Συμφωνεί με τη ΗΔΥΚΑ ✓", "Matches ΗΔΥΚΑ ✓")}</div>}
+            {amountMatch === false && <div className="mt-1.5 inline-flex items-center gap-1 text-xs font-semibold text-rose-600"><AlertTriangle className="h-4 w-4" /> {t(`Ασυμφωνία ${fmtEur(Math.abs(diffCents))} — διόρθωσε το τιμολόγιο (αλλιώς δεν πληρώνεται το 95%).`, `Mismatch ${fmtEur(Math.abs(diffCents))} — fix the invoice (else the 95% won't be paid).`)}</div>}
+          </div>
+        </div>
+
+        {/* 2. Checklist — τα υπόλοιπα συνηθέστερα λάθη */}
+        <div className="mt-4 space-y-1.5">
+          <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">{t("Λίστα ελέγχου ολοκλήρωσης", "Completion checklist")}</div>
+          {([
+            ["amount", t("Το ποσό τιμολογίου = ποσό ΗΔΥΚΑ (πάνω)", "Invoice amount = ΗΔΥΚΑ amount (above)"), amountMatch === true],
+            ["clearance", t("Φορολογική & ασφαλιστική ενημερότητα σε ισχύ", "Tax & insurance clearance valid"), checks.clearance],
+            ["finalized", t("Οριστικοποίησα την υποβολή στην ΚΜΕΣ (τελικό βήμα)", "Finalized the submission on ΚΜΕΣ (final step)"), checks.finalized],
+            ["ssy", t("Επισύναψα το Συγκεντρωτικό Σημείωμα Υποβολής (ΣΣΥ)", "Attached the Aggregate Submission Note (ΣΣΥ)"), checks.ssy],
+          ] as [string, string, boolean][]).map(([key, label, done]) => (
+            <label key={key} className={`flex items-center gap-2.5 rounded-lg px-2 py-1.5 text-sm ${done ? "text-emerald-700 dark:text-emerald-300" : "text-slate-600 dark:text-slate-300"} ${key === "amount" ? "cursor-default" : "cursor-pointer hover:bg-white/60 dark:hover:bg-slate-800/40"}`}>
+              <input type="checkbox" checked={done} disabled={key === "amount"}
+                onChange={(e) => { if (key === "amount") return; const patch = { [key]: e.target.checked }; setChecks((c) => ({ ...c, ...patch })); persist(patch); }}
+                className="h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500" />
+              {label}
+            </label>
+          ))}
+        </div>
+        <p className="mt-2 text-[11px] text-slate-400">{t("Πηγή: ανακοίνωση ΠΦΣ — τα συνηθέστερα λάθη που μπλοκάρουν την προκαταβολή 95% (~200 φαρμακεία/μήνα).", "Source: ΠΦΣ notice — the most common errors blocking the 95% advance (~200 pharmacies/month).")}</p>
+      </div>
+
       <h3 className="inline-flex items-center gap-2 text-sm font-semibold text-slate-700 dark:text-slate-200"><Send className="h-4 w-4 text-emerald-600" /> {t("Κέντρο υποβολής — δέσμες ανά ομάδα ταμείων", "Submission center — per-group batches")}</h3>
 
       {/* status funnel */}
