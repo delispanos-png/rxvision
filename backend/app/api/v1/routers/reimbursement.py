@@ -310,3 +310,20 @@ async def delete_scan(scan_id: str,
                       ctx: TenantContext = Depends(require("closing:read", module=_MODULE))):
     ok = await ScanRepository(tenant_id=ctx.tenant_id).delete(scan_id)
     return {"ok": ok}
+
+
+class ScanGroupIn(BaseModel):
+    scan_ids: list[str]
+    case_id: str
+
+
+@router.post("/scans/group")
+async def group_scans(body: ScanGroupIn,
+                      ctx: TenantContext = Depends(require("closing:read", module=_MODULE))):
+    return await ScanRepository(tenant_id=ctx.tenant_id).set_case(body.scan_ids, body.case_id)
+
+
+@router.post("/scans/{scan_id}/ungroup")
+async def ungroup_scan(scan_id: str,
+                       ctx: TenantContext = Depends(require("closing:read", module=_MODULE))):
+    return await ScanRepository(tenant_id=ctx.tenant_id).clear_case(scan_id)

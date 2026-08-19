@@ -50,25 +50,46 @@ def _cross_check(ai: dict, auth: dict | None, matched: str | None) -> tuple[list
                         or (_norm(m.get("name"))[:6] and _norm(m.get("name"))[:6] in an)), None)
             if hit and hit.get("quantity") and hit["quantity"] != am["qty"]:
                 add("warn", f"{am.get('name')}: ποσότητα φωτό {hit['quantity']} ≠ καταχωρημένη {am['qty']}.")
-        # ΕΟΦ paper strips expected
-        eof = auth.get("eof") or 0
-        seen = (ai.get("coupons") or {}).get("count") or 0
-        if eof > 0 and seen == 0:
-            add("warn", f"Αναμένονται ~{eof} κουπόνια ΕΟΦ στο χαρτί — δεν εντοπίστηκαν στη φωτό.")
-        # signatures / stamps (only meaningful for non-paperless prescriptions)
+        # ── ΦΥΣΙΚΑ ΣΤΟΙΧΕΙΑ: ελέγχονται ΜΟΝΟ σε ΕΝΤΥΠΗ/χειρόγραφη ──
+        # Στην ΑΥΛΗ κανένα φυσικό στοιχείο (υπογραφή/σφραγίδα/ταινία/έντυπο) ΔΕΝ είναι προϋπόθεση
+        # αποζημίωσης (ο διοικητικός έλεγχος ΕΟΠΥΥ «δεν εφαρμόζεται σε άυλη»). memory: optical-check-only-printed.
         sig = ai.get("signatures") or {}
         stamp = ai.get("stamps") or {}
         if auth.get("intangible"):
-            add("info", "Άυλη συνταγή — δεν απαιτείται έντυπη υπογραφή/σφραγίδα ιατρού.")
+            add("info", "Άυλη συνταγή — δεν απαιτείται κανένας φυσικός έλεγχος "
+                        "(υπογραφή/σφραγίδα/ταινία/έντυπο). Η ηλεκτρονική εκτέλεση αρκεί.")
         else:
+            # ΕΝΤΥΠΗ → φυσικά στοιχεία ΑΠΑΙΤΟΥΝΤΑΙ (διοικητικός έλεγχος ΕΟΠΥΥ 1-7, θεραπεύσιμα σε 4 ημ.)
+            eof = auth.get("eof") or 0
+            seen = (ai.get("coupons") or {}).get("count") or 0
+            if eof > 0 and seen == 0:
+                add("warn", f"Αναμένονται ~{eof} ταινίες γνησιότητας στο έντυπο — δεν εντοπίστηκαν στη φωτό.")
             if sig.get("doctor") is False:
-                add("warn", "Δεν εντοπίστηκε υπογραφή ιατρού.")
+                add("warn", "Δεν εντοπίστηκε υπογραφή ιατρού (έντυπη συνταγή).")
             if stamp.get("doctor") is False:
-                add("warn", "Δεν εντοπίστηκε σφραγίδα ιατρού.")
-        if sig.get("pharmacist") is False and stamp.get("pharmacy") is False:
-            add("warn", "Δεν εντοπίστηκε υπογραφή/σφραγίδα φαρμακείου.")
+                add("warn", "Δεν εντοπίστηκε σφραγίδα ιατρού (έντυπη συνταγή).")
+            if sig.get("pharmacist") is False and stamp.get("pharmacy") is False:
+                add("warn", "Δεν εντοπίστηκε υπογραφή/σφραγίδα φαρμακείου (έντυπη συνταγή).")
+            if sig.get("patient") is False:
+                add("warn", "Δεν εντοπίστηκε υπογραφή παραλήπτη (έντυπη συνταγή).")
+        # ── submission-critical authoritative flags (ίδια με το κλείσιμο/cockpit) ──
+        if auth.get("needs_original") and not auth.get("intangible"):
+            add("warn", "Χρειάζεται η ΠΡΩΤΟΤΥΠΗ έντυπη συνταγή ιατρού — βεβαιώσου ότι επισυνάπτεται.")
+        if auth.get("has_opinion"):
+            add("info", "Απαιτείται ΓΝΩΜΑΤΕΥΣΗ — έλεγξε ότι υπάρχει & επισυνάπτεται.")
+        if auth.get("is_eopyy") is False and auth.get("fund"):
+            add("info", f"Δεν είναι ΕΟΠΥΥ ({auth['fund']}) — ξεχωριστή κατάθεση στο δικό του ταμείο.")
+        if auth.get("is_fyk"):
+            add("info", "ΦΥΚ (υψηλού κόστους) — χρειάζεται αντίγραφο τιμολογίου.")
+        if auth.get("partial"):
+            add("info", "Μερικώς εκτελεσμένη συνταγή — μέρος των φαρμάκων δεν χορηγήθηκε.")
 
     for a in (ai.get("anomalies") or []):
+        # Σε ΑΥΛΗ συνταγή αγνόησε anomalies για ΦΥΣΙΚΑ στοιχεία (υπογραφή/σφραγίδα) — δεν απαιτούνται
+        # (ο διοικητικός έλεγχος ΕΟΠΥΥ δεν εφαρμόζεται σε άυλη). Αποφεύγει ψευδείς προειδοποιήσεις.
+        if auth and auth.get("intangible") and any(
+                k in (a or "").lower() for k in ("υπογραφ", "σφραγίδ", "σφραγιδ", "signature", "stamp")):
+            continue
         add("warn", a)
 
     if any(f["level"] == "error" for f in F):
@@ -194,6 +215,10 @@ class ScanRepository(BaseRepository):
 
         upd: dict = {
             "status": "done",
+            # ΦΑΚΕΛΟΣ ΣΥΝΤΑΓΗΣ: σαρώσεις με ΤΟ ΙΔΙΟ barcode (π.χ. 2ο συνοδευτικό φύλλο >12 κουπονιών)
+            # ενώνονται ΑΥΤΟΜΑΤΑ σε μία συνταγή (case_id = barcode). Barcode-less σελίδες (γνωμάτευση)
+            # κρατούν τυχόν χειροκίνητο case_id.
+            "case_id": (matched.split(":")[0] if matched else s.get("case_id")),
             "ocr": {**{k: ocr.get(k) for k in ("date", "quality", "barcodes", "ok", "error")},
                     "rx_barcode": bc},
             "ocr_text": (ocr.get("text") or "")[:2000], "visual": ocr.get("visual"),
@@ -215,46 +240,51 @@ class ScanRepository(BaseRepository):
         await self._coll.update_one({"_id": s["_id"], "tenant_id": self.tenant_id}, {"$set": upd})
 
     async def _coupons_summary(self, barcode: str) -> dict:
-        """Authoritative coupons for the matched Rx FROM OUR DATA: how many meds executed and how
-        many carry a QR vs an ΕΟΦ strip, plus whether the Rx is άυλη (electronic — no paper doctor
-        signature needed). This is what the optical audit should judge — not OCR guesses."""
+        """Authoritative picture of the matched Rx FROM OUR ΗΔΥΚΑ DATA — the SAME source the closing
+        cockpit uses (ReimbursementRepository.prescription_detail), so both features always agree.
+        Returns how many DISTINCT meds executed and how many carry a QR vs an ΕΟΦ/ταινία strip, plus
+        the submission-critical flags (άυλη, πρωτότυπη, γνωμάτευση, ταμείο/ΕΟΠΥΥ, ΦΥΚ, μερική).
+
+        NOTE on coupons: a coupon's `qr` field is QR (True) vs authenticity-strip/ταινία (False) —
+        NEVER executed-vs-unexecuted. Every stored coupon = an executed unit. See coupon-qr-semantics.
+        """
+        empty = {"meds": 0, "qr": 0, "eof": 0, "intangible": None, "items": [], "date": None,
+                 "needs_original": None, "has_opinion": None, "is_eopyy": None, "fund": None,
+                 "is_fyk": None, "partial": None}
         bc = (barcode or "").split(":")[0].strip()
         if not bc or not bc.isdigit():
-            return {"meds": 0, "qr": 0, "eof": 0, "intangible": None, "items": [], "date": None}
-        exs = [e async for e in self._db["prescription_executions"].find(
+            return empty
+        from app.repositories.reimbursement import ReimbursementRepository
+        d = await ReimbursementRepository(tenant_id=self.tenant_id).prescription_detail(bc, live=False)
+        if not d.get("found"):
+            return empty
+        # DISTINCT medicines (group the per-unit coupon cards by name) — matches «πλήθος φαρμάκων»
+        # that the AI reads on the paper. QR wins over ταινία when a drug has both.
+        by_name: dict = {}
+        for c in (d.get("coupons") or []):
+            if not c.get("executed"):
+                continue
+            g = by_name.setdefault(c.get("name") or "—", {"qty": 0, "qr": False, "eof": False})
+            g["qty"] += c.get("quantity", 1) or 1
+            if c.get("qr") is True:
+                g["qr"] = True
+            elif c.get("qr") is False:
+                g["eof"] = True
+        meds = len(by_name)
+        qr = sum(1 for g in by_name.values() if g["qr"])
+        eof = sum(1 for g in by_name.values() if g["eof"] and not g["qr"])
+        items = [{"name": n, "qty": g["qty"],
+                  "type": "qr" if g["qr"] else "eof" if g["eof"] else None}
+                 for n, g in by_name.items()]
+        # earliest execution date (light projection — prescription_detail doesn't carry it)
+        _dts = [e["executed_at"] async for e in self._db["prescription_executions"].find(
             {"tenant_id": self.tenant_id, "external_id": {"$regex": f"^{bc}"}},
-            {"_id": 1, "details": 1, "executed_at": 1})]
-        if not exs:
-            return {"meds": 0, "qr": 0, "eof": 0, "intangible": None, "items": [], "date": None}
-        intangible = any((e.get("details") or {}).get("intangible") for e in exs)
-        _dts = [e.get("executed_at") for e in exs if e.get("executed_at")]
+            {"executed_at": 1}) if e.get("executed_at")]
         date = min(_dts).strftime("%d/%m/%Y") if _dts else None
-        exec_ids = [e["_id"] for e in exs]
-        meds = qr = eof = 0
-        items: list = []
-        async for it in self._db["prescription_items"].find(
-                {"tenant_id": self.tenant_id, "execution_id": {"$in": exec_ids},
-                 "is_executed": {"$ne": False}}):
-            d = it.get("details") or {}
-            has_qr = bool(d.get("qr") or d.get("qr_product_code"))
-            has_eof = bool(d.get("strip")) and not has_qr
-            if not (has_qr or has_eof):
-                for c in (d.get("coupons") or []):
-                    if c.get("qr") or c.get("qr_product_code"):
-                        has_qr = True
-                    elif c.get("strip"):
-                        has_eof = True
-            prod = await self._db["products"].find_one(
-                {"_id": it.get("product_id")}, {"name": 1}) if it.get("product_id") else None
-            meds += 1
-            if has_qr:
-                qr += 1
-            elif has_eof:
-                eof += 1
-            items.append({"name": (prod or {}).get("name"), "qty": it.get("quantity"),
-                          "type": "qr" if has_qr else "eof" if has_eof else None})
-        return {"meds": meds, "qr": qr, "eof": eof, "intangible": intangible,
-                "items": items, "date": date}
+        return {"meds": meds, "qr": qr, "eof": eof, "intangible": d.get("is_intangible"),
+                "items": items, "date": date, "needs_original": d.get("needs_original"),
+                "has_opinion": d.get("has_opinion"), "is_eopyy": d.get("is_eopyy"),
+                "fund": d.get("fund"), "is_fyk": d.get("is_fyk"), "partial": d.get("partial")}
 
     async def set_review(self, scan_id: str, ok: bool) -> dict:
         """Pharmacist's manual verdict after looking at the image (the reliable signal for
@@ -267,11 +297,33 @@ class ScanRepository(BaseRepository):
             {"$set": {"reviewed_ok": bool(ok), "reviewed_at": _now()}})
         return {"ok": True, "reviewed_ok": bool(ok)}
 
+    async def set_case(self, scan_ids: list[str], case_id: str) -> dict:
+        """Χειροκίνητη ομαδοποίηση: βάλε τις σαρώσεις σε ΕΝΑ φάκελο συνταγής (case_id) — για
+        barcode-less συνοδευτικά (γνωμάτευση/έντυπο ιατρού) που δεν ενώνονται αυτόματα με barcode."""
+        oids = [o for o in (_oid(s) for s in scan_ids) if o]
+        if not oids or not case_id:
+            return {"ok": False}
+        await self._coll.update_many(
+            {"_id": {"$in": oids}, "tenant_id": self.tenant_id},
+            {"$set": {"case_id": str(case_id), "updated_at": _now()}})
+        return {"ok": True, "case_id": str(case_id), "n": len(oids)}
+
+    async def clear_case(self, scan_id: str) -> dict:
+        """Αφαίρεση σάρωσης από τον φάκελο συνταγής (ξαναγίνεται μεμονωμένη)."""
+        oid = _oid(scan_id)
+        if not oid:
+            return {"ok": False}
+        await self._coll.update_one(
+            {"_id": oid, "tenant_id": self.tenant_id},
+            {"$set": {"case_id": None, "updated_at": _now()}})
+        return {"ok": True}
+
     async def queue(self) -> list[dict]:
         rows = [s async for s in self._coll.find({"tenant_id": self.tenant_id})
                 .sort("uploaded_at", -1).limit(200)]
         return jsonsafe([{
             "scan_id": str(s["_id"]), "filename": s.get("filename"), "doc_type": s.get("doc_type"),
+            "case_id": s.get("case_id"),
             "status": s.get("status"), "uploaded_at": s.get("uploaded_at"),
             "optical_risk": s.get("optical_risk"), "band": s.get("band"),
             "flags": s.get("flags", []), "matched": s.get("matched_execution"),

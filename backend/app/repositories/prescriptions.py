@@ -66,9 +66,13 @@ class PrescriptionRepository(BaseRepository):
                         continue   # τα κουπόνια του φαρμάκου ανήκουν σε άλλη μερική εκτέλεση
                 elif seq != 1:
                     continue       # ανεκτέλεστο (χωρίς κουπόνι) → εμφανίζεται μόνο στην 1η μερική
-            g = by_eof.setdefault(eof, {"it": it, "d": d, "strips": set(), "max_qty": 0})
+            g = by_eof.setdefault(eof, {"it": it, "d": d, "strips": set(), "tokens": 0, "max_qty": 0})
             for c in coupons:
                 g["strips"].add(c.get("strip") or c.get("qr_batch") or len(g["strips"]) + 1)
+                # token γνησιότητας = QR (qr True/False) ή ταινία (strip) ή batch. Χωρίς κανένα →
+                # ανεκτέλεστο/κενό (κίνδυνος περικοπής ποσότητας, κωδ. τακτικού ελέγχου 7).
+                if c.get("qr") is not None or c.get("strip") or c.get("qr_batch"):
+                    g["tokens"] += 1
             g["max_qty"] = max(g["max_qty"], it.get("quantity", 1) or 1)
         items_out: list[dict] = []
         for eof, g in by_eof.items():
@@ -81,8 +85,36 @@ class PrescriptionRepository(BaseRepository):
             item = {"barcode": cat.get("barcode"), "name": name, "quantity": qty,
                     "dose": d.get("dose"), "frequency": d.get("frequency"), "duration": d.get("duration")}
             checks = pc.check_item(item, cat, ultra_levure_enabled=ul, has_opinion=has_opinion)
+            # Item 4 — ΤΑΙΝΙΕΣ/QR vs ΠΟΣΟΤΗΤΑ (τακτικός έλεγχος ΕΟΠΥΥ κωδ. 7): κάθε εκτελεσμένο τεμάχιο
+            # πρέπει να φέρει token γνησιότητας (QR ή ταινία). Λιγότερα → κίνδυνος περικοπής ποσότητας.
+            n_coupons = len(g["strips"])
+            missing_tok = n_coupons - g["tokens"]
+            if n_coupons and missing_tok > 0:
+                checks.append({"type": "missing_strip", "level": "warning", "category": "closing",
+                    "title": "Λείπει ταινία/QR γνησιότητας",
+                    "detail": f"Εκτελέστηκαν {n_coupons} τεμ. αλλά {g['tokens']} φέρουν ταινία/QR — "
+                              f"λείπουν {missing_tok}. Κίνδυνος περικοπής ποσότητας (τακτικός έλεγχος ΕΟΠΥΥ). "
+                              "Βεβαιώσου ότι έχουν επικολληθεί/σκαναριστεί όλες οι ταινίες/QR."})
             if checks:
                 items_out.append({"name": name, "barcode": item["barcode"], "checks": checks})
+        # Item 2 — ΠΑΡΑΘΥΡΟ ΕΚΤΕΛΕΣΗΣ (prescription-level): εκτέλεση 30 ημ. από έκδοση (+10 τμηματική).
+        # Χρησιμοποιούμε valid_until (λήξη ισχύος/θεραπείας) ή valid_from+30· grace 10 ημ. Εκτός → κίνδυνος
+        # περικοπής (τακτικός έλεγχος: εκτός παραθύρου). Soft warning — ζητά επιβεβαίωση ημερομηνιών.
+        from datetime import timedelta
+        relevant = [e for e in exs if seq is None or e.get("external_id") == f"{bc}:{seq}"] or exs
+        late_days = 0
+        for e in relevant:
+            ea, vu, vf = e.get("executed_at"), e.get("valid_until"), e.get("valid_from")
+            deadline = vu or ((vf + timedelta(days=30)) if vf else None)
+            if ea and deadline and ea.date() > (deadline + timedelta(days=10)).date():
+                late_days = max(late_days, (ea.date() - deadline.date()).days)
+        if late_days > 0:
+            items_out.insert(0, {"name": "Παράθυρο εκτέλεσης", "barcode": None, "checks": [{
+                "type": "exec_window", "level": "warning", "category": "closing",
+                "title": "⏱️ Πιθανή εκτέλεση εκτός παραθύρου",
+                "detail": f"Η εκτέλεση φαίνεται ~{late_days} ημέρες μετά τη λήξη ισχύος της συνταγής "
+                          "(όριο 30 ημ. από έκδοση, +10 σε τμηματική). Κίνδυνος περικοπής — "
+                          "επιβεβαίωσε τις ημερομηνίες έκδοσης/εκτέλεσης."}]})
         # «Αμιγώς 100%» — ΟΛΑ τα φάρμακα με συμμετοχή ασθενή 100% → η συνταγή ΔΕΝ κατατίθεται στο ταμείο.
         # Οδηγία στον φαρμακοποιό (prescription-level) + σύντομη αιτιολογία.
         if any((e.get("details") or {}).get("full_participation") for e in exs):

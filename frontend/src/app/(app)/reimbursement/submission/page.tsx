@@ -94,6 +94,18 @@ export default function SubmissionPage() {
             <div className="text-xs text-slate-500">{t("Ο ΕΟΠΥΥ αναμένει (από δεδομένα ΗΔΥΚΑ)", "ΕΟΠΥΥ expects (from ΗΔΥΚΑ data)")}</div>
             <div className="text-2xl font-extrabold text-emerald-700 dark:text-emerald-300">{fmtEur(eopyyExpected)}</div>
             <div className="mt-1 text-[11px] text-slate-400">{t("Τιμολόγησε ΑΚΡΙΒΩΣ αυτό. Ο ΕΟΠΥΥ διασταυρώνει το τιμολόγιο με τα ποσά ΗΔΥΚΑ.", "Invoice EXACTLY this. ΕΟΠΥΥ cross-checks your invoice against ΗΔΥΚΑ.")}</div>
+            {/* Ξεχωριστά τιμολόγια ανά κατηγορία (Φάρμακα Νο1 / Εμβόλια Νο2 / λοιπά ταμεία) — καθένα εκδίδεται & διασταυρώνεται χωριστά */}
+            {(data?.batches ?? []).filter((b) => (b.expected_claim || 0) > 0).length > 1 && (
+              <div className="mt-2 space-y-0.5 border-t border-slate-100 pt-2 dark:border-slate-800">
+                <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">{t("Ξεχωριστά τιμολόγια ανά κατηγορία", "Separate invoices per category")}</div>
+                {(data?.batches ?? []).filter((b) => (b.expected_claim || 0) > 0).map((b) => (
+                  <div key={b.batch_id} className="flex items-center justify-between text-[11px]">
+                    <span className="truncate text-slate-500">{b.fund}</span>
+                    <b className="shrink-0 text-slate-700 dark:text-slate-200">{fmtEur(b.expected_claim)}</b>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
           <div className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
             <label className="mb-1 block text-xs text-slate-500">{t("Ποσό στο τιμολόγιό μου (€)", "My invoice amount (€)")}</label>
