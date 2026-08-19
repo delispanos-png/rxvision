@@ -59,22 +59,24 @@ def _cross_check(ai: dict, auth: dict | None, matched: str | None) -> tuple[list
             add("info", "Άυλη συνταγή — δεν απαιτείται κανένας φυσικός έλεγχος "
                         "(υπογραφή/σφραγίδα/ταινία/έντυπο). Η ηλεκτρονική εκτέλεση αρκεί.")
         else:
-            # ΕΝΤΥΠΗ → φυσικά στοιχεία ΑΠΑΙΤΟΥΝΤΑΙ (διοικητικός έλεγχος ΕΟΠΥΥ 1-7, θεραπεύσιμα σε 4 ημ.)
+            # ΕΝΤΥΠΗ → φυσικά στοιχεία απαιτούνται, ΑΛΛΑ το AI τα «διαβάζει» ΑΝΑΞΙΟΠΙΣΤΑ (συχνά δεν βλέπει
+            # υπογραφή/σφραγίδα που ΥΠΑΡΧΕΙ). Άρα ΔΕΝ είναι πορτοκαλί «πρόβλημα» — είναι ΜΠΛΕ ΥΠΕΝΘΥΜΙΣΕΙΣ
+            # (info) που ο φαρμακοποιός επιβεβαιώνει οπτικά. Πορτοκαλί = μόνο σίγουρη ασυμφωνία δεδομένων.
             eof = auth.get("eof") or 0
             seen = (ai.get("coupons") or {}).get("count") or 0
             if eof > 0 and seen == 0:
-                add("warn", f"Αναμένονται ~{eof} ταινίες γνησιότητας στο έντυπο — δεν εντοπίστηκαν στη φωτό.")
+                add("info", f"Επιβεβαίωσε τις ~{eof} ταινίες γνησιότητας στο έντυπο (το AI δεν τις εντόπισε).")
             if sig.get("doctor") is False:
-                add("warn", "Δεν εντοπίστηκε υπογραφή ιατρού (έντυπη συνταγή).")
+                add("info", "Επιβεβαίωσε υπογραφή ιατρού στο έντυπο.")
             if stamp.get("doctor") is False:
-                add("warn", "Δεν εντοπίστηκε σφραγίδα ιατρού (έντυπη συνταγή).")
+                add("info", "Επιβεβαίωσε σφραγίδα ιατρού στο έντυπο.")
             if sig.get("pharmacist") is False and stamp.get("pharmacy") is False:
-                add("warn", "Δεν εντοπίστηκε υπογραφή/σφραγίδα φαρμακείου (έντυπη συνταγή).")
+                add("info", "Επιβεβαίωσε υπογραφή/σφραγίδα φαρμακείου στο έντυπο.")
             if sig.get("patient") is False:
-                add("warn", "Δεν εντοπίστηκε υπογραφή παραλήπτη (έντυπη συνταγή).")
-        # ── submission-critical authoritative flags (ίδια με το κλείσιμο/cockpit) ──
+                add("info", "Επιβεβαίωσε υπογραφή παραλήπτη στο έντυπο.")
+        # ── submission-critical authoritative flags (ίδια με το κλείσιμο/cockpit) — ΥΠΕΝΘΥΜΙΣΕΙΣ (info) ──
         if auth.get("needs_original") and not auth.get("intangible"):
-            add("warn", "Χρειάζεται η ΠΡΩΤΟΤΥΠΗ έντυπη συνταγή ιατρού — βεβαιώσου ότι επισυνάπτεται.")
+            add("info", "Χρειάζεται η ΠΡΩΤΟΤΥΠΗ έντυπη συνταγή ιατρού — βεβαιώσου ότι επισυνάπτεται.")
         if auth.get("has_opinion"):
             add("info", "Απαιτείται ΓΝΩΜΑΤΕΥΣΗ — έλεγξε ότι υπάρχει & επισυνάπτεται.")
         if auth.get("is_eopyy") is False and auth.get("fund"):
@@ -84,13 +86,12 @@ def _cross_check(ai: dict, auth: dict | None, matched: str | None) -> tuple[list
         if auth.get("partial"):
             add("info", "Μερικώς εκτελεσμένη συνταγή — μέρος των φαρμάκων δεν χορηγήθηκε.")
 
-    for a in (ai.get("anomalies") or []):
-        # Σε ΑΥΛΗ συνταγή αγνόησε anomalies για ΦΥΣΙΚΑ στοιχεία (υπογραφή/σφραγίδα) — δεν απαιτούνται
-        # (ο διοικητικός έλεγχος ΕΟΠΥΥ δεν εφαρμόζεται σε άυλη). Αποφεύγει ψευδείς προειδοποιήσεις.
-        if auth and auth.get("intangible") and any(
-                k in (a or "").lower() for k in ("υπογραφ", "σφραγίδ", "σφραγιδ", "signature", "stamp")):
-            continue
-        add("warn", a)
+    # Τα AI anomalies είναι ΟΠΤΙΚΕΣ παρατηρήσεις πάνω στο χαρτί (υπογραφές/σφραγίδες/«διπλό barcode» κ.λπ.).
+    # Σε ΑΥΛΗ συνταγή το χαρτί ΔΕΝ είναι προϋπόθεση αποζημίωσης → αγνόησέ τα ΟΛΑ (μηδέν ψευδείς προειδοποιήσεις·
+    # μένουν μόνο οι δομικοί έλεγχοι από τα δεδομένα ΗΔΥΚΑ). Στην έντυπη κρατιούνται κανονικά.
+    if not (auth and auth.get("intangible")):
+        for a in (ai.get("anomalies") or []):
+            add("info", a)   # AI οπτική παρατήρηση = υπενθύμιση, όχι σίγουρο πρόβλημα (ο φαρμακοποιός κρίνει)
 
     if any(f["level"] == "error" for f in F):
         verdict = "problem"
@@ -140,12 +141,13 @@ class ScanRepository(BaseRepository):
         return AsyncIOMotorGridFSBucket(self._db, bucket_name="scans")
 
     async def create(self, *, filename: str, content: bytes, content_type: str,
-                     doc_type: str = "prescription") -> str:
+                     doc_type: str = "prescription", period: str | None = None) -> str:
         fid = await self._bucket().upload_from_stream(
             filename, content, metadata={"tenant_id": self.tenant_id})
         sid = ObjectId()
         await self._coll.insert_one({
             "_id": sid, "tenant_id": self.tenant_id, "filename": filename, "doc_type": doc_type,
+            "period": period,   # μήνας κλεισίματος (YYYY-MM) → ιστορικό & έλεγχος ανά μήνα
             "image_id": fid, "content_type": content_type, "status": "processing",
             "uploaded_at": _now()})
         return str(sid)
@@ -318,21 +320,34 @@ class ScanRepository(BaseRepository):
             {"$set": {"case_id": None, "updated_at": _now()}})
         return {"ok": True}
 
-    async def queue(self) -> list[dict]:
-        rows = [s async for s in self._coll.find({"tenant_id": self.tenant_id})
-                .sort("uploaded_at", -1).limit(200)]
-        return jsonsafe([{
-            "scan_id": str(s["_id"]), "filename": s.get("filename"), "doc_type": s.get("doc_type"),
-            "case_id": s.get("case_id"),
-            "status": s.get("status"), "uploaded_at": s.get("uploaded_at"),
-            "optical_risk": s.get("optical_risk"), "band": s.get("band"),
-            "flags": s.get("flags", []), "matched": s.get("matched_execution"),
-            "coupons": s.get("coupons"), "reviewed_ok": s.get("reviewed_ok"),
-            "barcode": (s.get("ocr") or {}).get("rx_barcode"),
-            "quality": (s.get("ocr") or {}).get("quality"),
-            "signature": (s.get("visual") or {}).get("signature"),
-            "stamp": (s.get("visual") or {}).get("stamp"),
-            # Prescriptor (AI eye)
-            "ai": s.get("ai"), "ai_findings": s.get("ai_findings"),
-            "auto_verdict": s.get("auto_verdict"), "ai_error": s.get("ai_error"),
-        } for s in rows])
+    async def queue(self, period: str | None = None) -> list[dict]:
+        q: dict = {"tenant_id": self.tenant_id}
+        if period:
+            # μήνας κλεισίματος: δείξε τις σαρώσεις ΑΥΤΟΥ του μήνα (+ legacy χωρίς period, για μη-απώλεια)
+            q["$or"] = [{"period": period}, {"period": {"$in": [None, ""]}}]
+        rows = [s async for s in self._coll.find(q).sort("uploaded_at", -1).limit(500)]
+        out = []
+        for s in rows:
+            # ΕΠΑΝΥΠΟΛΟΓΙΣΜΟΣ ευρημάτων σε read-time από το ΑΠΟΘΗΚΕΥΜΕΝΟ ai + coupons: το _cross_check είναι
+            # καθαρή συνάρτηση (χωρίς AI κλήση), οπότε κάθε αλλαγή gating (π.χ. άυλη → 0 φυσικά ευρήματα)
+            # εφαρμόζεται ΑΜΕΣΑ σε ΟΛΕΣ τις σαρώσεις — και τις παλιές — χωρίς reprocess.
+            ai = s.get("ai"); matched = s.get("matched_execution")
+            findings, verdict = s.get("ai_findings"), s.get("auto_verdict")
+            if ai:
+                findings, verdict = _cross_check(ai, s.get("coupons") if matched else None, matched)
+            out.append({
+                "scan_id": str(s["_id"]), "filename": s.get("filename"), "doc_type": s.get("doc_type"),
+                "case_id": s.get("case_id"), "period": s.get("period"),
+                "status": s.get("status"), "uploaded_at": s.get("uploaded_at"),
+                "optical_risk": s.get("optical_risk"), "band": s.get("band"),
+                "flags": s.get("flags", []), "matched": matched,
+                "coupons": s.get("coupons"), "reviewed_ok": s.get("reviewed_ok"),
+                "barcode": (s.get("ocr") or {}).get("rx_barcode"),
+                "quality": (s.get("ocr") or {}).get("quality"),
+                "signature": (s.get("visual") or {}).get("signature"),
+                "stamp": (s.get("visual") or {}).get("stamp"),
+                # Prescriptor (AI eye) — findings/verdict recomputed above
+                "ai": ai, "ai_findings": findings,
+                "auto_verdict": verdict, "ai_error": s.get("ai_error"),
+            })
+        return jsonsafe(out)

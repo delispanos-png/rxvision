@@ -4,7 +4,7 @@ import { useState, useRef, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   ScanBarcode, CheckCircle2, XCircle, RotateCcw, ChevronLeft, ChevronRight,
-  X, FileText, Syringe, Pill, ShieldAlert, Ticket, PartyPopper, CalendarDays, ArrowRight, AlertTriangle, Filter, Printer, ClipboardList,
+  X, FileText, Syringe, Pill, ShieldAlert, Ticket, PartyPopper, CalendarDays, ArrowRight, AlertTriangle, Filter, Printer, ClipboardList, Copy,
 } from "lucide-react";
 import { api } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
@@ -12,6 +12,7 @@ import { useReimbPeriod } from "@/store/reimbStore";
 import { fmtEur, fmtNum, scanRxBarcode } from "@/lib/formatters";
 import { DataTable, type Column } from "@/components/tables/DataTable";
 import { appConfirm, appAlert } from "@/store/dialogStore";
+import { toastSuccess } from "@/store/toastStore";
 import { ClosingReportModal } from "@/components/reimbursement/ClosingReportModal";
 
 type Item = { barcode: string; external_id: string; exec_no: string | null; claim: number; retail?: number; patient?: number; fund: string; group: string; is_eopyy: boolean; is_vaccine: boolean; is_100: boolean; is_fyk: boolean; is_etyap: boolean; needs_original: boolean; needs_dose_check: boolean; needs_check: boolean; executed_at: string; checked: boolean; visual_checked: boolean; day: string };
@@ -261,7 +262,12 @@ export default function PhysicalCheckPage() {
   const cols: Column<Item>[] = [
     { key: "checked", header: "", render: (r) => r.checked ? <CheckCircle2 className="h-4 w-4 text-emerald-600" /> : <span className="inline-block h-4 w-4 rounded-full border-2 border-slate-300" /> },
     { key: "barcode", header: "Barcode", render: (r) => (
-      <span className="inline-flex items-center gap-1.5">
+      <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
+        <button onClick={(e) => { e.stopPropagation(); navigator.clipboard?.writeText(r.barcode); toastSuccess(t("Barcode αντιγράφηκε", "Barcode copied")); }}
+          title={t("Αντιγραφή barcode", "Copy barcode")}
+          className="grid h-6 w-6 shrink-0 place-items-center rounded border border-slate-200 text-slate-400 transition hover:border-emerald-400 hover:text-emerald-600 dark:border-slate-700 dark:hover:border-emerald-600">
+          <Copy className="h-3.5 w-3.5" />
+        </button>
         <button onClick={() => openDetail(r.external_id)} className={`font-mono text-xs hover:text-emerald-600 hover:underline ${r.checked ? "text-slate-400 line-through" : "text-slate-700 dark:text-slate-200"}`}>{r.barcode}</button>
         {r.exec_no && <span className="shrink-0 rounded-full bg-indigo-100 px-2 py-0.5 text-[10px] font-bold text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300">{t(`Εκτέλεση ${r.exec_no}`, `Execution ${r.exec_no}`)}</span>}
       </span>
@@ -270,12 +276,12 @@ export default function PhysicalCheckPage() {
       const badge = r.is_100 ? "bg-amber-100 text-amber-800" : r.is_vaccine ? "bg-sky-100 text-sky-700" : r.is_eopyy ? "bg-emerald-100 text-emerald-700" : "bg-violet-100 text-violet-700";
       const lbl = r.group === "ΕΟΠΥΥ - Φάρμακα" ? "ΕΟΠΥΥ Φάρμ." : r.group === "ΕΟΠΥΥ - Εμβόλια" ? "Εμβόλια" : r.group === "Αμιγώς 100%" ? "100%" : r.group;
       return (
-        <span className="inline-flex flex-wrap items-center gap-1">
-          <span className={`rounded px-1.5 py-0.5 text-[10px] font-bold ${badge}`} title={r.group}>{lbl}</span>
-          {r.needs_original && <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800" title={t("Χρειάζεται πρωτότυπη χάρτινη συνταγή ιατρού", "Needs original paper Rx")}>📄</span>}
-          {r.is_fyk && <span className="rounded bg-fuchsia-100 px-1.5 py-0.5 text-[10px] font-semibold text-fuchsia-800">ΦΥΚ</span>}
-          {r.is_etyap && <span className="rounded bg-cyan-100 px-1.5 py-0.5 text-[10px] font-semibold text-cyan-800" title="ΕΤΥΑΠ">🛡️</span>}
-          {r.needs_dose_check && <span className="rounded bg-orange-100 px-1.5 py-0.5 text-[10px] font-bold text-orange-700" title={t("Περιέχει σκεύασμα που χρειάζεται έλεγχο δοσολογίας", "Contains an item needing a dosage check")}>E</span>}
+        <span className="inline-flex flex-nowrap items-center gap-1 whitespace-nowrap">
+          <span className={`shrink-0 whitespace-nowrap rounded px-1.5 py-0.5 text-[10px] font-bold ${badge}`} title={r.group}>{lbl}</span>
+          {r.needs_original && <span className="shrink-0 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800" title={t("Χρειάζεται πρωτότυπη χάρτινη συνταγή ιατρού", "Needs original paper Rx")}>📄</span>}
+          {r.is_fyk && <span className="shrink-0 rounded bg-fuchsia-100 px-1.5 py-0.5 text-[10px] font-semibold text-fuchsia-800">ΦΥΚ</span>}
+          {r.is_etyap && <span className="shrink-0 rounded bg-cyan-100 px-1.5 py-0.5 text-[10px] font-semibold text-cyan-800" title="ΕΤΥΑΠ">🛡️</span>}
+          {r.needs_dose_check && <span className="shrink-0 rounded bg-orange-100 px-1.5 py-0.5 text-[10px] font-bold text-orange-700" title={t("Περιέχει σκεύασμα που χρειάζεται έλεγχο δοσολογίας", "Contains an item needing a dosage check")}>E</span>}
         </span>
       );
     } },

@@ -34,6 +34,22 @@ const ddmmyyyy = (iso?: string | null) => {
 
 const empty: Contact = { marketing_consent: false, preferred_channel: "mobile", active: true };
 
+// ΠΡΟΣΟΧΗ: το Field ΠΡΕΠΕΙ να είναι σε module scope (σταθερή identity). Αν οριστεί inline μέσα στο
+// ContactCard, κάθε keystroke → re-render → νέα συνάρτηση → React ξαναφτιάχνει το <input> → χάνεται το
+// focus (αποθηκεύεται 1 ψηφίο και χρειάζεται νέο κλικ). Περνάμε f/set ως props.
+function Field({ label, k, type = "text", ph, f, set }: {
+  label: string; k: keyof Contact; type?: string; ph?: string;
+  f: Contact; set: (k: keyof Contact, v: string | boolean) => void;
+}) {
+  return (
+    <label className="text-sm">
+      <span className="mb-1 block text-xs text-slate-500">{label}</span>
+      <input type={type} value={(f[k] as string) || ""} onChange={(e) => set(k, e.target.value)} placeholder={ph}
+        className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-brand-500 focus:outline-none dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200" />
+    </label>
+  );
+}
+
 /** Στοιχεία επικοινωνίας πελάτη (pharmacist-controlled). Με `collapsible` ξεκινά κλειστή
  *  (μόνο σύνοψη) και ανοίγει η φόρμα με «Επεξεργασία» — για αλλαγή μόνο όταν χρειάζεται. */
 export function ContactCard({ patientId, collapsible = false, extraAction, openEditSignal = 0 }: { patientId: string; collapsible?: boolean; extraAction?: ReactNode; openEditSignal?: number }) {
@@ -160,14 +176,7 @@ export function ContactCard({ patientId, collapsible = false, extraAction, openE
     );
   }
 
-  // ── ΑΝΟΙΧΤΗ προβολή: πλήρης φόρμα ──
-  const Field = ({ label, k, type = "text", ph }: { label: string; k: keyof Contact; type?: string; ph?: string }) => (
-    <label className="text-sm">
-      <span className="mb-1 block text-xs text-slate-500">{label}</span>
-      <input type={type} value={(f[k] as string) || ""} onChange={(e) => set(k, e.target.value)} placeholder={ph}
-        className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-brand-500 focus:outline-none dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200" />
-    </label>
-  );
+  // ── ΑΝΟΙΧΤΗ προβολή: πλήρης φόρμα ── (Field = module-level, βλ. σχόλιο πάνω για το focus bug)
 
   return (
     <PanelCard title={t("Στοιχεία επικοινωνίας", "Contact details")} action={
@@ -220,9 +229,9 @@ export function ContactCard({ patientId, collapsible = false, extraAction, openE
       </div>
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <Field label={t("Κινητό", "Mobile")} k="mobile" type="tel" ph="69········" />
-        <Field label={t("Σταθερό", "Landline")} k="phone" type="tel" />
-        <Field label="Email" k="email" type="email" ph="name@example.gr" />
+        <Field label={t("Κινητό", "Mobile")} k="mobile" type="tel" ph="69········" f={f} set={set} />
+        <Field label={t("Σταθερό", "Landline")} k="phone" type="tel" f={f} set={set} />
+        <Field label="Email" k="email" type="email" ph="name@example.gr" f={f} set={set} />
         <label className="text-sm">
           <span className="mb-1 block text-xs text-slate-500">{t("Προτιμώμενο κανάλι", "Preferred channel")}</span>
           <select value={f.preferred_channel || "mobile"} onChange={(e) => set("preferred_channel", e.target.value)}
@@ -232,11 +241,11 @@ export function ContactCard({ patientId, collapsible = false, extraAction, openE
             <option value="phone">{t("Τηλέφωνο", "Phone")}</option>
           </select>
         </label>
-        <Field label={t("Διεύθυνση", "Address")} k="address" />
+        <Field label={t("Διεύθυνση", "Address")} k="address" f={f} set={set} />
         <div className="grid grid-cols-3 gap-3">
-          <Field label={t("Πόλη", "City")} k="city" />
-          <Field label={t("Τ.Κ.", "Postal code")} k="postal_code" />
-          <Field label={t("Ύψος (cm)", "Height (cm)")} k="height_cm" type="number" ph="175" />
+          <Field label={t("Πόλη", "City")} k="city" f={f} set={set} />
+          <Field label={t("Τ.Κ.", "Postal code")} k="postal_code" f={f} set={set} />
+          <Field label={t("Ύψος (cm)", "Height (cm)")} k="height_cm" type="number" ph="175" f={f} set={set} />
         </div>
         <label className="text-sm sm:col-span-2">
           <span className="mb-1 block text-xs text-slate-500">{t("Σημειώσεις", "Notes")}</span>

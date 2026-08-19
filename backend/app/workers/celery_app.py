@@ -55,6 +55,10 @@ celery_app.conf.beat_schedule = {
         "task": "app.workers.snapshots.compute_nightly",
         "schedule": crontab(hour=2, minute=30),
     },
+    "purge-old-scans": {  # GDPR retention: σαρώσεις συνταγών μόνο τρέχων + προηγούμενος μήνας
+        "task": "app.workers.optical.purge_old_scans",
+        "schedule": crontab(hour=4, minute=20),
+    },
     "retention-cleanup": {
         "task": "app.workers.snapshots.apply_retention",
         "schedule": crontab(hour=3, minute=0),

@@ -18,7 +18,16 @@ while true; do
   STY=$(printf '%s' "$CMD" | jget server_type); LOC=$(printf '%s' "$CMD" | jget location)
   if [ -n "$ID" ]; then
     case "$TYPE" in
-      prune)    OUT=$( { docker builder prune -f; docker image prune -f; } 2>&1 | grep -i 'reclaimed' | paste -sd'; ' );;
+      prune)    OUT=$( {
+                  # -af (ΟΛΟ το build cache): με σκέτο -f ο build node (MGMT) ανακτά 0B γιατί το cache
+                  # θεωρείται «πρόσφατα σε χρήση». Καθαρίζουμε ΚΑΙ container logs + journald (οι άλλοι όγκοι).
+                  docker builder prune -af
+                  docker image prune -f
+                  journalctl --vacuum-size=200M 2>/dev/null || true
+                  LB=$(du -cb /var/lib/docker/containers/*/*-json.log 2>/dev/null | tail -1 | cut -f1)
+                  for f in /var/lib/docker/containers/*/*-json.log; do : > "$f" 2>/dev/null || true; done
+                  [ -n "${LB:-}" ] && [ "${LB:-0}" -gt 0 ] && echo "container logs cleared ($((LB/1024/1024))MB)"
+                } 2>&1 | grep -iE 'reclaimed|freed|cleared' | paste -sd'; ' );;
       backup)   OUT=$(bash infra/scripts/mongo-backup.sh 2>&1 | tail -1);;
       add_node) OUT=$(NODE_CMD_ID="$ID" SRV_TYPE="${STY:-ccx13}" LOCATION="${LOC:-hel1}" bash infra/scripts/provision-app-node.sh 2>&1 | tail -1);;
       restore)

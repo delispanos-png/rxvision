@@ -17,6 +17,9 @@ _ADMIN_FALLBACK = ["cloudon@rxvision.gr"]
 _THROTTLE_S = 3 * 3600
 _BACKUP_MAX_AGE_H = 14
 _NODE_STALE_S = 900
+# Χωρητικότητα DB: προειδοποίηση όταν το ΠΡΑΓΜΑΤΙΚΟ μέγεθος δεδομένων (data+index, ΟΧΙ logs) φτάσει
+# ~45GB σε δίσκο 75GB → χρόνος να προστεθεί block volume στα μέλη του replica set (όχι sharding).
+_DB_DATA_WARN_GB = 45
 # Security-abuse thresholds over a 15-min window (M-7). Tuned to catch attacks without noise from
 # normal typos. Failed logins are already IP+account-lockout-limited; these ALERT so a human notices.
 _SEC_WINDOW_MIN = 15
@@ -122,6 +125,32 @@ def check() -> dict:
                     issues.append(("ingest-stale",
                                    f"📥 Κανένας ΗΔΥΚΑ συγχρονισμός δεν έφερε δεδομένα εδώ και ~{age_h:.0f}h "
                                    "(ώρες λειτουργίας) — πιθανή σιωπηλή αποτυχία (Vault/creds/δίκτυο)."))
+
+            # 6) DB storage capacity — έγκαιρη προειδοποίηση ΠΡΙΝ πιέσει ο δίσκος, για προσθήκη block
+            #    volume (δες docs/DEPLOYMENT ή reimbursement scaling). Ελέγχει ΠΡΑΓΜΑΤΙΚΑ δεδομένα, όχι logs.
+            try:
+                st = await db.command("dbStats", scale=1024 * 1024 * 1024)  # GB
+                data_gb = (st.get("dataSize") or 0) + (st.get("indexSize") or 0)
+                if data_gb >= _DB_DATA_WARN_GB:
+                    issues.append(("db-storage-high",
+                                   f"💾 Τα δεδομένα MongoDB έφτασαν ~{data_gb:.0f}GB (όριο {_DB_DATA_WARN_GB}GB σε "
+                                   f"δίσκο 75GB). Ώρα να προστεθεί block volume στα μέλη του replica set "
+                                   "(ένα-ένα, replica-safe) — ΟΧΙ sharding σε αυτή την κλίμακα."))
+            except Exception:  # noqa: BLE001 — never let a stats hiccup crash the watchdog
+                pass
+
+            # 7) Ορφανά δεδομένα: tenant με δεδομένα αλλά ΧΩΡΙΣ tenants doc (διαγράφηκε χωρίς πλήρη cascade)
+            #    → GDPR (κρατάμε δεδομένα υγείας χωρίς σχέση) + άσκοπος χώρος. Χρειάζεται delete_tenant_fully.
+            try:
+                active = {t["_id"] async for t in db["tenants"].find({}, {"_id": 1})}
+                with_data = {t for t in await db["prescription_executions"].distinct("tenant_id") if t}
+                orphans = sorted(with_data - active)
+                if orphans:
+                    issues.append(("orphan-tenant-data",
+                                   f"🗑️ {len(orphans)} tenant(s) έχουν δεδομένα αλλά ΚΑΜΙΑ συνδρομή (ορφανά): "
+                                   f"{', '.join(orphans[:5])}. Οριστική διαγραφή (delete_tenant_fully) — GDPR + χώρος."))
+            except Exception:  # noqa: BLE001
+                pass
 
             if not issues:
                 return {"ok": True, "issues": 0}

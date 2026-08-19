@@ -2,9 +2,11 @@
 
 import { useState, useRef, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Camera, CheckCircle2, Loader2, X, QrCode, AlertTriangle, Link2, Trash2, Sparkles, User, Stethoscope, ChevronDown, FolderOpen, FolderSync, Layers } from "lucide-react";
+import { Camera, CheckCircle2, XCircle, Loader2, X, QrCode, AlertTriangle, Link2, Trash2, Sparkles, User, Stethoscope, ChevronDown, ChevronRight, FolderOpen, FolderSync, Layers, Copy } from "lucide-react";
 import { api, apiUpload, apiBlob } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
+import { toastSuccess } from "@/store/toastStore";
+import { useReimbPeriod } from "@/store/reimbStore";
 import { Tooltip } from "@/components/ui/Tooltip";
 import { appConfirm } from "@/store/dialogStore";
 
@@ -95,6 +97,7 @@ const ST_RANK: Record<ScanStatus, number> = { problem: 0, review: 1, processing:
 
 export default function OpticalAuditPage() {
   const t = useT();
+  const { period } = useReimbPeriod();   // μήνας κλεισίματος — οι σαρώσεις ανήκουν & φιλτράρονται ανά μήνα
   const inputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
   const [locals, setLocals] = useState<Local[]>([]);
@@ -127,7 +130,7 @@ export default function OpticalAuditPage() {
   const aiOn = !!(ai.data?.configured && ai.data?.enabled);
 
   const queue = useQuery({
-    queryKey: ["optical-queue"], queryFn: () => api<{ items: Scan[] }>("/reimbursement/scans"),
+    queryKey: ["optical-queue", period], queryFn: () => api<{ items: Scan[] }>(`/reimbursement/scans?period=${period}`),
     refetchInterval: 3000,
   });
   const byId = new Map((queue.data?.items ?? []).map((s) => [s.scan_id, s]));
@@ -143,7 +146,7 @@ export default function OpticalAuditPage() {
       try {
         const fd = new FormData();
         fd.append("file", f);
-        const r = await apiUpload<{ scan_id: string }>("/reimbursement/scans", fd);
+        const r = await apiUpload<{ scan_id: string }>(`/reimbursement/scans?period=${period}`, fd);
         if (opts?.dedup) rememberImported(key);
         setLocals((s) => [{ scan_id: r.scan_id, preview: URL.createObjectURL(f) },...s]);
       } catch { /* ignore single failure */ }
@@ -247,138 +250,45 @@ export default function OpticalAuditPage() {
     );
   }
 
-  function Card({ id, scan, preview, pageCount = 1, caseKey: ck }: { id: string; scan?: Scan; preview?: string; pageCount?: number; caseKey?: string }) {
-    const done = scan?.status === "done";
+  // Συμπαγής ΓΡΑΜΜΗ ανά συνταγή: σύμβολο (σύννομη/όχι) + barcode + κατάσταση. Κλικ → πλήρες πόρισμα.
+  // (Λίστα αντί για κάρτες: 1.000 σαρώσεις = γρήγορη σάρωση, ιδανικό και σε κινητό.)
+  function Card({ id, scan, pageCount = 1 }: { id: string; scan?: Scan; preview?: string; pageCount?: number; caseKey?: string }) {
+    const st = scanStatus(scan);
     const isSel = selected.has(id);
-    const band = scan?.band ? BAND[scan.band] : null;
-    const verdict = scan?.auto_verdict ? VERDICT[scan.auto_verdict] : null;
-    const a = scan?.ai;
-    const findings = scan?.ai_findings ?? [];
+    const bc = scan?.barcode || scan?.matched?.split(":")[0] || "—";
+    const border = st === "ok" ? "border-l-emerald-500" : st === "problem" ? "border-l-rose-500" : st === "review" ? "border-l-amber-500" : "border-l-slate-300 dark:border-l-slate-600";
+    const icon = st === "ok" ? <CheckCircle2 className="h-5 w-5 shrink-0 text-emerald-600" />
+      : st === "problem" ? <XCircle className="h-5 w-5 shrink-0 text-rose-600" />
+      : st === "review" ? <AlertTriangle className="h-5 w-5 shrink-0 text-amber-500" />
+      : <Loader2 className="h-5 w-5 shrink-0 animate-spin text-slate-400" />;
+    const label = st === "ok" ? t("Σύννομη", "Compliant") : st === "problem" ? t("Μη σύννομη", "Not OK")
+      : st === "review" ? t("Έλεγχος", "Review") : t("Ανάλυση…", "Analyzing…");
+    const labelCls = st === "ok" ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300"
+      : st === "problem" ? "bg-rose-100 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300"
+      : st === "review" ? "bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300"
+      : "bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400";
     return (
-      <div onClick={() => scan && setDetailScan(scan)} title={t("Κλικ για πλήρες πόρισμα", "Click for full report")}
-        className={`cursor-pointer overflow-hidden rounded-xl border-2 bg-white transition hover:shadow-md dark:bg-slate-900 ${ST_BORDER[scanStatus(scan)]}`}>
-        <div className="relative aspect-[3/4] bg-slate-100 dark:bg-slate-800">
-          {preview ? /* eslint-disable-next-line @next/next/no-img-element */ <img src={preview} alt="" onClick={(e) => { e.stopPropagation(); setLightbox(preview); }} className="h-full w-full cursor-zoom-in object-cover" /> : <ScanImage scanId={id} onOpen={(u) => setLightbox(u)} />}
-          {/* checkbox επιλογής (χειροκίνητη ομαδοποίηση barcode-less σελίδων) */}
-          <button onClick={(e) => { e.stopPropagation(); toggleSel(id); }} title={t("Επιλογή για ομαδοποίηση", "Select to group")}
-            className={`absolute bottom-1.5 left-1.5 grid h-6 w-6 place-items-center rounded-md border-2 transition ${isSel ? "border-indigo-500 bg-indigo-500 text-white" : "border-white/70 bg-black/30 text-transparent hover:text-white/80"}`}>
-            <CheckCircle2 className="h-3.5 w-3.5" />
-          </button>
-          {/* φάκελος συνταγής: πλήθος σελίδων */}
-          {pageCount > 1 && <span className="absolute left-1.5 top-8 inline-flex items-center gap-1 rounded-full bg-indigo-600 px-2 py-0.5 text-[10px] font-bold text-white"><Layers className="h-3 w-3" /> {pageCount} {t("σελ.", "pg")}</span>}
-          <span className="absolute left-1.5 top-1.5 inline-flex items-center gap-1 rounded-full bg-black/55 px-2 py-0.5 text-[10px] font-semibold text-white">
-            {done ? (aiOn ? <Sparkles className="h-3 w-3" /> : <CheckCircle2 className="h-3 w-3" />) : <Loader2 className="h-3 w-3 animate-spin" />} {done ? (aiOn ? "AI" : "OCR") : t("ανάλυση…", "analyzing…")}
-          </span>
-          {/* badge precedence: manual verdict > AI verdict > OCR band */}
-          {scan?.reviewed_ok === true
-            ? <span className="absolute right-1.5 top-1.5 rounded-full bg-emerald-600 px-2 py-0.5 text-[10px] font-bold text-white">✓ {t("Σύννομη", "OK")}</span>
-            : scan?.reviewed_ok === false
-            ? <span className="absolute right-1.5 top-1.5 rounded-full bg-rose-600 px-2 py-0.5 text-[10px] font-bold text-white">✗ {t("Μη σύννομη", "Not OK")}</span>
-            : verdict
-            ? <span className={`absolute right-1.5 top-1.5 rounded-full px-2 py-0.5 text-[10px] font-bold ${verdict.cls}`}>{t(verdict.el, verdict.en)}</span>
-            : band && <span className={`absolute right-1.5 top-1.5 rounded-full px-2 py-0.5 text-[10px] font-bold ${band.cls}`}>{t(band.el, band.en)}{scan?.optical_risk != null ? ` ${scan.optical_risk}` : ""}</span>}
-          <Tooltip label={t("Διαγραφή", "Delete")}><button onClick={(e) => { e.stopPropagation(); del(id); }} className="absolute bottom-1.5 right-1.5 grid h-7 w-7 place-items-center rounded-full bg-black/55 text-white opacity-80 transition hover:bg-rose-600 hover:opacity-100"><Trash2 className="h-3.5 w-3.5" /></button></Tooltip>
-        </div>
-        <div className="space-y-1 p-2 text-xs">
-          {scan?.barcode && <div className="flex items-center gap-1 font-mono text-slate-600 dark:text-slate-300"><QrCode className="h-3 w-3" /> {scan.barcode}</div>}
-          {scan?.matched ? <div className="flex items-center gap-1 text-emerald-600"><Link2 className="h-3 w-3" /> {t("Ταυτοποιήθηκε", "Matched")}</div>
-            : done && scan?.barcode ? <div className="flex items-center gap-1 text-rose-600"><AlertTriangle className="h-3 w-3" /> {t("Χωρίς αντιστοίχιση", "No match")}</div> : null}
-
-          {/* ── Prescriptor: what the AI eye read ── */}
-          {a && (
-            <div className="space-y-1 rounded-lg bg-violet-50/60 p-1.5 dark:bg-violet-950/20">
-              {a.patient?.name && <div className="flex items-center gap-1 truncate text-slate-600 dark:text-slate-300"><User className="h-3 w-3 shrink-0 text-violet-500" /> <span className="truncate">{a.patient.name}</span></div>}
-              {a.doctor?.name && <div className="flex items-center gap-1 truncate text-slate-500"><Stethoscope className="h-3 w-3 shrink-0 text-violet-500" /> <span className="truncate">{a.doctor.name}</span></div>}
-              <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] font-medium">
-                <span className="text-slate-600 dark:text-slate-300">💊 {a.medicines?.length ?? 0} {t("φάρμακα", "meds")}</span>
-                {(a.coupons?.count ?? 0) > 0 && <span className="text-slate-600 dark:text-slate-300">🎟 {a.coupons.count} {t("κουπ.", "coup.")}</span>}
-              </div>
-              <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px]">
-                <YesNo on={a.signatures?.doctor} label={t("Υπ.ιατ", "Dr sig")} />
-                <YesNo on={a.stamps?.doctor} label={t("Σφρ.ιατ", "Dr stamp")} />
-                <YesNo on={a.signatures?.pharmacist || a.stamps?.pharmacy} label={t("Φαρμ.", "Pharm")} />
-              </div>
-            </div>
-          )}
-
-          {/* findings (the discrepancies the eye might miss) */}
-          {!!findings.length && (
-            <div className="flex flex-col gap-1">
-              {findings.slice(0, 3).map((f, i) => (
-                <span key={i} className={`rounded px-1.5 py-0.5 text-[9px] font-medium leading-tight ${LEVEL[f.level] ?? LEVEL.info}`}>{f.msg}</span>
-              ))}
-              {findings.length > 3 && (
-                <details className="text-[9px]">
-                  <summary onClick={(e) => e.stopPropagation()} className="cursor-pointer text-slate-400">+{findings.length - 3} {t("ακόμη", "more")}</summary>
-                  <div className="mt-1 flex flex-col gap-1">{findings.slice(3).map((f, i) => (
-                    <span key={i} className={`rounded px-1.5 py-0.5 font-medium leading-tight ${LEVEL[f.level] ?? LEVEL.info}`}>{f.msg}</span>
-                  ))}</div>
-                </details>
-              )}
-            </div>
-          )}
-          {scan?.ai_error && <div className="rounded bg-slate-100 px-1.5 py-0.5 text-[9px] text-slate-500 dark:bg-slate-800">{t("AI μη διαθέσιμο", "AI unavailable")}: {scan.ai_error}</div>}
-
-          {/* full AI reading (medicines with quantities) */}
-          {a && !!a.medicines?.length && (
-            <details className="group">
-              <summary onClick={(e) => e.stopPropagation()} className="flex cursor-pointer items-center gap-1 text-[10px] text-violet-600"><ChevronDown className="h-3 w-3 transition group-open:rotate-180" /> {t("Ανάλυση AI", "AI reading")}</summary>
-              <ul className="mt-1 space-y-0.5">
-                {a.medicines.map((m, i) => (
-                  <li key={i} className="flex items-center justify-between gap-1 text-[10px] text-slate-600 dark:text-slate-300">
-                    <span className="truncate">{m.name}</span>
-                    <span className="shrink-0 font-medium">×{m.quantity}{m.qr ? " QR" : m.coupon ? " 🎟" : ""}</span>
-                  </li>
-                ))}
-              </ul>
-              {a.date && <div className="mt-1 text-[10px] text-slate-400">📅 {a.date}</div>}
-              {a.notes && <div className="mt-1 text-[10px] italic text-slate-400">{a.notes}</div>}
-            </details>
-          )}
-
-          {/* authoritative coupons + submission flags (from our ΗΔΥΚΑ data — same as closing) */}
-          {done && scan?.coupons && scan.coupons.meds > 0 && (() => {
-            const c = scan.coupons!; const ok = c.qr + c.eof >= c.meds;
-            return (
-              <div className="flex flex-wrap items-center gap-1 text-[10px] font-medium">
-                <span className={ok ? "text-emerald-600" : "text-amber-600"}>{ok ? "✓" : "•"} {c.meds} {t("καταχ.", "rec.")}</span>
-                {c.qr > 0 && <span className="rounded bg-sky-50 px-1 text-sky-700 dark:bg-sky-950/40">{c.qr} QR</span>}
-                {c.eof > 0 && <span className="rounded bg-amber-50 px-1 text-amber-700 dark:bg-amber-950/40">{c.eof} {t("ταινία", "strip")}</span>}
-                {c.intangible && <span className="rounded bg-violet-50 px-1 text-violet-700 dark:bg-violet-950/40">{t("άυλη", "paperless")}</span>}
-                {c.needs_original && <span className="rounded bg-amber-100 px-1 text-amber-800 dark:bg-amber-950/40" title={t("Χρειάζεται πρωτότυπη έντυπη συνταγή", "Needs original paper Rx")}>📄 {t("πρωτότυπη", "original")}</span>}
-                {c.has_opinion && <span className="rounded bg-indigo-50 px-1 text-indigo-700 dark:bg-indigo-950/40" title={t("Απαιτείται γνωμάτευση", "Medical opinion required")}>📋 {t("γνωμ.", "opinion")}</span>}
-                {c.is_eopyy === false && c.fund && <span className="rounded bg-rose-50 px-1 text-rose-700 dark:bg-rose-950/40" title={t("Δεν είναι ΕΟΠΥΥ — ξεχωριστή κατάθεση", "Not ΕΟΠΥΥ — separate submission")}>🏛️ {c.fund}</span>}
-                {c.is_fyk && <span className="rounded bg-fuchsia-50 px-1 text-fuchsia-700 dark:bg-fuchsia-950/40">ΦΥΚ</span>}
-                {c.partial && <span className="rounded bg-orange-50 px-1 text-orange-700 dark:bg-orange-950/40">{t("μερική", "partial")}</span>}
-              </div>
-            );
-          })()}
-          {!aiOn && done && (
-            <div className="flex items-center gap-2 text-[10px] text-slate-400">
-              <Tooltip label={t("Αυτόματη εκτίμηση OCR — επιβεβαίωσε οπτικά (αναξιόπιστο)", "OCR estimate — confirm visually (unreliable)")}>
-                <span className="cursor-help">{scan?.signature ? "~" : "·"} {t("Υπογρ.", "Sig")} · {scan?.stamp ? "~" : "·"} {t("Σφραγ.", "Stamp")} <span className="text-[8px] italic">({t("εκτίμηση", "estimate")})</span></span>
-              </Tooltip>
-            </div>
-          )}
-          {!!scan?.flags?.length && !a && <div className="flex flex-wrap gap-1">{scan.flags.map((f) => <span key={f} className="rounded bg-rose-50 px-1.5 py-0.5 text-[9px] font-medium text-rose-600 dark:bg-rose-950/40">{t(FLAG[f]?.el ?? f, FLAG[f]?.en ?? f)}</span>)}</div>}
-          {done && (
-            <div className="flex items-center gap-1 pt-0.5">
-              <span className="text-[9px] text-slate-400">{a ? t("Επιβεβ.:", "Confirm:") : t("Έλεγχος:", "Verdict:")}</span>
-              <button onClick={(e) => { e.stopPropagation(); review(id, true); }} className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${scan?.reviewed_ok === true ? "bg-emerald-600 text-white" : "border border-emerald-300 text-emerald-700 hover:bg-emerald-50"}`}>✓ {t("Σύννομη", "OK")}</button>
-              <button onClick={(e) => { e.stopPropagation(); review(id, false); }} className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${scan?.reviewed_ok === false ? "bg-rose-600 text-white" : "border border-slate-300 text-slate-400 hover:bg-slate-50"}`}>✗</button>
-            </div>
-          )}
-          {/* «Δες λεπτομέρειες» — πρόσκληση για το πλήρες πόρισμα (έντονο σε προβληματικές) */}
-          {done && (() => {
-            const st = scanStatus(scan);
-            const cls = st === "problem" ? "bg-rose-600 text-white hover:bg-rose-700"
-              : st === "review" ? "bg-amber-500 text-white hover:bg-amber-600"
-              : "border border-slate-200 text-slate-500 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-400";
-            return <button onClick={(e) => { e.stopPropagation(); scan && setDetailScan(scan); }}
-              className={`mt-1 w-full rounded-lg px-2 py-1.5 text-[11px] font-semibold transition ${cls}`}>
-              {t("Δες λεπτομέρειες", "See details")} →</button>;
-          })()}
-        </div>
+      <div onClick={() => scan && setDetailScan(scan)} title={t("Κλικ για λεπτομέρειες", "Click for details")}
+        className={`flex cursor-pointer items-center gap-2.5 rounded-lg border border-l-4 border-slate-200 bg-white px-2.5 py-2 transition hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:hover:bg-slate-800 ${border}`}>
+        <button onClick={(e) => { e.stopPropagation(); toggleSel(id); }} title={t("Επιλογή για ομαδοποίηση", "Select to group")}
+          className={`grid h-5 w-5 shrink-0 place-items-center rounded border-2 transition ${isSel ? "border-indigo-500 bg-indigo-500 text-white" : "border-slate-300 text-transparent hover:text-slate-300 dark:border-slate-600"}`}>
+          <CheckCircle2 className="h-3 w-3" />
+        </button>
+        {icon}
+        <span className="font-mono text-sm text-slate-700 dark:text-slate-200">{bc}</span>
+        {pageCount > 1 && <span className="inline-flex shrink-0 items-center gap-0.5 rounded-full bg-indigo-100 px-1.5 py-0.5 text-[10px] font-bold text-indigo-700 dark:bg-indigo-950/40 dark:text-indigo-300"><Layers className="h-3 w-3" />{pageCount}</span>}
+        {scan?.matched === null && scan?.status === "done" && <span className="inline-flex shrink-0 items-center gap-0.5 text-[10px] text-rose-500" title={t("Χωρίς αντιστοίχιση", "No match")}><AlertTriangle className="h-3 w-3" /></span>}
+        {scan?.ai?.patient?.name && <span className="hidden truncate text-xs text-slate-400 sm:inline">{scan.ai.patient.name}</span>}
+        <button onClick={(e) => { e.stopPropagation(); navigator.clipboard?.writeText(bc); toastSuccess(t("Barcode αντιγράφηκε", "Barcode copied")); }} title={t("Αντιγραφή barcode", "Copy barcode")}
+          className="ml-auto grid h-7 w-7 shrink-0 place-items-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-emerald-600 dark:hover:bg-slate-800">
+          <Copy className="h-4 w-4" />
+        </button>
+        <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold ${labelCls}`}>{label}</span>
+        <button onClick={(e) => { e.stopPropagation(); del(id); }} title={t("Διαγραφή", "Delete")}
+          className="grid h-7 w-7 shrink-0 place-items-center rounded-lg text-slate-300 hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-950/30">
+          <Trash2 className="h-4 w-4" />
+        </button>
+        <ChevronRight className="h-4 w-4 shrink-0 text-slate-300" />
       </div>
     );
   }
@@ -444,6 +354,7 @@ export default function OpticalAuditPage() {
           <div>
             <div className="mb-2 flex flex-wrap items-center gap-2">
               <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-200">{t("Optical Audit", "Optical Audit")} ({cases.length})</h3>
+              <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-600 dark:bg-slate-800 dark:text-slate-300" title={t("Οι σαρώσεις ανήκουν στον μήνα κλεισίματος — αλλάζεις μήνα από πάνω", "Scans belong to the closing month — change it at the top")}>📅 {period}</span>
               {actionCount > 0 && <span className="inline-flex items-center gap-1 rounded-full bg-rose-100 px-2.5 py-1 text-xs font-semibold text-rose-700 dark:bg-rose-950/40 dark:text-rose-300"><AlertTriangle className="h-3.5 w-3.5" /> {actionCount} {t("χρειάζονται έλεγχο", "need review")}</span>}
               {procCount > 0 && <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-500 dark:bg-slate-800"><Loader2 className="h-3.5 w-3.5 animate-spin" /> {procCount} {t("σε ανάλυση", "analyzing")}</span>}
               {okCount > 0 && <button onClick={() => setShowOk((v) => !v)} className="inline-flex items-center gap-1 rounded-full border border-emerald-300 px-2.5 py-1 text-xs font-semibold text-emerald-700 hover:bg-emerald-50 dark:border-emerald-800 dark:text-emerald-300"><CheckCircle2 className="h-3.5 w-3.5" /> {showOk ? t(`Απόκρυψη ${okCount} σύννομων`, `Hide ${okCount} compliant`) : t(`${okCount} σύννομες — εμφάνιση`, `${okCount} compliant — show`)}</button>}
@@ -451,7 +362,7 @@ export default function OpticalAuditPage() {
               {selected.size > 0 && <button onClick={() => setSelected(new Set())} className="text-xs text-slate-400 underline">{t("άκυρο", "clear")}</button>}
             </div>
             {visible.length ? (
-              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
+              <div className="space-y-1.5">
                 {visible.map((x) => <Card key={x.key} id={x.primary.id} scan={x.primary.scan} preview={x.primary.preview} pageCount={x.count} caseKey={x.key} />)}
               </div>
             ) : (
@@ -485,7 +396,9 @@ export default function OpticalAuditPage() {
         // aggregate findings ΑΠΟ ΟΛΕΣ τις σελίδες (dedup ανά μήνυμα)
         const seenMsg = new Set<string>();
         const findings = (pages.length ? pages : [s]).flatMap((p) => p.ai_findings ?? [])
-          .filter((f) => { if (seenMsg.has(f.msg)) return false; seenMsg.add(f.msg); return true; });
+          .filter((f) => { if (seenMsg.has(f.msg)) return false; seenMsg.add(f.msg); return true; })
+          // «Σύννομη» ⟺ κανένα πορτοκαλί: αν ο φαρμακοποιός την ενέκρινε, οι αυτόματες προειδοποιήσεις παρακάμπτονται.
+          .filter((f) => !(s.reviewed_ok === true && (f.level === "warn" || f.level === "error")));
         const intangible = c?.intangible;
         const LEV_ICON: Record<string, string> = { error: "⛔", warn: "⚠️", info: "ℹ️", ok: "✓" };
         return (

@@ -248,4 +248,35 @@ GDPR anonymization service. Λεπτομέρειες: [SECURITY_GDPR.md](SECURIT
   Sentry για errors. Κάθε log φέρει `tenant_id` & `request_id`.
 - **Backups:** nightly Mongo snapshot + per-tenant logical export on demand.
 
+## 10. Reimbursement & Optical Audit — τεχνικές σημειώσεις
+
+Πλήρης προδιαγραφή κανόνων/πηγών: [reimbursement-compliance-spec.md](reimbursement-compliance-spec.md).
+
+- **Coupon/QR semantics (κρίσιμο):** στα ΗΔΥΚΑ CDA coupons το πεδίο `qr` = `True` (QR/DataMatrix) /
+  `False` (**ταινία γνησιότητας**, paper strip 2.10.12) / `None` (άγνωστο). **Κάθε κουπόνι που υπάρχει =
+  εκτελεσμένο τεμάχιο** (παράγεται μόνο από blocks εκτελεσμένης ποσότητας, `hdika_cda.py`). Η μη-εκτέλεση
+  αποτυπώνεται ΜΟΝΟ σε επίπεδο γραμμής (`is_executed`). ΠΟΤΕ μη χρησιμοποιείς το `qr` ως proxy εκτέλεσης
+  (`_rx_lines`, `scans._coupons_summary`). Regression test: `tests/test_reimbursement_coupons.py`.
+- **Closing checks** (`repositories/prescriptions.py::closing_checks` + `services/prescription_checks.py`):
+  ανά-γραμμή (overdose/ΦΥΚ/γνωμάτευση/ναρκωτικά…) + prescription-level `exec_window` (30+10 ημ.,
+  `valid_from`/`valid_until` vs `executed_at`) & `missing_strip` (tokens vs ποσότητα). Κατηγορία `closing`
+  = κίνδυνος περικοπής· `advisory` = ενημερωτικό.
+- **Έντυπη vs άυλη gating** (`scans._cross_check`): φυσικοί έλεγχοι (υπογραφή/σφραγίδα/παραλήπτης/ταινία +
+  AI anomalies) ΜΟΝΟ όταν `is_intangible` false. Άυλη = 0 φυσικά ευρήματα (ο διοικητικός έλεγχος ΕΟΠΥΥ
+  «δεν εφαρμόζεται σε άυλη»).
+- **Optical Audit single-source:** το `scans._coupons_summary` αντλεί από `Reimbursement.prescription_detail`
+  (ίδια authoritative εικόνα με το cockpit). **Φάκελος συνταγής:** `prescription_scans.case_id` — auto =
+  matched barcode (2ο φύλλο ίδιου barcode), χειροκίνητο μέσω `POST /scans/group` & `/scans/{id}/ungroup`.
+- **Folder-scan (frontend):** `optical/page.tsx` — File System Access API (`showDirectoryPicker` + watch
+  8''· fallback `webkitdirectory`). Cloud server ΔΕΝ βλέπει το LAN → browser-side directory-watch.
+- **Submission reconciliation:** `submission/page.tsx` — invoice amount vs άθροισμα αιτούμενων ΗΔΥΚΑ
+  (ανά ξεχωριστό τιμολόγιο), για την προκαταβολή 95%.
+
+## 11. Frontend gotchas
+
+- **Inline components με text input → focus loss:** helper component (π.χ. `Field`) ορισμένος inline μέσα
+  σε render → κάθε keystroke re-mount το `<input>` → χάνεται το focus (1 χαρακτήρας/κλικ). **Πάντα module
+  scope** + state ως props. (Fix: `ContactCard.tsx`.) Grep: inline `const [A-Z]… = (` με `<input`.
+- **JSX text:** χωρίς raw `'` (σπάει `next build` — ESLint react/no-unescaped-entities).
+
 Συνέχισε στο [DATABASE.md](DATABASE.md).

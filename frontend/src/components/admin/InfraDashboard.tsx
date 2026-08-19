@@ -101,81 +101,161 @@ function Topology({ infra, tenantsByNode }: { infra: Infra; tenantsByNode: Recor
   const mgmt = infra.servers.find((s) => s.role === "mgmt");
   const dbs = infra.servers.filter((s) => s.role === "db");
   const net = infra.networks[0];
-  const W = 860, H = 580;
-  const internet = { x: 510, y: 46 };
-  const lbXY = { x: 510, y: 158 };
-  const gitXY = { x: 150, y: 70 };
-  const mgmtXY = { x: 150, y: 280 };
-  const appXY = apps.map((s, i) => ({ s, x: Math.round(510 + (i - (apps.length - 1) / 2) * 180), y: 330 }));
-  const dbXY = { x: 410, y: 490 };
-  const stXY = { x: 730, y: 470 };
+  const onlineCount = infra.servers.filter((s) => s.status === "running").length;
+  const totalTenants = Object.values(tenantsByNode).reduce((a, b) => a + b, 0);
+  const C = { public: "#f59e0b", private: "#10b981" };
 
-  type E = { id: string; d: string; kind: "public" | "private" | "deploy" };
-  const edges: E[] = [];
-  if (lb) {
-    edges.push({ id: "pub_il", kind: "public", d: `M${internet.x},${internet.y + 24} L${lbXY.x},${lbXY.y - 28}` });
-    appXY.forEach((a, i) => edges.push({ id: `prv_la${i}`, kind: "private", d: `M${lbXY.x},${lbXY.y + 28} C${lbXY.x},245 ${a.x},262 ${a.x},${a.y - 30}` }));
-  }
-  appXY.forEach((a, i) => { if (dbs.length) edges.push({ id: `prv_ad${i}`, kind: "private", d: `M${a.x},${a.y + 30} C${a.x},425 ${dbXY.x},435 ${dbXY.x},${dbXY.y - 28}` }); });
-  if (mgmt) {
-    edges.push({ id: "pub_im", kind: "public", d: `M${internet.x - 58},${internet.y + 10} C320,72 ${mgmtXY.x + 36},150 ${mgmtXY.x},${mgmtXY.y - 30}` });
-    edges.push({ id: "dep_gm", kind: "deploy", d: `M${gitXY.x},${gitXY.y + 24} L${mgmtXY.x},${mgmtXY.y - 30}` });
-    appXY.forEach((a, i) => edges.push({ id: `dep_ma${i}`, kind: "deploy", d: `M${mgmtXY.x + 52},${mgmtXY.y} C320,${mgmtXY.y} ${a.x - 90},${a.y} ${a.x - 34},${a.y}` }));
-    if (dbs.length) edges.push({ id: "prv_md", kind: "private", d: `M${mgmtXY.x},${mgmtXY.y + 30} C${mgmtXY.x},440 ${dbXY.x - 95},${dbXY.y} ${dbXY.x - 34},${dbXY.y}` });
-    if (infra.storage) edges.push({ id: "pub_ms", kind: "public", d: `M${mgmtXY.x + 14},${mgmtXY.y + 30} C170,500 ${stXY.x - 130},${stXY.y + 70} ${stXY.x - 32},${stXY.y + 28}` });
-  }
-
-  const STROKE = { public: "stroke-amber-400 dark:stroke-amber-600", private: "stroke-emerald-400 dark:stroke-emerald-600", deploy: "stroke-violet-300 dark:stroke-violet-700" };
-  const DOT = { public: "fill-amber-500", private: "fill-emerald-500", deploy: "fill-violet-400" };
-  const pct = (v: number, t: number) => `${(v / t) * 100}%`;
-  const Card = ({ x, y, tone, children }: { x: number; y: number; tone: string; children: React.ReactNode }) => (
-    <div className={`absolute z-10 -translate-x-1/2 -translate-y-1/2 rounded-xl border px-3 py-1.5 text-center text-xs shadow-sm ${tone}`}
-      style={{ left: pct(x, W), top: pct(y, H), minWidth: 108 }}>{children}</div>
+  const Bar = ({ v, c }: { v: number | null; c: string }) => (
+    <span className="inline-block h-1.5 w-10 overflow-hidden rounded-full bg-slate-200 align-middle dark:bg-slate-700">
+      <span className="block h-full rounded-full transition-all" style={{ width: `${Math.min(100, Math.max(3, v ?? 0))}%`, background: c }} />
+    </span>
   );
 
-  return (
-    <div className="rounded-2xl border border-slate-200 bg-gradient-to-b from-slate-50 to-white p-4 dark:border-slate-700 dark:from-slate-900 dark:to-slate-950">
-      <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold text-slate-700 dark:text-slate-200"><Network className="h-4 w-4" /> Τοπολογία δικτύου</h3>
-      <div className="relative mx-auto w-full" style={{ aspectRatio: `${W} / ${H}`, maxWidth: 820 }}>
-        <svg viewBox={`0 0 ${W} ${H}`} className="absolute inset-0 h-full w-full" preserveAspectRatio="xMidYMid meet">
-          <defs>
-            <filter id="rxglow" x="-60%" y="-60%" width="220%" height="220%">
-              <feGaussianBlur stdDeviation="2.4" result="b" /><feMerge><feMergeNode in="b" /><feMergeNode in="SourceGraphic" /></feMerge>
-            </filter>
-            {edges.map((e) => <path key={e.id} id={e.id} d={e.d} fill="none" />)}
-          </defs>
-          {/* private-network zone — everything inside is 10.0.0.0/16; edges crossing the border are public */}
-          <rect x="64" y="220" width="566" height="332" rx="18" className="fill-emerald-50/60 stroke-emerald-300 dark:fill-emerald-950/30 dark:stroke-emerald-800" strokeWidth="1.5" strokeDasharray="7 6" />
-          <text x="80" y="240" className="fill-emerald-600 dark:fill-emerald-400" fontSize="11.5" fontWeight="700">🔒 Ιδιωτικό δίκτυο{net?.range ? ` ${net.range}` : " 10.0.0.0/16"}</text>
-          {edges.map((e) => <use key={`l${e.id}`} href={`#${e.id}`} className={STROKE[e.kind]} strokeWidth={e.kind === "deploy" ? 1.6 : 2.2} strokeDasharray={e.kind === "deploy" ? "5 5" : undefined} fill="none" />)}
-          {edges.filter((e) => e.kind !== "deploy").flatMap((e) => [0, 1.2].map((delay) => (
-            <circle key={`${e.id}-${delay}`} r="3.4" className={DOT[e.kind]} filter="url(#rxglow)">
-              <animateMotion dur="2.4s" begin={`${delay}s`} repeatCount="indefinite"><mpath href={`#${e.id}`} /></animateMotion>
-            </circle>
-          )))}
-        </svg>
+  const Node = ({ icon, accent, name, ip, tag, online, wide, children }: {
+    icon: React.ReactNode; accent: string; name: string; ip?: string | null; tag?: string;
+    online?: boolean; wide?: boolean; children?: React.ReactNode;
+  }) => (
+    <div className={`relative rounded-xl border border-l-4 bg-white p-2.5 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md dark:bg-slate-900 ${accent}`}
+      style={{ minWidth: wide ? 210 : 150, maxWidth: 250 }}>
+      {online !== undefined && (
+        <span className="absolute right-2 top-2 flex h-2.5 w-2.5">
+          {online && <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-70" />}
+          <span className={`relative inline-flex h-2.5 w-2.5 rounded-full ${online ? "bg-emerald-500" : "bg-rose-500"}`} />
+        </span>
+      )}
+      <div className="flex items-center gap-1.5 pr-3"><span className="shrink-0">{icon}</span><span className="truncate text-sm font-semibold text-slate-800 dark:text-slate-100">{name}</span></div>
+      {ip && <div className="mt-0.5 font-mono text-[10px] text-slate-400">{ip}</div>}
+      {tag && <div className="text-[10px] text-slate-500 dark:text-slate-400">{tag}</div>}
+      {children}
+    </div>
+  );
 
-        <Card x={internet.x} y={internet.y} tone="border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-800 dark:bg-sky-950 dark:text-sky-300"><Globe className="mx-auto mb-0.5 h-3.5 w-3.5" />Internet / Cloudflare<div className="text-[9px] opacity-70">app.rxvision.gr</div></Card>
-        <Card x={gitXY.x} y={gitXY.y} tone="border-violet-200 bg-violet-50 text-violet-700 dark:border-violet-800 dark:bg-violet-950 dark:text-violet-300"><GitBranch className="mx-auto mb-0.5 h-3.5 w-3.5" />Git / Deploy<div className="text-[9px] opacity-70">build → ship</div></Card>
-        {lb && <Card x={lbXY.x} y={lbXY.y} tone="border-brand-200 bg-brand-50 text-brand-700 dark:border-brand-800 dark:bg-brand-950 dark:text-brand-300"><Scale className="mx-auto mb-0.5 h-3.5 w-3.5" />{lb.name}<div className="font-mono text-[9px] opacity-70">{lb.public_ip}</div></Card>}
-        {mgmt && <Card x={mgmtXY.x} y={mgmtXY.y} tone="border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-300"><Wrench className="mx-auto mb-0.5 h-3.5 w-3.5" />{mgmt.name}<div className="font-mono text-[9px] opacity-70">{mgmt.private_ip}</div><div className="text-[9px] opacity-70">management · backups</div></Card>}
-        {appXY.map((a) => (
-          <Card key={a.s.name} x={a.x} y={a.y} tone="border-slate-200 bg-white text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">
-            <Server className="mx-auto mb-0.5 h-3.5 w-3.5 text-brand-600" />{a.s.name}<div className="font-mono text-[9px] opacity-70">{a.s.private_ip}</div>
-            <div className="mt-1 rounded-full bg-brand-100 px-1.5 py-0.5 text-[9px] font-semibold text-brand-700 dark:bg-brand-900/60 dark:text-brand-300">👥 {tenantsByNode[a.s.name] ?? 0} tenants</div>
-          </Card>
-        ))}
-        {dbs.map((s) => (
-          <Card key={s.name} x={dbXY.x} y={dbXY.y} tone="border-violet-200 bg-violet-50 text-violet-700 dark:border-violet-800 dark:bg-violet-950 dark:text-violet-300"><Database className="mx-auto mb-0.5 h-3.5 w-3.5" />{s.name}<div className="font-mono text-[9px] opacity-70">{s.private_ip}</div><div className="text-[9px] opacity-70">MongoDB + Redis</div></Card>
-        ))}
-        {infra.storage && (
-          <Card x={stXY.x} y={stXY.y} tone="border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-300"><HardDrive className="mx-auto mb-0.5 h-3.5 w-3.5" />Backup Storage<div className="font-mono text-[9px] opacity-70">offsite</div><div className="text-[9px] opacity-70">customer data backup</div></Card>
-        )}
+  // Κατακόρυφος connector ροής μεταξύ επιπέδων (κινούμενη τελεία + προαιρετική ετικέτα).
+  const Flow = ({ label, c }: { label?: string; c: string }) => (
+    <div className="relative flex h-8 items-center justify-center">
+      <svg width="16" height="34" className="overflow-visible" aria-hidden>
+        <line x1="8" y1="0" x2="8" y2="34" stroke={c} strokeWidth="2" strokeDasharray="2 5" strokeLinecap="round">
+          <animate attributeName="stroke-dashoffset" from="7" to="0" dur="0.6s" repeatCount="indefinite" />
+        </line>
+        <circle r="3" fill={c}><animateMotion dur="1.5s" repeatCount="indefinite" path="M8 0 V34" /></circle>
+      </svg>
+      {label && <span className="absolute left-[calc(50%+18px)] whitespace-nowrap rounded-full bg-slate-100 px-2 py-0.5 text-[9px] font-medium text-slate-500 dark:bg-slate-800 dark:text-slate-400">{label}</span>}
+    </div>
+  );
+
+  const Tier = ({ step, icon, title, note, children }: {
+    step: number; icon: React.ReactNode; title: string; note?: string; children: React.ReactNode;
+  }) => (
+    <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-3 dark:border-slate-700 dark:bg-slate-800/40">
+      <div className="mb-2 flex items-center gap-2">
+        <span className="grid h-5 w-5 place-items-center rounded-full bg-slate-800 text-[10px] font-bold text-white dark:bg-slate-200 dark:text-slate-900">{step}</span>
+        <span className="text-slate-500 dark:text-slate-400">{icon}</span>
+        <h4 className="text-xs font-bold uppercase tracking-wide text-slate-600 dark:text-slate-300">{title}</h4>
+        {note && <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300">🔒 {note}</span>}
       </div>
-      <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[10px] text-slate-500 dark:text-slate-400">
-        <span className="inline-flex items-center gap-1"><span className="inline-block h-2 w-4 rounded bg-emerald-400" /> Ιδιωτικό (10.0.0.0/16)</span>
-        <span className="inline-flex items-center gap-1"><span className="inline-block h-2 w-4 rounded bg-amber-400" /> Δημόσιο / Internet</span>
-        <span className="inline-flex items-center gap-1"><span className="inline-block h-0.5 w-4 border-t-2 border-dashed border-violet-400" /> Deploy</span>
+      <div className="flex flex-wrap items-stretch justify-center gap-3">{children}</div>
+    </div>
+  );
+
+  // Fan-out connector: ο LB μοιράζει σε N app servers (διακλάδωση με κινούμενα πακέτα).
+  const FanOut = ({ n, c }: { n: number; c: string }) => {
+    const xs = Array.from({ length: Math.max(1, n) }, (_, i) => 14 + (i + 0.5) * (172 / Math.max(1, n)));
+    return (
+      <div className="relative flex h-11 items-center justify-center">
+        <span className="absolute -top-0.5 z-10 rounded-full bg-slate-100 px-2 py-0.5 text-[9px] font-medium text-slate-500 dark:bg-slate-800 dark:text-slate-400">κατανομή σε {n} servers</span>
+        <svg viewBox="0 0 200 44" width="100%" height="44" preserveAspectRatio="none" className="max-w-lg" aria-hidden>
+          {xs.map((x, i) => (
+            <g key={i}>
+              <path id={`fan${i}`} d={`M100 8 C100 26 ${x} 24 ${x} 44`} fill="none" stroke={c} strokeWidth="1.4" strokeDasharray="2 5" strokeLinecap="round" opacity="0.7">
+                <animate attributeName="stroke-dashoffset" from="7" to="0" dur="0.6s" repeatCount="indefinite" />
+              </path>
+              <circle r="2.6" fill={c}><animateMotion dur="1.4s" begin={`${i * 0.22}s`} repeatCount="indefinite"><mpath href={`#fan${i}`} /></animateMotion></circle>
+            </g>
+          ))}
+        </svg>
+      </div>
+    );
+  };
+
+  const withM = infra.servers.filter((s) => s.cpu != null);
+  const avg = (f: (s: Srv) => number | null) => withM.length ? Math.round(withM.reduce((a, s) => a + (f(s) || 0), 0) / withM.length) : null;
+  const kpis = [
+    { label: "Servers online", value: `${onlineCount}/${infra.servers.length}`, c: "text-emerald-600 dark:text-emerald-400" },
+    { label: "Ενεργά φαρμακεία", value: totalTenants, c: "text-sky-600 dark:text-sky-400" },
+    { label: "Μ.Ο. CPU", value: avg((s) => s.cpu) != null ? `${avg((s) => s.cpu)}%` : "—", c: "text-slate-700 dark:text-slate-200" },
+    { label: "Μ.Ο. RAM", value: avg((s) => s.ram_pct) != null ? `${avg((s) => s.ram_pct)}%` : "—", c: "text-slate-700 dark:text-slate-200" },
+    { label: "Μ.Ο. δίσκος", value: avg((s) => s.disk_pct) != null ? `${avg((s) => s.disk_pct)}%` : "—", c: "text-violet-600 dark:text-violet-400" },
+  ];
+
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <h3 className="flex items-center gap-2 text-sm font-bold text-slate-800 dark:text-slate-100"><span className="grid h-6 w-6 place-items-center rounded-lg bg-gradient-to-br from-emerald-500 to-sky-500 text-white"><Network className="h-3.5 w-3.5" /></span> Αρχιτεκτονική υποδομής</h3>
+        <div className="flex items-center gap-2 text-[11px]">
+          <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 font-semibold text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300"><span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" />{onlineCount} online</span>
+          <span className="inline-flex items-center gap-1 rounded-full bg-sky-100 px-2 py-0.5 font-semibold text-sky-700 dark:bg-sky-950/50 dark:text-sky-300">👥 {totalTenants} tenants</span>
+          <span className="text-slate-400">· live 15s</span>
+        </div>
+      </div>
+
+      {/* KPI strip — «control-room» σύνοψη */}
+      <div className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-5">
+        {kpis.map((k) => (
+          <div key={k.label} className="rounded-xl border border-slate-200 bg-gradient-to-b from-slate-50 to-white px-3 py-2 dark:border-slate-700 dark:from-slate-800/60 dark:to-slate-900">
+            <div className={`text-lg font-extrabold leading-none ${k.c}`}>{k.value}</div>
+            <div className="mt-0.5 text-[10px] uppercase tracking-wide text-slate-400">{k.label}</div>
+          </div>
+        ))}
+      </div>
+
+      <div className="mx-auto max-w-2xl">
+        <Tier step={1} icon={<Globe className="h-4 w-4" />} title="Είσοδος & Deploy">
+          <Node icon={<Globe className="h-4 w-4 text-sky-500" />} accent="border-l-sky-400 border-slate-200 dark:border-slate-700" name="Internet / Cloudflare" tag="app.rxvision.gr · TLS + WAF" />
+          <Node icon={<GitBranch className="h-4 w-4 text-violet-500" />} accent="border-l-violet-400 border-slate-200 dark:border-slate-700" name="Git / Deploy" tag="build → ship" />
+        </Tier>
+
+        <Flow label="HTTPS · δημόσιο" c={C.public} />
+
+        <Tier step={2} icon={<Scale className="h-4 w-4" />} title="Edge · Κατανομή φόρτου">
+          {lb && <Node wide icon={<Scale className="h-4 w-4 text-brand-500" />} accent="border-l-brand-400 border-slate-200 dark:border-slate-700" name={lb.name} ip={lb.public_ip} tag="αυτόματη κατανομή + health checks" online={(lb.targets ?? []).some((t) => t.healthy)} />}
+        </Tier>
+
+        {apps.length > 1 ? <FanOut n={apps.length} c={C.private} /> : <Flow label={net?.range ? `ιδιωτικό ${net.range}` : "ιδιωτικό"} c={C.private} />}
+
+        <Tier step={3} icon={<Server className="h-4 w-4" />} title="Εφαρμογή" note={net?.range ?? "10.0.0.0/16"}>
+          {apps.map((s) => (
+            <Node key={s.name} icon={<Server className="h-4 w-4 text-brand-500" />} accent="border-l-brand-400 border-slate-200 dark:border-slate-700" name={s.name} ip={s.private_ip} tag={s.location ? `📍 ${s.location}` : undefined} online={s.status === "running"}>
+              <div className="mt-1.5 space-y-1 text-[9px] text-slate-500 dark:text-slate-400">
+                <div className="flex items-center gap-1"><Cpu className="h-3 w-3 shrink-0" /><Bar v={s.cpu} c={C.private} /><span className="tabular-nums">{s.cpu != null ? `${Math.round(s.cpu)}%` : "—"}</span></div>
+                <div className="flex items-center gap-1"><MemoryStick className="h-3 w-3 shrink-0" /><Bar v={s.ram_pct} c="#3b82f6" /><span className="tabular-nums">{s.ram_pct != null ? `${Math.round(s.ram_pct)}%` : "—"}</span></div>
+                <div className="mt-0.5 inline-block rounded-full bg-brand-100 px-2 py-0.5 text-[10px] font-semibold text-brand-700 dark:bg-brand-900/50 dark:text-brand-300">👥 {tenantsByNode[s.name] ?? 0} tenants</div>
+              </div>
+            </Node>
+          ))}
+          {mgmt && <Node icon={<Wrench className="h-4 w-4 text-amber-500" />} accent="border-l-amber-400 border-slate-200 dark:border-slate-700" name={mgmt.name} ip={mgmt.private_ip} tag="management · builds · backups" online={mgmt.status === "running"} />}
+        </Tier>
+
+        <Flow c={C.private} />
+
+        <Tier step={4} icon={<Database className="h-4 w-4" />} title="Δεδομένα · Replica Set">
+          {dbs.map((s) => (
+            <Node key={s.name} wide icon={<Database className="h-4 w-4 text-violet-500" />} accent="border-l-violet-400 border-slate-200 dark:border-slate-700" name={s.name} ip={s.private_ip} tag="MongoDB + Redis" online={s.status === "running"}>
+              <div className="mt-1.5 flex items-center gap-1.5 text-[9px] text-slate-400"><HardDrive className="h-3 w-3" /><Bar v={s.disk_pct} c="#8b5cf6" /><span>{s.disk_pct != null ? `${Math.round(s.disk_pct)}% δίσκος` : ""}</span></div>
+            </Node>
+          ))}
+        </Tier>
+
+        <Flow label="offsite" c={C.public} />
+
+        <Tier step={5} icon={<HardDrive className="h-4 w-4" />} title="Αντίγραφα ασφαλείας">
+          {infra.storage && <Node wide icon={<HardDrive className="h-4 w-4 text-amber-500" />} accent="border-l-amber-400 border-slate-200 dark:border-slate-700" name="Backup Storage" tag="offsite · κρυπτογραφημένα δεδομένα πελατών" />}
+        </Tier>
+      </div>
+
+      <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-[10px] text-slate-500 dark:text-slate-400">
+        <span className="inline-flex items-center gap-1"><span className="h-2 w-4 rounded" style={{ background: C.private }} /> Ιδιωτικό δίκτυο</span>
+        <span className="inline-flex items-center gap-1"><span className="h-2 w-4 rounded" style={{ background: C.public }} /> Δημόσιο / Internet</span>
+        <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-emerald-500" /> ζωντανά metrics ανά 15s</span>
       </div>
     </div>
   );

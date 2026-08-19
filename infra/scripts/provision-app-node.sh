@@ -54,6 +54,17 @@ progress "$NAME up (pub=$PUB priv=$PIP) — αναμονή Docker (cloud-init)�
 # 4) wait for SSH + docker
 for _ in $(seq 1 72); do ssh "${SSHO[@]}" root@$PIP 'command -v docker >/dev/null 2>&1' 2>/dev/null && break; sleep 10; done
 
+# 4b) Docker log rotation + cron backstop — ΠΡΙΝ ξεκινήσουν containers, ώστε κάθε νέος node να έχει
+# φραγμένα logs από την αρχή (χωρίς αυτό, τα container logs φουσκώνουν ασταμάτητα, βλ. DB01 24GB).
+ssh "${SSHO[@]}" root@$PIP 'mkdir -p /etc/docker && cat > /etc/docker/daemon.json <<JSON
+{
+  "log-driver": "json-file",
+  "log-opts": { "max-size": "20m", "max-file": "3" }
+}
+JSON
+printf "0 4 * * * root find /var/lib/docker/containers -name '"'"'*-json.log'"'"' -size +50M -exec truncate -s 0 {} \\; >/dev/null 2>&1\n" > /etc/cron.d/rxvision-log-trim
+systemctl restart docker' 2>/dev/null
+
 # 5) sync code + .env (Vault→10.0.0.2, NODE_NAME=this node) + app compose
 progress "Συγχρονισμός κώδικα & ρυθμίσεων → $NAME…"
 ssh "${SSHO[@]}" root@$PIP 'mkdir -p /opt/rxvision' 2>/dev/null

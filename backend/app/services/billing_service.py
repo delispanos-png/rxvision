@@ -367,21 +367,40 @@ async def expire_overdue() -> dict:
     return {"expired": expired, "graced": graced, "trial_grace": trial_grace, "active_grace": active_grace}
 
 
-# Πλήρης κατάλογος tenant-scoped collections (μία πηγή αλήθειας για ΟΡΙΣΤΙΚΗ διαγραφή πελάτη).
-TENANT_COLLECTIONS = ["subscriptions", "users", "roles", "audit_logs", "doctors",
-                      "future_prescriptions", "patients_anonymized", "pharmacyone_sales",
-                      "prescription_executions", "prescription_items", "products",
-                      "sellers", "sync_jobs", "icd10_codes", "insurance_funds"]
-
-
 async def delete_tenant_fully(tenant_id: str) -> dict:
-    """ΟΡΙΣΤΙΚΗ διαγραφή πελάτη + όλων των tenant-scoped δεδομένων του. Επιστρέφει τι διαγράφηκε."""
+    """ΟΡΙΣΤΙΚΗ διαγραφή πελάτη + ΟΛΩΝ των tenant-scoped δεδομένων του. ΔΥΝΑΜΙΚΟ (future-proof): σαρώνει
+    ΟΛΕΣ τις collections που φέρουν `tenant_id` — έτσι κάθε νέα collection καθαρίζεται αυτόματα, χωρίς να
+    ξεχνιέται (πριν, στατική λίστα άφηνε ορφανά: amount_audit_log 44k, vaccinations, pharmacat, loyalty…).
+    Καθαρίζει και GridFS σαρώσεις + tenant_serving. Επιστρέφει τι διαγράφηκε."""
     db = shared_db()
     removed: dict = {}
-    for c in TENANT_COLLECTIONS:
-        r = await db[c].delete_many({"tenant_id": tenant_id})
-        if r.deleted_count:
-            removed[c] = r.deleted_count
+    for c in await db.list_collection_names():
+        if c.startswith("system.") or c.startswith("scans."):   # system + GridFS chunks (χειρίζονται χωριστά)
+            continue
+        try:
+            r = await db[c].delete_many({"tenant_id": tenant_id})
+            if r.deleted_count:
+                removed[c] = r.deleted_count
+        except Exception:  # noqa: BLE001 — π.χ. views/capped/shared collections
+            continue
+    # GridFS σαρώσεις (metadata.tenant_id) — σβήνει files + chunks
+    try:
+        from motor.motor_asyncio import AsyncIOMotorGridFSBucket
+        bucket = AsyncIOMotorGridFSBucket(db, bucket_name="scans")
+        n_files = 0
+        async for f in db["scans.files"].find({"metadata.tenant_id": tenant_id}, {"_id": 1}):
+            try:
+                await bucket.delete(f["_id"]); n_files += 1
+            except Exception:  # noqa: BLE001
+                pass
+        if n_files:
+            removed["scans(GridFS)"] = n_files
+    except Exception:  # noqa: BLE001
+        pass
+    # tenant_serving (keyed by _id) + ο ίδιος ο tenant
+    r = await db["tenant_serving"].delete_one({"_id": tenant_id})
+    if r.deleted_count:
+        removed["tenant_serving"] = r.deleted_count
     await db["tenants"].delete_one({"_id": tenant_id})
     return removed
 

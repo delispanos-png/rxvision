@@ -259,6 +259,7 @@ async def prescriptor_status(ctx: TenantContext = Depends(require("closing:read"
 
 @router.post("/scans")
 async def upload_scan(file: UploadFile = File(...), doc_type: str = Form("prescription"),
+                      period: str = Query(None),
                       ctx: TenantContext = Depends(require("closing:read", module=_MODULE))):
     ctype = (file.content_type or "").split(";")[0].strip().lower()
     if ctype not in _ALLOWED_SCAN_TYPES:
@@ -270,15 +271,16 @@ async def upload_scan(file: UploadFile = File(...), doc_type: str = Form("prescr
                             detail={"error": "file_too_large", "max_bytes": _MAX_SCAN})
     repo = ScanRepository(tenant_id=ctx.tenant_id)
     scan_id = await repo.create(filename=file.filename or "scan.jpg", content=content,
-                                content_type=ctype, doc_type=doc_type)
+                                content_type=ctype, doc_type=doc_type, period=period or _cur())
     from app.workers.optical import process_scan
     process_scan.delay(ctx.tenant_id, scan_id)
     return {"scan_id": scan_id, "status": "processing"}
 
 
 @router.get("/scans")
-async def scan_queue(ctx: TenantContext = Depends(require("closing:read", module=_MODULE))):
-    return {"items": await ScanRepository(tenant_id=ctx.tenant_id).queue()}
+async def scan_queue(period: str = Query(None),
+                     ctx: TenantContext = Depends(require("closing:read", module=_MODULE))):
+    return {"items": await ScanRepository(tenant_id=ctx.tenant_id).queue(period=period)}
 
 
 class ScanReviewIn(BaseModel):
