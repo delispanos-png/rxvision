@@ -14,7 +14,7 @@ import { DataTable, type Column } from "@/components/tables/DataTable";
 import { appConfirm, appAlert } from "@/store/dialogStore";
 import { ClosingReportModal } from "@/components/reimbursement/ClosingReportModal";
 
-type Item = { barcode: string; external_id: string; exec_no: string | null; claim: number; fund: string; group: string; is_eopyy: boolean; is_vaccine: boolean; is_100: boolean; is_fyk: boolean; is_etyap: boolean; needs_original: boolean; needs_dose_check: boolean; needs_check: boolean; executed_at: string; checked: boolean; visual_checked: boolean; day: string };
+type Item = { barcode: string; external_id: string; exec_no: string | null; claim: number; retail?: number; patient?: number; fund: string; group: string; is_eopyy: boolean; is_vaccine: boolean; is_100: boolean; is_fyk: boolean; is_etyap: boolean; needs_original: boolean; needs_dose_check: boolean; needs_check: boolean; executed_at: string; checked: boolean; visual_checked: boolean; day: string };
 type DayRow = { date: string; total: number; checked: number };
 type Summary = { total: number; needs_check: number; clean: number; dose: number; fyk: number; narcotic: number; needs_original: number; opinion: number; desensitization: number; strips: number; hdika_note: number; vaccine: number };
 type Check = { period: string; group: string; groups: string[]; total: number; checked: number; remaining: number; extra: string[]; summary?: Summary; by_day: DayRow[]; items: Item[] };
@@ -110,7 +110,7 @@ export default function PhysicalCheckPage() {
 
   const { data } = useQuery({ queryKey: ["reimb-physical", period, group], queryFn: () => api<Check>(`/reimbursement/physical?period=${period}&group=${encodeURIComponent(group)}`) });
   const { data: prefs } = useQuery({ queryKey: ["reimb-settings"], queryFn: () => api<{ closing_mode: string; list_open: boolean }>("/reimbursement/settings") });
-  const mode: "classic" | "guided" | "express" = prefs?.closing_mode === "guided" ? "guided" : prefs?.closing_mode === "express" ? "express" : "classic";
+  const mode: "classic" | "guided" | "express" | "cockpit" = prefs?.closing_mode === "guided" ? "guided" : prefs?.closing_mode === "express" ? "express" : prefs?.closing_mode === "cockpit" ? "cockpit" : "classic";
   const [listOpenLocal, setListOpenLocal] = useState<boolean | null>(null);   // session override του default από ρυθμίσεις
   const listOpen = listOpenLocal ?? (prefs?.list_open ?? false);
   const byDay = data?.by_day ?? [];
@@ -173,7 +173,7 @@ export default function PhysicalCheckPage() {
       }
       setLast({ found: r.found, barcode: r.barcode, flags: r.flags, exec_no: r.exec_no, n_executions: r.n_executions });
       qc.invalidateQueries({ queryKey: ["reimb-physical", period] });
-      if (r.found && (mode === "express" || (mode === "classic" && localStorage.getItem("rxv_coupons_on_scan") === "1"))) openDetail(r.external_id || r.barcode);
+      if (r.found && (mode === "express" || mode === "cockpit" || (mode === "classic" && localStorage.getItem("rxv_coupons_on_scan") === "1"))) openDetail(r.external_id || r.barcode);
     },
   });
   const reset = useMutation({
@@ -266,7 +266,7 @@ export default function PhysicalCheckPage() {
         {r.exec_no && <span className="shrink-0 rounded-full bg-indigo-100 px-2 py-0.5 text-[10px] font-bold text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300">{t(`Εκτέλεση ${r.exec_no}`, `Execution ${r.exec_no}`)}</span>}
       </span>
     ) },
-    { key: "group", header: t("Ομάδα / Ενδείξεις", "Group / Flags"), render: (r) => {
+    { key: "group", header: t("Ταμείο", "Fund"), render: (r) => {
       const badge = r.is_100 ? "bg-amber-100 text-amber-800" : r.is_vaccine ? "bg-sky-100 text-sky-700" : r.is_eopyy ? "bg-emerald-100 text-emerald-700" : "bg-violet-100 text-violet-700";
       const lbl = r.group === "ΕΟΠΥΥ - Φάρμακα" ? "ΕΟΠΥΥ Φάρμ." : r.group === "ΕΟΠΥΥ - Εμβόλια" ? "Εμβόλια" : r.group === "Αμιγώς 100%" ? "100%" : r.group;
       return (
@@ -618,6 +618,174 @@ export default function PhysicalCheckPage() {
       </div>
     </aside>
   );
+  // ── ΚΟΚΠΙΤ (4η επιλογή): 3 στήλες σε μία οθόνη — Ημέρα & Ταμεία | Κουπόνια | Έλεγχος ──
+  if (mode === "cockpit") {
+    // σύνολα ανά ταμείο για την επιλεγμένη ημέρα (πλήθος + αιτούμενο)
+    const fundAgg: Record<string, { rx: number; claim: number; retail: number; patient: number }> = {};
+    for (const it of dayItems) {   // ταμεία της ΕΠΙΛΕΓΜΕΝΗΣ ΗΜΕΡΑΣ (κατά ομάδα/«που ανήκουν»)
+      const k = it.fund || it.group || "—";
+      const g = (fundAgg[k] || (fundAgg[k] = { rx: 0, claim: 0, retail: 0, patient: 0 }));
+      g.rx += 1; g.claim += it.claim || 0; g.retail += it.retail || 0; g.patient += it.patient || 0;
+    }
+    const fundLines = Object.entries(fundAgg).sort((a, b) => b[1].claim - a[1].claim);
+    const colHead = (title: string, sub: string) => (
+      <div className="rounded-2xl border border-slate-200 bg-white/70 p-3.5 dark:border-slate-700 dark:bg-slate-900/70">
+        <h2 className="text-base font-bold text-slate-900 dark:text-slate-100">{title}</h2>
+        <p className="mt-0.5 text-xs text-slate-500">{sub}</p>
+      </div>
+    );
+    // δομημένες κάρτες ελέγχου (δεξιά στήλη, όπως το mockup)
+    const allChk = (checks?.items || []).flatMap((it) => it.checks || []);
+    const opticalChk = allChk.find((c) => c.type === "overdose" || c.type === "vial_dose");
+    // Οι οπτικοί έλεγχοι (δόση/ποσότητα) φαίνονται ΜΟΝΟ στην κάρτα «Οπτικός έλεγχος» → τους εξαιρούμε
+    // από τη λίστα «Λοιπές προειδοποιήσεις» ώστε να μη διπλοεμφανίζονται.
+    const otherItems = (checks?.items || [])
+      .map((it) => ({ ...it, checks: (it.checks || []).filter((c) => c.type !== "overdose" && c.type !== "vial_dose") }))
+      .filter((it) => it.checks.length);
+    const otherChecks = checks ? { ...checks, items: otherItems, count: otherItems.reduce((s, it) => s + it.checks.length, 0) } : null;
+    const chk = (label: string, value: string, sub: string, tone: "danger" | "warning" | "ok" | "neutral") => (
+      <div className={`rounded-2xl border p-3.5 ${tone === "danger" ? "border-rose-200 bg-rose-50/60 dark:border-rose-900 dark:bg-rose-950/20" : tone === "warning" ? "border-amber-200 bg-amber-50/60 dark:border-amber-800 dark:bg-amber-950/20" : tone === "ok" ? "border-emerald-200 bg-emerald-50/50 dark:border-emerald-800 dark:bg-emerald-950/20" : "border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900"}`}>
+        <div className="text-[10px] font-bold uppercase tracking-wide text-slate-400">{label}</div>
+        <div className={`mt-1 text-sm font-bold ${tone === "danger" ? "text-rose-600 dark:text-rose-300" : tone === "warning" ? "text-amber-700 dark:text-amber-300" : tone === "ok" ? "text-emerald-700 dark:text-emerald-300" : "text-slate-800 dark:text-slate-100"}`}>{value}</div>
+        {sub && <div className="mt-0.5 text-xs text-slate-500">{sub}</div>}
+      </div>
+    );
+    return (
+      <div className="mx-auto max-w-[1600px]">
+        <div className="grid items-start gap-4 xl:grid-cols-[1.1fr_0.9fr_1.1fr]">
+          {/* ΑΡΙΣΤΕΡΑ — Ημέρα & Ταμεία */}
+          <section className="space-y-3 rounded-3xl border border-sky-100 bg-gradient-to-b from-sky-50/60 to-indigo-50/40 p-3 dark:border-slate-700 dark:from-slate-900 dark:to-slate-900">
+            {colHead(t("Ημέρα & Ταμεία", "Day & Funds"), t("Ημερολόγιο, σύνολα ταμείων & σάρωση", "Calendar, fund totals & scan"))}
+            {/* compact calendar */}
+            <div className="rounded-2xl border border-slate-200 bg-white p-2.5 dark:border-slate-700 dark:bg-slate-900">
+              <div className="mb-1 flex items-center justify-between px-1"><span className="text-xs font-bold text-slate-700 dark:text-slate-200">{t("Ημερολόγιο", "Calendar")}</span><span className="text-[11px] text-slate-400">{daysComplete}/{byDay.length} ✓</span></div>
+              <div className="grid grid-cols-7 gap-0.5 text-center text-[9px] font-medium text-slate-400">{["Δε", "Τρ", "Τε", "Πέ", "Πα", "Σά", "Κυ"].map((w) => <div key={w}>{w}</div>)}</div>
+              <div className="mt-0.5 grid grid-cols-7 gap-0.5">
+                {(() => {
+                  const yy = Number(period.split("-")[0]); const mm = Number(period.split("-")[1]);
+                  const dim = new Date(yy, mm, 0).getDate(); const lead = (new Date(yy, mm - 1, 1).getDay() + 6) % 7;
+                  const bmap: Record<string, DayRow> = {}; byDay.forEach((d) => { bmap[d.date] = d; });
+                  const idxOf: Record<string, number> = {}; byDay.forEach((d, i) => { idxOf[d.date] = i; });
+                  const cells: (string | null)[] = [...Array(lead).fill(null), ...Array.from({ length: dim }, (_, i) => `${period}-${String(i + 1).padStart(2, "0")}`)];
+                  return cells.map((date, ci) => {
+                    if (!date) return <div key={ci} />;
+                    const dnum = Number(date.slice(-2)); const d = bmap[date];
+                    if (!d) return <div key={ci} className="grid place-items-center rounded py-1 text-[10px] text-slate-300 dark:text-slate-600">{dnum}</div>;
+                    const done = d.checked >= d.total; const i = idxOf[date]; const isCur = i === dayIdx;
+                    return <button key={ci} onClick={() => setDayIdx(i)} className={`flex flex-col items-center rounded py-1 leading-none ${done ? "bg-emerald-500 text-white" : d.checked > 0 ? "bg-amber-100 text-amber-900 dark:bg-amber-950/40 dark:text-amber-200" : "bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-200"} ${isCur ? "ring-2 ring-emerald-500" : ""}`}><span className="text-[11px] font-bold">{dnum}</span><span className="text-[8px] opacity-80">{done ? "✓" : `${d.checked}/${d.total}`}</span></button>;
+                  });
+                })()}
+              </div>
+              <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 px-1 text-[10px] text-slate-500">
+                <span className="inline-flex items-center gap-1"><i className="h-2 w-2 rounded-full bg-emerald-500" /> {t("Ολοκληρωμένη", "Complete")}</span>
+                <span className="inline-flex items-center gap-1"><i className="h-2 w-2 rounded-full bg-amber-400" /> {t("Λείπει έλεγχος", "Needs check")}</span>
+                <span className="inline-flex items-center gap-1"><i className="h-2 w-2 rounded-full bg-slate-300" /> {t("Εκκρεμεί", "Pending")}</span>
+              </div>
+            </div>
+            {/* σύνολα ταμείων ημέρας */}
+            <div className="rounded-2xl border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900">
+              <div className="mb-2 text-xs font-bold text-slate-700 dark:text-slate-200">{t("Σύνολα ταμείων — ημέρα", "Fund totals — day")}</div>
+              {fundLines.length ? <div className="space-y-2">{fundLines.map(([f, v]) => (
+                <details key={f} className="group rounded-xl border border-slate-200 bg-slate-50/70 dark:border-slate-700 dark:bg-slate-800/40">
+                  <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-2.5 py-2 text-sm">
+                    <span className="inline-flex min-w-0 items-center gap-1.5 font-bold text-slate-800 dark:text-slate-100"><span className="shrink-0 text-slate-400 transition-transform group-open:rotate-90">▸</span><span className="truncate">{f}</span></span>
+                    <span className="shrink-0 whitespace-nowrap text-xs text-slate-500">{v.rx} · <b className="text-slate-800 dark:text-slate-100">{fmtEur(v.claim)}</b></span>
+                  </summary>
+                  <div className="grid grid-cols-4 gap-1.5 border-t border-slate-200 px-2.5 py-2 text-center dark:border-slate-700">
+                    {([[t("Συντ.", "Rx"), String(v.rx)], [t("Αιτούμενο", "Claim"), fmtEur(v.claim)], [t("Λιανική", "Retail"), fmtEur(v.retail)], [t("Συμμετοχή", "Copay"), fmtEur(v.patient)]] as [string, string][]).map(([lbl, val]) => (
+                      <div key={lbl}><div className="text-[9px] uppercase text-slate-400">{lbl}</div><div className="text-[12px] font-bold text-slate-800 dark:text-slate-100">{val}</div></div>
+                    ))}
+                  </div>
+                </details>))}</div> : <p className="text-xs text-slate-400">{t("Καμία εκτέλεση αυτή τη μέρα.", "No executions this day.")}</p>}
+            </div>
+            {/* σάρωση */}
+            <div className={`rounded-2xl border-2 p-4 ${dayDone ? "border-emerald-300 bg-emerald-50/50 dark:border-emerald-800 dark:bg-emerald-950/20" : "border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900"}`}>
+              <div className="flex items-center justify-between">
+                <button onClick={() => setDayIdx((i) => Math.max(0, i - 1))} disabled={dayIdx === 0} className="grid h-8 w-8 place-items-center rounded-lg text-slate-400 hover:bg-slate-100 disabled:opacity-30 dark:hover:bg-slate-800"><ChevronLeft className="h-5 w-5" /></button>
+                <div className="text-center"><div className="text-[11px] uppercase tracking-wide text-slate-400">{t("Ημέρα", "Day")} {dayIdx + 1}/{byDay.length}</div><div className="text-base font-bold capitalize text-slate-900 dark:text-slate-100">{cur ? fmtDay(cur.date) : "—"}</div></div>
+                <button onClick={nextDay} disabled={dayIdx >= byDay.length - 1} className="grid h-8 w-8 place-items-center rounded-lg text-slate-400 hover:bg-slate-100 disabled:opacity-30 dark:hover:bg-slate-800"><ChevronRight className="h-5 w-5" /></button>
+              </div>
+              <div className="mt-2 text-center text-sm"><span className={`text-2xl font-extrabold ${dayDone ? "text-emerald-600" : "text-slate-900 dark:text-slate-100"}`}>{cur?.checked ?? 0}</span><span className="text-slate-400"> / {cur?.total ?? 0} {t("σκαναρισμένες", "scanned")}</span></div>
+              <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700"><div className="h-full rounded-full bg-emerald-500" style={{ width: `${cur?.total ? (cur.checked / cur.total) * 100 : 0}%` }} /></div>
+              <div className="mt-3 flex gap-2">
+                <input ref={inputRef} autoFocus value={bc} onChange={(e) => setBc(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") submit(); }} placeholder={t("Barcode συνταγής…", "Prescription barcode…")} inputMode="numeric" className="flex-1 rounded-lg border border-slate-300 px-3 py-2.5 font-mono text-sm focus:border-emerald-500 focus:outline-none dark:border-slate-600 dark:bg-slate-800" />
+                <button onClick={submit} className="rounded-lg bg-emerald-600 px-5 text-sm font-semibold text-white hover:bg-emerald-700">{t("Έλεγχος", "Check")}</button>
+              </div>
+              {last && <div className={`mt-2 rounded-lg px-3 py-1.5 text-xs font-semibold ${last.found ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700"}`}>{last.found ? `✓ ${last.barcode} — ${t("βρέθηκε", "found")}` : `✗ ${last.barcode} — ${t("δεν βρέθηκε", "not found")}`}</div>}
+              {/* controls: μόνο όσες χρειάζονται έλεγχο + μηδενισμός ημέρας */}
+              <div className="mt-3 space-y-1.5 border-t border-slate-100 pt-2.5 dark:border-slate-800">
+                <label className="flex cursor-pointer items-center gap-2 text-xs text-slate-600 dark:text-slate-300">
+                  <button type="button" role="switch" aria-checked={onlyChecks} onClick={toggleOnlyChecks} className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${onlyChecks ? "bg-emerald-500" : "bg-slate-300 dark:bg-slate-600"}`}><span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${onlyChecks ? "translate-x-4" : "translate-x-0.5"}`} /></button>
+                  {t("Μόνο όσες χρειάζονται έλεγχο", "Only those needing a check")}
+                </label>
+                <button onClick={async () => { if (cur && await appConfirm(t(`Μηδενισμός ημέρας ${grDate(cur.date)};`, `Reset day ${cur ? grDate(cur.date) : ""}?`))) reset.mutate(cur.date); }} className="inline-flex w-full items-center justify-center gap-1.5 rounded-lg border border-rose-200 bg-rose-50/50 px-3 py-1.5 text-xs font-semibold text-rose-600 hover:bg-rose-50 dark:border-rose-900 dark:bg-rose-950/20"><RotateCcw className="h-3.5 w-3.5" /> {t("Μηδενισμός ημέρας", "Reset day")}</button>
+              </div>
+            </div>
+          </section>
+
+          {/* ΚΕΝΤΡΟ — Κουπόνια */}
+          <section className="space-y-3 rounded-3xl border border-emerald-100 bg-gradient-to-b from-emerald-50/50 to-white p-3 dark:border-slate-700 dark:from-slate-900 dark:to-slate-900">
+            {colHead(t("Κουπόνια", "Coupons"), t("Σκαναρισμένα κουπόνια & σύγκριση με τη συνταγή", "Scanned coupons vs the prescription"))}
+            <div className="[&>aside]:order-none [&>aside]:!static">{couponsPanel}</div>
+            {/* φάρμακα στην αρχική συνταγή (τι έγραψε ο γιατρός) */}
+            {detail?.found && !!(detail.coupons || []).length && (
+              <div className="rounded-2xl border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900">
+                <div className="mb-2 text-[11px] font-bold uppercase text-slate-500">💊 {t("Φάρμακα στην αρχική συνταγή", "Meds on the original Rx")}</div>
+                <div className="divide-y divide-slate-100 dark:divide-slate-800">
+                  {Object.entries((detail.coupons || []).reduce((m, c) => { m[c.name] = (m[c.name] || 0) + (c.quantity || 1); return m; }, {} as Record<string, number>)).map(([name, qty]) => (
+                    <div key={name} className="flex items-center justify-between py-1.5 text-sm">
+                      <span className="text-slate-700 dark:text-slate-200">{name}</span>
+                      <span className="font-bold text-slate-400">×{qty}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            {/* συνταγές ημέρας (accordion) */}
+            <details className="rounded-2xl border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900">
+              <summary className="cursor-pointer list-none text-sm font-semibold text-slate-700 dark:text-slate-200">▸ {t("Συνταγές ημέρας", "Day's prescriptions")} ({tableRows.length})</summary>
+              <div className="mt-2 overflow-x-auto"><DataTable pageSize={50} columns={cols} rows={tableRows} rowKey={(r) => r.external_id} empty={t("Καμία συνταγή.", "No prescriptions.")} /></div>
+            </details>
+          </section>
+
+          {/* ΔΕΞΙΑ — Έλεγχος */}
+          <section className="space-y-3 rounded-3xl border border-amber-100 bg-gradient-to-b from-amber-50/50 to-white p-3 dark:border-slate-700 dark:from-slate-900 dark:to-slate-900">
+            {colHead(t("Έλεγχος", "Checks"), t("Σημεία κινδύνου & προσοχής πριν την υποβολή", "Risk & attention points before submission"))}
+            {last?.found ? (
+              <>
+                {chk(t("Ταμείο", "Fund"), last.flags?.fund || detail?.fund || "ΕΟΠΥΥ",
+                     (last.flags?.has_vaccine || detail?.has_vaccine) ? t("Εμβόλια", "Vaccines") : t("Φάρμακα", "Medicines"),
+                     last.flags?.is_eopyy === false ? "warning" : "neutral")}
+                {last.flags?.is_intangible
+                  ? chk(t("Χάρτινη συνταγή", "Paper Rx"), t("ΟΧΙ — Άυλη", "NO — Paperless"), t("Δεν χρειάζεται χάρτινη — άυλη συνταγή.", "No paper needed — paperless Rx."), "ok")
+                  : (detail?.needs_original || last.flags?.needs_original)
+                    ? chk(t("Χάρτινη συνταγή", "Paper Rx"), t("ΝΑΙ", "YES"), t("Επισύναψε την ΠΡΩΤΟΤΥΠΗ συνταγή του γιατρού.", "Attach the doctor's ORIGINAL prescription."), "danger")
+                    : chk(t("Χάρτινη συνταγή", "Paper Rx"), t("Έντυπη", "Printed"), t("Κράτησε τη χάρτινη συνταγή στο φαρμακείο.", "Keep the printed prescription."), "neutral")}
+                {opticalChk
+                  ? chk(t("Οπτικός έλεγχος", "Optical check"), opticalChk.title, opticalChk.detail, "warning")
+                  : chk(t("Οπτικός έλεγχος", "Optical check"), t("Δεν χρειάζεται", "Not needed"), t("Καμία ιδιαιτερότητα δόσης/ποσότητας.", "No dose/quantity specialness."), "ok")}
+                {/* Λοιπές προειδοποιήσεις + τι να καταθέσεις — ΧΩΡΙΣ τον οπτικό (είναι πιο πάνω) */}
+                <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-3 dark:border-slate-700 dark:bg-slate-800/40">
+                  <div className="mb-2 text-[11px] font-bold uppercase text-slate-500">🔎 {t("Λοιπές προειδοποιήσεις", "Other warnings")}</div>
+                  {sideTodo.length > 0 && <div className="mb-2 rounded-xl border border-emerald-200 bg-emerald-50/60 p-2.5 dark:border-emerald-900/50 dark:bg-emerald-950/20"><div className="mb-1 flex items-center gap-1.5 text-[11px] font-bold uppercase text-emerald-700 dark:text-emerald-400"><ClipboardList className="h-3.5 w-3.5" /> {t("Για το ταμείο", "For the fund")}</div><ul className="space-y-0.5 text-[11px] text-slate-700 dark:text-slate-200">{sideTodo.map((x, i) => <li key={i}>{x}</li>)}</ul></div>}
+                  {otherChecks && otherChecks.count > 0 ? <CategorizedChecks res={otherChecks} t={t} />
+                    : (sideTodo.length === 0 && <p className="text-[11px] text-emerald-600">✓ {t("Καθαρή — καμία άλλη ιδιαιτερότητα.", "Clean — nothing else special.")}</p>)}
+                </div>
+              </>
+            ) : <p className="rounded-2xl border border-dashed border-slate-200 bg-white p-6 text-center text-xs text-slate-400 dark:border-slate-700 dark:bg-slate-900">{t("Σκάναρε ή πάτησε μια συνταγή για να δεις τους ελέγχους.", "Scan or tap a prescription to see the checks.")}</p>}
+            <div className={`rounded-2xl border p-4 ${dayDone ? "border-emerald-200 bg-emerald-50/50 dark:border-emerald-800 dark:bg-emerald-950/20" : "border-rose-200 bg-rose-50/50 dark:border-rose-900 dark:bg-rose-950/20"}`}>
+              <div className="text-[11px] font-bold uppercase text-slate-500">{t("Κατάσταση ημέρας", "Day status")}</div>
+              <div className={`mt-1 text-sm font-bold ${dayDone ? "text-emerald-700 dark:text-emerald-300" : "text-rose-600 dark:text-rose-300"}`}>{dayDone ? t("Έτοιμη ✓", "Ready ✓") : t("Δεν είναι έτοιμη για υποβολή", "Not ready for submission")}</div>
+              {!dayDone && <p className="mt-1 text-xs text-slate-500">{t("Μένουν συνταγές για σκανάρισμα/έλεγχο.", "Prescriptions still to scan/check.")}</p>}
+              {dayDone && <button onClick={nextDay} disabled={dayIdx >= byDay.length - 1} className="mt-3 w-full rounded-xl bg-emerald-600 py-2.5 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-50">✓ {t("Επόμενη ημέρα", "Next day")} →</button>}
+            </div>
+          </section>
+        </div>
+        {showReport && <ClosingReportModal period={period} t={t} onClose={() => setShowReport(false)} />}
+      </div>
+    );
+  }
+
   return (
     <div className="mx-auto max-w-7xl">
       <div className="grid items-start gap-4 lg:grid-cols-[300px_minmax(0,1fr)_320px]">

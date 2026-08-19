@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { ScanBarcode, ListChecks, LayoutPanelLeft, Check } from "lucide-react";
+import { ScanBarcode, ListChecks, LayoutPanelLeft, Columns3, Check } from "lucide-react";
 import { api } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
 
@@ -26,6 +26,9 @@ export default function ClosingSettingsPage() {
     { id: "express", icon: LayoutPanelLeft, title: t("Όλα σε ένα βήμα (express)", "All-in-one (express)"),
       desc: t("Μία οθόνη: σκανάρεις και ΤΑΥΤΟΧΡΟΝΑ βλέπεις αριστερά τα κουπόνια και δεξιά τι πρέπει να ελέγξεις/καταθέσεις — χωρίς pop-up. Γρήγορο για έμπειρους.",
               "One screen: scan and at the same time see the coupons on the left and what to check/submit on the right — no pop-ups. Fast for power users.") },
+    { id: "cockpit", icon: Columns3, title: t("Κόκπιτ (πλήρης εικόνα)", "Cockpit (full view)"),
+      desc: t("3 στήλες σε μία οθόνη: αριστερά Ημέρα & Ταμεία (ημερολόγιο + σύνολα + σάρωση), στο κέντρο τα Κουπόνια vs αρχική συνταγή, δεξιά ο Έλεγχος (ρίσκα/προειδοποιήσεις/ετοιμότητα). Πλούσια, ταυτόχρονη εικόνα για κλείσιμο.",
+              "3 columns in one screen: left Day & Funds (calendar + totals + scan), center Coupons vs original prescription, right Checks (risks/warnings/readiness). Rich, simultaneous view.") },
   ];
 
   return (
@@ -33,7 +36,7 @@ export default function ClosingSettingsPage() {
       <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-700 dark:bg-slate-900">
         <h2 className="text-base font-bold text-slate-900 dark:text-slate-100">{t("Έλεγχος Barcode — Τρόπος κλεισίματος", "Barcode check — closing mode")}</h2>
         <p className="mt-1 text-sm text-slate-500">{t("Πώς θα γίνεται ο έλεγχος των συνταγών πριν την υποβολή στα ταμεία. Ισχύει για όλο το φαρμακείο.", "How prescriptions are checked before submission. Applies to the whole pharmacy.")}</p>
-        <div className="mt-4 grid gap-3 sm:grid-cols-3">
+        <div className="mt-4 grid gap-3 sm:grid-cols-2">
           {opts.map((o) => {
             const active = mode === o.id;
             return (

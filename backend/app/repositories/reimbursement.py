@@ -799,6 +799,7 @@ class ReimbursementRepository(BaseRepository):
             # για έλεγχο/υποβολή — μπορεί και σε διαφορετικές ημερομηνίες.
             {"$group": {"_id": "$external_id",
                         "claim": {"$sum": "$amount_claimed"}, "retail": {"$sum": "$amount_total"},
+                        "patient": {"$sum": "$patient_share"},
                         "fund_id": {"$first": "$fund_id"},
                         "vac": {"$first": {"$ifNull": ["$details.vaccines", False]}},
                         "intangible": {"$first": {"$ifNull": ["$details.intangible", False]}},
@@ -838,7 +839,7 @@ class ReimbursementRepository(BaseRepository):
             needs_orig = (not bool(r.get("intangible"))) and first_phase
             allrows.append({
                 "barcode": root, "external_id": ext, "exec_no": exno,
-                "claim": r["claim"], "retail": r.get("retail", 0), "executed_at": r["executed_at"],
+                "claim": r["claim"], "retail": r.get("retail", 0), "patient": r.get("patient", 0), "executed_at": r["executed_at"],
                 "day": r["executed_at"].strftime("%Y-%m-%d") if r.get("executed_at") else None,
                 "fund": glabel, "group": glabel, "is_eopyy": is_eo, "is_vaccine": is_vac,
                 "is_100": is_100, "is_fyk": bool(r.get("n3816")), "is_etyap": bool(r.get("supp")),
@@ -1126,7 +1127,7 @@ class ReimbursementRepository(BaseRepository):
     async def set_closing_prefs(self, closing_mode: str | None = None, list_open: bool | None = None) -> dict:
         upd: dict = {"tenant_id": self.tenant_id, "updated_at": _now()}
         if closing_mode is not None:
-            upd["closing_mode"] = closing_mode if closing_mode in ("guided", "express") else "classic"
+            upd["closing_mode"] = closing_mode if closing_mode in ("guided", "express", "cockpit") else "classic"
         if list_open is not None:
             upd["list_open"] = bool(list_open)
         await self._db["reimbursement_settings"].update_one(
@@ -1243,16 +1244,17 @@ class ReimbursementRepository(BaseRepository):
                     if sk and dk in seen:
                         continue
                     seen.add(dk)
-                    # ΤΟ ΚΟΥΠΟΝΙ ΕΙΝΑΙ AUTHORITATIVE: qr != False → το είδος ΕΚΤΕΛΕΣΤΗΚΕ (έχει QR),
-                    # ΑΚΟΜΗ κι αν το item.is_executed είναι λάθος/False (π.χ. μερική εκτέλεση). Μόνο
-                    # qr == False = ανεκτέλεστη ουσία. (Αλλιώς QR'd φάρμακα φαίνονταν λάθος «ανεκτέλεστα».)
-                    cp_exec = cp.get("qr") is not False
+                    # ΚΑΘΕ κουπόνι προέρχεται από block ΕΚΤΕΛΕΣΜΕΝΗΣ ποσότητας (CDA 2.10.8) → ΠΑΝΤΑ
+                    # εκτελεσμένο τεμάχιο. Το qr ΔΕΝ δηλώνει εκτέλεση — ξεχωρίζει ΜΟΝΟ QR (True) από
+                    # ταινία γνησιότητας (False, = strip 2.10.12) ή άγνωστο (None). Η ΜΗ-εκτέλεση
+                    # αποτυπώνεται μόνο σε επίπεδο γραμμής (is_executed) → τότε ΔΕΝ υπάρχει κουπόνι.
+                    # (Πριν: qr==False φαινόταν λάθος «ανεκτέλεστο» — π.χ. LEXAVON με ταινία.)
                     lines.append({"name": name, "barcode": bc, "eof": eof, "quantity": 1,
-                                  "category": cat, "executed": cp_exec,
-                                  "qr": cp.get("qr") if cp_exec else None,
-                                  "qr_batch": cp.get("qr_batch") if cp_exec else None,
-                                  "qr_expiry": cp.get("qr_expiry") if cp_exec else None,
-                                  "lot": cp.get("strip") if cp_exec else None})
+                                  "category": cat, "executed": True,
+                                  "qr": cp.get("qr"),
+                                  "qr_batch": cp.get("qr_batch"),
+                                  "qr_expiry": cp.get("qr_expiry"),
+                                  "lot": cp.get("strip")})
             else:
                 dk = (eof, "_noc")
                 if dk in seen:
