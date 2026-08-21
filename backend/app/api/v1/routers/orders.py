@@ -27,10 +27,12 @@ async def suggestions(
     repo = FuturePrescriptionRepository(tenant_id=ctx.tenant_id)
     today = _now()
     lead_horizon = today + timedelta(days=lead_time_days)
+    # Το απόθεμα αποθήκης λαμβάνεται υπόψη ΜΟΝΟ αν η συνδρομή περιλαμβάνει το e-shop/αποθήκη.
+    use_warehouse = ctx.modules.get("order_delivery", "locked") != "locked"
     items = await repo.order_suggestions(today=today, lead_horizon=lead_horizon,
-                                         safety_stock_pct=safety_stock_pct)
+                                         safety_stock_pct=safety_stock_pct, use_warehouse=use_warehouse)
     return {"lead_time_days": lead_time_days, "safety_stock_pct": safety_stock_pct,
-            "items": items}
+            "warehouse_stock": use_warehouse, "items": items}
 
 
 @router.post("/suggestions/recompute", status_code=202)

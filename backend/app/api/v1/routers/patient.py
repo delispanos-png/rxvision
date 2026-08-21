@@ -545,7 +545,8 @@ async def shop(q: str = "", category: str | None = None, type: str | None = None
     # in_stock_only=False → δείχνουμε ΚΑΙ τα «κατόπιν παραγγελίας» (χωρίς απόθεμα)· ο πελάτης τα
     # παραγγέλνει ως αίτημα και ο φαρμακοποιός εγκρίνει/απορρίπτει + δηλώνει ημερομηνία.
     return await PharmacyCatalogRepository(tenant_id=ctx.tenant_id).list(
-        q=q, category=category, ptype=type, tag=tag, sort=sort, in_stock_only=False, page_size=60)
+        q=q, category=category, ptype=type, tag=tag, sort=sort, in_stock_only=False,
+        for_sale_only=True, page_size=60)   # πελάτης βλέπει ΜΟΝΟ όσα ο φαρμακοποιός έβαλε προς πώληση
 
 
 class ShopFavIn(BaseModel):

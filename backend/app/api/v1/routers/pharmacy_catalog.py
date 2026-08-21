@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Respon
 from pydantic import BaseModel, Field
 
 from app.core.deps import TenantContext, require
-from app.repositories.pharmacy_catalog import PharmacyCatalogRepository
+from app.repositories.pharmacy_catalog import PharmacyCatalogRepository, StockMovementRepository
 from app.repositories.shop_campaigns import ShopCampaignRepository
 from app.repositories.shop_promos import ShopBundleRepository, ShopCouponRepository
 from app.repositories.shop_service_offers import ShopServiceOffersRepository
@@ -31,9 +31,10 @@ def _repo(ctx: TenantContext) -> PharmacyCatalogRepository:
 @router.get("")
 async def list_products(q: str = "", category: str | None = None, type: str | None = None,
                         tag: str | None = None, sort: str = "featured", in_stock: bool = False,
-                        page: int = 1, ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+                        for_sale: bool = False, page: int = 1,
+                        ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
     return await _repo(ctx).list(q=q, category=category, ptype=type, tag=tag, sort=sort,
-                                 in_stock_only=in_stock, page=page)
+                                 in_stock_only=in_stock, for_sale_only=for_sale, page=page)
 
 
 @router.get("/categories")
@@ -117,7 +118,16 @@ class ProductIn(BaseModel):
     usage_video_url: str | None = None      # οδηγίες χρήσης (YouTube/Vimeo) — ο πελάτης το βλέπει
     discount_pct: int = Field(0, ge=0, le=90)
     stock_qty: int = Field(0, ge=0)
-    active: bool = True
+    active: bool = True                  # ενεργό/ανενεργό είδος στην αποθήκη
+    for_sale: bool = False              # πωλείται στο e-shop → εμφανίζεται στον Κατάλογο
+    # πλήρη χαρακτηριστικά αποθήκης
+    min_stock: int = Field(0, ge=0)     # σημείο αναπαραγγελίας
+    supplier: str | None = None         # προμηθευτής
+    location: str | None = None         # θέση/ράφι
+    batch: str | None = None            # παρτίδα
+    expiry: str | None = None           # λήξη (YYYY-MM-DD)
+    barcodes: list[str] = Field(default_factory=list)     # εναλλακτικά barcodes (κύριο = barcode)
+    variants: list[dict] = Field(default_factory=list)    # εκδοχές: [{color, size, barcode, stock_qty}]
 
 
 @router.post("")
@@ -128,6 +138,106 @@ async def upsert_product(body: ProductIn, ctx: TenantContext = Depends(require(_
 @router.delete("/{barcode}")
 async def delete_product(barcode: str, ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
     return await _repo(ctx).delete(barcode)
+
+
+# ── ΑΠΟΘΗΚΗ (master inventory + κινήσεις αποθέματος) ─────────────────────────
+def _mrepo(ctx: TenantContext) -> StockMovementRepository:
+    return StockMovementRepository(tenant_id=ctx.tenant_id)
+
+
+@router.get("/warehouse")
+async def warehouse(q: str = "", type: str | None = None, low_stock: bool = False,
+                    expiring: bool = False, include_inactive: bool = True, page: int = 1,
+                    page_size: int = 100,
+                    ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+    repo = _repo(ctx)
+    return {**await repo.warehouse(q=q, ptype=type, low_stock=low_stock, expiring=expiring,
+                                   include_inactive=include_inactive, page=page, page_size=page_size),
+            "summary": await repo.warehouse_summary()}
+
+
+class FlagsIn(BaseModel):
+    barcode: str
+    for_sale: bool | None = None
+    active: bool | None = None
+
+
+@router.post("/warehouse/flags")
+async def set_flags(body: FlagsIn, ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+    return await _repo(ctx).set_flags(body.barcode, for_sale=body.for_sale, active=body.active)
+
+
+class MoveIn(BaseModel):
+    barcode: str
+    kind: str = "in"                    # in=παραλαβή · out=πώληση/εξαγωγή · adjust=απογραφή · waste=απόσυρση
+    qty: int = Field(1, ge=1)
+    reason: str | None = None
+    batch: str | None = None
+    expiry: str | None = None
+    cost_cents: int | None = None       # κόστος παραλαβής (ενημερώνει τη χονδρική)
+    set_to: int | None = None           # απογραφή: όρισε ΑΠΟΛΥΤΟ υπόλοιπο (αντί delta)
+
+
+@router.post("/warehouse/move")
+async def stock_move(body: MoveIn, ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+    """Κίνηση αποθέματος: εφαρμόζει στο είδος + καταγράφει στο ledger (audit trail)."""
+    repo = _repo(ctx)
+    delta = None
+    if body.set_to is None:
+        delta = body.qty if body.kind == "in" else -body.qty   # in=+ · out/waste/adjust(delta)=−
+    new_stock = await repo.apply_stock(body.barcode, delta=delta, set_to=body.set_to,
+                                       expiry=body.expiry, batch=body.batch, cost_cents=body.cost_cents)
+    if new_stock is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail={"error": "product_not_found"})
+    await _mrepo(ctx).add(barcode=body.barcode, kind=body.kind, qty=(body.qty if body.set_to is None else new_stock),
+                          reason=body.reason or "", batch=body.batch or "", expiry=body.expiry or "",
+                          cost_cents=body.cost_cents, by=getattr(ctx, "email", None), new_stock=new_stock)
+    return {"ok": True, "stock_qty": new_stock}
+
+
+@router.get("/warehouse/{barcode}/movements")
+async def stock_history(barcode: str, ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+    return {"items": await _mrepo(ctx).history(barcode)}
+
+
+# ── ΕΥΕΛΙΚΤΗ ΕΙΣΑΓΩΓΗ Excel/CSV (self-service column mapping) ─────────────────
+async def _read_capped(file: UploadFile) -> bytes:
+    content = await file.read(_MAX_XML + 1)
+    if len(content) > _MAX_XML:
+        raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                            detail={"error": "file_too_large", "max_bytes": _MAX_XML})
+    return content
+
+
+@router.post("/import/preview")
+async def import_preview(file: UploadFile = File(...),
+                         ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+    """Διαβάζει το αρχείο & επιστρέφει ΔΕΙΓΜΑ (πρώτες γραμμές × στήλες) — ο χρήστης βλέπει τι έχει πού
+    και ορίζει mapping. Δεν υποθέτουμε επικεφαλίδες/θέσεις (ο καθένας έχει διαφορετικό Excel)."""
+    from app.repositories.pharmacy_catalog import parse_spreadsheet
+    rows = parse_spreadsheet(await _read_capped(file), file.filename or "")
+    cols = max((len(r) for r in rows[:100]), default=0)
+    return {"columns": cols, "total_rows": len(rows),
+            "rows": [(r + [""] * (cols - len(r)))[:cols] for r in rows[:20]]}
+
+
+@router.post("/import/commit")
+async def import_commit(file: UploadFile = File(...), mapping: str = Form(...),
+                        start_row: int = Form(1), default_type: str = Form("parapharmacy"),
+                        for_sale: bool = Form(False),
+                        ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+    """Εισάγει με βάση το mapping ({field: col_index}) & την αρχική γραμμή που όρισε ο χρήστης."""
+    from app.repositories.pharmacy_catalog import parse_spreadsheet
+    try:
+        m = json.loads(mapping) if mapping else {}
+    except json.JSONDecodeError:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail={"error": "bad_mapping"})
+    if not isinstance(m, dict) or m.get("barcode") in (None, "") or m.get("name") in (None, ""):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                            detail={"error": "barcode_name_required"})
+    rows = parse_spreadsheet(await _read_capped(file), file.filename or "")
+    return await _repo(ctx).import_mapped(rows, m, start_row=start_row,
+                                          default_type=default_type, for_sale=for_sale)
 
 
 @router.post("/import-xml")

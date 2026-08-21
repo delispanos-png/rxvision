@@ -34,7 +34,7 @@ export default function OrdersPage() {
 
   const { data, isLoading, isError, refetch } = useQuery({
     queryKey: queryKeys.orderSuggestions(),
-    queryFn: () => api<{ items: Suggestion[] }>(`/orders/suggestions`),
+    queryFn: () => api<{ items: Suggestion[]; warehouse_stock?: boolean }>(`/orders/suggestions`),
   });
 
   const recompute = useMutation({
@@ -51,7 +51,9 @@ export default function OrdersPage() {
   const [coverage, setCoverage] = useState(30);
   const [stock, setStock] = useState<Record<string, number>>({});
   const need = (r: Suggestion) => Math.ceil((r.avg_daily || 0) * coverage);          // ανάγκη για X μέρες
-  const adj = (r: Suggestion) => Math.max(0, need(r) - (stock[r.product_id] || 0));   // παράγγειλε = ανάγκη − απόθεμα
+  // απόθεμα: χειροκίνητο override αν υπάρχει, αλλιώς ΑΥΤΟΜΑΤΑ το τρέχον απόθεμα ΑΠΟΘΗΚΗΣ (on_hand)
+  const stockOf = (r: Suggestion) => stock[r.product_id] ?? (r.on_hand ?? 0);
+  const adj = (r: Suggestion) => Math.max(0, need(r) - stockOf(r));                   // παράγγειλε = ανάγκη − απόθεμα
   const unitCost = (r: Suggestion) => (r.suggested_qty ? (r.est_cost || 0) / r.suggested_qty : 0);
   const adjCost = (r: Suggestion) => Math.round(unitCost(r) * adj(r));
 
@@ -61,10 +63,13 @@ export default function OrdersPage() {
     { key: "avg_daily", header: t("Μ.Ο./ημέρα", "Avg/day"), align: "right", render: (r) => fmtNum(r.avg_daily), sortValue: (r) => r.avg_daily, hideOnMobile: true },
     { key: "need", header: t(`Ανάγκη ${coverage}ημ.`, `Need ${coverage}d`), align: "right", render: (r) => fmtNum(need(r)), sortValue: (r) => need(r) },
     { key: "stock", header: t("Απόθεμα", "Stock"), align: "right", render: (r) => (
-      <input type="number" min={0} value={stock[r.product_id] ?? ""} placeholder="0"
-        onChange={(e) => setStock((s) => ({...s, [r.product_id]: Math.max(0, parseInt(e.target.value) || 0) }))}
-        onClick={(e) => e.stopPropagation()}
-        className="w-16 rounded-md border border-slate-300 px-1.5 py-0.5 text-right text-sm focus:border-brand-500 focus:outline-none dark:border-slate-600 dark:bg-slate-800" /> ) },
+      <span className="inline-flex items-center justify-end gap-1">
+        <input type="number" min={0} value={stock[r.product_id] ?? r.on_hand ?? ""} placeholder="0"
+          onChange={(e) => setStock((s) => ({...s, [r.product_id]: Math.max(0, parseInt(e.target.value) || 0) }))}
+          onClick={(e) => e.stopPropagation()}
+          className="w-16 rounded-md border border-slate-300 px-1.5 py-0.5 text-right text-sm focus:border-brand-500 focus:outline-none dark:border-slate-600 dark:bg-slate-800" />
+        {r.on_hand != null && stock[r.product_id] == null && <span title={t("Αυτόματα από την Αποθήκη", "Auto from Warehouse")} className="text-[10px] text-emerald-600">🏬</span>}
+      </span> ) },
     { key: "adjusted", header: t("Παράγγειλε", "Order"), align: "right", render: (r) => <span className={`font-bold ${adj(r) > 0 ? "text-brand-700 dark:text-brand-300" : "text-slate-300"}`}>{fmtNum(adj(r))}</span>, sortValue: (r) => adj(r) },
     { key: "est_cost", header: t("Εκτ. κόστος", "Est. cost"), align: "right", render: (r) => fmtEur(adjCost(r)), sortValue: (r) => adjCost(r) },
   ], [stock, coverage, t]);
@@ -79,7 +84,8 @@ export default function OrdersPage() {
       <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-slate-900">{t("Προτάσεις παραγγελίας", "Order suggestions")}</h1>
-          <p className="mt-1 text-sm text-slate-500">{t("Διάλεξε πόσων ημερών ανάγκες θες να καλύψεις — οι ποσότητες προσαρμόζονται αυτόματα.", "Choose how many days of needs to cover — quantities adjust automatically.")}</p>
+          <p className="mt-1 text-sm text-slate-500">{t("Διάλεξε πόσων ημερών ανάγκες θες να καλύψεις — οι ποσότητες προσαρμόζονται αυτόματα.", "Choose how many days of needs to cover — quantities adjust automatically.")}
+            {data?.warehouse_stock && <span className="ml-1 font-medium text-emerald-600">🏬 {t("Το απόθεμα προσυμπληρώνεται αυτόματα από την Αποθήκη (μπορείς να το αλλάξεις).", "Stock is auto-filled from the Warehouse (you can override it).")}</span>}</p>
         </div>
         <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:justify-end">
           <div className="flex flex-wrap items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1.5 dark:border-slate-700 dark:bg-slate-900">

@@ -11,7 +11,7 @@ from __future__ import annotations
 import io
 import re
 import defusedxml.ElementTree as ET   # hardened: blocks entity-expansion / XXE (billion-laughs DoS)
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from bson import Binary, ObjectId
 
@@ -54,6 +54,34 @@ def _clean_tags(v) -> list[str]:
     return out[:_MAX_TAGS]
 
 
+def _clean_barcodes(v) -> list[str]:
+    """Εναλλακτικά barcodes (πέρα από το κύριο): μόνο ψηφία, ≥6, μοναδικά, cap 20."""
+    if isinstance(v, str):
+        v = re.split(r"[,\s]+", v)
+    out: list[str] = []
+    for x in (v or []):
+        s = re.sub(r"\D", "", str(x or ""))
+        if len(s) >= 6 and s not in out:
+            out.append(s)
+    return out[:20]
+
+
+def _clean_variants(v) -> list[dict]:
+    """Εκδοχές είδους (χρώμα/μέγεθος) — καθεμία με δικό της (προαιρετικό) barcode & απόθεμα."""
+    out: list[dict] = []
+    for it in (v or [])[:60]:
+        if not isinstance(it, dict):
+            continue
+        color = str(it.get("color") or "").strip()[:40]
+        size = str(it.get("size") or "").strip()[:40]
+        bc = re.sub(r"\D", "", str(it.get("barcode") or ""))
+        if not (color or size or bc):
+            continue
+        out.append({"color": color or None, "size": size or None,
+                    "barcode": bc or None, "stock_qty": max(0, _int(it.get("stock_qty")) or 0)})
+    return out
+
+
 _VIDEO_HOSTS = re.compile(r"^https://(www\.)?(youtube\.com/|youtu\.be/|m\.youtube\.com/|vimeo\.com/)", re.I)
 
 
@@ -93,13 +121,55 @@ def _int(v) -> int | None:
         return None
 
 
+def _iso_date(v) -> str | None:
+    """Δεκτές μορφές: 2026-08-19 / 19/08/2026 / 19-08-2026 / datetime → YYYY-MM-DD."""
+    s = str(v or "").strip()[:19]
+    if not s:
+        return None
+    s = s.split(" ")[0].split("T")[0]
+    m = re.match(r"^(\d{4})-(\d{2})-(\d{2})$", s)
+    if m:
+        return s
+    m = re.match(r"^(\d{1,2})[/.\-](\d{1,2})[/.\-](\d{2,4})$", s)
+    if m:
+        d, mo, y = m.groups()
+        y = ("20" + y) if len(y) == 2 else y
+        return f"{y}-{int(mo):02d}-{int(d):02d}"
+    return None
+
+
+def parse_spreadsheet(content: bytes, filename: str) -> list[list[str]]:
+    """Ευέλικτη ανάγνωση .xlsx/.xlsm/.csv → λίστα γραμμών (κάθε γραμμή = λίστα κελιών ως string).
+    ΔΕΝ υποθέτει επικεφαλίδες/θέση στηλών — αυτά τα ορίζει ο χρήστης στο mapping."""
+    name = (filename or "").lower()
+    rows: list[list[str]] = []
+    if name.endswith((".xlsx", ".xlsm")):
+        import openpyxl
+        wb = openpyxl.load_workbook(io.BytesIO(content), read_only=True, data_only=True)
+        try:
+            for r in (wb.active.iter_rows(values_only=True) if wb.active else []):
+                rows.append(["" if c is None else str(c).strip() for c in r])
+        finally:
+            wb.close()
+    else:                                   # CSV (auto-sniff ; ή ,)
+        import csv as _csv
+        text = content.decode("utf-8-sig", errors="replace")
+        head = text[:4000]
+        delim = ";" if head.count(";") > head.count(",") else ","
+        for r in _csv.reader(io.StringIO(text), delimiter=delim):
+            rows.append([str(c).strip() for c in r])
+    return rows[:20000]                     # cap (anti-abuse)
+
+
 class PharmacyCatalogRepository(BaseRepository):
     collection_name = "pharmacy_products"
 
     async def list(self, *, q: str = "", category: str | None = None, ptype: str | None = None,
-                   tag: str | None = None, in_stock_only: bool = False, sort: str = "featured",
-                   page: int = 1, page_size: int = 40) -> dict:
+                   tag: str | None = None, in_stock_only: bool = False, for_sale_only: bool = False,
+                   sort: str = "featured", page: int = 1, page_size: int = 40) -> dict:
         query: dict = {"active": {"$ne": False}}
+        if for_sale_only:                    # Κατάλογος e-shop: ΜΟΝΟ όσα ο φαρμακοποιός έχει βάλει προς πώληση
+            query["for_sale"] = True
         if q and q.strip():
             rx = {"$regex": re.escape(q.strip()), "$options": "i"}
             query["$or"] = [{"name": rx}, {"barcode": rx}, {"description_long": rx},
@@ -129,7 +199,7 @@ class PharmacyCatalogRepository(BaseRepository):
         Καθρεφτίζει τη μηχανή τιμολόγησης (τα rx εξαιρούνται ήδη). Κάθε είδος αποκτά eff_discount_pct
         & sale_cents («τώρα») ώστε η βιτρίνα να δείχνει «πριν/τώρα» χωρίς client-side λογική τιμών."""
         from app.repositories.shop_campaigns import campaign_pct_for
-        rows = await self.find({"active": {"$ne": False}}, limit=1000)
+        rows = await self.find({"active": {"$ne": False}, "for_sale": True}, limit=1000)
         out: list[dict] = []
         for p in rows:
             eff = max(int(p.get("discount_pct") or 0), campaign_pct_for(p, campaigns))
@@ -169,13 +239,23 @@ class PharmacyCatalogRepository(BaseRepository):
             "featured": bool(data.get("featured", False)),   # προτεινόμενο → πρώτο στη βιτρίνα
             "discount_pct": disc,
             "stock_qty": max(0, _int(data.get("stock_qty")) or 0),
-            "active": bool(data.get("active", True)),
+            "active": bool(data.get("active", True)),           # ενεργό/ανενεργό είδος στην αποθήκη
+            "for_sale": bool(data.get("for_sale", False)),      # πωλείται στο e-shop → εμφανίζεται στον Κατάλογο
+            # ── πλήρη χαρακτηριστικά ΑΠΟΘΗΚΗΣ ──
+            "min_stock": max(0, _int(data.get("min_stock")) or 0),   # σημείο αναπαραγγελίας (alert χαμηλού)
+            "supplier": (data.get("supplier") or "").strip()[:120] or None,   # προμηθευτής
+            "location": (data.get("location") or "").strip()[:60] or None,    # θέση/ράφι
+            "batch": (data.get("batch") or "").strip()[:60] or None,          # παρτίδα
+            "expiry": (data.get("expiry") or "").strip()[:10] or None,        # λήξη YYYY-MM-DD
+            "barcodes": _clean_barcodes(data.get("barcodes")),                # εναλλακτικά barcodes
+            "variants": _clean_variants(data.get("variants")),                # εκδοχές (χρώμα/μέγεθος)
             "source": data.get("source") if data.get("source") in ("manual", "xml", "hdika") else "manual",
             "updated_at": _now(),
         }
         # Τα tags/featured/image_id τα διαχειρίζεται ΜΟΝΟ ο φαρμακοποιός (edit). Το XML import δεν τα
         # στέλνει → μην τα σβήνεις σε επανα-εισαγωγή (διατήρησε ό,τι έχει ήδη μπει χειροκίνητα).
-        for k in ("tags", "featured", "image_id", "images", "wholesale_cents", "is_fyk", "participation"):
+        for k in ("tags", "featured", "image_id", "images", "wholesale_cents", "is_fyk", "participation",
+                  "for_sale", "min_stock", "supplier", "location", "batch", "expiry", "barcodes", "variants"):
             if k not in data:
                 doc.pop(k, None)
         await self.update_one({"barcode": bc},
@@ -187,6 +267,125 @@ class PharmacyCatalogRepository(BaseRepository):
         await self.update_one({"barcode": str(barcode)},
                               {"$set": {"active": False, "updated_at": _now()}})
         return {"ok": True}
+
+    # ── ΑΠΟΘΗΚΗ (πλήρης διαχείριση αποθέματος) ───────────────────────────────
+    NEAR_EXPIRY_DAYS = 90
+
+    async def warehouse(self, *, q: str = "", ptype: str | None = None, low_stock: bool = False,
+                        expiring: bool = False, include_inactive: bool = True,
+                        page: int = 1, page_size: int = 60) -> dict:
+        """Master inventory: ΟΛΑ τα είδη (ενεργά + ανενεργά) με πλήρη χαρακτηριστικά + φίλτρα."""
+        query: dict = {} if include_inactive else {"active": {"$ne": False}}
+        if q and q.strip():
+            rx = {"$regex": re.escape(q.strip()), "$options": "i"}
+            query["$or"] = [{"name": rx}, {"barcode": rx}, {"barcodes": rx}, {"variants.barcode": rx},
+                            {"supplier": rx}, {"location": rx}, {"category": rx}]
+        if ptype in TYPES:
+            query["type"] = ptype
+        if low_stock:
+            query["$expr"] = {"$lte": ["$stock_qty", {"$ifNull": ["$min_stock", 0]}]}
+        if expiring:
+            cutoff = (_now() + timedelta(days=self.NEAR_EXPIRY_DAYS)).date().isoformat()
+            query["expiry"] = {"$ne": None, "$lte": cutoff}
+        page = max(1, page); page_size = max(1, min(page_size, 200))
+        total = await self.count(query)
+        items = await self.find(query, sort=[("name", 1)], skip=(page - 1) * page_size, limit=page_size)
+        return {"items": jsonsafe(items), "total": total, "page": page, "page_size": page_size}
+
+    async def warehouse_summary(self) -> dict:
+        """KPIs αποθήκης: SKUs, ενεργά, προς πώληση, αξία αποθέματος (τεμ×χονδρική), χαμηλό, λήγοντα."""
+        cutoff = (_now() + timedelta(days=self.NEAR_EXPIRY_DAYS)).date().isoformat()
+        rows = await self.aggregate([{"$group": {
+            "_id": None,
+            "skus": {"$sum": 1},
+            "active": {"$sum": {"$cond": [{"$ne": ["$active", False]}, 1, 0]}},
+            "for_sale": {"$sum": {"$cond": [{"$eq": ["$for_sale", True]}, 1, 0]}},
+            "units": {"$sum": {"$ifNull": ["$stock_qty", 0]}},
+            "value_cents": {"$sum": {"$multiply": [{"$ifNull": ["$stock_qty", 0]}, {"$ifNull": ["$wholesale_cents", 0]}]}},
+            "low": {"$sum": {"$cond": [{"$lte": ["$stock_qty", {"$ifNull": ["$min_stock", 0]}]}, 1, 0]}},
+            "expiring": {"$sum": {"$cond": [{"$and": [{"$ne": ["$expiry", None]}, {"$lte": ["$expiry", cutoff]}]}, 1, 0]}},
+        }}])
+        s = rows[0] if rows else {}
+        return {k: int(s.get(k, 0) or 0) for k in ("skus", "active", "for_sale", "units", "value_cents", "low", "expiring")}
+
+    async def set_flags(self, barcode: str, *, for_sale: bool | None = None, active: bool | None = None) -> dict:
+        """Toggle ανεξάρτητα flags: ενεργό/ανενεργό (active) & πωλείται στο e-shop (for_sale)."""
+        upd: dict = {"updated_at": _now()}
+        if for_sale is not None:
+            upd["for_sale"] = bool(for_sale)
+        if active is not None:
+            upd["active"] = bool(active)
+        if len(upd) == 1:
+            return {"ok": False, "error": "no_flag"}
+        await self.update_one({"barcode": str(barcode)}, {"$set": upd})
+        return {"ok": True}
+
+    async def apply_stock(self, barcode: str, *, delta: int | None = None, set_to: int | None = None,
+                          expiry: str | None = None, batch: str | None = None,
+                          cost_cents: int | None = None) -> int | None:
+        """Εφαρμόζει κίνηση αποθέματος στο είδος & επιστρέφει το ΝΕΟ stock_qty (None αν δεν υπάρχει)."""
+        p = await self.find_one({"barcode": str(barcode)})
+        if not p:
+            return None
+        cur = int(p.get("stock_qty") or 0)
+        new = max(0, int(set_to) if set_to is not None else cur + int(delta or 0))
+        upd: dict = {"stock_qty": new, "updated_at": _now()}
+        if expiry:
+            upd["expiry"] = expiry[:10]
+        if batch:
+            upd["batch"] = batch[:60]
+        if cost_cents is not None and cost_cents > 0:
+            upd["wholesale_cents"] = cost_cents
+        await self.update_one({"barcode": str(barcode)}, {"$set": upd})
+        return new
+
+    async def import_mapped(self, rows: list[list], mapping: dict, *, start_row: int = 1,
+                            default_type: str = "parapharmacy", for_sale: bool = False) -> dict:
+        """Εισαγωγή γραμμών Excel/CSV με ΧΑΡΤΟΓΡΑΦΗΣΗ στηλών ({field: col_index}) — ο χρήστης ορίζει
+        από ποια γραμμή ξεκινούν τα δεδομένα & ποια στήλη έχει ποια πληροφορία (self-service)."""
+        def cell(row: list, field: str):
+            idx = mapping.get(field)
+            if idx is None or idx == "":
+                return None
+            try:
+                idx = int(idx)
+            except (ValueError, TypeError):
+                return None
+            return row[idx] if 0 <= idx < len(row) else None
+
+        imported = skipped = 0
+        for row in rows[max(0, int(start_row) - 1):]:
+            bc = str(cell(row, "barcode") or "").strip()
+            name = str(cell(row, "name") or "").strip()
+            if not bc or not name:
+                skipped += 1
+                continue
+            ptype = str(cell(row, "type") or "").strip()
+            data = {
+                "barcode": bc, "name": name,
+                "price_cents": _price_cents(cell(row, "price")),
+                "wholesale_cents": _price_cents(cell(row, "cost")),
+                "stock_qty": _int(cell(row, "stock")),
+                "min_stock": _int(cell(row, "min_stock")),
+                "category": (str(cell(row, "category")).strip() or None) if cell(row, "category") else None,
+                "supplier": (str(cell(row, "supplier")).strip() or None) if cell(row, "supplier") else None,
+                "location": (str(cell(row, "location")).strip() or None) if cell(row, "location") else None,
+                "batch": (str(cell(row, "batch")).strip() or None) if cell(row, "batch") else None,
+                "expiry": _iso_date(cell(row, "expiry")),
+                "type": ptype if ptype in TYPES else default_type,
+                "for_sale": for_sale,
+                "source": "xml",
+            }
+            # μη στέλνεις πεδία που δεν χαρτογραφήθηκαν (να μη μηδενίζουν υπάρχουσες τιμές σε re-import)
+            for k in ("price_cents", "wholesale_cents", "stock_qty", "min_stock", "category",
+                      "supplier", "location", "batch", "expiry"):
+                if data.get(k) is None:
+                    data.pop(k, None)
+            if not for_sale:
+                data.pop("for_sale", None)   # μη το σβήνεις αν ξανα-εισάγεις (κράτα το ήδη υπάρχον)
+            await self.upsert(data)
+            imported += 1
+        return {"ok": True, "imported": imported, "skipped": skipped, "rows": len(rows)}
 
     async def categories(self) -> list[str]:
         rows = await self.aggregate([{"$match": {"active": {"$ne": False}}},
@@ -369,3 +568,26 @@ class PharmacyCatalogRepository(BaseRepository):
             })
             imported += 1
         return {"ok": True, "imported": imported, "skipped": skipped, "rows": len(rows)}
+
+
+class StockMovementRepository(BaseRepository):
+    """Κινήσεις αποθέματος (ledger) ανά είδος: παραλαβή/πώληση/απογραφή/απόσυρση. Κάθε κίνηση κρατά
+    και το νέο υπόλοιπο (audit trail). Tenant-scoped by construction (BaseRepository)."""
+    collection_name = "pharmacy_stock_movements"
+    KINDS = ("in", "out", "adjust", "waste")   # παραλαβή / πώληση-εξαγωγή / διόρθωση απογραφής / απόσυρση(λήξη)
+
+    async def add(self, *, barcode: str, kind: str, qty: int, reason: str = "", batch: str = "",
+                  expiry: str = "", cost_cents: int | None = None, by: str | None = None,
+                  new_stock: int | None = None) -> dict:
+        doc = {"barcode": str(barcode), "kind": kind if kind in self.KINDS else "adjust",
+               "qty": int(qty), "reason": (reason or "").strip()[:200] or None,
+               "batch": (batch or "").strip()[:60] or None, "expiry": (expiry or "").strip()[:10] or None,
+               "cost_cents": cost_cents, "by": by, "new_stock": new_stock, "at": _now()}
+        r = await self.insert_one(doc)
+        return {"ok": True, "id": str(r.inserted_id)}
+
+    async def history(self, barcode: str, *, limit: int = 100) -> list:
+        return jsonsafe(await self.find({"barcode": str(barcode)}, sort=[("at", -1)], limit=limit))
+
+    async def recent(self, *, limit: int = 60) -> list:
+        return jsonsafe(await self.find({}, sort=[("at", -1)], limit=limit))

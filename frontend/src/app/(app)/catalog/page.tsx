@@ -61,7 +61,7 @@ function Catalog() {
   const PAGE_SIZE = 60;
   const list = useQuery({
     queryKey: ["catalog", term, type, sort, page],
-    queryFn: () => api<ListRes>(`/catalog?page_size=${PAGE_SIZE}&page=${page}&q=${encodeURIComponent(term)}&type=${type}&sort=${sort}`),
+    queryFn: () => api<ListRes>(`/catalog?page_size=${PAGE_SIZE}&page=${page}&q=${encodeURIComponent(term)}&type=${type}&sort=${sort}&for_sale=true`),
     retry: false,
   });
   const total = list.data?.total ?? 0;
@@ -88,8 +88,8 @@ function Catalog() {
     .filter((c) => c.type !== "rx_medicine").flatMap((c) => c.categories)));
   return (
     <div className="w-full">
-      <div className="mb-1 flex items-center gap-2 text-xl font-semibold text-slate-800"><Truck className="h-6 w-6 text-brand-600" /> Παραγγελίες & Κατάλογος</div>
-      <p className="mb-4 text-sm text-slate-500">Ο κατάλογος ειδών του φαρμακείου σου (OTC φάρμακα + παραφάρμακα) — οι πελάτες παραγγέλνουν από εδώ. <b>Στα συνταγογραφούμενα δεν επιτρέπονται εκπτώσεις.</b></p>
+      <div className="mb-1 flex items-center gap-2 text-xl font-semibold text-slate-800"><Truck className="h-6 w-6 text-brand-600" /> Κατάλογος ειδών (e-shop)</div>
+      <p className="mb-4 text-sm text-slate-500">Τα είδη που έχεις βάλει <b>«προς πώληση»</b> από την <b>Αποθήκη</b> — οι πελάτες παραγγέλνουν από εδώ. Εδώ ρυθμίζεις εικόνες, περιγραφή, εκπτώσεις & προσφορές. <b>Στα συνταγογραφούμενα δεν επιτρέπονται εκπτώσεις.</b></p>
 
       {/* ── Ενότητα «Προσφορές & προωθητικές ενέργειες» — ομαδοποιημένη ώστε να μη χάνεται ο φαρμακοποιός ── */}
       <section className="mb-5 rounded-2xl border border-slate-200 bg-slate-50/60 p-4">

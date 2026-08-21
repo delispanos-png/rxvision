@@ -13,7 +13,7 @@ import { CLOUDON_LOGO_DATA_URI } from "@/components/brand/cloudonLogo";
 import { APP_VERSION } from "@/lib/version";
 import { Tooltip } from "@/components/ui/Tooltip";
 import {
-  Activity, BarChart3, Boxes, CalendarClock, ChevronRight, LayoutDashboard,
+  Activity, BarChart3, Boxes, Warehouse, CalendarClock, ChevronRight, LayoutDashboard,
   Mail, Megaphone, Salad, PackageSearch, Settings, Sparkles, Stethoscope, TrendingUp, Target, Users,
   Brain, ShieldCheck, Tags, Syringe, Bot, Gift, BookOpen, ScrollText, Truck, Lock, X, UserPlus, Ticket, SlidersHorizontal, Heart, FileText, MessageSquare, PackageCheck, type LucideIcon,
 } from "lucide-react";
@@ -71,6 +71,7 @@ const GROUPS: Group[] = [
   ] },
   // eShop — όλα τα κυκλώματα του ηλεκτρονικού καταστήματος (κατάλογος, παραγγελίες, προσφορές, πιστότητα, πύλη).
   { title: "eShop", en: "eShop", icon: PackageSearch, items: [
+    { label: "Αποθήκη", en: "Warehouse", icon: Warehouse, href: "/warehouse", module: "order_delivery" },
     { label: "Κατάλογος ειδών", en: "Product Catalog", icon: Boxes, href: "/catalog", module: "order_delivery" },
     { label: "Ενεργές παραγγελίες", en: "Active orders", icon: Truck, href: "/orders-delivery#orders", module: "order_delivery" },
     { label: "Ολοκληρωμένες", en: "Completed", icon: PackageCheck, href: "/orders-delivery#done", module: "order_delivery" },

@@ -192,7 +192,7 @@ class FuturePrescriptionRepository(BaseRepository):
 
     async def order_suggestions(self, *, today: datetime, lead_horizon: datetime,
                                 safety_stock_pct: float = 15.0,
-                                history_days: int = 90) -> list[dict]:
+                                history_days: int = 90, use_warehouse: bool = True) -> list[dict]:
         """ANALYTICS.md Bonus — expected demand + safety stock → suggested qty.
 
         Enriched with the REAL trailing-window daily consumption (Μ.Ο./ημέρα) and the
@@ -211,10 +211,11 @@ class FuturePrescriptionRepository(BaseRepository):
                          "foreignField": "_id", "as": "p"}},
             {"$set": {"product_name": {"$first": "$p.name"},
                       "substance": {"$first": "$p.substance"},
-                      "category": {"$first": "$p.category"}}},
+                      "category": {"$first": "$p.category"},
+                      "barcode": {"$first": "$p.barcode"}}},
             {"$project": {"_id": 0, "product_id": "$_id",
                           "expected_demand": 1, "suggested_qty": 1,
-                          "product_name": 1, "substance": 1, "category": 1}},
+                          "product_name": 1, "substance": 1, "category": 1, "barcode": 1}},
         ])
         # trailing-window real consumption + unit wholesale cost from executed lines
         items = BaseRepository(tenant_id=self.tenant_id)
@@ -227,6 +228,17 @@ class FuturePrescriptionRepository(BaseRepository):
                         "cost": {"$sum": "$wholesale_price"}}},
         ])
         hmap = {h["_id"]: h for h in hist}
+        # ── ΑΠΟΘΗΚΗ: τρέχον απόθεμα ανά barcode → «καθαρή» πρόταση = πρόταση − απόθεμα ──
+        # ΜΟΝΟ αν η συνδρομή περιλαμβάνει το e-shop/αποθήκη (use_warehouse). Αλλιώς on_hand=None
+        # (καμία αναφορά αποθέματος) → ο φαρμακοποιός βάζει χειροκίνητα, όπως πριν.
+        whmap: dict = {}
+        if use_warehouse:
+            wh = BaseRepository(tenant_id=self.tenant_id)
+            wh.collection_name = "pharmacy_products"
+            barcodes = [str(d["barcode"]) for d in demand if d.get("barcode")]
+            if barcodes:
+                for p in await wh.find({"barcode": {"$in": barcodes}}, limit=len(barcodes) + 10):
+                    whmap[p.get("barcode")] = p
         out = []
         for d in demand:
             h = hmap.get(d["product_id"], {})
@@ -234,12 +246,20 @@ class FuturePrescriptionRepository(BaseRepository):
             cost = h.get("cost") or 0
             unit_cost = (cost / units) if units else 0  # cents per unit
             sub = d.get("substance")
+            wp = whmap.get(str(d.get("barcode"))) if d.get("barcode") else None
+            on_hand = int(wp.get("stock_qty") or 0) if wp else None      # None = δεν είναι στην αποθήκη
+            gross = int(d.get("suggested_qty") or 0)
+            net = max(0, gross - on_hand) if on_hand is not None else gross   # μη παραγγέλνεις ό,τι έχεις
             out.append({
-                **d,
+                **{k: v for k, v in d.items() if k != "barcode"},
+                "barcode": d.get("barcode"),
                 "substance": None if sub in (None, "None", "") else sub,
                 "avg_daily": round(units / history_days, 2),
-                "est_cost": int(round((d.get("suggested_qty") or 0) * unit_cost)),
-                "on_hand": None,
-                "supplier": None,
+                "on_hand": on_hand,                    # τρέχον απόθεμα αποθήκης
+                "net_suggested_qty": net,              # ΚΑΘΑΡΗ πρόταση (μετά την αφαίρεση αποθέματος)
+                "est_cost": int(round(net * unit_cost)),
+                "supplier": (wp or {}).get("supplier"),
             })
+        # όσα καλύπτονται πλήρως από το απόθεμα (net=0) → κάτω· ταξινόμηση κατά καθαρή ανάγκη
+        out.sort(key=lambda x: -(x.get("net_suggested_qty") or 0))
         return out
