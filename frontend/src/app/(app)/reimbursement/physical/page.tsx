@@ -15,12 +15,12 @@ import { appConfirm, appAlert } from "@/store/dialogStore";
 import { toastSuccess } from "@/store/toastStore";
 import { ClosingReportModal } from "@/components/reimbursement/ClosingReportModal";
 
-type Item = { barcode: string; external_id: string; exec_no: string | null; claim: number; retail?: number; patient?: number; fund: string; group: string; is_eopyy: boolean; is_vaccine: boolean; is_100: boolean; is_fyk: boolean; is_etyap: boolean; needs_original: boolean; needs_dose_check: boolean; needs_check: boolean; executed_at: string; checked: boolean; visual_checked: boolean; day: string };
+type Item = { barcode: string; external_id: string; exec_no: string | null; claim: number; kyyap?: number; retail?: number; patient?: number; fund: string; group: string; is_eopyy: boolean; is_vaccine: boolean; is_100: boolean; is_fyk: boolean; is_etyap: boolean; needs_original: boolean; needs_dose_check: boolean; needs_check: boolean; executed_at: string; checked: boolean; visual_checked: boolean; day: string };
 type DayRow = { date: string; total: number; checked: number };
 type Summary = { total: number; needs_check: number; clean: number; dose: number; fyk: number; narcotic: number; needs_original: number; opinion: number; desensitization: number; strips: number; hdika_note: number; vaccine: number };
 type Check = { period: string; group: string; groups: string[]; total: number; checked: number; remaining: number; extra: string[]; summary?: Summary; by_day: DayRow[]; items: Item[] };
 type Coupon = { name: string; barcode: string; quantity: number; category: string; executed: boolean; qr: boolean | null; qr_batch: string | null; qr_expiry: string | null; lot: string | null };
-type Detail = { ok: boolean; found: boolean; barcode: string; exec_no?: number | null; fund: string; is_eopyy?: boolean; claim: number; n_coupons: number; has_opinion: boolean | null; is_fyk: boolean; has_vaccine: boolean; has_narcotic: boolean; is_etyap?: boolean; needs_original?: boolean; partial: boolean; coupons: Coupon[] };
+type Detail = { ok: boolean; found: boolean; barcode: string; exec_no?: number | null; fund: string; is_eopyy?: boolean; claim: number; n_coupons: number; has_opinion: boolean | null; is_fyk: boolean; has_vaccine: boolean; has_narcotic: boolean; is_etyap?: boolean; needs_original?: boolean; partial: boolean; coupons: Coupon[]; original?: { name: string; quantity: number }[] };
 type RxCheck = { type: string; level: string; title: string; detail: string; category?: "closing" | "advisory" | "info" };
 type ClosingChecksRes = { items: { name: string; barcode: string | null; checks: RxCheck[] }[]; count: number; warnings: number };
 
@@ -631,7 +631,13 @@ export default function PhysicalCheckPage() {
     for (const it of dayItems) {   // ταμεία της ΕΠΙΛΕΓΜΕΝΗΣ ΗΜΕΡΑΣ (κατά ομάδα/«που ανήκουν»)
       const k = it.fund || it.group || "—";
       const g = (fundAgg[k] || (fundAgg[k] = { rx: 0, claim: 0, retail: 0, patient: 0 }));
+      // claim = ΚΑΘΑΡΟ ΕΟΠΥΥ (το backend έχει ήδη αφαιρέσει το ΚΥΥΑΠ)
       g.rx += 1; g.claim += it.claim || 0; g.retail += it.retail || 0; g.patient += it.patient || 0;
+      // Η ΚΥΥΑΠ κάλυψη → ξεχωριστή γραμμή «ΕΤΥΑΠ» (συμπληρωματική υποβολή), όχι στο ΕΟΠΥΥ
+      if ((it.kyyap || 0) > 0) {
+        const e = (fundAgg["ΕΤΥΑΠ"] || (fundAgg["ΕΤΥΑΠ"] = { rx: 0, claim: 0, retail: 0, patient: 0 }));
+        e.rx += 1; e.claim += it.kyyap || 0;
+      }
     }
     const fundLines = Object.entries(fundAgg).sort((a, b) => b[1].claim - a[1].claim);
     const colHead = (title: string, sub: string) => (
@@ -733,15 +739,15 @@ export default function PhysicalCheckPage() {
           <section className="space-y-3 rounded-3xl border border-emerald-100 bg-gradient-to-b from-emerald-50/50 to-white p-3 dark:border-slate-700 dark:from-slate-900 dark:to-slate-900">
             {colHead(t("Κουπόνια", "Coupons"), t("Σκαναρισμένα κουπόνια & σύγκριση με τη συνταγή", "Scanned coupons vs the prescription"))}
             <div className="[&>aside]:order-none [&>aside]:!static">{couponsPanel}</div>
-            {/* φάρμακα στην αρχική συνταγή (τι έγραψε ο γιατρός) */}
-            {detail?.found && !!(detail.coupons || []).length && (
+            {/* φάρμακα στην αρχική συνταγή (τι ΣΥΝΤΑΓΟΓΡΑΦΗΣΕ ο γιατρός — ΟΛΑ, με τη συνταγογραφημένη ποσότητα) */}
+            {detail?.found && !!(detail.original || []).length && (
               <div className="rounded-2xl border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900">
                 <div className="mb-2 text-[11px] font-bold uppercase text-slate-500">💊 {t("Φάρμακα στην αρχική συνταγή", "Meds on the original Rx")}</div>
                 <div className="divide-y divide-slate-100 dark:divide-slate-800">
-                  {Object.entries((detail.coupons || []).reduce((m, c) => { m[c.name] = (m[c.name] || 0) + (c.quantity || 1); return m; }, {} as Record<string, number>)).map(([name, qty]) => (
-                    <div key={name} className="flex items-center justify-between py-1.5 text-sm">
-                      <span className="text-slate-700 dark:text-slate-200">{name}</span>
-                      <span className="font-bold text-slate-400">×{qty}</span>
+                  {(detail.original || []).map((m) => (
+                    <div key={m.name} className="flex items-center justify-between py-1.5 text-sm">
+                      <span className="text-slate-700 dark:text-slate-200">{m.name}</span>
+                      <span className="font-bold text-slate-400">×{m.quantity}</span>
                     </div>
                   ))}
                 </div>
@@ -763,10 +769,8 @@ export default function PhysicalCheckPage() {
                      (last.flags?.has_vaccine || detail?.has_vaccine) ? t("Εμβόλια", "Vaccines") : t("Φάρμακα", "Medicines"),
                      last.flags?.is_eopyy === false ? "warning" : "neutral")}
                 {last.flags?.is_intangible
-                  ? chk(t("Χάρτινη συνταγή", "Paper Rx"), t("ΟΧΙ — Άυλη", "NO — Paperless"), t("Δεν χρειάζεται χάρτινη — άυλη συνταγή.", "No paper needed — paperless Rx."), "ok")
-                  : (detail?.needs_original || last.flags?.needs_original)
-                    ? chk(t("Χάρτινη συνταγή", "Paper Rx"), t("ΝΑΙ", "YES"), t("Επισύναψε την ΠΡΩΤΟΤΥΠΗ συνταγή του γιατρού.", "Attach the doctor's ORIGINAL prescription."), "danger")
-                    : chk(t("Χάρτινη συνταγή", "Paper Rx"), t("Έντυπη", "Printed"), t("Κράτησε τη χάρτινη συνταγή στο φαρμακείο.", "Keep the printed prescription."), "neutral")}
+                  ? chk(t("Τύπος συνταγής", "Rx type"), t("Άυλη", "Paperless"), t("Δεν χρειάζεται χάρτινη — άυλη συνταγή.", "No paper needed — paperless Rx."), "ok")
+                  : chk(t("Τύπος συνταγής", "Rx type"), t("ΜΗ ΑΫΛΗ", "NOT paperless"), t("Επισύναψε τη συνταγή με τη σφραγίδα και την υπογραφή του γιατρού.", "Attach the prescription with the doctor's stamp and signature."), "danger")}
                 {opticalChk
                   ? chk(t("Οπτικός έλεγχος", "Optical check"), opticalChk.title, opticalChk.detail, "warning")
                   : chk(t("Οπτικός έλεγχος", "Optical check"), t("Δεν χρειάζεται", "Not needed"), t("Καμία ιδιαιτερότητα δόσης/ποσότητας.", "No dose/quantity specialness."), "ok")}

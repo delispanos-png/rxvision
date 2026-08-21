@@ -800,6 +800,7 @@ class ReimbursementRepository(BaseRepository):
             {"$group": {"_id": "$external_id",
                         "claim": {"$sum": "$amount_claimed"}, "retail": {"$sum": "$amount_total"},
                         "patient": {"$sum": "$patient_share"},
+                        "kyyap": {"$max": {"$ifNull": ["$details.kyyap_covered", 0]}},
                         "fund_id": {"$first": "$fund_id"},
                         "vac": {"$first": {"$ifNull": ["$details.vaccines", False]}},
                         "intangible": {"$first": {"$ifNull": ["$details.intangible", False]}},
@@ -837,9 +838,13 @@ class ReimbursementRepository(BaseRepository):
             # κατατίθεται μία φορά (στη φάση 1)· οι επόμενες φάσες την αναφέρουν. (ec δεν κρίνει πλέον.)
             first_phase = (exno is None) or (str(exno) == "1")
             needs_orig = (not bool(r.get("intangible"))) and first_phase
+            # ΕΟΠΥΥ claim = ΚΑΘΑΡΟ πρωτεύον = amount_claimed − ΚΥΥΑΠ κάλυψη. Το ΚΥΥΑΠ κομμάτι ανήκει
+            # στο ΕΤΥΑΠ (συμπληρωματική υποβολή) — ΟΧΙ στον ΕΟΠΥΥ (αλλιώς διπλομετριέται στα σύνολα).
+            _kyyap = int(r.get("kyyap") or 0)
+            _net_claim = max(0, int(r.get("claim") or 0) - _kyyap)
             allrows.append({
                 "barcode": root, "external_id": ext, "exec_no": exno,
-                "claim": r["claim"], "retail": r.get("retail", 0), "patient": r.get("patient", 0), "executed_at": r["executed_at"],
+                "claim": _net_claim, "kyyap": _kyyap, "retail": r.get("retail", 0), "patient": r.get("patient", 0), "executed_at": r["executed_at"],
                 "day": r["executed_at"].strftime("%Y-%m-%d") if r.get("executed_at") else None,
                 "fund": glabel, "group": glabel, "is_eopyy": is_eo, "is_vaccine": is_vac,
                 "is_100": is_100, "is_fyk": bool(r.get("n3816")), "is_etyap": bool(r.get("supp")),
@@ -1293,6 +1298,37 @@ class ReimbursementRepository(BaseRepository):
                 "lot": ln.get("lot") if ex else None})
         return coupons, flags
 
+    async def _original_meds(self, ex_ids: list) -> list:
+        """Φάρμακα ΑΡΧΙΚΗΣ συνταγής = τι έγραψε ο γιατρός: γραμμές prescription_items με τη
+        ΣΥΝΤΑΓΟΓΡΑΦΗΜΕΝΗ ποσότητα (item.quantity = σύνολο συνταγής, αποθηκεύεται πλήρες σε κάθε φάση),
+        ΟΛΕΣ οι γραμμές — και οι ανεκτέλεστες. ΟΧΙ εκτελεσμένα κουπόνια της τρέχουσας φάσης."""
+        items = [it async for it in self._db["prescription_items"].find(
+            {"tenant_id": self.tenant_id, "execution_id": {"$in": ex_ids}})]
+        pids = []
+        for it in items:
+            try:
+                pids.append(ObjectId(it.get("product_id")))
+            except Exception:  # noqa: BLE001
+                pass
+        prods = {}
+        async for p in self._db["products"].find({"_id": {"$in": pids}, "tenant_id": self.tenant_id}):
+            prods[str(p["_id"])] = p
+        eofs = [p.get("barcode") for p in prods.values() if p.get("barcode")]
+        cat_by_key: dict = {}
+        async for c in self._db["medicine_catalog"].find(  # tenant-ok: shared catalogue
+                {"$or": [{"_id": {"$in": eofs}}, {"barcode": {"$in": eofs}}]}):
+            cat_by_key[c["_id"]] = c
+            if c.get("barcode"):
+                cat_by_key[c["barcode"]] = c
+        agg: dict = {}
+        for it in items:
+            p = prods.get(str(it.get("product_id")), {})
+            c = cat_by_key.get(p.get("barcode"), {})
+            name = c.get("full_name") or p.get("name") or "—"
+            q = int(it.get("quantity", 1) or 1)      # συνταγογραφημένη ποσότητα (σύνολο)
+            agg[name] = max(agg.get(name, 0), q)     # max ανά φάρμακο (ίδια σε κάθε φάση)
+        return [{"name": n, "quantity": q} for n, q in agg.items()]
+
     async def prescription_detail(self, barcode: str, live: bool = False) -> dict:
         raw = (barcode or "").strip()
         bc = raw.split(":")[0].strip()
@@ -1363,7 +1399,10 @@ class ReimbursementRepository(BaseRepository):
             **{k: v for k, v in self._submission_flags(scoped[0]).items()
                if k in ("is_intangible", "needs_original", "has_desensitization", "exec_count", "is_etyap")},
             "is_fyk": ("fyk" in flags) or bool((scoped[0].get("details") or {}).get("n3816")),
-            "coupons": lines})
+            "coupons": lines,
+            # ΑΡΧΙΚΗ συνταγή: τι έγραψε ο γιατρός (ΣΥΝΤΑΓΟΓΡΑΦΗΜΕΝΗ ποσότητα, ΟΛΕΣ οι γραμμές — και ανεκτέλεστες),
+            # ΟΧΙ τα εκτελεσμένα κουπόνια της τρέχουσας φάσης.
+            "original": await self._original_meds([e["_id"] for e in exs])})
 
     # ── 19. EXECUTIVE DASHBOARD + 18. AI AUDITOR ────────────────────────────
     async def executive(self, period: str | None = None) -> dict:
