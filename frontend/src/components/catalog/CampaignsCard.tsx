@@ -5,20 +5,36 @@
 // καμπάνιας. Επιβάλλεται server-side στη μηχανή τιμολόγησης (δεν εξαρτάται από αυτό το UI).
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Tag, Plus, Trash2, Pencil, X } from "lucide-react";
+import { Tag, Plus, Trash2, Pencil, X, Search, Layers, Check } from "lucide-react";
 import { api } from "@/lib/apiClient";
+import { useCategoryTree } from "@/components/catalog/CategoryPicker";
+import { DateInput } from "@/components/ui/DateInput";
+const toDay = (iso?: string | null) => (iso ? iso.slice(0, 10) : "");
 
 export type Campaign = {
   _id?: string; name: string; discount_pct: number; categories: string[]; tags: string[];
+  cat_ids?: string[]; barcodes?: string[];
   active: boolean; starts_at?: string | null; ends_at?: string | null;
 };
-const EMPTY: Campaign = { name: "", discount_pct: 10, categories: [], tags: [], active: true };
+const EMPTY: Campaign = { name: "", discount_pct: 10, categories: [], tags: [], cat_ids: [], barcodes: [], active: true };
 
 export function CampaignsCard({ categories, tags }: { categories: string[]; tags: string[] }) {
   const qc = useQueryClient();
   const key = ["catalog", "campaigns"];
   const { data } = useQuery({ queryKey: key, queryFn: () => api<{ items: Campaign[] }>("/catalog/campaigns") });
   const [edit, setEdit] = useState<Campaign | null>(null);
+  // Στόχευση σε κόμβους δέντρου κατηγοριών (π.χ. «Αντιγήρανση») + συγκεκριμένα είδη (αναζήτηση).
+  const { data: catTree } = useCategoryTree();
+  const cats = catTree?.items ?? [];
+  const catById = new Map(cats.map((c) => [c.id, c]));
+  const catLabel = (id: string) => { const parts: string[] = []; let cur = catById.get(id); let guard = 0; while (cur && guard++ < 5) { parts.unshift(cur.name); cur = cur.parent_id ? catById.get(cur.parent_id) : undefined; } return parts.join(" › ") || id; };
+  const [prodQ, setProdQ] = useState("");
+  const [pickNames, setPickNames] = useState<Record<string, string>>({});
+  const prodSearch = useQuery({
+    queryKey: ["camp-prod-search", prodQ],
+    queryFn: () => api<{ items: { barcode: string; name: string }[] }>(`/catalog?q=${encodeURIComponent(prodQ.trim())}&for_sale=true&page_size=8`),
+    enabled: prodQ.trim().length >= 2, retry: false,
+  });
 
   const save = useMutation({
     mutationFn: (c: Campaign) => api("/catalog/campaigns", { method: "POST", body: JSON.stringify({ ...c, id: c._id ?? null }) }),
@@ -53,9 +69,9 @@ export function CampaignsCard({ categories, tags }: { categories: string[]; tags
                 {!c.active && <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[10px] font-semibold text-slate-600">Ανενεργή</span>}
               </div>
               <div className="mt-1 text-xs text-slate-500">
-                {c.categories.length === 0 && c.tags.length === 0
+                {(c.categories.length + c.tags.length + (c.cat_ids?.length ?? 0) + (c.barcodes?.length ?? 0)) === 0
                   ? "Όλο το κατάστημα (εκτός συνταγογραφούμενων)"
-                  : [...c.categories, ...c.tags.map((t) => `#${t}`)].join(" · ")}
+                  : [...(c.cat_ids ?? []).map((id) => `🗂️ ${catLabel(id)}`), ...c.categories, ...c.tags.map((t) => `#${t}`), ...((c.barcodes?.length ?? 0) ? [`🎯 ${c.barcodes!.length} είδη`] : [])].join(" · ")}
               </div>
             </div>
             <div className="flex shrink-0 gap-1">
@@ -102,9 +118,61 @@ export function CampaignsCard({ categories, tags }: { categories: string[]; tags
                   </div>
                 </div>
               )}
-              {edit.categories.length === 0 && edit.tags.length === 0 && (
+              {cats.length > 0 && (
+                <div className="text-sm">
+                  <span className="mb-1 flex items-center gap-1 text-slate-600"><Layers className="h-3.5 w-3.5" /> Κατηγορίες e-shop (δέντρο)</span>
+                  <div className="max-h-40 space-y-0.5 overflow-auto rounded-lg border border-slate-200 p-2">
+                    {cats.map((c) => {
+                      const on = (edit.cat_ids ?? []).includes(c.id);
+                      return (
+                        <button key={c.id} onClick={() => setEdit({ ...edit, cat_ids: toggle(edit.cat_ids ?? [], c.id) })}
+                          style={{ paddingLeft: `${(c.level - 1) * 14 + 8}px` }}
+                          className={`block w-full rounded-md py-1 pr-2 text-left text-xs ${on ? "bg-rose-600 text-white" : "text-slate-600 hover:bg-slate-50"}`}>
+                          {c.level === 1 ? "📂 " : c.level === 2 ? "› " : "» "}{c.name}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <p className="mt-1 text-[11px] text-slate-400">Διαλέγοντας μια κατηγορία, η έκπτωση ισχύει σε <b>όλα τα είδη του κλαδιού</b> της (π.χ. «Αντιγήρανση»).</p>
+                </div>
+              )}
+              <div className="text-sm">
+                <span className="mb-1 flex items-center gap-1 text-slate-600"><Search className="h-3.5 w-3.5" /> Συγκεκριμένα είδη (στόχευση)</span>
+                {!!edit.barcodes?.length && (
+                  <div className="mb-1.5 flex flex-wrap gap-1.5">
+                    {edit.barcodes.map((bc) => (
+                      <span key={bc} className="inline-flex items-center gap-1 rounded-lg bg-rose-100 px-2 py-1 text-xs text-rose-700">
+                        {pickNames[bc] || bc}
+                        <button onClick={() => setEdit({ ...edit, barcodes: (edit.barcodes ?? []).filter((x) => x !== bc) })}><X className="h-3 w-3" /></button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+                <div className="relative">
+                  <input value={prodQ} onChange={(e) => setProdQ(e.target.value)} placeholder="Αναζήτηση είδους (όνομα/barcode)…" className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+                  {prodQ.trim().length >= 2 && (prodSearch.data?.items?.length ?? 0) > 0 && (
+                    <div className="absolute z-10 mt-1 max-h-44 w-full overflow-auto rounded-lg border border-slate-200 bg-white shadow-lg">
+                      {prodSearch.data!.items.map((p) => {
+                        const on = (edit.barcodes ?? []).includes(p.barcode);
+                        return (
+                          <button key={p.barcode} onClick={() => { setPickNames((m) => ({ ...m, [p.barcode]: p.name })); setEdit({ ...edit, barcodes: on ? (edit.barcodes ?? []).filter((x) => x !== p.barcode) : [...(edit.barcodes ?? []), p.barcode] }); }}
+                            className={`flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left text-xs hover:bg-slate-50 ${on ? "bg-rose-50" : ""}`}>
+                            <span className="min-w-0 truncate">{p.name}<span className="text-slate-400"> · {p.barcode}</span></span>
+                            {on ? <Check className="h-3.5 w-3.5 shrink-0 text-rose-600" /> : <Plus className="h-3.5 w-3.5 shrink-0 text-slate-400" />}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
+              {edit.categories.length === 0 && edit.tags.length === 0 && (edit.cat_ids?.length ?? 0) === 0 && (edit.barcodes?.length ?? 0) === 0 && (
                 <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">Χωρίς επιλογή → η έκπτωση ισχύει σε <b>όλο το κατάστημα</b> (πάντα εκτός συνταγογραφούμενων).</p>
               )}
+              <div className="grid grid-cols-2 gap-2 text-sm">
+                <label><span className="mb-1 block text-slate-600">Έναρξη (προαιρετικά)</span><DateInput value={toDay(edit.starts_at)} onChange={(d) => setEdit({ ...edit, starts_at: d ? `${d}T00:00:00` : null })} /></label>
+                <label><span className="mb-1 block text-slate-600">Λήξη (προαιρετικά)</span><DateInput value={toDay(edit.ends_at)} onChange={(d) => setEdit({ ...edit, ends_at: d ? `${d}T23:59:59` : null })} /></label>
+              </div>
               <label className="flex items-center gap-2 text-sm">
                 <input type="checkbox" checked={edit.active} onChange={(e) => setEdit({ ...edit, active: e.target.checked })} className="h-4 w-4" />
                 <span className="text-slate-700">Ενεργή</span>

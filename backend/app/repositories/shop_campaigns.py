@@ -56,6 +56,8 @@ class ShopCampaignRepository(BaseRepository):
             "discount_pct": max(1, min(90, int(data.get("discount_pct") or 0))),
             "categories": _clean_list(data.get("categories")),
             "tags": _clean_list(data.get("tags")),
+            "cat_ids": _clean_list(data.get("cat_ids")),       # στόχευση σε κόμβους δέντρου κατηγοριών
+            "barcodes": _clean_list(data.get("barcodes")),     # στόχευση σε συγκεκριμένα είδη
             "active": bool(data.get("active", True)),
             "starts_at": data.get("starts_at"),
             "ends_at": data.get("ends_at"),
@@ -91,14 +93,19 @@ def campaign_pct_for(product: dict, campaigns: list[dict]) -> int:
         return 0
     cat = (product.get("category") or "").strip().lower()
     tags = {str(t).strip().lower() for t in (product.get("tags") or [])}
+    barcode = str(product.get("barcode") or "").strip()
+    pcatids = {str(product.get(k)) for k in ("cat1_id", "cat2_id", "cat3_id") if product.get(k)}
     best = 0
     for c in campaigns:
         cats = {s.lower() for s in (c.get("categories") or [])}
         ctags = {s.lower() for s in (c.get("tags") or [])}
-        if not cats and not ctags:
-            match = True                       # store-wide
+        catids = {str(x) for x in (c.get("cat_ids") or [])}
+        bcs = {str(x) for x in (c.get("barcodes") or [])}
+        targeted = bool(cats or ctags or catids or bcs)
+        if not targeted:
+            match = True                       # store-wide (πάλι εκτός συνταγογραφούμενων)
         else:
-            match = (cat in cats) or bool(tags & ctags)
+            match = (cat in cats) or bool(tags & ctags) or bool(pcatids & catids) or (barcode in bcs)
         if match:
             best = max(best, int(c.get("discount_pct") or 0))
     return min(90, best)

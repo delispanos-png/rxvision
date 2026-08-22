@@ -26,7 +26,31 @@ function catEmoji(c: string): string {
   return "💊";
 }
 
-type Product = { barcode: string; name: string; description_short?: string | null; description_long?: string | null; photo_url?: string | null; image_id?: string | null; images?: string[]; usage_video_url?: string | null; price_cents: number; type: string; category?: string | null; tags?: string[]; featured?: boolean; discount_pct: number; stock_qty: number };
+type Product = { barcode: string; name: string; description_short?: string | null; description_long?: string | null; photo_url?: string | null; image_id?: string | null; images?: string[]; usage_video_url?: string | null; price_cents: number; type: string; category?: string | null; tags?: string[]; featured?: boolean; discount_pct: number; stock_qty: number; sale_starts_at?: string | null; sale_ends_at?: string | null; highlights?: string[]; points_multiplier?: number; related_barcodes?: string[]; related?: Product[]; eff_discount_pct?: number; sale_cents?: number };
+type Cat = { id: string; name: string; parent_id: string | null; level: number; image_id?: string | null; icon?: string | null };
+
+// Μενού-πλακίδια πύλης από το δέντρο κατηγοριών e-shop (3 επίπεδα). Οι μετρήσεις (category_counts)
+// είναι ΗΔΗ αθροιστικές του υποδέντρου (κάθε είδος μετρά στα cat1/cat2/cat3 του) → κρύβει άδεια κλαδιά.
+function CategoryTiles({ tree, counts, path, setPath }: { tree: Cat[]; counts: Record<string, number>; path: Cat[]; setPath: (p: Cat[]) => void }) {
+  const cur = path[path.length - 1];
+  const level = (cur?.level ?? 0) + 1;
+  const parentId = cur?.id ?? null;
+  const kids = tree.filter((c) => c.level === level && (level === 1 || c.parent_id === parentId) && (counts[c.id] ?? 0) > 0);
+  if (kids.length === 0) return null;   // φύλλο (χωρίς παιδιά) ή χωρίς δέντρο → τίποτα να δείξω
+  return (
+    <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 md:grid-cols-6">
+      {kids.map((c) => (
+        <button key={c.id} onClick={() => setPath([...path, c])} className="group flex flex-col items-center gap-1 rounded-xl border border-slate-200 bg-white p-2 shadow-sm transition hover:border-violet-300 hover:shadow">
+          <span className="grid h-14 w-14 shrink-0 place-items-center overflow-hidden rounded-xl bg-slate-50">
+            {c.image_id ? <img src={`${API_BASE}/catalog/image/${c.image_id}`} alt="" className="h-full w-full object-cover" /> : <span className="text-2xl">{c.icon || catEmoji(c.name)}</span>}
+          </span>
+          <span className="line-clamp-2 text-center text-[11px] font-medium leading-tight text-slate-700">{c.name}</span>
+          <span className="text-[10px] text-slate-400">{counts[c.id]} είδη</span>
+        </button>
+      ))}
+    </div>
+  );
+}
 
 // YouTube/Vimeo URL → ασφαλές embed URL (whitelist· αλλιώς null)
 function videoEmbed(url?: string | null): string | null {
@@ -140,9 +164,11 @@ export function ShopTab({ tenantKey = "x" }: { tenantKey?: string }) {
   const [favBarcodes, setFavBarcodes] = useState<Set<string>>(new Set());
   const [q, setQ] = useState("");
   const [cat, setCat] = useState("");
+  const [catPath, setCatPath] = useState<Cat[]>([]);   // επιλογή στο δέντρο κατηγοριών (μενού-πλακίδια)
+  const [showCats, setShowCats] = useState(true);      // εμφάνιση/απόκρυψη πλακιδίων μενού
   const [tag, setTag] = useState("");
   const [sort, setSort] = useState("featured");
-  const [meta, setMeta] = useState<{ categories: string[]; tags: string[]; settings: Settings; campaigns?: Campaign[]; bundles?: Bundle[]; loyalty?: Loyalty } | null>(null);
+  const [meta, setMeta] = useState<{ categories: string[]; tags: string[]; settings: Settings; campaigns?: Campaign[]; bundles?: Bundle[]; loyalty?: Loyalty; category_tree?: Cat[]; category_counts?: Record<string, number>; free_shipping_at?: number; auto_order_discounts?: { name: string; value_type: string; value: number; min_cents: number; min_qty: number }[] } | null>(null);
   // Καλάθι: αρχικοποίηση ΑΠΟ localStorage (ανά φαρμακείο) ώστε να ΜΗΝ χάνεται σε refresh.
   const [cart, setCart] = useState<Record<string, { p: Product; qty: number }>>(() => {
     try { return JSON.parse(localStorage.getItem(CART_KEY) || "{}"); } catch { return {}; }
@@ -159,7 +185,7 @@ export function ShopTab({ tenantKey = "x" }: { tenantKey?: string }) {
     }, 1500);
     return () => clearTimeout(tmo);
   }, [cart]);
-  useEffect(() => { patientApi<{ categories: string[]; tags: string[]; settings: Settings; campaigns?: Campaign[]; bundles?: Bundle[]; loyalty?: Loyalty }>("/patient/shop/meta").then(setMeta).catch(() => {}); }, []);
+  useEffect(() => { patientApi<{ categories: string[]; tags: string[]; settings: Settings; campaigns?: Campaign[]; bundles?: Bundle[]; loyalty?: Loyalty; category_tree?: Cat[]; category_counts?: Record<string, number>; free_shipping_at?: number; auto_order_discounts?: { name: string; value_type: string; value: number; min_cents: number; min_qty: number }[] }>("/patient/shop/meta").then(setMeta).catch(() => {}); }, []);
   // Φόρτωσε τις παραγγελίες στην αρχή ώστε το κουμπί «Οι παραγγελίες μου» να δείχνει badge ενεργών.
   useEffect(() => { patientApi<{ items: Order[] }>("/patient/shop/orders").then((d) => setOrders(d.items)).catch(() => {}); }, []);
   useEffect(() => { patientApi<{ barcodes: string[] }>("/patient/shop/favorites").then((d) => setFavBarcodes(new Set(d.barcodes))).catch(() => {}); }, []);
@@ -167,12 +193,19 @@ export function ShopTab({ tenantKey = "x" }: { tenantKey?: string }) {
     setFavBarcodes((s) => { const n = new Set(s); if (n.has(barcode)) n.delete(barcode); else n.add(barcode); return n; });
     try { await patientApi("/patient/shop/favorite", { method: "POST", body: JSON.stringify({ barcode }) }); } catch { /* ignore */ }
   }
+  const hasTree = (meta?.category_tree?.length ?? 0) > 0;
   useEffect(() => {
     const tmo = setTimeout(() => {
-      patientApi<{ items: Product[] }>(`/patient/shop?q=${encodeURIComponent(q)}&category=${encodeURIComponent(cat)}&tag=${encodeURIComponent(tag)}&sort=${sort}`).then((d) => setProducts(d.items)).catch(() => {});
+      const p = new URLSearchParams({ q, tag, sort });
+      if (hasTree) {   // δέντρο κατηγοριών: το πιο συγκεκριμένο επίπεδο του μονοπατιού
+        if (catPath[0]) p.set("cat1", catPath[0].id);
+        if (catPath[1]) p.set("cat2", catPath[1].id);
+        if (catPath[2]) p.set("cat3", catPath[2].id);
+      } else if (cat) { p.set("category", cat); }
+      patientApi<{ items: Product[] }>(`/patient/shop?${p.toString()}`).then((d) => setProducts(d.items)).catch(() => {});
     }, 250);
     return () => clearTimeout(tmo);
-  }, [q, cat, tag, sort]);
+  }, [q, cat, tag, sort, catPath, hasTree]);
 
   function add(p: Product) { setCart((c) => ({ ...c, [p.barcode]: { p, qty: Math.min((c[p.barcode]?.qty ?? 0) + 1, capOf(p)) } })); }
   function dec(bc: string) { setCart((c) => { const q2 = (c[bc]?.qty ?? 0) - 1; const n = { ...c }; if (q2 <= 0) delete n[bc]; else n[bc] = { ...n[bc], qty: q2 }; return n; }); }
@@ -260,9 +293,32 @@ export function ShopTab({ tenantKey = "x" }: { tenantKey?: string }) {
         <button onClick={() => setView("favorites")} title="Τα αγαπημένα μου" className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl border border-rose-200 bg-white text-rose-500 shadow-sm"><Heart className="h-5 w-5" /></button>
         {meta?.settings.subscription_enabled && <button onClick={() => setView("subs")} title="Οι συνδρομές μου" className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl border border-violet-300 bg-white text-violet-600 shadow-sm"><RefreshCcw className="h-5 w-5" /></button>}
       </div>
-      {/* Κατηγορία + ταξινόμηση σε ΜΙΑ συμπαγή σειρά (αντί για ~18 chips που γέμιζαν την οθόνη) */}
+      {/* Μενού κατηγοριών: μοντέρνα πλακίδια από το δέντρο (με φωτό)· fallback στο legacy select αν δεν έχει στηθεί δέντρο.
+          Πτύσσεται με κουμπί, και ΑΥΤΟΜΑΤΑ κρύβεται όταν αναζητάς — ώστε τα είδη να φαίνονται αμέσως. */}
+      {hasTree && (
+        <div className="space-y-2">
+          <div className="flex flex-wrap items-center gap-1.5 text-xs">
+            <button onClick={() => setShowCats((v) => !v)} className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50">
+              🗂️ Κατηγορίες <ChevronDown className={`h-4 w-4 transition ${showCats && !q.trim() ? "rotate-180" : ""}`} />
+            </button>
+            {catPath.length > 0 && (
+              <>
+                <button onClick={() => setCatPath([])} className="rounded-lg px-2 py-1 font-medium text-violet-600 hover:bg-violet-50">Όλες</button>
+                {catPath.map((c, i) => (
+                  <Fragment key={c.id}>
+                    <ChevronRight className="h-3 w-3 text-slate-300" />
+                    <button onClick={() => setCatPath(catPath.slice(0, i + 1))} className={`rounded-lg px-2 py-1 font-medium ${i === catPath.length - 1 ? "bg-violet-100 text-violet-700" : "text-violet-600 hover:bg-violet-50"}`}>{c.icon ? `${c.icon} ` : ""}{c.name}</button>
+                  </Fragment>
+                ))}
+                <button onClick={() => setCatPath([])} title="Καθαρισμός" className="ml-0.5 grid h-6 w-6 place-items-center rounded-full text-slate-400 hover:bg-slate-100"><XCircle className="h-4 w-4" /></button>
+              </>
+            )}
+          </div>
+          {showCats && !q.trim() && <CategoryTiles tree={meta!.category_tree!} counts={meta!.category_counts ?? {}} path={catPath} setPath={setCatPath} />}
+        </div>
+      )}
       <div className="flex items-center gap-2">
-        {!!meta?.categories.length && (
+        {!hasTree && !!meta?.categories.length && (
           <div className="relative flex-1">
             <select value={cat} onChange={(e) => setCat(e.target.value)} className="w-full appearance-none rounded-xl border border-slate-200 bg-white py-2 pl-3 pr-8 text-sm font-medium text-slate-700 shadow-sm focus:border-violet-400 focus:outline-none focus:ring-2 focus:ring-violet-100">
               <option value="">🗂️ Όλες οι κατηγορίες</option>
@@ -276,6 +332,19 @@ export function ShopTab({ tenantKey = "x" }: { tenantKey?: string }) {
           <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
         </div>
       </div>
+      {/* Μπάρα δωρεάν μεταφορικών (Shopify-style) — κίνητρο για μεγαλύτερο καλάθι. */}
+      {count > 0 && (meta?.free_shipping_at ?? 0) > 0 && (
+        <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-2.5">
+          {subtotal >= meta!.free_shipping_at! ? (
+            <div className="flex items-center gap-2 text-sm font-semibold text-emerald-700"><Truck className="h-4 w-4" /> 🎉 Έχεις ΔΩΡΕΑΝ μεταφορικά!</div>
+          ) : (
+            <>
+              <div className="flex items-center gap-2 text-xs font-medium text-emerald-800"><Truck className="h-4 w-4" /> Πρόσθεσε <b>{eur(meta!.free_shipping_at! - subtotal)}</b> για ΔΩΡΕΑΝ μεταφορικά</div>
+              <div className="mt-1.5 h-2 overflow-hidden rounded-full bg-emerald-200"><div className="h-full rounded-full bg-emerald-500 transition-all" style={{ width: `${Math.min(100, Math.round((subtotal / meta!.free_shipping_at!) * 100))}%` }} /></div>
+            </>
+          )}
+        </div>
+      )}
       {/* ΚΑΛΑΘΙ — κάτω από τα φίλτρα ώστε να ΜΗΝ σκεπάζει header/αναζήτηση/κατηγορίες· sticky & προσβάσιμο. */}
       {count > 0 && (
         <button onClick={() => setView("cart")}
@@ -910,6 +979,19 @@ function ReserveModal({ offer, onClose }: { offer: SvcOffer; onClose: () => void
 }
 
 // ── Σελίδα προϊόντος (PDP) — gallery + πλήρης περιγραφή + τιμή/προσφορά + στο καλάθι ──
+// Αντίστροφη μέτρηση flash προσφοράς — ticking κάθε δευτερόλεπτο.
+function Countdown({ to }: { to: string }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => { const id = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(id); }, []);
+  const end = new Date(to).getTime();
+  const ms = end - now;
+  if (!isFinite(end) || ms <= 0) return null;
+  const s = Math.floor(ms / 1000);
+  const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+  const label = d > 0 ? `${d}η ${h}ω ${m}λ` : `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
+  return <span className="inline-flex items-center gap-1 rounded-md bg-rose-600 px-2 py-0.5 text-xs font-bold text-white">⏳ Λήγει σε {label}</span>;
+}
+
 function ProductModal({ product, camps, inCart, add, dec, onClose, onVideo, isFav, toggleFav }: {
   product: Product; camps: Campaign[]; inCart: number; add: (p: Product) => void; dec: (bc: string) => void;
   onClose: () => void; onVideo: (url: string) => void; isFav: boolean; toggleFav: (bc: string) => void;
@@ -951,11 +1033,20 @@ function ProductModal({ product, camps, inCart, add, dec, onClose, onVideo, isFa
           {/* Πληροφορίες */}
           <div className="flex flex-col">
             {full.category && <div className="text-[11px] font-medium uppercase tracking-wide text-slate-400">{full.category}</div>}
-            {!!full.tags?.length && <div className="mt-1 flex flex-wrap gap-1">{full.tags.map((t) => <span key={t} className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${tagCls(t)}`}>{t}</span>)}</div>}
-            <div className="mt-2 flex items-baseline gap-2">
+            <div className="mt-1 flex flex-wrap items-center gap-1">
+              {full.tags?.map((t) => <span key={t} className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${tagCls(t)}`}>{t}</span>)}
+              {(full.points_multiplier ?? 1) > 1 && <span className="rounded px-1.5 py-0.5 text-[10px] font-bold bg-amber-100 text-amber-800">🎁 ×{full.points_multiplier} πόντοι</span>}
+            </div>
+            <div className="mt-2 flex flex-wrap items-baseline gap-2">
               <span className="text-2xl font-extrabold text-slate-900">{eur(fc)}</span>
               {fc < full.price_cents && <span className="text-sm text-slate-400 line-through">{eur(full.price_cents)}</span>}
+              {dPct > 0 && full.sale_ends_at && <Countdown to={full.sale_ends_at} />}
             </div>
+            {!!full.highlights?.length && (
+              <ul className="mt-2 space-y-0.5">
+                {full.highlights.map((h, i) => <li key={i} className="flex items-start gap-1.5 text-xs text-slate-600"><Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-500" />{h}</li>)}
+              </ul>
+            )}
             {back ? <div className="mt-1 text-xs font-semibold text-amber-700">Κατόπιν παραγγελίας — το φαρμακείο επιβεβαιώνει διαθεσιμότητα</div>
                   : full.stock_qty <= LOW_STOCK && full.stock_qty > 0 ? <div className="mt-1 text-xs font-semibold text-orange-600">Τελευταία {full.stock_qty} τεμάχια</div> : null}
             {(full.description_long || full.description_short) && (
@@ -974,6 +1065,21 @@ function ProductModal({ product, camps, inCart, add, dec, onClose, onVideo, isFa
             </div>
           </div>
         </div>
+        {!!full.related?.length && (
+          <div className="border-t border-slate-100 p-4">
+            <div className="mb-2 text-sm font-bold text-slate-800">Συχνά μαζί</div>
+            <div className="flex gap-3 overflow-x-auto pb-1">
+              {full.related.map((r) => (
+                <button key={r.barcode} onClick={() => { add(r); toast("Προστέθηκε στο καλάθι", "success"); }} className="w-28 shrink-0 rounded-xl border border-slate-200 p-2 text-left transition hover:border-violet-300">
+                  <div className="grid h-20 place-items-center overflow-hidden rounded-lg bg-slate-50">{imgList(r)[0] ? <img src={imgList(r)[0]} alt="" className="h-full w-full object-contain" /> : <Package className="h-6 w-6 text-slate-300" />}</div>
+                  <div className="mt-1 line-clamp-2 text-[11px] font-medium leading-tight text-slate-700">{r.name}</div>
+                  <div className="mt-0.5 text-xs font-bold text-slate-900">{eur(r.sale_cents ?? r.price_cents)}</div>
+                  <div className="mt-1 inline-flex items-center gap-1 text-[10px] font-semibold text-violet-600"><Plus className="h-3 w-3" /> Προσθήκη</div>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

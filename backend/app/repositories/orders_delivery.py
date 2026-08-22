@@ -40,6 +40,49 @@ def _clean_tiers(v) -> list[dict]:
     return [{"min_cents": k, "pct": out[k]} for k in sorted(out)][:6]
 
 
+# Μειωμένοι συντελεστές ΦΠΑ (νησιά κ.λπ.) — κατά προσέγγιση -30% στον πλησιέστερο νόμιμο συντελεστή.
+_REDUCED_VAT = {24: 17, 17: 13, 13: 9, 6: 4}
+
+
+def _eff_vat(rate: int, reduced: bool) -> int:
+    return _REDUCED_VAT.get(int(rate or 0), int(rate or 0)) if reduced else int(rate or 0)
+
+
+def compute_order_vat(items: list[dict], *, non_rx_reduction_cents: int = 0, reduced: bool = False) -> dict:
+    """Ανάλυση ΦΠΑ ανά είδος & ανά συντελεστή για ΣΩΣΤΕΣ αποδείξεις/τιμολόγια.
+    - price_includes_vat=True → ΑΠΟΦΟΡΟΛΟΓΗΣΗ (net=μικτή/(1+συντ.)) + ξεχωριστό ΦΠΑ.
+    - price_includes_vat=False → πρόσθεση ΦΠΑ πάνω στην καθαρή (η μικτή ανεβαίνει).
+    Οι εκπτώσεις καλαθιού κατανέμονται ΑΝΑΛΟΓΙΚΑ ΜΟΝΟ στα μη-rx (τα rx δεν παίρνουν έκπτωση).
+    Επιστρέφει και `extra_vat_cents` = επιπλέον ΦΠΑ που προστέθηκε σε είδη «χωρίς ΦΠΑ»."""
+    non_rx_base = sum(int(i.get("line_cents") or 0) for i in items if i.get("type") != "rx_medicine")
+    by_rate: dict[int, dict] = {}
+    lines, tot_net, tot_vat, tot_gross = [], 0, 0, 0
+    pre_vat_payable = 0
+    for i in items:
+        line = int(i.get("line_cents") or 0)
+        alloc = 0
+        if i.get("type") != "rx_medicine" and non_rx_base > 0 and non_rx_reduction_cents:
+            alloc = round(non_rx_reduction_cents * line / non_rx_base)
+        base = max(0, line - alloc)                 # τιμή μετά τις εκπτώσεις καλαθιού (shelf)
+        pre_vat_payable += base
+        v = _eff_vat(int(i.get("vat_rate") or 0), reduced)
+        if v <= 0:
+            net, vat, gross = base, 0, base
+        elif i.get("price_includes_vat", True):
+            net = round(base / (1 + v / 100)); vat = base - net; gross = base
+        else:
+            net = base; vat = round(base * v / 100); gross = base + vat
+        r = by_rate.setdefault(v, {"net_cents": 0, "vat_cents": 0, "gross_cents": 0})
+        r["net_cents"] += net; r["vat_cents"] += vat; r["gross_cents"] += gross
+        tot_net += net; tot_vat += vat; tot_gross += gross
+        lines.append({"barcode": i.get("barcode"), "vat_rate": v,
+                      "net_cents": net, "vat_cents": vat, "gross_cents": gross})
+    return {"by_rate": [{"rate": k, **val} for k, val in sorted(by_rate.items())],
+            "lines": lines, "total_net_cents": tot_net, "total_vat_cents": tot_vat,
+            "total_gross_cents": tot_gross, "reduced": bool(reduced),
+            "extra_vat_cents": max(0, tot_gross - pre_vat_payable)}
+
+
 class OrdersDeliveryRepository(BaseRepository):
     collection_name = "orders_delivery"
 
@@ -70,6 +113,8 @@ class OrdersDeliveryRepository(BaseRepository):
             "hero_image_id": d.get("hero_image_id") or None,
             "hero_title": d.get("hero_title", ""),
             "hero_subtitle": d.get("hero_subtitle", ""),
+            # Περιοχές μειωμένου ΦΠΑ (π.χ. νησιά): ονόματα περιοχών· η παράδοση σε αυτές → μειωμένος συντελεστής.
+            "reduced_vat_areas": d.get("reduced_vat_areas", []),
             "tenant_id": self.tenant_id,   # για το webhook URL στο UI
         }
 
@@ -109,6 +154,7 @@ class OrdersDeliveryRepository(BaseRepository):
             "hero_image_id": (str(cfg.get("hero_image_id")).strip() or None) if cfg.get("hero_image_id") else None,
             "hero_title": str(cfg.get("hero_title") or "")[:120],
             "hero_subtitle": str(cfg.get("hero_subtitle") or "")[:200],
+            "reduced_vat_areas": [str(a).strip()[:80] for a in (cfg.get("reduced_vat_areas") or []) if str(a).strip()][:80],
             "updated_at": _now(),
         }
         # Viva creds ανά φαρμακείο — κρυπτογράφησε τα secrets· κενό secret = αμετάβλητο.
@@ -174,20 +220,24 @@ class OrdersDeliveryRepository(BaseRepository):
                 has_medicine = True
             # Έκπτωση: καλύτερη ανάμεσα σε «δική του» και «καμπάνιας ομάδας» (ΔΕΝ αθροίζονται)·
             # τα συνταγογραφούμενα εξαιρούνται πάντα (campaign_pct_for → 0).
+            from app.repositories.pharmacy_catalog import sale_active_now
             camp_pct = campaign_pct_for(prod, campaigns)
+            self_disc = int(prod.get("discount_pct") or 0) if sale_active_now(prod) else 0  # flash: εντός παραθύρου
             if ptype == "rx_medicine":
                 disc = 0                                    # συνταγογραφούμενα: ΠΟΤΕ έκπτωση
             elif ptype == "otc_medicine":
-                disc = min(90, max(int(prod.get("discount_pct") or 0), camp_pct))
+                disc = min(90, max(self_disc, camp_pct))
             else:                                           # παραφάρμακα: + έκπτωση συνδρομής
-                disc = min(90, max(int(prod.get("discount_pct") or 0), camp_pct) + max(0, int(sub_discount_pct)))
+                disc = min(90, max(self_disc, camp_pct) + max(0, int(sub_discount_pct)))
             line_cents = round(unit * qty * (100 - disc) / 100)
             subtotal += line_cents
             if ptype != "rx_medicine":
                 redeemable += line_cents
             items.append({"barcode": prod["barcode"], "name": prod["name"], "qty": qty,
                           "unit_cents": unit, "discount_pct": disc, "line_cents": line_cents,
-                          "campaign_pct": camp_pct, "type": prod.get("type"), "backorder": backorder})
+                          "campaign_pct": camp_pct, "type": prod.get("type"), "backorder": backorder,
+                          "vat_rate": int(prod.get("vat_rate") or 0),
+                          "price_includes_vat": bool(prod.get("price_includes_vat", True))})
         if not items:
             return {"ok": False, "error": "empty"}
         st = await self.settings()
@@ -202,8 +252,16 @@ class OrdersDeliveryRepository(BaseRepository):
         bundle_cents, bundle_names = bundle_savings(items, bundles)
         bundle_cents = min(bundle_cents, redeemable)
         redeemable -= bundle_cents          # η βάση για τα επόμενα βήματα μικραίνει
-        # ── (3) ΚΑΛΑΘΙ: ΚΑΛΥΤΕΡΟ από «κλιμακωτή» ή «κουπόνι» — όχι και τα δύο ──
+        # ── (3) ΚΑΛΑΘΙ: ΚΑΛΥΤΕΡΟ από «αυτόματη» (κλιμακωτή/order-discount) ή «κουπόνι» — όχι και τα δύο ──
+        from app.repositories.shop_order_discounts import (
+            ShopOrderDiscountRepository, best_order_discount, free_shipping_threshold)
+        total_qty = sum(int(it.get("qty") or 0) for it in items)
+        order_discs = await ShopOrderDiscountRepository(tenant_id=self.tenant_id).active_now()
         tier_cents, tier_pct = tier_discount(redeemable, st.get("cart_tiers") or [])
+        auto = best_order_discount(order_discs, base_cents=redeemable, qty=total_qty)  # Shopify αυτόματη
+        auto_cents = auto["discount_cents"] if auto else 0
+        automatic_cents = max(tier_cents, auto_cents)               # μία αυτόματη έκπτωση (όχι σώρευση)
+        auto_disc_id = auto["id"] if (auto and auto_cents >= tier_cents and auto_cents > 0) else None
         coupon_doc, coupon_cents = None, 0
         if coupon_code:
             crepo = ShopCouponRepository(tenant_id=self.tenant_id)
@@ -212,16 +270,22 @@ class OrdersDeliveryRepository(BaseRepository):
                 return {"ok": False, "error": v.get("error"), "min_cents": v.get("min_cents")}
             coupon_doc = v["coupon"]
             coupon_cents = coupon_discount(coupon_doc, redeemable)
-        if coupon_cents >= tier_cents:
-            cart_cents, cart_kind, tier_pct = coupon_cents, "coupon", 0
+        if coupon_cents >= automatic_cents:
+            cart_cents, cart_kind, tier_pct, auto_disc_id = coupon_cents, "coupon", 0, None
         else:
-            cart_cents, cart_kind, coupon_doc, coupon_cents = tier_cents, "tier", None, 0
+            cart_cents = automatic_cents
+            cart_kind = "order_discount" if auto_disc_id else "tier"
+            coupon_doc, coupon_cents = None, 0
         cart_cents = min(cart_cents, redeemable)
         redeemable -= cart_cents            # ό,τι μένει είναι το ταβάνι για τους πόντους
         fee = 0
         if mode == "delivery":
             base_for_fee = subtotal - bundle_cents - cart_cents
-            fee = 0 if (st["free_over_cents"] and base_for_fee >= st["free_over_cents"]) else st["delivery_fee_cents"]
+            # Δωρεάν μεταφορικά: κατώφλι από ρυθμίσεις Ή από ενεργή free_shipping προσφορά (το μικρότερο).
+            fs = free_shipping_threshold(order_discs, qty=total_qty)
+            thresholds = [x for x in (st.get("free_over_cents") or 0, fs) if x]
+            free_at = min(thresholds) if thresholds else 0
+            fee = 0 if (free_at and base_for_fee >= free_at) else st["delivery_fee_cents"]
         # ── (4) εξαργύρωση πόντων: ΜΟΝΟ πάνω στην αξία των ΜΗ-συνταγογραφούμενων ειδών ──
         redeem_cents = max(0, int(loyalty_redeem_cents or 0))
         loy = None
@@ -242,6 +306,11 @@ class OrdersDeliveryRepository(BaseRepository):
             min_r = int(lcfg.get("min_redeem_cents") or 0)
             if min_r and redeem_cents < min_r:
                 return {"ok": False, "error": "redeem_below_min", "min_cents": min_r}
+        # ── (5) ΦΠΑ: ανάλυση ανά είδος/συντελεστή (αποφορολόγηση + ξανά ΦΠΑ) για σωστές αποδείξεις ──
+        reduced_areas = {str(a).strip().lower() for a in (st.get("reduced_vat_areas") or [])}
+        area = str((address or {}).get("area") or "").strip().lower() if mode == "delivery" else ""
+        reduced_vat = bool(area and area in reduced_areas)
+        vat = compute_order_vat(items, non_rx_reduction_cents=bundle_cents + cart_cents, reduced=reduced_vat)
         # «Σε αναμονή έγκρισης» αν έχει backorder (ο φαρμακοποιός αποφασίζει)· αλλιώς «Νέα» άμεσα.
         status = "pending" if has_backorder else "new"
         # ΑΤΟΜΙΚΗ δέσμευση αποθέματος για τα ΑΜΕΣΑ είδη (όχι σε pending — δεσμεύεται στην έγκριση).
@@ -258,6 +327,8 @@ class OrdersDeliveryRepository(BaseRepository):
                 return {"ok": False, "error": "redeem_failed"}
         if coupon_doc:                       # «κλείδωσε» τη χρήση του κουπονιού (επιστρέφεται σε ακύρωση)
             await ShopCouponRepository(tenant_id=self.tenant_id).consume(str(coupon_doc["code"]))
+        if auto_disc_id:                     # αύξησε μετρητή χρήσεων της αυτόματης order-έκπτωσης
+            await ShopOrderDiscountRepository(tenant_id=self.tenant_id).consume(auto_disc_id)
         doc = {
             "tenant_id": self.tenant_id, "account_id": account_id, "patient_ref": patient_ref,
             "patient_name": patient_name, "patient_phone": patient_phone,
@@ -266,7 +337,9 @@ class OrdersDeliveryRepository(BaseRepository):
             "cart_discount_cents": cart_cents, "cart_discount_kind": cart_kind if cart_cents else None,
             "cart_tier_pct": tier_pct, "coupon_code": (coupon_doc or {}).get("code"),
             "loyalty_redeem_cents": redeem_cents,
-            "total_cents": max(0, subtotal - bundle_cents - cart_cents + fee - redeem_cents), "mode": mode,
+            # ΦΠΑ ανάλυση (αποδείξεις/τιμολόγια)· extra_vat = ΦΠΑ που προστέθηκε σε είδη «χωρίς ΦΠΑ».
+            "vat": vat,
+            "total_cents": max(0, subtotal - bundle_cents - cart_cents + vat["extra_vat_cents"] + fee - redeem_cents), "mode": mode,
             "address": address if mode == "delivery" else None,
             "courier_authorized": bool(courier_authorized), "courier_auth": courier_auth,
             "gdpr_consent": True,
@@ -306,7 +379,7 @@ class OrdersDeliveryRepository(BaseRepository):
                     if has_backorder else "Στάλθηκε στο φαρμακείο σου. Θα ενημερώνεσαι σε κάθε βήμα.")
             await push_service.send_to_account(
                 account_id, title="🛍️ Η παραγγελία σου ελήφθη", body=body, url="/portal")
-        return {"ok": True, "order_id": str(res), "total_cents": subtotal + fee,
+        return {"ok": True, "order_id": str(res), "total_cents": order_total,
                 "status": status, "has_backorder": has_backorder}
 
     # ── ενεργό καλάθι (server-side) → υπενθύμιση «ξεχασμένου καλαθιού» ──────
@@ -446,6 +519,29 @@ class OrdersDeliveryRepository(BaseRepository):
         if cents > 0 or order.get("coupon_code"):
             await self.update_one({"_id": order["_id"]}, {"$set": {"loyalty_refunded": True}})
 
+    async def _award_shop_bonus(self, order: dict) -> None:
+        """Bonus πόντοι πιστότητας για είδη με points_multiplier>1. Ενεργό μόνο αν το πρόγραμμα
+        είναι enabled (opt-in). bonus = Σ(€γραμμής × (mult−1)) πόντοι × αξία πόντου. Idempotent ανά παραγγελία."""
+        if not order.get("patient_ref"):
+            return
+        from app.repositories.loyalty import LoyaltyRepository
+        loy = LoyaltyRepository(tenant_id=self.tenant_id)
+        cfg = await loy.config()
+        cpp = int(cfg.get("cents_per_point") or 0)
+        if not cfg.get("enabled") or cpp <= 0:
+            return
+        cat = PharmacyCatalogRepository(tenant_id=self.tenant_id)
+        bonus_pts = 0.0
+        for it in order.get("items", []):
+            prod = await cat.get(it.get("barcode"))
+            mult = float((prod or {}).get("points_multiplier") or 1)
+            if mult > 1:
+                bonus_pts += (int(it.get("line_cents") or 0) / 100) * (mult - 1)
+        bonus_cents = round(bonus_pts) * cpp
+        if bonus_cents > 0:
+            await loy._credit_once(str(order["patient_ref"]), bonus_cents, source="shop_bonus",
+                                   dedup_key=f"shopbonus:{order['_id']}", reason="Bonus πόντοι e-shop 🎁")
+
     async def set_status(self, order_id: str, status: str) -> dict:
         from bson import ObjectId
         if status not in STATUS_LABELS:
@@ -462,6 +558,9 @@ class OrdersDeliveryRepository(BaseRepository):
             await PharmacyCatalogRepository(tenant_id=self.tenant_id).restore_stock(
                 [{"barcode": it.get("barcode"), "qty": it.get("qty", 1)} for it in order.get("items", [])])
             await self._refund_loyalty(order)     # ακύρωση → γύρνα πίσω τους πόντους
+        # Παράδοση → bonus πόντοι για είδη με points_multiplier>1 (καθαρά πωλησιακό κίνητρο· idempotent).
+        if status == "delivered" and order.get("status") != "delivered":
+            await self._award_shop_bonus(order)
         await self.update_one({"_id": oid}, {"$set": {"status": status, "updated_at": _now()},
                                              "$push": {"status_history": {"status": status, "at": _now()}}})
         # notify the patient

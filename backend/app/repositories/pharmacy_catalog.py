@@ -82,6 +82,54 @@ def _clean_variants(v) -> list[dict]:
     return out
 
 
+def _clean_refs(v) -> list[str]:
+    """Λίστα barcodes-αναφορών (cross-sell) — κρατά το barcode ΟΠΩΣ ΕΙΝΑΙ (και μη-αριθμητικά SKU), dedup, cap 8."""
+    if isinstance(v, str):
+        v = re.split(r"[,\s]+", v)
+    out: list[str] = []
+    for x in (v or []):
+        s = str(x or "").strip()[:64]
+        if s and s not in out:
+            out.append(s)
+    return out[:8]
+
+
+def _clean_highlights(v) -> list[str]:
+    """Σημεία πώλησης (bullets) στη σελίδα προϊόντος — σύντομα, μοναδικά, cap 6."""
+    if isinstance(v, str):
+        v = v.splitlines()
+    out: list[str] = []
+    for x in (v or []):
+        s = str(x or "").strip()[:120]
+        if s and s not in out:
+            out.append(s)
+    return out[:6]
+
+
+def sale_active_now(product: dict, now: datetime | None = None) -> bool:
+    """True αν η per-item έκπτωση ισχύει ΤΩΡΑ (flash παράθυρο). Χωρίς παράθυρο → πάντα ενεργή."""
+    now = now or datetime.now(tz=timezone.utc)
+    s, e = product.get("sale_starts_at"), product.get("sale_ends_at")
+    if s and _as_utc(s) and now < _as_utc(s):
+        return False
+    if e and _as_utc(e) and now > _as_utc(e):
+        return False
+    return True
+
+
+def _as_utc(v):
+    """Δέξου datetime (naive→UTC) ή ISO string· επέστρεψε aware datetime ή None."""
+    if isinstance(v, datetime):
+        return v if v.tzinfo else v.replace(tzinfo=timezone.utc)
+    if isinstance(v, str) and v:
+        try:
+            d = datetime.fromisoformat(v.replace("Z", "+00:00"))
+            return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
+        except ValueError:
+            return None
+    return None
+
+
 _VIDEO_HOSTS = re.compile(r"^https://(www\.)?(youtube\.com/|youtu\.be/|m\.youtube\.com/|vimeo\.com/)", re.I)
 
 
@@ -166,16 +214,31 @@ class PharmacyCatalogRepository(BaseRepository):
 
     async def list(self, *, q: str = "", category: str | None = None, ptype: str | None = None,
                    tag: str | None = None, in_stock_only: bool = False, for_sale_only: bool = False,
+                   cat1: str | None = None, cat2: str | None = None, cat3: str | None = None,
                    sort: str = "featured", page: int = 1, page_size: int = 40) -> dict:
         query: dict = {"active": {"$ne": False}}
         if for_sale_only:                    # Κατάλογος e-shop: ΜΟΝΟ όσα ο φαρμακοποιός έχει βάλει προς πώληση
             query["for_sale"] = True
         if q and q.strip():
-            rx = {"$regex": re.escape(q.strip()), "$options": "i"}
-            query["$or"] = [{"name": rx}, {"barcode": rx}, {"description_long": rx},
-                            {"tags": rx}, {"category": rx}]
+            # Έξυπνη αναζήτηση: κάθε λέξη πρέπει να ταιριάζει ΚΑΠΟΥ (AND ανά λέξη, OR ανά πεδίο) —
+            # όνομα, barcode, περιγραφή, ετικέτες, κατηγορία. Π.χ. «depon 500» = όνομα με «depon» ΚΑΙ «500».
+            tokens = [tok for tok in re.split(r"\s+", q.strip()) if tok][:6]
+            ands = []
+            for tok in tokens:
+                rx = {"$regex": re.escape(tok), "$options": "i"}
+                ands.append({"$or": [{"name": rx}, {"barcode": rx}, {"description_long": rx},
+                                     {"description_short": rx}, {"tags": rx}, {"category": rx}]})
+            if ands:
+                query["$and"] = ands
         if category:
             query["category"] = category
+        # Φίλτρο δέντρου κατηγοριών e-shop (μενού πύλης): το πιο συγκεκριμένο επίπεδο υπερισχύει.
+        if cat3:
+            query["cat3_id"] = cat3
+        elif cat2:
+            query["cat2_id"] = cat2
+        elif cat1:
+            query["cat1_id"] = cat1
         if ptype in TYPES:
             query["type"] = ptype
         if tag:
@@ -202,7 +265,8 @@ class PharmacyCatalogRepository(BaseRepository):
         rows = await self.find({"active": {"$ne": False}, "for_sale": True}, limit=1000)
         out: list[dict] = []
         for p in rows:
-            eff = max(int(p.get("discount_pct") or 0), campaign_pct_for(p, campaigns))
+            self_disc = int(p.get("discount_pct") or 0) if sale_active_now(p) else 0  # flash: μόνο εντός παραθύρου
+            eff = max(self_disc, campaign_pct_for(p, campaigns))
             if eff <= 0:
                 continue
             price = int(p.get("price_cents") or 0)
@@ -231,6 +295,8 @@ class PharmacyCatalogRepository(BaseRepository):
             "usage_video_url": _safe_video_url(data.get("usage_video_url")),
             "price_cents": max(0, _int(data.get("price_cents")) or 0),
             "wholesale_cents": max(0, _int(data.get("wholesale_cents")) or 0),  # χονδρική → κερδοφορία
+            "vat_rate": max(0, min(30, _int(data.get("vat_rate")) if data.get("vat_rate") is not None else 6)),  # ΦΠΑ %
+            "price_includes_vat": bool(data.get("price_includes_vat", True)),   # λιανική με/χωρίς ΦΠΑ
             "is_fyk": bool(data.get("is_fyk", False)),                          # ΦΥΚ (εξαιρείται από rebate note)
             "participation": max(0, min(100, _int(data.get("participation")) if data.get("participation") is not None else 0)),  # % συμμετοχής ασφαλισμένου (indicative split)
             "type": ptype,
@@ -240,7 +306,11 @@ class PharmacyCatalogRepository(BaseRepository):
             "discount_pct": disc,
             "stock_qty": max(0, _int(data.get("stock_qty")) or 0),
             "active": bool(data.get("active", True)),           # ενεργό/ανενεργό είδος στην αποθήκη
-            "for_sale": bool(data.get("for_sale", False)),      # πωλείται στο e-shop → εμφανίζεται στον Κατάλογο
+            # e-shop κατηγορίες (3 επίπεδα)· για «προς πώληση» ΠΡΕΠΕΙ να υπάρχει Κατηγορία 1.
+            "cat1_id": (str(data.get("cat1_id")).strip() or None) if data.get("cat1_id") else None,
+            "cat2_id": (str(data.get("cat2_id")).strip() or None) if data.get("cat2_id") else None,
+            "cat3_id": (str(data.get("cat3_id")).strip() or None) if data.get("cat3_id") else None,
+            "for_sale": bool(data.get("for_sale", False)) and bool(data.get("cat1_id")),  # for_sale ⇒ Κατ.1
             # ── πλήρη χαρακτηριστικά ΑΠΟΘΗΚΗΣ ──
             "min_stock": max(0, _int(data.get("min_stock")) or 0),   # σημείο αναπαραγγελίας (alert χαμηλού)
             "supplier": (data.get("supplier") or "").strip()[:120] or None,   # προμηθευτής
@@ -249,13 +319,21 @@ class PharmacyCatalogRepository(BaseRepository):
             "expiry": (data.get("expiry") or "").strip()[:10] or None,        # λήξη YYYY-MM-DD
             "barcodes": _clean_barcodes(data.get("barcodes")),                # εναλλακτικά barcodes
             "variants": _clean_variants(data.get("variants")),                # εκδοχές (χρώμα/μέγεθος)
+            # ── καθαρά ΠΩΛΗΣΙΑΚΑ χαρακτηριστικά e-shop ──
+            "sale_starts_at": data.get("sale_starts_at"),      # flash προσφορά: παράθυρο ισχύος έκπτωσης
+            "sale_ends_at": data.get("sale_ends_at"),
+            "highlights": _clean_highlights(data.get("highlights")),          # σημεία πώλησης (bullets)
+            "related_barcodes": _clean_refs(data.get("related_barcodes")),  # cross-sell «συχνά μαζί»
+            "points_multiplier": max(1.0, min(10.0, float(data.get("points_multiplier") or 1))),  # bonus πόντοι (×)
             "source": data.get("source") if data.get("source") in ("manual", "xml", "hdika") else "manual",
             "updated_at": _now(),
         }
         # Τα tags/featured/image_id τα διαχειρίζεται ΜΟΝΟ ο φαρμακοποιός (edit). Το XML import δεν τα
         # στέλνει → μην τα σβήνεις σε επανα-εισαγωγή (διατήρησε ό,τι έχει ήδη μπει χειροκίνητα).
         for k in ("tags", "featured", "image_id", "images", "wholesale_cents", "is_fyk", "participation",
-                  "for_sale", "min_stock", "supplier", "location", "batch", "expiry", "barcodes", "variants"):
+                  "for_sale", "min_stock", "supplier", "location", "batch", "expiry", "barcodes", "variants",
+                  "cat1_id", "cat2_id", "cat3_id", "sale_starts_at", "sale_ends_at", "highlights",
+                  "related_barcodes", "points_multiplier", "vat_rate", "price_includes_vat"):
             if k not in data:
                 doc.pop(k, None)
         await self.update_one({"barcode": bc},
@@ -312,6 +390,10 @@ class PharmacyCatalogRepository(BaseRepository):
         """Toggle ανεξάρτητα flags: ενεργό/ανενεργό (active) & πωλείται στο e-shop (for_sale)."""
         upd: dict = {"updated_at": _now()}
         if for_sale is not None:
+            if for_sale:   # ΚΑΝΟΝΑΣ: για «προς πώληση» ΠΡΕΠΕΙ να έχει Κατηγορία 1
+                p = await self.find_one({"barcode": str(barcode)}) or {}
+                if not p.get("cat1_id"):
+                    return {"ok": False, "error": "no_category", "need_category": True}
             upd["for_sale"] = bool(for_sale)
         if active is not None:
             upd["active"] = bool(active)
@@ -391,6 +473,18 @@ class PharmacyCatalogRepository(BaseRepository):
         rows = await self.aggregate([{"$match": {"active": {"$ne": False}}},
                                      {"$group": {"_id": "$category"}}, {"$sort": {"_id": 1}}])
         return [r["_id"] for r in rows if r.get("_id")]
+
+    async def category_counts(self) -> dict:
+        """Πλήθος «προς πώληση» ειδών ανά κατηγορία-δέντρου (κάθε είδος μετρά στα cat1/cat2/cat3 του).
+        Οδηγεί το μενού της πύλης ώστε να κρύβει άδεια κλαδιά."""
+        rows = await self.aggregate([
+            {"$match": {"active": {"$ne": False}, "for_sale": True}},
+            {"$project": {"ids": ["$cat1_id", "$cat2_id", "$cat3_id"]}},
+            {"$unwind": "$ids"},
+            {"$match": {"ids": {"$ne": None}}},
+            {"$group": {"_id": "$ids", "n": {"$sum": 1}}},
+        ])
+        return {str(r["_id"]): int(r.get("n") or 0) for r in rows if r.get("_id")}
 
     async def tags(self) -> list[str]:
         rows = await self.aggregate([{"$match": {"active": {"$ne": False}}},
@@ -583,8 +677,8 @@ class StockMovementRepository(BaseRepository):
                "qty": int(qty), "reason": (reason or "").strip()[:200] or None,
                "batch": (batch or "").strip()[:60] or None, "expiry": (expiry or "").strip()[:10] or None,
                "cost_cents": cost_cents, "by": by, "new_stock": new_stock, "at": _now()}
-        r = await self.insert_one(doc)
-        return {"ok": True, "id": str(r.inserted_id)}
+        new_id = await self.insert_one(doc)
+        return {"ok": True, "id": str(new_id)}
 
     async def history(self, barcode: str, *, limit: int = 100) -> list:
         return jsonsafe(await self.find({"barcode": str(barcode)}, sort=[("at", -1)], limit=limit))

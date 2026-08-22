@@ -6,14 +6,16 @@ import { Truck, Search, Plus, Pencil, Trash2, Upload, X, Loader2, Sparkles, Pack
 import { api, apiUpload, API_BASE } from "@/lib/apiClient";
 import { appAlert, appConfirm } from "@/store/dialogStore";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
-import { CampaignsCard } from "@/components/catalog/CampaignsCard";
-import { PromosCard } from "@/components/catalog/PromosCard";
-import { ServiceOffersCard } from "@/components/catalog/ServiceOffersCard";
+import { useCategoryTree, catPath } from "@/components/catalog/CategoryPicker";
+import { DateInput } from "@/components/ui/DateInput";
 
 type Product = {
   barcode: string; name: string; description_short?: string | null; description_long?: string | null;
   photo_url?: string | null; image_id?: string | null; images?: string[]; usage_video_url?: string | null; price_cents: number; wholesale_cents?: number; type: string; category?: string | null;
+  cat1_id?: string | null; cat2_id?: string | null; cat3_id?: string | null;
   tags?: string[]; featured?: boolean; is_fyk?: boolean; participation?: number; discount_pct: number; stock_qty: number; active?: boolean;
+  // καθαρά πωλησιακά e-shop
+  sale_starts_at?: string | null; sale_ends_at?: string | null; highlights?: string[]; related_barcodes?: string[]; points_multiplier?: number;
 };
 type ListRes = { items: Product[]; total: number };
 const eur = (c: number) => (c / 100).toLocaleString("el-GR", { minimumFractionDigits: 2 }) + " €";
@@ -83,24 +85,10 @@ function Catalog() {
   }
 
   const items = list.data?.items ?? [];
-  // Κατηγορίες που μπορούν να μπουν σε καμπάνια — τα συνταγογραφούμενα εξαιρούνται εξ ορισμού.
-  const campCats = Array.from(new Set((tax.data?.classes ?? [])
-    .filter((c) => c.type !== "rx_medicine").flatMap((c) => c.categories)));
   return (
     <div className="w-full">
       <div className="mb-1 flex items-center gap-2 text-xl font-semibold text-slate-800"><Truck className="h-6 w-6 text-brand-600" /> Κατάλογος ειδών (e-shop)</div>
-      <p className="mb-4 text-sm text-slate-500">Τα είδη που έχεις βάλει <b>«προς πώληση»</b> από την <b>Αποθήκη</b> — οι πελάτες παραγγέλνουν από εδώ. Εδώ ρυθμίζεις εικόνες, περιγραφή, εκπτώσεις & προσφορές. <b>Στα συνταγογραφούμενα δεν επιτρέπονται εκπτώσεις.</b></p>
-
-      {/* ── Ενότητα «Προσφορές & προωθητικές ενέργειες» — ομαδοποιημένη ώστε να μη χάνεται ο φαρμακοποιός ── */}
-      <section className="mb-5 rounded-2xl border border-slate-200 bg-slate-50/60 p-4">
-        <div className="mb-1 flex items-center gap-2 text-base font-semibold text-slate-800">🎯 Προσφορές &amp; προωθητικές ενέργειες</div>
-        <p className="mb-3 text-xs text-slate-500">Ό,τι δημιουργείς εδώ εμφανίζεται στο κύκλωμα <b>«🔥 Προσφορές»</b> της πύλης πελατών (my.rxvision.gr), ώστε ο πελάτης να βλέπει γρήγορα τι προμηθεύεται/κλείνει με προσφορά. <b>Τα συνταγογραφούμενα δεν παίρνουν ποτέ έκπτωση.</b></p>
-        <div className="grid items-start gap-4 xl:grid-cols-2">
-          <CampaignsCard categories={campCats} tags={QUICK_TAGS} />
-          <PromosCard />
-          <div className="xl:col-span-2"><ServiceOffersCard /></div>
-        </div>
-      </section>
+      <p className="mb-4 text-sm text-slate-500">Τα είδη που έχεις βάλει <b>«προς πώληση»</b> από την <b>Αποθήκη</b> — οι πελάτες παραγγέλνουν από εδώ. Εδώ ρυθμίζεις εικόνες, περιγραφή & πωλησιακά εργαλεία. Οι <b>προσφορές/καμπάνιες/κουπόνια/πακέτα</b> είναι πλέον στο ξεχωριστό κύκλωμα <b>«Προσφορές»</b>.</p>
 
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <form onSubmit={(e) => { e.preventDefault(); setTerm(q.trim()); }} className="relative flex-1 min-w-[200px]">
@@ -247,12 +235,35 @@ function RegistryModal({ tax, onClose, onDone }: { tax?: Taxonomy; onClose: () =
   );
 }
 
+// Κατηγορία δέντρου e-shop — read-only προβολή· ρυθμίζεται στην Αποθήκη (κοινό χαρακτηριστικό του είδους).
+function InheritedCategory({ f }: { f: Product }) {
+  const { data } = useCategoryTree();
+  const cats = data?.items ?? [];
+  const path = catPath(cats, { cat1_id: f.cat1_id, cat2_id: f.cat2_id, cat3_id: f.cat3_id });
+  return (
+    <div className="rounded-lg border border-slate-200 bg-slate-50/60 p-2.5 text-xs text-slate-500">
+      <div className="mb-1 font-semibold text-slate-600">🗂️ Κατηγορία e-shop (μενού πύλης)</div>
+      {path
+        ? <div className="font-medium text-slate-700">{path}</div>
+        : <div className="text-amber-600">Δεν έχει οριστεί κατηγορία δέντρου. Όρισέ την στην <b>Αποθήκη</b>.</div>}
+      <span className="mt-1 block text-[11px] text-slate-400">Η κατηγορία είναι κοινό χαρακτηριστικό του είδους — ρυθμίζεται στην <b>Αποθήκη</b> και εμφανίζεται εδώ αυτόματα (οδηγεί το μενού της πύλης & τη στόχευση προσφορών).</span>
+    </div>
+  );
+}
+
 function EditModal({ product, busy, tax, onClose, onSave }: { product: Product; busy: boolean; tax?: Taxonomy; onClose: () => void; onSave: (p: Product) => void }) {
   const [f, setF] = useState<Product & { price_eur?: number; wholesale_eur?: number }>({ ...product, tags: product.tags ?? [], price_eur: (product as { price_eur?: number }).price_eur ?? product.price_cents / 100, wholesale_eur: (product.wholesale_cents ?? 0) / 100 });
   const [tagIn, setTagIn] = useState("");
   const [up, setUp] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+  // Cross-sell «συχνά μαζί»: αναζήτηση ειδών προς προσθήκη
+  const [relQ, setRelQ] = useState("");
+  const [relNames, setRelNames] = useState<Record<string, string>>({});
+  const relSearch = useQuery({ queryKey: ["catalog-rel-search", relQ], queryFn: () => api<ListRes>(`/catalog?q=${encodeURIComponent(relQ.trim())}&for_sale=true&page_size=8`), enabled: relQ.trim().length >= 2, retry: false });
+  const related = f.related_barcodes ?? [];
+  const highlights = f.highlights ?? [];
   const med = noDisc(f.type);   // κλείδωμα έκπτωσης μόνο στα συνταγογραφούμενα
+  const isNew = !product.barcode;   // νέο είδος → επιτρέπεται τιμή/απόθεμα (δημιουργείς την εγγραφή)· υπάρχον → read-only (Αποθήκη)
   const cls = tax?.classes.find((c) => c.type === f.type);
   const cats = cls?.categories ?? [];
   const set = (k: string, v: unknown) => setF((s) => ({ ...s, [k]: v }));
@@ -290,12 +301,23 @@ function EditModal({ product, busy, tax, onClose, onSave }: { product: Product; 
       <div className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl bg-white p-5 shadow-xl" onClick={(e) => e.stopPropagation()}>
         <div className="mb-3 flex items-center justify-between"><div className="text-lg font-semibold text-slate-800">{product.barcode ? "Επεξεργασία είδους" : "Νέο είδος"}</div><button onClick={onClose}><X className="h-5 w-5 text-slate-400" /></button></div>
         <div className="space-y-2.5">
-          <div className="flex gap-2">
-            <label className="flex-1 text-xs text-slate-500">Barcode<input value={f.barcode} onChange={(e) => set("barcode", e.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm" /></label>
-            <button onClick={prefill} className="mt-5 inline-flex items-center gap-1 rounded-lg border border-brand-200 bg-brand-50 px-2.5 py-1.5 text-xs font-medium text-brand-700 hover:bg-brand-100"><Sparkles className="h-3.5 w-3.5" /> Auto από ΗΔΙΚΑ</button>
-          </div>
-          <label className="block text-xs text-slate-500">Όνομα / μικρή περιγραφή<input value={f.name} onChange={(e) => set("name", e.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm" /></label>
-          <label className="block text-xs text-slate-500">Μεγάλη περιγραφή<textarea value={f.description_long ?? ""} onChange={(e) => set("description_long", e.target.value)} rows={3} className="mt-1 w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm" /></label>
+          {isNew ? (
+            <>
+              <div className="flex gap-2">
+                <label className="flex-1 text-xs text-slate-500">Barcode<input value={f.barcode} onChange={(e) => set("barcode", e.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm" /></label>
+                <button onClick={prefill} className="mt-5 inline-flex items-center gap-1 rounded-lg border border-brand-200 bg-brand-50 px-2.5 py-1.5 text-xs font-medium text-brand-700 hover:bg-brand-100"><Sparkles className="h-3.5 w-3.5" /> Auto από ΗΔΙΚΑ</button>
+              </div>
+              <label className="block text-xs text-slate-500">Όνομα<input value={f.name} onChange={(e) => set("name", e.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm" /></label>
+            </>
+          ) : (
+            /* Ταυτότητα (όνομα/τύπος/barcode) = δεδομένα Αποθήκης → read-only εδώ */
+            <div className="rounded-lg border border-slate-200 bg-slate-50/60 px-2.5 py-2">
+              <div className="text-sm font-semibold text-slate-800">{f.name}</div>
+              <div className="text-[11px] text-slate-400">{TYPE_LABEL[f.type] || f.type} · {f.barcode}</div>
+              <div className="mt-0.5 text-[10px] text-slate-400">Ταυτότητα & τύπος ρυθμίζονται στην <b>Αποθήκη</b>.</div>
+            </div>
+          )}
+          <label className="block text-xs text-slate-500">Περιγραφή e-shop (marketing)<textarea value={f.description_long ?? ""} onChange={(e) => set("description_long", e.target.value)} rows={3} placeholder="Περιγραφή που βλέπει ο πελάτης στη σελίδα προϊόντος…" className="mt-1 w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm" /></label>
 
           {/* Φωτογραφία — ανέβασμα από τη συσκευή */}
           <div className="text-xs text-slate-500">Φωτογραφία
@@ -329,14 +351,19 @@ function EditModal({ product, busy, tax, onClose, onSave }: { product: Product; 
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-2">
-            <label className="text-xs text-slate-500">Τύπος<select value={f.type} onChange={(e) => setF((s) => ({ ...s, type: e.target.value, category: null }))} className="mt-1 w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm"><option value="rx_medicine">Συνταγογραφούμενο</option><option value="otc_medicine">ΜΗ.ΣΥ.ΦΑ. (OTC)</option><option value="parapharmacy">Παραφάρμακο</option></select></label>
-            <label className="text-xs text-slate-500">Κατηγορία
-              {cats.length
-                ? <select value={f.category ?? ""} onChange={(e) => set("category", e.target.value || null)} className="mt-1 w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm"><option value="">— επιλογή —</option>{cats.map((c) => <option key={c} value={c}>{c}</option>)}</select>
-                : <input value={f.category ?? ""} onChange={(e) => set("category", e.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm" />}
-            </label>
-          </div>
+          {isNew && (
+            <div className="grid grid-cols-2 gap-2">
+              <label className="text-xs text-slate-500">Τύπος<select value={f.type} onChange={(e) => setF((s) => ({ ...s, type: e.target.value, category: null }))} className="mt-1 w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm"><option value="rx_medicine">Συνταγογραφούμενο</option><option value="otc_medicine">ΜΗ.ΣΥ.ΦΑ. (OTC)</option><option value="parapharmacy">Παραφάρμακο</option></select></label>
+              <label className="text-xs text-slate-500">Κατηγορία
+                {cats.length
+                  ? <select value={f.category ?? ""} onChange={(e) => set("category", e.target.value || null)} className="mt-1 w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm"><option value="">— επιλογή —</option>{cats.map((c) => <option key={c} value={c}>{c}</option>)}</select>
+                  : <input value={f.category ?? ""} onChange={(e) => set("category", e.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm" />}
+              </label>
+            </div>
+          )}
+
+          {/* Κατηγορία e-shop — ΚΟΙΝΟ χαρακτηριστικό του είδους· ρυθμίζεται στην Αποθήκη & κληρονομείται εδώ (read-only) */}
+          <InheritedCategory f={f} />
 
           {/* Tags / ετικέτες */}
           <div className="text-xs text-slate-500">Ετικέτες (tags)
@@ -353,21 +380,90 @@ function EditModal({ product, busy, tax, onClose, onSave }: { product: Product; 
 
           <label className="flex items-center gap-2 text-sm text-slate-700"><input type="checkbox" checked={!!f.featured} onChange={(e) => set("featured", e.target.checked)} /> <Star className={`h-4 w-4 ${f.featured ? "fill-amber-400 text-amber-500" : "text-slate-300"}`} /> Προτεινόμενο (πρώτο στη βιτρίνα)</label>
 
-          <div className="grid grid-cols-2 gap-2">
-            <label className="text-xs text-slate-500">Λιανική (€)<input type="number" step="0.01" value={f.price_eur} onChange={(e) => set("price_eur", +e.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm" /></label>
-            <label className="text-xs text-slate-500">Χονδρική (€)<input type="number" step="0.01" value={f.wholesale_eur} onChange={(e) => set("wholesale_eur", +e.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm" /></label>
-          </div>
-          {(f.wholesale_eur ?? 0) > 0 && (f.price_eur ?? 0) > 0 && (
-            <p className="rounded-lg bg-emerald-50 px-2.5 py-1.5 text-xs text-slate-600">Κέρδος: <b className="text-emerald-700">{((f.price_eur ?? 0) - (f.wholesale_eur ?? 0)).toFixed(2)} €</b> ({(Math.round(1000 * ((f.price_eur ?? 0) - (f.wholesale_eur ?? 0)) / (f.price_eur ?? 1)) / 10)}%){showRebate(f) && <span className="text-amber-600"> · υπόκειται επιπλέον σε rebate ΕΟΠΥΥ</span>}</p>
+          {isNew ? (
+            /* ── ΝΕΟ είδος: εδώ δημιουργείς την εγγραφή (τιμή/κόστος/απόθεμα ζουν στην Αποθήκη) ── */
+            <>
+              <div className="grid grid-cols-2 gap-2">
+                <label className="text-xs text-slate-500">Λιανική (€)<input type="number" step="0.01" value={f.price_eur} onChange={(e) => set("price_eur", +e.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm" /></label>
+                <label className="text-xs text-slate-500">Χονδρική (€)<input type="number" step="0.01" value={f.wholesale_eur} onChange={(e) => set("wholesale_eur", +e.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm" /></label>
+              </div>
+              <label className="text-xs text-slate-500">Απόθεμα<input type="number" value={f.stock_qty} onChange={(e) => set("stock_qty", +e.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm" /><span className="text-[10px] text-amber-600">{f.stock_qty > 0 ? "" : " 0 = κατόπιν παραγγελίας"}</span></label>
+            </>
+          ) : (
+            /* ── ΥΠΑΡΧΟΝ είδος: ΜΟΝΟ πώληση. Κόστος/τιμή/απόθεμα ρυθμίζονται στην Αποθήκη. ── */
+            <div className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50/60 px-2.5 py-2 text-xs text-slate-500">
+              <span>Τιμή πώλησης <span className="text-[10px] text-slate-400">(από Αποθήκη)</span></span>
+              <span className="text-right"><b className="text-slate-800">{eur(f.price_cents)}</b><br /><span className="text-[10px] text-slate-400">Διαθεσιμότητα: {f.stock_qty > 0 ? `${f.stock_qty} τεμ.` : "κατόπιν παραγγελίας"}</span></span>
+            </div>
           )}
-          {f.type === "rx_medicine" && (f.price_eur ?? 0) > 0 && (
-            <p className="rounded-lg bg-slate-50 px-2.5 py-1.5 text-[11px] text-slate-600">Στην εκτέλεση συνταγής: <b className="text-slate-800">Ασφαλισμένος {((f.price_eur ?? 0) * (f.participation ?? 0) / 100).toFixed(2)}€</b> (συμμετοχή {f.participation ?? 0}%) · <b className="text-sky-700">Ταμείο {((f.price_eur ?? 0) * (100 - (f.participation ?? 0)) / 100).toFixed(2)}€</b> (αναμενόμενο)</p>
+
+          {/* Έκπτωση e-shop — καθαρά πωλησιακό εργαλείο (δεν είναι δεδομένο αποθήκης) */}
+          <label className={`block text-xs ${med ? "text-slate-300" : "text-slate-500"}`}>Έκπτωση e-shop %<input type="number" disabled={med} title={med ? "Στα συνταγογραφούμενα δεν επιτρέπονται εκπτώσεις" : ""} value={med ? 0 : f.discount_pct} onChange={(e) => set("discount_pct", +e.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm disabled:bg-slate-100" /></label>
+          {!med && (f.discount_pct ?? 0) > 0 && (f.price_cents ?? 0) > 0 && (
+            <div className="flex items-center justify-between rounded-lg bg-emerald-50 px-2.5 py-1.5 text-xs text-emerald-700"><span>Τελική τιμή στο e-shop</span><b>{eur(Math.round((f.price_cents ?? 0) * (100 - (f.discount_pct ?? 0)) / 100))}</b></div>
           )}
-          <div className="grid grid-cols-2 gap-2">
-            <label className="text-xs text-slate-500">Απόθεμα<input type="number" value={f.stock_qty} onChange={(e) => set("stock_qty", +e.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm" /><span className="text-[10px] text-amber-600">{f.stock_qty > 0 ? "" : " 0 = κατόπιν παραγγελίας"}</span></label>
-            <label className={`text-xs ${med ? "text-slate-300" : "text-slate-500"}`}>Έκπτωση %<input type="number" disabled={med} title={med ? "Στα συνταγογραφούμενα δεν επιτρέπονται εκπτώσεις" : ""} value={med ? 0 : f.discount_pct} onChange={(e) => set("discount_pct", +e.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm disabled:bg-slate-100" /></label>
-          </div>
           {med && <p className="text-[11px] text-amber-600">🔒 Συνταγογραφούμενο — η έκπτωση είναι κλειδωμένη στο 0% από τον νόμο (OTC & παραφάρμακα επιτρέπουν).</p>}
+
+          {/* ── ΠΩΛΗΣΙΑΚΑ ΕΡΓΑΛΕΙΑ e-shop (κανένα δεδομένο αποθήκης) ── */}
+          <div className="space-y-3 rounded-xl border border-violet-200 bg-violet-50/40 p-3">
+            <div className="text-xs font-semibold text-violet-700">🛒 Πωλησιακά εργαλεία e-shop</div>
+
+            {!med && (
+              <div>
+                <div className="mb-1 text-xs text-slate-600">⏳ Flash προσφορά — παράθυρο ισχύος έκπτωσης (προαιρετικό)</div>
+                <div className="grid grid-cols-2 gap-2">
+                  <label className="text-[11px] text-slate-500">Από<div className="mt-1"><DateInput value={(f.sale_starts_at || "").slice(0, 10)} onChange={(d) => set("sale_starts_at", d ? `${d}T00:00:00` : null)} /></div></label>
+                  <label className="text-[11px] text-slate-500">Έως<div className="mt-1"><DateInput value={(f.sale_ends_at || "").slice(0, 10)} onChange={(d) => set("sale_ends_at", d ? `${d}T23:59:59` : null)} /></div></label>
+                </div>
+                <span className="mt-0.5 block text-[11px] text-slate-400">Χωρίς ημερομηνίες η έκπτωση ισχύει μόνιμα. Η πύλη δείχνει countdown όσο τρέχει.</span>
+              </div>
+            )}
+
+            <div>
+              <div className="mb-1 text-xs text-slate-600">✅ Σημεία πώλησης (ένα ανά γραμμή, ως 6)</div>
+              <textarea value={highlights.join("\n")} onChange={(e) => set("highlights", e.target.value.split("\n").slice(0, 6))} onBlur={(e) => set("highlights", e.target.value.split("\n").map((x) => x.trim()).filter(Boolean).slice(0, 6))} rows={3} placeholder={"π.χ. Χωρίς ζάχαρη\nΚλινικά τεκμηριωμένο\nΓια όλη την οικογένεια"} className="w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm" />
+            </div>
+
+            <div>
+              <div className="mb-1 text-xs text-slate-600">🔗 Συχνά μαζί (cross-sell)</div>
+              {!!related.length && (
+                <div className="mb-1.5 flex flex-wrap gap-1.5">
+                  {related.map((bc) => (
+                    <span key={bc} className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700">
+                      {relNames[bc] || bc}
+                      <button onClick={() => set("related_barcodes", related.filter((x) => x !== bc))}><X className="h-3 w-3" /></button>
+                    </span>
+                  ))}
+                </div>
+              )}
+              <div className="relative">
+                <input value={relQ} onChange={(e) => setRelQ(e.target.value)} placeholder="Αναζήτηση είδους…" className="w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm" />
+                {relQ.trim().length >= 2 && (relSearch.data?.items?.length ?? 0) > 0 && (
+                  <div className="absolute z-10 mt-1 max-h-40 w-full overflow-auto rounded-lg border border-slate-200 bg-white shadow-lg">
+                    {relSearch.data!.items.filter((p) => p.barcode !== f.barcode).map((p) => {
+                      const on = related.includes(p.barcode);
+                      return (
+                        <button key={p.barcode} onClick={() => { setRelNames((m) => ({ ...m, [p.barcode]: p.name })); set("related_barcodes", on ? related.filter((x) => x !== p.barcode) : [...related, p.barcode]); }} className={`flex w-full items-center justify-between gap-2 px-2.5 py-1.5 text-left text-xs hover:bg-slate-50 ${on ? "bg-violet-50" : ""}`}>
+                          <span className="min-w-0 truncate">{p.name}<span className="text-slate-400"> · {p.barcode}</span></span>
+                          {on ? <Check className="h-3.5 w-3.5 shrink-0 text-violet-600" /> : <Plus className="h-3.5 w-3.5 shrink-0 text-slate-400" />}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <label className="block text-xs text-slate-600">🎁 Bonus πόντοι πιστότητας
+              <select value={f.points_multiplier ?? 1} onChange={(e) => set("points_multiplier", +e.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm">
+                <option value={1}>Κανονικοί πόντοι (×1)</option>
+                <option value={2}>Διπλοί πόντοι (×2)</option>
+                <option value={3}>Τριπλοί πόντοι (×3)</option>
+                <option value={5}>×5 πόντοι</option>
+              </select>
+              <span className="mt-0.5 block text-[11px] text-slate-400">Δίνει bonus πόντους στην παράδοση (αν το πρόγραμμα επιβράβευσης είναι ενεργό).</span>
+            </label>
+          </div>
         </div>
         <div className="mt-4 flex justify-end gap-2">
           <button onClick={onClose} className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-600 hover:bg-slate-50">Άκυρο</button>

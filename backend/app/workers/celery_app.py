@@ -15,7 +15,7 @@ celery_app = Celery(
              "app.workers.billing", "app.workers.optical", "app.workers.reminders",
              "app.workers.ops_health", "app.workers.copilot_routines",
              "app.workers.contacts_backfill", "app.workers.death_sweep",
-             "app.workers.area_canonical"],
+             "app.workers.area_canonical", "app.workers.supplier_photos"],
 )
 
 celery_app.conf.update(
@@ -43,6 +43,16 @@ celery_app.conf.beat_schedule = {
     },
     "reap-stalled-sync": {  # watchdog: kill sync jobs with no progress >10min
         "task": "app.workers.ingestion.reap_stalled_sync",
+        "schedule": crontab(minute="*/2"),
+    },
+    # Ήπιο trickle φωτο προμηθευτή (Profarm) — ένα-ένα barcode, μικρό chunk κάθε 3 λεπτά (χωρίς traffic).
+    "profarm-photo-sync": {
+        "task": "app.workers.supplier_photos.profarm_sync_tick",
+        "schedule": crontab(minute="*/2"),
+    },
+    # Εισαγωγή προϊόντων OTC/παραφαρμάκων από Profarm — ήπιο chunk κάθε 2 λεπτά (μόνο με ενεργό job).
+    "profarm-import": {
+        "task": "app.workers.supplier_photos.profarm_import_tick",
         "schedule": crontab(minute="*/2"),
     },
     # self-heal: resume historical backfill for tenants with a history_from not yet reached

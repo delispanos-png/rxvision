@@ -9,6 +9,8 @@ import { appAlert } from "@/store/dialogStore";
 import { fmtEur, fmtNum } from "@/lib/formatters";
 import { DataTable, type Column } from "@/components/tables/DataTable";
 import { DateInput } from "@/components/ui/DateInput";
+import { CategoryPicker } from "@/components/catalog/CategoryPicker";
+import { SupplierPhotoCard } from "@/components/catalog/SupplierPhotoCard";
 
 type Item = {
   barcode: string; name: string; type: string; category?: string | null;
@@ -16,6 +18,8 @@ type Item = {
   supplier?: string | null; location?: string | null; batch?: string | null; expiry?: string | null;
   active?: boolean; for_sale?: boolean; image_id?: string | null;
   barcodes?: string[]; variants?: Variant[];
+  cat1_id?: string | null; cat2_id?: string | null; cat3_id?: string | null;
+  vat_rate?: number; price_includes_vat?: boolean;
 };
 type Variant = { color?: string | null; size?: string | null; barcode?: string | null; stock_qty?: number };
 type Summary = { skus: number; active: number; for_sale: number; units: number; value_cents: number; low: number; expiring: number };
@@ -53,7 +57,9 @@ export default function WarehousePage() {
   const s = list.data?.summary;
 
   async function toggle(bc: string, patch: { for_sale?: boolean; active?: boolean }) {
-    try { await api("/catalog/warehouse/flags", { method: "POST", body: JSON.stringify({ barcode: bc, ...patch }) }); list.refetch(); } catch { /* ignore */ }
+    const r = await api<{ ok: boolean; need_category?: boolean }>("/catalog/warehouse/flags", { method: "POST", body: JSON.stringify({ barcode: bc, ...patch }) }).catch(() => ({ ok: false, need_category: false }));
+    if (!r.ok && r.need_category) { await appAlert(t("Όρισε πρώτα Κατηγορία 1 (Επεξεργασία είδους) για να το βάλεις προς πώληση.", "Set Category 1 first (Edit item) to put it on sale.")); return; }
+    list.refetch();
   }
 
   const Toggle = ({ on, label, onClick, tone }: { on: boolean; label: string; onClick: () => void; tone: string }) => (
@@ -122,6 +128,8 @@ export default function WarehousePage() {
           <button onClick={() => setEdit({ barcode: "", name: "", type: "parapharmacy", price_cents: 0, stock_qty: 0, active: true, for_sale: false })} className="inline-flex items-center gap-1.5 rounded-xl bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700"><Plus className="h-4 w-4" /> {t("Νέο είδος", "New item")}</button>
         </div>
       </div>
+
+      <SupplierPhotoCard />
 
       {/* KPIs */}
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-7">
@@ -302,6 +310,19 @@ function EditModal({ item, t, onClose, onDone }: { item: Item; t: (a: string, b:
         {Fld({ k: "category", label: t("Κατηγορία", "Category") })}
         {Fld({ k: "price_eur", label: t("Λιανική (€)", "Retail (€)"), type: "number" })}
         {Fld({ k: "cost_eur", label: t("Χονδρική/κόστος (€)", "Cost (€)"), type: "number" })}
+        <label className="block text-sm"><span className="mb-1 block text-xs text-slate-500">{t("ΦΠΑ %", "VAT %")}</span>
+          <select value={f.vat_rate ?? 6} onChange={(e) => set("vat_rate", +e.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-800">
+            <option value={6}>6%</option><option value={13}>13%</option><option value={24}>24%</option><option value={0}>{t("0% / Απαλλ.", "0% / Exempt")}</option>
+          </select></label>
+        <label className="flex items-center gap-2 self-end rounded-lg border border-slate-200 px-3 py-2 text-sm dark:border-slate-600">
+          <input type="checkbox" checked={f.price_includes_vat ?? true} onChange={(e) => set("price_includes_vat", e.target.checked)} className="h-4 w-4" />
+          <span className="text-xs text-slate-600 dark:text-slate-300">{t("Η λιανική περιλαμβάνει ΦΠΑ", "Retail includes VAT")}</span>
+        </label>
+        {(f.price_eur > 0) && (f.vat_rate ?? 6) > 0 && (
+          <p className="col-span-full rounded-lg bg-slate-50 px-3 py-1.5 text-[11px] text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+            {(() => { const v = (f.vat_rate ?? 6) / 100; const net = (f.price_includes_vat ?? true) ? f.price_eur / (1 + v) : f.price_eur; const gross = (f.price_includes_vat ?? true) ? f.price_eur : f.price_eur * (1 + v); return t(`Καθαρή: ${net.toFixed(2)}€ · ΦΠΑ ${(f.vat_rate ?? 6)}%: ${(gross - net).toFixed(2)}€ · Μικτή: ${gross.toFixed(2)}€`, `Net: ${net.toFixed(2)}€ · VAT: ${(gross - net).toFixed(2)}€ · Gross: ${gross.toFixed(2)}€`); })()}
+          </p>
+        )}
         {Fld({ k: "stock_qty", label: t("Απόθεμα (τεμ)", "Stock (units)"), type: "number" })}
         {Fld({ k: "min_stock", label: t("Σημείο αναπαραγγελίας", "Reorder point"), type: "number" })}
         {Fld({ k: "supplier", label: t("Προμηθευτής", "Supplier") })}
@@ -334,9 +355,18 @@ function EditModal({ item, t, onClose, onDone }: { item: Item; t: (a: string, b:
           )}
         </div>
 
+        {/* Κατηγορίες e-shop (3 επίπεδα) — υποχρεωτική Κατ.1 για «προς πώληση» */}
+        <div className="col-span-full">
+          <div className="mb-1 text-xs font-medium text-slate-500">{t("Κατηγορίες e-shop", "e-shop categories")}</div>
+          <CategoryPicker value={{ cat1_id: f.cat1_id, cat2_id: f.cat2_id, cat3_id: f.cat3_id }} onChange={(v) => setF((s) => ({ ...s, ...v }))} />
+        </div>
+
         <div className="col-span-full mt-1 flex flex-wrap gap-5 rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800/40">
           <label className="inline-flex items-center gap-2 text-sm"><input type="checkbox" checked={f.active !== false} onChange={(e) => set("active", e.target.checked)} className="h-4 w-4" /> {t("Ενεργό είδος", "Active item")}</label>
-          <label className="inline-flex items-center gap-2 text-sm"><input type="checkbox" checked={!!f.for_sale} onChange={(e) => set("for_sale", e.target.checked)} className="h-4 w-4" /> {t("Προς πώληση στο e-shop (Κατάλογος)", "For sale in e-shop (Catalog)")}</label>
+          <label className={`inline-flex items-center gap-2 text-sm ${!f.cat1_id ? "text-slate-400" : ""}`} title={!f.cat1_id ? t("Χρειάζεται τουλάχιστον Κατηγορία 1", "Needs at least Category 1") : undefined}>
+            <input type="checkbox" checked={!!f.for_sale && !!f.cat1_id} disabled={!f.cat1_id} onChange={(e) => set("for_sale", e.target.checked)} className="h-4 w-4" /> {t("Προς πώληση στο e-shop (Κατάλογος)", "For sale in e-shop (Catalog)")}
+            {!f.cat1_id && <span className="text-[11px] text-amber-600">— {t("όρισε Κατηγορία 1", "set Category 1")}</span>}
+          </label>
         </div>
       </div>
       <button onClick={save} disabled={busy} className="mt-4 w-full rounded-xl bg-brand-600 py-2.5 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-50">{busy ? t("Αποθήκευση…", "Saving…") : t("Αποθήκευση", "Save")}</button>

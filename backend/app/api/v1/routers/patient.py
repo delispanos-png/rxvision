@@ -540,12 +540,14 @@ async def meds_times(body: SlotTimesIn, ctx: PatientContext = Depends(get_patien
 @router.get("/shop")
 async def shop(q: str = "", category: str | None = None, type: str | None = None,
                tag: str | None = None, sort: str = "featured",
+               cat1: str | None = None, cat2: str | None = None, cat3: str | None = None,
                ctx: PatientContext = Depends(get_patient_context)):
     from app.repositories.pharmacy_catalog import PharmacyCatalogRepository
     # in_stock_only=False → δείχνουμε ΚΑΙ τα «κατόπιν παραγγελίας» (χωρίς απόθεμα)· ο πελάτης τα
     # παραγγέλνει ως αίτημα και ο φαρμακοποιός εγκρίνει/απορρίπτει + δηλώνει ημερομηνία.
     return await PharmacyCatalogRepository(tenant_id=ctx.tenant_id).list(
         q=q, category=category, ptype=type, tag=tag, sort=sort, in_stock_only=False,
+        cat1=cat1, cat2=cat2, cat3=cat3,
         for_sale_only=True, page_size=60)   # πελάτης βλέπει ΜΟΝΟ όσα ο φαρμακοποιός έβαλε προς πώληση
 
 
@@ -591,8 +593,23 @@ async def shop_meta(ctx: PatientContext = Depends(get_patient_context)):
     except Exception:  # noqa: BLE001
         pass
     from app.repositories.shop_promos import ShopBundleRepository
+    from app.repositories.pharmacy_categories import PharmacyCategoryRepository
+    from app.repositories.shop_order_discounts import ShopOrderDiscountRepository, free_shipping_threshold
     bundles = await ShopBundleRepository(tenant_id=ctx.tenant_id).active_now()
+    # Shopify-style αυτόματες προσφορές καλαθιού: κατώφλι δωρεάν μεταφορικών + αυτόματες order-εκπτώσεις.
+    order_discs = await ShopOrderDiscountRepository(tenant_id=ctx.tenant_id).active_now()
+    fs = free_shipping_threshold(order_discs, qty=999999)
+    free_over = [x for x in (settings.get("free_over_cents") or 0, fs) if x]
+    free_shipping_at = min(free_over) if free_over else 0
+    auto_order = [{"name": c.get("name"), "value_type": c.get("value_type"), "value": int(c.get("value") or 0),
+                   "min_cents": int(c.get("min_cents") or 0), "min_qty": int(c.get("min_qty") or 0)}
+                  for c in order_discs if c.get("discount_type") == "order"]
+    # Δέντρο κατηγοριών e-shop (μενού-πλακίδια πύλης) + πλήθος «προς πώληση» ανά κόμβο (κρύβει άδεια κλαδιά).
+    category_tree = await PharmacyCategoryRepository(tenant_id=ctx.tenant_id).tree()
+    category_counts = await cat.category_counts()
     return {"categories": await cat.categories(), "tags": await cat.tags(), "settings": settings,
+            "category_tree": category_tree, "category_counts": category_counts,
+            "free_shipping_at": free_shipping_at, "auto_order_discounts": auto_order,
             "campaigns": [{"name": c.get("name"), "discount_pct": c.get("discount_pct"),
                            "categories": c.get("categories") or [], "tags": c.get("tags") or []}
                           for c in camps],
@@ -634,15 +651,28 @@ async def shop_offers(ctx: PatientContext = Depends(get_patient_context)):
 @router.get("/shop/product/{barcode}")
 async def shop_product(barcode: str, ctx: PatientContext = Depends(get_patient_context)):
     """Σελίδα προϊόντος (PDP): πλήρες προϊόν + effective έκπτωση (δική του ή καμπάνιας) για «πριν/τώρα»."""
-    from app.repositories.pharmacy_catalog import PharmacyCatalogRepository
+    from app.repositories.pharmacy_catalog import PharmacyCatalogRepository, sale_active_now
     from app.repositories.shop_campaigns import ShopCampaignRepository, campaign_pct_for
-    p = await PharmacyCatalogRepository(tenant_id=ctx.tenant_id).get(barcode)
+    repo = PharmacyCatalogRepository(tenant_id=ctx.tenant_id)
+    p = await repo.get(barcode)
     if not p or p.get("active") is False:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "not_found")
     camps = await ShopCampaignRepository(tenant_id=ctx.tenant_id).active_now()
-    eff = max(int(p.get("discount_pct") or 0), campaign_pct_for(p, camps))
+    self_disc = int(p.get("discount_pct") or 0) if sale_active_now(p) else 0   # flash: μόνο εντός παραθύρου
+    eff = max(self_disc, campaign_pct_for(p, camps))
     p["eff_discount_pct"] = eff
     p["sale_cents"] = round(int(p.get("price_cents") or 0) * (100 - eff) / 100)
+    # Cross-sell «συχνά μαζί» — τα σχετικά είδη που όρισε ο φαρμακοποιός (μόνο όσα πωλούνται & ενεργά).
+    related = []
+    for rb in (p.get("related_barcodes") or [])[:8]:
+        rp = await repo.get(rb)
+        if rp and rp.get("active") is not False and rp.get("for_sale"):
+            rd = int(rp.get("discount_pct") or 0) if sale_active_now(rp) else 0
+            re_eff = max(rd, campaign_pct_for(rp, camps))
+            rp["eff_discount_pct"] = re_eff
+            rp["sale_cents"] = round(int(rp.get("price_cents") or 0) * (100 - re_eff) / 100)
+            related.append(rp)
+    p["related"] = related
     return p
 
 

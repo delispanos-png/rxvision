@@ -11,9 +11,12 @@ from pydantic import BaseModel, Field
 
 from app.core.deps import TenantContext, require
 from app.repositories.pharmacy_catalog import PharmacyCatalogRepository, StockMovementRepository
+from app.repositories.pharmacy_categories import PharmacyCategoryRepository
 from app.repositories.shop_campaigns import ShopCampaignRepository
+from app.repositories.shop_order_discounts import ShopOrderDiscountRepository
 from app.repositories.shop_promos import ShopBundleRepository, ShopCouponRepository
 from app.repositories.shop_service_offers import ShopServiceOffersRepository
+from app.repositories.supplier_settings import SupplierSettingsRepository
 
 _MAX_XML = 25 * 1024 * 1024  # 25 MB cap on the uploaded catalog XML (no unbounded in-memory read)
 _XML_CTYPES = {"application/xml", "text/xml", "application/octet-stream", ""}
@@ -40,6 +43,127 @@ async def list_products(q: str = "", category: str | None = None, type: str | No
 @router.get("/categories")
 async def categories(ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
     return {"categories": await _repo(ctx).categories(), "tags": await _repo(ctx).tags()}
+
+
+# ── Δέντρο κατηγοριών e-shop (3 επίπεδα) ────────────────────────────────────
+def _catrepo(ctx: TenantContext) -> PharmacyCategoryRepository:
+    return PharmacyCategoryRepository(tenant_id=ctx.tenant_id)
+
+
+@router.get("/category-tree")
+async def category_tree(ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+    return {"items": await _catrepo(ctx).tree()}
+
+
+class CategoryIn(BaseModel):
+    name: str
+    parent_id: str | None = None
+
+
+@router.post("/category")
+async def add_category(body: CategoryIn, ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+    return await _catrepo(ctx).add(body.name, body.parent_id)
+
+
+@router.post("/category/seed-from-products")
+async def seed_categories(ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+    """Μεταφορά των υπαρχουσών κατηγοριών ειδών στο δέντρο ως Κατηγορία 1 + ανάθεση στα είδη."""
+    return await _catrepo(ctx).seed_from_products()
+
+
+class CategoryRenameIn(BaseModel):
+    name: str
+
+
+@router.put("/category/{cat_id}")
+async def rename_category(cat_id: str, body: CategoryRenameIn,
+                          ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+    return await _catrepo(ctx).rename(cat_id, body.name)
+
+
+class CategoryIconIn(BaseModel):
+    icon: str | None = None
+
+
+@router.post("/category/{cat_id}/icon")
+async def set_category_icon(cat_id: str, body: CategoryIconIn,
+                            ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+    return await _catrepo(ctx).set_icon(cat_id, body.icon)
+
+
+@router.delete("/category/{cat_id}")
+async def delete_category(cat_id: str, ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+    return await _catrepo(ctx).delete(cat_id)
+
+
+@router.post("/category/{cat_id}/image")
+async def category_image(cat_id: str, file: UploadFile = File(...),
+                         ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+    """Φωτογραφία κατηγορίας (για το μενού-πλακίδια της πύλης). Reuse του image storage/serve των ειδών."""
+    content = await file.read(_MAX_IMG + 1)
+    if len(content) > _MAX_IMG:
+        raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail={"error": "file_too_large"})
+    image_id = await _repo(ctx).save_image(content, (file.content_type or "").split(";")[0].strip().lower())
+    if not image_id:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail={"error": "bad_image"})
+    await _catrepo(ctx).set_image(cat_id, image_id)
+    return {"ok": True, "image_id": image_id}
+
+
+@router.delete("/category/{cat_id}/image")
+async def category_image_remove(cat_id: str, ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+    return await _catrepo(ctx).set_image(cat_id, None)
+
+
+def _read_grid(content: bytes, filename: str) -> list[list]:
+    """Διαβάζει Excel(.xlsx)/CSV σε 2D λίστα γραμμών (ευέλικτο: ο χρήστης ορίζει μετά στήλες/γραμμή)."""
+    import io
+    name = (filename or "").lower()
+    if name.endswith((".csv", ".txt", ".tsv")):
+        import csv
+        text = content.decode("utf-8-sig", errors="replace")
+        sample = text[:4000]
+        delim = ";" if sample.count(";") > sample.count(",") else ("\t" if sample.count("\t") > sample.count(",") else ",")
+        return [list(r) for r in csv.reader(io.StringIO(text), delimiter=delim)]
+    from openpyxl import load_workbook
+    wb = load_workbook(io.BytesIO(content), read_only=True, data_only=True)
+    ws = wb.active
+    rows = [list(r) for r in ws.iter_rows(values_only=True)]
+    wb.close()
+    return rows
+
+
+@router.post("/category/import/preview")
+async def category_import_preview(file: UploadFile = File(...),
+                                  ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+    """Επιστρέφει τις πρώτες γραμμές ώστε ο χρήστης να διαλέξει γραμμή-έναρξης & στήλες Κατ.1/2/3."""
+    content = await file.read(_MAX_XML + 1)
+    if len(content) > _MAX_XML:
+        raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail={"error": "file_too_large"})
+    try:
+        grid = _read_grid(content, file.filename or "")
+    except Exception:  # noqa: BLE001
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail={"error": "parse_failed"})
+    ncols = max((len(r) for r in grid[:30]), default=0)
+    preview = [[("" if (i >= len(r) or r[i] is None) else str(r[i]))[:60] for i in range(ncols)] for r in grid[:12]]
+    return {"rows": preview, "ncols": ncols, "total_rows": len(grid)}
+
+
+@router.post("/category/import")
+async def category_import(file: UploadFile = File(...), start_row: int = Form(1),
+                          col1: int = Form(0), col2: int = Form(-1), col3: int = Form(-1),
+                          ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+    content = await file.read(_MAX_XML + 1)
+    if len(content) > _MAX_XML:
+        raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail={"error": "file_too_large"})
+    try:
+        grid = _read_grid(content, file.filename or "")
+    except Exception:  # noqa: BLE001
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail={"error": "parse_failed"})
+    return await _catrepo(ctx).import_rows(grid, col1=col1,
+                                           col2=col2 if col2 >= 0 else None,
+                                           col3=col3 if col3 >= 0 else None,
+                                           start_row=start_row)
 
 
 @router.get("/taxonomy")
@@ -109,6 +233,8 @@ class ProductIn(BaseModel):
     photo_url: str | None = None
     price_cents: int = Field(0, ge=0)
     wholesale_cents: int = Field(0, ge=0)   # χονδρική — για την κερδοφορία
+    vat_rate: int = Field(6, ge=0, le=30)          # συντελεστής ΦΠΑ % (6/13/24 στην Ελλάδα)
+    price_includes_vat: bool = True                # αν η ΛΙΑΝΙΚΗ τιμή περιλαμβάνει ήδη ΦΠΑ
     type: str = "parapharmacy"          # rx_medicine | otc_medicine | parapharmacy
     category: str | None = None
     tags: list[str] = Field(default_factory=list)
@@ -128,6 +254,15 @@ class ProductIn(BaseModel):
     expiry: str | None = None           # λήξη (YYYY-MM-DD)
     barcodes: list[str] = Field(default_factory=list)     # εναλλακτικά barcodes (κύριο = barcode)
     variants: list[dict] = Field(default_factory=list)    # εκδοχές: [{color, size, barcode, stock_qty}]
+    cat1_id: str | None = None    # κατηγορία e-shop επιπέδου 1 (υποχρεωτική για for_sale)
+    cat2_id: str | None = None    # επιπέδου 2 (γονική = cat1)
+    cat3_id: str | None = None    # επιπέδου 3 (γονική = cat2)
+    # ── καθαρά ΠΩΛΗΣΙΑΚΑ χαρακτηριστικά e-shop (όχι δεδομένα αποθήκης) ──
+    sale_starts_at: datetime | None = None   # flash προσφορά: παράθυρο ισχύος της έκπτωσης (προαιρετικό)
+    sale_ends_at: datetime | None = None
+    highlights: list[str] = Field(default_factory=list)         # σημεία πώλησης (bullets) στη σελίδα προϊόντος
+    related_barcodes: list[str] = Field(default_factory=list)   # cross-sell «συχνά μαζί»
+    points_multiplier: float = Field(1.0, ge=1, le=10)          # bonus πόντοι πιστότητας για το είδος (×)
 
 
 @router.post("")
@@ -269,6 +404,8 @@ class CampaignIn(BaseModel):
     discount_pct: int = Field(..., ge=1, le=90)
     categories: list[str] = []
     tags: list[str] = []
+    cat_ids: list[str] = []      # στόχευση σε κόμβους δέντρου κατηγοριών e-shop (π.χ. «Αντιγήρανση»)
+    barcodes: list[str] = []     # στόχευση σε συγκεκριμένα είδη
     active: bool = True
     starts_at: datetime | None = None
     ends_at: datetime | None = None
@@ -293,6 +430,111 @@ async def save_campaign(body: CampaignIn, ctx: TenantContext = Depends(require(_
 @router.delete("/campaigns/{campaign_id}")
 async def delete_campaign(campaign_id: str, ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
     return await _crepo(ctx).delete(campaign_id)
+
+
+# ── ΑΥΤΟΜΑΤΕΣ προσφορές καλαθιού (Shopify-style): έκπτωση σε όλη την παραγγελία + δωρεάν μεταφορικά ──
+# ΚΑΝΟΝΑΣ: η order-έκπτωση εφαρμόζεται ΜΟΝΟ στα μη-συνταγογραφούμενα (server-side, create_order).
+class OrderDiscountIn(BaseModel):
+    id: str | None = None
+    name: str = Field(..., min_length=1, max_length=120)
+    discount_type: str = "order"       # order | free_shipping
+    value_type: str = "pct"            # pct | fixed
+    value: int = Field(1, ge=1)        # pct(1-90) ή cents (fixed)
+    min_cents: int = Field(0, ge=0)
+    min_qty: int = Field(0, ge=0)
+    usage_limit: int = Field(0, ge=0)
+    active: bool = True
+    starts_at: datetime | None = None
+    ends_at: datetime | None = None
+
+
+def _odrepo(ctx: TenantContext) -> ShopOrderDiscountRepository:
+    return ShopOrderDiscountRepository(tenant_id=ctx.tenant_id)
+
+
+@router.get("/order-discounts")
+async def list_order_discounts(ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+    return {"items": await _odrepo(ctx).list()}
+
+
+@router.post("/order-discounts")
+async def save_order_discount(body: OrderDiscountIn, ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+    data = body.model_dump()
+    data["_id"] = data.pop("id", None)
+    return await _odrepo(ctx).upsert(data)
+
+
+@router.delete("/order-discounts/{did}")
+async def delete_order_discount(did: str, ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+    return await _odrepo(ctx).delete(did)
+
+
+# ── Προμηθευτής Profarm: αντιστοίχιση barcode → επίσημη φωτογραφία (back-office, staff-only) ──
+class ProfarmCredsIn(BaseModel):
+    username: str
+    password: str = ""
+
+
+def _sup(ctx: TenantContext) -> SupplierSettingsRepository:
+    return SupplierSettingsRepository(tenant_id=ctx.tenant_id)
+
+
+@router.get("/supplier/profarm")
+async def profarm_status(ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+    return await _sup(ctx).get_profarm()
+
+
+@router.post("/supplier/profarm")
+async def profarm_save(body: ProfarmCredsIn, ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+    return await _sup(ctx).save_profarm(body.username, body.password)
+
+
+@router.delete("/supplier/profarm")
+async def profarm_delete(ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+    return await _sup(ctx).delete_profarm()
+
+
+@router.post("/supplier/profarm/test")
+async def profarm_test(ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+    from app.services import profarm_service
+    creds = await _sup(ctx).profarm_creds()
+    if not creds:
+        return {"ok": False, "error": "not_configured"}
+    return {"ok": await profarm_service.test_login(creds["username"], creds["password"])}
+
+
+@router.get("/supplier/profarm/sync-status")
+async def profarm_sync_status(ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+    from app.services import profarm_service
+    return await profarm_service.sync_status(ctx.tenant_id)
+
+
+@router.post("/supplier/profarm/sync")
+async def profarm_sync(batch: int = 25, only_for_sale: bool = False,
+                       ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+    """Μία παρτίδα harvest (ο frontend καλεί επαναληπτικά μέχρι remaining=0 δείχνοντας πρόοδο)."""
+    from app.services import profarm_service
+    return await profarm_service.sync_batch(ctx.tenant_id, batch=max(1, min(50, batch)), only_for_sale=only_for_sale)
+
+
+# ── Εισαγωγή ΟΛΟΚΛΗΡΩΝ προϊόντων OTC/παραφαρμάκων από Profarm (δημιουργία νέων + update υπαρχόντων) ──
+@router.get("/supplier/profarm/import-status")
+async def profarm_import_status(ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+    from app.services import profarm_service
+    return await profarm_service.import_status(ctx.tenant_id)
+
+
+@router.post("/supplier/profarm/import")
+async def profarm_import_start(ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+    """Ξεκινά την εισαγωγή (το Celery beat συνεχίζει ήπια στο παρασκήνιο)."""
+    from app.services import profarm_service
+    return await profarm_service.import_chunk(ctx.tenant_id)
+
+
+@router.delete("/supplier/profarm/import")
+async def profarm_import_reset(ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+    from app.services import profarm_service
+    return await profarm_service.import_reset(ctx.tenant_id)
 
 
 # ── Κουπόνια έκπτωσης ────────────────────────────────────────────────────────────────────

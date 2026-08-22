@@ -142,7 +142,7 @@ function Orders() {
 }
 
 type Tier = { min_cents: number; pct: number };
-type Settings = Record<string, number | boolean | string | Tier[]>;
+type Settings = Record<string, number | boolean | string | string[] | Tier[]>;
 
 function SettingsTab() {
   const s = useQuery({ queryKey: ["od-settings"], queryFn: () => api<Settings>("/orders/delivery/settings"), retry: false });
@@ -151,7 +151,8 @@ function SettingsTab() {
   const [saved, setSaved] = useState(false);
   const [heroUp, setHeroUp] = useState(false);
   if (!cur) return <div className="py-8 text-center text-sm text-slate-400">Φόρτωση…</div>;
-  const set = (k: string, v: number | boolean | string | Tier[]) => { setF({ ...cur, [k]: v }); setSaved(false); };
+  const set = (k: string, v: number | boolean | string | string[] | Tier[]) => { setF({ ...cur, [k]: v }); setSaved(false); };
+  const reducedAreas: string[] = Array.isArray(cur.reduced_vat_areas) ? (cur.reduced_vat_areas as string[]) : [];
   const tiers: Tier[] = Array.isArray(cur.cart_tiers) ? (cur.cart_tiers as Tier[]) : [];
   const setTier = (i: number, patch: Partial<Tier>) => set("cart_tiers", tiers.map((t, j) => j === i ? { ...t, ...patch } : t));
   async function save() { await api("/orders/delivery/settings", { method: "POST", body: JSON.stringify(cur) }); setSaved(true); }
@@ -181,6 +182,13 @@ function SettingsTab() {
       <label className="block text-xs text-slate-500">Αναφορά πιστοποίησης ΠΦΣ (e-φαρμακείο — εμφανίζεται με το λογότυπο ΕΕ)
         <input value={String(cur.pps_cert ?? "")} onChange={(e) => set("pps_cert", e.target.value)} placeholder="π.χ. αρ. μητρώου / σύνδεσμος" className="mt-1 w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm" /></label>
       <p className="text-[11px] text-slate-400">Για online πώληση φαρμάκων (OTC) απαιτείται πιστοποίηση ΠΦΣ + το κοινό λογότυπο ΕΕ. Τα παραφάρμακα δεν το χρειάζονται.</p>
+      </div>
+
+      {/* Περιοχές μειωμένου ΦΠΑ (νησιά) — παράδοση εκεί → μειωμένος συντελεστής στα είδη */}
+      <div className="rounded-xl border border-slate-200 bg-white p-4 space-y-2">
+        <div className="text-sm font-semibold text-slate-700">🏝️ Περιοχές μειωμένου ΦΠΑ</div>
+        <p className="text-[11px] text-slate-400">Μία περιοχή ανά γραμμή. Παράδοση σε αυτές → μειωμένος συντελεστής (24→17, 13→9, 6→4) στις αποδείξεις/τιμολόγια.</p>
+        <textarea value={reducedAreas.join("\n")} onChange={(e) => set("reduced_vat_areas", e.target.value.split("\n").map((x) => x.trim()).filter(Boolean))} rows={4} placeholder={"π.χ.\nΛέρος\nΛέσβος\nΚως\nΣάμος\nΧίος"} className="w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm" />
       </div>
 
       <div className="rounded-xl border border-violet-200 bg-violet-50/60 p-3">
