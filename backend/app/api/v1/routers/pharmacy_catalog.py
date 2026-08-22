@@ -517,6 +517,14 @@ async def profarm_sync(batch: int = 25, only_for_sale: bool = False,
     return await profarm_service.sync_batch(ctx.tenant_id, batch=max(1, min(50, batch)), only_for_sale=only_for_sale)
 
 
+@router.post("/supplier/profarm/sync-stop")
+async def profarm_sync_stop(stopped: bool = True,
+                            ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+    """Οριστική διακοπή (stopped=true) ή επανενεργοποίηση (stopped=false) της φωτο-σάρωσης."""
+    from app.services import profarm_service
+    return await profarm_service.set_sync_stopped(ctx.tenant_id, stopped)
+
+
 # ── Εισαγωγή ΟΛΟΚΛΗΡΩΝ προϊόντων OTC/παραφαρμάκων από Profarm (δημιουργία νέων + update υπαρχόντων) ──
 @router.get("/supplier/profarm/import-status")
 async def profarm_import_status(ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
@@ -535,6 +543,13 @@ async def profarm_import_start(ctx: TenantContext = Depends(require(_PERM, modul
 async def profarm_import_reset(ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
     from app.services import profarm_service
     return await profarm_service.import_reset(ctx.tenant_id)
+
+
+@router.post("/supplier/profarm/classify")
+async def profarm_classify(limit: int = 300, ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+    """AI-ταξινόμηση (haiku) εισαγμένων Profarm προϊόντων χωρίς κατηγορία, από το όνομα."""
+    from app.services import profarm_service
+    return await profarm_service.classify_new_products(ctx.tenant_id, limit=max(1, min(500, limit)))
 
 
 # ── Κουπόνια έκπτωσης ────────────────────────────────────────────────────────────────────

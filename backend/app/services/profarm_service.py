@@ -130,7 +130,11 @@ async def sync_batch(tenant_id: str, *, batch: int = 40, only_for_sale: bool = F
     `batch` είδη ανά κλήση ώστε ο frontend να δείχνει πρόοδο (loop μέχρι remaining=0)."""
     from app.repositories.pharmacy_catalog import PharmacyCatalogRepository
     from app.repositories.supplier_settings import SupplierSettingsRepository
-    creds = await SupplierSettingsRepository(tenant_id=tenant_id).profarm_creds()
+    sup = SupplierSettingsRepository(tenant_id=tenant_id)
+    doc = await sup.find_one({"key": "profarm"}) or {}
+    if doc.get("sync_stopped"):                 # οριστική διακοπή από τον χρήστη
+        return {"ok": True, "stopped": True, "processed": 0, "matched": 0, "attached": 0}
+    creds = await sup.profarm_creds()
     if not creds:
         return {"ok": False, "error": "not_configured"}
     cl = await login(creds["username"], creds["password"])
@@ -193,6 +197,7 @@ async def sync_batch(tenant_id: str, *, batch: int = 40, only_for_sale: bool = F
 async def sync_status(tenant_id: str) -> dict:
     """Πρόοδος: πόσα έχουν φωτο Profarm, πόσα δοκιμάστηκαν, πόσα μένουν (χωρίς φωτο & με barcode)."""
     from app.repositories.pharmacy_catalog import PharmacyCatalogRepository
+    from app.repositories.supplier_settings import SupplierSettingsRepository
     col = PharmacyCatalogRepository(tenant_id=tenant_id)._db["pharmacy_products"]
     base = {"tenant_id": tenant_id, "active": {"$ne": False}}
     remaining = await col.count_documents({**base, "profarm_tried": {"$ne": True},
@@ -200,7 +205,18 @@ async def sync_status(tenant_id: str) -> dict:
                  {"barcode": {"$nin": [None, ""]}}]})
     attached = await col.count_documents({**base, "photo_source": "profarm"})
     tried = await col.count_documents({**base, "profarm_tried": True})
-    return {"attached": attached, "tried": tried, "remaining": remaining}
+    doc = await SupplierSettingsRepository(tenant_id=tenant_id).find_one({"key": "profarm"}) or {}
+    return {"attached": attached, "tried": tried, "remaining": remaining,
+            "stopped": bool(doc.get("sync_stopped"))}
+
+
+async def set_sync_stopped(tenant_id: str, stopped: bool) -> dict:
+    """Οριστική διακοπή (ή επανενεργοποίηση) της φωτο-σάρωσης — flag ανά φαρμακείο."""
+    from app.repositories.supplier_settings import SupplierSettingsRepository
+    await SupplierSettingsRepository(tenant_id=tenant_id).update_one(
+        {"key": "profarm"}, {"$set": {"sync_stopped": bool(stopped)},
+                             "$setOnInsert": {"key": "profarm"}}, upsert=True)
+    return {"ok": True, "stopped": bool(stopped)}
 
 
 # ── ΕΙΣΑΓΩΓΗ ΟΛΟΚΛΗΡΩΝ ΠΡΟΪΟΝΤΩΝ (OTC/παραφάρμακα) από κατηγορίες Profarm ─────────────────────
@@ -208,6 +224,10 @@ async def sync_status(tenant_id: str) -> dict:
 IMPORT_CATS = {11: "otc_medicine", 5: "parapharmacy", 309: "parapharmacy", 3: "parapharmacy",
                4: "parapharmacy", 2: "parapharmacy", 8: "parapharmacy", 9: "parapharmacy",
                6: "parapharmacy"}
+# Ειδικές Profarm κατηγορίες → απευθείας κατηγορία e-shop (καλές ως έχουν). ΜΗΣΥΦΑ(11)/Παραφάρμακα(5,309)
+# = γενικές → None → AI-ταξινόμηση από όνομα (classify_new_products)· ό,τι δεν βρεθεί μένει κενό (χειροκίνητα).
+_PROFARM_CATEGORY = {3: "Αντηλιακά", 4: "Γάλατα", 2: "Επιδεσμικό Υλικό",
+                     6: "Μέσα Ατομικής Προστασίας", 8: "Ορθοπεδικά", 9: "Διαγνωστικά"}
 _EUR_RE = re.compile(r"([0-9]+(?:[.,][0-9]{1,2})?)")
 
 
@@ -259,9 +279,65 @@ async def list_category_products(cl: httpx.AsyncClient, cat_id, page: int, rows:
     return list(dict.fromkeys(re.findall(r"product_id/(\d+)", r.text or "")))
 
 
-async def import_chunk(tenant_id: str, category_ids: list | None = None, *, chunk: int = 12) -> dict:
-    """Stateful importer OTC/παραφαρμάκων: (1) enumerate product_ids των κατηγοριών (μία σελίδα/tick),
-    (2) import chunk προϊόντων (fetch detail→parse→upsert create/enrich + φωτο). Ήπιο, resumable."""
+async def _upsert_profarm_product(cl, col, repo, tenant_id: str, pid: str, ptype: str,
+                                  category_name: str | None = None) -> tuple[str, bool, bool]:
+    """Fetch detail → parse → create/enrich ΕΝΑ προϊόν. Returns (result, had_photo, reclassified).
+    ΕΛΕΓΧΟΣ τύπου: ο τύπος παίρνεται από την ΕΠΙΣΗΜΗ κατηγορία Profarm (ΜΗΣΥΦΑ=OTC, παραφάρμακα=
+    parapharmacy)· η εισαγωγή ΔΕΝ σαρώνει ποτέ «Φάρμακα» (συνταγογραφούμενα), άρα δεν αγγίζει rx.
+    reclassified=True όταν διορθώνεται λάθος τύπος υπάρχοντος είδους. result: created|enriched|skip|error."""
+    try:
+        b = (await asyncio.wait_for(cl.get(f"{BASE}/farmaka-1/product_id/{pid}"), timeout=18)).text
+    except (TimeoutError, Exception):  # noqa: BLE001
+        return "error", False, False
+    d = parse_product(b)
+    if not d.get("barcodes"):
+        return "skip", False, False
+    bc = d["barcodes"][0]
+    image_id = None
+    if d.get("image_url"):
+        try:
+            img = await asyncio.wait_for(fetch_image(cl, d["image_url"]), timeout=18)
+        except (TimeoutError, Exception):  # noqa: BLE001
+            img = None
+        if img:
+            image_id = await repo.save_image(img[0], img[1])
+    existing = await col.find_one({"tenant_id": tenant_id, "barcode": bc}, {"image_id": 1, "type": 1})
+    reclassified = bool(existing) and existing.get("type") != ptype
+    if existing:
+        # Ο τύπος από την ΚΑΤΗΓΟΡΙΑ Profarm είναι authoritative — διορθώνει το λάθος default (rx) του ΗΔΥΚΑ:
+        # ό,τι είναι στις κατηγορίες ΜΗΣΥΦΑ/παραφαρμάκων ΔΕΝ είναι συνταγογραφούμενο.
+        s = {"type": ptype, "vat_rate": d["vat_rate"], "price_includes_vat": True, "profarm_pid": pid,
+             "profarm_synced_at": _now(), "updated_at": _now()}
+        if d["wholesale_cents"]:
+            s["wholesale_cents"] = d["wholesale_cents"]
+        if image_id and not existing.get("image_id"):
+            s["image_id"] = image_id
+            s["photo_source"] = "profarm"
+        if d.get("description"):
+            s["description_long"] = d["description"]
+        if len(d.get("barcodes") or []) > 1:
+            s["barcodes"] = d["barcodes"][1:]
+        await col.update_one({"_id": existing["_id"]}, {"$set": s})
+        return "enriched", bool(image_id), reclassified
+    doc = {"tenant_id": tenant_id, "barcode": bc, "barcodes": d["barcodes"][1:],
+           "name": d["name"][:200] or bc, "type": ptype, "vat_rate": d["vat_rate"],
+           "category": category_name or None,   # ειδική Profarm κατηγορία (αλλιώς None → AI/χειροκίνητα)
+           "price_includes_vat": True, "price_cents": d["retail_cents"],
+           "wholesale_cents": d["wholesale_cents"], "description_long": d.get("description"),
+           "active": True, "for_sale": False, "stock_qty": 0,
+           "image_id": image_id, "photo_source": "profarm" if image_id else None,
+           "source": "profarm", "profarm_pid": pid, "created_at": _now(), "updated_at": _now()}
+    await col.insert_one(doc)
+    return "created", bool(image_id), False
+
+
+_MAX_PAGES = 600   # ασφάλεια ενάντια σε ατέρμονη σελιδοποίηση (wrap)
+
+
+async def import_chunk(tenant_id: str, category_ids: list | None = None, *, chunk: int = 10) -> dict:
+    """Importer OTC/παραφαρμάκων ΣΕΛΙΔΑ-ΣΕΛΙΔΑ: φόρτωσε ΜΙΑ σελίδα 100 product_ids, εισήγαγε λίγα-λίγα
+    (chunk) με fetch detail→upsert(create/enrich)+φωτο, και όταν τελειώσει η σελίδα → επόμενη σελίδα.
+    ΧΩΡΙΣ γιγάντια προ-καταγραφή. Idempotent (barcode), resumable, ήπιο."""
     from app.repositories.pharmacy_catalog import PharmacyCatalogRepository
     from app.repositories.supplier_settings import SupplierSettingsRepository
     sup = SupplierSettingsRepository(tenant_id=tenant_id)
@@ -269,103 +345,60 @@ async def import_chunk(tenant_id: str, category_ids: list | None = None, *, chun
     if not creds:
         return {"ok": False, "error": "not_configured"}
     job = await sup.find_one({"key": "profarm_import"}) or {}
-    status = job.get("status")
-    if status not in ("enumerating", "importing"):
+    if job.get("status") != "importing":
         cats = [c for c in (category_ids or list(IMPORT_CATS)) if int(c) in IMPORT_CATS]
-        job = {"key": "profarm_import", "status": "enumerating", "cats": cats, "enum_i": 0,
-               "enum_page": 0, "queue": [], "pos": 0, "created": 0, "enriched": 0, "photos": 0}
+        job = {"key": "profarm_import", "status": "importing", "cats": cats, "cat_i": 0, "page": 0,
+               "page_pids": [], "page_pos": 0, "created": 0, "enriched": 0, "photos": 0}
         await sup.update_one({"key": "profarm_import"}, {"$set": job}, upsert=True)
+    cats = job["cats"]
+    cat_i, page = job.get("cat_i", 0), job.get("page", 0)
+    page_pids, page_pos = job.get("page_pids", []), job.get("page_pos", 0)
+    if cat_i >= len(cats):
+        await sup.update_one({"key": "profarm_import"}, {"$set": {"status": "done"}})
+        return {"ok": True, "done": True}
     cl = await login(creds["username"], creds["password"])
     if not cl:
         return {"ok": False, "error": "login_failed"}
+    created = enriched = photos = 0
     try:
-        # ── Φάση 1: ENUMERATE (μία σελίδα κατηγορίας ανά tick) ──
-        if job["status"] == "enumerating":
-            cats = job["cats"]
-            i, page = job.get("enum_i", 0), job.get("enum_page", 0)
-            if i >= len(cats):
-                await sup.update_one({"key": "profarm_import"}, {"$set": {"status": "importing"}})
-                return {"ok": True, "phase": "enumerated", "total": len(job.get("queue", []))}
-            cid = cats[i]
-            pids = await list_category_products(cl, cid, page)
-            q = job.get("queue", [])
-            have = {x[0] for x in q}
-            ptype = IMPORT_CATS.get(int(cid), "parapharmacy")
-            for pid in pids:
-                if pid not in have:
-                    q.append([pid, ptype])
-            nxt = {"queue": q}
-            if len(pids) < 100:          # τέλος κατηγορίας → επόμενη
-                nxt["enum_i"] = i + 1
-                nxt["enum_page"] = 0
-            else:
-                nxt["enum_page"] = page + 1
-            await sup.update_one({"key": "profarm_import"}, {"$set": nxt})
-            return {"ok": True, "phase": "enumerating", "cat": cid, "collected": len(q)}
-        # ── Φάση 2: IMPORT (chunk προϊόντων) ──
+        # χρειάζεσαι ΝΕΑ σελίδα;
+        if page_pos >= len(page_pids):
+            pids = await list_category_products(cl, cats[cat_i], page)
+            if not pids or page >= _MAX_PAGES:          # τέλος κατηγορίας → επόμενη
+                nxt_done = (cat_i + 1) >= len(cats)
+                await sup.update_one({"key": "profarm_import"}, {"$set": {
+                    "cat_i": cat_i + 1, "page": 0, "page_pids": [], "page_pos": 0,
+                    **({"status": "done"} if nxt_done else {})}})
+                return {"ok": True, "phase": "next-category", "cat_i": cat_i + 1, "done": nxt_done}
+            page_pids, page_pos, page = pids, 0, page + 1   # page = η ΕΠΟΜΕΝΗ σελίδα προς φόρτωση
+        # εισήγαγε chunk από την ΤΡΕΧΟΥΣΑ σελίδα
         repo = PharmacyCatalogRepository(tenant_id=tenant_id)
         col = repo._db["pharmacy_products"]
-        queue = job.get("queue", [])
-        pos = job.get("pos", 0)
-        created = enriched = photos = 0
-        end = min(pos + chunk, len(queue))
-        for idx in range(pos, end):
-            pid, ptype = queue[idx]
-            try:
-                b = (await asyncio.wait_for(cl.get(f"{BASE}/farmaka-1/product_id/{pid}"), timeout=18)).text
-            except (TimeoutError, Exception):  # noqa: BLE001
-                break            # πιθανό throttling → σταμάτα, retry επόμενο tick (χωρίς advance)
-            d = parse_product(b)
-            if not d.get("barcodes"):
-                continue
-            bc = d["barcodes"][0]
-            image_id = None
-            if d.get("image_url"):
-                try:
-                    img = await asyncio.wait_for(fetch_image(cl, d["image_url"]), timeout=18)
-                except (TimeoutError, Exception):  # noqa: BLE001
-                    img = None
-                if img:
-                    image_id = await repo.save_image(img[0], img[1])
-            existing = await col.find_one({"tenant_id": tenant_id, "barcode": bc}, {"image_id": 1})
-            if existing:
-                s = {"vat_rate": d["vat_rate"], "price_includes_vat": True, "profarm_pid": pid,
-                     "profarm_synced_at": _now(), "updated_at": _now()}
-                if d["wholesale_cents"]:
-                    s["wholesale_cents"] = d["wholesale_cents"]
-                if image_id and not existing.get("image_id"):
-                    s["image_id"] = image_id
-                    s["photo_source"] = "profarm"
-                if d.get("description"):
-                    s["description_long"] = d["description"]
-                if d.get("barcodes"):
-                    s["barcodes"] = d["barcodes"][1:]
-                await col.update_one({"_id": existing["_id"]}, {"$set": s})
-                enriched += 1
-            else:
-                doc = {"tenant_id": tenant_id, "barcode": bc, "barcodes": d["barcodes"][1:],
-                       "name": d["name"][:200] or bc, "type": ptype, "vat_rate": d["vat_rate"],
-                       "price_includes_vat": True, "price_cents": d["retail_cents"],
-                       "wholesale_cents": d["wholesale_cents"], "description_long": d.get("description"),
-                       "active": True, "for_sale": False, "stock_qty": 0,
-                       "image_id": image_id, "photo_source": "profarm" if image_id else None,
-                       "source": "profarm", "profarm_pid": pid,
-                       "created_at": _now(), "updated_at": _now()}
-                await col.insert_one(doc)
+        ptype = IMPORT_CATS.get(int(cats[cat_i]), "parapharmacy")
+        cat_name = _PROFARM_CATEGORY.get(int(cats[cat_i]))   # ειδική κατηγορία (ή None για γενικά)
+        end = min(page_pos + chunk, len(page_pids))
+        reclassified = 0
+        for k in range(page_pos, end):
+            res, ph, rc = await _upsert_profarm_product(cl, col, repo, tenant_id, page_pids[k], ptype, cat_name)
+            if res == "error":
+                break                    # πιθανό throttling → σταμάτα, retry ίδιο pos επόμενο tick
+            page_pos = k + 1
+            if res == "created":
                 created += 1
-            if image_id:
+            elif res == "enriched":
+                enriched += 1
+            if ph:
                 photos += 1
+            if rc:
+                reclassified += 1
             await asyncio.sleep(0.35)
-        newpos = end
-        upd = {"pos": newpos, "created": job.get("created", 0) + created,
-               "enriched": job.get("enriched", 0) + enriched, "photos": job.get("photos", 0) + photos,
-               "updated_at": _now()}
-        if newpos >= len(queue):
-            upd["status"] = "done"
-        await sup.update_one({"key": "profarm_import"}, {"$set": upd})
+        await sup.update_one({"key": "profarm_import"}, {"$set": {
+            "page": page, "page_pids": page_pids, "page_pos": page_pos,
+            "created": job.get("created", 0) + created, "enriched": job.get("enriched", 0) + enriched,
+            "photos": job.get("photos", 0) + photos,
+            "reclassified": job.get("reclassified", 0) + reclassified, "updated_at": _now()}})
         return {"ok": True, "phase": "importing", "created": created, "enriched": enriched,
-                "photos": photos, "pos": newpos, "total": len(queue),
-                "done": newpos >= len(queue)}
+                "photos": photos, "cat_i": cat_i, "page": page, "page_pos": page_pos}
     finally:
         await cl.aclose()
 
@@ -373,12 +406,66 @@ async def import_chunk(tenant_id: str, category_ids: list | None = None, *, chun
 async def import_status(tenant_id: str) -> dict:
     from app.repositories.supplier_settings import SupplierSettingsRepository
     j = await SupplierSettingsRepository(tenant_id=tenant_id).find_one({"key": "profarm_import"}) or {}
-    return {"status": j.get("status") or "idle", "total": len(j.get("queue", [])), "pos": j.get("pos", 0),
-            "created": j.get("created", 0), "enriched": j.get("enriched", 0), "photos": j.get("photos", 0),
-            "cats": j.get("cats", [])}
+    cats = j.get("cats", [])
+    imported = int(j.get("created", 0)) + int(j.get("enriched", 0))
+    return {"status": j.get("status") or "idle",
+            "created": j.get("created", 0), "enriched": j.get("enriched", 0),
+            "photos": j.get("photos", 0), "imported": imported,
+            "reclassified": j.get("reclassified", 0),
+            "cat_i": j.get("cat_i", 0), "cats_total": len(cats), "page": j.get("page", 0),
+            "pct": round(100 * j.get("cat_i", 0) / len(cats)) if cats else 0}
 
 
 async def import_reset(tenant_id: str) -> dict:
     from app.repositories.supplier_settings import SupplierSettingsRepository
     await SupplierSettingsRepository(tenant_id=tenant_id).delete_many({"key": "profarm_import"})
     return {"ok": True}
+
+
+async def classify_new_products(tenant_id: str, *, limit: int = 300) -> dict:
+    """AI-ταξινόμηση (haiku) εισαγμένων Profarm προϊόντων ΧΩΡΙΣ κατηγορία, από το όνομα, στο υπάρχον
+    λεξιλόγιο κατηγοριών μας (ή νέα σύντομη). Ό,τι δεν ταξινομηθεί μένει κενό (χειροκίνητα)."""
+    import json as _json
+    from app.repositories.pharmacy_catalog import PharmacyCatalogRepository
+    from app.services import pharmacat_service
+    c = await pharmacat_service._config()
+    if not c.get("api_key"):
+        return {"ok": False, "error": "ai_not_configured"}
+    col = PharmacyCatalogRepository(tenant_id=tenant_id)._db["pharmacy_products"]
+    vocab = [x for x in await col.distinct("category", {"tenant_id": tenant_id,
+             "category": {"$nin": [None, ""]}}) if x][:70]
+    rows = await col.find({"tenant_id": tenant_id, "source": "profarm", "name": {"$nin": [None, ""]},
+                           "$or": [{"category": {"$in": [None, ""]}}, {"category": {"$exists": False}}]},
+                          {"barcode": 1, "name": 1}).limit(int(limit)).to_list(int(limit))
+    if not rows:
+        return {"ok": True, "classified": 0, "remaining": 0}
+    import anthropic
+    client = anthropic.AsyncAnthropic(api_key=c["api_key"])
+    prompt = ("Είσαι φαρμακοποιός. Ταξινόμησε ΚΑΘΕ προϊόν στη σωστή κατηγορία e-shop φαρμακείου. "
+              "Χρησιμοποίησε ΚΑΤΑ ΠΡΟΤΙΜΗΣΗ μία υπάρχουσα κατηγορία: " + _json.dumps(vocab, ensure_ascii=False)
+              + ". Αν καμία δεν ταιριάζει, βάλε σύντομη νέα ελληνική (π.χ. «Βιταμίνες & Συμπληρώματα», "
+              "«Περιποίηση προσώπου», «Στοματική υγιεινή», «Βρεφικά»). Επίστρεψε ΜΟΝΟ JSON "
+              "{\"barcode\":\"κατηγορία\"} για: ")
+    classified = 0
+    for start in range(0, len(rows), 40):
+        batch = [{"barcode": r["barcode"], "name": r["name"]} for r in rows[start:start + 40]]
+        try:
+            resp = await client.messages.create(
+                model="claude-haiku-4-5", max_tokens=4000,
+                messages=[{"role": "user", "content": prompt + _json.dumps(batch, ensure_ascii=False)}])
+            from app.services import ai_cost
+            await ai_cost.record("__profarm_classify__", "claude-haiku-4-5", getattr(resp, "usage", None))
+            text = "".join(b.text for b in resp.content if b.type == "text")
+            m = re.search(r"\{.*\}", text, re.S)
+            mp = _json.loads(m.group(0)) if m else {}
+            for bc, cat in mp.items():
+                cat = str(cat or "").strip()[:80]
+                if cat:
+                    await col.update_one({"tenant_id": tenant_id, "barcode": str(bc)},
+                                         {"$set": {"category": cat, "updated_at": _now()}})
+                    classified += 1
+        except Exception:  # noqa: BLE001
+            continue
+    remaining = await col.count_documents({"tenant_id": tenant_id, "source": "profarm",
+        "$or": [{"category": {"$in": [None, ""]}}, {"category": {"$exists": False}}]})
+    return {"ok": True, "classified": classified, "remaining": remaining}

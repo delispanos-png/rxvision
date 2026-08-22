@@ -17,13 +17,13 @@ export function SupplierPhotoCard() {
   // Live πρόοδος harvest — poll κάθε 5s όσο η κάρτα είναι ανοιχτή (δείχνει και server-side background sync).
   const prog = useQuery({
     queryKey: ["profarm-sync-status"],
-    queryFn: () => api<{ attached: number; tried: number; remaining: number }>("/catalog/supplier/profarm/sync-status"),
+    queryFn: () => api<{ attached: number; tried: number; remaining: number; stopped?: boolean }>("/catalog/supplier/profarm/sync-status"),
     enabled: open, refetchInterval: 5000, retry: false,
   });
   // Εισαγωγή ΟΛΟΚΛΗΡΩΝ προϊόντων OTC/παραφαρμάκων (create νέα + update υπάρχοντα)
   const imp = useQuery({
     queryKey: ["profarm-import-status"],
-    queryFn: () => api<{ status: string; total: number; pos: number; created: number; enriched: number; photos: number }>("/catalog/supplier/profarm/import-status"),
+    queryFn: () => api<{ status: string; created: number; enriched: number; photos: number; imported: number; reclassified: number; cat_i: number; cats_total: number; page: number; pct: number }>("/catalog/supplier/profarm/import-status"),
     enabled: open, refetchInterval: 5000, retry: false,
   });
   const [impBusy, setImpBusy] = useState(false);
@@ -77,6 +77,10 @@ export function SupplierPhotoCard() {
     }
     setSync((s) => ({ ...s, running: false }));
   }
+  async function setStopped(stopped: boolean) {
+    try { await api(`/catalog/supplier/profarm/sync-stop?stopped=${stopped}`, { method: "POST" }); await prog.refetch(); }
+    catch { await appAlert("Αποτυχία."); }
+  }
 
   return (
     <div className="rounded-xl border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
@@ -102,28 +106,38 @@ export function SupplierPhotoCard() {
           </div>
           {configured && (
             <div className="rounded-lg border border-indigo-200 bg-indigo-50/50 p-3 dark:border-indigo-900 dark:bg-indigo-950/30">
-              {(() => {
-                const tried = prog.data?.tried ?? 0, remaining = prog.data?.remaining ?? 0, attached = prog.data?.attached ?? 0;
-                const total = tried + remaining;
-                const pct = total > 0 ? Math.round((tried / total) * 100) : (attached > 0 ? 100 : 0);
-                const active = sync.running || (prog.isFetching && remaining > 0);
-                return (
-                  <div className="mb-2">
-                    <div className="mb-1 flex items-center justify-between text-xs text-slate-600 dark:text-slate-300">
-                      <span className="inline-flex items-center gap-1.5">{active && <Loader2 className="h-3.5 w-3.5 animate-spin text-indigo-500" />} Πρόοδος: <b>{pct}%</b> {remaining > 0 ? `(απομένουν ${remaining})` : "— ολοκληρώθηκε"}</span>
-                      <span>📷 <b className="text-emerald-600">{attached}</b> φωτο</span>
-                    </div>
-                    <div className="h-2.5 overflow-hidden rounded-full bg-indigo-100 dark:bg-slate-800"><div className="h-full rounded-full bg-indigo-500 transition-all" style={{ width: `${pct}%` }} /></div>
-                    <div className="mt-0.5 text-[11px] text-slate-400">{tried.toLocaleString("el-GR")} από {total.toLocaleString("el-GR")} είδη ελέγχθηκαν</div>
+              {prog.data?.stopped ? (
+                <div className="flex flex-wrap items-center gap-2 text-sm text-slate-500 dark:text-slate-400">
+                  <span>⏹ Η φωτο-σάρωση είναι <b>οριστικά σταματημένη</b> — δεν τρέχει τίποτα.</span>
+                  <button onClick={() => setStopped(false)} className="ml-auto inline-flex items-center gap-1 rounded-lg border border-indigo-300 px-2.5 py-1 text-xs font-medium text-indigo-600 hover:bg-indigo-50 dark:border-indigo-700">▶ Επανενεργοποίηση</button>
+                </div>
+              ) : (
+                <>
+                  {(() => {
+                    const tried = prog.data?.tried ?? 0, remaining = prog.data?.remaining ?? 0, attached = prog.data?.attached ?? 0;
+                    const total = tried + remaining;
+                    const pct = total > 0 ? Math.round((tried / total) * 100) : (attached > 0 ? 100 : 0);
+                    const active = sync.running || (prog.isFetching && remaining > 0);
+                    return (
+                      <div className="mb-2">
+                        <div className="mb-1 flex items-center justify-between text-xs text-slate-600 dark:text-slate-300">
+                          <span className="inline-flex items-center gap-1.5">{active && <Loader2 className="h-3.5 w-3.5 animate-spin text-indigo-500" />} Πρόοδος: <b>{pct}%</b> {remaining > 0 ? `(απομένουν ${remaining})` : "— ολοκληρώθηκε"}</span>
+                          <span>📷 <b className="text-emerald-600">{attached}</b> φωτο</span>
+                        </div>
+                        <div className="h-2.5 overflow-hidden rounded-full bg-indigo-100 dark:bg-slate-800"><div className="h-full rounded-full bg-indigo-500 transition-all" style={{ width: `${pct}%` }} /></div>
+                        <div className="mt-0.5 text-[11px] text-slate-400">{tried.toLocaleString("el-GR")} από {total.toLocaleString("el-GR")} είδη ελέγχθηκαν</div>
+                      </div>
+                    );
+                  })()}
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button onClick={runSync} disabled={sync.running} className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50">
+                      {sync.running ? <Loader2 className="h-4 w-4 animate-spin" /> : <Camera className="h-4 w-4" />} {sync.running ? "Συγχρονισμός…" : "Συγχρονισμός φωτογραφιών"}
+                    </button>
+                    <button onClick={() => setStopped(true)} disabled={sync.running} className="inline-flex items-center gap-1.5 rounded-lg border border-rose-300 px-3 py-1.5 text-sm font-medium text-rose-600 hover:bg-rose-50 disabled:opacity-50 dark:border-rose-800">⏹ Οριστική διακοπή</button>
                   </div>
-                );
-              })()}
-              <div className="flex flex-wrap items-center gap-2">
-                <button onClick={runSync} disabled={sync.running} className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50">
-                  {sync.running ? <Loader2 className="h-4 w-4 animate-spin" /> : <Camera className="h-4 w-4" />} {sync.running ? "Συγχρονισμός…" : "Συγχρονισμός φωτογραφιών"}
-                </button>
-              </div>
-              <p className="mt-1.5 text-[11px] text-slate-400">Ψάχνει κάθε είδος χωρίς φωτο με το barcode του στο Profarm — μόνο ακριβή ταιριάσματα. Η μπάρα ενημερώνεται αυτόματα (τρέχει και στο παρασκήνιο).</p>
+                  <p className="mt-1.5 text-[11px] text-slate-400">Ψάχνει κάθε είδος χωρίς φωτο με το barcode του στο Profarm — μόνο ακριβή ταιριάσματα.</p>
+                </>
+              )}
             </div>
           )}
 
@@ -133,10 +147,10 @@ export function SupplierPhotoCard() {
               <p className="mb-2 text-[11px] text-slate-400">Φέρνει ΟΛΟΚΛΗΡΑ τα προϊόντα (φωτο, περιγραφή, barcode, ΦΠΑ, προτεινόμενη λιανική, χονδρική) από τις κατηγορίες OTC/παραφαρμάκων. <b>Νέα → δημιουργούνται· υπάρχοντα → ενημερώνονται.</b> Εισάγονται ανενεργά «προς πώληση» (τα ενεργοποιείς εσύ).</p>
               {(() => {
                 const s = imp.data; const st = s?.status || "idle";
-                const total = s?.total ?? 0, pos = s?.pos ?? 0;
-                const pct = st === "done" ? 100 : (total > 0 ? Math.round((pos / total) * 100) : 0);
-                const label = st === "enumerating" ? "Καταγραφή προϊόντων…" : st === "importing" ? `Εισαγωγή ${pos}/${total}` : st === "done" ? "Ολοκληρώθηκε ✓" : "Έτοιμο για εκκίνηση";
-                const active = st === "importing" || st === "enumerating";
+                const imported = s?.imported ?? 0;
+                const pct = st === "done" ? 100 : (s?.pct ?? 0);
+                const active = st === "importing";
+                const label = st === "importing" ? `Εισαγωγή σε εξέλιξη — κατηγορία ${(s?.cat_i ?? 0) + 1}/${s?.cats_total ?? 0}` : st === "done" ? "Ολοκληρώθηκε ✓" : "Έτοιμο για εκκίνηση";
                 return (
                   <>
                     {st !== "idle" && (
@@ -145,7 +159,8 @@ export function SupplierPhotoCard() {
                           <span className="inline-flex items-center gap-1.5">{active && <Loader2 className="h-3.5 w-3.5 animate-spin text-emerald-500" />}{label}</span>
                           <span>✚<b className="text-emerald-600">{s?.created ?? 0}</b> νέα · ↻{s?.enriched ?? 0} · 📷{s?.photos ?? 0}</span>
                         </div>
-                        <div className="h-2.5 overflow-hidden rounded-full bg-emerald-100 dark:bg-slate-800"><div className="h-full rounded-full bg-emerald-500 transition-all" style={{ width: `${st === "enumerating" ? 12 : pct}%` }} /></div>
+                        <div className="h-2.5 overflow-hidden rounded-full bg-emerald-100 dark:bg-slate-800"><div className="h-full rounded-full bg-emerald-500 transition-all" style={{ width: `${pct}%` }} /></div>
+                        <div className="mt-0.5 text-[11px] text-slate-400">{imported.toLocaleString("el-GR")} προϊόντα εισήχθησαν{(s?.reclassified ?? 0) > 0 ? ` · 🔧 ${s?.reclassified} διορθώσεις τύπου (rx→OTC/παραφ.)` : ""}</div>
                       </div>
                     )}
                     <div className="flex items-center gap-2">

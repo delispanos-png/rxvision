@@ -45,15 +45,21 @@ celery_app.conf.beat_schedule = {
         "task": "app.workers.ingestion.reap_stalled_sync",
         "schedule": crontab(minute="*/2"),
     },
-    # Ήπιο trickle φωτο προμηθευτή (Profarm) — ένα-ένα barcode, μικρό chunk κάθε 3 λεπτά (χωρίς traffic).
-    "profarm-photo-sync": {
-        "task": "app.workers.supplier_photos.profarm_sync_tick",
-        "schedule": crontab(minute="*/2"),
-    },
+    # (Απενεργοποιημένο) rx φωτο-σάρωση Profarm — σχεδόν μηδενική απόδοση (τα φάρμακα δεν έχουν φωτο).
+    # Οι φωτο έρχονται από την «Εισαγωγή OTC/παραφαρμάκων» (profarm-import). Ξανα-ενεργοποίησε αν χρειαστεί.
+    # "profarm-photo-sync": {
+    #     "task": "app.workers.supplier_photos.profarm_sync_tick",
+    #     "schedule": crontab(minute="*/2"),
+    # },
     # Εισαγωγή προϊόντων OTC/παραφαρμάκων από Profarm — ήπιο chunk κάθε 2 λεπτά (μόνο με ενεργό job).
     "profarm-import": {
         "task": "app.workers.supplier_photos.profarm_import_tick",
         "schedule": crontab(minute="*/2"),
+    },
+    # AI-ταξινόμηση κατηγοριών εισαγμένων Profarm προϊόντων — κάθε 10 λεπτά (σταματά όταν μηδενιστούν).
+    "profarm-classify": {
+        "task": "app.workers.supplier_photos.profarm_classify_tick",
+        "schedule": crontab(minute="*/10"),
     },
     # self-heal: resume historical backfill for tenants with a history_from not yet reached
     # (a killed/stalled chunk → auto-continue from the current oldest record).

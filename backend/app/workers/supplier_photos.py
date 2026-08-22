@@ -33,6 +33,26 @@ def profarm_sync_tick() -> dict:
     return _run_async(_run())
 
 
+@celery_app.task(name="app.workers.supplier_photos.profarm_classify_tick")
+def profarm_classify_tick() -> dict:
+    """AI-ταξινόμηση κατηγοριών εισαγμένων Profarm προϊόντων (haiku) — μόνο όσο υπάρχουν ατα ξινόμητα."""
+    async def _run() -> dict:
+        from app.core.db import shared_db
+        from app.services import profarm_service
+        db = shared_db()
+        tids = await db["supplier_settings"].distinct("tenant_id", {"key": "profarm_import"})
+        out: dict = {}
+        for t in tids:
+            try:
+                r = await profarm_service.classify_new_products(str(t), limit=200)
+                if r.get("classified") or r.get("remaining"):
+                    out[str(t)] = {"classified": r.get("classified"), "remaining": r.get("remaining")}
+            except Exception as e:  # noqa: BLE001
+                out[str(t)] = {"error": str(e)[:100]}
+        return out
+    return _run_async(_run())
+
+
 @celery_app.task(name="app.workers.supplier_photos.profarm_import_tick")
 def profarm_import_tick() -> dict:
     """Εισαγωγή OTC/παραφαρμάκων από Profarm — προχωρά ΜΟΝΟ tenants με ΕΝΕΡΓΟ job (enumerating/importing)."""
