@@ -63,7 +63,7 @@ export default function AdminSoftonePage() {
       <p className="mb-5 text-sm text-slate-500">Διαπιστευτήρια SoftOne για έκδοση παραστατικών & διαβίβαση στο myDATA. Τα δεδομένα αποθηκεύονται κρυπτογραφημένα. {s1?.configured && <span className="ml-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">ρυθμισμένο</span>}</p>
 
       <div className="grid gap-6 xl:grid-cols-2 xl:items-start">
-      <div className="space-y-5 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+      <div className="min-w-0 space-y-5 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
         <div className="grid gap-4 sm:grid-cols-2">
           <div className="sm:col-span-2"><label className={lbl}>Base URL (S1 Web Services)</label><input className={inp} value={f.base_url} onChange={(e) => set("base_url", e.target.value)} placeholder="https://<host>/s1services" /></div>
           <div><label className={lbl}>App ID</label><input className={inp} value={f.app_id} onChange={(e) => set("app_id", e.target.value)} /></div>
@@ -153,7 +153,7 @@ function MtrlMap() {
   const items = q.data?.items ?? [];
   const groups = Array.from(new Set(items.map((i) => i.group)));
   return (
-    <div className="space-y-4 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+    <div className="min-w-0 space-y-4 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
       <div className="flex items-start gap-2">
         <Boxes className="mt-0.5 h-5 w-5 shrink-0 text-brand-600" />
         <div>

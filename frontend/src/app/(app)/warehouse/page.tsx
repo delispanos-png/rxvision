@@ -9,7 +9,7 @@ import { appAlert } from "@/store/dialogStore";
 import { fmtEur, fmtNum } from "@/lib/formatters";
 import { DataTable, type Column } from "@/components/tables/DataTable";
 import { DateInput } from "@/components/ui/DateInput";
-import { CategoryPicker } from "@/components/catalog/CategoryPicker";
+import { CategoryPicker, useCategoryTree } from "@/components/catalog/CategoryPicker";
 import { SupplierPhotoCard } from "@/components/catalog/SupplierPhotoCard";
 
 type Item = {
@@ -23,7 +23,7 @@ type Item = {
 };
 type Variant = { color?: string | null; size?: string | null; barcode?: string | null; stock_qty?: number };
 type Summary = { skus: number; active: number; for_sale: number; units: number; value_cents: number; low: number; expiring: number };
-type WH = { items: Item[]; total: number; summary: Summary };
+type WH = { items: Item[]; total: number; summary: Summary; suppliers?: string[] };
 type Move = { kind: string; qty: number; reason?: string | null; batch?: string | null; expiry?: string | null; new_stock?: number; at: string; by?: string | null };
 
 const TYPE_EL: Record<string, string> = { rx_medicine: "Συνταγογρ.", otc_medicine: "ΜΗ.ΣΥ.ΦΑ.", parapharmacy: "Παραφάρμακο" };
@@ -39,17 +39,31 @@ export default function WarehousePage() {
   const [low, setLow] = useState(false);
   const [exp, setExp] = useState(false);
   const [inactive, setInactive] = useState(true);
+  const [cat1, setCat1] = useState(""); const [cat2, setCat2] = useState(""); const [cat3, setCat3] = useState("");
+  const [forSale, setForSale] = useState(""); const [stock, setStock] = useState(""); const [supplier, setSupplier] = useState("");
+  const [noImg, setNoImg] = useState(false); const [noCat, setNoCat] = useState(false);
+  const { data: catTree } = useCategoryTree();
+  const cats = catTree?.items ?? [];
+  const catOpts = (level: number, parent: string) => cats.filter((c) => c.level === level && (level === 1 || c.parent_id === parent));
   const [move, setMove] = useState<Item | null>(null);
   const [edit, setEdit] = useState<Item | null>(null);
   const [hist, setHist] = useState<Item | null>(null);
   const [imp, setImp] = useState(false);
   const [page, setPage] = useState(1);
   const PAGE = 100;
-  useEffect(() => { setPage(1); }, [q, type, low, exp, inactive]);
+  useEffect(() => { setPage(1); }, [q, type, low, exp, inactive, cat1, cat2, cat3, forSale, stock, supplier, noImg, noCat]);
 
   const list = useQuery({
-    queryKey: ["warehouse", q, type, low, exp, inactive, page],
-    queryFn: () => api<WH>(`/catalog/warehouse?q=${encodeURIComponent(q)}&type=${type}&low_stock=${low}&expiring=${exp}&include_inactive=${inactive}&page=${page}&page_size=${PAGE}`),
+    queryKey: ["warehouse", q, type, low, exp, inactive, cat1, cat2, cat3, forSale, stock, supplier, noImg, noCat, page],
+    queryFn: () => {
+      const p = new URLSearchParams({ q, type, low_stock: String(low), expiring: String(exp), include_inactive: String(inactive), page: String(page), page_size: String(PAGE) });
+      if (cat1) p.set("cat1", cat1); if (cat2) p.set("cat2", cat2); if (cat3) p.set("cat3", cat3);
+      if (forSale) p.set("for_sale", forSale === "yes" ? "true" : "false");
+      if (stock) p.set("stock", stock);
+      if (supplier) p.set("supplier", supplier);
+      if (noImg) p.set("no_image", "true"); if (noCat) p.set("no_category", "true");
+      return api<WH>(`/catalog/warehouse?${p.toString()}`);
+    },
     retry: false,
   });
   const total = list.data?.total ?? 0;
@@ -151,6 +165,46 @@ export default function WarehousePage() {
         <button onClick={() => setLow((v) => !v)} className={`rounded-lg px-3 py-1.5 text-sm font-medium ${low ? "bg-amber-100 text-amber-700" : "border border-slate-300 text-slate-600 dark:border-slate-600"}`}>⚠ {t("Χαμηλό", "Low")}</button>
         <button onClick={() => setExp((v) => !v)} className={`rounded-lg px-3 py-1.5 text-sm font-medium ${exp ? "bg-rose-100 text-rose-700" : "border border-slate-300 text-slate-600 dark:border-slate-600"}`}>⏱ {t("Λήγοντα", "Expiring")}</button>
         <label className="inline-flex items-center gap-1.5 px-2 text-sm text-slate-600 dark:text-slate-300"><input type="checkbox" checked={inactive} onChange={(e) => setInactive(e.target.checked)} className="h-4 w-4" /> {t("+ ανενεργά", "+ inactive")}</label>
+      </div>
+
+      {/* Φίλτρα κατηγορίας (3 επίπεδα) + κατάσταση/προμηθευτής/κενά πεδία */}
+      <div className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-white p-2 dark:border-slate-700 dark:bg-slate-900">
+        {cats.length > 0 && (<>
+          <select value={cat1} onChange={(e) => { setCat1(e.target.value); setCat2(""); setCat3(""); }} className="rounded-lg border border-slate-300 px-2 py-1.5 text-sm dark:border-slate-600 dark:bg-slate-800">
+            <option value="">{t("🗂️ Κατηγορία 1", "🗂️ Category 1")}</option>
+            {catOpts(1, "").map((c) => <option key={c.id} value={c.id}>{c.icon ? `${c.icon} ` : ""}{c.name}</option>)}
+          </select>
+          <select value={cat2} disabled={!cat1} onChange={(e) => { setCat2(e.target.value); setCat3(""); }} className="rounded-lg border border-slate-300 px-2 py-1.5 text-sm disabled:opacity-50 dark:border-slate-600 dark:bg-slate-800">
+            <option value="">{t("Κατηγορία 2", "Category 2")}</option>
+            {catOpts(2, cat1).map((c) => <option key={c.id} value={c.id}>{c.icon ? `${c.icon} ` : ""}{c.name}</option>)}
+          </select>
+          <select value={cat3} disabled={!cat2} onChange={(e) => setCat3(e.target.value)} className="rounded-lg border border-slate-300 px-2 py-1.5 text-sm disabled:opacity-50 dark:border-slate-600 dark:bg-slate-800">
+            <option value="">{t("Κατηγορία 3", "Category 3")}</option>
+            {catOpts(3, cat2).map((c) => <option key={c.id} value={c.id}>{c.icon ? `${c.icon} ` : ""}{c.name}</option>)}
+          </select>
+        </>)}
+        <select value={stock} onChange={(e) => setStock(e.target.value)} className="rounded-lg border border-slate-300 px-2 py-1.5 text-sm dark:border-slate-600 dark:bg-slate-800">
+          <option value="">{t("Απόθεμα: όλα", "Stock: all")}</option>
+          <option value="in">{t("Σε απόθεμα", "In stock")}</option>
+          <option value="out">{t("Εξαντλημένα", "Out of stock")}</option>
+          <option value="low">{t("Χαμηλό", "Low")}</option>
+        </select>
+        <select value={forSale} onChange={(e) => setForSale(e.target.value)} className="rounded-lg border border-slate-300 px-2 py-1.5 text-sm dark:border-slate-600 dark:bg-slate-800">
+          <option value="">{t("Πώληση: όλα", "Sale: all")}</option>
+          <option value="yes">{t("Προς πώληση", "For sale")}</option>
+          <option value="no">{t("Όχι στο e-shop", "Not in e-shop")}</option>
+        </select>
+        {!!(list.data?.suppliers?.length) && (
+          <select value={supplier} onChange={(e) => setSupplier(e.target.value)} className="max-w-[12rem] rounded-lg border border-slate-300 px-2 py-1.5 text-sm dark:border-slate-600 dark:bg-slate-800">
+            <option value="">{t("Προμηθευτής: όλοι", "Supplier: all")}</option>
+            {list.data!.suppliers!.map((s) => <option key={s} value={s}>{s}</option>)}
+          </select>
+        )}
+        <button onClick={() => setNoImg((v) => !v)} className={`rounded-lg px-3 py-1.5 text-sm font-medium ${noImg ? "bg-indigo-100 text-indigo-700" : "border border-slate-300 text-slate-600 dark:border-slate-600"}`}>📷 {t("Χωρίς φωτο", "No photo")}</button>
+        <button onClick={() => setNoCat((v) => !v)} className={`rounded-lg px-3 py-1.5 text-sm font-medium ${noCat ? "bg-indigo-100 text-indigo-700" : "border border-slate-300 text-slate-600 dark:border-slate-600"}`}>🗂️ {t("Χωρίς κατηγορία", "No category")}</button>
+        {(q || type || low || exp || cat1 || forSale || stock || supplier || noImg || noCat) && (
+          <button onClick={() => { setQ(""); setType(""); setLow(false); setExp(false); setCat1(""); setCat2(""); setCat3(""); setForSale(""); setStock(""); setSupplier(""); setNoImg(false); setNoCat(false); }} className="ml-auto rounded-lg px-3 py-1.5 text-sm font-medium text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/30">✕ {t("Καθαρισμός", "Clear")}</button>
+        )}
       </div>
 
       <div className="rounded-2xl border border-slate-200 bg-white p-2 dark:border-slate-700 dark:bg-slate-900">

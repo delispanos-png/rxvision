@@ -310,6 +310,8 @@ async def _upsert_profarm_product(cl, col, repo, tenant_id: str, pid: str, ptype
              "profarm_synced_at": _now(), "updated_at": _now()}
         if d["wholesale_cents"]:
             s["wholesale_cents"] = d["wholesale_cents"]
+        if d["retail_cents"]:            # διόρθωση λάθος λιανικής ΗΔΥΚΑ με την προτεινόμενη λιανική Profarm
+            s["price_cents"] = d["retail_cents"]
         if image_id and not existing.get("image_id"):
             s["image_id"] = image_id
             s["photo_source"] = "profarm"

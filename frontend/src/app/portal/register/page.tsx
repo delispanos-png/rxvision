@@ -73,7 +73,7 @@ export default function PortalRegister() {
 
   const inp = "w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm focus:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-100";
   return (
-    <div className="flex min-h-dvh items-center justify-center px-4 py-8">
+    <div className="h-full overflow-y-auto"><div className="flex min-h-full items-center justify-center px-4 py-8">
       {step === "form" ? (
         <form onSubmit={submit} className="w-full max-w-sm space-y-3 rounded-3xl border border-slate-200 bg-white p-6 shadow-xl shadow-slate-200/60 sm:p-8">
           <div className="text-center">
@@ -120,6 +120,6 @@ export default function PortalRegister() {
           </button>
         </form>
       )}
-    </div>
+    </div></div>
   );
 }

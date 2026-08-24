@@ -48,6 +48,11 @@ def _form_auto_checked(form_code: str | None, package_form: str | None, name: st
         return False
     if "TAB" in f or "CAP" in f or "ΔΙΣΚΙ" in n or "ΚΑΨΟΥΛ" in n or "ΤΑΜΠΛΕΤ" in n or "ΔΙΣΠ" in f:
         return True
+    # Αναβράζοντα: μονοδοσικά (1 δισκίο/φακελίσκος = 1 δόση), η ΗΔΥΚΑ τα μετράει ανά τεμάχιο όπως τα
+    # δισκία. Τα δισκία (EF.TAB) πιάνονται ήδη από το «TAB»· εδώ πιάνουμε και τα κοκκία/φακελίσκους
+    # (EFF.GRAN) ώστε να μην παίρνουν περιττό οπτικό έλεγχο — ΟΧΙ πολυδοσικά όπως οι σταγόνες.
+    if "EFF" in f or "ΑΝΑΒΡΑΖ" in n:
+        return True
     if "SYR" in f or "ΣΙΡΟΠ" in n or "SYRUP" in n or "POS" in f:           # σιρόπι / πόσιμο διάλυμα
         return True
     if "NEB" in f or ("ΑΜΠ" in n and ("ΑΝΑΠΝΕΥΣ" in n or "ΕΙΣΠΝ" in n or "NEB" in n)):

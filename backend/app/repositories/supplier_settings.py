@@ -16,10 +16,17 @@ class SupplierSettingsRepository(BaseRepository):
     collection_name = "supplier_settings"
 
     async def get_profarm(self) -> dict:
-        """Κατάσταση για το UI — ΠΟΤΕ τον κωδικό."""
+        """Κατάσταση για το UI — ΠΟΤΕ τον κωδικό. `enabled` = ενεργοποιημένο module (admin-controlled)."""
         d = await self.find_one({"key": "profarm"}) or {}
         return {"configured": bool(d.get("username") and d.get("password")),
-                "username": d.get("username") or ""}
+                "username": d.get("username") or "", "enabled": bool(d.get("module_enabled"))}
+
+    async def set_profarm_enabled(self, enabled: bool) -> dict:
+        """Ενεργοποίηση/απενεργοποίηση του module Profarm για το φαρμακείο (μόνο από admin panel)."""
+        await self.update_one({"key": "profarm"},
+                              {"$set": {"module_enabled": bool(enabled), "updated_at": _now()},
+                               "$setOnInsert": {"key": "profarm", "created_at": _now()}}, upsert=True)
+        return {"ok": True, "enabled": bool(enabled)}
 
     async def save_profarm(self, username: str, password: str) -> dict:
         from app.services.platform_secrets import penc

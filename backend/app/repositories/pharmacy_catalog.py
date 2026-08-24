@@ -351,8 +351,11 @@ class PharmacyCatalogRepository(BaseRepository):
 
     async def warehouse(self, *, q: str = "", ptype: str | None = None, low_stock: bool = False,
                         expiring: bool = False, include_inactive: bool = True,
+                        cat1: str | None = None, cat2: str | None = None, cat3: str | None = None,
+                        for_sale: bool | None = None, stock: str | None = None,
+                        supplier: str | None = None, no_image: bool = False, no_category: bool = False,
                         page: int = 1, page_size: int = 60) -> dict:
-        """Master inventory: ΟΛΑ τα είδη (ενεργά + ανενεργά) με πλήρη χαρακτηριστικά + φίλτρα."""
+        """Master inventory: ΟΛΑ τα είδη (ενεργά + ανενεργά) με πλήρη χαρακτηριστικά + πλούσια φίλτρα."""
         query: dict = {} if include_inactive else {"active": {"$ne": False}}
         if q and q.strip():
             rx = {"$regex": re.escape(q.strip()), "$options": "i"}
@@ -360,7 +363,31 @@ class PharmacyCatalogRepository(BaseRepository):
                             {"supplier": rx}, {"location": rx}, {"category": rx}]
         if ptype in TYPES:
             query["type"] = ptype
-        if low_stock:
+        # Κατηγορία-δέντρο (το πιο συγκεκριμένο επίπεδο υπερισχύει)
+        if cat3:
+            query["cat3_id"] = cat3
+        elif cat2:
+            query["cat2_id"] = cat2
+        elif cat1:
+            query["cat1_id"] = cat1
+        if for_sale is True:
+            query["for_sale"] = True
+        elif for_sale is False:
+            query["for_sale"] = {"$ne": True}
+        if supplier:
+            query["supplier"] = supplier
+        if no_image:
+            query["$and"] = query.get("$and", []) + [
+                {"$or": [{"image_id": {"$in": [None, ""]}}, {"image_id": {"$exists": False}}]},
+                {"$or": [{"photo_url": {"$in": [None, ""]}}, {"photo_url": {"$exists": False}}]}]
+        if no_category:
+            query["cat1_id"] = {"$in": [None, ""]}
+        # Κατάσταση αποθέματος: σε απόθεμα / εξαντλημένο / χαμηλό (min_stock)
+        if stock == "out":
+            query["stock_qty"] = {"$lte": 0}
+        elif stock == "in":
+            query["stock_qty"] = {"$gt": 0}
+        if low_stock or stock == "low":
             query["$expr"] = {"$lte": ["$stock_qty", {"$ifNull": ["$min_stock", 0]}]}
         if expiring:
             cutoff = (_now() + timedelta(days=self.NEAR_EXPIRY_DAYS)).date().isoformat()
@@ -369,6 +396,56 @@ class PharmacyCatalogRepository(BaseRepository):
         total = await self.count(query)
         items = await self.find(query, sort=[("name", 1)], skip=(page - 1) * page_size, limit=page_size)
         return {"items": jsonsafe(items), "total": total, "page": page, "page_size": page_size}
+
+    async def copy_from(self, source_tenant: str, *, overwrite: bool = False) -> dict:
+        """Αντιγραφή ΟΛΩΝ των ειδών ενός φαρμακείου (source) στο ΤΡΕΧΟΝ (self=target) ως αρχικοποίηση.
+        Οι εικόνες είναι ΚΟΙΝΕΣ (global image_id) → δεν αντιγράφονται blobs, μόνο η αναφορά. Απόθεμα→0.
+        Idempotent ανά barcode: υπάρχον barcode στο target → skip (ή overwrite)."""
+        if not source_tenant or source_tenant == self.tenant_id:
+            return {"ok": False, "error": "bad_source"}
+        col = self._db["pharmacy_products"]
+        existing = set(await col.distinct("barcode", {"tenant_id": self.tenant_id}))
+        # πεδία που ΔΕΝ μεταφέρονται (tenant-specific): markers/ιστορικό/ταυτότητα εγγραφής
+        drop = {"_id", "tenant_id", "created_at", "updated_at", "profarm_tried", "profarm_tried_at",
+                "profarm_synced_at", "profarm_pid", "photo_source", "source"}
+        copied = skipped = updated = 0
+        buf: list = []
+        async for p in col.find({"tenant_id": source_tenant}):
+            bc = p.get("barcode")
+            if not bc:
+                continue
+            doc = {k: v for k, v in p.items() if k not in drop}
+            doc.update({"tenant_id": self.tenant_id, "stock_qty": 0,
+                        "source": "copy", "created_at": _now(), "updated_at": _now()})
+            if bc in existing:
+                if not overwrite:
+                    skipped += 1
+                    continue
+                doc.pop("stock_qty", None)          # μη μηδενίζεις το απόθεμα υπάρχοντος
+                await col.update_one({"tenant_id": self.tenant_id, "barcode": bc}, {"$set": doc})
+                updated += 1
+                continue
+            buf.append(doc)
+            if len(buf) >= 1000:
+                await col.insert_many(buf); copied += len(buf); buf = []
+        if buf:
+            await col.insert_many(buf); copied += len(buf)
+        return {"ok": True, "copied": copied, "updated": updated, "skipped": skipped}
+
+    async def delete_all_items(self) -> dict:
+        """Διαγραφή ΟΛΩΝ των ειδών αποθήκης του φαρμακείου + κινήσεις αποθέματος (admin-only, destructive).
+        Δεν αγγίζει παραγγελίες/ιστορικό."""
+        res = await self._db["pharmacy_products"].delete_many({"tenant_id": self.tenant_id})
+        try:
+            await self._db["pharmacy_stock_movements"].delete_many({"tenant_id": self.tenant_id})
+        except Exception:  # noqa: BLE001
+            pass
+        return {"ok": True, "deleted": res.deleted_count}
+
+    async def warehouse_suppliers(self) -> list[str]:
+        rows = await self.aggregate([{"$match": {"supplier": {"$nin": [None, ""]}}},
+                                     {"$group": {"_id": "$supplier"}}, {"$sort": {"_id": 1}}])
+        return [r["_id"] for r in rows if r.get("_id")][:200]
 
     async def warehouse_summary(self) -> dict:
         """KPIs αποθήκης: SKUs, ενεργά, προς πώληση, αξία αποθέματος (τεμ×χονδρική), χαμηλό, λήγοντα."""

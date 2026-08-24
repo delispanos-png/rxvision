@@ -58,12 +58,12 @@ export default function MarkupConfigPage() {
           {bands.map((row, i) => (
             <div key={i} className="grid grid-cols-[1fr_auto_1fr_1fr_auto] items-center gap-2">
               <input type="number" value={i === 0 ? 0 : Number((bands[i - 1][0] + 0.01).toFixed(2))} readOnly tabIndex={-1}
-                className="cursor-not-allowed rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5 text-sm text-slate-500" />
+                className="w-full min-w-0 cursor-not-allowed rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5 text-sm text-slate-500" />
               <span className="text-slate-400">–</span>
               <input type="number" step="0.01" value={row[0]} onChange={(e) => setCell(i, 0, e.target.value)}
-                className="rounded-lg border border-slate-300 px-2 py-1.5 text-sm focus:border-brand-500 focus:outline-none" />
+                className="w-full min-w-0 rounded-lg border border-slate-300 px-2 py-1.5 text-sm focus:border-brand-500 focus:outline-none" />
               <input type="number" step="0.01" value={row[1]} onChange={(e) => setCell(i, 1, e.target.value)}
-                className="rounded-lg border border-slate-300 px-2 py-1.5 text-sm focus:border-brand-500 focus:outline-none" />
+                className="w-full min-w-0 rounded-lg border border-slate-300 px-2 py-1.5 text-sm focus:border-brand-500 focus:outline-none" />
               <button onClick={() => delRow(i)} className="grid h-8 w-8 place-items-center rounded-lg text-slate-400 hover:bg-rose-50 hover:text-rose-600" title="Διαγραφή"><Trash2 className="h-4 w-4" /></button>
             </div>
           ))}

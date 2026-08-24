@@ -46,10 +46,10 @@ export default function FundGroupsPage() {
             onChange={(e) => setNewName(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter" && newName.trim()) create.mutate(newName.trim()); }}
             placeholder="Νέα ομάδα (π.χ. ΕΟΠΥΥ, Δημόσιο, Ναυτικοί)"
-            className="w-72 rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none"
+            className="min-w-0 flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none"
           />
           <button onClick={() => newName.trim() && create.mutate(newName.trim())} disabled={!newName.trim() || create.isPending}
-            className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50">
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50">
             <Plus className="h-4 w-4" /> Προσθήκη
           </button>
         </div>
@@ -62,7 +62,7 @@ export default function FundGroupsPage() {
                 <input
                   defaultValue={g.name}
                   onBlur={(e) => { if (e.target.value.trim() && e.target.value !== g.name) rename.mutate({ id: g.id, name: e.target.value.trim(), codes: g.codes }); }}
-                  className="w-72 rounded-lg border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-800 focus:border-brand-500 focus:outline-none"
+                  className="min-w-0 flex-1 rounded-lg border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-800 focus:border-brand-500 focus:outline-none"
                 />
                 <span className="text-xs text-slate-400">{assignedCount(g.id)} ταμεία</span>
                 <button onClick={async () => { if (await appConfirm(`Διαγραφή ομάδας «${g.name}»;`, { danger: true })) del.mutate(g.id); }}

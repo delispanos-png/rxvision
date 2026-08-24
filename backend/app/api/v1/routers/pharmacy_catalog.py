@@ -284,11 +284,18 @@ def _mrepo(ctx: TenantContext) -> StockMovementRepository:
 async def warehouse(q: str = "", type: str | None = None, low_stock: bool = False,
                     expiring: bool = False, include_inactive: bool = True, page: int = 1,
                     page_size: int = 100,
+                    cat1: str | None = None, cat2: str | None = None, cat3: str | None = None,
+                    for_sale: bool | None = None, stock: str | None = None,
+                    supplier: str | None = None, no_image: bool = False, no_category: bool = False,
                     ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
     repo = _repo(ctx)
     return {**await repo.warehouse(q=q, ptype=type, low_stock=low_stock, expiring=expiring,
-                                   include_inactive=include_inactive, page=page, page_size=page_size),
-            "summary": await repo.warehouse_summary()}
+                                   include_inactive=include_inactive, cat1=cat1, cat2=cat2, cat3=cat3,
+                                   for_sale=for_sale, stock=stock, supplier=supplier,
+                                   no_image=no_image, no_category=no_category,
+                                   page=page, page_size=page_size),
+            "summary": await repo.warehouse_summary(),
+            "suppliers": await repo.warehouse_suppliers()}
 
 
 class FlagsIn(BaseModel):

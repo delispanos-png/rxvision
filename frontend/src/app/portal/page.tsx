@@ -640,14 +640,14 @@ export default function PortalHome() {
       {/* ── top bar ───────────────────────────────────────────── */}
       <header className="shrink-0 z-20 border-b border-slate-200/80 bg-white/85 backdrop-blur-md dark:border-slate-800/80 dark:bg-slate-900/85">
         <div className="mx-auto flex h-16 max-w-7xl items-center justify-between gap-1.5 px-3 sm:gap-3 sm:px-4 lg:px-6">
-          <a href="https://rxvision.gr" title="rxvision.gr" className="flex items-center gap-2 transition hover:opacity-80">
-            <LogoMark className="h-9 w-9" />
-            <div className="leading-tight">
-              <div className="text-sm font-extrabold tracking-tight text-slate-900 dark:text-slate-100">RxVision</div>
-              <div className="text-[10px] font-medium uppercase tracking-wider text-slate-400">Πύλη Πελατών</div>
+          <a href="https://rxvision.gr" title="rxvision.gr" className="flex min-w-0 items-center gap-2 transition hover:opacity-80">
+            <LogoMark className="h-9 w-9 shrink-0" />
+            <div className="min-w-0 leading-tight">
+              <div className="truncate text-sm font-extrabold tracking-tight text-slate-900 dark:text-slate-100">RxVision</div>
+              <div className="hidden text-[10px] font-medium uppercase tracking-wider text-slate-400 sm:block">Πύλη Πελατών</div>
             </div>
           </a>
-          <div className="flex items-center gap-2">
+          <div className="flex shrink-0 items-center gap-2">
             {!single && me.pharmacies.length > 0 && (() => {
               // custom dropdown: μικρά γράμματα + ★αγαπημένο + πόλη/χιλιομετρική απόσταση (native select αγνοεί το CSS στα options)
               const meta = (tid: string) => directory.find((d) => d.tenant_id === tid);
@@ -665,7 +665,7 @@ export default function PortalHome() {
               return (
                 <div className="relative">
                   <button type="button" onClick={() => setSwitchOpen((v) => !v)}
-                    className="flex max-w-[10rem] items-center gap-1.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white py-2 pl-2.5 pr-2 text-[11px] font-semibold text-slate-700 dark:text-slate-200 shadow-sm hover:bg-slate-50 dark:hover:bg-slate-800 sm:max-w-[15rem]">
+                    className="flex max-w-[7.5rem] items-center gap-1.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white py-2 pl-2.5 pr-2 text-[11px] font-semibold text-slate-700 dark:text-slate-200 shadow-sm hover:bg-slate-50 dark:hover:bg-slate-800 sm:max-w-[15rem]">
                     <Building2 className="h-4 w-4 shrink-0 text-brand-500" />
                     <span className="min-w-0 flex-1 truncate text-left">{active?.name ?? "—"}</span>
                     <ChevronDown className={`h-3.5 w-3.5 shrink-0 text-slate-400 transition ${switchOpen ? "rotate-180" : ""}`} />
@@ -902,7 +902,7 @@ export default function PortalHome() {
                   {sessions.map((s) => (
                     <div key={s.id} className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 dark:border-slate-800 px-3 py-2 dark:border-slate-700">
                       <div className="min-w-0">
-                        <div className="flex items-center gap-1.5 text-sm text-slate-700 dark:text-slate-200"><span className="truncate">{deviceLabel(s.user_agent)}</span> {s.current && <span className="shrink-0 rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700">τρέχουσα</span>}</div>
+                        <div className="flex items-center gap-1.5 text-sm text-slate-700 dark:text-slate-200"><span className="min-w-0 truncate">{deviceLabel(s.user_agent)}</span> {s.current && <span className="shrink-0 rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700">τρέχουσα</span>}</div>
                         <div className="truncate text-[11px] text-slate-400">{s.ip || "—"}{s.last_seen ? ` · ${fmtDateTime(s.last_seen)}` : ""}</div>
                       </div>
                       {!s.current && <button onClick={() => revokeSession(s.id)} className="shrink-0 rounded-lg border border-rose-200 px-2 py-1 text-xs font-semibold text-rose-600 hover:bg-rose-50 dark:border-rose-800 dark:hover:bg-rose-900/20">Αποσύνδεση</button>}
@@ -955,7 +955,7 @@ export default function PortalHome() {
 
       {/* Desktop (lg+): σταθερό πλαϊνό μενού αριστερά + περιεχόμενο δεξιά.
           Tablet (sm–lg): pills πάνω από το περιεχόμενο.  Κινητό: σταθερή κάτω μπάρα. */}
-      <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain [-webkit-overflow-scrolling:touch]">
+      <div id="portal-scroll" className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain [-webkit-overflow-scrolling:touch]">
       <div className="mx-auto flex w-full max-w-7xl gap-6 px-4 lg:px-6">
         <aside className="hidden w-56 shrink-0 py-6 lg:block">
           <nav className="sticky top-20 space-y-1">
@@ -1255,7 +1255,7 @@ export default function PortalHome() {
                         {p.pharmacy_name && (
                           <span className="inline-flex min-w-0 items-center gap-1 text-slate-500 dark:text-slate-400">
                             <Building2 className="h-3 w-3 shrink-0 text-slate-400" />
-                            <span className="truncate">{p.pharmacy_name}</span>
+                            <span className="min-w-0 truncate">{p.pharmacy_name}</span>
                           </span>
                         )}
                         {p.next_open_date && <span className="inline-flex items-center gap-1 text-emerald-600"><Clock className="h-3 w-3" /> ανοίγει {dt(p.next_open_date)}</span>}
@@ -1865,9 +1865,9 @@ export default function PortalHome() {
                 <div className="text-xs font-semibold text-slate-500 dark:text-slate-400">Οι αναθέσεις μου</div>
                 {rxReqs.map((r) => (
                   <div key={r._id} className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white px-3 py-2 text-sm">
-                    <div className="flex items-center justify-between">
-                      <span className="text-slate-700 dark:text-slate-200">{r.kind === "barcode" ? <>📋 Barcode <span className="font-mono text-xs">{r.barcode}</span></> : <>📷 Φωτογραφία συνταγής</>}<span className="ml-2 text-xs text-slate-400">{dt(r.created_at)}</span></span>
-                      <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${statusCls(r.status)}`}>{STATUS_LABEL[r.status] ?? r.status}</span>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="min-w-0 flex-1 text-slate-700 dark:text-slate-200">{r.kind === "barcode" ? <>📋 Barcode <span className="break-all font-mono text-xs">{r.barcode}</span></> : <>📷 Φωτογραφία συνταγής</>}<span className="ml-2 text-xs text-slate-400">{dt(r.created_at)}</span></span>
+                      <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold ${statusCls(r.status)}`}>{STATUS_LABEL[r.status] ?? r.status}</span>
                     </div>
                     {r.cda?.found && (
                       <div className="mt-1.5 rounded-lg bg-emerald-50 px-2 py-1.5 text-xs text-emerald-800">

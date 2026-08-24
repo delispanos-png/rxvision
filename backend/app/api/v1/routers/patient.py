@@ -539,7 +539,7 @@ async def meds_times(body: SlotTimesIn, ctx: PatientContext = Depends(get_patien
 # ── Κατάστημα φαρμακείου (OTC + παραφάρμακα) — παραγγελία στο δικό σου φαρμακείο ──────────────
 @router.get("/shop")
 async def shop(q: str = "", category: str | None = None, type: str | None = None,
-               tag: str | None = None, sort: str = "featured",
+               tag: str | None = None, sort: str = "featured", page: int = 1,
                cat1: str | None = None, cat2: str | None = None, cat3: str | None = None,
                ctx: PatientContext = Depends(get_patient_context)):
     from app.repositories.pharmacy_catalog import PharmacyCatalogRepository
@@ -547,7 +547,7 @@ async def shop(q: str = "", category: str | None = None, type: str | None = None
     # παραγγέλνει ως αίτημα και ο φαρμακοποιός εγκρίνει/απορρίπτει + δηλώνει ημερομηνία.
     return await PharmacyCatalogRepository(tenant_id=ctx.tenant_id).list(
         q=q, category=category, ptype=type, tag=tag, sort=sort, in_stock_only=False,
-        cat1=cat1, cat2=cat2, cat3=cat3,
+        cat1=cat1, cat2=cat2, cat3=cat3, page=max(1, page),
         for_sale_only=True, page_size=60)   # πελάτης βλέπει ΜΟΝΟ όσα ο φαρμακοποιός έβαλε προς πώληση
 
 

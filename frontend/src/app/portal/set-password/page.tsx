@@ -47,7 +47,7 @@ function SetPasswordForm() {
   }
 
   return (
-    <div className="flex min-h-dvh items-center justify-center px-4">
+    <div className="h-full overflow-y-auto"><div className="flex min-h-full items-center justify-center px-4 py-8">
       <form onSubmit={submit} className="w-full max-w-sm space-y-4 rounded-3xl border border-slate-200 bg-white p-6 shadow-xl shadow-slate-200/60 sm:p-8">
         <div className="text-center">
           <span className="mx-auto mb-3 grid h-12 w-12 place-items-center rounded-2xl bg-gradient-to-br from-brand-500 to-indigo-600 text-white shadow-lg shadow-brand-500/30"><Pill className="h-6 w-6" /></span>
@@ -70,7 +70,7 @@ function SetPasswordForm() {
           {busy ? "Αποθήκευση…" : "Αποθήκευση & Σύνδεση"}
         </button>
       </form>
-    </div>
+    </div></div>
   );
 }
 

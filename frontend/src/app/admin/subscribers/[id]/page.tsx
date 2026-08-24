@@ -1,6 +1,6 @@
 "use client";
 
-import { appConfirm } from "@/store/dialogStore";
+import { appConfirm, appAlert } from "@/store/dialogStore";
 import { Tooltip } from "@/components/ui/Tooltip";
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
@@ -99,6 +99,31 @@ export default function TenantCardPage() {
   const creds = useQuery({ queryKey: ["admin", "tenant", id, "creds"], queryFn: () => adminApi<Creds>(`/admin/tenants/${encodeURIComponent(id)}/credentials`), retry: false });
   const pkgsQ = useQuery({ queryKey: ["admin", "packages"], queryFn: () => adminApi<{ items: { _id: string; name?: string }[] }>("/admin/packages") });
   const walletQ = useQuery({ queryKey: ["admin", "wallet", id], queryFn: () => adminApi<{ balance_cents: number; by_channel: Record<string, { count: number }> }>(`/admin/tenants/${encodeURIComponent(id)}/wallet`), retry: false });
+  const profarmQ = useQuery({ queryKey: ["admin", "profarm", id], queryFn: () => adminApi<{ enabled: boolean; configured: boolean }>(`/admin/tenants/${encodeURIComponent(id)}/profarm-module`), retry: false });
+  const tenantsQ = useQuery({ queryKey: ["admin", "tenants"], queryFn: () => adminApi<{ items: { id: string; name?: string }[] }>("/admin/tenants"), retry: false });
+  const [copySrc, setCopySrc] = useState("");
+  const [copyOverwrite, setCopyOverwrite] = useState(false);
+  const [copyBusy, setCopyBusy] = useState(false);
+  async function runCopy() {
+    if (!copySrc) return;
+    const src = tenantsQ.data?.items.find((x) => x.id === copySrc);
+    if (!(await appConfirm(`Αντιγραφή ΟΛΩΝ των ειδών από «${src?.name || copySrc}» σε αυτό το φαρμακείο;${copyOverwrite ? " (θα ενημερωθούν & τα υπάρχοντα)" : " (θα προστεθούν μόνο όσα λείπουν)"}`, { title: "Αρχικοποίηση ειδών", confirmText: "Αντιγραφή" }))) return;
+    setCopyBusy(true);
+    try {
+      const r = await adminApi<{ ok: boolean; copied: number; updated: number; skipped: number }>(`/admin/tenants/${encodeURIComponent(id)}/copy-items`, { method: "POST", body: JSON.stringify({ source_tenant: copySrc, overwrite: copyOverwrite }) });
+      await appAlert(`✓ Ολοκληρώθηκε — νέα: ${r.copied}, ενημερωμένα: ${r.updated}, παραλείφθηκαν: ${r.skipped}`, { title: "Αντιγραφή ειδών" });
+    } catch { await appAlert("Αποτυχία αντιγραφής."); }
+    setCopyBusy(false);
+  }
+  async function runDeleteAll() {
+    if (!(await appConfirm(`ΔΙΑΓΡΑΦΗ ΟΛΩΝ των ειδών αποθήκης του «${t?.name ?? id}»; Δεν αναιρείται. Οι παραγγελίες/ιστορικό δεν επηρεάζονται.`, { title: "Διαγραφή όλων των ειδών", danger: true, confirmText: "Διαγραφή όλων" }))) return;
+    setCopyBusy(true);
+    try {
+      const r = await adminApi<{ ok: boolean; deleted: number }>(`/admin/tenants/${encodeURIComponent(id)}/items`, { method: "DELETE" });
+      await appAlert(`✓ Διαγράφηκαν ${r.deleted} είδη.`, { title: "Διαγραφή ειδών" });
+    } catch { await appAlert("Αποτυχία διαγραφής."); }
+    setCopyBusy(false);
+  }
   const [creditEur, setCreditEur] = useState("");
   useEffect(() => { if (data?.tenant?.name) setName(data.tenant.name); }, [data]);
 
@@ -240,6 +265,31 @@ export default function TenantCardPage() {
               </label>
             );
           })}
+        </div>
+        {/* Back-office πηγή ενημέρωσης ειδών (Profarm) — ξεχωριστό, ορατό μόνο σε επιλεγμένα φαρμακεία */}
+        <div className="mt-3 rounded-lg border border-indigo-200 bg-indigo-50/50 p-3">
+          <label className="flex cursor-pointer items-center justify-between text-sm">
+            <span className="text-slate-700"><b>📷 Ενημέρωση ειδών από Profarm</b> <span className="text-xs text-slate-400">(back-office· φωτο/περιγραφή/ΦΠΑ/τιμές από τον προμηθευτή — μόνο στη βάση αυτού του φαρμακείου)</span></span>
+            <input type="checkbox" checked={!!profarmQ.data?.enabled} disabled={busy}
+              onChange={(e) => { const v = e.target.checked; act(() => adminApi(`/admin/tenants/${encodeURIComponent(id)}/profarm-module?enabled=${v}`, { method: "POST" }), v ? "Profarm module ΟΝ ✓" : "Profarm module OFF ✓").then(() => profarmQ.refetch()); }}
+              className="h-4 w-4 accent-indigo-600" />
+          </label>
+        </div>
+      </div>
+
+      {/* Διαχείριση ειδών αποθήκης (admin) — αρχικοποίηση από άλλον πελάτη + μαζική διαγραφή */}
+      <div className="mb-6 rounded-xl border border-slate-200 bg-white p-6">
+        <div className="mb-1 text-sm font-semibold text-slate-700">📦 Διαχείριση ειδών αποθήκης</div>
+        <p className="mb-3 text-xs text-slate-400">Αρχικοποίηση καταλόγου από άλλο φαρμακείο (οι φωτο είναι κοινές — δεν διπλασιάζονται) ή ολική διαγραφή. Απόθεμα νέων ειδών = 0.</p>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-sm text-slate-600">Αντιγραφή από:</span>
+          <select value={copySrc} onChange={(e) => setCopySrc(e.target.value)} className="rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none">
+            <option value="">— επίλεξε φαρμακείο πηγή —</option>
+            {(tenantsQ.data?.items ?? []).filter((x) => x.id !== id).map((x) => <option key={x.id} value={x.id}>{x.name || x.id}</option>)}
+          </select>
+          <label className="inline-flex items-center gap-1.5 text-sm text-slate-600"><input type="checkbox" checked={copyOverwrite} onChange={(e) => setCopyOverwrite(e.target.checked)} className="h-4 w-4" /> ενημέρωση & υπαρχόντων</label>
+          <button onClick={runCopy} disabled={copyBusy || !copySrc} className="rounded-lg bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50">Αντιγραφή ειδών</button>
+          <button onClick={runDeleteAll} disabled={copyBusy} className="ml-auto rounded-lg border border-rose-300 px-3 py-1.5 text-sm font-medium text-rose-600 hover:bg-rose-50 disabled:opacity-50">🗑 Διαγραφή όλων των ειδών</button>
         </div>
       </div>
 

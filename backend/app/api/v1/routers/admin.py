@@ -1669,6 +1669,42 @@ async def set_tenant_status(tenant_id: str, body: StatusIn,
         raise HTTPException(http_status.HTTP_400_BAD_REQUEST, str(e))
 
 
+@router.get("/tenants/{tenant_id}/profarm-module")
+async def get_profarm_module(tenant_id: str, _: PlatformContext = Depends(get_platform_admin)):
+    """Κατάσταση module Profarm (ενημέρωση ειδών) για το φαρμακείο."""
+    from app.repositories.supplier_settings import SupplierSettingsRepository
+    return await SupplierSettingsRepository(tenant_id=tenant_id).get_profarm()
+
+
+@router.post("/tenants/{tenant_id}/profarm-module")
+async def set_profarm_module(tenant_id: str, enabled: bool = True,
+                             _: PlatformContext = Depends(get_platform_admin)):
+    """Ενεργοποίηση/απενεργοποίηση του module Profarm για συγκεκριμένο φαρμακείο (admin-only)."""
+    from app.repositories.supplier_settings import SupplierSettingsRepository
+    return await SupplierSettingsRepository(tenant_id=tenant_id).set_profarm_enabled(enabled)
+
+
+class CopyItemsIn(BaseModel):
+    source_tenant: str
+    overwrite: bool = False
+
+
+@router.post("/tenants/{tenant_id}/copy-items")
+async def copy_items(tenant_id: str, body: CopyItemsIn,
+                     _: PlatformContext = Depends(get_platform_admin)):
+    """Αντιγραφή ειδών από ΑΛΛΟ φαρμακείο (source) στο {tenant_id} ως αρχικοποίηση (φωτο κοινές)."""
+    from app.repositories.pharmacy_catalog import PharmacyCatalogRepository
+    return await PharmacyCatalogRepository(tenant_id=tenant_id).copy_from(
+        body.source_tenant, overwrite=body.overwrite)
+
+
+@router.delete("/tenants/{tenant_id}/items")
+async def delete_all_items(tenant_id: str, _: PlatformContext = Depends(get_platform_admin)):
+    """Διαγραφή ΟΛΩΝ των ειδών αποθήκης του φαρμακείου (admin-only, destructive)."""
+    from app.repositories.pharmacy_catalog import PharmacyCatalogRepository
+    return await PharmacyCatalogRepository(tenant_id=tenant_id).delete_all_items()
+
+
 @router.get("/tenants/{tenant_id}")
 async def tenant_detail(tenant_id: str, _: PlatformContext = Depends(get_platform_admin)):
     """Καρτέλα πελάτη: tenant + subscription + χρήστες + πρόσφατα sync jobs."""

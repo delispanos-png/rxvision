@@ -31,15 +31,15 @@ export function RenewalCard({ r, onDone }: { r: Renewal; onDone: () => void }) {
   }
 
   return (
-    <div className="rounded-xl border border-slate-200 bg-white p-3">
+    <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-3">
       <div className="flex items-center justify-between gap-3">
         <div className="min-w-0">
-          <div className="truncate font-semibold text-slate-800">{r.medicine || "Φάρμακο"}</div>
-          {r.key ? <div className="font-mono text-xs text-slate-500">Συνταγή {r.key}</div> : null}
-          {r.since ? <div className="text-xs text-slate-500">Διαθέσιμη από {dt(r.since)}</div> : null}
+          <div className="truncate font-semibold text-slate-800 dark:text-slate-100">{r.medicine || "Φάρμακο"}</div>
+          {r.key ? <div className="font-mono text-xs text-slate-500 dark:text-slate-400">Συνταγή {r.key}</div> : null}
+          {r.since ? <div className="text-xs text-slate-500 dark:text-slate-400">Διαθέσιμη από {dt(r.since)}</div> : null}
           {r.doctor?.name ? (
-            <div className="mt-0.5 text-xs text-slate-500">
-              Ιατρός: <span className="font-medium text-slate-700">{r.doctor.name}</span>
+            <div className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
+              Ιατρός: <span className="font-medium text-slate-700 dark:text-slate-200">{r.doctor.name}</span>
               {r.doctor.specialty ? ` · ${r.doctor.specialty}` : ""}
               {r.doctor.phone ? <> · <a href={`tel:${r.doctor.phone}`} className="font-medium text-brand-600 hover:underline">📞 {r.doctor.phone}</a></> : ""}
             </div>
@@ -54,18 +54,18 @@ export function RenewalCard({ r, onDone }: { r: Renewal; onDone: () => void }) {
       {mode === null ? (
         <div className="mt-2 flex flex-wrap gap-2">
           <button onClick={() => setMode("take")} className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700"><Check className="h-4 w-4" /> {intent?.decision === "take" ? "Αλλαγή ημερομηνίας" : "Θα το πάρω"}</button>
-          <button onClick={() => setMode("skip")} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-50"><X className="h-4 w-4" /> Δεν θα το πάρω</button>
+          <button onClick={() => setMode("skip")} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 dark:border-slate-600 px-3 py-1.5 text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800"><X className="h-4 w-4" /> Δεν θα το πάρω</button>
         </div>
       ) : mode === "take" ? (
         <div className="mt-2 flex flex-wrap items-center gap-2">
-          <label className="inline-flex items-center gap-1.5 text-sm text-slate-600"><CalendarDays className="h-4 w-4" /> Πότε θα περάσεις;</label>
-          <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="rounded-lg border border-slate-300 px-2 py-1.5 text-sm" />
+          <label className="inline-flex items-center gap-1.5 text-sm text-slate-600 dark:text-slate-300"><CalendarDays className="h-4 w-4" /> Πότε θα περάσεις;</label>
+          <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="rounded-lg border border-slate-300 dark:border-slate-600 px-2 py-1.5 text-sm" />
           <button onClick={() => submit("take")} disabled={busy} className="rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-50">Καταχώρηση</button>
           <button onClick={() => setMode(null)} className="text-sm text-slate-400">Άκυρο</button>
         </div>
       ) : (
         <div className="mt-2 flex flex-wrap items-center gap-2">
-          <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Λόγος (προαιρετικό)" className="min-w-0 flex-1 rounded-lg border border-slate-300 px-2 py-1.5 text-sm" />
+          <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Λόγος (προαιρετικό)" className="min-w-0 flex-1 rounded-lg border border-slate-300 dark:border-slate-600 px-2 py-1.5 text-sm" />
           <button onClick={() => submit("skip")} disabled={busy} className="rounded-lg bg-rose-600 px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-50">Καταχώρηση</button>
           <button onClick={() => setMode(null)} className="text-sm text-slate-400">Άκυρο</button>
         </div>

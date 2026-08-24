@@ -2,7 +2,11 @@
 (`platform_settings._id="markup"`), applied to ALL tenants.
 
 Bands = list of [upper_euro, pct]; for a unit retail price, profit% = first band whose upper ≥ price.
-wholesale = retail × (1 − pct/100). Galenic/compounded preparations are excluded (Ν/Α) by the
+The pct is the pharmacy gross-profit MARKUP on the χονδρική (wholesale), i.e. retail = wholesale × (1 + pct/100),
+so wholesale = retail / (1 + pct/100) and profit = retail − wholesale. (NOT retail × (1 − pct/100): that would
+treat the markup as a discount off retail and overstate the profit — e.g. 30% band → 30% of retail instead of
+23.08%. Plavix proof: 12.77 / 1.30 = 9.82 → profit 2.95, exactly the real διατίμηση.)
+Galenic/compounded preparations are excluded (Ν/Α) by the
 ingestion engine separately. Falls back to the Ministry-of-Health default until an admin overrides it.
 """
 
@@ -56,33 +60,65 @@ def item_wholesale(it: dict, bands: list[list[float]]) -> tuple[int, str]:
         return 0, "unavailable"                                # γαληνικά → Ν/Α
     retail = it.get("retail_price", 0) or 0
     if retail > 0:
-        return round(retail * (1 - markup_pct(retail, bands) / 100)), "estimated"
+        # Το ποσοστό είναι μεικτό κέρδος ΠΑΝΩ στη χονδρική: λιανική = χονδρική × (1 + pct%)
+        # → χονδρική = λιανική / (1 + pct%). (Όχι λιανική × (1 − pct%) — αυτό φουσκώνει το κέρδος.)
+        return round(retail / (1 + markup_pct(retail, bands) / 100)), "estimated"
     return 0, "unknown"
 
 
+def _markup_switch(bands: list[list[float]]) -> dict:
+    """$switch that replicates markup_pct() server-side (pct by unit retail €)."""
+    branches = [{"case": {"$lte": [{"$divide": ["$retail_price", 100]}, hi]}, "then": pct}
+                for hi, pct in bands]
+    return {"$switch": {"branches": branches, "default": (bands[-1][1] if bands else 2.25)}}
+
+
 async def recompute(db, bands: list[list[float]], tenant_id: str | None = None) -> dict:
-    """Re-apply the scale to stored items + executions (all tenants if tenant_id is None)."""
+    """Re-apply the scale to stored items + executions (all tenants if tenant_id is None).
+
+    Idempotent & server-side: estimated items are recomputed straight from retail via the band
+    switch (wholesale = retail / (1 + pct/100)); each execution's wholesale_cost is rebuilt from the
+    per-execution item sums. Real prices (source/masterdata) and galenic (Ν/Α) items are left as-is.
+    Uses bulk ops so a full-history recompute runs in seconds, not hours.
+    """
+    from pymongo import UpdateOne
+
+    item_flt: dict = {"wholesale_source": "estimated", "retail_price": {"$gt": 0}}
+    if tenant_id:
+        item_flt["tenant_id"] = tenant_id
+    g_items = (await db["prescription_items"].update_many(item_flt, [
+        {"$set": {"_pct": _markup_switch(bands)}},
+        {"$set": {"wholesale_price": {"$round": [{"$divide": [
+            {"$multiply": ["$retail_price", 100]}, {"$add": [100, "$_pct"]}]}, 0]}}},
+        {"$set": {"margin": {"$subtract": ["$retail_price", "$wholesale_price"]}}},
+        {"$unset": "_pct"},
+    ])).modified_count
+
     tenants = [tenant_id] if tenant_id else await db["prescription_executions"].distinct("tenant_id")
-    g_items = g_exec = g_na = 0
+    g_exec = 0
     for tid in tenants:
-        async for it in db["prescription_items"].find({"tenant_id": tid}):
-            w, src = item_wholesale(it, bands)
-            retail = it.get("retail_price", 0) or 0
-            margin = (retail - w) if src not in ("unavailable", "unknown") else 0
-            await db["prescription_items"].update_one(
-                {"_id": it["_id"]},
-                {"$set": {"wholesale_price": w, "wholesale_source": src, "margin": margin}})
-            g_items += 1
-            if src == "unavailable":
-                g_na += 1
+        sums: dict = {}
+        async for r in db["prescription_items"].aggregate([
+            {"$match": {"tenant_id": tid}},
+            {"$group": {"_id": "$execution_id",
+                        "raw_w": {"$sum": {"$multiply": [
+                            {"$ifNull": ["$wholesale_price", 0]}, {"$ifNull": ["$quantity", 0]}]}},
+                        "raw_retail": {"$sum": {"$multiply": [
+                            {"$ifNull": ["$retail_price", 0]}, {"$ifNull": ["$quantity", 0]}]}}}},
+        ]):
+            sums[r["_id"]] = (r["raw_w"], r["raw_retail"])
+        ops: list = []
         async for ex in db["prescription_executions"].find({"tenant_id": tid}, {"amount_total": 1}):
-            items = [i async for i in db["prescription_items"].find(
-                {"tenant_id": tid, "execution_id": ex["_id"]})]
-            raw_retail = sum((i.get("retail_price", 0) or 0) * (i.get("quantity", 0) or 0) for i in items)
-            raw_w = sum((i.get("wholesale_price", 0) or 0) * (i.get("quantity", 0) or 0) for i in items)
+            rw, rr = sums.get(ex["_id"], (0, 0))
             amt = ex.get("amount_total", 0) or 0
-            wc = round(raw_w * amt / raw_retail) if (amt > 0 and raw_retail > 0) else raw_w
-            await db["prescription_executions"].update_one({"_id": ex["_id"]}, {"$set": {"wholesale_cost": wc}})
-            g_exec += 1
-    return {"tenants": len(tenants), "items": g_items, "na": g_na,
+            wc = round(rw * amt / rr) if (amt > 0 and rr > 0) else rw
+            ops.append(UpdateOne({"_id": ex["_id"]}, {"$set": {"wholesale_cost": wc}}))
+            if len(ops) >= 2000:
+                await db["prescription_executions"].bulk_write(ops, ordered=False)
+                g_exec += len(ops)
+                ops = []
+        if ops:
+            await db["prescription_executions"].bulk_write(ops, ordered=False)
+            g_exec += len(ops)
+    return {"tenants": len(tenants), "items": g_items,
             "executions": g_exec, "at": datetime.now(tz=timezone.utc).isoformat()}

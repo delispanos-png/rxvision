@@ -34,14 +34,14 @@ export function TransferCard({ onDone }: { onDone: () => void }) {
           <div className="flex items-start gap-3">
             <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-brand-100 text-brand-600"><Building2 className="h-4 w-4" /></span>
             <div className="min-w-0 flex-1">
-              <div className="text-sm font-bold text-slate-900">Αίτημα αλλαγής φαρμακείου</div>
-              <p className="mt-0.5 text-sm text-slate-600">
+              <div className="text-sm font-bold text-slate-900 dark:text-slate-100">Αίτημα αλλαγής φαρμακείου</div>
+              <p className="mt-0.5 text-sm text-slate-600 dark:text-slate-300">
                 Το <b>{t.pharmacy_name}</b> ζητά να γίνει το φαρμακείο που σε εξυπηρετεί.
               </p>
               {t.reason_label && (
-                <p className="mt-1 text-xs text-slate-500">Αιτιολογία: <b>{t.reason_label}</b>{t.note ? ` — «${t.note}»` : ""}</p>
+                <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Αιτιολογία: <b>{t.reason_label}</b>{t.note ? ` — «${t.note}»` : ""}</p>
               )}
-              <ul className="mt-2 space-y-0.5 text-[11px] text-slate-500">
+              <ul className="mt-2 space-y-0.5 text-[11px] text-slate-500 dark:text-slate-400">
                 <li>• Μεταφέρονται: <b>πρόγραμμα λήψης, μετρήσεις υγείας, στοιχεία επικοινωνίας</b>.</li>
                 <li>• Οι <b>εκτελέσεις σου παραμένουν</b> — θα τις βλέπεις όλες, με ένδειξη σε ποιο φαρμακείο έγιναν.</li>
                 <li>• Το <b>τρέχον φαρμακείο σου θα ενημερωθεί</b> ότι άλλαξες, με την παραπάνω αιτιολογία.</li>
@@ -52,7 +52,7 @@ export function TransferCard({ onDone }: { onDone: () => void }) {
                   <Check className="h-4 w-4" /> Έγκριση
                 </button>
                 <button onClick={() => decide(t, false)} disabled={!!busy}
-                  className="inline-flex items-center gap-1.5 rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-60">
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3.5 py-2 text-sm font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-60">
                   <X className="h-4 w-4" /> Απόρριψη
                 </button>
               </div>

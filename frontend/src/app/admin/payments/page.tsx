@@ -117,7 +117,7 @@ export default function PaymentsSettingsPage() {
           <label className="text-xs text-slate-500 sm:col-span-2">Webhook signing secret <Badge ok={s?.revolut.webhook_secret_set} />
             <input type="password" value={revSecret} onChange={(e) => setRevSecret(e.target.value)} placeholder={s?.revolut.webhook_secret_set ? "•••• (αποθηκευμένο)" : "wsk_..."} className={inp} /></label>
         </div>
-        <p className="mt-3 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-500">Webhook URL: <code className="text-brand-700">https://app.rxvision.gr/api/v1/billing/webhook/revolut</code></p>
+        <p className="mt-3 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-500">Webhook URL: <code className="break-all text-brand-700">https://app.rxvision.gr/api/v1/billing/webhook/revolut</code></p>
       </div>
 
       {/* Viva Wallet */}
@@ -156,7 +156,7 @@ export default function PaymentsSettingsPage() {
           <label className="text-xs text-slate-500 sm:col-span-2">Shared secret (digest) <Badge ok={s?.alphabank?.shared_secret_set} />
             <input type="password" value={abSecret} onChange={(e) => setAbSecret(e.target.value)} placeholder={s?.alphabank?.shared_secret_set ? "•••• (αποθηκευμένο)" : "Shared secret…"} className={inp} /></label>
         </div>
-        <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700">⚠️ Απαιτείται επιβεβαίωση Alpha Bank: gateway URL & σειρά πεδίων digest (docs/alphabank-api-requirements.md). Callback: <code>https://app.rxvision.gr/api/v1/subscription/alpha-callback</code></p>
+        <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700">⚠️ Απαιτείται επιβεβαίωση Alpha Bank: gateway URL & σειρά πεδίων digest (docs/alphabank-api-requirements.md). Callback: <code className="break-all">https://app.rxvision.gr/api/v1/subscription/alpha-callback</code></p>
       </div>
 
       <button onClick={() => saveCreds.mutate()} disabled={saveCreds.isPending} className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50">

@@ -9,7 +9,7 @@ import { Camera, ChevronDown, Loader2, Check, X } from "lucide-react";
 import { api } from "@/lib/apiClient";
 import { appAlert, appConfirm } from "@/store/dialogStore";
 
-type Status = { configured: boolean; username: string };
+type Status = { configured: boolean; username: string; enabled?: boolean };
 
 export function SupplierPhotoCard() {
   const [open, setOpen] = useState(false);
@@ -81,6 +81,10 @@ export function SupplierPhotoCard() {
     try { await api(`/catalog/supplier/profarm/sync-stop?stopped=${stopped}`, { method: "POST" }); await prog.refetch(); }
     catch { await appAlert("Αποτυχία."); }
   }
+
+  // Module Profarm — κρυφό όσο φορτώνει (χωρίς flash σε άλλους) & όταν είναι ΡΗΤΑ απενεργοποιημένο.
+  // Αν λείπει το πεδίο (παλιά cached απάντηση) → δείχνεται, ώστε να μη «χάνεται» σε ενεργά φαρμακεία.
+  if (!st.data || st.data.enabled === false) return null;
 
   return (
     <div className="rounded-xl border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">

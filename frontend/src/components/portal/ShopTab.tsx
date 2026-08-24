@@ -1,7 +1,8 @@
 "use client";
 
 import { Fragment, useEffect, useState } from "react";
-import { Search, ShoppingCart, ShoppingBag, Plus, Minus, Trash2, Truck, Store, ShieldCheck, Pill, Package, ChevronLeft, ChevronRight, ChevronDown, Loader2, MapPin, Check, XCircle, PackageCheck, RefreshCcw, Star, Heart, Flame, Sparkles, CalendarCheck } from "lucide-react";
+import { createPortal } from "react-dom";
+import { Search, ShoppingCart, ShoppingBag, Plus, Minus, Trash2, Truck, Store, ShieldCheck, Pill, Package, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Loader2, MapPin, Check, XCircle, PackageCheck, RefreshCcw, Star, Heart, Flame, Sparkles, CalendarCheck } from "lucide-react";
 import { patientApi, API_BASE } from "@/lib/patientClient";
 import { toast, confirmDialog } from "@/components/portal/Toaster";
 import { DateInput } from "@/components/ui/DateInput";
@@ -40,11 +41,11 @@ function CategoryTiles({ tree, counts, path, setPath }: { tree: Cat[]; counts: R
   return (
     <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 md:grid-cols-6">
       {kids.map((c) => (
-        <button key={c.id} onClick={() => setPath([...path, c])} className="group flex flex-col items-center gap-1 rounded-xl border border-slate-200 bg-white p-2 shadow-sm transition hover:border-violet-300 hover:shadow">
-          <span className="grid h-14 w-14 shrink-0 place-items-center overflow-hidden rounded-xl bg-slate-50">
+        <button key={c.id} onClick={() => setPath([...path, c])} className="group flex flex-col items-center gap-1 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-2 shadow-sm transition hover:border-violet-300 hover:shadow">
+          <span className="grid h-14 w-14 shrink-0 place-items-center overflow-hidden rounded-xl bg-slate-50 dark:bg-slate-900">
             {c.image_id ? <img src={`${API_BASE}/catalog/image/${c.image_id}`} alt="" className="h-full w-full object-cover" /> : <span className="text-2xl">{c.icon || catEmoji(c.name)}</span>}
           </span>
-          <span className="line-clamp-2 text-center text-[11px] font-medium leading-tight text-slate-700">{c.name}</span>
+          <span className="line-clamp-2 text-center text-[11px] font-medium leading-tight text-slate-700 dark:text-slate-200">{c.name}</span>
           <span className="text-[10px] text-slate-400">{counts[c.id]} είδη</span>
         </button>
       ))}
@@ -77,7 +78,7 @@ const imgList = (p: Product): string[] => {
   return Array.from(new Set(urls));
 };
 const TAG_STYLE: Record<string, string> = { "Προσφορά": "bg-rose-100 text-rose-700", "Νέο": "bg-emerald-100 text-emerald-700", "Δημοφιλές": "bg-amber-100 text-amber-800", "Bestseller": "bg-amber-100 text-amber-800", "Βιολογικό": "bg-green-100 text-green-700", "Vegan": "bg-green-100 text-green-700" };
-const tagCls = (t: string) => TAG_STYLE[t] || "bg-slate-100 text-slate-600";
+const tagCls = (t: string) => TAG_STYLE[t] || "bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300";
 const SORTS: [string, string][] = [["featured", "Προτεινόμενα"], ["newest", "Νεότερα"], ["price_asc", "Φθηνότερα"], ["price_desc", "Ακριβότερα"]];
 type Sub = { _id: string; items?: { barcode: string; qty: number }[]; lines?: { barcode: string; qty: number }[]; mode: string; interval_days: number; next_run: string };
 const FREQ: [number, string][] = [[0, "Μία φορά"], [14, "Κάθε 2 εβδομάδες"], [30, "Κάθε μήνα"], [60, "Κάθε 2 μήνες"], [90, "Κάθε 3 μήνες"]];
@@ -159,6 +160,23 @@ export function ShopTab({ tenantKey = "x" }: { tenantKey?: string }) {
   const CART_KEY = `rxv_cart_${tenantKey}`;
   const [view, setView] = useState<"browse" | "cart" | "orders" | "subs" | "favorites" | "offers">("browse");
   const [products, setProducts] = useState<Product[]>([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [loadingMore, setLoadingMore] = useState(false);
+  // «↑ Πάνω» — η πύλη scrollάρει τον container #portal-scroll (όχι το window)
+  const [showTop, setShowTop] = useState(false);
+  useEffect(() => {
+    const el = document.getElementById("portal-scroll");
+    if (!el) return;
+    const onScroll = () => setShowTop(el.scrollTop > 700);
+    el.addEventListener("scroll", onScroll, { passive: true });
+    onScroll();
+    return () => el.removeEventListener("scroll", onScroll);
+  }, []);
+  const scrollTop = () => {
+    const el = document.getElementById("portal-scroll");
+    try { el?.scrollTo({ top: 0, behavior: "smooth" }); } catch { if (el) el.scrollTop = 0; }
+  };
   const [video, setVideo] = useState<string | null>(null);   // embed URL οδηγιών χρήσης
   const [pdp, setPdp] = useState<Product | null>(null);       // σελίδα προϊόντος (detail modal)
   const [favBarcodes, setFavBarcodes] = useState<Set<string>>(new Set());
@@ -194,18 +212,32 @@ export function ShopTab({ tenantKey = "x" }: { tenantKey?: string }) {
     try { await patientApi("/patient/shop/favorite", { method: "POST", body: JSON.stringify({ barcode }) }); } catch { /* ignore */ }
   }
   const hasTree = (meta?.category_tree?.length ?? 0) > 0;
-  useEffect(() => {
+  const shopQuery = (pg: number) => {
+    const p = new URLSearchParams({ q, tag, sort, page: String(pg) });
+    if (hasTree) {   // δέντρο κατηγοριών: το πιο συγκεκριμένο επίπεδο του μονοπατιού
+      if (catPath[0]) p.set("cat1", catPath[0].id);
+      if (catPath[1]) p.set("cat2", catPath[1].id);
+      if (catPath[2]) p.set("cat3", catPath[2].id);
+    } else if (cat) { p.set("category", cat); }
+    return p.toString();
+  };
+  useEffect(() => {   // αλλαγή φίλτρου → σελίδα 1 (αντικατάσταση)
     const tmo = setTimeout(() => {
-      const p = new URLSearchParams({ q, tag, sort });
-      if (hasTree) {   // δέντρο κατηγοριών: το πιο συγκεκριμένο επίπεδο του μονοπατιού
-        if (catPath[0]) p.set("cat1", catPath[0].id);
-        if (catPath[1]) p.set("cat2", catPath[1].id);
-        if (catPath[2]) p.set("cat3", catPath[2].id);
-      } else if (cat) { p.set("category", cat); }
-      patientApi<{ items: Product[] }>(`/patient/shop?${p.toString()}`).then((d) => setProducts(d.items)).catch(() => {});
+      patientApi<{ items: Product[]; total: number }>(`/patient/shop?${shopQuery(1)}`)
+        .then((d) => { setProducts(d.items); setTotal(d.total ?? d.items.length); setPage(1); }).catch(() => {});
     }, 250);
     return () => clearTimeout(tmo);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [q, cat, tag, sort, catPath, hasTree]);
+  async function loadMore() {   // «φόρτωσε περισσότερα» → επόμενη σελίδα (προσθήκη)
+    if (loadingMore) return;
+    setLoadingMore(true);
+    try {
+      const next = page + 1;
+      const d = await patientApi<{ items: Product[]; total: number }>(`/patient/shop?${shopQuery(next)}`);
+      setProducts((prev) => [...prev, ...d.items]); setTotal(d.total ?? 0); setPage(next);
+    } catch { /* ignore */ } finally { setLoadingMore(false); }
+  }
 
   function add(p: Product) { setCart((c) => ({ ...c, [p.barcode]: { p, qty: Math.min((c[p.barcode]?.qty ?? 0) + 1, capOf(p)) } })); }
   function dec(bc: string) { setCart((c) => { const q2 = (c[bc]?.qty ?? 0) - 1; const n = { ...c }; if (q2 <= 0) delete n[bc]; else n[bc] = { ...n[bc], qty: q2 }; return n; }); }
@@ -252,7 +284,7 @@ export function ShopTab({ tenantKey = "x" }: { tenantKey?: string }) {
         <div className="flex items-center gap-2">
           <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-gradient-to-br from-violet-500 to-indigo-500 text-white shadow-sm"><ShoppingBag className="h-5 w-5" /></span>
           <div className="leading-tight">
-            <div className="text-lg font-extrabold tracking-tight text-slate-900">e-Κατάστημα</div>
+            <div className="text-lg font-extrabold tracking-tight text-slate-900 dark:text-slate-100">e-Κατάστημα</div>
             <div className="text-[11px] text-slate-400">Παράγγειλε online από το φαρμακείο σου</div>
           </div>
         </div>
@@ -288,17 +320,17 @@ export function ShopTab({ tenantKey = "x" }: { tenantKey?: string }) {
       <div className="flex items-center gap-2">
         <div className="relative flex-1">
           <Search className="pointer-events-none absolute left-3.5 top-1/2 h-[18px] w-[18px] -translate-y-1/2 text-slate-400" />
-          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Αναζήτηση προϊόντος…" className="w-full rounded-2xl border border-slate-300 bg-white py-2.5 pl-11 pr-3 text-[15px] shadow-sm focus:border-violet-400 focus:outline-none focus:ring-2 focus:ring-violet-100" />
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Αναζήτηση προϊόντος…" className="w-full rounded-2xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 py-2.5 pl-11 pr-3 text-[15px] shadow-sm focus:border-violet-400 focus:outline-none focus:ring-2 focus:ring-violet-100" />
         </div>
-        <button onClick={() => setView("favorites")} title="Τα αγαπημένα μου" className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl border border-rose-200 bg-white text-rose-500 shadow-sm"><Heart className="h-5 w-5" /></button>
-        {meta?.settings.subscription_enabled && <button onClick={() => setView("subs")} title="Οι συνδρομές μου" className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl border border-violet-300 bg-white text-violet-600 shadow-sm"><RefreshCcw className="h-5 w-5" /></button>}
+        <button onClick={() => setView("favorites")} title="Τα αγαπημένα μου" className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl border border-rose-200 bg-white dark:bg-slate-800 text-rose-500 shadow-sm"><Heart className="h-5 w-5" /></button>
+        {meta?.settings.subscription_enabled && <button onClick={() => setView("subs")} title="Οι συνδρομές μου" className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl border border-violet-300 bg-white dark:bg-slate-800 text-violet-600 shadow-sm"><RefreshCcw className="h-5 w-5" /></button>}
       </div>
       {/* Μενού κατηγοριών: μοντέρνα πλακίδια από το δέντρο (με φωτό)· fallback στο legacy select αν δεν έχει στηθεί δέντρο.
           Πτύσσεται με κουμπί, και ΑΥΤΟΜΑΤΑ κρύβεται όταν αναζητάς — ώστε τα είδη να φαίνονται αμέσως. */}
       {hasTree && (
         <div className="space-y-2">
           <div className="flex flex-wrap items-center gap-1.5 text-xs">
-            <button onClick={() => setShowCats((v) => !v)} className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50">
+            <button onClick={() => setShowCats((v) => !v)} className="inline-flex items-center gap-1 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-2 text-sm font-medium text-slate-700 dark:text-slate-200 shadow-sm hover:bg-slate-50 dark:hover:bg-slate-800">
               🗂️ Κατηγορίες <ChevronDown className={`h-4 w-4 transition ${showCats && !q.trim() ? "rotate-180" : ""}`} />
             </button>
             {catPath.length > 0 && (
@@ -310,7 +342,7 @@ export function ShopTab({ tenantKey = "x" }: { tenantKey?: string }) {
                     <button onClick={() => setCatPath(catPath.slice(0, i + 1))} className={`rounded-lg px-2 py-1 font-medium ${i === catPath.length - 1 ? "bg-violet-100 text-violet-700" : "text-violet-600 hover:bg-violet-50"}`}>{c.icon ? `${c.icon} ` : ""}{c.name}</button>
                   </Fragment>
                 ))}
-                <button onClick={() => setCatPath([])} title="Καθαρισμός" className="ml-0.5 grid h-6 w-6 place-items-center rounded-full text-slate-400 hover:bg-slate-100"><XCircle className="h-4 w-4" /></button>
+                <button onClick={() => setCatPath([])} title="Καθαρισμός" className="ml-0.5 grid h-6 w-6 place-items-center rounded-full text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700"><XCircle className="h-4 w-4" /></button>
               </>
             )}
           </div>
@@ -320,7 +352,7 @@ export function ShopTab({ tenantKey = "x" }: { tenantKey?: string }) {
       <div className="flex items-center gap-2">
         {!hasTree && !!meta?.categories.length && (
           <div className="relative flex-1">
-            <select value={cat} onChange={(e) => setCat(e.target.value)} className="w-full appearance-none rounded-xl border border-slate-200 bg-white py-2 pl-3 pr-8 text-sm font-medium text-slate-700 shadow-sm focus:border-violet-400 focus:outline-none focus:ring-2 focus:ring-violet-100">
+            <select value={cat} onChange={(e) => setCat(e.target.value)} className="w-full appearance-none rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 py-2 pl-3 pr-8 text-sm font-medium text-slate-700 dark:text-slate-200 shadow-sm focus:border-violet-400 focus:outline-none focus:ring-2 focus:ring-violet-100">
               <option value="">🗂️ Όλες οι κατηγορίες</option>
               {meta.categories.map((c) => <option key={c} value={c}>{catEmoji(c)} {c}</option>)}
             </select>
@@ -328,7 +360,7 @@ export function ShopTab({ tenantKey = "x" }: { tenantKey?: string }) {
           </div>
         )}
         <div className="relative">
-          <select value={sort} onChange={(e) => setSort(e.target.value)} className="appearance-none rounded-xl border border-slate-200 bg-white py-2 pl-3 pr-8 text-sm text-slate-600 shadow-sm focus:border-violet-400 focus:outline-none focus:ring-2 focus:ring-violet-100">{SORTS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select>
+          <select value={sort} onChange={(e) => setSort(e.target.value)} className="appearance-none rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 py-2 pl-3 pr-8 text-sm text-slate-600 dark:text-slate-300 shadow-sm focus:border-violet-400 focus:outline-none focus:ring-2 focus:ring-violet-100">{SORTS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select>
           <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
         </div>
       </div>
@@ -348,7 +380,7 @@ export function ShopTab({ tenantKey = "x" }: { tenantKey?: string }) {
       {/* ΚΑΛΑΘΙ — κάτω από τα φίλτρα ώστε να ΜΗΝ σκεπάζει header/αναζήτηση/κατηγορίες· sticky & προσβάσιμο. */}
       {count > 0 && (
         <button onClick={() => setView("cart")}
-          className="sticky top-[4.5rem] z-10 flex w-full items-center justify-between gap-2 rounded-2xl bg-gradient-to-r from-violet-600 to-indigo-600 px-4 py-3 text-white shadow-lg shadow-violet-500/30 ring-1 ring-white/20">
+          className="sticky top-2 z-10 flex w-full items-center justify-between gap-2 rounded-2xl bg-gradient-to-r from-violet-600 to-indigo-600 px-4 py-3 text-white shadow-lg shadow-violet-500/30 ring-1 ring-white/20">
           <span className="flex items-center gap-2 text-sm font-bold">
             <span className="relative grid h-8 w-8 place-items-center rounded-xl bg-white/20">
               <ShoppingCart className="h-[18px] w-[18px]" />
@@ -371,8 +403,8 @@ export function ShopTab({ tenantKey = "x" }: { tenantKey?: string }) {
           const med = isMed(p.type); const fc = final(p, camps); const inCart = cart[p.barcode]?.qty ?? 0;
           const dPct = effDisc(p, camps);
           return (
-            <div key={p.barcode} className={`flex flex-col rounded-2xl border bg-white p-2.5 ${p.featured ? "border-amber-300 ring-1 ring-amber-100" : "border-slate-200"}`}>
-              <div onClick={() => setPdp(p)} title="Δες λεπτομέρειες" className="relative mb-1 grid h-24 cursor-pointer place-items-center overflow-hidden rounded-xl bg-slate-50 sm:h-32">
+            <div key={p.barcode} className={`flex flex-col rounded-2xl border bg-white dark:bg-slate-800 p-2.5 ${p.featured ? "border-amber-300 ring-1 ring-amber-100" : "border-slate-200 dark:border-slate-700"}`}>
+              <div onClick={() => setPdp(p)} title="Δες λεπτομέρειες" className="relative mb-1 grid h-24 cursor-pointer place-items-center overflow-hidden rounded-xl bg-slate-50 dark:bg-slate-900 sm:h-32">
                 {imgSrc(p) ? <img src={imgSrc(p)} alt="" className="h-full w-full object-contain" /> : (med ? <Pill className="h-7 w-7 text-slate-300" /> : <Package className="h-7 w-7 text-slate-300" />)}
                 {(imgList(p).length > 1) && <span className="absolute bottom-1 right-8 rounded bg-black/60 px-1 text-[9px] font-semibold text-white">📷 {imgList(p).length}</span>}
                 {dPct > 0 && <span className="absolute left-1 top-1 rounded-md bg-rose-600 px-1.5 py-0.5 text-[10px] font-bold text-white">-{dPct}%</span>}
@@ -385,18 +417,18 @@ export function ShopTab({ tenantKey = "x" }: { tenantKey?: string }) {
                 {p.stock_qty > 0 && p.stock_qty <= LOW_STOCK && <span className="absolute bottom-1 left-1 rounded bg-orange-100 px-1.5 py-0.5 text-[9px] font-semibold text-orange-700">τελευταία {p.stock_qty}</span>}
                 {isBackorder(p) && <span className="absolute bottom-1 left-1 rounded bg-amber-100 px-1.5 py-0.5 text-[9px] font-semibold text-amber-700">Κατόπιν παραγγελίας</span>}
               </div>
-              <div onClick={() => setPdp(p)} className="line-clamp-2 min-h-[2.2rem] cursor-pointer text-xs font-semibold text-slate-800 hover:text-violet-700">{p.name}</div>
+              <div onClick={() => setPdp(p)} className="line-clamp-2 min-h-[2.2rem] cursor-pointer text-xs font-semibold text-slate-800 dark:text-slate-100 hover:text-violet-700">{p.name}</div>
               {!!p.tags?.length && <div className="mt-0.5 flex flex-wrap gap-0.5">{p.tags.slice(0, 3).map((t) => <span key={t} className={`rounded px-1 py-0.5 text-[9px] font-semibold ${tagCls(t)}`}>{t}</span>)}</div>}
               <div className="mt-1 flex items-end justify-between">
                 <div>
                   {fc < p.price_cents && <div className="text-[10px] text-slate-400 line-through">{eur(p.price_cents)}</div>}
-                  <div className="text-sm font-bold text-slate-900">{eur(fc)}{dPct > 0 && <span className="ml-1 text-[10px] font-semibold text-emerald-600">-{dPct}%</span>}</div>
+                  <div className="text-sm font-bold text-slate-900 dark:text-slate-100">{eur(fc)}{dPct > 0 && <span className="ml-1 text-[10px] font-semibold text-emerald-600">-{dPct}%</span>}</div>
                 </div>
                 {inCart ? (
                   <div className="flex items-center gap-1.5 rounded-full bg-violet-600 px-1 text-white">
-                    <button onClick={() => dec(p.barcode)} className="grid h-6 w-6 place-items-center"><Minus className="h-3.5 w-3.5" /></button>
+                    <button onClick={() => dec(p.barcode)} className="grid h-8 w-8 place-items-center"><Minus className="h-4 w-4" /></button>
                     <span className="text-xs font-bold">{inCart}</span>
-                    <button onClick={() => add(p)} className="grid h-6 w-6 place-items-center"><Plus className="h-3.5 w-3.5" /></button>
+                    <button onClick={() => add(p)} className="grid h-8 w-8 place-items-center"><Plus className="h-4 w-4" /></button>
                   </div>
                 ) : <button onClick={() => add(p)} className="grid h-8 w-8 place-items-center rounded-full bg-violet-600 text-white"><Plus className="h-4 w-4" /></button>}
               </div>
@@ -405,6 +437,24 @@ export function ShopTab({ tenantKey = "x" }: { tenantKey?: string }) {
         })}
         {products.length === 0 && <div className="col-span-2 py-10 text-center text-sm text-slate-400">Δεν βρέθηκαν προϊόντα.</div>}
       </div>
+
+      {/* Φόρτωση περισσότερων — η πύλη έδειχνε μόνο 60· τώρα ο πελάτης βλέπει ΟΛΑ τα προϊόντα της κατηγορίας */}
+      {products.length > 0 && products.length < total && (
+        <div className="mt-3 flex flex-col items-center gap-1 pb-20 sm:pb-4">
+          <button onClick={loadMore} disabled={loadingMore} className="inline-flex items-center gap-2 rounded-xl border border-violet-300 bg-white dark:bg-slate-800 px-5 py-2.5 text-sm font-semibold text-violet-700 shadow-sm hover:bg-violet-50 disabled:opacity-50">
+            {loadingMore ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCcw className="h-4 w-4" />} Φόρτωσε περισσότερα
+          </button>
+          <span className="text-[11px] text-slate-400">{products.length} από {total.toLocaleString("el-GR")} προϊόντα</span>
+        </div>
+      )}
+
+      {/* «↑ Πάνω» — γρήγορη επιστροφή στην κορυφή όταν έχεις κατέβει πολύ */}
+      {showTop && (
+        <button onClick={scrollTop} aria-label="Πάνω" title="Πάνω"
+          className="fixed bottom-24 right-4 z-40 grid h-11 w-11 place-items-center rounded-full bg-violet-600 text-white shadow-lg shadow-violet-500/30 ring-1 ring-white/20 transition hover:bg-violet-700 sm:bottom-6">
+          <ChevronUp className="h-5 w-5" />
+        </button>
+      )}
 
       {/* (Το πλωτό κάτω κουμπί καλαθιού αφαιρέθηκε: ήταν διπλό με το sticky πάνω και έπεφτε
           πάνω στην κάτω μπάρα πλοήγησης στο κινητό.) */}
@@ -505,17 +555,17 @@ function Checkout({ cart, subtotal, settings, camps, bundles, loyalty, onBack, o
   return (
     // Desktop: 2 στήλες — αριστερά είδη/παράδοση/στοιχεία, δεξιά «κολλημένο» το σύνολο & η ολοκλήρωση.
     <div className="pb-6">
-      <button onClick={onBack} className="inline-flex items-center gap-1 text-sm text-slate-500"><ChevronLeft className="h-4 w-4" /> Συνέχεια αγορών</button>
-      <div className="mt-3 grid items-start gap-3 lg:grid-cols-[minmax(0,1fr)_22rem]">
-      <div className="space-y-3">
-      <div className="rounded-2xl border border-slate-200 bg-white p-3">
+      <button onClick={onBack} className="inline-flex items-center gap-1 text-sm text-slate-500 dark:text-slate-400"><ChevronLeft className="h-4 w-4" /> Συνέχεια αγορών</button>
+      <div className="mt-3 grid min-w-0 items-start gap-3 lg:grid-cols-[minmax(0,1fr)_22rem]">
+      <div className="min-w-0 space-y-3">
+      <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-3">
         {items.map((x) => (
-          <div key={x.p.barcode} className="flex items-center justify-between border-b border-slate-100 py-2 last:border-0">
-            <div className="min-w-0"><div className="truncate text-sm font-medium text-slate-800">{x.p.name}</div><div className="text-xs text-slate-400">{eur(final(x.p, camps))} × {x.qty}</div></div>
-            <div className="flex items-center gap-2">
-              <button onClick={() => dec(x.p.barcode)} className="grid h-7 w-7 place-items-center rounded-full bg-slate-100">{x.qty === 1 ? <Trash2 className="h-3.5 w-3.5 text-rose-500" /> : <Minus className="h-3.5 w-3.5" />}</button>
+          <div key={x.p.barcode} className="flex items-center justify-between gap-3 border-b border-slate-100 dark:border-slate-800 py-2 last:border-0">
+            <div className="min-w-0 flex-1"><div className="truncate text-sm font-medium text-slate-800 dark:text-slate-100">{x.p.name}</div><div className="text-xs text-slate-400">{eur(final(x.p, camps))} × {x.qty} = <b className="text-slate-500 dark:text-slate-300">{eur(final(x.p, camps) * x.qty)}</b></div></div>
+            <div className="flex shrink-0 items-center gap-2">
+              <button onClick={() => dec(x.p.barcode)} className="grid h-7 w-7 place-items-center rounded-full bg-slate-100 dark:bg-slate-700">{x.qty === 1 ? <Trash2 className="h-3.5 w-3.5 text-rose-500" /> : <Minus className="h-3.5 w-3.5" />}</button>
               <span className="w-4 text-center text-sm font-bold">{x.qty}</span>
-              <button onClick={() => add(x.p)} className="grid h-7 w-7 place-items-center rounded-full bg-slate-100"><Plus className="h-3.5 w-3.5" /></button>
+              <button onClick={() => add(x.p)} className="grid h-7 w-7 place-items-center rounded-full bg-slate-100 dark:bg-slate-700"><Plus className="h-3.5 w-3.5" /></button>
             </div>
           </div>
         ))}
@@ -523,38 +573,38 @@ function Checkout({ cart, subtotal, settings, camps, bundles, loyalty, onBack, o
 
       {/* delivery vs pickup */}
       <div className="grid grid-cols-2 gap-2">
-        {settings?.delivery_enabled && <button onClick={() => setMode("delivery")} className={`flex items-center gap-2 rounded-xl border p-3 text-sm font-medium ${mode === "delivery" ? "border-violet-500 bg-violet-50 text-violet-700" : "border-slate-200 text-slate-600"}`}><Truck className="h-4 w-4" /> Αποστολή</button>}
-        {settings?.pickup_enabled && <button onClick={() => setMode("pickup")} className={`flex items-center gap-2 rounded-xl border p-3 text-sm font-medium ${mode === "pickup" ? "border-violet-500 bg-violet-50 text-violet-700" : "border-slate-200 text-slate-600"}`}><Store className="h-4 w-4" /> Παραλαβή</button>}
+        {settings?.delivery_enabled && <button onClick={() => setMode("delivery")} className={`flex items-center gap-2 rounded-xl border p-3 text-sm font-medium ${mode === "delivery" ? "border-violet-500 bg-violet-50 text-violet-700" : "border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300"}`}><Truck className="h-4 w-4" /> Αποστολή</button>}
+        {settings?.pickup_enabled && <button onClick={() => setMode("pickup")} className={`flex items-center gap-2 rounded-xl border p-3 text-sm font-medium ${mode === "pickup" ? "border-violet-500 bg-violet-50 text-violet-700" : "border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300"}`}><Store className="h-4 w-4" /> Παραλαβή</button>}
       </div>
 
       {/* τρόπος πληρωμής (online Viva = κάρτα/IRIS· αλλιώς στο κατάστημα/παράδοση) */}
       {settings?.online_payment_enabled && (
         <div>
-          <div className="mb-1.5 text-xs font-semibold text-slate-500">Τρόπος πληρωμής</div>
+          <div className="mb-1.5 text-xs font-semibold text-slate-500 dark:text-slate-400">Τρόπος πληρωμής</div>
           <div className="grid grid-cols-2 gap-2">
-            <button onClick={() => setPay("store")} className={`rounded-xl border p-3 text-sm font-medium ${pay === "store" ? "border-violet-500 bg-violet-50 text-violet-700" : "border-slate-200 text-slate-600"}`}>🏪 {mode === "delivery" ? "Με την παράδοση" : "Στο κατάστημα"}</button>
-            <button onClick={() => setPay("online")} className={`rounded-xl border p-3 text-sm font-medium ${pay === "online" ? "border-violet-500 bg-violet-50 text-violet-700" : "border-slate-200 text-slate-600"}`}>💳 Online (κάρτα / IRIS)</button>
+            <button onClick={() => setPay("store")} className={`rounded-xl border p-3 text-sm font-medium ${pay === "store" ? "border-violet-500 bg-violet-50 text-violet-700" : "border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300"}`}>🏪 {mode === "delivery" ? "Με την παράδοση" : "Στο κατάστημα"}</button>
+            <button onClick={() => setPay("online")} className={`rounded-xl border p-3 text-sm font-medium ${pay === "online" ? "border-violet-500 bg-violet-50 text-violet-700" : "border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300"}`}>💳 Online (κάρτα / IRIS)</button>
           </div>
         </div>
       )}
 
       {mode === "delivery" && (
-        <div className="space-y-2 rounded-2xl border border-slate-200 bg-white p-3">
-          <div className="text-sm font-semibold text-slate-700">Διεύθυνση αποστολής</div>
-          <input value={addr.street} onChange={(e) => setAddr({ ...addr, street: e.target.value })} placeholder="Οδός & αριθμός" className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+        <div className="space-y-2 rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-3">
+          <div className="text-sm font-semibold text-slate-700 dark:text-slate-200">Διεύθυνση αποστολής</div>
+          <input value={addr.street} onChange={(e) => setAddr({ ...addr, street: e.target.value })} placeholder="Οδός & αριθμός" className="w-full rounded-lg border border-slate-300 dark:border-slate-600 px-3 py-2 text-sm" />
           <div className="grid grid-cols-2 gap-2">
-            <input value={addr.area} onChange={(e) => setAddr({ ...addr, area: e.target.value })} placeholder="Περιοχή" className="rounded-lg border border-slate-300 px-3 py-2 text-sm" />
-            <input value={addr.postal} onChange={(e) => setAddr({ ...addr, postal: e.target.value })} placeholder="Τ.Κ." className="rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+            <input value={addr.area} onChange={(e) => setAddr({ ...addr, area: e.target.value })} placeholder="Περιοχή" className="rounded-lg border border-slate-300 dark:border-slate-600 px-3 py-2 text-sm" />
+            <input value={addr.postal} onChange={(e) => setAddr({ ...addr, postal: e.target.value })} placeholder="Τ.Κ." className="rounded-lg border border-slate-300 dark:border-slate-600 px-3 py-2 text-sm" />
           </div>
-          <input value={addr.phone} onChange={(e) => setAddr({ ...addr, phone: e.target.value })} placeholder="Τηλέφωνο" className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" />
-          <input value={addr.notes} onChange={(e) => setAddr({ ...addr, notes: e.target.value })} placeholder="Σημείωση (όροφος, κουδούνι…)" className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+          <input value={addr.phone} onChange={(e) => setAddr({ ...addr, phone: e.target.value })} placeholder="Τηλέφωνο" className="w-full rounded-lg border border-slate-300 dark:border-slate-600 px-3 py-2 text-sm" />
+          <input value={addr.notes} onChange={(e) => setAddr({ ...addr, notes: e.target.value })} placeholder="Σημείωση (όροφος, κουδούνι…)" className="w-full rounded-lg border border-slate-300 dark:border-slate-600 px-3 py-2 text-sm" />
         </div>
       )}
 
       {settings?.subscription_enabled && (
         <div className="rounded-2xl border border-violet-200 bg-violet-50/60 p-3">
           <div className="mb-1.5 text-sm font-semibold text-violet-900">🔁 Επανάληψη παραγγελίας</div>
-          <select value={repeat} onChange={(e) => setRepeat(+e.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm">
+          <select value={repeat} onChange={(e) => setRepeat(+e.target.value)} className="w-full rounded-lg border border-slate-300 dark:border-slate-600 px-3 py-2 text-sm">
             {FREQ.map(([d, l]) => <option key={d} value={d}>{l}</option>)}
           </select>
           {repeat > 0 && (settings.subscription_discount_pct > 0
@@ -567,16 +617,16 @@ function Checkout({ cart, subtotal, settings, camps, bundles, loyalty, onBack, o
       {hasMed && settings?.pps_cert && (
         <div className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800"><ShieldCheck className="h-4 w-4 shrink-0" /> Πιστοποιημένο φαρμακείο (ΠΦΣ): {settings.pps_cert}. Νόμιμη διάθεση ΜΗ.ΣΥ.ΦΑ. βάσει του κοινού λογοτύπου ΕΕ.</div>
       )}
-      <label className="flex items-start gap-2 text-xs text-slate-600"><input type="checkbox" checked={gdpr} onChange={(e) => setGdpr(e.target.checked)} className="mt-0.5" /> Συναινώ στην επεξεργασία των στοιχείων μου για την εκτέλεση της παραγγελίας (GDPR).</label>
+      <label className="flex items-start gap-2 text-xs text-slate-600 dark:text-slate-300"><input type="checkbox" checked={gdpr} onChange={(e) => setGdpr(e.target.checked)} className="mt-0.5" /> Συναινώ στην επεξεργασία των στοιχείων μου για την εκτέλεση της παραγγελίας (GDPR).</label>
       {mode === "delivery" && (
         <div className="space-y-2">
-          <label className="flex items-start gap-2 text-xs text-slate-600"><input type="checkbox" checked={courier} onChange={(e) => setCourier(e.target.checked)} className="mt-0.5" /> Εξουσιοδοτώ τον μεταφορέα να παραλάβει και να μου παραδώσει την παραγγελία στη διεύθυνσή μου.</label>
+          <label className="flex items-start gap-2 text-xs text-slate-600 dark:text-slate-300"><input type="checkbox" checked={courier} onChange={(e) => setCourier(e.target.checked)} className="mt-0.5" /> Εξουσιοδοτώ τον μεταφορέα να παραλάβει και να μου παραδώσει την παραγγελία στη διεύθυνσή μου.</label>
           {courier && (
             <div className="space-y-2 rounded-2xl border border-amber-200 bg-amber-50/60 p-3">
               <div className="text-sm font-semibold text-amber-900">Στοιχεία εξουσιοδοτούμενου</div>
               <p className="text-[11px] text-amber-800">Το άτομο που εξουσιοδοτείς να παραλάβει τα φάρμακα για λογαριασμό σου. Θα ζητηθεί ταυτοποίηση κατά την παράδοση.</p>
-              <input value={cauth.name} onChange={(e) => setCauth({ ...cauth, name: e.target.value })} placeholder="Ονοματεπώνυμο εξουσιοδοτούμενου" className="w-full rounded-lg border border-amber-300 bg-white px-3 py-2 text-sm" />
-              <input value={cauth.id_number} onChange={(e) => setCauth({ ...cauth, id_number: e.target.value })} placeholder="Αρ. ταυτότητας ή διαβατηρίου" className="w-full rounded-lg border border-amber-300 bg-white px-3 py-2 text-sm" />
+              <input value={cauth.name} onChange={(e) => setCauth({ ...cauth, name: e.target.value })} placeholder="Ονοματεπώνυμο εξουσιοδοτούμενου" className="w-full rounded-lg border border-amber-300 bg-white dark:bg-slate-800 px-3 py-2 text-sm" />
+              <input value={cauth.id_number} onChange={(e) => setCauth({ ...cauth, id_number: e.target.value })} placeholder="Αρ. ταυτότητας ή διαβατηρίου" className="w-full rounded-lg border border-amber-300 bg-white dark:bg-slate-800 px-3 py-2 text-sm" />
             </div>
           )}
         </div>
@@ -587,16 +637,16 @@ function Checkout({ cart, subtotal, settings, camps, bundles, loyalty, onBack, o
       {/* ── δεξιά στήλη: προσφορές + σύνολο + ολοκλήρωση (sticky σε desktop) ── */}
       <div className="space-y-3 lg:sticky lg:top-20">
       {/* Κουπόνι έκπτωσης */}
-      <div className="rounded-2xl border border-slate-200 bg-white p-3">
-        <div className="mb-1.5 text-sm font-semibold text-slate-700">🎟️ Κουπόνι έκπτωσης</div>
+      <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-3">
+        <div className="mb-1.5 text-sm font-semibold text-slate-700 dark:text-slate-200">🎟️ Κουπόνι έκπτωσης</div>
         {coupon ? (
           <div className="flex items-center justify-between gap-2 rounded-xl bg-violet-50 px-3 py-2">
-            <span className="text-sm text-violet-800">Ενεργό: <code className="font-bold">{coupon.code}</code> {coupon.kind === "pct" ? `(−${coupon.value}%)` : `(−${eur(coupon.value)})`}</span>
-            <button onClick={() => { setCoupon(null); setCouponIn(""); }} className="text-xs font-semibold text-slate-400">Αφαίρεση</button>
+            <span className="min-w-0 flex-1 text-sm text-violet-800">Ενεργό: <code className="font-bold break-all">{coupon.code}</code> {coupon.kind === "pct" ? `(−${coupon.value}%)` : `(−${eur(coupon.value)})`}</span>
+            <button onClick={() => { setCoupon(null); setCouponIn(""); }} className="shrink-0 text-xs font-semibold text-slate-400">Αφαίρεση</button>
           </div>
         ) : (
           <div className="flex gap-2">
-            <input value={couponIn} onChange={(e) => setCouponIn(e.target.value.toUpperCase())} placeholder="Κωδικός" className="min-w-0 flex-1 rounded-lg border border-slate-300 px-3 py-2 font-mono text-sm uppercase" />
+            <input value={couponIn} onChange={(e) => setCouponIn(e.target.value.toUpperCase())} placeholder="Κωδικός" className="min-w-0 flex-1 rounded-lg border border-slate-300 dark:border-slate-600 px-3 py-2 font-mono text-sm uppercase" />
             <button onClick={applyCoupon} disabled={couponIn.trim().length < 3 || couponBusy} className="shrink-0 rounded-lg bg-slate-800 px-3 py-2 text-sm font-semibold text-white disabled:opacity-50">{couponBusy ? "…" : "Εφαρμογή"}</button>
           </div>
         )}
@@ -625,13 +675,13 @@ function Checkout({ cart, subtotal, settings, camps, bundles, loyalty, onBack, o
         </div>
       )}
 
-      <div className="rounded-2xl border border-slate-200 bg-white p-3 text-sm">
-        <div className="flex justify-between text-slate-600"><span>Υποσύνολο</span><span>{eur(subtotal)}</span></div>
-        {bundleCents > 0 && <div className="flex justify-between font-semibold text-emerald-700"><span>📦 {bs.names.join(", ")}</span><span>−{eur(bundleCents)}</span></div>}
-        {cartCents > 0 && <div className="flex justify-between font-semibold text-violet-700"><span>{useCoupon ? `🎟️ Κουπόνι ${coupon?.code}` : `📈 Έκπτωση καλαθιού (${td.pct}%)`}</span><span>−{eur(cartCents)}</span></div>}
-        {mode === "delivery" && <div className="flex justify-between text-slate-600"><span>Μεταφορικά</span><span>{fee === 0 ? "Δωρεάν" : eur(fee)}</span></div>}
+      <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-3 text-sm">
+        <div className="flex justify-between text-slate-600 dark:text-slate-300"><span>Υποσύνολο</span><span>{eur(subtotal)}</span></div>
+        {bundleCents > 0 && <div className="flex items-center justify-between gap-2 font-semibold text-emerald-700"><span className="min-w-0 truncate">📦 {bs.names.join(", ")}</span><span className="shrink-0">−{eur(bundleCents)}</span></div>}
+        {cartCents > 0 && <div className="flex justify-between gap-2 font-semibold text-violet-700"><span className="min-w-0 truncate">{useCoupon ? `🎟️ Κουπόνι ${coupon?.code}` : `📈 Έκπτωση καλαθιού (${td.pct}%)`}</span><span className="shrink-0">−{eur(cartCents)}</span></div>}
+        {mode === "delivery" && <div className="flex justify-between text-slate-600 dark:text-slate-300"><span>Μεταφορικά</span><span>{fee === 0 ? "Δωρεάν" : eur(fee)}</span></div>}
         {redeemApplied > 0 && <div className="flex justify-between font-semibold text-emerald-700"><span>🎁 Πόντοι επιβράβευσης</span><span>−{eur(redeemApplied)}</span></div>}
-        <div className="mt-1 flex justify-between border-t border-slate-100 pt-1 text-base font-bold text-slate-900"><span>Σύνολο</span><span>{eur(total)}</span></div>
+        <div className="mt-1 flex justify-between border-t border-slate-100 dark:border-slate-800 pt-1 text-base font-bold text-slate-900 dark:text-slate-100"><span>Σύνολο</span><span>{eur(total)}</span></div>
         <p className="mt-1 text-[11px] text-slate-400">Πληρωμή κατά την παράδοση/παραλαβή. Τα φάρμακα δεν επιστρέφονται.</p>
       </div>
 
@@ -661,10 +711,10 @@ function Stepper({ steps, cur }: { steps: string[]; cur: number }) {
       {steps.map((s, i) => (
         <Fragment key={i}>
           <div className="flex flex-1 flex-col items-center">
-            <div className={`grid h-7 w-7 place-items-center rounded-full text-xs font-bold ${i < cur ? "bg-emerald-500 text-white" : i === cur ? "bg-violet-600 text-white ring-4 ring-violet-100" : "bg-slate-100 text-slate-400"}`}>
+            <div className={`grid h-7 w-7 place-items-center rounded-full text-xs font-bold ${i < cur ? "bg-emerald-500 text-white" : i === cur ? "bg-violet-600 text-white ring-4 ring-violet-100" : "bg-slate-100 dark:bg-slate-700 text-slate-400"}`}>
               {i < cur ? <Check className="h-4 w-4" /> : i + 1}
             </div>
-            <span className={`mt-1 text-center text-[10px] leading-tight ${i <= cur ? "font-medium text-slate-700" : "text-slate-400"}`}>{s}</span>
+            <span className={`mt-1 text-center text-[10px] leading-tight ${i <= cur ? "font-medium text-slate-700 dark:text-slate-200" : "text-slate-400"}`}>{s}</span>
           </div>
           {i < steps.length - 1 && <div className={`mt-3.5 h-0.5 flex-1 ${i < cur ? "bg-emerald-500" : "bg-slate-200"}`} />}
         </Fragment>
@@ -683,13 +733,13 @@ function OrderCard({ o, onReorder }: { o: Order; onReorder?: (o: Order) => void 
   const dead = cancelled || declined;
   const done = o.status === "delivered";
   return (
-    <div className={`overflow-hidden rounded-2xl border bg-white ${dead ? "border-slate-200 opacity-70" : done ? "border-emerald-200" : pending ? "border-amber-300" : "border-violet-200"}`}>
+    <div className={`overflow-hidden rounded-2xl border bg-white dark:bg-slate-800 ${dead ? "border-slate-200 dark:border-slate-700 opacity-70" : done ? "border-emerald-200" : pending ? "border-amber-300" : "border-violet-200"}`}>
       <button onClick={() => setOpen((v) => !v)} className="flex w-full items-center justify-between gap-2 p-3 text-left">
-        <span className="flex items-center gap-2 text-sm font-semibold text-slate-800">
+        <span className="flex items-center gap-2 text-sm font-semibold text-slate-800 dark:text-slate-100">
           {o.mode === "delivery" ? <Truck className="h-4 w-4 text-violet-500" /> : <Store className="h-4 w-4 text-sky-500" />}
           {eur(o.total_cents)} <span className="text-xs font-normal text-slate-400">· {o.items.length} είδη</span>
         </span>
-        <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${dead ? "bg-slate-200 text-slate-500" : done ? "bg-emerald-100 text-emerald-700" : pending ? "bg-amber-100 text-amber-800" : "bg-violet-100 text-violet-700"}`}>{ST[o.status] ?? o.status}</span>
+        <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${dead ? "bg-slate-200 text-slate-500 dark:text-slate-400" : done ? "bg-emerald-100 text-emerald-700" : pending ? "bg-amber-100 text-amber-800" : "bg-violet-100 text-violet-700"}`}>{ST[o.status] ?? o.status}</span>
       </button>
 
       {pending ? (
@@ -709,19 +759,19 @@ function OrderCard({ o, onReorder }: { o: Order; onReorder?: (o: Order) => void 
       )}
 
       {open && (
-        <div className="space-y-2 border-t border-slate-100 px-3 py-2.5 text-sm">
+        <div className="space-y-2 border-t border-slate-100 dark:border-slate-800 px-3 py-2.5 text-sm">
           <div className="space-y-0.5">
             {o.items.map((it, i) => (
-              <div key={i} className="flex justify-between text-slate-600">
-                <span>{it.qty}× {it.name}{it.discount_pct ? <span className="ml-1 text-emerald-600">-{it.discount_pct}%</span> : null}{it.backorder ? <span className="ml-1 text-amber-600">· κατόπιν παραγγελίας</span> : null}</span>
-                <span>{eur(it.line_cents)}</span>
+              <div key={i} className="flex justify-between gap-2 text-slate-600 dark:text-slate-300">
+                <span className="min-w-0 flex-1">{it.qty}× {it.name}{it.discount_pct ? <span className="ml-1 text-emerald-600">-{it.discount_pct}%</span> : null}{it.backorder ? <span className="ml-1 text-amber-600">· κατόπιν παραγγελίας</span> : null}</span>
+                <span className="shrink-0">{eur(it.line_cents)}</span>
               </div>
             ))}
           </div>
-          <div className="border-t border-slate-100 pt-1 text-xs text-slate-500">
+          <div className="border-t border-slate-100 dark:border-slate-800 pt-1 text-xs text-slate-500 dark:text-slate-400">
             <div className="flex justify-between"><span>Υποσύνολο</span><span>{eur(o.subtotal_cents)}</span></div>
             {o.mode === "delivery" && <div className="flex justify-between"><span>Μεταφορικά</span><span>{o.delivery_fee_cents ? eur(o.delivery_fee_cents) : "Δωρεάν"}</span></div>}
-            <div className="flex justify-between font-bold text-slate-800"><span>Σύνολο</span><span>{eur(o.total_cents)}</span></div>
+            <div className="flex justify-between font-bold text-slate-800 dark:text-slate-100"><span>Σύνολο</span><span>{eur(o.total_cents)}</span></div>
           </div>
           {o.mode === "delivery" && o.address && (
             <div className="flex items-start gap-1.5 rounded-lg bg-violet-50 px-2.5 py-1.5 text-xs text-violet-800">
@@ -747,20 +797,20 @@ function Favorites({ onBack, favBarcodes, toggleFav, add, cart, dec, camps }: {
   const shown = items.filter((p) => favBarcodes.has(p.barcode));   // κρύψε αυτά που μόλις αφαίρεσε
   return (
     <div className="space-y-3">
-      <button onClick={onBack} className="inline-flex items-center gap-1 text-sm text-slate-500"><ChevronLeft className="h-4 w-4" /> Στο e-Κατάστημα</button>
-      <div className="flex items-center gap-1.5 text-base font-bold text-slate-800"><Heart className="h-4 w-4 fill-rose-500 text-rose-500" /> Τα αγαπημένα μου</div>
+      <button onClick={onBack} className="inline-flex items-center gap-1 text-sm text-slate-500 dark:text-slate-400"><ChevronLeft className="h-4 w-4" /> Στο e-Κατάστημα</button>
+      <div className="flex items-center gap-1.5 text-base font-bold text-slate-800 dark:text-slate-100"><Heart className="h-4 w-4 fill-rose-500 text-rose-500" /> Τα αγαπημένα μου</div>
       <p className="text-xs text-slate-400">Σε ειδοποιούμε για <b>πτώση τιμής</b> ή <b>επιστροφή σε απόθεμα</b> (στις Ειδοποιήσεις της Αρχικής).</p>
       {loading && <div className="py-8 text-center text-sm text-slate-400">Φόρτωση…</div>}
       {!loading && shown.length === 0 && <div className="py-10 text-center text-sm text-slate-400"><Heart className="mx-auto mb-2 h-8 w-8 text-slate-300" />Δεν έχεις αγαπημένα ακόμη. Πάτα την ❤️ σε ένα προϊόν.</div>}
       {shown.map((p) => {
         const fc = final(p, camps); const inCart = cart[p.barcode]?.qty ?? 0;
         return (
-          <div key={p.barcode} className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
-            <span className="grid h-12 w-12 shrink-0 place-items-center overflow-hidden rounded-xl bg-slate-50">{imgSrc(p) ? <img src={imgSrc(p)} alt="" className="h-full w-full object-contain" /> : <Pill className="h-5 w-5 text-slate-300" />}</span>
+          <div key={p.barcode} className="flex items-center gap-3 rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-3 shadow-sm">
+            <span className="grid h-12 w-12 shrink-0 place-items-center overflow-hidden rounded-xl bg-slate-50 dark:bg-slate-900">{imgSrc(p) ? <img src={imgSrc(p)} alt="" className="h-full w-full object-contain" /> : <Pill className="h-5 w-5 text-slate-300" />}</span>
             <div className="min-w-0 flex-1">
-              <div className="truncate text-sm font-semibold text-slate-800">{p.name}</div>
+              <div className="truncate text-sm font-semibold text-slate-800 dark:text-slate-100">{p.name}</div>
               <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
-                <span className="text-sm font-bold text-slate-900">{eur(fc)}</span>
+                <span className="text-sm font-bold text-slate-900 dark:text-slate-100">{eur(fc)}</span>
                 {p.price_dropped && <span className="rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700">↓ πτώση τιμής</span>}
                 {p.back_in_stock && <span className="rounded-full bg-sky-100 px-1.5 py-0.5 text-[10px] font-bold text-sky-700">📦 διαθέσιμο</span>}
                 {isBackorder(p) && <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700">κατόπιν παραγγελίας</span>}
@@ -769,9 +819,9 @@ function Favorites({ onBack, favBarcodes, toggleFav, add, cart, dec, camps }: {
             <button onClick={() => toggleFav(p.barcode)} title="Αφαίρεση" className="grid h-8 w-8 shrink-0 place-items-center"><Heart className="h-[18px] w-[18px] fill-rose-500 text-rose-500" /></button>
             {inCart ? (
               <div className="flex shrink-0 items-center gap-1.5 rounded-full bg-violet-600 px-1 text-white">
-                <button onClick={() => dec(p.barcode)} className="grid h-6 w-6 place-items-center"><Minus className="h-3.5 w-3.5" /></button>
+                <button onClick={() => dec(p.barcode)} className="grid h-8 w-8 place-items-center"><Minus className="h-4 w-4" /></button>
                 <span className="text-xs font-bold">{inCart}</span>
-                <button onClick={() => add(p)} className="grid h-6 w-6 place-items-center"><Plus className="h-3.5 w-3.5" /></button>
+                <button onClick={() => add(p)} className="grid h-8 w-8 place-items-center"><Plus className="h-4 w-4" /></button>
               </div>
             ) : <button onClick={() => add(p)} className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-violet-600 text-white"><Plus className="h-4 w-4" /></button>}
           </div>
@@ -790,19 +840,19 @@ function Subscriptions({ onBack }: { onBack: () => void }) {
   const freq = (d: number) => FREQ.find(([n]) => n === d)?.[1] ?? `κάθε ${d} ημέρες`;
   return (
     <div className="space-y-3">
-      <button onClick={onBack} className="inline-flex items-center gap-1 text-sm text-slate-500"><ChevronLeft className="h-4 w-4" /> Στο κατάστημα</button>
-      <div className="text-base font-bold text-slate-800">Οι συνδρομές μου</div>
+      <button onClick={onBack} className="inline-flex items-center gap-1 text-sm text-slate-500 dark:text-slate-400"><ChevronLeft className="h-4 w-4" /> Στο κατάστημα</button>
+      <div className="text-base font-bold text-slate-800 dark:text-slate-100">Οι συνδρομές μου</div>
       {loading && <div className="py-8 text-center text-sm text-slate-400">Φόρτωση…</div>}
       {!loading && subs.length === 0 && <div className="py-10 text-center text-sm text-slate-400"><RefreshCcw className="mx-auto mb-2 h-8 w-8 text-slate-300" />Δεν έχεις ενεργές συνδρομές. Φτιάξε μία στο checkout επιλέγοντας «Επανάληψη».</div>}
       {subs.map((s) => {
         const lines = s.lines ?? s.items ?? [];
         return (
-          <div key={s._id} className="rounded-2xl border border-violet-200 bg-white p-3">
+          <div key={s._id} className="rounded-2xl border border-violet-200 bg-white dark:bg-slate-800 p-3">
             <div className="flex items-center justify-between">
               <span className="flex items-center gap-1.5 text-sm font-semibold text-violet-800"><RefreshCcw className="h-4 w-4" /> {freq(s.interval_days)}</span>
               <button onClick={() => cancel(s._id)} className="text-xs font-medium text-rose-600 hover:underline">Ακύρωση</button>
             </div>
-            <div className="mt-1 text-xs text-slate-500">{lines.length} είδη · {s.mode === "delivery" ? "Αποστολή" : "Παραλαβή"}</div>
+            <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">{lines.length} είδη · {s.mode === "delivery" ? "Αποστολή" : "Παραλαβή"}</div>
             <div className="mt-0.5 text-[11px] text-slate-400">Επόμενη παραγγελία: {new Date(s.next_run).toLocaleDateString("el-GR")}</div>
           </div>
         );
@@ -823,14 +873,14 @@ function Orders({ orders, setOrders, onBack, onReorder }: { orders: Order[]; set
   const list = oview === "active" ? active : past;
   return (
     <div className="space-y-3">
-      <button onClick={onBack} className="inline-flex items-center gap-1 text-sm text-slate-500"><ChevronLeft className="h-4 w-4" /> Στο e-Κατάστημα</button>
-      <div className="text-base font-bold text-slate-800">Οι παραγγελίες μου</div>
+      <button onClick={onBack} className="inline-flex items-center gap-1 text-sm text-slate-500 dark:text-slate-400"><ChevronLeft className="h-4 w-4" /> Στο e-Κατάστημα</button>
+      <div className="text-base font-bold text-slate-800 dark:text-slate-100">Οι παραγγελίες μου</div>
       {/* Διαχωρισμός: ΕΝΕΡΓΕΣ vs ΙΣΤΟΡΙΚΟ */}
-      <div className="flex gap-1.5 rounded-xl bg-slate-100 p-1">
+      <div className="flex gap-1.5 rounded-xl bg-slate-100 dark:bg-slate-700 p-1">
         {([["active", "Ενεργές", active.length], ["history", "Ιστορικό", past.length]] as const).map(([k, label, n]) => (
           <button key={k} onClick={() => setOView(k)}
-            className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg py-1.5 text-sm font-semibold transition ${oview === k ? "bg-white text-violet-700 shadow-sm" : "text-slate-500"}`}>
-            {label}<span className={`grid h-5 min-w-[20px] place-items-center rounded-full px-1 text-[10px] font-bold ${oview === k ? (k === "active" ? "bg-violet-100 text-violet-700" : "bg-slate-200 text-slate-600") : "bg-slate-200 text-slate-500"}`}>{n}</span>
+            className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg py-1.5 text-sm font-semibold transition ${oview === k ? "bg-white dark:bg-slate-800 text-violet-700 shadow-sm" : "text-slate-500 dark:text-slate-400"}`}>
+            {label}<span className={`grid h-5 min-w-[20px] place-items-center rounded-full px-1 text-[10px] font-bold ${oview === k ? (k === "active" ? "bg-violet-100 text-violet-700" : "bg-slate-200 text-slate-600 dark:text-slate-300") : "bg-slate-200 text-slate-500 dark:text-slate-400"}`}>{n}</span>
           </button>
         ))}
       </div>
@@ -860,30 +910,30 @@ function Offers({ onBack, add, goCart, cartCount }: { onBack: () => void; add: (
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <button onClick={onBack} className="inline-flex items-center gap-1 text-sm font-medium text-slate-500 hover:text-slate-700"><ChevronLeft className="h-4 w-4" /> Πίσω στο κατάστημα</button>
+        <button onClick={onBack} className="inline-flex items-center gap-1 text-sm font-medium text-slate-500 dark:text-slate-400 hover:text-slate-700"><ChevronLeft className="h-4 w-4" /> Πίσω στο κατάστημα</button>
         {cartCount > 0 && <button onClick={goCart} className="inline-flex items-center gap-1.5 rounded-xl bg-violet-600 px-3 py-1.5 text-xs font-semibold text-white"><ShoppingCart className="h-4 w-4" /> Καλάθι ({cartCount})</button>}
       </div>
       <div className="flex items-center gap-2">
         <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-gradient-to-br from-rose-500 to-amber-500 text-white shadow-sm"><Flame className="h-5 w-5" /></span>
-        <div className="leading-tight"><div className="text-lg font-extrabold text-slate-900">Προσφορές</div><div className="text-[11px] text-slate-400">Ό,τι μπορείς να προμηθευτείς ή να κλείσεις με προσφορά, τώρα</div></div>
+        <div className="leading-tight"><div className="text-lg font-extrabold text-slate-900 dark:text-slate-100">Προσφορές</div><div className="text-[11px] text-slate-400">Ό,τι μπορείς να προμηθευτείς ή να κλείσεις με προσφορά, τώρα</div></div>
       </div>
 
       {!data && <div className="py-10 text-center text-sm text-slate-400"><Loader2 className="mx-auto mb-2 h-5 w-5 animate-spin" /> Φόρτωση…</div>}
-      {empty && <div className="rounded-2xl border border-dashed border-slate-300 p-10 text-center text-sm text-slate-400">Δεν υπάρχουν ενεργές προσφορές αυτή τη στιγμή.</div>}
+      {empty && <div className="rounded-2xl border border-dashed border-slate-300 dark:border-slate-600 p-10 text-center text-sm text-slate-400">Δεν υπάρχουν ενεργές προσφορές αυτή τη στιγμή.</div>}
 
       {/* Προϊόντα σε έκπτωση */}
       {!!data?.products.length && (
         <section>
-          <div className="mb-2 flex items-center gap-1.5 text-sm font-bold text-slate-700"><Flame className="h-4 w-4 text-rose-500" /> Προϊόντα σε έκπτωση</div>
+          <div className="mb-2 flex items-center gap-1.5 text-sm font-bold text-slate-700 dark:text-slate-200"><Flame className="h-4 w-4 text-rose-500" /> Προϊόντα σε έκπτωση</div>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
             {data.products.map((p) => (
-              <div key={p.barcode} className="flex flex-col overflow-hidden rounded-2xl border border-rose-100 bg-white shadow-sm">
-                <div className="relative aspect-square bg-slate-50">
+              <div key={p.barcode} className="flex flex-col overflow-hidden rounded-2xl border border-rose-100 bg-white dark:bg-slate-800 shadow-sm">
+                <div className="relative aspect-square bg-slate-50 dark:bg-slate-900">
                   {imgSrc(p) ? <img src={imgSrc(p)} alt="" className="h-full w-full object-cover" /> : <span className="grid h-full w-full place-items-center text-slate-300"><Pill className="h-8 w-8" /></span>}
                   <span className="absolute left-1.5 top-1.5 rounded-md bg-rose-600 px-1.5 py-0.5 text-[11px] font-bold text-white">−{p.eff_discount_pct}%</span>
                 </div>
                 <div className="flex flex-1 flex-col p-2.5">
-                  <div className="line-clamp-2 text-xs font-semibold text-slate-800">{p.name}</div>
+                  <div className="line-clamp-2 text-xs font-semibold text-slate-800 dark:text-slate-100">{p.name}</div>
                   <div className="mt-1 flex items-baseline gap-1.5">
                     <span className="text-sm font-extrabold text-rose-600">{eur(p.sale_cents)}</span>
                     <span className="text-[11px] text-slate-400 line-through">{eur(p.price_cents)}</span>
@@ -899,12 +949,12 @@ function Offers({ onBack, add, goCart, cartCount }: { onBack: () => void; add: (
       {/* Πακέτα */}
       {!!data?.bundles.length && (
         <section>
-          <div className="mb-2 flex items-center gap-1.5 text-sm font-bold text-slate-700"><Package className="h-4 w-4 text-amber-500" /> Πακέτα προσφορών</div>
+          <div className="mb-2 flex items-center gap-1.5 text-sm font-bold text-slate-700 dark:text-slate-200"><Package className="h-4 w-4 text-amber-500" /> Πακέτα προσφορών</div>
           <div className="grid gap-2 sm:grid-cols-2">
             {data.bundles.map((b, i) => (
               <div key={i} className="flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50/60 p-3">
                 <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-amber-100 text-amber-600"><Package className="h-5 w-5" /></span>
-                <div className="min-w-0"><div className="truncate text-sm font-semibold text-slate-800">{b.name}</div>
+                <div className="min-w-0"><div className="truncate text-sm font-semibold text-slate-800 dark:text-slate-100">{b.name}</div>
                   <div className="text-[11px] text-amber-700">{b.kind === "nplusm" ? `${b.buy_qty}+${b.free_qty} δώρο` : `Πακέτο −${b.discount_pct}%`}</div></div>
               </div>
             ))}
@@ -916,17 +966,17 @@ function Offers({ onBack, add, goCart, cartCount }: { onBack: () => void; add: (
       {/* Υπηρεσίες σε προσφορά → κράτηση ραντεβού */}
       {!!data?.services.length && (
         <section>
-          <div className="mb-2 flex items-center gap-1.5 text-sm font-bold text-slate-700"><Sparkles className="h-4 w-4 text-fuchsia-500" /> Υπηρεσίες σε προσφορά</div>
+          <div className="mb-2 flex items-center gap-1.5 text-sm font-bold text-slate-700 dark:text-slate-200"><Sparkles className="h-4 w-4 text-fuchsia-500" /> Υπηρεσίες σε προσφορά</div>
           <div className="grid gap-2 sm:grid-cols-2">
             {data.services.map((o) => (
-              <div key={o.id} className="flex items-start gap-3 rounded-2xl border border-fuchsia-200 bg-white p-3 shadow-sm">
+              <div key={o.id} className="flex items-start gap-3 rounded-2xl border border-fuchsia-200 bg-white dark:bg-slate-800 p-3 shadow-sm">
                 {svcImg(o) ? <img src={svcImg(o)} alt="" className="h-16 w-16 shrink-0 rounded-lg object-cover" /> : <span className="grid h-16 w-16 shrink-0 place-items-center rounded-lg bg-fuchsia-100 text-fuchsia-500"><Sparkles className="h-6 w-6" /></span>}
                 <div className="min-w-0 flex-1">
-                  <div className="text-sm font-semibold text-slate-800">{o.title}</div>
+                  <div className="text-sm font-semibold text-slate-800 dark:text-slate-100">{o.title}</div>
                   <div className="mt-0.5 text-sm">
                     {o.is_free ? <span className="font-bold text-emerald-600">Δωρεάν</span> : (<><span className="font-extrabold text-fuchsia-600">{eur(o.price_cents)}</span>{o.compare_cents > 0 && <span className="ml-1.5 text-xs text-slate-400 line-through">{eur(o.compare_cents)}</span>}</>)}
                   </div>
-                  {o.description && <p className="mt-0.5 line-clamp-2 text-xs text-slate-500">{o.description}</p>}
+                  {o.description && <p className="mt-0.5 line-clamp-2 text-xs text-slate-500 dark:text-slate-400">{o.description}</p>}
                   {o.cta === "reserve"
                     ? <button onClick={() => setReserve(o)} className="mt-2 inline-flex items-center gap-1 rounded-lg bg-fuchsia-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-fuchsia-700"><CalendarCheck className="h-3.5 w-3.5" /> Κλείσε ραντεβού</button>
                     : <div className="mt-2 text-[11px] text-slate-400">Ρώτησε στο φαρμακείο</div>}
@@ -959,18 +1009,18 @@ function ReserveModal({ offer, onClose }: { offer: SvcOffer; onClose: () => void
   }
   return (
     <div className="fixed inset-0 z-[130] grid place-items-center bg-black/50 p-4" onClick={onClose}>
-      <div className="w-full max-w-sm rounded-2xl bg-white p-5 shadow-xl" onClick={(e) => e.stopPropagation()}>
-        <div className="mb-1 text-base font-bold text-slate-800">Κράτηση ραντεβού</div>
+      <div className="max-h-[90vh] w-full max-w-sm overflow-y-auto rounded-2xl bg-white dark:bg-slate-800 p-5 shadow-xl" onClick={(e) => e.stopPropagation()}>
+        <div className="mb-1 text-base font-bold text-slate-800 dark:text-slate-100">Κράτηση ραντεβού</div>
         <div className="mb-3 text-sm text-fuchsia-600">{offer.title}{!offer.is_free && ` · ${eur(offer.price_cents)}`}{offer.is_free && " · Δωρεάν"}</div>
         <div className="space-y-3">
-          <div><label className="text-xs text-slate-500">Ημερομηνία</label><DateInput value={date} onChange={setDate} /></div>
-          <label className="block text-xs text-slate-500">Ώρα
-            <select value={time} onChange={(e) => setTime(e.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm">{TIMES.map((t) => <option key={t} value={t}>{t}</option>)}</select></label>
-          <label className="block text-xs text-slate-500">Σημείωση (προαιρετικό)
-            <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={2} className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" /></label>
+          <div><label className="text-xs text-slate-500 dark:text-slate-400">Ημερομηνία</label><DateInput value={date} onChange={setDate} /></div>
+          <label className="block text-xs text-slate-500 dark:text-slate-400">Ώρα
+            <select value={time} onChange={(e) => setTime(e.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 dark:border-slate-600 px-3 py-2 text-sm">{TIMES.map((t) => <option key={t} value={t}>{t}</option>)}</select></label>
+          <label className="block text-xs text-slate-500 dark:text-slate-400">Σημείωση (προαιρετικό)
+            <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={2} className="mt-1 w-full rounded-lg border border-slate-300 dark:border-slate-600 px-3 py-2 text-sm" /></label>
         </div>
         <div className="mt-4 flex justify-end gap-2">
-          <button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-600 hover:bg-slate-50">Άκυρο</button>
+          <button onClick={onClose} className="rounded-lg border border-slate-300 dark:border-slate-600 px-4 py-2 text-sm text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800">Άκυρο</button>
           <button onClick={submit} disabled={busy} className="rounded-lg bg-fuchsia-600 px-4 py-2 text-sm font-semibold text-white hover:bg-fuchsia-700 disabled:opacity-50">{busy ? "Αποστολή…" : "Κλείσε ραντεβού"}</button>
         </div>
       </div>
@@ -1006,17 +1056,26 @@ function ProductModal({ product, camps, inCart, add, dec, onClose, onVideo, isFa
   const fc = final(full, camps);
   const vid = videoEmbed(full.usage_video_url);
   const back = isBackorder(full);
-  return (
-    <div className="fixed inset-0 z-[135] grid place-items-center bg-black/50 p-3" onClick={onClose}>
-      <div className="max-h-[92vh] w-full max-w-3xl overflow-y-auto rounded-2xl bg-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
-          <div className="truncate pr-2 text-sm font-bold text-slate-800">{full.name}</div>
-          <button onClick={onClose} className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-slate-400 hover:bg-slate-100"><XCircle className="h-5 w-5" /></button>
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {   // portal + κλείδωμα scroll του body όσο είναι ανοιχτό
+    setMounted(true);
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = prev; };
+  }, []);
+  if (!mounted) return null;
+  return createPortal(
+    <div className="fixed inset-0 z-[200] grid place-items-center bg-black/60 p-3 pb-[calc(env(safe-area-inset-bottom)+1rem)]" onClick={onClose}>
+      <div className="flex max-h-[85vh] w-full max-w-3xl flex-col rounded-2xl bg-white dark:bg-slate-800 shadow-2xl sm:max-h-[92vh]" onClick={(e) => e.stopPropagation()}>
+        <div className="flex shrink-0 items-center justify-between border-b border-slate-100 dark:border-slate-800 px-4 py-3">
+          <div className="min-w-0 truncate pr-2 text-sm font-bold text-slate-800 dark:text-slate-100">{full.name}</div>
+          <button onClick={onClose} aria-label="Κλείσιμο" className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-700 dark:text-slate-200 dark:hover:bg-slate-600"><Plus className="h-5 w-5 rotate-45" /></button>
         </div>
+        <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="grid gap-4 p-4 sm:grid-cols-2">
           {/* Gallery */}
           <div>
-            <div className="relative grid aspect-square place-items-center overflow-hidden rounded-xl bg-slate-50">
+            <div className="relative grid aspect-square place-items-center overflow-hidden rounded-xl bg-slate-50 dark:bg-slate-900">
               {gallery.length ? <img src={gallery[idx]} alt="" className="h-full w-full object-contain" /> : <Package className="h-12 w-12 text-slate-300" />}
               {dPct > 0 && <span className="absolute left-2 top-2 rounded-md bg-rose-600 px-2 py-0.5 text-xs font-bold text-white">−{dPct}%</span>}
               <button onClick={() => toggleFav(full.barcode)} className="absolute right-2 top-2 grid h-9 w-9 place-items-center rounded-full bg-white/90 shadow"><Heart className={`h-5 w-5 ${isFav ? "fill-rose-500 text-rose-500" : "text-slate-400"}`} /></button>
@@ -1038,49 +1097,52 @@ function ProductModal({ product, camps, inCart, add, dec, onClose, onVideo, isFa
               {(full.points_multiplier ?? 1) > 1 && <span className="rounded px-1.5 py-0.5 text-[10px] font-bold bg-amber-100 text-amber-800">🎁 ×{full.points_multiplier} πόντοι</span>}
             </div>
             <div className="mt-2 flex flex-wrap items-baseline gap-2">
-              <span className="text-2xl font-extrabold text-slate-900">{eur(fc)}</span>
+              <span className="text-2xl font-extrabold text-slate-900 dark:text-slate-100">{eur(fc)}</span>
               {fc < full.price_cents && <span className="text-sm text-slate-400 line-through">{eur(full.price_cents)}</span>}
               {dPct > 0 && full.sale_ends_at && <Countdown to={full.sale_ends_at} />}
             </div>
             {!!full.highlights?.length && (
               <ul className="mt-2 space-y-0.5">
-                {full.highlights.map((h, i) => <li key={i} className="flex items-start gap-1.5 text-xs text-slate-600"><Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-500" />{h}</li>)}
+                {full.highlights.map((h, i) => <li key={i} className="flex items-start gap-1.5 text-xs text-slate-600 dark:text-slate-300"><Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-500" />{h}</li>)}
               </ul>
             )}
             {back ? <div className="mt-1 text-xs font-semibold text-amber-700">Κατόπιν παραγγελίας — το φαρμακείο επιβεβαιώνει διαθεσιμότητα</div>
                   : full.stock_qty <= LOW_STOCK && full.stock_qty > 0 ? <div className="mt-1 text-xs font-semibold text-orange-600">Τελευταία {full.stock_qty} τεμάχια</div> : null}
             {(full.description_long || full.description_short) && (
-              <p className="mt-3 whitespace-pre-wrap text-sm leading-relaxed text-slate-600">{full.description_long || full.description_short}</p>
+              <p className="mt-3 whitespace-pre-wrap break-words text-sm leading-relaxed text-slate-600 dark:text-slate-300">{full.description_long || full.description_short}</p>
             )}
-            <div className="mt-auto pt-4">
-              {inCart ? (
-                <div className="flex items-center justify-between rounded-xl bg-violet-600 px-2 py-1.5 text-white">
-                  <button onClick={() => dec(full.barcode)} className="grid h-9 w-9 place-items-center rounded-lg hover:bg-white/10"><Minus className="h-5 w-5" /></button>
-                  <span className="font-bold">{inCart} στο καλάθι</span>
-                  <button onClick={() => add(full)} className="grid h-9 w-9 place-items-center rounded-lg hover:bg-white/10"><Plus className="h-5 w-5" /></button>
-                </div>
-              ) : (
-                <button onClick={() => { add(full); toast("Προστέθηκε στο καλάθι", "success"); }} className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-violet-600 py-3 text-sm font-bold text-white hover:bg-violet-700"><Plus className="h-5 w-5" /> Προσθήκη στο καλάθι</button>
-              )}
-            </div>
           </div>
         </div>
         {!!full.related?.length && (
-          <div className="border-t border-slate-100 p-4">
-            <div className="mb-2 text-sm font-bold text-slate-800">Συχνά μαζί</div>
+          <div className="border-t border-slate-100 dark:border-slate-800 p-4">
+            <div className="mb-2 text-sm font-bold text-slate-800 dark:text-slate-100">Συχνά μαζί</div>
             <div className="flex gap-3 overflow-x-auto pb-1">
               {full.related.map((r) => (
-                <button key={r.barcode} onClick={() => { add(r); toast("Προστέθηκε στο καλάθι", "success"); }} className="w-28 shrink-0 rounded-xl border border-slate-200 p-2 text-left transition hover:border-violet-300">
-                  <div className="grid h-20 place-items-center overflow-hidden rounded-lg bg-slate-50">{imgList(r)[0] ? <img src={imgList(r)[0]} alt="" className="h-full w-full object-contain" /> : <Package className="h-6 w-6 text-slate-300" />}</div>
-                  <div className="mt-1 line-clamp-2 text-[11px] font-medium leading-tight text-slate-700">{r.name}</div>
-                  <div className="mt-0.5 text-xs font-bold text-slate-900">{eur(r.sale_cents ?? r.price_cents)}</div>
+                <button key={r.barcode} onClick={() => { add(r); toast("Προστέθηκε στο καλάθι", "success"); }} className="w-28 shrink-0 rounded-xl border border-slate-200 dark:border-slate-700 p-2 text-left transition hover:border-violet-300">
+                  <div className="grid h-20 place-items-center overflow-hidden rounded-lg bg-slate-50 dark:bg-slate-900">{imgList(r)[0] ? <img src={imgList(r)[0]} alt="" className="h-full w-full object-contain" /> : <Package className="h-6 w-6 text-slate-300" />}</div>
+                  <div className="mt-1 line-clamp-2 text-[11px] font-medium leading-tight text-slate-700 dark:text-slate-200">{r.name}</div>
+                  <div className="mt-0.5 text-xs font-bold text-slate-900 dark:text-slate-100">{eur(r.sale_cents ?? r.price_cents)}</div>
                   <div className="mt-1 inline-flex items-center gap-1 text-[10px] font-semibold text-violet-600"><Plus className="h-3 w-3" /> Προσθήκη</div>
                 </button>
               ))}
             </div>
           </div>
         )}
+        </div>
+        {/* Sticky footer — το κουμπί «Προσθήκη στο καλάθι» πάντα ορατό (δεν χάνεται στο scroll) */}
+        <div className="shrink-0 border-t border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-800 p-3">
+          {inCart ? (
+            <div className="flex items-center justify-between rounded-xl bg-violet-600 px-2 py-1.5 text-white">
+              <button onClick={() => dec(full.barcode)} className="grid h-10 w-10 place-items-center rounded-lg hover:bg-white/10"><Minus className="h-5 w-5" /></button>
+              <span className="text-sm font-bold">{inCart} στο καλάθι · {eur(fc * inCart)}</span>
+              <button onClick={() => add(full)} className="grid h-10 w-10 place-items-center rounded-lg hover:bg-white/10"><Plus className="h-5 w-5" /></button>
+            </div>
+          ) : (
+            <button onClick={() => { add(full); toast("Προστέθηκε στο καλάθι", "success"); }} className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-violet-600 py-3 text-sm font-bold text-white hover:bg-violet-700"><Plus className="h-5 w-5" /> Προσθήκη στο καλάθι · {eur(fc)}</button>
+          )}
+        </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
