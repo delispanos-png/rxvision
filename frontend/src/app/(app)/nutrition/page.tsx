@@ -150,18 +150,18 @@ function MeasureAdvice({ patientId }: { patientId: string }) {
   const advice: { icon: string; sev: "high" | "warn"; label: string; text: string }[] = [];
   if (bp?.systolic && bp.diastolic) {
     const s = bp.systolic, d = bp.diastolic;
-    if (s >= 140 || d >= 90) advice.push({ icon: "❤️", sev: "high", label: `Υψηλή πίεση ${s}/${d}`, text: "Μείωσε αλάτι/νάτριο (<5g/ημέρα) & επεξεργασμένα τρόφιμα. Αύξησε κάλιο (φρούτα, λαχανικά, όσπρια). Μεσογειακή διατροφή, περιορισμός αλκοόλ/καφεΐνης." });
-    else if (s >= 130 || d >= 85) advice.push({ icon: "❤️", sev: "warn", label: `Οριακή πίεση ${s}/${d}`, text: "Πρόσεξε το αλάτι, τακτική αερόβια άσκηση, διατήρηση υγιούς βάρους." });
+    if (s >= 140 || d >= 90) advice.push({ icon: "❤️", sev: "high", label: t(`Υψηλή πίεση ${s}/${d}`, `High blood pressure ${s}/${d}`), text: t("Μείωσε αλάτι/νάτριο (<5g/ημέρα) & επεξεργασμένα τρόφιμα. Αύξησε κάλιο (φρούτα, λαχανικά, όσπρια). Μεσογειακή διατροφή, περιορισμός αλκοόλ/καφεΐνης.", "Reduce salt/sodium (<5g/day) & processed foods. Increase potassium (fruit, vegetables, legumes). Mediterranean diet, limit alcohol/caffeine.") });
+    else if (s >= 130 || d >= 85) advice.push({ icon: "❤️", sev: "warn", label: t(`Οριακή πίεση ${s}/${d}`, `Borderline blood pressure ${s}/${d}`), text: t("Πρόσεξε το αλάτι, τακτική αερόβια άσκηση, διατήρηση υγιούς βάρους.", "Watch your salt, regular aerobic exercise, maintain a healthy weight.") });
   }
   if (gl?.value) {
     const v = gl.value;
-    if (v >= 126) advice.push({ icon: "🩸", sev: "high", label: `Υψηλό ζάχαρο ${v} mg/dL`, text: "Περιόρισε ζάχαρη & απλούς υδατάνθρακες (λευκό ψωμί/ρύζι/γλυκά). Προτίμησε χαμηλό γλυκαιμικό δείκτη, φυτικές ίνες, τακτικά μικρά γεύματα. Παρακολούθηση από ιατρό." });
-    else if (v >= 100) advice.push({ icon: "🩸", sev: "warn", label: `Οριακό ζάχαρο ${v} mg/dL`, text: "Μείωσε ζάχαρη & εξευγενισμένους υδατάνθρακες, αύξησε φυτικές ίνες & σωματική δραστηριότητα." });
+    if (v >= 126) advice.push({ icon: "🩸", sev: "high", label: t(`Υψηλό ζάχαρο ${v} mg/dL`, `High blood sugar ${v} mg/dL`), text: t("Περιόρισε ζάχαρη & απλούς υδατάνθρακες (λευκό ψωμί/ρύζι/γλυκά). Προτίμησε χαμηλό γλυκαιμικό δείκτη, φυτικές ίνες, τακτικά μικρά γεύματα. Παρακολούθηση από ιατρό.", "Limit sugar & simple carbs (white bread/rice/sweets). Prefer a low glycemic index, fiber, regular small meals. Monitor with a doctor.") });
+    else if (v >= 100) advice.push({ icon: "🩸", sev: "warn", label: t(`Οριακό ζάχαρο ${v} mg/dL`, `Borderline blood sugar ${v} mg/dL`), text: t("Μείωσε ζάχαρη & εξευγενισμένους υδατάνθρακες, αύξησε φυτικές ίνες & σωματική δραστηριότητα.", "Reduce sugar & refined carbs, increase fiber & physical activity.") });
   }
   if (bmi) {
-    if (bmi >= 30) advice.push({ icon: "⚖️", sev: "high", label: `ΔΜΣ ${bmi.toFixed(1)} (παχυσαρκία)`, text: "Σταδιακό θερμιδικό έλλειμμα, έλεγχος μερίδων, αύξηση φυσικής δραστηριότητας. Σύσταση για διαιτολόγο." });
-    else if (bmi >= 25) advice.push({ icon: "⚖️", sev: "warn", label: `ΔΜΣ ${bmi.toFixed(1)} (υπέρβαρο)`, text: "Ελαφρύ θερμιδικό έλλειμμα, λιγότερα κορεσμένα λιπαρά & ζάχαρη, περισσότερη κίνηση." });
-    else if (bmi < 18.5) advice.push({ icon: "⚖️", sev: "warn", label: `ΔΜΣ ${bmi.toFixed(1)} (λιποβαρές)`, text: "Αύξηση θερμιδικής & πρωτεϊνικής πρόσληψης με θρεπτικά τρόφιμα." });
+    if (bmi >= 30) advice.push({ icon: "⚖️", sev: "high", label: t(`ΔΜΣ ${bmi.toFixed(1)} (παχυσαρκία)`, `BMI ${bmi.toFixed(1)} (obesity)`), text: t("Σταδιακό θερμιδικό έλλειμμα, έλεγχος μερίδων, αύξηση φυσικής δραστηριότητας. Σύσταση για διαιτολόγο.", "Gradual caloric deficit, portion control, more physical activity. Consider a dietitian.") });
+    else if (bmi >= 25) advice.push({ icon: "⚖️", sev: "warn", label: t(`ΔΜΣ ${bmi.toFixed(1)} (υπέρβαρο)`, `BMI ${bmi.toFixed(1)} (overweight)`), text: t("Ελαφρύ θερμιδικό έλλειμμα, λιγότερα κορεσμένα λιπαρά & ζάχαρη, περισσότερη κίνηση.", "Slight caloric deficit, less saturated fat & sugar, more movement.") });
+    else if (bmi < 18.5) advice.push({ icon: "⚖️", sev: "warn", label: t(`ΔΜΣ ${bmi.toFixed(1)} (λιποβαρές)`, `BMI ${bmi.toFixed(1)} (underweight)`), text: t("Αύξηση θερμιδικής & πρωτεϊνικής πρόσληψης με θρεπτικά τρόφιμα.", "Increase caloric & protein intake with nutritious foods.") });
   }
   const hasData = !!(bp || gl || bmi);
   return (

@@ -107,7 +107,7 @@ export default function DashboardPage() {
   const valSeries = (tsVal.data ?? []).map((b) => Math.round((b.value || 0) / 100));
   const claimSeries = (tsClaim.data ?? []).map((b) => Math.round((b.value || 0) / 100));
 
-  const dateLabel = new Date().toLocaleDateString("el-GR", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+  const dateLabel = new Date().toLocaleDateString(t("el-GR", "en-GB"), { weekday: "long", day: "numeric", month: "long", year: "numeric" });
 
   return (
     <ModuleGuard module="dashboard">

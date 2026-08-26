@@ -15,9 +15,12 @@ type Duty = { _id: string; date: string; start: string; end: string; overnight: 
 type Exc = { _id: string; date: string; type: string; label?: string | null; note?: string | null };
 type Status = { isOpen: boolean; isOnDuty: boolean; isOvernightDuty: boolean; closingSoon: boolean; statusText: string; nextOpening?: string | null; nextClosing?: string | null };
 
-const DAYS = ["Δευτέρα", "Τρίτη", "Τετάρτη", "Πέμπτη", "Παρασκευή", "Σάββατο", "Κυριακή"];
-const STATUS_OPTS = [["closed", "Κλειστό"], ["continuous", "Συνεχές"], ["split", "Σπαστό"], ["custom", "Προσαρμοσμένο"]] as const;
-const EXC_TYPES = [["holiday", "Αργία"], ["local_holiday", "Τοπική αργία"], ["vacation", "Διακοπές"], ["inventory", "Απογραφή"], ["renovation", "Ανακαίνιση"], ["emergency_close", "Έκτακτο κλείσιμο"], ["custom", "Έκτακτη αλλαγή ωραρίου"]] as const;
+const DAYS: [string, string][] = [
+  ["Δευτέρα", "Monday"], ["Τρίτη", "Tuesday"], ["Τετάρτη", "Wednesday"], ["Πέμπτη", "Thursday"],
+  ["Παρασκευή", "Friday"], ["Σάββατο", "Saturday"], ["Κυριακή", "Sunday"],
+];
+const STATUS_OPTS = [["closed", "Κλειστό", "Closed"], ["continuous", "Συνεχές", "Continuous"], ["split", "Σπαστό", "Split"], ["custom", "Προσαρμοσμένο", "Custom"]] as const;
+const EXC_TYPES = [["holiday", "Αργία", "Holiday"], ["local_holiday", "Τοπική αργία", "Local holiday"], ["vacation", "Διακοπές", "Vacation"], ["inventory", "Απογραφή", "Inventory"], ["renovation", "Ανακαίνιση", "Renovation"], ["emergency_close", "Έκτακτο κλείσιμο", "Emergency closure"], ["custom", "Έκτακτη αλλαγή ωραρίου", "Special hours change"]] as const;
 
 function defaultsFor(status: string, cur: Interval[]): Interval[] {
   if (status === "closed") return [];
@@ -25,10 +28,10 @@ function defaultsFor(status: string, cur: Interval[]): Interval[] {
   if (status === "split") return cur.length >= 2 ? cur : [{ start: "08:00", end: "14:00" }, { start: "17:00", end: "21:00" }];
   return cur.length ? cur : [{ start: "08:00", end: "14:00" }];
 }
-const TEMPLATES: { name: string; week: Day[] }[] = [
-  { name: "Συνεχές (Δευ-Παρ 08-21)", week: [...Array(5)].map((_, i) => ({ day: i, status: "continuous", intervals: [{ start: "08:00", end: "21:00" }] })).concat([{ day: 5, status: "continuous", intervals: [{ start: "08:00", end: "14:00" }] }, { day: 6, status: "closed", intervals: [] }]) },
-  { name: "Σπαστό (Δευ-Παρ 08-14 & 17-21)", week: [...Array(5)].map((_, i) => ({ day: i, status: "split", intervals: [{ start: "08:00", end: "14:00" }, { start: "17:00", end: "21:00" }] })).concat([{ day: 5, status: "continuous", intervals: [{ start: "08:00", end: "14:00" }] }, { day: 6, status: "closed", intervals: [] }]) },
-  { name: "Μικτό (Δευ/Τετ/Σαβ μισή)", week: [0, 1, 2, 3, 4, 5, 6].map((i) => ([0, 2, 5].includes(i) ? { day: i, status: "continuous", intervals: [{ start: "08:00", end: "14:00" }] } : i === 6 ? { day: i, status: "closed", intervals: [] } : { day: i, status: "split", intervals: [{ start: "08:00", end: "14:00" }, { start: "17:00", end: "21:00" }] })) },
+const TEMPLATES: { name: string; en: string; week: Day[] }[] = [
+  { name: "Συνεχές (Δευ-Παρ 08-21)", en: "Continuous (Mon-Fri 08-21)", week: [...Array(5)].map((_, i) => ({ day: i, status: "continuous", intervals: [{ start: "08:00", end: "21:00" }] })).concat([{ day: 5, status: "continuous", intervals: [{ start: "08:00", end: "14:00" }] }, { day: 6, status: "closed", intervals: [] }]) },
+  { name: "Σπαστό (Δευ-Παρ 08-14 & 17-21)", en: "Split (Mon-Fri 08-14 & 17-21)", week: [...Array(5)].map((_, i) => ({ day: i, status: "split", intervals: [{ start: "08:00", end: "14:00" }, { start: "17:00", end: "21:00" }] })).concat([{ day: 5, status: "continuous", intervals: [{ start: "08:00", end: "14:00" }] }, { day: 6, status: "closed", intervals: [] }]) },
+  { name: "Μικτό (Δευ/Τετ/Σαβ μισή)", en: "Mixed (Mon/Wed/Sat half-day)", week: [0, 1, 2, 3, 4, 5, 6].map((i) => ([0, 2, 5].includes(i) ? { day: i, status: "continuous", intervals: [{ start: "08:00", end: "14:00" }] } : i === 6 ? { day: i, status: "closed", intervals: [] } : { day: i, status: "split", intervals: [{ start: "08:00", end: "14:00" }, { start: "17:00", end: "21:00" }] })) },
 ];
 
 export default function AvailabilityPage() {
@@ -104,16 +107,16 @@ export default function AvailabilityPage() {
       <PanelCard title={t("Εβδομαδιαίο ωράριο", "Weekly schedule")}>
         <div className="mb-3 flex flex-wrap gap-2">
           {TEMPLATES.map((tp) => (
-            <button key={tp.name} onClick={() => setWeek(tp.week.map((dd) => ({ ...dd, intervals: dd.intervals.map((i) => ({ ...i })) })))} className="rounded-lg border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-300">📋 {tp.name}</button>
+            <button key={tp.name} onClick={() => setWeek(tp.week.map((dd) => ({ ...dd, intervals: dd.intervals.map((i) => ({ ...i })) })))} className="rounded-lg border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-300">📋 {t(tp.name, tp.en)}</button>
           ))}
         </div>
         <div className="space-y-2">
           {week.map((day) => (
             <div key={day.day} className="rounded-xl border border-slate-200 p-3 dark:border-slate-700">
               <div className="flex flex-wrap items-center gap-2">
-                <span className="w-20 shrink-0 text-sm font-semibold text-slate-700 dark:text-slate-200">{DAYS[day.day]}</span>
+                <span className="w-20 shrink-0 text-sm font-semibold text-slate-700 dark:text-slate-200">{t(DAYS[day.day][0], DAYS[day.day][1])}</span>
                 <select value={day.status} onChange={(ev) => setDayStatus(day.day, ev.target.value)} className="rounded-lg border border-slate-300 px-2 py-1 text-sm dark:border-slate-600 dark:bg-slate-800">
-                  {STATUS_OPTS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                  {STATUS_OPTS.map(([v, el, en]) => <option key={v} value={v}>{t(el, en)}</option>)}
                 </select>
                 {day.status !== "closed" && day.intervals.map((iv, idx) => (
                   <span key={idx} className="inline-flex items-center gap-1">
@@ -162,7 +165,7 @@ export default function AvailabilityPage() {
         <div className="mt-4 rounded-xl border border-dashed border-slate-300 p-3 dark:border-slate-600">
           <div className="mb-1 inline-flex items-center gap-1.5 text-sm font-semibold text-slate-700 dark:text-slate-200"><Upload className="h-4 w-4 text-brand-600" /> {t("Μαζική εισαγωγή εφημεριών", "Bulk import duties")}</div>
           <p className="mb-2 text-xs text-slate-400">{t("Επικόλλησε κείμενο/CSV/Excel (π.χ. «10/01/2027 08:00 - 08:00 διανυκτέρευση»). Γίνεται preview πριν την αποθήκευση.", "Paste text/CSV/Excel. Preview before saving.")}</p>
-          <textarea value={impText} onChange={(ev) => { setImpText(ev.target.value); setPreview(null); }} rows={3} placeholder={"10/01/2027 08:00 - 08:00 διανυκτέρευση\n15/02/2027 14:00 21:00"} className="w-full rounded-lg border border-slate-300 px-2 py-1.5 font-mono text-xs dark:border-slate-600 dark:bg-slate-800" />
+          <textarea value={impText} onChange={(ev) => { setImpText(ev.target.value); setPreview(null); }} rows={3} placeholder={t("10/01/2027 08:00 - 08:00 διανυκτέρευση\n15/02/2027 14:00 21:00", "10/01/2027 08:00 - 08:00 overnight\n15/02/2027 14:00 21:00")} className="w-full rounded-lg border border-slate-300 px-2 py-1.5 font-mono text-xs dark:border-slate-600 dark:bg-slate-800" />
           <div className="mt-2 flex flex-wrap gap-2">
             <button onClick={() => doImport.mutate(false)} disabled={!impText.trim() || doImport.isPending} className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-600 dark:text-slate-300">{t("Προεπισκόπηση", "Preview")}</button>
             {preview && preview.count > 0 && <button onClick={() => doImport.mutate(true)} disabled={doImport.isPending} className="rounded-lg bg-brand-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-50">{t(`Αποθήκευση ${preview.count}`, `Save ${preview.count}`)}</button>}
@@ -182,7 +185,7 @@ export default function AvailabilityPage() {
         <p className="mb-2 text-xs text-slate-400">{t("Υπερισχύουν του εβδομαδιαίου ωραρίου για τη συγκεκριμένη ημερομηνία.", "Override the weekly schedule for that date.")}</p>
         <div className="mb-3 flex flex-wrap items-end gap-2">
           <div><label className="mb-1 block text-xs text-slate-500">{t("Ημερομηνία", "Date")}</label><DateInput value={e.date} onChange={(v) => setE({ ...e, date: v })} /></div>
-          <div><label className="mb-1 block text-xs text-slate-500">{t("Τύπος", "Type")}</label><select value={e.type} onChange={(ev) => setE({ ...e, type: ev.target.value })} className="rounded-lg border border-slate-300 px-2 py-1.5 text-sm dark:border-slate-600 dark:bg-slate-800">{EXC_TYPES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></div>
+          <div><label className="mb-1 block text-xs text-slate-500">{t("Τύπος", "Type")}</label><select value={e.type} onChange={(ev) => setE({ ...e, type: ev.target.value })} className="rounded-lg border border-slate-300 px-2 py-1.5 text-sm dark:border-slate-600 dark:bg-slate-800">{EXC_TYPES.map(([v, el, en]) => <option key={v} value={v}>{t(el, en)}</option>)}</select></div>
           <div className="flex-1 min-w-[120px]"><label className="mb-1 block text-xs text-slate-500">{t("Περιγραφή", "Label")}</label><input value={e.label} onChange={(ev) => setE({ ...e, label: ev.target.value })} className="w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm dark:border-slate-600 dark:bg-slate-800" /></div>
           <button onClick={() => addExc.mutate()} disabled={!e.date || addExc.isPending} className="inline-flex items-center gap-1.5 rounded-lg bg-amber-600 px-3 py-2 text-sm font-semibold text-white hover:bg-amber-700 disabled:opacity-50"><Plus className="h-4 w-4" /> {t("Προσθήκη", "Add")}</button>
         </div>
@@ -190,7 +193,7 @@ export default function AvailabilityPage() {
         <div className="space-y-1.5">
           {(excs.data?.items ?? []).map((ex) => (
             <div key={ex._id} className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm dark:border-slate-700">
-              <span className="inline-flex items-center gap-2"><Calendar className="h-4 w-4 text-amber-500" /> <b>{ex.date.split("-").reverse().join("/")}</b> · {EXC_TYPES.find(([v]) => v === ex.type)?.[1] || ex.type}{ex.label && <span className="text-xs text-slate-400">· {ex.label}</span>}</span>
+              <span className="inline-flex items-center gap-2"><Calendar className="h-4 w-4 text-amber-500" /> <b>{ex.date.split("-").reverse().join("/")}</b> · {(() => { const et = EXC_TYPES.find(([v]) => v === ex.type); return et ? t(et[1], et[2]) : ex.type; })()}{ex.label && <span className="text-xs text-slate-400">· {ex.label}</span>}</span>
               <button onClick={() => delExc.mutate(ex._id)} className="text-slate-300 hover:text-rose-500"><Trash2 className="h-4 w-4" /></button>
             </div>
           ))}

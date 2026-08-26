@@ -9,19 +9,22 @@ import { api, ApiError } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
 import { PanelCard } from "@/components/ui/Card";
 
+type T = (el: string, en: string) => string;
 type Reason = { value: string; label: string };
 type Notice = { id: string; patient_ref: string; patient_name: string; amka?: string | null; reason_label: string; note?: string | null; at: string; read: boolean };
 type Req = { _id: string; to_pharmacy_name: string; status: string; reason?: string; note?: string | null; created_at: string };
 
-const ST: Record<string, string> = { pending: "Αναμονή έγκρισης πελάτη", accepted: "Εγκρίθηκε", declined: "Απορρίφθηκε", expired: "Έληξε" };
-const ERR: Record<string, string> = {
-  no_portal_account: "Ο πελάτης δεν έχει λογαριασμό στην πύλη — δεν μπορεί να δώσει έγκριση. Κάνε τον πρώτα εγγραφή.",
-  already_linked: "Ο πελάτης είναι ήδη συνδεδεμένος με το φαρμακείο σου.",
-  already_pending: "Υπάρχει ήδη εκκρεμές αίτημα για αυτόν τον πελάτη.",
-};
+const stMap = (t: T): Record<string, string> => ({ pending: t("Αναμονή έγκρισης πελάτη", "Awaiting customer approval"), accepted: t("Εγκρίθηκε", "Approved"), declined: t("Απορρίφθηκε", "Declined"), expired: t("Έληξε", "Expired") });
+const errMap = (t: T): Record<string, string> => ({
+  no_portal_account: t("Ο πελάτης δεν έχει λογαριασμό στην πύλη — δεν μπορεί να δώσει έγκριση. Κάνε τον πρώτα εγγραφή.", "The customer has no portal account — they can't approve. Register them first."),
+  already_linked: t("Ο πελάτης είναι ήδη συνδεδεμένος με το φαρμακείο σου.", "The customer is already linked to your pharmacy."),
+  already_pending: t("Υπάρχει ήδη εκκρεμές αίτημα για αυτόν τον πελάτη.", "There's already a pending request for this customer."),
+});
 
 export function TransferRequestCard() {
   const t = useT();
+  const ST = stMap(t);
+  const ERR = errMap(t);
   const qc = useQueryClient();
   const [amka, setAmka] = useState("");
   const [reason, setReason] = useState("customer_choice");
@@ -34,7 +37,7 @@ export function TransferRequestCard() {
   const send = useMutation({
     mutationFn: () => api("/patients/transfer-request", { method: "POST", body: JSON.stringify({ amka: amka.trim(), reason, note: note.trim() || null }) }),
     onSuccess: () => {
-      setMsg({ ok: true, text: "Στάλθηκε! Ο πελάτης θα το εγκρίνει από την πύλη του." });
+      setMsg({ ok: true, text: t("Στάλθηκε! Ο πελάτης θα το εγκρίνει από την πύλη του.", "Sent! The customer will approve it from their portal.") });
       setAmka(""); setNote("");
       qc.invalidateQueries({ queryKey: ["transfer-requests"] });
     },
@@ -42,7 +45,7 @@ export function TransferRequestCard() {
       // FastAPI: HTTPException(detail={"error": ...}) → problem.detail.error
       const p = (e as ApiError)?.problem as { detail?: { error?: string } } | undefined;
       const code = p?.detail?.error ?? "";
-      setMsg({ ok: false, text: ERR[code] ?? "Δεν ήταν δυνατή η αποστολή του αιτήματος." });
+      setMsg({ ok: false, text: ERR[code] ?? t("Δεν ήταν δυνατή η αποστολή του αιτήματος.", "The request could not be sent.") });
     },
   });
   return (
@@ -55,7 +58,7 @@ export function TransferRequestCard() {
           <label className="block text-sm">
             <span className="mb-1 block text-slate-600">ΑΜΚΑ</span>
             <input value={amka} onChange={(e) => { setAmka(e.target.value.replace(/\D/g, "").slice(0, 11)); setMsg(null); }}
-              inputMode="numeric" placeholder="11 ψηφία" className="w-full rounded-lg border border-slate-300 px-3 py-2 font-mono" />
+              inputMode="numeric" placeholder={t("11 ψηφία", "11 digits")} className="w-full rounded-lg border border-slate-300 px-3 py-2 font-mono" />
           </label>
           <label className="block text-sm">
             <span className="mb-1 block text-slate-600">{t("Αιτιολογία", "Reason")} <span className="text-rose-500">*</span></span>
@@ -65,11 +68,11 @@ export function TransferRequestCard() {
           </label>
           <label className="block text-sm">
             <span className="mb-1 block text-slate-600">{t("Σχόλιο (προαιρετικό)", "Note (optional)")}</span>
-            <input value={note} onChange={(e) => setNote(e.target.value)} maxLength={300} placeholder="π.χ. μένει πλέον δίπλα μας"
+            <input value={note} onChange={(e) => setNote(e.target.value)} maxLength={300} placeholder={t("π.χ. μένει πλέον δίπλα μας", "e.g. now lives next to us")}
               className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" />
           </label>
           <p className="rounded-lg bg-amber-50 px-3 py-2 text-[11px] text-amber-800">
-            ⚠️ Η αιτιολογία <b>κοινοποιείται στον πελάτη</b> (τη βλέπει πριν εγκρίνει) και στο <b>προηγούμενο φαρμακείο</b> του.
+            ⚠️ {t("Η αιτιολογία", "The reason is")} <b>{t("κοινοποιείται στον πελάτη", "shared with the customer")}</b> {t("(τη βλέπει πριν εγκρίνει) και στο", "(they see it before approving) and with their")} <b>{t("προηγούμενο φαρμακείο", "previous pharmacy")}</b>.
           </p>
           {msg && <div className={`rounded-lg px-3 py-2 text-xs ${msg.ok ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700"}`}>{msg.text}</div>}
           <button onClick={() => { setMsg(null); send.mutate(); }} disabled={amka.length !== 11 || send.isPending}
@@ -109,7 +112,7 @@ export function TransferNoticesCard() {
   const unread = ns.filter((n) => !n.read);
 
   return (
-    <PanelCard title={`${t("Πελάτες που άλλαξαν φαρμακείο", "Customers who switched")}${unread.length ? ` (${unread.length} νέα)` : ""}`}>
+    <PanelCard title={`${t("Πελάτες που άλλαξαν φαρμακείο", "Customers who switched")}${unread.length ? ` (${unread.length} ${t("νέα", "new")})` : ""}`}>
       {ns.length === 0
         ? <p className="text-sm text-slate-400">{t("Καμία ενημέρωση.", "No notices.")}</p>
         : (
@@ -124,12 +127,12 @@ export function TransferNoticesCard() {
                     </div>
                     {n.amka && <div className="mt-0.5 font-mono text-[11px] text-slate-500">ΑΜΚΑ {n.amka}</div>}
                     <div className="mt-1 text-xs text-slate-600">
-                      Άλλαξε φαρμακείο εξυπηρέτησης · <b>{n.reason_label}</b>{n.note ? ` — «${n.note}»` : ""}
+                      {t("Άλλαξε φαρμακείο εξυπηρέτησης", "Switched serving pharmacy")} · <b>{n.reason_label}</b>{n.note ? ` — «${n.note}»` : ""}
                     </div>
                     <div className="mt-0.5 text-[11px] text-slate-400">{new Date(n.at).toLocaleString("el-GR")}</div>
                   </div>
                   {!n.read && (
-                    <button onClick={() => markRead.mutate(n.id)} title="Σήμανση ως διαβασμένο"
+                    <button onClick={() => markRead.mutate(n.id)} title={t("Σήμανση ως διαβασμένο", "Mark as read")}
                       className="grid h-8 w-8 shrink-0 place-items-center rounded-lg border border-slate-200 bg-white text-slate-500 hover:bg-slate-50">
                       <Check className="h-3.5 w-3.5" />
                     </button>

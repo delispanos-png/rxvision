@@ -25,11 +25,18 @@ export default function ForecastPage() {
   if (isLoading) return <div className="p-8 text-slate-400">{t("Υπολογισμός πρόβλεψης…", "Forecasting…")}</div>;
 
   const formula = (r: Row) =>
-    `Α (μ.ο. ${(data?.a_months ?? []).map(ml).join(", ")}) = ${fmtEur(r.avg_3m)}\n` +
-    `Β (μ.ο. ίδιων μηνών πέρσι) = ${fmtEur(r.avg_3m_ly)}\n` +
-    `Γ (${ml(data?.ly_month ?? "")}) = ${fmtEur(r.ly_month)}\n` +
-    `Δ = (Γ−Β)/Β = ${pct(r.deviation)}\n` +
-    `Πρόβλεψη = Α × (1+Δ) = ${fmtEur(r.forecast)}`;
+    t(
+      `Α (μ.ο. ${(data?.a_months ?? []).map(ml).join(", ")}) = ${fmtEur(r.avg_3m)}\n` +
+      `Β (μ.ο. ίδιων μηνών πέρσι) = ${fmtEur(r.avg_3m_ly)}\n` +
+      `Γ (${ml(data?.ly_month ?? "")}) = ${fmtEur(r.ly_month)}\n` +
+      `Δ = (Γ−Β)/Β = ${pct(r.deviation)}\n` +
+      `Πρόβλεψη = Α × (1+Δ) = ${fmtEur(r.forecast)}`,
+      `Α (avg ${(data?.a_months ?? []).map(ml).join(", ")}) = ${fmtEur(r.avg_3m)}\n` +
+      `Β (avg of same months last year) = ${fmtEur(r.avg_3m_ly)}\n` +
+      `Γ (${ml(data?.ly_month ?? "")}) = ${fmtEur(r.ly_month)}\n` +
+      `Δ = (Γ−Β)/Β = ${pct(r.deviation)}\n` +
+      `Forecast = Α × (1+Δ) = ${fmtEur(r.forecast)}`,
+    );
 
   const cols: Column<Row>[] = [
     { key: "fund", header: t("Ταμείο", "Fund"), render: (r) => <span className="inline-flex items-center gap-1.5" title={r.fund}>{r.is_vaccine ? <Syringe className="h-3.5 w-3.5 text-sky-600" /> : r.is_eopyy ? <Building2 className="h-3.5 w-3.5 text-emerald-600" /> : null}{short(r.fund)}</span> },

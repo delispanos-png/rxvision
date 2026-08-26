@@ -94,11 +94,11 @@ function CopilotInner() {
 
   async function runAction(a: Extract<Action, { type: "action" }>) {
     if (busy) return;
-    if (!(await appConfirm(`${a.summary}\n\nΝα συνεχίσω;`))) return;
+    if (!(await appConfirm(`${a.summary}\n\n${t("Να συνεχίσω;", "Continue?")}`))) return;
     setBusy(true);
     try {
       const r = await api<{ ok: boolean; reply?: string; error?: string }>("/copilot/act", { method: "POST", body: JSON.stringify({ action: a.action, params: a.params ?? {} }) });
-      const reply = r.reply || (r.ok ? "Έγινε." : t("Η ενέργεια απέτυχε.", "The action failed."));
+      const reply = r.reply || (r.ok ? t("Έγινε.", "Done.") : t("Η ενέργεια απέτυχε.", "The action failed."));
       setTurns((s) => [...s, { role: "assistant", content: "", result: { ok: true, reply } }]);
     } catch {
       setTurns((s) => [...s, { role: "assistant", content: "", result: { ok: false, error: "network", reply: "" } }]);
@@ -130,11 +130,11 @@ function CopilotInner() {
   async function execCard(c: PlanCard) {
     if (c.action.kind === "navigate") { router.push(c.action.href); return; }
     if (busy) return;
-    if (!(await appConfirm(`${c.title}\n${c.why}\n\nΝα εκτελεστεί;`))) return;
+    if (!(await appConfirm(`${c.title}\n${c.why}\n\n${t("Να εκτελεστεί;", "Run this?")}`))) return;
     setBusy(true);
     try {
       const r = await api<{ ok: boolean; reply?: string }>("/copilot/act", { method: "POST", body: JSON.stringify({ action: (c.action as { key: string }).key, params: {} }) });
-      setTurns((s) => [...s, { role: "assistant", content: "", result: { ok: true, reply: r.reply || "Έγινε." } }]);
+      setTurns((s) => [...s, { role: "assistant", content: "", result: { ok: true, reply: r.reply || t("Έγινε.", "Done.") } }]);
       plan.refetch();
     } catch {
       setTurns((s) => [...s, { role: "assistant", content: "", result: { ok: false, error: "network", reply: "" } }]);
@@ -168,7 +168,7 @@ function CopilotInner() {
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <div className="flex items-center gap-2 text-sm font-semibold text-slate-800 dark:text-slate-100">
-                      {c.urgency === "high" && <span className="rounded-full bg-rose-100 px-1.5 py-0.5 text-[10px] font-bold text-rose-700">ΕΠΕΙΓΟΝ</span>}
+                      {c.urgency === "high" && <span className="rounded-full bg-rose-100 px-1.5 py-0.5 text-[10px] font-bold text-rose-700">{t("ΕΠΕΙΓΟΝ", "URGENT")}</span>}
                       {c.title}
                     </div>
                     <div className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">{c.why}</div>

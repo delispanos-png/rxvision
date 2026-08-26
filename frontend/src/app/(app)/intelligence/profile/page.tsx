@@ -381,7 +381,7 @@ export default function PatientProfilePage() {
           {/* περίοδος για Διαγνώσεις & Φάρμακα — εστιάζει & το AI στο πρόσφατο πρόβλημα (όχι παλιές διαγνώσεις) */}
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-xs font-medium text-slate-500">{t("Διαγνώσεις & Φάρμακα — περίοδος", "Diagnoses & medicines — period")}:</span>
-            {([[3, "3μ"], [6, "6μ"], [12, "12μ"], [24, "24μ"], [0, t("Όλα", "All")]] as [number, string][]).map(([m, label]) => (
+            {([[3, t("3μ", "3m")], [6, t("6μ", "6m")], [12, t("12μ", "12m")], [24, t("24μ", "24m")], [0, t("Όλα", "All")]] as [number, string][]).map(([m, label]) => (
               <button key={m} onClick={() => changeRange(m)}
                 className={`rounded-lg px-2.5 py-1 text-xs font-semibold transition ${rangeMonths === m ? "bg-brand-600 text-white" : "border border-slate-200 text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300"}`}>
                 {label}
@@ -562,7 +562,7 @@ export default function PatientProfilePage() {
                             <td className="px-3 py-2 font-mono text-[11px] text-slate-500">{j === 0 ? e.barcode.split(":")[0] : ""}</td>
                             <td className="px-3 py-2 text-slate-700 dark:text-slate-200">
                               <span className="flex items-start gap-1.5">
-                                {j === 0 && e.kind === "vaccine" && <span className="mt-0.5 shrink-0 rounded bg-sky-100 px-1.5 py-0.5 text-[9px] font-semibold text-sky-700">💉 ΕΜΒΟΛΙΟ</span>}
+                                {j === 0 && e.kind === "vaccine" && <span className="mt-0.5 shrink-0 rounded bg-sky-100 px-1.5 py-0.5 text-[9px] font-semibold text-sky-700">💉 {t("ΕΜΒΟΛΙΟ", "VACCINE")}</span>}
                                 <span className="whitespace-normal break-words">{med.name}</span>
                               </span>
                             </td>

@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, useEffect, type ReactNode } from "react";
+import { useState, useEffect, useRef, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { useQuery } from "@tanstack/react-query";
-import { Warehouse, Plus, ArrowDownToLine, History, Pencil, AlertTriangle, CalendarClock, X, PackageX, FileSpreadsheet, Upload, ImagePlus } from "lucide-react";
+import { Warehouse, Plus, ArrowDownToLine, History, Pencil, AlertTriangle, CalendarClock, X, PackageX, FileSpreadsheet, Upload, ImagePlus, ZoomIn } from "lucide-react";
 import { api, apiUpload, apiBlob } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
 import { appAlert } from "@/store/dialogStore";
@@ -26,14 +27,15 @@ type Summary = { skus: number; active: number; for_sale: number; units: number; 
 type WH = { items: Item[]; total: number; summary: Summary; suppliers?: string[] };
 type Move = { kind: string; qty: number; reason?: string | null; batch?: string | null; expiry?: string | null; new_stock?: number; at: string; by?: string | null };
 
-const TYPE_EL: Record<string, string> = { rx_medicine: "Συνταγογρ.", otc_medicine: "ΜΗ.ΣΥ.ΦΑ.", parapharmacy: "Παραφάρμακο" };
-const KIND_EL: Record<string, string> = { in: "Παραλαβή", out: "Πώληση/Έξοδος", adjust: "Απογραφή", waste: "Απόσυρση" };
+const typeElMap = (t: (a: string, b: string) => string): Record<string, string> => ({ rx_medicine: t("Συνταγογρ.", "Rx"), otc_medicine: t("ΜΗ.ΣΥ.ΦΑ.", "OTC"), parapharmacy: t("Παραφάρμακο", "Parapharmacy") });
+const kindElMap = (t: (a: string, b: string) => string): Record<string, string> => ({ in: t("Παραλαβή", "Receipt"), out: t("Πώληση/Έξοδος", "Sale/Out"), adjust: t("Απογραφή", "Stock count"), waste: t("Απόσυρση", "Write-off") });
 const daysTo = (iso?: string | null) => iso ? Math.round((new Date(iso).getTime() - Date.now()) / 86400000) : null;
 const dmy = (iso?: string | null) => iso ? iso.split("-").reverse().join("/") : "—";
 const margin = (p: Item) => (p.wholesale_cents && p.price_cents) ? Math.round((p.price_cents - p.wholesale_cents) / p.price_cents * 100) : null;
 
 export default function WarehousePage() {
   const t = useT();
+  const TYPE_EL = typeElMap(t);
   const [q, setQ] = useState("");
   const [type, setType] = useState("");
   const [low, setLow] = useState(false);
@@ -251,6 +253,7 @@ function MoveModal({ item, t, onClose, onDone }: { item: Item; t: (a: string, b:
   const [setTo, setSetTo] = useState<number>(item.stock_qty);
   const [busy, setBusy] = useState(false);
   const isAdjust = kind === "adjust";
+  const KIND_EL = kindElMap(t);
   async function submit() {
     setBusy(true);
     try {
@@ -298,8 +301,46 @@ function MoveModal({ item, t, onClose, onDone }: { item: Item; t: (a: string, b:
   );
 }
 
+/** Μεγέθυνση φωτογραφίας είδους. Portal στο body: ο backdrop του Modal έχει `backdrop-blur`,
+ *  που κάνει τον ίδιο containing block για fixed παιδιά — χωρίς portal δεν καλύπτει όλη την οθόνη. */
+function PhotoZoom({ src, alt, onClose }: { src: string; alt: string; onClose: () => void }) {
+  const t = useT();
+  const [mounted, setMounted] = useState(false);
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
+  useEffect(() => {
+    setMounted(true);
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    // Escape κλείνει ΜΟΝΟ τη μεγέθυνση — capture, ώστε να μην φτάσει στο Modal και κλείσει η καρτέλα.
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      e.preventDefault(); e.stopPropagation();
+      closeRef.current();
+    };
+    document.addEventListener("keydown", onKey, true);
+    return () => {
+      document.body.style.overflow = prevOverflow;
+      document.removeEventListener("keydown", onKey, true);
+    };
+  }, []);
+  if (!mounted) return null;
+  return createPortal(
+    <div onMouseDown={() => closeRef.current()} className="fixed inset-0 z-[200] grid cursor-zoom-out place-items-center bg-black/80 p-4 sm:p-8">
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img src={src} alt={alt} className="max-h-full max-w-full rounded-lg object-contain shadow-2xl" />
+      <button type="button" onClick={() => closeRef.current()} aria-label={t("Κλείσιμο", "Close")}
+        className="absolute right-4 top-4 grid h-9 w-9 place-items-center rounded-full bg-white/15 text-white hover:bg-white/25">
+        <X className="h-5 w-5" />
+      </button>
+    </div>,
+    document.body,
+  );
+}
+
 function EditModal({ item, t, onClose, onDone }: { item: Item; t: (a: string, b: string) => string; onClose: () => void; onDone: () => void }) {
   const isNew = !item.barcode;
+  const TYPE_EL = typeElMap(t);
   const [f, setF] = useState<Item & { price_eur: number; cost_eur: number }>({ ...item, price_eur: item.price_cents / 100, cost_eur: (item.wholesale_cents ?? 0) / 100 });
   const [busy, setBusy] = useState(false);
   const [bcText, setBcText] = useState((item.barcodes ?? []).join(", "));
@@ -310,6 +351,7 @@ function EditModal({ item, t, onClose, onDone }: { item: Item; t: (a: string, b:
   const delVar = (i: number) => set("variants", variants.filter((_, j) => j !== i));
   const [img, setImg] = useState<string | null>(null);
   const [imgBusy, setImgBusy] = useState(false);
+  const [imgZoom, setImgZoom] = useState(false);
   useEffect(() => {
     let alive = true; let obj = "";
     if (item.image_id) apiBlob(`/catalog/image/${item.image_id}`).then((b) => { if (!alive) return; obj = URL.createObjectURL(b); setImg(obj); }).catch(() => {});
@@ -342,9 +384,21 @@ function EditModal({ item, t, onClose, onDone }: { item: Item; t: (a: string, b:
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {/* Φωτογραφία είδους */}
         <div className="col-span-full flex items-center gap-4">
-          <div className="grid h-24 w-24 shrink-0 place-items-center overflow-hidden rounded-xl border-2 border-dashed border-slate-300 bg-slate-50 dark:border-slate-600 dark:bg-slate-800">
-            {img ? /* eslint-disable-next-line @next/next/no-img-element */ <img src={img} alt="" className="h-full w-full object-cover" /> : <ImagePlus className="h-7 w-7 text-slate-300" />}
-          </div>
+          {img ? (
+            <button type="button" onClick={() => setImgZoom(true)} title={t("Μεγέθυνση φωτογραφίας", "Enlarge photo")}
+              className="group relative grid h-24 w-24 shrink-0 cursor-zoom-in place-items-center overflow-hidden rounded-xl border-2 border-dashed border-slate-300 bg-slate-50 dark:border-slate-600 dark:bg-slate-800">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={img} alt={f.name} className="h-full w-full object-cover" />
+              <span className="absolute inset-0 grid place-items-center text-white opacity-0 transition group-hover:bg-black/40 group-hover:opacity-100 group-focus-visible:bg-black/40 group-focus-visible:opacity-100">
+                <ZoomIn className="h-6 w-6" />
+              </span>
+            </button>
+          ) : (
+            <div className="grid h-24 w-24 shrink-0 place-items-center overflow-hidden rounded-xl border-2 border-dashed border-slate-300 bg-slate-50 dark:border-slate-600 dark:bg-slate-800">
+              <ImagePlus className="h-7 w-7 text-slate-300" />
+            </div>
+          )}
+          {imgZoom && img && <PhotoZoom src={img} alt={f.name} onClose={() => setImgZoom(false)} />}
           <div>
             <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200">
               <Upload className="h-4 w-4" /> {imgBusy ? t("Ανέβασμα…", "Uploading…") : t("Φωτογραφία είδους", "Item photo")}
@@ -429,6 +483,7 @@ function EditModal({ item, t, onClose, onDone }: { item: Item; t: (a: string, b:
 }
 
 function HistoryModal({ item, t, onClose }: { item: Item; t: (a: string, b: string) => string; onClose: () => void }) {
+  const KIND_EL = kindElMap(t);
   const h = useQuery({ queryKey: ["wh-hist", item.barcode], queryFn: () => api<{ items: Move[] }>(`/catalog/warehouse/${item.barcode}/movements`), retry: false });
   return (
     <Modal title={`${t("Ιστορικό κινήσεων", "Movement history")} — ${item.name}`} onClose={onClose}>
@@ -449,19 +504,19 @@ function HistoryModal({ item, t, onClose }: { item: Item; t: (a: string, b: stri
   );
 }
 
-const IMPORT_FIELDS: { k: string; label: string; req?: boolean }[] = [
+const importFields = (t: (a: string, b: string) => string): { k: string; label: string; req?: boolean }[] => [
   { k: "barcode", label: "Barcode", req: true },
-  { k: "name", label: "Όνομα", req: true },
-  { k: "stock", label: "Απόθεμα" },
-  { k: "cost", label: "Χονδρική/κόστος (€)" },
-  { k: "price", label: "Λιανική (€)" },
-  { k: "category", label: "Κατηγορία" },
-  { k: "type", label: "Τύπος" },
-  { k: "supplier", label: "Προμηθευτής" },
-  { k: "location", label: "Θέση/ράφι" },
-  { k: "min_stock", label: "Σημείο αναπαραγγελίας" },
-  { k: "expiry", label: "Λήξη" },
-  { k: "batch", label: "Παρτίδα" },
+  { k: "name", label: t("Όνομα", "Name"), req: true },
+  { k: "stock", label: t("Απόθεμα", "Stock") },
+  { k: "cost", label: t("Χονδρική/κόστος (€)", "Cost (€)") },
+  { k: "price", label: t("Λιανική (€)", "Retail (€)") },
+  { k: "category", label: t("Κατηγορία", "Category") },
+  { k: "type", label: t("Τύπος", "Type") },
+  { k: "supplier", label: t("Προμηθευτής", "Supplier") },
+  { k: "location", label: t("Θέση/ράφι", "Location/shelf") },
+  { k: "min_stock", label: t("Σημείο αναπαραγγελίας", "Reorder point") },
+  { k: "expiry", label: t("Λήξη", "Expiry") },
+  { k: "batch", label: t("Παρτίδα", "Batch") },
 ];
 
 const GUESS: Record<string, string[]> = {
@@ -473,6 +528,8 @@ const GUESS: Record<string, string[]> = {
 };
 
 function ImportModal({ t, onClose, onDone }: { t: (a: string, b: string) => string; onClose: () => void; onDone: () => void }) {
+  const TYPE_EL = typeElMap(t);
+  const IMPORT_FIELDS = importFields(t);
   const [file, setFile] = useState<File | null>(null);
   const [pv, setPv] = useState<{ columns: number; rows: string[][]; total_rows: number } | null>(null);
   const [startRow, setStartRow] = useState(2);

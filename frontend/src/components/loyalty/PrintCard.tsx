@@ -7,6 +7,7 @@ import { useRef, useState } from "react";
 import { QRCodeCanvas } from "qrcode.react";
 import { Printer, X } from "lucide-react";
 import { appAlert } from "@/store/dialogStore";
+import { useT } from "@/store/prefStore";
 
 export type CardMember = { patient_ref: string; name: string; tier?: string };
 
@@ -17,10 +18,11 @@ const CARD_H = "54mm";
 export function PrintCardButton({ member, pharmacyName, className }: {
   member: CardMember; pharmacyName: string; className?: string;
 }) {
+  const t = useT();
   const [open, setOpen] = useState(false);
   return (
     <>
-      <button onClick={(e) => { e.stopPropagation(); setOpen(true); }} title="Εκτύπωση φυσικής κάρτας"
+      <button onClick={(e) => { e.stopPropagation(); setOpen(true); }} title={t("Εκτύπωση φυσικής κάρτας", "Print physical card")}
         className={className ?? "grid h-8 w-8 place-items-center rounded-lg border border-slate-200 bg-white text-slate-500 hover:bg-slate-50"}>
         <Printer className="h-3.5 w-3.5" />
       </button>
@@ -32,6 +34,7 @@ export function PrintCardButton({ member, pharmacyName, className }: {
 function PrintCardDialog({ member, pharmacyName, onClose }: {
   member: CardMember; pharmacyName: string; onClose: () => void;
 }) {
+  const t = useT();
   const qrRef = useRef<HTMLDivElement>(null);
   const [busy, setBusy] = useState(false);
   const code = `RXVL:${member.patient_ref}`;
@@ -43,9 +46,9 @@ function PrintCardDialog({ member, pharmacyName, onClose }: {
     const canvas = qrRef.current?.querySelector("canvas");
     const qr = canvas?.toDataURL("image/png") ?? "";
     const w = window.open("", "_blank", "width=700,height=560");
-    if (!w) { setBusy(false); await appAlert("Ο browser μπλόκαρε το παράθυρο εκτύπωσης — επίτρεψε τα pop-ups.", { title: "Αποκλείστηκε" }); return; }
+    if (!w) { setBusy(false); await appAlert(t("Ο browser μπλόκαρε το παράθυρο εκτύπωσης — επίτρεψε τα pop-ups.", "The browser blocked the print window — allow pop-ups."), { title: t("Αποκλείστηκε", "Blocked") }); return; }
     w.document.write(`<!doctype html><html lang="el"><head><meta charset="utf-8">
-<title>Κάρτα πιστότητας — ${esc(member.name)}</title>
+<title>${t("Κάρτα πιστότητας", "Loyalty card")} — ${esc(member.name)}</title>
 <style>
   @page { size: auto; margin: 10mm; }
   * { box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
@@ -71,11 +74,11 @@ function PrintCardDialog({ member, pharmacyName, onClose }: {
   @media print { .cut { display: none; } }
 </style></head><body>
 <div class="sheet">
-  <div class="cut">Κόψε στο περίγραμμα (85,6 × 54 mm — μέγεθος τραπεζικής κάρτας).</div>
+  <div class="cut">${t("Κόψε στο περίγραμμα (85,6 × 54 mm — μέγεθος τραπεζικής κάρτας).", "Cut along the outline (85.6 × 54 mm — bank-card size).")}</div>
   <div class="card">
     <div class="l">
       <div>
-        <div class="brand">Κάρτα Πιστότητας</div>
+        <div class="brand">${t("Κάρτα Πιστότητας", "Loyalty Card")}</div>
         <div class="ph">${esc(pharmacyName)}</div>
       </div>
       <div class="who">${esc(member.name || "—")}</div>
@@ -85,8 +88,8 @@ function PrintCardDialog({ member, pharmacyName, onClose }: {
   </div>
   <div class="card back">
     <div class="l">
-      <div class="t"><b>Δείξε την κάρτα</b> σε κάθε επίσκεψη για να μαζεύεις πόντους και να τους εξαργυρώνεις.</div>
-      <div class="t" style="opacity:.7">Την ίδια κάρτα έχεις και ψηφιακά στο <b>my.rxvision.gr</b>.</div>
+      <div class="t"><b>${t("Δείξε την κάρτα", "Show your card")}</b> ${t("σε κάθε επίσκεψη για να μαζεύεις πόντους και να τους εξαργυρώνεις.", "on every visit to collect points and redeem them.")}</div>
+      <div class="t" style="opacity:.7">${t("Την ίδια κάρτα έχεις και ψηφιακά στο", "You also have the same card digitally at")} <b>my.rxvision.gr</b>.</div>
       <div class="ph" style="color:#94a3b8">${esc(pharmacyName)}</div>
     </div>
   </div>
@@ -101,7 +104,7 @@ function PrintCardDialog({ member, pharmacyName, onClose }: {
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4" onClick={onClose}>
       <div className="w-full max-w-sm rounded-2xl bg-white p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
         <div className="mb-3 flex items-center justify-between">
-          <div className="font-semibold text-slate-800">Φυσική κάρτα πιστότητας</div>
+          <div className="font-semibold text-slate-800">{t("Φυσική κάρτα πιστότητας", "Physical loyalty card")}</div>
           <button onClick={onClose} className="text-slate-400"><X className="h-4 w-4" /></button>
         </div>
 
@@ -109,7 +112,7 @@ function PrintCardDialog({ member, pharmacyName, onClose }: {
         <div className="mb-3 flex items-stretch justify-between gap-3 rounded-xl bg-gradient-to-br from-rose-600 to-amber-500 p-3 text-white">
           <div className="flex min-w-0 flex-col justify-between">
             <div>
-              <div className="text-[9px] font-semibold uppercase tracking-widest opacity-80">Κάρτα Πιστότητας</div>
+              <div className="text-[9px] font-semibold uppercase tracking-widest opacity-80">{t("Κάρτα Πιστότητας", "Loyalty Card")}</div>
               <div className="truncate text-[10px] opacity-90">{pharmacyName || "—"}</div>
             </div>
             <div className="break-words text-sm font-extrabold leading-tight">{member.name || "—"}</div>
@@ -121,13 +124,12 @@ function PrintCardDialog({ member, pharmacyName, onClose }: {
         </div>
 
         <p className="mb-3 text-[11px] text-slate-500">
-          Τυπώνεται σε <b>μέγεθος τραπεζικής κάρτας</b> (85,6 × 54 mm), με πίσω όψη. Σκανάρεται από το ταμείο
-          όπως και η ψηφιακή — ίδιος κωδικός.
+          {t("Τυπώνεται σε μέγεθος τραπεζικής κάρτας (85,6 × 54 mm), με πίσω όψη. Σκανάρεται από το ταμείο όπως και η ψηφιακή — ίδιος κωδικός.", "Prints at bank-card size (85.6 × 54 mm), with a back side. Scanned at the counter just like the digital one — same code.")}
         </p>
 
         <button onClick={print} disabled={busy}
           className="flex w-full items-center justify-center gap-2 rounded-xl bg-brand-600 py-2.5 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-60">
-          <Printer className="h-4 w-4" /> Εκτύπωση
+          <Printer className="h-4 w-4" /> {t("Εκτύπωση", "Print")}
         </button>
       </div>
     </div>

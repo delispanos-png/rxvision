@@ -31,19 +31,24 @@ type Result = {
 type Status = { configured: boolean; enabled: boolean; model: string; ai_used?: number; ai_included?: number; ai_period?: string };
 type Turn = { role: "user" | "assistant"; content: string; result?: Result };
 
-const SYMPTOMS = ["Βήχας", "Πονόλαιμος", "Συνάχι", "Πυρετός", "Πονοκέφαλος", "Ημικρανία", "Δυσπεψία", "Διάρροια", "Δυσκοιλιότητα", "Καούρα", "Αλλεργία", "Ξηροφθαλμία", "Μυϊκός πόνος", "Δερματικός ερεθισμός", "Ναυτία"];
+const SYMPTOMS: [string, string][] = [
+  ["Βήχας", "Cough"], ["Πονόλαιμος", "Sore throat"], ["Συνάχι", "Runny nose"], ["Πυρετός", "Fever"],
+  ["Πονοκέφαλος", "Headache"], ["Ημικρανία", "Migraine"], ["Δυσπεψία", "Indigestion"], ["Διάρροια", "Diarrhea"],
+  ["Δυσκοιλιότητα", "Constipation"], ["Καούρα", "Heartburn"], ["Αλλεργία", "Allergy"], ["Ξηροφθαλμία", "Dry eyes"],
+  ["Μυϊκός πόνος", "Muscle pain"], ["Δερματικός ερεθισμός", "Skin irritation"], ["Ναυτία", "Nausea"],
+];
 
-const SEV: Record<string, { cls: string; el: string }> = {
-  minor: { cls: "bg-emerald-100 text-emerald-700 border-emerald-200", el: "Ήσσονος" },
-  moderate: { cls: "bg-amber-100 text-amber-700 border-amber-200", el: "Μέτρια" },
-  major: { cls: "bg-orange-100 text-orange-700 border-orange-200", el: "Σοβαρή" },
-  contraindicated: { cls: "bg-rose-100 text-rose-700 border-rose-200", el: "Αντένδειξη" },
+const SEV: Record<string, { cls: string; el: string; en: string }> = {
+  minor: { cls: "bg-emerald-100 text-emerald-700 border-emerald-200", el: "Ήσσονος", en: "Minor" },
+  moderate: { cls: "bg-amber-100 text-amber-700 border-amber-200", el: "Μέτρια", en: "Moderate" },
+  major: { cls: "bg-orange-100 text-orange-700 border-orange-200", el: "Σοβαρή", en: "Major" },
+  contraindicated: { cls: "bg-rose-100 text-rose-700 border-rose-200", el: "Αντένδειξη", en: "Contraindicated" },
 };
-const URGENCY: Record<string, { cls: string; el: string }> = {
-  none: { cls: "bg-slate-100 text-slate-600", el: "—" },
-  gp: { cls: "bg-amber-100 text-amber-700", el: "Παραπομπή σε ιατρό" },
-  urgent: { cls: "bg-orange-100 text-orange-700", el: "Επείγουσα παραπομπή" },
-  emergency: { cls: "bg-rose-100 text-white !bg-rose-600", el: "ΕΠΕΙΓΟΝ — Νοσοκομείο" },
+const URGENCY: Record<string, { cls: string; el: string; en: string }> = {
+  none: { cls: "bg-slate-100 text-slate-600", el: "—", en: "—" },
+  gp: { cls: "bg-amber-100 text-amber-700", el: "Παραπομπή σε ιατρό", en: "Refer to a doctor" },
+  urgent: { cls: "bg-orange-100 text-orange-700", el: "Επείγουσα παραπομπή", en: "Urgent referral" },
+  emergency: { cls: "bg-rose-100 text-white !bg-rose-600", el: "ΕΠΕΙΓΟΝ — Νοσοκομείο", en: "EMERGENCY — Hospital" },
 };
 
 export default function PharmaCatPage() {
@@ -205,7 +210,7 @@ function PharmaCatInner() {
             <Sparkles className="mx-auto h-8 w-8 text-violet-400" />
             <p className="text-sm text-slate-500">{t("Περιγράψτε ένα σύμπτωμα ή ρωτήστε κλινικά (π.χ. «Ασθενής με Xarelto & Concor — μπορώ Algofren;»). Ο PharmaCat κάνει triage, ελέγχει red flags & αλληλεπιδράσεις, και προτείνει κατηγορίες/προϊόντα.", "Describe a symptom or ask clinically (e.g. \"Patient on Xarelto & Concor — can I give Algofren?\"). PharmaCat triages, checks red flags & interactions, suggests categories/products.")}</p>
             <div className="flex flex-wrap justify-center gap-1.5">
-              {SYMPTOMS.map((s) => <button key={s} onClick={() => send(s)} className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs text-slate-600 hover:border-violet-300 hover:bg-violet-50 dark:border-slate-700 dark:bg-slate-800">{s}</button>)}
+              {SYMPTOMS.map(([el, en]) => <button key={el} onClick={() => send(t(el, en))} className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs text-slate-600 hover:border-violet-300 hover:bg-violet-50 dark:border-slate-700 dark:bg-slate-800">{t(el, en)}</button>)}
             </div>
           </div>
         )}
@@ -373,7 +378,7 @@ function AssistantCard({ r, t, onAnswer, onMed, onReport, reported }: { r: Resul
             const sv = SEV[x.severity] ?? SEV.moderate;
             return (
               <div key={i} className={`rounded-lg border p-2 text-xs ${sv.cls}`}>
-                <div className="flex items-center justify-between font-semibold"><span>{x.a} ↔ {x.b}</span><span className="rounded-full bg-white/60 px-2 py-0.5 text-[10px]">{sv.el}</span></div>
+                <div className="flex items-center justify-between font-semibold"><span>{x.a} ↔ {x.b}</span><span className="rounded-full bg-white/60 px-2 py-0.5 text-[10px]">{t(sv.el, sv.en)}</span></div>
                 {x.mechanism && <div className="mt-0.5 opacity-90"><b>{t("Μηχανισμός", "Mechanism")}:</b> {x.mechanism}</div>}
                 {x.risk && <div className="opacity-90"><b>{t("Κίνδυνος", "Risk")}:</b> {x.risk}</div>}
                 {x.action && <div className="opacity-90"><b>{t("Ενέργεια", "Action")}:</b> {x.action}</div>}
@@ -394,8 +399,8 @@ function AssistantCard({ r, t, onAnswer, onMed, onReport, reported }: { r: Resul
       {/* safety grid */}
       {r.safety && Object.values(r.safety).some(Boolean) && (
         <div className="grid grid-cols-2 gap-1.5 text-[11px] sm:grid-cols-3">
-          {([["pregnancy", "Εγκυμοσύνη"], ["lactation", "Θηλασμός"], ["renal", "Νεφρική"], ["hepatic", "Ηπατική"], ["pediatric", "Παιδιατρική"], ["elderly", "Ηλικιωμένοι"]] as const).map(([k, lbl]) => r.safety![k] ? (
-            <div key={k} className="rounded-lg border border-slate-200 bg-white px-2 py-1 dark:border-slate-700 dark:bg-slate-900"><span className="font-semibold text-slate-500">{lbl}:</span> <span className="text-slate-600 dark:text-slate-300">{r.safety![k]}</span></div>
+          {([["pregnancy", "Εγκυμοσύνη", "Pregnancy"], ["lactation", "Θηλασμός", "Lactation"], ["renal", "Νεφρική", "Renal"], ["hepatic", "Ηπατική", "Hepatic"], ["pediatric", "Παιδιατρική", "Pediatric"], ["elderly", "Ηλικιωμένοι", "Elderly"]] as const).map(([k, el, en]) => r.safety![k] ? (
+            <div key={k} className="rounded-lg border border-slate-200 bg-white px-2 py-1 dark:border-slate-700 dark:bg-slate-900"><span className="font-semibold text-slate-500">{t(el, en)}:</span> <span className="text-slate-600 dark:text-slate-300">{r.safety![k]}</span></div>
           ) : null)}
         </div>
       )}
@@ -403,7 +408,7 @@ function AssistantCard({ r, t, onAnswer, onMed, onReport, reported }: { r: Resul
       {/* referral */}
       {ref?.needed && (
         <div className={`flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-semibold ${URGENCY[ref.urgency]?.cls ?? URGENCY.gp.cls}`}>
-          <Stethoscope className="h-4 w-4" /> {URGENCY[ref.urgency]?.el ?? ref.urgency}{ref.reason ? ` — ${ref.reason}` : ""}
+          <Stethoscope className="h-4 w-4" /> {URGENCY[ref.urgency] ? t(URGENCY[ref.urgency].el, URGENCY[ref.urgency].en) : ref.urgency}{ref.reason ? ` — ${ref.reason}` : ""}
         </div>
       )}
     </>

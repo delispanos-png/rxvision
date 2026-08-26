@@ -22,23 +22,26 @@ type Run = {
 const eur = (c?: number) => `${((c || 0) / 100).toFixed(2).replace(".", ",")} €`;
 
 // ίδια λίστα με REPORT_TOOLS του backend (copilot_service.py)
-const REPORT_TOOLS: [string, string][] = [
-  ["get_kpis", "Σύνοψη φαρμακείου (KPIs)"],
-  ["get_top", "Κορυφαία λίστα (ιατροί/προϊόντα/πελάτες/ICD)"],
-  ["get_unexecuted", "Ανεκτέλεστες δραστικές"],
-  ["get_profitability", "Κερδοφορία"],
-  ["get_low_margin", "Προϊόντα χαμηλού περιθωρίου"],
-  ["get_reimbursement", "Εικόνα αποζημίωσης ΕΟΠΥΥ"],
-  ["get_reimbursement_risk", "Ρίσκο ΕΟΠΥΥ"],
-  ["get_today_tasks", "Εργασίες ημέρας (ασθενείς)"],
-  ["get_winback", "Ασθενείς για win-back"],
-  ["get_at_risk", "Ασθενείς σε ρίσκο"],
-  ["get_vip", "VIP ασθενείς"],
-  ["get_order_suggestions", "Προτάσεις παραγγελίας"],
-  ["get_upcoming", "Μελλοντικές συνταγές"],
-  ["get_portal_pending", "Εκκρεμή αιτήματα πελατών"],
+const REPORT_TOOLS: [string, string, string][] = [
+  ["get_kpis", "Σύνοψη φαρμακείου (KPIs)", "Pharmacy summary (KPIs)"],
+  ["get_top", "Κορυφαία λίστα (ιατροί/προϊόντα/πελάτες/ICD)", "Top list (doctors/products/customers/ICD)"],
+  ["get_unexecuted", "Ανεκτέλεστες δραστικές", "Unexecuted substances"],
+  ["get_profitability", "Κερδοφορία", "Profitability"],
+  ["get_low_margin", "Προϊόντα χαμηλού περιθωρίου", "Low-margin products"],
+  ["get_reimbursement", "Εικόνα αποζημίωσης ΕΟΠΥΥ", "ΕΟΠΥΥ reimbursement overview"],
+  ["get_reimbursement_risk", "Ρίσκο ΕΟΠΥΥ", "ΕΟΠΥΥ risk"],
+  ["get_today_tasks", "Εργασίες ημέρας (ασθενείς)", "Today's tasks (patients)"],
+  ["get_winback", "Ασθενείς για win-back", "Patients for win-back"],
+  ["get_at_risk", "Ασθενείς σε ρίσκο", "At-risk patients"],
+  ["get_vip", "VIP ασθενείς", "VIP patients"],
+  ["get_order_suggestions", "Προτάσεις παραγγελίας", "Order suggestions"],
+  ["get_upcoming", "Μελλοντικές συνταγές", "Upcoming prescriptions"],
+  ["get_portal_pending", "Εκκρεμή αιτήματα πελατών", "Pending customer requests"],
 ];
-const DAYS = ["Δευτέρα", "Τρίτη", "Τετάρτη", "Πέμπτη", "Παρασκευή", "Σάββατο", "Κυριακή"];
+const DAYS: [string, string][] = [
+  ["Δευτέρα", "Monday"], ["Τρίτη", "Tuesday"], ["Τετάρτη", "Wednesday"], ["Πέμπτη", "Thursday"],
+  ["Παρασκευή", "Friday"], ["Σάββατο", "Saturday"], ["Κυριακή", "Sunday"],
+];
 const fmt = (s?: string | null) => (s ? new Date(s).toLocaleString("el-GR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "—");
 
 export default function RoutinesPage() {
@@ -169,12 +172,12 @@ export default function RoutinesPage() {
   );
 }
 
-const SEGMENTS: [string, string, string | null][] = [
-  ["all", "Όλοι οι πελάτες (με συναίνεση)", null],
-  ["upcoming", "Επικείμενη επανάληψη", "ημέρες (π.χ. 30)"],
-  ["inactive", "Ανενεργοί", "ημέρες (π.χ. 180)"],
-  ["icd", "Με διάγνωση ICD-10", "κωδικός ICD-10"],
-  ["substance", "Με δραστική/ATC", "ATC ή δραστική"],
+const SEGMENTS: [string, string, string, string | null, string | null][] = [
+  ["all", "Όλοι οι πελάτες (με συναίνεση)", "All customers (consented)", null, null],
+  ["upcoming", "Επικείμενη επανάληψη", "Upcoming refill", "ημέρες (π.χ. 30)", "days (e.g. 30)"],
+  ["inactive", "Ανενεργοί", "Inactive", "ημέρες (π.χ. 180)", "days (e.g. 180)"],
+  ["icd", "Με διάγνωση ICD-10", "With ICD-10 diagnosis", "κωδικός ICD-10", "ICD-10 code"],
+  ["substance", "Με δραστική/ATC", "With substance/ATC", "ATC ή δραστική", "ATC or substance"],
 ];
 
 function NewRoutineForm({ onDone, onCancel, t }: { onDone: () => void; onCancel: () => void; t: (a: string, b: string) => string }) {
@@ -203,7 +206,8 @@ function NewRoutineForm({ onDone, onCancel, t }: { onDone: () => void; onCancel:
   const [err, setErr] = useState<string | null>(null);
 
   const isTop = tool === "get_top";
-  const segNeedsValue = SEGMENTS.find(([v]) => v === segment)?.[2] || null;
+  const segMatch = SEGMENTS.find(([v]) => v === segment);
+  const segNeedsValue = segMatch && segMatch[3] ? t(segMatch[3], segMatch[4] || "") : null;
   const save = async () => {
     setBusy(true); setErr(null);
     try {
@@ -217,7 +221,8 @@ function NewRoutineForm({ onDone, onCancel, t }: { onDone: () => void; onCancel:
       } else {
         const report_args: Record<string, unknown> = {};
         if (isTop) { report_args.dim = dim; report_args.days_back = Number(daysBack); }
-        body = { action: "report", name: name || REPORT_TOOLS.find(([v]) => v === tool)?.[1], schedule, report_tool: tool, report_args, delivery, email: delivery === "email" ? email : null };
+        const rt = REPORT_TOOLS.find(([v]) => v === tool);
+        body = { action: "report", name: name || (rt ? t(rt[1], rt[2]) : ""), schedule, report_tool: tool, report_args, delivery, email: delivery === "email" ? email : null };
       }
       const r = await api<{ ok: boolean }>("/copilot/routines", { method: "POST", body: JSON.stringify(body) });
       if (!r.ok) { setErr(t("Αποτυχία.", "Failed.")); return; }
@@ -245,7 +250,7 @@ function NewRoutineForm({ onDone, onCancel, t }: { onDone: () => void; onCancel:
           <>
             <label className="block text-xs font-medium text-slate-500">{t("Αναφορά", "Report")}
               <select value={tool} onChange={(e) => setTool(e.target.value)} className={`mt-1 block w-full ${field}`}>
-                {REPORT_TOOLS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                {REPORT_TOOLS.map(([v, el, en]) => <option key={v} value={v}>{t(el, en)}</option>)}
               </select>
             </label>
             {isTop && (
@@ -289,7 +294,7 @@ function NewRoutineForm({ onDone, onCancel, t }: { onDone: () => void; onCancel:
             </label>
             <label className="block text-xs font-medium text-slate-500">{t("Παραλήπτες", "Recipients")}
               <select value={segment} onChange={(e) => setSegment(e.target.value)} className={`mt-1 block w-full ${field}`}>
-                {SEGMENTS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                {SEGMENTS.map(([v, el, en]) => <option key={v} value={v}>{t(el, en)}</option>)}
               </select>
             </label>
             {segNeedsValue && (
@@ -333,7 +338,7 @@ function NewRoutineForm({ onDone, onCancel, t }: { onDone: () => void; onCancel:
         {kind === "weekly" && (
           <label className="block text-xs font-medium text-slate-500">{t("Ημέρα", "Day")}
             <select value={weekday} onChange={(e) => setWeekday(e.target.value)} className={`mt-1 block w-full ${field}`}>
-              {DAYS.map((d, i) => <option key={i} value={i}>{d}</option>)}
+              {DAYS.map(([el, en], i) => <option key={i} value={i}>{t(el, en)}</option>)}
             </select>
           </label>
         )}

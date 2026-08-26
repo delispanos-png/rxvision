@@ -406,7 +406,7 @@ export default function IngestionSettingsPage() {
           )}
           {/* read-only — αντλούνται από ΗΔΥΚΑ, δεν τα πληκτρολογεί ο φαρμακοποιός */}
           <div className="grid gap-3 sm:grid-cols-3 text-sm">
-            {[["ΑΦΜ", c?.afm], ["ΑΜ ΕΟΠΥΥ", c?.eopyy_registry], [t("Κωδικός ΣΗΣ", "ΣΗΣ code"), c?.pharmacy_code]].map(([lbl, val]) => (
+            {[["ΑΦΜ", c?.afm], [t("ΑΜ ΕΟΠΥΥ", "ΕΟΠΥΥ reg. no."), c?.eopyy_registry], [t("Κωδικός ΣΗΣ", "ΣΗΣ code"), c?.pharmacy_code]].map(([lbl, val]) => (
               <div key={lbl as string} className="rounded-lg border border-slate-200 px-3 py-2 dark:border-slate-700">
                 <div className="text-[11px] text-slate-400">{lbl}</div>
                 <div className="font-medium text-slate-800 dark:text-slate-100">{(val as string) || <span className="text-slate-300">{t("— μετά τη σύνδεση", "— after connecting")}</span>}</div>

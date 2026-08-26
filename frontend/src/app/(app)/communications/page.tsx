@@ -15,10 +15,10 @@ type Campaign = { id: string; channel: string; subject?: string | null; recipien
 
 type T = (el: string, en: string) => string;
 // Θεραπευτικές κατηγορίες (ίδια κλειδιά με services/marketing.py) — για στόχευση 1-κλικ.
-const THERAPY_CATS: [string, string][] = [
-  ["diabetes", "🩸 Διαβήτης"], ["hypertension", "❤️ Υπέρταση"], ["cardio", "🫀 Καρδιολογικά"],
-  ["cholesterol", "🧈 Χοληστερίνη"], ["thyroid", "🦋 Θυρεοειδής"], ["respiratory", "🫁 Αναπνευστικά"],
-  ["allergy", "🤧 Αλλεργίες"], ["psych", "🧠 Νευρο/Ψυχ."], ["osteo", "🦴 Οστεοπόρωση"], ["gastro", "🩹 Γαστρεντερικά"],
+const THERAPY_CATS: [string, string, string][] = [
+  ["diabetes", "🩸 Διαβήτης", "🩸 Diabetes"], ["hypertension", "❤️ Υπέρταση", "❤️ Hypertension"], ["cardio", "🫀 Καρδιολογικά", "🫀 Cardiac"],
+  ["cholesterol", "🧈 Χοληστερίνη", "🧈 Cholesterol"], ["thyroid", "🦋 Θυρεοειδής", "🦋 Thyroid"], ["respiratory", "🫁 Αναπνευστικά", "🫁 Respiratory"],
+  ["allergy", "🤧 Αλλεργίες", "🤧 Allergies"], ["psych", "🧠 Νευρο/Ψυχ.", "🧠 Neuro/Psych"], ["osteo", "🦴 Οστεοπόρωση", "🦴 Osteoporosis"], ["gastro", "🩹 Γαστρεντερικά", "🩹 Gastrointestinal"],
 ];
 const makeSegments = (t: T) => [
   { value: "all", label: t("Όλοι (με συγκατάθεση)", "Everyone (with consent)"), needs: null },
@@ -99,7 +99,7 @@ export default function CommunicationsPage() {
             <button onClick={() => setChannel("email")} className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm font-medium ${channel === "email" ? "border-brand-300 bg-brand-50 text-brand-700" : "border-slate-300 text-slate-600"}`}><Mail className="h-4 w-4" /> Email</button>
             <button onClick={() => setChannel("sms")} className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm font-medium ${channel === "sms" ? "border-brand-300 bg-brand-50 text-brand-700" : "border-slate-300 text-slate-600"}`}><MessageSquare className="h-4 w-4" /> SMS</button>
             <button onClick={() => setChannel("viber")} className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm font-medium ${channel === "viber" ? "border-violet-300 bg-violet-50 text-violet-700" : "border-slate-300 text-slate-600"}`}><MessageSquare className="h-4 w-4" /> Viber</button>
-            <button onClick={() => setChannel("push")} className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm font-medium ${channel === "push" ? "border-emerald-300 bg-emerald-50 text-emerald-700" : "border-slate-300 text-slate-600"}`}><Smartphone className="h-4 w-4" /> Push <span className="rounded-full bg-emerald-100 px-1.5 text-[10px] font-bold text-emerald-700">ΔΩΡΕΑΝ</span></button>
+            <button onClick={() => setChannel("push")} className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm font-medium ${channel === "push" ? "border-emerald-300 bg-emerald-50 text-emerald-700" : "border-slate-300 text-slate-600"}`}><Smartphone className="h-4 w-4" /> Push <span className="rounded-full bg-emerald-100 px-1.5 text-[10px] font-bold text-emerald-700">{t("ΔΩΡΕΑΝ", "FREE")}</span></button>
           </div>
 
           {/* audience builder */}
@@ -112,7 +112,7 @@ export default function CommunicationsPage() {
               {seg.needs === "therapy"
                 ? <select value={value} onChange={(e) => setValue(e.target.value)} className={`${inp} w-full sm:w-72`}>
                     <option value="">{t("— διάλεξε κατηγορία —", "— pick a category —")}</option>
-                    {THERAPY_CATS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+                    {THERAPY_CATS.map(([k, el, en]) => <option key={k} value={k}>{t(el, en)}</option>)}
                   </select>
                 : seg.needs ? <input value={value} onChange={(e) => setValue(e.target.value)} placeholder={seg.ph} className={`${inp} w-full sm:w-72`} /> : null}
               <span className="ml-auto inline-flex items-center gap-1.5 rounded-lg bg-white px-3 py-2 text-sm"><Users className="h-4 w-4 text-brand-600" /> {t("Παραλήπτες:", "Recipients:")} <b className="text-slate-900">{audience.isFetching ? "…" : count}</b></span>

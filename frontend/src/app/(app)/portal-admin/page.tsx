@@ -17,6 +17,7 @@ type DateRange = { start_date: string; end_date: string; start: string; end: str
 type Availability = { mode: string; slots: Slot[]; date_ranges?: DateRange[] };
 type Service = { id?: string; _id?: string; name: string; kind?: string; description?: string; active?: boolean; duration_min?: number; availability?: Availability };
 const DAYS = ["Δευ", "Τρί", "Τετ", "Πέμ", "Παρ", "Σάβ", "Κυρ"];
+const DAYS_EN = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const dmy = (iso: string) => { const [y, m, d] = iso.split("-"); return d && m ? `${d}/${m}${y ? "/" + y.slice(2) : ""}` : iso; };
 const rangeLabel = (r: DateRange) => (r.start_date === r.end_date ? dmy(r.start_date) : `${dmy(r.start_date)}–${dmy(r.end_date)}`) + ` ${r.start}–${r.end}`;
 const isoToDmy = (iso: string) => { const [y, m, d] = (iso || "").split("-"); return d ? `${d}/${m}/${y}` : ""; };
@@ -30,6 +31,7 @@ const dmyToIso = (s: string) => {
 
 /** Locale-independent date field — always shows ηη/μμ/εεεε, stores ISO (yyyy-mm-dd). */
 function DateField({ value, onChange, className }: { value: string; onChange: (iso: string) => void; className?: string }) {
+  const t = useT();
   const [text, setText] = useState(isoToDmy(value));
   useEffect(() => { setText(isoToDmy(value)); }, [value]);
   function handle(raw: string) {
@@ -41,15 +43,15 @@ function DateField({ value, onChange, className }: { value: string; onChange: (i
     const iso = dmyToIso(out);
     if (iso) onChange(iso);
   }
-  return <input value={text} onChange={(e) => handle(e.target.value)} placeholder="ηη/μμ/εεεε" inputMode="numeric" maxLength={10} className={className} />;
+  return <input value={text} onChange={(e) => handle(e.target.value)} placeholder={t("ηη/μμ/εεεε", "dd/mm/yyyy")} inputMode="numeric" maxLength={10} className={className} />;
 }
-const slotsSummary = (av?: Availability) => {
-  if (!av || av.mode !== "custom") return "Όλο το ωράριο του φαρμακείου";
+const slotsSummary = (av: Availability | undefined, t: (el: string, en: string) => string) => {
+  if (!av || av.mode !== "custom") return t("Όλο το ωράριο του φαρμακείου", "All pharmacy hours");
   const parts = [
-   ...(av.slots ?? []).map((s) => `${DAYS[s.day]} ${s.start}–${s.end}`),
+   ...(av.slots ?? []).map((s) => `${t(DAYS[s.day], DAYS_EN[s.day])} ${s.start}–${s.end}`),
    ...(av.date_ranges ?? []).map((r) => `📅 ${rangeLabel(r)}`),
   ];
-  return parts.length ? parts.join(" · ") : "Όλο το ωράριο του φαρμακείου";
+  return parts.length ? parts.join(" · ") : t("Όλο το ωράριο του φαρμακείου", "All pharmacy hours");
 };
 type Cda = { available?: boolean; found?: boolean; doctor?: string | null; medicines?: string[]; issue_date?: string | null; deadline_date?: string | null; intangible?: boolean; exec_count?: number | null };
 type RxReq = { id?: string; _id?: string; kind: string; barcode?: string | null; note?: string | null; status: string; created_at: string; patient_name?: string; patient_phone?: string; image_id?: string | null; cda?: Cda | null; reply?: string | null; available_date?: string | null };
@@ -57,6 +59,7 @@ type RxReq = { id?: string; _id?: string; kind: string; barcode?: string | null;
 const oid = (x: { id?: string; _id?: string }) => x.id ?? x._id ?? "";
 const dtl = (s: string) => fmtDateTime(s);
 const RX_STATUS: Record<string, string> = { new: "Νέα", in_progress: "Σε εξέλιξη", answered: "Απαντήθηκε", done: "Ολοκληρώθηκε", rejected: "Απορρίφθηκε" };
+const RX_STATUS_EN: Record<string, string> = { new: "New", in_progress: "In progress", answered: "Answered", done: "Done", rejected: "Rejected" };
 const rxStatusCls = (s: string) => ["answered", "done"].includes(s) ? "bg-emerald-100 text-emerald-700" : s === "rejected" ? "bg-rose-100 text-rose-700" : s === "in_progress" ? "bg-amber-100 text-amber-700" : "bg-sky-100 text-sky-700";
 
 type PortalCustomers = { registered: number; total: number; to_invite: number; adoption_pct: number; contactable: number; registered_list: { name: string; since?: string | null; last_seen?: string | null }[]; tenant_id?: string; pharmacy_name?: string | null; register_url?: string };
@@ -87,11 +90,11 @@ function PortalCustomersTab() {
     if (!w) return;
     w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>QR ${phName}</title></head>
       <body style="margin:0;font-family:system-ui,sans-serif;text-align:center;padding:36px 24px;color:#0f172a">
-        <div style="font-size:14px;letter-spacing:.08em;color:#6366f1;font-weight:700">RxVision · ΠΥΛΗ ΠΕΛΑΤΩΝ</div>
+        <div style="font-size:14px;letter-spacing:.08em;color:#6366f1;font-weight:700">RxVision · ${t("ΠΥΛΗ ΠΕΛΑΤΩΝ", "CUSTOMER PORTAL")}</div>
         <h1 style="font-size:24px;margin:8px 0 2px">${phName}</h1>
-        <p style="font-size:16px;color:#334155;margin:0 0 18px">Σκάναρε &amp; κάνε εγγραφή — δες τις συνταγές σου &amp; κλείσε ραντεβού!</p>
+        <p style="font-size:16px;color:#334155;margin:0 0 18px">${t("Σκάναρε &amp; κάνε εγγραφή — δες τις συνταγές σου &amp; κλείσε ραντεβού!", "Scan &amp; register — see your prescriptions &amp; book appointments!")}</p>
         <img src="${dataUrl}" style="width:320px;height:320px"/>
-        <p style="font-size:13px;color:#64748b;margin-top:18px">Εγγραφή με το ΑΜΚΑ σου · μόλις 1 λεπτό</p>
+        <p style="font-size:13px;color:#64748b;margin-top:18px">${t("Εγγραφή με το ΑΜΚΑ σου · μόλις 1 λεπτό", "Register with your ΑΜΚΑ · just 1 minute")}</p>
       </body></html>`);
     w.document.close(); w.focus(); setTimeout(() => w.print(), 250);
   }
@@ -293,10 +296,10 @@ function RxRequestsTab() {
         return (
           <div key={id} className="rx-card p-4">
             <div className="flex items-start justify-between gap-2">
-              <span className="font-medium text-slate-800 dark:text-slate-200">{r.kind === "barcode" ? <>📋 Barcode <span className="font-mono text-xs">{r.barcode}</span></> : "📷 Φωτογραφία συνταγής"}</span>
+              <span className="font-medium text-slate-800 dark:text-slate-200">{r.kind === "barcode" ? <>📋 Barcode <span className="font-mono text-xs">{r.barcode}</span></> : t("📷 Φωτογραφία συνταγής", "📷 Prescription photo")}</span>
               <div className="flex shrink-0 flex-col items-end gap-1">
                 <span className="text-xs text-slate-400">{dtl(r.created_at)}</span>
-                <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${rxStatusCls(r.status)}`}>{RX_STATUS[r.status] ?? r.status}</span>
+                <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${rxStatusCls(r.status)}`}>{RX_STATUS[r.status] ? t(RX_STATUS[r.status], RX_STATUS_EN[r.status] ?? RX_STATUS[r.status]) : r.status}</span>
               </div>
             </div>
             {/* Στοιχεία πελάτη — ξεχωριστά & με ετικέτες */}
@@ -385,7 +388,7 @@ function ServiceRow({ s }: { s: Service }) {
       <div className="flex items-center justify-between gap-2">
         <div className="min-w-0">
           <div className="text-sm font-medium text-slate-800 dark:text-slate-200">{s.name}</div>
-          <div className="text-[11px] text-slate-400">🕒 {slotsSummary(s.availability)}</div>
+          <div className="text-[11px] text-slate-400">🕒 {slotsSummary(s.availability, t)}</div>
         </div>
         <div className="flex shrink-0 items-center gap-2">
           <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-600 dark:bg-slate-800 dark:text-slate-300">{s.kind === "vaccination" ? t("Εμβολιασμός", "Vaccination") : t("Υπηρεσία", "Service")}</span>
@@ -408,7 +411,7 @@ function ServiceRow({ s }: { s: Service }) {
                 {slots.map((sl, i) => (
                   <div key={i} className="flex flex-wrap items-center gap-2">
                     <select value={sl.day} onChange={(e) => setSlots(slots.map((x, j) => j === i ? {...x, day: +e.target.value } : x))} className="rounded-lg border border-slate-300 px-2 py-1 text-sm dark:border-slate-700 dark:bg-slate-800">
-                      {DAYS.map((d, di) => <option key={di} value={di}>{d}</option>)}
+                      {DAYS.map((d, di) => <option key={di} value={di}>{t(d, DAYS_EN[di])}</option>)}
                     </select>
                     <input type="time" value={sl.start} onChange={(e) => setSlots(slots.map((x, j) => j === i ? {...x, start: e.target.value } : x))} className="rounded-lg border border-slate-300 px-2 py-1 text-sm dark:border-slate-700 dark:bg-slate-800" />
                     <span className="text-slate-400">–</span>
