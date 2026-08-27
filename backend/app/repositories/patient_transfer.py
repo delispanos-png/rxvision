@@ -17,6 +17,7 @@ from bson import ObjectId
 
 from app.core.db import shared_db
 from app.repositories.base import jsonsafe
+from app.utils.masking import mask_row, mask_rows
 
 _TTL_DAYS = 14          # αίτημα που δεν απαντήθηκε → λήγει
 
@@ -43,6 +44,9 @@ def _oid(v):
 
 class PatientTransferRepository:
     """Global (cross-tenant) — όπως τα `patient_links`. Κάθε πρόσβαση φιλτράρεται ρητά."""
+
+    def __init__(self, *, demo: bool = False) -> None:
+        self.demo = demo            # «πελάτης παρουσίασης» → ψευδωνυμοποίηση PII στα reads
 
     @property
     def db(self):
@@ -87,8 +91,9 @@ class PatientTransferRepository:
                 url="/portal")
         except Exception:  # noqa: BLE001
             pass
-        return {"ok": True, "transfer_id": str(res.inserted_id),
-                "patient_name": f"{acc.get('first_name', '')} {acc.get('last_name', '')}".strip()}
+        return mask_row({"ok": True, "transfer_id": str(res.inserted_id),
+                         "patient_name": f"{acc.get('first_name', '')} {acc.get('last_name', '')}".strip()},
+                        self.demo)
 
     async def list_for_tenant(self, tenant_id: str) -> list[dict]:
         rows = [r async for r in self.db["patient_transfers"]
@@ -182,7 +187,8 @@ class PatientTransferRepository:
                 "reason": r.get("reason"), "reason_label": REASONS.get(r.get("reason") or "", "—"),
                 "note": r.get("note"), "at": r.get("at"), "read": bool(r.get("read")),
             })
-        return jsonsafe(out)
+        # demo: pseudonymize the patient's name + ΑΜΚΑ shown to the old pharmacy (GDPR).
+        return jsonsafe(mask_rows(out, self.demo))
 
     async def mark_notice_read(self, notice_id: str, tenant_id: str) -> dict:
         oid = _oid(notice_id)

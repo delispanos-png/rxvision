@@ -3,6 +3,7 @@
 // In-app pop-ups (toast + confirm) για την πύλη πελατών — αντικαθιστούν τα browser alert()/confirm().
 // Χρήση από παντού: `import { toast, confirmDialog } from "@/components/portal/Toaster"`.
 import { useEffect, useState } from "react";
+import { useT } from "@/store/prefStore";
 
 type Toast = { id: number; msg: string; kind: "info" | "success" | "error" };
 type Confirm = { id: number; msg: string; resolve: (v: boolean) => void };
@@ -32,6 +33,7 @@ export function confirmDialog(msg: string): Promise<boolean> {
 }
 
 export function Toaster() {
+  const t = useT();
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [confirm, setConfirm] = useState<Confirm | null>(null);
   useEffect(() => {
@@ -57,8 +59,8 @@ export function Toaster() {
           <div onClick={(e) => e.stopPropagation()} className="relative w-full max-w-sm rounded-2xl bg-white dark:bg-slate-800 p-5 shadow-2xl">
             <div className="text-sm text-slate-700 dark:text-slate-200">{confirm.msg}</div>
             <div className="mt-4 flex justify-end gap-2">
-              <button onClick={() => done(false)} className="rounded-xl border border-slate-200 dark:border-slate-700 px-4 py-2 text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800">Άκυρο</button>
-              <button onClick={() => done(true)} className="rounded-xl bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700">Ναι</button>
+              <button onClick={() => done(false)} className="rounded-xl border border-slate-200 dark:border-slate-700 px-4 py-2 text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800">{t("Άκυρο", "Cancel")}</button>
+              <button onClick={() => done(true)} className="rounded-xl bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700">{t("Ναι", "Yes")}</button>
             </div>
           </div>
         </div>

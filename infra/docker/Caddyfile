@@ -91,6 +91,9 @@
 		}
 		reverse_proxy api:8000 {
 			header_up X-Real-Client-IP {client_ip}
+			# API απαντήσεις ΠΟΤΕ cached (browser/CDN) — αλλιώς stale PII (π.χ. demo masking «δεν
+			# δούλευε» επειδή ο browser σέρβιρε παλιά /renewals). Auth-scoped → private.
+			header_down Cache-Control "no-store, no-cache, must-revalidate, private"
 		}
 	}
 	handle /health {

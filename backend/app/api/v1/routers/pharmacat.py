@@ -34,7 +34,9 @@ class ReportIn(BaseModel):
 
 
 def _repo(ctx: TenantContext) -> PharmaCatRepository:
-    return PharmaCatRepository(tenant_id=ctx.tenant_id)
+    # demo flag threaded for consistency, but PharmaCat exposes NO patient/doctor PII — every
+    # name-like field it returns is a DRUG / substance / medicine name, which must never be masked.
+    return PharmaCatRepository(tenant_id=ctx.tenant_id, demo=ctx.demo)
 
 
 @router.get("/status")

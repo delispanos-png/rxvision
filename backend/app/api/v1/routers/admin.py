@@ -2896,6 +2896,53 @@ async def recompute_markup(background: BackgroundTasks,
     return {"recompute": "started"}
 
 
+# ── Προμήθειες συναλλαγής e-shop ─────────────────────────────────────────────
+class EshopFeeCfgIn(BaseModel):
+    enabled: bool | None = None
+    default_cents: int | None = None
+    min_order_cents: int | None = None
+    cap_pct: int | None = None
+    min_charge_cents: int | None = None
+    charge_weekday: int | None = None
+
+
+class EshopFeeTenantIn(BaseModel):
+    fee_cents: int | None = None   # <0 ⇒ καθαρισμός override (χρήση default)
+    exempt: bool | None = None
+
+
+@router.get("/eshop-fees/config")
+async def eshop_fees_config(_: PlatformContext = Depends(get_platform_admin)):
+    from app.services import eshop_fees
+    return await eshop_fees.get_config()
+
+
+@router.put("/eshop-fees/config")
+async def eshop_fees_set_config(body: EshopFeeCfgIn, _: PlatformContext = Depends(get_platform_admin)):
+    from app.services import eshop_fees
+    return await eshop_fees.set_config(body.model_dump(exclude_none=True))
+
+
+@router.get("/eshop-fees/overview")
+async def eshop_fees_overview(_: PlatformContext = Depends(get_platform_admin)):
+    from app.services import eshop_fees
+    return {"items": await eshop_fees.admin_overview()}
+
+
+@router.put("/eshop-fees/tenant/{tenant_id}")
+async def eshop_fees_set_tenant(tenant_id: str, body: EshopFeeTenantIn,
+                                _: PlatformContext = Depends(get_platform_admin)):
+    from app.services import eshop_fees
+    await eshop_fees.set_tenant(tenant_id, fee_cents=body.fee_cents, exempt=body.exempt)
+    return {"ok": True}
+
+
+@router.post("/eshop-fees/tenant/{tenant_id}/charge")
+async def eshop_fees_charge_now(tenant_id: str, _: PlatformContext = Depends(get_platform_admin)):
+    from app.services import eshop_fees
+    return await eshop_fees.charge_tenant(tenant_id, force=True)
+
+
 
 
 

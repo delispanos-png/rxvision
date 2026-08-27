@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 
 from app.repositories.base import BaseRepository, jsonsafe
 from app.repositories.pharmacy_catalog import PharmacyCatalogRepository
+from app.utils.masking import mask_row, pseudo_phone
 from app.repositories.shop_campaigns import ShopCampaignRepository, campaign_pct_for
 from app.repositories.shop_promos import ShopBundleRepository, ShopCouponRepository
 from app.services.shop_pricing import bundle_savings, coupon_discount, tier_discount
@@ -85,6 +86,26 @@ def compute_order_vat(items: list[dict], *, non_rx_reduction_cents: int = 0, red
 
 class OrdersDeliveryRepository(BaseRepository):
     collection_name = "orders_delivery"
+
+    # ── demo/presentation masking (GDPR): pseudonymize the CUSTOMER's PII on read ──────────
+    # Only patient/customer person fields — never the drug/item names in `items`.
+    def _mask_order(self, o: dict) -> dict:
+        if not self.demo or not isinstance(o, dict):
+            return o
+        mask_row(o, True)                                   # patient_name
+        if o.get("patient_phone"):
+            o["patient_phone"] = pseudo_phone(o["patient_phone"], True)
+        if isinstance(o.get("address"), dict):
+            mask_row(o["address"], True)                    # address / area / city / street
+        if isinstance(o.get("courier_auth"), dict):
+            mask_row(o["courier_auth"], True)               # authorized pick-up person's name
+        return o
+
+    def _mask_orders(self, rows: list[dict] | None) -> list[dict] | None:
+        if self.demo and rows:
+            for r in rows:
+                self._mask_order(r)
+        return rows
 
     # ── per-pharmacy delivery settings ──────────────────────────────────────
     async def settings(self) -> dict:
@@ -353,6 +374,13 @@ class OrdersDeliveryRepository(BaseRepository):
         }
         res = await self.insert_one(doc)
         order_total = doc["total_cents"]
+        try:   # προμήθεια συναλλαγής e-shop (no-op αν off/εξαίρεση)· ΠΟΤΕ δεν ρίχνει τη δημιουργία
+            from app.services import eshop_fees
+            await eshop_fees.accrue(self.tenant_id, res.inserted_id,
+                                    order_no=str(res.inserted_id)[-6:],
+                                    amount_total=doc.get("total_cents"))
+        except Exception:  # noqa: BLE001
+            pass
         # Online πληρωμή → Viva Smart Checkout (κάρτα/IRIS). Επιστρέφει checkout_url για redirect.
         if payment_method == "online" and order_total > 0:
             st = await self.settings()
@@ -422,7 +450,7 @@ class OrdersDeliveryRepository(BaseRepository):
     async def my_subscriptions(self, account_id) -> list[dict]:
         rows = [r async for r in self._db["order_subscriptions"].find(
             {"tenant_id": self.tenant_id, "account_id": account_id, "active": True}).sort("created_at", -1)]
-        return jsonsafe(rows)
+        return jsonsafe(self._mask_orders(rows))
 
     async def cancel_subscription(self, sub_id: str, account_id) -> dict:
         from bson import ObjectId
@@ -457,7 +485,7 @@ class OrdersDeliveryRepository(BaseRepository):
         rows = await self.find({"account_id": account_id}, sort=[("created_at", -1)], limit=50)
         if not rows:
             rows = await self.find({"account_id": _oid(account_id)}, sort=[("created_at", -1)], limit=50)
-        return jsonsafe(rows)
+        return jsonsafe(self._mask_orders(rows))
 
     # ── pharmacist side ─────────────────────────────────────────────────────
     async def list_orders(self, *, status: str | None = None, limit: int = 100) -> list[dict]:
@@ -466,7 +494,7 @@ class OrdersDeliveryRepository(BaseRepository):
             q["status"] = {"$in": list(_OPEN)}
         elif status:
             q["status"] = status
-        return jsonsafe(await self.find(q, sort=[("created_at", -1)], limit=limit))
+        return jsonsafe(self._mask_orders(await self.find(q, sort=[("created_at", -1)], limit=limit)))
 
     async def pending_count(self) -> int:
         return await self.count({"status": {"$in": ["pending", "new", "preparing"]}})

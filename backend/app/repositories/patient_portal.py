@@ -22,6 +22,7 @@ from bson import Binary, ObjectId
 from app.core.db import shared_db
 from app.repositories.base import BaseRepository, jsonsafe
 from app.services.vault_service import vault
+from app.utils.masking import pseudo_name
 from app.utils.anonymization import pseudonymize
 
 
@@ -400,7 +401,7 @@ class PatientAccountRepository:
         return [{"tenant_id": r["tenant_id"], "patient_ref": str(r["patient_ref"]),
                  "pharmacy_name": r.get("pharmacy_name")} for r in rows]
 
-    async def all_prescriptions(self, account_id, *, limit: int = 200) -> list[dict]:
+    async def all_prescriptions(self, account_id, *, limit: int = 200, demo: bool = False) -> list[dict]:
         """ΟΛΕΣ οι εκτελέσεις του πελάτη, από ΟΛΑ τα φαρμακεία του, με ΕΤΙΚΕΤΑ φαρμακείου.
 
         Η συνταγή είναι του πελάτη → βλέπει τα δικά του παντού. Κάθε ερώτημα παραμένει
@@ -410,13 +411,17 @@ class PatientAccountRepository:
         out: list[dict] = []
         for ln in await self.links(account_id):
             try:
-                rows = await PatientRxRepository(tenant_id=ln["tenant_id"]).my_prescriptions(
+                rows = await PatientRxRepository(
+                    tenant_id=ln["tenant_id"], demo=demo).my_prescriptions(
                     ln["patient_ref"], limit=limit)
             except Exception:  # noqa: BLE001
                 continue                      # ένα προβληματικό φαρμακείο δεν ρίχνει όλη τη λίστα
+            pn = ln.get("pharmacy_name")
+            if demo and pn:   # όνομα φαρμακείου (=φαρμακοποιού) → μερική απόκρυψη σε demo
+                pn = pseudo_name(pn, True)
             for r in rows:
                 r["tenant_id"] = ln["tenant_id"]
-                r["pharmacy_name"] = ln.get("pharmacy_name")
+                r["pharmacy_name"] = pn
                 out.append(r)
         out.sort(key=_exec_ts, reverse=True)
         return out[:limit]
@@ -520,7 +525,7 @@ class PatientAccountRepository:
             {"_id": oid}, {"$set": {"favorite_tenant_id": new}})
         return new
 
-    async def portal_customers(self, tenant_id: str, *, limit: int = 300) -> dict:
+    async def portal_customers(self, tenant_id: str, *, limit: int = 300, demo: bool = False) -> dict:
         """Pharmacist view: how many of THIS pharmacy's patients are registered in the portal
         («favourite» customers) vs how many remain to invite. patient_links.patient_ref ==
         patients_anonymized._id."""
@@ -540,6 +545,9 @@ class PatientAccountRepository:
                 reg_list.append({"name": p.get("full_name") or "—",
                                  "since": lk.get("created_at"), "last_seen": p.get("last_seen_at")})
         reg_list.sort(key=lambda x: str(x.get("since") or ""), reverse=True)
+        if demo:   # «πελάτης παρουσίασης»: κρύψε τα ονόματα των εγγεγραμμένων πελατών
+            from app.utils.masking import mask_rows
+            mask_rows(reg_list, True)
         # patients we could proactively contact (have a mobile/email on file, not yet registered)
         contactable = await db["patient_contacts"].count_documents(
             {"tenant_id": tenant_id, "active": {"$ne": False},
@@ -828,7 +836,15 @@ class PatientRxRepository(BaseRepository):
                                       "cond": {"$eq": ["$$p._id", "$$it.product_id"]}}}}},
                                   "in": {"$ifNull": ["$$m.name", "Φάρμακο"]}}}}}}},
         ]
-        return await self.aggregate(pipe)
+        rows = await self.aggregate(pipe)
+        # demo/presentation: κρύβουμε ΙΑΤΡΟ (prescriber) + ΦΑΡΜΑΚΕΙΟ (=όνομα φαρμακοποιού) — τα φάρμακα μένουν.
+        if self.demo:
+            for r in rows:
+                if r.get("doctor"):
+                    r["doctor"] = pseudo_name(r["doctor"], True)
+                if r.get("pharmacy_name"):
+                    r["pharmacy_name"] = pseudo_name(r["pharmacy_name"], True)
+        return rows
 
     async def my_prescription_detail(self, patient_ref: str, barcode: str) -> dict | None:
         """Full drill-down for ONE of the patient's own prescriptions (ownership enforced by
@@ -856,6 +872,9 @@ class PatientRxRepository(BaseRepository):
                 "dosage": _format_dosage(d.get("dose"), d.get("frequency"), d.get("duration")),
                 "details": d,
             })
+        doc_name = (doctor or {}).get("full_name")
+        if self.demo and doc_name:                 # pseudonymize the DOCTOR name (medicines stay real)
+            doc_name = pseudo_name(doc_name, True)
         return jsonsafe({
             "barcode": str(ex.get("external_id", "")).split(":")[0],
             "executed_at": ex.get("executed_at"), "status": ex.get("status"),
@@ -863,7 +882,7 @@ class PatientRxRepository(BaseRepository):
             "repeat_current": ex.get("repeat_current", 1), "repeat_total": ex.get("repeat_total", 1),
             "repeat_root": ex.get("repeat_root"), "next_open_date": ex.get("next_open_date"),
             "icd10": await self._icd10_named(ex.get("icd10", [])),
-            "doctor": (doctor or {}).get("full_name"), "specialty": (doctor or {}).get("specialty"),
+            "doctor": doc_name, "specialty": (doctor or {}).get("specialty"),
             "details": ex.get("details") or {}, "items": items,
         })
 

@@ -22,6 +22,25 @@ def bill_subscriptions() -> dict:
     return asyncio.run(_run())
 
 
+@celery_app.task(name="app.workers.billing.charge_eshop_fees")
+def charge_eshop_fees() -> dict:
+    """Εβδομαδιαία χρέωση προμηθειών συναλλαγής e-shop. Το beat τρέχει ΚΑΘΕ μέρα· εδώ ελέγχουμε αν
+    σήμερα είναι η ρυθμισμένη ημέρα (charge_weekday) — έτσι η ημέρα αλλάζει live από τον admin."""
+    from datetime import datetime, timezone
+
+    from app.services import eshop_fees
+
+    async def _run() -> dict:
+        cfg = await eshop_fees.get_config()
+        if not cfg["enabled"]:
+            return {"skipped": "disabled"}
+        if datetime.now(tz=timezone.utc).weekday() != cfg["charge_weekday"]:
+            return {"skipped": "not_charge_day"}
+        return await eshop_fees.charge_weekly()
+
+    return asyncio.run(_run())
+
+
 @celery_app.task(name="app.workers.billing.purge_expired_trials")
 def purge_expired_trials() -> dict:
     """Ημερήσιο: διαγράφει δοκιμαστικές συνδρομές που έληξαν >N ημέρες (default 20) & δεν μετατράπηκαν,

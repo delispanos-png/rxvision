@@ -10,6 +10,7 @@ from bson import ObjectId
 from bson.errors import InvalidId
 
 from app.repositories.base import BaseRepository, jsonsafe
+from app.utils.masking import pseudo_name
 
 CONTACT_FIELDS = (
     "phone", "mobile", "email", "address", "city", "postal_code",
@@ -217,11 +218,13 @@ class PatientContactRepository(BaseRepository):
         items = []
         for d in facet.get("items", []):
             email, mobile = d.get("email"), d.get("mobile")
+            name = d.get("name") or "—"
             if self.demo:                       # GDPR: κρύψε PII σε demo/περιορισμένο χρήστη
                 email = mobile = None
+                name = pseudo_name(name, True)  # ψευδώνυμο ονόματος (η λίστα μένει πλοηγήσιμη)
             items.append({
                 "patient_id": str(d["_id"]),
-                "name": d.get("name") or "—",
+                "name": name,
                 "email": email or None,
                 "mobile": mobile or None,
                 "source": d.get("contact_source"),

@@ -27,6 +27,7 @@ const GROUPS: { label: string; icon: typeof LayoutGrid; items: { label: string; 
       { label: "Συνδρομές", icon: CreditCard, href: "/admin/subscriptions", section: "subscriptions" },
       { label: "Πακέτα & SLA", icon: Boxes, href: "/admin/packages", section: "subscriptions" },
       { label: "Add-ons", icon: Sparkles, href: "/admin/addons", section: "subscriptions" },
+      { label: "Προμήθειες e-shop", icon: Receipt, href: "/admin/eshop-fees", section: "subscriptions" },
       { label: "Αιτήματα αναβάθμισης", icon: ArrowUpCircle, href: "/admin/plan-changes", section: "subscriptions" },
       { label: "Εκκρεμείς εγγραφές", icon: Clock, href: "/admin/pending", section: "subscriptions" },
       { label: "Leads (πρώην trials)", icon: Users, href: "/admin/leads", section: "leads" },

@@ -80,7 +80,7 @@ class ServiceIn(BaseModel):
 async def portal_customers(ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
     """Adoption picture: how many of the pharmacy's patients are registered in the portal + how
     many remain to invite."""
-    return await PatientAccountRepository().portal_customers(ctx.tenant_id)
+    return await PatientAccountRepository().portal_customers(ctx.tenant_id, demo=ctx.demo)
 
 
 # ── live "pending" feed (polled by the panel to pop up new requests) ──

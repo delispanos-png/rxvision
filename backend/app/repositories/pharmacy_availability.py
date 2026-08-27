@@ -244,25 +244,33 @@ class PharmacyAvailabilityRepository(BaseRepository):
 
         if is_overnight:
             txt = f"Διανυκτέρευση έως {hm(next_closing)}"
+            txt_en = f"Overnight duty until {hm(next_closing)}"
         elif is_on_duty:
             txt = f"Σε εφημερία έως {hm(next_closing)}"
+            txt_en = f"On duty until {hm(next_closing)}"
         elif is_open:
             txt = (f"Κλείνει σύντομα — {hm(next_closing)}" if closing_soon
                    else f"Ανοιχτό έως {hm(next_closing)}")
+            txt_en = (f"Closing soon — {hm(next_closing)}" if closing_soon
+                      else f"Open until {hm(next_closing)}")
         elif next_opening:
             nd = next_opening.astimezone(ATHENS).date()
             today = now.astimezone(ATHENS).date()
             if nd == today:
                 txt = f"Κλειστό — ανοίγει στις {hm(next_opening)}"
+                txt_en = f"Closed — opens at {hm(next_opening)}"
             elif nd == today + timedelta(days=1):
                 txt = f"Κλειστό — ανοίγει αύριο στις {hm(next_opening)}"
+                txt_en = f"Closed — opens tomorrow at {hm(next_opening)}"
             else:
                 txt = f"Κλειστό — ανοίγει {next_opening.astimezone(ATHENS).strftime('%d/%m στις %H:%M')}"
+                txt_en = f"Closed — opens {next_opening.astimezone(ATHENS).strftime('%d/%m at %H:%M')}"
         else:
             txt = "Κλειστό"
+            txt_en = "Closed"
 
         return {"isOpen": is_open, "isOnDuty": is_on_duty, "isOvernightDuty": is_overnight,
-                "closingSoon": closing_soon, "statusText": txt,
+                "closingSoon": closing_soon, "statusText": txt, "statusTextEn": txt_en,
                 "nextOpening": next_opening.isoformat() if next_opening else None,
                 "nextClosing": next_closing.isoformat() if next_closing else None,
                 "now": now.astimezone(ATHENS).isoformat()}

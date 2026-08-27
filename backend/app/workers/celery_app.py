@@ -79,6 +79,12 @@ celery_app.conf.beat_schedule = {
         "task": "app.workers.snapshots.apply_retention",
         "schedule": crontab(hour=3, minute=0),
     },
+    # Προμήθειες συναλλαγής e-shop — τρέχει ΚΑΘΕ μέρα 04:40 UTC (~07:40 Αθήνα)· το task χρεώνει ΜΟΝΟ
+    # την ρυθμισμένη ημέρα (charge_weekday) & όσους έχουν δεδουλευμένα ≥ κατώφλι (roll-over αλλιώς).
+    "charge-eshop-fees": {
+        "task": "app.workers.billing.charge_eshop_fees",
+        "schedule": crontab(hour=4, minute=40),
+    },
     # Έλεγχος ΑΚΥΡΩΣΕΩΝ — καθημερινά ΜΕΤΑ ΤΟ ΩΡΑΡΙΟ (19:00 UTC = 22:00 Αθήνα, μετά το κλείσιμο των
     # φαρμακείων & πριν το ΗΔΥΚΑ maintenance ~23:00). Ελαφρύ: βλέπει 15 μέρες πίσω τι επιστρέφει η ΗΔΥΚΑ
     # και ακυρώνει όσες δικές μας ΔΕΝ εμφανίζονται πλέον (η ΗΔΥΚΑ δεν δίνει λίστα ακυρωμένων). Χωρίς

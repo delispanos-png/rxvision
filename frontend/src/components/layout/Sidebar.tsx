@@ -15,7 +15,7 @@ import { Tooltip } from "@/components/ui/Tooltip";
 import {
   Activity, BarChart3, Boxes, Warehouse, Layers, CalendarClock, ChevronRight, LayoutDashboard,
   Mail, Megaphone, Salad, PackageSearch, Settings, Sparkles, Stethoscope, TrendingUp, Target, Users,
-  Brain, ShieldCheck, Tags, Syringe, Bot, Gift, BookOpen, ScrollText, Truck, Lock, X, UserPlus, Ticket, SlidersHorizontal, Heart, FileText, MessageSquare, PackageCheck, type LucideIcon,
+  Brain, ShieldCheck, Tags, Syringe, Bot, Gift, BookOpen, ScrollText, Truck, Lock, X, UserPlus, Ticket, SlidersHorizontal, Heart, FileText, MessageSquare, PackageCheck, Receipt, type LucideIcon,
 } from "lucide-react";
 
 // A leaf (direct link). `module` gates visibility (shown only when enabled/trial).
@@ -78,6 +78,7 @@ const GROUPS: Group[] = [
     { label: "Ενεργές παραγγελίες", en: "Active orders", icon: Truck, href: "/orders-delivery#orders", module: "order_delivery" },
     { label: "Ολοκληρωμένες", en: "Completed", icon: PackageCheck, href: "/orders-delivery#done", module: "order_delivery" },
     { label: "Ρυθμίσεις αποστολής", en: "Delivery settings", icon: SlidersHorizontal, href: "/orders-delivery#settings", module: "order_delivery" },
+    { label: "Προμήθειες συναλλαγών", en: "Transaction fees", icon: Receipt, href: "/eshop-fees", module: "order_delivery" },
   ] },
   // Πύλη πελατών — δικό της κύκλωμα· κάθε εσωτερική καρτέλα = αυτόνομο entry (URL hash).
   { title: "Πύλη πελατών", en: "Customer Portal", icon: Users, items: [

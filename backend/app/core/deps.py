@@ -40,6 +40,7 @@ class PatientContext:
     tenant_id: str
     patient_ref: str
     session_id: str | None = None
+    demo: bool = False               # «πελάτης παρουσίασης» → ψευδωνυμοποίηση PII και στην πύλη
 
 
 async def get_platform_admin(
@@ -73,8 +74,12 @@ async def get_patient_context(
     tid, pref = claims.get("tid"), claims.get("pref")
     if not tid or not pref:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "incomplete_patient_token")
+    # «Πελάτης παρουσίασης»: ο patient token δεν κουβαλά demo → το αντλούμε ζωντανά από τον tenant
+    # (μικρό lookup, ισχύει άμεσα και για υπάρχουσες συνεδρίες πύλης).
+    from app.core.db import shared_db
+    tdoc = await shared_db()["tenants"].find_one({"_id": tid}, {"demo": 1})
     return PatientContext(account_id=claims["sub"], tenant_id=tid, patient_ref=pref,
-                          session_id=claims.get("sid"))
+                          session_id=claims.get("sid"), demo=bool((tdoc or {}).get("demo")))
 
 
 async def get_current_context(

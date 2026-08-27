@@ -265,16 +265,21 @@ async def me(ctx: PatientContext = Depends(get_patient_context)):
     links = await repo.links(ctx.account_id)
     if mode == "single":   # κλείδωμα στο ενεργό (φαρμακείο εγγραφής) — κρύβεται εναλλαγή/κατάλογος
         links = [l for l in links if l.get("tenant_id") == ctx.tenant_id]
+    profile = {"first_name": acc.get("first_name"), "last_name": acc.get("last_name"),
+               "email": acc.get("email"), "phone": acc.get("phone"),
+               "amka": acc.get("amka"), "phone_verified": bool(acc.get("phone_verified")),
+               "email_verified": bool(acc.get("email_verified")),
+               "twofa_enabled": bool(acc.get("twofa_enabled")),
+               "consents": acc.get("consents") or {},
+               "address": acc.get("address"), "city": acc.get("city"),
+               "postal_code": acc.get("postal_code"), "theme": acc.get("theme"),
+               "avatar_url": f"/patient/avatar/{acc['avatar_id']}" if acc.get("avatar_id") else None}
+    if ctx.demo:   # «πελάτης παρουσίασης»: κρύβουμε ΜΟΝΟ το ΕΠΙΘΕΤΟ (κυρίως) — κρατάμε μικρό όνομα &
+        from app.utils.masking import mask_rows, mask_surname   # τα υπόλοιπα πραγματικά (επεξεργάσιμα)
+        profile["last_name"] = mask_surname(profile.get("last_name"), True)   # χωρίς κίνδυνο στο Save
+        mask_rows(links, True)   # + όνομα φαρμακείου (= όνομα φαρμακοποιού) στα linked φαρμακεία
     return {
-        "profile": {"first_name": acc.get("first_name"), "last_name": acc.get("last_name"),
-                    "email": acc.get("email"), "phone": acc.get("phone"),
-                    "amka": acc.get("amka"), "phone_verified": bool(acc.get("phone_verified")),
-                    "email_verified": bool(acc.get("email_verified")),
-                    "twofa_enabled": bool(acc.get("twofa_enabled")),
-                    "consents": acc.get("consents") or {},
-                    "address": acc.get("address"), "city": acc.get("city"),
-                    "postal_code": acc.get("postal_code"), "theme": acc.get("theme"),
-                    "avatar_url": f"/patient/avatar/{acc['avatar_id']}" if acc.get("avatar_id") else None},
+        "profile": profile,
         "active_tenant": ctx.tenant_id,
         "favorite_tenant": acc.get("favorite_tenant_id"),
         "pharmacies": links,
@@ -287,8 +292,11 @@ async def me(ctx: PatientContext = Depends(get_patient_context)):
 async def update_me(body: ProfileUpdateIn, ctx: PatientContext = Depends(get_patient_context)):
     """Ενημέρωση προφίλ πελάτη (όνομα/τηλέφωνο/διεύθυνση/θέμα). Email & ΑΜΚΑ δεν αλλάζουν εδώ."""
     from app.repositories.patient_portal import PatientAccountRepository
+    # Guard demo: το επίθετο εμφανίζεται μασκαρισμένο («Δ****») — αν έρθει έτσι πίσω, ΜΗΝ το αποθηκεύσεις
+    # (αλλιώς το πραγματικό επίθετο θα αντικατασταθεί με τα αστεράκια).
+    last_name = None if (body.last_name and "*" in body.last_name) else body.last_name
     await PatientAccountRepository().update_profile(
-        ctx.account_id, first_name=body.first_name, last_name=body.last_name,
+        ctx.account_id, first_name=body.first_name, last_name=last_name,
         phone=body.phone, address=body.address, city=body.city,
         postal_code=body.postal_code, theme=body.theme)
     # Φάση C: διάδοση στην καρτέλα κάθε φαρμακείου (source=patient, επιβεβαιωμένα από τον ίδιο).
@@ -455,7 +463,8 @@ async def my_prescriptions(ctx: PatientContext = Depends(get_patient_context)):
     # 200 ώστε η αναζήτηση (αρ. συνταγής / ημ. διάστημα) στην πύλη να καλύπτει αρκετό ιστορικό·
     # η προβολή δείχνει by default μόνο τις 5 πιο πρόσφατες.
     # ΟΛΑ τα φαρμακεία του πελάτη — κάθε εκτέλεση με ετικέτα «πού έγινε» (η συνταγή είναι δική του).
-    return {"items": await PatientAccountRepository().all_prescriptions(ctx.account_id, limit=200)}
+    return {"items": await PatientAccountRepository().all_prescriptions(
+        ctx.account_id, limit=200, demo=ctx.demo)}
 
 
 @router.get("/repeats")
@@ -799,13 +808,13 @@ async def shop_viva_webhook(request: Request):
 @router.get("/shop/orders")
 async def my_orders(ctx: PatientContext = Depends(get_patient_context)):
     from app.repositories.orders_delivery import OrdersDeliveryRepository
-    return {"items": await OrdersDeliveryRepository(tenant_id=ctx.tenant_id).my_orders(ctx.account_id)}
+    return {"items": await OrdersDeliveryRepository(tenant_id=ctx.tenant_id, demo=ctx.demo).my_orders(ctx.account_id)}
 
 
 @router.get("/shop/subscriptions")
 async def my_subscriptions(ctx: PatientContext = Depends(get_patient_context)):
     from app.repositories.orders_delivery import OrdersDeliveryRepository
-    return {"items": await OrdersDeliveryRepository(tenant_id=ctx.tenant_id).my_subscriptions(ctx.account_id)}
+    return {"items": await OrdersDeliveryRepository(tenant_id=ctx.tenant_id, demo=ctx.demo).my_subscriptions(ctx.account_id)}
 
 
 @router.post("/shop/subscriptions/{sub_id}/cancel")
@@ -826,13 +835,17 @@ async def pharmacy_hours(ctx: PatientContext = Depends(get_patient_context)):
 async def my_renewals(ctx: PatientContext = Depends(get_patient_context)):
     """Διαθέσιμες ανανεώσεις: χρόνιες επαναλαμβανόμενες συνταγές που μπορούν να εκτελεστούν τώρα
     στο ενεργό φαρμακείο (ώστε ο ασθενής να μην ξεχάσει την επανάληψη)."""
+    from app.utils.masking import mask_row
     det = await AdvisorRepository(tenant_id=ctx.tenant_id).recall_detail(str(ctx.patient_ref))
     items = []
     for c in det.get("chains", []):
         if c.get("available"):
             since = next((w["due"] for w in c.get("windows", []) if w.get("status") == "available"), None)
+            doc = c.get("doctor")
+            if ctx.demo and isinstance(doc, dict):
+                mask_row(doc, True)   # «πελάτης παρουσίασης»: κρύψε όνομα (επίθετο) + τηλέφωνο ιατρού
             items.append({"key": c.get("key"), "medicine": c.get("medicine"),
-                          "doctor": c.get("doctor"), "available": c["available"],
+                          "doctor": doc, "available": c["available"],
                           "since": since, "intent": c.get("intent")})
     return {"items": items}
 
@@ -877,7 +890,7 @@ async def prescription_detail(barcode: str, tenant_id: str | None = None,
         if not link:
             raise HTTPException(status.HTTP_403_FORBIDDEN, "not_linked_to_pharmacy")
         tid, pref = tenant_id, str(link["patient_ref"])
-    d = await PatientRxRepository(tenant_id=tid).my_prescription_detail(pref, barcode)
+    d = await PatientRxRepository(tenant_id=tid, demo=ctx.demo).my_prescription_detail(pref, barcode)
     if d is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "not_found")
     return d
@@ -971,9 +984,20 @@ async def push_unsubscribe(body: PushUnsubIn, ctx: PatientContext = Depends(get_
 
 
 # ── pharmacy directory (nearby) + medicine catalogue ─────────
+def _mask_pharmacy_names(items: list[dict], demo: bool) -> list[dict]:
+    """Σε demo κρύψε ΜΟΝΟ το όνομα φαρμακείου (=όνομα φαρμακοποιού)· κράτα περιοχή/πόλη για επιλογή."""
+    if demo:
+        from app.utils.masking import pseudo_name
+        for p in items or []:
+            if p.get("name"):
+                p["name"] = pseudo_name(p["name"], True)
+    return items
+
+
 @router.get("/pharmacies/nearby")
 async def nearby(lat: float, lon: float, ctx: PatientContext = Depends(get_patient_context)):
-    return {"items": await PatientAccountRepository().nearby_pharmacies(lat, lon)}
+    items = await PatientAccountRepository().nearby_pharmacies(lat, lon)
+    return {"items": _mask_pharmacy_names(items, ctx.demo)}
 
 
 @router.get("/pharmacies/directory")
@@ -986,7 +1010,7 @@ async def pharmacies_directory(ctx: PatientContext = Depends(get_patient_context
     items = await repo.directory(linked_ids=linked, favorite_id=fav)
     if await portal_mode() == "single":   # single: μόνο το φαρμακείο εγγραφής (κλειδώνει PharmacyPicker)
         items = [p for p in items if p.get("tenant_id") == ctx.tenant_id]
-    return {"items": items, "favorite": fav, "active_tenant": ctx.tenant_id}
+    return {"items": _mask_pharmacy_names(items, ctx.demo), "favorite": fav, "active_tenant": ctx.tenant_id}
 
 
 class FavoriteIn(BaseModel):
@@ -1046,7 +1070,9 @@ async def ask_availability(body: AvailabilityIn, ctx: PatientContext = Depends(g
 
 @router.get("/availability")
 async def my_availability(ctx: PatientContext = Depends(get_patient_context)):
-    return {"items": await PatientAccountRepository().my_availability(ctx.account_id)}
+    from app.utils.masking import mask_rows
+    items = await PatientAccountRepository().my_availability(ctx.account_id)
+    return {"items": mask_rows(items, ctx.demo)}   # κρύψε όνομα φαρμακείου σε demo
 
 
 @router.post("/appointments", status_code=201)
@@ -1061,7 +1087,9 @@ async def book_appointment(body: AppointmentIn, ctx: PatientContext = Depends(ge
 
 @router.get("/appointments")
 async def my_appointments(ctx: PatientContext = Depends(get_patient_context)):
-    return {"items": await PatientAccountRepository().my_appointments(ctx.account_id)}
+    from app.utils.masking import mask_rows
+    items = await PatientAccountRepository().my_appointments(ctx.account_id)
+    return {"items": mask_rows(items, ctx.demo)}   # κρύψε όνομα φαρμακείου σε demo
 
 
 # ── «Ανάθεση συνταγής» — by barcode OR a photo of the doctor's Rx ───────────

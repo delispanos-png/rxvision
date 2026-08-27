@@ -15,7 +15,7 @@ _PERM = "portal:manage"
 
 @router.get("")
 async def overview(ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
-    data = await LoyaltyRepository(tenant_id=ctx.tenant_id).overview()
+    data = await LoyaltyRepository(tenant_id=ctx.tenant_id, demo=ctx.demo).overview()
     # Όνομα φαρμακείου → τυπώνεται πάνω στη φυσική κάρτα πιστότητας.
     from app.core.db import shared_db
     t = await shared_db()["tenants"].find_one({"_id": ctx.tenant_id}) or {}   # tenant-ok: own tenant
@@ -25,13 +25,13 @@ async def overview(ctx: TenantContext = Depends(require(_PERM, module=_MODULE)))
 
 @router.get("/member/{patient_ref}")
 async def member(patient_ref: str, ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
-    return await LoyaltyRepository(tenant_id=ctx.tenant_id).member(patient_ref) or {"ok": False}
+    return await LoyaltyRepository(tenant_id=ctx.tenant_id, demo=ctx.demo).member(patient_ref) or {"ok": False}
 
 
 # ── enrollment (opt-in) ────────────────────────────────────────────────────
 @router.get("/candidates")
 async def candidates(q: str = "", ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
-    return {"items": await LoyaltyRepository(tenant_id=ctx.tenant_id).candidates(q)}
+    return {"items": await LoyaltyRepository(tenant_id=ctx.tenant_id, demo=ctx.demo).candidates(q)}
 
 
 class EnrollIn(BaseModel):
@@ -43,19 +43,19 @@ class EnrollIn(BaseModel):
 
 @router.post("/enroll")
 async def enroll(body: EnrollIn, ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
-    return await LoyaltyRepository(tenant_id=ctx.tenant_id).enroll(
+    return await LoyaltyRepository(tenant_id=ctx.tenant_id, demo=ctx.demo).enroll(
         body.patient_ref, method=body.method, name=body.name, referred_by_code=body.referred_by_code)
 
 
 @router.post("/unenroll")
 async def unenroll(body: EnrollIn, ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
-    return await LoyaltyRepository(tenant_id=ctx.tenant_id).unenroll(body.patient_ref)
+    return await LoyaltyRepository(tenant_id=ctx.tenant_id, demo=ctx.demo).unenroll(body.patient_ref)
 
 
 # ── redemptions log + reversal ─────────────────────────────────────────────
 @router.get("/redemptions")
 async def redemptions(ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
-    return {"items": await LoyaltyRepository(tenant_id=ctx.tenant_id).redemptions()}
+    return {"items": await LoyaltyRepository(tenant_id=ctx.tenant_id, demo=ctx.demo).redemptions()}
 
 
 class ReverseIn(BaseModel):
@@ -64,7 +64,7 @@ class ReverseIn(BaseModel):
 
 @router.post("/reverse")
 async def reverse(body: ReverseIn, ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
-    return await LoyaltyRepository(tenant_id=ctx.tenant_id).reverse(body.ledger_id)
+    return await LoyaltyRepository(tenant_id=ctx.tenant_id, demo=ctx.demo).reverse(body.ledger_id)
 
 
 class ConfigIn(BaseModel):
@@ -95,7 +95,7 @@ class ConfigIn(BaseModel):
 
 @router.post("/config")
 async def save_config(body: ConfigIn, ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
-    return await LoyaltyRepository(tenant_id=ctx.tenant_id).save_config(body.model_dump())
+    return await LoyaltyRepository(tenant_id=ctx.tenant_id, demo=ctx.demo).save_config(body.model_dump())
 
 
 class RedeemIn(BaseModel):
@@ -107,7 +107,7 @@ class RedeemIn(BaseModel):
 
 @router.post("/redeem")
 async def redeem(body: RedeemIn, ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
-    return await LoyaltyRepository(tenant_id=ctx.tenant_id).redeem(
+    return await LoyaltyRepository(tenant_id=ctx.tenant_id, demo=ctx.demo).redeem(
         body.patient_ref, body.cents, reason=body.reason or "", kind=body.kind)
 
 
@@ -119,14 +119,14 @@ class AdjustIn(BaseModel):
 
 @router.post("/adjust")
 async def adjust(body: AdjustIn, ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
-    return await LoyaltyRepository(tenant_id=ctx.tenant_id).adjust(
+    return await LoyaltyRepository(tenant_id=ctx.tenant_id, demo=ctx.demo).adjust(
         body.patient_ref, body.cents, reason=body.reason or "")
 
 
 # ── rewards catalogue ──────────────────────────────────────────────────────
 @router.get("/rewards")
 async def rewards(ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
-    return {"items": await LoyaltyRepository(tenant_id=ctx.tenant_id).rewards()}
+    return {"items": await LoyaltyRepository(tenant_id=ctx.tenant_id, demo=ctx.demo).rewards()}
 
 
 class RewardIn(BaseModel):
@@ -139,18 +139,18 @@ class RewardIn(BaseModel):
 
 @router.post("/rewards", status_code=201)
 async def add_reward(body: RewardIn, ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
-    return {"id": await LoyaltyRepository(tenant_id=ctx.tenant_id).add_reward(body.model_dump())}
+    return {"id": await LoyaltyRepository(tenant_id=ctx.tenant_id, demo=ctx.demo).add_reward(body.model_dump())}
 
 
 @router.post("/rewards/{reward_id}")
 async def update_reward(reward_id: str, body: RewardIn,
                         ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
-    return await LoyaltyRepository(tenant_id=ctx.tenant_id).update_reward(reward_id, body.model_dump())
+    return await LoyaltyRepository(tenant_id=ctx.tenant_id, demo=ctx.demo).update_reward(reward_id, body.model_dump())
 
 
 @router.delete("/rewards/{reward_id}")
 async def delete_reward(reward_id: str, ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
-    return await LoyaltyRepository(tenant_id=ctx.tenant_id).delete_reward(reward_id)
+    return await LoyaltyRepository(tenant_id=ctx.tenant_id, demo=ctx.demo).delete_reward(reward_id)
 
 
 class RedeemRewardIn(BaseModel):
@@ -160,7 +160,7 @@ class RedeemRewardIn(BaseModel):
 
 @router.post("/redeem-reward")
 async def redeem_reward(body: RedeemRewardIn, ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
-    return await LoyaltyRepository(tenant_id=ctx.tenant_id).redeem_reward(body.patient_ref, body.reward_id)
+    return await LoyaltyRepository(tenant_id=ctx.tenant_id, demo=ctx.demo).redeem_reward(body.patient_ref, body.reward_id)
 
 
 class ConfirmCodeIn(BaseModel):
@@ -170,10 +170,10 @@ class ConfirmCodeIn(BaseModel):
 @router.get("/pending")
 async def pending_redemptions(ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
     """Ενεργές δεσμεύσεις δώρων που έκαναν οι πελάτες από την πύλη (self-redeem) — προς επιβεβαίωση."""
-    return {"items": await LoyaltyRepository(tenant_id=ctx.tenant_id).pending_redemptions()}
+    return {"items": await LoyaltyRepository(tenant_id=ctx.tenant_id, demo=ctx.demo).pending_redemptions()}
 
 
 @router.post("/confirm-redeem")
 async def confirm_redeem(body: ConfirmCodeIn, ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
     """Ο φαρμακοποιός επιβεβαιώνει δέσμευση με τον 6ψήφιο κωδικό → οριστική εξαργύρωση."""
-    return await LoyaltyRepository(tenant_id=ctx.tenant_id).confirm_reward(body.code)
+    return await LoyaltyRepository(tenant_id=ctx.tenant_id, demo=ctx.demo).confirm_reward(body.code)

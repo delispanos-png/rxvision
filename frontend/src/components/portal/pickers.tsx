@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { patientApi } from "@/lib/patientClient";
+import { useT } from "@/store/prefStore";
 
 // Minimal type for the native BarcodeDetector (not in TS lib types yet).
 type BarcodeDetectorLike = { detect: (s: CanvasImageSource) => Promise<{ rawValue: string }[]> };
@@ -26,6 +27,7 @@ const _hav = (aLat: number, aLon: number, bLat: number, bLon: number) => {
 export function PharmacyPicker({ linked, value, onChange }: {
   linked: Pharmacy[]; value: string; onChange: (tenantId: string) => void;
 }) {
+  const t = useT();
   const [dir, setDir] = useState<DirItem[]>([]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
@@ -42,11 +44,11 @@ export function PharmacyPicker({ linked, value, onChange }: {
 
   function findNearby() {
     setErr(""); setBusy(true);
-    if (!navigator.geolocation) { setErr("Η τοποθεσία δεν υποστηρίζεται."); setBusy(false); return; }
+    if (!navigator.geolocation) { setErr(t("Η τοποθεσία δεν υποστηρίζεται.", "Location is not supported.")); setBusy(false); return; }
     navigator.geolocation.getCurrentPosition((pos) => {
       setDir((ds) => ds.map((p) => ({ ...p, dist: p.lat != null && p.lon != null ? _hav(pos.coords.latitude, pos.coords.longitude, p.lat, p.lon) : null })));
       setBusy(false);
-    }, () => { setErr("Δεν δόθηκε άδεια τοποθεσίας."); setBusy(false); });
+    }, () => { setErr(t("Δεν δόθηκε άδεια τοποθεσίας.", "Location permission was denied.")); setBusy(false); });
   }
 
   // σειρά: αγαπημένο → δικά μου → υπόλοιπα· μέσα σε κάθε ομάδα κατά απόσταση (αν υπάρχει)
@@ -59,7 +61,7 @@ export function PharmacyPicker({ linked, value, onChange }: {
   });
   const label = (p: DirItem) => {
     const tail = p.dist != null
-      ? ` · ${p.dist < 1 ? Math.round(p.dist * 1000) + " μ" : p.dist.toFixed(1) + " χλμ"}`
+      ? ` · ${p.dist < 1 ? Math.round(p.dist * 1000) + t(" μ", " m") : p.dist.toFixed(1) + t(" χλμ", " km")}`
       : (p.city ? ` · ${p.city}` : "");   // αν δεν υπάρχει απόσταση, δείξε πόλη ώστε να φαίνεται πάντα κάτι
     return `${p.favorite ? "★ " : ""}${p.name}${tail}`;
   };
@@ -69,12 +71,12 @@ export function PharmacyPicker({ linked, value, onChange }: {
       <div className="flex gap-2">
         <select value={value} onChange={(e) => onChange(e.target.value)}
           className="min-w-0 flex-1 truncate rounded-lg border border-slate-300 px-2.5 py-2 text-xs dark:border-slate-700 dark:bg-slate-800">
-          {opts.length === 0 && <option value="">— Επίλεξε φαρμακείο —</option>}
+          {opts.length === 0 && <option value="">{t("— Επίλεξε φαρμακείο —", "— Select pharmacy —")}</option>}
           {opts.map((p) => <option key={p.tenant_id} value={p.tenant_id}>{label(p)}</option>)}
         </select>
         <button type="button" onClick={findNearby} disabled={busy}
           className="shrink-0 whitespace-nowrap rounded-lg border border-slate-300 px-3 py-2 text-sm hover:bg-slate-100 disabled:opacity-60 dark:border-slate-700">
-          {busy ? "…" : "📍 Κοντινά"}
+          {busy ? "…" : t("📍 Κοντινά", "📍 Nearby")}
         </button>
       </div>
       {err && <div className="text-xs text-rose-600">{err}</div>}
@@ -84,6 +86,7 @@ export function PharmacyPicker({ linked, value, onChange }: {
 
 // ── Medicine picker: autocomplete from catalogue + barcode typing + camera scan ──
 export function MedicinePicker({ value, onChange }: { value: Medicine | null; onChange: (m: Medicine | null) => void }) {
+  const t = useT();
   const [mode, setMode] = useState<"search" | "barcode">("search");
   const [q, setQ] = useState("");
   const [opts, setOpts] = useState<Medicine[]>([]);
@@ -103,14 +106,14 @@ export function MedicinePicker({ value, onChange }: { value: Medicine | null; on
   async function lookupBarcode(c: string) {
     setMsg("");
     try { const m = await patientApi<Medicine>(`/patient/medicines/by-barcode?code=${encodeURIComponent(c)}`); onChange(m); setMsg(""); }
-    catch { setMsg("Δεν βρέθηκε φάρμακο με αυτό το barcode."); }
+    catch { setMsg(t("Δεν βρέθηκε φάρμακο με αυτό το barcode.", "No medicine found for this barcode.")); }
   }
 
   if (value) {
     return (
       <div className="flex items-center justify-between rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm dark:border-emerald-800 dark:bg-emerald-950/40">
         <span className="font-medium text-emerald-800 dark:text-emerald-300">💊 {value.name}</span>
-        <button type="button" onClick={() => onChange(null)} className="text-xs text-slate-500 hover:underline">Αλλαγή</button>
+        <button type="button" onClick={() => onChange(null)} className="text-xs text-slate-500 hover:underline">{t("Αλλαγή", "Change")}</button>
       </div>
     );
   }
@@ -118,14 +121,14 @@ export function MedicinePicker({ value, onChange }: { value: Medicine | null; on
   return (
     <div className="space-y-2">
       <div className="flex gap-1 text-xs">
-        <button type="button" onClick={() => setMode("search")} className={`rounded px-2 py-1 ${mode === "search" ? "bg-brand-600 text-white" : "bg-slate-100 dark:bg-slate-800"}`}>Λίστα</button>
+        <button type="button" onClick={() => setMode("search")} className={`rounded px-2 py-1 ${mode === "search" ? "bg-brand-600 text-white" : "bg-slate-100 dark:bg-slate-800"}`}>{t("Λίστα", "List")}</button>
         <button type="button" onClick={() => setMode("barcode")} className={`rounded px-2 py-1 ${mode === "barcode" ? "bg-brand-600 text-white" : "bg-slate-100 dark:bg-slate-800"}`}>Barcode</button>
-        <button type="button" onClick={() => setScan(true)} className="rounded bg-slate-100 px-2 py-1 dark:bg-slate-800">📷 Σάρωση</button>
+        <button type="button" onClick={() => setScan(true)} className="rounded bg-slate-100 px-2 py-1 dark:bg-slate-800">{t("📷 Σάρωση", "📷 Scan")}</button>
       </div>
 
       {mode === "search" && (
         <div className="relative">
-          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Γράψε όνομα φαρμάκου…"
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={t("Γράψε όνομα φαρμάκου…", "Type a medicine name…")}
             className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800" />
           {opts.length > 0 && (
             <div className="absolute z-10 mt-1 max-h-56 w-full overflow-auto rounded-lg border border-slate-200 bg-white shadow-lg dark:border-slate-700 dark:bg-slate-900">
@@ -155,6 +158,7 @@ export function MedicinePicker({ value, onChange }: { value: Medicine | null; on
 
 // ── Camera barcode scanner (native BarcodeDetector; graceful fallback) ──
 function ScanModal({ onClose, onCode }: { onClose: () => void; onCode: (code: string) => void }) {
+  const t = useT();
   const videoRef = useRef<HTMLVideoElement>(null);
   const [err, setErr] = useState("");
 
@@ -163,7 +167,7 @@ function ScanModal({ onClose, onCode }: { onClose: () => void; onCode: (code: st
     let raf = 0;
     let stopped = false;
     (async () => {
-      if (!window.BarcodeDetector) { setErr("Η σάρωση δεν υποστηρίζεται σε αυτή τη συσκευή — πληκτρολόγησε το barcode."); return; }
+      if (!window.BarcodeDetector) { setErr(t("Η σάρωση δεν υποστηρίζεται σε αυτή τη συσκευή — πληκτρολόγησε το barcode.", "Scanning is not supported on this device — type the barcode instead.")); return; }
       try {
         stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
         if (videoRef.current) { videoRef.current.srcObject = stream; await videoRef.current.play(); }
@@ -177,7 +181,7 @@ function ScanModal({ onClose, onCode }: { onClose: () => void; onCode: (code: st
           raf = requestAnimationFrame(tick);
         };
         raf = requestAnimationFrame(tick);
-      } catch { setErr("Δεν δόθηκε άδεια κάμερας."); }
+      } catch { setErr(t("Δεν δόθηκε άδεια κάμερας.", "Camera permission was denied.")); }
     })();
     return () => { stopped = true; cancelAnimationFrame(raf); stream?.getTracks().forEach((t) => t.stop()); };
   }, [onCode]);
@@ -185,10 +189,10 @@ function ScanModal({ onClose, onCode }: { onClose: () => void; onCode: (code: st
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" onClick={onClose}>
       <div className="w-full max-w-sm rounded-2xl bg-white p-4 dark:bg-slate-900" onClick={(e) => e.stopPropagation()}>
-        <div className="mb-2 text-sm font-semibold">Σάρωση barcode φαρμάκου</div>
+        <div className="mb-2 text-sm font-semibold">{t("Σάρωση barcode φαρμάκου", "Scan medicine barcode")}</div>
         {err ? <div className="py-6 text-center text-sm text-rose-600">{err}</div>
           : <video ref={videoRef} className="w-full rounded-lg bg-black" playsInline muted />}
-        <button type="button" onClick={onClose} className="mt-3 w-full rounded-lg border border-slate-300 py-2 text-sm dark:border-slate-700">Κλείσιμο</button>
+        <button type="button" onClick={onClose} className="mt-3 w-full rounded-lg border border-slate-300 py-2 text-sm dark:border-slate-700">{t("Κλείσιμο", "Close")}</button>
       </div>
     </div>
   );

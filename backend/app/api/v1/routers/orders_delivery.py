@@ -15,13 +15,20 @@ _PERM = "portal:manage"
 
 
 def _repo(ctx: TenantContext) -> OrdersDeliveryRepository:
-    return OrdersDeliveryRepository(tenant_id=ctx.tenant_id)
+    return OrdersDeliveryRepository(tenant_id=ctx.tenant_id, demo=ctx.demo)
 
 
 @router.get("")
 async def list_orders(status: str | None = None,
                       ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
     return {"items": await _repo(ctx).list_orders(status=status)}
+
+
+@router.get("/fees")
+async def transaction_fees(ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+    """Live report προμηθειών συναλλαγής e-shop για τον φαρμακοποιό (δεδουλευμένα + ιστορικό χρεώσεων)."""
+    from app.services import eshop_fees
+    return await eshop_fees.tenant_report(ctx.tenant_id)
 
 
 @router.get("/pending")

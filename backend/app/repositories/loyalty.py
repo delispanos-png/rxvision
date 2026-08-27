@@ -16,6 +16,7 @@ from bson import ObjectId
 
 from app.repositories.base import BaseRepository, jsonsafe
 from app.repositories.patient_intelligence import PatientIntelligenceRepository
+from app.utils.masking import mask_rows
 
 
 def _now() -> datetime:
@@ -428,7 +429,9 @@ class LoyaltyRepository(BaseRepository):
                 **ti,
             })
         rows.sort(key=lambda x: (-x["points"], -(x["compliance"] or 0)))
-        return rows
+        # demo/presentation: pseudonymize each member's patient «name» (GDPR). Tier/campaign names
+        # live under nested config and are untouched — they are NOT person names.
+        return mask_rows(rows, self.demo)
 
     async def overview(self) -> dict:
         cfg = await self.config()
@@ -509,7 +512,7 @@ class LoyaltyRepository(BaseRepository):
             names[str(p["_id"])] = p.get("full_name")
         for r in rows:
             r["patient_name"] = names.get(r.get("patient_ref")) or "—"
-        return rows
+        return mask_rows(rows, self.demo)
 
     async def reverse(self, ledger_id: str) -> dict:
         """Void a redemption (patient changed their mind) → its cents return to the wallet."""
@@ -688,7 +691,9 @@ class LoyaltyRepository(BaseRepository):
             if pr and pr not in names and len(str(pr)) == 24:
                 p = await self._db["patients_anonymized"].find_one({"_id": ObjectId(pr)}, {"full_name": 1})
                 names[pr] = (p or {}).get("full_name")
-        return jsonsafe([{"code": r.get("code"), "reward": r.get("reason"),
-                          "patient_ref": r.get("patient_ref"), "name": names.get(r.get("patient_ref")) or "—",
-                          "cost_cents": r.get("cents"), "at": r.get("at"), "expires_at": r.get("expires_at")}
-                         for r in rows])
+        return jsonsafe(mask_rows([{"code": r.get("code"), "reward": r.get("reason"),
+                                    "patient_ref": r.get("patient_ref"),
+                                    "name": names.get(r.get("patient_ref")) or "—",
+                                    "cost_cents": r.get("cents"), "at": r.get("at"),
+                                    "expires_at": r.get("expires_at")}
+                                   for r in rows], self.demo))

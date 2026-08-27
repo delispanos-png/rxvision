@@ -438,7 +438,7 @@ async def request_transfer(body: TransferRequestIn,
     if not _valid_amka(body.amka):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "bad_amka_format")
     from app.repositories.patient_transfer import PatientTransferRepository
-    res = await PatientTransferRepository().request(
+    res = await PatientTransferRepository(demo=ctx.demo).request(
         to_tenant_id=ctx.tenant_id, amka=body.amka.strip(),
         reason=body.reason, note=body.note,
         requested_by=getattr(ctx, "user_id", None))
@@ -450,14 +450,14 @@ async def request_transfer(body: TransferRequestIn,
 @router.get("/transfer-requests")
 async def list_transfers(ctx: TenantContext = Depends(require("patients:read", module=_MODULE))):
     from app.repositories.patient_transfer import PatientTransferRepository
-    return {"items": await PatientTransferRepository().list_for_tenant(ctx.tenant_id)}
+    return {"items": await PatientTransferRepository(demo=ctx.demo).list_for_tenant(ctx.tenant_id)}
 
 
 # ── Ενημερώσεις ΠΡΟΣ ΕΜΑΣ: πελάτης μας άλλαξε φαρμακείο εξυπηρέτησης ──
 @router.get("/transfer-notices")
 async def transfer_notices(ctx: TenantContext = Depends(require("patients:read", module=_MODULE))):
     from app.repositories.patient_transfer import PatientTransferRepository
-    return {"items": await PatientTransferRepository().notices_for_tenant(ctx.tenant_id)}
+    return {"items": await PatientTransferRepository(demo=ctx.demo).notices_for_tenant(ctx.tenant_id)}
 
 
 @router.post("/transfer-notices/{notice_id}/read")
