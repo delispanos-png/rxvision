@@ -12,7 +12,7 @@ type Row = {
   loyalty_points: number; loyalty_cents: number; orders_count: number; orders_cents: number;
   total_cents: number; settled: boolean;
 };
-type Res = { items: Row[]; totals: { patients: number; loyalty_cents: number; orders_cents: number; total_cents: number } };
+type Res = { items: Row[]; totals: { patients: number; with_balance: number; loyalty_cents: number; orders_cents: number; total_cents: number } };
 type Job = { status?: string; total?: number; done?: number; deceased_found?: number; age_filled?: number; note?: string };
 
 const eur = (c: number) => `${((c || 0) / 100).toLocaleString("el-GR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €`;
@@ -50,8 +50,8 @@ export default function DeceasedBalancesPage() {
         <div className="flex items-center gap-3">
           <span className="grid h-11 w-11 place-items-center rounded-2xl bg-gradient-to-br from-slate-500 to-slate-700 text-white shadow-lg"><Cross className="h-6 w-6" /></span>
           <div>
-            <h1 className="text-lg font-bold text-slate-900 dark:text-slate-100">{t("Θανόντες με ανοιχτό υπόλοιπο", "Deceased with open balance")}</h1>
-            <p className="text-xs text-slate-500">{t("Υπόλοιπο πόντων + ανεξόφλητες παραγγελίες. Για διεκδίκηση από την οικογένεια ή κλείσιμο.", "Loyalty balance + unpaid orders. To claim from family or write off.")}</p>
+            <h1 className="text-lg font-bold text-slate-900 dark:text-slate-100">{t("Θανόντες", "Deceased")}</h1>
+            <p className="text-xs text-slate-500">{t("Όλοι οι θανόντες ασθενείς (με ή χωρίς υπόλοιπο). Τυχόν υπόλοιπο πόντων/ανεξόφλητων για διεκδίκηση ή κλείσιμο.", "All deceased patients (with or without a balance). Any loyalty/unpaid balance can be claimed or written off.")}</p>
           </div>
         </div>
 
@@ -95,16 +95,17 @@ export default function DeceasedBalancesPage() {
         <QueryState isLoading={q.isLoading} isError={q.isError} onRetry={() => q.refetch()}>
           {q.data && (
             <>
-              <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
-                <Kpi label={t("Θανόντες με υπόλοιπο", "Deceased w/ balance")} value={String(q.data.totals.patients)} />
+              <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-5">
+                <Kpi label={t("Σύνολο θανόντων", "Total deceased")} value={String(q.data.totals.patients)} />
+                <Kpi label={t("Με ανοιχτό υπόλοιπο", "With open balance")} value={String(q.data.totals.with_balance)} tint="amber" />
                 <Kpi label={t("Πόντοι (αξία)", "Loyalty value")} value={eur(q.data.totals.loyalty_cents)} tint="violet" />
                 <Kpi label={t("Ανεξόφλητες παραγγελίες", "Unpaid orders")} value={eur(q.data.totals.orders_cents)} tint="amber" />
-                <Kpi label={t("Σύνολο", "Total")} value={eur(q.data.totals.total_cents)} tint="rose" />
+                <Kpi label={t("Σύνολο υπολοίπων", "Total balance")} value={eur(q.data.totals.total_cents)} tint="rose" />
               </div>
 
               {q.data.items.length === 0 ? (
                 <div className="rounded-2xl border border-dashed border-slate-200 bg-white p-8 text-center text-sm text-slate-400 dark:border-slate-700 dark:bg-slate-900">
-                  {t("Δεν υπάρχουν θανόντες με ανοιχτό υπόλοιπο.", "No deceased patients with an open balance.")}
+                  {t("Δεν υπάρχουν θανόντες.", "No deceased patients.")}
                 </div>
               ) : (
                 <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">

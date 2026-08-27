@@ -40,7 +40,7 @@ async def deceased_balances(tenant_id: str, *, include_settled: bool = False, de
         "_id", {"tenant_id": tenant_id, "deceased_balance_settled": True}))
 
     items = []
-    tot_loy = tot_ord = 0
+    tot_loy = tot_ord = with_balance = 0
     for d in deceased:
         rid = str(d["_id"])
         lb = loy.get(rid, {})
@@ -48,10 +48,10 @@ async def deceased_balances(tenant_id: str, *, include_settled: bool = False, de
         loyalty_cents = int(lb.get("balance_cents") or 0)
         orders_cents = int(ob.get("cents") or 0)
         total = loyalty_cents + orders_cents
-        if total <= 0:
-            continue
         is_settled = d["_id"] in settled
-        if is_settled and not include_settled:
+        # Δείχνουμε ΟΛΟΥΣ τους θανόντες (έχουν/δεν έχουν υπόλοιπο). Οι «τακτοποιημένοι» (settled)
+        # κρύβονται μόνο αν είχαν υπόλοιπο & δεν ζητήθηκαν ρητά (include_settled).
+        if is_settled and total > 0 and not include_settled:
             continue
         items.append({
             "patient_id": rid,
@@ -67,10 +67,13 @@ async def deceased_balances(tenant_id: str, *, include_settled: bool = False, de
         })
         tot_loy += loyalty_cents
         tot_ord += orders_cents
+        if total > 0:
+            with_balance += 1
 
-    items.sort(key=lambda x: x["total_cents"], reverse=True)
+    # πρώτα όσοι έχουν ανοιχτό υπόλοιπο (φθίνον), μετά οι υπόλοιποι κατά ημ/νία θανάτου (πιο πρόσφατοι πρώτα)
+    items.sort(key=lambda x: (x["total_cents"], x["deceased_at"] or ""), reverse=True)
     return {"items": items, "totals": {
-        "patients": len(items), "loyalty_cents": tot_loy,
+        "patients": len(items), "with_balance": with_balance, "loyalty_cents": tot_loy,
         "orders_cents": tot_ord, "total_cents": tot_loy + tot_ord}}
 
 
