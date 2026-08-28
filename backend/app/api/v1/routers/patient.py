@@ -1078,6 +1078,13 @@ async def my_availability(ctx: PatientContext = Depends(get_patient_context)):
 @router.post("/appointments", status_code=201)
 async def book_appointment(body: AppointmentIn, ctx: PatientContext = Depends(get_patient_context)):
     target, pref, name, phone = await _target(ctx, body.tenant_id)
+    # Μπλοκάρισμα: δεν επιτρέπεται ραντεβού αν το φαρμακείο εμφανίζεται ΚΛΕΙΣΤΟ τη ζητούμενη ώρα.
+    from app.repositories.pharmacy_availability import ATHENS, PharmacyAvailabilityRepository
+    when = body.requested_at
+    when = when.replace(tzinfo=timezone.utc) if when.tzinfo is None else when
+    st = await PharmacyAvailabilityRepository(tenant_id=target).status(now=when.astimezone(ATHENS))
+    if not st.get("isOpen"):
+        raise HTTPException(status.HTTP_409_CONFLICT, detail={"error": "pharmacy_closed"})
     aid = await AppointmentRepository(tenant_id=target).create(
         account_id=ctx.account_id, service_id=body.service_id, service_name=body.service_name,
         requested_at=body.requested_at, note=body.note, patient_ref=pref,

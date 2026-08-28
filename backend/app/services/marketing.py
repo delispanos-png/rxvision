@@ -62,10 +62,17 @@ async def category_sizes(tenant_id: str) -> list[dict]:
     consented = set(await db["patient_contacts"].distinct("_id", {
         "tenant_id": tenant_id, "marketing_consent": True,
         "$or": [{"email": {"$nin": [None, ""]}}, {"mobile": {"$nin": [None, ""]}}]}))
+    # Θανόντες εκτός κάθε στόχευσης/κοινού — δεν προωθούμε σε νεκρούς (authoritative deceased flag,
+    # πιάνει & όσους δεν έχουν εγγραφή patient_contacts).
+    deceased_ids = set(await db["patients_anonymized"].distinct(
+        "_id", {"tenant_id": tenant_id, "deceased": True}))
     # ATC4 → κατηγορία (ταιριάζει με το πιο μακρύ prefix)
     out = {c["key"]: {"key": c["key"], "label": c["label"], "icon": c["icon"], "offer": c["offer"],
                       "patients": set(), "value": 0} for c in THERAPY_CATEGORIES}
     for r in rows:
+        pt = r["_id"]["pt"]
+        if pt in deceased_ids:
+            continue
         atc4 = r["_id"]["atc4"]
         for c in THERAPY_CATEGORIES:
             if any(atc4.startswith(pref) for pref in c["atc"]):
@@ -114,9 +121,13 @@ async def dashboard(tenant_id: str, *, demo: bool = False) -> dict:
     winback_n = len(wb.get("items", []) or []) if isinstance(wb, dict) else 0
     risk_n = len(risk.get("items", []) or []) if isinstance(risk, dict) else 0
     horizon = _now() + timedelta(days=30)
-    upcoming_n = len(await db["future_prescriptions"].distinct(
+    upcoming_refs = await db["future_prescriptions"].distinct(
         "patient_ref", {"tenant_id": tenant_id, "status": "pending",
-                        "expected_open_date": {"$gte": _now(), "$lt": horizon}}))
+                        "expected_open_date": {"$gte": _now(), "$lt": horizon}})
+    # Θανόντες εκτός της κάρτας «υπενθύμιση επανάληψης» — δεν στοχεύουμε νεκρούς.
+    deceased_ids = set(await db["patients_anonymized"].distinct(
+        "_id", {"tenant_id": tenant_id, "deceased": True}))
+    upcoming_n = len([r for r in upcoming_refs if r not in deceased_ids])
 
     # ── ΠΡΟΤΑΣΕΙΣ ΕΝΕΡΓΕΙΩΝ (action cards) — κάθε μία ανοίγει καμπάνια με προ-επιλεγμένο κοινό ──
     cards: list[dict] = []

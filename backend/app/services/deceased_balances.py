@@ -1,6 +1,6 @@
-"""Λίστα θανόντων ασθενών με ΑΝΟΙΧΤΟ υπόλοιπο — ώστε το φαρμακείο να διεκδικήσει το υπόλοιπο από
-την οικογένεια (αν το επιθυμεί) ή να το κλείσει. «Υπόλοιπο» = loyalty balance (πόντοι→€) +
-ανεξόφλητες e-shop παραγγελίες (orders_delivery, unpaid/pending)."""
+"""Λίστα ΟΛΩΝ των θανόντων ασθενών + τυχόν ΕΚΚΡΕΜΟΤΗΤΕΣ ανά θανόντα: ΑΝΕΚΤΕΛΕΣΤΕΣ συνταγές
+(εκτελέσεις με ανεκτέλεστες ουσίες) + ΑΝΟΙΧΤΕΣ e-shop παραγγελίες (unpaid/pending). ΟΧΙ loyalty
+(οι πόντοι πιστότητας δεν διεκδικούνται). Ώστε το φαρμακείο να δει τι εκκρεμεί & να το κλείσει."""
 
 from __future__ import annotations
 
@@ -8,7 +8,6 @@ from datetime import datetime, timezone
 
 from app.core.db import shared_db
 from app.repositories.base import jsonsafe
-from app.repositories.loyalty import LoyaltyRepository
 from app.utils.masking import mask_amka
 
 
@@ -18,63 +17,71 @@ async def deceased_balances(tenant_id: str, *, include_settled: bool = False, de
         {"tenant_id": tenant_id, "deceased": True},
         {"_id": 1, "full_name": 1, "amka": 1, "deceased_at": 1},
     ).to_list(length=None)
+    empty = {"patients": 0, "with_open": 0, "unexecuted_rx": 0, "orders_count": 0, "orders_cents": 0}
     if not deceased:
-        return {"items": [], "totals": {"patients": 0, "loyalty_cents": 0, "orders_cents": 0, "total_cents": 0}}
+        return {"items": [], "totals": empty}
 
     ref_ids = [d["_id"] for d in deceased]
     ref_strs = [str(x) for x in ref_ids]
 
-    loy = await LoyaltyRepository(tenant_id=tenant_id).balances_for_refs(ref_strs)
+    # ΑΝΕΚΤΕΛΕΣΤΕΣ συνταγές ανά θανόντα (εκτελέσεις με ανεκτέλεστες ουσίες)
+    unexec: dict[str, int] = {}
+    async for r in db["prescription_executions"].aggregate([
+        {"$match": {"tenant_id": tenant_id, "patient_ref": {"$in": ref_ids},
+                    "has_unexecuted_substances": True}},
+        {"$group": {"_id": "$patient_ref", "n": {"$sum": 1}}},
+    ]):
+        unexec[str(r["_id"])] = r["n"]
 
-    # ανεξόφλητες παραγγελίες (patient_ref μπορεί να είναι str ή ObjectId ανά caller → ταίριαξε και τα δύο)
-    orders = await db["orders_delivery"].aggregate([
+    # ΑΝΟΙΧΤΕΣ e-shop παραγγελίες (patient_ref μπορεί να είναι str ή ObjectId → ταίριαξε και τα δύο)
+    orders_by: dict[str, dict] = {}
+    async for o in db["orders_delivery"].aggregate([
         {"$match": {"tenant_id": tenant_id, "patient_ref": {"$in": ref_strs + ref_ids},
                     "payment_status": {"$in": ["unpaid", "pending"]},
                     "status": {"$nin": ["cancelled"]}}},
         {"$group": {"_id": {"$toString": "$patient_ref"}, "orders": {"$sum": 1},
                     "cents": {"$sum": {"$ifNull": ["$total_cents", 0]}}}},
-    ]).to_list(length=None)
-    orders_by = {o["_id"]: o for o in orders}
+    ]):
+        orders_by[o["_id"]] = o
 
     settled = set(await db["patient_contacts"].distinct(
         "_id", {"tenant_id": tenant_id, "deceased_balance_settled": True}))
 
     items = []
-    tot_loy = tot_ord = with_balance = 0
+    tot_unexec = tot_ord_n = tot_ord_c = with_open = 0
     for d in deceased:
         rid = str(d["_id"])
-        lb = loy.get(rid, {})
+        ux = int(unexec.get(rid, 0))
         ob = orders_by.get(rid, {})
-        loyalty_cents = int(lb.get("balance_cents") or 0)
+        orders_count = int(ob.get("orders") or 0)
         orders_cents = int(ob.get("cents") or 0)
-        total = loyalty_cents + orders_cents
+        open_items = ux + orders_count
         is_settled = d["_id"] in settled
-        # Δείχνουμε ΟΛΟΥΣ τους θανόντες (έχουν/δεν έχουν υπόλοιπο). Οι «τακτοποιημένοι» (settled)
-        # κρύβονται μόνο αν είχαν υπόλοιπο & δεν ζητήθηκαν ρητά (include_settled).
-        if is_settled and total > 0 and not include_settled:
+        # ΟΛΟΙ οι θανόντες. Οι «τακτοποιημένοι» κρύβονται μόνο αν είχαν εκκρεμότητες & δεν ζητήθηκαν ρητά.
+        if is_settled and open_items > 0 and not include_settled:
             continue
         items.append({
             "patient_id": rid,
             "name": (d.get("full_name") or "—"),
             "amka": mask_amka(d.get("amka"), demo),
             "deceased_at": jsonsafe(d.get("deceased_at")),
-            "loyalty_points": int(lb.get("points") or 0),
-            "loyalty_cents": loyalty_cents,
-            "orders_count": int(ob.get("orders") or 0),
+            "unexecuted_rx": ux,
+            "orders_count": orders_count,
             "orders_cents": orders_cents,
-            "total_cents": total,
+            "open_items": open_items,
             "settled": is_settled,
         })
-        tot_loy += loyalty_cents
-        tot_ord += orders_cents
-        if total > 0:
-            with_balance += 1
+        tot_unexec += ux
+        tot_ord_n += orders_count
+        tot_ord_c += orders_cents
+        if open_items > 0:
+            with_open += 1
 
-    # πρώτα όσοι έχουν ανοιχτό υπόλοιπο (φθίνον), μετά οι υπόλοιποι κατά ημ/νία θανάτου (πιο πρόσφατοι πρώτα)
-    items.sort(key=lambda x: (x["total_cents"], x["deceased_at"] or ""), reverse=True)
+    # πρώτα όσοι έχουν εκκρεμότητες (φθίνον), μετά οι υπόλοιποι κατά ημ/νία θανάτου (πιο πρόσφατοι πρώτα)
+    items.sort(key=lambda x: (x["open_items"], x["deceased_at"] or ""), reverse=True)
     return {"items": items, "totals": {
-        "patients": len(items), "with_balance": with_balance, "loyalty_cents": tot_loy,
-        "orders_cents": tot_ord, "total_cents": tot_loy + tot_ord}}
+        "patients": len(items), "with_open": with_open, "unexecuted_rx": tot_unexec,
+        "orders_count": tot_ord_n, "orders_cents": tot_ord_c}}
 
 
 async def set_settled(tenant_id: str, patient_id: str, settled: bool, by: str | None = None) -> dict:

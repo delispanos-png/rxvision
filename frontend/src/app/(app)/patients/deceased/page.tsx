@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Cross, DownloadCloud, Loader2, Check, Gift, ShoppingBag } from "lucide-react";
+import { Cross, DownloadCloud, Loader2, Check, AlertCircle, ShoppingBag } from "lucide-react";
 import { api } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
 import { QueryState } from "@/components/ui/QueryState";
@@ -9,10 +9,10 @@ import { ModuleGuard } from "@/components/layout/ModuleGuard";
 
 type Row = {
   patient_id: string; name: string; amka: string | null; deceased_at: string | null;
-  loyalty_points: number; loyalty_cents: number; orders_count: number; orders_cents: number;
-  total_cents: number; settled: boolean;
+  unexecuted_rx: number; orders_count: number; orders_cents: number;
+  open_items: number; settled: boolean;
 };
-type Res = { items: Row[]; totals: { patients: number; with_balance: number; loyalty_cents: number; orders_cents: number; total_cents: number } };
+type Res = { items: Row[]; totals: { patients: number; with_open: number; unexecuted_rx: number; orders_count: number; orders_cents: number } };
 type Job = { status?: string; total?: number; done?: number; deceased_found?: number; age_filled?: number; note?: string };
 
 const eur = (c: number) => `${((c || 0) / 100).toLocaleString("el-GR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €`;
@@ -51,7 +51,7 @@ export default function DeceasedBalancesPage() {
           <span className="grid h-11 w-11 place-items-center rounded-2xl bg-gradient-to-br from-slate-500 to-slate-700 text-white shadow-lg"><Cross className="h-6 w-6" /></span>
           <div>
             <h1 className="text-lg font-bold text-slate-900 dark:text-slate-100">{t("Θανόντες", "Deceased")}</h1>
-            <p className="text-xs text-slate-500">{t("Όλοι οι θανόντες ασθενείς (με ή χωρίς υπόλοιπο). Τυχόν υπόλοιπο πόντων/ανεξόφλητων για διεκδίκηση ή κλείσιμο.", "All deceased patients (with or without a balance). Any loyalty/unpaid balance can be claimed or written off.")}</p>
+            <p className="text-xs text-slate-500">{t("Όλοι οι θανόντες ασθενείς. Τυχόν εκκρεμότητες — ανεκτέλεστες συνταγές & ανοιχτές e-shop παραγγελίες — για κλείσιμο.", "All deceased patients. Any pending items — unexecuted prescriptions & open e-shop orders — to close off.")}</p>
           </div>
         </div>
 
@@ -95,12 +95,11 @@ export default function DeceasedBalancesPage() {
         <QueryState isLoading={q.isLoading} isError={q.isError} onRetry={() => q.refetch()}>
           {q.data && (
             <>
-              <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-5">
+              <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
                 <Kpi label={t("Σύνολο θανόντων", "Total deceased")} value={String(q.data.totals.patients)} />
-                <Kpi label={t("Με ανοιχτό υπόλοιπο", "With open balance")} value={String(q.data.totals.with_balance)} tint="amber" />
-                <Kpi label={t("Πόντοι (αξία)", "Loyalty value")} value={eur(q.data.totals.loyalty_cents)} tint="violet" />
-                <Kpi label={t("Ανεξόφλητες παραγγελίες", "Unpaid orders")} value={eur(q.data.totals.orders_cents)} tint="amber" />
-                <Kpi label={t("Σύνολο υπολοίπων", "Total balance")} value={eur(q.data.totals.total_cents)} tint="rose" />
+                <Kpi label={t("Με εκκρεμότητες", "With pending items")} value={String(q.data.totals.with_open)} tint="amber" />
+                <Kpi label={t("Ανεκτέλεστες συνταγές", "Unexecuted prescriptions")} value={String(q.data.totals.unexecuted_rx)} tint="rose" />
+                <Kpi label={t("Ανοιχτές παραγγελίες", "Open orders")} value={`${q.data.totals.orders_count} · ${eur(q.data.totals.orders_cents)}`} tint="amber" />
               </div>
 
               {q.data.items.length === 0 ? (
@@ -114,9 +113,8 @@ export default function DeceasedBalancesPage() {
                       <tr>
                         <th className="px-4 py-2 font-semibold">{t("Θανών", "Deceased")}</th>
                         <th className="px-4 py-2 font-semibold">{t("Ημ/νία", "Date")}</th>
-                        <th className="px-4 py-2 text-right font-semibold">{t("Πόντοι", "Loyalty")}</th>
-                        <th className="px-4 py-2 text-right font-semibold">{t("Παραγγελίες", "Orders")}</th>
-                        <th className="px-4 py-2 text-right font-semibold">{t("Σύνολο", "Total")}</th>
+                        <th className="px-4 py-2 text-right font-semibold">{t("Ανεκτέλεστες", "Unexecuted")}</th>
+                        <th className="px-4 py-2 text-right font-semibold">{t("Ανοιχτές παραγγελίες", "Open orders")}</th>
                         <th className="px-4 py-2" />
                       </tr>
                     </thead>
@@ -129,16 +127,15 @@ export default function DeceasedBalancesPage() {
                           </td>
                           <td className="px-4 py-2.5 text-slate-500">{ddmmyyyy(r.deceased_at)}</td>
                           <td className="px-4 py-2.5 text-right">
-                            {r.loyalty_cents > 0 ? (
-                              <span className="inline-flex items-center gap-1 text-violet-600"><Gift className="h-3.5 w-3.5" />{eur(r.loyalty_cents)}</span>
+                            {r.unexecuted_rx > 0 ? (
+                              <span className="inline-flex items-center gap-1 font-semibold text-rose-600"><AlertCircle className="h-3.5 w-3.5" />{r.unexecuted_rx}</span>
                             ) : <span className="text-slate-300">—</span>}
                           </td>
                           <td className="px-4 py-2.5 text-right">
-                            {r.orders_cents > 0 ? (
-                              <span className="inline-flex items-center gap-1 text-amber-600"><ShoppingBag className="h-3.5 w-3.5" />{eur(r.orders_cents)} <span className="text-[11px] text-slate-400">×{r.orders_count}</span></span>
+                            {r.orders_count > 0 ? (
+                              <span className="inline-flex items-center gap-1 text-amber-600"><ShoppingBag className="h-3.5 w-3.5" />{r.orders_count} <span className="text-[11px] text-slate-400">· {eur(r.orders_cents)}</span></span>
                             ) : <span className="text-slate-300">—</span>}
                           </td>
-                          <td className="px-4 py-2.5 text-right font-bold text-slate-800 dark:text-slate-100">{eur(r.total_cents)}</td>
                           <td className="px-4 py-2.5 text-right">
                             <button onClick={() => settle.mutate({ id: r.patient_id, settled: !r.settled })} disabled={settle.isPending}
                               className={`inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs font-semibold ${r.settled ? "bg-emerald-100 text-emerald-700 hover:bg-emerald-200" : "border border-slate-200 text-slate-500 hover:bg-slate-50 dark:border-slate-700"}`}>

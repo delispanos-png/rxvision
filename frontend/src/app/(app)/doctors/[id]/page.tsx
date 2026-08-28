@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
@@ -57,10 +58,32 @@ const makePatCols = (t: T): Column<PatRow>[] => [
   { key: "last", header: t("Τελευταία", "Last"), hideOnMobile: true, render: (r) => fmtDate(r.last) },
 ];
 
+type MedRow = { name: string; substance?: string | null; atc?: string | null; rx: number; qty: number; value: number };
+type SubRow = { substance?: string | null; atc?: string | null; rx: number; qty: number; value: number };
+
+const makeMedCols = (t: T): Column<MedRow>[] => [
+  { key: "name", header: t("Σκεύασμα", "Medicine"), render: (r) => r.name || "—" },
+  { key: "substance", header: t("Δραστική", "Active substance"), hideOnMobile: true, render: (r) => r.substance || "—" },
+  { key: "atc", header: "ATC", hideOnMobile: true, render: (r) => r.atc || "—" },
+  { key: "rx", header: t("Συνταγογραφήσεις", "Prescribed"), align: "right", render: (r) => fmtNum(r.rx) },
+  { key: "qty", header: t("Τεμάχια", "Units"), align: "right", hideOnMobile: true, render: (r) => fmtNum(r.qty) },
+  { key: "value", header: t("Αξία", "Value"), align: "right", render: (r) => fmtEur(r.value) },
+];
+
+const makeSubCols = (t: T): Column<SubRow>[] => [
+  { key: "substance", header: t("Δραστική", "Active substance"), render: (r) => r.substance || "—" },
+  { key: "atc", header: "ATC", hideOnMobile: true, render: (r) => r.atc || "—" },
+  { key: "rx", header: t("Συνταγογραφήσεις", "Prescribed"), align: "right", render: (r) => fmtNum(r.rx) },
+  { key: "qty", header: t("Τεμάχια", "Units"), align: "right", hideOnMobile: true, render: (r) => fmtNum(r.qty) },
+  { key: "value", header: t("Αξία", "Value"), align: "right", render: (r) => fmtEur(r.value) },
+];
+
 export default function DoctorDetailPage() {
   const t = useT();
   const rxCols = makeRxCols(t);
   const patCols = makePatCols(t);
+  const medCols = makeMedCols(t);
+  const subCols = makeSubCols(t);
   const id = useParams<{ id: string }>().id;
   const router = useRouter();
   const filters = useUiStore();
@@ -78,6 +101,11 @@ export default function DoctorDetailPage() {
     queryKey: ["doctors", "pats", id, q],
     queryFn: () => api<{ items: PatRow[] }>(`/doctors/${id}/patients?${q}`),
   });
+  const meds = useQuery({
+    queryKey: ["doctors", "meds", id, q],
+    queryFn: () => api<{ medicines: MedRow[]; substances: SubRow[] }>(`/doctors/${id}/medicines?${q}`),
+  });
+  const [medView, setMedView] = useState<"medicines" | "substances">("medicines");
 
   const d = stats.data;
 
@@ -115,6 +143,25 @@ export default function DoctorDetailPage() {
             rowKey={(r) => r.external_id}
             onRowClick={(r) => router.push(`/prescriptions/${encodeURIComponent(r.external_id)}`)}
             empty={t("Καμία συνταγή στην περίοδο.", "No prescriptions in the period.")} />
+        </PanelCard>
+        <PanelCard title={t("Τι συνταγογραφεί (σκευάσματα & δραστικές)", "What they prescribe (medicines & substances)")} bodyClassName="pt-2">
+          <div className="mb-3 inline-flex rounded-lg border border-slate-200 p-0.5 dark:border-slate-700">
+            {(["medicines", "substances"] as const).map((v) => (
+              <button key={v} onClick={() => setMedView(v)}
+                className={`rounded-md px-3 py-1.5 text-sm font-medium transition ${medView === v ? "bg-brand-600 text-white" : "text-slate-600 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-800"}`}>
+                {v === "medicines" ? t("Σκευάσματα", "Medicines") : t("Δραστικές", "Active substances")}
+              </button>
+            ))}
+          </div>
+          {medView === "medicines" ? (
+            <DataTable pageSize={20} columns={medCols} rows={meds.data?.medicines ?? []}
+              rowKey={(r) => r.name}
+              empty={t("Καμία συνταγογράφηση στην περίοδο.", "Nothing prescribed in the period.")} />
+          ) : (
+            <DataTable pageSize={20} columns={subCols} rows={meds.data?.substances ?? []}
+              rowKey={(r) => r.substance ?? "—"}
+              empty={t("Καμία συνταγογράφηση στην περίοδο.", "Nothing prescribed in the period.")} />
+          )}
         </PanelCard>
       </div>
     </ModuleGuard>

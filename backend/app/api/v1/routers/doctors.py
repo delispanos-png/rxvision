@@ -80,3 +80,15 @@ async def doctor_patients(
     repo = DoctorExecutionsRepository(tenant_id=ctx.tenant_id, demo=ctx.demo)
     return {"items": await repo.patients(doctor_id=doctor_id,
                                          date_from=date_from, date_to=date_to)}
+
+
+@router.get("/{doctor_id}/medicines")
+async def doctor_medicines(
+    doctor_id: str,
+    date_from: datetime = Query(...),
+    date_to: datetime = Query(...),
+    ctx: TenantContext = Depends(require("doctors:read", module=_MODULE)),
+):
+    """Σκευάσματα & δραστικές που συνταγογραφεί ο ιατρός στην περίοδο."""
+    repo = DoctorExecutionsRepository(tenant_id=ctx.tenant_id, demo=ctx.demo)
+    return await repo.top_medicines(doctor_id=doctor_id, date_from=date_from, date_to=date_to)

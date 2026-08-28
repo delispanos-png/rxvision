@@ -96,6 +96,8 @@ class PatientRepository(BaseRepository):
         if by == "area":
             field = {"$ifNull": ["$residence_area_canonical", "$residence_area"]}
         pipeline = [
+            # Θανόντες εκτός κάθε κατανομής/μέτρησης ασθενών (authoritative deceased flag).
+            {"$match": {"deceased": {"$ne": True}}},
             {"$group": {
                 "_id": field,
                 "patients": {"$sum": 1},
@@ -116,7 +118,10 @@ class PatientRepository(BaseRepository):
         from datetime import datetime, timezone
         now = datetime.now(tz=timezone.utc)
         horizons = [1, 3, 6, 12]
-        match: dict = {"first_seen_at": {"$ne": None}, "last_seen_at": {"$ne": None}}
+        # Θανόντες εκτός καμπύλης διατήρησης: ένας θανών δεν είναι «χαμένος» πελάτης — η παρουσία
+        # του θα παραμόρφωνε το retention προς τα κάτω. (Judgment call — αν θέλεις «all-time», βγάλ' το.)
+        match: dict = {"first_seen_at": {"$ne": None}, "last_seen_at": {"$ne": None},
+                       "deceased": {"$ne": True}}
         if cohort:
             match["$expr"] = {"$eq": [
                 {"$dateToString": {"format": "%Y-%m", "date": "$first_seen_at"}}, cohort]}
@@ -190,8 +195,13 @@ class PatientExecutionsRepository(BaseRepository):
                       "sex": {"$first": "$p.sex"},
                       "area": {"$first": "$p.residence_area"},
                       "area_canonical": {"$first": "$p.residence_area_canonical"},
+                      "deceased": {"$first": "$p.deceased"},
                       "lifecycle": {"$first": "$p.lifecycle"}}},
             {"$set": {"area_eff": {"$ifNull": ["$area_canonical", "$area"]}}},
+            # Θανόντες εκτός της λίστας «Ασφαλισμένοι» & των per-patient stats (authoritative flag —
+            # πιάνει & όσους θανόντες δεν έχουν εγγραφή patient_contacts). Ασθενείς χωρίς προφίλ
+            # (κενό $p → deceased απών) ΔΕΝ κόβονται.
+            {"$match": {"deceased": {"$ne": True}}},
         ]
         demo: dict = {}
         if f.get("sex"):
@@ -260,7 +270,10 @@ class PatientExecutionsRepository(BaseRepository):
         if not ids:
             return []
         rows = await db["patients_anonymized"].aggregate([
-            {"$match": {"_id": {"$in": list(ids)}, "tenant_id": self.tenant_id}},
+            # Θανόντες εκτός αναζήτησης/λίστας ασθενών (η καρτέλα θανόντος ανοίγει από τη σελίδα
+            # «Θανόντες» με ρητό id μέσω patient_detail, που ΔΕΝ φιλτράρει).
+            {"$match": {"_id": {"$in": list(ids)}, "tenant_id": self.tenant_id,
+                        "deceased": {"$ne": True}}},
             {"$lookup": {"from": "patient_contacts", "localField": "_id",
                          "foreignField": "_id", "as": "ct"}},
             {"$set": {"ct": {"$first": "$ct"}}},

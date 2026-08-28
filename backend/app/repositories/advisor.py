@@ -549,7 +549,9 @@ class AdvisorRepository(BaseRepository):
         excluded_inactive = 0
         for pref in prefs:
             d = per[pref]; pa = pats.get(pref, {}); ct = cts.get(pref, {})
-            if ct.get("active") is False:  # deceased / moved / stopped — don't chase
+            # Μη τους «κυνηγάμε»: θανόντες (authoritative deceased flag — πιάνει & όσους δεν έχουν
+            # contact record) ή ανενεργή καρτέλα (μεταφορά/διακοπή).
+            if pa.get("deceased") or ct.get("active") is False:
                 excluded_inactive += 1
                 continue
             items.append({

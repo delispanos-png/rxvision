@@ -599,25 +599,40 @@ export default function PortalHome() {
     if (!appt.service_name || !appt.date || !appt.time) return;
     const when = new Date(`${appt.date}T${appt.time}`);
     if (isNaN(when.getTime())) return;
-    await patientApi("/patient/appointments", { method: "POST", body: JSON.stringify({
-      tenant_id: apptTarget || undefined, service_name: appt.service_name,
-      requested_at: when.toISOString(),
-    }) });
-    setAppt({ service_name: "", date: "", time: "" });
-    patientApi<{ items: Appt[] }>("/patient/appointments").then((d) => setAppts(d.items));
+    try {
+      await patientApi("/patient/appointments", { method: "POST", body: JSON.stringify({
+        tenant_id: apptTarget || undefined, service_name: appt.service_name,
+        requested_at: when.toISOString(),
+      }) });
+      setAppt({ service_name: "", date: "", time: "" });
+      patientApi<{ items: Appt[] }>("/patient/appointments").then((d) => setAppts(d.items));
+      toast(t("✓ Το αίτημα ραντεβού στάλθηκε.", "✓ Your appointment request was sent."));
+    } catch (err) {
+      const code = (err as { problem?: { detail?: { error?: string } } })?.problem?.detail?.error;
+      toast(code === "pharmacy_closed"
+        ? t("Το φαρμακείο εμφανίζεται κλειστό εκείνη την ώρα. Διάλεξε ώρα μέσα στο ωράριο λειτουργίας.", "The pharmacy appears closed at that time. Please choose a time within opening hours.")
+        : t("Δεν ήταν δυνατό το ραντεβού — δοκίμασε ξανά.", "Could not book the appointment — please try again."), "error");
+    }
   }
   async function bookPickup(p: Rx | Repeat) {
     if (!pickupAt) return;
     const names = p.medicines.map((m) => typeof m === "string" ? m : m.name).slice(0, 6).join(", ");
-    await patientApi("/patient/appointments", { method: "POST", body: JSON.stringify({
-      tenant_id: me?.active_tenant || undefined,
-      kind: "pickup",
-      service_name: "Παραλαβή συνταγής",
-      requested_at: new Date(pickupAt).toISOString(),
-      note: names,
-    }) });
-    setPickupDone((d) => ({ ...d, [p.barcode]: pickupAt }));
-    setPickupFor(null); setPickupAt("");
+    try {
+      await patientApi("/patient/appointments", { method: "POST", body: JSON.stringify({
+        tenant_id: me?.active_tenant || undefined,
+        kind: "pickup",
+        service_name: "Παραλαβή συνταγής",
+        requested_at: new Date(pickupAt).toISOString(),
+        note: names,
+      }) });
+      setPickupDone((d) => ({ ...d, [p.barcode]: pickupAt }));
+      setPickupFor(null); setPickupAt("");
+    } catch (err) {
+      const code = (err as { problem?: { detail?: { error?: string } } })?.problem?.detail?.error;
+      toast(code === "pharmacy_closed"
+        ? t("Το φαρμακείο εμφανίζεται κλειστό εκείνη την ώρα. Διάλεξε ώρα μέσα στο ωράριο λειτουργίας.", "The pharmacy appears closed at that time. Please choose a time within opening hours.")
+        : t("Δεν ήταν δυνατή η παραλαβή — δοκίμασε ξανά.", "Could not schedule pickup — please try again."), "error");
+    }
   }
 
   if (noPharmacy) return (

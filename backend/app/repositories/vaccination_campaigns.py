@@ -73,10 +73,12 @@ def _now() -> datetime:
 
 
 def _default_season(today: datetime) -> tuple[str, datetime, datetime]:
-    """Flu season runs Sep→Aug. Returns (label, start, end) for the season `today` falls in."""
+    """Εμβολιαστική περίοδος: 01/09 (y) → 30/04 (y+1) — π.χ. 01/09/2025–30/04/2026. Το `end` είναι
+    01/05 (exclusive $lt) ώστε να περιλαμβάνεται όλος ο Απρίλιος. Από Σεπ ανοίγει η νέα περίοδος·
+    Ιαν–Αυγ = ακόμη η περίοδος που ξεκίνησε τον προηγούμενο Σεπτέμβριο. Returns (label, start, end)."""
     y = today.year if today.month >= 9 else today.year - 1
     start = datetime(y, 9, 1, tzinfo=timezone.utc)
-    end = datetime(y + 1, 9, 1, tzinfo=timezone.utc)
+    end = datetime(y + 1, 5, 1, tzinfo=timezone.utc)          # 01/05 → όλος ο Απρίλιος (exclusive)
     return f"{y}-{y + 1}", start, end
 
 

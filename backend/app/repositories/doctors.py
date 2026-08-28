@@ -54,11 +54,16 @@ class DoctorExecutionsRepository(BaseRepository):
         pipe: list[dict] = [
             {"$match": {"executed_at": {"$gte": date_from, "$lte": date_to},
                         "doctor_id": {"$ne": None}}},
+            # Χαρακτηρισμός εκτέλεσης ως θανόντος/ζώντος ΠΡΙΝ το group — ώστε το πλήθος ασθενών να
+            # μετρά μόνο ζώντες, ΧΩΡΙΣ να πειράξει τα οικονομικά (rx/value/cost = όλες οι εκτελέσεις).
+            {"$lookup": {"from": "patients_anonymized", "localField": "patient_ref",
+                         "foreignField": "_id", "as": "_pa"}},
+            {"$set": {"_alive": {"$ne": [{"$first": "$_pa.deceased"}, True]}}},
             {"$group": {"_id": "$doctor_id",
                         "rx_count": {"$sum": 1},
                         "value": {"$sum": "$amount_total"},
                         "cost": {"$sum": "$wholesale_cost"},
-                        "patients": {"$addToSet": "$patient_ref"}}},
+                        "patients": {"$addToSet": {"$cond": ["$_alive", "$patient_ref", None]}}}},
             {"$lookup": {"from": "doctors", "localField": "_id",
                          "foreignField": "_id", "as": "d"}},
             {"$set": {"d": {"$first": "$d"}}},
@@ -72,7 +77,8 @@ class DoctorExecutionsRepository(BaseRepository):
             {"$project": {"_id": 0, "id": {"$toString": "$_id"}, "name": 1, "specialty": 1,
                           "rx_count": 1, "value": 1,
                           "gross_profit": {"$subtract": ["$value", "$cost"]},
-                          "new_patients": {"$size": "$patients"}}},
+                          "new_patients": {"$size": {"$filter": {
+                              "input": "$patients", "cond": {"$ne": ["$$this", None]}}}}}},
             {"$sort": {self._SORT_FIELDS.get(sort, "value"): (1 if sort == "name" else -1)}},
             {"$skip": skip}, {"$limit": limit},
         ]
@@ -89,16 +95,22 @@ class DoctorExecutionsRepository(BaseRepository):
         pipeline = [
             {"$match": {"doctor_id": doctor_id,
                         "executed_at": {"$gte": date_from, "$lt": date_to}}},
+            # Θανόντες/ζώντες ανά εκτέλεση ΠΡΙΝ το group → distinct_patients μόνο ζώντες, ΧΩΡΙΣ να
+            # αλλάξουν τα οικονομικά (value/claimed/cost/profit = όλες οι πραγματικές εκτελέσεις).
+            {"$lookup": {"from": "patients_anonymized", "localField": "patient_ref",
+                         "foreignField": "_id", "as": "_pa"}},
+            {"$set": {"_alive": {"$ne": [{"$first": "$_pa.deceased"}, True]}}},
             {"$group": {
                 "_id": "$doctor_id",
                 "rx": {"$sum": 1},
                 "value": {"$sum": "$amount_total"},
                 "claimed": {"$sum": "$amount_claimed"},
                 "cost": {"$sum": "$wholesale_cost"},
-                "patients": {"$addToSet": "$patient_ref"},
+                "patients": {"$addToSet": {"$cond": ["$_alive", "$patient_ref", None]}},
             }},
             {"$set": {"profit": {"$subtract": ["$value", "$cost"]},  # retail − wholesale
-                      "distinct_patients": {"$size": "$patients"}}},
+                      "distinct_patients": {"$size": {"$filter": {
+                          "input": "$patients", "cond": {"$ne": ["$$this", None]}}}}}},
             {"$set": {"margin_pct": {"$cond": [
                 {"$gt": ["$claimed", 0]},
                 {"$multiply": [{"$divide": ["$profit", "$claimed"]}, 100]},
@@ -127,6 +139,10 @@ class DoctorExecutionsRepository(BaseRepository):
                         "first_doctor": {"$first": "$doctor_id"}}},
             {"$match": {"first_at": {"$gte": date_from, "$lt": date_to},
                         "first_doctor": doctor_id}},
+            # Θανόντες εκτός του πλήθους «νέων ασθενών» (authoritative deceased flag).
+            {"$lookup": {"from": "patients_anonymized", "localField": "_id",
+                         "foreignField": "_id", "as": "_pa"}},
+            {"$match": {"_pa.deceased": {"$ne": True}}},
             {"$count": "new_patients"},
         ]
         rows = await self.aggregate(pipeline)
@@ -142,6 +158,10 @@ class DoctorExecutionsRepository(BaseRepository):
                         "first_doctor": {"$first": "$doctor_id"}}},
             {"$match": {"first_at": {"$gte": date_from, "$lt": date_to},
                         "first_doctor": doctor_id}},
+            # Θανόντες εκτός της λίστας «νέων ασθενών» (authoritative deceased flag).
+            {"$lookup": {"from": "patients_anonymized", "localField": "_id",
+                         "foreignField": "_id", "as": "_pa"}},
+            {"$match": {"_pa.deceased": {"$ne": True}}},
             {"$sort": {"first_at": 1}},
             {"$project": {"_id": 0, "patient_ref": "$_id", "first_at": 1}},
         ]
@@ -176,10 +196,12 @@ class DoctorExecutionsRepository(BaseRepository):
                         "executed_at": {"$gte": date_from, "$lt": date_to}}},
             {"$group": {"_id": "$patient_ref", "rx": {"$sum": 1},
                         "value": {"$sum": "$amount_total"}, "last": {"$max": "$executed_at"}}},
-            {"$sort": {"value": -1}},
-            {"$limit": limit},
             {"$lookup": {"from": "patients_anonymized", "localField": "_id",
                          "foreignField": "_id", "as": "p"}},
+            # Θανόντες εκτός της λίστας ασθενών του ιατρού (φιλτράρισμα ΠΡΙΝ το limit → σωστό top-N).
+            {"$match": {"p.deceased": {"$ne": True}}},
+            {"$sort": {"value": -1}},
+            {"$limit": limit},
             {"$project": {"_id": 0, "patient_ref": {"$toString": "$_id"},
                           "rx": 1, "value": 1, "last": 1,
                           "name": {"$first": "$p.full_name"},
@@ -188,3 +210,38 @@ class DoctorExecutionsRepository(BaseRepository):
                           "sex": {"$first": "$p.sex"}}},
         ]
         return mask_rows(await self.aggregate(pipe), self.demo)
+
+    async def top_medicines(self, *, doctor_id, date_from: datetime,
+                            date_to: datetime, limit: int = 500) -> dict:
+        """Τι συνταγογραφεί ο ιατρός στην περίοδο — ΣΚΕΥΑΣΜΑΤΑ (products.name) & ΔΡΑΣΤΙΚΕΣ
+        (products.substance), με πλήθος γραμμών, τεμάχια και αξία. Ένα pass με $facet."""
+        base = [
+            {"$match": {"doctor_id": _oid(doctor_id),
+                        "executed_at": {"$gte": date_from, "$lt": date_to}}},
+            {"$lookup": {"from": "prescription_items", "localField": "_id",
+                         "foreignField": "execution_id", "as": "it"}},
+            {"$unwind": "$it"},
+            {"$lookup": {"from": "products", "localField": "it.product_id",
+                         "foreignField": "_id", "as": "pr"}},
+            {"$set": {"pr": {"$first": "$pr"}}},
+        ]
+        med_stage = [
+            {"$group": {"_id": "$pr.name", "name": {"$first": "$pr.name"},
+                        "substance": {"$first": "$pr.substance"}, "atc": {"$first": "$pr.atc"},
+                        "qty": {"$sum": {"$ifNull": ["$it.quantity", 1]}}, "rx": {"$sum": 1},
+                        "value": {"$sum": {"$ifNull": ["$it.retail_price", 0]}}}},
+            {"$match": {"_id": {"$nin": [None, ""]}}},
+            {"$sort": {"rx": -1, "value": -1}}, {"$limit": limit},
+            {"$project": {"_id": 0, "name": 1, "substance": 1, "atc": 1, "qty": 1, "rx": 1, "value": 1}},
+        ]
+        sub_stage = [
+            {"$group": {"_id": "$pr.substance", "substance": {"$first": "$pr.substance"},
+                        "atc": {"$first": "$pr.atc"},
+                        "qty": {"$sum": {"$ifNull": ["$it.quantity", 1]}}, "rx": {"$sum": 1},
+                        "value": {"$sum": {"$ifNull": ["$it.retail_price", 0]}}}},
+            {"$match": {"_id": {"$nin": [None, ""]}}},
+            {"$sort": {"rx": -1, "value": -1}}, {"$limit": limit},
+            {"$project": {"_id": 0, "substance": 1, "atc": 1, "qty": 1, "rx": 1, "value": 1}},
+        ]
+        rows = await self.aggregate(base + [{"$facet": {"medicines": med_stage, "substances": sub_stage}}])
+        return rows[0] if rows else {"medicines": [], "substances": []}
