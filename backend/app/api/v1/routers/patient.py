@@ -1099,6 +1099,26 @@ async def my_appointments(ctx: PatientContext = Depends(get_patient_context)):
     return {"items": mask_rows(items, ctx.demo)}   # κρύψε όνομα φαρμακείου σε demo
 
 
+# ── Συγχρονισμός ημερολογίου (Google Calendar / Outlook 365 / Apple) ──────────
+@router.get("/calendar-feed")
+async def calendar_feed(ctx: PatientContext = Depends(get_patient_context)):
+    """Μυστικό link συνδρομής (.ics) με τη δοσοληψία φαρμάκων + τα ραντεβού με το φαρμακείο.
+    Ο πελάτης το προσθέτει ΜΙΑ φορά στο Google/Outlook («Add calendar from URL») → αυτο-ανανέωση."""
+    from app.services import calendar_feed_service as cf
+    token = await cf.get_or_create("patient", tenant_id=ctx.tenant_id,
+                                   account_id=ctx.account_id, patient_ref=ctx.patient_ref)
+    return {"path": cf.feed_path("patient", token)}
+
+
+@router.post("/calendar-feed/regenerate")
+async def calendar_feed_regenerate(ctx: PatientContext = Depends(get_patient_context)):
+    """Ανανέωση link — ακυρώνει το παλιό (αν διέρρευσε) & δίνει καινούριο."""
+    from app.services import calendar_feed_service as cf
+    token = await cf.regenerate("patient", tenant_id=ctx.tenant_id,
+                                account_id=ctx.account_id, patient_ref=ctx.patient_ref)
+    return {"path": cf.feed_path("patient", token)}
+
+
 # ── «Ανάθεση συνταγής» — by barcode OR a photo of the doctor's Rx ───────────
 class RxRequestIn(BaseModel):
     barcode: str

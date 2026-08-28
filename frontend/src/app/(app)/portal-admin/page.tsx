@@ -9,6 +9,9 @@ import { api, apiBlob } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
 import { fmtDateTime } from "@/lib/formatters";
+import { CalendarSyncCard } from "@/components/CalendarSyncCard";
+import { toastSuccess, toastError } from "@/store/toastStore";
+import { appConfirm } from "@/store/dialogStore";
 
 type Avail = { id?: string; _id?: string; query: string; medicine_name?: string | null; patient_name?: string; patient_phone?: string; status: string; answer?: string | null; created_at: string; pickup_intent?: { coming: boolean; date?: string | null; at?: string } | null };
 type Appt = { id?: string; _id?: string; service_name: string; kind?: string; note?: string; patient_name?: string; patient_phone?: string; requested_at: string; status: string };
@@ -206,6 +209,14 @@ function AppointmentsTab() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["portal-appts"] }),
   });
   const items = data?.items ?? [];
+  const feedQ = useQuery({ queryKey: ["portal-cal-feed"], queryFn: () => api<{ path: string }>("/portal/calendar-feed") });
+  const regen = useMutation({
+    mutationFn: () => api<{ path: string }>("/portal/calendar-feed/regenerate", { method: "POST" }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["portal-cal-feed"] }); toastSuccess(t("Δημιουργήθηκε νέος σύνδεσμος.", "New link generated.")); },
+  });
+  const onRegen = async () => {
+    if (await appConfirm(t("Να δημιουργηθεί νέος σύνδεσμος ημερολογίου; Ο παλιός θα πάψει να λειτουργεί σε όσους τον έχουν προσθέσει.", "Generate a new calendar link? The old one will stop working for anyone who added it."), { danger: true, confirmText: t("Νέος σύνδεσμος", "New link") })) regen.mutate();
+  };
   const STATUS_EL: Record<string, string> = {
     requested: t("Σε αναμονή", "Requested"), confirmed: t("Επιβεβαιωμένο", "Confirmed"),
     ready: t("Έτοιμη για παραλαβή", "Ready for pickup"), done: t("Ολοκληρώθηκε", "Done"),
@@ -213,6 +224,12 @@ function AppointmentsTab() {
   };
   return (
     <div className="space-y-3">
+      <CalendarSyncCard feedPath={feedQ.data?.path ?? null}
+        calName={t("Ραντεβού πελατών", "Customer appointments")} t={t}
+        notify={(m, k) => (k === "error" ? toastError(m) : toastSuccess(m))}
+        onRegenerate={onRegen} regenerating={regen.isPending}
+        title={t("Ημερολόγιο ραντεβού (Google / Outlook / Apple)", "Appointments calendar (Google / Outlook / Apple)")}
+        subtitle={t("Δες όλα τα ραντεβού των πελατών σου στο ημερολόγιό σου — ενημερώνεται αυτόματα.", "See all your customers' appointments in your calendar — updates automatically.")} />
       {items.length === 0 && <p className="text-sm text-slate-400">{t("Κανένα ραντεβού.", "No appointments.")}</p>}
       {items.map((a) => {
         const id = oid(a);

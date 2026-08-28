@@ -63,12 +63,21 @@ async def interactions_execution(external_id: str, ctx: TenantContext = Depends(
 class PatientInteractionIn(BaseModel):
     amka: str | None = None
     patient_id: str | None = None
+    added: list[str] | None = None   # δραστική(ές) ΝΕΟΥ σκευάσματος (OTC χωρίς συνταγή) προς έλεγχο
 
 
 @router.post("/interactions/patient")
 async def interactions_patient(body: PatientInteractionIn, ctx: TenantContext = Depends(require("patients:read", module="drug_interactions"))):
-    """Έλεγχος αλληλεπιδράσεων σε ΟΛΗ την ενεργή αγωγή του ασθενή (add-on «drug_interactions»)."""
-    return await _repo(ctx).interactions_for_patient(ctx.user_id, patient_id=body.patient_id, amka=body.amka)
+    """Έλεγχος αλληλεπιδράσεων σε ΟΛΗ την ενεργή αγωγή του ασθενή (add-on «drug_interactions»).
+    Με `added` → ελέγχει και ΝΕΟ σκεύασμα (δραστική) που θέλει να δώσει ο φαρμακοποιός χωρίς συνταγή."""
+    return await _repo(ctx).interactions_for_patient(
+        ctx.user_id, patient_id=body.patient_id, amka=body.amka, added=body.added)
+
+
+@router.get("/medicine-search")
+async def medicine_search(q: str, ctx: TenantContext = Depends(require("patients:read", module="drug_interactions"))):
+    """Autocomplete σκευασμάτων/δραστικών (για τον έλεγχο νέου σκευάσματος) — επιστρέφει τη δραστική."""
+    return await _repo(ctx).medicine_search(q)
 
 
 @router.post("/report")

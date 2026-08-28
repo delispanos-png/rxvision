@@ -169,9 +169,39 @@ class PharmaCatRepository(BaseRepository):
             return {"ok": True, "interactions": [], "checked_drugs": [], "note": "no_drugs"}
         return await self._ddi(ctx_user, drugs, {"πηγή": "συνταγή", "barcode": external_id})
 
+    async def medicine_search(self, q: str, limit: int = 12) -> dict:
+        """Autocomplete πάνω στον κατάλογο σκευασμάτων: ταιριάζει εμπορική ονομασία Ή δραστική, και
+        επιστρέφει την ΚΑΘΑΡΗ δραστική ουσία (substance_name) — αυτή χρησιμοποιείται για τον έλεγχο
+        αλληλεπιδράσεων (ασφαλές, canonical), όχι το brand. Dedup ανά (όνομα, δραστική)."""
+        import re
+        q = (q or "").strip()
+        if len(q) < 2:
+            return {"items": []}
+        rx = re.compile(re.escape(q), re.I)
+        cur = self._db["medicine_catalog"].find(   # tenant-ok: shared platform catalogue
+            {"$or": [{"name": rx}, {"full_name": rx}, {"substance_name": rx}],
+             "in_circulation": {"$ne": False}, "substance_name": {"$nin": [None, ""]}},
+            {"name": 1, "full_name": 1, "substance_name": 1, "atc": 1}).limit(120)
+        seen: set = set()
+        out: list[dict] = []
+        async for c in cur:
+            sub = (c.get("substance_name") or "").strip()
+            nm = (c.get("full_name") or c.get("name") or "").strip()
+            key = (nm.lower(), sub.lower())
+            if not sub or key in seen:
+                continue
+            seen.add(key)
+            out.append({"name": nm, "substance": sub, "atc": c.get("atc")})
+            if len(out) >= limit:
+                break
+        return {"items": out}
+
     async def interactions_for_patient(self, ctx_user: str, *, patient_id: str | None = None,
-                                       amka: str | None = None) -> dict:
-        """Αλληλεπιδράσεις σε ΟΛΗ την ΕΝΕΡΓΗ αγωγή του ασθενή (τρέχουσες θεραπείες, όχι ιστορικό)."""
+                                       amka: str | None = None,
+                                       added: list[str] | None = None) -> dict:
+        """Αλληλεπιδράσεις σε ΟΛΗ την ΕΝΕΡΓΗ αγωγή του ασθενή (τρέχουσες θεραπείες, όχι ιστορικό).
+        `added`: δραστική(ές) ΝΕΟΥ σκευάσματος (π.χ. OTC που θέλει να δώσει ο φαρμακοποιός χωρίς
+        συνταγή) → ελέγχεται μαζί με την ενεργή αγωγή· οι αλληλεπιδράσεις που το αφορούν σημαίνονται."""
         from bson import ObjectId
         from app.repositories.patient_portal import PatientRxRepository
         pid = None
@@ -188,9 +218,22 @@ class PharmaCatRepository(BaseRepository):
             return {"ok": False, "error": "patient_not_found"}
         sched = await PatientRxRepository(tenant_id=self.tenant_id).medication_schedule(str(pid))
         drugs = self._dedup([t.get("name") or "" for t in (sched.get("therapies") or [])])
+        added = self._dedup([a for a in (added or []) if a and a.strip()])
         if not drugs:
-            return {"ok": True, "interactions": [], "checked_drugs": [], "note": "no_active"}
-        return await self._ddi(ctx_user, drugs, {"πηγή": "ενεργή αγωγή ασθενή"})
+            # καμία ενεργή αγωγή → δεν υπάρχει με τι να ελεγχθεί το νέο σκεύασμα
+            note = "no_regimen_for_new" if added else "no_active"
+            return {"ok": True, "interactions": [], "checked_drugs": added,
+                    "added": added, "note": note}
+        combined = self._dedup(drugs + added)
+        src = "ενεργή αγωγή ασθενή" + (" + νέο σκεύασμα (χωρίς συνταγή)" if added else "")
+        res = await self._ddi(ctx_user, combined, {"πηγή": src})
+        if added and isinstance(res, dict) and isinstance(res.get("interactions"), list):
+            low = [a.lower() for a in added]
+            for it in res["interactions"]:
+                ab = f"{it.get('a', '')} {it.get('b', '')}".lower()
+                it["involves_new"] = any(s in ab for s in low)
+            res["added"] = added
+        return res
 
     async def _record(self, user: str, messages: list[dict], context: dict | None,
                       res: dict, *, kind: str, drugs: list[str] | None = None,

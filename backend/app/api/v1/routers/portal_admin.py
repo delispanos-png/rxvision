@@ -202,6 +202,23 @@ async def appointment_status(appt_id: str, body: StatusIn,
     return {"ok": True}
 
 
+# ── ημερολόγιο φαρμακείου (Google Calendar / Outlook 365 / Apple) ────────────
+@router.get("/calendar-feed")
+async def calendar_feed(ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+    """Μυστικό link συνδρομής (.ics) με ΟΛΑ τα ραντεβού των πελατών. Ο φαρμακοποιός το προσθέτει
+    ΜΙΑ φορά στο Google/Outlook («Προσθήκη ημερολογίου από URL») → αυτόματη ανανέωση."""
+    from app.services import calendar_feed_service as cf
+    token = await cf.get_or_create("pharmacy", tenant_id=ctx.tenant_id)
+    return {"path": cf.feed_path("pharmacy", token)}
+
+
+@router.post("/calendar-feed/regenerate")
+async def calendar_feed_regenerate(ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+    from app.services import calendar_feed_service as cf
+    token = await cf.regenerate("pharmacy", tenant_id=ctx.tenant_id)
+    return {"path": cf.feed_path("pharmacy", token)}
+
+
 # ── services catalogue ───────────────────────────────────────
 @router.get("/services")
 async def services(ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):

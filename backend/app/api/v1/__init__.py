@@ -5,6 +5,7 @@ from app.api.v1.routers import (
     admin,
     advisor,
     auth,
+    calendar,
     communications,
     dashboard,
     doctors,
@@ -44,6 +45,7 @@ from app.api.v1.routers import (
 
 api_router = APIRouter()
 api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
+api_router.include_router(calendar.router, prefix="/calendar", tags=["calendar"])
 api_router.include_router(onboarding.router, prefix="/onboarding", tags=["onboarding"])
 api_router.include_router(feedback.router, prefix="/feedback", tags=["feedback"])
 api_router.include_router(billing.router, prefix="/billing", tags=["billing"])

@@ -7,8 +7,8 @@ import { api } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
 import { Modal } from "@/components/ui/Modal";
 
-type Interaction = { a: string; b: string; severity: string; mechanism?: string; risk?: string; action?: string };
-type Result = { ok?: boolean; error?: string; interactions?: Interaction[]; checked_drugs?: string[]; note?: string; summary?: string; source?: string };
+type Interaction = { a: string; b: string; severity: string; mechanism?: string; risk?: string; action?: string; involves_new?: boolean };
+type Result = { ok?: boolean; error?: string; interactions?: Interaction[]; checked_drugs?: string[]; note?: string; summary?: string; source?: string; added?: string[] };
 
 const SEV: Record<string, { cls: string; el: string }> = {
   minor: { cls: "bg-emerald-100 text-emerald-700 border-emerald-200", el: "Ήσσονος" },
@@ -53,13 +53,21 @@ export function InteractionsModal({ open, onClose, title, endpoint, body }: {
           {!!r.checked_drugs?.length && (
             <div className="text-xs text-slate-500">{t("Ελέγχθηκαν", "Checked")}: <span className="text-slate-600 dark:text-slate-300">{r.checked_drugs.join(" · ")}</span></div>
           )}
+          {!!r.added?.length && (
+            <div className="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs text-indigo-700 dark:border-indigo-800 dark:bg-indigo-950/30 dark:text-indigo-300">
+              {t("Νέο σκεύασμα προς έλεγχο", "New medicine to check")}: <b>{r.added.join(" · ")}</b>
+            </div>
+          )}
           {r.summary && <p className="rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-700 dark:bg-slate-800 dark:text-slate-200">{r.summary}</p>}
           {r.interactions?.length ? (
-            <div className="space-y-2">{r.interactions.map((x, i) => {
+            <div className="space-y-2">{[...r.interactions].sort((a, b) => Number(!!b.involves_new) - Number(!!a.involves_new)).map((x, i) => {
               const sv = SEV[x.severity] ?? SEV.moderate;
               return (
-                <div key={i} className={`rounded-lg border p-3 text-sm ${sv.cls}`}>
-                  <div className="flex items-center justify-between font-semibold"><span>{x.a} ↔ {x.b}</span><span className="rounded-full bg-white/70 px-2 py-0.5 text-[11px]">{sv.el}</span></div>
+                <div key={i} className={`rounded-lg border p-3 text-sm ${sv.cls} ${x.involves_new ? "ring-2 ring-indigo-400" : ""}`}>
+                  <div className="flex items-center justify-between font-semibold">
+                    <span className="flex items-center gap-1.5">{x.involves_new && <span className="rounded-full bg-indigo-600 px-1.5 py-0.5 text-[10px] font-bold text-white">{t("ΝΕΟ", "NEW")}</span>}{x.a} ↔ {x.b}</span>
+                    <span className="rounded-full bg-white/70 px-2 py-0.5 text-[11px]">{sv.el}</span>
+                  </div>
                   {x.mechanism && <div className="mt-1 opacity-90"><b>{t("Μηχανισμός", "Mechanism")}:</b> {x.mechanism}</div>}
                   {x.risk && <div className="opacity-90"><b>{t("Κίνδυνος", "Risk")}:</b> {x.risk}</div>}
                   {x.action && <div className="opacity-90"><b>{t("Ενέργεια", "Action")}:</b> {x.action}</div>}
@@ -68,8 +76,12 @@ export function InteractionsModal({ open, onClose, title, endpoint, body }: {
             })}</div>
           ) : (
             <div className="rounded-lg bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
-              ✓ {r.note === "no_drugs" || r.note === "no_active"
+              ✓ {r.note === "no_regimen_for_new"
+                ? t("Ο ασθενής δεν έχει ενεργή αγωγή — δεν υπάρχει με τι να ελεγχθεί το νέο σκεύασμα.", "The patient has no active regimen — nothing to check the new medicine against.")
+                : r.note === "no_drugs" || r.note === "no_active"
                 ? t("Δεν βρέθηκαν φάρμακα/ενεργή αγωγή για έλεγχο.", "No medicines / active therapy to check.")
+                : r.added?.length
+                ? t("Δεν εντοπίστηκαν αλληλεπιδράσεις του νέου σκευάσματος με την ενεργή αγωγή.", "No interactions found between the new medicine and the active regimen.")
                 : t("Δεν εντοπίστηκαν σημαντικές αλληλεπιδράσεις.", "No significant interactions found.")}
             </div>
           )}

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Search, User, Wallet, Repeat, Stethoscope, Pill, Sparkles, AlertTriangle, Salad, Target, Eye, Crown, Syringe, ChevronRight, ScanLine, Calendar, CalendarRange, ShieldAlert } from "lucide-react";
 import { InteractionsModal } from "@/components/clinical/InteractionsModal";
+import { NewMedInteractionCard } from "@/components/clinical/NewMedInteractionCard";
 import { api, ApiError } from "@/lib/apiClient";
 import { appConfirm } from "@/store/dialogStore";
 import { useT } from "@/store/prefStore";
@@ -399,6 +400,8 @@ export default function PatientProfilePage() {
               <InteractionsModal open={showInter} onClose={() => setShowInter(false)}
                 title={t("Αλληλεπιδράσεις ενεργής αγωγής", "Active-regimen interactions")}
                 endpoint="/pharmacat/interactions/patient" body={{ patient_id: p.patient.id }} />
+              {/* Έλεγχος ΝΕΟΥ σκευάσματος (OTC χωρίς συνταγή) vs ενεργή αγωγή */}
+              <NewMedInteractionCard patientId={p.patient.id} />
             </>
           )}
 

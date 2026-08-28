@@ -20,6 +20,7 @@ import { RenewalCard, type Renewal } from "@/components/portal/RenewalCard";
 import { ShopTab } from "@/components/portal/ShopTab";
 import { Toaster, toast, confirmDialog } from "@/components/portal/Toaster";
 import { TransferCard } from "@/components/portal/TransferCard";
+import { CalendarSyncCard } from "@/components/CalendarSyncCard";
 import { pushSupported, isPushSubscribed, enablePush } from "@/lib/push";
 import { BellRing } from "lucide-react";
 import { fmtDate, fmtDateTime } from "@/lib/formatters";
@@ -185,6 +186,8 @@ export default function PortalHome() {
   const [assignMsg, setAssignMsg] = useState<string | null>(null);
   const [availTarget, setAvailTarget] = useState("");
   const [apptView, setApptView] = useState<"open" | "closed">("open");   // Ραντεβού: Ανοιχτά | Κλειστά
+  const [calFeed, setCalFeed] = useState<string | null>(null);           // .ics συνδρομή ημερολογίου
+  const [calBusy, setCalBusy] = useState(false);
   const [availMed, setAvailMed] = useState<Medicine | null>(null);
   const [availNote, setAvailNote] = useState("");
   const [apptTarget, setApptTarget] = useState("");
@@ -271,6 +274,7 @@ export default function PortalHome() {
         .catch(() => {});
     }
     if (tab === "meds") patientApi<Schedule>("/patient/meds/schedule").then(setSched).catch(() => {});
+    if ((tab === "meds" || tab === "appointments") && !calFeed) patientApi<{ path: string }>("/patient/calendar-feed").then((d) => setCalFeed(d.path)).catch(() => {});
     if (tab === "health") patientApi<Health>("/patient/health").then(setHealth).catch(() => {});
     if (tab === "renewals") patientApi<{ items: Renewal[] }>("/patient/renewals").then((d) => setRenewals(d.items)).catch(() => {});
     if (tab === "wallet") patientApi<Loyalty>("/patient/loyalty").then(setLoyalty).catch(() => {});
@@ -593,6 +597,16 @@ export default function PortalHome() {
       await patientUpload("/patient/rx-request/photo", fd);
       setAssignNote(""); setAssignMsg(t("Η φωτογραφία στάλθηκε ✓", "Photo sent ✓")); reloadRxReqs();
     } catch { setAssignMsg(t("Αποτυχία αποστολής φωτογραφίας.", "Failed to send photo.")); } finally { setAssignBusy(false); }
+  }
+  async function regenCalFeed() {
+    if (!(await confirmDialog(t("Να δημιουργηθεί νέος σύνδεσμος ημερολογίου; Ο παλιός θα πάψει να λειτουργεί όπου τον έχεις προσθέσει.", "Generate a new calendar link? The old one will stop working wherever you added it.")))) return;
+    setCalBusy(true);
+    try {
+      const d = await patientApi<{ path: string }>("/patient/calendar-feed/regenerate", { method: "POST" });
+      setCalFeed(d.path);
+      toast(t("Δημιουργήθηκε νέος σύνδεσμος ημερολογίου.", "New calendar link generated."), "success");
+    } catch { toast(t("Κάτι πήγε στραβά — δοκίμασε ξανά.", "Something went wrong — please try again."), "error"); }
+    finally { setCalBusy(false); }
   }
   async function bookAppt(e: React.FormEvent) {
     e.preventDefault();
@@ -1442,6 +1456,13 @@ export default function PortalHome() {
               ))}
             </div>
 
+            <CalendarSyncCard feedPath={calFeed}
+              calName={t("Φάρμακα & ραντεβού — RxVision", "Medication & appointments — RxVision")} t={t}
+              notify={(m, k) => toast(m, k === "error" ? "error" : "success")}
+              onRegenerate={regenCalFeed} regenerating={calBusy}
+              title={t("Συγχρονισμός με το ημερολόγιό σου", "Sync with your calendar")}
+              subtitle={t("Οι λήψεις των φαρμάκων σου & τα ραντεβού με το φαρμακείο σε Google Calendar, Outlook 365 ή Apple — αυτόματη ανανέωση.", "Your medication doses & pharmacy appointments in Google Calendar, Outlook 365 or Apple — auto-refreshing.")} />
+
             {!sched ? <div className="py-10 text-center text-sm text-slate-400">{t("Φόρτωση…", "Loading…")}</div>
              : sched.therapies.length === 0 ? <Empty icon={BellRing} text={t("Δεν βρέθηκαν ενεργές αγωγές αυτή τη στιγμή.", "No active treatments right now.")} />
              : medsView === "calendar" ? (<>
@@ -1983,6 +2004,12 @@ export default function PortalHome() {
         {/* ── APPOINTMENTS ───────────────────────────────────── */}
         {tab === "appointments" && (
           <div className="space-y-4">
+            <CalendarSyncCard feedPath={calFeed}
+              calName={t("Φάρμακα & ραντεβού — RxVision", "Medication & appointments — RxVision")} t={t}
+              notify={(m, k) => toast(m, k === "error" ? "error" : "success")}
+              onRegenerate={regenCalFeed} regenerating={calBusy}
+              title={t("Συγχρονισμός με το ημερολόγιό σου", "Sync with your calendar")}
+              subtitle={t("Τα ραντεβού σου & οι λήψεις φαρμάκων σε Google Calendar, Outlook 365 ή Apple — αυτόματη ανανέωση.", "Your appointments & medication doses in Google Calendar, Outlook 365 or Apple — auto-refreshing.")} />
             <form onSubmit={bookAppt} className="space-y-3 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:border-slate-800 dark:bg-slate-900 p-4 shadow-sm sm:p-5">
               <div className="flex items-center gap-2 text-sm font-bold text-slate-800 dark:text-slate-100"><CalendarPlus className="h-4 w-4 text-brand-500" /> {t("Κλείσε ραντεβού", "Book an appointment")}</div>
               <div>
