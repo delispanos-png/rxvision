@@ -46,3 +46,17 @@ docker run -d --name rxvision-mongo --restart unless-stopped \
 # VM that is ~1.5GB, which is fine for the current dataset.
 
 echo "started. From the primary (DB01) verify:  rs.status()  → 10.0.0.8:27017 SECONDARY health=1"
+
+# ── Monitoring agent (dashboard RAM/Disk/Load) ──────────────────────────────────
+# DB nodes report host metrics via a standalone bash reporter (systemd rxvision-metrics.service)
+# writing to db.node_metrics — the same fields as services/node_metrics.py, keyed by NODE name.
+# (App nodes report via the app itself; DB nodes have no app container, hence the script.)
+# DB02 is a SECONDARY, so its reporter writes to the PRIMARY via the replica-set URI:
+#   1) Stream the mongo root creds onto DB02 (NOT printed), 600-perm:
+#        grep -E '^MONGO_ROOT_USER=|^MONGO_ROOT_PASSWORD=' /opt/rxvision/.env \
+#          | ssh root@10.0.0.8 'umask 077; cat > /root/db02-mongo.env'
+#   2) Install /usr/local/bin/rxvision-node-metrics.sh (NODE=RxVisionDB02; sources the env file;
+#      URI=mongodb://$MONGO_ROOT_USER:$MONGO_ROOT_PASSWORD@10.0.0.3,10.0.0.2,10.0.0.8/rxvision?replicaSet=rs0&authSource=admin;
+#      loop: sample /proc + df every ~30s → db.node_metrics.updateOne({_id:NODE},{...},{upsert:true})).
+#   3) systemd unit rxvision-metrics.service (ExecStart=that script, Restart=always) → enable --now.
+# Verify: db.node_metrics.findOne({_id:'RxVisionDB02'}) shows cpu/ram_pct/disk_pct/load + fresh ts.
