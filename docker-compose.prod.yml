@@ -21,7 +21,10 @@ services:
         KF=/etc/mongo-keyfile/keyfile
         if [ ! -s "$$KF" ]; then openssl rand -base64 756 > "$$KF"; fi
         chmod 400 "$$KF"; chown mongodb:mongodb "$$KF"
-        exec docker-entrypoint.sh mongod --replSet rs0 --bind_ip_all --keyFile "$$KF" --auth
+        # --wiredTigerCacheSizeGB 1: cap the WT cache so it can't balloon to ~50%×(RAM-1GB)≈3.25GB
+        # and starve Vault/beat/builds on this shared 8GB node. This member only replicates
+        # (app reads via primary DB01) so 1GB cache is ample. Same cap as the SRV01 secondary.
+        exec docker-entrypoint.sh mongod --replSet rs0 --bind_ip_all --keyFile "$$KF" --auth --wiredTigerCacheSizeGB 1
     volumes:
       - "mongo_data:/data/db"
       - "mongo_keyfile:/etc/mongo-keyfile"
