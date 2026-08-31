@@ -83,6 +83,32 @@ async def portal_customers(ctx: TenantContext = Depends(require(_PERM, module=_M
     return await PatientAccountRepository().portal_customers(ctx.tenant_id, demo=ctx.demo)
 
 
+class ResendSetPwIn(BaseModel):
+    identifier: str   # email Ή ΑΜΚΑ του πελάτη
+
+
+@router.post("/portal-customers/resend-set-password")
+async def resend_set_password(body: ResendSetPwIn,
+                              ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+    """Ξεκλείδωμα πελάτη: στέλνει ΦΡΕΣΚΟ σύνδεσμο «ορισμού κωδικού» (email + SMS) σε ΥΠΑΡΧΟΝΤΑ
+    πελάτη — μόνο αν είναι συνδεδεμένος με ΑΥΤΟ το φαρμακείο. Λύνει «δεν έλαβα email ανάκτησης»
+    ό,τι κι αν φταίει (λάθος/διαφορετικό email που θυμάται ο πελάτης)."""
+    from app.services.patient_auth_service import PatientAuthService
+    ident = (body.identifier or "").strip()
+    if not ident:
+        return {"ok": False, "error": "no_identifier"}
+    repo = PatientAccountRepository()
+    acc = await repo.get_by_email(ident) if "@" in ident else await repo.get_by_amka(ident)
+    if not acc:
+        return {"ok": False, "error": "not_found"}
+    # scoping: ο πελάτης πρέπει να ανήκει σε ΑΥΤΟ το φαρμακείο (patient_links account↔tenant)
+    link = await shared_db()["patient_links"].find_one(
+        {"account_id": acc["_id"], "tenant_id": ctx.tenant_id})
+    if not link:
+        return {"ok": False, "error": "not_your_customer"}
+    return await PatientAuthService().resend_set_password_link(str(acc["_id"]))
+
+
 # ── live "pending" feed (polled by the panel to pop up new requests) ──
 @router.get("/pending")
 async def pending(ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):

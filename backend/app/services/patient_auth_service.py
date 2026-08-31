@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import logging
 import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -20,6 +21,18 @@ from app.core.security import (
     hash_password, verify_password,
 )
 from app.repositories.patient_portal import PatientAccountRepository
+
+logger = logging.getLogger(__name__)
+
+
+def _mask_email(email: str | None) -> str:
+    """Μερικό mask για ops logs (GDPR-friendly): ab***@domain.gr."""
+    e = (email or "").strip()
+    if "@" not in e:
+        return "(no-email)"
+    local, _, dom = e.partition("@")
+    return (local[:2] + "***") + "@" + dom
+
 
 _OTP_TTL_MIN = 10
 _OTP_MAX_ATTEMPTS = 5
@@ -209,17 +222,37 @@ class PatientAuthService:
                     f"<p style='font-size:12px;color:#64748b'>ή αντιγράψτε: {link}</p>"
                     f"<p style='font-size:12px;color:#64748b'>Ο σύνδεσμος λήγει σε 7 ημέρες.</p>")
                 sent.append({"type": "email", "hint": _mask_email(email)})
-            except Exception:  # noqa: BLE001
-                pass
+            except Exception as exc:  # noqa: BLE001 — best-effort αλλά logged (διαγνώσιμο)
+                logger.warning("set-password EMAIL failed for %s: %s: %s",
+                               _mask_email(email), type(exc).__name__, exc)
         if phone:
             try:
                 from app.services import comms
                 await comms.send_otp_sms(
                     phone, f"RxVision: ορίστε τον κωδικό πρόσβασής σας: {link}")
                 sent.append({"type": "sms", "hint": _mask_phone(phone)})
-            except Exception:  # noqa: BLE001
-                pass
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("set-password SMS failed: %s: %s", type(exc).__name__, exc)
         return sent
+
+    async def resend_set_password_link(self, account_id: str) -> dict:
+        """Φαρμακοποιός-assisted ξεκλείδωμα: δημιουργεί ΦΡΕΣΚΟ set-password token για υπάρχοντα
+        πελάτη & στέλνει τον σύνδεσμο (email + SMS). Λύνει «δεν έλαβα email» ό,τι κι αν φταίει
+        (λάθος email που θυμάται ο πελάτης κ.λπ.) — ο φαρμακοποιός ξέρει τα σωστά στοιχεία."""
+        acc = await self.repo.get(account_id)
+        if not acc:
+            return {"ok": False, "error": "not_found"}
+        token = await self.repo.create_set_password_token(acc["_id"])
+        if not token:
+            return {"ok": False, "error": "token_failed"}
+        link = f"{_PORTAL_BASE}/portal/set-password?token={token}"
+        sent = await self._send_set_password_link(acc.get("email"), acc.get("phone"), link)
+        logger.info("pharmacist resent set-password link for %s → %s",
+                    _mask_email(acc.get("email")), [s["type"] for s in sent])
+        return {"ok": bool(sent), "sent": sent,
+                "email": _mask_email(acc.get("email")),
+                "phone": _mask_phone(acc.get("phone")) if acc.get("phone") else None,
+                "error": None if sent else "no_channel_delivered"}
 
     async def request_password_reset(self, email: str) -> dict:
         """Self-service «ξέχασα κωδικό»: αν υπάρχει λογαριασμός με αυτό το email, στέλνει σύνδεσμο
@@ -231,6 +264,10 @@ class PatientAuthService:
             if token:
                 link = f"{_PORTAL_BASE}/portal/set-password?token={token}"
                 await self._send_password_reset_link(acc.get("email"), acc.get("phone"), link)
+        else:
+            # ops-log για διάγνωση «δεν έλαβα email ανάκτησης»: το email ΔΕΝ αντιστοιχεί σε
+            # λογαριασμό (τυπογραφικό ή διαφορετικό από το εγγεγραμμένο). Στον χρήστη πάντα ok.
+            logger.info("password reset requested for unknown email %s (no account)", _mask_email(email))
         return {"ok": True}
 
     async def _send_password_reset_link(self, email: str | None, phone: str | None, link: str) -> None:
@@ -247,14 +284,17 @@ class PatientAuthService:
                     f"<p style='font-size:12px;color:#64748b'>ή αντιγράψτε: {link}</p>"
                     "<p style='font-size:12px;color:#64748b'>Αν δεν το ζητήσατε εσείς, αγνοήστε το μήνυμα. "
                     "Ο σύνδεσμος λήγει σε 7 ημέρες.</p>")
-            except Exception:  # noqa: BLE001
-                pass
+                logger.info("password reset email sent to %s", _mask_email(email))
+            except Exception as exc:  # noqa: BLE001 — best-effort, ΑΛΛΑ όχι σιωπηλό: κατέγραψέ το ώστε
+                # μια αποτυχία SMTP («δεν έλαβα email») να είναι διαγνώσιμη αντί να χάνεται αθόρυβα.
+                logger.warning("password reset EMAIL failed for %s: %s: %s",
+                               _mask_email(email), type(exc).__name__, exc)
         if phone:
             try:
                 from app.services import comms
                 await comms.send_otp_sms(phone, f"RxVision: ορίστε νέο κωδικό πρόσβασης: {link}")
-            except Exception:  # noqa: BLE001
-                pass
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("password reset SMS failed: %s: %s", type(exc).__name__, exc)
 
     async def set_password_by_token(self, token: str, new_password: str) -> dict | None:
         """Link flow (email/SMS): ο πελάτης ορίζει δικό του κωδικό μέσω single-use token → session."""

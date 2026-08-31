@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from "react";
 import { DateInput } from "@/components/ui/DateInput";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { QRCodeCanvas } from "qrcode.react";
-import { Users, MessageSquare, CalendarClock, Stethoscope, FileText, ZoomIn, Trash2, Heart, Copy, Printer } from "lucide-react";
+import { Users, MessageSquare, CalendarClock, Stethoscope, FileText, ZoomIn, Trash2, Heart, Copy, Printer, KeyRound, Loader2, Send } from "lucide-react";
 import { api, apiBlob } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
@@ -81,6 +81,25 @@ function PortalCustomersTab() {
   const t = useT();
   const { data: d } = useQuery({ queryKey: ["portal-customers"], queryFn: () => api<PortalCustomers>("/portal/portal-customers") });
   const [copied, setCopied] = useState(false);
+  const [resendId, setResendId] = useState("");
+  const resend = useMutation({
+    mutationFn: (identifier: string) => api<{ ok: boolean; sent?: { type: string; hint: string }[]; error?: string }>(
+      "/portal/portal-customers/resend-set-password", { method: "POST", body: JSON.stringify({ identifier }) }),
+    onSuccess: (r) => {
+      if (r.ok && r.sent?.length) {
+        toastSuccess(t(`✓ Στάλθηκε σύνδεσμος κωδικού (${r.sent.map((s) => s.type === "email" ? "email" : "SMS").join(" + ")}).`,
+          `✓ Password link sent (${r.sent.map((s) => s.type).join(" + ")}).`));
+        setResendId("");
+      } else {
+        toastError(
+          r.error === "not_found" ? t("Δεν βρέθηκε πελάτης με αυτό το στοιχείο.", "No customer found with that detail.")
+          : r.error === "not_your_customer" ? t("Ο πελάτης δεν ανήκει στο φαρμακείο σου.", "This customer isn't linked to your pharmacy.")
+          : r.error === "no_channel_delivered" ? t("Ο πελάτης δεν έχει έγκυρο email/κινητό στο σύστημα.", "No valid email/mobile on file for this customer.")
+          : t("Δεν ήταν δυνατή η αποστολή — δοκίμασε ξανά.", "Could not send — try again."));
+      }
+    },
+    onError: () => toastError(t("Κάτι πήγε στραβά.", "Something went wrong.")),
+  });
   const qrRef = useRef<HTMLDivElement>(null);
   const url = d?.register_url || "https://my.rxvision.gr/portal/register";
   const phName = d?.pharmacy_name || t("το φαρμακείο μας", "our pharmacy");
@@ -125,6 +144,21 @@ function PortalCustomersTab() {
               className="inline-flex items-center gap-1 rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700"><Copy className="h-4 w-4" /> {copied ? t("Αντιγράφηκε!", "Copied!") : t("Αντιγραφή συνδέσμου", "Copy link")}</button>
           </div>
         </div>
+      </div>
+
+      <div className="rx-card p-4">
+        <div className="flex items-center gap-2 text-sm font-semibold text-slate-800 dark:text-slate-200">
+          <KeyRound className="h-4 w-4 text-indigo-500" /> {t("Ξεκλείδωμα πελάτη — επαναποστολή συνδέσμου κωδικού", "Unlock a customer — resend password link")}
+        </div>
+        <p className="mt-0.5 text-xs text-slate-500">{t("Αν πελάτης σου δεν έλαβε το email ανάκτησης (π.χ. πληκτρολόγησε λάθος/άλλο email), δώσε το ΑΜΚΑ ή το email του και στέλνουμε φρέσκο σύνδεσμο ορισμού κωδικού σε email + SMS.", "If your customer didn't receive the reset email (e.g. typed a wrong/different email), enter their ΑΜΚΑ or email and we'll send a fresh set-password link via email + SMS.")}</p>
+        <form onSubmit={(e) => { e.preventDefault(); if (resendId.trim()) resend.mutate(resendId.trim()); }} className="mt-2 flex flex-wrap gap-2">
+          <input value={resendId} onChange={(e) => setResendId(e.target.value)} placeholder={t("ΑΜΚΑ ή email πελάτη", "Customer ΑΜΚΑ or email")}
+            className="min-w-0 flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800" />
+          <button type="submit" disabled={resend.isPending || !resendId.trim()}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-50">
+            {resend.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />} {t("Αποστολή συνδέσμου", "Send link")}
+          </button>
+        </form>
       </div>
 
       <div>
