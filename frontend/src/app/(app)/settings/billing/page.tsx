@@ -5,10 +5,10 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, queryKeys, ApiError } from "@/lib/apiClient";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
-import { fmtEur, fmtNum } from "@/lib/formatters";
+import { fmtEur, fmtNum, fmtDate } from "@/lib/formatters";
 import { KpiCard } from "@/components/kpi/KpiCard";
 import { useT } from "@/store/prefStore";
-import { CreditCard, Sparkles, Database, Check, Loader2, Lock, Users } from "lucide-react";
+import { CreditCard, Sparkles, Database, Check, Loader2, Lock, Users, RefreshCw } from "lucide-react";
 import { appConfirm, appAlert } from "@/store/dialogStore";
 
 /** Άνοιγμα του Revolut Checkout popup για ένα order token (φορτώνει το embed.js on demand). */
@@ -186,7 +186,7 @@ export default function BillingSettingsPage() {
       }
       if (cc.ok && cc.token) {
         await payWithRevolut(cc.token, cc.mode || "sandbox");
-        setNotice(t("Η κάρτα αποθηκεύτηκε. Ξεκλείδωσες τις επιπλέον δυνατότητες ✓", "Card saved. Extras unlocked ✓"));
+        setNotice(t("Η κάρτα αποθηκεύτηκε ✓ — η συνδρομή σου ανανεώνεται πλέον αυτόματα & ξεκλείδωσες τις επιπλέον δυνατότητες.", "Card saved ✓ — your subscription now auto-renews & extras are unlocked."));
         refresh();
       } else {
         setNotice(t("Η χρέωση με κάρτα δεν είναι διαθέσιμη αυτή τη στιγμή. Δοκίμασε αργότερα ή επικοίνωσε μαζί μας.", "Card payment is not available right now."));
@@ -224,19 +224,27 @@ export default function BillingSettingsPage() {
       <div className={`mb-6 rounded-xl border p-5 shadow-sm ${x?.card_on_file ? "border-emerald-200 bg-emerald-50/50" : "border-amber-300 bg-amber-50/60"}`}>
         <h2 className="mb-1 flex items-center gap-2 text-sm font-semibold text-slate-800"><CreditCard className="h-4 w-4" /> {t("Τρόπος πληρωμής", "Payment method")}</h2>
         {x?.card_on_file ? (
-          <div className="flex flex-wrap items-center gap-2 text-sm text-emerald-800">
-            <Check className="h-4 w-4 text-emerald-600" />
-            {t("Έχεις αποθηκευμένη κάρτα. Οι επιπλέον δυνατότητες είναι ξεκλείδωτες και χρεώνονται στη συνδρομή σου.", "Card on file. Extras are unlocked and billed to your subscription.")}
-            <button onClick={addCard} disabled={cardBusy} className="ml-auto rounded-lg border border-emerald-300 bg-white px-3 py-1 text-xs font-semibold text-emerald-700 hover:bg-emerald-50 disabled:opacity-50">
-              {cardBusy ? <Loader2 className="inline h-3.5 w-3.5 animate-spin" /> : t("Αλλαγή κάρτας", "Change card")}
-            </button>
+          <div className="space-y-1.5">
+            <div className="flex flex-wrap items-center gap-2 text-sm font-semibold text-emerald-800">
+              <RefreshCw className="h-4 w-4 text-emerald-600" />
+              {t("Αυτόματη ανανέωση: ΕΝΕΡΓΗ", "Auto-renewal: ON")}
+              <button onClick={addCard} disabled={cardBusy} className="ml-auto rounded-lg border border-emerald-300 bg-white px-3 py-1 text-xs font-semibold text-emerald-700 hover:bg-emerald-50 disabled:opacity-50">
+                {cardBusy ? <Loader2 className="inline h-3.5 w-3.5 animate-spin" /> : t("Αλλαγή κάρτας", "Change card")}
+              </button>
+            </div>
+            <p className="text-xs text-emerald-800">
+              {t(`Η συνδρομή σου${subscription.data?.plan ? ` «${subscription.data.plan}»` : ""} ανανεώνεται αυτόματα${subscription.data?.renews_at ? ` στις ${fmtDate(subscription.data.renews_at)}` : ""} — δεν χρειάζεται να την αγοράζεις κάθε ${perLabel}. Αλλάζει μόνο αν κάνεις εσύ upgrade/downgrade.`,
+                `Your subscription${subscription.data?.plan ? ` «${subscription.data.plan}»` : ""} renews automatically${subscription.data?.renews_at ? ` on ${fmtDate(subscription.data.renews_at)}` : ""} — no need to buy it each ${perLabel}. It only changes if you upgrade/downgrade.`)}
+            </p>
+            <p className="text-[11px] text-emerald-700 flex items-center gap-1"><Check className="h-3 w-3" /> {t("Οι επιπλέον δυνατότητες είναι ξεκλείδωτες και χρεώνονται στη συνδρομή σου.", "Extras are unlocked and billed to your subscription.")}</p>
           </div>
         ) : (
           <div className="space-y-2 text-sm text-amber-900">
-            <p>{t("Δεν έχεις καταχωρήσει κάρτα. Πρόσθεσε μία για να ξεκλειδώσεις τις επιπλέον δυνατότητες: top-up μηνυμάτων (SMS / Viber / email), περισσότερα AI ερωτήματα, μεγαλύτερη διατήρηση δεδομένων, επιπλέον χρήστες και ό,τι νέο προστεθεί.", "No card on file. Add one to unlock extras: message top-up (SMS / Viber / email), more AI questions, longer data retention, extra users, and anything new.")}</p>
-            <p className="text-xs text-amber-700">{t("Ασφαλής αποθήκευση κάρτας μέσω Viva (κάρτα ή IRIS). Χρεώνεσαι μόνο για ό,τι επιλέξεις — μπαίνει στη συνδρομή σου.", "Secure card storage via Viva (card or IRIS). You are charged only for what you choose — added to your subscription.")}</p>
+            <p className="flex items-start gap-1.5 font-semibold"><RefreshCw className="mt-0.5 h-4 w-4 shrink-0" /> {t(`Πρόσθεσε κάρτα → η συνδρομή σου ανανεώνεται ΑΥΤΟΜΑΤΑ κάθε ${perLabel} στο ίδιο πλάνο. Τέλος στη χειροκίνητη αγορά — δεν χρειάζεται να θυμάσαι τίποτα.`, `Add a card → your subscription auto-renews every ${perLabel} on the same plan. No more manual purchase — nothing to remember.`)}</p>
+            <p>{t("Ξεκλειδώνεις επίσης τις επιπλέον δυνατότητες: top-up μηνυμάτων (SMS / Viber / email), περισσότερα AI ερωτήματα, μεγαλύτερη διατήρηση δεδομένων, επιπλέον χρήστες και ό,τι νέο προστεθεί.", "You also unlock extras: message top-up (SMS / Viber / email), more AI questions, longer data retention, extra users, and anything new.")}</p>
+            <p className="text-xs text-amber-700">{t("Ασφαλής αποθήκευση κάρτας μέσω Viva (κάρτα ή IRIS). Μπορείς να κάνεις upgrade/downgrade ή να αφαιρέσεις την κάρτα όποτε θες.", "Secure card storage via Viva (card or IRIS). You can upgrade/downgrade or remove the card anytime.")}</p>
             <button onClick={addCard} disabled={cardBusy} className="inline-flex items-center gap-1.5 rounded-lg bg-amber-600 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-700 disabled:opacity-50">
-              {cardBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <CreditCard className="h-4 w-4" />} {t("Πρόσθεσε κάρτα", "Add card")}
+              {cardBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <CreditCard className="h-4 w-4" />} {t("Πρόσθεσε κάρτα & ενεργοποίησε αυτόματη ανανέωση", "Add card & enable auto-renewal")}
             </button>
           </div>
         )}
