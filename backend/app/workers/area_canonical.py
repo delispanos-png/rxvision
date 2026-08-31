@@ -15,3 +15,14 @@ def refresh_area_canonical() -> dict:
         return await area_canonical.refresh()
 
     return _run_async(_run())
+
+
+@celery_app.task(name="app.workers.area_canonical.canonicalize_tenant_areas")
+def canonicalize_tenant_areas(tenant_id: str) -> dict:
+    """Κανονικοποίηση περιοχών ΕΝΟΣ tenant — καλείται μετά τον πρώτο επιτυχή συγχρονισμό, ώστε ο
+    νέος πελάτης να μη βλέπει την ίδια περιοχή σπασμένη σε δεκάδες γραμμές έως τον εβδομαδιαίο βρόχο."""
+    async def _run() -> dict:
+        from app.services import area_canonical
+        return await area_canonical.ensure_for_tenant(tenant_id)
+
+    return _run_async(_run())

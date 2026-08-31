@@ -38,6 +38,36 @@ def _pretty(key: str) -> str:
     return key.title() if key else ""
 
 
+# ── Ενοποίηση ΕΞΟΔΟΥ (canonical) ────────────────────────────────────────────────────────────
+# Το mechanical_key ενώνει τις ΕΙΣΟΔΟΥΣ. Το AI όμως μπορεί να γυρίσει για δύο διαφορετικά κλειδιά
+# την ίδια περιοχή με ΔΙΑΦΟΡΕΤΙΚΟ τονισμό/ορθογραφία («Άλιμος» vs «Αλιμός») → δύο γραμμές στη λίστα.
+# Γι' αυτό ενοποιούμε και τα canonical: ομαδοποίηση με άτονο κλειδί, ΕΝΑΣ εκπρόσωπος ανά ομάδα.
+_TONED = set("άέήίόύώΆΈΉΊΌΎΏϊϋΐΰ")
+
+
+def canonical_key(canon: str | None) -> str:
+    """Άτονο κλειδί ομάδας για ΕΞΟΔΟ (canonical) — «Άλιμος» και «Αλιμός» δίνουν το ίδιο."""
+    return mechanical_key(canon)
+
+
+def _has_tone(s: str) -> bool:
+    return any(ch in _TONED for ch in (s or ""))
+
+
+def pick_representative(variants: dict[str, int], locked: set[str] | None = None) -> str:
+    """Ένας εκπρόσωπος ανά ομάδα. Σειρά προτεραιότητας:
+    1) χειροκίνητα κλειδωμένη γραφή (ποτέ δεν την πατάμε)
+    2) γραφή ΜΕ τόνο (ελληνικό τοπωνύμιο >1 συλλαβής χωρίς τόνο = σχεδόν πάντα λάθος)
+    3) η συχνότερη · 4) αλφαβητικά (ντετερμινισμός)"""
+    if locked:
+        for v in sorted(variants):
+            if v in locked:
+                return v
+    toned = {v: n for v, n in variants.items() if _has_tone(v)}
+    pool = toned or variants
+    return sorted(pool.items(), key=lambda kv: (-kv[1], kv[0]))[0][0]
+
+
 async def get_alias_map() -> dict:
     """{mechanical_key → canonical} — ο τρέχων χάρτης (καθολικός, τα τοπωνύμια είναι κοινά)."""
     return {d["_id"]: d.get("canonical")
@@ -103,7 +133,31 @@ async def ai_map_keys(keys: list[str]) -> dict:
     return out
 
 
+async def _align_to_existing(mapping: dict) -> dict:
+    """Ευθυγράμμισε τα ΝΕΑ canonical με ό,τι ήδη χρησιμοποιείται για την ίδια περιοχή, ώστε να μη
+    δημιουργείται δεύτερη γραμμή με άλλον τονισμό. Οι locked (manual) γραφές πάντα υπερισχύουν."""
+    if not mapping:
+        return mapping
+    db = shared_db()
+    groups: dict[str, dict[str, int]] = {}
+    locked: set[str] = set()
+    async for d in db[_ALIASES].find({}, {"canonical": 1, "locked": 1}):
+        c = (d.get("canonical") or "").strip()
+        if not c:
+            continue
+        groups.setdefault(canonical_key(c), {})[c] = groups.get(canonical_key(c), {}).get(c, 0) + 1
+        if d.get("locked"):
+            locked.add(c)
+    for canon in mapping.values():
+        c = (canon or "").strip()
+        if c:
+            groups.setdefault(canonical_key(c), {}).setdefault(c, 0)
+    reps = {gk: pick_representative(v, locked) for gk, v in groups.items() if v}
+    return {k: reps.get(canonical_key(c), c) for k, c in mapping.items()}
+
+
 async def _upsert_aliases(mapping: dict, source: str) -> None:
+    mapping = await _align_to_existing(mapping)
     now = datetime.now(tz=timezone.utc)
     db = shared_db()
     for key, canon in mapping.items():
@@ -154,7 +208,7 @@ async def backfill(*, tenant_id: str | None = None, use_ai: bool = True) -> dict
             "patients_updated": updated}
 
 
-async def refresh(*, max_new_keys: int = 800) -> dict:
+async def refresh(*, max_new_keys: int = 5000) -> dict:
     """Αυτο-συντηρούμενος βρόχος (εβδομαδιαίος): κανονικοποίησε ΜΟΝΟ νέους/pending — ασθενείς χωρίς
     canonical + κλειδιά με source 'pending'. Φθηνό: πιάνει μόνο ό,τι νέο εμφανίστηκε."""
     db = shared_db()
@@ -178,7 +232,52 @@ async def refresh(*, max_new_keys: int = 800) -> dict:
             await _upsert_aliases(pending, "pending")
         amap = await get_alias_map()
     updated = await _apply_to_patients(missing_raws, amap) if missing_raws else 0
-    return {"new_keys": len(to_ai), "ai_mapped": len(ai_mapped), "patients_updated": updated}
+    unified = await unify_existing()   # ποτέ δύο γραφές για την ίδια περιοχή
+    return {"new_keys": len(to_ai), "ai_mapped": len(ai_mapped), "patients_updated": updated,
+            "unified": unified}
+
+
+async def unify_existing() -> dict:
+    """Συγχώνευσε ΥΠΑΡΧΟΥΣΕΣ διπλές γραφές της ίδιας περιοχής («Άλιμος»/«Αλιμός») σε μία. Τρέχει
+    και στον εβδομαδιαίο βρόχο, ώστε το πρόβλημα να μην ξαναεμφανιστεί σιωπηλά."""
+    db = shared_db()
+    groups: dict[str, dict[str, int]] = {}
+    locked: set[str] = set()
+    async for d in db[_ALIASES].find({}, {"canonical": 1, "locked": 1}):
+        c = (d.get("canonical") or "").strip()
+        if not c:
+            continue
+        gk = canonical_key(c)
+        groups.setdefault(gk, {})
+        groups[gk][c] = groups[gk].get(c, 0) + 1
+        if d.get("locked"):
+            locked.add(c)
+    merged, patients = 0, 0
+    now = datetime.now(tz=timezone.utc)
+    for gk, variants in groups.items():
+        if len(variants) < 2:
+            continue
+        rep = pick_representative(variants, locked)
+        losers = [v for v in variants if v != rep]
+        if not losers:
+            continue
+        r = await db[_ALIASES].update_many(
+            {"canonical": {"$in": losers}, "locked": {"$ne": True}},
+            {"$set": {"canonical": rep, "unified_at": now}})
+        merged += r.modified_count
+        r2 = await db["patients_anonymized"].update_many(
+            {"residence_area_canonical": {"$in": losers}},
+            {"$set": {"residence_area_canonical": rep}})
+        patients += r2.modified_count
+    return {"groups_merged": merged, "patients_updated": patients}
+
+
+async def ensure_for_tenant(tenant_id: str) -> dict:
+    """Κανονικοποίηση περιοχών ΕΝΟΣ tenant (νέος πελάτης μετά το πρώτο ingestion) — ώστε να μη
+    βλέπει ακανόνιστη λίστα μέχρι τον εβδομαδιαίο βρόχο."""
+    out = await backfill(tenant_id=tenant_id, use_ai=True)
+    out.update(await unify_existing())
+    return out
 
 
 async def set_override(raw_or_key: str, canonical: str) -> dict:

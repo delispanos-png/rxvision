@@ -74,6 +74,13 @@ async def _maybe_first_sync_alert(db, tenant_id: str, inserted: int) -> None:
             {"$set": {"ingestion_config.hdika.first_sync_alerted": True}})
         if r.modified_count:
             await _admin_hdika_alert(db, tenant_id, f"✅ ΗΔΥΚΑ — ξεκίνησε ο συγχρονισμός ({inserted} εγγραφές)")
+            # Νέος πελάτης: κανονικοποίησε ΤΩΡΑ τις περιοχές του (αλλιώς θα έβλεπε την ίδια περιοχή
+            # σε δεκάδες παραλλαγές μέχρι τον εβδομαδιαίο βρόχο της Κυριακής).
+            try:
+                from app.workers.area_canonical import canonicalize_tenant_areas
+                canonicalize_tenant_areas.delay(tenant_id)
+            except Exception:  # noqa: BLE001 — ποτέ να μη ρίξει τον συγχρονισμό
+                pass
     except Exception:  # noqa: BLE001
         pass
 
