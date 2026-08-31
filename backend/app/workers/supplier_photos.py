@@ -22,9 +22,12 @@ def _athens_now() -> datetime:
 
 
 def _in_download_window() -> bool:
-    """Παράθυρο κατεβάσματος Profarm: 22:00–06:00 ώρα Αθήνας."""
-    h = _athens_now().hour
-    return h >= 22 or h < 6
+    """Παράθυρο κατεβάσματος Profarm: ΚΑΘΗΜΕΡΙΝΕΣ 20:00–06:00 Αθήνας· ΣΑΒΒΑΤΟ & ΚΥΡΙΑΚΗ όλη μέρα."""
+    now = _athens_now()
+    if now.weekday() >= 5:      # 5=Σάββατο, 6=Κυριακή → όλο το 24ωρο
+        return True
+    h = now.hour
+    return h >= 20 or h < 6
 
 
 @celery_app.task(name="app.workers.supplier_photos.profarm_sync_tick")
@@ -82,7 +85,7 @@ def profarm_import_tick() -> dict:
         in_win = _in_download_window()
         now_utc = datetime.now(timezone.utc)
         for t in tids:
-            # Κατέβασμα ΜΟΝΟ 22:00–06:00 Αθήνας· εξαίρεση «σήμερα» μέσω day_grace_until (τρέχει μέχρι τότε).
+            # Κατέβασμα: καθημερινές 20:00–06:00 Αθήνας, Σαβ/Κυρ όλη μέρα· εξαίρεση «σήμερα» μέσω day_grace_until.
             job = await db["supplier_settings"].find_one({"tenant_id": t, "key": "profarm_import"}, {"day_grace_until": 1})
             grace = (job or {}).get("day_grace_until")
             if grace and grace.tzinfo is None:

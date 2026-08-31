@@ -285,6 +285,11 @@ async def _upsert_profarm_product(cl, col, repo, tenant_id: str, pid: str, ptype
     ΕΛΕΓΧΟΣ τύπου: ο τύπος παίρνεται από την ΕΠΙΣΗΜΗ κατηγορία Profarm (ΜΗΣΥΦΑ=OTC, παραφάρμακα=
     parapharmacy)· η εισαγωγή ΔΕΝ σαρώνει ποτέ «Φάρμακα» (συνταγογραφούμενα), άρα δεν αγγίζει rx.
     reclassified=True όταν διορθώνεται λάθος τύπος υπάρχοντος είδους. result: created|enriched|skip|error."""
+    # FAST SKIP: αυτό το pid έχει ΗΔΗ επεξεργαστεί (υπάρχει είδος με αυτό το profarm_pid) → μη κατεβάσεις
+    # καν το detail. Καθιστά ένα re-crawl ταχύτατο — «πετά» ό,τι έγινε (και τα άφωτα, που το Profarm δεν
+    # έχει εικόνα) και ασχολείται ΜΟΝΟ με ΝΕΑ είδη.
+    if await col.find_one({"tenant_id": tenant_id, "profarm_pid": pid}, {"_id": 1}):
+        return "skip", False, False
     try:
         b = (await asyncio.wait_for(cl.get(f"{BASE}/farmaka-1/product_id/{pid}"), timeout=18)).text
     except (TimeoutError, Exception):  # noqa: BLE001
@@ -293,15 +298,22 @@ async def _upsert_profarm_product(cl, col, repo, tenant_id: str, pid: str, ptype
     if not d.get("barcodes"):
         return "skip", False, False
     bc = d["barcodes"][0]
+    existing = await col.find_one({"tenant_id": tenant_id, "barcode": bc},
+                                  {"image_id": 1, "type": 1, "profarm_pid": 1})
+    # ΗΔΗ πλήρως εισηγμένο (ίδιο Profarm pid + φωτο) → SKIP: μη ξανακατεβάζεις εικόνα, μη ξαναγράφεις.
+    # Έτσι ένα re-crawl «πετά» πάνω από τα ολοκληρωμένα και φτάνει γρήγορα στα ΝΕΑ είδη.
+    if existing and existing.get("image_id") and existing.get("profarm_pid") == pid \
+            and existing.get("type") == ptype:
+        return "skip", False, False
     image_id = None
-    if d.get("image_url"):
+    # Κατέβασε εικόνα ΜΟΝΟ αν το υπάρχον δεν έχει ήδη (αλλιώς άσκοπο 18s fetch που πετιέται).
+    if d.get("image_url") and not (existing and existing.get("image_id")):
         try:
             img = await asyncio.wait_for(fetch_image(cl, d["image_url"]), timeout=18)
         except (TimeoutError, Exception):  # noqa: BLE001
             img = None
         if img:
             image_id = await repo.save_image(img[0], img[1])
-    existing = await col.find_one({"tenant_id": tenant_id, "barcode": bc}, {"image_id": 1, "type": 1})
     reclassified = bool(existing) and existing.get("type") != ptype
     if existing:
         # Ο τύπος από την ΚΑΤΗΓΟΡΙΑ Profarm είναι authoritative — διορθώνει το λάθος default (rx) του ΗΔΥΚΑ:
@@ -401,7 +413,8 @@ async def import_chunk(tenant_id: str, category_ids: list | None = None, *, chun
                 photos += 1
             if rc:
                 reclassified += 1
-            await asyncio.sleep(0.35)
+            if res != "skip":          # skip = ΚΑΝΕΝΑ external request → μη σπαταλάς throttle-sleep
+                await asyncio.sleep(0.35)
         await sup.update_one({"key": "profarm_import"}, {"$set": {
             "page": page, "page_pids": page_pids, "page_pos": page_pos, "seen_pids": list(seen),
             "created": job.get("created", 0) + created, "enriched": job.get("enriched", 0) + enriched,
