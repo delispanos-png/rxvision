@@ -93,10 +93,23 @@ def profarm_import_tick() -> dict:
             if not in_win and not (grace and now_utc < grace):
                 out[str(t)] = {"skipped": "out_of_window"}
                 continue
+            # ΠΟΛΛΑ chunks ανά tick (~90s): όταν το tick πιάσει worker-slot (τη μέρα οι slots είναι
+            # γεμάτοι από ΗΔΥΚΑ syncs), να κάνει ΟΥΣΙΑΣΤΙΚΗ δουλειά αντί για ένα μόνο chunk.
+            import time as _time
+            deadline = _time.time() + 90
+            agg = {"created": 0, "enriched": 0, "photos": 0}
+            r: dict = {}
             try:
-                r = await profarm_service.import_chunk(str(t), chunk=12)
-                out[str(t)] = {k: r.get(k) for k in ("phase", "created", "enriched", "photos", "pos", "total")}
+                while _time.time() < deadline:
+                    r = await profarm_service.import_chunk(str(t), chunk=20)
+                    if not r.get("ok"):
+                        break
+                    for k in agg:
+                        agg[k] += int(r.get(k) or 0)
+                    if r.get("done"):
+                        break
+                out[str(t)] = {"phase": r.get("phase"), **agg, "cat_i": r.get("cat_i"), "page": r.get("page")}
             except Exception as e:  # noqa: BLE001
-                out[str(t)] = {"error": str(e)[:100]}
+                out[str(t)] = {"error": str(e)[:100], **agg}
         return out
     return _run_async(_run())
