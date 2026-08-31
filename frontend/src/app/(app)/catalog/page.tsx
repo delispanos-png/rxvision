@@ -333,10 +333,16 @@ function EditModal({ product, busy, tax, onClose, onSave }: { product: Product; 
 
           {/* Φωτογραφία — ανέβασμα από τη συσκευή */}
           <div className="text-xs text-slate-500">{t("Φωτογραφία", "Photo")}
-            <div className="mt-1 flex items-center gap-3">
-              <div className="grid h-20 w-20 shrink-0 place-items-center overflow-hidden rounded-lg border border-slate-200 bg-slate-50">
+            <div className="relative mt-1 flex items-center gap-3">
+              <div className={`peer/ph grid h-20 w-20 shrink-0 place-items-center overflow-hidden rounded-lg border border-slate-200 bg-slate-50 ${preview ? "cursor-zoom-in" : ""}`}>
                 {preview ? <img src={preview} alt="" className="h-full w-full object-contain" /> : <ImagePlus className="h-6 w-6 text-slate-300" />}
               </div>
+              {/* Μεγέθυνση φωτογραφίας με hover (peer) — μεγάλο preview για καλύτερη ορατότητα */}
+              {preview && (
+                <div className="pointer-events-none absolute left-20 top-0 z-50 grid h-60 w-60 place-items-center rounded-xl border border-slate-200 bg-white p-2 opacity-0 shadow-2xl transition-opacity duration-150 peer-hover/ph:opacity-100 dark:border-slate-700 dark:bg-slate-800">
+                  <img src={preview} alt="" className="max-h-full max-w-full object-contain" />
+                </div>
+              )}
               <div className="flex flex-col gap-1.5">
                 <input ref={fileRef} type="file" accept="image/*" hidden onChange={(e) => { const fl = e.target.files?.[0]; if (fl) upload(fl); }} />
                 <button onClick={() => fileRef.current?.click()} disabled={up} className="inline-flex items-center gap-1.5 rounded-lg border border-brand-200 bg-brand-50 px-3 py-1.5 text-xs font-medium text-brand-700 hover:bg-brand-100 disabled:opacity-50">{up ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ImagePlus className="h-3.5 w-3.5" />} {preview ? t("Αλλαγή φωτό", "Change photo") : t("Ανέβασμα φωτό", "Upload photo")}</button>
