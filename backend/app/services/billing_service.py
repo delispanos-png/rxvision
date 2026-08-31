@@ -505,7 +505,10 @@ async def subscription_reminders() -> dict:
         if not pend:
             continue
         days = (pend.date() - now.date()).days      # >0 πριν, <=0 μετά
-        if not ((days in warn and sub.get("status") in ("trial", "trialing", "active"))
+        # Παράθυρο υπενθύμισης ανά κύκλο: ΕΤΗΣΙΑ = τελευταίες 20 μέρες, ΜΗΝΙΑΙΑ (& trial/άλλο) = 5.
+        # (Μην ειδοποιείς μηνιαίο πελάτη από τη 1η μέρα — το warn_day=30 = όλη η μηνιαία περίοδος.)
+        win = 20 if sub.get("billing_cycle") == "yearly" else 5
+        if not (((days in warn and days <= win) and sub.get("status") in ("trial", "trialing", "active"))
                 or (-max_after <= days <= 0)):
             continue
         if sub.get("last_reminder_date") == today:   # ήδη στάλθηκε σήμερα

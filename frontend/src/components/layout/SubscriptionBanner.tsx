@@ -19,7 +19,7 @@ type Pkg = { code: string; name: string; price_monthly: number; price_yearly: nu
 const eur = (c: number) => (c / 100).toLocaleString("el-GR", { minimumFractionDigits: 2 }) + " €";
 
 /**
- * App-wide banner που εμφανίζεται όταν η συνδρομή πλησιάζει λήξη (≤30 μέρες) ή έχει λήξει, με κουμπί
+ * App-wide banner που εμφανίζεται όταν η συνδρομή πλησιάζει λήξη (ετήσια ≤20 μέρες, μηνιαία ≤5) ή έχει λήξει, με κουμπί
  * «Ανανέωση» → picker πακέτου/κύκλου → Viva checkout. Η επέκταση περιόδου γίνεται στο webhook.
  */
 export function SubscriptionBanner() {
@@ -33,7 +33,10 @@ export function SubscriptionBanner() {
   const [open, setOpen] = useState(false);
   const eff = data?.effective_status;
   const days = data?.days_to_expiry;
-  const near = (eff === "active" || eff === "trial" || eff === "past_due") && days != null && days <= 30;
+  // Παράθυρο υπενθύμισης λήξης ανά κύκλο χρέωσης: ΕΤΗΣΙΑ = τελευταίες 20 μέρες· ΜΗΝΙΑΙΑ (& trial/άλλο) =
+  // τελευταίες 5. Έτσι ένας μηνιαίος πελάτης ΔΕΝ βλέπει «λήγει σε 30 μέρες» από την 1η μέρα (φαίνεται άσχημο).
+  const remindWindow = data?.billing_cycle === "yearly" ? 20 : 5;
+  const near = (eff === "active" || eff === "trial" || eff === "past_due") && days != null && days <= remindWindow;
   const expired = eff === "expired";
   if (!data || (!near && !expired)) return null;
 
