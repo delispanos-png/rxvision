@@ -116,11 +116,17 @@ function Catalog() {
         {items.map((p) => {
           const med = isMed(p.type);
           return (
-            <div key={p.barcode} className={`flex gap-3 rounded-xl border bg-white p-3 ${p.featured ? "border-amber-300 ring-1 ring-amber-100" : "border-slate-200"}`}>
-              <div className="relative grid h-16 w-16 shrink-0 place-items-center overflow-hidden rounded-lg bg-slate-50">
+            <div key={p.barcode} className={`relative flex gap-3 rounded-xl border bg-white p-3 ${p.featured ? "border-amber-300 ring-1 ring-amber-100" : "border-slate-200"}`}>
+              <div className={`peer/ph relative grid h-16 w-16 shrink-0 place-items-center overflow-hidden rounded-lg bg-slate-50 ${imgSrc(p) ? "cursor-zoom-in" : ""}`}>
                 {imgSrc(p) ? <img src={imgSrc(p)} alt="" className="h-full w-full object-contain" /> : (med ? <Pill className="h-6 w-6 text-slate-300" /> : <Package className="h-6 w-6 text-slate-300" />)}
                 {p.featured && <Star className="absolute left-0.5 top-0.5 h-3.5 w-3.5 fill-amber-400 text-amber-500" />}
               </div>
+              {/* Μεγέθυνση φωτογραφίας με hover (peer) — μεγάλο preview για να το βλέπεις καλύτερα */}
+              {imgSrc(p) && (
+                <div className="pointer-events-none absolute left-16 top-0 z-50 grid h-60 w-60 place-items-center rounded-xl border border-slate-200 bg-white p-2 opacity-0 shadow-2xl transition-opacity duration-150 peer-hover/ph:opacity-100 dark:border-slate-700 dark:bg-slate-800">
+                  <img src={imgSrc(p)} alt={p.name || ""} className="max-h-full max-w-full object-contain" />
+                </div>
+              )}
               <div className="min-w-0 flex-1">
                 <div className="flex items-start justify-between gap-2">
                   <div className="truncate text-sm font-semibold text-slate-800">{p.name || "—"}</div>
