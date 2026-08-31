@@ -2,7 +2,7 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # RxVisionDB02 (10.0.0.8) — DEDICATED MongoDB replica node, added to rs0 as a
 # preferred hot-standby SECONDARY of the primary on RxVisionDB01 (10.0.0.3).
-# Provisioned 2026-08-30. VM: Ubuntu 22.04, 4GB RAM, private IP 10.0.0.8.
+# Provisioned 2026-08-30. VM: Ubuntu 22.04, private IP 10.0.0.8 (rescaled 4GB→8GB 2026-08-31).
 #
 # Final rs0 topology (production-grade HA, odd voting count = 3):
 #   DB01  10.0.0.3  priority 3  vote 1   (dedicated, preferred PRIMARY)
@@ -12,8 +12,6 @@
 # → any single node can fail and a primary remains (majority=2); the two dedicated
 #   DBs alone (DB01+DB02) form a majority, so shared-node loss never blocks writes.
 #
-# NOTE: DB02 is a 4GB VM while DB01 is 8GB. Fine for the current ~1.2GB dataset, but
-# for a truly equal standby resize DB02 to 8GB when convenient.
 #
 # ── How it was built (run FROM MGMT01 which holds the rs0 keyfile volume) ────────
 # 0) Authorize the deploy key on the new VM (Hetzner injects registered keys only at
@@ -43,7 +41,7 @@ docker run -d --name rxvision-mongo --restart unless-stopped \
   mongo:7 \
   --replSet rs0 --bind_ip_all --keyFile /etc/mongo-keyfile/keyfile --auth
 # Dedicated DB node → WiredTiger cache left at default (~50%×(RAM-1GB)); on this 4GB
-# VM that is ~1.5GB, which is fine for the current dataset.
+# VM now ~3.28GB on the 8GB node (equal standby to DB01).
 
 echo "started. From the primary (DB01) verify:  rs.status()  → 10.0.0.8:27017 SECONDARY health=1"
 
