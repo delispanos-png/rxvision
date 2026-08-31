@@ -364,15 +364,23 @@ async def import_chunk(tenant_id: str, category_ids: list | None = None, *, chun
     created = enriched = photos = 0
     try:
         # χρειάζεσαι ΝΕΑ σελίδα;
+        seen = set(job.get("seen_pids") or [])   # pids που έχουμε ήδη δει σε ΑΥΤΗ την κατηγορία
         if page_pos >= len(page_pids):
             pids = await list_category_products(cl, cats[cat_i], page)
-            if not pids or page >= _MAX_PAGES:          # τέλος κατηγορίας → επόμενη
+            new_pids = [p for p in pids if str(p) not in seen]
+            # ΤΕΛΟΣ κατηγορίας όταν: κενή σελίδα, όριο ασφαλείας, Ή WRAP — η σελίδα δεν φέρνει ΚΑΝΕΝΑ
+            # νέο pid (το Profarm επαναλαμβάνει σελίδες πέρα από το πραγματικό τέλος → μη ξαναδουλεύεις
+            # τα ίδια προϊόντα ~40 φορές· αυτό ήταν το bug «κόλλημα σε κατηγορία 1/9, σελίδα 484»).
+            if not pids or page >= _MAX_PAGES or (pids and not new_pids):
                 nxt_done = (cat_i + 1) >= len(cats)
                 await sup.update_one({"key": "profarm_import"}, {"$set": {
                     "cat_i": cat_i + 1, "page": 0, "page_pids": [], "page_pos": 0,
+                    "seen_pids": [],   # reset του «seen» για τη νέα κατηγορία
                     **({"status": "done"} if nxt_done else {})}})
                 return {"ok": True, "phase": "next-category", "cat_i": cat_i + 1, "done": nxt_done}
-            page_pids, page_pos, page = pids, 0, page + 1   # page = η ΕΠΟΜΕΝΗ σελίδα προς φόρτωση
+            if len(seen) < 60000:                 # cap: μη φουσκώνει το job doc (distinct/κατηγορία = μικρό)
+                seen.update(str(p) for p in pids)
+            page_pids, page_pos, page = new_pids, 0, page + 1   # μόνο τα ΝΕΑ pids αυτής της σελίδας
         # εισήγαγε chunk από την ΤΡΕΧΟΥΣΑ σελίδα
         repo = PharmacyCatalogRepository(tenant_id=tenant_id)
         col = repo._db["pharmacy_products"]
@@ -395,7 +403,7 @@ async def import_chunk(tenant_id: str, category_ids: list | None = None, *, chun
                 reclassified += 1
             await asyncio.sleep(0.35)
         await sup.update_one({"key": "profarm_import"}, {"$set": {
-            "page": page, "page_pids": page_pids, "page_pos": page_pos,
+            "page": page, "page_pids": page_pids, "page_pos": page_pos, "seen_pids": list(seen),
             "created": job.get("created", 0) + created, "enriched": job.get("enriched", 0) + enriched,
             "photos": job.get("photos", 0) + photos,
             "reclassified": job.get("reclassified", 0) + reclassified, "updated_at": _now()}})
@@ -407,15 +415,25 @@ async def import_chunk(tenant_id: str, category_ids: list | None = None, *, chun
 
 async def import_status(tenant_id: str) -> dict:
     from app.repositories.supplier_settings import SupplierSettingsRepository
+    from app.repositories.pharmacy_catalog import PharmacyCatalogRepository
     j = await SupplierSettingsRepository(tenant_id=tenant_id).find_one({"key": "profarm_import"}) or {}
     cats = j.get("cats", [])
-    imported = int(j.get("created", 0)) + int(j.get("enriched", 0))
+    # ΠΡΑΓΜΑΤΙΚΑ distinct νούμερα από τη βάση — ΟΧΙ οι cumulative μετρητές λειτουργιών (created/enriched),
+    # που φουσκώνουν όταν το Profarm επαναλαμβάνει σελίδες (το ίδιο είδος upsert-άρεται πολλές φορές).
+    col = PharmacyCatalogRepository(tenant_id=tenant_id)._db["pharmacy_products"]
+    q = {"tenant_id": tenant_id}
+    new_items = await col.count_documents({**q, "source": "profarm"})
+    touched = await col.count_documents({**q, "profarm_pid": {"$exists": True}})
+    photos = await col.count_documents({**q, "photo_source": "profarm"})
     return {"status": j.get("status") or "idle",
-            "created": j.get("created", 0), "enriched": j.get("enriched", 0),
-            "photos": j.get("photos", 0), "imported": imported,
+            # distinct είδη (η αλήθεια): νέα, ενημερωμένα (υπάρχοντα), με φωτο Profarm
+            "created": new_items, "enriched": max(0, touched - new_items),
+            "photos": photos, "imported": touched,
             "reclassified": j.get("reclassified", 0),
             "cat_i": j.get("cat_i", 0), "cats_total": len(cats), "page": j.get("page", 0),
-            "pct": round(100 * j.get("cat_i", 0) / len(cats)) if cats else 0}
+            "pct": round(100 * j.get("cat_i", 0) / len(cats)) if cats else 0,
+            # πληροφοριακά: πόσες φορές τρέξαμε upsert συνολικά (με re-processing) — όχι distinct
+            "ops_processed": int(j.get("created", 0)) + int(j.get("enriched", 0))}
 
 
 async def import_reset(tenant_id: str) -> dict:
