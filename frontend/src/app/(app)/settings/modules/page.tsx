@@ -6,7 +6,7 @@ import { api, queryKeys, refreshSession, ApiError } from "@/lib/apiClient";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
 import { useT } from "@/store/prefStore";
 import { appAlert, appConfirm } from "@/store/dialogStore";
-import { Check, ArrowUp, ArrowDown, Sparkles, Crown, Loader2, Users, Star, CreditCard, Building2, X, Clock, Plus } from "lucide-react";
+import { Check, ArrowUp, ArrowDown, Sparkles, Crown, Loader2, Users, Star, CreditCard, Building2, X, Clock, Plus, RefreshCw } from "lucide-react";
 
 // ── types (defensive: fields may be absent on older docs) ──────────────────────
 type Pkg = {
@@ -182,6 +182,23 @@ export default function ModulesPlanPage() {
     finally { setBusy(false); }
   }
 
+  // ── αλλαγή κύκλου χρέωσης: μηνιαία → ετήσια (μέσω renew-now/Viva· ίδιο πακέτο, ετήσια τιμή) ──
+  async function switchToYearly() {
+    if (!current) return;
+    const saving = (current.price_monthly ?? 0) * 12 - (current.price_yearly ?? 0);
+    const ok = await appConfirm(
+      t(`Αλλαγή σε ΕΤΗΣΙΑ χρέωση «${current.name}»: ${eur(current.price_yearly)}/έτος${saving > 0 ? ` (γλιτώνεις ${eur(saving)}/έτος)` : ""}. Θα μεταφερθείς στην ασφαλή πληρωμή Viva· μετά την πληρωμή η συνδρομή σου γίνεται ετήσια — οι υπόλοιπες μέρες σου ΔΕΝ χάνονται. Συνέχεια;`,
+        `Switch to ANNUAL billing for «${current.name}»: ${eur(current.price_yearly)}/yr${saving > 0 ? ` (save ${eur(saving)}/yr)` : ""}. You'll go to secure Viva payment; after payment your subscription becomes annual — your remaining days are NOT lost. Continue?`));
+    if (!ok) return;
+    setBusy(true);
+    try {
+      const r = await api<{ checkout_url?: string }>("/billing/renew-now", { method: "POST", body: JSON.stringify({ package_code: current._id, billing_cycle: "yearly" }) });
+      if (r.checkout_url) { window.location.href = r.checkout_url; return; }
+      appAlert(t("Δεν ξεκίνησε η πληρωμή — δοκίμασε ξανά.", "Payment didn't start — try again."));
+    } catch (e) { appAlert(e instanceof ApiError ? t(`Σφάλμα (${e.status})`, `Error (${e.status})`) : t("Αποτυχία", "Failed")); }
+    finally { setBusy(false); }
+  }
+
   function pick(p: Pkg) {
     if (pending) { appAlert(t("Υπάρχει ήδη εκκρεμής αλλαγή πλάνου — ακύρωσέ την πρώτα.", "There's already a pending plan change — cancel it first.")); return; }
     if (priceOf(p) > currentPrice) setUpgradeFor(p);
@@ -268,6 +285,25 @@ export default function ModulesPlanPage() {
             </div>
           )}
         </section>
+
+        {/* ── Κύκλος χρέωσης: μηνιαία → ετήσια ──────────────────────────── */}
+        {!yearly && current && (current.price_yearly ?? 0) > 0 && ((current.billing_cycles?.includes("yearly")) ?? true) && (
+          <section className="rounded-2xl border border-emerald-200 bg-emerald-50/60 p-4 dark:border-emerald-800/50 dark:bg-emerald-950/20">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2 text-sm font-semibold text-emerald-800 dark:text-emerald-300"><RefreshCw className="h-4 w-4" /> {t("Πληρώνεις μηνιαία — πέρνα σε ΕΤΗΣΙΑ χρέωση", "You pay monthly — switch to ANNUAL billing")}</div>
+                <p className="mt-1 text-sm text-emerald-800/90 dark:text-emerald-200/80">
+                  {t(`Ετήσια: ${eur(current.price_yearly)}/έτος (${eur(Math.round((current.price_yearly ?? 0) / 12))}/μήνα)`, `Annual: ${eur(current.price_yearly)}/yr (${eur(Math.round((current.price_yearly ?? 0) / 12))}/mo)`)}
+                  {(current.price_monthly ?? 0) * 12 > (current.price_yearly ?? 0) && <b className="ml-1 text-emerald-700 dark:text-emerald-400">· {t(`γλιτώνεις ${eur((current.price_monthly ?? 0) * 12 - (current.price_yearly ?? 0))}/έτος`, `save ${eur((current.price_monthly ?? 0) * 12 - (current.price_yearly ?? 0))}/yr`)}</b>}
+                </p>
+                <p className="mt-0.5 text-[11px] text-emerald-700/80 dark:text-emerald-300/70">{t("Μία πληρωμή τον χρόνο — οι υπόλοιπες μέρες σου δεν χάνονται.", "One payment per year — your remaining days are not lost.")}</p>
+              </div>
+              <button onClick={switchToYearly} disabled={busy} className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-50">
+                {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />} {t("Άλλαξε σε ετήσια", "Switch to annual")}
+              </button>
+            </div>
+          </section>
+        )}
 
         {/* ── Διαθέσιμα πακέτα (αναβάθμιση/υποβάθμιση) ──────────────────── */}
         <section>
