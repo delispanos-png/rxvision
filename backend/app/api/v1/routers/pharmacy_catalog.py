@@ -237,6 +237,7 @@ class ProductIn(BaseModel):
     price_includes_vat: bool = True                # αν η ΛΙΑΝΙΚΗ τιμή περιλαμβάνει ήδη ΦΠΑ
     type: str = "parapharmacy"          # rx_medicine | otc_medicine | parapharmacy
     category: str | None = None
+    brand: str | None = None            # μάρκα (χειροκίνητη· facet/φίλτρο e-shop)
     tags: list[str] = Field(default_factory=list)
     featured: bool = False
     image_id: str | None = None

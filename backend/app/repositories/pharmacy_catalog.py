@@ -245,23 +245,29 @@ class PharmacyCatalogRepository(BaseRepository):
                    brand: str | None = None, on_sale_only: bool = False,
                    sort: str = "featured", page: int = 1, page_size: int = 40) -> dict:
         query: dict = {"active": {"$ne": False}}
+        ands: list[dict] = []                # συγκεντρωτικά AND (q tokens + brand) → ένα $and
         if for_sale_only:                    # Κατάλογος e-shop: ΜΟΝΟ όσα ο φαρμακοποιός έχει βάλει προς πώληση
             query["for_sale"] = True
-        if brand and brand.strip():          # brand = πρώτη λέξη ονόματος (facet)· φίλτρο σε αρχή ονόματος
-            query["name"] = {"$regex": r"^\s*" + re.escape(brand.strip()) + r"\b", "$options": "i"}
+        if brand and brand.strip():
+            # Effective brand: αποθηκευμένο `brand` (χειροκίνητο) ΑΛΛΙΩΣ η πρώτη λέξη του ονόματος (heuristic).
+            bq = re.escape(brand.strip())
+            ands.append({"$or": [
+                {"brand": {"$regex": r"^\s*" + bq + r"\s*$", "$options": "i"}},
+                {"$and": [{"$or": [{"brand": None}, {"brand": ""}, {"brand": {"$exists": False}}]},
+                          {"name": {"$regex": r"^\s*" + bq + r"\b", "$options": "i"}}]},
+            ]})
         if on_sale_only:                     # «Σε προσφορά»: δική τους έκπτωση > 0 (καμπάνιες = server-side)
             query["discount_pct"] = {"$gt": 0}
         if q and q.strip():
             # Έξυπνη αναζήτηση: κάθε λέξη πρέπει να ταιριάζει ΚΑΠΟΥ (AND ανά λέξη, OR ανά πεδίο) —
             # όνομα, barcode, περιγραφή, ετικέτες, κατηγορία. Π.χ. «depon 500» = όνομα με «depon» ΚΑΙ «500».
             tokens = [tok for tok in re.split(r"\s+", q.strip()) if tok][:6]
-            ands = []
             for tok in tokens:
                 rx = {"$regex": _fold_accents_regex(tok), "$options": "i"}
                 ands.append({"$or": [{"name": rx}, {"barcode": rx}, {"description_long": rx},
                                      {"description_short": rx}, {"tags": rx}, {"category": rx}]})
-            if ands:
-                query["$and"] = ands
+        if ands:
+            query["$and"] = ands
         if category:
             query["category"] = category
         # Φίλτρο δέντρου κατηγοριών e-shop (μενού πύλης): το πιο συγκεκριμένο επίπεδο υπερισχύει.
@@ -333,6 +339,7 @@ class PharmacyCatalogRepository(BaseRepository):
             "participation": max(0, min(100, _int(data.get("participation")) if data.get("participation") is not None else 0)),  # % συμμετοχής ασφαλισμένου (indicative split)
             "type": ptype,
             "category": (data.get("category") or "").strip()[:80] or None,
+            "brand": (data.get("brand") or "").strip()[:60] or None,   # μάρκα (χειροκίνητη· facet/φίλτρο)
             "tags": _clean_tags(data.get("tags")),           # ελεύθερες ετικέτες (badges/φίλτρα)
             "featured": bool(data.get("featured", False)),   # προτεινόμενο → πρώτο στη βιτρίνα
             "discount_pct": disc,
@@ -365,7 +372,7 @@ class PharmacyCatalogRepository(BaseRepository):
         for k in ("tags", "featured", "image_id", "images", "wholesale_cents", "is_fyk", "participation",
                   "for_sale", "min_stock", "supplier", "location", "batch", "expiry", "barcodes", "variants",
                   "cat1_id", "cat2_id", "cat3_id", "sale_starts_at", "sale_ends_at", "highlights",
-                  "related_barcodes", "points_multiplier", "vat_rate", "price_includes_vat"):
+                  "related_barcodes", "points_multiplier", "vat_rate", "price_includes_vat", "brand"):
             if k not in data:
                 doc.pop(k, None)
         await self.update_one({"barcode": bc},
@@ -606,8 +613,12 @@ class PharmacyCatalogRepository(BaseRepository):
         Κρατά μόνο brands με ≥2 προϊόντα προς πώληση & φιλτράρει γενικές/αριθμητικές λέξεις."""
         rows = await self.aggregate([
             {"$match": {"active": {"$ne": False}, "for_sale": True, "name": {"$type": "string"}}},
-            {"$project": {"tok": {"$arrayElemAt": [{"$split": [{"$trim": {"input": "$name"}}, " "]}, 0]}}},
-            {"$group": {"_id": {"$toUpper": "$tok"}, "n": {"$sum": 1}}},
+            {"$project": {"b": {"$cond": [
+                {"$gt": [{"$strLenCP": {"$ifNull": ["$brand", ""]}}, 0]},
+                {"$toUpper": {"$trim": {"input": "$brand"}}},
+                {"$toUpper": {"$arrayElemAt": [{"$split": [{"$trim": {"input": "$name"}}, " "]}, 0]}},
+            ]}}},
+            {"$group": {"_id": "$b", "n": {"$sum": 1}}},
             {"$match": {"n": {"$gte": 2}}},
             {"$sort": {"n": -1, "_id": 1}},
             {"$limit": limit * 2},

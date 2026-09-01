@@ -14,7 +14,7 @@ type Product = {
   barcode: string; name: string; description_short?: string | null; description_long?: string | null;
   photo_url?: string | null; image_id?: string | null; images?: string[]; usage_video_url?: string | null; price_cents: number; wholesale_cents?: number; type: string; category?: string | null;
   cat1_id?: string | null; cat2_id?: string | null; cat3_id?: string | null;
-  tags?: string[]; featured?: boolean; is_fyk?: boolean; participation?: number; discount_pct: number; stock_qty: number; active?: boolean;
+  brand?: string | null; tags?: string[]; featured?: boolean; is_fyk?: boolean; participation?: number; discount_pct: number; stock_qty: number; active?: boolean;
   // καθαρά πωλησιακά e-shop
   sale_starts_at?: string | null; sale_ends_at?: string | null; highlights?: string[]; related_barcodes?: string[]; points_multiplier?: number;
 };
@@ -391,6 +391,10 @@ function EditModal({ product, busy, tax, onClose, onSave }: { product: Product; 
             </div>
             <div className="mt-1 flex flex-wrap gap-1">{QUICK_TAGS.filter((t) => !tags.includes(t)).map((t) => <button key={t} onClick={() => addTag(t)} className="rounded-full border border-slate-200 px-2 py-0.5 text-[11px] text-slate-500 hover:bg-slate-50">+ {t}</button>)}</div>
           </div>
+
+          <label className="text-xs text-slate-500">🏷️ {t("Μάρκα", "Brand")}
+            <input value={f.brand ?? ""} onChange={(e) => set("brand", e.target.value || null)} placeholder={t("π.χ. BETADINE (κενό = αυτόματη από το όνομα)", "e.g. BETADINE (empty = auto from the name)")} className="mt-1 w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm" />
+            <span className="mt-0.5 block text-[11px] text-slate-400">{t("Φίλτρο «Μάρκα» στο e-shop. Αν το αφήσεις κενό, η πύλη μαντεύει τη μάρκα από την πρώτη λέξη του ονόματος.", "The e-shop «Brand» filter. If left empty, the portal guesses the brand from the first word of the name.")}</span></label>
 
           <label className="text-xs text-slate-500">🎬 {t("Βίντεο οδηγιών χρήσης (YouTube/Vimeo)", "How-to-use video (YouTube/Vimeo)")}
             <input value={f.usage_video_url ?? ""} onChange={(e) => set("usage_video_url", e.target.value || null)} placeholder={t("https://youtu.be/… ή https://vimeo.com/…", "https://youtu.be/… or https://vimeo.com/…")} className="mt-1 w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm" />
