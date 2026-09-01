@@ -662,3 +662,41 @@ async def save_service_offer(body: ServiceOfferIn, ctx: TenantContext = Depends(
 @router.delete("/service-offers/{offer_id}")
 async def delete_service_offer(offer_id: str, ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
     return await _sorepo(ctx).delete(offer_id)
+
+
+# ── Θεματικά banners προσφορών (slider πύλης «🔥 Προσφορές») ──────────────────────────────
+class OfferBannerIn(BaseModel):
+    id: str | None = None
+    title: str = Field("", max_length=80)
+    subtitle: str | None = Field(None, max_length=120)
+    badge: str | None = Field(None, max_length=16)
+    image_id: str | None = None
+    accent: str = Field("rose", pattern="^(rose|violet|amber|emerald|sky)$")
+    target_type: str = Field("on_sale", pattern="^(on_sale|brand|tag|bundles)$")
+    target_value: str | None = Field(None, max_length=80)
+    sort_order: int = 0
+    active: bool = True
+    starts_at: datetime | None = None
+    ends_at: datetime | None = None
+
+
+def _bnrepo(ctx: TenantContext):
+    from app.repositories.shop_offer_banners import ShopOfferBannerRepository
+    return ShopOfferBannerRepository(tenant_id=ctx.tenant_id)
+
+
+@router.get("/offer-banners")
+async def list_offer_banners(ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+    return {"items": await _bnrepo(ctx).list()}
+
+
+@router.post("/offer-banners")
+async def save_offer_banner(body: OfferBannerIn, ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+    data = body.model_dump()
+    data["_id"] = data.pop("id", None)
+    return await _bnrepo(ctx).upsert(data)
+
+
+@router.delete("/offer-banners/{banner_id}")
+async def delete_offer_banner(banner_id: str, ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+    return await _bnrepo(ctx).delete(banner_id)

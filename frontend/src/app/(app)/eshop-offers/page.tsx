@@ -10,6 +10,7 @@ import { CampaignsCard } from "@/components/catalog/CampaignsCard";
 import { OrderDiscountsCard } from "@/components/catalog/OrderDiscountsCard";
 import { PromosCard } from "@/components/catalog/PromosCard";
 import { ServiceOffersCard } from "@/components/catalog/ServiceOffersCard";
+import { BannersCard } from "@/components/catalog/BannersCard";
 
 type TaxClass = { type: string; label: string; discount: boolean; auto: boolean; categories: string[] };
 type Taxonomy = { classes: TaxClass[] };
@@ -29,6 +30,7 @@ function Offers() {
       <div className="mb-1 flex items-center gap-2 text-xl font-semibold text-slate-800"><Flame className="h-6 w-6 text-rose-500" /> Προσφορές &amp; προωθητικές ενέργειες</div>
       <p className="mb-4 text-sm text-slate-500">Ό,τι δημιουργείς εδώ εμφανίζεται στο κύκλωμα <b>«🔥 Προσφορές»</b> της πύλης πελατών (my.rxvision.gr), ώστε ο πελάτης να βλέπει γρήγορα τι προμηθεύεται/κλείνει με προσφορά. <b>Τα συνταγογραφούμενα δεν παίρνουν ποτέ έκπτωση.</b></p>
       <div className="grid items-start gap-4 xl:grid-cols-2">
+        <div className="xl:col-span-2"><BannersCard /></div>
         <CampaignsCard categories={campCats} tags={QUICK_TAGS} />
         <OrderDiscountsCard />
         <PromosCard />

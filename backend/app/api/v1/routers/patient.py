@@ -640,11 +640,28 @@ async def shop_offers(ctx: PatientContext = Depends(get_patient_context)):
     from app.repositories.shop_campaigns import ShopCampaignRepository
     from app.repositories.shop_promos import ShopBundleRepository
     from app.repositories.shop_service_offers import ShopServiceOffersRepository
+    from app.repositories.shop_offer_banners import ShopOfferBannerRepository
     camps = await ShopCampaignRepository(tenant_id=ctx.tenant_id).active_now()
     products = await PharmacyCatalogRepository(tenant_id=ctx.tenant_id).deals(camps)
     bundles = await ShopBundleRepository(tenant_id=ctx.tenant_id).active_now()
     services = await ShopServiceOffersRepository(tenant_id=ctx.tenant_id).active_now()
+    # Θεματικά banners: χειροκίνητα (φαρμακοποιός) + αυτόματα από τις υπάρχουσες προσφορές.
+    manual = await ShopOfferBannerRepository(tenant_id=ctx.tenant_id).active_now()
+    banners = [{"kind": "manual", "id": str(b.get("_id")), "title": b.get("title"),
+                "subtitle": b.get("subtitle"), "badge": b.get("badge"), "image_id": b.get("image_id"),
+                "accent": b.get("accent") or "rose", "target_type": b.get("target_type") or "on_sale",
+                "target_value": b.get("target_value")} for b in manual]
+    max_disc = max((int(p.get("eff_discount_pct") or 0) for p in products), default=0)
+    if max_disc > 0:
+        banners.append({"kind": "auto", "title": "Προσφορές προϊόντων",
+                        "subtitle": f"Έως -{max_disc}% σε επιλεγμένα είδη", "badge": f"-{max_disc}%",
+                        "image_id": None, "accent": "rose", "target_type": "on_sale", "target_value": None})
+    if bundles:
+        banners.append({"kind": "auto", "title": "Πακέτα & 1+1",
+                        "subtitle": "Συνδυασμοί με έξτρα όφελος", "badge": "1+1",
+                        "image_id": None, "accent": "amber", "target_type": "bundles", "target_value": None})
     return {
+        "banners": banners,
         "products": products,
         "bundles": [{"name": b.get("name"), "kind": b.get("kind"), "barcode": b.get("barcode"),
                      "buy_qty": b.get("buy_qty"), "free_qty": b.get("free_qty"),

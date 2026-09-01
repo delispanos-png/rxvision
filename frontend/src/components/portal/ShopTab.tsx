@@ -289,7 +289,7 @@ export function ShopTab({ tenantKey = "x" }: { tenantKey?: string }) {
   if (view === "orders") return <>{modals}<Orders orders={orders} setOrders={setOrders} onBack={() => setView("browse")} onReorder={reorder} /></>;
   if (view === "cart") return <>{modals}<Checkout cart={cart} subtotal={subtotal} settings={meta?.settings} camps={camps} bundles={meta?.bundles ?? []} loyalty={meta?.loyalty} onBack={() => setView("browse")} onDone={() => { setCart({}); setView("orders"); }} dec={dec} add={add} openProduct={setPdp} /></>;
   if (view === "favorites") return <>{modals}<Favorites onBack={() => setView("browse")} favBarcodes={favBarcodes} toggleFav={toggleFav} add={add} cart={cart} dec={dec} camps={camps} openProduct={setPdp} /></>;
-  if (view === "offers") return <>{modals}<Offers onBack={() => setView("browse")} add={add} goCart={() => setView("cart")} cartCount={count} /></>;
+  if (view === "offers") return <>{modals}<Offers onBack={() => setView("browse")} add={add} goCart={() => setView("cart")} cartCount={count} onBrowse={(f) => { clearFilters(); if (f.sort) setSort(f.sort); if (f.brand) setBrand(f.brand); if (f.tag) setTag(f.tag); setView("browse"); }} /></>;
 
   const activeOrders = orders.filter((o) => !["delivered", "cancelled", "declined"].includes(o.status)).length;
 
@@ -1021,12 +1021,22 @@ type SvcOffer = { id: string; title: string; description?: string | null; photo_
 const svcImg = (o: SvcOffer) => o.image_id ? `${API_BASE}/catalog/image/${o.image_id}` : (o.photo_url || "");
 const TIMES = Array.from({ length: 23 }, (_, i) => { const m = 9 * 60 + i * 30; return `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`; });
 
-function Offers({ onBack, add, goCart, cartCount }: { onBack: () => void; add: (p: Product) => void; goCart: () => void; cartCount: number }) {
+type OfferBanner = { kind: string; id?: string; title: string; subtitle?: string | null; badge?: string | null; image_id?: string | null; accent: string; target_type: "on_sale" | "brand" | "tag" | "bundles"; target_value?: string | null };
+type BrowseFilter = { sort?: string; brand?: string; tag?: string };
+const BANNER_ACCENT: Record<string, string> = { rose: "from-rose-500 to-orange-500", violet: "from-violet-500 to-indigo-500", amber: "from-amber-500 to-yellow-500", emerald: "from-emerald-500 to-teal-500", sky: "from-sky-500 to-cyan-500" };
+
+function Offers({ onBack, add, goCart, cartCount, onBrowse }: { onBack: () => void; add: (p: Product) => void; goCart: () => void; cartCount: number; onBrowse: (f: BrowseFilter) => void }) {
   const t = useT();
-  const [data, setData] = useState<{ products: DealProduct[]; bundles: Bundle[]; services: SvcOffer[] } | null>(null);
+  const [data, setData] = useState<{ banners?: OfferBanner[]; products: DealProduct[]; bundles: Bundle[]; services: SvcOffer[] } | null>(null);
   const [reserve, setReserve] = useState<SvcOffer | null>(null);
-  useEffect(() => { patientApi<{ products: DealProduct[]; bundles: Bundle[]; services: SvcOffer[] }>("/patient/shop/offers").then(setData).catch(() => setData({ products: [], bundles: [], services: [] })); }, []);
+  useEffect(() => { patientApi<{ banners?: OfferBanner[]; products: DealProduct[]; bundles: Bundle[]; services: SvcOffer[] }>("/patient/shop/offers").then(setData).catch(() => setData({ products: [], bundles: [], services: [] })); }, []);
   const empty = data && data.products.length === 0 && data.bundles.length === 0 && data.services.length === 0;
+  function clickBanner(b: OfferBanner) {
+    if (b.target_type === "bundles") { document.getElementById("offers-bundles")?.scrollIntoView({ behavior: "smooth", block: "start" }); return; }
+    if (b.target_type === "brand" && b.target_value) { onBrowse({ brand: b.target_value }); return; }
+    if (b.target_type === "tag" && b.target_value) { onBrowse({ tag: b.target_value }); return; }
+    onBrowse({ sort: "on_sale" });   // «όλα σε προσφορά» → κατάλογος ταξινομημένος σε εκπτώσεις
+  }
 
   return (
     <div className="space-y-4">
@@ -1038,6 +1048,24 @@ function Offers({ onBack, add, goCart, cartCount }: { onBack: () => void; add: (
         <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-gradient-to-br from-rose-500 to-amber-500 text-white shadow-sm"><Flame className="h-5 w-5" /></span>
         <div className="leading-tight"><div className="text-lg font-extrabold text-slate-900 dark:text-slate-100">{t("Προσφορές", "Offers")}</div><div className="text-[11px] text-slate-400">{t("Ό,τι μπορείς να προμηθευτείς ή να κλείσεις με προσφορά, τώρα", "Everything you can buy or book on offer, right now")}</div></div>
       </div>
+
+      {/* Slider θεματικών banners (2.3) — clickable → φιλτραρισμένη λίστα προϊόντων */}
+      {!!data?.banners?.length && (
+        <div className="-mx-4 flex gap-2.5 overflow-x-auto px-4 pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          {data.banners.map((b, i) => (
+            <button key={b.id ?? `auto-${i}`} onClick={() => clickBanner(b)} className={`relative flex h-24 w-64 shrink-0 flex-col justify-end overflow-hidden rounded-2xl p-3 text-left text-white shadow-sm transition hover:brightness-105 sm:w-72 ${b.image_id ? "bg-slate-800" : `bg-gradient-to-r ${BANNER_ACCENT[b.accent] ?? BANNER_ACCENT.rose}`}`}>
+              {b.image_id && <img src={`${API_BASE}/catalog/image/${b.image_id}`} alt="" className="absolute inset-0 h-full w-full object-cover" />}
+              <span className="absolute inset-0 bg-gradient-to-t from-black/50 to-transparent" />
+              {b.badge && <span className="absolute right-2 top-2 z-10 rounded-lg bg-white/25 px-2 py-0.5 text-xs font-extrabold backdrop-blur">{b.badge}</span>}
+              <span className="relative z-10 min-w-0">
+                <span className="block truncate text-sm font-extrabold drop-shadow">{b.title}</span>
+                {b.subtitle && <span className="block truncate text-[11px] opacity-90 drop-shadow">{b.subtitle}</span>}
+                <span className="mt-0.5 inline-flex items-center gap-0.5 text-[11px] font-semibold opacity-95">{t("Δες προϊόντα", "See products")} <ChevronRight className="h-3 w-3" /></span>
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
 
       {!data && <div className="py-10 text-center text-sm text-slate-400"><Loader2 className="mx-auto mb-2 h-5 w-5 animate-spin" /> {t("Φόρτωση…", "Loading…")}</div>}
       {empty && <div className="rounded-2xl border border-dashed border-slate-300 dark:border-slate-600 p-10 text-center text-sm text-slate-400">{t("Δεν υπάρχουν ενεργές προσφορές αυτή τη στιγμή.", "There are no active offers right now.")}</div>}
@@ -1069,7 +1097,7 @@ function Offers({ onBack, add, goCart, cartCount }: { onBack: () => void; add: (
 
       {/* Πακέτα */}
       {!!data?.bundles.length && (
-        <section>
+        <section id="offers-bundles">
           <div className="mb-2 flex items-center gap-1.5 text-sm font-bold text-slate-700 dark:text-slate-200"><Package className="h-4 w-4 text-amber-500" /> {t("Πακέτα προσφορών", "Offer bundles")}</div>
           <div className="grid gap-2 sm:grid-cols-2">
             {data.bundles.map((b, i) => (
