@@ -200,7 +200,8 @@ class OrdersDeliveryRepository(BaseRepository):
                            courier_authorized: bool, gdpr_consent: bool,
                            courier_auth: dict | None = None, loyalty_redeem_cents: int = 0,
                            coupon_code: str | None = None, payment_method: str = "pickup",
-                           sub_discount_pct: int = 0, subscription_id: str | None = None) -> dict:
+                           sub_discount_pct: int = 0, subscription_id: str | None = None,
+                           note: str | None = None) -> dict:
         if not gdpr_consent:
             return {"ok": False, "error": "consent_required"}
         # Παραλαβή από το κατάστημα → καμία εξουσιοδότηση. Αποστολή με μεταφορέα → εξουσιοδότηση
@@ -364,6 +365,7 @@ class OrdersDeliveryRepository(BaseRepository):
             "address": address if mode == "delivery" else None,
             "courier_authorized": bool(courier_authorized), "courier_auth": courier_auth,
             "gdpr_consent": True,
+            "note": (note or "").strip()[:500] or None,   # σημείωση πελάτη πάνω στην παραγγελία
             "has_medicine": has_medicine, "has_backorder": has_backorder, "available_date": None,
             "status": status, "subscription_id": subscription_id,
             "status_history": [{"status": status, "at": _now()}],

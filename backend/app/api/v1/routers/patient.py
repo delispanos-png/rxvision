@@ -746,6 +746,7 @@ class OrderIn(BaseModel):
     gdpr_consent: bool = False
     repeat_days: int = 0                     # 0 = εφάπαξ· >0 = συνδρομή κάθε N ημέρες
     payment_method: str = "pickup"           # pickup/cod = στο κατάστημα· online = Viva (κάρτα/IRIS)
+    note: str | None = Field(None, max_length=500)   # σημείωση πελάτη πάνω στην παραγγελία
 
 
 @router.post("/shop/order")
@@ -765,7 +766,8 @@ async def place_order(body: OrderIn, ctx: PatientContext = Depends(get_patient_c
         lines=[ln.model_dump() for ln in body.lines], mode=body.mode, address=addr,
         courier_authorized=body.courier_authorized, courier_auth=cauth,
         loyalty_redeem_cents=body.loyalty_redeem_cents, coupon_code=body.coupon_code,
-        payment_method=body.payment_method, gdpr_consent=body.gdpr_consent, sub_discount_pct=sub_disc)
+        payment_method=body.payment_method, gdpr_consent=body.gdpr_consent, sub_discount_pct=sub_disc,
+        note=body.note)
     if res.get("ok") and body.repeat_days > 0 and st.get("subscription_enabled", True):
         sub = await repo.create_subscription(
             account_id=ctx.account_id, patient_ref=ctx.patient_ref, patient_name=name, patient_phone=phone,

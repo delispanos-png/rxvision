@@ -7,7 +7,7 @@ import {
   Pill, RefreshCw, Stethoscope, Bell, LogOut, Building2,
   Calendar, ChevronDown, ChevronUp, ChevronRight, CheckCircle2, Clock, Sparkles, X, Search, CalendarPlus, AlertCircle,
   PackageCheck, Gift, FileText, ShoppingBag, HeartPulse, FilePlus, MapPin, Home, Camera, Upload, Star, Navigation, Plus, Check,
-  Sun, Moon, User, Globe,
+  Sun, Moon, User, Globe, Download,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { QRCodeCanvas } from "qrcode.react";
@@ -75,6 +75,9 @@ const haversineKm = (a: { lat: number; lon: number }, lat2: number, lon2: number
   const s = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(a.lat)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
   return 2 * r * Math.asin(Math.min(1, Math.sqrt(s)));
 };
+
+// beforeinstallprompt event (PWA) — δεν υπάρχει στους τυπικούς DOM types
+type BIPEvent = Event & { prompt: () => Promise<void>; userChoice: Promise<{ outcome: string }> };
 
 const TABS = [["home", "Αρχική", "Home"], ["rx", "Συνταγές", "Prescriptions"], ["shop", "e-Κατάστημα", "e-Store"], ["meds", "Πρόγραμμα λήψης", "Medication schedule"], ["health", "Υγεία", "Health"], ["wallet", "Επιβράβευση", "Rewards"], ["repeats", "Επαναλήψεις", "Refills"], ["renewals", "Ανεκτέλεστα", "Unexecuted"], ["assign", "Ανάθεση συνταγής", "Assign prescription"], ["availability", "Διαθεσιμότητα", "Availability"], ["appointments", "Ραντεβού", "Appointments"], ["pharmacies", "Φαρμακεία", "Pharmacies"]] as const;
 // Σύντομες ετικέτες για τη στενή κάτω μπάρα (mobile) — αλλιώς κόβονται άσχημα.
@@ -195,6 +198,9 @@ export default function PortalHome() {
   const [notifs, setNotifs] = useState<Notif[]>([]);
   const [showNotifs, setShowNotifs] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
+  // PWA «Λήψη εφαρμογής» (1.2b): αιχμαλωτίζουμε το beforeinstallprompt & ανιχνεύουμε αν τρέχει ήδη ως app
+  const [installPrompt, setInstallPrompt] = useState<BIPEvent | null>(null);
+  const [isStandalone, setIsStandalone] = useState(false);
   const [pf, setPf] = useState({ first_name: "", last_name: "", phone: "", address: "", city: "", postal_code: "" });
   const [pwd, setPwd] = useState({ current: "", next: "" });
   const [profileBusy, setProfileBusy] = useState(false);
@@ -377,6 +383,33 @@ export default function PortalHome() {
     const th = me?.profile.theme;
     if (th === "light" || th === "dark") setTheme(th);
   }, [me?.profile.theme, setTheme]);
+
+  // «Λήψη εφαρμογής» (PWA): αιχμαλώτισε το beforeinstallprompt & ανίχνευσε αν τρέχει ήδη σαν εγκατεστημένη app
+  useEffect(() => {
+    const onPrompt = (e: Event) => { e.preventDefault(); setInstallPrompt(e as BIPEvent); };
+    const onInstalled = () => { setInstallPrompt(null); setIsStandalone(true); };
+    window.addEventListener("beforeinstallprompt", onPrompt);
+    window.addEventListener("appinstalled", onInstalled);
+    try {
+      const mm = window.matchMedia("(display-mode: standalone)");
+      // iOS Safari εκθέτει navigator.standalone
+      setIsStandalone(mm.matches || (navigator as Navigator & { standalone?: boolean }).standalone === true);
+    } catch { /* ignore */ }
+    return () => { window.removeEventListener("beforeinstallprompt", onPrompt); window.removeEventListener("appinstalled", onInstalled); };
+  }, []);
+  async function installApp() {
+    if (installPrompt) {
+      await installPrompt.prompt();
+      try { await installPrompt.userChoice; } catch { /* ignore */ }
+      setInstallPrompt(null);
+      return;
+    }
+    // iOS/Safari & browsers χωρίς prompt → οδηγίες προσθήκης στην αρχική οθόνη
+    const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
+    await confirmDialog(isIOS
+      ? t("Στο iPhone/iPad: πάτησε το κουμπί «Κοινή χρήση» (τετράγωνο με βέλος) και μετά «Προσθήκη στην αρχική οθόνη».", "On iPhone/iPad: tap the «Share» button (square with an arrow) and then «Add to Home Screen».")
+      : t("Στο μενού του browser (⋮) επίλεξε «Εγκατάσταση εφαρμογής» ή «Προσθήκη στην αρχική οθόνη».", "In your browser menu (⋮) choose «Install app» or «Add to Home screen»."));
+  }
 
   // φόρτωσε ενεργές συνεδρίες όταν ανοίγει το προφίλ
   useEffect(() => {
@@ -854,6 +887,14 @@ export default function PortalHome() {
                 ))}
               </span>
             </div>
+
+            {/* «Λήψη εφαρμογής» (1.2b) — PWA install ή οδηγίες (κρύβεται αν τρέχει ήδη ως εγκατεστημένη app) */}
+            {!isStandalone && (
+              <button onClick={installApp} className="mb-5 flex w-full items-center justify-between rounded-xl border border-brand-200 bg-brand-50 px-4 py-3 text-sm dark:border-brand-800 dark:bg-brand-900/20">
+                <span className="flex items-center gap-2 font-semibold text-brand-700 dark:text-brand-300"><Download className="h-4 w-4" /> {t("Λήψη εφαρμογής στο κινητό", "Install the app on your phone")}</span>
+                <span className="text-[11px] font-medium text-brand-500">{t("Πρόσθεσέ την στην αρχική οθόνη", "Add it to your home screen")}</span>
+              </button>
+            )}
 
             <div className="space-y-3">
               <div className="grid grid-cols-2 gap-3">
