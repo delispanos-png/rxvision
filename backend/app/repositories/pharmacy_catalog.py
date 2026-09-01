@@ -41,6 +41,7 @@ _MAX_TAGS = 12
 # Ταξινομήσεις βιτρίνας (πάντα «προτεινόμενα» πρώτα): νεότερα, τιμή ↑/↓, αλφαβητικά.
 _SORTS: dict = {
     "featured": [("name", 1)],
+    "on_sale": [("discount_pct", -1), ("name", 1)],   # «Σε προσφορά» — εκπτώσεις πρώτα
     "newest": [("created_at", -1)],
     "price_asc": [("price_cents", 1)],
     "price_desc": [("price_cents", -1)],

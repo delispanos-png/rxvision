@@ -81,7 +81,7 @@ const imgList = (p: Product): string[] => {
 };
 const TAG_STYLE: Record<string, string> = { "Προσφορά": "bg-rose-100 text-rose-700", "Νέο": "bg-emerald-100 text-emerald-700", "Δημοφιλές": "bg-amber-100 text-amber-800", "Bestseller": "bg-amber-100 text-amber-800", "Βιολογικό": "bg-green-100 text-green-700", "Vegan": "bg-green-100 text-green-700" };
 const tagCls = (t: string) => TAG_STYLE[t] || "bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300";
-const SORTS: [string, string, string][] = [["featured", "Προτεινόμενα", "Recommended"], ["newest", "Νεότερα", "Newest"], ["price_asc", "Φθηνότερα", "Price: low to high"], ["price_desc", "Ακριβότερα", "Price: high to low"]];
+const SORTS: [string, string, string][] = [["featured", "Προτεινόμενα", "Recommended"], ["on_sale", "Σε προσφορά", "On sale"], ["newest", "Νεότερα", "Newest"], ["price_asc", "Φθηνότερα", "Price: low to high"], ["price_desc", "Ακριβότερα", "Price: high to low"]];
 type Sub = { _id: string; items?: { barcode: string; qty: number }[]; lines?: { barcode: string; qty: number }[]; mode: string; interval_days: number; next_run: string };
 const FREQ: [number, string, string][] = [[0, "Όχι", "No"], [14, "Κάθε 2 εβδομάδες", "Every 2 weeks"], [30, "Κάθε μήνα", "Every month"], [60, "Κάθε 2 μήνες", "Every 2 months"], [90, "Κάθε 3 μήνες", "Every 3 months"]];
 type OrderItem = { barcode: string; name: string; qty: number; line_cents: number; discount_pct?: number; backorder?: boolean };
@@ -242,7 +242,10 @@ export function ShopTab({ tenantKey = "x" }: { tenantKey?: string }) {
     } catch { /* ignore */ } finally { setLoadingMore(false); }
   }
 
-  function add(p: Product) { setCart((c) => ({ ...c, [p.barcode]: { p, qty: Math.min((c[p.barcode]?.qty ?? 0) + 1, capOf(p)) } })); }
+  function add(p: Product) {
+    setCart((c) => ({ ...c, [p.barcode]: { p, qty: Math.min((c[p.barcode]?.qty ?? 0) + 1, capOf(p)) } }));
+    if (p.type === "rx_medicine") toast(t("Τα συνταγογραφούμενα φάρμακα ΔΕΝ αποστέλλονται με courier — μόνο παραλαβή από το φαρμακείο (κατόπιν έγκρισης).", "Prescription medicines are NOT shipped by courier — pharmacy pickup only (after approval)."), "info");
+  }
   function dec(bc: string) { setCart((c) => { const q2 = (c[bc]?.qty ?? 0) - 1; const n = { ...c }; if (q2 <= 0) delete n[bc]; else n[bc] = { ...n[bc], qty: q2 }; return n; }); }
   async function reorder(o: Order) {
     try {
@@ -333,7 +336,7 @@ export function ShopTab({ tenantKey = "x" }: { tenantKey?: string }) {
       {hasTree && (
         <div className="space-y-2">
           <div className="flex flex-wrap items-center gap-1.5 text-xs">
-            <button onClick={() => setShowCats((v) => !v)} className="inline-flex items-center gap-1 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-2 text-sm font-medium text-slate-700 dark:text-slate-200 shadow-sm hover:bg-slate-50 dark:hover:bg-slate-800">
+            <button onClick={() => { if (q.trim()) { setQ(""); setShowCats(true); } else { setShowCats((v) => !v); } }} className="inline-flex items-center gap-1 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-2 text-sm font-medium text-slate-700 dark:text-slate-200 shadow-sm hover:bg-slate-50 dark:hover:bg-slate-800">
               🗂️ {t("Κατηγορίες", "Categories")} <ChevronDown className={`h-4 w-4 transition ${showCats && !q.trim() ? "rotate-180" : ""}`} />
             </button>
             {catPath.length > 0 && (
