@@ -142,6 +142,20 @@ class VaultService:
         self.set_secret(path, creds)
         return f"vault://{path}"
 
+    def delete_tenant_secrets(self, tenant_id: str) -> list[str]:
+        """Οριστική διαγραφή ΟΛΩΝ των per-tenant secrets (ΗΔΥΚΑ/ΓΕΣΥ creds + pepper) στη διαγραφή
+        πελάτη — ώστε να μη μένει καμία «υποδομή» πίσω. Επιστρέφει τα paths που καθαρίστηκαν."""
+        cleaned: list[str] = []
+        for source in ("hdika", "gesy", "pepper"):
+            path = f"tenants/{tenant_id}/{source}"
+            try:
+                if self.has_secret(path):
+                    self.delete_secret(path)
+                    cleaned.append(path)
+            except Exception as exc:  # noqa: BLE001 — never let a Vault hiccup block tenant deletion
+                logger.warning("Vault delete_tenant_secrets failed for %s: %s", path, exc)
+        return cleaned
+
 
 # module-level singleton used across the app
 vault = VaultService()

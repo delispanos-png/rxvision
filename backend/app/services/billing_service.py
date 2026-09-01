@@ -6,11 +6,14 @@ success advances the period; repeated failure suspends the tenant (auto-deactiva
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timedelta, timezone
 
 from app.core.db import shared_db
 from app.services import revolut_service as rv
 from app.services import viva_service
+
+logger = logging.getLogger(__name__)
 
 CURRENCY = "EUR"
 MAX_ATTEMPTS = 3
@@ -397,6 +400,14 @@ async def delete_tenant_fully(tenant_id: str) -> dict:
             removed["scans(GridFS)"] = n_files
     except Exception:  # noqa: BLE001
         pass
+    # Vault secrets (ΗΔΥΚΑ/ΓΕΣΥ creds + pepper) — «υποδομή» εκτός Mongo· να μη μένει τίποτα.
+    try:
+        from app.services.vault_service import vault
+        cleaned = vault.delete_tenant_secrets(tenant_id)
+        if cleaned:
+            removed["vault_secrets"] = len(cleaned)
+    except Exception:  # noqa: BLE001 — Vault degraded δεν πρέπει να μπλοκάρει τη διαγραφή
+        pass
     # tenant_serving (keyed by _id) + ο ίδιος ο tenant
     r = await db["tenant_serving"].delete_one({"_id": tenant_id})
     if r.deleted_count:
@@ -430,6 +441,34 @@ async def purge_expired_trials(*, dry_run: bool = False) -> dict:
     return {"enabled": cfg["purge_enabled"], "purge_days": cfg["purge_days"],
             "candidates": len(targets), "purged": purged, "archived": [k for k in archived if k],
             "dry_run": dry_run}
+
+
+async def purge_orphan_data(*, dry_run: bool = False, limit: int = 50) -> dict:
+    """Self-healing «κλείσιμο» της διαγραφής: δεδομένα tenant που έμειναν ΧΩΡΙΣ tenants doc (ορφανά —
+    υπόλειμμα παλιάς/μερικής διαγραφής) καθαρίζονται ΟΡΙΣΤΙΚΑ ώστε να μη μένει ΤΙΠΟΤΑ πίσω (GDPR + χώρος).
+
+    ΑΣΦΑΛΕΙΑ: σβήνει tenant_id ΜΟΝΟ όταν δεν έχει tenants doc ΚΑΙ δεν έχει subscription ΚΑΙ δεν έχει users
+    (δηλ. πλήρως εγκαταλελειμμένο). Αν βρεθεί orphan με subscription/users, ΔΕΝ το αγγίζει — αφήνεται για
+    χειροκίνητο έλεγχο (μπορεί να είναι ενεργός πελάτης που έχασε μόνο το tenants doc)."""
+    db = shared_db()
+    active = {t["_id"] async for t in db["tenants"].find({}, {"_id": 1})}
+    with_data = {t for t in await db["prescription_executions"].distinct("tenant_id") if t}
+    orphans = sorted(with_data - active)
+    purged: list[str] = []
+    skipped: list[str] = []
+    for tid in orphans[:limit]:
+        has_sub = await db["subscriptions"].find_one({"tenant_id": tid}, {"_id": 1})
+        has_users = await db["users"].find_one({"tenant_id": tid}, {"_id": 1})
+        if has_sub or has_users:
+            skipped.append(tid)
+            continue
+        if dry_run:
+            purged.append(tid)
+            continue
+        removed = await delete_tenant_fully(tid)
+        logger.info("purge_orphan_data cleaned orphan %s → %s", tid, removed)
+        purged.append(tid)
+    return {"orphans": len(orphans), "purged": purged, "skipped": skipped, "dry_run": dry_run}
 
 
 async def _billing_email(db, tid: str, tenant: dict) -> str | None:

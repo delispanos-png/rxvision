@@ -53,6 +53,18 @@ def purge_expired_trials() -> dict:
     return asyncio.run(_run())
 
 
+@celery_app.task(name="app.workers.billing.purge_orphan_data")
+def purge_orphan_data() -> dict:
+    """Ημερήσιο self-healing: καθαρίζει ΟΡΙΣΤΙΚΑ δεδομένα tenant που έμειναν χωρίς tenants doc (ορφανά),
+    ώστε μετά τη διαγραφή ενός δοκιμαστικού να μη μένει ΤΙΠΟΤΑ πίσω. Ασφαλές (μόνο πλήρως εγκαταλελειμμένα)."""
+    from app.services.billing_service import purge_orphan_data as _purge
+
+    async def _run() -> dict:
+        return await _purge()
+
+    return asyncio.run(_run())
+
+
 @celery_app.task(name="app.workers.billing.subscription_reminders")
 def subscription_reminders() -> dict:
     """Ημερήσιο: προειδοποιητικά email πριν τη λήξη + καθημερινά «η συνδρομή σας έχει λήξει» μετά."""

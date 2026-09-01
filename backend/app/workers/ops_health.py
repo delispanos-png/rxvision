@@ -139,16 +139,23 @@ def check() -> dict:
             except Exception:  # noqa: BLE001 — never let a stats hiccup crash the watchdog
                 pass
 
-            # 7) Ορφανά δεδομένα: tenant με δεδομένα αλλά ΧΩΡΙΣ tenants doc (διαγράφηκε χωρίς πλήρη cascade)
-            #    → GDPR (κρατάμε δεδομένα υγείας χωρίς σχέση) + άσκοπος χώρος. Χρειάζεται delete_tenant_fully.
+            # 7) Ορφανά δεδομένα: tenant με δεδομένα αλλά ΧΩΡΙΣ tenants doc (διαγράφηκε χωρίς πλήρη cascade).
+            #    Τα ΠΛΗΡΩΣ εγκαταλελειμμένα (χωρίς subscription/users) τα καθαρίζει ΑΥΤΟΜΑΤΑ το ημερήσιο
+            #    purge_orphan_data → δεν ειδοποιούμε γι' αυτά. Ειδοποιούμε ΜΟΝΟ για «κολλημένα» ορφανά που
+            #    έχουν ακόμη subscription/users (πιθανός ενεργός πελάτης που έχασε το tenants doc) → χειροκίνητα.
             try:
                 active = {t["_id"] async for t in db["tenants"].find({}, {"_id": 1})}
                 with_data = {t for t in await db["prescription_executions"].distinct("tenant_id") if t}
-                orphans = sorted(with_data - active)
-                if orphans:
-                    issues.append(("orphan-tenant-data",
-                                   f"🗑️ {len(orphans)} tenant(s) έχουν δεδομένα αλλά ΚΑΜΙΑ συνδρομή (ορφανά): "
-                                   f"{', '.join(orphans[:5])}. Οριστική διαγραφή (delete_tenant_fully) — GDPR + χώρος."))
+                stuck = []
+                for tid in sorted(with_data - active):
+                    if (await db["subscriptions"].find_one({"tenant_id": tid}, {"_id": 1})
+                            or await db["users"].find_one({"tenant_id": tid}, {"_id": 1})):
+                        stuck.append(tid)
+                if stuck:
+                    issues.append(("orphan-tenant-stuck",
+                                   f"🗑️ {len(stuck)} tenant(s) με δεδομένα αλλά χωρίς tenants doc ΚΑΙ με ενεργό "
+                                   f"δεσμό (subscription/users): {', '.join(stuck[:5])}. Το auto-purge ΔΕΝ τα αγγίζει "
+                                   "— χρειάζονται χειροκίνητο έλεγχο (ενεργός πελάτης; ή delete_tenant_fully)."))
             except Exception:  # noqa: BLE001
                 pass
 

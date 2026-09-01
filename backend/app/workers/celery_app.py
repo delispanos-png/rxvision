@@ -175,6 +175,12 @@ celery_app.conf.beat_schedule = {
         "task": "app.workers.billing.purge_expired_trials",
         "schedule": crontab(hour=5, minute=45),
     },
+    # Self-healing: οριστικός καθαρισμός ορφανών δεδομένων (tenant χωρίς tenants doc) — «να μη μένει
+    # τίποτα» μετά τη διαγραφή δοκιμαστικού (καθημερινά 05:55 UTC, μετά το trial purge).
+    "purge-orphan-data": {
+        "task": "app.workers.billing.purge_orphan_data",
+        "schedule": crontab(hour=5, minute=55),
+    },
     # Αυτόματη έκδοση παραστατικών: pending → SoftOne → myDATA (κάθε 5′· off χωρίς auto_invoicing)
     "process-pending-invoices": {
         "task": "app.workers.billing.process_pending_invoices",
