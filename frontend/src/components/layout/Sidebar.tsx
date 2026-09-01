@@ -101,8 +101,11 @@ const GROUPS: Group[] = [
     { label: "Καμπάνιες", en: "Campaigns", icon: Mail, href: "/communications", module: "patient_analytics" },
     { label: "Κουπόνια", en: "Coupons", icon: Ticket, href: "/marketing/coupons", module: "marketing" },
   ] },
-  { title: "Λειτουργίες", en: "Operations", icon: SlidersHorizontal, items: [
+  // «Έλεγχος συνταγών» = ΑΝΕΞΑΡΤΗΤΗ top-level επιλογή (single-item group → αποδίδεται ως απευθείας link).
+  { title: "Έλεγχος συνταγών", en: "Rx Audit", icon: ShieldCheck, items: [
     { label: "Έλεγχος συνταγών", en: "Rx Audit", icon: ShieldCheck, href: "/reimbursement", module: "monthly_closing" },
+  ] },
+  { title: "Λειτουργίες", en: "Operations", icon: SlidersHorizontal, items: [
     // PharmacyOne is a back-office INTEGRATION (data source), not a user-facing capability → not in the menu.
     { label: "Οδηγός δεικτών", en: "Indicators guide", icon: BookOpen, href: "/guide" },
     { label: "Όροι Χρήσης", en: "Terms of Use", icon: ScrollText, href: "/terms-of-use" },
@@ -237,6 +240,25 @@ export function Sidebar() {
 
         <nav className="flex-1 space-y-6 overflow-y-auto px-3 py-4">
           {groups.map((g) => {
+            // Ομάδα με ΕΝΑ φύλλο (χωρίς υπο-στοιχεία) → ανεξάρτητο top-level link (χωρίς επικεφαλίδα/πτύξη).
+            if (g.items.length === 1 && !g.items[0].children) {
+              const n = g.items[0];
+              const Icon = n.icon;
+              const active = nodeActive(n);
+              if (!allowedMod(n.module)) {
+                return (
+                  <button key={g.title} onClick={() => openUpsell(n)} title={collapsed ? t(n.label, n.en) : undefined} className={`${linkCls(false)} w-full opacity-55`}>
+                    <Icon className={iconCls(false)} strokeWidth={2} />
+                    <span className={`flex-1 text-left ${hide}`}>{t(n.label, n.en)}</span>
+                    <Lock className={`h-3.5 w-3.5 shrink-0 text-slate-300 ${hide}`} />
+                  </button>
+                );
+              }
+              const inner = (<><Icon className={iconCls(active)} strokeWidth={2} /><span className={hide}>{t(n.label, n.en)}</span></>);
+              return n.href!.includes("#")
+                ? <a key={g.title} href={n.href!} title={collapsed ? t(n.label, n.en) : undefined} className={linkCls(active)} onClick={() => setOpen(false)}>{inner}</a>
+                : <Link key={g.title} href={n.href!} title={collapsed ? t(n.label, n.en) : undefined} className={linkCls(active)}>{inner}</Link>;
+            }
             const gCollapsed = collapsedGroups.has(g.title);
             const GroupIcon = g.icon;
             return (
