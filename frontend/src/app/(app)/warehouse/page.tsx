@@ -4,7 +4,7 @@ import { useState, useEffect, useRef, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { useQuery } from "@tanstack/react-query";
 import { Warehouse, Plus, ArrowUpDown, History, Pencil, AlertTriangle, CalendarClock, X, PackageX, FileSpreadsheet, Upload, ImagePlus, ZoomIn } from "lucide-react";
-import { api, apiUpload, apiBlob } from "@/lib/apiClient";
+import { api, apiUpload, apiBlob, API_BASE } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
 import { appAlert } from "@/store/dialogStore";
 import { fmtEur, fmtNum } from "@/lib/formatters";
