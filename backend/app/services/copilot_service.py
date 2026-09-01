@@ -51,6 +51,11 @@ SYSTEM = """Είσαι ο «Copilot» του RxVision — ο έξυπνος βο
 ή αυτόν τον μήνα», «πόσες εκτελέσεις σήμερα», «κορυφαίοι…»): ΚΑΛΕΣΕ το σωστό εργαλείο (π.χ. get_top με
 dim=patients & days_back=0 για «σήμερα») και ΑΠΑΝΤΗΣΕ ΜΕ ΤΟ ΟΝΟΜΑ/ΑΡΙΘΜΟ. ΜΗΝ στέλνεις απλώς σε σελίδα —
 το open_screen είναι ΣΥΜΠΛΗΡΩΜΑ της απάντησης, όχι υποκατάστατο. Ημερήσια: days_back=0=σήμερα, 1=χθες.
+ΣΥΓΚΕΚΡΙΜΕΝΟΣ/ΠΕΡΣΙΝΟΣ ΜΗΝΑΣ & ΣΥΓΚΡΙΣΕΙΣ ΕΤΟΥΣ-ΜΕ-ΕΤΟΣ: για έναν ΣΥΓΚΕΚΡΙΜΕΝΟ μήνα («Αύγουστος 2025»)
+ή σύγκριση «φέτος vs πέρσι», χρησιμοποίησε `month:"YYYY-MM"` (ΟΧΙ months_back — αυτό είναι ΚΥΛΙΟΜΕΝΟ παράθυρο
+από σήμερα, όχι συγκεκριμένος μήνας). Για σύγκριση, ΚΑΛΕΣΕ το tool ΔΥΟ φορές (π.χ. month=2026-08 ΚΑΙ
+month=2025-08) και δώσε τη διαφορά %. Αν ένα tool γυρίσει 0, ΠΡΩΤΑ δοκίμασε ξανά με το σωστό `month` πριν
+πεις «δεν υπάρχουν δεδομένα» — τα ιστορικά δεδομένα υπάρχουν.
 
 ΚΕΡΔΟΦΟΡΙΑ — ΕΛΛΗΝΙΚΟ ΝΟΜΙΚΟ ΠΛΑΙΣΙΟ (ΚΡΙΣΙΜΟ, μη δίνεις συμβουλές που ΔΕΝ ισχύουν στην Ελλάδα):
 • Τα ΣΥΝΤΑΓΟΓΡΑΦΟΥΜΕΝΑ φάρμακα (Rx) είναι σε ΔΙΑΤΙΜΗΣΗ: λιανική & χονδρική ορίζονται από το Κράτος
@@ -86,9 +91,22 @@ def _period(months_back: int) -> tuple[datetime, datetime]:
 
 
 def _range(args: dict) -> tuple[datetime, datetime]:
-    """Εύρος ημερομηνιών από τα args. Αν δοθεί `days_back` (0 = ΣΗΜΕΡΑ, 1 = χθες κ.λπ.) → ημερήσιο
-    εύρος [αρχή εκείνης της ημέρας → τώρα]. Αλλιώς → μηνιαίο εύρος (`months_back`, default 1)."""
+    """Εύρος ημερομηνιών από τα args:
+    - `month` «YYYY-MM» → ΣΥΓΚΕΚΡΙΜΕΝΟΣ ημερολογιακός μήνας [αρχή → αρχή επόμενου]. ΑΠΑΡΑΙΤΗΤΟ για
+      έναν συγκεκριμένο/περσινό μήνα & για συγκρίσεις έτους-με-έτος (π.χ. Αύγ.2026 vs Αύγ.2025).
+    - `days_back` (0 = ΣΗΜΕΡΑ, 1 = χθες…) → ημερήσιο εύρος [αρχή εκείνης της ημέρας → τώρα].
+    - αλλιώς → ΚΥΛΙΟΜΕΝΟ μηνιαίο εύρος (`months_back`, default 1) από τώρα προς τα πίσω."""
     args = args or {}
+    m = args.get("month")
+    if isinstance(m, str) and len(m) == 7 and m[4] == "-":
+        try:
+            y, mo = int(m[:4]), int(m[5:7])
+            if 1 <= mo <= 12:
+                start = datetime(y, mo, 1, tzinfo=timezone.utc)
+                end = datetime(y + 1, 1, 1, tzinfo=timezone.utc) if mo == 12 else datetime(y, mo + 1, 1, tzinfo=timezone.utc)
+                return start, end
+        except (ValueError, TypeError):
+            pass
     if args.get("days_back") is not None:
         d = max(0, min(_as_int(args.get("days_back"), 0), 365))
         now = _now()
@@ -338,8 +356,8 @@ _READ_NAMES = ["get_kpis", "get_top", "get_unexecuted", "get_profitability", "ge
                "get_order_suggestions", "get_portal_pending", "get_ingestion_status"]
 
 _READ_DESC = {
-    "get_kpis": "Σύνοψη φαρμακείου (εκτελέσεις, αξία, αιτούμενα, μεικτό κέρδος, ασθενείς). params: months_back Ή days_back (0=ΣΗΜΕΡΑ, 1=χθες…).",
-    "get_top": "Κορυφαίοι ανά διάσταση (π.χ. «ποιος πελάτης έκανε τον μεγαλύτερο τζίρο σήμερα» → dim=patients, days_back=0). params: dim(doctors|products|icd10|patients), limit, months_back Ή days_back (0=ΣΗΜΕΡΑ).",
+    "get_kpis": "Σύνοψη φαρμακείου (εκτελέσεις, αξία, αιτούμενα, μεικτό κέρδος, ασθενείς). params: month «YYYY-MM» (συγκεκριμένος/περσινός μήνας — για σύγκριση έτους-με-έτος κάλεσέ το 2 φορές) Ή months_back Ή days_back (0=ΣΗΜΕΡΑ, 1=χθες…).",
+    "get_top": "Κορυφαίοι ανά διάσταση (π.χ. «ποιος πελάτης έκανε τον μεγαλύτερο τζίρο σήμερα» → dim=patients, days_back=0). params: dim(doctors|products|icd10|patients), limit, month «YYYY-MM» Ή months_back Ή days_back (0=ΣΗΜΕΡΑ).",
     "get_unexecuted": "Ανεκτέλεστες δραστικές (χαμένη αξία). params: months_back Ή days_back.",
     "get_profitability": "Κερδοφορία/περιθώριο για περίοδο. params: months_back.",
     "get_low_margin": "Προϊόντα χαμηλού περιθωρίου. params: threshold_pct.",
@@ -441,7 +459,8 @@ def _tools() -> list[dict]:
     common = {"type": "object", "properties": {
         "months_back": {"type": "integer"}, "days_back": {"type": "integer", "description": "Ημερήσιο εύρος: 0=ΣΗΜΕΡΑ, 1=χθες. Υπερισχύει του months_back."},
         "dim": {"type": "string", "enum": ["doctors", "products", "icd10", "patients"]}, "limit": {"type": "integer"},
-        "month": {"type": "string"}, "days": {"type": "integer"}, "threshold_pct": {"type": "number"}},
+        "month": {"type": "string", "description": "Συγκεκριμένος ημερολογιακός μήνας «YYYY-MM» (π.χ. «2025-08»). ΧΡΗΣΙΜΟΠΟΙΗΣΕ ΤΟ για έναν ΣΥΓΚΕΚΡΙΜΕΝΟ/ΠΕΡΣΙΝΟ μήνα και για ΣΥΓΚΡΙΣΕΙΣ έτους-με-έτος (κάλεσε το tool 2 φορές, π.χ. month=2026-08 και month=2025-08). Υπερισχύει των months_back/days_back."},
+        "days": {"type": "integer"}, "threshold_pct": {"type": "number"}},
         "required": []}
     tools = [{"name": n, "description": _READ_DESC[n], "input_schema": common} for n in _READ_NAMES]
     tools.append({"name": "open_screen", "description": "Κουμπί που ανοίγει σελίδα του προγράμματος.",
