@@ -612,7 +612,10 @@ class PharmacyCatalogRepository(BaseRepository):
         """Facet «μάρκα»: παράγεται από την ΠΡΩΤΗ λέξη του ονόματος (χωρίς μετάλλαξη δεδομένων).
         Κρατά μόνο brands με ≥2 προϊόντα προς πώληση & φιλτράρει γενικές/αριθμητικές λέξεις."""
         rows = await self.aggregate([
-            {"$match": {"active": {"$ne": False}, "for_sale": True, "name": {"$type": "string"}}},
+            # Μόνο μη-συνταγογραφούμενα: οι μάρκες έχουν νόημα σε OTC/παραφάρμακα· τα Rx (πρώτη λέξη =
+            # δραστική, π.χ. SODIUM/HUMAN) θα μόλυναν το facet.
+            {"$match": {"active": {"$ne": False}, "for_sale": True, "name": {"$type": "string"},
+                        "type": {"$ne": "rx_medicine"}}},
             {"$project": {"b": {"$cond": [
                 {"$gt": [{"$strLenCP": {"$ifNull": ["$brand", ""]}}, 0]},
                 {"$toUpper": {"$trim": {"input": "$brand"}}},
