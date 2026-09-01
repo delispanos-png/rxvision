@@ -21,6 +21,9 @@ type Item = {
   barcodes?: string[]; variants?: Variant[];
   cat1_id?: string | null; cat2_id?: string | null; cat3_id?: string | null;
   vat_rate?: number; price_includes_vat?: boolean; usage_video_url?: string | null;
+  // ── πωλησιακά χαρακτηριστικά e-shop (worksheet, όταν «στο e-shop») ──
+  description_long?: string | null; discount_pct?: number; featured?: boolean; tags?: string[];
+  highlights?: string[]; points_multiplier?: number; sale_starts_at?: string | null; sale_ends_at?: string | null;
 };
 type Variant = { color?: string | null; size?: string | null; barcode?: string | null; stock_qty?: number };
 type Summary = { skus: number; active: number; for_sale: number; units: number; value_cents: number; low: number; expiring: number };
@@ -352,6 +355,8 @@ function EditModal({ item, t, onClose, onDone }: { item: Item; t: (a: string, b:
   const [img, setImg] = useState<string | null>(null);
   const [imgBusy, setImgBusy] = useState(false);
   const [imgZoom, setImgZoom] = useState(false);
+  const [tagIn, setTagIn] = useState("");
+  const noDisc = f.type === "rx_medicine";   // συνταγογραφούμενα → καμία έκπτωση (διατίμηση)
   useEffect(() => {
     let alive = true; let obj = "";
     if (item.image_id) apiBlob(`/catalog/image/${item.image_id}`).then((b) => { if (!alive) return; obj = URL.createObjectURL(b); setImg(obj); }).catch(() => {});
@@ -415,7 +420,6 @@ function EditModal({ item, t, onClose, onDone }: { item: Item; t: (a: string, b:
         <label className="block text-sm"><span className="mb-1 block text-xs text-slate-500">{t("Τύπος", "Type")}</span>
           <select value={f.type} onChange={(e) => set("type", e.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-800">
             {Object.entries(TYPE_EL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></label>
-        {Fld({ k: "category", label: t("Κατηγορία", "Category") })}
         {Fld({ k: "price_eur", label: t("Λιανική (€)", "Retail (€)"), type: "number" })}
         {Fld({ k: "cost_eur", label: t("Χονδρική/κόστος (€)", "Cost (€)"), type: "number" })}
         <label className="block text-sm"><span className="mb-1 block text-xs text-slate-500">{t("ΦΠΑ %", "VAT %")}</span>
@@ -480,10 +484,36 @@ function EditModal({ item, t, onClose, onDone }: { item: Item; t: (a: string, b:
             <input type="checkbox" checked={!!f.for_sale && !!f.cat1_id} disabled={!f.cat1_id} onChange={(e) => set("for_sale", e.target.checked)} className="h-4 w-4" /> {t("Προς πώληση στο e-shop", "For sale in e-shop")}
             {!f.cat1_id && <span className="text-[11px] text-amber-600">— {t("όρισε Κατηγορία 1", "set Category 1")}</span>}
           </label>
-          {!!f.for_sale && !isNew && (
-            <a href={`/catalog?edit=${encodeURIComponent(f.barcode)}`} className="inline-flex items-center gap-1.5 rounded-lg border border-brand-300 bg-brand-50 px-3 py-1.5 text-xs font-semibold text-brand-700 hover:bg-brand-100 dark:border-brand-800 dark:bg-brand-950/30 dark:text-brand-300">🛒 {t("Πωλησιακά e-shop (περιγραφή, έκπτωση, προσφορές…) →", "e-shop selling (description, discount, offers…) →")}</a>
-          )}
         </div>
+
+        {/* ── Worksheet: Πωλησιακά χαρακτηριστικά e-shop (inline, όταν «στο e-shop») ── */}
+        {!!f.for_sale && (
+          <div className="col-span-full space-y-3 rounded-xl border border-brand-200 bg-brand-50/40 p-4 dark:border-brand-900 dark:bg-brand-950/20">
+            <div className="flex items-center gap-1.5 text-sm font-semibold text-brand-800 dark:text-brand-200">🛒 {t("Πωλησιακά χαρακτηριστικά e-shop", "e-shop selling attributes")}</div>
+            <label className="block text-sm"><span className="mb-1 block text-xs text-slate-500">{t("Περιγραφή e-shop (marketing)", "e-shop description (marketing)")}</span>
+              <textarea value={f.description_long ?? ""} onChange={(e) => set("description_long", e.target.value)} rows={3} placeholder={t("Περιγραφή που βλέπει ο πελάτης στη σελίδα προϊόντος…", "Description the customer sees on the product page…")} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-800" /></label>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <label className="block text-sm"><span className="mb-1 block text-xs text-slate-500">{t("Έκπτωση %", "Discount %")}{noDisc && <span className="ml-1 text-amber-600">— {t("όχι σε συνταγογραφούμενα", "not on prescription items")}</span>}</span>
+                <input type="number" min={0} max={90} disabled={noDisc} value={noDisc ? 0 : (f.discount_pct ?? 0)} onChange={(e) => set("discount_pct", Math.max(0, Math.min(90, +e.target.value)))} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm disabled:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:disabled:bg-slate-800" /></label>
+              <label className="flex items-center gap-2 self-end rounded-lg border border-slate-200 px-3 py-2 text-sm dark:border-slate-600"><input type="checkbox" checked={!!f.featured} onChange={(e) => set("featured", e.target.checked)} className="h-4 w-4" /> ⭐ {t("Προτεινόμενο (πρώτο στη βιτρίνα)", "Featured (first in storefront)")}</label>
+            </div>
+            {!noDisc && (f.discount_pct ?? 0) > 0 && (
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <label className="block text-sm"><span className="mb-1 block text-xs text-slate-500">{t("Έναρξη προσφοράς (προαιρετικό)", "Offer start (optional)")}</span><DateInput value={(f.sale_starts_at ?? "").split("T")[0]} onChange={(d) => set("sale_starts_at", d ? `${d}T00:00:00` : null)} /></label>
+                <label className="block text-sm"><span className="mb-1 block text-xs text-slate-500">{t("Λήξη προσφοράς (προαιρετικό)", "Offer end (optional)")}</span><DateInput value={(f.sale_ends_at ?? "").split("T")[0]} onChange={(d) => set("sale_ends_at", d ? `${d}T23:59:59` : null)} /></label>
+              </div>
+            )}
+            <div className="text-sm"><span className="mb-1 block text-xs text-slate-500">{t("Ετικέτες (tags)", "Labels (tags)")}</span>
+              <div className="flex flex-wrap gap-1.5 rounded-lg border border-slate-300 p-2 dark:border-slate-600">
+                {(f.tags ?? []).map((tg) => <span key={tg} className="inline-flex items-center gap-1 rounded bg-slate-100 px-1.5 py-0.5 text-[11px] font-semibold text-slate-600 dark:bg-slate-700 dark:text-slate-200">{tg}<button type="button" onClick={() => set("tags", (f.tags ?? []).filter((x) => x !== tg))}><X className="h-3 w-3" /></button></span>)}
+                <input value={tagIn} onChange={(e) => setTagIn(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" || e.key === ",") { e.preventDefault(); const v = tagIn.trim(); if (v && !(f.tags ?? []).includes(v)) set("tags", [...(f.tags ?? []), v].slice(0, 12)); setTagIn(""); } }} placeholder={(f.tags ?? []).length ? "" : t("π.χ. Προσφορά, Βιολογικό… (Enter)", "e.g. Offer, Organic… (Enter)")} className="min-w-[6rem] flex-1 border-0 bg-transparent p-0 text-sm outline-none focus:ring-0" /></div>
+            </div>
+            <label className="block text-sm"><span className="mb-1 block text-xs text-slate-500">{t("Σημεία πώλησης (ένα ανά γραμμή, ως 6)", "Selling points (one per line, up to 6)")}</span>
+              <textarea value={(f.highlights ?? []).join("\n")} onChange={(e) => set("highlights", e.target.value.split("\n").map((x) => x.trim()).filter(Boolean).slice(0, 6))} rows={3} placeholder={t("π.χ.\nΓια ευαίσθητο δέρμα\nΧωρίς parabens", "e.g.\nFor sensitive skin\nParaben-free")} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-800" /></label>
+            <label className="block text-sm"><span className="mb-1 block text-xs text-slate-500">{t("Bonus πόντοι πιστότητας (×)", "Loyalty bonus points (×)")}</span>
+              <input type="number" min={1} max={10} step={0.5} value={f.points_multiplier ?? 1} onChange={(e) => set("points_multiplier", Math.max(1, Math.min(10, +e.target.value)))} className="w-32 rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-800" /></label>
+          </div>
+        )}
       </div>
       <button onClick={save} disabled={busy} className="mt-4 w-full rounded-xl bg-brand-600 py-2.5 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-50">{busy ? t("Αποθήκευση…", "Saving…") : t("Αποθήκευση", "Save")}</button>
     </Modal>
