@@ -86,7 +86,7 @@ type Sub = { _id: string; items?: { barcode: string; qty: number }[]; lines?: { 
 const FREQ: [number, string, string][] = [[0, "Όχι", "No"], [14, "Κάθε 2 εβδομάδες", "Every 2 weeks"], [30, "Κάθε μήνα", "Every month"], [60, "Κάθε 2 μήνες", "Every 2 months"], [90, "Κάθε 3 μήνες", "Every 3 months"]];
 type OrderItem = { barcode: string; name: string; qty: number; line_cents: number; discount_pct?: number; backorder?: boolean };
 type OrderAddr = { street?: string; area?: string; postal?: string; phone?: string; notes?: string } | null;
-type Order = { _id: string; items: OrderItem[]; subtotal_cents: number; delivery_fee_cents: number; total_cents: number; mode: string; status: string; created_at: string; address?: OrderAddr; has_backorder?: boolean; available_date?: string | null };
+type Order = { _id: string; items: OrderItem[]; subtotal_cents: number; delivery_fee_cents: number; total_cents: number; mode: string; status: string; created_at: string; address?: OrderAddr; has_backorder?: boolean; available_date?: string | null; payment_method?: string | null };
 const eur = (c: number) => (c / 100).toLocaleString("el-GR", { minimumFractionDigits: 2 }) + " €";
 const isMed = (t: string) => t === "rx_medicine" || t === "otc_medicine";
 const noDisc = (t: string) => t === "rx_medicine";   // μόνο τα συνταγογραφούμενα → 0% έκπτωση
@@ -476,6 +476,7 @@ function Checkout({ cart, subtotal, settings, camps, bundles, loyalty, onBack, o
   const t = useT();
   const items = Object.values(cart);
   const hasMed = items.some((x) => isMed(x.p.type));
+  const hasRx = items.some((x) => x.p.type === "rx_medicine");
   const hasBackorder = items.some((x) => isBackorder(x.p));
   const [mode, setMode] = useState<"delivery" | "pickup">(settings?.delivery_enabled ? "delivery" : "pickup");
   const [pay, setPay] = useState<"store" | "online">("store");
@@ -567,12 +568,14 @@ function Checkout({ cart, subtotal, settings, camps, bundles, loyalty, onBack, o
       <div className="min-w-0 space-y-3">
       <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-3">
         {items.map((x) => (
-          <div key={x.p.barcode} className="flex items-center justify-between gap-3 border-b border-slate-100 dark:border-slate-800 py-2 last:border-0">
+          <div key={x.p.barcode} className="flex items-center gap-2.5 border-b border-slate-100 dark:border-slate-800 py-2 last:border-0">
+            <span className="grid h-11 w-11 shrink-0 place-items-center overflow-hidden rounded-lg bg-slate-50 dark:bg-slate-900">{imgSrc(x.p) ? <img src={imgSrc(x.p)} alt="" className="h-full w-full object-contain" /> : (isMed(x.p.type) ? <Pill className="h-5 w-5 text-slate-300" /> : <Package className="h-5 w-5 text-slate-300" />)}</span>
             <div className="min-w-0 flex-1"><div className="truncate text-sm font-medium text-slate-800 dark:text-slate-100">{x.p.name}</div><div className="text-xs text-slate-400">{eur(final(x.p, camps))} × {x.qty} = <b className="text-slate-500 dark:text-slate-300">{eur(final(x.p, camps) * x.qty)}</b></div></div>
-            <div className="flex shrink-0 items-center gap-2">
-              <button onClick={() => dec(x.p.barcode)} className="grid h-7 w-7 place-items-center rounded-full bg-slate-100 dark:bg-slate-700">{x.qty === 1 ? <Trash2 className="h-3.5 w-3.5 text-rose-500" /> : <Minus className="h-3.5 w-3.5" />}</button>
+            <div className="flex shrink-0 items-center gap-1.5">
+              <button onClick={() => dec(x.p.barcode)} className="grid h-7 w-7 place-items-center rounded-full bg-slate-100 dark:bg-slate-700"><Minus className="h-3.5 w-3.5" /></button>
               <span className="w-4 text-center text-sm font-bold">{x.qty}</span>
               <button onClick={() => add(x.p)} className="grid h-7 w-7 place-items-center rounded-full bg-slate-100 dark:bg-slate-700"><Plus className="h-3.5 w-3.5" /></button>
+              <button onClick={() => { for (let i = 0; i < x.qty; i++) dec(x.p.barcode); }} title={t("Αφαίρεση", "Remove")} aria-label={t("Αφαίρεση", "Remove")} className="ml-0.5 grid h-7 w-7 place-items-center rounded-full text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-500/10"><Trash2 className="h-3.5 w-3.5" /></button>
             </div>
           </div>
         ))}
@@ -583,6 +586,12 @@ function Checkout({ cart, subtotal, settings, camps, bundles, loyalty, onBack, o
         {settings?.delivery_enabled && <button onClick={() => setMode("delivery")} className={`flex items-center gap-2 rounded-xl border p-3 text-sm font-medium ${mode === "delivery" ? "border-violet-500 bg-violet-50 text-violet-700" : "border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300"}`}><Truck className="h-4 w-4" /> {t("Αποστολή", "Delivery")}</button>}
         {settings?.pickup_enabled && <button onClick={() => setMode("pickup")} className={`flex items-center gap-2 rounded-xl border p-3 text-sm font-medium ${mode === "pickup" ? "border-violet-500 bg-violet-50 text-violet-700" : "border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300"}`}><Store className="h-4 w-4" /> {t("Παραλαβή", "Pickup")}</button>}
       </div>
+      {/* Ενημέρωση: τα συνταγογραφούμενα δεν αποστέλλονται με courier — μόνο παραλαβή από το φαρμακείο */}
+      {hasRx && mode === "delivery" && (
+        <div className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+          <Truck className="mt-0.5 h-3.5 w-3.5 shrink-0" /> {t("Τα συνταγογραφούμενα φάρμακα του καλαθιού ΔΕΝ αποστέλλονται με courier — απαιτείται παραλαβή από το φαρμακείο (κατόπιν έγκρισης). Τα υπόλοιπα είδη αποστέλλονται κανονικά.", "The prescription medicines in your cart are NOT shipped by courier — pharmacy pickup is required (after approval). The rest of the items ship normally.")}
+        </div>
+      )}
 
       {/* τρόπος πληρωμής (online Viva = κάρτα/IRIS· αλλιώς στο κατάστημα/παράδοση) */}
       {settings?.online_payment_enabled && (
@@ -740,15 +749,25 @@ function OrderCard({ o, onReorder }: { o: Order; onReorder?: (o: Order) => void 
   const pending = o.status === "pending";
   const dead = cancelled || declined;
   const done = o.status === "delivered";
+  const oid = (o._id || "").slice(-6).toUpperCase();   // σύντομο, αναγνωρίσιμο Order ID
+  const payLabel = o.payment_method === "online" ? t("Online (κάρτα/IRIS)", "Online (card/IRIS)") : o.payment_method === "cod" ? t("Με την παράδοση", "On delivery") : t("Στο κατάστημα", "In store");
   return (
-    <div className={`overflow-hidden rounded-2xl border bg-white dark:bg-slate-800 ${dead ? "border-slate-200 dark:border-slate-700 opacity-70" : done ? "border-emerald-200" : pending ? "border-amber-300" : "border-violet-200"}`}>
-      <button onClick={() => setOpen((v) => !v)} className="flex w-full items-center justify-between gap-2 p-3 text-left">
-        <span className="flex items-center gap-2 text-sm font-semibold text-slate-800 dark:text-slate-100">
-          {o.mode === "delivery" ? <Truck className="h-4 w-4 text-violet-500" /> : <Store className="h-4 w-4 text-sky-500" />}
-          {eur(o.total_cents)} <span className="text-xs font-normal text-slate-400">· {o.items.length} {t("είδη", "items")}</span>
+    // Ολόκληρη η κάρτα clickable για expand/collapse (όχι μόνο η κορυφή)
+    <div onClick={() => setOpen((v) => !v)} className={`cursor-pointer overflow-hidden rounded-2xl border bg-white dark:bg-slate-800 ${dead ? "border-slate-200 dark:border-slate-700 opacity-70" : done ? "border-emerald-200" : pending ? "border-amber-300" : "border-violet-200"}`}>
+      <div className="flex w-full items-center justify-between gap-2 p-3 text-left">
+        <span className="min-w-0">
+          <span className="flex items-center gap-2 text-sm font-semibold text-slate-800 dark:text-slate-100">
+            {o.mode === "delivery" ? <Truck className="h-4 w-4 text-violet-500" /> : <Store className="h-4 w-4 text-sky-500" />}
+            {eur(o.total_cents)} <span className="text-xs font-normal text-slate-400">· {o.items.length} {t("είδη", "items")}</span>
+          </span>
+          <span className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-[11px] text-slate-400">
+            {oid && <span className="font-mono font-semibold text-slate-500 dark:text-slate-300">#{oid}</span>}
+            <span>· {o.mode === "delivery" ? t("Αποστολή", "Delivery") : t("Παραλαβή", "Pickup")}</span>
+            {o.payment_method && <span>· {payLabel}</span>}
+          </span>
         </span>
         <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${dead ? "bg-slate-200 text-slate-500 dark:text-slate-400" : done ? "bg-emerald-100 text-emerald-700" : pending ? "bg-amber-100 text-amber-800" : "bg-violet-100 text-violet-700"}`}>{ST[o.status] ? t(ST[o.status][0], ST[o.status][1]) : o.status}</span>
-      </button>
+      </div>
 
       {pending ? (
         <div className="flex items-center gap-2 px-3 pb-3 text-xs text-amber-700">⏳ {t("Κατόπιν παραγγελίας — αναμονή έγκρισης & ημερομηνίας από το φαρμακείο.", "Backorder — awaiting approval & date from the pharmacy.")}</div>
@@ -760,7 +779,7 @@ function OrderCard({ o, onReorder }: { o: Order; onReorder?: (o: Order) => void 
 
       {(done || dead) && onReorder && (
         <div className="px-3 pb-3">
-          <button onClick={() => onReorder(o)} className="inline-flex items-center gap-1.5 rounded-full bg-violet-600 px-4 py-2 text-xs font-semibold text-white hover:bg-violet-700">
+          <button onClick={(e) => { e.stopPropagation(); onReorder(o); }} className="inline-flex items-center gap-1.5 rounded-full bg-violet-600 px-4 py-2 text-xs font-semibold text-white hover:bg-violet-700">
             <ShoppingCart className="h-3.5 w-3.5" /> {t("Παράγγειλε ξανά", "Order again")}
           </button>
         </div>
