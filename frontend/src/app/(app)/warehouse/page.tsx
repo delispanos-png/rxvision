@@ -17,7 +17,7 @@ type Item = {
   barcode: string; name: string; type: string; category?: string | null;
   stock_qty: number; min_stock?: number; wholesale_cents?: number; price_cents: number;
   supplier?: string | null; location?: string | null; batch?: string | null; expiry?: string | null;
-  active?: boolean; for_sale?: boolean; image_id?: string | null;
+  active?: boolean; for_sale?: boolean; image_id?: string | null; photo_url?: string | null;
   barcodes?: string[]; variants?: Variant[];
   cat1_id?: string | null; cat2_id?: string | null; cat3_id?: string | null;
   vat_rate?: number; price_includes_vat?: boolean; usage_video_url?: string | null;
@@ -88,15 +88,27 @@ export default function WarehousePage() {
   );
 
   const cols: Column<Item>[] = [
-    { key: "name", header: t("Είδος", "Item"), render: (r) => (
-      <div className="min-w-0">
-        <div className={`truncate font-medium ${r.active === false ? "text-slate-400 line-through" : "text-slate-800 dark:text-slate-100"}`}>{r.name || "—"}</div>
-        <div className="font-mono text-[10px] text-slate-400">{r.barcode}{r.category ? ` · ${r.category}` : ""} · {TYPE_EL[r.type] ?? r.type}
-          {(r.barcodes?.length ?? 0) > 0 && <span className="ml-1 rounded bg-slate-100 px-1 text-slate-500 dark:bg-slate-800">+{r.barcodes!.length} bc</span>}
-          {(r.variants?.length ?? 0) > 0 && <span className="ml-1 rounded bg-violet-100 px-1 text-violet-600 dark:bg-violet-950/40">{r.variants!.length} {t("εκδοχές", "variants")}</span>}
+    { key: "name", header: t("Είδος", "Item"), render: (r) => {
+      const src = r.image_id ? `${API_BASE}/catalog/image/${r.image_id}` : (r.photo_url || "");
+      return (
+      <div className="flex min-w-0 items-center gap-2.5">
+        {/* Μικρογραφία προϊόντος (γρήγορη οπτική αναγνώριση) + hover-zoom για μεγάλη προεπισκόπηση */}
+        <div className="group/th relative shrink-0">
+          <div className="grid h-10 w-10 place-items-center overflow-hidden rounded-lg border border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-800">
+            {src ? <img src={src} alt="" className="h-full w-full object-contain" /> : <ImagePlus className="h-4 w-4 text-slate-300" />}
+          </div>
+          {src && <div className="pointer-events-none absolute left-11 top-0 z-50 hidden h-44 w-44 place-items-center rounded-xl border border-slate-200 bg-white p-2 shadow-2xl group-hover/th:grid dark:border-slate-700 dark:bg-slate-800"><img src={src} alt="" className="max-h-full max-w-full object-contain" /></div>}
+        </div>
+        <div className="min-w-0">
+          <div className={`truncate font-medium ${r.active === false ? "text-slate-400 line-through" : "text-slate-800 dark:text-slate-100"}`}>{r.name || "—"}</div>
+          <div className="font-mono text-[10px] text-slate-400">{r.barcode}{r.category ? ` · ${r.category}` : ""} · {TYPE_EL[r.type] ?? r.type}
+            {(r.barcodes?.length ?? 0) > 0 && <span className="ml-1 rounded bg-slate-100 px-1 text-slate-500 dark:bg-slate-800">+{r.barcodes!.length} bc</span>}
+            {(r.variants?.length ?? 0) > 0 && <span className="ml-1 rounded bg-violet-100 px-1 text-violet-600 dark:bg-violet-950/40">{r.variants!.length} {t("εκδοχές", "variants")}</span>}
+          </div>
         </div>
       </div>
-    ) },
+      );
+    } },
     { key: "stock", header: t("Απόθεμα", "Stock"), align: "right", sortValue: (r) => r.stock_qty, render: (r) => {
       const lowS = r.stock_qty <= (r.min_stock ?? 0);
       return <span className={`inline-flex items-center gap-1 font-semibold ${lowS ? "text-amber-600" : "text-slate-700 dark:text-slate-200"}`}>{lowS && <AlertTriangle className="h-3 w-3" />}{fmtNum(r.stock_qty)}<span className="text-[10px] font-normal text-slate-400">/{r.min_stock ?? 0}</span></span>;
