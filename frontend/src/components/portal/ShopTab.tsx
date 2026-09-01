@@ -83,7 +83,7 @@ const TAG_STYLE: Record<string, string> = { "Προσφορά": "bg-rose-100 tex
 const tagCls = (t: string) => TAG_STYLE[t] || "bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300";
 const SORTS: [string, string, string][] = [["featured", "Προτεινόμενα", "Recommended"], ["newest", "Νεότερα", "Newest"], ["price_asc", "Φθηνότερα", "Price: low to high"], ["price_desc", "Ακριβότερα", "Price: high to low"]];
 type Sub = { _id: string; items?: { barcode: string; qty: number }[]; lines?: { barcode: string; qty: number }[]; mode: string; interval_days: number; next_run: string };
-const FREQ: [number, string, string][] = [[0, "Μία φορά", "One time"], [14, "Κάθε 2 εβδομάδες", "Every 2 weeks"], [30, "Κάθε μήνα", "Every month"], [60, "Κάθε 2 μήνες", "Every 2 months"], [90, "Κάθε 3 μήνες", "Every 3 months"]];
+const FREQ: [number, string, string][] = [[0, "Όχι", "No"], [14, "Κάθε 2 εβδομάδες", "Every 2 weeks"], [30, "Κάθε μήνα", "Every month"], [60, "Κάθε 2 μήνες", "Every 2 months"], [90, "Κάθε 3 μήνες", "Every 3 months"]];
 type OrderItem = { barcode: string; name: string; qty: number; line_cents: number; discount_pct?: number; backorder?: boolean };
 type OrderAddr = { street?: string; area?: string; postal?: string; phone?: string; notes?: string } | null;
 type Order = { _id: string; items: OrderItem[]; subtotal_cents: number; delivery_fee_cents: number; total_cents: number; mode: string; status: string; created_at: string; address?: OrderAddr; has_backorder?: boolean; available_date?: string | null };
@@ -391,7 +391,7 @@ export function ShopTab({ tenantKey = "x" }: { tenantKey?: string }) {
             </span>
             {t("Το καλάθι μου", "My cart")}
           </span>
-          <span className="flex items-center gap-2 text-sm font-extrabold">{eur(subtotal)} <span className="rounded-lg bg-white/20 px-2.5 py-1 text-xs">{t("Ολοκλήρωση →", "Checkout →")}</span></span>
+          <span className="flex items-center gap-2 text-sm font-extrabold">{eur(subtotal)} <span className="rounded-lg bg-white/20 px-2.5 py-1 text-xs" aria-label={t("Ολοκλήρωση", "Checkout")}>→</span></span>
         </button>
       )}
       {/* Ετικέτες — μία κυλιόμενη σειρά (χωρίς αναδίπλωση) */}

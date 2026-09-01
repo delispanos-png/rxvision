@@ -19,6 +19,24 @@ from app.repositories.base import BaseRepository, jsonsafe
 from app.services.catalog_taxonomy import PRODUCT_TYPES, discount_allowed
 
 TYPES = PRODUCT_TYPES   # ("rx_medicine", "otc_medicine", "parapharmacy")
+
+# Accent-insensitive αναζήτηση: κάθε ελληνικό φωνήεν ταιριάζει με ΟΛΕΣ τις τονισμένες παραλλαγές του,
+# ώστε «βρεφικο γαλα» να βρίσκει «Βρεφικό γάλα» (case handled by regex $options:i).
+_GREEK_FOLD = {
+    "α": "αά", "ά": "αά", "ε": "εέ", "έ": "εέ", "η": "ηή", "ή": "ηή",
+    "ι": "ιίϊΐ", "ί": "ιίϊΐ", "ϊ": "ιίϊΐ", "ΐ": "ιίϊΐ",
+    "ο": "οό", "ό": "οό", "υ": "υύϋΰ", "ύ": "υύϋΰ", "ϋ": "υύϋΰ", "ΰ": "υύϋΰ",
+    "ω": "ωώ", "ώ": "ωώ",
+}
+
+
+def _fold_accents_regex(tok: str) -> str:
+    """→ regex όπου κάθε φωνήεν γίνεται character class με όλες τις τονισμένες μορφές του."""
+    out = []
+    for ch in tok:
+        cls = _GREEK_FOLD.get(ch.lower())
+        out.append(f"[{cls}]" if cls else re.escape(ch))
+    return "".join(out)
 _MAX_TAGS = 12
 # Ταξινομήσεις βιτρίνας (πάντα «προτεινόμενα» πρώτα): νεότερα, τιμή ↑/↓, αλφαβητικά.
 _SORTS: dict = {
@@ -225,7 +243,7 @@ class PharmacyCatalogRepository(BaseRepository):
             tokens = [tok for tok in re.split(r"\s+", q.strip()) if tok][:6]
             ands = []
             for tok in tokens:
-                rx = {"$regex": re.escape(tok), "$options": "i"}
+                rx = {"$regex": _fold_accents_regex(tok), "$options": "i"}
                 ands.append({"$or": [{"name": rx}, {"barcode": rx}, {"description_long": rx},
                                      {"description_short": rx}, {"tags": rx}, {"category": rx}]})
             if ands:

@@ -655,7 +655,7 @@ export default function PortalHome() {
         <div className="mx-auto mb-4 grid h-14 w-14 place-items-center rounded-2xl bg-brand-100 text-brand-600"><CheckCircle2 className="h-7 w-7" /></div>
         <h1 className="text-lg font-bold text-slate-900 dark:text-slate-100">{t("Ο λογαριασμός σου είναι έτοιμος", "Your account is ready")}</h1>
         <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">{t("Δεν βρέθηκε ακόμα ιστορικό σε φαρμακείο. Μόλις εξυπηρετηθείς σε φαρμακείο του δικτύου με το ΑΜΚΑ σου, οι συνταγές σου θα εμφανιστούν εδώ αυτόματα.", "No pharmacy history yet. Once you're served at a network pharmacy with your ΑΜΚΑ, your prescriptions will appear here automatically.")}</p>
-        <button onClick={logout} className="mt-6 inline-flex items-center gap-1.5 text-sm font-medium text-brand-600 hover:underline"><LogOut className="h-4 w-4" /> {t("Αποσύνδεση", "Sign out")}</button>
+        <button onClick={async () => { if (await confirmDialog(t("Είστε σίγουροι ότι θέλετε να αποσυνδεθείτε;", "Are you sure you want to sign out?"))) logout(); }} className="mt-6 inline-flex items-center gap-1.5 text-sm font-medium text-brand-600 hover:underline"><LogOut className="h-4 w-4" /> {t("Αποσύνδεση", "Sign out")}</button>
       </div>
     </div>
   );
