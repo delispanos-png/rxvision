@@ -359,13 +359,13 @@ export function ShopTab({ tenantKey = "x" }: { tenantKey?: string }) {
           παγιδεύεται σε transformed ancestor και στο κινητό το κάτω κουμπί κρύβεται πίσω από το bottom nav. */}
       {showFilters && typeof document !== "undefined" && createPortal(
         <div className="fixed inset-0 z-[200] flex items-end justify-center bg-black/60 sm:items-center sm:p-4" onClick={() => setShowFilters(false)}>
-          <div className="flex max-h-[88vh] w-full flex-col overflow-hidden rounded-t-2xl bg-white shadow-2xl dark:bg-slate-800 sm:max-h-[85vh] sm:max-w-lg sm:rounded-2xl" onClick={(e) => e.stopPropagation()}>
+          <div className="flex max-h-[88vh] w-full flex-col overflow-hidden rounded-t-2xl bg-white shadow-2xl dark:bg-slate-800 sm:max-h-[85vh] sm:max-w-2xl sm:rounded-2xl lg:max-w-4xl" onClick={(e) => e.stopPropagation()}>
             <div className="mx-auto mt-2 h-1 w-10 shrink-0 rounded-full bg-slate-300 dark:bg-slate-600 sm:hidden" />
-            <div className="flex shrink-0 items-center justify-between px-4 py-3">
+            <div className="flex shrink-0 items-center justify-between px-4 py-3 sm:px-6 sm:py-4">
               <span className="flex items-center gap-2 text-base font-bold text-slate-800 dark:text-slate-100"><SlidersHorizontal className="h-4 w-4 text-violet-600" /> {t("Φίλτρα", "Filters")}{filterCount > 0 && <span className="grid h-5 min-w-[20px] place-items-center rounded-full bg-violet-600 px-1 text-[10px] font-bold text-white">{filterCount}</span>}</span>
               <button onClick={() => setShowFilters(false)} aria-label={t("Κλείσιμο", "Close")} className="grid h-8 w-8 place-items-center rounded-full bg-slate-100 text-slate-500 hover:bg-slate-200 dark:bg-slate-700 dark:text-slate-300 dark:hover:bg-slate-600"><Plus className="h-4 w-4 rotate-45" /></button>
             </div>
-            <div className="min-h-0 flex-1 space-y-5 overflow-y-auto border-t border-slate-100 px-4 py-4 dark:border-slate-800">
+            <div className="min-h-0 flex-1 space-y-5 overflow-y-auto border-t border-slate-100 px-4 py-4 dark:border-slate-800 sm:space-y-6 sm:px-6 sm:py-5">
               {hasTree ? (
                 <section>
                   <div className="mb-2 text-[11px] font-bold uppercase tracking-wider text-slate-400">🗂️ {t("Κατηγορίες", "Categories")}</div>
@@ -408,7 +408,7 @@ export function ShopTab({ tenantKey = "x" }: { tenantKey?: string }) {
                 </div>
               </section>
             </div>
-            <div className="flex shrink-0 items-center gap-2 border-t border-slate-100 bg-white p-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] dark:border-slate-800 dark:bg-slate-800">
+            <div className="flex shrink-0 items-center gap-2 border-t border-slate-100 bg-white p-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] dark:border-slate-800 dark:bg-slate-800 sm:px-6">
               <button onClick={clearFilters} disabled={filterCount === 0} className="rounded-xl px-4 py-3 text-sm font-semibold text-slate-500 hover:bg-slate-100 disabled:opacity-40 dark:text-slate-400 dark:hover:bg-slate-700">{t("Καθαρισμός", "Clear")}</button>
               <button onClick={() => setShowFilters(false)} className="flex-1 rounded-xl bg-violet-600 py-3 text-sm font-bold text-white shadow-sm hover:bg-violet-700">{t("Δες αποτελέσματα", "Show results")}{total ? ` (${total.toLocaleString("el-GR")})` : ""}</button>
             </div>
