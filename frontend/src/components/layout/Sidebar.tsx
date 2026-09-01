@@ -71,8 +71,7 @@ const GROUPS: Group[] = [
   ] },
   // eShop — όλα τα κυκλώματα του ηλεκτρονικού καταστήματος (κατάλογος, παραγγελίες, προσφορές, πιστότητα, πύλη).
   { title: "eShop", en: "eShop", icon: PackageSearch, items: [
-    { label: "Αποθήκη", en: "Warehouse", icon: Warehouse, href: "/warehouse", module: "order_delivery" },
-    { label: "Κατάλογος ειδών", en: "Product Catalog", icon: Boxes, href: "/catalog", module: "order_delivery" },
+    { label: "Προϊόντα", en: "Products", icon: Boxes, href: "/warehouse", module: "order_delivery" },
     { label: "Κατηγορίες e-shop", en: "e-shop Categories", icon: Layers, href: "/eshop-categories", module: "order_delivery" },
     { label: "Προσφορές", en: "Promotions", icon: Tags, href: "/eshop-offers", module: "order_delivery" },
     { label: "Ενεργές παραγγελίες", en: "Active orders", icon: Truck, href: "/orders-delivery#orders", module: "order_delivery" },

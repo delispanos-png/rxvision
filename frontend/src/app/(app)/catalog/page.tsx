@@ -59,6 +59,14 @@ function Catalog() {
   const [page, setPage] = useState(1);
   useEffect(() => { setPage(1); }, [term, type, sort]);   // νέα αναζήτηση/φίλτρο → σελίδα 1
   const [edit, setEdit] = useState<Product | null>(null);
+  // Deep-link από τα «Προϊόντα» (Αποθήκη): ?edit=barcode → άνοιξε κατευθείαν τον e-shop editor του είδους.
+  useEffect(() => {
+    let bc = ""; try { bc = new URLSearchParams(window.location.search).get("edit") || ""; } catch { /* ignore */ }
+    if (!bc) return;
+    api<ListRes>(`/catalog?q=${encodeURIComponent(bc)}&for_sale=true&page_size=1`)
+      .then((r) => { const p = r.items?.[0]; if (p) setEdit({ ...p, ...({ price_eur: p.price_cents / 100 } as object) }); })
+      .catch(() => {});
+  }, []);
   const [importing, setImporting] = useState(false);
   const [registry, setRegistry] = useState(false);
   const [busy, setBusy] = useState(false);

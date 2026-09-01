@@ -136,8 +136,8 @@ export default function WarehousePage() {
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
-          <div className="flex items-center gap-2 text-xl font-semibold text-slate-800 dark:text-slate-100"><Warehouse className="h-6 w-6 text-brand-600" /> {t("Αποθήκη", "Warehouse")}</div>
-          <p className="text-sm text-slate-500">{t("Όλα τα διαθέσιμα είδη του φαρμακείου. Όσα βάλεις «στο e-shop» εμφανίζονται στον Κατάλογο.", "All pharmacy items. Those you mark «in e-shop» appear in the Catalog.")}</p>
+          <div className="flex items-center gap-2 text-xl font-semibold text-slate-800 dark:text-slate-100"><Warehouse className="h-6 w-6 text-brand-600" /> {t("Προϊόντα", "Products")}</div>
+          <p className="text-sm text-slate-500">{t("Όλα τα προϊόντα του φαρμακείου (αποθήκη + e-shop σε μία ενότητα). Φίλτραρε ανά απόθεμα, κατάσταση e-shop, κατηγορία. Όσα βάλεις «στο e-shop» πωλούνται online.", "All pharmacy products (warehouse + e-shop in one section). Filter by stock, e-shop status, category. Those marked «in e-shop» sell online.")}</p>
         </div>
         <div className="flex items-center gap-2">
           <button onClick={() => setImp(true)} className="inline-flex items-center gap-1.5 rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200"><FileSpreadsheet className="h-4 w-4 text-emerald-600" /> {t("Εισαγωγή Excel/CSV", "Import Excel/CSV")}</button>
@@ -477,9 +477,12 @@ function EditModal({ item, t, onClose, onDone }: { item: Item; t: (a: string, b:
         <div className="col-span-full mt-1 flex flex-wrap gap-5 rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800/40">
           <label className="inline-flex items-center gap-2 text-sm"><input type="checkbox" checked={f.active !== false} onChange={(e) => set("active", e.target.checked)} className="h-4 w-4" /> {t("Ενεργό είδος", "Active item")}</label>
           <label className={`inline-flex items-center gap-2 text-sm ${!f.cat1_id ? "text-slate-400" : ""}`} title={!f.cat1_id ? t("Χρειάζεται τουλάχιστον Κατηγορία 1", "Needs at least Category 1") : undefined}>
-            <input type="checkbox" checked={!!f.for_sale && !!f.cat1_id} disabled={!f.cat1_id} onChange={(e) => set("for_sale", e.target.checked)} className="h-4 w-4" /> {t("Προς πώληση στο e-shop (Κατάλογος)", "For sale in e-shop (Catalog)")}
+            <input type="checkbox" checked={!!f.for_sale && !!f.cat1_id} disabled={!f.cat1_id} onChange={(e) => set("for_sale", e.target.checked)} className="h-4 w-4" /> {t("Προς πώληση στο e-shop", "For sale in e-shop")}
             {!f.cat1_id && <span className="text-[11px] text-amber-600">— {t("όρισε Κατηγορία 1", "set Category 1")}</span>}
           </label>
+          {!!f.for_sale && !isNew && (
+            <a href={`/catalog?edit=${encodeURIComponent(f.barcode)}`} className="inline-flex items-center gap-1.5 rounded-lg border border-brand-300 bg-brand-50 px-3 py-1.5 text-xs font-semibold text-brand-700 hover:bg-brand-100 dark:border-brand-800 dark:bg-brand-950/30 dark:text-brand-300">🛒 {t("Πωλησιακά e-shop (περιγραφή, έκπτωση, προσφορές…) →", "e-shop selling (description, discount, offers…) →")}</a>
+          )}
         </div>
       </div>
       <button onClick={save} disabled={busy} className="mt-4 w-full rounded-xl bg-brand-600 py-2.5 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-50">{busy ? t("Αποθήκευση…", "Saving…") : t("Αποθήκευση", "Save")}</button>
