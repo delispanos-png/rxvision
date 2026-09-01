@@ -263,17 +263,9 @@ export function ShopTab({ tenantKey = "x" }: { tenantKey?: string }) {
   const subtotal = cartItems.reduce((s, x) => s + final(x.p, camps) * x.qty, 0);
   const count = cartItems.reduce((s, x) => s + x.qty, 0);
 
-  if (view === "subs") return <Subscriptions onBack={() => setView("browse")} />;
-  if (view === "orders") return <Orders orders={orders} setOrders={setOrders} onBack={() => setView("browse")} onReorder={reorder} />;
-  if (view === "cart") return <Checkout cart={cart} subtotal={subtotal} settings={meta?.settings} camps={camps} bundles={meta?.bundles ?? []} loyalty={meta?.loyalty} onBack={() => setView("browse")} onDone={() => { setCart({}); setView("orders"); }} dec={dec} add={add} />;
-  if (view === "favorites") return <Favorites onBack={() => setView("browse")} favBarcodes={favBarcodes} toggleFav={toggleFav} add={add} cart={cart} dec={dec} camps={camps} />;
-  if (view === "offers") return <Offers onBack={() => setView("browse")} add={add} goCart={() => setView("cart")} cartCount={count} />;
-
-  const activeOrders = orders.filter((o) => !["delivered", "cancelled", "declined"].includes(o.status)).length;
-
-  return (
-    <div className="space-y-3">
-      {/* Player οδηγιών χρήσης (YouTube/Vimeo embed) */}
+  // Overlays (video + PDP) — αποσπασμένα ώστε να λειτουργούν & στο καλάθι/αγαπημένα (όχι μόνο στην περιήγηση)
+  const modals = (
+    <>
       {video && (
         <div onClick={() => setVideo(null)} className="fixed inset-0 z-[130] grid place-items-center bg-black/70 p-4">
           <div onClick={(e) => e.stopPropagation()} className="w-full max-w-2xl overflow-hidden rounded-2xl bg-black shadow-2xl">
@@ -285,6 +277,20 @@ export function ShopTab({ tenantKey = "x" }: { tenantKey?: string }) {
         </div>
       )}
       {pdp && <ProductModal product={pdp} camps={camps} inCart={cart[pdp.barcode]?.qty ?? 0} add={add} dec={dec} onClose={() => setPdp(null)} onVideo={(u) => setVideo(u)} isFav={favBarcodes.has(pdp.barcode)} toggleFav={toggleFav} />}
+    </>
+  );
+
+  if (view === "subs") return <>{modals}<Subscriptions onBack={() => setView("browse")} /></>;
+  if (view === "orders") return <>{modals}<Orders orders={orders} setOrders={setOrders} onBack={() => setView("browse")} onReorder={reorder} /></>;
+  if (view === "cart") return <>{modals}<Checkout cart={cart} subtotal={subtotal} settings={meta?.settings} camps={camps} bundles={meta?.bundles ?? []} loyalty={meta?.loyalty} onBack={() => setView("browse")} onDone={() => { setCart({}); setView("orders"); }} dec={dec} add={add} openProduct={setPdp} /></>;
+  if (view === "favorites") return <>{modals}<Favorites onBack={() => setView("browse")} favBarcodes={favBarcodes} toggleFav={toggleFav} add={add} cart={cart} dec={dec} camps={camps} openProduct={setPdp} /></>;
+  if (view === "offers") return <>{modals}<Offers onBack={() => setView("browse")} add={add} goCart={() => setView("cart")} cartCount={count} /></>;
+
+  const activeOrders = orders.filter((o) => !["delivered", "cancelled", "declined"].includes(o.status)).length;
+
+  return (
+    <div className="space-y-3">
+      {modals}
       {/* e-Κατάστημα — branding + εύκολη, ευδιάκριτη πρόσβαση στις παραγγελίες μου */}
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-2">
@@ -468,10 +474,11 @@ export function ShopTab({ tenantKey = "x" }: { tenantKey?: string }) {
   );
 }
 
-function Checkout({ cart, subtotal, settings, camps, bundles, loyalty, onBack, onDone, dec, add }: {
+function Checkout({ cart, subtotal, settings, camps, bundles, loyalty, onBack, onDone, dec, add, openProduct }: {
   cart: Record<string, { p: Product; qty: number }>; subtotal: number; settings?: Settings;
   camps: Campaign[]; bundles: Bundle[]; loyalty?: Loyalty;
   onBack: () => void; onDone: () => void; dec: (bc: string) => void; add: (p: Product) => void;
+  openProduct: (p: Product) => void;
 }) {
   const t = useT();
   const items = Object.values(cart);
@@ -569,8 +576,8 @@ function Checkout({ cart, subtotal, settings, camps, bundles, loyalty, onBack, o
       <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-3">
         {items.map((x) => (
           <div key={x.p.barcode} className="flex items-center gap-2.5 border-b border-slate-100 dark:border-slate-800 py-2 last:border-0">
-            <span className="grid h-11 w-11 shrink-0 place-items-center overflow-hidden rounded-lg bg-slate-50 dark:bg-slate-900">{imgSrc(x.p) ? <img src={imgSrc(x.p)} alt="" className="h-full w-full object-contain" /> : (isMed(x.p.type) ? <Pill className="h-5 w-5 text-slate-300" /> : <Package className="h-5 w-5 text-slate-300" />)}</span>
-            <div className="min-w-0 flex-1"><div className="truncate text-sm font-medium text-slate-800 dark:text-slate-100">{x.p.name}</div><div className="text-xs text-slate-400">{eur(final(x.p, camps))} × {x.qty} = <b className="text-slate-500 dark:text-slate-300">{eur(final(x.p, camps) * x.qty)}</b></div></div>
+            <button onClick={() => openProduct(x.p)} title={t("Δες λεπτομέρειες", "View details")} className="grid h-11 w-11 shrink-0 place-items-center overflow-hidden rounded-lg bg-slate-50 dark:bg-slate-900">{imgSrc(x.p) ? <img src={imgSrc(x.p)} alt="" className="h-full w-full object-contain" /> : (isMed(x.p.type) ? <Pill className="h-5 w-5 text-slate-300" /> : <Package className="h-5 w-5 text-slate-300" />)}</button>
+            <div className="min-w-0 flex-1"><button onClick={() => openProduct(x.p)} className="block max-w-full truncate text-left text-sm font-medium text-slate-800 dark:text-slate-100 hover:text-violet-700">{x.p.name}</button><div className="text-xs text-slate-400">{eur(final(x.p, camps))} × {x.qty} = <b className="text-slate-500 dark:text-slate-300">{eur(final(x.p, camps) * x.qty)}</b></div></div>
             <div className="flex shrink-0 items-center gap-1.5">
               <button onClick={() => dec(x.p.barcode)} className="grid h-7 w-7 place-items-center rounded-full bg-slate-100 dark:bg-slate-700"><Minus className="h-3.5 w-3.5" /></button>
               <span className="w-4 text-center text-sm font-bold">{x.qty}</span>
@@ -813,10 +820,10 @@ function OrderCard({ o, onReorder }: { o: Order; onReorder?: (o: Order) => void 
 }
 
 type FavProduct = Product & { price_at_add?: number | null; price_dropped?: boolean; back_in_stock?: boolean };
-function Favorites({ onBack, favBarcodes, toggleFav, add, cart, dec, camps }: {
+function Favorites({ onBack, favBarcodes, toggleFav, add, cart, dec, camps, openProduct }: {
   onBack: () => void; favBarcodes: Set<string>; toggleFav: (bc: string) => void;
   add: (p: Product) => void; cart: Record<string, { p: Product; qty: number }>; dec: (bc: string) => void;
-  camps: Campaign[];
+  camps: Campaign[]; openProduct: (p: Product) => void;
 }) {
   const t = useT();
   const [items, setItems] = useState<FavProduct[]>([]);
@@ -834,9 +841,9 @@ function Favorites({ onBack, favBarcodes, toggleFav, add, cart, dec, camps }: {
         const fc = final(p, camps); const inCart = cart[p.barcode]?.qty ?? 0;
         return (
           <div key={p.barcode} className="flex items-center gap-3 rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-3 shadow-sm">
-            <span className="grid h-12 w-12 shrink-0 place-items-center overflow-hidden rounded-xl bg-slate-50 dark:bg-slate-900">{imgSrc(p) ? <img src={imgSrc(p)} alt="" className="h-full w-full object-contain" /> : <Pill className="h-5 w-5 text-slate-300" />}</span>
+            <button onClick={() => openProduct(p)} title={t("Δες λεπτομέρειες", "View details")} className="grid h-12 w-12 shrink-0 place-items-center overflow-hidden rounded-xl bg-slate-50 dark:bg-slate-900">{imgSrc(p) ? <img src={imgSrc(p)} alt="" className="h-full w-full object-contain" /> : <Pill className="h-5 w-5 text-slate-300" />}</button>
             <div className="min-w-0 flex-1">
-              <div className="truncate text-sm font-semibold text-slate-800 dark:text-slate-100">{p.name}</div>
+              <button onClick={() => openProduct(p)} className="block max-w-full truncate text-left text-sm font-semibold text-slate-800 dark:text-slate-100 hover:text-violet-700">{p.name}</button>
               <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
                 <span className="text-sm font-bold text-slate-900 dark:text-slate-100">{eur(fc)}</span>
                 {p.price_dropped && <span className="rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700">↓ {t("πτώση τιμής", "price drop")}</span>}
