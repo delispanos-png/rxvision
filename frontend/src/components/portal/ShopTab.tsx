@@ -87,7 +87,7 @@ type Sub = { _id: string; items?: SubLine[]; lines?: SubLine[]; mode: string; in
 const FREQ: [number, string, string][] = [[0, "Όχι", "No"], [14, "Κάθε 2 εβδομάδες", "Every 2 weeks"], [30, "Κάθε μήνα", "Every month"], [60, "Κάθε 2 μήνες", "Every 2 months"], [90, "Κάθε 3 μήνες", "Every 3 months"]];
 type OrderItem = { barcode: string; name: string; qty: number; line_cents: number; discount_pct?: number; backorder?: boolean };
 type OrderAddr = { street?: string; area?: string; postal?: string; phone?: string; notes?: string } | null;
-type Order = { _id: string; items: OrderItem[]; subtotal_cents: number; delivery_fee_cents: number; total_cents: number; mode: string; status: string; created_at: string; address?: OrderAddr; has_backorder?: boolean; available_date?: string | null; payment_method?: string | null; note?: string | null };
+type Order = { _id: string; items: OrderItem[]; subtotal_cents: number; delivery_fee_cents: number; total_cents: number; mode: string; status: string; created_at: string; address?: OrderAddr; has_backorder?: boolean; available_date?: string | null; available_from?: string | null; available_to?: string | null; payment_method?: string | null; note?: string | null; customer_message?: string | null; messages?: { text: string; at: string; from?: string }[] };
 const eur = (c: number) => (c / 100).toLocaleString("el-GR", { minimumFractionDigits: 2 }) + " €";
 const isMed = (t: string) => t === "rx_medicine" || t === "otc_medicine";
 const noDisc = (t: string) => t === "rx_medicine";   // μόνο τα συνταγογραφούμενα → 0% έκπτωση
@@ -833,7 +833,7 @@ function OrderCard({ o, onReorder }: { o: Order; onReorder?: (o: Order) => void 
         <div className="flex items-center gap-2 px-3 pb-3 text-xs text-rose-600"><XCircle className="h-4 w-4" /> {t("Το φαρμακείο δεν μπόρεσε να εκτελέσει την παραγγελία.", "The pharmacy could not fulfil the order.")}</div>
       ) : cancelled ? (
         <div className="flex items-center gap-2 px-3 pb-3 text-xs text-rose-600"><XCircle className="h-4 w-4" /> {t("Η παραγγελία ακυρώθηκε.", "The order was cancelled.")}</div>
-      ) : <div className="px-3 pb-2"><Stepper steps={steps} cur={cur} />{o.available_date && <div className="mt-1 text-center text-[11px] font-medium text-emerald-700">📦 {t("Διαθέσιμο", "Available")} ~{new Date(o.available_date).toLocaleDateString("el-GR")}</div>}</div>}
+      ) : <div className="px-3 pb-2"><Stepper steps={steps} cur={cur} />{o.available_date && <div className="mt-1 text-center text-[11px] font-medium text-emerald-700">📦 {t("Διαθέσιμο", "Available")} {(() => { const p = o.available_date!.split("T")[0].split("-"); const d = p.length === 3 ? `${p[2]}/${p[1]}/${p[0]}` : o.available_date; return o.available_from && o.available_to ? `${d}, ${o.available_from}–${o.available_to}` : d; })()}</div>}</div>}
 
       {(done || dead) && onReorder && (
         <div className="px-3 pb-3">
@@ -864,6 +864,11 @@ function OrderCard({ o, onReorder }: { o: Order; onReorder?: (o: Order) => void 
             </div>
           )}
           {o.note && <div className="rounded-lg bg-amber-50 px-2.5 py-1.5 text-xs text-amber-800">📝 {o.note}</div>}
+          {!!o.messages?.length && (
+            <div className="space-y-1">
+              {o.messages.map((m, i) => <div key={i} className="rounded-lg bg-violet-50 px-2.5 py-1.5 text-xs text-violet-800 dark:bg-violet-950/30 dark:text-violet-200">💬 <b>{t("Φαρμακείο:", "Pharmacy:")}</b> {m.text} <span className="text-[10px] text-violet-400">· {new Date(m.at).toLocaleDateString("el-GR")}</span></div>)}
+            </div>
+          )}
           <div className="text-[11px] text-slate-400">{t("Παραγγέλθηκε", "Ordered")} {new Date(o.created_at).toLocaleString("el-GR")}</div>
         </div>
       )}
