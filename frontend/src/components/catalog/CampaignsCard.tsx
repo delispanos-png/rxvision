@@ -100,15 +100,19 @@ export function CampaignsCard({ categories, tags }: { categories: string[]; tags
                 <span className="mb-1 block text-slate-600">{t("Έκπτωση:", "Discount:")} <b>{edit.discount_pct}%</b></span>
                 <input type="range" min={1} max={90} value={edit.discount_pct} onChange={(e) => setEdit({ ...edit, discount_pct: +e.target.value })} className="w-full accent-rose-600" />
               </label>
-              <div className="text-sm">
-                <span className="mb-1 block text-slate-600">{t("Κατηγορίες", "Categories")}</span>
-                <div className="flex flex-wrap gap-1.5">
-                  {categories.map((c) => (
-                    <button key={c} onClick={() => setEdit({ ...edit, categories: toggle(edit.categories, c) })}
-                      className={`rounded-lg border px-2 py-1 text-xs ${edit.categories.includes(c) ? "border-rose-500 bg-rose-600 text-white" : "border-slate-200 bg-white text-slate-600"}`}>{c}</button>
-                  ))}
+              {/* Κατηγορίες: μία μόνο επιλογή — το δέντρο e-shop (παρακάτω) είναι το κύριο· οι απλές
+                  κατηγορίες εμφανίζονται ΜΟΝΟ ως fallback αν δεν έχει στηθεί δέντρο (ώστε να μη διπλασιάζεται). */}
+              {cats.length === 0 && categories.length > 0 && (
+                <div className="text-sm">
+                  <span className="mb-1 block text-slate-600">{t("Κατηγορίες", "Categories")}</span>
+                  <div className="flex flex-wrap gap-1.5">
+                    {categories.map((c) => (
+                      <button key={c} onClick={() => setEdit({ ...edit, categories: toggle(edit.categories, c) })}
+                        className={`rounded-lg border px-2 py-1 text-xs ${edit.categories.includes(c) ? "border-rose-500 bg-rose-600 text-white" : "border-slate-200 bg-white text-slate-600"}`}>{c}</button>
+                    ))}
+                  </div>
                 </div>
-              </div>
+              )}
               {tags.length > 0 && (
                 <div className="text-sm">
                   <span className="mb-1 block text-slate-600">{t("Ετικέτες", "Labels")}</span>
@@ -122,7 +126,7 @@ export function CampaignsCard({ categories, tags }: { categories: string[]; tags
               )}
               {cats.length > 0 && (
                 <div className="text-sm">
-                  <span className="mb-1 flex items-center gap-1 text-slate-600"><Layers className="h-3.5 w-3.5" /> {t("Κατηγορίες e-shop (δέντρο)", "e-shop categories (tree)")}</span>
+                  <span className="mb-1 flex items-center gap-1 text-slate-600"><Layers className="h-3.5 w-3.5" /> {t("Κατηγορίες", "Categories")}</span>
                   <div className="max-h-40 space-y-0.5 overflow-auto rounded-lg border border-slate-200 p-2">
                     {cats.map((c) => {
                       const on = (edit.cat_ids ?? []).includes(c.id);
@@ -171,7 +175,7 @@ export function CampaignsCard({ categories, tags }: { categories: string[]; tags
               {edit.categories.length === 0 && edit.tags.length === 0 && (edit.cat_ids?.length ?? 0) === 0 && (edit.barcodes?.length ?? 0) === 0 && (
                 <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">{t("Χωρίς επιλογή → η έκπτωση ισχύει σε ", "No selection → the discount applies to the ")}<b>{t("όλο το κατάστημα", "whole store")}</b>{t(" (πάντα εκτός συνταγογραφούμενων).", " (always except prescription items).")}</p>
               )}
-              <div className="grid grid-cols-2 gap-2 text-sm">
+              <div className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2 sm:gap-4">
                 <label><span className="mb-1 block text-slate-600">{t("Έναρξη (προαιρετικά)", "Start (optional)")}</span><DateInput value={toDay(edit.starts_at)} onChange={(d) => setEdit({ ...edit, starts_at: d ? `${d}T00:00:00` : null })} /></label>
                 <label><span className="mb-1 block text-slate-600">{t("Λήξη (προαιρετικά)", "End (optional)")}</span><DateInput value={toDay(edit.ends_at)} onChange={(d) => setEdit({ ...edit, ends_at: d ? `${d}T23:59:59` : null })} /></label>
               </div>

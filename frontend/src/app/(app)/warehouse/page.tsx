@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { useQuery } from "@tanstack/react-query";
-import { Warehouse, Plus, ArrowDownToLine, History, Pencil, AlertTriangle, CalendarClock, X, PackageX, FileSpreadsheet, Upload, ImagePlus, ZoomIn } from "lucide-react";
+import { Warehouse, Plus, ArrowUpDown, History, Pencil, AlertTriangle, CalendarClock, X, PackageX, FileSpreadsheet, Upload, ImagePlus, ZoomIn } from "lucide-react";
 import { api, apiUpload, apiBlob } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
 import { appAlert } from "@/store/dialogStore";
@@ -115,7 +115,7 @@ export default function WarehousePage() {
     ) },
     { key: "act", header: "", render: (r) => (
       <div className="flex items-center gap-0.5">
-        <button onClick={() => setMove(r)} title={t("Κίνηση αποθέματος", "Stock movement")} className="grid h-7 w-7 place-items-center rounded-lg text-brand-600 hover:bg-brand-50 dark:hover:bg-slate-800"><ArrowDownToLine className="h-4 w-4" /></button>
+        <button onClick={() => setMove(r)} title={t("Κίνηση αποθέματος (εισαγωγή/εξαγωγή)", "Stock movement (in/out)")} className="grid h-7 w-7 place-items-center rounded-lg text-brand-600 hover:bg-brand-50 dark:hover:bg-slate-800"><ArrowUpDown className="h-4 w-4" /></button>
         <button onClick={() => setHist(r)} title={t("Ιστορικό κινήσεων", "Movement history")} className="grid h-7 w-7 place-items-center rounded-lg text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"><History className="h-4 w-4" /></button>
         <button onClick={() => setEdit(r)} title={t("Επεξεργασία", "Edit")} className="grid h-7 w-7 place-items-center rounded-lg text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"><Pencil className="h-4 w-4" /></button>
       </div>

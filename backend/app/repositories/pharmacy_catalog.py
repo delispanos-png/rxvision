@@ -397,9 +397,18 @@ class PharmacyCatalogRepository(BaseRepository):
         """Master inventory: ΟΛΑ τα είδη (ενεργά + ανενεργά) με πλήρη χαρακτηριστικά + πλούσια φίλτρα."""
         query: dict = {} if include_inactive else {"active": {"$ne": False}}
         if q and q.strip():
-            rx = {"$regex": re.escape(q.strip()), "$options": "i"}
-            query["$or"] = [{"name": rx}, {"barcode": rx}, {"barcodes": rx}, {"variants.barcode": rx},
-                            {"supplier": rx}, {"location": rx}, {"category": rx}]
+            # accent/case-insensitive: κάθε λέξη πρέπει να ταιριάζει ΚΑΠΟΥ (AND ανά λέξη, OR ανά πεδίο)
+            # με αναδίπλωση τόνων («βρεφικο γαλα» → «Βρεφικό γάλα»), όπως και ο κατάλογος e-shop.
+            toks = [tok for tok in re.split(r"\s+", q.strip()) if tok][:6]
+            query["$and"] = [{"$or": [
+                {"name": {"$regex": _fold_accents_regex(tok), "$options": "i"}},
+                {"barcode": {"$regex": re.escape(tok), "$options": "i"}},
+                {"barcodes": {"$regex": re.escape(tok), "$options": "i"}},
+                {"variants.barcode": {"$regex": re.escape(tok), "$options": "i"}},
+                {"supplier": {"$regex": _fold_accents_regex(tok), "$options": "i"}},
+                {"location": {"$regex": _fold_accents_regex(tok), "$options": "i"}},
+                {"category": {"$regex": _fold_accents_regex(tok), "$options": "i"}},
+            ]} for tok in toks]
         if ptype in TYPES:
             query["type"] = ptype
         # Κατηγορία-δέντρο (το πιο συγκεκριμένο επίπεδο υπερισχύει)

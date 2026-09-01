@@ -126,7 +126,7 @@ export function OrderDiscountsCard() {
                   <input type="number" value={edit.min_qty} onChange={(e) => setEdit({ ...edit, min_qty: Math.max(0, +e.target.value) })} className="w-full rounded-lg border border-slate-300 px-3 py-2" /></label>
               </div>
 
-              <div className="grid grid-cols-2 gap-2 text-sm">
+              <div className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2 sm:gap-4">
                 <label><span className="mb-1 block text-slate-600">{t("Έναρξη", "Start")}</span><DateInput value={toDay(edit.starts_at)} onChange={(d) => setEdit({ ...edit, starts_at: d ? `${d}T00:00:00` : null })} /></label>
                 <label><span className="mb-1 block text-slate-600">{t("Λήξη", "End")}</span><DateInput value={toDay(edit.ends_at)} onChange={(d) => setEdit({ ...edit, ends_at: d ? `${d}T23:59:59` : null })} /></label>
               </div>
