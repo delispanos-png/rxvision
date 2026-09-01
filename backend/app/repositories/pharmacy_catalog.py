@@ -48,6 +48,14 @@ _SORTS: dict = {
     "name": [("name", 1)],
 }
 
+# Γενικές/άχρηστες πρώτες-λέξεις που ΔΕΝ είναι μάρκες (φιλτράρονται από το facet «μάρκα»).
+_BRAND_STOP = {
+    "ΒΡΕΦΙΚΟ", "ΒΡΕΦΙΚΗ", "ΠΑΙΔΙΚΟ", "ΠΑΙΔΙΚΗ", "ΓΑΛΑ", "ΓΙΑ", "ΤΟ", "ΤΗ", "ΤΗΝ", "ΤΟΝ", "ΜΕ", "ΚΑΙ",
+    "ΣΕΤ", "SET", "KIT", "ΣΥΣΚΕΥΑΣΙΑ", "ΠΑΚΕΤΟ", "ΝΕΟ", "NEW", "ΧΩΡΙΣ", "ΚΑΤΑ", "ΑΝΤΙ", "ΜΑΣΚΑ",
+    "ΚΡΕΜΑ", "ΛΑΔΙ", "ΣΙΡΟΠΙ", "ΔΙΣΚΙΑ", "ΚΑΨΟΥΛΕΣ", "ΣΤΑΓΟΝΕΣ", "ΣΠΡΕΪ", "ΣΑΜΠΟΥΑΝ", "ΤΖΕΛ", "GEL",
+    "THE", "AND", "FOR", "WITH",
+}
+
 
 def _clean_images(v) -> list[str]:
     """Gallery: λίστα image_id (uploaded). Καθαρίζει διπλότυπα/κενά, cap 8. Η κύρια εικόνα του
@@ -234,10 +242,15 @@ class PharmacyCatalogRepository(BaseRepository):
     async def list(self, *, q: str = "", category: str | None = None, ptype: str | None = None,
                    tag: str | None = None, in_stock_only: bool = False, for_sale_only: bool = False,
                    cat1: str | None = None, cat2: str | None = None, cat3: str | None = None,
+                   brand: str | None = None, on_sale_only: bool = False,
                    sort: str = "featured", page: int = 1, page_size: int = 40) -> dict:
         query: dict = {"active": {"$ne": False}}
         if for_sale_only:                    # Κατάλογος e-shop: ΜΟΝΟ όσα ο φαρμακοποιός έχει βάλει προς πώληση
             query["for_sale"] = True
+        if brand and brand.strip():          # brand = πρώτη λέξη ονόματος (facet)· φίλτρο σε αρχή ονόματος
+            query["name"] = {"$regex": r"^\s*" + re.escape(brand.strip()) + r"\b", "$options": "i"}
+        if on_sale_only:                     # «Σε προσφορά»: δική τους έκπτωση > 0 (καμπάνιες = server-side)
+            query["discount_pct"] = {"$gt": 0}
         if q and q.strip():
             # Έξυπνη αναζήτηση: κάθε λέξη πρέπει να ταιριάζει ΚΑΠΟΥ (AND ανά λέξη, OR ανά πεδίο) —
             # όνομα, barcode, περιγραφή, ετικέτες, κατηγορία. Π.χ. «depon 500» = όνομα με «depon» ΚΑΙ «500».
@@ -587,6 +600,26 @@ class PharmacyCatalogRepository(BaseRepository):
                                      {"$unwind": "$tags"}, {"$group": {"_id": "$tags"}},
                                      {"$sort": {"_id": 1}}])
         return [r["_id"] for r in rows if r.get("_id")]
+
+    async def brands(self, limit: int = 40) -> list[str]:
+        """Facet «μάρκα»: παράγεται από την ΠΡΩΤΗ λέξη του ονόματος (χωρίς μετάλλαξη δεδομένων).
+        Κρατά μόνο brands με ≥2 προϊόντα προς πώληση & φιλτράρει γενικές/αριθμητικές λέξεις."""
+        rows = await self.aggregate([
+            {"$match": {"active": {"$ne": False}, "for_sale": True, "name": {"$type": "string"}}},
+            {"$project": {"tok": {"$arrayElemAt": [{"$split": [{"$trim": {"input": "$name"}}, " "]}, 0]}}},
+            {"$group": {"_id": {"$toUpper": "$tok"}, "n": {"$sum": 1}}},
+            {"$match": {"n": {"$gte": 2}}},
+            {"$sort": {"n": -1, "_id": 1}},
+            {"$limit": limit * 2},
+        ])
+        out: list[str] = []
+        for r in rows:
+            b = (r.get("_id") or "").strip()
+            if len(b) >= 3 and b not in _BRAND_STOP and not b.replace(",", "").replace(".", "").isdigit():
+                out.append(b)
+            if len(out) >= limit:
+                break
+        return out
 
     # ── product images (uploaded, stored in shared DB so they serve from BOTH app nodes) ──────
     async def save_image(self, raw: bytes, content_type: str) -> str | None:

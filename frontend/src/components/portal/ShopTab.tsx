@@ -2,7 +2,7 @@
 
 import { Fragment, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
-import { Search, ShoppingCart, ShoppingBag, Plus, Minus, Trash2, Truck, Store, ShieldCheck, Pill, Package, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Loader2, MapPin, Check, XCircle, PackageCheck, RefreshCcw, Star, Heart, Flame, Sparkles, CalendarCheck } from "lucide-react";
+import { Search, ShoppingCart, ShoppingBag, Plus, Minus, Trash2, Truck, Store, ShieldCheck, Pill, Package, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Loader2, MapPin, Check, XCircle, PackageCheck, RefreshCcw, Star, Heart, Flame, Sparkles, CalendarCheck, SlidersHorizontal } from "lucide-react";
 import { patientApi, API_BASE } from "@/lib/patientClient";
 import { toast, confirmDialog } from "@/components/portal/Toaster";
 import { DateInput } from "@/components/ui/DateInput";
@@ -187,10 +187,11 @@ export function ShopTab({ tenantKey = "x" }: { tenantKey?: string }) {
   const [q, setQ] = useState("");
   const [cat, setCat] = useState("");
   const [catPath, setCatPath] = useState<Cat[]>([]);   // επιλογή στο δέντρο κατηγοριών (μενού-πλακίδια)
-  const [showCats, setShowCats] = useState(false);     // κλειστές με την είσοδο — ο πελάτης τις ανοίγει (χώρος)
   const [tag, setTag] = useState("");
+  const [brand, setBrand] = useState("");              // φίλτρο μάρκας (facet «πρώτη λέξη ονόματος»)
+  const [showFilters, setShowFilters] = useState(false);   // ενιαίο drawer «Φίλτρα»
   const [sort, setSort] = useState("featured");
-  const [meta, setMeta] = useState<{ categories: string[]; tags: string[]; settings: Settings; campaigns?: Campaign[]; bundles?: Bundle[]; loyalty?: Loyalty; category_tree?: Cat[]; category_counts?: Record<string, number>; free_shipping_at?: number; auto_order_discounts?: { name: string; value_type: string; value: number; min_cents: number; min_qty: number }[] } | null>(null);
+  const [meta, setMeta] = useState<{ categories: string[]; tags: string[]; brands?: string[]; settings: Settings; campaigns?: Campaign[]; bundles?: Bundle[]; loyalty?: Loyalty; category_tree?: Cat[]; category_counts?: Record<string, number>; free_shipping_at?: number; auto_order_discounts?: { name: string; value_type: string; value: number; min_cents: number; min_qty: number }[] } | null>(null);
   // Καλάθι: αρχικοποίηση ΑΠΟ localStorage (ανά φαρμακείο) ώστε να ΜΗΝ χάνεται σε refresh.
   const [cart, setCart] = useState<Record<string, { p: Product; qty: number }>>(() => {
     try { return JSON.parse(localStorage.getItem(CART_KEY) || "{}"); } catch { return {}; }
@@ -218,6 +219,7 @@ export function ShopTab({ tenantKey = "x" }: { tenantKey?: string }) {
   const hasTree = (meta?.category_tree?.length ?? 0) > 0;
   const shopQuery = (pg: number) => {
     const p = new URLSearchParams({ q, tag, sort, page: String(pg) });
+    if (brand) p.set("brand", brand);
     if (hasTree) {   // δέντρο κατηγοριών: το πιο συγκεκριμένο επίπεδο του μονοπατιού
       if (catPath[0]) p.set("cat1", catPath[0].id);
       if (catPath[1]) p.set("cat2", catPath[1].id);
@@ -232,7 +234,7 @@ export function ShopTab({ tenantKey = "x" }: { tenantKey?: string }) {
     }, 250);
     return () => clearTimeout(tmo);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [q, cat, tag, sort, catPath, hasTree]);
+  }, [q, cat, tag, sort, catPath, hasTree, brand]);
   async function loadMore() {   // «φόρτωσε περισσότερα» → επόμενη σελίδα (προσθήκη)
     if (loadingMore) return;
     setLoadingMore(true);
@@ -263,6 +265,8 @@ export function ShopTab({ tenantKey = "x" }: { tenantKey?: string }) {
   const cartItems = Object.values(cart);
   const subtotal = cartItems.reduce((s, x) => s + final(x.p, camps) * x.qty, 0);
   const count = cartItems.reduce((s, x) => s + x.qty, 0);
+  const filterCount = (catPath.length > 0 ? 1 : 0) + (cat ? 1 : 0) + (brand ? 1 : 0) + (tag ? 1 : 0) + (sort !== "featured" ? 1 : 0);
+  const clearFilters = () => { setCatPath([]); setCat(""); setBrand(""); setTag(""); setSort("featured"); };
 
   // Overlays (video + PDP) — αποσπασμένα ώστε να λειτουργούν & στο καλάθι/αγαπημένα (όχι μόνο στην περιήγηση)
   const modals = (
@@ -329,50 +333,86 @@ export function ShopTab({ tenantKey = "x" }: { tenantKey?: string }) {
         </span>
         <ChevronRight className="h-5 w-5 shrink-0 opacity-90" />
       </button>
-      {/* Γρήγορη πρόσβαση: αγαπημένα + συνδρομές (η αναζήτηση μετακινήθηκε ακριβώς πάνω από τον κατάλογο) */}
-      <div className="flex items-center justify-end gap-2">
+      {/* Ενιαία γραμμή: «Φίλτρα» (burger με κατηγορίες+brand+ετικέτες+ταξινόμηση) + Αγαπημένα + Συνδρομές */}
+      <div className="flex items-center gap-2">
+        <button onClick={() => setShowFilters(true)} className="inline-flex h-10 flex-1 items-center justify-center gap-1.5 rounded-2xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 text-sm font-semibold text-slate-700 dark:text-slate-200 shadow-sm hover:bg-slate-50 dark:hover:bg-slate-700 sm:flex-none">
+          <SlidersHorizontal className="h-4 w-4" /> {t("Φίλτρα", "Filters")}
+          {filterCount > 0 && <span className="grid h-5 min-w-[20px] place-items-center rounded-full bg-violet-600 px-1 text-[10px] font-bold text-white">{filterCount}</span>}
+        </button>
         <button onClick={() => setView("favorites")} title={t("Τα αγαπημένα μου", "My favourites")} className="inline-flex h-10 items-center gap-1.5 rounded-2xl border border-rose-200 bg-white dark:bg-slate-800 px-3 text-sm font-semibold text-rose-500 shadow-sm"><Heart className="h-4 w-4" /> <span className="hidden sm:inline">{t("Αγαπημένα", "Favourites")}</span></button>
         {meta?.settings.subscription_enabled && <button onClick={() => setView("subs")} title={t("Οι συνδρομές μου", "My subscriptions")} className="inline-flex h-10 items-center gap-1.5 rounded-2xl border border-violet-300 bg-white dark:bg-slate-800 px-3 text-sm font-semibold text-violet-600 shadow-sm"><RefreshCcw className="h-4 w-4" /> <span className="hidden sm:inline">{t("Συνδρομές", "Subscriptions")}</span></button>}
       </div>
-      {/* Μενού κατηγοριών: μοντέρνα πλακίδια από το δέντρο (με φωτό)· fallback στο legacy select αν δεν έχει στηθεί δέντρο.
-          Πτύσσεται με κουμπί, και ΑΥΤΟΜΑΤΑ κρύβεται όταν αναζητάς — ώστε τα είδη να φαίνονται αμέσως. */}
-      {hasTree && (
-        <div className="space-y-2">
-          <div className="flex flex-wrap items-center gap-1.5 text-xs">
-            <button onClick={() => { if (q.trim()) { setQ(""); setShowCats(true); } else { setShowCats((v) => !v); } }} className="inline-flex items-center gap-1 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-2 text-sm font-medium text-slate-700 dark:text-slate-200 shadow-sm hover:bg-slate-50 dark:hover:bg-slate-800">
-              🗂️ {t("Κατηγορίες", "Categories")} <ChevronDown className={`h-4 w-4 transition ${showCats && !q.trim() ? "rotate-180" : ""}`} />
-            </button>
-            {catPath.length > 0 && (
-              <>
-                <button onClick={() => setCatPath([])} className="rounded-lg px-2 py-1 font-medium text-violet-600 hover:bg-violet-50">{t("Όλες", "All")}</button>
-                {catPath.map((c, i) => (
-                  <Fragment key={c.id}>
-                    <ChevronRight className="h-3 w-3 text-slate-300" />
-                    <button onClick={() => setCatPath(catPath.slice(0, i + 1))} className={`rounded-lg px-2 py-1 font-medium ${i === catPath.length - 1 ? "bg-violet-100 text-violet-700" : "text-violet-600 hover:bg-violet-50"}`}>{c.icon ? `${c.icon} ` : ""}{c.name}</button>
-                  </Fragment>
-                ))}
-                <button onClick={() => setCatPath([])} title={t("Καθαρισμός", "Clear")} className="ml-0.5 grid h-6 w-6 place-items-center rounded-full text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700"><XCircle className="h-4 w-4" /></button>
-              </>
-            )}
-          </div>
-          {showCats && !q.trim() && <CategoryTiles tree={meta!.category_tree!} counts={meta!.category_counts ?? {}} path={catPath} setPath={setCatPath} />}
+
+      {/* Ενεργά φίλτρα — γρήγορη αφαίρεση με ένα άγγιγμα */}
+      {filterCount > 0 && (
+        <div className="flex flex-wrap items-center gap-1.5">
+          {catPath.map((c, i) => <button key={c.id} onClick={() => setCatPath(catPath.slice(0, i))} className="inline-flex items-center gap-1 rounded-full bg-violet-100 px-2.5 py-1 text-[11px] font-semibold text-violet-700">{c.icon ? `${c.icon} ` : ""}{c.name} <XCircle className="h-3 w-3" /></button>)}
+          {cat && <button onClick={() => setCat("")} className="inline-flex items-center gap-1 rounded-full bg-violet-100 px-2.5 py-1 text-[11px] font-semibold text-violet-700">{cat} <XCircle className="h-3 w-3" /></button>}
+          {brand && <button onClick={() => setBrand("")} className="inline-flex items-center gap-1 rounded-full bg-sky-100 px-2.5 py-1 text-[11px] font-semibold text-sky-700">🏷️ {brand} <XCircle className="h-3 w-3" /></button>}
+          {tag && <button onClick={() => setTag("")} className="inline-flex items-center gap-1 rounded-full bg-slate-800 px-2.5 py-1 text-[11px] font-semibold text-white">{tag} <XCircle className="h-3 w-3" /></button>}
+          {sort !== "featured" && <button onClick={() => setSort("featured")} className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2.5 py-1 text-[11px] font-semibold text-amber-800">{t(SORTS.find(([v]) => v === sort)?.[1] ?? "", SORTS.find(([v]) => v === sort)?.[2] ?? "")} <XCircle className="h-3 w-3" /></button>}
+          <button onClick={clearFilters} className="rounded-full px-2 py-1 text-[11px] font-medium text-slate-400 hover:text-slate-600">{t("Καθαρισμός όλων", "Clear all")}</button>
         </div>
       )}
-      <div className="flex items-center gap-2">
-        {!hasTree && !!meta?.categories.length && (
-          <div className="relative flex-1">
-            <select value={cat} onChange={(e) => setCat(e.target.value)} className="w-full appearance-none rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 py-2 pl-3 pr-8 text-sm font-medium text-slate-700 dark:text-slate-200 shadow-sm focus:border-violet-400 focus:outline-none focus:ring-2 focus:ring-violet-100">
-              <option value="">🗂️ {t("Όλες οι κατηγορίες", "All categories")}</option>
-              {meta.categories.map((c) => <option key={c} value={c}>{catEmoji(c)} {c}</option>)}
-            </select>
-            <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+
+      {/* Drawer «Φίλτρα» — ενοποιεί Κατηγορίες + Μάρκα + Ετικέτες + Ταξινόμηση */}
+      {showFilters && (
+        <div className="fixed inset-0 z-[120] flex items-end justify-center bg-black/50 sm:items-center sm:p-4" onClick={() => setShowFilters(false)}>
+          <div className="flex max-h-[85vh] w-full max-w-lg flex-col overflow-hidden rounded-t-2xl bg-white shadow-2xl dark:bg-slate-800 sm:rounded-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="flex shrink-0 items-center justify-between border-b border-slate-100 dark:border-slate-800 px-4 py-3">
+              <span className="flex items-center gap-2 text-sm font-bold text-slate-800 dark:text-slate-100"><SlidersHorizontal className="h-4 w-4" /> {t("Φίλτρα", "Filters")}</span>
+              <button onClick={() => setShowFilters(false)} aria-label={t("Κλείσιμο", "Close")} className="grid h-8 w-8 place-items-center rounded-full bg-slate-100 text-slate-500 dark:bg-slate-700 dark:text-slate-300"><Plus className="h-4 w-4 rotate-45" /></button>
+            </div>
+            <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
+              {hasTree ? (
+                <div>
+                  <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">🗂️ {t("Κατηγορίες", "Categories")}</div>
+                  {catPath.length > 0 && (
+                    <div className="mb-2 flex flex-wrap items-center gap-1.5 text-xs">
+                      <button onClick={() => setCatPath([])} className="rounded-lg px-2 py-1 font-medium text-violet-600 hover:bg-violet-50">{t("Όλες", "All")}</button>
+                      {catPath.map((c, i) => (<Fragment key={c.id}><ChevronRight className="h-3 w-3 text-slate-300" /><button onClick={() => setCatPath(catPath.slice(0, i + 1))} className={`rounded-lg px-2 py-1 font-medium ${i === catPath.length - 1 ? "bg-violet-100 text-violet-700" : "text-violet-600 hover:bg-violet-50"}`}>{c.icon ? `${c.icon} ` : ""}{c.name}</button></Fragment>))}
+                    </div>
+                  )}
+                  <CategoryTiles tree={meta!.category_tree!} counts={meta!.category_counts ?? {}} path={catPath} setPath={setCatPath} />
+                </div>
+              ) : !!meta?.categories.length && (
+                <div>
+                  <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">🗂️ {t("Κατηγορίες", "Categories")}</div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {meta.categories.map((c) => <button key={c} onClick={() => setCat(cat === c ? "" : c)} className={`rounded-full px-3 py-1.5 text-xs font-medium ${cat === c ? "bg-violet-600 text-white" : "bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-200"}`}>{catEmoji(c)} {c}</button>)}
+                  </div>
+                </div>
+              )}
+              {!!meta?.brands?.length && (
+                <div>
+                  <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">🏷️ {t("Μάρκα", "Brand")}</div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {meta.brands.map((b) => <button key={b} onClick={() => setBrand(brand === b ? "" : b)} className={`rounded-full px-3 py-1.5 text-xs font-medium ${brand === b ? "bg-sky-600 text-white" : "bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-200"}`}>{b}</button>)}
+                  </div>
+                </div>
+              )}
+              {!!meta?.tags?.length && (
+                <div>
+                  <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">{t("Ετικέτες", "Tags")}</div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {meta.tags.map((tg) => <button key={tg} onClick={() => setTag(tag === tg ? "" : tg)} className={`rounded-full px-3 py-1.5 text-xs font-semibold ${tag === tg ? "bg-slate-800 text-white" : tagCls(tg)}`}>{tg}</button>)}
+                  </div>
+                </div>
+              )}
+              <div>
+                <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">{t("Ταξινόμηση", "Sort")}</div>
+                <div className="flex flex-wrap gap-1.5">
+                  {SORTS.map(([v, el, en]) => <button key={v} onClick={() => setSort(v)} className={`rounded-full px-3 py-1.5 text-xs font-medium ${sort === v ? "bg-violet-600 text-white" : "bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-200"}`}>{t(el, en)}</button>)}
+                </div>
+              </div>
+            </div>
+            <div className="flex shrink-0 items-center gap-2 border-t border-slate-100 dark:border-slate-800 p-3">
+              <button onClick={clearFilters} className="rounded-xl px-4 py-2.5 text-sm font-semibold text-slate-500 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-700">{t("Καθαρισμός", "Clear")}</button>
+              <button onClick={() => setShowFilters(false)} className="flex-1 rounded-xl bg-violet-600 py-2.5 text-sm font-bold text-white hover:bg-violet-700">{t("Δες αποτελέσματα", "Show results")}{total ? ` (${total.toLocaleString("el-GR")})` : ""}</button>
+            </div>
           </div>
-        )}
-        <div className="relative">
-          <select value={sort} onChange={(e) => setSort(e.target.value)} className="appearance-none rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 py-2 pl-3 pr-8 text-sm text-slate-600 dark:text-slate-300 shadow-sm focus:border-violet-400 focus:outline-none focus:ring-2 focus:ring-violet-100">{SORTS.map(([v, el, en]) => <option key={v} value={v}>{t(el, en)}</option>)}</select>
-          <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
         </div>
-      </div>
+      )}
       {/* Μπάρα δωρεάν μεταφορικών (Shopify-style) — κίνητρο για μεγαλύτερο καλάθι. */}
       {count > 0 && (meta?.free_shipping_at ?? 0) > 0 && (
         <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-2.5">
@@ -400,13 +440,6 @@ export function ShopTab({ tenantKey = "x" }: { tenantKey?: string }) {
           <span className="flex items-center gap-2 text-sm font-extrabold">{eur(subtotal)} <span className="rounded-lg bg-white/20 px-2.5 py-1 text-xs" aria-label={t("Ολοκλήρωση", "Checkout")}>→</span></span>
         </button>
       )}
-      {/* Ετικέτες — μία κυλιόμενη σειρά (χωρίς αναδίπλωση) */}
-      {!!meta?.tags?.length && (
-        <div className="-mx-4 flex gap-1.5 overflow-x-auto px-4 pb-1 [-ms-overflow-style:none] [scrollbar-width:none] sm:mx-0 sm:flex-wrap sm:px-0 [&::-webkit-scrollbar]:hidden">
-          {meta.tags.map((tg) => <button key={tg} onClick={() => setTag(tag === tg ? "" : tg)} className={`shrink-0 whitespace-nowrap rounded-full px-2.5 py-1 text-[11px] font-semibold ${tag === tg ? "bg-slate-800 text-white" : tagCls(tg)}`}>{tg}</button>)}
-        </div>
-      )}
-
       {/* Αναζήτηση — ακριβώς πάνω από τον κατάλογο (2.5) */}
       <div className="relative">
         <Search className="pointer-events-none absolute left-3.5 top-1/2 h-[18px] w-[18px] -translate-y-1/2 text-slate-400" />

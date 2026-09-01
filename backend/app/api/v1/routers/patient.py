@@ -550,13 +550,14 @@ async def meds_times(body: SlotTimesIn, ctx: PatientContext = Depends(get_patien
 async def shop(q: str = "", category: str | None = None, type: str | None = None,
                tag: str | None = None, sort: str = "featured", page: int = 1,
                cat1: str | None = None, cat2: str | None = None, cat3: str | None = None,
+               brand: str | None = None, on_sale: bool = False,
                ctx: PatientContext = Depends(get_patient_context)):
     from app.repositories.pharmacy_catalog import PharmacyCatalogRepository
     # in_stock_only=False → δείχνουμε ΚΑΙ τα «κατόπιν παραγγελίας» (χωρίς απόθεμα)· ο πελάτης τα
     # παραγγέλνει ως αίτημα και ο φαρμακοποιός εγκρίνει/απορρίπτει + δηλώνει ημερομηνία.
     return await PharmacyCatalogRepository(tenant_id=ctx.tenant_id).list(
         q=q, category=category, ptype=type, tag=tag, sort=sort, in_stock_only=False,
-        cat1=cat1, cat2=cat2, cat3=cat3, page=max(1, page),
+        cat1=cat1, cat2=cat2, cat3=cat3, brand=brand, on_sale_only=on_sale, page=max(1, page),
         for_sale_only=True, page_size=60)   # πελάτης βλέπει ΜΟΝΟ όσα ο φαρμακοποιός έβαλε προς πώληση
 
 
@@ -616,7 +617,8 @@ async def shop_meta(ctx: PatientContext = Depends(get_patient_context)):
     # Δέντρο κατηγοριών e-shop (μενού-πλακίδια πύλης) + πλήθος «προς πώληση» ανά κόμβο (κρύβει άδεια κλαδιά).
     category_tree = await PharmacyCategoryRepository(tenant_id=ctx.tenant_id).tree()
     category_counts = await cat.category_counts()
-    return {"categories": await cat.categories(), "tags": await cat.tags(), "settings": settings,
+    return {"categories": await cat.categories(), "tags": await cat.tags(), "brands": await cat.brands(),
+            "settings": settings,
             "category_tree": category_tree, "category_counts": category_counts,
             "free_shipping_at": free_shipping_at, "auto_order_discounts": auto_order,
             "campaigns": [{"name": c.get("name"), "discount_pct": c.get("discount_pct"),
