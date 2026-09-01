@@ -82,7 +82,8 @@ const imgList = (p: Product): string[] => {
 const TAG_STYLE: Record<string, string> = { "Προσφορά": "bg-rose-100 text-rose-700", "Νέο": "bg-emerald-100 text-emerald-700", "Δημοφιλές": "bg-amber-100 text-amber-800", "Bestseller": "bg-amber-100 text-amber-800", "Βιολογικό": "bg-green-100 text-green-700", "Vegan": "bg-green-100 text-green-700" };
 const tagCls = (t: string) => TAG_STYLE[t] || "bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300";
 const SORTS: [string, string, string][] = [["featured", "Προτεινόμενα", "Recommended"], ["on_sale", "Σε προσφορά", "On sale"], ["newest", "Νεότερα", "Newest"], ["price_asc", "Φθηνότερα", "Price: low to high"], ["price_desc", "Ακριβότερα", "Price: high to low"]];
-type Sub = { _id: string; items?: { barcode: string; qty: number }[]; lines?: { barcode: string; qty: number }[]; mode: string; interval_days: number; next_run: string };
+type SubLine = { barcode: string; qty: number; name?: string; image_id?: string | null; type?: string; price_cents?: number; unit_cents?: number; line_cents?: number; discount_pct?: number };
+type Sub = { _id: string; items?: SubLine[]; lines?: SubLine[]; mode: string; interval_days: number; next_run: string; subtotal_cents?: number };
 const FREQ: [number, string, string][] = [[0, "Όχι", "No"], [14, "Κάθε 2 εβδομάδες", "Every 2 weeks"], [30, "Κάθε μήνα", "Every month"], [60, "Κάθε 2 μήνες", "Every 2 months"], [90, "Κάθε 3 μήνες", "Every 3 months"]];
 type OrderItem = { barcode: string; name: string; qty: number; line_cents: number; discount_pct?: number; backorder?: boolean };
 type OrderAddr = { street?: string; area?: string; postal?: string; phone?: string; notes?: string } | null;
@@ -885,26 +886,60 @@ function Subscriptions({ onBack }: { onBack: () => void }) {
   const t = useT();
   const [subs, setSubs] = useState<Sub[]>([]);
   const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState<string | null>(null);
   async function load() { try { const d = await patientApi<{ items: Sub[] }>("/patient/shop/subscriptions"); setSubs(d.items); } finally { setLoading(false); } }
   useEffect(() => { load(); }, []);
-  async function cancel(id: string) { if (!(await confirmDialog(t("Να ακυρωθεί η συνδρομή;", "Cancel this subscription?")))) return; await patientApi(`/patient/shop/subscriptions/${id}/cancel`, { method: "POST" }); load(); }
-  const freq = (d: number) => { const f = FREQ.find(([n]) => n === d); return f ? t(f[1], f[2]) : t(`κάθε ${d} ημέρες`, `every ${d} days`); };
+  async function cancel(id: string) { if (!(await confirmDialog(t("Να ακυρωθεί η συνδρομή;", "Cancel this subscription?")))) return; setBusy(id); try { await patientApi(`/patient/shop/subscriptions/${id}/cancel`, { method: "POST" }); await load(); } finally { setBusy(null); } }
+  async function changeFreq(id: string, days: number) { setBusy(id); try { await patientApi(`/patient/shop/subscriptions/${id}/update`, { method: "POST", body: JSON.stringify({ interval_days: days }) }); await load(); toast(t("Η συχνότητα ενημερώθηκε", "Frequency updated"), "success"); } catch { toast(t("Κάτι πήγε στραβά", "Something went wrong"), "error"); } finally { setBusy(null); } }
+  async function removeItem(id: string, barcode: string) { if (!(await confirmDialog(t("Αφαίρεση είδους από τη συνδρομή;", "Remove this item from the subscription?")))) return; setBusy(id); try { const r = await patientApi<{ ok: boolean; cancelled?: boolean }>(`/patient/shop/subscriptions/${id}/update`, { method: "POST", body: JSON.stringify({ remove_barcode: barcode }) }); await load(); if (r.cancelled) toast(t("Η συνδρομή ακυρώθηκε (έμεινε χωρίς είδη).", "Subscription cancelled (no items left)."), "info"); } catch { toast(t("Κάτι πήγε στραβά", "Something went wrong"), "error"); } finally { setBusy(null); } }
+  const freqLabel = (d: number) => { const f = FREQ.find(([n]) => n === d); return f ? t(f[1], f[2]) : t(`κάθε ${d} ημέρες`, `every ${d} days`); };
   return (
     <div className="space-y-3">
       <button onClick={onBack} className="inline-flex items-center gap-1 text-sm text-slate-500 dark:text-slate-400"><ChevronLeft className="h-4 w-4" /> {t("Στο κατάστημα", "To the shop")}</button>
-      <div className="text-base font-bold text-slate-800 dark:text-slate-100">{t("Οι συνδρομές μου", "My subscriptions")}</div>
+      <div className="flex items-center gap-1.5 text-base font-bold text-slate-800 dark:text-slate-100"><RefreshCcw className="h-4 w-4 text-violet-600" /> {t("Οι συνδρομές μου", "My subscriptions")}</div>
+      <p className="text-xs text-slate-400">{t("Επαναλαμβανόμενες παραγγελίες — άλλαξε συχνότητα, αφαίρεσε είδη ή ακύρωσε όποτε θες.", "Recurring orders — change frequency, remove items or cancel anytime.")}</p>
       {loading && <div className="py-8 text-center text-sm text-slate-400">{t("Φόρτωση…", "Loading…")}</div>}
       {!loading && subs.length === 0 && <div className="py-10 text-center text-sm text-slate-400"><RefreshCcw className="mx-auto mb-2 h-8 w-8 text-slate-300" />{t("Δεν έχεις ενεργές συνδρομές. Φτιάξε μία στο checkout επιλέγοντας «Επανάληψη».", "You have no active subscriptions. Create one at checkout by choosing «Repeat».")}</div>}
       {subs.map((s) => {
         const lines = s.lines ?? s.items ?? [];
+        const subtotal = s.subtotal_cents ?? lines.reduce((a, l) => a + (l.line_cents ?? 0), 0);
         return (
-          <div key={s._id} className="rounded-2xl border border-violet-200 bg-white dark:bg-slate-800 p-3">
-            <div className="flex items-center justify-between">
-              <span className="flex items-center gap-1.5 text-sm font-semibold text-violet-800"><RefreshCcw className="h-4 w-4" /> {freq(s.interval_days)}</span>
-              <button onClick={() => cancel(s._id)} className="text-xs font-medium text-rose-600 hover:underline">{t("Ακύρωση", "Cancel")}</button>
+          <div key={s._id} className={`overflow-hidden rounded-2xl border border-violet-200 bg-white dark:bg-slate-800 shadow-sm transition ${busy === s._id ? "pointer-events-none opacity-60" : ""}`}>
+            <div className="flex items-center justify-between gap-2 border-b border-slate-100 dark:border-slate-800 bg-violet-50/60 px-3 py-2.5">
+              <span className="flex items-center gap-1.5 text-sm font-bold text-violet-800"><RefreshCcw className="h-4 w-4" /> {freqLabel(s.interval_days)}</span>
+              <span className="flex items-center gap-1 text-xs font-medium text-slate-500 dark:text-slate-400">{s.mode === "delivery" ? <><Truck className="h-3.5 w-3.5" /> {t("Αποστολή", "Delivery")}</> : <><Store className="h-3.5 w-3.5" /> {t("Παραλαβή", "Pickup")}</>}</span>
             </div>
-            <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">{lines.length} {t("είδη", "items")} · {s.mode === "delivery" ? t("Αποστολή", "Delivery") : t("Παραλαβή", "Pickup")}</div>
-            <div className="mt-0.5 text-[11px] text-slate-400">{t("Επόμενη παραγγελία:", "Next order:")} {new Date(s.next_run).toLocaleDateString("el-GR")}</div>
+            <div className="divide-y divide-slate-100 dark:divide-slate-800 px-3">
+              {lines.map((l, i) => (
+                <div key={i} className="flex items-center gap-2.5 py-2">
+                  <span className="grid h-11 w-11 shrink-0 place-items-center overflow-hidden rounded-lg bg-slate-50 dark:bg-slate-900">{l.image_id ? <img src={`${API_BASE}/catalog/image/${l.image_id}`} alt="" className="h-full w-full object-contain" /> : <Package className="h-5 w-5 text-slate-300" />}</span>
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-sm font-medium text-slate-800 dark:text-slate-100">{l.name ?? l.barcode}</div>
+                    <div className="text-xs text-slate-400">{eur(l.unit_cents ?? l.price_cents ?? 0)} × {l.qty}{(l.discount_pct ?? 0) > 0 && <span className="ml-1 text-emerald-600">-{l.discount_pct}%</span>}</div>
+                  </div>
+                  <div className="shrink-0 text-right">
+                    <div className="text-sm font-bold text-slate-800 dark:text-slate-100">{eur(l.line_cents ?? 0)}</div>
+                    <button onClick={() => removeItem(s._id, l.barcode)} className="mt-0.5 inline-flex items-center gap-0.5 text-[11px] font-medium text-rose-500 hover:underline"><Trash2 className="h-3 w-3" /> {t("Αφαίρεση", "Remove")}</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="flex items-center justify-between gap-2 border-t border-slate-100 dark:border-slate-800 px-3 py-2 text-sm">
+              <span className="text-slate-500 dark:text-slate-400">{t("Σύνολο ανά παράδοση", "Total per delivery")}</span>
+              <span className="font-bold text-slate-900 dark:text-slate-100">{eur(subtotal)}</span>
+            </div>
+            <div className="space-y-2 border-t border-slate-100 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-900/40 px-3 py-2.5">
+              <div className="flex items-center justify-between gap-2">
+                <label className="text-xs font-medium text-slate-500 dark:text-slate-400">{t("Συχνότητα", "Frequency")}</label>
+                <select value={s.interval_days} onChange={(e) => changeFreq(s._id, +e.target.value)} disabled={busy === s._id} className="rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-2 py-1.5 text-sm">
+                  {FREQ.filter(([d]) => d > 0).map(([d, el, en]) => <option key={d} value={d}>{t(el, en)}</option>)}
+                </select>
+              </div>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[11px] text-slate-400">{t("Επόμενη παραγγελία:", "Next order:")} <b className="text-slate-600 dark:text-slate-300">{new Date(s.next_run).toLocaleDateString("el-GR")}</b></span>
+                <button onClick={() => cancel(s._id)} disabled={busy === s._id} className="text-xs font-semibold text-rose-600 hover:underline">{t("Ακύρωση συνδρομής", "Cancel subscription")}</button>
+              </div>
+            </div>
           </div>
         );
       })}

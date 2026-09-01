@@ -452,7 +452,66 @@ class OrdersDeliveryRepository(BaseRepository):
     async def my_subscriptions(self, account_id) -> list[dict]:
         rows = [r async for r in self._db["order_subscriptions"].find(
             {"tenant_id": self.tenant_id, "account_id": account_id, "active": True}).sort("created_at", -1)]
-        return jsonsafe(self._mask_orders(rows))
+        rows = self._mask_orders(rows) or []
+        # Εμπλούτισε τις γραμμές με στοιχεία προϊόντος (όνομα/φωτό/τιμή) ώστε η οθόνη «Συνδρομές»
+        # να δείχνει ευδιάκριτα προϊόντα/ποσότητες/τιμές (ίδια λογική έκπτωσης με το κατάστημα).
+        from app.repositories.pharmacy_catalog import PharmacyCatalogRepository, sale_active_now
+        from app.repositories.shop_campaigns import ShopCampaignRepository, campaign_pct_for
+        cat = PharmacyCatalogRepository(tenant_id=self.tenant_id)
+        camps = await ShopCampaignRepository(tenant_id=self.tenant_id).active_now()
+        cache: dict = {}
+        for sub in rows:
+            total = 0
+            for ln in sub.get("lines", []):
+                bc = str(ln.get("barcode"))
+                if bc not in cache:
+                    cache[bc] = await cat.get(bc) or {}
+                p = cache[bc]
+                qty = max(1, int(ln.get("qty") or 1))
+                is_rx = p.get("type") == "rx_medicine"
+                self_disc = int(p.get("discount_pct") or 0) if (not is_rx and sale_active_now(p)) else 0
+                eff = 0 if is_rx else max(self_disc, campaign_pct_for(p, camps))
+                unit = round(int(p.get("price_cents") or 0) * (100 - eff) / 100)
+                ln["name"] = p.get("name") or bc
+                ln["image_id"] = p.get("image_id")
+                ln["type"] = p.get("type")
+                ln["price_cents"] = int(p.get("price_cents") or 0)
+                ln["unit_cents"] = unit
+                ln["line_cents"] = unit * qty
+                ln["discount_pct"] = eff
+                total += unit * qty
+            sub["subtotal_cents"] = total
+        return jsonsafe(rows)
+
+    async def update_subscription(self, sub_id: str, account_id, *, interval_days: int | None = None,
+                                  remove_barcode: str | None = None) -> dict:
+        """Επεξεργασία συνδρομής από τον πελάτη: αλλαγή συχνότητας ή αφαίρεση είδους
+        (αφαίρεση του τελευταίου είδους → ακύρωση συνδρομής)."""
+        from datetime import timedelta
+        from bson import ObjectId
+        try:
+            oid = ObjectId(sub_id)
+        except Exception:  # noqa: BLE001
+            return {"ok": False}
+        q = {"_id": oid, "tenant_id": self.tenant_id, "account_id": account_id}
+        sub = await self._db["order_subscriptions"].find_one(q)
+        if not sub:
+            return {"ok": False, "error": "not_found"}
+        upd: dict = {}
+        if interval_days is not None:
+            iv = max(7, int(interval_days))
+            upd["interval_days"] = iv
+            upd["next_run"] = _now() + timedelta(days=iv)
+        if remove_barcode is not None:
+            lines = [ln for ln in sub.get("lines", []) if str(ln.get("barcode")) != str(remove_barcode)]
+            if not lines:
+                await self._db["order_subscriptions"].update_one(q, {"$set": {"active": False, "cancelled_at": _now()}})
+                return {"ok": True, "cancelled": True}
+            upd["lines"] = [{"barcode": str(ln["barcode"]), "qty": max(1, int(ln.get("qty") or 1))} for ln in lines]
+        if upd:
+            upd["updated_at"] = _now()
+            await self._db["order_subscriptions"].update_one(q, {"$set": upd})
+        return {"ok": True}
 
     async def cancel_subscription(self, sub_id: str, account_id) -> dict:
         from bson import ObjectId

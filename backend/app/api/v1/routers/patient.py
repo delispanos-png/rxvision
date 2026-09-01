@@ -825,6 +825,19 @@ async def cancel_subscription(sub_id: str, ctx: PatientContext = Depends(get_pat
     return await OrdersDeliveryRepository(tenant_id=ctx.tenant_id).cancel_subscription(sub_id, ctx.account_id)
 
 
+class SubUpdateIn(BaseModel):
+    interval_days: int | None = Field(None, ge=7, le=365)
+    remove_barcode: str | None = Field(None, max_length=64)
+
+
+@router.post("/shop/subscriptions/{sub_id}/update")
+async def update_subscription(sub_id: str, body: SubUpdateIn, ctx: PatientContext = Depends(get_patient_context)):
+    """Επεξεργασία συνδρομής: αλλαγή συχνότητας ή αφαίρεση είδους."""
+    from app.repositories.orders_delivery import OrdersDeliveryRepository
+    return await OrdersDeliveryRepository(tenant_id=ctx.tenant_id).update_subscription(
+        sub_id, ctx.account_id, interval_days=body.interval_days, remove_barcode=body.remove_barcode)
+
+
 @router.get("/pharmacy-hours")
 async def pharmacy_hours(ctx: PatientContext = Depends(get_patient_context)):
     """Ζωντανή κατάσταση (ανοιχτό/κλειστό/εφημερία) + εβδομαδιαίο ωράριο του ενεργού φαρμακείου."""
