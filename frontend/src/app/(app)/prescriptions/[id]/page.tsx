@@ -507,14 +507,25 @@ export default function PrescriptionDetailPage() {
           </div>
         ))}
       </div>
-      {/* ΚΥΥΑΠ (ΕΤΥΑΠ σωμάτων ασφαλείας): τριμερής επιμερισμός Ασφ/νος · ΚΥΥΑΠ · ΕΟΠΥΥ */}
-      {d.details?.kyyap_covered ? (
-        <div className="flex flex-wrap gap-2 text-sm">
-          <span className="rounded-lg bg-amber-50 px-3 py-1.5 font-medium text-amber-700">{t("Από Ασφ/νο", "From patient")}: {eur(d.patient_payable)}</span>
-          <span className="rounded-lg bg-violet-50 px-3 py-1.5 font-medium text-violet-700">{t("Από ΚΥΥΑΠ", "From ΚΥΥΑΠ")}: {eur(d.details.kyyap_covered)}</span>
-          <span className="rounded-lg bg-brand-50 px-3 py-1.5 font-medium text-brand-700">{t("Από ΕΟΠΥΥ", "From ΕΟΠΥΥ")}: {eur(d.fund_payable - d.details.kyyap_covered)}</span>
-        </div>
-      ) : null}
+      {/* ΚΥΥΑΠ (ΕΤΥΑΠ σωμάτων ασφαλείας): τριμερής επιμερισμός Ασφ/νος · ΚΥΥΑΠ · ΕΟΠΥΥ.
+          ΠΡΟΣΟΧΗ scope: το ΚΥΥΑΠ (kyyap_covered) είναι ποσό ΑΝΑ ΣΥΝΤΑΓΗ (visit) — ΔΕΝ αφαιρείται από το
+          per-execution amount_claimed (έδινε αρνητικό σε μερικές εκτελέσεις, π.χ. 3,29 − 19,18 = −15,89).
+          Ο επιμερισμός γίνεται στα ΠΟΣΑ ΣΥΝΤΑΓΗΣ (fund_share_total/patient_share_total, ίδιο CDA scope). */}
+      {d.details?.kyyap_covered ? (() => {
+        const fundTot = d.details.fund_share_total ?? d.fund_payable;
+        const patTot = d.details.patient_share_total ?? d.patient_payable;
+        const eopyy = Math.max(0, fundTot - d.details.kyyap_covered);
+        return (
+          <div className="space-y-1.5">
+            <div className="text-[11px] font-medium text-slate-400">{t("Επιμερισμός ανά συνταγή (ΚΥΥΑΠ/ΕΤΥΑΠ)", "Per-prescription split (ΚΥΥΑΠ/ΕΤΥΑΠ)")}</div>
+            <div className="flex flex-wrap gap-2 text-sm">
+              <span className="rounded-lg bg-amber-50 px-3 py-1.5 font-medium text-amber-700">{t("Από Ασφ/νο", "From patient")}: {eur(patTot)}</span>
+              <span className="rounded-lg bg-violet-50 px-3 py-1.5 font-medium text-violet-700">{t("Από ΚΥΥΑΠ", "From ΚΥΥΑΠ")}: {eur(d.details.kyyap_covered)}</span>
+              <span className="rounded-lg bg-brand-50 px-3 py-1.5 font-medium text-brand-700">{t("Από ΕΟΠΥΥ", "From ΕΟΠΥΥ")}: {eur(eopyy)}</span>
+            </div>
+          </div>
+        );
+      })() : null}
       {marginReliable ? (
         <div className="-mt-2 text-xs text-slate-400">
           {t("Η χονδρική τιμή εκτιμάται από την επίσημη κλιμακωτή διατίμηση (μεικτό κέρδος φαρμακείου ανά τιμή) — ενδεικτικό.",

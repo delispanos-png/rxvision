@@ -59,6 +59,14 @@ RISK_MISMATCH = 40     # amount_claimed + patient_share ≠ amount_total
 RISK_NO_FUND = 35      # missing insurer
 RISK_HIGH_COST = 15    # high-cost line → extra scrutiny
 
+# ΚΥΥΑΠ (ΕΤΥΑΠ) ΑΝΑ ΣΥΝΤΑΓΗ (visit), γραμμένο σε ΚΑΘΕ φάση/εκτέλεση. Στις προβολές ΑΝΑ ΗΜΕΡΑ/ΕΚΤΕΛΕΣΗ
+# πρέπει να μετρηθεί/αφαιρεθεί ΜΙΑ φορά — αλλιώς μια συνταγή εκτελεσμένη σε >1 μέρες αφαιρεί ΟΛΟ το ΚΥΥΑΠ
+# σε ΚΑΘΕ μέρα (π.χ. φάση 2 με claim 3,29 − 19,18 = −15,89) και διπλομετρά το ΕΤΥΑΠ. Το αποδίδουμε ΜΟΝΟ
+# στη ΦΑΣΗ 1 (external_id χωρίς «:» ή που λήγει σε «:1»).
+_KYYAP_FIRST_PHASE = {"$cond": [
+    {"$in": [{"$arrayElemAt": [{"$split": ["$external_id", ":"]}, 1]}, [None, "1"]]},
+    {"$ifNull": ["$details.kyyap_covered", 0]}, 0]}
+
 
 def _band(score: int) -> str:
     return "critical" if score >= 75 else "high" if score >= 50 else "medium" if score >= 25 else "low"
@@ -135,17 +143,18 @@ class ReimbursementRepository(BaseRepository):
         by_fund_raw = await self._db["prescription_executions"].aggregate([
             {"$match": {**match, "amount_total": {"$gt": 0},
                         "details.full_participation": {"$ne": True}}},
+            {"$addFields": {"_kyyap_eff": _KYYAP_FIRST_PHASE}},   # ΚΥΥΑΠ μόνο στη φάση 1 (σωστό & όταν visit σε >1 μήνες)
             {"$group": {"_id": {"fund": "$fund_id",
                                 "vac": {"$ifNull": ["$details.vaccines", False]},
                                 "fyk": {"$ifNull": ["$details.n3816", False]},
                                 "visit": {"$ifNull": ["$details.visit_id", "$_id"]}},
                         "rx": {"$sum": 1}, "retail": {"$sum": "$amount_total"},
                         "amount_claimed": {"$sum": "$amount_claimed"},
-                        "kyyap": {"$max": {"$ifNull": ["$details.kyyap_covered", 0]}},
+                        "kyyap": {"$max": "$_kyyap_eff"},
                         "patient": {"$sum": "$patient_share"}}},
             {"$group": {"_id": {"fund": "$_id.fund", "vac": "$_id.vac", "fyk": "$_id.fyk"},
                         "rx": {"$sum": "$rx"}, "retail": {"$sum": "$retail"},
-                        "claim": {"$sum": {"$subtract": ["$amount_claimed", "$kyyap"]}},
+                        "claim": {"$sum": {"$max": [0, {"$subtract": ["$amount_claimed", "$kyyap"]}]}},
                         "patient": {"$sum": "$patient"}}},
         ]).to_list(None)
         grouped: dict = defaultdict(lambda: {"rx": 0, "retail": 0, "claim": 0, "patient": 0,
@@ -177,8 +186,10 @@ class ReimbursementRepository(BaseRepository):
         # Το πλήθος (rx) παραμένει σε εκτελέσεις.
         et = await self._db["prescription_executions"].aggregate([
             {"$match": {**match, "details.kyyap_covered": {"$gt": 0}}},
+            {"$addFields": {"_kyyap_eff": _KYYAP_FIRST_PHASE}},   # ΚΥΥΑΠ μόνο στη φάση 1 (μία φορά ανά visit)
             {"$group": {"_id": {"$ifNull": ["$details.visit_id", "$_id"]},
-                        "kyyap": {"$first": "$details.kyyap_covered"}, "n": {"$sum": 1}}},
+                        "kyyap": {"$max": "$_kyyap_eff"}, "n": {"$sum": 1}}},
+            {"$match": {"kyyap": {"$gt": 0}}},
             {"$group": {"_id": None, "rx": {"$sum": "$n"}, "claim": {"$sum": "$kyyap"}}},
         ]).to_list(1)
         etyap_claim = (et[0]["claim"] if et else 0) or 0
@@ -284,16 +295,17 @@ class ReimbursementRepository(BaseRepository):
         # claim = ΚΑΘΑΡΟ πρωτεύον (− ΚΥΥΑΠ)· το ΚΥΥΑΠ ανά ΣΥΝΤΑΓΗ (visit) → αφαιρείται ΜΙΑ φορά ανά visit
         for r in await self._db["prescription_executions"].aggregate([
             {"$match": {**match, "amount_total": {"$gt": 0}, "details.full_participation": {"$ne": True}}},
+            {"$addFields": {"_kyyap_eff": _KYYAP_FIRST_PHASE}},   # ΚΥΥΑΠ μόνο στη φάση 1 (μία φορά)
             {"$group": {"_id": {"fund": "$fund_id", "vac": {"$ifNull": ["$details.vaccines", False]},
                                 "day": {"$dateToString": {"format": "%Y-%m-%d", "date": "$executed_at"}},
                                 "visit": {"$ifNull": ["$details.visit_id", "$_id"]}},
                         "rx": {"$sum": 1}, "retail": {"$sum": "$amount_total"},
                         "amount_claimed": {"$sum": "$amount_claimed"},
-                        "kyyap": {"$max": {"$ifNull": ["$details.kyyap_covered", 0]}},
+                        "kyyap": {"$max": "$_kyyap_eff"},
                         "patient": {"$sum": "$patient_share"}}},
             {"$group": {"_id": {"fund": "$_id.fund", "vac": "$_id.vac", "day": "$_id.day"},
                         "rx": {"$sum": "$rx"}, "retail": {"$sum": "$retail"},
-                        "claim": {"$sum": {"$subtract": ["$amount_claimed", "$kyyap"]}},
+                        "claim": {"$sum": {"$max": [0, {"$subtract": ["$amount_claimed", "$kyyap"]}]}},
                         "patient": {"$sum": "$patient"}}},
         ]).to_list(None):
             label, _ = self._grp_label(meta, r["_id"]["fund"], bool(r["_id"]["vac"]))
@@ -304,9 +316,11 @@ class ReimbursementRepository(BaseRepository):
         # ΕΤΥΑΠ ανά ημέρα: το kyyap μετριέται ΜΙΑ φορά ανά ΣΥΝΤΑΓΗ (visit) — dedup· πλήθος σε εκτελέσεις.
         for r in await self._db["prescription_executions"].aggregate([
             {"$match": {**match, "details.kyyap_covered": {"$gt": 0}}},
+            {"$addFields": {"_kyyap_eff": _KYYAP_FIRST_PHASE}},   # ΚΥΥΑΠ μόνο στη φάση 1 (όχι διπλή μέτρηση ανά μέρα)
             {"$group": {"_id": {"visit": {"$ifNull": ["$details.visit_id", "$_id"]},
                                 "day": {"$dateToString": {"format": "%Y-%m-%d", "date": "$executed_at"}}},
-                        "kyyap": {"$first": "$details.kyyap_covered"}, "n": {"$sum": 1}}},
+                        "kyyap": {"$max": "$_kyyap_eff"}, "n": {"$sum": 1}}},
+            {"$match": {"kyyap": {"$gt": 0}}},   # η μέρα που φέρει τη φάση 1 της συνταγής
             {"$group": {"_id": "$_id.day", "rx": {"$sum": "$n"}, "claim": {"$sum": "$kyyap"}}},
         ]).to_list(None):
             e = perfund["ΕΤΥΑΠ"][r["_id"]]
@@ -840,7 +854,10 @@ class ReimbursementRepository(BaseRepository):
             needs_orig = (not bool(r.get("intangible"))) and first_phase
             # ΕΟΠΥΥ claim = ΚΑΘΑΡΟ πρωτεύον = amount_claimed − ΚΥΥΑΠ κάλυψη. Το ΚΥΥΑΠ κομμάτι ανήκει
             # στο ΕΤΥΑΠ (συμπληρωματική υποβολή) — ΟΧΙ στον ΕΟΠΥΥ (αλλιώς διπλομετριέται στα σύνολα).
-            _kyyap = int(r.get("kyyap") or 0)
+            # ΤΟ ΚΥΥΑΠ ΕΙΝΑΙ ΑΝΑ ΣΥΝΤΑΓΗ (visit), γραμμένο σε ΚΑΘΕ φάση/εκτέλεση → αποδίδεται ΜΟΝΟ στη
+            # ΦΑΣΗ 1 (μία φορά). Αλλιώς σε μερική εκτέλεση (π.χ. φάση 2 με claim 3,29) αφαιρούσε ΟΛΟ το
+            # ΚΥΥΑΠ (19,18) → αρνητικό ΕΟΠΥΥ −15,89 και διπλομέτρηση ΕΤΥΑΠ.
+            _kyyap = int(r.get("kyyap") or 0) if first_phase else 0
             _net_claim = max(0, int(r.get("claim") or 0) - _kyyap)
             allrows.append({
                 "barcode": root, "external_id": ext, "exec_no": exno,
