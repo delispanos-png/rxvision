@@ -50,13 +50,38 @@ async def set_status(order_id: str, body: StatusIn,
 class BackorderIn(BaseModel):
     accept: bool
     available_date: str | None = None   # YYYY-MM-DD (πότε θα είναι διαθέσιμο)
+    available_from: str | None = Field(None, max_length=5)   # «15:00» (χρονικό διάστημα παραλαβής)
+    available_to: str | None = Field(None, max_length=5)     # «20:00»
 
 
 @router.post("/{order_id}/backorder")
 async def respond_backorder(order_id: str, body: BackorderIn,
                             ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
-    """Αποδοχή (+ ημερομηνία) ή απόρριψη μιας «σε αναμονή έγκρισης» παραγγελίας (κατόπιν παραγγελίας)."""
-    return await _repo(ctx).respond_backorder(order_id, body.accept, body.available_date)
+    """Αποδοχή (+ ημερομηνία & χρονικό διάστημα) ή απόρριψη μιας «σε αναμονή έγκρισης» παραγγελίας."""
+    return await _repo(ctx).respond_backorder(order_id, body.accept, body.available_date,
+                                              body.available_from, body.available_to)
+
+
+class NoteIn(BaseModel):
+    note: str = Field("", max_length=1000)
+
+
+@router.post("/{order_id}/note")
+async def set_internal_note(order_id: str, body: NoteIn,
+                            ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+    """Εσωτερική σημείωση φαρμακοποιού (ΔΕΝ φαίνεται στον πελάτη)."""
+    return await _repo(ctx).set_internal_note(order_id, body.note)
+
+
+class MessageIn(BaseModel):
+    text: str = Field(..., min_length=1, max_length=1000)
+
+
+@router.post("/{order_id}/message")
+async def send_customer_message(order_id: str, body: MessageIn,
+                                ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+    """Μήνυμα προς τον πελάτη για την παραγγελία (ορατό στον πελάτη + push)."""
+    return await _repo(ctx).send_customer_message(order_id, body.text)
 
 
 @router.get("/settings")

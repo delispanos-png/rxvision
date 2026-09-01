@@ -36,7 +36,7 @@ const margin = (p: Item) => (p.wholesale_cents && p.price_cents) ? Math.round((p
 export default function WarehousePage() {
   const t = useT();
   const TYPE_EL = typeElMap(t);
-  const [q, setQ] = useState("");
+  const [q, setQ] = useState(() => { try { return new URLSearchParams(window.location.search).get("q") ?? ""; } catch { return ""; } });
   const [type, setType] = useState("");
   const [low, setLow] = useState(false);
   const [exp, setExp] = useState(false);

@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Truck, Package, MapPin, Phone, Check, Loader2, Clock, X, Trash2, Plus, ImagePlus } from "lucide-react";
+import { Truck, Package, MapPin, Phone, Check, Loader2, Clock, X, Trash2, Plus, ImagePlus, Eye, MessageSquare, StickyNote, Send, Search } from "lucide-react";
 import { api, apiUpload, API_BASE } from "@/lib/apiClient";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
 import { DateInput } from "@/components/ui/DateInput";
@@ -11,14 +11,22 @@ import { useT } from "@/store/prefStore";
 type T = (el: string, en: string) => string;
 
 type Item = { barcode: string; name: string; qty: number; line_cents: number; discount_pct: number; type: string; backorder?: boolean };
+type Msg = { text: string; at: string; from?: string };
 type Order = {
   _id: string; patient_name: string; patient_phone: string; items: Item[];
   subtotal_cents: number; delivery_fee_cents: number; total_cents: number; mode: string;
   address?: { street?: string; area?: string; postal?: string; phone?: string; notes?: string } | null;
   courier_auth?: { name?: string; id_number?: string } | null;
   has_medicine: boolean; has_backorder?: boolean; available_date?: string | null; status: string; created_at: string;
+  available_from?: string | null; available_to?: string | null; payment_method?: string | null;
+  note?: string | null; internal_note?: string | null; customer_message?: string | null; messages?: Msg[];
 };
 const eur = (c: number) => (c / 100).toLocaleString("el-GR", { minimumFractionDigits: 2 }) + " €";
+const oidOf = (o: Order) => (o._id || "").slice(-6).toUpperCase();
+const dmy = (s?: string | null) => { if (!s) return ""; const p = s.split("T")[0].split("-"); return p.length === 3 ? `${p[2]}/${p[1]}/${p[0]}` : s; };
+const availWindow = (o: Order) => o.available_date ? `${dmy(o.available_date)}${o.available_from && o.available_to ? `, ${o.available_from}–${o.available_to}` : ""}` : "";
+const payLabelOf = (t: T, o: Order) => o.payment_method === "online" ? t("Online (κάρτα/IRIS)", "Online (card/IRIS)") : o.payment_method === "cod" ? t("Με την παράδοση", "On delivery") : t("Στο κατάστημα", "In store");
+const TIMES = Array.from({ length: 27 }, (_, i) => { const m = 8 * 60 + i * 30; return `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`; });
 const stMap = (t: T): Record<string, { label: string; cls: string }> => ({
   pending: { label: t("Σε αναμονή έγκρισης", "Awaiting approval"), cls: "bg-amber-100 text-amber-800" },
   new: { label: t("Νέα", "New"), cls: "bg-rose-100 text-rose-700" },
@@ -56,6 +64,11 @@ function Orders() {
   const list = useQuery({ queryKey: ["od-orders"], queryFn: () => api<{ items: Order[] }>("/orders/delivery"), refetchInterval: 20000, retry: false });
   const [busy, setBusy] = useState<string | null>(null);
   const [dates, setDates] = useState<Record<string, string>>({});
+  const [times, setTimes] = useState<Record<string, { from: string; to: string }>>({});
+  const [openOrder, setOpenOrder] = useState<Order | null>(null);   // πλήρης προβολή (5.5/6.2)
+  const [quickBc, setQuickBc] = useState<string | null>(null);      // γρήγορη προβολή προϊόντος (5.4)
+  // Φίλτρα ολοκληρωμένων (6.1)
+  const [fq, setFq] = useState({ text: "", status: "", pay: "", mode: "", from: "", to: "" });
   async function advance(id: string, status: string) {
     setBusy(id);
     try { await api(`/orders/delivery/${id}/status`, { method: "POST", body: JSON.stringify({ status }) }); await list.refetch(); }
@@ -63,11 +76,24 @@ function Orders() {
   }
   async function respond(id: string, accept: boolean) {
     setBusy(id);
-    try { await api(`/orders/delivery/${id}/backorder`, { method: "POST", body: JSON.stringify({ accept, available_date: dates[id] || null }) }); await list.refetch(); }
+    const tm = times[id];
+    try { await api(`/orders/delivery/${id}/backorder`, { method: "POST", body: JSON.stringify({ accept, available_date: dates[id] || null, available_from: tm?.from || null, available_to: tm?.to || null }) }); await list.refetch(); }
     finally { setBusy(null); }
   }
   const orders = (list.data?.items ?? []).filter((o) => !DONE_ST.includes(o.status));
-  const done = (list.data?.items ?? []).filter((o) => DONE_ST.includes(o.status));
+  const doneAll = (list.data?.items ?? []).filter((o) => DONE_ST.includes(o.status));
+  const done = doneAll.filter((o) => {
+    if (fq.text) { const q = fq.text.toLowerCase(); if (!(o.patient_name || "").toLowerCase().includes(q) && !oidOf(o).toLowerCase().includes(q)) return false; }
+    if (fq.status && o.status !== fq.status) return false;
+    if (fq.pay && (o.payment_method || "store") !== fq.pay) return false;
+    if (fq.mode && o.mode !== fq.mode) return false;
+    const d = o.created_at?.split("T")[0] ?? "";
+    if (fq.from && d < fq.from) return false;
+    if (fq.to && d > fq.to) return false;
+    return true;
+  });
+  // Ζωντανή ενημέρωση του ανοιχτού modal μετά από refetch (νέα σημείωση/μήνυμα)
+  const openLive = openOrder ? (list.data?.items ?? []).find((o) => o._id === openOrder._id) ?? openOrder : null;
 
   return (
     <div className="w-full">
@@ -87,13 +113,18 @@ function Orders() {
                     {o.mode === "delivery" ? <Truck className="h-4 w-4 text-violet-500" /> : <Package className="h-4 w-4 text-sky-500" />}
                     {o.patient_name || t("Πελάτης", "Customer")} <span className={`rounded-full px-2 py-0.5 text-[11px] ${ST[o.status]?.cls}`}>{ST[o.status]?.label}</span>
                   </div>
-                  <div className="mt-0.5 text-[11px] text-slate-400">{new Date(o.created_at).toLocaleString("el-GR")} · {o.mode === "delivery" ? t("Αποστολή", "Delivery") : t("Παραλαβή", "Pickup")}</div>
+                  <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-[11px] text-slate-400"><span className="font-mono font-semibold text-slate-500">#{oidOf(o)}</span><span>· {new Date(o.created_at).toLocaleString("el-GR")}</span><span>· {o.mode === "delivery" ? t("Αποστολή", "Delivery") : t("Παραλαβή", "Pickup")}</span><span>· 💳 {payLabelOf(t, o)}</span></div>
                 </div>
-                <div className="text-right"><div className="text-base font-bold text-slate-800">{eur(o.total_cents)}</div>{o.delivery_fee_cents > 0 && <div className="text-[11px] text-slate-400">(+{eur(o.delivery_fee_cents)} {t("μεταφορικά", "delivery")})</div>}</div>
+                <div className="flex flex-col items-end gap-1">
+                  <div className="text-base font-bold text-slate-800">{eur(o.total_cents)}</div>
+                  {o.delivery_fee_cents > 0 && <div className="text-[11px] text-slate-400">(+{eur(o.delivery_fee_cents)} {t("μεταφορικά", "delivery")})</div>}
+                  <button onClick={() => setOpenOrder(o)} className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2 py-1 text-[11px] font-semibold text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-800"><Eye className="h-3.5 w-3.5" /> {t("Προβολή", "View")}</button>
+                </div>
               </div>
               <div className="mt-2 space-y-0.5 text-sm text-slate-600">
-                {o.items.map((it, i) => <div key={i} className="flex justify-between"><span>{it.qty}× {it.name}{it.discount_pct > 0 && <span className="ml-1 text-emerald-600">-{it.discount_pct}%</span>}{it.backorder && <span className="ml-1 rounded bg-amber-100 px-1 text-[10px] font-semibold text-amber-700">{t("κατόπιν παραγγελίας", "backorder")}</span>}</span><span>{eur(it.line_cents)}</span></div>)}
+                {o.items.map((it, i) => <div key={i} className="flex justify-between gap-2"><button onClick={() => setQuickBc(it.barcode)} className="min-w-0 truncate text-left hover:text-brand-700 hover:underline">{it.qty}× {it.name}{it.discount_pct > 0 && <span className="ml-1 text-emerald-600">-{it.discount_pct}%</span>}{it.backorder && <span className="ml-1 rounded bg-amber-100 px-1 text-[10px] font-semibold text-amber-700">{t("κατόπιν παραγγελίας", "backorder")}</span>}</button><span className="shrink-0">{eur(it.line_cents)}</span></div>)}
               </div>
+              {o.note && <div className="mt-2 rounded-lg bg-slate-50 px-3 py-1.5 text-xs text-slate-600 dark:bg-slate-800"><b>{t("Σημείωση πελάτη:", "Customer note:")}</b> {o.note}</div>}
               {o.mode === "delivery" && o.address && (
                 <div className="mt-2 rounded-lg bg-violet-50 px-3 py-2 text-xs text-violet-800">
                   <div className="flex items-center gap-1 font-medium"><MapPin className="h-3.5 w-3.5" /> {o.address.street}, {o.address.area} {o.address.postal}</div>
@@ -113,13 +144,17 @@ function Orders() {
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="text-xs text-slate-500">{t("Διαθέσιμο:", "Available:")}</span>
                     <DateInput value={dates[o._id] ?? ""} onChange={(v) => setDates((d) => ({ ...d, [o._id]: v }))} />
+                    <span className="text-xs text-slate-400">{t("από", "from")}</span>
+                    <select value={times[o._id]?.from ?? ""} onChange={(e) => setTimes((s) => ({ ...s, [o._id]: { from: e.target.value, to: s[o._id]?.to ?? "" } }))} className="rounded-lg border border-slate-300 px-2 py-1.5 text-xs dark:border-slate-600 dark:bg-slate-800"><option value="">—</option>{TIMES.map((tm) => <option key={tm} value={tm}>{tm}</option>)}</select>
+                    <span className="text-xs text-slate-400">{t("έως", "to")}</span>
+                    <select value={times[o._id]?.to ?? ""} onChange={(e) => setTimes((s) => ({ ...s, [o._id]: { from: s[o._id]?.from ?? "", to: e.target.value } }))} className="rounded-lg border border-slate-300 px-2 py-1.5 text-xs dark:border-slate-600 dark:bg-slate-800"><option value="">—</option>{TIMES.map((tm) => <option key={tm} value={tm}>{tm}</option>)}</select>
                     <button onClick={() => respond(o._id, true)} disabled={busy === o._id} className="inline-flex items-center gap-1 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50">{busy === o._id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />} {t("Αποδοχή", "Accept")}</button>
                     <button onClick={() => respond(o._id, false)} disabled={busy === o._id} className="inline-flex items-center gap-1 rounded-lg border border-rose-300 px-3 py-1.5 text-xs font-semibold text-rose-600 hover:bg-rose-50 disabled:opacity-50"><X className="h-3.5 w-3.5" /> {t("Απόρριψη", "Decline")}</button>
                   </div>
                 </div>
               ) : (
                 <div className="mt-3 flex flex-wrap items-center gap-2">
-                  {o.available_date && <span className="rounded-lg bg-emerald-50 px-2 py-1 text-[11px] font-medium text-emerald-700">📦 {t("Διαθέσιμο", "Available")} ~{new Date(o.available_date).toLocaleDateString("el-GR")}</span>}
+                  {o.available_date && <span className="rounded-lg bg-emerald-50 px-2 py-1 text-[11px] font-medium text-emerald-700">📦 {t("Διαθέσιμο", "Available")} {availWindow(o)}</span>}
                   {(NEXT[o.status] ?? []).map((n) => (
                     <button key={n.to} onClick={() => advance(o._id, n.to)} disabled={busy === o._id}
                       className={`inline-flex items-center gap-1 rounded-lg px-3 py-1.5 text-xs font-semibold disabled:opacity-50 ${n.to === "cancelled" ? "border border-rose-300 text-rose-600 hover:bg-rose-50" : "bg-brand-600 text-white hover:bg-brand-700"}`}>
@@ -133,16 +168,109 @@ function Orders() {
         </div>
       )}
       {tab === "done" && (
-        <div className="grid items-start gap-2 xl:grid-cols-2">
-          {done.length === 0 && <div className="rounded-xl border border-dashed border-slate-300 p-8 text-center text-sm text-slate-400 xl:col-span-2">{t("Καμία ολοκληρωμένη παραγγελία ακόμη.", "No completed orders yet.")}</div>}
-          {done.map((o) => (
-            <div key={o._id} className="flex items-center justify-between rounded-lg border border-slate-100 bg-slate-50/60 px-3 py-2.5 text-sm text-slate-500">
-              <span className="min-w-0 truncate">{o.patient_name} · {o.items.length} {t("είδη", "items")} · {new Date(o.created_at).toLocaleDateString("el-GR")}</span>
-              <span className="flex shrink-0 items-center gap-2"><span className={`rounded-full px-2 py-0.5 text-[11px] ${ST[o.status]?.cls}`}>{ST[o.status]?.label}</span> {eur(o.total_cents)}</span>
+        <div className="space-y-3">
+          {/* Φίλτρα (6.1): Order ID/πελάτης, κατάσταση, πληρωμή, αποστολή, ημερομηνία */}
+          <div className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-white p-2.5 dark:border-slate-700 dark:bg-slate-900">
+            <div className="relative min-w-[160px] flex-1">
+              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <input value={fq.text} onChange={(e) => setFq({ ...fq, text: e.target.value })} placeholder={t("Order ID ή πελάτης…", "Order ID or customer…")} className="w-full rounded-lg border border-slate-300 py-1.5 pl-8 pr-2 text-sm dark:border-slate-600 dark:bg-slate-800" />
             </div>
-          ))}
+            <select value={fq.status} onChange={(e) => setFq({ ...fq, status: e.target.value })} className="rounded-lg border border-slate-300 px-2 py-1.5 text-sm dark:border-slate-600 dark:bg-slate-800"><option value="">{t("Κατάσταση", "Status")}</option>{DONE_ST.map((s) => <option key={s} value={s}>{ST[s]?.label}</option>)}</select>
+            <select value={fq.pay} onChange={(e) => setFq({ ...fq, pay: e.target.value })} className="rounded-lg border border-slate-300 px-2 py-1.5 text-sm dark:border-slate-600 dark:bg-slate-800"><option value="">{t("Πληρωμή", "Payment")}</option><option value="store">{t("Στο κατάστημα", "In store")}</option><option value="cod">{t("Με την παράδοση", "On delivery")}</option><option value="online">Online</option></select>
+            <select value={fq.mode} onChange={(e) => setFq({ ...fq, mode: e.target.value })} className="rounded-lg border border-slate-300 px-2 py-1.5 text-sm dark:border-slate-600 dark:bg-slate-800"><option value="">{t("Παράδοση", "Delivery")}</option><option value="delivery">{t("Αποστολή", "Delivery")}</option><option value="pickup">{t("Παραλαβή", "Pickup")}</option></select>
+            <DateInput value={fq.from} onChange={(v) => setFq({ ...fq, from: v })} />
+            <span className="text-xs text-slate-400">→</span>
+            <DateInput value={fq.to} onChange={(v) => setFq({ ...fq, to: v })} />
+            {(fq.text || fq.status || fq.pay || fq.mode || fq.from || fq.to) && <button onClick={() => setFq({ text: "", status: "", pay: "", mode: "", from: "", to: "" })} className="rounded-lg px-2 py-1 text-xs font-medium text-slate-400 hover:text-slate-600">{t("Καθαρισμός", "Clear")}</button>}
+          </div>
+          <div className="grid items-start gap-2 xl:grid-cols-2">
+            {doneAll.length === 0 && <div className="rounded-xl border border-dashed border-slate-300 p-8 text-center text-sm text-slate-400 xl:col-span-2">{t("Καμία ολοκληρωμένη παραγγελία ακόμη.", "No completed orders yet.")}</div>}
+            {doneAll.length > 0 && done.length === 0 && <div className="rounded-xl border border-dashed border-slate-300 p-8 text-center text-sm text-slate-400 xl:col-span-2">{t("Καμία παραγγελία με αυτά τα φίλτρα.", "No orders match these filters.")}</div>}
+            {done.map((o) => (
+              <button key={o._id} onClick={() => setOpenOrder(o)} className="flex items-center justify-between gap-2 rounded-lg border border-slate-100 bg-slate-50/60 px-3 py-2.5 text-left text-sm text-slate-500 hover:bg-slate-100 dark:border-slate-800 dark:bg-slate-800/60 dark:hover:bg-slate-800">
+                <span className="min-w-0 truncate"><span className="font-mono font-semibold text-slate-600 dark:text-slate-300">#{oidOf(o)}</span> · {o.patient_name} · {o.items.length} {t("είδη", "items")} · {new Date(o.created_at).toLocaleDateString("el-GR")}</span>
+                <span className="flex shrink-0 items-center gap-2"><span className={`rounded-full px-2 py-0.5 text-[11px] ${ST[o.status]?.cls}`}>{ST[o.status]?.label}</span> {eur(o.total_cents)} <Eye className="h-4 w-4 text-slate-400" /></span>
+              </button>
+            ))}
+          </div>
         </div>
       )}
+      {openLive && <OrderModal order={openLive} t={t} ST={ST} onClose={() => setOpenOrder(null)} onChanged={() => list.refetch()} onQuick={(bc) => setQuickBc(bc)} />}
+      {quickBc && <ProductQuick barcode={quickBc} t={t} onClose={() => setQuickBc(null)} />}
+    </div>
+  );
+}
+
+// ── Πλήρης προβολή παραγγελίας (5.5/6.2) + εσωτερική σημείωση (5.2) + μήνυμα πελάτη (5.3) + clickable προϊόντα (5.4) ──
+function OrderModal({ order: o, t, ST, onClose, onChanged, onQuick }: { order: Order; t: T; ST: Record<string, { label: string; cls: string }>; onClose: () => void; onChanged: () => void; onQuick: (bc: string) => void }) {
+  const [note, setNote] = useState(o.internal_note ?? "");
+  const [msg, setMsg] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [savedNote, setSavedNote] = useState(false);
+  async function saveNote() { setBusy(true); try { await api(`/orders/delivery/${o._id}/note`, { method: "POST", body: JSON.stringify({ note }) }); setSavedNote(true); onChanged(); } finally { setBusy(false); } }
+  async function sendMsg() { if (!msg.trim()) return; setBusy(true); try { await api(`/orders/delivery/${o._id}/message`, { method: "POST", body: JSON.stringify({ text: msg.trim() }) }); setMsg(""); onChanged(); } finally { setBusy(false); } }
+  return (
+    <div className="fixed inset-0 z-[100] flex items-start justify-center overflow-y-auto bg-black/40 p-4" onClick={onClose}>
+      <div className="my-4 w-full max-w-2xl rounded-2xl bg-white p-5 shadow-xl dark:bg-slate-900" onClick={(e) => e.stopPropagation()}>
+        <div className="mb-3 flex items-center justify-between">
+          <div className="flex flex-wrap items-center gap-2 text-base font-bold text-slate-800 dark:text-slate-100"><Package className="h-5 w-5 text-brand-600" /> {t("Παραγγελία", "Order")} <span className="font-mono text-brand-700">#{oidOf(o)}</span> <span className={`rounded-full px-2 py-0.5 text-[11px] ${ST[o.status]?.cls}`}>{ST[o.status]?.label}</span></div>
+          <button onClick={onClose} className="grid h-8 w-8 place-items-center rounded-lg text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"><X className="h-4 w-4" /></button>
+        </div>
+        <div className="grid gap-2 text-sm sm:grid-cols-2">
+          <div className="rounded-lg border border-slate-200 p-2.5 dark:border-slate-700"><div className="text-[11px] font-semibold uppercase text-slate-400">{t("Πελάτης", "Customer")}</div><div className="font-medium text-slate-800 dark:text-slate-100">{o.patient_name || "—"}</div>{o.patient_phone && <div className="flex items-center gap-1 text-xs text-slate-500"><Phone className="h-3 w-3" /> {o.patient_phone}</div>}</div>
+          <div className="space-y-0.5 rounded-lg border border-slate-200 p-2.5 text-xs text-slate-600 dark:border-slate-700 dark:text-slate-300">
+            <div>{o.mode === "delivery" ? <><Truck className="inline h-3.5 w-3.5" /> {t("Αποστολή", "Delivery")}</> : <><Package className="inline h-3.5 w-3.5" /> {t("Παραλαβή", "Pickup")}</>}</div>
+            <div>💳 {payLabelOf(t, o)}</div>
+            <div>🗓️ {new Date(o.created_at).toLocaleString("el-GR")}</div>
+            {o.available_date && <div className="font-semibold text-emerald-700">📦 {t("Διαθέσιμο", "Available")} {availWindow(o)}</div>}
+          </div>
+        </div>
+        {o.mode === "delivery" && o.address && <div className="mt-2 rounded-lg bg-violet-50 px-3 py-2 text-xs text-violet-800 dark:bg-violet-950/30 dark:text-violet-200"><MapPin className="mr-1 inline h-3.5 w-3.5" />{o.address.street}, {o.address.area} {o.address.postal}{o.address.phone ? ` · ${o.address.phone}` : ""}{o.address.notes ? ` · «${o.address.notes}»` : ""}</div>}
+        <div className="mt-3 overflow-hidden rounded-lg border border-slate-200 dark:border-slate-700">
+          {o.items.map((it, i) => (
+            <button key={i} onClick={() => onQuick(it.barcode)} title={t("Δες προϊόν", "View product")} className="flex w-full items-center justify-between gap-2 border-b border-slate-100 px-3 py-2 text-left text-sm last:border-0 hover:bg-slate-50 dark:border-slate-800 dark:hover:bg-slate-800">
+              <span className="min-w-0 truncate text-slate-700 hover:text-brand-700 dark:text-slate-200">{it.qty}× {it.name}{it.discount_pct > 0 && <span className="ml-1 text-emerald-600">-{it.discount_pct}%</span>}{it.backorder && <span className="ml-1 rounded bg-amber-100 px-1 text-[10px] font-semibold text-amber-700">{t("κατόπιν παραγγελίας", "backorder")}</span>}</span>
+              <span className="shrink-0 font-medium">{eur(it.line_cents)}</span>
+            </button>
+          ))}
+          <div className="flex justify-between border-t border-slate-100 px-3 py-2 text-sm font-bold text-slate-800 dark:border-slate-800 dark:text-slate-100"><span>{t("Σύνολο", "Total")}{o.delivery_fee_cents > 0 && <span className="ml-1 text-[11px] font-normal text-slate-400">(+{eur(o.delivery_fee_cents)} {t("μεταφορικά", "delivery")})</span>}</span><span>{eur(o.total_cents)}</span></div>
+        </div>
+        {o.note && <div className="mt-2 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600 dark:bg-slate-800"><b>{t("Σημείωση πελάτη:", "Customer note:")}</b> {o.note}</div>}
+        <div className="mt-3">
+          <div className="mb-1 flex items-center gap-1.5 text-xs font-semibold text-slate-600 dark:text-slate-300"><StickyNote className="h-3.5 w-3.5 text-amber-500" /> {t("Εσωτερική σημείωση (δεν τη βλέπει ο πελάτης)", "Internal note (not shown to the customer)")}</div>
+          <div className="flex gap-2"><textarea value={note} onChange={(e) => { setNote(e.target.value); setSavedNote(false); }} rows={2} className="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-800" /><button onClick={saveNote} disabled={busy} className="shrink-0 self-start rounded-lg bg-slate-700 px-3 py-2 text-xs font-semibold text-white hover:bg-slate-800 disabled:opacity-50">{savedNote ? t("✓", "✓") : t("Αποθήκευση", "Save")}</button></div>
+        </div>
+        <div className="mt-3">
+          <div className="mb-1 flex items-center gap-1.5 text-xs font-semibold text-slate-600 dark:text-slate-300"><MessageSquare className="h-3.5 w-3.5 text-brand-500" /> {t("Μήνυμα προς τον πελάτη", "Message to the customer")}</div>
+          {!!o.messages?.length && <div className="mb-1.5 space-y-1">{o.messages.map((m, i) => <div key={i} className="rounded-lg bg-brand-50 px-2.5 py-1.5 text-xs text-brand-800 dark:bg-brand-950/30 dark:text-brand-200">{m.text} <span className="text-[10px] text-brand-400">· {new Date(m.at).toLocaleString("el-GR")}</span></div>)}</div>}
+          <div className="flex gap-2"><input value={msg} onChange={(e) => setMsg(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") sendMsg(); }} placeholder={t("Γράψε μήνυμα… (ο πελάτης λαμβάνει ειδοποίηση)", "Write a message… (the customer gets a notification)")} className="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-800" /><button onClick={sendMsg} disabled={busy || !msg.trim()} className="inline-flex shrink-0 items-center gap-1 rounded-lg bg-brand-600 px-3 py-2 text-xs font-semibold text-white hover:bg-brand-700 disabled:opacity-50"><Send className="h-3.5 w-3.5" /> {t("Αποστολή", "Send")}</button></div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+type QP = { barcode: string; name: string; image_id?: string | null; photo_url?: string | null; price_cents: number; stock_qty: number; type: string; category?: string | null };
+function ProductQuick({ barcode, t, onClose }: { barcode: string; t: T; onClose: () => void }) {
+  const q = useQuery({ queryKey: ["od-quick", barcode], queryFn: () => api<{ items: QP[] }>(`/catalog/warehouse?q=${encodeURIComponent(barcode)}&page_size=1`), retry: false });
+  const p = q.data?.items?.[0];
+  return (
+    <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
+      <div className="w-full max-w-sm rounded-2xl bg-white p-4 shadow-xl dark:bg-slate-900" onClick={(e) => e.stopPropagation()}>
+        <div className="mb-2 flex items-center justify-between"><div className="text-sm font-bold text-slate-800 dark:text-slate-100">{t("Προϊόν", "Product")}</div><button onClick={onClose} className="grid h-7 w-7 place-items-center rounded-lg text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"><X className="h-4 w-4" /></button></div>
+        {q.isLoading ? <div className="py-6 text-center text-sm text-slate-400">{t("Φόρτωση…", "Loading…")}</div> : !p ? <div className="py-6 text-center text-sm text-slate-400">{t("Δεν βρέθηκε στην αποθήκη.", "Not found in the warehouse.")}<div className="mt-1 font-mono text-xs">{barcode}</div></div> : (
+          <div className="flex gap-3">
+            <span className="grid h-20 w-20 shrink-0 place-items-center overflow-hidden rounded-xl bg-slate-50 dark:bg-slate-800">{p.image_id || p.photo_url ? <img src={p.image_id ? `${API_BASE}/catalog/image/${p.image_id}` : (p.photo_url || "")} alt="" className="h-full w-full object-contain" /> : <Package className="h-7 w-7 text-slate-300" />}</span>
+            <div className="min-w-0 flex-1 text-sm">
+              <div className="font-semibold text-slate-800 dark:text-slate-100">{p.name}</div>
+              <div className="mt-0.5 font-mono text-[11px] text-slate-400">{p.barcode}</div>
+              {p.category && <div className="text-xs text-slate-500">{p.category}</div>}
+              <div className="mt-1 flex items-center gap-2"><span className="font-bold text-slate-900 dark:text-slate-100">{eur(p.price_cents)}</span><span className={`text-xs ${p.stock_qty > 0 ? "text-emerald-600" : "text-amber-600"}`}>{t("Απόθεμα", "Stock")}: {p.stock_qty}</span></div>
+              <a href={`/warehouse?q=${encodeURIComponent(p.barcode)}`} className="mt-2 inline-block text-xs font-semibold text-brand-700 hover:underline">{t("Άνοιγμα στην Αποθήκη →", "Open in Warehouse →")}</a>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

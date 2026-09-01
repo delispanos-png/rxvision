@@ -31,6 +31,7 @@ export function CampaignsCard({ categories, tags }: { categories: string[]; tags
   const catById = new Map(cats.map((c) => [c.id, c]));
   const catLabel = (id: string) => { const parts: string[] = []; let cur = catById.get(id); let guard = 0; while (cur && guard++ < 5) { parts.unshift(cur.name); cur = cur.parent_id ? catById.get(cur.parent_id) : undefined; } return parts.join(" › ") || id; };
   const [prodQ, setProdQ] = useState("");
+  const [prodFocus, setProdFocus] = useState(false);   // dropdown: ανοιχτό μόνο όταν το πεδίο έχει focus (κλείνει σε blur)
   const [pickNames, setPickNames] = useState<Record<string, string>>({});
   const prodSearch = useQuery({
     queryKey: ["camp-prod-search", prodQ],
@@ -155,8 +156,10 @@ export function CampaignsCard({ categories, tags }: { categories: string[]; tags
                   </div>
                 )}
                 <div className="relative">
-                  <input value={prodQ} onChange={(e) => setProdQ(e.target.value)} placeholder={t("Αναζήτηση είδους (όνομα/barcode)…", "Search item (name/barcode)…")} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" />
-                  {prodQ.trim().length >= 2 && (prodSearch.data?.items?.length ?? 0) > 0 && (
+                  <input value={prodQ} onChange={(e) => setProdQ(e.target.value)}
+                    onFocus={() => setProdFocus(true)} onBlur={() => setTimeout(() => setProdFocus(false), 150)}
+                    placeholder={t("Αναζήτηση είδους (όνομα/barcode)…", "Search item (name/barcode)…")} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+                  {prodFocus && prodQ.trim().length >= 2 && (prodSearch.data?.items?.length ?? 0) > 0 && (
                     <div className="absolute z-10 mt-1 max-h-44 w-full overflow-auto rounded-lg border border-slate-200 bg-white shadow-lg">
                       {prodSearch.data!.items.map((p) => {
                         const on = (edit.barcodes ?? []).includes(p.barcode);

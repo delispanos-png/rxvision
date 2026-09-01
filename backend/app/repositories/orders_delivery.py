@@ -546,6 +546,8 @@ class OrdersDeliveryRepository(BaseRepository):
         rows = await self.find({"account_id": account_id}, sort=[("created_at", -1)], limit=50)
         if not rows:
             rows = await self.find({"account_id": _oid(account_id)}, sort=[("created_at", -1)], limit=50)
+        for r in (rows or []):        # η ΕΣΩΤΕΡΙΚΗ σημείωση φαρμακοποιού ΔΕΝ φαίνεται ΠΟΤΕ στον πελάτη
+            r.pop("internal_note", None)
         return jsonsafe(self._mask_orders(rows))
 
     # ── pharmacist side ─────────────────────────────────────────────────────
@@ -560,8 +562,23 @@ class OrdersDeliveryRepository(BaseRepository):
     async def pending_count(self) -> int:
         return await self.count({"status": {"$in": ["pending", "new", "preparing"]}})
 
-    async def respond_backorder(self, order_id: str, accept: bool, available_date: str | None = None) -> dict:
-        """Ο φαρμακοποιός αποδέχεται (+ ημερομηνία διαθεσιμότητας) ή απορρίπτει μια «σε αναμονή» παραγγελία."""
+    @staticmethod
+    def _fmt_window(available_date: str | None, af: str | None, at: str | None) -> str:
+        """«29/09/2026, 15:00–20:00» — ημερομηνία + (προαιρετικό) χρονικό διάστημα παραλαβής."""
+        if not available_date:
+            return ""
+        try:
+            y, m, d = available_date.split("-")[:3]
+            ds = f"{d}/{m}/{y}"
+        except Exception:  # noqa: BLE001
+            ds = available_date
+        if af and at:
+            return f"{ds}, {af}–{at}"
+        return ds
+
+    async def respond_backorder(self, order_id: str, accept: bool, available_date: str | None = None,
+                                available_from: str | None = None, available_to: str | None = None) -> dict:
+        """Ο φαρμακοποιός αποδέχεται (+ ημερομηνία & χρονικό διάστημα διαθεσιμότητας) ή απορρίπτει μια «σε αναμονή»."""
         from bson import ObjectId
         try:
             oid = ObjectId(order_id)
@@ -570,6 +587,8 @@ class OrdersDeliveryRepository(BaseRepository):
         order = await self.find_one({"_id": oid})
         if not order or order.get("status") != "pending":
             return {"ok": False, "error": "not_pending"}
+        af = (available_from or "").strip()[:5] or None
+        at = (available_to or "").strip()[:5] or None
         if accept:
             # δέσμευσε ό,τι είναι ΗΔΗ σε απόθεμα (τα backorder θα έρθουν) → «Νέα» πλέον
             cat = PharmacyCatalogRepository(tenant_id=self.tenant_id)
@@ -578,9 +597,11 @@ class OrdersDeliveryRepository(BaseRepository):
             if in_stock:
                 await cat.reserve_stock(in_stock)   # best-effort (backorder ούτως ή άλλως έρχεται)
             await self.update_one({"_id": oid}, {
-                "$set": {"status": "new", "available_date": available_date, "updated_at": _now()},
+                "$set": {"status": "new", "available_date": available_date,
+                         "available_from": af, "available_to": at, "updated_at": _now()},
                 "$push": {"status_history": {"status": "new", "at": _now()}}})
-            msg = (f"Η παραγγελία σου εγκρίθηκε! Διαθέσιμη ~{available_date}." if available_date
+            win = self._fmt_window(available_date, af, at)
+            msg = (f"Η παραγγελία σου εγκρίθηκε! Διαθέσιμη ~{win}." if win
                    else "Η παραγγελία σου εγκρίθηκε! Θα ενημερωθείς μόλις είναι έτοιμη.")
         else:
             await self.update_one({"_id": oid}, {
@@ -593,6 +614,40 @@ class OrdersDeliveryRepository(BaseRepository):
             await push_service.send_to_account(order["account_id"],
                                                title="🛍️ Παραγγελία φαρμακείου", body=msg, url="/portal")
         return {"ok": True, "status": "new" if accept else "declined", "available_date": available_date}
+
+    async def set_internal_note(self, order_id: str, note: str) -> dict:
+        """Εσωτερική σημείωση φαρμακοποιού — ΜΟΝΟ για το φαρμακείο (ΔΕΝ φαίνεται στον πελάτη· βλ. my_orders)."""
+        from bson import ObjectId
+        try:
+            oid = ObjectId(order_id)
+        except Exception:  # noqa: BLE001
+            return {"ok": False, "error": "bad_id"}
+        await self.update_one({"_id": oid}, {"$set": {"internal_note": (note or "").strip()[:1000] or None,
+                                                      "updated_at": _now()}})
+        return {"ok": True}
+
+    async def send_customer_message(self, order_id: str, text: str) -> dict:
+        """Μήνυμα προς τον πελάτη για την παραγγελία (ορατό στον πελάτη + push). Ξεχωριστό από την
+        εσωτερική σημείωση. Κρατά ιστορικό μηνυμάτων στην παραγγελία."""
+        from bson import ObjectId
+        txt = (text or "").strip()[:1000]
+        if not txt:
+            return {"ok": False, "error": "empty"}
+        try:
+            oid = ObjectId(order_id)
+        except Exception:  # noqa: BLE001
+            return {"ok": False, "error": "bad_id"}
+        order = await self.find_one({"_id": oid})
+        if not order:
+            return {"ok": False, "error": "not_found"}
+        entry = {"text": txt, "at": _now(), "from": "pharmacy"}
+        await self.update_one({"_id": oid}, {"$set": {"customer_message": txt, "updated_at": _now()},
+                                             "$push": {"messages": entry}})
+        if order.get("account_id"):
+            from app.services import push_service
+            await push_service.send_to_account(order["account_id"],
+                                               title="💬 Μήνυμα από το φαρμακείο", body=txt, url="/portal")
+        return {"ok": True}
 
     async def _refund_loyalty(self, order: dict) -> None:
         """Επιστροφή πόντων + χρήσης κουπονιού σε ακύρωση/απόρριψη — ΜΙΑ φορά (idempotent)."""
