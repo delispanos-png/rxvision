@@ -43,7 +43,7 @@ type Summary = { rx_count: number; paid_cents: number; total_cents: number; cove
 type Rx = { barcode: string; executed_at: string; status?: string; patient_share?: number; repeat_current?: number; repeat_total?: number; repeat_root?: string | null; next_open_date?: string | null; medicines: string[]; pending?: string[]; partial?: boolean; doctor?: string | null; specialty?: string | null; tenant_id?: string; pharmacy_name?: string | null };
 type RepeatMed = { name: string; dosage?: string | null };
 type Repeat = Omit<Rx, "medicines"> & { medicines: RepeatMed[] };
-type RxItem = { name?: string | null; quantity?: number; retail_price?: number; is_executed?: boolean; dosage?: string | null };
+type RxItem = { name?: string | null; barcode?: string | null; quantity?: number; retail_price?: number; is_executed?: boolean; dosage?: string | null; usage_video_url?: string | null };
 type RxDetail = Rx & { amount_total?: number; icd10?: string[]; items: RxItem[] };
 type Notif = { id: string; type: string; title: string; body: string; when?: string | null };
 type Avail = { _id?: string; query: string; medicine_name?: string | null; status: string; answer?: string | null; created_at: string };
@@ -78,6 +78,16 @@ const haversineKm = (a: { lat: number; lon: number }, lat2: number, lon2: number
 
 // beforeinstallprompt event (PWA) — δεν υπάρχει στους τυπικούς DOM types
 type BIPEvent = Event & { prompt: () => Promise<void>; userChoice: Promise<{ outcome: string }> };
+
+// YouTube/Vimeo URL → ασφαλές embed URL (whitelist· αλλιώς null)
+function videoEmbed(url?: string | null): string | null {
+  const u = (url || "").trim();
+  let m = u.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([\w-]{6,})/i);
+  if (m) return `https://www.youtube.com/embed/${m[1]}`;
+  m = u.match(/vimeo\.com\/(?:video\/)?(\d+)/i);
+  if (m) return `https://player.vimeo.com/video/${m[1]}`;
+  return null;
+}
 
 const TABS = [["home", "Αρχική", "Home"], ["rx", "Συνταγές", "Prescriptions"], ["shop", "e-Κατάστημα", "e-Store"], ["meds", "Πρόγραμμα λήψης", "Medication schedule"], ["health", "Υγεία", "Health"], ["wallet", "Επιβράβευση", "Rewards"], ["repeats", "Επαναλήψεις", "Refills"], ["renewals", "Ανεκτέλεστα", "Unexecuted"], ["assign", "Ανάθεση συνταγής", "Assign prescription"], ["availability", "Διαθεσιμότητα", "Availability"], ["appointments", "Ραντεβού", "Appointments"], ["pharmacies", "Φαρμακεία", "Pharmacies"]] as const;
 // Σύντομες ετικέτες για τη στενή κάτω μπάρα (mobile) — αλλιώς κόβονται άσχημα.
@@ -198,6 +208,7 @@ export default function PortalHome() {
   const [notifs, setNotifs] = useState<Notif[]>([]);
   const [showNotifs, setShowNotifs] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
+  const [video, setVideo] = useState<string | null>(null);   // player οδηγιών χρήσης (YouTube/Vimeo embed)
   // PWA «Λήψη εφαρμογής» (1.2b): αιχμαλωτίζουμε το beforeinstallprompt & ανιχνεύουμε αν τρέχει ήδη ως app
   const [installPrompt, setInstallPrompt] = useState<BIPEvent | null>(null);
   const [isStandalone, setIsStandalone] = useState(false);
@@ -844,6 +855,17 @@ export default function PortalHome() {
         </div>
       </header>
 
+      {/* Player οδηγιών χρήσης (YouTube/Vimeo) — Συνταγές & Διαθεσιμότητα & e-Κατάστημα */}
+      {video && (
+        <div onClick={() => setVideo(null)} className="fixed inset-0 z-[130] grid place-items-center bg-black/70 p-4">
+          <div onClick={(e) => e.stopPropagation()} className="w-full max-w-2xl overflow-hidden rounded-2xl bg-black shadow-2xl">
+            <div className="flex items-center justify-between bg-slate-900 px-3 py-2 text-sm font-semibold text-white">🎬 {t("Οδηγίες χρήσης", "How to use")}<button onClick={() => setVideo(null)} className="rounded-lg px-2 py-0.5 text-slate-300 hover:bg-white/10">✕</button></div>
+            <div className="relative w-full" style={{ paddingBottom: "56.25%" }}>
+              <iframe src={video} title={t("Οδηγίες χρήσης", "How to use")} allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowFullScreen className="absolute inset-0 h-full w-full" />
+            </div>
+          </div>
+        </div>
+      )}
       {showProfile && me && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4" onClick={() => setShowProfile(false)}>
           <div className="max-h-[90vh] w-full max-w-md overflow-auto rounded-2xl bg-white p-5 shadow-xl dark:bg-slate-900" onClick={(e) => e.stopPropagation()}>
@@ -1377,6 +1399,11 @@ export default function PortalHome() {
                                       {!it.is_executed && <span className="rounded-full bg-rose-50 px-1.5 py-0.5 text-[10px] font-medium text-rose-600">{t("δεν παραλήφθηκε", "not dispensed")}</span>}
                                     </span>
                                     {it.dosage && <span className="mt-0.5 block text-xs text-slate-500 dark:text-slate-400">💊 {it.dosage}</span>}
+                                    {videoEmbed(it.usage_video_url) && (
+                                      <button onClick={() => setVideo(videoEmbed(it.usage_video_url))} className="mt-1 inline-flex items-center gap-1 rounded-lg bg-rose-50 px-2 py-1 text-[11px] font-semibold text-rose-600 hover:bg-rose-100 dark:bg-rose-950/30 dark:text-rose-300">
+                                        ▶ {t("Οδηγίες χρήσης (βίντεο)", "How to use (video)")}
+                                      </button>
+                                    )}
                                   </span>
                                 </span>
                                 {it.is_executed && <span className="shrink-0 font-medium">{eur(it.retail_price)}</span>}
@@ -2006,6 +2033,11 @@ export default function PortalHome() {
               <div>
                 <div className="mb-1 text-xs font-medium text-slate-500 dark:text-slate-400">{t("Φάρμακο (λίστα / barcode / σάρωση)", "Medicine (list / barcode / scan)")}</div>
                 <MedicinePicker value={availMed} onChange={setAvailMed} />
+                {videoEmbed(availMed?.usage_video_url) && (
+                  <button type="button" onClick={() => setVideo(videoEmbed(availMed?.usage_video_url))} className="mt-2 inline-flex items-center gap-1.5 rounded-lg bg-rose-50 px-3 py-1.5 text-xs font-semibold text-rose-600 hover:bg-rose-100 dark:bg-rose-950/30 dark:text-rose-300">
+                    ▶ {t("Οδηγίες χρήσης του", "How to use")} {availMed?.name}
+                  </button>
+                )}
               </div>
               <input value={availNote} onChange={(e) => setAvailNote(e.target.value)} placeholder={t("Σχόλιο (προαιρετικό)", "Comment (optional)")}
                 className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm focus:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-100" />

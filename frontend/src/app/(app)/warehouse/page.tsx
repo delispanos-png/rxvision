@@ -20,7 +20,7 @@ type Item = {
   active?: boolean; for_sale?: boolean; image_id?: string | null;
   barcodes?: string[]; variants?: Variant[];
   cat1_id?: string | null; cat2_id?: string | null; cat3_id?: string | null;
-  vat_rate?: number; price_includes_vat?: boolean;
+  vat_rate?: number; price_includes_vat?: boolean; usage_video_url?: string | null;
 };
 type Variant = { color?: string | null; size?: string | null; barcode?: string | null; stock_qty?: number };
 type Summary = { skus: number; active: number; for_sale: number; units: number; value_cents: number; low: number; expiring: number };
@@ -468,6 +468,11 @@ function EditModal({ item, t, onClose, onDone }: { item: Item; t: (a: string, b:
           <div className="mb-1 text-xs font-medium text-slate-500">{t("Κατηγορίες e-shop", "e-shop categories")}</div>
           <CategoryPicker value={{ cat1_id: f.cat1_id, cat2_id: f.cat2_id, cat3_id: f.cat3_id }} onChange={(v) => setF((s) => ({ ...s, ...v }))} />
         </div>
+
+        {/* Βίντεο οδηγιών χρήσης — εμφανίζεται στον πελάτη σε Συνταγές, Διαθεσιμότητα & e-Κατάστημα */}
+        <label className="col-span-full block text-sm"><span className="mb-1 block text-xs text-slate-500">🎬 {t("Βίντεο οδηγιών χρήσης (YouTube/Vimeo)", "How-to-use video (YouTube/Vimeo)")}</span>
+          <input value={f.usage_video_url ?? ""} onChange={(e) => set("usage_video_url", e.target.value || null)} placeholder={t("https://youtu.be/… ή https://vimeo.com/…", "https://youtu.be/… or https://vimeo.com/…")} className="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm dark:border-slate-600 dark:bg-slate-800" />
+          <span className="mt-0.5 block text-[11px] text-slate-400">{t("Δεκτά ΜΟΝΟ YouTube/Vimeo. Ο πελάτης το βλέπει στη Συνταγή του, στη Διαθεσιμότητα & στο e-Κατάστημα.", "Only YouTube/Vimeo accepted. The patient sees it in their prescription, in Availability & in the e-shop.")}</span></label>
 
         <div className="col-span-full mt-1 flex flex-wrap gap-5 rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800/40">
           <label className="inline-flex items-center gap-2 text-sm"><input type="checkbox" checked={f.active !== false} onChange={(e) => set("active", e.target.checked)} className="h-4 w-4" /> {t("Ενεργό είδος", "Active item")}</label>

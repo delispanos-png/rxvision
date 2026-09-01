@@ -14,7 +14,7 @@ declare global {
 
 export type Pharmacy = { tenant_id: string; pharmacy_name?: string; name?: string; distance_km?: number };
 type DirItem = { tenant_id: string; name: string; city?: string | null; mine?: boolean; favorite?: boolean; lat?: number | null; lon?: number | null; status?: { isOpen: boolean; isOnDuty: boolean } | null; dist?: number | null };
-export type Medicine = { barcode: string | null; name: string };
+export type Medicine = { barcode: string | null; name: string; usage_video_url?: string | null };
 
 const _hav = (aLat: number, aLon: number, bLat: number, bLon: number) => {
   const r = 6371, rad = (d: number) => (d * Math.PI) / 180;

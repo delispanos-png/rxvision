@@ -97,6 +97,20 @@ def _format_dosage(dose, freq, dur) -> str | None:
     return " · ".join(parts) if parts else None
 
 
+async def product_video_map(db, tenant_id: str, barcodes) -> dict:
+    """{barcode: usage_video_url} για όσα φάρμακα/είδη έχει βάλει ο φαρμακοποιός βίντεο οδηγιών χρήσης
+    (πεδίο `usage_video_url` του είδους στο pharmacy_products). Batch lookup με tenant scope."""
+    bcs = list({str(b) for b in (barcodes or []) if b})
+    if not bcs:
+        return {}
+    out: dict = {}
+    async for p in db["pharmacy_products"].find(
+            {"tenant_id": tenant_id, "barcode": {"$in": bcs}, "usage_video_url": {"$nin": [None, ""]}},
+            {"barcode": 1, "usage_video_url": 1}):
+        out[str(p.get("barcode"))] = p.get("usage_video_url")
+    return out
+
+
 class PatientAccountRepository:
     def __init__(self):
         self.db = shared_db()
@@ -865,6 +879,7 @@ class PatientRxRepository(BaseRepository):
             d = it.get("details") or {}
             items.append({
                 "name": (prod or {}).get("name"),
+                "barcode": (prod or {}).get("barcode"),   # για βίντεο οδηγιών (join → pharmacy_products)
                 "quantity": it.get("quantity", 1),
                 "retail_price": it.get("retail_price", 0),
                 "is_executed": it.get("is_executed", True),
@@ -872,6 +887,11 @@ class PatientRxRepository(BaseRepository):
                 "dosage": _format_dosage(d.get("dose"), d.get("frequency"), d.get("duration")),
                 "details": d,
             })
+        # Βίντεο οδηγιών χρήσης ανά φάρμακο (αν ο φαρμακοποιός το έχει βάλει στο είδος e-shop) → ο πελάτης
+        # μαθαίνει πώς να το χρησιμοποιεί μέσα από τη Συνταγή του.
+        vmap = await product_video_map(self._db, self.tenant_id, [i.get("barcode") for i in items])
+        for i in items:
+            i["usage_video_url"] = vmap.get(str(i.get("barcode"))) if i.get("barcode") else None
         doc_name = (doctor or {}).get("full_name")
         if self.demo and doc_name:                 # pseudonymize the DOCTOR name (medicines stay real)
             doc_name = pseudo_name(doc_name, True)

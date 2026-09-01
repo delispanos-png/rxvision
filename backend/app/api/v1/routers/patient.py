@@ -1059,14 +1059,25 @@ async def set_favorite_pharmacy(body: FavoriteIn, ctx: PatientContext = Depends(
 
 @router.get("/medicines/search")
 async def medicines_search(q: str, ctx: PatientContext = Depends(get_patient_context)):
-    return {"items": await PatientAccountRepository().search_medicines(q)}
+    from app.repositories.patient_portal import product_video_map
+    from app.core.db import shared_db
+    items = await PatientAccountRepository().search_medicines(q)
+    # βίντεο οδηγιών χρήσης (αν το φαρμακείο το έχει βάλει) → φαίνεται στη Διαθεσιμότητα
+    vmap = await product_video_map(shared_db(), ctx.tenant_id, [i.get("barcode") for i in items])
+    for i in items:
+        i["usage_video_url"] = vmap.get(str(i.get("barcode"))) if i.get("barcode") else None
+    return {"items": items}
 
 
 @router.get("/medicines/by-barcode")
 async def medicine_by_barcode(code: str, ctx: PatientContext = Depends(get_patient_context)):
+    from app.repositories.patient_portal import product_video_map
+    from app.core.db import shared_db
     m = await PatientAccountRepository().medicine_by_barcode(code)
     if not m:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "medicine_not_found")
+    vmap = await product_video_map(shared_db(), ctx.tenant_id, [m.get("barcode")])
+    m["usage_video_url"] = vmap.get(str(m.get("barcode"))) if m.get("barcode") else None
     return m
 
 
