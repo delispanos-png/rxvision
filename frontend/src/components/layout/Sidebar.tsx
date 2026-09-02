@@ -15,7 +15,7 @@ import { Tooltip } from "@/components/ui/Tooltip";
 import {
   Activity, BarChart3, Boxes, Warehouse, Layers, CalendarClock, ChevronRight, LayoutDashboard,
   Mail, Megaphone, Salad, PackageSearch, Settings, Sparkles, Stethoscope, TrendingUp, Target, Users,
-  Brain, ShieldCheck, Tags, Syringe, Bot, Gift, BookOpen, ScrollText, Truck, Lock, X, UserPlus, Ticket, SlidersHorizontal, Heart, FileText, MessageSquare, PackageCheck, Receipt, type LucideIcon,
+  Brain, ShieldCheck, Tags, Syringe, Bot, Gift, BookOpen, ScrollText, Truck, Lock, X, UserPlus, Ticket, SlidersHorizontal, Heart, FileText, MessageSquare, PackageCheck, Receipt, ArrowRightLeft, type LucideIcon,
 } from "lucide-react";
 
 // A leaf (direct link). `module` gates visibility (shown only when enabled/trial).
@@ -45,7 +45,6 @@ const GROUPS: Group[] = [
       { href: "/patients#kpi", label: "Δείκτες", en: "Indicators" },
       { href: "/patients/verify-contacts", label: "Επιβεβαίωση στοιχείων", en: "Confirm contacts" },
       { href: "/patients/deceased", label: "Θανόντες & υπόλοιπα", en: "Deceased & balances" },
-      { href: "/patients/transfers", label: "Μεταφορά πελάτη", en: "Patient transfer" },
     ] },
     { label: "Ιατροί", en: "Doctors", icon: Stethoscope, module: "doctor_analytics", children: [
       { href: "/doctors#list", label: "Λίστα", en: "List" },
@@ -86,6 +85,7 @@ const GROUPS: Group[] = [
     { label: "Διαθεσιμότητα", en: "Availability", icon: MessageSquare, href: "/portal-admin#availability", module: "patient_portal" },
     { label: "Ραντεβού", en: "Appointments", icon: CalendarClock, href: "/portal-admin#appointments", module: "patient_portal" },
     { label: "Υπηρεσίες", en: "Services", icon: Stethoscope, href: "/portal-admin#services", module: "patient_portal" },
+    { label: "Μεταφορά πελάτη", en: "Patient transfer", icon: ArrowRightLeft, href: "/patients/transfers", module: "patient_analytics" },
   ] },
   // Κάρτες πιστότητας — δικό του κύκλωμα· κάθε καρτέλα του προγράμματος = αυτόνομο entry (URL hash).
   { title: "Κάρτες πιστότητας", en: "Loyalty Cards", icon: Gift, items: [
