@@ -597,8 +597,10 @@ async def shop_meta(ctx: PatientContext = Depends(get_patient_context)):
         lcfg = await lrepo.config()
         if lcfg.get("enabled"):
             m = await lrepo.member(ctx.patient_ref) if ctx.patient_ref else None
+            _pol = lcfg.get("redeem_cart_policy") or "any"
             loyalty = {"enabled": True, "balance_cents": int((m or {}).get("balance_cents") or 0),
                        "min_redeem_cents": int(lcfg.get("min_redeem_cents") or 0),
+                       "redeem_cart_policy": _pol if _pol in ("any", "non_rx_only", "off") else "any",
                        "member": bool(m)}
     except Exception:  # noqa: BLE001
         pass
@@ -780,11 +782,28 @@ async def place_order(body: OrderIn, ctx: PatientContext = Depends(get_patient_c
     st = await repo.settings()
     sub_disc = st.get("subscription_discount_pct", 0) if body.repeat_days > 0 else 0
     cauth = body.courier_auth.model_dump() if body.courier_auth else None
+    # Εξαργύρωση πόντων στο καλάθι = ΠΑΡΑΜΕΤΡΙΚΗ πολιτική· επιβάλλεται server-side (να μην παρακαμφθεί):
+    #   off → ποτέ· non_rx_only → μόνο αν ΔΕΝ υπάρχει κανένα συνταγογραφούμενο· any → κανονικά.
+    redeem_cents = body.loyalty_redeem_cents
+    if redeem_cents > 0:
+        from app.repositories.loyalty import LoyaltyRepository
+        lcfg = await LoyaltyRepository(tenant_id=ctx.tenant_id).config()
+        policy = lcfg.get("redeem_cart_policy") or "any"
+        if not lcfg.get("enabled") or policy == "off":
+            redeem_cents = 0
+        elif policy == "non_rx_only":
+            from app.repositories.pharmacy_catalog import PharmacyCatalogRepository
+            cat = PharmacyCatalogRepository(tenant_id=ctx.tenant_id)
+            for ln in body.lines:
+                p = await cat.get(str(ln.barcode)) or {}
+                if p.get("type") == "rx_medicine":
+                    redeem_cents = 0
+                    break
     res = await repo.create_order(
         account_id=ctx.account_id, patient_ref=ctx.patient_ref, patient_name=name, patient_phone=phone,
         lines=[ln.model_dump() for ln in body.lines], mode=body.mode, address=addr,
         courier_authorized=body.courier_authorized, courier_auth=cauth,
-        loyalty_redeem_cents=body.loyalty_redeem_cents, coupon_code=body.coupon_code,
+        loyalty_redeem_cents=redeem_cents, coupon_code=body.coupon_code,
         payment_method=body.payment_method, gdpr_consent=body.gdpr_consent, sub_discount_pct=sub_disc,
         note=body.note)
     if res.get("ok") and body.repeat_days > 0 and st.get("subscription_enabled", True):

@@ -51,6 +51,11 @@ DEFAULT_CONFIG = {
     "points_per_refill": 10,     # points earned per on-time repeat refill
     "cents_per_point": 5,        # € value of one point (cents) → 10pts = 0.50€
     "min_redeem_cents": 100,     # smallest redemption (1.00€)
+    # Πολιτική εξαργύρωσης πόντων στο ΚΑΛΑΘΙ (πύλη) — παραμετρικό ανά φαρμακείο:
+    #   "any"          → επιτρέπεται σε κάθε καλάθι (πόντοι πάντα μόνο στην αξία μη-συνταγογραφούμενων)
+    #   "non_rx_only"  → ΜΟΝΟ αν το καλάθι ΔΕΝ έχει καθόλου συνταγογραφούμενα (όχι rx-only, όχι μικτό)
+    #   "off"          → ΠΟΤΕ στο καλάθι· οι πόντοι εξαργυρώνονται μόνο σε δώρα/υπηρεσίες στο φαρμακείο
+    "redeem_cart_policy": "any",
     "welcome_cents": 0,          # optional signup credit (cents) — applied as an adjust on first read
     # Med-intake adherence rewards — PHARMACIST-ONLY opt-in, OFF by default (points cost real €).
     "adherence_points_enabled": False,
@@ -120,7 +125,7 @@ class LoyaltyRepository(BaseRepository):
 
     _BOOL_KEYS = {"enabled", "adherence_points_enabled", "tier_multipliers_enabled",
                   "referral_enabled", "birthday_enabled"}
-    _STR_KEYS = {"adherence_rule"}
+    _STR_KEYS = {"adherence_rule", "redeem_cart_policy"}
     _DICT_KEYS = {"tier_multipliers"}
     _LIST_KEYS = {"campaigns"}
 

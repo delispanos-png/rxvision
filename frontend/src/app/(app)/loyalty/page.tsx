@@ -10,7 +10,7 @@ import { ModuleGuard } from "@/components/layout/ModuleGuard";
 import { PrintCardButton } from "@/components/loyalty/PrintCard";
 import { DateInput } from "@/components/ui/DateInput";
 
-type Cfg = { enabled: boolean; points_per_refill: number; cents_per_point: number; min_redeem_cents: number; welcome_cents: number; terms?: string; adherence_points_enabled: boolean; adherence_rule: string; points_per_adherence: number; adherence_streak_bonus: number; tier_multipliers_enabled: boolean; tier_multipliers: Record<string, number>; campaigns?: Campaign[]; points_expire_months?: number; referral_enabled?: boolean; referral_referrer_cents?: number; referral_referred_cents?: number; birthday_enabled?: boolean; birthday_bonus_cents?: number };
+type Cfg = { enabled: boolean; redeem_cart_policy?: "any" | "non_rx_only" | "off"; points_per_refill: number; cents_per_point: number; min_redeem_cents: number; welcome_cents: number; terms?: string; adherence_points_enabled: boolean; adherence_rule: string; points_per_adherence: number; adherence_streak_bonus: number; tier_multipliers_enabled: boolean; tier_multipliers: Record<string, number>; campaigns?: Campaign[]; points_expire_months?: number; referral_enabled?: boolean; referral_referrer_cents?: number; referral_referred_cents?: number; birthday_enabled?: boolean; birthday_bonus_cents?: number };
 type Campaign = { name: string; start: string; end: string; multiplier_pct: number };
 type Candidate = { patient_ref: string; name: string; compliance: number | null };
 type Redemption = { _id?: string; id?: string; patient_ref: string; patient_name?: string; cents: number; kind?: string; reason?: string; at: string; voided?: boolean };
@@ -267,6 +267,16 @@ function ConfigCard({ cfg }: { cfg: Cfg }) {
           <input type="number" value={f.min_redeem_cents} onChange={num("min_redeem_cents")} className="mt-1 w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm dark:border-slate-700 dark:bg-slate-800" /></label>
         <label className="text-xs text-slate-500">{t("Δώρο εγγραφής (λεπτά)", "Welcome credit (cents)")}
           <input type="number" value={f.welcome_cents} onChange={num("welcome_cents")} className="mt-1 w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm dark:border-slate-700 dark:bg-slate-800" /></label>
+      </div>
+      {/* Πολιτική εξαργύρωσης πόντων στο ΚΑΛΑΘΙ της πύλης — παραμετρική ανά φαρμακείο */}
+      <div className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50/60 p-3 dark:border-emerald-900/40 dark:bg-emerald-950/20">
+        <label className="block text-sm font-semibold text-emerald-900 dark:text-emerald-200">🛒 {t("Εξαργύρωση πόντων στο καλάθι (πύλη)", "Redeem points in the cart (portal)")}
+          <select value={f.redeem_cart_policy ?? "any"} onChange={(e) => setF({ ...f, redeem_cart_policy: e.target.value as Cfg["redeem_cart_policy"] })} className="mt-1 block w-full max-w-md rounded-lg border border-emerald-300 bg-white px-2 py-1.5 text-sm font-normal text-slate-700 dark:border-emerald-800 dark:bg-slate-800 dark:text-slate-200">
+            <option value="any">{t("Σε κάθε καλάθι (προεπιλογή)", "In any cart (default)")}</option>
+            <option value="non_rx_only">{t("Μόνο σε καλάθι ΧΩΡΙΣ συνταγογραφούμενα (όχι rx, όχι μικτό)", "Only in carts WITHOUT prescription items (no rx, no mixed)")}</option>
+            <option value="off">{t("Ποτέ στο καλάθι — μόνο δώρα/υπηρεσίες στο φαρμακείο", "Never in the cart — gifts/services at the pharmacy only")}</option>
+          </select></label>
+        <p className="mt-1.5 text-[11px] text-emerald-800 dark:text-emerald-300">{t("Οι πόντοι ούτως ή άλλως δεν εφαρμόζονται ποτέ σε συνταγογραφούμενα (διατίμηση). Με «όχι μικτό» μπλοκάρεις την εξαργύρωση αν το καλάθι έχει έστω ένα συνταγογραφούμενο. Με «ποτέ στο καλάθι», οι πόντοι εξαργυρώνονται μόνο για δώρα/υπηρεσίες (π.χ. τσάντα θαλάσσης, μέτρηση πίεσης) μέσα από τα «Δώρα».", "Points never apply to prescription items anyway. «no mixed» blocks redemption if the cart has any prescription item. «never in cart» keeps redemption for gifts/services only (e.g. beach bag, blood-pressure check) via «Rewards».")}</p>
       </div>
       {/* Πόντοι για συνεπή λήψη αγωγής — ΔΙΚΗ ΣΟΥ απόφαση (off by default, κοστίζει € στο wallet) */}
       <div className="mt-4 rounded-xl border border-violet-200 bg-violet-50/60 p-3 dark:border-violet-900/40 dark:bg-violet-950/20">

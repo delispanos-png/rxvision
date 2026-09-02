@@ -94,7 +94,7 @@ const noDisc = (t: string) => t === "rx_medicine";   // μόνο τα συντα
 // Εκπτωτική καμπάνια σε ομάδα ειδών (κατηγορίες/ετικέτες). Καθρεφτίζει τη μηχανή του server
 // (shop_campaigns.campaign_pct_for) — ΜΟΝΟ για εμφάνιση· η τιμή υπολογίζεται πάντα server-side.
 type Campaign = { name: string; discount_pct: number; categories: string[]; tags: string[] };
-type Loyalty = { enabled: boolean; balance_cents: number; min_redeem_cents: number; member?: boolean };
+type Loyalty = { enabled: boolean; balance_cents: number; min_redeem_cents: number; member?: boolean; redeem_cart_policy?: "any" | "non_rx_only" | "off" };
 const campPct = (p: Product, camps: Campaign[] = []) => {
   if (noDisc(p.type)) return 0;                       // συνταγογραφούμενα: ποτέ έκπτωση καμπάνιας
   const cat = (p.category || "").trim().toLowerCase();
@@ -560,7 +560,11 @@ function Checkout({ cart, subtotal, settings, camps, bundles, loyalty, onBack, o
   const cartCents = Math.min(useCoupon ? cCents : td.cents, afterBundles);
   const eligible = afterBundles - cartCents;           // ταβάνι για τους πόντους
 
-  const canRedeem = !!loyalty?.enabled && !!loyalty?.member && loyalty.balance_cents > 0 && eligible > 0;
+  // Εξαργύρωση στο καλάθι: ΠΑΡΑΜΕΤΡΙΚΗ πολιτική φαρμακείου —
+  //   any = πάντα · non_rx_only = μόνο αν ΔΕΝ υπάρχει συνταγογραφούμενο στο καλάθι · off = ποτέ (μόνο δώρα/υπηρεσίες).
+  const redeemPolicy = loyalty?.redeem_cart_policy ?? "any";
+  const policyOk = redeemPolicy === "any" ? true : redeemPolicy === "non_rx_only" ? !hasRx : false;
+  const canRedeem = !!loyalty?.enabled && policyOk && !!loyalty?.member && loyalty.balance_cents > 0 && eligible > 0;
   const maxRedeem = Math.min(loyalty?.balance_cents ?? 0, eligible);
   const minRedeem = loyalty?.min_redeem_cents ?? 0;
   const redeemApplied = useP ? Math.min(redeem, maxRedeem) : 0;
@@ -729,6 +733,10 @@ function Checkout({ cart, subtotal, settings, camps, bundles, loyalty, onBack, o
       </div>
 
       {/* Εξαργύρωση πόντων — ΜΟΝΟ σε μη-συνταγογραφούμενα (τα συνταγογραφούμενα εξαιρούνται) */}
+      {/* Εξήγηση όταν η πολιτική μπλοκάρει λόγω συνταγογραφούμενου στο καλάθι */}
+      {!canRedeem && !!loyalty?.enabled && !!loyalty?.member && (loyalty.balance_cents > 0) && redeemPolicy === "non_rx_only" && hasRx && (
+        <div className="rounded-2xl border border-amber-200 bg-amber-50/70 px-3 py-2 text-xs text-amber-800">🎁 {t("Οι πόντοι επιβράβευσης δεν εξαργυρώνονται όταν το καλάθι περιέχει συνταγογραφούμενα φάρμακα. Άφησε μόνο μη-συνταγογραφούμενα είδη για να εξαργυρώσεις.", "Reward points can't be redeemed when the cart contains prescription medicines. Keep only non-prescription items to redeem.")}</div>
+      )}
       {canRedeem && (
         <div className="rounded-2xl border border-emerald-200 bg-emerald-50/70 p-3">
           <label className="flex items-start gap-2 text-sm font-semibold text-emerald-900">
