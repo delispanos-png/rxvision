@@ -44,7 +44,7 @@ export default function LoyaltyPage() {
   const [tab, setTab] = useState<string>("members");
   // Η καρτέλα οδηγείται ΚΑΙ από το URL hash → κάθε tab = αυτόνομο entry στο μενού «Κάρτες πιστότητας».
   useEffect(() => {
-    const valid = ["members", "enroll", "redemptions", "settings"];
+    const valid = ["members", "enroll", "redemptions", "rewards", "settings"];
     const read = () => { const h = window.location.hash.slice(1); if (valid.includes(h)) setTab(h); };
     read();
     window.addEventListener("hashchange", read);
@@ -76,13 +76,13 @@ export default function LoyaltyPage() {
       <div className="mb-4 flex items-center gap-3">
         <span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-gradient-to-br from-rose-500 to-amber-500 text-white shadow-lg"><Gift className="h-6 w-6" /></span>
         <div>
-          <h1 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-slate-100">{t("Πιστότητα Πελατών", "Loyalty")} <span className="text-slate-300">·</span> <span className="text-brand-700 dark:text-brand-400">{({ members: t("Μέλη", "Members"), enroll: t("Εγγραφή", "Enrol"), redemptions: t("Εξαργυρώσεις", "Redemptions"), settings: t("Ρυθμίσεις & Δώρα", "Settings & Rewards") } as Record<string, string>)[tab]}</span></h1>
+          <h1 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-slate-100">{t("Πιστότητα Πελατών", "Loyalty")} <span className="text-slate-300">·</span> <span className="text-brand-700 dark:text-brand-400">{({ members: t("Μέλη", "Members"), enroll: t("Εγγραφή", "Enrol"), redemptions: t("Εξαργυρώσεις", "Redemptions"), rewards: t("Δώρα & εξαργυρώσεις", "Rewards"), settings: t("Ρυθμίσεις προγράμματος", "Program settings") } as Record<string, string>)[tab]}</span></h1>
           <p className="text-sm text-slate-500">{t("Επίλεξε ενότητα από το μενού «Κάρτες πιστότητας» αριστερά.", "Pick a section from the «Loyalty Cards» menu on the left.")}</p>
         </div>
       </div>
 
       {!cfg?.enabled && (
-        <div className="mb-4 rounded-xl bg-amber-50 px-4 py-3 text-sm text-amber-800">{t("Το πρόγραμμα πιστότητας είναι ανενεργό. Ενεργοποίησέ το από την καρτέλα «Ρυθμίσεις & Δώρα».", "Loyalty is off — enable it in the «Settings & Rewards» tab.")}</div>
+        <div className="mb-4 rounded-xl bg-amber-50 px-4 py-3 text-sm text-amber-800">{t("Το πρόγραμμα πιστότητας είναι ανενεργό. Ενεργοποίησέ το από την καρτέλα «Ρυθμίσεις προγράμματος».", "Loyalty is off — enable it in the «Program settings» tab.")}</div>
       )}
 
       <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-5">
@@ -186,12 +186,8 @@ export default function LoyaltyPage() {
 
       {tab === "enroll" && cfg && <EnrollCard cfg={cfg} />}
       {tab === "redemptions" && <RedemptionsCard />}
-      {tab === "settings" && cfg && (
-        <div className="space-y-4">
-          <ConfigCard cfg={cfg} />
-          <RewardsCard />
-        </div>
-      )}
+      {tab === "settings" && cfg && <ConfigCard cfg={cfg} />}
+      {tab === "rewards" && <RewardsCard />}
 
       {redeemFor && cfg && <RedeemModal member={redeemFor} cfg={cfg} onClose={() => setRedeemFor(null)} onDone={() => { setRedeemFor(null); qc.invalidateQueries({ queryKey: ["loyalty"] }); }} />}
       {scanOpen && <ScanModal onClose={() => setScanOpen(false)} onCode={(c) => { setScanOpen(false); openByCode(c); }} />}
@@ -278,8 +274,13 @@ function ConfigCard({ cfg }: { cfg: Cfg }) {
           </select></label>
         <p className="mt-1.5 text-[11px] text-emerald-800 dark:text-emerald-300">{t("Οι πόντοι ούτως ή άλλως δεν εφαρμόζονται ποτέ σε συνταγογραφούμενα (διατίμηση). Με «όχι μικτό» μπλοκάρεις την εξαργύρωση αν το καλάθι έχει έστω ένα συνταγογραφούμενο. Με «ποτέ στο καλάθι», οι πόντοι εξαργυρώνονται μόνο για δώρα/υπηρεσίες (π.χ. τσάντα θαλάσσης, μέτρηση πίεσης) μέσα από τα «Δώρα».", "Points never apply to prescription items anyway. «no mixed» blocks redemption if the cart has any prescription item. «never in cart» keeps redemption for gifts/services only (e.g. beach bag, blood-pressure check) via «Rewards».")}</p>
       </div>
+      {/* ── Ενότητα: Επιπλέον κίνητρα — όλα ΠΡΟΑΙΡΕΤΙΚΑ & ανενεργά εξ ορισμού (κόστος πόντων/€) ── */}
+      <div className="mt-5 border-t border-slate-100 pt-4 dark:border-slate-800">
+        <div className="text-sm font-bold text-slate-800 dark:text-slate-200">✨ {t("Επιπλέον κίνητρα (προαιρετικά)", "Extra incentives (optional)")}</div>
+        <p className="mt-0.5 text-[11px] text-slate-400">{t("Ενεργοποίησε όποια θέλεις — είναι ανενεργά εξ ορισμού και επιβραβεύουν με πόντους (κόστος €).", "Enable any you like — all off by default; they reward with points (cost €).")}</p>
+      </div>
       {/* Πόντοι για συνεπή λήψη αγωγής — ΔΙΚΗ ΣΟΥ απόφαση (off by default, κοστίζει € στο wallet) */}
-      <div className="mt-4 rounded-xl border border-violet-200 bg-violet-50/60 p-3 dark:border-violet-900/40 dark:bg-violet-950/20">
+      <div className="mt-3 rounded-xl border border-violet-200 bg-violet-50/60 p-3 dark:border-violet-900/40 dark:bg-violet-950/20">
         <label className="inline-flex cursor-pointer items-center gap-2 text-sm font-semibold text-violet-900 dark:text-violet-200">
           <input type="checkbox" checked={f.adherence_points_enabled} onChange={(e) => setF({ ...f, adherence_points_enabled: e.target.checked })} />
           💊 {t("Πόντοι για συνεπή λήψη αγωγής", "Points for medication adherence")}
@@ -379,13 +380,16 @@ function ConfigCard({ cfg }: { cfg: Cfg }) {
             <input type="number" value={f.birthday_bonus_cents ?? 0} onChange={num("birthday_bonus_cents")} className="mt-1 w-40 rounded-lg border border-slate-300 px-2 py-1.5 text-sm dark:border-slate-700 dark:bg-slate-800" /></label>
         )}
       </div>
-      <div className="mt-3">
-        <label className="text-xs text-slate-500">{t("Όροι συμμετοχής (εμφανίζονται στον πελάτη & εκτυπώνονται)", "Terms (shown to patient & printed)")}
+      {/* ── Ενότητα: Όροι συμμετοχής ── */}
+      <div className="mt-5 border-t border-slate-100 pt-4 dark:border-slate-800">
+        <div className="text-sm font-bold text-slate-800 dark:text-slate-200">📄 {t("Όροι συμμετοχής", "Terms")}</div>
+        <label className="mt-2 block text-xs text-slate-500">{t("Εμφανίζονται στον πελάτη & εκτυπώνονται στην κάρτα", "Shown to the patient & printed on the card")}
           <textarea value={f.terms ?? ""} onChange={(e) => setF({...f, terms: e.target.value })} rows={5} className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-800" /></label>
       </div>
-      <div className="mt-3 flex items-center gap-3">
-        <button onClick={() => save.mutate()} className="rounded-lg bg-brand-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-brand-700">{t("Αποθήκευση", "Save")}</button>
-        <span className="text-xs text-slate-400">{t(`Κάθε εκτέλεση = ${f.points_per_refill} πόντοι = ${eur(f.points_per_refill * f.cents_per_point)} · οι πόντοι μετρούν από την εγγραφή`, `Each refill = ${f.points_per_refill} pts · points count from enrolment`)}</span>
+      {/* Sticky Save bar — πάντα προσβάσιμο στη μακριά φόρμα */}
+      <div className="sticky bottom-0 -mx-4 -mb-4 mt-5 flex items-center justify-between gap-3 rounded-b-2xl border-t border-slate-100 bg-white/90 px-4 py-3 backdrop-blur dark:border-slate-800 dark:bg-slate-900/90">
+        <span className="hidden text-xs text-slate-400 sm:block">{t(`Κάθε εκτέλεση = ${f.points_per_refill} πόντοι = ${eur(f.points_per_refill * f.cents_per_point)}`, `Each refill = ${f.points_per_refill} pts = ${eur(f.points_per_refill * f.cents_per_point)}`)}</span>
+        <button onClick={() => save.mutate()} disabled={save.isPending} className="ml-auto rounded-lg bg-brand-600 px-5 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-60">{save.isPending ? t("Αποθήκευση…", "Saving…") : save.isSuccess ? t("✓ Αποθηκεύτηκε", "✓ Saved") : t("Αποθήκευση", "Save")}</button>
       </div>
     </div>
   );

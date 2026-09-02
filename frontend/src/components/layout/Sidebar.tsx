@@ -92,7 +92,8 @@ const GROUPS: Group[] = [
     { label: "Μέλη", en: "Members", icon: Users, href: "/loyalty#members", module: "loyalty" },
     { label: "Εγγραφή", en: "Enrol", icon: UserPlus, href: "/loyalty#enroll", module: "loyalty" },
     { label: "Εξαργυρώσεις", en: "Redemptions", icon: Ticket, href: "/loyalty#redemptions", module: "loyalty" },
-    { label: "Ρυθμίσεις & Δώρα", en: "Settings & Rewards", icon: SlidersHorizontal, href: "/loyalty#settings", module: "loyalty" },
+    { label: "Δώρα & εξαργυρώσεις", en: "Rewards", icon: Gift, href: "/loyalty#rewards", module: "loyalty" },
+    { label: "Ρυθμίσεις προγράμματος", en: "Program settings", icon: SlidersHorizontal, href: "/loyalty#settings", module: "loyalty" },
   ] },
   // Στοχευμένη Προώθηση — δικό του εμπορικό κύκλωμα (module `marketing`, ενεργό ανά συνδρομή).
   { title: "Προώθηση", en: "Marketing", icon: Megaphone, items: [
