@@ -72,6 +72,7 @@ class ConfigIn(BaseModel):
     points_per_refill: int = Field(10, ge=0, le=1000)
     cents_per_point: int = Field(5, ge=0, le=1000)
     min_redeem_cents: int = Field(100, ge=0, le=100000)
+    redeem_cart_policy: str = Field("any", pattern="^(any|non_rx_only|off)$")   # πολιτική εξαργύρωσης στο καλάθι
     welcome_cents: int = Field(0, ge=0, le=100000)
     # Πόντοι για συνεπή λήψη αγωγής (med-intake streak) — ΑΠΟΚΛΕΙΣΤΙΚΗ απόφαση του φαρμακοποιού,
     # OFF by default (οι πόντοι κοστίζουν € στο wallet). Το calendar/σερί δουλεύουν ούτως ή άλλως.
