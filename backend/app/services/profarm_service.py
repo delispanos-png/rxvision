@@ -11,7 +11,12 @@ from __future__ import annotations
 
 import asyncio
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+
+# Κάθε πόσο ξανα-ελέγχουμε ένα ΗΔΗ εισαγμένο είδος για ΑΛΛΑΓΕΣ στην Profarm (χονδρική/φωτο/περιγραφή).
+_RESYNC_AFTER = timedelta(days=3)
+# Μετά από ΠΛΗΡΗ πέρασμα όλων των κατηγοριών, περίμενε τόσο πριν ξανα-σαρώσεις (συνεχής ήπιος συγχρονισμός).
+_RESCAN_AFTER = timedelta(hours=6)
 
 import httpx
 
@@ -285,11 +290,17 @@ async def _upsert_profarm_product(cl, col, repo, tenant_id: str, pid: str, ptype
     ΕΛΕΓΧΟΣ τύπου: ο τύπος παίρνεται από την ΕΠΙΣΗΜΗ κατηγορία Profarm (ΜΗΣΥΦΑ=OTC, παραφάρμακα=
     parapharmacy)· η εισαγωγή ΔΕΝ σαρώνει ποτέ «Φάρμακα» (συνταγογραφούμενα), άρα δεν αγγίζει rx.
     reclassified=True όταν διορθώνεται λάθος τύπος υπάρχοντος είδους. result: created|enriched|skip|error."""
-    # FAST SKIP: αυτό το pid έχει ΗΔΗ επεξεργαστεί (υπάρχει είδος με αυτό το profarm_pid) → μη κατεβάσεις
-    # καν το detail. Καθιστά ένα re-crawl ταχύτατο — «πετά» ό,τι έγινε (και τα άφωτα, που το Profarm δεν
-    # έχει εικόνα) και ασχολείται ΜΟΝΟ με ΝΕΑ είδη.
-    if await col.find_one({"tenant_id": tenant_id, "profarm_pid": pid}, {"_id": 1}):
-        return "skip", False, False
+    # RE-SYNC ΒΑΣΕΙ ΠΑΛΑΙΟΤΗΤΑΣ: αν το είδος με αυτό το pid συγχρονίστηκε ΠΡΟΣΦΑΤΑ (< _RESYNC_AFTER) & έχει
+    # φωτο → SKIP χωρίς detail (γρήγορο re-crawl). Αν έχει «παλιώσει» → ξανακατεβάζουμε detail για να πιάσουμε
+    # ΑΛΛΑΓΕΣ (χονδρική/λιανική-πρόταση/φωτο/περιγραφή). Έτσι το ίδιο process κάνει ΚΑΙ import ΚΑΙ update.
+    pidd = await col.find_one({"tenant_id": tenant_id, "profarm_pid": pid},
+                              {"profarm_synced_at": 1, "image_id": 1})
+    if pidd:
+        sc = pidd.get("profarm_synced_at")
+        if sc and sc.tzinfo is None:
+            sc = sc.replace(tzinfo=timezone.utc)
+        if sc and (_now() - sc) < _RESYNC_AFTER and pidd.get("image_id"):
+            return "skip", False, False
     try:
         b = (await asyncio.wait_for(cl.get(f"{BASE}/farmaka-1/product_id/{pid}"), timeout=18)).text
     except (TimeoutError, Exception):  # noqa: BLE001
@@ -299,12 +310,8 @@ async def _upsert_profarm_product(cl, col, repo, tenant_id: str, pid: str, ptype
         return "skip", False, False
     bc = d["barcodes"][0]
     existing = await col.find_one({"tenant_id": tenant_id, "barcode": bc},
-                                  {"image_id": 1, "type": 1, "profarm_pid": 1})
-    # ΗΔΗ πλήρως εισηγμένο (ίδιο Profarm pid + φωτο) → SKIP: μη ξανακατεβάζεις εικόνα, μη ξαναγράφεις.
-    # Έτσι ένα re-crawl «πετά» πάνω από τα ολοκληρωμένα και φτάνει γρήγορα στα ΝΕΑ είδη.
-    if existing and existing.get("image_id") and existing.get("profarm_pid") == pid \
-            and existing.get("type") == ptype:
-        return "skip", False, False
+                                  {"image_id": 1, "type": 1, "profarm_pid": 1,
+                                   "wholesale_cents": 1, "description_long": 1, "vat_rate": 1})
     image_id = None
     # Κατέβασε εικόνα ΜΟΝΟ αν το υπάρχον δεν έχει ήδη (αλλιώς άσκοπο 18s fetch που πετιέται).
     if d.get("image_url") and not (existing and existing.get("image_id")):
@@ -316,23 +323,26 @@ async def _upsert_profarm_product(cl, col, repo, tenant_id: str, pid: str, ptype
             image_id = await repo.save_image(img[0], img[1])
     reclassified = bool(existing) and existing.get("type") != ptype
     if existing:
-        # Ο τύπος από την ΚΑΤΗΓΟΡΙΑ Profarm είναι authoritative — διορθώνει το λάθος default (rx) του ΗΔΥΚΑ:
-        # ό,τι είναι στις κατηγορίες ΜΗΣΥΦΑ/παραφαρμάκων ΔΕΝ είναι συνταγογραφούμενο.
+        # Ο τύπος από την ΚΑΤΗΓΟΡΙΑ Profarm είναι authoritative — διορθώνει το λάθος default (rx) του ΗΔΥΚΑ.
+        # first_link = πρώτη φορά που δένεται στο Profarm· στα ΕΠΟΜΕΝΑ re-sync ΔΕΝ πατάμε τη λιανική τιμή
+        # (μπορεί ο φαρμακοποιός να την έχει ορίσει χειροκίνητα — OTC/παραφάρμακα = ελεύθερη τιμή).
+        first_link = existing.get("profarm_pid") != pid
         s = {"type": ptype, "vat_rate": d["vat_rate"], "price_includes_vat": True, "profarm_pid": pid,
              "profarm_synced_at": _now(), "updated_at": _now()}
-        if d["wholesale_cents"]:
-            s["wholesale_cents"] = d["wholesale_cents"]
-        if d["retail_cents"]:            # διόρθωση λάθος λιανικής ΗΔΥΚΑ με την προτεινόμενη λιανική Profarm
-            s["price_cents"] = d["retail_cents"]
+        changed = reclassified
+        if d["wholesale_cents"] and d["wholesale_cents"] != existing.get("wholesale_cents"):
+            s["wholesale_cents"] = d["wholesale_cents"]; changed = True   # χονδρική/κόστος → πάντα συγχρονίζεται
+        if first_link and d["retail_cents"]:     # προτεινόμενη λιανική Profarm ΜΟΝΟ στο 1ο link
+            s["price_cents"] = d["retail_cents"]; changed = True
         if image_id and not existing.get("image_id"):
-            s["image_id"] = image_id
-            s["photo_source"] = "profarm"
-        if d.get("description"):
-            s["description_long"] = d["description"]
+            s["image_id"] = image_id; s["photo_source"] = "profarm"; changed = True
+        if d.get("description") and d["description"] != existing.get("description_long"):
+            s["description_long"] = d["description"]; changed = True
         if len(d.get("barcodes") or []) > 1:
             s["barcodes"] = d["barcodes"][1:]
         await col.update_one({"_id": existing["_id"]}, {"$set": s})
-        return "enriched", bool(image_id), reclassified
+        # «enriched» όταν ΟΝΤΩΣ άλλαξε κάτι (νέα αλλαγή Profarm)· αλλιώς «skip» (μόνο ανανέωση synced_at).
+        return ("enriched" if changed else "skip"), bool(image_id), reclassified
     doc = {"tenant_id": tenant_id, "barcode": bc, "barcodes": d["barcodes"][1:],
            "name": d["name"][:200] or bc, "type": ptype, "vat_rate": d["vat_rate"],
            "category": category_name or None,   # ειδική Profarm κατηγορία (αλλιώς None → AI/χειροκίνητα)
@@ -340,7 +350,8 @@ async def _upsert_profarm_product(cl, col, repo, tenant_id: str, pid: str, ptype
            "wholesale_cents": d["wholesale_cents"], "description_long": d.get("description"),
            "active": True, "for_sale": False, "stock_qty": 0,
            "image_id": image_id, "photo_source": "profarm" if image_id else None,
-           "source": "profarm", "profarm_pid": pid, "created_at": _now(), "updated_at": _now()}
+           "source": "profarm", "profarm_pid": pid, "profarm_synced_at": _now(),
+           "created_at": _now(), "updated_at": _now()}
     await col.insert_one(doc)
     return "created", bool(image_id), False
 
@@ -367,9 +378,18 @@ async def import_chunk(tenant_id: str, category_ids: list | None = None, *, chun
     cats = job["cats"]
     cat_i, page = job.get("cat_i", 0), job.get("page", 0)
     page_pids, page_pos = job.get("page_pids", []), job.get("page_pos", 0)
+    # Cooldown ανάμεσα σε ΠΛΗΡΗ περάσματα — συνεχής ΗΠΙΟΣ συγχρονισμός χωρίς tight loop.
+    npa = job.get("next_pass_after")
+    if npa and getattr(npa, "tzinfo", None) is None:
+        npa = npa.replace(tzinfo=timezone.utc)
+    if npa and _now() < npa:
+        return {"ok": True, "cooldown": True}
     if cat_i >= len(cats):
-        await sup.update_one({"key": "profarm_import"}, {"$set": {"status": "done"}})
-        return {"ok": True, "done": True}
+        # ΤΕΛΟΣ πλήρους περάσματος → ΞΑΝΑ από την αρχή (re-scan για ΑΛΛΑΓΕΣ/ΝΕΑ) μετά από cooldown.
+        await sup.update_one({"key": "profarm_import"}, {"$set": {
+            "status": "importing", "cat_i": 0, "page": 0, "page_pids": [], "page_pos": 0, "seen_pids": [],
+            "last_pass_at": _now(), "next_pass_after": _now() + _RESCAN_AFTER}})
+        return {"ok": True, "pass_done": True}
     cl = await login(creds["username"], creds["password"])
     if not cl:
         return {"ok": False, "error": "login_failed"}
@@ -384,12 +404,16 @@ async def import_chunk(tenant_id: str, category_ids: list | None = None, *, chun
             # νέο pid (το Profarm επαναλαμβάνει σελίδες πέρα από το πραγματικό τέλος → μη ξαναδουλεύεις
             # τα ίδια προϊόντα ~40 φορές· αυτό ήταν το bug «κόλλημα σε κατηγορία 1/9, σελίδα 484»).
             if not pids or page >= _MAX_PAGES or (pids and not new_pids):
-                nxt_done = (cat_i + 1) >= len(cats)
+                if (cat_i + 1) >= len(cats):
+                    # τέλος πλήρους περάσματος → loop-back με cooldown (συνεχής συγχρονισμός)
+                    await sup.update_one({"key": "profarm_import"}, {"$set": {
+                        "status": "importing", "cat_i": 0, "page": 0, "page_pids": [], "page_pos": 0,
+                        "seen_pids": [], "last_pass_at": _now(), "next_pass_after": _now() + _RESCAN_AFTER}})
+                    return {"ok": True, "pass_done": True}
                 await sup.update_one({"key": "profarm_import"}, {"$set": {
                     "cat_i": cat_i + 1, "page": 0, "page_pids": [], "page_pos": 0,
-                    "seen_pids": [],   # reset του «seen» για τη νέα κατηγορία
-                    **({"status": "done"} if nxt_done else {})}})
-                return {"ok": True, "phase": "next-category", "cat_i": cat_i + 1, "done": nxt_done}
+                    "seen_pids": []}})   # reset του «seen» για τη νέα κατηγορία
+                return {"ok": True, "phase": "next-category", "cat_i": cat_i + 1}
             if len(seen) < 60000:                 # cap: μη φουσκώνει το job doc (distinct/κατηγορία = μικρό)
                 seen.update(str(p) for p in pids)
             page_pids, page_pos, page = new_pids, 0, page + 1   # μόνο τα ΝΕΑ pids αυτής της σελίδας

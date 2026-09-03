@@ -104,8 +104,8 @@ def profarm_import_tick() -> dict:
                         break
                     for k in agg:
                         agg[k] += int(r.get(k) or 0)
-                    if r.get("done"):
-                        break
+                    if r.get("done") or r.get("cooldown") or r.get("pass_done"):
+                        break   # ολοκληρώθηκε πέρασμα ή σε cooldown → σταμάτα αυτό το tick
                 out[str(t)] = {"phase": r.get("phase"), **agg, "cat_i": r.get("cat_i"), "page": r.get("page")}
             except Exception as e:  # noqa: BLE001
                 out[str(t)] = {"error": str(e)[:100], **agg}
