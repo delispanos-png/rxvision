@@ -298,11 +298,10 @@ def parse_category_listing(html: str) -> list[dict]:
         pid = m.group(1)
         seen.add(pid)
         seg = block[:1600]
-        # Τιμή προσφοράς (ecm_prod_sale) υπερισχύει· αλλιώς η κανονική (ecm_prod_price ... <span>).
-        sale = re.search(r'ecm_prod_sale">([^<]+)</div>', seg)
+        # ΧΟΝΔΡΙΚΗ = η ΚΑΝΟΝΙΚΗ/ΔΙΑΓΡΑΜΜΕΝΗ τιμή (ecm_prod_price ... <span>) — ΠΡΙΝ την «τιμολογιακή
+        # πολιτική» (π.χ. 12,29 €). ΟΧΙ η εκπτωτική (ecm_prod_sale, π.χ. 11,92 €) που είναι η καθαρή αγορά.
         reg = re.search(r'ecm_prod_price[^>]*>\s*<span[^>]*>([^<]+)</span>', seg)
-        pt = sale.group(1) if sale else (reg.group(1) if reg else None)
-        pc = _cents(pt) if pt else None
+        pc = _cents(reg.group(1)) if reg else None
         out.append({"pid": pid, "price_cents": pc or None,
                     "in_stock": "stock_level_zero" not in seg})
     return out
@@ -336,20 +335,23 @@ async def _upsert_profarm_product(cl, col, repo, tenant_id: str, pid: str, ptype
         sc = pidd.get("profarm_synced_at")
         if sc and getattr(sc, "tzinfo", None) is None:
             sc = sc.replace(tzinfo=timezone.utc)
-        # ΦΘΗΝΟ change-signal από τη ΛΙΣΤΑ (100/request): detail ΜΟΝΟ όταν η τιμή ΟΝΤΩΣ άλλαξε.
-        stored_lp = pidd.get("profarm_list_price")
-        price_changed = list_price_cents is not None and stored_lp is not None and stored_lp != list_price_cents
+        # ΧΟΝΔΡΙΚΗ = struck price από τη ΛΙΣΤΑ (100/request). Αν έχει φωτο & δεν είναι ώρα για βαθύ έλεγχο →
+        # ΔΕΝ ανοίγουμε detail: ενημερώνουμε ΦΘΗΝΑ διαθεσιμότητα + (αν άλλαξε) τη ΧΟΝΔΡΙΚΗ, απευθείας.
+        stored_lp = pidd.get("profarm_list_price")   # τελευταία γνωστή χονδρική λίστας
+        wh_changed = list_price_cents is not None and stored_lp != list_price_cents
         deep_due = (not sc) or (_now() - sc) >= _DEEP_RESYNC
-        if pidd.get("image_id") and not price_changed and not deep_due:
-            # Τιμή αμετάβλητη (ή πρώτη-φορά backfill) & έχει φωτο & όχι βαθύς έλεγχος → SKIP χωρίς detail.
+        if pidd.get("image_id") and not deep_due:
             cheap: dict = {}
             if in_stock is not None:
                 cheap["profarm_in_stock"] = bool(in_stock)
-            if list_price_cents is not None and stored_lp != list_price_cents:
-                cheap["profarm_list_price"] = list_price_cents   # backfill τιμής λίστας (χωρίς external request)
+            if wh_changed:                      # η χονδρική άλλαξε → ενημέρωσε ΑΠΕΥΘΕΙΑΣ από τη λίστα
+                cheap["wholesale_cents"] = list_price_cents
+                cheap["profarm_list_price"] = list_price_cents
+                cheap["profarm_synced_at"] = _now()
+                cheap["updated_at"] = _now()
             if cheap:
                 await col.update_one({"tenant_id": tenant_id, "profarm_pid": pid}, {"$set": cheap})
-            return "skip", False, False
+            return ("enriched" if wh_changed else "skip"), False, False
     try:
         b = (await asyncio.wait_for(cl.get(f"{BASE}/farmaka-1/product_id/{pid}"), timeout=18)).text
     except (TimeoutError, Exception):  # noqa: BLE001
@@ -383,8 +385,10 @@ async def _upsert_profarm_product(cl, col, repo, tenant_id: str, pid: str, ptype
         if in_stock is not None:
             s["profarm_in_stock"] = bool(in_stock)
         changed = reclassified
-        if d["wholesale_cents"] and d["wholesale_cents"] != existing.get("wholesale_cents"):
-            s["wholesale_cents"] = d["wholesale_cents"]; changed = True   # χονδρική/κόστος → πάντα συγχρονίζεται
+        # ΧΟΝΔΡΙΚΗ: η struck τιμή της ΛΙΣΤΑΣ (12,29) είναι authoritative· fallback το detail αν λείπει.
+        wh = list_price_cents if list_price_cents is not None else d["wholesale_cents"]
+        if wh and wh != existing.get("wholesale_cents"):
+            s["wholesale_cents"] = wh; changed = True
         if first_link and d["retail_cents"]:     # προτεινόμενη λιανική Profarm ΜΟΝΟ στο 1ο link
             s["price_cents"] = d["retail_cents"]; changed = True
         if image_id and not existing.get("image_id"):
@@ -400,7 +404,9 @@ async def _upsert_profarm_product(cl, col, repo, tenant_id: str, pid: str, ptype
            "name": d["name"][:200] or bc, "type": ptype, "vat_rate": d["vat_rate"],
            "category": category_name or None,   # ειδική Profarm κατηγορία (αλλιώς None → AI/χειροκίνητα)
            "price_includes_vat": True, "price_cents": d["retail_cents"],
-           "wholesale_cents": d["wholesale_cents"], "description_long": d.get("description"),
+           # ΧΟΝΔΡΙΚΗ = struck τιμή λίστας (authoritative)· fallback το detail
+           "wholesale_cents": list_price_cents if list_price_cents is not None else d["wholesale_cents"],
+           "description_long": d.get("description"),
            "active": True, "for_sale": False, "stock_qty": 0,
            "image_id": image_id, "photo_source": "profarm" if image_id else None,
            "source": "profarm", "profarm_pid": pid, "profarm_synced_at": _now(),
