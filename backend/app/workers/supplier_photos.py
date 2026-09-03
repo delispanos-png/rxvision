@@ -22,12 +22,9 @@ def _athens_now() -> datetime:
 
 
 def _in_download_window() -> bool:
-    """Παράθυρο κατεβάσματος Profarm: ΚΑΘΗΜΕΡΙΝΕΣ 20:00–06:00 Αθήνας· ΣΑΒΒΑΤΟ & ΚΥΡΙΑΚΗ όλη μέρα."""
-    now = _athens_now()
-    if now.weekday() >= 5:      # 5=Σάββατο, 6=Κυριακή → όλο το 24ωρο
-        return True
-    h = now.hour
-    return h >= 20 or h < 6
+    """Παράθυρο κατεβάσματος Profarm: ΚΑΘΕ ΜΕΡΑ 07:00–00:00 Αθήνας (μεσάνυχτα). Νύχτα 00:00–07:00 = off.
+    Τρέχει ΗΠΙΑ (μικρό chunk/tick) ώστε να μη γίνεται αντιληπτό & να μη φορτώνει το σύστημα τη μέρα."""
+    return _athens_now().hour >= 7      # 07:00–23:59 ON · 00:00–06:59 OFF
 
 
 @celery_app.task(name="app.workers.supplier_photos.profarm_sync_tick")
@@ -85,7 +82,7 @@ def profarm_import_tick() -> dict:
         in_win = _in_download_window()
         now_utc = datetime.now(timezone.utc)
         for t in tids:
-            # Κατέβασμα: καθημερινές 20:00–06:00 Αθήνας, Σαβ/Κυρ όλη μέρα· εξαίρεση «σήμερα» μέσω day_grace_until.
+            # Κατέβασμα: κάθε μέρα 07:00–00:00 Αθήνας· εξαίρεση «τώρα» μέσω day_grace_until (χειροκίνητο άνοιγμα).
             job = await db["supplier_settings"].find_one({"tenant_id": t, "key": "profarm_import"}, {"day_grace_until": 1})
             grace = (job or {}).get("day_grace_until")
             if grace and grace.tzinfo is None:
@@ -93,15 +90,16 @@ def profarm_import_tick() -> dict:
             if not in_win and not (grace and now_utc < grace):
                 out[str(t)] = {"skipped": "out_of_window"}
                 continue
-            # ΠΟΛΛΑ chunks ανά tick (~90s): όταν το tick πιάσει worker-slot (τη μέρα οι slots είναι
-            # γεμάτοι από ΗΔΥΚΑ syncs), να κάνει ΟΥΣΙΑΣΤΙΚΗ δουλειά αντί για ένα μόνο chunk.
+            # ΗΠΙΟ trickle: μικρό time-budget (~25s) & μικρό chunk ανά tick (κάθε 2′) — δεν κρατά τον worker-slot
+            # πολλή ώρα, δεν μπλοκάρει τους ΗΔΥΚΑ syncs, δεν γίνεται αντιληπτό. Idempotent/resumable → κάθε
+            # deploy/restart απλώς συνεχίζει από εκεί που έμεινε στο επόμενο tick.
             import time as _time
-            deadline = _time.time() + 90
+            deadline = _time.time() + 25
             agg = {"created": 0, "enriched": 0, "photos": 0}
             r: dict = {}
             try:
                 while _time.time() < deadline:
-                    r = await profarm_service.import_chunk(str(t), chunk=20)
+                    r = await profarm_service.import_chunk(str(t), chunk=15)
                     if not r.get("ok"):
                         break
                     for k in agg:
