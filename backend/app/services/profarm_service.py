@@ -13,9 +13,11 @@ import asyncio
 import re
 from datetime import datetime, timedelta, timezone
 
-# Κάθε πόσο ξανα-ελέγχουμε ένα ΗΔΗ εισαγμένο είδος για ΑΛΛΑΓΕΣ στην Profarm (χονδρική/φωτο/περιγραφή).
-_RESYNC_AFTER = timedelta(days=3)
-# Μετά από ΠΛΗΡΗ πέρασμα όλων των κατηγοριών, περίμενε τόσο πριν ξανα-σαρώσεις (συνεχής ήπιος συγχρονισμός).
+# Οι αλλαγές πιάνονται ΦΘΗΝΑ από την τιμή/διαθεσιμότητα της ΛΙΣΤΑΣ (100 προϊόντα/request)· ανοίγουμε το
+# detail μόνο όσων άλλαξε η τιμή. _DEEP_RESYNC = βαθύς έλεγχος ασφαλείας ανά είδος (πιάνει ό,τι δεν φάνηκε
+# στην τιμή, π.χ. αλλαγή περιγραφής) — αραιά, για να μένει ήπιο.
+_DEEP_RESYNC = timedelta(days=30)
+# Μετά από ΠΛΗΡΕΣ πέρασμα όλων των κατηγοριών, περίμενε τόσο πριν ξανα-σαρώσεις (συνεχής ήπιος συγχρονισμός).
 _RESCAN_AFTER = timedelta(hours=6)
 
 import httpx
@@ -284,8 +286,43 @@ async def list_category_products(cl: httpx.AsyncClient, cat_id, page: int, rows:
     return list(dict.fromkeys(re.findall(r"product_id/(\d+)", r.text or "")))
 
 
+def parse_category_listing(html: str) -> list[dict]:
+    """Από τη σελίδα ΛΙΣΤΑΣ κατηγορίας (100 προϊόντα/request) βγάζει ΑΝΑ ΠΡΟΪΟΝ: {pid, price_cents, in_stock}.
+    Δίνει ΦΘΗΝΟ σήμα αλλαγής (τιμή/διαθεσιμότητα) → ανοίγουμε το detail ΜΟΝΟ όσων άλλαξαν."""
+    out: list[dict] = []
+    seen: set[str] = set()
+    for block in re.split(r'class="ecm_product"', html)[1:]:
+        m = re.search(r"product_id/(\d+)", block)
+        if not m or m.group(1) in seen:
+            continue
+        pid = m.group(1)
+        seen.add(pid)
+        seg = block[:1600]
+        # Τιμή προσφοράς (ecm_prod_sale) υπερισχύει· αλλιώς η κανονική (ecm_prod_price ... <span>).
+        sale = re.search(r'ecm_prod_sale">([^<]+)</div>', seg)
+        reg = re.search(r'ecm_prod_price[^>]*>\s*<span[^>]*>([^<]+)</span>', seg)
+        pt = sale.group(1) if sale else (reg.group(1) if reg else None)
+        pc = _cents(pt) if pt else None
+        out.append({"pid": pid, "price_cents": pc or None,
+                    "in_stock": "stock_level_zero" not in seg})
+    return out
+
+
+async def list_category_items(cl: httpx.AsyncClient, cat_id, page: int, rows: int = 100) -> list[dict]:
+    """Σαν το list_category_products αλλά με ΤΙΜΗ+ΔΙΑΘΕΣΙΜΟΤΗΤΑ ανά προϊόν (για φθηνό change-detection)."""
+    url = (f"{BASE}/farmaka-1/category_id/{cat_id}/rowsperpage784/{rows}/productspage784/{page}"
+           "/tmpvars[784][no_deps]/1/mode/ajax/ajax/784")
+    try:
+        r = await asyncio.wait_for(cl.get(url), timeout=25)
+    except Exception:  # noqa: BLE001
+        return []
+    return parse_category_listing(r.text or "")
+
+
 async def _upsert_profarm_product(cl, col, repo, tenant_id: str, pid: str, ptype: str,
-                                  category_name: str | None = None) -> tuple[str, bool, bool]:
+                                  category_name: str | None = None,
+                                  list_price_cents: int | None = None,
+                                  in_stock: bool | None = None) -> tuple[str, bool, bool]:
     """Fetch detail → parse → create/enrich ΕΝΑ προϊόν. Returns (result, had_photo, reclassified).
     ΕΛΕΓΧΟΣ τύπου: ο τύπος παίρνεται από την ΕΠΙΣΗΜΗ κατηγορία Profarm (ΜΗΣΥΦΑ=OTC, παραφάρμακα=
     parapharmacy)· η εισαγωγή ΔΕΝ σαρώνει ποτέ «Φάρμακα» (συνταγογραφούμενα), άρα δεν αγγίζει rx.
@@ -294,12 +331,24 @@ async def _upsert_profarm_product(cl, col, repo, tenant_id: str, pid: str, ptype
     # φωτο → SKIP χωρίς detail (γρήγορο re-crawl). Αν έχει «παλιώσει» → ξανακατεβάζουμε detail για να πιάσουμε
     # ΑΛΛΑΓΕΣ (χονδρική/λιανική-πρόταση/φωτο/περιγραφή). Έτσι το ίδιο process κάνει ΚΑΙ import ΚΑΙ update.
     pidd = await col.find_one({"tenant_id": tenant_id, "profarm_pid": pid},
-                              {"profarm_synced_at": 1, "image_id": 1})
+                              {"profarm_synced_at": 1, "image_id": 1, "profarm_list_price": 1})
     if pidd:
         sc = pidd.get("profarm_synced_at")
-        if sc and sc.tzinfo is None:
+        if sc and getattr(sc, "tzinfo", None) is None:
             sc = sc.replace(tzinfo=timezone.utc)
-        if sc and (_now() - sc) < _RESYNC_AFTER and pidd.get("image_id"):
+        # ΦΘΗΝΟ change-signal από τη ΛΙΣΤΑ (100/request): detail ΜΟΝΟ όταν η τιμή ΟΝΤΩΣ άλλαξε.
+        stored_lp = pidd.get("profarm_list_price")
+        price_changed = list_price_cents is not None and stored_lp is not None and stored_lp != list_price_cents
+        deep_due = (not sc) or (_now() - sc) >= _DEEP_RESYNC
+        if pidd.get("image_id") and not price_changed and not deep_due:
+            # Τιμή αμετάβλητη (ή πρώτη-φορά backfill) & έχει φωτο & όχι βαθύς έλεγχος → SKIP χωρίς detail.
+            cheap: dict = {}
+            if in_stock is not None:
+                cheap["profarm_in_stock"] = bool(in_stock)
+            if list_price_cents is not None and stored_lp != list_price_cents:
+                cheap["profarm_list_price"] = list_price_cents   # backfill τιμής λίστας (χωρίς external request)
+            if cheap:
+                await col.update_one({"tenant_id": tenant_id, "profarm_pid": pid}, {"$set": cheap})
             return "skip", False, False
     try:
         b = (await asyncio.wait_for(cl.get(f"{BASE}/farmaka-1/product_id/{pid}"), timeout=18)).text
@@ -329,6 +378,10 @@ async def _upsert_profarm_product(cl, col, repo, tenant_id: str, pid: str, ptype
         first_link = existing.get("profarm_pid") != pid
         s = {"type": ptype, "vat_rate": d["vat_rate"], "price_includes_vat": True, "profarm_pid": pid,
              "profarm_synced_at": _now(), "updated_at": _now()}
+        if list_price_cents is not None:
+            s["profarm_list_price"] = list_price_cents   # για φθηνό change-detection στο επόμενο πέρασμα
+        if in_stock is not None:
+            s["profarm_in_stock"] = bool(in_stock)
         changed = reclassified
         if d["wholesale_cents"] and d["wholesale_cents"] != existing.get("wholesale_cents"):
             s["wholesale_cents"] = d["wholesale_cents"]; changed = True   # χονδρική/κόστος → πάντα συγχρονίζεται
@@ -351,6 +404,7 @@ async def _upsert_profarm_product(cl, col, repo, tenant_id: str, pid: str, ptype
            "active": True, "for_sale": False, "stock_qty": 0,
            "image_id": image_id, "photo_source": "profarm" if image_id else None,
            "source": "profarm", "profarm_pid": pid, "profarm_synced_at": _now(),
+           "profarm_list_price": list_price_cents, "profarm_in_stock": in_stock,
            "created_at": _now(), "updated_at": _now()}
     await col.insert_one(doc)
     return "created", bool(image_id), False
@@ -378,6 +432,8 @@ async def import_chunk(tenant_id: str, category_ids: list | None = None, *, chun
     cats = job["cats"]
     cat_i, page = job.get("cat_i", 0), job.get("page", 0)
     page_pids, page_pos = job.get("page_pids", []), job.get("page_pos", 0)
+    page_prices = job.get("page_prices", {})   # {pid: τιμή λίστας cents} — φθηνό change-signal
+    page_stock = job.get("page_stock", {})     # {pid: in_stock}
     # Cooldown ανάμεσα σε ΠΛΗΡΗ περάσματα — συνεχής ΗΠΙΟΣ συγχρονισμός χωρίς tight loop.
     npa = job.get("next_pass_after")
     if npa and getattr(npa, "tzinfo", None) is None:
@@ -398,7 +454,8 @@ async def import_chunk(tenant_id: str, category_ids: list | None = None, *, chun
         # χρειάζεσαι ΝΕΑ σελίδα;
         seen = set(job.get("seen_pids") or [])   # pids που έχουμε ήδη δει σε ΑΥΤΗ την κατηγορία
         if page_pos >= len(page_pids):
-            pids = await list_category_products(cl, cats[cat_i], page)
+            items = await list_category_items(cl, cats[cat_i], page)   # με τιμή+διαθεσιμότητα ανά προϊόν
+            pids = [it["pid"] for it in items]
             new_pids = [p for p in pids if str(p) not in seen]
             # ΤΕΛΟΣ κατηγορίας όταν: κενή σελίδα, όριο ασφαλείας, Ή WRAP — η σελίδα δεν φέρνει ΚΑΝΕΝΑ
             # νέο pid (το Profarm επαναλαμβάνει σελίδες πέρα από το πραγματικό τέλος → μη ξαναδουλεύεις
@@ -417,6 +474,9 @@ async def import_chunk(tenant_id: str, category_ids: list | None = None, *, chun
             if len(seen) < 60000:                 # cap: μη φουσκώνει το job doc (distinct/κατηγορία = μικρό)
                 seen.update(str(p) for p in pids)
             page_pids, page_pos, page = new_pids, 0, page + 1   # μόνο τα ΝΕΑ pids αυτής της σελίδας
+            # χάρτες τιμής/διαθεσιμότητας για ΑΥΤΗ τη σελίδα (φθηνό change-signal στο upsert)
+            page_prices = {it["pid"]: it["price_cents"] for it in items if it["pid"] in set(new_pids)}
+            page_stock = {it["pid"]: it["in_stock"] for it in items if it["pid"] in set(new_pids)}
         # εισήγαγε chunk από την ΤΡΕΧΟΥΣΑ σελίδα
         repo = PharmacyCatalogRepository(tenant_id=tenant_id)
         col = repo._db["pharmacy_products"]
@@ -425,7 +485,10 @@ async def import_chunk(tenant_id: str, category_ids: list | None = None, *, chun
         end = min(page_pos + chunk, len(page_pids))
         reclassified = 0
         for k in range(page_pos, end):
-            res, ph, rc = await _upsert_profarm_product(cl, col, repo, tenant_id, page_pids[k], ptype, cat_name)
+            _pid = page_pids[k]
+            res, ph, rc = await _upsert_profarm_product(
+                cl, col, repo, tenant_id, _pid, ptype, cat_name,
+                list_price_cents=page_prices.get(_pid), in_stock=page_stock.get(_pid))
             if res == "error":
                 break                    # πιθανό throttling → σταμάτα, retry ίδιο pos επόμενο tick
             page_pos = k + 1
@@ -441,6 +504,7 @@ async def import_chunk(tenant_id: str, category_ids: list | None = None, *, chun
                 await asyncio.sleep(0.35)
         await sup.update_one({"key": "profarm_import"}, {"$set": {
             "page": page, "page_pids": page_pids, "page_pos": page_pos, "seen_pids": list(seen),
+            "page_prices": page_prices, "page_stock": page_stock,
             "created": job.get("created", 0) + created, "enriched": job.get("enriched", 0) + enriched,
             "photos": job.get("photos", 0) + photos,
             "reclassified": job.get("reclassified", 0) + reclassified, "updated_at": _now()}})
