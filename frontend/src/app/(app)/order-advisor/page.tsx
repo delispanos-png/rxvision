@@ -17,7 +17,8 @@ type Sug = {
   product_id: string; product_name: string; substance?: string | null;
   avg_daily: number; expected_demand: number; suggested_qty: number; est_cost: number; price_rising?: boolean;
 };
-type Upc = { expected_open_date: string; patient_name?: string | null; amka?: string | null; products?: (string | null)[]; source_barcode?: string | null };
+type UpcProduct = { name?: string | null; qty?: number } | string | null;
+type Upc = { expected_open_date: string; patient_name?: string | null; amka?: string | null; products?: UpcProduct[]; source_barcode?: string | null };
 type Xsell = { atc: string; class: string; sell: string; why: string; reach: number };
 type OrderAdvice = {
   kpis: { items: number; qty: number; cost: number; rising: number };
@@ -41,7 +42,13 @@ const makeSugCols = (t: T): Column<Sug>[] => [
 const makeUpcCols = (t: T): Column<Upc>[] => [
   { key: "expected_open_date", header: t("Αναμένεται", "Expected"), render: (r) => fmtDate(r.expected_open_date) },
   { key: "patient_name", header: t("Ασθενής", "Patient"), render: (r) => r.patient_name || "—" },
-  { key: "products", header: t("Σκευάσματα", "Products"), render: (r) => (r.products ?? []).filter(Boolean).join(", ") || "—" },
+  { key: "products", header: t("Σκευάσματα", "Products"), render: (r) => (r.products ?? [])
+      .map((p) => {
+        if (!p) return null;
+        if (typeof p === "string") return p;
+        return p.name ? (p.qty && p.qty > 1 ? `${p.name} × ${p.qty}` : p.name) : null;
+      })
+      .filter(Boolean).join(", ") || "—" },
 ];
 
 export default function OrderAdvisorPage() {
