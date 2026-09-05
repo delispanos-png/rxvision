@@ -131,10 +131,18 @@ class VaultService:
 
     # ── convenience helpers ────────────────────────────────
     def tenant_pepper(self, tenant_id: str) -> str:
+        """Pepper ψευδωνυμοποίησης ΑΜΚΑ για το φαρμακείο.
+
+        ⚠️ ΠΡΟΣΟΧΗ: ΠΟΤΕ μην προμηθεύσεις pepper σε ΥΠΑΡΧΟΝΤΑ tenant που ήδη τρέχει με το παράγωγο
+        fallback — όλα τα patient_ref (= HMAC(ΑΜΚΑ, pepper)) θα άλλαζαν και θα «έσπαγαν» οι συνδέσεις
+        ασθενών ↔ εκτελέσεων/πύλης. Νέοι tenants παίρνουν ΤΥΧΑΙΟ pepper στη δημιουργία (provisioning).
+        Το fallback παραμένει μόνο για τους παλιούς (και για dev).
+        """
         sec = self.get_secret(f"tenants/{tenant_id}/pepper")
         if sec and "value" in sec:
             return sec["value"]
-        # Lazily derive a per-tenant pepper from the global one if not yet provisioned.
+        # Legacy/dev fallback: παράγωγο από το global pepper. Αδύναμο (το tenant_id δεν είναι μυστικό),
+        # γι' αυτό οι ΝΕΟΙ tenants παίρνουν τυχαίο pepper — βλ. provisioning.open_tenant.
         return f"{settings.ANONYMIZATION_GLOBAL_PEPPER}:{tenant_id}"
 
     def set_tenant_credentials(self, tenant_id: str, source: str, creds: dict[str, Any]) -> str:

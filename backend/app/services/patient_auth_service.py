@@ -16,6 +16,7 @@ from datetime import datetime, timedelta, timezone
 import pyotp
 
 from app.core.config import settings
+from app.utils.signed_media import avatar_url as _avatar_url
 from app.core.security import (
     create_patient_refresh_token, create_patient_token, decode_patient_token,
     hash_password, verify_password,
@@ -551,6 +552,6 @@ class PatientAuthService:
                 "consents": acc.get("consents") or {},
                 "address": acc.get("address"), "city": acc.get("city"),
                 "postal_code": acc.get("postal_code"), "theme": acc.get("theme"),
-                "avatar_url": f"/patient/avatar/{acc['avatar_id']}" if acc.get("avatar_id") else None,
+                "avatar_url": _avatar_url(acc.get("avatar_id")),   # υπογεγραμμένο & ληγόμενο (PII)
             },
         }

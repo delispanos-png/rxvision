@@ -7,6 +7,7 @@ subscription with the package's modules/price/trial.
 
 from __future__ import annotations
 
+import logging
 import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -14,6 +15,9 @@ from datetime import datetime, timedelta, timezone
 from app.core.db import shared_db
 from app.core.security import hash_password
 from app.services.rbac_seed import seed_rbac
+from app.services.vault_service import vault
+
+logger = logging.getLogger(__name__)
 
 
 _ALL_MODULES = ["dashboard", "prescription_analytics", "doctor_analytics", "patient_analytics",
@@ -80,6 +84,17 @@ class TenantProvisioningService:
             "billing_profile": company or {},
             "external_ref": external_ref, "opened_via": source,
             "created_at": _now(), "updated_at": _now()})
+
+        # ΨΕΥΔΩΝΥΜΟΠΟΙΗΣΗ: τυχαίο pepper ΑΝΑ ΦΑΡΜΑΚΕΙΟ στο Vault (έλεγχος ασφαλείας 2026-09, L9).
+        # Χωρίς αυτό, το `vault.tenant_pepper()` επιστρέφει το παράγωγο «GLOBAL_PEPPER:tenant_id» — και
+        # επειδή το tenant_id ΔΕΝ είναι μυστικό, μια διαρροή του global pepper θα καθιστούσε τα ΑΜΚΑ
+        # ψευδώνυμα εξαντλητικά αναστρέψιμα (11ψήφιος χώρος). Ένα τυχαίο pepper το αποκλείει αυτό.
+        # ⚠️ ΜΟΝΟ για ΝΕΟΥΣ tenants — ΠΟΤΕ μην προμηθεύσεις pepper σε υπάρχοντα: θα άλλαζαν όλα τα
+        # patient_ref του και θα «έσπαγαν» οι συνδέσεις ασθενών/εκτελέσεων.
+        try:
+            vault.set_secret(f"tenants/{tid}/pepper", {"value": secrets.token_urlsafe(32)})
+        except Exception as exc:  # noqa: BLE001 — Vault degraded δεν πρέπει να μπλοκάρει τη δημιουργία·
+            logger.warning("pepper provisioning failed for %s (θα χρησιμοποιηθεί το παράγωγο): %s", tid, exc)
 
         # RBAC roles for the tenant, then the owner user
         await seed_rbac(tenant_id=tid)

@@ -168,7 +168,8 @@ class PatientContactRepository(BaseRepository):
                 if amka:
                     acc = await self._db["patient_accounts"].find_one({"amka": amka}, {"avatar_id": 1})
                     if acc and acc.get("avatar_id"):
-                        avatar_url = f"/patient/avatar/{acc['avatar_id']}"
+                        from app.utils.signed_media import avatar_url as _sig_avatar
+                        avatar_url = _sig_avatar(acc["avatar_id"])   # υπογεγραμμένο & ληγόμενο (PII)
             except Exception:  # noqa: BLE001
                 pass
         return {

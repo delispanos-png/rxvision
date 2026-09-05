@@ -19,6 +19,7 @@ from app.repositories.patient_portal import (
     PatientRxRepository, PharmacyServiceRepository, RxRequestRepository,
 )
 from app.services.hdika_lookup import lookup_prescription
+from app.utils.signed_media import avatar_url
 from app.services.patient_auth_service import PatientAuthService, PatientError
 
 router = APIRouter()
@@ -273,7 +274,7 @@ async def me(ctx: PatientContext = Depends(get_patient_context)):
                "consents": acc.get("consents") or {},
                "address": acc.get("address"), "city": acc.get("city"),
                "postal_code": acc.get("postal_code"), "theme": acc.get("theme"),
-               "avatar_url": f"/patient/avatar/{acc['avatar_id']}" if acc.get("avatar_id") else None}
+               "avatar_url": avatar_url(acc.get("avatar_id"))}
     if ctx.demo:   # «πελάτης παρουσίασης»: κρύβουμε ΜΟΝΟ το ΕΠΙΘΕΤΟ (κυρίως) — κρατάμε μικρό όνομα &
         from app.utils.masking import mask_rows, mask_surname   # τα υπόλοιπα πραγματικά (επεξεργάσιμα)
         profile["last_name"] = mask_surname(profile.get("last_name"), True)   # χωρίς κίνδυνο στο Save
@@ -444,12 +445,16 @@ async def upload_avatar(file: UploadFile = File(...),
     img_id = await PatientAccountRepository().save_avatar(ctx.account_id, raw, file.content_type)
     if not img_id:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail={"error": "bad_image"})
-    return {"avatar_id": img_id, "url": f"/patient/avatar/{img_id}"}
+    return {"avatar_id": img_id, "url": avatar_url(img_id)}
 
 
 @router.get("/avatar/{image_id}")
-async def get_avatar(image_id: str):
-    """Public serve φωτογραφίας προφίλ (opaque id — τα <img> δεν στέλνουν bearer token)."""
+async def get_avatar(image_id: str, exp: str | None = None, sig: str | None = None):
+    """Serve φωτογραφίας προφίλ με ΥΠΟΓΕΓΡΑΜΜΕΝΟ, ληγόμενο URL (τα <img> δεν στέλνουν bearer token).
+    Πρόσωπο = PII: χωρίς έγκυρη υπογραφή/εντός λήξης → 403 (πριν ήταν δημόσιο για πάντα με το id)."""
+    from app.utils.signed_media import avatar_sig_valid
+    if not avatar_sig_valid(image_id, exp, sig):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail={"error": "invalid_or_expired_link"})
     from app.repositories.patient_portal import PatientAccountRepository
     got = await PatientAccountRepository.get_avatar(image_id)
     if not got:
