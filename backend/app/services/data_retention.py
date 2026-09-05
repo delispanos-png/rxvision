@@ -131,6 +131,11 @@ async def purge_old(db=None, *, dry_run: bool = False) -> dict:
     db: πέρασέ το από worker context (_fresh_db)· default = shared_db() για FastAPI."""
     db = db if db is not None else shared_db()
     now = _utcnow()
+    # SAFETY CAP: κανονικά κάθε run σβήνει μια μικρή «φέτα» που μόλις βγήκε από το παράθυρο. Αν ένα run
+    # θα έσβηνε δυσανάλογα μεγάλο ποσοστό (πιθανό bug σε cutoff/retention_months), ΠΑΡΑΚΑΜΨΕ + ειδοποίησε
+    # τον ιδιοκτήτη αντί να διαγράψεις μαζικά (μη-αναστρέψιμο, μόνο από backup).
+    _SAFETY_FRACTION = 0.25
+    _SAFETY_MIN_TOTAL = 200
     per: list[dict] = []
     tot_exec = tot_item = 0
     async for t in db["tenants"].find({}, {"_id": 1, "name": 1, "retention_months": 1}):
@@ -140,13 +145,27 @@ async def purge_old(db=None, *, dry_run: bool = False) -> dict:
         q = {"tenant_id": tid, "executed_at": {"$lt": cutoff}}
         n_exec = await db["prescription_executions"].count_documents(q)   # tenant-ok: scoped by tenant_id
         n_item = await db["prescription_items"].count_documents(q)
+        guarded = False
         if not dry_run and (n_exec or n_item):
-            # items ΠΡΩΤΑ (τα «παιδιά»), μετά οι εκτελέσεις — αν διακοπεί, δεν μένουν ορφανά items
-            await _batched_delete(db["prescription_items"], q)
-            await _batched_delete(db["prescription_executions"], q)
+            total_ex = await db["prescription_executions"].count_documents({"tenant_id": tid})
+            if total_ex > _SAFETY_MIN_TOTAL and n_exec > total_ex * _SAFETY_FRACTION:
+                guarded = True   # ύποπτα πολλά → μη διαγράψεις, ειδοποίησε
+                try:
+                    from app.services.comms import admin_alert
+                    await admin_alert(
+                        f"⚠️ RxVision retention: ΠΑΡΑΛΕΙΦΘΗΚΕ purge {n_exec}/{total_ex} εκτελέσεων για "
+                        f"«{t.get('name') or tid}» (>{int(_SAFETY_FRACTION*100)}% σε ένα run — πιθανό λάθος "
+                        f"retention {months}μ). Έλεγξε πριν τρέξεις χειροκίνητη διαγραφή.")
+                except Exception:  # noqa: BLE001
+                    pass
+            else:
+                # items ΠΡΩΤΑ (τα «παιδιά»), μετά οι εκτελέσεις — αν διακοπεί, δεν μένουν ορφανά items
+                await _batched_delete(db["prescription_items"], q)
+                await _batched_delete(db["prescription_executions"], q)
         if n_exec or n_item:
             per.append({"tenant_id": str(tid), "name": t.get("name"), "months": months,
-                        "cutoff": cutoff.date().isoformat(), "executions": n_exec, "items": n_item})
-        tot_exec += n_exec
-        tot_item += n_item
+                        "cutoff": cutoff.date().isoformat(), "executions": n_exec, "items": n_item,
+                        "guarded": guarded})
+        tot_exec += 0 if guarded else n_exec
+        tot_item += 0 if guarded else n_item
     return {"deleted": not dry_run, "executions": tot_exec, "items": tot_item, "per_tenant": per}

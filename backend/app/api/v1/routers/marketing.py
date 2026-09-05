@@ -42,7 +42,7 @@ async def campaigns(days: int = 90, ctx: TenantContext = Depends(require("patien
 
 
 @router.post("/coupons/redeem")
-async def redeem(body: RedeemIn, ctx: TenantContext = Depends(require("patients:read", module=_MODULE))):
+async def redeem(body: RedeemIn, ctx: TenantContext = Depends(require("portal:manage", module=_MODULE))):
     """Εξαργύρωση κουπονιού στο ταμείο — επιβεβαιώνει ισχύ, καταγράφει εξαργύρωση & αξία."""
     return await marketing.redeem_coupon(
         ctx.tenant_id, body.code, amount_cents=body.amount_cents,
@@ -73,7 +73,7 @@ async def coupons(ctx: TenantContext = Depends(require("patients:read", module=_
 
 
 @router.post("/coupons")
-async def coupon_create(body: CouponCreateIn, ctx: TenantContext = Depends(require("patients:read", module=_MODULE))):
+async def coupon_create(body: CouponCreateIn, ctx: TenantContext = Depends(require("portal:manage", module=_MODULE))):
     """Δημιουργία ΑΥΤΟΝΟΜΟΥ κουπονιού (χωρίς αποστολή) — έκπτωση Ή δωρεάν/εκπτωτική υπηρεσία."""
     return await marketing.create_standalone_coupon(
         ctx.tenant_id, reward_type=body.reward_type, discount_type=body.discount_type,
@@ -84,7 +84,7 @@ async def coupon_create(body: CouponCreateIn, ctx: TenantContext = Depends(requi
 
 @router.post("/coupons/{code}/status")
 async def coupon_status(code: str, body: CouponStatusIn,
-                        ctx: TenantContext = Depends(require("patients:read", module=_MODULE))):
+                        ctx: TenantContext = Depends(require("portal:manage", module=_MODULE))):
     """Ενεργοποίηση/απενεργοποίηση κουπονιού."""
     return await marketing.set_coupon_status(ctx.tenant_id, code, body.active)
 
@@ -103,6 +103,6 @@ async def get_settings(ctx: TenantContext = Depends(require("patients:read", mod
 
 
 @router.put("/settings")
-async def set_settings(body: SettingsIn, ctx: TenantContext = Depends(require("patients:read", module=_MODULE))):
+async def set_settings(body: SettingsIn, ctx: TenantContext = Depends(require("portal:manage", module=_MODULE))):
     """Anti-fatigue: όριο προωθητικών μηνυμάτων ανά ασθενή/μήνα."""
     return await marketing.set_settings(ctx.tenant_id, frequency_cap=body.frequency_cap)

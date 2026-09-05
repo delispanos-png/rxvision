@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Respon
 from pydantic import BaseModel, Field
 
 from app.core.deps import TenantContext, require
+from app.core.ratelimit import rate_limit
 from app.repositories.pharmacy_catalog import PharmacyCatalogRepository, StockMovementRepository
 from app.repositories.pharmacy_categories import PharmacyCategoryRepository
 from app.repositories.shop_campaigns import ShopCampaignRepository
@@ -502,7 +503,8 @@ async def profarm_delete(ctx: TenantContext = Depends(require(_PERM, module=_MOD
     return await _sup(ctx).delete_profarm()
 
 
-@router.post("/supplier/profarm/test")
+@router.post("/supplier/profarm/test",
+             dependencies=[Depends(rate_limit("profarm_test", limit=10, window_seconds=60))])
 async def profarm_test(ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
     from app.services import profarm_service
     creds = await _sup(ctx).profarm_creds()
@@ -517,7 +519,8 @@ async def profarm_sync_status(ctx: TenantContext = Depends(require(_PERM, module
     return await profarm_service.sync_status(ctx.tenant_id)
 
 
-@router.post("/supplier/profarm/sync")
+@router.post("/supplier/profarm/sync",
+             dependencies=[Depends(rate_limit("profarm_sync", limit=60, window_seconds=60))])
 async def profarm_sync(batch: int = 25, only_for_sale: bool = False,
                        ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
     """Μία παρτίδα harvest (ο frontend καλεί επαναληπτικά μέχρι remaining=0 δείχνοντας πρόοδο)."""
@@ -540,7 +543,8 @@ async def profarm_import_status(ctx: TenantContext = Depends(require(_PERM, modu
     return await profarm_service.import_status(ctx.tenant_id)
 
 
-@router.post("/supplier/profarm/import")
+@router.post("/supplier/profarm/import",
+             dependencies=[Depends(rate_limit("profarm_import", limit=20, window_seconds=60))])
 async def profarm_import_start(ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
     """Ξεκινά την εισαγωγή (το Celery beat συνεχίζει ήπια στο παρασκήνιο)."""
     from app.services import profarm_service
@@ -553,7 +557,8 @@ async def profarm_import_reset(ctx: TenantContext = Depends(require(_PERM, modul
     return await profarm_service.import_reset(ctx.tenant_id)
 
 
-@router.post("/supplier/profarm/classify")
+@router.post("/supplier/profarm/classify",
+             dependencies=[Depends(rate_limit("profarm_classify", limit=10, window_seconds=60))])
 async def profarm_classify(limit: int = 300, ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
     """AI-ταξινόμηση (haiku) εισαγμένων Profarm προϊόντων χωρίς κατηγορία, από το όνομα."""
     from app.services import profarm_service

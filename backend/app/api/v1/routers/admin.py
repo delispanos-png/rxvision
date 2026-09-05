@@ -54,6 +54,9 @@ _SEG_TO_SECTION = {
     "idika": "idika", "posts": "content", "maintenance": "maintenance",
     "health": "health", "sync-health": "health",
     "leads": "leads", "trials": "leads",
+    # ── ευαίσθητα state-changing segments (ήταν unmapped → παρακάμπταν τον έλεγχο ενότητας) ──
+    "integrations": "billing", "payments": "billing", "credit-packages": "billing",
+    "eshop-fees": "billing", "data-retention": "maintenance", "network": "subscribers",
 }
 # read-only endpoints που χρειάζεται και ο «dashboard»-only χρήστης
 _DASHBOARD_GET = {"tenants", "packages", "sync-health"}
@@ -72,8 +75,14 @@ async def enforce_section(request: Request,
     m = re.search(r"/admin/([^/?]+)", request.url.path)
     seg = m.group(1) if m else ""
     section = _SEG_TO_SECTION.get(seg)
-    if section is None:                                   # unmapped misc → allow
-        return ctx
+    if section is None:
+        # FAIL-CLOSED σε άγνωστο segment: επιτρέπουμε ΜΟΝΟ ανάγνωση (GET/HEAD). Κάθε state-change
+        # (POST/PUT/PATCH/DELETE) σε μη-χαρτογραφημένο segment απορρίπτεται για περιορισμένους admins
+        # (αλλιώς νέα ευαίσθητα endpoints παρακάμπτουν σιωπηλά τον έλεγχο ενότητας — privilege escalation).
+        if request.method in ("GET", "HEAD"):
+            return ctx
+        raise HTTPException(http_status.HTTP_403_FORBIDDEN,
+                            {"error": "forbidden_section", "section": seg})
     allowed = {section}
     if request.method == "GET" and seg in _DASHBOARD_GET:
         allowed.add("dashboard")

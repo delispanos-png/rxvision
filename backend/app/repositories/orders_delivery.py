@@ -736,10 +736,15 @@ async def confirm_viva_payment(*, order_code: str, transaction_id: str | None = 
     tid = order.get("tenant_id")
     repo = OrdersDeliveryRepository(tenant_id=tid)
     creds = await repo.viva_creds()
-    if transaction_id:
-        info = await viva_service.get_transaction(str(transaction_id), creds=creds)
-        if info and str(info.get("StatusId") or "") not in ("", "F"):
-            return False           # όχι επιτυχής → μη μαρκάρεις
+    # FAIL-CLOSED (το webhook είναι δημόσιο & ΑΝΥΠΟΓΡΑΦΟ): μαρκάρουμε paid ΜΟΝΟ αν το re-fetch της
+    # συναλλαγής από το Viva (source of truth, με τα creds του φαρμακείου) γυρίσει StatusId="F" (Finished).
+    # Χωρίς transaction_id, ή αποτυχία fetch, ή οποιοδήποτε άλλο/κενό status → ΔΕΝ μαρκάρουμε (αλλιώς
+    # πλαστό payload χωρίς TransactionId περνούσε σαν πληρωμένο — payment bypass).
+    if not transaction_id:
+        return False
+    info = await viva_service.get_transaction(str(transaction_id), creds=creds)
+    if not info or str(info.get("StatusId") or "") != "F":
+        return False
     await repo.update_one({"_id": order["_id"]}, {"$set": {
         "payment_status": "paid", "viva_transaction_id": transaction_id, "paid_at": _now()}})
     if order.get("account_id"):

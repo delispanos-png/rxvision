@@ -139,17 +139,17 @@ async def _test_send(channel: str, to: str, tenant_id: str):
 
 
 @router.post("/test-email")
-async def test_email(to: str = Query(...), ctx: TenantContext = Depends(require("patients:read", module=_MODULE))):
+async def test_email(to: str = Query(...), ctx: TenantContext = Depends(require("portal:manage", module=_MODULE))):
     return await _test_send("email", to, ctx.tenant_id)
 
 
 @router.post("/test-sms")
-async def test_sms(to: str = Query(...), ctx: TenantContext = Depends(require("patients:read", module=_MODULE))):
+async def test_sms(to: str = Query(...), ctx: TenantContext = Depends(require("portal:manage", module=_MODULE))):
     return await _test_send("sms", to, ctx.tenant_id)
 
 
 @router.post("/test-viber")
-async def test_viber(to: str = Query(...), ctx: TenantContext = Depends(require("patients:read", module=_MODULE))):
+async def test_viber(to: str = Query(...), ctx: TenantContext = Depends(require("portal:manage", module=_MODULE))):
     return await _test_send("viber", to, ctx.tenant_id)
 
 
@@ -189,7 +189,7 @@ class CampaignIn(BaseModel):
 
 
 @router.post("/send", status_code=202)
-async def send_campaign(body: CampaignIn, ctx: TenantContext = Depends(require("patients:read", module=_MODULE))):
+async def send_campaign(body: CampaignIn, ctx: TenantContext = Depends(require("portal:manage", module=_MODULE))):
     from bson import ObjectId
     cid = ObjectId()
     coupon_code = None
@@ -296,6 +296,23 @@ async def charges(days: int = Query(30, ge=1, le=365), channel: str | None = Non
 async def apifon_dlr(request: Request):
     """Delivery receipts της Apifon → ενημέρωση κατάστασης ανά μήνυμα + ΕΠΙΣΤΡΟΦΗ χρημάτων για μη
     παραδοθέντα. ⚠️ Η ΑΚΡΙΒΗΣ μορφή/υπογραφή DLR επιβεβαιώνεται με την Apifon (βλ. request list)."""
+    # AUTH GUARD: το endpoint είναι δημόσιο και κινεί ΕΠΙΣΤΡΟΦΕΣ wallet — πλαστό DLR = δωρεάν credit.
+    # Μέχρι να επιβεβαιωθεί η υπογραφή HMAC της Apifon, απαιτούμε κοινό μυστικό (token) που ρυθμίζεται
+    # στο callback URL της Apifon (?token=... ή header X-Apifon-Token). Αν έχει οριστεί secret και ΔΕΝ
+    # ταιριάζει → 403. Αν ΔΕΝ έχει οριστεί ακόμη → επεξεργαζόμαστε αλλά με προειδοποίηση (μη σπάσουμε το
+    # τρέχον flow· ο ιδιοκτήτης πρέπει να ορίσει comms.apifon_dlr_secret + να ενημερώσει το callback URL).
+    import secrets as _secrets
+    from app.services.platform_secrets import decrypt_doc
+    _cfg = decrypt_doc("comms", await shared_db()["platform_settings"].find_one({"_id": "comms"})) or {}
+    _want = str(_cfg.get("apifon_dlr_secret") or "").strip()
+    if _want:
+        _got = (request.query_params.get("token") or request.headers.get("x-apifon-token")
+                or request.headers.get("x-dlr-token") or "")
+        if not _secrets.compare_digest(_got, _want):
+            from fastapi import HTTPException
+            raise HTTPException(status_code=403, detail="forbidden")
+    else:
+        print("⚠️ apifon_dlr: unauthenticated (comms.apifon_dlr_secret δεν έχει οριστεί) — set it + update callback URL")
     try:
         payload = await request.json()
     except Exception:  # noqa: BLE001

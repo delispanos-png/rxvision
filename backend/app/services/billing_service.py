@@ -375,6 +375,12 @@ async def delete_tenant_fully(tenant_id: str) -> dict:
     ΟΛΕΣ τις collections που φέρουν `tenant_id` — έτσι κάθε νέα collection καθαρίζεται αυτόματα, χωρίς να
     ξεχνιέται (πριν, στατική λίστα άφηνε ορφανά: amount_audit_log 44k, vaccinations, pharmacat, loyalty…).
     Καθαρίζει και GridFS σαρώσεις + tenant_serving. Επιστρέφει τι διαγράφηκε."""
+    # GUARD (blast-radius): κενό/άκυρο tenant_id θα σάρωνε ΟΛΕΣ τις collections με
+    # delete_many({"tenant_id": ""/None}) και θα έσβηνε μαζικά shared/platform docs (που έχουν tenant_id
+    # null/απόν). Απαίτησε έγκυρο ΜΗ-ΚΕΝΟ string — ένα κανονικό tenant_id (π.χ. "T-XXXX") ταιριάζει ΜΟΝΟ
+    # τα δικά του docs. (Δεν απαιτούμε ύπαρξη tenant doc: το purge_orphan_data καθαρίζει νόμιμα ορφανά.)
+    if not tenant_id or not isinstance(tenant_id, str) or not tenant_id.strip():
+        raise ValueError("delete_tenant_fully: κενό/άκυρο tenant_id — άρνηση (blast-radius guard)")
     db = shared_db()
     removed: dict = {}
     for c in await db.list_collection_names():
@@ -587,10 +593,11 @@ async def handle_viva_webhook(event_data: dict) -> None:
     txn = event_data.get("TransactionId") or event_data.get("transactionId")
     if not txn:
         return
-    # επιβεβαίωση: re-fetch της συναλλαγής από το Viva (source of truth) — μη εμπιστεύεσαι το payload
+    # FAIL-CLOSED: re-fetch της συναλλαγής από το Viva (source of truth). Εμπιστευόμαστε ΜΟΝΟ το re-fetch,
+    # ΟΧΙ το StatusId του payload (πλαστογραφήσιμο). Χωρίς επιτυχές fetch με StatusId="F" (Finished) →
+    # σταματάμε (αλλιώς κενό/άγνωστο status περνούσε σαν επιτυχία → εγγραφή/ανανέωση/wallet χωρίς πληρωμή).
     info = await viva_service.get_transaction(str(txn))
-    status_id = str((info or {}).get("StatusId") or event_data.get("StatusId") or "")
-    if status_id and status_id != "F":       # F = Finished (επιτυχής)
+    if not info or str(info.get("StatusId") or "") != "F":
         return
     # (0) signup «πληρωμή-πρώτα»: MerchantTrns = "signup:<pending_id>" → μαρκάρισε την pending ως paid
     #     (ο λογαριασμός δημιουργείται όταν ο πελάτης βάλει κωδικό στο /register-complete)
