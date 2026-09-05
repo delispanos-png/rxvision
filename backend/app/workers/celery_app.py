@@ -27,11 +27,28 @@ celery_app.conf.update(
     # spawning duplicate concurrent runs that raced over the same window. Raise to 12h.
     broker_transport_options={"visibility_timeout": 43200},
     task_default_queue="celery",
+    # ── ΧΡΟΝΙΚΑ ΟΡΙΑ (safety net κατά του «wedge») ──────────────────────────────────
+    # Χωρίς όριο, ένα κολλημένο task (π.χ. αργό Mongo query στο νυχτερινό maintenance) κρατά τη
+    # θέση του worker ΓΙΑ ΠΑΝΤΑ· 2 τέτοια (concurrency=2) = νεκρός worker → σταματά όλη η ουρά
+    # (incident 2026-09-05: 13ωρο κενό συγχρονισμού ΗΔΥΚΑ). Global default: 10′ soft / 15′ hard —
+    # πολύ πάνω από κάθε incremental sync, αλλά εγγυάται ότι το χειρότερο wedge = 15′ (όχι 13h).
+    # Τα βαριά tasks παίρνουν μεγαλύτερα όρια παρακάτω (task_annotations) ώστε να μη διακόπτονται.
+    task_soft_time_limit=600,     # SoftTimeLimitExceeded (catchable) στα 10′
+    task_time_limit=900,          # SIGKILL στα 15′ — ελευθερώνει τη θέση ό,τι κι αν συμβαίνει
     # Optical-audit scans (interactive) + heavy historical backfills get DEDICATED queues so they
     # never block the fast 5-min incrementals (and vice-versa).
     task_routes={
         "app.workers.optical.process_scan": {"queue": "optical"},
         "app.workers.ingestion.hdika_backfill": {"queue": "backfill"},
+    },
+    # Per-task overrides: μεγάλα ιστορικά backfills, οπτικές σαρώσεις & νυχτερινά snapshots/retention
+    # δουλεύουν νόμιμα πολλή ώρα — τους δίνουμε άνετα όρια ώστε το global 15′ να μην τα σκοτώνει.
+    task_annotations={
+        "app.workers.ingestion.hdika_backfill":   {"soft_time_limit": 5400, "time_limit": 6000},  # 90′/100′
+        "app.workers.optical.process_scan":        {"soft_time_limit": 1200, "time_limit": 1500},  # 20′/25′
+        "app.workers.snapshots.compute_nightly":   {"soft_time_limit": 5400, "time_limit": 6000},
+        "app.workers.snapshots.apply_retention":   {"soft_time_limit": 3600, "time_limit": 4200},
+        "app.workers.ingestion.dispatch_deep_reconcile_weekly": {"soft_time_limit": 3600, "time_limit": 4200},
     },
 )
 
