@@ -694,7 +694,8 @@ class LoyaltyRepository(BaseRepository):
         for r in rows:
             pr = r.get("patient_ref")
             if pr and pr not in names and len(str(pr)) == 24:
-                p = await self._db["patients_anonymized"].find_one({"_id": ObjectId(pr)}, {"full_name": 1})
+                p = await self._db["patients_anonymized"].find_one(
+                    {"_id": ObjectId(pr), "tenant_id": self.tenant_id}, {"full_name": 1})
                 names[pr] = (p or {}).get("full_name")
         return jsonsafe(mask_rows([{"code": r.get("code"), "reward": r.get("reason"),
                                     "patient_ref": r.get("patient_ref"),

@@ -3,6 +3,7 @@ pipeline, match the decoded barcode against executions, and score optical risk."
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 
 from bson import ObjectId
@@ -280,7 +281,7 @@ class ScanRepository(BaseRepository):
                  for n, g in by_name.items()]
         # earliest execution date (light projection — prescription_detail doesn't carry it)
         _dts = [e["executed_at"] async for e in self._db["prescription_executions"].find(
-            {"tenant_id": self.tenant_id, "external_id": {"$regex": f"^{bc}"}},
+            {"tenant_id": self.tenant_id, "external_id": {"$regex": f"^{re.escape(bc)}"}},
             {"executed_at": 1}) if e.get("executed_at")]
         date = min(_dts).strftime("%d/%m/%Y") if _dts else None
         return {"meds": meds, "qr": qr, "eof": eof, "intangible": d.get("is_intangible"),

@@ -225,21 +225,23 @@ origin-auth guard + non-spoofable client IP + no-store σε `/api/*`.
 
 ## Προτεινόμενο πλάνο δράσης (σειρά)
 
-| # | Εύρημα | Σοβαρότητα | Προσπάθεια |
+| # | Εύρημα | Σοβαρότητα | Κατάσταση |
 |---|--------|-----------|-----------|
-| 1 | H1 Viva webhook fail-closed | 🔴 | Μικρή |
-| 2 | H2 admin section RBAC fail-closed | 🔴 | Μικρή |
-| 3 | M1 Apifon DLR υπογραφή | 🟠 | Μικρή |
-| 4 | M2 rate-limit Profarm endpoints | 🟠 | Μικρή |
-| 5 | M3 permissions σε send/coupons | 🟠 | Μικρή |
-| 6 | H4 dead-man's-switch + εγκατάσταση watchdog | 🔴 | Μεσαία |
-| 7 | H3 κρυπτογράφηση ΑΜΚΑ at-rest | 🔴 | Μεσαία-Μεγάλη |
-| 8 | M4 CI-lint απομόνωσης tenant | 🟠 | Μεσαία |
-| 9 | M5 host-pin επιφανειών | 🟠 | Μικρή-Μεσαία |
-| 10 | M6 KEK ανεξάρτητο από JWT_SECRET | 🟠 | Μεσαία |
-| 11 | delete_tenant_fully guard + retention purge caps | 🟠 | Μικρή |
-| 12 | M7/L1 cookies+CSP+impersonation token | 🟡 | Μεσαία |
-| 13 | Λοιπά L2–L11 | 🟡 | Μικρή (καθένα) |
+| 1 | H1 Viva webhook fail-closed | 🔴 | ✅ **Διορθώθηκε** (44a98f5) |
+| 2 | H2 admin section RBAC fail-closed | 🔴 | ✅ **Διορθώθηκε** (44a98f5) |
+| 3 | M1 Apifon DLR shared-secret guard | 🟠 | ✅ Κώδικας έτοιμος — ⚠️ **θέλει ρύθμιση** `comms.apifon_dlr_secret` + callback URL |
+| 4 | M2 rate-limit Profarm endpoints | 🟠 | ✅ **Διορθώθηκε** (44a98f5) |
+| 5 | M3 permissions σε send/coupons | 🟠 | ✅ **Διορθώθηκε** (44a98f5) |
+| 6 | delete_tenant_fully guard + retention safety-cap | 🟠 | ✅ **Διορθώθηκε** (44a98f5) |
+| 7 | M5 host-pin `/admin` (404 εκτός adminpanel) | 🟠 | ✅ **Διορθώθηκε** — επαληθεύτηκε 404/200 |
+| 8 | L3 AMKA→όνομα oracle (μεταφορά πελάτη) | 🟡 | ✅ **Διορθώθηκε** |
+| 9 | L6 unscoped read · L7 regex escape · L10 dead probe() | 🟡 | ✅ **Διορθώθηκαν** |
+| 10 | H4 dead-man's-switch + εγκατάσταση watchdog | 🔴 | 🟡 Μερικώς (time-limits+watchdog έτοιμα· **θέλει owner**: install + external ping) |
+| 11 | H3 κρυπτογράφηση ΑΜΚΑ at-rest | 🔴 | ⏳ **Εκκρεμεί — θέλει απόφαση προσέγγισης** (volume vs field encryption) |
+| 12 | M6 KEK ανεξάρτητο από JWT_SECRET | 🟠 | ⏳ Εκκρεμεί — θέλει migration + Vault provisioning |
+| 13 | M7/L1 cookies+CSP+impersonation token | 🟡 | ⏳ Εκκρεμεί — auth refactor (μεσαίο ρίσκο) |
+| 14 | M4 CI-lint απομόνωσης tenant | 🟠 | ⏳ Εκκρεμεί — χρειάζεται σταδιακό tuning για μηδέν false positives |
+| 15 | Λοιπά L2, L4, L5, L8, L9, L11 | 🟡 | ⏳ Εκκρεμούν (μικρά) |
 
 **Top-3 άμεσα:** (1) fail-closed στο Viva webhook (πραγματικό payment bypass), (2) fail-closed στο admin
 section RBAC, (3) υπογραφή στο Apifon DLR.

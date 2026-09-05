@@ -32,6 +32,15 @@ export function middleware(request: NextRequest) {
   const host = request.headers.get("host")?.split(":")[0] ?? "";
   const { pathname } = request.nextUrl;
 
+  // HOST-PINNING (ασφάλεια): το back-office (/admin) επιτρέπεται ΜΟΝΟ στο adminpanel host. Σε app/my
+  // επιστρέφουμε 404 ώστε το admin login/bundle να μην είναι ούτε ανακαλύψιμο ούτε επιτεύξιμο από λάθος
+  // origin (τα /platform APIs απαιτούν ούτως ή άλλως padmin token — αυτό κλείνει την επιφάνεια στο UI).
+  if (pathname.startsWith("/admin") && host !== ADMIN_HOST) {
+    const notFound = new NextResponse(null, { status: 404 });
+    notFound.headers.set("Content-Security-Policy", CSP);
+    return notFound;
+  }
+
   if (host === ADMIN_HOST) {
     const isAdminPath = pathname.startsWith("/admin") || pathname.startsWith("/_next") || pathname.startsWith("/api");
     if (!isAdminPath) {

@@ -91,9 +91,10 @@ class PatientTransferRepository:
                 url="/portal")
         except Exception:  # noqa: BLE001
             pass
-        return mask_row({"ok": True, "transfer_id": str(res.inserted_id),
-                         "patient_name": f"{acc.get('first_name', '')} {acc.get('last_name', '')}".strip()},
-                        self.demo)
+        # ΔΕΝ επιστρέφουμε patient_name: το endpoint δέχεται αυθαίρετο ΑΜΚΑ και θα ήταν oracle ύπαρξης/
+        # ονόματος (ο φαρμακοποιός θα δοκίμαζε ΑΜΚΑ για να μάθει ονόματα μη-πελατών). Ο πελάτης βλέπει το
+        # φαρμακείο-αιτούντα στη δική του οθόνη έγκρισης· η επιβεβαίωση εδώ αρκεί ως {ok, transfer_id}.
+        return {"ok": True, "transfer_id": str(res.inserted_id)}
 
     async def list_for_tenant(self, tenant_id: str) -> list[dict]:
         rows = [r async for r in self.db["patient_transfers"]

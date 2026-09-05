@@ -108,29 +108,6 @@ async def fetch_image(cl: httpx.AsyncClient, url: str) -> tuple[bytes, str] | No
     return None
 
 
-async def probe(username: str, password: str, *, barcode: str | None = None,
-                path: str | None = None) -> dict:
-    """Διαγνωστικό: authenticated fetch για ανακάλυψη δομής (search-by-barcode + image URL).
-    Επιστρέφει μικρά αποσπάσματα HTML (search forms, img tags) — για ανάλυση, όχι bulk."""
-    cl = await login(username, password)
-    if not cl:
-        return {"ok": False, "error": "login_failed"}
-    try:
-        target = f"{BASE}{path}" if path else f"{BASE}/b2b-daily"
-        r = await cl.get(target)
-        html = r.text or ""
-        forms = re.findall(r"<form[^>]*>", html)[:8]
-        imgs = re.findall(r"<img[^>]*src=\"[^\"]*\"[^>]*>", html)
-        imgs = [i for i in imgs if not re.search(r"logo|icon|site/|minus|plus", i)][:15]
-        inputs = re.findall(r"<input[^>]*(?:name|id)=\"[^\"]*\"[^>]*>", html)[:25]
-        found = bool(barcode and barcode in html)
-        return {"ok": True, "status": r.status_code, "url": str(r.url),
-                "forms": forms, "imgs": imgs, "inputs": inputs,
-                "barcode_in_page": found, "len": len(html)}
-    finally:
-        await cl.aclose()
-
-
 async def sync_batch(tenant_id: str, *, batch: int = 40, only_for_sale: bool = False) -> dict:
     """Μαζικό harvest: για είδη ΧΩΡΙΣ φωτο & με barcode, ψάξε στο Profarm και κατέβασε την επίσημη
     φωτογραφία όπου το barcode ΤΑΙΡΙΑΖΕΙ. Idempotent (marker `profarm_tried`), throttled. Επεξεργάζεται
