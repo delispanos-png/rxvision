@@ -245,7 +245,20 @@ origin-auth guard + non-spoofable client IP + no-store σε `/api/*`.
 | 16 | L5 bounded file reads (×3) | 🟡 | ✅ **Διορθώθηκε** (ed8bae9) |
 | 17 | L8 legacy plaintext passwords | 🟡 | ✅ **Επαληθεύτηκε καθαρό** (0 legacy — όλα `enc:v1:`) |
 | 18 | CORS wildcard | 🟡 | ✅ **Επαληθεύτηκε καθαρό** (ρητά origins) |
-| 19 | L2 AI-cache per-tenant · L4 avatar signed URL · L9 per-tenant pepper | 🟡 | ⏳ Εκκρεμούν (μικρά) |
+| 19 | L4 avatar signed URL (HMAC+λήξη, 4 παραγωγοί) | 🟡 | ✅ **Διορθώθηκε** (e39c76c) |
+| 20 | L9 τυχαίο pepper ανά ΝΕΟ φαρμακείο | 🟡 | ✅ **Διορθώθηκε** (e39c76c) |
+| 21 | L1 impersonation 30′ μη-ανανεώσιμο | 🟡 | ✅ **Διορθώθηκε** (0dd7c70) |
+| 22 | M6 KEK ανεξάρτητο (v2, backward-compatible) | 🟠 | ✅ Κώδικας έτοιμος — ⚠️ **θέλει** `SECRETS_ENCRYPTION_KEY` + migration |
+| 23 | M4 CI-lint απομόνωσης tenant | 🟠 | ✅ **Υλοποιήθηκε** (e8f5f54) — hard gate στο CI |
+| 24 | L2 καθολικό AI-cache | 🟡 | ⏸️ **Σκόπιμα ΟΧΙ** — εσκεμμένη εξοικονόμηση κόστους· ο κίνδυνος επισκιάζεται από το H3 |
+| 25 | M7 refresh-token σε cookie · CSP `unsafe-inline` | 🟡 | ⏸️ **Μετά το 11/09** — auth refactor 3 επιφανειών· το `unsafe-inline` δεν αφαιρείται με στατικά προ-rendered σελίδες |
+
+## Ενέργειες που απαιτούν τον ιδιοκτήτη
+
+1. `sudo bash infra/scaling/install-worker-watchdog.sh` (MGMT01) → SMS + auto-restart workers.
+2. Ρύθμιση `comms.apifon_dlr_secret` + ενημέρωση callback URL στην Apifon → ενεργοποιεί τον DLR guard.
+3. `SECRETS_ENCRYPTION_KEY` στο `.env` (**+ αντίγραφο σε Vault/password manager**), μετά:
+   `python3 scripts/ops/migrate_secrets_kek.py --dry-run` και έπειτα χωρίς `--dry-run`.
 
 **Top-3 άμεσα:** (1) fail-closed στο Viva webhook (πραγματικό payment bypass), (2) fail-closed στο admin
 section RBAC, (3) υπογραφή στο Apifon DLR.

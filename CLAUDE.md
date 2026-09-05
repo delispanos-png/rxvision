@@ -54,8 +54,14 @@ repository that extends `BaseRepository`. This is unit-tested in
 ## Conventions
 
 - **Money is integer cents** everywhere (never floats for currency).
-- **PII**: raw AMKA/national_id is pseudonymized (HMAC-SHA256, `utils/anonymization.py`)
-  before any write — never persist raw national IDs.
+- **PII**: the patient's *primary key* is a pseudonym — HMAC-SHA256(AMKA, per-tenant pepper)
+  (`utils/anonymization.py`) — so the same person gets a **different `_id` in every tenant**
+  (cross-tenant correlation is impossible by construction). Use the pseudonym for all joins/lookups.
+  ⚠️ **However** (security review 2026-09, finding H3): `patients_anonymized` **also stores the raw
+  `amka` + `full_name`** (deliberately — the pharmacist must see who the patient is), and there is
+  **no encryption at rest**. So the collection name is misleading: treat it as **identifying data**,
+  not anonymised. Never widen its exposure; field-level encryption is planned —
+  see `docs/security-h3-pii-at-rest.md`.
 - **Auth**: JWT access+refresh; permissions/modules/roles are baked into the token
   at login (re-resolved on refresh). Two identities: tenant (`tid` claim) vs
   platform admin (`padmin` claim) — they must stay cryptographically distinct.
