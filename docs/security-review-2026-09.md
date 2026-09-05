@@ -241,7 +241,11 @@ origin-auth guard + non-spoofable client IP + no-store σε `/api/*`.
 | 12 | M6 KEK ανεξάρτητο από JWT_SECRET | 🟠 | ⏳ Εκκρεμεί — θέλει migration + Vault provisioning |
 | 13 | M7/L1 cookies+CSP+impersonation token | 🟡 | ⏳ Εκκρεμεί — auth refactor (μεσαίο ρίσκο) |
 | 14 | M4 CI-lint απομόνωσης tenant | 🟠 | ⏳ Εκκρεμεί — χρειάζεται σταδιακό tuning για μηδέν false positives |
-| 15 | Λοιπά L2, L4, L5, L8, L9, L11 | 🟡 | ⏳ Εκκρεμούν (μικρά) |
+| 15 | L11 write-permissions (scans→closing:run, billing→billing:manage) | 🟡 | ✅ **Διορθώθηκε** (ed8bae9) |
+| 16 | L5 bounded file reads (×3) | 🟡 | ✅ **Διορθώθηκε** (ed8bae9) |
+| 17 | L8 legacy plaintext passwords | 🟡 | ✅ **Επαληθεύτηκε καθαρό** (0 legacy — όλα `enc:v1:`) |
+| 18 | CORS wildcard | 🟡 | ✅ **Επαληθεύτηκε καθαρό** (ρητά origins) |
+| 19 | L2 AI-cache per-tenant · L4 avatar signed URL · L9 per-tenant pepper | 🟡 | ⏳ Εκκρεμούν (μικρά) |
 
 **Top-3 άμεσα:** (1) fail-closed στο Viva webhook (πραγματικό payment bypass), (2) fail-closed στο admin
 section RBAC, (3) υπογραφή στο Apifon DLR.
