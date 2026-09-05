@@ -46,6 +46,11 @@ class Settings(BaseSettings):
     # 3rd identity: patient-portal customers — own signing key, isolated from tenant/admin.
     JWT_PATIENT_SECRET: str = "change-me-dev-only-patient"
     JWT_ALG: str = "HS256"
+    # Κλειδί κρυπτογράφησης ΑΠΟΘΗΚΕΥΜΕΝΩΝ μυστικών (platform_settings/supplier_settings), ΑΝΕΞΑΡΤΗΤΟ
+    # από το JWT_SECRET. Κενό = συμβατότητα προς τα πίσω (παράγεται από το JWT_SECRET, «enc:v1:»).
+    # Όταν οριστεί → νέες εγγραφές γίνονται «enc:v2:»· η ανάγνωση δέχεται ΚΑΙ τα δύο (μηδέν lockout).
+    # Γιατί: διαρροή του JWT_SECRET δεν πρέπει να αποκρυπτογραφεί ΚΑΙ όλα τα credentials πληρωμών/υποδομής.
+    SECRETS_ENCRYPTION_KEY: str = ""
     ACCESS_TOKEN_TTL_SECONDS: int = 900
     REFRESH_TOKEN_TTL_SECONDS: int = 60 * 60 * 24 * 30
     # Concurrent-session cap: a tenant may hold at most `subscription.seats` LIVE sessions at once

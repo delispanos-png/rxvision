@@ -15,28 +15,53 @@ import sys
 
 from cryptography.fernet import Fernet, InvalidToken
 
-_PREFIX = "enc:v1:"
+_PREFIX = "enc:v1:"        # legacy: κλειδί παραγόμενο από JWT_SECRET
+_PREFIX_V2 = "enc:v2:"     # νέο: ανεξάρτητο SECRETS_ENCRYPTION_KEY
 
 
-def _jwt_secret() -> str:
+def _env(name: str) -> str:
+    """Διάβασε μεταβλητή από το repo-root .env (ή το περιβάλλον, αν υπάρχει)."""
+    if os.environ.get(name):
+        return os.environ[name]
     env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", ".env")
     try:
         with open(env_path) as f:
             for line in f:
-                if line.startswith("JWT_SECRET="):
+                if line.startswith(name + "="):
                     return line.split("=", 1)[1].strip().strip('"').strip("'")
     except OSError:
         pass
     return ""
 
 
+def _key_v1() -> bytes:
+    return base64.urlsafe_b64encode(
+        hashlib.sha256(("rxvision-platform-secrets:" + _env("JWT_SECRET")).encode()).digest())
+
+
+def _key_v2() -> bytes | None:
+    raw = _env("SECRETS_ENCRYPTION_KEY").strip()
+    if not raw:
+        return None
+    return base64.urlsafe_b64encode(hashlib.sha256(("rxvision-secrets-kek:" + raw).encode()).digest())
+
+
 def pdec(value: str) -> str:
-    if not isinstance(value, str) or not value.startswith(_PREFIX):
+    """Δέχεται ΚΑΙ v2 ΚΑΙ v1 — καθρέφτης του backend/app/services/platform_secrets.py."""
+    if not isinstance(value, str):
         return value
-    key = base64.urlsafe_b64encode(
-        hashlib.sha256(("rxvision-platform-secrets:" + _jwt_secret()).encode()).digest())
+    if value.startswith(_PREFIX_V2):
+        k2 = _key_v2()
+        if k2 is None:
+            return value
+        try:
+            return Fernet(k2).decrypt(value[len(_PREFIX_V2):].encode()).decode()
+        except InvalidToken:
+            return value
+    if not value.startswith(_PREFIX):
+        return value
     try:
-        return Fernet(key).decrypt(value[len(_PREFIX):].encode()).decode()
+        return Fernet(_key_v1()).decrypt(value[len(_PREFIX):].encode()).decode()
     except InvalidToken:
         return value
 
