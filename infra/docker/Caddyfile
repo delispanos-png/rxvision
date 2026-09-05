@@ -4,7 +4,15 @@
 #   app.rxvision.gr         -> Next.js PWA (web:3000), /api/* -> FastAPI (api:8000)
 #   adminpanel.rxvision.gr  -> same web, root rewritten to /admin, /api/* -> api
 #
-# TLS: controlled by {$CADDY_TLS} (default "internal" = self-signed origin cert).
+# TLS: **Cloudflare Origin CA certificate** (/data/origin.pem + /data/origin.key, λήγει 2041).
+#   Εκδόθηκε 2026-09-05 ώστε η Cloudflare να μπορεί να ΕΠΑΛΗΘΕΥΣΕΙ τον origin → SSL mode "Full (strict)".
+#   Πριν, ο origin σέρβιρε αυτο-υπογεγραμμένο (Caddy internal) και το mode ήταν "Full" = κρυπτογράφηση
+#   ΧΩΡΙΣ επαλήθευση (man-in-the-middle μεταξύ Cloudflare–origin ήταν θεωρητικά δυνατός).
+#   Τα αρχεία ζουν στο caddy_data volume κάθε node (μπήκαν με docker cp)· εφεδρικό αντίγραφο στο
+#   MGMT01: /root/rxvision-origin-ca/ (ΤΟ ΚΛΕΙΔΙ ΔΕΝ ΜΠΑΙΝΕΙ ΠΟΤΕ ΣΤΟ GIT).
+#   ROLLBACK: βάλε ξανά `tls {$CADDY_TLS:internal}` στα 3 site blocks + scp Caddyfile + caddy reload,
+#   ΚΑΙ γύρνα το Cloudflare SSL mode σε "Full" (όχι strict) — αλλιώς πέφτει το site.
+#   Backup του παλιού αρχείου: /root/rxvision-origin-ca/Caddyfile.pre-origin-ca.bak
 #   - Works behind Cloudflare in "Full" SSL mode immediately.
 #   - To get a publicly-trusted cert behind Cloudflare proxy AFTER you switch the
 #     registrar nameservers to Cloudflare, set in .env:
@@ -124,12 +132,12 @@
 }
 
 app.rxvision.gr {
-	tls {$CADDY_TLS:internal}
+	tls /data/origin.pem /data/origin.key
 	import api_and_app
 }
 
 adminpanel.rxvision.gr {
-	tls {$CADDY_TLS:internal}
+	tls /data/origin.pem /data/origin.key
 	# Land the back-office on /admin by default.
 	@root path /
 	rewrite @root /admin
@@ -137,7 +145,7 @@ adminpanel.rxvision.gr {
 }
 
 my.rxvision.gr {
-	tls {$CADDY_TLS:internal}
+	tls /data/origin.pem /data/origin.key
 	# Patient portal (3rd identity). Land on /portal by default; same web + /api backend.
 	@root path /
 	rewrite @root /portal

@@ -13,8 +13,7 @@
 ### Cloudflare / edge hardening (2026-09-05) — βλ. `docs/cloudflare-hardening-2026-09.md`
 - [x] `always_use_https` on · `min_tls_version` 1.2 · 3 custom WAF κανόνες (2026-09-05)
 - [ ] **Cloudflare Access στο adminpanel** — δωρεάν, δικαιώματα υπάρχουν· ΘΕΛΕΙ ιδιοκτήτη μπροστά
-- [ ] **Origin CA cert στον Caddy (3 nodes) → SSL `full (strict)`** — ο origin είναι αυτο-υπογεγραμμένος·
-      ΜΗΝ αλλάξεις σε strict πριν μπει το πιστοποιητικό
+- [x] **Origin CA cert στον Caddy (3 nodes) → SSL `full (strict)`** — ΕΓΙΝΕ 2026-09-05 (cert λήγει 2041)
 - [ ] **Hetzner firewall: `:443` μόνο από IP Cloudflare** (`hetzner_token` υπάρχει)
 - [ ] Προαιρετικό: πλάνο Pro (~€20/μ) για πλήρες WAF managed ruleset
 - [ ] Περιόρισε το Cloudflare API token σε μία zone + ημερομηνία λήξης (βλέπει 27 domains)

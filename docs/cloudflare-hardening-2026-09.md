@@ -40,14 +40,21 @@ Zone: `rxvision.gr` (ID `18e921c1768166eb9dd6e6efbc2a3199`) · πλάνο **Free
 Δεν ενεργοποιήθηκε γιατί **θέλει τον ιδιοκτήτη μπροστά** για δοκιμή — λάθος ρύθμιση = κλείδωμα έξω
 (αναστρέψιμο σε δευτερόλεπτα, αλλά όχι την ημέρα του event).
 
-### 2. SSL `full` → `full (strict)` — θέλει Origin CA cert
-**Ο origin σερβίρει ΑΥΤΟ-ΥΠΟΓΕΓΡΑΜΜΕΝΟ πιστοποιητικό** (`Caddy Local Authority`, 12ωρης διάρκειας).
-Με `full`, η Cloudflare κρυπτογραφεί προς τον origin αλλά **ΔΕΝ επαληθεύει** το πιστοποιητικό → ένας
-man-in-the-middle μεταξύ Cloudflare και Hetzner θα μπορούσε να υποκλέψει την κίνηση (και το
-`ORIGIN_AUTH_SECRET`). Απαιτεί θέση στο δίκτυο, αλλά είναι πραγματικό κενό.
+### ~~2. SSL `full` → `full (strict)`~~ ✅ ΟΛΟΚΛΗΡΩΘΗΚΕ 2026-09-05
+Εκδόθηκε **Cloudflare Origin CA certificate** (ECC P-256, SAN: app/adminpanel/my.rxvision.gr,
+**λήγει 2041-09-01**) και εγκαταστάθηκε στον Caddy **και στους 3 app nodes**
+(`/data/origin.pem` + `/data/origin.key` στο `caddy_data` volume, μέσω `docker cp`· ο Caddyfile
+δείχνει πλέον εκεί αντί για `tls internal`). Μετά την επαλήθευση, το SSL mode γύρισε σε **`strict`**.
 
-**Σωστή λύση:** Cloudflare **Origin CA certificate** (δωρεάν, 15ετές) → εγκατάσταση στον Caddy και
-στους 3 app nodes → μετά `ssl = strict`. **ΜΗΝ** αλλάξεις σε `strict` πριν μπει το πιστοποιητικό — θα πέσει το site.
+Πλέον η Cloudflare **επαληθεύει** ποιος είναι ο origin → κλείνει το παράθυρο man-in-the-middle
+μεταξύ Cloudflare και Hetzner.
+
+**Επαληθεύτηκε:** 3/3 nodes σερβίρουν CF Origin CA · `app`/`my`/`rxvision.gr` → 200 · API μέσω CF → OK.
+**Εφεδρικό αντίγραφο κλειδιού/cert:** MGMT01 `/root/rxvision-origin-ca/` (mode 600, ΕΚΤΟΣ git).
+**ROLLBACK:** στον Caddyfile γύρνα σε `tls {$CADDY_TLS:internal}` → scp + `caddy reload` → SSL mode `full`.
+
+⚠️ Το κλειδί ζει στο `caddy_data` volume κάθε node. Επιβιώνει restart/recreate του container, ΟΧΙ
+`docker compose down -v`. Σε νέο node: αντίγραψε τα 2 αρχεία από το MGMT01 πριν το πρώτο reload.
 
 ### 3. Hetzner firewall: `:443` μόνο από IP της Cloudflare
 Σήμερα τον απευθείας origin τον εμποδίζει **μόνο** ο HTTP origin-guard (`X-Origin-Auth`). Με firewall
