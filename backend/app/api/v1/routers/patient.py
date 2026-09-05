@@ -437,7 +437,7 @@ async def upload_avatar(file: UploadFile = File(...),
     """Ανέβασμα φωτογραφίας προφίλ (resize + JPEG). Επιστρέφει το url εξυπηρέτησης."""
     if not (file.content_type or "").startswith("image/"):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail={"error": "not_an_image"})
-    raw = await file.read()
+    raw = await file.read(8 * 1024 * 1024 + 1)   # read at most cap+1 → no unbounded memory
     if len(raw) > 8 * 1024 * 1024:
         raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail={"error": "too_large"})
     from app.repositories.patient_portal import PatientAccountRepository

@@ -15,7 +15,7 @@ from pymongo.errors import DuplicateKeyError
 from fastapi.responses import JSONResponse
 
 from app.core.db import shared_db
-from app.core.deps import TenantContext, get_current_context
+from app.core.deps import TenantContext, get_current_context, require
 from app.services import billing_service, revolut_service, viva_service
 
 router = APIRouter()
@@ -43,7 +43,7 @@ async def viva_webhook(request: Request):
 
 
 @router.post("/card-capture")
-async def card_capture(ctx: TenantContext = Depends(get_current_context)):
+async def card_capture(ctx: TenantContext = Depends(require("billing:manage"))):
     """Start Revolut card capture for the current tenant → {ok, token} for the checkout widget."""
     return await billing_service.start_card_capture(ctx.tenant_id)
 
@@ -79,7 +79,7 @@ class RenewNowIn(BaseModel):
 
 
 @router.post("/renew-now")
-async def renew_now(body: RenewNowIn, ctx: TenantContext = Depends(get_current_context)):
+async def renew_now(body: RenewNowIn, ctx: TenantContext = Depends(require("billing:manage"))):
     """Προληπτική ανανέωση από ΣΥΝΔΕΔΕΜΕΝΟ (ενεργό) πελάτη — διαλέγει πακέτο (ίδιο/άλλο) & κύκλο →
     Viva checkout. Η επέκταση περιόδου + το παραστατικό γίνονται στο webhook (complete_renewal)."""
     res = await billing_service.start_renewal(ctx.tenant_id, body.package_code, body.billing_cycle,

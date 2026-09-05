@@ -260,7 +260,7 @@ async def import_insured(
     file: UploadFile = File(...),
     ctx: TenantContext = Depends(require("patients:read", module=_MODULE)),
 ):
-    data = await file.read()
+    data = await file.read(8_000_001)   # read at most cap+1 → no unbounded memory
     if len(data) > 8_000_000:
         raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "Πολύ μεγάλο αρχείο (>8MB).")
     rows, err = parse_contacts_xlsx(data)

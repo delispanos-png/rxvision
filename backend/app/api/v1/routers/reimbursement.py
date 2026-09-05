@@ -260,7 +260,7 @@ async def prescriptor_status(ctx: TenantContext = Depends(require("closing:read"
 @router.post("/scans")
 async def upload_scan(file: UploadFile = File(...), doc_type: str = Form("prescription"),
                       period: str = Query(None),
-                      ctx: TenantContext = Depends(require("closing:read", module=_MODULE))):
+                      ctx: TenantContext = Depends(require("closing:run", module=_MODULE))):
     ctype = (file.content_type or "").split(";")[0].strip().lower()
     if ctype not in _ALLOWED_SCAN_TYPES:
         raise HTTPException(status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
@@ -309,7 +309,7 @@ async def scan_image(scan_id: str,
 
 @router.delete("/scans/{scan_id}")
 async def delete_scan(scan_id: str,
-                      ctx: TenantContext = Depends(require("closing:read", module=_MODULE))):
+                      ctx: TenantContext = Depends(require("closing:run", module=_MODULE))):
     ok = await ScanRepository(tenant_id=ctx.tenant_id).delete(scan_id)
     return {"ok": ok}
 

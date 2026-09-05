@@ -453,7 +453,7 @@ async def upload_gesy(
             file.content_type not in ("application/xml", "text/xml"):
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
                             detail={"error": "expected_xml_upload"})
-    data = await file.read()
+    data = await file.read(_MAX_UPLOAD + 1)   # read at most cap+1 → no unbounded memory
     if len(data) > _MAX_UPLOAD:
         raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
                             detail={"error": "file_too_large", "max_bytes": _MAX_UPLOAD})
