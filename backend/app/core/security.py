@@ -49,7 +49,10 @@ def verify_totp(secret: str, code: str) -> bool:
 
 def create_access_token(*, user_id: str, tenant_id: str, roles: list[str],
                         modules: dict[str, str], permissions: list[str] | None = None,
-                        demo: bool = False, sid: str | None = None) -> str:
+                        demo: bool = False, sid: str | None = None,
+                        imp: bool = False, ttl_seconds: int | None = None) -> str:
+    """imp=True → συνεδρία «Σύνδεση ως πελάτης» (υποστήριξη). Σημαίνεται στο token ώστε backend/UI να
+    μπορούν να το περιορίσουν & να το εμφανίσουν· συνοδεύεται από ΜΙΚΡΟ ttl_seconds και ΚΑΝΕΝΑ refresh."""
     payload = {
         "sub": user_id,
         "tid": tenant_id,
@@ -61,9 +64,11 @@ def create_access_token(*, user_id: str, tenant_id: str, roles: list[str],
         "scope": "access",
         "aud": AUD_TENANT,
         "iat": _now(),
-        "exp": _now() + timedelta(seconds=settings.ACCESS_TOKEN_TTL_SECONDS),
+        "exp": _now() + timedelta(seconds=ttl_seconds or settings.ACCESS_TOKEN_TTL_SECONDS),
         "jti": str(uuid.uuid4()),
     }
+    if imp:
+        payload["imp"] = True
     return jwt.encode(payload, settings.JWT_SECRET, algorithm=settings.JWT_ALG)
 
 

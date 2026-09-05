@@ -67,9 +67,11 @@ export default function LoginPage() {
     const h = window.location.hash;
     if (!h.startsWith("#imp=")) return;
     const [access, refresh] = decodeURIComponent(h.slice(5)).split("~");
-    if (access && refresh) {
+    // Το impersonation εκδίδει ΜΟΝΟ βραχύβιο access token (χωρίς refresh) — μη το απαιτείς.
+    if (access) {
       window.localStorage.setItem("access_token", access);
-      window.localStorage.setItem("refresh_token", refresh);
+      if (refresh) window.localStorage.setItem("refresh_token", refresh);
+      else window.localStorage.removeItem("refresh_token");
       window.location.hash = "";
       router.replace("/dashboard");
     }

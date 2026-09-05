@@ -26,6 +26,9 @@ def _utcnow() -> datetime:
 # ΗΔΥΚΑ connection) — always available regardless of subscription plan. Actual
 # access is still enforced per-request by RBAC permissions (settings:read/write).
 _CORE_MODULES = {"settings"}
+# «Σύνδεση ως πελάτης» (υποστήριξη): βραχύβιο, ΜΗ-ανανεώσιμο. Λήγει μόνο του → δεν μένει ζωντανή
+# συνεδρία πελάτη στον browser του διαχειριστή για εβδομάδες.
+_IMPERSONATION_TTL_SECONDS = 1800   # 30′
 
 
 def resolve_modules(included: set[str], overrides: dict[str, str]) -> dict[str, str]:
@@ -245,11 +248,24 @@ class AuthService:
 
     async def issue_for_user(self, user: dict) -> dict:
         """Mint tokens for a user WITHOUT a password check or last_login update — used
-        for admin impersonation. Opens an impersonation session (excluded from the seat cap)."""
+        for admin impersonation. Opens an impersonation session (excluded from the seat cap).
+
+        ΑΣΦΑΛΕΙΑ (έλεγχος 2026-09, L1): η «σύνδεση ως πελάτης» ΔΕΝ είναι κανονική σύνδεση —
+        εκδίδουμε ΜΟΝΟ βραχύβιο access token (30′) με claim `imp`, ΧΩΡΙΣ refresh token. Πριν, έβγαινε
+        πλήρους διάρκειας ανανεώσιμο ζεύγος (ίδιο με πραγματικό login) που επιβίωνε για εβδομάδες.
+        """
         sid = await sessions.open_session(
             str(user["tenant_id"]), str(user["_id"]), impersonation=True)
         modules, roles, perms, demo = await self._resolve(user)
-        return self._issue(user, roles, modules, perms, demo, sid=sid)
+        ttl = _IMPERSONATION_TTL_SECONDS
+        return {
+            "access_token": create_access_token(
+                user_id=str(user["_id"]), tenant_id=str(user["tenant_id"]), roles=roles,
+                modules=modules, permissions=perms, demo=demo, sid=sid, imp=True, ttl_seconds=ttl),
+            "refresh_token": "",          # σκόπιμα κενό — η συνεδρία υποστήριξης δεν ανανεώνεται
+            "expires_in": ttl,
+            "impersonation": True,
+        }
 
     async def _resolve(self, user: dict, tid: str | None = None) -> tuple[dict, list[str], list[str], bool]:
         """tid = ΕΝΕΡΓΟ φαρμακείο (default: το κύριο του χρήστη).

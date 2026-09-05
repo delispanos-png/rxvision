@@ -163,7 +163,7 @@ export default function TenantCardPage() {
         `/admin/tenants/${encodeURIComponent(id)}/impersonate`, { method: "POST" });
       const url = `${r.app_url}/login#imp=${encodeURIComponent(`${r.access_token}~${r.refresh_token}`)}`;
       window.open(url, "_blank", "noopener");
-      setNotice(`Άνοιξε νέα καρτέλα συνδεδεμένη ως ${r.as_email}.`);
+      setNotice(`Άνοιξε νέα καρτέλα συνδεδεμένη ως ${r.as_email}. Η συνεδρία υποστήριξης λήγει σε 30 λεπτά.`);
     } catch { setNotice("Σφάλμα — η ενέργεια απέτυχε. Δοκιμάστε ξανά."); }
     finally { setBusy(false); }
   }
