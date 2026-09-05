@@ -212,6 +212,8 @@ async def refresh(*, max_new_keys: int = 5000) -> dict:
     """Αυτο-συντηρούμενος βρόχος (εβδομαδιαίος): κανονικοποίησε ΜΟΝΟ νέους/pending — ασθενείς χωρίς
     canonical + κλειδιά με source 'pending'. Φθηνό: πιάνει μόνο ό,τι νέο εμφανίστηκε."""
     db = shared_db()
+    # tenant-ok: το λεξικό περιοχών είναι ΚΑΘΟΛΙΚΟ (μία περιοχή = μία γραμμή για όλη την πλατφόρμα)·
+    # η κανονικοποίηση εφαρμόζεται σε όλους τους πελάτες σκόπιμα — δεν διαβάζεται/εκτίθεται PII.
     missing_raws = [r for r in await db["patients_anonymized"].distinct(
         "residence_area", {"residence_area": {"$nin": [None, ""]},
                            "residence_area_canonical": {"$in": [None, ""]}}) if r]
@@ -265,7 +267,7 @@ async def unify_existing() -> dict:
             {"canonical": {"$in": losers}, "locked": {"$ne": True}},
             {"$set": {"canonical": rep, "unified_at": now}})
         merged += r.modified_count
-        r2 = await db["patients_anonymized"].update_many(
+        r2 = await db["patients_anonymized"].update_many(   # tenant-ok: καθολική ενοποίηση περιοχών
             {"residence_area_canonical": {"$in": losers}},
             {"$set": {"residence_area_canonical": rep}})
         patients += r2.modified_count
@@ -291,6 +293,7 @@ async def set_override(raw_or_key: str, canonical: str) -> dict:
                                 "locked": True, "updated_at": now}}, upsert=True)
     # εφάρμοσε σε όλους τους ασθενείς με raw που δίνει αυτό το κλειδί
     db = shared_db()
+    # tenant-ok: χειροκίνητη υπερίσχυση στο ΚΑΘΟΛΙΚΟ λεξικό περιοχών (ισχύει για όλους τους πελάτες)
     raws = [r for r in await db["patients_anonymized"].distinct("residence_area", {}) if mechanical_key(r) == key]
     updated = await _apply_to_patients(raws, {key: canonical.strip()})
     return {"ok": True, "key": key, "canonical": canonical.strip(), "patients_updated": updated}

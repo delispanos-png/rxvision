@@ -537,8 +537,9 @@ class OrdersDeliveryRepository(BaseRepository):
             sub_discount_pct=st.get("subscription_discount_pct", 0), subscription_id=str(sub["_id"]))
         nxt = _now() + timedelta(days=int(sub.get("interval_days", 30)))
         await self._db["order_subscriptions"].update_one(
-            {"_id": sub["_id"]}, {"$set": {"next_run": nxt, "last_run": _now(),
-                                           "last_result": "ok" if res.get("ok") else res.get("error")}})
+            {"_id": sub["_id"], "tenant_id": self.tenant_id},
+            {"$set": {"next_run": nxt, "last_run": _now(),
+                      "last_result": "ok" if res.get("ok") else res.get("error")}})
         return res
 
     async def my_orders(self, account_id) -> list[dict]:

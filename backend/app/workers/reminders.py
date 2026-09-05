@@ -18,8 +18,13 @@ from app.workers.celery_app import celery_app
 from app.workers.ingestion import _fresh_db, _run_async
 
 
-async def _account_for(db, accrepo, patient_ref):
-    pat = await db["patients_anonymized"].find_one({"_id": patient_ref}, {"amka": 1})
+async def _account_for(db, accrepo, patient_ref, tenant_id=None):
+    # tenant_id: defense-in-depth — ο patient_ref προέρχεται από tenant-scoped δεδομένα, αλλά δεν
+    # στηριζόμαστε στο «είναι ασφαλές επειδή το input τυχαίνει να είναι έμπιστο».
+    q = {"_id": patient_ref}
+    if tenant_id:
+        q["tenant_id"] = tenant_id
+    pat = await db["patients_anonymized"].find_one(q, {"amka": 1})
     amka = (pat or {}).get("amka")
     return await accrepo.get_by_amka(amka) if amka else None
 
@@ -38,7 +43,7 @@ def dispatch_med_reminders() -> dict:
         for tid in await db["med_reminders"].distinct("tenant_id", {"enabled": True}):
             for pref in await db["med_reminders"].distinct("patient_ref", {"tenant_id": tid, "enabled": True}):
                 try:
-                    acc = await _account_for(db, accrepo, pref)
+                    acc = await _account_for(db, accrepo, pref, tid)
                     if not acc:
                         continue
                     sched = await PatientRxRepository(tenant_id=tid).medication_schedule(str(pref))
@@ -99,7 +104,7 @@ def dispatch_refill_radar() -> dict:
         for tid in await db["med_reminders"].distinct("tenant_id", {"enabled": True}):
             for pref in await db["med_reminders"].distinct("patient_ref", {"tenant_id": tid, "enabled": True}):
                 try:
-                    acc = await _account_for(db, accrepo, pref)
+                    acc = await _account_for(db, accrepo, pref, tid)
                     if not acc:
                         continue
                     sched = await PatientRxRepository(tenant_id=tid).medication_schedule(str(pref))
@@ -252,7 +257,7 @@ def dispatch_loyalty_rewards() -> dict:
                             continue
                         if await repo.active_reservation(pref):
                             continue                       # έχει ήδη δεσμεύσει δώρο
-                        acc = await _account_for(db, accrepo, pref)
+                        acc = await _account_for(db, accrepo, pref, tid)
                         if not acc:
                             continue                       # χωρίς λογαριασμό πύλης — δεν λαμβάνει push
                         best = max(affordable, key=lambda r: r["cost_cents"])
@@ -295,7 +300,7 @@ def dispatch_birthday_bonus() -> dict:
                 for pref in refs:
                     credited += 1
                     try:
-                        acc = await _account_for(db, accrepo, pref)
+                        acc = await _account_for(db, accrepo, pref, tid)
                         if acc:
                             await push_service.send_to_account(
                                 str(acc["_id"]), title="🎂 Χρόνια πολλά!",

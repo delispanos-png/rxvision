@@ -1383,6 +1383,7 @@ async def admin_comms_profit(days: int = 30, _: PlatformContext = Depends(get_pl
     our_cost = cfg.get("cost") or {}
     since = datetime.now(tz=timezone.utc) - timedelta(days=int(days))
     rows: dict = {}
+    # tenant-ok: πλατφορμικά έσοδα/κόστος μηνυμάτων ΣΕ ΟΛΟΥΣ τους πελάτες (adminpanel, padmin identity)
     async for r in db["sent_messages"].aggregate([
             {"$match": {"created_at": {"$gte": since}, "cost_cents": {"$gt": 0}, "refunded": {"$ne": True}}},
             {"$group": {"_id": "$channel", "count": {"$sum": 1}, "revenue": {"$sum": "$cost_cents"}}}]):

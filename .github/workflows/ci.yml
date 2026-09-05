@@ -22,6 +22,11 @@ jobs:
         run: pip install -e ".[dev]"
       - name: Ruff (lint)
         run: ruff check .
+      # ΤΟ ΔΙΧΤΥ ΑΣΦΑΛΕΙΑΣ ΤΟΥ ΕΝΟΣ ΚΑΝΟΝΑ: καμία raw πρόσβαση σε tenant collection χωρίς tenant_id.
+      # Το test_invariants καλύπτει το BaseRepository· αυτό καλύπτει τα σημεία που το ΠΑΡΑΚΑΜΠΤΟΥΝ.
+      - name: Tenant-isolation lint
+        working-directory: .
+        run: python3 scripts/ci/check_tenant_isolation.py
       - name: Pytest
         run: pytest -q
       # Not yet enforced — the codebase has not had a full type pass. Surfaces
