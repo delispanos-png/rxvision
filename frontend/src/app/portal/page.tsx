@@ -55,6 +55,7 @@ const pdmy = (iso: string) => { const [y, m, d] = iso.split("-"); return d && m 
 const prange = (r: PRange) => (r.start_date === r.end_date ? pdmy(r.start_date) : `${pdmy(r.start_date)}–${pdmy(r.end_date)}`) + ` ${r.start}–${r.end}`;
 type Appt = { _id?: string; service_name: string; requested_at: string; status: string; tenant_id?: string; pharmacy_name?: string | null };
 type Cda = { available?: boolean; found?: boolean; doctor?: string | null; medicines?: string[]; issue_date?: string | null; deadline_date?: string | null; intangible?: boolean; exec_count?: number | null; is_fyk?: boolean; has_vaccine?: boolean };
+type NoPaperRx = { barcode: string; issue_date?: string | null; expiry_date?: string | null; status?: string | null; prescription_type?: string | null; executions?: string | null; already_submitted?: boolean };
 type RxReq = { _id?: string; kind: string; barcode?: string | null; note?: string | null; status: string; created_at: string; cda?: Cda | null; reply?: string | null; available_date?: string | null };
 type LoyaltyMember = { patient_ref: string; name?: string; points: number; balance_cents: number; tier: string; next_tier: string | null; to_next: number; progress_pct: number; compliance: number | null; refills: number; expected: number; open_refills: number; potential_points: number; points_per_refill: number; cents_per_point: number; ledger: { type: string; cents: number; kind?: string; reason?: string; at: string }[] };
 type LReward = { _id?: string; title: string; type: string; cost_points: number; cost_cents: number; note?: string };
@@ -175,6 +176,12 @@ export default function PortalHome() {
   const [geo, setGeo] = useState<{ lat: number; lon: number } | null>(null);
   const [geoBusy, setGeoBusy] = useState(false);
   const [rx, setRx] = useState<Rx[]>([]);
+  // Άυλη συνταγογράφηση: PIN μέσω SMS από ΗΔΥΚΑ → λίστα νέων συνταγών → ανάθεση με το ΙΔΙΟ rx-request
+  const [npStep, setNpStep] = useState<"idle" | "pin" | "list">("idle");
+  const [npPin, setNpPin] = useState("");
+  const [npBusy, setNpBusy] = useState(false);
+  const [npMsg, setNpMsg] = useState<string | null>(null);
+  const [npItems, setNpItems] = useState<NoPaperRx[]>([]);
   const [rxQuery, setRxQuery] = useState("");   // αναζήτηση αρ. συνταγής (barcode)
   const [rxFrom, setRxFrom] = useState("");     // ημ/νιακό διάστημα από (YYYY-MM-DD)
   const [rxTo, setRxTo] = useState("");         // …έως
@@ -633,6 +640,41 @@ export default function PortalHome() {
       else setAssignMsg(t("Στάλθηκε στο φαρμακείο ✓", "Sent to the pharmacy ✓"));
       reloadRxReqs();
     } catch { setAssignMsg(t("Αποτυχία αποστολής.", "Failed to send.")); } finally { setAssignBusy(false); }
+  }
+  async function npSendPin() {
+    setNpBusy(true); setNpMsg(null);
+    try {
+      await patientApi("/patient/nopaper/pin", { method: "POST", body: JSON.stringify({}) });
+      setNpStep("pin");
+      setNpMsg(t("Σου στείλαμε PIN με SMS στο κινητό που έχεις δηλώσει στη ΗΔΙΚΑ.",
+                 "We sent you a PIN by SMS to the phone registered with ΗΔΙΚΑ."));
+    } catch {
+      setNpMsg(t("Δεν ήταν δυνατή η αποστολή PIN. Δοκίμασε ξανά σε λίγο.",
+                 "Could not send the PIN. Try again shortly."));
+    } finally { setNpBusy(false); }
+  }
+  async function npLoadList() {
+    setNpBusy(true); setNpMsg(null);
+    try {
+      const r = await patientApi<{ items: NoPaperRx[]; new_count: number }>(
+        "/patient/nopaper/list", { method: "POST", body: JSON.stringify({ pin: npPin.trim(), page: 0 }) });
+      setNpItems(r.items || []); setNpStep("list");
+      if (!r.items?.length) setNpMsg(t("Δεν βρέθηκαν συνταγές.", "No prescriptions found."));
+      else if (!r.new_count) setNpMsg(t("Όλες οι συνταγές σου έχουν ήδη σταλεί στο φαρμακείο.",
+                                        "All your prescriptions have already been sent."));
+    } catch {
+      setNpMsg(t("Λάθος ή ληγμένο PIN — ζήτα νέο.", "Wrong or expired PIN — request a new one."));
+    } finally { setNpBusy(false); }
+  }
+  async function npSend(bc: string) {
+    setNpBusy(true);
+    try {
+      // ΙΔΙΑ διαδρομή υποβολής με το barcode — καμία ξεχωριστή ροή
+      await patientApi("/patient/rx-request", { method: "POST", body: JSON.stringify({ barcode: bc }) });
+      setNpItems((xs) => xs.map((x) => (x.barcode === bc ? { ...x, already_submitted: true } : x)));
+      setAssignMsg(t("Στάλθηκε στο φαρμακείο ✓", "Sent to the pharmacy ✓"));
+      reloadRxReqs();
+    } catch { setNpMsg(t("Αποτυχία αποστολής.", "Failed to send.")); } finally { setNpBusy(false); }
   }
   async function submitPhoto(file: File) {
     setAssignBusy(true); setAssignMsg(null);
@@ -1945,6 +1987,50 @@ export default function PortalHome() {
         {tab === "assign" && (
           <div className="space-y-4">
             {assignMsg && <div className="rounded-xl bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{assignMsg}</div>}
+
+            {/* 0) ΑΥΛΗ: φέρε τις νέες μου συνταγές από τη ΗΔΙΚΑ */}
+            <div className="rounded-2xl border border-indigo-200 bg-indigo-50/40 dark:border-indigo-900 dark:bg-indigo-950/20 p-4 shadow-sm">
+              <h3 className="mb-1 text-sm font-semibold text-slate-800 dark:text-slate-100">{t("✨ Έλεγχος για νέες συνταγές", "✨ Check for new prescriptions")}</h3>
+              <p className="mb-3 text-xs text-slate-500 dark:text-slate-400">{t("Φέρε αυτόματα τις συνταγές που σου έγραψε ο γιατρός. Η ΗΔΙΚΑ θα σου στείλει PIN με SMS στο κινητό που έχεις δηλώσει σε ΑΥΤΗΝ.", "Automatically fetch prescriptions your doctor issued. ΗΔΙΚΑ will text you a PIN on the phone registered with THEM.")}</p>
+              {npMsg && <div className="mb-3 rounded-lg bg-white/70 dark:bg-slate-900/50 px-3 py-2 text-xs text-slate-700 dark:text-slate-300">{npMsg}</div>}
+
+              {npStep === "idle" && (
+                <button type="button" onClick={npSendPin} disabled={npBusy}
+                  className="w-full rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-50">
+                  {npBusy ? t("Αποστολή…", "Sending…") : t("Στείλε μου PIN", "Send me a PIN")}</button>
+              )}
+
+              {npStep === "pin" && (
+                <div className="flex gap-2">
+                  <input value={npPin} onChange={(e) => setNpPin(e.target.value)} inputMode="numeric"
+                    placeholder={t("PIN από το SMS", "PIN from the SMS")}
+                    className="w-full rounded-lg border border-slate-300 dark:border-slate-700 dark:bg-slate-800 px-3 py-2 text-sm" />
+                  <button type="button" onClick={npLoadList} disabled={npBusy || npPin.trim().length < 4}
+                    className="shrink-0 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-50">
+                    {npBusy ? "…" : t("Δες τις συνταγές μου", "Show my prescriptions")}</button>
+                </div>
+              )}
+
+              {npStep === "list" && (
+                <div className="space-y-2">
+                  {npItems.map((x) => (
+                    <div key={x.barcode} className="flex items-center justify-between gap-3 rounded-lg bg-white dark:bg-slate-900 px-3 py-2">
+                      <div className="min-w-0">
+                        <div className="truncate text-sm font-medium text-slate-800 dark:text-slate-100">{x.barcode}</div>
+                        <div className="text-[11px] text-slate-500">{[x.issue_date, x.prescription_type, x.status].filter(Boolean).join(" · ")}</div>
+                      </div>
+                      {x.already_submitted
+                        ? <span className="shrink-0 rounded-full bg-slate-100 dark:bg-slate-800 px-2.5 py-1 text-[11px] text-slate-500">{t("έχει σταλεί", "already sent")}</span>
+                        : <button type="button" onClick={() => npSend(x.barcode)} disabled={npBusy}
+                            className="shrink-0 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50">
+                            {t("Στείλε", "Send")}</button>}
+                    </div>
+                  ))}
+                  <button type="button" onClick={() => { setNpStep("idle"); setNpItems([]); setNpPin(""); setNpMsg(null); }}
+                    className="w-full rounded-lg border border-slate-300 dark:border-slate-700 px-3 py-2 text-xs text-slate-600 dark:text-slate-300">{t("Κλείσιμο", "Close")}</button>
+                </div>
+              )}
+            </div>
 
             {/* 1) με barcode */}
             <form onSubmit={submitBarcode} className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:border-slate-800 dark:bg-slate-900 p-4 shadow-sm">

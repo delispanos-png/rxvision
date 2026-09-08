@@ -1209,6 +1209,80 @@ async def rx_request_barcode(body: RxRequestIn, ctx: PatientContext = Depends(ge
     return {"id": rid, "status": "new", "cda": cda}
 
 
+# ── Άυλη συνταγογράφηση: ο ασθενής φέρνει ΜΟΝΟΣ του τις ΝΕΕΣ συνταγές του ────────
+# ΑΣΦΑΛΕΙΑ: το ΑΜΚΑ αντλείται ΠΑΝΤΑ από τον αυθεντικοποιημένο λογαριασμό — ΠΟΤΕ από το αίτημα.
+# Επαληθεύτηκε ότι η ΗΔΥΚΑ ΔΕΝ βάζει rate-limit (5 αιτήσεις → 5 SMS) και ότι ανύπαρκτο ΑΜΚΑ
+# επιστρέφει επίσης 204. Αν το ΑΜΚΑ ερχόταν από τον client, η πύλη θα γινόταν SMS-bombing εργαλείο
+# με χρέωση ΗΔΥΚΑ και ίχνος στον δικό μας integrator λογαριασμό.
+async def _own_amka(ctx: PatientContext) -> str:
+    acc = await PatientAccountRepository().get(ctx.account_id) or {}
+    amka = str(acc.get("amka") or "").strip()
+    if not amka:
+        raise HTTPException(status.HTTP_409_CONFLICT, detail={"error": "amka_missing"})
+    return amka
+
+
+class NoPaperPinIn(BaseModel):
+    tenant_id: str | None = None          # σε ποιο φαρμακείο (σύνδεση ΗΔΥΚΑ) — ΟΧΙ ΑΜΚΑ
+
+
+@router.post("/nopaper/pin",
+             dependencies=[Depends(rate_limit("nopaper_pin", limit=3, window_seconds=300))])
+async def nopaper_send_pin(body: NoPaperPinIn, ctx: PatientContext = Depends(get_patient_context)):
+    """Ζητά από τη ΗΔΥΚΑ να στείλει PIN με SMS στο κινητό που έχει ΕΚΕΙΝΗ καταχωρημένο."""
+    from app.services import hdika_nopaper
+    target, _pref, _n, _p = await _target(ctx, body.tenant_id)
+    res = await hdika_nopaper.send_pin(target, await _own_amka(ctx))
+    if not res.get("ok"):
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, detail=res)
+    return {"ok": True, "sent": True}
+
+
+class NoPaperListIn(BaseModel):
+    pin: str
+    page: int = 0
+    tenant_id: str | None = None
+
+
+@router.post("/nopaper/list",
+             dependencies=[Depends(rate_limit("nopaper_list", limit=20, window_seconds=300))])
+async def nopaper_list(body: NoPaperListIn, ctx: PatientContext = Depends(get_patient_context)):
+    """Οι συνταγές του ασφαλισμένου από τη ΗΔΥΚΑ, σημειωμένες με το τι ΕΧΕΙ ΗΔΗ σταλεί στο φαρμακείο.
+    Η υποβολή γίνεται μετά μέσω του ΥΠΑΡΧΟΝΤΟΣ POST /rx-request (ίδια διαδρομή με το barcode)."""
+    from app.services import hdika_nopaper
+    target, pref, _n, _p = await _target(ctx, body.tenant_id)
+    res = await hdika_nopaper.list_prescriptions(
+        target, await _own_amka(ctx), body.pin, page=body.page, size=50)
+    if not res.get("ok"):
+        code = status.HTTP_400_BAD_REQUEST if res.get("error") == "bad_pin" else status.HTTP_502_BAD_GATEWAY
+        raise HTTPException(code, detail=res)
+    items = res.get("items") or []
+    known = await _already_submitted(target, ctx.account_id, pref, [i["barcode"] for i in items])
+    for it in items:
+        it["already_submitted"] = it["barcode"] in known
+    return {"items": items, "page": res.get("page", 0), "total": res.get("total", 0),
+            "total_pages": res.get("total_pages", 1), "last": res.get("last", True),
+            "new_count": sum(1 for i in items if not i["already_submitted"])}
+
+
+async def _already_submitted(tenant_id: str, account_id, patient_ref, barcodes: list[str]) -> set[str]:
+    """Κλειδί dedup = barcode. «Ήδη γνωστή» = υπάρχει αίτημα ανάθεσης Ή εκτέλεση στο φαρμακείο."""
+    if not barcodes:
+        return set()
+    db = shared_db()
+    known: set[str] = set()
+    async for r in db["rx_requests"].find(                      # tenant-ok: ρητό φίλτρο tenant_id
+            {"tenant_id": tenant_id, "account_id": account_id, "barcode": {"$in": barcodes}},
+            {"barcode": 1}):
+        known.add(str(r.get("barcode")))
+    q: dict = {"tenant_id": tenant_id, "external_id": {"$in": barcodes}}
+    if patient_ref:
+        q["patient_ref"] = patient_ref
+    async for r in db["prescription_executions"].find(q, {"external_id": 1}):
+        known.add(str(r.get("external_id")).split(":")[0])
+    return known
+
+
 _MAX_RX_PHOTO = 12 * 1024 * 1024
 _RX_PHOTO_TYPES = {"image/jpeg", "image/jpg", "image/png", "image/webp", "image/heic", "image/heif", "application/pdf"}
 
