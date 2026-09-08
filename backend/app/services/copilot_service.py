@@ -647,6 +647,11 @@ async def ask(*, tenant_id: str, perms: set[str], messages: list[dict], demo: bo
         for _ in range(6):
             resp = await client.messages.create(
                 model=c["model"], max_tokens=1600, system=ai_cost.cached_system(system),
+                # effort=low: ο Copilot απαντά ΑΠΟ ΔΕΔΟΜΕΝΑ εργαλείων — δεν χρειάζεται βαθιά σκέψη.
+                # Μετρημένο σε δύσκολη πολυβηματική ερώτηση: ΙΔΙΑ 5 εργαλεία με την ίδια σειρά όπως
+                # στο default/medium, αλλά -17% κόστος. (Τα ΚΛΙΝΙΚΑ — pharmacat/patient_advice —
+                # μένουν ΣΚΟΠΙΜΑ στο default effort: εκεί η ποιότητα σκέψης μετράει.)
+                output_config={"effort": "low"},
                 tools=tools, messages=msgs)
             await ai_cost.record(tenant_id, c["model"], getattr(resp, "usage", None))
             reply = "".join(b.text for b in resp.content if b.type == "text").strip() or reply

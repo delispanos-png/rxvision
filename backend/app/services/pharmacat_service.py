@@ -14,9 +14,12 @@ import json
 
 from app.core.db import shared_db
 
-_DEFAULT_MODEL = "claude-opus-4-8"
+_DEFAULT_MODEL = "claude-sonnet-5"
 # Selectable in admin → Integrations (cost vs quality). Opus best, Sonnet ~6× cheaper, Haiku cheapest.
-ALLOWED_MODELS = ("claude-opus-4-8", "claude-sonnet-4-6", "claude-haiku-4-5")
+# Νέα γενιά πρώτη. Το Sonnet 5 είναι φθηνότερο ΚΑΙ ικανότερο από το Sonnet 4.6
+# (μετρημένο: ίδια ενορχήστρωση εργαλείων, -17% κόστος με effort=low).
+ALLOWED_MODELS = ("claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5",
+                  "claude-opus-4-8", "claude-sonnet-4-6")
 
 # Hard-coded clinical safety contract. Phrased as context + duties, not over-aggressive commands.
 SYSTEM = """Είσαι ο «PharmaCat», κλινικός επιστημονικός βοηθός (Clinical Decision Support System)

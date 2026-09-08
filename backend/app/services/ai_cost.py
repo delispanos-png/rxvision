@@ -18,10 +18,16 @@ from app.core.db import shared_db
 
 # Default per-model prices (€cents per 1M tokens): in=input, out=output, cin=cached-input read.
 # Public Anthropic list prices at time of writing — EDITABLE in platform_settings._id="ai_pricing".
+# Επαληθευμένες επίσημες τιμές Anthropic (2026-09). ΔΙΟΡΘΩΣΗ: το Opus ήταν καταχωρημένο 3× ΠΑΝΩ
+# (1500/7500 — τιμές προηγούμενης γενιάς) και τα Sonnet 5 / Opus 5 έλειπαν εντελώς, οπότε αν
+# επιλέγονταν ΔΕΝ καταγραφόταν καθόλου κόστος (το record() κάνει return όταν λείπει η τιμή).
 DEFAULT_MODEL_PRICES: dict[str, dict[str, int]] = {
-    "claude-opus-4-8":   {"in": 1500, "out": 7500, "cin": 150},
-    "claude-sonnet-4-6": {"in": 300,  "out": 1500, "cin": 30},
-    "claude-haiku-4-5":  {"in": 100,  "out": 500,  "cin": 10},
+    "claude-fable-5-1":  {"in": 1000, "out": 5000, "cin": 100},   # $10 / $50
+    "claude-opus-5":     {"in": 500,  "out": 2500, "cin": 50},    # $5  / $25
+    "claude-opus-4-8":   {"in": 500,  "out": 2500, "cin": 50},    # $5  / $25
+    "claude-sonnet-5":   {"in": 200,  "out": 1000, "cin": 20},    # $2  / $10  ← προεπιλογή
+    "claude-sonnet-4-6": {"in": 300,  "out": 1500, "cin": 30},    # $3  / $15  (παλιά γενιά)
+    "claude-haiku-4-5":  {"in": 100,  "out": 500,  "cin": 10},    # $1  / $5
 }
 DEFAULT_MARGIN_PCT = 40   # μικρό κέρδος πάνω στο πραγματικό κόστος
 
