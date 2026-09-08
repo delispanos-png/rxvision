@@ -37,6 +37,11 @@ export default function NutritionPage() {
 
   const search = useQuery({ queryKey: ["pat-search", q], queryFn: () => api<{ items: Hit[] }>(`/patients/search?q=${encodeURIComponent(q)}`), enabled: q.trim().length >= 2, retry: false });
   const plan = useQuery({ queryKey: ["nutrition", picked?.patient_id], queryFn: () => api<Plan>(`/advisor/nutrition/${picked!.patient_id}`), enabled: !!picked, retry: false });
+  const assign = useMutation({
+    mutationFn: () => api<{ ok: boolean; sections: number }>(`/advisor/nutrition/${picked!.patient_id}/assign`, { method: "POST", body: JSON.stringify({}) }),
+    onSuccess: () => appAlert(t("Αναρτήθηκε στην πύλη του πελάτη ✅", "Published to the customer's portal ✅")),
+    onError: (e: Error) => appAlert(t("Αποτυχία: ", "Failed: ") + e.message),
+  });
   const email = useMutation({ mutationFn: () => api<{ to: string }>(`/advisor/nutrition/${picked!.patient_id}/email`, { method: "POST" }), onSuccess: (r) => appAlert(t("Στάλθηκε στο ", "Sent to ") + r.to + " ✅"), onError: (e: Error) => appAlert(t("Αποτυχία: ", "Failed: ") + e.message) });
 
   return (
@@ -91,6 +96,11 @@ export default function NutritionPage() {
             <div className="flex gap-2 print:hidden">
               <button onClick={() => setPicked(null)} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-600 hover:bg-slate-50"><X className="h-4 w-4" /> {t("Άλλος", "Another")}</button>
               <button onClick={() => window.print()} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"><Printer className="h-4 w-4" /> {t("Εκτύπωση", "Print")}</button>
+              <button onClick={() => assign.mutate()} disabled={assign.isPending}
+                title={t("Ο πελάτης θα τη βλέπει μόνιμα στην πύλη (το email χάνεται στα εισερχόμενα)", "The customer sees it permanently in the portal")}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-50">
+                🥗 {assign.isPending ? t("Ανάρτηση…", "Publishing…") : t("Ανάθεση στην πύλη", "Assign to portal")}
+              </button>
               <button onClick={() => email.mutate()} disabled={email.isPending || !plan.data?.email}
                 className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50">
                 {email.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : email.isSuccess ? <Check className="h-4 w-4" /> : <Mail className="h-4 w-4" />} {t("Email στον ασθενή", "Email to patient")}

@@ -1209,6 +1209,20 @@ async def rx_request_barcode(body: RxRequestIn, ctx: PatientContext = Depends(ge
     return {"id": rid, "status": "new", "cda": cda}
 
 
+@router.get("/nutrition")
+async def my_nutrition(ctx: PatientContext = Depends(get_patient_context)):
+    """Η πρόταση διατροφής που ανέθεσε ο φαρμακοποιός (ή κενό αν δεν υπάρχει)."""
+    if not ctx.patient_ref:
+        return {"has": False}
+    d = await shared_db()["patient_nutrition_plans"].find_one(   # tenant-ok: ρητό φίλτρο tenant_id
+        {"tenant_id": ctx.tenant_id, "patient_ref": str(ctx.patient_ref)},
+        {"_id": 0, "assigned_by": 0})
+    if not d:
+        return {"has": False}
+    return {"has": True, "sections": d.get("sections") or [], "note": d.get("note"),
+            "assigned_at": d.get("assigned_at")}
+
+
 # ── Άυλη συνταγογράφηση: ο ασθενής φέρνει ΜΟΝΟΣ του τις ΝΕΕΣ συνταγές του ────────
 # ΑΣΦΑΛΕΙΑ: το ΑΜΚΑ αντλείται ΠΑΝΤΑ από τον αυθεντικοποιημένο λογαριασμό — ΠΟΤΕ από το αίτημα.
 # Επαληθεύτηκε ότι η ΗΔΥΚΑ ΔΕΝ βάζει rate-limit (5 αιτήσεις → 5 SMS) και ότι ανύπαρκτο ΑΜΚΑ

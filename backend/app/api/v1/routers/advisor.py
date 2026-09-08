@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Query
 
 from fastapi import HTTPException, status
+from pydantic import BaseModel
+
+from app.core.db import shared_db
 
 from app.core.deps import TenantContext, require
 from app.repositories.advisor import AdvisorRepository, nutrition_html
@@ -23,6 +26,54 @@ async def nutrition(
     if not plan:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "patient_not_found")
     return plan
+
+
+class NutritionAssignIn(BaseModel):
+    note: str | None = None       # προαιρετικό σημείωμα φαρμακοποιού προς τον ασθενή
+
+
+@router.post("/nutrition/{patient_id}/assign")
+async def nutrition_assign(
+    patient_id: str, body: NutritionAssignIn | None = None,
+    ctx: TenantContext = Depends(require("patients:read", module=["nutrition", "ai_assistant"])),
+):
+    """Αναθέτει την πρόταση διατροφής ΣΤΗΝ ΠΥΛΗ του ασθενή (αντί/επιπλέον του email).
+
+    ΓΙΑΤΙ: το email χάνεται στα εισερχόμενα· στην πύλη ο ασθενής το ξαναβρίσκει όποτε θέλει.
+    Κρατάμε ΜΙΑ ενεργή πρόταση ανά ασθενή (η νέα αντικαθιστά την προηγούμενη) — ο ασθενής δεν
+    πρέπει να βλέπει αντικρουόμενες οδηγίες από διαφορετικές ημερομηνίες.
+    """
+    plan = await AdvisorRepository(tenant_id=ctx.tenant_id, demo=ctx.demo).nutrition_plan(patient_id)
+    if not plan:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "patient_not_found")
+    if not (plan.get("sections") or []):
+        raise HTTPException(status.HTTP_409_CONFLICT, detail={"error": "no_sections"})
+    db = shared_db()
+    now = datetime.now(tz=timezone.utc)
+    await db["patient_nutrition_plans"].update_one(   # tenant-ok: ρητό φίλτρο tenant_id
+        {"tenant_id": ctx.tenant_id, "patient_ref": patient_id},
+        {"$set": {"sections": plan.get("sections") or [], "note": (body.note if body else None),
+                  "assigned_at": now, "assigned_by": getattr(ctx, "user_id", None)},
+         "$setOnInsert": {"created_at": now}},
+        upsert=True)
+    # ειδοποίηση στην πύλη (best-effort — η ανάθεση δεν πρέπει να αποτύχει αν το push είναι κάτω)
+    try:
+        from app.repositories.patient_portal import PatientAccountRepository
+        from app.services import push_service
+        # ίδιο μοτίβο με τον worker υπενθυμίσεων: patient_ref → ΑΜΚΑ → λογαριασμός πύλης
+        from bson import ObjectId
+        pa = await db["patients_anonymized"].find_one(
+            {"_id": ObjectId(patient_id), "tenant_id": ctx.tenant_id}, {"amka": 1})
+        acc = (await PatientAccountRepository().get_by_amka((pa or {}).get("amka"))
+               if (pa or {}).get("amka") else None)
+        if acc:
+            await push_service.send_to_account(
+                str(acc["_id"]), title="🥗 Νέα πρόταση διατροφής",
+                body="Ο φαρμακοποιός σου ετοίμασε διατροφικές οδηγίες για την αγωγή σου.",
+                url="/portal")
+    except Exception:  # noqa: BLE001
+        pass
+    return {"ok": True, "sections": len(plan.get("sections") or [])}
 
 
 @router.post("/nutrition/{patient_id}/email")

@@ -55,6 +55,7 @@ const pdmy = (iso: string) => { const [y, m, d] = iso.split("-"); return d && m 
 const prange = (r: PRange) => (r.start_date === r.end_date ? pdmy(r.start_date) : `${pdmy(r.start_date)}–${pdmy(r.end_date)}`) + ` ${r.start}–${r.end}`;
 type Appt = { _id?: string; service_name: string; requested_at: string; status: string; tenant_id?: string; pharmacy_name?: string | null };
 type Cda = { available?: boolean; found?: boolean; doctor?: string | null; medicines?: string[]; issue_date?: string | null; deadline_date?: string | null; intangible?: boolean; exec_count?: number | null; is_fyk?: boolean; has_vaccine?: boolean };
+type NutritionPlan = { has: boolean; note?: string | null; assigned_at?: string | null; sections?: { title: string; drugs: string[]; favor: string; avoid: string; why?: string }[] };
 type NoPaperRx = { barcode: string; issue_date?: string | null; expiry_date?: string | null; status?: string | null; prescription_type?: string | null; executions?: string | null; already_submitted?: boolean };
 type RxReq = { _id?: string; kind: string; barcode?: string | null; note?: string | null; status: string; created_at: string; cda?: Cda | null; reply?: string | null; available_date?: string | null };
 type LoyaltyMember = { patient_ref: string; name?: string; points: number; balance_cents: number; tier: string; next_tier: string | null; to_next: number; progress_pct: number; compliance: number | null; refills: number; expected: number; open_refills: number; potential_points: number; points_per_refill: number; cents_per_point: number; ledger: { type: string; cents: number; kind?: string; reason?: string; at: string }[] };
@@ -177,6 +178,7 @@ export default function PortalHome() {
   const [geoBusy, setGeoBusy] = useState(false);
   const [rx, setRx] = useState<Rx[]>([]);
   // Άυλη συνταγογράφηση: PIN μέσω SMS από ΗΔΥΚΑ → λίστα νέων συνταγών → ανάθεση με το ΙΔΙΟ rx-request
+  const [nutrition, setNutrition] = useState<NutritionPlan | null>(null);
   const [npStep, setNpStep] = useState<"idle" | "pin" | "list">("idle");
   const [npPin, setNpPin] = useState("");
   const [npBusy, setNpBusy] = useState(false);
@@ -299,7 +301,10 @@ export default function PortalHome() {
     }
     if (tab === "meds") patientApi<Schedule>("/patient/meds/schedule").then(setSched).catch(() => {});
     if ((tab === "meds" || tab === "appointments") && !calFeed) patientApi<{ path: string }>("/patient/calendar-feed").then((d) => setCalFeed(d.path)).catch(() => {});
-    if (tab === "health") patientApi<Health>("/patient/health").then(setHealth).catch(() => {});
+    if (tab === "health") {
+      patientApi<Health>("/patient/health").then(setHealth).catch(() => {});
+      patientApi<NutritionPlan>("/patient/nutrition").then(setNutrition).catch(() => {});
+    }
     if (tab === "renewals") patientApi<{ items: Renewal[] }>("/patient/renewals").then((d) => setRenewals(d.items)).catch(() => {});
     if (tab === "wallet") patientApi<Loyalty>("/patient/loyalty").then(setLoyalty).catch(() => {});
     if (tab === "pharmacies" || directory.length === 0) patientApi<{ items: DirPharmacy[] }>("/patient/pharmacies/directory").then((d) => setDirectory(d.items)).catch(() => {});
@@ -1734,6 +1739,25 @@ export default function PortalHome() {
                 })}
               </div>
              </>)}
+          </div>
+        )}
+
+        {tab === "health" && nutrition?.has && (
+          <div className="mb-4 rounded-2xl border border-emerald-200 bg-emerald-50/50 dark:border-emerald-900 dark:bg-emerald-950/20 p-4 shadow-sm">
+            <h3 className="mb-1 text-sm font-semibold text-slate-800 dark:text-slate-100">{t("🥗 Η διατροφή σου", "🥗 Your nutrition plan")}</h3>
+            <p className="mb-3 text-xs text-slate-500 dark:text-slate-400">{t("Οδηγίες από τον φαρμακοποιό σου, με βάση την αγωγή σου.", "Guidance from your pharmacist, based on your medication.")}</p>
+            {nutrition.note && <div className="mb-3 rounded-lg bg-white/70 dark:bg-slate-900/50 px-3 py-2 text-xs italic text-slate-700 dark:text-slate-300">{nutrition.note}</div>}
+            <div className="space-y-2">
+              {(nutrition.sections || []).map((sec, i) => (
+                <div key={i} className="rounded-lg bg-white dark:bg-slate-900 p-3">
+                  <div className="text-sm font-semibold text-indigo-700 dark:text-indigo-400">{sec.title}</div>
+                  {sec.drugs?.length > 0 && <div className="mb-1.5 text-[11px] text-slate-400">{t("Σχετικά φάρμακα:", "Related medicines:")} {sec.drugs.join(", ")}</div>}
+                  <div className="text-sm text-slate-700 dark:text-slate-200"><b className="text-emerald-600">{t("🥗 Προτίμησε:", "🥗 Prefer:")}</b> {sec.favor}</div>
+                  <div className="mt-1 text-sm text-slate-700 dark:text-slate-200"><b className="text-rose-600">{t("⛔ Πρόσεξε:", "⛔ Avoid:")}</b> {sec.avoid}</div>
+                </div>
+              ))}
+            </div>
+            <p className="mt-3 text-[11px] text-slate-400">{t("Γενικές & ενημερωτικές οδηγίες — δεν υποκαθιστούν ιατρική ή διαιτολογική γνωμάτευση.", "General informational guidance — does not replace medical or dietary advice.")}</p>
           </div>
         )}
 
