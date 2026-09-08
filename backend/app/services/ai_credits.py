@@ -2,7 +2,13 @@
 
 Κάθε πακέτο credits = N ερωτήσεις για X€. Όταν εξαντληθεί το included (βλ. ai_quota), κάθε επιπλέον
 ερώτηση τραβάει 1 credit· όταν αδειάσουν → block («αγόρασε επιπλέον»). Ίδιο μοτίβο με το message_wallet:
-αγορά μέσω Viva/Revolut → webhook → πίστωση + παραστατικό (idempotent). Το balance είναι σε ΕΡΩΤΗΣΕΙΣ.
+αγορά μέσω Viva/Revolut → webhook → πίστωση + παραστατικό (idempotent). Το balance είναι σε **ΛΕΠΤΑ ΕΥΡΩ ΠΡΑΓΜΑΤΙΚΟΥ ΚΟΣΤΟΥΣ** (2026-09: ενοποίηση μονάδας).
+
+ΓΙΑΤΙ ΑΛΛΑΞΕ: τα credits πωλούνταν σε «ερωτήσεις», αλλά μία ερώτηση κοστίζει 0,036€–0,141€ (10×
+διαφορά). Έτσι το πακέτο «1.000 ερωτήσεις / 34,90€» πωλούσε στα 0,0349€/ερώτηση, δηλαδή ΚΑΤΩ ΑΠΟ ΤΟ
+ΚΟΣΤΟΣ για τυπικές (-81%) και βαριές (-304%) ερωτήσεις — όσο περισσότερα αγόραζε ο πελάτης, τόσο
+περισσότερα χάναμε. Με μονάδα το ευρώ αυτό γίνεται ΑΔΥΝΑΤΟ: το `credit_cents` του πακέτου είναι
+πραγματικό κόστος και το `price_cents` το εμπεριέχει με περιθώριο.
 """
 
 from __future__ import annotations
@@ -15,9 +21,12 @@ from app.core.db import shared_db
 
 # Default πακέτα (seed) — τιμή cost-plus (~4¢/ερώτηση). Editable στο adminpanel (ai_credit_packs).
 DEFAULT_PACKS = [
-    {"_id": "ai200", "name": "200 ερωτήσεις", "questions": 200, "price_cents": 890, "active": True},
-    {"_id": "ai500", "name": "500 ερωτήσεις", "questions": 500, "price_cents": 1990, "active": True},
-    {"_id": "ai1000", "name": "1.000 ερωτήσεις", "questions": 1000, "price_cents": 3490, "active": True},
+    # credit_cents = ΠΡΑΓΜΑΤΙΚΟ κόστος AI που πιστώνεται · price_cents = τι πληρώνει ο πελάτης
+    # (εμπεριέχει ~40% περιθώριο). Έτσι είναι ΑΔΥΝΑΤΟ να πουλήσουμε κάτω από το κόστος.
+    # Ενδεικτικές ερωτήσεις: με μετρημένο μέσο ~0,063€/τυπική ερώτηση (μετά το prompt caching).
+    {"_id": "ai5", "name": "AI +5 € (≈80 ερωτήσεις)", "credit_cents": 500, "price_cents": 700, "active": True},
+    {"_id": "ai10", "name": "AI +10 € (≈160 ερωτήσεις)", "credit_cents": 1000, "price_cents": 1350, "active": True},
+    {"_id": "ai25", "name": "AI +25 € (≈400 ερωτήσεις)", "credit_cents": 2500, "price_cents": 3200, "active": True},
 ]
 
 
@@ -31,7 +40,7 @@ async def balance(tenant_id: str) -> int:
 
 
 async def consume(tenant_id: str, n: int = 1) -> bool:
-    """Atomic: τράβα n credits ΑΝ υπάρχουν (χωρίς μερική χρέωση). Returns True αν καταναλώθηκαν."""
+    """Atomic: τράβα n ΛΕΠΤΑ κόστους ΑΝ υπάρχουν (χωρίς μερική χρέωση). Returns True αν καταναλώθηκαν."""
     if not tenant_id or n <= 0:
         return False
     db = shared_db()
@@ -45,13 +54,13 @@ async def consume(tenant_id: str, n: int = 1) -> bool:
     return True
 
 
-async def add(tenant_id: str, questions: int, *, reason: str = "topup", ref: str | None = None) -> dict:
+async def add(tenant_id: str, cents: int, *, reason: str = "topup", ref: str | None = None) -> dict:
     """Πίστωση ερωτήσεων (αγορά / bonus / manual grant)."""
     db = shared_db()
     doc = await db["ai_credit_wallets"].find_one_and_update(
-        {"_id": tenant_id}, {"$inc": {"balance": int(questions)}, "$set": {"updated_at": _now()}},
+        {"_id": tenant_id}, {"$inc": {"balance": int(cents)}, "$set": {"updated_at": _now()}},
         upsert=True, return_document=ReturnDocument.AFTER)
-    await _ledger(tenant_id, reason, int(questions), doc["balance"], ref)
+    await _ledger(tenant_id, reason, int(cents), doc["balance"], ref)
     return {"balance": doc["balance"]}
 
 
@@ -82,7 +91,7 @@ async def get_pack(pack_id: str) -> dict | None:
 async def record_pending_topup(tenant_id: str, pack: dict, order_id: str) -> None:
     await shared_db()["ai_credit_topups"].insert_one({
         "order_id": order_id, "tenant_id": tenant_id, "pack_id": pack["_id"],
-        "questions": int(pack["questions"]), "price_cents": int(pack["price_cents"]),
+        "credit_cents": int(pack["credit_cents"]), "price_cents": int(pack["price_cents"]),
         "status": "pending", "created_at": _now()})
 
 
@@ -96,12 +105,12 @@ async def complete_topup(order_id: str) -> bool:
         return_document=ReturnDocument.AFTER)
     if not doc:
         return await db["ai_credit_topups"].count_documents({"order_id": order_id}) > 0
-    await add(doc["tenant_id"], int(doc["questions"]), reason="topup", ref=order_id)
+    await add(doc["tenant_id"], int(doc["credit_cents"]), reason="topup", ref=order_id)
     try:
         from app.services import invoice_service
         await invoice_service.create_for_payment(
             tenant_id=doc["tenant_id"], kind="ai_credits", gross_cents=int(doc.get("price_cents", 0) or 0),
-            description=f"Αγορά AI credits RxVision ({doc['questions']} ερωτήσεις)",
+            description=f"Αγορά AI credits RxVision ({doc['credit_cents']/100:.2f}€)",
             item_key=f"ai_credit:{doc.get('pack_id')}",
             payment={"method": "card", "provider": doc.get("provider"), "transaction_id": order_id})
     except Exception:  # noqa: BLE001 — η πίστωση έγινε· το παραστατικό είναι best-effort

@@ -122,8 +122,15 @@ async def status_for(db, tenant_id: str) -> dict:
     included, period = await included_allowance(db, tenant_id)
     used = await _used_in_period(db, tenant_id, period)
     from app.services import ai_credits
+    # ΜΟΝΑΔΑ = ΕΥΡΩ (2026-09). Το πλήθος ερωτήσεων μένει μόνο ως ένδειξη· η αλήθεια είναι τα λεπτά.
+    budget_cents, b_period = await included_budget(db, tenant_id)
+    spent_cents = await spent_cents_in_period(db, tenant_id, b_period)
+    wallet_cents = await ai_credits.balance(tenant_id)
     return {"included": included, "period": period, "used": used,
-            "remaining": max(0, included - used), "credits": await ai_credits.balance(tenant_id)}
+            "remaining": max(0, included - used), "credits": wallet_cents,
+            "budget_cents": budget_cents, "spent_cents": round(spent_cents, 2),
+            "budget_remaining_cents": round(max(0.0, budget_cents - spent_cents), 2),
+            "wallet_cents": wallet_cents}
 
 
 async def included_budget(db, tenant_id: str) -> tuple[int, str]:
@@ -168,42 +175,36 @@ async def spent_cents_in_period(db, tenant_id: str, period: str) -> float:
 
 
 async def check_and_consume(tenant_id: str, source: str = "llm") -> tuple[bool, int, int, str | None]:
-    """Χρέωσε 1 ερώτημα στην τρέχουσα περίοδο (μήνα ή ημέρα, βάσει πακέτου). Επιστρέφει
-    (allowed, used, included, reason). reason: None όταν επιτρέπεται· "quota_exceeded" όταν εξαντλήθηκε
-    το included του πακέτου (→ αγορά AI credits). Αν ξεπερνά → allowed=False & rollback."""
+    """Καταγράφει 1 ερώτημα και αποφασίζει αν επιτρέπεται — **ΜΕ ΜΟΝΑΔΑ ΤΟ ΕΥΡΩ**.
+
+    ΓΙΑΤΙ ΟΧΙ ΠΛΗΘΟΣ ΕΡΩΤΗΣΕΩΝ (αλλαγή 2026-09): μία ερώτηση κοστίζει 0,036€–0,141€ ανάλογα με το
+    πόσες κλήσεις εργαλείων χρειάστηκε (έως 6) — διαφορά 10×. Άρα ένα όριο «Ν ερωτήσεις» δεν λέει
+    τίποτα για την έκθεσή μας: «400» μπορεί να σημαίνει 12€ ή 127€. Ο προϋπολογισμός σε ευρώ την
+    κάνει ντετερμινιστική. Το πλήθος συνεχίζει να μετριέται ΜΟΝΟ για εμφάνιση/στατιστικά.
+
+    Σειρά: (1) εντός δωρεάν προϋπολογισμού περιόδου → ΟΚ· (2) αλλιώς, αν υπάρχει υπόλοιπο
+    προπληρωμένων credits → ΟΚ (η πραγματική αφαίρεση γίνεται στο ai_cost.record με το ΑΛΗΘΙΝΟ
+    κόστος)· (3) αλλιώς → μπλοκ.
+    """
     if not tenant_id:
         return (True, 0, AI_DEFAULT_DAILY, None)   # χωρίς tenant → μη περιοριστικό (ασφάλεια)
     db = shared_db()
-    included, period = await included_allowance(db, tenant_id)
-    # ΠΡΟΫΠΟΛΟΓΙΣΜΟΣ σε €: σκληρό όριο πραγματικού κόστους (προστατεύει από βαριές ερωτήσεις που
-    # «τρώνε» τη συνδρομή). Ελέγχεται ΠΡΙΝ την κατανάλωση· το κόστος της τρέχουσας ερώτησης
-    # καταγράφεται αφού απαντηθεί, άρα η υπέρβαση είναι το πολύ μία ερώτηση.
-    from app.services import ai_credits
-    credit_taken = False        # ΜΙΑ ερώτηση = ΤΟ ΠΟΛΥ ΕΝΑ credit (δύο έλεγχοι, μία χρέωση)
-    budget_cents, b_period = await included_budget(db, tenant_id)
-    if budget_cents > 0:
-        spent = await spent_cents_in_period(db, tenant_id, b_period)
-        if spent >= budget_cents:
-            if not await ai_credits.consume(tenant_id, 1):
-                return (False, included, included, "budget_exhausted")
-            credit_taken = True
+    budget_cents, period = await included_budget(db, tenant_id)
+    included, _p = await included_allowance(db, tenant_id)      # μόνο για εμφάνιση
     key = f"ai:{tenant_id}:{_day()}"
     sub = "n_cache" if source == "cache" else "n_llm"
-    doc = await db["llm_daily_usage"].find_one_and_update(   # tenant-ok: platform usage meter
+    await db["llm_daily_usage"].find_one_and_update(   # tenant-ok: platform usage meter
         {"_id": key}, {"$inc": {"n": 1, sub: 1}, "$setOnInsert": {"at": datetime.now(tz=timezone.utc)}},
         upsert=True, return_document=ReturnDocument.AFTER)
-    used = await _used_in_period(db, tenant_id, period) if period in ("month", "year", "trial") else int((doc or {}).get("n", 0))
-    if used > included:
-        if period == "trial":
-            # ΔΟΚΙΜΑΣΤΙΚΗ: σκληρό συνολικό όριο — ΟΧΙ credits (αγορά μόνο με πληρωμένη συνδρομή).
-            await db["llm_daily_usage"].update_one({"_id": key}, {"$inc": {"n": -1, sub: -1}})   # rollback
-            return (False, included, included, "trial_exhausted")
-        # Πάνω από το included → τράβα 1 AI credit (prepaid). Αν υπάρχει → επιτρέπεται (source="credit").
-        # credit_taken: αν χρεώθηκε ήδη credit στον έλεγχο προϋπολογισμού, ΜΗΝ ξαναχρεώσεις — αλλιώς
-        # μία ερώτηση θα κόστιζε 2 credits όταν έχουν εξαντληθεί ΚΑΙ ο προϋπολογισμός ΚΑΙ οι ερωτήσεις.
-        if credit_taken or await ai_credits.consume(tenant_id, 1):
-            return (True, used, included, "credit")
-        await db["llm_daily_usage"].update_one({"_id": key}, {"$inc": {"n": -1, sub: -1}})   # rollback
-        return (False, included, included, "quota_exceeded")
-    return (True, used, included, None)
+    used = await _used_in_period(db, tenant_id, period)
 
+    spent = await spent_cents_in_period(db, tenant_id, period)
+    if budget_cents > 0 and spent < budget_cents:
+        return (True, used, included, None)          # εντός δωρεάν προϋπολογισμού
+
+    from app.services import ai_credits
+    if await ai_credits.balance(tenant_id) > 0:      # προπληρωμένο υπόλοιπο → επιτρέπεται
+        return (True, used, included, "credit")
+
+    await db["llm_daily_usage"].update_one({"_id": key}, {"$inc": {"n": -1, sub: -1}})   # rollback
+    return (False, used, included, "budget_exhausted" if budget_cents > 0 else "quota_exceeded")

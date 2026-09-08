@@ -28,7 +28,7 @@ type Result = {
   substances: Substance[]; non_drug_advice: string[]; interactions: Interaction[];
   safety?: Safety; referral?: Referral; products?: ProductGroup[];
 };
-type Status = { configured: boolean; enabled: boolean; model: string; ai_used?: number; ai_included?: number; ai_period?: string };
+type Status = { configured: boolean; enabled: boolean; model: string; ai_used?: number; ai_included?: number; ai_period?: string; ai_budget_cents?: number; ai_spent_cents?: number; ai_wallet_cents?: number };
 type Turn = { role: "user" | "assistant"; content: string; result?: Result };
 
 const SYMPTOMS: [string, string][] = [
@@ -174,7 +174,7 @@ function PharmaCatInner() {
           <p className="text-xs text-slate-500">{t("Επιστημονικός βοηθός φαρμακοποιού (CDSS) — δεν διαγιγνώσκει, δεν αντικαθιστά ιατρό.", "Pharmacist's scientific assistant (CDSS) — not diagnosis, not a doctor replacement.")}</p>
         </div>
         {status.data?.configured && status.data?.enabled && (
-          <Tooltip label={t("Ερωτήματα του πακέτου σου (μετρούν όλα)", "Your plan's questions (all count)")}><span className="hidden shrink-0 rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-medium text-slate-500 sm:inline dark:bg-slate-800">{status.data.ai_used ?? 0}/{status.data.ai_included ?? 0} {status.data.ai_period === "month" ? t("αυτόν τον μήνα", "this month") : status.data.ai_period === "year" ? t("φέτος", "this year") : status.data.ai_period === "trial" ? t("δοκιμαστική", "trial") : t("σήμερα", "today")}</span></Tooltip>
+          <Tooltip label={t("Δωρεάν AI του πακέτου σου σε ευρώ (+ προπληρωμένο υπόλοιπο)", "Your plan's free AI budget (+ prepaid balance)")}><span className="hidden shrink-0 rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-medium text-slate-500 sm:inline dark:bg-slate-800">{((status.data.ai_spent_cents ?? 0) / 100).toFixed(2)}€ / {((status.data.ai_budget_cents ?? 0) / 100).toFixed(2)}€{(status.data.ai_wallet_cents ?? 0) > 0 ? ` + ${((status.data.ai_wallet_cents ?? 0) / 100).toFixed(2)}€` : ""} {status.data.ai_period === "month" ? t("αυτόν τον μήνα", "this month") : status.data.ai_period === "year" ? t("φέτος", "this year") : status.data.ai_period === "trial" ? t("δοκιμαστική", "trial") : t("σήμερα", "today")}</span></Tooltip>
         )}
         {turns.length > 0 && (
           <Tooltip label={t("Καθαρισμός συνομιλίας", "Clear conversation")}><button onClick={() => { setTurns([]); setInput(""); setMed(null); }}

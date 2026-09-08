@@ -90,8 +90,35 @@ async def record(tenant_id: str | None, model: str, usage, *, db=None) -> None:
              # δημιουργεί πρώτο το έγγραφο (π.χ. εσωτερικές εργασίες), το κόστος έμενε ΑΟΡΑΤΟ.
              "$setOnInsert": {"at": datetime.now(tz=timezone.utc)}},
             upsert=True)
+        await _settle_prepaid(db, tenant_id, micro)
     except Exception:  # noqa: BLE001 — cost metering must never break an AI answer
         pass
+
+
+async def _settle_prepaid(db, tenant_id: str, micro: int) -> None:
+    """Χρέωσε στο προπληρωμένο πορτοφόλι ΜΟΝΟ το μέρος του κόστους που ξεπερνά τον δωρεάν
+    προϋπολογισμό της περιόδου — με το ΑΛΗΘΙΝΟ κόστος, όχι με εκτίμηση «1 ερώτηση = 1 credit».
+
+    Ακρίβεια: το κόστος είναι σε micro-λεπτά ενώ το πορτοφόλι σε ακέραια λεπτά· κρατάμε το υπόλοιπο
+    (`credit_debt_micro`) στον μετρητή της ημέρας και αφαιρούμε ολόκληρα λεπτά όταν συμπληρώνονται —
+    ώστε να μη χάνονται ούτε να διπλοχρεώνονται κλάσματα.
+    """
+    if micro <= 0 or not tenant_id or str(tenant_id).startswith("__"):
+        return
+    from app.services import ai_quota, ai_credits
+    budget_cents, period = await ai_quota.included_budget(db, tenant_id)
+    spent_after = await ai_quota.spent_cents_in_period(db, tenant_id, period)      # σε λεπτά
+    prev = spent_after - micro / 1_000_000
+    excess_micro = (max(0.0, spent_after - budget_cents) - max(0.0, prev - budget_cents)) * 1_000_000
+    if excess_micro <= 0:
+        return
+    key = f"ai:{tenant_id}:{_day()}"
+    doc = await db["llm_daily_usage"].find_one({"_id": key}, {"credit_debt_micro": 1}) or {}
+    debt = float(doc.get("credit_debt_micro") or 0) + excess_micro
+    cents = int(debt // 1_000_000)
+    if cents > 0 and await ai_credits.consume(tenant_id, cents):
+        debt -= cents * 1_000_000
+    await db["llm_daily_usage"].update_one({"_id": key}, {"$set": {"credit_debt_micro": debt}})
 
 
 async def measured(db=None, days: int = 30) -> dict:
