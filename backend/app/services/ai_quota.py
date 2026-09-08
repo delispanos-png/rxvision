@@ -119,6 +119,44 @@ async def status_for(db, tenant_id: str) -> dict:
             "remaining": max(0, included - used), "credits": await ai_credits.balance(tenant_id)}
 
 
+async def included_budget(db, tenant_id: str) -> tuple[int, str]:
+    """Δωρεάν AI **ΠΡΟΫΠΟΛΟΓΙΣΜΟΣ** του πακέτου σε λεπτά του ευρώ: (cents, περίοδος).
+
+    ΓΙΑΤΙ ΥΠΑΡΧΕΙ: το όριο «Ν ερωτήσεις» ΔΕΝ είναι ασφαλές — μία ερώτηση μπορεί να κοστίσει από
+    0,03€ (απλή, 1 κλήση) έως 0,32€ (βαριά, 6 κλήσεις με εργαλεία), δηλαδή διαφορά 10×. Έτσι το
+    ίδιο όριο «400» μπορεί να μας κοστίσει από 12€ έως 127€ — πάνω από τη συνδρομή. Ο προϋπολογισμός
+    σε ευρώ κάνει την έκθεσή μας ΝΤΕΤΕΡΜΙΝΙΣΤΙΚΗ: 5€ είναι 5€, ό,τι κι αν ρωτήσει ο πελάτης.
+
+    0 = απενεργοποιημένο (ισχύει μόνο το όριο ερωτήσεων) — έτσι δεν αλλάζει τίποτα μέχρι να το ορίσεις.
+    """
+    sub = await db["subscriptions"].find_one({"tenant_id": tenant_id}, {"plan": 1})
+    plan = (sub or {}).get("plan")
+    if plan:
+        pkg = await db["packages"].find_one({"_id": plan}, {"ai_budget_cents": 1, "ai_included_period": 1})
+        if pkg and pkg.get("ai_budget_cents") is not None:
+            period = pkg.get("ai_included_period") if pkg.get("ai_included_period") in ("month", "day", "year") else "month"
+            try:
+                return max(0, int(pkg["ai_budget_cents"])), period
+            except (TypeError, ValueError):
+                pass
+    return 0, "month"
+
+
+async def spent_cents_in_period(db, tenant_id: str, period: str) -> float:
+    """Πραγματικό κόστος (σε λεπτά €) που έχει ξοδέψει το φαρμακείο στην περίοδο — από cost_micro."""
+    if period in ("month", "year"):
+        fmt = "%Y-%m" if period == "month" else "%Y"
+        prefix = f"ai:{tenant_id}:{datetime.now(tz=timezone.utc).strftime(fmt)}"
+    elif period == "trial":
+        prefix = f"ai:{tenant_id}:"
+    else:
+        prefix = f"ai:{tenant_id}:{_day()}"
+    rows = await db["llm_daily_usage"].aggregate([
+        {"$match": {"_id": {"$regex": "^" + re.escape(prefix)}}},
+        {"$group": {"_id": None, "c": {"$sum": "$cost_micro"}}}]).to_list(length=1)
+    return (int(rows[0]["c"]) if rows and rows[0].get("c") else 0) / 1_000_000
+
+
 async def check_and_consume(tenant_id: str, source: str = "llm") -> tuple[bool, int, int, str | None]:
     """Χρέωσε 1 ερώτημα στην τρέχουσα περίοδο (μήνα ή ημέρα, βάσει πακέτου). Επιστρέφει
     (allowed, used, included, reason). reason: None όταν επιτρέπεται· "quota_exceeded" όταν εξαντλήθηκε
@@ -127,6 +165,16 @@ async def check_and_consume(tenant_id: str, source: str = "llm") -> tuple[bool, 
         return (True, 0, AI_DEFAULT_DAILY, None)   # χωρίς tenant → μη περιοριστικό (ασφάλεια)
     db = shared_db()
     included, period = await included_allowance(db, tenant_id)
+    # ΠΡΟΫΠΟΛΟΓΙΣΜΟΣ σε €: σκληρό όριο πραγματικού κόστους (προστατεύει από βαριές ερωτήσεις που
+    # «τρώνε» τη συνδρομή). Ελέγχεται ΠΡΙΝ την κατανάλωση· το κόστος της τρέχουσας ερώτησης
+    # καταγράφεται αφού απαντηθεί, άρα η υπέρβαση είναι το πολύ μία ερώτηση.
+    budget_cents, b_period = await included_budget(db, tenant_id)
+    if budget_cents > 0:
+        spent = await spent_cents_in_period(db, tenant_id, b_period)
+        if spent >= budget_cents:
+            from app.services import ai_credits
+            if not await ai_credits.consume(tenant_id, 1):
+                return (False, included, included, "budget_exhausted")
     key = f"ai:{tenant_id}:{_day()}"
     sub = "n_cache" if source == "cache" else "n_llm"
     doc = await db["llm_daily_usage"].find_one_and_update(   # tenant-ok: platform usage meter

@@ -63,7 +63,10 @@ def _usage_tokens(usage) -> tuple[int, int, int, int]:
 
 def cost_micro(prices: dict, in_tok: int, out_tok: int, cin_tok: int = 0, cwrite_tok: int = 0) -> int:
     """Micro-cents for one call. input_tokens excludes cached reads; cache writes bill ~like input."""
-    return int((in_tok + cwrite_tok) * prices.get("in", 0)
+    # ΠΡΟΣΟΧΗ στην τιμολόγηση Anthropic: η ΕΓΓΡΑΦΗ στην cache κοστίζει 1.25× την τιμή input, ενώ η
+    # ΑΝΑΓΝΩΣΗ από cache κοστίζει ~0.1× ("cin"). Πριν χρεώναμε την εγγραφή 1.0× → υποεκτίμηση κόστους.
+    return int(in_tok * prices.get("in", 0)
+               + cwrite_tok * prices.get("in", 0) * 1.25
                + out_tok * prices.get("out", 0)
                + cin_tok * prices.get("cin", prices.get("in", 0)))
 
@@ -82,7 +85,10 @@ async def record(tenant_id: str | None, model: str, usage, *, db=None) -> None:
         await db["llm_daily_usage"].update_one(
             {"_id": f"ai:{tenant_id}:{_day()}"},
             {"$inc": {"tok_in": in_tok + cwrite + cin_tok, "tok_out": out_tok, "cost_micro": micro,
-                      "n_priced": 1}},   # πόσες κλήσεις τιμολογήθηκαν (για ΤΙΜΙΟ μέσο όρο κόστους)
+                      "n_priced": 1},   # πόσες κλήσεις τιμολογήθηκαν (για ΤΙΜΙΟ μέσο όρο κόστους)
+             # ΚΡΙΣΙΜΟ: χρονοσήμανση — το measured() φιλτράρει με `at`. Χωρίς αυτό, όταν το record()
+             # δημιουργεί πρώτο το έγγραφο (π.χ. εσωτερικές εργασίες), το κόστος έμενε ΑΟΡΑΤΟ.
+             "$setOnInsert": {"at": datetime.now(tz=timezone.utc)}},
             upsert=True)
     except Exception:  # noqa: BLE001 — cost metering must never break an AI answer
         pass
@@ -93,7 +99,9 @@ async def measured(db=None, days: int = 30) -> dict:
     db = db if db is not None else shared_db()
     cutoff = datetime.now(tz=timezone.utc) - timedelta(days=days)
     rows = await db["llm_daily_usage"].aggregate([
-        {"$match": {"_id": {"$regex": "^ai:"}, "at": {"$gte": cutoff}}},
+        # ΜΟΝΟ ερωτήσεις πελατών: εξαιρούνται οι εσωτερικές ψευδο-tenant εργασίες (__…__), γιατί
+        # έχουν εντελώς διαφορετικό προφίλ (haiku, μαζικά) και θα νόθευαν το «κόστος ανά ερώτηση».
+        {"$match": {"_id": {"$regex": "^ai:(?!__)"}, "at": {"$gte": cutoff}}},
         {"$group": {"_id": None, "cost_micro": {"$sum": "$cost_micro"},
                     "priced": {"$sum": "$n_priced"}, "tok_in": {"$sum": "$tok_in"},
                     "tok_out": {"$sum": "$tok_out"}}},
@@ -118,3 +126,14 @@ async def pricing_suggestion(db=None, days: int = 30) -> dict:
     suggested_q = round(cpq * factor, 4) if cpq is not None else None
     return {"margin_pct": cfg["margin_pct"], "models": cfg["models"], "measured": m,
             "suggested_price_per_q_cents": suggested_q}
+
+
+def cached_system(text: str) -> list[dict]:
+    """System prompt ως block με cache_control → η Anthropic κρατά το πρόθεμα (system + tools) σε cache.
+
+    ΓΙΑΤΙ: ο Copilot ξαναστέλνει ~8.500 tokens (system + 20 εργαλεία) σε ΚΑΘΕ κλήση, και μία ερώτηση
+    κάνει έως 6 κλήσεις (tool loop). Χωρίς cache χρεώνονται όλα με πλήρη τιμή input· με cache η
+    ανάγνωση κοστίζει ~10× λιγότερο. Μετρημένο όφελος: ~45% στο συνολικό κόστος ανά ερώτηση.
+    Το cache_control μπαίνει στο system (τελευταίο του προθέματος) ώστε να καλύπτει ΚΑΙ τα tools.
+    """
+    return [{"type": "text", "text": text, "cache_control": {"type": "ephemeral"}}]

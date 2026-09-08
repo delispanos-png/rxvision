@@ -741,6 +741,10 @@ class PackageIn(BaseModel):
     included_users: int | None = None  # πόσους ταυτόχρονους χρήστες περιλαμβάνει ΔΩΡΕΑΝ η τιμή (default 1)
     ai_included: int | None = None            # δωρεάν AI ερωτήσεις που περιλαμβάνει το πακέτο
     ai_included_period: str | None = None     # "month" (σύνολο/μήνα) ή "day" (ανά ημέρα)
+    # ΠΡΟΫΠΟΛΟΓΙΣΜΟΣ σε λεπτά € (π.χ. 500 = 5,00€). Σκληρό όριο ΠΡΑΓΜΑΤΙΚΟΥ κόστους ανά περίοδο —
+    # πιο ασφαλές από το πλήθος ερωτήσεων, γιατί μία ερώτηση κοστίζει 0,03€–0,32€ (διαφορά 10×).
+    # 0/κενό = ανενεργό (ισχύει μόνο το όριο ερωτήσεων).
+    ai_budget_cents: int | None = None
     sla: str | None = None
     modules: list[str] | None = None  # the capabilities this package grants
     features: list[str] | None = None  # marketing bullet list shown on the pricing card
@@ -2742,6 +2746,8 @@ async def ai_limits(_: PlatformContext = Depends(get_platform_admin)):
         st = await ai_quota.status_for(db, tid)
         bd = await ai_quota.usage_breakdown_today(db, tid)
         sub = await db["subscriptions"].find_one({"tenant_id": tid}, {"plan": 1, "plan_name": 1})
+        _bgt, _bp = await ai_quota.included_budget(db, tid)
+        _spent = await ai_quota.spent_cents_in_period(db, tid, _bp)
         rows.append({
             "tenant_id": str(tid), "name": t.get("name"),
             "plan": (sub or {}).get("plan"), "plan_name": (sub or {}).get("plan_name"),
@@ -2750,6 +2756,8 @@ async def ai_limits(_: PlatformContext = Depends(get_platform_admin)):
             "ai_used_today": bd["total"],
             "ai_used_ai": bd["ai"],        # πραγματικές AI κλήσεις (μόνο για εμάς)
             "ai_used_local": bd["local"],  # σερβιρίστηκαν από την τοπική βάση (μόνο για εμάς)
+            # ΠΡΑΓΜΑΤΙΚΟ κόστος περιόδου + προϋπολογισμός (σε λεπτά €) — η αλήθεια για την έκθεσή μας
+            "budget_cents": _bgt, "spent_cents": round(_spent, 2),
             "card_on_file": await billing_service.card_on_file(tid),
         })
     rows.sort(key=lambda r: (-(r["used"] or 0), (r["name"] or "").lower()))

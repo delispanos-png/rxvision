@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 
 from app.services import pharmacat_service
+from app.services import ai_cost   # κόστος/caching — πρέπει να είναι διαθέσιμο ΠΡΙΝ τις κλήσεις
 
 SYSTEM = (
     "Είσαι έμπειρος βοηθός φαρμακοποιού στην Ελλάδα. Με βάση την ΕΙΚΟΝΑ ΠΕΛΑΤΗ που σου δίνεται "
@@ -61,14 +62,13 @@ async def advise(facts: dict, tenant_id: str | None = None) -> dict:
     prompt = "ΕΙΚΟΝΑ ΠΕΛΑΤΗ:\n" + json.dumps(facts, ensure_ascii=False, indent=2)
     try:
         resp = await client.messages.create(
-            model=c["model"], max_tokens=3000, system=SYSTEM,
+            model=c["model"], max_tokens=3000, system=ai_cost.cached_system(SYSTEM),
             messages=[{"role": "user", "content": prompt}], output_config=out_cfg)
     except anthropic.APIStatusError as e:
         return {"ok": False, "error": f"api_error:{e.status_code}"}
     except Exception as e:  # noqa: BLE001
         return {"ok": False, "error": f"unavailable:{type(e).__name__}"}
 
-    from app.services import ai_cost
     await ai_cost.record(tenant_id, c["model"], getattr(resp, "usage", None))
     text = next((b.text for b in resp.content if b.type == "text"), "").strip()
     if text.startswith("```"):  # defensive: strip markdown fences if a model adds them

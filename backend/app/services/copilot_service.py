@@ -17,6 +17,7 @@ from datetime import datetime, timedelta, timezone
 from app.repositories.base import jsonsafe
 from app.services import pharmacat_service  # shared Anthropic config
 from app.utils.masking import mask_name
+from app.services import ai_cost   # κόστος/caching — πρέπει να είναι διαθέσιμο ΠΡΙΝ τις κλήσεις
 
 SYSTEM = """Είσαι ο «Copilot» του RxVision — ο έξυπνος βοηθός ΛΕΙΤΟΥΡΓΙΑΣ του προγράμματος (όχι κλινικός·
 γι' αυτό υπάρχει ο PharmaCat). Απαντάς ΠΑΝΤΑ στα ελληνικά, σύντομα και με ουσία.
@@ -445,9 +446,10 @@ async def summarize_report(tenant_id: str, title: str, tool: str, data: dict) ->
         client = anthropic.AsyncAnthropic(api_key=c["api_key"])
         payload = json.dumps(_scrub_amka(data), ensure_ascii=False, default=str)[:6000]
         resp = await client.messages.create(
+            # ΧΩΡΙΣ cache: μονή κλήση, το πρόθεμα δεν ξαναχρησιμοποιείται εντός 5′ → η ΕΓΓΡΑΦΗ cache
+            # (1.25× input) θα ήταν καθαρή ζημιά. Το caching αξίζει μόνο όπου υπάρχει βρόχος εργαλείων.
             model=c["model"], max_tokens=700, system=_REPORT_SYSTEM,
             messages=[{"role": "user", "content": f"Τίτλος: {title}\nΔεδομένα:\n{payload}"}])
-        from app.services import ai_cost
         await ai_cost.record(tenant_id, c["model"], getattr(resp, "usage", None))
         txt = "".join(b.text for b in resp.content if b.type == "text").strip()
         return txt or _deterministic_report(title, data)
@@ -644,8 +646,8 @@ async def ask(*, tenant_id: str, perms: set[str], messages: list[dict], demo: bo
     try:
         for _ in range(6):
             resp = await client.messages.create(
-                model=c["model"], max_tokens=1600, system=system, tools=tools, messages=msgs)
-            from app.services import ai_cost
+                model=c["model"], max_tokens=1600, system=ai_cost.cached_system(system),
+                tools=tools, messages=msgs)
             await ai_cost.record(tenant_id, c["model"], getattr(resp, "usage", None))
             reply = "".join(b.text for b in resp.content if b.type == "text").strip() or reply
             if resp.stop_reason != "tool_use":
