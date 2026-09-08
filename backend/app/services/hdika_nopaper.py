@@ -23,7 +23,10 @@ from __future__ import annotations
 
 import asyncio
 
-from app.services.hdika_lookup import _creds_for
+# ΠΡΟΣΟΧΗ: ΟΧΙ το hdika_lookup._creds_for — ΔΕΝ κληρονομεί το production api_key και κάθε κλήση
+# αποτυγχάνει με «You must provide a valid api key» (επαληθεύτηκε σε production). Ο σωστός builder
+# είναι ο ίδιος που χρησιμοποιεί το ingestion.
+from app.api.v1.routers.ingestion import _effective_hdika_creds
 import defusedxml.ElementTree as _DET   # ίδιος σκληρυμένος parser με το ingestion (XXE-safe)
 
 from app.services.ingestion.hdika_client import (
@@ -128,8 +131,8 @@ async def send_pin(tenant_id: str, amka: str) -> dict:
     """
     if not (amka or "").strip():
         return {"ok": False, "error": "amka_missing"}
-    creds = await _creds_for(tenant_id)
-    if not creds:
+    creds = dict(await _effective_hdika_creds(tenant_id) or {})
+    if not creds.get("username"):
         return {"ok": False, "error": "no_connection"}
     try:
         return await asyncio.to_thread(_send_pin_sync, creds, amka.strip())
@@ -146,8 +149,8 @@ async def list_prescriptions(tenant_id: str, amka: str, pin: str, *,
         return {"ok": False, "error": "amka_missing"}
     if not (pin or "").strip():
         return {"ok": False, "error": "pin_required"}
-    creds = await _creds_for(tenant_id)
-    if not creds:
+    creds = dict(await _effective_hdika_creds(tenant_id) or {})
+    if not creds.get("username"):
         return {"ok": False, "error": "no_connection"}
     try:
         return await asyncio.to_thread(_list_sync, creds, amka.strip(), pin.strip(),

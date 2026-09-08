@@ -77,7 +77,13 @@ async def lookup_prescription(tenant_id, barcode: str) -> dict:
     if not bc:
         return {"available": False}
     try:
-        creds = await _creds_for(tenant_id)
+        # ΔΙΟΡΘΩΣΗ 2026-09-08: το τοπικό _creds_for ΔΕΝ κληρονομεί το production api_key, οπότε η
+        # ζωντανή επαλήθευση barcode στην πύλη αποτύγχανε ΣΙΩΠΗΛΑ για κάθε φαρμακείο χωρίς δικό του
+        # key («You must provide a valid api key») και εμφανιζόταν ως «δεν εντοπίστηκε στην ΗΔΙΚΑ».
+        from app.api.v1.routers.ingestion import _effective_hdika_creds
+        creds = dict(await _effective_hdika_creds(tenant_id) or {}) or None
+        if creds and not creds.get("username"):
+            creds = None
         if not creds or not creds.get("base_url"):
             return {"available": False}
         res = await asyncio.to_thread(_lookup_sync, creds, bc)

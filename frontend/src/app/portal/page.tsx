@@ -1991,7 +1991,7 @@ export default function PortalHome() {
             {/* 0) ΑΥΛΗ: φέρε τις νέες μου συνταγές από τη ΗΔΙΚΑ */}
             <div className="rounded-2xl border border-indigo-200 bg-indigo-50/40 dark:border-indigo-900 dark:bg-indigo-950/20 p-4 shadow-sm">
               <h3 className="mb-1 text-sm font-semibold text-slate-800 dark:text-slate-100">{t("✨ Έλεγχος για νέες συνταγές", "✨ Check for new prescriptions")}</h3>
-              <p className="mb-3 text-xs text-slate-500 dark:text-slate-400">{t("Φέρε αυτόματα τις συνταγές που σου έγραψε ο γιατρός. Η ΗΔΙΚΑ θα σου στείλει PIN με SMS στο κινητό που έχεις δηλώσει σε ΑΥΤΗΝ.", "Automatically fetch prescriptions your doctor issued. ΗΔΙΚΑ will text you a PIN on the phone registered with THEM.")}</p>
+              <p className="mb-3 text-xs text-slate-500 dark:text-slate-400">{t("Κατέβασε τις νέες συνταγές που σου έγραψε ο γιατρός σου και ανάθεσέ τες στο φαρμακείο.", "Download the new prescriptions your doctor issued and assign them to your pharmacy.")}</p>
               {npMsg && <div className="mb-3 rounded-lg bg-white/70 dark:bg-slate-900/50 px-3 py-2 text-xs text-slate-700 dark:text-slate-300">{npMsg}</div>}
 
               {npStep === "idle" && (
