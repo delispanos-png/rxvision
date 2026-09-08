@@ -149,10 +149,21 @@ class PatientTransferRepository:
         #     φαρμακείου (αποφυγή τριβών). Ο πελάτης το έχει δει και το ενέκρινε στην οθόνη έγκρισης.
         if src:
             await self._notify_old(src, acc, t)
-        # 3) Το ΝΕΟ γίνεται προεπιλεγμένο. Το ΠΑΛΙΟ ΜΕΝΕΙ ενεργό (απόφαση ιδιοκτήτη).
-        #    Γράφουμε απευθείας — το set_favorite είναι toggle και θα το μηδένιζε σε επανάληψη.
+        # 3) Το ΝΕΟ γίνεται προεπιλεγμένο. Γράφουμε απευθείας — το set_favorite είναι toggle και θα
+        #    το μηδένιζε σε επανάληψη.
         await self.db["patient_accounts"].update_one(   # tenant-ok: global patient account
             {"_id": aid}, {"$set": {"favorite_tenant_id": to_tid}})
+        # 4) ΑΦΑΙΡΕΣΗ του συνδέσμου ΠΥΛΗΣ με το παλιό φαρμακείο (αλλαγή απόφασης ιδιοκτήτη 2026-09-08:
+        #    πριν έμενε ενεργός). Ο πελάτης «έφυγε» — δεν πρέπει να εμφανίζεται πλέον ως χρήστης πύλης
+        #    εκεί, ούτε να μπορεί να το επιλέξει.
+        #    ΤΟ ΙΣΤΟΡΙΚΟ ΔΕΝ ΘΙΓΕΤΑΙ: patients_anonymized + prescription_executions κλειδώνονται στο
+        #    patient_ref (ΑΜΚΑ + pepper του φαρμακείου), όχι στον σύνδεσμο. Το παλιό φαρμακείο
+        #    συνεχίζει να τον βλέπει κανονικά ως πελάτη με κίνηση. Και είναι ΑΝΑΣΤΡΕΨΙΜΟ: αν τον
+        #    ξαναεπιλέξει, το link_or_create ξαναφτιάχνει τον σύνδεσμο με ΤΟ ΙΔΙΟ patient_ref και
+        #    το ιστορικό επανασυνδέεται αυτόματα.
+        if src and src.get("tenant_id") and src["tenant_id"] != to_tid:
+            await self.db["patient_links"].delete_one(   # tenant-ok: ρητό account+tenant φίλτρο
+                {"account_id": aid, "tenant_id": src["tenant_id"]})
         await self.db["patient_transfers"].update_one(
             {"_id": oid}, {"$set": {"status": "accepted", "decided_at": _now(), "copied": copied}})
         return {"ok": True, "status": "accepted", "tenant_id": to_tid, "copied": copied}
