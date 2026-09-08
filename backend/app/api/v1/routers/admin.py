@@ -2752,6 +2752,12 @@ async def ai_limits(_: PlatformContext = Depends(get_platform_admin)):
         sub = await db["subscriptions"].find_one({"tenant_id": tid}, {"plan": 1, "plan_name": 1})
         _bgt, _bp = await ai_quota.included_budget(db, tid)
         _spent = await ai_quota.spent_cents_in_period(db, tid, _bp)
+        # πόσες ερωτήσεις έχουν ΟΝΤΩΣ τιμολογηθεί — οι παλιότερες (πριν τη διόρθωση καταγραφής
+        # 2026-09-07) δεν έχουν κόστος, οπότε το UI πρέπει να το λέει αντί να δείχνει ψευδές 0,00€.
+        _pr = await db["llm_daily_usage"].aggregate([
+            {"$match": {"_id": {"$regex": "^ai:" + re.escape(str(tid)) + ":"}}},
+            {"$group": {"_id": None, "pr": {"$sum": "$n_priced"}}}]).to_list(length=1)
+        _priced = int(_pr[0]["pr"]) if _pr and _pr[0].get("pr") else 0
         rows.append({
             "tenant_id": str(tid), "name": t.get("name"),
             "plan": (sub or {}).get("plan"), "plan_name": (sub or {}).get("plan_name"),
@@ -2761,7 +2767,7 @@ async def ai_limits(_: PlatformContext = Depends(get_platform_admin)):
             "ai_used_ai": bd["ai"],        # πραγματικές AI κλήσεις (μόνο για εμάς)
             "ai_used_local": bd["local"],  # σερβιρίστηκαν από την τοπική βάση (μόνο για εμάς)
             # ΠΡΑΓΜΑΤΙΚΟ κόστος περιόδου + προϋπολογισμός (σε λεπτά €) — η αλήθεια για την έκθεσή μας
-            "budget_cents": _bgt, "spent_cents": round(_spent, 2),
+            "budget_cents": _bgt, "spent_cents": round(_spent, 2), "priced_questions": _priced,
             "card_on_file": await billing_service.card_on_file(tid),
         })
     rows.sort(key=lambda r: (-(r["used"] or 0), (r["name"] or "").lower()))

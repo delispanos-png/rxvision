@@ -10,7 +10,7 @@ type Integrations = {
   drugbank?: { api_key_set: boolean; enabled: boolean; region: string };
 };
 // Στη γλώσσα των ΠΑΚΕΤΩΝ: κάθε φαρμακείο δικαιούται `included` ερωτήσεις (ανά period) από το πακέτο του.
-type AiTenant = { tenant_id: string; name?: string | null; plan?: string | null; plan_name?: string | null; included: number; period: string; used: number; remaining: number; credits: number; ai_used_today: number; ai_used_ai: number; ai_used_local: number; card_on_file: boolean };
+type AiTenant = { tenant_id: string; name?: string | null; plan?: string | null; plan_name?: string | null; included: number; period: string; used: number; remaining: number; credits: number; ai_used_today: number; ai_used_ai: number; ai_used_local: number; card_on_file: boolean; budget_cents?: number; spent_cents?: number; priced_questions?: number };
 type ModelPrice = { in: number; out: number; cin: number };
 type AiCost = {
   margin_pct: number; models: Record<string, ModelPrice>;
@@ -129,7 +129,7 @@ export default function AiProvidersPage() {
       {/* Όρια AI ερωτημάτων ανά φαρμακείο */}
       <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
         <h3 className="mb-1 flex items-center gap-2 text-sm font-semibold text-slate-700"><Gauge className="h-4 w-4 text-violet-600" /> Όρια AI ερωτημάτων ανά φαρμακείο</h3>
-        <p className="mb-3 text-xs text-slate-500">Τα δικαιούμενα ερωτήματα ορίζονται <b>ανά πακέτο</b> (Πακέτα → «🤖 Δωρεάν AI ερωτήσεις»). Πάνω από αυτά → αγορά επιπλέον (AI credits). Το παρακάτω <b>καθολικό όριο</b> ισχύει μόνο ως fallback για πακέτα χωρίς ρυθμισμένο included.</p>
+        <p className="mb-3 text-xs text-slate-500">Το δωρεάν AI ορίζεται <b>ανά πακέτο σε ΕΥΡΩ</b> (Πακέτα → «💶 Προϋπολογισμός AI»). Πάνω από αυτό → αγορά επιπλέον (AI credits, επίσης σε ευρώ). Οι στήλες δείχνουν το <b>πραγματικό κόστος</b> που μας στοίχισε κάθε φαρμακείο.</p>
 
         {/* Καθολικό fallback (για πακέτα χωρίς included) */}
         <div className="mb-4 flex flex-wrap items-center gap-2 rounded-xl border border-violet-200 bg-violet-50/60 p-3 text-sm">
@@ -206,30 +206,44 @@ export default function AiProvidersPage() {
                 <tr>
                   <th className="px-3 py-2">Φαρμακείο</th>
                   <th className="px-3 py-2">Πακέτο</th>
-                  <th className="px-3 py-2 text-right">Δικαιούται</th>
-                  <th className="px-3 py-2 text-right">Κατανάλωσε (περίοδος)</th>
+                  <th className="px-3 py-2 text-right">Δωρεάν όριο</th>
+                  <th className="px-3 py-2 text-right">Πραγματικό κόστος (περίοδος)</th>
+                  <th className="px-3 py-2 text-right">Ερωτήσεις</th>
                 </tr>
               </thead>
               <tbody>
                 {(limits.data?.tenants ?? []).map((t) => {
-                  const over = t.used >= t.included && t.included > 0;
-                  const pct = t.included > 0 ? Math.min(100, Math.round((t.used / t.included) * 100)) : 0;
+                  const bgt = (t.budget_cents ?? 0) / 100;          // δωρεάν όριο σε €
+                  const sp = (t.spent_cents ?? 0) / 100;            // ΠΡΑΓΜΑΤΙΚΟ κόστος σε €
+                  const over = bgt > 0 && sp >= bgt;
+                  const pct = bgt > 0 ? Math.min(100, Math.round((sp / bgt) * 100)) : 0;
+                  // Τίμια ένδειξη: ερωτήσεις πριν τη διόρθωση καταγραφής (2026-09-07) ΔΕΝ έχουν κόστος
+                  const unmeasured = Math.max(0, (t.used ?? 0) - (t.priced_questions ?? 0));
                   return (
                   <tr key={t.tenant_id} className="border-t border-slate-100">
                     <td className="px-3 py-2 font-medium text-slate-800">{t.name || t.tenant_id}</td>
                     <td className="px-3 py-2 text-xs text-slate-600">{t.plan_name || t.plan || <span className="text-slate-300">—</span>}</td>
-                    <td className="px-3 py-2 text-right tabular-nums font-semibold text-slate-700">{t.included}<span className="text-[11px] font-normal text-slate-400">{periodLabel(t.period)}</span>{t.credits > 0 && <div className="text-[10px] font-normal text-violet-600">+{t.credits} credits</div>}</td>
+                    <td className="px-3 py-2 text-right tabular-nums font-semibold text-slate-700">
+                      {bgt > 0 ? `${bgt.toFixed(2)}€` : <span className="text-rose-500">χωρίς δωρεάν</span>}
+                      <span className="text-[11px] font-normal text-slate-400">{periodLabel(t.period)}</span>
+                      {t.credits > 0 && <div className="text-[10px] font-normal text-violet-600">+{(t.credits / 100).toFixed(2)}€ προπληρωμένα</div>}
+                    </td>
                     <td className="px-3 py-2 text-right tabular-nums text-slate-600">
-                      <span className={over ? "font-semibold text-rose-600" : ""}>{t.used}</span>
-                      <span className="text-slate-300"> / {t.included}</span>
+                      <span className={over ? "font-semibold text-rose-600" : "font-semibold text-slate-700"}>{sp.toFixed(4)}€</span>
+                      {bgt > 0 && <span className="text-slate-300"> / {bgt.toFixed(2)}€</span>}
                       <div className="mt-1 ml-auto h-1.5 w-24 overflow-hidden rounded-full bg-slate-100">
                         <div className={`h-full rounded-full ${over ? "bg-rose-500" : pct > 80 ? "bg-amber-500" : "bg-emerald-500"}`} style={{ width: `${pct}%` }} />
                       </div>
+                      {bgt > 0 && <div className="mt-0.5 text-[10px] text-slate-400">απομένουν {(bgt - sp).toFixed(2)}€</div>}
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums text-slate-600">
+                      {t.used}
                       <div className="mt-0.5 text-[10px] text-slate-400" title="Ανάλυση μόνο για εμάς — ο πελάτης βλέπει μόνο το σύνολο.">σήμερα: AI {t.ai_used_ai} · τοπική {t.ai_used_local}</div>
+                      {unmeasured > 0 && <div className="text-[10px] text-amber-600" title="Έγιναν πριν διορθωθεί η καταγραφή κόστους (2026-09-07) — δεν υπάρχει μέτρηση γι' αυτές.">{unmeasured} χωρίς μέτρηση</div>}
                     </td>
                   </tr>
                 );})}
-                {(limits.data?.tenants ?? []).length === 0 && <tr><td colSpan={4} className="px-3 py-6 text-center text-sm text-slate-400">Δεν υπάρχουν φαρμακεία.</td></tr>}
+                {(limits.data?.tenants ?? []).length === 0 && <tr><td colSpan={5} className="px-3 py-6 text-center text-sm text-slate-400">Δεν υπάρχουν φαρμακεία.</td></tr>}
               </tbody>
             </table>
           </div>
