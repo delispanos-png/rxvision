@@ -37,9 +37,20 @@ export default function NutritionPage() {
 
   const search = useQuery({ queryKey: ["pat-search", q], queryFn: () => api<{ items: Hit[] }>(`/patients/search?q=${encodeURIComponent(q)}`), enabled: q.trim().length >= 2, retry: false });
   const plan = useQuery({ queryKey: ["nutrition", picked?.patient_id], queryFn: () => api<Plan>(`/advisor/nutrition/${picked!.patient_id}`), enabled: !!picked, retry: false });
+  const [nutNote, setNutNote] = useState("");
+  const assigned = useQuery({
+    queryKey: ["nut-assigned", picked?.patient_id],
+    queryFn: () => api<{ assigned: boolean; assigned_at?: string | null; note?: string | null }>(`/advisor/nutrition/${picked!.patient_id}/assigned`),
+    enabled: !!picked, retry: false,
+  });
+  const unassign = useMutation({
+    mutationFn: () => api<{ ok: boolean }>(`/advisor/nutrition/${picked!.patient_id}/assign`, { method: "DELETE" }),
+    onSuccess: () => { appAlert(t("Αφαιρέθηκε από την πύλη ✅", "Removed from the portal ✅")); assigned.refetch(); },
+    onError: (e: Error) => appAlert(t("Αποτυχία: ", "Failed: ") + e.message),
+  });
   const assign = useMutation({
-    mutationFn: () => api<{ ok: boolean; sections: number }>(`/advisor/nutrition/${picked!.patient_id}/assign`, { method: "POST", body: JSON.stringify({}) }),
-    onSuccess: () => appAlert(t("Αναρτήθηκε στην πύλη του πελάτη ✅", "Published to the customer's portal ✅")),
+    mutationFn: () => api<{ ok: boolean; sections: number }>(`/advisor/nutrition/${picked!.patient_id}/assign`, { method: "POST", body: JSON.stringify({ note: nutNote.trim() || undefined }) }),
+    onSuccess: () => { appAlert(t("Αναρτήθηκε στην πύλη του πελάτη ✅", "Published to the customer's portal ✅")); assigned.refetch(); },
     onError: (e: Error) => appAlert(t("Αποτυχία: ", "Failed: ") + e.message),
   });
   const email = useMutation({ mutationFn: () => api<{ to: string }>(`/advisor/nutrition/${picked!.patient_id}/email`, { method: "POST" }), onSuccess: (r) => appAlert(t("Στάλθηκε στο ", "Sent to ") + r.to + " ✅"), onError: (e: Error) => appAlert(t("Αποτυχία: ", "Failed: ") + e.message) });
@@ -96,6 +107,21 @@ export default function NutritionPage() {
             <div className="flex gap-2 print:hidden">
               <button onClick={() => setPicked(null)} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-600 hover:bg-slate-50"><X className="h-4 w-4" /> {t("Άλλος", "Another")}</button>
               <button onClick={() => window.print()} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"><Printer className="h-4 w-4" /> {t("Εκτύπωση", "Print")}</button>
+              <input value={nutNote} onChange={(e) => setNutNote(e.target.value)}
+                placeholder={t("Προαιρετικό σημείωμα προς τον πελάτη…", "Optional note to the customer…")}
+                className="min-w-[220px] flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+              {assigned.data?.assigned && (
+                <span className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-50 px-3 py-2 text-xs font-medium text-emerald-700">
+                  ● {t("Αναρτημένη στην πύλη", "Published in portal")}
+                </span>
+              )}
+              {assigned.data?.assigned && (
+                <button onClick={() => unassign.mutate()} disabled={unassign.isPending}
+                  title={t("Ο πελάτης παύει να τη βλέπει — χρήσιμο όταν αλλάξει η αγωγή", "The customer stops seeing it")}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-rose-300 px-3 py-2 text-sm font-medium text-rose-600 hover:bg-rose-50 disabled:opacity-50">
+                  {unassign.isPending ? t("Αφαίρεση…", "Removing…") : t("Αφαίρεση από την πύλη", "Remove from portal")}
+                </button>
+              )}
               <button onClick={() => assign.mutate()} disabled={assign.isPending}
                 title={t("Ο πελάτης θα τη βλέπει μόνιμα στην πύλη (το email χάνεται στα εισερχόμενα)", "The customer sees it permanently in the portal")}
                 className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-50">

@@ -76,6 +76,34 @@ async def nutrition_assign(
     return {"ok": True, "sections": len(plan.get("sections") or [])}
 
 
+@router.get("/nutrition/{patient_id}/assigned")
+async def nutrition_assigned(
+    patient_id: str,
+    ctx: TenantContext = Depends(require("patients:read", module=["nutrition", "ai_assistant"])),
+):
+    """Υπάρχει ήδη ανατεθειμένη πρόταση στην πύλη; (ώστε το UI να δείχνει κατάσταση + «Αφαίρεση»)."""
+    d = await shared_db()["patient_nutrition_plans"].find_one(   # tenant-ok: ρητό φίλτρο tenant_id
+        {"tenant_id": ctx.tenant_id, "patient_ref": patient_id},
+        {"_id": 0, "sections": 0, "assigned_by": 0})
+    return {"assigned": bool(d), "assigned_at": (d or {}).get("assigned_at"),
+            "note": (d or {}).get("note")}
+
+
+@router.delete("/nutrition/{patient_id}/assign")
+async def nutrition_unassign(
+    patient_id: str,
+    ctx: TenantContext = Depends(require("patients:read", module=["nutrition", "ai_assistant"])),
+):
+    """Αποσύρει την πρόταση από την πύλη — ο ασθενής παύει να τη βλέπει.
+
+    ΓΙΑΤΙ ΧΡΕΙΑΖΕΤΑΙ: η αγωγή αλλάζει. Μια παλιά διατροφική οδηγία που δεν ισχύει πια είναι
+    χειρότερη από καμία — ο ασθενής μπορεί να την ακολουθεί ενώ δεν παίρνει πλέον το φάρμακο.
+    """
+    r = await shared_db()["patient_nutrition_plans"].delete_one(
+        {"tenant_id": ctx.tenant_id, "patient_ref": patient_id})
+    return {"ok": True, "removed": r.deleted_count}
+
+
 @router.post("/nutrition/{patient_id}/email")
 async def nutrition_email(
     patient_id: str,
