@@ -92,6 +92,40 @@ def dispatch_order_subscriptions() -> dict:
     return _run_async(_run())
 
 
+async def _has_rx_cover(db, tenant_id: str, patient_ref) -> dict:
+    """Έχει ο ασθενής ΕΓΚΥΡΗ συνταγή να καλύψει την επόμενη λήψη;
+
+    ΓΙΑΤΙ: το «η αγωγή σου τελειώνει» χωρίς αυτό είναι μισή πληροφορία. Αν του έχουν μείνει
+    επαναλήψεις → αρκεί να περάσει από το φαρμακείο. Αν ΔΕΝ του έχουν → πρέπει να δει ΓΙΑΤΡΟ, και
+    αυτό θέλει ημέρες. Το να το μάθει όταν τελειώσει το κουτί είναι αργά.
+
+    Επιστρέφει {"covered": bool, "repeats_left": int} — «covered» = υπάρχει τουλάχιστον μία
+    επαναλαμβανόμενη συνταγή με υπόλοιπο επαναλήψεων, μη ληγμένη.
+    """
+    now = datetime.now(timezone.utc)
+    best = 0
+    async for ex in db["prescription_executions"].find(     # tenant-ok: ρητό φίλτρο tenant_id
+            {"tenant_id": tenant_id, "patient_ref": patient_ref,
+             "repeat_total": {"$gt": 1}, "executed_at": {"$gte": now - timedelta(days=200)}},
+            {"repeat_current": 1, "repeat_total": 1, "details.deadline_date": 1}):
+        try:
+            left = int(ex.get("repeat_total") or 0) - int(ex.get("repeat_current") or 0)
+        except (TypeError, ValueError):
+            continue
+        if left <= 0:
+            continue
+        dl = ((ex.get("details") or {}).get("deadline_date") or "").strip()
+        if dl:                       # DD/MM/YYYY — ληγμένη συνταγή δεν καλύπτει
+            try:
+                d, m, y = (int(x) for x in dl.split("/"))
+                if datetime(y, m, d, tzinfo=timezone.utc) < now:
+                    continue
+            except (ValueError, TypeError):
+                pass
+        best = max(best, left)
+    return {"covered": best > 0, "repeats_left": best}
+
+
 @celery_app.task(name="app.workers.reminders.dispatch_refill_radar")
 def dispatch_refill_radar() -> dict:
     async def _run() -> dict:
@@ -116,10 +150,19 @@ def dispatch_refill_radar() -> dict:
                         if await db["reminder_sent"].find_one({"_id": dk}):
                             continue
                         await db["reminder_sent"].insert_one({"_id": dk, "at": datetime.now(timezone.utc)})
+                        # ΔΙΑΦΟΡΕΤΙΚΟ ΜΗΝΥΜΑ ανάλογα με το αν υπάρχει συνταγή να το καλύψει:
+                        # με επαναλήψεις → αρκεί το φαρμακείο· χωρίς → χρειάζεται ΓΙΑΤΡΟ (θέλει χρόνο).
+                        cover = await _has_rx_cover(db, tid, pref)
+                        if cover["covered"]:
+                            title = "🔁 Η αγωγή σου τελειώνει"
+                            body = (f"{t['name']}: απομένουν {dl} ημέρες — κράτησε την επανάληψη με 1 κλικ "
+                                    f"({cover['repeats_left']} ακόμη διαθέσιμες).")
+                        else:
+                            title = "⚠️ Χρειάζεσαι νέα συνταγή"
+                            body = (f"{t['name']}: απομένουν {dl} ημέρες και ΔΕΝ έχεις άλλη επανάληψη. "
+                                    f"Κλείσε ραντεβού με τον γιατρό σου έγκαιρα.")
                         n = await push_service.send_to_account(
-                            str(acc["_id"]), title="🔁 Η αγωγή σου τελειώνει",
-                            body=f"{t['name']}: απομένουν {dl} ημέρες — κράτησε την επανάληψη με 1 κλικ.",
-                            url="/portal")
+                            str(acc["_id"]), title=title, body=body, url="/portal")
                         sent += n
                 except Exception:  # noqa: BLE001
                     continue
