@@ -168,13 +168,15 @@ async def check_and_consume(tenant_id: str, source: str = "llm") -> tuple[bool, 
     # ΠΡΟΫΠΟΛΟΓΙΣΜΟΣ σε €: σκληρό όριο πραγματικού κόστους (προστατεύει από βαριές ερωτήσεις που
     # «τρώνε» τη συνδρομή). Ελέγχεται ΠΡΙΝ την κατανάλωση· το κόστος της τρέχουσας ερώτησης
     # καταγράφεται αφού απαντηθεί, άρα η υπέρβαση είναι το πολύ μία ερώτηση.
+    from app.services import ai_credits
+    credit_taken = False        # ΜΙΑ ερώτηση = ΤΟ ΠΟΛΥ ΕΝΑ credit (δύο έλεγχοι, μία χρέωση)
     budget_cents, b_period = await included_budget(db, tenant_id)
     if budget_cents > 0:
         spent = await spent_cents_in_period(db, tenant_id, b_period)
         if spent >= budget_cents:
-            from app.services import ai_credits
             if not await ai_credits.consume(tenant_id, 1):
                 return (False, included, included, "budget_exhausted")
+            credit_taken = True
     key = f"ai:{tenant_id}:{_day()}"
     sub = "n_cache" if source == "cache" else "n_llm"
     doc = await db["llm_daily_usage"].find_one_and_update(   # tenant-ok: platform usage meter
@@ -187,8 +189,9 @@ async def check_and_consume(tenant_id: str, source: str = "llm") -> tuple[bool, 
             await db["llm_daily_usage"].update_one({"_id": key}, {"$inc": {"n": -1, sub: -1}})   # rollback
             return (False, included, included, "trial_exhausted")
         # Πάνω από το included → τράβα 1 AI credit (prepaid). Αν υπάρχει → επιτρέπεται (source="credit").
-        from app.services import ai_credits
-        if await ai_credits.consume(tenant_id, 1):
+        # credit_taken: αν χρεώθηκε ήδη credit στον έλεγχο προϋπολογισμού, ΜΗΝ ξαναχρεώσεις — αλλιώς
+        # μία ερώτηση θα κόστιζε 2 credits όταν έχουν εξαντληθεί ΚΑΙ ο προϋπολογισμός ΚΑΙ οι ερωτήσεις.
+        if credit_taken or await ai_credits.consume(tenant_id, 1):
             return (True, used, included, "credit")
         await db["llm_daily_usage"].update_one({"_id": key}, {"$inc": {"n": -1, sub: -1}})   # rollback
         return (False, included, included, "quota_exceeded")
