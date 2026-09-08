@@ -15,6 +15,7 @@ import { Tooltip } from "@/components/ui/Tooltip";
 import { LogoMark } from "@/components/brand/Logo";
 import { patientApi, patientTokens, patientUpload, patientLogout, API_BASE, ApiError } from "@/lib/patientClient";
 import { usePref, useT } from "@/store/prefStore";
+import { nutritionDecor, measurementAdvice } from "@/lib/nutrition";
 import { PharmacyPicker, MedicinePicker, type Medicine } from "@/components/portal/pickers";
 import { RenewalCard, type Renewal } from "@/components/portal/RenewalCard";
 import { ShopTab } from "@/components/portal/ShopTab";
@@ -1742,24 +1743,77 @@ export default function PortalHome() {
           </div>
         )}
 
-        {tab === "health" && nutrition?.has && (
-          <div className="mb-4 rounded-2xl border border-emerald-200 bg-emerald-50/50 dark:border-emerald-900 dark:bg-emerald-950/20 p-4 shadow-sm">
-            <h3 className="mb-1 text-sm font-semibold text-slate-800 dark:text-slate-100">{t("🥗 Η διατροφή σου", "🥗 Your nutrition plan")}</h3>
-            <p className="mb-3 text-xs text-slate-500 dark:text-slate-400">{t("Οδηγίες από τον φαρμακοποιό σου, με βάση την αγωγή σου.", "Guidance from your pharmacist, based on your medication.")}</p>
-            {nutrition.note && <div className="mb-3 rounded-lg bg-white/70 dark:bg-slate-900/50 px-3 py-2 text-xs italic text-slate-700 dark:text-slate-300">{nutrition.note}</div>}
-            <div className="space-y-2">
-              {(nutrition.sections || []).map((sec, i) => (
-                <div key={i} className="rounded-lg bg-white dark:bg-slate-900 p-3">
-                  <div className="text-sm font-semibold text-indigo-700 dark:text-indigo-400">{sec.title}</div>
-                  {sec.drugs?.length > 0 && <div className="mb-1.5 text-[11px] text-slate-400">{t("Σχετικά φάρμακα:", "Related medicines:")} {sec.drugs.join(", ")}</div>}
-                  <div className="text-sm text-slate-700 dark:text-slate-200"><b className="text-emerald-600">{t("🥗 Προτίμησε:", "🥗 Prefer:")}</b> {sec.favor}</div>
-                  <div className="mt-1 text-sm text-slate-700 dark:text-slate-200"><b className="text-rose-600">{t("⛔ Πρόσεξε:", "⛔ Avoid:")}</b> {sec.avoid}</div>
+        {tab === "health" && nutrition?.has && (() => {
+          // Ίδια εμφάνιση με τη σελίδα «Διατροφή» του φαρμακοποιού (κοινό lib/nutrition.ts)
+          const lt = health?.latest ?? {};
+          const adv = measurementAdvice({ bp: lt.bp, glucose: lt.glucose, weight: lt.weight, height_cm: health?.height_cm }, t);
+          return (
+            <div className="mb-4">
+              <div className="mb-3 flex items-start gap-3">
+                <span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-gradient-to-br from-emerald-100 to-teal-100 text-2xl shadow-sm dark:from-emerald-900/40 dark:to-teal-900/30">🥗</span>
+                <div className="min-w-0">
+                  <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">{t("Η διατροφή σου", "Your nutrition plan")}</h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    {t("Οδηγίες από τον φαρμακοποιό σου, με βάση την αγωγή σου.", "Guidance from your pharmacist, based on your medication.")}
+                    {nutrition.assigned_at && <> · {dt(nutrition.assigned_at)}</>}
+                  </p>
                 </div>
-              ))}
+              </div>
+
+              {nutrition.note && (
+                <div className="mb-3 flex gap-2.5 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 shadow-sm dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-100">
+                  <span className="shrink-0">💬</span>
+                  <div><div className="mb-0.5 text-[11px] font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-300">{t("Σημείωμα φαρμακοποιού", "Pharmacist's note")}</div>{nutrition.note}</div>
+                </div>
+              )}
+
+              {adv.hasData && (
+                <div className="mb-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900">
+                  <div className="mb-2 text-sm font-bold text-slate-900 dark:text-slate-100">{t("Συμβουλές βάσει των μετρήσεών σου", "Advice from your measurements")}</div>
+                  {adv.items.length === 0
+                    ? <p className="text-sm font-medium text-emerald-700 dark:text-emerald-400">✓ {t("Οι μετρήσεις σου είναι σε φυσιολογικά όρια — συνέχισε ισορροπημένη μεσογειακή διατροφή.", "Your measurements are within normal range — keep a balanced Mediterranean diet.")}</p>
+                    : <div className="space-y-2">{adv.items.map((a, i) => (
+                        <div key={i} className={`rounded-xl border p-3 ${a.sev === "high" ? "border-rose-200 bg-rose-50 dark:border-rose-900/50 dark:bg-rose-950/30" : "border-amber-200 bg-amber-50 dark:border-amber-900/50 dark:bg-amber-950/30"}`}>
+                          <div className={`text-sm font-semibold ${a.sev === "high" ? "text-rose-700 dark:text-rose-300" : "text-amber-700 dark:text-amber-300"}`}>{a.icon} {a.label}</div>
+                          <p className="mt-0.5 text-sm text-slate-600 dark:text-slate-300">{a.text}</p>
+                        </div>))}
+                      </div>}
+                </div>
+              )}
+
+              <div className="grid gap-3 md:grid-cols-2">
+                {(nutrition.sections || []).map((sec, i) => {
+                  const d = nutritionDecor(sec.title);
+                  return (
+                    <div key={i} className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-card transition hover:shadow-lg dark:border-slate-700 dark:bg-slate-900">
+                      <div className={`flex items-center gap-3 bg-gradient-to-r ${d.from} ${d.to} ${d.darkFrom} ${d.darkTo} px-4 py-3`}>
+                        <span className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-white text-2xl shadow-sm dark:bg-slate-800">{d.emoji}</span>
+                        <div className="min-w-0">
+                          <div className={`text-base font-bold ${d.text} ${d.darkText}`}>{sec.title}</div>
+                          <div className="mt-1 flex flex-wrap gap-1">
+                            {sec.drugs?.length ? sec.drugs.map((dr) => <span key={dr} className="rounded-full bg-white/70 px-2 py-0.5 text-[10px] font-medium text-slate-500 dark:bg-slate-800/70 dark:text-slate-300">{dr}</span>) : <span className="text-[11px] text-slate-400">—</span>}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="space-y-2.5 p-4">
+                        <div>
+                          <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-bold text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">{t("🥗 Προτίμησε", "🥗 Prefer")}</span>
+                          <p className="mt-1 text-sm leading-relaxed text-slate-700 dark:text-slate-200">{sec.favor}</p>
+                        </div>
+                        <div>
+                          <span className="inline-flex items-center gap-1 rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-bold text-rose-700 dark:bg-rose-900/40 dark:text-rose-300">{t("⛔ Πρόσεξε", "⛔ Avoid")}</span>
+                          <p className="mt-1 text-sm leading-relaxed text-slate-700 dark:text-slate-200">{sec.avoid}</p>
+                        </div>
+                        {sec.why && <p className="flex gap-1.5 rounded-lg bg-slate-50 px-3 py-2 text-xs italic text-slate-500 dark:bg-slate-800 dark:text-slate-400"><span className="not-italic">💡</span>{sec.why}</p>}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              <p className="mt-3 text-[11px] text-slate-400">{t("Γενικές & ενημερωτικές οδηγίες — δεν υποκαθιστούν ιατρική ή διαιτολογική γνωμάτευση.", "General informational guidance — does not replace medical or dietary advice.")}</p>
             </div>
-            <p className="mt-3 text-[11px] text-slate-400">{t("Γενικές & ενημερωτικές οδηγίες — δεν υποκαθιστούν ιατρική ή διαιτολογική γνωμάτευση.", "General informational guidance — does not replace medical or dietary advice.")}</p>
-          </div>
-        )}
+          );
+        })()}
 
         {tab === "health" && (() => {
           const lt = health?.latest ?? {}; const bp = lt.bp; const gl = lt.glucose; const wt = lt.weight;
