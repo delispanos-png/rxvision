@@ -71,7 +71,14 @@ async def included_allowance(db, tenant_id: str) -> tuple[int, str]:
     sub = await db["subscriptions"].find_one({"tenant_id": tenant_id}, {"plan": 1})
     plan = (sub or {}).get("plan")
     if plan:
-        pkg = await db["packages"].find_one({"_id": plan}, {"ai_included": 1, "ai_included_period": 1})
+        pkg = await db["packages"].find_one(
+            {"_id": plan}, {"ai_included": 1, "ai_included_period": 1, "ai_free_enabled": 1})
+        # ΡΗΤΟΣ ΔΙΑΚΟΠΤΗΣ: ai_free_enabled=False → ΜΗΔΕΝ δωρεάν AI, τελεία. Λύνει την παγίδα όπου ένα
+        # πακέτο χωρίς ρύθμιση έπεφτε στο καθολικό fallback (20/ημέρα ≈ 600/μήνα) και χάριζε AI σιωπηλά.
+        # None/True = ως είχε (συμβατότητα με τα υπάρχοντα πακέτα).
+        if pkg is not None and pkg.get("ai_free_enabled") is False:
+            per = pkg.get("ai_included_period") if pkg.get("ai_included_period") in ("month", "day", "year") else "month"
+            return 0, per
         if pkg and pkg.get("ai_included") is not None:
             period = pkg.get("ai_included_period") if pkg.get("ai_included_period") in ("month", "day", "year") else "month"
             try:
@@ -132,7 +139,10 @@ async def included_budget(db, tenant_id: str) -> tuple[int, str]:
     sub = await db["subscriptions"].find_one({"tenant_id": tenant_id}, {"plan": 1})
     plan = (sub or {}).get("plan")
     if plan:
-        pkg = await db["packages"].find_one({"_id": plan}, {"ai_budget_cents": 1, "ai_included_period": 1})
+        pkg = await db["packages"].find_one(
+            {"_id": plan}, {"ai_budget_cents": 1, "ai_included_period": 1, "ai_free_enabled": 1})
+        if pkg is not None and pkg.get("ai_free_enabled") is False:
+            return 0, "month"        # χωρίς δωρεάν AI → δεν υπάρχει προϋπολογισμός να ξοδευτεί
         if pkg and pkg.get("ai_budget_cents") is not None:
             period = pkg.get("ai_included_period") if pkg.get("ai_included_period") in ("month", "day", "year") else "month"
             try:

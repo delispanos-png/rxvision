@@ -745,6 +745,10 @@ class PackageIn(BaseModel):
     # πιο ασφαλές από το πλήθος ερωτήσεων, γιατί μία ερώτηση κοστίζει 0,03€–0,32€ (διαφορά 10×).
     # 0/κενό = ανενεργό (ισχύει μόνο το όριο ερωτήσεων).
     ai_budget_cents: int | None = None
+    # ΡΗΤΟΣ διακόπτης: False = το πακέτο ΔΕΝ έχει καθόλου δωρεάν AI (μόνο αγορασμένα credits).
+    # None/True = κανονική συμπεριφορά. Χωρίς αυτόν, πακέτο χωρίς ρύθμιση AI έπαιρνε σιωπηλά το
+    # καθολικό fallback (20/ημέρα) — δηλαδή χαρίζαμε AI χωρίς να το ξέρουμε.
+    ai_free_enabled: bool | None = None
     sla: str | None = None
     modules: list[str] | None = None  # the capabilities this package grants
     features: list[str] | None = None  # marketing bullet list shown on the pricing card
