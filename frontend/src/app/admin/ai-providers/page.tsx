@@ -32,16 +32,16 @@ export default function AiProvidersPage() {
 
   const [antKey, setAntKey] = useState("");
   const [antEnabled, setAntEnabled] = useState(true);
-  const [antModel, setAntModel] = useState("claude-opus-4-8");
-  const [antAdminModel, setAntAdminModel] = useState("claude-opus-4-8");
+  const [antModel, setAntModel] = useState("claude-sonnet-5");
+  const [antAdminModel, setAntAdminModel] = useState("claude-sonnet-5");
   const [dbKey, setDbKey] = useState("");
   const [dbEnabled, setDbEnabled] = useState(true);
   const [dbRegion, setDbRegion] = useState("eu");
   useEffect(() => {
     if (status.data?.anthropic) {
       setAntEnabled(status.data.anthropic.enabled ?? true);
-      setAntModel(status.data.anthropic.model || "claude-opus-4-8");
-      setAntAdminModel(status.data.anthropic.admin_model || "claude-opus-4-8");
+      setAntModel(status.data.anthropic.model || "claude-sonnet-5");
+      setAntAdminModel(status.data.anthropic.admin_model || "claude-opus-5");
     }
     if (status.data?.drugbank) {
       setDbEnabled(status.data.drugbank.enabled ?? true);
@@ -108,15 +108,19 @@ export default function AiProvidersPage() {
             <input type="password" value={antKey} onChange={(e) => setAntKey(e.target.value)} placeholder={s?.anthropic?.api_key_set ? "•••• (αποθηκευμένο — κενό = αμετάβλητο)" : "sk-ant-..."} className={inp} /></label>
           <label className="text-xs text-slate-500">Μοντέλο φαρμακοποιού
             <select value={antModel} onChange={(e) => setAntModel(e.target.value)} className={inp}>
-              <option value="claude-opus-4-8">Opus 4.8 — κορυφαίο</option>
-              <option value="claude-sonnet-4-6">Sonnet 4.6 — ισορροπία</option>
-              <option value="claude-haiku-4-5">Haiku 4.5 — οικονομικό</option>
+              <option value="claude-sonnet-5">Sonnet 5 — προτεινόμενο (φθηνότερο & καλύτερο)</option>
+              <option value="claude-opus-5">Opus 5 — κορυφαίο</option>
+              <option value="claude-haiku-4-5">Haiku 4.5 — οικονομικό (όχι για εργαλεία)</option>
+              <option value="claude-opus-4-8">Opus 4.8 — παλαιότερο</option>
+              <option value="claude-sonnet-4-6">Sonnet 4.6 — παλαιότερο</option>
             </select></label>
           <label className="text-xs text-slate-500">Μοντέλο διορθώσεων / admin
             <select value={antAdminModel} onChange={(e) => setAntAdminModel(e.target.value)} className={inp}>
-              <option value="claude-opus-4-8">Opus 4.8 — κορυφαίο</option>
-              <option value="claude-sonnet-4-6">Sonnet 4.6 — ισορροπία</option>
-              <option value="claude-haiku-4-5">Haiku 4.5 — οικονομικό</option>
+              <option value="claude-sonnet-5">Sonnet 5 — προτεινόμενο (φθηνότερο & καλύτερο)</option>
+              <option value="claude-opus-5">Opus 5 — κορυφαίο</option>
+              <option value="claude-haiku-4-5">Haiku 4.5 — οικονομικό (όχι για εργαλεία)</option>
+              <option value="claude-opus-4-8">Opus 4.8 — παλαιότερο</option>
+              <option value="claude-sonnet-4-6">Sonnet 4.6 — παλαιότερο</option>
             </select></label>
           <label className="flex items-center gap-2 self-end pb-2 text-xs font-medium text-slate-600 sm:col-span-2">
             <input type="checkbox" checked={antEnabled} onChange={(e) => setAntEnabled(e.target.checked)} className="h-4 w-4 rounded border-slate-300" />
