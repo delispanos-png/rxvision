@@ -1555,8 +1555,10 @@ async def admin_ai_credit_packs(_: PlatformContext = Depends(get_platform_admin)
 
 
 class AiCreditPackIn(BaseModel):
+    """Πακέτο AI credits: ΜΟΝΟ όνομα + τιμή. Το πορτοφόλι πιστώνεται με την ίδια τιμή
+    (το `questions` καταργήθηκε 2026-09-09 — η μονάδα είναι το ευρώ, όχι η ερώτηση)."""
+
     name: str | None = None
-    questions: int | None = None
     price_cents: int | None = None
     active: bool | None = None
 
@@ -1568,7 +1570,11 @@ async def update_ai_credit_pack(code: str, body: AiCreditPackIn,
     db = shared_db()
     if upd:
         upd["updated_at"] = datetime.now(tz=timezone.utc)
-        await db["ai_credit_packs"].update_one({"_id": code}, {"$set": upd}, upsert=True)  # tenant-ok: catalog
+        # ΠΑΝΤΑ ίση πίστωση με την τιμή + καθάρισμα των καταργημένων πεδίων παλιών εγγράφων.
+        if "price_cents" in upd:
+            upd["credit_cents"] = int(upd["price_cents"])
+        await db["ai_credit_packs"].update_one(  # tenant-ok: catalog
+            {"_id": code}, {"$set": upd, "$unset": {"questions": ""}}, upsert=True)
     return {"ok": True, "pack": jsonsafe(await db["ai_credit_packs"].find_one({"_id": code}))}
 
 

@@ -1,14 +1,14 @@
-"""AI credits — prepaid ΕΡΩΤΗΣΕΙΣ πάνω από το included του πακέτου (Phase C του AI pricing).
+"""AI credits — προπληρωμένο ΠΟΡΤΟΦΟΛΙ ΣΕ ΕΥΡΩ πάνω από το δωρεάν όριο του πακέτου.
 
-Κάθε πακέτο credits = N ερωτήσεις για X€. Όταν εξαντληθεί το included (βλ. ai_quota), κάθε επιπλέον
-ερώτηση τραβάει 1 credit· όταν αδειάσουν → block («αγόρασε επιπλέον»). Ίδιο μοτίβο με το message_wallet:
-αγορά μέσω Viva/Revolut → webhook → πίστωση + παραστατικό (idempotent). Το balance είναι σε **ΛΕΠΤΑ ΕΥΡΩ ΠΡΑΓΜΑΤΙΚΟΥ ΚΟΣΤΟΥΣ** (2026-09: ενοποίηση μονάδας).
+Το φαρμακείο αγοράζει ένα πακέτο (π.χ. «AI +20 €») και το πορτοφόλι του πιστώνεται με **ακριβώς αυτά
+τα ευρώ**. Όταν εξαντληθεί ο δωρεάν προϋπολογισμός της περιόδου (βλ. ai_quota), κάθε ερώτηση χρεώνει
+το πορτοφόλι με **τιμή πώλησης = πραγματικό κόστος × (1 + περιθώριο%)** — άρα ο πελάτης κάνει όσες
+ερωτήσεις αντέχει το υπόλοιπό του, και το περιθώριό μας μένει ανέπαφο. Αγορά μέσω Viva/Revolut →
+webhook → πίστωση + παραστατικό (idempotent), ίδιο μοτίβο με το message_wallet.
 
-ΓΙΑΤΙ ΑΛΛΑΞΕ: τα credits πωλούνταν σε «ερωτήσεις», αλλά μία ερώτηση κοστίζει 0,036€–0,141€ (10×
-διαφορά). Έτσι το πακέτο «1.000 ερωτήσεις / 34,90€» πωλούσε στα 0,0349€/ερώτηση, δηλαδή ΚΑΤΩ ΑΠΟ ΤΟ
-ΚΟΣΤΟΣ για τυπικές (-81%) και βαριές (-304%) ερωτήσεις — όσο περισσότερα αγόραζε ο πελάτης, τόσο
-περισσότερα χάναμε. Με μονάδα το ευρώ αυτό γίνεται ΑΔΥΝΑΤΟ: το `credit_cents` του πακέτου είναι
-πραγματικό κόστος και το `price_cents` το εμπεριέχει με περιθώριο.
+ΓΙΑΤΙ ΔΕΝ ΜΕΤΡΑΜΕ «ΕΡΩΤΗΣΕΙΣ»: μία ερώτηση κοστίζει 0,036€–0,141€ (10× διαφορά ανάλογα με το
+ερώτημα), οπότε ένα πακέτο «N ερωτήσεων» πουλούσε άλλοτε κάτω κι άλλοτε πάνω από το κόστος. Με
+μονάδα το ΕΥΡΩ αυτό γίνεται αδύνατο. Το πεδίο `questions` καταργήθηκε (2026-09-09).
 """
 
 from __future__ import annotations
@@ -19,15 +19,21 @@ from pymongo import ReturnDocument
 
 from app.core.db import shared_db
 
-# Default πακέτα (seed) — τιμή cost-plus (~4¢/ερώτηση). Editable στο adminpanel (ai_credit_packs).
+# Default πακέτα (seed) — ΜΟΝΟ τιμή· το πορτοφόλι πιστώνεται με το ίδιο ποσό.
+# Editable στο adminpanel (ai_credit_packs).
 DEFAULT_PACKS = [
-    # credit_cents = ΠΡΑΓΜΑΤΙΚΟ κόστος AI που πιστώνεται · price_cents = τι πληρώνει ο πελάτης
-    # (εμπεριέχει ~40% περιθώριο). Έτσι είναι ΑΔΥΝΑΤΟ να πουλήσουμε κάτω από το κόστος.
-    # Ενδεικτικές ερωτήσεις: με μετρημένο μέσο ~0,063€/τυπική ερώτηση (μετά το prompt caching).
-    {"_id": "ai5", "name": "AI +5 € (≈80 ερωτήσεις)", "credit_cents": 500, "price_cents": 700, "active": True},
-    {"_id": "ai10", "name": "AI +10 € (≈160 ερωτήσεις)", "credit_cents": 1000, "price_cents": 1350, "active": True},
-    {"_id": "ai25", "name": "AI +25 € (≈400 ερωτήσεις)", "credit_cents": 2500, "price_cents": 3200, "active": True},
+    {"_id": "ai10", "name": "Πακέτο AI credits 10 €", "price_cents": 1000, "active": True},
+    {"_id": "ai20", "name": "Πακέτο AI credits 20 €", "price_cents": 2000, "active": True},
+    {"_id": "ai30", "name": "Πακέτο AI credits 30 €", "price_cents": 3000, "active": True},
 ]
+
+
+def credit_cents_of(pack: dict) -> int:
+    """Πόσα λεπτά πιστώνονται στο πορτοφόλι για αυτό το πακέτο = η τιμή του.
+
+    Ανέχεται παλιά έγγραφα που είχαν ξεχωριστό `credit_cents` (πριν την ενοποίηση 2026-09-09).
+    """
+    return int(pack.get("credit_cents") or pack.get("price_cents") or 0)
 
 
 def _now() -> datetime:
@@ -55,7 +61,7 @@ async def consume(tenant_id: str, n: int = 1) -> bool:
 
 
 async def add(tenant_id: str, cents: int, *, reason: str = "topup", ref: str | None = None) -> dict:
-    """Πίστωση ερωτήσεων (αγορά / bonus / manual grant)."""
+    """Πίστωση λεπτών ευρώ στο πορτοφόλι (αγορά / bonus / manual grant)."""
     db = shared_db()
     doc = await db["ai_credit_wallets"].find_one_and_update(
         {"_id": tenant_id}, {"$inc": {"balance": int(cents)}, "$set": {"updated_at": _now()}},
@@ -91,7 +97,7 @@ async def get_pack(pack_id: str) -> dict | None:
 async def record_pending_topup(tenant_id: str, pack: dict, order_id: str) -> None:
     await shared_db()["ai_credit_topups"].insert_one({
         "order_id": order_id, "tenant_id": tenant_id, "pack_id": pack["_id"],
-        "credit_cents": int(pack["credit_cents"]), "price_cents": int(pack["price_cents"]),
+        "credit_cents": credit_cents_of(pack), "price_cents": int(pack.get("price_cents") or 0),
         "status": "pending", "created_at": _now()})
 
 

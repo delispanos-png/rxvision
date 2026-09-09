@@ -118,6 +118,9 @@ async def _settle_prepaid(db, tenant_id: str, micro: int) -> None:
     excess_micro = (max(0.0, spent_after - budget_cents) - max(0.0, prev - budget_cents)) * 1_000_000
     if excess_micro <= 0:
         return
+    # Το πορτοφόλι είναι σε ΕΥΡΩ ΠΕΛΑΤΗ: χρεώνουμε ΤΙΜΗ ΠΩΛΗΣΗΣ = κόστος × (1 + περιθώριο%),
+    # ώστε 20€ αγορά = 20€ διαθέσιμα και το περιθώριό μας να μένει ανέπαφο.
+    excess_micro *= 1 + (await config(db))["margin_pct"] / 100
     key = f"ai:{tenant_id}:{_day()}"
     doc = await db["llm_daily_usage"].find_one({"_id": key}, {"credit_debt_micro": 1}) or {}
     debt = float(doc.get("credit_debt_micro") or 0) + excess_micro

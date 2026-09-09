@@ -18,7 +18,7 @@ type AiCost = {
   suggested_price_per_q_cents: number | null;
 };
 type AiLimits = { tenants: AiTenant[]; default: number; cost?: AiCost };
-type AiPack = { _id: string; name?: string; questions: number; price_cents: number; active?: boolean };
+type AiPack = { _id: string; name?: string; price_cents: number; active?: boolean };
 
 const inp = "w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none";
 const Badge = ({ ok }: { ok?: boolean }) => <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${ok ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-500"}`}>{ok ? "Αποθηκευμένο" : "Μη ρυθμισμένο"}</span>;
@@ -84,9 +84,9 @@ export default function AiProvidersPage() {
   const packsQ = useQuery({ queryKey: ["ai-credit-packs"], queryFn: () => adminApi<{ items: AiPack[] }>("/admin/ai-credit-packs"), retry: false });
   const [packDraft, setPackDraft] = useState<Record<string, AiPack>>({});
   const pk = (p: AiPack) => packDraft[p._id] ?? p;
-  const setPk = (id: string, patch: Partial<AiPack>) => setPackDraft((d) => ({ ...d, [id]: { ...(d[id] ?? packsQ.data?.items.find((x) => x._id === id) ?? { _id: id, questions: 0, price_cents: 0, active: true }), ...patch } }));
+  const setPk = (id: string, patch: Partial<AiPack>) => setPackDraft((d) => ({ ...d, [id]: { ...(d[id] ?? packsQ.data?.items.find((x) => x._id === id) ?? { _id: id, price_cents: 0, active: true }), ...patch } }));
   const savePack = useMutation({
-    mutationFn: (p: AiPack) => adminApi(`/admin/ai-credit-packs/${encodeURIComponent(p._id)}`, { method: "PUT", body: JSON.stringify({ name: p.name, questions: p.questions, price_cents: p.price_cents, active: p.active }) }),
+    mutationFn: (p: AiPack) => adminApi(`/admin/ai-credit-packs/${encodeURIComponent(p._id)}`, { method: "PUT", body: JSON.stringify({ name: p.name, price_cents: p.price_cents, active: p.active }) }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["ai-credit-packs"] }),
   });
   const delPack = useMutation({ mutationFn: (id: string) => adminApi(`/admin/ai-credit-packs/${encodeURIComponent(id)}`, { method: "DELETE" }), onSuccess: () => qc.invalidateQueries({ queryKey: ["ai-credit-packs"] }) });
@@ -256,19 +256,18 @@ export default function AiProvidersPage() {
 
       {/* AI credit packs (overage) */}
       <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-        <h3 className="mb-1 flex items-center gap-2 text-sm font-semibold text-slate-700"><Sparkles className="h-4 w-4 text-violet-600" /> Πακέτα AI credits (αγορά επιπλέον ερωτήσεων)</h3>
-        <p className="mb-3 text-xs text-slate-500">Το φαρμακείο τα αγοράζει όταν εξαντλήσει το included του πακέτου του. Τιμή = cost-plus (βλ. πάνω).</p>
+        <h3 className="mb-1 flex items-center gap-2 text-sm font-semibold text-slate-700"><Sparkles className="h-4 w-4 text-violet-600" /> Πακέτα AI credits (προπληρωμένο πορτοφόλι σε €)</h3>
+        <p className="mb-3 text-xs text-slate-500">Το φαρμακείο τα αγοράζει όταν εξαντλήσει το δωρεάν όριό του. <b>Πληρώνει X € → παίρνει X € στο πορτοφόλι</b> και κάνει όσες ερωτήσεις αντέχει το υπόλοιπο· κάθε ερώτηση χρεώνεται με κόστος +{cost?.margin_pct ?? 40}% (βλ. πάνω).</p>
         <div className="overflow-x-auto rounded-xl border border-slate-200">
           <table className="w-full min-w-[520px] text-sm">
             <thead className="bg-slate-50 text-left text-xs text-slate-500"><tr>
-              <th className="px-3 py-2">Κωδικός</th><th className="px-3 py-2">Όνομα</th><th className="px-3 py-2">Ερωτήσεις</th><th className="px-3 py-2">Τιμή (€)</th><th className="px-3 py-2">Ενεργό</th><th className="px-3 py-2"></th>
+              <th className="px-3 py-2">Κωδικός</th><th className="px-3 py-2">Όνομα</th><th className="px-3 py-2">Τιμή / αξία πορτοφολιού (€)</th><th className="px-3 py-2">Ενεργό</th><th className="px-3 py-2"></th>
             </tr></thead>
             <tbody>
               {(packsQ.data?.items ?? []).map((p0) => { const p = pk(p0); return (
                 <tr key={p._id} className="border-t border-slate-100">
                   <td className="px-3 py-2 font-mono text-[11px] text-slate-500">{p._id}</td>
                   <td className="px-3 py-2"><input value={p.name ?? ""} onChange={(e) => setPk(p._id, { name: e.target.value })} className="w-full rounded border border-slate-300 px-2 py-1 text-xs" /></td>
-                  <td className="px-3 py-2"><input type="number" min={1} value={p.questions} onChange={(e) => setPk(p._id, { questions: parseInt(e.target.value) || 0 })} className="w-24 rounded border border-slate-300 px-2 py-1 text-xs" /></td>
                   <td className="px-3 py-2"><input type="number" step="0.5" min={0} value={(p.price_cents / 100).toString()} onChange={(e) => setPk(p._id, { price_cents: Math.round(parseFloat(e.target.value || "0") * 100) })} className="w-24 rounded border border-slate-300 px-2 py-1 text-xs" /></td>
                   <td className="px-3 py-2"><input type="checkbox" checked={p.active !== false} onChange={(e) => setPk(p._id, { active: e.target.checked })} /></td>
                   <td className="px-3 py-2 text-right">
@@ -277,13 +276,13 @@ export default function AiProvidersPage() {
                   </td>
                 </tr>
               );})}
-              {(packsQ.data?.items ?? []).length === 0 && <tr><td colSpan={6} className="px-3 py-4 text-center text-xs text-slate-400">Καμία — πρόσθεσε ένα παρακάτω.</td></tr>}
+              {(packsQ.data?.items ?? []).length === 0 && <tr><td colSpan={5} className="px-3 py-4 text-center text-xs text-slate-400">Καμία — πρόσθεσε ένα παρακάτω.</td></tr>}
             </tbody>
           </table>
         </div>
         <div className="mt-3 flex items-center gap-2">
           <input value={newPackId} onChange={(e) => setNewPackId(e.target.value)} placeholder="κωδικός (π.χ. ai300)" className="w-40 rounded-lg border border-slate-300 px-2 py-1 text-sm" />
-          <button onClick={() => { if (newPackId.trim()) { savePack.mutate({ _id: newPackId.trim(), name: "", questions: 100, price_cents: 500, active: true }); setNewPackId(""); } }}
+          <button onClick={() => { if (newPackId.trim()) { savePack.mutate({ _id: newPackId.trim(), name: "", price_cents: 1000, active: true }); setNewPackId(""); } }}
             className="rounded-lg border border-violet-300 bg-violet-50 px-3 py-1 text-xs font-semibold text-violet-700 hover:bg-violet-100">+ Νέο πακέτο</button>
         </div>
       </div>

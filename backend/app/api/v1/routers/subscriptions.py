@@ -108,8 +108,8 @@ class AiTopupIn(BaseModel):
 
 @router.post("/ai-credits/topup")
 async def ai_credits_topup(body: AiTopupIn, ctx: TenantContext = Depends(require("billing:manage"))):
-    """Αγορά πακέτου AI credits μέσω του ΕΝΕΡΓΟΥ παρόχου. Το webhook πιστώνει τις ερωτήσεις + βγάζει
-    παραστατικό όταν ολοκληρωθεί η πληρωμή (ίδια ροή με τα credits μηνυμάτων)."""
+    """Αγορά πακέτου AI credits μέσω του ΕΝΕΡΓΟΥ παρόχου. Το webhook πιστώνει το ΠΟΣΟ σε ευρώ +
+    βγάζει παραστατικό όταν ολοκληρωθεί η πληρωμή (ίδια ροή με τα credits μηνυμάτων)."""
     from app.core.db import shared_db
     from app.services import ai_credits, billing_service, revolut_service, viva_service
     pkg = await ai_credits.get_pack(body.pack_id)
@@ -130,7 +130,8 @@ async def ai_credits_topup(body: AiTopupIn, ctx: TenantContext = Depends(require
         if not res.get("ok"):
             raise HTTPException(status.HTTP_400_BAD_REQUEST, res.get("error", "viva_error"))
         await ai_credits.record_pending_topup(ctx.tenant_id, pkg, res["order_code"])
-        return {"ok": True, "provider": "viva", "checkout_url": res["checkout_url"], "questions": int(pkg["questions"])}
+        return {"ok": True, "provider": "viva", "checkout_url": res["checkout_url"],
+                "credit_cents": ai_credits.credit_cents_of(pkg)}
     if not await revolut_service.is_configured():
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "no_payment_provider")
     res = await revolut_service.create_topup_order(
@@ -141,7 +142,7 @@ async def ai_credits_topup(body: AiTopupIn, ctx: TenantContext = Depends(require
     await ai_credits.record_pending_topup(ctx.tenant_id, pkg, res["order_id"])
     mode = (await revolut_service.config()).get("mode", "sandbox")
     return {"ok": True, "provider": "revolut", "token": res["token"], "order_id": res["order_id"],
-            "mode": mode, "questions": int(pkg["questions"])}
+            "mode": mode, "credit_cents": ai_credits.credit_cents_of(pkg)}
 
 
 # ── Self-service αριθμός χρηστών (seats) — αύξηση άμεση/prorated, μείωση στην ανανέωση ─────────────

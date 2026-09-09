@@ -28,7 +28,7 @@ function payWithRevolut(token: string, mode: string): Promise<void> {
     document.body.appendChild(s);
   });
 }
-type AiPack = { _id: string; name?: string; questions: number; price_cents: number };
+type AiPack = { _id: string; name?: string; price_cents: number };
 
 type Subscription = {
   plan: string;
@@ -265,18 +265,19 @@ export default function BillingSettingsPage() {
               <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
                 <div className="h-full rounded-full bg-emerald-500" style={{ width: `${x.ai.included > 0 ? Math.min(100, Math.round((x.ai.used / x.ai.included) * 100)) : 0}%` }} />
               </div>
-              {/* AI credits (overage) — αγορά επιπλέον ερωτήσεων πάνω από το included */}
+              {/* AI credits (overage) — προπληρωμένο πορτοφόλι σε € πάνω από το δωρεάν όριο */}
               <div className="mt-3 border-t border-slate-100 pt-2">
-                <div className="mb-1.5 text-xs text-slate-500">{t("Επιπλέον ερωτήσεις (credits)", "Extra questions (credits)")}: <b className="text-violet-700">{x.ai.credits ?? 0}</b></div>
+                <div className="mb-1.5 text-xs text-slate-500">{t("Υπόλοιπο AI credits", "AI credit balance")}: <b className="text-violet-700">{fmtEur(x.ai.credits ?? 0)}</b></div>
                 <div className="flex flex-wrap gap-1.5">
                   {(aiPacks.data?.items ?? []).map((p) => (
                     <button key={p._id} onClick={() => buyAiCredits(p._id)} disabled={buyingAi !== null}
+                      title={p.name || undefined}
                       className="inline-flex items-center gap-1 rounded-lg border border-violet-300 bg-violet-50 px-2.5 py-1 text-xs font-semibold text-violet-700 hover:bg-violet-100 disabled:opacity-50">
-                      {buyingAi === p._id ? <Loader2 className="h-3 w-3 animate-spin" /> : "+"} {p.questions} · {fmtEur(p.price_cents)}
+                      {buyingAi === p._id ? <Loader2 className="h-3 w-3 animate-spin" /> : "+"} {fmtEur(p.price_cents)}
                     </button>
                   ))}
                 </div>
-                <p className="mt-1.5 text-[11px] text-slate-400">{t("Όταν εξαντληθούν τα ερωτήματα του πακέτου, τραβάμε από τα credits.", "When your plan's questions run out, we draw from credits.")}</p>
+                <p className="mt-1.5 text-[11px] text-slate-400">{t("Όταν εξαντληθεί το δωρεάν όριο, κάθε ερώτηση χρεώνεται στο υπόλοιπο — κάνεις όσες αντέχει.", "When your free allowance runs out, each question is charged to your balance — ask as many as it covers.")}</p>
               </div>
             </div>
 
