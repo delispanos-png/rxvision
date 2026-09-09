@@ -114,6 +114,13 @@ POSTS: dict[str, dict] = {
         "size": 88,
         "top": 500,
     },
+    "li02-idyka": {
+        "headline": ["Δεν θα", "πληκτρολογήσεις", "ούτε μία", "συνταγή."],
+        "highlight": ["ούτε", "μία"],
+        "sub": "Το ΗΔΥΚΑ κατεβαίνει μόνο του. Κάθε μέρα.",
+        "size": 88,
+        "top": 500,
+    },
     # Facebook / Instagram — εβδομάδα webinar (docs/marketing/posts-webinar-week.md)
     "w03-screenshots-telos": {
         "headline": ["Τα screenshots", "τελείωσαν.", "Παρασκευή, live."],
