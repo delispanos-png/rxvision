@@ -84,6 +84,11 @@ async def topup(body: TopupIn, ctx: TenantContext = Depends(require("billing:man
     ολοκληρωθεί η πληρωμή. Viva → {ok, provider:"viva", checkout_url} (redirect, κάρτα/IRIS)·
     Revolut → {ok, token, mode} (widget)."""
     from app.services import revolut_service, viva_service, billing_service
+    # ΚΑΝΟΝΑΣ ιδιοκτήτη: καμία αγορά credits χωρίς αποθηκευμένη κάρτα στο σύστημα — ίδιο gate με τα
+    # υπόλοιπα χρεώσιμα extras (βλ. extras_service). Fail-closed: ο έλεγχος γίνεται ΠΡΙΝ φτιαχτεί
+    # παραγγελία στον πάροχο, ώστε να μην μπορεί να πληρώσει παρακάμπτοντας το UI.
+    if not await billing_service.card_on_file(ctx.tenant_id):
+        raise HTTPException(status.HTTP_402_PAYMENT_REQUIRED, "card_required")
     pkg = await message_wallet.get_package(body.package_id)
     if not pkg:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "unknown_package")

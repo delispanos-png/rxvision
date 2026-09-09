@@ -270,14 +270,16 @@ export default function BillingSettingsPage() {
                 <div className="mb-1.5 text-xs text-slate-500">{t("Υπόλοιπο AI credits", "AI credit balance")}: <b className="text-violet-700">{fmtEur(x.ai.credits ?? 0)}</b></div>
                 <div className="flex flex-wrap gap-1.5">
                   {(aiPacks.data?.items ?? []).map((p) => (
-                    <button key={p._id} onClick={() => buyAiCredits(p._id)} disabled={buyingAi !== null}
-                      title={p.name || undefined}
-                      className="inline-flex items-center gap-1 rounded-lg border border-violet-300 bg-violet-50 px-2.5 py-1 text-xs font-semibold text-violet-700 hover:bg-violet-100 disabled:opacity-50">
+                    <button key={p._id} onClick={() => buyAiCredits(p._id)} disabled={buyingAi !== null || !x.card_on_file}
+                      title={!x.card_on_file ? t("Χρειάζεται αποθηκευμένη κάρτα", "Requires a saved card") : (p.name || undefined)}
+                      className="inline-flex items-center gap-1 rounded-lg border border-violet-300 bg-violet-50 px-2.5 py-1 text-xs font-semibold text-violet-700 hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-violet-50">
                       {buyingAi === p._id ? <Loader2 className="h-3 w-3 animate-spin" /> : "+"} {fmtEur(p.price_cents)}
                     </button>
                   ))}
                 </div>
-                <p className="mt-1.5 text-[11px] text-slate-400">{t("Όταν εξαντληθεί το δωρεάν όριο, κάθε ερώτηση χρεώνεται στο υπόλοιπο — κάνεις όσες αντέχει.", "When your free allowance runs out, each question is charged to your balance — ask as many as it covers.")}</p>
+                {!x.card_on_file
+                  ? <p className="mt-1.5 flex items-center gap-1 text-[11px] text-amber-700"><Lock className="h-3 w-3" /> {t("Πρόσθεσε κάρτα για να αγοράσεις AI credits.", "Add a card to buy AI credits.")}</p>
+                  : <p className="mt-1.5 text-[11px] text-slate-400">{t("Όταν εξαντληθεί το δωρεάν όριο, κάθε ερώτηση χρεώνεται στο υπόλοιπο — κάνεις όσες αντέχει.", "When your free allowance runs out, each question is charged to your balance — ask as many as it covers.")}</p>}
               </div>
             </div>
 

@@ -134,10 +134,17 @@ export default function CommsSettingsPage() {
         {/* buy credits (top-up) */}
         <div className="mt-4">
           <div className="mb-2 text-xs font-semibold text-slate-600 dark:text-slate-300">💳 {t("Αγορά credits", "Buy credits")}</div>
+          {!d?.card_on_file && (
+            <div className="mb-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
+              🔒 {t("Για να αγοράσεις credits χρειάζεται πρώτα αποθηκευμένη κάρτα στον λογαριασμό σου.", "To buy credits you first need a saved card on your account.")}{" "}
+              <a href="/settings/billing" className="font-semibold underline">{t("Πρόσθεσε κάρτα", "Add a card")}</a>
+            </div>
+          )}
           <div className="grid gap-2 sm:grid-cols-4">
             {(pkgs.data?.items ?? []).map((p) => (
-              <button key={p._id} disabled={!!buying} onClick={() => buy(p._id)}
-                className="rounded-xl border-2 border-slate-200 p-3 text-center transition hover:border-brand-400 disabled:opacity-50 dark:border-slate-700">
+              <button key={p._id} disabled={!!buying || !d?.card_on_file} onClick={() => buy(p._id)}
+                title={!d?.card_on_file ? t("Χρειάζεται αποθηκευμένη κάρτα", "Requires a saved card") : undefined}
+                className="rounded-xl border-2 border-slate-200 p-3 text-center transition hover:border-brand-400 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-slate-200 dark:border-slate-700">
                 <div className="text-sm font-bold text-slate-900 dark:text-slate-100">{buying === p._id ? "…" : p.name}</div>
                 <div className="text-[11px] font-medium text-emerald-600">+{eur(p.credits_cents)} {t("credits", "credits")}</div>
                 <div className="mt-1 text-xs text-slate-500">{t("πληρωμή", "pay")} {eur(p.price_cents)}</div>

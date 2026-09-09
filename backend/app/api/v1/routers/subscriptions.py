@@ -112,6 +112,10 @@ async def ai_credits_topup(body: AiTopupIn, ctx: TenantContext = Depends(require
     βγάζει παραστατικό όταν ολοκληρωθεί η πληρωμή (ίδια ροή με τα credits μηνυμάτων)."""
     from app.core.db import shared_db
     from app.services import ai_credits, billing_service, revolut_service, viva_service
+    # Ίδιο gate με τα credits μηνυμάτων: χωρίς αποθηκευμένη κάρτα δεν γίνεται αγορά (fail-closed,
+    # πριν δημιουργηθεί παραγγελία στον πάροχο).
+    if not await billing_service.card_on_file(ctx.tenant_id):
+        raise HTTPException(status.HTTP_402_PAYMENT_REQUIRED, "card_required")
     pkg = await ai_credits.get_pack(body.pack_id)
     if not pkg:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "unknown_pack")
