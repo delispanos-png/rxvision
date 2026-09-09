@@ -647,16 +647,29 @@ export default function PortalHome() {
       reloadRxReqs();
     } catch { setAssignMsg(t("Αποτυχία αποστολής.", "Failed to send.")); } finally { setAssignBusy(false); }
   }
+  function npError(e: unknown): string {
+    // ΠΟΤΕ γενικό «λάθος PIN»: κάθε αιτία θέλει άλλη ενέργεια από τον χρήστη.
+    const p = (e as { problem?: { detail?: { error?: string; detail?: string } } })?.problem;
+    const d = p?.detail;
+    switch (d?.error) {
+      case "bad_pin":       return t("Το PIN δεν είναι σωστό ή έληξε. Έλεγξε SMS ΚΑΙ email, ή ζήτα νέο.", "Wrong or expired PIN. Check SMS AND email, or request a new one.");
+      case "amka_missing":  return t("Ο λογαριασμός σου δεν έχει ΑΜΚΑ. Ενημέρωσέ τον από το Προφίλ.", "Your account has no AMKA. Update it in your Profile.");
+      case "no_connection": return t("Το φαρμακείο δεν έχει ενεργή σύνδεση με τη ΗΔΙΚΑ.", "The pharmacy has no active ΗΔΙΚΑ connection.");
+      case "pharmacy_auth": return t("Πρόβλημα σύνδεσης του φαρμακείου με τη ΗΔΙΚΑ — ενημέρωσέ το.", "The pharmacy's ΗΔΙΚΑ connection failed — please inform them.");
+      case "pin_required":  return t("Συμπλήρωσε το PIN που έλαβες με SMS.", "Enter the PIN you received by SMS.");
+      case "unavailable":   return t("Η ΗΔΙΚΑ δεν απαντά αυτή τη στιγμή. Δοκίμασε ξανά σε λίγο.", "ΗΔΙΚΑ is not responding. Try again shortly.");
+      default:              return (d?.detail as string) || t("Κάτι πήγε στραβά. Δοκίμασε ξανά.", "Something went wrong. Try again.");
+    }
+  }
   async function npSendPin() {
     setNpBusy(true); setNpMsg(null);
     try {
       await patientApi("/patient/nopaper/pin", { method: "POST", body: JSON.stringify({}) });
       setNpStep("pin");
-      setNpMsg(t("Σου στείλαμε PIN με SMS στο κινητό που έχεις δηλώσει στη ΗΔΙΚΑ.",
-                 "We sent you a PIN by SMS to the phone registered with ΗΔΙΚΑ."));
-    } catch {
-      setNpMsg(t("Δεν ήταν δυνατή η αποστολή PIN. Δοκίμασε ξανά σε λίγο.",
-                 "Could not send the PIN. Try again shortly."));
+      setNpMsg(t("Η ΗΔΙΚΑ σου έστειλε PIN — με SMS ή email, σε ό,τι έχεις δηλώσει για την άυλη συνταγογράφηση. Έλεγξε και τα δύο.",
+                 "ΗΔΙΚΑ sent you a PIN — by SMS or email, to whatever you registered for paperless prescriptions. Check both."));
+    } catch (e) {
+      setNpMsg(npError(e));
     } finally { setNpBusy(false); }
   }
   async function npLoadList() {
@@ -668,8 +681,8 @@ export default function PortalHome() {
       if (!r.items?.length) setNpMsg(t("Δεν βρέθηκαν συνταγές.", "No prescriptions found."));
       else if (!r.new_count) setNpMsg(t("Όλες οι συνταγές σου έχουν ήδη σταλεί στο φαρμακείο.",
                                         "All your prescriptions have already been sent."));
-    } catch {
-      setNpMsg(t("Λάθος ή ληγμένο PIN — ζήτα νέο.", "Wrong or expired PIN — request a new one."));
+    } catch (e) {
+      setNpMsg(npError(e));
     } finally { setNpBusy(false); }
   }
   async function npSend(bc: string) {
@@ -2081,12 +2094,17 @@ export default function PortalHome() {
               {npStep === "pin" && (
                 <div className="flex gap-2">
                   <input value={npPin} onChange={(e) => setNpPin(e.target.value)} inputMode="numeric"
-                    placeholder={t("PIN από το SMS", "PIN from the SMS")}
+                    placeholder={t("PIN από SMS ή email", "PIN from SMS or email")}
                     className="w-full rounded-lg border border-slate-300 dark:border-slate-700 dark:bg-slate-800 px-3 py-2 text-sm" />
                   <button type="button" onClick={npLoadList} disabled={npBusy || npPin.trim().length < 4}
                     className="shrink-0 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-50">
                     {npBusy ? "…" : t("Δες τις συνταγές μου", "Show my prescriptions")}</button>
                 </div>
+              )}
+              {npStep === "pin" && (
+                <button type="button" onClick={npSendPin} disabled={npBusy}
+                  className="mt-2 text-xs text-indigo-600 underline disabled:opacity-50">
+                  {t("Δεν έλαβα PIN — ξαναστείλε", "No PIN received — resend")}</button>
               )}
 
               {npStep === "list" && (
