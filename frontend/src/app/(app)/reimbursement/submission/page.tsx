@@ -45,14 +45,14 @@ export default function SubmissionPage() {
   // ── Έλεγχος πριν την υποβολή (95% προκαταβολή — ΠΦΣ): ποσό ΗΔΥΚΑ που ελέγχει ο ΕΟΠΥΥ + checklist ──
   const eopyyExpected = (data?.batches ?? []).filter((b) => b.is_eopyy).reduce((s, b) => s + (b.expected_claim || 0), 0);
   const [invoiceAmt, setInvoiceAmt] = useState("");
-  const [checks, setChecks] = useState({ clearance: false, finalized: false, ssy: false });
+  const [checks, setChecks] = useState({ clearance: false, finalized: false });
   useEffect(() => {   // per-period persistence (workflow aid — localStorage)
     try {
       const raw = localStorage.getItem(`reimb-precheck:${period}`);
       const s = raw ? JSON.parse(raw) : {};
       setInvoiceAmt(s.invoiceAmt || "");
-      setChecks({ clearance: !!s.clearance, finalized: !!s.finalized, ssy: !!s.ssy });
-    } catch { setInvoiceAmt(""); setChecks({ clearance: false, finalized: false, ssy: false }); }
+      setChecks({ clearance: !!s.clearance, finalized: !!s.finalized });
+    } catch { setInvoiceAmt(""); setChecks({ clearance: false, finalized: false }); }
   }, [period]);
   const persist = (patch: object) => {
     const next = { invoiceAmt, ...checks, ...patch };
@@ -122,8 +122,10 @@ export default function SubmissionPage() {
           {([
             ["amount", t("Το ποσό τιμολογίου = ποσό ΗΔΥΚΑ (πάνω)", "Invoice amount = ΗΔΥΚΑ amount (above)"), amountMatch === true],
             ["clearance", t("Φορολογική & ασφαλιστική ενημερότητα σε ισχύ", "Tax & insurance clearance valid"), checks.clearance],
-            ["finalized", t("Οριστικοποίησα την υποβολή στην ΚΜΕΣ (τελικό βήμα)", "Finalized the submission on ΚΜΕΣ (final step)"), checks.finalized],
-            ["ssy", t("Επισύναψα το Συγκεντρωτικό Σημείωμα Υποβολής (ΣΣΥ)", "Attached the Aggregate Submission Note (ΣΣΥ)"), checks.ssy],
+            // Ένα βήμα: η οριστικοποίηση στην ΚΜΕΣ και η έκδοση του ΣΣΥ γίνονται μαζί — δύο ξεχωριστά
+            // τικ έδιναν την εντύπωση δύο ανεξάρτητων ενεργειών.
+            ["finalized", t("Οριστικοποίησα την υποβολή στην ΚΜΕΣ (τελικό βήμα) και ολοκλήρωσα την έκδοση του Συγκεντρωτικού Σημειώματος Υποβολής (ΣΣΥ)",
+                            "Finalized the submission on ΚΜΕΣ (final step) and completed the issuance of the Aggregate Submission Note (ΣΣΥ)"), checks.finalized],
           ] as [string, string, boolean][]).map(([key, label, done]) => (
             <label key={key} className={`flex items-center gap-2.5 rounded-lg px-2 py-1.5 text-sm ${done ? "text-emerald-700 dark:text-emerald-300" : "text-slate-600 dark:text-slate-300"} ${key === "amount" ? "cursor-default" : "cursor-pointer hover:bg-white/60 dark:hover:bg-slate-800/40"}`}>
               <input type="checkbox" checked={done} disabled={key === "amount"}
