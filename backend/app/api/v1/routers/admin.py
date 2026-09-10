@@ -374,6 +374,7 @@ async def tenants(_: PlatformContext = Depends(get_platform_admin)):
     items = []
     async for t in db["tenants"].find({}).sort("created_at", -1):
         sub = subs.get(t["_id"], {})
+        _hd = ((t.get("ingestion_config") or {}).get("hdika") or {})
         pharmacies = (sub.get("limits") or {}).get("pharmacies", 1) or 1
         mrr = 0 if sub.get("complimentary") else (sub.get("price_per_pharmacy") or 0) * pharmacies
         items.append({
@@ -387,6 +388,11 @@ async def tenants(_: PlatformContext = Depends(get_platform_admin)):
             "seats": sub.get("seats") or pharmacies,
             "mrr": mrr,
             "msg_balance": wallets.get(t["_id"], 0),
+            # Παγωμένος συγχρονισμός ΗΔΥΚΑ (λάθος/ληγμένος μηνιαίος κωδικός ή κλειδωμένος λογαριασμός)
+            # — ορατό στη λίστα ΚΑΙ ως KPI, ώστε να μη μένει φαρμακείο εβδομάδες χωρίς δεδομένα.
+            "hdika_paused": bool(_hd.get("auth_paused")),
+            "hdika_error": (_hd.get("auth_error_msg") or None),
+            "hdika_paused_at": _hd.get("auth_error_at"),
             "created_at": t.get("created_at"),
         })
     return {"items": jsonsafe(items)}

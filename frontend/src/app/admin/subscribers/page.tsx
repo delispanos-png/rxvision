@@ -8,9 +8,9 @@ import { adminApi, ApiError } from "@/lib/adminClient";
 import { fmtEur, fmtNum, fmtDate } from "@/lib/formatters";
 import { DataTable, type Column } from "@/components/tables/DataTable";
 import { Modal } from "@/components/ui/Modal";
-import { Search, X, Users2, Building2, Wallet, type LucideIcon } from "lucide-react";
+import { Search, X, Users2, Building2, Wallet, KeyRound, type LucideIcon } from "lucide-react";
 
-type Tenant = { id: string; name: string; afm?: string; plan: string; status: string; users: number; active_now?: number; seats?: number; mrr: number; msg_balance?: number; created_at: string };
+type Tenant = { id: string; name: string; afm?: string; plan: string; status: string; users: number; active_now?: number; seats?: number; mrr: number; msg_balance?: number; hdika_paused?: boolean; hdika_error?: string | null; hdika_paused_at?: string | null; created_at: string };
 type Package = { _id: string; name: string; price_monthly: number; price_yearly?: number; modules: string[]; seats: number; trial_days: number; sla?: string; active?: boolean; extra_user_price?: number; extra_user_price_yearly?: number };
 type Sla = { _id: string; name?: string; description?: string; active?: boolean; price_monthly?: number; price_yearly?: number };
 type AadeResp = { ok: boolean; name?: string; title?: string; doy?: string; address?: string; postal_code?: string; city?: string };
@@ -34,15 +34,25 @@ function Avatar({ name }: { name: string }) {
   const initials = name.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]).join("").toUpperCase() || "?";
   return <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-brand-100 text-xs font-bold text-brand-700 dark:bg-brand-900/60 dark:text-brand-300">{initials}</span>;
 }
-function StatChip({ icon: Icon, label, value, accent }: { icon: LucideIcon; label: string; value: string; accent: string }) {
+/** Πατώντας ένα KPI φιλτράρεται η λίστα από κάτω· ξαναπατώντας καθαρίζει. */
+function StatChip({ icon: Icon, label, value, accent, onClick, active, muted }: {
+  icon: LucideIcon; label: string; value: string; accent: string;
+  onClick?: () => void; active?: boolean; muted?: boolean;
+}) {
   return (
-    <div className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3 dark:border-slate-700 dark:bg-slate-900">
+    <button type="button" onClick={onClick} disabled={!onClick}
+      title={onClick ? (active ? "Πάτησε για καθαρισμό φίλτρου" : `Δες μόνο: ${label}`) : undefined}
+      aria-pressed={active}
+      className={`flex w-full items-center gap-3 rounded-xl border bg-white px-4 py-3 text-left transition dark:bg-slate-900
+        ${active ? "border-brand-500 ring-2 ring-brand-200 dark:ring-brand-900" : "border-slate-200 dark:border-slate-700"}
+        ${onClick ? "cursor-pointer hover:border-brand-400 hover:shadow-sm" : "cursor-default"}
+        ${muted ? "opacity-60" : ""}`}>
       <span className={`grid h-9 w-9 shrink-0 place-items-center rounded-lg ${accent}`}><Icon className="h-4 w-4" strokeWidth={2} /></span>
       <div className="min-w-0">
         <div className="text-[11px] uppercase tracking-wide text-slate-400">{label}</div>
         <div className="truncate text-lg font-bold text-slate-900 dark:text-slate-100">{value}</div>
       </div>
-    </div>
+    </button>
   );
 }
 
@@ -53,6 +63,7 @@ export default function SubscribersPage() {
   const [q, setQ] = useState("");
   const [statusF, setStatusF] = useState("all");
   const [planF, setPlanF] = useState("all");
+  const [kpiF, setKpiF] = useState<null | "paying" | "hdika_paused">(null);
 
   const tenants = useQuery({ queryKey: ["admin", "tenants"], queryFn: () => adminApi<{ items: Tenant[] }>("/admin/tenants"), retry: false });
   const rows = tenants.data?.items ?? [];
@@ -63,16 +74,19 @@ export default function SubscribersPage() {
     active: rows.filter((r) => r.status === "active").length,
     trial: rows.filter((r) => r.status === "trial").length,
     mrr: rows.reduce((s, r) => s + (r.mrr ?? 0), 0),
+    hdikaPaused: rows.filter((r) => r.hdika_paused).length,
   }), [rows]);
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase();
     return rows.filter((r) => {
       if (statusF !== "all" && r.status !== statusF) return false;
       if (planF !== "all" && r.plan !== planF) return false;
+      if (kpiF === "paying" && !(r.mrr > 0)) return false;
+      if (kpiF === "hdika_paused" && !r.hdika_paused) return false;
       if (needle && !`${r.name} ${r.afm ?? ""}`.toLowerCase().includes(needle)) return false;
       return true;
     });
-  }, [rows, q, statusF, planF]);
+  }, [rows, q, statusF, planF, kpiF]);
 
   async function toggleStatus(t: Tenant) {
     const next = t.status === "suspended" ? "active" : "suspended";
@@ -93,7 +107,15 @@ export default function SubscribersPage() {
       <div className="flex items-center gap-2.5">
         <Avatar name={r.name} />
         <div className="min-w-0">
-          <div className="truncate font-medium text-slate-800 dark:text-slate-100">{r.name}</div>
+          <div className="flex items-center gap-1.5">
+            <span className="truncate font-medium text-slate-800 dark:text-slate-100">{r.name}</span>
+            {r.hdika_paused && (
+              <span title={r.hdika_error || "Παγωμένος συγχρονισμός ΗΔΥΚΑ"}
+                className="inline-flex shrink-0 items-center gap-1 rounded-full bg-rose-100 px-1.5 py-0.5 text-[10px] font-semibold text-rose-700 dark:bg-rose-900/50 dark:text-rose-300">
+                <KeyRound className="h-3 w-3" /> ΗΔΥΚΑ
+              </span>
+            )}
+          </div>
           {r.afm ? <div className="text-[11px] text-slate-400">ΑΦΜ {r.afm}</div>
                  : <button onClick={(e) => { e.stopPropagation(); addAfm(r); }} className="text-[11px] font-semibold text-amber-600 hover:underline">+ Συμπλήρωση ΑΦΜ</button>}
         </div>
@@ -137,13 +159,26 @@ export default function SubscribersPage() {
         </button>
       </div>
 
-      {/* summary chips */}
-      <div className="mb-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <StatChip icon={Building2} label="Σύνολο" value={fmtNum(stats.total)} accent="bg-brand-50 text-brand-600" />
-        <StatChip icon={Users2} label="Ενεργοί" value={fmtNum(stats.active)} accent="bg-emerald-50 text-emerald-600" />
-        <StatChip icon={Users2} label="Trial" value={fmtNum(stats.trial)} accent="bg-sky-50 text-sky-600" />
-        <StatChip icon={Wallet} label="Συνολικό MRR" value={fmtEur(stats.mrr)} accent="bg-violet-50 text-violet-600" />
+      {/* summary chips — πατώμενα: φιλτράρουν τη λίστα από κάτω */}
+      <div className="mb-2 grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
+        <StatChip icon={Building2} label="Σύνολο" value={fmtNum(stats.total)} accent="bg-brand-50 text-brand-600"
+          active={statusF === "all" && planF === "all" && !kpiF && !q}
+          onClick={() => { setStatusF("all"); setPlanF("all"); setKpiF(null); setQ(""); }} />
+        <StatChip icon={Users2} label="Ενεργοί" value={fmtNum(stats.active)} accent="bg-emerald-50 text-emerald-600"
+          active={statusF === "active" && !kpiF}
+          onClick={() => { setKpiF(null); setStatusF(statusF === "active" ? "all" : "active"); }} />
+        <StatChip icon={Users2} label="Trial" value={fmtNum(stats.trial)} accent="bg-sky-50 text-sky-600"
+          active={statusF === "trial" && !kpiF}
+          onClick={() => { setKpiF(null); setStatusF(statusF === "trial" ? "all" : "trial"); }} />
+        <StatChip icon={Wallet} label="Συνολικό MRR" value={fmtEur(stats.mrr)} accent="bg-violet-50 text-violet-600"
+          active={kpiF === "paying"}
+          onClick={() => { setStatusF("all"); setKpiF(kpiF === "paying" ? null : "paying"); }} />
+        <StatChip icon={KeyRound} label="Κλειδωμένος κωδικός ΗΔΥΚΑ" value={fmtNum(stats.hdikaPaused)}
+          accent={stats.hdikaPaused > 0 ? "bg-rose-50 text-rose-600" : "bg-slate-100 text-slate-400"}
+          muted={stats.hdikaPaused === 0} active={kpiF === "hdika_paused"}
+          onClick={stats.hdikaPaused > 0 ? () => { setStatusF("all"); setKpiF(kpiF === "hdika_paused" ? null : "hdika_paused"); } : undefined} />
       </div>
+      <p className="mb-4 text-[11px] text-slate-400">Πάτησε ένα KPI για να φιλτράρεις τη λίστα· ξαναπάτησέ το για καθαρισμό.</p>
 
       {/* filter bar */}
       <div className="mb-3 flex flex-col gap-3 rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900 lg:flex-row lg:items-center">
