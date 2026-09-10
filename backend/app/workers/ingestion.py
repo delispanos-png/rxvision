@@ -841,3 +841,135 @@ def heal_missing_cda(limit_per_tenant: int = 25) -> dict:
             client.close()
 
     return _run_async(_run())
+
+
+# ── Ειδοποίηση φαρμακοποιού όταν παγώσει ο συγχρονισμός ΗΔΥΚΑ ────────────────────────────────────
+_SETTINGS_URL = "https://app.rxvision.gr/settings/ingestion"
+_AUTH_SMS_AFTER_HOURS = 24      # email αμέσως· SMS μόνο αν ΔΕΝ το διόρθωσε μέσα σε μία μέρα
+
+
+def _pharmacy_contacts(t: dict) -> tuple[str | None, str | None]:
+    """(email, ΚΙΝΗΤΟ) του φαρμακοποιού. Το σταθερό ΔΕΝ επιστρέφεται ως κινητό — τα μισά φαρμακεία
+    έχουν σταθερό στην καρτέλα και το SMS θα πήγαινε στο κενό."""
+    comp, bill = t.get("company") or {}, t.get("billing_profile") or {}
+    email = (bill.get("email") or comp.get("email") or bill.get("billing_email") or "").strip() or None
+    mobile = None
+    for cand in (bill.get("phone"), comp.get("phone"), comp.get("telephone"), bill.get("mobile")):
+        c = str(cand or "").strip().replace(" ", "")
+        if c.startswith("69") and len(c) == 10:
+            mobile = c
+            break
+    return email, mobile
+
+
+def _auth_pause_copy(err: str | None) -> tuple[str, str]:
+    """(σύντομο μήνυμα, οδηγία) ανάλογα με την ΑΙΤΙΑ. Το να πεις «πέρασε τον κωδικό» σε κάποιον με
+    ΚΛΕΙΔΩΜΕΝΟ λογαριασμό τον στέλνει να χτυπάει σε τοίχο — γι' αυτό ξεχωρίζουμε τις δύο περιπτώσεις."""
+    low = str(err or "").lower()
+    if "κλειδ" in low or "lock" in low:
+        return ("Ο λογαριασμός σου στην ΗΔΥΚΑ κλειδώθηκε προσωρινά.",
+                "Ξεκλείδωσέ τον πρώτα από την πύλη της ΗΔΥΚΑ και μετά καταχώρισε τον κωδικό σου στο RxVision.")
+    return ("Άλλαξε ο μηνιαίος κωδικός σου στην ΗΔΥΚΑ.",
+            "Καταχώρισε τον νέο κωδικό στο RxVision για να ξαναρχίσει ο συγχρονισμός.")
+
+
+@celery_app.task(name="app.workers.ingestion.notify_hdika_auth_paused")
+def notify_hdika_auth_paused() -> dict:
+    """Ωριαία: ειδοποίησε ΤΟΝ ΦΑΡΜΑΚΟΠΟΙΟ ότι σταμάτησε ο συγχρονισμός του με την ΗΔΥΚΑ.
+
+    ΓΙΑΤΙ ΥΠΑΡΧΕΙ: η in-app μπάρα δεν πιάνει όποιον δεν μπαίνει καθόλου — δύο φαρμακεία έμειναν
+    παγωμένα 10 και 14 ημέρες χωρίς να το πάρει είδηση κανείς.
+
+    Κλιμάκωση (μία φορά το καθένα, με σφραγίδα στο ingestion_config):
+      • αμέσως  → email
+      • +24 ώρες → SMS στο κινητό, ΜΟΝΟ αν δεν το διόρθωσε
+
+    ΚΟΣΤΟΣ: και τα δύο φεύγουν από τους ΚΕΝΤΡΙΚΟΥΣ λογαριασμούς της πλατφόρμας. ΠΟΤΕ από το
+    πορτοφόλι μηνυμάτων του φαρμακείου — δεν χρεώνουμε τον πελάτη επειδή έπεσε η σύνδεσή μας.
+    """
+    async def _run() -> dict:
+        from app.services import comms, mailer
+        client, db = _fresh_db()
+        sent_email = sent_sms = 0
+        try:
+            now = datetime.now(tz=timezone.utc)
+            async for t in db["tenants"].find(
+                    {"status": {"$in": ["active", "trial"]},
+                     "ingestion_config.hdika.auth_paused": True}):
+                h = (t.get("ingestion_config") or {}).get("hdika") or {}
+                email, mobile = _pharmacy_contacts(t)
+                headline, action = _auth_pause_copy(h.get("auth_error_msg"))
+                name = t.get("name") or ""
+                if email and not h.get("auth_notified_email_at"):
+                    try:
+                        await mailer.send_email(
+                            email, f"RxVision — σταμάτησε ο συγχρονισμός με την ΗΔΥΚΑ",
+                            f"<p>Γεια σου,</p><p><b>{headline}</b></p><p>{action}</p>"
+                            f'<p><a href="{_SETTINGS_URL}" style="background:#1d4ed8;color:#fff;'
+                            f'padding:10px 18px;border-radius:8px;text-decoration:none;display:inline-block">'
+                            f"Καταχώριση κωδικού</a></p>"
+                            f"<p style='color:#64748b;font-size:13px'>Μέχρι να γίνει αυτό, δεν κατεβαίνουν "
+                            f"νέες εκτελέσεις συνταγών για το {name}. Σταματήσαμε αυτόματα κάθε προσπάθεια "
+                            f"σύνδεσης ώστε να μην κλειδωθεί ο λογαριασμός σου στην ΗΔΥΚΑ.</p>")
+                        await db["tenants"].update_one(
+                            {"_id": t["_id"]},
+                            {"$set": {"ingestion_config.hdika.auth_notified_email_at": now}})
+                        sent_email += 1
+                    except Exception:  # noqa: BLE001 — μία αποτυχία δεν σταματά τους υπόλοιπους
+                        pass
+                since = h.get("auth_error_at") or h.get("auth_notified_email_at")
+                old_enough = bool(since) and (now - since.replace(tzinfo=timezone.utc)).total_seconds() \
+                    >= _AUTH_SMS_AFTER_HOURS * 3600
+                if mobile and old_enough and not h.get("auth_notified_sms_at"):
+                    try:
+                        await comms.send_otp_sms(   # κεντρικός λογαριασμός — ΧΩΡΙΣ χρέωση φαρμακείου
+                            mobile, f"RxVision: {headline} {action} {_SETTINGS_URL}")
+                        await db["tenants"].update_one(
+                            {"_id": t["_id"]},
+                            {"$set": {"ingestion_config.hdika.auth_notified_sms_at": now}})
+                        sent_sms += 1
+                    except Exception:  # noqa: BLE001
+                        pass
+        finally:
+            client.close()
+        return {"emails": sent_email, "sms": sent_sms}
+    return _run_async(_run())
+
+
+@celery_app.task(name="app.workers.ingestion.remind_monthly_hdika_password")
+def remind_monthly_hdika_password() -> int:
+    """1η κάθε μήνα: υπενθύμιση ΠΡΙΝ σπάσει ο συγχρονισμός.
+
+    Ο κωδικός ΗΔΥΚΑ αλλάζει μηνιαίως σε ΟΛΟΥΣ — δεν είναι ατύχημα, είναι ραντεβού που το ξέρουμε.
+    Η πρόληψη κοστίζει ένα email· η ανίχνευση κοστίζει μέρες χαμένων δεδομένων.
+    Δεν στέλνεται σε ήδη παγωμένους (τους καλύπτει το notify_hdika_auth_paused).
+    """
+    async def _run() -> int:
+        from app.services import mailer
+        client, db = _fresh_db()
+        n = 0
+        try:
+            async for t in db["tenants"].find(
+                    {"country": "GR", "status": {"$in": ["active", "trial"]},
+                     "credentials_ref.hdika": {"$ne": None},
+                     "ingestion_config.hdika.auth_paused": {"$ne": True}}):
+                email, _ = _pharmacy_contacts(t)
+                if not email:
+                    continue
+                try:
+                    await mailer.send_email(
+                        email, "RxVision — άλλαξες κωδικό στην ΗΔΥΚΑ αυτόν τον μήνα;",
+                        "<p>Γεια σου,</p><p>Αν άλλαξες (ή αλλάξεις) τον μηνιαίο κωδικό σου στην ΗΔΥΚΑ, "
+                        "θυμήσου να τον περάσεις και στο RxVision — αλλιώς ο συγχρονισμός των εκτελέσεών "
+                        "σου θα σταματήσει.</p>"
+                        f'<p><a href="{_SETTINGS_URL}" style="background:#1d4ed8;color:#fff;padding:10px 18px;'
+                        'border-radius:8px;text-decoration:none;display:inline-block">Ενημέρωση κωδικού</a></p>'
+                        "<p style='color:#64748b;font-size:13px'>Αν δεν άλλαξε τίποτα, αγνόησέ το — "
+                        "όλα δουλεύουν κανονικά.</p>")
+                    n += 1
+                except Exception:  # noqa: BLE001
+                    pass
+        finally:
+            client.close()
+        return n
+    return _run_async(_run())

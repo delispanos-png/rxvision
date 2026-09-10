@@ -140,6 +140,17 @@ celery_app.conf.beat_schedule = {
         "task": "app.workers.ingestion.dispatch_amount_audit",
         "schedule": crontab(minute=20),
     },
+    # Ο φαρμακοποιός να ΜΑΘΕΙ ότι πάγωσε ο συγχρονισμός του — η in-app μπάρα δεν πιάνει όποιον
+    # δεν μπαίνει καθόλου (δύο φαρμακεία έμειναν παγωμένα 10 & 14 ημέρες). Email αμέσως, SMS +24h.
+    "hdika-auth-paused-notify": {
+        "task": "app.workers.ingestion.notify_hdika_auth_paused",
+        "schedule": crontab(minute=5),
+    },
+    # ΠΡΟΛΗΨΗ: ο κωδικός ΗΔΥΚΑ αλλάζει μηνιαίως σε όλους — υπενθύμιση την 1η, πριν σπάσει.
+    "hdika-monthly-password-reminder": {
+        "task": "app.workers.ingestion.remind_monthly_hdika_password",
+        "schedule": crontab(day_of_month=1, hour=7, minute=0),
+    },
     # Εμβολιασμοί ΗΔΥΚΑ (Influenza Registry) — ΚΑΘΕ 6 ΩΡΕΣ, όχι μία φορά την ημέρα.
     # ΓΙΑΤΙ: με ένα μόνο στιγμιότυπο στις 04:30, κάθε restart/deploy/κόλλημα του beat εκείνη την ώρα
     # σήμαινε ότι το φαρμακείο περίμενε άλλες 24 ώρες — και αν επαναλαμβανόταν, ΠΟΤΕ. Έτσι έμειναν 5

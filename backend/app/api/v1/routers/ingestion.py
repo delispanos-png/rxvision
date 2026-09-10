@@ -174,7 +174,10 @@ async def set_hdika_credentials(
         pass
     # Καταχώρηση νέου κωδικού → ΑΡΣΗ της αυτόματης παύσης (αν ο tenant είχε μπει σε παύση λόγω λάθους
     # κωδικού). Ο επόμενος sync ξαναδοκιμάζει· αν ο κωδικός είναι σωστός συνεχίζει, αλλιώς ξανα-παύει.
-    await repo.patch_ingestion_config("hdika", {"auth_paused": False, "auth_error_msg": None, "auth_error_at": None})
+    await repo.patch_ingestion_config("hdika", {
+        "auth_paused": False, "auth_error_msg": None, "auth_error_at": None,
+        # μηδένισε τις σφραγίδες ειδοποίησης, ώστε σε ΕΠΟΜΕΝΗ παύση να ξαναειδοποιηθεί κανονικά
+        "auth_notified_email_at": None, "auth_notified_sms_at": None})
     return CredentialsStatusOut(source="hdika", configured=True, credentials_ref=ref)
 
 
