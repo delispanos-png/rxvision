@@ -177,7 +177,7 @@ async def set_hdika_credentials(
     await repo.patch_ingestion_config("hdika", {
         "auth_paused": False, "auth_error_msg": None, "auth_error_at": None,
         # μηδένισε τις σφραγίδες ειδοποίησης, ώστε σε ΕΠΟΜΕΝΗ παύση να ξαναειδοποιηθεί κανονικά
-        "auth_notified_email_at": None, "auth_notified_sms_at": None})
+        "auth_notify_count": 0, "auth_notify_last_at": None})
     return CredentialsStatusOut(source="hdika", configured=True, credentials_ref=ref)
 
 
