@@ -79,8 +79,10 @@ async def sync_influenza(tenant_id: str, *, db, dry_run: bool = False) -> dict:
     from app.services.ingestion.influenza_client import InfluenzaClient
     from app.services.vault_service import vault
 
+    started = datetime.now(tz=timezone.utc)
     creds = await _effective_hdika_creds(tenant_id)
     if not creds or not creds.get("base_url") or not creds.get("api_key"):
+        await _job(db, tenant_id, started, "error", {"fetched": 0}, "no_credentials")
         return {"ok": False, "reason": "no_credentials"}
 
     def _fetch() -> list:
@@ -90,7 +92,12 @@ async def sync_influenza(tenant_id: str, *, db, dry_run: bool = False) -> dict:
         finally:
             cl.close()
 
-    rows = await run_in_threadpool(_fetch)
+    try:
+        rows = await run_in_threadpool(_fetch)
+    except Exception as exc:   # noqa: BLE001 — καταγράφουμε ΚΑΙ ξαναρίχνουμε (ορατή αποτυχία)
+        if not dry_run:
+            await _job(db, tenant_id, started, "error", {"fetched": 0}, str(exc)[:300])
+        raise
     pepper = vault.tenant_pepper(tenant_id)
     now = datetime.now(tz=timezone.utc)
     mapped = [_map(r, tenant_id, pepper, now) for r in rows if r.get("id") is not None]
@@ -109,5 +116,22 @@ async def sync_influenza(tenant_id: str, *, db, dry_run: bool = False) -> dict:
             inserted += 1
         elif res.modified_count:
             updated += 1
+    await _job(db, tenant_id, started, "success",
+               {"fetched": len(rows), "inserted": inserted, "updated": updated})
     return {"ok": True, "fetched": len(rows), "inserted": inserted, "updated": updated,
             "cancelled": cancelled}
+
+
+async def _job(db, tenant_id: str, started: datetime, status: str, stats: dict,
+               error: str | None = None) -> None:
+    """Ίχνος στο `sync_jobs` — ΧΩΡΙΣ αυτό ο συγχρονισμός εμβολιασμών ήταν αόρατος: καμία σελίδα
+    υγείας, κανένα alert, κανείς δεν έβλεπε ότι δεν έτρεξε ποτέ για 5 φαρμακεία."""
+    try:
+        doc = {"tenant_id": tenant_id, "source": "INFLUENZA", "type": "full", "status": status,
+               "stats": stats, "started_at": started,
+               "updated_at": datetime.now(tz=timezone.utc)}
+        if error:
+            doc["error"] = error
+        await db["sync_jobs"].insert_one(doc)
+    except Exception:  # noqa: BLE001 — το log δεν πρέπει να σπάσει τον συγχρονισμό
+        pass

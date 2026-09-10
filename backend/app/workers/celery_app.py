@@ -140,10 +140,13 @@ celery_app.conf.beat_schedule = {
         "task": "app.workers.ingestion.dispatch_amount_audit",
         "schedule": crontab(minute=20),
     },
-    # Seasonal-flu vaccinations sync (ΗΔΥΚΑ Influenza Registry) — daily 04:30 UTC.
+    # Εμβολιασμοί ΗΔΥΚΑ (Influenza Registry) — ΚΑΘΕ 6 ΩΡΕΣ, όχι μία φορά την ημέρα.
+    # ΓΙΑΤΙ: με ένα μόνο στιγμιότυπο στις 04:30, κάθε restart/deploy/κόλλημα του beat εκείνη την ώρα
+    # σήμαινε ότι το φαρμακείο περίμενε άλλες 24 ώρες — και αν επαναλαμβανόταν, ΠΟΤΕ. Έτσι έμειναν 5
+    # φαρμακεία με μηδέν εμβολιασμούς για εβδομάδες. Ο όγκος είναι μικρός (~12 σελίδες/φαρμακείο).
     "influenza-sync": {
         "task": "app.workers.ingestion.dispatch_influenza_sync",
-        "schedule": crontab(hour=4, minute=30),
+        "schedule": crontab(minute=30, hour="*/6"),
     },
     # Self-heal ΗΔΥΚΑ CDA-πεδία που έλειψαν από παλιότερο parser (π.χ. «άυλη»/intangible) — κάθε 2 ώρες,
     # best-effort/throttled (σταματά αν η CDA είναι 503· ξαναδοκιμάζει). Offset από τους syncs.

@@ -3,9 +3,16 @@
 Same credentials as the PharmacistAPI, but a SEPARATE JSON service for seasonal-flu vaccinations.
 The barcode 92… range that never showed up in the prescription data lives here.
 
-⚠️ QUIRK: every request — even GET — MUST carry `Content-Type: application/json`, otherwise the
+⚠️ QUIRK 1: every request — even GET — MUST carry `Content-Type: application/json`, otherwise the
 ΗΔΥΚΑ gateway returns 404 (not 400). The date query-params (Greek names) don't reliably filter, so
 we paginate ALL pages and let the caller filter by executionDate.
+
+⚠️ QUIRK 2 (ΚΡΙΣΙΜΟ): the registry keeps a server-side **connection/session** per user. Any data
+call made before it exists — or after it expires — fails with HTTP 400 `error.Connection`
+("You must create a first connection." / "You must refresh your connection."). Calling
+`GET /users/me` ESTABLISHES/REFRESHES it. So every data call must be preceded by `ensure_connection()`.
+This was the root cause of 8 of 9 pharmacies having ZERO flu vaccinations: the old code silently
+swallowed the 400 and reported "ok, fetched: 0".
 """
 
 from __future__ import annotations
@@ -19,6 +26,17 @@ _TIMEOUT = 40
 _PAGE_SIZE = 50  # API max
 # NB: the OpenAPI parameter NAMES are Greek labels but those DON'T bind — the real Spring query
 # params are the standard English `page`/`size` (verified: page=1 returns a different result set).
+
+
+def _is_connection_error(r) -> bool:
+    """HTTP 400 με errorKey/message «Connection» = λήξε ή δεν άνοιξε ποτέ η σύνδεση του μητρώου."""
+    if r.status_code != 400:
+        return False
+    try:
+        d = r.json()
+        return "connection" in str(d.get("errorKey", "") or d.get("message", "")).lower()
+    except Exception:  # noqa: BLE001
+        return False
 
 
 class InfluenzaClient:
@@ -65,18 +83,40 @@ class InfluenzaClient:
         r.raise_for_status()
         return r.json()
 
+    def ensure_connection(self) -> None:
+        """Άνοιξε/ανανέωσε τη server-side σύνδεση του μητρώου (βλ. QUIRK 2). Χωρίς αυτό κάθε
+        κλήση δεδομένων γυρίζει 400 `error.Connection`. Idempotent & φθηνό (μία κλήση)."""
+        if getattr(self, "_connected", False):
+            return
+        r = self._get("/users/me")
+        if r.status_code != 200:
+            raise RuntimeError(
+                f"Influenza API: αποτυχία σύνδεσης (HTTP {r.status_code}): {r.text[:200]}")
+        self._connected = True
+
     def find_all_vaccines(self) -> list:
+        self.ensure_connection()
         r = self._get("/find-all-vaccines")
         return r.json() if r.status_code == 200 and isinstance(r.json(), list) else []
 
     def iter_vaccinations(self):
         """Yield every vaccination execution record (paginated via page/size). The dataset is small
         (a few hundred per pharmacy) so we always full-sync; stops on lastPage / totalPages / empty."""
+        self.ensure_connection()
         page = 0
         while True:
             r = self._get("/execution/search", {"page": page, "size": _PAGE_SIZE})
+            if r.status_code != 200 and _is_connection_error(r) and page == 0:
+                # Η σύνδεση έληξε ενδιάμεσα → μία ανανέωση και ξαναδοκίμασε (μία φορά).
+                self._connected = False
+                self.ensure_connection()
+                r = self._get("/execution/search", {"page": page, "size": _PAGE_SIZE})
             if r.status_code != 200:
-                break
+                # ΠΟΤΕ σιωπηλό break: ένα 401/403/503 έδινε «ok, fetched: 0» — δηλαδή ΑΠΟΤΥΧΙΑ που
+                # έμοιαζε με επιτυχία, και το φαρμακείο έβλεπε λιγότερους εμβολιασμούς χωρίς να το
+                # καταλάβει κανείς. Αν έχουμε ήδη σελίδες, ρίχνουμε — ο καλών καταγράφει το σφάλμα.
+                raise RuntimeError(
+                    f"Influenza API HTTP {r.status_code} στη σελίδα {page}: {r.text[:200]}")
             data = r.json()
             rows = data.get("content") or []
             for row in rows:
