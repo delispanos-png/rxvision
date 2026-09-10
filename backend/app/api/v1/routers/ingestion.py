@@ -6,7 +6,7 @@ Credentials are write-only: they go to Vault and only a `vault://...` reference 
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 
@@ -164,24 +164,14 @@ async def set_hdika_credentials(
     ref = vault.set_tenant_credentials(ctx.tenant_id, "hdika", creds)
     await repo.set_credentials_ref("hdika", ref)
     await repo.set_ingestion_config("hdika", _public_config(creds))
-    # ΑΥΤΟΜΑΤΗ εύρεση pharmacy_id: ο φαρμακοποιός ΔΕΝ γνωρίζει τον «κωδικό φαρμακείου» — η ΗΔΥΚΑ τον
-    # επιστρέφει στο /user/me (<pharmacy><id>). GDPR-critical (φιλτράρει την άντληση ανά φαρμακείο).
-    if not creds.get("pharmacy_id"):
-        eff = await _effective_hdika_creds(ctx.tenant_id)
-        if eff.get("username") and eff.get("password") and eff.get("api_key"):
-            import asyncio
-
-            def _discover() -> str | None:
-                cl = HdikaClient(eff)
-                try:
-                    return cl.discover_pharmacy_id()
-                finally:
-                    cl.close()
-            pid = await asyncio.to_thread(_discover)
-            if pid:
-                creds["pharmacy_id"] = creds["pharmacy_code"] = pid
-                ref = vault.set_tenant_credentials(ctx.tenant_id, "hdika", creds)
-                await repo.set_ingestion_config("hdika", _public_config(creds))
+    # ΑΥΤΟΜΑΤΗ συμπλήρωση ΟΛΟΥ του προφίλ (όχι μόνο pharmacy_id): ο φαρμακοποιός δεν ξέρει — και δεν
+    # πρέπει να πληκτρολογεί — κωδικό φαρμακείου/ΣΗΣ, ΑΦΜ, ΑΜ ΕΟΠΥΥ, νομό, ταμεία. Η ΗΔΥΚΑ τα δίνει
+    # στο /user/me (+ /contracts). Best-effort: αν αποτύχει, η αποθήκευση των κωδικών ισχύει κανονικά.
+    try:
+        if await _discover_and_store(ctx.tenant_id):
+            creds = vault.get_secret(f"tenants/{ctx.tenant_id}/hdika") or creds
+    except Exception:  # noqa: BLE001 — λάθος/ληγμένος κωδικός: το λέει το «Δοκιμή σύνδεσης»
+        pass
     # Καταχώρηση νέου κωδικού → ΑΡΣΗ της αυτόματης παύσης (αν ο tenant είχε μπει σε παύση λόγω λάθους
     # κωδικού). Ο επόμενος sync ξαναδοκιμάζει· αν ο κωδικός είναι σωστός συνεχίζει, αλλιώς ξανα-παύει.
     await repo.patch_ingestion_config("hdika", {"auth_paused": False, "auth_error_msg": None, "auth_error_at": None})
@@ -231,6 +221,90 @@ async def test_hdika_connection(
     await repo.patch_ingestion_config("hdika", {"last_test": {
         "at": datetime.now(tz=timezone.utc).isoformat(), "ok": result.ok, "message": result.message}})
     return result
+
+
+# Πόσα ΠΛΗΡΗ προηγούμενα έτη κατεβάζουμε αυτόματα σε νέο φαρμακείο (+ το τρέχον μέχρι σήμερα).
+_AUTO_HISTORY_YEARS = 2
+
+
+def _auto_history_window() -> tuple[str, str]:
+    """Προεπιλογή νέου φαρμακείου: τα 2 τελευταία ΠΛΗΡΗ έτη + το τρέχον μέχρι σήμερα.
+    π.χ. 10/09/2026 → 2024-01-01 … 2026-09-10. Ο φαρμακοποιός δεν επιλέγει τίποτα."""
+    today = date.today()
+    return date(today.year - _AUTO_HISTORY_YEARS, 1, 1).isoformat(), today.isoformat()
+
+
+async def _discover_and_store(tenant_id: str) -> dict:
+    """Authenticate → /user/me (+ /contracts) → αποθήκευση ΟΛΟΥ του προφίλ φαρμακείου.
+
+    Ό,τι μπορεί να το πει η ΗΔΥΚΑ, ΔΕΝ το ζητάμε από τον φαρμακοποιό: pharmacy_id, ΑΦΜ, κωδικός ΣΗΣ,
+    ΑΜ ΕΟΠΥΥ, επωνυμία, διεύθυνση, νομός, ταμεία, ΕΤΥΑΠ. Επιστρέφει τα ευρεθέντα (χωρίς μυστικά).
+    """
+    import asyncio
+
+    eff = await _effective_hdika_creds(tenant_id)
+    if not (eff.get("username") and eff.get("password") and eff.get("api_key")):
+        return {}
+
+    def _run() -> dict:
+        cl = HdikaClient(eff)
+        try:
+            cl.authenticate()
+            return cl.fetch_user_info() or {}
+        finally:
+            cl.close()
+
+    discovered = await asyncio.to_thread(_run)
+    if not discovered:
+        return {}
+    creds = vault.get_secret(f"tenants/{tenant_id}/hdika") or {}
+    # Το pharmacy_code είναι ο κωδικός ΣΗΣ· κρατάμε ΚΑΙ το pharmacy_id (φίλτρο άντλησης, GDPR).
+    merged = {**creds, **{k: v for k, v in discovered.items() if v not in (None, "")}}
+    if not merged.get("pharmacy_id") and merged.get("pharmacy_code"):
+        merged["pharmacy_id"] = merged["pharmacy_code"]
+    vault.set_tenant_credentials(tenant_id, "hdika", merged)
+    await TenantRepository(tenant_id=tenant_id).set_ingestion_config("hdika", _public_config(merged))
+    return discovered
+
+
+@router.post("/hdika/setup", status_code=202)
+async def hdika_setup(
+    body: HdikaCredentialsIn,
+    ctx: TenantContext = Depends(require("ingestion:run", module=_MODULE)),
+):
+    """ΕΝΑ βήμα για νέο φαρμακείο: κωδικοί ΗΔΥΚΑ → όλα τα υπόλοιπα αυτόματα.
+
+    1. Αποθήκευση διαπιστευτηρίων (Vault)
+    2. Άντληση ΟΛΟΥ του προφίλ φαρμακείου από την ΗΔΥΚΑ (τίποτα δεν πληκτρολογείται)
+    3. Ορισμός ιστορικού = 2 πλήρη έτη + τρέχον μέχρι σήμερα
+    4. Έναρξη της ιστορικής άντλησης στο παρασκήνιο
+
+    Ο φαρμακοποιός δεν αγγίζει τίποτα άλλο. Αν η σύνδεση αποτύχει, ΔΕΝ ξεκινά άντληση και
+    επιστρέφεται το σφάλμα της ΗΔΥΚΑ, ώστε να διορθώσει τους κωδικούς.
+    """
+    assert_source_allowed(await _tenant_country(ctx.tenant_id), "HDIKA")
+    await set_hdika_credentials(body, ctx)           # βήμα 1 (ίδια λογική merge/ασφάλειας)
+    try:
+        discovered = await _discover_and_store(ctx.tenant_id)
+    except Exception as exc:  # noqa: BLE001 — λάθος κωδικοί: πες το καθαρά, μη ξεκινήσεις άντληση
+        raise HTTPException(400, f"Δεν έγινε σύνδεση με την ΗΔΥΚΑ: {exc}")
+    if not discovered.get("pharmacy_id"):
+        raise HTTPException(400, "Η ΗΔΥΚΑ δεν επέστρεψε κωδικό φαρμακείου — έλεγξε τους κωδικούς σου.")
+
+    date_from, date_to = _auto_history_window()
+    # Μη πας πιο πίσω από την έναρξη σύμβασης που δηλώνει η ΗΔΥΚΑ (δεν υπάρχουν δεδομένα εκεί).
+    contract_from = str(discovered.get("history_from") or "")[:10]
+    if contract_from and contract_from > date_from:
+        date_from = contract_from
+    creds = vault.get_secret(f"tenants/{ctx.tenant_id}/hdika") or {}
+    creds["history_from"] = date_from
+    vault.set_tenant_credentials(ctx.tenant_id, "hdika", creds)
+    await TenantRepository(tenant_id=ctx.tenant_id).set_ingestion_config("hdika", _public_config(creds))
+
+    from app.workers.ingestion import hdika_backfill
+    hdika_backfill.delay(ctx.tenant_id, f"{date_from}T00:00:00+00:00", f"{date_to}T23:59:59+00:00", 0.0)
+    return {"status": "queued", "discovered": discovered,
+            "window": {"from": date_from, "to": date_to}}
 
 
 @router.post("/hdika/discover")

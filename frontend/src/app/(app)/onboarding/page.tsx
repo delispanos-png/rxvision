@@ -1,7 +1,5 @@
 "use client";
 
-import { appAlert } from "@/store/dialogStore";
-import { DateInput } from "@/components/ui/DateInput";
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
@@ -14,6 +12,12 @@ type Job = { status?: string; type?: string; progress?: number; cursor_date?: st
   window?: { start?: string; end?: string } };
 
 type Me = { modules: Record<string, "enabled" | "trial" | "locked"> } & Record<string, unknown>;
+
+type Discovered = {
+  pharmacy_name?: string; pharmacy_code?: string; pharmacy_id?: string; afm?: string;
+  eopyy_registry?: string; address?: string; city?: string; county?: string; contracted_funds?: string;
+};
+type SetupRes = { status: string; discovered?: Discovered; window?: { from: string; to: string } };
 
 type Tenant = {
   country?: string;
@@ -34,12 +38,10 @@ export default function OnboardingPage() {
 
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
-  const [pharmacyCode, setPharmacyCode] = useState("");
-
-  const today = new Date().toISOString().slice(0, 10);
-  const [dateFrom, setDateFrom] = useState(`${new Date().getFullYear() - 1}-01-01`);
-  const [dateTo, setDateTo] = useState(today);
   const [queued, setQueued] = useState(false);
+  const [setupErr, setSetupErr] = useState<string | null>(null);
+  const [found, setFound] = useState<Discovered | null>(null);
+  const [win, setWin] = useState<{ from: string; to: string } | null>(null);
 
   const me = useQuery({
     queryKey: queryKeys.me(),
@@ -51,21 +53,17 @@ export default function OnboardingPage() {
     queryFn: () => api<Tenant>("/tenant"),
   });
 
-  const saveCreds = useMutation({
-    mutationFn: (body: { username: string; password: string; pharmacy_code: string }) =>
-      api<{ ok: boolean }>("/ingestion/credentials/hdika", {
-        method: "PUT",
-        body: JSON.stringify(body),
-      }),
-    onSuccess: () => setCredsSaved(true),
-    onError: (e) =>
-      appAlert(e instanceof ApiError ? t(`Σφάλμα (${e.status})`, `Error (${e.status})`) : t("Αποτυχία αποθήκευσης", "Save failed")),
-  });
-
-  const triggerBackfill = useMutation({
-    mutationFn: () => api(`/ingestion/hdika/backfill?date_from=${dateFrom}&date_to=${dateTo}`, { method: "POST" }),
-    onSuccess: () => setQueued(true),
-    onError: (e) => appAlert(e instanceof ApiError ? t(`Σφάλμα (${e.status})`, `Error (${e.status})`) : t("Αποτυχία άντλησης", "Download failed")),
+  // ΕΝΑ βήμα: κωδικοί ΗΔΥΚΑ → στοιχεία φαρμακείου + περίοδος ιστορικού + έναρξη άντλησης, αυτόματα.
+  const setup = useMutation({
+    mutationFn: (body: { username: string; password: string }) =>
+      api<SetupRes>("/ingestion/hdika/setup", { method: "POST", body: JSON.stringify(body) }),
+    onSuccess: (r) => { setCredsSaved(true); setFound(r.discovered ?? null); setWin(r.window ?? null); setQueued(true); setSetupErr(null); },
+    onError: (e) => {
+      const msg = e instanceof ApiError
+        ? (typeof e.problem === "string" ? e.problem : (e.problem as { detail?: string })?.detail) || t(`Σφάλμα (${e.status})`, `Error (${e.status})`)
+        : t("Αποτυχία σύνδεσης", "Connection failed");
+      setSetupErr(String(msg));
+    },
   });
 
   const jobs = useQuery({
@@ -129,100 +127,81 @@ export default function OnboardingPage() {
           <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
             <div className="mb-3 flex items-center gap-3">
               <StepBadge n={1} />
-              <h2 className="text-sm font-semibold text-slate-700">{t("Σύνδεση με ΗΔΥΚΑ", "Connect to ΗΔΥΚΑ")}</h2>
+              <h2 className="text-sm font-semibold text-slate-700">{t("Οι κωδικοί σου στην ΗΔΥΚΑ", "Your ΗΔΥΚΑ credentials")}</h2>
             </div>
-            <form
-              className="space-y-3"
-              onSubmit={(e) => {
-                e.preventDefault();
-                saveCreds.mutate({ username, password, pharmacy_code: pharmacyCode });
-              }}
-            >
+            <p className="mb-4 text-sm text-slate-500">
+              {t("Αυτό είναι το μόνο που χρειαζόμαστε. Τα στοιχεία του φαρμακείου σου (επωνυμία, ΑΦΜ, κωδικός ΣΗΣ, ΑΜ ΕΟΠΥΥ, ταμεία) τα αντλούμε μόνοι μας από την ΗΔΥΚΑ και ξεκινάμε αμέσως το κατέβασμα των εκτελέσεών σου.", "That is all we need. We fetch your pharmacy details (name, VAT no., ΣΗΣ code, ΕΟΠΥΥ no., funds) from ΗΔΥΚΑ ourselves and start downloading your executions right away.")}
+            </p>
+            <form className="space-y-3" onSubmit={(e) => { e.preventDefault(); setup.mutate({ username, password }); }}>
               <div>
                 <label className="mb-1 block text-sm text-slate-600">{t("Όνομα χρήστη", "Username")}</label>
-                <input
-                  value={username}
-                  onChange={(e) => setUsername(e.target.value)}
-                  required
-                  className="w-full rounded-lg border border-slate-300 px-3 py-2 focus:border-brand-600 focus:outline-none"
-                />
+                <input value={username} onChange={(e) => setUsername(e.target.value)} required autoComplete="username"
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 focus:border-brand-600 focus:outline-none" />
               </div>
               <div>
                 <label className="mb-1 block text-sm text-slate-600">{t("Κωδικός", "Password")}</label>
-                <input
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  required
-                  className="w-full rounded-lg border border-slate-300 px-3 py-2 focus:border-brand-600 focus:outline-none"
-                />
+                <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required autoComplete="current-password"
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 focus:border-brand-600 focus:outline-none" />
               </div>
-              <div>
-                <label className="mb-1 block text-sm text-slate-600">{t("Κωδικός φαρμακείου (προαιρετικό)", "Pharmacy code (optional)")}</label>
-                <input
-                  value={pharmacyCode}
-                  onChange={(e) => setPharmacyCode(e.target.value)}
-                  placeholder={t("Αφήστε το κενό — συμπληρώνεται αυτόματα", "Leave empty — filled automatically")}
-                  className="w-full rounded-lg border border-slate-300 px-3 py-2 focus:border-brand-600 focus:outline-none"
-                />
-                <p className="mt-1 text-xs text-slate-400">{t("Δεν χρειάζεται να τον ξέρεις — τον βρίσκουμε αυτόματα από την ΗΔΥΚΑ μετά την αποθήκευση.", "You don't need to know it — we fetch it automatically from ΗΔΥΚΑ after saving.")}</p>
-              </div>
-              <button
-                type="submit"
-                disabled={saveCreds.isPending}
-                className="rounded-lg bg-brand-700 px-4 py-2 text-sm font-medium text-white hover:bg-brand-800 disabled:opacity-50"
-              >
-                {saveCreds.isPending ? t("Αποθήκευση…", "Saving…") : t("Αποθήκευση", "Save")}
+              <button type="submit" disabled={setup.isPending || credsSaved}
+                className="inline-flex items-center gap-2 rounded-lg bg-brand-700 px-4 py-2 text-sm font-medium text-white hover:bg-brand-800 disabled:opacity-50">
+                {setup.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+                {setup.isPending ? t("Σύνδεση με ΗΔΥΚΑ…", "Connecting to ΗΔΥΚΑ…") : t("Σύνδεση & έναρξη", "Connect & start")}
               </button>
-              {credsSaved && (
-                <p className="text-sm text-brand-700">{t("Τα στοιχεία αποθηκεύτηκαν με ασφάλεια.", "Your credentials were stored securely.")}</p>
-              )}
+              {setupErr && <p className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">{setupErr}</p>}
             </form>
           </div>
 
-          {credsSaved && (
+          {/* Ό,τι βρήκαμε μόνοι μας — ο φαρμακοποιός το βλέπει, δεν το πληκτρολογεί */}
+          {found && (
+            <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-5">
+              <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-emerald-800">
+                <CheckCircle2 className="h-4 w-4" /> {t("Βρήκαμε το φαρμακείο σου", "We found your pharmacy")}
+              </div>
+              <dl className="grid gap-x-6 text-sm sm:grid-cols-2">
+                {([
+                  [t("Επωνυμία", "Name"), found.pharmacy_name],
+                  [t("ΑΦΜ", "VAT no."), found.afm],
+                  [t("Κωδικός ΣΗΣ", "ΣΗΣ code"), found.pharmacy_code],
+                  [t("ΑΜ ΕΟΠΥΥ", "ΕΟΠΥΥ no."), found.eopyy_registry],
+                  [t("Διεύθυνση", "Address"), [found.address, found.city].filter(Boolean).join(", ")],
+                  [t("Νομός", "County"), found.county],
+                ] as const).filter(([, v]) => v).map(([k, v]) => (
+                  <div key={k} className="flex justify-between gap-3 border-b border-emerald-100 py-1">
+                    <dt className="shrink-0 text-emerald-700">{k}</dt>
+                    <dd className="truncate font-medium text-slate-800">{v}</dd>
+                  </div>
+                ))}
+              </dl>
+              {found.contracted_funds && <p className="mt-2 text-xs text-emerald-700"><b>{t("Ταμεία", "Funds")}:</b> {found.contracted_funds}</p>}
+            </div>
+          )}
+
+          {queued && (
             <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
               <div className="mb-3 flex items-center gap-3">
                 <StepBadge n={2} />
-                <h2 className="text-sm font-semibold text-slate-700">{t("Άντληση ιστορικών δεδομένων", "Download historical data")}</h2>
+                <h2 className="text-sm font-semibold text-slate-700">{t("Κατεβάζουμε το ιστορικό σου", "Downloading your history")}</h2>
               </div>
-              <p className="mb-3 text-sm text-slate-500">{t("Διάλεξε από πότε μέχρι πότε να κατεβάσουμε τις εκτελέσεις συνταγών σου από την ΗΔΥΚΑ.", "Choose the date range to download your prescription executions from ΗΔΥΚΑ.")}</p>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="mb-1 block text-xs font-medium text-slate-600">{t("Από", "From")}</label>
-                  <DateInput value={dateFrom} max={dateTo} onChange={(v) => setDateFrom(v)} className="w-full" />
+              <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                <div className="mb-2 flex items-center justify-between text-sm">
+                  <span className="inline-flex items-center gap-1.5 font-medium text-slate-700">
+                    {jobDone ? <CheckCircle2 className="h-4 w-4 text-emerald-600" /> : <Loader2 className="h-4 w-4 animate-spin text-brand-600" />}
+                    {jobDone ? t("Η άντληση ολοκληρώθηκε", "Download complete") : jobRunning ? t("Άντληση σε εξέλιξη…", "Download in progress…") : t("Εκκίνηση άντλησης…", "Starting download…")}
+                    {jobKnown && !jobDone && <span className="font-bold text-brand-700">{jobPct}%</span>}
+                  </span>
+                  <span className="text-xs text-slate-500">{(job?.stats?.fetched ?? 0)} {t("συνταγές", "rx")} · {(job?.stats?.inserted ?? 0)} {t("νέες", "new")}</span>
                 </div>
-                <div>
-                  <label className="mb-1 block text-xs font-medium text-slate-600">{t("Έως", "To")}</label>
-                  <DateInput value={dateTo} min={dateFrom} max={today} onChange={(v) => setDateTo(v)} className="w-full" />
+                <div className="h-2.5 w-full overflow-hidden rounded-full bg-slate-200">
+                  <div className={`h-full rounded-full transition-[width] duration-700 ${jobDone ? "w-full bg-emerald-500" : jobKnown ? "bg-brand-500" : "w-1/3 animate-pulse bg-brand-500"}`} style={!jobDone && jobKnown ? { width: `${jobPct}%` } : undefined} />
                 </div>
+                <p className="mt-2 text-xs text-slate-500">
+                  {win
+                    ? t(`Περίοδος ${win.from} → ${win.to} (τα δύο τελευταία έτη και το τρέχον). Μπορείς να συνεχίσεις στο Dashboard — τρέχει στο παρασκήνιο.`,
+                        `Period ${win.from} → ${win.to} (the last two years plus the current one). You can continue to the Dashboard — it runs in the background.`)
+                    : t("Τρέχει στο παρασκήνιο — μπορείς να συνεχίσεις.", "Running in the background — you can continue.")}
+                </p>
               </div>
-              <button
-                type="button"
-                onClick={() => triggerBackfill.mutate()}
-                disabled={triggerBackfill.isPending || !dateFrom || !dateTo}
-                className="mt-3 rounded-lg bg-brand-700 px-4 py-2 text-sm font-medium text-white hover:bg-brand-800 disabled:opacity-50"
-              >
-                {triggerBackfill.isPending ? t("Έναρξη…", "Starting…") : t("Κατέβασμα δεδομένων", "Download data")}
-              </button>
-              {queued && (
-                <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
-                  <div className="mb-2 flex items-center justify-between text-sm">
-                    <span className="inline-flex items-center gap-1.5 font-medium text-slate-700">
-                      {jobDone ? <CheckCircle2 className="h-4 w-4 text-emerald-600" /> : <Loader2 className="h-4 w-4 animate-spin text-brand-600" />}
-                      {jobDone ? t("Η άντληση ολοκληρώθηκε", "Download complete") : jobRunning ? t("Άντληση σε εξέλιξη…", "Download in progress…") : t("Εκκίνηση άντλησης…", "Starting download…")}
-                      {jobKnown && !jobDone && <span className="font-bold text-brand-700">{jobPct}%</span>}
-                    </span>
-                    <span className="text-xs text-slate-500">{(job?.stats?.fetched ?? 0)} {t("συνταγές", "rx")} · {(job?.stats?.inserted ?? 0)} {t("νέες", "new")}</span>
-                  </div>
-                  <div className="h-2.5 w-full overflow-hidden rounded-full bg-slate-200">
-                    <div className={`h-full rounded-full transition-[width] duration-700 ${jobDone ? "w-full bg-emerald-500" : jobKnown ? "bg-brand-500" : "w-1/3 animate-pulse bg-brand-500"}`} style={!jobDone && jobKnown ? { width: `${jobPct}%` } : undefined} />
-                  </div>
-                  <p className="mt-2 text-xs text-slate-500">
-                    {t(`Περίοδος ${dateFrom} → ${dateTo}. Μπορείς να συνεχίσεις στο Dashboard — η άντληση τρέχει στο παρασκήνιο.`, `Period ${dateFrom} → ${dateTo}. You can continue to the Dashboard — the download runs in the background.`)}
-                  </p>
-                </div>
-              )}
             </div>
           )}
 
