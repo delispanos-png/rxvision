@@ -59,9 +59,16 @@ async def sync_from_account(account_id, *, verify: bool = True,
 
     targets = await db["patients_anonymized"].find(
         {"amka": amka}, {"_id": 1, "tenant_id": 1}).to_list(length=None)
+    # Οι προτιμήσεις ειδοποιήσεων ταξιδεύουν ΠΑΝΤΑ μαζί: αν ο πελάτης έχει κλείσει π.χ. τα SMS και
+    # μετά συνδεθεί σε ΝΕΟ φαρμακείο, η νέα καρτέλα πρέπει να γεννηθεί ήδη κλειστή — αλλιώς θα
+    # άρχιζε να δέχεται μηνύματα που έχει ρητά απαγορεύσει.
+    from app.services import notify_prefs
+    prefs = notify_prefs.normalize(acc.get("notify_prefs"))
     synced = 0
     for tgt in targets:
         await PatientContactRepository(tenant_id=tgt["tenant_id"]).save_contact(
             str(tgt["_id"]), dict(data), source="patient", verify=verify)
+        await db["patient_contacts"].update_one(  # tenant-ok: tenant_id στο φίλτρο
+            {"_id": tgt["_id"], "tenant_id": tgt["tenant_id"]}, {"$set": {"notify_prefs": prefs}})
         synced += 1
     return {"synced": synced, "amka": amka}

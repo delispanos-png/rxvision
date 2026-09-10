@@ -18,6 +18,7 @@ from app.repositories.patient_portal import (
     AppointmentRepository, AvailabilityRepository, PatientAccountRepository,
     PatientRxRepository, PharmacyServiceRepository, RxRequestRepository,
 )
+from app.services import notify_prefs
 from app.services.hdika_lookup import lookup_prescription
 from app.utils.signed_media import avatar_url
 from app.services.patient_auth_service import PatientAuthService, PatientError
@@ -272,6 +273,7 @@ async def me(ctx: PatientContext = Depends(get_patient_context)):
                "email_verified": bool(acc.get("email_verified")),
                "twofa_enabled": bool(acc.get("twofa_enabled")),
                "consents": acc.get("consents") or {},
+               "notify_prefs": notify_prefs.normalize(acc.get("notify_prefs")),
                "address": acc.get("address"), "city": acc.get("city"),
                "postal_code": acc.get("postal_code"), "theme": acc.get("theme"),
                "avatar_url": avatar_url(acc.get("avatar_id"))}
@@ -318,6 +320,35 @@ async def set_consent(body: ConsentIn, ctx: PatientContext = Depends(get_patient
         from app.services.patient_contact_sync import sync_from_account
         await sync_from_account(ctx.account_id, verify=True, include_consent=True)
     return {"ok": True, "kind": body.kind, "consent": entry}
+
+
+class NotifyPrefsIn(BaseModel):
+    """Ανά κανάλι, τι επιτρέπει ο πελάτης να του στέλνει το φαρμακείο. Παραλείπεις ένα → μένει ως έχει."""
+
+    sms: bool | None = None
+    viber: bool | None = None
+    email: bool | None = None
+    push: bool | None = None
+
+
+@router.put("/me/notification-prefs")
+async def set_notification_prefs(body: NotifyPrefsIn,
+                                 ctx: PatientContext = Depends(get_patient_context)):
+    """Ο πελάτης ελέγχει ΑΝΑ ΚΑΝΑΛΙ αν το φαρμακείο μπορεί να του στέλνει ενημερώσεις.
+
+    Οι προτιμήσεις διαδίδονται σε ΟΛΕΣ τις καρτέλες φαρμακείων του (ίδιο ΑΜΚΑ) και ελέγχονται μέσα
+    στους ίδιους τους αποστολείς (`comms.send_*`, `push_service`), ώστε καμία διαδρομή να μην τις
+    προσπερνά. Όταν κλείσουν ΟΛΑ τα κανάλια, ανακαλείται και η συγκατάθεση marketing — δεν έχει
+    νόημα να μείνει ενεργή χωρίς τρόπο παράδοσης.
+    """
+    patch = {k: v for k, v in body.model_dump().items() if v is not None}
+    prefs = await notify_prefs.set_for_account(ctx.account_id, patch)
+    if not any(prefs.values()):
+        from app.repositories.patient_portal import PatientAccountRepository
+        await PatientAccountRepository().set_consent(ctx.account_id, "marketing", False)
+        from app.services.patient_contact_sync import sync_from_account
+        await sync_from_account(ctx.account_id, verify=True, include_consent=True)
+    return {"ok": True, "notify_prefs": prefs}
 
 
 @router.post("/me/phone/verify/start",

@@ -260,6 +260,6 @@ async def book_appointment(body: ApptIn, ctx: TenantContext = Depends(require(_P
     await appt_repo.set_status(appt_id, "confirmed")  # pharmacist-initiated ⇒ already confirmed
     if acc:
         await push_service.send_to_account(
-            acc["_id"], title="✅ Ραντεβού εμβολιασμού",
+            acc["_id"], kind="appointment", title="✅ Ραντεβού εμβολιασμού",
             body=f"{svc_name} — {body.when.strftime('%d/%m %H:%M')}", url="/portal")
     return {"id": appt_id, "portal_visible": bool(acc), "service_name": svc_name}

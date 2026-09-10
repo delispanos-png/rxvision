@@ -73,12 +73,22 @@ async def remove_subscription(endpoint: str, account_id=None) -> None:
         await shared_db()["patient_push_subs"].delete_one(q)  # tenant-ok: global patient push sub
 
 
-async def send_to_account(account_id, *, title: str, body: str, url: str = "/portal") -> int:
+async def send_to_account(account_id, *, title: str, body: str, url: str = "/portal",
+                          kind: str = "update") -> int:
     """Push a notification to ALL of this patient account's devices. Returns #delivered.
-    Runs the blocking webpush call in a thread; prunes expired (404/410) subscriptions."""
+    Runs the blocking webpush call in a thread; prunes expired (404/410) subscriptions.
+
+    `kind` κρίνει αν σέβεται τις προτιμήσεις του ασθενή (βλ. `notify_prefs`): η προεπιλογή
+    "update" = ενημέρωση φαρμακείου και ΜΠΛΟΚΑΡΕΤΑΙ αν ο πελάτης έχει κλείσει τις ειδοποιήσεις.
+    Τα μηνύματα που απαντούν σε δική του ενέργεια (παραγγελία, ραντεβού, διαθεσιμότητα) περνούν
+    `kind` από τα ESSENTIAL_KINDS και φεύγουν πάντα.
+    """
     vv = _vapid()
     oid = _oid(account_id)
     if vv is None or oid is None:
+        return 0
+    from app.services import notify_prefs
+    if not await notify_prefs.allows_account(oid, "push", kind):
         return 0
     try:
         from pywebpush import WebPushException, webpush

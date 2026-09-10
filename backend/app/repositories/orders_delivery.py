@@ -408,7 +408,7 @@ class OrdersDeliveryRepository(BaseRepository):
             body = ("Κάποια είδη είναι κατόπιν παραγγελίας — στάλθηκε στο φαρμακείο για έγκριση & ημερομηνία."
                     if has_backorder else "Στάλθηκε στο φαρμακείο σου. Θα ενημερώνεσαι σε κάθε βήμα.")
             await push_service.send_to_account(
-                account_id, title="🛍️ Η παραγγελία σου ελήφθη", body=body, url="/portal")
+                account_id, title="🛍️ Η παραγγελία σου ελήφθη", body=body, url="/portal", kind="order")
         return {"ok": True, "order_id": str(res), "total_cents": order_total,
                 "status": status, "has_backorder": has_backorder}
 
@@ -613,7 +613,7 @@ class OrdersDeliveryRepository(BaseRepository):
         if order.get("account_id"):
             from app.services import push_service
             await push_service.send_to_account(order["account_id"],
-                                               title="🛍️ Παραγγελία φαρμακείου", body=msg, url="/portal")
+                                               title="🛍️ Παραγγελία φαρμακείου", body=msg, url="/portal", kind="order")
         return {"ok": True, "status": "new" if accept else "declined", "available_date": available_date}
 
     async def set_internal_note(self, order_id: str, note: str) -> dict:
@@ -647,7 +647,7 @@ class OrdersDeliveryRepository(BaseRepository):
         if order.get("account_id"):
             from app.services import push_service
             await push_service.send_to_account(order["account_id"],
-                                               title="💬 Μήνυμα από το φαρμακείο", body=txt, url="/portal")
+                                               title="💬 Μήνυμα από το φαρμακείο", body=txt, url="/portal", kind="order")
         return {"ok": True}
 
     async def _refund_loyalty(self, order: dict) -> None:
@@ -718,7 +718,7 @@ class OrdersDeliveryRepository(BaseRepository):
                    "cancelled": "Η παραγγελία σου ακυρώθηκε."}.get(status)
             if msg:
                 await push_service.send_to_account(order["account_id"],
-                                                   title="🛍️ Παραγγελία φαρμακείου", body=msg, url="/portal")
+                                                   title="🛍️ Παραγγελία φαρμακείου", body=msg, url="/portal", kind="order")
         return {"ok": True, "status": status}
 
 
@@ -750,6 +750,6 @@ async def confirm_viva_payment(*, order_code: str, transaction_id: str | None = 
         "payment_status": "paid", "viva_transaction_id": transaction_id, "paid_at": _now()}})
     if order.get("account_id"):
         from app.services import push_service
-        await push_service.send_to_account(order["account_id"], title="✅ Η πληρωμή ολοκληρώθηκε",
+        await push_service.send_to_account(order["account_id"], kind="payment", title="✅ Η πληρωμή ολοκληρώθηκε",
                                            body="Η online πληρωμή της παραγγελίας σου ελήφθη.", url="/portal")
     return True

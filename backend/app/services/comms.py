@@ -111,9 +111,28 @@ async def check_central_balance() -> dict:
 
 
 # ── Email (central SMTP, pharmacy display name + reply-to) ───────────────────
+async def _blocked_by_patient(tenant_id: str, channel: str, recipient: str, *,
+                              patient_ref: str | None, kind: str, subject: str | None = None) -> bool:
+    """True αν ο ΑΣΘΕΝΗΣ έχει απενεργοποιήσει αυτό το κανάλι από την πύλη του.
+
+    Ο έλεγχος ζει ΕΔΩ (και όχι στους καλούντες) ώστε καμία νέα διαδρομή αποστολής να μην μπορεί να
+    τον παρακάμψει κατά λάθος. Καταγράφεται με status="blocked" και μηδενικό κόστος, ώστε να
+    φαίνεται στο ιστορικό γιατί δεν έφυγε — και να ΜΗΝ χρεωθεί το φαρμακείο.
+    """
+    from app.services import notify_prefs
+    if await notify_prefs.allows_patient(tenant_id, patient_ref, channel, kind):
+        return False
+    await _log_message(tenant_id, channel, recipient, cost_cents=0, status="blocked",
+                       patient_ref=patient_ref, kind=kind, subject=subject,
+                       error="Ο πελάτης έχει απενεργοποιήσει αυτό το κανάλι από την πύλη.")
+    return True
+
+
 async def send_email(tenant_id: str, to: str, subject: str, html: str, *,
                      patient_ref: str | None = None, campaign_id: str | None = None,
                      kind: str = "message", charge: bool = True) -> None:
+    if await _blocked_by_patient(tenant_id, "email", to, patient_ref=patient_ref, kind=kind, subject=subject):
+        return
     ch = await message_wallet.charge(tenant_id, "email", 1, ref=to) if charge else {"cost": 0}  # raises InsufficientCredits
     try:
         cfg = await mailer.get_smtp(masked=False)
@@ -303,6 +322,8 @@ async def clear_tenant_sender(tenant_id: str, channel: str) -> dict:
 
 async def send_sms(tenant_id: str, to: str, text: str, *, patient_ref: str | None = None,
                    campaign_id: str | None = None, kind: str = "message", charge: bool = True) -> None:
+    if await _blocked_by_patient(tenant_id, "sms", to, patient_ref=patient_ref, kind=kind):
+        return
     ap = await _apifon()
     sender = await _resolved_sender(tenant_id, "sms", ap["sender"])
     ch = await message_wallet.charge(tenant_id, "sms", 1, ref=to) if charge else {"cost": 0}
@@ -356,6 +377,8 @@ async def send_viber(tenant_id: str, to: str, text: str, *, patient_ref: str | N
                      campaign_id: str | None = None, kind: str = "message", charge: bool = True) -> None:
     """Central Apifon IM (Viber). Text-only. Το Viber→SMS fallback γίνεται στο DLR webhook όταν το
     Viber δεν παραδοθεί (όχι εδώ — θα ήταν διπλή χρέωση)."""
+    if await _blocked_by_patient(tenant_id, "viber", to, patient_ref=patient_ref, kind=kind):
+        return
     ap = await _apifon()
     sender = await _resolved_sender(tenant_id, "viber", ap["viber_sender"])
     ch = await message_wallet.charge(tenant_id, "viber", 1, ref=to) if charge else {"cost": 0}

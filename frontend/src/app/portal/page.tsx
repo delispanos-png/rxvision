@@ -7,7 +7,7 @@ import {
   Pill, RefreshCw, Stethoscope, Bell, LogOut, Building2,
   Calendar, ChevronDown, ChevronUp, ChevronRight, CheckCircle2, Clock, Sparkles, X, Search, CalendarPlus, AlertCircle,
   PackageCheck, Gift, FileText, ShoppingBag, HeartPulse, FilePlus, MapPin, Home, Camera, Upload, Star, Navigation, Plus, Check,
-  Sun, Moon, User, Globe, Download,
+  Sun, Moon, User, Globe, Download, MessageSquare, Mail, Smartphone, BellOff,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { QRCodeCanvas } from "qrcode.react";
@@ -29,7 +29,9 @@ import { fmtDate, fmtDateTime } from "@/lib/formatters";
 type Pharmacy = { tenant_id: string; pharmacy_name: string };
 type Pharm = { status: { isOpen: boolean; isOnDuty: boolean; isOvernightDuty: boolean; closingSoon: boolean; statusText: string; statusTextEn?: string }; schedule: { week: { day: number; status: string; intervals: { start: string; end: string }[] }[] } };
 type Consent = { granted: boolean; at?: string | null };
-type Me = { profile: { first_name: string; last_name: string; email?: string; phone?: string; amka?: string; phone_verified?: boolean; email_verified?: boolean; twofa_enabled?: boolean; consents?: { health_data?: Consent; marketing?: Consent }; address?: string; city?: string; postal_code?: string; theme?: "light" | "dark" | null; avatar_url?: string | null }; active_tenant: string | null; pharmacies: Pharmacy[]; portal_mode?: "network" | "single"; caps?: { shop: boolean; loyalty: boolean } };
+type NotifyPrefs = { sms: boolean; viber: boolean; email: boolean; push: boolean };
+const NOTIFY_CHANNELS = ["sms", "viber", "email", "push"] as const;
+type Me = { profile: { first_name: string; last_name: string; email?: string; phone?: string; amka?: string; phone_verified?: boolean; email_verified?: boolean; twofa_enabled?: boolean; consents?: { health_data?: Consent; marketing?: Consent }; notify_prefs?: NotifyPrefs; address?: string; city?: string; postal_code?: string; theme?: "light" | "dark" | null; avatar_url?: string | null }; active_tenant: string | null; pharmacies: Pharmacy[]; portal_mode?: "network" | "single"; caps?: { shop: boolean; loyalty: boolean } };
 const PF_INP = "mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 dark:text-slate-100 focus:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100";
 type Sess = { id: string; current: boolean; user_agent?: string | null; ip?: string | null; created_at?: string | null; last_seen?: string | null };
 function deviceLabel(ua: string | null | undefined, t: (el: string, en: string) => string): string {
@@ -584,6 +586,22 @@ export default function PortalHome() {
     } catch { toast(t("Κάτι πήγε στραβά — δοκίμασε ξανά.", "Something went wrong — please try again."), "error"); }
   }
 
+  async function setNotify(patch: Partial<NotifyPrefs>) {
+    const prev = me?.profile.notify_prefs;
+    setMe((m) => (m ? { ...m, profile: { ...m.profile, notify_prefs: { ...(m.profile.notify_prefs ?? { sms: true, viber: true, email: true, push: true }), ...patch } } } : m));
+    try {
+      const r = await patientApi<{ notify_prefs: NotifyPrefs }>("/patient/me/notification-prefs",
+        { method: "PUT", body: JSON.stringify(patch) });
+      setMe((m) => (m ? { ...m, profile: { ...m.profile, notify_prefs: r.notify_prefs } } : m));
+      const off = NOTIFY_CHANNELS.every((c) => !r.notify_prefs[c]);
+      toast(off ? t("Το φαρμακείο δεν θα σου στέλνει πλέον ενημερώσεις.", "The pharmacy will no longer send you updates.")
+                : t("Οι προτιμήσεις σου αποθηκεύτηκαν.", "Your preferences were saved."), "success");
+    } catch {
+      setMe((m) => (m && prev ? { ...m, profile: { ...m.profile, notify_prefs: prev } } : m));   // rollback
+      toast(t("Κάτι πήγε στραβά — δοκίμασε ξανά.", "Something went wrong — please try again."), "error");
+    }
+  }
+
   // tenantId: η εκτέλεση μπορεί να έγινε σε ΑΛΛΟ φαρμακείο του πελάτη → πες στο API πού να ψάξει.
   async function toggleExpand(barcode: string, tenantId?: string) {
     if (expanded === barcode) { setExpanded(null); setDetail(null); return; }
@@ -1042,12 +1060,77 @@ export default function PortalHome() {
               </div>
             </div>
 
+            {/* ── Ειδοποιήσεις: ο ΠΕΛΑΤΗΣ αποφασίζει αν & πώς του μιλά το φαρμακείο ────────────── */}
+            {(() => {
+              const np = me.profile.notify_prefs ?? { sms: true, viber: true, email: true, push: true };
+              const anyOn = NOTIFY_CHANNELS.some((c) => np[c]);
+              const rows = [
+                { k: "sms" as const, Icon: MessageSquare, label: t("SMS", "SMS"), sub: t("Γραπτό μήνυμα στο κινητό σου", "Text message to your mobile") },
+                { k: "viber" as const, Icon: MessageSquare, label: t("Viber", "Viber"), sub: t("Μήνυμα μέσω Viber", "Message via Viber") },
+                { k: "email" as const, Icon: Mail, label: t("Email", "Email"), sub: t("Μήνυμα στο email σου", "Message to your email") },
+                { k: "push" as const, Icon: Smartphone, label: t("Ειδοποιήσεις κινητού", "Phone notifications"), sub: t("Ειδοποίηση στην οθόνη, ακόμη κι αν η εφαρμογή είναι κλειστή", "On-screen alert, even when the app is closed") },
+              ];
+              return (
+                <div className="mt-5 rounded-2xl border-2 border-brand-200 bg-brand-50/40 p-4 dark:border-brand-800 dark:bg-brand-950/20">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 text-sm font-bold text-slate-800 dark:text-slate-100">
+                        <Bell className="h-4 w-4 text-brand-600" /> {t("Ειδοποιήσεις από το φαρμακείο", "Pharmacy notifications")}
+                      </div>
+                      <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">
+                        {t("Εσύ αποφασίζεις αν και πώς θα σου στέλνει ενημερώσεις το φαρμακείο σου. Μπορείς να το αλλάξεις όποτε θέλεις.", "You decide whether and how your pharmacy may send you updates. You can change this at any time.")}
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* κεντρικός διακόπτης */}
+                  <button onClick={() => setNotify(Object.fromEntries(NOTIFY_CHANNELS.map((c) => [c, !anyOn])) as Partial<NotifyPrefs>)}
+                    className={`mt-3 flex w-full items-center justify-between gap-3 rounded-xl border-2 px-3 py-3 text-left transition ${anyOn ? "border-emerald-300 bg-white dark:border-emerald-800 dark:bg-slate-900" : "border-rose-300 bg-rose-50 dark:border-rose-800 dark:bg-rose-950/30"}`}>
+                    <span className="flex min-w-0 items-center gap-2">
+                      {anyOn ? <Bell className="h-5 w-5 shrink-0 text-emerald-600" /> : <BellOff className="h-5 w-5 shrink-0 text-rose-600" />}
+                      <span className="min-w-0">
+                        <span className="block text-sm font-bold text-slate-800 dark:text-slate-100">{anyOn ? t("Δέχομαι ενημερώσεις", "I accept updates") : t("Δεν δέχομαι καμία ενημέρωση", "I accept no updates")}</span>
+                        <span className="block text-[11px] text-slate-500 dark:text-slate-400">{anyOn ? t("Πάτησε για να τα κλείσεις όλα", "Tap to turn everything off") : t("Πάτησε για να τα ξανανοίξεις", "Tap to turn them back on")}</span>
+                      </span>
+                    </span>
+                    <span className={`relative h-7 w-12 shrink-0 rounded-full transition ${anyOn ? "bg-emerald-500" : "bg-rose-400"}`}>
+                      <span className={`absolute top-1 h-5 w-5 rounded-full bg-white shadow transition-all ${anyOn ? "left-[26px]" : "left-1"}`} />
+                    </span>
+                  </button>
+
+                  {/* ανά κανάλι */}
+                  <div className={`mt-2 space-y-1 transition ${anyOn ? "" : "pointer-events-none opacity-40"}`}>
+                    {rows.map(({ k, Icon, label, sub }) => (
+                      <div key={k} className="flex items-center justify-between gap-3 rounded-xl bg-white px-3 py-2.5 dark:bg-slate-900">
+                        <span className="flex min-w-0 items-center gap-2">
+                          <Icon className="h-4 w-4 shrink-0 text-slate-400" />
+                          <span className="min-w-0">
+                            <span className="block text-sm font-semibold text-slate-700 dark:text-slate-200">{label}</span>
+                            <span className="block text-[11px] text-slate-400">{sub}</span>
+                          </span>
+                        </span>
+                        <button aria-label={label} onClick={() => setNotify({ [k]: !np[k] } as Partial<NotifyPrefs>)}
+                          className={`relative h-6 w-11 shrink-0 rounded-full transition ${np[k] ? "bg-emerald-500" : "bg-slate-300 dark:bg-slate-600"}`}>
+                          <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all ${np[k] ? "left-[22px]" : "left-0.5"}`} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+
+                  <p className="mt-2.5 text-[11px] leading-relaxed text-slate-500 dark:text-slate-400">
+                    <b>{t("Τι θα συνεχίσεις να λαμβάνεις:", "What you'll still receive:")}</b>{" "}
+                    {t("μηνύματα που απαντούν σε δική σου ενέργεια — κατάσταση παραγγελίας που έκανες, ραντεβού που έκλεισες, απάντηση σε ερώτημα διαθεσιμότητας και κωδικοί ασφαλείας. Χωρίς αυτά δεν λειτουργούν οι υπηρεσίες που ζήτησες.", "messages that answer something you did — the status of an order you placed, an appointment you booked, a reply to an availability question, and security codes. Without them, the services you asked for don't work.")}
+                  </p>
+                </div>
+              );
+            })()}
+
             <div className="mt-5 border-t border-slate-100 dark:border-slate-800 pt-4 dark:border-slate-800">
               <div className="mb-1 text-sm font-semibold text-slate-700 dark:text-slate-200">{t("Συγκαταθέσεις (GDPR)", "Consents (GDPR)")}</div>
               <p className="mb-3 text-[11px] text-slate-400">{t("Ξεχωριστές & ανακλητές ανά πάσα στιγμή. Η επεξεργασία δεδομένων υγείας είναι διακριτή από το marketing.", "Separate and revocable at any time. Processing of health data is distinct from marketing.")}</p>
               {([
                 { k: "health_data", label: t("Επεξεργασία δεδομένων υγείας", "Health data processing"), sub: t("Απαραίτητη για να βλέπεις συνταγές & ιστορικό στην πύλη.", "Required to view your prescriptions & history in the portal.") },
-                { k: "marketing", label: t("Ενημερώσεις & προσφορές (newsletter)", "Updates & offers (newsletter)"), sub: t("Email/SMS με νέα, προσφορές & χρήσιμες υπενθυμίσεις.", "Email/SMS with news, offers & helpful reminders.") },
+                { k: "marketing", label: t("Προσφορές & newsletter", "Offers & newsletter"), sub: t("Προωθητικά μηνύματα του φαρμακείου. Τα κανάλια τα ορίζεις παραπάνω.", "Promotional messages from the pharmacy. You choose the channels above.") },
               ] as const).map((c) => {
                 const cur = me.profile.consents?.[c.k];
                 const on = !!cur?.granted;

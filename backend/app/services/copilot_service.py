@@ -262,7 +262,7 @@ async def _a_answer_avail(tenant_id, p):
     doc = await AvailabilityRepository(tenant_id=tenant_id).answer(str(rid), str(ans))
     if doc and doc.get("account_id"):
         from app.services import push_service
-        await push_service.send_to_account(doc["account_id"], title="💬 Απάντηση διαθεσιμότητας",
+        await push_service.send_to_account(doc["account_id"], kind="availability", title="💬 Απάντηση διαθεσιμότητας",
                                            body=f"{doc.get('medicine_name') or doc.get('query')}: {ans}",
                                            url="/portal")
     return "Στάλθηκε η απάντηση στον πελάτη."
@@ -278,7 +278,7 @@ async def _a_pickup_ready(tenant_id, p):
     if doc and doc.get("account_id"):
         what = doc.get("service_name") or "Η συνταγή σου"
         from app.services import push_service
-        if await push_service.send_to_account(doc["account_id"], title="📦 Έτοιμη για παραλαβή",
+        if await push_service.send_to_account(doc["account_id"], kind="order", title="📦 Έτοιμη για παραλαβή",
                                                body=what, url="/portal"):
             notified.append("push")
         # SMS «η συνταγή σου είναι έτοιμη» — ΜΟΝΟ σε ΕΠΙΒΕΒΑΙΩΜΕΝΟ κινητό, μετρημένο από το wallet
@@ -290,7 +290,7 @@ async def _a_pickup_ready(tenant_id, p):
                 await comms.send_sms(
                     tenant_id, acc["phone"],
                     f"RxVision: {what} είναι έτοιμη για παραλαβή από το φαρμακείο. Πέρνα να την παραλάβεις.",
-                    kind="notify")
+                    kind="order")   # απαντά σε δικό του αίτημα → φεύγει πάντα (βλ. notify_prefs)
                 notified.append("SMS")
             except message_wallet.InsufficientCredits:
                 pass
