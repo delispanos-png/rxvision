@@ -64,8 +64,20 @@ async def _admin_hdika_alert(db, tenant_id: str, headline: str) -> None:
         pass
 
 
+# Μόνο φαρμακεία που γράφτηκαν μέσα σε αυτό το παράθυρο θεωρούνται «νέα» για την ειδοποίηση
+# πρώτου συγχρονισμού. ΓΙΑΤΙ: το flag `first_sync_alerted` προστέθηκε αργότερα από τους πρώτους
+# πελάτες, οπότε ΚΑΘΕ παλιό φαρμακείο έστελνε αναδρομικά ένα «ξεκίνησε ο συγχρονισμός» — ο
+# ιδιοκτήτης έπαιρνε SMS για υπαρκτούς πελάτες. Με τον έλεγχο ηλικίας αυτό δεν μπορεί να επαναληφθεί
+# ούτε αν χαθεί/μηδενιστεί ποτέ το flag.
+_FIRST_SYNC_ALERT_MAX_AGE_DAYS = 30
+
+
 async def _maybe_first_sync_alert(db, tenant_id: str, inserted: int) -> None:
-    """Πρώτος επιτυχημένος συγχρονισμός ΗΔΥΚΑ με δεδομένα → ΜΙΑ ειδοποίηση «ξεκίνησε». Idempotent (flag)."""
+    """Πρώτος επιτυχημένος συγχρονισμός ΗΔΥΚΑ ΝΕΟΥ φαρμακείου → ΜΙΑ ειδοποίηση. Idempotent (flag).
+
+    Για παλιά φαρμακεία το flag μπαίνει ΣΙΩΠΗΛΑ (χωρίς SMS): ο ιδιοκτήτης θέλει ενημέρωση μόνο για
+    νέα εγγραφή και για το αν ο ΠΡΩΤΟΣ της συγχρονισμός δούλεψε — όχι για συγχρονισμούς υπαρχόντων.
+    """
     if not inserted:
         return
     try:
@@ -73,7 +85,15 @@ async def _maybe_first_sync_alert(db, tenant_id: str, inserted: int) -> None:
             {"_id": tenant_id, "ingestion_config.hdika.first_sync_alerted": {"$ne": True}},
             {"$set": {"ingestion_config.hdika.first_sync_alerted": True}})
         if r.modified_count:
-            await _admin_hdika_alert(db, tenant_id, f"✅ ΗΔΥΚΑ — ξεκίνησε ο συγχρονισμός ({inserted} εγγραφές)")
+            t = await db["tenants"].find_one({"_id": tenant_id}, {"created_at": 1})
+            created = (t or {}).get("created_at")
+            age_days = ((datetime.now(tz=timezone.utc) - created).days
+                        if isinstance(created, datetime) else 10_000)
+            if age_days > _FIRST_SYNC_ALERT_MAX_AGE_DAYS:
+                return          # παλιό φαρμακείο → μόνο σφράγισμα του flag, ΚΑΝΕΝΑ SMS
+            await _admin_hdika_alert(
+                db, tenant_id,
+                f"✅ ΝΕΟ ΦΑΡΜΑΚΕΙΟ — ο πρώτος συγχρονισμός ΗΔΥΚΑ πέτυχε ({inserted} εγγραφές)")
             # Νέος πελάτης: κανονικοποίησε ΤΩΡΑ τις περιοχές του (αλλιώς θα έβλεπε την ίδια περιοχή
             # σε δεκάδες παραλλαγές μέχρι τον εβδομαδιαίο βρόχο της Κυριακής).
             try:
