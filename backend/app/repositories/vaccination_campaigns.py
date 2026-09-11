@@ -184,6 +184,102 @@ class VaccinationCampaignRepository(BaseRepository):
         return open_ags
 
     # ── the worklist ──────────────────────────────────────────
+    # ── Επανάκληση περσινών ───────────────────────────────────
+    @staticmethod
+    def season_window(season_start: int) -> tuple[datetime, datetime]:
+        """Εμβολιαστική περίοδος: 1 Οκτ (season_start) → 30 Απρ (season_start+1).
+        Το πάνω όριο είναι ΑΠΟΚΛΕΙΣΤΙΚΟ (1/5), ώστε να περιλαμβάνεται ολόκληρη η 30/4."""
+        return (datetime(season_start, 10, 1, tzinfo=timezone.utc),
+                datetime(season_start + 1, 5, 1, tzinfo=timezone.utc))
+
+    @staticmethod
+    def current_season_start(now: datetime | None = None) -> int:
+        """Η τελευταία περίοδος που έχει ΞΕΚΙΝΗΣΕΙ (ίδιος κανόνας με το UI)."""
+        n = now or _now()
+        return n.year if n.month >= 10 else n.year - 1
+
+    async def recall_list(self, *, season_start: int, page: int = 1, page_size: int = 50,
+                          status: str = "all", search: str | None = None,
+                          include_deceased: bool = False) -> dict:
+        """Ποιοι εμβολιάστηκαν την ΠΕΡΣΙΝΗ περίοδο και ποιοι από αυτούς ΔΕΝ ήρθαν φέτος.
+
+        Η πιο αποδοτική λίστα επανάκλησης που υπάρχει: δεν είναι υποθετικό κοινό — είναι άνθρωποι
+        που **αποδεδειγμένα** εμβολιάζονται και απλώς δεν έχουν έρθει ακόμη φέτος.
+
+        `status`: all | pending (δεν ήρθε φέτος) | done (ήρθε).
+        Οι **θανόντες** αποκλείονται εξ ορισμού (`include_deceased=False`) αλλά μετριούνται χωριστά —
+        δεν στέλνουμε πρόσκληση εμβολιασμού σε νεκρό.
+        """
+        prev_start, prev_end = self.season_window(season_start - 1)
+        cur_start, cur_end = self.season_window(season_start)
+        prev = await self._vaccinated_map(prev_start, prev_end)
+        cur = await self._vaccinated_map(cur_start, cur_end)
+        if not prev:
+            return jsonsafe({"page": page, "page_size": page_size, "total": 0, "items": [],
+                             "counts": {"cohort": 0, "done": 0, "pending": 0, "deceased": 0},
+                             "season": {"current": season_start, "previous": season_start - 1}})
+
+        contacts: dict[ObjectId, dict] = {}
+        async for c in self._db["patient_contacts"].find(
+                {"tenant_id": self.tenant_id},
+                {"mobile": 1, "phone": 1, "email": 1, "marketing_consent": 1,
+                 "active": 1, "inactive_reason": 1}):
+            contacts[c["_id"]] = c
+
+        needle = (search or "").strip().lower()
+        rows: list[dict] = []
+        counts = {"cohort": 0, "done": 0, "pending": 0, "deceased": 0}
+        async for p in self._db["patients_anonymized"].find(
+                {"tenant_id": self.tenant_id, "pseudo_id": {"$in": list(prev.keys())}},
+                {"pseudo_id": 1, "amka": 1, "full_name": 1, "age_group": 1,
+                 "last_seen_at": 1, "deceased": 1}):
+            pid = p.get("pseudo_id")
+            c = contacts.get(p["_id"]) or {}
+            dead = bool(p.get("deceased")) or (
+                c.get("active") is False and c.get("inactive_reason") == "deceased")
+            done = pid in cur
+            counts["cohort"] += 1
+            if dead:
+                counts["deceased"] += 1
+            elif done:
+                counts["done"] += 1
+            else:
+                counts["pending"] += 1
+
+            if dead and not include_deceased:
+                continue
+            if status == "pending" and (done or dead):
+                continue
+            if status == "done" and not done:
+                continue
+            if needle and needle not in f"{p.get('full_name') or ''} {p.get('amka') or ''}".lower():
+                continue
+            ag = p.get("age_group") or "unknown"
+            rows.append({
+                "patient_ref": str(p["_id"]), "name": mask_name(p.get("full_name"), self.demo),
+                "amka": mask_amka(p.get("amka"), self.demo), "age_group": ag,
+                "last_season_at": prev.get(pid), "vaccinated": done,
+                "vaccinated_at": cur.get(pid) if done else None,
+                "deceased": dead, "last_seen": p.get("last_seen_at"),
+                "mobile": None if self.demo else c.get("mobile"),
+                "phone": None if self.demo else c.get("phone"),
+                "email": None if self.demo else c.get("email"),
+                "consent": bool(c.get("marketing_consent")),
+                "has_contact": bool(c.get("mobile") or c.get("phone") or c.get("email")),
+                "_score": _AGE_RANK.get(ag, 0),
+            })
+
+        # Προτεραιότητα: μεγαλύτερες ηλικίες πρώτα, μετά όσοι εμβολιάστηκαν νωρίτερα πέρσι
+        # (ήρθαν έγκαιρα πέρσι → πιο πιθανό να ανταποκριθούν τώρα).
+        rows.sort(key=lambda r: (r["_score"], -(r["last_season_at"] or prev_end).timestamp()), reverse=True)
+        total = len(rows)
+        page_rows = rows[(page - 1) * page_size: page * page_size]
+        for r in page_rows:
+            r.pop("_score", None)
+        return jsonsafe({"page": page, "page_size": page_size, "total": total, "items": page_rows,
+                         "counts": counts,
+                         "season": {"current": season_start, "previous": season_start - 1}})
+
     async def worklist(self, *, page: int = 1, page_size: int = 50, age_groups: list[str] | None = None,
                        status: str = "pending", open_only: bool = False, high_risk_only: bool = False,
                        search: str | None = None, vacc_from: datetime | None = None,

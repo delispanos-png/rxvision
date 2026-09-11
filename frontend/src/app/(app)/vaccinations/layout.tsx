@@ -9,6 +9,7 @@ import { ModuleGuard } from "@/components/layout/ModuleGuard";
 const TABS = [
   { href: "/vaccinations", el: "Επισκόπηση", en: "Overview" },
   { href: "/vaccinations/targets", el: "Λίστα στόχων", en: "Worklist" },
+  { href: "/vaccinations/recall", el: "Επανάκληση", en: "Recall" },
   { href: "/vaccinations/registry", el: "Μητρώο", en: "Registry" },
   { href: "/vaccinations/settings", el: "Ρυθμίσεις", en: "Settings" },
 ];

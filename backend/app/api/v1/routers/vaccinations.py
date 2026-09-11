@@ -142,6 +142,28 @@ async def worklist(
         vacc_from=vacc_from, vacc_to=vacc_to)
 
 
+@router.get("/recall")
+async def recall(
+    season: int | None = Query(None, description="έτος έναρξης περιόδου (π.χ. 2025 = 2025-26)"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+    status: Literal["all", "pending", "done"] = "all",
+    search: str | None = None,
+    include_deceased: bool = False,
+    ctx: TenantContext = Depends(require(_PERM, module=_MODULE)),
+):
+    """Επανάκληση: όσοι εμβολιάστηκαν την ΠΕΡΣΙΝΗ περίοδο, με ένδειξη ποιοι ήρθαν φέτος.
+
+    Θανόντες: αποκλείονται εξ ορισμού, αλλά επιστρέφονται στα counts ώστε να φαίνεται πόσοι
+    αφαιρέθηκαν και γιατί.
+    """
+    repo = VaccinationCampaignRepository(tenant_id=ctx.tenant_id, demo=ctx.demo)
+    return await repo.recall_list(
+        season_start=season if season is not None else repo.current_season_start(),
+        page=page, page_size=page_size, status=status, search=search,
+        include_deceased=include_deceased)
+
+
 def _vacc_email_html(message: str, from_name: str | None) -> str:
     body = message.replace("\n", "<br/>")
     return f"""<div style="background:#f1f5f9;padding:24px;font-family:Arial,Helvetica,sans-serif;">
@@ -157,6 +179,9 @@ def _vacc_email_html(message: str, from_name: str | None) -> str:
 
 class NotifyIn(BaseModel):
     channel: Literal["sms", "email", "push"]
+    # "campaign" = η λίστα στόχων της τρέχουσας καμπάνιας· "recall" = περσινοί που ΔΕΝ ήρθαν φέτος
+    mode: Literal["campaign", "recall"] = "campaign"
+    season: int | None = None
     age_groups: list[str] = []
     open_only: bool = False
     high_risk_only: bool = False
@@ -170,9 +195,16 @@ async def notify(body: NotifyIn, ctx: TenantContext = Depends(require(_PERM, mod
     """Invite PENDING patients (optionally a subset of age bands / open bands / high-risk) to vaccinate.
     SMS/email respect marketing consent + the withdrawal ledger; push reaches portal accounts."""
     repo = VaccinationCampaignRepository(tenant_id=ctx.tenant_id)
-    wl = await repo.worklist(page=1, page_size=5000, age_groups=body.age_groups or None,
-                             status="pending", open_only=body.open_only,
-                             high_risk_only=body.high_risk_only)
+    if body.mode == "recall":
+        # ΜΟΝΟ όσοι εμβολιάστηκαν πέρσι και δεν έχουν έρθει φέτος· οι θανόντες δεν μπαίνουν ΠΟΤΕ
+        # στη λίστα (status="pending" τους αποκλείει ήδη, include_deceased=False διπλό φράγμα).
+        wl = await repo.recall_list(
+            season_start=body.season if body.season is not None else repo.current_season_start(),
+            page=1, page_size=5000, status="pending", include_deceased=False)
+    else:
+        wl = await repo.worklist(page=1, page_size=5000, age_groups=body.age_groups or None,
+                                 status="pending", open_only=body.open_only,
+                                 high_risk_only=body.high_risk_only)
     field = "mobile" if body.channel == "sms" else "email" if body.channel == "email" else None
 
     targets: list[dict] = []
