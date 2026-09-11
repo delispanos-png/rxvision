@@ -8,8 +8,13 @@ import { DateInput } from "@/components/ui/DateInput";
 import { useT } from "@/store/prefStore";
 
 /** From/to date inputs bound to the global Zustand filter store + a reload button that
- *  refetches the data WITHOUT touching the selected range. */
-export function DateRangeFilter() {
+ *  refetches the data WITHOUT touching the selected range.
+ *
+ *  `presets="season"` → **εμβολιαστικές περίοδοι** αντί για ημερολογιακά έτη. Η γρίπη δεν ακολουθεί
+ *  το ημερολόγιο: η περίοδος πάει **1 Οκτωβρίου → 30 Απριλίου**, οπότε το «τρέχον έτος» έκοβε τη
+ *  σεζόν στη μέση (Οκτ-Δεκ σε έναν χρόνο, Ιαν-Απρ στον επόμενο) και τα νούμερα έβγαζαν λάθος εικόνα.
+ */
+export function DateRangeFilter({ presets: kind = "default" }: { presets?: "default" | "season" } = {}) {
   const { dateFrom, dateTo, setDateRange } = useUiStore();
   const t = useT();
   const qc = useQueryClient();
@@ -33,11 +38,32 @@ export function DateRangeFilter() {
   };
   const y = today.getFullYear();
   const tomorrow = iso(new Date(y, today.getMonth(), today.getDate() + 1));   // exclusive upper → περιλαμβάνει σήμερα
-  const presets: { label: string; from: string; to: string }[] = [
-    { label: t("Τρέχων μήνας", "This month"), from: iso(new Date(y, today.getMonth(), 1)), to: tomorrow },
-    { label: t("Τρέχον έτος", "This year"), from: `${y}-01-01`, to: tomorrow },
-    { label: t("Προηγ. έτος", "Last year"), from: `${y - 1}-01-01`, to: `${y}-01-01` },   // περιλαμβάνει 31/12
-  ];
+  // Εμβολιαστική περίοδος: 1 Οκτ (έτος sy) → 30 Απρ (sy+1). ΤΡΕΧΟΥΣΑ = η τελευταία που έχει ΞΕΚΙΝΗΣΕΙ,
+  // ώστε στο μεσοδιάστημα Μαΐου–Σεπτεμβρίου να δείχνει τη σεζόν που μόλις έκλεισε (που έχει δεδομένα)
+  // κι όχι ένα άδειο διάστημα. Τον Οκτώβριο γυρίζει μόνη της στη νέα.
+  const seasonStart = today.getMonth() >= 9 ? y : y - 1;      // getMonth() 9 = Οκτώβριος
+  const season = (sy: number) => ({
+    from: `${sy}-10-01`,
+    to: `${sy + 1}-05-01`,                                    // αποκλειστικό όριο → περιλαμβάνει 30/04
+    years: `${sy}-${String((sy + 1) % 100).padStart(2, "0")}`,
+  });
+  const cur = season(seasonStart);
+  const prev = season(seasonStart - 1);
+  const presets: { label: string; title?: string; from: string; to: string }[] = kind === "season"
+    ? [
+        { label: t("Τρέχων μήνας", "This month"), from: iso(new Date(y, today.getMonth(), 1)), to: tomorrow },
+        { label: t(`Τρέχουσα περίοδος ${cur.years}`, `Current season ${cur.years}`), from: cur.from, to: cur.to,
+          title: t(`Εμβολιαστική περίοδος 01/10/${seasonStart} – 30/04/${seasonStart + 1}`,
+                   `Vaccination season 01/10/${seasonStart} – 30/04/${seasonStart + 1}`) },
+        { label: t(`Προηγούμενη ${prev.years}`, `Previous ${prev.years}`), from: prev.from, to: prev.to,
+          title: t(`Εμβολιαστική περίοδος 01/10/${seasonStart - 1} – 30/04/${seasonStart}`,
+                   `Vaccination season 01/10/${seasonStart - 1} – 30/04/${seasonStart}`) },
+      ]
+    : [
+        { label: t("Τρέχων μήνας", "This month"), from: iso(new Date(y, today.getMonth(), 1)), to: tomorrow },
+        { label: t("Τρέχον έτος", "This year"), from: `${y}-01-01`, to: tomorrow },
+        { label: t("Προηγ. έτος", "Last year"), from: `${y - 1}-01-01`, to: `${y}-01-01` },   // περιλαμβάνει 31/12
+      ];
 
   return (
     <div className="flex flex-wrap items-end gap-3">
@@ -45,7 +71,7 @@ export function DateRangeFilter() {
         {presets.map((p) => {
           const active = dateFrom === p.from && dateTo === p.to;
           return (
-            <button key={p.label} type="button" onClick={() => setDateRange(p.from, p.to)}
+            <button key={p.label} type="button" title={p.title} onClick={() => setDateRange(p.from, p.to)}
               className={`rounded-lg border px-2.5 py-1.5 text-xs font-medium ${active ? "border-brand-500 bg-brand-50 text-brand-700 dark:bg-brand-950/40 dark:text-brand-300" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-300"}`}>
               {p.label}
             </button>

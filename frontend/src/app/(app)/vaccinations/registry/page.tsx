@@ -69,7 +69,7 @@ export default function VaccinationRegistryPage() {
   return (
     <div>
       <div className="mb-4 flex flex-wrap items-end gap-3">
-        <DateRangeFilter />
+        <DateRangeFilter presets="season" />
         <label className="text-xs font-medium text-slate-500">{t("Αναζήτηση barcode εμβολίου", "Vaccination barcode")}
           <div className="relative mt-1">
             <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
