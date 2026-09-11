@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 
 from app.core.db import shared_db
 from app.repositories.base import jsonsafe
-from app.utils.masking import mask_amka
+from app.utils.masking import mask_amka, mask_name
 
 
 async def deceased_balances(tenant_id: str, *, include_settled: bool = False, demo: bool = False) -> dict:
@@ -62,7 +62,9 @@ async def deceased_balances(tenant_id: str, *, include_settled: bool = False, de
             continue
         items.append({
             "patient_id": rid,
-            "name": (d.get("full_name") or "—"),
+            # Ίδια μεταχείριση με κάθε άλλη λίστα ασθενών: στον «Πελάτη παρουσίασης» κρύβεται το
+            # ΕΠΙΘΕΤΟ. Ήταν ασυνέπεια να μασκάρεται το ΑΜΚΑ αλλά να φαίνεται ολόκληρο το όνομα.
+            "name": mask_name(d.get("full_name"), demo) or "—",
             "amka": mask_amka(d.get("amka"), demo),
             "deceased_at": jsonsafe(d.get("deceased_at")),
             "unexecuted_rx": ux,
@@ -77,8 +79,10 @@ async def deceased_balances(tenant_id: str, *, include_settled: bool = False, de
         if open_items > 0:
             with_open += 1
 
-    # πρώτα όσοι έχουν εκκρεμότητες (φθίνον), μετά οι υπόλοιποι κατά ημ/νία θανάτου (πιο πρόσφατοι πρώτα)
-    items.sort(key=lambda x: (x["open_items"], x["deceased_at"] or ""), reverse=True)
+    # ΠΙΟ ΠΡΟΣΦΑΤΟΣ ΘΑΝΑΤΟΣ ΠΡΩΤΑ — αυτό ψάχνει ο φαρμακοποιός (τι συνέβη τελευταία), όχι ποιος
+    # χρωστά περισσότερα. Σε ισοπαλία ημερομηνίας, μπροστά όσοι έχουν εκκρεμότητες.
+    # (τα deceased_at έρχονται ως ISO strings από το jsonsafe → η αλφαβητική σύγκριση = χρονολογική)
+    items.sort(key=lambda x: (str(x["deceased_at"] or ""), x["open_items"]), reverse=True)
     return {"items": items, "totals": {
         "patients": len(items), "with_open": with_open, "unexecuted_rx": tot_unexec,
         "orders_count": tot_ord_n, "orders_cents": tot_ord_c}}
