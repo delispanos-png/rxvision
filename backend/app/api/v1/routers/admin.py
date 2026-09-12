@@ -57,6 +57,7 @@ _SEG_TO_SECTION = {
     # ── ευαίσθητα state-changing segments (ήταν unmapped → παρακάμπταν τον έλεγχο ενότητας) ──
     "integrations": "billing", "payments": "billing", "credit-packages": "billing",
     "eshop-fees": "billing", "data-retention": "maintenance", "network": "subscribers",
+    "open-balances": "billing",
 }
 # read-only endpoints που χρειάζεται και ο «dashboard»-only χρήστης
 _DASHBOARD_GET = {"tenants", "packages", "sync-health"}
@@ -2179,6 +2180,150 @@ async def billing(_: PlatformContext = Depends(get_platform_admin)):
         "by_plan": jsonsafe(sorted(by_plan.values(), key=lambda x: x["mrr"], reverse=True)),
         "tenants": jsonsafe(rows),
     }
+
+
+# ── Ανοιχτά υπόλοιπα πελατών + υπενθύμιση εξόφλησης ───────────────────────────────────────────
+_DUE_AFTER_DAYS = 15        # μετά από τόσες ημέρες από την έκδοση θεωρείται ληξιπρόθεσμο
+_REMIND_MIN_GAP_DAYS = 7    # ποτέ δεύτερη υπενθύμιση στον ίδιο πελάτη πριν περάσει μία εβδομάδα
+
+
+def _tenant_billing_email(t: dict) -> str | None:
+    comp, bill = t.get("company") or {}, t.get("billing_profile") or {}
+    return (bill.get("email") or comp.get("email") or bill.get("billing_email") or "").strip() or None
+
+
+async def _open_balances(db) -> list[dict]:
+    """Ανά φαρμακείο: τα ΑΝΕΞΟΦΛΗΤΑ παραστατικά (ούτε πληρωμένα ούτε χαρακτηρισμένα «εξοφλημένα»).
+
+    Πηγή αλήθειας είναι το ίδιο κριτήριο με το `_invoice_public`: πληρωμένο = υπάρχει
+    `payment.transaction_id`· `settled` = χειροκίνητος χαρακτηρισμός. Ό,τι άλλο = ανοιχτό.
+    """
+    from app.services import billing_service
+    now = datetime.now(tz=timezone.utc)
+    tenants = {t["_id"]: t async for t in db["tenants"].find({})}
+    subs = {s["tenant_id"]: s async for s in db["subscriptions"].find({})}
+    by: dict[str, dict] = {}
+    async for inv in db["invoices"].find({
+            "$and": [{"$or": [{"payment.transaction_id": {"$in": [None, ""]}},
+                              {"payment": {"$exists": False}}]},
+                     {"settled": {"$ne": True}}]}):
+        tid = inv.get("tenant_id")
+        t = tenants.get(tid)
+        if not t:
+            continue                       # ορφανό παραστατικό (διαγραμμένος tenant)
+        issued = inv.get("issue_date") or inv.get("created_at")
+        age = (now - issued.replace(tzinfo=timezone.utc)).days if isinstance(issued, datetime) else None
+        row = by.setdefault(tid, {
+            "tenant_id": tid, "tenant_name": t.get("name", tid),
+            "email": _tenant_billing_email(t),
+            "status": billing_service.effective_status(subs.get(tid) or {}) if subs.get(tid) else (t.get("status") or "—"),
+            "open_cents": 0, "invoices": [], "oldest_days": 0, "last_reminded_at": t.get("balance_reminded_at"),
+        })
+        row["open_cents"] += int(inv.get("total") or 0)
+        row["oldest_days"] = max(row["oldest_days"], age or 0)
+        row["invoices"].append({
+            "id": str(inv["_id"]), "number": f"{inv.get('series')}-{inv.get('number')}",
+            "issue_date": issued, "total": int(inv.get("total") or 0),
+            "description": inv.get("description", ""), "days": age,
+        })
+    rows = [r for r in by.values() if r["open_cents"] > 0]
+    for r in rows:
+        r["overdue"] = r["oldest_days"] >= _DUE_AFTER_DAYS
+        r["invoices"].sort(key=lambda x: x.get("issue_date") or now)
+    rows.sort(key=lambda r: (r["oldest_days"], r["open_cents"]), reverse=True)
+    return rows
+
+
+@router.get("/open-balances")
+async def open_balances(_: PlatformContext = Depends(get_platform_admin)):
+    """Ποιοι πελάτες χρωστούν, πόσα, και από πότε — με τα παραστατικά αναλυτικά."""
+    db = shared_db()
+    rows = await _open_balances(db)
+    total = sum(r["open_cents"] for r in rows)
+    overdue = [r for r in rows if r["overdue"]]
+    return {"items": jsonsafe(rows), "summary": {
+        "total_cents": total, "tenants": len(rows),
+        "overdue_tenants": len(overdue),
+        "overdue_cents": sum(r["open_cents"] for r in overdue),
+        "no_email": len([r for r in rows if not r["email"]]),
+        "due_after_days": _DUE_AFTER_DAYS}}
+
+
+class BalanceNotifyIn(BaseModel):
+    tenant_ids: list[str] = []          # κενό = όλοι όσοι έχουν ανοιχτό υπόλοιπο
+    note: str | None = None             # προαιρετικό προσωπικό σημείωμα
+    dry_run: bool = False
+
+
+def _balance_email_html(name: str, cents: int, invs: list[dict], note: str | None) -> str:
+    lines = "".join(
+        f"<tr><td style='padding:6px 10px;border-bottom:1px solid #e2e8f0'>{i['number']}</td>"
+        f"<td style='padding:6px 10px;border-bottom:1px solid #e2e8f0;color:#64748b'>{i.get('description','')}</td>"
+        f"<td style='padding:6px 10px;border-bottom:1px solid #e2e8f0;text-align:right;white-space:nowrap'>"
+        f"{i['total']/100:.2f} €</td></tr>" for i in invs)
+    extra = f"<p>{note}</p>" if note else ""
+    return f"""<div style="font-family:Arial,Helvetica,sans-serif;background:#f1f5f9;padding:24px">
+  <div style="max-width:600px;margin:0 auto;background:#fff;border-radius:14px;overflow:hidden">
+    <div style="background:#4338ca;color:#fff;padding:18px 24px;font-size:18px;font-weight:700">RxVision</div>
+    <div style="padding:24px;color:#0f172a;font-size:15px;line-height:1.6">
+      <p>Γεια σου,</p>
+      <p>Στον λογαριασμό του <b>{name}</b> υπάρχει ανεξόφλητο υπόλοιπο
+         <b style="font-size:19px">{cents/100:.2f} €</b>.</p>
+      {extra}
+      <table style="width:100%;border-collapse:collapse;font-size:14px;margin:14px 0">{lines}</table>
+      <p>Παρακαλούμε τακτοποίησέ το ώστε <b>να μη διακοπούν οι υπηρεσίες σου</b>. Αν το έχεις ήδη
+         εξοφλήσει ή υπάρχει κάποια εκκρεμότητα, αγνόησε αυτό το μήνυμα ή απάντησε εδώ και
+         το κοιτάμε μαζί.</p>
+      <p style="color:#64748b;font-size:13px">Ευχαριστούμε για τη συνεργασία.</p>
+    </div>
+  </div>
+</div>"""
+
+
+@router.post("/open-balances/notify")
+async def notify_open_balances(body: BalanceNotifyIn,
+                               ctx: PlatformContext = Depends(get_platform_admin)):
+    """Υπενθύμιση εξόφλησης στους πελάτες με ανοιχτό υπόλοιπο.
+
+    - Email από τον **κεντρικό** SMTP της πλατφόρμας — ΠΟΤΕ από το πορτοφόλι μηνυμάτων του
+      φαρμακείου (δεν χρεώνουμε τον πελάτη για να του ζητήσουμε λεφτά).
+    - Αντι-spam: παραλείπεται όποιος ειδοποιήθηκε τις τελευταίες 7 ημέρες.
+    - `dry_run` → επιστρέφει ΜΟΝΟ ποιοι θα λάβουν, χωρίς να σταλεί τίποτα.
+    """
+    db = shared_db()
+    now = datetime.now(tz=timezone.utc)
+    wanted = set(body.tenant_ids or [])
+    rows = [r for r in await _open_balances(db) if not wanted or r["tenant_id"] in wanted]
+
+    targets, skipped = [], {"no_email": 0, "too_soon": 0}
+    for r in rows:
+        if not r["email"]:
+            skipped["no_email"] += 1
+            continue
+        last = r.get("last_reminded_at")
+        if isinstance(last, datetime) and (now - last.replace(tzinfo=timezone.utc)).days < _REMIND_MIN_GAP_DAYS:
+            skipped["too_soon"] += 1
+            continue
+        targets.append(r)
+
+    if body.dry_run:
+        return {"dry_run": True, "recipients": len(targets), "skipped": skipped,
+                "total_cents": sum(r["open_cents"] for r in targets),
+                "preview": jsonsafe([{"tenant_name": r["tenant_name"], "email": r["email"],
+                                      "open_cents": r["open_cents"]} for r in targets[:50]])}
+
+    sent = failed = 0
+    for r in targets:
+        try:
+            await mailer.send_email(
+                r["email"], f"RxVision — ανεξόφλητο υπόλοιπο {r['open_cents']/100:.2f} €",
+                _balance_email_html(r["tenant_name"], r["open_cents"], r["invoices"], body.note))
+            await db["tenants"].update_one({"_id": r["tenant_id"]}, {"$set": {
+                "balance_reminded_at": now, "balance_reminded_by": ctx.admin_id}})
+            sent += 1
+        except Exception:  # noqa: BLE001 — ένας αποτυχημένος παραλήπτης δεν σταματά τους υπόλοιπους
+            failed += 1
+    return {"recipients": len(targets), "sent": sent, "failed": failed, "skipped": skipped}
 
 
 # ── παραστατικά (invoices) με κλείδωμα ΑΑΔΕ ────────────────
