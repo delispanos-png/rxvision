@@ -38,6 +38,12 @@ def _slugify(name: str) -> str:
     return f"{base[:32]}-{uuid.uuid4().hex[:6]}"
 
 
+
+# ΚΑΝΕΝΑ εμπορικό πλαφόν στους χρήστες: ο πελάτης αγοράζει όσους θέλει (το `seats` του πακέτου
+# είναι πληροφοριακό, όχι όριο). Το παρακάτω είναι ΜΟΝΟ φράχτης κατά παραλόγου input σε δημόσιο
+# endpoint (π.χ. seats=1000000 → τερατώδες τιμολόγιο) — δεν είναι πολιτική τιμολόγησης.
+_SEATS_HARD_MAX = 999
+
 class OnboardingError(Exception):
     pass
 
@@ -97,10 +103,14 @@ class OnboardingService:
         price = (pkg or {}).get("price_yearly" if yearly else "price_monthly", 0) if pkg else 0
         # seats & cost breakdown: base package + chosen SLA tier + extra concurrent users
         sla_code = sla or (pkg or {}).get("sla", "basic")
-        max_seats = int((pkg or {}).get("seats", 1) or 1)        # ΜΕΓΙΣΤΟ όριο πλάνου («έως N»)
+        max_seats = int((pkg or {}).get("seats", 1) or 1)        # πληροφοριακό «έως N» — ΟΧΙ όριο αγοράς
         extra_rate = int((pkg or {}).get("extra_user_price_yearly" if yearly else "extra_user_price", 0) or 0)
-        included_free = 1                                        # ΒΑΣΗ: 1 δωρεάν ταυτόχρονος χρήστης σε ΚΑΘΕ πλάνο
-        chosen_seats = min(max_seats, max(1, int(seats or 1)))   # default 1· πάντα cap στο max του πλάνου
+        # ΔΩΡΕΑΝ χρήστες = αυτοί που ΠΕΡΙΛΑΜΒΑΝΕΙ το πακέτο (1/3/6 — όπως τους διαφημίζει η σελίδα
+        # τιμών), ΟΧΙ σταθερά 1. Το `included_users` υπάρχει ήδη στα πακέτα και το χρησιμοποιεί σωστά
+        # το provisioning· εδώ ήταν σκληροκωδικοποιημένο και χρέωνε ως «έξτρα» χρήστες που ο πελάτης
+        # είχε ήδη πληρώσει μέσα στο πακέτο.
+        included_free = int((pkg or {}).get("included_users") or 1)
+        chosen_seats = min(_SEATS_HARD_MAX, max(1, int(seats or 1)))
         extra_users = max(0, chosen_seats - included_free)       # extra = πάνω από τη βάση (1) → χρεώσιμα
         sla_doc = await db["sla_tiers"].find_one({"_id": sla_code}) or {}
         sla_price = int(sla_doc.get("price_yearly" if yearly else "price_monthly", 0) or 0)
@@ -243,10 +253,12 @@ class OnboardingService:
         pkg = await db["packages"].find_one({"_id": package_code}) if package_code else None
         yearly = (billing_cycle == "yearly")
         price = int((pkg or {}).get("price_yearly" if yearly else "price_monthly", 0) or 0)
-        max_seats = int((pkg or {}).get("seats", 1) or 1)
-        chosen_seats = min(max_seats, max(1, int(seats or 1)))
+        chosen_seats = min(_SEATS_HARD_MAX, max(1, int(seats or 1)))
         extra_rate = int((pkg or {}).get("extra_user_price_yearly" if yearly else "extra_user_price", 0) or 0)
-        extra_total = max(0, chosen_seats - 1) * extra_rate
+        # ίδιος κανόνας με το open_tenant/provisioning: χρεώνονται ΜΟΝΟ οι χρήστες πάνω από όσους
+        # περιλαμβάνει το πακέτο (βλ. included_users) — όχι όλοι πλην ενός.
+        included_free = int((pkg or {}).get("included_users") or 1)
+        extra_total = max(0, chosen_seats - included_free) * extra_rate
         sla_code = sla or (pkg or {}).get("sla", "basic")
         sla_doc = await db["sla_tiers"].find_one({"_id": sla_code}) or {}
         sla_price = int(sla_doc.get("price_yearly" if yearly else "price_monthly", 0) or 0)

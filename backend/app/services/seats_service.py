@@ -62,7 +62,12 @@ async def _load(tenant_id: str) -> tuple[dict, dict | None]:
 
 
 def _max_seats(pkg: dict | None, sub: dict) -> int:
-    return int((pkg or {}).get("seats") or sub.get("seats") or INCLUDED_FREE)
+    """Πόσους χρήστες μπορεί να φτάσει ο πελάτης αγοράζοντας.
+
+    ΔΕΝ υπάρχει εμπορικό πλαφόν ανά πακέτο (το `seats` του πακέτου είναι πληροφοριακό «έως N»):
+    ο πελάτης αγοράζει όσους θέλει. Το 999 είναι φράχτης κατά παραλόγου input, όχι πολιτική.
+    """
+    return 999
 
 
 async def seat_surcharge_for_cycle(db, tenant_id: str) -> int:
