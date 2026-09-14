@@ -83,6 +83,10 @@ export default function RegisterWizard() {
   const [afmErr, setAfmErr] = useState<string | null>(null); // διπλότυπο ΑΦΜ (ενεργή συνδρομή)
   const [reactivation, setReactivation] = useState(false);   // υπάρχων λογαριασμός με ληγμένο/trial → αγορά κανονικού πακέτου
   const [trialUsed, setTrialUsed] = useState(false);         // ΑΦΜ που έχει ήδη χρησιμοποιήσει δωρεάν δοκιμή
+  // ΖΩΝΤΑΝΟΣ εντοπισμός υπάρχοντος πελάτη ΚΑΘΩΣ πληκτρολογεί το ΑΦΜ — δεν τον αφήνουμε να
+  // συμπληρώσει ολόκληρη φόρμα εγγραφής για να του πούμε στο τέλος ότι τον ξέρουμε ήδη.
+  const [known, setKnown] = useState<{ mode: "reactivate" | "blocked"; pharmacy_name: string | null } | null>(null);
+  const [checking, setChecking] = useState(false);
   const [acceptedTerms, setAcceptedTerms] = useState(false); // αποδοχή Όρων Χρήσης (υποχρεωτική πριν την ολοκλήρωση)
   const [showTerms, setShowTerms] = useState(false);         // modal ανάγνωσης όρων ΜΕΣΑ στην εγγραφή (χωρίς πλοήγηση)
 
@@ -233,6 +237,28 @@ export default function RegisterWizard() {
     poll();
     return () => { stop = true; };
   }, [pendingId]);
+
+  // Μόλις συμπληρωθούν 9 ψηφία ΑΦΜ → αυτόματος έλεγχος (debounced). Ο πελάτης βλέπει ΑΜΕΣΩΣ αν
+  // τον ξέρουμε, δίπλα στο πεδίο που κοιτάζει — όχι αφού γεμίσει όλη τη φόρμα.
+  useEffect(() => {
+    const afm = company.afm.trim();
+    if (!/^\d{9}$/.test(afm)) { setKnown(null); setAfmErr(null); return; }
+    let alive = true;
+    const id = setTimeout(async () => {
+      setChecking(true);
+      try {
+        const r = await api<{ blocked?: boolean; reactivation?: boolean; trial_used?: boolean; mode?: string; pharmacy_name?: string | null }>(`/onboarding/check-afm/${afm}`);
+        if (!alive) return;
+        if (r.blocked) { setKnown({ mode: "blocked", pharmacy_name: r.pharmacy_name ?? null }); setAfmErr(null); }
+        else if (r.reactivation || r.trial_used) {
+          setKnown({ mode: "reactivate", pharmacy_name: r.pharmacy_name ?? null });
+          setTrialUsed(!!r.trial_used); setReactivation(true);
+        } else { setKnown(null); setTrialUsed(false); setReactivation(false); }
+      } catch { /* μη-blocking: ο server ξαναελέγχει στο intent */ }
+      finally { if (alive) setChecking(false); }
+    }, 500);
+    return () => { alive = false; clearTimeout(id); };
+  }, [company.afm]);
 
   // βήμα «Επόμενο» — στο βήμα εταιρείας ελέγχει διπλότυπο ΑΦΜ πριν προχωρήσει
   async function goNext() {
@@ -401,6 +427,35 @@ export default function RegisterWizard() {
                 {afmErr && (
                   <div role="alert" className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">
                     {afmErr} <a href="/login" className="font-semibold underline">Σύνδεση</a> · <a href="/forgot-password" className="font-semibold underline">Ξέχασα τον κωδικό</a>
+                  </div>
+                )}
+                {checking && <p className="flex items-center gap-1.5 text-xs text-slate-400"><Loader2 className="h-3 w-3 animate-spin" /> Ελέγχουμε το ΑΦΜ…</p>}
+                {known?.mode === "blocked" && (
+                  <div role="alert" className="rounded-xl border border-amber-300 bg-amber-50 p-4">
+                    <div className="font-bold text-amber-900">Έχεις ήδη ενεργή συνδρομή</div>
+                    <p className="mt-1 text-sm text-amber-800">
+                      {known.pharmacy_name ? <>Ο λογαριασμός <b>{known.pharmacy_name}</b> είναι ενεργός.</> : "Αυτό το ΑΦΜ έχει ήδη ενεργή συνδρομή."} Δεν χρειάζεται νέα εγγραφή — απλώς συνδέσου.
+                    </p>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <a href="/login" className="rounded-lg bg-amber-600 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-700">Σύνδεση</a>
+                      <a href="/forgot-password" className="rounded-lg border border-amber-300 px-4 py-2 text-sm font-semibold text-amber-800 hover:bg-amber-100">Ξέχασα τον κωδικό</a>
+                    </div>
+                  </div>
+                )}
+                {known?.mode === "reactivate" && (
+                  <div className="rounded-xl border-2 border-brand-300 bg-brand-50 p-4">
+                    <div className="flex items-center gap-2 font-bold text-brand-900">
+                      <Check className="h-5 w-5 text-emerald-600" /> Σε βρήκαμε{known.pharmacy_name ? <> — {known.pharmacy_name}</> : null}
+                    </div>
+                    <p className="mt-1 text-sm text-brand-800">
+                      Έχεις ήδη λογαριασμό. <b>Δεν χρειάζεται να ξαναγραφτείς</b> — διάλεξε πακέτο, πλήρωσε και
+                      <b> ο ίδιος λογαριασμός σου ενεργοποιείται ξανά</b> με όλα τα δεδομένα σου.
+                    </p>
+                    <button type="button" onClick={() => { setAcceptedTerms(true); setStep(STEP.PACKAGE); }}
+                      className="mt-3 inline-flex items-center gap-1.5 rounded-lg bg-brand-700 px-5 py-2.5 text-sm font-bold text-white hover:bg-brand-800">
+                      Συνέχεια στην πληρωμή →
+                    </button>
+                    <p className="mt-2 text-[11px] text-brand-600">Η δωρεάν δοκιμή δεν είναι διαθέσιμη ξανά για αυτό το ΑΦΜ.</p>
                   </div>
                 )}
                 <p className="text-[11px] text-brand-600">Πληκτρολόγησε ΑΦΜ και πάτησε αναζήτηση για αυτόματη συμπλήρωση από ΑΑΔΕ.</p>

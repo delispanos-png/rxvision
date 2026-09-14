@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, EmailStr, Field
 
 from app.core.ratelimit import rate_limit
+from app.core.db import shared_db
 from app.services.onboarding_service import OnboardingError, OnboardingService
 
 router = APIRouter()
@@ -91,9 +92,17 @@ async def check_afm(afm: str):
         # Ο tenant μπορεί να διαγράφηκε (ληγμένο trial) — αλλά κρατάμε το ΑΦΜ στα leads → μπλοκ επανα-trial.
         from app.services import trial_leads
         if await trial_leads.afm_had_trial(afm):
-            return {"exists": True, "blocked": False, "reactivation": False, "trial_used": True}
-        return {"exists": False, "blocked": False, "reactivation": False}
-    return {"exists": True, "blocked": tgt["blocked"], "reactivation": not tgt["blocked"]}
+            return {"exists": True, "blocked": False, "reactivation": False, "trial_used": True,
+                    "mode": "reactivate", "pharmacy_name": None}
+        return {"exists": False, "blocked": False, "reactivation": False, "mode": "new",
+                "pharmacy_name": None}
+    # ΜΟΝΟ η επωνυμία επιστρέφεται — είναι ήδη δημόσιο στοιχείο για το ίδιο ΑΦΜ μέσω ΑΑΔΕ
+    # (βλ. /onboarding/aade/{afm}). ΠΟΤΕ email/τηλέφωνο/διεύθυνση: θα ήταν διαρροή σε όποιον
+    # ξέρει ένα ΑΦΜ.
+    t = await shared_db()["tenants"].find_one({"_id": tgt["tenant_id"]}, {"name": 1})
+    return {"exists": True, "blocked": tgt["blocked"], "reactivation": not tgt["blocked"],
+            "mode": "blocked" if tgt["blocked"] else "reactivate",
+            "pharmacy_name": (t or {}).get("name")}
 
 
 @router.post("/register-intent", status_code=201,
