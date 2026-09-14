@@ -142,6 +142,24 @@ async def start_renewal(tenant_id: str, package_code: str, billing_cycle: str = 
             "discount_pct": (coupon or {}).get("discount_pct")}
 
 
+def seats_for_package(pkg: dict | None, *, current: int | None = None,
+                      requested: int | None = None) -> int:
+    """Πόσους ταυτόχρονους χρήστες δικαιούται μια συνδρομή σε ΑΥΤΟ το πακέτο.
+
+    ΜΙΑ πηγή αλήθειας για ΟΛΕΣ τις διαδρομές (εγγραφή, ανανέωση, αναβάθμιση, ανάθεση από
+    adminpanel). ΓΙΑΤΙ: ο κανόνας ήταν γραμμένος ξεχωριστά σε 6 σημεία και είχε αποκλίνει — άλλα
+    ξεκινούσαν από 1 κι άλλα από τους περιλαμβανόμενους, με αποτέλεσμα πελάτης να πληρώνει πακέτο
+    με 6 χρήστες και να έχει 1.
+
+    Κανόνας: **ποτέ λιγότεροι από όσους περιλαμβάνει το πακέτο** (τους πληρώνει μέσα στην τιμή),
+    και ό,τι παραπάνω έχει ζητήσει/είχε ήδη διατηρείται. Κανένα εμπορικό πλαφόν — μόνο φράχτης
+    κατά παραλόγου input.
+    """
+    included = int((pkg or {}).get("included_users") or 1)
+    want = requested if requested else (current or included)
+    return max(included, min(999, int(want or included)))
+
+
 async def complete_renewal(tenant_id: str, viva_transaction_id: str) -> None:
     """Viva webhook (renew:<tid>) → ενεργοποιεί τη συνδρομή με το επιλεγμένο πακέτο (idempotent)."""
     db = shared_db()
@@ -164,7 +182,7 @@ async def complete_renewal(tenant_id: str, viva_transaction_id: str) -> None:
                  # Οι χρήστες του ΝΕΟΥ πακέτου: τουλάχιστον όσους περιλαμβάνει (ο πελάτης τους πληρώνει
                  # μέσα στην τιμή), ή όσους είχε ήδη αν ήταν περισσότεροι. Χωρίς αυτό, όποιος ερχόταν
                  # από δοκιμή έμενε με 1 χρήστη ενώ πλήρωνε πακέτο με 6.
-                 "seats": max(int(pkg.get("included_users") or 1), int(sub.get("seats") or 1)),
+                 "seats": seats_for_package(pkg, current=sub.get("seats")),
                  "billing_cycle": cycle, "price_per_pharmacy": price,
                  "price_includes_vat": bool(pkg.get("price_includes_vat")),
                  "modules_included": pkg.get("modules", sub.get("modules_included", [])),

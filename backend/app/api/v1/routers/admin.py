@@ -704,6 +704,8 @@ async def edit_subscription(tenant_id: str, body: SubEditIn,
             if pkg:
                 upd["modules_included"] = pkg.get("modules", [])
                 upd.setdefault("plan_name", pkg.get("name"))
+                from app.services.billing_service import seats_for_package   # και οι χρήστες του νέου πλάνου
+                upd.setdefault("seats", seats_for_package(pkg, current=cur.get("seats")))
                 if pkg.get("available_addons") is not None:
                     upd["available_addons"] = pkg.get("available_addons")
                 sync_pkg = pkg
@@ -1868,8 +1870,8 @@ async def assign_package(tenant_id: str, body: AssignPackageIn,
     cycle = body.billing_cycle or sub.get("billing_cycle") or "monthly"
     yearly = cycle == "yearly"
     price = int(pkg.get("price_yearly" if yearly else "price_monthly", 0) or 0)
-    # ΒΑΣΗ 1 δωρεάν χρήστης· default 1 (όχι το max του πλάνου)· cap στο max του πλάνου («έως N»)
-    seats = min(int(pkg.get("seats", 1) or 1), max(1, int(body.seats or 1)))
+    from app.services.billing_service import seats_for_package
+    seats = seats_for_package(pkg, current=sub.get("seats"), requested=body.seats)
     upd = {
         "plan": body.package_code, "plan_name": pkg.get("name"),
         "modules_included": pkg.get("modules", []),

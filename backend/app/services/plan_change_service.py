@@ -210,7 +210,11 @@ async def apply_change(tenant_id: str, *, source: str = "system") -> dict:
     if not pkg:
         return {"ok": False, "error": "unknown_plan"}
     yearly = (pend.get("billing_cycle") or sub.get("billing_cycle")) == "yearly"
+    from app.services.billing_service import seats_for_package
     upd: dict = {"plan": pend["plan"], "price_per_pharmacy": _price(pkg, yearly),
+                 # ΝΕΟ πακέτο → και οι χρήστες του νέου πακέτου. Χωρίς αυτό, όποιος αναβάθμιζε από
+                 # Essential (1) σε Advanced (6) πλήρωνε 6 και κρατούσε 1.
+                 "seats": seats_for_package(pkg, current=sub.get("seats")),
                  "price_includes_vat": bool(pkg.get("price_includes_vat")),
                  "modules_included": pkg.get("modules", []), "updated_at": _now(),
                  "last_plan_change": {"kind": pend.get("kind"), "at": _now(), "source": source,
