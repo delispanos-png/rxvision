@@ -57,7 +57,7 @@ _SEG_TO_SECTION = {
     # ── ευαίσθητα state-changing segments (ήταν unmapped → παρακάμπταν τον έλεγχο ενότητας) ──
     "integrations": "billing", "payments": "billing", "credit-packages": "billing",
     "eshop-fees": "billing", "data-retention": "maintenance", "network": "subscribers",
-    "open-balances": "billing",
+    "open-balances": "billing", "softone": "integrations",
 }
 # read-only endpoints που χρειάζεται και ο «dashboard»-only χρήστης
 _DASHBOARD_GET = {"tenants", "packages", "sync-health"}
@@ -1452,6 +1452,39 @@ async def admin_softone_test(_: PlatformContext = Depends(get_platform_admin)):
 class MtrlMapIn(BaseModel):
     map: dict[str, str] = {}
     default_mtrl: str | None = None
+
+
+@router.get("/softone/bridge")
+async def softone_bridge_info(_: PlatformContext = Depends(get_platform_admin)):
+    """Στοιχεία που πρέπει να δοθούν στη CloudOn για να εγκαταστήσουν τη γέφυρα στη LIVE SoftOne.
+
+    Η γέφυρα δουλεύει ΑΝΤΙΣΤΡΟΦΑ (η SoftOne μάς καλεί), γιατί το κοινό domain live/R&D δείχνει
+    στην R&D και καμία εισερχόμενη κλήση δεν φτάνει στη live.
+    """
+    from app.api.v1.routers.softone_bridge import ensure_pull_token
+    cfg = await _softone_cfg() if "_softone_cfg" in globals() else (
+        await shared_db()["platform_settings"].find_one({"_id": "softone"}) or {})
+    return {
+        "token": await ensure_pull_token(),
+        "pull_url": "https://app.rxvision.gr/api/v1/softone/pull",
+        "ack_url": "https://app.rxvision.gr/api/v1/softone/ack",
+        "series": cfg.get("series"),
+        "app_id": cfg.get("app_id"),
+        "script": "docs/softone-pull-bridge.js",
+        "note": ("Δώσε το token στη CloudOn ώστε να το βάλουν στο CFG.TOKEN του script. "
+                 "Η σειρά πρέπει να είναι 7767 (ΤΠΥ) για να παίρνει ΜΑΡΚ — το 7002 είναι "
+                 "Προτιμολόγιο και ΔΕΝ διαβιβάζεται."),
+    }
+
+
+@router.post("/softone/bridge/rotate")
+async def softone_bridge_rotate(_: PlatformContext = Depends(get_platform_admin)):
+    """Νέο token γέφυρας (αν διέρρευσε). Το παλιό παύει ΑΜΕΣΩΣ — ενημέρωσε τη CloudOn."""
+    import secrets
+    tok = secrets.token_urlsafe(32)
+    await shared_db()["platform_settings"].update_one(
+        {"_id": "softone"}, {"$set": {"pull_token": tok}}, upsert=True)
+    return {"token": tok}
 
 
 @router.get("/softone/items")

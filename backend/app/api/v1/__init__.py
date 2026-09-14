@@ -15,6 +15,7 @@ from app.api.v1.routers import (
     future,
     pharmacy_availability,
     gdpr,
+    softone_bridge,
     infra_cloud,
     icd10,
     ingestion,
@@ -64,6 +65,7 @@ api_router.include_router(advisor.router, prefix="/advisor", tags=["advisor"])
 api_router.include_router(communications.router, prefix="/communications", tags=["communications"])
 api_router.include_router(marketing.router, prefix="/marketing", tags=["marketing"])
 api_router.include_router(gdpr.router, prefix="/gdpr", tags=["gdpr"])
+api_router.include_router(softone_bridge.router, prefix="/softone", tags=["softone-bridge"])
 api_router.include_router(prescriptions.router, prefix="/prescriptions", tags=["prescriptions"])
 api_router.include_router(vaccinations.router, prefix="/vaccinations", tags=["vaccinations"])
 
