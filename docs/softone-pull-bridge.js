@@ -1,6 +1,6 @@
 /* ────────────────────────────────────────────────────────────────────────────────────────────
  * RxVision ⇄ SoftOne — ΓΕΦΥΡΑ ΕΚΔΟΣΗΣ ΠΑΡΑΣΤΑΤΙΚΩΝ (πλευρά SoftOne)
- * ★ ΤΕΛΕΥΤΑΙΑ ΕΝΗΜΕΡΩΣΗ: 14/09/2026 18:05 (ώρα Αθήνας)
+ * ★ ΤΕΛΕΥΤΑΙΑ ΕΝΗΜΕΡΩΣΗ: 14/09/2026 18:25 (ώρα Αθήνας)
  *
  * ΓΙΑΤΙ ΥΠΑΡΧΕΙ
  * Το domain *.oncloud.gr της εγκατάστασης είναι κοινό μεταξύ live και R&D και αυτή τη στιγμή
@@ -52,7 +52,7 @@ function findOrCreateCustomer(cus) {
     var ds = X.GETSQLDATASET(
       "SELECT TOP 1 TRDR FROM TRDR WHERE COMPANY=:1 AND SODTYPE=:2 AND AFM=:3",
       X.SYS.COMPANY, 13, afm);
-    if (ds && !ds.EOF) return ds.TRDR;
+    if (ds) { ds.FIRST; if (!ds.EOF) return ds.TRDR; }   // ΠΑΝΤΑ FIRST πριν την ανάγνωση
   }
   // Δεν υπάρχει → δημιουργία με setData (εσωτερικά)
   var ws = { SERVICE: "setData", OBJECT: "CUSTOMER", appId: CFG.APPID, KEY: "",
@@ -70,7 +70,9 @@ function findExisting(ref) {
   var ds = X.GETSQLDATASET(
     "SELECT TOP 1 FINDOC, FINCODE, MARK FROM FINDOC WHERE COMPANY=:1 AND POSGUID=:2",
     X.SYS.COMPANY, ref);
-  return (ds && !ds.EOF) ? { findoc: ds.FINDOC, number: ds.FINCODE, mark: ds.MARK } : null;
+  if (!ds) return null;
+  ds.FIRST;
+  return (!ds.EOF) ? { findoc: ds.FINDOC, number: ds.FINCODE, mark: ds.MARK } : null;
 }
 
 /* ── Έκδοση ΕΝΟΣ παραστατικού ───────────────────────────────────────────────────────────── */
@@ -109,10 +111,12 @@ function issueOne(doc) {
   var back = X.GETSQLDATASET(
     "SELECT TOP 1 FINDOC, FINCODE, MARK, UID FROM FINDOC WHERE COMPANY=:1 AND FINDOC=:2",
     X.SYS.COMPANY, r.id);
+  if (back) back.FIRST;
+  var got = (back && !back.EOF);
   return { ok: true, findoc: r.id,
-           number: (back && !back.EOF) ? back.FINCODE : null,
-           mark:   (back && !back.EOF) ? back.MARK : null,
-           uid:    (back && !back.EOF) ? back.UID : null };
+           number: got ? back.FINCODE : null,
+           mark:   got ? back.MARK : null,
+           uid:    got ? back.UID : null };
 }
 
 /* ── Κύρια εργασία (αυτή καλείται από τον χρονοπρογραμματιστή) ──────────────────────────── */
@@ -168,8 +172,9 @@ function run() {
  * ──────────────────────────────────────────────────────────────────────────────────────────── */
 function testConnection() {
   try {
-    var r = httpGet("/pull?limit=0");
-    X.WARNING("Σύνδεση OK. Εκκρεμή παραστατικά: " + (r && r.count !== undefined ? r.count : "?"));
+    /* /ping — ΔΕΝ δεσμεύει παραστατικό (το /pull θα το κρατούσε 15′ χωρίς να το εκδώσει). */
+    var r = httpGet("/ping");
+    X.WARNING("Σύνδεση OK. Εκκρεμή παραστατικά: " + (r && r.pending !== undefined ? r.pending : "?"));
     return true;
   } catch (e) {
     X.WARNING("ΑΠΟΤΥΧΙΑ: " + (e && e.message ? e.message : e));

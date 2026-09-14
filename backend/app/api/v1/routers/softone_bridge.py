@@ -66,6 +66,19 @@ async def _auth(x_s1_token: str | None = Header(None, alias="X-S1-Token")) -> No
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "bad_token")
 
 
+@router.get("/ping", dependencies=[Depends(_auth)])
+async def ping():
+    """Έλεγχος σύνδεσης & token. ΔΕΝ δεσμεύει και ΔΕΝ αλλάζει τίποτε — ασφαλές να καλείται όσο θες.
+
+    ΓΙΑΤΙ ΧΩΡΙΣΤΟ: δοκιμή με `/pull` θα «κρατούσε» ένα πραγματικό παραστατικό για 15′ χωρίς να το
+    εκδώσει — δηλαδή ο έλεγχος θα καθυστερούσε την έκδοση.
+    """
+    db = shared_db()
+    pending = await db["invoices"].count_documents(
+        {"status": {"$in": ["pending", "sending", "error"]}, "aade_mark": {"$in": [None, ""]}})
+    return {"ok": True, "pending": pending, "server_time": _now().isoformat()}
+
+
 @router.get("/pull", dependencies=[Depends(_auth)])
 async def pull(limit: int = Query(10, ge=1, le=50)):
     """Τα εκκρεμή παραστατικά προς έκδοση, στη μορφή που περιμένει το script της SoftOne.
