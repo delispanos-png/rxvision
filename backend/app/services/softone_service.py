@@ -108,8 +108,18 @@ async def test_connection() -> dict:
         return {"ok": False, "error": "not_configured"}
     try:
         lg = await _login(cfg)
+    except httpx.HTTPStatusError as e:
+        # ΚΑΤΑΝΟΗΤΟ μήνυμα αντί για «HTTPStatusError»: το 404 εδώ σημαίνει ότι ο host ΔΕΝ
+        # εξυπηρετεί web services — τυπικά όταν το κοινό domain live/R&D δείχνει αλλού.
+        code = e.response.status_code
+        if code == 404:
+            return {"ok": False, "error": (
+                f"404 — ο host δεν εξυπηρετεί web services ({cfg.get('base_url')}). "
+                "Το domain live/R&D δείχνει στην R&D. Η έκδοση γίνεται μέσω της "
+                "ΓΕΦΥΡΑΣ (η SoftOne μάς καλεί) — δες την κάρτα «Γέφυρα έκδοσης» πιο πάνω.")}
+        return {"ok": False, "error": f"HTTP {code} από {cfg.get('base_url')}"}
     except Exception as e:  # noqa: BLE001
-        return {"ok": False, "error": f"connect_error:{type(e).__name__}"}
+        return {"ok": False, "error": f"Δεν έγινε σύνδεση: {type(e).__name__}"}
     if not lg.get("success"):
         return {"ok": False, "error": lg.get("error") or "login_failed", "code": lg.get("errorcode")}
     objs = lg.get("objs") or []
