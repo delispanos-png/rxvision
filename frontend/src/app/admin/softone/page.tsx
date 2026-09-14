@@ -27,6 +27,17 @@ export default function AdminSoftonePage() {
   const [autoInv, setAutoInv] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [test, setTest] = useState<string | null>(null);
+  const [showTok, setShowTok] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const bridge = useQuery({
+    queryKey: ["softone-bridge"],
+    queryFn: () => adminApi<{ token: string; pull_url: string; ack_url: string; series?: string; note: string }>("/admin/softone/bridge"),
+    retry: false,
+  });
+  const rotate = useMutation({
+    mutationFn: () => adminApi<{ token: string }>("/admin/softone/bridge/rotate", { method: "POST" }),
+    onSuccess: () => { bridge.refetch(); setNotice("Νέο token — ενημέρωσε το script στη SoftOne!"); },
+  });
 
   useEffect(() => {
     if (!s1) return;
@@ -61,6 +72,52 @@ export default function AdminSoftonePage() {
     <div className="w-full">
       <div className="mb-1 flex items-center gap-2"><Receipt className="h-6 w-6 text-brand-600" /><h1 className="text-xl font-bold text-slate-900">SoftOne / myDATA</h1></div>
       <p className="mb-5 text-sm text-slate-500">Διαπιστευτήρια SoftOne για έκδοση παραστατικών & διαβίβαση στο myDATA. Τα δεδομένα αποθηκεύονται κρυπτογραφημένα. {s1?.configured && <span className="ml-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">ρυθμισμένο</span>}</p>
+
+      {/* ── Γέφυρα (αντεστραμμένη ροή): τα στοιχεία που μπαίνουν στο script της SoftOne ── */}
+      <div className="mb-6 rounded-2xl border-2 border-brand-200 bg-brand-50/50 p-5">
+        <div className="mb-1 flex items-center gap-2 text-sm font-bold text-brand-900">
+          🔗 Γέφυρα έκδοσης — στοιχεία για το script της SoftOne
+        </div>
+        <p className="mb-3 text-xs text-brand-800">
+          Η SoftOne μάς καλεί (όχι εμείς αυτήν), γιατί το domain live/R&amp;D δείχνει στην R&amp;D.
+          Βάλε το token στο <code className="rounded bg-white px-1">CFG.TOKEN</code> του
+          <code className="ml-1 rounded bg-white px-1">docs/softone-pull-bridge.js</code>.
+        </p>
+        <div className="space-y-2 text-sm">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="w-24 shrink-0 text-xs font-medium text-slate-500">Token</span>
+            <code className="min-w-0 flex-1 truncate rounded-lg border border-slate-300 bg-white px-3 py-1.5 font-mono text-xs">
+              {bridge.data ? (showTok ? bridge.data.token : "••••••••••••••••••••••••••••") : "…"}
+            </code>
+            <button type="button" onClick={() => setShowTok((v) => !v)}
+              className="rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50">
+              {showTok ? "Απόκρυψη" : "Εμφάνιση"}
+            </button>
+            <button type="button" disabled={!bridge.data}
+              onClick={() => { if (bridge.data) { navigator.clipboard.writeText(bridge.data.token); setCopied(true); setTimeout(() => setCopied(false), 1800); } }}
+              className="rounded-lg bg-brand-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand-700 disabled:opacity-50">
+              {copied ? "Αντιγράφηκε ✓" : "Αντιγραφή"}
+            </button>
+          </div>
+          {([["Pull URL", bridge.data?.pull_url], ["Ack URL", bridge.data?.ack_url]] as const).map(([k, v]) => (
+            <div key={k} className="flex flex-wrap items-center gap-2">
+              <span className="w-24 shrink-0 text-xs font-medium text-slate-500">{k}</span>
+              <code className="min-w-0 flex-1 truncate rounded-lg border border-slate-200 bg-white px-3 py-1.5 font-mono text-xs text-slate-600">{v ?? "…"}</code>
+            </div>
+          ))}
+        </div>
+        <div className="mt-3 flex flex-wrap items-center gap-3">
+          <button type="button" onClick={() => rotate.mutate()} disabled={rotate.isPending}
+            className="rounded-lg border border-rose-300 px-3 py-1.5 text-xs font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-50">
+            Νέο token (ακυρώνει το παλιό)
+          </button>
+          {f.series && f.series !== "7767" && (
+            <span className="text-xs font-semibold text-amber-700">
+              ⚠ Σειρά {f.series}: το 7002 είναι Προτιμολόγιο και ΔΕΝ παίρνει ΜΑΡΚ. Για φορολογικό ΤΠΥ βάλε 7767.
+            </span>
+          )}
+        </div>
+      </div>
 
       <div className="grid gap-6 xl:grid-cols-2 xl:items-start">
       <div className="min-w-0 space-y-5 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
