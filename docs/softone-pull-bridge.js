@@ -1,6 +1,6 @@
 /* ────────────────────────────────────────────────────────────────────────────────────────────
  * RxVision ⇄ SoftOne — ΓΕΦΥΡΑ ΕΚΔΟΣΗΣ ΠΑΡΑΣΤΑΤΙΚΩΝ (πλευρά SoftOne)
- * ★ ΤΕΛΕΥΤΑΙΑ ΕΝΗΜΕΡΩΣΗ: 14/09/2026 17:40 (ώρα Αθήνας)
+ * ★ ΤΕΛΕΥΤΑΙΑ ΕΝΗΜΕΡΩΣΗ: 14/09/2026 18:05 (ώρα Αθήνας)
  *
  * ΓΙΑΤΙ ΥΠΑΡΧΕΙ
  * Το domain *.oncloud.gr της εγκατάστασης είναι κοινό μεταξύ live και R&D και αυτή τη στιγμή
@@ -8,9 +8,9 @@
  * script τρέχει ΜΕΣΑ στη live ως προγραμματισμένη εργασία και καλεί ΠΡΟΣ ΤΑ ΕΞΩ το RxVision.
  *
  * ΤΙ ΚΑΝΕΙ (κάθε εκτέλεση)
- *   1. X.WSCALL      → GET  https://app.rxvision.gr/api/v1/softone/pull   (εκκρεμή παραστατικά)
+ *   1. X.HTTPCALL    → GET  https://app.rxvision.gr/api/v1/softone/pull   (εκκρεμή παραστατικά)
  *   2. X.WEBREQUEST  → SERVICE:"setData", OBJECT:"SALDOC"  (έκδοση ΕΣΩΤΕΡΙΚΑ → πραγματικό MARK)
- *   3. X.WSCALL      → POST https://app.rxvision.gr/api/v1/softone/ack    (findoc/MARK ή σφάλμα)
+ *   3. X.HTTPCALL    → POST https://app.rxvision.gr/api/v1/softone/ack    (findoc/MARK ή σφάλμα)
  *
  * ΕΓΚΑΤΑΣΤΑΣΗ (CloudOn)
  *   • Advanced JavaScript → νέο script, επικόλληση αυτού του αρχείου.
@@ -33,13 +33,15 @@ var CFG = {
 };
 
 /* ── HTTP helpers ───────────────────────────────────────────────────────────────────────── */
+/* X.HTTPCALL(URL, PostData, Headers, Method) — headers χωρισμένα με \r\n (BlackBook σελ. 297).
+   ΟΧΙ X.WSCALL: εκείνο έχει 4 παραμέτρους ΧΩΡΙΣ headers και καλεί endpoints του ΙΔΙΟΥ του SoftOne. */
 function httpGet(path) {
-  var res = X.WSCALL(null, CFG.BASE + path, null, null, { "X-S1-Token": CFG.TOKEN });
+  var res = X.HTTPCALL(CFG.BASE + path, "", "X-S1-Token: " + CFG.TOKEN, "GET");
   return JSON.parse(res);
 }
 function httpPost(path, obj) {
-  var res = X.WSCALL(null, CFG.BASE + path, JSON.stringify(obj), null,
-                     { "X-S1-Token": CFG.TOKEN, "Content-Type": "application/json" });
+  var hdr = "Content-Type: application/json\r\nX-S1-Token: " + CFG.TOKEN;
+  var res = X.HTTPCALL(CFG.BASE + path, JSON.stringify(obj), hdr, "POST");
   return JSON.parse(res);
 }
 
@@ -48,8 +50,8 @@ function findOrCreateCustomer(cus) {
   var afm = String(cus.afm || "").trim();
   if (afm) {
     var ds = X.GETSQLDATASET(
-      "SELECT TOP 1 TRDR FROM TRDR WHERE COMPANY=:1 AND SODTYPE=13 AND AFM=:2", null,
-      X.SYS.COMPANY, afm);
+      "SELECT TOP 1 TRDR FROM TRDR WHERE COMPANY=:1 AND SODTYPE=:2 AND AFM=:3",
+      X.SYS.COMPANY, 13, afm);
     if (ds && !ds.EOF) return ds.TRDR;
   }
   // Δεν υπάρχει → δημιουργία με setData (εσωτερικά)
@@ -66,7 +68,7 @@ function findOrCreateCustomer(cus) {
 /* ── Ιδεμποτεντικότητα: υπάρχει ΗΔΗ παραστατικό με αυτό το ref (POSGUID); ───────────────── */
 function findExisting(ref) {
   var ds = X.GETSQLDATASET(
-    "SELECT TOP 1 FINDOC, FINCODE, MARK FROM FINDOC WHERE COMPANY=:1 AND POSGUID=:2", null,
+    "SELECT TOP 1 FINDOC, FINCODE, MARK FROM FINDOC WHERE COMPANY=:1 AND POSGUID=:2",
     X.SYS.COMPANY, ref);
   return (ds && !ds.EOF) ? { findoc: ds.FINDOC, number: ds.FINCODE, mark: ds.MARK } : null;
 }
@@ -105,7 +107,7 @@ function issueOne(doc) {
 
   // Διάβασε πίσω findoc/αριθμό/MARK (το MARK μπαίνει από τη διαβίβαση myDATA)
   var back = X.GETSQLDATASET(
-    "SELECT TOP 1 FINDOC, FINCODE, MARK, UID FROM FINDOC WHERE COMPANY=:1 AND FINDOC=:2", null,
+    "SELECT TOP 1 FINDOC, FINCODE, MARK, UID FROM FINDOC WHERE COMPANY=:1 AND FINDOC=:2",
     X.SYS.COMPANY, r.id);
   return { ok: true, findoc: r.id,
            number: (back && !back.EOF) ? back.FINCODE : null,
@@ -159,3 +161,18 @@ function run() {
  * παραστατικό εκδοθεί σε σειρά προτιμολογίου (7002) το MARK θα είναι πάντα κενό — δεν είναι
  * σφάλμα της γέφυρας, είναι επιλογή σειράς.
  * ──────────────────────────────────────────────────────────────────────────────────────────── */
+
+/* ────────────────────────────────────────────────────────────────────────────────────────────
+ * ΔΟΚΙΜΗ ΑΠΟ ΤΟΝ EDITOR — τρέξε αυτή ΠΡΩΤΑ, πριν προγραμματίσεις την εργασία.
+ * Ελέγχει ΜΟΝΟ τη σύνδεση· ΔΕΝ εκδίδει τίποτα.
+ * ──────────────────────────────────────────────────────────────────────────────────────────── */
+function testConnection() {
+  try {
+    var r = httpGet("/pull?limit=0");
+    X.WARNING("Σύνδεση OK. Εκκρεμή παραστατικά: " + (r && r.count !== undefined ? r.count : "?"));
+    return true;
+  } catch (e) {
+    X.WARNING("ΑΠΟΤΥΧΙΑ: " + (e && e.message ? e.message : e));
+    return false;
+  }
+}
