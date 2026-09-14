@@ -72,6 +72,7 @@ export default function RegisterWizard() {
   const [billing, setBilling] = useState<"monthly" | "yearly">("yearly");
   const [sla, setSla] = useState<string>("");
   const [seats, setSeats] = useState<number>(1);
+  const [wantsExtra, setWantsExtra] = useState(false);   // ΡΗΤΗ επιλογή — όχι σιωπηλό stepper
   // Ενεργοί τρόποι πληρωμής — δυναμικά από το adminpanel (public_methods), όχι hardcoded.
   const [payMethods, setPayMethods] = useState<{ id: string; label: { el: string; en: string } }[]>([]);
   const [payChoice, setPayChoice] = useState<string>("");   // επιλεγμένο method id (π.χ. card_viva)
@@ -143,7 +144,11 @@ export default function RegisterWizard() {
   const vatAmount = grossPrice - netPrice;
   // when the package changes: default seats to 1 (base), drop add-ons now bundled in the plan,
   // and switch the billing cycle if not offered. Ο πελάτης ανεβάζει έξτρα χρήστες χειροκίνητα (χρεώσιμοι).
-  useEffect(() => { setSeats(Math.max(1, pkgs.find((p) => p._id === pkgCode)?.included_users ?? 1)); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [pkgCode]);
+  useEffect(() => {
+    setSeats(Math.max(1, pkgs.find((p) => p._id === pkgCode)?.included_users ?? 1));
+    setWantsExtra(false);          // κάθε αλλαγή πακέτου ξαναρωτά από την αρχή
+    /* eslint-disable-next-line react-hooks/exhaustive-deps */
+  }, [pkgCode]);
   useEffect(() => { setSelAddons((sel) => sel.filter((id) => availAddons.some((a) => a._id === id))); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [pkgCode]);
   useEffect(() => { if (!cycles.includes(billing)) setBilling(cycles[0]); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [pkgCode]);
 
@@ -564,18 +569,52 @@ export default function RegisterWizard() {
                     </div>
                   </div>
                 )}
-                {/* concurrent users + cost breakdown */}
-                <div>
-                  <label className={label}>Ταυτόχρονοι χρήστες</label>
-                  {/* Compact bordered pill (inline-flex → αγκαλιάζει το περιεχόμενο· ΠΟΤΕ overflow).
-                      Ξεκινά από τους περιλαμβανόμενους χρήστες του πακέτου· ΧΩΡΙΣ ανώτατο όριο. */}
-                  <div className="mt-1 inline-flex items-center gap-1 rounded-xl border border-slate-300 p-1">
-                    <button type="button" disabled={seats <= includedFree} onClick={() => setSeats((n) => Math.max(includedFree, n - 1))} className="grid h-9 w-9 shrink-0 place-items-center rounded-lg text-lg text-slate-600 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-30">−</button>
-                    <input type="number" min={includedFree} value={seats} onChange={(e) => setSeats(Math.max(includedFree, parseInt(e.target.value) || includedFree))} className="w-16 border-0 bg-transparent text-center text-sm font-medium text-slate-900 focus:outline-none focus:ring-0 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none" />
-                    <button type="button" onClick={() => setSeats((n) => n + 1)} className="grid h-9 w-9 shrink-0 place-items-center rounded-lg text-lg text-slate-600 hover:bg-slate-100">+</button>
+                {/* Χρήστες. ΔΟΚΙΜΗ: κλειδωμένο στον 1 — καμία επιλογή, καμία παρεξήγηση.
+                    ΠΛΗΡΩΜΕΝΟ: ΡΗΤΗ ερώτηση αν θέλει έξτρα· το stepper εμφανίζεται μόνο αν πει «ναι»,
+                    ώστε να μη χρεωθεί ποτέ από άθελη κίνηση. */}
+                {isTrial ? (
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                    <label className={label}>Χρήστες</label>
+                    <p className="mt-1 text-sm text-slate-700">
+                      Η δωρεάν δοκιμή περιλαμβάνει <b>1 χρήστη για 14 ημέρες</b>.
+                    </p>
+                    <p className="mt-1 text-xs text-slate-500">
+                      Όταν επιλέξεις πακέτο για να συνεχίσεις, παίρνεις τους χρήστες που περιλαμβάνει —
+                      και τότε θα σε ρωτήσουμε αν θέλεις επιπλέον.
+                    </p>
                   </div>
-                  <p className="mt-1.5 text-xs text-slate-400">{includedFree} {includedFree === 1 ? "χρήστης περιλαμβάνεται" : "χρήστες περιλαμβάνονται"} στην τιμή{extraUsers > 0 ? <> · +{extraUsers} έξτρα</> : null}</p>
-                </div>
+                ) : (
+                  <div>
+                    <label className={label}>Χρήστες</label>
+                    <p className="mt-1 text-sm text-slate-700">
+                      Το πακέτο περιλαμβάνει <b>{includedFree} {includedFree === 1 ? "χρήστη" : "χρήστες"}</b> στην τιμή του.
+                    </p>
+                    <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                      <button type="button" onClick={() => { setWantsExtra(false); setSeats(includedFree); }}
+                        className={`rounded-xl border-2 px-4 py-3 text-left text-sm transition ${!wantsExtra ? "border-brand-500 bg-brand-50" : "border-slate-200 hover:border-slate-300"}`}>
+                        <span className="block font-semibold text-slate-900">Μου αρκούν</span>
+                        <span className="block text-xs text-slate-500">Καμία επιπλέον χρέωση</span>
+                      </button>
+                      <button type="button" onClick={() => { setWantsExtra(true); setSeats((n) => Math.max(includedFree + 1, n)); }}
+                        className={`rounded-xl border-2 px-4 py-3 text-left text-sm transition ${wantsExtra ? "border-brand-500 bg-brand-50" : "border-slate-200 hover:border-slate-300"}`}>
+                        <span className="block font-semibold text-slate-900">Θέλω επιπλέον</span>
+                        <span className="block text-xs text-slate-500">{eur(extraRate)} ανά χρήστη/{per}</span>
+                      </button>
+                    </div>
+                    {wantsExtra && (
+                      <div className="mt-3 flex flex-wrap items-center gap-3">
+                        <div className="inline-flex items-center gap-1 rounded-xl border border-slate-300 p-1">
+                          <button type="button" disabled={seats <= includedFree} onClick={() => setSeats((n) => Math.max(includedFree, n - 1))} className="grid h-9 w-9 shrink-0 place-items-center rounded-lg text-lg text-slate-600 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-30">−</button>
+                          <input type="number" min={includedFree} value={seats} onChange={(e) => setSeats(Math.max(includedFree, parseInt(e.target.value) || includedFree))} className="w-16 border-0 bg-transparent text-center text-sm font-medium text-slate-900 focus:outline-none focus:ring-0 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none" />
+                          <button type="button" onClick={() => setSeats((n) => n + 1)} className="grid h-9 w-9 shrink-0 place-items-center rounded-lg text-lg text-slate-600 hover:bg-slate-100">+</button>
+                        </div>
+                        <p className="text-sm text-slate-600">
+                          σύνολο χρηστών · <b>{extraUsers}</b> επιπλέον × {eur(extraRate)} = <b>{eur(extraTotal)}</b>/{per}
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                )}
                 <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
                   <div className="mb-2 text-xs font-semibold text-slate-500">Ανάλυση κόστους ({yearly ? "ετήσια" : "μηνιαία"})</div>
                   <dl className="space-y-1.5 text-sm">

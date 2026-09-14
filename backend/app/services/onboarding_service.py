@@ -43,6 +43,10 @@ def _slugify(name: str) -> str:
 # είναι πληροφοριακό, όχι όριο). Το παρακάτω είναι ΜΟΝΟ φράχτης κατά παραλόγου input σε δημόσιο
 # endpoint (π.χ. seats=1000000 → τερατώδες τιμολόγιο) — δεν είναι πολιτική τιμολόγησης.
 _SEATS_HARD_MAX = 999
+# Η ΔΩΡΕΑΝ ΔΟΚΙΜΗ είναι ΠΑΝΤΑ 1 χρήστης για ΟΛΟΥΣ — καμία επιλογή, καμία εξαίρεση.
+# ΓΙΑΤΙ: μέχρι τώρα άλλοι έπαιρναν 1 και άλλοι 2 (ανάλογα ποια διαδρομή τους δημιούργησε) και ο
+# πελάτης μπορούσε να ανεβάσει «χρήστες» στη δοκιμή — νόμιζε ότι τους έχει, και τους πλήρωνε μετά.
+_TRIAL_SEATS = 1
 
 class OnboardingError(Exception):
     pass
@@ -110,8 +114,11 @@ class OnboardingService:
         # το provisioning· εδώ ήταν σκληροκωδικοποιημένο και χρέωνε ως «έξτρα» χρήστες που ο πελάτης
         # είχε ήδη πληρώσει μέσα στο πακέτο.
         included_free = int((pkg or {}).get("included_users") or 1)
-        chosen_seats = min(_SEATS_HARD_MAX, max(1, int(seats or 1)))
-        extra_users = max(0, chosen_seats - included_free)       # extra = πάνω από τη βάση (1) → χρεώσιμα
+        # ΔΟΚΙΜΗ → κλειδωμένα στον 1 χρήστη. ΠΛΗΡΩΜΕΝΟ → ό,τι ζήτησε, με κατώφλι τους
+        # περιλαμβανόμενους του πακέτου (δεν γίνεται να αγοράσει ΛΙΓΟΤΕΡΟΥΣ απ' όσους πληρώνει).
+        chosen_seats = (_TRIAL_SEATS if not activate
+                        else min(_SEATS_HARD_MAX, max(included_free, int(seats or included_free))))
+        extra_users = max(0, chosen_seats - included_free)
         sla_doc = await db["sla_tiers"].find_one({"_id": sla_code}) or {}
         sla_price = int(sla_doc.get("price_yearly" if yearly else "price_monthly", 0) or 0)
         extra_total = extra_users * extra_rate
@@ -253,11 +260,13 @@ class OnboardingService:
         pkg = await db["packages"].find_one({"_id": package_code}) if package_code else None
         yearly = (billing_cycle == "yearly")
         price = int((pkg or {}).get("price_yearly" if yearly else "price_monthly", 0) or 0)
-        chosen_seats = min(_SEATS_HARD_MAX, max(1, int(seats or 1)))
         extra_rate = int((pkg or {}).get("extra_user_price_yearly" if yearly else "extra_user_price", 0) or 0)
         # ίδιος κανόνας με το open_tenant/provisioning: χρεώνονται ΜΟΝΟ οι χρήστες πάνω από όσους
         # περιλαμβάνει το πακέτο (βλ. included_users) — όχι όλοι πλην ενός.
         included_free = int((pkg or {}).get("included_users") or 1)
+        # Δωρεάν πακέτο (μηδενική τιμή) = δοκιμή → ΠΑΝΤΑ 1 χρήστης, ό,τι κι αν ήρθε από τη φόρμα.
+        chosen_seats = (_TRIAL_SEATS if price <= 0
+                        else min(_SEATS_HARD_MAX, max(included_free, int(seats or included_free))))
         extra_total = max(0, chosen_seats - included_free) * extra_rate
         sla_code = sla or (pkg or {}).get("sla", "basic")
         sla_doc = await db["sla_tiers"].find_one({"_id": sla_code}) or {}
