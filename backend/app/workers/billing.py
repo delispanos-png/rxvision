@@ -126,3 +126,47 @@ def check_invoice_transformations(self) -> dict:
     διαβιβάζονται στην ΑΑΔΕ. Περιοδικά ρωτάμε αν έγινε ο μετασχηματισμός → αποθηκεύουμε τελικό MARK/κατάσταση."""
     from app.services.invoice_service import check_transformations
     return asyncio.run(check_transformations())
+
+
+@celery_app.task(name="app.workers.billing.reconcile_viva_payments")
+def reconcile_viva_payments() -> dict:
+    """ΔΙΧΤΥ ΑΣΦΑΛΕΙΑΣ: ρωτά την ΙΔΙΑ τη Viva ποιες εκκρεμείς παραγγελίες πληρώθηκαν.
+
+    ΓΙΑΤΙ ΥΠΑΡΧΕΙ: η ενεργοποίηση εξαρτιόταν ΑΠΟΚΛΕΙΣΤΙΚΑ από το webhook της Viva. Όταν αυτό δεν
+    φτάσει (λάθος ρύθμιση, δίκτυο, downtime) ο πελάτης **πληρώνει και δεν γίνεται τίποτα** —
+    σιωπηλά, χωρίς να το μάθει κανείς. Εδώ ρωτάμε εμείς, οπότε το webhook γίνεται επιτάχυνση,
+    όχι προϋπόθεση.
+
+    Καλύπτει και τις δύο ροές: ανανέωση (`pending_renewal`) και νέα εγγραφή (`pending_registrations`).
+    """
+    async def _run() -> dict:
+        from app.services import billing_service, viva_service
+        from app.services.onboarding_service import OnboardingService
+        from app.core.db import shared_db
+        db = shared_db()
+        renewed = signups = 0
+        if True:
+            # (1) ανανεώσεις: συνδρομή με εκκρεμή ανανέωση + order code
+            async for sub in db["subscriptions"].find({
+                    "pending_renewal": {"$ne": None},
+                    "viva_order_code": {"$nin": [None, ""]}}):
+                t = await viva_service.order_paid_transaction(str(sub["viva_order_code"]))
+                if t:
+                    await billing_service.complete_renewal(sub["tenant_id"], str(t["TransactionId"]))
+                    renewed += 1
+            # (2) εγγραφές «πληρωμή-πρώτα» που περιμένουν πληρωμή
+            async for p in db["pending_registrations"].find({
+                    "status": "awaiting_payment", "viva_order_code": {"$nin": [None, ""]}}):
+                t = await viva_service.order_paid_transaction(str(p["viva_order_code"]))
+                if t:
+                    await OnboardingService().mark_pending_paid(str(p["_id"]), str(t["TransactionId"]))
+                    signups += 1
+        if renewed or signups:
+            try:   # ο ιδιοκτήτης ΠΡΕΠΕΙ να μάθει ότι το webhook δεν δούλεψε
+                from app.services.comms import admin_alert
+                await admin_alert(f"⚠️ RxVision: {renewed + signups} πληρωμή/ές Viva εντοπίστηκαν από "
+                                  f"το reconcile (το webhook ΔΕΝ έφτασε). Έλεγξε τη ρύθμιση webhook.")
+            except Exception:  # noqa: BLE001
+                pass
+        return {"renewed": renewed, "signups": signups}
+    return asyncio.run(_run())

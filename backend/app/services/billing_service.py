@@ -161,6 +161,10 @@ async def complete_renewal(tenant_id: str, viva_transaction_id: str) -> None:
     base = cur_end if (cur_end and cur_end > now) else now
     await db["subscriptions"].update_one({"tenant_id": tenant_id}, {
         "$set": {"status": "active", "plan": plan, "plan_name": pkg.get("name"),
+                 # Οι χρήστες του ΝΕΟΥ πακέτου: τουλάχιστον όσους περιλαμβάνει (ο πελάτης τους πληρώνει
+                 # μέσα στην τιμή), ή όσους είχε ήδη αν ήταν περισσότεροι. Χωρίς αυτό, όποιος ερχόταν
+                 # από δοκιμή έμενε με 1 χρήστη ενώ πλήρωνε πακέτο με 6.
+                 "seats": max(int(pkg.get("included_users") or 1), int(sub.get("seats") or 1)),
                  "billing_cycle": cycle, "price_per_pharmacy": price,
                  "price_includes_vat": bool(pkg.get("price_includes_vat")),
                  "modules_included": pkg.get("modules", sub.get("modules_included", [])),

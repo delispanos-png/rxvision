@@ -170,6 +170,18 @@ async def webhook_verification_key(creds: dict | None = None) -> str | None:
         return None
 
 
+def _first_transaction(payload) -> dict | None:
+    """Το Viva τυλίγει ΠΑΝΤΑ την απάντηση σε {"Transactions": [ … ]} — ακόμη και όταν ζητάς ΜΙΑ
+    συναλλαγή με το id της. Χωρίς ξετύλιγμα, το `StatusId` διαβαζόταν από το ΠΕΡΙΤΥΛΙΓΜΑ και έβγαινε
+    πάντα None → ο fail-closed έλεγχος απέρριπτε κάθε γνήσια πληρωμή."""
+    if not isinstance(payload, dict):
+        return None
+    rows = payload.get("Transactions")
+    if isinstance(rows, list):
+        return next((t for t in rows if isinstance(t, dict)), None)
+    return payload if "StatusId" in payload else None
+
+
 async def get_transaction(transaction_id: str, creds: dict | None = None) -> dict | None:
     """Ανάκτηση συναλλαγής (επιβεβαίωση πληρωμής μετά το redirect/webhook)."""
     c = await _creds(creds)
@@ -177,9 +189,42 @@ async def get_transaction(transaction_id: str, creds: dict | None = None) -> dic
         return None
     try:
         async with httpx.AsyncClient(timeout=20) as cl:
-            r = await cl.get(f"{_urls(c)['api']}/api/transactions/{transaction_id}",
+            # ΠΡΟΣΟΧΗ ΣΤΟΝ HOST: το Basic-auth REST API (/api/…) ζει στον MAIN host
+            # (www./demo.vivapayments.com) — ΟΧΙ στο api.vivapayments.com, που γυρίζει 404.
+            r = await cl.get(f"{_urls(c)['web']}/api/transactions/{transaction_id}",
                              headers={"Authorization": _basic(c)})
             r.raise_for_status()
-            return r.json()
+            return _first_transaction(r.json())
     except Exception:  # noqa: BLE001
         return None
+
+
+async def get_order_transactions(order_code: str, creds: dict | None = None) -> list[dict]:
+    """Οι συναλλαγές μιας παραγγελίας checkout, με βάση τον **orderCode**.
+
+    ΓΙΑΤΙ ΧΡΕΙΑΖΕΤΑΙ: το webhook μάς δίνει TransactionId, αλλά εμείς κρατάμε orderCode. Όταν το
+    webhook ΔΕΝ φτάσει (δίκτυο, λάθος ρύθμιση, downtime), αυτό είναι ο ΜΟΝΟΣ τρόπος να μάθουμε
+    μόνοι μας ότι ο πελάτης πλήρωσε — χωρίς αυτό, «πλήρωσε και δεν έγινε τίποτα», σιωπηλά.
+    """
+    c = await _creds(creds)
+    if not can_recurring(c):
+        return []
+    try:
+        async with httpx.AsyncClient(timeout=20) as cl:
+            r = await cl.get(f"{_urls(c)['web']}/api/transactions",   # MAIN host — βλ. get_transaction
+                             params={"ordercode": str(order_code)},
+                             headers={"Authorization": _basic(c)})
+            r.raise_for_status()
+            d = r.json()
+    except Exception:  # noqa: BLE001
+        return []
+    rows = d.get("Transactions") if isinstance(d, dict) else d
+    return [t for t in (rows or []) if isinstance(t, dict)]
+
+
+async def order_paid_transaction(order_code: str, creds: dict | None = None) -> dict | None:
+    """Η ΕΠΙΤΥΧΗΜΕΝΗ συναλλαγή μιας παραγγελίας (StatusId 'F'), αλλιώς None."""
+    for t in await get_order_transactions(order_code, creds):
+        if str(t.get("StatusId") or "") == "F":
+            return t
+    return None

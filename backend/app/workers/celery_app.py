@@ -151,6 +151,12 @@ celery_app.conf.beat_schedule = {
         "task": "app.workers.ingestion.remind_monthly_hdika_password",
         "schedule": crontab(day_of_month=1, hour=7, minute=0),
     },
+    # ΔΙΧΤΥ πληρωμών Viva — κάθε 10 λεπτά ρωτάμε ΕΜΕΙΣ ποιες εκκρεμείς παραγγελίες πληρώθηκαν, ώστε
+    # μια χαμένη ειδοποίηση (webhook) να μη σημαίνει «ο πελάτης πλήρωσε και δεν έγινε τίποτα».
+    "viva-reconcile": {
+        "task": "app.workers.billing.reconcile_viva_payments",
+        "schedule": crontab(minute="*/10"),
+    },
     # Εμβολιασμοί ΗΔΥΚΑ (Influenza Registry) — ΚΑΘΕ 6 ΩΡΕΣ, όχι μία φορά την ημέρα.
     # ΓΙΑΤΙ: με ένα μόνο στιγμιότυπο στις 04:30, κάθε restart/deploy/κόλλημα του beat εκείνη την ώρα
     # σήμαινε ότι το φαρμακείο περίμενε άλλες 24 ώρες — και αν επαναλαμβανόταν, ΠΟΤΕ. Έτσι έμειναν 5
