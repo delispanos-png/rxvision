@@ -151,30 +151,37 @@ class DailyCoachRepository(BaseRepository):
         return out
 
     async def _sig_idle_requests(self, now: datetime) -> list[dict]:
-        """Κάποιος σου μίλησε και δεν του απάντησες. Αυτό δεν συγχωρείται εύκολα."""
+        """Κάποιος απευθύνθηκε στο φαρμακείο μέσω της πύλης και δεν πήρε απάντηση."""
         cutoff = now - timedelta(hours=24)
         out: list[dict] = []
         specs = [
             ("rx_requests", {"status": "new"}, "created_at",
-             "ζήτησε να του ετοιμάσεις συνταγή", "/portal-admin#rx"),
+             "ζήτησε να ετοιμάσεις μια συνταγή", "/portal-admin#rx"),
             ("availability_requests", {"status": "open"}, "created_at",
-             "ρώτησε αν έχεις ένα φάρμακο", "/portal-admin#availability"),
+             "ρώτησε αν έχεις κάποιο φάρμακο", "/portal-admin#availability"),
             ("appointments", {"status": "requested"}, "created_at",
              "ζήτησε ραντεβού", "/portal-admin#appointments"),
             ("orders_delivery", {"status": {"$in": ["pending", "new"]}}, "created_at",
              "έκανε παραγγελία", "/orders-delivery#orders"),
         ]
+        rows: list[tuple] = []
         for coll, flt, field, what, href in specs:
             async for d in self._db[coll].find(
                     {"tenant_id": self.tenant_id, **flt, field: {"$lt": cutoff}}).sort(field, 1).limit(30):
-                out.append({
-                    "signal": "idle_request", "subject": f"{coll}:{d['_id']}",
-                    "name": d.get("patient_name"), "hdika_name": False, "since": d.get(field),
-                    "money_cents": int(d.get("total_cents") or 0) or None,
-                    "extra": {"what": what, "detail": (d.get("query") or d.get("medicine_name")
-                                                       or d.get("service_name") or d.get("note") or "")},
-                    "severity": 3, "href": href,
-                })
+                rows.append((coll, field, what, href, d))
+        # Το φύλο το ξέρουμε ΜΟΝΟ μέσω της καρτέλας ασθενή — χωρίς αυτό ο σύμβουλος
+        # γράφει «Ο ΜΑΡΙΑ» και χάνει αμέσως κάθε σοβαρότητα.
+        info = await self._patient_info([_oid(d.get("patient_ref")) for *_, d in rows])
+        for coll, field, what, href, d in rows:
+            out.append({
+                "signal": "idle_request", "subject": f"{coll}:{d['_id']}",
+                "name": d.get("patient_name"), "hdika_name": False, "since": d.get(field),
+                "sex": (info.get(_oid(d.get("patient_ref"))) or {}).get("sex"),
+                "money_cents": int(d.get("total_cents") or 0) or None,
+                "extra": {"what": what, "detail": (d.get("query") or d.get("medicine_name")
+                                                   or d.get("service_name") or d.get("note") or "")},
+                "severity": 3, "href": href,
+            })
         return out
 
     async def _sig_no_contact(self, now: datetime) -> list[dict]:
@@ -204,8 +211,8 @@ class DailyCoachRepository(BaseRepository):
             "name": None, "since": min(r["last"] for r in missing),
             "money_cents": sum(r["value"] for r in missing),
             "extra": {"count": len(missing),
-                      "names": [info[r["_id"]]["name"] for r in missing[:4]
-                                if info.get(r["_id"], {}).get("name")]},
+                      "names": [{"name": info[r["_id"]]["name"], "sex": info[r["_id"]].get("sex")}
+                                for r in missing[:4] if info.get(r["_id"], {}).get("name")]},
             "severity": 2, "href": "/patients?filter=no-contact",
         }]
 
@@ -319,7 +326,7 @@ class DailyCoachRepository(BaseRepository):
             wins.append({"key": "w_unexec_closed", "count": n,
                          "text": (f"{V.people(n).capitalize()} που είχαν φύγει με μισή συνταγή "
                                   f"γύρισαν μέσα στην εβδομάδα και την ολοκλήρωσαν. "
-                                  f"Αυτό δεν γίνεται μόνο του — κάποιος τους κυνήγησε.")})
+                                  f"Δεν έγινε μόνο του· κάποιος ασχολήθηκε μαζί τους.")})
 
         # 2. Γρήγορες απαντήσεις σε αιτήματα πελατών (<2 ώρες)
         fast = 0
@@ -401,6 +408,13 @@ class DailyCoachRepository(BaseRepository):
     # ─────────────────────────────────────────────────────────────────────────
 
     def _speak(self, f: dict, st: dict) -> dict:
+        """Ωμό εύρημα ⇒ κουβέντα.
+
+        ΥΦΟΣ (ρητή απαίτηση): φιλικός αλλά επαγγελματίας σύμβουλος. Ολοκληρωμένες προτάσεις,
+        το όνομα ΠΑΝΤΑ σε ονομαστική με άρθρο («Ο ΓΙΩΡΓΟΣ…», «Η ΜΑΡΙΑ…») ώστε να μη χρειάζεται
+        κλίση ονόματος (η ΗΔΥΚΑ τα δίνει άκλιτα και κάθε προσπάθεια κλίσης βγάζει λάθος).
+        Ποτέ προσβολή· η σοβαρότητα βγαίνει από το ίδιο το γεγονός, όχι από τον χαρακτηρισμό.
+        """
         streak = int(st.get("days_seen") or 1)
         relapses = int(st.get("relapses") or 0)
         tone = V.tone_for(streak + relapses)
@@ -410,90 +424,106 @@ class DailyCoachRepository(BaseRepository):
         # Η ΗΔΥΚΑ δίνει «ΕΠΩΝΥΜΟ ΟΝΟΜΑ» (το μικρό είναι τελευταίο)· η πύλη δίνει ό,τι έγραψε ο
         # ίδιος ο πελάτης. Εκεί ΔΕΝ μαντεύουμε — λέμε το όνομα όπως το έδωσε.
         who = V.first_name(f.get("name")) if f.get("hdika_name", True) else V.person(f.get("name"))
+        art = V.the(sex)                        # «Ο» / «Η»
+        subj = f"{art} {who}"                   # ονομαστική — δουλεύει σε κάθε πρόταση
         ago = V.ago_phrase(_days_between(f.get("since"), _now()))
         ex = f.get("extra") or {}
         money = V.money(f.get("money_cents")) if f.get("money_cents") else None
         him = V.g(sex, "τον", "την")
-        his = V.g(sex, "Του", "Της")
+        gen = V.g(sex, "του", "της")
 
         if sig == "unexecuted":
             names = [V.product(n) for n in (f.get("items") or [])]
-            items = ", ".join(names[:2])
-            if len(names) > 2:
-                items += f" και άλλα {len(names) - 2}"
-            title = f"{who}: έφυγε με μισή συνταγή"
-            body = (f"Ήρθε {ago} και δεν πήρε {items}. "
-                    f"{money} που θα ξοδέψει σε άλλο φαρμακείο")
+            what = (f"το {names[0]}" if len(names) == 1
+                    else ", ".join(names[:2]) + (f" και άλλα {len(names) - 2}" if len(names) > 2 else ""))
+            title = f"{subj} έφυγε χωρίς μέρος της συνταγής {gen}"
+            body = (f"Πέρασε {ago} και δεν πήρε {what}. "
+                    f"Μιλάμε για {money} που πιθανότατα θα καταλήξουν σε άλλο φαρμακείο")
             if f.get("profit_cents"):
-                body += f" — {V.money(f['profit_cents'])} δικό σου κέρδος"
-            body += "."
+                body += f", και μαζί τους {V.money(f['profit_cents'])} δικό σου κέρδος"
+            body += ". "
             if tone == V.TONE_HARD:
-                body += (f" Και δεν είναι μόνο τα λεφτά: αν άρχισε να ψωνίζει αλλού, "
-                         f"την επόμενη φορά μπορεί να μην έρθει καθόλου.")
-            action = f"Πάρ' {him} τηλέφωνο — «σου κράτησα το υπόλοιπο»"
+                body += ("Όταν κάποιος συνηθίσει να συμπληρώνει τη συνταγή του αλλού, συνήθως "
+                         "δεν το ξανασκέφτεται. Αξίζει να μπει σήμερα στη λίστα σου.")
+            else:
+                body += ("Ένα τηλέφωνο συνήθως αρκεί — οι περισσότεροι επιστρέφουν μόλις "
+                         "μάθουν ότι τους το κρατάς.")
+            action = f"Πάρ' {him} τηλέφωνο"
 
         elif sig == "repeat_expiring":
             left, dl = ex.get("left", 1), ex.get("days_left", 0)
             when = ("σήμερα" if dl == 0 else "αύριο" if dl == 1
                     else f"σε {V.count_word(dl, feminine=True)} μέρες")
-            title = f"{who}: η συνταγή λήγει {when}"
-            body = (f"{his} {'μένει' if left == 1 else 'μένουν'} {V.doses(left)} "
-                    f"και η συνταγή λήγει {when}. "
-                    f"Αν δεν περάσει, {'τη' if left == 1 else 'τις'} χάνει — "
-                    f"και ξαναρχίζει από τον γιατρό. "
-                    f"Για σένα είναι {money} που δεν θα γίνουν ποτέ.")
-            action = f"Στείλε {V.g(sex, 'του', 'της')} υπενθύμιση σήμερα"
+            title = f"{subj} χάνει {V.doses(left)} {when}"
+            body = (f"Η επαναλαμβανόμενη συνταγή {gen} λήγει {when} και "
+                    f"{'μένει' if left == 1 else 'μένουν'} {V.doses(left)} αχρησιμοποίητ"
+                    f"{'η' if left == 1 else 'ες'}. Αν δεν προλάβει, θα χρειαστεί να ξαναπάει "
+                    f"στον γιατρό για να {'την' if left == 1 else 'τις'} ξαναγράψει — και για "
+                    f"το φαρμακείο είναι {money} που δεν θα εκτελεστούν ποτέ. "
+                    f"Μια υπενθύμιση σήμερα το λύνει.")
+            action = f"Ειδοποίησέ {him} σήμερα"
 
         elif sig == "idle_request":
-            what = ex.get("what", "σου έστειλε αίτημα")
-            title = f"{who}: περιμένει απάντηση {V.days_phrase(_days_between(f.get('since'), _now()))}"
-            body = f"{who} {what} και δεν έχει πάρει απάντηση ακόμα."
+            what = ex.get("what", "έστειλε ένα αίτημα")
+            title = f"{subj} περιμένει απάντηση {V.days_phrase(_days_between(f.get('since'), _now()))}"
+            body = f"{what.capitalize()} μέσα από την πύλη και το αίτημα παραμένει αναπάντητο. "
             if ex.get("detail"):
-                body += f" Έγραψε: «{str(ex['detail'])[:120]}»."
+                body += f"Έγραψε: «{str(ex['detail'])[:120]}». "
             if tone == V.TONE_SOFT:
-                body += " Δύο λεπτά θέλει."
+                body += ("Μια σύντομη απάντηση, έστω «το κοιτάζω», είναι αρκετή για να "
+                         "μην αισθανθεί ότι τον ξέχασαν.")
             elif tone == V.TONE_FIRM:
-                body += " Ένας πελάτης που ρωτάει και δεν παίρνει απάντηση, δεν ξαναρωτάει."
+                body += ("Όποιος ρωτήσει και δεν πάρει απάντηση, συνήθως δεν ξαναρωτά — "
+                         "και δεν το λέει κιόλας.")
             else:
-                body += (" Αυτός ο άνθρωπος σού εμπιστεύτηκε ένα αίτημα και τον αφήνεις να περιμένει. "
-                         "Είναι το χειρότερο πράγμα που μπορείς να κάνεις σε πελάτη της πύλης.")
-            action = "Απάντησέ του τώρα"
+                body += ("Η πύλη έχει αξία μόνο όσο κάποιος απαντά σε αυτήν· διαφορετικά "
+                         "δουλεύει εναντίον του φαρμακείου. Αξίζει να κλείσει σήμερα.")
+            action = "Απάντησε στο αίτημα"
 
         elif sig == "no_contact":
             n = ex.get("count", 0)
-            nms = [x for x in (ex.get("names") or []) if x]
-            who_list = ", ".join(V.first_name(x) for x in nms[:3])
-            title = f"{n} πελάτες που δεν μπορείς να βρεις"
-            body = (f"{V.people(n).capitalize()} πέρασαν τις τελευταίες τρεις μέρες"
-                    + (f" — {who_list} και άλλοι" if who_list else "")
-                    + f" — και δεν έχεις ούτε τηλέφωνο ούτε email. Ψώνισαν {money}. "
-                      f"Αν αύριο έρθει το φάρμακό τους ή λήξει η συνταγή τους, "
-                      f"δεν έχεις τρόπο να τους το πεις.")
+            nms = [f"{V.the(x.get('sex'), cap=False)} {V.first_name(x.get('name'))}"
+                   for x in (ex.get("names") or []) if x and x.get("name")][:2]
+            who_list = (" και ".join(nms) + (" ανάμεσά τους" if n > len(nms) else "")) if nms else ""
+            title = f"{n} πελάτες χωρίς στοιχεία επικοινωνίας"
+            body = (f"{V.people(n).capitalize()} πέρασαν από το φαρμακείο τις τελευταίες τρεις "
+                    f"μέρες" + (f" — {who_list} — " if who_list else " ") +
+                    f"και άφησαν {money}, αλλά στην καρτέλα τους δεν υπάρχει ούτε τηλέφωνο "
+                    f"ούτε email. Αν αύριο έρθει το φάρμακό τους ή λήξει η συνταγή τους, "
+                    f"δεν υπάρχει τρόπος να τους το πεις.")
             if tone == V.TONE_HARD:
-                body += (" Το λέμε μέρες. Ένα τηλέφωνο στο ταμείο είναι δέκα δευτερόλεπτα — "
-                         "και είναι η διαφορά ανάμεσα σε πελάτη και περαστικό.")
-            action = "Ζήτα τηλέφωνο στο ταμείο"
+                body += (" Δέκα δευτερόλεπτα στο ταμείο είναι όλη κι όλη η διαφορά ανάμεσα "
+                         "σε πελάτη και σε περαστικό.")
+            else:
+                body += " Δέκα δευτερόλεπτα στο ταμείο αρκούν."
+            action = "Ζήτα στοιχεία στο ταμείο"
 
         elif sig == "vaccine_missed":
-            title = f"{who}: δικαιούται εμβόλιο και δεν {V.g(sex, 'του', 'της')} το είπες"
-            body = (f"{V.person(f.get('name'))}, {ex.get('age_group', '65+')}, ήταν μπροστά σου {ago} "
-                    f"και δεν έχει κάνει αντιγριπικό φέτος. Δεν είναι πώληση — είναι ο λόγος "
-                    f"που υπάρχει φαρμακείο στη γειτονιά.")
-            action = f"Πρόσφερέ {V.g(sex, 'του', 'της')} εμβολιασμό"
+            title = f"{subj} δικαιούται αντιγριπικό"
+            body = (f"Ανήκει στην ομάδα {ex.get('age_group', '65+')}, πέρασε από το φαρμακείο "
+                    f"{ago} και δεν έχει εμβολιαστεί φέτος. Δεν είναι θέμα πώλησης· είναι "
+                    f"ακριβώς ο ρόλος που έχει ένα φαρμακείο στη γειτονιά του. ")
+            body += ("Σε αυτή την ηλικία η γρίπη δεν είναι απλώς ενόχληση, και η σύσταση "
+                     "βαραίνει περισσότερο όταν έρχεται από το φαρμακείο που εμπιστεύεται."
+                     if tone == V.TONE_HARD
+                     else "Μια κουβέντα στο ταμείο, την επόμενη φορά που θα περάσει, αρκεί.")
+            action = "Πρότεινε εμβολιασμό"
 
         elif sig == "lapsed_chronic":
-            title = f"{who}: χρόνιος ασθενής που δεν ήρθε"
-            body = (f"Έπαιρνε την αγωγή {V.g(sex, 'του', 'της')} εδώ {ex.get('rx_count', 'πολλές')} φορές. "
-                    f"{him.capitalize()} περίμενες {ago} και δεν φάνηκε. "
-                    f"Κάθε επίσκεψη άξιζε περίπου {money} — αλλά το θέμα δεν είναι αυτό: "
-                    f"όποιος παίρνει χρόνια αγωγή και σταματά, ή άλλαξε φαρμακείο ή κάτι συμβαίνει.")
-            action = f"Πάρ' {him} να δεις τι έγινε"
+            title = f"{subj} σταμάτησε να έρχεται"
+            body = (f"Έχει εκτελέσει {ex.get('rx_count', 'πολλές')} συνταγές εδώ, αλλά η "
+                    f"επόμενη αναμενόταν {ago} και δεν εμφανίστηκε. Κάθε επίσκεψη άξιζε "
+                    f"περίπου {money}· το ουσιαστικό ερώτημα όμως είναι άλλο: όταν ένας "
+                    f"χρόνιος ασθενής σταματά απότομα, ή άλλαξε φαρμακείο ή έχει συμβεί κάτι. "
+                    f"Ένα τηλέφωνο θα το ξεκαθαρίσει.")
+            action = f"Πάρ' {him} τηλέφωνο"
 
         else:
             title, body, action = f["signal"], "", ""
 
         if ex.get("rest"):
-            body += f" Άλλοι {ex['rest']} είναι στην ίδια ακριβώς κατάσταση σήμερα."
+            body += (f" Στην ίδια ακριβώς κατάσταση βρίσκονται σήμερα άλλοι "
+                     f"{ex['rest']} πελάτες.")
         if opener:
             body = f"{opener} {body}"
         return {"title": title, "body": body, "action": action, "tone": tone,
