@@ -39,9 +39,12 @@ class MarkIn(BaseModel):
     action: str = "done"          # done = το έκλεισα σήμερα · dismiss = δεν με αφορά (30 μέρες)
 
 
+# ΔΙΚΑΙΩΜΑ: `patients:read`, ΟΧΙ `patients:write`. Το «Το έκανα» δεν αλλάζει δεδομένα ασθενή —
+# αλλάζει την κατάσταση του ΙΔΙΟΥ του ευρήματος. Το `patients:write` το έχει μόνο ο ιδιοκτήτης,
+# οπότε θα κλείδωνε τη λίστα από ακριβώς τους ανθρώπους που τη δουλεύουν (πάγκος, φαρμακοποιοί).
 @router.post("/findings/{key:path}/mark")
 async def mark(key: str, body: MarkIn,
-               ctx: TenantContext = Depends(require("patients:write", module=_MODULE))):
+               ctx: TenantContext = Depends(require("patients:read", module=_MODULE))):
     return await _repo(ctx).mark(key, body.action, by=getattr(ctx, "user_id", None))
 
 
@@ -79,9 +82,10 @@ class GoalIn(BaseModel):
     target: int = 0               # «το πολύ N την ημέρα»
 
 
+# Ο στόχος του μήνα είναι απόφαση διοίκησης του φαρμακείου, όχι ενέργεια πάγκου.
 @router.put("/goal")
 async def set_goal(body: GoalIn,
-                   ctx: TenantContext = Depends(require("patients:write", module=_MODULE))):
+                   ctx: TenantContext = Depends(require("settings:write", module=_MODULE))):
     return await _repo(ctx).set_goal(body.signal, body.target)
 
 

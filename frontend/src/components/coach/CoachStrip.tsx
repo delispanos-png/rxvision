@@ -6,6 +6,11 @@ import { Compass, AlertTriangle, Info, ArrowRight } from "lucide-react";
 import { api, queryKeys } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
 
+const KIND_EMOJI: Record<string, string> = {
+  unexecuted: "💊", repeat_expiring: "⏳", idle_request: "💬",
+  no_contact: "📇", vaccine_missed: "💉",
+};
+
 type Note = { kind: string; tone: "warn" | "info"; text: string; money_cents?: number | null; href?: string };
 type Brief = { found: boolean; name?: string | null; notes?: Note[] };
 type Me = { modules?: Record<string, string> };
@@ -47,9 +52,11 @@ export function CoachStrip({ patientId }: { patientId?: string | null }) {
       <ul className="mt-2.5 space-y-2">
         {notes.map((n, i) => (
           <li key={n.kind + i} className="flex items-start gap-2 text-sm leading-relaxed text-slate-800 dark:text-slate-200">
-            {n.tone === "warn"
-              ? <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
-              : <Info className="mt-0.5 h-4 w-4 shrink-0 text-sky-600" />}
+            {KIND_EMOJI[n.kind]
+              ? <span className="mt-px shrink-0 leading-none" aria-hidden>{KIND_EMOJI[n.kind]}</span>
+              : n.tone === "warn"
+                ? <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+                : <Info className="mt-0.5 h-4 w-4 shrink-0 text-sky-600" />}
             <span>
               {n.text}
               {n.href && (

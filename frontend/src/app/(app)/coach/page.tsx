@@ -1,12 +1,13 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Compass, Check, BellOff, ArrowRight, Trophy, Flame, TrendingUp, Phone, PhoneOff, User, IdCard, FileText, ListChecks, Wallet, Droplets, Users2, SlidersHorizontal, CalendarRange, Target } from "lucide-react";
 import { api } from "@/lib/apiClient";
 import { appConfirm } from "@/store/dialogStore";
 import { useT } from "@/store/prefStore";
+import { Celebrate } from "@/components/coach/Celebrate";
 import { QueryState } from "@/components/ui/QueryState";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
 
@@ -16,12 +17,14 @@ type Link = { kind: "profile" | "card" | "rx" | "inbox"; label: string; href: st
 type Item = {
   key: string; signal: string; name: string | null; title: string; body: string; action: string;
   tone: Tone; streak: number; relapses: number; money_cents: number | null;
-  who: Who; call: string | null; links: Link[];
+  who: Who; call: string | null; links: Link[]; emoji?: string | null;
 };
-type Win = { key: string; count: number; text: string };
+type Win = { key: string; count: number; text: string; emoji?: string };
+type Mood = "celebrate" | "calm" | "focus" | "work";
 type Today = {
   day: string; greeting: string; items: Item[]; hidden: number; wins: Win[];
   closing: string; clean_streak: number; at_risk_cents: number;
+  mood: Mood; milestone: string | null;
 };
 type Hist = { day: string; misses: number; wins: number };
 type Bucket = { n: number; value_cents: number; profit_cents: number };
@@ -38,10 +41,11 @@ type Leak = {
   trend: { before: number; after: number; better: boolean; worse: boolean } | null;
   full_months: number; this_month: string;
 };
-type Goal = { signal: string; label: string; target: number; active: boolean; hit_days: number; of_days: number; progress_text: string } | null;
+type Goal = { signal: string; label: string; target: number; active: boolean; hit_days: number; of_days: number; progress_text: string; achieved?: boolean; emoji?: string } | null;
 type Week = {
   from: string; to: string; misses: number; misses_prev: number; closed: number;
-  recovered: Bucket; daily: { day: string; misses: number }[]; goal: Goal; narrative: string;
+  recovered: Bucket; daily: { day: string; misses: number; has_data: boolean }[];
+  goal: Goal; narrative: string; days_with_data: number; prev_days_with_data: number;
 };
 type Team = { days: number; total_closed: number; stale: number;
   members: { user_id: string; name: string; closed: number; recovered: number; last: string }[] };
@@ -59,6 +63,15 @@ const TABS: { key: Tab; el: string; en: string; icon: typeof Compass }[] = [
   { key: "team", el: "Ομάδα", en: "Team", icon: Users2 },
   { key: "settings", el: "Ρυθμίσεις", en: "Settings", icon: SlidersHorizontal },
 ];
+// Η «διάθεση» της ημέρας. Στη «δουλειά» (πολλά ή επαναλαμβανόμενα) ΔΕΝ μπαίνει εικονίδιο —
+// εκεί η ελαφρότητα θα ακύρωνε το μήνυμα.
+const MOOD: Record<Mood, { emoji: string | null; card: string }> = {
+  celebrate: { emoji: "🎉", card: "border-emerald-200 bg-emerald-50/70 dark:border-emerald-900 dark:bg-emerald-950/30" },
+  calm: { emoji: "☀️", card: "border-sky-200 bg-sky-50/60 dark:border-sky-900 dark:bg-sky-950/25" },
+  focus: { emoji: "☕", card: "border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900" },
+  work: { emoji: null, card: "border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900" },
+};
+const DOW_EL = ["Κυ", "Δε", "Τρ", "Τε", "Πέ", "Πα", "Σά"];
 const MONTH_EL = ["Ιαν", "Φεβ", "Μαρ", "Απρ", "Μάι", "Ιουν", "Ιουλ", "Αυγ", "Σεπ", "Οκτ", "Νοε", "Δεκ"];
 const mlabel = (m: string) => { const [y, mm] = m.split("-"); return `${MONTH_EL[Number(mm) - 1] ?? mm} ${y.slice(2)}`; };
 
@@ -82,12 +95,17 @@ const SIGNAL_EL: Record<string, string> = {
   vaccine_missed: "Χαμένοι εμβολιασμοί",
   lapsed_chronic: "Χρόνιοι που σταμάτησαν",
 };
+// Ίδια εικονίδια με το backend, ώστε το ίδιο θέμα να φαίνεται ίδιο παντού.
+const SIGNAL_EMOJI: Record<string, string> = {
+  unexecuted: "💊", repeat_expiring: "⏳", idle_request: "💬",
+  no_contact: "📇", vaccine_missed: "💉", lapsed_chronic: "🚶",
+};
 // Οι στόχοι που έχει νόημα να βάλει κάποιος — διατυπωμένοι ως δέσμευση, όχι ως μετρικό.
 const SIGNAL_GOALS: Record<string, string> = {
-  idle_request: "Κανένα αίτημα χωρίς απάντηση",
-  unexecuted: "Κανένα ανεκτέλεστο να μείνει αναπάντητο",
-  repeat_expiring: "Καμία επανάληψη να λήξει αχρησιμοποίητη",
-  no_contact: "Κανένας πελάτης χωρίς τηλέφωνο",
+  idle_request: "💬 Κανένα αίτημα χωρίς απάντηση",
+  unexecuted: "💊 Κανένα ανεκτέλεστο να μείνει αναπάντητο",
+  repeat_expiring: "⏳ Καμία επανάληψη να λήξει αχρησιμοποίητη",
+  no_contact: "📇 Κανένας πελάτης χωρίς τηλέφωνο",
 };
 
 function Stat({ label, value, sub, tone }: { label: string; value: string; sub?: string; tone?: "good" }) {
@@ -142,6 +160,17 @@ export default function CoachPage() {
     onSuccess: () => wk.refetch(),
   });
 
+  // Γιορτάζουμε ΜΟΝΟ στη μετάβαση «είχα θέματα» → «κανένα». Μια γιορτή που παίζει σε κάθε
+  // φόρτωση σελίδας παύει να είναι γιορτή.
+  const [party, setParty] = useState(0);
+  const had = useRef(false);
+  useEffect(() => {
+    const n = q.data?.items.length;
+    if (n === undefined) return;
+    if (n === 0 && had.current) setParty((p) => p + 1);
+    had.current = n > 0;
+  }, [q.data?.items.length]);
+
   const mark = useMutation({
     mutationFn: (v: { key: string; action: string }) =>
       api(`/coach/findings/${encodeURIComponent(v.key)}/mark`, { method: "POST", body: JSON.stringify({ action: v.action }) }),
@@ -165,6 +194,7 @@ export default function CoachPage() {
 
   return (
     <ModuleGuard module="daily_coach">
+      <Celebrate fire={party > 0} key={party} />
       <div className="mx-auto w-full max-w-4xl space-y-6">
         <div className="flex items-center gap-3">
           <span className="grid h-11 w-11 place-items-center rounded-2xl bg-gradient-to-br from-indigo-500 to-sky-600 text-white shadow-lg"><Compass className="h-6 w-6" /></span>
@@ -193,9 +223,20 @@ export default function CoachPage() {
         <QueryState isLoading={q.isLoading} isError={q.isError} onRetry={() => q.refetch()}>
           {q.data && (
             <>
-              {/* Η καλημέρα — ο σύμβουλος μιλάει πρώτος */}
-              <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-                <p className="text-base leading-relaxed text-slate-800 dark:text-slate-200">{q.data.greeting}</p>
+              {/* Η καλημέρα — ο σύμβουλος μιλάει πρώτος. Το χρώμα & το εικονίδιο ακολουθούν
+                  τη διάθεση της ημέρας· στις κακές μέρες δεν μπαίνει εικονίδιο καθόλου. */}
+              <div className={`rounded-2xl border p-5 shadow-sm ${MOOD[q.data.mood ?? "focus"].card}`}>
+                <div className="flex items-start gap-3">
+                  {MOOD[q.data.mood ?? "focus"].emoji && (
+                    <span className="text-2xl leading-none" aria-hidden>{MOOD[q.data.mood ?? "focus"].emoji}</span>
+                  )}
+                  <p className="text-base leading-relaxed text-slate-800 dark:text-slate-200">{q.data.greeting}</p>
+                </div>
+                {q.data.milestone && (
+                  <p className="mt-2.5 rounded-xl bg-white/70 px-3 py-2 text-sm font-semibold text-emerald-700 dark:bg-slate-900/50 dark:text-emerald-300">
+                    🏅 {q.data.milestone}
+                  </p>
+                )}
                 <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
                   {q.data.clean_streak > 0 && (
                     <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-1 font-semibold text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">
@@ -233,6 +274,7 @@ export default function CoachPage() {
                       <span className={`absolute inset-y-0 left-0 w-1.5 ${tn.bar}`} />
                       <div className="p-4 pl-6">
                         <div className="flex flex-wrap items-center gap-2">
+                          {it.emoji && <span className="text-base leading-none" aria-hidden>{it.emoji}</span>}
                           <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">{it.title}</h3>
                           <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${tn.chip}`}>{t(tn.label[0], tn.label[1])}</span>
                           {it.streak > 1 && (
@@ -310,6 +352,17 @@ export default function CoachPage() {
                     </div>
                   );
                 })}
+                {q.data.items.length === 0 && (
+                  <div className="rounded-2xl border border-dashed border-emerald-200 bg-emerald-50/40 p-8 text-center dark:border-emerald-900 dark:bg-emerald-950/20">
+                    <div className="text-4xl" aria-hidden>🧹</div>
+                    <p className="mt-2 text-sm font-semibold text-emerald-800 dark:text-emerald-300">
+                      {t("Καθαρό ταμπλό.", "All clear.")}
+                    </p>
+                    <p className="mt-1 text-xs text-emerald-700/80 dark:text-emerald-400/80">
+                      {t("Τίποτα δεν περιμένει εσένα αυτή τη στιγμή.", "Nothing is waiting on you right now.")}
+                    </p>
+                  </div>
+                )}
                 {q.data.hidden > 0 && (
                   <p className="px-1 text-xs text-slate-500">
                     {t(`Υπάρχουν κι άλλα ${q.data.hidden}, αλλά δεν σου τα λέω σήμερα — κλείσε πρώτα αυτά.`,
@@ -326,7 +379,9 @@ export default function CoachPage() {
                   </h2>
                   <ul className="mt-3 space-y-2.5">
                     {q.data.wins.map((w) => (
-                      <li key={w.key} className="text-sm leading-relaxed text-emerald-900 dark:text-emerald-200">✅ {w.text}</li>
+                      <li key={w.key} className="flex items-start gap-2 text-sm leading-relaxed text-emerald-900 dark:text-emerald-200">
+                        <span className="leading-none" aria-hidden>{w.emoji || "✅"}</span><span>{w.text}</span>
+                      </li>
                     ))}
                   </ul>
                 </div>
@@ -376,18 +431,30 @@ export default function CoachPage() {
                 <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
                   <p className="text-base leading-relaxed text-slate-800 dark:text-slate-200">{wk.data.narrative}</p>
                   <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
-                    <Stat label={t("Θέματα", "Findings")} value={String(wk.data.misses)} sub={t(`προηγ. ${wk.data.misses_prev}`, `prev ${wk.data.misses_prev}`)} />
+                    <Stat label={t("Θέματα", "Findings")} value={String(wk.data.misses)}
+                      sub={wk.data.prev_days_with_data >= 4 ? t(`προηγ. ${wk.data.misses_prev}`, `prev ${wk.data.misses_prev}`) : undefined} />
                     <Stat label={t("Έκλεισαν", "Closed")} value={String(wk.data.closed)} />
                     <Stat label={t("Επιβεβαιωμένα", "Confirmed")} value={String(wk.data.recovered.n)} />
                     <Stat label={t("Αξία", "Value")} value={eur(wk.data.recovered.value_cents)} tone="good" />
                   </div>
-                  <div className="mt-4 flex h-16 items-end gap-1.5">
+                  {/* Μέρα χωρίς δεδομένα = γκρι διακεκομμένη βάση, ΟΧΙ πράσινη στήλη. Το πράσινο
+                      σημαίνει «καθαρή μέρα» και πρέπει να το εννοεί. */}
+                  <div className="mt-4 flex h-20 items-end gap-1.5">
                     {wk.data.daily.map((d) => {
-                      const mx = Math.max(1, ...wk.data!.daily.map((x) => x.misses));
+                      const mx = Math.max(1, ...wk.data!.daily.filter((x) => x.has_data).map((x) => x.misses));
+                      const dt = new Date(d.day + "T12:00:00");
                       return (
-                        <div key={d.day} className="flex-1" title={`${d.day}: ${d.misses}`}>
-                          <div className={`w-full rounded-t ${d.misses === 0 ? "bg-emerald-400" : d.misses <= 3 ? "bg-sky-400" : "bg-amber-400"}`}
-                            style={{ height: `${Math.max(5, (d.misses / mx) * 60)}px` }} />
+                        <div key={d.day} className="flex flex-1 flex-col items-center gap-1"
+                          title={d.has_data ? `${d.day}: ${d.misses}` : t(`${d.day}: χωρίς δεδομένα`, `${d.day}: no data`)}>
+                          <div className="flex w-full flex-1 items-end">
+                            {d.has_data ? (
+                              <div className={`w-full rounded-t ${d.misses === 0 ? "bg-emerald-400" : d.misses <= 3 ? "bg-sky-400" : "bg-amber-400"}`}
+                                style={{ height: `${Math.max(5, (d.misses / mx) * 56)}px` }} />
+                            ) : (
+                              <div className="h-1 w-full rounded-full border-b-2 border-dashed border-slate-300 dark:border-slate-700" />
+                            )}
+                          </div>
+                          <span className="text-[10px] text-slate-400">{DOW_EL[dt.getDay()]}</span>
                         </div>
                       );
                     })}
@@ -401,9 +468,23 @@ export default function CoachPage() {
                   </h2>
                   {wk.data.goal ? (
                     <>
-                      <p className="mt-2 text-sm leading-relaxed text-slate-700 dark:text-slate-300">{wk.data.goal.progress_text}</p>
-                      <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
-                        <div className="h-full rounded-full bg-emerald-500" style={{ width: `${(wk.data.goal.hit_days / 7) * 100}%` }} />
+                      <div className="mt-2 flex items-start gap-2.5">
+                        <span className="text-xl leading-none" aria-hidden>
+                          {wk.data.goal.achieved ? "🎯" : wk.data.goal.emoji || "•"}
+                        </span>
+                        <p className="text-sm leading-relaxed text-slate-700 dark:text-slate-300">{wk.data.goal.progress_text}</p>
+                      </div>
+                      {/* Επτά τελείες = επτά μέρες. Πιο ανθρώπινο από μια μπάρα ποσοστού. */}
+                      <div className="mt-3 flex items-center gap-1.5">
+                        {Array.from({ length: 7 }).map((_, i) => (
+                          <span key={i} className={`h-2.5 w-2.5 rounded-full transition ${
+                            i < wk.data!.goal!.hit_days ? "bg-emerald-500" : "bg-slate-200 dark:bg-slate-700"}`} />
+                        ))}
+                        {wk.data.goal.achieved && (
+                          <span className="ml-1.5 rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-bold text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">
+                            {t("Πέτυχε 🎉", "Achieved 🎉")}
+                          </span>
+                        )}
                       </div>
                       <button onClick={() => saveGoal.mutate({ signal: null, target: 0 })}
                         className="mt-3 text-xs font-semibold text-slate-400 hover:text-slate-600">{t("Άλλαξε στόχο", "Change goal")}</button>
@@ -437,7 +518,7 @@ export default function CoachPage() {
               <div className="space-y-5">
                 <div className="rounded-2xl border border-emerald-200 bg-emerald-50/60 p-5 dark:border-emerald-900 dark:bg-emerald-950/30">
                   <h2 className="text-sm font-bold text-emerald-800 dark:text-emerald-300">
-                    {t("Επιβεβαιωμένη ανάκτηση — τελευταίες 90 μέρες", "Confirmed recovery — last 90 days")}
+                    {val.data.acted.n > 0 ? "💚 " : ""}{t("Επιβεβαιωμένη ανάκτηση — τελευταίες 90 μέρες", "Confirmed recovery — last 90 days")}
                   </h2>
                   <p className="mt-1.5 text-sm leading-relaxed text-emerald-900 dark:text-emerald-200">
                     {val.data.acted.n > 0
@@ -482,7 +563,9 @@ export default function CoachPage() {
                               {r.name || "—"}
                               {r.acted && <span className="ml-1.5 rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">{t("ενήργησες", "acted")}</span>}
                             </td>
-                            <td className="px-4 py-2.5 text-slate-500">{SIGNAL_EL[r.signal] ?? r.signal}</td>
+                            <td className="px-4 py-2.5 text-slate-500">
+                              <span className="mr-1" aria-hidden>{SIGNAL_EMOJI[r.signal] ?? ""}</span>{SIGNAL_EL[r.signal] ?? r.signal}
+                            </td>
                             <td className="px-4 py-2.5 text-right text-slate-700 dark:text-slate-300">{eur(r.value_cents)}</td>
                             <td className="px-4 py-2.5 text-right text-slate-400">{r.days_open}</td>
                           </tr>
@@ -585,9 +668,12 @@ export default function CoachPage() {
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                        {team.data.members.map((m) => (
+                        {team.data.members.map((m, i) => (
                           <tr key={m.user_id}>
-                            <td className="px-4 py-2.5 font-medium text-slate-800 dark:text-slate-100">{m.name}</td>
+                            <td className="px-4 py-2.5 font-medium text-slate-800 dark:text-slate-100">
+                              {i === 0 && m.closed > 0 && <span className="mr-1.5" aria-hidden title={t("Έκλεισε τα περισσότερα", "Closed the most")}>👏</span>}
+                              {m.name}
+                            </td>
                             <td className="px-4 py-2.5 text-right text-slate-700 dark:text-slate-300">{m.closed}</td>
                             <td className="px-4 py-2.5 text-right text-emerald-600 dark:text-emerald-400">{m.recovered}</td>
                           </tr>

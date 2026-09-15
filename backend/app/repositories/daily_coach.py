@@ -72,6 +72,20 @@ def _oid(v):
         return None
 
 
+# Ορόσημα σερί: γιορτάζουμε ΣΠΑΝΙΑ, αλλιώς παύει να σημαίνει κάτι.
+_MILESTONES = {
+    3: "Τρεις καθαρές μέρες στη σειρά.",
+    5: "Πέντε καθαρές μέρες. Αυτό είναι πια συνήθεια, όχι τύχη.",
+    10: "Δέκα καθαρές μέρες στη σειρά. Λίγα φαρμακεία το πετυχαίνουν αυτό.",
+    20: "Είκοσι καθαρές μέρες. Δεν έχω κάτι να προσθέσω.",
+    30: "Έναν ολόκληρο μήνα χωρίς να μου ξεφύγει τίποτα. Καμάρωσε.",
+}
+
+
+def _milestone(clean_streak: int) -> str | None:
+    return _MILESTONES.get(int(clean_streak or 0))
+
+
 def _days_between(a: datetime | None, b: datetime) -> int:
     if not a:
         return 0
@@ -336,6 +350,10 @@ class DailyCoachRepository(BaseRepository):
         wins: list[dict] = []
         week = now - timedelta(days=7)
 
+        def _emoji(w: dict) -> dict:
+            w["emoji"] = V.WIN_EMOJI.get(w["key"], "✅")
+            return w
+
         # 1. Ανεκτέλεστα που ΕΚΛΕΙΣΑΝ: ασθενής με ανεκτέλεστο ΓΥΡΙΣΕ και το ολοκλήρωσε.
         # Δύο απλά group-by αντί για per-patient $lookup — το ίδιο αποτέλεσμα, κλάσμα του κόστους.
         had = {r["_id"]: r["first"] for r in await self._db["prescription_executions"].aggregate([
@@ -393,7 +411,7 @@ class DailyCoachRepository(BaseRepository):
                          "text": (f"{vacc} εμβολιασμοί μέσα στην εβδομάδα. Πέρα από τα λεφτά: "
                                   f"{vacc} άνθρωποι που πιθανότατα δεν θα αρρωστήσουν φέτος "
                                   f"επειδή μπήκαν στο δικό σου φαρμακείο.")})
-        return wins
+        return [_emoji(w) for w in wins]
 
     # ─────────────────────────────────────────────────────────────────────────
     # βοηθητικά
@@ -585,6 +603,9 @@ class DailyCoachRepository(BaseRepository):
         if opener:
             body = f"{opener} {body}"
         return {"title": title, "body": body, "action": action, "tone": tone,
+                # Στον σκληρό τόνο ΔΕΝ μπαίνει εικονίδιο: όταν το λέμε πέντε μέρες, η
+                # χαριτωμενιά ακυρώνει το μήνυμα.
+                "emoji": None if tone == V.TONE_HARD else V.SIGNAL_EMOJI.get(sig),
                 "streak": streak, "relapses": relapses}
 
     @staticmethod
@@ -687,6 +708,9 @@ class DailyCoachRepository(BaseRepository):
             "items": shown, "hidden": hidden, "wins": wins,
             "closing": V.closing(open_misses=len(items), wins=len(wins), hard=hard),
             "clean_streak": clean,
+            # Η «διάθεση» της ημέρας — το UI διαλέγει χρώμα/εικονίδιο/μικρή γιορτή.
+            "mood": V.mood(open_misses=len(items), clean_streak=clean, hard=hard),
+            "milestone": _milestone(clean),
             "at_risk_cents": sum(i["money_cents"] or 0 for i in items),
         }
 
@@ -986,8 +1010,13 @@ class DailyCoachRepository(BaseRepository):
         prev = [(today - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(7, 14)][::-1]
         rows = {d["day"]: d async for d in self._db["coach_days"].find(
             {"tenant_id": self.tenant_id, "day": {"$in": days + prev}})}
-        cur_m = sum((rows.get(d) or {}).get("misses", 0) for d in days)
-        prev_m = sum((rows.get(d) or {}).get("misses", 0) for d in prev)
+        # ΠΡΟΣΟΧΗ: μέρα χωρίς εγγραφή ΔΕΝ είναι «καθαρή» μέρα — είναι μέρα που δεν λειτουργούσε
+        # ακόμη ο Σύμβουλος. Αν τις μετρήσουμε ως μηδέν, το γράφημα λέει ψέματα και η σύγκριση
+        # με την προηγούμενη εβδομάδα βγάζει πάντα «βελτιώθηκες».
+        have = [d for d in days if d in rows]
+        have_prev = [d for d in prev if d in rows]
+        cur_m = sum(rows[d].get("misses", 0) for d in have)
+        prev_m = sum(rows[d].get("misses", 0) for d in have_prev)
         rec = [r async for r in self._db["coach_recoveries"].find(
             {"tenant_id": self.tenant_id, "day": {"$in": days}})]
         closed = await self._coll.count_documents(
@@ -996,17 +1025,26 @@ class DailyCoachRepository(BaseRepository):
         return {
             "from": days[0], "to": days[-1],
             "misses": cur_m, "misses_prev": prev_m,
+            "days_with_data": len(have), "prev_days_with_data": len(have_prev),
             "closed": closed,
             "recovered": {"n": len(rec),
                           "value_cents": sum(int(r.get("value_cents") or 0) for r in rec),
                           "profit_cents": sum(int(r.get("profit_cents") or 0) for r in rec)},
-            "daily": [{"day": d, "misses": (rows.get(d) or {}).get("misses", 0)} for d in days],
+            "daily": [{"day": d, "misses": (rows.get(d) or {}).get("misses", 0),
+                       "has_data": d in rows} for d in days],
             "goal": goal,
-            "narrative": self._week_words(cur_m, prev_m, len(rec), closed, goal),
+            "narrative": self._week_words(cur_m, prev_m, len(rec), closed,
+                                          days_with_data=len(have),
+                                          prev_days=len(have_prev)),
         }
 
     @staticmethod
-    def _week_words(cur: int, prev: int, rec: int, closed: int, goal: dict | None) -> str:
+    def _week_words(cur: int, prev: int, rec: int, closed: int, *,
+                    days_with_data: int, prev_days: int) -> str:
+        """Ο στόχος ΔΕΝ μπαίνει εδώ — έχει δική του κάρτα και θα διαβαζόταν δύο φορές."""
+        if days_with_data == 0:
+            return ("Ο Σύμβουλος μόλις ξεκίνησε σε αυτό το φαρμακείο. Από την επόμενη εβδομάδα "
+                    "θα μπορώ να σου λέω αν βελτιώνεσαι.")
         bits = []
         if closed:
             bits.append(f"Έκλεισαν {closed} θέματα μέσα στην εβδομάδα")
@@ -1014,19 +1052,20 @@ class DailyCoachRepository(BaseRepository):
                 bits[-1] += f", και σε {rec} από αυτά τα δεδομένα δείχνουν ότι ο άνθρωπος " \
                             f"όντως γύρισε ή το αίτημα όντως απαντήθηκε"
             bits[-1] += "."
-        if prev and cur < prev * 0.8:
+        if prev_days >= 4 and prev and cur < prev * 0.8:
             bits.append(f"Σου ξέφυγαν λιγότερα απ' ό,τι την προηγούμενη εβδομάδα "
                         f"({cur} έναντι {prev}). Κάτι αλλάζει στον τρόπο που δουλεύεις.")
-        elif prev and cur > prev * 1.2:
+        elif prev_days >= 4 and prev and cur > prev * 1.2:
             bits.append(f"Σου ξέφυγαν περισσότερα απ' ό,τι την προηγούμενη εβδομάδα "
                         f"({cur} έναντι {prev}). Δεν σε κατηγορώ — ίσως ήταν πιο φορτωμένη· "
                         f"απλώς να το ξέρεις.")
-        elif prev:
+        elif prev_days >= 4 and prev:
             bits.append(f"Σταθερή εβδομάδα ({cur} θέματα, έναντι {prev} την προηγούμενη).")
-        if goal and goal.get("active"):
-            bits.append(goal.get("progress_text") or "")
+        elif days_with_data < 7:
+            bits.append(f"Έχω δεδομένα για {days_with_data} από τις 7 μέρες — "
+                        f"από την επόμενη εβδομάδα η σύγκριση θα είναι πλήρης.")
         if not bits:
-            bits.append("Πρώτη εβδομάδα μαζί — από την επόμενη θα μπορώ να σου λέω αν βελτιώνεσαι.")
+            bits.append(f"Αυτή την εβδομάδα σου επισήμανα {cur} θέματα.")
         return " ".join(b for b in bits if b)
 
     async def goal(self) -> dict | None:
@@ -1045,11 +1084,12 @@ class DailyCoachRepository(BaseRepository):
         label = SIGNAL_LABEL.get(g["signal"], g["signal"])
         ok = hits >= 6
         return {"signal": g["signal"], "label": label, "target": int(g.get("target") or 0),
-                "active": True, "hit_days": hits, "of_days": 7,
+                "active": True, "hit_days": hits, "of_days": 7, "achieved": ok,
+                "emoji": V.SIGNAL_EMOJI.get(g["signal"]),
                 "progress_text": (
                     f"Ο στόχος σου «{label}: το πολύ {g.get('target', 0)} την ημέρα» τηρήθηκε "
-                    f"{hits} από τις 7 μέρες." + (" Πέτυχε." if ok else
-                    " Δεν είναι ακόμη συνήθεια — άλλη μία εβδομάδα."))}
+                    f"{hits} από τις 7 μέρες." + (" Πέτυχε — και το πέτυχες εσύ." if ok else
+                    " Δεν είναι ακόμη συνήθεια, αλλά πλησιάζεις."))}
 
     async def set_goal(self, signal: str | None, target: int = 0) -> dict:
         await self._db["coach_goals"].update_many(

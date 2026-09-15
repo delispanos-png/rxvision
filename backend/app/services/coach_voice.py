@@ -59,6 +59,32 @@ def repeat_opener(streak: int) -> str:
     return opts[idx % len(opts)].format(n=int(streak))
 
 
+# ── ΕΙΚΟΝΙΔΙΑ ────────────────────────────────────────────────────────────────
+# ΚΑΝΟΝΑΣ (για να μη γίνει καρικατούρα): το emoji μπαίνει είτε για να ΞΕΧΩΡΙΖΕΙ το είδος του
+# θέματος με μια ματιά, είτε για να ΓΙΟΡΤΑΣΕΙ κάτι καλό. ΠΟΤΕ πάνω σε σοβαρό μήνυμα και ποτέ
+# στον αυστηρό τόνο — εκεί η χαριτωμενιά ακυρώνει το μήνυμα.
+SIGNAL_EMOJI = {
+    "unexecuted": "💊", "repeat_expiring": "⏳", "idle_request": "💬",
+    "no_contact": "📇", "vaccine_missed": "💉", "lapsed_chronic": "🚶",
+}
+WIN_EMOJI = {"w_unexec_closed": "🔁", "w_fast_reply": "⚡",
+             "w_contacts": "📇", "w_vaccines": "💉"}
+
+# Η «διάθεση» της ημέρας — την αποδίδει το UI (χρώμα, εικονίδιο, μικρή γιορτή).
+MOOD_CELEBRATE = "celebrate"   # καθαρό ταμπλό με σερί → αξίζει γιορτή
+MOOD_CALM = "calm"             # καθαρό ταμπλό
+MOOD_FOCUS = "focus"           # λίγα πράγματα, ήρεμα
+MOOD_WORK = "work"             # πολλά ή επαναλαμβανόμενα → ΚΑΜΙΑ χαριτωμενιά
+
+
+def mood(*, open_misses: int, clean_streak: int, hard: int = 0) -> str:
+    if hard or open_misses > 4:
+        return MOOD_WORK
+    if open_misses == 0:
+        return MOOD_CELEBRATE if clean_streak >= 3 else MOOD_CALM
+    return MOOD_FOCUS
+
+
 # ── ανθρώπινοι αριθμοί ───────────────────────────────────────────────────────
 _WORDS = {1: "ένας", 2: "δύο", 3: "τρεις", 4: "τέσσερις", 5: "πέντε", 6: "έξι",
           7: "εφτά", 8: "οχτώ", 9: "εννιά", 10: "δέκα"}
@@ -186,10 +212,10 @@ def greeting(name: str | None, *, hour: int, open_misses: int, wins: int,
     if open_misses == 0 and clean_streak >= 5:
         return (f"{head} Έχουν περάσει {count_word(clean_streak, feminine=True)} συνεχόμενες μέρες "
                 f"χωρίς να εντοπίσω κάτι που να ξέφυγε. Δεν είναι τύχη — είναι ο τρόπος "
-                f"που δουλεύεις, και αξίζει να το ξέρεις.")
+                f"που δουλεύεις, και αξίζει να το ξέρεις. Καμάρωσε λίγο σήμερα.")
     if open_misses == 0:
         return (f"{head} Κοίταξα όλα τα σημεία και σήμερα δεν υπάρχει κάτι που να χρειάζεται "
-                f"την προσοχή σου. Καλή σου μέρα.")
+                f"την προσοχή σου. Ούτε ένα. Καλή σου μέρα.")
     if open_misses == 1:
         return (f"{head} Ένα μόνο θέμα θα ήθελα να δεις σήμερα — δεν θα σου πάρει "
                 f"πάνω από δύο λεπτά.")
@@ -213,7 +239,7 @@ def closing(*, open_misses: int, wins: int, hard: int) -> str:
                 "Μη δοκιμάσεις να τα κλείσεις όλα σήμερα — διάλεξε ένα και τελείωσέ το. "
                 "Την επόμενη μέρα θα είναι ένα λιγότερο.")
     if open_misses == 0 and wins:
-        return "Δεν έχω κάτι άλλο για σήμερα. Καλή συνέχεια."
+        return "Δεν έχω κάτι άλλο για σήμερα. Καλή συνέχεια — και μπράβο."
     if open_misses == 0:
         return "Καθαρή μέρα — τα λέμε αύριο."
     return "Ό,τι κλείσεις σήμερα δεν θα το ξαναδείς αύριο. Αυτή είναι όλη η ιδέα εδώ."
@@ -235,7 +261,9 @@ def shuffle_seed(day: str) -> int:
     return sum(ord(c) for c in (day or "")) % 997
 
 
-__all__ = ["TONE_SOFT", "TONE_FIRM", "TONE_HARD", "tone_for", "repeat_opener", "count_word",
+__all__ = ["SIGNAL_EMOJI", "WIN_EMOJI", "mood", "MOOD_CELEBRATE", "MOOD_CALM", "MOOD_FOCUS",
+           "MOOD_WORK",
+           "TONE_SOFT", "TONE_FIRM", "TONE_HARD", "tone_for", "repeat_opener", "count_word",
            "people", "days_phrase", "ago_phrase", "money", "first_name", "person", "greeting",
            "closing", "g", "the", "doses", "product",
            "praise_opener", "shuffle_seed"]
