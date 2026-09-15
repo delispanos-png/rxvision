@@ -19,12 +19,14 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
+from urllib.parse import quote
+
 from bson import ObjectId
 from bson.errors import InvalidId
 
 from app.repositories.base import BaseRepository
 from app.services import coach_voice as V
-from app.utils.masking import mask_name
+from app.utils.masking import mask_amka, mask_name, pseudo_email, pseudo_phone
 
 ATHENS = timezone(timedelta(hours=3))          # πρακτικά αρκεί για το «ποια μέρα είναι»
 
@@ -35,6 +37,10 @@ MAX_ITEMS = 10
 PER_SIGNAL_CAP = {"idle_request": 4, "unexecuted": 3, "repeat_expiring": 3,
                   "vaccine_missed": 2, "no_contact": 1, "lapsed_chronic": 2}
 DISMISS_DAYS = 30                               # «δεν με αφορά» → σιωπή για έναν μήνα
+
+# Η οθόνη-λίστα του κάθε σήματος (εκεί δουλεύεις μαζικά, όχι ανά άτομο).
+_INBOX_LABEL = {"idle_request": "Άνοιγμα αιτημάτων", "no_contact": "Λίστα επιβεβαίωσης στοιχείων",
+                "vaccine_missed": "Κύκλωμα εμβολιασμών"}
 
 
 def _now() -> datetime:
@@ -105,13 +111,14 @@ class DailyCoachRepository(BaseRepository):
             miss = items_by_exec.get(e["_id"]) or {}
             if not miss.get("names"):
                 continue
+            who = self._who(info.get(e["patient_ref"]), e["patient_ref"])
             out.append({
                 "signal": "unexecuted", "subject": str(e["patient_ref"]),
-                "name": (info.get(e["patient_ref"]) or {}).get("name"),
-                "sex": (info.get(e["patient_ref"]) or {}).get("sex"), "since": e["executed_at"],
+                "name": who.get("name"), "sex": who.get("sex"), "who": who,
+                "since": e["executed_at"],
                 "money_cents": miss["retail"], "profit_cents": miss["margin"],
                 "items": miss["names"], "severity": 3 if miss["retail"] >= 3000 else 2,
-                "href": f"/intelligence/profile?patient={e['patient_ref']}",
+                "rx": e.get("external_id"),
             })
         return out
 
@@ -122,7 +129,7 @@ class DailyCoachRepository(BaseRepository):
              "$expr": {"$lt": ["$repeat_current", "$repeat_total"]},
              "valid_until": {"$gte": now, "$lt": now + timedelta(days=6)}},
             {"patient_ref": 1, "valid_until": 1, "repeat_current": 1, "repeat_total": 1,
-             "repeat_root": 1, "amount_total": 1}).sort("valid_until", 1).limit(200)]
+             "repeat_root": 1, "amount_total": 1, "external_id": 1}).sort("valid_until", 1).limit(200)]
         if not rows:
             return []
         # κράτα την ΤΕΛΕΥΤΑΙΑ σειρά ανά συνταγή (repeat_root) — μία γραμμή ανά συνταγή
@@ -139,14 +146,15 @@ class DailyCoachRepository(BaseRepository):
             if left <= 0:
                 continue
             days_left = max(0, (r["valid_until"] - now).days)
+            who = self._who(info.get(r.get("patient_ref")), r.get("patient_ref"))
             out.append({
                 "signal": "repeat_expiring", "subject": r.get("repeat_root") or str(r["_id"]),
-                "name": (info.get(r.get("patient_ref")) or {}).get("name"),
-                "sex": (info.get(r.get("patient_ref")) or {}).get("sex"), "since": None,
+                "name": who.get("name"), "sex": who.get("sex"), "who": who, "since": None,
                 "money_cents": int(r.get("amount_total") or 0) * left,
                 "extra": {"left": left, "days_left": days_left},
                 "severity": 3 if days_left <= 2 else 2,
-                "href": f"/intelligence/profile?patient={r.get('patient_ref')}",
+                # ΟΧΙ το repeat_root — η καρτέλα συνταγής θέλει external_id (barcode:σειρά)
+                "rx": r.get("external_id"),
             })
         return out
 
@@ -173,14 +181,19 @@ class DailyCoachRepository(BaseRepository):
         # γράφει «Ο ΜΑΡΙΑ» και χάνει αμέσως κάθε σοβαρότητα.
         info = await self._patient_info([_oid(d.get("patient_ref")) for *_, d in rows])
         for coll, field, what, href, d in rows:
+            pid = _oid(d.get("patient_ref"))
+            who = self._who(info.get(pid), pid, extra={
+                "name": d.get("patient_name"),
+                "mobile": pseudo_phone(d.get("patient_phone"), self.demo)
+                or (info.get(pid) or {}).get("mobile")})
             out.append({
                 "signal": "idle_request", "subject": f"{coll}:{d['_id']}",
                 "name": d.get("patient_name"), "hdika_name": False, "since": d.get(field),
-                "sex": (info.get(_oid(d.get("patient_ref"))) or {}).get("sex"),
+                "sex": who.get("sex"), "who": who,
                 "money_cents": int(d.get("total_cents") or 0) or None,
                 "extra": {"what": what, "detail": (d.get("query") or d.get("medicine_name")
                                                    or d.get("service_name") or d.get("note") or "")},
-                "severity": 3, "href": href,
+                "severity": 3, "href": href, "inbox": href,
             })
         return out
 
@@ -213,7 +226,7 @@ class DailyCoachRepository(BaseRepository):
             "extra": {"count": len(missing),
                       "names": [{"name": info[r["_id"]]["name"], "sex": info[r["_id"]].get("sex")}
                                 for r in missing[:4] if info.get(r["_id"], {}).get("name")]},
-            "severity": 2, "href": "/patients?filter=no-contact",
+            "severity": 2, "inbox": "/patients/verify-contacts",
         }]
 
     async def _sig_vaccine_missed(self, now: datetime) -> list[dict]:
@@ -235,7 +248,7 @@ class DailyCoachRepository(BaseRepository):
         async for p in self._db["patients_anonymized"].find(
                 {"tenant_id": self.tenant_id, "_id": {"$in": pids},
                  "age_group": {"$in": ["65-74", "75+"]}},
-                {"full_name": 1, "pseudo_id": 1, "age_group": 1, "sex": 1}):
+                {"full_name": 1, "pseudo_id": 1, "age_group": 1, "sex": 1, "amka": 1}):
             elig[p["_id"]] = p
         if not elig:
             return []
@@ -248,16 +261,20 @@ class DailyCoachRepository(BaseRepository):
         inactive = {c["_id"] async for c in self._db["patient_contacts"].find(
             {"tenant_id": self.tenant_id, "_id": {"$in": list(elig)}, "active": False}, {"_id": 1})}
         last = {r["_id"]: r["last"] for r in rows}
+        contacts_info = await self._patient_info(list(elig))
         out = []
         for pid, p in elig.items():
             if p.get("pseudo_id") in done or pid in inactive:
                 continue
+            who = self._who(contacts_info.get(pid), pid, extra={
+                "name": mask_name(p.get("full_name"), self.demo), "sex": p.get("sex"),
+                "amka": mask_amka(p.get("amka"), self.demo)})
             out.append({
                 "signal": "vaccine_missed", "subject": str(pid),
-                "name": mask_name(p.get("full_name"), self.demo), "sex": p.get("sex"),
+                "name": who.get("name"), "sex": p.get("sex"), "who": who,
                 "since": last.get(pid), "money_cents": None,
                 "extra": {"age_group": p.get("age_group")},
-                "severity": 2, "href": "/vaccinations",
+                "severity": 2, "inbox": "/vaccinations",
             })
         return out[:8]
 
@@ -285,15 +302,17 @@ class DailyCoachRepository(BaseRepository):
             {"tenant_id": self.tenant_id, "_id": {"$in": list(pats)}, "active": False}, {"_id": 1})}
         cand = [(pid, p) for pid, p in pats.items() if pid not in inactive]
         cand.sort(key=lambda t: t[1].get("rx_value_total") or 0, reverse=True)
+        info = await self._patient_info([pid for pid, _ in cand[:6]])
         out = []
         for pid, p in cand[:6]:
             per_visit = int((p.get("rx_value_total") or 0) / max(1, p.get("rx_count") or 1))
+            who = self._who(info.get(pid), pid, extra={
+                "name": mask_name(p.get("full_name"), self.demo), "sex": p.get("sex")})
             out.append({
                 "signal": "lapsed_chronic", "subject": str(pid),
-                "name": mask_name(p.get("full_name"), self.demo), "sex": p.get("sex"),
+                "name": who.get("name"), "sex": p.get("sex"), "who": who,
                 "since": by_pat[pid]["expected_open_date"], "money_cents": per_visit,
                 "extra": {"rx_count": p.get("rx_count")}, "severity": 2,
-                "href": f"/intelligence/profile?patient={pid}",
             })
         return out
 
@@ -369,16 +388,40 @@ class DailyCoachRepository(BaseRepository):
     # ─────────────────────────────────────────────────────────────────────────
 
     async def _patient_info(self, ids: list) -> dict:
-        """_id → {name, sex}. Το φύλο δεν είναι στολίδι: χωρίς αυτό ο σύμβουλος λέει
-        «ο ΚΩΝΣΤΑΝΤΙΝΟΣ… της μένουν» και χάνει αμέσως κάθε αξιοπιστία."""
+        """_id → {name, sex, amka, mobile, phone, email}.
+
+        Το φύλο δεν είναι στολίδι: χωρίς αυτό ο σύμβουλος λέει «ο ΚΩΝΣΤΑΝΤΙΝΟΣ… της μένουν».
+        Το ΑΜΚΑ και το τηλέφωνο δεν είναι στολίδι ούτε αυτά: «ο ΧΑΡΑΛΑΜΠΟΣ» δεν ταυτοποιεί
+        κανέναν σε φαρμακείο με 14.000 πελάτες, και μια προτροπή «πάρ' τον τηλέφωνο» χωρίς
+        τον αριθμό είναι απλώς μια ευχή.
+        """
         ids = [i for i in ids if i]
         if not ids:
             return {}
         out = {}
         async for p in self._db["patients_anonymized"].find(
-                {"tenant_id": self.tenant_id, "_id": {"$in": ids}}, {"full_name": 1, "sex": 1}):
-            out[p["_id"]] = {"name": mask_name(p.get("full_name"), self.demo), "sex": p.get("sex")}
+                {"tenant_id": self.tenant_id, "_id": {"$in": ids}},
+                {"full_name": 1, "sex": 1, "amka": 1}):
+            out[p["_id"]] = {"name": mask_name(p.get("full_name"), self.demo), "sex": p.get("sex"),
+                             "amka": mask_amka(p.get("amka"), self.demo)}
+        async for c in self._db["patient_contacts"].find(
+                {"tenant_id": self.tenant_id, "_id": {"$in": ids}},
+                {"mobile": 1, "phone": 1, "email": 1}):
+            if c["_id"] in out:
+                out[c["_id"]].update(
+                    mobile=pseudo_phone(c.get("mobile"), self.demo),
+                    phone=pseudo_phone(c.get("phone"), self.demo),
+                    email=pseudo_email(c.get("email"), self.demo))
         return out
+
+    @staticmethod
+    def _who(info: dict | None, pid, *, extra: dict | None = None) -> dict:
+        """Η «ταυτότητα» του ευρήματος — ό,τι χρειάζεται η κάρτα για να δείξει ΠΟΙΟΝ αφορά
+        και να δώσει τρόπο να τον βρεις. Ένα εύρημα χωρίς αυτό είναι παρατήρηση, όχι ενέργεια."""
+        d = dict(info or {})
+        d.update(extra or {})
+        d["id"] = str(pid) if pid else None
+        return d
 
     async def _missing_items(self, exec_ids: list) -> dict:
         """execution_id → {names, retail(cents), margin(cents)} για ΜΟΝΟ τα ανεκτέλεστα είδη."""
@@ -426,6 +469,9 @@ class DailyCoachRepository(BaseRepository):
         who = V.first_name(f.get("name")) if f.get("hdika_name", True) else V.person(f.get("name"))
         art = V.the(sex)                        # «Ο» / «Η»
         subj = f"{art} {who}"                   # ονομαστική — δουλεύει σε κάθε πρόταση
+        # Στον ΤΙΤΛΟ μπαίνει ΟΛΟΚΛΗΡΟ το ονοματεπώνυμο: «ο ΧΑΡΑΛΑΜΠΟΣ» δεν ταυτοποιεί κανέναν
+        # σε φαρμακείο με χιλιάδες πελάτες. Στο κείμενο μένει το μικρό, για να διαβάζεται.
+        subj_full = f"{art} {V.person(f.get('name'))}"
         ago = V.ago_phrase(_days_between(f.get("since"), _now()))
         ex = f.get("extra") or {}
         money = V.money(f.get("money_cents")) if f.get("money_cents") else None
@@ -436,7 +482,7 @@ class DailyCoachRepository(BaseRepository):
             names = [V.product(n) for n in (f.get("items") or [])]
             what = (f"το {names[0]}" if len(names) == 1
                     else ", ".join(names[:2]) + (f" και άλλα {len(names) - 2}" if len(names) > 2 else ""))
-            title = f"{subj} έφυγε χωρίς μέρος της συνταγής {gen}"
+            title = f"{subj_full} έφυγε χωρίς μέρος της συνταγής {gen}"
             body = (f"Πέρασε {ago} και δεν πήρε {what}. "
                     f"Μιλάμε για {money} που πιθανότατα θα καταλήξουν σε άλλο φαρμακείο")
             if f.get("profit_cents"):
@@ -454,7 +500,7 @@ class DailyCoachRepository(BaseRepository):
             left, dl = ex.get("left", 1), ex.get("days_left", 0)
             when = ("σήμερα" if dl == 0 else "αύριο" if dl == 1
                     else f"σε {V.count_word(dl, feminine=True)} μέρες")
-            title = f"{subj} χάνει {V.doses(left)} {when}"
+            title = f"{subj_full} χάνει {V.doses(left)} {when}"
             body = (f"Η επαναλαμβανόμενη συνταγή {gen} λήγει {when} και "
                     f"{'μένει' if left == 1 else 'μένουν'} {V.doses(left)} αχρησιμοποίητ"
                     f"{'η' if left == 1 else 'ες'}. Αν δεν προλάβει, θα χρειαστεί να ξαναπάει "
@@ -465,7 +511,7 @@ class DailyCoachRepository(BaseRepository):
 
         elif sig == "idle_request":
             what = ex.get("what", "έστειλε ένα αίτημα")
-            title = f"{subj} περιμένει απάντηση {V.days_phrase(_days_between(f.get('since'), _now()))}"
+            title = f"{subj_full} περιμένει απάντηση {V.days_phrase(_days_between(f.get('since'), _now()))}"
             body = f"{what.capitalize()} μέσα από την πύλη και το αίτημα παραμένει αναπάντητο. "
             if ex.get("detail"):
                 body += f"Έγραψε: «{str(ex['detail'])[:120]}». "
@@ -499,7 +545,7 @@ class DailyCoachRepository(BaseRepository):
             action = "Ζήτα στοιχεία στο ταμείο"
 
         elif sig == "vaccine_missed":
-            title = f"{subj} δικαιούται αντιγριπικό"
+            title = f"{subj_full} δικαιούται αντιγριπικό"
             body = (f"Ανήκει στην ομάδα {ex.get('age_group', '65+')}, πέρασε από το φαρμακείο "
                     f"{ago} και δεν έχει εμβολιαστεί φέτος. Δεν είναι θέμα πώλησης· είναι "
                     f"ακριβώς ο ρόλος που έχει ένα φαρμακείο στη γειτονιά του. ")
@@ -510,7 +556,7 @@ class DailyCoachRepository(BaseRepository):
             action = "Πρότεινε εμβολιασμό"
 
         elif sig == "lapsed_chronic":
-            title = f"{subj} σταμάτησε να έρχεται"
+            title = f"{subj_full} σταμάτησε να έρχεται"
             body = (f"Έχει εκτελέσει {ex.get('rx_count', 'πολλές')} συνταγές εδώ, αλλά η "
                     f"επόμενη αναμενόταν {ago} και δεν εμφανίστηκε. Κάθε επίσκεψη άξιζε "
                     f"περίπου {money}· το ουσιαστικό ερώτημα όμως είναι άλλο: όταν ένας "
@@ -528,6 +574,31 @@ class DailyCoachRepository(BaseRepository):
             body = f"{opener} {body}"
         return {"title": title, "body": body, "action": action, "tone": tone,
                 "streak": streak, "relapses": relapses}
+
+    @staticmethod
+    def _links(f: dict) -> list[dict]:
+        """Πού πάει ο φαρμακοποιός από εδώ. ΟΛΑ τα href δείχνουν σε υπαρκτές διαδρομές που
+        φορτώνουν ΤΟΝ ΣΥΓΚΕΚΡΙΜΕΝΟ πελάτη — μια προτροπή που δεν σε πάει πουθενά είναι θόρυβος.
+
+          · Εικόνα Πελάτη 360°  → /intelligence/profile?patient_id=…  (deep-link)
+          · Καρτέλα & επαφή     → /patients/<id>  (εκεί ζει η ContactCard)
+          · Η συνταγή           → /prescriptions/<external_id>
+          · Λίστα εργασίας      → η οθόνη του κυκλώματος (αιτήματα/εμβόλια/επαφές)
+        """
+        who = f.get("who") or {}
+        pid, out = who.get("id"), []
+        if pid:
+            out.append({"kind": "profile", "label": "Εικόνα Πελάτη",
+                        "href": f"/intelligence/profile?patient_id={quote(pid)}"})
+            out.append({"kind": "card", "label": "Καρτέλα & επαφή",
+                        "href": f"/patients/{quote(pid)}"})
+        if f.get("rx"):
+            out.append({"kind": "rx", "label": "Η συνταγή",
+                        "href": f"/prescriptions/{quote(str(f['rx']))}"})
+        if f.get("inbox"):
+            out.append({"kind": "inbox", "label": _INBOX_LABEL.get(f["signal"], "Άνοιγμα λίστας"),
+                        "href": f["inbox"]})
+        return out
 
     # ─────────────────────────────────────────────────────────────────────────
     # Η ΣΥΝΑΡΜΟΛΟΓΗΣΗ
@@ -557,10 +628,18 @@ class DailyCoachRepository(BaseRepository):
             if st.get("hidden_until") and st["hidden_until"] >= day:
                 continue                                   # «έγινε» σήμερα ή «δεν με αφορά»
             spoken = self._speak(f, st)
+            who = f.get("who") or {}
             items.append({
                 "key": f["key"], "signal": f["signal"], "name": f.get("name"),
-                "money_cents": f.get("money_cents"), "href": f.get("href"),
-                "severity": f.get("severity", 2), **spoken,
+                "money_cents": f.get("money_cents"),
+                "severity": f.get("severity", 2),
+                # ΠΟΙΟΝ αφορά — ονοματεπώνυμο, ΑΜΚΑ, τηλέφωνο για κλήση με ένα άγγιγμα
+                "who": {"id": who.get("id"), "name": who.get("name"), "amka": who.get("amka"),
+                        "mobile": who.get("mobile"), "phone": who.get("phone"),
+                        "email": who.get("email")},
+                "call": who.get("mobile") or who.get("phone"),
+                "links": self._links(f),
+                **spoken,
             })
 
         rank = {V.TONE_HARD: 0, V.TONE_FIRM: 1, V.TONE_SOFT: 2}

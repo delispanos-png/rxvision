@@ -154,6 +154,18 @@ export default function PatientProfilePage() {
   const changeRange = (m: number) => { setRangeMonths(m); if (identity) search.mutate(`${identity}${rangeParam(m)}`); };
   const pick = (h: Hit) => { setAmka(h.name || h.amka || ""); setOpen(false); load(`patient_id=${encodeURIComponent(h.patient_id)}`); };
   const go = () => { const a = amka.trim(); if (a.length >= 3) load(`amka=${encodeURIComponent(a)}`); };
+  // Deep-link: /intelligence/profile?patient_id=… (ή ?amka=… / ?barcode=…) φορτώνει ΑΜΕΣΩΣ
+  // τον πελάτη. Το χρειάζεται ο Σύμβουλος (και κάθε άλλη λίστα): μια προτροπή «δες τον πελάτη»
+  // που σε αφήνει σε άδεια φόρμα αναζήτησης δεν βοηθάει κανέναν.
+  useEffect(() => {
+    const q = new URLSearchParams(window.location.search);
+    const pid = q.get("patient_id"), am = q.get("amka"), bc = q.get("barcode");
+    if (pid) { load(`patient_id=${encodeURIComponent(pid)}`); return; }
+    if (am) { setAmka(am); load(`amka=${encodeURIComponent(am)}`); return; }
+    if (bc) load(`barcode=${encodeURIComponent(bc)}`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // σάρωση συνταγής (ο σαρωτής «πληκτρολογεί» το barcode) → φόρτωση πελάτη ΧΩΡΙΣ ΑΜΚΑ
   const scanGo = () => { const c = scanRxBarcode(scan); if (c.length >= 4) { load(`barcode=${encodeURIComponent(c)}`); setScan(""); } };
   // Πολλοί σαρωτές ΔΕΝ στέλνουν Enter — μόλις σταματήσει η εισαγωγή ενός πλήρους barcode, ψάξε μόνο του.

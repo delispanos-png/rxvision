@@ -3,7 +3,7 @@
 import { useMemo } from "react";
 import Link from "next/link";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { Compass, Check, BellOff, ArrowRight, Trophy, Flame, TrendingUp } from "lucide-react";
+import { Compass, Check, BellOff, ArrowRight, Trophy, Flame, TrendingUp, Phone, PhoneOff, User, IdCard, FileText, ListChecks } from "lucide-react";
 import { api } from "@/lib/apiClient";
 import { appConfirm } from "@/store/dialogStore";
 import { useT } from "@/store/prefStore";
@@ -11,9 +11,12 @@ import { QueryState } from "@/components/ui/QueryState";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
 
 type Tone = "soft" | "firm" | "hard";
+type Who = { id: string | null; name: string | null; amka: string | null; mobile: string | null; phone: string | null; email: string | null };
+type Link = { kind: "profile" | "card" | "rx" | "inbox"; label: string; href: string };
 type Item = {
   key: string; signal: string; name: string | null; title: string; body: string; action: string;
-  tone: Tone; streak: number; relapses: number; money_cents: number | null; href: string | null;
+  tone: Tone; streak: number; relapses: number; money_cents: number | null;
+  who: Who; call: string | null; links: Link[];
 };
 type Win = { key: string; count: number; text: string };
 type Today = {
@@ -30,6 +33,8 @@ const TONE: Record<Tone, { bar: string; chip: string; label: [string, string] }>
   firm: { bar: "bg-amber-500", chip: "bg-amber-50 text-amber-800 dark:bg-amber-950 dark:text-amber-300", label: ["Επιμένει", "Recurring"] },
   hard: { bar: "bg-rose-600", chip: "bg-rose-50 text-rose-700 dark:bg-rose-950 dark:text-rose-300", label: ["Επαναλαμβάνεται", "Repeated"] },
 };
+
+const LINK_ICON = { profile: User, card: IdCard, rx: FileText, inbox: ListChecks } as const;
 
 export default function CoachPage() {
   const t = useT();
@@ -92,6 +97,20 @@ export default function CoachPage() {
               <div className="space-y-3">
                 {q.data.items.map((it) => {
                   const tn = TONE[it.tone];
+                  const links = it.links ?? [];
+                  // Στον «πελάτη παρουσίασης» τα τηλέφωνα είναι μασκαρισμένα («****») — δείχνουμε
+                  // το chip για ρεαλισμό, αλλά ΔΕΝ φτιάχνουμε tel: σύνδεσμο που δεν καλεί κανέναν.
+                  const dial = it.call && /\d{6,}/.test(it.call) ? it.call.replace(/\s/g, "") : null;
+                  // Η ετικέτα ενός κουμπιού πρέπει να λέει ΤΗΝ ΑΛΗΘΕΙΑ για το πού πάει. Όταν
+                  // υπάρχει αριθμός, το κουμπί ΚΑΛΕΙ. Όταν δεν υπάρχει, δεν γράφουμε «πάρ' τον
+                  // τηλέφωνο» σε σύνδεσμο που ανοίγει καρτέλα — γράφουμε «βρες τηλέφωνο».
+                  const primary = dial ? null : (links.find((l) => l.kind === "card") ?? links[0] ?? null);
+                  const noPhone = !it.call && !!it.who?.id;
+                  const primaryLabel = primary
+                    ? (noPhone ? t("Βρες τηλέφωνο", "Find a phone number") : primary.label)
+                    : "";
+                  const PrimaryIco = noPhone ? PhoneOff : (primary ? LINK_ICON[primary.kind] ?? ArrowRight : ArrowRight);
+                  const rest = links.filter((l) => l !== primary);
                   return (
                     <div key={it.key} className="relative overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
                       <span className={`absolute inset-y-0 left-0 w-1.5 ${tn.bar}`} />
@@ -105,13 +124,62 @@ export default function CoachPage() {
                             </span>
                           )}
                         </div>
-                        <p className="mt-1.5 text-sm leading-relaxed text-slate-700 dark:text-slate-300">{it.body}</p>
+
+                        {/* Ταυτότητα: ΠΟΙΟΝ ακριβώς αφορά + πώς τον βρίσκεις. Χωρίς αυτό η γραμμή
+                            είναι παρατήρηση· με αυτό είναι ενέργεια. */}
+                        {(it.who?.amka || it.call || it.who?.email) && (
+                          <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-500 dark:text-slate-400">
+                            {it.who?.amka && <span>{t("ΑΜΚΑ", "ΑΜΚΑ")} {it.who.amka}</span>}
+                            {it.call ? (
+                              dial ? (
+                                <a href={`tel:${dial}`}
+                                  className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 font-semibold text-emerald-700 hover:bg-emerald-100 dark:bg-emerald-950 dark:text-emerald-300">
+                                  <Phone className="h-3 w-3" />{it.call}
+                                </a>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 font-semibold text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">
+                                  <Phone className="h-3 w-3" />{it.call}
+                                </span>
+                              )
+                            ) : it.who?.id ? (
+                              <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 font-semibold text-amber-700 dark:bg-amber-950 dark:text-amber-300">
+                                <PhoneOff className="h-3 w-3" />{t("χωρίς τηλέφωνο", "no phone")}
+                              </span>
+                            ) : null}
+                            {it.who?.email && <span className="truncate max-w-[220px]">{it.who.email}</span>}
+                          </div>
+                        )}
+
+                        <p className="mt-2 text-sm leading-relaxed text-slate-700 dark:text-slate-300">{it.body}</p>
+
+                        {/* Γραμμή 1 — ΠΟΥ πάω τώρα. Κάθε κουμπί οδηγεί σε υπαρκτή οθόνη
+                            φορτωμένη με ΑΥΤΟΝ τον πελάτη. */}
                         <div className="mt-3 flex flex-wrap items-center gap-2">
-                          {it.href && (
-                            <Link href={it.href} className="inline-flex items-center gap-1.5 rounded-xl bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-700">
-                              {it.action}<ArrowRight className="h-3.5 w-3.5" />
+                          {dial ? (
+                            <a href={`tel:${dial}`}
+                              className="inline-flex items-center gap-1.5 rounded-xl bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-700">
+                              <Phone className="h-3.5 w-3.5" />{it.action}
+                            </a>
+                          ) : primary ? (
+                            <Link href={primary.href}
+                              className="inline-flex items-center gap-1.5 rounded-xl bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-700">
+                              <PrimaryIco className="h-3.5 w-3.5" />{primaryLabel}
                             </Link>
-                          )}
+                          ) : null}
+                          {rest.map((l) => {
+                            const Ico = LINK_ICON[l.kind] ?? ArrowRight;
+                            return (
+                              <Link key={l.kind + l.href} href={l.href}
+                                className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800">
+                                <Ico className="h-3.5 w-3.5" />{l.label}
+                              </Link>
+                            );
+                          })}
+                        </div>
+
+                        {/* Γραμμή 2 — τι κάνω με το ίδιο το εύρημα. Πάντα χωριστά, ώστε να μη
+                            χοροπηδάει η διάταξη ανάλογα με το πλήθος των συνδέσμων. */}
+                        <div className="mt-2 flex items-center justify-end gap-2 border-t border-slate-100 pt-2 dark:border-slate-800">
                           <button onClick={() => mark.mutate({ key: it.key, action: "done" })}
                             className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800">
                             <Check className="h-3.5 w-3.5" />{t("Το έκανα", "Done")}
