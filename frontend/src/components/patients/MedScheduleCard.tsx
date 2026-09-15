@@ -4,12 +4,13 @@
 // ενεργοποίηση υπενθύμισης ανά αγωγή + ώρα λήψης (24ωρο) ή «κάθε X ώρες» + σχέση με γεύμα.
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Pill, Clock } from "lucide-react";
+import { Pill, Clock, AlertTriangle, X } from "lucide-react";
 import { api } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
 import { PanelCard } from "@/components/ui/Card";
 
-type Therapy = { med_key: string; name: string; dosage_text: string | null; per_day: number; days_left: number | null; enabled: boolean; time?: string | null; meal?: string | null; interval_hours?: number | null };
+type Therapy = { med_key: string; name: string; dosage_text: string | null; per_day: number; days_left: number | null; enabled: boolean; time?: string | null; meal?: string | null; interval_hours?: number | null; plan_summary?: string | null; override?: { by?: string; reason?: string; at?: string; doctor_text?: string } | null };
+type Ovr = { med_key: string; name: string; doctor_text: string | null; kind: "custom" | "taper"; per_day: number; phases: { days: number; qty: number }[]; maintenance_qty: number; reason: string };
 type Sched = { therapies: Therapy[] };
 type Cfg = { med_key: string; time: string; meal: string; mode: "time" | "interval"; interval: number; per_day: number };
 
@@ -21,6 +22,8 @@ export function MedScheduleCard({ patientId }: { patientId: string }) {
   const qc = useQueryClient();
   const { data } = useQuery({ queryKey: ["patient-med-schedule", patientId], queryFn: () => api<Sched>(`/patients/${encodeURIComponent(patientId)}/med-schedule`) });
   const [cfg, setCfg] = useState<Cfg | null>(null);
+  const [ovr, setOvr] = useState<Ovr | null>(null);          // ΕΞΑΙΡΕΤΙΚΗ αλλαγή οδηγίας γιατρού
+  const [ovrErr, setOvrErr] = useState<string | null>(null);
   const key = ["patient-med-schedule", patientId];
 
   const reminder = useMutation({
@@ -41,6 +44,13 @@ export function MedScheduleCard({ patientId }: { patientId: string }) {
     const pd = th.per_day || 1;
     setCfg({ med_key: th.med_key, time: th.time || "08:00", meal: th.meal || "none", mode: th.interval_hours ? "interval" : "time", interval: th.interval_hours || Math.max(1, Math.round(24 / pd)), per_day: pd });
   }
+  const plan = useMutation({
+    mutationFn: (b: Record<string, unknown>) =>
+      api(`/patients/${encodeURIComponent(patientId)}/med-plan`, { method: "POST", body: JSON.stringify(b) }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: key }); setOvr(null); setOvrErr(null); },
+    onError: () => setOvrErr(t("Δεν αποθηκεύτηκε — έλεγξε την αιτιολόγηση.", "Not saved — check the justification.")),
+  });
+
   function save() {
     if (!cfg) return;
     reminder.mutate({ med_key: cfg.med_key, enabled: true, time: cfg.time || null, meal: cfg.meal, interval_hours: cfg.mode === "interval" ? cfg.interval : 0 });
@@ -69,10 +79,32 @@ export function MedScheduleCard({ patientId }: { patientId: string }) {
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <div className="truncate text-sm font-semibold text-slate-800 dark:text-slate-100">{th.name}</div>
-                {th.dosage_text && <div className="mt-0.5 text-xs text-slate-500">{th.dosage_text}</div>}
+                {th.override ? (
+                  <>
+                    <div className="mt-0.5 text-xs text-slate-400 line-through">{th.override.doctor_text || th.dosage_text}</div>
+                    <div className="mt-1 rounded-lg border border-amber-300 bg-amber-50 px-2 py-1 dark:border-amber-800 dark:bg-amber-950/30">
+                      <div className="flex items-center gap-1 text-[11px] font-bold text-amber-800 dark:text-amber-300">
+                        <AlertTriangle className="h-3 w-3" /> {t("Αλλαγή από φαρμακοποιό", "Changed by pharmacist")}
+                      </div>
+                      <div className="text-xs font-semibold text-slate-800 dark:text-slate-100">
+                        {th.plan_summary || t(`${th.per_day} λήψη/ημέρα`, `${th.per_day}×/day`)}
+                      </div>
+                      {th.override.reason && <div className="mt-0.5 text-[11px] italic text-amber-800 dark:text-amber-300">«{th.override.reason}»</div>}
+                    </div>
+                  </>
+                ) : th.dosage_text ? <div className="mt-0.5 text-xs text-slate-500">{th.dosage_text}</div> : null}
                 {th.enabled && cfg?.med_key !== th.med_key && (
                   <button onClick={() => edit(th)} className="mt-1 inline-flex items-center gap-1.5 rounded-lg bg-violet-50 px-2 py-0.5 text-[11px] text-violet-700 hover:bg-violet-100 dark:bg-violet-950/40 dark:text-violet-300">
                     <Clock className="h-3 w-3" /> {th.interval_hours ? `κάθε ${th.interval_hours}ω` : (th.time || "—")}{th.meal === "before" ? " · πριν" : th.meal === "after" ? " · μετά" : ""} · {t("αλλαγή", "edit")}
+                  </button>
+                )}
+                {/* ΕΞΑΙΡΕΤΙΚΗ αλλαγή της οδηγίας του γιατρού — ξεχωριστό, διακριτικό, με αιτιολόγηση */}
+                {ovr?.med_key !== th.med_key && (
+                  <button onClick={() => setOvr({ med_key: th.med_key, name: th.name, doctor_text: th.override?.doctor_text || th.dosage_text,
+                      kind: "custom", per_day: th.per_day || 1, phases: [{ days: 2, qty: 3 }, { days: 2, qty: 2 }, { days: 2, qty: 1 }],
+                      maintenance_qty: 1, reason: "" })}
+                    className="ml-1 mt-1 inline-flex items-center gap-1 rounded-lg border border-amber-300 px-2 py-0.5 text-[11px] font-medium text-amber-700 hover:bg-amber-50 dark:border-amber-800 dark:text-amber-400">
+                    <AlertTriangle className="h-3 w-3" /> {th.override ? t("Αλλαγή/επαναφορά", "Change/revert") : t("Αλλαγή δοσολογίας", "Change dosage")}
                   </button>
                 )}
               </div>
@@ -80,6 +112,87 @@ export function MedScheduleCard({ patientId }: { patientId: string }) {
                 <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white transition-all ${th.enabled ? "left-[1.45rem]" : "left-0.5"}`} />
               </button>
             </div>
+            {ovr?.med_key === th.med_key && (
+              <div className="mt-2 space-y-2 rounded-lg border-2 border-amber-300 bg-amber-50/60 p-3 dark:border-amber-800 dark:bg-amber-950/20">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="text-[11px] font-bold text-amber-900 dark:text-amber-300">
+                    ⚠️ {t("Αλλαγή οδηγίας γιατρού — μόνο σε εξαιρετικές περιπτώσεις", "Changing the doctor's instruction — exceptional cases only")}
+                  </div>
+                  <button onClick={() => { setOvr(null); setOvrErr(null); }} className="shrink-0 text-slate-400 hover:text-slate-600"><X className="h-4 w-4" /></button>
+                </div>
+                {ovr.doctor_text && <div className="rounded bg-white px-2 py-1 text-[11px] text-slate-600 dark:bg-slate-800 dark:text-slate-300">{t("Ο γιατρός έγραψε", "The doctor prescribed")}: <b>{ovr.doctor_text}</b></div>}
+
+                <div className="flex gap-1.5">
+                  {([["custom", t("Απλή δοσολογία", "Simple dosage")], ["taper", t("Φθίνουσα", "Tapering")]] as const).map(([k, l]) => (
+                    <button key={k} onClick={() => setOvr({ ...ovr, kind: k })}
+                      className={`flex-1 rounded-lg border px-2 py-1.5 text-[11px] font-semibold ${ovr.kind === k ? "border-amber-500 bg-amber-500 text-white" : "border-slate-200 bg-white text-slate-600 dark:border-slate-600 dark:bg-slate-800"}`}>{l}</button>
+                  ))}
+                </div>
+
+                {ovr.kind === "custom" ? (
+                  <div className="flex items-center gap-2">
+                    <span className="text-[11px] text-slate-600 dark:text-slate-300">{t("Λήψεις ανά ημέρα", "Intakes per day")}</span>
+                    <select value={ovr.per_day} onChange={(e) => setOvr({ ...ovr, per_day: +e.target.value })}
+                      className="rounded-lg border border-slate-300 px-2 py-1.5 text-sm dark:border-slate-600 dark:bg-slate-800">
+                      {[1, 2, 3, 4].map((n) => <option key={n} value={n}>{n}</option>)}
+                    </select>
+                  </div>
+                ) : (
+                  <div className="space-y-1.5">
+                    {ovr.phases.map((ph, i) => (
+                      <div key={i} className="flex items-center gap-1.5 text-[11px]">
+                        <span className="w-12 shrink-0 text-slate-500">{t("Φάση", "Phase")} {i + 1}</span>
+                        <input type="number" min={0} step={0.5} value={ph.qty}
+                          onChange={(e) => { const ps = [...ovr.phases]; ps[i] = { ...ph, qty: parseFloat(e.target.value) || 0 }; setOvr({ ...ovr, phases: ps }); }}
+                          className="w-14 rounded border border-slate-300 px-1.5 py-1 text-center dark:border-slate-600 dark:bg-slate-800" />
+                        <span className="text-slate-500">{t("για", "for")}</span>
+                        <input type="number" min={1} value={ph.days}
+                          onChange={(e) => { const ps = [...ovr.phases]; ps[i] = { ...ph, days: parseInt(e.target.value) || 1 }; setOvr({ ...ovr, phases: ps }); }}
+                          className="w-14 rounded border border-slate-300 px-1.5 py-1 text-center dark:border-slate-600 dark:bg-slate-800" />
+                        <span className="text-slate-500">{t("ημ.", "days")}</span>
+                        <button onClick={() => setOvr({ ...ovr, phases: ovr.phases.filter((_, j) => j !== i) })} className="ml-auto text-slate-400 hover:text-rose-600"><X className="h-3.5 w-3.5" /></button>
+                      </div>
+                    ))}
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button onClick={() => setOvr({ ...ovr, phases: [...ovr.phases, { days: 2, qty: 1 }] })}
+                        className="rounded border border-dashed border-slate-300 px-2 py-1 text-[11px] text-slate-600 dark:border-slate-600 dark:text-slate-300">+ {t("φάση", "phase")}</button>
+                      <span className="text-[11px] text-slate-600 dark:text-slate-300">{t("μετά μόνιμα", "then permanently")}</span>
+                      <input type="number" min={0} step={0.5} value={ovr.maintenance_qty}
+                        onChange={(e) => setOvr({ ...ovr, maintenance_qty: parseFloat(e.target.value) || 0 })}
+                        className="w-14 rounded border border-slate-300 px-1.5 py-1 text-center text-[11px] dark:border-slate-600 dark:bg-slate-800" />
+                      {ovr.maintenance_qty === 0 && <span className="text-[10px] text-amber-700">{t("→ διακοπή", "→ stop")}</span>}
+                    </div>
+                  </div>
+                )}
+
+                <div>
+                  <div className="mb-1 text-[11px] font-semibold text-amber-900 dark:text-amber-300">
+                    {t("Αιτιολόγηση (υποχρεωτική)", "Justification (required)")} *
+                  </div>
+                  <textarea value={ovr.reason} onChange={(e) => setOvr({ ...ovr, reason: e.target.value })} rows={2}
+                    placeholder={t("π.χ. Κατόπιν συνεννόησης με τον θεράποντα ιατρό, λόγω…", "e.g. In agreement with the treating physician, due to…")}
+                    className="w-full rounded-lg border border-slate-300 px-2 py-1.5 text-xs dark:border-slate-600 dark:bg-slate-800" />
+                  <p className="mt-1 text-[10px] text-slate-500">{t("Καταγράφεται ποιος έκανε την αλλαγή και πότε. Η αρχική οδηγία του γιατρού δεν σβήνεται.", "Who changed it and when is recorded. The doctor's original instruction is never deleted.")}</p>
+                </div>
+                {ovrErr && <div className="text-[11px] font-semibold text-rose-600">{ovrErr}</div>}
+                <div className="flex flex-wrap justify-end gap-2">
+                  {th.override && (
+                    <button onClick={() => plan.mutate({ med_key: ovr.med_key, kind: "none" })}
+                      className="mr-auto rounded-lg border border-slate-300 px-2.5 py-1.5 text-[11px] font-semibold text-slate-600 hover:bg-white dark:border-slate-600 dark:text-slate-300">
+                      {t("Επαναφορά οδηγίας γιατρού", "Revert to doctor's instruction")}
+                    </button>
+                  )}
+                  <button onClick={() => { setOvr(null); setOvrErr(null); }} className="px-2 py-1 text-[11px] text-slate-400">{t("Άκυρο", "Cancel")}</button>
+                  <button disabled={!ovr.reason.trim() || plan.isPending}
+                    onClick={() => plan.mutate(ovr.kind === "custom"
+                      ? { med_key: ovr.med_key, kind: "custom", per_day: ovr.per_day, reason: ovr.reason }
+                      : { med_key: ovr.med_key, kind: "taper", phases: ovr.phases, maintenance_qty: ovr.maintenance_qty, reason: ovr.reason })}
+                    className="rounded-lg bg-amber-600 px-3 py-1.5 text-[11px] font-semibold text-white hover:bg-amber-700 disabled:opacity-40">
+                    {t("Αποθήκευση αλλαγής", "Save change")}
+                  </button>
+                </div>
+              </div>
+            )}
             {cfg?.med_key === th.med_key && (
               <div className="mt-2 space-y-2 rounded-lg border border-violet-200 bg-violet-50/50 p-2.5 dark:border-violet-900 dark:bg-violet-950/20">
                 {cfg.per_day > 1 && (

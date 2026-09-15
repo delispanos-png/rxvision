@@ -340,6 +340,57 @@ async def set_med_reminder(patient_id: str, body: MedReminderIn,
         patient_id, body.med_key, body.enabled, body.time, body.meal, body.interval_hours)
 
 
+class MedPlanPhase(BaseModel):
+    days: int = Field(..., ge=1, le=365)
+    qty: float = Field(..., ge=0, le=20)
+
+
+class MedPlanIn(BaseModel):
+    """ΕΞΑΙΡΕΤΙΚΗ αλλαγή της δοσολογίας που έγραψε ο γιατρός, από τον φαρμακοποιό.
+
+    Η `reason` είναι ΥΠΟΧΡΕΩΤΙΚΗ: πρόκειται για κλινική παρέμβαση σε συνταγή τρίτου. Καταγράφεται
+    ποιος, πότε και τι έλεγε η αρχική οδηγία — η οποία ΔΕΝ σβήνεται ποτέ.
+    """
+
+    med_key: str
+    kind: Literal["custom", "monthly", "taper", "none"]
+    reason: str | None = None          # υποχρεωτική για κάθε kind εκτός "none"
+    start_date: str | None = None
+    slot: str = "morning"
+    per_day: int = Field(1, ge=1, le=4)          # custom
+    every_months: int = Field(1, ge=1, le=12)    # monthly
+    day_of_month: int = Field(1, ge=1, le=31)
+    qty: float = Field(1, ge=0, le=20)
+    phases: list[MedPlanPhase] = []              # taper
+    maintenance_qty: float = Field(0, ge=0, le=20)
+
+
+@router.post("/{patient_id}/med-plan")
+async def set_patient_med_plan(patient_id: str, body: MedPlanIn,
+                               ctx: TenantContext = Depends(require("patients:write", module=_MODULE))):
+    """Αλλαγή/επαναφορά δοσολογίας από τον φαρμακοποιό (εξαιρετικές περιπτώσεις).
+
+    Απαιτεί δικαίωμα ΕΓΓΡΑΦΗΣ (όχι απλής ανάγνωσης, όπως οι υπενθυμίσεις) — είναι παρέμβαση
+    στην αγωγή, όχι ρύθμιση ειδοποιήσεων.
+    """
+    from app.repositories.patient_portal import PatientRxRepository
+    repo = PatientRxRepository(tenant_id=ctx.tenant_id)
+    if body.kind != "none" and not (body.reason or "").strip():
+        raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                            detail={"error": "reason_required",
+                                    "message": "Απαιτείται αιτιολόγηση για αλλαγή της οδηγίας του γιατρού."})
+    # κράτα ΤΙ ΕΓΡΑΨΕ Ο ΓΙΑΤΡΟΣ, ώστε να φαίνεται πάντα δίπλα στην αλλαγή
+    doctor_text = None
+    try:
+        sch = await repo.medication_schedule(patient_id)
+        doctor_text = next((t.get("dosage_text") for t in sch.get("therapies", [])
+                            if t.get("med_key") == body.med_key), None)
+    except Exception:  # noqa: BLE001
+        pass
+    return await repo.set_med_plan(patient_id, body.model_dump(),
+                                   by=ctx.user_id, doctor_text=doctor_text)
+
+
 @router.get("/detail/{patient_id}")
 async def patient_detail(
     patient_id: str,

@@ -995,6 +995,10 @@ class PatientRxRepository(BaseRepository):
                 t["plan"] = ms.monthly_plan(every_months=c.get("every_months", 1),
                                             day_of_month=c.get("day_of_month", 1),
                                             qty=c.get("qty", 1), slot=c.get("slot", "morning"))
+            elif c.get("kind") == "custom":
+                t["plan"] = {"kind": "daily", "per_day": c.get("per_day", 1), "days": "all",
+                             "slots": ms._SLOTS_BY_COUNT.get(c.get("per_day", 1), ["morning"]),
+                             "times_per_week": c.get("per_day", 1) * 7, "qty": c.get("qty", 1)}
             elif c.get("kind") == "taper":
                 t["plan"] = ms.taper_plan(c.get("phases") or [],
                                           maintenance_qty=c.get("maintenance_qty", 0),
@@ -1006,13 +1010,18 @@ class PatientRxRepository(BaseRepository):
             t["custom_plan"] = {k: v for k, v in c.items() if k not in ("_id", "tenant_id", "patient_ref")}
             t["plan_summary"] = ms.plan_summary(t["plan"])
             t["plan_start"] = c.get("start_date")
+            # ΔΙΑΦΑΝΕΙΑ: ποιος άλλαξε την οδηγία, γιατί, και τι ΑΚΡΙΒΩΣ είχε γράψει ο γιατρός.
+            if c.get("set_by_role") == "pharmacist":
+                t["override"] = {"by": c.get("set_by"), "reason": c.get("reason"),
+                                 "at": c.get("set_at"), "doctor_text": c.get("doctor_text")}
         plans = [{"med_key": t["med_key"], "name": t["name"], "dose": t["dose"], "plan": t["plan"],
                   "start": _as_date(t.get("plan_start") or t.get("last_dispensed"))}
                  for t in ths if t["enabled"]]
         return jsonsafe({"therapies": ths, "week": ms.weekly_grid(plans, slot_times),
                          "slot_times": slot_times, "streak": streak, "taken_today": taken_today})
 
-    async def set_med_plan(self, patient_ref: str, body: dict) -> dict:
+    async def set_med_plan(self, patient_ref: str, body: dict, *, by: str | None = None,
+                           doctor_text: str | None = None) -> dict:
         """Αποθήκευση προσωπικού σχήματος (μηνιαίο/φθίνουσα) ή κατάργηση («none»).
 
         Επιστρέφει και την ΠΕΡΙΓΡΑΦΗ του σχήματος, ώστε ο ασθενής να δει αμέσως τι όρισε —
@@ -1028,9 +1037,19 @@ class PatientRxRepository(BaseRepository):
         if body.get("kind") == "none":
             await self._db["med_plans"].delete_one(q)      # tenant-ok: tenant_id στο φίλτρο
             return {"ok": True, "kind": "none", "summary": None}
+        # ΑΛΛΑΓΗ ΟΔΗΓΙΑΣ ΓΙΑΤΡΟΥ: όταν την ορίζει ο ΦΑΡΜΑΚΟΠΟΙΟΣ απαιτείται αιτιολόγηση και μένει
+        # ίχνος (ποιος/πότε/τι έλεγε ο γιατρός). Είναι κλινική παρέμβαση σε συνταγή τρίτου — δεν
+        # γίνεται σιωπηλά και δεν «σβήνει» ποτέ την αρχική οδηγία.
+        reason = str(body.get("reason") or "").strip()
+        if by and not reason:
+            return {"ok": False, "error": "reason_required"}
         doc = {**q, "kind": body["kind"], "slot": body.get("slot") or "morning",
                "start_date": body.get("start_date") or _date.today().isoformat(),
                "updated_at": datetime.now(tz=timezone.utc)}
+        if by:
+            doc.update({"set_by": by, "set_by_role": "pharmacist", "reason": reason,
+                        "set_at": datetime.now(tz=timezone.utc),
+                        "doctor_text": doctor_text or None})
         if body["kind"] == "monthly":
             doc.update({"every_months": body.get("every_months", 1),
                         "day_of_month": body.get("day_of_month", 1),
@@ -1038,6 +1057,12 @@ class PatientRxRepository(BaseRepository):
             plan = ms.monthly_plan(every_months=doc["every_months"],
                                    day_of_month=doc["day_of_month"],
                                    qty=doc["qty"], slot=doc["slot"])
+        elif body["kind"] == "custom":
+            per_day = max(1, min(4, int(body.get("per_day") or 1)))
+            doc.update({"per_day": per_day, "qty": body.get("qty", 1)})
+            plan = {"kind": "daily", "per_day": per_day, "days": "all",
+                    "slots": ms._SLOTS_BY_COUNT[per_day], "times_per_week": per_day * 7,
+                    "qty": body.get("qty", 1)}
         else:
             phases = [{"days": p.get("days"), "qty": p.get("qty")} for p in (body.get("phases") or [])]
             if not phases:
@@ -1045,8 +1070,9 @@ class PatientRxRepository(BaseRepository):
             doc.update({"phases": phases, "maintenance_qty": body.get("maintenance_qty", 0)})
             plan = ms.taper_plan(phases, maintenance_qty=doc["maintenance_qty"], slot=doc["slot"])
         await self._db["med_plans"].update_one(q, {"$set": doc}, upsert=True)  # tenant-ok
-        return {"ok": True, "kind": doc["kind"], "summary": ms.plan_summary(plan),
-                "start_date": doc["start_date"]}
+        return {"ok": True, "kind": doc["kind"],
+                "summary": ms.plan_summary(plan) or _format_dosage(None, None, None) or None,
+                "start_date": doc["start_date"], "reason": doc.get("reason")}
 
     async def _intake_streak(self, pid) -> int:
         dates: set = set()
