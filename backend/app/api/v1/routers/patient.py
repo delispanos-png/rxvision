@@ -6,6 +6,8 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, status
 from fastapi.responses import Response
+from typing import Literal
+
 from pydantic import BaseModel, EmailStr, Field
 
 from app.core.db import shared_db
@@ -535,6 +537,38 @@ async def meds_reminder(body: ReminderIn, ctx: PatientContext = Depends(get_pati
     """Ενεργοποίηση/απενεργοποίηση ενημερώσεων + (προαιρετικά) ώρα λήψης & σχέση με το γεύμα."""
     return await PatientRxRepository(tenant_id=ctx.tenant_id).set_reminder(
         ctx.patient_ref, body.med_key, body.enabled, body.time, body.meal, body.interval_hours)
+
+
+class TaperPhase(BaseModel):
+    days: int = Field(..., ge=1, le=365)
+    qty: float = Field(..., ge=0, le=20)
+
+
+class MedPlanIn(BaseModel):
+    """Προσωπικό σχήμα δοσολογίας — υπερισχύει της συχνότητας του γιατρού.
+
+    Η ΗΔΥΚΑ εκφράζει μόνο «κάθε πόσο». Δεν μπορεί να πει «1 χάπι στις 5 κάθε μήνα» ούτε
+    «3 χάπια για 2 ημέρες, μετά 2, μετά 1, μετά 1 μόνιμα».
+    """
+
+    med_key: str
+    kind: Literal["monthly", "taper", "none"]     # "none" → επιστροφή στη συχνότητα του γιατρού
+    start_date: str | None = None                 # YYYY-MM-DD (φθίνουσα: ημέρα έναρξης)
+    slot: str = "morning"
+    # μηνιαία
+    every_months: int = Field(1, ge=1, le=12)
+    day_of_month: int = Field(1, ge=1, le=31)
+    qty: float = Field(1, ge=0, le=20)
+    # φθίνουσα
+    phases: list[TaperPhase] = []
+    maintenance_qty: float = Field(0, ge=0, le=20)
+
+
+@router.put("/meds/plan")
+async def set_med_plan(body: MedPlanIn, ctx: PatientContext = Depends(get_patient_context)):
+    """Ορισμός/κατάργηση προσωπικού σχήματος δοσολογίας για ΕΝΑ φάρμακο."""
+    return await PatientRxRepository(tenant_id=ctx.tenant_id).set_med_plan(
+        ctx.patient_ref, body.model_dump())
 
 
 class IntakeIn(BaseModel):

@@ -79,6 +79,22 @@ def _parse_qty(val):
     return num, m.group(2)
 
 
+def _as_date(v):
+    """ISO string ή datetime → `date` (ή None). Το `dose_on` δουλεύει με ημερομηνίες, όχι χρόνους —
+    ώστε η σύγκριση «πόσες ημέρες πέρασαν» να μην επηρεάζεται από ώρα/ζώνη."""
+    from datetime import date as _d, datetime as _dt
+    if isinstance(v, _dt):
+        return v.date()
+    if isinstance(v, _d):
+        return v
+    if isinstance(v, str) and v:
+        try:
+            return _dt.fromisoformat(v[:10]).date()
+        except ValueError:
+            return None
+    return None
+
+
 def _format_dosage(dose, freq, dur) -> str | None:
     """Doctor's posology from the ΗΔΥΚΑ CDA, formatted EXACTLY per the CDA spec §2.1.2.4:
     dose (doseQuantity, π.χ. «1 ΔΙΣΚΙΑ»), frequency (PIVL_TS period → πίνακας συχνότητας,
@@ -929,7 +945,7 @@ class PatientRxRepository(BaseRepository):
                 med_key = str(it.get("product_id") or d.get("eof_code") or name)
                 if med_key in therapies:        # keep only the most recent execution per medicine
                     continue
-                plan = ms.frequency_plan(d.get("frequency"))
+                plan = ms.frequency_plan(d.get("frequency"))   # βάση: η συχνότητα του γιατρού
                 ro = ms.runout_date(ex.get("executed_at"), d.get("duration"))
                 active = (ro >= now) if ro else (ex.get("executed_at") and ex["executed_at"] >= now - timedelta(days=90))
                 if not active:
@@ -965,10 +981,72 @@ class PatientRxRepository(BaseRepository):
             t["time"] = cfg.get("time")      # custom ώρα λήψης (ή None → slot time)
             t["meal"] = cfg.get("meal")      # before/after/none
             t["interval_hours"] = cfg.get("interval_hours")  # «κάθε X ώρες» (ή None/0)
-        plans = [{"med_key": t["med_key"], "name": t["name"], "dose": t["dose"], "plan": t["plan"]}
+        # ΠΡΟΣΩΠΙΚΑ σχήματα (μηνιαία / φθίνουσα) — υπερισχύουν της συχνότητας του γιατρού, γιατί
+        # η ΗΔΥΚΑ δεν μπορεί να τα εκφράσει (βλ. med_schedule).
+        custom: dict = {}
+        async for c in self._db["med_plans"].find(
+                {"tenant_id": self.tenant_id, "patient_ref": pid}):
+            custom[c.get("med_key")] = c
+        for t in ths:
+            c = custom.get(t["med_key"])
+            if not c:
+                continue
+            if c.get("kind") == "monthly":
+                t["plan"] = ms.monthly_plan(every_months=c.get("every_months", 1),
+                                            day_of_month=c.get("day_of_month", 1),
+                                            qty=c.get("qty", 1), slot=c.get("slot", "morning"))
+            elif c.get("kind") == "taper":
+                t["plan"] = ms.taper_plan(c.get("phases") or [],
+                                          maintenance_qty=c.get("maintenance_qty", 0),
+                                          slot=c.get("slot", "morning"))
+            else:
+                continue
+            t["kind"] = t["plan"]["kind"]
+            t["per_day"] = t["plan"].get("per_day")
+            t["custom_plan"] = {k: v for k, v in c.items() if k not in ("_id", "tenant_id", "patient_ref")}
+            t["plan_summary"] = ms.plan_summary(t["plan"])
+            t["plan_start"] = c.get("start_date")
+        plans = [{"med_key": t["med_key"], "name": t["name"], "dose": t["dose"], "plan": t["plan"],
+                  "start": _as_date(t.get("plan_start") or t.get("last_dispensed"))}
                  for t in ths if t["enabled"]]
         return jsonsafe({"therapies": ths, "week": ms.weekly_grid(plans, slot_times),
                          "slot_times": slot_times, "streak": streak, "taken_today": taken_today})
+
+    async def set_med_plan(self, patient_ref: str, body: dict) -> dict:
+        """Αποθήκευση προσωπικού σχήματος (μηνιαίο/φθίνουσα) ή κατάργηση («none»).
+
+        Επιστρέφει και την ΠΕΡΙΓΡΑΦΗ του σχήματος, ώστε ο ασθενής να δει αμέσως τι όρισε —
+        σε κλινικό θέμα δεν αρκεί «αποθηκεύτηκε».
+        """
+        from app.services import med_schedule as ms
+        from datetime import date as _date
+        pid = _oid(patient_ref)
+        med_key = str(body.get("med_key") or "").strip()
+        if not pid or not med_key:
+            return {"ok": False, "error": "bad_request"}
+        q = {"tenant_id": self.tenant_id, "patient_ref": pid, "med_key": med_key}
+        if body.get("kind") == "none":
+            await self._db["med_plans"].delete_one(q)      # tenant-ok: tenant_id στο φίλτρο
+            return {"ok": True, "kind": "none", "summary": None}
+        doc = {**q, "kind": body["kind"], "slot": body.get("slot") or "morning",
+               "start_date": body.get("start_date") or _date.today().isoformat(),
+               "updated_at": datetime.now(tz=timezone.utc)}
+        if body["kind"] == "monthly":
+            doc.update({"every_months": body.get("every_months", 1),
+                        "day_of_month": body.get("day_of_month", 1),
+                        "qty": body.get("qty", 1)})
+            plan = ms.monthly_plan(every_months=doc["every_months"],
+                                   day_of_month=doc["day_of_month"],
+                                   qty=doc["qty"], slot=doc["slot"])
+        else:
+            phases = [{"days": p.get("days"), "qty": p.get("qty")} for p in (body.get("phases") or [])]
+            if not phases:
+                return {"ok": False, "error": "no_phases"}
+            doc.update({"phases": phases, "maintenance_qty": body.get("maintenance_qty", 0)})
+            plan = ms.taper_plan(phases, maintenance_qty=doc["maintenance_qty"], slot=doc["slot"])
+        await self._db["med_plans"].update_one(q, {"$set": doc}, upsert=True)  # tenant-ok
+        return {"ok": True, "kind": doc["kind"], "summary": ms.plan_summary(plan),
+                "start_date": doc["start_date"]}
 
     async def _intake_streak(self, pid) -> int:
         dates: set = set()
