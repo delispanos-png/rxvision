@@ -108,9 +108,9 @@ const TAB_ICON: Record<string, LucideIcon> = {
 const TAB_LABEL: Record<string, [string, string]> = Object.fromEntries(TABS.map(([k, l, en]) => [k, [l, en]]));
 
 const DOW = ["Δευ", "Τρί", "Τετ", "Πέμ", "Παρ", "Σάβ", "Κυρ"];
-type Therapy = { med_key: string; name: string; dose: string | null; dosage_text: string | null; kind: string; per_day: number; runout: string | null; days_left: number | null; enabled: boolean; reservable: boolean; time?: string | null; meal?: string | null; interval_hours?: number | null; plan_summary?: string | null; custom_plan?: CustomPlan | null; plan_start?: string | null };
-type TaperPhase = { days: number; qty: number };
-type CustomPlan = { kind: "monthly" | "taper"; start_date?: string; slot?: string; every_months?: number; day_of_month?: number; qty?: number; phases?: TaperPhase[]; maintenance_qty?: number };
+type Therapy = { med_key: string; name: string; dose: string | null; dosage_text: string | null; kind: string; per_day: number; runout: string | null; days_left: number | null; enabled: boolean; reservable: boolean; time?: string | null; meal?: string | null; interval_hours?: number | null; plan_summary?: string | null; custom_plan?: CustomPlan | null; plan_start?: string | null; override?: { by?: string; reason?: string; at?: string; doctor_text?: string } | null };
+type PlanPhase = { days: number; qty: number; per_day?: number; times?: string[] };
+type CustomPlan = { kind: "monthly" | "composite"; start_date?: string; slot?: string; every_months?: number; day_of_month?: number; qty?: number; phases?: PlanPhase[]; maintenance_qty?: number };
 type SlotCell = { slot: string; label: string; time: string; meds: { med_key: string; name: string; dose: string | null; time: string }[] };
 type Schedule = { therapies: Therapy[]; week: { dow: number; date?: string; slots: SlotCell[] }[]; slot_times: Record<string, string>; streak: number; taken_today?: { med_key: string; slot: string | null }[] };
 // τελικές καταστάσεις ραντεβού → «κλειστά» (κοινό σε Αρχική & καρτέλα Ραντεβού)
@@ -203,10 +203,6 @@ export default function PortalHome() {
   const [refCodeInput, setRefCodeInput] = useState("");   // κωδικός σύστασης φίλου (κατά την εγγραφή)
   const [health, setHealth] = useState<Health | null>(null);
   const [sched, setSched] = useState<Schedule | null>(null);
-  const [planFor, setPlanFor] = useState<null | { med_key: string; name: string; kind: "monthly" | "taper";
-    every_months: number; day_of_month: number; qty: number;
-    phases: TaperPhase[]; maintenance_qty: number; start_date: string }>(null);
-  const [planBusy, setPlanBusy] = useState(false);
   const [medsView, setMedsView] = useState<"calendar" | "settings">("calendar");  // Πρόγραμμα: Ημερολόγιο | Ρυθμίσεις
   const [healthDate, setHealthDate] = useState<string | null>(null);   // Υγεία: επιλεγμένη ημερομηνία μετρήσεων
   const [openDay, setOpenDay] = useState<number | null>(() => (new Date().getDay() + 6) % 7);  // accordion: σήμερα ανοιχτή
@@ -608,25 +604,6 @@ export default function PortalHome() {
     }
   }
 
-  async function saveMedPlan(kind: "monthly" | "taper" | "none") {
-    if (!planFor) return;
-    setPlanBusy(true);
-    try {
-      const body = kind === "none"
-        ? { med_key: planFor.med_key, kind }
-        : { med_key: planFor.med_key, kind, start_date: planFor.start_date, slot: "morning",
-            every_months: planFor.every_months, day_of_month: planFor.day_of_month, qty: planFor.qty,
-            phases: planFor.phases, maintenance_qty: planFor.maintenance_qty };
-      const r = await patientApi<{ ok: boolean; summary?: string | null }>(
-        "/patient/meds/plan", { method: "PUT", body: JSON.stringify(body) });
-      setSched(await patientApi<Schedule>("/patient/meds/schedule"));
-      setPlanFor(null);
-      toast(kind === "none" ? t("Επαναφέρθηκε η οδηγία του γιατρού.", "Reverted to the doctor's instruction.")
-                            : (r.summary || t("Αποθηκεύτηκε.", "Saved.")), "success");
-    } catch { toast(t("Κάτι πήγε στραβά — δοκίμασε ξανά.", "Something went wrong — try again."), "error"); }
-    finally { setPlanBusy(false); }
-  }
-
   // tenantId: η εκτέλεση μπορεί να έγινε σε ΑΛΛΟ φαρμακείο του πελάτη → πες στο API πού να ψάξει.
   async function toggleExpand(barcode: string, tenantId?: string) {
     if (expanded === barcode) { setExpanded(null); setDetail(null); return; }
@@ -856,100 +833,6 @@ export default function PortalHome() {
                     <ChevronDown className={`h-3.5 w-3.5 shrink-0 text-slate-400 transition ${switchOpen ? "rotate-180" : ""}`} />
                   </button>
             
-      {/* ── ΕΙΔΙΚΟ ΣΧΗΜΑ ΔΟΣΟΛΟΓΙΑΣ ─────────────────────────────────────────────────────── */}
-      {planFor && (
-        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4" onClick={() => setPlanFor(null)}>
-          <div className="max-h-[92vh] w-full max-w-lg overflow-y-auto rounded-t-2xl bg-white p-5 shadow-xl dark:bg-slate-900 sm:rounded-2xl" onClick={(e) => e.stopPropagation()}>
-            <div className="mb-1 flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <h3 className="text-lg font-bold text-slate-900 dark:text-slate-100">{t("Ειδικό σχήμα", "Special regimen")}</h3>
-                <p className="truncate text-xs text-slate-500">{planFor.name}</p>
-              </div>
-              <button onClick={() => setPlanFor(null)} className="text-slate-400 hover:text-slate-600"><X className="h-5 w-5" /></button>
-            </div>
-
-            <div className="mt-3 flex gap-2">
-              {([["taper", t("Φθίνουσα αγωγή", "Tapering")], ["monthly", t("Μηνιαία λήψη", "Monthly")]] as const).map(([k, label]) => (
-                <button key={k} onClick={() => setPlanFor({ ...planFor, kind: k })}
-                  className={`flex-1 rounded-xl border-2 px-3 py-2 text-sm font-semibold transition ${planFor.kind === k ? "border-violet-500 bg-violet-50 text-violet-800 dark:bg-violet-950/40 dark:text-violet-200" : "border-slate-200 text-slate-600 dark:border-slate-700 dark:text-slate-300"}`}>
-                  {label}
-                </button>
-              ))}
-            </div>
-
-            {planFor.kind === "taper" ? (
-              <div className="mt-4 space-y-3">
-                <p className="text-xs text-slate-500">{t("Π.χ. 3 χάπια για 2 ημέρες, μετά 2 για 2 ημέρες, μετά 1 για 2 ημέρες, και μετά 1 μόνιμα.", "E.g. 3 pills for 2 days, then 2 for 2 days, then 1 for 2 days, then 1 permanently.")}</p>
-                {planFor.phases.map((ph, i) => (
-                  <div key={i} className="flex items-center gap-2 rounded-xl border border-slate-200 p-2 dark:border-slate-700">
-                    <span className="w-14 shrink-0 text-xs font-semibold text-slate-500">{t("Φάση", "Phase")} {i + 1}</span>
-                    <input type="number" min={0} step={0.5} value={ph.qty} aria-label={t("δόση", "dose")}
-                      onChange={(e) => { const ps = [...planFor.phases]; ps[i] = { ...ph, qty: parseFloat(e.target.value) || 0 }; setPlanFor({ ...planFor, phases: ps }); }}
-                      className="w-16 rounded-lg border border-slate-300 px-2 py-1.5 text-center text-sm dark:border-slate-600 dark:bg-slate-800" />
-                    <span className="shrink-0 text-xs text-slate-500">{t("για", "for")}</span>
-                    <input type="number" min={1} value={ph.days} aria-label={t("ημέρες", "days")}
-                      onChange={(e) => { const ps = [...planFor.phases]; ps[i] = { ...ph, days: parseInt(e.target.value) || 1 }; setPlanFor({ ...planFor, phases: ps }); }}
-                      className="w-16 rounded-lg border border-slate-300 px-2 py-1.5 text-center text-sm dark:border-slate-600 dark:bg-slate-800" />
-                    <span className="shrink-0 text-xs text-slate-500">{t("ημέρες", "days")}</span>
-                    <button onClick={() => setPlanFor({ ...planFor, phases: planFor.phases.filter((_, j) => j !== i) })}
-                      className="ml-auto shrink-0 text-slate-400 hover:text-rose-600" aria-label={t("Αφαίρεση", "Remove")}>
-                      <X className="h-4 w-4" />
-                    </button>
-                  </div>
-                ))}
-                <button onClick={() => setPlanFor({ ...planFor, phases: [...planFor.phases, { days: 2, qty: 1 }] })}
-                  className="rounded-lg border border-dashed border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-300">
-                  + {t("Προσθήκη φάσης", "Add phase")}
-                </button>
-                <div className="flex items-center gap-2 rounded-xl bg-slate-50 p-2.5 dark:bg-slate-800">
-                  <span className="text-xs font-semibold text-slate-600 dark:text-slate-300">{t("Μετά, μόνιμα:", "Then, permanently:")}</span>
-                  <input type="number" min={0} step={0.5} value={planFor.maintenance_qty}
-                    onChange={(e) => setPlanFor({ ...planFor, maintenance_qty: parseFloat(e.target.value) || 0 })}
-                    className="w-16 rounded-lg border border-slate-300 px-2 py-1.5 text-center text-sm dark:border-slate-600 dark:bg-slate-900" />
-                  <span className="text-xs text-slate-500">{planFor.maintenance_qty > 0 ? t("τη μέρα", "per day") : t("→ διακοπή αγωγής", "→ treatment stops")}</span>
-                </div>
-                <label className="block text-xs">
-                  <span className="mb-1 block font-semibold text-slate-600 dark:text-slate-300">{t("Έναρξη", "Start")}</span>
-                  <DateInput value={planFor.start_date} onChange={(v) => setPlanFor({ ...planFor, start_date: v })} />
-                </label>
-              </div>
-            ) : (
-              <div className="mt-4 space-y-3">
-                <p className="text-xs text-slate-500">{t("Π.χ. 1 χάπι στις 5 κάθε μήνα.", "E.g. 1 pill on the 5th of each month.")}</p>
-                <div className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 p-3 dark:border-slate-700">
-                  <input type="number" min={0} step={0.5} value={planFor.qty}
-                    onChange={(e) => setPlanFor({ ...planFor, qty: parseFloat(e.target.value) || 0 })}
-                    className="w-16 rounded-lg border border-slate-300 px-2 py-1.5 text-center text-sm dark:border-slate-600 dark:bg-slate-800" />
-                  <span className="text-xs text-slate-500">{t("κάθε", "every")}</span>
-                  <input type="number" min={1} max={12} value={planFor.every_months}
-                    onChange={(e) => setPlanFor({ ...planFor, every_months: parseInt(e.target.value) || 1 })}
-                    className="w-16 rounded-lg border border-slate-300 px-2 py-1.5 text-center text-sm dark:border-slate-600 dark:bg-slate-800" />
-                  <span className="text-xs text-slate-500">{planFor.every_months === 1 ? t("μήνα, στις", "month, on day") : t("μήνες, στις", "months, on day")}</span>
-                  <input type="number" min={1} max={31} value={planFor.day_of_month}
-                    onChange={(e) => setPlanFor({ ...planFor, day_of_month: parseInt(e.target.value) || 1 })}
-                    className="w-16 rounded-lg border border-slate-300 px-2 py-1.5 text-center text-sm dark:border-slate-600 dark:bg-slate-800" />
-                  <span className="text-xs text-slate-500">{t("του μήνα", "of the month")}</span>
-                </div>
-                {planFor.day_of_month > 28 && (
-                  <p className="text-[11px] text-amber-700">{t("Σε μήνες με λιγότερες ημέρες, η λήψη πέφτει στην τελευταία ημέρα του μήνα — δεν χάνεται δόση.", "In shorter months the intake falls on the last day — no dose is missed.")}</p>
-                )}
-              </div>
-            )}
-
-            <div className="mt-5 flex flex-wrap items-center gap-2">
-              <button onClick={() => saveMedPlan("none")} disabled={planBusy}
-                className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-600 dark:text-slate-300">
-                {t("Οδηγία γιατρού", "Doctor's instruction")}
-              </button>
-              <button onClick={() => saveMedPlan(planFor.kind)} disabled={planBusy}
-                className="ml-auto inline-flex items-center gap-1.5 rounded-lg bg-violet-600 px-5 py-2 text-sm font-semibold text-white hover:bg-violet-700 disabled:opacity-50">
-                {planBusy && <Loader2 className="h-4 w-4 animate-spin" />} {t("Αποθήκευση", "Save")}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {switchOpen && (
                     <>
                       <div className="fixed inset-0 z-40" onClick={() => setSwitchOpen(false)} />
@@ -1873,9 +1756,16 @@ export default function PortalHome() {
                         <div className="min-w-0">
                           <div className="truncate text-sm font-semibold text-slate-800 dark:text-slate-100">{th.name}</div>
                           {th.dosage_text && <div className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">{th.dosage_text}</div>}
+                          {/* ΜΟΝΟ ΕΜΦΑΝΙΣΗ — ο ασθενής δεν αλλάζει αγωγή (ανήκει στον φαρμακοποιό). */}
                           {th.plan_summary && (
                             <div className="mt-1 inline-flex items-center gap-1 rounded-lg bg-violet-100 px-2 py-0.5 text-[11px] font-semibold text-violet-700 dark:bg-violet-900/40 dark:text-violet-300">
                               📋 {th.plan_summary}
+                            </div>
+                          )}
+                          {th.override && (
+                            <div className="mt-1 rounded-lg bg-amber-50 px-2 py-1 text-[11px] text-amber-800 dark:bg-amber-950/30 dark:text-amber-300">
+                              ℹ️ {t("Η αγωγή προσαρμόστηκε από το φαρμακείο σου.", "Your pharmacy adjusted this treatment.")}
+                              {th.override.reason && <span className="italic"> «{th.override.reason}»</span>}
                             </div>
                           )}
                           {th.days_left !== null && (
@@ -1896,23 +1786,6 @@ export default function PortalHome() {
                           <span className="inline-flex items-center gap-1"><Clock className="h-3.5 w-3.5" /> {th.interval_hours ? t(`κάθε ${th.interval_hours} ώρες`, `every ${th.interval_hours} hours`) : (th.time || "—")}</span>
                           <span>{th.meal === "before" ? t("🍽️ πριν το γεύμα", "🍽️ before meal") : th.meal === "after" ? t("🍽️ μετά το γεύμα", "🍽️ after meal") : t("άσχετο με γεύμα", "unrelated to meals")}</span>
                           <span className="text-[10px] text-violet-400">{t("· αλλαγή", "· change")}</span>
-                        </button>
-                      )}
-                      {/* Ειδικό σχήμα: μηνιαία λήψη ή φθίνουσα αγωγή — πράγματα που η οδηγία της
-                          ΗΔΥΚΑ δεν μπορεί να εκφράσει. */}
-                      {medCfg?.med_key !== th.med_key && (
-                        <button onClick={() => setPlanFor({
-                          med_key: th.med_key, name: th.name,
-                          kind: th.custom_plan?.kind || "taper",
-                          every_months: th.custom_plan?.every_months ?? 1,
-                          day_of_month: th.custom_plan?.day_of_month ?? new Date().getDate(),
-                          qty: th.custom_plan?.qty ?? 1,
-                          phases: th.custom_plan?.phases ?? [{ days: 2, qty: 3 }, { days: 2, qty: 2 }, { days: 2, qty: 1 }],
-                          maintenance_qty: th.custom_plan?.maintenance_qty ?? 1,
-                          start_date: th.custom_plan?.start_date ?? new Date().toISOString().slice(0, 10),
-                        })}
-                          className="mt-2 ml-2 inline-flex items-center gap-1 rounded-lg border border-violet-200 px-2.5 py-1 text-xs font-medium text-violet-700 hover:bg-violet-50 dark:border-violet-800 dark:text-violet-300">
-                          ⚙️ {th.plan_summary ? t("Αλλαγή σχήματος", "Change regimen") : t("Ειδικό σχήμα", "Special regimen")}
                         </button>
                       )}
                       {/* φόρμα ρύθμισης (εμφανίζεται στην ενεργοποίηση ή στην «αλλαγή») */}

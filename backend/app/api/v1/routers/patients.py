@@ -342,7 +342,9 @@ async def set_med_reminder(patient_id: str, body: MedReminderIn,
 
 class MedPlanPhase(BaseModel):
     days: int = Field(..., ge=1, le=365)
-    qty: float = Field(..., ge=0, le=20)
+    qty: float = Field(..., ge=0, le=20)          # ποσότητα ΑΝΑ ΛΗΨΗ
+    per_day: int = Field(1, ge=1, le=6)           # λήψεις/ημέρα
+    times: list[str] = []                         # ώρες λήψης (HH:MM)
 
 
 class MedPlanIn(BaseModel):
@@ -353,7 +355,7 @@ class MedPlanIn(BaseModel):
     """
 
     med_key: str
-    kind: Literal["custom", "monthly", "taper", "none"]
+    kind: Literal["custom", "monthly", "composite", "none"]
     reason: str | None = None          # υποχρεωτική για κάθε kind εκτός "none"
     start_date: str | None = None
     slot: str = "morning"
@@ -361,8 +363,10 @@ class MedPlanIn(BaseModel):
     every_months: int = Field(1, ge=1, le=12)    # monthly
     day_of_month: int = Field(1, ge=1, le=31)
     qty: float = Field(1, ge=0, le=20)
-    phases: list[MedPlanPhase] = []              # taper
+    phases: list[MedPlanPhase] = []              # σύνθετο
     maintenance_qty: float = Field(0, ge=0, le=20)
+    maintenance_per_day: int = Field(1, ge=1, le=6)
+    maintenance_times: list[str] = []
 
 
 @router.post("/{patient_id}/med-plan")

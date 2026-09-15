@@ -999,10 +999,12 @@ class PatientRxRepository(BaseRepository):
                 t["plan"] = {"kind": "daily", "per_day": c.get("per_day", 1), "days": "all",
                              "slots": ms._SLOTS_BY_COUNT.get(c.get("per_day", 1), ["morning"]),
                              "times_per_week": c.get("per_day", 1) * 7, "qty": c.get("qty", 1)}
-            elif c.get("kind") == "taper":
-                t["plan"] = ms.taper_plan(c.get("phases") or [],
-                                          maintenance_qty=c.get("maintenance_qty", 0),
-                                          slot=c.get("slot", "morning"))
+            elif c.get("kind") in ("composite", "taper"):
+                t["plan"] = ms.composite_plan(c.get("phases") or [],
+                                              maintenance_qty=c.get("maintenance_qty", 0),
+                                              maintenance_per_day=c.get("maintenance_per_day", 1),
+                                              maintenance_times=c.get("maintenance_times"),
+                                              slot=c.get("slot", "morning"))
             else:
                 continue
             t["kind"] = t["plan"]["kind"]
@@ -1064,11 +1066,17 @@ class PatientRxRepository(BaseRepository):
                     "slots": ms._SLOTS_BY_COUNT[per_day], "times_per_week": per_day * 7,
                     "qty": body.get("qty", 1)}
         else:
-            phases = [{"days": p.get("days"), "qty": p.get("qty")} for p in (body.get("phases") or [])]
+            phases = [{"days": p.get("days"), "qty": p.get("qty"),
+                       "per_day": p.get("per_day", 1), "times": p.get("times") or []}
+                      for p in (body.get("phases") or [])]
             if not phases:
                 return {"ok": False, "error": "no_phases"}
-            doc.update({"phases": phases, "maintenance_qty": body.get("maintenance_qty", 0)})
-            plan = ms.taper_plan(phases, maintenance_qty=doc["maintenance_qty"], slot=doc["slot"])
+            doc.update({"phases": phases, "maintenance_qty": body.get("maintenance_qty", 0),
+                        "maintenance_per_day": body.get("maintenance_per_day", 1),
+                        "maintenance_times": body.get("maintenance_times") or []})
+            plan = ms.composite_plan(phases, maintenance_qty=doc["maintenance_qty"],
+                                     maintenance_per_day=doc["maintenance_per_day"],
+                                     maintenance_times=doc["maintenance_times"], slot=doc["slot"])
         await self._db["med_plans"].update_one(q, {"$set": doc}, upsert=True)  # tenant-ok
         return {"ok": True, "kind": doc["kind"],
                 "summary": ms.plan_summary(plan) or _format_dosage(None, None, None) or None,

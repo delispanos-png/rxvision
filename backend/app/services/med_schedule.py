@@ -85,6 +85,14 @@ def runout_date(start: datetime | None, duration) -> datetime | None:
     return start + timedelta(days=days)
 
 
+def _mins(hhmm: str) -> int:
+    try:
+        h, m = str(hhmm).split(":")[:2]
+        return int(h) * 60 + int(m)
+    except (ValueError, AttributeError):
+        return 0
+
+
 def weekly_grid(plans: list[dict], slot_times: dict | None = None, today=None) -> list[dict]:
     """7 ΠΡΑΓΜΑΤΙΚΕΣ ημέρες (από σήμερα) × slots, με την ΠΟΣΟΤΗΤΑ κάθε δόσης.
 
@@ -105,13 +113,13 @@ def weekly_grid(plans: list[dict], slot_times: dict | None = None, today=None) -
         slots: dict = {}
         for p in plans:
             plan = p["plan"]
-            qty = dose_on(plan, day, p.get("start"))
-            if qty <= 0:
-                continue
-            for s in plan.get("slots") or ["morning"]:
-                slots.setdefault(s, []).append({
+            for ik in intakes_on(plan, day, p.get("start"), st):
+                # τοποθέτησε τη λήψη στο slot που ταιριάζει με την ΩΡΑ της (τα σύνθετα σχήματα
+                # μπορεί να έχουν ώρες που δεν πέφτουν στα προεπιλεγμένα slots)
+                slot = min(SLOTS_ORDER, key=lambda sl: abs(_mins(st.get(sl, "08:00")) - _mins(ik["time"])))
+                slots.setdefault(slot, []).append({
                     "med_key": p["med_key"], "name": p["name"], "dose": p.get("dose"),
-                    "qty": qty, "qty_label": _num(qty), "time": st.get(s)})
+                    "qty": ik["qty"], "qty_label": _num(ik["qty"]), "time": ik["time"]})
         ordered = [{"slot": s, "label": SLOT_LABEL[s], "time": st.get(s), "meds": slots[s]}
                    for s in SLOTS_ORDER if s in slots]
         week.append({"dow": day.weekday(), "date": day.isoformat(), "slots": ordered})
@@ -135,22 +143,39 @@ def monthly_plan(*, every_months: int = 1, day_of_month: int = 1, qty: float = 1
             "qty": qty, "times_per_week": round(7 / (30.0 * max(1, int(every_months or 1))), 3)}
 
 
-def taper_plan(phases: list[dict], *, maintenance_qty: float = 0, slot: str = "morning") -> dict:
-    """Φθίνουσα αγωγή: διαδοχικές φάσεις «X ημέρες με Y δόση», και μετά σταθερή δόση συντήρησης.
+def composite_plan(phases: list[dict], *, maintenance_qty: float = 0,
+                   maintenance_per_day: int = 1, maintenance_times: list | None = None,
+                   slot: str = "morning") -> dict:
+    """ΣΥΝΘΕΤΟ σχήμα: διαδοχικές φάσεις, και μετά σταθερή δόση συντήρησης.
 
-    `phases` = [{"days": 2, "qty": 3}, {"days": 2, "qty": 2}, …] — με τη σειρά που εκτελούνται.
-    `maintenance_qty` = δόση ΜΕΤΑ το τέλος των φάσεων· **0 = η αγωγή σταματά**.
+    Κάθε φάση: `{"days": 2, "qty": 1, "per_day": 3, "times": ["08:00","14:00","20:00"]}`
+      • `qty`     = ποσότητα ΑΝΑ ΛΗΨΗ (π.χ. 1 χάπι)
+      • `per_day` = πόσες λήψεις την ημέρα
+      • `times`   = ώρες των λήψεων (προαιρετικό· αν λείπουν → προεπιλεγμένα slots)
+    Έτσι εκφράζονται και «3 χάπια μία φορά» (qty=3, per_day=1) και «1 χάπι ×3» (qty=1, per_day=3).
+
+    `maintenance_qty` = δόση ΜΕΤΑ τις φάσεις· **0 = η αγωγή σταματά**.
+    Λέγεται «σύνθετο» και όχι «φθίνουσα» επειδή οι δόσεις δεν είναι πάντα φθίνουσες
+    (π.χ. τιτλοποίηση προς τα πάνω).
     """
     clean = []
     for ph in phases or []:
-        d, q = int(ph.get("days") or 0), float(ph.get("qty") or 0)
-        if d > 0:
-            clean.append({"days": d, "qty": q})
-    return {"kind": "taper", "phases": clean, "maintenance_qty": float(maintenance_qty or 0),
-            "per_day": (clean[0]["qty"] if clean else maintenance_qty),
+        d = int(ph.get("days") or 0)
+        if d <= 0:
+            continue
+        pd = max(1, min(6, int(ph.get("per_day") or 1)))
+        times = [str(x) for x in (ph.get("times") or []) if x][:pd]
+        clean.append({"days": d, "qty": float(ph.get("qty") or 0), "per_day": pd, "times": times})
+    mt = [str(x) for x in (maintenance_times or []) if x][:max(1, int(maintenance_per_day or 1))]
+    return {"kind": "composite", "phases": clean, "maintenance_qty": float(maintenance_qty or 0),
+            "maintenance_per_day": max(1, int(maintenance_per_day or 1)), "maintenance_times": mt,
+            "per_day": (clean[0]["per_day"] if clean else max(1, int(maintenance_per_day or 1))),
             "days": "all", "slots": [slot or "morning"],
             "total_days": sum(p["days"] for p in clean),
             "times_per_week": 7}
+
+
+taper_plan = composite_plan     # συμβατότητα ονόματος
 
 
 def dose_on(plan: dict, day, start=None) -> float:
@@ -162,17 +187,9 @@ def dose_on(plan: dict, day, start=None) -> float:
     kind = plan.get("kind")
     if kind == "prn":
         return 0.0
-    if kind == "taper":
-        if not start:
-            return float(plan.get("per_day") or 0)
-        elapsed = (day - start).days
-        if elapsed < 0:
-            return 0.0
-        for ph in plan.get("phases") or []:
-            if elapsed < ph["days"]:
-                return float(ph["qty"])
-            elapsed -= ph["days"]
-        return float(plan.get("maintenance_qty") or 0)      # 0 → τέλος αγωγής
+    if kind in ("composite", "taper"):
+        ph = _phase_on(plan, day, start)
+        return 0.0 if ph is None else float(ph["qty"]) * int(ph.get("per_day") or 1)
     if kind == "monthly":
         dom = plan.get("day_of_month")
         every = max(1, int(plan.get("every_months") or 1))
@@ -209,11 +226,16 @@ def plan_summary(plan: dict) -> str:
         when = f"στις {dom} του μήνα" if dom else "μία φορά τον μήνα"
         cadence = "κάθε μήνα" if every == 1 else f"κάθε {every} μήνες"
         return f"{_num(q)} {cadence}, {when}"
-    if k == "taper":
-        parts = [f"{_num(p['qty'])} για {p['days']} {'ημέρα' if p['days'] == 1 else 'ημέρες'}"
-                 for p in (plan.get("phases") or [])]
+    if k in ("composite", "taper"):
+        parts = []
+        for p in plan.get("phases") or []:
+            pd = int(p.get("per_day") or 1)
+            amount = _num(p["qty"]) + (f" ×{pd}/ημέρα" if pd > 1 else "")
+            hours = f" ({', '.join(p['times'])})" if p.get("times") else ""
+            parts.append(f"{amount} για {p['days']} {'ημέρα' if p['days'] == 1 else 'ημέρες'}{hours}")
         m = plan.get("maintenance_qty") or 0
-        parts.append(f"μετά {_num(m)} μόνιμα" if m else "μετά διακοπή")
+        mpd = int(plan.get("maintenance_per_day") or 1)
+        parts.append((f"μετά {_num(m)}{f' ×{mpd}/ημέρα' if mpd > 1 else ''} μόνιμα") if m else "μετά διακοπή")
         return " → ".join(parts)
     return ""
 
@@ -226,3 +248,45 @@ def _num(v) -> str:
     if abs(f - round(f)) < 1e-6:
         return str(int(round(f)))
     return f"{f:g}"
+
+
+def _phase_on(plan: dict, day, start=None) -> dict | None:
+    """Ποια φάση ισχύει αυτή την ημέρα (ή η συντήρηση). None = καμία λήψη."""
+    if not start:
+        ph = (plan.get("phases") or [None])[0]
+        return ph
+    elapsed = (day - start).days
+    if elapsed < 0:
+        return None
+    for ph in plan.get("phases") or []:
+        if elapsed < ph["days"]:
+            return ph
+        elapsed -= ph["days"]
+    mq = float(plan.get("maintenance_qty") or 0)
+    if mq <= 0:
+        return None                                    # τέλος αγωγής
+    return {"days": 0, "qty": mq, "per_day": plan.get("maintenance_per_day", 1),
+            "times": plan.get("maintenance_times") or []}
+
+
+def intakes_on(plan: dict, day, start=None, slot_times: dict | None = None) -> list[dict]:
+    """Οι ΛΗΨΕΙΣ μιας ημέρας: [{time, qty}] — με τις ΩΡΕΣ, όχι μόνο το σύνολο.
+
+    Για σύνθετα σχήματα διαβάζει τις ώρες της φάσης· αν δεν έχουν οριστεί, μοιράζει στα
+    προεπιλεγμένα slots ανάλογα με το πόσες λήψεις έχει η φάση.
+    """
+    st = {**SLOT_TIMES, **(slot_times or {})}
+    if plan.get("kind") in ("composite", "taper"):
+        ph = _phase_on(plan, day, start)
+        if not ph or float(ph.get("qty") or 0) <= 0:
+            return []
+        pd = max(1, int(ph.get("per_day") or 1))
+        times = list(ph.get("times") or [])
+        if len(times) < pd:                            # συμπλήρωσε από τα slots
+            times += [st[s] for s in _SLOTS_BY_COUNT.get(pd, ["morning"])[len(times):pd]]
+        return [{"time": times[i], "qty": float(ph["qty"])} for i in range(pd)]
+    total = dose_on(plan, day, start)
+    if total <= 0:
+        return []
+    slots = plan.get("slots") or ["morning"]
+    return [{"time": st.get(s, "08:00"), "qty": total / len(slots)} for s in slots]

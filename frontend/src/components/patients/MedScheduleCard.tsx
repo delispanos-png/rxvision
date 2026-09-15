@@ -10,7 +10,8 @@ import { useT } from "@/store/prefStore";
 import { PanelCard } from "@/components/ui/Card";
 
 type Therapy = { med_key: string; name: string; dosage_text: string | null; per_day: number; days_left: number | null; enabled: boolean; time?: string | null; meal?: string | null; interval_hours?: number | null; plan_summary?: string | null; override?: { by?: string; reason?: string; at?: string; doctor_text?: string } | null };
-type Ovr = { med_key: string; name: string; doctor_text: string | null; kind: "custom" | "taper"; per_day: number; phases: { days: number; qty: number }[]; maintenance_qty: number; reason: string };
+type Phase = { days: number; qty: number; per_day: number; times: string[] };
+type Ovr = { med_key: string; name: string; doctor_text: string | null; kind: "custom" | "composite"; per_day: number; phases: Phase[]; maintenance_qty: number; reason: string };
 type Sched = { therapies: Therapy[] };
 type Cfg = { med_key: string; time: string; meal: string; mode: "time" | "interval"; interval: number; per_day: number };
 
@@ -101,7 +102,8 @@ export function MedScheduleCard({ patientId }: { patientId: string }) {
                 {/* ΕΞΑΙΡΕΤΙΚΗ αλλαγή της οδηγίας του γιατρού — ξεχωριστό, διακριτικό, με αιτιολόγηση */}
                 {ovr?.med_key !== th.med_key && (
                   <button onClick={() => setOvr({ med_key: th.med_key, name: th.name, doctor_text: th.override?.doctor_text || th.dosage_text,
-                      kind: "custom", per_day: th.per_day || 1, phases: [{ days: 2, qty: 3 }, { days: 2, qty: 2 }, { days: 2, qty: 1 }],
+                      kind: "custom", per_day: th.per_day || 1,
+                      phases: [{ days: 2, qty: 1, per_day: 3, times: ["08:00", "14:00", "20:00"] }],
                       maintenance_qty: 1, reason: "" })}
                     className="ml-1 mt-1 inline-flex items-center gap-1 rounded-lg border border-amber-300 px-2 py-0.5 text-[11px] font-medium text-amber-700 hover:bg-amber-50 dark:border-amber-800 dark:text-amber-400">
                     <AlertTriangle className="h-3 w-3" /> {th.override ? t("Αλλαγή/επαναφορά", "Change/revert") : t("Αλλαγή δοσολογίας", "Change dosage")}
@@ -123,7 +125,7 @@ export function MedScheduleCard({ patientId }: { patientId: string }) {
                 {ovr.doctor_text && <div className="rounded bg-white px-2 py-1 text-[11px] text-slate-600 dark:bg-slate-800 dark:text-slate-300">{t("Ο γιατρός έγραψε", "The doctor prescribed")}: <b>{ovr.doctor_text}</b></div>}
 
                 <div className="flex gap-1.5">
-                  {([["custom", t("Απλή δοσολογία", "Simple dosage")], ["taper", t("Φθίνουσα", "Tapering")]] as const).map(([k, l]) => (
+                  {([["custom", t("Απλή δοσολογία", "Simple dosage")], ["composite", t("Σύνθετη", "Composite")]] as const).map(([k, l]) => (
                     <button key={k} onClick={() => setOvr({ ...ovr, kind: k })}
                       className={`flex-1 rounded-lg border px-2 py-1.5 text-[11px] font-semibold ${ovr.kind === k ? "border-amber-500 bg-amber-500 text-white" : "border-slate-200 bg-white text-slate-600 dark:border-slate-600 dark:bg-slate-800"}`}>{l}</button>
                   ))}
@@ -139,22 +141,46 @@ export function MedScheduleCard({ patientId }: { patientId: string }) {
                   </div>
                 ) : (
                   <div className="space-y-1.5">
-                    {ovr.phases.map((ph, i) => (
-                      <div key={i} className="flex items-center gap-1.5 text-[11px]">
-                        <span className="w-12 shrink-0 text-slate-500">{t("Φάση", "Phase")} {i + 1}</span>
-                        <input type="number" min={0} step={0.5} value={ph.qty}
-                          onChange={(e) => { const ps = [...ovr.phases]; ps[i] = { ...ph, qty: parseFloat(e.target.value) || 0 }; setOvr({ ...ovr, phases: ps }); }}
-                          className="w-14 rounded border border-slate-300 px-1.5 py-1 text-center dark:border-slate-600 dark:bg-slate-800" />
-                        <span className="text-slate-500">{t("για", "for")}</span>
-                        <input type="number" min={1} value={ph.days}
-                          onChange={(e) => { const ps = [...ovr.phases]; ps[i] = { ...ph, days: parseInt(e.target.value) || 1 }; setOvr({ ...ovr, phases: ps }); }}
-                          className="w-14 rounded border border-slate-300 px-1.5 py-1 text-center dark:border-slate-600 dark:bg-slate-800" />
-                        <span className="text-slate-500">{t("ημ.", "days")}</span>
-                        <button onClick={() => setOvr({ ...ovr, phases: ovr.phases.filter((_, j) => j !== i) })} className="ml-auto text-slate-400 hover:text-rose-600"><X className="h-3.5 w-3.5" /></button>
-                      </div>
-                    ))}
+                    {ovr.phases.map((ph, i) => {
+                      const setPh = (patch: Partial<Phase>) => { const ps = [...ovr.phases]; ps[i] = { ...ph, ...patch }; setOvr({ ...ovr, phases: ps }); };
+                      const setTimes = (n: number) => {
+                        const def = ["08:00", "14:00", "20:00", "23:00", "11:00", "17:00"];
+                        const tms = Array.from({ length: n }, (_, j) => ph.times[j] ?? def[j] ?? "08:00");
+                        setPh({ per_day: n, times: tms });
+                      };
+                      return (
+                        <div key={i} className="rounded-lg border border-amber-200 bg-white p-2 dark:border-amber-900 dark:bg-slate-800">
+                          <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+                            <span className="shrink-0 font-semibold text-slate-500">{t("Φάση", "Phase")} {i + 1}</span>
+                            <input type="number" min={0} step={0.5} value={ph.qty} title={t("ποσότητα ανά λήψη", "amount per intake")}
+                              onChange={(e) => setPh({ qty: parseFloat(e.target.value) || 0 })}
+                              className="w-12 rounded border border-slate-300 px-1 py-1 text-center dark:border-slate-600 dark:bg-slate-900" />
+                            <span className="text-slate-500">×</span>
+                            <select value={ph.per_day} onChange={(e) => setTimes(+e.target.value)}
+                              className="rounded border border-slate-300 px-1 py-1 dark:border-slate-600 dark:bg-slate-900">
+                              {[1, 2, 3, 4, 5, 6].map((n) => <option key={n} value={n}>{n}</option>)}
+                            </select>
+                            <span className="text-slate-500">{t("/ημέρα, για", "/day, for")}</span>
+                            <input type="number" min={1} value={ph.days}
+                              onChange={(e) => setPh({ days: parseInt(e.target.value) || 1 })}
+                              className="w-12 rounded border border-slate-300 px-1 py-1 text-center dark:border-slate-600 dark:bg-slate-900" />
+                            <span className="text-slate-500">{t("ημ.", "days")}</span>
+                            <button onClick={() => setOvr({ ...ovr, phases: ovr.phases.filter((_, j) => j !== i) })}
+                              className="ml-auto shrink-0 text-slate-400 hover:text-rose-600"><X className="h-3.5 w-3.5" /></button>
+                          </div>
+                          <div className="mt-1.5 flex flex-wrap items-center gap-1">
+                            <span className="text-[10px] text-slate-500">⏰ {t("ώρες:", "times:")}</span>
+                            {Array.from({ length: ph.per_day }, (_, j) => (
+                              <input key={j} type="time" value={ph.times[j] ?? "08:00"}
+                                onChange={(e) => { const tms = [...ph.times]; tms[j] = e.target.value; setPh({ times: tms }); }}
+                                className="rounded border border-slate-300 px-1 py-0.5 text-[11px] dark:border-slate-600 dark:bg-slate-900" />
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })}
                     <div className="flex flex-wrap items-center gap-2">
-                      <button onClick={() => setOvr({ ...ovr, phases: [...ovr.phases, { days: 2, qty: 1 }] })}
+                      <button onClick={() => setOvr({ ...ovr, phases: [...ovr.phases, { days: 2, qty: 1, per_day: 1, times: ["08:00"] }] })}
                         className="rounded border border-dashed border-slate-300 px-2 py-1 text-[11px] text-slate-600 dark:border-slate-600 dark:text-slate-300">+ {t("φάση", "phase")}</button>
                       <span className="text-[11px] text-slate-600 dark:text-slate-300">{t("μετά μόνιμα", "then permanently")}</span>
                       <input type="number" min={0} step={0.5} value={ovr.maintenance_qty}
@@ -186,7 +212,7 @@ export function MedScheduleCard({ patientId }: { patientId: string }) {
                   <button disabled={!ovr.reason.trim() || plan.isPending}
                     onClick={() => plan.mutate(ovr.kind === "custom"
                       ? { med_key: ovr.med_key, kind: "custom", per_day: ovr.per_day, reason: ovr.reason }
-                      : { med_key: ovr.med_key, kind: "taper", phases: ovr.phases, maintenance_qty: ovr.maintenance_qty, reason: ovr.reason })}
+                      : { med_key: ovr.med_key, kind: "composite", phases: ovr.phases, maintenance_qty: ovr.maintenance_qty, reason: ovr.reason })}
                     className="rounded-lg bg-amber-600 px-3 py-1.5 text-[11px] font-semibold text-white hover:bg-amber-700 disabled:opacity-40">
                     {t("Αποθήκευση αλλαγής", "Save change")}
                   </button>
