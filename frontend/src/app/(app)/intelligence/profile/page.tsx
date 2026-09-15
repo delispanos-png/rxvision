@@ -11,6 +11,7 @@ import { appConfirm } from "@/store/dialogStore";
 import { useT } from "@/store/prefStore";
 import { fmtNum, fmtEur, fmtDec, scanRxBarcode } from "@/lib/formatters";
 import { KpiCard } from "@/components/kpi/KpiCard";
+import { CoachStrip } from "@/components/coach/CoachStrip";
 import { ContactCard } from "@/components/patients/ContactCard";
 import { MeasurementsCard } from "@/components/patients/MeasurementsCard";
 import { MedScheduleCard } from "@/components/patients/MedScheduleCard";
@@ -229,6 +230,8 @@ export default function PatientProfilePage() {
 
       {p && p.patient && (
         <>
+          {/* Ο Σύμβουλος πρώτος: ό,τι εκκρεμεί γι' ΑΥΤΟΝ τον άνθρωπο, πριν από κάθε ανάλυση. */}
+          <CoachStrip patientId={p.patient.id} />
           {/* header */}
           <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-700 dark:bg-slate-900">
             <div className="flex items-center gap-3">

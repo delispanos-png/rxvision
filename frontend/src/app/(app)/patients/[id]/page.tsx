@@ -6,6 +6,7 @@ import { ArrowLeft } from "lucide-react";
 import { api } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
 import { PanelCard } from "@/components/ui/Card";
+import { CoachStrip } from "@/components/coach/CoachStrip";
 import { ContactCard } from "@/components/patients/ContactCard";
 import { Tooltip } from "@/components/ui/Tooltip";
 import { fmtDate } from "@/lib/formatters";
@@ -70,6 +71,9 @@ export default function PatientDetailPage() {
           {d.amka ? ` · ΑΜΚΑ ${d.amka}` : ""} · {d.area || "—"}
         </p>
       </div>
+
+      {/* Ο Σύμβουλος: ό,τι εκκρεμεί γι' αυτόν τον άνθρωπο, εδώ που ψάχνεις το τηλέφωνό του. */}
+      <CoachStrip patientId={d.patient_id} />
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         {[

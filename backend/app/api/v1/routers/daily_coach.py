@@ -45,6 +45,74 @@ async def mark(key: str, body: MarkIn,
     return await _repo(ctx).mark(key, body.action, by=getattr(ctx, "user_id", None))
 
 
+# ── Ο Σύμβουλος στο ταμείο ───────────────────────────────────────────────────────────────────
+@router.get("/patient/{patient_id}")
+async def patient_brief(patient_id: str,
+                        ctx: TenantContext = Depends(require("patients:read", module=_MODULE))):
+    """Ό,τι ξέρει ο Σύμβουλος γι' ΑΥΤΟΝ τον άνθρωπο — για να το δεις ενώ είναι μπροστά σου."""
+    return await _repo(ctx).patient_brief(patient_id)
+
+
+# ── Τι ανακτήθηκε / τι χάθηκε ────────────────────────────────────────────────────────────────
+@router.get("/value")
+async def value(days: int = Query(90, ge=7, le=365),
+                ctx: TenantContext = Depends(require("patients:read", module=_MODULE))):
+    """Ο απολογισμός αξίας: τι ανακτήθηκε πραγματικά, επαληθευμένο στα δεδομένα."""
+    return await _repo(ctx).value(days)
+
+
+@router.get("/leakage")
+async def leakage(months: int = Query(6, ge=2, le=24),
+                  ctx: TenantContext = Depends(require("patients:read", module=_MODULE))):
+    """Το «κρυφό κόστος»: πόσα χάνει το φαρμακείο ανά μήνα, σε τζίρο και σε κέρδος."""
+    return await _repo(ctx).leakage(months)
+
+
+# ── Η εβδομάδα & ο στόχος ────────────────────────────────────────────────────────────────────
+@router.get("/week")
+async def week(ctx: TenantContext = Depends(require("patients:read", module=_MODULE))):
+    return await _repo(ctx).week()
+
+
+class GoalIn(BaseModel):
+    signal: str | None = None     # None = καθάρισε τον στόχο
+    target: int = 0               # «το πολύ N την ημέρα»
+
+
+@router.put("/goal")
+async def set_goal(body: GoalIn,
+                   ctx: TenantContext = Depends(require("patients:write", module=_MODULE))):
+    return await _repo(ctx).set_goal(body.signal, body.target)
+
+
+# ── Ομάδα ────────────────────────────────────────────────────────────────────────────────────
+@router.get("/team")
+async def team(days: int = Query(30, ge=7, le=120),
+               ctx: TenantContext = Depends(require("patients:read", module=_MODULE))):
+    return await _repo(ctx).team(days)
+
+
+# ── Ρυθμίσεις ────────────────────────────────────────────────────────────────────────────────
+class SettingsIn(BaseModel):
+    email_enabled: bool | None = None
+    email_hour: int | None = None
+    email_to: str | None = None
+    max_items: int | None = None
+    escalate_owner: bool | None = None
+    signals: dict | None = None
+
+
+@router.get("/settings")
+async def get_settings(ctx: TenantContext = Depends(require("patients:read", module=_MODULE))):
+    return await _repo(ctx).settings()
+
+
+@router.put("/settings")
+async def put_settings(body: SettingsIn,
+                       ctx: TenantContext = Depends(require("settings:write", module=_MODULE))):
+    return await _repo(ctx).save_settings(body.model_dump(exclude_none=True))
+
+
 @router.get("/history")
 async def history(days: int = Query(30, ge=7, le=120),
                   ctx: TenantContext = Depends(require("patients:read", module=_MODULE))):

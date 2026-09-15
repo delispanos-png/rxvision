@@ -14,6 +14,12 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
+try:
+    from zoneinfo import ZoneInfo
+    _ATH = ZoneInfo("Europe/Athens")
+except Exception:  # noqa: BLE001
+    _ATH = timezone.utc
+
 from app.workers.celery_app import celery_app
 from app.workers.ingestion import _fresh_db, _pharmacy_email, _run_async
 
@@ -71,7 +77,14 @@ def daily_briefing() -> dict:
                 tid = t["_id"]
                 if not tenant_has(await resolve_tenant_modules(tid), "daily_coach"):
                     continue
-                email = _pharmacy_email(t)
+                repo = DailyCoachRepository(tenant_id=tid, demo=bool(t.get("demo")))
+                cfg = await repo.settings()
+                if not cfg["email_enabled"]:
+                    continue
+                # Ο φαρμακοποιός ορίζει την ώρα· το beat χτυπά κάθε ώρα και στέλνει όταν φτάσει.
+                if datetime.now(_ATH).hour != int(cfg["email_hour"]):
+                    continue
+                email = cfg["email_to"] or _pharmacy_email(t)
                 if not email:
                     skipped += 1
                     continue
@@ -79,7 +92,7 @@ def daily_briefing() -> dict:
                 if last and (now - last.replace(tzinfo=timezone.utc)) < timedelta(hours=20):
                     continue                                   # ήδη στάλθηκε σήμερα
                 try:
-                    day = await DailyCoachRepository(tenant_id=tid, demo=bool(t.get("demo"))).build()
+                    day = await repo.build()
                 except Exception:                              # noqa: BLE001
                     import logging
                     logging.getLogger(__name__).exception("coach build failed for %s", tid)
@@ -99,5 +112,72 @@ def daily_briefing() -> dict:
         finally:
             client.close()
         return {"sent": sent, "skipped_no_email": skipped}
+
+    return _run_async(_run())
+
+
+@celery_app.task(name="app.workers.coach.escalate_stale")
+def escalate_stale() -> dict:
+    """Ό,τι μένει ανοιχτό {ESCALATE_DAYS}+ συνεχόμενες μέρες ανεβαίνει ΜΙΑ φορά στον ιδιοκτήτη.
+
+    Αυτό είναι το πραγματικό «ξύλο»: όχι σκληρότερη διατύπωση στην οθόνη, αλλά το ότι το θέμα
+    σταματά να είναι ιδιωτική υπόθεση όποιου το αγνοεί. Μία φορά ανά εύρημα — ποτέ σπαμ.
+    """
+    async def _run() -> dict:
+        from app.repositories.daily_coach import ESCALATE_DAYS, SIGNAL_LABEL
+        from app.services import mailer
+        from app.services.auth_service import resolve_tenant_modules, tenant_has
+        from app.repositories.daily_coach import DailyCoachRepository
+        client, db = _fresh_db()
+        sent = 0
+        try:
+            async for t in db["tenants"].find({"status": {"$in": ["active", "trial"]}}):
+                tid = t["_id"]
+                if not tenant_has(await resolve_tenant_modules(tid), "daily_coach"):
+                    continue
+                repo = DailyCoachRepository(tenant_id=tid, demo=bool(t.get("demo")))
+                if not (await repo.settings())["escalate_owner"]:
+                    continue
+                stale = [d async for d in db["coach_findings"].find(
+                    {"tenant_id": tid, "closed_at": {"$exists": False},
+                     "days_seen": {"$gte": ESCALATE_DAYS},
+                     "escalated_at": {"$exists": False}}).limit(20)]
+                if not stale:
+                    continue
+                owner = await db["users"].find_one(
+                    {"tenant_id": tid, "status": "active"}, sort=[("created_at", 1)])
+                email = (owner or {}).get("email") or _pharmacy_email(t)
+                if not email:
+                    continue
+                rows = "".join(
+                    f"<li style='margin:0 0 6px;'><b>{SIGNAL_LABEL.get(d['signal'], d['signal'])}</b>"
+                    f"{' — ' + d['name'] if d.get('name') else ''} "
+                    f"<span style='color:#94a3b8'>({d.get('days_seen')} μέρες ανοιχτό)</span></li>"
+                    for d in stale)
+                try:
+                    await mailer.send_email(
+                        email, f"RxVision — {len(stale)} θέματα μένουν ανοιχτά πάνω από μία εβδομάδα",
+                        f"""<div style="font-family:Arial,Helvetica,sans-serif;max-width:600px;">
+                          <p style="font-size:15px;color:#0f172a;line-height:1.6;">
+                            Δεν στέλνω τέτοιο μήνυμα εύκολα. Τα παρακάτω τα επισημαίνω κάθε μέρα
+                            στον Σύμβουλο και παραμένουν ανοιχτά πάνω από μία εβδομάδα.</p>
+                          <ul style="font-size:14px;color:#334155;padding-left:18px;">{rows}</ul>
+                          <p style="font-size:14px;color:#334155;line-height:1.6;">
+                            Δεν χρειάζεται να κλείσουν όλα σήμερα. Διάλεξε ένα.</p>
+                          <p><a href="https://app.rxvision.gr/coach" style="background:#4f46e5;color:#fff;
+                            padding:10px 18px;border-radius:8px;text-decoration:none;display:inline-block;
+                            font-weight:700;">Δες τα στον Σύμβουλο</a></p>
+                          <p style="color:#94a3b8;font-size:12px;">Μπορείς να απενεργοποιήσεις αυτή την
+                            ειδοποίηση από τις ρυθμίσεις του Συμβούλου.</p></div>""")
+                    await db["coach_findings"].update_many(
+                        {"_id": {"$in": [d["_id"] for d in stale]}},
+                        {"$set": {"escalated_at": datetime.now(tz=timezone.utc)}})
+                    sent += 1
+                except Exception:                              # noqa: BLE001
+                    import logging
+                    logging.getLogger(__name__).exception("coach escalation failed for %s", tid)
+        finally:
+            client.close()
+        return {"tenants_notified": sent}
 
     return _run_async(_run())

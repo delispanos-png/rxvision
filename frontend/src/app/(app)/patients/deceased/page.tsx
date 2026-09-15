@@ -1,7 +1,8 @@
 "use client";
 
+import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Cross, DownloadCloud, Loader2, Check, AlertCircle, ShoppingBag } from "lucide-react";
+import { Cross, DownloadCloud, Loader2, Check, AlertCircle, ShoppingBag, Search, X } from "lucide-react";
 import { api } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
 import { QueryState } from "@/components/ui/QueryState";
@@ -26,6 +27,9 @@ const ddmmyyyy = (iso?: string | null) => {
 export default function DeceasedBalancesPage() {
   const t = useT();
   const qc = useQueryClient();
+  // Αναζήτηση με ΑΜΚΑ ή όνομα. Η λίστα έρχεται ολόκληρη, οπότε το φιλτράρισμα γίνεται εδώ —
+  // άμεσο, χωρίς κλήση. Τα κενά στο ΑΜΚΑ αγνοούνται (συχνά γράφεται με διαστήματα).
+  const [term, setTerm] = useState("");
 
   const q = useQuery({ queryKey: ["deceased-balances"], queryFn: () => api<Res>("/patients/deaths/balances") });
 
@@ -93,7 +97,12 @@ export default function DeceasedBalancesPage() {
         </div>
 
         <QueryState isLoading={q.isLoading} isError={q.isError} onRetry={() => q.refetch()}>
-          {q.data && (
+          {q.data && (() => {
+            const needle = term.trim().toLowerCase().replace(/\s/g, "");
+            const rows = !needle ? q.data.items : q.data.items.filter((r) =>
+              `${r.name || ""}`.toLowerCase().replace(/\s/g, "").includes(needle)
+              || `${r.amka || ""}`.replace(/\s/g, "").includes(needle));
+            return (
             <>
               <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
                 <Kpi label={t("Σύνολο θανόντων", "Total deceased")} value={String(q.data.totals.patients)} />
@@ -102,9 +111,24 @@ export default function DeceasedBalancesPage() {
                 <Kpi label={t("Ανοιχτές παραγγελίες", "Open orders")} value={`${q.data.totals.orders_count} · ${eur(q.data.totals.orders_cents)}`} tint="amber" />
               </div>
 
-              {q.data.items.length === 0 ? (
+              <div className="relative">
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                <input value={term} onChange={(e) => setTerm(e.target.value)}
+                  placeholder={t("Αναζήτηση με ΑΜΚΑ ή όνομα…", "Search by ΑΜΚΑ or name…")}
+                  className="w-full rounded-xl border border-slate-300 py-2 pl-9 pr-9 text-sm focus:border-brand-500 focus:outline-none dark:border-slate-600 dark:bg-slate-800" />
+                {term && (
+                  <button onClick={() => setTerm("")} aria-label={t("Καθαρισμός", "Clear")}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
+                    <X className="h-4 w-4" />
+                  </button>
+                )}
+              </div>
+
+              {rows.length === 0 ? (
                 <div className="rounded-2xl border border-dashed border-slate-200 bg-white p-8 text-center text-sm text-slate-400 dark:border-slate-700 dark:bg-slate-900">
-                  {t("Δεν υπάρχουν θανόντες.", "No deceased patients.")}
+                  {term
+                    ? t(`Κανένας θανών δεν ταιριάζει με «${term}».`, `No deceased patient matches "${term}".`)
+                    : t("Δεν υπάρχουν θανόντες.", "No deceased patients.")}
                 </div>
               ) : (
                 <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
@@ -119,7 +143,7 @@ export default function DeceasedBalancesPage() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                      {q.data.items.map((r) => (
+                      {rows.map((r) => (
                         <tr key={r.patient_id} className={`hover:bg-slate-50/60 dark:hover:bg-slate-800/40 ${r.settled ? "opacity-50" : ""}`}>
                           <td className="px-4 py-2.5">
                             <div className="font-medium text-slate-800 dark:text-slate-100">{r.name}</div>
@@ -149,7 +173,8 @@ export default function DeceasedBalancesPage() {
                 </div>
               )}
             </>
-          )}
+            );
+          })()}
         </QueryState>
       </div>
     </ModuleGuard>

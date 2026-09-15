@@ -57,9 +57,15 @@ celery_app.conf.update(
 celery_app.conf.beat_schedule = {
     # Ο Σύμβουλος — πρωινό μήνυμα 07:30 Αθήνας (04:30 UTC θέρος/05:30 χειμώνα· το task
     # ελέγχει από μόνο του ότι δεν έστειλε ήδη σήμερα).
+    # Ο Σύμβουλος: το task χτυπά ΚΑΘΕ ΩΡΑ και στέλνει μόνο όταν είναι η ώρα που όρισε το
+    # φαρμακείο (ρυθμίσεις ανά tenant, ώρα Αθήνας).
     "coach-daily-briefing": {
         "task": "app.workers.coach.daily_briefing",
-        "schedule": crontab(hour=4, minute=30),
+        "schedule": crontab(minute=35),
+    },
+    "coach-escalate-stale": {
+        "task": "app.workers.coach.escalate_stale",
+        "schedule": crontab(hour=6, minute=20),
     },
     "hdika-incremental-dispatch": {
         "task": "app.workers.ingestion.dispatch_incremental_sync",

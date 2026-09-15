@@ -42,6 +42,18 @@ DISMISS_DAYS = 30                               # «δεν με αφορά» →
 _INBOX_LABEL = {"idle_request": "Άνοιγμα αιτημάτων", "no_contact": "Λίστα επιβεβαίωσης στοιχείων",
                 "vaccine_missed": "Κύκλωμα εμβολιασμών"}
 
+# Ανθρώπινο όνομα κάθε σήματος — για στόχους, απολογισμούς και ρυθμίσεις.
+SIGNAL_LABEL = {
+    "unexecuted": "Ανεκτέλεστα είδη",
+    "repeat_expiring": "Επαναλήψεις που λήγουν",
+    "idle_request": "Αιτήματα χωρίς απάντηση",
+    "no_contact": "Πελάτες χωρίς στοιχεία",
+    "vaccine_missed": "Χαμένοι εμβολιασμοί",
+    "lapsed_chronic": "Χρόνιοι που σταμάτησαν",
+}
+# Μετά από τόσες συνεχόμενες μέρες ανοιχτό, το θέμα ανεβαίνει στον ιδιοκτήτη.
+ESCALATE_DAYS = 7
+
 
 def _now() -> datetime:
     return datetime.now(tz=timezone.utc)
@@ -607,9 +619,18 @@ class DailyCoachRepository(BaseRepository):
     async def build(self, *, user_name: str | None = None, persist: bool = True) -> dict:
         now = _now()
         day = _day_key(now)
+        cfg = await self.settings()
+        on = cfg["signals"]
         raw: list[dict] = []
-        for fn in (self._sig_idle_requests, self._sig_unexecuted, self._sig_repeat_expiring,
-                   self._sig_vaccine_missed, self._sig_no_contact, self._sig_lapsed_chronic):
+        _SIGNALS = (("idle_request", self._sig_idle_requests),
+                    ("unexecuted", self._sig_unexecuted),
+                    ("repeat_expiring", self._sig_repeat_expiring),
+                    ("vaccine_missed", self._sig_vaccine_missed),
+                    ("no_contact", self._sig_no_contact),
+                    ("lapsed_chronic", self._sig_lapsed_chronic))
+        for sig, fn in _SIGNALS:
+            if not on.get(sig, True):
+                continue                                    # το έκλεισε ο φαρμακοποιός
             try:
                 raw += await fn(now)
             except Exception:                              # noqa: BLE001
@@ -620,7 +641,7 @@ class DailyCoachRepository(BaseRepository):
             f["key"] = f"{f['signal']}:{f['subject']}"
 
         raw = self._cap_per_signal(raw)
-        states = await self._touch([(f["key"], f["signal"]) for f in raw], day, persist=persist)
+        states = await self._touch(raw, day, persist=persist)
 
         items = []
         for f in raw:
@@ -644,13 +665,20 @@ class DailyCoachRepository(BaseRepository):
 
         rank = {V.TONE_HARD: 0, V.TONE_FIRM: 1, V.TONE_SOFT: 2}
         items.sort(key=lambda i: (rank[i["tone"]], -i["severity"], -(i["money_cents"] or 0)))
-        shown, hidden = items[:MAX_ITEMS], max(0, len(items) - MAX_ITEMS)
+        cap = int(cfg.get("max_items") or MAX_ITEMS)
+        shown, hidden = items[:cap], max(0, len(items) - cap)
 
+        if persist:
+            # ΠΡΩΤΑ κλείσε ό,τι λύθηκε — αλλιώς η ανάκτηση δεν μετριέται ποτέ
+            await self._close_resolved({f["key"] for f in raw}, day)
         wins = await self._wins(now)
         clean = await self._clean_streak(day) if persist else 0
         hard = sum(1 for i in shown if i["tone"] == V.TONE_HARD)
         if persist:
-            await self._stamp_day(day, misses=len(items), wins=len(wins))
+            by_sig: dict = {}
+            for i in items:
+                by_sig[i["signal"]] = by_sig.get(i["signal"], 0) + 1
+            await self._stamp_day(day, misses=len(items), wins=len(wins), by_signal=by_sig)
 
         return {
             "day": day,
@@ -683,20 +711,31 @@ class DailyCoachRepository(BaseRepository):
             out += keep
         return out
 
-    async def _touch(self, keys: list[tuple[str, str]], day: str, *, persist: bool) -> dict:
-        """Ενημέρωσε/διάβασε την κατάσταση κάθε ευρήματος & υπολόγισε το σερί."""
+    async def _touch(self, raw: list[dict], day: str, *, persist: bool) -> dict:
+        """Ενημέρωσε/διάβασε την κατάσταση κάθε ευρήματος & υπολόγισε το σερί.
+
+        Κρατάμε ΚΑΙ την αξία και τη στιγμή που πρωτοεμφανίστηκε: χωρίς αυτά, όταν αργότερα το
+        θέμα λυθεί, δεν έχουμε πώς να πιστώσουμε το ποσό που ανακτήθηκε."""
+        keys = [(f["key"], f["signal"]) for f in raw]
         if not keys:
             return {}
+        by_key = {f["key"]: f for f in raw}
         existing = {d["key"]: d async for d in self._coll.find(
             {"tenant_id": self.tenant_id, "_id": {"$in": [self._doc_id(k) for k, _ in keys]}})}
         out, ops = {}, []
         yesterday = (datetime.strptime(day, "%Y-%m-%d") - timedelta(days=1)).strftime("%Y-%m-%d")
         for key, sig in keys:
+            f = by_key[key]
             st = existing.get(key)
             if not st:
                 st = {"_id": self._doc_id(key), "key": key, "tenant_id": self.tenant_id,
                       "signal": sig, "days_seen": 1, "relapses": 0,
-                      "first_day": day, "last_day": day, "hidden_until": None}
+                      "first_day": day, "last_day": day, "hidden_until": None,
+                      "first_seen_at": _now(), "subject": f.get("subject"),
+                      "patient_ref": (f.get("who") or {}).get("id"),
+                      "name": f.get("name"),
+                      "value_cents": int(f.get("money_cents") or 0),
+                      "profit_cents": int(f.get("profit_cents") or 0)}
                 ops.append(("insert", st))
             elif st.get("last_day") != day:
                 if st.get("last_day") == yesterday:
@@ -705,6 +744,11 @@ class DailyCoachRepository(BaseRepository):
                     st["relapses"] = int(st.get("relapses") or 0) + 1
                     st["days_seen"] = 1
                 st["last_day"] = day
+                # η αξία μπορεί να μεγαλώσει (π.χ. κι άλλο ανεκτέλεστο) — κράτα τη ΜΕΓΑΛΥΤΕΡΗ
+                st["value_cents"] = max(int(st.get("value_cents") or 0),
+                                        int(f.get("money_cents") or 0))
+                st["profit_cents"] = max(int(st.get("profit_cents") or 0),
+                                         int(f.get("profit_cents") or 0))
                 ops.append(("update", st))
             out[key] = st
         if persist and ops:
@@ -714,10 +758,11 @@ class DailyCoachRepository(BaseRepository):
                 {"$set": {k: v for k, v in s.items() if k != "_id"}}, upsert=True) for _, s in ops])
         return out
 
-    async def _stamp_day(self, day: str, *, misses: int, wins: int) -> None:
+    async def _stamp_day(self, day: str, *, misses: int, wins: int,
+                         by_signal: dict | None = None) -> None:
         await self._db["coach_days"].update_one(
             {"tenant_id": self.tenant_id, "day": day},
-            {"$set": {"misses": misses, "wins": wins, "at": _now()},
+            {"$set": {"misses": misses, "wins": wins, "by_signal": by_signal or {}, "at": _now()},
              "$setOnInsert": {"tenant_id": self.tenant_id, "day": day}}, upsert=True)
 
     async def _clean_streak(self, day: str) -> int:
@@ -748,6 +793,440 @@ class DailyCoachRepository(BaseRepository):
             {"_id": self._doc_id(key), "tenant_id": self.tenant_id},
             {"$set": {"hidden_until": hide, "status": action, "acted_by": by, "acted_at": _now()}})
         return {"ok": bool(res.matched_count), "hidden_until": hide}
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # ΑΝΑΚΤΗΣΗ — «τι σου γλίτωσε ο Σύμβουλος», μετρημένο στα δεδομένα
+    # ─────────────────────────────────────────────────────────────────────────
+    async def _close_resolved(self, open_keys: set[str], day: str) -> int:
+        """Ό,τι ήταν ανοιχτό χθες και ΔΕΝ εμφανίστηκε σήμερα, έκλεισε. Για κάθε τέτοιο πάμε ΠΙΣΩ
+        στα δεδομένα και ρωτάμε: λύθηκε ή χάθηκε; Μόνο αν λύθηκε πιστώνεται ποσό.
+
+        Δεν πιστώνουμε ποτέ «επειδή το πάτησε Έγινε» — το πάτημα δεν είναι απόδειξη. Απόδειξη
+        είναι η εκτέλεση που εμφανίστηκε, το αίτημα που απαντήθηκε, το τηλέφωνο που μπήκε.
+        """
+        prev = [d async for d in self._coll.find(
+            {"tenant_id": self.tenant_id, "last_day": {"$lt": day},
+             "closed_at": {"$exists": False}})]
+        n = 0
+        for st in prev:
+            if st["key"] in open_keys:
+                continue
+            verdict = await self._verify(st)
+            await self._coll.update_one({"_id": st["_id"]}, {"$set": {
+                "closed_at": _now(), "closed_day": day, "outcome": verdict}})
+            if verdict == "recovered":
+                await self._db["coach_recoveries"].update_one(
+                    {"_id": st["_id"]},
+                    {"$set": {"tenant_id": self.tenant_id, "key": st["key"],
+                              "signal": st["signal"], "day": day,
+                              "name": st.get("name"), "patient_ref": st.get("patient_ref"),
+                              "value_cents": int(st.get("value_cents") or 0),
+                              "profit_cents": int(st.get("profit_cents") or 0),
+                              "days_open": int(st.get("days_seen") or 1),
+                              # «ενήργησε κάποιος» = το είχε σημειώσει ως Έγινε πριν λυθεί.
+                              # Το ξεχωρίζουμε γιατί το υπόλοιπο μπορεί να έλυσε μόνο του.
+                              "acted": bool(st.get("acted_at")), "acted_by": st.get("acted_by"),
+                              "at": _now()}}, upsert=True)
+                n += 1
+        return n
+
+    async def _verify(self, st: dict) -> str:
+        """recovered | lost | unknown — ΠΑΝΤΑ από τα πρωτογενή δεδομένα."""
+        sig, subj = st.get("signal"), st.get("subject")
+        since = st.get("first_seen_at") or (_now() - timedelta(days=30))
+        if since.tzinfo is None:
+            since = since.replace(tzinfo=timezone.utc)
+        try:
+            if sig in ("unexecuted", "lapsed_chronic"):
+                pid = _oid(subj)
+                got = await self._db["prescription_executions"].find_one(
+                    {"tenant_id": self.tenant_id, "patient_ref": pid,
+                     "executed_at": {"$gt": since}}, {"_id": 1})
+                return "recovered" if got else "lost"
+            if sig == "repeat_expiring":
+                got = await self._db["prescription_executions"].find_one(
+                    {"tenant_id": self.tenant_id, "repeat_root": subj,
+                     "executed_at": {"$gt": since}}, {"_id": 1})
+                return "recovered" if got else "lost"
+            if sig == "idle_request":
+                coll, _id = str(subj).split(":", 1)
+                d = await self._db[coll].find_one(
+                    {"tenant_id": self.tenant_id, "_id": _oid(_id)}, {"status": 1})
+                if not d:
+                    return "unknown"
+                return "lost" if d.get("status") in ("new", "open", "pending", "requested") \
+                    else "recovered"
+            if sig == "no_contact":
+                return "recovered"              # έπαψε να ισχύει = μπήκαν στοιχεία
+            if sig == "vaccine_missed":
+                p = await self._db["patients_anonymized"].find_one(
+                    {"tenant_id": self.tenant_id, "_id": _oid(subj)}, {"pseudo_id": 1})
+                if not p:
+                    return "unknown"
+                got = await self._db["vaccinations"].find_one(
+                    {"tenant_id": self.tenant_id, "patient_ref": p.get("pseudo_id"),
+                     "cancelled": {"$ne": True}, "executed_at": {"$gt": since}}, {"_id": 1})
+                return "recovered" if got else "lost"
+        except Exception:                       # noqa: BLE001
+            import logging
+            logging.getLogger(__name__).exception("coach verify failed: %s", st.get("key"))
+        return "unknown"
+
+    async def value(self, days: int = 90) -> dict:
+        """Ο απολογισμός: τι ανακτήθηκε και τι χάθηκε, με ονόματα. Η μόνη σελίδα που απαντά
+        στην ερώτηση «γιατί πληρώνω γι' αυτό»."""
+        since = (datetime.now(tz=ATHENS) - timedelta(days=days)).strftime("%Y-%m-%d")
+        rows = [r async for r in self._db["coach_recoveries"].find(
+            {"tenant_id": self.tenant_id, "day": {"$gte": since}}).sort("at", -1).limit(500)]
+        acted = [r for r in rows if r.get("acted")]
+        passive = [r for r in rows if not r.get("acted")]
+        lost = [d async for d in self._coll.find(
+            {"tenant_id": self.tenant_id, "outcome": "lost", "closed_day": {"$gte": since}},
+            {"signal": 1, "value_cents": 1, "profit_cents": 1, "name": 1}).limit(1000)]
+
+        def _sum(xs, k):
+            return sum(int(x.get(k) or 0) for x in xs)
+
+        by_sig: dict = {}
+        for r in rows:
+            b = by_sig.setdefault(r["signal"], {"signal": r["signal"], "n": 0, "value": 0, "profit": 0})
+            b["n"] += 1
+            b["value"] += int(r.get("value_cents") or 0)
+            b["profit"] += int(r.get("profit_cents") or 0)
+        return {
+            "days": days,
+            "acted": {"n": len(acted), "value_cents": _sum(acted, "value_cents"),
+                      "profit_cents": _sum(acted, "profit_cents")},
+            "passive": {"n": len(passive), "value_cents": _sum(passive, "value_cents"),
+                        "profit_cents": _sum(passive, "profit_cents")},
+            "lost": {"n": len(lost), "value_cents": _sum(lost, "value_cents"),
+                     "profit_cents": _sum(lost, "profit_cents")},
+            "by_signal": sorted(by_sig.values(), key=lambda b: -b["value"]),
+            "recent": [{"name": r.get("name"), "signal": r["signal"], "day": r["day"],
+                        "value_cents": r.get("value_cents"), "acted": bool(r.get("acted")),
+                        "days_open": r.get("days_open")} for r in rows[:25]],
+        }
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # ΚΡΥΦΟ ΚΟΣΤΟΣ — τι χάνει το φαρμακείο χωρίς να το βλέπει
+    # ─────────────────────────────────────────────────────────────────────────
+    async def leakage(self, months: int = 6) -> dict:
+        """Ανά μήνα: ληγμένες επαναλήψεις & ανεκτέλεστα είδη, σε τζίρο ΚΑΙ σε μεικτό κέρδος.
+
+        ΤΙΜΙΟΤΗΤΑ: αυτά ΔΕΝ ανακτώνται όλα — κάποιοι άλλαξαν αγωγή, μετακόμισαν ή πέθαναν.
+        Είναι το μέγεθος της διαρροής, όχι υπόσχεση εσόδων. Το λέμε καθαρά και στην οθόνη.
+        """
+        now = _now()
+        start = (now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+                 - timedelta(days=31 * (months - 1))).replace(day=1)
+        mfmt = {"$dateToString": {"format": "%Y-%m", "date": "$valid_until",
+                                  "timezone": "Europe/Athens"}}
+        left = {"$subtract": ["$repeat_total", "$repeat_current"]}
+        repeats = await self._db["prescription_executions"].aggregate([
+            {"$match": {"tenant_id": self.tenant_id,
+                        "$expr": {"$lt": ["$repeat_current", "$repeat_total"]},
+                        "valid_until": {"$gte": start, "$lt": now}}},
+            {"$group": {"_id": mfmt, "n": {"$sum": 1},
+                        "value": {"$sum": {"$multiply": ["$amount_total", left]}},
+                        "cost": {"$sum": {"$multiply": ["$wholesale_cost", left]}}}},
+        ]).to_list(length=None)
+        items = await self._db["prescription_items"].aggregate([
+            {"$match": {"tenant_id": self.tenant_id, "is_executed": False,
+                        "executed_at": {"$gte": start}}},
+            {"$group": {"_id": {"$dateToString": {"format": "%Y-%m", "date": "$executed_at",
+                                                  "timezone": "Europe/Athens"}},
+                        "n": {"$sum": 1},
+                        "value": {"$sum": {"$multiply": ["$retail_price", "$quantity"]}},
+                        "profit": {"$sum": {"$multiply": ["$margin", "$quantity"]}}}},
+        ]).to_list(length=None)
+
+        by_month: dict = {}
+        for r in repeats:
+            b = by_month.setdefault(r["_id"], {"month": r["_id"]})
+            b["repeats_n"] = r["n"]
+            b["repeats_value"] = r["value"]
+            b["repeats_profit"] = r["value"] - r["cost"]
+        for r in items:
+            b = by_month.setdefault(r["_id"], {"month": r["_id"]})
+            b["items_n"] = r["n"]
+            b["items_value"] = r["value"]
+            b["items_profit"] = r["profit"]
+        rows = sorted(by_month.values(), key=lambda b: b["month"])
+        for b in rows:
+            for k in ("repeats_n", "repeats_value", "repeats_profit",
+                      "items_n", "items_value", "items_profit"):
+                b.setdefault(k, 0)
+            b["total_value"] = b["repeats_value"] + b["items_value"]
+            b["total_profit"] = b["repeats_profit"] + b["items_profit"]
+        tot = {k: sum(b[k] for b in rows) for k in
+               ("repeats_n", "repeats_value", "repeats_profit",
+                "items_n", "items_value", "items_profit", "total_value", "total_profit")}
+        # Ο ΤΡΕΧΩΝ μήνας είναι μισός. Αν μπει στην τάση, κάθε μήνα θα ανακοινώνουμε ψευδώς
+        # «η διαρροή μικραίνει» — και θα το πιστέψουν. Τον σημαδεύουμε και τον βγάζουμε.
+        this_month = now.astimezone(ATHENS).strftime("%Y-%m")
+        for b in rows:
+            b["partial"] = b["month"] == this_month
+        full = [b for b in rows if not b["partial"]]
+        trend = None
+        if len(full) >= 4:
+            half = len(full) // 2
+            a = sum(b["total_profit"] for b in full[:half]) / max(1, half)
+            z = sum(b["total_profit"] for b in full[half:]) / max(1, len(full) - half)
+            trend = {"before": a, "after": z, "better": z < a * 0.9, "worse": z > a * 1.1}
+        return {"months": rows, "total": tot, "trend": trend,
+                "full_months": len(full), "this_month": this_month}
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Η ΕΒΔΟΜΑΔΑ & Ο ΣΤΟΧΟΣ
+    # ─────────────────────────────────────────────────────────────────────────
+    async def week(self) -> dict:
+        """Απολογισμός 7 ημερών + πρόοδος του ενεργού στόχου."""
+        today = datetime.now(tz=ATHENS)
+        days = [(today - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(7)][::-1]
+        prev = [(today - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(7, 14)][::-1]
+        rows = {d["day"]: d async for d in self._db["coach_days"].find(
+            {"tenant_id": self.tenant_id, "day": {"$in": days + prev}})}
+        cur_m = sum((rows.get(d) or {}).get("misses", 0) for d in days)
+        prev_m = sum((rows.get(d) or {}).get("misses", 0) for d in prev)
+        rec = [r async for r in self._db["coach_recoveries"].find(
+            {"tenant_id": self.tenant_id, "day": {"$in": days}})]
+        closed = await self._coll.count_documents(
+            {"tenant_id": self.tenant_id, "closed_day": {"$in": days}})
+        goal = await self.goal()
+        return {
+            "from": days[0], "to": days[-1],
+            "misses": cur_m, "misses_prev": prev_m,
+            "closed": closed,
+            "recovered": {"n": len(rec),
+                          "value_cents": sum(int(r.get("value_cents") or 0) for r in rec),
+                          "profit_cents": sum(int(r.get("profit_cents") or 0) for r in rec)},
+            "daily": [{"day": d, "misses": (rows.get(d) or {}).get("misses", 0)} for d in days],
+            "goal": goal,
+            "narrative": self._week_words(cur_m, prev_m, len(rec), closed, goal),
+        }
+
+    @staticmethod
+    def _week_words(cur: int, prev: int, rec: int, closed: int, goal: dict | None) -> str:
+        bits = []
+        if closed:
+            bits.append(f"Έκλεισαν {closed} θέματα μέσα στην εβδομάδα")
+            if rec:
+                bits[-1] += f", και σε {rec} από αυτά τα δεδομένα δείχνουν ότι ο άνθρωπος " \
+                            f"όντως γύρισε ή το αίτημα όντως απαντήθηκε"
+            bits[-1] += "."
+        if prev and cur < prev * 0.8:
+            bits.append(f"Σου ξέφυγαν λιγότερα απ' ό,τι την προηγούμενη εβδομάδα "
+                        f"({cur} έναντι {prev}). Κάτι αλλάζει στον τρόπο που δουλεύεις.")
+        elif prev and cur > prev * 1.2:
+            bits.append(f"Σου ξέφυγαν περισσότερα απ' ό,τι την προηγούμενη εβδομάδα "
+                        f"({cur} έναντι {prev}). Δεν σε κατηγορώ — ίσως ήταν πιο φορτωμένη· "
+                        f"απλώς να το ξέρεις.")
+        elif prev:
+            bits.append(f"Σταθερή εβδομάδα ({cur} θέματα, έναντι {prev} την προηγούμενη).")
+        if goal and goal.get("active"):
+            bits.append(goal.get("progress_text") or "")
+        if not bits:
+            bits.append("Πρώτη εβδομάδα μαζί — από την επόμενη θα μπορώ να σου λέω αν βελτιώνεσαι.")
+        return " ".join(b for b in bits if b)
+
+    async def goal(self) -> dict | None:
+        """Ο ΕΝΑΣ στόχος του μήνα. Παραπάνω από έναν δεν τον κυνηγά κανείς."""
+        g = await self._db["coach_goals"].find_one(
+            {"tenant_id": self.tenant_id, "active": True})
+        if not g:
+            return None
+        today = datetime.now(tz=ATHENS)
+        days = [(today - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(7)]
+        hits = 0
+        async for d in self._db["coach_days"].find(
+                {"tenant_id": self.tenant_id, "day": {"$in": days}}, {"by_signal": 1}):
+            if int((d.get("by_signal") or {}).get(g["signal"], 0)) <= int(g.get("target") or 0):
+                hits += 1
+        label = SIGNAL_LABEL.get(g["signal"], g["signal"])
+        ok = hits >= 6
+        return {"signal": g["signal"], "label": label, "target": int(g.get("target") or 0),
+                "active": True, "hit_days": hits, "of_days": 7,
+                "progress_text": (
+                    f"Ο στόχος σου «{label}: το πολύ {g.get('target', 0)} την ημέρα» τηρήθηκε "
+                    f"{hits} από τις 7 μέρες." + (" Πέτυχε." if ok else
+                    " Δεν είναι ακόμη συνήθεια — άλλη μία εβδομάδα."))}
+
+    async def set_goal(self, signal: str | None, target: int = 0) -> dict:
+        await self._db["coach_goals"].update_many(
+            {"tenant_id": self.tenant_id}, {"$set": {"active": False}})
+        if not signal:
+            return {"ok": True, "cleared": True}
+        await self._db["coach_goals"].update_one(
+            {"tenant_id": self.tenant_id, "signal": signal},
+            {"$set": {"tenant_id": self.tenant_id, "signal": signal,
+                      "target": max(0, int(target)), "active": True, "since": _now()}},
+            upsert=True)
+        return {"ok": True, "goal": await self.goal()}
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # ΟΜΑΔΑ — ποιος κάνει τη δουλειά
+    # ─────────────────────────────────────────────────────────────────────────
+    async def team(self, days: int = 30) -> dict:
+        since = _now() - timedelta(days=days)
+        rows = await self._coll.aggregate([
+            {"$match": {"tenant_id": self.tenant_id, "acted_at": {"$gte": since},
+                        "acted_by": {"$ne": None}}},
+            {"$group": {"_id": "$acted_by", "closed": {"$sum": 1},
+                        "recovered": {"$sum": {"$cond": [{"$eq": ["$outcome", "recovered"]}, 1, 0]}},
+                        "last": {"$max": "$acted_at"}}},
+            {"$sort": {"closed": -1}},
+        ]).to_list(length=None)
+        names = {}
+        ids = [_oid(r["_id"]) for r in rows if _oid(r["_id"])]
+        if ids:
+            async for u in self._db["users"].find(
+                    {"tenant_id": self.tenant_id, "_id": {"$in": ids}}, {"full_name": 1, "email": 1}):
+                names[str(u["_id"])] = u.get("full_name") or u.get("email")
+        total = sum(r["closed"] for r in rows)
+        # Πόσα έμειναν ανοιχτά πολλές μέρες — η «ουρά» που κανείς δεν πιάνει
+        stale = await self._coll.count_documents(
+            {"tenant_id": self.tenant_id, "closed_at": {"$exists": False},
+             "days_seen": {"$gte": ESCALATE_DAYS}})
+        return {"days": days, "total_closed": total, "stale": stale,
+                "members": [{"user_id": str(r["_id"]), "name": names.get(str(r["_id"])) or "—",
+                             "closed": r["closed"], "recovered": r["recovered"],
+                             "last": r["last"]} for r in rows]}
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Ο ΣΥΜΒΟΥΛΟΣ ΣΤΟ ΤΑΜΕΙΟ — ό,τι ξέρουμε γι' ΑΥΤΟΝ τον άνθρωπο, τη στιγμή που είναι μπροστά
+    # ─────────────────────────────────────────────────────────────────────────
+    async def patient_brief(self, patient_id: str) -> dict:
+        """Σύντομο ενημερωτικό για έναν ασθενή, φτιαγμένο για να διαβαστεί σε 3 δευτερόλεπτα
+        με τον άνθρωπο απέναντι. Δεν ξανατρέχει όλα τα σήματα — ρωτάει στοχευμένα γι' αυτόν."""
+        pid = _oid(patient_id)
+        if not pid:
+            return {"found": False}
+        p = await self._db["patients_anonymized"].find_one(
+            {"tenant_id": self.tenant_id, "_id": pid},
+            {"full_name": 1, "sex": 1, "amka": 1, "age_group": 1, "pseudo_id": 1})
+        if not p:
+            return {"found": False}
+        now = _now()
+        sex = p.get("sex")
+        him, gen = V.g(sex, "τον", "την"), V.g(sex, "του", "της")
+        notes: list[dict] = []
+
+        # 1) ανεκτέλεστα που δεν κλείσανε
+        ex = await self._db["prescription_executions"].find_one(
+            {"tenant_id": self.tenant_id, "patient_ref": pid, "has_unexecuted_substances": True,
+             "executed_at": {"$gte": now - timedelta(days=60)}},
+            {"executed_at": 1, "external_id": 1}, sort=[("executed_at", -1)])
+        if ex:
+            newer = await self._db["prescription_executions"].find_one(
+                {"tenant_id": self.tenant_id, "patient_ref": pid,
+                 "has_unexecuted_substances": {"$ne": True},
+                 "executed_at": {"$gt": ex["executed_at"]}}, {"_id": 1})
+            if not newer:
+                miss = (await self._missing_items([ex["_id"]])).get(ex["_id"]) or {}
+                if miss.get("names"):
+                    names = [V.product(n) for n in miss["names"]]
+                    notes.append({
+                        "kind": "unexecuted", "tone": "warn",
+                        "text": (f"Έχει ανεκτέλεστο από {V.ago_phrase(_days_between(ex['executed_at'], now))}: "
+                                 f"{', '.join(names[:2])}. Ρώτησέ {him} αν το θέλει τώρα."),
+                        "money_cents": miss.get("retail"),
+                        "href": f"/prescriptions/{quote(str(ex.get('external_id') or ''))}"})
+
+        # 2) επανάληψη που λήγει
+        rep = await self._db["prescription_executions"].find_one(
+            {"tenant_id": self.tenant_id, "patient_ref": pid,
+             "$expr": {"$lt": ["$repeat_current", "$repeat_total"]},
+             "valid_until": {"$gte": now, "$lt": now + timedelta(days=15)}},
+            {"valid_until": 1, "repeat_current": 1, "repeat_total": 1, "external_id": 1},
+            sort=[("valid_until", 1)])
+        if rep:
+            left = int(rep.get("repeat_total") or 0) - int(rep.get("repeat_current") or 0)
+            dl = max(0, (rep["valid_until"] - now).days)
+            notes.append({
+                "kind": "repeat_expiring", "tone": "warn" if dl <= 3 else "info",
+                "text": (f"Η επαναλαμβανόμενη συνταγή {gen} λήγει "
+                         f"{'σήμερα' if dl == 0 else 'αύριο' if dl == 1 else f'σε {dl} μέρες'} "
+                         f"με {V.doses(left)} αχρησιμοποίητ{'η' if left == 1 else 'ες'}. "
+                         f"Αν δεν την εκτελέσει τώρα, θα ξαναπάει στον γιατρό."),
+                "href": f"/prescriptions/{quote(str(rep.get('external_id') or ''))}"})
+
+        # 3) εμβόλιο
+        season = now.year if now.month >= 10 else now.year - 1
+        s_start = datetime(season, 10, 1, tzinfo=timezone.utc)
+        s_end = datetime(season + 1, 5, 1, tzinfo=timezone.utc)
+        if s_start <= now < s_end and p.get("age_group") in ("65-74", "75+"):
+            done = await self._db["vaccinations"].find_one(
+                {"tenant_id": self.tenant_id, "patient_ref": p.get("pseudo_id"),
+                 "cancelled": {"$ne": True},
+                 "executed_at": {"$gte": s_start, "$lt": s_end}}, {"_id": 1})
+            if not done:
+                notes.append({"kind": "vaccine_missed", "tone": "info",
+                              "text": (f"Ανήκει στην ομάδα {p.get('age_group')} και δεν έχει κάνει "
+                                       f"αντιγριπικό φέτος. Καλή στιγμή να {gen} το προτείνεις."),
+                              "href": "/vaccinations"})
+
+        # 4) στοιχεία επικοινωνίας
+        c = await self._db["patient_contacts"].find_one(
+            {"tenant_id": self.tenant_id, "_id": pid},
+            {"mobile": 1, "phone": 1, "email": 1, "active": 1}) or {}
+        if c.get("active") is not False and not (c.get("mobile") or c.get("phone") or c.get("email")):
+            notes.append({"kind": "no_contact", "tone": "info",
+                          "text": (f"Δεν έχεις κανένα στοιχείο επικοινωνίας "
+                                   f"γι' {V.g(sex, 'αυτόν', 'αυτήν')}. "
+                                   f"Τώρα που είναι μπροστά σου, ζήτα ένα κινητό."),
+                          "href": f"/patients/{quote(str(pid))}"})
+
+        # 5) ανοιχτό αίτημα πύλης
+        for coll, flt, what in (("rx_requests", {"status": "new"}, "αίτημα συνταγής"),
+                                ("availability_requests", {"status": "open"}, "ερώτηση διαθεσιμότητας"),
+                                ("appointments", {"status": "requested"}, "αίτημα ραντεβού")):
+            d = await self._db[coll].find_one(
+                {"tenant_id": self.tenant_id, "patient_ref": pid, **flt}, {"created_at": 1})
+            if d:
+                notes.append({"kind": "idle_request", "tone": "warn",
+                              "text": f"Έχει ανοιχτό {what} στην πύλη, που δεν έχει απαντηθεί ακόμη.",
+                              "href": "/portal-admin"})
+                break
+
+        return {"found": True, "patient_id": str(pid),
+                "name": mask_name(p.get("full_name"), self.demo),
+                "amka": mask_amka(p.get("amka"), self.demo),
+                "notes": notes}
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # ΡΥΘΜΙΣΕΙΣ — χωρίς αυτές, το πρώτο φαρμακείο που θα ενοχληθεί απλώς το κλείνει
+    # ─────────────────────────────────────────────────────────────────────────
+    async def settings(self) -> dict:
+        d = await self._db["coach_settings"].find_one({"tenant_id": self.tenant_id}) or {}
+        return {
+            "email_hour": int(d.get("email_hour", 7)),          # ώρα Αθήνας
+            "email_enabled": bool(d.get("email_enabled", True)),
+            "email_to": d.get("email_to") or None,              # κενό = το email της καρτέλας
+            "max_items": int(d.get("max_items", MAX_ITEMS)),
+            "signals": {k: bool((d.get("signals") or {}).get(k, True)) for k in SIGNAL_LABEL},
+            "escalate_owner": bool(d.get("escalate_owner", True)),
+            "labels": SIGNAL_LABEL,
+        }
+
+    async def save_settings(self, patch: dict) -> dict:
+        cur = await self.settings()
+        upd = {"tenant_id": self.tenant_id}
+        if "email_hour" in patch:
+            upd["email_hour"] = max(0, min(23, int(patch["email_hour"])))
+        if "email_enabled" in patch:
+            upd["email_enabled"] = bool(patch["email_enabled"])
+        if "email_to" in patch:
+            upd["email_to"] = (str(patch["email_to"]).strip() or None)
+        if "max_items" in patch:
+            upd["max_items"] = max(3, min(25, int(patch["max_items"])))
+        if "escalate_owner" in patch:
+            upd["escalate_owner"] = bool(patch["escalate_owner"])
+        if "signals" in patch and isinstance(patch["signals"], dict):
+            upd["signals"] = {k: bool(patch["signals"].get(k, cur["signals"][k]))
+                              for k in SIGNAL_LABEL}
+        await self._db["coach_settings"].update_one(
+            {"tenant_id": self.tenant_id}, {"$set": upd}, upsert=True)
+        return await self.settings()
 
     async def history(self, days: int = 30) -> list[dict]:
         """Η γραμμή αυτοβελτίωσης: πόσα ξέφευγαν τότε, πόσα ξεφεύγουν τώρα."""
