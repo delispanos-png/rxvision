@@ -44,6 +44,7 @@ const MODULE_LABELS: Record<string, { el: string; en: string }> = {
   patient_portal: { el: "Πύλη Πελατών", en: "Customer portal" },
   pharmacat: { el: "PharmaCat", en: "PharmaCat" },
   drug_interactions: { el: "Αλληλεπιδράσεις Φαρμάκων", en: "Drug interactions" },
+  daily_coach: { el: "Ο Σύμβουλός σου", en: "Your Advisor" },
   ai_assistant: { el: "AI Βοηθός", en: "AI Assistant" },
   loyalty: { el: "Πιστότητα", en: "Loyalty" },
 };

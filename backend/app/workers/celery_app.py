@@ -15,7 +15,8 @@ celery_app = Celery(
              "app.workers.billing", "app.workers.optical", "app.workers.reminders",
              "app.workers.ops_health", "app.workers.copilot_routines",
              "app.workers.contacts_backfill", "app.workers.death_sweep",
-             "app.workers.area_canonical", "app.workers.supplier_photos"],
+             "app.workers.area_canonical", "app.workers.supplier_photos",
+             "app.workers.coach"],
 )
 
 celery_app.conf.update(
@@ -54,6 +55,12 @@ celery_app.conf.update(
 
 # Periodic schedule (beat). Per-tenant incremental sync fans out from the dispatcher.
 celery_app.conf.beat_schedule = {
+    # Ο Σύμβουλος — πρωινό μήνυμα 07:30 Αθήνας (04:30 UTC θέρος/05:30 χειμώνα· το task
+    # ελέγχει από μόνο του ότι δεν έστειλε ήδη σήμερα).
+    "coach-daily-briefing": {
+        "task": "app.workers.coach.daily_briefing",
+        "schedule": crontab(hour=4, minute=30),
+    },
     "hdika-incremental-dispatch": {
         "task": "app.workers.ingestion.dispatch_incremental_sync",
         "schedule": crontab(minute="*/5"),

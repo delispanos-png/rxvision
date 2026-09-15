@@ -26,6 +26,7 @@ from app.api.v1.routers import (
     orders,
     orders_delivery,
     copilot,
+    daily_coach,
     patient,
     patient_intelligence,
     patients,
@@ -62,6 +63,7 @@ api_router.include_router(pharmacy_catalog.router, prefix="/catalog", tags=["cat
 api_router.include_router(orders_delivery.router, prefix="/orders/delivery", tags=["orders-delivery"])
 api_router.include_router(dashboard.router, prefix="/dashboard", tags=["dashboard"])
 api_router.include_router(advisor.router, prefix="/advisor", tags=["advisor"])
+api_router.include_router(daily_coach.router, prefix="/coach", tags=["coach"])
 api_router.include_router(communications.router, prefix="/communications", tags=["communications"])
 api_router.include_router(marketing.router, prefix="/marketing", tags=["marketing"])
 api_router.include_router(gdpr.router, prefix="/gdpr", tags=["gdpr"])

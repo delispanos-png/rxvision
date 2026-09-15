@@ -136,14 +136,134 @@ POSTS: dict[str, dict] = {
 }
 
 
+# --- Carousel / document decks ----------------------------------------------
+def wrap(d: ImageDraw.ImageDraw, text: str, f: ImageFont.FreeTypeFont, width: int) -> list[str]:
+    lines: list[str] = []
+    for para in text.split("\n"):
+        if not para:
+            lines.append("")
+            continue
+        cur = ""
+        for word in para.split(" "):
+            trial = f"{cur} {word}".strip()
+            if d.textlength(trial, font=f) <= width:
+                cur = trial
+            else:
+                lines.append(cur)
+                cur = word
+        lines.append(cur)
+    return lines
+
+
+def render_page(page: dict, index: int, total: int, w: int, h: int, margin: int) -> Image.Image:
+    img = background(w, h)
+    d = ImageDraw.Draw(img)
+    eyebrow(d, margin, 180, f"{index:02d} / {total:02d}")
+
+    title_size = page.get("title_size", 68)
+    ft = font("InterDisplay-Bold.ttf", title_size)
+    y = page.get("top", 300)
+    for line in wrap(d, page["title"], ft, w - 2 * margin):
+        draw_tokens(d, margin, y, line, ft, {x.lower() for x in page.get("highlight", [])})
+        y += int(title_size * 1.20)
+
+    if page.get("body"):
+        fb = font("Inter-Regular.ttf", page.get("body_size", 40))
+        y += 50
+        for line in wrap(d, page["body"], fb, w - 2 * margin):
+            d.text((margin, y), line, font=fb, fill=MUTED)
+            y += int(page.get("body_size", 40) * 1.45)
+
+    footer(img, d, w, h, margin)
+    return img
+
+
+def render_deck(slug: str, deck: dict) -> Path:
+    w, h = deck.get("canvas", LINKEDIN)
+    margin = deck.get("margin", 100)
+    pages = deck["pages"]
+    imgs = [render_page(p, i, len(pages), w, h, margin) for i, p in enumerate(pages, 1)]
+    out = ROOT / deck.get("out", "docs/marketing/linkedin-assets") / f"{slug}.pdf"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    imgs[0].save(out, "PDF", save_all=True, append_images=imgs[1:], resolution=150.0)
+    return out
+
+
+DECKS: dict[str, dict] = {
+    # LinkedIn POST 4 — document post (docs/marketing/linkedin-campaign.md)
+    "li04-perikopes": {
+        "pages": [
+            {
+                "title": "Οι περικοπές δεν είναι ατυχία.\nΕίναι πρόβλεψη.",
+                "highlight": ["πρόβλεψη"],
+                "body": "5 έλεγχοι που γίνονται πριν πατήσεις υποβολή.",
+                "title_size": 72,
+                "top": 420,
+            },
+            {
+                "title": "Γιατί κόβονται",
+                "body": "Σχεδόν πάντα για τους ίδιους λίγους λόγους.\n\nΤο πρόβλημα δεν είναι ότι δεν τους ξέρεις. Είναι ότι δεν "
+                        "φαίνονται όταν μπροστά σου υπάρχουν εκατοντάδες συνταγές και μία προθεσμία.",
+                "top": 380,
+            },
+            {
+                "title": "01 · Προθεσμία εκτέλεσης",
+                "highlight": ["01"],
+                "body": "Εκτελέστηκε η συνταγή μέσα στο επιτρεπόμενο παράθυρο;\n\nΜία ημερομηνία εκτός ορίου αρκεί. "
+                        "Η πλατφόρμα τη βρίσκει όσο προλαβαίνεις να κάνεις κάτι.",
+                "top": 380,
+            },
+            {
+                "title": "02 · Έντυπη ή άυλη;",
+                "highlight": ["02"],
+                "body": "Η άυλη δεν χρειάζεται πρωτότυπο, υπογραφή ή σφραγίδα.\n\nΗ έντυπη τα χρειάζεται — μαζί με τη "
+                        "γνωμάτευση όπου απαιτείται. Ο διαχωρισμός γίνεται αυτόματα, ανά συνταγή.",
+                "top": 380,
+            },
+            {
+                "title": "03 · Ταινίες γνησιότητας",
+                "highlight": ["03"],
+                "body": "Ταιριάζουν οι ταινίες με τις ποσότητες που εκτελέστηκαν;\n\nΈνας έλεγχος που στο χαρτί "
+                        "κοστίζει ώρες και στην οθόνη δευτερόλεπτα.",
+                "top": 380,
+            },
+            {
+                "title": "04 · Διασταύρωση τιμολογίου",
+                "highlight": ["04"],
+                "body": "Συμφωνεί το σύνολο του τιμολογίου με το σύνολο των εκτελέσεων;\n\nΑν όχι, βλέπεις ακριβώς "
+                        "πού χάνεται η διαφορά — πριν φύγει ο φάκελος.",
+                "top": 380,
+            },
+            {
+                "title": "05 · Ο φάκελος πριν φύγει",
+                "highlight": ["05"],
+                "body": "Για τις έντυπες: σκανάρεις τα barcode και η πλατφόρμα σου λέει ποια συνταγή λείπει από τον "
+                        "φάκελο και ποια περισσεύει.\n\nΠριν την υποβολή. Όχι τρεις μήνες μετά.",
+                "top": 360,
+            },
+            {
+                "title": "Δεν θα κοπείς για κάτι που θα μπορούσες να είχες δει.",
+                "highlight": ["δει"],
+                "body": "RxVision — ανάλυση & συμμόρφωση για το φαρμακείο.\nΕλλάδα & Κύπρος · rxvision.gr\n\nΔοκιμή 14 ημερών, χωρίς κάρτα.",
+                "title_size": 66,
+                "top": 380,
+            },
+        ],
+    },
+}
+
+
 def main() -> int:
     args = sys.argv[1:]
-    slugs = list(POSTS) if not args or args[0] == "--all" else args
+    slugs = list(POSTS) + list(DECKS) if not args or args[0] == "--all" else args
     for slug in slugs:
-        if slug not in POSTS:
-            print(f"unknown card: {slug} (available: {', '.join(POSTS)})")
+        if slug in POSTS:
+            print(render(slug, POSTS[slug]))
+        elif slug in DECKS:
+            print(render_deck(slug, DECKS[slug]))
+        else:
+            print(f"unknown: {slug} (cards: {', '.join(POSTS)} · decks: {', '.join(DECKS)})")
             return 1
-        print(render(slug, POSTS[slug]))
     return 0
 
 

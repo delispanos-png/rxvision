@@ -15,7 +15,7 @@ import { Tooltip } from "@/components/ui/Tooltip";
 import {
   Activity, BarChart3, Boxes, Warehouse, Layers, CalendarClock, ChevronRight, LayoutDashboard,
   Mail, Megaphone, Salad, PackageSearch, Settings, Sparkles, Stethoscope, TrendingUp, Target, Users,
-  Brain, ShieldCheck, Tags, Syringe, Bot, Gift, BookOpen, ScrollText, Truck, Lock, X, UserPlus, Ticket, SlidersHorizontal, Heart, FileText, MessageSquare, PackageCheck, Receipt, ArrowRightLeft, type LucideIcon,
+  Brain, ShieldCheck, Tags, Syringe, Bot, Gift, BookOpen, ScrollText, Truck, Lock, X, UserPlus, Ticket, SlidersHorizontal, Heart, FileText, MessageSquare, PackageCheck, Receipt, ArrowRightLeft, Compass, type LucideIcon,
 } from "lucide-react";
 
 // A leaf (direct link). `module` gates visibility (shown only when enabled/trial).
@@ -26,6 +26,11 @@ type Group = { title: string; en: string; icon: LucideIcon; items: Node[] };
 type Me = { modules?: Record<string, "enabled" | "trial" | "locked"> };
 
 const GROUPS: Group[] = [
+  // Ο Σύμβουλος — ξεχωριστό κύκλωμα που αγοράζεται ως extra (module `daily_coach`,
+  // σε ΚΑΝΕΝΑ πακέτο). Πρώτο στο μενού: είναι η οθόνη που ανοίγεις το πρωί.
+  { title: "Ο Σύμβουλός σου", en: "Your Advisor", icon: Compass, items: [
+    { label: "Ο Σύμβουλός σου", en: "Your Advisor", icon: Compass, href: "/coach", module: "daily_coach" },
+  ] },
   { title: "Patient Intelligence", en: "Patient Intelligence", icon: Brain, items: [
     { label: "Patient Intelligence", en: "Patient Intelligence", icon: Brain, href: "/intelligence", module: "patient_analytics" },
   ] },

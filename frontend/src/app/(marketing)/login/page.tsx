@@ -30,6 +30,7 @@ const MODULE_LABELS: Record<string, string> = {
   future_prescriptions: "Μελλοντικές Συνταγές", order_suggestions: "Προτάσεις Παραγγελίας", monthly_closing: "Κλείσιμο Μήνα",
   pharmacyone: "PharmacyOne", patient_portal: "Πύλη Πελατών", pharmacat: "PharmaCat",
   drug_interactions: "Αλληλεπιδράσεις Φαρμάκων", ai_assistant: "AI Βοηθός", loyalty: "Πιστότητα",
+  daily_coach: "Ο Σύμβουλός σου",
 };
 const modLabel = (k: string) => MODULE_LABELS[k] || k;
 

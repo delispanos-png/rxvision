@@ -88,6 +88,8 @@ INDEXES: list[tuple[str, list[tuple[str, int]], dict]] = [
     ("prescription_executions", [("tenant_id", 1), ("next_open_date", 1)], {}),
     ("prescription_executions", [("tenant_id", 1), ("patient_ref", 1)], {}),
     ("prescription_executions", [("tenant_id", 1), ("repeat_root", 1)], {}),
+    # Ο Σύμβουλος: «επαναλήψεις που λήγουν» σαρώνει παράθυρο valid_until ανά φαρμακείο.
+    ("prescription_executions", [("tenant_id", 1), ("valid_until", 1)], {}),
     # GLOBAL (cross-tenant) — powers the cross-tenant contamination guard in the ingestion engine:
     # a prescription barcode must live under exactly ONE tenant.
     ("prescription_executions", [("external_id", 1), ("source", 1)], {"name": "guard_external_id_source"}),
@@ -112,6 +114,9 @@ INDEXES: list[tuple[str, list[tuple[str, int]], dict]] = [
     ("future_prescriptions", [("tenant_id", 1), ("expected_open_date", 1), ("status", 1)], {}),
     ("future_prescriptions", [("tenant_id", 1), ("patient_ref", 1)], {}),
     ("future_prescriptions", [("tenant_id", 1), ("source_execution_id", 1)], {}),
+    ("coach_findings", [("tenant_id", 1), ("last_day", -1)], {}),
+    ("coach_findings", [("tenant_id", 1), ("signal", 1)], {}),
+    ("coach_days", [("tenant_id", 1), ("day", -1)], {"unique": True}),
     ("profitability_snapshots", [("tenant_id", 1), ("period", 1), ("dimension", 1)], {}),
     ("sync_jobs", [("tenant_id", 1), ("source", 1), ("started_at", -1)], {}),
     ("audit_logs", [("tenant_id", 1), ("at", -1)], {}),
