@@ -32,8 +32,29 @@ ACTIONS = ("shown", "dismissed", "never", "trial", "demo", "info")
 _FINAL = ("never", "trial", "demo")
 
 
+# Ώρα Ελλάδας: ο ιδιοκτήτης ορίζει ημερομηνίες σκεπτόμενος ελληνικό ημερολόγιο, όχι UTC.
+ATHENS = timezone(timedelta(hours=3))
+
+
 def _now() -> datetime:
     return datetime.now(tz=timezone.utc)
+
+
+def _as_window(v, *, end: bool):
+    """Ημερομηνία από τη φόρμα → στιγμή. Το «έως 30/09» για έναν άνθρωπο σημαίνει «μέχρι το
+    τέλος της 30ής» — αν το αφήναμε στα μεσάνυχτα, η ανακοίνωση θα χανόταν μια μέρα νωρίτερα."""
+    if not v:
+        return None
+    if isinstance(v, str):
+        try:
+            v = datetime.fromisoformat(v.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    if v.tzinfo is None:
+        v = v.replace(tzinfo=ATHENS)
+    if end and (v.hour, v.minute, v.second) == (0, 0, 0):
+        v = v.replace(hour=23, minute=59, second=59)
+    return v.astimezone(timezone.utc)
 
 
 def _oid(v):
@@ -268,7 +289,8 @@ async def save(data: dict, *, ann_id: str | None = None, by: str | None = None) 
             "status": (data.get("audience") or {}).get("status") or ["active"],
             "exclude_with_addon": bool((data.get("audience") or {}).get("exclude_with_addon", True)),
         },
-        "from": data.get("from"), "to": data.get("to"),
+        "from": _as_window(data.get("from"), end=False),
+        "to": _as_window(data.get("to"), end=True),
         "frequency": data.get("frequency") if data.get("frequency") in FREQUENCIES else "once",
         "priority": int(data.get("priority") or 0),
         "active": bool(data.get("active", False)),

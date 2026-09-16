@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Megaphone, Plus, Save, Trash2, Users, PlayCircle, CalendarClock, Check, Eye, Inbox, Phone, Mail } from "lucide-react";
 import { adminApi } from "@/lib/adminClient";
+import { DateInput } from "@/components/ui/DateInput";
 import { AnnouncementCard } from "@/components/layout/AnnouncementPopup";
 import { appConfirm, appAlert, appPrompt } from "@/store/dialogStore";
 
@@ -34,6 +35,20 @@ const EMPTY: Ann = {
   audience: { mode: "all", tenant_ids: [], packages: [], status: ["active"], exclude_with_addon: true },
   frequency: "once", priority: 0, active: false,
 };
+/** ISO datetime → «YYYY-MM-DD» για το DateInput (και κενό αν δεν υπάρχει). */
+const isoDay = (s?: string | null) => (s ? new Date(s).toISOString().slice(0, 10) : "");
+const gr = (s?: string | null) => (s ? new Date(s).toLocaleDateString("el-GR", { day: "2-digit", month: "2-digit", year: "numeric" }) : "");
+/** Μια πρόταση που λέει τι θα συμβεί — ώστε να μη χρειάζεται να το υπολογίσεις μόνος σου. */
+function windowText(a: { from?: string | null; to?: string | null; active?: boolean }): string {
+  if (!a.active) return "Όσο είναι ΠΡΟΧΕΙΡΟ, οι ημερομηνίες δεν παίζουν ρόλο.";
+  const now = new Date();
+  const f = a.from ? new Date(a.from) : null;
+  const t = a.to ? new Date(a.to) : null;
+  if (f && f > now) return `Θα ξεκινήσει μόνη της στις ${gr(a.from)}${t ? ` και θα σταματήσει στις ${gr(a.to)}.` : " και δεν θα σταματήσει μόνη της."}`;
+  if (t && t < now) return `Έχει λήξει (${gr(a.to)}) — δεν εμφανίζεται πουθενά.`;
+  if (t) return `Εμφανίζεται τώρα και σταματά μόνη της μετά τις ${gr(a.to)}.`;
+  return "Εμφανίζεται τώρα και δεν σταματά μόνη της.";
+}
 const dt = (s?: string | null) => (s ? new Date(s).toLocaleString("el-GR", { day: "2-digit", month: "2-digit", year: "2-digit", hour: "2-digit", minute: "2-digit" }) : "—");
 
 function AudienceModal({ ann, onClose }: { ann: Ann; onClose: () => void }) {
@@ -226,6 +241,19 @@ export default function AnnouncementsAdminPage() {
                 </label>
               </div>
 
+              {/* Χρονικό παράθυρο — για να μην το έχεις στο μυαλό σου. Κενό = χωρίς όριο. */}
+              <div className="grid gap-3 rounded-xl border border-slate-200 bg-white p-3 md:grid-cols-2">
+                <label className="text-xs font-semibold text-slate-600">Ενεργή από
+                  <DateInput value={isoDay(draft.from)} onChange={(v) => set({ from: v || null })} className="mt-1" />
+                  <span className="mt-1 block font-normal text-slate-400">Κενό = ξεκινά αμέσως μόλις την κάνεις ενεργή.</span>
+                </label>
+                <label className="text-xs font-semibold text-slate-600">Ενεργή έως (και)
+                  <DateInput value={isoDay(draft.to)} onChange={(v) => set({ to: v || null })} className="mt-1" />
+                  <span className="mt-1 block font-normal text-slate-400">Κενό = δεν σταματά μόνη της. Η μέρα που θα βάλεις μετράει ΟΛΟΚΛΗΡΗ.</span>
+                </label>
+                <p className="md:col-span-2 text-xs text-slate-500">{windowText(draft)}</p>
+              </div>
+
               {draft.audience?.mode === "packages" && (
                 <div className="flex flex-wrap gap-2">
                   {(pkgs.data?.items ?? []).map((p) => {
@@ -276,6 +304,12 @@ export default function AnnouncementsAdminPage() {
                     <span className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${a.active ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>{a.active ? "Ενεργή" : "ΠΡΟΧΕΙΡΟ — δεν τη βλέπει κανείς"}</span>
                     <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-600"><Users className="h-3 w-3" />{a.reach ?? 0} φαρμακεία</span>
                     <span className="text-[11px] text-slate-400">{FREQ[a.frequency ?? "once"]}</span>
+                    {(a.from || a.to) && (
+                      <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-600">
+                        <CalendarClock className="h-3 w-3" />
+                        {a.from ? gr(a.from) : "τώρα"} → {a.to ? gr(a.to) : "∞"}
+                      </span>
+                    )}
                   </div>
                   <div className="mt-1 flex flex-wrap gap-3 text-[11px] text-slate-400">
                     <span className="inline-flex items-center gap-1"><Eye className="h-3 w-3" />{a.stats?.shown ?? 0} εμφανίσεις</span>
