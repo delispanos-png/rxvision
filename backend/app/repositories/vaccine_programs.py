@@ -127,7 +127,10 @@ class VaccineProgramRepository(BaseRepository):
 
     async def save(self, doc: dict, program_id: str | None = None) -> dict:
         """Create or update one programme. Validates the clinical fields rather than trusting the UI."""
-        clean = self._validate(doc)
+        # Σε ΕΠΕΞΕΡΓΑΣΙΑ το εμβόλιο είναι κλειδωμένο και το αγνοούμε (βλ. παρακάτω) — άρα δεν
+        # έχει νόημα να απαιτούμε να σταλεί. Χωρίς αυτό, ένα PUT που δεν έστελνε atc_prefixes
+        # έπαιρνε 400 «Επίλεξε τουλάχιστον μία ομάδα» και ΚΑΜΙΑ αλλαγή δεν αποθηκευόταν.
+        clean = self._validate(doc, require_vaccine=not program_id)
         clean["updated_at"] = _now()
         if program_id:
             oid = _oid(program_id)
@@ -309,7 +312,7 @@ class VaccineProgramRepository(BaseRepository):
 
     # ── validation ───────────────────────────────────────────────────────────────────────────
     @staticmethod
-    def _validate(doc: dict) -> dict:
+    def _validate(doc: dict, *, require_vaccine: bool = True) -> dict:
         name = (doc.get("name") or "").strip()
         if not name:
             raise ValueError("name_required")
@@ -319,7 +322,7 @@ class VaccineProgramRepository(BaseRepository):
             if not _ATC_RE.match(p):
                 raise ValueError(f"bad_atc:{p}")          # only J07* — this circuit is vaccines
         codes = [str(c).strip() for c in (doc.get("eof_codes") or []) if str(c).strip()]
-        if not prefixes and not codes:
+        if require_vaccine and not prefixes and not codes:
             raise ValueError("no_vaccine_selected")
 
         def _posint(key, lo, hi, default=None):
