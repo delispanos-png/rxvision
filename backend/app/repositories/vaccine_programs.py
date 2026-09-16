@@ -210,7 +210,9 @@ class VaccineProgramRepository(BaseRepository):
                         "first_at": {"$min": "$executed_at"},
                         "doses": {"$sum": 1},
                         "codes": {"$addToSet": "$details.eof_code"},
-                        "lots": {"$addToSet": "$details.lot"}}},
+                        "lots": {"$addToSet": "$details.lot"},
+                        "shots": {"$push": {"at": "$executed_at", "code": "$details.eof_code",
+                                            "lot": "$details.lot"}}}},
             # ασθενής → όνομα/ΑΜΚΑ/ηλικία (+ θανών)
             {"$lookup": {"from": "patients_anonymized", "localField": "_id",
                          "foreignField": "_id", "as": "p"}},
@@ -273,6 +275,11 @@ class VaccineProgramRepository(BaseRepository):
                 "doses": int(r.get("doses") or 0), "doses_required": doses_required,
                 "status": st, "due_at": due_at,
                 "vaccines": sorted({names_by_code.get(c, c) for c in (r.get("codes") or []) if c}),
+                # Αναλυτικά, ώστε ο φαρμακοποιός να απαντά «πότε έκανες τι» χωρίς να ψάχνει.
+                "shots": [{"at": sh.get("at"),
+                           "vaccine": names_by_code.get(str(sh.get("code")), sh.get("code")),
+                           "lot": sh.get("lot")}
+                          for sh in sorted((r.get("shots") or []), key=lambda x: x.get("at") or now)],
                 "lots": sorted({str(x) for x in (r.get("lots") or []) if x})[:3],
             })
         if status != "all":

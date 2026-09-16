@@ -2,12 +2,13 @@
 
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Users, Search, Settings2 } from "lucide-react";
+import { Users, Search, Settings2, Info } from "lucide-react";
 import Link from "next/link";
 import { api } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
 import { Tooltip } from "@/components/ui/Tooltip";
+import { Modal } from "@/components/ui/Modal";
 import { PriorityBadge } from "@/components/ui/PriorityBadge";
 import { type Priority } from "@/lib/priority";
 
@@ -16,6 +17,7 @@ type Pat = {
   patient_id: string; name: string; amka: string | null; age_group: string | null;
   last_at: string | null; first_at: string | null; doses: number; doses_required: number;
   age: number | null; vaccines: string[]; lots: string[];
+  shots: { at: string | null; vaccine: string | null; lot: string | null }[];
   status: "covered" | "due_soon" | "expired" | "incomplete"; due_at: string | null;
 };
 type PatRes = { items: Pat[]; total: number; counts: Record<string, number> };
@@ -49,6 +51,7 @@ export default function PeriodicVaccinationListPage() {
 
 function Inner() {
   const t = useT();
+  const [info, setInfo] = useState<Pat | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [status, setStatus] = useState("all");
   const [term, setTerm] = useState("");
@@ -151,7 +154,16 @@ function Inner() {
               <tbody>
                 {pats.items.map((r) => (
                   <tr key={r.patient_id} className="border-t border-slate-100 dark:border-slate-800">
-                    <td className="px-4 py-2.5 font-medium text-slate-800 dark:text-slate-100">{r.name}</td>
+                    <td className="px-4 py-2.5">
+                      <span className="flex items-center gap-1.5">
+                        <button onClick={() => setInfo(r)}
+                          className="shrink-0 rounded p-0.5 text-slate-300 hover:bg-sky-50 hover:text-sky-600 dark:hover:bg-sky-900/30"
+                          title={t("Ιστορικό δόσεων", "Dose history")}>
+                          <Info className="h-4 w-4" />
+                        </button>
+                        <span className="font-medium text-slate-800 dark:text-slate-100">{r.name}</span>
+                      </span>
+                    </td>
                     <td className="px-4 py-2.5 font-mono text-[11px] text-slate-500">{r.amka || "—"}</td>
                     <td className="px-4 py-2.5 text-slate-600 dark:text-slate-300">{r.age ?? r.age_group ?? "—"}</td>
                     <td className="px-4 py-2.5">
@@ -197,6 +209,51 @@ function Inner() {
           </div>
         )}
       </div>
+      {info && <DoseHistory pat={info} onClose={() => setInfo(null)} />}
     </div>
+  );
+}
+
+/** «Πότε έκανα τους εμβολιασμούς μου;» — η απάντηση, έτοιμη για τον πάγκο. */
+function DoseHistory({ pat, onClose }: { pat: Pat; onClose: () => void }) {
+  const t = useT();
+  const done = pat.doses >= pat.doses_required;
+  return (
+    <Modal open onClose={onClose} title={pat.name} size="md">
+      <div className="space-y-3">
+        <ol className="space-y-2">
+          {pat.shots?.map((sh, i) => (
+            <li key={i} className="flex items-start gap-3 rounded-lg border border-slate-200 p-3 dark:border-slate-700">
+              <span className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-sky-100 text-xs font-bold text-sky-700 dark:bg-sky-900/50 dark:text-sky-300">
+                {i + 1}
+              </span>
+              <div className="min-w-0">
+                <div className="font-medium text-slate-800 dark:text-slate-100">
+                  {sh.at ? new Date(sh.at).toLocaleDateString("el-GR", { day: "2-digit", month: "long", year: "numeric" }) : "—"}
+                </div>
+                <div className="text-xs text-slate-500">
+                  {sh.vaccine || "—"}{sh.lot ? ` · ${t("παρτίδα", "lot")} ${sh.lot}` : ""}
+                </div>
+              </div>
+            </li>
+          ))}
+        </ol>
+
+        <div className={`rounded-lg px-3 py-2.5 text-sm ${done
+          ? "bg-emerald-50 text-emerald-800 dark:bg-emerald-900/25 dark:text-emerald-200"
+          : "bg-amber-50 text-amber-800 dark:bg-amber-900/25 dark:text-amber-200"}`}>
+          {done
+            ? t(`Ολοκληρώθηκε η διαδικασία του εμβολιασμού — ${pat.doses} από ${pat.doses_required} δόσεις.`,
+                `Vaccination complete — ${pat.doses} of ${pat.doses_required} doses.`)
+            : t(`Εκκρεμεί δόση: ${pat.doses} από ${pat.doses_required}${pat.due_at ? `. Επόμενη: ${new Date(pat.due_at).toLocaleDateString("el-GR")}` : ""}.`,
+                `Dose pending: ${pat.doses} of ${pat.doses_required}${pat.due_at ? `. Next: ${new Date(pat.due_at).toLocaleDateString("el-GR")}` : ""}.`)}
+        </div>
+
+        <p className="text-xs text-slate-400">
+          {t("Εμφανίζονται μόνο οι δόσεις που χορηγήθηκαν από ΤΟ ΔΙΚΟ ΣΟΥ φαρμακείο. Δόσεις που έγιναν αλλού δεν είναι γνωστές — η ΗΔΥΚΑ δεν τις διαθέτει.",
+             "Only doses dispensed by YOUR pharmacy are shown. Doses given elsewhere are not available from ΗΔΥΚΑ.")}
+        </p>
+      </div>
+    </Modal>
   );
 }
