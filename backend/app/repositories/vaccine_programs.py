@@ -179,6 +179,7 @@ class VaccineProgramRepository(BaseRepository):
         repeat_years = program.get("repeat_years")
         doses_required = int(program.get("doses_required") or 1)
         notify_before = int(program.get("notify_before_days") or 30)
+        max_age = program.get("max_age")
         now = datetime.now(tz=timezone.utc)
 
         pipeline: list[dict] = [
@@ -236,8 +237,15 @@ class VaccineProgramRepository(BaseRepository):
 
         items, counts = [], {"covered": 0, "due_soon": 0, "expired": 0, "incomplete": 0}
         for r in rows:
-            st, due_at = self._coverage(r.get("last_at"), repeat_years, notify_before, now,
+            st, due_at = self._coverage(r.get("first_at"), repeat_years, notify_before, now,
                                         int(r.get("doses") or 0), doses_required)
+            # Αν ο ασθενής θα έχει ΞΕΠΕΡΑΣΕΙ το ηλικιακό όριο όταν έρθει η αναμνηστική, δεν
+            # υπάρχει επόμενη δόση να προτείνουμε — τον βγάζουμε από τη λίστα. ΕΞΑΙΡΕΣΗ: όποιος
+            # δεν έχει ολοκληρώσει τη σειρά χρειάζεται δόση ΤΩΡΑ, άρα μένει.
+            if (st != "incomplete" and due_at and max_age is not None
+                    and r.get("age") is not None
+                    and (int(r["age"]) + (due_at.year - now.year)) > max_age):
+                continue
             counts[st] = counts.get(st, 0) + 1
             items.append({
                 "patient_id": str(r["_id"]),
@@ -256,16 +264,20 @@ class VaccineProgramRepository(BaseRepository):
         return {"items": items[skip:skip + limit], "total": total, "counts": counts}
 
     @staticmethod
-    def _coverage(last_at, repeat_years, notify_before_days, now, doses, doses_required):
-        """Κατάσταση κάλυψης ενός ασθενή + πότε λήγει.
+    def _coverage(first_at, repeat_years, notify_before_days, now, doses, doses_required):
+        """Κατάσταση κάλυψης ενός ασθενή + πότε οφείλεται η επόμενη δόση.
+
+        Ο κύκλος μετράει από την ΠΡΩΤΗ δόση (όχι την τελευταία): σε πενταετή σχήματα η επόμενη
+        αναμνηστική οφείλεται 5 έτη μετά την έναρξη του κύκλου, ανεξάρτητα από το πότε έγινε η
+        δεύτερη δόση της σειράς.
 
         incomplete = ξεκίνησε τη σειρά αλλά δεν την ολοκλήρωσε (π.χ. 1 από 2 δόσεις Shingrix)
         covered / due_soon / expired = με βάση την αναμνηστική· χωρίς repeat_years δεν λήγει ποτέ."""
         if doses < doses_required:
             return "incomplete", None
-        if not repeat_years or not last_at:
+        if not repeat_years or not first_at:
             return "covered", None
-        due = last_at + timedelta(days=int(repeat_years) * 365)
+        due = first_at + timedelta(days=int(repeat_years) * 365)
         if now >= due:
             return "expired", due
         if (due - now).days <= notify_before_days:
