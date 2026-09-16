@@ -315,36 +315,107 @@ class PatientAccountRepository:
 
     # ── cross-pharmacy linking (by ΑΜΚΑ) ──────────────────────
     async def refresh_links(self, account_id, amka: str) -> list[dict]:
-        """Scan every pharmacy with the portal enabled; match the patient by the per-tenant
-        pseudonym of ΑΜΚΑ and upsert a link. Returns the patient's links (their pharmacies)."""
+        """Ανανεώνει ΜΟΝΟ τους ΥΠΑΡΧΟΝΤΕΣ συνδέσμους του λογαριασμού — ΔΕΝ δημιουργεί νέους.
+
+        ΓΙΑΤΙ ΑΛΛΑΞΕ: παλιά σάρωνε ΟΛΑ τα φαρμακεία και συνέδεε αυτόματα τον πελάτη με καθένα
+        όπου το ΑΜΚΑ του ταίριαζε σε καρτέλα. Αποτέλεσμα: αρκούσε να τον έχει καταχωρίσει ΚΑΠΟΤΕ
+        ένα φαρμακείο (ή να είχε εκτελέσει μία συνταγή εκεί πριν χρόνια) και, στο επόμενο login,
+        γινόταν «πελάτης πύλης» του φαρμακείου εκείνου χωρίς να το ζητήσει κανείς — εμφανιζόταν
+        στη λίστα πελατών ενός φαρμακοποιού που δεν είχε ποτέ σχέση μαζί του.
+        Η σύνδεση είναι πλέον ΠΑΝΤΑ πράξη βούλησης: εγγραφή, ρητή επιλογή στον κατάλογο, ή
+        δημιουργία λογαριασμού από τον ίδιο τον φαρμακοποιό. Ό,τι ταιριάζει αλλά δεν είναι
+        συνδεδεμένο, προτείνεται μέσω `suggested_links()` για να το αποδεχθεί ο ΠΕΛΑΤΗΣ.
+        """
         oid = _oid(account_id)
-        amka = (amka or "").strip()
+        if not oid:
+            return []
         out: list[dict] = []
+        async for l in self.db["patient_links"].find({"account_id": oid}):  # tenant-ok: global link doc
+            tid = l["tenant_id"]
+            t = await self.db["tenants"].find_one({"_id": tid}, {"name": 1, "company": 1})
+            name = ((t or {}).get("company") or {}).get("name") or (t or {}).get("name") or tid
+            pref = l.get("patient_ref")
+            # Η καρτέλα μπορεί να ξαναφτιάχτηκε (π.χ. re-ingest) → ξανα-βρες την από το ψευδώνυμο.
+            if (amka or "").strip():
+                try:
+                    pseudo = pseudonymize(amka.strip(), tenant_pepper=vault.tenant_pepper(tid))
+                    pat = await self.db["patients_anonymized"].find_one(
+                        {"tenant_id": tid, "pseudo_id": pseudo}, {"_id": 1})
+                    if pat:
+                        pref = pat["_id"]
+                except Exception:  # noqa: BLE001
+                    pass
+            await self.db["patient_links"].update_one(
+                {"_id": l["_id"]},
+                {"$set": {"patient_ref": pref, "pharmacy_name": name, "updated_at": _now()}})
+            out.append({"tenant_id": tid, "patient_ref": str(pref), "pharmacy_name": name})
+        return out
+
+    async def suggested_links(self, account_id, amka: str) -> list[dict]:
+        """Φαρμακεία όπου το ΑΜΚΑ ταιριάζει σε καρτέλα αλλά ΔΕΝ υπάρχει σύνδεσμος.
+
+        Τα προτείνουμε στον πελάτη («έχεις ιστορικό εδώ — θέλεις να το προσθέσεις;») αντί να τον
+        συνδέουμε σιωπηλά. Η πρόταση ΔΕΝ αποκαλύπτει τίποτα στο φαρμακείο: μέχρι να την αποδεχθεί,
+        δεν δημιουργείται σύνδεσμος και δεν εμφανίζεται πουθενά στον φαρμακοποιό.
+        """
+        oid, amka = _oid(account_id), (amka or "").strip()
         if not oid or not amka:
-            return out
+            return []
+        linked = {l["tenant_id"] async for l in self.db["patient_links"].find(
+            {"account_id": oid}, {"tenant_id": 1})}
         from app.services.auth_service import resolve_tenant_modules, tenant_has
+        out: list[dict] = []
         async for t in self.db["tenants"].find(  # tenant-ok: cross-tenant discovery by design
-                {}, {"_id": 1, "name": 1, "company": 1}):
+                {"status": {"$in": ["active", "trial"]}}, {"_id": 1, "name": 1, "company": 1}):
             tid = str(t["_id"])
-            # only pharmacies that have the portal ENABLED (effective: plan modules_included OR override —
-            # not just the per-tenant override, otherwise a portal granted via the package is missed)
+            if tid in linked:
+                continue
             if not tenant_has(await resolve_tenant_modules(tid), "patient_portal"):
                 continue
             try:
                 pseudo = pseudonymize(amka, tenant_pepper=vault.tenant_pepper(tid))
             except Exception:  # noqa: BLE001
                 continue
-            pat = await self.db["patients_anonymized"].find_one(  # tenant-ok: explicit tenant_id
-                {"tenant_id": tid, "pseudo_id": pseudo}, {"_id": 1})
+            pat = await self.db["patients_anonymized"].find_one(
+                {"tenant_id": tid, "pseudo_id": pseudo}, {"_id": 1, "rx_count": 1, "last_seen_at": 1})
             if not pat:
                 continue
             name = (t.get("company") or {}).get("name") or t.get("name") or tid
-            await self.db["patient_links"].update_one(  # tenant-ok: global link doc
-                {"account_id": oid, "tenant_id": tid},
-                {"$set": {"patient_ref": pat["_id"], "pharmacy_name": name, "updated_at": _now()},
-                 "$setOnInsert": {"created_at": _now()}}, upsert=True)
-            out.append({"tenant_id": tid, "patient_ref": str(pat["_id"]), "pharmacy_name": name})
+            out.append({"tenant_id": tid, "pharmacy_name": name,
+                        "rx_count": int(pat.get("rx_count") or 0),
+                        "last_seen_at": pat.get("last_seen_at")})
         return out
+
+    async def unlink(self, account_id, tenant_id: str) -> dict:
+        """Ο πελάτης αποσυνδέει ένα φαρμακείο από την πύλη του.
+
+        Αφαιρεί ΜΟΝΟ τη σύνδεση της πύλης. Τα δικά του αρχεία (εκτελέσεις συνταγών) ανήκουν στο
+        φαρμακείο και δεν τα πειράζουμε. Αν όμως η καρτέλα είχε δημιουργηθεί ΑΠΟ την πύλη και δεν
+        έχει καμία κίνηση, φεύγει κι αυτή — αλλιώς ο φαρμακοποιός θα συνέχιζε να βλέπει έναν
+        «πελάτη» που δεν υπήρξε ποτέ.
+        """
+        oid = _oid(account_id)
+        if not oid:
+            return {"ok": False, "error": "bad_account"}
+        links = [l async for l in self.db["patient_links"].find({"account_id": oid})]
+        if len(links) <= 1:
+            return {"ok": False, "error": "last_pharmacy"}   # χωρίς φαρμακείο δεν λειτουργεί η πύλη
+        link = next((l for l in links if l["tenant_id"] == tenant_id), None)
+        if not link:
+            return {"ok": False, "error": "not_linked"}
+        pref = link.get("patient_ref")
+        await self.db["patient_links"].delete_one({"_id": link["_id"]})
+        if pref:
+            pat = await self.db["patients_anonymized"].find_one(
+                {"tenant_id": tenant_id, "_id": pref}, {"rx_count": 1, "source": 1})
+            if pat and (pat.get("source") == "portal_selected") and not int(pat.get("rx_count") or 0):
+                await self.db["patients_anonymized"].delete_one({"tenant_id": tenant_id, "_id": pref})
+                await self.db["patient_contacts"].delete_one({"tenant_id": tenant_id, "_id": pref})
+        acc = await self.get(account_id)
+        if (acc or {}).get("favorite_tenant_id") == tenant_id:
+            await self.set_favorite(oid, links[0]["tenant_id"] if links[0]["tenant_id"] != tenant_id
+                                    else links[1]["tenant_id"])
+        return {"ok": True}
 
     async def find_amka_contacts(self, amka: str) -> list[dict]:
         """On-file contacts (mobile/email) that a PHARMACY already holds for this ΑΜΚΑ, across every

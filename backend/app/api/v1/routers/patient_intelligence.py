@@ -220,8 +220,11 @@ async def create_portal_account(body: PortalAccountIn,
     last = parts[0] if parts else ""
     first = " ".join(parts[1:]) if len(parts) > 1 else ""
     from app.services.patient_auth_service import PatientAuthService
+    # Ο λογαριασμός συνδέεται ΜΟΝΟ με το φαρμακείο που τον δημιουργεί — όχι με κάθε φαρμακείο
+    # που τυχαίνει να έχει το ίδιο ΑΜΚΑ στα αρχεία του.
     res = await PatientAuthService().admin_create(
-        first_name=first, last_name=last, email=body.email, phone=body.phone, amka=body.amka)
+        first_name=first, last_name=last, email=body.email, phone=body.phone, amka=body.amka,
+        tenant_id=ctx.tenant_id)
     if not res.get("ok"):
         raise HTTPException(status.HTTP_409_CONFLICT, res.get("error", "failed"))
     return res

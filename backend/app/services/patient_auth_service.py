@@ -181,14 +181,20 @@ class PatientAuthService:
             await self.repo.set_favorite(acc["_id"], ch["favorite_tenant_id"])
             acc["favorite_tenant_id"] = ch["favorite_tenant_id"]
         await self.repo.delete_otp_challenge(challenge_id)
+        # Η σύνδεση με φαρμακείο είναι ΠΡΑΞΗ ΒΟΥΛΗΣΗΣ: συνδέουμε ΜΟΝΟ αυτό που επέλεξε ο πελάτης
+        # στην εγγραφή. Τα υπόλοιπα (όπου τυχόν ταιριάζει το ΑΜΚΑ του) του ΠΡΟΤΕΙΝΟΝΤΑΙ μέσα στην
+        # πύλη για να τα αποδεχθεί ο ίδιος — δεν τον συνδέουμε σιωπηλά.
+        if ch.get("favorite_tenant_id"):
+            await self.repo.link_or_create(acc["_id"], ch["favorite_tenant_id"])
         links = await self.repo.refresh_links(acc["_id"], ch["amka"])
         return await self._start_session(acc, links, meta)
 
     async def admin_create(self, *, first_name: str, last_name: str, email: str,
-                           phone: str | None, amka: str) -> dict:
+                           phone: str | None, amka: str, tenant_id: str | None = None) -> dict:
         """Pharmacist-initiated account creation (my.rxvision.gr). Στέλνει στον πελάτη link «όρισε
         κωδικό» (email + SMS) ώστε να βάλει δικό του κωδικό, ΚΑΙ επιστρέφει έναν εύκολο προσωρινό
-        κωδικό (χωρίς σύμβολα) ως εφεδρεία + υποχρεωτική αλλαγή στο 1ο login. Auto-links pharmacies."""
+        κωδικό (χωρίς σύμβολα) ως εφεδρεία + υποχρεωτική αλλαγή στο 1ο login. Συνδέεται ΜΟΝΟ με το
+        φαρμακείο που τον δημιούργησε."""
         email = (email or "").strip().lower()
         amka = (amka or "").strip()
         if not email or "@" not in email:
@@ -202,7 +208,10 @@ class PatientAuthService:
             first_name=first_name, last_name=last_name, email=email,
             phone=phone, amka=amka, password_hash=hash_password(pw),
             must_change_password=True)
-        await self.repo.refresh_links(acc["_id"], amka)
+        # ΜΟΝΟ το φαρμακείο που δημιούργησε τον λογαριασμό — όχι κάθε φαρμακείο με το ίδιο ΑΜΚΑ.
+        if tenant_id:
+            await self.repo.link_or_create(acc["_id"], tenant_id)
+            await self.repo.set_favorite(acc["_id"], tenant_id)
         token = await self.repo.create_set_password_token(acc["_id"])
         link = f"{_PORTAL_BASE}/portal/set-password?token={token}" if token else None
         sent = await self._send_set_password_link(email, phone, link) if link else []
@@ -490,11 +499,15 @@ class PatientAuthService:
         """Revoke every refresh token for this patient account (all devices)."""
         await self.repo.revoke_tokens(account_id)
 
-    async def select_pharmacy(self, account_id: str, tenant_id: str, *, sid: str | None = None) -> str | None:
-        """Re-mint an access token for another pharmacy. Λειτουργεί για ΟΠΟΙΟΔΗΠΟΤΕ φαρμακείο με
-        ενεργή πύλη: αν ο πελάτης δεν είναι ήδη linked (δεν έχει ιστορικό εκεί), δημιουργείται
-        «καρτέλα χωρίς κίνηση» + link on-the-fly ώστε να μπορεί να το εξυπηρετηθεί (ερωτήματα/
-        αγορές/ανάθεση). Το ιστορικό μένει ανά φαρμακείο (tenant-scoped)."""
+    async def select_pharmacy(self, account_id: str, tenant_id: str, *, sid: str | None = None,
+                              join: bool = False) -> str | None:
+        """Εναλλαγή στο ΗΔΗ συνδεδεμένο φαρμακείο. Αν δεν υπάρχει σύνδεσμος, χρειάζεται ΡΗΤΗ
+        συγκατάθεση (`join=True`) — γιατί η σύνδεση δημιουργεί καρτέλα με το ονοματεπώνυμο και το
+        ΑΜΚΑ του πελάτη στο φαρμακείο εκείνο. Ένα άστοχο πάτημα στον κατάλογο δεν επιτρέπεται
+        να γνωστοποιεί τα στοιχεία κάποιου σε φαρμακείο που δεν επισκέφθηκε ποτέ."""
+        existing = await self.repo.link_for(account_id, tenant_id)
+        if not existing and not join:
+            raise PatientError("join_required")
         link = await self.repo.link_or_create(account_id, tenant_id)
         if not link:
             return None

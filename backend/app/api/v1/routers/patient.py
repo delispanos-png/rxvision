@@ -72,6 +72,7 @@ class RefreshIn(BaseModel):
 
 class SelectIn(BaseModel):
     tenant_id: str
+    join: bool = False      # ρητή συγκατάθεση για ΝΕΑ σύνδεση με φαρμακείο (όχι απλή εναλλαγή)
 
 
 class SetPasswordIn(BaseModel):
@@ -242,11 +243,37 @@ async def logout(ctx: PatientContext = Depends(get_patient_context)):
 async def select_pharmacy(body: SelectIn, ctx: PatientContext = Depends(get_patient_context)):
     if await portal_mode() == "single" and body.tenant_id != ctx.tenant_id:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "single_pharmacy_mode")   # καμία εναλλαγή/self-onboarding
-    token = await PatientAuthService().select_pharmacy(ctx.account_id, body.tenant_id,
-                                                       sid=ctx.session_id)
+    try:
+        token = await PatientAuthService().select_pharmacy(
+            ctx.account_id, body.tenant_id, sid=ctx.session_id, join=body.join)
+    except PatientError as e:
+        # «join_required» ΔΕΝ είναι σφάλμα: η πύλη ρωτά τον πελάτη και ξαναστέλνει με join=true.
+        raise HTTPException(status.HTTP_409_CONFLICT, str(e)) from e
     if token is None:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "not_linked_to_pharmacy")
     return {"access_token": token, "active_tenant": body.tenant_id}
+
+
+@router.get("/pharmacies/suggested")
+async def suggested_pharmacies(ctx: PatientContext = Depends(get_patient_context)):
+    """Φαρμακεία όπου υπάρχει ήδη καρτέλα με το ΑΜΚΑ του πελάτη αλλά ΔΕΝ είναι συνδεδεμένα.
+    Προτείνονται — δεν συνδέονται σιωπηλά. Μέχρι να τα αποδεχθεί, κανένα φαρμακείο δεν τον βλέπει."""
+    from app.repositories.patient_portal import PatientAccountRepository
+    if await portal_mode() == "single":
+        return {"items": []}
+    repo = PatientAccountRepository()
+    acc = await repo.get(ctx.account_id)
+    return {"items": await repo.suggested_links(ctx.account_id, (acc or {}).get("amka") or "")}
+
+
+@router.delete("/pharmacies/{tenant_id}")
+async def unlink_pharmacy(tenant_id: str, ctx: PatientContext = Depends(get_patient_context)):
+    """Αποσύνδεση φαρμακείου από την πύλη του πελάτη — δικαίωμά του, χωρίς να ρωτήσει κανέναν."""
+    from app.repositories.patient_portal import PatientAccountRepository
+    res = await PatientAccountRepository().unlink(ctx.account_id, tenant_id)
+    if not res.get("ok"):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, res.get("error", "failed"))
+    return res
 
 
 # ── profile + own data ───────────────────────────────────────

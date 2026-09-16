@@ -23,7 +23,7 @@ import { Toaster, toast, confirmDialog } from "@/components/portal/Toaster";
 import { TransferCard } from "@/components/portal/TransferCard";
 import { CalendarSyncCard } from "@/components/CalendarSyncCard";
 import { pushSupported, isPushSubscribed, enablePush } from "@/lib/push";
-import { BellRing } from "lucide-react";
+import { BellRing, Unlink as LinkIcon2 } from "lucide-react";
 import { fmtDate, fmtDateTime } from "@/lib/formatters";
 
 type Pharmacy = { tenant_id: string; pharmacy_name: string };
@@ -380,15 +380,43 @@ export default function PortalHome() {
     catch { toast(t("Κάτι πήγε στραβά — δοκίμασε ξανά.", "Something went wrong — please try again."), "error"); }
   }
 
-  async function switchPharmacy(tenant_id: string, gotoTab?: string) {
+  async function switchPharmacy(tenant_id: string, gotoTab?: string, join = false) {
     try {
-      const d = await patientApi<{ access_token: string }>("/patient/auth/select-pharmacy", { method: "POST", body: JSON.stringify({ tenant_id }) });
+      const d = await patientApi<{ access_token: string }>("/patient/auth/select-pharmacy", { method: "POST", body: JSON.stringify({ tenant_id, join }) });
       patientTokens.set(d.access_token, window.localStorage.getItem("patient_refresh_token"));
       // η επιλογή φαρμακείου ισχύει ΠΑΝΤΟΥ: ερωτήματα διαθεσιμότητας & ραντεβού στοχεύουν το ίδιο
       setAvailTarget(tenant_id); setApptTarget(tenant_id);
       if (gotoTab) setTab(gotoTab);
       await load();
-    } catch { toast(t("Δεν ήταν δυνατή η επιλογή του φαρμακείου — δοκίμασε ξανά.", "Could not select the pharmacy — please try again."), "error"); }
+    } catch (e) {
+      // 409 «join_required» = ΠΡΩΤΗ φορά σε αυτό το φαρμακείο. Δεν το κάνουμε σιωπηλά: η σύνδεση
+      // δίνει στο φαρμακείο το ονοματεπώνυμο και το ΑΜΚΑ σου — πρέπει να το ξέρεις και να το θες.
+      if (String((e as { message?: string })?.message || "").includes("join_required")) {
+        const name = directory.find((d) => d.tenant_id === tenant_id)?.name || t("αυτό το φαρμακείο", "this pharmacy");
+        const ok = await confirmDialog(
+          t(`Θέλεις να συνδεθείς με το «${name}»;\n\nΘα μπορεί να σε εξυπηρετεί μέσα από την εφαρμογή (διαθεσιμότητα, παραγγελίες, ανάθεση συνταγής) και θα βλέπει το ονοματεπώνυμο και το ΑΜΚΑ σου. Μπορείς να το αποσυνδέσεις όποτε θες.`,
+            `Connect with "${name}"?\n\nIt will be able to serve you through the app and will see your name and ΑΜΚΑ. You can disconnect at any time.`));
+        if (ok) await switchPharmacy(tenant_id, gotoTab, true);
+        return;
+      }
+      toast(t("Δεν ήταν δυνατή η επιλογή του φαρμακείου — δοκίμασε ξανά.", "Could not select the pharmacy — please try again."), "error");
+    }
+  }
+
+  async function unlinkPharmacy(tenant_id: string, name: string) {
+    if (!(await confirmDialog(t(
+      `Αποσύνδεση από το «${name}»;\n\nΔεν θα σε εξυπηρετεί πια μέσα από την εφαρμογή. Το ιστορικό των συνταγών που έχεις εκτελέσει εκεί ανήκει στο φαρμακείο και παραμένει.`,
+      `Disconnect from "${name}"?\n\nIt will no longer serve you through the app. Prescriptions you filled there belong to the pharmacy and remain.`)))) return;
+    try {
+      await patientApi(`/patient/pharmacies/${encodeURIComponent(tenant_id)}`, { method: "DELETE" });
+      toast(t("✓ Αποσυνδέθηκε.", "✓ Disconnected."));
+      await load();
+    } catch (e) {
+      const m = String((e as { message?: string })?.message || "");
+      toast(m.includes("last_pharmacy")
+        ? t("Χρειάζεσαι τουλάχιστον ένα φαρμακείο. Πρόσθεσε άλλο πρώτα.", "You need at least one pharmacy. Add another first.")
+        : t("Δεν ήταν δυνατή η αποσύνδεση — δοκίμασε ξανά.", "Could not disconnect — please try again."), "error");
+    }
   }
   async function setFavoritePharmacy(tenant_id: string) {
     const prev = directory;
@@ -2500,10 +2528,19 @@ export default function PortalHome() {
                         </div>
                         {s && <div className={`mt-0.5 text-xs font-medium ${s.isOnDuty ? "text-indigo-600" : s.isOpen ? (s.closingSoon ? "text-amber-600" : "text-emerald-600") : "text-slate-400"}`}>{t(s.statusText, s.statusTextEn ?? s.statusText)}</div>}
                       </div>
-                      <button onClick={() => setFavoritePharmacy(d.tenant_id)} title={d.favorite ? t("Αφαίρεση αγαπημένου", "Remove favorite") : t("Όρισε αγαπημένο", "Set as favorite")}
-                        className="grid h-8 w-8 shrink-0 place-items-center rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800">
-                        <Star className={`h-[18px] w-[18px] ${d.favorite ? "fill-amber-400 text-amber-400" : "text-slate-300"}`} />
-                      </button>
+                      <div className="flex shrink-0 flex-col items-center gap-0.5">
+                        <button onClick={() => setFavoritePharmacy(d.tenant_id)} title={d.favorite ? t("Αφαίρεση αγαπημένου", "Remove favorite") : t("Όρισε αγαπημένο", "Set as favorite")}
+                          className="grid h-8 w-8 place-items-center rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800">
+                          <Star className={`h-[18px] w-[18px] ${d.favorite ? "fill-amber-400 text-amber-400" : "text-slate-300"}`} />
+                        </button>
+                        {/* Αποσύνδεση — δικαίωμα του πελάτη. Μέχρι τώρα, μια σύνδεση ήταν οριστική. */}
+                        {d.mine && (
+                          <button onClick={() => unlinkPharmacy(d.tenant_id, d.name)} title={t("Αποσύνδεση φαρμακείου", "Disconnect pharmacy")}
+                            className="grid h-8 w-8 place-items-center rounded-lg text-slate-300 hover:bg-rose-50 hover:text-rose-500 dark:hover:bg-rose-950">
+                            <LinkIcon2 className="h-[17px] w-[17px]" />
+                          </button>
+                        )}
+                      </div>
                     </div>
                     {/* ενέργειες: επιλογή + γρήγορες δράσεις (σε αυτό το φαρμακείο) */}
                     <div className="mt-2.5 flex flex-wrap items-center gap-1.5">

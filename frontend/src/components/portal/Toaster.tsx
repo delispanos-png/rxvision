@@ -57,7 +57,7 @@ export function Toaster() {
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={() => done(false)}>
           <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" />
           <div onClick={(e) => e.stopPropagation()} className="relative w-full max-w-sm rounded-2xl bg-white dark:bg-slate-800 p-5 shadow-2xl">
-            <div className="text-sm text-slate-700 dark:text-slate-200">{confirm.msg}</div>
+            <div className="whitespace-pre-line text-sm leading-relaxed text-slate-700 dark:text-slate-200">{confirm.msg}</div>
             <div className="mt-4 flex justify-end gap-2">
               <button onClick={() => done(false)} className="rounded-xl border border-slate-200 dark:border-slate-700 px-4 py-2 text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800">{t("Άκυρο", "Cancel")}</button>
               <button onClick={() => done(true)} className="rounded-xl bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700">{t("Ναι", "Yes")}</button>
