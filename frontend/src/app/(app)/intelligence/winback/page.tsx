@@ -6,6 +6,8 @@ import { api } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
 import { fmtNum, fmtEur } from "@/lib/formatters";
 import { KpiCard } from "@/components/kpi/KpiCard";
+import { PriorityBadge } from "@/components/ui/PriorityBadge";
+import { winbackPriority } from "@/lib/priority";
 
 type WB = {
   buckets: { bucket: number; count: number; lost_revenue: number; recoverable: number }[];
@@ -27,7 +29,11 @@ export default function WinbackPage() {
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         {(data?.buckets ?? []).map((b) => (
           <div key={b.bucket} className="rx-card p-5">
-            <div className="text-sm font-semibold text-slate-700 dark:text-slate-200">{b.bucket} {t("ημέρες αδράνειας", "days inactive")}</div>
+            <div className="flex items-center justify-between gap-2">
+              <div className="text-sm font-semibold text-slate-700 dark:text-slate-200">{b.bucket} {t("ημέρες αδράνειας", "days inactive")}</div>
+              {/* Όσο πιο πρόσφατη η αδράνεια, τόσο πιο επείγον: ο 60ήμερος γυρίζει ακόμη. */}
+              <PriorityBadge level={winbackPriority(b.bucket)} />
+            </div>
             <div className="mt-2 text-3xl font-bold text-slate-900 dark:text-slate-100">{fmtNum(b.count)}</div>
             <div className="text-xs text-slate-400">{t("ασθενείς", "patients")}</div>
             <div className="mt-3 space-y-1 text-sm">

@@ -7,6 +7,8 @@ import { api } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
 import { fmtNum, fmtEur } from "@/lib/formatters";
 import { DataTable, type Column } from "@/components/tables/DataTable";
+import { PriorityBadge } from "@/components/ui/PriorityBadge";
+import { riskPriority, byPriority, PRIORITY_RANK } from "@/lib/priority";
 
 type Row = {
   patient_id: string; name?: string | null; amka?: string | null; compliance: number | null;
@@ -25,7 +27,13 @@ export default function RiskPage() {
   const { data, isLoading } = useQuery({ queryKey: ["pi-risk"], queryFn: () => api<{ items: Row[]; count: number }>("/patient-intelligence/risk") });
   if (isLoading) return <div className="p-8 text-slate-400">{t("Ανίχνευση κινδύνου…", "Detecting risk…")}</div>;
 
+  // Οι κρίσιμοι πρώτοι: σε λίστα εκατοντάδων γραμμών το χρώμα μόνο του δεν αρκεί.
+  const rows = byPriority(data?.items ?? [], riskPriority);
+
   const cols: Column<Row>[] = [
+    { key: "priority", header: t("Προτεραιότητα", "Priority"),
+      sortValue: (r) => PRIORITY_RANK[riskPriority(r)],
+      render: (r) => <PriorityBadge level={riskPriority(r)} /> },
     { key: "name", header: t("Ασθενής", "Patient"), render: (r) => r.name || r.amka || "—" },
     { key: "reasons", header: t("Λόγοι", "Reasons"), render: (r) => (
       <span className="flex flex-wrap gap-1">{r.reasons.map((x) => <span key={x} className="rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-semibold text-rose-700 dark:bg-rose-900/40 dark:text-rose-300">{t(REASON[x]?.el ?? x, REASON[x]?.en ?? x)}</span>)}</span>
@@ -42,7 +50,7 @@ export default function RiskPage() {
         <AlertTriangle className="h-5 w-5 shrink-0" />
         <span><b>{fmtNum(data?.count ?? 0)}</b> {t("ασθενείς υψηλού κινδύνου — πιθανή διακοπή θεραπείας. Προτεραιότητα σε ενέργειες recall.", "high-risk patients — possible therapy discontinuation. Prioritize recall actions.")}</span>
       </div>
-      <DataTable pageSize={20} columns={cols} rows={data?.items ?? []} rowKey={(r) => r.patient_id}
+      <DataTable pageSize={20} columns={cols} rows={rows} rowKey={(r) => r.patient_id}
         onRowClick={(r) => router.push(`/patients/${encodeURIComponent(r.patient_id)}`)} empty={t("Κανένας ασθενής σε κίνδυνο. 👍", "No patients at risk. 👍")} />
     </div>
   );

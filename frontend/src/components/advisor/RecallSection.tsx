@@ -8,6 +8,8 @@ import { useT } from "@/store/prefStore";
 import { Phone, MessageSquare, Mail, PhoneCall, Users, AlertTriangle, Wallet, Pill, ExternalLink } from "lucide-react";
 import { fmtEur, fmtDate, fmtMoney} from "@/lib/formatters";
 import { DataTable, type Column } from "@/components/tables/DataTable";
+import { PriorityBadge } from "@/components/ui/PriorityBadge";
+import { recallPriority, byPriority, PRIORITY_RANK } from "@/lib/priority";
 import { KpiCard } from "@/components/kpi/KpiCard";
 import { ExportMenu } from "@/components/export/ExportMenu";
 import { PanelCard } from "@/components/ui/Card";
@@ -41,7 +43,13 @@ export function RecallSection() {
   const d = q.data;
   if (!d || d.patients === 0) return null;
 
+  // Οι καθυστερημένες ανανεώσεις βαραίνουν περισσότερο από τις απλά διαθέσιμες.
+  const recallRows = byPriority(d.items, recallPriority);
+
   const cols: Column<RecallPat>[] = [
+    { key: "priority", header: t("Προτεραιότητα", "Priority"),
+      sortValue: (r) => PRIORITY_RANK[recallPriority(r)],
+      render: (r) => <PriorityBadge level={recallPriority(r)} /> },
     { key: "name", header: t("Ασθενής", "Patient"), render: (r) => r.name || r.amka || "—", sortValue: (r) => r.name || "" },
     { key: "available", header: t("Διαθέσιμες τώρα", "Available now"), align: "right", sortValue: (r) => r.available,
       render: (r) => r.available ? <span className="rounded-full bg-sky-100 px-2 py-0.5 text-xs font-semibold text-sky-700 dark:bg-sky-900/40 dark:text-sky-300">{r.available}</span> : <span className="text-slate-300">—</span> },
@@ -91,7 +99,7 @@ export function RecallSection() {
         </div>
       )}
 
-      <DataTable pageSize={15} columns={cols} rows={d.items} rowKey={(r) => r.patient_id}
+      <DataTable pageSize={15} columns={cols} rows={recallRows} rowKey={(r) => r.patient_id}
         onRowClick={(r) => setSel(r)}
         empty={t("Καμία εκκρεμή επανάληψη.", "No pending repeats.")} />
 

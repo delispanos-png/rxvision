@@ -9,6 +9,8 @@ import { useT } from "@/store/prefStore";
 import { fmtNum } from "@/lib/formatters";
 import { QueryState } from "@/components/ui/QueryState";
 import { DataTable, type Column } from "@/components/tables/DataTable";
+import { PriorityBadge } from "@/components/ui/PriorityBadge";
+import { vaccinationPriority } from "@/lib/priority";
 import { MultiSelect } from "@/components/filters/MultiSelect";
 
 type Row = {
@@ -75,9 +77,13 @@ export default function VaccinationTargetsPage() {
       key: "high_risk", header: t("Προτεραιότητα", "Priority"), sortable: false,
       render: (r) => {
         const reasons = r.priority_reasons || [];
-        const badge = r.high_risk
-          ? <span className="inline-flex items-center gap-1 rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-medium text-rose-700"><ShieldAlert className="h-3 w-3" />{t("Υψηλού κινδύνου", "High-risk")}</span>
-          : <span className="text-xs text-slate-400">{t("Κανονική", "Normal")}</span>;
+        // Κοινή κλίμακα με Ρίσκο/Recall/Συμμόρφωση — ίδιο χρώμα, ίδια σημασία παντού.
+        const badge = (
+          <span className="inline-flex items-center gap-1">
+            <PriorityBadge level={vaccinationPriority(r)} />
+            {r.high_risk && <ShieldAlert className="h-3 w-3 text-rose-500" aria-hidden />}
+          </span>
+        );
         if (!reasons.length) return badge;
         return (
           <div className="group relative inline-block cursor-help">

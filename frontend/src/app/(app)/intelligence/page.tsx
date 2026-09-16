@@ -11,6 +11,8 @@ import { api } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
 import { fmtNum, fmtEur } from "@/lib/formatters";
 import { KpiCard } from "@/components/kpi/KpiCard";
+import { PriorityDot } from "@/components/ui/PriorityBadge";
+import { winbackPriority } from "@/lib/priority";
 import { Tooltip } from "@/components/ui/Tooltip";
 
 type Kpi = { value: number; delta: number | null };
@@ -105,7 +107,10 @@ export default function IntelligenceDashboard() {
           <div className="space-y-2">
             {(data?.winback ?? []).map((b) => (
               <div key={b.bucket} className="flex items-center justify-between gap-3 rounded-lg bg-slate-50 px-3 py-2 dark:bg-slate-800/60">
-                <span className="text-sm font-medium text-slate-700 dark:text-slate-200">{b.bucket} {t("ημέρες", "days")}</span>
+                <span className="flex items-center gap-2 text-sm font-medium text-slate-700 dark:text-slate-200">
+                  <PriorityDot level={winbackPriority(b.bucket)} />
+                  {b.bucket} {t("ημέρες", "days")}
+                </span>
                 <span className="text-xs text-slate-500">{fmtNum(b.count)} {t("ασθενείς", "patients")}</span>
                 <span className="ml-auto text-sm font-bold text-emerald-600">{fmtEur(b.recoverable)}</span>
               </div>

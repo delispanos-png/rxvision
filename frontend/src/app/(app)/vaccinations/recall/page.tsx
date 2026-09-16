@@ -5,6 +5,8 @@ import { useQuery } from "@tanstack/react-query";
 import { Syringe, UserCheck, UserX, HeartCrack, Send, X, Search } from "lucide-react";
 import { api } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
+import { PriorityBadge } from "@/components/ui/PriorityBadge";
+import { vaccinationRecallPriority } from "@/lib/priority";
 import { fmtNum } from "@/lib/formatters";
 import { QueryState } from "@/components/ui/QueryState";
 import { KpiCard } from "@/components/kpi/KpiCard";
@@ -126,9 +128,16 @@ export default function VaccinationRecallPage() {
                       <td className="px-3 py-2 text-slate-600 dark:text-slate-300">{r.age_group}</td>
                       <td className="px-3 py-2 text-slate-600 dark:text-slate-300">{d(r.last_season_at)}</td>
                       <td className="px-3 py-2">
-                        {r.vaccinated
-                          ? <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-700 dark:bg-emerald-900/50 dark:text-emerald-300">✓ {d(r.vaccinated_at)}</span>
-                          : <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700 dark:bg-amber-900/50 dark:text-amber-300">{t("εκκρεμεί", "pending")}</span>}
+                        {/* Κοινή κλίμακα προτεραιότητας. Οι μη εν ζωή εξαιρούνται από κάθε
+                            ειδοποίηση, άρα δεν παίρνουν χρώμα επείγοντος. */}
+                        {r.deceased
+                          ? <span className="text-xs text-slate-400">—</span>
+                          : r.vaccinated
+                            ? <span className="inline-flex items-center gap-1.5">
+                                <PriorityBadge level={vaccinationRecallPriority({ came_this_season: true })} />
+                                <span className="text-[11px] text-slate-500">{d(r.vaccinated_at)}</span>
+                              </span>
+                            : <PriorityBadge level={vaccinationRecallPriority({ came_this_season: false })} />}
                       </td>
                       <td className="px-3 py-2 text-xs text-slate-500">
                         {r.has_contact
