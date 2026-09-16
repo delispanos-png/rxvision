@@ -238,7 +238,9 @@ class VaccineProgramRepository(BaseRepository):
         items, counts = [], {"covered": 0, "due_soon": 0, "expired": 0, "incomplete": 0}
         for r in rows:
             st, due_at = self._coverage(r.get("first_at"), repeat_years, notify_before, now,
-                                        int(r.get("doses") or 0), doses_required)
+                                        int(r.get("doses") or 0), doses_required,
+                                        last_at=r.get("last_at"),
+                                        dose_interval_days=program.get("dose_interval_days"))
             # Αν ο ασθενής θα έχει ΞΕΠΕΡΑΣΕΙ το ηλικιακό όριο όταν έρθει η αναμνηστική, δεν
             # υπάρχει επόμενη δόση να προτείνουμε — τον βγάζουμε από τη λίστα. ΕΞΑΙΡΕΣΗ: όποιος
             # δεν έχει ολοκληρώσει τη σειρά χρειάζεται δόση ΤΩΡΑ, άρα μένει.
@@ -264,16 +266,25 @@ class VaccineProgramRepository(BaseRepository):
         return {"items": items[skip:skip + limit], "total": total, "counts": counts}
 
     @staticmethod
-    def _coverage(first_at, repeat_years, notify_before_days, now, doses, doses_required):
+    def _coverage(first_at, repeat_years, notify_before_days, now, doses, doses_required,
+                  last_at=None, dose_interval_days=None):
         """Κατάσταση κάλυψης ενός ασθενή + πότε οφείλεται η επόμενη δόση.
 
         Ο κύκλος μετράει από την ΠΡΩΤΗ δόση (όχι την τελευταία): σε πενταετή σχήματα η επόμενη
         αναμνηστική οφείλεται 5 έτη μετά την έναρξη του κύκλου, ανεξάρτητα από το πότε έγινε η
         δεύτερη δόση της σειράς.
 
-        incomplete = ξεκίνησε τη σειρά αλλά δεν την ολοκλήρωσε (π.χ. 1 από 2 δόσεις Shingrix)
-        covered / due_soon / expired = με βάση την αναμνηστική· χωρίς repeat_years δεν λήγει ποτέ."""
+        ΔΥΟ ΔΙΑΦΟΡΕΤΙΚΕΣ «επόμενες δόσεις»:
+          • incomplete → η επόμενη δόση ΤΗΣ ΣΕΙΡΑΣ (τελευταία + dose_interval_days)
+          • covered    → η ΑΝΑΜΝΗΣΤΙΚΗ (πρώτη + repeat_years)
+
+        Αν το εμβόλιο ΔΕΝ επαναλαμβάνεται (repeat_years κενό — π.χ. Shingrix), όποιος
+        ολοκλήρωσε τη σειρά ΔΕΝ έχει επόμενη δόση: η ημερομηνία μένει κενή."""
         if doses < doses_required:
+            # Η επόμενη δόση ΤΗΣ ΣΕΙΡΑΣ οφείλεται μετά το μεσοδιάστημα δόσεων — αν δεν έχει
+            # οριστεί, δεν επινοούμε ημερομηνία.
+            if last_at and dose_interval_days:
+                return "incomplete", last_at + timedelta(days=int(dose_interval_days))
             return "incomplete", None
         if not repeat_years or not first_at:
             return "covered", None

@@ -124,8 +124,8 @@ function Inner() {
       </div>
 
       <p className="text-xs text-slate-400">
-        {t("«Δεν ολοκλήρωσαν τις δόσεις» = ξεκίνησαν τη σειρά αλλά λείπει δόση. «Θέλουν αναμνηστική» = πέρασε το διάστημα επανάληψης που όρισες.",
-           "«Incomplete doses» = started the series but a dose is missing. «Booster overdue» = the repeat interval you set has passed.")}
+        {t("«Δεν ολοκλήρωσαν τις δόσεις» = ξεκίνησαν τη σειρά αλλά λείπει δόση· η στήλη «Επόμενη» δείχνει πότε οφείλεται. Όσοι ολοκλήρωσαν έχουν ημερομηνία ΜΟΝΟ αν το εμβόλιο επαναλαμβάνεται (αναμνηστική).",
+           "«Incomplete doses» = the series was started but a dose is missing; «Next» shows when it is due. Those who completed it get a date only if the vaccine repeats.")}
       </p>
 
       <div className="rx-card overflow-hidden">
@@ -174,7 +174,13 @@ function Inner() {
                       {r.doses}{r.doses_required > 1 ? ` / ${r.doses_required}` : ""}
                     </td>
                     <td className="px-4 py-2.5 text-slate-600 dark:text-slate-300">
-                      {r.due_at ? new Date(r.due_at).toLocaleDateString("el-GR") : "—"}
+                      {r.due_at ? (
+                        <Tooltip label={r.status === "incomplete"
+                          ? t("Επόμενη δόση της σειράς", "Next dose in the series")
+                          : t("Αναμνηστική δόση", "Booster dose")}>
+                          <span>{new Date(r.due_at).toLocaleDateString("el-GR")}</span>
+                        </Tooltip>
+                      ) : <span className="text-slate-400">—</span>}
                     </td>
                     <td className="px-4 py-2.5">
                       <Tooltip label={t(STATUS_EL[r.status][0], STATUS_EL[r.status][1])}>
