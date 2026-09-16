@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus, Pencil, Trash2, Syringe } from "lucide-react";
+import { Plus, Pencil, Trash2, Syringe, Lock } from "lucide-react";
 import { api } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
 import { appConfirm } from "@/store/dialogStore";
@@ -10,6 +10,7 @@ import { Modal } from "@/components/ui/Modal";
 import { Tooltip } from "@/components/ui/Tooltip";
 
 type Group = { atc: string; label: string; count: number; examples: string[] };
+type Product = { eof_code: string; name: string; atc: string; barcode: string };
 type Program = {
   _id: string; name: string; atc_prefixes: string[]; eof_codes: string[];
   doses_required: number | null; dose_interval_days: number | null;
@@ -154,7 +155,27 @@ function Editor({ value, groups, error, saving, onCancel, onSave }: {
   const [v, setV] = useState(value);
   const set = (patch: Partial<Draft>) => setV({ ...v, ...patch });
   const toggleAtc = (atc: string) =>
-    set({ atc_prefixes: v.atc_prefixes.includes(atc) ? v.atc_prefixes.filter((x) => x !== atc) : [...v.atc_prefixes, atc] });
+    set({ atc_prefixes: v.atc_prefixes.includes(atc) ? v.atc_prefixes.filter((x) => x !== atc) : [...v.atc_prefixes, atc],
+          eof_codes: [] });   // αλλαγή ομάδας → οι παλιές επιλογές σκευασμάτων δεν ισχύουν
+  const toggleCode = (code: string) =>
+    set({ eof_codes: v.eof_codes.includes(code) ? v.eof_codes.filter((x) => x !== code) : [...v.eof_codes, code] });
+
+  // Τα σκευάσματα των επιλεγμένων ομάδων — ο φαρμακοποιός μπορεί να στοχεύσει συγκεκριμένα
+  // (π.χ. στον πνευμονιόκοκκο δίνεται άλλο σκεύασμα ανά ηλικία).
+  const [prodTerm, setProdTerm] = useState("");
+  // Σκευάσματα προς επιλογή: των ομάδων που διάλεξε, ή ΟΛΑ τα εμβόλια όταν ψάχνει ελεύθερα.
+  // Δεν περιορίζουμε εμείς τι «ταιριάζει» σε κάθε εμβολιασμό — δεν το γνωρίζουμε.
+  const { data: prods } = useQuery({
+    queryKey: ["vaccine-products", v.atc_prefixes, prodTerm],
+    queryFn: async () => {
+      if (prodTerm.trim())
+        return (await api<{ items: Product[] }>(`/vaccine-programs/catalog/products?q=${encodeURIComponent(prodTerm.trim())}`)).items;
+      const all = await Promise.all(v.atc_prefixes.map((a) =>
+        api<{ items: Product[] }>(`/vaccine-programs/catalog/products?atc=${encodeURIComponent(a)}`)));
+      return all.flatMap((x) => x.items);
+    },
+    enabled: v.atc_prefixes.length > 0 || prodTerm.trim().length > 1,
+  });
 
   return (
     <Modal open onClose={onCancel} size="lg"
@@ -176,20 +197,69 @@ function Editor({ value, groups, error, saving, onCancel, onSave }: {
             placeholder={t("π.χ. Έρπης ζωστήρας", "e.g. Herpes zoster")} className="block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-800" />
         </Field>
 
-        <Field label={t("Ποια εμβόλια παρακολουθώ", "Which vaccines to watch")}
-          hint={t("Επίλεξε ομάδα — περιλαμβάνει όλα τα σκευάσματά της.", "Pick a group — it includes all its products.")}>
-          <div className="grid max-h-56 gap-1.5 overflow-y-auto rounded-lg border border-slate-200 p-2 dark:border-slate-700 sm:grid-cols-2">
-            {groups.map((g) => (
-              <label key={g.atc} className="flex cursor-pointer items-start gap-2 rounded px-2 py-1.5 text-sm hover:bg-slate-50 dark:hover:bg-slate-800">
-                <input type="checkbox" checked={v.atc_prefixes.includes(g.atc)} onChange={() => toggleAtc(g.atc)} className="mt-0.5" />
-                <span className="min-w-0">
-                  <span className="block truncate font-medium text-slate-700 dark:text-slate-200">{g.label}</span>
-                  <span className="block truncate text-[11px] text-slate-400">{g.atc} · {g.count} {t("σκευάσματα", "products")}</span>
-                </span>
-              </label>
-            ))}
-          </div>
-        </Field>
+        {/* Σε ΕΠΕΞΕΡΓΑΣΙΑ το εμβόλιο κλειδώνει: αλλαγή του θα άλλαζε αναδρομικά ποιοι ασθενείς
+            ανήκουν στο πρόγραμμα και τι σημαίνει το ιστορικό τους. Θέλεις άλλο εμβόλιο → νέο πρόγραμμα. */}
+        {v._id ? (
+          <Field label={t("Εμβόλιο προγράμματος", "Programme vaccine")}
+            hint={t("Το εμβόλιο δεν αλλάζει μετά τη δημιουργία — για άλλο εμβόλιο φτιάξε νέο πρόγραμμα.",
+                    "The vaccine cannot change after creation — create a new programme for a different one.")}>
+            <div className="flex flex-wrap gap-1.5 rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800/60">
+              {v.atc_prefixes.length ? v.atc_prefixes.map((a) => {
+                const g = groups.find((x) => x.atc === a);
+                return (
+                  <span key={a} className="inline-flex items-center gap-1.5 rounded-full bg-white px-2.5 py-1 text-sm font-medium text-slate-700 shadow-sm dark:bg-slate-900 dark:text-slate-200">
+                    <Lock className="h-3 w-3 text-slate-400" />
+                    {g?.label ?? a}
+                    <span className="text-[11px] text-slate-400">{a}</span>
+                  </span>
+                );
+              }) : <span className="text-sm text-slate-400">{t("Μεμονωμένα σκευάσματα", "Individual products")}</span>}
+            </div>
+          </Field>
+        ) : (
+          <Field label={t("Ποια εμβόλια παρακολουθώ", "Which vaccines to watch")}
+            hint={t("Επίλεξε ομάδα — περιλαμβάνει όλα τα σκευάσματά της. Δεν αλλάζει μετά τη δημιουργία.",
+                    "Pick a group — it includes all its products. Cannot be changed later.")}>
+            <div className="grid max-h-56 gap-1.5 overflow-y-auto rounded-lg border border-slate-200 p-2 dark:border-slate-700 sm:grid-cols-2">
+              {groups.map((g) => (
+                <label key={g.atc} className="flex cursor-pointer items-start gap-2 rounded px-2 py-1.5 text-sm hover:bg-slate-50 dark:hover:bg-slate-800">
+                  <input type="checkbox" checked={v.atc_prefixes.includes(g.atc)} onChange={() => toggleAtc(g.atc)} className="mt-0.5" />
+                  <span className="min-w-0">
+                    <span className="block truncate font-medium text-slate-700 dark:text-slate-200">{g.label}</span>
+                    <span className="block truncate text-[11px] text-slate-400">{g.atc} · {g.count} {t("σκευάσματα", "products")}</span>
+                  </span>
+                </label>
+              ))}
+            </div>
+          </Field>
+        )}
+
+        {(!!prods?.length || !!v.atc_prefixes.length) && (
+          <Field label={t("Ποια σκευάσματα δίνεις", "Which products you dispense")}
+            hint={t("Εσύ ορίζεις ποια σκευάσματα ανήκουν σε αυτόν τον εμβολιασμό — άφησέ τα ξεμαρκάριστα για όλη την ομάδα. Ψάξε με το εμπορικό όνομα για να βρεις οποιοδήποτε εμβόλιο του καταλόγου.",
+                    "You define which products belong to this vaccination — leave unchecked for the whole group. Search by brand name to find any vaccine in the catalogue.")}>
+            <input value={prodTerm} onChange={(e) => setProdTerm(e.target.value)}
+              placeholder={t("αναζήτηση σκευάσματος (π.χ. PREVENAR)…", "search product (e.g. PREVENAR)…")}
+              className="mb-1.5 block w-full rounded-lg border border-slate-300 px-3 py-1.5 text-sm dark:border-slate-600 dark:bg-slate-800" />
+            <div className="grid max-h-44 gap-1 overflow-y-auto rounded-lg border border-slate-200 p-2 dark:border-slate-700 sm:grid-cols-2">
+              {(prods ?? []).map((pr) => (
+                <label key={pr.eof_code} className="flex cursor-pointer items-center gap-2 rounded px-2 py-1 text-sm hover:bg-slate-50 dark:hover:bg-slate-800">
+                  <input type="checkbox" checked={v.eof_codes.includes(pr.eof_code)} onChange={() => toggleCode(pr.eof_code)} />
+                  <span className="min-w-0 truncate">
+                    <span className="font-medium text-slate-700 dark:text-slate-200">{pr.name}</span>
+                    <span className="ml-1.5 text-[11px] text-slate-400">{pr.atc}</span>
+                  </span>
+                </label>
+              ))}
+            </div>
+            {!!v.eof_codes.length && (
+              <p className="mt-1 text-xs text-sky-600 dark:text-sky-400">
+                {t(`Επιλεγμένα ${v.eof_codes.length} σκευάσματα — μόνο αυτά θα παρακολουθούνται.`,
+                   `${v.eof_codes.length} products selected — only these will be tracked.`)}
+              </p>
+            )}
+          </Field>
+        )}
 
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label={t("Δόσεις σειράς", "Doses in series")}

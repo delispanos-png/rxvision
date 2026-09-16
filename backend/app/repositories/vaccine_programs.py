@@ -26,8 +26,10 @@ from app.core.db import shared_db
 from app.repositories.base import BaseRepository, jsonsafe
 from app.utils.masking import mask_amka, mask_name
 
-# Human labels for the vaccine ATC groups actually present in the ΗΔΥΚΑ catalogue.
-# Anything not listed still works — it just shows its raw ATC code.
+# Ονόματα των ATC ομάδων — ΟΥΔΕΤΕΡΗ περιγραφή του διεθνούς προτύπου ATC (WHO), όχι σύσταση
+# χρήσης. ΔΕΝ γνωρίζουμε ποια σκευάσματα εγκρίνονται/συνιστώνται στην ελληνική αγορά για κάθε
+# εμβολιαστική κατηγορία — αυτό το ξέρει ο φαρμακοποιός και το ορίζει ο ίδιος.
+# Χρησιμεύουν μόνο για να αναγνωρίζει τι βλέπει· η επιλογή είναι πάντα δική του.
 ATC_GROUP_LABELS: dict[str, str] = {
     "J07AG": "Αιμόφιλος ινφλουέντζας b",
     "J07AH": "Μηνιγγιτιδόκοκκος",
@@ -49,8 +51,8 @@ ATC_GROUP_LABELS: dict[str, str] = {
 # ο έρπης ζωστήρας (ενήλικες 60+) και η ανεμευλογιά (παιδικό) — χωρίς διαχωρισμό η λίστα του
 # ζωστήρα γέμιζε παιδιά.
 ATC_EXACT_LABELS: dict[str, str] = {
-    "J07BK01": "Ανεμευλογιά (παιδικό)",
-    "J07BK02": "Έρπης ζωστήρας (ζωντανό)",
+    "J07BK01": "Ανεμευλογιά",
+    "J07BK02": "Έρπης ζωστήρας (ζωντανό εξασθενημένο)",
     "J07BK03": "Έρπης ζωστήρας (ανασυνδυασμένο)",
 }
 
@@ -131,6 +133,11 @@ class VaccineProgramRepository(BaseRepository):
             oid = _oid(program_id)
             if not oid:
                 raise ValueError("not_found")
+            # ΤΟ ΕΜΒΟΛΙΟ ΔΕΝ ΑΛΛΑΖΕΙ ΜΕΤΑ ΤΗ ΔΗΜΙΟΥΡΓΙΑ. Αλλαγή του θα άλλαζε αναδρομικά ποιοι
+            # ασθενείς ανήκουν στο πρόγραμμα και τι σημαίνει το ιστορικό τους — για άλλο εμβόλιο
+            # φτιάχνεται νέο πρόγραμμα. Το UI το κλειδώνει· εδώ επιβάλλεται.
+            clean.pop("atc_prefixes", None)
+            clean.pop("eof_codes", None)
             await self.update_one({"_id": oid}, {"$set": clean})
             return await self.find_one({"_id": oid}) or {}
         clean["created_at"] = _now()
@@ -149,6 +156,11 @@ class VaccineProgramRepository(BaseRepository):
 
         This is what the ingestion hook matches against, so it must be cheap and exact."""
         codes: set[str] = {str(c) for c in (program.get("eof_codes") or []) if c}
+        # ΣΥΓΚΕΚΡΙΜΕΝΑ ΣΚΕΥΑΣΜΑΤΑ ΥΠΕΡΙΣΧΥΟΥΝ της ομάδας: στον πνευμονιόκοκκο π.χ. δίνεται άλλο
+        # σκεύασμα ανά ηλικία (PNEUMOVAX 23 vs PREVENAR 20 vs SYNFLORIX παιδικό), οπότε όποιος
+        # διάλεξε ρητά σκευάσματα ΔΕΝ θέλει όλη την ομάδα από πάνω.
+        if codes:
+            return codes
         prefixes = [p for p in (program.get("atc_prefixes") or []) if p]
         if prefixes:
             rx = "|".join(f"^{re.escape(p)}" for p in prefixes)
