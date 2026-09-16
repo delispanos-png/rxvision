@@ -66,6 +66,33 @@ async def _addon_card(key: str | None) -> dict | None:
 
 
 # ── στόχευση ────────────────────────────────────────────────────────────────────────────────
+async def explain(ann: dict, tenant: dict, sub: dict, modules: dict) -> str | None:
+    """ΓΙΑΤΙ δεν θα το δει αυτό το φαρμακείο — ή None αν θα το δει.
+
+    Υπάρχει για έναν λόγο: «το ενεργοποίησα και δεν το είδα» δεν πρέπει να λύνεται με μαντεψιά.
+    """
+    aud = ann.get("audience") or {}
+    if not ann.get("active"):
+        return "η ανακοίνωση δεν είναι ενεργή"
+    now = _now()
+    if ann.get("from") and ann["from"].replace(tzinfo=timezone.utc) > now:
+        return "δεν έχει ξεκινήσει ακόμη"
+    if ann.get("to") and ann["to"].replace(tzinfo=timezone.utc) < now:
+        return "έχει λήξει"
+    allowed = aud.get("status") or ["active"]
+    if tenant.get("status") not in allowed:
+        return f"το φαρμακείο είναι «{tenant.get('status')}» — στέλνουμε μόνο σε {', '.join(allowed)}"
+    mode = aud.get("mode") or "all"
+    if mode == "tenants" and tenant["_id"] not in (aud.get("tenant_ids") or []):
+        return "δεν είναι στη λίστα φαρμακείων που επέλεξες"
+    if mode == "packages" and sub.get("plan") not in (aud.get("packages") or []):
+        return f"το πακέτο του («{sub.get('plan')}») δεν είναι στα επιλεγμένα"
+    key = ann.get("addon_key")
+    if key and aud.get("exclude_with_addon", True) and modules.get(key) in ("enabled", "trial"):
+        return "το έχει ήδη ενεργό"
+    return None
+
+
 async def _matches(ann: dict, tenant: dict, sub: dict, modules: dict) -> bool:
     aud = ann.get("audience") or {}
     # ΠΡΟΕΠΙΛΟΓΗ: ΜΟΝΟ ενεργοί συνδρομητές. Ο δοκιμαστικός αξιολογεί ακόμη το βασικό προϊόν —
@@ -270,6 +297,30 @@ async def delete(ann_id: str) -> dict:
     await db["announcements"].delete_one({"_id": oid})
     await db["announcement_events"].delete_many({"announcement_id": oid})
     return {"ok": True}
+
+
+async def audience_check(ann_id: str) -> list[dict]:
+    """Ανά φαρμακείο: θα το δει ή όχι, και ΓΙΑΤΙ. Συν το τι έχει ήδη γίνει ανά φαρμακείο."""
+    db = shared_db()
+    aid = _oid(ann_id)
+    ann = await db["announcements"].find_one({"_id": aid}) if aid else None
+    if not ann:
+        return []
+    from app.services.auth_service import resolve_tenant_modules
+    out: list[dict] = []
+    async for t in db["tenants"].find({"status": {"$in": ["active", "trial"]}},
+                                      {"name": 1, "status": 1}):
+        sub = await db["subscriptions"].find_one({"tenant_id": t["_id"]}, {"plan": 1}) or {}
+        why = await explain(ann, t, sub, await resolve_tenant_modules(t["_id"]))
+        seen = await db["announcement_events"].count_documents(
+            {"announcement_id": aid, "tenant_id": t["_id"]})
+        acted = await db["announcement_events"].count_documents(
+            {"announcement_id": aid, "tenant_id": t["_id"], "final": True})
+        out.append({"tenant_id": t["_id"], "name": t.get("name"), "status": t.get("status"),
+                    "plan": sub.get("plan"), "will_show": why is None, "reason": why,
+                    "seen": seen, "answered": acted})
+    out.sort(key=lambda r: (not r["will_show"], r["name"] or ""))
+    return out
 
 
 async def requests(status: str = "new") -> list[dict]:

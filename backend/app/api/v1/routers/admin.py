@@ -3630,6 +3630,13 @@ async def delete_announcement(ann_id: str, _: PlatformContext = Depends(enforce_
     return await svc.delete(ann_id)
 
 
+@router.get("/announcements/{ann_id}/audience")
+async def announcement_audience(ann_id: str, _: PlatformContext = Depends(enforce_section)):
+    """Ανά φαρμακείο: θα το δει; αν όχι, γιατί; — ώστε το «δεν το είδα» να μη λύνεται με μαντεψιά."""
+    from app.services import announcements as svc
+    return {"items": await svc.audience_check(ann_id)}
+
+
 @router.get("/announcement-requests")
 async def list_announcement_requests(status: str = "new",
                                      _: PlatformContext = Depends(enforce_section)):

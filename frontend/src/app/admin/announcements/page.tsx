@@ -4,13 +4,14 @@ import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Megaphone, Plus, Save, Trash2, Users, PlayCircle, CalendarClock, Check, Eye, Inbox, Phone, Mail } from "lucide-react";
 import { adminApi } from "@/lib/adminClient";
+import { AnnouncementCard } from "@/components/layout/AnnouncementPopup";
 import { appConfirm, appAlert, appPrompt } from "@/store/dialogStore";
 
 type Addon = { _id: string; name?: string; icon?: string; description?: string; price_monthly?: number; active?: boolean };
 type Pkg = { _id: string; name?: string };
 type Tenant = { _id: string; name?: string; status?: string };
 type Ann = {
-  _id: string; title: string; body?: string; addon_key?: string | null; kind?: string;
+  _id: string; title: string; addon?: { key: string; name: string; icon?: string; description?: string; price_monthly?: number; features?: string[] } | null; body?: string; addon_key?: string | null; kind?: string;
   cta?: { trial?: boolean; demo?: boolean; info_href?: string | null };
   audience?: { mode?: string; tenant_ids?: string[]; packages?: string[]; status?: string[]; exclude_with_addon?: boolean };
   from?: string | null; to?: string | null; frequency?: string; priority?: number; active?: boolean;
@@ -35,10 +36,46 @@ const EMPTY: Ann = {
 };
 const dt = (s?: string | null) => (s ? new Date(s).toLocaleString("el-GR", { day: "2-digit", month: "2-digit", year: "2-digit", hour: "2-digit", minute: "2-digit" }) : "—");
 
+function AudienceModal({ ann, onClose }: { ann: Ann; onClose: () => void }) {
+  type Row = { tenant_id: string; name?: string; status?: string; plan?: string; will_show: boolean; reason?: string | null; seen: number; answered: number };
+  const q = useQuery({
+    queryKey: ["admin", "ann-audience", ann._id],
+    queryFn: () => adminApi<{ items: Row[] }>(`/admin/announcements/${ann._id}/audience`),
+  });
+  const rows = q.data?.items ?? [];
+  const yes = rows.filter((r) => r.will_show).length;
+  return (
+    <div className="fixed inset-0 z-[80] grid place-items-center bg-slate-900/50 p-4" onClick={onClose}>
+      <div onClick={(e) => e.stopPropagation()} className="max-h-[80vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white p-5 shadow-2xl">
+        <h3 className="text-base font-bold text-slate-900">Ποιος θα δει «{ann.title}»</h3>
+        <p className="mt-0.5 text-xs text-slate-500">{yes} από {rows.length} φαρμακεία. Για τα υπόλοιπα φαίνεται ο ακριβής λόγος.</p>
+        <div className="mt-3 divide-y divide-slate-100">
+          {rows.map((r) => (
+            <div key={r.tenant_id} className="flex flex-wrap items-center gap-2 py-2 text-sm">
+              <span className={`h-2 w-2 shrink-0 rounded-full ${r.will_show ? "bg-emerald-500" : "bg-slate-300"}`} />
+              <span className="font-medium text-slate-800">{r.name}</span>
+              <span className="text-[11px] text-slate-400">[{r.status} · {r.plan}]</span>
+              {r.will_show
+                ? <span className="ml-auto text-xs font-semibold text-emerald-600">θα το δει</span>
+                : <span className="ml-auto text-xs text-slate-400">{r.reason}</span>}
+              {r.answered > 0 && <span className="rounded-full bg-indigo-50 px-1.5 text-[10px] font-bold text-indigo-600">απάντησε</span>}
+            </div>
+          ))}
+          {!q.isLoading && !rows.length && <p className="py-6 text-center text-sm text-slate-400">—</p>}
+        </div>
+        <button onClick={onClose} className="mt-4 rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white">Κλείσιμο</button>
+      </div>
+    </div>
+  );
+}
+
 export default function AnnouncementsAdminPage() {
   const qc = useQueryClient();
   const [tab, setTab] = useState<"list" | "requests">("list");
   const [draft, setDraft] = useState<Ann | null>(null);
+  const [preview, setPreview] = useState<Ann | null>(null);   // ΤΟ ΙΔΙΟ παράθυρο που θα δει ο πελάτης
+  const [audOf, setAudOf] = useState<Ann | null>(null);       // «ποιος θα το δει και γιατί όχι»
+  const [prevNote, setPrevNote] = useState("");
 
   const anns = useQuery({ queryKey: ["admin", "announcements"], queryFn: () => adminApi<{ items: Ann[] }>("/admin/announcements") });
   const addons = useQuery({ queryKey: ["admin", "addons"], queryFn: () => adminApi<{ items: Addon[] }>("/admin/addons") });
@@ -98,6 +135,12 @@ export default function AnnouncementsAdminPage() {
   }
 
   const newCount = reqs.data?.items.length ?? 0;
+  // Η προεπισκόπηση δανείζεται τα στοιχεία του add-on ακριβώς όπως κάνει το ζωντανό pop-up.
+  const withAddon = (a: Ann | null): Ann | null => {
+    if (!a) return null;
+    const ad = addons.data?.items.find((x) => x._id === a.addon_key);
+    return { ...a, addon: ad ? { key: ad._id, name: ad.name ?? "", icon: ad.icon, description: ad.description, price_monthly: ad.price_monthly, features: (ad as { features?: string[] }).features } : null };
+  };
 
   return (
     <div className="w-full space-y-5">
@@ -126,6 +169,26 @@ export default function AnnouncementsAdminPage() {
 
           {draft && (
             <div className="space-y-4 rounded-2xl border border-indigo-200 bg-indigo-50/40 p-5">
+              {/* Το «ενεργή» ήταν ένα checkbox χαμένο σε σειρά με άλλα τέσσερα — και μια ανακοίνωση
+                  που δεν είναι ενεργή δεν τη βλέπει ΚΑΝΕΙΣ. Τώρα είναι το πρώτο πράγμα που βλέπεις. */}
+              <button onClick={() => set({ active: !draft.active })}
+                className={`flex w-full items-center gap-3 rounded-xl border px-4 py-3 text-left transition ${
+                  draft.active ? "border-emerald-300 bg-emerald-50" : "border-amber-300 bg-amber-50"}`}>
+                <span className={`relative h-6 w-11 shrink-0 rounded-full ${draft.active ? "bg-emerald-600" : "bg-slate-300"}`}>
+                  <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all ${draft.active ? "left-[22px]" : "left-0.5"}`} />
+                </span>
+                <span className="min-w-0">
+                  <span className={`block text-sm font-bold ${draft.active ? "text-emerald-800" : "text-amber-800"}`}>
+                    {draft.active ? "ΕΝΕΡΓΗ — θα εμφανιστεί στους πελάτες" : "ΠΡΟΧΕΙΡΟ — δεν τη βλέπει κανείς"}
+                  </span>
+                  <span className="block text-xs text-slate-500">
+                    {draft.active
+                      ? "Πάτησε «Αποθήκευση» για να ισχύσει."
+                      : "Άνοιξε τον διακόπτη και αποθήκευσε, αλλιώς δεν θα εμφανιστεί πουθενά."}
+                  </span>
+                </span>
+              </button>
+
               <div className="grid gap-3 md:grid-cols-2">
                 <label className="text-xs font-semibold text-slate-600">Σχετική δυνατότητα (add-on)
                   <select value={draft.addon_key ?? ""} onChange={(e) => pickAddon(e.target.value)} className={inp + " mt-1"}>
@@ -194,11 +257,11 @@ export default function AnnouncementsAdminPage() {
                 <label className="inline-flex items-center gap-1.5"><input type="checkbox" checked={draft.cta?.trial !== false} onChange={(e) => setCta({ trial: e.target.checked })} />Κουμπί «Θέλω να το δοκιμάσω»</label>
                 <label className="inline-flex items-center gap-1.5"><input type="checkbox" checked={draft.cta?.demo !== false} onChange={(e) => setCta({ demo: e.target.checked })} />Κουμπί «Δείξτε μου το»</label>
                 <label className="inline-flex items-center gap-1.5"><input type="checkbox" checked={draft.audience?.exclude_with_addon !== false} onChange={(e) => setAud({ exclude_with_addon: e.target.checked })} />Όχι σε όσους το έχουν ήδη</label>
-                <label className="inline-flex items-center gap-1.5"><input type="checkbox" checked={!!draft.active} onChange={(e) => set({ active: e.target.checked })} />Ενεργή</label>
               </div>
 
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2">
                 <button onClick={save} className="inline-flex items-center gap-1.5 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700"><Save className="h-4 w-4" />Αποθήκευση</button>
+                <button onClick={() => setPreview(withAddon(draft))} className="inline-flex items-center gap-1.5 rounded-xl border border-indigo-300 bg-white px-4 py-2 text-sm font-semibold text-indigo-700 hover:bg-indigo-50"><Eye className="h-4 w-4" />Δες πώς θα φανεί</button>
                 <button onClick={() => setDraft(null)} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-600">Άκυρο</button>
               </div>
             </div>
@@ -210,7 +273,7 @@ export default function AnnouncementsAdminPage() {
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="font-semibold text-slate-800">{a.title}</span>
-                    <span className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${a.active ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-500"}`}>{a.active ? "Ενεργή" : "Ανενεργή"}</span>
+                    <span className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${a.active ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>{a.active ? "Ενεργή" : "ΠΡΟΧΕΙΡΟ — δεν τη βλέπει κανείς"}</span>
                     <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-600"><Users className="h-3 w-3" />{a.reach ?? 0} φαρμακεία</span>
                     <span className="text-[11px] text-slate-400">{FREQ[a.frequency ?? "once"]}</span>
                   </div>
@@ -221,6 +284,8 @@ export default function AnnouncementsAdminPage() {
                     <span>{a.stats?.never ?? 0} «μη ξαναδείξεις»</span>
                   </div>
                 </div>
+                <button onClick={() => setPreview(withAddon({ ...EMPTY, ...a }))} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50">Προεπισκόπηση</button>
+                <button onClick={() => setAudOf(a)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50">Ποιος θα το δει</button>
                 <button onClick={() => setDraft({ ...EMPTY, ...a })} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50">Επεξεργασία</button>
                 <button onClick={() => remove(a)} className="grid h-8 w-8 place-items-center rounded-lg text-slate-400 hover:bg-rose-50 hover:text-rose-600"><Trash2 className="h-4 w-4" /></button>
               </div>
@@ -231,6 +296,18 @@ export default function AnnouncementsAdminPage() {
           </div>
         </>
       )}
+
+      {preview && (
+        <div className="fixed inset-0 z-[80] grid place-items-center bg-slate-900/50 p-4 backdrop-blur-sm" onClick={() => setPreview(null)}>
+          <div onClick={(e) => e.stopPropagation()} className="w-full max-w-lg">
+            <p className="mb-2 text-center text-xs font-semibold text-white/90">Έτσι ακριβώς θα το δει ο πελάτης — τα κουμπιά εδώ δεν κάνουν τίποτα.</p>
+            <AnnouncementCard ann={preview} done={null} note={prevNote} setNote={setPrevNote}
+              onClose={() => setPreview(null)} onAction={() => { /* προεπισκόπηση */ }} />
+          </div>
+        </div>
+      )}
+
+      {audOf && <AudienceModal ann={audOf} onClose={() => setAudOf(null)} />}
 
       {tab === "requests" && (
         <div className="space-y-2.5">
