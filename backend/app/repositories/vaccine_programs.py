@@ -17,10 +17,11 @@ Design notes:
 from __future__ import annotations
 
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from app.core.db import shared_db
 from app.repositories.base import BaseRepository, jsonsafe
+from app.utils.masking import mask_amka, mask_name
 
 # Human labels for the vaccine ATC groups actually present in the ΗΔΥΚΑ catalogue.
 # Anything not listed still works — it just shows its raw ATC code.
@@ -127,6 +128,87 @@ class VaccineProgramRepository(BaseRepository):
             for code in await self.resolve_codes(p):
                 table[code] = str(p["_id"])
         return table
+
+    # ── λίστα ασφαλισμένων ανά πρόγραμμα ─────────────────────────────────────────────────────
+    async def patients_for(self, program: dict, *, status: str = "all",
+                           q: str | None = None, limit: int = 200, skip: int = 0) -> dict:
+        """Ποιοι ασφαλισμένοι «ανήκουν» σε ένα πρόγραμμα: όσοι έχουν λάβει κάποιο από τα
+        παρακολουθούμενα σκευάσματα, με την κατάσταση της κάλυψής τους.
+
+        Πηγή = οι ΕΚΤΕΛΕΣΜΕΝΕΣ συνταγές που ήδη έχουμε στη βάση (καμία κλήση ΗΔΥΚΑ). Οι θανόντες
+        ΔΕΝ εμφανίζονται ποτέ — είναι λίστα που καταλήγει σε επικοινωνία."""
+        codes = await self.resolve_codes(program)
+        if not codes:
+            return {"items": [], "total": 0, "counts": {}}
+
+        repeat_years = program.get("repeat_years")
+        doses_required = int(program.get("doses_required") or 1)
+        notify_before = int(program.get("notify_before_days") or 30)
+        now = datetime.now(tz=timezone.utc)
+
+        pipeline: list[dict] = [
+            {"$match": {"tenant_id": self.tenant_id, "details.eof_code": {"$in": sorted(codes)},
+                        "is_executed": {"$ne": False}}},
+            # item → εκτέλεση (εκεί ζει ο ασθενής)
+            {"$lookup": {"from": "prescription_executions", "localField": "execution_id",
+                         "foreignField": "_id", "as": "ex"}},
+            {"$set": {"patient": {"$first": "$ex.patient_ref"}}},
+            {"$match": {"patient": {"$ne": None}}},
+            {"$group": {"_id": "$patient",
+                        "last_at": {"$max": "$executed_at"},
+                        "first_at": {"$min": "$executed_at"},
+                        "doses": {"$sum": 1},
+                        "names": {"$addToSet": "$details.eof_code"}}},
+            # ασθενής → όνομα/ΑΜΚΑ/ηλικία (+ θανών)
+            {"$lookup": {"from": "patients_anonymized", "localField": "_id",
+                         "foreignField": "_id", "as": "p"}},
+            {"$set": {"name": {"$first": "$p.full_name"}, "amka": {"$first": "$p.amka"},
+                      "age_group": {"$first": "$p.age_group"},
+                      "deceased": {"$first": "$p.deceased"}}},
+            {"$match": {"deceased": {"$ne": True}}},     # ΠΟΤΕ θανόντες σε λίστα επικοινωνίας
+        ]
+        if q and q.strip():
+            rx = re.escape(q.strip())
+            pipeline.append({"$match": {"$or": [{"name": {"$regex": rx, "$options": "i"}},
+                                                {"amka": {"$regex": rx}}]}})
+        pipeline.append({"$sort": {"last_at": -1}})
+        rows = await self._db["prescription_items"].aggregate(pipeline).to_list(length=None)
+
+        items, counts = [], {"covered": 0, "due_soon": 0, "expired": 0, "incomplete": 0}
+        for r in rows:
+            st, due_at = self._coverage(r.get("last_at"), repeat_years, notify_before, now,
+                                        int(r.get("doses") or 0), doses_required)
+            counts[st] = counts.get(st, 0) + 1
+            items.append({
+                "patient_id": str(r["_id"]),
+                "name": mask_name(r.get("name"), self.demo) or "—",
+                "amka": mask_amka(r.get("amka"), self.demo),
+                "age_group": r.get("age_group"),
+                "last_at": r.get("last_at"), "first_at": r.get("first_at"),
+                "doses": int(r.get("doses") or 0), "doses_required": doses_required,
+                "status": st, "due_at": due_at,
+            })
+        if status != "all":
+            items = [i for i in items if i["status"] == status]
+        total = len(items)
+        return {"items": items[skip:skip + limit], "total": total, "counts": counts}
+
+    @staticmethod
+    def _coverage(last_at, repeat_years, notify_before_days, now, doses, doses_required):
+        """Κατάσταση κάλυψης ενός ασθενή + πότε λήγει.
+
+        incomplete = ξεκίνησε τη σειρά αλλά δεν την ολοκλήρωσε (π.χ. 1 από 2 δόσεις Shingrix)
+        covered / due_soon / expired = με βάση την αναμνηστική· χωρίς repeat_years δεν λήγει ποτέ."""
+        if doses < doses_required:
+            return "incomplete", None
+        if not repeat_years or not last_at:
+            return "covered", None
+        due = last_at + timedelta(days=int(repeat_years) * 365)
+        if now >= due:
+            return "expired", due
+        if (due - now).days <= notify_before_days:
+            return "due_soon", due
+        return "covered", due
 
     # ── validation ───────────────────────────────────────────────────────────────────────────
     @staticmethod

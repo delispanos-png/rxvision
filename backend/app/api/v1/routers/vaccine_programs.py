@@ -85,6 +85,29 @@ async def delete_program(program_id: str,
     return {"deleted": n}
 
 
+# ── ασφαλισμένοι ανά πρόγραμμα ───────────────────────────────────────────────────────────────
+@router.get("/{program_id}/patients")
+async def program_patients(
+    program_id: str,
+    status: str = Query("all", pattern="^(all|covered|due_soon|expired|incomplete)$"),
+    q: str | None = Query(None, description="όνομα ή ΑΜΚΑ"),
+    limit: int = Query(200, ge=1, le=1000),
+    skip: int = Query(0, ge=0),
+    ctx: TenantContext = Depends(require(_PERM, module=_MODULE)),
+):
+    """Οι ασφαλισμένοι που ανήκουν στο πρόγραμμα, με κατάσταση κάλυψης.
+    Πηγή: οι εκτελεσμένες συνταγές που ήδη έχουμε — καμία κλήση ΗΔΥΚΑ."""
+    repo = VaccineProgramRepository(tenant_id=ctx.tenant_id, demo=ctx.demo)
+    program = await repo.find_one({"_id": program_id})
+    if not program:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Το πρόγραμμα δεν βρέθηκε.")
+    out = await repo.patients_for(program, status=status, q=q, limit=limit, skip=skip)
+    out["program"] = {"_id": program_id, "name": program.get("name"),
+                      "repeat_years": program.get("repeat_years"),
+                      "doses_required": program.get("doses_required")}
+    return out
+
+
 def _msg(code: str) -> str:
     """Validation code → μήνυμα που καταλαβαίνει ο φαρμακοποιός."""
     if code.startswith("bad_atc:"):

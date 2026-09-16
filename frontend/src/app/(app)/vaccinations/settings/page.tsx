@@ -8,6 +8,7 @@ import { Save } from "lucide-react";
 import { api } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
 import { QueryState } from "@/components/ui/QueryState";
+import { VaccineProgramsConfig } from "@/components/vaccinations/VaccineProgramsConfig";
 
 type Band = { age_group: string; opens_at: string; closes_at?: string | null };
 type Campaign = {
@@ -169,6 +170,9 @@ export default function VaccinationSettingsPage() {
               className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 font-mono text-sm dark:border-slate-600 dark:bg-slate-800" />
           </details>
         </section>
+
+        {/* Παράμετροι περιοδικών εμβολιασμών — δικό τους module, εμφανίζεται μόνο σε όσους το έχουν. */}
+        <VaccineProgramsConfig />
 
         <div className="flex items-center gap-3">
           <button onClick={save} disabled={busy} className="inline-flex items-center gap-2 rounded-lg bg-sky-600 px-5 py-2.5 font-semibold text-white hover:bg-sky-700 disabled:opacity-50">
