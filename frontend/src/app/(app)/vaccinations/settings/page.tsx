@@ -8,6 +8,7 @@ import { Save } from "lucide-react";
 import { api } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
 import { QueryState } from "@/components/ui/QueryState";
+import { AddonSection } from "@/components/layout/AddonSection";
 import { VaccineProgramsConfig } from "@/components/vaccinations/VaccineProgramsConfig";
 
 type Band = { age_group: string; opens_at: string; closes_at?: string | null };
@@ -172,7 +173,11 @@ export default function VaccinationSettingsPage() {
         </section>
 
         {/* Παράμετροι περιοδικών εμβολιασμών — δικό τους module, εμφανίζεται μόνο σε όσους το έχουν. */}
-        <VaccineProgramsConfig />
+        {/* Χωρίς το add-on «Περιοδικοί εμβολιασμοί» οι παράμετροι δεν έχουν νόημα: ο πελάτης
+            θα ρύθμιζε κάτι που δεν πρόκειται να τρέξει (και κάθε κλήση θα γύριζε 403). */}
+        <AddonSection module="vaccination_programs">
+          <VaccineProgramsConfig />
+        </AddonSection>
 
         <div className="flex items-center gap-3">
           <button onClick={save} disabled={busy} className="inline-flex items-center gap-2 rounded-lg bg-sky-600 px-5 py-2.5 font-semibold text-white hover:bg-sky-700 disabled:opacity-50">
