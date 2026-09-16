@@ -42,6 +42,13 @@ _DEFAULTS: list[dict] = [
      "description": "Ανάλυση ασθενών: compliance, recall, win-back, VIP, segments + Εικόνα Πελάτη 360°.",
      "price_monthly": 2500, "price_yearly": 25000, "active": True,
      "features": ["Compliance / recall / win-back", "VIP & segments", "Εικόνα Πελάτη 360°"]},
+    {"_id": "vaccination_programs", "name": "Περιοδικά Εμβόλια", "icon": "💉", "category": "intelligence",
+     "description": "Παρακολούθηση μη εποχικών εμβολίων (έρπης ζωστήρας, τέτανος, πνευμονιόκοκκος): "
+                    "ορίζεις ποια παρακολουθείς, το σύστημα βρίσκει πότε τα έκανε ο καθένας και "
+                    "ειδοποιεί όταν λήγουν. Περιλαμβάνει αναδρομή 5ετίας.",
+     "price_monthly": 1000, "price_yearly": 10000, "active": True,
+     "features": ["Επιλογή εμβολίων ανά ομάδα ATC", "Σειρά δόσεων & αναμνηστικές",
+                  "Αναδρομική άντληση 5ετίας", "Ειδοποιήσεις λήξης"]},
     {"_id": "nutrition", "name": "Διατροφή", "icon": "🥗", "category": "ai",
      "description": "AI διατροφικό πλάνο ανά ασθενή με βάση τις παθήσεις & τη φαρμακευτική αγωγή.",
      "price_monthly": 1000, "price_yearly": 10000, "active": True,

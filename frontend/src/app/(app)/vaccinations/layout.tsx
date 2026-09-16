@@ -10,6 +10,7 @@ const TABS = [
   { href: "/vaccinations", el: "Επισκόπηση", en: "Overview" },
   { href: "/vaccinations/targets", el: "Λίστα στόχων", en: "Worklist" },
   { href: "/vaccinations/recall", el: "Επανάκληση", en: "Recall" },
+  { href: "/vaccinations/programs", el: "Περιοδικά", en: "Periodic" },
   { href: "/vaccinations/registry", el: "Μητρώο", en: "Registry" },
   { href: "/vaccinations/settings", el: "Ρυθμίσεις", en: "Settings" },
 ];

@@ -41,6 +41,7 @@ from app.api.v1.routers import (
     security,
     subscriptions,
     vaccinations,
+    vaccine_programs,
     tenants,
     users,
 )
@@ -70,6 +71,7 @@ api_router.include_router(gdpr.router, prefix="/gdpr", tags=["gdpr"])
 api_router.include_router(softone_bridge.router, prefix="/softone", tags=["softone-bridge"])
 api_router.include_router(prescriptions.router, prefix="/prescriptions", tags=["prescriptions"])
 api_router.include_router(vaccinations.router, prefix="/vaccinations", tags=["vaccinations"])
+api_router.include_router(vaccine_programs.router, prefix="/vaccine-programs", tags=["vaccine-programs"])
 
 # Analytics modules
 api_router.include_router(doctors.router, prefix="/doctors", tags=["doctors"])
