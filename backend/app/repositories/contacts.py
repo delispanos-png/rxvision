@@ -199,7 +199,12 @@ class PatientContactRepository(BaseRepository):
             {"$match": match},
             {"$lookup": {"from": "patients_anonymized", "localField": "_id",
                          "foreignField": "_id", "as": "p"}},
-            {"$set": {"name": {"$first": "$p.full_name"}, "amka": {"$first": "$p.amka"}}},
+            {"$set": {"name": {"$first": "$p.full_name"}, "amka": {"$first": "$p.amka"},
+                      "_deceased": {"$first": "$p.deceased"}}},
+            # ΟΙ ΘΑΝΟΝΤΕΣ ΔΕΝ ΜΠΑΙΝΟΥΝ ΠΟΤΕ ΣΕ ΛΙΣΤΑ ΕΠΙΚΟΙΝΩΝΙΑΣ. Χωρίς αυτό, ο φαρμακοποιός
+            # καλούσε οικογένειες που πενθούν για «επιβεβαίωση στοιχείων» (1.554 από 6.282
+            # εγγραφές — το 25% της λίστας· αναφορά πελάτη 16/09/2026).
+            {"$match": {"_deceased": {"$ne": True}}},
         ]
         if q:
             import re
@@ -209,7 +214,7 @@ class PatientContactRepository(BaseRepository):
             {"$sort": {"contact_updated_at": 1, "_id": 1}},
             {"$facet": {
                 "items": [{"$skip": skip}, {"$limit": limit},
-                          {"$project": {"p": 0}}],
+                          {"$project": {"p": 0, "_deceased": 0}}],
                 "total": [{"$count": "n"}],
             }},
         ]
