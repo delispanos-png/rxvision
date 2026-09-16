@@ -45,7 +45,16 @@ ATC_GROUP_LABELS: dict[str, str] = {
     "J07X": "Λοιπά",
 }
 
-_ATC_RE = re.compile(r"^J07[A-Z]{0,2}\d{0,2}$")
+# Πλήρεις ATC κωδικοί όπου η 5-ψήφια ομάδα ΕΝΩΝΕΙ άσχετα εμβόλια. Π.χ. στο J07BK συνυπάρχουν
+# ο έρπης ζωστήρας (ενήλικες 60+) και η ανεμευλογιά (παιδικό) — χωρίς διαχωρισμό η λίστα του
+# ζωστήρα γέμιζε παιδιά.
+ATC_EXACT_LABELS: dict[str, str] = {
+    "J07BK01": "Ανεμευλογιά (παιδικό)",
+    "J07BK02": "Έρπης ζωστήρας (ζωντανό)",
+    "J07BK03": "Έρπης ζωστήρας (ανασυνδυασμένο)",
+}
+
+_ATC_RE = re.compile(r"^J07[A-Z]{0,2}\d{0,2}$")   # J07 … J07BK03
 
 
 def _now() -> datetime:
@@ -77,21 +86,22 @@ class VaccineProgramRepository(BaseRepository):
         enough for the pharmacist to recognise it without opening the full list."""
         pipeline = [
             {"$match": {"atc": {"$regex": "^J07"}}},
-            {"$group": {"_id": {"$substr": ["$atc", 0, 5]},
-                        "count": {"$sum": 1},
-                        "examples": {"$push": "$name"}}},
+            # Γκρουπάρουμε στον ΠΛΗΡΗ ATC· παρακάτω τα ενώνουμε σε 5-ψήφιες ομάδες εκτός από
+            # όσα έχουν ρητό label (εκεί ο διαχωρισμός είναι κλινικά σημαντικός).
+            {"$group": {"_id": "$atc", "count": {"$sum": 1}, "examples": {"$push": "$name"}}},
             {"$sort": {"_id": 1}},
         ]
-        out = []
+        merged: dict[str, dict] = {}
         async for r in shared_db()["medicine_catalog"].aggregate(pipeline):
-            code = r["_id"]
-            out.append({
-                "atc": code,
-                "label": ATC_GROUP_LABELS.get(code, code),
-                "count": r["count"],
-                "examples": [n for n in (r.get("examples") or [])[:3] if n],
-            })
-        return out
+            full = r["_id"] or ""
+            key = full if full in ATC_EXACT_LABELS else full[:5]
+            label = ATC_EXACT_LABELS.get(full) or ATC_GROUP_LABELS.get(key, key)
+            slot = merged.setdefault(key, {"atc": key, "label": label, "count": 0, "examples": []})
+            slot["count"] += r["count"]
+            slot["examples"] += [n for n in (r.get("examples") or []) if n]
+        for v in merged.values():
+            v["examples"] = v["examples"][:3]
+        return sorted(merged.values(), key=lambda x: x["atc"])
 
     @staticmethod
     async def products(atc_prefix: str | None = None, search: str | None = None) -> list[dict]:
@@ -183,21 +193,46 @@ class VaccineProgramRepository(BaseRepository):
                         "last_at": {"$max": "$executed_at"},
                         "first_at": {"$min": "$executed_at"},
                         "doses": {"$sum": 1},
-                        "names": {"$addToSet": "$details.eof_code"}}},
+                        "codes": {"$addToSet": "$details.eof_code"},
+                        "lots": {"$addToSet": "$details.lot"}}},
             # ασθενής → όνομα/ΑΜΚΑ/ηλικία (+ θανών)
             {"$lookup": {"from": "patients_anonymized", "localField": "_id",
                          "foreignField": "_id", "as": "p"}},
             {"$set": {"name": {"$first": "$p.full_name"}, "amka": {"$first": "$p.amka"},
                       "age_group": {"$first": "$p.age_group"},
+                      "birth_year": {"$first": "$p.birth_year"},
                       "deceased": {"$first": "$p.deceased"}}},
             {"$match": {"deceased": {"$ne": True}}},     # ΠΟΤΕ θανόντες σε λίστα επικοινωνίας
+            {"$set": {"age": {"$cond": [{"$gt": ["$birth_year", 0]},
+                                        {"$subtract": [now.year, "$birth_year"]}, None]}}},
         ]
+        # ΗΛΙΚΙΑΚΟ ΕΥΡΟΣ του προγράμματος. Υπήρχε στις παραμέτρους αλλά ΔΕΝ εφαρμοζόταν ποτέ:
+        # η ομάδα J07BK π.χ. περιέχει ΚΑΙ ανεμευλογιά (παιδικό) μαζί με τον έρπη ζωστήρα, οπότε
+        # η λίστα γέμιζε παιδιά. Όποιος δεν έχει έτος γέννησης ΔΕΝ κόβεται (δεν τον κρύβουμε
+        # επειδή λείπει η πληροφορία) — φαίνεται με ηλικία «—».
+        age_cond: list[dict] = []
+        if program.get("min_age") is not None:
+            age_cond.append({"$or": [{"age": None}, {"age": {"$gte": int(program["min_age"])}}]})
+        if program.get("max_age") is not None:
+            age_cond.append({"$or": [{"age": None}, {"age": {"$lte": int(program["max_age"])}}]})
+        if age_cond:
+            pipeline.append({"$match": {"$and": age_cond}})
         if q and q.strip():
             rx = re.escape(q.strip())
             pipeline.append({"$match": {"$or": [{"name": {"$regex": rx, "$options": "i"}},
                                                 {"amka": {"$regex": rx}}]}})
         pipeline.append({"$sort": {"last_at": -1}})
         rows = await self._db["prescription_items"].aggregate(pipeline).to_list(length=None)
+
+        # ΕΟΦ κωδικοί → εμπορικά ονόματα. Η ίδια ATC ομάδα μπορεί να περιέχει κλινικά διαφορετικά
+        # εμβόλια (π.χ. ζωστήρας vs ανεμευλογιά), οπότε ο φαρμακοποιός πρέπει να βλέπει ΤΙ ακριβώς
+        # έκανε ο καθένας — όχι μόνο ότι «ανήκει στο πρόγραμμα».
+        used = {c for r in rows for c in (r.get("codes") or []) if c}
+        names_by_code: dict[str, str] = {}
+        if used:
+            async for d in shared_db()["medicine_catalog"].find(
+                    {"_id": {"$in": sorted(used)}}, {"name": 1}):
+                names_by_code[str(d["_id"])] = (d.get("name") or "").strip()
 
         items, counts = [], {"covered": 0, "due_soon": 0, "expired": 0, "incomplete": 0}
         for r in rows:
@@ -208,10 +243,12 @@ class VaccineProgramRepository(BaseRepository):
                 "patient_id": str(r["_id"]),
                 "name": mask_name(r.get("name"), self.demo) or "—",
                 "amka": mask_amka(r.get("amka"), self.demo),
-                "age_group": r.get("age_group"),
+                "age_group": r.get("age_group"), "age": r.get("age"),
                 "last_at": r.get("last_at"), "first_at": r.get("first_at"),
                 "doses": int(r.get("doses") or 0), "doses_required": doses_required,
                 "status": st, "due_at": due_at,
+                "vaccines": sorted({names_by_code.get(c, c) for c in (r.get("codes") or []) if c}),
+                "lots": sorted({str(x) for x in (r.get("lots") or []) if x})[:3],
             })
         if status != "all":
             items = [i for i in items if i["status"] == status]

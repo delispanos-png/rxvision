@@ -15,6 +15,7 @@ type Program = { _id: string; name: string; active: boolean; repeat_years: numbe
 type Pat = {
   patient_id: string; name: string; amka: string | null; age_group: string | null;
   last_at: string | null; first_at: string | null; doses: number; doses_required: number;
+  age: number | null; vaccines: string[]; lots: string[];
   status: "covered" | "due_soon" | "expired" | "incomplete"; due_at: string | null;
 };
 type PatRes = { items: Pat[]; total: number; counts: Record<string, number> };
@@ -23,18 +24,19 @@ type PatRes = { items: Pat[]; total: number; counts: Record<string, number> };
 const STATUS_PRIO: Record<Pat["status"], Priority> = {
   expired: "critical", due_soon: "high", incomplete: "medium", covered: "ok",
 };
+/** Τι σημαίνει κάθε κατάσταση — σε γλώσσα φαρμακοποιού, όχι σε ορολογία συστήματος. */
 const STATUS_EL: Record<Pat["status"], [string, string]> = {
-  expired: ["Έληξε — χρειάζεται αναμνηστική", "Expired — booster due"],
-  due_soon: ["Λήγει σύντομα", "Due soon"],
-  incomplete: ["Ατελής σειρά δόσεων", "Incomplete dose series"],
-  covered: ["Σε ισχύ", "Covered"],
+  expired: ["Πέρασε ο χρόνος για αναμνηστική δόση", "Booster overdue"],
+  due_soon: ["Πλησιάζει η ώρα για αναμνηστική δόση", "Booster due soon"],
+  incomplete: ["Ξεκίνησε τις δόσεις αλλά δεν τις ολοκλήρωσε", "Started but did not finish the doses"],
+  covered: ["Ολοκλήρωσε τις δόσεις και είναι σε ισχύ", "Fully vaccinated and still valid"],
 };
 const FILTERS: [string, string, string][] = [
   ["all", "Όλοι", "All"],
-  ["expired", "Έληξε", "Expired"],
-  ["due_soon", "Λήγει σύντομα", "Due soon"],
-  ["incomplete", "Ατελής σειρά", "Incomplete"],
-  ["covered", "Σε ισχύ", "Covered"],
+  ["expired", "Θέλουν αναμνηστική", "Booster overdue"],
+  ["due_soon", "Πλησιάζει αναμνηστική", "Booster due soon"],
+  ["incomplete", "Δεν ολοκλήρωσαν τις δόσεις", "Incomplete doses"],
+  ["covered", "Πλήρως εμβολιασμένοι", "Fully vaccinated"],
 ];
 
 export default function PeriodicVaccinationListPage() {
@@ -121,6 +123,11 @@ function Inner() {
         </span>
       </div>
 
+      <p className="text-xs text-slate-400">
+        {t("«Δεν ολοκλήρωσαν τις δόσεις» = ξεκίνησαν τη σειρά αλλά λείπει δόση. «Θέλουν αναμνηστική» = πέρασε το διάστημα επανάληψης που όρισες.",
+           "«Incomplete doses» = started the series but a dose is missing. «Booster overdue» = the repeat interval you set has passed.")}
+      </p>
+
       <div className="rx-card overflow-hidden">
         {isFetching && <div className="p-6 text-center text-sm text-slate-400">{t("Φόρτωση…", "Loading…")}</div>}
         {!isFetching && !pats?.items?.length && (
@@ -135,6 +142,7 @@ function Inner() {
                 <th className="px-4 py-2.5 text-left">{t("Ασφαλισμένος", "Patient")}</th>
                 <th className="px-4 py-2.5 text-left">ΑΜΚΑ</th>
                 <th className="px-4 py-2.5 text-left">{t("Ηλικία", "Age")}</th>
+                <th className="px-4 py-2.5 text-left">{t("Εμβόλιο", "Vaccine")}</th>
                 <th className="px-4 py-2.5 text-left">{t("Τελευταία δόση", "Last dose")}</th>
                 <th className="px-4 py-2.5 text-left">{t("Δόσεις", "Doses")}</th>
                 <th className="px-4 py-2.5 text-left">{t("Επόμενη", "Next due")}</th>
@@ -145,7 +153,20 @@ function Inner() {
                   <tr key={r.patient_id} className="border-t border-slate-100 dark:border-slate-800">
                     <td className="px-4 py-2.5 font-medium text-slate-800 dark:text-slate-100">{r.name}</td>
                     <td className="px-4 py-2.5 font-mono text-[11px] text-slate-500">{r.amka || "—"}</td>
-                    <td className="px-4 py-2.5 text-slate-600 dark:text-slate-300">{r.age_group || "—"}</td>
+                    <td className="px-4 py-2.5 text-slate-600 dark:text-slate-300">{r.age ?? r.age_group ?? "—"}</td>
+                    <td className="px-4 py-2.5">
+                      {r.vaccines?.length ? (
+                        <Tooltip label={r.lots?.length ? `${t("Παρτίδα", "Lot")}: ${r.lots.join(", ")}` : r.vaccines.join(", ")}>
+                          <span className="inline-flex flex-wrap gap-1">
+                            {r.vaccines.map((v) => (
+                              <span key={v} className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] font-medium text-slate-700 dark:bg-slate-800 dark:text-slate-200">
+                                {v.length > 22 ? `${v.slice(0, 22)}…` : v}
+                              </span>
+                            ))}
+                          </span>
+                        </Tooltip>
+                      ) : <span className="text-slate-400">—</span>}
+                    </td>
                     <td className="px-4 py-2.5 text-slate-600 dark:text-slate-300">
                       {r.last_at ? new Date(r.last_at).toLocaleDateString("el-GR") : "—"}
                     </td>
