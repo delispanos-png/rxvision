@@ -7,7 +7,7 @@ import {
   LayoutGrid, Users, UserCog, Mail, Server, Wrench, BarChart3, CreditCard, Receipt,
   LogOut, PlugZap, Menu, X, Layers, Cloud, ScrollText, Boxes, Settings, ChevronDown,
   ChevronRight, Percent, Brain, Bell, Sparkles, MessageSquare, Activity, ArrowUpCircle,
-  Landmark, Bot, Wallet, Smartphone, Network, Database, Clock, FileText,
+  Landmark, Bot, Wallet, Smartphone, Network, Database, Clock, FileText, Megaphone,
 } from "lucide-react";
 import { adminApi, adminTokens, ApiError } from "@/lib/adminClient";
 import { PoweredBy } from "@/components/brand/PoweredBy";
@@ -32,6 +32,7 @@ const GROUPS: { label: string; icon: typeof LayoutGrid; items: { label: string; 
       { label: "Εκκρεμείς εγγραφές", icon: Clock, href: "/admin/pending", section: "subscriptions" },
       { label: "Leads (πρώην trials)", icon: Users, href: "/admin/leads", section: "leads" },
       { label: "Newsletter", icon: Mail, href: "/admin/newsletter", section: "newsletter" },
+      { label: "Ανακοινώσεις πελατών", icon: Megaphone, href: "/admin/announcements", section: "content" },
       { label: "Αξιολογήσεις", icon: MessageSquare, href: "/admin/feedback", section: "subscribers" },
     ],
   },

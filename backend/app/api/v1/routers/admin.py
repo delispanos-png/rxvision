@@ -58,6 +58,7 @@ _SEG_TO_SECTION = {
     "integrations": "billing", "payments": "billing", "credit-packages": "billing",
     "eshop-fees": "billing", "data-retention": "maintenance", "network": "subscribers",
     "open-balances": "billing", "softone": "integrations",
+    "announcements": "content", "announcement-requests": "content",
 }
 # read-only endpoints που χρειάζεται και ο «dashboard»-only χρήστης
 _DASHBOARD_GET = {"tenants", "packages", "sync-health"}
@@ -3583,3 +3584,83 @@ async def set_network_access(user_id: str, body: NetworkAccessIn,
     clean = [t for t in dict.fromkeys(body.tenant_ids) if t in valid and t != user.get("tenant_id")]
     await db["users"].update_one({"_id": user["_id"]}, {"$set": {"tenant_ids": clean}})
     return {"ok": True, "user_id": user_id, "tenant_ids": clean}
+
+
+# ── Ανακοινώσεις προς πελάτες (pop-up μέσα στο RxVision τους) ────────────────────────────────
+class AnnouncementIn(BaseModel):
+    title: str
+    body: str = ""
+    addon_key: str | None = None
+    kind: str | None = None
+    cta: dict | None = None          # {trial, demo, info_href}
+    audience: dict | None = None     # {mode, tenant_ids, packages, status, exclude_with_addon}
+    from_: datetime | None = Field(default=None, alias="from")
+    to: datetime | None = None
+    frequency: str = "once"
+    priority: int = 0
+    active: bool = False
+
+    model_config = {"populate_by_name": True}
+
+
+@router.get("/announcements")
+async def list_announcements(_: PlatformContext = Depends(enforce_section)):
+    """Όλες οι ανακοινώσεις + σε πόσα φαρμακεία φτάνει καθεμία ΤΩΡΑ."""
+    from app.services import announcements as svc
+    return {"items": await svc.list_all()}
+
+
+@router.post("/announcements")
+async def create_announcement(body: AnnouncementIn, ctx: PlatformContext = Depends(enforce_section)):
+    from app.services import announcements as svc
+    d = body.model_dump(by_alias=True)
+    return await svc.save(d, by=ctx.email)
+
+
+@router.put("/announcements/{ann_id}")
+async def update_announcement(ann_id: str, body: AnnouncementIn,
+                              ctx: PlatformContext = Depends(enforce_section)):
+    from app.services import announcements as svc
+    return await svc.save(body.model_dump(by_alias=True), ann_id=ann_id, by=ctx.email)
+
+
+@router.delete("/announcements/{ann_id}")
+async def delete_announcement(ann_id: str, _: PlatformContext = Depends(enforce_section)):
+    from app.services import announcements as svc
+    return await svc.delete(ann_id)
+
+
+@router.get("/announcement-requests")
+async def list_announcement_requests(status: str = "new",
+                                     _: PlatformContext = Depends(enforce_section)):
+    """Ο φάκελος: ποιος ζήτησε δοκιμή ή παρουσίαση, με τα στοιχεία επικοινωνίας του."""
+    from app.services import announcements as svc
+    return {"items": await svc.requests(status)}
+
+
+class CloseReqIn(BaseModel):
+    outcome: str = "done"            # done | rejected
+
+
+@router.post("/announcement-requests/{req_id}/close")
+async def close_announcement_request(req_id: str, body: CloseReqIn,
+                                     ctx: PlatformContext = Depends(enforce_section)):
+    from app.services import announcements as svc
+    return await svc.close_request(req_id, by=ctx.email, outcome=body.outcome)
+
+
+class GrantIn(BaseModel):
+    tenant_id: str
+    module: str
+    days: int = 30
+
+
+@router.post("/announcement-requests/grant")
+async def grant_preview(body: GrantIn, ctx: PlatformContext = Depends(enforce_section)):
+    """Άνοιξε τη δυνατότητα στη ΔΙΚΗ ΤΟΥ υποδομή για Ν ημέρες — ένα κλικ από το αίτημα.
+
+    Δεν περνά από τον φρουρό «μία δοκιμή ανά πελάτη» του self-service: αυτό είναι ΑΠΟΦΑΣΗ ΣΟΥ,
+    όχι αυτοεξυπηρέτηση. Λήγει μόνη της (τα expired trials πέφτουν σε locked στο login/refresh)."""
+    from app.services.addon_service import grant_preview as _grant
+    return await _grant(body.tenant_id, body.module, days=max(1, min(180, int(body.days))),
+                        by=ctx.email)

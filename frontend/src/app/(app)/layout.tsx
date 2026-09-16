@@ -7,6 +7,7 @@ import { ThemeInit } from "@/components/layout/ThemeInit";
 import { PageHelp } from "@/components/help/PageHelp";
 import { OnboardingGate } from "@/components/layout/OnboardingGate";
 import { PortalRequestsWatcher } from "@/components/portal/PortalRequestsWatcher";
+import { AnnouncementPopup } from "@/components/layout/AnnouncementPopup";
 
 // Backend always enforces permissions/modules; the sidebar is presentational.
 export default function AppLayout({ children }: { children: React.ReactNode }) {
@@ -27,6 +28,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       </div>
       <PageHelp />
       <PortalRequestsWatcher />
+      <AnnouncementPopup />
     </div>
   );
 }

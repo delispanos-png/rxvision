@@ -218,6 +218,31 @@ async def start_trial(tenant_id: str, module: str) -> dict:
     return {"ok": True, "package": (target or {}).get("_id"), "trial_days": _TRIAL_DAYS, "modules": granted}
 
 
+async def grant_preview(tenant_id: str, module: str, *, days: int = 30,
+                        by: str | None = None) -> dict:
+    """Παραχώρηση δυνατότητας «για να τη δει» — απόφαση της πλατφόρμας, όχι αυτοεξυπηρέτηση.
+
+    Γιατί ΔΕΝ ξαναχρησιμοποιούμε το start_trial(): εκείνο έχει φρουρό «μία δοκιμή ανά πελάτη»
+    (σωστό για self-service) που θα απέκλειε ΚΑΘΕ υπάρχοντα συνδρομητή — δηλαδή ακριβώς αυτούς
+    στους οποίους θέλουμε να δείξουμε κάτι νέο. Εδώ ανοίγει ΜΟΝΟ το ζητούμενο module, για
+    συγκεκριμένες μέρες, και κλείνει μόνο του (expired trial → locked στο login/refresh).
+    """
+    db = shared_db()
+    t = await db["tenants"].find_one({"_id": tenant_id}, {"modules": 1})
+    if not t:
+        return {"ok": False, "error": "tenant_not_found"}
+    if (t.get("modules") or {}).get(module) == "enabled":
+        return {"ok": False, "error": "already_enabled"}
+    exp = _now() + timedelta(days=int(days))
+    await db["tenants"].update_one({"_id": tenant_id}, {"$set": {
+        f"modules.{module}": "trial", f"module_trials.{module}": exp,
+        "updated_at": _now()}})
+    await db["addon_grants"].insert_one({
+        "tenant_id": tenant_id, "module": module, "days": int(days),
+        "expires_at": exp, "by": by, "at": _now()})
+    return {"ok": True, "module": module, "days": int(days), "expires_at": exp}
+
+
 async def deactivate(tenant_id: str, addon_id: str) -> dict:
     """Turn an add-on OFF: remove the module override + the billing record, recompute total."""
     db = shared_db()
