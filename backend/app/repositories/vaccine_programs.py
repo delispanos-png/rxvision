@@ -19,6 +19,9 @@ from __future__ import annotations
 import re
 from datetime import datetime, timedelta, timezone
 
+from bson import ObjectId
+from bson.errors import InvalidId
+
 from app.core.db import shared_db
 from app.repositories.base import BaseRepository, jsonsafe
 from app.utils.masking import mask_amka, mask_name
@@ -47,6 +50,17 @@ _ATC_RE = re.compile(r"^J07[A-Z]{0,2}\d{0,2}$")
 
 def _now() -> datetime:
     return datetime.now(tz=timezone.utc)
+
+
+def _oid(value):
+    """Το `_id` των προγραμμάτων είναι ObjectId, αλλά από το URL έρχεται ΠΑΝΤΑ string.
+    Χωρίς αυτή τη μετατροπή κάθε PUT/DELETE/λίστα ασθενών γύριζε 404 (fix 16/09/2026)."""
+    if isinstance(value, ObjectId):
+        return value
+    try:
+        return ObjectId(str(value))
+    except (InvalidId, TypeError):
+        return None
 
 
 class VaccineProgramRepository(BaseRepository):
@@ -94,19 +108,30 @@ class VaccineProgramRepository(BaseRepository):
     async def list(self) -> list[dict]:
         return await self.find(sort=[("name", 1)], limit=200)
 
+    async def get(self, program_id) -> dict | None:
+        """Ένα πρόγραμμα με το id του (δέχεται string από URL ή ObjectId)."""
+        oid = _oid(program_id)
+        return await self.find_one({"_id": oid}) if oid else None
+
     async def save(self, doc: dict, program_id: str | None = None) -> dict:
         """Create or update one programme. Validates the clinical fields rather than trusting the UI."""
         clean = self._validate(doc)
         clean["updated_at"] = _now()
         if program_id:
-            await self.update_one({"_id": program_id}, {"$set": clean})
-            return await self.find_one({"_id": program_id}) or {}
+            oid = _oid(program_id)
+            if not oid:
+                raise ValueError("not_found")
+            await self.update_one({"_id": oid}, {"$set": clean})
+            return await self.find_one({"_id": oid}) or {}
         clean["created_at"] = _now()
         new_id = await self.insert_one(clean)
         return jsonsafe(await self._coll.find_one({"_id": new_id})) or {}
 
     async def delete(self, program_id: str) -> int:
-        res = await self.delete_many({"_id": program_id})
+        oid = _oid(program_id)
+        if not oid:
+            return 0
+        res = await self.delete_many({"_id": oid})
         return res.deleted_count
 
     async def resolve_codes(self, program: dict) -> set[str]:

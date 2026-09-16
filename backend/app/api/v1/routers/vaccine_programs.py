@@ -68,7 +68,7 @@ async def create_program(body: ProgramIn,
 async def update_program(program_id: str, body: ProgramIn,
                          ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
     repo = VaccineProgramRepository(tenant_id=ctx.tenant_id)
-    if not await repo.find_one({"_id": program_id}):
+    if not await repo.get(program_id):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Το πρόγραμμα δεν βρέθηκε.")
     try:
         return await repo.save(body.model_dump(), program_id=program_id)
@@ -98,7 +98,7 @@ async def program_patients(
     """Οι ασφαλισμένοι που ανήκουν στο πρόγραμμα, με κατάσταση κάλυψης.
     Πηγή: οι εκτελεσμένες συνταγές που ήδη έχουμε — καμία κλήση ΗΔΥΚΑ."""
     repo = VaccineProgramRepository(tenant_id=ctx.tenant_id, demo=ctx.demo)
-    program = await repo.find_one({"_id": program_id})
+    program = await repo.get(program_id)
     if not program:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Το πρόγραμμα δεν βρέθηκε.")
     out = await repo.patients_for(program, status=status, q=q, limit=limit, skip=skip)
