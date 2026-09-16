@@ -307,13 +307,22 @@ class IngestionEngine:
         bc = str(ex.external_id).split(":")[0]
         amka = ex.patient.national_id if (ex.patient.national_id or "").isdigit() else None
         ag = age_group(ex.patient.birth_year, today=_now().date()) if ex.patient.birth_year else None
+        # ΠΡΟΣΟΧΗ: το `vaccinations.patient_ref` είναι το **pseudo_id (string)** — έτσι το διαβάζει
+        # το targeting engine (vaccination_campaigns._vaccinated_map → pid = patients.pseudo_id).
+        # Γράφοντας εδώ ObjectId, 1.125 εμβολιασμένοι ασθενείς εμφανίζονταν ως «εκκρεμείς» και
+        # λάμβαναν υπενθύμιση για εμβόλιο που είχαν ήδη κάνει (fix 16/09/2026).
+        pdoc = await self.db["patients_anonymized"].find_one(
+            {"tenant_id": self.tenant_id, "_id": patient_ref}, {"pseudo_id": 1})
+        pseudo = (pdoc or {}).get("pseudo_id")
+        if not pseudo:
+            return
         await self.db["vaccinations"].update_one(  # tenant-ok: tenant_id in key
             {"tenant_id": self.tenant_id, "source": "PRESCRIPTION", "external_id": "rx:" + bc},
             {"$set": {"tenant_id": self.tenant_id, "source": "PRESCRIPTION", "external_id": "rx:" + bc,
                       "barcode": bc,
                       "executed_at": ex.executed_at, "cancelled": status == "cancelled",
                       "vaccine_name": hit.name, "vaccine_type": "influenza",
-                      "patient_ref": patient_ref, "patient_name": ex.patient.full_name, "amka": amka,
+                      "patient_ref": pseudo, "patient_name": ex.patient.full_name, "amka": amka,
                       "patient_age_group": ag, "from_prescription": True, "updated_at": _now()}},
             upsert=True)
 

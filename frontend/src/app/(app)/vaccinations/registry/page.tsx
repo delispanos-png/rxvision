@@ -10,6 +10,7 @@ import { useT } from "@/store/prefStore";
 import { fmtNum } from "@/lib/formatters";
 import { QueryState } from "@/components/ui/QueryState";
 import { KpiCard } from "@/components/kpi/KpiCard";
+import { Tooltip } from "@/components/ui/Tooltip";
 
 type NC = { name?: string; group?: string; month?: string; count: number };
 type Summary = {
@@ -19,10 +20,36 @@ type Summary = {
 type Vacc = {
   barcode?: string | null; external_id: string; executed_at?: string | null;
   vaccine_name?: string | null; status_name?: string | null; cancelled?: boolean;
+  source?: "INFLUENZA" | "PRESCRIPTION" | null;
   patient_name?: string | null; amka?: string | null;
   patient_age_group?: string | null; patient_sex?: string | null; high_risk_group?: string | null;
   icd10_title?: string | null; lot?: string | null;
 };
+
+/** Από πού ήρθε η εγγραφή: το μητρώο της ΗΔΥΚΑ ή συνταγή που εκτελέσαμε εμείς.
+ *  Οι δύο πηγές έχουν διαφορετική κάλυψη — το μητρώο πιάνει και εμβολιασμούς αλλού. */
+function SourceBadge({ source }: { source?: string | null }) {
+  const t = useT();
+  if (source === "INFLUENZA") {
+    return (
+      <Tooltip label={t("Από το Μητρώο Εμβολιασμών της ΗΔΥΚΑ — καταγράφηκε ως εμβολιασμός.", "From the ΗΔΥΚΑ vaccination registry.")}>
+        <span className="inline-flex items-center gap-1 whitespace-nowrap rounded-full bg-sky-100 px-2 py-0.5 text-[11px] font-medium text-sky-700 dark:bg-sky-900/40 dark:text-sky-300">
+          🏛️ {t("Μητρώο", "Registry")}
+        </span>
+      </Tooltip>
+    );
+  }
+  if (source === "PRESCRIPTION") {
+    return (
+      <Tooltip label={t("Εντοπίστηκε μέσα σε συνταγή που εκτελέσαμε — το εμβόλιο δόθηκε από το φαρμακείο.", "Found inside a prescription we executed.")}>
+        <span className="inline-flex items-center gap-1 whitespace-nowrap rounded-full bg-violet-100 px-2 py-0.5 text-[11px] font-medium text-violet-700 dark:bg-violet-900/40 dark:text-violet-300">
+          🧾 {t("Συνταγή", "Prescription")}
+        </span>
+      </Tooltip>
+    );
+  }
+  return <span className="text-xs text-slate-400">—</span>;
+}
 
 function BarList({ title, rows, label }: { title: string; rows: NC[]; label: (r: NC) => string }) {
   const max = Math.max(1,...rows.map((r) => r.count));
@@ -116,6 +143,7 @@ export default function VaccinationRegistryPage() {
                 <th className="px-4 py-2 text-left">ΑΜΚΑ</th>
                 <th className="px-4 py-2 text-left">Barcode</th>
                 <th className="px-4 py-2 text-left">{t("Εμβόλιο", "Vaccine")}</th>
+                <th className="px-4 py-2 text-left">{t("Πηγή", "Source")}</th>
                 <th className="px-4 py-2 text-left">{t("Ομάδα κινδύνου", "Risk group")}</th>
                 <th className="px-4 py-2 text-left">{t("Ηλικία", "Age")}</th>
                 <th className="px-4 py-2 text-left">{t("Κατάσταση", "Status")}</th>
@@ -128,6 +156,7 @@ export default function VaccinationRegistryPage() {
                     <td className="px-4 py-2 font-mono text-[11px] text-slate-500">{v.amka || "—"}</td>
                     <td className="px-4 py-2 font-mono text-[11px] text-slate-500">{v.barcode || "—"}</td>
                     <td className="px-4 py-2 text-slate-700 dark:text-slate-200">{v.vaccine_name || "—"}</td>
+                    <td className="px-4 py-2"><SourceBadge source={v.source} /></td>
                     <td className="px-4 py-2 text-xs text-slate-500">{v.high_risk_group || "—"}</td>
                     <td className="px-4 py-2 text-slate-600 dark:text-slate-300">{v.patient_age_group || "—"}</td>
                     <td className="px-4 py-2">
