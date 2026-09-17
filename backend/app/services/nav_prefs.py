@@ -62,13 +62,18 @@ async def get_for(tenant_id: str, user_id: str, roles: list[str]) -> dict:
         hidden_items = (set.intersection(*per_role_items) if len(per_role_items) > 1
                         else per_role_items[0])
     pinned = list(doc.get("pinned") or [])[:MAX_PINNED]
+    # Ολόκληρα κυκλώματα: αποθηκεύονται ως ΟΜΑΔΑ, όχι ως λίστα των σημερινών επιλογών της.
+    # Έτσι, αν αύριο μπει νέα επιλογή στην «Ανάλυση», ο χειριστής που διάλεξε «όλη την
+    # Ανάλυση» τη βλέπει αμέσως — χωρίς να ξαναμπεί στον επιλογέα.
+    pinned_groups = list(doc.get("pinned_groups") or [])[:40]
     mode = doc.get("mode") if doc.get("mode") in ("central", "personal") else "central"
     # ΑΣΦΑΛΙΣΤΙΚΟ: «μόνο τα δικά μου» χωρίς καρφιτσωμένα = άδειο μενού και ο χειριστής
     # κολλάει χωρίς τρόπο να πάει πουθενά. Πέφτουμε πίσω στο κεντρικό.
-    if mode == "personal" and not pinned:
+    if mode == "personal" and not (pinned or pinned_groups):
         mode = "central"
     return {
         "pinned": pinned,
+        "pinned_groups": pinned_groups,
         "mode": mode,
         "hidden_groups": sorted(hidden),
         # Μεμονωμένες επιλογές (κλειδί = href). Χρειάζεται γιατί μια ενότητα σπάνια είναι
@@ -88,7 +93,7 @@ async def set_mode(user_id: str, mode: str) -> dict:
     return {"ok": True, "mode": mode}
 
 
-async def set_pinned(user_id: str, items: list[dict]) -> dict:
+async def set_pinned(user_id: str, items: list[dict], groups: list[str] | None = None) -> dict:
     """Τα καρφιτσωμένα του χειριστή. Κρατάμε href + ετικέτα ώστε το μενού να τα δείχνει
     χωρίς να ψάχνει τον κατάλογο — και να μη σπάει αν μια επιλογή μετονομαστεί."""
     clean: list[dict] = []
@@ -103,10 +108,12 @@ async def set_pinned(user_id: str, items: list[dict]) -> dict:
                       "en": str(it.get("en") or "")[:60]})
         if len(clean) >= MAX_PINNED:
             break
+    gs = sorted({str(g).strip() for g in (groups or []) if str(g).strip()})[:40]
     await shared_db()[COLL].update_one(
         {"_id": _user_key(user_id)},
-        {"$set": {"pinned": clean, "updated_at": _now(), "kind": "user"}}, upsert=True)
-    return {"ok": True, "pinned": clean}
+        {"$set": {"pinned": clean, "pinned_groups": gs, "updated_at": _now(), "kind": "user"}},
+        upsert=True)
+    return {"ok": True, "pinned": clean, "pinned_groups": gs}
 
 
 async def role_menus(tenant_id: str, roles: list[str]) -> dict:

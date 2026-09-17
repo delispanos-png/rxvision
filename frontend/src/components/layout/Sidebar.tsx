@@ -48,7 +48,7 @@ export function Sidebar() {
   const [picking, setPicking] = useState(false);
   const prefsQ = useQuery({
     queryKey: ["nav", "prefs"],
-    queryFn: () => api<{ pinned: Pin[]; mode: "central" | "personal"; hidden_groups: string[]; hidden_items: string[]; max_pinned: number }>("/nav/prefs"),
+    queryFn: () => api<{ pinned: Pin[]; pinned_groups: string[]; mode: "central" | "personal"; hidden_groups: string[]; hidden_items: string[]; max_pinned: number }>("/nav/prefs"),
     retry: false,
   });
   const pinned = prefsQ.data?.pinned ?? [];
@@ -59,8 +59,8 @@ export function Sidebar() {
   };
   const hiddenGroups = new Set(prefsQ.data?.hidden_groups ?? []);
   const hiddenItems = new Set(prefsQ.data?.hidden_items ?? []);
-  const savePins = async (items: Pin[]) => {
-    await api("/nav/pinned", { method: "PUT", body: JSON.stringify({ items }) });
+  const savePins = async (items: Pin[], groups: string[] = []) => {
+    await api("/nav/pinned", { method: "PUT", body: JSON.stringify({ items, groups }) });
     qc.invalidateQueries({ queryKey: ["nav", "prefs"] });
   };
 
@@ -108,6 +108,10 @@ export function Sidebar() {
   // Δύο επίπεδα απόκρυψης από τον ρόλο: ΟΛΗ η ενότητα ή ΜΕΜΟΝΩΜΕΝΕΣ επιλογές. Μια ενότητα
   // σπάνια είναι «όλη ή τίποτα» — στις «Λειτουργίες» θες οδηγίες και όρους, όχι Ρυθμίσεις.
   const visible = (href?: string) => !href || !hiddenItems.has(href);
+  /** Ένα φύλλο = ένας προορισμός, με το εικονίδιο του γονιού του. */
+  const leavesOfNode = (n: Node) => n.children
+    ? n.children.filter((c) => visible(c.href)).map((c) => ({ href: c.href, label: `${n.label} · ${c.label}`, en: `${n.en} · ${c.en}`, icon: n.icon }))
+    : n.href && visible(n.href) ? [{ href: n.href, label: n.label, en: n.en, icon: n.icon }] : [];
   const groups = GROUPS
     .filter((g) => !hiddenGroups.has(g.title))
     .map((g) => ({
@@ -119,6 +123,19 @@ export function Sidebar() {
         .filter((n) => (n.children ? n.children.length > 0 : visible(n.href))),
     }))
     .filter((g) => g.items.length > 0);
+
+  // «Τα δικά μου» ΜΕ ΔΟΜΗ: ίδια σειρά κυκλωμάτων με το κεντρικό, μόνο με ό,τι διάλεξε.
+  // Ολόκληρο κύκλωμα = ΟΜΑΔΑ, όχι φωτογραφία των σημερινών επιλογών της: αν αύριο μπει νέα
+  // επιλογή στην «Ανάλυση», τη βλέπει αμέσως.
+  const hasPicks = pinned.length > 0 || (prefsQ.data?.pinned_groups ?? []).length > 0;
+  const pinnedHrefs = new Set(pinned.map((p) => p.href));
+  const pinnedGroups = new Set(prefsQ.data?.pinned_groups ?? []);
+  const myGroups = groups
+    .map((g) => {
+      const all = g.items.flatMap(leavesOfNode);
+      return { ...g, leaves: pinnedGroups.has(g.title) ? all : all.filter((l) => pinnedHrefs.has(l.href)) };
+    })
+    .filter((g) => g.leaves.length > 0);
 
   const leafActive = (href: string) => {
     const base = href.split(/[?#]/)[0];
@@ -189,8 +206,8 @@ export function Sidebar() {
               className={`flex-1 rounded-lg px-2 py-1.5 text-xs font-bold transition ${mode === "central" ? "bg-white text-slate-800 shadow-sm dark:bg-slate-700 dark:text-slate-100" : "text-slate-500 hover:text-slate-700 dark:text-slate-400"}`}>
               {t("Κεντρικό", "Full menu")}
             </button>
-            <button onClick={() => setMode("personal")} disabled={!pinned.length}
-              title={!pinned.length ? t("Διάλεξε πρώτα τις δικές σου δουλειές", "Pick your own tasks first") : undefined}
+            <button onClick={() => setMode("personal")} disabled={!hasPicks}
+              title={!hasPicks ? t("Διάλεξε πρώτα τις δικές σου δουλειές", "Pick your own tasks first") : undefined}
               className={`flex-1 rounded-lg px-2 py-1.5 text-xs font-bold transition disabled:opacity-40 ${mode === "personal" ? "bg-white text-slate-800 shadow-sm dark:bg-slate-700 dark:text-slate-100" : "text-slate-500 hover:text-slate-700 dark:text-slate-400"}`}>
               {t("Τα δικά μου", "Mine")}
             </button>
@@ -201,36 +218,33 @@ export function Sidebar() {
           </button>
           </div>
 
-          {/* ΤΑ ΔΙΚΑ ΜΟΥ — μόνο στη δική τους λειτουργία. Στο «Κεντρικό» βλέπεις ΜΟΝΟ το
-              κεντρικό· αλλιώς ξαναγίνονται δύο μενού το ένα πάνω στο άλλο. */}
-          {(mode === "personal" || !pinned.length) && (
-          <div>
-            <div className={`flex items-center gap-2 px-3 pb-2 text-[13px] font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400 ${hide}`}>
-              <Star className="h-4 w-4 shrink-0 text-amber-400" strokeWidth={2} />{t("Τα δικά μου", "My shortcuts")}
-            </div>
-            {pinned.length ? (
-              <div className="space-y-1">
-                {pinned.map((p) => {
-                  const active = leafActive(p.href);
-                  const inner = (<><Star className={`h-[18px] w-[18px] shrink-0 ${active ? "text-brand-600" : "text-amber-400"}`} strokeWidth={2} /><span className={hide}>{t(p.label || p.href, p.en || p.label || p.href)}</span></>);
-                  return p.href.includes("#")
-                    ? <a key={p.href} href={p.href} title={collapsed ? p.label : undefined} className={linkCls(active)} onClick={() => setOpen(false)}>{inner}</a>
-                    : <Link key={p.href} href={p.href} title={collapsed ? p.label : undefined} className={linkCls(active)}>{inner}</Link>;
-                })}
-              </div>
-            ) : (
-              <button onClick={() => setPicking(true)} className={`w-full rounded-xl border border-dashed border-slate-300 px-3 py-2 text-left text-xs text-slate-400 hover:border-brand-300 hover:text-brand-600 dark:border-slate-700 ${hide}`}>
-                {t("Διάλεξε τις δουλειές που κάνεις κάθε μέρα", "Pick the tasks you do every day")}
-              </button>
-            )}
-          </div>
-          )}
-
+          {/* ΤΑ ΔΙΚΑ ΜΟΥ — με την ΙΔΙΑ δομή με το κεντρικό: επικεφαλίδα κυκλώματος και από
+              κάτω μόνο όσα διάλεξε. Μια πλακέ λίστα με αστεράκια χάνει το πλαίσιο — δεν
+              φαίνεται ότι «από τους Συμβούλους κρατάω δύο πράγματα». */}
           {mode === "personal" ? (
-            <p className={`px-3 text-[11px] leading-relaxed text-slate-400 ${hide}`}>
-              {t("Βλέπεις μόνο τις δικές σου δουλειές. Πάτα «Κεντρικό» για ολόκληρο το μενού.",
-                 "You are seeing only your own tasks. Tap «Full menu» for everything.")}
-            </p>
+            <>
+              {myGroups.map((g) => (
+                <div key={g.title}>
+                  <div className={`flex items-center gap-2 px-3 pb-2 text-[13px] font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400 ${hide}`}>
+                    <g.icon className="h-4 w-4 shrink-0 text-brand-500" strokeWidth={2} />{t(g.title, g.en)}
+                  </div>
+                  <div className="space-y-1">
+                    {g.leaves.map((l) => {
+                      const active = leafActive(l.href);
+                      const inner = (<><l.icon className={iconCls(active)} strokeWidth={2} /><span className={hide}>{t(l.label, l.en)}</span></>);
+                      return l.href.includes("#")
+                        ? <a key={l.href} href={l.href} title={collapsed ? l.label : undefined} className={linkCls(active)} onClick={() => setOpen(false)}>{inner}</a>
+                        : <Link key={l.href} href={l.href} title={collapsed ? l.label : undefined} className={linkCls(active)}>{inner}</Link>;
+                    })}
+                  </div>
+                </div>
+              ))}
+              {!myGroups.length && (
+                <button onClick={() => setPicking(true)} className={`w-full rounded-xl border border-dashed border-slate-300 px-3 py-2 text-left text-xs text-slate-400 hover:border-brand-300 hover:text-brand-600 dark:border-slate-700 ${hide}`}>
+                  {t("Διάλεξε τις δουλειές που κάνεις κάθε μέρα", "Pick the tasks you do every day")}
+                </button>
+              )}
+            </>
           ) : groups.map((g) => {
             // Ομάδα με ΕΝΑ φύλλο (χωρίς υπο-στοιχεία) → ανεξάρτητο top-level link (χωρίς επικεφαλίδα/πτύξη).
             if (g.items.length === 1 && !g.items[0].children) {
@@ -363,8 +377,9 @@ export function Sidebar() {
         </div>
       )}
       {picking && (
-        <PickerModal groups={groups} pinned={pinned} t={t}
-          onClose={() => setPicking(false)} onSave={async (items) => { await savePins(items); setPicking(false); }} />
+        <PickerModal groups={groups} pinned={pinned} pinnedGroups={[...pinnedGroups]} t={t}
+          onClose={() => setPicking(false)}
+          onSave={async (items, gs) => { await savePins(items, gs); setPicking(false); }} />
       )}
     </>
   );
@@ -373,58 +388,98 @@ export function Sidebar() {
 /** Επιλογή «δικών μου»: ΟΛΟΙ οι προορισμοί που βλέπει αυτός ο χειριστής, σε μία λίστα.
  *  Γιατί λίστα και όχι αστεράκια στο μενού: σε κινητό το hover δεν υπάρχει, και το να
  *  βλέπεις τα πάντα μαζί κάνει την επιλογή μία δουλειά αντί για δέκα. */
-function PickerModal({ groups, pinned, t, onClose, onSave }: {
-  groups: Group[]; pinned: Pin[]; t: (el: string, en: string) => string;
-  onClose: () => void; onSave: (items: Pin[]) => Promise<void>;
+function PickerModal({ groups, pinned, pinnedGroups, t, onClose, onSave }: {
+  groups: Group[]; pinned: Pin[]; pinnedGroups: string[];
+  t: (el: string, en: string) => string;
+  onClose: () => void; onSave: (items: Pin[], groups: string[]) => Promise<void>;
 }) {
   const [sel, setSel] = useState<Pin[]>(pinned);
+  const [selG, setSelG] = useState<string[]>(pinnedGroups);
   const [busy, setBusy] = useState(false);
-  const has = (href: string) => sel.some((p) => p.href === href);
-  const toggle = (p: Pin) => setSel((prev) =>
-    prev.some((x) => x.href === p.href) ? prev.filter((x) => x.href !== p.href) : [...prev, p]);
 
-  const rows: { group: string; items: Pin[] }[] = groups.map((g) => ({
-    group: t(g.title, g.en),
+  const rows = groups.map((g) => ({
+    title: g.title, en: g.en, icon: g.icon,
     items: g.items.flatMap((n) => n.children
       ? n.children.map((c) => ({ href: c.href, label: `${n.label} · ${c.label}`, en: `${n.en} · ${c.en}` }))
       : n.href ? [{ href: n.href, label: n.label, en: n.en }] : []),
   })).filter((r) => r.items.length);
+
+  const groupOn = (title: string) => selG.includes(title);
+  const itemOn = (title: string, href: string) => groupOn(title) || sel.some((x) => x.href === href);
+
+  const toggleGroup = (r: (typeof rows)[number]) => {
+    if (groupOn(r.title)) {
+      setSelG((p) => p.filter((x) => x !== r.title));
+      setSel((p) => p.filter((x) => !r.items.some((i) => i.href === x.href)));   // καθάρισε και τα επιμέρους
+    } else {
+      setSelG((p) => [...p, r.title]);
+      setSel((p) => p.filter((x) => !r.items.some((i) => i.href === x.href)));   // η ομάδα τα καλύπτει
+    }
+  };
+
+  /** Ξετσεκάροντας ΜΙΑ επιλογή ενώ είναι διαλεγμένο όλο το κύκλωμα, το κύκλωμα «σπάει» στις
+   *  υπόλοιπες επιλογές του — αλλιώς ή θα έχανες όλο το κύκλωμα ή δεν θα γινόταν τίποτα. */
+  const toggleItem = (r: (typeof rows)[number], it: Pin) => {
+    if (groupOn(r.title)) {
+      setSelG((p) => p.filter((x) => x !== r.title));
+      setSel((p) => [...p, ...r.items.filter((i) => i.href !== it.href)]);
+      return;
+    }
+    setSel((p) => p.some((x) => x.href === it.href) ? p.filter((x) => x.href !== it.href) : [...p, it]);
+  };
+
+  const count = selG.reduce((n, tt) => n + (rows.find((r) => r.title === tt)?.items.length ?? 0), 0) + sel.length;
 
   return (
     <div className="fixed inset-0 z-[60] grid place-items-center bg-black/40 p-4" onClick={onClose}>
       <div className="flex max-h-[80vh] w-full max-w-lg flex-col rounded-2xl bg-white dark:bg-slate-900" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-start justify-between border-b border-slate-100 p-5 dark:border-slate-800">
           <div>
-            <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">{t("Τα δικά μου", "My shortcuts")}</h3>
+            <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">{t("Τα δικά μου", "My menu")}</h3>
             <p className="mt-0.5 text-xs text-slate-500">
-              {t("Διάλεξε τις δουλειές που κάνεις κάθε μέρα — όσες θέλεις.",
-                 "Pick the tasks you do every day — as many as you want.")}
+              {t("Διάλεξε ολόκληρα κυκλώματα ή μεμονωμένες δουλειές — όσες θέλεις.",
+                 "Pick whole sections or individual tasks — as many as you want.")}
             </p>
           </div>
-          <span className="shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-xs font-bold text-slate-500 dark:bg-slate-800">{sel.length}</span>
+          <span className="shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-xs font-bold text-slate-500 dark:bg-slate-800">{count}</span>
         </div>
         <div className="flex-1 overflow-y-auto p-4">
-          {rows.map((r) => (
-            <div key={r.group} className="mb-3">
-              <div className="mb-1 text-[11px] font-bold uppercase tracking-wide text-slate-400">{r.group}</div>
-              {r.items.map((it) => {
-                const on = has(it.href);
-                return (
-                  <button key={it.href} onClick={() => toggle(it)}
-                    className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm transition ${on ? "bg-brand-50 font-semibold text-brand-700 dark:bg-brand-600/15" : "text-slate-600 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-800"}`}>
-                    <span className={`grid h-4 w-4 shrink-0 place-items-center rounded border ${on ? "border-brand-500 bg-brand-500 text-white" : "border-slate-300 dark:border-slate-600"}`}>
-                      {on && <Check className="h-3 w-3" strokeWidth={3} />}
-                    </span>
-                    {t(it.label || it.href, it.en || it.label || it.href)}
-                  </button>
-                );
-              })}
-            </div>
-          ))}
+          {rows.map((r) => {
+            const gOn = groupOn(r.title);
+            const GIcon = r.icon;
+            return (
+              <div key={r.title} className="mb-3">
+                {/* Επικεφαλίδα κυκλώματος = ΕΠΙΛΕΞΙΜΗ: «όλη η Ανάλυση» με ένα κλικ. */}
+                <button onClick={() => toggleGroup(r)}
+                  className={`mb-1 flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[11px] font-bold uppercase tracking-wide transition ${gOn ? "bg-brand-600 text-white" : "text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800"}`}>
+                  <span className={`grid h-4 w-4 shrink-0 place-items-center rounded border ${gOn ? "border-white bg-white/25 text-white" : "border-slate-300 dark:border-slate-600"}`}>
+                    {gOn && <Check className="h-3 w-3" strokeWidth={3} />}
+                  </span>
+                  <GIcon className="h-3.5 w-3.5 shrink-0" strokeWidth={2} />
+                  {t(r.title, r.en)}
+                  <span className={`ml-auto font-normal normal-case ${gOn ? "text-white/70" : "text-slate-400"}`}>
+                    {gOn ? t("όλο το κύκλωμα", "whole section") : `${r.items.length}`}
+                  </span>
+                </button>
+                {r.items.map((it) => {
+                  const on = itemOn(r.title, it.href);
+                  return (
+                    <button key={it.href} onClick={() => toggleItem(r, it)}
+                      className={`flex w-full items-center gap-2 rounded-lg py-1.5 pl-6 pr-2.5 text-left text-sm transition ${on ? "font-semibold text-brand-700 dark:text-brand-300" : "text-slate-600 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-800"}`}>
+                      <span className={`grid h-4 w-4 shrink-0 place-items-center rounded border ${on ? "border-brand-500 bg-brand-500 text-white" : "border-slate-300 dark:border-slate-600"}`}>
+                        {on && <Check className="h-3 w-3" strokeWidth={3} />}
+                      </span>
+                      {t(it.label || it.href, it.en || it.label || it.href)}
+                    </button>
+                  );
+                })}
+              </div>
+            );
+          })}
         </div>
         <div className="flex justify-end gap-2 border-t border-slate-100 p-4 dark:border-slate-800">
           <button onClick={onClose} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-600 dark:border-slate-600 dark:text-slate-300">{t("Άκυρο", "Cancel")}</button>
-          <button onClick={async () => { setBusy(true); try { await onSave(sel); } finally { setBusy(false); } }} disabled={busy}
+          <button onClick={async () => { setBusy(true); try { await onSave(sel, selG); } finally { setBusy(false); } }} disabled={busy}
             className="rounded-xl bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-50">
             {t("Αποθήκευση", "Save")}
           </button>

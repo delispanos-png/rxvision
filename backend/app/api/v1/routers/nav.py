@@ -23,6 +23,7 @@ class PinItem(BaseModel):
 
 class PinnedIn(BaseModel):
     items: list[PinItem]
+    groups: list[str] = []
 
 
 @router.get("/prefs")
@@ -35,7 +36,7 @@ async def get_prefs(ctx: TenantContext = Depends(get_current_context)):
 async def set_pinned(body: PinnedIn, ctx: TenantContext = Depends(get_current_context)):
     """Τα «δικά μου». Κάθε χειριστής ορίζει τα δικά του — κανένα δικαίωμα δεν απαιτείται,
     γιατί δεν αλλάζει τίποτα για κανέναν άλλον."""
-    return await nav_prefs.set_pinned(ctx.user_id, [i.model_dump() for i in body.items])
+    return await nav_prefs.set_pinned(ctx.user_id, [i.model_dump() for i in body.items], body.groups)
 
 
 class ModeIn(BaseModel):
