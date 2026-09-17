@@ -77,6 +77,17 @@ class BaseRepository:
     async def update_one(self, query: dict, update: dict, *, upsert: bool = False):
         return await self._coll.update_one(self._scope(query), update, upsert=upsert)
 
+    async def update_many(self, query: dict, update: dict):
+        """Μαζική ενημέρωση ΜΕΣΑ στο tenant — με ρητή απαγόρευση κενού φίλτρου.
+
+        ΓΙΑΤΙ Ο ΦΡΟΥΡΟΣ: ένα `update_many({}, ...)` μοιάζει αθώο και αλλάζει ΟΛΟΚΛΗΡΗ τη
+        συλλογή του φαρμακείου με ένα κλικ. Αν όντως θέλεις «όλα», πέρασε ρητό φίλτρο
+        (π.χ. `{"active": {"$ne": None}}`) ώστε η πρόθεση να φαίνεται στον κώδικα.
+        """
+        if not query:
+            raise ValueError("update_many: κενό φίλτρο — άρνηση (blast-radius guard)")
+        return await self._coll.update_many(self._scope(query), update)
+
     async def delete_many(self, query: dict | None = None):
         return await self._coll.delete_many(self._scope(query))
 

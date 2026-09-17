@@ -395,6 +395,28 @@ class PharmacyCatalogRepository(BaseRepository):
                         supplier: str | None = None, no_image: bool = False, no_category: bool = False,
                         page: int = 1, page_size: int = 60) -> dict:
         """Master inventory: ΟΛΑ τα είδη (ενεργά + ανενεργά) με πλήρη χαρακτηριστικά + πλούσια φίλτρα."""
+        query = self.warehouse_query(
+            q=q, ptype=ptype, low_stock=low_stock, expiring=expiring,
+            include_inactive=include_inactive, cat1=cat1, cat2=cat2, cat3=cat3,
+            for_sale=for_sale, stock=stock, supplier=supplier,
+            no_image=no_image, no_category=no_category)
+        page = max(1, page); page_size = max(1, min(page_size, 200))
+        total = await self.count(query)
+        items = await self.find(query, sort=[("name", 1)], skip=(page - 1) * page_size, limit=page_size)
+        return {"items": jsonsafe(items), "total": total, "page": page, "page_size": page_size}
+
+    def warehouse_query(self, *, q: str = "", ptype: str | None = None, low_stock: bool = False,
+                        expiring: bool = False, include_inactive: bool = True,
+                        cat1: str | None = None, cat2: str | None = None, cat3: str | None = None,
+                        for_sale: bool | None = None, stock: str | None = None,
+                        supplier: str | None = None, no_image: bool = False,
+                        no_category: bool = False) -> dict:
+        """Τα ΙΔΙΑ φίλτρα που βλέπει ο φαρμακοποιός στην οθόνη — ΜΙΑ φορά γραμμένα.
+
+        Το χρησιμοποιούν και η λίστα και οι μαζικές ενέργειες, ώστε «ό,τι βλέπω, αυτό αλλάζω».
+        Αν ήταν δύο ξεχωριστά φίλτρα, η μαζική ενέργεια θα άγγιζε κάποτε άλλα είδη από αυτά
+        που δείχνει η οθόνη — και θα το μάθαινε κανείς αφού είχε γίνει.
+        """
         query: dict = {} if include_inactive else {"active": {"$ne": False}}
         if q and q.strip():
             # accent/case-insensitive: κάθε λέξη πρέπει να ταιριάζει ΚΑΠΟΥ (AND ανά λέξη, OR ανά πεδίο)
@@ -440,10 +462,35 @@ class PharmacyCatalogRepository(BaseRepository):
         if expiring:
             cutoff = (_now() + timedelta(days=self.NEAR_EXPIRY_DAYS)).date().isoformat()
             query["expiry"] = {"$ne": None, "$lte": cutoff}
-        page = max(1, page); page_size = max(1, min(page_size, 200))
+        return query
+
+    async def bulk_preview(self, filters: dict) -> dict:
+        """Πόσα είδη πιάνει το φίλτρο και τι θα γίνει σε καθένα — ΠΡΙΝ αλλάξει τίποτα."""
+        query = self.warehouse_query(**filters)
         total = await self.count(query)
-        items = await self.find(query, sort=[("name", 1)], skip=(page - 1) * page_size, limit=page_size)
-        return {"items": jsonsafe(items), "total": total, "page": page, "page_size": page_size}
+        on = await self.count({**query, "for_sale": True})
+        # Κανόνας που ισχύει ήδη: για πώληση χρειάζεται Κατηγορία 1. Το λέμε ΠΡΙΝ, όχι μετά.
+        blocked = await self.count({**query, "for_sale": {"$ne": True},
+                                    "cat1_id": {"$in": [None, ""]}})
+        return {"total": total, "already_on": on, "already_off": total - on,
+                "blocked_no_category": blocked}
+
+    async def bulk_set_for_sale(self, filters: dict, *, for_sale: bool) -> dict:
+        """Μαζική αλλαγή «πωλείται στο e-shop» σε ό,τι πιάνει το φίλτρο της οθόνης.
+
+        ΑΣΦΑΛΕΙΑ: το φίλτρο είναι ΠΑΝΤΑ tenant-scoped (BaseRepository) και ΠΟΤΕ κενό — ένα
+        άδειο φίλτρο θα άλλαζε ολόκληρο τον κατάλογο με ένα κλικ.
+        """
+        query = self.warehouse_query(**filters)
+        if not query:
+            raise ValueError("empty_filter")
+        if for_sale:
+            # Δεν βάζουμε σε πώληση είδη χωρίς κατηγορία — ο κατάλογος θα τα έκρυβε ούτως ή άλλως.
+            query = {**query, "cat1_id": {"$nin": [None, ""]}}
+        res = await self.update_many(query, {"$set": {"for_sale": bool(for_sale),
+                                                      "updated_at": _now()}})
+        return {"ok": True, "changed": getattr(res, "modified_count", 0),
+                "matched": getattr(res, "matched_count", 0)}
 
     async def copy_from(self, source_tenant: str, *, overwrite: bool = False) -> dict:
         """Αντιγραφή ΟΛΩΝ των ειδών ενός φαρμακείου (source) στο ΤΡΕΧΟΝ (self=target) ως αρχικοποίηση.

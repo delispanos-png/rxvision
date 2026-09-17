@@ -311,6 +311,49 @@ async def set_flags(body: FlagsIn, ctx: TenantContext = Depends(require(_PERM, m
     return await _repo(ctx).set_flags(body.barcode, for_sale=body.for_sale, active=body.active)
 
 
+class BulkIn(BaseModel):
+    """Τα ΙΔΙΑ φίλτρα της οθόνης — ό,τι βλέπει ο φαρμακοποιός, αυτό αλλάζει."""
+    q: str = ""
+    type: str | None = None
+    cat1: str | None = None
+    cat2: str | None = None
+    cat3: str | None = None
+    for_sale: bool | None = None
+    stock: str | None = None
+    supplier: str | None = None
+    no_image: bool = False
+    no_category: bool = False
+    low_stock: bool = False
+    expiring: bool = False
+    include_inactive: bool = True
+
+    def as_filters(self) -> dict:
+        d = self.model_dump()
+        d["ptype"] = d.pop("type")
+        return d
+
+
+@router.post("/warehouse/bulk/preview")
+async def bulk_preview(body: BulkIn, ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+    """Πόσα είδη πιάνει το φίλτρο — ΠΡΙΝ αλλάξει οτιδήποτε."""
+    return await _repo(ctx).bulk_preview(body.as_filters())
+
+
+class BulkForSaleIn(BulkIn):
+    for_sale_value: bool
+
+
+@router.post("/warehouse/bulk/for-sale")
+async def bulk_for_sale(body: BulkForSaleIn,
+                        ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+    """Μαζικό «πωλείται / δεν πωλείται στο e-shop» σε ό,τι πιάνει το φίλτρο."""
+    filters = {k: v for k, v in body.as_filters().items() if k != "for_sale_value"}
+    try:
+        return await _repo(ctx).bulk_set_for_sale(filters, for_sale=body.for_sale_value)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from None
+
+
 class MoveIn(BaseModel):
     barcode: str
     kind: str = "in"                    # in=παραλαβή · out=πώληση/εξαγωγή · adjust=απογραφή · waste=απόσυρση

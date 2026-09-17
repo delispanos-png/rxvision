@@ -3,10 +3,10 @@
 import { useState, useEffect, useRef, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { useQuery } from "@tanstack/react-query";
-import { Warehouse, Plus, ArrowUpDown, History, Pencil, AlertTriangle, CalendarClock, X, PackageX, FileSpreadsheet, Upload, ImagePlus, ZoomIn } from "lucide-react";
+import { Warehouse, Plus, ArrowUpDown, History, Pencil, AlertTriangle, CalendarClock, X, PackageX, FileSpreadsheet, Upload, ImagePlus, ZoomIn, ShoppingCart, Ban, Loader2 } from "lucide-react";
 import { api, apiUpload, apiBlob, API_BASE } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
-import { appAlert } from "@/store/dialogStore";
+import { appAlert, appConfirm } from "@/store/dialogStore";
 import { fmtEur, fmtNum } from "@/lib/formatters";
 import { DataTable, type Column } from "@/components/tables/DataTable";
 import { DateInput } from "@/components/ui/DateInput";
@@ -74,6 +74,46 @@ export default function WarehousePage() {
   const total = list.data?.total ?? 0;
   const totalPages = Math.max(1, Math.ceil(total / PAGE));
   const s = list.data?.summary;
+
+  const anyFilter = !!(q || type || low || exp || cat1 || cat2 || cat3 || forSale || stock || supplier || noImg || noCat);
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const filterBody = () => ({
+    q, type: type || null, cat1: cat1 || null, cat2: cat2 || null, cat3: cat3 || null,
+    for_sale: forSale ? forSale === "yes" : null, stock: stock || null,
+    supplier: supplier || null, no_image: noImg, no_category: noCat,
+    low_stock: low, expiring: exp, include_inactive: inactive,
+  });
+
+  /** Μαζική αλλαγή: ΠΑΝΤΑ προεπισκόπηση πρώτα, και το κουμπί λέει τον ΠΡΑΓΜΑΤΙΚΟ αριθμό.
+   *  Με 41.000 είδη, μια μαζική ενέργεια χωρίς νούμερο είναι στοίχημα. */
+  async function bulk(value: boolean) {
+    setBulkBusy(true);
+    try {
+      const p = await api<{ total: number; already_on: number; already_off: number; blocked_no_category: number }>(
+        "/pharmacy-catalog/warehouse/bulk/preview", { method: "POST", body: JSON.stringify(filterBody()) });
+      const willChange = value ? p.already_off - p.blocked_no_category : p.already_on;
+      if (willChange <= 0) {
+        appAlert(value
+          ? t(`Δεν αλλάζει κάτι — είναι ήδη όλα στο e-shop${p.blocked_no_category ? ` (${p.blocked_no_category} δεν μπορούν: δεν έχουν Κατηγορία 1)` : ""}.`,
+               "Nothing to change — they are all already online.")
+          : t("Δεν αλλάζει κάτι — κανένα από αυτά δεν πωλείται online.", "Nothing to change — none of these is sold online."));
+        return;
+      }
+      const msg = value
+        ? t(`Θα μπουν στο e-shop ${willChange} είδη (από τα ${p.total} του φίλτρου).${p.blocked_no_category ? `\n${p.blocked_no_category} μένουν εκτός γιατί δεν έχουν Κατηγορία 1.` : ""}`,
+             `${willChange} items will be sold online (of ${p.total} matched).`)
+        : t(`Θα βγουν από το e-shop ${willChange} είδη (από τα ${p.total} του φίλτρου).`,
+             `${willChange} items will be removed from the e-shop (of ${p.total} matched).`);
+      if (!(await appConfirm(msg, { title: value ? t("Πώληση online", "Sell online") : t("Απόσυρση από e-shop", "Remove from e-shop"),
+                                    confirmText: t("Ναι, εφάρμοσέ το", "Yes, apply"), danger: !value }))) return;
+      const r = await api<{ changed: number }>("/pharmacy-catalog/warehouse/bulk/for-sale",
+        { method: "POST", body: JSON.stringify({ ...filterBody(), for_sale_value: value }) });
+      appAlert(t(`Άλλαξαν ${r.changed} είδη.`, `${r.changed} items updated.`));
+      list.refetch();
+    } catch {
+      appAlert(t("Η μαζική αλλαγή απέτυχε.", "Bulk change failed."));
+    } finally { setBulkBusy(false); }
+  }
 
   async function toggle(bc: string, patch: { for_sale?: boolean; active?: boolean }) {
     const r = await api<{ ok: boolean; need_category?: boolean }>("/catalog/warehouse/flags", { method: "POST", body: JSON.stringify({ barcode: bc, ...patch }) }).catch(() => ({ ok: false, need_category: false }));
@@ -223,6 +263,26 @@ export default function WarehousePage() {
           <button onClick={() => { setQ(""); setType(""); setLow(false); setExp(false); setCat1(""); setCat2(""); setCat3(""); setForSale(""); setStock(""); setSupplier(""); setNoImg(false); setNoCat(false); }} className="ml-auto rounded-lg px-3 py-1.5 text-sm font-medium text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/30">✕ {t("Καθαρισμός", "Clear")}</button>
         )}
       </div>
+
+      {/* ΜΑΖΙΚΗ ΕΝΕΡΓΕΙΑ — «ό,τι βλέπω, αυτό αλλάζω».
+          Καμία νέα γλώσσα κανόνων: ο φαρμακοποιός φιλτράρει όπως ήδη ξέρει και εφαρμόζει
+          σε ΟΛΑ όσα πιάνει το φίλτρο, με προεπισκόπηση και ρητή επιβεβαίωση. */}
+      {anyFilter && total > 0 && (
+        <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-brand-200 bg-brand-50/60 px-4 py-3 dark:border-brand-800 dark:bg-brand-950/20">
+          <span className="text-sm text-slate-700 dark:text-slate-200">
+            {t("Αυτό το φίλτρο πιάνει", "This filter matches")} <b>{fmtNum(total)}</b> {t("είδη.", "items.")}
+          </span>
+          <button onClick={() => bulk(true)} disabled={bulkBusy}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-50">
+            {bulkBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ShoppingCart className="h-3.5 w-3.5" />}
+            {t("Πούλα τα όλα στο e-shop", "Sell all online")}
+          </button>
+          <button onClick={() => bulk(false)} disabled={bulkBusy}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200">
+            <Ban className="h-3.5 w-3.5" />{t("Βγάλ' τα όλα από το e-shop", "Remove all from e-shop")}
+          </button>
+        </div>
+      )}
 
       <div className="rounded-2xl border border-slate-200 bg-white p-2 dark:border-slate-700 dark:bg-slate-900">
         <DataTable pageSize={PAGE} columns={cols} rows={list.data?.items ?? []} rowKey={(r) => r.barcode} empty={list.isError ? t("Το κύκλωμα e-shop δεν είναι ενεργό για το φαρμακείο.", "The e-shop module is not enabled.") : t("Κανένα είδος.", "No items.")} />
