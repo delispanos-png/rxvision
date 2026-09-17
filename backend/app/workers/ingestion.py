@@ -205,16 +205,8 @@ def dispatch_incremental_sync() -> int:
     async def _run() -> list[str]:
         client, db = _fresh_db()
         try:
-            ids: list[str] = []
-            cursor = db["tenants"].find(
-                {"country": "GR", "status": {"$in": ["active", "trial"]},
-                 "credentials_ref.hdika": {"$ne": None},
-                 "ingestion_config.hdika.sync_enabled": {"$ne": False},
-                 "ingestion_config.hdika.auth_paused": {"$ne": True}},
-                {"_id": 1})
-            async for t in cursor:
-                ids.append(str(t["_id"]))
-            return ids
+            from app.services.ingestion_gate import eligible_tenant_ids
+            return await eligible_tenant_ids(db)
         finally:
             client.close()
 
@@ -230,11 +222,8 @@ def dispatch_cancellation_reconcile() -> int:
     async def _run() -> list[str]:
         client, db = _fresh_db()
         try:
-            return [str(t["_id"]) async for t in db["tenants"].find(
-                {"country": "GR", "status": {"$in": ["active", "trial"]},
-                 "credentials_ref.hdika": {"$ne": None},
-                 "ingestion_config.hdika.sync_enabled": {"$ne": False},
-                 "ingestion_config.hdika.auth_paused": {"$ne": True}}, {"_id": 1})]
+            from app.services.ingestion_gate import eligible_tenant_ids
+            return await eligible_tenant_ids(db)
         finally:
             client.close()
 
@@ -263,19 +252,17 @@ def reconcile_cancellations_task(self, tenant_id: str) -> dict:
     return _run_async(_run())
 
 
-def _gr_hdika_tenants(db):
-    return db["tenants"].find(
-        {"country": "GR", "status": {"$in": ["active", "trial"]},
-         "credentials_ref.hdika": {"$ne": None},
-         "ingestion_config.hdika.sync_enabled": {"$ne": False},
-                 "ingestion_config.hdika.auth_paused": {"$ne": True}}, {"_id": 1})
+async def _gr_hdika_tenant_ids(db) -> list[str]:
+    """Τα φαρμακεία που δικαιούνται συγχρονισμό — ΕΝΑ σημείο απόφασης (ingestion_gate)."""
+    from app.services.ingestion_gate import eligible_tenant_ids
+    return await eligible_tenant_ids(db)
 
 
 def _dispatch_deep(days: int) -> int:
     async def _run() -> list[str]:
         client, db = _fresh_db()
         try:
-            return [str(t["_id"]) async for t in _gr_hdika_tenants(db)]
+            return await _gr_hdika_tenant_ids(db)
         finally:
             client.close()
     ids = _run_async(_run())
@@ -375,7 +362,7 @@ def dispatch_reconcile_gaps() -> int:
     from app.services.ingestion.reconcile import RECONCILE_WINDOW_DAYS
     async def _run() -> list[str]:
         _, db = _fresh_db()
-        return [str(t["_id"]) async for t in _gr_hdika_tenants(db)]
+        return await _gr_hdika_tenant_ids(db)
     ids = _run_async(_run())
     for tid in ids:
         reconcile_gaps_task.apply_async(args=[tid, RECONCILE_WINDOW_DAYS], queue="backfill")
@@ -447,7 +434,7 @@ def dispatch_cross_tenant_leaks() -> int:
     σωστό. Ουρά backfill ώστε να μην κλέβει slots από τον incremental sync."""
     async def _run() -> list[str]:
         _, db = _fresh_db()
-        return [str(t["_id"]) async for t in _gr_hdika_tenants(db)]
+        return await _gr_hdika_tenant_ids(db)
     ids = _run_async(_run())
     for tid in ids:
         reconcile_cross_tenant_leaks_task.apply_async(args=[tid, 120], queue="backfill")
@@ -463,7 +450,7 @@ def dispatch_amount_audit() -> int:
     async def _run() -> list[str]:
         client, db = _fresh_db()
         try:
-            return [str(t["_id"]) async for t in _gr_hdika_tenants(db)]
+            return await _gr_hdika_tenant_ids(db)
         finally:
             client.close()
     ids = _run_async(_run())
@@ -493,11 +480,8 @@ def dispatch_influenza_sync() -> int:
     async def _run() -> list[str]:
         client, db = _fresh_db()
         try:
-            return [str(t["_id"]) async for t in db["tenants"].find(
-                {"country": "GR", "status": {"$in": ["active", "trial"]},
-                 "credentials_ref.hdika": {"$ne": None},
-                 "ingestion_config.hdika.sync_enabled": {"$ne": False},
-                 "ingestion_config.hdika.auth_paused": {"$ne": True}}, {"_id": 1})]
+            from app.services.ingestion_gate import eligible_tenant_ids
+            return await eligible_tenant_ids(db)
         finally:
             client.close()
     tenant_ids = _run_async(_run())
@@ -701,11 +685,8 @@ def dispatch_historical_continue() -> int:
         client, db = _fresh_db()
         try:
             todo = []
-            async for t in db["tenants"].find(
-                    {"country": "GR", "status": {"$in": ["active", "trial"]},
-                     "credentials_ref.hdika": {"$ne": None},
-                     "ingestion_config.hdika.auth_paused": {"$ne": True}}, {"_id": 1}):
-                tid = str(t["_id"])
+            from app.services.ingestion_gate import eligible_tenant_ids
+            for tid in await eligible_tenant_ids(db):
                 hf = (vault.get_secret(f"tenants/{tid}/hdika") or {}).get("history_from")
                 if not hf:
                     continue
@@ -796,10 +777,8 @@ def heal_missing_cda(limit_per_tenant: int = 25) -> dict:
         try:
             from app.api.v1.routers.ingestion import _effective_hdika_creds
             healed = scanned = 0
-            tenants = [str(t["_id"]) async for t in db["tenants"].find(
-                {"country": "GR", "status": {"$in": ["active", "trial"]},
-                 "credentials_ref.hdika": {"$ne": None},
-                 "ingestion_config.hdika.auth_paused": {"$ne": True}}, {"_id": 1})]
+            from app.services.ingestion_gate import eligible_tenant_ids
+            tenants = await eligible_tenant_ids(db)
             for tid in tenants:
                 seen, barcodes = set(), []
                 async for e in db["prescription_executions"].find(
@@ -884,9 +863,13 @@ def notify_hdika_auth_paused() -> dict:
         sent = 0
         try:
             now = datetime.now(tz=timezone.utc)
+            from app.services.ingestion_gate import _should_stop
             async for t in db["tenants"].find(
                     {"status": {"$in": ["active", "trial"]},
                      "ingestion_config.hdika.auth_paused": True}):
+                # Ληγμένη συνδρομή → καμία υπενθύμιση· ο συγχρονισμός είναι ούτως ή άλλως σταματημένος.
+                if await _should_stop(db, str(t["_id"])):
+                    continue
                 h = (t.get("ingestion_config") or {}).get("hdika") or {}
                 count = int(h.get("auth_notify_count") or 0)
                 if count >= _AUTH_NOTIFY_MAX_DAYS:
@@ -937,10 +920,13 @@ def remind_monthly_hdika_password() -> int:
         client, db = _fresh_db()
         n = 0
         try:
+            from app.services.ingestion_gate import _should_stop
             async for t in db["tenants"].find(
                     {"country": "GR", "status": {"$in": ["active", "trial"]},
                      "credentials_ref.hdika": {"$ne": None},
                      "ingestion_config.hdika.auth_paused": {"$ne": True}}):
+                if await _should_stop(db, str(t["_id"])):
+                    continue          # ληγμένη συνδρομή → μην του ζητάς νέο μηνιαίο κωδικό
                 email = _pharmacy_email(t)
                 if not email:
                     continue

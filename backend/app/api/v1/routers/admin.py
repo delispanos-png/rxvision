@@ -396,6 +396,11 @@ async def tenants(_: PlatformContext = Depends(get_platform_admin)):
             "hdika_paused": bool(_hd.get("auth_paused")),
             "hdika_error": (_hd.get("auth_error_msg") or None),
             "hdika_paused_at": _hd.get("auth_error_at"),
+            # Σταματημένος συγχρονισμός επειδή έληξε η ΣΥΝΔΡΟΜΗ (όχι λάθος κωδικός): δεν είναι
+            # πρόβλημα που πρέπει να λυθεί — είναι σωστή συμπεριφορά, και ξεκινά μόνος του όταν
+            # ο πελάτης ανανεώσει. Ξεχωριστή σήμανση για να μη μπερδεύεται με το auth_paused.
+            "sync_stopped": bool((_hd.get("sync_stopped") or {}).get("at")),
+            "sync_stopped_at": (_hd.get("sync_stopped") or {}).get("at"),
             "created_at": t.get("created_at"),
         })
     return {"items": jsonsafe(items)}

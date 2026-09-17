@@ -148,6 +148,8 @@ INDEXES: list[tuple[str, list[tuple[str, int]], dict]] = [
     # Μόνιμο ημερολόγιο αλλαγών πακέτου (ποιος άλλαξε σε τι και πότε).
     ("plan_change_log", [("at", -1)], {}),
     ("plan_change_log", [("tenant_id", 1), ("at", -1)], {}),
+    # Ιστορικό παύσης/επανεκκίνησης συγχρονισμού ΗΔΥΚΑ (ληγμένη συνδρομή).
+    ("sync_events", [("tenant_id", 1), ("at", -1)], {}),
     ("module_settings", [("tenant_id", 1), ("module", 1)], {"unique": True}),
     ("subscriptions", [("tenant_id", 1)], {"unique": True}),
     ("tenants", [("slug", 1)], {"unique": True}),

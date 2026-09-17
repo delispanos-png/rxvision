@@ -8,9 +8,9 @@ import { adminApi, ApiError } from "@/lib/adminClient";
 import { fmtEur, fmtNum, fmtDate } from "@/lib/formatters";
 import { DataTable, type Column } from "@/components/tables/DataTable";
 import { Modal } from "@/components/ui/Modal";
-import { Search, X, Users2, Building2, Wallet, KeyRound, type LucideIcon } from "lucide-react";
+import { Search, X, Users2, Building2, Wallet, KeyRound, PauseCircle, type LucideIcon } from "lucide-react";
 
-type Tenant = { id: string; name: string; afm?: string; plan: string; status: string; users: number; active_now?: number; seats?: number; mrr: number; msg_balance?: number; hdika_paused?: boolean; hdika_error?: string | null; hdika_paused_at?: string | null; created_at: string };
+type Tenant = { id: string; name: string; afm?: string; plan: string; status: string; users: number; active_now?: number; seats?: number; mrr: number; msg_balance?: number; hdika_paused?: boolean; hdika_error?: string | null; hdika_paused_at?: string | null; sync_stopped?: boolean; sync_stopped_at?: string | null; created_at: string };
 type Package = { _id: string; name: string; price_monthly: number; price_yearly?: number; modules: string[]; seats: number; trial_days: number; sla?: string; active?: boolean; extra_user_price?: number; extra_user_price_yearly?: number };
 type Sla = { _id: string; name?: string; description?: string; active?: boolean; price_monthly?: number; price_yearly?: number };
 type AadeResp = { ok: boolean; name?: string; title?: string; doy?: string; address?: string; postal_code?: string; city?: string };
@@ -124,6 +124,12 @@ export default function SubscribersPage() {
         <div className="min-w-0">
           <div className="flex items-center gap-1.5">
             <span className="truncate font-medium text-slate-800 dark:text-slate-100">{r.name}</span>
+            {r.sync_stopped && !r.hdika_paused && (
+              <span title={`Ο συγχρονισμός ΗΔΥΚΑ σταμάτησε επειδή έληξε η συνδρομή${r.sync_stopped_at ? ` (${new Date(r.sync_stopped_at).toLocaleDateString("el-GR", { timeZone: "Europe/Athens" })})` : ""}. Θα συνεχίσει μόνος του από εκείνη την ημέρα μόλις ανανεώσει.`}
+                className="inline-flex shrink-0 items-center gap-1 rounded-full bg-slate-200 px-1.5 py-0.5 text-[10px] font-semibold text-slate-600 dark:bg-slate-700 dark:text-slate-300">
+                <PauseCircle className="h-3 w-3" /> χωρίς sync
+              </span>
+            )}
             {r.hdika_paused && (
               <span title={r.hdika_error || "Παγωμένος συγχρονισμός ΗΔΥΚΑ"}
                 className="inline-flex shrink-0 items-center gap-1 rounded-full bg-rose-100 px-1.5 py-0.5 text-[10px] font-semibold text-rose-700 dark:bg-rose-900/50 dark:text-rose-300">
