@@ -824,13 +824,31 @@ async def approve_plan_change(tenant_id: str, ctx: PlatformContext = Depends(get
 
 @router.post("/plan-changes/{tenant_id}/reject")
 async def reject_plan_change(tenant_id: str, ctx: PlatformContext = Depends(get_platform_admin)):
-    """Reject / cancel a pending plan change."""
+    """Ακύρωση εκκρεμούς αλλαγής πακέτου. Σκάει αν δεν υπήρχε τίποτα να ακυρωθεί."""
     from app.services import plan_change_service
-    await plan_change_service.cancel_change(tenant_id)
+    res = await plan_change_service.cancel_change(tenant_id)
+    if not res.get("ok"):
+        raise HTTPException(http_status.HTTP_400_BAD_REQUEST, "nothing_to_cancel")
     await shared_db()["audit_logs"].insert_one({
         "tenant_id": tenant_id, "action": "plan_change_rejected", "by": ctx.email,
         "at": datetime.now(tz=timezone.utc)})
-    return {"ok": True}
+    return res
+
+
+@router.post("/plan-changes/{tenant_id}/clear-broken")
+async def clear_broken_plan_change(tenant_id: str, ctx: PlatformContext = Depends(get_platform_admin)):
+    """Καθαρισμός ΧΑΛΑΣΜΕΝΗΣ εγγραφής (χωρίς kind/status ή με πακέτο που δεν υπάρχει).
+
+    Δεν αγγίζει ποτέ έγκυρο αίτημα σε εξέλιξη· κρατά αντίγραφο πριν σβήσει.
+    """
+    from app.services import plan_change_service
+    res = await plan_change_service.clear_broken(tenant_id)
+    if not res.get("ok"):
+        raise HTTPException(http_status.HTTP_400_BAD_REQUEST, res.get("error", "failed"))
+    await shared_db()["audit_logs"].insert_one({
+        "tenant_id": tenant_id, "action": "plan_change_broken_cleared", "by": ctx.email,
+        "at": datetime.now(tz=timezone.utc)})
+    return res
 
 
 class BankIn(BaseModel):

@@ -181,12 +181,43 @@ async def request_change(tenant_id: str, plan: str, *, method: str | None = None
             "plan": plan, "plan_name": plan_name}
 
 
+def is_broken(pend: dict | None, pkg: dict | None) -> bool:
+    """Εγγραφή που ΔΕΝ είναι αίτημα: λείπει kind/status/requested_at ή το πακέτο δεν υπάρχει."""
+    pend = pend or {}
+    return not (pend.get("kind") and pend.get("status") and pend.get("requested_at") and pkg)
+
+
 async def cancel_change(tenant_id: str) -> dict:
-    """Cancel a not-yet-applied change (scheduled downgrade or awaiting-payment upgrade)."""
-    await shared_db()["subscriptions"].update_one(
+    """Ακύρωση μη-εφαρμοσμένης αλλαγής (προγραμματισμένη υποβάθμιση ή αναβάθμιση σε αναμονή).
+
+    Επιστρέφει `cleared` ώστε ο καλών να ΞΕΡΕΙ αν όντως έγινε κάτι. Πριν επέστρεφε πάντα
+    `ok: True` ακόμη κι όταν δεν ταίριαζε τίποτα — το κουμπί «έπαιζε» χωρίς να κάνει τίποτα.
+    """
+    res = await shared_db()["subscriptions"].update_one(
         {"tenant_id": tenant_id, "pending_change.status": {"$in": ["scheduled", "awaiting_payment"]}},
         {"$unset": {"pending_change": ""}})
-    return {"ok": True}
+    return {"ok": bool(res.modified_count), "cleared": res.modified_count}
+
+
+async def clear_broken(tenant_id: str) -> dict:
+    """Σβήνει ΜΟΝΟ χαλασμένη εγγραφή — ποτέ έγκυρο αίτημα σε εξέλιξη.
+
+    Ξεχωριστή διαδρομή από την ακύρωση επίτηδες: η ακύρωση κρατά τον έλεγχο κατάστασης ώστε
+    κανείς να μη σβήσει κατά λάθος μια πληρωμή με κάρτα που είναι στον αέρα.
+    """
+    db = shared_db()
+    sub = await db["subscriptions"].find_one({"tenant_id": tenant_id})
+    if not sub or not sub.get("pending_change"):
+        return {"ok": False, "error": "nothing_to_clear"}
+    pend = sub["pending_change"]
+    if not is_broken(pend, await _pkg(pend.get("plan"))):
+        return {"ok": False, "error": "not_broken"}
+    # Κρατάμε αντίγραφο πριν σβήσουμε — δεν πετάμε ποτέ δεδομένα χωρίς ίχνος.
+    await db["plan_change_discarded"].insert_one(
+        {"tenant_id": tenant_id, "pending_change": pend, "at": _now()})
+    res = await db["subscriptions"].update_one({"tenant_id": tenant_id},
+                                               {"$unset": {"pending_change": ""}})
+    return {"ok": bool(res.modified_count), "cleared": res.modified_count}
 
 
 async def get_pending(tenant_id: str) -> dict:
@@ -296,7 +327,7 @@ async def list_pending_admin() -> list[dict]:
         valid = bool(pend.get("kind") and pend.get("status") and pend.get("requested_at"))
         known = bool(await _pkg(pend.get("plan")))
         out.append({
-            "broken": (not valid) or (not known),
+            "broken": is_broken(pend, await _pkg(pend.get("plan"))),
             "broken_reason": (None if valid and known else
                               ("άγνωστο πακέτο «%s»" % pend.get("plan") if valid
                                else "παλιά/ημιτελής εγγραφή χωρίς αίτημα")),

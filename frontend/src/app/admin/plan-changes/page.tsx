@@ -9,7 +9,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { appConfirm } from "@/store/dialogStore";
+import { appAlert, appConfirm } from "@/store/dialogStore";
 import { adminApi } from "@/lib/adminClient";
 import { ArrowUp, ArrowDown, Building2, Check, Loader2, TrendingDown, TrendingUp, History } from "lucide-react";
 
@@ -44,14 +44,21 @@ export default function PlanChangesPage() {
   const [busy, setBusy] = useState<string | null>(null);
   const q = useQuery({ queryKey: ["admin", "plan-changes"], queryFn: () => adminApi<Res>("/admin/plan-changes"), retry: false, refetchInterval: 60000 });
 
-  const act = async (tid: string, action: "approve" | "reject") => {
+  // `clear-broken` είναι ΞΕΧΩΡΙΣΤΗ διαδρομή από την ακύρωση: η ακύρωση κρατά έλεγχο κατάστασης
+  // (για να μη σβηστεί πληρωμή στον αέρα) και γι' αυτό δεν μπορούσε ποτέ να πιάσει τις
+  // χαλασμένες — το κουμπί «έπαιζε» χωρίς να κάνει τίποτα.
+  const act = async (tid: string, action: "approve" | "clear-broken") => {
     const ok = action === "approve"
       ? await appConfirm("Επιβεβαίωση λήψης κατάθεσης & ενεργοποίηση της αναβάθμισης;", { title: "Έγκριση", confirmText: "Έγκριση" })
-      : await appConfirm("Να καθαριστεί αυτή η εγγραφή;", { title: "Καθαρισμός", danger: true, confirmText: "Καθάρισε" });
+      : await appConfirm("Να καθαριστεί αυτή η χαλασμένη εγγραφή; Κρατάμε αντίγραφο.", { title: "Καθαρισμός", danger: true, confirmText: "Καθάρισε" });
     if (!ok) return;
     setBusy(tid);
-    try { await adminApi(`/admin/plan-changes/${tid}/${action}`, { method: "POST" }); }
-    finally { setBusy(null); qc.invalidateQueries({ queryKey: ["admin", "plan-changes"] }); }
+    try {
+      await adminApi(`/admin/plan-changes/${tid}/${action}`, { method: "POST" });
+      await qc.invalidateQueries({ queryKey: ["admin", "plan-changes"] });
+    } catch {
+      appAlert("Δεν έγινε τίποτα — η εγγραφή δεν βρέθηκε ή έχει ήδη καθαριστεί.");
+    } finally { setBusy(null); }
   };
 
   const up = q.data?.upcoming ?? [];
@@ -158,7 +165,7 @@ export default function PlanChangesPage() {
             <div key={r.tenant_id} className="flex flex-wrap items-center gap-2 border-t border-rose-100 py-2 text-sm">
               <span className="font-semibold text-slate-800">{r.tenant_name || r.tenant_id}</span>
               <span className="text-rose-700">{r.broken_reason}</span>
-              <button onClick={() => act(r.tenant_id, "reject")} disabled={busy === r.tenant_id}
+              <button onClick={() => act(r.tenant_id, "clear-broken")} disabled={busy === r.tenant_id}
                 className="ml-auto rounded-lg border border-rose-300 bg-white px-2.5 py-1 text-xs font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-50">
                 {busy === r.tenant_id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Καθάρισέ το"}
               </button>
