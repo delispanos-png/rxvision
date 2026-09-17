@@ -59,7 +59,6 @@ export function Sidebar() {
   };
   const hiddenGroups = new Set(prefsQ.data?.hidden_groups ?? []);
   const hiddenItems = new Set(prefsQ.data?.hidden_items ?? []);
-  const maxPinned = prefsQ.data?.max_pinned ?? 8;
   const savePins = async (items: Pin[]) => {
     await api("/nav/pinned", { method: "PUT", body: JSON.stringify({ items }) });
     qc.invalidateQueries({ queryKey: ["nav", "prefs"] });
@@ -184,7 +183,8 @@ export function Sidebar() {
           {/* ΔΙΑΚΟΠΤΗΣ: ή το κεντρικό μενού (όπως το ορίζει ο ρόλος του) ή ΜΟΝΟ τα δικά του.
               Όχι και τα δύο μαζί — αυτό ήταν το αρχικό λάθος: το «προσωπικό» απλώς πρόσθετε
               άλλη μια ενότητα σε ένα μενού που ήταν ήδη μεγάλο. */}
-          <div className={`flex rounded-xl bg-slate-100 p-0.5 dark:bg-slate-800 ${hide}`}>
+          <div className={`flex items-center gap-1.5 ${hide}`}>
+          <div className="flex flex-1 rounded-xl bg-slate-100 p-0.5 dark:bg-slate-800">
             <button onClick={() => setMode("central")}
               className={`flex-1 rounded-lg px-2 py-1.5 text-xs font-bold transition ${mode === "central" ? "bg-white text-slate-800 shadow-sm dark:bg-slate-700 dark:text-slate-100" : "text-slate-500 hover:text-slate-700 dark:text-slate-400"}`}>
               {t("Κεντρικό", "Full menu")}
@@ -195,14 +195,19 @@ export function Sidebar() {
               {t("Τα δικά μου", "Mine")}
             </button>
           </div>
+          <button onClick={() => setPicking(true)} title={t("Διάλεξε τις δικές σου δουλειές", "Pick your own tasks")}
+            className="grid h-7 w-7 shrink-0 place-items-center rounded-lg text-slate-400 transition hover:bg-slate-100 hover:text-brand-600 dark:hover:bg-slate-800">
+            <Pencil className="h-3.5 w-3.5" />
+          </button>
+          </div>
 
-          {/* ΤΑ ΔΙΚΑ ΜΟΥ — οι δουλειές που κάνει ΑΥΤΟΣ ο χειριστής κάθε μέρα. */}
+          {/* ΤΑ ΔΙΚΑ ΜΟΥ — μόνο στη δική τους λειτουργία. Στο «Κεντρικό» βλέπεις ΜΟΝΟ το
+              κεντρικό· αλλιώς ξαναγίνονται δύο μενού το ένα πάνω στο άλλο. */}
+          {(mode === "personal" || !pinned.length) && (
           <div>
-            <button onClick={() => setPicking(true)}
-              className={`flex w-full items-center justify-between px-3 pb-2 text-[13px] font-bold uppercase tracking-wide text-slate-500 transition-colors hover:text-brand-600 dark:text-slate-400 ${hide}`}>
-              <span className="flex items-center gap-2"><Star className="h-4 w-4 shrink-0 text-amber-400" strokeWidth={2} />{t("Τα δικά μου", "My shortcuts")}</span>
-              <Pencil className="h-3.5 w-3.5 shrink-0 opacity-60" />
-            </button>
+            <div className={`flex items-center gap-2 px-3 pb-2 text-[13px] font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400 ${hide}`}>
+              <Star className="h-4 w-4 shrink-0 text-amber-400" strokeWidth={2} />{t("Τα δικά μου", "My shortcuts")}
+            </div>
             {pinned.length ? (
               <div className="space-y-1">
                 {pinned.map((p) => {
@@ -219,6 +224,7 @@ export function Sidebar() {
               </button>
             )}
           </div>
+          )}
 
           {mode === "personal" ? (
             <p className={`px-3 text-[11px] leading-relaxed text-slate-400 ${hide}`}>
@@ -357,7 +363,7 @@ export function Sidebar() {
         </div>
       )}
       {picking && (
-        <PickerModal groups={groups} pinned={pinned} max={maxPinned} t={t}
+        <PickerModal groups={groups} pinned={pinned} t={t}
           onClose={() => setPicking(false)} onSave={async (items) => { await savePins(items); setPicking(false); }} />
       )}
     </>
@@ -367,16 +373,15 @@ export function Sidebar() {
 /** Επιλογή «δικών μου»: ΟΛΟΙ οι προορισμοί που βλέπει αυτός ο χειριστής, σε μία λίστα.
  *  Γιατί λίστα και όχι αστεράκια στο μενού: σε κινητό το hover δεν υπάρχει, και το να
  *  βλέπεις τα πάντα μαζί κάνει την επιλογή μία δουλειά αντί για δέκα. */
-function PickerModal({ groups, pinned, max, t, onClose, onSave }: {
-  groups: Group[]; pinned: Pin[]; max: number; t: (el: string, en: string) => string;
+function PickerModal({ groups, pinned, t, onClose, onSave }: {
+  groups: Group[]; pinned: Pin[]; t: (el: string, en: string) => string;
   onClose: () => void; onSave: (items: Pin[]) => Promise<void>;
 }) {
   const [sel, setSel] = useState<Pin[]>(pinned);
   const [busy, setBusy] = useState(false);
   const has = (href: string) => sel.some((p) => p.href === href);
   const toggle = (p: Pin) => setSel((prev) =>
-    prev.some((x) => x.href === p.href) ? prev.filter((x) => x.href !== p.href)
-      : prev.length >= max ? prev : [...prev, p]);
+    prev.some((x) => x.href === p.href) ? prev.filter((x) => x.href !== p.href) : [...prev, p]);
 
   const rows: { group: string; items: Pin[] }[] = groups.map((g) => ({
     group: t(g.title, g.en),
@@ -392,11 +397,11 @@ function PickerModal({ groups, pinned, max, t, onClose, onSave }: {
           <div>
             <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">{t("Τα δικά μου", "My shortcuts")}</h3>
             <p className="mt-0.5 text-xs text-slate-500">
-              {t(`Διάλεξε έως ${max} δουλειές που κάνεις κάθε μέρα — θα είναι πρώτες στο μενού σου.`,
-                 `Pick up to ${max} tasks you do daily — they go to the top of your menu.`)}
+              {t("Διάλεξε τις δουλειές που κάνεις κάθε μέρα — όσες θέλεις.",
+                 "Pick the tasks you do every day — as many as you want.")}
             </p>
           </div>
-          <span className="shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-xs font-bold text-slate-500 dark:bg-slate-800">{sel.length}/{max}</span>
+          <span className="shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-xs font-bold text-slate-500 dark:bg-slate-800">{sel.length}</span>
         </div>
         <div className="flex-1 overflow-y-auto p-4">
           {rows.map((r) => (
@@ -404,10 +409,9 @@ function PickerModal({ groups, pinned, max, t, onClose, onSave }: {
               <div className="mb-1 text-[11px] font-bold uppercase tracking-wide text-slate-400">{r.group}</div>
               {r.items.map((it) => {
                 const on = has(it.href);
-                const full = !on && sel.length >= max;
                 return (
-                  <button key={it.href} onClick={() => toggle(it)} disabled={full}
-                    className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm transition ${on ? "bg-brand-50 font-semibold text-brand-700 dark:bg-brand-600/15" : full ? "text-slate-300 dark:text-slate-600" : "text-slate-600 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-800"}`}>
+                  <button key={it.href} onClick={() => toggle(it)}
+                    className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm transition ${on ? "bg-brand-50 font-semibold text-brand-700 dark:bg-brand-600/15" : "text-slate-600 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-800"}`}>
                     <span className={`grid h-4 w-4 shrink-0 place-items-center rounded border ${on ? "border-brand-500 bg-brand-500 text-white" : "border-slate-300 dark:border-slate-600"}`}>
                       {on && <Check className="h-3 w-3" strokeWidth={3} />}
                     </span>

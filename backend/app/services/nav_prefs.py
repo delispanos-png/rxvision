@@ -25,7 +25,9 @@ from datetime import datetime, timezone
 from app.core.db import shared_db
 
 COLL = "nav_prefs"
-MAX_PINNED = 8            # πάνω από αυτό παύει να είναι «τα δικά μου» και ξαναγίνεται μενού
+# Χωρίς όριο: ο χειριστής ξέρει καλύτερα πόσες δουλειές κάνει. Το ταβάνι είναι μόνο
+# τεχνικό φρένο ώστε μια χαλασμένη κλήση να μη γράψει χιλιάδες γραμμές.
+MAX_PINNED = 200
 
 
 def _now() -> datetime:
@@ -91,7 +93,7 @@ async def set_pinned(user_id: str, items: list[dict]) -> dict:
     χωρίς να ψάχνει τον κατάλογο — και να μη σπάει αν μια επιλογή μετονομαστεί."""
     clean: list[dict] = []
     seen: set[str] = set()
-    for it in (items or [])[: MAX_PINNED * 2]:
+    for it in (items or [])[:MAX_PINNED]:
         href = str((it or {}).get("href") or "").strip()
         if not href.startswith("/") or href in seen:
             continue

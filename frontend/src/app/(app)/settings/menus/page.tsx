@@ -120,7 +120,10 @@ export default function MenusPage() {
           <thead className="bg-slate-50 text-xs text-slate-500 dark:bg-slate-800/60">
             <tr>
               <th className="px-4 py-2.5 text-left font-semibold">{t("Ενότητα / επιλογή", "Section / item")}</th>
-              {roles.map((r) => <th key={r} className="px-3 py-2.5 text-center font-semibold">{ROLE_EL[r] ?? r}</th>)}
+              {/* Σταθερό πλάτος: η επικεφαλίδα κάθε ρόλου πρέπει να κάθεται ΑΚΡΙΒΩΣ πάνω από
+                  τα ματάκια του. Με αυτόματο πλάτος, η πρώτη στήλη τραβούσε τον χώρο και οι
+                  επικεφαλίδες έπεφταν δεξιά από τα κουμπιά. */}
+              {roles.map((r) => <th key={r} className="w-28 px-0 py-2.5 text-center font-semibold">{ROLE_EL[r] ?? r}</th>)}
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
@@ -139,8 +142,8 @@ export default function MenusPage() {
                       </button>
                     </td>
                     {roles.map((r) => (
-                      <td key={r} className="px-3 py-2 text-center">
-                        <Btn state={groupState(r, g)} k={`${r}|${g.title}`} onClick={() => toggleGroup(r, g)} />
+                      <td key={r} className="w-28 px-0 py-2">
+                        <div className="flex justify-center"><Btn state={groupState(r, g)} k={`${r}|${g.title}`} onClick={() => toggleGroup(r, g)} /></div>
                       </td>
                     ))}
                   </tr>
@@ -150,8 +153,8 @@ export default function MenusPage() {
                       {roles.map((r) => {
                         const off = menu(r).items.includes(l.href) || menu(r).groups.includes(g.title);
                         return (
-                          <td key={r} className="px-3 py-1.5 text-center">
-                            <Btn state={off ? "off" : "on"} k={`${r}|${l.href}`} onClick={() => toggleItem(r, g, l.href)} />
+                          <td key={r} className="w-28 px-0 py-1.5">
+                            <div className="flex justify-center"><Btn state={off ? "off" : "on"} k={`${r}|${l.href}`} onClick={() => toggleItem(r, g, l.href)} /></div>
                           </td>
                         );
                       })}
