@@ -5,14 +5,16 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Megaphone, Plus, Save, Trash2, Users, PlayCircle, CalendarClock, Check, Eye, Inbox, Phone, Mail } from "lucide-react";
 import { adminApi } from "@/lib/adminClient";
 import { DateInput } from "@/components/ui/DateInput";
-import { AnnouncementCard } from "@/components/layout/AnnouncementPopup";
+import { FeatureAnnouncementModal } from "@/components/announcements/FeatureAnnouncementModal";
 import { appConfirm, appAlert, appPrompt } from "@/store/dialogStore";
 
 type Addon = { _id: string; name?: string; icon?: string; description?: string; price_monthly?: number; active?: boolean };
 type Pkg = { _id: string; name?: string };
 type Tenant = { _id: string; name?: string; status?: string };
 type Ann = {
-  _id: string; title: string; addon?: { key: string; name: string; icon?: string; description?: string; price_monthly?: number; features?: string[] } | null; body?: string; addon_key?: string | null; kind?: string;
+  _id: string; title: string; subtitle?: string | null; quote?: string | null; version?: string;
+  features?: string[] | null; preview_rows?: string[] | null; preview_title?: string | null;
+  trial_days?: number; trial_mode?: string; addon?: { key: string; name: string; icon?: string; description?: string; price_monthly?: number; features?: string[] } | null; body?: string; addon_key?: string | null; kind?: string;
   cta?: { trial?: boolean; demo?: boolean; info_href?: string | null };
   audience?: { mode?: string; tenant_ids?: string[]; packages?: string[]; status?: string[]; exclude_with_addon?: boolean };
   from?: string | null; to?: string | null; frequency?: string; priority?: number; active?: boolean;
@@ -30,7 +32,8 @@ const FREQ: Record<string, string> = {
   weekly: "Μία φορά την εβδομάδα", every_login: "Σε κάθε σύνδεση",
 };
 const EMPTY: Ann = {
-  _id: "", title: "", body: "", addon_key: null,
+  _id: "", title: "", subtitle: "", body: "", quote: "", version: "1", features: [],
+  trial_mode: "instant", trial_days: 30, preview_rows: [], addon_key: null,
   cta: { trial: true, demo: true, info_href: "/settings/modules" },
   audience: { mode: "all", tenant_ids: [], packages: [], status: ["active"], exclude_with_addon: true },
   frequency: "once", priority: 0, active: false,
@@ -151,6 +154,35 @@ export default function AnnouncementsAdminPage() {
 
   const newCount = reqs.data?.items.length ?? 0;
   // Η προεπισκόπηση δανείζεται τα στοιχεία του add-on ακριβώς όπως κάνει το ζωντανό pop-up.
+  // Ίδια μετάφραση με τον συνδέτη της εφαρμογής, ώστε η προεπισκόπηση να είναι ΑΚΡΙΒΩΣ ό,τι
+  // θα δει ο πελάτης — όχι μια «περίπου» εκδοχή.
+  const toConfig = (a: Ann) => {
+    const ad = addons.data?.items.find((x) => x._id === a.addon_key);
+    const raw = (a.features?.length ? a.features : (ad as { features?: string[] })?.features) ?? [];
+    const BULLETS = ["💡", "🔔", "👥", "🏆", "✨", "📈"];
+    return {
+      announcementId: a._id || "preview", version: a.version || "1",
+      badge: "ΝΕΑ ΔΥΝΑΤΟΤΗΤΑ", title: a.title, subtitle: a.subtitle || undefined,
+      description: a.body || ad?.description || undefined, quote: a.quote || undefined,
+      features: raw.slice(0, 4).map((line: string, i: number) => {
+        const [head, ...rest] = String(line).split(/\s+[—–-]\s+/);
+        return { icon: BULLETS[i % BULLETS.length], title: head.trim(), text: rest.join(" — ").trim() };
+      }),
+      aiCallout: ad ? { title: `${ad.icon ?? ""} ${ad.name ?? ""}`.trim(), text: "δουλεύει για σένα, κάθε μέρα." } : undefined,
+      preview: a.preview_rows?.length ? {
+        title: a.preview_title || ad?.name || a.title,
+        subtitle: "Έτσι φαίνεται μέσα στην εφαρμογή σου.",
+        rows: a.preview_rows.slice(0, 4).map((line: string, i: number) => {
+          const [icon, text, who, cta] = String(line).split("|").map((x) => x.trim());
+          return { icon: icon || "•", text: text || "", who: who || undefined, cta: cta || undefined,
+                   tone: (["rose", "amber", "sky", "emerald"] as const)[i % 4] };
+        }),
+      } : undefined,
+      informationUrl: a.cta?.info_href || undefined,
+      enableTrial: a.cta?.trial !== false, allowCallback: a.cta?.demo !== false,
+      trialDays: a.trial_days ?? 30,
+    };
+  };
   const withAddon = (a: Ann | null): Ann | null => {
     if (!a) return null;
     const ad = addons.data?.items.find((x) => x._id === a.addon_key);
@@ -217,9 +249,39 @@ export default function AnnouncementsAdminPage() {
                 </label>
               </div>
 
+              <div className="grid gap-3 md:grid-cols-[2fr_1fr]">
+                <label className="text-xs font-semibold text-slate-600">Υπότιτλος
+                  <input value={draft.subtitle ?? ""} onChange={(e) => set({ subtitle: e.target.value })} className={inp + " mt-1"}
+                    placeholder="π.χ. Η καθημερινότητά σου, πιο απλή και πιο αποτελεσματική." />
+                </label>
+                <label className="text-xs font-semibold text-slate-600">Έκδοση
+                  <input value={draft.version ?? "1"} onChange={(e) => set({ version: e.target.value })} className={inp + " mt-1"} />
+                  <span className="mt-1 block font-normal text-slate-400">Άλλαξέ την για να ξαναεμφανιστεί σε όσους την είδαν.</span>
+                </label>
+              </div>
+
               <label className="block text-xs font-semibold text-slate-600">Κείμενο
                 <textarea value={draft.body ?? ""} onChange={(e) => set({ body: e.target.value })} rows={4} className={inp + " mt-1"}
                   placeholder="Μίλα του σαν άνθρωπος: τι αλλάζει στην καθημερινότητά του, όχι τι κάνει το λογισμικό." />
+              </label>
+
+              <label className="block text-xs font-semibold text-slate-600">Χαρακτηριστικά — μία ανά γραμμή, «Τίτλος — περιγραφή»
+                <textarea value={(draft.features ?? []).join("\n")} rows={4}
+                  onChange={(e) => set({ features: e.target.value.split("\n").map((x) => x.trim()).filter(Boolean) })}
+                  className={inp + " mt-1"} placeholder={"Έξυπνες προτάσεις — Εντοπίζει ευκαιρίες που μπορεί να σου ξέφυγαν.\nΥπενθυμίσεις ασθενών — Εμβολιασμοί, επαναλήψεις και εκκρεμότητες."} />
+                <span className="mt-1 block font-normal text-slate-400">Κενό = παίρνει αυτόματα τα χαρακτηριστικά του add-on.</span>
+              </label>
+
+              <label className="block text-xs font-semibold text-slate-600">Στιγμιότυπο δεξιά (προαιρετικό) — «εικονίδιο | κείμενο | ποιος | κουμπί»
+                <textarea value={(draft.preview_rows ?? []).join("\n")} rows={4}
+                  onChange={(e) => set({ preview_rows: e.target.value.split("\n").map((x) => x.trim()).filter(Boolean) })}
+                  className={inp + " mt-1"} placeholder={"💉 | Ήταν μπροστά σου, δικαιούται εμβόλιο | Παπαδόπουλος Γ. | Δες τον πελάτη\n⏳ | Επαναλαμβανόμενη συνταγή που λήγει | Δημητρίου Α. | Δες τη συνταγή"} />
+                <span className="mt-1 block font-normal text-slate-400">Κενό = το παράθυρο εμφανίζεται σε μία στήλη, χωρίς άδειο χώρο.</span>
+              </label>
+
+              <label className="block text-xs font-semibold text-slate-600">Απόσπασμα (προαιρετικό)
+                <input value={draft.quote ?? ""} onChange={(e) => set({ quote: e.target.value })} className={inp + " mt-1"}
+                  placeholder="Δύο λεπτά το πρωί, με τον καφέ, και ξέρω τι αξίζει την προσοχή μου σήμερα." />
               </label>
 
               <div className="grid gap-3 md:grid-cols-3">
@@ -238,6 +300,20 @@ export default function AnnouncementsAdminPage() {
                 <label className="text-xs font-semibold text-slate-600">Προτεραιότητα
                   <input type="number" value={draft.priority ?? 0} onChange={(e) => set({ priority: Number(e.target.value) })} className={inp + " mt-1"} />
                   <span className="mt-1 block font-normal text-slate-400">Μεγαλύτερο = εμφανίζεται πρώτο. Ποτέ δύο μαζί.</span>
+                </label>
+              </div>
+
+              <div className="grid gap-3 rounded-xl border border-slate-200 bg-white p-3 md:grid-cols-2">
+                <label className="text-xs font-semibold text-slate-600">Τι κάνει το «Ενεργοποίηση δοκιμής»
+                  <select value={draft.trial_mode ?? "instant"} onChange={(e) => set({ trial_mode: e.target.value })} className={inp + " mt-1"}>
+                    <option value="instant">Ανοίγει ΑΜΕΣΩΣ στο φαρμακείο του</option>
+                    <option value="request">Μπαίνει μόνο ως αίτημα — το ανοίγεις εσύ</option>
+                  </select>
+                </label>
+                <label className="text-xs font-semibold text-slate-600">Ημέρες δοκιμής
+                  <input type="number" min={1} max={180} value={draft.trial_days ?? 30}
+                    onChange={(e) => set({ trial_days: Number(e.target.value) })} className={inp + " mt-1"} />
+                  <span className="mt-1 block font-normal text-slate-400">Λήγει μόνη της — δεν χρειάζεται να το θυμάσαι.</span>
                 </label>
               </div>
 
@@ -332,13 +408,7 @@ export default function AnnouncementsAdminPage() {
       )}
 
       {preview && (
-        <div className="fixed inset-0 z-[80] grid place-items-center bg-slate-900/50 p-4 backdrop-blur-sm" onClick={() => setPreview(null)}>
-          <div onClick={(e) => e.stopPropagation()} className="w-full max-w-lg">
-            <p className="mb-2 text-center text-xs font-semibold text-white/90">Έτσι ακριβώς θα το δει ο πελάτης — τα κουμπιά εδώ δεν κάνουν τίποτα.</p>
-            <AnnouncementCard ann={preview} done={null} note={prevNote} setNote={setPrevNote}
-              onClose={() => setPreview(null)} onAction={() => { /* προεπισκόπηση */ }} />
-          </div>
-        </div>
+        <FeatureAnnouncementModal open config={toConfig(preview)} onClose={() => setPreview(null)} />
       )}
 
       {audOf && <AudienceModal ann={audOf} onClose={() => setAudOf(null)} />}

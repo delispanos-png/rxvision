@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, type ReactNode } from "react";
 
-const SIZES = { sm: "max-w-sm", md: "max-w-md", lg: "max-w-lg", xl: "max-w-2xl", "2xl": "max-w-4xl", "3xl": "max-w-6xl", "4xl": "max-w-7xl" } as const;
+const SIZES = { sm: "max-w-sm", md: "max-w-md", lg: "max-w-lg", xl: "max-w-2xl", "2xl": "max-w-4xl", "3xl": "max-w-6xl", "4xl": "max-w-7xl", announcement: "max-w-[1050px]" } as const;
 
 /** Accessible modal primitive: backdrop, Escape-to-close, focus trap, focus restore,
  *  and `max-h-[90vh]` scroll for small screens (U-12, R-5). Consolidates the ad-hoc
@@ -17,6 +17,8 @@ export function Modal({
   children,
   footer,
   size = "md",
+  padded = true,
+  dim = "bg-slate-900/50",
 }: {
   open: boolean;
   onClose: () => void;
@@ -24,6 +26,10 @@ export function Modal({
   children: ReactNode;
   footer?: ReactNode;
   size?: keyof typeof SIZES;
+  /** false → το περιεχόμενο ορίζει μόνο του τα περιθώρια (full-bleed κάρτες/εικόνες). */
+  padded?: boolean;
+  /** Σκίαση φόντου· η εφαρμογή πρέπει να μένει ορατή αλλά θολή από πίσω. */
+  dim?: string;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const restoreTo = useRef<HTMLElement | null>(null);
@@ -70,7 +76,7 @@ export function Modal({
 
   return (
     <div
-      className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/50 p-4 backdrop-blur-sm"
+      className={`fixed inset-0 z-[100] flex items-center justify-center p-3 backdrop-blur-sm sm:p-4 ${dim}`}
       onMouseDown={onClose}
     >
       <div
@@ -78,7 +84,7 @@ export function Modal({
         role="dialog"
         aria-modal="true"
         tabIndex={-1}
-        className={`max-h-[90vh] w-full ${SIZES[size]} overflow-y-auto rounded-2xl bg-white p-4 shadow-2xl outline-none dark:bg-slate-900 sm:p-6`}
+        className={`max-h-[92vh] w-full ${SIZES[size]} overflow-y-auto rounded-2xl bg-white shadow-2xl outline-none dark:bg-slate-900 sm:max-h-[90vh] ${padded ? "p-4 sm:p-6" : ""}`}
         onMouseDown={(e) => e.stopPropagation()}
       >
         {title && <h3 className="mb-3 text-base font-bold text-slate-900 dark:text-slate-100">{title}</h3>}

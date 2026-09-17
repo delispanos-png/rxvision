@@ -761,7 +761,9 @@ class PackageIn(BaseModel):
     ai_free_enabled: bool | None = None
     sla: str | None = None
     modules: list[str] | None = None  # the capabilities this package grants
-    features: list[str] | None = None  # marketing bullet list shown on the pricing card
+    features: list[str] | None = None
+    preview_title: str | None = None
+    preview_rows: list[str] | None = None  # marketing bullet list shown on the pricing card
     available_addons: list[str] | None = None  # which à-la-carte add-ons are offered ON this package
     billing_cycles: list[str] | None = None  # offered cycles: ["monthly"], ["yearly"], or both
     active: bool | None = None
@@ -929,6 +931,8 @@ class AddonIn(BaseModel):
     price_monthly: int | None = None       # cents
     price_yearly: int | None = None        # cents
     features: list[str] | None = None
+    preview_title: str | None = None
+    preview_rows: list[str] | None = None
     active: bool | None = None
 
 
@@ -3589,7 +3593,15 @@ async def set_network_access(user_id: str, body: NetworkAccessIn,
 # ── Ανακοινώσεις προς πελάτες (pop-up μέσα στο RxVision τους) ────────────────────────────────
 class AnnouncementIn(BaseModel):
     title: str
+    subtitle: str | None = None
     body: str = ""
+    quote: str | None = None
+    version: str = "1"
+    features: list[str] | None = None
+    preview_title: str | None = None
+    preview_rows: list[str] | None = None
+    trial_mode: str = "instant"      # instant → ανοίγει αμέσως για trial_days· request → αίτημα
+    trial_days: int = 30
     addon_key: str | None = None
     kind: str | None = None
     cta: dict | None = None          # {trial, demo, info_href}

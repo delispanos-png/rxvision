@@ -27,9 +27,9 @@ from bson.errors import InvalidId
 from app.core.db import shared_db
 
 FREQUENCIES = ("once", "daily", "weekly", "every_login")
-ACTIONS = ("shown", "dismissed", "never", "trial", "demo", "info")
+ACTIONS = ("shown", "dismissed", "never", "trial", "demo", "callback", "info")
 # Ενέργειες που κλείνουν ΟΡΙΣΤΙΚΑ την ανακοίνωση για τον συγκεκριμένο χρήστη.
-_FINAL = ("never", "trial", "demo")
+_FINAL = ("never", "trial", "demo", "callback")
 
 
 # Ώρα Ελλάδας: ο ιδιοκτήτης ορίζει ημερομηνίες σκεπτόμενος ελληνικό ημερολόγιο, όχι UTC.
@@ -207,8 +207,18 @@ async def record(ann_id: str, tenant_id: str, user_id: str | None, action: str,
         {"announcement_id": aid, "tenant_id": tenant_id, "user_id": uid}, upd, upsert=True)
     await db["announcements"].update_one({"_id": aid}, {"$inc": {f"stats.{action}": 1}})
 
-    if action in ("trial", "demo"):
-        return await _open_request(ann, tenant_id, uid, action, note=note, user=user)
+    if action in ("trial", "demo", "callback"):
+        res = await _open_request(ann, tenant_id, uid, action, note=note, user=user)
+        # «Ενεργοποίηση δοκιμής» που δεν ενεργοποιεί τίποτα είναι υπόσχεση, όχι δυνατότητα.
+        # Με trial_mode=instant ανοίγει ΤΩΡΑ και λήγει μόνη της.
+        if action == "trial" and ann.get("trial_mode", "instant") == "instant" and ann.get("addon_key"):
+            from app.services.addon_service import grant_preview
+            g = await grant_preview(tenant_id, ann["addon_key"],
+                                    days=int(ann.get("trial_days") or 30), by="announcement")
+            res["activated"] = bool(g.get("ok")) or g.get("error") == "already_enabled"
+            res["days"] = ann.get("trial_days") or 30
+            res["expires_at"] = g.get("expires_at")
+        return res
     return {"ok": True}
 
 
@@ -235,6 +245,12 @@ async def _open_request(ann: dict, tenant_id: str, uid, kind: str, *,
         "note": (note or "").strip()[:500] or None,
         "created_at": _now(),
     }
+    # «Να με καλέσει κάποιος»: ό,τι συμπλήρωσε ο ίδιος υπερισχύει των στοιχείων της καρτέλας —
+    # συνήθως δίνει το κινητό που σηκώνει, όχι το σταθερό του φαρμακείου.
+    for k in ("callback_name", "callback_phone", "callback_when"):
+        v = str(((user or {}).get("_form") or {}).get(k) or "").strip()
+        if v:
+            doc[k] = v[:120]
     await db["announcement_requests"].insert_one(doc)
     # SMS στον ιδιοκτήτη: ΑΥΤΟ είναι ζεστό ενδιαφέρον πελάτη — δεν περιμένει μέχρι να ανοίξει
     # το adminpanel. Best-effort· αν αποτύχει, το αίτημα είναι ήδη στον φάκελο.
@@ -276,8 +292,21 @@ async def save(data: dict, *, ann_id: str | None = None, by: str | None = None) 
     db = shared_db()
     doc = {
         "title": (data.get("title") or "").strip()[:160],
+        "subtitle": (data.get("subtitle") or "").strip()[:240] or None,
         "body": (data.get("body") or "").strip()[:4000],
+        "quote": (data.get("quote") or "").strip()[:400] or None,
         "addon_key": (data.get("addon_key") or None),
+        # Η έκδοση επιτρέπει να ΞΑΝΑΔΕΙΞΕΙΣ μια ανακοίνωση όταν αλλάξει ουσιαστικά: το κλειδί
+        # «είδα το» περιλαμβάνει την έκδοση, οπότε το v2 ξαναφτάνει σε όσους είδαν το v1.
+        "version": str(data.get("version") or "1").strip()[:12],
+        "features": [f for f in (data.get("features") or []) if str(f).strip()][:6] or None,
+        # Προαιρετικό «στιγμιότυπο» στο δεξί μέρος: «εικονίδιο | κείμενο | ποιος | κουμπί»
+        "preview_title": (data.get("preview_title") or "").strip()[:80] or None,
+        "preview_rows": [r for r in (data.get("preview_rows") or []) if str(r).strip()][:4] or None,
+        # Δοκιμή: «instant» = ενεργοποιείται ΑΜΕΣΩΣ για Ν ημέρες (και μπαίνει στον φάκελο για
+        # να το ξέρεις)· «request» = μπαίνει μόνο ως αίτημα και το ανοίγεις εσύ.
+        "trial_mode": "request" if data.get("trial_mode") == "request" else "instant",
+        "trial_days": max(1, min(180, int(data.get("trial_days") or 30))),
         "kind": data.get("kind") or ("addon" if data.get("addon_key") else "news"),
         "cta": {"trial": bool((data.get("cta") or {}).get("trial", True)),
                 "demo": bool((data.get("cta") or {}).get("demo", True)),

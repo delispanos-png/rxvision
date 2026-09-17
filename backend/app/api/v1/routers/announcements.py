@@ -24,8 +24,12 @@ async def next_announcement(ctx: TenantContext = Depends(get_current_context)):
 
 
 class ActionIn(BaseModel):
-    action: str                  # shown | dismissed | never | trial | demo | info
-    note: str | None = None      # προαιρετικό μήνυμα του πελάτη («θέλω ραντεβού Τρίτη πρωί»)
+    action: str                  # shown|dismissed|never|trial|demo|callback|info
+    note: str | None = None      # προαιρετικό μήνυμα του πελάτη
+    # «Να με καλέσει κάποιος» — η μικρή φόρμα επικοινωνίας
+    callback_name: str | None = None
+    callback_phone: str | None = None
+    callback_when: str | None = None
 
 
 @router.post("/{ann_id}/action")
@@ -33,6 +37,8 @@ async def act(ann_id: str, body: ActionIn, ctx: TenantContext = Depends(get_curr
     from bson import ObjectId
     uid = ObjectId(ctx.user_id) if ObjectId.is_valid(ctx.user_id) else ctx.user_id
     user = await shared_db()["users"].find_one({"_id": uid, "tenant_id": ctx.tenant_id},
-                                               {"full_name": 1, "email": 1})
+                                               {"full_name": 1, "email": 1}) or {}
+    user["_form"] = {"callback_name": body.callback_name, "callback_phone": body.callback_phone,
+                     "callback_when": body.callback_when}
     return await svc.record(ann_id, ctx.tenant_id, ctx.user_id, body.action,
                             note=body.note, user=user)
