@@ -53,11 +53,28 @@ async def get_for(tenant_id: str, user_id: str, roles: list[str]) -> dict:
         per_role.append(set((rd or {}).get("hidden_groups") or []))
     if per_role:
         hidden = set.intersection(*per_role) if len(per_role) > 1 else per_role[0]
+    pinned = list(doc.get("pinned") or [])[:MAX_PINNED]
+    mode = doc.get("mode") if doc.get("mode") in ("central", "personal") else "central"
+    # ΑΣΦΑΛΙΣΤΙΚΟ: «μόνο τα δικά μου» χωρίς καρφιτσωμένα = άδειο μενού και ο χειριστής
+    # κολλάει χωρίς τρόπο να πάει πουθενά. Πέφτουμε πίσω στο κεντρικό.
+    if mode == "personal" and not pinned:
+        mode = "central"
     return {
-        "pinned": list(doc.get("pinned") or [])[:MAX_PINNED],
+        "pinned": pinned,
+        "mode": mode,
         "hidden_groups": sorted(hidden),
         "max_pinned": MAX_PINNED,
     }
+
+
+async def set_mode(user_id: str, mode: str) -> dict:
+    """Τι βλέπει ο χειριστής: το κεντρικό μενού ή μόνο τα δικά του."""
+    if mode not in ("central", "personal"):
+        return {"ok": False, "error": "bad_mode"}
+    await shared_db()[COLL].update_one(
+        {"_id": _user_key(user_id)},
+        {"$set": {"mode": mode, "updated_at": _now(), "kind": "user"}}, upsert=True)
+    return {"ok": True, "mode": mode}
 
 
 async def set_pinned(user_id: str, items: list[dict]) -> dict:

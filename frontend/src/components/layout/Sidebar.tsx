@@ -48,10 +48,15 @@ export function Sidebar() {
   const [picking, setPicking] = useState(false);
   const prefsQ = useQuery({
     queryKey: ["nav", "prefs"],
-    queryFn: () => api<{ pinned: Pin[]; hidden_groups: string[]; max_pinned: number }>("/nav/prefs"),
+    queryFn: () => api<{ pinned: Pin[]; mode: "central" | "personal"; hidden_groups: string[]; max_pinned: number }>("/nav/prefs"),
     retry: false,
   });
   const pinned = prefsQ.data?.pinned ?? [];
+  const mode = prefsQ.data?.mode ?? "central";      // «central» = κεντρικό μενού · «personal» = μόνο τα δικά μου
+  const setMode = async (m: "central" | "personal") => {
+    await api("/nav/mode", { method: "PUT", body: JSON.stringify({ mode: m }) });
+    qc.invalidateQueries({ queryKey: ["nav", "prefs"] });
+  };
   const hiddenGroups = new Set(prefsQ.data?.hidden_groups ?? []);
   const maxPinned = prefsQ.data?.max_pinned ?? 8;
   const savePins = async (items: Pin[]) => {
@@ -165,8 +170,22 @@ export function Sidebar() {
         </div>
 
         <nav className="flex-1 space-y-6 overflow-y-auto px-3 py-4">
-          {/* ΤΑ ΔΙΚΑ ΜΟΥ — οι δουλειές που κάνει ΑΥΤΟΣ ο χειριστής κάθε μέρα, πρώτες.
-              Δεν αντικαθιστά το μενού· του γλιτώνει το ψάξιμο. */}
+          {/* ΔΙΑΚΟΠΤΗΣ: ή το κεντρικό μενού (όπως το ορίζει ο ρόλος του) ή ΜΟΝΟ τα δικά του.
+              Όχι και τα δύο μαζί — αυτό ήταν το αρχικό λάθος: το «προσωπικό» απλώς πρόσθετε
+              άλλη μια ενότητα σε ένα μενού που ήταν ήδη μεγάλο. */}
+          <div className={`flex rounded-xl bg-slate-100 p-0.5 dark:bg-slate-800 ${hide}`}>
+            <button onClick={() => setMode("central")}
+              className={`flex-1 rounded-lg px-2 py-1.5 text-xs font-bold transition ${mode === "central" ? "bg-white text-slate-800 shadow-sm dark:bg-slate-700 dark:text-slate-100" : "text-slate-500 hover:text-slate-700 dark:text-slate-400"}`}>
+              {t("Κεντρικό", "Full menu")}
+            </button>
+            <button onClick={() => setMode("personal")} disabled={!pinned.length}
+              title={!pinned.length ? t("Διάλεξε πρώτα τις δικές σου δουλειές", "Pick your own tasks first") : undefined}
+              className={`flex-1 rounded-lg px-2 py-1.5 text-xs font-bold transition disabled:opacity-40 ${mode === "personal" ? "bg-white text-slate-800 shadow-sm dark:bg-slate-700 dark:text-slate-100" : "text-slate-500 hover:text-slate-700 dark:text-slate-400"}`}>
+              {t("Τα δικά μου", "Mine")}
+            </button>
+          </div>
+
+          {/* ΤΑ ΔΙΚΑ ΜΟΥ — οι δουλειές που κάνει ΑΥΤΟΣ ο χειριστής κάθε μέρα. */}
           <div>
             <button onClick={() => setPicking(true)}
               className={`flex w-full items-center justify-between px-3 pb-2 text-[13px] font-bold uppercase tracking-wide text-slate-500 transition-colors hover:text-brand-600 dark:text-slate-400 ${hide}`}>
@@ -190,7 +209,12 @@ export function Sidebar() {
             )}
           </div>
 
-          {groups.map((g) => {
+          {mode === "personal" ? (
+            <p className={`px-3 text-[11px] leading-relaxed text-slate-400 ${hide}`}>
+              {t("Βλέπεις μόνο τις δικές σου δουλειές. Πάτα «Κεντρικό» για ολόκληρο το μενού.",
+                 "You are seeing only your own tasks. Tap «Full menu» for everything.")}
+            </p>
+          ) : groups.map((g) => {
             // Ομάδα με ΕΝΑ φύλλο (χωρίς υπο-στοιχεία) → ανεξάρτητο top-level link (χωρίς επικεφαλίδα/πτύξη).
             if (g.items.length === 1 && !g.items[0].children) {
               const n = g.items[0];

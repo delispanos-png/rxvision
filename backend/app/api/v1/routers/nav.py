@@ -38,6 +38,16 @@ async def set_pinned(body: PinnedIn, ctx: TenantContext = Depends(get_current_co
     return await nav_prefs.set_pinned(ctx.user_id, [i.model_dump() for i in body.items])
 
 
+class ModeIn(BaseModel):
+    mode: str
+
+
+@router.put("/mode")
+async def set_mode(body: ModeIn, ctx: TenantContext = Depends(get_current_context)):
+    """Εναλλαγή «Κεντρικό μενού» ↔ «Τα δικά μου». Προσωπική επιλογή, κανένα δικαίωμα."""
+    return await nav_prefs.set_mode(ctx.user_id, body.mode)
+
+
 @router.get("/role-menus")
 async def get_role_menus(ctx: TenantContext = Depends(require("settings:write"))):
     from app.core.db import shared_db
