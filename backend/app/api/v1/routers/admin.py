@@ -60,6 +60,7 @@ _SEG_TO_SECTION = {
     "open-balances": "billing", "softone": "integrations",
     "announcements": "content", "announcement-requests": "content",
     "announcement-copy": "content",
+    "lifecycle": "subscriptions",
 }
 # read-only endpoints που χρειάζεται και ο «dashboard»-only χρήστης
 _DASHBOARD_GET = {"tenants", "packages", "sync-health"}
@@ -1656,6 +1657,35 @@ async def update_ai_credit_pack(code: str, body: AiCreditPackIn,
 async def delete_ai_credit_pack(code: str, _: PlatformContext = Depends(get_platform_admin)):
     await shared_db()["ai_credit_packs"].delete_one({"_id": code})  # tenant-ok: platform catalog
     return {"ok": True}
+
+
+# ── Κύκλος ζωής λογαριασμού (λήξη → ειδοποιήσεις → προειδοποίηση → διαγραφή) ──────────────────
+@router.get("/lifecycle")
+async def lifecycle_schedule(_: PlatformContext = Depends(enforce_section)):
+    """Τι λήγει, τι κρατιέται, τι θα διαγραφεί και πότε — με το κόστος σε δεδομένα."""
+    from app.services import lifecycle
+    return jsonsafe(await lifecycle.schedule())
+
+
+class LifecycleCfgIn(BaseModel):
+    enabled: bool | None = None
+    trial_delete_days: int | None = Field(None, ge=1, le=365)
+    paid_delete_days: int | None = Field(None, ge=7, le=1095)
+    final_notice_days: int | None = Field(None, ge=1, le=60)
+    notice_days: list[int] | None = None
+
+
+@router.put("/lifecycle")
+async def lifecycle_config(body: LifecycleCfgIn, ctx: PlatformContext = Depends(enforce_section)):
+    from app.services import lifecycle
+    return await lifecycle.save_config(body.model_dump(exclude_none=True), by=ctx.email)
+
+
+@router.post("/lifecycle/run")
+async def lifecycle_run(dry_run: bool = True, ctx: PlatformContext = Depends(enforce_section)):
+    """Χειροκίνητο πέρασμα. ΠΡΟΕΠΙΛΟΓΗ dry_run=True — η διαγραφή δεν γίνεται κατά λάθος."""
+    from app.services import lifecycle
+    return jsonsafe(await lifecycle.run(dry_run=dry_run))
 
 
 # ── Trial leads → ΑΝΤΙΚΑΤΑΣΤΑΘΗΚΑΝ από το Lead Engine (routers/admin_leads.py, 17/09/2026) ──

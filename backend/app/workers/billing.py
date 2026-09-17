@@ -43,12 +43,17 @@ def charge_eshop_fees() -> dict:
 
 @celery_app.task(name="app.workers.billing.purge_expired_trials")
 def purge_expired_trials() -> dict:
-    """Ημερήσιο: διαγράφει δοκιμαστικές συνδρομές που έληξαν >N ημέρες (default 20) & δεν μετατράπηκαν,
-    αφού πρώτα αρχειοθετήσει ΑΦΜ/επικοινωνία στη βάση leads (μπλοκ επανα-trial + προσφορές)."""
-    from app.services.billing_service import purge_expired_trials as _purge
+    """Ημερήσιος κύκλος ζωής λογαριασμού: ειδοποιήσεις μετά τη λήξη, τελική προειδοποίηση και
+    διαγραφή — για ΔΟΚΙΜΑΣΤΙΚΕΣ **και** για πληρωμένες που έφυγαν.
+
+    Το όνομα του task μένει για συμβατότητα με το beat schedule. Η λογική ζει πλέον στο
+    `services/lifecycle.py`, ώστε να υπάρχει ΜΙΑ διαδρομή διαγραφής και όχι δύο.
+    Ο σκληρός κανόνας εκεί: κανείς δεν διαγράφεται χωρίς σταλμένη τελική προειδοποίηση.
+    """
+    from app.services.lifecycle import run as _run_lifecycle
 
     async def _run() -> dict:
-        return await _purge()
+        return await _run_lifecycle()
 
     return asyncio.run(_run())
 
