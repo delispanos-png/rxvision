@@ -59,6 +59,7 @@ _SEG_TO_SECTION = {
     "eshop-fees": "billing", "data-retention": "maintenance", "network": "subscribers",
     "open-balances": "billing", "softone": "integrations",
     "announcements": "content", "announcement-requests": "content",
+    "announcement-copy": "content",
 }
 # read-only endpoints που χρειάζεται και ο «dashboard»-only χρήστης
 _DASHBOARD_GET = {"tenants", "packages", "sync-health"}
@@ -3640,6 +3641,19 @@ async def update_announcement(ann_id: str, body: AnnouncementIn,
 async def delete_announcement(ann_id: str, _: PlatformContext = Depends(enforce_section)):
     from app.services import announcements as svc
     return await svc.delete(ann_id)
+
+
+@router.get("/announcement-copy/{addon_key}")
+async def announcement_copy(addon_key: str, _: PlatformContext = Depends(enforce_section)):
+    """Έτοιμο κείμενο ανακοίνωσης για ένα add-on — γραμμένο με τον οδηγό ύφους.
+
+    Γεμίζει ΟΛΑ τα πεδία της φόρμας ώστε να μη γράφεται τίποτα από την αρχή. Ό,τι δεν έχει
+    γραφτεί ειδικά, παράγεται από τον κατάλογο (`source: "auto"`) — ποτέ κενή φόρμα."""
+    from app.services.announcement_copy import copy_for
+    a = await shared_db()["addons"].find_one({"_id": addon_key})
+    if not a:
+        raise HTTPException(http_status.HTTP_404_NOT_FOUND, "addon_not_found")
+    return copy_for(a)
 
 
 @router.get("/announcements/{ann_id}/audience")

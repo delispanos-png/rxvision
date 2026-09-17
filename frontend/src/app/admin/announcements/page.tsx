@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Megaphone, Plus, Save, Trash2, Users, PlayCircle, CalendarClock, Check, Eye, Inbox, Phone, Mail } from "lucide-react";
+import { Megaphone, Plus, Save, Trash2, Users, PlayCircle, CalendarClock, Check, Eye, Inbox, Phone, Mail, Sparkles } from "lucide-react";
 import { adminApi } from "@/lib/adminClient";
 import { DateInput } from "@/components/ui/DateInput";
 import { FeatureAnnouncementModal } from "@/components/announcements/FeatureAnnouncementModal";
@@ -33,7 +33,7 @@ const FREQ: Record<string, string> = {
 };
 const EMPTY: Ann = {
   _id: "", title: "", subtitle: "", body: "", quote: "", version: "1", features: [],
-  trial_mode: "instant", trial_days: 30, preview_rows: [], addon_key: null,
+  trial_mode: "instant", trial_days: 30, preview_rows: [], preview_title: "", addon_key: null,
   cta: { trial: true, demo: true, info_href: "/settings/modules" },
   audience: { mode: "all", tenant_ids: [], packages: [], status: ["active"], exclude_with_addon: true },
   frequency: "once", priority: 0, active: false,
@@ -112,13 +112,43 @@ export default function AnnouncementsAdminPage() {
 
   // Διαλέγοντας add-on, ο τίτλος & το κείμενο γράφονται μόνα τους από τον κατάλογο — η τιμή και οι
   // δυνατότητες μένουν ΠΑΝΤΑ σύγχρονες γιατί τις διαβάζει το pop-up τη στιγμή που εμφανίζεται.
-  function pickAddon(key: string) {
-    const a = addons.data?.items.find((x) => x._id === key);
-    setDraft((d) => d && ({
-      ...d, addon_key: key || null, kind: key ? "addon" : "news",
-      title: d.title || (a ? `Νέο: ${a.name}` : ""),
-      body: d.body || (a?.description ?? ""),
-    }));
+  const [filling, setFilling] = useState(false);
+
+  /**
+   * Επιλογή add-on → γεμίζουν ΟΛΑ τα κείμενα από τη βιβλιοθήκη του backend, γραμμένα με τον
+   * οδηγό ύφους. Δεν σβήνει ποτέ ό,τι έχεις ήδη γράψει: συμπληρώνει μόνο τα ΚΕΝΑ πεδία.
+   * Το «Ξαναγέμισε» αντικαθιστά τα πάντα, όταν το ζητήσεις ρητά.
+   */
+  async function fillFromAddon(key: string, replace = false) {
+    if (!key) { setDraft((d) => d && ({ ...d, addon_key: null, kind: "news" })); return; }
+    setFilling(true);
+    try {
+      const c = await adminApi<{
+        title: string; subtitle: string; body: string; quote: string;
+        features: string[]; preview_title: string; preview_rows: string[]; source: string;
+      }>(`/admin/announcement-copy/${encodeURIComponent(key)}`);
+      setDraft((d) => {
+        if (!d) return d;
+        const keep = (cur: string | null | undefined, next: string) =>
+          replace || !String(cur ?? "").trim() ? next : cur!;
+        const keepList = (cur: string[] | null | undefined, next: string[]) =>
+          replace || !(cur ?? []).length ? next : cur!;
+        return {
+          ...d, addon_key: key, kind: "addon",
+          title: keep(d.title, c.title),
+          subtitle: keep(d.subtitle, c.subtitle),
+          body: keep(d.body, c.body),
+          quote: keep(d.quote, c.quote),
+          features: keepList(d.features, c.features),
+          preview_title: keep(d.preview_title, c.preview_title),
+          preview_rows: keepList(d.preview_rows, c.preview_rows),
+        };
+      });
+      if (c.source === "auto") {
+        appAlert("Δεν υπάρχει γραμμένο κείμενο γι' αυτό το κύκλωμα — συμπληρώθηκε προσχέδιο από τον κατάλογο. Δώσ' του μια σκηνή φαρμακείου πριν το στείλεις.");
+      }
+    } catch { appAlert("Δεν ήταν δυνατή η φόρτωση των έτοιμων κειμένων."); }
+    finally { setFilling(false); }
   }
 
   async function save() {
@@ -238,11 +268,17 @@ export default function AnnouncementsAdminPage() {
 
               <div className="grid gap-3 md:grid-cols-2">
                 <label className="text-xs font-semibold text-slate-600">Σχετική δυνατότητα (add-on)
-                  <select value={draft.addon_key ?? ""} onChange={(e) => pickAddon(e.target.value)} className={inp + " mt-1"}>
+                  <select value={draft.addon_key ?? ""} onChange={(e) => fillFromAddon(e.target.value)} className={inp + " mt-1"}>
                     <option value="">— καμία (απλή ανακοίνωση) —</option>
                     {(addons.data?.items ?? []).map((a) => <option key={a._id} value={a._id}>{a.icon} {a.name}</option>)}
                   </select>
                   <span className="mt-1 block font-normal text-slate-400">Η τιμή & οι δυνατότητες διαβάζονται ΤΗ ΣΤΙΓΜΗ που εμφανίζεται — δεν παλιώνουν ποτέ.</span>
+                  {draft.addon_key && (
+                    <button type="button" onClick={() => fillFromAddon(draft.addon_key!, true)} disabled={filling}
+                      className="mt-1.5 inline-flex items-center gap-1.5 rounded-lg border border-indigo-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-indigo-700 hover:bg-indigo-50 disabled:opacity-50">
+                      <Sparkles className="h-3.5 w-3.5" />{filling ? "Φόρτωση…" : "Ξαναγέμισε όλα τα κείμενα"}
+                    </button>
+                  )}
                 </label>
                 <label className="text-xs font-semibold text-slate-600">Τίτλος
                   <input value={draft.title} onChange={(e) => set({ title: e.target.value })} className={inp + " mt-1"} placeholder="π.χ. Νέο: Ο Σύμβουλός σου" />
