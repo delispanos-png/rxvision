@@ -526,13 +526,62 @@ async def frequency_capped_patients(tenant_id: str, cap: int | None = None) -> s
     return out
 
 
+async def audience_breakdown(tenant_id: str, channel: str, segment: str = "all",
+                             value: str | None = None) -> dict:
+    """Πόσοι θα το λάβουν, πόσοι εξαιρούνται — και ΓΙΑΤΙ ο καθένας.
+
+    Είναι η οθόνη έγκρισης (§20): ο φαρμακοποιός δεν πρέπει ποτέ να πατά «στείλε» χωρίς να ξέρει
+    σε πόσους πάει και ποιοι μένουν απ' έξω. Κάθε εξαίρεση έχει όνομα — «δεν έχει δώσει
+    συγκατάθεση» δεν είναι το ίδιο με «δεν έχει email».
+    """
+    from app.services import consent
+    db = shared_db()
+    field = "email" if channel == "email" else "mobile"
+    seg = await segment_patient_ids(tenant_id, segment, value)
+    base: dict = {"tenant_id": tenant_id}
+    if seg is not None:
+        base["_id"] = {"$in": list(seg)}
+    total = await db["patient_contacts"].count_documents(base)
+
+    no_consent = await db["patient_contacts"].count_documents(
+        {**base, "marketing_consent": {"$ne": True}})
+    consented = {**base, "marketing_consent": True}
+    no_contact = await db["patient_contacts"].count_documents(
+        {**consented, field: {"$in": [None, ""]}})
+    reachable = {**consented, field: {"$nin": [None, ""]}}
+
+    withdrawn = set(await consent.withdrawn_patient_ids(tenant_id, channel))
+    capped = await frequency_capped_patients(tenant_id)
+    ids = {d["_id"] async for d in db["patient_contacts"].find(reachable, {"_id": 1})}
+    n_withdrawn = len(ids & withdrawn)
+    n_capped = len((ids - withdrawn) & capped)
+    n_unsub = await db["patient_contacts"].count_documents(
+        {**reachable, "unsubscribed_at": {"$ne": None}})
+    final = len(ids - withdrawn - capped)
+
+    return {
+        "total": total, "will_receive": max(0, final),
+        "excluded": [
+            {"n": no_consent, "reason": "δεν έχουν δώσει συγκατάθεση επικοινωνίας", "code": "no_consent"},
+            {"n": n_withdrawn, "reason": f"έχουν κλείσει το κανάλι «{channel}»", "code": "channel_off"},
+            {"n": n_capped, "reason": "έλαβαν ήδη τα μηνύματα του μήνα (όριο συχνότητας)", "code": "frequency_cap"},
+            {"n": n_unsub, "reason": "ζήτησαν να μη λαμβάνουν προωθητικά", "code": "unsubscribed"},
+            {"n": no_contact, "reason": f"δεν έχουν {'email' if channel == 'email' else 'κινητό'}", "code": "no_contact"},
+        ],
+        "cap": await _frequency_cap(tenant_id),
+    }
+
+
 async def campaign_audience(tenant_id: str, channel: str, segment: str = "all", value: str | None = None) -> list[dict]:
     """Consented recipients (marketing_consent + NOT in the withdrawal ledger for this channel) with a
     contact for `channel`, restricted to a smart segment. GDPR: the consent ledger is authoritative.
     Εξαιρεί όσους έπιασαν το frequency cap (anti-fatigue)."""
     from app.services import consent
     field = "email" if channel == "email" else "mobile"
-    q: dict = {"tenant_id": tenant_id, "marketing_consent": True, field: {"$nin": [None, ""]}}
+    # `unsubscribed_at` = ο ίδιος ο άνθρωπος πάτησε «δεν θέλω άλλα». Υπερισχύει ΚΑΘΕ ρύθμισης
+    # του φαρμακείου — δεν υπάρχει τρόπος να παρακαμφθεί από το UI.
+    q: dict = {"tenant_id": tenant_id, "marketing_consent": True, field: {"$nin": [None, ""]},
+               "unsubscribed_at": None}
     seg = await segment_patient_ids(tenant_id, segment, value)
     withdrawn = set(await consent.withdrawn_patient_ids(tenant_id, channel))
     withdrawn |= await frequency_capped_patients(tenant_id)

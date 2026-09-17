@@ -7,6 +7,7 @@ import re
 from datetime import datetime, timedelta, timezone
 from typing import Literal
 
+from bson import ObjectId
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel
 
@@ -15,6 +16,10 @@ from app.core.deps import TenantContext, require
 from app.services import comms, message_wallet
 
 router = APIRouter()
+
+# Segments που στηρίζονται σε ΔΕΔΟΜΕΝΑ ΥΓΕΙΑΣ. Επιτρέπονται μόνο για επικοινωνία φροντίδας,
+# ποτέ για προώθηση — και ποτέ με κουπόνι μέσα.
+_CLINICAL_SEGMENTS = {"icd", "therapy", "substance"}
 _MODULE = "patient_analytics"
 
 
@@ -185,6 +190,7 @@ class CouponIn(BaseModel):
 
 
 class CampaignIn(BaseModel):
+    purpose: str = "commercial"   # commercial | care — ο φρουρός κλινικών segments
     channel: Literal["email", "sms", "viber", "push"]
     subject: str | None = None
     message: str
@@ -195,20 +201,95 @@ class CampaignIn(BaseModel):
 
 @router.post("/send", status_code=202)
 async def send_campaign(body: CampaignIn, ctx: TenantContext = Depends(require("portal:manage", module=_MODULE))):
-    from bson import ObjectId
-    cid = ObjectId()
+    """Βάζει την καμπάνια ΣΤΗΝ ΟΥΡΑ και επιστρέφει αμέσως.
+
+    ΔΕΝ στέλνει εδώ. Παλιά έστελνε μέσα στο αίτημα (βρόχος έως 2.000 παραληπτών): χρονικά όρια,
+    μισοτελειωμένες αποστολές, και refresh = διπλή χρέωση. Τώρα κάθε παραλήπτης γράφεται μία
+    φορά με μοναδικό κλειδί και ο worker στέλνει σε παρτίδες με επαναλήψεις.
+    """
+    from app.services import campaign_engine
+    from app.workers.comms import dispatch_campaign
+
+    # ΦΡΟΥΡΟΣ ΔΕΔΟΜΕΝΩΝ ΥΓΕΙΑΣ: τμηματοποίηση με κλινικά κριτήρια επιτρέπεται ΜΟΝΟ για
+    # επικοινωνία φροντίδας — και τότε απαγορεύεται το κουπόνι. Δεν αρκεί προειδοποίηση.
+    purpose = (body.purpose or "commercial").strip()
+    if body.segment in _CLINICAL_SEGMENTS:
+        if purpose != "care":
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "clinical_segment_requires_care_purpose")
+        if body.coupon and body.coupon.enabled:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "care_message_cannot_carry_offer")
+
     coupon_code = None
     if body.coupon and body.coupon.enabled and body.coupon.discount_value > 0:
         from app.services import marketing
+        pre = ObjectId()
         cp = await marketing.create_coupon(
-            ctx.tenant_id, campaign_id=str(cid), discount_type=body.coupon.discount_type,
+            ctx.tenant_id, campaign_id=str(pre), discount_type=body.coupon.discount_type,
             discount_value=body.coupon.discount_value, valid_days=body.coupon.valid_days,
             max_redemptions=body.coupon.max_redemptions)
         coupon_code = cp["code"]
-    return await comms.run_campaign(
+
+    res = await campaign_engine.create(
         ctx.tenant_id, channel=body.channel, message=body.message, subject=body.subject,
-        segment=body.segment, value=body.value, campaign_id=str(cid), coupon_code=coupon_code,
-        by=ctx.email if hasattr(ctx, "email") else None)
+        segment=body.segment, value=body.value, purpose=purpose, coupon_code=coupon_code,
+        by=getattr(ctx, "email", None) or ctx.user_id)
+    if res["recipients"]:
+        dispatch_campaign.delay(res["campaign_id"])
+    return {**res, "queued": True}
+
+
+@router.get("/audience/breakdown")
+async def audience_breakdown(channel: str, segment: str = "all", value: str | None = None,
+                             ctx: TenantContext = Depends(require("portal:manage", module=_MODULE))):
+    """Πόσοι θα το λάβουν και ποιοι εξαιρούνται — με τον λόγο του καθενός (οθόνη έγκρισης)."""
+    return await comms.audience_breakdown(ctx.tenant_id, channel, segment, value)
+
+
+@router.get("/campaigns/{campaign_id}/progress")
+async def campaign_progress(campaign_id: str,
+                            ctx: TenantContext = Depends(require("portal:manage", module=_MODULE))):
+    """Ζωντανή πρόοδος: «340 από 1.102»."""
+    from app.services import campaign_engine
+    return await campaign_engine.progress(ctx.tenant_id, campaign_id)
+
+
+class CampaignActionIn(BaseModel):
+    action: str          # pause | resume | cancel
+
+
+@router.post("/campaigns/{campaign_id}/action")
+async def campaign_action(campaign_id: str, body: CampaignActionIn,
+                          ctx: TenantContext = Depends(require("portal:manage", module=_MODULE))):
+    from app.services import campaign_engine
+    res = await campaign_engine.set_status(ctx.tenant_id, campaign_id, body.action)
+    if not res.get("ok"):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, res.get("error", "failed"))
+    return res
+
+
+class TestSendIn(BaseModel):
+    channel: str
+    message: str
+    subject: str | None = None
+    to: str                      # δικό ΣΟΥ email/κινητό
+
+
+@router.post("/test-send")
+async def test_send(body: TestSendIn, ctx: TenantContext = Depends(require("portal:manage", module=_MODULE))):
+    """Δοκιμαστική αποστολή στον ίδιο τον φαρμακοποιό — πάντα πριν φύγει στους υπόλοιπους."""
+    ph = await comms._pharmacy(ctx.tenant_id)                       # noqa: SLF001
+    text = body.message.replace("{name}", "ΔΟΚΙΜΗ ΟΝΟΜΑ").replace("{first}", "ΔΟΚΙΜΗ").replace("{coupon}", "ΔΟΚΙΜΗ123")
+    try:
+        if body.channel == "email":
+            await comms.send_email(ctx.tenant_id, body.to, f"[ΔΟΚΙΜΗ] {body.subject or 'Ενημέρωση φαρμακείου'}",
+                                   comms._campaign_email_html(text, ph.get("name")), kind="test")  # noqa: SLF001
+        elif body.channel == "viber":
+            await comms.send_viber(ctx.tenant_id, body.to, f"[ΔΟΚΙΜΗ] {text}", kind="test")
+        else:
+            await comms.send_sms(ctx.tenant_id, body.to, f"[ΔΟΚΙΜΗ] {text}", kind="test")
+    except Exception as e:                                          # noqa: BLE001
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e)[:120]) from e
+    return {"ok": True}
 
 
 @router.get("/history")
@@ -359,3 +440,25 @@ async def apifon_dlr(request: Request):
             except Exception:  # noqa: BLE001
                 pass
     return {"ok": True, "updated": updated}
+
+
+# ── ΔΗΜΟΣΙΟ: διαγραφή από προωθητικά (χωρίς σύνδεση) ─────────────────────────────────────────
+class UnsubIn(BaseModel):
+    scope: str = "all"           # all | email | sms | viber
+
+
+@router.get("/u/{token}", include_in_schema=False)
+async def unsubscribe_info(token: str):
+    """Τι θα δει ο άνθρωπος πριν αποφασίσει. Καμία σύνδεση, κανένα προσωπικό δεδομένο πίσω."""
+    from app.services import unsubscribe
+    return await unsubscribe.describe(token)
+
+
+@router.post("/u/{token}", include_in_schema=False)
+async def unsubscribe_apply(token: str, body: UnsubIn):
+    """Ο σύνδεσμος ΠΡΕΠΕΙ να δουλεύει χωρίς λογαριασμό — αλλιώς δεν είναι πραγματική έξοδος."""
+    from app.services import unsubscribe
+    res = await unsubscribe.apply(token, scope=body.scope)
+    if not res.get("ok"):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, res.get("error", "failed"))
+    return res

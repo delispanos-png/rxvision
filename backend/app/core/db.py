@@ -117,6 +117,13 @@ INDEXES: list[tuple[str, list[tuple[str, int]], dict]] = [
     ("coach_findings", [("tenant_id", 1), ("last_day", -1)], {}),
     ("coach_findings", [("tenant_id", 1), ("signal", 1)], {}),
     ("coach_days", [("tenant_id", 1), ("day", -1)], {"unique": True}),
+    # Καμπάνιες: το unique key είναι Η ΕΓΓΥΗΣΗ ότι κανείς δεν λαμβάνει (και δεν χρεώνεται) δύο φορές.
+    ("comm_recipients", [("key", 1)], {"unique": True}),
+    ("comm_recipients", [("campaign_id", 1), ("status", 1)], {}),
+    ("comm_recipients", [("status", 1), ("claimed_at", 1)], {}),
+    ("comms_campaigns", [("tenant_id", 1), ("status", 1), ("created_at", -1)], {}),
+    ("comms_campaigns", [("status", 1), ("scheduled_at", 1)], {}),
+    ("patient_contacts", [("tenant_id", 1), ("unsubscribed_at", 1)], {}),
     ("announcements", [("active", 1), ("priority", -1)], {}),
     ("announcement_events", [("announcement_id", 1), ("tenant_id", 1), ("user_id", 1)], {"unique": True}),
     ("announcement_requests", [("status", 1), ("created_at", -1)], {}),

@@ -16,7 +16,7 @@ celery_app = Celery(
              "app.workers.ops_health", "app.workers.copilot_routines",
              "app.workers.contacts_backfill", "app.workers.death_sweep",
              "app.workers.area_canonical", "app.workers.supplier_photos",
-             "app.workers.coach"],
+             "app.workers.coach", "app.workers.comms"],
 )
 
 celery_app.conf.update(
@@ -55,6 +55,12 @@ celery_app.conf.update(
 
 # Periodic schedule (beat). Per-tenant incremental sync fans out from the dispatcher.
 celery_app.conf.beat_schedule = {
+    # Καμπάνιες: δίχτυ ασφαλείας — ξεκινά όσες περιμένουν, ξεκολλά παραλήπτες που έμειναν
+    # στη μέση, συνεχίζει όσες πάγωσαν από έλλειψη υπολοίπου.
+    "comms-sweep-campaigns": {
+        "task": "app.workers.comms.sweep_campaigns",
+        "schedule": crontab(minute="*/5"),
+    },
     # Ο Σύμβουλος — πρωινό μήνυμα 07:30 Αθήνας (04:30 UTC θέρος/05:30 χειμώνα· το task
     # ελέγχει από μόνο του ότι δεν έστειλε ήδη σήμερα).
     # Ο Σύμβουλος: το task χτυπά ΚΑΘΕ ΩΡΑ και στέλνει μόνο όταν είναι η ώρα που όρισε το

@@ -3,12 +3,12 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Mail, MessageSquare, Send, Loader2, Users, Settings, Target, Smartphone } from "lucide-react";
+import { Mail, MessageSquare, Send, Loader2, Users, Settings, Target, Smartphone, ShieldCheck, Pause, Play, X, FlaskConical } from "lucide-react";
 import { api } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
 import { PanelCard } from "@/components/ui/Card";
-import { appAlert, appConfirm } from "@/store/dialogStore";
+import { appAlert, appConfirm, appPrompt } from "@/store/dialogStore";
 import { fmtDate } from "@/lib/formatters";
 
 type Campaign = { id: string; channel: string; subject?: string | null; recipients: number; sent: number; failed: number; created_at: string };
@@ -67,7 +67,23 @@ export default function CommunicationsPage() {
   const audience = useQuery({ queryKey: ["comms", "audience", qs], queryFn: () => api<{ count: number }>(`/communications/audience?${qs}`), retry: false });
   const wallet = useQuery({ queryKey: ["comms", "wallet"], queryFn: () => api<{ balance_cents: number; prices: Record<string, number> }>("/communications/wallet"), retry: false });
 
-  const count = audience.data?.count ?? 0;
+  // Ανάλυση κοινού: πόσοι θα λάβουν και ΠΟΙΟΙ εξαιρούνται, με τον λόγο του καθενός.
+  const bd = useQuery({
+    queryKey: ["comms", "breakdown", qs],
+    queryFn: () => api<{ total: number; will_receive: number; cap: number;
+                         excluded: { n: number; reason: string; code: string }[] }>(`/communications/audience/breakdown?${qs}`),
+    retry: false,
+  });
+  const [liveId, setLiveId] = useState<string | null>(null);
+  const live = useQuery({
+    queryKey: ["comms", "progress", liveId],
+    queryFn: () => api<{ status: string; paused_reason?: string | null; recipients: number;
+                         sent: number; failed: number; pending: number }>(`/communications/campaigns/${liveId}/progress`),
+    enabled: !!liveId,
+    refetchInterval: (q) => (["queued", "sending"].includes((q.state.data as { status?: string })?.status ?? "") ? 2000 : false),
+  });
+
+  const count = bd.data?.will_receive ?? audience.data?.count ?? 0;
   const unit = wallet.data?.prices?.[channel] ?? 0;                 // κόστος/μήνυμα (cents)
   const costCents = count * unit;
   const balance = wallet.data?.balance_cents ?? 0;
@@ -75,9 +91,19 @@ export default function CommunicationsPage() {
   const eur = (c: number) => `€${(c / 100).toFixed(2)}`;
 
   const send = useMutation({
-    mutationFn: () => api<{ recipients: number; sent: number; failed: number }>("/communications/send", { method: "POST", body: JSON.stringify({ channel, subject, message, segment, value: value || null, coupon: cpOn ? { enabled: true, discount_type: cpType, discount_value: cpType === "fixed" ? Math.round(parseFloat(cpVal || "0") * 100) : Math.round(parseFloat(cpVal || "0")), valid_days: parseInt(cpDays) || 30 } : null }) }),
-    onSuccess: (r) => { appAlert(t(`Στάλθηκαν ${r.sent}/${r.recipients} (${r.failed} αποτυχίες)`, `Sent ${r.sent}/${r.recipients} (${r.failed} failures)`)); setMessage(""); setSubject(""); qc.invalidateQueries({ queryKey: ["comms", "history"] }); qc.invalidateQueries({ queryKey: ["comms", "wallet"] }); },
-    onError: (e: Error) => appAlert(t("Αποτυχία: ", "Failed: ") + e.message),
+    mutationFn: () => api<{ campaign_id: string; recipients: number }>("/communications/send", { method: "POST", body: JSON.stringify({ channel, subject, message, segment, value: value || null, coupon: cpOn ? { enabled: true, discount_type: cpType, discount_value: cpType === "fixed" ? Math.round(parseFloat(cpVal || "0") * 100) : Math.round(parseFloat(cpVal || "0")), valid_days: parseInt(cpDays) || 30 } : null }) }),
+    // Δεν περιμένουμε πια το τέλος της αποστολής: παρακολουθούμε την πρόοδο ζωντανά.
+    onSuccess: (r) => { setLiveId(r.campaign_id); setMessage(""); setSubject(""); qc.invalidateQueries({ queryKey: ["comms", "history"] }); },
+    onError: (e: Error) => appAlert(t("Δεν μπήκε στην ουρά: ", "Could not queue: ") + e.message),
+  });
+  const testSend = useMutation({
+    mutationFn: (to: string) => api("/communications/test-send", { method: "POST", body: JSON.stringify({ channel, subject, message, to }) }),
+    onSuccess: () => appAlert(t("✓ Η δοκιμή στάλθηκε. Δες την πριν φύγει στους υπόλοιπους.", "✓ Test sent. Check it before the real send.")),
+    onError: (e: Error) => appAlert(t("Η δοκιμή δεν στάλθηκε: ", "Test failed: ") + e.message),
+  });
+  const control = useMutation({
+    mutationFn: (action: string) => api(`/communications/campaigns/${liveId}/action`, { method: "POST", body: JSON.stringify({ action }) }),
+    onSuccess: () => live.refetch(),
   });
 
   const inp = "rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-brand-500 focus:outline-none";
@@ -93,6 +119,43 @@ export default function CommunicationsPage() {
       </div>
 
       <div className="space-y-4">
+        {/* Ζωντανή πρόοδος: ο φαρμακοποιός δεν μένει ποτέ να κοιτάζει το κενό. */}
+        {liveId && live.data && (
+          <div className="rounded-2xl border border-brand-200 bg-brand-50/60 p-4">
+            <div className="flex flex-wrap items-center gap-3">
+              <span className="text-sm font-semibold text-brand-900">
+                {live.data.status === "completed"
+                  ? t(`Έφυγαν ${live.data.sent} μηνύματα.`, `${live.data.sent} messages sent.`)
+                  : live.data.status === "paused"
+                    ? (live.data.paused_reason === "no_credits"
+                        ? t("Πάγωσε — τελείωσε το υπόλοιπο. Συνεχίζει μόλις ανανεωθεί.", "Paused — out of credits.")
+                        : t("Σε παύση.", "Paused."))
+                    : t(`Στέλνεται… ${live.data.sent} από ${live.data.recipients}`, `Sending… ${live.data.sent} of ${live.data.recipients}`)}
+              </span>
+              {live.data.failed > 0 && <span className="text-xs text-rose-600">{t(`${live.data.failed} απέτυχαν`, `${live.data.failed} failed`)}</span>}
+              <span className="ml-auto flex gap-2">
+                {["queued", "sending"].includes(live.data.status) && (
+                  <button onClick={() => control.mutate("pause")} className="inline-flex items-center gap-1 rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-600"><Pause className="h-3.5 w-3.5" />{t("Παύση", "Pause")}</button>
+                )}
+                {live.data.status === "paused" && (
+                  <button onClick={() => control.mutate("resume")} className="inline-flex items-center gap-1 rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-600"><Play className="h-3.5 w-3.5" />{t("Συνέχισε", "Resume")}</button>
+                )}
+                {["queued", "sending", "paused"].includes(live.data.status) && (
+                  <button onClick={async () => { if (await appConfirm(t(`Να σταματήσει; Έχουν λάβει ${live.data!.sent}. Όσοι έλαβαν δεν αναιρούνται.`, `Stop? ${live.data!.sent} already received.`), { danger: true })) control.mutate("cancel"); }}
+                    className="inline-flex items-center gap-1 rounded-lg border border-rose-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-rose-600"><X className="h-3.5 w-3.5" />{t("Σταμάτα", "Stop")}</button>
+                )}
+                {["completed", "cancelled"].includes(live.data.status) && (
+                  <button onClick={() => setLiveId(null)} className="rounded-lg px-2.5 py-1.5 text-xs font-semibold text-slate-400">{t("Κλείσιμο", "Close")}</button>
+                )}
+              </span>
+            </div>
+            <div className="mt-2 h-2 overflow-hidden rounded-full bg-white">
+              <div className="h-full rounded-full bg-brand-600 transition-all"
+                style={{ width: `${Math.round(((live.data.sent + live.data.failed) / Math.max(1, live.data.recipients)) * 100)}%` }} />
+            </div>
+          </div>
+        )}
+
         <PanelCard title={t("Νέα στοχευμένη αποστολή", "New targeted send")}>
           {/* channel */}
           <div className="mb-4 flex gap-2">
@@ -161,10 +224,31 @@ export default function CommunicationsPage() {
           <textarea value={message} onChange={(e) => setMessage(e.target.value)} rows={5} placeholder={channel !== "email" ? t("Κείμενο μηνύματος…", "Message text…") : t("Μήνυμα… (μεταβλητές: {name} = πλήρες όνομα, {first} = επώνυμο)", "Message… (variables: {name} = full name, {first} = last name)")} className={`${inp} w-full`} />
           <div className="mt-3 flex items-center justify-between">
             <span className="text-xs text-slate-400">{channel !== "email" ? t(`${message.length} χαρακτήρες`, `${message.length} characters`) : t("Διαθέσιμες μεταβλητές: {name}, {first}", "Available variables: {name}, {first}")}</span>
-            <button onClick={async () => { if (message.trim() && await appConfirm(channel === "push" ? t(`Δωρεάν push σε ${count} ασθενείς;`, `Free push to ${count} patients?`) : t(`Αποστολή σε ${count} παραλήπτες — κόστος ${eur(costCents)};`, `Send to ${count} recipients — cost ${eur(costCents)}?`))) send.mutate(); }}
+            <button onClick={async () => {
+              if (!message.trim()) return;
+              const ex = (bd.data?.excluded ?? []).filter((x) => x.n > 0);
+              const lines = ex.map((x) => `· ${x.n} ${x.reason}`).join("\n");
+              const ok = await appConfirm(
+                t(`Να σταλεί σε ${count} ανθρώπους;`, `Send to ${count} people?`) +
+                (channel === "push" ? t("\n\nΤο κανάλι αυτό δεν χρεώνεται.", "\n\nThis channel is free.")
+                                    : t(`\n\nΚόστος περίπου ${eur(costCents)}.`, `\n\nAbout ${eur(costCents)}.`)) +
+                (ex.length ? t(`\n\nΕξαιρούνται ${bd.data!.total - count}:\n${lines}`, `\n\n${bd.data!.total - count} excluded:\n${lines}`) : "") +
+                t("\n\nΜόλις ξεκινήσει μπορείς να το σταματήσεις, αλλά όσοι έχουν λάβει δεν αναιρούνται.",
+                  "\n\nYou can stop it, but delivered messages cannot be recalled."),
+                { confirmText: t(`Στείλε το σε ${count} ανθρώπους`, `Send to ${count}`) });
+              if (ok) send.mutate();
+            }}
               disabled={send.isPending || !message.trim() || !count || insufficient}
               className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-5 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50">
-              {send.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />} {t("Αποστολή", "Send")}
+              {send.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />} {count ? t(`Στείλε το σε ${count}`, `Send to ${count}`) : t("Αποστολή", "Send")}
+            </button>
+            {/* Δοκιμαστική αποστολή — ΠΑΝΤΑ πριν φύγει στους υπόλοιπους. */}
+            <button onClick={async () => {
+              const to = await appPrompt(t("Σε ποιο email/κινητό να σταλεί η δοκιμή;", "Where should the test go?"));
+              if (to?.trim()) testSend.mutate(to.trim());
+            }} disabled={!message.trim() || testSend.isPending}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50">
+              {testSend.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <FlaskConical className="h-4 w-4" />} {t("Δοκιμαστική αποστολή", "Test send")}
             </button>
           </div>
         </PanelCard>
