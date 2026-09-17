@@ -30,7 +30,7 @@ const GROUPS: { label: string; icon: typeof LayoutGrid; items: { label: string; 
       { label: "Προμήθειες e-shop", icon: Receipt, href: "/admin/eshop-fees", section: "subscriptions" },
       { label: "Αιτήματα αναβάθμισης", icon: ArrowUpCircle, href: "/admin/plan-changes", section: "subscriptions" },
       { label: "Εκκρεμείς εγγραφές", icon: Clock, href: "/admin/pending", section: "subscriptions" },
-      { label: "Leads (πρώην trials)", icon: Users, href: "/admin/leads", section: "leads" },
+      { label: "Leads & Conversions", icon: Users, href: "/admin/leads", section: "leads" },
       { label: "Newsletter", icon: Mail, href: "/admin/newsletter", section: "newsletter" },
       { label: "Ανακοινώσεις πελατών", icon: Megaphone, href: "/admin/announcements", section: "content" },
       { label: "Αξιολογήσεις", icon: MessageSquare, href: "/admin/feedback", section: "subscribers" },

@@ -1,155 +1,289 @@
 "use client";
 
+/* Leads & Conversions — η οθόνη απαντά ΜΙΑ ερώτηση:
+   «ποιο φαρμακείο χρειάζεται την προσοχή μου σήμερα και τι να του πω;»
+   Ό,τι δεν βοηθά σε αυτό δεν μπαίνει. Γι' αυτό το «Σήμερα» είναι ΠΑΝΩ από τις μετρήσεις. */
+
 import { useState } from "react";
-import { appConfirm } from "@/store/dialogStore";
+import Link from "next/link";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Users, Send, Trash2, Loader2, Save, Mail, Trash } from "lucide-react";
+import {
+  Users, Search, RefreshCw, Phone, Mail, Loader2, ArrowRight, Settings2, X,
+} from "lucide-react";
 import { adminApi } from "@/lib/adminClient";
+import { appAlert } from "@/store/dialogStore";
 
-type Lead = {
-  _id: string; afm?: string | null; email?: string | null; phone?: string | null;
-  contact_name?: string | null; pharmacy_name?: string | null; country?: string;
-  status: string; offers_sent?: number; last_offer_at?: string | null;
-  trial_expired?: string | null; purged_at?: string | null; reason?: string; trial_allowed?: boolean;
+type Suggestion = { action: string; title: string; why: string; urgency: string; buttons: string[] };
+type Row = {
+  _id: string; pharmacy_name: string; city?: string | null; tenant_id?: string | null;
+  stage: string; stage_label: string; status: string; status_label?: string;
+  days_since_expiry?: number | null; days_left?: number | null;
+  score?: number | null; band?: string; band_label?: string;
+  days_since_activity?: number | null; actions_30d?: number | null;
+  has_email: boolean; has_phone: boolean; tags: string[];
+  assigned_name?: string | null;
+  next_action?: { title?: string; due_at?: string; priority?: string } | null;
+  last_comm_at?: string | null; suggestion: Suggestion;
 };
-type LeadCfg = { purge_days: number; purge_enabled: boolean; offer_subject: string; offer_body: string };
-type LeadsRes = { items: Lead[]; counts: Record<string, number>; config: LeadCfg };
-type PurgeRes = { candidates: number; purged: number; purge_days: number; enabled: boolean; dry_run: boolean };
+type Today = { tone: string; icon: string; n: number; text: string; link: { kind: string; value: string } };
+type Kpis = {
+  total: number; trialing: number; ending: number; expired: number; needs_contact: number;
+  reengage: number; offers_sent: number; customers: number; lost: number;
+  conversion: { won: number; of: number } | null; contacted_30d: number | null;
+};
+type Seg = { key: string; icon: string; name: string; why: string; count: number };
+type Tab = { key: string; label: string; count: number };
+type Overview = { today: Today[]; kpis: Kpis; tabs: Tab[]; segments: Seg[]; last_projection_at?: string | null };
 
-const STATUS: Record<string, { label: string; cls: string }> = {
-  lead: { label: "Νέο lead", cls: "bg-sky-100 text-sky-700" },
-  contacted: { label: "Επικοινωνήθηκε", cls: "bg-amber-100 text-amber-700" },
-  converted: { label: "Έγινε πελάτης", cls: "bg-emerald-100 text-emerald-700" },
-  unsubscribed: { label: "Διαγραφή", cls: "bg-slate-200 text-slate-500" },
+const TONE: Record<string, string> = {
+  red: "border-rose-200 bg-rose-50 text-rose-900 hover:bg-rose-100",
+  orange: "border-orange-200 bg-orange-50 text-orange-900 hover:bg-orange-100",
+  yellow: "border-amber-200 bg-amber-50 text-amber-900 hover:bg-amber-100",
+  green: "border-emerald-200 bg-emerald-50 text-emerald-900 hover:bg-emerald-100",
+  slate: "border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100",
 };
-const FILTERS: [string, string][] = [["all", "Όλα"], ["lead", "Νέα"], ["contacted", "Επικοινωνήθηκαν"], ["converted", "Πελάτες"], ["unsubscribed", "Διαγραφές"]];
-const fmt = (s?: string | null) => (s ? new Date(s).toLocaleDateString("el-GR") : "—");
+// Ενιαία κλίμακα κρισιμότητας: ίδιο χρώμα = ίδια σημασία σε όλο το προϊόν.
+const BAND: Record<string, { bar: string; text: string }> = {
+  hot: { bar: "bg-emerald-500", text: "text-emerald-700" },
+  engaged: { bar: "bg-sky-500", text: "text-sky-700" },
+  warm: { bar: "bg-amber-500", text: "text-amber-700" },
+  cold: { bar: "bg-rose-400", text: "text-rose-600" },
+  unknown: { bar: "bg-slate-300", text: "text-slate-400" },
+};
+const URGENCY: Record<string, string> = {
+  high: "bg-rose-600 text-white hover:bg-rose-700",
+  normal: "bg-indigo-600 text-white hover:bg-indigo-700",
+  low: "bg-white text-slate-600 border border-slate-300 hover:bg-slate-50",
+};
+
+const ago = (iso?: string | null) => {
+  if (!iso) return "—";
+  const d = Math.floor((Date.now() - new Date(iso).getTime()) / 86400000);
+  if (d <= 0) return "σήμερα";
+  if (d === 1) return "χθες";
+  if (d < 30) return `πριν ${d} μέρες`;
+  const m = Math.floor(d / 30);
+  return m === 1 ? "πριν έναν μήνα" : `πριν ${m} μήνες`;
+};
+
+function ScoreBar({ value, band, label }: { value?: number | null; band?: string; label?: string }) {
+  const b = BAND[band || "unknown"] ?? BAND.unknown;
+  if (value === null || value === undefined) {
+    return <span className="text-[11px] text-slate-400" title="Ο λογαριασμός διαγράφηκε πριν αρχίσουμε να μετράμε">δεν μετριέται</span>;
+  }
+  return (
+    <div className="flex items-center gap-2" title={label}>
+      <div className="h-1.5 w-16 overflow-hidden rounded-full bg-slate-100">
+        <div className={`h-full rounded-full ${b.bar}`} style={{ width: `${Math.max(4, value)}%` }} />
+      </div>
+      <span className={`text-[11px] font-bold tabular-nums ${b.text}`}>{value}</span>
+    </div>
+  );
+}
 
 export default function AdminLeadsPage() {
   const qc = useQueryClient();
-  const [filter, setFilter] = useState("all");
-  const q = useQuery({ queryKey: ["admin-leads", filter], queryFn: () => adminApi<LeadsRes>(`/admin/leads${filter !== "all" ? `?status=${filter}` : ""}`), retry: false });
-  const inv = () => qc.invalidateQueries({ queryKey: ["admin-leads"] });
-  const [busyId, setBusyId] = useState<string | null>(null);
+  const [tab, setTab] = useState("attention");
+  const [segment, setSegment] = useState<string | null>(null);
+  const [q, setQ] = useState("");
+  const [showCfg, setShowCfg] = useState(false);
 
-  const offer = useMutation({ mutationFn: (id: string) => { setBusyId(id); return adminApi(`/admin/leads/${encodeURIComponent(id)}/offer`, { method: "POST", body: JSON.stringify({}) }); }, onSettled: () => setBusyId(null), onSuccess: inv });
-  const setStatus = useMutation({ mutationFn: (v: { id: string; status: string }) => adminApi(`/admin/leads/${encodeURIComponent(v.id)}`, { method: "PATCH", body: JSON.stringify({ status: v.status }) }), onSuccess: inv });
-  const del = useMutation({ mutationFn: (id: string) => adminApi(`/admin/leads/${encodeURIComponent(id)}`, { method: "DELETE" }), onSuccess: inv });
-  const allowTrial = useMutation({ mutationFn: (v: { id: string; allowed: boolean }) => adminApi(`/admin/leads/${encodeURIComponent(v.id)}`, { method: "PATCH", body: JSON.stringify({ trial_allowed: v.allowed }) }), onSuccess: inv });
-  const saveEmail = useMutation({ mutationFn: (v: { id: string; email: string }) => adminApi(`/admin/leads/${encodeURIComponent(v.id)}`, { method: "PATCH", body: JSON.stringify({ email: v.email }) }), onSuccess: inv });
-  const bulk = useMutation({ mutationFn: () => adminApi(`/admin/leads/offer-bulk`, { method: "POST", body: JSON.stringify({}) }), onSuccess: inv });
-
-  // config + manual purge
-  const cfg = q.data?.config;
-  const [days, setDays] = useState<string>("");
-  const [enabled, setEnabled] = useState<boolean | null>(null);
-  const [subj, setSubj] = useState<string>("");
-  const [body, setBody] = useState<string>("");
-  const saveCfg = useMutation({
-    mutationFn: () => adminApi(`/admin/leads-config`, { method: "PUT", body: JSON.stringify({ purge_days: days ? Number(days) : undefined, purge_enabled: enabled ?? undefined, offer_subject: subj || undefined, offer_body: body || undefined }) }),
-    onSuccess: () => { setDays(""); setEnabled(null); setSubj(""); setBody(""); inv(); },
+  const ov = useQuery({ queryKey: ["leads", "overview"], queryFn: () => adminApi<Overview>("/admin/leads/overview") });
+  const list = useQuery({
+    queryKey: ["leads", "list", tab, segment, q],
+    queryFn: () => adminApi<{ items: Row[]; total: number }>(
+      `/admin/leads?tab=${tab}${segment ? `&segment=${segment}` : ""}${q ? `&q=${encodeURIComponent(q)}` : ""}`),
   });
-  const [purge, setPurge] = useState<PurgeRes | null>(null);
-  const runPurge = useMutation({
-    mutationFn: (dry: boolean) => adminApi<PurgeRes>(`/admin/trials/purge?dry_run=${dry}`, { method: "POST" }),
-    onSuccess: (r) => { setPurge(r); if (!r.dry_run) inv(); },
+  const refresh = useMutation({
+    mutationFn: () => adminApi<{ total: number }>("/admin/leads/refresh", { method: "POST" }),
+    onSuccess: (r) => { qc.invalidateQueries({ queryKey: ["leads"] }); appAlert(`Η λίστα ανανεώθηκε — ${r.total} φαρμακεία.`); },
   });
 
-  const items = q.data?.items ?? [];
-  const counts = q.data?.counts ?? {};
+  const k = ov.data?.kpis;
+  const rows = list.data?.items ?? [];
+
+  // Οι γραμμές του «Σήμερα» ΟΔΗΓΟΥΝ κάπου. Γραμμή που δεν οδηγεί πουθενά δεν μπαίνει.
+  function goto(link: Today["link"]) {
+    if (link.kind === "tab") { setSegment(null); setTab(link.value); }
+    else if (link.kind === "segment") { setTab("all"); setSegment(link.value); }
+    else if (link.kind === "tasks") { setSegment(null); setTab("attention"); }
+    document.getElementById("lead-table")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
 
   return (
-    <div className="w-full space-y-6">
-      <div>
-        <h1 className="flex items-center gap-2 text-2xl font-bold text-slate-900"><Users className="h-6 w-6 text-brand-600" /> Leads — πρώην δοκιμαστικοί</h1>
-        <p className="mt-1 text-sm text-slate-500">Φαρμακεία που δοκίμασαν το RxVision & δεν έγιναν πελάτες. Κρατάμε το ΑΦΜ (μπλοκ επανα-trial) και τους στέλνουμε προσφορές για να τους μετατρέψουμε.</p>
-      </div>
-
-      {/* config + purge */}
-      <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-        <h3 className="mb-3 text-sm font-semibold text-slate-700">⚙️ Ρυθμίσεις κύκλου trial</h3>
-        <div className="flex flex-wrap items-end gap-4">
-          <label className="text-xs text-slate-500">Διαγραφή trial μετά από (ημέρες λήξης)
-            <input type="number" min={1} value={days} onChange={(e) => setDays(e.target.value)} placeholder={String(cfg?.purge_days ?? 20)} className="mt-1 block w-28 rounded-lg border border-slate-300 px-2 py-1.5 text-sm" />
-          </label>
-          <label className="flex items-center gap-2 pb-2 text-xs font-medium text-slate-600">
-            <input type="checkbox" checked={enabled ?? cfg?.purge_enabled ?? true} onChange={(e) => setEnabled(e.target.checked)} className="h-4 w-4 rounded border-slate-300" />
-            Αυτόματη διαγραφή ενεργή
-          </label>
-          <button onClick={() => saveCfg.mutate()} disabled={saveCfg.isPending} className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand-700 disabled:opacity-50"><Save className="h-3.5 w-3.5" /> Αποθήκευση</button>
-          <div className="ml-auto flex items-center gap-2">
-            <button onClick={() => runPurge.mutate(true)} disabled={runPurge.isPending} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium hover:bg-slate-50 disabled:opacity-50">Προεπισκόπηση διαγραφής</button>
-            <button onClick={async () => { if (await appConfirm(`Οριστική διαγραφή ${purge?.candidates ?? ""} ληγμένων trials; (κρατάμε τα ΑΦΜ στα leads)`, { danger: true })) runPurge.mutate(false); }} disabled={runPurge.isPending} className="inline-flex items-center gap-1.5 rounded-lg bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-rose-700 disabled:opacity-50"><Trash className="h-3.5 w-3.5" /> Εκτέλεση τώρα</button>
+    <div className="w-full space-y-5">
+      <header className="flex flex-wrap items-start justify-between gap-3">
+        <div className="flex items-start gap-3">
+          <div className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-indigo-600 text-white"><Users className="h-6 w-6" /></div>
+          <div>
+            <h1 className="text-2xl font-bold tracking-tight text-slate-900">Leads &amp; Conversions</h1>
+            <p className="text-sm text-slate-500">Διαχειρίσου τα φαρμακεία που δοκιμάζουν, επιστρέφουν και γίνονται πελάτες του RxVision.</p>
           </div>
         </div>
-        {purge && <p className="mt-2 text-xs text-slate-500">{purge.dry_run ? `Θα διαγραφούν ${purge.candidates} λογαριασμοί (ληγμένα trials >${purge.purge_days} ημ.).` : `Διαγράφηκαν ${purge.purged} λογαριασμοί — τα ΑΦΜ αρχειοθετήθηκαν στα leads.`}</p>}
-        <details className="mt-3 text-xs">
-          <summary className="cursor-pointer text-slate-500">Πρότυπο προσφοράς (email)</summary>
-          <div className="mt-2 space-y-2">
-            <input value={subj} onChange={(e) => setSubj(e.target.value)} placeholder={cfg?.offer_subject} className="block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" />
-            <textarea value={body} onChange={(e) => setBody(e.target.value)} rows={4} placeholder={cfg?.offer_body} className="block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" />
-            <span className="text-[11px] text-slate-400">Χρησιμοποίησε {"{name}"} για το όνομα. Αποθηκεύεται με το κουμπί «Αποθήκευση» πάνω.</span>
-          </div>
-        </details>
-      </div>
+        <div className="flex items-center gap-2">
+          <button onClick={() => setShowCfg(true)} className="inline-flex items-center gap-1.5 rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50"><Settings2 className="h-4 w-4" />Ρυθμίσεις</button>
+          <button onClick={() => refresh.mutate()} disabled={refresh.isPending} className="inline-flex items-center gap-1.5 rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-50">
+            {refresh.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}Ανανέωση
+          </button>
+        </div>
+      </header>
 
-      {/* filters + bulk */}
-      <div className="flex flex-wrap items-center gap-2">
-        {FILTERS.map(([k, l]) => (
-          <button key={k} onClick={() => setFilter(k)} className={`rounded-full px-3 py-1 text-xs font-medium ${filter === k ? "bg-brand-600 text-white" : "border border-slate-300 text-slate-600 hover:bg-slate-50"}`}>{l}{counts[k] ? ` (${counts[k]})` : k === "all" && counts.total ? ` (${counts.total})` : ""}</button>
+      {/* ΣΗΜΕΡΑ — πάνω από τις μετρήσεις, γιατί γι' αυτό ανοίγεις τη σελίδα */}
+      <section className="rounded-2xl border border-slate-200 bg-white p-4">
+        <h2 className="mb-2.5 text-sm font-bold uppercase tracking-wider text-slate-400">Σήμερα</h2>
+        {ov.isLoading && <p className="text-sm text-slate-400">Φόρτωση…</p>}
+        {!ov.isLoading && !(ov.data?.today ?? []).length && (
+          <p className="text-sm text-slate-500">Κανένα φαρμακείο δεν χρειάζεται προσοχή αυτή τη στιγμή. Όσα δοκιμάζουν είναι μέσα στον χρόνο τους.</p>
+        )}
+        <div className="grid gap-2 sm:grid-cols-2">
+          {(ov.data?.today ?? []).map((t, i) => (
+            <button key={i} onClick={() => goto(t.link)} className={`flex items-center gap-2.5 rounded-xl border px-3.5 py-2.5 text-left text-sm font-semibold transition ${TONE[t.tone] ?? TONE.slate}`}>
+              <span className="text-base">{t.icon}</span>
+              <span className="flex-1">{t.text}</span>
+              <ArrowRight className="h-4 w-4 shrink-0 opacity-50" />
+            </button>
+          ))}
+        </div>
+      </section>
+
+      {/* Μετρήσεις — πραγματικές. Ό,τι δεν υπολογίζεται λέει «δεν μετριέται ακόμη». */}
+      <section className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-6">
+        {[
+          { label: "Δοκιμάζουν", v: k?.trialing, tab: "trialing" },
+          { label: "Τελειώνουν", v: k?.ending, tab: "ending" },
+          { label: "Έληξαν", v: k?.expired, tab: "expired" },
+          { label: "Θέλουν επικοινωνία", v: k?.needs_contact, tab: "attention" },
+          { label: "Πήραν προσφορά", v: k?.offers_sent, tab: "all" },
+          { label: "Έγιναν πελάτες", v: k?.customers, tab: "customers" },
+        ].map((c) => (
+          <button key={c.label} onClick={() => { setSegment(null); setTab(c.tab); }} className="rounded-2xl border border-slate-200 bg-white p-3.5 text-left transition hover:border-indigo-300 hover:shadow-sm">
+            <div className="text-2xl font-bold tabular-nums text-slate-900">{c.v ?? "—"}</div>
+            <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">{c.label}</div>
+          </button>
         ))}
-        <button onClick={async () => { if (await appConfirm("Αποστολή προσφοράς σε ΟΛΑ τα νέα leads;")) bulk.mutate(); }} disabled={bulk.isPending} className="ml-auto inline-flex items-center gap-1.5 rounded-lg bg-violet-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-violet-700 disabled:opacity-50">{bulk.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Mail className="h-3.5 w-3.5" />} Προσφορά σε όλα τα νέα</button>
-      </div>
+      </section>
+      {k?.conversion && (
+        <p className="-mt-2 text-xs text-slate-500">
+          Έγιναν πελάτες <b className="text-slate-700">{k.conversion.won} από {k.conversion.of}</b> φαρμακεία που δοκίμασαν.
+        </p>
+      )}
 
-      {/* table */}
-      <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
-        <table className="w-full min-w-[760px] text-sm">
-          <thead className="bg-slate-50 text-left text-xs text-slate-500"><tr>
-            <th className="px-3 py-2">Φαρμακείο</th><th className="px-3 py-2">ΑΦΜ</th><th className="px-3 py-2">Επικοινωνία</th>
-            <th className="px-3 py-2">Κατάσταση</th><th className="px-3 py-2">Επανα-trial</th><th className="px-3 py-2 text-center">Προσφορές</th><th className="px-3 py-2">Λήξη trial</th><th className="px-3 py-2 text-right">Ενέργειες</th>
-          </tr></thead>
-          <tbody>
-            {q.isLoading ? <tr><td colSpan={8} className="px-3 py-6 text-center text-slate-400">Φόρτωση…</td></tr>
-              : items.length === 0 ? <tr><td colSpan={8} className="px-3 py-8 text-center text-slate-400">Κανένα lead ακόμη.</td></tr>
-              : items.map((l) => (
-                <tr key={l._id} className="border-t border-slate-100">
-                  <td className="px-3 py-2 font-medium text-slate-800">{l.pharmacy_name || l.contact_name || l._id}</td>
-                  <td className="px-3 py-2 font-mono text-[11px] text-slate-500">{l.afm || "—"}</td>
-                  <td className="px-3 py-2 text-xs text-slate-600">
-                    <input key={l.email || ""} type="email" defaultValue={l.email || ""} placeholder="πρόσθεσε email…"
-                      onBlur={(e) => { const v = e.target.value.trim(); if (v !== (l.email || "")) saveEmail.mutate({ id: l._id, email: v }); }}
-                      onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
-                      className="w-44 rounded border border-transparent px-1.5 py-0.5 hover:border-slate-300 focus:border-brand-400 focus:outline-none" />
-                    {l.phone ? <div className="text-slate-400">{l.phone}</div> : null}
-                  </td>
-                  <td className="px-3 py-2">
-                    <select value={l.status} onChange={(e) => setStatus.mutate({ id: l._id, status: e.target.value })} className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${STATUS[l.status]?.cls || "bg-slate-100 text-slate-500"}`}>
-                      {Object.entries(STATUS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
-                    </select>
-                  </td>
-                  <td className="px-3 py-2">
-                    {l.trial_allowed ? (
-                      <span className="inline-flex items-center gap-1.5">
-                        <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">✓ επιτρέπεται</span>
-                        <button onClick={() => allowTrial.mutate({ id: l._id, allowed: false })} className="text-[11px] text-slate-400 hover:text-rose-600">μπλόκαρε</button>
-                      </span>
-                    ) : (
-                      <span className="inline-flex items-center gap-1.5">
-                        <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-700">🔒 μπλοκαρισμένο</span>
-                        <button onClick={() => allowTrial.mutate({ id: l._id, allowed: true })} className="text-[11px] font-semibold text-brand-600 hover:underline">επίτρεψε ξανά</button>
-                      </span>
-                    )}
-                  </td>
-                  <td className="px-3 py-2 text-center tabular-nums text-slate-600">{l.offers_sent || 0}</td>
-                  <td className="px-3 py-2 text-xs text-slate-500">{fmt(l.trial_expired)}</td>
-                  <td className="px-3 py-2 text-right">
-                    <button onClick={() => offer.mutate(l._id)} disabled={!l.email || busyId === l._id} title={l.email ? "Στείλε προσφορά" : "Χωρίς email"} className="mr-2 inline-flex items-center gap-1 rounded-lg border border-violet-300 bg-violet-50 px-2.5 py-1 text-xs font-semibold text-violet-700 hover:bg-violet-100 disabled:opacity-40">{busyId === l._id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />} Προσφορά</button>
-                    <button onClick={async () => { if (await appConfirm(`Διαγραφή lead ${l.pharmacy_name || l._id}; (το ΑΦΜ δεν θα μπλοκάρει πια)`, { danger: true })) del.mutate(l._id); }} className="rounded-lg p-1.5 text-slate-400 hover:bg-rose-50 hover:text-rose-600"><Trash2 className="h-4 w-4" /></button>
-                  </td>
-                </tr>
-              ))}
-          </tbody>
-        </table>
+      {/* Έτοιμα τμήματα */}
+      <section className="flex flex-wrap gap-2">
+        {(ov.data?.segments ?? []).filter((s) => s.count > 0).map((s) => (
+          <button key={s.key} onClick={() => { setTab("all"); setSegment(segment === s.key ? null : s.key); }} title={s.why}
+            className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold transition ${segment === s.key ? "border-indigo-400 bg-indigo-50 text-indigo-700" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"}`}>
+            <span>{s.icon}</span>{s.name}<span className="rounded-full bg-slate-100 px-1.5 tabular-nums">{s.count}</span>
+          </button>
+        ))}
+      </section>
+
+      {/* Φίλτρα + αναζήτηση */}
+      <section id="lead-table" className="flex flex-wrap items-center gap-2">
+        {(ov.data?.tabs ?? []).map((t) => (
+          <button key={t.key} onClick={() => { setTab(t.key); setSegment(null); }}
+            className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${tab === t.key && !segment ? "bg-indigo-600 text-white" : "bg-white text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50"}`}>
+            {t.label} <span className="tabular-nums opacity-60">{t.count}</span>
+          </button>
+        ))}
+        <div className="relative ml-auto">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Φαρμακείο, ΑΦΜ, email, πόλη…"
+            className="w-64 rounded-lg border border-slate-300 py-2 pl-8 pr-8 text-sm focus:border-indigo-500 focus:outline-none" />
+          {q && <button onClick={() => setQ("")} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"><X className="h-4 w-4" /></button>}
+        </div>
+      </section>
+      {segment && (
+        <p className="-mt-2 text-xs text-indigo-700">
+          Φιλτράρεις με «{ov.data?.segments.find((s) => s.key === segment)?.name}».{" "}
+          <button onClick={() => setSegment(null)} className="font-semibold underline">Καθάρισε</button>
+        </p>
+      )}
+
+      {/* Ο πίνακας — επτά στήλες, όχι δεκατέσσερις */}
+      <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
+        <div className="hidden grid-cols-[1.6fr_1fr_0.8fr_0.7fr_1.3fr] gap-3 border-b border-slate-100 px-4 py-2.5 text-[11px] font-bold uppercase tracking-wider text-slate-400 lg:grid">
+          <span>Φαρμακείο</span><span>Κατάσταση</span><span>Δραστηριότητα</span><span>Τελευταία κίνηση</span><span>Τι κάνω</span>
+        </div>
+        {list.isLoading && <p className="p-8 text-center text-sm text-slate-400">Φόρτωση…</p>}
+        {!list.isLoading && !rows.length && (
+          <p className="p-8 text-center text-sm text-slate-400">
+            Κανένα φαρμακείο εδώ.{" "}
+            <button onClick={() => { setTab("all"); setSegment(null); }} className="font-semibold text-indigo-600 underline">Δες όλα</button>
+          </p>
+        )}
+        {rows.map((r) => (
+          <Link key={r._id} href={`/admin/leads/${encodeURIComponent(r._id)}`}
+            className="grid gap-2 border-b border-slate-50 px-4 py-3 transition last:border-0 hover:bg-slate-50 lg:grid-cols-[1.6fr_1fr_0.8fr_0.7fr_1.3fr] lg:items-center lg:gap-3">
+            <div className="min-w-0">
+              <div className="truncate text-sm font-semibold text-slate-800">{r.pharmacy_name}</div>
+              <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-slate-400">
+                {r.city && <span>{r.city}</span>}
+                {!r.has_email && !r.has_phone && <span className="font-semibold text-rose-500">χωρίς στοιχεία επαφής</span>}
+                {r.has_phone && <Phone className="h-3 w-3" />}
+                {r.has_email && <Mail className="h-3 w-3" />}
+                {r.assigned_name && <span className="rounded bg-slate-100 px-1.5 font-semibold text-slate-500">{r.assigned_name}</span>}
+              </div>
+            </div>
+            <div className="text-xs">
+              <div className="font-semibold text-slate-700">{r.stage_label}</div>
+              <div className="text-slate-400">
+                {r.days_since_expiry != null ? `πριν ${r.days_since_expiry} μέρες`
+                  : r.days_left != null ? `σε ${r.days_left} μέρες` : (r.status_label ?? "")}
+              </div>
+            </div>
+            <ScoreBar value={r.score} band={r.band} label={r.band_label} />
+            <div className="text-xs text-slate-500">{r.days_since_activity != null ? ago(new Date(Date.now() - r.days_since_activity * 86400000).toISOString()) : "—"}</div>
+            <div className="flex items-center gap-2">
+              <span className={`inline-flex items-center rounded-lg px-2.5 py-1.5 text-[11px] font-bold ${URGENCY[r.suggestion.urgency] ?? URGENCY.low}`}>{r.suggestion.title}</span>
+            </div>
+          </Link>
+        ))}
+      </section>
+
+      {ov.data?.last_projection_at && (
+        <p className="text-[11px] text-slate-400">Τελευταία ανανέωση δεδομένων: {new Date(ov.data.last_projection_at).toLocaleString("el-GR", { timeZone: "Europe/Athens" })}</p>
+      )}
+
+      {showCfg && <ConfigPanel onClose={() => { setShowCfg(false); qc.invalidateQueries({ queryKey: ["leads"] }); }} />}
+    </div>
+  );
+}
+
+/* Ρυθμίσεις: τα κατώφλια είναι εμπορικές αποφάσεις, όχι τεχνικές σταθερές. */
+function ConfigPanel({ onClose }: { onClose: () => void }) {
+  const cfg = useQuery({ queryKey: ["leads", "config"], queryFn: () => adminApi<Record<string, number>>("/admin/leads/config") });
+  const [v, setV] = useState<Record<string, string>>({});
+  const save = useMutation({
+    mutationFn: () => adminApi("/admin/leads/config", { method: "PUT", body: JSON.stringify(
+      Object.fromEntries(Object.entries(v).filter(([, x]) => x !== "").map(([kk, x]) => [kk, Number(x)]))) }),
+    onSuccess: onClose,
+  });
+  const F: [string, string][] = [
+    ["trial_ending_days", "Πόσες μέρες πριν τη λήξη λέμε «τελειώνει»"],
+    ["returned_after_days", "Σιωπή τόσων ημερών ώστε η επιστροφή να μετρήσει ως σήμα"],
+    ["inactive_days", "Πάνω από τόσες μέρες χωρίς κίνηση = «δεν έχει επιστρέψει»"],
+    ["signup_abandoned_hours", "Ώρες μέχρι μια ημιτελής εγγραφή να γίνει lead"],
+  ];
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-slate-900/40 p-4" onClick={onClose}>
+      <div className="w-full max-w-lg rounded-2xl bg-white p-5" onClick={(e) => e.stopPropagation()}>
+        <h3 className="mb-1 text-lg font-bold text-slate-900">Ρυθμίσεις Leads</h3>
+        <p className="mb-4 text-xs text-slate-500">Αλλάζοντας αυτά αλλάζουν και τα φίλτρα — δεν είναι γραμμένα στον κώδικα.</p>
+        <div className="space-y-3">
+          {F.map(([kk, label]) => (
+            <label key={kk} className="block">
+              <span className="text-xs font-semibold text-slate-600">{label}</span>
+              <input type="number" value={v[kk] ?? ""} placeholder={String(cfg.data?.[kk] ?? "")}
+                onChange={(e) => setV({ ...v, [kk]: e.target.value })}
+                className="mt-1 w-full rounded-lg border border-slate-300 px-2.5 py-2 text-sm focus:border-indigo-500 focus:outline-none" />
+            </label>
+          ))}
+        </div>
+        <div className="mt-5 flex justify-end gap-2">
+          <button onClick={onClose} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-600">Άκυρο</button>
+          <button onClick={() => save.mutate()} className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700">Αποθήκευση</button>
+        </div>
       </div>
     </div>
   );

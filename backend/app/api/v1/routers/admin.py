@@ -39,7 +39,7 @@ def _oid(value):
 # Canonical sidebar sections (key → ελληνική ετικέτα for the UI).
 ADMIN_SECTIONS = [
     ("dashboard", "Πίνακας"), ("subscribers", "Συνδρομητές"), ("subscriptions", "Συνδρομές"),
-    ("leads", "Leads (πρώην trials)"),
+    ("leads", "Leads & Conversions"),
     ("staff", "Χρήστες (staff)"), ("billing", "Τιμολόγηση"), ("newsletter", "Newsletter"),
     ("smtp", "Ρυθμίσεις SMTP"), ("idika", "Διασύνδεση ΗΔΥΚΑ"),
     ("content", "Περιεχόμενο"), ("maintenance", "Συντήρηση"), ("health", "Επισκεψιμότητα"),
@@ -1632,67 +1632,12 @@ async def delete_ai_credit_pack(code: str, _: PlatformContext = Depends(get_plat
     return {"ok": True}
 
 
-# ── Trial leads (πρώην δοκιμαστικοί) — βάση + προσφορές + block επανα-trial ───────────────────────
-@router.get("/leads")
-async def admin_leads(status: str | None = None, _: PlatformContext = Depends(get_platform_admin)):
-    from app.services import trial_leads
-    return {"items": jsonsafe(await trial_leads.list_leads(status)),
-            "counts": await trial_leads.counts(), "config": await trial_leads.config()}
-
-
-class LeadPatchIn(BaseModel):
-    status: str | None = None
-    trial_allowed: bool | None = None   # True = ο admin επιτρέπει trial ξανά σε αυτό το ΑΦΜ
-    email: str | None = None            # χειροκίνητη συμπλήρωση/διόρθωση επικοινωνίας
-    phone: str | None = None
-    contact_name: str | None = None
-
-
-@router.patch("/leads/{lead_id}")
-async def admin_lead_patch(lead_id: str, body: LeadPatchIn,
-                           _: PlatformContext = Depends(get_platform_admin)):
-    from app.services import trial_leads
-    out: dict = {"ok": True}
-    if body.status is not None:
-        out["status"] = await trial_leads.set_status(lead_id, body.status)
-    if body.trial_allowed is not None:
-        out["trial"] = await trial_leads.set_trial_allowed(lead_id, body.trial_allowed)
-    if body.email is not None or body.phone is not None or body.contact_name is not None:
-        out["contact"] = await trial_leads.update_contact(
-            lead_id, email=body.email, phone=body.phone, contact_name=body.contact_name)
-    return out
-
-
-@router.delete("/leads/{lead_id}")
-async def admin_lead_delete(lead_id: str, _: PlatformContext = Depends(get_platform_admin)):
-    from app.services import trial_leads
-    return await trial_leads.delete_lead(lead_id)
-
-
-class LeadOfferIn(BaseModel):
-    subject: str | None = None
-    body: str | None = None
-    lead_ids: list[str] | None = None   # None → μεμονωμένο (path)· λίστα → bulk
-
-
-@router.post("/leads/{lead_id}/offer")
-async def admin_lead_offer(lead_id: str, body: LeadOfferIn,
-                           _: PlatformContext = Depends(get_platform_admin)):
-    from app.services import trial_leads
-    return await trial_leads.send_offer(lead_id, body.subject, body.body)
-
-
-@router.post("/leads/offer-bulk")
-async def admin_leads_offer_bulk(body: LeadOfferIn, _: PlatformContext = Depends(get_platform_admin)):
-    from app.services import trial_leads
-    ids = body.lead_ids or [x["_id"] for x in await trial_leads.list_leads(status="lead")]
-    sent = failed = 0
-    for lid in ids:
-        r = await trial_leads.send_offer(lid, body.subject, body.body)
-        sent += 1 if r.get("ok") else 0
-        failed += 0 if r.get("ok") else 1
-    return {"ok": True, "sent": sent, "failed": failed}
-
+# ── Trial leads → ΑΝΤΙΚΑΤΑΣΤΑΘΗΚΑΝ από το Lead Engine (routers/admin_leads.py, 17/09/2026) ──
+# Αφαιρέθηκαν: GET/PATCH/DELETE /leads, POST /leads/{id}/offer, POST /leads/offer-bulk.
+# Τα τρία πρώτα τα καλύπτει πλήρως ο νέος router. Η αποστολή προσφοράς αφαιρέθηκε ΣΚΟΠΙΜΑ:
+# έστελνε προωθητικό email χωρίς έλεγχο συγκατάθεσης και ΧΩΡΙΣ σύνδεσμο διαγραφής (νομική
+# υποχρέωση). Δεν είχε χρησιμοποιηθεί ποτέ — `offers_sent = 0` σε όλες τις εγγραφές. Επανέρχεται
+# σωστά στη Φάση 3 (RXVISION_PROMOTIONS.md). Οι ρυθμίσεις καθαρισμού μένουν εδώ.
 
 class LeadCfgIn(BaseModel):
     purge_days: int | None = Field(None, ge=1, le=365)

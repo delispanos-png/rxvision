@@ -3,6 +3,7 @@ from fastapi import APIRouter
 from app.api.v1.routers import (
     addons,
     admin,
+    admin_leads,
     advisor,
     announcements,
     auth,
@@ -99,6 +100,9 @@ api_router.include_router(platform.router, prefix="/platform", tags=["platform"]
 api_router.include_router(fund_groups.router, prefix="/platform/fund-groups", tags=["platform"])
 api_router.include_router(infra_cloud.router, prefix="/platform/cloud", tags=["platform"])
 api_router.include_router(admin.router, prefix="/admin", tags=["admin"])
+# Lead Engine — δικός του router (ο admin.py είναι ήδη 3.700+ γραμμές). Ο prefix είναι
+# δηλωμένος μέσα στο module ώστε το `enforce_section` να διαβάζει σωστά την ενότητα «leads».
+api_router.include_router(admin_leads.router, tags=["admin-leads"])
 
 # Admin: subscriptions, tenant, users/roles/permissions
 api_router.include_router(subscriptions.router, prefix="/subscription", tags=["subscription"])

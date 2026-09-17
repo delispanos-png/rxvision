@@ -16,7 +16,9 @@ celery_app = Celery(
              "app.workers.ops_health", "app.workers.copilot_routines",
              "app.workers.contacts_backfill", "app.workers.death_sweep",
              "app.workers.area_canonical", "app.workers.supplier_photos",
-             "app.workers.coach", "app.workers.comms"],
+             "app.workers.coach", "app.workers.comms",
+        "app.workers.leads",
+    ],
 )
 
 celery_app.conf.update(
@@ -70,6 +72,17 @@ celery_app.conf.beat_schedule = {
     # ελέγχει από μόνο του ότι δεν έστειλε ήδη σήμερα).
     # Ο Σύμβουλος: το task χτυπά ΚΑΘΕ ΩΡΑ και στέλνει μόνο όταν είναι η ώρα που όρισε το
     # φαρμακείο (ρυθμίσεις ανά tenant, ώρα Αθήνας).
+    # Lead Engine — προβολή leads· ΚΑΜΙΑ αποστολή σε φαρμακείο (Φάση 1)
+    "leads-project": {
+        "task": "app.workers.leads.project",
+        "schedule": crontab(minute=10),
+        "options": {"queue": "default"},
+    },
+    "leads-digest": {
+        "task": "app.workers.leads.digest",
+        "schedule": crontab(hour=6, minute=30),
+        "options": {"queue": "default"},
+    },
     "coach-daily-briefing": {
         "task": "app.workers.coach.daily_briefing",
         "schedule": crontab(minute=35),

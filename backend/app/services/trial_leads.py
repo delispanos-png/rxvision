@@ -5,8 +5,12 @@
   1) ΑΦΜ → μπλοκ επανα-λήψης ΔΩΡΕΑΝ trial (μπορεί να αγοράσει ΠΛΗΡΩΜΕΝΟ πακέτο),
   2) βάση leads → στέλνουμε προσφορές για να τους κάνουμε πελάτες.
 
-Collection: `trial_leads` (platform-level· _id = ΑΦΜ αν υπάρχει, αλλιώς email). status:
-lead → contacted → converted / unsubscribed.
+Collection: **`leads`** (platform-level· _id = ΑΦΜ αν υπάρχει, αλλιώς email).
+
+ΑΛΛΑΓΗ 17/09/2026 — Lead Engine: η συλλογή ΜΕΤΟΝΟΜΑΣΤΗΚΕ από `trial_leads` σε `leads` και
+πλέον περιέχει ΚΑΘΕ φαρμακείο που έδειξε πρόθεση, όχι μόνο τα διαγραμμένα δοκιμαστικά.
+Αυτό το module ΔΕΝ άλλαξε λογική: κρατά την αρχειοθέτηση κατά τη διαγραφή και το μπλοκ
+επανα-trial, που είναι κρίσιμα και δοκιμασμένα. Ό,τι νέο ζει στο `services/leads/`.
 """
 
 from __future__ import annotations
@@ -16,6 +20,7 @@ from datetime import datetime, timezone
 from app.core.db import shared_db
 
 DEFAULT_PURGE_DAYS = 20
+LEADS = "leads"        # βλ. docstring — παλαιό όνομα: trial_leads
 
 
 def _now() -> datetime:
@@ -73,7 +78,7 @@ async def archive_from_tenant(tenant_id: str, *, db=None, reason: str = "trial_p
     key = _lead_key(c["afm"], c["email"])
     if not key:
         key = f"tid:{tenant_id}"      # χωρίς ΑΦΜ/email → κράτα κάτι μοναδικό
-    await db["trial_leads"].update_one(
+    await db[LEADS].update_one(
         {"_id": key},
         {"$set": {**c, "reason": reason, "purged_at": _now(),
                   "original_tenant_id": tenant_id, "updated_at": _now()},
@@ -93,8 +98,15 @@ async def afm_had_trial(afm: str | None, email: str | None = None) -> bool:
         ors.append({"email": email.strip().lower()})
     if not ors:
         return False
-    return await db["trial_leads"].count_documents(
-        {"$or": ors, "status": {"$ne": "converted"}, "trial_allowed": {"$ne": True}}) > 0
+    # ΠΡΟΣΟΧΗ — ίδια σημασία με πριν: μπλοκάρουμε ΜΟΝΟ όποιον έχει ΗΔΗ τελειώσει δοκιμαστική.
+    # Η συλλογή `leads` περιέχει πλέον και φαρμακεία με τρέχουσα δοκιμή ή ενεργή συνδρομή· αν
+    # δεν περιοριζόμασταν στα τελειωμένα, θα μπλοκάραμε ανθρώπους που δεν μπλοκάρονταν πριν.
+    ended = {"$or": [{"purged_at": {"$ne": None}},
+                     {"stage": {"$in": ["trial_expired", "trial_purged", "churned"]}}]}
+    return await db[LEADS].count_documents(
+        {"$and": [{"$or": ors}, ended,
+                  {"status": {"$nin": ["converted", "won"]}},
+                  {"trial_allowed": {"$ne": True}}]}) > 0
 
 
 async def update_contact(lead_id: str, *, email: str | None = None, phone: str | None = None,
@@ -110,14 +122,14 @@ async def update_contact(lead_id: str, *, email: str | None = None, phone: str |
     if not upd:
         return {"ok": True}
     upd["updated_at"] = _now()
-    r = await shared_db()["trial_leads"].update_one({"_id": lead_id}, {"$set": upd})
+    r = await shared_db()[LEADS].update_one({"_id": lead_id}, {"$set": upd})
     return {"ok": bool(r.matched_count)}
 
 
 async def set_trial_allowed(lead_id: str, allowed: bool) -> dict:
     """Ξεμπλοκάρει (ή ξανα-μπλοκάρει) ένα ΑΦΜ ώστε να ΜΠΟΡΕΙ (ή όχι) να πάρει δωρεάν trial ξανά,
     ΧΩΡΙΣ να χαθεί η εγγραφή lead."""
-    r = await shared_db()["trial_leads"].update_one(
+    r = await shared_db()[LEADS].update_one(
         {"_id": lead_id}, {"$set": {"trial_allowed": bool(allowed), "updated_at": _now()}})
     return {"ok": bool(r.matched_count), "trial_allowed": bool(allowed)}
 
@@ -126,13 +138,13 @@ async def set_trial_allowed(lead_id: str, allowed: bool) -> dict:
 async def list_leads(status: str | None = None, limit: int = 500) -> list[dict]:
     db = shared_db()
     flt = {"status": status} if status and status != "all" else {}
-    return [r async for r in db["trial_leads"].find(flt).sort("purged_at", -1).limit(limit)]
+    return [r async for r in db[LEADS].find(flt).sort("purged_at", -1).limit(limit)]
 
 
 async def counts() -> dict:
     db = shared_db()
     out = {"lead": 0, "contacted": 0, "converted": 0, "unsubscribed": 0, "total": 0}
-    async for r in db["trial_leads"].aggregate([{"$group": {"_id": "$status", "n": {"$sum": 1}}}]):
+    async for r in db[LEADS].aggregate([{"$group": {"_id": "$status", "n": {"$sum": 1}}}]):
         out[r["_id"] or "lead"] = r["n"]
         out["total"] += r["n"]
     return out
@@ -141,13 +153,13 @@ async def counts() -> dict:
 async def set_status(lead_id: str, status: str) -> dict:
     if status not in ("lead", "contacted", "converted", "unsubscribed"):
         return {"ok": False, "error": "bad_status"}
-    r = await shared_db()["trial_leads"].update_one(
+    r = await shared_db()[LEADS].update_one(
         {"_id": lead_id}, {"$set": {"status": status, "updated_at": _now()}})
     return {"ok": bool(r.matched_count)}
 
 
 async def delete_lead(lead_id: str) -> dict:
-    r = await shared_db()["trial_leads"].delete_one({"_id": lead_id})
+    r = await shared_db()[LEADS].delete_one({"_id": lead_id})
     return {"ok": bool(r.deleted_count)}
 
 
@@ -164,7 +176,7 @@ def _offer_html(body: str, name: str | None) -> str:
 async def send_offer(lead_id: str, subject: str | None = None, body: str | None = None) -> dict:
     """Στέλνει προσφορά (email) σε έναν lead μέσω του κεντρικού mailer· ενημερώνει offers_sent/status."""
     db = shared_db()
-    lead = await db["trial_leads"].find_one({"_id": lead_id})
+    lead = await db[LEADS].find_one({"_id": lead_id})
     if not lead:
         return {"ok": False, "error": "not_found"}
     if lead.get("status") == "unsubscribed":
@@ -177,7 +189,7 @@ async def send_offer(lead_id: str, subject: str | None = None, body: str | None 
     body = body or cfg["offer_body"]
     from app.services import mailer
     await mailer.send_email(email, subj, _offer_html(body, lead.get("contact_name") or lead.get("pharmacy_name")))
-    await db["trial_leads"].update_one(
+    await db[LEADS].update_one(
         {"_id": lead_id},
         {"$inc": {"offers_sent": 1}, "$set": {"last_offer_at": _now(), "updated_at": _now(),
                                               "status": "contacted" if lead.get("status") == "lead" else lead.get("status")}})
