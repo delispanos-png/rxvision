@@ -161,6 +161,9 @@ def reconcile_viva_payments() -> dict:
                 if t:
                     await OnboardingService().mark_pending_paid(str(p["_id"]), str(t["TransactionId"]))
                     signups += 1
+        # Αφού ρωτήσαμε την ίδια τη Viva, ό,τι έμεινε απλήρωτο πέρα από το παράθυρό του είναι
+        # όντως εγκαταλελειμμένο ταμείο — όχι «εκκρεμής εγγραφή».
+        expired = await OnboardingService().expire_stale()
         if renewed or signups:
             try:   # ο ιδιοκτήτης ΠΡΕΠΕΙ να μάθει ότι το webhook δεν δούλεψε
                 from app.services.comms import admin_alert
@@ -168,5 +171,5 @@ def reconcile_viva_payments() -> dict:
                                   f"το reconcile (το webhook ΔΕΝ έφτασε). Έλεγξε τη ρύθμιση webhook.")
             except Exception:  # noqa: BLE001
                 pass
-        return {"renewed": renewed, "signups": signups}
+        return {"renewed": renewed, "signups": signups, "abandoned": expired}
     return asyncio.run(_run())

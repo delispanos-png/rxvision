@@ -324,12 +324,63 @@ class OnboardingService:
             await self._send_completion_email(await db["pending_registrations"].find_one({"_id": pending_id}))
         return r.modified_count > 0
 
-    async def list_incomplete(self) -> list[dict]:
-        """Εκκρεμείς εγγραφές (δεν ολοκληρώθηκαν): πλήρωσαν αλλά δεν όρισαν κωδικό, ή εκκρεμεί πληρωμή."""
+    # Κατάσταση → τι ΠΡΑΓΜΑΤΙΚΑ συνέβη. Η παλιά σελίδα τα έδειχνε όλα μαζί ως «πλήρωσαν αλλά
+    # δεν ολοκλήρωσαν», ενώ οι μισές δεν είχαν πληρώσει καθόλου.
+    _KIND = {
+        "paid": "paid_not_completed",              # πλήρωσε, δεν όρισε κωδικό → ΞΑΝΑΣΤΕΙΛΕ LINK
+        "approved": "paid_not_completed",
+        "awaiting_bank_approval": "bank_pending",  # τραπεζική κατάθεση → ΕΛΕΓΞΕ & ΕΓΚΡΙΝΕ
+        "awaiting_payment": "abandoned",           # ΔΕΝ πλήρωσε → εγκαταλειμμένο ταμείο
+        "abandoned": "abandoned",
+    }
+    _OURS = ("cloudon.gr", "rxvision.gr")
+
+    async def list_incomplete(self, *, include_abandoned: bool = True) -> list[dict]:
+        """Εκκρεμείς εγγραφές, ΧΩΡΙΣΤΑ ανά πραγματική κατάσταση.
+
+        Τι διορθώνει (17/09/2026): η λίστα έδειχνε επ' άπειρον κάθε εγκαταλειμμένη απόπειρα
+        πληρωμής. Τρεις από τις τέσσερις γραμμές ήταν διαδοχικές προσπάθειες του ΙΔΙΟΥ
+        φαρμακείου που τελικά **πλήρωσε και είναι ενεργός πελάτης**, και η τέταρτη ήταν η ίδια
+        η CloudOn. Δηλαδή η σελίδα έλεγε «κάποιος πλήρωσε και δεν πήρε συνδρομή» ενώ δεν
+        υπήρχε κανείς τέτοιος.
+        """
         db = shared_db()
-        return [r async for r in db["pending_registrations"].find(
-            {"completed_tenant_id": {"$exists": False}, "status": {"$ne": "completed"},
-             "is_trial": {"$ne": True}}).sort("created_at", -1).limit(300)]
+        now = _now()
+        out: list[dict] = []
+        async for r in db["pending_registrations"].find(
+                {"completed_tenant_id": {"$exists": False}, "status": {"$ne": "completed"},
+                 "is_trial": {"$ne": True}}).sort("created_at", -1).limit(300):
+            kind = self._KIND.get(r.get("status"), "abandoned")
+            email = (r.get("owner_email") or "").lower()
+            comp = r.get("company") or {}
+            if any(email.endswith("@" + d) for d in self._OURS):
+                continue                                   # δικοί μας — δεν είναι πελάτες
+            afm = (comp.get("afm") or "").strip()
+            if afm:
+                # Κατέληξε να γίνει πελάτης (συχνά μετά από 2-3 απόπειρες πληρωμής);
+                # Τότε δεν εκκρεμεί τίποτα — η γραμμή είναι θόρυβος.
+                if await db["tenants"].count_documents(
+                        {"$or": [{"company.afm": afm}, {"billing_profile.afm": afm}]}, limit=1):
+                    continue
+            exp = r.get("expires_at")
+            stale = bool(exp and (exp if exp.tzinfo else exp.replace(tzinfo=timezone.utc)) < now)
+            if kind == "abandoned" and (not include_abandoned):
+                continue
+            out.append({**r, "kind": kind, "stale": stale})
+        return out
+
+    async def expire_stale(self) -> int:
+        """Σημειώνει ως «εγκαταλελειμμένες» τις απόπειρες πληρωμής που πέρασε το παράθυρό τους.
+
+        Το `expires_at` γραφόταν αλλά ΔΕΝ το διάβαζε κανείς — γι' αυτό μια απόπειρα του Ιουλίου
+        εμφανιζόταν ακόμη τον Σεπτέμβριο ως «εκκρεμής». Τρέχει ΜΕΤΑ το reconcile της Viva, ώστε
+        να μη σημειωθεί ποτέ ως εγκαταλελειμμένη μια πληρωμή που απλώς άργησε.
+        """
+        res = await shared_db()["pending_registrations"].update_many(
+            {"status": "awaiting_payment", "expires_at": {"$lt": _now()},
+             "completed_tenant_id": {"$exists": False}},
+            {"$set": {"status": "abandoned", "abandoned_at": _now()}})
+        return res.modified_count
 
     async def resend_completion(self, pending_id: str) -> bool:
         """Ξαναστέλνει το link ολοκλήρωσης σε PAID εκκρεμή εγγραφή (+ επεκτείνει το παράθυρο)."""

@@ -2528,12 +2528,14 @@ async def settle_invoice(invoice_id: str, body: SettleIn,
 
 # ── εκκρεμείς εγγραφές (πλήρωσαν αλλά δεν ολοκλήρωσαν) ──────────
 @router.get("/pending-registrations")
-async def pending_registrations(_: PlatformContext = Depends(get_platform_admin)):
-    """Δίχτυ ασφαλείας: εγγραφές που πλήρωσαν αλλά δεν όρισαν κωδικό (ή εκκρεμεί πληρωμή)."""
+async def pending_registrations(include_abandoned: bool = True,
+                                _: PlatformContext = Depends(get_platform_admin)):
+    """Δίχτυ ασφαλείας, χωρισμένο ανά ΠΡΑΓΜΑΤΙΚΗ κατάσταση (βλ. `list_incomplete`)."""
     from app.services.onboarding_service import OnboardingService
-    rows = await OnboardingService().list_incomplete()
+    rows = await OnboardingService().list_incomplete(include_abandoned=include_abandoned)
     items = [{"id": r["_id"], "pharmacy_name": r.get("pharmacy_name"), "owner_email": r.get("owner_email"),
-              "owner_name": r.get("owner_name"), "status": r.get("status"),
+              "owner_name": r.get("owner_name"), "status": r.get("status"), "kind": r.get("kind"),
+              "stale": r.get("stale"),
               "amount_cents": r.get("amount_cents", 0), "package_code": r.get("package_code"),
               "payment_method": r.get("payment_method"), "created_at": r.get("created_at"),
               "paid_at": r.get("paid_at"), "afm": (r.get("company") or {}).get("afm")} for r in rows]
