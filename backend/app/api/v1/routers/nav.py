@@ -58,11 +58,13 @@ async def get_role_menus(ctx: TenantContext = Depends(require("settings:write"))
 
 
 class RoleMenuIn(BaseModel):
-    hidden_groups: list[str]
+    hidden_groups: list[str] | None = None
+    hidden_items: list[str] | None = None
 
 
 @router.put("/role-menus/{role}")
 async def set_role_menu(role: str, body: RoleMenuIn,
                         ctx: TenantContext = Depends(require("settings:write"))):
     return await nav_prefs.set_role_menu(ctx.tenant_id, role, body.hidden_groups,
+                                         body.hidden_items,
                                          by=getattr(ctx, "email", None) or ctx.user_id)

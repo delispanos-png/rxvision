@@ -48,11 +48,17 @@ async def get_for(tenant_id: str, user_id: str, roles: list[str]) -> dict:
     # Αν ο χρήστης έχει ΠΟΛΛΟΥΣ ρόλους, βλέπει την ΕΝΩΣΗ. Κρύβουμε μόνο ό,τι κρύβουν ΟΛΟΙ οι
     # ρόλοι του — αλλιώς ένας περιοριστικός ρόλος θα έκοβε πρόσβαση που δίνει ο άλλος.
     per_role: list[set[str]] = []
+    per_role_items: list[set[str]] = []
     for r in roles or []:
         rd = await db[COLL].find_one({"_id": _role_key(tenant_id, r)})
         per_role.append(set((rd or {}).get("hidden_groups") or []))
+        per_role_items.append(set((rd or {}).get("hidden_items") or []))
     if per_role:
         hidden = set.intersection(*per_role) if len(per_role) > 1 else per_role[0]
+    hidden_items: set[str] = set()
+    if per_role_items:
+        hidden_items = (set.intersection(*per_role_items) if len(per_role_items) > 1
+                        else per_role_items[0])
     pinned = list(doc.get("pinned") or [])[:MAX_PINNED]
     mode = doc.get("mode") if doc.get("mode") in ("central", "personal") else "central"
     # ΑΣΦΑΛΙΣΤΙΚΟ: «μόνο τα δικά μου» χωρίς καρφιτσωμένα = άδειο μενού και ο χειριστής
@@ -63,6 +69,9 @@ async def get_for(tenant_id: str, user_id: str, roles: list[str]) -> dict:
         "pinned": pinned,
         "mode": mode,
         "hidden_groups": sorted(hidden),
+        # Μεμονωμένες επιλογές (κλειδί = href). Χρειάζεται γιατί μια ενότητα σπάνια είναι
+        # «όλη ή τίποτα»: στις «Λειτουργίες» θέλεις να βλέπει οδηγίες και όρους, όχι Ρυθμίσεις.
+        "hidden_items": sorted(hidden_items),
         "max_pinned": MAX_PINNED,
     }
 
@@ -99,20 +108,27 @@ async def set_pinned(user_id: str, items: list[dict]) -> dict:
 
 
 async def role_menus(tenant_id: str, roles: list[str]) -> dict:
-    """Τι κρύβει κάθε ρόλος — για την οθόνη ρυθμίσεων του ιδιοκτήτη."""
+    """Τι κρύβει κάθε ρόλος — ενότητες ΚΑΙ μεμονωμένες επιλογές."""
     db = shared_db()
     out: dict = {}
     for r in roles:
         rd = await db[COLL].find_one({"_id": _role_key(tenant_id, r)}) or {}
-        out[r] = sorted(rd.get("hidden_groups") or [])
+        out[r] = {"groups": sorted(rd.get("hidden_groups") or []),
+                  "items": sorted(rd.get("hidden_items") or [])}
     return out
 
 
-async def set_role_menu(tenant_id: str, role: str, hidden_groups: list[str], *,
+async def set_role_menu(tenant_id: str, role: str, hidden_groups: list[str] | None = None,
+                        hidden_items: list[str] | None = None, *,
                         by: str | None = None) -> dict:
-    hidden = sorted({str(g).strip() for g in (hidden_groups or []) if str(g).strip()})[:40]
-    await shared_db()[COLL].update_one(
-        {"_id": _role_key(tenant_id, role)},
-        {"$set": {"hidden_groups": hidden, "tenant_id": tenant_id, "role": role,
-                  "kind": "role", "updated_at": _now(), "updated_by": by}}, upsert=True)
-    return {"ok": True, "role": role, "hidden_groups": hidden}
+    upd: dict = {"tenant_id": tenant_id, "role": role, "kind": "role",
+                 "updated_at": _now(), "updated_by": by}
+    if hidden_groups is not None:
+        upd["hidden_groups"] = sorted({str(g).strip() for g in hidden_groups if str(g).strip()})[:40]
+    if hidden_items is not None:
+        upd["hidden_items"] = sorted({str(i).strip() for i in hidden_items if str(i).strip()})[:200]
+    await shared_db()[COLL].update_one({"_id": _role_key(tenant_id, role)},
+                                       {"$set": upd}, upsert=True)
+    rd = await shared_db()[COLL].find_one({"_id": _role_key(tenant_id, role)}) or {}
+    return {"ok": True, "role": role, "hidden_groups": rd.get("hidden_groups") or [],
+            "hidden_items": rd.get("hidden_items") or []}

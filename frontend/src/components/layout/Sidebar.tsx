@@ -48,7 +48,7 @@ export function Sidebar() {
   const [picking, setPicking] = useState(false);
   const prefsQ = useQuery({
     queryKey: ["nav", "prefs"],
-    queryFn: () => api<{ pinned: Pin[]; mode: "central" | "personal"; hidden_groups: string[]; max_pinned: number }>("/nav/prefs"),
+    queryFn: () => api<{ pinned: Pin[]; mode: "central" | "personal"; hidden_groups: string[]; hidden_items: string[]; max_pinned: number }>("/nav/prefs"),
     retry: false,
   });
   const pinned = prefsQ.data?.pinned ?? [];
@@ -58,6 +58,7 @@ export function Sidebar() {
     qc.invalidateQueries({ queryKey: ["nav", "prefs"] });
   };
   const hiddenGroups = new Set(prefsQ.data?.hidden_groups ?? []);
+  const hiddenItems = new Set(prefsQ.data?.hidden_items ?? []);
   const maxPinned = prefsQ.data?.max_pinned ?? 8;
   const savePins = async (items: Pin[]) => {
     await api("/nav/pinned", { method: "PUT", body: JSON.stringify({ items }) });
@@ -105,9 +106,19 @@ export function Sidebar() {
   }
 
   // show enabled circuits + locked-but-offerable (upsell); hide plain unavailable ones + empty groups
+  // Δύο επίπεδα απόκρυψης από τον ρόλο: ΟΛΗ η ενότητα ή ΜΕΜΟΝΩΜΕΝΕΣ επιλογές. Μια ενότητα
+  // σπάνια είναι «όλη ή τίποτα» — στις «Λειτουργίες» θες οδηγίες και όρους, όχι Ρυθμίσεις.
+  const visible = (href?: string) => !href || !hiddenItems.has(href);
   const groups = GROUPS
-    .filter((g) => !hiddenGroups.has(g.title))      // κρυμμένη από τον ρόλο → εκτός μενού
-    .map((g) => ({ ...g, items: g.items.filter((n) => allowedMod(n.module) || canUpsell(n.module)) }))
+    .filter((g) => !hiddenGroups.has(g.title))
+    .map((g) => ({
+      ...g,
+      items: g.items
+        .filter((n) => allowedMod(n.module) || canUpsell(n.module))
+        .map((n) => (n.children ? { ...n, children: n.children.filter((c) => visible(c.href)) } : n))
+        // γονέας που έμεινε χωρίς παιδιά δεν έχει πού να οδηγήσει → φεύγει
+        .filter((n) => (n.children ? n.children.length > 0 : visible(n.href))),
+    }))
     .filter((g) => g.items.length > 0);
 
   const leafActive = (href: string) => {
