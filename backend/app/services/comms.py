@@ -527,7 +527,7 @@ async def frequency_capped_patients(tenant_id: str, cap: int | None = None) -> s
 
 
 async def audience_breakdown(tenant_id: str, channel: str, segment: str = "all",
-                             value: str | None = None) -> dict:
+                             value: str | None = None, only_ids: set | None = None) -> dict:
     """Πόσοι θα το λάβουν, πόσοι εξαιρούνται — και ΓΙΑΤΙ ο καθένας.
 
     Είναι η οθόνη έγκρισης (§20): ο φαρμακοποιός δεν πρέπει ποτέ να πατά «στείλε» χωρίς να ξέρει
@@ -538,6 +538,10 @@ async def audience_breakdown(tenant_id: str, channel: str, segment: str = "all",
     db = shared_db()
     field = "email" if channel == "email" else "mobile"
     seg = await segment_patient_ids(tenant_id, segment, value)
+    # `only_ids` = αποτέλεσμα του Audience Engine. Τέμνεται με το segment ώστε οι έλεγχοι
+    # συγκατάθεσης/ορίου να μείνουν ΕΝΑ σημείο — ό,τι κι αν διάλεξε ο φαρμακοποιός.
+    if only_ids is not None:
+        seg = only_ids if seg is None else (set(seg) & set(only_ids))
     base: dict = {"tenant_id": tenant_id}
     if seg is not None:
         base["_id"] = {"$in": list(seg)}
@@ -572,7 +576,8 @@ async def audience_breakdown(tenant_id: str, channel: str, segment: str = "all",
     }
 
 
-async def campaign_audience(tenant_id: str, channel: str, segment: str = "all", value: str | None = None) -> list[dict]:
+async def campaign_audience(tenant_id: str, channel: str, segment: str = "all", value: str | None = None,
+                            only_ids: set | None = None) -> list[dict]:
     """Consented recipients (marketing_consent + NOT in the withdrawal ledger for this channel) with a
     contact for `channel`, restricted to a smart segment. GDPR: the consent ledger is authoritative.
     Εξαιρεί όσους έπιασαν το frequency cap (anti-fatigue)."""
@@ -583,6 +588,10 @@ async def campaign_audience(tenant_id: str, channel: str, segment: str = "all", 
     q: dict = {"tenant_id": tenant_id, "marketing_consent": True, field: {"$nin": [None, ""]},
                "unsubscribed_at": None}
     seg = await segment_patient_ids(tenant_id, segment, value)
+    # `only_ids` = αποτέλεσμα του Audience Engine. Τέμνεται με το segment ώστε οι έλεγχοι
+    # συγκατάθεσης/ορίου να μείνουν ΕΝΑ σημείο — ό,τι κι αν διάλεξε ο φαρμακοποιός.
+    if only_ids is not None:
+        seg = only_ids if seg is None else (set(seg) & set(only_ids))
     withdrawn = set(await consent.withdrawn_patient_ids(tenant_id, channel))
     withdrawn |= await frequency_capped_patients(tenant_id)
     id_filter: dict = {}
@@ -653,6 +662,10 @@ async def push_audience(tenant_id: str, segment: str = "all", value: str | None 
     from app.services import consent
     db = shared_db()
     seg = await segment_patient_ids(tenant_id, segment, value)
+    # `only_ids` = αποτέλεσμα του Audience Engine. Τέμνεται με το segment ώστε οι έλεγχοι
+    # συγκατάθεσης/ορίου να μείνουν ΕΝΑ σημείο — ό,τι κι αν διάλεξε ο φαρμακοποιός.
+    if only_ids is not None:
+        seg = only_ids if seg is None else (set(seg) & set(only_ids))
     withdrawn = set(await consent.withdrawn_patient_ids(tenant_id, "push"))
     withdrawn |= await frequency_capped_patients(tenant_id)
     q: dict = {"tenant_id": tenant_id, "marketing_consent": True}

@@ -34,6 +34,7 @@ DRAFT, QUEUED, SENDING, PAUSED, COMPLETED, CANCELLED, FAILED = (
 LIVE_STATES = (QUEUED, SENDING, PAUSED)
 
 _PORTAL_BASE = "https://my.rxvision.gr"
+_API_BASE = "https://api.rxvision.gr/api/v1"
 
 BATCH = 50              # παραλήπτες ανά πέρασμα — κρατά το task κάτω από τα χρονικά όρια
 MAX_ATTEMPTS = 3        # μετά από τόσες αποτυχίες, ο παραλήπτης σημειώνεται ως failed
@@ -56,7 +57,8 @@ def _oid(v):
 async def create(tenant_id: str, *, channel: str, message: str, subject: str | None,
                  segment: str, value: str | None, by: str | None,
                  purpose: str = "commercial", coupon_code: str | None = None,
-                 scheduled_at: datetime | None = None, source: str = "campaign") -> dict:
+                 scheduled_at: datetime | None = None, source: str = "campaign",
+                 audience_rules: dict | None = None, audience_name: str | None = None) -> dict:
     """Υλοποιεί την καμπάνια και ΚΛΕΙΔΩΝΕΙ τους παραλήπτες τώρα.
 
     Γιατί κλειδώνονται τώρα και δεν υπολογίζονται τη στιγμή της αποστολής: ο φαρμακοποιός είδε
@@ -65,8 +67,14 @@ async def create(tenant_id: str, *, channel: str, message: str, subject: str | N
     """
     from app.services import comms
     db = shared_db()
-    rows = await comms.campaign_audience(tenant_id, channel, segment, value) \
+    only = None
+    if audience_rules:
+        from app.services import audience as aud
+        only = await aud.resolve(tenant_id, audience_rules, purpose=purpose)
+    rows = await comms.campaign_audience(tenant_id, channel, segment, value, only_ids=only) \
         if channel != "push" else await comms.push_audience(tenant_id, segment, value)
+    if only is not None and channel == "push":
+        rows = [r for r in rows if r.get("patient_id") in only]
 
     cid = ObjectId()
     field = "email" if channel == "email" else "mobile"
@@ -75,6 +83,7 @@ async def create(tenant_id: str, *, channel: str, message: str, subject: str | N
         "_id": cid, "tenant_id": tenant_id, "channel": channel, "subject": subject,
         "message": message, "segment": segment, "segment_value": value,
         "purpose": purpose, "coupon_code": coupon_code, "source": source,
+        "audience_rules": audience_rules, "audience_name": audience_name,
         "status": QUEUED if not scheduled_at else QUEUED,
         "scheduled_at": scheduled_at,
         "recipients": len(rows), "sent": 0, "failed": 0, "skipped": 0,
@@ -118,6 +127,9 @@ async def dispatch(campaign_id: str, *, limit: int = BATCH) -> dict:
     await db["comms_campaigns"].update_one(
         {"_id": cid}, {"$set": {"status": SENDING, "updated_at": _now()}})
 
+    from app.services import comm_analytics
+    track = await comm_analytics.tracking_enabled(tenant_id)
+
     batch = [r async for r in db["comm_recipients"].find(
         {"campaign_id": cid, "status": "pending", "attempts": {"$lt": MAX_ATTEMPTS}}).limit(limit)]
     if not batch:
@@ -146,6 +158,10 @@ async def dispatch(campaign_id: str, *, limit: int = BATCH) -> dict:
                 html = comms._campaign_email_html(text, ph.get("name"))            # noqa: SLF001
                 if c.get("purpose", "commercial") != "care" and r.get("patient_ref"):
                     html += _unsub.footer_html(tenant_id, r["patient_ref"], _PORTAL_BASE)
+                # Pixel ανοίγματος ΜΟΝΟ αν το φαρμακείο έχει ανοίξει ρητά τη μέτρηση.
+                if track:
+                    html += (f'<img src="{_API_BASE}/communications/o/{cid}/'
+                             f'{r["key"]}.gif" width="1" height="1" alt="" style="display:none">')
                 await comms.send_email(tenant_id, to, c.get("subject") or "Ενημέρωση φαρμακείου",
                                        html,
                                        patient_ref=str(r.get("patient_ref") or "") or None,

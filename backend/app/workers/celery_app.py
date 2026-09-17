@@ -61,6 +61,11 @@ celery_app.conf.beat_schedule = {
         "task": "app.workers.comms.sweep_campaigns",
         "schedule": crontab(minute="*/5"),
     },
+    # Αυτοματισμοί: 09:00 Αθήνας (06:00 UTC) — ώρα που ένα μήνυμα δεν ενοχλεί.
+    "comms-run-automations": {
+        "task": "app.workers.comms.run_automations",
+        "schedule": crontab(hour=6, minute=15),
+    },
     # Ο Σύμβουλος — πρωινό μήνυμα 07:30 Αθήνας (04:30 UTC θέρος/05:30 χειμώνα· το task
     # ελέγχει από μόνο του ότι δεν έστειλε ήδη σήμερα).
     # Ο Σύμβουλος: το task χτυπά ΚΑΘΕ ΩΡΑ και στέλνει μόνο όταν είναι η ώρα που όρισε το

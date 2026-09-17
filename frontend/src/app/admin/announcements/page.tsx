@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Megaphone, Plus, Save, Trash2, Users, PlayCircle, CalendarClock, Check, Eye, Inbox, Phone, Mail, Sparkles } from "lucide-react";
+import { Megaphone, Plus, Save, Trash2, Users, PlayCircle, CalendarClock, Check, Eye, Inbox, Phone, Mail, Sparkles, ArrowUp, ArrowDown } from "lucide-react";
 import { adminApi } from "@/lib/adminClient";
 import { DateInput } from "@/components/ui/DateInput";
 import { FeatureAnnouncementModal } from "@/components/announcements/FeatureAnnouncementModal";
@@ -18,7 +18,7 @@ type Ann = {
   cta?: { trial?: boolean; demo?: boolean; info_href?: string | null };
   audience?: { mode?: string; tenant_ids?: string[]; packages?: string[]; status?: string[]; exclude_with_addon?: boolean };
   from?: string | null; to?: string | null; frequency?: string; priority?: number; active?: boolean;
-  reach?: number; stats?: Record<string, number>;
+  reach?: number; stats?: Record<string, number>; rank?: number | null; live?: boolean; window?: string;
 };
 type Req = {
   _id: string; title?: string; addon_key?: string | null; kind: "trial" | "demo"; status: string;
@@ -40,7 +40,9 @@ const EMPTY: Ann = {
 };
 /** ISO datetime → «YYYY-MM-DD» για το DateInput (και κενό αν δεν υπάρχει). */
 const isoDay = (s?: string | null) => (s ? new Date(s).toISOString().slice(0, 10) : "");
-const gr = (s?: string | null) => (s ? new Date(s).toLocaleDateString("el-GR", { day: "2-digit", month: "2-digit", year: "numeric" }) : "");
+// Πάντα ώρα Αθήνας: το παράθυρο αποθηκεύεται ως αρχή/τέλος ελληνικής ημέρας, οπότε σε browser
+// με άλλη ζώνη η ίδια ημερομηνία θα εμφανιζόταν μία μέρα πίσω.
+const gr = (s?: string | null) => (s ? new Date(s).toLocaleDateString("el-GR", { day: "2-digit", month: "2-digit", year: "numeric", timeZone: "Europe/Athens" }) : "");
 /** Μια πρόταση που λέει τι θα συμβεί — ώστε να μη χρειάζεται να το υπολογίσεις μόνος σου. */
 function windowText(a: { from?: string | null; to?: string | null; active?: boolean }): string {
   if (!a.active) return "Όσο είναι ΠΡΟΧΕΙΡΟ, οι ημερομηνίες δεν παίζουν ρόλο.";
@@ -96,6 +98,7 @@ export default function AnnouncementsAdminPage() {
   const [prevNote, setPrevNote] = useState("");
 
   const anns = useQuery({ queryKey: ["admin", "announcements"], queryFn: () => adminApi<{ items: Ann[] }>("/admin/announcements") });
+  const liveCount = (anns.data?.items ?? []).filter((a) => a.live).length;   // πόσες ανταγωνίζονται σήμερα
   const addons = useQuery({ queryKey: ["admin", "addons"], queryFn: () => adminApi<{ items: Addon[] }>("/admin/addons") });
   const pkgs = useQuery({ queryKey: ["admin", "packages"], queryFn: () => adminApi<{ items: Pkg[] }>("/admin/packages") });
   const tenants = useQuery({ queryKey: ["admin", "tenants"], queryFn: () => adminApi<{ items: Tenant[] }>("/admin/tenants") });
@@ -160,6 +163,18 @@ export default function AnnouncementsAdminPage() {
       setDraft(null); refresh();
     } catch (e) { appAlert("Αποτυχία αποθήκευσης: " + (e as Error).message); }
   }
+  // Διακόπτης on/off χωρίς επεξεργασία: δεν στέλνουμε ΟΛΟ το draft πίσω (θα πατούσε ρυθμίσεις
+  // που ο ιδιοκτήτης άλλαξε από αλλού) — μόνο το `active`.
+  async function toggle(a: Ann) {
+    await adminApi(`/admin/announcements/${a._id}/active`, { method: "POST", body: JSON.stringify({ active: !a.active }) });
+    qc.invalidateQueries({ queryKey: ["admin", "announcements"] });
+  }
+
+  async function reorder(a: Ann, direction: "up" | "down") {
+    await adminApi(`/admin/announcements/${a._id}/move?direction=${direction}`, { method: "POST" });
+    qc.invalidateQueries({ queryKey: ["admin", "announcements"] });
+  }
+
   async function remove(a: Ann) {
     if (!(await appConfirm(`Διαγραφή της ανακοίνωσης «${a.title}»;`, { danger: true }))) return;
     await adminApi(`/admin/announcements/${a._id}`, { method: "DELETE" });
@@ -407,13 +422,39 @@ export default function AnnouncementsAdminPage() {
             </div>
           )}
 
+          {liveCount > 1 && (
+            <p className="rounded-xl border border-indigo-100 bg-indigo-50/60 px-3.5 py-2.5 text-[12px] text-indigo-900">
+              <b>{liveCount} ανακοινώσεις τρέχουν ταυτόχρονα.</b> Ο πελάτης βλέπει <b>μία</b> τη φορά — αυτή με τον αριθμό <b>1</b>.
+              Με τα βελάκια αλλάζεις τη σειρά, με τον διακόπτη ανάβεις ή σβήνεις χωρίς να μπεις σε επεξεργασία.
+            </p>
+          )}
+
           <div className="space-y-2.5">
             {(anns.data?.items ?? []).map((a) => (
-              <div key={a._id} className="flex flex-wrap items-center gap-3 rounded-2xl border border-slate-200 bg-white p-4">
+              <div key={a._id} className={`flex flex-wrap items-center gap-3 rounded-2xl border bg-white p-4 ${a.live ? "border-slate-200" : "border-slate-200 opacity-80"}`}>
+                <div className="flex w-10 shrink-0 flex-col items-center gap-0.5">
+                  {a.rank ? (
+                    <span title="Σειρά εμφάνισης" className={`grid h-7 w-7 place-items-center rounded-full text-xs font-bold ${a.rank === 1 ? "bg-indigo-600 text-white" : "bg-slate-100 text-slate-500"}`}>{a.rank}</span>
+                  ) : <span className="grid h-7 w-7 place-items-center rounded-full bg-slate-50 text-xs font-bold text-slate-300">—</span>}
+                  {a.live && (
+                    <div className="flex flex-col">
+                      <button onClick={() => reorder(a, "up")} disabled={a.rank === 1} title="Πιο ψηλά στη σειρά" className="text-slate-400 hover:text-indigo-600 disabled:opacity-25 disabled:hover:text-slate-400"><ArrowUp className="h-3.5 w-3.5" /></button>
+                      <button onClick={() => reorder(a, "down")} disabled={a.rank === liveCount} title="Πιο χαμηλά στη σειρά" className="text-slate-400 hover:text-indigo-600 disabled:opacity-25 disabled:hover:text-slate-400"><ArrowDown className="h-3.5 w-3.5" /></button>
+                    </div>
+                  )}
+                </div>
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="font-semibold text-slate-800">{a.title}</span>
-                    <span className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${a.active ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>{a.active ? "Ενεργή" : "ΠΡΟΧΕΙΡΟ — δεν τη βλέπει κανείς"}</span>
+                    <button onClick={() => toggle(a)} title={a.active ? "Πάτα για να τη σβήσεις" : "Πάτα για να την ανάψεις"}
+                      className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-bold transition ${a.active ? "bg-emerald-100 text-emerald-700 hover:bg-emerald-200" : "bg-amber-100 text-amber-700 hover:bg-amber-200"}`}>
+                      <span className={`h-3.5 w-6 rounded-full p-0.5 transition ${a.active ? "bg-emerald-600" : "bg-amber-400"}`}>
+                        <span className={`block h-2.5 w-2.5 rounded-full bg-white transition ${a.active ? "translate-x-2.5" : ""}`} />
+                      </span>
+                      {a.active ? "Ενεργή" : "ΠΡΟΧΕΙΡΟ — δεν τη βλέπει κανείς"}
+                    </button>
+                    {a.active && a.window === "upcoming" && <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[11px] font-bold text-sky-700">ξεκινά αργότερα</span>}
+                    {a.active && a.window === "ended" && <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[11px] font-bold text-slate-600">έληξε</span>}
                     <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-600"><Users className="h-3 w-3" />{a.reach ?? 0} φαρμακεία</span>
                     <span className="text-[11px] text-slate-400">{FREQ[a.frequency ?? "once"]}</span>
                     {(a.from || a.to) && (

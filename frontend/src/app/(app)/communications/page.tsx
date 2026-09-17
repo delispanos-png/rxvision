@@ -3,10 +3,9 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Mail, MessageSquare, Send, Loader2, Users, Settings, Target, Smartphone, ShieldCheck, Pause, Play, X, FlaskConical } from "lucide-react";
+import { Mail, MessageSquare, Send, Loader2, Users, Settings, Target, Smartphone, ShieldCheck, Pause, Play, X, FlaskConical, Sparkles } from "lucide-react";
 import { api } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
-import { ModuleGuard } from "@/components/layout/ModuleGuard";
 import { PanelCard } from "@/components/ui/Card";
 import { appAlert, appConfirm, appPrompt } from "@/store/dialogStore";
 import { fmtDate } from "@/lib/formatters";
@@ -60,18 +59,24 @@ export default function CommunicationsPage() {
     if (p.get("value")) setValue(p.get("value")!);
     if (p.get("subject")) setSubject(p.get("subject")!);
     if (p.get("channel") === "sms") setChannel("sms");
+    // Κοινό που ήρθε από τις «Ομάδες ανθρώπων» — ταξιδεύει ως κανόνας, όχι ως λίστα ονομάτων.
+    const a = p.get("audience");
+    if (a) { try { setAudRules(JSON.parse(a)); setAudLabel(p.get("label") || ""); } catch { /* αγνόησε */ } }
   }, []);
 
+  const [audRules, setAudRules] = useState<Record<string, unknown> | null>(null);
+  const [audLabel, setAudLabel] = useState("");
   const seg = SEGMENTS.find((s) => s.value === segment)!;
+  const audQs = audRules ? `&audience=${encodeURIComponent(JSON.stringify(audRules))}` : "";
   const qs = `channel=${channel}&segment=${segment}${value ? `&value=${encodeURIComponent(value)}` : ""}`;
   const audience = useQuery({ queryKey: ["comms", "audience", qs], queryFn: () => api<{ count: number }>(`/communications/audience?${qs}`), retry: false });
   const wallet = useQuery({ queryKey: ["comms", "wallet"], queryFn: () => api<{ balance_cents: number; prices: Record<string, number> }>("/communications/wallet"), retry: false });
 
   // Ανάλυση κοινού: πόσοι θα λάβουν και ΠΟΙΟΙ εξαιρούνται, με τον λόγο του καθενός.
   const bd = useQuery({
-    queryKey: ["comms", "breakdown", qs],
+    queryKey: ["comms", "breakdown", qs, audQs],
     queryFn: () => api<{ total: number; will_receive: number; cap: number;
-                         excluded: { n: number; reason: string; code: string }[] }>(`/communications/audience/breakdown?${qs}`),
+                         excluded: { n: number; reason: string; code: string }[] }>(`/communications/audience/breakdown?${qs}${audQs}`),
     retry: false,
   });
   const [liveId, setLiveId] = useState<string | null>(null);
@@ -91,7 +96,7 @@ export default function CommunicationsPage() {
   const eur = (c: number) => `€${(c / 100).toFixed(2)}`;
 
   const send = useMutation({
-    mutationFn: () => api<{ campaign_id: string; recipients: number }>("/communications/send", { method: "POST", body: JSON.stringify({ channel, subject, message, segment, value: value || null, coupon: cpOn ? { enabled: true, discount_type: cpType, discount_value: cpType === "fixed" ? Math.round(parseFloat(cpVal || "0") * 100) : Math.round(parseFloat(cpVal || "0")), valid_days: parseInt(cpDays) || 30 } : null }) }),
+    mutationFn: () => api<{ campaign_id: string; recipients: number }>("/communications/send", { method: "POST", body: JSON.stringify({ channel, subject, message, segment, value: value || null, audience_rules: audRules, audience_name: audLabel || null, coupon: cpOn ? { enabled: true, discount_type: cpType, discount_value: cpType === "fixed" ? Math.round(parseFloat(cpVal || "0") * 100) : Math.round(parseFloat(cpVal || "0")), valid_days: parseInt(cpDays) || 30 } : null }) }),
     // Δεν περιμένουμε πια το τέλος της αποστολής: παρακολουθούμε την πρόοδο ζωντανά.
     onSuccess: (r) => { setLiveId(r.campaign_id); setMessage(""); setSubject(""); qc.invalidateQueries({ queryKey: ["comms", "history"] }); },
     onError: (e: Error) => appAlert(t("Δεν μπήκε στην ουρά: ", "Could not queue: ") + e.message),
@@ -101,6 +106,14 @@ export default function CommunicationsPage() {
     onSuccess: () => appAlert(t("✓ Η δοκιμή στάλθηκε. Δες την πριν φύγει στους υπόλοιπους.", "✓ Test sent. Check it before the real send.")),
     onError: (e: Error) => appAlert(t("Η δοκιμή δεν στάλθηκε: ", "Test failed: ") + e.message),
   });
+  // AI προσχέδιο — γυρίζει ΣΤΗ ΦΟΡΜΑ. Δεν στέλνεται ποτέ μόνο του.
+  const aiDraft = useMutation({
+    mutationFn: (brief: string) => api<{ subject: string; message: string }>("/communications/draft", {
+      method: "POST", body: JSON.stringify({ brief, channel, audience_label: audLabel }) }),
+    onSuccess: (d) => { if (d.subject) setSubject(d.subject); setMessage(d.message); },
+    onError: () => appAlert(t("Δεν μπόρεσα να γράψω προσχέδιο τώρα. Γράψ' το εσύ — ή δοκίμασε ξανά.",
+      "Could not draft right now.")),
+  });
   const control = useMutation({
     mutationFn: (action: string) => api(`/communications/campaigns/${liveId}/action`, { method: "POST", body: JSON.stringify({ action }) }),
     onSuccess: () => live.refetch(),
@@ -109,13 +122,9 @@ export default function CommunicationsPage() {
   const inp = "rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-brand-500 focus:outline-none";
 
   return (
-    <ModuleGuard module="patient_analytics">
-      <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="flex items-center gap-2 text-2xl font-bold tracking-tight text-slate-900"><Mail className="h-6 w-6 text-brand-600" /> {t("Επικοινωνία", "Communications")}</h1>
-          <p className="mt-1 text-sm text-slate-500">{t("Στοχευμένα newsletter & ειδοποιήσεις σε ασθενείς με συγκατάθεση.", "Targeted newsletters & notifications to patients with consent.")}</p>
-        </div>
-        <Link href="/settings/communications" className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50"><Settings className="h-4 w-4" /> {t("Ρυθμίσεις αποστολέα", "Sender settings")}</Link>
+    <>
+      <div className="mb-4 flex justify-end">
+        <Link href="/settings/communications" className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50"><Settings className="h-4 w-4" /> {t("Κανάλια & όρια", "Channels & limits")}</Link>
       </div>
 
       <div className="space-y-4">
@@ -153,6 +162,15 @@ export default function CommunicationsPage() {
               <div className="h-full rounded-full bg-brand-600 transition-all"
                 style={{ width: `${Math.round(((live.data.sent + live.data.failed) / Math.max(1, live.data.recipients)) * 100)}%` }} />
             </div>
+          </div>
+        )}
+
+        {audRules && (
+          <div className="flex flex-wrap items-center gap-2 rounded-xl border border-brand-200 bg-brand-50/60 p-3 text-sm dark:border-brand-900 dark:bg-slate-800/40">
+            <Users className="h-4 w-4 text-brand-600" />
+            <span className="font-semibold text-brand-900 dark:text-brand-200">{audLabel || t("Δική σου ομάδα", "Your group")}</span>
+            <span className="text-brand-700 dark:text-brand-300">{t(`· ${count} θα το λάβουν`, `· ${count} will receive`)}</span>
+            <button onClick={() => { setAudRules(null); setAudLabel(""); }} className="ml-auto text-xs font-semibold text-slate-500 hover:text-slate-700">{t("Άλλαξε ομάδα", "Change")}</button>
           </div>
         )}
 
@@ -250,6 +268,14 @@ export default function CommunicationsPage() {
               className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50">
               {testSend.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <FlaskConical className="h-4 w-4" />} {t("Δοκιμαστική αποστολή", "Test send")}
             </button>
+            {/* Ο AI γράφει ΠΡΟΣΧΕΔΙΟ. Το διαβάζεις, το αλλάζεις, το εγκρίνεις — ποτέ δεν φεύγει μόνο του. */}
+            <button onClick={async () => {
+              const b = await appPrompt(t("Τι θέλεις να τους πεις; (μια πρόταση αρκεί)", "What do you want to say?"));
+              if (b?.trim()) aiDraft.mutate(b.trim());
+            }} disabled={aiDraft.isPending}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50">
+              {aiDraft.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />} {t("Γράψ' το για μένα", "Draft it for me")}
+            </button>
           </div>
         </PanelCard>
 
@@ -266,6 +292,6 @@ export default function CommunicationsPage() {
           )}
         </PanelCard>
       </div>
-    </ModuleGuard>
+    </>
   );
 }

@@ -3637,6 +3637,32 @@ async def update_announcement(ann_id: str, body: AnnouncementIn,
     return await svc.save(body.model_dump(by_alias=True), ann_id=ann_id, by=ctx.email)
 
 
+class AnnActiveIn(BaseModel):
+    active: bool
+
+
+@router.post("/announcements/{ann_id}/active")
+async def set_announcement_active(ann_id: str, body: AnnActiveIn,
+                                  ctx: PlatformContext = Depends(enforce_section)):
+    """Διακόπτης on/off χωρίς επεξεργασία — δεν αγγίζει κανένα άλλο πεδίο."""
+    from app.services import announcements as svc
+    res = await svc.set_active(ann_id, body.active, by=ctx.email)
+    if not res.get("ok"):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, res.get("error", "failed"))
+    return res
+
+
+@router.post("/announcements/{ann_id}/move")
+async def move_announcement(ann_id: str, direction: Literal["up", "down"],
+                            ctx: PlatformContext = Depends(enforce_section)):
+    """Αλλαγή σειράς προτεραιότητας: ποια θα δει πρώτη ο πελάτης."""
+    from app.services import announcements as svc
+    res = await svc.move(ann_id, direction, by=ctx.email)
+    if not res.get("ok"):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, res.get("error", "failed"))
+    return res
+
+
 @router.delete("/announcements/{ann_id}")
 async def delete_announcement(ann_id: str, _: PlatformContext = Depends(enforce_section)):
     from app.services import announcements as svc

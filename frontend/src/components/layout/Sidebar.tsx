@@ -104,7 +104,12 @@ const GROUPS: Group[] = [
   { title: "Προώθηση", en: "Marketing", icon: Megaphone, items: [
     { label: "Πίνακας", en: "Dashboard", icon: Megaphone, href: "/marketing", module: "marketing" },
     { label: "Θεραπευτικές κατηγορίες", en: "Therapeutic categories", icon: Target, href: "/marketing/categories", module: "marketing" },
-    { label: "Καμπάνιες", en: "Campaigns", icon: Mail, href: "/communications", module: "patient_analytics" },
+    { label: "Επικοινωνία", en: "Communications", icon: Mail, module: "patient_analytics", children: [
+      { href: "/communications", label: "Νέο μήνυμα", en: "New message" },
+      { href: "/communications/audiences", label: "Ομάδες ανθρώπων", en: "Audiences" },
+      { href: "/communications/automations", label: "Αυτόματα μηνύματα", en: "Automations" },
+      { href: "/communications/calendar", label: "Ημερολόγιο", en: "Calendar" },
+    ] },
     { label: "Κουπόνια", en: "Coupons", icon: Ticket, href: "/marketing/coupons", module: "marketing" },
   ] },
   // «Έλεγχος συνταγών» = ΑΝΕΞΑΡΤΗΤΗ top-level επιλογή (single-item group → αποδίδεται ως απευθείας link).

@@ -81,3 +81,32 @@ def sweep_campaigns() -> dict:
         return {"started": started, "revived_recipients": revived, "resumed_no_credits": resumed}
 
     return _run_async(_run())
+
+
+@celery_app.task(name="app.workers.comms.run_automations")
+def run_automations() -> dict:
+    """Μία φορά την ημέρα, 09:00 Αθήνας — ώρα που δεν ενοχλεί κανέναν.
+
+    Τρέχει ΜΟΝΟ για φαρμακεία με ενεργό αυτοματισμό: δεν σαρώνει όλη τη βάση κάθε πρωί.
+    """
+    async def _run() -> dict:
+        from app.services.automations import run_for_tenant
+        client, db = _fresh_db()
+        out = {}
+        try:
+            for tid in await db["comm_automations"].distinct("tenant_id", {"active": True}):
+                t = await db["tenants"].find_one({"_id": tid}, {"status": 1})
+                if (t or {}).get("status") not in ("active", "trial"):
+                    continue
+                try:
+                    r = await run_for_tenant(tid)
+                    if r.get("queued"):
+                        out[tid] = r["queued"]
+                except Exception:                          # noqa: BLE001 — ένα φαρμακείο δεν ρίχνει τα υπόλοιπα
+                    import logging
+                    logging.getLogger(__name__).exception("automations failed for %s", tid)
+        finally:
+            client.close()
+        return {"tenants": len(out), "queued": sum(out.values())}
+
+    return _run_async(_run())

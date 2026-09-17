@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from datetime import datetime, timedelta, timezone
 from typing import Literal
@@ -191,6 +192,9 @@ class CouponIn(BaseModel):
 
 class CampaignIn(BaseModel):
     purpose: str = "commercial"   # commercial | care — ο φρουρός κλινικών segments
+    audience_rules: dict | None = None   # Audience Engine· αν δοθεί, τέμνεται με το segment
+    audience_name: str | None = None
+    scheduled_at: datetime | None = None
     channel: Literal["email", "sms", "viber", "push"]
     subject: str | None = None
     message: str
@@ -229,20 +233,221 @@ async def send_campaign(body: CampaignIn, ctx: TenantContext = Depends(require("
             max_redemptions=body.coupon.max_redemptions)
         coupon_code = cp["code"]
 
-    res = await campaign_engine.create(
-        ctx.tenant_id, channel=body.channel, message=body.message, subject=body.subject,
-        segment=body.segment, value=body.value, purpose=purpose, coupon_code=coupon_code,
-        by=getattr(ctx, "email", None) or ctx.user_id)
-    if res["recipients"]:
+    # Ο φρουρός ισχύει ΚΑΙ για κανόνες του Audience Engine, όχι μόνο για τα παλιά segments.
+    from app.services import audience as _aud
+    if body.audience_rules and _aud.uses_clinical(body.audience_rules) and purpose != "care":
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "clinical_segment_requires_care_purpose")
+
+    try:
+        res = await campaign_engine.create(
+            ctx.tenant_id, channel=body.channel, message=body.message, subject=body.subject,
+            segment=body.segment, value=body.value, purpose=purpose, coupon_code=coupon_code,
+            audience_rules=body.audience_rules, audience_name=body.audience_name,
+            scheduled_at=body.scheduled_at,
+            by=getattr(ctx, "email", None) or ctx.user_id)
+    except (PermissionError, ValueError) as exc:
+        # Κανόνες που δεν αναγνωρίζονται → ΚΑΜΙΑ αποστολή. Ποτέ «στείλ' το σε όλους».
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from None
+    # Προγραμματισμένη → την πιάνει το sweep όταν φτάσει η ώρα. Αλλιώς φεύγει τώρα.
+    if res["recipients"] and not body.scheduled_at:
         dispatch_campaign.delay(res["campaign_id"])
     return {**res, "queued": True}
 
 
+# ── Audience Engine (Φάση 2) ─────────────────────────────────────────────────────────────────
+@router.get("/audience/fields")
+async def audience_fields(_: TenantContext = Depends(require("portal:manage", module=_MODULE))):
+    """Τα πεδία πάνω στα οποία χτίζεται κανόνας, με ελληνικά ονόματα και σήμανση κλινικών."""
+    from app.services import audience
+    return {"fields": audience.FIELDS, "operators": list(audience.OPS)}
+
+
+@router.get("/audience/smart")
+async def audience_smart(ctx: TenantContext = Depends(require("portal:manage", module=_MODULE))):
+    """Οι έτοιμες ομάδες με ζωντανό πλήθος — οι κάρτες «σε ποιους θέλεις να μιλήσεις;»."""
+    from app.services import audience
+    return {"items": await audience.smart_counts(ctx.tenant_id)}
+
+
+class RulesIn(BaseModel):
+    rules: dict
+    purpose: str = "commercial"
+
+
+@router.post("/audience/preview")
+async def audience_preview(body: RulesIn,
+                           ctx: TenantContext = Depends(require("portal:manage", module=_MODULE))):
+    from app.services import audience
+    try:
+        return await audience.preview(ctx.tenant_id, body.rules, purpose=body.purpose)
+    except (PermissionError, ValueError) as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from None
+
+
+class AudienceIn(BaseModel):
+    name: str
+    rules: dict
+
+
+@router.get("/audiences")
+async def audiences_list(ctx: TenantContext = Depends(require("portal:manage", module=_MODULE))):
+    from app.services import audience
+    return {"items": await audience.listing(ctx.tenant_id)}
+
+
+@router.post("/audiences")
+async def audiences_create(body: AudienceIn,
+                           ctx: TenantContext = Depends(require("portal:manage", module=_MODULE))):
+    from app.services import audience
+    return await audience.save(ctx.tenant_id, name=body.name, rules=body.rules,
+                               by=getattr(ctx, "email", None))
+
+
+@router.put("/audiences/{audience_id}")
+async def audiences_update(audience_id: str, body: AudienceIn,
+                           ctx: TenantContext = Depends(require("portal:manage", module=_MODULE))):
+    from app.services import audience
+    return await audience.save(ctx.tenant_id, name=body.name, rules=body.rules,
+                               audience_id=audience_id, by=getattr(ctx, "email", None))
+
+
+@router.delete("/audiences/{audience_id}")
+async def audiences_delete(audience_id: str,
+                           ctx: TenantContext = Depends(require("portal:manage", module=_MODULE))):
+    from app.services import audience
+    return await audience.delete(ctx.tenant_id, audience_id)
+
+
+# ── Automations & ημερολόγιο (Φάση 3) ────────────────────────────────────────────────────────
+class AutomationIn(BaseModel):
+    name: str | None = None
+    trigger: str
+    param: int | None = None
+    channel: str = "email"
+    subject: str | None = None
+    message: str
+    purpose: str = "commercial"
+    active: bool = False
+
+
+@router.get("/automations/triggers")
+async def automation_triggers(_: TenantContext = Depends(require("portal:manage", module=_MODULE))):
+    from app.services import automations
+    return {"triggers": automations.TRIGGERS, "daily_cap": automations.DAILY_CAP}
+
+
+@router.get("/automations")
+async def automations_list(ctx: TenantContext = Depends(require("portal:manage", module=_MODULE))):
+    from app.services import automations
+    return {"items": await automations.listing(ctx.tenant_id)}
+
+
+@router.post("/automations")
+async def automations_create(body: AutomationIn,
+                             ctx: TenantContext = Depends(require("portal:manage", module=_MODULE))):
+    from app.services import automations
+    res = await automations.save(ctx.tenant_id, body.model_dump(), by=getattr(ctx, "email", None))
+    if not res.get("ok"):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, res["error"])
+    return res
+
+
+@router.put("/automations/{automation_id}")
+async def automations_update(automation_id: str, body: AutomationIn,
+                             ctx: TenantContext = Depends(require("portal:manage", module=_MODULE))):
+    from app.services import automations
+    res = await automations.save(ctx.tenant_id, body.model_dump(), automation_id=automation_id,
+                                 by=getattr(ctx, "email", None))
+    if not res.get("ok"):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, res["error"])
+    return res
+
+
+@router.delete("/automations/{automation_id}")
+async def automations_delete(automation_id: str,
+                             ctx: TenantContext = Depends(require("portal:manage", module=_MODULE))):
+    from app.services import automations
+    return await automations.delete(ctx.tenant_id, automation_id)
+
+
+@router.get("/calendar")
+async def comms_calendar(days: int = Query(60, ge=7, le=180),
+                         ctx: TenantContext = Depends(require("portal:manage", module=_MODULE))):
+    """Πότε ενοχλείς τον κόσμο — σταλμένα, προγραμματισμένα και αυτόματα σε μία όψη."""
+    from app.services import automations
+    return {"items": await automations.calendar(ctx.tenant_id, days)}
+
+
+# ── Analytics & AI (Φάση 4) ──────────────────────────────────────────────────────────────────
+@router.get("/overview")
+async def comms_overview(days: int = Query(30, ge=7, le=180),
+                         ctx: TenantContext = Depends(require("portal:manage", module=_MODULE))):
+    from app.services import comm_analytics
+    return await comm_analytics.overview(ctx.tenant_id, days)
+
+
+@router.get("/campaigns/{campaign_id}/report")
+async def campaign_report(campaign_id: str,
+                          ctx: TenantContext = Depends(require("portal:manage", module=_MODULE))):
+    from app.services import comm_analytics
+    res = await comm_analytics.report(ctx.tenant_id, campaign_id)
+    if not res.get("ok"):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "not_found")
+    return res
+
+
+class TrackingIn(BaseModel):
+    enabled: bool
+
+
+@router.put("/tracking")
+async def set_tracking(body: TrackingIn,
+                       ctx: TenantContext = Depends(require("settings:write", module=_MODULE))):
+    """Μέτρηση ανοιγμάτων/κλικ — ΚΛΕΙΣΤΗ εξ ορισμού. Είναι παρακολούθηση ανθρώπου και
+    ανοίγει μόνο με ρητή απόφαση του φαρμακείου."""
+    from app.services import comm_analytics
+    return await comm_analytics.set_tracking(ctx.tenant_id, body.enabled)
+
+
+class DraftIn(BaseModel):
+    brief: str
+    channel: str = "email"
+    audience_label: str | None = None
+
+
+@router.post("/draft")
+async def ai_draft(body: DraftIn, ctx: TenantContext = Depends(require("portal:manage", module=_MODULE))):
+    """Προσχέδιο μηνύματος από AI. ΠΟΤΕ δεν στέλνεται μόνο του — γυρίζει στη φόρμα για έγκριση."""
+    from app.services import comm_analytics
+    res = await comm_analytics.draft(ctx.tenant_id, brief=body.brief, channel=body.channel,
+                                     audience_label=body.audience_label or "")
+    if not res.get("ok"):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, res.get("error", "failed"))
+    return res
+
+
 @router.get("/audience/breakdown")
 async def audience_breakdown(channel: str, segment: str = "all", value: str | None = None,
+                             audience: str | None = None, purpose: str = "commercial",
                              ctx: TenantContext = Depends(require("portal:manage", module=_MODULE))):
-    """Πόσοι θα το λάβουν και ποιοι εξαιρούνται — με τον λόγο του καθενός (οθόνη έγκρισης)."""
-    return await comms.audience_breakdown(ctx.tenant_id, channel, segment, value)
+    """Πόσοι θα το λάβουν και ποιοι εξαιρούνται — με τον λόγο του καθενός (οθόνη έγκρισης).
+
+    `audience` = οι ΚΑΝΟΝΕΣ της ομάδας (JSON), όπως ταξιδεύουν από τις «Ομάδες ανθρώπων».
+    Χωρίς αυτό η οθόνη έγκρισης θα έδειχνε ΟΛΟ το πελατολόγιο ενώ ο φαρμακοποιός έχει διαλέξει
+    μια συγκεκριμένη ομάδα — δηλαδή θα έλεγε ψέματα ακριβώς εκεί που μετράει.
+    """
+    only_ids = None
+    if audience:
+        from app.services import audience as audience_svc
+        try:
+            rules = json.loads(audience)
+        except (TypeError, ValueError):
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "invalid_audience") from None
+        try:
+            only_ids = await audience_svc.resolve(ctx.tenant_id, rules, purpose=purpose)
+        except (PermissionError, ValueError) as exc:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from None
+    return await comms.audience_breakdown(ctx.tenant_id, channel, segment, value, only_ids=only_ids)
 
 
 @router.get("/campaigns/{campaign_id}/progress")
@@ -462,3 +667,34 @@ async def unsubscribe_apply(token: str, body: UnsubIn):
     if not res.get("ok"):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, res.get("error", "failed"))
     return res
+
+
+# ── ΔΗΜΟΣΙΑ: μέτρηση ανοίγματος & κλικ (μόνο αν το φαρμακείο το έχει ανοίξει) ─────────────────
+@router.get("/o/{campaign_id}/{key}.gif", include_in_schema=False)
+async def track_open(campaign_id: str, key: str):
+    """Διαφανές pixel. Επιστρέφει ΠΑΝΤΑ εικόνα — ακόμη κι όταν η μέτρηση είναι κλειστή, ώστε
+    να μη σπάει το email και να μη διαρρέει αν κάποιος μετρά ή όχι."""
+    from fastapi.responses import Response
+    from app.services import comm_analytics
+    try:
+        await comm_analytics.record_event(campaign_id, key, "opened")
+    except Exception:                                      # noqa: BLE001
+        pass
+    gif = bytes.fromhex("47494638396101000100800000000000ffffff21f90401000000002c00000000"
+                        "0100010000020144003b")
+    return Response(content=gif, media_type="image/gif",
+                    headers={"Cache-Control": "no-store"})
+
+
+@router.get("/c/{campaign_id}/{key}", include_in_schema=False)
+async def track_click(campaign_id: str, key: str, u: str):
+    """Ανακατεύθυνση με καταγραφή κλικ. Ο προορισμός έρχεται από το ίδιο το μήνυμα."""
+    from fastapi.responses import RedirectResponse
+    from app.services import comm_analytics
+    try:
+        await comm_analytics.record_event(campaign_id, key, "clicked", {"url": u[:300]})
+    except Exception:                                      # noqa: BLE001
+        pass
+    if not u.startswith(("http://", "https://")):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "bad_url")
+    return RedirectResponse(u, status_code=302)

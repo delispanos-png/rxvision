@@ -267,13 +267,85 @@ async def _open_request(ann: dict, tenant_id: str, uid, kind: str, *,
 
 # ── διαχείριση (adminpanel) ─────────────────────────────────────────────────────────────────
 async def list_all() -> list[dict]:
+    """Η λίστα ΜΕ ΤΗ ΣΕΙΡΑ ΠΟΥ ΘΑ ΕΜΦΑΝΙΣΤΟΥΝ — ίδια ταξινόμηση με το `next_for`.
+
+    Αν δύο ανακοινώσεις είναι ενεργές ταυτόχρονα, ο πελάτης βλέπει ΜΙΑ: αυτή με τη μεγαλύτερη
+    προτεραιότητα. Εδώ φαίνεται ποια είναι αυτή (`rank` = 1) χωρίς να ανοίξεις τίποτα.
+    """
     db = shared_db()
+    now = _now()
     out = []
-    async for a in db["announcements"].find({}).sort([("active", -1), ("created_at", -1)]):
+    async for a in db["announcements"].find({}).sort([("priority", -1), ("created_at", -1)]):
         a = _clean(a)
         a["reach"] = await _reach(a)
+        frm, to = a.get("from"), a.get("to")
+        # «Τρέχει τώρα» = ενεργή ΚΑΙ μέσα στο ημερομηνιακό παράθυρο. Μια ενεργή που ξεκινά
+        # την επόμενη βδομάδα δεν ανταγωνίζεται κανέναν σήμερα.
+        a["live"] = bool(a.get("active")) and _in_window(frm, to, now)
+        a["window"] = ("upcoming" if frm and _as_dt(frm) and _as_dt(frm) > now
+                       else "ended" if to and _as_dt(to) and _as_dt(to) < now else "now")
         out.append(a)
+    out.sort(key=lambda r: (0 if r["live"] else 1 if r.get("active") else 2,
+                            -int(r.get("priority") or 0)))
+    rank = 0
+    for r in out:
+        if r["live"]:
+            rank += 1
+            r["rank"] = rank
+        else:
+            r["rank"] = None
     return out
+
+
+def _as_dt(v):
+    if isinstance(v, datetime):
+        return v if v.tzinfo else v.replace(tzinfo=timezone.utc)
+    return None
+
+
+def _in_window(frm, to, now) -> bool:
+    f, t = _as_dt(frm), _as_dt(to)
+    return (f is None or f <= now) and (t is None or t >= now)
+
+
+async def set_active(ann_id: str, active: bool, *, by: str | None = None) -> dict:
+    """Άναψε/σβήσε μια ανακοίνωση χωρίς να την ανοίξεις — τίποτα άλλο δεν αλλάζει."""
+    oid = _oid(ann_id)
+    if not oid:
+        return {"ok": False, "error": "not_found"}
+    res = await shared_db()["announcements"].update_one(
+        {"_id": oid}, {"$set": {"active": bool(active), "updated_at": _now(), "updated_by": by}})
+    if not res.matched_count:
+        return {"ok": False, "error": "not_found"}
+    return {"ok": True, "active": bool(active)}
+
+
+async def move(ann_id: str, direction: str, *, by: str | None = None) -> dict:
+    """Ανέβασε/κατέβασε μια ανακοίνωση στη σειρά προτεραιότητας.
+
+    Ανταλλάσσει θέση με τη γειτονική ΕΝΕΡΓΗ-ΚΑΙ-ΕΝ-ΙΣΧΥΙ ανακοίνωση, ώστε ο διακόπτης να κάνει
+    ορατή διαφορά: η σειρά μετράει μόνο ανάμεσα σε αυτές που τρέχουν ταυτόχρονα.
+    """
+    db = shared_db()
+    oid = _oid(ann_id)
+    if not oid:
+        return {"ok": False, "error": "not_found"}
+    rows = [r for r in await list_all() if r["live"]]
+    idx = next((i for i, r in enumerate(rows) if str(r["_id"]) == str(ann_id)), None)
+    if idx is None:
+        return {"ok": False, "error": "not_live"}
+    j = idx - 1 if direction == "up" else idx + 1
+    if j < 0 or j >= len(rows):
+        return {"ok": True, "unchanged": True}
+    # Ξαναγράφουμε ΟΛΕΣ τις προτεραιότητες σε καθαρά, διαδοχικά νούμερα (η κορυφή παίρνει το
+    # μεγαλύτερο). Έτσι δεν μαζεύονται ισοπαλίες και διπλές τιμές με τον καιρό.
+    rows[idx], rows[j] = rows[j], rows[idx]
+    top = len(rows)
+    for k, r in enumerate(rows):
+        await db["announcements"].update_one(
+            {"_id": _oid(r["_id"])},
+            {"$set": {"priority": top - k, "updated_at": _now(), "updated_by": by}})
+    return {"ok": True}
 
 
 async def _reach(ann: dict) -> int:
