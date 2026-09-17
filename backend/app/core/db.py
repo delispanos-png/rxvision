@@ -145,6 +145,9 @@ INDEXES: list[tuple[str, list[tuple[str, int]], dict]] = [
     ("lead_tasks", [("status", 1), ("due_at", 1)], {}),
     ("lead_tasks", [("lead_key", 1), ("due_at", 1)], {}),
     ("lead_status_history", [("lead_key", 1), ("at", -1)], {}),
+    # Μόνιμο ημερολόγιο αλλαγών πακέτου (ποιος άλλαξε σε τι και πότε).
+    ("plan_change_log", [("at", -1)], {}),
+    ("plan_change_log", [("tenant_id", 1), ("at", -1)], {}),
     ("module_settings", [("tenant_id", 1), ("module", 1)], {"unique": True}),
     ("subscriptions", [("tenant_id", 1)], {"unique": True}),
     ("tenants", [("slug", 1)], {"unique": True}),

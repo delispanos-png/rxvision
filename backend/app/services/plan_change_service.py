@@ -15,7 +15,7 @@ State lives on `subscriptions.pending_change`. Money is integer cents (project c
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from app.core.db import shared_db
 from app.services import revolut_service as rv
@@ -26,6 +26,9 @@ CURRENCY = "EUR"
 
 class PlanChangeError(Exception):
     """Business-rule violation (unknown/trial/same plan, provider error). Surfaced as 400."""
+
+
+LOG = "plan_change_log"      # μόνιμο ιστορικό αλλαγών πακέτου
 
 
 def _now() -> datetime:
@@ -230,6 +233,20 @@ async def apply_change(tenant_id: str, *, source: str = "system") -> dict:
         upd["payment_status"] = "active"
     await db["subscriptions"].update_one({"tenant_id": tenant_id},
                                          {"$set": upd, "$unset": {"pending_change": ""}})
+    # ΜΟΝΙΜΟ ΙΣΤΟΡΙΚΟ: το `last_plan_change` κρατά μόνο την τελευταία αλλαγή και χάνεται στην
+    # επόμενη. Χωρίς αυτό δεν μπορείς να απαντήσεις «ποιοι άλλαξαν πακέτο φέτος και προς τα πού».
+    old_price = int(sub.get("price_per_pharmacy", 0) or 0)
+    new_price = int(upd["price_per_pharmacy"] or 0)
+    await db[LOG].insert_one({
+        "tenant_id": tenant_id, "at": _now(), "source": source,
+        "kind": pend.get("kind") or ("upgrade" if new_price > old_price else "downgrade"),
+        "from_plan": sub.get("plan"), "to_plan": pend["plan"],
+        "to_plan_name": pend.get("plan_name") or pkg.get("name"),
+        "billing_cycle": pend.get("billing_cycle") or sub.get("billing_cycle"),
+        "from_price": old_price, "to_price": new_price, "delta": new_price - old_price,
+        "requested_by": pend.get("requested_by"), "requested_at": pend.get("requested_at"),
+        "method": pend.get("method"),
+    })
     # Παραστατικό αναβάθμισης (η υποβάθμιση δεν έχει πληρωμή).
     if pend.get("kind") == "upgrade":
         from app.services import receipts
@@ -296,6 +313,55 @@ async def list_pending_admin() -> list[dict]:
     out.sort(key=lambda r: (r["broken"],
                             not (r["method"] == "bank" and r["status"] == "awaiting_payment"),
                             r["requested_at"] or ""))
+    return out
+
+
+async def upcoming() -> dict:
+    """Ποιοι πελάτες έχουν ΗΔΗ επιλέξει να ανανεώσουν σε άλλο πακέτο.
+
+    Καθαρή γνώση, όχι ουρά έγκρισης: την αλλαγή την κάνουν μόνοι τους και ισχύει στη λήξη της
+    περιόδου τους. Εμείς θέλουμε να ΞΕΡΟΥΜΕ τι αλλάζει και πόσο πιάνει, όχι να την εγκρίνουμε.
+    """
+    db = shared_db()
+    rows: list[dict] = []
+    delta_month = 0
+    async for sub in db["subscriptions"].find({"pending_change": {"$exists": True}}):
+        pend = sub.get("pending_change") or {}
+        if not (pend.get("kind") and pend.get("status") and pend.get("requested_at")):
+            continue                                    # χαλασμένη — βλ. list_pending_admin
+        pkg = await _pkg(pend.get("plan"))
+        if not pkg:
+            continue
+        tenant = await db["tenants"].find_one({"_id": sub["tenant_id"]}, {"name": 1}) or {}
+        yearly = (pend.get("billing_cycle") or sub.get("billing_cycle")) == "yearly"
+        cur = int(sub.get("price_per_pharmacy", 0) or 0)
+        new = int(pend.get("new_price") or _price(pkg, yearly))
+        d = new - cur
+        delta_month += round(d / 12) if yearly else d    # ό,τι πιάνει ανά ΜΗΝΑ, για να συγκρίνεται
+        rows.append({
+            "tenant_id": sub["tenant_id"], "tenant_name": tenant.get("name"),
+            "from_plan": sub.get("plan"), "to_plan": pend.get("plan"),
+            "to_plan_name": pend.get("plan_name") or pkg.get("name"),
+            "kind": pend.get("kind"), "status": pend.get("status"), "method": pend.get("method"),
+            "billing_cycle": pend.get("billing_cycle") or sub.get("billing_cycle"),
+            "from_price": cur, "to_price": new, "delta": d,
+            "effective_at": _iso(pend.get("effective_at") or sub.get("current_period_end")),
+            "requested_by": pend.get("requested_by"), "requested_at": _iso(pend.get("requested_at")),
+        })
+    rows.sort(key=lambda r: r["effective_at"] or "")
+    return {"items": rows, "monthly_delta": delta_month}
+
+
+async def history(months: int = 12, limit: int = 200) -> list[dict]:
+    """Τι ΑΛΛΑΞΕ πραγματικά — από το μόνιμο ημερολόγιο."""
+    db = shared_db()
+    since = _now() - timedelta(days=30 * max(1, months))
+    out = []
+    async for r in db[LOG].find({"at": {"$gte": since}}).sort("at", -1).limit(limit):
+        tenant = await db["tenants"].find_one({"_id": r["tenant_id"]}, {"name": 1}) or {}
+        out.append({**r, "_id": str(r["_id"]), "at": _iso(r["at"]),
+                    "requested_at": _iso(r.get("requested_at")),
+                    "tenant_name": tenant.get("name")})
     return out
 
 

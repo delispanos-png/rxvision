@@ -802,8 +802,11 @@ async def delete_package(code: str, _: PlatformContext = Depends(get_platform_ad
 @router.get("/plan-changes")
 async def plan_changes(_: PlatformContext = Depends(get_platform_admin)):
     """Pending plan changes across tenants (bank-transfer upgrades to approve first)."""
-    from app.services import plan_change_service
-    return {"items": jsonsafe(await plan_change_service.list_pending_admin())}
+    from app.services import plan_change_service as pcs
+    up = await pcs.upcoming()
+    return {"items": jsonsafe(await pcs.list_pending_admin()),      # συμβατότητα
+            "upcoming": jsonsafe(up["items"]), "monthly_delta": up["monthly_delta"],
+            "history": jsonsafe(await pcs.history())}
 
 
 @router.post("/plan-changes/{tenant_id}/approve")
