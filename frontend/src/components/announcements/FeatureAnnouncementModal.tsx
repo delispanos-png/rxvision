@@ -29,8 +29,16 @@ const TONE: Record<string, string> = {
 };
 
 export function FeatureAnnouncementModal({
-  config, open, onClose,
-}: { config: AnnouncementConfig; open: boolean; onClose: (reason: "dismissed" | "never" | "done") => void }) {
+  config, open, onClose, preview = false,
+}: {
+  config: AnnouncementConfig; open: boolean;
+  onClose: (reason: "dismissed" | "never" | "done") => void;
+  /** Προεπισκόπηση στο adminpanel: δείχνει ΑΚΡΙΒΩΣ το ίδιο παράθυρο αλλά δεν γράφει τίποτα.
+   *  Δύο λόγοι: (α) οι δοκιμές του διαχειριστή χάλαγαν τους μετρητές «εμφανίσεις» της
+   *  πραγματικής ανακοίνωσης· (β) τα endpoints είναι του ΠΕΛΑΤΗ — στο adminpanel γύριζαν 401
+   *  και ο apiClient πετούσε τον διαχειριστή στο /login, κλείνοντας όλη τη σελίδα. */
+  preview?: boolean;
+}) {
   const t = useT();
   const [choice, setChoice] = useState<Choice | null>(null);
   const [never, setNever] = useState(false);
@@ -43,14 +51,15 @@ export function FeatureAnnouncementModal({
   const hasVisual = !!(config.preview || config.aiCallout);
 
   useEffect(() => {
-    if (!open || viewed.current) return;
+    if (!open || viewed.current || preview) return;
     viewed.current = true;
     markSeenLocally(config.announcementId, config.version);
     trackAnnouncement("announcement_viewed", { id: config.announcementId, version: config.version });
     void recordAnnouncementAction(config.announcementId, "shown");
-  }, [open, config.announcementId, config.version]);
+  }, [open, preview, config.announcementId, config.version]);
 
   const close = (reason: "dismissed" | "never" | "done" = "dismissed") => {
+    if (preview) { onClose(reason); return; }
     if (never || reason === "never") {
       markSeenLocally(config.announcementId, config.version, "never");
       trackAnnouncement("announcement_dismissed", { id: config.announcementId });
@@ -74,14 +83,18 @@ export function FeatureAnnouncementModal({
       text: t("Θέλω να το δοκιμάσω για μια περίοδο.", "I want to try it for a while.") },
   ].filter((o) => o.show)), [config, t]);
 
+  // Σε προεπισκόπηση τα κουμπιά δείχνουν το ίδιο αποτέλεσμα ΧΩΡΙΣ να ζητήσουν τίποτα: ο
+  // διαχειριστής βλέπει τι θα δει ο πελάτης, χωρίς να ανοίξει δοκιμή ή να ζητήσει τηλέφωνο.
   async function submitCallback() {
     if (!form.name.trim() || !form.phone.trim()) return;
+    if (preview) { setSent("callback"); return; }
     setBusy(true);
     await requestCallback(config.announcementId, form);
     setBusy(false);
     setSent("callback");
   }
   async function confirmTrial() {
+    if (preview) { setActivated(true); setSent("trial"); return; }
     setBusy(true);
     const res = await activateFeatureTrial(config.announcementId);
     setBusy(false);
@@ -239,7 +252,9 @@ export function FeatureAnnouncementModal({
                   const cls = `group flex w-full items-center gap-3 rounded-2xl border p-3.5 text-left transition hover:-translate-y-0.5 hover:shadow-pop ${
                     on ? "border-brand-500 bg-brand-50/60 shadow-pop dark:bg-brand-900/20"
                        : "border-slate-200 bg-white hover:border-brand-300 hover:bg-slate-50/80 dark:border-slate-700 dark:bg-slate-900 dark:hover:bg-slate-800"}`;
-                  return o.key === "interested" && config.informationUrl ? (
+                  // Σε προεπισκόπηση ο σύνδεσμος ΔΕΝ πλοηγεί: ο διαχειριστής δεν είναι στην
+                  // εφαρμογή του πελάτη και θα έφευγε από τη σελίδα του adminpanel.
+                  return o.key === "interested" && config.informationUrl && !preview ? (
                     <Link key={o.key} href={config.informationUrl} className={cls} aria-label={o.title}
                       onClick={() => {
                         trackAnnouncement("announcement_interested", { id: config.announcementId });

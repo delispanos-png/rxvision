@@ -485,7 +485,7 @@ export default function AnnouncementsAdminPage() {
       )}
 
       {preview && (
-        <FeatureAnnouncementModal open config={toConfig(preview)} onClose={() => setPreview(null)} />
+        <FeatureAnnouncementModal open preview config={toConfig(preview)} onClose={() => setPreview(null)} />
       )}
 
       {audOf && <AudienceModal ann={audOf} onClose={() => setAudOf(null)} />}
