@@ -90,7 +90,7 @@ export default function WarehousePage() {
     setBulkBusy(true);
     try {
       const p = await api<{ total: number; already_on: number; already_off: number; blocked_no_category: number }>(
-        "/pharmacy-catalog/warehouse/bulk/preview", { method: "POST", body: JSON.stringify(filterBody()) });
+        "/catalog/warehouse/bulk/preview", { method: "POST", body: JSON.stringify(filterBody()) });
       const willChange = value ? p.already_off - p.blocked_no_category : p.already_on;
       if (willChange <= 0) {
         appAlert(value
@@ -106,12 +106,16 @@ export default function WarehousePage() {
              `${willChange} items will be removed from the e-shop (of ${p.total} matched).`);
       if (!(await appConfirm(msg, { title: value ? t("Πώληση online", "Sell online") : t("Απόσυρση από e-shop", "Remove from e-shop"),
                                     confirmText: t("Ναι, εφάρμοσέ το", "Yes, apply"), danger: !value }))) return;
-      const r = await api<{ changed: number }>("/pharmacy-catalog/warehouse/bulk/for-sale",
+      const r = await api<{ changed: number }>("/catalog/warehouse/bulk/for-sale",
         { method: "POST", body: JSON.stringify({ ...filterBody(), for_sale_value: value }) });
       appAlert(t(`Άλλαξαν ${r.changed} είδη.`, `${r.changed} items updated.`));
       list.refetch();
-    } catch {
-      appAlert(t("Η μαζική αλλαγή απέτυχε.", "Bulk change failed."));
+    } catch (e) {
+      // Ο λόγος έχει σημασία: «απέτυχε» χωρίς αιτία αφήνει τον φαρμακοποιό να ξαναδοκιμάζει
+      // το ίδιο πράγμα. Δείχνουμε τι απάντησε ο server.
+      const detail = (e as { problem?: { detail?: string } })?.problem?.detail;
+      appAlert(t(`Η μαζική αλλαγή απέτυχε${detail ? `: ${detail}` : ""}.`,
+                 `Bulk change failed${detail ? `: ${detail}` : ""}.`));
     } finally { setBulkBusy(false); }
   }
 
