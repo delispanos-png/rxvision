@@ -1,6 +1,6 @@
 "use client";
 
-import { appConfirm, appPrompt } from "@/store/dialogStore";
+import { appAlert, appConfirm, appPrompt } from "@/store/dialogStore";
 import { useState, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -88,6 +88,21 @@ export default function SubscribersPage() {
     });
   }, [rows, q, statusF, planF, kpiF]);
 
+  // Σύνδεση ως πελάτης απευθείας από τη λίστα: η συνηθέστερη ενέργεια υποστήριξης δεν πρέπει
+  // να απαιτεί δύο κλικ και μια ενδιάμεση σελίδα. Ίδια ακριβώς κλήση με την καρτέλα.
+  const [impBusy, setImpBusy] = useState<string | null>(null);
+  async function impersonate(t: Tenant) {
+    setImpBusy(t.id);
+    try {
+      const r = await adminApi<{ access_token: string; refresh_token: string; app_url: string; as_email: string }>(
+        `/admin/tenants/${encodeURIComponent(t.id)}/impersonate`, { method: "POST" });
+      window.open(`${r.app_url}/login#imp=${encodeURIComponent(`${r.access_token}~${r.refresh_token}`)}`,
+                  "_blank", "noopener");
+    } catch {
+      appAlert("Δεν έγινε η σύνδεση. Ο λογαριασμός μπορεί να μην έχει χρήστη.");
+    } finally { setImpBusy(null); }
+  }
+
   async function toggleStatus(t: Tenant) {
     const next = t.status === "suspended" ? "active" : "suspended";
     if (!(await appConfirm(`Αλλαγή κατάστασης «${t.name}» σε ${next};`, { title: "Αλλαγή κατάστασης", confirmText: "Αλλαγή" }))) return;
@@ -135,7 +150,15 @@ export default function SubscribersPage() {
     {
       key: "actions", header: "", align: "right", fullWidthOnMobile: true,
       render: (r) => (
-        <div className="flex flex-wrap justify-end gap-2">
+        <div className="flex flex-nowrap items-center justify-end gap-1.5 whitespace-nowrap">
+          {/* Εικονίδιο, όχι κείμενο: με τρία κουμπιά με λεκτικό η στήλη τυλίγεται σε τρεις
+              γραμμές και ψηλώνει κάθε σειρά του πίνακα. */}
+          <button onClick={(e) => { e.stopPropagation(); impersonate(r); }} disabled={impBusy === r.id}
+            aria-label={`Σύνδεση ως ${r.name}`}
+            title="Σύνδεση ως πελάτης (υποστήριξη) — δεν δεσμεύει άδεια, δεν χρειάζεται κωδικός"
+            className="grid h-[26px] w-[26px] place-items-center rounded-md bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-60">
+            {impBusy === r.id ? <span className="text-[10px]">…</span> : <KeyRound className="h-3.5 w-3.5" />}
+          </button>
           <button onClick={(e) => { e.stopPropagation(); router.push(`/admin/subscribers/${encodeURIComponent(r.id)}`); }}
             className="rounded-md border border-slate-300 px-2 py-1 text-xs hover:bg-slate-50 dark:border-slate-600 dark:hover:bg-slate-800">Καρτέλα</button>
           <button onClick={(e) => { e.stopPropagation(); toggleStatus(r); }}
