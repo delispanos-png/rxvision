@@ -67,6 +67,20 @@ async def request_plan_change(body: PlanChangeIn,
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
 
+class BlockedIn(BaseModel):
+    plan: str
+
+
+@router.post("/plan-change/blocked")
+async def upgrade_blocked(body: BlockedIn, ctx: TenantContext = Depends(require("billing:manage"))):
+    """Ο πελάτης άνοιξε την αναβάθμιση και ΔΕΝ βρήκε τρόπο πληρωμής.
+
+    Το ακριβό σημείο δεν είναι το σφάλμα — είναι ότι φεύγει σιωπηλά. Εδώ το μαθαίνουμε.
+    """
+    await pcs.notify_upgrade_blocked(ctx.tenant_id, body.plan)
+    return {"ok": True}
+
+
 @router.delete("/plan-change")
 async def cancel_plan_change(ctx: TenantContext = Depends(require("billing:manage"))):
     """Cancel a not-yet-applied change (scheduled downgrade or awaiting-payment upgrade)."""

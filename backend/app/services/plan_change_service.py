@@ -128,6 +128,7 @@ async def request_change(tenant_id: str, plan: str, *, method: str | None = None
     from app.services import payment_methods
     _method_key = {"card": "card_revolut", "alpha": "card_alpha", "bank": "bank_transfer"}.get(method or "")
     if not _method_key or not await payment_methods.is_enabled(_method_key):
+        await notify_upgrade_blocked(tenant_id, plan_name)
         raise PlanChangeError("method_disabled")
 
     if method == "card":   # Revolut hosted checkout (instant)
@@ -272,7 +273,16 @@ async def list_pending_admin() -> list[dict]:
     async for sub in cur:
         pend = sub.get("pending_change") or {}
         tenant = await db["tenants"].find_one({"_id": sub["tenant_id"]}, {"name": 1}) or {}
+        # Μια έγκυρη εγγραφή έχει ΠΑΝΤΑ kind + status + requested_at (τα γράφει το `request_change`).
+        # Ό,τι δεν τα έχει είναι κατάλοιπο παλιότερης μορφής — δεν είναι αίτημα και δεν πρέπει να
+        # εμφανίζεται σαν αίτημα (η σελίδα έδειχνε «Υποβάθμιση» για εγγραφή χωρίς kind).
+        valid = bool(pend.get("kind") and pend.get("status") and pend.get("requested_at"))
+        known = bool(await _pkg(pend.get("plan")))
         out.append({
+            "broken": (not valid) or (not known),
+            "broken_reason": (None if valid and known else
+                              ("άγνωστο πακέτο «%s»" % pend.get("plan") if valid
+                               else "παλιά/ημιτελής εγγραφή χωρίς αίτημα")),
             "tenant_id": sub["tenant_id"], "tenant_name": tenant.get("name"),
             "current_plan": sub.get("plan"), "billing_cycle": sub.get("billing_cycle"),
             "kind": pend.get("kind"), "method": pend.get("method"), "status": pend.get("status"),
@@ -283,6 +293,29 @@ async def list_pending_admin() -> list[dict]:
             "effective_at": _iso(pend.get("effective_at")),
         })
     # bank-transfer upgrades awaiting approval first
-    out.sort(key=lambda r: (not (r["method"] == "bank" and r["status"] == "awaiting_payment"),
+    out.sort(key=lambda r: (r["broken"],
+                            not (r["method"] == "bank" and r["status"] == "awaiting_payment"),
                             r["requested_at"] or ""))
     return out
+
+
+async def notify_upgrade_blocked(tenant_id: str, plan: str) -> None:
+    """Ο πελάτης ΘΕΛΗΣΕ να αναβαθμίσει και δεν μπόρεσε — μάθε το ΤΩΡΑ.
+
+    Χωρίς αυτό, ένα κλειστό μέσο πληρωμής σημαίνει χαμένα έσοδα που δεν τα βλέπει κανείς: ο
+    πελάτης βλέπει «δεν υπάρχει διαθέσιμος τρόπος πληρωμής» και φεύγει σιωπηλά.
+    Μία ειδοποίηση ανά φαρμακείο ανά ημέρα — όχι καταιγισμός.
+    """
+    db = shared_db()
+    key = f"{tenant_id}|{_now().date().isoformat()}"
+    try:
+        await db["plan_change_alerts"].insert_one({"_id": key, "at": _now(), "plan": plan})
+    except Exception:                                   # noqa: BLE001 — ήδη ειδοποιήθηκε σήμερα
+        return
+    tenant = await db["tenants"].find_one({"_id": tenant_id}, {"name": 1}) or {}
+    try:
+        from app.services.comms import admin_alert
+        await admin_alert(f"⚠️ RxVision: το «{tenant.get('name') or tenant_id}» προσπάθησε να "
+                          f"αναβαθμίσει σε «{plan}» αλλά ΔΕΝ υπάρχει ενεργός τρόπος πληρωμής.")
+    except Exception:                                   # noqa: BLE001
+        pass

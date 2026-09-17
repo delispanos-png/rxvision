@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, queryKeys, refreshSession, ApiError } from "@/lib/apiClient";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
@@ -433,11 +433,27 @@ export default function ModulesPlanPage() {
                 );
                 return null;
               })}
-              {enabledMethods.length === 0 && <p className="rounded-lg bg-slate-50 px-3 py-4 text-center text-sm text-slate-400 dark:bg-slate-800">{t("Δεν υπάρχει διαθέσιμος τρόπος πληρωμής. Επικοινώνησε με τη διαχείριση.", "No payment method available. Contact support.")}</p>}
+              {enabledMethods.length === 0 && <BlockedNotice plan={upgradeFor.name || upgradeFor._id} />}
             </div>
           </div>
         </div>
       )}
     </ModuleGuard>
+  );
+}
+
+/** Αδιέξοδο αναβάθμισης: ο πελάτης θέλει να πληρώσει και δεν υπάρχει τρόπος. Το λέμε καθαρά
+ *  ΚΑΙ ειδοποιούμε τη διαχείριση — αλλιώς φεύγει σιωπηλά και δεν το μαθαίνει κανείς. */
+function BlockedNotice({ plan }: { plan: string }) {
+  const t = useT();
+  useEffect(() => {
+    api("/subscription/plan-change/blocked", { method: "POST", body: JSON.stringify({ plan }) })
+      .catch(() => { /* η ειδοποίηση δεν πρέπει ποτέ να χαλάσει την οθόνη */ });
+  }, [plan]);
+  return (
+    <p className="rounded-lg bg-amber-50 px-3 py-4 text-center text-sm text-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
+      {t("Δεν υπάρχει αυτή τη στιγμή διαθέσιμος τρόπος πληρωμής. Ενημερώσαμε τη διαχείριση και θα επικοινωνήσουν μαζί σου.",
+         "No payment method is available right now. We notified support and they will contact you.")}
+    </p>
   );
 }
