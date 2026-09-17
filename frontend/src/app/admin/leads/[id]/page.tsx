@@ -8,7 +8,7 @@ import { useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
-  ArrowLeft, Phone, Mail, Building2, Loader2, Check, Plus, CalendarClock, Tag as TagIcon,
+  ArrowLeft, Phone, Mail, Building2, Loader2, Check, Plus, CalendarClock, Tag as TagIcon, RotateCcw,
 } from "lucide-react";
 import { adminApi } from "@/lib/adminClient";
 import { appAlert, appPrompt } from "@/store/dialogStore";
@@ -25,9 +25,12 @@ type Lead = {
   activity?: { last_login_at?: string; days_since_activity?: number; actions_30d?: number; actions_total?: number; active_days_30d?: number; features?: string[]; data_connected?: boolean; returned_after_days?: number };
   score?: { value?: number | null; band?: string; band_label?: string; signals?: { key: string; points: number; why: string }[] };
   tags?: string[]; tag_labels?: string[]; assigned_name?: string | null;
+  trials?: { count: number; granted: number; last_granted_at?: string | null; last_granted_by?: string | null };
+  trial_allowed?: boolean;
   suggestion: { action: string; title: string; why: string; urgency: string; buttons: string[] };
 };
-type Detail = { lead: Lead; timeline: Ev[]; notes: Note[]; tasks: Task[]; history: { _id: string; from: string; to: string; by: string; at: string; reason?: string }[] };
+type Grant = { _id: string; days: number; kind: string; reason: string; by: string; at: string; ends_at: string };
+type Detail = { lead: Lead; trial_grants: Grant[]; timeline: Ev[]; notes: Note[]; tasks: Task[]; history: { _id: string; from: string; to: string; by: string; at: string; reason?: string }[] };
 
 const STATUSES: [string, string][] = [
   ["new", "Δεν του έχουμε μιλήσει"], ["contacted", "Του μιλήσαμε"], ["engaged", "Ανταποκρίθηκε"],
@@ -64,6 +67,7 @@ export default function LeadDetailPage() {
   const [noteKind, setNoteKind] = useState("call");
   const [noteBody, setNoteBody] = useState("");
   const [due, setDue] = useState("");
+  const [grantDays, setGrantDays] = useState("15");
 
   const setStatus = useMutation({
     mutationFn: async (s: string) => {
@@ -89,6 +93,27 @@ export default function LeadDetailPage() {
     mutationFn: (id: string) => adminApi(`/admin/leads/tasks/${id}/done`, { method: "POST", body: JSON.stringify({}) }),
     onSuccess: inv,
   });
+  // Κατ' εξαίρεση νέα δοκιμαστική. Ζητά ΠΑΝΤΑ λόγο — χωρίς αυτόν, σε τρεις μήνες κανείς δεν
+  // θυμάται γιατί δόθηκε δεύτερη δωρεάν δοκιμή, και η «εξαίρεση» γίνεται κανόνας.
+  const grantTrial = useMutation({
+    mutationFn: async () => {
+      const reason = await appPrompt("Γιατί του δίνουμε ξανά δοκιμαστική;");
+      if (!reason) throw new Error("cancelled");
+      return adminApi<{ kind: string; days: number }>(`/admin/leads/${encodeURIComponent(key)}/grant-trial`,
+        { method: "POST", body: JSON.stringify({ days: Number(grantDays) || 15, reason }) });
+    },
+    onSuccess: (r) => {
+      appAlert(r.kind === "extend"
+        ? `Δόθηκε δοκιμαστική ${r.days} ημερών. Ο λογαριασμός ξαναδουλεύει αμέσως.`
+        : `Ξεκλειδώθηκε το ΑΦΜ — μπορεί να γραφτεί ξανά και να πάρει ${r.days} ημέρες δοκιμής.`);
+      inv();
+    },
+    onError: (e: Error) => {
+      if (e.message === "cancelled") return;
+      appAlert("Δεν δόθηκε η δοκιμαστική. Αν είναι πληρωμένη συνδρομή, δεν γίνεται να μετατραπεί σε δοκιμή.");
+    },
+  });
+
   const toggleTag = useMutation({
     mutationFn: (t: string) => {
       const cur = new Set(d.data?.lead.tags ?? []);
@@ -156,6 +181,28 @@ export default function LeadDetailPage() {
               <Field label="Δοκιμή" value={t.ends_at ? `έληξε ${gr(t.ends_at)}` : "—"}
                 sub={t.days_since_expiry != null ? `πριν ${t.days_since_expiry} μέρες` : t.days_left != null ? `σε ${t.days_left} μέρες` : undefined} />
               <Field label="Δραστηριότητα" value={sc.value == null ? "δεν μετριέται" : String(sc.value)} sub={sc.band_label} />
+              <Field label="Δοκιμαστικές" value={`${lead.trials?.count ?? 0} ${lead.trials?.count === 1 ? "φορά" : "φορές"}`}
+                sub={lead.trials?.granted ? `${lead.trials.granted} κατ' εξαίρεση` : "μόνο η αρχική"} />
+            </div>
+
+            {/* Κατ' εξαίρεση νέα δοκιμαστική */}
+            <div className="mt-4 flex flex-wrap items-center gap-2 rounded-xl border border-amber-200 bg-amber-50/60 p-3">
+              <span className="text-xs font-semibold text-amber-900">Δώσε ξανά δοκιμαστική:</span>
+              <input type="number" min={1} max={90} value={grantDays} onChange={(e) => setGrantDays(e.target.value)}
+                className="w-16 rounded-lg border border-amber-300 px-2 py-1 text-sm focus:border-amber-500 focus:outline-none" />
+              <span className="text-xs text-amber-900">ημέρες</span>
+              <button onClick={() => grantTrial.mutate()} disabled={grantTrial.isPending}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-amber-700 disabled:opacity-50">
+                {grantTrial.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />}
+                {lead.tenant_id ? "Ενεργοποίηση" : "Ξεκλείδωμα για νέα εγγραφή"}
+              </button>
+              {(lead.trials?.count ?? 0) > 1 && (
+                <span className="text-[11px] font-semibold text-amber-700">
+                  Προσοχή: έχει ήδη πάρει {lead.trials!.count} δοκιμαστικές.
+                </span>
+              )}
+            </div>
+            <div className="mt-2 grid grid-cols-2 gap-4 text-sm sm:grid-cols-4">
               <Field label="Υπεύθυνος" value={lead.assigned_name || "κανείς"} />
             </div>
             <div className="mt-4 flex flex-wrap items-center gap-2">
@@ -215,6 +262,19 @@ export default function LeadDetailPage() {
               στις επόμενες φάσεις — μέχρι τότε κάθε επαφή καταγράφεται ως σημείωση.
             </p>
           </section>
+
+          {!!d.data.trial_grants.length && (
+            <section className="rounded-2xl border border-slate-200 bg-white p-5">
+              <h2 className="mb-3 text-[11px] font-bold uppercase tracking-wider text-slate-400">Δοκιμαστικές που δώσαμε</h2>
+              {d.data.trial_grants.map((g) => (
+                <div key={g._id} className="border-b border-slate-50 py-2 text-sm last:border-0">
+                  <span className="font-semibold text-slate-700">{g.days} ημέρες</span>
+                  <span className="text-slate-400"> · {gr(g.at)} · {g.by} · {g.kind === "extend" ? "παράταση λογαριασμού" : "ξεκλείδωμα ΑΦΜ"}</span>
+                  <p className="text-slate-600">{g.reason}</p>
+                </div>
+              ))}
+            </section>
+          )}
 
           {/* Σημειώσεις */}
           <section className="rounded-2xl border border-slate-200 bg-white p-5">

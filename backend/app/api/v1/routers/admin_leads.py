@@ -228,6 +228,28 @@ async def assign(lead_key: str, body: AssignIn,
     return res
 
 
+class GrantTrialIn(BaseModel):
+    days: int = 15
+    reason: str
+
+
+@router.post("/{lead_key:path}/grant-trial")
+async def grant_trial(lead_key: str, body: GrantTrialIn,
+                      ctx: PlatformContext = Depends(enforce_section)):
+    """Κατ' εξαίρεση νέα δοκιμαστική περίοδος. Ζητά ΠΑΝΤΑ λόγο και μετριέται."""
+    from app.services.leads import trials
+    res = await trials.grant(lead_key, days=body.days, by=_who(ctx), reason=body.reason)
+    if not res.get("ok"):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, res.get("error", "failed"))
+    return jsonsafe(res)
+
+
+@router.get("/{lead_key:path}/trials")
+async def trial_history(lead_key: str, _: PlatformContext = Depends(enforce_section)):
+    from app.services.leads import trials
+    return jsonsafe({"items": await trials.history(lead_key)})
+
+
 class TrialAllowedIn(BaseModel):
     allowed: bool
 

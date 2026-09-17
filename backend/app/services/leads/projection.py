@@ -228,8 +228,10 @@ async def project() -> dict:
         stage = old.get("stage") or TRIAL_PURGED
         if stage not in (TRIAL_PURGED, CHURNED, SIGNUP_ABANDONED):
             stage = TRIAL_PURGED         # δεν έχει πια tenant → ο λογαριασμός έφυγε
+        from app.services.leads import trials as _trials
         await db[COLL].update_one({"_id": old["_id"]}, {"$set": {
             "stage": stage, "stage_label": STAGE_LABEL[stage],
+            "trials": await _trials.summary(old["_id"], None, old),
             "score": {**score, "computed_at": now}, "tenant_id": None, "updated_at": now}})
         stats["archived"] += 1
 
@@ -310,7 +312,9 @@ async def _upsert(db, key: str, *, source: str, tenant_id, ident: dict, stage: s
     }
     score = scoring.compute(activity, flags, c["weights"])
 
+    from app.services.leads import trials as _trials
     set_doc: dict = {
+        "trials": await _trials.summary(key, sub, old),
         "source": old.get("source") or source,
         "tenant_id": tenant_id,
         "stage": stage, "stage_label": STAGE_LABEL[stage],

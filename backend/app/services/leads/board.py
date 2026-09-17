@@ -70,6 +70,8 @@ def _row(lead: dict) -> dict:
         "actions_30d": a.get("actions_30d"),
         "has_email": bool(lead.get("email")), "has_phone": bool(lead.get("phone")),
         "tags": lead.get("tags") or [],
+        "trials": lead.get("trials") or {"count": 0, "granted": 0},
+        "trial_allowed": bool(lead.get("trial_allowed")),
         "assigned_name": lead.get("assigned_name"),
         "next_action": lead.get("next_action"),
         "last_comm_at": (lead.get("comms") or {}).get("last_sent_at"),
@@ -189,8 +191,10 @@ async def detail(key: str) -> dict | None:
     lead["status_label"] = actions.STATUSES.get(lead.get("status"))
     lead["suggestion"] = next_action.suggest(lead)
     lead["tag_labels"] = [actions.TAG_LABEL.get(t, t) for t in (lead.get("tags") or [])]
+    from app.services.leads import trials as _trials
     return {
         "lead": lead,
+        "trial_grants": await _trials.history(key),
         "timeline": await timeline.for_lead(key),
         "notes": await actions.notes_for(key),
         "tasks": await actions.tasks_for(key),

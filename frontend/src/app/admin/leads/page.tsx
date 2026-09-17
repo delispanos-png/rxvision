@@ -21,6 +21,7 @@ type Row = {
   score?: number | null; band?: string; band_label?: string;
   days_since_activity?: number | null; actions_30d?: number | null;
   has_email: boolean; has_phone: boolean; tags: string[];
+  trials?: { count: number; granted: number };
   assigned_name?: string | null;
   next_action?: { title?: string; due_at?: string; priority?: string } | null;
   last_comm_at?: string | null; suggestion: Suggestion;
@@ -222,6 +223,11 @@ export default function AdminLeadsPage() {
                 {!r.has_email && !r.has_phone && <span className="font-semibold text-rose-500">χωρίς στοιχεία επαφής</span>}
                 {r.has_phone && <Phone className="h-3 w-3" />}
                 {r.has_email && <Mail className="h-3 w-3" />}
+                {(r.trials?.count ?? 0) > 1 && (
+                  <span className="rounded bg-amber-100 px-1.5 font-semibold text-amber-700" title={`${r.trials!.granted} δόθηκαν κατ' εξαίρεση`}>
+                    {r.trials!.count} δοκιμαστικές
+                  </span>
+                )}
                 {r.assigned_name && <span className="rounded bg-slate-100 px-1.5 font-semibold text-slate-500">{r.assigned_name}</span>}
               </div>
             </div>
