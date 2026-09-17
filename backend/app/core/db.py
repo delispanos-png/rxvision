@@ -150,6 +150,8 @@ INDEXES: list[tuple[str, list[tuple[str, int]], dict]] = [
     ("plan_change_log", [("tenant_id", 1), ("at", -1)], {}),
     # Ιστορικό παύσης/επανεκκίνησης συγχρονισμού ΗΔΥΚΑ (ληγμένη συνδρομή).
     ("sync_events", [("tenant_id", 1), ("at", -1)], {}),
+    # Προσωπικό μενού & μενού ανά ρόλο (_id = "u|<user>" ή "r|<tenant>|<role>").
+    ("nav_prefs", [("tenant_id", 1), ("kind", 1)], {}),
     ("module_settings", [("tenant_id", 1), ("module", 1)], {"unique": True}),
     ("subscriptions", [("tenant_id", 1)], {"unique": True}),
     ("tenants", [("slug", 1)], {"unique": True}),

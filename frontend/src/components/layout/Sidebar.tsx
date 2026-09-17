@@ -15,115 +15,14 @@ import { Tooltip } from "@/components/ui/Tooltip";
 import {
   Activity, BarChart3, Boxes, Warehouse, Layers, CalendarClock, ChevronRight, LayoutDashboard,
   Mail, Megaphone, Salad, PackageSearch, Settings, Sparkles, Stethoscope, TrendingUp, Target, Users,
-  Brain, ShieldCheck, Tags, Syringe, Bot, Gift, BookOpen, ScrollText, Truck, Lock, X, UserPlus, Ticket, SlidersHorizontal, Heart, FileText, MessageSquare, PackageCheck, Receipt, ArrowRightLeft, Compass, type LucideIcon,
+  Brain, ShieldCheck, Tags, Syringe, Bot, Gift, BookOpen, ScrollText, Truck, Lock, X, UserPlus, Ticket, SlidersHorizontal, Heart, FileText, MessageSquare, PackageCheck, Receipt, ArrowRightLeft, Compass, Star, Pencil, Check, type LucideIcon,
 } from "lucide-react";
 
-// A leaf (direct link). `module` gates visibility (shown only when enabled/trial).
-type Leaf = { href: string; label: string; en: string; module?: string | string[] };
-// A node is either a direct link (href) or an expandable parent (children).
-type Node = { label: string; en: string; icon: LucideIcon; href?: string; module?: string | string[]; children?: Leaf[] };
-type Group = { title: string; en: string; icon: LucideIcon; items: Node[] };
-type Me = { modules?: Record<string, "enabled" | "trial" | "locked"> };
+import { NAV_GROUPS as GROUPS, type Group, type Node, type Me } from "./navCatalog";
 
-const GROUPS: Group[] = [
-  // Ο Σύμβουλος — ξεχωριστό κύκλωμα που αγοράζεται ως extra (module `daily_coach`,
-  // σε ΚΑΝΕΝΑ πακέτο). Πρώτο στο μενού: είναι η οθόνη που ανοίγεις το πρωί.
-  { title: "Ο Σύμβουλός σου", en: "Your Advisor", icon: Compass, items: [
-    { label: "Ο Σύμβουλός σου", en: "Your Advisor", icon: Compass, href: "/coach", module: "daily_coach" },
-  ] },
-  { title: "Patient Intelligence", en: "Patient Intelligence", icon: Brain, items: [
-    { label: "Patient Intelligence", en: "Patient Intelligence", icon: Brain, href: "/intelligence", module: "patient_analytics" },
-  ] },
-  { title: "Ανάλυση", en: "Analysis", icon: BarChart3, items: [
-    { label: "Dashboard", en: "Dashboard", icon: LayoutDashboard, href: "/dashboard" },
-    { label: "Συνταγές", en: "Prescriptions", icon: BarChart3, module: "prescription_analytics", children: [
-      { href: "/prescriptions", label: "Λίστα", en: "List" },
-      { href: "/rx-types", label: "Δείκτες", en: "Indicators" },
-    ] },
-    { label: "Κύκλωμα Εμβολιασμών", en: "Vaccinations", icon: Syringe, href: "/vaccinations", module: "prescription_analytics" },
-    { label: "Μελλοντικές", en: "Upcoming", icon: CalendarClock, module: "future_prescriptions", children: [
-      { href: "/future#coverage", label: "Κάλυψη περιόδου", en: "Period coverage" },
-      { href: "/future#forecast", label: "Πρόβλεψη κάλυψης", en: "Coverage forecast" },
-    ] },
-    { label: "Ασφαλισμένοι", en: "Patients", icon: Users, module: "patient_analytics", children: [
-      { href: "/patients#list", label: "Λίστα", en: "List" },
-      { href: "/patients#kpi", label: "Δείκτες", en: "Indicators" },
-      { href: "/patients/verify-contacts", label: "Επιβεβαίωση στοιχείων", en: "Confirm contacts" },
-      { href: "/patients/deceased", label: "Θανόντες & υπόλοιπα", en: "Deceased & balances" },
-    ] },
-    { label: "Ιατροί", en: "Doctors", icon: Stethoscope, module: "doctor_analytics", children: [
-      { href: "/doctors#list", label: "Λίστα", en: "List" },
-      { href: "/doctors#kpi", label: "Δείκτες", en: "Indicators" },
-    ] },
-    { label: "ICD-10", en: "ICD-10", icon: Activity, module: "icd10_analytics", children: [
-      { href: "/icd10#list", label: "Λίστα", en: "List" },
-      { href: "/icd10#kpi", label: "Δείκτες", en: "Indicators" },
-    ] },
-  ] },
-  { title: "Σύμβουλοι", en: "Advisors", icon: Stethoscope, items: [
-    { label: "Επιχειρησιακά", en: "Business", icon: Sparkles, href: "/advisor" },
-    { label: "Παραγγελία", en: "Ordering", icon: PackageSearch, module: "order_suggestions", children: [
-      { href: "/orders", label: "βάσει εκτελέσεων", en: "by executions" },
-      { href: "/order-advisor", label: "βάσει πρόβλεψης", en: "by forecast" },
-    ] },
-    { label: "AI σύμβουλος", en: "AI Assistant", icon: Bot, module: "ai_assistant", children: [
-      { href: "/copilot", label: "Συνομιλία", en: "Chat" },
-      { href: "/copilot/routines", label: "Ρουτίνες", en: "Routines" },
-    ] },
-    { label: "Διατροφή", en: "Nutrition", icon: Salad, href: "/nutrition", module: ["nutrition", "ai_assistant"] },
-    { label: "Κερδοφορία", en: "Profitability", icon: TrendingUp, href: "/profitability", module: "profitability" },
-  ] },
-  // eShop — όλα τα κυκλώματα του ηλεκτρονικού καταστήματος (κατάλογος, παραγγελίες, προσφορές, πιστότητα, πύλη).
-  { title: "eShop", en: "eShop", icon: PackageSearch, items: [
-    { label: "Προϊόντα", en: "Products", icon: Boxes, href: "/warehouse", module: "order_delivery" },
-    { label: "Κατηγορίες e-shop", en: "e-shop Categories", icon: Layers, href: "/eshop-categories", module: "order_delivery" },
-    { label: "Προσφορές", en: "Promotions", icon: Tags, href: "/eshop-offers", module: "order_delivery" },
-    { label: "Ενεργές παραγγελίες", en: "Active orders", icon: Truck, href: "/orders-delivery#orders", module: "order_delivery" },
-    { label: "Ολοκληρωμένες", en: "Completed", icon: PackageCheck, href: "/orders-delivery#done", module: "order_delivery" },
-    { label: "Ρυθμίσεις αποστολής", en: "Delivery settings", icon: SlidersHorizontal, href: "/orders-delivery#settings", module: "order_delivery" },
-    { label: "Προμήθειες συναλλαγών", en: "Transaction fees", icon: Receipt, href: "/eshop-fees", module: "order_delivery" },
-  ] },
-  // Πύλη πελατών — δικό της κύκλωμα· κάθε εσωτερική καρτέλα = αυτόνομο entry (URL hash).
-  { title: "Πύλη πελατών", en: "Customer Portal", icon: Users, items: [
-    { label: "Πελάτες πύλης", en: "Portal customers", icon: Heart, href: "/portal-admin#customers", module: "patient_portal" },
-    { label: "Αιτήματα συνταγών", en: "Rx requests", icon: FileText, href: "/portal-admin#rx", module: "patient_portal" },
-    { label: "Διαθεσιμότητα", en: "Availability", icon: MessageSquare, href: "/portal-admin#availability", module: "patient_portal" },
-    { label: "Ραντεβού", en: "Appointments", icon: CalendarClock, href: "/portal-admin#appointments", module: "patient_portal" },
-    { label: "Υπηρεσίες", en: "Services", icon: Stethoscope, href: "/portal-admin#services", module: "patient_portal" },
-    { label: "Μεταφορά πελάτη", en: "Patient transfer", icon: ArrowRightLeft, href: "/patients/transfers", module: "patient_analytics" },
-  ] },
-  // Κάρτες πιστότητας — δικό του κύκλωμα· κάθε καρτέλα του προγράμματος = αυτόνομο entry (URL hash).
-  { title: "Κάρτες πιστότητας", en: "Loyalty Cards", icon: Gift, items: [
-    { label: "Μέλη", en: "Members", icon: Users, href: "/loyalty#members", module: "loyalty" },
-    { label: "Εγγραφή", en: "Enrol", icon: UserPlus, href: "/loyalty#enroll", module: "loyalty" },
-    { label: "Εξαργυρώσεις", en: "Redemptions", icon: Ticket, href: "/loyalty#redemptions", module: "loyalty" },
-    { label: "Δώρα & εξαργυρώσεις", en: "Rewards", icon: Gift, href: "/loyalty#rewards", module: "loyalty" },
-    { label: "Ρυθμίσεις προγράμματος", en: "Program settings", icon: SlidersHorizontal, href: "/loyalty#settings", module: "loyalty" },
-  ] },
-  // Στοχευμένη Προώθηση — δικό του εμπορικό κύκλωμα (module `marketing`, ενεργό ανά συνδρομή).
-  { title: "Προώθηση", en: "Marketing", icon: Megaphone, items: [
-    { label: "Πίνακας", en: "Dashboard", icon: Megaphone, href: "/marketing", module: "marketing" },
-    { label: "Θεραπευτικές κατηγορίες", en: "Therapeutic categories", icon: Target, href: "/marketing/categories", module: "marketing" },
-    { label: "Επικοινωνία", en: "Communications", icon: Mail, module: "patient_analytics", children: [
-      { href: "/communications", label: "Νέο μήνυμα", en: "New message" },
-      { href: "/communications/audiences", label: "Ομάδες ανθρώπων", en: "Audiences" },
-      { href: "/communications/automations", label: "Αυτόματα μηνύματα", en: "Automations" },
-      { href: "/communications/calendar", label: "Ημερολόγιο", en: "Calendar" },
-    ] },
-    { label: "Κουπόνια", en: "Coupons", icon: Ticket, href: "/marketing/coupons", module: "marketing" },
-  ] },
-  // «Έλεγχος συνταγών» = ΑΝΕΞΑΡΤΗΤΗ top-level επιλογή (single-item group → αποδίδεται ως απευθείας link).
-  { title: "Έλεγχος συνταγών", en: "Rx Audit", icon: ShieldCheck, items: [
-    { label: "Έλεγχος συνταγών", en: "Rx Audit", icon: ShieldCheck, href: "/reimbursement", module: "monthly_closing" },
-  ] },
-  { title: "Λειτουργίες", en: "Operations", icon: SlidersHorizontal, items: [
-    // PharmacyOne is a back-office INTEGRATION (data source), not a user-facing capability → not in the menu.
-    { label: "Οδηγός δεικτών", en: "Indicators guide", icon: BookOpen, href: "/guide" },
-    { label: "Όροι Χρήσης", en: "Terms of Use", icon: ScrollText, href: "/terms-of-use" },
-    { label: "GDPR", en: "GDPR", icon: Lock, href: "/gdpr" },
-    { label: "Ρυθμίσεις", en: "Settings", icon: Settings, href: "/settings/users" },
-  ] },
-];
+/** Συντόμευση του χειριστή. Ζει εδώ (όχι στον κατάλογο): είναι επιλογή ανθρώπου, όχι μενού. */
+type Pin = { href: string; label?: string; en?: string };
+
 
 export function Sidebar() {
   const pathname = usePathname();
@@ -144,6 +43,21 @@ export function Sidebar() {
   const qc = useQueryClient();
   const [upsell, setUpsell] = useState<{ label: string; en: string; module: string; href: string } | null>(null);
   const [trialBusy, setTrialBusy] = useState(false);
+
+  // Προσωπικό μενού & μενού ανά ρόλο. ΕΜΦΑΝΙΣΗ μόνο — τα δικαιώματα επιβάλλονται στον server.
+  const [picking, setPicking] = useState(false);
+  const prefsQ = useQuery({
+    queryKey: ["nav", "prefs"],
+    queryFn: () => api<{ pinned: Pin[]; hidden_groups: string[]; max_pinned: number }>("/nav/prefs"),
+    retry: false,
+  });
+  const pinned = prefsQ.data?.pinned ?? [];
+  const hiddenGroups = new Set(prefsQ.data?.hidden_groups ?? []);
+  const maxPinned = prefsQ.data?.max_pinned ?? 8;
+  const savePins = async (items: Pin[]) => {
+    await api("/nav/pinned", { method: "PUT", body: JSON.stringify({ items }) });
+    qc.invalidateQueries({ queryKey: ["nav", "prefs"] });
+  };
 
   const { data: me } = useQuery({ queryKey: queryKeys.me(), queryFn: () => api<Me>("/auth/me"), retry: false });
   const modules = me?.modules;
@@ -187,6 +101,7 @@ export function Sidebar() {
 
   // show enabled circuits + locked-but-offerable (upsell); hide plain unavailable ones + empty groups
   const groups = GROUPS
+    .filter((g) => !hiddenGroups.has(g.title))      // κρυμμένη από τον ρόλο → εκτός μενού
     .map((g) => ({ ...g, items: g.items.filter((n) => allowedMod(n.module) || canUpsell(n.module)) }))
     .filter((g) => g.items.length > 0);
 
@@ -250,6 +165,31 @@ export function Sidebar() {
         </div>
 
         <nav className="flex-1 space-y-6 overflow-y-auto px-3 py-4">
+          {/* ΤΑ ΔΙΚΑ ΜΟΥ — οι δουλειές που κάνει ΑΥΤΟΣ ο χειριστής κάθε μέρα, πρώτες.
+              Δεν αντικαθιστά το μενού· του γλιτώνει το ψάξιμο. */}
+          <div>
+            <button onClick={() => setPicking(true)}
+              className={`flex w-full items-center justify-between px-3 pb-2 text-[13px] font-bold uppercase tracking-wide text-slate-500 transition-colors hover:text-brand-600 dark:text-slate-400 ${hide}`}>
+              <span className="flex items-center gap-2"><Star className="h-4 w-4 shrink-0 text-amber-400" strokeWidth={2} />{t("Τα δικά μου", "My shortcuts")}</span>
+              <Pencil className="h-3.5 w-3.5 shrink-0 opacity-60" />
+            </button>
+            {pinned.length ? (
+              <div className="space-y-1">
+                {pinned.map((p) => {
+                  const active = leafActive(p.href);
+                  const inner = (<><Star className={`h-[18px] w-[18px] shrink-0 ${active ? "text-brand-600" : "text-amber-400"}`} strokeWidth={2} /><span className={hide}>{t(p.label || p.href, p.en || p.label || p.href)}</span></>);
+                  return p.href.includes("#")
+                    ? <a key={p.href} href={p.href} title={collapsed ? p.label : undefined} className={linkCls(active)} onClick={() => setOpen(false)}>{inner}</a>
+                    : <Link key={p.href} href={p.href} title={collapsed ? p.label : undefined} className={linkCls(active)}>{inner}</Link>;
+                })}
+              </div>
+            ) : (
+              <button onClick={() => setPicking(true)} className={`w-full rounded-xl border border-dashed border-slate-300 px-3 py-2 text-left text-xs text-slate-400 hover:border-brand-300 hover:text-brand-600 dark:border-slate-700 ${hide}`}>
+                {t("Διάλεξε τις δουλειές που κάνεις κάθε μέρα", "Pick the tasks you do every day")}
+              </button>
+            )}
+          </div>
+
           {groups.map((g) => {
             // Ομάδα με ΕΝΑ φύλλο (χωρίς υπο-στοιχεία) → ανεξάρτητο top-level link (χωρίς επικεφαλίδα/πτύξη).
             if (g.items.length === 1 && !g.items[0].children) {
@@ -381,6 +321,76 @@ export function Sidebar() {
           </div>
         </div>
       )}
+      {picking && (
+        <PickerModal groups={groups} pinned={pinned} max={maxPinned} t={t}
+          onClose={() => setPicking(false)} onSave={async (items) => { await savePins(items); setPicking(false); }} />
+      )}
     </>
+  );
+}
+
+/** Επιλογή «δικών μου»: ΟΛΟΙ οι προορισμοί που βλέπει αυτός ο χειριστής, σε μία λίστα.
+ *  Γιατί λίστα και όχι αστεράκια στο μενού: σε κινητό το hover δεν υπάρχει, και το να
+ *  βλέπεις τα πάντα μαζί κάνει την επιλογή μία δουλειά αντί για δέκα. */
+function PickerModal({ groups, pinned, max, t, onClose, onSave }: {
+  groups: Group[]; pinned: Pin[]; max: number; t: (el: string, en: string) => string;
+  onClose: () => void; onSave: (items: Pin[]) => Promise<void>;
+}) {
+  const [sel, setSel] = useState<Pin[]>(pinned);
+  const [busy, setBusy] = useState(false);
+  const has = (href: string) => sel.some((p) => p.href === href);
+  const toggle = (p: Pin) => setSel((prev) =>
+    prev.some((x) => x.href === p.href) ? prev.filter((x) => x.href !== p.href)
+      : prev.length >= max ? prev : [...prev, p]);
+
+  const rows: { group: string; items: Pin[] }[] = groups.map((g) => ({
+    group: t(g.title, g.en),
+    items: g.items.flatMap((n) => n.children
+      ? n.children.map((c) => ({ href: c.href, label: `${n.label} · ${c.label}`, en: `${n.en} · ${c.en}` }))
+      : n.href ? [{ href: n.href, label: n.label, en: n.en }] : []),
+  })).filter((r) => r.items.length);
+
+  return (
+    <div className="fixed inset-0 z-[60] grid place-items-center bg-black/40 p-4" onClick={onClose}>
+      <div className="flex max-h-[80vh] w-full max-w-lg flex-col rounded-2xl bg-white dark:bg-slate-900" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-start justify-between border-b border-slate-100 p-5 dark:border-slate-800">
+          <div>
+            <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">{t("Τα δικά μου", "My shortcuts")}</h3>
+            <p className="mt-0.5 text-xs text-slate-500">
+              {t(`Διάλεξε έως ${max} δουλειές που κάνεις κάθε μέρα — θα είναι πρώτες στο μενού σου.`,
+                 `Pick up to ${max} tasks you do daily — they go to the top of your menu.`)}
+            </p>
+          </div>
+          <span className="shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-xs font-bold text-slate-500 dark:bg-slate-800">{sel.length}/{max}</span>
+        </div>
+        <div className="flex-1 overflow-y-auto p-4">
+          {rows.map((r) => (
+            <div key={r.group} className="mb-3">
+              <div className="mb-1 text-[11px] font-bold uppercase tracking-wide text-slate-400">{r.group}</div>
+              {r.items.map((it) => {
+                const on = has(it.href);
+                const full = !on && sel.length >= max;
+                return (
+                  <button key={it.href} onClick={() => toggle(it)} disabled={full}
+                    className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm transition ${on ? "bg-brand-50 font-semibold text-brand-700 dark:bg-brand-600/15" : full ? "text-slate-300 dark:text-slate-600" : "text-slate-600 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-800"}`}>
+                    <span className={`grid h-4 w-4 shrink-0 place-items-center rounded border ${on ? "border-brand-500 bg-brand-500 text-white" : "border-slate-300 dark:border-slate-600"}`}>
+                      {on && <Check className="h-3 w-3" strokeWidth={3} />}
+                    </span>
+                    {t(it.label || it.href, it.en || it.label || it.href)}
+                  </button>
+                );
+              })}
+            </div>
+          ))}
+        </div>
+        <div className="flex justify-end gap-2 border-t border-slate-100 p-4 dark:border-slate-800">
+          <button onClick={onClose} className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-600 dark:border-slate-600 dark:text-slate-300">{t("Άκυρο", "Cancel")}</button>
+          <button onClick={async () => { setBusy(true); try { await onSave(sel); } finally { setBusy(false); } }} disabled={busy}
+            className="rounded-xl bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-50">
+            {t("Αποθήκευση", "Save")}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }

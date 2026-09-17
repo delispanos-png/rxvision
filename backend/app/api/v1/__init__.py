@@ -4,6 +4,7 @@ from app.api.v1.routers import (
     addons,
     admin,
     admin_leads,
+    nav,
     advisor,
     announcements,
     auth,
@@ -111,3 +112,5 @@ api_router.include_router(tenants.router, prefix="/tenant", tags=["tenant"])
 # users router declares its own /users, /roles, /permissions paths → mount at root.
 api_router.include_router(users.router, tags=["users"])
 api_router.include_router(security.router, prefix="/security", tags=["security"])
+# Προσωπικό μενού & μενού ανά ρόλο (ΕΜΦΑΝΙΣΗ — τα δικαιώματα μένουν στον server).
+api_router.include_router(nav.router, prefix="/nav", tags=["nav"])
