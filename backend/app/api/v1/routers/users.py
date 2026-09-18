@@ -12,7 +12,7 @@ from app.repositories.base import jsonsafe
 from app.repositories.users import RoleRepository, UserRepository
 from app.schemas.users import RoleCreate, ResetPasswordIn, RoleUpdate, UserCreate, UserUpdate
 from app.services import mailer
-from app.services.rbac_seed import PERMISSIONS
+from app.services.rbac_seed import ALL_PERMISSION_KEYS, PERMISSIONS
 
 router = APIRouter()
 
@@ -192,9 +192,47 @@ async def get_role(role_id: str, ctx: TenantContext = Depends(require(_PERM))):
     return role
 
 
+def _clean_perms(perms: list[str]) -> list[str]:
+    """Δέξου ΜΟΝΟ δικαιώματα που υπάρχουν στον κατάλογο.
+
+    Χωρίς αυτό, ένα ορθογραφικό λάθος («paitents:read») αποθηκευόταν κανονικά και ο ρόλος
+    απλώς δεν έκανε τίποτα — σιωπηλά, χωρίς να το μάθει κανείς.
+    """
+    known = set(ALL_PERMISSION_KEYS)
+    bad = sorted({p for p in perms if p not in known and p != "*"})
+    if bad:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                            detail={"error": "unknown_permission", "keys": bad})
+    return sorted(set(perms))
+
+
+async def _guard_last_admin(repo: RoleRepository, *, role_id=None, new_perms=None) -> None:
+    """Πρέπει ΠΑΝΤΑ να μένει τουλάχιστον ένας ρόλος που μπορεί να διαχειριστεί χρήστες.
+
+    Αλλιώς ο πελάτης κλειδώνεται έξω από τη διαχείριση του ίδιου του λογαριασμού του και
+    χρειάζεται εμάς για να ξεκλειδώσει — κάτι που δεν πρέπει να μπορεί να συμβεί με ένα κλικ.
+    """
+    keeps = 0
+    for r in await repo.list_roles():
+        perms = list(r.get("permissions") or [])
+        if role_id is not None and str(r["_id"]) == str(role_id):
+            if new_perms is None:          # διαγραφή → δεν μετράει
+                continue
+            perms = new_perms
+        if "*" in perms or "users:manage" in perms:
+            keeps += 1
+    if keeps == 0:
+        raise HTTPException(status.HTTP_409_CONFLICT, detail={"error": "last_admin_role"})
+
+
 @router.post("/roles", status_code=201)
 async def create_role(body: RoleCreate, ctx: TenantContext = Depends(require(_PERM))):
-    return await RoleRepository(tenant_id=ctx.tenant_id).create(body.model_dump())
+    repo = RoleRepository(tenant_id=ctx.tenant_id)
+    if await repo.by_key(body.key):
+        raise HTTPException(status.HTTP_409_CONFLICT, detail={"error": "key_exists"})
+    doc = body.model_dump()
+    doc["permissions"] = _clean_perms(doc.get("permissions") or [])
+    return await repo.create(doc)
 
 
 @router.patch("/roles/{role_id}")
@@ -208,20 +246,61 @@ async def update_role(
     if existing is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "role_not_found")
     if existing.get("is_system"):
-        raise HTTPException(status.HTTP_409_CONFLICT, "cannot_modify_system_role")
-    return await repo.update(role_id, body.model_dump(exclude_none=True))
+        raise HTTPException(status.HTTP_409_CONFLICT, detail={"error": "cannot_modify_system_role"})
+    fields = body.model_dump(exclude_none=True)
+    if "permissions" in fields:
+        fields["permissions"] = _clean_perms(fields["permissions"])
+        await _guard_last_admin(repo, role_id=role_id, new_perms=fields["permissions"])
+    return await repo.update(role_id, fields)
 
 
 @router.delete("/roles/{role_id}", status_code=204)
 async def delete_role(role_id: str, ctx: TenantContext = Depends(require(_PERM))):
     repo = RoleRepository(tenant_id=ctx.tenant_id)
     existing = await repo.get(role_id)
-    if existing and existing.get("is_system"):
-        raise HTTPException(status.HTTP_409_CONFLICT, "cannot_delete_system_role")
+    if not existing:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail={"error": "role_not_found"})
+    if existing.get("is_system"):
+        raise HTTPException(status.HTTP_409_CONFLICT, detail={"error": "cannot_delete_system_role"})
+    n = await repo.users_with(role_id)
+    if n:
+        # Διαγραφή ρόλου που χρησιμοποιείται θα άφηνε χρήστες χωρίς δικαιώματα, σιωπηλά.
+        raise HTTPException(status.HTTP_409_CONFLICT,
+                            detail={"error": "role_in_use", "users": n})
+    await _guard_last_admin(repo, role_id=role_id, new_perms=None)
     await repo.delete(role_id)
 
 
 # ── Permission catalog ─────────────────────────────────────
+# Ελληνικά ονόματα ανά περιοχή — ο κατάλογος έχει κλειδιά τύπου «prescriptions:read»,
+# που δεν λένε τίποτα σε φαρμακοποιό.
+_RESOURCE_EL: dict[str, str] = {
+    "dashboard": "Πίνακας", "prescriptions": "Συνταγές", "doctors": "Ιατροί",
+    "patients": "Ασφαλισμένοι", "icd10": "ICD-10", "profitability": "Κερδοφορία",
+    "future": "Μελλοντικές συνταγές", "orders": "Παραγγελίες",
+    "closing": "Κλείσιμο μήνα", "ingestion": "Δεδομένα ΗΔΥΚΑ",
+    "pharmacyone": "PharmacyOne", "settings": "Ρυθμίσεις", "users": "Χρήστες & ρόλοι",
+    "billing": "Συνδρομή & χρεώσεις", "portal": "Πύλη πελατών", "gdpr": "GDPR",
+}
+_ACTION_EL: dict[str, str] = {
+    "read": "Προβολή", "write": "Αλλαγή", "export": "Εξαγωγή", "run": "Εκτέλεση",
+    "manage": "Διαχείριση", "rectify": "Διόρθωση", "erase": "Διαγραφή",
+}
+
+
 @router.get("/permissions")
 async def list_permissions(ctx: TenantContext = Depends(require(_PERM))):
-    return {"items": PERMISSIONS}
+    """Ο κατάλογος δικαιωμάτων, ΟΜΑΔΟΠΟΙΗΜΕΝΟΣ ανά περιοχή και σε ελληνικά."""
+    groups: dict[str, dict] = {}
+    for p in PERMISSIONS:
+        g = groups.setdefault(p["resource"], {
+            "resource": p["resource"],
+            "label": _RESOURCE_EL.get(p["resource"], p["resource"]),
+            "items": [],
+        })
+        g["items"].append({**p,
+                           "action_label": _ACTION_EL.get(p["action"], p["action"]),
+                           "label": p["description"]})
+    ordered = [groups[r] for r in _RESOURCE_EL if r in groups]
+    ordered += [g for r, g in groups.items() if r not in _RESOURCE_EL]
+    return {"items": PERMISSIONS, "groups": ordered}

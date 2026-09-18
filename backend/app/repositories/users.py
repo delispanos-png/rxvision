@@ -82,11 +82,31 @@ class UserRepository(BaseRepository):
 class RoleRepository(BaseRepository):
     collection_name = "roles"
 
-    async def list_roles(self, *, skip: int, limit: int) -> list[dict]:
+    @staticmethod
+    def _key(role_id):
+        """Οι ρόλοι έχουν ObjectId `_id`, αλλά το API τους δέχεται ως συμβολοσειρά.
+
+        ΧΩΡΙΣ ΑΥΤΟ, τα `get`/`update`/`delete` ΔΕΝ ταίριαζαν ΠΟΤΕ: το φίλτρο έψαχνε
+        συμβολοσειρά σε πεδίο ObjectId, οπότε κάθε επεξεργασία ρόλου «πετύχαινε» σιωπηλά
+        χωρίς να αλλάζει τίποτα.
+        """
+        from bson import ObjectId
+        from bson.errors import InvalidId
+        if isinstance(role_id, ObjectId):
+            return role_id
+        try:
+            return ObjectId(str(role_id))
+        except (InvalidId, TypeError):
+            return role_id            # μη-ObjectId κλειδί (σπάνιο) → ψάξε αυτούσιο
+
+    async def list_roles(self, *, skip: int = 0, limit: int = 200) -> list[dict]:
         return await self.find({}, sort=[("key", 1)], skip=skip, limit=limit)
 
     async def get(self, role_id) -> dict | None:
-        return await self.find_one({"_id": role_id})
+        return await self.find_one({"_id": self._key(role_id)})
+
+    async def by_key(self, key: str) -> dict | None:
+        return await self.find_one({"key": key})
 
     async def create(self, doc: dict) -> dict:
         doc = {**doc, "is_system": False,
@@ -95,8 +115,13 @@ class RoleRepository(BaseRepository):
         return await self.get(role_id)
 
     async def update(self, role_id, fields: dict) -> dict | None:
-        await self.update_one({"_id": role_id}, {"$set": fields})
+        await self.update_one({"_id": self._key(role_id)}, {"$set": fields})
         return await self.get(role_id)
 
     async def delete(self, role_id) -> None:
-        await self.delete_many({"_id": role_id})
+        await self.delete_many({"_id": self._key(role_id)})
+
+    async def users_with(self, role_id) -> int:
+        """Πόσοι χρήστες έχουν αυτόν τον ρόλο — δεν σβήνεις ρόλο που χρησιμοποιείται."""
+        return await self._db["users"].count_documents(
+            {"tenant_id": self.tenant_id, "role_ids": self._key(role_id)})

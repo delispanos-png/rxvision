@@ -7,6 +7,7 @@ import { useT } from "@/store/prefStore";
 const TABS = [
   { href: "/settings/users", el: "Χρήστες & Ρόλοι", en: "Users & Roles" },
   { href: "/settings/modules", el: "Modules / Πλάνο", en: "Modules / Plan" },
+  { href: "/settings/roles", el: "Ρόλοι & Δικαιώματα", en: "Roles & Permissions" },
   { href: "/settings/menus", el: "Μενού ανά ρόλο", en: "Menu per role" },
   { href: "/settings/ingestion", el: "Διασύνδεση ΗΔΥΚΑ", en: "ΗΔΥΚΑ Connection" },
   { href: "/settings/closing", el: "Κλείσιμο Μήνα", en: "Month Closing" },
