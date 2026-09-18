@@ -18,6 +18,11 @@ from app.core.config import settings
 from app.core.db import shared_db
 
 SESSIONS = "user_sessions"
+# ΜΟΝΙΜΟ ΗΜΕΡΟΛΟΓΙΟ ΣΥΝΔΕΣΕΩΝ. Το `user_sessions` απαντά «ποιος είναι ΤΩΡΑ μέσα» και σβήνεται
+# από TTL 15′ μετά την τελευταία κίνηση — άρα δεν αφήνει κανένα ίχνος. Για να απαντηθεί το
+# «ποιος συνδέθηκε χθες και πόση ώρα έμεινε», η γραμμή γράφεται με το ΑΝΟΙΓΜΑ και κλείνει
+# αργότερα· έτσι τίποτα δεν χάνεται ούτε αν ο browser κλείσει χωρίς αποσύνδεση.
+LOG = "session_log"
 
 
 def _now() -> datetime:
@@ -69,7 +74,48 @@ async def open_session(tenant_id: str, user_id: str, *, sid: str | None = None,
         {"_id": sid},
         {"$set": setf, "$setOnInsert": {"created_at": now, "impersonation": bool(impersonation)}},
         upsert=True)
+    await _log_open(sid, tenant_id, user_id, now, ua=ua, ip=ip, impersonation=impersonation)
     return sid
+
+
+async def _log_open(sid: str, tenant_id: str, user_id: str, now, *, ua, ip, impersonation) -> None:
+    """Γράψε τη γραμμή ιστορικού ΤΩΡΑ, στο άνοιγμα — όχι στο κλείσιμο.
+
+    Αν την περιμέναμε στο κλείσιμο, κάθε συνεδρία που τελειώνει με «έκλεισα τον browser»
+    (δηλαδή οι περισσότερες) δεν θα καταγραφόταν ποτέ.
+    `$setOnInsert` στο `started_at`: σε revive/refresh η ίδια συνεδρία ΔΕΝ ξαναρχίζει.
+    """
+    try:
+        await shared_db()[LOG].update_one({"_id": sid}, {
+            "$set": {"tenant_id": tenant_id, "user_id": str(user_id),
+                     "last_seen_at": now, "ua": (ua or "")[:200], **({"ip": ip[:64]} if ip else {})},
+            "$setOnInsert": {"started_at": now, "impersonation": bool(impersonation),
+                             "ended_at": None, "ended_reason": None},
+        }, upsert=True)
+    except Exception:  # noqa: BLE001 — το ιστορικό δεν πρέπει ΠΟΤΕ να εμποδίσει σύνδεση
+        pass
+
+
+async def _log_close(sid: str, reason: str) -> None:
+    """Κλείσε τη γραμμή με τη ΔΙΑΡΚΕΙΑ. Ιδεμποτεντικό: ήδη κλεισμένη → δεν ξαναγράφεται."""
+    try:
+        db = shared_db()
+        row = await db[LOG].find_one({"_id": sid})
+        if not row or row.get("ended_at"):
+            return
+        # Τέλος = η τελευταία στιγμή που ΞΕΡΟΥΜΕ ότι ήταν μέσα. Στο logout είναι τώρα· στη λήξη
+        # είναι η τελευταία κίνηση — όχι η ώρα που το πρόσεξε ο σαρωτής.
+        end = _now() if reason == "logout" else (row.get("last_seen_at") or _now())
+        start = row.get("started_at") or end
+        if start.tzinfo is None:
+            start = start.replace(tzinfo=timezone.utc)
+        if end.tzinfo is None:
+            end = end.replace(tzinfo=timezone.utc)
+        await db[LOG].update_one({"_id": sid, "ended_at": None}, {"$set": {
+            "ended_at": end, "ended_reason": reason,
+            "duration_seconds": max(0, int((end - start).total_seconds()))}})
+    except Exception:  # noqa: BLE001
+        pass
 
 
 # ── force-logout: access tokens are stateless JWT, so admin «Αποσύνδεση» sets a short-lived Redis
@@ -87,7 +133,7 @@ async def mark_revoked(sid: str | None) -> None:
         await _redis().setex(f"revoked:sess:{sid}", _REVOKE_TTL, "1")
     except Exception:  # noqa: BLE001 — Redis down → μένει η ανάκληση refresh/seat (εντός 15')
         pass
-    await close_session(sid)
+    await close_session(sid, reason="revoked")
 
 
 async def is_revoked(sid: str | None) -> bool:
@@ -114,11 +160,58 @@ async def touch(sid: str | None) -> None:
     await shared_db()[SESSIONS].update_one({"_id": sid}, {"$set": {"last_active_at": _now()}})
 
 
-async def close_session(sid: str | None) -> None:
+async def close_session(sid: str | None, *, reason: str = "logout") -> None:
     """Free the seat immediately (explicit logout)."""
     if not sid:
         return
     await shared_db()[SESSIONS].delete_one({"_id": sid})
+    await _log_close(sid, reason)
+
+
+async def sweep() -> dict:
+    """Συγχρόνισε το ιστορικό με την πραγματικότητα — τρέχει κάθε λίγα λεπτά.
+
+    ΓΙΑΤΙ ΧΡΕΙΑΖΕΤΑΙ: οι περισσότερες συνεδρίες δεν τελειώνουν με «αποσύνδεση» — ο χρήστης
+    κλείνει τον browser. Τότε κανείς δεν ειδοποιεί κανέναν: η συνεδρία απλώς παύει να στέλνει
+    σήμα και μετά από 15′ το TTL τη σβήνει. Ο σαρωτής (α) κρατά ενήμερη την τελευταία κίνηση
+    στο ιστορικό όσο η συνεδρία ζει και (β) κλείνει τις γραμμές που δεν έχουν πια συνεδρία.
+    """
+    db = shared_db()
+    now = _now()
+    live = {}
+    async for s in db[SESSIONS].find({}, {"last_active_at": 1}):
+        live[str(s["_id"])] = s.get("last_active_at")
+    synced = closed = 0
+    # (α) ενήμερη «τελευταία κίνηση» για τις ζωντανές — ώστε αν χαθεί η συνεδρία ανάμεσα σε δύο
+    #     περάσματα, η διάρκεια να είναι το πολύ λίγα λεπτά λάθος, ποτέ μηδέν.
+    for sid, la in live.items():
+        if la:
+            await db[LOG].update_one({"_id": sid, "ended_at": None},
+                                     {"$set": {"last_seen_at": la}})
+            synced += 1
+    # (β) ανοιχτές γραμμές χωρίς ζωντανή συνεδρία → τελείωσαν
+    async for row in db[LOG].find({"ended_at": None}, {"_id": 1}):
+        sid = str(row["_id"])
+        if sid in live:
+            continue
+        await _log_close(sid, "expired")
+        closed += 1
+    return {"synced": synced, "closed": closed, "at": now}
+
+
+async def history(*, tenant_id: str | None = None, user_id: str | None = None,
+                  days: int = 30, include_impersonation: bool = False,
+                  limit: int = 500) -> list[dict]:
+    """Ιστορικό συνδέσεων: ποιος, πότε μπήκε, πότε βγήκε, πόση ώρα έμεινε."""
+    db = shared_db()
+    q: dict = {"started_at": {"$gte": _now() - timedelta(days=max(1, days))}}
+    if tenant_id:
+        q["tenant_id"] = tenant_id
+    if user_id:
+        q["user_id"] = str(user_id)
+    if not include_impersonation:
+        q["impersonation"] = {"$ne": True}
+    return [r async for r in db[LOG].find(q).sort("started_at", -1).limit(min(2000, limit))]
 
 
 async def close_user_sessions(user_id: str) -> int:
@@ -126,5 +219,8 @@ async def close_user_sessions(user_id: str) -> int:
     logged out and its seat freed. Complements the refresh_token_version bump."""
     if not user_id:
         return 0
+    sids = await shared_db()[SESSIONS].distinct("_id", {"user_id": str(user_id)})
     res = await shared_db()[SESSIONS].delete_many({"user_id": str(user_id)})
+    for sid in sids:
+        await _log_close(str(sid), "revoked")
     return res.deleted_count

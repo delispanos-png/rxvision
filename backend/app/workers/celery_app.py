@@ -18,6 +18,7 @@ celery_app = Celery(
              "app.workers.area_canonical", "app.workers.supplier_photos",
              "app.workers.coach", "app.workers.comms",
         "app.workers.leads",
+        "app.workers.sessions",
     ],
 )
 
@@ -72,6 +73,15 @@ celery_app.conf.beat_schedule = {
     # ελέγχει από μόνο του ότι δεν έστειλε ήδη σήμερα).
     # Ο Σύμβουλος: το task χτυπά ΚΑΘΕ ΩΡΑ και στέλνει μόνο όταν είναι η ώρα που όρισε το
     # φαρμακείο (ρυθμίσεις ανά tenant, ώρα Αθήνας).
+    # Ιστορικό συνδέσεων: κλείσιμο γραμμών που έμειναν ανοιχτές (κλειστός browser).
+    # Κάθε 2΄: το TTL σβήνει τη συνεδρία 15΄ μετά την τελευταία κίνηση, οπότε υπάρχει άνετο
+    # περιθώριο να προλάβει ο σαρωτής — και η διάρκεια βγαίνει από την ΤΕΛΕΥΤΑΙΑ ΚΙΝΗΣΗ, όχι
+    # από την ώρα που το πρόσεξε.
+    "sessions-sweep": {
+        "task": "app.workers.sessions.sweep",
+        "schedule": crontab(minute="*/2"),
+        "options": {"queue": "default"},
+    },
     # Lead Engine — προβολή leads· ΚΑΜΙΑ αποστολή σε φαρμακείο (Φάση 1)
     "leads-project": {
         "task": "app.workers.leads.project",

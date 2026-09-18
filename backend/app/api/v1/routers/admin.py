@@ -61,6 +61,7 @@ _SEG_TO_SECTION = {
     "announcements": "content", "announcement-requests": "content",
     "announcement-copy": "content",
     "lifecycle": "subscriptions",
+    "sessions": "health", "session-history": "health", "audit-logs": "health",
 }
 # read-only endpoints που χρειάζεται και ο «dashboard»-only χρήστης
 _DASHBOARD_GET = {"tenants", "packages", "sync-health"}
@@ -3261,6 +3262,52 @@ async def list_sessions(_: PlatformContext = Depends(get_platform_admin)):
             "created_at": s.get("created_at"),
         })
     return {"items": jsonsafe(items)}
+
+
+@router.get("/session-history")
+async def session_history(days: int = 30, tenant_id: str | None = None,
+                          include_impersonation: bool = False,
+                          _: PlatformContext = Depends(get_platform_admin)):
+    """Ποιος συνδέθηκε, πότε, από πού και ΠΟΣΗ ΩΡΑ έμεινε — ανά συνεδρία."""
+    from app.services import session_service as sessions
+    db = shared_db()
+    rows = await sessions.history(days=days, tenant_id=tenant_id,
+                                  include_impersonation=include_impersonation)
+    names = {t["_id"]: t.get("name", t["_id"]) async for t in db["tenants"].find({}, {"name": 1})}
+    users: dict = {}
+    items = []
+    for r in rows:
+        uid = r.get("user_id")
+        if uid and uid not in users:
+            try:
+                users[uid] = await db["users"].find_one({"_id": _oid(uid)}, {"email": 1, "full_name": 1}) or {}
+            except Exception:  # noqa: BLE001
+                users[uid] = {}
+        u = users.get(uid) or {}
+        items.append({
+            "sid": str(r["_id"]), "tenant_id": r.get("tenant_id"),
+            "tenant": names.get(r.get("tenant_id"), r.get("tenant_id")),
+            "username": u.get("email") or uid, "full_name": u.get("full_name"),
+            "ip": r.get("ip") or "—", "ua": r.get("ua") or "",
+            "impersonation": bool(r.get("impersonation")),
+            "started_at": r.get("started_at"), "ended_at": r.get("ended_at"),
+            "last_seen_at": r.get("last_seen_at"), "ended_reason": r.get("ended_reason"),
+            "duration_seconds": r.get("duration_seconds"),
+            "live": r.get("ended_at") is None,
+        })
+    # Σύνοψη ΜΟΝΟ από κλεισμένες συνεδρίες: μια ανοιχτή δεν έχει ακόμη διάρκεια και θα
+    # τραβούσε τον μέσο όρο προς τα κάτω.
+    done = [i["duration_seconds"] for i in items if i["duration_seconds"] is not None]
+    return jsonsafe({
+        "items": items,
+        "summary": {
+            "sessions": len(items),
+            "people": len({i["username"] for i in items if i["username"]}),
+            "total_seconds": sum(done),
+            "avg_seconds": round(sum(done) / len(done)) if done else None,
+            "open_now": sum(1 for i in items if i["live"]),
+        },
+    })
 
 
 @router.post("/sessions/{sid}/revoke")

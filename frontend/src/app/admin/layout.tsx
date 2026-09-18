@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import {
-  LayoutGrid, Users, UserCog, Mail, Server, Wrench, BarChart3, CreditCard, Receipt,
+  History, LayoutGrid, Users, UserCog, Mail, Server, Wrench, BarChart3, CreditCard, Receipt,
   LogOut, PlugZap, Menu, X, Layers, Cloud, ScrollText, Boxes, Settings, ChevronDown,
   ChevronRight, Percent, Brain, Bell, Sparkles, MessageSquare, Activity, ArrowUpCircle,
   Landmark, Bot, Wallet, Smartphone, Network, Database, Clock, FileText, Megaphone,
@@ -64,6 +64,7 @@ const GROUPS: { label: string; icon: typeof LayoutGrid; items: { label: string; 
     label: "Λειτουργία & Παρακολούθηση", icon: Activity, items: [
       { label: "Επισκεψιμότητα", icon: BarChart3, href: "/admin/health", section: "health" },
       { label: "Συνδεδεμένοι", icon: Activity, href: "/admin/sessions", section: "health" },
+      { label: "Ιστορικό συνδέσεων", icon: History, href: "/admin/session-history", section: "health" },
       { label: "Ειδοποιήσεις", icon: Bell, href: "/admin/notifications", section: "notifications" },
       { label: "SMS ιδιοκτήτη", icon: Smartphone, href: "/admin/alerts", section: "notifications" },
       { label: "Αρχείο ενεργειών", icon: ScrollText, href: "/admin/audit-logs", section: "audit" },
