@@ -9,11 +9,43 @@ NODE="${NODE:?NODE env required}"
 strip() { sed -E 's/^["'"'"']//; s/["'"'"']$//'; }
 URI=$(grep -E '^MONGODB_URI=' .env | cut -d= -f2- | strip)
 DB=$(grep -E '^MONGODB_DB=' .env | cut -d= -f2- | strip); DB=${DB:-rxvision}
+# ΣΠΑΝΙΕΣ κλήσεις (ανάγνωση ρυθμίσεων, γράψιμο αποτελέσματος): σηκώνουν δικό τους container.
 M() { docker run --rm --network host mongo:7 mongosh "$URI" --quiet --eval "db = db.getSiblingDB('$DB'); $1"; }
 jget() { python3 -c "import sys,json; d=sys.stdin.read().strip(); print(json.loads(d).get('$1','') if d else '')" 2>/dev/null; }
 
+# ── ΤΟ ΕΡΩΤΗΜΑ ΤΟΥ ΒΡΟΧΟΥ ─────────────────────────────────────────────────────────────────
+# ΤΙ ΔΙΟΡΘΩΝΕΙ (19/09/2026): ο βρόχος καλούσε την `M()`, δηλαδή σήκωνε ΟΛΟΚΛΗΡΟ container
+# `mongo:7` κάθε 8 δευτερόλεπτα — δημιουργία container + 2 volumes + δίκτυο + εκκίνηση +
+# τερματισμός + καταστροφή, ~10.800 φορές την ημέρα ΑΝΑ ΚΟΜΒΟ. Ο `dockerd` έτρεχε μόνιμα στο
+# 100-190% CPU σε τρεις servers χωρίς να είναι κανείς συνδεδεμένος.
+# Τώρα το ίδιο ερώτημα γίνεται με `docker exec` μέσα στο API container που ΗΔΗ τρέχει και έχει
+# και τη σύνδεση και τα credentials. Καμία δημιουργία container.
+API_CT="${API_CT:-rxvision-app-api-1}"
+
+POLL() {
+  docker exec -i -e OPS_NODE="$NODE" "$API_CT" python - <<'PYEOF' 2>/dev/null
+import json, os
+from datetime import datetime, timezone
+from pymongo import MongoClient, ReturnDocument
+cli = MongoClient(os.environ["MONGODB_URI"], serverSelectionTimeoutMS=4000)
+db = cli[os.environ.get("MONGODB_DB", "rxvision")]
+c = db.ops_commands.find_one_and_update(
+    {"status": "pending", "node": os.environ["OPS_NODE"]},
+    {"$set": {"status": "running", "started_at": datetime.now(tz=timezone.utc)}},
+    return_document=ReturnDocument.AFTER)
+print(json.dumps({"id": str(c["_id"]), "type": c.get("type", ""), "file": c.get("file", ""),
+                  "server_type": c.get("server_type", ""), "location": c.get("location", "")})
+      if c else "")
+PYEOF
+}
+
 while true; do
-  CMD=$(M "const c=db.ops_commands.findOneAndUpdate({status:'pending',node:'$NODE'},{\$set:{status:'running',started_at:new Date()}},{returnDocument:'after'}); print(c?JSON.stringify({id:c._id.toString(),type:c.type,file:c.file||'',server_type:c.server_type||'',location:c.location||''}):'')" 2>/dev/null | tail -1)
+  # Το API container μπορεί να λείπει στιγμιαία (deploy) → περίμενε, ΜΗΝ γυρίσεις στο παλιό
+  # ακριβό μονοπάτι· αλλιώς ένα μεγάλο deploy θα ξανάφερνε τον καταιγισμό container.
+  if ! docker inspect -f '{{.State.Running}}' "$API_CT" 2>/dev/null | grep -q true; then
+    sleep 30; continue
+  fi
+  CMD=$(POLL | tail -1)
   ID=$(printf '%s' "$CMD" | jget id); TYPE=$(printf '%s' "$CMD" | jget type); FILE=$(printf '%s' "$CMD" | jget file)
   STY=$(printf '%s' "$CMD" | jget server_type); LOC=$(printf '%s' "$CMD" | jget location)
   if [ -n "$ID" ]; then
