@@ -15,7 +15,9 @@ units** (λεπτά, integer) για ακρίβεια — όχι float.
 | `tenants` | φαρμακεία (root του multi-tenancy) |
 | `users` | χρήστες ανά tenant |
 | `roles` | σύνολα permissions ανά tenant |
-| `permissions` | global κατάλογος permission keys |
+| `permissions` | global κατάλογος permission keys (tenant-side RBAC) |
+| `platform_admins` | προσωπικό CloudOn (back-office) — ξεχωριστή ταυτότητα από τους `users` |
+| `platform_groups` | ομάδες δικαιωμάτων του back-office |
 | `pharmacies` | φυσικά σημεία/καταστήματα ενός tenant (chain support) |
 | `prescription_executions` | εκτελεσμένες συνταγές (head) |
 | `prescription_items` | γραμμές συνταγής (σκευάσματα) |
@@ -93,6 +95,35 @@ units** (λεπτά, integer) για ακρίβεια — όχι float.
  "description":"Ανάγνωση συνταγών","module":"prescription_analytics"}
 ```
 **Indexes:** `{resource:1, action:1}`. **Σημ.:** seed-only, read-mostly.
+
+## 4β. `platform_admins` + `platform_groups` (back-office RBAC)
+
+Ξεχωριστό σύστημα από το tenant RBAC παραπάνω: άλλη ταυτότητα (`padmin` token), άλλος
+κατάλογος ενεργειών. Ο κατάλογος **δεν** αποθηκεύεται σε collection — ζει στον κώδικα
+(`app/services/platform_rbac.py`), ώστε χάρτης διαδρομών και δικαιώματα να μένουν
+συγχρονισμένα και να ελέγχονται από test.
+
+```json
+// platform_admins
+{"_id":"ObjectId","email":"…@cloudon.gr","full_name":"…","password_hash":"argon2…",
+ "status":"active","super_admin":false,"group_ids":["ObjectId"],
+ "refresh_token_version":0,"permissions":[]}
+```
+Το `permissions[]` είναι **legacy** (παλιά section keys) — διατηρείται για rollback και
+αγνοείται από τον κώδικα. Τα ενεργά δικαιώματα προκύπτουν από τα `group_ids`.
+
+```json
+// platform_groups
+{"_id":"ObjectId","key":"support","name":"Υποστήριξη πελατών","description":"…",
+ "permissions":["tenants:read","subscriptions:read"],
+ "is_system":true,"customized":false,"tenant_scope":null}
+```
+`is_system` = προεπιλεγμένη ομάδα (ενημερώνεται από το seed)· μόλις την πειράξει
+άνθρωπος μπαίνει `customized:true` και το seed δεν την ξαναγράφει.
+`tenant_scope:null` = όλοι οι πελάτες — **δεσμευμένο** για μελλοντικό περιορισμό ανά
+πελάτη (μοντέλο account manager), ώστε να μπει χωρίς migration.
+
+**Indexes:** `platform_groups {name:1}` unique · `platform_admins {group_ids:1}`.
 
 ## 5. `pharmacies`
 **Σκοπός:** φυσικά καταστήματα (υποστήριξη αλυσίδας κάτω από έναν tenant).

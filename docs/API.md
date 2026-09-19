@@ -36,6 +36,51 @@ JWT claims: `sub, tid, roles[], modules{}, scope, exp, iat, jti`.
 | GET | `/permissions` | `users:manage` |
 | CRUD | `/pharmacies` | `settings:write` |
 
+## Back-office (CloudOn staff) — ομάδες & δικαιώματα
+
+Ξεχωριστή ταυτότητα από τους χρήστες φαρμακείων: `padmin` token από
+`POST /platform/auth/login` (ΟΧΙ `/auth/login`). Δύο διαφορετικά συστήματα σύνδεσης.
+
+**Το μοντέλο:** τα δικαιώματα ζουν **μόνο σε ομάδες** (`platform_groups`). Ο χρήστης
+παίρνει ομάδες (`platform_admins.group_ids`) και τα δικαιώματά του είναι η **ένωση**
+τους. Ένα δικαίωμα ανά **ενέργεια** (`tenants:read` ≠ `tenants:delete`), σε μορφή
+`resource:action`. Ο `super_admin` κουβαλά wildcard `*`.
+
+**Εξουσιοδότηση:** κεντρικός χάρτης `(method, route template) → permission` στο
+`app/services/platform_rbac.py`, που επιβάλλεται από το router-level
+`require_padmin(scope)` (δηλώνεται στο `app/api/v1/__init__.py`). Καλύπτει και τους
+τέσσερις back-office routers: `admin`, `admin_leads`, `platform/cloud`,
+`platform/fund-groups`.
+
+⚠️ **Deny by default**: διαδρομή εκτός χάρτη → `403 route_not_mapped`. Κάθε νέο
+endpoint ΠΡΕΠΕΙ να δηλωθεί στον χάρτη, αλλιώς δεν δουλεύει για κανέναν πλην super
+admin. Το `tests/test_platform_rbac.py` αποτυγχάνει στο CI αν ξεχαστεί.
+
+Τα δικαιώματα **δεν** μπαίνουν στο token — διαβάζονται ανά request, οπότε αλλαγή
+ομάδας ισχύει άμεσα, χωρίς επανασύνδεση.
+
+| Method | Path | Permission |
+|---|---|---|
+| GET | `/admin/permissions` | κάθε συνδεδεμένος admin (κατάλογος για το UI) |
+| GET | `/admin/sections` | κάθε συνδεδεμένος admin (ετικέτες ενοτήτων) |
+| GET | `/admin/groups` | `staff:read` |
+| POST | `/admin/groups` | `staff:manage` |
+| PATCH/DELETE | `/admin/groups/{id}` | `staff:manage` |
+| GET | `/admin/staff` | `staff:read` |
+| POST/PATCH/DELETE | `/admin/staff[/{id}]` | `staff:manage` |
+| POST | `/admin/staff/{id}/reset-password` · `/send-credentials` | `staff:password` |
+
+**Επικίνδυνα δικαιώματα** (`sensitive`): δεν μπαίνουν ποτέ σε προεπιλεγμένη ομάδα και
+κάθε χρήση τους καταγράφεται στο `audit_logs` —
+`tenants:impersonate` (δεδομένα ασθενών), `tenants:credentials`,
+`tenants:send_credentials`, `tenants:delete`, `tenants:items_delete`,
+`subscriptions:trials_purge`, `integrations:write`, `integrations:rotate`,
+`monitoring:audit`, `staff:manage`, `staff:password`, `system:purge`,
+`cloud:write`, `cloud:ops`.
+
+Προεπιλεγμένες ομάδες: Μόνο ανάγνωση · Υποστήριξη πελατών · Πωλήσεις · Λογιστήριο ·
+Marketing · Τεχνική υποστήριξη.
+
 ## Ingestion
 | Method | Path | Permission | Σημείωση |
 |---|---|---|---|

@@ -1,5 +1,6 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
+from app.core.deps import require_padmin
 from app.api.v1.routers import (
     addons,
     admin,
@@ -98,12 +99,20 @@ api_router.include_router(pharmacyone.router, prefix="/pharmacyone", tags=["phar
 
 # Back-office (platform/CloudOn) — separate auth + cross-tenant admin
 api_router.include_router(platform.router, prefix="/platform", tags=["platform"])
-api_router.include_router(fund_groups.router, prefix="/platform/fund-groups", tags=["platform"])
-api_router.include_router(infra_cloud.router, prefix="/platform/cloud", tags=["platform"])
-api_router.include_router(admin.router, prefix="/admin", tags=["admin"])
+# Back-office authorization: ΕΝΑ σημείο για όλους τους routers του back-office.
+# Το `require_padmin(scope)` ελέγχει ταυτότητα ΚΑΙ δικαίωμα ανά διαδρομή, με deny
+# by default. Το `scope` πρέπει να ταιριάζει με τα κλειδιά του ROUTE_PERMISSIONS.
+api_router.include_router(fund_groups.router, prefix="/platform/fund-groups", tags=["platform"],
+                          dependencies=[Depends(require_padmin("fund_groups"))])
+api_router.include_router(infra_cloud.router, prefix="/platform/cloud", tags=["platform"],
+                          dependencies=[Depends(require_padmin("cloud"))])
+api_router.include_router(admin.router, prefix="/admin", tags=["admin"],
+                          dependencies=[Depends(require_padmin("admin"))])
 # Lead Engine — δικός του router (ο admin.py είναι ήδη 3.700+ γραμμές). Ο prefix είναι
-# δηλωμένος μέσα στο module ώστε το `enforce_section` να διαβάζει σωστά την ενότητα «leads».
-api_router.include_router(admin_leads.router, tags=["admin-leads"])
+# δηλωμένος ΜΕΣΑ στο module, γι' αυτό οι διαδρομές του στον χάρτη δικαιωμάτων γράφονται
+# ολόκληρες (`/admin/leads/...`), σε αντίθεση με τους άλλους routers.
+api_router.include_router(admin_leads.router, tags=["admin-leads"],
+                          dependencies=[Depends(require_padmin("admin_leads"))])
 
 # Admin: subscriptions, tenant, users/roles/permissions
 api_router.include_router(subscriptions.router, prefix="/subscription", tags=["subscription"])

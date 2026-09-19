@@ -8,6 +8,7 @@ import {
   LogOut, PlugZap, Menu, X, Layers, Cloud, ScrollText, Boxes, Settings, ChevronDown,
   ChevronRight, Percent, Brain, Bell, Sparkles, MessageSquare, Activity, ArrowUpCircle,
   Landmark, Bot, Wallet, Smartphone, Network, Database, Clock, FileText, Megaphone,
+  ShieldCheck,
 } from "lucide-react";
 import { adminApi, adminTokens, ApiError } from "@/lib/adminClient";
 import { PoweredBy } from "@/components/brand/PoweredBy";
@@ -15,70 +16,71 @@ import { LogoMark } from "@/components/brand/Logo";
 import { APP_VERSION } from "@/lib/version";
 
 // Πίνακας — always visible, standalone entry above the grouped circuits.
-const HOME = { label: "Πίνακας", icon: LayoutGrid, href: "/admin", section: "dashboard" };
+const HOME = { label: "Πίνακας", icon: LayoutGrid, href: "/admin", section: "dashboard:read" };
 
 // CloudOn console — organised into logical circuits (ομάδες συναφών ενοτήτων). Each group is
 // collapsible; the one containing the active page auto-expands.
 const GROUPS: { label: string; icon: typeof LayoutGrid; items: { label: string; icon: typeof LayoutGrid; href: string; section: string }[] }[] = [
   {
     label: "Πελάτες & Συνδρομές", icon: Users, items: [
-      { label: "Συνδρομητές", icon: Users, href: "/admin/subscribers", section: "subscribers" },
-      { label: "Δίκτυο φαρμακείων", icon: Network, href: "/admin/network", section: "subscribers" },
-      { label: "Συνδρομές", icon: CreditCard, href: "/admin/subscriptions", section: "subscriptions" },
-      { label: "Πακέτα & SLA", icon: Boxes, href: "/admin/packages", section: "subscriptions" },
-      { label: "Add-ons", icon: Sparkles, href: "/admin/addons", section: "subscriptions" },
-      { label: "Προμήθειες e-shop", icon: Receipt, href: "/admin/eshop-fees", section: "subscriptions" },
-      { label: "Αλλαγές πακέτου", icon: ArrowUpCircle, href: "/admin/plan-changes", section: "subscriptions" },
-      { label: "Κύκλος ζωής", icon: Clock, href: "/admin/lifecycle", section: "subscriptions" },
-      { label: "Εκκρεμείς εγγραφές", icon: Clock, href: "/admin/pending", section: "subscriptions" },
-      { label: "Leads & Conversions", icon: Users, href: "/admin/leads", section: "leads" },
-      { label: "Newsletter", icon: Mail, href: "/admin/newsletter", section: "newsletter" },
-      { label: "Ανακοινώσεις πελατών", icon: Megaphone, href: "/admin/announcements", section: "content" },
-      { label: "Αξιολογήσεις", icon: MessageSquare, href: "/admin/feedback", section: "subscribers" },
+      { label: "Συνδρομητές", icon: Users, href: "/admin/subscribers", section: "tenants:read" },
+      { label: "Δίκτυο φαρμακείων", icon: Network, href: "/admin/network", section: "tenants:read" },
+      { label: "Συνδρομές", icon: CreditCard, href: "/admin/subscriptions", section: "subscriptions:read" },
+      { label: "Πακέτα & SLA", icon: Boxes, href: "/admin/packages", section: "packages:read" },
+      { label: "Add-ons", icon: Sparkles, href: "/admin/addons", section: "packages:read" },
+      { label: "Προμήθειες e-shop", icon: Receipt, href: "/admin/eshop-fees", section: "eshop_fees:read" },
+      { label: "Αλλαγές πακέτου", icon: ArrowUpCircle, href: "/admin/plan-changes", section: "subscriptions:read" },
+      { label: "Κύκλος ζωής", icon: Clock, href: "/admin/lifecycle", section: "subscriptions:read" },
+      { label: "Εκκρεμείς εγγραφές", icon: Clock, href: "/admin/pending", section: "tenants:read" },
+      { label: "Leads & Conversions", icon: Users, href: "/admin/leads", section: "leads:read" },
+      { label: "Newsletter", icon: Mail, href: "/admin/newsletter", section: "newsletter:read" },
+      { label: "Ανακοινώσεις πελατών", icon: Megaphone, href: "/admin/announcements", section: "content:read" },
+      { label: "Αξιολογήσεις", icon: MessageSquare, href: "/admin/feedback", section: "feedback:read" },
     ],
   },
   {
     label: "Χρεώσεις & Πληρωμές", icon: Wallet, items: [
-      { label: "Τιμολόγηση", icon: Receipt, href: "/admin/billing", section: "billing" },
-      { label: "Παραστατικά", icon: FileText, href: "/admin/invoices", section: "billing" },
-      { label: "Ανοιχτά υπόλοιπα", icon: Wallet, href: "/admin/open-balances", section: "billing" },
-      { label: "Τρόποι πληρωμής", icon: Wallet, href: "/admin/payments", section: "integrations" },
-      { label: "Διατίμηση / Κέρδος", icon: Percent, href: "/admin/markup", section: "markup" },
-      { label: "Μηνύματα & Credits", icon: MessageSquare, href: "/admin/credit-packages", section: "subscriptions" },
+      { label: "Τιμολόγηση", icon: Receipt, href: "/admin/billing", section: "billing:read" },
+      { label: "Παραστατικά", icon: FileText, href: "/admin/invoices", section: "invoices:read" },
+      { label: "Ανοιχτά υπόλοιπα", icon: Wallet, href: "/admin/open-balances", section: "billing:read" },
+      { label: "Τρόποι πληρωμής", icon: Wallet, href: "/admin/payments", section: "billing:read" },
+      { label: "Διατίμηση / Κέρδος", icon: Percent, href: "/admin/markup", section: "markup:read" },
+      { label: "Μηνύματα & Credits", icon: MessageSquare, href: "/admin/credit-packages", section: "packages:read" },
     ],
   },
   {
     label: "Κρατικές διασυνδέσεις", icon: Landmark, items: [
-      { label: "ΑΑΔΕ", icon: Landmark, href: "/admin/aade", section: "integrations" },
-      { label: "SoftOne / myDATA", icon: Receipt, href: "/admin/softone", section: "integrations" },
-      { label: "Διασύνδεση ΗΔΥΚΑ", icon: PlugZap, href: "/admin/idika", section: "idika" },
+      { label: "ΑΑΔΕ", icon: Landmark, href: "/admin/aade", section: "tenants:read" },
+      { label: "SoftOne / myDATA", icon: Receipt, href: "/admin/softone", section: "integrations:read" },
+      { label: "Διασύνδεση ΗΔΥΚΑ", icon: PlugZap, href: "/admin/idika", section: "integrations:read" },
     ],
   },
   {
     label: "AI & Κλινικά", icon: Brain, items: [
-      { label: "AI Providers", icon: Bot, href: "/admin/ai-providers", section: "integrations" },
-      { label: "PharmaCat — Βάση γνώσης", icon: Brain, href: "/admin/pharmacat-kb", section: "pharmacat" },
+      { label: "AI Providers", icon: Bot, href: "/admin/ai-providers", section: "integrations:read" },
+      { label: "PharmaCat — Βάση γνώσης", icon: Brain, href: "/admin/pharmacat-kb", section: "pharmacat:read" },
     ],
   },
   {
     label: "Λειτουργία & Παρακολούθηση", icon: Activity, items: [
-      { label: "Επισκεψιμότητα", icon: BarChart3, href: "/admin/health", section: "health" },
-      { label: "Συνδεδεμένοι", icon: Activity, href: "/admin/sessions", section: "health" },
-      { label: "Ιστορικό συνδέσεων", icon: History, href: "/admin/session-history", section: "health" },
-      { label: "Ειδοποιήσεις", icon: Bell, href: "/admin/notifications", section: "notifications" },
-      { label: "SMS ιδιοκτήτη", icon: Smartphone, href: "/admin/alerts", section: "notifications" },
-      { label: "Αρχείο ενεργειών", icon: ScrollText, href: "/admin/audit-logs", section: "audit" },
+      { label: "Επισκεψιμότητα", icon: BarChart3, href: "/admin/health", section: "monitoring:read" },
+      { label: "Συνδεδεμένοι", icon: Activity, href: "/admin/sessions", section: "monitoring:sessions" },
+      { label: "Ιστορικό συνδέσεων", icon: History, href: "/admin/session-history", section: "monitoring:sessions" },
+      { label: "Ειδοποιήσεις", icon: Bell, href: "/admin/notifications", section: "comms:read" },
+      { label: "SMS ιδιοκτήτη", icon: Smartphone, href: "/admin/alerts", section: "comms:read" },
+      { label: "Αρχείο ενεργειών", icon: ScrollText, href: "/admin/audit-logs", section: "monitoring:audit" },
     ],
   },
   {
     label: "Σύστημα", icon: Settings, items: [
-      { label: "Χρήστες", icon: UserCog, href: "/admin/staff", section: "staff" },
-      { label: "Ομάδες ταμείων", icon: Layers, href: "/admin/fund-groups", section: "fund_groups" },
-      { label: "Υποδομή / Cloud", icon: Cloud, href: "/admin/cloud", section: "cloud" },
-      { label: "Ρυθμίσεις SMTP", icon: Server, href: "/admin/smtp", section: "smtp" },
-      { label: "Πύλη Πελατών", icon: Smartphone, href: "/admin/portal", section: "maintenance" },
-      { label: "Διατήρηση δεδομένων", icon: Database, href: "/admin/data-retention", section: "maintenance" },
-      { label: "Συντήρηση", icon: Wrench, href: "/admin/maintenance", section: "maintenance" },
+      { label: "Χρήστες", icon: UserCog, href: "/admin/staff", section: "staff:read" },
+      { label: "Ομάδες & δικαιώματα", icon: ShieldCheck, href: "/admin/groups", section: "staff:read" },
+      { label: "Ομάδες ταμείων", icon: Layers, href: "/admin/fund-groups", section: "fund_groups:read" },
+      { label: "Υποδομή / Cloud", icon: Cloud, href: "/admin/cloud", section: "cloud:read" },
+      { label: "Ρυθμίσεις SMTP", icon: Server, href: "/admin/smtp", section: "system:read" },
+      { label: "Πύλη Πελατών", icon: Smartphone, href: "/admin/portal", section: "system:read" },
+      { label: "Διατήρηση δεδομένων", icon: Database, href: "/admin/data-retention", section: "system:read" },
+      { label: "Συντήρηση", icon: Wrench, href: "/admin/maintenance", section: "system:read" },
     ],
   },
 ];
@@ -103,7 +105,11 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
   if (isLogin) return <div className="min-h-screen bg-slate-900">{children}</div>;
 
-  const canSee = (section: string) => !access || access.super_admin || access.permissions.includes(section);
+  // `section` είναι πλέον κλειδί δικαιώματος (π.χ. "billing:read"). Όσο δεν έχει
+  // απαντήσει το /auth/me δείχνουμε τα πάντα — το backend είναι η πηγή αλήθειας και
+  // θα απαντήσει 403· έτσι το μενού δεν «αναβοσβήνει» στο φόρτωμα.
+  const canSee = (perm: string) =>
+    !access || access.super_admin || access.permissions.includes("*") || access.permissions.includes(perm);
   const isActive = (href: string) => pathname === href || pathname.startsWith(href + "/");
 
   function logout() {

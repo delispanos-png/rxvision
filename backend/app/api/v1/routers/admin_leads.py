@@ -1,7 +1,8 @@
 """Leads & Conversions — platform-level API.
 
 Ξεχωριστός router από τον `admin.py` (3.700+ γραμμές) επίτηδες. Κάθε διαδρομή περνά από
-`enforce_section` → ενότητα `leads`: staff χωρίς αυτό το δικαίωμα παίρνει 403.
+`require_padmin("admin_leads")` (δηλώνεται στο `api/v1/__init__.py`): κάθε διαδρομή
+απαιτεί το δικό της δικαίωμα `leads:*` — staff χωρίς αυτό παίρνει 403.
 
 ΚΑΜΙΑ διαδρομή δεν αγγίζει δεδομένα ασθενών. Το Lead Engine αφορά τη σχέση με το φαρμακείο.
 """
@@ -12,9 +13,9 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from app.api.v1.routers.admin import enforce_section, jsonsafe
+from app.api.v1.routers.admin import jsonsafe
 from app.core.db import shared_db
-from app.core.deps import PlatformContext
+from app.core.deps import PlatformContext, get_platform_admin
 from app.services.leads import actions, board, config as cfg, projection, segments
 from pydantic import BaseModel
 
@@ -31,7 +32,7 @@ def _who(ctx: PlatformContext) -> str:
 
 # ── οθόνη ───────────────────────────────────────────────────────────────────────────────────
 @router.get("/overview")
-async def overview(_: PlatformContext = Depends(enforce_section)):
+async def overview(_: PlatformContext = Depends(get_platform_admin)):
     """«Σήμερα» + μετρήσεις + καρτέλες + έτοιμα τμήματα, με ζωντανά νούμερα."""
     return jsonsafe(await board.overview())
 
@@ -39,7 +40,7 @@ async def overview(_: PlatformContext = Depends(enforce_section)):
 @router.get("")
 async def listing(tab: str = "attention", q: str | None = None,
                   segment: str | None = None, assigned_to: str | None = None,
-                  limit: int = 200, _: PlatformContext = Depends(enforce_section)):
+                  limit: int = 200, _: PlatformContext = Depends(get_platform_admin)):
     try:
         return jsonsafe(await board.listing(tab=tab, q=q, segment_id=segment,
                                             assigned_to=assigned_to, limit=min(500, limit)))
@@ -48,7 +49,7 @@ async def listing(tab: str = "attention", q: str | None = None,
 
 
 @router.get("/config")
-async def get_config(_: PlatformContext = Depends(enforce_section)):
+async def get_config(_: PlatformContext = Depends(get_platform_admin)):
     return await cfg.get()
 
 
@@ -63,26 +64,26 @@ class ConfigIn(BaseModel):
 
 
 @router.put("/config")
-async def put_config(body: ConfigIn, ctx: PlatformContext = Depends(enforce_section)):
+async def put_config(body: ConfigIn, ctx: PlatformContext = Depends(get_platform_admin)):
     return await cfg.save(body.model_dump(exclude_none=True), by=_who(ctx))
 
 
 @router.post("/refresh")
-async def refresh(ctx: PlatformContext = Depends(enforce_section)):
+async def refresh(ctx: PlatformContext = Depends(get_platform_admin)):
     """Χειροκίνητο ξαναχτίσιμο της προβολής — δεν στέλνει τίποτα, μόνο διαβάζει & ενημερώνει."""
     return await projection.project()
 
 
 # ── τμήματα ─────────────────────────────────────────────────────────────────────────────────
 @router.get("/segments/fields")
-async def segment_fields(_: PlatformContext = Depends(enforce_section)):
+async def segment_fields(_: PlatformContext = Depends(get_platform_admin)):
     return {"fields": segments.FIELDS, "operators": list(segments.OPS),
             "stages": projection.STAGE_LABEL, "statuses": actions.STATUSES,
             "tags": segments.BUILTIN and actions.TAG_LABEL}
 
 
 @router.get("/segments")
-async def segment_list(_: PlatformContext = Depends(enforce_section)):
+async def segment_list(_: PlatformContext = Depends(get_platform_admin)):
     return {"builtin": await segments.builtin_counts(), "saved": await segments.listing()}
 
 
@@ -91,7 +92,7 @@ class RulesIn(BaseModel):
 
 
 @router.post("/segments/preview")
-async def segment_preview(body: RulesIn, _: PlatformContext = Depends(enforce_section)):
+async def segment_preview(body: RulesIn, _: PlatformContext = Depends(get_platform_admin)):
     try:
         return {"count": await segments.count(body.rules)}
     except ValueError as exc:
@@ -104,7 +105,7 @@ class SegmentIn(BaseModel):
 
 
 @router.post("/segments")
-async def segment_save(body: SegmentIn, ctx: PlatformContext = Depends(enforce_section)):
+async def segment_save(body: SegmentIn, ctx: PlatformContext = Depends(get_platform_admin)):
     try:
         res = await segments.save(name=body.name, rules=body.rules, by=_who(ctx))
     except ValueError as exc:
@@ -115,13 +116,13 @@ async def segment_save(body: SegmentIn, ctx: PlatformContext = Depends(enforce_s
 
 
 @router.delete("/segments/{segment_id}")
-async def segment_delete(segment_id: str, _: PlatformContext = Depends(enforce_section)):
+async def segment_delete(segment_id: str, _: PlatformContext = Depends(get_platform_admin)):
     return await segments.delete(segment_id)
 
 
 # ── εργασίες (τροφοδοτούν το «Σήμερα») ──────────────────────────────────────────────────────
 @router.get("/tasks")
-async def task_list(overdue: bool = False, _: PlatformContext = Depends(enforce_section)):
+async def task_list(overdue: bool = False, _: PlatformContext = Depends(get_platform_admin)):
     rows = await actions.open_tasks(overdue_only=overdue)
     db = shared_db()
     for r in rows:                       # το όνομα του φαρμακείου, για να μη λέει σκέτο ΑΦΜ
@@ -134,7 +135,7 @@ async def task_list(overdue: bool = False, _: PlatformContext = Depends(enforce_
 
 # ── ένα lead ────────────────────────────────────────────────────────────────────────────────
 @router.get("/{lead_key:path}/detail")
-async def detail(lead_key: str, _: PlatformContext = Depends(enforce_section)):
+async def detail(lead_key: str, _: PlatformContext = Depends(get_platform_admin)):
     res = await board.detail(lead_key)
     if not res:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "not_found")
@@ -148,7 +149,7 @@ class StatusIn(BaseModel):
 
 @router.post("/{lead_key:path}/status")
 async def set_status(lead_key: str, body: StatusIn,
-                     ctx: PlatformContext = Depends(enforce_section)):
+                     ctx: PlatformContext = Depends(get_platform_admin)):
     res = await actions.set_status(lead_key, body.status, by=_who(ctx), reason=body.reason)
     if not res.get("ok"):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, res.get("error", "failed"))
@@ -162,7 +163,7 @@ class NoteIn(BaseModel):
 
 @router.post("/{lead_key:path}/notes")
 async def add_note(lead_key: str, body: NoteIn,
-                   ctx: PlatformContext = Depends(enforce_section)):
+                   ctx: PlatformContext = Depends(get_platform_admin)):
     res = await actions.add_note(lead_key, body.body, kind=body.kind, by=_who(ctx))
     if not res.get("ok"):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, res.get("error", "failed"))
@@ -179,7 +180,7 @@ class TaskIn(BaseModel):
 
 @router.post("/{lead_key:path}/tasks")
 async def add_task(lead_key: str, body: TaskIn,
-                   ctx: PlatformContext = Depends(enforce_section)):
+                   ctx: PlatformContext = Depends(get_platform_admin)):
     res = await actions.add_task(lead_key, action=body.action, title=body.title,
                                  due_at=body.due_at, priority=body.priority,
                                  assigned_to=body.assigned_to, by=_who(ctx))
@@ -195,7 +196,7 @@ class TaskDoneIn(BaseModel):
 
 @router.post("/tasks/{task_id}/done")
 async def task_done(task_id: str, body: TaskDoneIn,
-                    ctx: PlatformContext = Depends(enforce_section)):
+                    ctx: PlatformContext = Depends(get_platform_admin)):
     res = await actions.complete_task(task_id, by=_who(ctx), note=body.note, cancel=body.cancel)
     if not res.get("ok"):
         raise HTTPException(status.HTTP_404_NOT_FOUND, res.get("error", "failed"))
@@ -208,7 +209,7 @@ class TagsIn(BaseModel):
 
 @router.post("/{lead_key:path}/tags")
 async def set_tags(lead_key: str, body: TagsIn,
-                   ctx: PlatformContext = Depends(enforce_section)):
+                   ctx: PlatformContext = Depends(get_platform_admin)):
     res = await actions.set_tags(lead_key, body.tags, by=_who(ctx))
     if not res.get("ok"):
         raise HTTPException(status.HTTP_404_NOT_FOUND, res.get("error", "failed"))
@@ -221,7 +222,7 @@ class AssignIn(BaseModel):
 
 @router.post("/{lead_key:path}/assign")
 async def assign(lead_key: str, body: AssignIn,
-                 ctx: PlatformContext = Depends(enforce_section)):
+                 ctx: PlatformContext = Depends(get_platform_admin)):
     res = await actions.assign(lead_key, body.admin_id, by=_who(ctx))
     if not res.get("ok"):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, res.get("error", "failed"))
@@ -235,7 +236,7 @@ class GrantTrialIn(BaseModel):
 
 @router.post("/{lead_key:path}/grant-trial")
 async def grant_trial(lead_key: str, body: GrantTrialIn,
-                      ctx: PlatformContext = Depends(enforce_section)):
+                      ctx: PlatformContext = Depends(get_platform_admin)):
     """Κατ' εξαίρεση νέα δοκιμαστική περίοδος. Ζητά ΠΑΝΤΑ λόγο και μετριέται."""
     from app.services.leads import trials
     res = await trials.grant(lead_key, days=body.days, by=_who(ctx), reason=body.reason)
@@ -245,7 +246,7 @@ async def grant_trial(lead_key: str, body: GrantTrialIn,
 
 
 @router.get("/{lead_key:path}/trials")
-async def trial_history(lead_key: str, _: PlatformContext = Depends(enforce_section)):
+async def trial_history(lead_key: str, _: PlatformContext = Depends(get_platform_admin)):
     from app.services.leads import trials
     return jsonsafe({"items": await trials.history(lead_key)})
 
@@ -256,7 +257,7 @@ class TrialAllowedIn(BaseModel):
 
 @router.post("/{lead_key:path}/trial-allowed")
 async def set_trial_allowed(lead_key: str, body: TrialAllowedIn,
-                            ctx: PlatformContext = Depends(enforce_section)):
+                            ctx: PlatformContext = Depends(get_platform_admin)):
     """Ξεμπλοκάρει (ή ξανα-μπλοκάρει) ΑΦΜ ώστε να μπορεί να πάρει ΞΑΝΑ δωρεάν δοκιμαστική.
 
     Μεταφέρθηκε αυτούσιο από τον παλιό router — είναι το ένα πράγμα που ο ιδιοκτήτης όντως
@@ -270,7 +271,7 @@ async def set_trial_allowed(lead_key: str, body: TrialAllowedIn,
 
 
 @router.delete("/{lead_key:path}")
-async def delete_lead(lead_key: str, _: PlatformContext = Depends(enforce_section)):
+async def delete_lead(lead_key: str, _: PlatformContext = Depends(get_platform_admin)):
     """Οριστική διαγραφή lead + χρονολογίου (αίτημα διαγραφής)."""
     from app.services.leads import timeline as tl
     db = shared_db()
@@ -289,7 +290,7 @@ class ContactIn(BaseModel):
 
 @router.patch("/{lead_key:path}/contact")
 async def update_contact(lead_key: str, body: ContactIn,
-                         ctx: PlatformContext = Depends(enforce_section)):
+                         ctx: PlatformContext = Depends(get_platform_admin)):
     res = await actions.update_contact(lead_key, email=body.email, phone=body.phone,
                                        contact_name=body.contact_name, by=_who(ctx))
     if not res.get("ok"):

@@ -8,26 +8,44 @@ import { fmtDate } from "@/lib/formatters";
 import { DataTable, type Column } from "@/components/tables/DataTable";
 import { Modal } from "@/components/ui/Modal";
 
-type Staff = { id: string; email: string; full_name: string; status: string; created_at: string; super_admin: boolean; permissions: string[] };
-type Section = { key: string; label: string };
+type Group = { id: string; name: string };
+type Staff = {
+  id: string; email: string; full_name: string; status: string; created_at: string;
+  super_admin: boolean; group_ids: string[]; groups: Group[];
+};
 
-function SectionPicker({ sections, superAdmin, perms, onSuper, onToggle }:
-  { sections: Section[]; superAdmin: boolean; perms: string[]; onSuper: (v: boolean) => void; onToggle: (key: string) => void }) {
+/** Τα δικαιώματα ζουν ΜΟΝΟ στις ομάδες — εδώ επιλέγεις σε ποιες ανήκει ο χρήστης.
+ *  Για να αλλάξεις το τι μπορεί να κάνει μια ομάδα: Σύστημα → Ομάδες & δικαιώματα. */
+function GroupPicker({ groups, superAdmin, selected, onSuper, onToggle }: {
+  groups: Group[]; superAdmin: boolean; selected: string[];
+  onSuper: (v: boolean) => void; onToggle: (id: string) => void;
+}) {
   return (
     <div className="mb-4">
       <label className="mb-2 flex items-center gap-2 text-sm font-medium text-slate-700">
         <input type="checkbox" checked={superAdmin} onChange={(e) => onSuper(e.target.checked)} />
-        Super Admin (πλήρης πρόσβαση)
+        Super Admin (πλήρης πρόσβαση — παρακάμπτει τις ομάδες)
       </label>
       {!superAdmin && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-1 rounded-lg border border-slate-200 p-3">
-          {sections.map((s) => (
-            <label key={s.key} className="flex items-center gap-2 text-sm text-slate-600">
-              <input type="checkbox" checked={perms.includes(s.key)} onChange={() => onToggle(s.key)} />
-              {s.label}
-            </label>
-          ))}
-        </div>
+        <>
+          <p className="mb-2 text-xs text-slate-500">
+            Ο χρήστης παίρνει την ένωση των δικαιωμάτων από τις ομάδες που θα επιλέξεις.
+          </p>
+          <div className="grid grid-cols-1 gap-1 rounded-lg border border-slate-200 p-3 sm:grid-cols-2">
+            {groups.length === 0 && <span className="text-sm text-slate-400">Δεν υπάρχουν ομάδες ακόμη.</span>}
+            {groups.map((g) => (
+              <label key={g.id} className="flex items-center gap-2 text-sm text-slate-600">
+                <input type="checkbox" checked={selected.includes(g.id)} onChange={() => onToggle(g.id)} />
+                {g.name}
+              </label>
+            ))}
+          </div>
+          {selected.length === 0 && (
+            <p className="mt-2 text-xs text-amber-700">
+              ⚠️ Χωρίς ομάδα ο χρήστης συνδέεται αλλά δεν βλέπει τίποτα.
+            </p>
+          )}
+        </>
       )}
     </div>
   );
@@ -40,9 +58,8 @@ export default function StaffPage() {
   const [notice, setNotice] = useState<string | null>(null);
 
   const staff = useQuery({ queryKey: ["admin", "staff"], queryFn: () => adminApi<{ items: Staff[] }>("/admin/staff"), retry: false });
-  const sectionsQ = useQuery({ queryKey: ["admin", "sections"], queryFn: () => adminApi<{ sections: Section[] }>("/admin/sections"), retry: false });
-  const sections = sectionsQ.data?.sections ?? [];
-  const labelOf = (k: string) => sections.find((s) => s.key === k)?.label ?? k;
+  const groupsQ = useQuery({ queryKey: ["admin", "groups"], queryFn: () => adminApi<{ items: Group[] }>("/admin/groups"), retry: false });
+  const groups = groupsQ.data?.items ?? [];
   const rows = staff.data?.items ?? [];
   const refresh = () => qc.invalidateQueries({ queryKey: ["admin", "staff"] });
 
@@ -100,10 +117,16 @@ export default function StaffPage() {
     { key: "full_name", header: "Όνομα" },
     { key: "email", header: "Email" },
     {
-      key: "access", header: "Πρόσβαση",
+      key: "access", header: "Ομάδες",
       render: (r) => r.super_admin
         ? <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-xs font-medium text-indigo-700">Super Admin</span>
-        : <span className="text-xs text-slate-500">{r.permissions.length ? r.permissions.map(labelOf).join(", ") : "—"}</span>,
+        : r.groups.length
+          ? <div className="flex flex-wrap gap-1">
+              {r.groups.map((g) => (
+                <span key={g.id} className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">{g.name}</span>
+              ))}
+            </div>
+          : <span className="text-xs text-amber-600">χωρίς ομάδα</span>,
     },
     {
       key: "status", header: "Κατάσταση",
@@ -133,7 +156,12 @@ export default function StaffPage() {
   return (
     <div>
       <div className="mb-6 flex items-center justify-between">
-        <h1 className="text-xl font-bold text-slate-900">Χρήστες (CloudOn staff)</h1>
+        <div>
+          <h1 className="text-xl font-bold text-slate-900">Χρήστες (CloudOn staff)</h1>
+          <p className="mt-1 text-xs text-slate-500">
+            Η πρόσβαση ορίζεται από τις <a href="/admin/groups" className="text-indigo-600 hover:underline">ομάδες</a>, όχι ανά άτομο.
+          </p>
+        </div>
         <button onClick={() => setOpen(true)} className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700">
           + Προσθήκη χρήστη
         </button>
@@ -148,28 +176,31 @@ export default function StaffPage() {
 
       {staff.isLoading ? <div className="text-slate-400">Φόρτωση…</div> : <DataTable pageSize={20} columns={columns} rows={rows} rowKey={(r) => r.id} />}
 
-      {open && <AddStaffModal sections={sections} onClose={() => setOpen(false)} onDone={(msg) => { setNotice(msg); refresh(); }} />}
-      {editing && <EditStaffModal staff={editing} sections={sections} onClose={() => setEditing(null)} onDone={(msg) => { setNotice(msg); refresh(); }} />}
+      {open && <AddStaffModal groups={groups} onClose={() => setOpen(false)} onDone={(msg) => { setNotice(msg); refresh(); }} />}
+      {editing && <EditStaffModal staff={editing} groups={groups} onClose={() => setEditing(null)} onDone={(msg) => { setNotice(msg); refresh(); }} />}
     </div>
   );
 }
 
-function EditStaffModal({ staff, sections, onClose, onDone }: { staff: Staff; sections: Section[]; onClose: () => void; onDone: (msg: string | null) => void }) {
+function EditStaffModal({ staff, groups, onClose, onDone }: { staff: Staff; groups: Group[]; onClose: () => void; onDone: (msg: string | null) => void }) {
   const [form, setForm] = useState({ email: staff.email, full_name: staff.full_name });
   const [superAdmin, setSuperAdmin] = useState(staff.super_admin);
-  const [perms, setPerms] = useState<string[]>(staff.permissions ?? []);
+  const [selected, setSelected] = useState<string[]>(staff.group_ids ?? []);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const toggle = (k: string) => setPerms((p) => p.includes(k) ? p.filter((x) => x !== k) : [...p, k]);
+  const toggle = (id: string) => setSelected((p) => p.includes(id) ? p.filter((x) => x !== id) : [...p, id]);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setBusy(true); setError(null);
     try {
-      await adminApi(`/admin/staff/${staff.id}`, { method: "PATCH", body: JSON.stringify({ full_name: form.full_name, email: form.email, super_admin: superAdmin, permissions: perms }) });
+      await adminApi(`/admin/staff/${staff.id}`, { method: "PATCH", body: JSON.stringify({ full_name: form.full_name, email: form.email, super_admin: superAdmin, group_ids: selected }) });
       onDone(`Αποθηκεύτηκε: ${form.email}`); onClose();
     } catch (e) {
-      setError(e instanceof ApiError ? "Σφάλμα — δοκιμάστε ξανά." : "Σφάλμα.");
+      const problem = e instanceof ApiError ? (e.problem as { detail?: { error?: string } })?.detail?.error : null;
+      setError(problem === "last_super_admin"
+        ? "Δεν γίνεται — είναι ο τελευταίος super admin."
+        : "Σφάλμα — δοκιμάστε ξανά.");
     } finally { setBusy(false); }
   }
 
@@ -186,7 +217,7 @@ function EditStaffModal({ staff, sections, onClose, onDone }: { staff: Staff; se
           <input required type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })}
             className="w-full rounded-lg border border-slate-300 px-3 py-2 focus:border-indigo-500 focus:outline-none" />
         </label>
-        <SectionPicker sections={sections} superAdmin={superAdmin} perms={perms} onSuper={setSuperAdmin} onToggle={toggle} />
+        <GroupPicker groups={groups} superAdmin={superAdmin} selected={selected} onSuper={setSuperAdmin} onToggle={toggle} />
         {error && <div className="mb-4 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}
         <div className="flex gap-2">
           <button type="button" onClick={onClose} className="flex-1 rounded-lg border border-slate-300 py-2 text-sm">Άκυρο</button>
@@ -199,19 +230,19 @@ function EditStaffModal({ staff, sections, onClose, onDone }: { staff: Staff; se
   );
 }
 
-function AddStaffModal({ sections, onClose, onDone }: { sections: Section[]; onClose: () => void; onDone: (msg: string | null) => void }) {
+function AddStaffModal({ groups, onClose, onDone }: { groups: Group[]; onClose: () => void; onDone: (msg: string | null) => void }) {
   const [form, setForm] = useState({ email: "", full_name: "", password: "" });
   const [superAdmin, setSuperAdmin] = useState(false);
-  const [perms, setPerms] = useState<string[]>([]);
+  const [selected, setSelected] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const toggle = (k: string) => setPerms((p) => p.includes(k) ? p.filter((x) => x !== k) : [...p, k]);
+  const toggle = (id: string) => setSelected((p) => p.includes(id) ? p.filter((x) => x !== id) : [...p, id]);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setBusy(true); setError(null);
     try {
-      const body = { email: form.email, full_name: form.full_name, super_admin: superAdmin, permissions: perms, ...(form.password ? { password: form.password } : {}) };
+      const body = { email: form.email, full_name: form.full_name, super_admin: superAdmin, group_ids: selected, ...(form.password ? { password: form.password } : {}) };
       const r = await adminApi<{ email: string; temp_password: string | null }>("/admin/staff", { method: "POST", body: JSON.stringify(body) });
       onDone(r.temp_password ? `Δημιουργήθηκε ${r.email}. Προσωρινός κωδικός: ${r.temp_password}` : `Δημιουργήθηκε ${r.email}.`);
       onClose();
@@ -238,7 +269,7 @@ function AddStaffModal({ sections, onClose, onDone }: { sections: Section[]; onC
           <input type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })}
             className="w-full rounded-lg border border-slate-300 px-3 py-2 focus:border-indigo-500 focus:outline-none" />
         </label>
-        <SectionPicker sections={sections} superAdmin={superAdmin} perms={perms} onSuper={setSuperAdmin} onToggle={toggle} />
+        <GroupPicker groups={groups} superAdmin={superAdmin} selected={selected} onSuper={setSuperAdmin} onToggle={toggle} />
         {error && <div className="mb-4 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}
         <div className="flex gap-2">
           <button type="button" onClick={onClose} className="flex-1 rounded-lg border border-slate-300 py-2 text-sm">Άκυρο</button>

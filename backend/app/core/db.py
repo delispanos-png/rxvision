@@ -63,6 +63,9 @@ def shared_db() -> AsyncIOMotorDatabase:
 INDEXES: list[tuple[str, list[tuple[str, int]], dict]] = [
     ("users", [("tenant_id", 1), ("email", 1)], {"unique": True}),
     ("roles", [("tenant_id", 1), ("key", 1)], {"unique": True}),
+    # back-office RBAC: ομάδες δικαιωμάτων + αναζήτηση μελών ανά ομάδα
+    ("platform_groups", [("name", 1)], {"unique": True}),
+    ("platform_admins", [("group_ids", 1)], {}),
     ("pharmacies", [("tenant_id", 1)], {}),
     ("prescription_executions", [("tenant_id", 1), ("source", 1), ("external_id", 1)], {"unique": True}),
     ("vaccinations", [("tenant_id", 1), ("source", 1), ("external_id", 1)], {"unique": True}),

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -29,6 +29,11 @@ class PlatformContext:
 
     admin_id: str
     email: str
+    # Δικαιώματα από τις ΟΜΑΔΕΣ του (platform_rbac.effective_permissions). Δεν έρχονται
+    # από το token — διαβάζονται ανά request, ώστε αλλαγή ομάδας να ισχύει άμεσα.
+    # Γεμίζουν από το `require_padmin` gate· ο super_admin κουβαλά {"*"}.
+    permissions: set[str] = field(default_factory=set)
+    super_admin: bool = False
 
 
 @dataclass
@@ -58,6 +63,57 @@ async def get_platform_admin(
     admin = PlatformContext(admin_id=claims["sub"], email=claims.get("email", ""))
     request.state.admin = admin  # so AuditMiddleware can log platform-admin actions
     return admin
+
+
+def require_padmin(scope: str):
+    """Router-level gate για το back-office: ταυτότητα + δικαίωμα ανά διαδρομή.
+
+    `scope` δηλώνει ΠΟΙΟΥ router είναι οι διαδρομές ("admin", "admin_leads", "cloud",
+    "fund_groups"), γιατί το `request.scope["route"].path` είναι σχετικό ως προς τον
+    router που δήλωσε τη διαδρομή — δες το docstring του `platform_rbac`.
+
+    Deny by default: αν η διαδρομή δεν είναι στον χάρτη, απαγορεύεται. Έτσι ένα νέο
+    endpoint δεν γεννιέται ανοιχτό· το `tests/test_platform_rbac.py` το πιάνει στο CI.
+    """
+    from app.core.db import shared_db
+    from app.services import platform_rbac as prbac
+
+    async def _dep(request: Request,
+                   ctx: PlatformContext = Depends(get_platform_admin)) -> PlatformContext:
+        route = request.scope.get("route")
+        template = getattr(route, "path", None)
+        needed = (prbac.permission_for(scope, request.method, template)
+                  if template is not None else None)
+        if needed is None:
+            # Αχαρτογράφητη διαδρομή: κλειστή για όλους πλην super admin, ώστε μια
+            # παράλειψη να γίνεται αντιληπτή ως «δεν δουλεύει», όχι ως διαρροή.
+            raise HTTPException(status.HTTP_403_FORBIDDEN,
+                                detail={"error": "route_not_mapped"})
+
+        # Ο λογαριασμός διαβάζεται ΑΝΑ REQUEST (το platform token δεν κουβαλά
+        # δικαιώματα) → αφαίρεση ομάδας ισχύει άμεσα, χωρίς επανασύνδεση.
+        from bson import ObjectId
+        try:
+            oid = ObjectId(ctx.admin_id)
+        except Exception:  # noqa: BLE001
+            oid = ctx.admin_id
+        admin = await shared_db()["platform_admins"].find_one({"_id": oid})
+        if not admin or admin.get("status") != "active":
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "forbidden")
+
+        ctx.super_admin = bool(admin.get("super_admin"))
+        ctx.permissions = await prbac.effective_permissions(admin)
+        if not prbac.has_permission(ctx.permissions, needed):
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN,
+                detail={"error": "insufficient_permissions", "required": needed})
+
+        # Επικίνδυνη ενέργεια → ρητή εγγραφή στο audit, πέρα από το middleware.
+        if needed in prbac.SENSITIVE_KEYS:
+            request.state.sensitive_permission = needed
+        return ctx
+
+    return _dep
 
 
 async def get_patient_context(

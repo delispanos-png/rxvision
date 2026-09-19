@@ -22,6 +22,7 @@ from app.core.deps import PlatformContext, get_platform_admin
 from app.core.security import hash_password
 from app.repositories.base import jsonsafe
 from app.services import email_template, mailer
+from app.services import platform_rbac as prbac
 from app.services.auth_service import AuthService, resolve_modules
 from app.services.provisioning import ProvisioningError, TenantProvisioningService
 from app.services.vault_service import vault
@@ -35,69 +36,9 @@ def _oid(value):
         return value
 
 
-# ── per-section access control for CloudOn staff ───────────
-# Canonical sidebar sections (key → ελληνική ετικέτα for the UI).
-ADMIN_SECTIONS = [
-    ("dashboard", "Πίνακας"), ("subscribers", "Συνδρομητές"), ("subscriptions", "Συνδρομές"),
-    ("leads", "Leads & Conversions"),
-    ("staff", "Χρήστες (staff)"), ("billing", "Τιμολόγηση"), ("newsletter", "Newsletter"),
-    ("smtp", "Ρυθμίσεις SMTP"), ("idika", "Διασύνδεση ΗΔΥΚΑ"),
-    ("content", "Περιεχόμενο"), ("maintenance", "Συντήρηση"), ("health", "Επισκεψιμότητα"),
-]
-ADMIN_SECTION_KEYS = [k for k, _ in ADMIN_SECTIONS]
-# URL segment (μετά το /admin/) → section key
-_SEG_TO_SECTION = {
-    "overview": "dashboard",
-    "tenants": "subscribers", "packages": "subscribers", "subscriptions": "subscriptions",
-    "staff": "staff", "billing": "billing", "invoices": "billing",
-    "newsletter": "newsletter", "smtp": "smtp",
-    "idika": "idika", "posts": "content", "maintenance": "maintenance",
-    "health": "health", "sync-health": "health",
-    "leads": "leads", "trials": "leads",
-    # ── ευαίσθητα state-changing segments (ήταν unmapped → παρακάμπταν τον έλεγχο ενότητας) ──
-    "integrations": "billing", "payments": "billing", "credit-packages": "billing",
-    "eshop-fees": "billing", "data-retention": "maintenance", "network": "subscribers",
-    "open-balances": "billing", "softone": "integrations",
-    "announcements": "content", "announcement-requests": "content",
-    "announcement-copy": "content",
-    "lifecycle": "subscriptions",
-    "sessions": "health", "session-history": "health", "audit-logs": "health",
-}
-# read-only endpoints που χρειάζεται και ο «dashboard»-only χρήστης
-_DASHBOARD_GET = {"tenants", "packages", "sync-health"}
-
-
-async def enforce_section(request: Request,
-                          ctx: PlatformContext = Depends(get_platform_admin)) -> PlatformContext:
-    """Router-wide gate: super_admin → όλα· αλλιώς ο χρήστης πρέπει να έχει το section.
-    Legacy admins χωρίς πεδίο permissions θεωρούνται πλήρους πρόσβασης."""
-    admin = await shared_db()["platform_admins"].find_one({"_id": _oid(ctx.admin_id)})
-    if not admin:
-        raise HTTPException(http_status.HTTP_403_FORBIDDEN, "forbidden")
-    perms = admin.get("permissions")
-    if admin.get("super_admin") or perms is None:        # super ή legacy → full
-        return ctx
-    m = re.search(r"/admin/([^/?]+)", request.url.path)
-    seg = m.group(1) if m else ""
-    section = _SEG_TO_SECTION.get(seg)
-    if section is None:
-        # FAIL-CLOSED σε άγνωστο segment: επιτρέπουμε ΜΟΝΟ ανάγνωση (GET/HEAD). Κάθε state-change
-        # (POST/PUT/PATCH/DELETE) σε μη-χαρτογραφημένο segment απορρίπτεται για περιορισμένους admins
-        # (αλλιώς νέα ευαίσθητα endpoints παρακάμπτουν σιωπηλά τον έλεγχο ενότητας — privilege escalation).
-        if request.method in ("GET", "HEAD"):
-            return ctx
-        raise HTTPException(http_status.HTTP_403_FORBIDDEN,
-                            {"error": "forbidden_section", "section": seg})
-    allowed = {section}
-    if request.method == "GET" and seg in _DASHBOARD_GET:
-        allowed.add("dashboard")
-    if any(a in perms for a in allowed):
-        return ctx
-    raise HTTPException(http_status.HTTP_403_FORBIDDEN,
-                        {"error": "forbidden_section", "section": section})
-
-
-router = APIRouter(dependencies=[Depends(enforce_section)])
+# Η εξουσιοδότηση γίνεται πλέον στο `app/api/v1/__init__.py` με
+# `require_padmin("admin")` — δικαίωμα ανά ΕΝΕΡΓΕΙΑ, deny by default.
+router = APIRouter()
 
 
 class OpenTenantIn(BaseModel):
@@ -219,7 +160,7 @@ class StaffIn(BaseModel):
     full_name: str
     password: str | None = None  # if omitted, a temp password is generated & returned
     super_admin: bool = False
-    permissions: list[str] = []  # section keys (αγνοείται αν super_admin)
+    group_ids: list[str] = []    # ομάδες — εκεί ζουν τα δικαιώματα (αγνοείται αν super_admin)
 
 
 class ResetPwIn(BaseModel):
@@ -231,11 +172,35 @@ class StaffEditIn(BaseModel):
     full_name: str | None = None
     email: EmailStr | None = None
     super_admin: bool | None = None
+    group_ids: list[str] | None = None
+
+
+class GroupIn(BaseModel):
+    name: str = Field(..., min_length=2, max_length=80)
+    description: str | None = Field(None, max_length=300)
+    permissions: list[str] = []
+
+
+class GroupEditIn(BaseModel):
+    name: str | None = Field(None, min_length=2, max_length=80)
+    description: str | None = Field(None, max_length=300)
     permissions: list[str] | None = None
 
 
-def _clean_perms(perms: list[str] | None) -> list[str]:
-    return [p for p in (perms or []) if p in ADMIN_SECTION_KEYS]
+async def _valid_group_ids(ids: list[str] | None) -> list[ObjectId]:
+    """Κρατά μόνο ομάδες που ΥΠΑΡΧΟΥΝ — αλλιώς ένα σβησμένο id θα έμενε κολλημένο
+    στον χρήστη και θα έμοιαζε με πρόσβαση που δεν ισχύει."""
+    oids = []
+    for g in ids or []:
+        try:
+            oids.append(ObjectId(g))
+        except Exception:  # noqa: BLE001
+            continue
+    if not oids:
+        return []
+    found = {d["_id"] async for d in shared_db()["platform_groups"].find(
+        {"_id": {"$in": oids}}, {"_id": 1})}
+    return [o for o in oids if o in found]
 
 
 class SmtpIn(BaseModel):
@@ -1662,7 +1627,7 @@ async def delete_ai_credit_pack(code: str, _: PlatformContext = Depends(get_plat
 
 # ── Κύκλος ζωής λογαριασμού (λήξη → ειδοποιήσεις → προειδοποίηση → διαγραφή) ──────────────────
 @router.get("/lifecycle")
-async def lifecycle_schedule(_: PlatformContext = Depends(enforce_section)):
+async def lifecycle_schedule(_: PlatformContext = Depends(get_platform_admin)):
     """Τι λήγει, τι κρατιέται, τι θα διαγραφεί και πότε — με το κόστος σε δεδομένα."""
     from app.services import lifecycle
     return jsonsafe(await lifecycle.schedule())
@@ -1677,13 +1642,13 @@ class LifecycleCfgIn(BaseModel):
 
 
 @router.put("/lifecycle")
-async def lifecycle_config(body: LifecycleCfgIn, ctx: PlatformContext = Depends(enforce_section)):
+async def lifecycle_config(body: LifecycleCfgIn, ctx: PlatformContext = Depends(get_platform_admin)):
     from app.services import lifecycle
     return await lifecycle.save_config(body.model_dump(exclude_none=True), by=ctx.email)
 
 
 @router.post("/lifecycle/run")
-async def lifecycle_run(dry_run: bool = True, ctx: PlatformContext = Depends(enforce_section)):
+async def lifecycle_run(dry_run: bool = True, ctx: PlatformContext = Depends(get_platform_admin)):
     """Χειροκίνητο πέρασμα. ΠΡΟΕΠΙΛΟΓΗ dry_run=True — η διαγραφή δεν γίνεται κατά λάθος."""
     from app.services import lifecycle
     return jsonsafe(await lifecycle.run(dry_run=dry_run))
@@ -2038,23 +2003,132 @@ async def delete_tenant(tenant_id: str, _: PlatformContext = Depends(get_platfor
 
 
 # ── platform staff (CloudOn admins) ────────────────────────
-def _staff_public(a: dict) -> dict:
-    # legacy admins (χωρίς πεδίο permissions) = full access → super
-    is_super = bool(a.get("super_admin")) or a.get("permissions") is None
+def _staff_public(a: dict, group_names: dict | None = None) -> dict:
+    names = group_names or {}
+    gids = [str(g) for g in (a.get("group_ids") or [])]
     return {"id": str(a["_id"]), "email": a["email"], "full_name": a.get("full_name", ""),
             "status": a.get("status", "active"), "created_at": a.get("created_at"),
-            "super_admin": is_super, "permissions": a.get("permissions") or []}
+            "super_admin": bool(a.get("super_admin")),
+            "group_ids": gids,
+            "groups": [{"id": g, "name": names.get(g, g)} for g in gids]}
 
 
 @router.get("/sections")
 async def list_sections(_: PlatformContext = Depends(get_platform_admin)):
-    return {"sections": [{"key": k, "label": label} for k, label in ADMIN_SECTIONS]}
+    """Ενότητες — μόνο για ομαδοποίηση στο UI· δεν φέρουν πια εξουσιοδότηση."""
+    return {"sections": [{"key": k, "label": label} for k, label in prbac.SECTIONS]}
+
+
+@router.get("/permissions")
+async def list_permissions(_: PlatformContext = Depends(get_platform_admin)):
+    """Ο κατάλογος δικαιωμάτων ομαδοποιημένος ανά ενότητα — τροφοδοτεί τη σελίδα ομάδων."""
+    return prbac.catalog_for_ui()
+
+
+# ── Ομάδες δικαιωμάτων ────────────────────────────────────────
+async def _group_names() -> dict[str, str]:
+    return {str(g["_id"]): g.get("name", "") async for g
+            in shared_db()["platform_groups"].find({}, {"name": 1})}
+
+
+def _group_public(g: dict, members: int = 0) -> dict:
+    return {"id": str(g["_id"]), "key": g.get("key"), "name": g.get("name", ""),
+            "description": g.get("description") or "",
+            "permissions": g.get("permissions") or [],
+            "is_system": bool(g.get("is_system")), "members": members,
+            "created_at": g.get("created_at"), "updated_at": g.get("updated_at")}
+
+
+@router.get("/groups")
+async def list_groups(_: PlatformContext = Depends(get_platform_admin)):
+    db = shared_db()
+    counts: dict[str, int] = {}
+    async for row in db["platform_admins"].aggregate([
+        {"$unwind": "$group_ids"},
+        {"$group": {"_id": "$group_ids", "n": {"$sum": 1}}},
+    ]):
+        counts[str(row["_id"])] = row["n"]
+    items = [_group_public(g, counts.get(str(g["_id"]), 0))
+             async for g in db["platform_groups"].find({}).sort("name", 1)]
+    return {"items": jsonsafe(items)}
+
+
+@router.post("/groups", status_code=201)
+async def create_group(body: GroupIn, ctx: PlatformContext = Depends(get_platform_admin)):
+    db = shared_db()
+    if await db["platform_groups"].find_one({"name": body.name}):
+        raise HTTPException(http_status.HTTP_400_BAD_REQUEST, "name_in_use")
+    now = datetime.now(tz=timezone.utc)
+    res = await db["platform_groups"].insert_one({
+        "key": None, "name": body.name, "description": body.description or "",
+        "permissions": prbac.clean_permissions(body.permissions),
+        "is_system": False, "tenant_scope": None,
+        "created_at": now, "updated_at": now})
+    await _audit_group(ctx, "group_create", str(res.inserted_id), body.permissions)
+    return {"id": str(res.inserted_id)}
+
+
+@router.patch("/groups/{group_id}")
+async def edit_group(group_id: str, body: GroupEditIn,
+                     ctx: PlatformContext = Depends(get_platform_admin)):
+    db = shared_db()
+    g = await db["platform_groups"].find_one({"_id": _oid(group_id)})
+    if not g:
+        raise HTTPException(http_status.HTTP_404_NOT_FOUND, "not_found")
+    patch: dict = {}
+    if body.name and body.name != g.get("name"):
+        if await db["platform_groups"].find_one({"name": body.name, "_id": {"$ne": g["_id"]}}):
+            raise HTTPException(http_status.HTTP_400_BAD_REQUEST, "name_in_use")
+        patch["name"] = body.name
+    if body.description is not None:
+        patch["description"] = body.description
+    if body.permissions is not None:
+        patch["permissions"] = prbac.clean_permissions(body.permissions)
+        # Οι default ομάδες σημειώνονται ως «πειραγμένες» ώστε το seed να μην
+        # ξαναγράψει την επιλογή του διαχειριστή στο επόμενο deploy.
+        if g.get("is_system"):
+            patch["customized"] = True
+    if not patch:
+        return {"id": group_id, "updated": False}
+    patch["updated_at"] = datetime.now(tz=timezone.utc)
+    await db["platform_groups"].update_one({"_id": g["_id"]}, {"$set": patch})
+    if body.permissions is not None:
+        await _audit_group(ctx, "group_edit", group_id, patch["permissions"])
+    return {"id": group_id, "updated": True}
+
+
+@router.delete("/groups/{group_id}", status_code=204)
+async def delete_group(group_id: str, ctx: PlatformContext = Depends(get_platform_admin)):
+    db = shared_db()
+    oid = _oid(group_id)
+    g = await db["platform_groups"].find_one({"_id": oid})
+    if not g:
+        raise HTTPException(http_status.HTTP_404_NOT_FOUND, "not_found")
+    members = await db["platform_admins"].count_documents({"group_ids": oid})
+    if members:
+        # Σιωπηλή αφαίρεση θα άφηνε τα μέλη χωρίς πρόσβαση χωρίς να το καταλάβει κανείς.
+        raise HTTPException(http_status.HTTP_400_BAD_REQUEST,
+                            detail={"error": "group_in_use", "members": members})
+    await db["platform_groups"].delete_one({"_id": oid})
+    await _audit_group(ctx, "group_delete", group_id, g.get("permissions") or [])
+
+
+async def _audit_group(ctx: PlatformContext, action: str, group_id: str,
+                       permissions: list[str]) -> None:
+    """Αλλαγή δικαιωμάτων = αλλαγή ασφαλείας· καταγράφεται πάντα, με έμφαση στα επικίνδυνα."""
+    await shared_db()["audit_logs"].insert_one({
+        "tenant_id": None, "action": action, "by": ctx.email, "group_id": group_id,
+        "permissions": sorted(permissions or []),
+        "sensitive_granted": sorted(set(permissions or []) & prbac.SENSITIVE_KEYS),
+        "at": datetime.now(tz=timezone.utc)})
 
 
 @router.get("/staff")
 async def list_staff(_: PlatformContext = Depends(get_platform_admin)):
     db = shared_db()
-    items = [_staff_public(a) async for a in db["platform_admins"].find({}).sort("created_at", 1)]
+    names = await _group_names()
+    items = [_staff_public(a, names) async for a
+             in db["platform_admins"].find({}).sort("created_at", 1)]
     return {"items": jsonsafe(items)}
 
 
@@ -2069,7 +2143,7 @@ async def create_staff(body: StaffIn, _: PlatformContext = Depends(get_platform_
         "email": body.email, "full_name": body.full_name,
         "password_hash": hash_password(temp), "status": "active",
         "super_admin": body.super_admin,
-        "permissions": [] if body.super_admin else _clean_perms(body.permissions),
+        "group_ids": [] if body.super_admin else await _valid_group_ids(body.group_ids),
         "refresh_token_version": 0, "created_at": now, "updated_at": now})
     return {"id": str(res.inserted_id), "email": body.email,
             "temp_password": None if body.password else temp}
@@ -2092,10 +2166,18 @@ async def edit_staff(admin_id: str, body: StaffEditIn,
     if body.super_admin is not None:
         patch["super_admin"] = body.super_admin
         if body.super_admin:
-            patch["permissions"] = []
-    if body.permissions is not None and not patch.get("super_admin"):
-        patch["permissions"] = _clean_perms(body.permissions)
+            patch["group_ids"] = []
+    if body.group_ids is not None and not patch.get("super_admin"):
+        patch["group_ids"] = await _valid_group_ids(body.group_ids)
         patch.setdefault("super_admin", False)
+    # Η πλατφόρμα δεν επιτρέπεται να μείνει χωρίς super admin — αλλιώς κλειδώνονται όλοι
+    # έξω από τη διαχείριση χρηστών και χρειάζεται επέμβαση στη βάση.
+    if admin.get("super_admin") and patch.get("super_admin") is False:
+        others = await db["platform_admins"].count_documents(
+            {"_id": {"$ne": admin["_id"]}, "super_admin": True, "status": "active"})
+        if not others:
+            raise HTTPException(http_status.HTTP_400_BAD_REQUEST,
+                                detail={"error": "last_super_admin"})
     if not patch:
         return {"id": admin_id, "updated": False}
     patch["updated_at"] = datetime.now(tz=timezone.utc)
@@ -3667,14 +3749,14 @@ class AnnouncementIn(BaseModel):
 
 
 @router.get("/announcements")
-async def list_announcements(_: PlatformContext = Depends(enforce_section)):
+async def list_announcements(_: PlatformContext = Depends(get_platform_admin)):
     """Όλες οι ανακοινώσεις + σε πόσα φαρμακεία φτάνει καθεμία ΤΩΡΑ."""
     from app.services import announcements as svc
     return {"items": await svc.list_all()}
 
 
 @router.post("/announcements")
-async def create_announcement(body: AnnouncementIn, ctx: PlatformContext = Depends(enforce_section)):
+async def create_announcement(body: AnnouncementIn, ctx: PlatformContext = Depends(get_platform_admin)):
     from app.services import announcements as svc
     d = body.model_dump(by_alias=True)
     return await svc.save(d, by=ctx.email)
@@ -3682,7 +3764,7 @@ async def create_announcement(body: AnnouncementIn, ctx: PlatformContext = Depen
 
 @router.put("/announcements/{ann_id}")
 async def update_announcement(ann_id: str, body: AnnouncementIn,
-                              ctx: PlatformContext = Depends(enforce_section)):
+                              ctx: PlatformContext = Depends(get_platform_admin)):
     from app.services import announcements as svc
     return await svc.save(body.model_dump(by_alias=True), ann_id=ann_id, by=ctx.email)
 
@@ -3693,7 +3775,7 @@ class AnnActiveIn(BaseModel):
 
 @router.post("/announcements/{ann_id}/active")
 async def set_announcement_active(ann_id: str, body: AnnActiveIn,
-                                  ctx: PlatformContext = Depends(enforce_section)):
+                                  ctx: PlatformContext = Depends(get_platform_admin)):
     """Διακόπτης on/off χωρίς επεξεργασία — δεν αγγίζει κανένα άλλο πεδίο."""
     from app.services import announcements as svc
     res = await svc.set_active(ann_id, body.active, by=ctx.email)
@@ -3704,7 +3786,7 @@ async def set_announcement_active(ann_id: str, body: AnnActiveIn,
 
 @router.post("/announcements/{ann_id}/move")
 async def move_announcement(ann_id: str, direction: Literal["up", "down"],
-                            ctx: PlatformContext = Depends(enforce_section)):
+                            ctx: PlatformContext = Depends(get_platform_admin)):
     """Αλλαγή σειράς προτεραιότητας: ποια θα δει πρώτη ο πελάτης."""
     from app.services import announcements as svc
     res = await svc.move(ann_id, direction, by=ctx.email)
@@ -3714,13 +3796,13 @@ async def move_announcement(ann_id: str, direction: Literal["up", "down"],
 
 
 @router.delete("/announcements/{ann_id}")
-async def delete_announcement(ann_id: str, _: PlatformContext = Depends(enforce_section)):
+async def delete_announcement(ann_id: str, _: PlatformContext = Depends(get_platform_admin)):
     from app.services import announcements as svc
     return await svc.delete(ann_id)
 
 
 @router.get("/announcement-copy/{addon_key}")
-async def announcement_copy(addon_key: str, _: PlatformContext = Depends(enforce_section)):
+async def announcement_copy(addon_key: str, _: PlatformContext = Depends(get_platform_admin)):
     """Έτοιμο κείμενο ανακοίνωσης για ένα add-on — γραμμένο με τον οδηγό ύφους.
 
     Γεμίζει ΟΛΑ τα πεδία της φόρμας ώστε να μη γράφεται τίποτα από την αρχή. Ό,τι δεν έχει
@@ -3733,7 +3815,7 @@ async def announcement_copy(addon_key: str, _: PlatformContext = Depends(enforce
 
 
 @router.get("/announcements/{ann_id}/audience")
-async def announcement_audience(ann_id: str, _: PlatformContext = Depends(enforce_section)):
+async def announcement_audience(ann_id: str, _: PlatformContext = Depends(get_platform_admin)):
     """Ανά φαρμακείο: θα το δει; αν όχι, γιατί; — ώστε το «δεν το είδα» να μη λύνεται με μαντεψιά."""
     from app.services import announcements as svc
     return {"items": await svc.audience_check(ann_id)}
@@ -3741,7 +3823,7 @@ async def announcement_audience(ann_id: str, _: PlatformContext = Depends(enforc
 
 @router.get("/announcement-requests")
 async def list_announcement_requests(status: str = "new",
-                                     _: PlatformContext = Depends(enforce_section)):
+                                     _: PlatformContext = Depends(get_platform_admin)):
     """Ο φάκελος: ποιος ζήτησε δοκιμή ή παρουσίαση, με τα στοιχεία επικοινωνίας του."""
     from app.services import announcements as svc
     return {"items": await svc.requests(status)}
@@ -3753,7 +3835,7 @@ class CloseReqIn(BaseModel):
 
 @router.post("/announcement-requests/{req_id}/close")
 async def close_announcement_request(req_id: str, body: CloseReqIn,
-                                     ctx: PlatformContext = Depends(enforce_section)):
+                                     ctx: PlatformContext = Depends(get_platform_admin)):
     from app.services import announcements as svc
     return await svc.close_request(req_id, by=ctx.email, outcome=body.outcome)
 
@@ -3765,7 +3847,7 @@ class GrantIn(BaseModel):
 
 
 @router.post("/announcement-requests/grant")
-async def grant_preview(body: GrantIn, ctx: PlatformContext = Depends(enforce_section)):
+async def grant_preview(body: GrantIn, ctx: PlatformContext = Depends(get_platform_admin)):
     """Άνοιξε τη δυνατότητα στη ΔΙΚΗ ΤΟΥ υποδομή για Ν ημέρες — ένα κλικ από το αίτημα.
 
     Δεν περνά από τον φρουρό «μία δοκιμή ανά πελάτη» του self-service: αυτό είναι ΑΠΟΦΑΣΗ ΣΟΥ,

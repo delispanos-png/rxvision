@@ -79,8 +79,16 @@ async def me(ctx: PlatformContext = Depends(get_platform_admin)):
         oid = ObjectId(ctx.admin_id)
     except Exception:  # noqa: BLE001
         oid = ctx.admin_id
-    admin = await shared_db()["platform_admins"].find_one({"_id": oid}) or {}
-    is_super = bool(admin.get("super_admin")) or admin.get("permissions") is None
+    from app.services import platform_rbac as prbac
+    db = shared_db()
+    admin = await db["platform_admins"].find_one({"_id": oid}) or {}
+    is_super = bool(admin.get("super_admin"))
+    gids = admin.get("group_ids") or []
+    groups = [{"id": str(g["_id"]), "name": g.get("name", "")} async for g
+              in db["platform_groups"].find({"_id": {"$in": gids}}, {"name": 1})]
+    # Τα δικαιώματα ΔΕΝ είναι στο token — υπολογίζονται εδώ από τις ομάδες, ώστε το
+    # μενού να δείχνει πάντα την τρέχουσα πραγματικότητα.
+    perms = await prbac.effective_permissions(admin)
     return {"admin_id": ctx.admin_id, "email": ctx.email, "platform_admin": True,
             "full_name": admin.get("full_name", ""), "super_admin": is_super,
-            "permissions": admin.get("permissions") or []}
+            "groups": groups, "permissions": sorted(perms)}
