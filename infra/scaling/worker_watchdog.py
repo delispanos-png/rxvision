@@ -1,19 +1,20 @@
-"""RxVision worker watchdog — DETECTION + SMS (runs INSIDE rxvision-api-1 on MGMT01).
+"""RxVision worker watchdog — ΑΝΙΧΝΕΥΣΗ ΑΝΑ ΔΡΟΜΟ + SMS (τρέχει ΜΕΣΑ στο rxvision-api-1, MGMT01).
 
-Ανιχνεύει «κολλημένους» Celery workers της κύριας ουράς `celery` (incident 2026-09-05: 13ωρο κενό
-συγχρονισμού ΗΔΥΚΑ επειδή tasks χωρίς time-limit μπλόκαραν τις θέσεις των workers). Είναι ΑΝΕΞΑΡΤΗΤΟ
-από την ουρά που μπορεί να κολλήσει: τρέχει από systemd timer στο MGMT01, μιλά μόνο σε Redis + Apifon.
+ΓΙΑΤΙ ΑΝΑ ΔΡΟΜΟ (19/09/2026): από τότε που οι εργασίες χωρίστηκαν σε δρόμους (fast/sync/
+maintenance/backfill/optical), ένας γενικός έλεγχος «κόλλησαν οι workers;» είναι πολύ χοντρός.
+Μπορεί να έχει κολλήσει ΜΟΝΟ ο sync ενώ οι υπόλοιποι δουλεύουν μια χαρά — και τότε δεν έχει
+κανένα νόημα να ρίξουμε τους πάντες. Ελέγχουμε κάθε δρόμο μόνο του και ξαναρίχνουμε ΜΟΝΟ
+αυτόν που φταίει.
 
-Λογική (2 ανεξάρτητα σήματα wedge — αποφεύγουμε restart ΥΓΙΩΝ workers κατά τη νόμιμη αποκλιμάκωση):
-  • ping-wedge: το `ping` δεν επιστρέφει ΚΑΝΕΝΑΝ worker (nodes==0) — το βασικό & αξιόπιστο σήμα (όπως
-    στο incident 2026-09-05: «No nodes replied»). Χρειάζονται PING_STREAK συνεχόμενα ticks (transient-safe).
-  • stuck-queue: το backlog είναι > BACKLOG_HI ΚΑΙ ΔΕΝ προχωρά (backlog ≥ προηγούμενο) για STUCK_STREAK
-    συνεχόμενα ticks — πιάνει τη σπάνια περίπτωση «workers απαντούν στο ping αλλά δεν καταναλώνουν».
-    Όσο η ουρά ΑΔΕΙΑΖΕΙ (backlog < προηγούμενο), ΠΟΤΕ δεν θεωρείται stuck (καμία false δράση στο drain).
-  • Δράση (με cooldown RESTART_COOLDOWN): «ACTION=RESTART» (το shell wrapper κάνει το ssh-restart) + SMS.
-  • Ανάκαμψη (ήταν incident, τώρα nodes>0 & όχι stuck): SMS «OK» + κλείσιμο incident.
+Είναι ΑΝΕΞΑΡΤΗΤΟ από την ουρά που μπορεί να κολλήσει: systemd timer στο MGMT01, μιλά μόνο σε
+Redis + Apifon. Γι' αυτό επιβίωσε και δούλεψε στο 9ωρο περιστατικό της 19/09/2026.
 
-State: Redis key `rxv:watchdog` (JSON). Έξοδος: μία γραμμή status + προαιρετικά «ACTION=RESTART».
+Δύο ανεξάρτητα σήματα ανά δρόμο (για να μη ρίχνουμε ΥΓΙΕΙΣ workers σε νόμιμη αποκλιμάκωση):
+  • ping-wedge : κανένας worker ΑΥΤΟΥ του δρόμου δεν απαντά, για BAD_STREAK συνεχόμενα ticks.
+  • stuck-queue: η ουρά του είναι πάνω από το κατώφλι ΚΑΙ δεν προχωρά, για STUCK_STREAK ticks.
+    Όσο ΑΔΕΙΑΖΕΙ, ΠΟΤΕ δεν θεωρείται κολλημένη — καμία λάθος δράση σε φυσιολογικό drain.
+
+Έξοδος: μία γραμμή κατάστασης ανά δρόμο + «ACTION=RESTART <container> …» μόνο για όσους φταίνε.
 """
 from __future__ import annotations
 
@@ -22,10 +23,36 @@ import json
 import os
 import time
 
-BACKLOG_HI = int(os.environ.get("WD_BACKLOG_HI", "800"))              # πάνω απ' αυτό = ύποπτο backlog
-BAD_STREAK = int(os.environ.get("WD_BAD_STREAK", "2"))               # ping==0 συνεχόμενα ticks πριν δράση
-STUCK_STREAK = int(os.environ.get("WD_STUCK_STREAK", "4"))           # στάσιμο backlog ticks (≈8′) πριν δράση
-RESTART_COOLDOWN = int(os.environ.get("WD_RESTART_COOLDOWN", "900"))  # 15′ μεταξύ auto-restarts
+# Κάθε δρόμος: ουρές του, το container που τον τρέχει, το πρόθεμα του ονόματός του στο ping,
+# και το κατώφλι ουράς πάνω από το οποίο θεωρείται ύποπτος.
+# ΤΑ ΚΑΤΩΦΛΙΑ ΔΙΑΦΕΡΟΥΝ ΕΠΙΤΗΔΕΣ: ο «fast» δεν επιτρέπεται να στοιβάζει (κάποιος περιμένει
+# μπροστά στην οθόνη), ενώ ο «backfill» στοιβάζει ΝΟΜΙΜΑ — τραβά χρόνια δεδομένων.
+LANES = {
+    "fast": {
+        "queues": ["fast"],
+        "container": "rxvision-app-worker-1",
+        # «celery@» = το παλιό όνομα πριν τον χωρισμό· το δεχόμαστε ώστε ο φύλακας να μη
+        # νομίσει ότι κόλλησε ο δρόμος ΚΑΤΑ ΤΗ ΜΕΤΑΒΑΣΗ, όσο ο παλιός worker ζει ακόμη.
+        "prefixes": ("fast@", "celery@"),
+        "backlog_hi": 200,
+    },
+    "sync": {"queues": ["sync"], "container": "rxvision-app-worker-sync-1",
+             "prefixes": ("sync@",), "backlog_hi": 400},
+    # Η συντήρηση κουβαλά ΚΑΙ τις δύο παλιές ουρές (αδειάζουν εφάπαξ μετά τον χωρισμό της
+    # 19/09). Γι' αυτό το κατώφλι της είναι ΨΗΛΟ: χωρίς αυτό ο φύλακας θα έβλεπε 1.300 παλιές
+    # εργασίες, θα τις νόμιζε «στάσιμη ουρά» και θα έριχνε ΥΓΙΗ εργάτη χωρίς κανέναν λόγο.
+    "maint": {"queues": ["maintenance", "celery", "default"],
+              "container": "rxvision-app-worker-maint-1",
+              "prefixes": ("maint@",), "backlog_hi": 3000},
+    "backfill": {"queues": ["backfill"], "container": "rxvision-app-worker-backfill-1",
+                 "prefixes": ("backfill@",), "backlog_hi": 2000},
+    "optical": {"queues": ["optical"], "container": "rxvision-app-optical-1",
+                "prefixes": ("optical@",), "backlog_hi": 200},
+}
+
+BAD_STREAK = int(os.environ.get("WD_BAD_STREAK", "2"))               # ticks χωρίς καμία απάντηση
+STUCK_STREAK = int(os.environ.get("WD_STUCK_STREAK", "4"))           # ticks με στάσιμη ουρά (≈8′)
+RESTART_COOLDOWN = int(os.environ.get("WD_RESTART_COOLDOWN", "900"))  # 15′ ανά ΔΡΟΜΟ
 STATE_KEY = "rxv:watchdog"
 
 
@@ -35,14 +62,22 @@ def _redis():
     return redis.from_url(celery_app.conf.broker_url, socket_connect_timeout=5, socket_timeout=6)
 
 
-def _ping_nodes() -> int:
-    """Πλήθος workers που απαντούν σε ping (broadcast, σύντομο timeout). 0 = κανείς → wedge/down."""
+def _ping_by_lane() -> dict[str, int] | None:
+    """Πόσοι workers απαντούν ΑΝΑ ΔΡΟΜΟ. None = δεν μπορέσαμε να ρωτήσουμε (≠ «κανείς»).
+
+    Η διάκριση είναι κρίσιμη: «δεν ξέρω» ΔΕΝ είναι απόδειξη βλάβης και δεν πρέπει ποτέ να
+    πυροδοτεί restart.
+    """
     try:
         from app.workers.celery_app import celery_app
         replies = celery_app.control.ping(timeout=8) or []
-        return len(replies)
     except Exception:
-        return -1   # άγνωστο (δεν το μετράμε ως απόδειξη wedge από μόνο του)
+        return None
+    names = [n for reply in replies for n in reply]
+    out = {}
+    for lane, cfg in LANES.items():
+        out[lane] = sum(1 for n in names if n.startswith(tuple(cfg["prefixes"])))
+    return out
 
 
 async def _sms(text: str) -> None:
@@ -56,55 +91,67 @@ async def _sms(text: str) -> None:
 def main() -> None:
     r = _redis()
     try:
-        backlog = int(r.llen("celery"))
+        r.ping()
     except Exception as exc:
-        print(f"WD backlog=ERR ({exc}) — redis unreachable")
+        print(f"WD ΣΦΑΛΜΑ: ο Redis δεν απαντά ({exc}) — καμία δράση")
         return
-    nodes = _ping_nodes()
 
     try:
-        st = json.loads(r.get(STATE_KEY) or "{}")
+        state = json.loads(r.get(STATE_KEY) or "{}")
     except Exception:
-        st = {}
-    prev = int(st.get("last_backlog", backlog))
-    ping_streak = int(st.get("ping_streak", 0))
-    stuck_streak = int(st.get("stuck_streak", 0))
-    incident = bool(st.get("incident_open", False))
-    last_restart = float(st.get("last_restart_ts", 0))
+        state = {}
+    lanes_state = state.get("lanes") or {}
+    pings = _ping_by_lane()
     now = time.time()
+    to_restart, messages = [], []
 
-    # Σήμα 1: κανένας worker δεν απαντά (nodes==0). nodes==-1 = άγνωστο (σφάλμα ping) → δεν το μετράμε.
-    ping_streak = ping_streak + 1 if nodes == 0 else 0
-    # Σήμα 2: μεγάλο backlog που ΔΕΝ προχωρά (backlog >= προηγούμενο). Όσο αδειάζει → reset.
-    stuck = backlog > BACKLOG_HI and backlog >= prev
-    stuck_streak = stuck_streak + 1 if stuck else 0
+    for lane, cfg in LANES.items():
+        st = lanes_state.get(lane) or {}
+        try:
+            backlog = sum(int(r.llen(q)) for q in cfg["queues"])
+        except Exception:
+            continue
+        nodes = -1 if pings is None else pings.get(lane, 0)
+        prev = int(st.get("last_backlog", backlog))
 
-    wedged = ping_streak >= BAD_STREAK or stuck_streak >= STUCK_STREAK
+        # nodes == -1 → άγνωστο: μηδενίζουμε το streak αντί να το αυξήσουμε.
+        ping_streak = int(st.get("ping_streak", 0)) + 1 if nodes == 0 else 0
+        stuck = backlog > cfg["backlog_hi"] and backlog >= prev
+        stuck_streak = int(st.get("stuck_streak", 0)) + 1 if stuck else 0
+        last_restart = float(st.get("last_restart_ts", 0))
+        incident = bool(st.get("incident_open", False))
 
-    action = False
-    if wedged and (now - last_restart) >= RESTART_COOLDOWN:
-        action = True
-        last_restart = now
-        why = "δεν απαντούν στο ping" if ping_streak >= BAD_STREAK else "στάσιμη ουρά"
-        asyncio.run(_sms(
-            f"⚠️ RxVision: οι workers φαίνονται κολλημένοι ({why}· ουρά celery={backlog}, "
-            f"workers που απαντούν={max(nodes, 0)}). Αυτόματο restart σε εξέλιξη."))
-        st["incident_open"] = True
-    elif incident and nodes > 0 and not stuck:
-        asyncio.run(_sms(f"✅ RxVision: οι workers επανήλθαν (ουρά celery={backlog}, workers={nodes})."))
-        st["incident_open"] = False
+        # «Κανένας worker» ΜΕ ΑΔΕΙΑ ΟΥΡΑ δεν είναι βλάβη: είναι δρόμος που δεν έχει στηθεί
+        # ακόμη ή απλώς δεν έχει δουλειά. Χτυπάμε καμπανάκι μόνο όταν ΥΠΑΡΧΕΙ δουλειά που
+        # περιμένει και δεν την κάνει κανείς — αλλιώς γεμίζουμε τον ιδιοκτήτη ψεύτικα SMS.
+        wedged = (ping_streak >= BAD_STREAK and backlog > 0) or stuck_streak >= STUCK_STREAK
+        if wedged and (now - last_restart) >= RESTART_COOLDOWN:
+            why = "δεν απαντά κανείς" if ping_streak >= BAD_STREAK else "στάσιμη ουρά"
+            to_restart.append(cfg["container"])
+            messages.append(f"«{lane}» ({why}, ουρά={backlog})")
+            last_restart = now
+            incident = True
+        elif incident and nodes > 0 and not stuck:
+            asyncio.run(_sms(f"✅ RxVision: ο δρόμος «{lane}» επανήλθε "
+                             f"(ουρά={backlog}, workers={nodes})."))
+            incident = False
 
-    st.update({"last_backlog": backlog, "ping_streak": ping_streak, "stuck_streak": stuck_streak,
-               "last_restart_ts": last_restart, "updated_at": now})
+        lanes_state[lane] = {"last_backlog": backlog, "ping_streak": ping_streak,
+                             "stuck_streak": stuck_streak, "last_restart_ts": last_restart,
+                             "incident_open": incident, "updated_at": now}
+        print(f"WD [{lane:9}] ουρά={backlog:<6} workers={nodes:<3} "
+              f"ping_streak={ping_streak} stuck_streak={stuck_streak} incident={incident}")
+
+    state["lanes"] = lanes_state
     try:
-        r.set(STATE_KEY, json.dumps(st))
+        r.set(STATE_KEY, json.dumps(state))
     except Exception:
         pass
 
-    print(f"WD backlog={backlog} prev={prev} nodes={nodes} stuck={stuck} "
-          f"ping_streak={ping_streak} stuck_streak={stuck_streak} incident={st.get('incident_open')}")
-    if action:
-        print("ACTION=RESTART")
+    if to_restart:
+        asyncio.run(_sms("⚠️ RxVision: κολλημένοι workers — " + ", ".join(messages) +
+                         ". Αυτόματη επανεκκίνηση σε εξέλιξη."))
+        print("ACTION=RESTART " + " ".join(to_restart))
 
 
 if __name__ == "__main__":

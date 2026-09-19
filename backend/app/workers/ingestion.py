@@ -615,6 +615,12 @@ def hdika_backfill(self, tenant_id: str, since_iso: str, until_iso: str | None =
                 floor = datetime.fromisoformat(continue_floor_iso)
                 if floor.tzinfo is None:
                     floor = floor.replace(tzinfo=timezone.utc)
+                # ΤΟ ΦΡΕΝΟ ΖΕΙ ΕΔΩ, ΟΧΙ ΜΟΝΟ ΣΤΟΝ ΔΡΟΜΟΛΟΓΗΤΗ (19/09/2026): το floor έρχεται
+                # ως όρισμα, άρα όποιος καλέσει το task απευθείας μπορεί να ζητήσει ό,τι θέλει
+                # — π.χ. 2015 — και να κατεβάσει 11 χρόνια που το παράθυρο διατήρησης θα σβήσει
+                # ούτως ή άλλως. Ένα όριο που επιβάλλεται μόνο στον καλούντα δεν είναι όριο.
+                from app.services.data_retention import tenant_cutoff
+                floor = max(floor, await tenant_cutoff(db, tenant_id))
                 new_min = await _oldest(db)
                 progressed = (before_min is None) or (new_min and new_min < before_min)
                 if (progressed and new_min and new_min.date() > floor.date()
@@ -657,6 +663,9 @@ def hdika_backfill_continue(self, tenant_id: str, floor_iso: str | None = None) 
                 floor = datetime(2024, 1, 1)
             if floor.tzinfo is None:
                 floor = floor.replace(tzinfo=timezone.utc)
+            # Ίδιο φρένο και στην αφετηρία — δες το σχόλιο στην αλυσίδα (hdika_backfill).
+            from app.services.data_retention import tenant_cutoff
+            floor = max(floor, await tenant_cutoff(db, tenant_id))
             d = await db["prescription_executions"].find_one(
                 {"tenant_id": tenant_id}, sort=[("executed_at", 1)], projection={"executed_at": 1})
             until = d.get("executed_at") if d else datetime.now(tz=timezone.utc)

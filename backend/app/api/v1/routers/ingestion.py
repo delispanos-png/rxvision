@@ -230,11 +230,23 @@ async def test_hdika_connection(
 _AUTO_HISTORY_YEARS = 2
 
 
+def _policy_history_floor(retention_months: int | None = None) -> str:
+    """Η ΠΟΛΙΤΙΚΗ: τρέχουσα χρονιά + 2 προηγούμενες πλήρεις (π.χ. 2026 → 2024-01-01).
+
+    Υπολογίζεται, δεν γράφεται σταθερά: την 01/01/2027 γίνεται μόνο του 2025-01-01.
+    Όποιο φαρμακείο έχει ΑΓΟΡΑΣΕΙ επιπλέον έτη διατήρησης δικαιούται αναλόγως πιο πίσω.
+    """
+    # ΕΝΑ ΣΗΜΕΙΟ ΑΛΗΘΕΙΑΣ: ακριβώς το ίδιο κατώφλι που χρησιμοποιεί ο νυχτερινός καθαρισμός.
+    # Αν οι δύο αποκλίνουν, το σύστημα κατεβάζει από την ΗΔΥΚΑ δεδομένα που ο καθαρισμός σβήνει
+    # την ίδια νύχτα — ατέρμονος κύκλος που κανείς δεν βλέπει, απλώς «αργεί ο συγχρονισμός».
+    from app.services.data_retention import cutoff_for
+    return cutoff_for(retention_months or 0).date().isoformat()
+
+
 def _auto_history_window() -> tuple[str, str]:
     """Προεπιλογή νέου φαρμακείου: τα 2 τελευταία ΠΛΗΡΗ έτη + το τρέχον μέχρι σήμερα.
     π.χ. 10/09/2026 → 2024-01-01 … 2026-09-10. Ο φαρμακοποιός δεν επιλέγει τίποτα."""
-    today = date.today()
-    return date(today.year - _AUTO_HISTORY_YEARS, 1, 1).isoformat(), today.isoformat()
+    return _policy_history_floor(), date.today().isoformat()
 
 
 async def _discover_and_store(tenant_id: str) -> dict:
@@ -263,6 +275,15 @@ async def _discover_and_store(tenant_id: str) -> dict:
     creds = vault.get_secret(f"tenants/{tenant_id}/hdika") or {}
     # Το pharmacy_code είναι ο κωδικός ΣΗΣ· κρατάμε ΚΑΙ το pharmacy_id (φίλτρο άντλησης, GDPR).
     merged = {**creds, **{k: v for k, v in discovered.items() if v not in (None, "")}}
+    # ⚠️ ΤΟ ΦΡΕΝΟ ΤΗΣ ΠΟΛΙΤΙΚΗΣ (19/09/2026). Η ΗΔΥΚΑ επιστρέφει στο `history_from` την ΕΝΑΡΞΗ
+    # ΣΥΜΒΑΣΗΣ ΕΟΠΥΥ — για πολλά φαρμακεία 2015. Αυτό είναι στοιχείο συμβολαίου, ΟΧΙ πολιτική
+    # διατήρησης. Χωρίς φρένο, ΚΑΘΕ επανα-ανακάλυψη προφίλ το ξαναέγραφε πάνω από τη σωστή τιμή
+    # και το φαρμακείο ξεκινούσε να κατεβάζει έντεκα χρόνια που το σύστημα θα έσβηνε ούτως ή
+    # άλλως — χτυπώντας άσκοπα την ΗΔΥΚΑ και γεμίζοντας δίσκο. Βρέθηκε σε 9 από 14 φαρμακεία.
+    _t = await TenantRepository(tenant_id=tenant_id).get() or {}
+    _floor = _policy_history_floor(_t.get("retention_months"))
+    if str(merged.get("history_from") or "")[:10] < _floor:
+        merged["history_from"] = _floor
     if not merged.get("pharmacy_id") and merged.get("pharmacy_code"):
         merged["pharmacy_id"] = merged["pharmacy_code"]
     vault.set_tenant_credentials(tenant_id, "hdika", merged)

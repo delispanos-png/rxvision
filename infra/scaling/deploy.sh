@@ -48,14 +48,21 @@ for NODE in "${APP_NODES[@]}"; do
     'gunzip | docker load && docker tag rxvision-api:latest rxvision-app-api:latest \
        && docker tag rxvision-api:latest rxvision-app-worker:latest \
        && docker tag rxvision-api:latest rxvision-app-worker-backfill:latest \
+       && docker tag rxvision-api:latest rxvision-app-worker-sync:latest \
+       && docker tag rxvision-api:latest rxvision-app-worker-maint:latest \
        && docker tag rxvision-api:latest rxvision-app-optical:latest'
   docker save rxvision-web:latest | gzip -1 | "${SSH[@]}" "root@$NODE" \
     'gunzip | docker load && docker tag rxvision-web:latest rxvision-app-web:latest'
 
   # Keep the reverse-proxy config in sync (bind-mounted from the node's checkout). Ships the repo
   # Caddyfile + validates + hot-reloads — so the LB /lb-health probe and routing never drift per node.
-  echo "▶ 2b/4  Sync Caddyfile + reload on $NODE…"
+  echo "▶ 2b/4  Sync Caddyfile + compose + reload on $NODE…"
   scp -i "$KEY" -o StrictHostKeyChecking=no infra/docker/Caddyfile "root@$NODE:/opt/rxvision/infra/docker/Caddyfile"
+  # ΤΟ COMPOSE ΤΩΝ ΚΟΜΒΩΝ ΔΕΝ ΣΥΓΧΡΟΝΙΖΟΤΑΝ ΠΟΤΕ (19/09/2026): κάθε app node έχει ΔΙΚΟ ΤΟΥ
+  # αντίγραφο και το `docker compose up` το διαβάζει ΕΚΕΙ. Όταν προστέθηκαν οι νέοι δρόμοι
+  # (worker-sync/worker-maint) το deploy έσκασε με «no such service» — ΑΦΟΥ όμως είχε ήδη
+  # ανανεωθεί ο beat στο MGMT, που άρχισε να στέλνει σε ουρές που δεν άκουγε κανείς.
+  scp -i "$KEY" -o StrictHostKeyChecking=no infra/scaling/docker-compose.app.yml "root@$NODE:$APP_COMPOSE"
   "${SSH[@]}" "root@$NODE" \
     'docker exec rxvision-app-caddy-1 caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null 2>&1 \
        && docker exec rxvision-app-caddy-1 caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null 2>&1 \
@@ -66,6 +73,7 @@ for NODE in "${APP_NODES[@]}"; do
   echo "▶ 3/4  Recreate [$SERVICES +extra workers] on $NODE (no rebuild)…"
   "${SSH[@]}" "root@$NODE" \
     "docker compose --project-directory /opt/rxvision -f $APP_COMPOSE up -d --no-build --force-recreate $SERVICES \
+       worker-sync worker-maint \
        \$(for X in worker-backfill optical; do docker ps -a --format '{{.Names}}' | grep -q \"rxvision-app-\$X-1\" && echo \$X; done)"
 
   echo "▶ 4/4  Verify $NODE serves the SAME web build as MGMT…"

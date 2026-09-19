@@ -22,6 +22,57 @@ celery_app = Celery(
     ],
 )
 
+# ── ΔΡΟΜΟΛΟΓΗΣΗ: χωριστοί δρόμοι ανά ΕΙΔΟΣ δουλειάς ─────────────────────────────────────
+# ΤΟ ΠΡΟΒΛΗΜΑ (incident 19/09/2026): σχεδόν ΤΑ ΠΑΝΤΑ έτρεχαν σε ΜΙΑ ουρά με 6 θέσεις. Οι
+# συγχρονισμοί ΗΔΥΚΑ (14 φαρμακεία × λεπτά ο καθένας, κάθε 5′) τις γέμιζαν και πίσω τους
+# περίμεναν email ανάκτησης κωδικού, SMS, παραστατικά, παραγγελίες e-shop. Δηλαδή ΕΝΑ αργό
+# φαρμακείο καθυστερούσε τον κωδικό ενός πελάτη — και όταν κόλλησε η ουρά, κόλλησαν ΟΛΑ.
+#
+# ΚΑΝΟΝΑΣ, ΟΧΙ ΛΙΣΤΑ: η δρομολόγηση γίνεται ανά module, ώστε κάθε ΝΕΑ εργασία που θα
+# προσθέσουμε να μπαίνει ΑΥΤΟΜΑΤΑ στον σωστό δρόμο χωρίς να το θυμάται κανείς. Οι εξαιρέσεις
+# είναι ρητές και λίγες — και κάθε μία έχει λόγο γραμμένο δίπλα της.
+_QUEUE_BY_MODULE = {
+    "ingestion": "sync",            # ΗΔΥΚΑ — αργά, κανείς δεν περιμένει μπροστά στην οθόνη
+    "death_sweep": "sync",
+    "contacts_backfill": "sync",
+    "snapshots": "maintenance",     # νυχτερινά, βαριά
+    "area_canonical": "maintenance",
+    "supplier_photos": "maintenance",
+    "leads": "maintenance",
+    # Ό,τι δεν αναφέρεται εδώ → "fast": comms, reminders, billing, sessions, coach,
+    # copilot_routines, ops_health. Κοινό τους: κάποιος ΑΝΘΡΩΠΟΣ περιμένει.
+}
+
+_QUEUE_BY_TASK = {
+    # Βαριά, με δικό τους δρόμο από παλιά — μένουν ως έχουν.
+    "app.workers.ingestion.hdika_backfill": "backfill",
+    "app.workers.optical.process_scan": "optical",
+    # ΟΙ ΦΥΛΑΚΕΣ ΤΟΥ ΣΥΓΧΡΟΝΙΣΜΟΥ ΠΑΝΕ ΣΤΟΝ ΓΡΗΓΟΡΟ ΔΡΟΜΟ: αν έμπαιναν στο "sync", ένας
+    # κολλημένος συγχρονισμός θα μπλόκαρε και το ίδιο το ξεκόλλημά του — ο φύλακας δεν
+    # επιτρέπεται να περιμένει πίσω από αυτό που φυλάει.
+    "app.workers.ingestion.reap_stalled_sync": "fast",
+    "app.workers.ingestion.notify_hdika_auth_paused": "fast",
+    "app.workers.ingestion.remind_monthly_hdika_password": "fast",
+    # Νυχτερινά καθαρίσματα — δεν δικαιούνται θέση «γρήγορου».
+    "app.workers.billing.purge_orphan_data": "maintenance",
+    "app.workers.billing.purge_expired_trials": "maintenance",
+    "app.workers.reminders.purge_old_data": "maintenance",
+    "app.workers.optical.purge_old_scans": "maintenance",
+}
+
+
+def _route_task(name, args=None, kwargs=None, options=None, task=None, **kw):
+    """Ποιος δρόμος για κάθε εργασία. None → μένει στην προεπιλογή."""
+    if not name or not name.startswith("app.workers."):
+        return None
+    explicit = _QUEUE_BY_TASK.get(name)
+    if explicit:
+        return {"queue": explicit}
+    parts = name.split(".")
+    module = parts[2] if len(parts) > 2 else ""
+    return {"queue": _QUEUE_BY_MODULE.get(module, "fast")}
+
+
 celery_app.conf.update(
     task_acks_late=True,
     task_reject_on_worker_lost=True,
@@ -29,7 +80,24 @@ celery_app.conf.update(
     task_default_retry_delay=60,
     # Long backfills (>1h) were being redelivered by Redis' default 1h visibility timeout,
     # spawning duplicate concurrent runs that raced over the same window. Raise to 12h.
-    broker_transport_options={"visibility_timeout": 43200},
+    broker_transport_options={
+        "visibility_timeout": 43200,
+        # ΤΟ ΣΗΜΕΙΟ ΠΟΥ ΑΠΕΤΥΧΕ ΣΤΙΣ 19/09/2026: ο κόμβος του Redis έπεσε απότομα στη 01:11.
+        # Ο beat ξανασυνδέθηκε· οι workers ΟΧΙ — έμειναν βουβοί 9 ώρες με «Broken pipe» και
+        # κανένα φαρμακείο δεν συγχρονίστηκε. Χωρίς keepalive, η σπασμένη σύνδεση δεν
+        # ανιχνεύεται ποτέ: η διεργασία «περιμένει» σε ένα socket που δεν υπάρχει πια.
+        "socket_keepalive": True,
+        "retry_on_timeout": True,
+        "health_check_interval": 30,   # ενεργός έλεγχος — δεν περιμένουμε να «μιλήσει» ο άλλος
+    },
+    # Ξανασυνδέσου ΓΙΑ ΠΑΝΤΑ, και στην εκκίνηση και εν ώρα λειτουργίας. Η προεπιλογή τα
+    # παρατά μετά από λίγες προσπάθειες — δηλαδή ακριβώς ό,τι δεν θέλουμε όταν ο broker
+    # λείπει για δύο λεπτά.
+    broker_connection_retry=True,
+    broker_connection_retry_on_startup=True,
+    broker_connection_max_retries=None,
+    redis_socket_keepalive=True,
+    redis_retry_on_timeout=True,
     task_default_queue="celery",
     # ── ΧΡΟΝΙΚΑ ΟΡΙΑ (safety net κατά του «wedge») ──────────────────────────────────
     # Χωρίς όριο, ένα κολλημένο task (π.χ. αργό Mongo query στο νυχτερινό maintenance) κρατά τη
@@ -41,10 +109,7 @@ celery_app.conf.update(
     task_time_limit=900,          # SIGKILL στα 15′ — ελευθερώνει τη θέση ό,τι κι αν συμβαίνει
     # Optical-audit scans (interactive) + heavy historical backfills get DEDICATED queues so they
     # never block the fast 5-min incrementals (and vice-versa).
-    task_routes={
-        "app.workers.optical.process_scan": {"queue": "optical"},
-        "app.workers.ingestion.hdika_backfill": {"queue": "backfill"},
-    },
+    task_routes=(_route_task,),
     # Per-task overrides: μεγάλα ιστορικά backfills, οπτικές σαρώσεις & νυχτερινά snapshots/retention
     # δουλεύουν νόμιμα πολλή ώρα — τους δίνουμε άνετα όρια ώστε το global 15′ να μην τα σκοτώνει.
     task_annotations={
@@ -80,18 +145,15 @@ celery_app.conf.beat_schedule = {
     "sessions-sweep": {
         "task": "app.workers.sessions.sweep",
         "schedule": crontab(minute="*/2"),
-        "options": {"queue": "default"},
     },
     # Lead Engine — προβολή leads· ΚΑΜΙΑ αποστολή σε φαρμακείο (Φάση 1)
     "leads-project": {
         "task": "app.workers.leads.project",
         "schedule": crontab(minute=10),
-        "options": {"queue": "default"},
     },
     "leads-digest": {
         "task": "app.workers.leads.digest",
         "schedule": crontab(hour=6, minute=30),
-        "options": {"queue": "default"},
     },
     "coach-daily-briefing": {
         "task": "app.workers.coach.daily_briefing",

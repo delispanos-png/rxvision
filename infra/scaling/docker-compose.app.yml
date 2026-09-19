@@ -20,11 +20,61 @@ services:
     security_opt: ["no-new-privileges:true"]
     volumes:
       - "./infra/docker/vault/tls/vault.crt:/vault/tls/vault.crt:ro"
+  # ── ΧΩΡΙΣΤΟΙ ΔΡΟΜΟΙ (19/09/2026) ────────────────────────────────────────────────────
+  # Πριν: ΕΝΑΣ worker με 2 θέσεις κουβαλούσε σχεδόν τα πάντα. Οι συγχρονισμοί ΗΔΥΚΑ (λεπτά ο
+  # καθένας, κάθε 5′) τις γέμιζαν και πίσω τους περίμεναν email ανάκτησης κωδικού, SMS,
+  # παραστατικά, παραγγελίες. Τώρα κάθε είδος δουλειάς έχει δικό του δρόμο ΚΑΙ δικές του
+  # θέσεις: ένας κορεσμένος ή κολλημένος δρόμος ΔΕΝ μπορεί να λιμοκτονήσει τους άλλους.
+  #
+  # Το όνομα «worker» ΔΕΝ αλλάζει επίτηδες (το περιμένει το deploy.sh) — είναι ο γρήγορος.
   worker:
     build: ./backend
     restart: unless-stopped
     env_file: .env
-    command: celery -A app.workers.celery_app worker -l info --concurrency 2 --max-tasks-per-child 200 -Q celery
+    # ΜΟΝΟ «fast»: κάποιος άνθρωπος περιμένει — δεν επιτρέπεται να μπλοκάρεται από τίποτα.
+    command: celery -A app.workers.celery_app worker -l info --concurrency 3 --max-tasks-per-child 200 -Q fast -n fast@%h
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A app.workers.celery_app inspect ping -d fast@$$(hostname) --timeout 8 >/dev/null 2>&1 || exit 1"]
+      interval: 60s
+      timeout: 20s
+      retries: 3
+      start_period: 90s
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    volumes:
+      - "./infra/docker/vault/tls/vault.crt:/vault/tls/vault.crt:ro"
+  worker-sync:
+    build: ./backend
+    restart: unless-stopped
+    env_file: .env
+    command: celery -A app.workers.celery_app worker -l info --concurrency 2 --max-tasks-per-child 200 -Q sync -n sync@%h
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A app.workers.celery_app inspect ping -d sync@$$(hostname) --timeout 8 >/dev/null 2>&1 || exit 1"]
+      interval: 60s
+      timeout: 20s
+      retries: 3
+      start_period: 90s
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    volumes:
+      - "./infra/docker/vault/tls/vault.crt:/vault/tls/vault.crt:ro"
+  # Η συντήρηση αναλαμβάνει ΚΑΙ τις δύο ΠΑΛΙΕΣ ουρές (celery/default) — όχι ο γρήγορος.
+  # ΓΙΑΤΙ: μετά τον χωρισμό, η «celery» κρατούσε 1.077 ΠΑΛΙΕΣ εργασίες από το 9ωρο κενό της
+  # 19/09 (774 μόνο συγχρονισμοί ΗΔΥΚΑ). Όσο τις κουβαλούσε ο γρήγορος, οι 3 θέσεις του ήταν
+  # πιασμένες με ώρες-παλιά διπλότυπα και τα email/SMS περίμεναν από πίσω — δηλαδή ακριβώς η
+  # λιμοκτονία που ο χωρισμός υπάρχει για να εξαλείψει. Καμία εργασία δεν χάνεται· απλώς
+  # αδειάζουν σε δρόμο όπου δεν ενοχλούν. Όταν αδειάσουν, οι ουρές μένουν κενές για πάντα.
+  worker-maint:
+    build: ./backend
+    restart: unless-stopped
+    env_file: .env
+    command: celery -A app.workers.celery_app worker -l info --concurrency 1 --max-tasks-per-child 100 -Q maintenance,celery,default -n maint@%h
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A app.workers.celery_app inspect ping -d maint@$$(hostname) --timeout 8 >/dev/null 2>&1 || exit 1"]
+      interval: 60s
+      timeout: 20s
+      retries: 3
+      start_period: 90s
     cap_drop: ["ALL"]
     security_opt: ["no-new-privileges:true"]
     volumes:
@@ -34,6 +84,12 @@ services:
     restart: unless-stopped
     env_file: .env
     command: celery -A app.workers.celery_app worker -l info --concurrency 4 --max-tasks-per-child 100 -Q backfill -n backfill@%h
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A app.workers.celery_app inspect ping -d backfill@$$(hostname) --timeout 8 >/dev/null 2>&1 || exit 1"]
+      interval: 60s
+      timeout: 20s
+      retries: 3
+      start_period: 90s
     cap_drop: ["ALL"]
     security_opt: ["no-new-privileges:true"]
     volumes:
@@ -43,6 +99,12 @@ services:
     restart: unless-stopped
     env_file: .env
     command: celery -A app.workers.celery_app worker -l info --concurrency 3 --max-tasks-per-child 100 -Q optical -n optical@%h
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A app.workers.celery_app inspect ping -d optical@$$(hostname) --timeout 8 >/dev/null 2>&1 || exit 1"]
+      interval: 60s
+      timeout: 20s
+      retries: 3
+      start_period: 90s
     cap_drop: ["ALL"]
     security_opt: ["no-new-privileges:true"]
     volumes:
