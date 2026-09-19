@@ -50,14 +50,11 @@ WILDCARD = "*"
 # ── Ενότητες (μόνο για ομαδοποίηση στο UI) ─────────────────────────────────
 SECTIONS: list[tuple[str, str]] = [
     ("dashboard", "Πίνακας"),
-    ("tenants", "Συνδρομητές"),
-    ("subscriptions", "Συνδρομές & πακέτα"),
-    ("leads", "Leads & Conversions"),
-    ("billing", "Χρεώσεις & πληρωμές"),
-    ("content", "Περιεχόμενο & ανακοινώσεις"),
-    ("comms", "Επικοινωνίες"),
-    ("integrations", "Διασυνδέσεις"),
-    ("monitoring", "Παρακολούθηση"),
+    ("customers", "Πελάτες & Συνδρομές"),
+    ("billing", "Χρεώσεις & Πληρωμές"),
+    ("government", "Κρατικές διασυνδέσεις"),
+    ("ai_clinical", "AI & Κλινικά"),
+    ("operations", "Λειτουργία & Παρακολούθηση"),
     ("system", "Σύστημα"),
 ]
 
@@ -70,48 +67,46 @@ _DEFS: list[tuple[str, str, str, bool]] = [
     # ── Πίνακας ──
     ("dashboard:read", "dashboard", "Προβολή πίνακα & KPIs", False),
 
-    # ── Συνδρομητές ──
-    ("tenants:read", "tenants", "Προβολή πελατών & καρτέλας", False),
-    ("tenants:create", "tenants", "Άνοιγμα νέου πελάτη", False),
-    ("tenants:edit", "tenants", "Επεξεργασία στοιχείων πελάτη", False),
-    ("tenants:suspend", "tenants", "Αναστολή / επανενεργοποίηση", False),
-    ("tenants:modules", "tenants", "Αλλαγή δυνατοτήτων (modules)", False),
-    ("tenants:package", "tenants", "Ανάθεση πακέτου", False),
-    ("tenants:addons", "tenants", "Ενεργοποίηση add-on", False),
-    ("tenants:cancel", "tenants", "Ακύρωση συνδρομής πελάτη", False),
-    ("tenants:wallet_credit", "tenants", "Πίστωση υπολοίπου μηνυμάτων", False),
-    ("tenants:items_copy", "tenants", "Αντιγραφή ειδών σε πελάτη", False),
-    ("tenants:items_delete", "tenants", "Διαγραφή ειδών πελάτη", True),
-    ("tenants:delete", "tenants", "Οριστική διαγραφή πελάτη", True),
-    ("tenants:credentials", "tenants", "Προβολή credentials πελάτη", True),
-    ("tenants:send_credentials", "tenants", "Έκδοση & αποστολή νέου κωδικού πελάτη", True),
-    ("tenants:impersonate", "tenants", "Σύνδεση ως πελάτης (δεδομένα ασθενών)", True),
-    ("feedback:read", "tenants", "Προβολή αξιολογήσεων", False),
-    ("feedback:coupon", "tenants", "Έκδοση κουπονιού αξιολόγησης", False),
+    # ── Πελάτες & Συνδρομές ──
+    ("tenants:read", "customers", "Προβολή πελατών & καρτέλας", False),
+    ("tenants:create", "customers", "Άνοιγμα νέου πελάτη", False),
+    ("tenants:edit", "customers", "Επεξεργασία στοιχείων πελάτη", False),
+    ("tenants:suspend", "customers", "Αναστολή / επανενεργοποίηση", False),
+    ("tenants:modules", "customers", "Αλλαγή δυνατοτήτων (modules)", False),
+    ("tenants:package", "customers", "Ανάθεση πακέτου", False),
+    ("tenants:addons", "customers", "Ενεργοποίηση add-on", False),
+    ("tenants:cancel", "customers", "Ακύρωση συνδρομής πελάτη", False),
+    ("tenants:wallet_credit", "customers", "Πίστωση υπολοίπου μηνυμάτων", False),
+    ("tenants:items_copy", "customers", "Αντιγραφή ειδών σε πελάτη", False),
+    ("tenants:items_delete", "customers", "Διαγραφή ειδών πελάτη", True),
+    ("tenants:delete", "customers", "Οριστική διαγραφή πελάτη", True),
+    ("tenants:credentials", "customers", "Προβολή credentials πελάτη", True),
+    ("tenants:send_credentials", "customers", "Έκδοση & αποστολή νέου κωδικού πελάτη", True),
+    ("tenants:impersonate", "customers", "Σύνδεση ως πελάτης (δεδομένα ασθενών)", True),
+    ("feedback:read", "customers", "Προβολή αξιολογήσεων", False),
+    ("feedback:coupon", "customers", "Έκδοση κουπονιού αξιολόγησης", False),
 
-    # ── Συνδρομές & πακέτα ──
-    ("subscriptions:read", "subscriptions", "Προβολή συνδρομών", False),
-    ("subscriptions:edit", "subscriptions", "Επεξεργασία συνδρομής", False),
-    ("subscriptions:plan_change", "subscriptions", "Έγκριση / απόρριψη αλλαγής πακέτου", False),
-    ("subscriptions:lifecycle", "subscriptions", "Ρυθμίσεις κύκλου ζωής", False),
-    ("subscriptions:lifecycle_run", "subscriptions", "Εκτέλεση κύκλου ζωής", False),
-    ("subscriptions:notifications", "subscriptions", "Ειδοποιήσεις συνδρομών", False),
-    ("subscriptions:trials_purge", "subscriptions", "Εκκαθάριση δοκιμαστικών", True),
-    ("packages:read", "subscriptions", "Προβολή πακέτων / add-ons / SLA", False),
-    ("packages:write", "subscriptions", "Δημιουργία & επεξεργασία πακέτων", False),
-    ("packages:delete", "subscriptions", "Διαγραφή πακέτων", False),
-    ("eshop_fees:read", "subscriptions", "Προβολή προμηθειών e-shop", False),
-    ("eshop_fees:write", "subscriptions", "Ρύθμιση προμηθειών e-shop", False),
-    ("eshop_fees:charge", "subscriptions", "Χρέωση προμήθειας e-shop", False),
+    ("subscriptions:read", "customers", "Προβολή συνδρομών", False),
+    ("subscriptions:edit", "customers", "Επεξεργασία συνδρομής", False),
+    ("subscriptions:plan_change", "customers", "Έγκριση / απόρριψη αλλαγής πακέτου", False),
+    ("subscriptions:lifecycle", "customers", "Ρυθμίσεις κύκλου ζωής", False),
+    ("subscriptions:lifecycle_run", "customers", "Εκτέλεση κύκλου ζωής", False),
+    ("subscriptions:notifications", "customers", "Ειδοποιήσεις συνδρομών", False),
+    ("subscriptions:trials_purge", "customers", "Εκκαθάριση δοκιμαστικών", True),
+    ("packages:read", "customers", "Προβολή πακέτων / add-ons / SLA", False),
+    ("packages:write", "customers", "Δημιουργία & επεξεργασία πακέτων", False),
+    ("packages:delete", "customers", "Διαγραφή πακέτων", False),
+    ("eshop_fees:read", "customers", "Προβολή προμηθειών e-shop", False),
+    ("eshop_fees:write", "customers", "Ρύθμιση προμηθειών e-shop", False),
+    ("eshop_fees:charge", "customers", "Χρέωση προμήθειας e-shop", False),
 
-    # ── Leads ──
-    ("leads:read", "leads", "Προβολή leads", False),
-    ("leads:edit", "leads", "Επεξεργασία lead (status, notes, tasks)", False),
-    ("leads:segments", "leads", "Διαχείριση segments", False),
-    ("leads:config", "leads", "Ρυθμίσεις Lead Engine", False),
-    ("leads:refresh", "leads", "Ανανέωση projection", False),
-    ("leads:grant_trial", "leads", "Χορήγηση δοκιμαστικής", False),
-    ("leads:delete", "leads", "Διαγραφή lead", False),
+    ("leads:read", "customers", "Προβολή leads", False),
+    ("leads:edit", "customers", "Επεξεργασία lead (status, notes, tasks)", False),
+    ("leads:segments", "customers", "Διαχείριση segments", False),
+    ("leads:config", "customers", "Ρυθμίσεις Lead Engine", False),
+    ("leads:refresh", "customers", "Ανανέωση projection", False),
+    ("leads:grant_trial", "customers", "Χορήγηση δοκιμαστικής", False),
+    ("leads:delete", "customers", "Διαγραφή lead", False),
 
     # ── Χρεώσεις & πληρωμές ──
     ("billing:read", "billing", "Προβολή τιμολόγησης & υπολοίπων", False),
@@ -127,34 +122,37 @@ _DEFS: list[tuple[str, str, str, bool]] = [
     ("markup:write", "billing", "Αλλαγή διατίμησης", False),
     ("markup:recompute", "billing", "Επανυπολογισμός διατίμησης", False),
 
-    # ── Περιεχόμενο ──
-    ("content:read", "content", "Προβολή άρθρων & ανακοινώσεων", False),
-    ("content:write", "content", "Δημιουργία & επεξεργασία", False),
-    ("content:delete", "content", "Διαγραφή", False),
-    ("newsletter:read", "content", "Προβολή newsletter & παραληπτών", False),
-    ("newsletter:send", "content", "Αποστολή newsletter", False),
+    ("content:read", "customers", "Προβολή άρθρων & ανακοινώσεων", False),
+    ("content:write", "customers", "Δημιουργία & επεξεργασία", False),
+    ("content:delete", "customers", "Διαγραφή", False),
+    ("newsletter:read", "customers", "Προβολή newsletter & παραληπτών", False),
+    ("newsletter:send", "customers", "Αποστολή newsletter", False),
 
-    # ── Επικοινωνίες ──
-    ("comms:read", "comms", "Προβολή χρήσης & υπολοίπων μηνυμάτων", False),
-    ("comms:send", "comms", "Δοκιμαστική αποστολή", False),
-    ("comms:senders", "comms", "Έγκριση sender IDs", False),
-    ("comms:config", "comms", "Ρυθμίσεις ειδοποιήσεων & παραληπτών", False),
+    # ── Λειτουργία & Παρακολούθηση ──
+    ("comms:read", "operations", "Προβολή χρήσης & υπολοίπων μηνυμάτων", False),
+    ("comms:send", "operations", "Δοκιμαστική αποστολή", False),
+    ("comms:senders", "operations", "Έγκριση sender IDs", False),
+    ("comms:config", "operations", "Ρυθμίσεις ειδοποιήσεων & παραληπτών", False),
 
-    # ── Διασυνδέσεις ──
-    ("integrations:read", "integrations", "Προβολή διασυνδέσεων", False),
-    ("integrations:write", "integrations", "Αλλαγή κλειδιών & διαπιστευτηρίων", True),
-    ("integrations:test", "integrations", "Δοκιμή σύνδεσης", False),
-    ("integrations:rotate", "integrations", "Εναλλαγή κλειδιού SoftOne bridge", True),
-    ("pharmacat:read", "integrations", "Προβολή βάσης γνώσης PharmaCat", False),
-    ("pharmacat:write", "integrations", "Επεξεργασία βάσης γνώσης", False),
-    ("pharmacat:delete", "integrations", "Διαγραφή από βάση γνώσης", False),
+    # ── Κρατικές διασυνδέσεις ──
+    ("integrations:read", "government", "Προβολή διασυνδέσεων (και AI Providers)", False),
+    ("integrations:write", "government",
+     "Αλλαγή κλειδιών & διαπιστευτηρίων (και AI Providers)", True),
+    ("integrations:test", "government", "Δοκιμή σύνδεσης", False),
+    ("integrations:rotate", "government", "Εναλλαγή κλειδιού SoftOne bridge", True),
+    # Το /admin/integrations (κλειδιά παρόχων) είναι ΚΟΙΝΟ με τις Κρατικές διασυνδέσεις —
+    # γι' αυτό τα όρια/τιμές AI έχουν δικά τους κλειδιά, αλλά τα κλειδιά παρόχων όχι.
+    ("ai:read", "ai_clinical", "Προβολή ορίων & τιμολόγησης AI", False),
+    ("ai:write", "ai_clinical", "Αλλαγή ορίων, τιμών & πακέτων AI", False),
+    ("pharmacat:read", "ai_clinical", "Προβολή βάσης γνώσης PharmaCat", False),
+    ("pharmacat:write", "ai_clinical", "Επεξεργασία βάσης γνώσης", False),
+    ("pharmacat:delete", "ai_clinical", "Διαγραφή από βάση γνώσης", False),
 
-    # ── Παρακολούθηση ──
-    ("monitoring:read", "monitoring", "Επισκεψιμότητα & υγεία συγχρονισμού", False),
-    ("monitoring:run", "monitoring", "Εκτέλεση ελέγχου ποσών", False),
-    ("monitoring:sessions", "monitoring", "Προβολή συνδεδεμένων & ιστορικού", False),
-    ("monitoring:session_revoke", "monitoring", "Αποσύνδεση χρήστη", False),
-    ("monitoring:audit", "monitoring", "Αρχείο ενεργειών (όλοι οι πελάτες)", True),
+    ("monitoring:read", "operations", "Επισκεψιμότητα & υγεία συγχρονισμού", False),
+    ("monitoring:run", "operations", "Εκτέλεση ελέγχου ποσών", False),
+    ("monitoring:sessions", "operations", "Προβολή συνδεδεμένων & ιστορικού", False),
+    ("monitoring:session_revoke", "operations", "Αποσύνδεση χρήστη", False),
+    ("monitoring:audit", "operations", "Αρχείο ενεργειών (όλοι οι πελάτες)", True),
 
     # ── Σύστημα ──
     ("staff:read", "system", "Προβολή ομάδας & δικαιωμάτων", False),
@@ -249,11 +247,11 @@ _ADMIN: dict[tuple[str, str], str] = {
     ("GET", "/credit-packages"): "packages:read",
     ("PUT", "/credit-packages/{code}"): "packages:write",
     ("DELETE", "/credit-packages/{code}"): "packages:delete",
-    ("GET", "/ai-credit-packs"): "packages:read",
-    ("PUT", "/ai-credit-packs/{code}"): "packages:write",
-    ("DELETE", "/ai-credit-packs/{code}"): "packages:delete",
-    ("GET", "/ai-limits"): "packages:read",
-    ("PUT", "/ai-pricing"): "packages:write",
+    ("GET", "/ai-credit-packs"): "ai:read",
+    ("PUT", "/ai-credit-packs/{code}"): "ai:write",
+    ("DELETE", "/ai-credit-packs/{code}"): "ai:write",
+    ("GET", "/ai-limits"): "ai:read",
+    ("PUT", "/ai-pricing"): "ai:write",
     ("GET", "/eshop-fees/config"): "eshop_fees:read",
     ("PUT", "/eshop-fees/config"): "eshop_fees:write",
     ("GET", "/eshop-fees/overview"): "eshop_fees:read",
@@ -440,7 +438,20 @@ def _read_only() -> list[str]:
     return sorted(k for k in ALL_PERMISSION_KEYS if k.endswith(":read") and k not in SENSITIVE_KEYS)
 
 
+# Η ΜΟΝΗ default ομάδα που κουβαλά sensitive δικαιώματα, σκόπιμα: είναι ο ρόλος
+# «διαχειριστής» με τα πάντα. Διαφέρει από το `super_admin` flag — ο flag παρακάμπτει τον
+# έλεγχο εντελώς και παίρνει αυτόματα ό,τι νέο προστεθεί· αυτή η ομάδα είναι ρητή λίστα που
+# τη βλέπεις και την πειράζεις στον πίνακα. Το test φροντίζει να μη μείνει πίσω.
+ADMIN_GROUP_KEY = "admin"
+
 DEFAULT_GROUPS: list[dict] = [
+    {
+        "key": ADMIN_GROUP_KEY,
+        "name": "Διαχειριστές",
+        "description": "Πλήρης πρόσβαση σε όλες τις δυνατότητες, συμπεριλαμβανομένων των "
+                       "επικίνδυνων ενεργειών. Μόνο για όσους διαχειρίζονται την πλατφόρμα.",
+        "permissions": sorted(ALL_PERMISSION_KEYS),
+    },
     {
         "key": "readonly",
         "name": "Μόνο ανάγνωση",
@@ -501,6 +512,7 @@ DEFAULT_GROUPS: list[dict] = [
         "permissions": sorted({
             "dashboard:read", "tenants:read", "tenants:modules",
             "integrations:read", "integrations:test",
+            "ai:read", "ai:write",
             "pharmacat:read", "pharmacat:write", "pharmacat:delete",
             "monitoring:read", "monitoring:run", "monitoring:sessions",
             "monitoring:session_revoke", "cloud:read", "system:read",
