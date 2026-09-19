@@ -248,6 +248,7 @@ async def _hetzner_topology(token: str, live: dict) -> tuple[list, list, list]:
                 "disk_pct": lm.get("disk_pct") if lm.get("fresh") else None,
                 "disk_total_gb": lm.get("disk_total_gb") if lm.get("fresh") else st.get("disk"),
                 "metrics_live": bool(lm.get("fresh")),
+                "health": lm.get("health"),
             })
 
         lbs = []
@@ -387,6 +388,17 @@ async def infra(ctx: PlatformContext = Depends(get_platform_admin)):
     async for m in shared_db()["node_metrics"].find({}):
         m["fresh"] = bool(m.get("ts") and m["ts"] > cutoff)
         live[m.get("node") or m.get("_id")] = m
+    # Υγεία κόμβου: ΟΧΙ άλλο ένα ποσοστό, αλλά η ΑΙΤΙΑ πίσω από ένα ύποπτο ποσοστό — ρυθμός
+    # γέννησης container, CPU του ίδιου του daemon, ορφανές ροές που καθαρίστηκαν.
+    h_cut = datetime.now(tz=timezone.utc) - timedelta(minutes=30)
+    async for h in shared_db()["node_health"].find({}):
+        n = h.get("node") or h.get("_id")
+        if n in live and h.get("at") and h["at"] > h_cut:
+            live[n]["health"] = {
+                "dockerd_cpu": h.get("dockerd_cpu"), "churn": h.get("container_churn_10s"),
+                "zombies": h.get("zombies"), "orphans_killed": h.get("orphans_killed"),
+                "at": h.get("at"),
+            }
 
     servers: list = []
     lbs: list = []

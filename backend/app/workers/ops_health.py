@@ -8,7 +8,7 @@ Throttled to at most one email per issue-signature per 3h (state in `ops_alerts`
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from app.workers.celery_app import celery_app
 from app.workers.ingestion import _fresh_db, _run_async
@@ -125,6 +125,59 @@ def check() -> dict:
                     issues.append(("ingest-stale",
                                    f"📥 Κανένας ΗΔΥΚΑ συγχρονισμός δεν έφερε δεδομένα εδώ και ~{age_h:.0f}h "
                                    "(ώρες λειτουργίας) — πιθανή σιωπηλή αποτυχία (Vault/creds/δίκτυο)."))
+
+            # 5β) ΥΓΕΙΑ ΚΟΜΒΟΥ — «καίει CPU χωρίς να είναι κανείς συνδεδεμένος»
+            #     ΓΙΑΤΙ ΥΠΑΡΧΕΙ: τρεις servers έτρεχαν στο 100-200% dockerd επί 30 ημέρες και δεν
+            #     το είδε κανείς, γιατί κανένας έλεγχος δεν κοιτούσε ΤΟΝ ΛΟΓΟ — μόνο το σύνολο.
+            #     Τα σήματα εδώ δείχνουν ΑΙΤΙΑ, όχι σύμπτωμα: ρυθμό γέννησης container, CPU του
+            #     daemon, ορφανές ροές, zombies. Ο κόμβος τα γράφει μόνος του κάθε 5 λεπτά.
+            async for h in db["node_health"].find({}):
+                node = h.get("node") or h.get("_id")
+                t = _as_dt(h.get("at"))
+                if not t or (now - t).total_seconds() > 1800:
+                    continue                      # μπαγιάτικο → το πιάνει ο έλεγχος «node-down»
+                # (α) καταιγισμός container: κάτι γεννά container σε βρόχο
+                churn = int(h.get("container_churn_10s") or 0)
+                if churn >= 2:
+                    issues.append((f"node-churn-{node}",
+                                   f"🔁 {node}: γεννιούνται ~{churn * 6}/λεπτό containers. Κάποιος βρόχος "
+                                   "σηκώνει container αντί να χρησιμοποιεί κάποιο που ήδη τρέχει — "
+                                   "καίει CPU στον daemon χωρίς να φαίνεται πουθενά."))
+                # (β) ο daemon τρώει CPU μόνος του
+                dcpu = float(h.get("dockerd_cpu") or 0)
+                if dcpu >= 50:
+                    issues.append((f"node-dockerd-{node}",
+                                   f"🐳 {node}: ο Docker daemon τρέχει στο {dcpu:.0f}% CPU χωρίς φορτίο "
+                                   "χρηστών. Συνήθης αιτία: ροή (`docker logs/events`) που έμεινε ανοιχτή "
+                                   "ή βρόχος που γεννά container."))
+                # (γ) φορτίο ανά πυρήνα χωρίς κανέναν συνδεδεμένο
+                cores = max(1, int(h.get("cores") or 1))
+                per_core = float(h.get("load1") or 0) / cores
+                if per_core >= 1.5:
+                    live = await db["user_sessions"].count_documents(
+                        {"last_active_at": {"$gte": now - timedelta(minutes=10)},
+                         "impersonation": {"$ne": True}})
+                    if live == 0:
+                        issues.append((f"node-idle-load-{node}",
+                                       f"⚠️ {node}: φορτίο {per_core:.1f} ανά πυρήνα με ΜΗΔΕΝ συνδεδεμένους "
+                                       "χρήστες. Κάτι τρέχει που δεν το ζήτησε κανείς."))
+                if int(h.get("zombies") or 0) >= 20:
+                    issues.append((f"node-zombies-{node}",
+                                   f"🧟 {node}: {h['zombies']} zombie διεργασίες — κάποιος γονιός δεν "
+                                   "μαζεύει τα παιδιά του."))
+
+            # 5γ) Η ΑΥΤΟΔΙΟΡΘΩΣΗ ΔΕΝ ΕΙΝΑΙ ΣΙΩΠΗΛΗ. Αν ένας κόμβος καθαρίζει ορφανές ροές ΞΑΝΑ
+            #     ΚΑΙ ΞΑΝΑ, το πρόβλημα δεν λύθηκε — απλώς σκουπίζεται. Αυτό πρέπει να ακουστεί.
+            heal_cut = now - timedelta(hours=24)
+            async for row in db["node_health_events"].aggregate([
+                    {"$match": {"kind": "orphans_killed", "at": {"$gte": heal_cut}}},
+                    {"$group": {"_id": "$node", "times": {"$sum": 1},
+                                "total": {"$sum": "$orphans_killed"}}}]):
+                if row["times"] >= 3:
+                    issues.append((f"node-selfheal-loop-{row['_id']}",
+                                   f"🩹 {row['_id']}: το σύστημα καθάρισε ορφανές ροές docker {row['times']} "
+                                   f"φορές σε 24 ώρες ({row['total']} συνολικά). Η αυτοδιόρθωση κρύβει κάτι "
+                                   "που τις παράγει — βρες το, μη μείνεις στο σκούπισμα."))
 
             # 6) DB storage capacity — έγκαιρη προειδοποίηση ΠΡΙΝ πιέσει ο δίσκος, για προσθήκη block
             #    volume (δες docs/DEPLOYMENT ή reimbursement scaling). Ελέγχει ΠΡΑΓΜΑΤΙΚΑ δεδομένα, όχι logs.

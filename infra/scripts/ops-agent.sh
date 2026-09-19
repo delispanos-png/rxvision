@@ -39,7 +39,74 @@ print(json.dumps({"id": str(c["_id"]), "type": c.get("type", ""), "file": c.get(
 PYEOF
 }
 
+# ── ΔΙΚΛΕΙΔΑ ΑΣΦΑΛΕΙΑΣ ΤΟΥ ΚΟΜΒΟΥ ────────────────────────────────────────────────────────────
+# ΓΙΑΤΙ ΥΠΑΡΧΕΙ (19/09/2026): τρεις servers έκαιγαν CPU επί 30 ημέρες χωρίς να το δει κανείς.
+# Δύο αιτίες: (α) ο ίδιος ο agent γεννούσε container κάθε 8΄΄, (β) εντολές `docker logs` που
+# ξέμειναν ανοιχτές 13 μέρες και ο dockerd τις σέρβιρε ασταμάτητα. Και τα δύο ήταν ΟΡΑΤΑ από
+# τον host — απλώς κανείς δεν κοιτούσε. Τώρα κοιτάει ο ίδιος ο κόμβος, κάθε 5 λεπτά.
+SELFCHECK_EVERY=$(( 5 * 60 / 8 ))     # ~κάθε 5 λεπτά (ο βρόχος κάνει sleep 8)
+ORPHAN_AGE=3600                        # ροή docker ανοιχτή >1 ώρα = ξεχασμένη
+
+host_selfcheck() {
+  # 1) Ορφανές ΡΟΕΣ docker. ΜΟΝΟ logs/events/stats/attach — είναι read-only και το κλείσιμό
+  #    τους δεν μπορεί να χαλάσει τίποτα. Το `exec` ΔΕΝ μπαίνει εδώ επίτηδες: το χρησιμοποιεί
+  #    ο ίδιος ο agent και μπορεί να τρέχει μια νόμιμη μακρά εργασία (migration).
+  local orphans killed=0 pid
+  orphans=$(ps -eo pid,etimes,cmd --no-headers 2>/dev/null             | awk -v a="$ORPHAN_AGE" '$2>a'             | grep -E "docker (logs|events|stats|attach)" | grep -v grep || true)
+  if [ -n "$orphans" ]; then
+    while read -r pid _; do
+      [ -n "$pid" ] && kill -9 "$pid" 2>/dev/null && killed=$((killed+1))
+    done <<< "$orphans"
+  fi
+
+  # 2) CPU του dockerd — ΣΩΣΤΟΣ τύπος: ticks / (CLK_TCK × δευτερόλεπτα) × 100.
+  #    (Λάθος διαίρεση δίνει νούμερα 100× μεγαλύτερα και στέλνει σε κυνήγι φαντασμάτων.)
+  local dp a b hz
+  dp=$(pgrep -x dockerd | head -1); hz=$(getconf CLK_TCK)
+  a=$(awk '{print $14+$15}' "/proc/$dp/stat" 2>/dev/null || echo 0)
+  sleep 3
+  b=$(awk '{print $14+$15}' "/proc/$dp/stat" 2>/dev/null || echo 0)
+  local dcpu; dcpu=$(awk -v d=$((b-a)) -v hz="$hz" 'BEGIN{printf "%.1f", 100*(d/hz)/3}')
+
+  # 3) Ρυθμός γέννησης container — ο καταιγισμός που μας έκαψε ήταν ακριβώς αυτό.
+  # ΠΡΟΣΟΧΗ: `grep -c … || echo 0` τυπώνει ΔΥΟ μηδενικά (το «0» του grep ΚΑΙ το echo) — η
+  # τιμή γίνεται "0\n0", το int() σκάει και η εγγραφή χάνεται ΣΙΩΠΗΛΑ. Το `|| true` κρατά
+  # μόνο το «0» του grep.
+  local churn; churn=$( { timeout 12 docker events --since 0s --until 10s 2>/dev/null || true; } | grep -c "container create" || true )
+
+  local zomb; zomb=$(ps -eo stat --no-headers 2>/dev/null | grep -c '^Z' || true)
+  churn=$(printf "%s" "${churn:-0}" | head -1); zomb=$(printf "%s" "${zomb:-0}" | head -1)
+  local load1; load1=$(cut -d" " -f1 /proc/loadavg)
+  local cores; cores=$(nproc)
+
+  docker exec -i     -e H_NODE="$NODE" -e H_ORPH="$killed" -e H_DCPU="$dcpu" -e H_CHURN="$churn"     -e H_ZOMB="$zomb" -e H_LOAD="$load1" -e H_CORES="$cores"     "$API_CT" python - <<'PYEOF' 2>&1 | head -3
+import os
+from datetime import datetime, timezone
+from pymongo import MongoClient
+cli = MongoClient(os.environ["MONGODB_URI"], serverSelectionTimeoutMS=4000)
+db = cli[os.environ.get("MONGODB_DB", "rxvision")]
+node = os.environ["H_NODE"]
+killed = int(os.environ.get("H_ORPH") or 0)
+doc = {
+    "node": node, "at": datetime.now(tz=timezone.utc),
+    "dockerd_cpu": float(os.environ.get("H_DCPU") or 0),
+    "container_churn_10s": int(os.environ.get("H_CHURN") or 0),
+    "zombies": int(os.environ.get("H_ZOMB") or 0),
+    "load1": float(os.environ.get("H_LOAD") or 0),
+    "cores": int(os.environ.get("H_CORES") or 1),
+    "orphans_killed": killed,
+}
+db.node_health.update_one({"_id": node}, {"$set": doc}, upsert=True)
+# Η αυτοδιόρθωση καταγράφεται ΠΑΝΤΑ: μια σιωπηλή θεραπεία κρύβει ότι το πρόβλημα επανέρχεται.
+if killed:
+    db.node_health_events.insert_one({**doc, "kind": "orphans_killed"})
+PYEOF
+}
+
+LOOPS=0
 while true; do
+  LOOPS=$((LOOPS+1))
+  if [ $((LOOPS % SELFCHECK_EVERY)) -eq 1 ]; then host_selfcheck || true; fi
   # Το API container μπορεί να λείπει στιγμιαία (deploy) → περίμενε, ΜΗΝ γυρίσεις στο παλιό
   # ακριβό μονοπάτι· αλλιώς ένα μεγάλο deploy θα ξανάφερνε τον καταιγισμό container.
   if ! docker inspect -f '{{.State.Running}}' "$API_CT" 2>/dev/null | grep -q true; then

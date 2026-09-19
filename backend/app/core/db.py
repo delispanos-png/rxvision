@@ -156,6 +156,9 @@ INDEXES: list[tuple[str, list[tuple[str, int]], dict]] = [
     ("session_log", [("started_at", -1)], {}),
     ("session_log", [("tenant_id", 1), ("started_at", -1)], {}),
     ("session_log", [("ended_at", 1)], {}),
+    # Υγεία κόμβου (μία γραμμή ανά κόμβο) + ημερολόγιο αυτοδιορθώσεων (90 ημέρες).
+    ("node_health", [("at", -1)], {}),
+    ("node_health_events", [("at", -1)], {"expireAfterSeconds": 90 * 24 * 3600}),
     ("module_settings", [("tenant_id", 1), ("module", 1)], {"unique": True}),
     ("subscriptions", [("tenant_id", 1)], {"unique": True}),
     ("tenants", [("slug", 1)], {"unique": True}),

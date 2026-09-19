@@ -12,6 +12,8 @@ type Srv = {
   public_ip: string | null; private_ip: string | null; location: string | null;
   cpu: number | null; ram_pct: number | null; load: number | null;
   disk_pct: number | null; disk_total_gb: number | null; metrics_live: boolean;
+  health?: { dockerd_cpu?: number | null; churn?: number | null; zombies?: number | null;
+             orphans_killed?: number | null; at?: string } | null;
 };
 type LB = { name: string; public_ip: string | null; private_ip: string | null; services: string[]; targets: { name: string; healthy: boolean | null }[] };
 type Net = { name: string; range: string | null; members: string[] };
@@ -91,6 +93,23 @@ function ServerCard({ s, onPrune, pruning }: { s: Srv; onPrune?: (node: string) 
         <Metric icon={<Activity className="h-3 w-3" />} label="Load" pct={s.load == null ? null : Math.round(s.load * 100) / 100} suffix="" />
       </div>
       {!s.metrics_live && <div className="mt-2 text-[10px] text-slate-400">CPU από Hetzner · RAM/Δίσκος/Load ζωντανά μόλις τρέξει ο agent</div>}
+      {/* ΥΓΕΙΑ ΚΟΜΒΟΥ: εμφανίζεται ΜΟΝΟ όταν υπάρχει κάτι να πει. Ένα μόνιμο «όλα καλά» κάνει
+          τον κόμβο θόρυβο· ένα σήμα που εμφανίζεται σπάνια το προσέχεις. */}
+      {s.health && (() => {
+        const h = s.health!;
+        const bad: string[] = [];
+        if ((h.dockerd_cpu ?? 0) >= 50) bad.push(`Docker daemon ${Math.round(h.dockerd_cpu!)}% χωρίς φορτίο χρηστών`);
+        if ((h.churn ?? 0) >= 2) bad.push(`~${(h.churn ?? 0) * 6} containers/λεπτό γεννιούνται σε βρόχο`);
+        if ((h.zombies ?? 0) >= 20) bad.push(`${h.zombies} zombie διεργασίες`);
+        if ((h.orphans_killed ?? 0) > 0) bad.push(`καθαρίστηκαν ${h.orphans_killed} ορφανές ροές docker`);
+        if (!bad.length) return null;
+        const healed = bad.length === 1 && (h.orphans_killed ?? 0) > 0;
+        return (
+          <div className={`mt-2 rounded-lg px-2 py-1.5 text-[10px] ${healed ? "bg-emerald-50 text-emerald-800" : "bg-amber-50 text-amber-900"}`}>
+            {healed ? "🩹 " : "⚠️ "}{bad.join(" · ")}
+          </div>
+        );
+      })()}
     </div>
   );
 }
