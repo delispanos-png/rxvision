@@ -140,6 +140,34 @@ Marketing · Τεχνική υποστήριξη.
 | POST | `/subscription/checkout` | `billing:manage` | upgrade/downgrade |
 | GET | `/subscription/usage` | usage vs limits |
 
+## Copilot (AI βοηθός)
+
+`POST /copilot/chat` — gate: `patients:read` + module `ai_assistant`.
+
+Ο βοηθός απαντά καλώντας **εργαλεία** (ορίζονται στο `app/services/copilot_service.py`).
+Τα συγκεντρωτικά (`get_kpis`, `get_top`, `get_profitability`, …) συνυπάρχουν με το
+**`list_prescriptions`**, που επιστρέφει **μεμονωμένες συνταγές** — όχι αθροίσματα.
+
+| Παράμετρος | Τιμή |
+|---|---|
+| `year` | «2025» → ολόκληρο ημερολογιακό έτος |
+| `month` | «YYYY-MM» |
+| `date_from` / `date_to` | «YYYY-MM-DD» (το `date_to` συμπεριλαμβάνεται) |
+| `days_back` / `months_back` | κυλιόμενο εύρος |
+| `min_amount` / `max_amount` | σε **ΕΥΡΩ** (μετατρέπονται σε cents εσωτερικά) |
+| `sort` | `amount_total` (default, φθίνουσα) ή `executed_at` |
+| `limit` | έως 50 |
+| `patient_name` · `icd10` · `status` · `unexecuted_only` | προαιρετικά φίλτρα |
+
+Το `year` / `date_from` / `date_to` προστέθηκαν στο κοινό `_range()`, άρα ισχύουν για **όλα**
+τα εργαλεία. Πριν, ερωτήσεις τύπου «το 2025» έπεφταν σιωπηλά στο κυλιόμενο 1μηνο.
+
+**Δικαιώματα:** το `list_prescriptions` απαιτεί **`prescriptions:read`** — αυστηρότερο από τον
+υπόλοιπο Copilot, επειδή επιστρέφει γραμμές με ονόματα ασθενών αντί για σύνολα. Χωρίς αυτό δεν
+διαφημίζεται καν στο μοντέλο, και η εκτέλεσή του απορρίπτεται (έλεγχος σε δύο σημεία).
+Το ΑΜΚΑ αφαιρείται πάντα πριν φύγει οτιδήποτε προς το LLM (`_scrub_amka`), και σε tenant
+«παρουσίασης» τα ονόματα ψευδωνυμοποιούνται.
+
 ## Export (cross-cutting)
 Πολλά list/aggregate endpoints δέχονται `?format=csv|xlsx|pdf` → async export job
 (audited) → `202 Accepted` + `GET /exports/{id}` για το αρχείο (signed URL).

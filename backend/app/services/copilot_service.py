@@ -23,7 +23,7 @@ SYSTEM = """Είσαι ο «Copilot» του RxVision — ο έξυπνος βο
 γι' αυτό υπάρχει ο PharmaCat). Απαντάς ΠΑΝΤΑ στα ελληνικά, σύντομα και με ουσία.
 
 ΕΧΕΙΣ ΕΡΓΑΛΕΙΑ — χρησιμοποίησέ τα αντί να μαντεύεις:
-• Δεδομένα: get_kpis, get_profitability, get_reimbursement, get_reimbursement_risk, get_top,
+• Δεδομένα: get_kpis, list_prescriptions, get_profitability, get_reimbursement, get_reimbursement_risk, get_top,
   get_patient_overview, get_today_tasks, get_winback, get_at_risk, get_vip, get_compliance,
   get_upcoming, get_order_suggestions, get_low_margin, get_unexecuted, get_portal_pending,
   get_ingestion_status. ΟΛΑ τα χρηματικά πεδία είναι σε ΛΕΠΤΑ — διαίρεσε /100 και γράψε «1.234,56 €».
@@ -52,6 +52,10 @@ SYSTEM = """Είσαι ο «Copilot» του RxVision — ο έξυπνος βο
 ή αυτόν τον μήνα», «πόσες εκτελέσεις σήμερα», «κορυφαίοι…»): ΚΑΛΕΣΕ το σωστό εργαλείο (π.χ. get_top με
 dim=patients & days_back=0 για «σήμερα») και ΑΠΑΝΤΗΣΕ ΜΕ ΤΟ ΟΝΟΜΑ/ΑΡΙΘΜΟ. ΜΗΝ στέλνεις απλώς σε σελίδα —
 το open_screen είναι ΣΥΜΠΛΗΡΩΜΑ της απάντησης, όχι υποκατάστατο. Ημερήσια: days_back=0=σήμερα, 1=χθες.
+ΛΙΣΤΑ ΣΥΝΤΑΓΩΝ: όταν ζητηθούν ΟΙ ΙΔΙΕΣ ΟΙ ΣΥΝΤΑΓΕΣ («δείξε/βρες μου τις συνταγές», «ποιες συνταγές»,
+«μεγάλης αξίας», «πάνω από X ευρώ»), κάλεσε `list_prescriptions` και ΠΑΡΑΘΕΣΕ ΤΙΣ ΓΡΑΜΜΕΣ (ημερομηνία,
+ασθενής, ταμείο, αξία). ΑΠΑΓΟΡΕΥΕΤΑΙ να πεις «δεν έχω εργαλείο» ή να παραπέμψεις στη σελίδα Συνταγές —
+το εργαλείο ΥΠΑΡΧΕΙ. Για ολόκληρο έτος δώσε `year:"2025"`, όχι months_back.
 ΣΥΓΚΕΚΡΙΜΕΝΟΣ/ΠΕΡΣΙΝΟΣ ΜΗΝΑΣ & ΣΥΓΚΡΙΣΕΙΣ ΕΤΟΥΣ-ΜΕ-ΕΤΟΣ: για έναν ΣΥΓΚΕΚΡΙΜΕΝΟ μήνα («Αύγουστος 2025»)
 ή σύγκριση «φέτος vs πέρσι», χρησιμοποίησε `month:"YYYY-MM"` (ΟΧΙ months_back — αυτό είναι ΚΥΛΙΟΜΕΝΟ παράθυρο
 από σήμερα, όχι συγκεκριμένος μήνας). Για σύγκριση, ΚΑΛΕΣΕ το tool ΔΥΟ φορές (π.χ. month=2026-08 ΚΑΙ
@@ -95,9 +99,34 @@ def _range(args: dict) -> tuple[datetime, datetime]:
     """Εύρος ημερομηνιών από τα args:
     - `month` «YYYY-MM» → ΣΥΓΚΕΚΡΙΜΕΝΟΣ ημερολογιακός μήνας [αρχή → αρχή επόμενου]. ΑΠΑΡΑΙΤΗΤΟ για
       έναν συγκεκριμένο/περσινό μήνα & για συγκρίσεις έτους-με-έτος (π.χ. Αύγ.2026 vs Αύγ.2025).
+    - `year` «2025» → ΟΛΟΚΛΗΡΟ το ημερολογιακό έτος. Χωρίς αυτό, ερωτήσεις τύπου «το 2025»
+      έπεφταν σιωπηλά στο κυλιόμενο 1μηνο και απαντούσαν για λάθος περίοδο.
+    - `date_from`/`date_to` «YYYY-MM-DD» → ρητό εύρος (το `date_to` συμπεριλαμβάνεται).
     - `days_back` (0 = ΣΗΜΕΡΑ, 1 = χθες…) → ημερήσιο εύρος [αρχή εκείνης της ημέρας → τώρα].
     - αλλιώς → ΚΥΛΙΟΜΕΝΟ μηνιαίο εύρος (`months_back`, default 1) από τώρα προς τα πίσω."""
     args = args or {}
+
+    def _day(v):
+        if isinstance(v, str) and len(v) == 10:
+            try:
+                return datetime(int(v[:4]), int(v[5:7]), int(v[8:10]), tzinfo=timezone.utc)
+            except (ValueError, TypeError):
+                return None
+        return None
+
+    df, dt = _day(args.get("date_from")), _day(args.get("date_to"))
+    if df or dt:
+        return (df or datetime(2000, 1, 1, tzinfo=timezone.utc),
+                (dt + timedelta(days=1)) if dt else _now())
+
+    y = args.get("year")
+    try:
+        y = int(y) if y not in (None, "") else None
+    except (ValueError, TypeError):
+        y = None
+    if y and 2000 <= y <= 2100:
+        return datetime(y, 1, 1, tzinfo=timezone.utc), datetime(y + 1, 1, 1, tzinfo=timezone.utc)
+
     m = args.get("month")
     if isinstance(m, str) and len(m) == 7 and m[4] == "-":
         try:
@@ -174,6 +203,48 @@ async def _read_tool(name: str, args: dict, tenant_id: str, demo: bool = False) 
                          "items": await PrescriptionRepository(tenant_id=tenant_id).top(
                              dim=args.get("dim", "doctors"), limit=min(_as_int(args.get("limit"), 5), 10),
                              date_from=frm, date_to=to)})
+    if name == "list_prescriptions":
+        # ΤΟ ΕΡΓΑΛΕΙΟ ΠΟΥ ΕΛΕΙΠΕ: μέχρι τώρα ο Copilot είχε ΜΟΝΟ συγκεντρωτικά (get_top/get_kpis),
+        # οπότε σε κάθε «δείξε μου τις συνταγές …» απαντούσε «δεν έχω εργαλείο» και παρέπεμπε σε
+        # σελίδα. Εδώ επιστρέφει ΠΡΑΓΜΑΤΙΚΕΣ γραμμές, με τα ίδια φίλτρα που έχει η σελίδα Συνταγές.
+        frm, to = _range(args)
+        q: dict = {"executed_at": {"$gte": frm, "$lt": to}}
+        lo, hi = _as_float(args.get("min_amount"), 0.0), _as_float(args.get("max_amount"), 0.0)
+        if lo > 0 or hi > 0:                      # ο χρήστης μιλά σε ΕΥΡΩ· η βάση κρατά cents
+            amt: dict = {}
+            if lo > 0:
+                amt["$gte"] = int(round(lo * 100))
+            if hi > 0:
+                amt["$lte"] = int(round(hi * 100))
+            q["amount_total"] = amt
+        if args.get("status"):
+            q["status"] = str(args["status"])
+        if args.get("icd10"):
+            q["icd10"] = str(args["icd10"]).upper()
+        if args.get("unexecuted_only"):
+            q["has_unexecuted_substances"] = True
+        repo = PrescriptionRepository(tenant_id=tenant_id, demo=demo)
+        if args.get("patient_name"):              # όνομα → ψευδώνυμα, ποτέ ελεύθερο regex στα PII
+            refs = await repo.find_patient_refs(name=str(args["patient_name"]))
+            if not refs:
+                return {"period": f"{frm.date()} … {to.date()}", "total": 0, "items": [],
+                        "note": "Δεν βρέθηκε ασθενής με αυτό το όνομα."}
+            q["patient_ref"] = {"$in": refs}
+        sort = args.get("sort") if args.get("sort") in ("amount_total", "executed_at") else "amount_total"
+        limit = max(1, min(_as_int(args.get("limit"), 20), 50))
+        total = await repo.count(q)
+        rows = await repo.list_executions(q, skip=0, limit=limit, sort=sort, direction=-1)
+        items = [{"συνταγή": r.get("external_id"),
+                  "ημερομηνία": str(r.get("executed_at"))[:10],
+                  "ασθενής": r.get("patient_name"),
+                  "ταμείο": r.get("fund_general") or r.get("fund_name"),
+                  "αξία_€": round((r.get("amount_total") or 0) / 100, 2),
+                  "αιτούμενο_€": round((r.get("amount_claimed") or 0) / 100, 2),
+                  "συμμετοχή_€": round((r.get("patient_share") or 0) / 100, 2),
+                  "icd10": r.get("icd10_named"),
+                  "κατάσταση": r.get("status")} for r in rows]
+        return jsonsafe({"period": f"{frm.date()} … {to.date()}", "sort": sort,
+                         "total": total, "showing": len(items), "items": items})
     if name == "get_unexecuted":
         frm, to = _range(args)
         return jsonsafe(await PrescriptionRepository(tenant_id=tenant_id).unexecuted_substances(
@@ -351,14 +422,21 @@ SERVER_ACTIONS = {
     "mark_pickup_ready": {"perm": "portal:manage", "label": "Σήμανση «έτοιμη για παραλαβή»", "run": _a_pickup_ready},
 }
 
-_READ_NAMES = ["get_kpis", "get_top", "get_unexecuted", "get_profitability", "get_low_margin",
+_READ_NAMES = ["get_kpis", "get_top", "list_prescriptions", "get_unexecuted", "get_profitability", "get_low_margin",
                "get_reimbursement", "get_reimbursement_risk", "get_patient_overview", "get_today_tasks",
                "get_winback", "get_at_risk", "get_vip", "get_compliance", "get_upcoming",
                "get_order_suggestions", "get_portal_pending", "get_ingestion_status"]
 
 _READ_DESC = {
-    "get_kpis": "Σύνοψη φαρμακείου (εκτελέσεις, αξία, αιτούμενα, μεικτό κέρδος, ασθενείς). params: month «YYYY-MM» (συγκεκριμένος/περσινός μήνας — για σύγκριση έτους-με-έτος κάλεσέ το 2 φορές) Ή months_back Ή days_back (0=ΣΗΜΕΡΑ, 1=χθες…).",
-    "get_top": "Κορυφαίοι ανά διάσταση (π.χ. «ποιος πελάτης έκανε τον μεγαλύτερο τζίρο σήμερα» → dim=patients, days_back=0). params: dim(doctors|products|icd10|patients), limit, month «YYYY-MM» Ή months_back Ή days_back (0=ΣΗΜΕΡΑ).",
+    "get_kpis": "Σύνοψη φαρμακείου (εκτελέσεις, αξία, αιτούμενα, μεικτό κέρδος, ασθενείς). params: year «2025» (ΟΛΟΚΛΗΡΟ έτος) Ή month «YYYY-MM» (για σύγκριση έτους-με-έτος κάλεσέ το 2 φορές) Ή months_back Ή days_back (0=ΣΗΜΕΡΑ, 1=χθες…).",
+    "get_top": "Κορυφαίοι ανά διάσταση (π.χ. «ποιος πελάτης έκανε τον μεγαλύτερο τζίρο σήμερα» → dim=patients, days_back=0). params: dim(doctors|products|icd10|patients), limit, year «2025» Ή month «YYYY-MM» Ή months_back Ή days_back (0=ΣΗΜΕΡΑ).",
+    "list_prescriptions": (
+        "ΛΙΣΤΑ ΜΕΜΟΝΩΜΕΝΩΝ ΣΥΝΤΑΓΩΝ (όχι σύνολα) — χρησιμοποίησέ το σε ΚΑΘΕ «δείξε/βρες μου τις "
+        "συνταγές …», «ποιες συνταγές …», «μεγάλης αξίας», «πάνω από X ευρώ». ΜΗΝ παραπέμπεις σε "
+        "σελίδα: φέρε τις γραμμές. params: year «2025» Ή month «YYYY-MM» Ή date_from/date_to "
+        "«YYYY-MM-DD» Ή months_back Ή days_back· min_amount/max_amount σε ΕΥΡΩ· "
+        "sort(amount_total|executed_at, default amount_total φθίνουσα)· limit (έως 50)· "
+        "προαιρετικά patient_name, icd10, status, unexecuted_only."),
     "get_unexecuted": "Ανεκτέλεστες δραστικές (χαμένη αξία). params: months_back Ή days_back.",
     "get_profitability": "Κερδοφορία/περιθώριο για περίοδο. params: months_back.",
     "get_low_margin": "Προϊόντα χαμηλού περιθωρίου. params: threshold_pct.",
@@ -381,6 +459,7 @@ _READ_DESC = {
 REPORT_TOOLS = {
     "get_kpis": "Σύνοψη φαρμακείου (KPIs)",
     "get_top": "Κορυφαία λίστα (ιατροί/προϊόντα/πελάτες/ICD)",
+    "list_prescriptions": "Λίστα συνταγών (φίλτρα: περίοδος, αξία, ασθενής, ICD)",
     "get_unexecuted": "Ανεκτέλεστες δραστικές",
     "get_profitability": "Κερδοφορία",
     "get_low_margin": "Προϊόντα χαμηλού περιθωρίου",
@@ -457,14 +536,33 @@ async def summarize_report(tenant_id: str, title: str, tool: str, data: dict) ->
         return _deterministic_report(title, data)
 
 
-def _tools() -> list[dict]:
+# Τα μεμονωμένα παραστατικά είναι πιο ευαίσθητα από τα σύνολα (ονόματα ασθενών ανά γραμμή),
+# γι' αυτό θέλουν το δικό τους δικαίωμα — ο Copilot συνολικά περνά μόνο από `patients:read`.
+_TOOL_PERM = {"list_prescriptions": "prescriptions:read"}
+
+
+def _tools(perms: set[str] | None = None) -> list[dict]:
     common = {"type": "object", "properties": {
         "months_back": {"type": "integer"}, "days_back": {"type": "integer", "description": "Ημερήσιο εύρος: 0=ΣΗΜΕΡΑ, 1=χθες. Υπερισχύει του months_back."},
         "dim": {"type": "string", "enum": ["doctors", "products", "icd10", "patients"]}, "limit": {"type": "integer"},
         "month": {"type": "string", "description": "Συγκεκριμένος ημερολογιακός μήνας «YYYY-MM» (π.χ. «2025-08»). ΧΡΗΣΙΜΟΠΟΙΗΣΕ ΤΟ για έναν ΣΥΓΚΕΚΡΙΜΕΝΟ/ΠΕΡΣΙΝΟ μήνα και για ΣΥΓΚΡΙΣΕΙΣ έτους-με-έτος (κάλεσε το tool 2 φορές, π.χ. month=2026-08 και month=2025-08). Υπερισχύει των months_back/days_back."},
-        "days": {"type": "integer"}, "threshold_pct": {"type": "number"}},
+        "days": {"type": "integer"}, "threshold_pct": {"type": "number"},
+        # ── list_prescriptions ──
+        "year": {"type": "string", "description": "ΟΛΟΚΛΗΡΟ ημερολογιακό έτος, π.χ. «2025». Για «το 2025» χρησιμοποίησε ΑΥΤΟ, όχι months_back."},
+        "date_from": {"type": "string", "description": "«YYYY-MM-DD» — αρχή ρητού εύρους."},
+        "date_to": {"type": "string", "description": "«YYYY-MM-DD» — τέλος ρητού εύρους (συμπεριλαμβάνεται)."},
+        "min_amount": {"type": "number", "description": "Ελάχιστη αξία συνταγής σε ΕΥΡΩ (π.χ. 500)."},
+        "max_amount": {"type": "number", "description": "Μέγιστη αξία συνταγής σε ΕΥΡΩ."},
+        "sort": {"type": "string", "enum": ["amount_total", "executed_at"]},
+        "patient_name": {"type": "string"}, "icd10": {"type": "string"},
+        "status": {"type": "string"}, "unexecuted_only": {"type": "boolean"}},
         "required": []}
-    tools = [{"name": n, "description": _READ_DESC[n], "input_schema": common} for n in _READ_NAMES]
+    def _allowed(n: str) -> bool:
+        need = _TOOL_PERM.get(n)
+        return need is None or perms is None or need in perms or "*" in perms
+
+    tools = [{"name": n, "description": _READ_DESC[n], "input_schema": common}
+             for n in _READ_NAMES if _allowed(n)]
     tools.append({"name": "open_screen", "description": "Κουμπί που ανοίγει σελίδα του προγράμματος.",
                   "input_schema": {"type": "object", "properties": {
                       "href": {"type": "string"}, "label": {"type": "string"}},
@@ -576,6 +674,9 @@ async def execute_action(*, tenant_id: str, perms: set[str], action: str, params
 
 
 async def _handle_tool(name, args, tenant_id, perms, actions, demo=False) -> dict:
+    need = _TOOL_PERM.get(name)
+    if need and need not in perms and "*" not in perms:
+        return {"error": "forbidden", "note": f"Ο χρήστης δεν έχει το δικαίωμα «{need}»."}
     if name == "open_screen":
         href = str(args.get("href", "")); label = str(args.get("label", "Άνοιγμα"))
         if href.startswith("/"):
@@ -639,7 +740,7 @@ async def ask(*, tenant_id: str, perms: set[str], messages: list[dict], demo: bo
               "ΧΡΗΣΙΜΟΠΟΙΗΣΕ ΤΙΣ ΗΜΕΡΟΜΗΝΙΕΣ/ΠΕΡΙΟΔΟΥΣ ΑΚΡΙΒΩΣ όπως έρχονται από τα εργαλεία "
               "(π.χ. period/period_label/period range). ΜΗΝ εφευρίσκεις μήνα ή έτος."
               + pharmacat_service.GUARDRAIL)
-    tools = _tools()
+    tools = _tools(perms)
     msgs: list[dict] = [{"role": m["role"], "content": m["content"]} for m in messages]
     actions: list[dict] = []
     reply = ""
