@@ -9,8 +9,13 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 
+from datetime import datetime, timezone
+
+from app.core.db import shared_db
 from app.core.deps import TenantContext, require
+from app.repositories.patient_portal import PatientAccountRepository
 from app.repositories.vaccine_programs import VaccineProgramRepository
+from app.services import comms, consent, push_service
 
 router = APIRouter()
 _MODULE = "vaccination_programs"        # paid add-on, 10 €/month — separate from the flu circuit
@@ -106,6 +111,79 @@ async def program_patients(
                       "repeat_years": program.get("repeat_years"),
                       "doses_required": program.get("doses_required")}
     return out
+
+
+class NotifyIn(BaseModel):
+    status: str = "incomplete"          # ποιους: incomplete | expired | due_soon
+    channel: str = "sms"                # sms | viber | email | push
+    subject: str | None = None
+    message: str
+    dry_run: bool = False
+
+
+@router.post("/{program_id}/notify")
+async def notify_program(program_id: str, body: NotifyIn,
+                         ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+    """Ειδοποίηση των ασφαλισμένων μιας κατάστασης (π.χ. όσων δεν ολοκλήρωσαν τις δόσεις).
+
+    Σέβεται συγκατάθεση + μητρώο ανακλήσεων. Οι θανόντες ΔΕΝ μπαίνουν ποτέ (η λίστα τους
+    αποκλείει ήδη). `dry_run` επιστρέφει μόνο πλήθος παραληπτών — ο φαρμακοποιός βλέπει
+    πόσους αφορά ΠΡΙΝ σταλεί οτιδήποτε."""
+    if body.status not in ("incomplete", "expired", "due_soon"):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                            "Η ειδοποίηση αφορά μόνο όσους εκκρεμούν, όχι τους πλήρως εμβολιασμένους.")
+    repo = VaccineProgramRepository(tenant_id=ctx.tenant_id)
+    program = await repo.get(program_id)
+    if not program:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Το πρόγραμμα δεν βρέθηκε.")
+
+    data = await repo.patients_for(program, status=body.status, limit=5000)
+    field = {"sms": "mobile", "viber": "mobile", "email": "email"}.get(body.channel)
+
+    targets: list[dict] = []
+    if field:
+        withdrawn = {str(x) for x in await consent.withdrawn_patient_ids(ctx.tenant_id, body.channel)}
+        for r in data["items"]:
+            if r.get("consent") and r["patient_id"] not in withdrawn and r.get(field):
+                targets.append(r)
+    else:                                   # push → όσοι έχουν λογαριασμό στην πύλη
+        targets = list(data["items"])
+
+    if body.dry_run:
+        return {"recipients": len(targets), "channel": body.channel, "dry_run": True}
+
+    accounts = PatientAccountRepository()
+    sent = failed = 0
+    for r in targets[:2000]:
+        name = r.get("name") or ""
+        text = (body.message or "").replace("{name}", name).replace("{first}", name.split(" ")[0])
+        try:
+            if body.channel == "email":
+                from app.api.v1.routers.vaccinations import _vacc_email_html
+                await comms.send_email(ctx.tenant_id, r["email"],
+                                       body.subject or "Υπενθύμιση εμβολιασμού",
+                                       _vacc_email_html(text, None))
+            elif body.channel == "sms":
+                await comms.send_sms(ctx.tenant_id, r["mobile"], text)
+            elif body.channel == "viber":
+                await comms.send_viber(ctx.tenant_id, r["mobile"], text)
+            else:
+                acc = await accounts.get_by_amka(r.get("amka") or "")
+                if not acc or not await push_service.send_to_account(
+                        acc["_id"], title=body.subject or "💉 Υπενθύμιση εμβολιασμού",
+                        body=text, url="/portal"):
+                    failed += 1
+                    continue
+            sent += 1
+        except Exception:  # noqa: BLE001 — ένας κακός παραλήπτης δεν ρίχνει όλη την παρτίδα
+            failed += 1
+
+    await shared_db()["comms_campaigns"].insert_one({
+        "tenant_id": ctx.tenant_id, "channel": body.channel, "kind": "vaccine_program",
+        "program": program.get("name"), "status_filter": body.status,
+        "subject": body.subject, "recipients": len(targets), "sent": sent, "failed": failed,
+        "by": getattr(ctx, "email", None), "created_at": datetime.now(tz=timezone.utc)})
+    return {"recipients": len(targets), "sent": sent, "failed": failed}
 
 
 def _msg(code: str) -> str:

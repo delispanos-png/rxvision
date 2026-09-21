@@ -148,6 +148,26 @@ class DailyCoachRepository(BaseRepository):
             })
         return out
 
+
+    async def _chain_progress(self, roots: list) -> dict:
+        """repeat_root → η ΜΕΓΑΛΥΤΕΡΗ θέση αλυσίδας που έχει ΕΚΤΕΛΕΣΤΕΙ.
+
+        ΠΡΟΣΟΧΗ στη σημασιολογία: το `repeat_current` ΔΕΝ είναι «πόσες εκτελέσεις έγιναν» —
+        είναι η ΘΕΣΗ αυτής της συνταγής μέσα στην αλυσίδα (CDA 1.1.4.1 «Σειρά»). Κάθε θέση
+        είναι ΞΕΧΩΡΙΣΤΟ barcode με δικό του παράθυρο εκτέλεσης.
+
+        Χωρίς αυτό, το `repeat_total - repeat_current` έβγαζε ψευδείς συναγερμούς: μια συνταγή
+        στη θέση 3/6 που «λήγει» εμφανιζόταν ως «3 χαμένες εκτελέσεις», ενώ η θέση 4 είχε ήδη
+        εκτελεστεί κανονικά (αναφορά πελάτη 21/09/2026)."""
+        roots = [r for r in roots if r]
+        if not roots:
+            return {}
+        rows = await self._db["prescription_executions"].aggregate([
+            {"$match": {"tenant_id": self.tenant_id, "repeat_root": {"$in": roots}}},
+            {"$group": {"_id": "$repeat_root", "max_pos": {"$max": "$repeat_current"}}},
+        ]).to_list(length=None)
+        return {r["_id"]: int(r.get("max_pos") or 0) for r in rows}
+
     async def _sig_repeat_expiring(self, now: datetime) -> list[dict]:
         """Επαναλαμβανόμενη συνταγή με δόσεις που δεν πάρθηκαν και λήγει. Χάνει ο ασθενής — και εσύ."""
         rows = [e async for e in self._db["prescription_executions"].find(
@@ -166,9 +186,17 @@ class DailyCoachRepository(BaseRepository):
             if not cur or (r.get("repeat_current") or 0) > (cur.get("repeat_current") or 0):
                 by_root[k] = r
         info = await self._patient_info([r["patient_ref"] for r in by_root.values()])
+        # Πόσο έχει προχωρήσει ΠΡΑΓΜΑΤΙΚΑ κάθε αλυσίδα (όχι μόνο όσες λήγουν τώρα).
+        progress = await self._chain_progress([r.get("repeat_root") for r in by_root.values()])
         out = []
         for r in by_root.values():
-            left = int(r.get("repeat_total") or 0) - int(r.get("repeat_current") or 0)
+            pos = int(r.get("repeat_current") or 0)
+            done = max(pos, progress.get(r.get("repeat_root"), 0))
+            # Υπάρχει ΝΕΟΤΕΡΗ συνταγή της αλυσίδας ⇒ ο ασθενής πήρε τη συνέχειά του και αυτή
+            # εδώ απλώς έληξε φυσιολογικά. Δεν είναι απώλεια — δεν βγάζουμε συναγερμό.
+            if done > pos:
+                continue
+            left = int(r.get("repeat_total") or 0) - done
             if left <= 0:
                 continue
             days_left = max(0, (r["valid_until"] - now).days)
@@ -945,14 +973,24 @@ class DailyCoachRepository(BaseRepository):
                  - timedelta(days=31 * (months - 1))).replace(day=1)
         mfmt = {"$dateToString": {"format": "%Y-%m", "date": "$valid_until",
                                   "timezone": "Europe/Athens"}}
-        left = {"$subtract": ["$repeat_total", "$repeat_current"]}
+        # Το `repeat_current` είναι ΘΕΣΗ στην αλυσίδα, όχι πλήθος εκτελέσεων (βλ. _chain_progress).
+        # Μετράμε μία φορά ανά ΑΛΥΣΙΔΑ, με βάση την πιο προχωρημένη θέση που εκτελέστηκε —
+        # αλλιώς κάθε ενδιάμεση συνταγή που «λήγει» μετριόταν ως χαμένη, ενώ η αλυσίδα συνεχιζόταν.
         repeats = await self._db["prescription_executions"].aggregate([
             {"$match": {"tenant_id": self.tenant_id,
-                        "$expr": {"$lt": ["$repeat_current", "$repeat_total"]},
+                        "repeat_total": {"$gt": 1},
                         "valid_until": {"$gte": start, "$lt": now}}},
-            {"$group": {"_id": mfmt, "n": {"$sum": 1},
-                        "value": {"$sum": {"$multiply": ["$amount_total", left]}},
-                        "cost": {"$sum": {"$multiply": ["$wholesale_cost", left]}}}},
+            {"$group": {"_id": {"root": {"$ifNull": ["$repeat_root", "$external_id"]}},
+                        "month": {"$last": mfmt},
+                        "total": {"$max": "$repeat_total"},
+                        "done": {"$max": "$repeat_current"},
+                        "amount": {"$last": "$amount_total"},
+                        "wholesale": {"$last": "$wholesale_cost"}}},
+            {"$set": {"left": {"$subtract": ["$total", "$done"]}}},
+            {"$match": {"left": {"$gt": 0}}},
+            {"$group": {"_id": "$month", "n": {"$sum": 1},
+                        "value": {"$sum": {"$multiply": ["$amount", "$left"]}},
+                        "cost": {"$sum": {"$multiply": ["$wholesale", "$left"]}}}},
         ]).to_list(length=None)
         items = await self._db["prescription_items"].aggregate([
             {"$match": {"tenant_id": self.tenant_id, "is_executed": False,
@@ -1177,18 +1215,25 @@ class DailyCoachRepository(BaseRepository):
             {"tenant_id": self.tenant_id, "patient_ref": pid,
              "$expr": {"$lt": ["$repeat_current", "$repeat_total"]},
              "valid_until": {"$gte": now, "$lt": now + timedelta(days=15)}},
-            {"valid_until": 1, "repeat_current": 1, "repeat_total": 1, "external_id": 1},
+            {"valid_until": 1, "repeat_current": 1, "repeat_total": 1, "external_id": 1,
+             "repeat_root": 1},
             sort=[("valid_until", 1)])
         if rep:
-            left = int(rep.get("repeat_total") or 0) - int(rep.get("repeat_current") or 0)
+            _prog = await self._chain_progress([rep.get("repeat_root")])
+            _pos = int(rep.get("repeat_current") or 0)
+            _done = max(_pos, _prog.get(rep.get("repeat_root"), 0))
+            # νεότερη συνταγή στην αλυσίδα ⇒ δεν χάνεται τίποτα (βλ. _chain_progress)
+            left = 0 if _done > _pos else int(rep.get("repeat_total") or 0) - _done
             dl = max(0, (rep["valid_until"] - now).days)
-            notes.append({
-                "kind": "repeat_expiring", "tone": "warn" if dl <= 3 else "info",
-                "text": (f"Η επαναλαμβανόμενη συνταγή {gen} λήγει "
-                         f"{'σήμερα' if dl == 0 else 'αύριο' if dl == 1 else f'σε {dl} μέρες'} "
-                         f"με {V.doses(left)} αχρησιμοποίητ{'η' if left == 1 else 'ες'}. "
-                         f"Αν δεν την εκτελέσει τώρα, θα ξαναπάει στον γιατρό."),
-                "href": f"/prescriptions/{quote(str(rep.get('external_id') or ''))}"})
+            # left <= 0 ⇒ η αλυσίδα έχει ήδη προχωρήσει πέρα από αυτή τη θέση· δεν χάνεται τίποτα.
+            if left > 0:
+                notes.append({
+                    "kind": "repeat_expiring", "tone": "warn" if dl <= 3 else "info",
+                    "text": (f"Η επαναλαμβανόμενη συνταγή {gen} λήγει "
+                             f"{'σήμερα' if dl == 0 else 'αύριο' if dl == 1 else f'σε {dl} μέρες'} "
+                             f"με {V.doses(left)} αχρησιμοποίητ{'η' if left == 1 else 'ες'}. "
+                             f"Αν δεν την εκτελέσει τώρα, θα ξαναπάει στον γιατρό."),
+                    "href": f"/prescriptions/{quote(str(rep.get('external_id') or ''))}"})
 
         # 3) εμβόλιο
         season = now.year if now.month >= 10 else now.year - 1

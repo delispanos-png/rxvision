@@ -221,6 +221,13 @@ class VaccineProgramRepository(BaseRepository):
                       "birth_year": {"$first": "$p.birth_year"},
                       "deceased": {"$first": "$p.deceased"}}},
             {"$match": {"deceased": {"$ne": True}}},     # ΠΟΤΕ θανόντες σε λίστα επικοινωνίας
+            # Στοιχεία επικοινωνίας — η λίστα καταλήγει σε μήνυμα, άρα χρειάζεται να ξέρουμε
+            # ποιος είναι προσβάσιμος ΚΑΙ ποιος έχει δώσει συγκατάθεση.
+            {"$lookup": {"from": "patient_contacts", "localField": "_id",
+                         "foreignField": "_id", "as": "c"}},
+            {"$set": {"mobile": {"$first": "$c.mobile"}, "email": {"$first": "$c.email"},
+                      "consent": {"$first": "$c.marketing_consent"},
+                      "contact_active": {"$first": "$c.active"}}},
             {"$set": {"age": {"$cond": [{"$gt": ["$birth_year", 0]},
                                         {"$subtract": [now.year, "$birth_year"]}, None]}}},
         ]
@@ -281,6 +288,10 @@ class VaccineProgramRepository(BaseRepository):
                            "lot": sh.get("lot")}
                           for sh in sorted((r.get("shots") or []), key=lambda x: x.get("at") or now)],
                 "lots": sorted({str(x) for x in (r.get("lots") or []) if x})[:3],
+                "mobile": None if self.demo else (r.get("mobile") or None),
+                "email": None if self.demo else (r.get("email") or None),
+                "consent": bool(r.get("consent")),
+                "has_contact": bool(r.get("mobile") or r.get("email")),
             })
         if status != "all":
             items = [i for i in items if i["status"] == status]

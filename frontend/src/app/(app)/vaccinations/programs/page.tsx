@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Users, Search, Settings2, Info } from "lucide-react";
+import { Users, Search, Settings2, Info, Send } from "lucide-react";
 import Link from "next/link";
 import { api } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
@@ -17,6 +17,7 @@ type Pat = {
   patient_id: string; name: string; amka: string | null; age_group: string | null;
   last_at: string | null; first_at: string | null; doses: number; doses_required: number;
   age: number | null; vaccines: string[]; lots: string[];
+  mobile: string | null; email: string | null; consent: boolean; has_contact: boolean;
   shots: { at: string | null; vaccine: string | null; lot: string | null }[];
   status: "covered" | "due_soon" | "expired" | "incomplete"; due_at: string | null;
 };
@@ -55,6 +56,7 @@ function Inner() {
   const [selected, setSelected] = useState<string | null>(null);
   const [status, setStatus] = useState("all");
   const [term, setTerm] = useState("");
+  const [notify, setNotify] = useState(false);
 
   const { data: progs, isLoading } = useQuery({
     queryKey: ["vaccine-programs"],
@@ -118,6 +120,12 @@ function Inner() {
             {t(el, en)}{k !== "all" && pats?.counts?.[k] !== undefined ? ` (${pats.counts[k]})` : ""}
           </button>
         ))}
+        {["incomplete", "expired", "due_soon"].includes(status) && !!pats?.items?.length && (
+          <button onClick={() => setNotify(true)}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-sky-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-sky-700">
+            <Send className="h-3.5 w-3.5" />{t("Ειδοποίηση", "Notify")}
+          </button>
+        )}
         <span className="ml-auto inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-2 dark:border-slate-700">
           <Search className="h-3.5 w-3.5 text-slate-400" />
           <input value={term} onChange={(e) => setTerm(e.target.value)}
@@ -210,6 +218,11 @@ function Inner() {
         )}
       </div>
       {info && <DoseHistory pat={info} onClose={() => setInfo(null)} />}
+      {notify && active && (
+        <NotifyDialog programId={active} status={status}
+          programName={programs.find((p) => p._id === active)?.name || ""}
+          onClose={() => setNotify(false)} />
+      )}
     </div>
   );
 }
@@ -253,6 +266,96 @@ function DoseHistory({ pat, onClose }: { pat: Pat; onClose: () => void }) {
           {t("Εμφανίζονται μόνο οι δόσεις που χορηγήθηκαν από ΤΟ ΔΙΚΟ ΣΟΥ φαρμακείο. Δόσεις που έγιναν αλλού δεν είναι γνωστές — η ΗΔΥΚΑ δεν τις διαθέτει.",
              "Only doses dispensed by YOUR pharmacy are shown. Doses given elsewhere are not available from ΗΔΥΚΑ.")}
         </p>
+      </div>
+    </Modal>
+  );
+}
+
+/** Αποστολή υπενθύμισης — με προεπισκόπηση πλήθους ΠΡΙΝ φύγει οτιδήποτε. */
+function NotifyDialog({ programId, status, programName, onClose }: {
+  programId: string; status: string; programName: string; onClose: () => void;
+}) {
+  const t = useT();
+  const [channel, setChannel] = useState("sms");
+  const [message, setMessage] = useState(
+    "Καλησπέρα {first}, υπενθύμιση από το φαρμακείο μας για την επόμενη δόση του εμβολιασμού σας. Περάστε όποτε σας βολεύει.");
+  const [preview, setPreview] = useState<number | null>(null);
+  const [result, setResult] = useState<{ sent: number; failed: number } | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const call = async (dry: boolean) => {
+    setBusy(true);
+    try {
+      const r = await api<{ recipients: number; sent?: number; failed?: number }>(
+        `/vaccine-programs/${programId}/notify`,
+        { method: "POST", body: JSON.stringify({ status, channel, message, dry_run: dry }) });
+      if (dry) setPreview(r.recipients);
+      else setResult({ sent: r.sent ?? 0, failed: r.failed ?? 0 });
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <Modal open onClose={onClose} size="md"
+      title={t(`Ειδοποίηση — ${programName}`, `Notify — ${programName}`)}>
+      <div className="space-y-4">
+        <div className="flex flex-wrap gap-1.5">
+          {(["sms", "viber", "email", "push"] as const).map((c) => (
+            <button key={c} onClick={() => { setChannel(c); setPreview(null); }}
+              className={`rounded-lg px-3 py-1.5 text-sm font-medium ${channel === c
+                ? "bg-sky-600 text-white"
+                : "border border-slate-200 text-slate-600 dark:border-slate-700 dark:text-slate-300"}`}>
+              {c.toUpperCase()}
+            </button>
+          ))}
+        </div>
+
+        <div>
+          <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-200">
+            {t("Μήνυμα", "Message")}
+          </label>
+          <textarea value={message} onChange={(e) => setMessage(e.target.value)} rows={4}
+            className="block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-800" />
+          <p className="mt-1 text-xs text-slate-400">
+            {t("Διαθέσιμα: {name} (πλήρες όνομα), {first} (μικρό όνομα).",
+               "Available: {name} (full name), {first} (first name).")}
+          </p>
+        </div>
+
+        <div className="rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-500 dark:bg-slate-800/60">
+          {t("Εξαιρούνται αυτόματα όσοι δεν έχουν δώσει συγκατάθεση ή έχουν ανακαλέσει, όσοι δεν έχουν στοιχεία επικοινωνίας, και όσοι δεν είναι εν ζωή.",
+             "Automatically excluded: no consent or withdrawn, no contact details, and deceased.")}
+        </div>
+
+        {preview !== null && !result && (
+          <div className="rounded-lg bg-sky-50 px-3 py-2 text-sm text-sky-800 dark:bg-sky-900/30 dark:text-sky-200">
+            {t(`Θα σταλεί σε ${preview} ασφαλισμένους.`, `Will be sent to ${preview} patients.`)}
+          </div>
+        )}
+        {result && (
+          <div className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-200">
+            {t(`Στάλθηκαν ${result.sent}${result.failed ? ` · απέτυχαν ${result.failed}` : ""}.`,
+               `Sent ${result.sent}${result.failed ? ` · failed ${result.failed}` : ""}.`)}
+          </div>
+        )}
+
+        <div className="flex justify-end gap-2">
+          <button onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2 text-sm dark:border-slate-600">
+            {result ? t("Κλείσιμο", "Close") : t("Άκυρο", "Cancel")}
+          </button>
+          {!result && (
+            <>
+              <button onClick={() => call(true)} disabled={busy}
+                className="rounded-lg border border-sky-300 px-4 py-2 text-sm font-medium text-sky-700 disabled:opacity-50 dark:border-sky-700 dark:text-sky-300">
+                {t("Πόσοι;", "How many?")}
+              </button>
+              <button onClick={() => call(false)} disabled={busy || preview === null || preview === 0}
+                title={preview === null ? t("Δες πρώτα πόσους αφορά.", "Check the count first.") : ""}
+                className="rounded-lg bg-sky-600 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-700 disabled:opacity-50">
+                {busy ? t("Αποστολή…", "Sending…") : t("Αποστολή", "Send")}
+              </button>
+            </>
+          )}
+        </div>
       </div>
     </Modal>
   );
