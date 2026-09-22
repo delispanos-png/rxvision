@@ -3,7 +3,7 @@
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Repeat, Printer, QrCode, X, ShieldAlert } from "lucide-react";
+import { ArrowLeft, Repeat, Printer, QrCode, X, ShieldAlert, EyeOff, Eye } from "lucide-react";
 import { InteractionsModal } from "@/components/clinical/InteractionsModal";
 import { api, queryKeys } from "@/lib/apiClient";
 import { PanelCard } from "@/components/ui/Card";
@@ -11,7 +11,7 @@ import { CopyButton } from "@/components/ui/CopyButton";
 import { fmtDate, fmtDateTime } from "@/lib/formatters";
 import { RepeatTree } from "@/components/prescriptions/RepeatTree";
 import { useT } from "@/store/prefStore";
-import { appAlert } from "@/store/dialogStore";
+import { appAlert, appConfirm, appPrompt } from "@/store/dialogStore";
 
 type T = (el: string, en: string) => string;
 
@@ -230,6 +230,7 @@ type Detail = {
   external_id: string; executed_at: string; status: string | null; source: string;
   repeat_current: number; repeat_total: number; repeat_root: string | null; next_open_date: string | null;
   amount_total: number; amount_claimed: number; patient_share: number; wholesale_cost: number;
+  excluded_from_stats?: boolean; excluded_reason?: string;
   fund_payable: number; patient_payable: number;
   icd10: string[]; icd10_named?: string[]; has_unexecuted_substances: boolean;
   doctor: { name: string | null; specialty: string | null } | null;
@@ -391,6 +392,7 @@ export default function PrescriptionDetailPage() {
   useEffect(() => { const p = typeof window !== "undefined" && localStorage.getItem("rxv_coupon_paper"); if (p === "a4" || p === "th80" || p === "th58") setPaper(p); }, []);
   function pickPaper(p: "a4" | "th80" | "th58") { setPaper(p); localStorage.setItem("rxv_coupon_paper", p); }
 
+  const qcPage = useQueryClient();
   if (isLoading) return <div className="text-slate-400">{t("Φόρτωση…", "Loading…")}</div>;
   if (!data) return <div className="text-slate-500">{t("Η συνταγή δεν βρέθηκε.", "Prescription not found.")}</div>;
 
@@ -454,6 +456,35 @@ export default function PrescriptionDetailPage() {
               <QrCode className="h-4 w-4" /> {t("Εκτύπωση κουπονιών", "Print coupons")}
             </button>
           ) : null}
+          {/* ΕΞΑΙΡΕΣΗ ΑΠΟ ΤΑ ΣΤΑΤΙΣΤΙΚΑ. Η ΗΔΥΚΑ καταχωρεί λάθη και δεν τα ακυρώνει πάντα· ο
+              ΕΟΠΥΥ τα βγάζει από τα κλεισίματά του αλλά τα αφήνει στο κύκλωμα. Χωρίς αυτό, μία
+              λάθος εγγραφή μπορεί να είναι το 94% του τζίρου ενός φαρμακείου. Τα ποσά ΔΕΝ
+              αλλάζουν — αλλάζει μόνο το αν μετρώνται, άρα είναι πάντα αναστρέψιμο. */}
+          <button
+            onClick={async () => {
+              const on = !!d?.excluded_from_stats;
+              if (on) {
+                if (!(await appConfirm(t("Να ξαναμετράει στα στατιστικά σου;", "Count it again?")))) return;
+                await api(`/prescriptions/${encodeURIComponent(String(d?.external_id))}/exclude`,
+                  { method: "POST", body: JSON.stringify({ excluded: false }) });
+              } else {
+                const reason = (await appPrompt(
+                  t("Γιατί δεν μετράει; (θα το χρειαστείς σε έξι μήνες)",
+                    "Why does it not count? (you will need this later)")))?.trim();
+                if (!reason) return;
+                await api(`/prescriptions/${encodeURIComponent(String(d?.external_id))}/exclude`,
+                  { method: "POST", body: JSON.stringify({ excluded: true, reason }) });
+              }
+              qcPage.invalidateQueries();
+            }}
+            className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm font-medium ${
+              d?.excluded_from_stats
+                ? "border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100"
+                : "border-slate-300 text-slate-700 hover:bg-slate-50"}`}>
+            {d?.excluded_from_stats
+              ? <><Eye className="h-4 w-4" /> {t("Να ξαναμετράει", "Count again")}</>
+              : <><EyeOff className="h-4 w-4" /> {t("Δεν μετράει στα στατιστικά", "Exclude from stats")}</>}
+          </button>
         </div>
       </div>
 

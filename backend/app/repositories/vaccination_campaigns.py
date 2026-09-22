@@ -128,7 +128,7 @@ class VaccinationCampaignRepository(BaseRepository):
     async def _vaccinated_map(self, start: datetime, end: datetime) -> dict[str, datetime]:
         """pseudo_id → most-recent vaccination date this season (non-cancelled)."""
         rows = await self._db["vaccinations"].aggregate([
-            {"$match": {"tenant_id": self.tenant_id, "cancelled": {"$ne": True},
+            {"$match": {"tenant_id": self.tenant_id, "cancelled": {"$ne": True}, "excluded_from_stats": {"$ne": True},
                         "executed_at": {"$gte": start, "$lt": end}}},
             {"$group": {"_id": "$patient_ref", "last": {"$max": "$executed_at"}}},
         ]).to_list(length=None)

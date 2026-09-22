@@ -330,7 +330,7 @@ class DailyCoachRepository(BaseRepository):
         if not elig:
             return []
         done = {r["_id"] for r in await self._db["vaccinations"].aggregate([
-            {"$match": {"tenant_id": self.tenant_id, "cancelled": {"$ne": True},
+            {"$match": {"tenant_id": self.tenant_id, "cancelled": {"$ne": True}, "excluded_from_stats": {"$ne": True},
                         "executed_at": {"$gte": start, "$lt": end},
                         "patient_ref": {"$in": [p["pseudo_id"] for p in elig.values() if p.get("pseudo_id")]}}},
             {"$group": {"_id": "$patient_ref"}},
@@ -624,7 +624,7 @@ class DailyCoachRepository(BaseRepository):
 
         # 4. Εμβολιασμοί
         vacc = await self._db["vaccinations"].count_documents(
-            {"tenant_id": self.tenant_id, "cancelled": {"$ne": True}, "executed_at": {"$gte": week}})
+            {"tenant_id": self.tenant_id, "cancelled": {"$ne": True}, "excluded_from_stats": {"$ne": True}, "executed_at": {"$gte": week}})
         if vacc:
             wins.append({"key": "w_vaccines", "count": vacc,
                          "text": (f"{vacc} εμβολιασμοί μέσα στην εβδομάδα. Πέρα από τα λεφτά: "
@@ -1180,7 +1180,7 @@ class DailyCoachRepository(BaseRepository):
                     return "unknown"
                 got = await self._db["vaccinations"].find_one(
                     {"tenant_id": self.tenant_id, "patient_ref": p.get("pseudo_id"),
-                     "cancelled": {"$ne": True}, "executed_at": {"$gt": since}}, {"_id": 1})
+                     "cancelled": {"$ne": True}, "excluded_from_stats": {"$ne": True}, "executed_at": {"$gt": since}}, {"_id": 1})
                 return "recovered" if got else "lost"
         except Exception:                       # noqa: BLE001
             import logging
@@ -1505,7 +1505,7 @@ class DailyCoachRepository(BaseRepository):
         if s_start <= now < s_end and p.get("age_group") in ("65-74", "75+"):
             done = await self._db["vaccinations"].find_one(
                 {"tenant_id": self.tenant_id, "patient_ref": p.get("pseudo_id"),
-                 "cancelled": {"$ne": True},
+                 "cancelled": {"$ne": True}, "excluded_from_stats": {"$ne": True},
                  "executed_at": {"$gte": s_start, "$lt": s_end}}, {"_id": 1})
             if not done:
                 notes.append({"kind": "vaccine_missed", "tone": "info",

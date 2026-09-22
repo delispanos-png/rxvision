@@ -300,3 +300,38 @@ async def unexecuted(
     """Concept doc §9 — ανεκτέλεστες δραστικές: μη-εκτελεσμένες γραμμές + χαμένη αξία."""
     repo = PrescriptionRepository(tenant_id=ctx.tenant_id, demo=ctx.demo)
     return await repo.unexecuted_substances(date_from=date_from, date_to=date_to, limit=limit)
+
+
+# ── Εξαίρεση από τα στατιστικά ───────────────────────────────────────────────────────────────
+class ExcludeIn(BaseModel):
+    excluded: bool = True
+    reason: str = ""
+
+
+@router.post("/{external_id}/exclude")
+async def exclude_from_stats(
+    external_id: str, body: ExcludeIn,
+    ctx: TenantContext = Depends(require("prescriptions:read", module="prescription_analytics")),
+):
+    """«Αυτή η εκτέλεση δεν μετράει στα στατιστικά μου.»
+
+    Η ΗΔΥΚΑ καταχωρεί λάθη και δεν μπαίνει πάντα στη διαδικασία να τα ακυρώσει — ο ΕΟΠΥΥ τα
+    βγάζει από τα δικά του κλεισίματα αλλά τα αφήνει στο κύκλωμα. Χωρίς αυτό, μία λάθος
+    εγγραφή μπορεί να είναι το 94% του τζίρου ενός φαρμακείου (πραγματικό περιστατικό).
+
+    ΔΕΝ αλλάζει κανένα ποσό — αλλάζει μόνο το ΑΝ μετρώνται· άρα είναι πάντα αναστρέψιμο.
+    Η αιτιολογία είναι υποχρεωτική ώστε σε έξι μήνες να ξέρεις γιατί το έκανες.
+    """
+    from app.core.db import shared_db
+    from app.services import stats_exclusion
+
+    if body.excluded and not (body.reason or "").strip():
+        raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                            detail={"error": "reason_required",
+                                    "message": "Γράψε γιατί εξαιρείται — θα το χρειαστείς αργότερα."})
+    n = await stats_exclusion.set_excluded(
+        shared_db(), ctx.tenant_id, external_id,
+        excluded=body.excluded, reason=body.reason, by=ctx.user_id)
+    if not n:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail={"error": "not_found"})
+    return {"ok": True, "excluded": body.excluded, "external_id": external_id}

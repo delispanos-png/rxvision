@@ -370,7 +370,7 @@ class LoyaltyRepository(BaseRepository):
         if not oids:
             return out
         cur = self._db["prescription_executions"].find(
-            {"tenant_id": self.tenant_id, "patient_ref": {"$in": oids}, "cancelled": {"$ne": True}},
+            {"tenant_id": self.tenant_id, "patient_ref": {"$in": oids}, "cancelled": {"$ne": True}, "excluded_from_stats": {"$ne": True}},
             {"patient_ref": 1, "executed_at": 1})
         async for e in cur:
             ref = str(e.get("patient_ref"))

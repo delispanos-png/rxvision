@@ -48,7 +48,7 @@ async def category_sizes(tenant_id: str) -> list[dict]:
     executions → items → products.atc → group ανά ασθενή με το σετ των ATC prefixes → μέτρηση ανά κατηγορία."""
     db = shared_db()
     rows = await db["prescription_executions"].aggregate([
-        {"$match": {"tenant_id": tenant_id, "status": {"$ne": "cancelled"}}},
+        {"$match": {"tenant_id": tenant_id, "status": {"$ne": "cancelled"}, "excluded_from_stats": {"$ne": True}}},
         {"$lookup": {"from": "prescription_items", "localField": "_id",
                      "foreignField": "execution_id", "as": "it"}},
         {"$unwind": "$it"},

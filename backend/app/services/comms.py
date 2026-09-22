@@ -469,7 +469,7 @@ async def segment_patient_ids(tenant_id: str, segment: str, value: str | None):
             return set()
         rx = "^(" + "|".join(re.escape(p) for p in prefixes) + ")"
         rows = await db["prescription_executions"].aggregate([
-            {"$match": {"tenant_id": tenant_id, "status": {"$ne": "cancelled"}}},
+            {"$match": {"tenant_id": tenant_id, "status": {"$ne": "cancelled"}, "excluded_from_stats": {"$ne": True}}},
             {"$lookup": {"from": "prescription_items", "localField": "_id", "foreignField": "execution_id", "as": "it"}},
             {"$unwind": "$it"},
             {"$lookup": {"from": "products", "localField": "it.product_id", "foreignField": "_id", "as": "p"}},

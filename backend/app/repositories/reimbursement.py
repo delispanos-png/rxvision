@@ -101,7 +101,7 @@ class ReimbursementRepository(BaseRepository):
     async def _period_money(self, period: str) -> dict:
         start, end = _month_bounds(period)
         rows = await self._db["prescription_executions"].aggregate([
-            {"$match": {"tenant_id": self.tenant_id, "executed_at": {"$gte": start, "$lt": end}, "status": {"$ne": "cancelled"}}},
+            {"$match": {"tenant_id": self.tenant_id, "executed_at": {"$gte": start, "$lt": end}, "status": {"$ne": "cancelled"}, "excluded_from_stats": {"$ne": True}}},
             {"$group": {"_id": None, "rx": {"$sum": 1},
                         "retail": {"$sum": "$amount_total"}, "claim": {"$sum": "$amount_claimed"},
                         "patient": {"$sum": "$patient_share"}, "cost": {"$sum": "$wholesale_cost"}}},
@@ -123,7 +123,7 @@ class ReimbursementRepository(BaseRepository):
         meta = await self._fund_meta()
         # εξαιρούμε ακυρωμένες — το εμπορικό πρόγραμμα στα κλεισίματα δείχνει μόνο ενεργές
         match = {"tenant_id": self.tenant_id, "executed_at": {"$gte": start, "$lt": end},
-                 "status": {"$ne": "cancelled"}}
+                 "status": {"$ne": "cancelled"}, "excluded_from_stats": {"$ne": True}}
 
         by_day = [{"day": r["_id"], "rx": r["rx"], "claim": r["claim"]}
                   for r in await self._db["prescription_executions"].aggregate([
@@ -289,7 +289,7 @@ class ReimbursementRepository(BaseRepository):
         start, end = _month_bounds(period)
         meta = await self._fund_meta()
         match = {"tenant_id": self.tenant_id, "executed_at": {"$gte": start, "$lt": end},
-                 "status": {"$ne": "cancelled"}}
+                 "status": {"$ne": "cancelled"}, "excluded_from_stats": {"$ne": True}}
         perfund: dict = defaultdict(lambda: defaultdict(lambda: {"rx": 0, "claim": 0, "retail": 0, "patient": 0}))
         # ΥΠΟΒΑΛΛΟΜΕΝΕΣ ανά (ταμείο, ημέρα)· claim = ΚΑΘΑΡΟ πρωτεύον (− ΚΥΥΑΠ)
         # claim = ΚΑΘΑΡΟ πρωτεύον (− ΚΥΥΑΠ)· το ΚΥΥΑΠ ανά ΣΥΝΤΑΓΗ (visit) → αφαιρείται ΜΙΑ φορά ανά visit
@@ -351,7 +351,7 @@ class ReimbursementRepository(BaseRepository):
         start, end = _month_bounds(period)
         meta = await self._fund_meta()
         agg = await self._db["prescription_executions"].aggregate([
-            {"$match": {"tenant_id": self.tenant_id, "executed_at": {"$gte": start, "$lt": end}, "status": {"$ne": "cancelled"}}},
+            {"$match": {"tenant_id": self.tenant_id, "executed_at": {"$gte": start, "$lt": end}, "status": {"$ne": "cancelled"}, "excluded_from_stats": {"$ne": True}}},
             {"$group": {"_id": {"fund": "$fund_id",
                                 "vac": {"$ifNull": ["$details.vaccines", False]},
                                 "fyk": {"$ifNull": ["$details.n3816", False]}},
@@ -431,7 +431,7 @@ class ReimbursementRepository(BaseRepository):
     async def _risk_rows(self, period: str) -> list[dict]:
         start, end = _month_bounds(period)
         rows = await self._db["prescription_executions"].aggregate([
-            {"$match": {"tenant_id": self.tenant_id, "executed_at": {"$gte": start, "$lt": end}, "status": {"$ne": "cancelled"}}},
+            {"$match": {"tenant_id": self.tenant_id, "executed_at": {"$gte": start, "$lt": end}, "status": {"$ne": "cancelled"}, "excluded_from_stats": {"$ne": True}}},
             {"$lookup": {"from": "prescription_items", "localField": "_id",
                          "foreignField": "execution_id", "as": "it"}},
         ]).to_list(None)
@@ -509,7 +509,7 @@ class ReimbursementRepository(BaseRepository):
         start, end = _month_bounds(period)
         meta = await self._fund_meta()
         agg = await self._db["prescription_executions"].aggregate([
-            {"$match": {"tenant_id": self.tenant_id, "executed_at": {"$gte": start, "$lt": end}, "status": {"$ne": "cancelled"}}},
+            {"$match": {"tenant_id": self.tenant_id, "executed_at": {"$gte": start, "$lt": end}, "status": {"$ne": "cancelled"}, "excluded_from_stats": {"$ne": True}}},
             {"$group": {"_id": "$fund_id", "rx": {"$sum": 1}, "claim": {"$sum": "$amount_claimed"}}},
         ]).to_list(None)
         # fold funds into their group (ΕΟΠΥΥ = one batch, standalone funds separate)
@@ -624,7 +624,7 @@ class ReimbursementRepository(BaseRepository):
         start, end = _month_bounds(period)
         meta = await self._fund_meta()
         agg = await self._db["prescription_executions"].aggregate([
-            {"$match": {"tenant_id": self.tenant_id, "executed_at": {"$gte": start, "$lt": end}, "status": {"$ne": "cancelled"}}},
+            {"$match": {"tenant_id": self.tenant_id, "executed_at": {"$gte": start, "$lt": end}, "status": {"$ne": "cancelled"}, "excluded_from_stats": {"$ne": True}}},
             {"$group": {"_id": "$fund_id", "rx": {"$sum": 1}, "claim": {"$sum": "$amount_claimed"}}},
         ]).to_list(None)
         g: dict = defaultdict(lambda: {"rx": 0, "claim": 0, "is_eopyy": False})
@@ -807,7 +807,7 @@ class ReimbursementRepository(BaseRepository):
         start, end = _month_bounds(period)
         meta = await self._fund_meta()
         rows = await self._db["prescription_executions"].aggregate([
-            {"$match": {"tenant_id": self.tenant_id, "executed_at": {"$gte": start, "$lt": end}, "status": {"$ne": "cancelled"}}},
+            {"$match": {"tenant_id": self.tenant_id, "executed_at": {"$gte": start, "$lt": end}, "status": {"$ne": "cancelled"}, "excluded_from_stats": {"$ne": True}}},
             # ΑΝΑ ΕΚΤΕΛΕΣΗ (full external_id = barcode:execNo), ΟΧΙ ανά barcode-root: μια συνταγή που
             # εκτελέστηκε σε φάσεις (μερικές εκτελέσεις) πρέπει να εμφανίζεται ως ΞΕΧΩΡΙΣΤΕΣ εγγραφές
             # για έλεγχο/υποβολή — μπορεί και σε διαφορετικές ημερομηνίες.
@@ -981,7 +981,7 @@ class ReimbursementRepository(BaseRepository):
             # σκανάρισμα σε λάθος tenant). Δεν εκτίθεται κανένα δεδομένο άλλου tenant — μόνο ύπαρξη
             # barcode που ο ίδιος ο χρήστης πληκτρολόγησε. Μένει μόνο ό,τι ΔΕΝ υπάρχει πουθενά.
             async for e in self._db["prescription_executions"].find(
-                    {"external_id": {"$regex": rx}, "status": {"$ne": "cancelled"}}, {"external_id": 1}):
+                    {"external_id": {"$regex": rx}, "status": {"$ne": "cancelled"}, "excluded_from_stats": {"$ne": True}}, {"external_id": 1}):
                 present.add(str(e["external_id"]).split(":")[0])
             extra13 = [b for b in extra13 if str(b) not in present]
         return jsonsafe({
@@ -1041,13 +1041,13 @@ class ReimbursementRepository(BaseRepository):
         else:
             seq = None
         all_exs = [e async for e in self._db["prescription_executions"].find(  # tenant-ok
-            {"tenant_id": self.tenant_id, "status": {"$ne": "cancelled"},
+            {"tenant_id": self.tenant_id, "status": {"$ne": "cancelled"}, "excluded_from_stats": {"$ne": True},
              "external_id": {"$regex": f"^{re.escape(bc)}"}})]
         if not all_exs:               # δεν υπάρχει σε ΑΥΤΟ το φαρμακείο
             # μήπως ανήκει σε ΑΛΛΟ φαρμακείο (μις-σκανάρισμα σε λάθος tenant, π.χ. χρήστης δικτύου που
             # έχει επιλέξει λάθος φαρμακείο); → ΜΗ το βάλεις στο «δεν υπάρχουν», ενημέρωσε ξεκάθαρα.
             other = await self._db["prescription_executions"].count_documents(
-                {"external_id": {"$regex": f"^{re.escape(bc)}"}, "status": {"$ne": "cancelled"}})
+                {"external_id": {"$regex": f"^{re.escape(bc)}"}, "status": {"$ne": "cancelled"}, "excluded_from_stats": {"$ne": True}})
             if other > 0:
                 return {"ok": True, "found": False, "other_tenant": True, "barcode": bc, "n_executions": 0}
             await self._db["barcode_check"].update_one(
@@ -1112,7 +1112,7 @@ class ReimbursementRepository(BaseRepository):
         start, end = _month_bounds(period)
         ids = [e["external_id"] async for e in self._db["prescription_executions"].find(  # tenant-ok
             {"tenant_id": self.tenant_id, "executed_at": {"$gte": start, "$lt": end},
-             "status": {"$ne": "cancelled"}}, {"external_id": 1, "executed_at": 1})
+             "status": {"$ne": "cancelled"}, "excluded_from_stats": {"$ne": True}}, {"external_id": 1, "executed_at": 1})
             if e["executed_at"].strftime("%Y-%m-%d") == day]
         if ids:
             roots = list({i.split(":")[0] for i in ids})   # + παλιό state ανά barcode-root
@@ -1168,7 +1168,7 @@ class ReimbursementRepository(BaseRepository):
         groups: set = set()
         cur = self._db["prescription_executions"].find(
             {"tenant_id": self.tenant_id, "executed_at": {"$gte": start, "$lt": end},
-             "status": {"$ne": "cancelled"}},
+             "status": {"$ne": "cancelled"}, "excluded_from_stats": {"$ne": True}},
             {"executed_at": 1, "external_id": 1, "fund_id": 1, "amount_total": 1,
              "amount_claimed": 1, "patient_share": 1, "details.vaccines": 1, "details.kyyap_covered": 1,
              "details.full_participation": 1})
@@ -1432,13 +1432,13 @@ class ReimbursementRepository(BaseRepository):
         # informational only — partial execution is lawful, NOT a cut reason
         partial = await self._db["prescription_executions"].count_documents(
             {"tenant_id": self.tenant_id, "executed_at": {"$gte": start, "$lt": end},
-             "status": {"$ne": "cancelled"}, "has_unexecuted_substances": True})
+             "status": {"$ne": "cancelled"}, "excluded_from_stats": {"$ne": True}, "has_unexecuted_substances": True})
         mismatch = sum(1 for r in risk_rows if "amount_mismatch" in r["flags"])
         # Συνταγές «Αμιγώς 100%» = ΟΛΑ τα φάρμακα με συμμετοχή ασθενή 100% (`details.full_participation`)
         # → ΔΕΝ υποβάλλονται. ΟΧΙ `amount_claimed==0` (25% μπορεί να έχει claim=0· έδινε 10 αντί 4).
         rx_100 = await self._db["prescription_executions"].count_documents(
             {"tenant_id": self.tenant_id, "executed_at": {"$gte": start, "$lt": end},
-             "status": {"$ne": "cancelled"}, "amount_total": {"$gt": 0},
+             "status": {"$ne": "cancelled"}, "excluded_from_stats": {"$ne": True}, "amount_total": {"$gt": 0},
              "details.full_participation": True})
         t = closing["totals"]
 

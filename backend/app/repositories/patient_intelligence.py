@@ -577,7 +577,7 @@ class PatientIntelligenceRepository(BaseRepository):
         s_start = datetime(fy, 9, 1, tzinfo=timezone.utc)
         s_end = datetime(fy + 1, 9, 1, tzinfo=timezone.utc)
         flu_doc = await self._db["vaccinations"].find_one(
-            {"tenant_id": self.tenant_id, "cancelled": {"$ne": True},
+            {"tenant_id": self.tenant_id, "cancelled": {"$ne": True}, "excluded_from_stats": {"$ne": True},
              "executed_at": {"$gte": s_start, "$lt": s_end},
              "$or": [{"patient_ref": pa.get("pseudo_id")}, {"amka": amka}]},
             sort=[("executed_at", -1)])
