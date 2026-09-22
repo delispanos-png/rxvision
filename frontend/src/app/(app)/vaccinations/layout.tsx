@@ -13,7 +13,7 @@ const TABS: { href: string; el: string; en: string; module?: string }[] = [
   { href: "/vaccinations", el: "Επισκόπηση", en: "Overview" },
   { href: "/vaccinations/targets", el: "Λίστα στόχων", en: "Worklist" },
   { href: "/vaccinations/recall", el: "Επανάκληση", en: "Recall" },
-  { href: "/vaccinations/programs", el: "Προγράμματα & Θεραπείες", en: "Programmes & therapies",
+  { href: "/vaccinations/programs", el: "Περιοδικοί εμβολιασμοί", en: "Periodic vaccinations",
     module: "vaccination_programs" },
   { href: "/vaccinations/registry", el: "Μητρώο", en: "Registry" },
   { href: "/vaccinations/settings", el: "Ρυθμίσεις", en: "Settings" },
@@ -23,9 +23,9 @@ export default function VaccinationsLayout({ children }: { children: React.React
   const pathname = usePathname();
   const t = useT();
   // Ίδιος κανόνας με το μενού: ενεργό → κανονικά· αγοράσιμο → γκρι με λουκέτο· αλλιώς εξαφανίζεται.
-  const periodic = useAddonState(["vaccination_programs", "therapy_programs"]);
+  const periodic = useAddonState("vaccination_programs");
   return (
-    <ModuleGuard module={["prescription_analytics", "vaccination_programs", "therapy_programs"]}>
+    <ModuleGuard module={["prescription_analytics", "vaccination_programs"]}>
       <div className="mb-4 flex items-center gap-3">
         <span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-gradient-to-br from-sky-600 to-cyan-600 text-white shadow-lg"><Syringe className="h-6 w-6" /></span>
         <div>

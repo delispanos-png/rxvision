@@ -54,16 +54,21 @@ const toDraft = (p: Program): Draft => ({
 });
 
 
-/** Παράμετροι περιοδικών εμβολιασμών — ζει μέσα στις «Ρυθμίσεις» του κυκλώματος. */
-export function VaccineProgramsConfig() {
+/** Παράμετροι προγραμμάτων — ΙΔΙΟΣ μηχανισμός για εμβόλια και θεραπείες, διαφορετική γλώσσα.
+ *
+ *  Όποιος παρακολουθεί Prolia δεν πρέπει να διαβάζει πουθενά τη λέξη «εμβόλιο»: μεταφράζει στο
+ *  μυαλό του κάθε φορά και χάνει την εμπιστοσύνη του στην οθόνη.
+ */
+export function VaccineProgramsConfig({ kind = "vaccine" }: { kind?: "vaccine" | "therapy" }) {
+  const isTherapy = kind === "therapy";
   const t = useT();
   const qc = useQueryClient();
   const [editing, setEditing] = useState<Draft | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const { data: progs } = useQuery({
-    queryKey: ["vaccine-programs"],
-    queryFn: () => api<{ items: Program[] }>("/vaccine-programs"),
+    queryKey: ["vaccine-programs", kind],
+    queryFn: () => api<{ items: Program[] }>(`/vaccine-programs?kind=${kind}`),
   });
   const { data: groups } = useQuery({
     queryKey: ["vaccine-groups"],
@@ -91,7 +96,8 @@ export function VaccineProgramsConfig() {
     <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900 sm:p-5">
       <div className="mb-3 flex items-start justify-between gap-3">
         <div>
-          <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-200">{t("Περιοδικοί εμβολιασμοί — παράμετροι", "Periodic vaccinations — parameters")}</h3>
+          <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-200">{isTherapy ? t("Θεραπείες με επανάληψη — παράμετροι", "Repeat therapies — parameters")
+                       : t("Περιοδικοί εμβολιασμοί — παράμετροι", "Periodic vaccinations — parameters")}</h3>
           <p className="mt-0.5 text-xs text-slate-400">
             {t("Ποια μη εποχικά εμβόλια παρακολουθεί το φαρμακείο και κάθε πότε επαναλαμβάνονται.",
                "Which non-seasonal vaccines the pharmacy tracks and how often they repeat.")}
@@ -150,6 +156,7 @@ export function VaccineProgramsConfig() {
 
       {editing && (
         <Editor value={editing} groups={groups?.items ?? []} error={error} saving={save.isPending}
+          isTherapy={isTherapy}
           onCancel={() => setEditing(null)} onSave={(v) => save.mutate(v)} />
       )}
     </section>
@@ -160,8 +167,11 @@ function Row({ label, value }: { label: string; value: string }) {
   return (<><dt className="truncate">{label}</dt><dd className="text-right font-medium text-slate-700 dark:text-slate-200">{value}</dd></>);
 }
 
-function Editor({ value, groups, error, saving, onCancel, onSave }: {
+function Editor({ value, groups, error, saving, isTherapy, onCancel, onSave }: {
   value: Draft; groups: Group[]; error: string | null; saving: boolean;
+  // Το είδος έρχεται ως ΙΔΙΟΤΗΤΑ: ο Editor είναι ξεχωριστό component και δεν βλέπει το
+  // `kind` του γονέα. Χωρίς αυτό το build σπάει με «Cannot find name isTherapy».
+  isTherapy: boolean;
   onCancel: () => void; onSave: (v: Draft) => void;
 }) {
   const t = useT();
@@ -192,7 +202,9 @@ function Editor({ value, groups, error, saving, onCancel, onSave }: {
 
   return (
     <Modal open onClose={onCancel} size="lg"
-      title={v._id ? t("Επεξεργασία προγράμματος", "Edit programme") : t("Νέο πρόγραμμα εμβολιασμού", "New vaccination programme")}
+      title={v._id ? t("Επεξεργασία προγράμματος", "Edit programme")
+        : isTherapy ? t("Νέα θεραπεία με επανάληψη", "New repeat therapy")
+        : t("Νέο πρόγραμμα εμβολιασμού", "New vaccination programme")}
       footer={
         <div className="flex justify-end gap-2">
           <button onClick={onCancel} className="rounded-lg border border-slate-300 px-4 py-2 text-sm dark:border-slate-600">{t("Άκυρο", "Cancel")}</button>
@@ -229,8 +241,8 @@ function Editor({ value, groups, error, saving, onCancel, onSave }: {
               }) : <span className="text-sm text-slate-400">{t("Μεμονωμένα σκευάσματα", "Individual products")}</span>}
             </div>
           </Field>
-        ) : (
-          <Field label={t("Ποια εμβόλια παρακολουθώ", "Which vaccines to watch")}
+        ) : isTherapy ? null : (
+          <Field label={t("Ομάδες εμβολίων (προαιρετικό)", "Vaccine groups (optional)")}
             hint={t("Επίλεξε ομάδα — περιλαμβάνει όλα τα σκευάσματά της. Δεν αλλάζει μετά τη δημιουργία.",
                     "Pick a group — it includes all its products. Cannot be changed later.")}>
             <div className="grid max-h-56 gap-1.5 overflow-y-auto rounded-lg border border-slate-200 p-2 dark:border-slate-700 sm:grid-cols-2">
@@ -247,12 +259,15 @@ function Editor({ value, groups, error, saving, onCancel, onSave }: {
           </Field>
         )}
 
-        {(!!prods?.length || !!v.atc_prefixes.length) && (
-          <Field label={t("Ποια σκευάσματα δίνεις", "Which products you dispense")}
-            hint={t("Εσύ ορίζεις ποια σκευάσματα ανήκουν σε αυτόν τον εμβολιασμό — άφησέ τα ξεμαρκάριστα για όλη την ομάδα. Ψάξε με το εμπορικό όνομα για να βρεις οποιοδήποτε εμβόλιο του καταλόγου.",
-                    "You define which products belong to this vaccination — leave unchecked for the whole group. Search by brand name to find any vaccine in the catalogue.")}>
+        {/* ΠΑΝΤΑ ΟΡΑΤΟ. Πριν εμφανιζόταν μόνο ΑΦΟΥ διαλέξεις ομάδα εμβολίων — και για μια θεραπεία
+            (Prolia) δεν υπάρχει ομάδα να διαλέξεις, οπότε η αναζήτηση δεν εμφανιζόταν ΠΟΤΕ.
+            Αδιέξοδο: το σκεύασμα ήταν αδύνατο να επιλεγεί. */}
+        {true && (
+          <Field label={t("Ποιο σκεύασμα παρακολουθώ", "Which product to watch")}
+            hint={t("Για ΘΕΡΑΠΕΙΑ (Prolia, Ajovy, Stelara) γράψε εδώ το εμπορικό όνομα — δεν χρειάζεται ομάδα από πάνω. Για εμβόλιο, διάλεξε ομάδα και άφησε τα σκευάσματα ξεμαρκάριστα αν τα θες όλα.",
+                    "For a THERAPY (Prolia, Ajovy) type the brand name here — no group needed. For a vaccine, pick a group and leave products unchecked to take them all.")}>
             <input value={prodTerm} onChange={(e) => setProdTerm(e.target.value)}
-              placeholder={t("αναζήτηση σκευάσματος (π.χ. PREVENAR)…", "search product (e.g. PREVENAR)…")}
+              placeholder={t("γράψε όνομα σκευάσματος (π.χ. PROLIA)…", "type product name (e.g. PROLIA)…")}
               className="mb-1.5 block w-full rounded-lg border border-slate-300 px-3 py-1.5 text-sm dark:border-slate-600 dark:bg-slate-800" />
             <div className="grid max-h-44 gap-1 overflow-y-auto rounded-lg border border-slate-200 p-2 dark:border-slate-700 sm:grid-cols-2">
               {(prods ?? []).map((pr) => (

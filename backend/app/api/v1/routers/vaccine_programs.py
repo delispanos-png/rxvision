@@ -82,8 +82,10 @@ async def catalog_products(
 
 # ── programmes CRUD ──────────────────────────────────────────────────────────────────────────
 @router.get("")
-async def list_programs(ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
-    return {"items": await VaccineProgramRepository(tenant_id=ctx.tenant_id).list()}
+async def list_programs(kind: str | None = Query(None, description="vaccine | therapy"),
+                        ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+    """`kind` χωρίζει τα δύο κυκλώματα: το ένα δεν βλέπει ποτέ τα προγράμματα του άλλου."""
+    return {"items": await VaccineProgramRepository(tenant_id=ctx.tenant_id).list(kind=kind)}
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)

@@ -5,8 +5,7 @@
 import {
   Activity, BarChart3, Boxes, Warehouse, Layers, CalendarClock, ChevronRight, LayoutDashboard,
   Mail, Megaphone, Salad, PackageSearch, Settings, Sparkles, Stethoscope, TrendingUp, Target, Users,
-  Brain, ShieldCheck, Tags, Syringe, Bot, Gift, BookOpen, ScrollText, Truck, Lock, X, UserPlus, Ticket, SlidersHorizontal, Heart, FileText, MessageSquare, PackageCheck, Receipt, ArrowRightLeft, Compass, type LucideIcon,
-} from "lucide-react";
+  Brain, ShieldCheck, Tags, Syringe, Bot, Gift, BookOpen, ScrollText, Truck, Lock, X, UserPlus, Ticket, SlidersHorizontal, Heart, FileText, MessageSquare, PackageCheck, Receipt, ArrowRightLeft, Compass, type LucideIcon, RefreshCw } from "lucide-react";
 
 // A leaf (direct link). `module` gates visibility (shown only when enabled/trial).
 export type Leaf = { href: string; label: string; en: string; module?: string | string[] };
@@ -33,7 +32,11 @@ export const NAV_GROUPS: Group[] = [
     // Φαίνεται με ΟΠΟΙΟΔΗΠΟΤΕ από τα τρία: ένα πληρωμένο add-on δεν επιτρέπεται να μένει αόρατο
     // επειδή λείπει ΑΛΛΟ module. Όποιος αγόρασε «Θεραπείες με Επανάληψη» πρέπει να το βρίσκει.
     { label: "Κύκλωμα Εμβολιασμών", en: "Vaccinations", icon: Syringe, href: "/vaccinations",
-      module: ["prescription_analytics", "vaccination_programs", "therapy_programs"] },
+      module: ["prescription_analytics", "vaccination_programs"] },
+    // Δικό του κύκλωμα, δική του γλώσσα: όποιος παρακολουθεί Prolia δεν πρέπει να διαβάζει
+    // πουθενά τη λέξη «εμβόλιο». Ο μηχανισμός από κάτω είναι ο ίδιος.
+    { label: "Θεραπείες με Επανάληψη", en: "Repeat Therapies", icon: RefreshCw, href: "/therapies",
+      module: "therapy_programs" },
     { label: "Μελλοντικές", en: "Upcoming", icon: CalendarClock, module: "future_prescriptions", children: [
       { href: "/future#coverage", label: "Κάλυψη περιόδου", en: "Period coverage" },
       { href: "/future#forecast", label: "Πρόβλεψη κάλυψης", en: "Coverage forecast" },

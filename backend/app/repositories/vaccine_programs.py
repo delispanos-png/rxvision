@@ -125,8 +125,18 @@ class VaccineProgramRepository(BaseRepository):
 
     @staticmethod
     async def products(atc_prefix: str | None = None, search: str | None = None) -> list[dict]:
-        """Individual vaccine products, for pharmacists who want finer control than a whole group."""
-        q: dict = {"atc": {"$regex": f"^{re.escape(atc_prefix)}" if atc_prefix else "^J07"}}
+        """Μεμονωμένα σκευάσματα — για όποιον θέλει ακρίβεια αντί για ολόκληρη ομάδα.
+
+        ⚠️ ΟΤΑΝ ΨΑΧΝΕΙ ΜΕ ΟΝΟΜΑ, ΔΕΝ ΠΕΡΙΟΡΙΖΟΥΜΕ ΣΕ J07. Οι ομάδες που προσφέρονται στην οθόνη
+        είναι εμβολίων· οι θεραπείες με επανάληψη (Prolia M05BX04, Ajovy N02CD03) ΔΕΝ ανήκουν σε
+        καμία από αυτές. Με το παλιό `^J07` η αναζήτηση «Prolia» γύριζε πάντα κενή και το
+        σκεύασμα ήταν αδύνατο να επιλεγεί — δυνατότητα πληρωμένη και ανέφικτη.
+        """
+        q: dict = {}
+        if atc_prefix:
+            q["atc"] = {"$regex": f"^{re.escape(atc_prefix)}"}
+        elif not search:
+            q["atc"] = {"$regex": "^J07"}      # χωρίς όρο αναζήτησης → οι γνωστές ομάδες εμβολίων
         if search:
             q["name"] = {"$regex": re.escape(search.strip()), "$options": "i"}
         cur = shared_db()["medicine_catalog"].find(
@@ -135,8 +145,40 @@ class VaccineProgramRepository(BaseRepository):
                  "atc": d.get("atc"), "barcode": d.get("barcode")} async for d in cur]
 
     # ── programmes (per tenant) ──────────────────────────────────────────────────────────────
-    async def list(self) -> list[dict]:
-        return await self.find(sort=[("name", 1)], limit=200)
+    @staticmethod
+    def kind_of(program: dict) -> str:
+        """«vaccine» ή «therapy» — το κρίνει ο ΚΩΔΙΚΟΣ, όχι ο χρήστης.
+
+        Τα εμβόλια ζουν όλα στο J07. Ένα πρόγραμμα με ρητούς κωδικούς ΕΟΦ κρίνεται από το ATC
+        του πρώτου σκευάσματος. Έτσι ο διαχωρισμός των δύο κυκλωμάτων δεν χρειάζεται ούτε
+        επιπλέον πεδίο ούτε μετάπτωση παλιών προγραμμάτων.
+        """
+        for a in (program.get("atc_prefixes") or []):
+            if not str(a).upper().startswith("J07"):
+                return "therapy"
+        if program.get("atc_prefixes"):
+            return "vaccine"
+        return program.get("kind") or "therapy"      # μόνο ρητά σκευάσματα → το λέει το ίδιο
+
+    async def list(self, kind: str | None = None) -> list[dict]:
+        """`kind`: "vaccine" | "therapy" | None (όλα).
+
+        Όταν το πρόγραμμα έχει ΜΟΝΟ κωδικούς ΕΟΦ (χωρίς ATC), το είδος βγαίνει από τον κατάλογο.
+        """
+        rows = await self.find(sort=[("name", 1)], limit=200)
+        if not kind:
+            return rows
+        # Συμπλήρωση είδους για όσα δηλώνουν μόνο σκευάσματα
+        unknown = [r for r in rows if not (r.get("atc_prefixes") or []) and r.get("eof_codes")]
+        if unknown:
+            codes = {str(c) for r in unknown for c in (r.get("eof_codes") or [])}
+            atc_by_code = {str(d["_id"]): (d.get("atc") or "") async for d in
+                           shared_db()["medicine_catalog"].find({"_id": {"$in": sorted(codes)}},
+                                                                {"atc": 1})}
+            for r in unknown:
+                first = next((atc_by_code.get(str(c), "") for c in (r.get("eof_codes") or [])), "")
+                r["kind"] = "vaccine" if first.upper().startswith("J07") else "therapy"
+        return [r for r in rows if self.kind_of(r) == kind]
 
     async def get(self, program_id) -> dict | None:
         """Ένα πρόγραμμα με το id του (δέχεται string από URL ή ObjectId)."""
