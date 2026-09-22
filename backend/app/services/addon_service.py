@@ -42,6 +42,15 @@ _DEFAULTS: list[dict] = [
      "description": "Ανάλυση ασθενών: compliance, recall, win-back, VIP, segments + Εικόνα Πελάτη 360°.",
      "price_monthly": 2500, "price_yearly": 25000, "active": True,
      "features": ["Compliance / recall / win-back", "VIP & segments", "Εικόνα Πελάτη 360°"]},
+    {"_id": "advance_dispensing", "name": "Προχορηγήσεις (δανεικά)", "icon": "🤝",
+     "category": "intelligence",
+     "description": "Καταγραφή σκευασμάτων που έδωσες χωρίς συνταγή: σαρώνεις το κουτί, το "
+                    "χρεώνεις στον πελάτη, και όταν έρθει η συνταγή το σύστημα σου προτείνει "
+                    "την ξεχρέωση. Λίστες για ό,τι αργεί, με ένδειξη HMVO.",
+     "price_monthly": 2500, "price_yearly": 25000, "active": True,
+     "features": ["Σάρωση 2D: GTIN, παρτίδα, ταινία", "Χρέωση σε πελάτη ή περαστικό",
+                  "Πρόταση ξεχρέωσης όταν κατέβει η συνταγή",
+                  "Λίστες: QR >10 ημερών, όλα >30 ημερών"]},
     {"_id": "therapy_programs", "name": "Θεραπείες με Επανάληψη", "icon": "🔁",
      "category": "intelligence",
      "description": "Θεραπείες που επαναλαμβάνονται κάθε λίγους μήνες (Prolia κάθε 6, "

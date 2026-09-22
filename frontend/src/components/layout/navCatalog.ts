@@ -46,6 +46,8 @@ export const NAV_GROUPS: Group[] = [
       { href: "/patients#kpi", label: "Δείκτες", en: "Indicators" },
       { href: "/patients/verify-contacts", label: "Επιβεβαίωση στοιχείων", en: "Confirm contacts" },
       { href: "/patients/deceased", label: "Θανόντες & υπόλοιπα", en: "Deceased & balances" },
+      { href: "/patients/advance", label: "Προχορηγήσεις (δανεικά)", en: "Advance dispensings",
+        module: "advance_dispensing" },
     ] },
     { label: "Ιατροί", en: "Doctors", icon: Stethoscope, module: "doctor_analytics", children: [
       { href: "/doctors#list", label: "Λίστα", en: "List" },

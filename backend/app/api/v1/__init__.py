@@ -30,6 +30,7 @@ from app.api.v1.routers import (
     orders,
     orders_delivery,
     copilot,
+    advance_dispensings,
     daily_coach,
     patient,
     patient_intelligence,
@@ -69,6 +70,9 @@ api_router.include_router(orders_delivery.router, prefix="/orders/delivery", tag
 api_router.include_router(dashboard.router, prefix="/dashboard", tags=["dashboard"])
 api_router.include_router(advisor.router, prefix="/advisor", tags=["advisor"])
 api_router.include_router(daily_coach.router, prefix="/coach", tags=["coach"])
+api_router.include_router(advance_dispensings.router,
+                          prefix="/advance-dispensings",
+                          tags=["advance-dispensings"])
 api_router.include_router(announcements.router, prefix="/announcements", tags=["announcements"])
 api_router.include_router(communications.router, prefix="/communications", tags=["communications"])
 api_router.include_router(marketing.router, prefix="/marketing", tags=["marketing"])

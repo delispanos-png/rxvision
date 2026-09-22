@@ -45,6 +45,7 @@ const MODULE_LABELS: [string, string][] = [
   ["marketing", "🎯 Στοχευμένη Προώθηση"],
   ["vaccination_programs", "💉 Περιοδικός Εμβολιασμός (ζωστήρας/τέτανος/πνευμονιόκοκκος)"],
   ["therapy_programs", "🔁 Θεραπείες με Επανάληψη (Prolia/Ajovy/Stelara)"],
+  ["advance_dispensing", "🤝 Προχορηγήσεις (δανεικά σκευάσματα)"],
 ];
 type Creds = {
   users: User[];
