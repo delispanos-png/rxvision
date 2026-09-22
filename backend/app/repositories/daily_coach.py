@@ -414,6 +414,22 @@ class DailyCoachRepository(BaseRepository):
                     "n": int(r.get("n") or 0)}
         return {"rev": 0, "cost": 0, "n": 0}
 
+    async def _data_is_fresh(self, now: datetime) -> bool:
+        """Έχουμε ΠΡΟΣΦΑΤΑ δεδομένα για να μιλήσουμε για τζίρο και περιθώριο;
+
+        ⚠️ ΧΩΡΙΣ ΑΥΤΟ Ο ΣΥΜΒΟΥΛΟΣ ΚΑΤΗΓΟΡΕΙ ΤΟΝ ΠΕΛΑΤΗ ΓΙΑ ΔΙΚΟ ΜΑΣ ΠΡΟΒΛΗΜΑ. Μετρημένο
+        22/09/2026: φαρμακείο με σταματημένο συγχρονισμό 26 ημερών εμφάνιζε «πτώση τζίρου 82%».
+        Δεν είχε πέσει τίποτα — απλώς σταματήσαμε να κατεβάζουμε. Ένα τέτοιο μήνυμα τρομάζει
+        τον φαρμακοποιό και, όταν ανακαλύψει την αλήθεια, δεν ξαναπιστεύει ΚΑΝΕΝΑ σήμα.
+
+        Τρεις ημέρες ανοχή: η ΗΔΥΚΑ καταχωρεί με καθυστέρηση και τα Σαββατοκύριακα είναι αραιά.
+        """
+        last = await self._db["prescription_executions"].find_one(
+            {"tenant_id": self.tenant_id}, sort=[("executed_at", -1)],
+            projection={"executed_at": 1})
+        at = (last or {}).get("executed_at")
+        return bool(at and (now - at).days <= 3)
+
     async def _sig_loss_execution(self, now: datetime) -> list[dict]:
         """Εκτέλεση που κόστισε περισσότερα απ' όσα έφερε. Σπάνιο — άρα αληθινό όταν συμβαίνει."""
         out = []
@@ -440,6 +456,8 @@ class DailyCoachRepository(BaseRepository):
         Η διατίμηση κρατά το μικτό περιθώριο πολύ σταθερό (μετρημένο: 25–26% σε ΟΛΑ τα φαρμακεία).
         Γι' αυτό ακόμη και 2 μονάδες πτώσης ΔΕΝ είναι διακύμανση — είναι κάτι που άλλαξε.
         """
+        if not await self._data_is_fresh(now):
+            return []          # κενό στα δεδομένα ΜΑΣ — δεν το χρεώνουμε στον πελάτη
         cur = await self._totals(now - timedelta(days=30), now)
         base = await self._totals(now - timedelta(days=120), now - timedelta(days=30))
         if cur["n"] < _MIN_EXECS or base["n"] < _MIN_EXECS or not cur["rev"] or not base["rev"]:
@@ -456,6 +474,8 @@ class DailyCoachRepository(BaseRepository):
 
     async def _sig_revenue_drop(self, now: datetime) -> list[dict]:
         """Πτώση τζίρου σε σχέση με τον προηγούμενο μήνα — πριν τη νιώσει στο ταμείο."""
+        if not await self._data_is_fresh(now):
+            return []          # δες `_data_is_fresh` — σταματημένος συγχρονισμός ΔΕΝ είναι πτώση τζίρου
         cur = await self._totals(now - timedelta(days=30), now)
         prev = await self._totals(now - timedelta(days=60), now - timedelta(days=30))
         if cur["n"] < _MIN_EXECS or prev["n"] < _MIN_EXECS or prev["rev"] <= 0:
