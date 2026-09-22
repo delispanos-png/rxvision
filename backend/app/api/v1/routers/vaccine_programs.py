@@ -22,6 +22,27 @@ _MODULE = "vaccination_programs"        # paid add-on, 10 €/month — separate
 _PERM = "prescriptions:read"
 
 
+def _is_therapy(body: "ProgramIn") -> bool:
+    """Εμβόλιο ή θεραπεία; Το κρίνει ο ΙΔΙΟΣ ο κωδικός ATC — καμία επιπλέον ερώτηση στον χρήστη.
+
+    Τα εμβόλια ζουν όλα στο J07. Ό,τι άλλο (Prolia M05BX04, Stelara L04AC05, Eylea S01LA05)
+    είναι θεραπεία και ανήκει στο ξεχωριστό, πληρωμένο κύκλωμα «Θεραπείες με Επανάληψη».
+    """
+    for a in (body.atc_prefixes or []):
+        if not str(a).upper().startswith("J07"):
+            return True
+    return False
+
+
+def _guard_module(ctx: TenantContext, body: "ProgramIn") -> None:
+    """Θεραπεία χωρίς το αντίστοιχο add-on δεν αποθηκεύεται — ούτε «κρύβεται» απλώς."""
+    if _is_therapy(body) and ctx.modules.get("therapy_programs") not in ("enabled", "trial"):
+        raise HTTPException(status.HTTP_402_PAYMENT_REQUIRED,
+                            detail={"error": "therapy_programs_required",
+                                    "message": "Οι θεραπείες με επανάληψη είναι "
+                                               "ξεχωριστή δυνατότητα."})
+
+
 class ProgramIn(BaseModel):
     name: str
     atc_prefixes: list[str] | None = None
@@ -29,6 +50,11 @@ class ProgramIn(BaseModel):
     doses_required: int | None = None
     dose_interval_days: int | None = None
     repeat_years: int | None = None
+    # Σε ΜΗΝΕΣ — οι περισσότερες θεραπείες επαναλαμβάνονται υπο-ετήσια (Prolia 6, Ajovy 3).
+    repeat_months: int | None = None
+    # "last" = θεραπεία (μετράει από την τελευταία δόση) · "first" = αναμνηστική εμβολίου.
+    repeat_from: str | None = None
+    sex: str | None = None
     min_age: int | None = None
     max_age: int | None = None
     lookback_years: int | None = None
@@ -64,6 +90,7 @@ async def list_programs(ctx: TenantContext = Depends(require(_PERM, module=_MODU
 async def create_program(body: ProgramIn,
                          ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
     try:
+        _guard_module(ctx, body)
         return await VaccineProgramRepository(tenant_id=ctx.tenant_id).save(body.model_dump())
     except ValueError as e:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, _msg(str(e))) from e
@@ -76,6 +103,7 @@ async def update_program(program_id: str, body: ProgramIn,
     if not await repo.get(program_id):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Το πρόγραμμα δεν βρέθηκε.")
     try:
+        _guard_module(ctx, body)
         return await repo.save(body.model_dump(), program_id=program_id)
     except ValueError as e:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, _msg(str(e))) from e
@@ -111,6 +139,37 @@ async def program_patients(
                       "repeat_years": program.get("repeat_years"),
                       "doses_required": program.get("doses_required")}
     return out
+
+
+class ManualDoseIn(BaseModel):
+    at: datetime
+    note: str | None = None
+
+
+@router.post("/{program_id}/patients/{patient_id}/doses")
+async def add_manual_dose(program_id: str, patient_id: str, body: ManualDoseIn,
+                          ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+    """Καταγραφή δόσης που έγινε ΑΛΛΟΥ (άλλο φαρμακείο / νοσοκομείο).
+
+    Χωρίς αυτό ο ασθενής έμενε «εκπρόθεσμος» για πάντα και δεχόταν κλήσεις άδικα. ΔΕΝ γίνεται
+    εκτέλεση συνταγής: δεν αγγίζει τζίρο ούτε αποζημίωση — μόνο την κάλυψή του.
+    """
+    repo = VaccineProgramRepository(tenant_id=ctx.tenant_id)
+    if not await repo.get(program_id):
+        raise HTTPException(404, "program_not_found")
+    return await repo.add_manual_dose(program_id=program_id, patient_id=patient_id,
+                                      at=body.at, note=body.note or "", by=ctx.user_id)
+
+
+@router.delete("/{program_id}/doses/{dose_id}")
+async def remove_manual_dose(program_id: str, dose_id: str,
+                             ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+    """Αναίρεση λάθος καταχώρησης. Σβήνει ΜΟΝΟ χειροκίνητες — οι πραγματικές εκτελέσεις δεν
+    αγγίζονται από εδώ."""
+    n = await VaccineProgramRepository(tenant_id=ctx.tenant_id).remove_manual_dose(dose_id)
+    if not n:
+        raise HTTPException(404, "dose_not_found")
+    return {"deleted": n}
 
 
 class NotifyIn(BaseModel):

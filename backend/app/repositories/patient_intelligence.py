@@ -585,6 +585,24 @@ class PatientIntelligenceRepository(BaseRepository):
                "date": flu_doc.get("executed_at") if flu_doc else None,
                "vaccine": flu_doc.get("vaccine_name") if flu_doc else None}
 
+        # ΘΕΡΑΠΕΙΕΣ ΜΕ ΕΠΑΝΑΛΗΨΗ (Prolia, Shingrix, τέτανος…) — η πληροφορία που ο φαρμακοποιός
+        # δεν έχει τρόπο να θυμάται: πότε έγινε η τελευταία δόση και πότε οφείλεται η επόμενη.
+        # Διαβάζεται από τα ΕΝΕΡΓΑ προγράμματα του φαρμακείου· χωρίς προγράμματα, καμία ενότητα.
+        programs: list[dict] = []
+        try:
+            from app.repositories.vaccine_programs import VaccineProgramRepository
+            vpr = VaccineProgramRepository(tenant_id=self.tenant_id, demo=self.demo)
+            for prog in await vpr.find({"active": True}, limit=50):
+                mine = await vpr.coverage_for_patient(prog, str(pid))
+                if not mine:
+                    continue
+                programs.append({"program_id": str(prog["_id"]),
+                                 "name": prog.get("name"), **mine})
+        except Exception:                                   # noqa: BLE001
+            # Μια θεραπεία που δεν φορτώνει ΔΕΝ ρίχνει ολόκληρη την Εικόνα Πελάτη.
+            import logging
+            logging.getLogger(__name__).exception("patient profile: programs failed")
+
         # κλινικό date-scope (διαγνώσεις/φάρμακα): match εκτελέσεων εντός περιόδου, αν δόθηκε
         clin_match: dict = {"patient_ref": pid}
         if date_from or date_to:
@@ -761,6 +779,7 @@ class PatientIntelligenceRepository(BaseRepository):
                           "available": available, "lost_value": round(recoverable),
                           "next_open": next_open},
             "missed_items": missed_items, "available_items": available_items, "flu": flu,
+            "programs": programs,
             "clinical": {"g6pd_deficiency": bool(ct.get("g6pd_deficiency"))},
             "segments": segments, "conditions": conditions,
             "medicines": medicines[:15], "doctors": doctors, "executions": executions,

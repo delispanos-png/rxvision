@@ -56,7 +56,25 @@ ATC_EXACT_LABELS: dict[str, str] = {
     "J07BK03": "Έρπης ζωστήρας (ανασυνδυασμένο)",
 }
 
-_ATC_RE = re.compile(r"^J07[A-Z]{0,2}\d{0,2}$")   # J07 … J07BK03
+# ΚΑΘΕ ομάδα ATC, όχι μόνο J07. Το κύκλωμα ξεκίνησε για εμβόλια, αλλά ο μηχανισμός ποτέ δεν
+# ήταν δεμένος μαζί τους: ταιριάζει ό,τι κωδικό ΕΟΦ/ATC ορίσει το πρόγραμμα. Οι θεραπείες
+# με μεγάλο μεσοδιάστημα (Prolia M05BX04, Stelara L04AC05, Eylea S01LA05) έχουν ΑΚΡΙΒΩΣ την
+# ίδια ανάγκη με μια αναμνηστική δόση — και ο φαρμακοποιός τις ξεχνά με τον ίδιο τρόπο.
+def _add_months(dt, months: int):
+    """Ημερολογιακή πρόσθεση μηνών στην ημερομηνία μιας δόσης.
+
+    ΟΧΙ «μήνες × 30»: σε εξάμηνο σχήμα (Prolia) η απόκλιση φτάνει τις έξι μέρες και η
+    υπενθύμιση πέφτει σε λάθος μέρα — ακριβώς εκεί που ο ασθενής περιμένει ακρίβεια.
+    Η μέρα «σφίγγεται» στον μήνα προορισμού (31 Ιαν + 1 μήνας → 28/29 Φεβ).
+    """
+    total = dt.month - 1 + int(months)
+    y, m = dt.year + total // 12, total % 12 + 1
+    leap = y % 4 == 0 and (y % 100 != 0 or y % 400 == 0)
+    last = [31, 29 if leap else 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][m - 1]
+    return dt.replace(year=y, month=m, day=min(dt.day, last))
+
+
+_ATC_RE = re.compile(r"^[A-Z]\d{2}[A-Z]{0,2}\d{0,2}$")   # J07BK03 · M05BX04 · L04AC05
 
 
 def _now() -> datetime:
@@ -179,6 +197,89 @@ class VaccineProgramRepository(BaseRepository):
                 table[code] = str(p["_id"])
         return table
 
+    # ── δόσεις που έγιναν ΑΛΛΟΥ ────────────────────────────────────────────────────────────
+    # Ο ασθενής μπορεί να έκανε τη θεραπεία σε άλλο φαρμακείο ή στο νοσοκομείο. Χωρίς αυτό, ο
+    # φαρμακοποιός τον βλέπει «εκπρόθεσμο» για πάντα, τον καλεί άδικα, και σταματά να εμπιστεύεται
+    # τη λίστα. Κρατιέται ΧΩΡΙΣΤΑ από τις συνταγές: δεν είναι δική μας εκτέλεση και δεν πρέπει
+    # ΠΟΤΕ να μετρήσει σε τζίρο ή αποζημίωση — μόνο στην κάλυψη του ασθενή.
+    async def add_manual_dose(self, *, program_id: str, patient_id: str, at: datetime,
+                              note: str = "", by: str | None = None) -> dict:
+        doc = {"tenant_id": self.tenant_id, "program_id": str(program_id),
+               "patient_id": str(patient_id), "at": at, "note": (note or "")[:300],
+               "by": by, "created_at": datetime.now(tz=timezone.utc)}
+        res = await self._db["program_doses_manual"].insert_one(doc)
+        return {"_id": str(res.inserted_id)}
+
+    async def remove_manual_dose(self, dose_id: str) -> int:
+        try:
+            oid = ObjectId(dose_id)
+        except Exception:                                    # noqa: BLE001
+            return 0
+        res = await self._db["program_doses_manual"].delete_one(
+            {"_id": oid, "tenant_id": self.tenant_id})        # ΠΑΝΤΑ scoped στον πελάτη
+        return res.deleted_count
+
+    async def _manual_doses(self, program_id: str, patient_ids: list[str]) -> dict[str, list[dict]]:
+        """{patient_id → [δόσεις]} για τους ασθενείς της λίστας."""
+        if not program_id or not patient_ids:
+            return {}
+        out: dict[str, list[dict]] = {}
+        async for d in self._db["program_doses_manual"].find(
+                {"tenant_id": self.tenant_id, "program_id": str(program_id),
+                 "patient_id": {"$in": patient_ids}}):
+            out.setdefault(d["patient_id"], []).append(
+                {"_id": str(d["_id"]), "at": d.get("at"), "note": d.get("note") or "",
+                 "elsewhere": True})
+        return out
+
+    async def coverage_for_patient(self, program: dict, patient_id: str) -> dict | None:
+        """Η κάλυψη ΕΝΟΣ ασθενή — για την Εικόνα Πελάτη.
+
+        ΓΙΑΤΙ ΞΕΧΩΡΙΣΤΗ ΑΠΟ ΤΟ `patients_for`: εκείνο συγκεντρώνει ΟΛΟΥΣ τους ασθενείς του
+        προγράμματος. Καλώντας το για μία καρτέλα, κάθε άνοιγμα καρτέλας θα έτρεχε τόσες πλήρεις
+        συγκεντρώσεις όσα και τα ενεργά προγράμματα — για να κρατήσει μία γραμμή. Εδώ διαβάζουμε
+        μόνο τις εκτελέσεις ΑΥΤΟΥ του ασθενή.
+        """
+        codes = await self.resolve_codes(program)
+        if not codes:
+            return None
+        # Το `patient_ref` άλλοτε είναι ObjectId και άλλοτε ψευδώνυμο-κείμενο, ανάλογα με την πηγή
+        # (ΗΔΥΚΑ vs πύλη). Η λίστα το επιστρέφει πάντα ως κείμενο, οπότε εδώ δοκιμάζουμε ΚΑΙ ΤΑ ΔΥΟ
+        # — αλλιώς η καρτέλα δείχνει «καμία θεραπεία» σε ασθενή που έχει κάνει πέντε δόσεις.
+        cands: list = [patient_id]
+        try:
+            cands.append(ObjectId(patient_id))
+        except (InvalidId, TypeError):
+            pass
+        ex_ids = await self._db["prescription_executions"].distinct(
+            "_id", {"tenant_id": self.tenant_id, "patient_ref": {"$in": cands}})
+        shots: list[dict] = []
+        if ex_ids:
+            async for it in self._db["prescription_items"].find(
+                    {"tenant_id": self.tenant_id, "execution_id": {"$in": ex_ids},
+                     "details.eof_code": {"$in": sorted(codes)}, "is_executed": {"$ne": False}},
+                    {"executed_at": 1, "details.eof_code": 1}):
+                shots.append({"at": it.get("executed_at"),
+                              "code": (it.get("details") or {}).get("eof_code"),
+                              "elsewhere": False, "note": ""})
+        for d in (await self._manual_doses(str(program.get("_id") or ""), [str(patient_id)])
+                  ).get(str(patient_id), []):
+            shots.append({"at": d["at"], "code": None, "elsewhere": True, "note": d["note"]})
+        if not shots:
+            return None
+        dates = sorted([s["at"] for s in shots if s.get("at")])
+        now = datetime.now(tz=timezone.utc)
+        st, due = self._coverage(dates[0] if dates else None, self.repeat_months_of(program),
+                                 int(program.get("notify_before_days") or 30), now,
+                                 len(shots), int(program.get("doses_required") or 1),
+                                 last_at=dates[-1] if dates else None,
+                                 dose_interval_days=program.get("dose_interval_days"),
+                                 repeat_from=program.get("repeat_from") or "first")
+        return {"status": st, "due_at": due, "doses": len(shots),
+                "doses_required": int(program.get("doses_required") or 1),
+                "last_at": dates[-1] if dates else None,
+                "shots": sorted(shots, key=lambda x: x.get("at") or now)}
+
     # ── λίστα ασφαλισμένων ανά πρόγραμμα ─────────────────────────────────────────────────────
     async def patients_for(self, program: dict, *, status: str = "all",
                            q: str | None = None, limit: int = 200, skip: int = 0) -> dict:
@@ -191,7 +292,7 @@ class VaccineProgramRepository(BaseRepository):
         if not codes:
             return {"items": [], "total": 0, "counts": {}}
 
-        repeat_years = program.get("repeat_years")
+        repeat_months = self.repeat_months_of(program)
         doses_required = int(program.get("doses_required") or 1)
         notify_before = int(program.get("notify_before_days") or 30)
         max_age = program.get("max_age")
@@ -219,6 +320,7 @@ class VaccineProgramRepository(BaseRepository):
             {"$set": {"name": {"$first": "$p.full_name"}, "amka": {"$first": "$p.amka"},
                       "age_group": {"$first": "$p.age_group"},
                       "birth_year": {"$first": "$p.birth_year"},
+                      "sex": {"$first": "$p.sex"},
                       "deceased": {"$first": "$p.deceased"}}},
             {"$match": {"deceased": {"$ne": True}}},     # ΠΟΤΕ θανόντες σε λίστα επικοινωνίας
             # Στοιχεία επικοινωνίας — η λίστα καταλήγει σε μήνυμα, άρα χρειάζεται να ξέρουμε
@@ -242,12 +344,36 @@ class VaccineProgramRepository(BaseRepository):
             age_cond.append({"$or": [{"age": None}, {"age": {"$lte": int(program["max_age"])}}]})
         if age_cond:
             pipeline.append({"$match": {"$and": age_cond}})
+        # ΦΥΛΟ — μόνο αν το πρόγραμμα το ορίζει ρητά. Όποιος δεν έχει καταγεγραμμένο φύλο ΔΕΝ
+        # κόβεται: δεν τον κρύβουμε από τον φαρμακοποιό επειδή λείπει μια πληροφορία από την ΗΔΥΚΑ.
+        if program.get("sex"):
+            pipeline.append({"$match": {"$or": [{"sex": None}, {"sex": ""},
+                                                {"sex": str(program["sex"])[:1].upper()}]}})
         if q and q.strip():
             rx = re.escape(q.strip())
             pipeline.append({"$match": {"$or": [{"name": {"$regex": rx, "$options": "i"}},
                                                 {"amka": {"$regex": rx}}]}})
         pipeline.append({"$sort": {"last_at": -1}})
         rows = await self._db["prescription_items"].aggregate(pipeline).to_list(length=None)
+
+        # ΔΟΣΕΙΣ ΠΟΥ ΕΓΙΝΑΝ ΑΛΛΟΥ — μπαίνουν ΠΡΙΝ υπολογιστεί η κάλυψη, αλλιώς ο ασθενής θα
+        # έβγαινε εκπρόθεσμος παρότι ο φαρμακοποιός μόλις κατέγραψε ότι έκανε τη δόση.
+        manual = await self._manual_doses(str(program.get("_id") or ""),
+                                          [str(r["_id"]) for r in rows])
+        for r in rows:
+            extra = manual.get(str(r["_id"]))
+            if not extra:
+                continue
+            dates = [d["at"] for d in extra if d.get("at")]
+            r["doses"] = int(r.get("doses") or 0) + len(extra)
+            if dates:
+                _floor = datetime.min.replace(tzinfo=timezone.utc)
+                r["last_at"] = max([r.get("last_at")] + dates, key=lambda x: x or _floor)
+                r["first_at"] = min([d for d in [r.get("first_at")] + dates if d])
+            r["shots"] = (r.get("shots") or []) + [
+                {"at": d["at"], "code": None, "lot": None, "elsewhere": True, "note": d["note"]}
+                for d in extra]
+            r["manual"] = extra
 
         # ΕΟΦ κωδικοί → εμπορικά ονόματα. Η ίδια ATC ομάδα μπορεί να περιέχει κλινικά διαφορετικά
         # εμβόλια (π.χ. ζωστήρας vs ανεμευλογιά), οπότε ο φαρμακοποιός πρέπει να βλέπει ΤΙ ακριβώς
@@ -261,10 +387,11 @@ class VaccineProgramRepository(BaseRepository):
 
         items, counts = [], {"covered": 0, "due_soon": 0, "expired": 0, "incomplete": 0}
         for r in rows:
-            st, due_at = self._coverage(r.get("first_at"), repeat_years, notify_before, now,
+            st, due_at = self._coverage(r.get("first_at"), repeat_months, notify_before, now,
                                         int(r.get("doses") or 0), doses_required,
                                         last_at=r.get("last_at"),
-                                        dose_interval_days=program.get("dose_interval_days"))
+                                        dose_interval_days=program.get("dose_interval_days"),
+                                        repeat_from=program.get("repeat_from") or "first")
             # Αν ο ασθενής θα έχει ΞΕΠΕΡΑΣΕΙ το ηλικιακό όριο όταν έρθει η αναμνηστική, δεν
             # υπάρχει επόμενη δόση να προτείνουμε — τον βγάζουμε από τη λίστα. ΕΞΑΙΡΕΣΗ: όποιος
             # δεν έχει ολοκληρώσει τη σειρά χρειάζεται δόση ΤΩΡΑ, άρα μένει.
@@ -284,8 +411,10 @@ class VaccineProgramRepository(BaseRepository):
                 "vaccines": sorted({names_by_code.get(c, c) for c in (r.get("codes") or []) if c}),
                 # Αναλυτικά, ώστε ο φαρμακοποιός να απαντά «πότε έκανες τι» χωρίς να ψάχνει.
                 "shots": [{"at": sh.get("at"),
-                           "vaccine": names_by_code.get(str(sh.get("code")), sh.get("code")),
-                           "lot": sh.get("lot")}
+                           "vaccine": (names_by_code.get(str(sh.get("code")), sh.get("code"))
+                                       if sh.get("code") else "— εκτός φαρμακείου —"),
+                           "lot": sh.get("lot"), "elsewhere": bool(sh.get("elsewhere")),
+                           "note": sh.get("note") or ""}
                           for sh in sorted((r.get("shots") or []), key=lambda x: x.get("at") or now)],
                 "lots": sorted({str(x) for x in (r.get("lots") or []) if x})[:3],
                 "mobile": None if self.demo else (r.get("mobile") or None),
@@ -299,8 +428,21 @@ class VaccineProgramRepository(BaseRepository):
         return {"items": items[skip:skip + limit], "total": total, "counts": counts}
 
     @staticmethod
-    def _coverage(first_at, repeat_years, notify_before_days, now, doses, doses_required,
-                  last_at=None, dose_interval_days=None):
+    def repeat_months_of(program: dict) -> int | None:
+        """Μεσοδιάστημα επανάληψης ΣΕ ΜΗΝΕΣ, από όποιο πεδίο υπάρχει.
+
+        Τα προγράμματα που φτιάχτηκαν πριν υπάρξουν οι μήνες κρατούν `repeat_years` και
+        συνεχίζουν να δουλεύουν αυτούσια — καμία μετάπτωση, κανένα ρίσκο σε ζωντανά δεδομένα.
+        """
+        m = program.get("repeat_months")
+        if m:
+            return int(m)
+        y = program.get("repeat_years")
+        return int(y) * 12 if y else None
+
+    @staticmethod
+    def _coverage(first_at, repeat_months, notify_before_days, now, doses, doses_required,
+                  last_at=None, dose_interval_days=None, repeat_from="first"):
         """Κατάσταση κάλυψης ενός ασθενή + πότε οφείλεται η επόμενη δόση.
 
         Ο κύκλος μετράει από την ΠΡΩΤΗ δόση (όχι την τελευταία): σε πενταετή σχήματα η επόμενη
@@ -309,9 +451,9 @@ class VaccineProgramRepository(BaseRepository):
 
         ΔΥΟ ΔΙΑΦΟΡΕΤΙΚΕΣ «επόμενες δόσεις»:
           • incomplete → η επόμενη δόση ΤΗΣ ΣΕΙΡΑΣ (τελευταία + dose_interval_days)
-          • covered    → η ΑΝΑΜΝΗΣΤΙΚΗ (πρώτη + repeat_years)
+          • covered    → η ΑΝΑΜΝΗΣΤΙΚΗ (πρώτη + repeat_months)
 
-        Αν το εμβόλιο ΔΕΝ επαναλαμβάνεται (repeat_years κενό — π.χ. Shingrix), όποιος
+        Αν η θεραπεία ΔΕΝ επαναλαμβάνεται (κενό μεσοδιάστημα — π.χ. Shingrix), όποιος
         ολοκλήρωσε τη σειρά ΔΕΝ έχει επόμενη δόση: η ημερομηνία μένει κενή."""
         if doses < doses_required:
             # Η επόμενη δόση ΤΗΣ ΣΕΙΡΑΣ οφείλεται μετά το μεσοδιάστημα δόσεων — αν δεν έχει
@@ -319,9 +461,10 @@ class VaccineProgramRepository(BaseRepository):
             if last_at and dose_interval_days:
                 return "incomplete", last_at + timedelta(days=int(dose_interval_days))
             return "incomplete", None
-        if not repeat_years or not first_at:
+        anchor = last_at if (repeat_from == "last" and last_at) else first_at
+        if not repeat_months or not anchor:
             return "covered", None
-        due = first_at + timedelta(days=int(repeat_years) * 365)
+        due = _add_months(anchor, repeat_months)
         if now >= due:
             return "expired", due
         if (due - now).days <= notify_before_days:
@@ -364,6 +507,21 @@ class VaccineProgramRepository(BaseRepository):
             "dose_interval_days": _posint("dose_interval_days", 1, 3650),
             # … is NOT the same as a BOOSTER interval. null = does not repeat.
             "repeat_years": _posint("repeat_years", 1, 50),
+            # ΣΕ ΜΗΝΕΣ — γιατί έξι στις εφτά θεραπείες του πίνακα επαναλαμβάνονται ΥΠΟ-ΕΤΗΣΙΑ:
+            # Prolia 6μ, Ajovy 3μ, Stelara 2–3μ, Eylea 2–4μ. Με μόνο «χρόνια» δεν εκφράζονται.
+            # Το `repeat_years` ΔΕΝ καταργείται: τα υπάρχοντα προγράμματα συνεχίζουν αυτούσια
+            # (δες `repeat_months_of`) — καμία μετάπτωση δεδομένων, κανένα ρίσκο.
+            "repeat_months": _posint("repeat_months", 1, 600),
+            # ΑΠΟ ΠΟΥ ΜΕΤΡΑΕΙ Ο ΕΠΟΜΕΝΟΣ ΚΥΚΛΟΣ — η διαφορά ΕΜΒΟΛΙΟΥ από ΘΕΡΑΠΕΙΑΣ:
+            #  · "first" (αναμνηστική): από την ΕΝΑΡΞΗ του κύκλου — έτσι δούλευε πάντα το
+            #    κύκλωμα στα εμβόλια, και ΔΕΝ το αλλάζουμε (μένει προεπιλογή).
+            #  · "last"  (επαναλαμβανόμενη θεραπεία): από την ΤΕΛΕΥΤΑΙΑ δόση. Το Prolia κάθε 6
+            #    μήνες δεν «λήγει» ποτέ· κάθε δόση ορίζει την επόμενη. Με το "first" μια ασθενής
+            #    που εμβολιάστηκε χθες εμφανιζόταν εκπρόθεσμη από το 2025.
+            "repeat_from": "last" if (doc.get("repeat_from") == "last") else "first",
+            # «Γυναίκες & Άνδρες» = κενό. Τιμή μπαίνει μόνο όταν η θεραπεία αφορά ρητά ένα φύλο
+            # (π.χ. μετεμμηνοπαυσιακή οστεοπόρωση) — αλλιώς κρύβουμε ασθενείς χωρίς λόγο.
+            "sex": (doc.get("sex") or "").strip().upper()[:1] or None,
             "min_age": _posint("min_age", 0, 120),
             "max_age": _posint("max_age", 0, 120),
             # How far back the one-off historical sweep should look (§3 of the design doc).

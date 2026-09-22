@@ -26,7 +26,7 @@ _ALL_MODULES = ["dashboard", "prescription_analytics", "doctor_analytics", "pati
 # Opt-in capabilities — NOT granted by default; the platform admin enables them per pharmacy
 # (tenant module override). Pharmacists without them don't see them at all.
 _OPT_IN_MODULES = ["ai_assistant", "pharmacat", "nutrition", "patient_portal", "loyalty", "order_delivery",
-                   "drug_interactions", "daily_coach", "vaccination_programs"]
+                   "drug_interactions", "daily_coach", "vaccination_programs", "therapy_programs"]
 # External role → RxVision tenant role key
 _NOETON_ROLE_MAP = {"admin": "owner", "owner": "owner", "manager": "manager",
                     "pharmacist": "pharmacist", "user": "staff", "staff": "staff"}

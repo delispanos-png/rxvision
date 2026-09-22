@@ -14,7 +14,8 @@ type Product = { eof_code: string; name: string; atc: string; barcode: string };
 type Program = {
   _id: string; name: string; atc_prefixes: string[]; eof_codes: string[];
   doses_required: number | null; dose_interval_days: number | null;
-  repeat_years: number | null; min_age: number | null; max_age: number | null;
+  repeat_years: number | null; repeat_months: number | null; repeat_from: "first" | "last";
+  sex: string | null; min_age: number | null; max_age: number | null;
   lookback_years: number | null; notify_before_days: number | null;
   active: boolean; notes: string;
 };
@@ -23,6 +24,7 @@ type Program = {
 type Draft = {
   _id?: string; name: string; atc_prefixes: string[]; eof_codes: string[];
   doses_required: number; dose_interval_days: number | null; repeat_years: number | null;
+  repeat_months: number | null; repeat_from: "first" | "last"; sex: string | null;
   min_age: number | null; max_age: number | null;
   lookback_years: number; notify_before_days: number; active: boolean; notes: string;
 };
@@ -30,7 +32,8 @@ type Draft = {
 const EMPTY: Draft = {
   name: "", atc_prefixes: [], eof_codes: [],
   doses_required: 1, dose_interval_days: null,
-  repeat_years: null, min_age: null, max_age: null,
+  repeat_years: null, repeat_months: null, repeat_from: "last", sex: null,
+  min_age: null, max_age: null,
   lookback_years: 5, notify_before_days: 30, active: true, notes: "",
 };
 
@@ -41,6 +44,10 @@ const toDraft = (p: Program): Draft => ({
   atc_prefixes: p.atc_prefixes ?? [],
   eof_codes: p.eof_codes ?? [],
   doses_required: p.doses_required ?? EMPTY.doses_required,
+  // Τα προγράμματα που φτιάχτηκαν όταν υπήρχαν μόνο έτη εμφανίζονται σε μήνες — χωρίς να
+  // πειραχτεί η βάση. Ό,τι αποθηκευτεί από δω και πέρα γράφεται σε μήνες.
+  repeat_months: p.repeat_months ?? (p.repeat_years ? p.repeat_years * 12 : null),
+  repeat_from: p.repeat_from ?? "first",
   lookback_years: p.lookback_years ?? EMPTY.lookback_years,
   notify_before_days: p.notify_before_days ?? EMPTY.notify_before_days,
   notes: p.notes ?? "",
@@ -127,7 +134,13 @@ export function VaccineProgramsConfig() {
             </div>
             <dl className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-slate-500">
               <Row label={t("Δόσεις σειράς", "Doses")} value={String(p.doses_required ?? 1)} />
-              <Row label={t("Επανάληψη", "Booster")} value={p.repeat_years ? t(`κάθε ${p.repeat_years} έτη`, `every ${p.repeat_years}y`) : t("δεν επαναλαμβάνεται", "none")} />
+              <Row label={t("Επανάληψη", "Repeat")} value={(() => {
+                const m = p.repeat_months ?? (p.repeat_years ? p.repeat_years * 12 : null);
+                if (!m) return t("δεν επαναλαμβάνεται", "none");
+                const from = p.repeat_from === "last" ? t("από τελευταία", "from last") : t("από έναρξη", "from start");
+                return m % 12 === 0 ? t(`κάθε ${m / 12} έτη · ${from}`, `every ${m / 12}y · ${from}`)
+                                    : t(`κάθε ${m} μήνες · ${from}`, `every ${m}m · ${from}`);
+              })()} />
               <Row label={t("Ηλικίες", "Ages")} value={p.min_age || p.max_age ? `${p.min_age ?? 0}–${p.max_age ?? "∞"}` : t("όλες", "all")} />
               <Row label={t("Προειδοποίηση", "Notify")} value={`${p.notify_before_days ?? 30} ${t("ημ.", "d")}`} />
             </dl>
@@ -274,15 +287,37 @@ function Editor({ value, groups, error, saving, onCancel, onSave }: {
           </Field>
         </div>
 
-        <Field label={t("Αναμνηστική κάθε (έτη)", "Booster every (years)")}
-          hint={t("Άφησέ το κενό αν το εμβόλιο ΔΕΝ επαναλαμβάνεται. Διαφορετικό από τις δόσεις σειράς.",
-                  "Leave empty if the vaccine does NOT repeat. Different from the dose series.")}>
-          <input type="number" min={1} max={50} value={v.repeat_years ?? ""}
-            onChange={(e) => set({ repeat_years: e.target.value ? Number(e.target.value) : null })}
-            placeholder={t("π.χ. 10 για τέτανο", "e.g. 10 for tetanus")} className="block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-800" />
-        </Field>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field label={t("Επανάληψη κάθε (μήνες)", "Repeat every (months)")}
+            hint={t("Κενό = δεν επαναλαμβάνεται. Σε ΜΗΝΕΣ: 6 για Prolia, 3 για Ajovy, 120 για τέτανο (10 έτη).",
+                    "Empty = does not repeat. In MONTHS: 6 for Prolia, 3 for Ajovy, 120 for tetanus.")}>
+            <input type="number" min={1} max={600} value={v.repeat_months ?? ""}
+              onChange={(e) => set({ repeat_months: e.target.value ? Number(e.target.value) : null })}
+              placeholder={t("π.χ. 6", "e.g. 6")} className="block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-800" />
+          </Field>
+          {/* Η ΠΙΟ ΕΠΙΚΙΝΔΥΝΗ ΡΥΘΜΙΣΗ ΤΗΣ ΣΕΛΙΔΑΣ: με λάθος επιλογή, ασθενής που έκανε δόση χθες
+              εμφανίζεται εκπρόθεσμος εδώ και χρόνια. Γι αυτό εξηγείται με παράδειγμα, όχι με όρο. */}
+          <Field label={t("Ο επόμενος κύκλος μετράει από", "Next cycle counts from")}
+            hint={t("Θεραπεία που επαναλαμβάνεται για πάντα (Prolia) → τελευταία δόση. Αναμνηστική εμβολίου → έναρξη σειράς.",
+                    "Recurring therapy → last dose. Vaccine booster → start of series.")}>
+            <select value={v.repeat_from} onChange={(e) => set({ repeat_from: e.target.value as "first" | "last" })}
+              className="block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-800">
+              <option value="last">{t("την τελευταία δόση (θεραπεία)", "the last dose (therapy)")}</option>
+              <option value="first">{t("την έναρξη της σειράς (αναμνηστική)", "the start of the series (booster)")}</option>
+            </select>
+          </Field>
+        </div>
 
-        <div className="grid gap-4 sm:grid-cols-3">
+        <div className="grid gap-4 sm:grid-cols-4">
+          <Field label={t("Φύλο", "Sex")}
+            hint={t("Μόνο αν η θεραπεία αφορά ρητά ένα φύλο.", "Only if the therapy targets one sex.")}>
+            <select value={v.sex ?? ""} onChange={(e) => set({ sex: e.target.value || null })}
+              className="block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-800">
+              <option value="">{t("Όλοι", "All")}</option>
+              <option value="F">{t("Γυναίκες", "Women")}</option>
+              <option value="M">{t("Άνδρες", "Men")}</option>
+            </select>
+          </Field>
           <Field label={t("Ελάχιστη ηλικία", "Min age")}>
             <input type="number" min={0} max={120} value={v.min_age ?? ""}
               onChange={(e) => set({ min_age: e.target.value ? Number(e.target.value) : null })} className="block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-800" />
