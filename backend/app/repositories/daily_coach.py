@@ -40,7 +40,10 @@ DISMISS_DAYS = 30                               # «δεν με αφορά» →
 
 # Η οθόνη-λίστα του κάθε σήματος (εκεί δουλεύεις μαζικά, όχι ανά άτομο).
 _INBOX_LABEL = {"idle_request": "Άνοιγμα αιτημάτων", "no_contact": "Λίστα επιβεβαίωσης στοιχείων",
-                "vaccine_missed": "Κύκλωμα εμβολιασμών"}
+                "vaccine_missed": "Κύκλωμα εμβολιασμών",
+                "margin_drop": "Ανάλυση κερδοφορίας", "revenue_drop": "Ανάλυση τζίρου",
+                "expired_stock": "Αποθήκη — ληγμένα", "expiring_soon": "Αποθήκη — λήγουν",
+                "dead_stock": "Αποθήκη — ακίνητα", "below_reorder": "Αποθήκη — χαμηλό απόθεμα"}
 
 # Ανθρώπινο όνομα κάθε σήματος — για στόχους, απολογισμούς και ρυθμίσεις.
 SIGNAL_LABEL = {
@@ -50,7 +53,27 @@ SIGNAL_LABEL = {
     "no_contact": "Πελάτες χωρίς στοιχεία",
     "vaccine_missed": "Χαμένοι εμβολιασμοί",
     "lapsed_chronic": "Χρόνιοι που σταμάτησαν",
+    # ── Λειτουργία & Κέρδος ──
+    "loss_execution": "Εκτελέσεις με ζημιά",
+    "margin_drop": "Πτώση περιθωρίου",
+    "revenue_drop": "Πτώση τζίρου",
+    "expired_stock": "Ληγμένα με απόθεμα",
+    "expiring_soon": "Λήγουν σύντομα",
+    "dead_stock": "Ακίνητο απόθεμα",
+    "below_reorder": "Κάτω από το σημείο αναπαραγγελίας",
 }
+
+# Τα σήματα που ΔΕΝ μιλούν για ασθενή αλλά για την ΕΠΙΧΕΙΡΗΣΗ. Χωριστή φωνή (δεν έχουν όνομα
+# ούτε γένος) και χωριστό δικαίωμα: τζίρος και περιθώρια δεν είναι για κάθε χειριστή.
+BUSINESS_SIGNALS = frozenset({
+    "loss_execution", "margin_drop", "revenue_drop",
+    "expired_stock", "expiring_soon", "dead_stock", "below_reorder",
+})
+
+# Κάτω από τόσες εκτελέσεις στην περίοδο, η σύγκριση είναι θόρυβος και όχι τάση.
+_MIN_EXECS = 200
+# Κάτω από τόσα είδη με απόθεμα, η αποθήκη δεν χρησιμοποιείται — δεν βγάζουμε συμπεράσματα.
+_STOCK_MIN = 20
 # Μετά από τόσες συνεχόμενες μέρες ανοιχτό, το θέμα ανεβαίνει στον ιδιοκτήτη.
 ESCALATE_DAYS = 7
 
@@ -371,6 +394,154 @@ class DailyCoachRepository(BaseRepository):
         return out
 
     # ─────────────────────────────────────────────────────────────────────────
+    # ΛΕΙΤΟΥΡΓΙΑ & ΚΕΡΔΟΣ — ο σύμβουλος δεν παρακολουθεί μόνο ασθενείς
+    #
+    # ΓΙΑΤΙ ΑΝΑ ΕΚΤΕΛΕΣΗ ΚΑΙ ΟΧΙ ΑΝΑ ΕΙΔΟΣ: η λιανική ΑΝΑ ΕΙΔΟΣ είναι αναξιόπιστη — όταν πέντε
+    # είδη μοιράζονται μία εκτέλεση, το ποσό δεν επιμερίζεται. Μετρημένο 19/09/2026: ΚΑΘΕ μία από
+    # τις 163 γραμμές «αρνητικού περιθωρίου» είχε λιανική 0 — δηλαδή ΚΑΜΙΑ πραγματική ζημιά. Ένα
+    # σήμα πάνω σε αυτό το πεδίο θα έλεγε στον φαρμακοποιό ότι έχασε 1.738€ που δεν έχασε ποτέ.
+    # Η ΕΚΤΕΛΕΣΗ όμως έχει σωστά και τα δύο ποσά (amount_total 100% συμπληρωμένο, wholesale_cost).
+    # ─────────────────────────────────────────────────────────────────────────
+
+    async def _totals(self, start: datetime, end: datetime) -> dict:
+        """Τζίρος, κόστος και πλήθος εκτελέσεων μιας περιόδου."""
+        agg = [{"$match": {"tenant_id": self.tenant_id, "amount_total": {"$gt": 0},
+                           "executed_at": {"$gte": start, "$lt": end}}},
+               {"$group": {"_id": None, "rev": {"$sum": "$amount_total"},
+                           "cost": {"$sum": "$wholesale_cost"}, "n": {"$sum": 1}}}]
+        async for r in self._db["prescription_executions"].aggregate(agg):
+            return {"rev": int(r.get("rev") or 0), "cost": int(r.get("cost") or 0),
+                    "n": int(r.get("n") or 0)}
+        return {"rev": 0, "cost": 0, "n": 0}
+
+    async def _sig_loss_execution(self, now: datetime) -> list[dict]:
+        """Εκτέλεση που κόστισε περισσότερα απ' όσα έφερε. Σπάνιο — άρα αληθινό όταν συμβαίνει."""
+        out = []
+        async for e in self._db["prescription_executions"].find(
+                {"tenant_id": self.tenant_id, "amount_total": {"$gt": 0},
+                 "wholesale_cost": {"$gt": 0},
+                 "executed_at": {"$gte": now - timedelta(days=30)},
+                 "$expr": {"$gt": ["$wholesale_cost", "$amount_total"]}},
+                {"external_id": 1, "executed_at": 1, "amount_total": 1, "wholesale_cost": 1}
+        ).sort("executed_at", -1).limit(20):
+            loss = int(e["wholesale_cost"]) - int(e["amount_total"])
+            if loss < 100:
+                continue                       # κάτω από 1€: στρογγυλοποίηση, όχι πρόβλημα
+            out.append({"signal": "loss_execution",
+                        "subject": str(e.get("external_id") or e["_id"]),
+                        "since": e.get("executed_at"), "money_cents": loss,
+                        "rx": e.get("external_id"), "severity": 3,
+                        "extra": {"rev": e.get("amount_total"), "cost": e.get("wholesale_cost")}})
+        return out
+
+    async def _sig_margin_drop(self, now: datetime) -> list[dict]:
+        """Το περιθώριο έπεσε σε σχέση με το ΔΙΚΟ ΤΟΥ ιστορικό.
+
+        Η διατίμηση κρατά το μικτό περιθώριο πολύ σταθερό (μετρημένο: 25–26% σε ΟΛΑ τα φαρμακεία).
+        Γι' αυτό ακόμη και 2 μονάδες πτώσης ΔΕΝ είναι διακύμανση — είναι κάτι που άλλαξε.
+        """
+        cur = await self._totals(now - timedelta(days=30), now)
+        base = await self._totals(now - timedelta(days=120), now - timedelta(days=30))
+        if cur["n"] < _MIN_EXECS or base["n"] < _MIN_EXECS or not cur["rev"] or not base["rev"]:
+            return []                          # λίγα δεδομένα: καμία γνώμη
+        cur_pct = (cur["rev"] - cur["cost"]) * 100 / cur["rev"]
+        base_pct = (base["rev"] - base["cost"]) * 100 / base["rev"]
+        gap = base_pct - cur_pct
+        if gap < 2:
+            return []
+        return [{"signal": "margin_drop", "subject": "period", "since": now - timedelta(days=30),
+                 "money_cents": int(cur["rev"] * gap / 100), "inbox": "/analytics", "severity": 3,
+                 "extra": {"cur": round(cur_pct, 1), "base": round(base_pct, 1),
+                           "gap": round(gap, 1)}}]
+
+    async def _sig_revenue_drop(self, now: datetime) -> list[dict]:
+        """Πτώση τζίρου σε σχέση με τον προηγούμενο μήνα — πριν τη νιώσει στο ταμείο."""
+        cur = await self._totals(now - timedelta(days=30), now)
+        prev = await self._totals(now - timedelta(days=60), now - timedelta(days=30))
+        if cur["n"] < _MIN_EXECS or prev["n"] < _MIN_EXECS or prev["rev"] <= 0:
+            return []
+        drop = prev["rev"] - cur["rev"]
+        pct = drop * 100 // prev["rev"]
+        if drop <= 0 or pct < 12:
+            return []                          # κάτω από 12%: εποχικότητα, όχι σήμα
+        return [{"signal": "revenue_drop", "subject": "period", "since": now - timedelta(days=30),
+                 "money_cents": drop, "inbox": "/analytics", "severity": 3,
+                 "extra": {"pct": pct, "prev": prev["rev"], "cur": cur["rev"]}}]
+
+    # ── Αποθήκη: ΚΟΙΜΟΥΝΤΑΙ μέχρι να υπάρξει πραγματικό απόθεμα ──────────────
+    async def _stock_ready(self) -> bool:
+        """Μια αποθήκη με πέντε είδη δεν είναι αποθήκη — είναι δοκιμή.
+
+        Χωρίς αυτόν τον φραγμό, ένα φαρμακείο που μόλις καταχώρησε δύο προϊόντα θα δεχόταν
+        «συμβουλές αποθήκης» βγαλμένες από το τίποτα, και θα έπαυε να εμπιστεύεται τον σύμβουλο
+        ΚΑΙ στα υπόλοιπα. Μετρημένο 22/09/2026: σε ΟΛΑ τα φαρμακεία μαζί υπήρχαν 13 είδη με
+        απόθεμα και ΚΑΜΙΑ ημερομηνία λήξης — γι' αυτό τα σήματα αυτά γεννιούνται κοιμισμένα.
+        """
+        n = await self._db["pharmacy_products"].count_documents(
+            {"tenant_id": self.tenant_id, "stock_qty": {"$gt": 0}}, limit=_STOCK_MIN)
+        return n >= _STOCK_MIN
+
+    async def _stock_bucket(self, query: dict, *, signal: str, severity: int,
+                            inbox: str, now: datetime) -> list[dict]:
+        """Ένα θέμα ΣΥΝΟΛΙΚΑ ανά κατηγορία αποθήκης, όχι ένα ανά προϊόν.
+
+        Πενήντα ξεχωριστά «έληξε το Χ» δεν είναι συμβουλή· είναι λίστα. Ο σύμβουλος λέει πόσα
+        και πόσων αξίας, και στέλνει στη λίστα για τη λεπτομέρεια.
+        """
+        n, value, names = 0, 0, []
+        async for pr in self._db["pharmacy_products"].find(
+                {"tenant_id": self.tenant_id, **query},
+                {"name": 1, "stock_qty": 1, "wholesale_price": 1}).limit(500):
+            n += 1
+            value += int(pr.get("stock_qty") or 0) * int(pr.get("wholesale_price") or 0)
+            if len(names) < 3 and pr.get("name"):
+                names.append(pr["name"])
+        if not n:
+            return []
+        return [{"signal": signal, "subject": "stock", "since": now, "money_cents": value or None,
+                 "inbox": inbox, "severity": severity, "extra": {"count": n, "names": names}}]
+
+    async def _sig_expired_stock(self, now: datetime) -> list[dict]:
+        """Ληγμένα στο ράφι — χρήματα ήδη χαμένα, που μπορεί να πουληθούν κιόλας."""
+        if not await self._stock_ready():
+            return []
+        today = now.date().isoformat()
+        return await self._stock_bucket(
+            {"stock_qty": {"$gt": 0}, "expiry": {"$ne": None, "$gt": "", "$lt": today}},
+            signal="expired_stock", severity=3, inbox="/warehouse?expiring=expired", now=now)
+
+    async def _sig_expiring_soon(self, now: datetime) -> list[dict]:
+        """Λήγουν σε τρεις μήνες: ακόμη προλαβαίνεις να τα κινήσεις."""
+        if not await self._stock_ready():
+            return []
+        today = now.date().isoformat()
+        soon = (now + timedelta(days=90)).date().isoformat()
+        return await self._stock_bucket(
+            {"stock_qty": {"$gt": 0}, "expiry": {"$gte": today, "$lt": soon}},
+            signal="expiring_soon", severity=2, inbox="/warehouse?expiring=90", now=now)
+
+    async def _sig_below_reorder(self, now: datetime) -> list[dict]:
+        """Κάτω από το σημείο αναπαραγγελίας που όρισε ο ΙΔΙΟΣ — χαμένη πώληση, όχι γνώμη μας."""
+        if not await self._stock_ready():
+            return []
+        return await self._stock_bucket(
+            {"min_stock": {"$gt": 0}, "$expr": {"$lte": ["$stock_qty", "$min_stock"]}},
+            signal="below_reorder", severity=2, inbox="/warehouse?stock=low", now=now)
+
+    async def _sig_dead_stock(self, now: datetime) -> list[dict]:
+        """Απόθεμα που δεν κινήθηκε έξι μήνες — κεφάλαιο δεμένο στο ράφι."""
+        if not await self._stock_ready():
+            return []
+        moved = await self._db["pharmacy_stock_movements"].distinct(
+            "product_id", {"tenant_id": self.tenant_id,
+                           "created_at": {"$gte": now - timedelta(days=180)}})
+        if not moved:
+            return []      # καμία κίνηση καταγεγραμμένη: δεν ξέρουμε τι κινήθηκε, άρα σιωπή
+        return await self._stock_bucket(
+            {"stock_qty": {"$gt": 0}, "_id": {"$nin": moved}},
+            signal="dead_stock", severity=1, inbox="/warehouse?stock=in", now=now)
+
+    # ─────────────────────────────────────────────────────────────────────────
     # ΕΠΙΒΡΑΒΕΥΣΗ — από τα ίδια δεδομένα, όχι ευγένειες
     # ─────────────────────────────────────────────────────────────────────────
 
@@ -508,6 +679,60 @@ class DailyCoachRepository(BaseRepository):
     # Η ΓΛΩΣΣΑ — ωμό εύρημα + ιστορικό ⇒ κουβέντα
     # ─────────────────────────────────────────────────────────────────────────
 
+    def _speak_business(self, f: dict, tone: str) -> dict:
+        """Φωνή για τα σήματα «Λειτουργία & Κέρδος».
+
+        ΚΑΝΟΝΑΣ: λέμε ΤΙ, ΠΟΣΟ και ΠΑΝΩ ΣΕ ΤΙ το στηρίζουμε. Ο φαρμακοποιός ξέρει τη δουλειά του
+        καλύτερα από εμάς — αν του πούμε «κάτι πάει στραβά» χωρίς νούμερο και βάση, είναι θόρυβος.
+        """
+        ex = f.get("extra") or {}
+        money = V.money(f.get("money_cents")) if f.get("money_cents") else None
+        n = ex.get("count", 0)
+        some = ", ".join(V.product(x) for x in (ex.get("names") or [])[:2])
+
+        if f["signal"] == "loss_execution":
+            title = "Μια εκτέλεση σού κόστισε περισσότερα απ' όσα έφερε"
+            body = (f"Πλήρωσες {V.money(ex.get('cost'))} για φάρμακα και εισέπραξες "
+                    f"{V.money(ex.get('rev'))} — διαφορά {money} σε βάρος σου. Συνήθως φταίει "
+                    f"τιμή αγοράς που δεν ενημερώθηκε ή είδος εκτός διατίμησης.")
+            action = "Δες την εκτέλεση"
+        elif f["signal"] == "margin_drop":
+            title = f"Το περιθώριό σου έπεσε στο {ex.get('cur')}%"
+            body = (f"Τους προηγούμενους τρεις μήνες κρατούσες {ex.get('base')}% και τον τελευταίο "
+                    f"μήνα {ex.get('cur')}% — {ex.get('gap')} μονάδες κάτω, περίπου {money} "
+                    f"λιγότερο κέρδος. Η διατίμηση κρατά το περιθώριο σταθερό, οπότε μια τέτοια "
+                    f"διαφορά δεν είναι διακύμανση: κάτι άλλαξε στις τιμές αγοράς ή στο μείγμα.")
+            action = "Δες την κερδοφορία"
+        elif f["signal"] == "revenue_drop":
+            title = f"Ο τζίρος σου έπεσε {ex.get('pct')}% τον τελευταίο μήνα"
+            body = (f"Από {V.money(ex.get('prev'))} σε {V.money(ex.get('cur'))} — {money} "
+                    f"λιγότερα. Αξίζει να δεις αν έφυγαν συγκεκριμένοι πελάτες ή αν έπεσε "
+                    f"συγκεκριμένη κατηγορία.")
+            action = "Δες τον τζίρο"
+        elif f["signal"] == "expired_stock":
+            title = f"{n} ληγμένα είδη είναι ακόμη στο ράφι"
+            body = (f"Αξίας {money} σε τιμή αγοράς" + (f" — {some} ανάμεσά τους" if some else "") +
+                    ". Τα χρήματα χάθηκαν ήδη· μένει να μην πουληθούν κατά λάθος.")
+            action = "Δες τα ληγμένα"
+        elif f["signal"] == "expiring_soon":
+            title = f"{n} είδη λήγουν μέσα στο τρίμηνο"
+            body = (f"Απόθεμα {money}" + (f" — {some} ανάμεσά τους" if some else "") +
+                    ". Προλαβαίνεις ακόμη να τα κινήσεις ή να τα επιστρέψεις.")
+            action = "Δες τι λήγει"
+        elif f["signal"] == "dead_stock":
+            title = f"{n} είδη δεν κινήθηκαν έξι μήνες"
+            body = (f"Κεφάλαιο {money} δεμένο στο ράφι" +
+                    (f" — {some} ανάμεσά τους" if some else "") + ".")
+            action = "Δες τα ακίνητα"
+        else:                                    # below_reorder
+            title = f"{n} είδη κάτω από το σημείο αναπαραγγελίας"
+            body = ("Είναι το όριο που όρισες εσύ" +
+                    (f" — {some} ανάμεσά τους" if some else "") +
+                    ". Όσο λείπουν, η πώληση πάει αλλού.")
+            action = "Δες τι λείπει"
+
+        return {"title": title, "body": body, "action": action, "tone": tone}
+
     def _speak(self, f: dict, st: dict) -> dict:
         """Ωμό εύρημα ⇒ κουβέντα.
 
@@ -521,6 +746,10 @@ class DailyCoachRepository(BaseRepository):
         tone = V.tone_for(streak + relapses)
         opener = V.repeat_opener(streak + relapses)
         sig = f["signal"]
+        # Τα σήματα της επιχείρησης δεν έχουν όνομα ούτε γένος: αν περνούσαν από τον παρακάτω
+        # κώδικα θα προσπαθούσε να κλίνει ανύπαρκτο πρόσωπο («Ο None…»). Χωριστή φωνή.
+        if sig in BUSINESS_SIGNALS:
+            return self._speak_business(f, tone)
         sex = f.get("sex")
         # Η ΗΔΥΚΑ δίνει «ΕΠΩΝΥΜΟ ΟΝΟΜΑ» (το μικρό είναι τελευταίο)· η πύλη δίνει ό,τι έγραψε ο
         # ίδιος ο πελάτης. Εκεί ΔΕΝ μαντεύουμε — λέμε το όνομα όπως το έδωσε.
@@ -665,7 +894,13 @@ class DailyCoachRepository(BaseRepository):
     # Η ΣΥΝΑΡΜΟΛΟΓΗΣΗ
     # ─────────────────────────────────────────────────────────────────────────
 
-    async def build(self, *, user_name: str | None = None, persist: bool = True) -> dict:
+    async def build(self, *, user_name: str | None = None, persist: bool = True,
+                    business: bool = True) -> dict:
+        """`business=False` → τα σήματα κέρδους ΟΥΤΕ ΚΑΝ υπολογίζονται.
+
+        Το δικαίωμα δεν είναι φίλτρο εμφάνισης: αν ο χειριστής δεν το έχει, δεν πρέπει να
+        διαβαστούν καν τα οικονομικά του φαρμακείου — και γλιτώνουμε και τα ερωτήματα.
+        """
         now = _now()
         day = _day_key(now)
         cfg = await self.settings()
@@ -677,6 +912,14 @@ class DailyCoachRepository(BaseRepository):
                     ("vaccine_missed", self._sig_vaccine_missed),
                     ("no_contact", self._sig_no_contact),
                     ("lapsed_chronic", self._sig_lapsed_chronic))
+        if business:
+            _SIGNALS += (("loss_execution", self._sig_loss_execution),
+                         ("margin_drop", self._sig_margin_drop),
+                         ("revenue_drop", self._sig_revenue_drop),
+                         ("expired_stock", self._sig_expired_stock),
+                         ("expiring_soon", self._sig_expiring_soon),
+                         ("below_reorder", self._sig_below_reorder),
+                         ("dead_stock", self._sig_dead_stock))
         for sig, fn in _SIGNALS:
             if not on.get(sig, True):
                 continue                                    # το έκλεισε ο φαρμακοποιός

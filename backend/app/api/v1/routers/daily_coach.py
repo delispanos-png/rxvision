@@ -29,10 +29,25 @@ async def _who(ctx: TenantContext) -> str | None:
     return (u or {}).get("full_name")
 
 
+# Τα σήματα «Λειτουργία & Κέρδος» (τζίρος, περιθώριο, απόθεμα) κρύβονται πίσω από το ΥΠΑΡΧΟΝ
+# δικαίωμα «Ανάγνωση κερδοφορίας» — δεν φτιάχνουμε νέα έννοια για το ίδιο πράγμα, και ο
+# φαρμακοποιός το βρίσκει στους Ρόλους εκεί που ήδη το ψάχνει.
+_BUSINESS_PERM = "profitability:read"
+
+
+def _sees_business(ctx: TenantContext) -> bool:
+    perms = ctx.permissions or set()
+    return _BUSINESS_PERM in perms or "*" in perms
+
+
 @router.get("/today")
 async def today(ctx: TenantContext = Depends(require("patients:read", module=_MODULE))):
-    """Η σημερινή κουβέντα: χαιρετισμός, τι ξέφυγε, τι πήγε καλά, τι να κάνεις τώρα."""
-    return await _repo(ctx).build(user_name=await _who(ctx))
+    """Η σημερινή κουβέντα: χαιρετισμός, τι ξέφυγε, τι πήγε καλά, τι να κάνεις τώρα.
+
+    Χωρίς δικαίωμα κερδοφορίας η σελίδα ΔΕΝ κλειδώνει — απλώς δεν περιλαμβάνει τα οικονομικά.
+    Ο πάγκος πρέπει να βλέπει τους ασθενείς του· ο τζίρος είναι άλλη κουβέντα.
+    """
+    return await _repo(ctx).build(user_name=await _who(ctx), business=_sees_business(ctx))
 
 
 class MarkIn(BaseModel):
