@@ -42,6 +42,15 @@ _DEFAULTS: list[dict] = [
      "description": "Ανάλυση ασθενών: compliance, recall, win-back, VIP, segments + Εικόνα Πελάτη 360°.",
      "price_monthly": 2500, "price_yearly": 25000, "active": True,
      "features": ["Compliance / recall / win-back", "VIP & segments", "Εικόνα Πελάτη 360°"]},
+    {"_id": "therapy_programs", "name": "Θεραπείες με Επανάληψη", "icon": "🔁",
+     "category": "intelligence",
+     "description": "Θεραπείες που επαναλαμβάνονται κάθε λίγους μήνες (Prolia κάθε 6, "
+                    "Ajovy κάθε 3, Stelara, Eylea): ορίζεις ποιες παρακολουθείς με ηλικία "
+                    "και φύλο, και το σύστημα σου λέει ποιος έχει καθυστερήσει και πόσο. "
+                    "Φαίνεται και στην Εικόνα Πελάτη.",
+     "price_monthly": 1000, "price_yearly": 10000, "active": True,
+     "features": ["Επανάληψη σε μήνες, όχι μόνο έτη", "Ηλικία & φύλο ανά θεραπεία",
+                  "Καταγραφή δόσης που έγινε αλλού", "Λίστα εκπρόθεσμων με καθυστέρηση σε ημέρες"]},
     {"_id": "vaccination_programs", "name": "Περιοδικός Εμβολιασμός", "icon": "💉", "category": "intelligence",
      "description": "Παρακολούθηση μη εποχικών εμβολίων (έρπης ζωστήρας, τέτανος, πνευμονιόκοκκος): "
                     "ορίζεις ποια παρακολουθείς, το σύστημα βρίσκει πότε τα έκανε ο καθένας και "
@@ -215,6 +224,11 @@ async def start_trial(tenant_id: str, module: str) -> dict:
         return {"ok": True, "package": (target or {}).get("_id"), "trial_days": _TRIAL_DAYS, "modules": [], "already": True}
     sets["updated_at"] = datetime.now(tz=timezone.utc)
     await db["tenants"].update_one({"_id": tenant_id}, {"$set": sets})
+    # Καταγραφή ΕΝΑΡΞΗΣ: χωρίς αυτήν ξέρουμε μόνο πότε λήγει η δοκιμή, όχι πότε ξεκίνησε —
+    # και το κύκλωμα παρακολούθησης (module_trials_service) δεν μπορεί να πει «πότε το πήρε».
+    await db["addon_grants"].insert_many([{
+        "tenant_id": tenant_id, "module": m, "days": _TRIAL_DAYS, "expires_at": exp,
+        "by": "self-service", "at": sets["updated_at"]} for m in granted])
     return {"ok": True, "package": (target or {}).get("_id"), "trial_days": _TRIAL_DAYS, "modules": granted}
 
 
