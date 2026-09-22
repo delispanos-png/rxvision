@@ -17,7 +17,8 @@ import { appAlert, appConfirm, appPrompt } from "@/store/dialogStore";
 import { useT } from "@/store/prefStore";
 
 type Item = { name?: string; gtin?: string; batch?: string; strip?: string; lot?: string;
-              expiry?: string; qty?: number; has_qr?: boolean; hmvo_uploaded?: boolean };
+              expiry?: string; qty?: number; has_qr?: boolean; hmvo_uploaded?: boolean;
+              raw?: string };
 type Loan = { _id: string; patient_name: string; items: Item[]; status: string;
               created_at: string; note?: string };
 type Hit = { patient_id: string; name: string | null; amka: string | null; last_seen?: string | null };
@@ -47,6 +48,10 @@ function parseGs1(raw: string): Item | null {
   out.expiry = take("17", 6);
   out.batch = take("10");
   out.strip = take("21");
+  // Μετρημένο σε 6.000/6.000 είδη: το `details.lot` της εκτέλεσης ΕΙΝΑΙ η ταινία του κουπονιού
+  // — όχι η παρτίδα παραγωγής. Γράφουμε τον ίδιο κωδικό και στα δύο πεδία ώστε η ταύτιση να
+  // τον βρίσκει από όποιο μονοπάτι κι αν ψάξει.
+  out.lot = out.strip;
   return out;
 }
 
@@ -85,12 +90,50 @@ function Inner() {
   const late = useQuery({ queryKey: ["adv", "overdue"], queryFn: () => api<{ qr_over_10d: Loan[]; over_30d: Loan[]; counts: Record<string, number> }>("/advance-dispensings/overdue") });
   const sugg = useQuery({ queryKey: ["adv", "matches"], queryFn: () => api<{ items: Match[] }>("/advance-dispensings/matches") });
 
-  function addScan() {
-    const v = scan.trim();
+  /* ΓΡΗΓΟΡΗ ΣΑΡΩΣΗ — ο φαρμακοποιός δεν πατάει τίποτα.
+
+     Ο σαρωτής συμπεριφέρεται σαν πληκτρολόγιο που γράφει ασύλληπτα γρήγορα (λίγα ms ανά
+     χαρακτήρα) και συνήθως — όχι πάντα — τελειώνει με Enter. Στηριζόμαστε ΚΑΙ στα δύο:
+     Enter/Tab καταχωρεί αμέσως, αλλιώς η «ριπή» χαρακτήρων καταχωρείται μόλις σταματήσει.
+     Έτσι δουλεύει και το QR (2D) και ο γραμμικός των παλιών κουπονιών, χωρίς ρύθμιση. */
+  const lastKeyAt = useRef(0);
+  const isBurst = useRef(true);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [dup, setDup] = useState("");
+  useEffect(() => () => { if (timer.current) clearTimeout(timer.current); }, []);
+
+  function addScan(value?: string) {
+    if (timer.current) { clearTimeout(timer.current); timer.current = null; }
+    const v = (value ?? scan).trim();
     if (!v) return;
+    const key = v.toUpperCase();
+    // Διπλό πέρασμα του ΙΔΙΟΥ κουτιού: ο κωδικός είναι μοναδικός ανά κουτί, οπότε ίδιος
+    // κωδικός = ξανασαρώθηκε το ίδιο. Δύο κουτιά → «τεμ.», όχι δεύτερη γραμμή.
+    if (items.some((i) => i.raw === key)) {
+      setScan(""); setDup(key);
+      setTimeout(() => setDup(""), 1600);
+      scanRef.current?.focus();
+      return;
+    }
     const parsed = parseGs1(v);
-    setItems((x) => [...x, parsed ?? { lot: v.toUpperCase(), name: "" }]);
+    // Μη-GS1 = γραμμικός παλιού κουπονιού → είναι ΤΑΙΝΙΑ, όχι παρτίδα. Στα δύο πεδία.
+    setItems((x) => [...x, { ...(parsed ?? { strip: key, lot: key, name: "" }), raw: key }]);
     setScan("");
+    scanRef.current?.focus();
+  }
+
+  function onScanChange(v: string) {
+    const now = Date.now();
+    const gap = now - lastKeyAt.current;
+    lastKeyAt.current = now;
+    if (v.length <= 1) isBurst.current = true;      // νέα σάρωση ξεκινά
+    else if (gap > 60) isBurst.current = false;     // τόσο αργά γράφει μόνο άνθρωπος
+    setScan(v);
+    if (timer.current) clearTimeout(timer.current);
+    if (isBurst.current && v.trim().length >= 6) {
+      // η ριπή τελείωσε → καταχώρησε. Το Enter του σαρωτή απλώς προλαβαίνει.
+      timer.current = setTimeout(() => addScan(v), 140);
+    }
   }
 
   async function save() {
@@ -102,7 +145,7 @@ function Inner() {
       // γραμμή-γραμμή· σαρώνει τα κουτιά στη σειρά και πατάει μία φορά «Καταχώρηση».
       await api("/advance-dispensings", { method: "POST", body: JSON.stringify({
         patient_name: patient.name || patient.amka || "—", patient_ref: patient.patient_id,
-        amka: patient.amka, items }) });
+        amka: patient.amka, items: items.map(({ raw: _r, ...i }) => i) }) });
       setPatient(null); setTerm(""); setItems([]);
       qc.invalidateQueries({ queryKey: ["adv"] });
     } catch (e) {
@@ -252,16 +295,34 @@ function Inner() {
         <div className="mt-4">
           <span className="mb-1 block text-xs font-medium text-slate-500">
             {t("2. Σκευάσματα που δόθηκαν — σάρωσε το ένα μετά το άλλο", "2. Products given — scan them one after another")}
+            {!!items.length && (
+              <span className="ml-2 rounded-full bg-teal-600 px-2 py-0.5 text-[11px] font-bold text-white">
+                {items.length}
+              </span>
+            )}
           </span>
           <div className="flex gap-2">
-            <input ref={scanRef} value={scan} onChange={(e) => setScan(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addScan(); } }}
-              placeholder={t("σάρωσε το 2D — ή γράψε LOT / όνομα", "scan the 2D — or type LOT / name")}
-              className="block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-800" />
-            <button onClick={addScan} className="inline-flex items-center gap-1 rounded-lg border border-slate-300 px-3 text-sm text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200">
-              <Plus className="h-4 w-4" />{t("Προσθήκη", "Add")}
+            <div className="relative flex-1">
+              <ScanLine className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-teal-500" />
+              <input ref={scanRef} value={scan} autoComplete="off"
+                onChange={(e) => onScanChange(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); addScan(); } }}
+                placeholder={t("σάρωσε QR ή ταινία ΕΟΦ — το ένα μετά το άλλο, δεν πατάς τίποτα",
+                               "scan QR or ΕΟΦ strip — one after another, press nothing")}
+                className="block w-full rounded-lg border-2 border-teal-300 bg-teal-50/40 py-2 pl-9 pr-3 text-sm outline-none focus:border-teal-500 dark:border-teal-800 dark:bg-slate-800" />
+            </div>
+            {/* Μόνο για χειροκίνητη πληκτρολόγηση — η σάρωση δεν το χρειάζεται ποτέ. */}
+            <button onClick={() => addScan()} title={t("για χειροκίνητη πληκτρολόγηση", "for manual typing")}
+              className="inline-flex items-center rounded-lg border border-slate-300 px-3 text-sm text-slate-500 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-300">
+              <Plus className="h-4 w-4" />
             </button>
           </div>
+          {dup && (
+            <p className="mt-1.5 text-xs font-medium text-amber-600">
+              {t("Αυτό το κουτί σαρώθηκε ήδη — άλλαξε τα «τεμ.» αν έδωσες δεύτερο.",
+                 "This box was already scanned — change the qty if you gave a second one.")}
+            </p>
+          )}
         </div>
 
         {!!items.length && (
@@ -278,9 +339,12 @@ function Inner() {
                     onChange={(e) => setItems((x) => x.map((y, k) => k === n ? { ...y, qty: Math.max(1, Number(e.target.value) || 1) } : y))}
                     className="w-14 rounded border border-slate-200 px-2 py-1 dark:border-slate-600 dark:bg-slate-900" />
                 </label>
-                <span className="text-slate-500">
-                  {i.gtin ? `GTIN ${i.gtin}` : ""} {i.batch ? `· ${t("παρτ.", "batch")} ${i.batch}` : ""}
-                  {i.strip ? ` · ${t("ταινία", "strip")} ${i.strip}` : ""} {i.lot && !i.gtin ? `LOT ${i.lot}` : ""}
+                <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${i.gtin ? "bg-sky-100 text-sky-700" : "bg-amber-100 text-amber-700"}`}>
+                  {i.gtin ? "QR (HMVS)" : t("Ταινία ΕΟΦ", "ΕΟΦ strip")}
+                </span>
+                <span className="font-mono text-slate-500">
+                  {i.strip || i.lot}
+                  {i.gtin ? ` · GTIN ${i.gtin}` : ""}
                 </span>
                 <button onClick={() => setItems((x) => x.filter((_, k) => k !== n))} className="ml-auto text-slate-400 hover:text-rose-600">
                   <X className="h-3.5 w-3.5" />

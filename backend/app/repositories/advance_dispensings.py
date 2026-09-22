@@ -69,7 +69,10 @@ class AdvanceDispensingRepository(BaseRepository):
                 "lot": _clean(it.get("lot")) or None,
                 "expiry": _clean(it.get("expiry")) or None,
                 "qty": max(1, int(it.get("qty") or 1)),
-                "has_qr": bool(gtin or strip),
+                # ΜΟΝΟ το 2D (GTIN) σημαίνει κουτί με HMVO υποχρέωση. Ο γραμμικός κωδικός των
+                # παλιών κουπονιών δίνει κι αυτός ταινία, αλλά ΔΕΝ ανεβαίνει στον HMVO — αν τον
+                # μετρούσαμε ως QR, κάθε παλιό κουπόνι θα «έληγε» στις 10 μέρες αντί για 30.
+                "has_qr": bool(gtin),
                 "hmvo_uploaded": bool(it.get("hmvo_uploaded")),
             })
         if not clean_items:
@@ -170,7 +173,9 @@ class AdvanceDispensingRepository(BaseRepository):
                               "executed_at": (ex or {}).get("executed_at")},
                 # ΓΙΑΤΙ ταιριάζει — ο φαρμακοποιός πρέπει να βλέπει τη βάση της πρότασης, όχι
                 # να την εμπιστεύεται στα τυφλά.
-                "matched_on": "ταινία/σειριακό" if strips else "παρτίδα (LOT)",
+                # ΟΧΙ «παρτίδα»: μετρημένο σε 6.000/6.000 είδη, το `details.lot` της εκτέλεσης
+                # ΕΙΝΑΙ η ταινία γνησιότητας ΕΟΦ — ίδιος κωδικός, δεύτερο μονοπάτι.
+                "matched_on": "ίδιος κωδικός ταινίας/QR",
                 # ⚠ Τα executions κρατούν `patient_ref` ως ObjectId, τα δανεικά ως string.
                 # Χωρίς str() η σύγκριση ήταν ΠΑΝΤΑ False και το «ίδιος πελάτης» δεν εμφανιζόταν
                 # ποτέ — ακριβώς η ένδειξη που κάνει την πρόταση αξιόπιστη.
