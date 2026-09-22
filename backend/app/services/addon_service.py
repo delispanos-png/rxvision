@@ -196,14 +196,22 @@ async def start_trial(tenant_id: str, module: str) -> dict:
     still-missing modules as time-limited trials (auth resolution downgrades expired trials to locked).
     Already-owned modules are left untouched, so an expiring trial can never remove a paid feature.
 
-    ΦΡΟΥΡΟΣ: όποιος ΕΧΕΙ ΗΔΗ χρησιμοποιήσει δοκιμαστική περίοδο (η συνδρομή του έχει/είχε trial_ends_at)
-    ΔΕΝ δικαιούται νέα δωρεάν δοκιμή σε extra δυνατότητες — τις αγοράζει απευθείας. Μία δοκιμή ανά πελάτη."""
+    ΦΡΟΥΡΟΣ — ΜΙΑ ΔΟΚΙΜΗ ΠΡΟΣΘΕΤΟΥ ΑΝΑ ΠΕΛΑΤΗ.
+
+    ⚠️ ΔΙΟΡΘΩΣΗ 22/09/2026: ο έλεγχος κοίταζε το `subscriptions.trial_ends_at` — δηλαδή τη
+    ΔΟΚΙΜΑΣΤΙΚΗ ΠΕΡΙΟΔΟ ΤΗΣ ΣΥΝΔΡΟΜΗΣ, που την έχει ΚΑΘΕ φαρμακείο επειδή όλα ξεκινούν με
+    trial. Αποτέλεσμα: **14 από τα 15 φαρμακεία** ήταν μπλοκαρισμένα από την πρώτη μέρα και
+    καμία δοκιμή προσθέτου δεν μπορούσε να ξεκινήσει ποτέ. Τα δύο «trial» είναι ΔΙΑΦΟΡΕΤΙΚΑ
+    πράγματα: το ένα είναι η δοκιμή του ΠΡΟΪΟΝΤΟΣ, το άλλο η δοκιμή μιας ΔΥΝΑΤΟΤΗΤΑΣ.
+
+    Πηγή αλήθειας πλέον = `addon_grants` με `by="self-service"`: έχει ΑΥΤΟΣ ο πελάτης πάρει
+    ξανά δοκιμή προσθέτου μόνος του;"""
     db = shared_db()
-    sub = await db["subscriptions"].find_one({"tenant_id": tenant_id}, {"trial_ends_at": 1}) or {}
-    if sub.get("trial_ends_at") is not None:
+    prior = await db["addon_grants"].find_one({"tenant_id": tenant_id, "by": "self-service"})
+    if prior:
         return {"ok": False, "error": "trial_used",
-                "message": "Έχεις ήδη χρησιμοποιήσει δοκιμαστική περίοδο — οι επιπλέον δυνατότητες "
-                           "αγοράζονται απευθείας (χωρίς δοκιμή)."}
+                "message": "Έχεις ήδη χρησιμοποιήσει τη δωρεάν δοκιμή δυνατοτήτων — οι επιπλέον "
+                           "δυνατότητες αγοράζονται απευθείας (χωρίς δοκιμή)."}
     # smallest PAID active package that unlocks the module (skip the €0 free-trial package, which
     # bundles everything — we don't want a click to trial the entire catalogue).
     pkgs = [p async for p in db["packages"].find({"active": True}).sort("price_monthly", 1)

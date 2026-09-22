@@ -97,8 +97,14 @@ export function Sidebar() {
       const href = upsell.href;
       setUpsell(null);
       router.push(href);
-    } catch {
-      appAlert(t("Δεν ήταν δυνατή η έναρξη δοκιμής. Δοκίμασε ξανά.", "Could not start the trial. Please try again."));
+    } catch (e) {
+      // ΔΕΙΞΕ ΤΟΝ ΠΡΑΓΜΑΤΙΚΟ ΛΟΓΟ. Το «δοκίμασε ξανά» ήταν χειρότερο από άχρηστο: όταν ο
+      // λόγος είναι «έχεις ήδη χρησιμοποιήσει τη δοκιμή», η επανάληψη ΔΕΝ πρόκειται να
+      // δουλέψει ποτέ — ο πελάτης ξαναπατά, ξαναποτυγχάνει, και τηλεφωνεί.
+      const d = (e as { problem?: { detail?: { message?: string; error?: string } } })?.problem?.detail;
+      appAlert(d?.message
+        || t("Δεν ήταν δυνατή η έναρξη δοκιμής. Επικοινώνησε μαζί μας.",
+             "Could not start the trial. Please contact us."));
     } finally {
       setTrialBusy(false);
     }
