@@ -172,10 +172,10 @@ export default function VaccinationSettingsPage() {
           </details>
         </section>
 
-        {/* Παράμετροι περιοδικών εμβολιασμών — δικό τους module, εμφανίζεται μόνο σε όσους το έχουν. */}
+        {/* Παράμετροι εμβολίων ΚΑΙ θεραπειών — δύο προϊόντα, ίδια οθόνη: αρκεί να έχεις το ένα. */}
         {/* Χωρίς το add-on «Περιοδικοί εμβολιασμοί» οι παράμετροι δεν έχουν νόημα: ο πελάτης
             θα ρύθμιζε κάτι που δεν πρόκειται να τρέξει (και κάθε κλήση θα γύριζε 403). */}
-        <AddonSection module="vaccination_programs">
+        <AddonSection module={["vaccination_programs", "therapy_programs"]}>
           <VaccineProgramsConfig />
         </AddonSection>
 

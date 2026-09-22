@@ -29,7 +29,13 @@ type Addon = { _id: string; name: string; icon?: string; description?: string;
  *   "hide"    → δεν πωλείται σ' αυτόν τον πελάτη → εξαφάνισέ το
  *   "unknown" → δεν ξέρουμε ακόμη → μη δείξεις τίποτα (καλύτερα κενό παρά αναβόσβημα)
  */
-export function useAddonState(module: string): { state: "on" | "offer" | "hide" | "unknown"; addon?: Addon } {
+/** Ένα ή ΠΕΡΙΣΣΟΤΕΡΑ modules ξεκλειδώνουν την ίδια οθόνη.
+ *
+ *  ΓΙΑΤΙ: ο ίδιος κινητήρας πουλιέται ως δύο προϊόντα (Περιοδικός Εμβολιασμός / Θεραπείες με
+ *  Επανάληψη). Όποιος αγόρασε ΤΟ ΕΝΑ πρέπει να βλέπει την οθόνη. Με έλεγχο ενός μόνο module,
+ *  όποιος είχε μόνο τις Θεραπείες έβλεπε κενό μενού και νόμιζε ότι δεν ενεργοποιήθηκε τίποτα.
+ */
+export function useAddonState(module: string | string[]): { state: "on" | "offer" | "hide" | "unknown"; addon?: Addon } {
   const me = useQuery({ queryKey: queryKeys.me(), queryFn: () => api<Me>("/auth/me"), retry: false, staleTime: 300_000 });
   const addons = useQuery({
     queryKey: ["addons"],
@@ -37,15 +43,17 @@ export function useAddonState(module: string): { state: "on" | "offer" | "hide" 
     retry: false,
     staleTime: 300_000,
   });
-  const m = me.data?.modules?.[module];
-  if (m === "enabled" || m === "trial") return { state: "on" };
+  const keys = Array.isArray(module) ? module : [module];
+  if (keys.some((k) => ["enabled", "trial"].includes(me.data?.modules?.[k] ?? "")))
+    return { state: "on" };
   if (me.isLoading || addons.isLoading) return { state: "unknown" };
-  const addon = addons.data?.addons?.find((x) => x._id === module);
+  // Καμία κατοχή → προσφέρουμε το ΠΡΩΤΟ της λίστας (το «κύριο» προϊόν της οθόνης).
+  const addon = addons.data?.addons?.find((x) => x._id === keys[0]);
   if (!addon || !addon.offered || addon.status === "included") return { state: "hide" };
   return { state: "offer", addon };
 }
 
-export function AddonSection({ module, children }: { module: string; children: React.ReactNode }) {
+export function AddonSection({ module, children }: { module: string | string[]; children: React.ReactNode }) {
   const t = useT();
   const { state, addon: a } = useAddonState(module);
   if (state === "on") return <>{children}</>;

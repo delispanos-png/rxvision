@@ -30,7 +30,10 @@ export const NAV_GROUPS: Group[] = [
       { href: "/prescriptions", label: "Λίστα", en: "List" },
       { href: "/rx-types", label: "Δείκτες", en: "Indicators" },
     ] },
-    { label: "Κύκλωμα Εμβολιασμών", en: "Vaccinations", icon: Syringe, href: "/vaccinations", module: "prescription_analytics" },
+    // Φαίνεται με ΟΠΟΙΟΔΗΠΟΤΕ από τα τρία: ένα πληρωμένο add-on δεν επιτρέπεται να μένει αόρατο
+    // επειδή λείπει ΑΛΛΟ module. Όποιος αγόρασε «Θεραπείες με Επανάληψη» πρέπει να το βρίσκει.
+    { label: "Κύκλωμα Εμβολιασμών", en: "Vaccinations", icon: Syringe, href: "/vaccinations",
+      module: ["prescription_analytics", "vaccination_programs", "therapy_programs"] },
     { label: "Μελλοντικές", en: "Upcoming", icon: CalendarClock, module: "future_prescriptions", children: [
       { href: "/future#coverage", label: "Κάλυψη περιόδου", en: "Period coverage" },
       { href: "/future#forecast", label: "Πρόβλεψη κάλυψης", en: "Coverage forecast" },
