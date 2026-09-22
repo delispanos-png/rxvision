@@ -33,13 +33,24 @@ const STATUS_EL: Record<Pat["status"], [string, string]> = {
   incomplete: ["Ξεκίνησε τις δόσεις αλλά δεν τις ολοκλήρωσε", "Started but did not finish the doses"],
   covered: ["Ολοκλήρωσε τις δόσεις και είναι σε ισχύ", "Fully vaccinated and still valid"],
 };
-const FILTERS: [string, string, string][] = [
-  ["all", "Όλοι", "All"],
-  ["expired", "Θέλουν αναμνηστική", "Booster overdue"],
-  ["due_soon", "Πλησιάζει αναμνηστική", "Booster due soon"],
-  ["incomplete", "Δεν ολοκλήρωσαν τις δόσεις", "Incomplete doses"],
-  ["covered", "Πλήρως εμβολιασμένοι", "Fully vaccinated"],
-];
+/** Οι ίδιες καταστάσεις, δύο λεξιλόγια. Σε θεραπεία δεν υπάρχει «αναμνηστική» — υπάρχει
+ *  «επόμενη δόση»· και κανείς δεν είναι «εμβολιασμένος». */
+const FILTERS_BY_KIND: Record<"vaccine" | "therapy", [string, string, string][]> = {
+  vaccine: [
+    ["all", "Όλοι", "All"],
+    ["expired", "Θέλουν αναμνηστική", "Booster overdue"],
+    ["due_soon", "Πλησιάζει αναμνηστική", "Booster due soon"],
+    ["incomplete", "Δεν ολοκλήρωσαν τις δόσεις", "Incomplete doses"],
+    ["covered", "Πλήρως εμβολιασμένοι", "Fully vaccinated"],
+  ],
+  therapy: [
+    ["all", "Όλοι", "All"],
+    ["expired", "Εκπρόθεσμοι", "Overdue"],
+    ["due_soon", "Πλησιάζει η επόμενη δόση", "Next dose due soon"],
+    ["incomplete", "Δεν ολοκλήρωσαν τη σειρά", "Incomplete series"],
+    ["covered", "Σε ισχύ", "Up to date"],
+  ],
+};
 
 /** Η ΙΔΙΑ οθόνη εξυπηρετεί ΚΑΙ τα δύο κυκλώματα — αλλάζει μόνο ποια προγράμματα δείχνει και
  *  πώς μιλάει. Εξάγεται ώστε το κύκλωμα «Θεραπείες» να την ξαναχρησιμοποιεί ΑΥΤΟΥΣΙΑ: ο
@@ -74,13 +85,23 @@ export function ProgramPatients({ kind }: { kind: "vaccine" | "therapy" }) {
       <div className="rx-card p-8 text-center">
         <Settings2 className="mx-auto mb-3 h-9 w-9 text-slate-300" />
         <p className="text-sm text-slate-600 dark:text-slate-300">
-          {t("Δεν έχεις ορίσει ακόμη ποια εμβόλια παρακολουθείς.",
-             "You have not defined which vaccines to track yet.")}
+          {kind === "therapy"
+            ? t("Δεν έχεις ορίσει ακόμη ποιες θεραπείες παρακολουθείς.",
+                "You have not defined which therapies to track yet.")
+            : t("Δεν έχεις ορίσει ακόμη ποια εμβόλια παρακολουθείς.",
+                "You have not defined which vaccines to track yet.")}
         </p>
-        <Link href="/vaccinations/settings"
-          className="mt-4 inline-block rounded-lg bg-sky-600 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-700">
-          {t("Άνοιγμα ρυθμίσεων", "Open settings")}
-        </Link>
+        {kind === "therapy" ? (
+          <p className="mt-2 text-sm text-slate-500">
+            {t("Φτιάξε την πρώτη παρακάτω, στις παραμέτρους αυτής της σελίδας.",
+               "Create the first one below, in this page settings.")}
+          </p>
+        ) : (
+          <Link href="/vaccinations/settings"
+            className="mt-4 inline-block rounded-lg bg-sky-600 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-700">
+            {t("Άνοιγμα ρυθμίσεων", "Open settings")}
+          </Link>
+        )}
       </div>
     );
   }
@@ -106,7 +127,7 @@ export function ProgramPatients({ kind }: { kind: "vaccine" | "therapy" }) {
 
       {/* φίλτρο: κατάσταση + αναζήτηση */}
       <div className="flex flex-wrap items-center gap-2">
-        {FILTERS.map(([k, el, en]) => (
+        {FILTERS_BY_KIND[kind].map(([k, el, en]) => (
           <button key={k} onClick={() => setStatus(k)}
             className={`rounded-lg px-2.5 py-1.5 text-xs font-medium ${status === k
               ? "bg-slate-800 text-white dark:bg-slate-200 dark:text-slate-900"
@@ -129,7 +150,7 @@ export function ProgramPatients({ kind }: { kind: "vaccine" | "therapy" }) {
       </div>
 
       <p className="text-xs text-slate-400">
-        {t("«Δεν ολοκλήρωσαν τις δόσεις» = ξεκίνησαν τη σειρά αλλά λείπει δόση· η στήλη «Επόμενη» δείχνει πότε οφείλεται. Όσοι ολοκλήρωσαν έχουν ημερομηνία ΜΟΝΟ αν το εμβόλιο επαναλαμβάνεται (αναμνηστική).",
+        {t("«Δεν ολοκλήρωσαν τις δόσεις» = ξεκίνησαν τη σειρά αλλά λείπει δόση· η στήλη «Επόμενη» δείχνει πότε οφείλεται. Όσοι ολοκλήρωσαν έχουν ημερομηνία ΜΟΝΟ αν το σχήμα επαναλαμβάνεται.",
            "«Incomplete doses» = the series was started but a dose is missing; «Next» shows when it is due. Those who completed it get a date only if the vaccine repeats.")}
       </p>
 
@@ -147,7 +168,7 @@ export function ProgramPatients({ kind }: { kind: "vaccine" | "therapy" }) {
                 <th className="px-4 py-2.5 text-left">{t("Ασφαλισμένος", "Patient")}</th>
                 <th className="px-4 py-2.5 text-left">ΑΜΚΑ</th>
                 <th className="px-4 py-2.5 text-left">{t("Ηλικία", "Age")}</th>
-                <th className="px-4 py-2.5 text-left">{t("Εμβόλιο", "Vaccine")}</th>
+                <th className="px-4 py-2.5 text-left">{t("Σκεύασμα", "Product")}</th>
                 <th className="px-4 py-2.5 text-left">{t("Τελευταία δόση", "Last dose")}</th>
                 <th className="px-4 py-2.5 text-left">{t("Δόσεις", "Doses")}</th>
                 <th className="px-4 py-2.5 text-left">{t("Επόμενη", "Next due")}</th>
@@ -250,7 +271,7 @@ function DoseHistory({ pat, onClose }: { pat: Pat; onClose: () => void }) {
           ? "bg-emerald-50 text-emerald-800 dark:bg-emerald-900/25 dark:text-emerald-200"
           : "bg-amber-50 text-amber-800 dark:bg-amber-900/25 dark:text-amber-200"}`}>
           {done
-            ? t(`Ολοκληρώθηκε η διαδικασία του εμβολιασμού — ${pat.doses} από ${pat.doses_required} δόσεις.`,
+            ? t(`Ολοκληρώθηκε η σειρά — ${pat.doses} από ${pat.doses_required} δόσεις.`,
                 `Vaccination complete — ${pat.doses} of ${pat.doses_required} doses.`)
             : t(`Εκκρεμεί δόση: ${pat.doses} από ${pat.doses_required}${pat.due_at ? `. Επόμενη: ${new Date(pat.due_at).toLocaleDateString("el-GR")}` : ""}.`,
                 `Dose pending: ${pat.doses} of ${pat.doses_required}${pat.due_at ? `. Next: ${new Date(pat.due_at).toLocaleDateString("el-GR")}` : ""}.`)}
@@ -272,7 +293,7 @@ function NotifyDialog({ programId, status, programName, onClose }: {
   const t = useT();
   const [channel, setChannel] = useState("sms");
   const [message, setMessage] = useState(
-    "Καλησπέρα {first}, υπενθύμιση από το φαρμακείο μας για την επόμενη δόση του εμβολιασμού σας. Περάστε όποτε σας βολεύει.");
+    "Καλησπέρα {first}, υπενθύμιση από το φαρμακείο μας για την επόμενη δόση σας. Περάστε όποτε σας βολεύει.");
   const [preview, setPreview] = useState<number | null>(null);
   const [result, setResult] = useState<{ sent: number; failed: number } | null>(null);
   const [busy, setBusy] = useState(false);
