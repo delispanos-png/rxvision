@@ -27,6 +27,12 @@ type Flu = { season: string; vaccinated: boolean; date: string | null; vaccine: 
 const EXECS_PER_PAGE = 8;   // σελιδοποίηση modal εκτελέσεων — ανά εκτέλεση (κάθε εκτέλεση ολόκληρη)
 type ExecMed = { name: string; quantity?: number | null };
 type Exec = { kind?: string; barcode: string; executed_at: string | null; amount_total: number; patient_share: number; doctor: string | null; cancelled?: boolean; medicines: ExecMed[] };
+type ProgramCoverage = {
+  program_id: string; name: string; status: "covered" | "due_soon" | "expired" | "incomplete";
+  doses: number; doses_required: number; last_at: string | null; due_at: string | null;
+  shots?: { at: string | null; vaccine: string | null; elsewhere?: boolean; note?: string }[];
+};
+
 type Profile = {
   found: boolean;
   patient?: { id: string; name: string; amka: string; age_group: string; sex: string; area: string; birth_year: number; lifecycle: string; deceased: boolean; first_seen: string; last_seen: string; gap_days: number | null };
@@ -37,6 +43,7 @@ type Profile = {
   missed_items?: Renewal[];
   available_items?: Renewal[];
   flu?: Flu;
+  programs?: ProgramCoverage[];
   segments?: Seg[];
   conditions?: Cond[];
   medicines?: Med[];
@@ -391,6 +398,48 @@ export default function PatientProfilePage() {
               {p.flu.vaccinated
                 ? <span className="text-emerald-700 dark:text-emerald-400">✓ {t("Εμβολιάστηκε", "Vaccinated")} {p.flu.date ? `(${fmtDate(p.flu.date)}${p.flu.vaccine ? ` · ${p.flu.vaccine}` : ""})` : ""}</span>
                 : <span className="text-amber-700 dark:text-amber-500">✗ {t("Δεν έχει εμβολιαστεί φέτος", "Not vaccinated this season")}</span>}
+            </div>
+          )}
+
+          {/* ΘΕΡΑΠΕΙΕΣ ΜΕ ΕΠΑΝΑΛΗΨΗ — η πληροφορία που ο φαρμακοποιός δεν έχει τρόπο να θυμάται:
+              πότε έγινε η τελευταία δόση και πότε οφείλεται η επόμενη. Εμφανίζεται μόνο όταν ο
+              ασθενής ανήκει σε κάποιο ενεργό πρόγραμμα — αλλιώς δεν καταλαμβάνει χώρο. */}
+          {!!p.programs?.length && (
+            <div className="space-y-1.5">
+              {p.programs.map((pr) => {
+                const late = pr.status === "expired";
+                const soon = pr.status === "due_soon";
+                const partial = pr.status === "incomplete";
+                const tone = late ? "border-rose-100 bg-rose-50 dark:border-rose-900/40 dark:bg-rose-950/20"
+                  : soon || partial ? "border-amber-100 bg-amber-50 dark:border-amber-900/40 dark:bg-amber-950/20"
+                  : "border-emerald-100 bg-emerald-50 dark:border-emerald-900/40 dark:bg-emerald-950/20";
+                const ink = late ? "text-rose-700 dark:text-rose-400"
+                  : soon || partial ? "text-amber-700 dark:text-amber-500"
+                  : "text-emerald-700 dark:text-emerald-400";
+                const elsewhere = (pr.shots || []).filter((sh) => sh.elsewhere).length;
+                return (
+                  <div key={pr.program_id} className={`flex flex-wrap items-center gap-2 rounded-xl border px-4 py-2.5 text-sm ${tone}`}>
+                    <Syringe className={`h-4 w-4 ${ink}`} />
+                    <span className="font-medium text-slate-700 dark:text-slate-200">{pr.name}:</span>
+                    <span className={ink}>
+                      {partial
+                        ? t(`Εκκρεμεί δόση — ${pr.doses} από ${pr.doses_required}`, `Dose pending — ${pr.doses} of ${pr.doses_required}`)
+                        : late
+                        ? t(`Εκπρόθεσμη από ${fmtDate(pr.due_at)}`, `Overdue since ${fmtDate(pr.due_at)}`)
+                        : soon
+                        ? t(`Οφείλεται ${fmtDate(pr.due_at)}`, `Due ${fmtDate(pr.due_at)}`)
+                        : pr.due_at
+                        ? t(`Καλυμμένος — επόμενη ${fmtDate(pr.due_at)}`, `Covered — next ${fmtDate(pr.due_at)}`)
+                        : t("Ολοκληρωμένη", "Complete")}
+                    </span>
+                    <span className="text-xs text-slate-500">
+                      {pr.last_at ? t(`τελευταία ${fmtDate(pr.last_at)}`, `last ${fmtDate(pr.last_at)}`) : ""}
+                      {pr.doses > 1 ? t(` · ${pr.doses} δόσεις`, ` · ${pr.doses} doses`) : ""}
+                      {elsewhere ? t(` · ${elsewhere} εκτός φαρμακείου`, ` · ${elsewhere} elsewhere`) : ""}
+                    </span>
+                  </div>
+                );
+              })}
             </div>
           )}
 
