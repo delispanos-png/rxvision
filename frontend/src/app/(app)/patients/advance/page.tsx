@@ -17,8 +17,7 @@ import { appAlert, appConfirm, appPrompt } from "@/store/dialogStore";
 import { useT } from "@/store/prefStore";
 
 type Item = { name?: string; gtin?: string; batch?: string; strip?: string; lot?: string;
-              expiry?: string; qty?: number; has_qr?: boolean; hmvo_uploaded?: boolean;
-              raw?: string };
+              expiry?: string; qty?: number; raw?: string };
 type Loan = { _id: string; patient_name: string; items: Item[]; status: string;
               created_at: string; note?: string };
 type Hit = { patient_id: string; name: string | null; amka: string | null; last_seen?: string | null };
@@ -87,7 +86,7 @@ function Inner() {
   });
 
   const open = useQuery({ queryKey: ["adv", "open"], queryFn: () => api<{ items: Loan[] }>("/advance-dispensings?status=open") });
-  const late = useQuery({ queryKey: ["adv", "overdue"], queryFn: () => api<{ qr_over_10d: Loan[]; over_30d: Loan[]; counts: Record<string, number> }>("/advance-dispensings/overdue") });
+  const late = useQuery({ queryKey: ["adv", "overdue"], queryFn: () => api<{ items: Loan[]; counts: Record<string, number> }>("/advance-dispensings/overdue") });
   const sugg = useQuery({ queryKey: ["adv", "matches"], queryFn: () => api<{ items: Match[] }>("/advance-dispensings/matches") });
 
   /* ΓΡΗΓΟΡΗ ΣΑΡΩΣΗ — ο φαρμακοποιός δεν πατάει τίποτα.
@@ -176,11 +175,6 @@ function Inner() {
         <span className={`text-xs ${d >= 30 ? "text-rose-600" : d >= 10 ? "text-amber-600" : "text-slate-400"}`}>
           {fmt(l.created_at)} · {t(`${d} ημέρες`, `${d} days`)}
         </span>
-        {(l.items || []).some((i) => i.has_qr && !i.hmvo_uploaded) && (
-          <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-medium text-amber-800">
-            {t("δεν ανέβηκε στον HMVO", "not on HMVO")}
-          </span>
-        )}
         <span className="ml-auto flex gap-1.5">
           <button onClick={() => setStatus(l._id, "cleared")} className="inline-flex items-center gap-1 rounded-lg border border-emerald-300 bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700 hover:bg-emerald-100">
             <Check className="h-3.5 w-3.5" />{t("Ξεχρεώθηκε", "Cleared")}
@@ -363,13 +357,12 @@ function Inner() {
       </section>
 
       {/* ΤΙ ΑΡΓΕΙ */}
-      {!!(late.data?.counts?.qr_over_10d || late.data?.counts?.over_30d) && (
+      {!!late.data?.counts?.overdue && (
         <section className="space-y-2">
           <h2 className="flex items-center gap-1.5 text-sm font-semibold text-slate-700 dark:text-slate-200">
-            <AlertTriangle className="h-4 w-4 text-amber-500" />{t("Αργούν", "Overdue")}
+            <AlertTriangle className="h-4 w-4 text-amber-500" />{t("Ανοιχτά πάνω από 30 ημέρες", "Open over 30 days")}
           </h2>
-          {(late.data?.qr_over_10d || []).map((l) => <Row key={l._id} l={l} />)}
-          {(late.data?.over_30d || []).map((l) => <Row key={l._id} l={l} />)}
+          {(late.data?.items || []).map((l) => <Row key={l._id} l={l} />)}
         </section>
       )}
 

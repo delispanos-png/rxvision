@@ -8,6 +8,10 @@
 τρέχει για 24.000 εκτελέσεις — ένα λάθος εκεί σταματά τον συγχρονισμό όλων. Το ερώτημα
 ταύτισης είναι φθηνό, επαναλήψιμο και δεν μπορεί να χαλάσει δεδομένα.
 
+ΔΕΝ ΑΝΑΡΤΟΥΜΕ ΤΙΠΟΤΑ. Ούτε στην ΗΔΥΚΑ ούτε στον HMVO — αυτό το κάνει το εμπορικό πρόγραμμα του
+φαρμακείου. Εδώ είμαστε καθαρά ενημερωτικοί, οπότε δεν κουβαλάμε κανένα από τα κατώφλια ή τα
+πεδία εκείνων των υποχρεώσεων.
+
 ΠΡΟΤΕΙΝΟΥΜΕ, ΔΕΝ ΑΠΟΦΑΣΙΖΟΥΜΕ. Μετρημένο: το `strip` (ταινία) ΔΕΝ είναι μοναδικό — 17.325 από
 115.476 εμφανίζονται πάνω από μία φορά. Γι' αυτό η ταύτιση συνδυάζει GTIN + παρτίδα + ταινία,
 και το τελικό «ναι» το δίνει ΠΑΝΤΑ ο φαρμακοποιός. Μια αυτόματη ξεχρέωση σε λάθος ταίριασμα θα
@@ -26,9 +30,11 @@ from app.repositories.base import BaseRepository
 
 OPEN, CLEARED, WRITTEN_OFF = "open", "cleared", "written_off"
 
-#: Πότε ένα δανεικό θεωρείται «αργεί». Τα QR πιέζουν περισσότερο επειδή πρέπει να αναρτηθούν
-#: στον HMVO — δες τη λίστα `overdue()`.
-QR_DAYS, PLAIN_DAYS = 10, 30
+#: Πότε ένα δανεικό θεωρείται «αργεί».
+#: ΔΕΝ υπάρχει ξεχωριστό, αυστηρότερο κατώφλι για τα QR. Είχε μπει με την υπόθεση ότι εμείς
+#: αναρτούμε στον HMVO· δεν αναρτούμε τίποτα — αυτό το κάνει το εμπορικό πρόγραμμα του
+#: φαρμακείου. Εδώ απλώς θυμίζουμε ποιος χρωστά και από πότε.
+OVERDUE_DAYS = 30
 
 
 def _now() -> datetime:
@@ -69,11 +75,6 @@ class AdvanceDispensingRepository(BaseRepository):
                 "lot": _clean(it.get("lot")) or None,
                 "expiry": _clean(it.get("expiry")) or None,
                 "qty": max(1, int(it.get("qty") or 1)),
-                # ΜΟΝΟ το 2D (GTIN) σημαίνει κουτί με HMVO υποχρέωση. Ο γραμμικός κωδικός των
-                # παλιών κουπονιών δίνει κι αυτός ταινία, αλλά ΔΕΝ ανεβαίνει στον HMVO — αν τον
-                # μετρούσαμε ως QR, κάθε παλιό κουπόνι θα «έληγε» στις 10 μέρες αντί για 30.
-                "has_qr": bool(gtin),
-                "hmvo_uploaded": bool(it.get("hmvo_uploaded")),
             })
         if not clean_items:
             raise ValueError("items_required")
@@ -105,23 +106,11 @@ class AdvanceDispensingRepository(BaseRepository):
 
     # ── λίστες ───────────────────────────────────────────────────────────────────────────────
     async def overdue(self) -> dict:
-        """Τι αργεί. Δύο κατώφλια επίτηδες: τα QR πρέπει να αναρτηθούν στον HMVO, οπότε πιέζουν
-        νωρίτερα από ένα απλό κουτί."""
-        now = _now()
-        qr_cut, plain_cut = now - timedelta(days=QR_DAYS), now - timedelta(days=PLAIN_DAYS)
+        """Τι αργεί — ένα κατώφλι για όλα, ενημερωτικά."""
+        cut = _now() - timedelta(days=OVERDUE_DAYS)
         rows = await self.find({"status": OPEN}, sort=[("created_at", 1)], limit=500)
-        qr, plain = [], []
-        for r in rows:
-            at = r.get("created_at")
-            if not at:
-                continue
-            has_qr = any(i.get("has_qr") for i in (r.get("items") or []))
-            if has_qr and at <= qr_cut:
-                qr.append(r)
-            elif at <= plain_cut:
-                plain.append(r)
-        return {"qr_over_10d": qr, "over_30d": plain,
-                "counts": {"qr_over_10d": len(qr), "over_30d": len(plain), "open": len(rows)}}
+        late = [r for r in rows if r.get("created_at") and r["created_at"] <= cut]
+        return {"items": late, "counts": {"overdue": len(late), "open": len(rows)}}
 
     async def open_for_patient(self, patient_ref: str) -> list[dict]:
         """Ανοιχτά δανεικά ΕΝΟΣ πελάτη — για την καρτέλα του και το pop-up του ταμείου.

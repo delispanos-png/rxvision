@@ -2,8 +2,8 @@
 
 Α φάση: καταγραφή δανεικού, λίστες, χειροκίνητη ξεχρέωση.
 Β φάση: προτάσεις ταύτισης με εκτελεσμένη συνταγή — ο φαρμακοποιός απαντά ναι/όχι.
-Γ φάση (μελλοντική): ΗΔΥΚΑ + HMVO. Το πεδίο `hmvo_uploaded` υπάρχει ήδη ανά είδος ώστε η λίστα
-των αργοπορημένων να το δείχνει από σήμερα, χειροκίνητα.
+ΔΕΝ αναρτούμε τίποτα σε ΗΔΥΚΑ ή HMVO — αυτό το κάνει το εμπορικό πρόγραμμα του φαρμακείου.
+Το κύκλωμα είναι καθαρά ενημερωτικό για τον φαρμακοποιό.
 """
 
 from __future__ import annotations
@@ -32,7 +32,6 @@ class ItemIn(BaseModel):
     lot: str | None = None           # για σκευάσματα χωρίς QR
     expiry: str | None = None
     qty: int = 1
-    hmvo_uploaded: bool = False
 
 
 class LoanIn(BaseModel):
@@ -85,11 +84,10 @@ async def for_patient(ref: str = Query(..., min_length=1),
 
 @router.get("/overdue")
 async def overdue(ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
-    """Τι αργεί: QR πάνω από 10 ημέρες (πρέπει να ανέβουν στον HMVO) και όλα πάνω από 30."""
+    """Δανεικά που ανοίγουν πάνω από 30 ημέρες — υπενθύμιση, όχι προθεσμία."""
     res = await _repo(ctx).overdue()
-    for k in ("qr_over_10d", "over_30d"):
-        for it in res[k]:
-            it["_id"] = str(it["_id"])
+    for it in res["items"]:
+        it["_id"] = str(it["_id"])
     return res
 
 
