@@ -36,8 +36,10 @@ class ItemIn(BaseModel):
 
 
 class LoanIn(BaseModel):
+    # Ο πελάτης ΕΠΙΛΕΓΕΤΑΙ από τη λίστα: με ελεύθερο κείμενο, «Κυρία Μαρία» και «ΜΑΡΙΑ Κ.»
+    # γίνονται δύο διαφορετικοί οφειλέτες και το χρέος δεν βρίσκεται ποτέ ξανά.
     patient_name: str
-    patient_ref: str | None = None
+    patient_ref: str
     amka: str | None = None
     items: list[ItemIn] = []
     note: str = ""
@@ -57,6 +59,28 @@ async def list_loans(status_f: str = Query("open", alias="status"),
     for it in items:
         it["_id"] = str(it["_id"])
     return {"items": items}
+
+
+@router.get("/patients")
+async def search_patients(q: str = Query(..., min_length=2),
+                          ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+    """Αναζήτηση πελάτη για χρέωση δανεικού.
+
+    ΓΙΑΤΙ ΕΔΩ ΚΑΙ ΟΧΙ ΤΟ `/patients/search`: εκείνο απαιτεί το module «Ασφαλισμένοι». Όποιος
+    αγόρασε ΜΟΝΟ τις Προχορηγήσεις θα έπαιρνε 403 και το πεδίο δεν θα έβρισκε ποτέ κανέναν.
+    Ίδιο αποθετήριο, ίδια δεδομένα — απλώς περνάει από το δικό του πρόσθετο.
+    """
+    from app.repositories.patients import PatientExecutionsRepository
+    repo = PatientExecutionsRepository(tenant_id=ctx.tenant_id, demo=ctx.demo)
+    return {"items": await repo.search(q)}
+
+
+@router.get("/for-patient")
+async def for_patient(ref: str = Query(..., min_length=1),
+                      ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+    """Τα ανοιχτά δανεικά ενός πελάτη — το καταναλώνει η καρτέλα πελάτη & το pop-up ταμείου."""
+    items = await _repo(ctx).open_for_patient(ref)
+    return {"items": items, "count": len(items)}
 
 
 @router.get("/overdue")
@@ -88,7 +112,10 @@ async def create_loan(body: LoanIn,
             patient_name=body.patient_name, patient_ref=body.patient_ref, amka=body.amka,
             items=[i.model_dump() for i in body.items], note=body.note, by=ctx.user_id)
     except ValueError as e:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail={"error": str(e)}) from e
+        msg = {"patient_ref_required": "Διάλεξε πελάτη από τη λίστα.",
+               "items_required": "Σάρωσε ή γράψε τουλάχιστον ένα σκεύασμα."}.get(str(e), "")
+        raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                            detail={"error": str(e), "message": msg}) from e
 
 
 class StatusIn(BaseModel):

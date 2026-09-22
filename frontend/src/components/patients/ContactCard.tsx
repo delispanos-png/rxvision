@@ -7,6 +7,7 @@ import { api, API_BASE } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
 import { appAlert } from "@/store/dialogStore";
 import { PanelCard } from "@/components/ui/Card";
+import { AdvanceLoanNotice } from "@/components/advance/AdvanceLoanNotice";
 import { Tooltip } from "@/components/ui/Tooltip";
 
 type Contact = {
@@ -167,6 +168,7 @@ export function ContactCard({ patientId, collapsible = false, extraAction, openE
             {data?.active === false ? t("Ανενεργός", "Inactive") : t("Ενεργός", "Active")}
           </span>
           {statusBadge}
+          <AdvanceLoanNotice patientId={patientId} compact />
           {tel && <span className="inline-flex items-center gap-1.5"><Phone className="h-4 w-4 text-slate-400" />{tel}</span>}
           {data?.email && <span className="inline-flex items-center gap-1.5"><Mail className="h-4 w-4 text-slate-400" />{data.email}</span>}
           {data?.marketing_consent && <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] text-emerald-700">{t("Συγκατάθεση marketing", "Marketing consent")}</span>}
@@ -192,6 +194,7 @@ export function ContactCard({ patientId, collapsible = false, extraAction, openE
         )}
       </div>
     }>
+      <div className="mb-3"><AdvanceLoanNotice patientId={patientId} /></div>
       <div className="-mt-1 mb-3 flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2.5">
           {avatar}

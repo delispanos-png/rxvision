@@ -43,11 +43,18 @@ class AdvanceDispensingRepository(BaseRepository):
     collection_name = "advance_dispensings"
 
     # ── καταγραφή ────────────────────────────────────────────────────────────────────────────
-    async def create(self, *, patient_name: str, items: list[dict], patient_ref: str | None = None,
+    async def create(self, *, patient_name: str, items: list[dict], patient_ref: str,
                      amka: str | None = None, note: str = "", by: str | None = None) -> dict:
-        """Ένα δανεικό = ένας πελάτης + ένα ή περισσότερα σκευάσματα, εκείνη τη στιγμή."""
+        """Ένα δανεικό = ΕΝΑΣ πελάτης + ΟΣΑ σκευάσματα του δόθηκαν εκείνη τη στιγμή (μία κίνηση).
+
+        Ο πελάτης επιλέγεται από τη λίστα, δεν γράφεται: ένα δανεικό που δεν δείχνει σε υπαρκτή
+        καρτέλα δεν μπορεί ούτε να εμφανιστεί στην καρτέλα του, ούτε να ταυτιστεί με τη συνταγή
+        του αργότερα. Περαστικός χωρίς καρτέλα → φτιάξε πρώτα καρτέλα.
+        """
         if not (patient_name or "").strip():
             raise ValueError("patient_name_required")
+        if not (patient_ref or "").strip():
+            raise ValueError("patient_ref_required")
         clean_items = []
         for it in items or []:
             gtin, batch = _clean(it.get("gtin")), _clean(it.get("batch"))
@@ -113,6 +120,20 @@ class AdvanceDispensingRepository(BaseRepository):
         return {"qr_over_10d": qr, "over_30d": plain,
                 "counts": {"qr_over_10d": len(qr), "over_30d": len(plain), "open": len(rows)}}
 
+    async def open_for_patient(self, patient_ref: str) -> list[dict]:
+        """Ανοιχτά δανεικά ΕΝΟΣ πελάτη — για την καρτέλα του και το pop-up του ταμείου.
+
+        Ο φαρμακοποιός δεν ψάχνει τη λίστα δανεικών όταν έχει τον πελάτη μπροστά του· η
+        πληροφορία πρέπει να τον βρει εκεί που ήδη κοιτάζει.
+        """
+        if not (patient_ref or "").strip():
+            return []
+        rows = await self.find({"status": OPEN, "patient_ref": str(patient_ref).strip()},
+                               sort=[("created_at", 1)], limit=50)
+        for r in rows:
+            r["_id"] = str(r["_id"])
+        return rows
+
     # ── ταύτιση με εκτελεσμένες συνταγές (Β φάση) ────────────────────────────────────────────
     async def matches(self, *, days: int = 45, limit: int = 50) -> list[dict]:
         """Ανοιχτά δανεικά που ΜΟΙΑΖΟΥΝ με πρόσφατη εκτέλεση — προτάσεις προς επιβεβαίωση.
@@ -150,8 +171,12 @@ class AdvanceDispensingRepository(BaseRepository):
                 # ΓΙΑΤΙ ταιριάζει — ο φαρμακοποιός πρέπει να βλέπει τη βάση της πρότασης, όχι
                 # να την εμπιστεύεται στα τυφλά.
                 "matched_on": "ταινία/σειριακό" if strips else "παρτίδα (LOT)",
-                "same_patient": bool(loan.get("patient_ref") is not None
-                                     and (ex or {}).get("patient_ref") == loan["patient_ref"]),
+                # ⚠ Τα executions κρατούν `patient_ref` ως ObjectId, τα δανεικά ως string.
+                # Χωρίς str() η σύγκριση ήταν ΠΑΝΤΑ False και το «ίδιος πελάτης» δεν εμφανιζόταν
+                # ποτέ — ακριβώς η ένδειξη που κάνει την πρόταση αξιόπιστη.
+                "same_patient": bool(loan.get("patient_ref")
+                                     and str((ex or {}).get("patient_ref") or "")
+                                     == str(loan["patient_ref"])),
             })
             if len(out) >= limit:
                 break

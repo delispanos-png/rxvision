@@ -8,9 +8,9 @@
    Η ΤΑΥΤΙΣΗ ΕΙΝΑΙ ΠΡΟΤΑΣΗ, ΟΧΙ ΠΡΑΞΗ: η ταινία γνησιότητας δεν είναι μοναδική (μετρημένο: 15%
    επαναλαμβάνονται), οπότε το τελικό «ναι» το δίνει πάντα ο άνθρωπος. */
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { HandCoins, ScanLine, Check, X, Clock, AlertTriangle, Plus, Trash2 } from "lucide-react";
+import { HandCoins, ScanLine, Check, X, Clock, AlertTriangle, Plus, Trash2, Search, UserRound } from "lucide-react";
 import { api } from "@/lib/apiClient";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
 import { appAlert, appConfirm, appPrompt } from "@/store/dialogStore";
@@ -20,6 +20,7 @@ type Item = { name?: string; gtin?: string; batch?: string; strip?: string; lot?
               expiry?: string; qty?: number; has_qr?: boolean; hmvo_uploaded?: boolean };
 type Loan = { _id: string; patient_name: string; items: Item[]; status: string;
               created_at: string; note?: string };
+type Hit = { patient_id: string; name: string | null; amka: string | null; last_seen?: string | null };
 type Match = { loan_id: string; patient_name: string; created_at: string; items: string[];
                execution: { external_id: string | null; executed_at: string | null };
                matched_on: string; same_patient: boolean };
@@ -60,10 +61,25 @@ export default function AdvanceDispensingsPage() {
 function Inner() {
   const t = useT();
   const qc = useQueryClient();
-  const [name, setName] = useState("");
+  const [patient, setPatient] = useState<Hit | null>(null);
+  const [term, setTerm] = useState("");
+  const [openList, setOpenList] = useState(false);
   const [scan, setScan] = useState("");
+  const scanRef = useRef<HTMLInputElement>(null);
   const [items, setItems] = useState<Item[]>([]);
   const [busy, setBusy] = useState(false);
+
+  // Ο πελάτης ΕΠΙΛΕΓΕΤΑΙ — δεν γράφεται. Ελεύθερο κείμενο σήμαινε ότι «Κυρία Μαρία» και
+  // «ΜΑΡΙΑ Κ.» γίνονταν δύο οφειλέτες, το χρέος δεν φαινόταν ποτέ στην καρτέλα του πελάτη και
+  // καμία συνταγή δεν μπορούσε να το ξεχρεώσει αυτόματα.
+  const [debounced, setDebounced] = useState("");
+  useEffect(() => { const h = setTimeout(() => setDebounced(term.trim()), 250); return () => clearTimeout(h); }, [term]);
+  const hits = useQuery({
+    queryKey: ["adv", "patients", debounced],
+    queryFn: () => api<{ items: Hit[] }>(`/advance-dispensings/patients?q=${encodeURIComponent(debounced)}`),
+    enabled: debounced.length >= 2 && !patient,
+    staleTime: 60_000,
+  });
 
   const open = useQuery({ queryKey: ["adv", "open"], queryFn: () => api<{ items: Loan[] }>("/advance-dispensings?status=open") });
   const late = useQuery({ queryKey: ["adv", "overdue"], queryFn: () => api<{ qr_over_10d: Loan[]; over_30d: Loan[]; counts: Record<string, number> }>("/advance-dispensings/overdue") });
@@ -78,14 +94,21 @@ function Inner() {
   }
 
   async function save() {
-    if (!name.trim()) { appAlert(t("Γράψε όνομα πελάτη.", "Enter a customer name.")); return; }
+    if (!patient) { appAlert(t("Διάλεξε πελάτη από τη λίστα.", "Pick a customer from the list.")); return; }
     if (!items.length) { appAlert(t("Σάρωσε ή γράψε τουλάχιστον ένα σκεύασμα.", "Add at least one product.")); return; }
     setBusy(true);
     try {
-      await api("/advance-dispensings", { method: "POST", body: JSON.stringify({ patient_name: name.trim(), items }) });
-      setName(""); setItems([]);
+      // ΜΙΑ κίνηση = ένας πελάτης + ΟΛΑ όσα του δόθηκαν τώρα. Ο φαρμακοποιός δεν καταχωρεί
+      // γραμμή-γραμμή· σαρώνει τα κουτιά στη σειρά και πατάει μία φορά «Καταχώρηση».
+      await api("/advance-dispensings", { method: "POST", body: JSON.stringify({
+        patient_name: patient.name || patient.amka || "—", patient_ref: patient.patient_id,
+        amka: patient.amka, items }) });
+      setPatient(null); setTerm(""); setItems([]);
       qc.invalidateQueries({ queryKey: ["adv"] });
-    } catch { appAlert(t("Δεν αποθηκεύτηκε.", "Not saved.")); }
+    } catch (e) {
+      const msg = (e as { problem?: { detail?: { message?: string } } })?.problem?.detail?.message;
+      appAlert(msg || t("Δεν αποθηκεύτηκε.", "Not saved."));
+    }
     finally { setBusy(false); }
   }
 
@@ -175,37 +198,86 @@ function Inner() {
         </section>
       )}
 
-      {/* ΚΑΤΑΓΡΑΦΗ */}
+      {/* ΚΑΤΑΓΡΑΦΗ — ΕΝΑΣ πελάτης επάνω, ΟΣΑ σκευάσματα θέλει από κάτω, μία αποθήκευση. */}
       <section className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
-        <h2 className="mb-3 text-sm font-semibold text-slate-700 dark:text-slate-200">{t("Νέο δανεικό", "New loan")}</h2>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <label className="block text-xs font-medium text-slate-500">
-            {t("Πελάτης", "Customer")}
-            <input value={name} onChange={(e) => setName(e.target.value)}
-              placeholder={t("ονοματεπώνυμο", "full name")}
-              className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-800" />
-          </label>
-          <label className="block text-xs font-medium text-slate-500">
-            {t("Σάρωση κουτιού ή παρτίδα", "Scan box or batch")}
-            <div className="mt-1 flex gap-2">
-              <input value={scan} onChange={(e) => setScan(e.target.value)}
-                onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addScan(); } }}
-                placeholder={t("σάρωσε το 2D — ή γράψε LOT", "scan the 2D — or type LOT")}
-                className="block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-800" />
-              <button onClick={addScan} className="inline-flex items-center gap-1 rounded-lg border border-slate-300 px-3 text-sm text-slate-700 hover:bg-slate-50">
-                <Plus className="h-4 w-4" />
+        <h2 className="mb-3 text-sm font-semibold text-slate-700 dark:text-slate-200">{t("Νέα προχορήγηση", "New advance dispensing")}</h2>
+
+        {/* 1. ΠΕΛΑΤΗΣ */}
+        <div className="relative">
+          <span className="mb-1 block text-xs font-medium text-slate-500">{t("1. Πελάτης", "1. Customer")}</span>
+          {patient ? (
+            <div className="flex items-center gap-2 rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm dark:border-emerald-800 dark:bg-emerald-950/30">
+              <UserRound className="h-4 w-4 text-emerald-600" />
+              <span className="font-medium text-emerald-900 dark:text-emerald-200">{patient.name || "—"}</span>
+              {patient.amka && <span className="text-xs text-emerald-700/70 dark:text-emerald-300/60">ΑΜΚΑ {patient.amka}</span>}
+              <button onClick={() => { setPatient(null); setTerm(""); }} className="ml-auto text-emerald-700 hover:text-rose-600">
+                <X className="h-4 w-4" />
               </button>
             </div>
-          </label>
+          ) : (
+            <>
+              <div className="flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 dark:border-slate-600 dark:bg-slate-800">
+                <Search className="h-4 w-4 shrink-0 text-slate-400" />
+                <input value={term} autoComplete="off"
+                  onChange={(e) => { setTerm(e.target.value); setOpenList(true); }}
+                  onFocus={() => setOpenList(true)}
+                  placeholder={t("όνομα, ΑΜΚΑ ή τηλέφωνο — τουλάχιστον 2 χαρακτήρες", "name, ΑΜΚΑ or phone — at least 2 characters")}
+                  className="w-full bg-transparent text-sm outline-none" />
+                {hits.isFetching && <span className="text-xs text-slate-400">…</span>}
+              </div>
+              {openList && debounced.length >= 2 && (
+                <div className="absolute z-20 mt-1 max-h-72 w-full overflow-auto rounded-xl border border-slate-200 bg-white shadow-lg dark:border-slate-700 dark:bg-slate-900">
+                  {!hits.isFetching && !hits.data?.items?.length && (
+                    <p className="px-3 py-2.5 text-sm text-slate-400">
+                      {t("Κανένας πελάτης. Φτιάξε πρώτα καρτέλα στους Ασφαλισμένους.",
+                         "No customer found. Create the card first.")}
+                    </p>
+                  )}
+                  {(hits.data?.items || []).map((h) => (
+                    <button key={h.patient_id} onClick={() => { setPatient(h); setOpenList(false); setTimeout(() => scanRef.current?.focus(), 30); }}
+                      className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-slate-50 dark:hover:bg-slate-800">
+                      <UserRound className="h-4 w-4 shrink-0 text-slate-400" />
+                      <span className="font-medium text-slate-800 dark:text-slate-100">{h.name || "—"}</span>
+                      {h.amka && <span className="text-xs text-slate-400">ΑΜΚΑ {h.amka}</span>}
+                      {h.last_seen && <span className="ml-auto text-xs text-slate-400">{fmt(h.last_seen)}</span>}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
         </div>
+
+        {/* 2. ΣΚΕΥΑΣΜΑΤΑ — όσα θέλει, με τη σειρά */}
+        <div className="mt-4">
+          <span className="mb-1 block text-xs font-medium text-slate-500">
+            {t("2. Σκευάσματα που δόθηκαν — σάρωσε το ένα μετά το άλλο", "2. Products given — scan them one after another")}
+          </span>
+          <div className="flex gap-2">
+            <input ref={scanRef} value={scan} onChange={(e) => setScan(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addScan(); } }}
+              placeholder={t("σάρωσε το 2D — ή γράψε LOT / όνομα", "scan the 2D — or type LOT / name")}
+              className="block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-800" />
+            <button onClick={addScan} className="inline-flex items-center gap-1 rounded-lg border border-slate-300 px-3 text-sm text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200">
+              <Plus className="h-4 w-4" />{t("Προσθήκη", "Add")}
+            </button>
+          </div>
+        </div>
+
         {!!items.length && (
           <ul className="mt-3 space-y-1.5">
             {items.map((i, n) => (
-              <li key={n} className="flex items-center gap-2 rounded-lg bg-slate-50 px-3 py-1.5 text-xs dark:bg-slate-800">
+              <li key={n} className="flex flex-wrap items-center gap-2 rounded-lg bg-slate-50 px-3 py-1.5 text-xs dark:bg-slate-800">
                 <ScanLine className="h-3.5 w-3.5 text-slate-400" />
                 <input value={i.name || ""} onChange={(e) => setItems((x) => x.map((y, k) => k === n ? { ...y, name: e.target.value } : y))}
                   placeholder={t("όνομα σκευάσματος (προαιρετικό)", "product name (optional)")}
                   className="w-56 rounded border border-slate-200 px-2 py-1 dark:border-slate-600 dark:bg-slate-900" />
+                <label className="flex items-center gap-1 text-slate-500">
+                  {t("τεμ.", "qty")}
+                  <input type="number" min={1} value={i.qty ?? 1}
+                    onChange={(e) => setItems((x) => x.map((y, k) => k === n ? { ...y, qty: Math.max(1, Number(e.target.value) || 1) } : y))}
+                    className="w-14 rounded border border-slate-200 px-2 py-1 dark:border-slate-600 dark:bg-slate-900" />
+                </label>
                 <span className="text-slate-500">
                   {i.gtin ? `GTIN ${i.gtin}` : ""} {i.batch ? `· ${t("παρτ.", "batch")} ${i.batch}` : ""}
                   {i.strip ? ` · ${t("ταινία", "strip")} ${i.strip}` : ""} {i.lot && !i.gtin ? `LOT ${i.lot}` : ""}
@@ -217,9 +289,12 @@ function Inner() {
             ))}
           </ul>
         )}
-        <button onClick={save} disabled={busy}
+
+        <button onClick={save} disabled={busy || !patient || !items.length}
           className="mt-3 rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-50">
-          {t("Καταχώρηση δανεικού", "Record loan")}
+          {items.length > 1
+            ? t(`Καταχώρηση ${items.length} σκευασμάτων`, `Record ${items.length} products`)
+            : t("Καταχώρηση", "Record")}
         </button>
       </section>
 

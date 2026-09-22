@@ -116,7 +116,7 @@ export function Sidebar() {
   const visible = (href?: string) => !href || !hiddenItems.has(href);
   /** Ένα φύλλο = ένας προορισμός, με το εικονίδιο του γονιού του. */
   const leavesOfNode = (n: Node) => n.children
-    ? n.children.filter((c) => visible(c.href)).map((c) => ({ href: c.href, label: `${n.label} · ${c.label}`, en: `${n.en} · ${c.en}`, icon: n.icon }))
+    ? n.children.filter((c) => visible(c.href) && allowedMod(c.module)).map((c) => ({ href: c.href, label: `${n.label} · ${c.label}`, en: `${n.en} · ${c.en}`, icon: n.icon }))
     : n.href && visible(n.href) ? [{ href: n.href, label: n.label, en: n.en, icon: n.icon }] : [];
   const groups = GROUPS
     .filter((g) => !hiddenGroups.has(g.title))
@@ -124,7 +124,12 @@ export function Sidebar() {
       ...g,
       items: g.items
         .filter((n) => allowedMod(n.module) || canUpsell(n.module))
-        .map((n) => (n.children ? { ...n, children: n.children.filter((c) => visible(c.href)) } : n))
+        // Τα ΠΑΙΔΙΑ φιλτράρονται ΚΑΙ ως προς το module τους, όχι μόνο ως προς τις
+        // προτιμήσεις. Αλλιώς, μόλις η ενότητα ανοίξει για ΕΝΑ πρόσθετο, θα φαίνονταν
+        // και οι υπόλοιπες επιλογές της — σελίδες που ο πελάτης δεν έχει αγοράσει.
+        .map((n) => (n.children
+          ? { ...n, children: n.children.filter((c) => visible(c.href) && allowedMod(c.module)) }
+          : n))
         // γονέας που έμεινε χωρίς παιδιά δεν έχει πού να οδηγήσει → φεύγει
         .filter((n) => (n.children ? n.children.length > 0 : visible(n.href))),
     }))

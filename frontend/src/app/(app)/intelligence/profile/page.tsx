@@ -12,6 +12,7 @@ import { useT } from "@/store/prefStore";
 import { fmtNum, fmtEur, fmtDec, scanRxBarcode } from "@/lib/formatters";
 import { KpiCard } from "@/components/kpi/KpiCard";
 import { CoachStrip } from "@/components/coach/CoachStrip";
+import { AdvanceLoanNotice } from "@/components/advance/AdvanceLoanNotice";
 import { ContactCard } from "@/components/patients/ContactCard";
 import { MeasurementsCard } from "@/components/patients/MeasurementsCard";
 import { MedScheduleCard } from "@/components/patients/MedScheduleCard";
@@ -266,6 +267,10 @@ export default function PatientProfilePage() {
               {p.vip && <div className="mt-1 text-xs text-slate-500">{t("Κατάταξη αξίας", "Value rank")}: #{p.vip.rank}/{fmtNum(p.vip.of)} ({t("top", "top")} {(p.vip.rank / p.vip.of * 100).toFixed(1)}%)</div>}
             </div>
           </div>
+
+          {/* Εκκρεμεί δανεικό; Μπαίνει ΠΑΝΩ από όλα: είναι το μόνο που μπορεί να ζητηθεί πίσω
+              όσο ο πελάτης είναι ακόμη μπροστά σου. */}
+          <AdvanceLoanNotice patientId={p.patient.id} />
 
           {/* Μόνιμη ειδοποίηση: τα στοιχεία επικοινωνίας θέλουν ενημέρωση/επιβεβαίωση */}
           {contactSt.data?.needs_confirmation && (

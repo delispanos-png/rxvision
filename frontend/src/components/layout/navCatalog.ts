@@ -41,7 +41,8 @@ export const NAV_GROUPS: Group[] = [
       { href: "/future#coverage", label: "Κάλυψη περιόδου", en: "Period coverage" },
       { href: "/future#forecast", label: "Πρόβλεψη κάλυψης", en: "Coverage forecast" },
     ] },
-    { label: "Ασφαλισμένοι", en: "Patients", icon: Users, module: "patient_analytics", children: [
+    { label: "Ασφαλισμένοι", en: "Patients", icon: Users,
+      module: ["patient_analytics", "advance_dispensing"], children: [
       { href: "/patients#list", label: "Λίστα", en: "List" },
       { href: "/patients#kpi", label: "Δείκτες", en: "Indicators" },
       { href: "/patients/verify-contacts", label: "Επιβεβαίωση στοιχείων", en: "Confirm contacts" },
