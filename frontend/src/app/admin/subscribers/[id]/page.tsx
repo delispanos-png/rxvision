@@ -17,6 +17,7 @@ type Detail = {
   tenant: { id: string; name: string; status: string; country: string; opened_via: string; external_ref: string; created_at: string; contact_email?: string; contact_phone?: string; company?: BillingInfo; billing_profile?: BillingInfo; store?: { name?: string; code?: string }; demo?: boolean };
   subscription: { plan: string; plan_name: string; status: string; effective_status: string; product_code: string; features: Record<string, unknown>; limits: Record<string, unknown>; billing_cycle: string; seats: number; mrr: number; trial_ends_at: string | null; current_period_end: string | null; source: string };
   modules?: Record<string, "enabled" | "trial" | "locked">;
+  module_trials?: Record<string, string>;   // module → ημερομηνία λήξης δοκιμής
   users: User[];
   active_now?: number;
   sync: { source: string; status: string; started_at: string; stats: Record<string, number> }[];
@@ -43,6 +44,7 @@ const MODULE_LABELS: [string, string][] = [
   ["nutrition", "🥗 Διατροφή (AI πλάνο ανά ασθενή)"],
   ["marketing", "🎯 Στοχευμένη Προώθηση"],
   ["vaccination_programs", "💉 Περιοδικός Εμβολιασμός (ζωστήρας/τέτανος/πνευμονιόκοκκος)"],
+  ["therapy_programs", "🔁 Θεραπείες με Επανάληψη (Prolia/Ajovy/Stelara)"],
 ];
 type Creds = {
   users: User[];
@@ -168,7 +170,13 @@ export default function TenantCardPage() {
       const url = `${r.app_url}/login#imp=${encodeURIComponent(`${r.access_token}~${r.refresh_token}`)}`;
       window.open(url, "_blank", "noopener");
       setNotice(`Άνοιξε νέα καρτέλα συνδεδεμένη ως ${r.as_email}. Η συνεδρία υποστήριξης λήγει σε 30 λεπτά.`);
-    } catch { setNotice("Σφάλμα — η ενέργεια απέτυχε. Δοκιμάστε ξανά."); }
+    } catch (e) {
+      // Το «δεν έχεις δικαίωμα» πρέπει να λέγεται καθαρά — αλλιώς μοιάζει με βλάβη.
+      const det = e instanceof ApiError ? (e.problem as { detail?: { error?: string } } | null)?.detail : undefined;
+      setNotice(e instanceof ApiError && e.status === 403 && det?.error === "insufficient_permissions"
+        ? "Δεν έχεις δικαίωμα «Σύνδεση ως πελάτης». Ζήτησέ το από διαχειριστή (Ομάδες & δικαιώματα)."
+        : "Σφάλμα — η ενέργεια απέτυχε. Δοκιμάστε ξανά.");
+    }
     finally { setBusy(false); }
   }
 
@@ -259,12 +267,36 @@ export default function TenantCardPage() {
         <p className="mb-3 text-xs text-slate-400">Ό,τι είναι κλειστό δεν εμφανίζεται καθόλου στο πάνελ του φαρμακοποιού. Οι αλλαγές ισχύουν μετά την επόμενη σύνδεσή του.</p>
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
           {MODULE_LABELS.map(([key, label]) => {
-            const on = data.modules?.[key] === "enabled" || data.modules?.[key] === "trial";
+            const state = data.modules?.[key];
+            const on = state === "enabled" || state === "trial";
+            // Δοκιμή σε εξέλιξη: φαίνεται ΞΕΧΩΡΙΣΤΑ, γιατί το σβήσιμο τη σκοτώνει οριστικά —
+            // το ξανα-άναμμα δίνει μόνιμη δωρεάν πρόσβαση, ΟΧΙ δοκιμή.
+            const trialEnd = state === "trial" ? data.module_trials?.[key] : undefined;
+            const toggle = (v: boolean) => act(
+              () => adminApi(`/admin/tenants/${encodeURIComponent(id)}/modules`, {
+                method: "PUT", body: JSON.stringify({ modules: { [key]: v ? "enabled" : "locked" } }),
+              }), v ? "Ενεργοποιήθηκε ✓" : "Απενεργοποιήθηκε ✓");
             return (
-              <label key={key} className="flex cursor-pointer items-center justify-between rounded-lg border border-slate-200 px-3 py-2 text-sm hover:bg-slate-50">
-                <span className="text-slate-700">{label}</span>
+              <label key={key} className={`flex cursor-pointer items-center justify-between rounded-lg border px-3 py-2 text-sm hover:bg-slate-50 ${trialEnd ? "border-amber-300 bg-amber-50/40" : "border-slate-200"}`}>
+                <span className="text-slate-700">
+                  {label}
+                  {trialEnd && (
+                    <span className="ml-2 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800">
+                      δοκιμή έως {new Date(trialEnd).toLocaleDateString("el-GR", { day: "2-digit", month: "2-digit", year: "numeric" })}
+                    </span>
+                  )}
+                </span>
                 <input type="checkbox" checked={on} disabled={busy}
-                  onChange={(e) => { const v = e.target.checked; act(() => adminApi(`/admin/tenants/${encodeURIComponent(id)}/modules`, { method: "PUT", body: JSON.stringify({ modules: { [key]: v ? "enabled" : "locked" } }) }), v ? "Ενεργοποιήθηκε ✓" : "Απενεργοποιήθηκε ✓"); }}
+                  onChange={async (e) => {
+                    const v = e.target.checked;
+                    if (!v && trialEnd && !(await appConfirm(
+                      `Τρέχει δοκιμαστική περίοδος έως ${new Date(trialEnd).toLocaleDateString("el-GR")}. Αν το κλείσεις, η δοκιμή ΤΕΛΕΙΩΝΕΙ οριστικά — το ξανα-άνοιγμα δίνει μόνιμη δωρεάν πρόσβαση, όχι δοκιμή. Να συνεχίσω;`,
+                      { title: "Διακοπή δοκιμής", danger: true, confirmText: "Διακοπή δοκιμής" }))) {
+                      e.target.checked = true;   // επαναφορά — δεν στάλθηκε τίποτα
+                      return;
+                    }
+                    toggle(v);
+                  }}
                   className="h-4 w-4 accent-indigo-600" />
               </label>
             );
