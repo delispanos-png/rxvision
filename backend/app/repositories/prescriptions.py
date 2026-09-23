@@ -178,7 +178,11 @@ class PrescriptionRepository(BaseRepository):
              "$or": [{"details.coupons.strip": {"$in": keys}}, {"details.lot": {"$in": keys}}]}
         execs: list[dict] = []
         async for it in db["prescription_items"].find(
-                q, {"execution_id": 1, "name": 1, "details.lot": 1}).limit(limit):
+                q, {"execution_id": 1, "product_id": 1, "details.eof_code": 1}).limit(limit):
+            # Το όνομα ΔΕΝ είναι στη γραμμή της εκτέλεσης — ζει στη συλλογή προϊόντων μέσω
+            # `product_id`. Χωρίς αυτό το lookup το αποτέλεσμα έδειχνε κενό σκεύασμα, δηλαδή
+            # «κάποιος πήρε κάτι».
+            prod = await db["products"].find_one({"_id": it.get("product_id")}, {"name": 1}) or {}
             ex = await db["prescription_executions"].find_one(
                 {"_id": it.get("execution_id"), "tenant_id": self.tenant_id},
                 {"external_id": 1, "executed_at": 1, "patient_ref": 1, "amount_total": 1})
@@ -189,7 +193,8 @@ class PrescriptionRepository(BaseRepository):
                 {"full_name": 1, "amka": 1}) or {}
             execs.append({
                 "external_id": ex.get("external_id"), "executed_at": ex.get("executed_at"),
-                "product": it.get("name"), "amount_total": ex.get("amount_total"),
+                "product": prod.get("name") or (it.get("details") or {}).get("eof_code"),
+                "amount_total": ex.get("amount_total"),
                 "patient_id": str(ex.get("patient_ref") or "") or None,
                 "patient_name": mask_name(pat.get("full_name"), self.demo),
                 "amka": mask_amka(pat.get("amka"), self.demo)})
