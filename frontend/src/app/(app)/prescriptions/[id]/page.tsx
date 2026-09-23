@@ -2,7 +2,7 @@
 
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { CouponBarcode, type Coupon } from "@/components/barcode/CouponBarcode";
+import { CouponBarcode, couponScanString, type Coupon } from "@/components/barcode/CouponBarcode";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Repeat, Printer, QrCode, X, ShieldAlert, EyeOff, Eye } from "lucide-react";
 import { InteractionsModal } from "@/components/clinical/InteractionsModal";
@@ -83,21 +83,7 @@ function couponsOf(it: Item): Coupon[] {
   return [];
 }
 
-// Το string που θα έβγαζε ο σκάνερ διαβάζοντας τον κωδικό — για ΑΝΤΙΓΡΑΦΗ & επικόλληση στο εμπορικό
-// πρόγραμμα χωρίς σκανάρισμα. GS1: AIs χωρίς παρενθέσεις, με GS (ASCII 29) μετά από μεταβλητού μήκους AI.
-const GS = String.fromCharCode(29);
-function couponScanString(c: Coupon): string {
-  if (c.qr_product_code) {
-    const gtin = (c.qr_product_code || "").replace(/\D/g, "").padStart(14, "0").slice(-14);
-    let s = `01${gtin}`;
-    let lastVar = false;                       // 01 & 17 = σταθερού μήκους
-    if (c.qr_expiry) { s += `17${c.qr_expiry}`; lastVar = false; }
-    if (c.qr_batch) { s += `10${c.qr_batch}`; lastVar = true; }   // 10 = μεταβλητό
-    if (c.strip) { s += (lastVar ? GS : "") + `21${c.strip}`; }   // GS πριν το 21 μόνο μετά από μεταβλητό AI
-    return s;
-  }
-  return c.strip || "";
-}
+
 
 // Γραμμωτός κωδικός (Code-128) του barcode της συνταγής — ο φαρμακοποιός το σκανάρει για να βρει
 // τη συνταγή στο εμπορικό πρόγραμμα χωρίς να πληκτρολογεί τον αριθμό.

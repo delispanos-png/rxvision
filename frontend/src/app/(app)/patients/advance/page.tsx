@@ -12,7 +12,7 @@ import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { HandCoins, ScanLine, Check, X, Clock, AlertTriangle, Plus, Trash2, Search, UserRound, Copy, QrCode } from "lucide-react";
 import { api } from "@/lib/apiClient";
-import { CouponBarcode } from "@/components/barcode/CouponBarcode";
+import { CouponBarcode, couponScanString } from "@/components/barcode/CouponBarcode";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
 import { appAlert, appConfirm, appPrompt } from "@/store/dialogStore";
 import { useT } from "@/store/prefStore";
@@ -172,6 +172,12 @@ function Inner() {
      το συγκεκριμένο κουτί, και είναι αυτός που θα εμφανιστεί και στη συνταγή όταν έρθει. */
   const ItemLine = ({ i }: { i: Item }) => {
     const code = i.strip || i.lot;
+    /* Το κουπόνι όπως θα το έβγαζε ο σκάνερ. Η αντιγραφή ΜΟΝΟ του σειριακού ήταν άχρηστη για
+       επικόλληση: το εμπορικό πρόγραμμα περιμένει ολόκληρο το GS1 (GTIN + λήξη + παρτίδα +
+       σειριακό), ακριβώς όπως θα ερχόταν από το σκανάρισμα. */
+    const coupon = { qr_product_code: i.gtin || null, qr_batch: i.batch || null,
+                     qr_expiry: i.expiry || null, strip: code };
+    const scanText = couponScanString(coupon);
     // Ο σαρώσιμος κωδικός μένει ΚΛΕΙΣΤΟΣ. Ανοιχτός σε κάθε γραμμή, μια λίστα με δέκα δανεικά
     // γίνεται σεντόνι και χάνεται ακριβώς αυτό που ψάχνει ο φαρμακοποιός.
     const [showCode, setShowCode] = useState(false);
@@ -190,9 +196,12 @@ function Inner() {
           </span>
         )}
         {code && (
-          <button onClick={() => { navigator.clipboard?.writeText(code); setCopied(code);
+          <button onClick={() => { navigator.clipboard?.writeText(scanText); setCopied(code);
                                    setTimeout(() => setCopied(""), 1200); }}
-            title={t("Αντιγραφή κωδικού", "Copy code")}
+            title={i.gtin
+              ? t("Αντιγραφή ολόκληρου του QR (GS1), για επικόλληση στο εμπορικό πρόγραμμα",
+                   "Copy the full GS1 QR content, to paste into your POS software")
+              : t("Αντιγραφή κωδικού ταινίας", "Copy strip code")}
             className="inline-flex items-center gap-1 rounded border border-slate-200 px-1.5 py-0.5 font-mono text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300">
             <Copy className="h-3 w-3" />{code}
             {copied === code && <span className="text-emerald-600">{t("αντιγράφηκε", "copied")}</span>}
@@ -213,9 +222,7 @@ function Inner() {
       </div>
       {showCode && code && (
         <div className="mt-1.5 w-fit rounded-lg bg-white p-2 ring-1 ring-slate-200">
-          <CouponBarcode c={{ qr_product_code: i.gtin || null, qr_batch: i.batch || null,
-                              qr_expiry: i.expiry || null, strip: code }}
-                         size={i.gtin ? 150 : 230} />
+          <CouponBarcode c={coupon} size={i.gtin ? 150 : 230} />
         </div>
       )}
       </div>
