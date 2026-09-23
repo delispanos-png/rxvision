@@ -77,6 +77,13 @@ def subscription_reminders() -> dict:
     return asyncio.run(_run())
 
 
+@celery_app.task(name="app.workers.billing.module_trial_reminders")
+def module_trial_reminders() -> dict:
+    """Ημερήσιο: ενημέρωση αγοράς στους πελάτες που τους λήγει δοκιμή δυνατότητας."""
+    from app.services.module_trials_service import notify_expiring as _run
+    return asyncio.run(_run())
+
+
 @celery_app.task(name="app.workers.billing.check_central_balance")
 def check_central_balance() -> dict:
     """Έλεγχος κεντρικού υπολοίπου Apifon → ειδοποίηση admin αν πέσει κάτω από όριο (να μη στερέψει)."""

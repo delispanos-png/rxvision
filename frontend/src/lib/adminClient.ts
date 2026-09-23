@@ -70,17 +70,38 @@ function toLogin() {
   if (!window.location.pathname.startsWith("/admin/login")) window.location.href = "/admin/login";
 }
 
+/** 403 ΤΑΥΤΟΤΗΤΑΣ (όχι δικαιώματος): το token δεν είναι platform-admin ή ο λογαριασμός έκλεισε.
+ *  Μόνο αυτά δικαιολογούν αποσύνδεση — τα υπόλοιπα 403 σημαίνουν «συνδεδεμένος, αλλά δεν
+ *  επιτρέπεται αυτή η ενέργεια». Το backend τα ξεχωρίζει ρητά στο `detail`. */
+function isIdentityDenial(problem: unknown): boolean {
+  const d = (problem as { detail?: unknown } | null)?.detail;
+  if (typeof d === "string") return d === "platform_admin_required" || d === "forbidden";
+  const err = (d as { error?: string } | undefined)?.error;
+  // insufficient_permissions / route_not_mapped → λείπει δικαίωμα ή χάρτης, ΟΧΙ ταυτότητα
+  return err !== "insufficient_permissions" && err !== "route_not_mapped";
+}
+
 export async function adminApi<T>(path: string, init: RequestInit = {}): Promise<T> {
   let res = await fetch(`${API_BASE}${path}`, { ...init, headers: headers(init) });
-  if ((res.status === 401 || res.status === 403) && !path.startsWith("/platform/auth/")) {
+  // ΜΟΝΟ το 401 σημαίνει «δεν είσαι (πια) συνδεδεμένος» → ανανέωση και, αν αποτύχει, login.
+  if (res.status === 401 && !path.startsWith("/platform/auth/")) {
     if (await refresh()) {
       res = await fetch(`${API_BASE}${path}`, { ...init, headers: headers(init) });
     }
-    if (res.status === 401 || res.status === 403) {
+    if (res.status === 401) {
       toLogin();
       throw new ApiError(res.status, await res.json().catch(() => null));
     }
   }
-  if (!res.ok) throw new ApiError(res.status, await res.json().catch(() => null));
+  if (!res.ok) {
+    const problem = await res.json().catch(() => null);
+    // Ένα 403 έλλειψης δικαιώματος ΔΕΝ είναι λόγος αποσύνδεσης. Μέχρι 21/09/2026 ήταν, και
+    // ένα μόνο αίτημα χωρίς δικαίωμα (π.χ. impersonate) πετούσε τον χρήστη στο login — έμοιαζε
+    // με «κόλλησε το πάνελ» αντί για «δεν σου επιτρέπεται».
+    if (res.status === 403 && !path.startsWith("/platform/auth/") && isIdentityDenial(problem)) {
+      toLogin();
+    }
+    throw new ApiError(res.status, problem);
+  }
   return res.json() as Promise<T>;
 }
