@@ -10,8 +10,9 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { HandCoins, ScanLine, Check, X, Clock, AlertTriangle, Plus, Trash2, Search, UserRound, Copy } from "lucide-react";
+import { HandCoins, ScanLine, Check, X, Clock, AlertTriangle, Plus, Trash2, Search, UserRound, Copy, QrCode } from "lucide-react";
 import { api } from "@/lib/apiClient";
+import { CouponBarcode } from "@/components/barcode/CouponBarcode";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
 import { appAlert, appConfirm, appPrompt } from "@/store/dialogStore";
 import { useT } from "@/store/prefStore";
@@ -171,8 +172,12 @@ function Inner() {
      το συγκεκριμένο κουτί, και είναι αυτός που θα εμφανιστεί και στη συνταγή όταν έρθει. */
   const ItemLine = ({ i }: { i: Item }) => {
     const code = i.strip || i.lot;
+    // Ο σαρώσιμος κωδικός μένει ΚΛΕΙΣΤΟΣ. Ανοιχτός σε κάθε γραμμή, μια λίστα με δέκα δανεικά
+    // γίνεται σεντόνι και χάνεται ακριβώς αυτό που ψάχνει ο φαρμακοποιός.
+    const [showCode, setShowCode] = useState(false);
     return (
-      <div className="flex flex-wrap items-center gap-2 py-1 text-xs">
+      <div className="py-1 text-xs">
+      <div className="flex flex-wrap items-center gap-2">
         <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${i.gtin ? "bg-sky-100 text-sky-700" : "bg-amber-100 text-amber-700"}`}>
           {i.gtin ? "QR (HMVS)" : t("Ταινία ΕΟΦ", "ΕΟΦ strip")}
         </span>
@@ -196,6 +201,23 @@ function Inner() {
         {i.gtin && <span className="text-slate-400">GTIN {i.gtin}</span>}
         {i.batch && <span className="text-slate-400">{t("παρτ.", "batch")} {i.batch}</span>}
         {i.expiry && <span className="text-slate-400">{t("λήξη", "exp")} {i.expiry}</span>}
+        {code && (
+          <button onClick={() => setShowCode((v) => !v)}
+            className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 font-medium ${showCode
+              ? "border-brand-400 bg-brand-50 text-brand-700"
+              : "border-slate-200 text-slate-500 hover:bg-slate-50 dark:border-slate-700"}`}>
+            <QrCode className="h-3 w-3" />
+            {showCode ? t("Κλείσιμο", "Close") : t("Σάρωση", "Scan")}
+          </button>
+        )}
+      </div>
+      {showCode && code && (
+        <div className="mt-1.5 w-fit rounded-lg bg-white p-2 ring-1 ring-slate-200">
+          <CouponBarcode c={{ qr_product_code: i.gtin || null, qr_batch: i.batch || null,
+                              qr_expiry: i.expiry || null, strip: code }}
+                         size={i.gtin ? 150 : 230} />
+        </div>
+      )}
       </div>
     );
   };
