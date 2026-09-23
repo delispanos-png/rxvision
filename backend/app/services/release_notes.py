@@ -24,7 +24,7 @@ def _now() -> datetime:
 
 
 def _vkey(v: str) -> tuple:
-    """Ταξινόμηση έκδοσης ως ΑΡΙΘΜΩΝ: αλφαβητικά, η 1.9.0 έβγαινε μετά την 1.10.0."""
+    """Η έκδοση ως τριάδα αριθμών — για συγκρίσεις ΜΕΣΑ στην Python."""
     parts = []
     for p in str(v or "").split("."):
         try:
@@ -32,6 +32,17 @@ def _vkey(v: str) -> tuple:
         except ValueError:
             parts.append(0)
     return tuple(parts + [0, 0, 0])[:3]
+
+
+def _vsort(v: str) -> str:
+    """Κλειδί ταξινόμησης για τη MongoDB, ως ΣΥΜΠΛΗΡΩΜΕΝΗ ΣΥΜΒΟΛΟΣΕΙΡΑ («001.048.002»).
+
+    ΓΙΑΤΙ ΟΧΙ ΠΙΝΑΚΑΣ: η MongoDB ΔΕΝ συγκρίνει πίνακες στοιχείο-προς-στοιχείο όπως η Python —
+    χρησιμοποιεί το ΜΕΓΑΛΥΤΕΡΟ στοιχείο. Έτσι η 1.37.189 (max 189) έβγαινε πριν από την
+    1.48.2 (max 48) και το χρονολόγιο ήταν ανάκατο. Με μηδενικά μπροστά, η αλφαβητική
+    ταξινόμηση είναι σωστή αριθμητική ταξινόμηση.
+    """
+    return ".".join(f"{n:03d}" for n in _vkey(v))
 
 
 async def upsert(version: str, *, date: datetime | None = None, title: str = "",
@@ -53,15 +64,15 @@ async def upsert(version: str, *, date: datetime | None = None, title: str = "",
     await shared_db()[COLL].update_one({"_id": v}, {"$set": {
         "date": date or _now(), "title": str(title or "").strip()[:160],
         "items": clean, "published": bool(published), "updated_at": _now(),
-        "vkey": list(_vkey(v))}}, upsert=True)
+        "vsort": _vsort(v)}}, upsert=True)
     return {"ok": True, "version": v, "items": len(clean)}
 
 
 async def admin_list(limit: int = 300) -> list[dict]:
-    rows = [r async for r in shared_db()[COLL].find({}).sort("vkey", -1).limit(limit)]
+    rows = [r async for r in shared_db()[COLL].find({}).sort("vsort", -1).limit(limit)]
     for r in rows:
         r["version"] = r.pop("_id")
-        r.pop("vkey", None)
+        r.pop("vsort", None)
     return rows
 
 
@@ -80,7 +91,7 @@ async def delete(version: str) -> dict:
 async def for_tenant(tenant_id: str, limit: int = 40) -> dict:
     """Δημοσιευμένες σημειώσεις + πόσες δεν έχει δει ακόμη αυτό το φαρμακείο."""
     db = shared_db()
-    rows = [r async for r in db[COLL].find({"published": True}).sort("vkey", -1).limit(limit)]
+    rows = [r async for r in db[COLL].find({"published": True}).sort("vsort", -1).limit(limit)]
     seen = await db[SEEN].find_one({"_id": tenant_id}) or {}
     last = seen.get("last_version")
     lastk = _vkey(last) if last else (0, 0, 0)
@@ -98,7 +109,7 @@ async def for_tenant(tenant_id: str, limit: int = 40) -> dict:
 async def mark_seen(tenant_id: str) -> dict:
     """Ο πελάτης είδε τη λίστα → όλα μέχρι την τελευταία δημοσιευμένη παύουν να είναι «νέα»."""
     db = shared_db()
-    top = await db[COLL].find({"published": True}).sort("vkey", -1).limit(1).to_list(length=1)
+    top = await db[COLL].find({"published": True}).sort("vsort", -1).limit(1).to_list(length=1)
     if not top:
         return {"ok": True, "last_version": None}
     v = top[0]["_id"]
