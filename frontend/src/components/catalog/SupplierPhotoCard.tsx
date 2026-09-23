@@ -56,7 +56,7 @@ export function SupplierPhotoCard() {
   }
   async function test() {
     setBusy("test");
-    try { const r = await api<{ ok: boolean }>("/catalog/supplier/profarm/test", { method: "POST" }); await appAlert(r.ok ? t("✓ Επιτυχής σύνδεση στο Profarm.", "✓ Connected to Profarm successfully.") : t("✗ Αποτυχία σύνδεσης — έλεγξε τα στοιχεία.", "✗ Connection failed — check the credentials.")); }
+    try { const r = await api<{ ok: boolean }>("/catalog/supplier/profarm/test", { method: "POST" }); await appAlert(r.ok ? t("✓ Επιτυχής σύνδεση στη βάση ειδών.", "✓ Connected to the product database.") : t("✗ Αποτυχία σύνδεσης — έλεγξε τα στοιχεία.", "✗ Connection failed — check the credentials.")); }
     catch { await appAlert(t("Σφάλμα ελέγχου.", "Test error.")); }
     setBusy("");
   }
@@ -102,7 +102,7 @@ export function SupplierPhotoCard() {
         <div className="space-y-3 border-t border-slate-100 p-4 dark:border-slate-800">
           <p className="text-xs text-slate-500">{t("Σύνδεση με τον λογαριασμό σου στο B2B του προμηθευτή. Αντιστοιχίζουμε τα είδη με το ", "Connect with your supplier B2B account. We match items by ")}<b>barcode</b>{t(" και κατεβάζουμε την επίσημη φωτογραφία — μόνο όπου το barcode ταιριάζει ακριβώς. Ο κωδικός αποθηκεύεται κρυπτογραφημένος.", " and download the official photo — only where the barcode matches exactly. The password is stored encrypted.")}</p>
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-            <label className="text-xs text-slate-500">{t("Όνομα χρήστη Profarm", "Profarm username")}
+            <label className="text-xs text-slate-500">{t("Όνομα χρήστη βάσης ειδών", "Product database username")}
               <input value={user} onChange={(e) => setUser(e.target.value)} placeholder={st.data?.username || "username"} className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-800" /></label>
             <label className="text-xs text-slate-500">{t("Κωδικός", "Password")} {configured && <span className="text-slate-400">{t("(κενό = αμετάβλητος)", "(blank = unchanged)")}</span>}
               <input type="password" value={pass} onChange={(e) => setPass(e.target.value)} placeholder="••••••••" className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-800" /></label>
@@ -143,7 +143,7 @@ export function SupplierPhotoCard() {
                     </button>
                     <button onClick={() => setStopped(true)} disabled={sync.running} className="inline-flex items-center gap-1.5 rounded-lg border border-rose-300 px-3 py-1.5 text-sm font-medium text-rose-600 hover:bg-rose-50 disabled:opacity-50 dark:border-rose-800">⏹ {t("Οριστική διακοπή", "Stop permanently")}</button>
                   </div>
-                  <p className="mt-1.5 text-[11px] text-slate-400">{t("Ψάχνει κάθε είδος χωρίς φωτο με το barcode του στο Profarm — μόνο ακριβή ταιριάσματα.", "Looks up every item without a photo by its barcode on Profarm — exact matches only.")}</p>
+                  <p className="mt-1.5 text-[11px] text-slate-400">{t("Ψάχνει κάθε είδος χωρίς φωτο με το barcode του στη βάση ειδών — μόνο ακριβή ταιριάσματα.", "Looks up every item without a photo by its barcode in the product database — exact matches only.")}</p>
                 </>
               )}
             </div>
