@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
-import { KeyRound, LogOut, Menu, Settings, User, Sun, Moon, PanelLeft, PanelLeftClose, Sparkles } from "lucide-react";
+import { KeyRound, LogOut, Menu, Settings, User, Sun, Moon, PanelLeft, PanelLeftClose, Sparkles, MessageSquare} from "lucide-react";
 import { api, queryKeys, logoutSession } from "@/lib/apiClient";
 import { useNavStore } from "@/store/navStore";
 import { usePref, useT } from "@/store/prefStore";
@@ -32,6 +32,10 @@ function initials(name: string): string {
 
 export function Topbar() {
   const router = useRouter();
+  // Αδιάβαστα μηνύματα φαρμακείων — ελαφρύ ερώτημα, ανανεώνεται μόνο του.
+  const chatQ = useQuery({ queryKey: ["pchat", "unread"], retry: false, refetchInterval: 60000,
+    queryFn: () => api<{ unread: number }>("/pharmacy-chat/groups") });
+  const chatUnread = chatQ.data?.unread ?? 0;
   const { theme, setTheme, locale, setLocale, collapsed, toggleCollapsed } = usePref();
   const t = useT();
   const { data } = useQuery({ queryKey: queryKeys.me(), queryFn: () => api<Me>("/auth/me"), retry: false });
@@ -123,6 +127,22 @@ export function Topbar() {
         </button>
       </Tooltip>
       <NotificationBells modules={data?.modules} />
+      {/* Μηνύματα συνεργαζόμενων φαρμακείων. Στο πάνω μενού και όχι στο πλάι: μια ερώτηση για
+          έλλειψη θέλει απάντηση ΤΩΡΑ, και κανείς δεν σκρολάρει μενού για να τη δει. */}
+      <Tooltip label={chatUnread > 0
+        ? t(`${chatUnread} νέα μηνύματα από φαρμακεία`, `${chatUnread} new pharmacy messages`)
+        : t("Συνεργαζόμενα φαρμακεία", "Partner pharmacies")}>
+        <button onClick={() => router.push("/settings/pharmacy-chat")}
+          aria-label={t("Μηνύματα φαρμακείων", "Pharmacy messages")}
+          className="relative grid h-9 w-9 place-items-center rounded-lg text-slate-500 hover:bg-white dark:text-slate-300 dark:hover:bg-slate-800">
+          <MessageSquare className={`h-[18px] w-[18px] ${chatUnread > 0 ? "text-indigo-600" : ""}`} />
+          {chatUnread > 0 && (
+            <span className="absolute -right-0.5 -top-0.5 grid h-4 min-w-[16px] place-items-center rounded-full bg-indigo-600 px-1 text-[10px] font-bold text-white">
+              {chatUnread > 99 ? "99+" : chatUnread}
+            </span>
+          )}
+        </button>
+      </Tooltip>
       <Tooltip label={t("Copilot — Βοηθός προγράμματος", "Copilot — App assistant")}>
         <button
           onClick={() => router.push("/copilot")}

@@ -76,6 +76,15 @@ async def leave(group_id: str, ctx: TenantContext = Depends(require(_PERM, modul
     return res
 
 
+@router.delete("/groups/{group_id}")
+async def delete_group(group_id: str, ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+    """Διαγραφή ομάδας — μόνο ο δημιουργός."""
+    res = await _repo(ctx).delete_group(group_id)
+    if not res.get("ok"):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail=res)
+    return res
+
+
 @router.get("/messages")
 async def thread(group_id: str, with_tenant: str | None = Query(None),
                  ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):

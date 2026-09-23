@@ -190,6 +190,24 @@ class PharmacyChatRepository:
         await self._db[GROUPS].update_one({"_id": gid}, {"$pull": {"members": self.me}})
         return {"ok": True}
 
+    async def delete_group(self, group_id: str) -> dict:
+        """Διαγραφή ομάδας — ΜΟΝΟ από τον δημιουργό της.
+
+        Φεύγουν μαζί προσκλήσεις και μηνύματα: μια ομάδα που δεν υπάρχει δεν πρέπει να αφήνει
+        πίσω της μηνύματα που κανείς δεν μπορεί πια να δει, ούτε προσκλήσεις που οδηγούν στο
+        πουθενά αν κάποιος τις αποδεχτεί αργότερα.
+        """
+        gid = _oid(group_id)
+        g = await self._db[GROUPS].find_one({"_id": gid, "owner_tenant_id": self.me})
+        if not g:
+            return {"ok": False, "error": "not_owner",
+                    "message": "Μόνο ο δημιουργός μπορεί να διαγράψει την ομάδα."}
+        msgs = await self._db[MESSAGES].delete_many({"group_id": gid})
+        await self._db[INVITES].delete_many({"group_id": gid})
+        await self._db[GROUPS].delete_one({"_id": gid})
+        return {"ok": True, "deleted_messages": msgs.deleted_count,
+                "members": len(g.get("members") or [])}
+
     # ── μηνύματα ─────────────────────────────────────────────────────────────────────────────
     def _visible_q(self, group_ids: list[ObjectId]) -> dict:
         """Ο ΜΟΝΟΣ ορισμός του τι βλέπει ο `me`. Κάθε ανάγνωση περνά από εδώ.

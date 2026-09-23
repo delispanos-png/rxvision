@@ -17,6 +17,7 @@ const TABS: { href: string; el: string; en: string; module?: string }[] = [
   { href: "/settings/ingestion", el: "Διασύνδεση ΗΔΥΚΑ", en: "ΗΔΥΚΑ Connection" },
   { href: "/settings/closing", el: "Κλείσιμο Μήνα", en: "Month Closing" },
   { href: "/settings/catalog", el: "Ενημέρωση καταλόγου", en: "Catalog updates", module: "catalog_seed" },
+  { href: "/settings/pharmacy-chat", el: "Συνεργαζόμενα φαρμακεία", en: "Partner pharmacies" },
   { href: "/settings/availability", el: "Ωράριο & Διαθεσιμότητα", en: "Hours & Availability" },
   { href: "/settings/communications", el: "Επικοινωνία", en: "Communications" },
   { href: "/settings/billing", el: "Χρέωση", en: "Billing" },

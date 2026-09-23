@@ -11,7 +11,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { MessageSquare, Users, Plus, Send, LogOut, Check, X, ShieldAlert } from "lucide-react";
+import { MessageSquare, Users, Plus, Send, LogOut, Check, X, ShieldAlert, Trash2} from "lucide-react";
 import { api } from "@/lib/apiClient";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
 import { appAlert, appConfirm, appPrompt } from "@/store/dialogStore";
@@ -92,6 +92,24 @@ function Inner() {
   async function respond(id: string, accept: boolean) {
     await api(`/pharmacy-chat/invites/${id}`, { method: "POST", body: JSON.stringify({ accept }) });
     qc.invalidateQueries({ queryKey: ["pchat"] });
+  }
+
+  async function removeGroup(g: Group) {
+    const others = g.members.length - 1;
+    if (!(await appConfirm(
+      t(`Οριστική διαγραφή της ομάδας «${g.name}»;` +
+        (others > 0 ? ` Θα χάσουν την πρόσβαση ${others} φαρμακεία και θα σβηστεί όλη η συνομιλία.` : ""),
+        `Permanently delete «${g.name}»?`),
+      { title: t("Διαγραφή ομάδας", "Delete group"), danger: true,
+        confirmText: t("Διαγραφή", "Delete") }))) return;
+    try {
+      await api(`/pharmacy-chat/groups/${g.id}`, { method: "DELETE" });
+      setGid("");
+      qc.invalidateQueries({ queryKey: ["pchat"] });
+    } catch (e) {
+      const d = (e as { problem?: { detail?: { message?: string } } })?.problem?.detail;
+      appAlert(d?.message || t("Απέτυχε.", "Failed."));
+    }
   }
 
   async function leave(g: Group) {
@@ -184,9 +202,15 @@ function Inner() {
                 </span>
                 <span className="ml-auto flex gap-1.5">
                   {active.owner ? (
-                    <button onClick={invite} className="inline-flex items-center gap-1 rounded-lg border border-slate-300 px-2.5 py-1 text-xs text-slate-600 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-300">
-                      <Plus className="h-3.5 w-3.5" />{t("Πρόσκληση με ΑΦΜ", "Invite by VAT")}
-                    </button>
+                    <>
+                      <button onClick={invite} className="inline-flex items-center gap-1 rounded-lg border border-slate-300 px-2.5 py-1 text-xs text-slate-600 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-300">
+                        <Plus className="h-3.5 w-3.5" />{t("Πρόσκληση με ΑΦΜ", "Invite by VAT")}
+                      </button>
+                      <button onClick={() => removeGroup(active)} title={t("Διαγραφή ομάδας", "Delete group")}
+                        className="inline-flex items-center gap-1 rounded-lg border border-rose-300 px-2 py-1 text-xs text-rose-600 hover:bg-rose-50">
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </>
                   ) : (
                     <button onClick={() => leave(active)} className="inline-flex items-center gap-1 rounded-lg border border-slate-300 px-2.5 py-1 text-xs text-slate-500 hover:bg-slate-50 dark:border-slate-600">
                       <LogOut className="h-3.5 w-3.5" />{t("Αποχώρηση", "Leave")}
