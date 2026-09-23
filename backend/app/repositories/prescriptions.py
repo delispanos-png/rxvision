@@ -27,6 +27,36 @@ def _oid(v):
         return None
 
 
+def _gs1_parts(raw: str) -> tuple[str | None, str | None, str | None]:
+    """GS1 2D → (σειριακό 21, παρτίδα 10, GTIN 01). Σκέτη ταινία ΕΟΦ → (None, None, None).
+
+    Διαβάζει ΣΕΙΡΙΑΚΑ τους application identifiers αντί για `find()`: το «10» ή το «21» μπορεί
+    κάλλιστα να εμφανιστεί ΜΕΣΑ σε σειριακό ή παρτίδα, και μια αναζήτηση υποσυμβολοσειράς θα
+    έκοβε τον κωδικό σε λάθος σημείο — δηλαδή θα ψάχναμε ανύπαρκτο κουτί.
+    """
+    GS = "\u001d"
+    s = re.sub(r"[\u001d\u241d]", GS, (raw or "").strip())
+    if not re.match(r"^01\d{14}", s):
+        return None, None, None
+    gtin, rest = s[2:16], s[16:]
+    fixed = {"11": 6, "13": 6, "15": 6, "17": 6}     # ημερομηνίες — σταθερού μήκους
+    serial = batch = None
+    while len(rest) >= 2:
+        ai, rest = rest[:2], rest[2:]
+        if ai in fixed:
+            rest = rest[fixed[ai]:]
+            continue
+        if ai in ("10", "21"):
+            val, _, rest = rest.partition(GS)      # μεταβλητού μήκους → μέχρι GS ή τέλος
+            if ai == "10":
+                batch = val or None
+            else:
+                serial = val or None
+            continue
+        break                                       # άγνωστο AI → σταματάμε, δεν μαντεύουμε
+    return serial, batch, gtin
+
+
 class PrescriptionRepository(BaseRepository):
     collection_name = "prescription_executions"
 
@@ -128,6 +158,54 @@ class PrescriptionRepository(BaseRepository):
             "items": items_out,
             "count": sum(len(i["checks"]) for i in items_out),
             "warnings": sum(1 for i in items_out for c in i["checks"] if c["level"] == "warning")})
+
+    async def by_coupon(self, code: str, limit: int = 20) -> dict:
+        """«Σε ποιον δώσαμε αυτό το κουτί;» — αναζήτηση από τον κωδικό του κουπονιού.
+
+        Δέχεται είτε ολόκληρο το GS1 του 2D (`01…17…10…21…`) είτε σκέτη ταινία ΕΟΦ, γιατί ο
+        σκάνερ δίνει άλλο string ανά τύπο κουτιού και ο φαρμακοποιός δεν πρέπει να ξέρει τη
+        διαφορά. Ψάχνει ΚΑΙ στις εκτελεσμένες συνταγές ΚΑΙ στα δανεικά: το κουτί μπορεί να
+        έφυγε με οποιονδήποτε από τους δύο τρόπους, και η ερώτηση είναι ίδια.
+        """
+        raw = (code or "").strip()
+        if not raw:
+            return {"serial": None, "executions": [], "loans": []}
+        serial, batch, gtin = _gs1_parts(raw)
+        keys = [k for k in {serial, raw.upper()} if k]
+        db = self._db
+        # ── εκτελέσεις ──
+        q = {"tenant_id": self.tenant_id,
+             "$or": [{"details.coupons.strip": {"$in": keys}}, {"details.lot": {"$in": keys}}]}
+        execs: list[dict] = []
+        async for it in db["prescription_items"].find(
+                q, {"execution_id": 1, "name": 1, "details.lot": 1}).limit(limit):
+            ex = await db["prescription_executions"].find_one(
+                {"_id": it.get("execution_id"), "tenant_id": self.tenant_id},
+                {"external_id": 1, "executed_at": 1, "patient_ref": 1, "amount_total": 1})
+            if not ex:
+                continue
+            pat = await db["patients_anonymized"].find_one(
+                {"_id": ex.get("patient_ref"), "tenant_id": self.tenant_id},
+                {"full_name": 1, "amka": 1}) or {}
+            execs.append({
+                "external_id": ex.get("external_id"), "executed_at": ex.get("executed_at"),
+                "product": it.get("name"), "amount_total": ex.get("amount_total"),
+                "patient_id": str(ex.get("patient_ref") or "") or None,
+                "patient_name": mask_name(pat.get("full_name"), self.demo),
+                "amka": mask_amka(pat.get("amka"), self.demo)})
+        # ── δανεικά ──
+        loans: list[dict] = []
+        async for ln in db["advance_dispensings"].find(
+                {"tenant_id": self.tenant_id,
+                 "$or": [{"items.strip": {"$in": keys}}, {"items.lot": {"$in": keys}}]},
+                {"patient_name": 1, "patient_ref": 1, "status": 1, "created_at": 1,
+                 "items": 1}).limit(limit):
+            loans.append({"_id": str(ln["_id"]), "patient_name": ln.get("patient_name"),
+                          "patient_id": ln.get("patient_ref"), "status": ln.get("status"),
+                          "created_at": ln.get("created_at"),
+                          "products": [i.get("name") for i in (ln.get("items") or []) if i.get("name")]})
+        return {"serial": serial or raw.upper(), "batch": batch, "gtin": gtin,
+                "executions": jsonsafe(execs), "loans": jsonsafe(loans)}
 
     async def execution_detail(self, external_id: str) -> dict | None:
         """Full drill-down for one executed prescription: doctor + (anonymised) patient +

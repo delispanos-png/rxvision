@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { Receipt, Wallet, Pill, AlertTriangle, Search, Download, HeartPulse, Stethoscope } from "lucide-react";
 import { api } from "@/lib/apiClient";
+import { CouponLookup } from "@/components/prescriptions/CouponLookup";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
 import { Tooltip } from "@/components/ui/Tooltip";
 import { useUiStore, filtersToQuery } from "@/store/uiStore";
@@ -277,6 +278,8 @@ export default function PrescriptionsPage() {
             return all;
           }} />
       </div>
+
+      <CouponLookup />
 
       <div className="mb-4 flex flex-wrap items-end gap-3">
         <DateRangeFilter />

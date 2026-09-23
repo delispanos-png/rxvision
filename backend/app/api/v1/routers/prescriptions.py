@@ -50,6 +50,16 @@ async def _flu_vaccination_rows(tenant_id: str, date_from, date_to, barcode, pag
     return {"page": page, "page_size": page_size, "items": jsonsafe(rows)}
 
 
+@router.get("/by-coupon")
+async def by_coupon(
+    code: str,
+    ctx: TenantContext = Depends(require("prescriptions:read", module="prescription_analytics")),
+):
+    """«Σε ποιον δώσαμε αυτό το κουτί;» — σαρώνεις το QR ή την ταινία ΕΟΦ και βρίσκεις τον πελάτη."""
+    repo = PrescriptionRepository(tenant_id=ctx.tenant_id, demo=ctx.demo)
+    return await repo.by_coupon(code)
+
+
 @router.get("/detail/{external_id}")
 async def execution_detail(
     external_id: str,
