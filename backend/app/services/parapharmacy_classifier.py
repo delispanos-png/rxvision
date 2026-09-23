@@ -18,6 +18,7 @@
 
 from __future__ import annotations
 
+import html
 import json
 import re
 
@@ -44,6 +45,18 @@ _VALID = set(PARAPHARMACY_CATEGORIES)
 def name_key(name: str) -> str:
     """Κλειδί μητρώου: ίδιο προϊόν γραμμένο με άλλα κενά/πεζά δεν πρέπει να ρωτηθεί δεύτερη φορά."""
     return re.sub(r"\s+", " ", (name or "").strip()).upper()
+
+
+def _match_key(name: str) -> str:
+    """Κλειδί ΑΝΤΙΣΤΟΙΧΙΣΗΣ της απάντησης του AI με το όνομα που στείλαμε.
+
+    ΓΙΑΤΙ ΔΕΝ ΑΡΚΕΙ ΤΟ ΙΔΙΟ ΤΟ ΟΝΟΜΑ: αρκετά ονόματα έχουν HTML entities από την πηγή
+    («APIVITA MEN&#039;SCARE»). Το μοντέλο τα «διορθώνει» στην απάντησή του σε απόστροφο, οπότε
+    το κλειδί δεν ταίριαζε πια με αυτό που είχαμε στείλει και η γραμμή πεταγόταν σιωπηλά —
+    μετρημένο: 971 ονόματα ρωτήθηκαν, μόνο 251 επέστρεψαν χρησιμοποιήσιμα. Εδώ κανονικοποιούμε
+    ΚΑΙ ΤΙΣ ΔΥΟ πλευρές και κρατάμε μόνο γράμματα/ψηφία.
+    """
+    return re.sub(r"[^0-9A-Za-zΑ-Ωα-ωΆ-Ώά-ώ]+", "", html.unescape(name or "")).upper()
 
 
 def _parse_json(text: str) -> dict:
@@ -77,7 +90,14 @@ async def _ask_ai(names: list[str]) -> dict:
                 messages=[{"role": "user",
                            "content": _PROMPT + json.dumps(batch, ensure_ascii=False)}])
             await ai_cost.record("__parapharmacy_cat__", _AI_MODEL, getattr(resp, "usage", None))
-            out.update(_parse_json("".join(b.text for b in resp.content if b.type == "text")))
+            got = _parse_json("".join(b.text for b in resp.content if b.type == "text"))
+            # Αντιστοίχισε την απάντηση στα ΟΝΟΜΑΤΑ ΠΟΥ ΣΤΕΙΛΑΜΕ, όχι σε ό,τι επέστρεψε το
+            # μοντέλο — αλλιώς κάθε μικροδιαφορά γραφής χάνει τη γραμμή.
+            wanted = {_match_key(n): n for n in batch}
+            for k, v in got.items():
+                orig = wanted.get(_match_key(k))
+                if orig:
+                    out[orig] = v
         except Exception:  # noqa: BLE001 — μια κακή παρτίδα δεν ρίχνει όλο το πέρασμα
             continue
     return out
