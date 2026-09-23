@@ -1523,8 +1523,9 @@ async def softone_bridge_rotate(_: PlatformContext = Depends(get_platform_admin)
     """Νέο token γέφυρας (αν διέρρευσε). Το παλιό παύει ΑΜΕΣΩΣ — ενημέρωσε τη CloudOn."""
     import secrets
     tok = secrets.token_urlsafe(32)
+    from app.services.platform_secrets import encrypt_fields
     await shared_db()["platform_settings"].update_one(
-        {"_id": "softone"}, {"$set": {"pull_token": tok}}, upsert=True)
+        {"_id": "softone"}, {"$set": encrypt_fields("softone", {"pull_token": tok})}, upsert=True)
     return {"token": tok}
 
 

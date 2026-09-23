@@ -55,8 +55,10 @@ async def ensure_pull_token() -> str:
     tok = (cfg.get("pull_token") or "").strip()
     if not tok:
         tok = secrets.token_urlsafe(32)
+        from app.services.platform_secrets import encrypt_fields
         await shared_db()["platform_settings"].update_one(
-            {"_id": "softone"}, {"$set": {"pull_token": tok}}, upsert=True)
+            {"_id": "softone"},
+            {"$set": encrypt_fields("softone", {"pull_token": tok})}, upsert=True)
     return tok
 
 

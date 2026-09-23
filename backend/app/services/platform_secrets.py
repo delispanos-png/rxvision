@@ -39,13 +39,19 @@ SECRET_FIELDS: dict[str, tuple[str, ...]] = {
     "anthropic": ("api_key",),
     "revolut": ("api_key", "webhook_secret"),
     "viva": ("api_key", "client_secret"),
-    "softone": ("password",),
+    # `pull_token`: κοινό μυστικό της γέφυρας SoftOne — ό,τι έχει και ένα password. Έλειπε από
+    # τη λίστα και γι' αυτό καθόταν σε καθαρό κείμενο στη Mongo (εντοπίστηκε 23/09/2026).
+    "softone": ("password", "pull_token"),
     "comms": ("apifon_token", "apifon_secret", "apifon_sms_token", "apifon_sms_secret"),
     "aade": ("password",),
     "smtp": ("password", "pass"),
     # `cloud` (Hetzner/Cloudflare/storage) IS read by bash tooling (mongo-backup/provision/ops-agent), but
     # those decrypt via infra/scripts/rxsecret.py (same Fernet key, derived from JWT_SECRET in .env).
     "cloud": ("hetzner_token", "cloudflare_token", "storage_password"),
+    # Noeton: κλειδιά εισερχόμενης ενσωμάτωσης. Κανένα σημείο του backend δεν τα διαβάζει σήμερα,
+    # αλλά όσο υπάρχουν στη βάση πρέπει να είναι κρυπτογραφημένα — ένα backup που διαρρέει δεν
+    # ρωτάει αν το χρησιμοποιούμε.
+    "noeton": ("api_key", "inbound_key", "webhook_secret"),
 }
 
 # `idika` (ΗΔΥΚΑ integrator key) has a NESTED structure: secrets live under test/production sub-docs.
