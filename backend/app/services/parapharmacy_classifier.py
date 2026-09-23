@@ -95,7 +95,18 @@ async def _ask_ai(names: list[str]) -> dict:
             # μοντέλο — αλλιώς κάθε μικροδιαφορά γραφής χάνει τη γραμμή.
             wanted = {_match_key(n): n for n in batch}
             for k, v in got.items():
-                orig = wanted.get(_match_key(k))
+                mk = _match_key(k)
+                orig = wanted.get(mk)
+                if not orig and len(mk) >= 12:
+                    # ΤΟ ΜΟΝΤΕΛΟ ΣΥΜΠΛΗΡΩΝΕΙ ΚΟΜΜΕΝΑ ΟΝΟΜΑΤΑ. Πολλά ονόματα είναι κομμένα στη
+                    # βάση («…50ML(ΚΑΡΔΑ») και το μοντέλο αναγνωρίζει το προϊόν και επιστρέφει
+                    # το πλήρες («…50ML(ΚΑΡΔΑΜΟ+ΠΡΟΠΟΛΗ)»). Κανένα ταίριασμα ακριβείας δεν
+                    # πετυχαίνει· ταιριάζουμε με πρόθεμα, ΜΟΝΟ αν η αντιστοίχιση είναι μοναδική
+                    # — αλλιώς θα βάζαμε κατηγορία σε λάθος προϊόν.
+                    cands = [w for w in wanted if len(w) >= 12
+                             and (mk.startswith(w) or w.startswith(mk))]
+                    if len(cands) == 1:
+                        orig = wanted[cands[0]]
                 if orig:
                     out[orig] = v
         except Exception:  # noqa: BLE001 — μια κακή παρτίδα δεν ρίχνει όλο το πέρασμα
