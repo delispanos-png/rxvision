@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { Compass, Check, BellOff, ArrowRight, Trophy, Flame, TrendingUp, Phone, PhoneOff, User, IdCard, FileText, ListChecks, Wallet, Droplets, Users2, SlidersHorizontal, CalendarRange, Target } from "lucide-react";
+import { Compass, Check, BellOff, ArrowRight, Trophy, Flame, TrendingUp, Phone, PhoneOff, User, IdCard, FileText, ListChecks, Wallet, Droplets, Users2, SlidersHorizontal, CalendarRange, Target, ChevronDown} from "lucide-react";
 import { api } from "@/lib/apiClient";
 import { appConfirm } from "@/store/dialogStore";
 import { useT } from "@/store/prefStore";
@@ -182,18 +182,18 @@ export default function CoachPage() {
       `Stop mentioning "${it.title}"? I'll stay quiet for a month.`))) mark.mutate({ key: it.key, action: "dismiss" });
   }
 
-  /* ΣΕΛΙΔΟΠΟΙΗΣΗ: ο Σύμβουλος βγάζει δεκάδες κάρτες και η σελίδα γινόταν ατέλειωτη — έχανες
-     το μενού και δεν ήξερες πού είσαι.
-
-     5 ΚΑΙ ΟΧΙ 10: οι κάρτες του Συμβούλου είναι μεγάλες (όνομα, ΑΜΚΑ, τηλέφωνο, παράγραφος
-     εξήγησης, κουμπιά). Με 10 η σελίδα έμενε ατέλειωτη και με 9 θέματα δεν εμφανιζόταν καν
-     πλοήγηση — δηλαδή η σελιδοποίηση δεν φαινόταν να υπάρχει. */
-  const PAGE = 5;
-  const [page, setPage] = useState(0);
+  /* ΛΙΣΤΑ ΠΟΥ ΑΔΕΙΑΖΕΙ, ΟΧΙ ΣΕΛΙΔΟΠΟΙΗΣΗ.
+     Ο φαρμακοποιός δεν «ξεφυλλίζει» τα θέματα — τα ΚΛΕΙΝΕΙ ένα-ένα. Με σελίδες, κάθε «Το έκανα»
+     αναδιάταζε ό,τι έβλεπε. 10 θέματα· μόλις κλείσει ένα ανεβαίνει το επόμενο. Τίποτα δεν
+     κρύβεται — τα υπόλοιπα είναι ένα κλικ. Κλειστά εξ ορισμού: δέκα ανοιχτά μαζί (όνομα, ΑΜΚΑ,
+     τηλέφωνο, παράγραφος, κουμπιά) είναι σεντόνι που δεν διαβάζεται. */
+  const FIRST = 10;
+  const [limit, setLimit] = useState(FIRST);
+  const [openKeys, setOpenKeys] = useState<Set<string>>(new Set());
   const allItems = q.data?.items ?? [];
-  const pages = Math.max(1, Math.ceil(allItems.length / PAGE));
-  const shown = allItems.slice(page * PAGE, page * PAGE + PAGE);
-  useEffect(() => { setPage(0); }, [allItems.length]);
+  const shown = allItems.slice(0, limit);
+  const toggleOpen = (k: string) =>
+    setOpenKeys((o) => { const n = new Set(o); if (n.has(k)) n.delete(k); else n.add(k); return n; });
 
   const hist = h.data?.items ?? [];
   const trend = useMemo(() => {
@@ -286,7 +286,8 @@ export default function CoachPage() {
                     <div key={it.key} className="relative overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
                       <span className={`absolute inset-y-0 left-0 w-1.5 ${tn.bar}`} />
                       <div className="p-4 pl-6">
-                        <div className="flex flex-wrap items-center gap-2">
+                        <button onClick={() => toggleOpen(it.key)}
+                          className="-m-1 flex w-[calc(100%+0.5rem)] flex-wrap items-center gap-2 rounded-lg p-1 text-left transition hover:bg-slate-50 dark:hover:bg-slate-800/50">
                           {it.emoji && <span className="text-base leading-none" aria-hidden>{it.emoji}</span>}
                           <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">{it.title}</h3>
                           <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${tn.chip}`}>{t(tn.label[0], tn.label[1])}</span>
@@ -295,7 +296,9 @@ export default function CoachPage() {
                               {t(`${it.streak}η μέρα`, `day ${it.streak}`)}
                             </span>
                           )}
-                        </div>
+                          <ChevronDown className={`ml-auto h-4 w-4 shrink-0 text-slate-400 transition-transform ${openKeys.has(it.key) ? "rotate-180" : ""}`} />
+                        </button>
+                        {openKeys.has(it.key) && (<>
 
                         {/* Ταυτότητα: ΠΟΙΟΝ ακριβώς αφορά + πώς τον βρίσκεις. Χωρίς αυτό η γραμμή
                             είναι παρατήρηση· με αυτό είναι ενέργεια. */}
@@ -348,26 +351,6 @@ export default function CoachPage() {
                             );
                           })}
 
-                {/* Πλοήγηση — μόνο όταν χρειάζεται. Επιστροφή στην κορυφή με την αλλαγή
-                    σελίδας, αλλιώς ο χρήστης μένει στο τέλος και νομίζει ότι δεν άλλαξε. */}
-                {pages > 1 && (
-                  <div className="flex flex-wrap items-center justify-center gap-2 pt-2">
-                    <button onClick={() => { setPage((p) => Math.max(0, p - 1)); window.scrollTo({ top: 0, behavior: "smooth" }); }}
-                      disabled={page === 0}
-                      className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-600 hover:bg-slate-50 disabled:opacity-40 dark:border-slate-600 dark:text-slate-300">
-                      ← {t("Προηγούμενα", "Previous")}
-                    </button>
-                    <span className="text-sm text-slate-500">
-                      {t(`${page * PAGE + 1}–${Math.min(allItems.length, (page + 1) * PAGE)} από ${allItems.length}`,
-                         `${page * PAGE + 1}–${Math.min(allItems.length, (page + 1) * PAGE)} of ${allItems.length}`)}
-                    </span>
-                    <button onClick={() => { setPage((p) => Math.min(pages - 1, p + 1)); window.scrollTo({ top: 0, behavior: "smooth" }); }}
-                      disabled={page >= pages - 1}
-                      className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-600 hover:bg-slate-50 disabled:opacity-40 dark:border-slate-600 dark:text-slate-300">
-                      {t("Επόμενα", "Next")} →
-                    </button>
-                  </div>
-                )}
                         </div>
 
                         {/* Γραμμή 2 — τι κάνω με το ίδιο το εύρημα. Πάντα χωριστά, ώστε να μη
@@ -382,10 +365,26 @@ export default function CoachPage() {
                             <BellOff className="h-3.5 w-3.5" />{t("Δεν με αφορά", "Not relevant")}
                           </button>
                         </div>
+                        </>)}
                       </div>
                     </div>
                   );
                 })}
+
+                {/* Τίποτα δεν κρύβεται: λέμε πόσα δείχνουμε και τα υπόλοιπα είναι ένα κλικ. */}
+                {allItems.length > limit && (
+                  <div className="flex flex-col items-center gap-2 pt-1">
+                    <span className="text-xs text-slate-400">
+                      {t(`Δείχνονται ${shown.length} από ${allItems.length} θέματα`,
+                         `Showing ${shown.length} of ${allItems.length}`)}
+                    </span>
+                    <button onClick={() => setLimit(allItems.length)}
+                      className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800">
+                      {t(`Δες και τα υπόλοιπα ${allItems.length - limit}`, `Show the other ${allItems.length - limit}`)}
+                    </button>
+                  </div>
+                )}
+
                 {q.data.items.length === 0 && (
                   <div className="rounded-2xl border border-dashed border-emerald-200 bg-emerald-50/40 p-8 text-center dark:border-emerald-900 dark:bg-emerald-950/20">
                     <div className="text-4xl" aria-hidden>🧹</div>
