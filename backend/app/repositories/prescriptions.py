@@ -212,6 +212,50 @@ class PrescriptionRepository(BaseRepository):
         return {"serial": serial or raw.upper(), "batch": batch, "gtin": gtin,
                 "executions": jsonsafe(execs), "loans": jsonsafe(loans)}
 
+    async def by_product(self, code: str, limit: int = 100) -> dict | None:
+        """«Σε ΠΟΙΟΥΣ έχουμε δώσει αυτό το σκεύασμα;» — από το barcode του κουτιού.
+
+        Διαφορετική ερώτηση από το `by_coupon`: εκείνο βρίσκει ΤΟ ΣΥΓΚΕΚΡΙΜΕΝΟ κουτί, αυτό
+        βρίσκει ΟΛΟΥΣ όσους πήραν το ίδιο σκεύασμα. Ο φαρμακοποιός σαρώνει το ίδιο πράγμα και
+        θέλει και τα δύο — π.χ. σε ανάκληση παρτίδας ή όταν ψάχνει ποιοι είναι σε μια αγωγή.
+        """
+        raw = (code or "").strip()
+        if not raw:
+            return None
+        serial, _batch, gtin = _gs1_parts(raw)
+        # Το GTIN είναι το EAN συμπληρωμένο με μηδενικά στα 14 → δοκίμασε και χωρίς αυτά.
+        cands = {c for c in (raw.upper(), gtin, (gtin or "").lstrip("0") or None,
+                             raw.lstrip("0") or None) if c}
+        db = self._db
+        prod = await db["products"].find_one(
+            self._scope({"$or": [{"barcode": {"$in": sorted(cands)}},
+                                 {"_id": {"$in": sorted(cands)}}]}),
+            {"name": 1, "barcode": 1, "atc": 1, "substance": 1})
+        if not prod:
+            return None
+        rows = await db["prescription_items"].aggregate([
+            {"$match": {"tenant_id": self.tenant_id, "product_id": prod["_id"]}},
+            {"$lookup": {"from": "prescription_executions", "localField": "execution_id",
+                         "foreignField": "_id", "as": "ex"}},
+            {"$set": {"ex": {"$first": "$ex"}}},
+            {"$group": {"_id": "$ex.patient_ref", "n": {"$sum": 1},
+                        "last": {"$max": "$executed_at"},
+                        "qty": {"$sum": {"$ifNull": ["$quantity", 1]}}}},
+            {"$sort": {"last": -1}},
+        ]).to_list(length=None)
+        total = len(rows)
+        out = []
+        for r in rows[:limit]:
+            pat = await db["patients_anonymized"].find_one(
+                {"_id": r["_id"], "tenant_id": self.tenant_id}, {"full_name": 1, "amka": 1}) or {}
+            out.append({"patient_id": str(r["_id"]) if r.get("_id") else None,
+                        "patient_name": mask_name(pat.get("full_name"), self.demo),
+                        "amka": mask_amka(pat.get("amka"), self.demo),
+                        "times": r.get("n"), "boxes": r.get("qty"), "last": r.get("last")})
+        return jsonsafe({"name": prod.get("name"), "barcode": prod.get("barcode"),
+                         "substance": prod.get("substance"), "total_patients": total,
+                         "patients": out, "serial": serial})
+
     async def execution_detail(self, external_id: str) -> dict | None:
         """Full drill-down for one executed prescription: doctor + (anonymised) patient +
         fund + repeat info + ICD-10 + every medicine line (name/qty/retail/wholesale/margin)."""

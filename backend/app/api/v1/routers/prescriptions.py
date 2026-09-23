@@ -57,7 +57,10 @@ async def by_coupon(
 ):
     """«Σε ποιον δώσαμε αυτό το κουτί;» — σαρώνεις το QR ή την ταινία ΕΟΦ και βρίσκεις τον πελάτη."""
     repo = PrescriptionRepository(tenant_id=ctx.tenant_id, demo=ctx.demo)
-    return await repo.by_coupon(code)
+    res = await repo.by_coupon(code)
+    # Ο ίδιος σαρωτής απαντά ΚΑΙ στο «ποιο κουτί» ΚΑΙ στο «ποιοι πήραν το ίδιο σκεύασμα».
+    res["product"] = await repo.by_product(code)
+    return res
 
 
 @router.get("/detail/{external_id}")
