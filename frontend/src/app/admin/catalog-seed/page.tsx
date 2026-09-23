@@ -11,7 +11,7 @@
 
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Package, Calculator, Loader2, AlertTriangle, Pill, ShoppingBasket, Sparkles } from "lucide-react";
+import { Package, Calculator, Loader2, AlertTriangle, Pill, Sparkles } from "lucide-react";
 import { adminApi } from "@/lib/adminClient";
 import { appAlert, appConfirm } from "@/store/dialogStore";
 
@@ -218,12 +218,6 @@ export default function CatalogSeedPage() {
         </div>
       </section>
 
-      {cat.data?.source && (
-        <p className="flex items-center gap-1.5 text-xs text-slate-400">
-          <ShoppingBasket className="h-3.5 w-3.5" />
-          Πηγή: κεντρικός κατάλογος ({cat.data.source.name}) — {num(cat.data.total)} είδη συνολικά.
-        </p>
-      )}
     </div>
   );
 }

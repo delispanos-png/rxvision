@@ -90,7 +90,7 @@ export default function ModulesPlanPage() {
 
   const subQ = useQuery({ queryKey: queryKeys.subscription(), queryFn: () => api<Sub>("/subscription"), retry: false });
   const pkgsQ = useQuery({ queryKey: ["onboarding", "packages"], queryFn: () => api<{ packages: Pkg[] }>("/onboarding/packages"), retry: false });
-  const addonsQ = useQuery({ queryKey: ["addons"], queryFn: () => api<{ addons: AddonLite[]; addons_total: number; billing_cycle: "monthly" | "yearly" }>("/addons"), retry: false });
+  const addonsQ = useQuery({ queryKey: ["addons"], queryFn: () => api<{ addons: AddonLite[]; addons_total: number; billing_cycle: "monthly" | "yearly"; card_on_file?: boolean }>("/addons"), retry: false });
   const pendQ = useQuery({ queryKey: ["subscription", "plan-change"], queryFn: () => api<{ pending: Pending | null }>("/subscription/plan-change"), retry: false });
   const methodsQ = useQuery({ queryKey: ["subscription", "payment-methods"], queryFn: () => api<{ methods: { id: string; label: { el: string; en: string } }[] }>("/subscription/payment-methods"), retry: false });
   const enabledMethods = methodsQ.data?.methods ?? [];
@@ -108,7 +108,12 @@ export default function ModulesPlanPage() {
   const actAddon = useMutation({
     mutationFn: (id: string) => api(`/addons/${id}/activate`, { method: "POST" }),
     onSuccess: refreshAddons,
-    onError: () => appAlert(t("Η ενεργοποίηση απέτυχε. Δοκίμασε ξανά.", "Activation failed. Please try again.")),
+    // ΔΕΙΞΕ ΤΟΝ ΛΟΓΟ. «Δοκίμασε ξανά» όταν λείπει κάρτα σημαίνει ότι ο πελάτης θα ξαναπατά
+    // επ' άπειρον και θα τηλεφωνήσει — ο λόγος δεν αλλάζει με την επανάληψη.
+    onError: (e) => {
+      const d = (e as { problem?: { detail?: { message?: string } } })?.problem?.detail;
+      appAlert(d?.message || t("Η ενεργοποίηση απέτυχε.", "Activation failed."));
+    },
   });
   const deactAddon = useMutation({
     mutationFn: (id: string) => api(`/addons/${id}/deactivate`, { method: "POST" }),
@@ -117,6 +122,12 @@ export default function ModulesPlanPage() {
   const addonBusy = actAddon.isPending || deactAddon.isPending;
   async function activateAddon(a: AddonLite) {
     const price = yearly ? a.price_yearly : a.price_monthly;
+    // Χρεώσιμο πρόσθετο = επαναλαμβανόμενη χρέωση. Πες το ΠΡΙΝ το κλικ, όχι μετά την άρνηση.
+    if ((price || 0) > 0 && addonsQ.data && addonsQ.data.card_on_file === false) {
+      appAlert(t("Για να ενεργοποιήσεις χρεώσιμο πρόσθετο χρειάζεται καταχωρημένη κάρτα. Πρόσθεσέ την από τις Ρυθμίσεις → Χρέωση.",
+                 "A saved card is required to activate a paid add-on. Add one in Settings → Billing."));
+      return;
+    }
     if (await appConfirm(t(`Ενεργοποίηση «${a.name}» με επιπλέον ${eur(price)}/${per}; Η χρέωση ξεκινά από τον επόμενο κύκλο. Μπορείς να το απενεργοποιήσεις όποτε θες.`,
       `Activate «${a.name}» for +${eur(price)}/${per}? Billing starts next cycle. You can turn it off anytime.`))) actAddon.mutate(a._id);
   }

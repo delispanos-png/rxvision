@@ -189,12 +189,23 @@ async def for_tenant(tenant_id: str) -> dict:
         items.append({**a, "offered": key in offered,
                       "status": _status(key, in_plan=key in included,
                                         in_addons=key in active, entitled=tenant_has(mods, key))})
+    from app.services import billing_service
     return {"addons": items, "addons_total": int(sub.get("addons_total", 0) or 0),
-            "billing_cycle": "yearly" if yearly else "monthly"}
+            "billing_cycle": "yearly" if yearly else "monthly",
+            # Το UI πρέπει να ΞΕΡΕΙ από πριν ότι λείπει κάρτα, αντί να το ανακαλύπτει ο πελάτης
+            # πατώντας «Ενεργοποίηση» και τρώγοντας άρνηση.
+            "card_on_file": await billing_service.card_on_file(tenant_id)}
 
 
 async def activate(tenant_id: str, addon_id: str) -> dict:
-    """Turn an add-on ON for a tenant: entitlement (module override) + billing record."""
+    """Turn an add-on ON for a tenant: entitlement (module override) + billing record.
+
+    ΑΠΑΙΤΕΙΤΑΙ ΚΑΡΤΑ. Το πρόσθετο είναι ΕΠΑΝΑΛΑΜΒΑΝΟΜΕΝΗ μηνιαία χρέωση που μπαίνει στη
+    συνδρομή. Χωρίς αποθηκευμένη κάρτα δεν υπάρχει τρόπος να εισπραχθεί, οπότε ο πελάτης θα
+    χρησιμοποιούσε τη δυνατότητα και εμείς θα κυνηγούσαμε την πληρωμή εκ των υστέρων. Ίδιος
+    κανόνας με τα χρεώσιμα extras (όριο AI / διατήρηση δεδομένων) — ένα gate, ένας ορισμός.
+    """
+    from app.services import billing_service
     db = shared_db()
     a = await db["addons"].find_one({"_id": addon_id, "active": True})
     if not a:
@@ -202,6 +213,11 @@ async def activate(tenant_id: str, addon_id: str) -> dict:
     sub = await db["subscriptions"].find_one({"tenant_id": tenant_id}) or {}
     if addon_id in set(sub.get("modules_included", []) or []):
         return {"ok": False, "error": "included_in_plan"}
+    # Δωρεάν πρόσθετα δεν χρειάζονται κάρτα — δεν χρεώνονται ποτέ.
+    if int(a.get("price_monthly") or 0) > 0 and not await billing_service.card_on_file(tenant_id):
+        return {"ok": False, "error": "card_required",
+                "message": "Για να ενεργοποιήσεις χρεώσιμο πρόσθετο χρειάζεται καταχωρημένη "
+                           "κάρτα. Πρόσθεσέ την από τις Ρυθμίσεις → Χρέωση."}
     await db["tenants"].update_one({"_id": tenant_id},
                                    {"$set": {f"modules.{addon_id}": "enabled"}})
     await db["subscriptions"].update_one({"tenant_id": tenant_id},
