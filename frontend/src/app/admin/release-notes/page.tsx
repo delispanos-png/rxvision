@@ -12,7 +12,7 @@ import { Sparkles, Eye, EyeOff, Trash2, Plus, Save } from "lucide-react";
 import { adminApi } from "@/lib/adminClient";
 import { appAlert, appConfirm } from "@/store/dialogStore";
 
-type Item = { title: string; body?: string; icon?: string | null };
+type Item = { title: string; body?: string; icon?: string | null; where?: string | null };
 type Note = { version: string; date?: string; title?: string; items: Item[]; published: boolean };
 
 const fmt = (s?: string) => (s ? new Date(s).toLocaleDateString("el-GR") : "");
@@ -85,6 +85,9 @@ export default function ReleaseNotesAdmin() {
                 <textarea value={it.body || ""} rows={2} placeholder="Εξήγηση για τον φαρμακοποιό (προαιρετικό)"
                   onChange={(e) => setEdit({ ...edit, items: edit.items.map((x, k) => k === i ? { ...x, body: e.target.value } : x) })}
                   className="block w-full rounded border border-slate-200 px-2 py-1.5 text-sm" />
+                <input value={it.where || ""} placeholder="Πού θα το βρει — π.χ. «Ασφαλισμένοι → Προχορηγήσεις»"
+                  onChange={(e) => setEdit({ ...edit, items: edit.items.map((x, k) => k === i ? { ...x, where: e.target.value } : x) })}
+                  className="mt-1 block w-full rounded border border-slate-200 px-2 py-1.5 text-xs" />
               </div>
             ))}
             <button onClick={() => setEdit({ ...edit, items: [...(edit.items || []), { title: "" }] })}

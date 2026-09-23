@@ -182,6 +182,16 @@ export default function CoachPage() {
       `Stop mentioning "${it.title}"? I'll stay quiet for a month.`))) mark.mutate({ key: it.key, action: "dismiss" });
   }
 
+  /* ΣΕΛΙΔΟΠΟΙΗΣΗ: ο Σύμβουλος βγάζει δεκάδες κάρτες και η σελίδα γινόταν ατέλειωτη — έχανες
+     το μενού και δεν ήξερες πού είσαι. 10 τη φορά είναι όσα προλαβαίνει να δει ένας άνθρωπος
+     πριν βαρεθεί. */
+  const PAGE = 10;
+  const [page, setPage] = useState(0);
+  const allItems = q.data?.items ?? [];
+  const pages = Math.max(1, Math.ceil(allItems.length / PAGE));
+  const shown = allItems.slice(page * PAGE, page * PAGE + PAGE);
+  useEffect(() => { setPage(0); }, [allItems.length]);
+
   const hist = h.data?.items ?? [];
   const trend = useMemo(() => {
     if (hist.length < 6) return null;
@@ -253,7 +263,7 @@ export default function CoachPage() {
 
               {/* Τι ξέφυγε */}
               <div className="space-y-3">
-                {q.data.items.map((it) => {
+                {shown.map((it) => {
                   const tn = TONE[it.tone];
                   const links = it.links ?? [];
                   // Στον «πελάτη παρουσίασης» τα τηλέφωνα είναι μασκαρισμένα («****») — δείχνουμε
@@ -334,6 +344,27 @@ export default function CoachPage() {
                               </Link>
                             );
                           })}
+
+                {/* Πλοήγηση — μόνο όταν χρειάζεται. Επιστροφή στην κορυφή με την αλλαγή
+                    σελίδας, αλλιώς ο χρήστης μένει στο τέλος και νομίζει ότι δεν άλλαξε. */}
+                {pages > 1 && (
+                  <div className="flex flex-wrap items-center justify-center gap-2 pt-2">
+                    <button onClick={() => { setPage((p) => Math.max(0, p - 1)); window.scrollTo({ top: 0, behavior: "smooth" }); }}
+                      disabled={page === 0}
+                      className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-600 hover:bg-slate-50 disabled:opacity-40 dark:border-slate-600 dark:text-slate-300">
+                      ← {t("Προηγούμενα", "Previous")}
+                    </button>
+                    <span className="text-sm text-slate-500">
+                      {t(`${page * PAGE + 1}–${Math.min(allItems.length, (page + 1) * PAGE)} από ${allItems.length}`,
+                         `${page * PAGE + 1}–${Math.min(allItems.length, (page + 1) * PAGE)} of ${allItems.length}`)}
+                    </span>
+                    <button onClick={() => { setPage((p) => Math.min(pages - 1, p + 1)); window.scrollTo({ top: 0, behavior: "smooth" }); }}
+                      disabled={page >= pages - 1}
+                      className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-600 hover:bg-slate-50 disabled:opacity-40 dark:border-slate-600 dark:text-slate-300">
+                      {t("Επόμενα", "Next")} →
+                    </button>
+                  </div>
+                )}
                         </div>
 
                         {/* Γραμμή 2 — τι κάνω με το ίδιο το εύρημα. Πάντα χωριστά, ώστε να μη

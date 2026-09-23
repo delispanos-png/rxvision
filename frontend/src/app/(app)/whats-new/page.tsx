@@ -8,11 +8,11 @@
 
 import { useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Sparkles, Loader2 } from "lucide-react";
+import { Sparkles, Loader2, MapPin } from "lucide-react";
 import { api } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
 
-type Item = { title: string; body?: string; icon?: string | null };
+type Item = { title: string; body?: string; icon?: string | null; where?: string | null };
 type Note = { version: string; date?: string | null; title?: string; items: Item[]; is_new: boolean };
 
 const fmt = (s?: string | null) =>
@@ -80,6 +80,11 @@ export default function WhatsNewPage() {
                       {it.icon ? `${it.icon} ` : ""}{it.title}
                     </div>
                     {it.body && <p className="mt-0.5 text-slate-500 dark:text-slate-400">{it.body}</p>}
+                    {it.where && (
+                      <p className="mt-1 inline-flex items-center gap-1 rounded-lg bg-slate-100 px-2 py-0.5 text-xs text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                        <MapPin className="h-3 w-3" />{it.where}
+                      </p>
+                    )}
                   </li>
                 ))}
               </ul>

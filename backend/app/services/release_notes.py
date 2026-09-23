@@ -46,6 +46,9 @@ async def upsert(version: str, *, date: datetime | None = None, title: str = "",
         if not t:
             continue
         clean.append({"title": t, "body": str((it or {}).get("body") or "").strip()[:600],
+                      # «Πού θα το βρεις»: χωρίς αυτό ο πελάτης διαβάζει ότι υπάρχει κάτι νέο
+                      # και δεν ξέρει πού να πάει — η ανακοίνωση γίνεται απογοήτευση.
+                      "where": str((it or {}).get("where") or "").strip()[:120] or None,
                       "icon": str((it or {}).get("icon") or "")[:8] or None})
     await shared_db()[COLL].update_one({"_id": v}, {"$set": {
         "date": date or _now(), "title": str(title or "").strip()[:160],

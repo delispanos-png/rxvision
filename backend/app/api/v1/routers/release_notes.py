@@ -31,6 +31,7 @@ admin_router = APIRouter()
 class ItemIn(BaseModel):
     title: str
     body: str = ""
+    where: str | None = None
     icon: str | None = None
 
 
