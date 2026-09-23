@@ -50,7 +50,8 @@ class AdvanceDispensingRepository(BaseRepository):
 
     # ── καταγραφή ────────────────────────────────────────────────────────────────────────────
     async def create(self, *, patient_name: str, items: list[dict], patient_ref: str,
-                     amka: str | None = None, note: str = "", by: str | None = None) -> dict:
+                     amka: str | None = None, note: str = "", by: str | None = None,
+                     expected_at: str | None = None) -> dict:
         """Ένα δανεικό = ΕΝΑΣ πελάτης + ΟΣΑ σκευάσματα του δόθηκαν εκείνη τη στιγμή (μία κίνηση).
 
         Ο πελάτης επιλέγεται από τη λίστα, δεν γράφεται: ένα δανεικό που δεν δείχνει σε υπαρκτή
@@ -81,6 +82,9 @@ class AdvanceDispensingRepository(BaseRepository):
         doc = {"tenant_id": self.tenant_id, "patient_name": patient_name.strip()[:160],
                "patient_ref": patient_ref, "amka": (amka or "").strip() or None,
                "items": clean_items, "status": OPEN, "note": (note or "").strip()[:500],
+               # Πότε είπε ο πελάτης ότι θα φέρει τη συνταγή (YYYY-MM-DD, προαιρετικό).
+               # Χωρίς αυτό ο φαρμακοποιός δεν έχει τίποτα να περιμένει — μόνο «κάποτε».
+               "expected_at": (expected_at or "").strip()[:10] or None,
                "created_at": _now(), "created_by": by}
         res = await self.insert_one(doc)
         return {"_id": str(res.inserted_id if hasattr(res, "inserted_id") else res)}
@@ -111,6 +115,28 @@ class AdvanceDispensingRepository(BaseRepository):
         rows = await self.find({"status": OPEN}, sort=[("created_at", 1)], limit=500)
         late = [r for r in rows if r.get("created_at") and r["created_at"] <= cut]
         return {"items": late, "counts": {"overdue": len(late), "open": len(rows)}}
+
+    async def set_expected(self, loan_id: str, expected_at: str | None) -> int:
+        """Ορισμός/αλλαγή της ημερομηνίας που ο πελάτης θα φέρει τη συνταγή."""
+        try:
+            oid = ObjectId(loan_id)
+        except (InvalidId, TypeError):
+            return 0
+        val = (expected_at or "").strip()[:10] or None
+        r = await self.update_one({"_id": oid}, {"$set": {"expected_at": val}})
+        return r.modified_count
+
+    async def due_today(self, today: str) -> list[dict]:
+        """Ανοιχτά δανεικά που ο πελάτης είπε ότι θα ξεχρεώσει ΣΗΜΕΡΑ ή νωρίτερα.
+
+        Τροφοδοτεί τον Σύμβουλο: «σήμερα περιμένεις αυτούς». Χωρίς δηλωμένη ημερομηνία δεν
+        μπαίνει κανείς — δεν εφευρίσκουμε προσδοκία που δεν συμφωνήθηκε.
+        """
+        rows = await self.find({"status": OPEN, "expected_at": {"$ne": None, "$lte": today}},
+                               sort=[("expected_at", 1)], limit=100)
+        for x in rows:
+            x["_id"] = str(x["_id"])
+        return rows
 
     async def open_for_patient(self, patient_ref: str) -> list[dict]:
         """Ανοιχτά δανεικά ΕΝΟΣ πελάτη — για την καρτέλα του και το pop-up του ταμείου.

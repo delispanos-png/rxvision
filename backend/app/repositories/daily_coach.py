@@ -274,6 +274,37 @@ class DailyCoachRepository(BaseRepository):
             })
         return out
 
+    async def _sig_advance_due(self, now: datetime) -> list[dict]:
+        """Δανεικό σκεύασμα που ο πελάτης είπε ότι θα ξεχρεώσει σήμερα (ή το είχε πει για πριν).
+
+        ΜΟΝΟ με δηλωμένη ημερομηνία: ένα δανεικό χωρίς συμφωνημένη μέρα δεν είναι «σημερινή
+        δουλειά» — θα γέμιζε τον σύμβουλο με υπενθυμίσεις που δεν αφορούν τη σημερινή ημέρα.
+        """
+        today = now.date().isoformat()
+        rows = [d async for d in self._db["advance_dispensings"].find(
+            {"tenant_id": self.tenant_id, "status": "open",
+             "expected_at": {"$ne": None, "$lte": today}}).sort("expected_at", 1).limit(40)]
+        if not rows:
+            return []
+        info = await self._patient_info([_oid(d.get("patient_ref")) for d in rows])
+        out: list[dict] = []
+        for d in rows:
+            pid = _oid(d.get("patient_ref"))
+            who = self._who(info.get(pid), pid, extra={"name": d.get("patient_name")})
+            names = [n for n in ((i.get("name") or i.get("strip") or i.get("lot"))
+                                 for i in (d.get("items") or [])) if n]
+            overdue = (d.get("expected_at") or today) < today
+            out.append({
+                "signal": "advance_due", "subject": f"advance:{d['_id']}",
+                "name": d.get("patient_name"), "hdika_name": True,
+                "since": d.get("created_at"), "sex": who.get("sex"), "who": who,
+                "extra": {"items": names[:3], "expected_at": d.get("expected_at"),
+                          "overdue": overdue},
+                "severity": 4 if overdue else 3,
+                "href": "/patients/advance", "inbox": "/patients/advance",
+            })
+        return out
+
     async def _sig_no_contact(self, now: datetime) -> list[dict]:
         """Πέρασαν από το ταμείο και δεν ξέρεις πώς να τους βρεις. Δεν θα τους ξαναδείς με δική σου πρωτοβουλία."""
         since = now - timedelta(days=3)
@@ -785,6 +816,21 @@ class DailyCoachRepository(BaseRepository):
         him = V.g(sex, "τον", "την")
         gen = V.g(sex, "του", "της")
 
+        if sig == "advance_due":
+            names = [V.product(n) for n in (ex.get("items") or [])]
+            rest = f" και άλλα {len(names) - 2}" if len(names) > 2 else ""
+            what = f"το {names[0]}" if len(names) == 1 else ", ".join(names[:2]) + rest
+            if ex.get("overdue"):
+                title = f"{subj_full} δεν έφερε ακόμη τη συνταγή για {what}"
+                body = ("Είχε πει ότι θα την έφερνε και η μέρα πέρασε. "
+                        f"Πήρε {what} χωρίς συνταγή και το κουτί λείπει από το ράφι σου "
+                        "μέχρι να ξεχρεωθεί. Ένα τηλέφωνο σήμερα το λύνει.")
+            else:
+                title = f"{subj_full} θα φέρει σήμερα τη συνταγή για {what}"
+                body = ("Το είχε πάρει χωρίς συνταγή και σήμερα είναι η μέρα που συμφωνήσατε. "
+                        "Αν δεν εμφανιστεί μέχρι το κλείσιμο, αξίζει μια υπενθύμιση.")
+            return {"title": title, "body": opener + body if opener else body}
+
         if sig == "unexecuted":
             names = [V.product(n) for n in (f.get("items") or [])]
             what = (f"το {names[0]}" if len(names) == 1
@@ -931,6 +977,7 @@ class DailyCoachRepository(BaseRepository):
                     ("repeat_expiring", self._sig_repeat_expiring),
                     ("vaccine_missed", self._sig_vaccine_missed),
                     ("no_contact", self._sig_no_contact),
+                    ("advance_due", self._sig_advance_due),
                     ("lapsed_chronic", self._sig_lapsed_chronic))
         if business:
             _SIGNALS += (("loss_execution", self._sig_loss_execution),

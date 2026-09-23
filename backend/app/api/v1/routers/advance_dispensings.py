@@ -42,6 +42,7 @@ class LoanIn(BaseModel):
     amka: str | None = None
     items: list[ItemIn] = []
     note: str = ""
+    expected_at: str | None = None      # YYYY-MM-DD — πότε θα φέρει τη συνταγή
 
 
 @router.get("")
@@ -82,6 +83,14 @@ async def for_patient(ref: str = Query(..., min_length=1),
     return {"items": items, "count": len(items)}
 
 
+@router.get("/due-today")
+async def due_today(ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+    """Ποιοι είπαν ότι θα φέρουν συνταγή σήμερα (ή το είχαν πει για νωρίτερα)."""
+    from datetime import date
+    items = await _repo(ctx).due_today(date.today().isoformat())
+    return {"items": items, "count": len(items)}
+
+
 @router.get("/overdue")
 async def overdue(ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
     """Δανεικά που ανοίγουν πάνω από 30 ημέρες — υπενθύμιση, όχι προθεσμία."""
@@ -108,12 +117,27 @@ async def create_loan(body: LoanIn,
     try:
         return await _repo(ctx).create(
             patient_name=body.patient_name, patient_ref=body.patient_ref, amka=body.amka,
-            items=[i.model_dump() for i in body.items], note=body.note, by=ctx.user_id)
+            items=[i.model_dump() for i in body.items], note=body.note, by=ctx.user_id,
+            expected_at=body.expected_at)
     except ValueError as e:
         msg = {"patient_ref_required": "Διάλεξε πελάτη από τη λίστα.",
                "items_required": "Σάρωσε ή γράψε τουλάχιστον ένα σκεύασμα."}.get(str(e), "")
         raise HTTPException(status.HTTP_400_BAD_REQUEST,
                             detail={"error": str(e), "message": msg}) from e
+
+
+class ExpectedIn(BaseModel):
+    expected_at: str | None = None
+
+
+@router.post("/{loan_id}/expected")
+async def set_expected(loan_id: str, body: ExpectedIn,
+                       ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+    """Ορισμός ημερομηνίας που ο πελάτης θα φέρει τη συνταγή."""
+    n = await _repo(ctx).set_expected(loan_id, body.expected_at)
+    if not n:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail={"error": "not_found"})
+    return {"ok": True, "expected_at": body.expected_at}
 
 
 class StatusIn(BaseModel):

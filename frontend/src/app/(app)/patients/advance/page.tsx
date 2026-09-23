@@ -10,9 +10,10 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { HandCoins, ScanLine, Check, X, Clock, AlertTriangle, Plus, Trash2, Search, UserRound, Copy, QrCode } from "lucide-react";
+import { HandCoins, ScanLine, Check, X, Clock, AlertTriangle, Plus, Trash2, Search, UserRound, Copy, QrCode, CalendarClock } from "lucide-react";
 import { api } from "@/lib/apiClient";
 import { CouponBarcode, couponScanString } from "@/components/barcode/CouponBarcode";
+import { DateInput } from "@/components/ui/DateInput";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
 import { appAlert, appConfirm, appPrompt } from "@/store/dialogStore";
 import { useT } from "@/store/prefStore";
@@ -20,7 +21,7 @@ import { useT } from "@/store/prefStore";
 type Item = { name?: string; gtin?: string; batch?: string; strip?: string; lot?: string;
               expiry?: string; qty?: number; raw?: string };
 type Loan = { _id: string; patient_name: string; items: Item[]; status: string;
-              created_at: string; note?: string };
+              created_at: string; note?: string; expected_at?: string | null };
 type Hit = { patient_id: string; name: string | null; amka: string | null; last_seen?: string | null };
 type Match = { loan_id: string; patient_name: string; created_at: string; items: string[];
                execution: { external_id: string | null; executed_at: string | null };
@@ -87,6 +88,7 @@ function Inner() {
   });
 
   const open = useQuery({ queryKey: ["adv", "open"], queryFn: () => api<{ items: Loan[] }>("/advance-dispensings?status=open") });
+  const due = useQuery({ queryKey: ["adv", "due"], queryFn: () => api<{ items: Loan[]; count: number }>("/advance-dispensings/due-today") });
   const late = useQuery({ queryKey: ["adv", "overdue"], queryFn: () => api<{ items: Loan[]; counts: Record<string, number> }>("/advance-dispensings/overdue") });
   const sugg = useQuery({ queryKey: ["adv", "matches"], queryFn: () => api<{ items: Match[] }>("/advance-dispensings/matches") });
 
@@ -101,6 +103,7 @@ function Inner() {
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [dup, setDup] = useState("");
   const [copied, setCopied] = useState("");
+  const [expected, setExpected] = useState("");   // πότε θα φέρει τη συνταγή (προαιρετικό)
   useEffect(() => () => { if (timer.current) clearTimeout(timer.current); }, []);
 
   function addScan(value?: string) {
@@ -146,14 +149,30 @@ function Inner() {
       // γραμμή-γραμμή· σαρώνει τα κουτιά στη σειρά και πατάει μία φορά «Καταχώρηση».
       await api("/advance-dispensings", { method: "POST", body: JSON.stringify({
         patient_name: patient.name || patient.amka || "—", patient_ref: patient.patient_id,
-        amka: patient.amka, items: items.map(({ raw: _r, ...i }) => i) }) });
-      setPatient(null); setTerm(""); setItems([]);
+        amka: patient.amka, expected_at: expected || null,
+        items: items.map(({ raw: _r, ...i }) => i) }) });
+      setPatient(null); setTerm(""); setItems([]); setExpected("");
       qc.invalidateQueries({ queryKey: ["adv"] });
     } catch (e) {
       const msg = (e as { problem?: { detail?: { message?: string } } })?.problem?.detail?.message;
       appAlert(msg || t("Δεν αποθηκεύτηκε.", "Not saved."));
     }
     finally { setBusy(false); }
+  }
+
+  /* Η ημερομηνία που συμφώνησε ο πελάτης. Χωρίς αυτήν ο φαρμακοποιός δεν έχει τι να περιμένει
+     — μόνο «κάποτε» — και το δανεικό ξεχνιέται μέχρι να γίνει αργοπορημένο. */
+  async function askExpected(l: Loan) {
+    const cur = l.expected_at ? l.expected_at.split("-").reverse().join("/") : "";
+    const v = (await appPrompt(
+      t("Πότε θα φέρει τη συνταγή; (ΗΗ/ΜΜ/ΕΕΕΕ — κενό για καθαρισμό)",
+        "When will they bring the prescription? (DD/MM/YYYY — empty to clear)"), { defaultValue: cur }))?.trim();
+    if (v === undefined || v === null) return;
+    const m = v.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    if (v && !m) { appAlert(t("Γράψε ημερομηνία σε μορφή ΗΗ/ΜΜ/ΕΕΕΕ.", "Use DD/MM/YYYY.")); return; }
+    const iso = m ? `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}` : null;
+    await api(`/advance-dispensings/${l._id}/expected`, { method: "POST", body: JSON.stringify({ expected_at: iso }) });
+    qc.invalidateQueries({ queryKey: ["adv"] });
   }
 
   async function setStatus(id: string, status: string) {
@@ -236,8 +255,16 @@ function Inner() {
         <div className="flex flex-wrap items-center gap-2">
           <span className="font-medium text-slate-800 dark:text-slate-100">{l.patient_name}</span>
           <span className={`text-xs ${d >= 30 ? "text-rose-600" : "text-slate-400"}`}>
-            {fmt(l.created_at)} · {t(`${d} ημέρες`, `${d} days`)}
+            {t("Δόθηκε", "Given")} {fmt(l.created_at)} · {t(`${d} ημέρες`, `${d} days`)}
           </span>
+          <button onClick={() => askExpected(l)}
+            className={`rounded border px-1.5 py-0.5 text-xs ${l.expected_at
+              ? "border-sky-300 bg-sky-50 font-medium text-sky-700"
+              : "border-dashed border-slate-300 text-slate-500 hover:bg-slate-50"}`}>
+            {l.expected_at
+              ? `${t("Θα φέρει συνταγή", "Rx expected")} ${fmt(l.expected_at)}`
+              : t("+ ημερομηνία συνταγής", "+ expected date")}
+          </button>
           <span className="ml-auto flex gap-1.5">
             <button onClick={() => setStatus(l._id, "cleared")} className="inline-flex items-center gap-1 rounded-lg border border-emerald-300 bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700 hover:bg-emerald-100">
               <Check className="h-3.5 w-3.5" />{t("Ξεχρεώθηκε", "Cleared")}
@@ -270,6 +297,38 @@ function Inner() {
           </p>
         </div>
       </header>
+
+      {/* ΣΗΜΕΡΑ ΠΕΡΙΜΕΝΕΙΣ — μπαίνει πρώτο: είναι η δουλειά της ημέρας. */}
+      {!!due.data?.count && (
+        <section className="rounded-2xl border border-sky-300 bg-sky-50/70 p-4 dark:border-sky-900/50 dark:bg-sky-950/20">
+          <h2 className="mb-2 flex items-center gap-1.5 text-sm font-semibold text-sky-900 dark:text-sky-200">
+            <CalendarClock className="h-4 w-4" />
+            {t(`Σήμερα περιμένεις συνταγή από ${due.data.count} ${due.data.count === 1 ? "πελάτη" : "πελάτες"}`,
+               `Prescriptions expected today from ${due.data.count}`)}
+          </h2>
+          <div className="space-y-1.5">
+            {due.data.items.map((l) => {
+              const late = (l.expected_at || "") < new Date().toISOString().slice(0, 10);
+              return (
+                <div key={l._id} className="flex flex-wrap items-center gap-2 rounded-xl bg-white px-4 py-2 text-sm dark:bg-slate-900">
+                  <span className="font-medium text-slate-800 dark:text-slate-100">{l.patient_name}</span>
+                  <span className="text-slate-500">
+                    {(l.items || []).map((i) => i.name || i.strip || i.lot).filter(Boolean).join(", ")}
+                  </span>
+                  <span className={`text-xs ${late ? "font-medium text-rose-600" : "text-sky-700"}`}>
+                    {late ? t("είχε πει", "was due") : t("σήμερα", "today")} {fmt(l.expected_at)}
+                  </span>
+                  <span className="ml-auto flex gap-1.5">
+                    <button onClick={() => setStatus(l._id, "cleared")} className="inline-flex items-center gap-1 rounded-lg bg-emerald-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-emerald-700">
+                      <Check className="h-3.5 w-3.5" />{t("Ήρθε — ξεχρέωσέ το", "Cleared")}
+                    </button>
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      )}
 
       {/* ΠΡΟΤΑΣΕΙΣ ΞΕΧΡΕΩΣΗΣ — μπαίνουν ΠΑΝΩ, γιατί είναι το μόνο που απαιτεί απόφαση σήμερα. */}
       {!!sugg.data?.items?.length && (
@@ -414,6 +473,16 @@ function Inner() {
             ))}
           </ul>
         )}
+
+        {/* Προαιρετικό, αλλά είναι αυτό που μετατρέπει το δανεικό από «κάποτε» σε ραντεβού. */}
+        <div className="mt-4">
+          <span className="mb-1 block text-xs font-medium text-slate-500">
+            {t("3. Πότε θα φέρει τη συνταγή (προαιρετικό)", "3. When will they bring the prescription (optional)")}
+          </span>
+          <div className="max-w-xs">
+            <DateInput value={expected} onChange={setExpected} />
+          </div>
+        </div>
 
         <button onClick={save} disabled={busy || !patient || !items.length}
           className="mt-3 rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-50">
