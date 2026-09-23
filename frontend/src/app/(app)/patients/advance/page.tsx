@@ -10,7 +10,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { HandCoins, ScanLine, Check, X, Clock, AlertTriangle, Plus, Trash2, Search, UserRound } from "lucide-react";
+import { HandCoins, ScanLine, Check, X, Clock, AlertTriangle, Plus, Trash2, Search, UserRound, Copy } from "lucide-react";
 import { api } from "@/lib/apiClient";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
 import { appAlert, appConfirm, appPrompt } from "@/store/dialogStore";
@@ -99,6 +99,7 @@ function Inner() {
   const isBurst = useRef(true);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [dup, setDup] = useState("");
+  const [copied, setCopied] = useState("");
   useEffect(() => () => { if (timer.current) clearTimeout(timer.current); }, []);
 
   function addScan(value?: string) {
@@ -164,25 +165,62 @@ function Inner() {
     qc.invalidateQueries({ queryKey: ["adv"] });
   }
 
+  /* Κάθε σκεύασμα σε ΔΙΚΗ ΤΟΥ γραμμή, με τον κωδικό που σαρώθηκε.
+     ΓΙΑΤΙ: όταν ο φαρμακοποιός ψάχνει «ποιο κουτί έδωσα», ένα όνομα σκευάσματος δεν αρκεί —
+     μπορεί να έχει δώσει δύο κουτιά του ίδιου φαρμάκου. Ο κωδικός είναι το μόνο που ξεχωρίζει
+     το συγκεκριμένο κουτί, και είναι αυτός που θα εμφανιστεί και στη συνταγή όταν έρθει. */
+  const ItemLine = ({ i }: { i: Item }) => {
+    const code = i.strip || i.lot;
+    return (
+      <div className="flex flex-wrap items-center gap-2 py-1 text-xs">
+        <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${i.gtin ? "bg-sky-100 text-sky-700" : "bg-amber-100 text-amber-700"}`}>
+          {i.gtin ? "QR (HMVS)" : t("Ταινία ΕΟΦ", "ΕΟΦ strip")}
+        </span>
+        <span className="font-medium text-slate-700 dark:text-slate-200">
+          {i.name || t("(χωρίς όνομα)", "(no name)")}
+        </span>
+        {(i.qty ?? 1) > 1 && (
+          <span className="rounded bg-slate-100 px-1.5 py-0.5 text-slate-600 dark:bg-slate-800">
+            ×{i.qty}
+          </span>
+        )}
+        {code && (
+          <button onClick={() => { navigator.clipboard?.writeText(code); setCopied(code);
+                                   setTimeout(() => setCopied(""), 1200); }}
+            title={t("Αντιγραφή κωδικού", "Copy code")}
+            className="inline-flex items-center gap-1 rounded border border-slate-200 px-1.5 py-0.5 font-mono text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300">
+            <Copy className="h-3 w-3" />{code}
+            {copied === code && <span className="text-emerald-600">{t("αντιγράφηκε", "copied")}</span>}
+          </button>
+        )}
+        {i.gtin && <span className="text-slate-400">GTIN {i.gtin}</span>}
+        {i.batch && <span className="text-slate-400">{t("παρτ.", "batch")} {i.batch}</span>}
+        {i.expiry && <span className="text-slate-400">{t("λήξη", "exp")} {i.expiry}</span>}
+      </div>
+    );
+  };
+
   const Row = ({ l }: { l: Loan }) => {
     const d = daysAgo(l.created_at);
     return (
-      <div className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-900">
-        <span className="font-medium text-slate-800 dark:text-slate-100">{l.patient_name}</span>
-        <span className="text-slate-500">
-          {(l.items || []).map((i) => i.name || i.gtin || i.lot).filter(Boolean).join(", ")}
-        </span>
-        <span className={`text-xs ${d >= 30 ? "text-rose-600" : d >= 10 ? "text-amber-600" : "text-slate-400"}`}>
-          {fmt(l.created_at)} · {t(`${d} ημέρες`, `${d} days`)}
-        </span>
-        <span className="ml-auto flex gap-1.5">
-          <button onClick={() => setStatus(l._id, "cleared")} className="inline-flex items-center gap-1 rounded-lg border border-emerald-300 bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700 hover:bg-emerald-100">
-            <Check className="h-3.5 w-3.5" />{t("Ξεχρεώθηκε", "Cleared")}
-          </button>
-          <button onClick={() => setStatus(l._id, "written_off")} className="inline-flex items-center gap-1 rounded-lg border border-slate-300 px-2.5 py-1 text-xs text-slate-600 hover:bg-slate-50">
-            <Trash2 className="h-3.5 w-3.5" />{t("Διαγραφή χρέους", "Write off")}
-          </button>
-        </span>
+      <div className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-900">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="font-medium text-slate-800 dark:text-slate-100">{l.patient_name}</span>
+          <span className={`text-xs ${d >= 30 ? "text-rose-600" : "text-slate-400"}`}>
+            {fmt(l.created_at)} · {t(`${d} ημέρες`, `${d} days`)}
+          </span>
+          <span className="ml-auto flex gap-1.5">
+            <button onClick={() => setStatus(l._id, "cleared")} className="inline-flex items-center gap-1 rounded-lg border border-emerald-300 bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700 hover:bg-emerald-100">
+              <Check className="h-3.5 w-3.5" />{t("Ξεχρεώθηκε", "Cleared")}
+            </button>
+            <button onClick={() => setStatus(l._id, "written_off")} className="inline-flex items-center gap-1 rounded-lg border border-slate-300 px-2.5 py-1 text-xs text-slate-600 hover:bg-slate-50">
+              <Trash2 className="h-3.5 w-3.5" />{t("Διαγραφή χρέους", "Write off")}
+            </button>
+          </span>
+        </div>
+        <div className="mt-1.5 divide-y divide-slate-100 border-t border-slate-100 pt-1 dark:divide-slate-800 dark:border-slate-800">
+          {(l.items || []).map((i, n) => <ItemLine key={n} i={i} />)}
+        </div>
       </div>
     );
   };
