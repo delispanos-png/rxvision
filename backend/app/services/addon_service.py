@@ -56,7 +56,7 @@ _DEFAULTS: list[dict] = [
      "description": "Σου φορτώνουμε έτοιμο κατάλογο ειδών — φάρμακα, ΜΗ.ΣΥ.ΦΑ. και παραφάρμακα "
                     "— με ονόματα, barcodes, τιμές, κατηγορίες και φωτογραφίες. Δεν χρειάζεται "
                     "να καταχωρήσεις τίποτα με το χέρι για να ξεκινήσεις.",
-     "price_monthly": 1500, "price_yearly": 15000, "active": True,
+     "price_monthly": 1500, "price_yearly": 15000, "active": True, "no_trial": True,
      "features": ["Δεκάδες χιλιάδες είδη με barcode & φωτογραφία",
                   "Διαλέγεις κατηγορίες: μόνο φάρμακα, μόνο παραφάρμακα, ή όλα",
                   "Αυτόματη κατηγοριοποίηση και για ό,τι νέο μπαίνει",
@@ -210,6 +210,13 @@ async def activate(tenant_id: str, addon_id: str) -> dict:
     return {"ok": True, "addon": addon_id, "addons_total": total}
 
 
+#: Πρόσθετα ΕΚΤΟΣ δωρεάν δοκιμής — αγοράζονται απευθείας.
+#: Ο «Έτοιμος κατάλογος» δεν είναι δυνατότητα που δοκιμάζεις και μετά την αφήνεις: τη στιγμή που
+#: θα τον δοκίμαζε, δεκάδες χιλιάδες είδη θα είχαν ήδη μπει στον κατάλογό του. Δεν υπάρχει
+#: «τέλος δοκιμής» που να τα ξαναπαίρνει πίσω χωρίς να καταστρέψει δουλειά του.
+NO_TRIAL = {"catalog_seed"}
+
+
 async def start_trial(tenant_id: str, module: str) -> dict:
     """Self-service trial of the SMALLEST package that unlocks `module` — grants that package's
     still-missing modules as time-limited trials (auth resolution downgrades expired trials to locked).
@@ -225,6 +232,9 @@ async def start_trial(tenant_id: str, module: str) -> dict:
 
     Πηγή αλήθειας πλέον = `addon_grants` με `by="self-service"`: έχει ΑΥΤΟΣ ο πελάτης πάρει
     ξανά δοκιμή προσθέτου μόνος του;"""
+    if module in NO_TRIAL:
+        return {"ok": False, "error": "no_trial",
+                "message": "Αυτό το πρόσθετο δεν έχει δωρεάν δοκιμή — ενεργοποιείται απευθείας."}
     db = shared_db()
     prior = await db["addon_grants"].find_one({"tenant_id": tenant_id, "by": "self-service"})
     if prior:
@@ -242,6 +252,8 @@ async def start_trial(tenant_id: str, module: str) -> dict:
     sets: dict = {}
     granted: list[str] = []
     for m in grant:
+        if m in NO_TRIAL:               # δεν μπαίνει ούτε «μαζί με το πακέτο» σε δοκιμή
+            continue
         if tenant_has(current, m):      # already owned → don't shadow with a trial that would expire
             continue
         sets[f"modules.{m}"] = "trial"

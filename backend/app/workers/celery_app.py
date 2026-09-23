@@ -293,6 +293,12 @@ celery_app.conf.beat_schedule = {
         "task": "app.workers.catalog_categories.classify_parapharmacy",
         "schedule": crontab(hour=3, minute=40),
     },
+    # Ενημέρωση καταλόγου συνδρομητών — ΜΕΤΑ την κατηγοριοποίηση, ώστε τα νέα είδη να φτάνουν
+    # στον πελάτη ήδη κατηγοριοποιημένα και όχι «χωρίς κατηγορία» για μία μέρα.
+    "sync-subscriber-catalogs": {
+        "task": "app.workers.catalog_categories.sync_catalogs",
+        "schedule": crontab(hour=4, minute=30),
+    },
     # Death-sweep ΗΔΥΚΑ — έλεγχος θανόντων (ΚΑΘΗΜΕΡΙΝΑ 03:20 UTC για γρήγορη αρχική κάλυψη· rotation
     # με death_checked_at → μετά την κάλυψη απλώς επανελέγχει τους πιο παλιά ελεγμένους/νέους θανόντες)
     "dispatch-death-sweep": {

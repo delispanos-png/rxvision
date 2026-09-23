@@ -73,7 +73,10 @@ export function Sidebar() {
   };
   // A locked circuit stays in the menu (with 🔒 + upsell) ONLY if it's a purchasable add-on offered by
   // this tenant's package. Plain unselected modules (e.g. pharmacyone) just disappear from the menu.
-  const addonsQ = useQuery({ queryKey: ["addons"], queryFn: () => api<{ addons: { _id: string; status: string; offered?: boolean }[] }>("/addons"), retry: false });
+  const addonsQ = useQuery({ queryKey: ["addons"], queryFn: () => api<{ addons: { _id: string; status: string; offered?: boolean; no_trial?: boolean }[] }>("/addons"), retry: false });
+  // Ποια πρόσθετα ΔΕΝ έχουν δωρεάν δοκιμή. Χωρίς αυτό, το μενού έδειχνε κουμπί «Δωρεάν δοκιμή»
+  // που ήταν βέβαιο ότι θα αποτύχει — ο πελάτης το πατά, τρώει μήνυμα, ξαναπατά, τηλεφωνεί.
+  const noTrial = (m?: string) => !!addonsQ.data?.addons?.find((a) => a._id === m)?.no_trial;
   const upsellable = new Set((addonsQ.data?.addons ?? []).filter((a) => a.status === "available" && a.offered).map((a) => a._id));
   const canUpsell = (m?: string | string[]) => {
     const keys = Array.isArray(m) ? m : m ? [m] : [];
@@ -373,13 +376,18 @@ export function Sidebar() {
             <div className="mx-auto grid h-12 w-12 place-items-center rounded-2xl bg-gradient-to-br from-violet-500 to-indigo-600 text-white shadow-lg"><Sparkles className="h-6 w-6" /></div>
             <h3 className="mt-3 text-base font-bold text-slate-900 dark:text-slate-100">{t(upsell.label, upsell.en)}</h3>
             <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-              {t("Δεν περιλαμβάνεται στο πακέτο σου. Δοκίμασέ το δωρεάν για 14 ημέρες ή αναβάθμισε το πλάνο σου.",
-                 "Not included in your plan. Try it free for 14 days or upgrade your plan.")}
+              {noTrial(upsell.module)
+                ? t("Δεν περιλαμβάνεται στο πακέτο σου. Ενεργοποιείται απευθείας, χωρίς δοκιμαστική περίοδο.",
+                     "Not included in your plan. It is activated directly, with no trial period.")
+                : t("Δεν περιλαμβάνεται στο πακέτο σου. Δοκίμασέ το δωρεάν για 14 ημέρες ή αναβάθμισε το πλάνο σου.",
+                     "Not included in your plan. Try it free for 14 days or upgrade your plan.")}
             </p>
-            <button onClick={startTrial} disabled={trialBusy}
-              className="mt-4 w-full rounded-xl bg-violet-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-violet-700 disabled:opacity-50">
-              {trialBusy ? t("Έναρξη…", "Starting…") : t("✨ Δωρεάν δοκιμή 14 ημερών", "✨ Free 14-day trial")}
-            </button>
+            {!noTrial(upsell.module) && (
+              <button onClick={startTrial} disabled={trialBusy}
+                className="mt-4 w-full rounded-xl bg-violet-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-violet-700 disabled:opacity-50">
+                {trialBusy ? t("Έναρξη…", "Starting…") : t("✨ Δωρεάν δοκιμή 14 ημερών", "✨ Free 14-day trial")}
+              </button>
+            )}
             <button onClick={() => { setUpsell(null); router.push("/settings/billing"); }}
               className="mt-2 w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200">
               {t("Αναβάθμιση πλάνου", "Upgrade plan")}

@@ -749,3 +749,39 @@ async def save_offer_banner(body: OfferBannerIn, ctx: TenantContext = Depends(re
 @router.delete("/offer-banners/{banner_id}")
 async def delete_offer_banner(banner_id: str, ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
     return await _bnrepo(ctx).delete(banner_id)
+
+
+# ── Ενημέρωση καταλόγου από τη βάση μας (πρόσθετο «Έτοιμος κατάλογος», 15 €/μήνα) ────────────
+# ΞΕΧΩΡΙΣΤΟ module από το υπόλοιπο αρχείο: ένα φαρμακείο μπορεί να αγοράσει τον έτοιμο κατάλογο
+# χωρίς να έχει e-shop. Με το `order_delivery` θα έπαιρνε 403 και η ρύθμιση θα ήταν απρόσιτη.
+_SYNC_MODULE = "catalog_seed"
+
+
+class CatalogSyncIn(BaseModel):
+    types: list[str] = []
+
+
+@router.get("/sync-settings")
+async def catalog_sync_settings(
+        ctx: TenantContext = Depends(require(_PERM, module=_SYNC_MODULE))):
+    """Με ποια από τα τρία ενημερώνεται το φαρμακείο, και τι έγινε την τελευταία φορά."""
+    from app.services import catalog_sync
+    from app.services.catalog_taxonomy import TAXONOMY
+    cfg = await catalog_sync.get_settings(ctx.tenant_id)
+    return {**cfg, "available": [{"key": c["type"], "label": c["label"]}
+                                 for c in TAXONOMY["classes"]]}
+
+
+@router.put("/sync-settings")
+async def set_catalog_sync_settings(
+        body: CatalogSyncIn,
+        ctx: TenantContext = Depends(require(_PERM, module=_SYNC_MODULE))):
+    from app.services import catalog_sync
+    return await catalog_sync.set_settings(ctx.tenant_id, types=body.types)
+
+
+@router.post("/sync-now")
+async def catalog_sync_now(ctx: TenantContext = Depends(require(_PERM, module=_SYNC_MODULE))):
+    """Χειροκίνητη ενημέρωση τώρα — ίδια ακριβώς διαδικασία με τη νυχτερινή."""
+    from app.services import catalog_sync
+    return await catalog_sync.run_for_tenant(ctx.tenant_id)

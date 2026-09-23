@@ -11,6 +11,7 @@ const TABS = [
   { href: "/settings/menus", el: "Μενού ανά ρόλο", en: "Menu per role" },
   { href: "/settings/ingestion", el: "Διασύνδεση ΗΔΥΚΑ", en: "ΗΔΥΚΑ Connection" },
   { href: "/settings/closing", el: "Κλείσιμο Μήνα", en: "Month Closing" },
+  { href: "/settings/catalog", el: "Ενημέρωση καταλόγου", en: "Catalog updates" },
   { href: "/settings/availability", el: "Ωράριο & Διαθεσιμότητα", en: "Hours & Availability" },
   { href: "/settings/communications", el: "Επικοινωνία", en: "Communications" },
   { href: "/settings/billing", el: "Χρέωση", en: "Billing" },

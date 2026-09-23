@@ -18,3 +18,13 @@ def classify_parapharmacy(max_new: int | None = 3000) -> dict:
         return await parapharmacy_classifier.run(max_new=max_new)
 
     return _run_async(_run())
+
+
+@celery_app.task(name="app.workers.catalog_categories.sync_catalogs")
+def sync_catalogs() -> dict:
+    """Καθημερινή ενημέρωση καταλόγου για όσους πληρώνουν το πρόσθετο."""
+    async def _run() -> dict:
+        from app.services import catalog_sync
+        return await catalog_sync.run_all()
+
+    return _run_async(_run())
