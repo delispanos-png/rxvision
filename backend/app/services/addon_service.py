@@ -197,6 +197,46 @@ async def for_tenant(tenant_id: str) -> dict:
             "card_on_file": await billing_service.card_on_file(tenant_id)}
 
 
+def _prorated_addon(price_cents: int, sub: dict, yearly: bool) -> tuple[int, int]:
+    """(αναλογικό ποσό, μέρες που απομένουν) για ένα πρόσθετο στο υπόλοιπο της τρέχουσας περιόδου.
+
+    ΓΙΑΤΙ ΥΠΑΡΧΕΙ: χωρίς αυτό, πελάτης με ΕΤΗΣΙΑ συνδρομή που μόλις ανανέωσε μπορούσε να
+    ενεργοποιήσει πρόσθετο και να το χρησιμοποιεί έντεκα μήνες ΔΩΡΕΑΝ — η πρώτη χρέωση θα
+    ερχόταν στην επόμενη ανανέωση. Ίδια λογική με τα seats (services/seats_service.py).
+    """
+    period_days = 365 if yearly else 30
+    period_end = sub.get("current_period_end")
+    remaining = max(0, (period_end - _now()).days) if period_end else period_days
+    frac = min(1.0, max(0.0, remaining / period_days))
+    return max(0, round(price_cents * frac)), remaining
+
+
+async def activation_quote(tenant_id: str, addon_id: str) -> dict:
+    """Τι ΑΚΡΙΒΩΣ θα χρεωθεί τώρα η κάρτα — για να το δει ο πελάτης ΠΡΙΝ πατήσει.
+
+    Ποτέ δεν χρεώνουμε κάρτα με ποσό που ο πελάτης δεν έχει δει γραμμένο.
+    """
+    from app.services import billing_service
+    from app.services.invoice_service import gross_from_price
+    db = shared_db()
+    a = await db["addons"].find_one({"_id": addon_id, "active": True})
+    if not a:
+        return {"ok": False, "error": "unknown_addon"}
+    sub = await db["subscriptions"].find_one({"tenant_id": tenant_id}) or {}
+    yearly = sub.get("billing_cycle") == "yearly"
+    price = int(a.get("price_yearly" if yearly else "price_monthly") or 0)
+    tenant = await db["tenants"].find_one({"_id": tenant_id}, {"country": 1}) or {}
+    pkg = await db["packages"].find_one({"_id": sub.get("plan")}) if sub.get("plan") else None
+    inc_vat = bool((pkg or {}).get("price_includes_vat") or sub.get("price_includes_vat"))
+    net, remaining = _prorated_addon(price, sub, yearly)
+    return {"ok": True, "addon": addon_id, "name": a.get("name"),
+            "cycle": "yearly" if yearly else "monthly",
+            "full_price_cents": gross_from_price(price, inc_vat, tenant.get("country")),
+            "charge_now_cents": gross_from_price(net, inc_vat, tenant.get("country")),
+            "remaining_days": remaining,
+            "card_on_file": await billing_service.card_on_file(tenant_id)}
+
+
 async def activate(tenant_id: str, addon_id: str) -> dict:
     """Turn an add-on ON for a tenant: entitlement (module override) + billing record.
 
@@ -214,16 +254,50 @@ async def activate(tenant_id: str, addon_id: str) -> dict:
     if addon_id in set(sub.get("modules_included", []) or []):
         return {"ok": False, "error": "included_in_plan"}
     # Δωρεάν πρόσθετα δεν χρειάζονται κάρτα — δεν χρεώνονται ποτέ.
-    if int(a.get("price_monthly") or 0) > 0 and not await billing_service.card_on_file(tenant_id):
-        return {"ok": False, "error": "card_required",
-                "message": "Για να ενεργοποιήσεις χρεώσιμο πρόσθετο χρειάζεται καταχωρημένη "
-                           "κάρτα. Πρόσθεσέ την από τις Ρυθμίσεις → Χρέωση."}
+    yearly = sub.get("billing_cycle") == "yearly"
+    price = int(a.get("price_yearly" if yearly else "price_monthly") or 0)
+    if price > 0:
+        from app.services import billable_gate
+        reason = await billable_gate.blocked_reason(tenant_id, "addons")
+        if reason:
+            return {"ok": False, "error": "card_required", "message": reason}
+
+    # ── ΑΜΕΣΗ ΑΝΑΛΟΓΙΚΗ ΧΡΕΩΣΗ για ό,τι απομένει στην περίοδο ───────────────────────────────
+    charged = 0
+    if price > 0:
+        from app.services.invoice_service import gross_from_price
+        tenant = await db["tenants"].find_one({"_id": tenant_id}, {"country": 1}) or {}
+        pkg = await db["packages"].find_one({"_id": sub.get("plan")}) if sub.get("plan") else None
+        inc_vat = bool((pkg or {}).get("price_includes_vat") or sub.get("price_includes_vat"))
+        net, remaining = _prorated_addon(price, sub, yearly)
+        gross = gross_from_price(net, inc_vat, tenant.get("country"))
+        if gross > 0:
+            res = await billing_service._charge_recurring(sub, gross, tenant_id)
+            if not res.get("ok"):
+                # ΔΕΝ ανοίγουμε τη δυνατότητα αν δεν πληρώθηκε. Αλλιώς ο πελάτης τη χρησιμοποιεί
+                # και εμείς κυνηγάμε την είσπραξη — ακριβώς αυτό που θέλαμε να αποφύγουμε.
+                return {"ok": False, "error": "charge_failed",
+                        "message": "Η χρέωση της κάρτας δεν ολοκληρώθηκε. Έλεγξε την κάρτα σου "
+                                   "στις Ρυθμίσεις → Χρέωση και δοκίμασε ξανά."}
+            charged = gross
+            from app.services import invoice_service, receipts
+            label = f"{a.get('name') or addon_id} — αναλογικά για {remaining} ημέρες"
+            await receipts.record(tenant_id, "extra", f"Πρόσθετο RxVision: {label}", gross,
+                                  method="card", provider=res.get("provider", "viva"),
+                                  provider_order_id=res.get("order_id"))
+            await invoice_service.create_for_payment(
+                tenant_id=tenant_id, kind="extra", gross_cents=gross,
+                description=f"Πρόσθετο RxVision: {label}",
+                payment={"method": "card", "provider": res.get("provider", "viva"),
+                         "transaction_id": res.get("order_id")},
+                item_key=f"addon:{addon_id}")
+
     await db["tenants"].update_one({"_id": tenant_id},
                                    {"$set": {f"modules.{addon_id}": "enabled"}})
     await db["subscriptions"].update_one({"tenant_id": tenant_id},
                                          {"$addToSet": {"addons": addon_id}}, upsert=True)
     total = await _recompute_total(tenant_id)
-    return {"ok": True, "addon": addon_id, "addons_total": total}
+    return {"ok": True, "addon": addon_id, "addons_total": total, "charged_now": charged}
 
 
 #: Πρόσθετα ΕΚΤΟΣ δωρεάν δοκιμής — αγοράζονται απευθείας.

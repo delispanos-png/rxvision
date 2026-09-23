@@ -20,6 +20,15 @@ async def list_addons(ctx: TenantContext = Depends(get_current_context)):
     return await addon_service.for_tenant(ctx.tenant_id)
 
 
+@router.get("/{addon_id}/quote")
+async def quote(addon_id: str, ctx: TenantContext = Depends(require("billing:manage"))):
+    """Πόσο θα χρεωθεί ΤΩΡΑ η κάρτα για ενεργοποίηση — ο πελάτης το βλέπει πριν πατήσει."""
+    res = await addon_service.activation_quote(ctx.tenant_id, addon_id)
+    if not res.get("ok"):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail=res)
+    return res
+
+
 @router.post("/{addon_id}/activate")
 async def activate(addon_id: str, ctx: TenantContext = Depends(require("billing:manage"))):
     res = await addon_service.activate(ctx.tenant_id, addon_id)

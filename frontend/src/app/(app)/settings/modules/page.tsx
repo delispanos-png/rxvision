@@ -107,7 +107,11 @@ export default function ModulesPlanPage() {
   };
   const actAddon = useMutation({
     mutationFn: (id: string) => api(`/addons/${id}/activate`, { method: "POST" }),
-    onSuccess: refreshAddons,
+    onSuccess: (r) => {
+      refreshAddons();
+      const c = (r as { charged_now?: number })?.charged_now;
+      if (c) appAlert(t(`Ενεργοποιήθηκε. Χρεώθηκαν ${eur(c)}.`, `Activated. ${eur(c)} charged.`));
+    },
     // ΔΕΙΞΕ ΤΟΝ ΛΟΓΟ. «Δοκίμασε ξανά» όταν λείπει κάρτα σημαίνει ότι ο πελάτης θα ξαναπατά
     // επ' άπειρον και θα τηλεφωνήσει — ο λόγος δεν αλλάζει με την επανάληψη.
     onError: (e) => {
@@ -128,8 +132,22 @@ export default function ModulesPlanPage() {
                  "A saved card is required to activate a paid add-on. Add one in Settings → Billing."));
       return;
     }
-    if (await appConfirm(t(`Ενεργοποίηση «${a.name}» με επιπλέον ${eur(price)}/${per}; Η χρέωση ξεκινά από τον επόμενο κύκλο. Μπορείς να το απενεργοποιήσεις όποτε θες.`,
-      `Activate «${a.name}» for +${eur(price)}/${per}? Billing starts next cycle. You can turn it off anytime.`))) actAddon.mutate(a._id);
+    if (!price) {
+      if (await appConfirm(t(`Ενεργοποίηση «${a.name}»;`, `Activate «${a.name}»?`))) actAddon.mutate(a._id);
+      return;
+    }
+    /* ΠΟΤΕ δεν χρεώνουμε κάρτα με ποσό που ο πελάτης δεν έχει δει γραμμένο. Ζητάμε το ακριβές
+       αναλογικό ποσό από τον server και το δείχνουμε στο confirm. */
+    let q: { charge_now_cents: number; remaining_days: number } | null = null;
+    try {
+      q = await api<{ charge_now_cents: number; remaining_days: number }>(`/addons/${a._id}/quote`);
+    } catch { /* αν δεν βγει το quote, δείχνουμε τουλάχιστον την πλήρη τιμή */ }
+    const msg = q
+      ? t(`Ενεργοποίηση «${a.name}»;\n\nΧρεώνεται ΤΩΡΑ ${eur(q.charge_now_cents)} για τις ${q.remaining_days} ημέρες που απομένουν στην περίοδό σου.\nΑπό την επόμενη ανανέωση: ${eur(price)}/${per}.\n\nΜπορείς να το απενεργοποιήσεις όποτε θες.`,
+           `Activate «${a.name}»?\n\nCharged NOW: ${eur(q.charge_now_cents)} for the ${q.remaining_days} days left in your period.\nFrom next renewal: ${eur(price)}/${per}.\n\nYou can turn it off anytime.`)
+      : t(`Ενεργοποίηση «${a.name}» με ${eur(price)}/${per}; Θα χρεωθεί αναλογικά για τις ημέρες που απομένουν.`,
+           `Activate «${a.name}» for ${eur(price)}/${per}? You will be charged pro-rata for the remaining days.`);
+    if (await appConfirm(msg)) actAddon.mutate(a._id);
   }
   async function deactivateAddon(a: AddonLite) {
     if (await appConfirm(t(`Απενεργοποίηση «${a.name}»;`, `Deactivate «${a.name}»?`), { danger: true })) deactAddon.mutate(a._id);

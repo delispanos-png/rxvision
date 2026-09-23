@@ -86,6 +86,9 @@ class TopupIn(BaseModel):
 
 @router.post("/topup")
 async def topup(body: TopupIn, ctx: TenantContext = Depends(require("billing:manage"))):
+    # Χωρίς κάρτα δεν αγοράζει ΝΕΑ credits — ό,τι έχει ήδη πληρώσει το ξοδεύει κανονικά.
+    from app.services import billable_gate
+    await billable_gate.require_card(ctx.tenant_id, "messaging_topup")
     """Αγορά πακέτου credits μηνυμάτων μέσω του ΕΝΕΡΓΟΥ παρόχου. Το webhook πιστώνει το wallet όταν
     ολοκληρωθεί η πληρωμή. Viva → {ok, provider:"viva", checkout_url} (redirect, κάρτα/IRIS)·
     Revolut → {ok, token, mode} (widget)."""
