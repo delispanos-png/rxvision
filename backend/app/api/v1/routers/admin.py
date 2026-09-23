@@ -1802,7 +1802,8 @@ async def _master_catalog(db) -> str | None:
 
 
 @router.get("/catalog-seed/pharmacies")
-async def seed_pharmacies(_: PlatformContext = Depends(get_platform_admin)):
+async def seed_pharmacies(include_all: bool = False,
+                          _: PlatformContext = Depends(get_platform_admin)):
     """Τα φαρμακεία-προορισμοί, με το τι έχουν ήδη και αν πληρώνουν το πρόσθετο."""
     db = shared_db()
     counts = {r["_id"]: r["n"] for r in await db["pharmacy_products"].aggregate(
@@ -1814,12 +1815,13 @@ async def seed_pharmacies(_: PlatformContext = Depends(get_platform_admin)):
         # ΜΟΝΟ όσοι έχουν αγοράσει την υπηρεσία. Ένα λάθος κλικ εδώ φορτώνει 40.000 είδη σε
         # φαρμακείο που δεν την πλήρωσε — και το ξεφόρτωμα δεν είναι απλή ακύρωση, γιατί ο
         # πελάτης μπορεί στο μεταξύ να έχει δουλέψει πάνω στα είδη.
-        if (t.get("modules") or {}).get("catalog_seed") not in ("enabled", "trial"):
+        has = (t.get("modules") or {}).get("catalog_seed") in ("enabled", "trial")
+        if not has and not include_all:
             hidden += 1
             continue
         out.append({"id": t["_id"], "name": t.get("name"), "status": t.get("status"),
                     "items": counts.get(t["_id"], 0), "is_master": t["_id"] == master,
-                    "has_addon": True})
+                    "has_addon": has})
     out.sort(key=lambda x: (x["name"] or ""))
     return {"items": out, "hidden_without_addon": hidden}
 
@@ -1869,6 +1871,41 @@ async def seed_copy(body: SeedIn, _: PlatformContext = Depends(get_platform_admi
         from app.workers.catalog_categories import classify_parapharmacy
         classify_parapharmacy.delay(0)
     return res
+
+
+class SampleIn(BaseModel):
+    target_tenant: str
+    per_category: int = 10
+
+
+@router.post("/catalog-seed/sample")
+async def seed_sample(body: SampleIn, _: PlatformContext = Depends(get_platform_admin)):
+    """Δείγμα καταλόγου — λίγα είδη από κάθε κατηγορία, για να δει ο πελάτης πώς λειτουργεί.
+
+    ΔΕΝ απαιτεί ενεργό πρόσθετο: το δείγμα είναι ακριβώς ο τρόπος να το γνωρίσει κάποιος που
+    δεν το έχει αγοράσει ακόμη.
+    """
+    from app.repositories.pharmacy_catalog import PharmacyCatalogRepository
+    db = shared_db()
+    master = await _master_catalog(db)
+    if not master:
+        raise HTTPException(http_status.HTTP_400_BAD_REQUEST, detail={"error": "no_catalog"})
+    if master == body.target_tenant:
+        raise HTTPException(http_status.HTTP_400_BAD_REQUEST, detail={"error": "same_tenant"})
+    res = await PharmacyCatalogRepository(tenant_id=body.target_tenant).load_sample(
+        master, per_category=body.per_category)
+    if res.get("ok") and res.get("added"):
+        from app.workers.catalog_categories import classify_parapharmacy
+        classify_parapharmacy.delay(0)
+    return res
+
+
+@router.delete("/catalog-seed/sample")
+async def seed_sample_remove(target_tenant: str,
+                             _: PlatformContext = Depends(get_platform_admin)):
+    """Αφαίρεση δείγματος — μόνο ό,τι δεν πείραξε ο φαρμακοποιός."""
+    from app.repositories.pharmacy_catalog import PharmacyCatalogRepository
+    return await PharmacyCatalogRepository(tenant_id=target_tenant).remove_sample()
 
 
 @router.delete("/tenants/{tenant_id}/items")

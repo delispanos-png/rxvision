@@ -290,10 +290,13 @@ export default function TenantCardPage() {
             );
           })}
         </div>
-        {/* Back-office πηγή ενημέρωσης ειδών (Profarm) — ξεχωριστό, ορατό μόνο σε επιλεγμένα φαρμακεία */}
+        {/* Εμπλουτισμός ειδών από προμηθευτές — ΟΧΙ «από Profarm»: σήμερα η πηγή είναι ο Profarm,
+            αύριο θα είναι περισσότερες. Το όνομα περιγράφει τι κάνει, όχι ποιον χρησιμοποιεί
+            αυτή τη στιγμή. (Τα φάρμακα/παραφάρμακα έρχονται από την ΗΔΥΚΑ· ο προμηθευτής
+            συμπληρώνει φωτο/περιγραφές/τιμές.) */}
         <div className="mt-3 rounded-lg border border-indigo-200 bg-indigo-50/50 p-3">
           <label className="flex cursor-pointer items-center justify-between text-sm">
-            <span className="text-slate-700"><b>📷 Ενημέρωση ειδών από Profarm</b> <span className="text-xs text-slate-400">(back-office· φωτο/περιγραφή/ΦΠΑ/τιμές από τον προμηθευτή — μόνο στη βάση αυτού του φαρμακείου)</span></span>
+            <span className="text-slate-700"><b>📷 Εμπλουτισμός ειδών από προμηθευτές</b> <span className="text-xs text-slate-400">(back-office· φωτο/περιγραφή/ΦΠΑ/τιμές από τον προμηθευτή — σήμερα Profarm· μόνο στη βάση αυτού του φαρμακείου)</span></span>
             <input type="checkbox" checked={!!profarmQ.data?.enabled} disabled={busy}
               onChange={(e) => { const v = e.target.checked; act(() => adminApi(`/admin/tenants/${encodeURIComponent(id)}/profarm-module?enabled=${v}`, { method: "POST" }), v ? "Profarm module ΟΝ ✓" : "Profarm module OFF ✓").then(() => profarmQ.refetch()); }}
               className="h-4 w-4 accent-indigo-600" />

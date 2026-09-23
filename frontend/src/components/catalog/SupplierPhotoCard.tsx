@@ -1,6 +1,8 @@
 "use client";
 
-// Back-office (staff): σύνδεση με B2B προμηθευτή (Profarm) για αυτόματη λήψη φωτογραφιών ανά barcode.
+// Εμπλουτισμός ειδών από B2B προμηθευτή (σήμερα: Profarm) — φωτο/περιγραφές ανά barcode.
+// ΤΟ ΟΝΟΜΑ ΕΙΝΑΙ ΣΚΟΠΙΜΑ ΑΝΕΞΑΡΤΗΤΟ ΠΗΓΗΣ: οι πηγές θα πληθύνουν, και ένα όνομα που κλειδώνει
+// σε έναν προμηθευτή θα γινόταν λάθος με την πρώτη προσθήκη.
 // Off by default — ενεργοποιείται από τον διαχειριστή σε φαρμακεία που συνεργάζονται με τον προμηθευτή.
 // ΠΟΤΕ ορατό σε πελάτες. Ο κωδικός αποθηκεύεται κρυπτογραφημένος server-side.
 import { useState } from "react";
@@ -92,7 +94,7 @@ export function SupplierPhotoCard() {
     <div className="rounded-xl border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
       <button onClick={() => setOpen((v) => !v)} className="flex w-full items-center gap-2 px-4 py-3 text-left">
         <Camera className="h-5 w-5 text-indigo-500" />
-        <span className="text-sm font-semibold text-slate-700 dark:text-slate-200">{t("Φωτογραφίες από προμηθευτή (Profarm)", "Supplier photos (Profarm)")}</span>
+        <span className="text-sm font-semibold text-slate-700 dark:text-slate-200">{t("Εμπλουτισμός ειδών από προμηθευτή", "Enrich items from supplier")}</span>
         {configured && <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700"><Check className="h-3 w-3" /> {t("συνδεδεμένο", "connected")}</span>}
         <ChevronDown className={`ml-auto h-4 w-4 text-slate-400 transition ${open ? "rotate-180" : ""}`} />
       </button>

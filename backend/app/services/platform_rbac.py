@@ -205,6 +205,8 @@ _ADMIN: dict[tuple[str, str], str] = {
     ("GET", "/catalog-seed/pharmacies"): "tenants:read",
     ("GET", "/catalog-seed/catalog"): "tenants:read",
     ("POST", "/catalog-seed/copy"): "tenants:items_copy",
+    ("POST", "/catalog-seed/sample"): "tenants:items_copy",
+    ("DELETE", "/catalog-seed/sample"): "tenants:items_delete",
     ("DELETE", "/tenants/{tenant_id}/items"): "tenants:items_delete",
     ("GET", "/tenants/{tenant_id}/credentials"): "tenants:credentials",
     ("POST", "/tenants/{tenant_id}/impersonate"): "tenants:impersonate",

@@ -568,6 +568,64 @@ class PharmacyCatalogRepository(BaseRepository):
             await col.insert_many(buf); copied += len(buf)
         return {"ok": True, "copied": copied, "updated": updated, "skipped": skipped}
 
+    #: Σήμανση δείγματος — ΧΩΡΙΣ αυτήν το δείγμα δεν ξεχωρίζει από τα είδη του φαρμακοποιού και
+    #: δεν μπορεί να αφαιρεθεί χωρίς να πάρει μαζί του δουλειά του.
+    SAMPLE_SOURCE = "catalog_sample"
+
+    async def load_sample(self, source_tenant: str, *, per_category: int = 10) -> dict:
+        """Λίγα είδη από ΚΑΘΕ κατηγορία, για να δει ο πελάτης πώς λειτουργεί.
+
+        ΓΙΑΤΙ ΔΕΙΓΜΑ ΚΑΙ ΟΧΙ ΔΟΚΙΜΗ ΜΕ ΛΗΞΗ: ο έτοιμος κατάλογος δεν είναι δυνατότητα που
+        δοκιμάζεις και μετά την αφήνεις — τη στιγμή που θα έληγε η δοκιμή, δεκάδες χιλιάδες είδη
+        θα ήταν ήδη μέσα στον κατάλογό του και η «λήξη» θα σήμαινε μαζική διαγραφή. Ένα δείγμα
+        δείχνει το ίδιο πράγμα και αφαιρείται καθαρά.
+        """
+        if not source_tenant or source_tenant == self.tenant_id:
+            return {"ok": False, "error": "bad_source"}
+        col = self._db["pharmacy_products"]
+        n = max(1, min(int(per_category), 50))
+        rows = await col.aggregate([
+            {"$match": {"tenant_id": source_tenant, "barcode": {"$nin": [None, ""]}}},
+            {"$sort": {"name": 1}},
+            {"$group": {"_id": {"t": "$type", "c": "$category"}, "docs": {"$push": "$$ROOT"}}},
+            {"$project": {"docs": {"$slice": ["$docs", n]}}},
+        ]).to_list(length=None)
+        existing = set(await col.distinct("barcode", {"tenant_id": self.tenant_id}))
+        drop = {"_id", "tenant_id", "created_at", "updated_at", "profarm_tried", "profarm_tried_at",
+                "profarm_synced_at", "profarm_pid", "photo_source", "source"}
+        buf, skipped = [], 0
+        for g in rows:
+            for d in g.get("docs") or []:
+                bc = d.get("barcode")
+                if not bc or bc in existing:
+                    skipped += 1
+                    continue
+                existing.add(bc)
+                buf.append({**{k: v for k, v in d.items() if k not in drop},
+                            "tenant_id": self.tenant_id, "stock_qty": 0,
+                            "source": self.SAMPLE_SOURCE, "sample": True,
+                            "created_at": _now(), "updated_at": _now()})
+        for i in range(0, len(buf), 1000):
+            await col.insert_many(buf[i:i + 1000])
+        return {"ok": True, "added": len(buf), "skipped": skipped,
+                "categories": len(rows), "per_category": n}
+
+    async def remove_sample(self) -> dict:
+        """Αφαίρεση δείγματος — ΜΟΝΟ όσα δεν άγγιξε ο φαρμακοποιός.
+
+        Αν πρόλαβε να αλλάξει τιμή, να βγάλει είδος προς πώληση ή να του βάλει απόθεμα, το είδος
+        έπαψε να είναι «δικό μας δείγμα» και μένει. Μια αφαίρεση που σβήνει δουλειά του πελάτη
+        είναι χειρότερη από ένα δείγμα που ξέμεινε.
+        """
+        col = self._db["pharmacy_products"]
+        q = {"tenant_id": self.tenant_id, "sample": True,
+             "$expr": {"$eq": ["$created_at", "$updated_at"]},
+             "stock_qty": {"$in": [0, None]}, "for_sale": {"$ne": True}}
+        kept = await col.count_documents({"tenant_id": self.tenant_id, "sample": True})
+        res = await col.delete_many(q)
+        return {"ok": True, "deleted": res.deleted_count,
+                "kept_touched": kept - res.deleted_count}
+
     async def delete_all_items(self) -> dict:
         """Διαγραφή ΟΛΩΝ των ειδών αποθήκης του φαρμακείου + κινήσεις αποθέματος (admin-only, destructive).
         Δεν αγγίζει παραγγελίες/ιστορικό."""

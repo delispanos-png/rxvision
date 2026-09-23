@@ -11,7 +11,7 @@
 
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Package, Calculator, Loader2, AlertTriangle, Pill, Sparkles } from "lucide-react";
+import { Package, Calculator, Loader2, AlertTriangle, Pill, Sparkles, Gift } from "lucide-react";
 import { adminApi } from "@/lib/adminClient";
 import { appAlert, appConfirm } from "@/store/dialogStore";
 
@@ -36,9 +36,10 @@ export default function CatalogSeedPage() {
   const [overwrite, setOverwrite] = useState(false);
   const [busy, setBusy] = useState(false);
   const [preview, setPreview] = useState<number | null>(null);
+  const [perCat, setPerCat] = useState(10);
 
   const phs = useQuery({ queryKey: ["seed", "pharmacies"],
-    queryFn: () => adminApi<{ items: Ph[]; hidden_without_addon?: number }>("/admin/catalog-seed/pharmacies") });
+    queryFn: () => adminApi<{ items: Ph[]; hidden_without_addon?: number }>("/admin/catalog-seed/pharmacies?include_all=true") });
   const cat = useQuery({ queryKey: ["seed", "catalog"],
     queryFn: () => adminApi<Catalog>("/admin/catalog-seed/catalog") });
 
@@ -55,6 +56,40 @@ export default function CatalogSeedPage() {
     for (const p of pairs) sum.set(String(p.key), (sum.get(String(p.key)) ?? 0) + p.n);
     return [...sum.entries()].map(([key, n]) => ({ key, n })).sort((a, b) => b.n - a.n);
   })();
+  async function sendSample() {
+    if (!target) { appAlert("Διάλεξε φαρμακείο."); return; }
+    if (!(await appConfirm(
+      `Αποστολή δείγματος ${perCat} ειδών ανά κατηγορία στο «${tgtPh?.name}»; Το απόθεμα ξεκινά στο μηδέν και αφαιρείται καθαρά.`,
+      { title: "Δείγμα καταλόγου", confirmText: "Αποστολή" }))) return;
+    setBusy(true);
+    try {
+      const r = await adminApi<{ added: number; categories: number; skipped: number }>(
+        "/admin/catalog-seed/sample", { method: "POST",
+          body: JSON.stringify({ target_tenant: target, per_category: perCat }) });
+      await appAlert(`✓ Στάλθηκαν ${num(r.added)} είδη από ${num(r.categories)} κατηγορίες.`, { title: "Δείγμα" });
+      phs.refetch();
+    } catch (e) {
+      const d = (e as { problem?: { detail?: { message?: string } } })?.problem?.detail;
+      appAlert(d?.message || "Απέτυχε.");
+    } finally { setBusy(false); }
+  }
+
+  async function dropSample() {
+    if (!target) return;
+    if (!(await appConfirm(
+      `Αφαίρεση δείγματος από «${tgtPh?.name}»; Όσα είδη έχει πειράξει ο φαρμακοποιός ΔΕΝ διαγράφονται.`,
+      { title: "Αφαίρεση δείγματος", danger: true, confirmText: "Αφαίρεση" }))) return;
+    setBusy(true);
+    try {
+      const r = await adminApi<{ deleted: number; kept_touched: number }>(
+        `/admin/catalog-seed/sample?target_tenant=${encodeURIComponent(target)}`, { method: "DELETE" });
+      await appAlert(`✓ Διαγράφηκαν ${num(r.deleted)} είδη· ${num(r.kept_touched)} έμειναν γιατί τα είχε πειράξει.`,
+        { title: "Αφαίρεση δείγματος" });
+      phs.refetch();
+    } catch { appAlert("Απέτυχε."); }
+    finally { setBusy(false); }
+  }
+
   const uncat = (cat.data?.by_type_category || [])
     .filter((p) => !p.key && (types.length === 0 || types.includes(String(p.type))))
     .reduce((a, p) => a + p.n, 0);
@@ -179,22 +214,16 @@ export default function CatalogSeedPage() {
           <option value="">— διάλεξε φαρμακείο —</option>
           {(phs.data?.items || []).filter((p) => !p.is_master).map((p) => (
             <option key={p.id} value={p.id}>
-              {p.name}{p.items ? ` — έχει ήδη ${num(p.items)} είδη` : ""}
+              {p.has_addon ? "✅ " : "🎁 "}{p.name}{p.items ? ` — έχει ήδη ${num(p.items)} είδη` : ""}
             </option>
           ))}
         </select>
         {/* Εμφανίζονται ΜΟΝΟ όσοι πληρώνουν το πρόσθετο: ένα λάθος κλικ εδώ φορτώνει δεκάδες
             χιλιάδες είδη σε πελάτη που δεν το αγόρασε, και το ξεφόρτωμα δεν είναι απλή ακύρωση. */}
-        {!phs.isLoading && !phs.data?.items?.filter((p) => !p.is_master).length && (
+        {target && !tgtPh?.has_addon && (
           <p className="mt-2 flex items-center gap-1.5 text-xs font-medium text-amber-700">
             <AlertTriangle className="h-3.5 w-3.5" />
-            Κανένα φαρμακείο δεν έχει ενεργό το πρόσθετο «Έτοιμος κατάλογος ειδών».
-            Ενεργοποίησέ το πρώτα από την καρτέλα του πελάτη.
-          </p>
-        )}
-        {!!phs.data?.hidden_without_addon && (
-          <p className="mt-2 text-xs text-slate-400">
-            {num(phs.data.hidden_without_addon)} φαρμακεία δεν εμφανίζονται — δεν έχουν το πρόσθετο.
+            Δεν έχει το πρόσθετο (15 €/μήνα). Μπορείς μόνο να του στείλεις <b>δείγμα</b>.
           </p>
         )}
 
@@ -211,9 +240,29 @@ export default function CatalogSeedPage() {
           {preview != null && (
             <span className="text-sm font-medium text-slate-700">Θα φορτωθούν <b>{num(preview)}</b> είδη.</span>
           )}
-          <button onClick={() => run(false)} disabled={busy || !target}
+          <button onClick={() => run(false)} disabled={busy || !target || !tgtPh?.has_addon}
+            title={tgtPh && !tgtPh.has_addon ? "Χρειάζεται ενεργό πρόσθετο" : ""}
             className="ml-auto inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-50">
             {busy && <Loader2 className="h-4 w-4 animate-spin" />}Φόρτωση καταλόγου
+          </button>
+        </div>
+
+        {/* ΔΕΙΓΜΑ — ο τρόπος να δει κάποιος πώς λειτουργεί χωρίς να του φορτώσουμε 41.000 είδη
+            που μετά δεν παίρνονται πίσω. */}
+        <div className="mt-4 flex flex-wrap items-center gap-2 rounded-xl border border-dashed border-slate-300 p-3">
+          <Gift className="h-4 w-4 text-slate-400" />
+          <span className="text-sm text-slate-600">Δείγμα:</span>
+          <input type="number" min={1} max={50} value={perCat}
+            onChange={(e) => setPerCat(Math.max(1, Math.min(50, Number(e.target.value) || 10)))}
+            className="w-16 rounded-lg border border-slate-300 px-2 py-1 text-sm" />
+          <span className="text-sm text-slate-600">είδη από κάθε κατηγορία</span>
+          <button onClick={sendSample} disabled={busy || !target}
+            className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50">
+            Αποστολή δείγματος
+          </button>
+          <button onClick={dropSample} disabled={busy || !target}
+            className="rounded-lg border border-rose-300 px-3 py-1.5 text-sm text-rose-600 hover:bg-rose-50 disabled:opacity-50">
+            Αφαίρεση δείγματος
           </button>
         </div>
       </section>
