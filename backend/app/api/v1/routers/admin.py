@@ -1780,7 +1780,6 @@ async def copy_items(tenant_id: str, body: CopyItemsIn,
 
 
 class SeedIn(BaseModel):
-    source_tenant: str
     target_tenant: str
     types: list[str] = []          # κενό = όλοι οι τύποι
     categories: list[str] = []     # κενό = όλες οι κατηγορίες
@@ -1788,38 +1787,62 @@ class SeedIn(BaseModel):
     dry_run: bool = False
 
 
+async def _master_catalog(db) -> str | None:
+    """Ο «κεντρικός κατάλογος» = το φαρμακείο με τα περισσότερα είδη.
+
+    ΓΙΑΤΙ ΔΕΝ ΤΟΝ ΔΙΑΛΕΓΕΙ Ο ΧΡΗΣΤΗΣ: αυτό που πουλάμε είναι «έτοιμος κατάλογος», όχι
+    «αντιγραφή από τον τάδε πελάτη». Το ποιο φαρμακείο τυχαίνει να κρατά σήμερα τον πληρέστερο
+    κατάλογο είναι δική μας λεπτομέρεια — ο χρήστης διαλέγει ΠΡΟΪΟΝΤΑ και ΦΑΡΜΑΚΕΙΟ.
+    """
+    rows = await db["pharmacy_products"].aggregate([
+        {"$group": {"_id": "$tenant_id", "n": {"$sum": 1}}},
+        {"$sort": {"n": -1}}, {"$limit": 1}]).to_list(length=1)
+    return rows[0]["_id"] if rows else None
+
+
 @router.get("/catalog-seed/pharmacies")
 async def seed_pharmacies(_: PlatformContext = Depends(get_platform_admin)):
-    """Φαρμακεία + πόσα είδη έχει το καθένα — για να διαλέξεις πηγή και προορισμό."""
+    """Τα φαρμακεία-προορισμοί, με το τι έχουν ήδη και αν πληρώνουν το πρόσθετο."""
     db = shared_db()
     counts = {r["_id"]: r["n"] for r in await db["pharmacy_products"].aggregate(
         [{"$group": {"_id": "$tenant_id", "n": {"$sum": 1}}}]).to_list(length=None)}
+    master = await _master_catalog(db)
     out = []
     async for t in db["tenants"].find({}, {"name": 1, "status": 1, "modules": 1}):
         out.append({"id": t["_id"], "name": t.get("name"), "status": t.get("status"),
-                    "items": counts.get(t["_id"], 0),
-                    # Ο κατάλογος είναι χρεώσιμο πρόσθετο — δείξε ποιος το έχει ώστε να μη
-                    # φορτώνουμε 40.000 είδη σε φαρμακείο που δεν πληρώνει γι' αυτά.
+                    "items": counts.get(t["_id"], 0), "is_master": t["_id"] == master,
                     "has_addon": (t.get("modules") or {}).get("catalog_seed") in ("enabled", "trial")})
-    out.sort(key=lambda x: (-x["items"], (x["name"] or "")))
+    out.sort(key=lambda x: (x["name"] or ""))
     return {"items": out}
 
 
-@router.get("/catalog-seed/breakdown")
-async def seed_breakdown(source: str, _: PlatformContext = Depends(get_platform_admin)):
-    """Τι περιέχει η πηγή ανά τύπο & κατηγορία, με πλήθη."""
+@router.get("/catalog-seed/catalog")
+async def seed_catalog(_: PlatformContext = Depends(get_platform_admin)):
+    """Τι περιέχει ο κεντρικός κατάλογος, ανά τύπο & κατηγορία, με πλήθη."""
     from app.repositories.pharmacy_catalog import PharmacyCatalogRepository
-    return await PharmacyCatalogRepository(tenant_id=source).seed_breakdown(source)
+    db = shared_db()
+    master = await _master_catalog(db)
+    if not master:
+        return {"source": None, "total": 0, "by_type": [], "by_category": []}
+    t = await db["tenants"].find_one({"_id": master}, {"name": 1})
+    bd = await PharmacyCatalogRepository(tenant_id=master).seed_breakdown(master)
+    return {"source": {"id": master, "name": (t or {}).get("name")}, **bd}
 
 
 @router.post("/catalog-seed/copy")
 async def seed_copy(body: SeedIn, _: PlatformContext = Depends(get_platform_admin)):
-    """Αντιγραφή επιλεγμένων κατηγοριών από ένα φαρμακείο σε άλλο."""
+    """Φόρτωση επιλεγμένων κατηγοριών του κεντρικού καταλόγου σε ένα φαρμακείο."""
     from app.repositories.pharmacy_catalog import PharmacyCatalogRepository
-    if body.source_tenant == body.target_tenant:
-        raise HTTPException(http_status.HTTP_400_BAD_REQUEST, detail={"error": "same_tenant"})
+    db = shared_db()
+    master = await _master_catalog(db)
+    if not master:
+        raise HTTPException(http_status.HTTP_400_BAD_REQUEST, detail={"error": "no_catalog"})
+    if master == body.target_tenant:
+        raise HTTPException(http_status.HTTP_400_BAD_REQUEST,
+                            detail={"error": "same_tenant",
+                                    "message": "Αυτό το φαρμακείο ΕΙΝΑΙ ο κεντρικός κατάλογος."})
     res = await PharmacyCatalogRepository(tenant_id=body.target_tenant).copy_from(
-        body.source_tenant, overwrite=body.overwrite, types=body.types,
+        master, overwrite=body.overwrite, types=body.types,
         categories=body.categories, dry_run=body.dry_run)
     if res.get("ok") and not body.dry_run:
         # Τα νέα είδη μπορεί να είναι παραφάρμακα χωρίς κατηγορία· το μητρώο τα ντύνει ΑΜΕΣΩΣ

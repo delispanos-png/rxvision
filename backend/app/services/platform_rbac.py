@@ -203,7 +203,7 @@ _ADMIN: dict[tuple[str, str], str] = {
     ("POST", "/tenants/{tenant_id}/cancel"): "tenants:cancel",
     ("POST", "/tenants/{tenant_id}/copy-items"): "tenants:items_copy",
     ("GET", "/catalog-seed/pharmacies"): "tenants:read",
-    ("GET", "/catalog-seed/breakdown"): "tenants:read",
+    ("GET", "/catalog-seed/catalog"): "tenants:read",
     ("POST", "/catalog-seed/copy"): "tenants:items_copy",
     ("DELETE", "/tenants/{tenant_id}/items"): "tenants:items_delete",
     ("GET", "/tenants/{tenant_id}/credentials"): "tenants:credentials",
