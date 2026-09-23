@@ -25,7 +25,10 @@ def _utcnow() -> datetime:
 # Core modules are tenant-admin surfaces (settings: users/roles, plan, billing,
 # ΗΔΥΚΑ connection) — always available regardless of subscription plan. Actual
 # access is still enforced per-request by RBAC permissions (settings:read/write).
-_CORE_MODULES = {"settings"}
+# `pharmacy_chat`: ΔΩΡΕΑΝ σε όλους (απόφαση ιδιοκτήτη 23/09/2026). Η αξία του είναι το δίκτυο —
+# όσο περισσότερα φαρμακεία μέσα, τόσο πιο χρήσιμο για τον καθένα· μια χρέωση θα το κρατούσε
+# άδειο. Η πρόσκληση απαιτεί ΕΝΕΡΓΗ συνδρομή, οπότε δεν μπαίνει κανείς εκτός πελατολογίου.
+_CORE_MODULES = {"settings", "pharmacy_chat"}
 # «Σύνδεση ως πελάτης» (υποστήριξη): βραχύβιο, ΜΗ-ανανεώσιμο. Λήγει μόνο του → δεν μένει ζωντανή
 # συνεδρία πελάτη στον browser του διαχειριστή για εβδομάδες.
 _IMPERSONATION_TTL_SECONDS = 1800   # 30′

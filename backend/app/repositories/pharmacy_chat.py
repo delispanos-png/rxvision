@@ -108,6 +108,9 @@ class PharmacyChatRepository:
             return {"ok": False, "error": "self", "message": "Αυτό είναι το δικό σου ΑΦΜ."}
         if target in (g.get("members") or []):
             return {"ok": False, "error": "already", "message": "Είναι ήδη στην ομάδα."}
+        block = await self._subscription_block(target)
+        if block:
+            return block
         if await self._db[INVITES].find_one({"group_id": gid, "to_tenant_id": target,
                                              "status": PENDING}):
             return {"ok": False, "error": "pending",
@@ -116,6 +119,31 @@ class PharmacyChatRepository:
             "group_id": gid, "group_name": g.get("name"), "from_tenant_id": self.me,
             "to_tenant_id": target, "to_afm": num, "status": PENDING, "created_at": _now()})
         return {"ok": True, "invited": target}
+
+    async def _subscription_block(self, target: str) -> dict | None:
+        """Μπορεί αυτό το ΑΦΜ να μπει σε ομάδα; None = ναι, αλλιώς το μήνυμα άρνησης.
+
+        ΚΑΝΟΝΑΣ (ιδιοκτήτης 23/09/2026): χρειάζεται ΕΝΕΡΓΗ συνδρομή. Η **δοκιμαστική ΔΕΝ
+        αρκεί** — αλλιώς θα έμπαινε στο δίκτυο κάποιος που σε δεκαπέντε μέρες φεύγει, και τα
+        μηνύματά του θα έμεναν σε ομάδες πληρωμένων πελατών. Σε δοκιμαστικό το ανοίγουμε ΕΜΕΙΣ
+        χειροκίνητα: αν του έχει δοθεί ρητά το module, περνάει κανονικά.
+        """
+        from app.services.billing_service import effective_status
+        t = await self._db["tenants"].find_one({"_id": target}, {"name": 1, "modules": 1}) or {}
+        granted = (t.get("modules") or {}).get("pharmacy_chat") in ("enabled", "trial")
+        if granted:
+            return None
+        sub = await self._db["subscriptions"].find_one({"tenant_id": target})
+        st = effective_status(sub)
+        if st == "active":
+            return None
+        name = t.get("name") or "Το φαρμακείο"
+        if st == "trial":
+            return {"ok": False, "error": "trial_only",
+                    "message": f"Το «{name}» είναι σε δοκιμαστική περίοδο. Επικοινώνησε μαζί μας "
+                               "για να ενεργοποιηθεί η συμμετοχή του σε ομάδες."}
+        return {"ok": False, "error": "no_subscription",
+                "message": f"Το «{name}» δεν έχει ενεργή συνδρομή RxVision."}
 
     async def _find_by_afm(self, num: str) -> str | None:
         """Το ΑΦΜ ζει σε δύο σημεία (company/billing_profile) — κοιτάμε και τα δύο, γιατί
