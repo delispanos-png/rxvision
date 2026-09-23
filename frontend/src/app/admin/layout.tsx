@@ -36,6 +36,7 @@ const GROUPS: { label: string; icon: typeof LayoutGrid; items: { label: string; 
       { label: "Leads & Conversions", icon: Users, href: "/admin/leads", section: "leads:read" },
       { label: "Newsletter", icon: Mail, href: "/admin/newsletter", section: "newsletter:read" },
       { label: "Ανακοινώσεις πελατών", icon: Megaphone, href: "/admin/announcements", section: "content:read" },
+      { label: "Τι νέο υπάρχει", icon: Sparkles, href: "/admin/release-notes", section: "content:read" },
       { label: "Αξιολογήσεις", icon: MessageSquare, href: "/admin/feedback", section: "feedback:read" },
     ],
   },

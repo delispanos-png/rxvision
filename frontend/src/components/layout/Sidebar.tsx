@@ -76,6 +76,10 @@ export function Sidebar() {
   const addonsQ = useQuery({ queryKey: ["addons"], queryFn: () => api<{ addons: { _id: string; status: string; offered?: boolean; no_trial?: boolean }[] }>("/addons"), retry: false });
   // Ποια πρόσθετα ΔΕΝ έχουν δωρεάν δοκιμή. Χωρίς αυτό, το μενού έδειχνε κουμπί «Δωρεάν δοκιμή»
   // που ήταν βέβαιο ότι θα αποτύχει — ο πελάτης το πατά, τρώει μήνυμα, ξαναπατά, τηλεφωνεί.
+  // Πόσες σημειώσεις έκδοσης δεν έχει δει ακόμη — μικρό σήμα δίπλα στην έκδοση.
+  const rnQ = useQuery({ queryKey: ["release-notes-badge"], retry: false, staleTime: 300_000,
+    queryFn: () => api<{ unseen: number }>("/release-notes") });
+  const newCount = rnQ.data?.unseen || 0;
   const noTrial = (m?: string) => !!addonsQ.data?.addons?.find((a) => a._id === m)?.no_trial;
   const upsellable = new Set((addonsQ.data?.addons ?? []).filter((a) => a.status === "available" && a.offered).map((a) => a._id));
   const canUpsell = (m?: string | string[]) => {
@@ -208,6 +212,27 @@ export function Sidebar() {
             <div className={collapsed ? "md:hidden" : ""}><Logo markClassName="h-9 w-9" /></div>
             {collapsed && <LogoMark className="hidden h-9 w-9 md:block" />}
           </a>
+        </div>
+
+        {/* ΕΚΔΟΣΗ ΠΑΝΩ, ΟΧΙ ΚΑΤΩ. Στο υποσέλιδο κανείς δεν κοιτάζει, οπότε μια νέα δυνατότητα
+            περνούσε απαρατήρητη. Όταν υπάρχει κάτι νέο γίνεται πρόσκληση που κουνιέται·
+            όταν δεν υπάρχει, ξαναγίνεται διακριτικός αριθμός έκδοσης. */}
+        <div className={`px-3 pb-2 ${collapsed ? "md:hidden" : ""}`}>
+          {newCount ? (
+            <Link href="/whats-new"
+              className="flex animate-pulse items-center gap-2 rounded-xl bg-gradient-to-r from-violet-500 to-indigo-600 px-3 py-2 text-white shadow-md transition hover:from-violet-600 hover:to-indigo-700">
+              <Sparkles className="h-4 w-4 shrink-0" />
+              <span className="min-w-0 flex-1 text-xs font-semibold leading-tight">
+                {t("Δες τις νέες δυνατότητες", "See what's new")}
+              </span>
+              <span className="rounded-full bg-white/25 px-1.5 text-[10px] font-bold">{newCount}</span>
+            </Link>
+          ) : (
+            <Link href="/whats-new"
+              className="block text-center text-[10px] text-slate-400 transition hover:text-brand-600">
+              RxVision v{APP_VERSION}
+            </Link>
+          )}
         </div>
 
         <nav className="flex-1 space-y-6 overflow-y-auto px-3 py-4">
@@ -366,7 +391,7 @@ export function Sidebar() {
             <img src={CLOUDON_LOGO_DATA_URI} alt="CloudOn" className="h-4 w-auto" />
           </a>
         </Tooltip>
-        <div className={`shrink-0 pb-2 text-center text-[10px] text-slate-400 ${hide}`}>RxVision v{APP_VERSION}</div>
+
       </aside>
 
       {upsell && (

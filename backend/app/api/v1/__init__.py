@@ -42,6 +42,7 @@ from app.api.v1.routers import (
     pharmacyone,
     platform,
     prescriptions,
+    release_notes,
     profitability,
     reimbursement,
     security,
@@ -68,6 +69,7 @@ api_router.include_router(pharmacy_availability.router, prefix="/pharmacy-availa
 api_router.include_router(loyalty.router, prefix="/loyalty", tags=["loyalty"])
 api_router.include_router(pharmacy_catalog.router, prefix="/catalog", tags=["catalog"])
 api_router.include_router(pharmacy_chat.router, prefix="/pharmacy-chat", tags=["pharmacy-chat"])
+api_router.include_router(release_notes.router, prefix="/release-notes", tags=["release-notes"])
 api_router.include_router(orders_delivery.router, prefix="/orders/delivery", tags=["orders-delivery"])
 api_router.include_router(dashboard.router, prefix="/dashboard", tags=["dashboard"])
 api_router.include_router(advisor.router, prefix="/advisor", tags=["advisor"])
@@ -113,6 +115,9 @@ api_router.include_router(fund_groups.router, prefix="/platform/fund-groups", ta
 api_router.include_router(infra_cloud.router, prefix="/platform/cloud", tags=["platform"],
                           dependencies=[Depends(require_padmin("cloud"))])
 api_router.include_router(admin.router, prefix="/admin", tags=["admin"],
+                          dependencies=[Depends(require_padmin("admin"))])
+# «Τι νέο υπάρχει» — διαχείριση από το back-office, ίδιος φρουρός με τον admin router.
+api_router.include_router(release_notes.admin_router, prefix="/admin", tags=["admin"],
                           dependencies=[Depends(require_padmin("admin"))])
 # Lead Engine — δικός του router (ο admin.py είναι ήδη 3.700+ γραμμές). Ο prefix είναι
 # δηλωμένος ΜΕΣΑ στο module, γι' αυτό οι διαδρομές του στον χάρτη δικαιωμάτων γράφονται
