@@ -785,3 +785,12 @@ async def catalog_sync_now(ctx: TenantContext = Depends(require(_PERM, module=_S
     """Χειροκίνητη ενημέρωση τώρα — ίδια ακριβώς διαδικασία με τη νυχτερινή."""
     from app.services import catalog_sync
     return await catalog_sync.run_for_tenant(ctx.tenant_id)
+
+
+@router.get("/sync-report")
+async def catalog_sync_report(days: int = Query(30, ge=1, le=365),
+                              kind: str | None = Query(None),
+                              ctx: TenantContext = Depends(require(_PERM, module=_SYNC_MODULE))):
+    """Τι άλλαξε στον κατάλογό μου: νέα σκευάσματα, αλλαγές τιμών, μετονομασίες."""
+    from app.services import catalog_sync
+    return await catalog_sync.report(ctx.tenant_id, days=days, kind=kind)

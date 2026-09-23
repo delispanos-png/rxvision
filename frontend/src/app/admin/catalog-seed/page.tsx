@@ -17,8 +17,9 @@ import { appAlert, appConfirm } from "@/store/dialogStore";
 
 type Ph = { id: string; name: string | null; items: number; has_addon: boolean; is_master: boolean };
 type Bucket = { key: string | null; n: number };
+type Pair = { type: string | null; key: string | null; n: number };
 type Catalog = { source: { id: string; name: string | null } | null; total: number;
-                 by_type: Bucket[]; by_category: Bucket[] };
+                 by_type: Bucket[]; by_category: Bucket[]; by_type_category: Pair[] };
 
 const TYPES = [
   { key: "rx_medicine", label: "Συνταγογραφούμενα φάρμακα", icon: Pill },
@@ -37,26 +38,45 @@ export default function CatalogSeedPage() {
   const [preview, setPreview] = useState<number | null>(null);
 
   const phs = useQuery({ queryKey: ["seed", "pharmacies"],
-    queryFn: () => adminApi<{ items: Ph[] }>("/admin/catalog-seed/pharmacies") });
+    queryFn: () => adminApi<{ items: Ph[]; hidden_without_addon?: number }>("/admin/catalog-seed/pharmacies") });
   const cat = useQuery({ queryKey: ["seed", "catalog"],
     queryFn: () => adminApi<Catalog>("/admin/catalog-seed/catalog") });
 
   const countOf = (k: string) => cat.data?.by_type.find((b) => b.key === k)?.n ?? 0;
   const tgtPh = phs.data?.items.find((p) => p.id === target);
-  // Οι κατηγορίες αφορούν ΜΟΝΟ τους τύπους που διάλεξες — αλλιώς διαλέγεις «Καρδιαγγειακά»
-  // ενώ έχεις ζητήσει μόνο παραφάρμακα και το αποτέλεσμα είναι μηδέν, χωρίς εξήγηση.
-  const showCats = types.length === 0 || types.some((t) => t !== "parapharmacy") || types.includes("parapharmacy");
+
+  /* Οι κατηγορίες ακολουθούν τον τύπο. Οι θεραπευτικές («Καρδιαγγειακά») ανήκουν στα φάρμακα,
+     τα «Αντηλιακά/Μαλλιά» στα παραφάρμακα. Σε ενιαία λίστα διάλεγες «Καρδιαγγειακά» ενώ είχες
+     ζητήσει παραφάρμακα και έπαιρνες μηδέν είδη, χωρίς να καταλαβαίνεις γιατί. */
+  const visibleCats = (() => {
+    const pairs = (cat.data?.by_type_category || [])
+      .filter((p) => p.key && (types.length === 0 || types.includes(String(p.type))));
+    const sum = new Map<string, number>();
+    for (const p of pairs) sum.set(String(p.key), (sum.get(String(p.key)) ?? 0) + p.n);
+    return [...sum.entries()].map(([key, n]) => ({ key, n })).sort((a, b) => b.n - a.n);
+  })();
+  const uncat = (cat.data?.by_type_category || [])
+    .filter((p) => !p.key && (types.length === 0 || types.includes(String(p.type))))
+    .reduce((a, p) => a + p.n, 0);
 
   const toggle = (arr: string[], set: (v: string[]) => void, k: string) => {
     set(arr.includes(k) ? arr.filter((x) => x !== k) : [...arr, k]);
     setPreview(null);
   };
+  // Αλλάζοντας τύπο, καθάρισε κατηγορίες που δεν ανήκουν πια σ' αυτόν — αλλιώς μένει κρυφό
+  // φίλτρο που μηδενίζει το αποτέλεσμα.
+  const toggleType = (k: string) => {
+    const next = types.includes(k) ? types.filter((x) => x !== k) : [...types, k];
+    const allowed = new Set((cat.data?.by_type_category || [])
+      .filter((p) => p.key && (next.length === 0 || next.includes(String(p.type))))
+      .map((p) => String(p.key)));
+    setTypes(next);
+    setCats((c) => c.filter((x) => allowed.has(x)));
+    setPreview(null);
+  };
 
   async function run(dry: boolean) {
     if (!target) { appAlert("Διάλεξε φαρμακείο."); return; }
-    if (!dry && !tgtPh?.has_addon && !(await appConfirm(
-      `Το «${tgtPh?.name}» ΔΕΝ έχει ενεργό το πρόσθετο «Έτοιμος κατάλογος ειδών» (15 €/μήνα). Να προχωρήσει;`,
-      { title: "Χωρίς ενεργή συνδρομή", danger: true, confirmText: "Ναι, φόρτωσε" }))) return;
     if (!dry && !(await appConfirm(
       `Φόρτωση ${preview != null ? num(preview) + " ειδών" : "ειδών"} στο «${tgtPh?.name}»;` +
       (overwrite ? " Τα υπάρχοντα θα ΕΝΗΜΕΡΩΘΟΥΝ." : " Τα υπάρχοντα δεν θα πειραχτούν."),
@@ -73,11 +93,13 @@ export default function CatalogSeedPage() {
           { title: "Ολοκληρώθηκε" });
         phs.refetch();
       }
-    } catch { appAlert("Απέτυχε."); }
+    } catch (e) {
+      const d = (e as { problem?: { detail?: { message?: string } } })?.problem?.detail;
+      appAlert(d?.message || "Απέτυχε.");
+    }
     finally { setBusy(false); }
   }
 
-  const uncategorised = cat.data?.by_category.find((b) => !b.key)?.n ?? 0;
 
   return (
     <div className="w-full space-y-5">
@@ -108,7 +130,7 @@ export default function CatalogSeedPage() {
             const on = types.includes(t.key);
             const n = countOf(t.key);
             return (
-              <button key={t.key} onClick={() => toggle(types, setTypes, t.key)} disabled={!n}
+              <button key={t.key} onClick={() => toggleType(t.key)} disabled={!n}
                 className={`rounded-xl border p-4 text-left transition disabled:opacity-40 ${on
                   ? "border-indigo-500 bg-indigo-50 ring-1 ring-indigo-500"
                   : "border-slate-200 hover:border-slate-300 hover:bg-slate-50"}`}>
@@ -124,25 +146,25 @@ export default function CatalogSeedPage() {
         </p>
 
         {/* Προαιρετικός, λεπτότερος περιορισμός */}
-        {showCats && !!cat.data?.by_category.filter((b) => b.key).length && (
-          <details className="mt-4">
+        {!!visibleCats.length && (
+          <details className="mt-4" open>
             <summary className="cursor-pointer text-xs font-medium text-slate-500 hover:text-slate-700">
               Περιορισμός σε συγκεκριμένες κατηγορίες (προαιρετικό)
             </summary>
             <div className="mt-2 flex flex-wrap gap-1.5">
-              {cat.data.by_category.filter((b) => b.key).map((b) => (
-                <button key={String(b.key)} onClick={() => toggle(cats, setCats, String(b.key))}
-                  className={`rounded-lg border px-2.5 py-1 text-xs ${cats.includes(String(b.key))
+              {visibleCats.map((b) => (
+                <button key={b.key} onClick={() => toggle(cats, setCats, b.key)}
+                  className={`rounded-lg border px-2.5 py-1 text-xs ${cats.includes(b.key)
                     ? "border-indigo-500 bg-indigo-50 font-medium text-indigo-700"
                     : "border-slate-300 text-slate-600 hover:bg-slate-50"}`}>
-                  {String(b.key)} <span className="text-slate-400">{num(b.n)}</span>
+                  {b.key} <span className="text-slate-400">{num(b.n)}</span>
                 </button>
               ))}
             </div>
-            {!!uncategorised && (
+            {!!uncat && (
               <p className="mt-2 text-xs text-slate-400">
-                {num(uncategorised)} είδη δεν έχουν ακόμη κατηγορία — μπαίνουν μόνο αν δεν
-                περιορίσεις κατηγορία. Η αυτόματη κατηγοριοποίηση τα πιάνει.
+                {num(uncat)} είδη δεν έχουν ακόμη κατηγορία — μπαίνουν μόνο αν δεν περιορίσεις
+                κατηγορία. Η αυτόματη κατηγοριοποίηση τα πιάνει.
               </p>
             )}
           </details>
@@ -157,14 +179,22 @@ export default function CatalogSeedPage() {
           <option value="">— διάλεξε φαρμακείο —</option>
           {(phs.data?.items || []).filter((p) => !p.is_master).map((p) => (
             <option key={p.id} value={p.id}>
-              {p.has_addon ? "✅ " : "⚠️ "}{p.name}{p.items ? ` — έχει ήδη ${num(p.items)} είδη` : ""}
+              {p.name}{p.items ? ` — έχει ήδη ${num(p.items)} είδη` : ""}
             </option>
           ))}
         </select>
-        {target && !tgtPh?.has_addon && (
+        {/* Εμφανίζονται ΜΟΝΟ όσοι πληρώνουν το πρόσθετο: ένα λάθος κλικ εδώ φορτώνει δεκάδες
+            χιλιάδες είδη σε πελάτη που δεν το αγόρασε, και το ξεφόρτωμα δεν είναι απλή ακύρωση. */}
+        {!phs.isLoading && !phs.data?.items?.filter((p) => !p.is_master).length && (
           <p className="mt-2 flex items-center gap-1.5 text-xs font-medium text-amber-700">
             <AlertTriangle className="h-3.5 w-3.5" />
-            Δεν έχει ενεργό το πρόσθετο «Έτοιμος κατάλογος ειδών» (15 €/μήνα).
+            Κανένα φαρμακείο δεν έχει ενεργό το πρόσθετο «Έτοιμος κατάλογος ειδών».
+            Ενεργοποίησέ το πρώτα από την καρτέλα του πελάτη.
+          </p>
+        )}
+        {!!phs.data?.hidden_without_addon && (
+          <p className="mt-2 text-xs text-slate-400">
+            {num(phs.data.hidden_without_addon)} φαρμακεία δεν εμφανίζονται — δεν έχουν το πρόσθετο.
           </p>
         )}
 

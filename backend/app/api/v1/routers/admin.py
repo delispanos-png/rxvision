@@ -1808,12 +1808,19 @@ async def seed_pharmacies(_: PlatformContext = Depends(get_platform_admin)):
         [{"$group": {"_id": "$tenant_id", "n": {"$sum": 1}}}]).to_list(length=None)}
     master = await _master_catalog(db)
     out = []
+    hidden = 0
     async for t in db["tenants"].find({}, {"name": 1, "status": 1, "modules": 1}):
+        # ΜΟΝΟ όσοι έχουν αγοράσει την υπηρεσία. Ένα λάθος κλικ εδώ φορτώνει 40.000 είδη σε
+        # φαρμακείο που δεν την πλήρωσε — και το ξεφόρτωμα δεν είναι απλή ακύρωση, γιατί ο
+        # πελάτης μπορεί στο μεταξύ να έχει δουλέψει πάνω στα είδη.
+        if (t.get("modules") or {}).get("catalog_seed") not in ("enabled", "trial"):
+            hidden += 1
+            continue
         out.append({"id": t["_id"], "name": t.get("name"), "status": t.get("status"),
                     "items": counts.get(t["_id"], 0), "is_master": t["_id"] == master,
-                    "has_addon": (t.get("modules") or {}).get("catalog_seed") in ("enabled", "trial")})
+                    "has_addon": True})
     out.sort(key=lambda x: (x["name"] or ""))
-    return {"items": out}
+    return {"items": out, "hidden_without_addon": hidden}
 
 
 @router.get("/catalog-seed/catalog")
@@ -1841,6 +1848,17 @@ async def seed_copy(body: SeedIn, _: PlatformContext = Depends(get_platform_admi
         raise HTTPException(http_status.HTTP_400_BAD_REQUEST,
                             detail={"error": "same_tenant",
                                     "message": "Αυτό το φαρμακείο ΕΙΝΑΙ ο κεντρικός κατάλογος."})
+    # Το κρύψιμο από τη λίστα είναι βολικό· αυτό εδώ είναι ο πραγματικός φρουρός. Ένα παλιό
+    # ανοιχτό tab ή ένα χειροκίνητο request δεν πρέπει να μπορεί να φορτώσει κατάλογο σε
+    # φαρμακείο που δεν πληρώνει το πρόσθετο.
+    tgt = await db["tenants"].find_one({"_id": body.target_tenant}, {"modules": 1, "name": 1})
+    if not tgt:
+        raise HTTPException(http_status.HTTP_404_NOT_FOUND, detail={"error": "tenant_not_found"})
+    if (tgt.get("modules") or {}).get("catalog_seed") not in ("enabled", "trial"):
+        raise HTTPException(http_status.HTTP_409_CONFLICT, detail={
+            "error": "addon_not_active",
+            "message": f"Το «{tgt.get('name')}» δεν έχει ενεργό το πρόσθετο «Έτοιμος κατάλογος "
+                       "ειδών». Ενεργοποίησέ το πρώτα από την καρτέλα του πελάτη."})
     res = await PharmacyCatalogRepository(tenant_id=body.target_tenant).copy_from(
         master, overwrite=body.overwrite, types=body.types,
         categories=body.categories, dry_run=body.dry_run)

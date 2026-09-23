@@ -516,8 +516,17 @@ class PharmacyCatalogRepository(BaseRepository):
                 {"$group": {"_id": f"${field}", "n": {"$sum": 1}}},
                 {"$sort": {"n": -1}}]).to_list(length=None)
             return [{"key": r["_id"], "n": r["n"]} for r in rows]
+        # ΚΑΙ ανά ζεύγος τύπου-κατηγορίας: οι θεραπευτικές κατηγορίες ανήκουν στα φάρμακα και οι
+        # «Αντηλιακά/Μαλλιά» στα παραφάρμακα. Μια ενιαία λίστα τις ανακάτευε, κι έτσι διάλεγες
+        # «Καρδιαγγειακά» ενώ είχες ζητήσει παραφάρμακα και έπαιρνες μηδέν, χωρίς εξήγηση.
+        pairs = await col.aggregate([
+            {"$match": {"tenant_id": source_tenant}},
+            {"$group": {"_id": {"t": "$type", "c": "$category"}, "n": {"$sum": 1}}},
+            {"$sort": {"n": -1}}]).to_list(length=None)
         return {"total": await col.count_documents({"tenant_id": source_tenant}),
-                "by_type": await group("type"), "by_category": await group("category")}
+                "by_type": await group("type"), "by_category": await group("category"),
+                "by_type_category": [{"type": r["_id"]["t"], "key": r["_id"]["c"], "n": r["n"]}
+                                     for r in pairs]}
 
     async def copy_from(self, source_tenant: str, *, overwrite: bool = False,
                         types: list[str] | None = None, categories: list[str] | None = None,

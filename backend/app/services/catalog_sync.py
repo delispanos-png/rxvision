@@ -77,13 +77,17 @@ async def run_for_tenant(tenant_id: str, *, dry_run: bool = False) -> dict:
 
     mine: dict[str, dict] = {}
     async for d in col.find({"tenant_id": tenant_id},
-                            {"barcode": 1, "price_cents": 1, "seed_price_cents": 1}):
+                            {"barcode": 1, "price_cents": 1, "seed_price_cents": 1, "name": 1}):
         if d.get("barcode"):
             mine[str(d["barcode"])] = d
 
     q: dict = {"tenant_id": master, "type": {"$in": types}, "barcode": {"$nin": [None, ""]}}
     added = updated = 0
     buf: list[dict] = []
+    # Ημερολόγιο αλλαγών: χωρίς αυτό δεν μπορούμε να πούμε στον φαρμακοποιό ΤΙ του αλλάξαμε
+    # χθες το βράδυ — και ένας κατάλογος που αλλάζει αόρατα είναι χειρότερος από στατικό.
+    run_at = _now()
+    events: list[dict] = []
     async for p in col.find(q):
         bc = str(p.get("barcode"))
         src = {k: v for k, v in p.items() if k not in _NEVER}
@@ -94,6 +98,9 @@ async def run_for_tenant(tenant_id: str, *, dry_run: bool = False) -> dict:
             buf.append({**src, "tenant_id": tenant_id, "stock_qty": 0, "source": "catalog_sync",
                         "seed_price_cents": p.get("price_cents"),
                         "created_at": _now(), "updated_at": _now()})
+            events.append({"tenant_id": tenant_id, "run_at": run_at, "kind": "added",
+                           "barcode": bc, "name": p.get("name"), "type": p.get("type"),
+                           "category": p.get("category"), "price_cents": p.get("price_cents")})
             if len(buf) >= 1000:
                 await col.insert_many(buf); added += len(buf); buf = []
             continue
@@ -105,12 +112,24 @@ async def run_for_tenant(tenant_id: str, *, dry_run: bool = False) -> dict:
         # Η τιμή περνά μόνο αν είναι ακόμη «δική μας» (δεν την έχει αλλάξει ο φαρμακοποιός).
         untouched = (cur.get("seed_price_cents") is not None
                      and cur.get("price_cents") == cur.get("seed_price_cents"))
+        old_price, new_price = cur.get("price_cents"), p.get("price_cents")
         if untouched:
-            patch["price_cents"] = p.get("price_cents")
-            patch["seed_price_cents"] = p.get("price_cents")
+            patch["price_cents"] = new_price
+            patch["seed_price_cents"] = new_price
         if not patch:
             continue
         updated += 1
+        if untouched and old_price != new_price:
+            events.append({"tenant_id": tenant_id, "run_at": run_at, "kind": "price",
+                           "barcode": bc, "name": p.get("name"), "type": p.get("type"),
+                           "old_price_cents": old_price, "price_cents": new_price})
+        elif (p.get("name") or "") != (cur.get("name") or ""):
+            events.append({"tenant_id": tenant_id, "run_at": run_at, "kind": "renamed",
+                           "barcode": bc, "name": p.get("name"), "old_name": cur.get("name"),
+                           "type": p.get("type")})
+        else:
+            events.append({"tenant_id": tenant_id, "run_at": run_at, "kind": "info",
+                           "barcode": bc, "name": p.get("name"), "type": p.get("type")})
         if not dry_run:
             patch["updated_at"] = _now()
             await repo.update_one({"barcode": bc}, {"$set": patch})
@@ -118,6 +137,9 @@ async def run_for_tenant(tenant_id: str, *, dry_run: bool = False) -> dict:
         await col.insert_many(buf); added += len(buf)
 
     res = {"ok": True, "added": added, "updated": updated, "types": types}
+    if events and not dry_run:
+        for i in range(0, len(events), 1000):
+            await db["catalog_sync_events"].insert_many(events[i:i + 1000])
     if not dry_run:
         await db["tenants"].update_one({"_id": tenant_id}, {"$set": {
             "catalog_sync.last_sync_at": _now(), "catalog_sync.last_result": res}})
@@ -127,14 +149,23 @@ async def run_for_tenant(tenant_id: str, *, dry_run: bool = False) -> dict:
     return res
 
 
+async def report(tenant_id: str, *, days: int = 30, kind: str | None = None) -> dict:
+    """Τι άλλαξε στον κατάλογο του φαρμακείου: ανά βραδιά, και αναλυτικά ανά είδος."""
+    from app.repositories.catalog_sync_events import CatalogSyncEventRepository
+    repo = CatalogSyncEventRepository(tenant_id=tenant_id)
+    return {"runs": await repo.runs(), "items": await repo.items(days=days, kind=kind)}
+
+
 async def run_all() -> dict:
     """Όλα τα φαρμακεία που πληρώνουν το πρόσθετο και έχουν διαλέξει κατηγορίες."""
+    from app.repositories.catalog_sync_events import CatalogSyncEventRepository
     db = shared_db()
     out: dict[str, dict] = {}
     async for t in db["tenants"].find(
             {"modules.catalog_seed": {"$in": ["enabled", "trial"]}}, {"_id": 1}):
         try:
             out[t["_id"]] = await run_for_tenant(t["_id"])
+            await CatalogSyncEventRepository(tenant_id=t["_id"]).purge_old()
         except Exception as e:  # noqa: BLE001 — ένα φαρμακείο δεν ρίχνει τα υπόλοιπα
             out[t["_id"]] = {"ok": False, "error": str(e)[:160]}
     return {"ok": True, "tenants": len(out), "results": out}
