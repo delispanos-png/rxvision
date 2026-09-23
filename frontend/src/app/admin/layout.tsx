@@ -8,8 +8,7 @@ import {
   LogOut, PlugZap, Menu, X, Layers, Cloud, ScrollText, Boxes, Settings, ChevronDown,
   ChevronRight, Percent, Brain, Bell, Sparkles, MessageSquare, Activity, ArrowUpCircle,
   Landmark, Bot, Wallet, Smartphone, Network, Database, Clock, FileText, Megaphone,
-  ShieldCheck,
-} from "lucide-react";
+  ShieldCheck, FlaskConical } from "lucide-react";
 import { adminApi, adminTokens, ApiError } from "@/lib/adminClient";
 import { PoweredBy } from "@/components/brand/PoweredBy";
 import { LogoMark } from "@/components/brand/Logo";
@@ -28,6 +27,8 @@ const GROUPS: { label: string; icon: typeof LayoutGrid; items: { label: string; 
       { label: "Συνδρομές", icon: CreditCard, href: "/admin/subscriptions", section: "subscriptions:read" },
       { label: "Πακέτα & SLA", icon: Boxes, href: "/admin/packages", section: "packages:read" },
       { label: "Add-ons", icon: Sparkles, href: "/admin/addons", section: "packages:read" },
+      { label: "Έτοιμος κατάλογος", icon: Boxes, href: "/admin/catalog-seed", section: "tenants:read" },
+      { label: "Δοκιμές δυνατοτήτων", icon: FlaskConical, href: "/admin/module-trials", section: "subscriptions:read" },
       { label: "Προμήθειες e-shop", icon: Receipt, href: "/admin/eshop-fees", section: "eshop_fees:read" },
       { label: "Αλλαγές πακέτου", icon: ArrowUpCircle, href: "/admin/plan-changes", section: "subscriptions:read" },
       { label: "Κύκλος ζωής", icon: Clock, href: "/admin/lifecycle", section: "subscriptions:read" },

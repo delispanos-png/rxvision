@@ -16,6 +16,7 @@ celery_app = Celery(
              "app.workers.ops_health", "app.workers.copilot_routines",
              "app.workers.contacts_backfill", "app.workers.death_sweep",
              "app.workers.area_canonical", "app.workers.supplier_photos",
+             "app.workers.catalog_categories",
              "app.workers.coach", "app.workers.comms",
         "app.workers.leads",
         "app.workers.sessions",
@@ -37,6 +38,7 @@ _QUEUE_BY_MODULE = {
     "contacts_backfill": "sync",
     "snapshots": "maintenance",     # νυχτερινά, βαριά
     "area_canonical": "maintenance",
+    "catalog_categories": "maintenance",
     "supplier_photos": "maintenance",
     "leads": "maintenance",
     # Ό,τι δεν αναφέρεται εδώ → "fast": comms, reminders, billing, sessions, coach,
@@ -285,6 +287,12 @@ celery_app.conf.beat_schedule = {
         "task": "app.workers.area_canonical.refresh_area_canonical",
         "schedule": crontab(hour=4, minute=10, day_of_week=0),
     },
+    # Κατηγορίες παραφαρμάκων: ΚΑΘΗΜΕΡΙΝΑ, ώστε ό,τι μπήκε σήμερα να έχει κατηγορία αύριο.
+    # Χωρίς αυτό, κάθε νέο είδος ξαναγύριζε στο «χωρίς κατηγορία» και το φίλτρο ξανασπούσε.
+    "classify-parapharmacy": {
+        "task": "app.workers.catalog_categories.classify_parapharmacy",
+        "schedule": crontab(hour=3, minute=40),
+    },
     # Death-sweep ΗΔΥΚΑ — έλεγχος θανόντων (ΚΑΘΗΜΕΡΙΝΑ 03:20 UTC για γρήγορη αρχική κάλυψη· rotation
     # με death_checked_at → μετά την κάλυψη απλώς επανελέγχει τους πιο παλιά ελεγμένους/νέους θανόντες)
     "dispatch-death-sweep": {
@@ -300,6 +308,11 @@ celery_app.conf.beat_schedule = {
     "subscription-reminders": {
         "task": "app.workers.billing.subscription_reminders",
         "schedule": crontab(hour=8, minute=0),
+    },
+    # Δοκιμές δυνατοτήτων — «σου λήγει σε X μέρες» + «έληξε» (09:00 UTC, μετά τις υπενθυμίσεις συνδρομής)
+    "module-trial-reminders": {
+        "task": "app.workers.billing.module_trial_reminders",
+        "schedule": crontab(hour=9, minute=0),
     },
     # Κεντρικό υπόλοιπο Apifon — έλεγχος & ειδοποίηση admin αν πέσει χαμηλά (κάθε 6 ώρες)
     "check-central-balance": {

@@ -202,6 +202,9 @@ _ADMIN: dict[tuple[str, str], str] = {
     ("POST", "/tenants/{tenant_id}/addons/{addon_id}/{op}"): "tenants:addons",
     ("POST", "/tenants/{tenant_id}/cancel"): "tenants:cancel",
     ("POST", "/tenants/{tenant_id}/copy-items"): "tenants:items_copy",
+    ("GET", "/catalog-seed/pharmacies"): "tenants:read",
+    ("GET", "/catalog-seed/breakdown"): "tenants:read",
+    ("POST", "/catalog-seed/copy"): "tenants:items_copy",
     ("DELETE", "/tenants/{tenant_id}/items"): "tenants:items_delete",
     ("GET", "/tenants/{tenant_id}/credentials"): "tenants:credentials",
     ("POST", "/tenants/{tenant_id}/impersonate"): "tenants:impersonate",
@@ -231,6 +234,11 @@ _ADMIN: dict[tuple[str, str], str] = {
     ("GET", "/lifecycle"): "subscriptions:read",
     ("PUT", "/lifecycle"): "subscriptions:lifecycle",
     ("POST", "/lifecycle/run"): "subscriptions:lifecycle_run",
+    # Δοκιμές δυνατοτήτων — προβολή με το ίδιο δικαίωμα που βλέπει συνδρομές· η αποστολή
+    # ενημέρωσης αγοράς & οι ρυθμίσεις με το δικαίωμα ειδοποιήσεων (φεύγει email σε πελάτη).
+    ("GET", "/module-trials"): "subscriptions:read",
+    ("POST", "/module-trials/notify"): "subscriptions:notifications",
+    ("PUT", "/module-trials/settings"): "subscriptions:notifications",
     ("GET", "/subscription-notifications"): "subscriptions:read",
     ("PUT", "/subscription-notifications"): "subscriptions:notifications",
     ("POST", "/subscription-notifications/test"): "subscriptions:notifications",

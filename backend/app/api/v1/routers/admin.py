@@ -970,6 +970,48 @@ async def tenant_addon_op(tenant_id: str, addon_id: str, op: str,
     return res
 
 
+# ── Δοκιμές δυνατοτήτων (module trials) — ποιος δοκιμάζει τι & τι λήγει ──────────────────────
+@router.get("/module-trials")
+async def module_trials(status: str | None = None, module: str | None = None,
+                        _: PlatformContext = Depends(get_platform_admin)):
+    """Όλες οι δοκιμές δυνατοτήτων με ημερομηνία λήξης + ποσοστό μετατροπής σε αγορά."""
+    from app.services import module_trials_service
+    return jsonsafe(await module_trials_service.list_trials(status=status, module=module))
+
+
+class TrialNotifyIn(BaseModel):
+    tenant_id: str
+    module: str
+
+
+@router.post("/module-trials/notify")
+async def module_trials_notify(body: TrialNotifyIn,
+                               ctx: PlatformContext = Depends(get_platform_admin)):
+    """Χειροκίνητη αποστολή της ενημέρωσης αγοράς σε ΕΝΑΝ πελάτη (το αυτόματο τρέχει καθημερινά)."""
+    from app.services import module_trials_service
+    res = await module_trials_service.notify_one(body.tenant_id, body.module,
+                                                 by=getattr(ctx, "email", None))
+    if not res.get("ok"):
+        raise HTTPException(http_status.HTTP_400_BAD_REQUEST, detail=res)
+    return res
+
+
+class TrialSettingsIn(BaseModel):
+    enabled: bool | None = None
+    warn_days: list[int] | None = None
+    notify_on_expiry: bool | None = None
+    sales_email: str | None = None
+    sales_phone: str | None = None
+
+
+@router.put("/module-trials/settings")
+async def module_trials_settings(body: TrialSettingsIn,
+                                 _: PlatformContext = Depends(get_platform_admin)):
+    from app.services import module_trials_service
+    return await module_trials_service.save_settings(
+        {k: v for k, v in body.model_dump().items() if v is not None})
+
+
 # ── SLA / support tiers (admin-managed) ──────────────────────
 _DEFAULT_SLA = [
     {"_id": "basic", "name": "Basic", "description": "Email support, απόκριση 24ω",
@@ -1737,6 +1779,56 @@ async def copy_items(tenant_id: str, body: CopyItemsIn,
         body.source_tenant, overwrite=body.overwrite)
 
 
+class SeedIn(BaseModel):
+    source_tenant: str
+    target_tenant: str
+    types: list[str] = []          # κενό = όλοι οι τύποι
+    categories: list[str] = []     # κενό = όλες οι κατηγορίες
+    overwrite: bool = False
+    dry_run: bool = False
+
+
+@router.get("/catalog-seed/pharmacies")
+async def seed_pharmacies(_: PlatformContext = Depends(get_platform_admin)):
+    """Φαρμακεία + πόσα είδη έχει το καθένα — για να διαλέξεις πηγή και προορισμό."""
+    db = shared_db()
+    counts = {r["_id"]: r["n"] for r in await db["pharmacy_products"].aggregate(
+        [{"$group": {"_id": "$tenant_id", "n": {"$sum": 1}}}]).to_list(length=None)}
+    out = []
+    async for t in db["tenants"].find({}, {"name": 1, "status": 1, "modules": 1}):
+        out.append({"id": t["_id"], "name": t.get("name"), "status": t.get("status"),
+                    "items": counts.get(t["_id"], 0),
+                    # Ο κατάλογος είναι χρεώσιμο πρόσθετο — δείξε ποιος το έχει ώστε να μη
+                    # φορτώνουμε 40.000 είδη σε φαρμακείο που δεν πληρώνει γι' αυτά.
+                    "has_addon": (t.get("modules") or {}).get("catalog_seed") in ("enabled", "trial")})
+    out.sort(key=lambda x: (-x["items"], (x["name"] or "")))
+    return {"items": out}
+
+
+@router.get("/catalog-seed/breakdown")
+async def seed_breakdown(source: str, _: PlatformContext = Depends(get_platform_admin)):
+    """Τι περιέχει η πηγή ανά τύπο & κατηγορία, με πλήθη."""
+    from app.repositories.pharmacy_catalog import PharmacyCatalogRepository
+    return await PharmacyCatalogRepository(tenant_id=source).seed_breakdown(source)
+
+
+@router.post("/catalog-seed/copy")
+async def seed_copy(body: SeedIn, _: PlatformContext = Depends(get_platform_admin)):
+    """Αντιγραφή επιλεγμένων κατηγοριών από ένα φαρμακείο σε άλλο."""
+    from app.repositories.pharmacy_catalog import PharmacyCatalogRepository
+    if body.source_tenant == body.target_tenant:
+        raise HTTPException(http_status.HTTP_400_BAD_REQUEST, detail={"error": "same_tenant"})
+    res = await PharmacyCatalogRepository(tenant_id=body.target_tenant).copy_from(
+        body.source_tenant, overwrite=body.overwrite, types=body.types,
+        categories=body.categories, dry_run=body.dry_run)
+    if res.get("ok") and not body.dry_run:
+        # Τα νέα είδη μπορεί να είναι παραφάρμακα χωρίς κατηγορία· το μητρώο τα ντύνει ΑΜΕΣΩΣ
+        # και δωρεάν (γνωστά ονόματα), χωρίς να περιμένουμε τη νυχτερινή εργασία.
+        from app.workers.catalog_categories import classify_parapharmacy
+        classify_parapharmacy.delay(0)
+    return res
+
+
 @router.delete("/tenants/{tenant_id}/items")
 async def delete_all_items(tenant_id: str, _: PlatformContext = Depends(get_platform_admin)):
     """Διαγραφή ΟΛΩΝ των ειδών αποθήκης του φαρμακείου (admin-only, destructive)."""
@@ -1769,6 +1861,10 @@ async def tenant_detail(tenant_id: str, _: PlatformContext = Depends(get_platfor
                    "store": t.get("store"),
                    "demo": bool(t.get("demo"))},
         "modules": resolve_modules(set(sub.get("modules_included", [])), t.get("modules") or {}),
+        # Λήξεις δοκιμών, ώστε ο διακόπτης να ΞΕΧΩΡΙΖΕΙ τη δοκιμή από τη μόνιμη ενεργοποίηση.
+        # Χωρίς αυτό ένα «trial» φαινόταν ίδιο με «enabled» και ένα κατά λάθος κλικ σκότωνε
+        # σιωπηλά τη δοκιμή (συνέβη στον Κολέλη, 21/09/2026).
+        "module_trials": t.get("module_trials") or {},
         "subscription": {
             "plan": sub.get("plan"), "plan_name": sub.get("plan_name"),
             "status": sub.get("status"),

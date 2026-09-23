@@ -492,20 +492,52 @@ class PharmacyCatalogRepository(BaseRepository):
         return {"ok": True, "changed": getattr(res, "modified_count", 0),
                 "matched": getattr(res, "matched_count", 0)}
 
-    async def copy_from(self, source_tenant: str, *, overwrite: bool = False) -> dict:
-        """Αντιγραφή ΟΛΩΝ των ειδών ενός φαρμακείου (source) στο ΤΡΕΧΟΝ (self=target) ως αρχικοποίηση.
+    @staticmethod
+    def _seed_filter(source_tenant: str, types: list[str] | None,
+                     categories: list[str] | None) -> dict:
+        """Ποια είδη της πηγής μπαίνουν στην αντιγραφή.
+
+        Κενή λίστα = ΟΛΑ (όχι «κανένα»): το UI στέλνει κενό όταν ο χρήστης δεν περιόρισε τίποτα,
+        και μια αντιγραφή που δεν αντιγράφει τίποτα θα φαινόταν σαν βλάβη.
+        """
+        q: dict = {"tenant_id": source_tenant}
+        if types:
+            q["type"] = {"$in": list(types)}
+        if categories:
+            q["category"] = {"$in": list(categories)}
+        return q
+
+    async def seed_breakdown(self, source_tenant: str) -> dict:
+        """Τι έχει η πηγή, ανά τύπο και ανά κατηγορία — ώστε να διαλέγεις βλέποντας πλήθη."""
+        col = self._db["pharmacy_products"]
+        async def group(field: str) -> list[dict]:
+            rows = await col.aggregate([
+                {"$match": {"tenant_id": source_tenant}},
+                {"$group": {"_id": f"${field}", "n": {"$sum": 1}}},
+                {"$sort": {"n": -1}}]).to_list(length=None)
+            return [{"key": r["_id"], "n": r["n"]} for r in rows]
+        return {"total": await col.count_documents({"tenant_id": source_tenant}),
+                "by_type": await group("type"), "by_category": await group("category")}
+
+    async def copy_from(self, source_tenant: str, *, overwrite: bool = False,
+                        types: list[str] | None = None, categories: list[str] | None = None,
+                        dry_run: bool = False) -> dict:
+        """Αντιγραφή ειδών ενός φαρμακείου (source) στο ΤΡΕΧΟΝ (self=target) ως αρχικοποίηση.
         Οι εικόνες είναι ΚΟΙΝΕΣ (global image_id) → δεν αντιγράφονται blobs, μόνο η αναφορά. Απόθεμα→0.
         Idempotent ανά barcode: υπάρχον barcode στο target → skip (ή overwrite)."""
         if not source_tenant or source_tenant == self.tenant_id:
             return {"ok": False, "error": "bad_source"}
         col = self._db["pharmacy_products"]
+        q = self._seed_filter(source_tenant, types, categories)
+        if dry_run:
+            return {"ok": True, "dry_run": True, "would_copy": await col.count_documents(q)}
         existing = set(await col.distinct("barcode", {"tenant_id": self.tenant_id}))
         # πεδία που ΔΕΝ μεταφέρονται (tenant-specific): markers/ιστορικό/ταυτότητα εγγραφής
         drop = {"_id", "tenant_id", "created_at", "updated_at", "profarm_tried", "profarm_tried_at",
                 "profarm_synced_at", "profarm_pid", "photo_source", "source"}
         copied = skipped = updated = 0
         buf: list = []
-        async for p in col.find({"tenant_id": source_tenant}):
+        async for p in col.find(q):
             bc = p.get("barcode")
             if not bc:
                 continue
