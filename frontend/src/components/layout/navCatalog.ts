@@ -37,6 +37,9 @@ export const NAV_GROUPS: Group[] = [
     // πουθενά τη λέξη «εμβόλιο». Ο μηχανισμός από κάτω είναι ο ίδιος.
     { label: "Θεραπείες με Επανάληψη", en: "Repeat Therapies", icon: RefreshCw, href: "/therapies",
       module: "therapy_programs" },
+    // Δικό του κύκλωμα: η συνομιλία είναι ΜΕΤΑΞΥ φαρμακείων, δεν ανήκει σε κανένα υπάρχον.
+    { label: "Συνεργαζόμενα φαρμακεία", en: "Partner pharmacies", icon: MessageSquare,
+      href: "/pharmacy-chat", module: "pharmacy_chat" },
     { label: "Μελλοντικές", en: "Upcoming", icon: CalendarClock, module: "future_prescriptions", children: [
       { href: "/future#coverage", label: "Κάλυψη περιόδου", en: "Period coverage" },
       { href: "/future#forecast", label: "Πρόβλεψη κάλυψης", en: "Coverage forecast" },

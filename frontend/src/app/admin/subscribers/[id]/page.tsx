@@ -47,6 +47,7 @@ const MODULE_LABELS: [string, string][] = [
   ["therapy_programs", "🔁 Θεραπείες με Επανάληψη (Prolia/Ajovy/Stelara)"],
   ["advance_dispensing", "🤝 Προχορηγήσεις (δανεικά σκευάσματα)"],
   ["catalog_seed", "📦 Έτοιμος κατάλογος ειδών"],
+  ["pharmacy_chat", "💬 Συνομιλία συνεργαζόμενων φαρμακείων"],
 ];
 type Creds = {
   users: User[];

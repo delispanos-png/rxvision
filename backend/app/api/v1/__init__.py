@@ -38,6 +38,7 @@ from app.api.v1.routers import (
     portal_admin,
     pharmacat,
     pharmacy_catalog,
+    pharmacy_chat,
     pharmacyone,
     platform,
     prescriptions,
@@ -66,6 +67,7 @@ api_router.include_router(reimbursement.router, prefix="/reimbursement", tags=["
 api_router.include_router(pharmacy_availability.router, prefix="/pharmacy-availability", tags=["pharmacy-availability"])
 api_router.include_router(loyalty.router, prefix="/loyalty", tags=["loyalty"])
 api_router.include_router(pharmacy_catalog.router, prefix="/catalog", tags=["catalog"])
+api_router.include_router(pharmacy_chat.router, prefix="/pharmacy-chat", tags=["pharmacy-chat"])
 api_router.include_router(orders_delivery.router, prefix="/orders/delivery", tags=["orders-delivery"])
 api_router.include_router(dashboard.router, prefix="/dashboard", tags=["dashboard"])
 api_router.include_router(advisor.router, prefix="/advisor", tags=["advisor"])
