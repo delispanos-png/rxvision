@@ -11,6 +11,7 @@ from app.api.v1.routers import (
     auth,
     calendar,
     communications,
+    connect,
     dashboard,
     doctors,
     billing,
@@ -69,6 +70,7 @@ api_router.include_router(pharmacy_availability.router, prefix="/pharmacy-availa
 api_router.include_router(loyalty.router, prefix="/loyalty", tags=["loyalty"])
 api_router.include_router(pharmacy_catalog.router, prefix="/catalog", tags=["catalog"])
 api_router.include_router(pharmacy_chat.router, prefix="/pharmacy-chat", tags=["pharmacy-chat"])
+api_router.include_router(connect.router, prefix="/connect", tags=["connect"])
 api_router.include_router(release_notes.router, prefix="/release-notes", tags=["release-notes"])
 api_router.include_router(orders_delivery.router, prefix="/orders/delivery", tags=["orders-delivery"])
 api_router.include_router(dashboard.router, prefix="/dashboard", tags=["dashboard"])
