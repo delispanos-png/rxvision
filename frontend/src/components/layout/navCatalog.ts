@@ -5,7 +5,7 @@
 import {
   Activity, BarChart3, Boxes, Warehouse, Layers, CalendarClock, ChevronRight, LayoutDashboard,
   Mail, Megaphone, Salad, PackageSearch, Settings, Sparkles, Stethoscope, TrendingUp, Target, Users,
-  Brain, ShieldCheck, Tags, Syringe, Bot, Gift, BookOpen, ScrollText, Truck, Lock, X, UserPlus, Ticket, SlidersHorizontal, Heart, FileText, MessageSquare, PackageCheck, Receipt, ArrowRightLeft, Compass, type LucideIcon, RefreshCw } from "lucide-react";
+  Brain, ShieldCheck, Tags, Syringe, Bot, Gift, BookOpen, ScrollText, Truck, Lock, X, UserPlus, Ticket, SlidersHorizontal, Heart, FileText, MessageSquare, PackageCheck, Receipt, ArrowRightLeft, Compass, Handshake, Inbox, Send, type LucideIcon, RefreshCw } from "lucide-react";
 
 // A leaf (direct link). `module` gates visibility (shown only when enabled/trial).
 export type Leaf = { href: string; label: string; en: string; module?: string | string[] };
@@ -110,6 +110,16 @@ export const NAV_GROUPS: Group[] = [
       { href: "/communications/calendar", label: "Ημερολόγιο", en: "Calendar" },
     ] },
     { label: "Κουπόνια", en: "Coupons", icon: Ticket, href: "/marketing/coupons", module: "marketing" },
+  ] },
+  // RxVision Connect — δίκτυα συνεργασίας φαρμακείων (module `connect`, πληρωμένο πρόσθετο).
+  // Κάθε καρτέλα είναι αυτόνομη επιλογή (URL hash), όπως στην Πιστότητα και στο eShop.
+  { title: "Connect", en: "Connect", icon: Handshake, items: [
+    { label: "Πίνακας", en: "Dashboard", icon: Handshake, href: "/connect#dashboard", module: "connect" },
+    { label: "Αιτήματα δικτύου", en: "Network requests", icon: Inbox, href: "/connect#inbox", module: "connect" },
+    { label: "Τα αιτήματά μου", en: "My requests", icon: Send, href: "/connect#requests", module: "connect" },
+    { label: "Κινήσεις & υπόλοιπα", en: "Movements & balances", icon: ArrowRightLeft, href: "/connect#movements", module: "connect" },
+    { label: "Τα δίκτυά μου", en: "My networks", icon: Users, href: "/connect#networks", module: "connect" },
+    { label: "Πόσο διαθέτω", en: "Availability policy", icon: SlidersHorizontal, href: "/connect#settings", module: "connect" },
   ] },
   // «Έλεγχος συνταγών» = ΑΝΕΞΑΡΤΗΤΗ top-level επιλογή (single-item group → αποδίδεται ως απευθείας link).
   { title: "Έλεγχος συνταγών", en: "Rx Audit", icon: ShieldCheck, items: [

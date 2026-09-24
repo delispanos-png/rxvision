@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
-import { KeyRound, LogOut, Menu, Settings, User, Sun, Moon, PanelLeft, PanelLeftClose, Sparkles, MessageSquare} from "lucide-react";
+import { KeyRound, LogOut, Menu, Settings, User, Sun, Moon, PanelLeft, PanelLeftClose, Sparkles, MessageSquare, Handshake} from "lucide-react";
 import { api, queryKeys, logoutSession } from "@/lib/apiClient";
 import { useNavStore } from "@/store/navStore";
 import { usePref, useT } from "@/store/prefStore";
@@ -39,6 +39,13 @@ export function Topbar() {
   const { theme, setTheme, locale, setLocale, collapsed, toggleCollapsed } = usePref();
   const t = useT();
   const { data } = useQuery({ queryKey: queryKeys.me(), queryFn: () => api<Me>("/auth/me"), retry: false });
+  // Connect — αιτήματα του δικτύου + προσφορές που περιμένουν εμένα. Το ερώτημα τρέχει ΜΟΝΟ όταν
+  // το φαρμακείο έχει το πρόσθετο, ώστε να μη χτυπά 403 σε όλους τους υπόλοιπους.
+  const connectOn = ["enabled", "trial"].includes(data?.modules?.connect ?? "locked");
+  const connectQ = useQuery({ queryKey: ["connect", "topbar"], retry: false, refetchInterval: 60000,
+    enabled: connectOn,
+    queryFn: () => api<{ inbox: number; offers_waiting: number }>("/connect/dashboard") });
+  const connectTodo = (connectQ.data?.inbox ?? 0) + (connectQ.data?.offers_waiting ?? 0);
 
   const [open, setOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -143,6 +150,22 @@ export function Topbar() {
           )}
         </button>
       </Tooltip>
+      {connectOn && (
+        <Tooltip label={connectTodo > 0
+          ? t(`${connectTodo} εκκρεμότητες στο δίκτυό σου`, `${connectTodo} items waiting in your network`)
+          : t("RxVision Connect", "RxVision Connect")}>
+          <button onClick={() => router.push("/connect")}
+            aria-label={t("Connect", "Connect")}
+            className="relative grid h-9 w-9 place-items-center rounded-lg text-slate-500 hover:bg-white dark:text-slate-300 dark:hover:bg-slate-800">
+            <Handshake className={`h-[18px] w-[18px] ${connectTodo > 0 ? "text-emerald-600" : ""}`} />
+            {connectTodo > 0 && (
+              <span className="absolute -right-0.5 -top-0.5 grid h-4 min-w-[16px] place-items-center rounded-full bg-emerald-600 px-1 text-[10px] font-bold text-white">
+                {connectTodo > 99 ? "99+" : connectTodo}
+              </span>
+            )}
+          </button>
+        </Tooltip>
+      )}
       <Tooltip label={t("Copilot — Βοηθός προγράμματος", "Copilot — App assistant")}>
         <button
           onClick={() => router.push("/copilot")}
