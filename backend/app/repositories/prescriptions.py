@@ -57,6 +57,21 @@ def _gs1_parts(raw: str) -> tuple[str | None, str | None, str | None]:
     return serial, batch, gtin
 
 
+
+def _unexec_reason(ex: dict) -> str | None:
+    """Ανθρώπινη εξήγηση για τα ανεκτέλεστα, από τον τύπο εκτέλεσης της ΗΔΥΚΑ.
+
+    0 → η συνταγή ΜΕΝΕΙ ΑΝΟΙΧΤΗ: ο ασθενής μπορεί να γυρίσει (το μόνο ανακτήσιμο)
+    2 → έκλεισε ΜΕ ΤΗ ΣΥΜΦΩΝΙΑ του: επέλεξε να μην τα πάρει
+    3 → έκλεισε λόγω ασυμφωνίας δοσολογίας/ποσότητας: δεν επιτρέπεται να δοθούν
+    """
+    if not ex.get("has_unexecuted_substances"):
+        return None
+    return {"0": "open", 0: "open",
+            "2": "patient_choice", 2: "patient_choice",
+            "3": "dosage_mismatch", 3: "dosage_mismatch"}.get(
+        (ex.get("details") or {}).get("execution_case"), "unknown")
+
 class PrescriptionRepository(BaseRepository):
     collection_name = "prescription_executions"
 
@@ -364,6 +379,9 @@ class PrescriptionRepository(BaseRepository):
             "fund_payable": fund_payable, "patient_payable": patient_payable,
             "icd10": ex.get("icd10", []),
             "has_unexecuted_substances": ex.get("has_unexecuted_substances", False),
+            # ΓΙΑΤΙ έμειναν ανεκτέλεστα — χωρίς αυτό ο φαρμακοποιός βλέπει «ανεκτέλεστο» και
+            # υποθέτει χαμένο τζίρο, ενώ στο 94% των περιπτώσεων το έκλεισε ο ίδιος ο ασθενής.
+            "unexecuted_reason": _unexec_reason(ex),
             "doctor": {"name": (doctor or {}).get("full_name"),
                        "specialty": (doctor or {}).get("specialty")} if doctor else None,
             "fund": {"name": (fund or {}).get("name"), "code": (fund or {}).get("code")} if fund else None,

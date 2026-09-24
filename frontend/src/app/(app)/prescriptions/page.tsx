@@ -35,6 +35,7 @@ type Prescription = {
   amount_total: number; // cents
   amount_claimed: number; // cents
   has_unexecuted_substances: boolean;
+  unexecuted_reason?: "open" | "patient_choice" | "dosage_mismatch" | "unknown" | null;
   patient_share?: number; // cents — αιτούμενο/πληρωτέο από ασφαλισμένο
   patient_name?: string | null;
   amka?: string | null;
@@ -120,11 +121,29 @@ const makeColumns = (t: T): Column<Prescription>[] => {
   { key: "fund_general", header: t("Ταμείο", "Fund"), hideOnMobile: true, sortable: false, render: (r) => r.fund_general || r.fund_name || "—" },
   {
     key: "status", header: t("Κατάσταση", "Status"), hideOnMobile: true, sortable: false,
-    render: (r) => (
-      <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${r.has_unexecuted_substances ? "bg-amber-100 text-amber-700" : "bg-emerald-100 text-emerald-700"}`}>
-        {r.has_unexecuted_substances ? t("Μερικώς", "Partial") : STATUS_EL[r.status || "executed"] || t("Εκτελεσμένη", "Executed")}
-      </span>
-    ),
+    render: (r) => {
+      // ΓΙΑΤΙ ΔΥΟ ΧΡΩΜΑΤΑ ΣΤΑ «ΜΕΡΙΚΩΣ»: μόνο η ΑΝΟΙΧΤΗ συνταγή μπορεί ακόμη να ολοκληρωθεί.
+      // Όταν την έκλεισε ο ίδιος ο ασθενής, δεν υπάρχει τίποτα να κυνηγήσει ο φαρμακοποιός.
+      const open = r.unexecuted_reason === "open";
+      const why = r.unexecuted_reason === "patient_choice"
+        ? t("Έκλεισε με τη συμφωνία του ασθενή — δεν θέλησε τα υπόλοιπα", "Closed by patient agreement")
+        : r.unexecuted_reason === "dosage_mismatch"
+        ? t("Έκλεισε λόγω ασυμφωνίας δοσολογίας/ποσότητας", "Closed — dosage mismatch")
+        : t("Μένει ανοιχτή — μπορεί να γυρίσει για τα υπόλοιπα", "Still open — can return for the rest");
+      if (!r.has_unexecuted_substances) {
+        return (
+          <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700">
+            {STATUS_EL[r.status || "executed"] || t("Εκτελεσμένη", "Executed")}
+          </span>
+        );
+      }
+      return (
+        <span title={why}
+          className={`rounded-full px-2 py-0.5 text-xs font-medium ${open ? "bg-amber-100 text-amber-700" : "bg-slate-100 text-slate-500"}`}>
+          {open ? t("Μερικώς — ανοιχτή", "Partial — open") : t("Μερικώς — έκλεισε", "Partial — closed")}
+        </span>
+      );
+    },
   },
   { key: "icd10", header: t("Διάγνωση", "Diagnosis"), hideOnMobile: true, sortable: false, render: (r) => {
     const dx = r.icd10_named ?? r.icd10 ?? [];

@@ -218,11 +218,27 @@ class AdvisorRepository(BaseRepository):
         return {"up": up, "down": down}
 
     async def _unexec_lost(self, df, dt) -> int:
-        items = BaseRepository(tenant_id=self.tenant_id)
-        items.collection_name = "prescription_items"
-        rows = await items.aggregate([
-            {"$match": {"executed_at": {"$gte": df, "$lt": dt}, "is_executed": False}},
-            {"$group": {"_id": None, "lost": {"$sum": "$retail_price"}}},
+        """Αξία που μπορεί ΑΚΟΜΗ να ανακτηθεί — όχι κάθε ανεκτέλεστο φάρμακο.
+
+        Η ΗΔΥΚΑ λέει τον τύπο κάθε εκτέλεσης (`details.execution_case`):
+          0 → μερική, η συνταγή ΜΕΝΕΙ ΑΝΟΙΧΤΗ  → ο ασθενής μπορεί να γυρίσει  ✅ ανακτήσιμο
+          2 → μερική ΜΕ ΤΗ ΣΥΜΦΩΝΙΑ ΤΟΥ, ΚΛΕΙΝΕΙ → επέλεξε να μην τα πάρει   ❌
+          3 → ασυμφωνία δοσολογίας, ΚΛΕΙΝΕΙ       → δεν επιτρέπεται να δοθούν ❌
+
+        Παλιά μετρούσαμε και τις κλειστές, οπότε λέγαμε στον φαρμακοποιό ότι «έχασε» τζίρο που
+        ΠΟΤΕ δεν ήταν δικός του να τον χάσει. Στα πραγματικά δεδομένα το 94% ήταν ψευδές.
+        """
+        execs = BaseRepository(tenant_id=self.tenant_id)
+        execs.collection_name = "prescription_executions"
+        rows = await execs.aggregate([
+            {"$match": {"executed_at": {"$gte": df, "$lt": dt},
+                        "has_unexecuted_substances": True,
+                        "details.execution_case": {"$in": ["0", 0]}}},
+            {"$lookup": {"from": "prescription_items", "localField": "_id",
+                         "foreignField": "execution_id", "as": "it"}},
+            {"$unwind": "$it"},
+            {"$match": {"it.is_executed": False}},
+            {"$group": {"_id": None, "lost": {"$sum": "$it.retail_price"}}},
         ])
         return (rows[0]["lost"] if rows else 0) or 0
 
@@ -301,8 +317,9 @@ class AdvisorRepository(BaseRepository):
         # 4) lost value (unexecuted)
         lost = await self._unexec_lost(df, dt)
         if lost > 0:
-            add("opportunity", "alert-triangle", "Χαμένη αξία από ανεκτέλεστες",
-                f"€{eur_gr(lost)} σε δραστικές που δεν εκτελέστηκαν. Επικοινώνησε με τους ασθενείς να τις ολοκληρώσουν.",
+            add("opportunity", "alert-triangle", "Ανεκτέλεστα που ΜΠΟΡΟΥΝ ακόμη να δοθούν",
+                f"€{eur_gr(lost)} σε συνταγές που έμειναν ΑΝΟΙΧΤΕΣ — ο ασθενής δικαιούται να "
+                "γυρίσει για τα υπόλοιπα. Δεν μετρώνται όσα έκλεισε ο ίδιος με τη θέλησή του.",
                 f"€{eur_gr(lost)}", {"label": "Ανεκτέλεστες", "href": "/prescriptions"})
 
         # 5) doctor concentration

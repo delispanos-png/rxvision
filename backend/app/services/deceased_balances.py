@@ -28,7 +28,9 @@ async def deceased_balances(tenant_id: str, *, include_settled: bool = False, de
     unexec: dict[str, int] = {}
     async for r in db["prescription_executions"].aggregate([
         {"$match": {"tenant_id": tenant_id, "patient_ref": {"$in": ref_ids},
-                    "has_unexecuted_substances": True}},
+                    "has_unexecuted_substances": True,
+                    # ΜΟΝΟ ανοιχτές: όσες έκλεισε ο ίδιος ο ασθενής δεν είναι «ανοιχτό υπόλοιπο»
+                    "details.execution_case": {"$in": ["0", 0]}}},
         {"$group": {"_id": "$patient_ref", "n": {"$sum": 1}}},
     ]):
         unexec[str(r["_id"])] = r["n"]

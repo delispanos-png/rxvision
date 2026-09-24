@@ -117,6 +117,19 @@ def _days_between(a: datetime | None, b: datetime) -> int:
     return max(0, (b - a).days)
 
 
+# ── ΑΝΕΚΤΕΛΕΣΤΑ: ΠΟΤΕ ΔΕΝ ΕΙΝΑΙ ΟΛΑ «ΧΑΜΕΝΟΣ ΤΖΙΡΟΣ» ─────────────────────────────────────────
+# Η ΗΔΥΚΑ δίνει τον τύπο εκτέλεσης (CDA `execution_case`):
+#   0 → μερική εκτέλεση, η συνταγή ΜΕΝΕΙ ΑΝΟΙΧΤΗ  → ο ασθενής ΜΠΟΡΕΙ να πάρει τα υπόλοιπα
+#   1 → ολική εκτέλεση                             → δεν μένει τίποτα
+#   2 → μερική ΜΕ ΣΥΜΦΩΝΙΑ ΤΟΥ ΑΣΘΕΝΗ, ΚΛΕΙΝΕΙ     → επέλεξε ο ίδιος να μην τα πάρει
+#   3 → ασυμφωνία δοσολογίας/ποσότητας, ΚΛΕΙΝΕΙ     → δεν επιτρέπεται να δοθούν
+#
+# ΜΟΝΟ η περίπτωση 0 είναι ανακτήσιμη. Οι 2 και 3 είναι ΚΛΕΙΣΤΕΣ: δεν «αποτύχαμε» να τα δώσουμε,
+# ούτε υπάρχει τρόπος να δοθούν ποτέ. Μετρημένο στα πραγματικά δεδομένα: από 3.162 εκτελέσεις με
+# ανεκτέλεστα, ΜΟΝΟ 195 (6%) είναι ανοιχτές — το 94% ήταν ψευδής συναγερμός.
+RECOVERABLE_CASE = {"$in": ["0", 0]}
+
+
 class DailyCoachRepository(BaseRepository):
     collection_name = "coach_findings"
 
@@ -129,6 +142,7 @@ class DailyCoachRepository(BaseRepository):
         since = now - timedelta(days=10)
         execs = [e async for e in self._db["prescription_executions"].find(
             {"tenant_id": self.tenant_id, "has_unexecuted_substances": True,
+             "details.execution_case": RECOVERABLE_CASE,
              "executed_at": {"$gte": since}},
             {"patient_ref": 1, "executed_at": 1, "external_id": 1}).sort("executed_at", -1)]
         if not execs:
@@ -608,6 +622,7 @@ class DailyCoachRepository(BaseRepository):
         # Δύο απλά group-by αντί για per-patient $lookup — το ίδιο αποτέλεσμα, κλάσμα του κόστους.
         had = {r["_id"]: r["first"] for r in await self._db["prescription_executions"].aggregate([
             {"$match": {"tenant_id": self.tenant_id, "has_unexecuted_substances": True,
+             "details.execution_case": RECOVERABLE_CASE,
                         "executed_at": {"$gte": now - timedelta(days=30)}}},
             {"$group": {"_id": "$patient_ref", "first": {"$min": "$executed_at"}}},
         ]).to_list(length=None)}
@@ -1502,6 +1517,7 @@ class DailyCoachRepository(BaseRepository):
         # 1) ανεκτέλεστα που δεν κλείσανε
         ex = await self._db["prescription_executions"].find_one(
             {"tenant_id": self.tenant_id, "patient_ref": pid, "has_unexecuted_substances": True,
+             "details.execution_case": RECOVERABLE_CASE,
              "executed_at": {"$gte": now - timedelta(days=60)}},
             {"executed_at": 1, "external_id": 1}, sort=[("executed_at", -1)])
         if ex:

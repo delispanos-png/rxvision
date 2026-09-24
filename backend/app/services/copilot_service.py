@@ -222,7 +222,11 @@ async def _read_tool(name: str, args: dict, tenant_id: str, demo: bool = False) 
         if args.get("icd10"):
             q["icd10"] = str(args["icd10"]).upper()
         if args.get("unexecuted_only"):
+            # «Ανεκτέλεστα» = ό,τι ΜΠΟΡΕΙ ακόμη να δοθεί. Οι συνταγές που έκλεισαν με τη συμφωνία
+            # του ασθενή (execution_case 2) ή λόγω ασυμφωνίας δοσολογίας (3) δεν ανακτώνται ποτέ —
+            # αν τις έδειχνε, ο Copilot θα πρότεινε τηλέφωνα που δεν οδηγούν πουθενά.
             q["has_unexecuted_substances"] = True
+            q["details.execution_case"] = {"$in": ["0", 0]}
         repo = PrescriptionRepository(tenant_id=tenant_id, demo=demo)
         if args.get("patient_name"):              # όνομα → ψευδώνυμα, ποτέ ελεύθερο regex στα PII
             refs = await repo.find_patient_refs(name=str(args["patient_name"]))

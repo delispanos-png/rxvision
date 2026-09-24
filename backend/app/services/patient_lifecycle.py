@@ -56,7 +56,10 @@ async def mark_deceased(tenant_id: str, amka: str, *, isolation_tier: str = "sha
 
     # 4) ιστορικές μερικώς-ανεκτέλεστες εκτελέσεις → μαρκάρισμα «δεν θα εκτελεστεί λόγω θανάτου»
     ex = await db["prescription_executions"].update_many(
-        {"tenant_id": tenant_id, "patient_ref": pid, "has_unexecuted_substances": True},
+        # ΜΟΝΟ οι ΑΝΟΙΧΤΕΣ: μια συνταγή που έκλεισε με τη συμφωνία του ασθενή δεν «μένει
+        # ανεκτέλεστη λόγω θανάτου» — είχε ήδη ολοκληρωθεί όπως ήθελε ο ίδιος.
+        {"tenant_id": tenant_id, "patient_ref": pid, "has_unexecuted_substances": True,
+         "details.execution_case": {"$in": ["0", 0]}},
         {"$set": {"unexecuted_void": "deceased", "unexecuted_void_at": now}})
 
     return {
