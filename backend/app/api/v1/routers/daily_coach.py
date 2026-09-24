@@ -117,6 +117,7 @@ class SettingsIn(BaseModel):
     email_hour: int | None = None
     email_to: str | None = None
     max_items: int | None = None
+    show_all: bool | None = None
     escalate_owner: bool | None = None
     signals: dict | None = None
 

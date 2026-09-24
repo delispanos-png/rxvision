@@ -1039,8 +1039,15 @@ class DailyCoachRepository(BaseRepository):
 
         rank = {V.TONE_HARD: 0, V.TONE_FIRM: 1, V.TONE_SOFT: 2}
         items.sort(key=lambda i: (rank[i["tone"]], -i["severity"], -(i["money_cents"] or 0)))
-        cap = int(cfg.get("max_items") or MAX_ITEMS)
-        shown, hidden = items[:cap], max(0, len(items) - cap)
+        # «ΘΕΛΩ ΝΑ ΤΑ ΒΛΕΠΩ ΟΛΑ»: ο φαρμακοποιός παραπονέθηκε ότι ο Σύμβουλος «δεν ενημερώνει
+        # σωστά» — και είχε δίκιο: κόβαμε σιωπηλά τη λίστα στα Ν και δεν φαινόταν πουθενά ότι
+        # υπάρχουν κι άλλα. Το φίλτρο μένει (οι περισσότεροι θέλουν τα σημαντικά πρώτα), αλλά
+        # πλέον είναι ΔΙΚΗ ΤΟΥ επιλογή, όχι δική μας απόφαση εκ μέρους του.
+        if cfg.get("show_all"):
+            shown, hidden = items, 0
+        else:
+            cap = int(cfg.get("max_items") or MAX_ITEMS)
+            shown, hidden = items[:cap], max(0, len(items) - cap)
 
         if persist:
             # ΠΡΩΤΑ κλείσε ό,τι λύθηκε — αλλιώς η ανάκτηση δεν μετριέται ποτέ
@@ -1614,6 +1621,7 @@ class DailyCoachRepository(BaseRepository):
             "email_enabled": bool(d.get("email_enabled", True)),
             "email_to": d.get("email_to") or None,              # κενό = το email της καρτέλας
             "max_items": int(d.get("max_items", MAX_ITEMS)),
+            "show_all": bool(d.get("show_all", False)),
             "signals": {k: bool((d.get("signals") or {}).get(k, True)) for k in SIGNAL_LABEL},
             "escalate_owner": bool(d.get("escalate_owner", True)),
             "labels": SIGNAL_LABEL,
@@ -1630,6 +1638,8 @@ class DailyCoachRepository(BaseRepository):
             upd["email_to"] = (str(patch["email_to"]).strip() or None)
         if "max_items" in patch:
             upd["max_items"] = max(3, min(25, int(patch["max_items"])))
+        if "show_all" in patch:
+            upd["show_all"] = bool(patch["show_all"])
         if "escalate_owner" in patch:
             upd["escalate_owner"] = bool(patch["escalate_owner"])
         if "signals" in patch and isinstance(patch["signals"], dict):

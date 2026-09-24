@@ -50,7 +50,7 @@ type Week = {
 type Team = { days: number; total_closed: number; stale: number;
   members: { user_id: string; name: string; closed: number; recovered: number; last: string }[] };
 type Settings = {
-  email_hour: number; email_enabled: boolean; email_to: string | null; max_items: number;
+  email_hour: number; email_enabled: boolean; email_to: string | null; max_items: number; show_all?: boolean;
   escalate_owner: boolean; signals: Record<string, boolean>; labels: Record<string, string>;
 };
 
@@ -382,6 +382,22 @@ export default function CoachPage() {
                       className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800">
                       {t(`Δες και τα υπόλοιπα ${allItems.length - limit}`, `Show the other ${allItems.length - limit}`)}
                     </button>
+                  </div>
+                )}
+
+                {/* ΤΙ ΚΟΨΑΜΕ ΕΜΕΙΣ: το `hidden` είναι όσα δεν έφτασαν καν στην οθόνη λόγω του
+                    ημερήσιου ορίου. Ερχόταν από το API αλλά δεν φαινόταν πουθενά — γι αυτό ο
+                    φαρμακοποιός νόμιζε ότι ο Σύμβουλος «δεν τον ενημερώνει». */}
+                {(q.data.hidden ?? 0) > 0 && (
+                  <div className="flex flex-col items-center gap-2 rounded-2xl border border-dashed border-amber-300 bg-amber-50/50 p-4 text-center dark:border-amber-800 dark:bg-amber-950/20">
+                    <span className="text-sm text-amber-800 dark:text-amber-200">
+                      {t(`Υπάρχουν ακόμη ${q.data.hidden} θέματα που δεν δείχνονται, λόγω του ημερήσιου ορίου σου.`,
+                         `${q.data.hidden} more findings are not shown, because of your daily cap.`)}
+                    </span>
+                    <a href="#settings" onClick={() => setTab("settings")}
+                      className="text-xs font-semibold text-amber-900 underline dark:text-amber-100">
+                      {t("Θέλω να τα βλέπω όλα", "Show me everything")}
+                    </a>
                   </div>
                 )}
 
@@ -735,12 +751,19 @@ export default function CoachPage() {
                     {Array.from({ length: 24 }, (_, i) => <option key={i} value={i}>{String(i).padStart(2, "0")}:00</option>)}
                   </select>
                 </Row>
-                <Row label={t("Πόσα θέματα την ημέρα", "Findings per day")}
-                  hint={t("Πάνω από δέκα δεν διαβάζονται — αγνοούνται.", "More than ten and nobody reads them.")}>
-                  <input type="number" min={3} max={25} defaultValue={cfg.data.max_items}
-                    onBlur={(e) => saveCfg.mutate({ max_items: Number(e.target.value) })}
-                    className="w-20 rounded-lg border border-slate-300 px-2 py-1.5 text-sm dark:border-slate-600 dark:bg-slate-800" />
+                <Row label={t("Θέλω να τα βλέπω ΟΛΑ", "Show me everything")}
+                  hint={t("Χωρίς όριο. Ό,τι εντοπίσει ο Σύμβουλος εμφανίζεται — και τα λιγότερο επείγοντα.",
+                          "No cap. Everything the Advisor finds is shown — including the less urgent.")}>
+                  <Toggle on={!!cfg.data.show_all} onChange={(v) => saveCfg.mutate({ show_all: v })} />
                 </Row>
+                {!cfg.data.show_all && (
+                  <Row label={t("Πόσα θέματα την ημέρα", "Findings per day")}
+                    hint={t("Τα σημαντικότερα πρώτα· τα υπόλοιπα κρύβονται.", "Most important first; the rest are hidden.")}>
+                    <input type="number" min={3} max={25} defaultValue={cfg.data.max_items}
+                      onBlur={(e) => saveCfg.mutate({ max_items: Number(e.target.value) })}
+                      className="w-20 rounded-lg border border-slate-300 px-2 py-1.5 text-sm dark:border-slate-600 dark:bg-slate-800" />
+                  </Row>
+                )}
                 <Row label={t("Κλιμάκωση στον ιδιοκτήτη", "Escalate to owner")}
                   hint={t("Ό,τι μένει ανοιχτό πάνω από μία εβδομάδα, φεύγει μία φορά με email.", "Anything open over a week gets one email.")}>
                   <Toggle on={cfg.data.escalate_owner} onChange={(v) => saveCfg.mutate({ escalate_owner: v })} />
