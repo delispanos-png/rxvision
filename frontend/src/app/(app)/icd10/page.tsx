@@ -17,6 +17,7 @@ import { ExportMenu } from "@/components/export/ExportMenu";
 import { KpiCard } from "@/components/kpi/KpiCard";
 import { PanelCard } from "@/components/ui/Card";
 import { QueryState } from "@/components/ui/QueryState";
+import { ConditionsPanel } from "@/components/icd10/ConditionsPanel";
 import { useT } from "@/store/prefStore";
 
 type T = (el: string, en: string) => string;
@@ -143,6 +144,9 @@ export default function Icd10Page() {
               <DataTable pageSize={20} columns={columns} rows={rows} rowKey={(r) => r.node} />
             </PanelCard>
           )}
+
+          {/* Παθήσεις σε κεφάλαια + αναλυτική καρτέλα ανά πάθηση */}
+          {showList && <ConditionsPanel query={q} />}
         </div>
       </QueryState>
     </ModuleGuard>
