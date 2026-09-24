@@ -25,6 +25,7 @@ from bson import ObjectId
 from bson.errors import InvalidId
 
 from app.repositories.base import BaseRepository
+from app.services import recoverable
 from app.services import coach_voice as V
 from app.utils.masking import mask_amka, mask_name, pseudo_email, pseudo_phone
 
@@ -127,7 +128,10 @@ def _days_between(a: datetime | None, b: datetime) -> int:
 # ΜΟΝΟ η περίπτωση 0 είναι ανακτήσιμη. Οι 2 και 3 είναι ΚΛΕΙΣΤΕΣ: δεν «αποτύχαμε» να τα δώσουμε,
 # ούτε υπάρχει τρόπος να δοθούν ποτέ. Μετρημένο στα πραγματικά δεδομένα: από 3.162 εκτελέσεις με
 # ανεκτέλεστα, ΜΟΝΟ 195 (6%) είναι ανοιχτές — το 94% ήταν ψευδής συναγερμός.
-RECOVERABLE_CASE = {"$in": ["0", 0]}
+# ⚠ Η περίπτωση είναι ΜΟΝΟ ο μισός έλεγχος. Χρειάζεται ΚΑΙ να μην έχει λήξει η συνταγή —
+# δες `services/recoverable.py`. Όπου προτείνουμε ΠΡΑΞΗ χρησιμοποίησε `recoverable.mongo_filter()`·
+# η σκέτη περίπτωση μένει μόνο για ΙΣΤΟΡΙΚΕΣ μετρήσεις (π.χ. «ποιος έκλεισε το ανεκτέλεστό του»).
+RECOVERABLE_CASE = recoverable.RECOVERABLE_CASE
 
 
 class DailyCoachRepository(BaseRepository):
@@ -138,13 +142,24 @@ class DailyCoachRepository(BaseRepository):
     # ─────────────────────────────────────────────────────────────────────────
 
     async def _sig_unexecuted(self, now: datetime) -> list[dict]:
-        """Ο άνθρωπος έφυγε χωρίς μέρος της συνταγής του. Τα υπόλοιπα τα αγόρασε αλλού."""
+        """Ο άνθρωπος έφυγε χωρίς μέρος της συνταγής του.
+
+        ⚠ ΝΟΜΙΚΟ ΔΕΔΟΜΕΝΟ (ελληνική νομοθεσία): το ΥΠΟΛΟΙΠΟ ΑΥΤΗΣ ΤΗΣ ΕΚΤΕΛΕΣΗΣ κλειδώνει
+        στο φαρμακείο που την ξεκίνησε — κανένα άλλο δεν μπορεί να το δώσει. Άρα ΔΕΝ είναι
+        απώλεια σε ανταγωνιστή· χάνεται μόνο αν περάσει η ΠΡΟΘΕΣΜΙΑ.
+
+        ⚠ ΤΟ ΚΛΕΙΔΩΜΑ ΕΙΝΑΙ ΑΝΑ ΕΚΤΕΛΕΣΗ (barcode), ΟΧΙ ΣΕ ΟΛΗ ΤΗΝ ΑΛΥΣΙΔΑ: σε εξάμηνη με 6
+        εκτελέσεις, οι επόμενες (2, 3, 4…) είναι ΕΛΕΥΘΕΡΕΣ — ο ασθενής μπορεί να τις κάνει
+        οπουδήποτε και να εναλλάσσεται. Δες [[repeat-chain-semantics]]: κάθε θέση είναι
+        ξεχωριστό barcode με δικό του παράθυρο. Το σήμα `repeat_expiring` αφορά ΕΚΕΙΝΕΣ και
+        εκεί ο ανταγωνισμός ΕΙΝΑΙ υπαρκτός.
+        """
         since = now - timedelta(days=10)
         execs = [e async for e in self._db["prescription_executions"].find(
-            {"tenant_id": self.tenant_id, "has_unexecuted_substances": True,
-             "details.execution_case": RECOVERABLE_CASE,
+            {"tenant_id": self.tenant_id, **recoverable.mongo_filter(now),
              "executed_at": {"$gte": since}},
-            {"patient_ref": 1, "executed_at": 1, "external_id": 1}).sort("executed_at", -1)]
+            {"patient_ref": 1, "executed_at": 1, "external_id": 1,
+             "valid_until": 1}).sort("executed_at", -1)]
         if not execs:
             return []
         # Ο ασθενής ξαναπέρασε μετά; Τότε το έκλεισε — δεν το χρεώνουμε.
@@ -182,6 +197,9 @@ class DailyCoachRepository(BaseRepository):
                 "money_cents": miss["retail"], "profit_cents": miss["margin"],
                 "items": miss["names"], "severity": 3 if miss["retail"] >= 3000 else 2,
                 "rx": e.get("external_id"),
+                # Ο ΜΟΝΟΣ πραγματικός κίνδυνος: η προθεσμία. Δεν υπάρχει ανταγωνιστής εδώ.
+                "days_left": (max(0, (e["valid_until"] - now).days)
+                              if e.get("valid_until") else None),
             })
         return out
 
@@ -722,7 +740,8 @@ class DailyCoachRepository(BaseRepository):
         """execution_id → {names, retail(cents), margin(cents)} για ΜΟΝΟ τα ανεκτέλεστα είδη."""
         rows = [i async for i in self._db["prescription_items"].find(
             {"tenant_id": self.tenant_id, "execution_id": {"$in": exec_ids}, "is_executed": False},
-            {"execution_id": 1, "product_id": 1, "quantity": 1, "retail_price": 1, "margin": 1})]
+            {"execution_id": 1, "product_id": 1, "quantity": 1, "executed_qty": 1,
+             "retail_price": 1, "margin": 1})]
         if not rows:
             return {}
         prods = {}
@@ -733,7 +752,10 @@ class DailyCoachRepository(BaseRepository):
         out: dict = {}
         for r in rows:
             b = out.setdefault(r["execution_id"], {"names": [], "retail": 0, "margin": 0})
-            q = int(r.get("quantity") or 1)
+            # ΛΕΙΠΕΙ ό,τι ΕΜΕΙΝΕ, όχι όλη η γραμμή: 2 τεμάχια με το 1 δοσμένο λείπει 1.
+            q = max(0, int(r.get("quantity") or 1) - int(r.get("executed_qty") or 0))
+            if q <= 0:
+                continue
             nm = prods.get(r.get("product_id"))
             if nm and nm not in b["names"]:
                 b["names"].append(nm)
@@ -851,14 +873,24 @@ class DailyCoachRepository(BaseRepository):
             what = (f"το {names[0]}" if len(names) == 1
                     else ", ".join(names[:2]) + (f" και άλλα {len(names) - 2}" if len(names) > 2 else ""))
             title = f"{subj_full} έφυγε χωρίς μέρος της συνταγής {gen}"
+            # ⚠ ΠΟΤΕ «θα πάει σε άλλο φαρμακείο»: η μερική εκτέλεση ΚΛΕΙΔΩΝΕΙ τη συνταγή εδώ
+            # (ελληνική νομοθεσία). Η πώληση είναι δεσμευμένη για σένα· χάνεται ΜΟΝΟ με τον χρόνο.
             body = (f"Πέρασε {ago} και δεν πήρε {what}. "
-                    f"Μιλάμε για {money} που πιθανότατα θα καταλήξουν σε άλλο φαρμακείο")
+                    f"Μιλάμε για {money}")
             if f.get("profit_cents"):
                 body += f", και μαζί τους {V.money(f['profit_cents'])} δικό σου κέρδος"
             body += ". "
-            if tone == V.TONE_HARD:
-                body += ("Όταν κάποιος συνηθίσει να συμπληρώνει τη συνταγή του αλλού, συνήθως "
-                         "δεν το ξανασκέφτεται. Αξίζει να μπει σήμερα στη λίστα σου.")
+            dleft = f.get("days_left")
+            body += ("Το υπόλοιπο αυτής της εκτέλεσης είναι κλειδωμένο στο φαρμακείο σου — "
+                     "κανένα άλλο δεν μπορεί να του το δώσει. ")
+            if dleft is not None and dleft <= 0:
+                body += "Η προθεσμία όμως είναι σήμερα: μετά δεν εκτελείται από κανέναν."
+            elif dleft is not None and dleft <= 7:
+                body += (f"Μένουν όμως {V.count_word(dleft, feminine=True)} μέρες προθεσμία, "
+                         "και μετά δεν εκτελείται από κανέναν.")
+            elif tone == V.TONE_HARD:
+                body += ("Το μόνο που μπορεί να τη χαλάσει είναι ο χρόνος — αν περάσει η "
+                         "προθεσμία, χάνεται για όλους. Αξίζει να μπει σήμερα στη λίστα σου.")
             else:
                 body += ("Ένα τηλέφωνο συνήθως αρκεί — οι περισσότεροι επιστρέφουν μόλις "
                          "μάθουν ότι τους το κρατάς.")
@@ -869,11 +901,16 @@ class DailyCoachRepository(BaseRepository):
             when = ("σήμερα" if dl == 0 else "αύριο" if dl == 1
                     else f"σε {V.count_word(dl, feminine=True)} μέρες")
             title = f"{subj_full} χάνει {V.doses(left)} {when}"
+            # ⚠ ΔΙΑΦΟΡΑ ΑΠΟ ΤΟ «unexecuted»: εδώ ΔΕΝ υπάρχει κλείδωμα. Οι επόμενες εκτελέσεις
+            # μιας επαναλαμβανόμενης είναι ΕΛΕΥΘΕΡΕΣ — μπορεί να τις κάνει σε οποιοδήποτε
+            # φαρμακείο. Το λέμε ρητά, ώστε να μη συγχέονται τα δύο σήματα.
             body = (f"Η επαναλαμβανόμενη συνταγή {gen} λήγει {when} και "
                     f"{'μένει' if left == 1 else 'μένουν'} {V.doses(left)} αχρησιμοποίητ"
                     f"{'η' if left == 1 else 'ες'}. Αν δεν προλάβει, θα χρειαστεί να ξαναπάει "
-                    f"στον γιατρό για να {'την' if left == 1 else 'τις'} ξαναγράψει — και για "
-                    f"το φαρμακείο είναι {money} που δεν θα εκτελεστούν ποτέ. "
+                    f"στον γιατρό για να {'την' if left == 1 else 'τις'} ξαναγράψει — και "
+                    f"{money} δεν θα εκτελεστούν ποτέ, από κανέναν. "
+                    f"{'Αυτή την εκτέλεση μπορεί να την κάνει' if left == 1 else 'Αυτές τις εκτελέσεις μπορεί να τις κάνει'} "
+                    f"σε όποιο φαρμακείο θέλει — γι' αυτό μετράει ποιος θα {gen} το θυμίσει πρώτος. "
                     f"Μια υπενθύμιση σήμερα το λύνει.")
             action = f"Ειδοποίησέ {him} σήμερα"
 
@@ -1327,11 +1364,15 @@ class DailyCoachRepository(BaseRepository):
         items = await self._db["prescription_items"].aggregate([
             {"$match": {"tenant_id": self.tenant_id, "is_executed": False,
                         "executed_at": {"$gte": start}}},
+            # ΜΟΝΟ το υπόλοιπο μετράει ως χαμένο — η μισή εκτέλεση δεν είναι ολόκληρη χαμένη.
+            {"$set": {"_left": {"$max": [0, {"$subtract": [
+                "$quantity", {"$ifNull": ["$executed_qty", 0]}]}]}}},
+            {"$match": {"_left": {"$gt": 0}}},
             {"$group": {"_id": {"$dateToString": {"format": "%Y-%m", "date": "$executed_at",
                                                   "timezone": "Europe/Athens"}},
                         "n": {"$sum": 1},
-                        "value": {"$sum": {"$multiply": ["$retail_price", "$quantity"]}},
-                        "profit": {"$sum": {"$multiply": ["$margin", "$quantity"]}}}},
+                        "value": {"$sum": {"$multiply": ["$retail_price", "$_left"]}},
+                        "profit": {"$sum": {"$multiply": ["$margin", "$_left"]}}}},
         ]).to_list(length=None)
 
         by_month: dict = {}
@@ -1523,8 +1564,7 @@ class DailyCoachRepository(BaseRepository):
 
         # 1) ανεκτέλεστα που δεν κλείσανε
         ex = await self._db["prescription_executions"].find_one(
-            {"tenant_id": self.tenant_id, "patient_ref": pid, "has_unexecuted_substances": True,
-             "details.execution_case": RECOVERABLE_CASE,
+            {"tenant_id": self.tenant_id, "patient_ref": pid, **recoverable.mongo_filter(now),
              "executed_at": {"$gte": now - timedelta(days=60)}},
             {"executed_at": 1, "external_id": 1}, sort=[("executed_at", -1)])
         if ex:
@@ -1538,8 +1578,10 @@ class DailyCoachRepository(BaseRepository):
                     names = [V.product(n) for n in miss["names"]]
                     notes.append({
                         "kind": "unexecuted", "tone": "warn",
+                        # Κλειδωμένο σε εμάς (μερική εκτέλεση) — ο μόνος κίνδυνος είναι η προθεσμία.
                         "text": (f"Έχει ανεκτέλεστο από {V.ago_phrase(_days_between(ex['executed_at'], now))}: "
-                                 f"{', '.join(names[:2])}. Ρώτησέ {him} αν το θέλει τώρα."),
+                                 f"{', '.join(names[:2])}. Το υπόλοιπο αυτής της εκτέλεσης μόνο "
+                                 f"εσύ μπορείς να του το δώσεις — ρώτησέ {him} αν το θέλει τώρα."),
                         "money_cents": miss.get("retail"),
                         "href": f"/prescriptions/{quote(str(ex.get('external_id') or ''))}"})
 

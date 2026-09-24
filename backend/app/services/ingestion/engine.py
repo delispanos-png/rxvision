@@ -476,12 +476,20 @@ class IngestionEngine:
             product_id = res["_id"]
             amount_total += eff_retail * it.quantity
             wholesale_cost += wholesale * it.quantity
+            # Τεμάχια που δόθηκαν: η πηγή το ξέρει (υπόλοιπο ΗΔΥΚΑ). Όπου δεν το δίνει, όλα ή
+            # τίποτα. ΔΕΝ είναι διπλοεγγραφή του is_executed — μια γραμμή 2 τεμαχίων με ένα
+            # δοσμένο είναι ΚΑΙ «όχι πλήρως εκτελεσμένη» ΚΑΙ «δόθηκε το 1».
+            exec_qty = it.executed_qty
+            if exec_qty is None:
+                exec_qty = it.quantity if it.is_executed else 0
+            exec_qty = max(0, min(int(it.quantity or 0), int(exec_qty)))
             docs.append({"product_id": product_id, "active_substance_id": None,
                          "quantity": it.quantity, "retail_price": eff_retail,
                          "wholesale_price": wholesale, "wholesale_source": wsource,
                          "margin": margin,
                          "amount_claimed": eff_retail * it.quantity, "patient_share": 0,
-                         "is_executed": it.is_executed, "category": it.category,
+                         "is_executed": it.is_executed, "executed_qty": exec_qty,
+                         "category": it.category,
                          "details": it.details or {}})
         return docs, amount_total, wholesale_cost
 

@@ -230,8 +230,11 @@ class ProfitabilityLiveRepository(BaseRepository):
             {"$lookup": {"from": "prescription_items", "localField": "_id",
                          "foreignField": "execution_id", "as": "it"}},
             {"$unwind": "$it"},
-            {"$match": {"it.is_executed": True}},
-            {"$group": {"_id": "$it.product_id", "units": {"$sum": "$it.quantity"}}},
+            # ΤΕΜΑΧΙΑ ΠΟΥ ΔΟΘΗΚΑΝ. Ο παλιός έλεγχος «πλήρως εκτελεσμένη» πετούσε ολόκληρη τη
+            # μερική γραμμή, οπότε τα τεμάχια που όντως πουλήθηκαν δεν μετρούσαν καθόλου.
+            {"$match": {"$expr": {"$gt": [{"$ifNull": ["$it.executed_qty", 0]}, 0]}}},
+            {"$group": {"_id": "$it.product_id",
+                        "units": {"$sum": {"$ifNull": ["$it.executed_qty", "$it.quantity"]}}}},
             {"$lookup": {"from": "products", "localField": "_id",
                          "foreignField": "_id", "as": "_p"}},
             {"$set": {"atc": {"$first": "$_p.atc"},

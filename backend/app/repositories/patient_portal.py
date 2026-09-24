@@ -970,6 +970,10 @@ class PatientRxRepository(BaseRepository):
                 "quantity": it.get("quantity", 1),
                 "retail_price": it.get("retail_price", 0),
                 "is_executed": it.get("is_executed", True),
+                # πόσα τεμάχια πήρε όντως: 2 συνταγογραφημένα με το 1 δοσμένο ΔΕΝ είναι
+                # «δεν παραλήφθηκε» — ο ασθενής το έχει στα χέρια του και το παίρνει.
+                "executed_qty": it.get("executed_qty",
+                                       it.get("quantity", 1) if it.get("is_executed", True) else 0),
                 # doctor's posology for this line (dose · frequency · duration), from the ΗΔΥΚΑ CDA
                 "dosage": _format_dosage(d.get("dose"), d.get("frequency"), d.get("duration")),
                 "details": d,
@@ -1007,7 +1011,11 @@ class PatientRxRepository(BaseRepository):
                 self._scope({"patient_ref": pid, "executed_at": {"$gte": horizon}})).sort("executed_at", -1):
             async for it in self._db["prescription_items"].find(
                     {"tenant_id": self.tenant_id, "execution_id": ex["_id"]}):
-                if not it.get("is_executed", True):
+                # Ενεργή αγωγή = ό,τι ΠΗΡΕ, έστω και μερικώς. Ο έλεγχος «πλήρως εκτελεσμένο»
+                # πετούσε έξω τις μισο-δοσμένες συσκευασίες, δηλαδή φάρμακα που ο ασθενής
+                # όντως παίρνει — και μαζί τους κάθε έλεγχο αλληλεπίδρασης/συμμόρφωσης.
+                if not (it.get("executed_qty")
+                        if it.get("executed_qty") is not None else it.get("is_executed", True)):
                     continue
                 d = it.get("details") or {}
                 prod = (await self._db["products"].find_one({"_id": it.get("product_id")})

@@ -664,9 +664,13 @@ class PatientIntelligenceRepository(BaseRepository):
             {"$sort": {"executed_at": -1}}, {"$limit": 2000},  # «όλες οι συνταγές του πελάτη»
             {"$lookup": {"from": "prescription_items", "localField": "_id",
                          "foreignField": "execution_id", "as": "it"}},
-            # ΜΟΝΟ οι ΕΚΤΕΛΕΣΜΕΝΕΣ γραμμές → δείχνουμε ΟΛΑ τα φάρμακα που πραγματικά εκτελέστηκαν στη
-            # συνταγή (fallback: αν καμία δεν είναι flagged executed, κράτα όλες για να μη χαθεί η γραμμή).
-            {"$set": {"itx": {"$filter": {"input": "$it", "cond": {"$eq": ["$$this.is_executed", True]}}}}},
+            # ΟΣΕΣ ΔΟΘΗΚΑΝ, έστω και μερικώς → δείχνουμε ΟΛΑ τα φάρμακα που πήρε όντως ο ασθενής
+            # (fallback: αν καμία δεν είναι flagged, κράτα όλες για να μη χαθεί η γραμμή).
+            # ΓΙΑΤΙ ΟΧΙ `is_executed == True`: συσκευασία 2 τεμαχίων με το 1 δοσμένο είναι
+            # «όχι πλήρως εκτελεσμένη» — αλλά ο ασθενής την παίρνει, άρα ΠΡΕΠΕΙ να ελεγχθεί
+            # για αλληλεπιδράσεις. Ο παλιός έλεγχος την έκρυβε.
+            {"$set": {"itx": {"$filter": {"input": "$it",
+                "cond": {"$gt": [{"$ifNull": ["$$this.executed_qty", 0]}, 0]}}}}},
             {"$set": {"it": {"$cond": [{"$gt": [{"$size": "$itx"}, 0]}, "$itx", "$it"]}}},
             {"$lookup": {"from": "products", "localField": "it.product_id",
                          "foreignField": "_id", "as": "prods"}},

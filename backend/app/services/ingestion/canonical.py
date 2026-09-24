@@ -44,7 +44,12 @@ class CanonicalItem:
     retail_price: int = 0            # cents
     wholesale_price: int = 0         # cents
     category: str = "normal"         # normal | FYK | vaccine | narcotic | special
-    is_executed: bool = True
+    is_executed: bool = True         # ΠΛΗΡΩΣ εκτελεσμένη γραμμή (υπόλοιπο 0)
+    # ΠΟΣΑ τεμάχια δόθηκαν όντως. Η ΗΔΥΚΑ δίνει «Υπόλοιπο» (1.4.19): μια γραμμή 2 τεμαχίων με
+    # υπόλοιπο 1 σημαίνει ΔΟΘΗΚΕ ΤΟ ΕΝΑ. Το `is_executed` είναι ναι/όχι και δεν μπορεί να το
+    # εκφράσει — χωρίς αυτό το πεδίο η μισή εκτέλεση φαινόταν ως «δεν δόθηκε τίποτα».
+    # None = άγνωστο (η πηγή δεν έδωσε υπόλοιπο) → ο engine πέφτει στο is_executed.
+    executed_qty: int | None = None
     # Rich per-line ΗΔΥΚΑ/CDA detail (persisted for KPIs): execution/reference price (cents),
     # participation %, patient share, difference, generic flag, lot, dosage, QR/strip, etc.
     details: dict = field(default_factory=dict)

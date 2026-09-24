@@ -46,7 +46,14 @@ type Summary = { rx_count: number; paid_cents: number; total_cents: number; cove
 type Rx = { barcode: string; executed_at: string; status?: string; patient_share?: number; repeat_current?: number; repeat_total?: number; repeat_root?: string | null; next_open_date?: string | null; medicines: string[]; pending?: string[]; partial?: boolean; doctor?: string | null; specialty?: string | null; tenant_id?: string; pharmacy_name?: string | null };
 type RepeatMed = { name: string; dosage?: string | null };
 type Repeat = Omit<Rx, "medicines"> & { medicines: RepeatMed[] };
-type RxItem = { name?: string | null; barcode?: string | null; quantity?: number; retail_price?: number; is_executed?: boolean; dosage?: string | null; usage_video_url?: string | null };
+type RxItem = { name?: string | null; barcode?: string | null; quantity?: number; retail_price?: number; is_executed?: boolean; executed_qty?: number | null; dosage?: string | null; usage_video_url?: string | null };
+
+// Πόσα τεμάχια πήρε ο ασθενής. Συσκευασία 2 με το 1 δοσμένο ΔΕΝ είναι «δεν παραλήφθηκε».
+function got(it: RxItem) {
+  const q = it.quantity ?? 1;
+  const given = it.executed_qty ?? (it.is_executed ? q : 0);
+  return { q, given, left: Math.max(0, q - given), partial: given > 0 && given < q };
+}
 type RxDetail = Rx & { amount_total?: number; icd10?: string[]; items: RxItem[] };
 type Notif = { id: string; type: string; title: string; body: string; when?: string | null };
 type Avail = { _id?: string; query: string; medicine_name?: string | null; status: string; answer?: string | null; created_at: string };
@@ -1562,16 +1569,19 @@ export default function PortalHome() {
                           </div>
                           <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">{t("Φάρμακα", "Medicines")}</div>
                           <ul className="divide-y divide-slate-200/70">
-                            {detail.items.map((it, i) => (
-                              <li key={i} className={`flex items-start justify-between gap-3 py-2 text-sm ${it.is_executed ? "text-slate-700 dark:text-slate-200" : "text-slate-400"}`}>
+                            {detail.items.map((it, i) => {
+                              const g = got(it);
+                              return (
+                              <li key={i} className={`flex items-start justify-between gap-3 py-2 text-sm ${g.given > 0 ? "text-slate-700 dark:text-slate-200" : "text-slate-400"}`}>
                                 <span className="flex min-w-0 items-start gap-2">
-                                  {it.is_executed
+                                  {g.given > 0 && !g.partial
                                     ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-500" />
-                                    : <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-rose-400" />}
+                                    : <AlertCircle className={`mt-0.5 h-4 w-4 shrink-0 ${g.partial ? "text-amber-500" : "text-rose-400"}`} />}
                                   <span className="min-w-0">
                                     <span className="flex flex-wrap items-center gap-2">
-                                      <span className={it.is_executed ? "" : "line-through"}>{it.name}{it.quantity && it.quantity > 1 ? ` ×${it.quantity}` : ""}</span>
-                                      {!it.is_executed && <span className="rounded-full bg-rose-50 px-1.5 py-0.5 text-[10px] font-medium text-rose-600">{t("δεν παραλήφθηκε", "not dispensed")}</span>}
+                                      <span className={g.given > 0 ? "" : "line-through"}>{it.name}{g.q > 1 ? ` ×${g.q}` : ""}</span>
+                                      {g.partial && <span className="rounded-full bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700">{t(`παραλάβατε ${g.given} από ${g.q}`, `${g.given} of ${g.q} received`)}</span>}
+                                      {g.given === 0 && <span className="rounded-full bg-rose-50 px-1.5 py-0.5 text-[10px] font-medium text-rose-600">{t("δεν παραλήφθηκε", "not dispensed")}</span>}
                                     </span>
                                     {it.dosage && <span className="mt-0.5 block text-xs text-slate-500 dark:text-slate-400">💊 {it.dosage}</span>}
                                     {videoEmbed(it.usage_video_url) && (
@@ -1581,9 +1591,10 @@ export default function PortalHome() {
                                     )}
                                   </span>
                                 </span>
-                                {it.is_executed && <span className="shrink-0 font-medium">{eur(it.retail_price)}</span>}
+                                {g.given > 0 && <span className="shrink-0 font-medium">{eur(it.retail_price)}</span>}
                               </li>
-                            ))}
+                              );
+                            })}
                           </ul>
                           {detail.icd10 && detail.icd10.length > 0 && (
                             <div className="mt-3 text-xs text-slate-400">{t("Διάγνωση:", "Diagnosis:")} {detail.icd10.join(", ")}</div>

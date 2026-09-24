@@ -169,8 +169,12 @@ class FuturePrescriptionRepository(BaseRepository):
         items.collection_name = "prescription_items"
         hist_start = day_start - timedelta(days=history_days)
         hist = await items.aggregate([
-            {"$match": {"executed_at": {"$gte": hist_start}, "is_executed": True}},
-            {"$group": {"_id": "$product_id", "units": {"$sum": "$quantity"},
+            # ΟΣΑ ΔΟΘΗΚΑΝ: η μερικώς εκτελεσμένη γραμμή δεν είναι «πλήρως εκτελεσμένη»,
+            # αλλά τα τεμάχια που δόθηκαν πουλήθηκαν και πρέπει να μετρήσουν.
+            {"$match": {"executed_at": {"$gte": hist_start},
+                        "$expr": {"$gt": [{"$ifNull": ["$executed_qty", 0]}, 0]}}},
+            {"$group": {"_id": "$product_id",
+                        "units": {"$sum": {"$ifNull": ["$executed_qty", "$quantity"]}},
                         "cost": {"$sum": "$wholesale_price"}}},
         ])
         hmap = {h["_id"]: h for h in hist}

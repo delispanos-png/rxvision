@@ -15,6 +15,7 @@ import json
 from datetime import datetime, timedelta, timezone
 
 from app.repositories.base import jsonsafe
+from app.services import recoverable
 from app.services import pharmacat_service  # shared Anthropic config
 from app.utils.masking import mask_name
 from app.services import ai_cost   # κόστος/caching — πρέπει να είναι διαθέσιμο ΠΡΙΝ τις κλήσεις
@@ -61,6 +62,17 @@ dim=patients & days_back=0 για «σήμερα») και ΑΠΑΝΤΗΣΕ ΜΕ
 από σήμερα, όχι συγκεκριμένος μήνας). Για σύγκριση, ΚΑΛΕΣΕ το tool ΔΥΟ φορές (π.χ. month=2026-08 ΚΑΙ
 month=2025-08) και δώσε τη διαφορά %. Αν ένα tool γυρίσει 0, ΠΡΩΤΑ δοκίμασε ξανά με το σωστό `month` πριν
 πεις «δεν υπάρχουν δεδομένα» — τα ιστορικά δεδομένα υπάρχουν.
+
+ΜΕΡΙΚΗ ΕΚΤΕΛΕΣΗ — ΝΟΜΙΚΟ ΔΕΔΟΜΕΝΟ (ΚΡΙΣΙΜΟ, μην το μπερδέψεις με τις επαναλήψεις):
+• Το ΥΠΟΛΟΙΠΟ ΜΙΑΣ ΣΥΓΚΕΚΡΙΜΕΝΗΣ ΕΚΤΕΛΕΣΗΣ κλειδώνει στο φαρμακείο που την ξεκίνησε. Αν ο
+  ασθενής πήρε μέρος των ειδών εδώ, ΚΑΝΕΝΑ άλλο φαρμακείο δεν μπορεί να δώσει τα υπόλοιπα ΑΥΤΗΣ
+  της εκτέλεσης. ΠΟΤΕ μην πεις ότι «θα τα πάρει αλλού» ή ότι χάνονται σε ανταγωνιστή — ΛΑΘΟΣ.
+  Χάνονται ΜΟΝΟ αν περάσει η ΠΡΟΘΕΣΜΙΑ. Η επείγουσα διάσταση είναι ο ΧΡΟΝΟΣ, όχι ο ανταγωνισμός.
+• ΠΡΟΣΟΧΗ — ΟΙ ΕΠΟΜΕΝΕΣ ΕΚΤΕΛΕΣΕΙΣ ΕΙΝΑΙ ΕΛΕΥΘΕΡΕΣ: σε επαναλαμβανόμενη (π.χ. εξάμηνη με 6
+  εκτελέσεις), το κλείδωμα αφορά ΜΟΝΟ το υπόλοιπο της εκτέλεσης που έγινε εδώ. Τις εκτελέσεις
+  2, 3, 4… ο ασθενής μπορεί να τις κάνει σε ΟΠΟΙΟ φαρμακείο θέλει, και να εναλλάσσεται (τη 2η
+  αλλού, την 3η πάλι εδώ). ΕΚΕΙ ο ανταγωνισμός είναι υπαρκτός και η διατήρηση του πελάτη μετράει.
+• (Επίσης διαφορετικό: είδος που ΛΕΙΠΕΙ από το ράφι χωρίς συνταγή — εκεί ο πελάτης πάει αλλού.)
 
 ΚΕΡΔΟΦΟΡΙΑ — ΕΛΛΗΝΙΚΟ ΝΟΜΙΚΟ ΠΛΑΙΣΙΟ (ΚΡΙΣΙΜΟ, μη δίνεις συμβουλές που ΔΕΝ ισχύουν στην Ελλάδα):
 • Τα ΣΥΝΤΑΓΟΓΡΑΦΟΥΜΕΝΑ φάρμακα (Rx) είναι σε ΔΙΑΤΙΜΗΣΗ: λιανική & χονδρική ορίζονται από το Κράτος
@@ -225,8 +237,9 @@ async def _read_tool(name: str, args: dict, tenant_id: str, demo: bool = False) 
             # «Ανεκτέλεστα» = ό,τι ΜΠΟΡΕΙ ακόμη να δοθεί. Οι συνταγές που έκλεισαν με τη συμφωνία
             # του ασθενή (execution_case 2) ή λόγω ασυμφωνίας δοσολογίας (3) δεν ανακτώνται ποτέ —
             # αν τις έδειχνε, ο Copilot θα πρότεινε τηλέφωνα που δεν οδηγούν πουθενά.
-            q["has_unexecuted_substances"] = True
-            q["details.execution_case"] = {"$in": ["0", 0]}
+            # …και ΟΥΤΕ όσες πέρασε η προθεσμία τους: μια ληγμένη συνταγή δεν εκτελείται πια,
+            # οπότε κάθε πρόταση πάνω της είναι τηλέφωνο που δεν οδηγεί πουθενά.
+            q.update(recoverable.mongo_filter())
         repo = PrescriptionRepository(tenant_id=tenant_id, demo=demo)
         if args.get("patient_name"):              # όνομα → ψευδώνυμα, ποτέ ελεύθερο regex στα PII
             refs = await repo.find_patient_refs(name=str(args["patient_name"]))
@@ -441,7 +454,8 @@ _READ_DESC = {
         "«YYYY-MM-DD» Ή months_back Ή days_back· min_amount/max_amount σε ΕΥΡΩ· "
         "sort(amount_total|executed_at, default amount_total φθίνουσα)· limit (έως 50)· "
         "προαιρετικά patient_name, icd10, status, unexecuted_only."),
-    "get_unexecuted": "Ανεκτέλεστες δραστικές (χαμένη αξία). params: months_back Ή days_back.",
+    "get_unexecuted": ("Ανεκτέλεστες δραστικές — ΔΕΣΜΕΥΜΕΝΗ αξία για ΑΥΤΟ το φαρμακείο "
+                       "(κλειδώνει εκεί, δεν πάει αλλού). params: months_back Ή days_back."),
     "get_profitability": "Κερδοφορία/περιθώριο για περίοδο. params: months_back.",
     "get_low_margin": "Προϊόντα χαμηλού περιθωρίου. params: threshold_pct.",
     "get_reimbursement": "Εικόνα αποζημίωσης ΕΟΠΥΥ (executive). params: month 'YYYY-MM'.",

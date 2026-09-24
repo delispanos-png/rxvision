@@ -710,6 +710,10 @@ class HdikaClient:
             outstanding = m.get("outstanding")
             executed = (outstanding is not None and outstanding <= 0) if outstanding is not None \
                 else bool(m.get("is_executed", True))
+            # ΠΟΣΑ δόθηκαν. Το «Υπόλοιπο» μετρά ΤΕΜΑΧΙΑ που ΔΕΝ δόθηκαν: qty 2 / υπόλοιπο 1 =
+            # δόθηκε το ΕΝΑ. Χωρίς αυτό, η μισή εκτέλεση καταγραφόταν ως ολικά ανεκτέλεστη και
+            # ο φαρμακοποιός έβλεπε «ανεκτέλεστο» για φάρμακο που είχε ήδη δώσει.
+            exec_qty = _exec_qty(qty, outstanding, executed)
             if executed:
                 _pl_part += _eur_cents(m.get("patient_share") or 0)          # συμμετοχή (1.4.20) half-up
                 _pl_pdiff += _eur_cents_down(m.get("difference") or 0)       # διαφορά ασθενή (1.4.21) half-DOWN
@@ -743,6 +747,7 @@ class HdikaClient:
                 wholesale_price=it_wholesale,
                 category=it_category,
                 is_executed=executed,
+                executed_qty=exec_qty,
                 details={k: v for k, v in details.items() if v is not None},
             ))
         if not items:                                   # CDA missing → prescription-level line
@@ -968,6 +973,21 @@ class HdikaClient:
         self._client.close()
 
 
+def _exec_qty(qty: int, outstanding, executed: bool) -> int | None:
+    """Τεμάχια που δόθηκαν = ποσότητα − υπόλοιπο (ΗΔΥΚΑ 1.4.19).
+
+    Χωρίς υπόλοιπο δεν μαντεύουμε ενδιάμεση τιμή: όλα ή τίποτα, κατά το `executed`.
+    """
+    if outstanding is None:
+        return qty if executed else 0
+    try:
+        left = round(float(outstanding))     # ΑΚΕΡΑΙΑ τεμάχια — κανείς δεν εκτελεί 1,5 κουτί
+    except (TypeError, ValueError):
+        return qty if executed else 0
+    q = int(qty or 0)
+    return max(0, min(q, q - left))
+
+
 def _map_treatment(t: dict) -> CanonicalItem:
     med = t.get("medicine") if isinstance(t.get("medicine"), dict) else {}
     qty = int(float(_first(t, "quantityPrescribed", default=1) or 1))
@@ -983,7 +1003,8 @@ def _map_treatment(t: dict) -> CanonicalItem:
         # IngestionEngine._effective_wholesale (T-06).
         wholesale_price=0,
         category=_category(med),
-        is_executed=outstanding < qty,  # ανεκτέλεστη δραστική (§9)
+        is_executed=outstanding <= 0,             # ΠΛΗΡΩΣ εκτελεσμένη = μηδέν υπόλοιπο
+        executed_qty=max(0, qty - outstanding),   # ακέραια τεμάχια: qty 2 / υπόλοιπο 1 → 1
     )
 
 

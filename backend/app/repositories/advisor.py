@@ -238,7 +238,12 @@ class AdvisorRepository(BaseRepository):
                          "foreignField": "execution_id", "as": "it"}},
             {"$unwind": "$it"},
             {"$match": {"it.is_executed": False}},
-            {"$group": {"_id": None, "lost": {"$sum": "$it.retail_price"}}},
+            # Χάνεται ΤΟ ΥΠΟΛΟΙΠΟ, όχι όλη η γραμμή: συσκευασία 2 τεμαχίων με το 1 δοσμένο
+            # χάνει 1. Παλιές γραμμές χωρίς `executed_qty` → 0 δοσμένα (όπως πριν).
+            {"$set": {"_left": {"$max": [0, {"$subtract": [
+                "$it.quantity", {"$ifNull": ["$it.executed_qty", 0]}]}]}}},
+            {"$group": {"_id": None, "lost": {"$sum": {
+                "$multiply": ["$it.retail_price", "$_left"]}}}},
         ])
         return (rows[0]["lost"] if rows else 0) or 0
 
@@ -317,9 +322,14 @@ class AdvisorRepository(BaseRepository):
         # 4) lost value (unexecuted)
         lost = await self._unexec_lost(df, dt)
         if lost > 0:
+            # ⚠ Το ΥΠΟΛΟΙΠΟ ΜΙΑΣ ΕΚΤΕΛΕΣΗΣ κλειδώνει στο φαρμακείο που την ξεκίνησε (ελληνική
+            # νομοθεσία) — δεν είναι απώλεια σε ανταγωνιστή, είναι δεσμευμένη πώληση με
+            # ημερομηνία λήξης. (Οι ΕΠΟΜΕΝΕΣ εκτελέσεις της αλυσίδας είναι ελεύθερες.)
             add("opportunity", "alert-triangle", "Ανεκτέλεστα που ΜΠΟΡΟΥΝ ακόμη να δοθούν",
-                f"€{eur_gr(lost)} σε συνταγές που έμειναν ΑΝΟΙΧΤΕΣ — ο ασθενής δικαιούται να "
-                "γυρίσει για τα υπόλοιπα. Δεν μετρώνται όσα έκλεισε ο ίδιος με τη θέλησή του.",
+                f"€{eur_gr(lost)} σε εκτελέσεις που έμειναν ΑΝΟΙΧΤΕΣ. Το υπόλοιπο κάθε τέτοιας "
+                "εκτέλεσης είναι δεσμευμένο για ΕΣΕΝΑ — κανένα άλλο φαρμακείο δεν μπορεί να το "
+                "δώσει. Χάνεται μόνο αν περάσει η προθεσμία. Δεν μετρώνται όσα έκλεισε ο "
+                "ασθενής με τη θέλησή του.",
                 f"€{eur_gr(lost)}", {"label": "Ανεκτέλεστες", "href": "/prescriptions"})
 
         # 5) doctor concentration
@@ -376,13 +386,17 @@ class AdvisorRepository(BaseRepository):
         items = BaseRepository(tenant_id=self.tenant_id)
         items.collection_name = "prescription_items"
         rows = await items.aggregate([
-            {"$match": {"executed_at": {"$gte": df, "$lt": dt}, "is_executed": True}},
+            # ΟΣΑ ΔΟΘΗΚΑΝ: η μερικώς εκτελεσμένη γραμμή δεν είναι «πλήρως εκτελεσμένη»,
+            # αλλά τα τεμάχια που δόθηκαν πουλήθηκαν και πρέπει να μετρήσουν.
+            {"$match": {"executed_at": {"$gte": df, "$lt": dt},
+                        "$expr": {"$gt": [{"$ifNull": ["$executed_qty", 0]}, 0]}}},
             {"$lookup": {"from": "products", "localField": "product_id",
                          "foreignField": "_id", "as": "p"}},
-            {"$set": {"code": {"$toUpper": {"$substrCP": [{"$ifNull": [{"$first": "$p.atc"}, "?"]}, 0, 1]}}}},
+            {"$set": {"code": {"$toUpper": {"$substrCP": [{"$ifNull": [{"$first": "$p.atc"}, "?"]}, 0, 1]}},
+                      "_q": {"$ifNull": ["$executed_qty", "$quantity"]}}},
             {"$group": {"_id": "$code",
-                        "revenue": {"$sum": {"$multiply": ["$retail_price", "$quantity"]}},
-                        "cost": {"$sum": {"$multiply": ["$wholesale_price", "$quantity"]}},
+                        "revenue": {"$sum": {"$multiply": ["$retail_price", "$_q"]}},
+                        "cost": {"$sum": {"$multiply": ["$wholesale_price", "$_q"]}},
                         "units": {"$sum": "$quantity"}, "rx": {"$sum": 1}}},
             {"$project": {"_id": 0, "code": "$_id", "revenue": 1, "cost": 1, "units": 1, "rx": 1}},
         ])

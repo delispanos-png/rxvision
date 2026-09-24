@@ -163,8 +163,12 @@ class PharmaCatRepository(BaseRepository):
         detail = await PrescriptionRepository(tenant_id=self.tenant_id).execution_detail(external_id)
         if not detail:
             return {"ok": False, "error": "not_found"}
+        # Ό,τι ΔΟΘΗΚΕ, έστω και μερικώς: μισο-δοσμένη συσκευασία είναι φάρμακο που παίρνει
+        # ο ασθενής — αν λείψει από τη λίστα, χάνεται ο έλεγχος αλληλεπίδρασης.
         drugs = self._dedup([(it.get("substance") or it.get("name") or "")
-                             for it in (detail.get("items") or []) if it.get("is_executed", True)])
+                             for it in (detail.get("items") or [])
+                             if (it.get("executed_qty") if it.get("executed_qty") is not None
+                                 else it.get("is_executed", True))])
         if not drugs:
             return {"ok": True, "interactions": [], "checked_drugs": [], "note": "no_drugs"}
         return await self._ddi(ctx_user, drugs, {"πηγή": "συνταγή", "barcode": external_id})

@@ -14,9 +14,14 @@ from datetime import datetime, timezone
 from bson import ObjectId
 
 from app.repositories.base import BaseRepository, jsonsafe
+from app.services import recoverable
 from app.utils.masking import mask_amka, mask_name
 
 _GRAIN_FMT = {"day": "%Y-%m-%d", "month": "%Y-%m"}
+
+# Τεμάχια που ΔΕΝ δόθηκαν = ποσότητα − όσα δόθηκαν. Παλιές γραμμές χωρίς `executed_qty`
+# πέφτουν σε 0 δοσμένα, δηλαδή στην προηγούμενη συμπεριφορά — ποτέ αρνητικό.
+_UNEXEC_QTY = {"$max": [0, {"$subtract": ["$quantity", {"$ifNull": ["$executed_qty", 0]}]}]}
 _METRIC_FIELD = {"executions": None, "value": "$amount_total", "claimed": "$amount_claimed"}
 
 
@@ -59,18 +64,12 @@ def _gs1_parts(raw: str) -> tuple[str | None, str | None, str | None]:
 
 
 def _unexec_reason(ex: dict) -> str | None:
-    """Ανθρώπινη εξήγηση για τα ανεκτέλεστα, από τον τύπο εκτέλεσης της ΗΔΥΚΑ.
+    """Γιατί έμειναν ανεκτέλεστα — ΕΝΑ σημείο απόφασης, δες `services/recoverable.py`.
 
-    0 → η συνταγή ΜΕΝΕΙ ΑΝΟΙΧΤΗ: ο ασθενής μπορεί να γυρίσει (το μόνο ανακτήσιμο)
-    2 → έκλεισε ΜΕ ΤΗ ΣΥΜΦΩΝΙΑ του: επέλεξε να μην τα πάρει
-    3 → έκλεισε λόγω ασυμφωνίας δοσολογίας/ποσότητας: δεν επιτρέπεται να δοθούν
+    Κρίσιμο: «ανοιχτή» ΔΕΝ σημαίνει «ανακτήσιμη». Χρειάζεται και να μην έχει περάσει η
+    προθεσμία — αλλιώς λέγαμε στον φαρμακοποιό να κυνηγήσει συνταγές νεκρές εδώ και χρόνια.
     """
-    if not ex.get("has_unexecuted_substances"):
-        return None
-    return {"0": "open", 0: "open",
-            "2": "patient_choice", 2: "patient_choice",
-            "3": "dosage_mismatch", 3: "dosage_mismatch"}.get(
-        (ex.get("details") or {}).get("execution_case"), "unknown")
+    return recoverable.reason(ex)
 
 class PrescriptionRepository(BaseRepository):
     collection_name = "prescription_executions"
@@ -338,6 +337,8 @@ class PrescriptionRepository(BaseRepository):
                 "patient_share": pat_share,
                 "fund_share": line_total - pat_share,
                 "is_executed": it.get("is_executed", True),
+                # πόσα δόθηκαν όντως — «δόθηκε 1 από 2» αντί για σκέτο «ανεκτέλεστο»
+                "executed_qty": it.get("executed_qty", qty if it.get("is_executed", True) else 0),
                 "details": d,   # rich ΗΔΥΚΑ/CDA per-line detail — coupons filtered to THIS «:N» execution
             })
         # ── Συνοπτικά: άθροισμα ΟΛΩΝ των εκτελέσεων αυτής της συνταγής (ίδιο barcode, κάθε :N
@@ -357,10 +358,16 @@ class PrescriptionRepository(BaseRepository):
             g = agg.get(pid) or {"name": prod.get("name"),
                                  "category": prod.get("category") or it.get("category") or "normal",
                                  "substance": prod.get("substance"),
-                                 "quantity": 0, "amount": 0, "executions": 0, "is_executed": False}
+                                 "quantity": 0, "executed_qty": 0, "amount": 0,
+                                 "executions": 0, "is_executed": False}
             q = it.get("quantity", 1) or 1
+            # ΔΟΘΗΚΑΝ ≠ ΣΥΝΤΑΓΟΓΡΑΦΗΘΗΚΑΝ. Η αξία βγαίνει από ΟΣΑ ΔΟΘΗΚΑΝ — αλλιώς μια
+            # συσκευασία 2 τεμαχίων με το 1 δοσμένο εμφανιζόταν ως ×2 με διπλάσιο ποσό.
+            eq = it.get("executed_qty")
+            eq = (q if it.get("is_executed", True) else 0) if eq is None else eq
             g["quantity"] += q
-            g["amount"] += (it.get("retail_price", 0) or 0) * q
+            g["executed_qty"] += eq
+            g["amount"] += (it.get("retail_price", 0) or 0) * eq
             g["executions"] += 1
             g["is_executed"] = g["is_executed"] or bool(it.get("is_executed", True))
             agg[pid] = g
@@ -558,6 +565,11 @@ class PrescriptionRepository(BaseRepository):
                           "icd10": 1, "amount_total": 1, "amount_claimed": 1,
                           "patient_share": 1,            # Αιτούμενο/πληρωτέο από ασφαλισμένο
                           "status": 1, "has_unexecuted_substances": 1,
+                          # ΧΩΡΙΣ αυτά τα δύο η λίστα δεν μπορούσε να πει ΓΙΑΤΙ έμειναν ανεκτέλεστα,
+                          # οπότε ΚΑΘΕ μερική συνταγή έπεφτε στην προεπιλογή «έκλεισε» — ακόμη κι όσες
+                          # ήταν ανοιχτές και σε ισχύ, δηλαδή ακριβώς αυτές που έπρεπε να κυνηγήσει.
+                          "details": {"execution_case": "$details.execution_case"},
+                          "valid_until": 1,
                           "chronic": {"$ifNull": ["$details.chronic", False]},
                           "patient_name": 1, "amka": 1, "fund_name": 1, "fund_code": 1}},
         ]
@@ -571,6 +583,9 @@ class PrescriptionRepository(BaseRepository):
         titles = {d["_id"]: d.get("title_el") async for d in
                   shared_db()["icd10_codes"].find({"_id": {"$in": list(codes)}}, {"title_el": 1})}
         for r in rows:
+            # ΕΝΑ σημείο απόφασης, ίδιο με τη σελίδα της συνταγής (services/recoverable.py)
+            r["unexecuted_reason"] = recoverable.reason(r)
+            r.pop("details", None)          # χρειαζόταν μόνο για τον λόγο — έξω από το ωφέλιμο φορτίο
             r["fund_general"] = code2group.get(r.get("fund_code")) or r.get("fund_name")
             r["icd10_named"] = [f"{c} — {titles[c]}" if titles.get(c) else c
                                 for c in (r.get("icd10") or [])]
@@ -800,8 +815,12 @@ class PrescriptionRepository(BaseRepository):
         items = BaseRepository(tenant_id=self.tenant_id)
         items.collection_name = "prescription_items"
         return await items.aggregate([
-            {"$match": {"executed_at": {"$gte": date_from, "$lt": date_to}, "is_executed": True}},
-            {"$group": {"_id": "$product_id", "qty": {"$sum": "$quantity"}}},
+            # ΟΣΑ ΔΟΘΗΚΑΝ: η μερικώς εκτελεσμένη γραμμή δεν είναι «πλήρως εκτελεσμένη»,
+            # αλλά τα τεμάχια που δόθηκαν πουλήθηκαν και πρέπει να μετρήσουν.
+            {"$match": {"executed_at": {"$gte": date_from, "$lt": date_to},
+                        "$expr": {"$gt": [{"$ifNull": ["$executed_qty", 0]}, 0]}}},
+            {"$group": {"_id": "$product_id",
+                        "qty": {"$sum": {"$ifNull": ["$executed_qty", "$quantity"]}}}},
             {"$sort": {"qty": -1}}, {"$limit": limit},
             {"$lookup": {"from": "products", "localField": "_id",
                          "foreignField": "_id", "as": "p"}},
@@ -826,10 +845,13 @@ class PrescriptionRepository(BaseRepository):
             {"$set": {"rx": {"barcode": "$ex.external_id",
                              "patient": {"$first": "$pt.full_name"},
                              "date": "$ex.executed_at"}}},
+            {"$set": {"unexec_qty": _UNEXEC_QTY}},
             {"$group": {"_id": "$product_id",
                         "occurrences": {"$sum": 1},
-                        "qty": {"$sum": "$quantity"},
-                        "lost_value": {"$sum": "$retail_price"},
+                        "qty": {"$sum": "$unexec_qty"},
+                        # χαμένη αξία = τιμή × ΟΣΑ ΕΜΕΙΝΑΝ. Παλιά μετρούσε όλη τη γραμμή, οπότε
+                        # μια συσκευασία 2 τεμαχίων με το 1 δοσμένο χρεωνόταν ως ολόκληρη χαμένη.
+                        "lost_value": {"$sum": {"$multiply": ["$retail_price", "$unexec_qty"]}},
                         "category": {"$first": "$category"},
                         "barcodes": {"$addToSet": "$ex.external_id"},
                         "rxs": {"$addToSet": "$rx"}}},

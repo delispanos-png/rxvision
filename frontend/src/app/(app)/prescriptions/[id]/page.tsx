@@ -58,8 +58,18 @@ type Item = {
   atc?: string | null; narcotic?: boolean; high_cost?: boolean;
   quantity: number; retail_price: number; wholesale_price: number; margin: number;
   participation: number | null; patient_share: number; fund_share: number; is_executed: boolean;
+  executed_qty?: number | null;
   details?: LineDetails | null;
 };
+
+// ΤΡΕΙΣ καταστάσεις, όχι δύο. Η ΗΔΥΚΑ δίνει υπόλοιπο ανά γραμμή: συσκευασία 2 τεμαχίων με
+// υπόλοιπο 1 σημαίνει ότι ΔΟΘΗΚΕ ΤΟ ΕΝΑ. Όσο το δείχναμε «ανεκτέλεστο», ο φαρμακοποιός
+// έβλεπε ως μη δοσμένο ό,τι είχε ήδη δώσει.
+function dispensed(it: { quantity: number; executed_qty?: number | null; is_executed: boolean }) {
+  const q = it.quantity ?? 1;
+  const given = it.executed_qty ?? (it.is_executed ? q : 0);
+  return { q, given, left: Math.max(0, q - given), partial: given > 0 && given < q };
+}
 
 const catBadge = (t: T): Record<string, { label: string; cls: string }> => ({
   narcotic: { label: t("Ναρκωτικό", "Narcotic"), cls: "bg-rose-100 text-rose-700" },
@@ -189,7 +199,7 @@ type Detail = {
 };
 type SummaryItem = {
   name: string | null; category: string | null; substance: string | null;
-  quantity: number; amount: number; executions: number; is_executed: boolean;
+  quantity: number; executed_qty?: number | null; amount: number; executions: number; is_executed: boolean;
 };
 
 type IdikaLine = {
@@ -353,8 +363,8 @@ export default function PrescriptionDetailPage() {
   const marginReliable = d.wholesale_cost > 0;
 
   // BLOCK 2 tabs + BLOCK 3 coupon popup (hooks declared before the early returns above)
-  const executed = d.items.filter((it) => it.is_executed);
-  const unexecuted = d.items.filter((it) => !it.is_executed || (it.details?.outstanding ?? 0) > 0);
+  const executed = d.items.filter((it) => dispensed(it).given > 0);
+  const unexecuted = d.items.filter((it) => dispensed(it).left > 0);
   // πλήθος κουπονιών (ανά τεμάχιο) σε ΑΥΤΗ την εκτέλεση — όχι ανά γραμμή
   const allCoupons = executed.flatMap(couponsOf);
   const qrCount = allCoupons.filter((c) => c.qr).length;
@@ -579,7 +589,13 @@ export default function PrescriptionDetailPage() {
                   <span className={`font-semibold ${s.is_executed ? "text-slate-800 dark:text-slate-100" : "text-slate-500"}`}>{s.name || "—"}</span>
                   <CategoryBadge category={s.category} />
                 </span>
-                <span className="shrink-0 text-sm text-slate-600">×{s.quantity}{s.amount != null && <span className="ml-2 font-medium text-slate-800 dark:text-slate-100">{eur(s.amount)}</span>}</span>
+                <span className="shrink-0 text-sm text-slate-600">
+                  {/* «×2» σε φάρμακο που δόθηκε μία φορά ήταν παραπλανητικό — δείξε και τα δύο */}
+                  {s.executed_qty != null && s.executed_qty !== s.quantity
+                    ? t(`×${s.executed_qty} από ${s.quantity}`, `×${s.executed_qty} of ${s.quantity}`)
+                    : `×${s.quantity}`}
+                  {s.amount != null && <span className="ml-2 font-medium text-slate-800 dark:text-slate-100">{eur(s.amount)}</span>}
+                </span>
               </div>
               <div className="mt-1 text-xs text-slate-500">{[s.substance, `${s.executions} ${s.executions === 1 ? t("εκτέλεση", "execution") : t("εκτελέσεις", "executions")}`].filter(Boolean).join(" · ")}</div>
             </div>
@@ -645,17 +661,33 @@ export default function PrescriptionDetailPage() {
             <div className="space-y-3">
               {d.items.map((it, i) => {
                 const ln = it.details || {};
+                // ΤΟ ΠΛΑΙΣΙΟ ΠΡΕΠΕΙ ΝΑ ΣΥΜΦΩΝΕΙ ΜΕ ΤΗΝ ΕΤΙΚΕΤΑ: όσο το χρώμα έβγαινε από το
+                // ναι/όχι `is_executed`, η μισο-δοσμένη γραμμή έγραφε «Δόθηκε 1 από 2» αλλά
+                // εμφανιζόταν γκρι — δηλαδή ίδια με τα εντελώς ανεκτέλεστα.
+                const g = dispensed(it);
+                const box = g.partial ? "border-amber-300 bg-amber-50/60 dark:bg-amber-950/20"
+                  : g.given > 0 ? "border-slate-200" : "border-slate-300 bg-slate-100 dark:bg-slate-800/60";
                 return (
-                  <div key={i} className={`rounded-xl border p-4 ${it.is_executed ? "border-slate-200" : "border-slate-300 bg-slate-100 dark:bg-slate-800/60"}`}>
+                  <div key={i} className={`rounded-xl border p-4 ${box}`}>
                     <div className="mb-2 flex flex-wrap items-center gap-2">
-                      <span className={`font-semibold ${it.is_executed ? "text-slate-800" : "text-slate-500"}`}>{it.name}</span>
+                      <span className={`font-semibold ${g.given > 0 ? "text-slate-800 dark:text-slate-100" : "text-slate-500"}`}>{it.name}</span>
                       {it.atc && <span className="text-[10px] text-slate-400">{it.atc}</span>}
-                      <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${it.is_executed ? "bg-emerald-100 text-emerald-700" : "bg-slate-200 text-slate-600"}`}>{it.is_executed ? t("Εκτελέστηκε", "Executed") : t("Δεν εκτελέστηκε", "Not executed")}</span>
+                      {(() => {
+                        const cls = g.partial ? "bg-amber-100 text-amber-800"
+                          : g.given > 0 ? "bg-emerald-100 text-emerald-700" : "bg-slate-200 text-slate-600";
+                        const label = g.partial
+                          ? t(`Δόθηκε ${g.given} από ${g.q}`, `${g.given} of ${g.q} dispensed`)
+                          : g.given > 0 ? t("Εκτελέστηκε", "Executed") : t("Δεν εκτελέστηκε", "Not executed");
+                        return <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${cls}`}>{label}</span>;
+                      })()}
                     </div>
                     <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 text-sm sm:grid-cols-3 lg:grid-cols-4">
                       <Field label={t("Δραστική", "Active substance")} value={it.substance} />
                       <Field label={t("Μορφή", "Form")} value={ln.form} />
-                      <Field label={t("Ποσότητα", "Quantity")} value={String(it.quantity)} />
+                      <Field label={t("Ποσότητα", "Quantity")} value={
+                        g.left > 0 && g.given > 0
+                          ? t(`${g.q} (υπόλοιπο ${g.left})`, `${g.q} (${g.left} remaining)`)
+                          : String(g.q)} />
                       <Field label={t("Δοσολογία", "Dosage")} value={fmtDosage(ln.dose, ln.frequency, ln.duration, t)} />
                       <Field label={t("Ταινία γνησιότητας", "Authenticity strip")} value={ln.strip || ln.lot} />
                       <Field label={t("Τιμή εκτέλεσης", "Execution price")} value={ln.execution_price != null ? eur(ln.execution_price) : null} />
