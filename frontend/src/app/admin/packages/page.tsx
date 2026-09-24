@@ -10,7 +10,7 @@ import { fmtEur } from "@/lib/formatters";
 type Pkg = {
   _id: string; name?: string; description?: string;
   price_monthly?: number; price_yearly?: number; price_includes_vat?: boolean; extra_user_price?: number; extra_user_price_yearly?: number;
-  trial_days?: number; seats?: number; included_users?: number; ai_included?: number; ai_included_period?: string; ai_budget_cents?: number; ai_free_enabled?: boolean;
+  trial_days?: number; seats?: number; included_users?: number; ai_budget_cents?: number;
   sla?: string; modules?: string[]; features?: string[]; available_addons?: string[]; billing_cycles?: string[]; active?: boolean;
 };
 type Sla = { _id: string; name?: string; description?: string; response_hours?: number; channels?: string; price_monthly?: number; price_yearly?: number; active?: boolean };
@@ -146,8 +146,7 @@ export default function PackagesAdminPage() {
       price_includes_vat: !!p.price_includes_vat,
       extra_user_price: p.extra_user_price, extra_user_price_yearly: p.extra_user_price_yearly,
       trial_days: p.trial_days, seats: p.seats, included_users: p.included_users,
-      ai_included: p.ai_included ?? 0, ai_included_period: p.ai_included_period || "month",
-      ai_budget_cents: p.ai_budget_cents ?? 0, ai_free_enabled: p.ai_free_enabled !== false, sla: p.sla,
+      ai_budget_cents: p.ai_budget_cents ?? 0, sla: p.sla,
       modules: p.modules ?? [], features: (p.features ?? []).map((s) => s.trim()).filter(Boolean),
       available_addons: p.available_addons ?? allAddonIds,
       billing_cycles: p.billing_cycles ?? ["monthly", "yearly"], active: p.active ?? true,
@@ -258,18 +257,16 @@ export default function PackagesAdminPage() {
                     </div>
                     <label className="block text-xs font-medium text-slate-500">Δοκιμή (ημέρες)<input type="number" className={`mt-1 ${inp}`} value={p.trial_days ?? 0} onChange={(e) => setP(p._id, { trial_days: parseInt(e.target.value) || 0 })} /></label>
                     <label className="block text-xs font-medium text-slate-500">Θέσεις χρηστών (έως)<input type="number" className={`mt-1 ${inp}`} value={p.seats ?? 1} onChange={(e) => setP(p._id, { seats: parseInt(e.target.value) || 1 })} /></label>
-                    <label className="block text-xs font-medium text-slate-500">Περιλαμβάνονται στην τιμή<input type="number" min={1} className={`mt-1 ${inp}`} value={p.included_users ?? 1} onChange={(e) => setP(p._id, { included_users: parseInt(e.target.value) || 1 })} /></label>
-                    <label className="flex items-center gap-2 text-xs font-medium text-slate-600 sm:col-span-3" title="Αν ΞΕΚΛΕΙΔΩΤΟ, το πακέτο δεν έχει ΚΑΘΟΛΟΥ δωρεάν AI — ο πελάτης μπορεί μόνο να αγοράσει credits."><input type="checkbox" checked={p.ai_free_enabled !== false} onChange={(e) => setP(p._id, { ai_free_enabled: e.target.checked })} />🤖 Περιλαμβάνει δωρεάν AI ερωτήσεις</label>
-                                        <label className="block text-xs font-medium text-slate-500" title="Σκληρό όριο ΠΡΑΓΜΑΤΙΚΟΥ κόστους AI ανά περίοδο. Πιο ασφαλές από το πλήθος ερωτήσεων: μία ερώτηση κοστίζει 0,03€–0,32€. 0 = ανενεργό.">💶 Προϋπολογισμός AI (€/περίοδο)<input type="number" min={0} step="0.5" className={`mt-1 ${inp}`} disabled={p.ai_free_enabled === false} value={p.ai_free_enabled === false ? "0.00" : ((p.ai_budget_cents ?? 0) / 100).toFixed(2)} onChange={(e) => setP(p._id, { ai_budget_cents: Math.round((parseFloat(e.target.value) || 0) * 100) })} /></label>
-                    <label className="block text-xs font-medium text-slate-500">Περίοδος AI<select className={`mt-1 ${inp}`} value={p.ai_included_period || "month"} onChange={(e) => setP(p._id, { ai_included_period: e.target.value })}><option value="day">ανά ημέρα</option><option value="month">συνολικά / μήνα</option><option value="year">συνολικά / έτος</option></select></label>
+                    <label className="block text-xs font-medium text-slate-500" title="Πόσοι χρήστες είναι ΜΕΣΑ στην τιμή της συνδρομής. Πάνω από αυτούς χρεώνεται ο «Επιπλέον χρήστης» — και μέχρι το όριο «Θέσεις χρηστών (έως)».">👤 Χρήστες μέσα στην τιμή<input type="number" min={1} className={`mt-1 ${inp}`} value={p.included_users ?? 1} onChange={(e) => setP(p._id, { included_users: parseInt(e.target.value) || 1 })} /></label>
+                    <label className="block text-xs font-medium text-slate-500">Επιπλέον χρήστης (€/μήνα)<input type="number" className={`mt-1 ${inp}`} value={eur(p.extra_user_price)} onChange={(e) => setP(p._id, { extra_user_price: cents(e.target.value) })} /></label>
+                    <label className="block text-xs font-medium text-slate-500">Επιπλέον χρήστης (€/έτος)<input type="number" className={`mt-1 ${inp}`} value={eur(p.extra_user_price_yearly)} onChange={(e) => setP(p._id, { extra_user_price_yearly: cents(e.target.value) })} /></label>
+                    <label className="block text-xs font-medium text-slate-500" title="Πόσα ευρώ AI περιλαμβάνει το πακέτο ΚΑΘΕ ΜΗΝΑ. 0 = κανένα δωρεάν AI (ο πελάτης αγοράζει πακέτο). Ό,τι ξεπερνά αυτό αντλείται από το προπληρωμένο πορτοφόλι του, που δεν λήγει.">💶 Δωρεάν AI (€/μήνα)<input type="number" min={0} step="0.5" className={`mt-1 ${inp}`} value={((p.ai_budget_cents ?? 0) / 100).toFixed(2)} onChange={(e) => setP(p._id, { ai_budget_cents: Math.round((parseFloat(e.target.value) || 0) * 100) })} /></label>
                     <label className="block text-xs font-medium text-slate-500">SLA / Υποστήριξη
                       <select className={`mt-1 ${inp}`} value={p.sla ?? ""} onChange={(e) => setP(p._id, { sla: e.target.value })}>
                         <option value="">—</option>
                         {slaTiers.filter((s) => (s.active ?? true) || s._id === p.sla).map((s) => <option key={s._id} value={s._id}>{s.name || s._id}{(s.active ?? true) ? "" : " (ανενεργό)"}</option>)}
                       </select>
                     </label>
-                    <label className="block text-xs font-medium text-slate-500">Επιπλέον χρήστης (€/μήνα)<input type="number" className={`mt-1 ${inp}`} value={eur(p.extra_user_price)} onChange={(e) => setP(p._id, { extra_user_price: cents(e.target.value) })} /></label>
-                    <label className="block text-xs font-medium text-slate-500">Επιπλέον χρήστης (€/έτος)<input type="number" className={`mt-1 ${inp}`} value={eur(p.extra_user_price_yearly)} onChange={(e) => setP(p._id, { extra_user_price_yearly: cents(e.target.value) })} /></label>
                   </div>
                   <p className="mt-2 text-[11px] text-slate-400">Άφησε «Επιπλέον χρήστη» στο 0 για να κλειδώσει στο όριο «έως N». Αν θες extra χρήστες με χρέωση, βάλε τιμή.</p>
                 </section>

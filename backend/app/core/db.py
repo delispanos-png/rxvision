@@ -175,8 +175,14 @@ INDEXES: list[tuple[str, list[tuple[str, int]], dict]] = [
     ("csp_reports", [("at", 1)], {"expireAfterSeconds": 7 * 24 * 3600}),
     # Webhook replay-dedup keys (Revolut) — _id is the dedup key; reap after 24h
     ("webhook_dedup", [("at", 1)], {"expireAfterSeconds": 24 * 3600}),
-    # Per-tenant daily LLM usage meters (Prescriptor cap) — reap after 2 days
-    ("llm_daily_usage", [("at", 1)], {"expireAfterSeconds": 2 * 24 * 3600}),
+    # Per-tenant daily LLM usage meters. ⚠ ΗΤΑΝ 2 ΗΜΕΡΕΣ — και αυτό ΑΚΥΡΩΝΕ ΤΑ ΦΡΕΝΑ ΤΟΥ AI.
+    # Το TTL μπήκε όταν η συλλογή κρατούσε ΜΟΝΟ το ημερήσιο cap του Prescriptor (χρειάζεται μόνο
+    # το «σήμερα»). Μετά χτίστηκε πάνω της ο ΠΡΟΫΠΟΛΟΓΙΣΜΟΣ σε ευρώ, που αθροίζει ΜΗΝΑ/ΕΤΟΣ
+    # (`ai_quota.spent_cents_in_period`) — αλλά η Mongo έσβηνε κάθε εγγραφή μετά από 2 μέρες.
+    # Αποτέλεσμα: το «ξοδεύτηκε» μηδενιζόταν διαρκώς, ο προϋπολογισμός ΔΕΝ γέμιζε ΠΟΤΕ και το
+    # φρένο δεν έπιανε ποτέ — ούτε στις δοκιμαστικές συνδρομές. (Εντοπίστηκε 24/09/2026.)
+    # 400 ημέρες: καλύπτει μήνα ΚΑΙ έτος, με φραγμένο μέγεθος (~1 έγγραφο/φαρμακείο/ημέρα).
+    ("llm_daily_usage", [("at", 1)], {"expireAfterSeconds": 400 * 24 * 3600}),
     # Per-message delivery log (SMS/Viber/email via central Apifon): history UI + DLR lookup.
     ("sent_messages", [("tenant_id", 1), ("created_at", -1)], {}),
     ("sent_messages", [("provider_message_id", 1)], {"sparse": True}),
@@ -184,10 +190,25 @@ INDEXES: list[tuple[str, list[tuple[str, int]], dict]] = [
 
 
 async def ensure_indexes() -> None:
-    """Idempotent — runs on startup so deploys keep indexes in sync."""
+    """Idempotent — runs on startup so deploys keep indexes in sync.
+
+    ΠΡΟΣΟΧΗ ΣΤΑ TTL: η `create_index` ΔΕΝ αλλάζει το `expireAfterSeconds` ενός ευρετηρίου που
+    υπάρχει ήδη — σκάει με σύγκρουση επιλογών. Χωρίς τον χειρισμό από κάτω, μια διόρθωση TTL
+    στον κώδικα δεν έφτανε ΠΟΤΕ στην παραγωγή και το λάθος έμενε ζωντανό σιωπηλά.
+    """
+    from pymongo.errors import OperationFailure
+
     db = shared_db()
     for coll, keys, opts in INDEXES:
-        await db[coll].create_index(keys, **opts)
+        try:
+            await db[coll].create_index(keys, **opts)
+        except OperationFailure as e:
+            ttl = opts.get("expireAfterSeconds")
+            if ttl is None or "IndexOptionsConflict" not in str(e) and e.code != 85:
+                raise
+            name = "_".join(f"{k}_{d}" for k, d in keys)
+            await db.command({"collMod": coll,
+                              "index": {"name": name, "expireAfterSeconds": ttl}})
 
 
 async def reap_orphan_jobs() -> int:

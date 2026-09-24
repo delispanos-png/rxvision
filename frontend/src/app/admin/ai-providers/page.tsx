@@ -6,7 +6,7 @@ import { adminApi } from "@/lib/adminClient";
 import { Bot, Save, Loader2, Check, Gauge, Sparkles } from "lucide-react";
 
 type Integrations = {
-  anthropic?: { api_key_set: boolean; enabled: boolean; model: string; admin_model: string };
+  anthropic?: { api_key_set: boolean; platform_key_set?: boolean; enabled: boolean; model: string; admin_model: string };
   drugbank?: { api_key_set: boolean; enabled: boolean; region: string };
 };
 // Στη γλώσσα των ΠΑΚΕΤΩΝ: κάθε φαρμακείο δικαιούται `included` ερωτήσεις (ανά period) από το πακέτο του.
@@ -31,6 +31,7 @@ export default function AiProvidersPage() {
   const status = useQuery({ queryKey: ["integrations"], queryFn: () => adminApi<Integrations>("/admin/integrations"), retry: false });
 
   const [antKey, setAntKey] = useState("");
+  const [antPlatKey, setAntPlatKey] = useState("");
   const [antEnabled, setAntEnabled] = useState(true);
   const [antModel, setAntModel] = useState("claude-sonnet-5");
   const [antAdminModel, setAntAdminModel] = useState("claude-sonnet-5");
@@ -51,7 +52,8 @@ export default function AiProvidersPage() {
 
   const save = useMutation({
     mutationFn: () => adminApi("/admin/integrations", { method: "PUT", body: JSON.stringify({
-      anthropic_api_key: antKey || null, anthropic_enabled: antEnabled, anthropic_model: antModel || null,
+      anthropic_api_key: antKey || null, anthropic_platform_key: antPlatKey || null,
+      anthropic_enabled: antEnabled, anthropic_model: antModel || null,
       anthropic_admin_model: antAdminModel || null,
       drugbank_api_key: dbKey || null, drugbank_enabled: dbEnabled, drugbank_region: dbRegion || null,
     }) }),
@@ -106,6 +108,17 @@ export default function AiProvidersPage() {
         <div className="grid gap-4 sm:grid-cols-2">
           <label className="text-xs text-slate-500 sm:col-span-2">Anthropic API key
             <input type="password" value={antKey} onChange={(e) => setAntKey(e.target.value)} placeholder={s?.anthropic?.api_key_set ? "•••• (αποθηκευμένο — κενό = αμετάβλητο)" : "sk-ant-..."} className={inp} /></label>
+          <label className="text-xs text-slate-500 sm:col-span-2">
+            Κλειδί δικών μας εργασιών (προαιρετικό)
+            <input type="password" value={antPlatKey} onChange={(e) => setAntPlatKey(e.target.value)}
+              placeholder={s?.anthropic?.platform_key_set ? "•••• (αποθηκευμένο — κενό = αμετάβλητο)" : "sk-ant-... (κενό = χρήση του κύριου)"}
+              className={inp} />
+            <span className="mt-1 block text-[11px] text-slate-400">
+              Ξεχωριστό κλειδί για τις εργασίες που τρέχουμε ΕΜΕΙΣ — κατηγοριοποίηση προϊόντων,
+              μάρκες, περιοχές, επεξηγήσεις παθήσεων. Έτσι ο λογαριασμός Anthropic δείχνει με μια
+              ματιά τι ξοδεύουν οι πελάτες και τι η πλατφόρμα. Κενό = όλα στο κύριο κλειδί.
+            </span>
+          </label>
           <label className="text-xs text-slate-500">Μοντέλο φαρμακοποιού
             <select value={antModel} onChange={(e) => setAntModel(e.target.value)} className={inp}>
               <option value="claude-sonnet-5">Sonnet 5 — προτεινόμενο (φθηνότερο & καλύτερο)</option>

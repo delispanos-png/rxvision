@@ -393,6 +393,9 @@ async def _upsert_profarm_product(cl, col, repo, tenant_id: str, pid: str, ptype
     return "created", bool(image_id), False
 
 
+# Πόσες φορές ρωτάμε το AI για ένα είδος που δεν κατατάσσεται (βλ. classify_new_products).
+_MAX_CAT_ATTEMPTS = 3
+
 _MAX_PAGES = 600   # ασφάλεια ενάντια σε ατέρμονη σελιδοποίηση (wrap)
 
 
@@ -538,19 +541,26 @@ async def classify_new_products(tenant_id: str, *, limit: int = 300) -> dict:
     col = PharmacyCatalogRepository(tenant_id=tenant_id)._db["pharmacy_products"]
     vocab = [x for x in await col.distinct("category", {"tenant_id": tenant_id,
              "category": {"$nin": [None, ""]}}) if x][:70]
+    # ΟΡΙΟ ΠΡΟΣΠΑΘΕΙΩΝ: ό,τι ρωτήθηκε ήδη `_MAX_CAT_ATTEMPTS` φορές χωρίς απάντηση ΔΕΝ ξαναρωτιέται.
+    # Χωρίς αυτό, ένα είδος που το μοντέλο δεν κατατάσσει ξαναμπαίνει στη λίστα σε ΚΑΘΕ πέρασμα —
+    # δηλαδή 144 φορές την ημέρα, για πάντα, με κόστος κάθε φορά.
     rows = await col.find({"tenant_id": tenant_id, "source": "profarm", "name": {"$nin": [None, ""]},
-                           "$or": [{"category": {"$in": [None, ""]}}, {"category": {"$exists": False}}]},
+                           "$or": [{"category": {"$in": [None, ""]}}, {"category": {"$exists": False}}],
+                           "cat_attempts": {"$not": {"$gte": _MAX_CAT_ATTEMPTS}}},
                           {"barcode": 1, "name": 1}).limit(int(limit)).to_list(int(limit))
     if not rows:
         return {"ok": True, "classified": 0, "remaining": 0}
     import anthropic
-    client = anthropic.AsyncAnthropic(api_key=c["api_key"])
+    client = anthropic.AsyncAnthropic(
+        # ΔΙΚΗ ΜΑΣ εργασία (κατηγοριοποίηση προϊόντων βάσης ειδών) → κλειδί ΠΛΑΤΦΟΡΜΑΣ,
+        # ώστε ο λογαριασμός Anthropic να τη δείχνει χωριστά από τους πελάτες.
+        api_key=pharmacat_service.key_for(c, internal=True))
     prompt = ("Είσαι φαρμακοποιός. Ταξινόμησε ΚΑΘΕ προϊόν στη σωστή κατηγορία e-shop φαρμακείου. "
               "Χρησιμοποίησε ΚΑΤΑ ΠΡΟΤΙΜΗΣΗ μία υπάρχουσα κατηγορία: " + _json.dumps(vocab, ensure_ascii=False)
               + ". Αν καμία δεν ταιριάζει, βάλε σύντομη νέα ελληνική (π.χ. «Βιταμίνες & Συμπληρώματα», "
               "«Περιποίηση προσώπου», «Στοματική υγιεινή», «Βρεφικά»). Επίστρεψε ΜΟΝΟ JSON "
               "{\"barcode\":\"κατηγορία\"} για: ")
-    classified = 0
+    classified = skipped = 0
     for start in range(0, len(rows), 40):
         batch = [{"barcode": r["barcode"], "name": r["name"]} for r in rows[start:start + 40]]
         try:
@@ -562,14 +572,25 @@ async def classify_new_products(tenant_id: str, *, limit: int = 300) -> dict:
             text = "".join(b.text for b in resp.content if b.type == "text")
             m = re.search(r"\{.*\}", text, re.S)
             mp = _json.loads(m.group(0)) if m else {}
+            answered = set()
             for bc, cat in mp.items():
                 cat = str(cat or "").strip()[:80]
                 if cat:
                     await col.update_one({"tenant_id": tenant_id, "barcode": str(bc)},
-                                         {"$set": {"category": cat, "updated_at": _now()}})
+                                         {"$set": {"category": cat, "updated_at": _now()},
+                                          "$unset": {"cat_attempts": ""}})
+                    answered.add(str(bc))
                     classified += 1
+            # Όσα στείλαμε και ΔΕΝ γύρισαν κατηγορία: κράτα μετρητή. Στην 3η αποτυχία βγαίνουν
+            # από τη λίστα και περιμένουν άνθρωπο, αντί να ξαναρωτιούνται στο διηνεκές.
+            misses = [b["barcode"] for b in batch if str(b["barcode"]) not in answered]
+            if misses:
+                await col.update_many(
+                    {"tenant_id": tenant_id, "barcode": {"$in": [str(x) for x in misses]}},
+                    {"$inc": {"cat_attempts": 1}, "$set": {"cat_last_try_at": _now()}})
+                skipped += len(misses)
         except Exception:  # noqa: BLE001
             continue
     remaining = await col.count_documents({"tenant_id": tenant_id, "source": "profarm",
         "$or": [{"category": {"$in": [None, ""]}}, {"category": {"$exists": False}}]})
-    return {"ok": True, "classified": classified, "remaining": remaining}
+    return {"ok": True, "classified": classified, "no_answer": skipped, "remaining": remaining}

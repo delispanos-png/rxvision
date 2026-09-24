@@ -183,6 +183,12 @@ async def read(content: bytes, content_type: str, tenant_id: str | None = None) 
     except Exception as e:  # noqa: BLE001
         return {"ok": False, "error": f"unavailable:{type(e).__name__}"}
 
+    # ΚΑΤΑΓΡΑΦΗ ΚΟΣΤΟΥΣ: έλειπε εντελώς μέχρι τις 24/09/2026 — και είναι η ΑΚΡΙΒΟΤΕΡΗ κλήση του
+    # συστήματος (εικόνα συνταγής + έως 3072 tokens εξόδου). Χωρίς αυτή, ο Οπτικός Έλεγχος
+    # ξόδευε χωρίς να μετράει σε κανέναν προϋπολογισμό — ούτε του πελάτη ούτε δικό μας.
+    from app.services import ai_cost
+    await ai_cost.record(tenant_id, model, getattr(resp, "usage", None))
+
     text = next((b.text for b in resp.content if b.type == "text"), "")
     try:
         data = json.loads(text)

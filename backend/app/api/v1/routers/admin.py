@@ -723,7 +723,6 @@ class PackageIn(BaseModel):
     seats: int | None = None
     included_users: int | None = None  # πόσους ταυτόχρονους χρήστες περιλαμβάνει ΔΩΡΕΑΝ η τιμή (default 1)
     ai_included: int | None = None            # δωρεάν AI ερωτήσεις που περιλαμβάνει το πακέτο
-    ai_included_period: str | None = None     # "month" (σύνολο/μήνα) ή "day" (ανά ημέρα)
     # ΠΡΟΫΠΟΛΟΓΙΣΜΟΣ σε λεπτά € (π.χ. 500 = 5,00€). Σκληρό όριο ΠΡΑΓΜΑΤΙΚΟΥ κόστους ανά περίοδο —
     # πιο ασφαλές από το πλήθος ερωτήσεων, γιατί μία ερώτηση κοστίζει 0,03€–0,32€ (διαφορά 10×).
     # 0/κενό = ανενεργό (ισχύει μόνο το όριο ερωτήσεων).
@@ -731,7 +730,6 @@ class PackageIn(BaseModel):
     # ΡΗΤΟΣ διακόπτης: False = το πακέτο ΔΕΝ έχει καθόλου δωρεάν AI (μόνο αγορασμένα credits).
     # None/True = κανονική συμπεριφορά. Χωρίς αυτόν, πακέτο χωρίς ρύθμιση AI έπαιρνε σιωπηλά το
     # καθολικό fallback (20/ημέρα) — δηλαδή χαρίζαμε AI χωρίς να το ξέρουμε.
-    ai_free_enabled: bool | None = None
     sla: str | None = None
     modules: list[str] | None = None  # the capabilities this package grants
     features: list[str] | None = None
@@ -1101,6 +1099,9 @@ class IntegrationsIn(BaseModel):
     alphabank_shared_secret: str | None = None
     alphabank_mode: str | None = None  # test | live
     anthropic_api_key: str | None = None  # PharmaCat clinical assistant (Claude)
+    # ΞΕΧΩΡΙΣΤΟ κλειδί για τις ΔΙΚΕΣ ΜΑΣ εργασίες (κατηγοριοποιήσεις, εμπλουτισμοί, επεξηγήσεις):
+    # έτσι ο λογαριασμός Anthropic δείχνει χωριστά τι ξοδεύουν οι πελάτες και τι η πλατφόρμα.
+    anthropic_platform_key: str | None = None
     anthropic_enabled: bool | None = None
     anthropic_model: str | None = None        # model for pharmacist queries (cheap)
     anthropic_admin_model: str | None = None  # model for admin KB corrections (strong)
@@ -1220,6 +1221,7 @@ async def get_integrations(_: PlatformContext = Depends(get_platform_admin)):
                       "merchant_id_set": bool((decrypt_doc("alphabank", await db["platform_settings"].find_one({"_id": "alphabank"})) or {}).get("merchant_id")),
                       "shared_secret_set": bool((decrypt_doc("alphabank", await db["platform_settings"].find_one({"_id": "alphabank"})) or {}).get("shared_secret"))},
         "anthropic": {"api_key_set": bool(ant.get("api_key")),
+                      "platform_key_set": bool(ant.get("platform_api_key")),
                       "enabled": ant.get("enabled", True),
                       "model": ant.get("model", "claude-opus-4-8"),
                       "admin_model": ant.get("admin_model", "claude-opus-4-8")},
@@ -1322,6 +1324,9 @@ async def set_integrations(body: IntegrationsIn,
     ant: dict = {}
     if body.anthropic_api_key:
         ant["api_key"] = body.anthropic_api_key
+    if body.anthropic_platform_key is not None:
+        # κενό = «σβήσ\' το» → οι εσωτερικές εργασίες γυρίζουν στο κύριο κλειδί
+        ant["platform_api_key"] = body.anthropic_platform_key.strip() or None
     if body.anthropic_enabled is not None:
         ant["enabled"] = body.anthropic_enabled
     if body.anthropic_model:
@@ -1837,6 +1842,53 @@ async def seed_catalog(_: PlatformContext = Depends(get_platform_admin)):
     t = await db["tenants"].find_one({"_id": master}, {"name": 1})
     bd = await PharmacyCatalogRepository(tenant_id=master).seed_breakdown(master)
     return {"source": {"id": master, "name": (t or {}).get("name")}, **bd}
+
+
+@router.get("/ai-usage/{tenant_id}")
+async def admin_ai_usage(tenant_id: str, month: str | None = None,
+                         _: PlatformContext = Depends(get_platform_admin)):
+    """Η ΙΔΙΑ αναφορά που βλέπει ο πελάτης — συν το πραγματικό μας κόστος και το περιθώριο.
+
+    Όταν έρθει αμφισβήτηση, ανοίγουμε αυτό και ο πελάτης το δικό του: τα νούμερα των ερωτήσεων
+    είναι ΤΑ ΙΔΙΑ. Η διαφορά είναι μόνο ότι εμείς βλέπουμε και τι μας κόστισε.
+    """
+    from app.services import ai_cost
+    return await ai_cost.tenant_report(tenant_id, month, include_raw=True)
+
+
+@router.get("/catalog-seed/stuck")
+async def seed_stuck(limit: int = 200, _: PlatformContext = Depends(get_platform_admin)):
+    """Τι ΔΕΝ κατάφερε να κατατάξει το AI — θέλει ανθρώπινο μάτι.
+
+    ΓΙΑΤΙ ΥΠΑΡΧΕΙ: μέχρι τις 24/09/2026 ένα είδος που το μοντέλο δεν κατέτασσε ξαναρωτιόταν σε
+    ΚΑΘΕ πέρασμα, δηλαδή 144 φορές την ημέρα, για πάντα — με κόστος κάθε φορά. Τώρα σταματά στις
+    3 προσπάθειες και εμφανίζεται ΕΔΩ. Αν δεν φαίνεται πουθενά, η σιωπή γίνεται μόνιμο κενό.
+    """
+    from app.services import parapharmacy_classifier
+    db = shared_db()
+    prods = []
+    async for d in db["pharmacy_products"].find(   # tenant-ok: εποπτεία πλατφόρμας σε όλα
+            {"cat_attempts": {"$gte": 3},
+             "$or": [{"category": {"$in": [None, ""]}}, {"category": {"$exists": False}}]},
+            {"name": 1, "barcode": 1, "tenant_id": 1, "cat_attempts": 1,
+             "cat_last_try_at": 1}).sort("cat_attempts", -1).limit(limit):
+        prods.append({"name": d.get("name"), "barcode": d.get("barcode"),
+                      "tenant_id": d.get("tenant_id"), "attempts": d.get("cat_attempts"),
+                      "last_try_at": d.get("cat_last_try_at")})
+    names = await parapharmacy_classifier.stuck(limit)
+    return {"products": prods, "names": names,
+            "totals": {"products": len(prods), "names": len(names)}}
+
+
+@router.post("/catalog-seed/stuck/retry")
+async def seed_stuck_retry(_: PlatformContext = Depends(get_platform_admin)):
+    """Μηδενίζει τους μετρητές ώστε να ξαναδοκιμαστούν — αφού διορθωθεί κάτι (π.χ. ονόματα)."""
+    db = shared_db()
+    a = await db["pharmacy_products"].update_many(   # tenant-ok: εποπτεία πλατφόρμας
+        {"cat_attempts": {"$gte": 3}}, {"$unset": {"cat_attempts": ""}})
+    b = await db["parapharmacy_categories"].update_many(
+        {"attempts": {"$gte": 3}, "category": {"$in": [None, ""]}}, {"$unset": {"attempts": ""}})
+    return {"ok": True, "products": a.modified_count, "names": b.modified_count}
 
 
 @router.post("/catalog-seed/copy")

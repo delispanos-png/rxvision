@@ -25,11 +25,21 @@ import re
 from pymongo import UpdateOne
 
 from app.core.db import shared_db
+
+
+def _now():
+    from datetime import datetime, timezone
+    return datetime.now(tz=timezone.utc)
 from app.services.catalog_taxonomy import PARAPHARMACY_CATEGORIES
 
 _AI_MODEL = "claude-haiku-4-5"
 _BATCH = 120                    # ονόματα ανά AI κλήση — ίδιο μέγεθος με το area_canonical
 _REGISTRY = "parapharmacy_categories"
+# ΠΟΣΕΣ ΦΟΡΕΣ ΡΩΤΑΜΕ ΕΝΑ ΟΝΟΜΑ ΠΟΥ ΔΕΝ ΑΠΑΝΤΙΕΤΑΙ. Χωρίς αυτό το όριο, ένα όνομα που το μοντέλο
+# δεν μπορεί να κατατάξει ξαναρωτιόταν σε ΚΑΘΕ πέρασμα — για πάντα. Μετρημένο τον Σεπτέμβριο:
+# 971 ονόματα ρωτήθηκαν, 251 απάντησαν· τα υπόλοιπα 720 ξαναρωτιούνταν κάθε μέρα χωρίς λόγο.
+# Μετά το όριο, το όνομα μπαίνει στη λίστα «θέλουν χειροκίνητη κατηγορία» και ΣΤΑΜΑΤΑ να κοστίζει.
+_MAX_ATTEMPTS = 3
 
 _PROMPT = (
     "Είσαι βοηθός φαρμακείου. Κατάταξε ΚΑΘΕ εμπορικό όνομα παραφαρμάκου σε ΜΙΑ από αυτές τις "
@@ -75,12 +85,19 @@ def _parse_json(text: str) -> dict:
 
 async def _ask_ai(names: list[str]) -> dict:
     """{όνομα → κατηγορία} σε batches. Άδειο dict αν δεν υπάρχει ρυθμισμένο AI."""
+    # ΚΑΘΟΛΙΚΟ ΦΡΕΝΟ: αν πιάστηκε το ημερήσιο ταβάνι της πλατφόρμας, σταματάμε εδώ.
+    from app.services import ai_quota as _q
+    if not (await _q.platform_allows())[0]:
+        return {}
     from app.services import ai_cost, pharmacat_service
     c = await pharmacat_service._config()
     if not c.get("api_key"):
         return {}
     import anthropic
-    client = anthropic.AsyncAnthropic(api_key=c["api_key"])
+    client = anthropic.AsyncAnthropic(
+        # ΔΙΚΗ ΜΑΣ εργασία (κατηγοριοποίηση παραφαρμάκων) → κλειδί ΠΛΑΤΦΟΡΜΑΣ,
+        # ώστε ο λογαριασμός Anthropic να τη δείχνει χωριστά από τους πελάτες.
+        api_key=pharmacat_service.key_for(c, internal=True))
     out: dict = {}
     for start in range(0, len(names), _BATCH):
         batch = names[start:start + _BATCH]
@@ -153,13 +170,17 @@ async def run(*, max_new: int | None = None, dry_run: bool = False) -> dict:
         return {"ok": True, "pending": 0, "asked_ai": 0, "updated": 0}
 
     keys = {name_key(n) for names in pending.values() for n in names}
-    known = {d["_id"]: d["category"] async for d in
-             db[_REGISTRY].find({"_id": {"$in": list(keys)}}, {"category": 1})}
-    unknown = sorted(keys - set(known))
+    reg = {d["_id"]: d async for d in
+           db[_REGISTRY].find({"_id": {"$in": list(keys)}}, {"category": 1, "attempts": 1})}
+    known = {k: v.get("category") for k, v in reg.items() if v.get("category")}
+    # Εξαντλημένα: ρωτήθηκαν ήδη `_MAX_ATTEMPTS` φορές χωρίς απάντηση → ΔΕΝ ξαναρωτιούνται.
+    exhausted = {k for k, v in reg.items()
+                 if not v.get("category") and int(v.get("attempts") or 0) >= _MAX_ATTEMPTS}
+    unknown = sorted(keys - set(known) - exhausted)
     if max_new is not None:
         unknown = unknown[:max_new]
 
-    asked = 0
+    asked = failed = 0
     if unknown and not dry_run:
         fresh = await _ask_ai(unknown)
         asked = len(fresh)
@@ -167,10 +188,23 @@ async def run(*, max_new: int | None = None, dry_run: bool = False) -> dict:
             await db[_REGISTRY].bulk_write([
                 UpdateOne(
                     {"_id": name_key(n)},
-                    {"$set": {"category": c, "source": "ai", "model": _AI_MODEL}},
+                    {"$set": {"category": c, "source": "ai", "model": _AI_MODEL},
+                     "$unset": {"attempts": ""}},
                     upsert=True)
                 for n, c in fresh.items()], ordered=False)
             known.update({name_key(n): c for n, c in fresh.items()})
+        # ΟΣΑ ΡΩΤΗΘΗΚΑΝ ΚΑΙ ΔΕΝ ΑΠΑΝΤΗΘΗΚΑΝ: κράτα μετρητή. Αυτή η γραμμή είναι όλη η διαφορά
+        # ανάμεσα σε «ρωτάμε 3 φορές» και «ρωτάμε για πάντα».
+        answered = {name_key(n) for n in fresh}
+        misses = [k for k in unknown if k not in answered]
+        failed = len(misses)
+        if misses:
+            await db[_REGISTRY].bulk_write([
+                UpdateOne({"_id": k},
+                          {"$inc": {"attempts": 1},
+                           "$set": {"last_try_at": _now(), "model": _AI_MODEL}},
+                          upsert=True)
+                for k in misses], ordered=False)
 
     updated = 0
     if not dry_run:
@@ -189,4 +223,15 @@ async def run(*, max_new: int | None = None, dry_run: bool = False) -> dict:
                         {"$set": {"category": cat, "category_source": "ai"}})
                     updated += res.modified_count
     return {"ok": True, "pending": len(keys), "known": len(known), "asked_ai": asked,
+            "no_answer": failed, "skipped_exhausted": len(exhausted),
             "updated": updated, "dry_run": dry_run}
+
+
+async def stuck(limit: int = 200) -> list[dict]:
+    """Ονόματα που το AI δεν κατάφερε να κατατάξει — θέλουν ανθρώπινο μάτι."""
+    db = shared_db()
+    return [{"name_key": d["_id"], "attempts": d.get("attempts"),
+             "last_try_at": d.get("last_try_at"), "sample": d.get("sample")}
+            async for d in db[_REGISTRY].find(
+                {"category": {"$in": [None, ""]}, "attempts": {"$gte": _MAX_ATTEMPTS}})
+            .sort("attempts", -1).limit(limit)]

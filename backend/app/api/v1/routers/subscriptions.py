@@ -30,6 +30,18 @@ async def usage(ctx: TenantContext = Depends(get_current_context)):
     return await repo.usage()
 
 
+@router.get("/ai-usage")
+async def ai_usage(month: str | None = None,
+                   ctx: TenantContext = Depends(get_current_context)):
+    """Μηνιαία αναφορά χρήσης AI του ΔΙΚΟΥ ΜΟΥ φαρμακείου — διαφάνεια, ώστε να μη χρειάζεται
+    ποτέ να πιστέψει κάποιος τον λόγο μας για το πόσες ερωτήσεις έκανε.
+
+    ΤΟ ΦΑΡΜΑΚΕΙΟ ΔΕΝ ΒΛΕΠΕΙ ΤΟ ΔΙΚΟ ΜΑΣ ΚΟΣΤΟΣ — βλέπει ερωτήσεις και αξία με τις τιμές μας.
+    """
+    from app.services import ai_cost
+    return await ai_cost.tenant_report(ctx.tenant_id, month, include_raw=False)
+
+
 @router.get("/receipts")
 async def receipts(ctx: TenantContext = Depends(get_current_context)):
     """Παραστατικά — everything charged through RxVision (subscriptions, upgrades, credit top-ups)."""

@@ -267,6 +267,83 @@ export default function CatalogSeedPage() {
         </div>
       </section>
 
+      <StuckPanel />
     </div>
+  );
+}
+
+type Stuck = {
+  products: { name?: string; barcode?: string; tenant_id?: string; attempts?: number }[];
+  names: { name_key?: string; attempts?: number }[];
+  totals: { products: number; names: number };
+};
+
+/** Τι δεν κατάφερε να κατατάξει το AI. Σταματά στις 3 προσπάθειες και εμφανίζεται ΕΔΩ —
+ *  αλλιώς θα ξαναρωτιόταν στο διηνεκές, με κόστος κάθε φορά. */
+function StuckPanel() {
+  const [busy, setBusy] = useState(false);
+  const q = useQuery({ queryKey: ["seed", "stuck"],
+    queryFn: () => adminApi<Stuck>("/admin/catalog-seed/stuck") });
+  const d = q.data;
+  const total = (d?.totals.products || 0) + (d?.totals.names || 0);
+
+  const retry = async () => {
+    if (!(await appConfirm("Να ξαναδοκιμαστούν όλα όσα είχαν αποτύχει;"))) return;
+    setBusy(true);
+    try {
+      const r = await adminApi<{ products: number; names: number }>(
+        "/admin/catalog-seed/stuck/retry", { method: "POST" });
+      await appAlert(`Μηδενίστηκαν οι μετρητές: ${r.products} είδη, ${r.names} ονόματα.`);
+      q.refetch();
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <section className="w-full rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+      <h2 className="mb-1 flex items-center gap-2 text-sm font-semibold text-slate-700">
+        <AlertTriangle className="h-4 w-4 text-amber-500" />
+        Δεν κατατάχθηκαν από το AI — θέλουν ανθρώπινο μάτι
+      </h2>
+      <p className="mb-3 text-xs text-slate-500">
+        Μετά από 3 ανεπιτυχείς προσπάθειες σταματάμε να ρωτάμε το AI και το εμφανίζουμε εδώ.
+        Πριν την αλλαγή αυτή, τα ίδια είδη ξαναρωτιούνταν σε κάθε πέρασμα — με κόστος κάθε φορά.
+      </p>
+      {q.isLoading ? <div className="text-sm text-slate-400">Φόρτωση…</div> : total === 0 ? (
+        <div className="rounded-xl bg-emerald-50 p-3 text-sm text-emerald-700">
+          Τίποτα σε εκκρεμότητα — όλα κατατάχθηκαν.
+        </div>
+      ) : (
+        <div className="space-y-3">
+          <div className="flex flex-wrap items-center gap-3 text-sm">
+            <span className="rounded-lg bg-amber-50 px-2.5 py-1 font-medium text-amber-700">
+              {d?.totals.products} είδη
+            </span>
+            <span className="rounded-lg bg-amber-50 px-2.5 py-1 font-medium text-amber-700">
+              {d?.totals.names} ονόματα παραφαρμάκων
+            </span>
+            <button onClick={retry} disabled={busy}
+              className="ml-auto rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50">
+              Ξαναδοκίμασέ τα
+            </button>
+          </div>
+          <div className="max-h-72 overflow-y-auto rounded-xl border border-slate-200">
+            {(d?.products || []).map((p, i) => (
+              <div key={i} className="flex items-center gap-3 border-b border-slate-100 px-3 py-1.5 text-xs last:border-0">
+                <span className="w-28 shrink-0 font-mono text-slate-400">{p.barcode}</span>
+                <span className="min-w-0 flex-1 truncate text-slate-700">{p.name}</span>
+                <span className="shrink-0 text-slate-400">{p.attempts} προσπάθειες</span>
+              </div>
+            ))}
+            {(d?.names || []).map((n, i) => (
+              <div key={`n${i}`} className="flex items-center gap-3 border-b border-slate-100 px-3 py-1.5 text-xs last:border-0">
+                <span className="w-28 shrink-0 text-slate-400">όνομα</span>
+                <span className="min-w-0 flex-1 truncate text-slate-700">{n.name_key}</span>
+                <span className="shrink-0 text-slate-400">{n.attempts} προσπάθειες</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </section>
   );
 }

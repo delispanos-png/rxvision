@@ -1,14 +1,21 @@
 """Όρια AI ερωτημάτων ΑΝΑ φαρμακείο (PharmaCat/Copilot/Advice) — ΕΝΙΑΙΑ γλώσσα με τα ΠΑΚΕΤΑ.
 
-Το AI key είναι ΚΕΝΤΡΙΚΟ (πλατφόρμα). Κάθε φαρμακείο δικαιούται έναν αριθμό ΔΩΡΕΑΝ ερωτημάτων που
-ΟΡΙΖΕΤΑΙ ΑΠΟ ΤΟ ΠΑΚΕΤΟ ΤΟΥ (`packages.ai_included` + `ai_included_period` = "month" σύνολο/μήνα ή
-"day" ανά ημέρα). Πάνω από αυτό → αγορά επιπλέον (AI credits — Phase C). Τα cache-hits ΜΕΤΡΟΥΝ κι αυτά
-(source="cache"), αλλά κρατάμε breakdown ΓΙΑ ΕΜΑΣ (n_llm/n_cache).
+ΤΟ ΜΟΝΤΕΛΟ, ΜΕ ΔΥΟ ΠΡΟΤΑΣΕΙΣ:
+1. Κάθε φαρμακείο έχει ΔΩΡΕΑΝ προϋπολογισμό σε ΕΥΡΩ κάθε μήνα — ένα πεδίο, το
+   `packages.ai_budget_cents` (0 = κανένα δωρεάν AI). Ανανεώνεται την 1η του μήνα.
+2. Ό,τι ξεπερνά αυτόν αντλείται από το ΠΡΟΠΛΗΡΩΜΕΝΟ ΠΟΡΤΟΦΟΛΙ του (`ai_credits`), που **δεν
+   λήγει ποτέ**: αγοράζει π.χ. 100 € και τα ξοδεύει σε μία μέρα ή σε έναν χρόνο, όπως θέλει.
 
-Fallback: αν το πακέτο δεν έχει ορίσει `ai_included`, ισχύει το καθολικό `base_daily_free` (ημερήσιο).
+ΓΙΑΤΙ ΣΕ ΕΥΡΩ ΚΑΙ ΟΧΙ ΣΕ ΕΡΩΤΗΣΕΙΣ: μία ερώτηση κοστίζει 0,03€–0,32€ (διαφορά 10×), οπότε ένα
+όριο «Ν ερωτήσεις» δεν λέει τίποτα για την έκθεσή μας.
 
-Μετρητής: `llm_daily_usage` doc `_id="ai:{tenant}:{YYYY-MM-DD}"` (κοινό με το prescriptor cap)· μηνιαία
-μέτρηση = άθροισμα των ημερήσιων docs του μήνα.
+Τα cache-hits ΜΕΤΡΟΥΝ ως ερωτήσεις (source="cache") αλλά ΔΕΝ χρεώνονται: η απάντηση υπήρχε ήδη
+και δεν μας κόστισε τίποτα. Κρατάμε breakdown (n_llm/n_cache) για διαφάνεια προς τον πελάτη.
+
+Μετρητής: `llm_daily_usage` doc `_id="ai:{tenant}:{YYYY-MM-DD}"`· μηνιαία μέτρηση = άθροισμα των
+ημερήσιων docs του μήνα. ⚠ ΤΟ TTL ΤΟΥ ΕΙΝΑΙ ΜΕΡΟΣ ΤΟΥ ΦΡΕΝΟΥ: ήταν 2 ΗΜΕΡΕΣ και έσβηνε τη
+μέτρηση, οπότε ο μηνιαίος προϋπολογισμός ΔΕΝ γέμιζε ΠΟΤΕ και το πορτοφόλι δεν χρεωνόταν ποτέ
+(διορθώθηκε 24/09/2026 → 400 ημέρες, βλ. `core/db.py`).
 """
 
 from __future__ import annotations
@@ -71,18 +78,13 @@ async def included_allowance(db, tenant_id: str) -> tuple[int, str]:
     sub = await db["subscriptions"].find_one({"tenant_id": tenant_id}, {"plan": 1})
     plan = (sub or {}).get("plan")
     if plan:
-        pkg = await db["packages"].find_one(
-            {"_id": plan}, {"ai_included": 1, "ai_included_period": 1, "ai_free_enabled": 1})
-        # ΡΗΤΟΣ ΔΙΑΚΟΠΤΗΣ: ai_free_enabled=False → ΜΗΔΕΝ δωρεάν AI, τελεία. Λύνει την παγίδα όπου ένα
-        # πακέτο χωρίς ρύθμιση έπεφτε στο καθολικό fallback (20/ημέρα ≈ 600/μήνα) και χάριζε AI σιωπηλά.
-        # None/True = ως είχε (συμβατότητα με τα υπάρχοντα πακέτα).
-        if pkg is not None and pkg.get("ai_free_enabled") is False:
-            per = pkg.get("ai_included_period") if pkg.get("ai_included_period") in ("month", "day", "year") else "month"
-            return 0, per
+        # ΜΟΝΟ ΓΙΑ ΕΜΦΑΝΙΣΗ: πλήθος ερωτήσεων. Η ΧΡΕΩΣΗ γίνεται αποκλειστικά σε ΕΥΡΩ
+        # (`included_budget`) — μία ερώτηση κοστίζει 0,03€–0,32€, οπότε το πλήθος δεν λέει τίποτα
+        # για την έκθεσή μας. Δεν υπάρχει πεδίο στο adminpanel· μένει για τα παλιά πακέτα.
+        pkg = await db["packages"].find_one({"_id": plan}, {"ai_included": 1})
         if pkg and pkg.get("ai_included") is not None:
-            period = pkg.get("ai_included_period") if pkg.get("ai_included_period") in ("month", "day", "year") else "month"
             try:
-                return max(0, int(pkg["ai_included"])), period
+                return max(0, int(pkg["ai_included"])), "month"
             except (TypeError, ValueError):
                 pass
     return await base_daily_free(db), "day"
@@ -146,14 +148,14 @@ async def included_budget(db, tenant_id: str) -> tuple[int, str]:
     sub = await db["subscriptions"].find_one({"tenant_id": tenant_id}, {"plan": 1})
     plan = (sub or {}).get("plan")
     if plan:
-        pkg = await db["packages"].find_one(
-            {"_id": plan}, {"ai_budget_cents": 1, "ai_included_period": 1, "ai_free_enabled": 1})
-        if pkg is not None and pkg.get("ai_free_enabled") is False:
-            return 0, "month"        # χωρίς δωρεάν AI → δεν υπάρχει προϋπολογισμός να ξοδευτεί
+        pkg = await db["packages"].find_one({"_id": plan}, {"ai_budget_cents": 1})
+        # ΕΝΑ ΠΕΔΙΟ, ΜΙΑ ΑΛΗΘΕΙΑ: το ποσό αποφασίζει· 0 = κανένα δωρεάν AI. Υπήρχαν ΔΥΟ
+        # χειριστήρια (διακόπτης `ai_free_enabled` + ποσό) και αναπόφευκτα διαφώνησαν: το Growth
+        # έγραφε 3,00 € με τον διακόπτη κλειστό, δηλαδή έδινε μηδέν ενώ η οθόνη έλεγε 3 €.
+        # Η περίοδος είναι ΠΑΝΤΑ μήνας — ποτέ δεν χρησιμοποιήθηκε άλλη. (Καθαρισμός 24/09/2026.)
         if pkg and pkg.get("ai_budget_cents") is not None:
-            period = pkg.get("ai_included_period") if pkg.get("ai_included_period") in ("month", "day", "year") else "month"
             try:
-                return max(0, int(pkg["ai_budget_cents"])), period
+                return max(0, int(pkg["ai_budget_cents"])), "month"
             except (TypeError, ValueError):
                 pass
     return 0, "month"
@@ -174,6 +176,42 @@ async def spent_cents_in_period(db, tenant_id: str, period: str) -> float:
     return (int(rows[0]["c"]) if rows and rows[0].get("c") else 0) / 1_000_000
 
 
+# ── ΚΑΘΟΛΙΚΟ ΦΡΕΝΟ ΠΛΑΤΦΟΡΜΑΣ ───────────────────────────────────────────────────────────────
+# ΓΙΑΤΙ: τα όρια ανά φαρμακείο δεν προστατεύουν ΕΜΑΣ. Οι δικές μας εργασίες (κατηγοριοποιήσεις,
+# εμπλουτισμοί) δεν ανήκουν σε κανένα φαρμακείο — έτρεχαν χωρίς κανένα όριο και μπόρεσαν να
+# κάνουν 12 € σε μία ημέρα. Αυτό εδώ είναι ένα ΣΚΛΗΡΟ ταβάνι σε ευρώ για ΟΛΑ μαζί.
+PLATFORM_DAILY_CAP_CENTS = 800          # 8,00 €/ημέρα — ρυθμιζόμενο από το adminpanel
+
+
+async def platform_daily_cap(db=None) -> int:
+    db = db if db is not None else shared_db()
+    doc = await db["platform_settings"].find_one({"_id": "ai_quota"}) or {}
+    try:
+        v = int(doc.get("platform_daily_cap_cents"))
+        return max(0, v)
+    except (TypeError, ValueError):
+        return PLATFORM_DAILY_CAP_CENTS
+
+
+async def platform_spent_today(db=None) -> float:
+    """Ό,τι ξοδεύτηκε ΣΗΜΕΡΑ συνολικά — πελάτες ΚΑΙ δικές μας εργασίες — σε λεπτά €."""
+    db = db if db is not None else shared_db()
+    rows = await db["llm_daily_usage"].aggregate([   # tenant-ok: μετρητής πλατφόρμας
+        {"$match": {"_id": {"$regex": f":{_day()}$"}}},
+        {"$group": {"_id": None, "c": {"$sum": "$cost_micro"}}}]).to_list(length=1)
+    return (int(rows[0]["c"]) if rows and rows[0].get("c") else 0) / 1_000_000
+
+
+async def platform_allows(db=None) -> tuple[bool, float, int]:
+    """(επιτρέπεται, ξοδεύτηκε_σήμερα_λεπτά, ταβάνι_λεπτά). 0 ταβάνι = χωρίς όριο."""
+    db = db if db is not None else shared_db()
+    cap = await platform_daily_cap(db)
+    if cap <= 0:
+        return (True, 0.0, 0)
+    spent = await platform_spent_today(db)
+    return (spent < cap, spent, cap)
+
+
 async def check_and_consume(tenant_id: str, source: str = "llm") -> tuple[bool, int, int, str | None]:
     """Καταγράφει 1 ερώτημα και αποφασίζει αν επιτρέπεται — **ΜΕ ΜΟΝΑΔΑ ΤΟ ΕΥΡΩ**.
 
@@ -186,9 +224,18 @@ async def check_and_consume(tenant_id: str, source: str = "llm") -> tuple[bool, 
     προπληρωμένων credits → ΟΚ (η πραγματική αφαίρεση γίνεται στο ai_cost.record με το ΑΛΗΘΙΝΟ
     κόστος)· (3) αλλιώς → μπλοκ.
     """
-    if not tenant_id:
-        return (True, 0, AI_DEFAULT_DAILY, None)   # χωρίς tenant → μη περιοριστικό (ασφάλεια)
     db = shared_db()
+    # ΤΟ ΚΑΘΟΛΙΚΟ ΤΑΒΑΝΙ ΑΦΟΡΑ ΜΟΝΟ ΤΙΣ ΔΙΚΕΣ ΜΑΣ ΕΡΓΑΣΙΕΣ — ποτέ πελάτη που πληρώνει.
+    # Ο πελάτης έχει ΔΙΚΟ του όριο, αυτό του πακέτου του· θα ήταν λάθος να τον κόψει μια δική
+    # μας μαζική κατηγοριοποίηση που ξέφυγε. Το ταβάνι φυλάει ΕΜΑΣ από εμάς.
+    if not tenant_id or str(tenant_id).startswith("__"):
+        ok_platform, _spent, cap = await platform_allows(db)
+        if not ok_platform:
+            return (False, 0, cap, "platform_cap")
+    if not tenant_id:
+        # ΠΑΛΙΑ: «χωρίς tenant → μη περιοριστικό». Αυτό σήμαινε ΑΠΕΡΙΟΡΙΣΤΕΣ κλήσεις χωρίς
+        # καταγραφή. Τώρα δένεται στον κάδο πλατφόρμας, που έχει το δικό του ταβάνι παραπάνω.
+        return (True, 0, AI_DEFAULT_DAILY, None)
     budget_cents, period = await included_budget(db, tenant_id)
     included, _p = await included_allowance(db, tenant_id)      # μόνο για εμφάνιση
     key = f"ai:{tenant_id}:{_day()}"

@@ -20,6 +20,7 @@ celery_app = Celery(
              "app.workers.coach", "app.workers.comms",
         "app.workers.leads",
         "app.workers.sessions",
+        "app.workers.connect",
     ],
 )
 
@@ -179,15 +180,21 @@ celery_app.conf.beat_schedule = {
     #     "task": "app.workers.supplier_photos.profarm_sync_tick",
     #     "schedule": crontab(minute="*/2"),
     # },
-    # Εισαγωγή προϊόντων OTC/παραφαρμάκων από Profarm — ήπιο chunk κάθε 2 λεπτά (μόνο με ενεργό job).
+    # Εισαγωγή προϊόντων OTC/παραφαρμάκων από Profarm — ήπιο chunk κάθε 15 λεπτά (μόνο με ενεργό job).
+    # ΓΙΑΤΙ ΟΧΙ ΚΑΘΕ 2΄ (ως 24/09/2026): ο importer έχει ΔΙΚΟ του κύκλο 6 ωρών ανά κατηγορία και
+    # παραλείπει ό,τι συγχρονίστηκε πρόσφατα — άρα τα 720 περάσματα/μέρα δεν έφερναν τίποτα
+    # νωρίτερα· έπιαναν θέση εργάτη και χτυπούσαν τον προμηθευτή χωρίς λόγο.
     "profarm-import": {
         "task": "app.workers.supplier_photos.profarm_import_tick",
-        "schedule": crontab(minute="*/2"),
+        "schedule": crontab(minute="*/15"),
     },
-    # AI-ταξινόμηση κατηγοριών εισαγμένων Profarm προϊόντων — κάθε 10 λεπτά (σταματά όταν μηδενιστούν).
+    # AI-ταξινόμηση κατηγοριών εισαγμένων Profarm προϊόντων — ΜΙΑ φορά τη νύχτα (03:20).
+    # ΓΙΑΤΙ ΟΧΙ ΚΑΘΕ 10΄ (ως 24/09/2026): οι κατηγορίες φτάνουν στον πελάτη με τον ΝΥΧΤΕΡΙΝΟ
+    # συγχρονισμό καταλόγου — αρκεί να είναι έτοιμες πριν από αυτόν. Τα 144 περάσματα/μέρα δεν
+    # έδειχναν τίποτα νωρίτερα στον φαρμακοποιό· απλώς ξόδευαν όποτε έβρισκαν δουλειά.
     "profarm-classify": {
         "task": "app.workers.supplier_photos.profarm_classify_tick",
-        "schedule": crontab(minute="*/10"),
+        "schedule": crontab(hour=3, minute=20),
     },
     # self-heal: resume historical backfill for tenants with a history_from not yet reached
     # (a killed/stalled chunk → auto-continue from the current oldest record).
@@ -314,6 +321,12 @@ celery_app.conf.beat_schedule = {
     "subscription-reminders": {
         "task": "app.workers.billing.subscription_reminders",
         "schedule": crontab(hour=8, minute=0),
+    },
+    # Connect: λήξη κρατήσεων. Κάθε 5΄ — ο συνεργάτης περιμένει να ελευθερωθεί το ράφι του και
+    # μια κράτηση που δεν λήγει ποτέ εμφανίζεται ως «διαθέσιμα 0» χωρίς εξήγηση.
+    "connect-expire-reservations": {
+        "task": "app.workers.connect.expire_reservations",
+        "schedule": crontab(minute="*/5"),
     },
     # Δοκιμές δυνατοτήτων — «σου λήγει σε X μέρες» + «έληξε» (09:00 UTC, μετά τις υπενθυμίσεις συνδρομής)
     "module-trial-reminders": {

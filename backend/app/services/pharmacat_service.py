@@ -127,7 +127,24 @@ async def _config() -> dict:
     # Separate (usually stronger) model for admin curation/regeneration of KB answers.
     admin_model = cfg.get("admin_model") if cfg.get("admin_model") in ALLOWED_MODELS else _DEFAULT_MODEL
     return {"api_key": cfg.get("api_key"), "enabled": cfg.get("enabled", True),
+            "platform_api_key": cfg.get("platform_api_key"),
             "model": model, "admin_model": admin_model}
+
+
+def key_for(c: dict, *, internal: bool) -> str | None:
+    """Ποιο κλειδί Anthropic χρησιμοποιεί αυτή η κλήση.
+
+    ΓΙΑΤΙ ΔΥΟ ΚΛΕΙΔΙΑ: ο λογαριασμός Anthropic δείχνει κόστος ΑΝΑ ΚΛΕΙΔΙ. Με ένα κοινό κλειδί
+    δεν ξεχωρίζει ποτέ τι ξόδεψαν οι πελάτες (Copilot, PharmaCat, ανάγνωση συνταγών) από τι
+    ξόδεψε η ΠΛΑΤΦΟΡΜΑ για τη δική της αυτοβελτίωση (κατηγορίες προϊόντων, μάρκες, περιοχές,
+    επεξηγήσεις ICD-10). Με δύο, η απάντηση είναι μία ματιά στην κονσόλα.
+
+    Αν το κλειδί πλατφόρμας δεν έχει οριστεί, πέφτουμε στο κύριο — καμία εργασία δεν σταματά
+    επειδή λείπει μια ρύθμιση.
+    """
+    if internal and c.get("platform_api_key"):
+        return c["platform_api_key"]
+    return c.get("api_key")
 
 
 async def status() -> dict:

@@ -12,6 +12,7 @@ Money note: prices are in **€cents per 1,000,000 tokens**; cost is stored in *
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timedelta, timezone
 
 from app.core.db import shared_db
@@ -77,21 +78,40 @@ def cost_micro(prices: dict, in_tok: int, out_tok: int, cin_tok: int = 0, cwrite
                + cin_tok * prices.get("cin", prices.get("in", 0)))
 
 
+# Κάδος για κλήσεις ΧΩΡΙΣ φαρμακείο (εργασίες πλατφόρμας, back-office). Παλιά τέτοιες κλήσεις
+# απλώς ΔΕΝ καταγράφονταν — ξόδευαν αόρατα και δεν μετρούσαν σε κανένα όριο.
+PLATFORM_BUCKET = "__platform__"
+
+
+def _worst_prices() -> dict:
+    """Η ΑΚΡΙΒΟΤΕΡΗ τιμή του καταλόγου — για μοντέλο που δεν αναγνωρίζουμε."""
+    return max(DEFAULT_MODEL_PRICES.values(), key=lambda p: p.get("out", 0))
+
+
 async def record(tenant_id: str | None, model: str, usage, *, db=None) -> None:
-    """Value one AI call's usage and add it to today's per-tenant meter. Never raises."""
-    if not tenant_id or usage is None:
+    """Value one AI call's usage and add it to today's per-tenant meter. Never raises.
+
+    ΔΥΟ ΣΙΩΠΗΛΕΣ ΤΡΥΠΕΣ ΠΟΥ ΕΚΛΕΙΣΑΝ (24/09/2026):
+    · `tenant_id=None` → έβγαινε αμέσως έξω· τώρα πάει στον κάδο πλατφόρμας.
+    · άγνωστο μοντέλο → έβγαινε αμέσως έξω (μηδενικό κόστος!)· τώρα χρεώνεται με την ΑΚΡΙΒΟΤΕΡΗ
+      τιμή και σημαδεύεται `unpriced`, ώστε η άγνοια να κοστίζει ΟΡΑΤΑ αντί για τίποτα.
+    """
+    if usage is None:
         return
+    tenant_id = tenant_id or PLATFORM_BUCKET
     try:
         db = db if db is not None else shared_db()
         prices = (await config(db))["models"].get(model) or DEFAULT_MODEL_PRICES.get(model)
-        if not prices:
-            return
+        unpriced = not prices
+        if unpriced:
+            prices = _worst_prices()
         in_tok, out_tok, cin_tok, cwrite = _usage_tokens(usage)
         micro = cost_micro(prices, in_tok, out_tok, cin_tok, cwrite)
         await db["llm_daily_usage"].update_one(
             {"_id": f"ai:{tenant_id}:{_day()}"},
             {"$inc": {"tok_in": in_tok + cwrite + cin_tok, "tok_out": out_tok, "cost_micro": micro,
-                      "n_priced": 1},   # πόσες κλήσεις τιμολογήθηκαν (για ΤΙΜΙΟ μέσο όρο κόστους)
+                      "n_priced": 1,   # πόσες κλήσεις τιμολογήθηκαν (για ΤΙΜΙΟ μέσο όρο κόστους)
+                      **({"n_unpriced": 1} if unpriced else {})},
              # ΚΡΙΣΙΜΟ: χρονοσήμανση — το measured() φιλτράρει με `at`. Χωρίς αυτό, όταν το record()
              # δημιουργεί πρώτο το έγγραφο (π.χ. εσωτερικές εργασίες), το κόστος έμενε ΑΟΡΑΤΟ.
              "$setOnInsert": {"at": datetime.now(tz=timezone.utc)}},
@@ -173,3 +193,59 @@ def cached_system(text: str) -> list[dict]:
     Το cache_control μπαίνει στο system (τελευταίο του προθέματος) ώστε να καλύπτει ΚΑΙ τα tools.
     """
     return [{"type": "text", "text": text, "cache_control": {"type": "ephemeral"}}]
+
+
+async def tenant_report(tenant_id: str, month: str | None = None, *,
+                        include_raw: bool = False, db=None) -> dict:
+    """Μηνιαία αναφορά χρήσης AI ΕΝΟΣ φαρμακείου — για να μην υπάρχει αμφισβήτηση ερωτήσεων.
+
+    ΓΙΑΤΙ ΥΠΑΡΧΕΙ: όταν ο πελάτης ρωτήσει «γιατί με χρεώνετε τόσο;», η απάντηση πρέπει να είναι
+    ΑΡΙΘΜΟΣ που βλέπει και ο ίδιος — όχι δική μας διαβεβαίωση.
+
+    ΔΥΟ ΕΙΔΗ ΕΡΩΤΗΣΕΩΝ, ΚΑΙ Η ΔΙΑΦΟΡΑ ΕΧΕΙ ΣΗΜΑΣΙΑ:
+    · «από τη βάση γνώσεων» — η απάντηση υπήρχε ήδη· ΕΜΑΣ δεν μας κόστισε τίποτα (καμία κλήση
+      στο μοντέλο), αλλά για τον πελάτη είναι κανονική ερώτηση που απαντήθηκε.
+    · «νέα ερώτηση» — έγινε πραγματική κλήση και έχει πραγματικό κόστος.
+    Αν τα ανακατεύαμε, ή θα χρεώναμε αέρα ή θα φαινόμασταν ακριβότεροι απ' ό,τι είμαστε.
+
+    `include_raw=True` (ΜΟΝΟ για το back-office) προσθέτει το πραγματικό μας κόστος και το
+    περιθώριο — νούμερα που δεν αφορούν τον πελάτη.
+    """
+    db = db if db is not None else shared_db()
+    month = month or datetime.now(tz=timezone.utc).strftime("%Y-%m")
+    cfg = await config(db)
+    factor = 1 + cfg["margin_pct"] / 100
+
+    days: list[dict] = []
+    tot = {"questions": 0, "cached": 0, "llm": 0, "tok_in": 0, "tok_out": 0, "cost_micro": 0}
+    async for r in db["llm_daily_usage"].find(   # tenant-ok: το _id κουβαλά το tenant_id
+            {"_id": {"$regex": f"^ai:{re.escape(tenant_id)}:{re.escape(month)}"}}).sort("_id", 1):
+        n, cache = int(r.get("n") or 0), int(r.get("n_cache") or 0)
+        llm = int(r.get("n_llm") or 0) or max(0, n - cache)
+        micro = int(r.get("cost_micro") or 0)
+        days.append({"date": r["_id"].split(":")[-1], "questions": n, "cached": cache,
+                     "llm": llm, "value_cents": round(micro / 1_000_000 * factor, 2)})
+        tot["questions"] += n; tot["cached"] += cache; tot["llm"] += llm
+        tot["tok_in"] += int(r.get("tok_in") or 0); tot["tok_out"] += int(r.get("tok_out") or 0)
+        tot["cost_micro"] += micro
+
+    from app.services import ai_quota
+    budget, period = await ai_quota.included_budget(db, tenant_id)
+    cost_cents = tot["cost_micro"] / 1_000_000
+    value_cents = cost_cents * factor            # τιμή ΜΕ ΤΙΣ ΔΙΚΕΣ ΜΑΣ ΤΙΜΕΣ (cost-plus)
+
+    out = {
+        "month": month, "tenant_id": tenant_id,
+        "questions": tot["questions"],
+        "from_knowledge_base": tot["cached"],    # απαντήθηκαν άμεσα — χωρίς χρέωση
+        "new_questions": tot["llm"],
+        "value_cents": round(value_cents, 2),
+        "included_budget_cents": budget, "budget_period": period,
+        "remaining_cents": max(0, round(budget - value_cents, 2)) if budget else None,
+        "over_budget": bool(budget and value_cents > budget),
+        "days": days,
+    }
+    if include_raw:
+        out["raw"] = {"cost_cents": round(cost_cents, 2), "margin_pct": cfg["margin_pct"],
+                      "tok_in": tot["tok_in"], "tok_out": tot["tok_out"]}
+    return out

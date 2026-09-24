@@ -20,6 +20,7 @@ const TABS: { href: string; el: string; en: string; module?: string }[] = [
   { href: "/settings/pharmacy-chat", el: "Συνεργαζόμενα φαρμακεία", en: "Partner pharmacies" },
   { href: "/settings/availability", el: "Ωράριο & Διαθεσιμότητα", en: "Hours & Availability" },
   { href: "/settings/communications", el: "Επικοινωνία", en: "Communications" },
+  { href: "/settings/ai-usage", el: "Χρήση AI", en: "AI usage" },
   { href: "/settings/billing", el: "Χρέωση", en: "Billing" },
   { href: "/settings/gdpr", el: "GDPR / Απόρρητο", en: "GDPR / Privacy" },
 ];

@@ -116,7 +116,10 @@ async def ai_map_keys(keys: list[str]) -> dict:
     if not c.get("api_key"):
         return {}
     import anthropic
-    client = anthropic.AsyncAnthropic(api_key=c["api_key"])
+    client = anthropic.AsyncAnthropic(
+        # ΔΙΚΗ ΜΑΣ εργασία (κανονικοποίηση περιοχών) → κλειδί ΠΛΑΤΦΟΡΜΑΣ,
+        # ώστε ο λογαριασμός Anthropic να τη δείχνει χωριστά από τους πελάτες.
+        api_key=pharmacat_service.key_for(c, internal=True))
     out: dict = {}
     for start in range(0, len(keys), _BATCH):
         batch = keys[start:start + _BATCH]

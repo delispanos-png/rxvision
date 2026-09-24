@@ -36,7 +36,10 @@ _PREFIX_V2 = "enc:v2:"     # νέο: ΑΝΕΞΑΡΤΗΤΟ κλειδί (settings
 
 # Which fields of each platform_settings doc are secrets to encrypt at rest.
 SECRET_FIELDS: dict[str, tuple[str, ...]] = {
-    "anthropic": ("api_key",),
+    # `platform_api_key`: ΞΕΧΩΡΙΣΤΟ κλειδί για τις ΔΙΚΕΣ ΜΑΣ εργασίες (κατηγοριοποιήσεις,
+    # εμπλουτισμοί) ώστε ο λογαριασμός Anthropic να δείχνει καθαρά τι ξοδεύουν οι πελάτες
+    # και τι η πλατφόρμα. Ίδια ευαισθησία με το κύριο → ίδια κρυπτογράφηση.
+    "anthropic": ("api_key", "platform_api_key"),
     "revolut": ("api_key", "webhook_secret"),
     "viva": ("api_key", "client_secret"),
     # `pull_token`: κοινό μυστικό της γέφυρας SoftOne — ό,τι έχει και ένα password. Έλειπε από
