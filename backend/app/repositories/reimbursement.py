@@ -61,11 +61,19 @@ RISK_HIGH_COST = 15    # high-cost line → extra scrutiny
 
 # ΚΥΥΑΠ (ΕΤΥΑΠ) ΑΝΑ ΣΥΝΤΑΓΗ (visit), γραμμένο σε ΚΑΘΕ φάση/εκτέλεση. Στις προβολές ΑΝΑ ΗΜΕΡΑ/ΕΚΤΕΛΕΣΗ
 # πρέπει να μετρηθεί/αφαιρεθεί ΜΙΑ φορά — αλλιώς μια συνταγή εκτελεσμένη σε >1 μέρες αφαιρεί ΟΛΟ το ΚΥΥΑΠ
-# σε ΚΑΘΕ μέρα (π.χ. φάση 2 με claim 3,29 − 19,18 = −15,89) και διπλομετρά το ΕΤΥΑΠ. Το αποδίδουμε ΜΟΝΟ
-# στη ΦΑΣΗ 1 (external_id χωρίς «:» ή που λήγει σε «:1»).
+# σε ΚΑΘΕ μέρα (π.χ. φάση 2 με claim 3,29 − 19,18 = −15,89) και διπλομετρά το ΕΤΥΑΠ.
+#
+# ΠΗΓΗ ΑΛΗΘΕΙΑΣ = `details.kyyap_share`: το μερίδιο ΑΥΤΗΣ της εκτέλεσης, υπολογισμένο στην
+# εισαγωγή αναλογικά προς το ποσό της (βλ. `services/ingestion/kyyap_split.py`). Ο επιμερισμός
+# θέλει ΟΛΕΣ τις φάσεις της συνταγής — που μπορεί να πέφτουν έξω από το παράθυρο ημερομηνιών
+# της οθόνης — γι' αυτό γράφεται μία φορά και διαβάζεται από παντού.
+#
+# FALLBACK «όλο στη φάση 1»: για εκτελέσεις που δεν έχουν περάσει ακόμη από τον επιμερισμό
+# (παλιά δεδομένα πριν το backfill). Λάθος στον επιμερισμό ΑΝΑ ΗΜΕΡΑ, σωστό στο σύνολο.
 _KYYAP_FIRST_PHASE = {"$cond": [
     {"$in": [{"$arrayElemAt": [{"$split": ["$external_id", ":"]}, 1]}, [None, "1"]]},
     {"$ifNull": ["$details.kyyap_covered", 0]}, 0]}
+_KYYAP_EFFECTIVE = {"$ifNull": ["$details.kyyap_share", _KYYAP_FIRST_PHASE]}
 
 
 def _band(score: int) -> str:
@@ -143,7 +151,7 @@ class ReimbursementRepository(BaseRepository):
         by_fund_raw = await self._db["prescription_executions"].aggregate([
             {"$match": {**match, "amount_total": {"$gt": 0},
                         "details.full_participation": {"$ne": True}}},
-            {"$addFields": {"_kyyap_eff": _KYYAP_FIRST_PHASE}},   # ΚΥΥΑΠ μόνο στη φάση 1 (σωστό & όταν visit σε >1 μήνες)
+            {"$addFields": {"_kyyap_eff": _KYYAP_EFFECTIVE}},   # ΚΥΥΑΠ μόνο στη φάση 1 (σωστό & όταν visit σε >1 μήνες)
             {"$group": {"_id": {"fund": "$fund_id",
                                 "vac": {"$ifNull": ["$details.vaccines", False]},
                                 "fyk": {"$ifNull": ["$details.n3816", False]},
@@ -186,7 +194,7 @@ class ReimbursementRepository(BaseRepository):
         # Το πλήθος (rx) παραμένει σε εκτελέσεις.
         et = await self._db["prescription_executions"].aggregate([
             {"$match": {**match, "details.kyyap_covered": {"$gt": 0}}},
-            {"$addFields": {"_kyyap_eff": _KYYAP_FIRST_PHASE}},   # ΚΥΥΑΠ μόνο στη φάση 1 (μία φορά ανά visit)
+            {"$addFields": {"_kyyap_eff": _KYYAP_EFFECTIVE}},   # ΚΥΥΑΠ μόνο στη φάση 1 (μία φορά ανά visit)
             {"$group": {"_id": {"$ifNull": ["$details.visit_id", "$_id"]},
                         "kyyap": {"$max": "$_kyyap_eff"}, "n": {"$sum": 1}}},
             {"$match": {"kyyap": {"$gt": 0}}},
@@ -295,7 +303,7 @@ class ReimbursementRepository(BaseRepository):
         # claim = ΚΑΘΑΡΟ πρωτεύον (− ΚΥΥΑΠ)· το ΚΥΥΑΠ ανά ΣΥΝΤΑΓΗ (visit) → αφαιρείται ΜΙΑ φορά ανά visit
         for r in await self._db["prescription_executions"].aggregate([
             {"$match": {**match, "amount_total": {"$gt": 0}, "details.full_participation": {"$ne": True}}},
-            {"$addFields": {"_kyyap_eff": _KYYAP_FIRST_PHASE}},   # ΚΥΥΑΠ μόνο στη φάση 1 (μία φορά)
+            {"$addFields": {"_kyyap_eff": _KYYAP_EFFECTIVE}},   # ΚΥΥΑΠ μόνο στη φάση 1 (μία φορά)
             {"$group": {"_id": {"fund": "$fund_id", "vac": {"$ifNull": ["$details.vaccines", False]},
                                 "day": {"$dateToString": {"format": "%Y-%m-%d", "date": "$executed_at"}},
                                 "visit": {"$ifNull": ["$details.visit_id", "$_id"]}},
@@ -316,7 +324,7 @@ class ReimbursementRepository(BaseRepository):
         # ΕΤΥΑΠ ανά ημέρα: το kyyap μετριέται ΜΙΑ φορά ανά ΣΥΝΤΑΓΗ (visit) — dedup· πλήθος σε εκτελέσεις.
         for r in await self._db["prescription_executions"].aggregate([
             {"$match": {**match, "details.kyyap_covered": {"$gt": 0}}},
-            {"$addFields": {"_kyyap_eff": _KYYAP_FIRST_PHASE}},   # ΚΥΥΑΠ μόνο στη φάση 1 (όχι διπλή μέτρηση ανά μέρα)
+            {"$addFields": {"_kyyap_eff": _KYYAP_EFFECTIVE}},   # ΚΥΥΑΠ μόνο στη φάση 1 (όχι διπλή μέτρηση ανά μέρα)
             {"$group": {"_id": {"visit": {"$ifNull": ["$details.visit_id", "$_id"]},
                                 "day": {"$dateToString": {"format": "%Y-%m-%d", "date": "$executed_at"}}},
                         "kyyap": {"$max": "$_kyyap_eff"}, "n": {"$sum": 1}}},

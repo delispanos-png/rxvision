@@ -271,6 +271,12 @@ class IngestionEngine:
         if item_docs:
             await self.db["prescription_items"].insert_many(item_docs)  # tenant-ok: item_docs carry tenant_id
 
+        # ΚΥΥΑΠ: η κάλυψη είναι ΑΝΑ ΣΥΝΤΑΓΗ και γράφεται σε κάθε φάση. Ξαναμοίρασέ τη σε ΟΛΕΣ τις
+        # εκτελέσεις της — όταν έρθει η φάση 2, το μερίδιο της φάσης 1 μικραίνει.
+        if (ex.details or {}).get("kyyap_covered"):
+            from app.services.ingestion.kyyap_split import resync_visit
+            await resync_visit(self.db, self.tenant_id, ex.external_id)
+
         await self._maybe_record_flu_vaccine(ex, patient_ref, doc["status"])
         await self._post_process(ex, exec_id, patient_ref, amount_total, next_open,
                                  item_docs, count_patient=is_new)
