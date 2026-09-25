@@ -252,104 +252,20 @@ class CareAccountRepository(BaseRepository):
     async def cycle(self, gid: str, *, days: int = 30) -> dict | None:
         """Τι πρέπει να έχει έτοιμο το φαρμακείο για αυτή τη δομή.
 
-        Τρεις λίστες: τι ΑΝΟΙΓΕΙ ανά τρόφιμο, τι να ΠΑΡΑΓΓΕΙΛΕΙ (αθροισμένο ανά σκεύασμα), και
-        τι ΕΚΚΡΕΜΕΙ (ανακτήσιμα ανεκτέλεστα + ανοιχτά δανεικά).
+        Η λογική ζει στο `services/group_lists.py` — ΤΗΝ ΙΔΙΑ χρησιμοποιεί και η οθόνη των
+        Οικογενειών. Δύο αντίγραφα θα απαντούσαν με διαφορετικούς κανόνες στο ίδιο ερώτημα.
         """
+        from app.services import group_lists
         g = await self._group(gid)
         if not g:
             return None
         wins = await self._member_windows(g)
         ids = [w["_id"] for w in wins]
-        name_by = {str(w["_id"]): w["name"] for w in wins}
+        names = {str(w["_id"]): w["name"] for w in wins}
+        lists = await group_lists.everything(self._db, self.tenant_id, ids, names, days=days)
         dead = {str(w["_id"]) for w in wins if w["deceased"]}
-        if not ids:
-            return {"group": {"id": str(g["_id"]), "name": g.get("name")}, "horizon_days": days,
-                    "opening": [], "order": [], "pending": []}
-
-        now = _now()
-        horizon = now + timedelta(days=max(1, days))
-        ex = self._db["prescription_executions"]
-
-        # 1) ΤΙ ΑΝΟΙΓΕΙ — από το `next_open_date`, ΠΟΤΕ από `repeat_total − repeat_current`
-        #    (εκείνο είναι ΘΕΣΗ στην αλυσίδα, όχι πλήθος εκτελέσεων).
-        opening = []
-        async for r in ex.aggregate([
-                {"$match": {"tenant_id": self.tenant_id, "patient_ref": {"$in": ids},
-                            "status": {"$ne": "cancelled"},
-                            "next_open_date": {"$gte": now, "$lt": horizon}}},
-                {"$lookup": {"from": "prescription_items", "localField": "_id",
-                             "foreignField": "execution_id", "as": "it"}},
-                {"$lookup": {"from": "products", "localField": "it.product_id",
-                             "foreignField": "_id", "as": "pr"}},
-                {"$project": {"patient_ref": 1, "external_id": 1, "next_open_date": 1,
-                              "names": "$pr.name",
-                              "qty": {"$sum": "$it.quantity"}}},
-                {"$sort": {"next_open_date": 1}}, {"$limit": 500}]):
-            pid = str(r["patient_ref"])
-            opening.append({"patient_id": pid, "name": name_by.get(pid, "—"),
-                            "deceased": pid in dead,
-                            "barcode": str(r.get("external_id") or "").split(":")[0],
-                            "opens_at": r.get("next_open_date"),
-                            "items": [n for n in (r.get("names") or []) if n][:6],
-                            "qty": r.get("qty") or 0})
-
-        # 2) ΤΙ ΝΑ ΠΑΡΑΓΓΕΙΛΩ — τα ίδια, αθροισμένα ανά σκεύασμα
-        order: dict[str, dict] = {}
-        async for r in ex.aggregate([
-                {"$match": {"tenant_id": self.tenant_id, "patient_ref": {"$in": ids},
-                            "status": {"$ne": "cancelled"},
-                            "next_open_date": {"$gte": now, "$lt": horizon}}},
-                {"$lookup": {"from": "prescription_items", "localField": "_id",
-                             "foreignField": "execution_id", "as": "it"}},
-                {"$unwind": "$it"},
-                {"$group": {"_id": "$it.product_id", "qty": {"$sum": "$it.quantity"},
-                            "people": {"$addToSet": "$patient_ref"}}},
-                {"$lookup": {"from": "products", "localField": "_id",
-                             "foreignField": "_id", "as": "p"}},
-                {"$project": {"qty": 1, "people": {"$size": "$people"},
-                              "name": {"$first": "$p.name"},
-                              "barcode": {"$first": "$p.barcode"}}},
-                {"$sort": {"qty": -1}}, {"$limit": 200}]):
-            order[str(r["_id"])] = {"name": r.get("name") or "—", "barcode": r.get("barcode"),
-                                    "qty": r.get("qty") or 0, "people": r.get("people") or 0}
-
-        # 3) ΤΙ ΕΚΚΡΕΜΕΙ — ΜΟΝΟ τα ανακτήσιμα, και μόνο το ΥΠΟΛΟΙΠΟ των τεμαχίων
-        pending = []
-        async for r in ex.aggregate([
-                {"$match": {"tenant_id": self.tenant_id, "patient_ref": {"$in": ids},
-                            "status": {"$ne": "cancelled"}, **recoverable.mongo_filter()}},
-                {"$lookup": {"from": "prescription_items", "localField": "_id",
-                             "foreignField": "execution_id", "as": "it"}},
-                {"$unwind": "$it"},
-                {"$set": {"_left": {"$max": [0, {"$subtract": [
-                    "$it.quantity", {"$ifNull": ["$it.executed_qty", 0]}]}]}}},
-                {"$match": {"_left": {"$gt": 0}}},
-                {"$lookup": {"from": "products", "localField": "it.product_id",
-                             "foreignField": "_id", "as": "p"}},
-                {"$group": {"_id": {"pr": "$patient_ref", "ex": "$external_id"},
-                            "valid_until": {"$first": "$valid_until"},
-                            "value": {"$sum": {"$multiply": ["$it.retail_price", "$_left"]}},
-                            "items": {"$push": {"name": {"$first": "$p.name"}, "left": "$_left"}}}},
-                {"$sort": {"valid_until": 1}}, {"$limit": 200}]):
-            pid = str(r["_id"]["pr"])
-            pending.append({"patient_id": pid, "name": name_by.get(pid, "—"),
-                            "barcode": str(r["_id"]["ex"] or "").split(":")[0],
-                            "valid_until": r.get("valid_until"), "value": r.get("value") or 0,
-                            "items": r.get("items") or []})
-
-        # ανοιχτά δανεικά ανά τρόφιμο (το `patient_ref` εκεί άλλοτε ObjectId κι άλλοτε κείμενο)
-        loans = []
-        strs = [str(i) for i in ids]
-        async for d in self._db["advance_dispensings"].find(
-                {"tenant_id": self.tenant_id, "status": "open",
-                 "patient_ref": {"$in": ids + strs}}).sort("created_at", 1).limit(200):
-            pid = str(d.get("patient_ref"))
-            loans.append({"patient_id": pid, "name": name_by.get(pid, d.get("patient_name") or "—"),
-                          "created_at": d.get("created_at"),
-                          "items": [i.get("name") for i in (d.get("items") or []) if i.get("name")]})
-
+        for o in lists["opening"]:
+            o["deceased"] = o["patient_id"] in dead
         return {"group": {"id": str(g["_id"]), "name": g.get("name"),
                           "care_type": g.get("care_type")},
-                "horizon_days": days, "opening": opening,
-                "order": sorted(order.values(), key=lambda x: -x["qty"]),
-                "pending": pending, "loans": loans}
+                "horizon_days": days, **lists}

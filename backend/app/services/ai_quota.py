@@ -130,6 +130,11 @@ async def status_for(db, tenant_id: str) -> dict:
     wallet_cents = await ai_credits.balance(tenant_id)
     return {"included": included, "period": period, "used": used,
             "remaining": max(0, included - used), "credits": wallet_cents,
+            # ΔΥΟ ΔΙΑΦΟΡΕΤΙΚΕΣ ΠΕΡΙΟΔΟΙ, και δεν επιτρέπεται να μπερδεύονται: το `period` αφορά το
+            # όριο ΕΡΩΤΗΣΕΩΝ (ημερήσιο), το `budget_period` τον προϋπολογισμό σε € (πάντα μηνιαίος).
+            # Όποιος έδειχνε το ποσό με την ετικέτα του `period` έγραφε «5,00 €/μέρα» για μηνιαίο
+            # όριο — 30× λάθος, και στην οθόνη του ΠΕΛΑΤΗ. (Διόρθωση 25/09/2026.)
+            "budget_period": b_period,
             "budget_cents": budget_cents, "spent_cents": round(spent_cents, 2),
             "budget_remaining_cents": round(max(0.0, budget_cents - spent_cents), 2),
             "wallet_cents": wallet_cents}

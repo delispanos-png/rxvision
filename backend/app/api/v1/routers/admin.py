@@ -3279,6 +3279,10 @@ async def ai_limits(_: PlatformContext = Depends(get_platform_admin)):
             "ai_used_local": bd["local"],  # σερβιρίστηκαν από την τοπική βάση (μόνο για εμάς)
             # ΠΡΑΓΜΑΤΙΚΟ κόστος περιόδου + προϋπολογισμός (σε λεπτά €) — η αλήθεια για την έκθεσή μας
             "budget_cents": _bgt, "spent_cents": round(_spent, 2), "priced_questions": _priced,
+            # ΞΕΧΩΡΙΣΤΗ περίοδος: το `period` παραπάνω αφορά το όριο ΕΡΩΤΗΣΕΩΝ (ημερήσιο), ενώ ο
+            # προϋπολογισμός σε € είναι ΠΑΝΤΑ μηνιαίος. Το UI τα έδειχνε με την ίδια ετικέτα και
+            # έγραφε «5,00 €/μέρα» για μηνιαίο ποσό — 30× μεγαλύτερη έκθεση απ' ό,τι ισχύει.
+            "budget_period": _bp,
             "card_on_file": await billing_service.card_on_file(tid),
         })
     rows.sort(key=lambda r: (-(r["used"] or 0), (r["name"] or "").lower()))

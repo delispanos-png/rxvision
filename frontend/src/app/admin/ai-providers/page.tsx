@@ -10,7 +10,7 @@ type Integrations = {
   drugbank?: { api_key_set: boolean; enabled: boolean; region: string };
 };
 // Στη γλώσσα των ΠΑΚΕΤΩΝ: κάθε φαρμακείο δικαιούται `included` ερωτήσεις (ανά period) από το πακέτο του.
-type AiTenant = { tenant_id: string; name?: string | null; plan?: string | null; plan_name?: string | null; included: number; period: string; used: number; remaining: number; credits: number; ai_used_today: number; ai_used_ai: number; ai_used_local: number; card_on_file: boolean; budget_cents?: number; spent_cents?: number; priced_questions?: number };
+type AiTenant = { tenant_id: string; name?: string | null; plan?: string | null; plan_name?: string | null; included: number; period: string; used: number; remaining: number; credits: number; ai_used_today: number; ai_used_ai: number; ai_used_local: number; card_on_file: boolean; budget_cents?: number; budget_period?: string; spent_cents?: number; priced_questions?: number };
 type ModelPrice = { in: number; out: number; cin: number };
 type AiCost = {
   margin_pct: number; models: Record<string, ModelPrice>;
@@ -242,7 +242,7 @@ export default function AiProvidersPage() {
                     <td className="px-3 py-2 text-xs text-slate-600">{t.plan_name || t.plan || <span className="text-slate-300">—</span>}</td>
                     <td className="px-3 py-2 text-right tabular-nums font-semibold text-slate-700">
                       {bgt > 0 ? `${bgt.toFixed(2)}€` : <span className="text-rose-500">χωρίς δωρεάν</span>}
-                      <span className="text-[11px] font-normal text-slate-400">{periodLabel(t.period)}</span>
+                      <span className="text-[11px] font-normal text-slate-400">{periodLabel(t.budget_period ?? "month")}</span>
                       {t.credits > 0 && <div className="text-[10px] font-normal text-violet-600">+{(t.credits / 100).toFixed(2)}€ προπληρωμένα</div>}
                     </td>
                     <td className="px-3 py-2 text-right tabular-nums text-slate-600">

@@ -41,6 +41,12 @@ function Inner() {
   const [term, setTerm] = useState("");
   const [hits, setHits] = useState<Hit[]>([]);
   const [who, setWho] = useState<Hit | null>(null);
+  // ΔΕΥΤΕΡΗ, ΞΕΧΩΡΙΣΤΗ αναζήτηση: ποιον εξουσιοδοτεί. Η πρώτη εκδοχή ρωτούσε με prompt και
+  // κρατούσε ΤΟ ΠΡΩΤΟ αποτέλεσμα — δηλαδή μάντευε άνθρωπο. Σε θέμα πρόσβασης σε δεδομένα
+  // υγείας, ο φαρμακοποιός πρέπει να ΔΕΙ και να ΔΙΑΛΕΞΕΙ ρητά.
+  const [adding, setAdding] = useState(false);
+  const [gTerm, setGTerm] = useState("");
+  const [gHits, setGHits] = useState<Hit[]>([]);
 
   useEffect(() => {
     if (term.trim().length < 2) { setHits([]); return; }
@@ -50,6 +56,16 @@ function Inner() {
     }, 300);
     return () => clearTimeout(id);
   }, [term]);
+
+  useEffect(() => {
+    if (gTerm.trim().length < 2) { setGHits([]); return; }
+    const id = setTimeout(() => {
+      api<{ items: Hit[] }>(`/patient-access/patients?q=${encodeURIComponent(gTerm.trim())}`)
+        .then((r) => setGHits(r.items.filter((h) => h.patient_id !== who?.patient_id)))
+        .catch(() => setGHits([]));
+    }, 300);
+    return () => clearTimeout(id);
+  }, [gTerm, who]);
 
   const access = useQuery({
     queryKey: ["access", who?.patient_id],
@@ -67,15 +83,8 @@ function Inner() {
     qc.invalidateQueries({ queryKey: ["views"] });
   };
 
-  async function addGrant() {
+  async function grantTo(target: Hit) {
     if (!who) return;
-    const q = await appPrompt(
-      t(`Ποιον εξουσιοδοτεί ο/η ${who.name}; Γράψε όνομα ή ΑΜΚΑ.`,
-        `Whom does ${who.name} authorise? Type a name or AMKA.`));
-    if (!q?.trim()) return;
-    const r = await api<{ items: Hit[] }>(`/patient-access/patients?q=${encodeURIComponent(q.trim())}`);
-    if (!r.items.length) { await appAlert(t("Δεν βρέθηκε.", "Not found.")); return; }
-    const target = r.items[0];
     if (!(await appConfirm(
       t(`Ο/Η ${target.name} θα μπορεί να βλέπει την καρτέλα του/της ${who.name} στην πύλη. Συνεχίζουμε;`,
         `${target.name} will be able to view ${who.name} in the portal. Continue?`)))) return;
@@ -97,6 +106,7 @@ function Inner() {
         : t("Δεν καταχωρήθηκε.", "Not saved."));
       return;
     }
+    setAdding(false); setGTerm(""); setGHits([]);
     reload();
   }
 
@@ -153,19 +163,58 @@ function Inner() {
             <UserRound className="h-5 w-5 text-slate-400" />
             <span className="text-lg font-semibold text-slate-800 dark:text-slate-100">{who.name}</span>
             <span className="text-xs text-slate-400">{who.amka}</span>
-            <button onClick={addGrant}
+            <button onClick={() => { setAdding((v) => !v); setGTerm(""); setGHits([]); }}
               className="ml-auto inline-flex items-center gap-2 rounded-xl bg-rose-600 px-3 py-2 text-sm font-semibold text-white hover:bg-rose-700">
               <Plus className="h-4 w-4" /> {t("Νέα εξουσιοδότηση", "New authorisation")}
             </button>
           </div>
 
+          {adding && (
+            <div className="rounded-2xl border border-rose-200 bg-rose-50/40 p-4 dark:border-rose-900 dark:bg-rose-950/10">
+              <p className="mb-2 text-sm font-medium text-slate-700 dark:text-slate-200">
+                {t(`Ποιον εξουσιοδοτεί ο/η ${who.name} να βλέπει την καρτέλα του/της;`,
+                   `Whom does ${who.name} authorise to view their record?`)}
+              </p>
+              <div className="relative">
+                <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
+                <input autoFocus value={gTerm} onChange={(e) => setGTerm(e.target.value)}
+                  placeholder={t("Όνομα ή ΑΜΚΑ…", "Name or AMKA…")}
+                  className="w-full rounded-xl border border-slate-200 py-2 pl-9 pr-3 text-sm dark:border-slate-700 dark:bg-slate-800" />
+              </div>
+              {gTerm.trim().length >= 2 && gHits.length === 0 && (
+                <p className="mt-2 text-xs text-slate-500">
+                  {t("Δεν βρέθηκε ασφαλισμένος. Πρέπει να υπάρχει ήδη στο φαρμακείο σου.",
+                     "No patient found. They must already exist in your pharmacy.")}
+                </p>
+              )}
+              {gHits.length > 0 && (
+                <ul className="mt-2 max-h-56 divide-y divide-slate-100 overflow-auto rounded-xl border border-slate-200 bg-white dark:divide-slate-800 dark:border-slate-700 dark:bg-slate-900">
+                  {gHits.map((h) => (
+                    <li key={h.patient_id}>
+                      <button onClick={() => grantTo(h)}
+                        className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-slate-50 dark:hover:bg-slate-800">
+                        <ShieldCheck className="h-4 w-4 shrink-0 text-emerald-500" />
+                        <span className="truncate">{h.name || "—"}</span>
+                        <span className="ml-auto shrink-0 text-xs text-slate-400">{h.amka || ""}</span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+
           <Panel title={t("Βλέπει την καρτέλα του/της", "Can view this person")}
                  icon={<KeyRound className="h-4 w-4 text-slate-400" />}
                  hint={t("Όποιος εμφανίζεται εδώ μπορεί να δει τις συνταγές του/της μέσα από την πύλη.",
                          "Anyone listed here can see their prescriptions in the portal.")}>
-            {!access.data?.granted_to_me.length ? (
+            {/* ΠΡΟΣΟΧΗ ΣΤΗ ΦΟΡΑ: «ποιος βλέπει ΑΥΤΟΝ» = οι εξουσιοδοτήσεις που έδωσε Ο ΙΔΙΟΣ
+                (`granted_by_me`, με το όνομα του εξουσιοδοτημένου). Το `granted_to_me` είναι το
+                αντίθετο — ποιων τις καρτέλες βλέπει αυτός. Η σύγχυση των δύο έδειχνε τη λίστα
+                πάντα άδεια, ακριβώς μετά από καταχώριση. */}
+            {!access.data?.granted_by_me.length ? (
               <Empty text={t("Κανείς — μόνο ο ίδιος.", "Nobody — only themselves.")} />
-            ) : access.data.granted_to_me.map((a) => (
+            ) : access.data.granted_by_me.map((a) => (
               <li key={a.id} className="flex flex-wrap items-center gap-2 px-4 py-2 text-sm">
                 <ShieldCheck className="h-4 w-4 text-emerald-500" />
                 <span className="font-medium text-slate-700 dark:text-slate-200">{a.name}</span>

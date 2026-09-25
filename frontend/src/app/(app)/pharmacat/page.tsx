@@ -28,7 +28,7 @@ type Result = {
   substances: Substance[]; non_drug_advice: string[]; interactions: Interaction[];
   safety?: Safety; referral?: Referral; products?: ProductGroup[];
 };
-type Status = { configured: boolean; enabled: boolean; model: string; ai_used?: number; ai_included?: number; ai_period?: string; ai_budget_cents?: number; ai_spent_cents?: number; ai_wallet_cents?: number };
+type Status = { configured: boolean; enabled: boolean; model: string; ai_used?: number; ai_included?: number; ai_period?: string; ai_budget_period?: string; ai_budget_cents?: number; ai_spent_cents?: number; ai_wallet_cents?: number };
 type Turn = { role: "user" | "assistant"; content: string; result?: Result };
 
 const SYMPTOMS: [string, string][] = [
@@ -174,7 +174,7 @@ function PharmaCatInner() {
           <p className="text-xs text-slate-500">{t("Επιστημονικός βοηθός φαρμακοποιού (CDSS) — δεν διαγιγνώσκει, δεν αντικαθιστά ιατρό.", "Pharmacist's scientific assistant (CDSS) — not diagnosis, not a doctor replacement.")}</p>
         </div>
         {status.data?.configured && status.data?.enabled && (
-          <Tooltip label={t("Δωρεάν AI του πακέτου σου σε ευρώ (+ προπληρωμένο υπόλοιπο)", "Your plan's free AI budget (+ prepaid balance)")}><span className="hidden shrink-0 rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-medium text-slate-500 sm:inline dark:bg-slate-800">{((status.data.ai_spent_cents ?? 0) / 100).toFixed(2)}€ / {((status.data.ai_budget_cents ?? 0) / 100).toFixed(2)}€{(status.data.ai_wallet_cents ?? 0) > 0 ? ` + ${((status.data.ai_wallet_cents ?? 0) / 100).toFixed(2)}€` : ""} {status.data.ai_period === "month" ? t("αυτόν τον μήνα", "this month") : status.data.ai_period === "year" ? t("φέτος", "this year") : status.data.ai_period === "trial" ? t("δοκιμαστική", "trial") : t("σήμερα", "today")}</span></Tooltip>
+          <Tooltip label={t("Δωρεάν AI του πακέτου σου σε ευρώ (+ προπληρωμένο υπόλοιπο)", "Your plan's free AI budget (+ prepaid balance)")}><span className="hidden shrink-0 rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-medium text-slate-500 sm:inline dark:bg-slate-800">{((status.data.ai_spent_cents ?? 0) / 100).toFixed(2)}€ / {((status.data.ai_budget_cents ?? 0) / 100).toFixed(2)}€{(status.data.ai_wallet_cents ?? 0) > 0 ? ` + ${((status.data.ai_wallet_cents ?? 0) / 100).toFixed(2)}€` : ""} {(status.data.ai_budget_period ?? "month") === "month" ? t("αυτόν τον μήνα", "this month") : status.data.ai_budget_period === "year" ? t("φέτος", "this year") : status.data.ai_budget_period === "trial" ? t("δοκιμαστική", "trial") : t("σήμερα", "today")}</span></Tooltip>
         )}
         {turns.length > 0 && (
           <Tooltip label={t("Καθαρισμός συνομιλίας", "Clear conversation")}><button onClick={() => { setTurns([]); setInput(""); setMed(null); }}
@@ -226,7 +226,7 @@ function PharmaCatInner() {
                   {turn.result.error === "trial_exhausted"
                     ? <><div className="font-semibold">✋ {t(`Έφτασες το όριο των ${turn.result.limit ?? 30} δοκιμαστικών ερωτήσεων AI`, `You've reached the ${turn.result.limit ?? 30} trial AI questions limit`)}.</div><div className="mt-0.5 text-xs">{t("Αναβάθμισε σε πληρωμένο πακέτο για περισσότερες ερωτήσεις (διατροφή, PharmaCat & Copilot).", "Upgrade to a paid plan for more questions (nutrition, PharmaCat & Copilot).")}</div></>
                     : ["card_required", "quota_exceeded", "daily_limit"].includes(turn.result.error || "")
-                    ? <><div className="font-semibold">✋ {t(`Εξάντλησες το δωρεάν όριο AI του πακέτου σου${status.data?.ai_period === "month" ? " αυτόν τον μήνα" : status.data?.ai_period === "year" ? " φέτος" : " σήμερα"}`, `You've used your plan's free AI allowance${status.data?.ai_period === "month" ? " this month" : status.data?.ai_period === "year" ? " this year" : " today"}`)}.</div><div className="mt-0.5 text-xs">{t("Αγόρασε AI credits από τις", "Buy AI credits from")} <a href="/settings/billing" className="font-semibold underline">{t("Ρυθμίσεις → Συνδρομή", "Settings → Subscription")}</a> {t("και συνέχισε — χρεώνεσαι μόνο όσο ρωτάς.", "and keep going — you're charged only for what you ask.")}</div></>
+                    ? <><div className="font-semibold">✋ {t(`Εξάντλησες το δωρεάν όριο AI του πακέτου σου${(status.data?.ai_budget_period ?? "month") === "month" ? " αυτόν τον μήνα" : status.data?.ai_budget_period === "year" ? " φέτος" : " σήμερα"}`, `You've used your plan's free AI allowance${(status.data?.ai_budget_period ?? "month") === "month" ? " this month" : status.data?.ai_budget_period === "year" ? " this year" : " today"}`)}.</div><div className="mt-0.5 text-xs">{t("Αγόρασε AI credits από τις", "Buy AI credits from")} <a href="/settings/billing" className="font-semibold underline">{t("Ρυθμίσεις → Συνδρομή", "Settings → Subscription")}</a> {t("και συνέχισε — χρεώνεσαι μόνο όσο ρωτάς.", "and keep going — you're charged only for what you ask.")}</div></>
                     : turn.result.error === "disabled" ? t("Η υπηρεσία είναι απενεργοποιημένη.", "The service is disabled.")
                     : turn.result.error === "not_configured" ? t("Μη ρυθμισμένο (λείπει το API key).", "Not configured (missing API key).")
                     : t("Σφάλμα επικοινωνίας — δοκιμάστε ξανά.", "Communication error — try again.")}

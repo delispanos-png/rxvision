@@ -5,7 +5,7 @@
 import {
   Activity, BarChart3, Boxes, Warehouse, Layers, CalendarClock, ChevronRight, LayoutDashboard,
   Mail, Megaphone, Salad, PackageSearch, Settings, Sparkles, Stethoscope, TrendingUp, Target, Users,
-  Brain, ShieldCheck, Tags, Syringe, Bot, Gift, BookOpen, ScrollText, Truck, Lock, X, UserPlus, Ticket, SlidersHorizontal, Heart, FileText, MessageSquare, PackageCheck, Receipt, ArrowRightLeft, Compass, Handshake, Inbox, Send, type LucideIcon, RefreshCw } from "lucide-react";
+  Brain, ShieldCheck, Tags, Syringe, Bot, Gift, BookOpen, ScrollText, Truck, Lock, X, UserPlus, Ticket, SlidersHorizontal, Heart, FileText, MessageSquare, PackageCheck, Receipt, ArrowRightLeft, Compass, Handshake, Home, Inbox, Send, type LucideIcon, RefreshCw } from "lucide-react";
 
 // A leaf (direct link). `module` gates visibility (shown only when enabled/trial).
 export type Leaf = { href: string; label: string; en: string; module?: string | string[] };
@@ -42,7 +42,7 @@ export const NAV_GROUPS: Group[] = [
       { href: "/future#forecast", label: "Πρόβλεψη κάλυψης", en: "Coverage forecast" },
     ] },
     { label: "Ασφαλισμένοι", en: "Patients", icon: Users,
-      module: ["patient_analytics", "advance_dispensing", "family_groups", "care_homes", "patient_portal"], children: [
+      module: ["patient_analytics", "advance_dispensing", "family_groups", "patient_portal"], children: [
       { href: "/patients#list", label: "Λίστα", en: "List" },
       { href: "/patients#kpi", label: "Δείκτες", en: "Indicators" },
       { href: "/patients/verify-contacts", label: "Επιβεβαίωση στοιχείων", en: "Confirm contacts" },
@@ -51,11 +51,14 @@ export const NAV_GROUPS: Group[] = [
         module: "advance_dispensing" },
       { href: "/patients/families", label: "Οικογένειες", en: "Families",
         module: "family_groups" },
-      { href: "/patients/care", label: "Δομές Φροντίδας", en: "Care structures",
-        module: "care_homes" },
       { href: "/patients/access", label: "Ποιος βλέπει ποιον", en: "Who sees whom",
         module: "patient_portal" },
     ] },
+    // ΔΙΠΛΑ στους Ασφαλισμένους, ΟΧΙ από κάτω τους: η δομή φροντίδας δεν είναι «ένας ακόμη
+    // ασφαλισμένος» — είναι πελάτης-φορέας, με δικό του κύκλο ετοιμασίας και δικό του
+    // λογαριασμό. Ο φαρμακοποιός την ανοίγει για ΑΛΛΟΝ λόγο απ' ό,τι την καρτέλα ανθρώπου.
+    { label: "Δομές Φροντίδας", en: "Care Structures", icon: Home, href: "/care",
+      module: "care_homes" },
     { label: "Ιατροί", en: "Doctors", icon: Stethoscope, module: "doctor_analytics", children: [
       { href: "/doctors#list", label: "Λίστα", en: "List" },
       { href: "/doctors#kpi", label: "Δείκτες", en: "Indicators" },

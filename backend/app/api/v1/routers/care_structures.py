@@ -44,8 +44,11 @@ class GroupIn(BaseModel):
 class CareSettings(BaseModel):
     care_type: str | None = None
     cycle_days: int | None = None
-    billing: dict | None = None
     charges_from: str | None = None      # YYYY-MM-DD — από πότε μετράνε οι χρεώσεις
+    # ΣΤΟΙΧΕΙΑ ΕΠΙΚΟΙΝΩΝΙΑΣ: η δομή είναι ΠΕΛΑΤΗΣ, όχι ασθενής. Ο φαρμακοποιός πρέπει να ξέρει
+    # ποιον παίρνει τηλέφωνο, πού παραδίδει και ποιος υπογράφει — χωρίς να ψάχνει σε χαρτάκια.
+    billing: dict | None = None          # {afm, address, phone, email, contact_name,
+                                         #  contact_phone, hours, authorization, authorized_at, notes}
 
 
 class MemberIn(BaseModel):
@@ -75,7 +78,8 @@ def _date(s: str | None) -> datetime | None:
 @router.get("")
 async def list_structures(q: str | None = Query(None),
                           ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
-    return {"items": await _groups(ctx).list_groups(kind=CARE, q=q), "care_types": CARE_TYPES}
+    r = await _groups(ctx).list_groups(kind=CARE, q=q, limit=200)
+    return {**r, "care_types": CARE_TYPES}
 
 
 @router.get("/portfolio")
@@ -169,9 +173,140 @@ async def delete_entry(gid: str, eid: str,
     return await _acc(ctx).delete_entry(gid, eid)
 
 
+# ── η λίστα ΠΡΟΣ ΤΗ ΔΟΜΗ ──────────────────────────────────────────────────────────────
+def _owed_html(name: str, rows: list[dict], days: int) -> str:
+    """Το κείμενο που φεύγει στη δομή. ΟΧΙ «φέρτε μας συνταγές» — η δομή δεν εκδίδει συνταγές.
+
+    Στην Ελλάδα τη συνταγή τη γράφει ο ΓΙΑΤΡΟΣ. Η δομή πρέπει να φροντίσει να εκδοθεί και να
+    φτάσει σε εμάς. Αυτό λέει το κείμενο, αλλιώς ζητάμε κάτι που δεν μπορούν να κάνουν.
+    """
+    def rx(r: dict) -> str:
+        tag = ("<span style='color:#0a7'>άυλη — δεν χρειάζεται χαρτί</span>"
+               if r.get("intangible") else "<span style='color:#a60'>έντυπη</span>")
+        d = r.get("opens_at")
+        when = d.strftime("%d/%m/%Y") if hasattr(d, "strftime") else "—"
+        meds = ", ".join(r.get("items") or [])[:160]
+        return (f"<li><b>{r['barcode']}</b> — ανοίγει {when} · {tag}"
+                + (f"<br><span style='color:#666;font-size:12px'>{meds}</span>" if meds else "")
+                + "</li>")
+    body = "".join(
+        f"<h3 style='margin:18px 0 4px'>{b['name']}</h3><ul style='margin:0;padding-left:18px'>"
+        + "".join(rx(r) for r in b["rx"]) + "</ul>" for b in rows)
+    return (f"<div style='font-family:system-ui,sans-serif;font-size:14px;color:#222'>"
+            f"<h2 style='margin:0 0 6px'>Αγωγές που ανανεώνονται — {name}</h2>"
+            f"<p style='color:#555;margin:0 0 4px'>Οι παρακάτω αγωγές ανοίγουν μέσα στις επόμενες "
+            f"{days} ημέρες. Για να τις έχουμε έτοιμες, χρειάζεται να φροντίσετε να εκδοθούν από "
+            f"τον θεράποντα ιατρό και να φτάσουν σε εμάς.</p>"
+            f"<p style='color:#555;margin:0 0 10px'>Όπου αναφέρεται «άυλη», δεν χρειάζεται να "
+            f"φέρετε χαρτί — αρκεί ο κωδικός.</p>{body}</div>")
+
+
+@router.get("/{gid}/owed")
+async def owed(gid: str, days: int = Query(30, ge=1, le=365),
+               ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+    """ΑΝΑ ΤΡΟΦΙΜΟ: ποια barcode πρέπει να φτάσουν σε εμάς. Αυτό στέλνεται στη δομή."""
+    from app.services import group_lists
+    cy = await _acc(ctx).cycle(gid, days=days)
+    if not cy:
+        return {"error": "not_found"}
+    rows = group_lists.by_person(cy.get("opening") or [])
+    g = await _groups(ctx).find_one({"_id": __import__("bson").ObjectId(gid)})
+    return {"group": cy["group"], "days": days, "people": rows,
+            "email": ((g or {}).get("billing") or {}).get("email"),
+            "contact": ((g or {}).get("billing") or {}).get("contact_name"),
+            "html": _owed_html(cy["group"].get("name") or "", rows, days)}
+
+
+@router.post("/{gid}/owed/send")
+async def owed_send(gid: str, days: int = Query(30, ge=1, le=365),
+                    to: str | None = Query(None),
+                    ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+    """Αποστολή της λίστας με email στη δομή."""
+    from app.services import group_lists
+    from app.services.mailer import send_email
+    cy = await _acc(ctx).cycle(gid, days=days)
+    if not cy:
+        return {"ok": False, "error": "not_found"}
+    g = await _groups(ctx).find_one({"_id": __import__("bson").ObjectId(gid)})
+    addr = (to or "").strip() or ((g or {}).get("billing") or {}).get("email")
+    if not addr:
+        return {"ok": False, "error": "no_email"}
+    rows = group_lists.by_person(cy.get("opening") or [])
+    if not rows:
+        return {"ok": False, "error": "empty"}
+    name = cy["group"].get("name") or ""
+    try:
+        await send_email(addr, f"Αγωγές που ανανεώνονται — {name}",
+                         _owed_html(name, rows, days))
+    except Exception:                      # noqa: BLE001 — το SMTP δεν ρίχνει την οθόνη
+        return {"ok": False, "error": "send_failed"}
+    return {"ok": True, "to": addr, "people": len(rows)}
+
+
+# ── φύλλο οδηγιών λήψης ───────────────────────────────────────────────────────────────
+def _instr_html(name: str, rows: list[dict]) -> str:
+    def person(b: dict) -> str:
+        meds = "".join(
+            f"<tr><td style='padding:4px 10px 4px 0;border-bottom:1px solid #eee'>{m['name']}</td>"
+            f"<td style='padding:4px 0;border-bottom:1px solid #eee;color:#444'>{m['dosage'] or '—'}</td></tr>"
+            for m in b["meds"])
+        return (f"<h3 style='margin:20px 0 6px'>{b['name']}</h3>"
+                f"<table style='border-collapse:collapse;width:100%;font-size:13px'>{meds}</table>")
+    return (f"<div style='font-family:system-ui,sans-serif;font-size:14px;color:#222'>"
+            f"<h2 style='margin:0 0 6px'>Οδηγίες λήψης — {name}</h2>"
+            f"<p style='color:#555;margin:0 0 4px'>Η αγωγή κάθε τροφίμου όπως την έχει ορίσει ο "
+            f"θεράπων ιατρός, με βάση τις εκτελέσεις του τελευταίου εξαμήνου.</p>"
+            f"<p style='color:#a00;margin:0 0 10px;font-size:12px'>Σε κάθε αλλαγή αγωγής από τον "
+            f"ιατρό, το φύλλο πρέπει να αντικατασταθεί. Δεν υποκαθιστά ιατρική οδηγία.</p>"
+            + "".join(person(b) for b in rows) + "</div>")
+
+
+async def _instr_rows(ctx: TenantContext, gid: str) -> tuple[dict | None, list[dict]]:
+    from app.services import group_lists
+    acc = _acc(ctx)
+    g = await acc._group(gid)
+    if not g:
+        return None, []
+    wins = await acc._member_windows(g)
+    names = {str(w["_id"]): w["name"] for w in wins}
+    rows = await group_lists.instructions(acc._db, ctx.tenant_id,
+                                          [w["_id"] for w in wins], names)
+    return g, rows
+
+
+@router.get("/{gid}/instructions")
+async def instructions(gid: str, ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+    """Τι παίρνει ο κάθε τρόφιμος και ΠΩΣ — για το προσωπικό της δομής."""
+    g, rows = await _instr_rows(ctx, gid)
+    if not g:
+        return {"error": "not_found"}
+    return {"people": rows, "email": ((g.get("billing") or {}).get("email")),
+            "html": _instr_html(g.get("name") or "", rows)}
+
+
+@router.post("/{gid}/instructions/send")
+async def instructions_send(gid: str, to: str | None = Query(None),
+                            ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+    from app.services.mailer import send_email
+    g, rows = await _instr_rows(ctx, gid)
+    if not g:
+        return {"ok": False, "error": "not_found"}
+    addr = (to or "").strip() or ((g.get("billing") or {}).get("email"))
+    if not addr:
+        return {"ok": False, "error": "no_email"}
+    if not rows:
+        return {"ok": False, "error": "empty"}
+    name = g.get("name") or ""
+    try:
+        await send_email(addr, f"Οδηγίες λήψης — {name}", _instr_html(name, rows))
+    except Exception:                      # noqa: BLE001
+        return {"ok": False, "error": "send_failed"}
+    return {"ok": True, "to": addr, "people": len(rows)}
+
+
 # ── κύκλος ετοιμασίας ─────────────────────────────────────────────────────────────────
 @router.get("/{gid}/cycle")
-async def cycle(gid: str, days: int = Query(30, ge=1, le=120),
+async def cycle(gid: str, days: int = Query(30, ge=1, le=365),
                 ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
     """Τι ανοίγει, τι να παραγγείλεις, τι εκκρεμεί — για τον επόμενο κύκλο."""
     d = await _acc(ctx).cycle(gid, days=days)

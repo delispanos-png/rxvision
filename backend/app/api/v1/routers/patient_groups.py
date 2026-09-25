@@ -55,9 +55,11 @@ class MemberPatch(BaseModel):
 @router.get("")
 async def list_groups(q: str | None = Query(None),
                       include_inactive: bool = Query(False),
+                      skip: int = Query(0, ge=0), limit: int = Query(50, ge=1, le=200),
                       ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
-    return {"items": await _repo(ctx).list_groups(kind=FAMILY, q=q,
-                                                  include_inactive=include_inactive)}
+    """Η αναζήτηση πιάνει όνομα οικογένειας, ΑΜΚΑ μέλους και όνομα μέλους."""
+    return await _repo(ctx).list_groups(kind=FAMILY, q=q, include_inactive=include_inactive,
+                                        skip=skip, limit=limit)
 
 
 @router.get("/patients")
@@ -86,6 +88,35 @@ async def group_detail(gid: str, months: int = Query(12, ge=1, le=60),
     df, dt = _period(months)
     d = await _repo(ctx).detail(gid, date_from=df, date_to=dt)
     return d or {"error": "not_found"}
+
+
+@router.get("/{gid}/lists")
+async def group_lists_all(gid: str, days: int = Query(45, ge=1, le=120),
+                          months: int = Query(12, ge=1, le=60),
+                          ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+    """ΤΙ ΑΚΡΙΒΩΣ τρέχει σε κάθε μέλος — όλες οι λίστες με ΜΙΑ κλήση.
+
+    ΓΙΑΤΙ ΜΑΖΙ ΚΑΙ ΟΧΙ ΑΝΑ ΜΕΛΟΣ: ο φαρμακοποιός πατάει μπαμπά → μαμά → παιδί μέσα σε δύο
+    δευτερόλεπτα. Με ένα αίτημα ανά μέλος κάθε κλικ θα περίμενε τον διακομιστή· έτσι η
+    εναλλαγή είναι ακαριαία, γιατί τα δεδομένα είναι ήδη εκεί.
+    """
+    from app.services import group_lists
+    repo = _repo(ctx)
+    g = await repo.find_one({"_id": __import__("bson").ObjectId(gid)}) if gid else None
+    if not g:
+        return {"error": "not_found"}
+    pseudos = [m["pseudo_id"] for m in (g.get("members") or [])
+               if m.get("pseudo_id") and not m.get("left_at")]
+    names, ids = {}, []
+    if pseudos:
+        from app.utils.masking import mask_name
+        async for p in repo._db["patients_anonymized"].find(
+                {"tenant_id": ctx.tenant_id, "pseudo_id": {"$in": pseudos}},
+                {"pseudo_id": 1, "full_name": 1}):
+            ids.append(p["_id"])
+            names[str(p["_id"])] = mask_name(p.get("full_name"), ctx.demo)
+    return await group_lists.everything(repo._db, ctx.tenant_id, ids, names,
+                                        days=days, months=months)
 
 
 @router.patch("/{gid}")

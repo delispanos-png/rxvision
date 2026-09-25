@@ -49,19 +49,42 @@ class PatientGroupRepository(BaseRepository):
 
     # ── ομάδες ────────────────────────────────────────────────────────────────────────
     async def list_groups(self, *, kind: str = FAMILY, q: str | None = None,
-                          include_inactive: bool = False) -> list[dict]:
+                          include_inactive: bool = False, skip: int = 0,
+                          limit: int = 50) -> dict:
+        """Λίστα με ΑΝΑΖΗΤΗΣΗ και ΣΕΛΙΔΟΠΟΙΗΣΗ.
+
+        ΓΙΑΤΙ ΔΕΝ ΕΠΙΣΤΡΕΦΕΙ ΑΝΑΛΥΣΗ ΑΝΑ ΓΡΑΜΜΗ: ένα φαρμακείο μπορεί να έχει χιλιάδες
+        οικογένειες. Αν κάθε γραμμή υπολόγιζε εκκρεμότητες και δανεικά, η λίστα θα σάρωνε τις
+        εκτελέσεις ΟΛΩΝ. Η γραμμή δείχνει όνομα και πλήθος μελών· η ανάλυση έρχεται ΜΕΤΑ το κλικ.
+
+        Η ΑΝΑΖΗΤΗΣΗ ΠΙΑΝΕΙ ΚΑΙ ΜΕΛΟΣ: ο φαρμακοποιός σπάνια θυμάται πώς ονόμασε την οικογένεια —
+        θυμάται τον άνθρωπο μπροστά του. Ψάχνει με ΑΜΚΑ ή όνομα ΜΕΛΟΥΣ και βρίσκει την οικογένεια.
+        """
+        import re
         query: dict = {"kind": kind}
         if not include_inactive:
             query["active"] = {"$ne": False}
-        if q and q.strip():
-            import re
-            query["name"] = {"$regex": re.escape(q.strip()), "$options": "i"}
-        rows = await self.find(query, sort=[("name", 1)], limit=500)
+        term = (q or "").strip()
+        if term:
+            rx = {"$regex": re.escape(term), "$options": "i"}
+            # ΑΜΚΑ ή όνομα ΑΝΘΡΩΠΟΥ → τα ψευδώνυμά τους → οι ομάδες που τους περιέχουν
+            pseudos = [p["pseudo_id"] async for p in self._db["patients_anonymized"].find(
+                {"tenant_id": self.tenant_id,
+                 "$or": [{"amka": {"$regex": "^" + re.escape(term)}}, {"full_name": rx}]},
+                {"pseudo_id": 1}).limit(200) if p.get("pseudo_id")]
+            ors: list[dict] = [{"name": rx}]
+            if pseudos:
+                ors.append({"members.pseudo_id": {"$in": pseudos}})
+            query["$or"] = ors
+
+        total = await self.count(query)
+        rows = await self.find(query, sort=[("name", 1)], skip=max(0, skip),
+                               limit=max(1, min(limit, 200)))
         for r in rows:
             r["_id"] = str(r["_id"])
             r["member_count"] = len([m for m in (r.get("members") or []) if not m.get("left_at")])
             r.pop("members", None)          # η λίστα δεν χρειάζεται τα ψευδώνυμα
-        return rows
+        return {"items": rows, "total": total}
 
     async def create(self, *, kind: str, name: str, by: str | None = None) -> dict:
         name = str(name or "").strip()
@@ -242,8 +265,15 @@ class PatientGroupRepository(BaseRepository):
 
         # Οι εκκρεμότητες πρώτες — η οθόνη υπάρχει για να δείχνει τι θέλει ενέργεια.
         rows.sort(key=lambda r: (-(r["unexec_value"] or 0), -(r["loans"] or 0), r["name"] or ""))
-        return {"id": str(g["_id"]), "kind": g.get("kind"), "name": g.get("name"),
-                "active": g.get("active", True), "members": rows, "totals": totals}
+        out = {"id": str(g["_id"]), "kind": g.get("kind"), "name": g.get("name"),
+               "active": g.get("active", True), "members": rows, "totals": totals}
+        if g.get("kind") == CARE:
+            # Ποιον παίρνω τηλέφωνο· πού στέλνω τα φάρμακα· ποιος υπογράφει. Χωρίς αυτά ο
+            # φαρμακοποιός ψάχνει σε χαρτάκια — και η δομή είναι πελάτης, όχι ασθενής.
+            out.update({"care_type": g.get("care_type"), "cycle": g.get("cycle"),
+                        "billing": g.get("billing") or {},
+                        "charges_from": g.get("charges_from")})
+        return out
 
     async def _member_stats(self, ids: list, *, date_from: datetime,
                             date_to: datetime) -> dict[str, dict]:

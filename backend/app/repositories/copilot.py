@@ -52,5 +52,6 @@ class CopilotRepository(BaseRepository):
         s["ai_used"], s["ai_included"], s["ai_period"] = st["used"], st["included"], st["period"]
         # ΜΟΝΑΔΑ = ΕΥΡΩ: ο πελάτης βλέπει πόσο από τον προϋπολογισμό του έχει καταναλώσει
         s["ai_budget_cents"], s["ai_spent_cents"] = st["budget_cents"], st["spent_cents"]
+        s["ai_budget_period"] = st["budget_period"]   # μηνιαίος — ΟΧΙ το ημερήσιο `ai_period`
         s["ai_wallet_cents"] = st["wallet_cents"]
         return s

@@ -18,7 +18,7 @@ type Result = { ok: boolean; error?: string; limit?: number; reply: string; acti
 type PlanCard = { id: string; urgency: "high" | "medium" | "low"; icon: string; title: string; why: string; impact: string; executable?: boolean; action: { kind: "act"; key: string } | { kind: "navigate"; href: string }; cta: string };
 type Plan = { cards: PlanCard[]; count: number; generated_at: string };
 type Turn = { role: "user" | "assistant"; content: string; result?: Result };
-type Status = { configured: boolean; enabled: boolean; model: string; ai_used?: number; ai_included?: number; ai_period?: string };
+type Status = { configured: boolean; enabled: boolean; model: string; ai_used?: number; ai_included?: number; ai_period?: string; ai_budget_period?: string };
 
 const QUICK = [
   ["Πόσος τζίρος & κέρδος τον τελευταίο μήνα;", "Revenue & profit last month?"],
@@ -204,7 +204,7 @@ function CopilotInner() {
                   {turn.result.error === "trial_exhausted"
                     ? <><div className="font-semibold">✋ {t(`Έφτασες το όριο των ${turn.result.limit ?? 30} δοκιμαστικών ερωτήσεων AI`, `You've reached the ${turn.result.limit ?? 30} trial AI questions limit`)}.</div><div className="mt-0.5 text-xs">{t("Αναβάθμισε σε πληρωμένο πακέτο για περισσότερες ερωτήσεις (διατροφή, PharmaCat & Copilot).", "Upgrade to a paid plan for more questions (nutrition, PharmaCat & Copilot).")}</div></>
                     : ["card_required", "quota_exceeded", "daily_limit"].includes(turn.result.error || "")
-                    ? <><div className="font-semibold">✋ {t(`Εξάντλησες το δωρεάν όριο AI του πακέτου σου${status.data?.ai_period === "month" ? " αυτόν τον μήνα" : status.data?.ai_period === "year" ? " φέτος" : " σήμερα"}`, `You've used your plan's free AI allowance${status.data?.ai_period === "month" ? " this month" : status.data?.ai_period === "year" ? " this year" : " today"}`)}.</div><div className="mt-0.5 text-xs">{t("Αγόρασε AI credits από τις", "Buy AI credits from")} <a href="/settings/billing" className="font-semibold underline">{t("Ρυθμίσεις → Συνδρομή", "Settings → Subscription")}</a> {t("και συνέχισε — χρεώνεσαι μόνο όσο ρωτάς.", "and keep going — you're charged only for what you ask.")}</div></>
+                    ? <><div className="font-semibold">✋ {t(`Εξάντλησες το δωρεάν όριο AI του πακέτου σου${(status.data?.ai_budget_period ?? "month") === "month" ? " αυτόν τον μήνα" : status.data?.ai_budget_period === "year" ? " φέτος" : " σήμερα"}`, `You've used your plan's free AI allowance${(status.data?.ai_budget_period ?? "month") === "month" ? " this month" : status.data?.ai_budget_period === "year" ? " this year" : " today"}`)}.</div><div className="mt-0.5 text-xs">{t("Αγόρασε AI credits από τις", "Buy AI credits from")} <a href="/settings/billing" className="font-semibold underline">{t("Ρυθμίσεις → Συνδρομή", "Settings → Subscription")}</a> {t("και συνέχισε — χρεώνεσαι μόνο όσο ρωτάς.", "and keep going — you're charged only for what you ask.")}</div></>
                     : t("Σφάλμα — δοκιμάστε ξανά.", "Error — try again.")}
                 </div>
               ) : (
