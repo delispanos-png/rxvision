@@ -42,13 +42,19 @@ export const NAV_GROUPS: Group[] = [
       { href: "/future#forecast", label: "Πρόβλεψη κάλυψης", en: "Coverage forecast" },
     ] },
     { label: "Ασφαλισμένοι", en: "Patients", icon: Users,
-      module: ["patient_analytics", "advance_dispensing"], children: [
+      module: ["patient_analytics", "advance_dispensing", "family_groups", "care_homes", "patient_portal"], children: [
       { href: "/patients#list", label: "Λίστα", en: "List" },
       { href: "/patients#kpi", label: "Δείκτες", en: "Indicators" },
       { href: "/patients/verify-contacts", label: "Επιβεβαίωση στοιχείων", en: "Confirm contacts" },
       { href: "/patients/deceased", label: "Θανόντες & υπόλοιπα", en: "Deceased & balances" },
       { href: "/patients/advance", label: "Προχορηγήσεις (δανεικά)", en: "Advance dispensings",
         module: "advance_dispensing" },
+      { href: "/patients/families", label: "Οικογένειες", en: "Families",
+        module: "family_groups" },
+      { href: "/patients/care", label: "Δομές Φροντίδας", en: "Care structures",
+        module: "care_homes" },
+      { href: "/patients/access", label: "Ποιος βλέπει ποιον", en: "Who sees whom",
+        module: "patient_portal" },
     ] },
     { label: "Ιατροί", en: "Doctors", icon: Stethoscope, module: "doctor_analytics", children: [
       { href: "/doctors#list", label: "Λίστα", en: "List" },

@@ -46,6 +46,8 @@ const MODULE_LABELS: [string, string][] = [
   ["vaccination_programs", "💉 Περιοδικός Εμβολιασμός (ζωστήρας/τέτανος/πνευμονιόκοκκος)"],
   ["therapy_programs", "🔁 Θεραπείες με Επανάληψη (Prolia/Ajovy/Stelara)"],
   ["advance_dispensing", "🤝 Προχορηγήσεις (δανεικά σκευάσματα)"],
+  ["family_groups", "👨‍👩‍👧 Οικογένειες"],
+  ["care_homes", "🏠 Δομές Φροντίδας"],
   ["catalog_seed", "📦 Έτοιμος κατάλογος ειδών"],
   ["connect", "🤝 RxVision Connect (δίκτυα συνεργασίας φαρμακείων)"],
 ];

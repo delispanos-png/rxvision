@@ -107,6 +107,15 @@ INDEXES: list[tuple[str, list[tuple[str, int]], dict]] = [
     ("patients_anonymized", [("tenant_id", 1), ("full_name", 1)], {}),
     ("patients_anonymized", [("tenant_id", 1), ("amka", 1)], {}),
     ("patients_anonymized", [("tenant_id", 1), ("last_seen_at", -1)], {}),
+    # Ομάδες ασφαλισμένων (οικογένειες & — Φάση 2 — δομές φροντίδας)
+    ("patient_groups", [("tenant_id", 1), ("kind", 1), ("name", 1)], {}),
+    # «σε ποιες ομάδες ανήκει αυτός;» — το ρωτά η Εικόνα Πελάτη σε κάθε άνοιγμα
+    ("patient_groups", [("tenant_id", 1), ("members.pseudo_id", 1)], {}),
+    # Καθολικό δομών φροντίδας — εισπράξεις & χειροκίνητες χρεώσεις (οι συμμετοχές ΠΑΡΑΓΟΝΤΑΙ)
+    ("care_ledger", [("tenant_id", 1), ("group_id", 1), ("at", -1)], {}),
+    # Εξουσιοδοτήσεις φροντίδας — ποιος βλέπει ποιον στην πύλη (και οι δύο κατευθύνσεις)
+    ("care_authorizations", [("tenant_id", 1), ("grantee_pseudo", 1), ("revoked_at", 1)], {}),
+    ("care_authorizations", [("tenant_id", 1), ("grantor_pseudo", 1), ("revoked_at", 1)], {}),
     ("patient_contacts", [("tenant_id", 1), ("marketing_consent", 1)], {}),
     ("patient_contacts", [("tenant_id", 1), ("mobile", 1)], {}),
     ("patient_contacts", [("tenant_id", 1), ("email", 1)], {}),

@@ -35,6 +35,9 @@ from app.api.v1.routers import (
     daily_coach,
     patient,
     patient_intelligence,
+    care_structures,
+    patient_access,
+    patient_groups,
     patients,
     portal_admin,
     pharmacat,
@@ -91,6 +94,12 @@ api_router.include_router(vaccine_programs.router, prefix="/vaccine-programs", t
 # Analytics modules
 api_router.include_router(doctors.router, prefix="/doctors", tags=["doctors"])
 api_router.include_router(patients.router, prefix="/patients", tags=["patients"])
+api_router.include_router(patient_groups.router, prefix="/patient-groups",
+                          tags=["patient-groups"])
+api_router.include_router(care_structures.router, prefix="/care-structures",
+                          tags=["care-structures"])
+api_router.include_router(patient_access.router, prefix="/patient-access",
+                          tags=["patient-access"])
 api_router.include_router(icd10.router, prefix="/icd10", tags=["icd10"])
 api_router.include_router(profitability.router, prefix="/profitability", tags=["profitability"])
 

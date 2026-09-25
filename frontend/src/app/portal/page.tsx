@@ -46,6 +46,9 @@ type Summary = { rx_count: number; paid_cents: number; total_cents: number; cove
 type Rx = { barcode: string; executed_at: string; status?: string; patient_share?: number; repeat_current?: number; repeat_total?: number; repeat_root?: string | null; next_open_date?: string | null; medicines: string[]; pending?: string[]; partial?: boolean; doctor?: string | null; specialty?: string | null; tenant_id?: string; pharmacy_name?: string | null };
 type RepeatMed = { name: string; dosage?: string | null };
 type Repeat = Omit<Rx, "medicines"> & { medicines: RepeatMed[] };
+type ViewPerson = { tenant_id: string; pharmacy_name?: string | null; patient_ref: string;
+                    name: string; relation: "parental" | "authorized"; via?: string | null;
+                    deceased: boolean };
 type RxItem = { name?: string | null; barcode?: string | null; quantity?: number; retail_price?: number; is_executed?: boolean; executed_qty?: number | null; dosage?: string | null; usage_video_url?: string | null };
 
 // Πόσα τεμάχια πήρε ο ασθενής. Συσκευασία 2 με το 1 δοσμένο ΔΕΝ είναι «δεν παραλήφθηκε».
@@ -189,6 +192,11 @@ export default function PortalHome() {
   const [geo, setGeo] = useState<{ lat: number; lon: number } | null>(null);
   const [geoBusy, setGeoBusy] = useState(false);
   const [rx, setRx] = useState<Rx[]>([]);
+  // «Βλέπω ως»: οι ΔΙΚΕΣ μου συνταγές κρατιούνται χωριστά, ώστε η επιστροφή στον εαυτό μου να
+  // μη χρειάζεται νέο αίτημα — και να μη μείνουν ποτέ ξένα δεδομένα στην οθόνη.
+  const [myRx, setMyRx] = useState<Rx[]>([]);
+  const [viewable, setViewable] = useState<ViewPerson[]>([]);
+  const [viewAs, setViewAs] = useState<ViewPerson | null>(null);
   // Άυλη συνταγογράφηση: PIN μέσω SMS από ΗΔΥΚΑ → λίστα νέων συνταγών → ανάθεση με το ΙΔΙΟ rx-request
   const [nutrition, setNutrition] = useState<NutritionPlan | null>(null);
   const [npStep, setNpStep] = useState<"idle" | "pin" | "list">("idle");
@@ -290,11 +298,25 @@ export default function PortalHome() {
         patientApi<{ items: Notif[] }>("/patient/notifications"),
       ]);
       setSummary(s); setRx(p.items); setRepeats(r.items); setNotifs(n.items);
+      setMyRx(p.items);
+      // Ποιους άλλους επιτρέπεται να δει: ανήλικα παιδιά (γονική μέριμνα) + όσοι τον
+      // εξουσιοδότησαν. Ο έλεγχος γίνεται ΠΑΝΤΑ στον διακομιστή — εδώ μόνο εμφανίζεται.
+      patientApi<{ items: ViewPerson[] }>("/patient/viewable")
+        .then((v) => setViewable(v.items)).catch(() => setViewable([]));
       patientApi<Pharm>("/patient/pharmacy-hours").then(setPharm).catch(() => setPharm(null));
     } catch { /* patientApi redirects to /portal/login on 401 */ }
   }, [router]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Αλλαγή προσώπου → φέρε ΤΙΣ ΔΙΚΕΣ ΤΟΥ συνταγές (ξεχωριστή διαδρομή: η πρόσβαση σε τρίτον
+  // γεννιέται ΑΝΑ ΦΑΡΜΑΚΕΙΟ, ενώ οι δικές μου μαζεύονται από όλα).
+  useEffect(() => {
+    if (!viewAs) { setRx(myRx); return; }
+    patientApi<{ items: Rx[] }>(
+      `/patient/prescriptions-for?for=${encodeURIComponent(viewAs.patient_ref)}&tenant_id=${encodeURIComponent(viewAs.tenant_id)}`)
+      .then((r) => setRx(r.items)).catch(() => setRx([]));
+  }, [viewAs, myRx]);
 
   useEffect(() => {
     if (!me) return;
@@ -1484,6 +1506,35 @@ export default function PortalHome() {
         </div>}
 
         {/* ── PRESCRIPTIONS ──────────────────────────────────── */}
+        {tab === "rx" && viewable.length > 0 && (
+          <div className={`mb-3 flex flex-wrap items-center gap-2 rounded-2xl border p-3 ${
+            viewAs ? "border-sky-300 bg-sky-50 dark:bg-sky-950/20" : "border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900"}`}>
+            <span className="text-sm font-medium text-slate-600 dark:text-slate-300">
+              {t("Βλέπεις:", "Viewing:")}
+            </span>
+            <button onClick={() => setViewAs(null)}
+              className={`rounded-full px-3 py-1 text-sm ${!viewAs ? "bg-slate-800 text-white dark:bg-slate-200 dark:text-slate-900" : "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300"}`}>
+              {t("Εμένα", "Me")}
+            </button>
+            {viewable.map((v) => (
+              <button key={`${v.tenant_id}:${v.patient_ref}`} onClick={() => setViewAs(v)}
+                className={`rounded-full px-3 py-1 text-sm ${
+                  viewAs?.patient_ref === v.patient_ref ? "bg-sky-600 text-white"
+                    : "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300"}`}>
+                {v.name}
+                <span className="ml-1 text-[10px] opacity-70">
+                  {v.relation === "parental" ? t("παιδί", "child") : t("φροντίδα", "care")}
+                </span>
+              </button>
+            ))}
+            {viewAs && (
+              <span className="w-full text-xs text-sky-700 dark:text-sky-300">
+                {t(`Βλέπεις τις συνταγές του/της ${viewAs.name}. Δεν μπορείς να κάνεις ενέργειες στο όνομά του/της.`,
+                   `Viewing prescriptions for ${viewAs.name}. You cannot act on their behalf.`)}
+              </span>
+            )}
+          </div>
+        )}
         {tab === "rx" && (() => {
           const qn = rxQuery.trim();
           const filtered = rx.filter((p) => {

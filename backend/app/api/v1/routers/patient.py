@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, status
+from fastapi import (APIRouter, Depends, File, Form, HTTPException, Query, Request,
+                     UploadFile, status)
 from fastapi.responses import Response
 from typing import Literal
 
@@ -532,16 +533,82 @@ async def my_prescriptions(ctx: PatientContext = Depends(get_patient_context)):
         ctx.account_id, limit=200, demo=ctx.demo)}
 
 
+# ── ΠΟΙΟΝ ΒΛΕΠΩ ─────────────────────────────────────────────────────────────────────────
+# Ο έλεγχος γίνεται ΠΑΝΤΑ στο `services/portal_access.py`, ποτέ εδώ. Το `for` έρχεται από τον
+# πελάτη, άρα είναι αναξιόπιστο εξ ορισμού — γι' αυτό κάθε χρήση του περνά από `_target()`.
+async def _target(ctx: PatientContext, for_ref: str | None,
+                  tenant_id: str | None = None) -> tuple[str, str, bool]:
+    """(tenant_id, patient_ref, read_only). Χωρίς `for` → ο εαυτός του."""
+    from app.services import portal_access
+    tid, pref = ctx.tenant_id, ctx.patient_ref
+    if tenant_id and tenant_id != ctx.tenant_id:
+        link = await PatientAccountRepository().link_for(ctx.account_id, tenant_id)
+        if not link:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "not_linked_to_pharmacy")
+        tid, pref = tenant_id, str(link["patient_ref"])
+    if not for_ref or str(for_ref) == str(pref):
+        return tid, pref, False
+    ok = await portal_access.can_view(tid, pref, for_ref)
+    if not ok:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "not_allowed_to_view")
+    return tid, str(for_ref), bool(ok["read_only"])
+
+
+@router.get("/viewable")
+async def viewable(ctx: PatientContext = Depends(get_patient_context)):
+    """Ποιους άλλους μπορεί να δει: ανήλικα παιδιά (γονική μέριμνα) + όσοι τον εξουσιοδότησαν.
+
+    Η γονική μέριμνα **παύει μόνη της** στα 18 — η ηλικία υπολογίζεται σε κάθε κλήση.
+    """
+    from app.services import portal_access
+    return {"items": await portal_access.viewable_for_account(ctx.account_id, demo=ctx.demo)}
+
+
+@router.get("/access")
+async def my_access(ctx: PatientContext = Depends(get_patient_context)):
+    """Διαφάνεια: ποιον εξουσιοδότησα — και **ποιος βλέπει την καρτέλα μου**."""
+    from app.services import portal_access
+    return await portal_access.list_for_patient(ctx.tenant_id, ctx.patient_ref, demo=ctx.demo)
+
+
+@router.delete("/access/{auth_id}")
+async def revoke_access(auth_id: str, ctx: PatientContext = Depends(get_patient_context)):
+    """Ανάκληση εξουσιοδότησης από τον ΙΔΙΟ. Χωρίς αυτό, η συγκατάθεση δεν θα ήταν ανακλητή."""
+    from app.services import portal_access
+    rows = await portal_access.list_for_patient(ctx.tenant_id, ctx.patient_ref)
+    if auth_id not in {r["id"] for r in rows["granted_by_me"]}:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "not_yours")
+    return await portal_access.revoke(ctx.tenant_id, auth_id, by="patient")
+
+
 @router.get("/repeats")
-async def my_repeats(ctx: PatientContext = Depends(get_patient_context)):
-    repo = PatientRxRepository(tenant_id=ctx.tenant_id)
-    return {"items": await repo.my_repeats(ctx.patient_ref)}
+async def my_repeats(for_ref: str | None = Query(None, alias="for"),
+                     ctx: PatientContext = Depends(get_patient_context)):
+    tid, pref, _ = await _target(ctx, for_ref)
+    return {"items": await PatientRxRepository(tenant_id=tid).my_repeats(pref)}
 
 
 @router.get("/summary")
-async def my_summary(ctx: PatientContext = Depends(get_patient_context)):
+async def my_summary(for_ref: str | None = Query(None, alias="for"),
+                     ctx: PatientContext = Depends(get_patient_context)):
     """KPI snapshot for the portal home (counts, paid, fund-covered, repeats)."""
-    return await PatientRxRepository(tenant_id=ctx.tenant_id).summary(ctx.patient_ref)
+    tid, pref, _ = await _target(ctx, for_ref)
+    return await PatientRxRepository(tenant_id=tid).summary(pref)
+
+
+@router.get("/prescriptions-for")
+async def prescriptions_for(for_ref: str = Query(..., alias="for"),
+                            tenant_id: str | None = Query(None),
+                            ctx: PatientContext = Depends(get_patient_context)):
+    """Οι συνταγές ΑΛΛΟΥ ανθρώπου — μόνο όπου επιτρέπεται, και μόνο μέσα σε ΕΝΑ φαρμακείο.
+
+    ΓΙΑΤΙ ΞΕΧΩΡΙΣΤΗ ΔΙΑΔΡΟΜΗ: το `/prescriptions` του εαυτού μαζεύει ΟΛΑ τα φαρμακεία του
+    λογαριασμού. Η πρόσβαση σε τρίτον όμως γεννιέται ΑΝΑ ΦΑΡΜΑΚΕΙΟ (εκεί δηλώθηκε η οικογένεια
+    ή η εξουσιοδότηση) — ένα κοινό endpoint θα έμπλεκε τα δύο και θα διέρρεε.
+    """
+    tid, pref, read_only = await _target(ctx, for_ref, tenant_id)
+    items = await PatientRxRepository(tenant_id=tid, demo=ctx.demo).my_prescriptions(pref)
+    return {"items": items, "read_only": read_only}
 
 
 @router.get("/meds/schedule")
@@ -1003,15 +1070,11 @@ async def respond_renewal(body: RenewalRespondIn, ctx: PatientContext = Depends(
 
 @router.get("/prescriptions/{barcode}")
 async def prescription_detail(barcode: str, tenant_id: str | None = None,
+                              for_ref: str | None = Query(None, alias="for"),
                               ctx: PatientContext = Depends(get_patient_context)):
     """Λεπτομέρειες ΜΙΑΣ εκτέλεσης. Με `tenant_id` ανοίγει εκτέλεση άλλου φαρμακείου του πελάτη —
     ΜΟΝΟ αν είναι όντως linked εκεί (αλλιώς 403) και μόνο τη ΔΙΚΗ ΤΟΥ καρτέλα (patient_ref του link)."""
-    tid, pref = ctx.tenant_id, ctx.patient_ref
-    if tenant_id and tenant_id != ctx.tenant_id:
-        link = await PatientAccountRepository().link_for(ctx.account_id, tenant_id)
-        if not link:
-            raise HTTPException(status.HTTP_403_FORBIDDEN, "not_linked_to_pharmacy")
-        tid, pref = tenant_id, str(link["patient_ref"])
+    tid, pref, _ = await _target(ctx, for_ref, tenant_id)
     d = await PatientRxRepository(tenant_id=tid, demo=ctx.demo).my_prescription_detail(pref, barcode)
     if d is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "not_found")

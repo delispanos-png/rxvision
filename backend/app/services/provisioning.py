@@ -27,7 +27,8 @@ _ALL_MODULES = ["dashboard", "prescription_analytics", "doctor_analytics", "pati
 # (tenant module override). Pharmacists without them don't see them at all.
 _OPT_IN_MODULES = ["ai_assistant", "pharmacat", "nutrition", "patient_portal", "loyalty", "order_delivery",
                    "drug_interactions", "daily_coach", "vaccination_programs", "therapy_programs",
-                   "advance_dispensing", "catalog_seed", "connect"]
+                   "advance_dispensing", "catalog_seed", "connect",
+                   "family_groups", "care_homes"]
 # External role → RxVision tenant role key
 _NOETON_ROLE_MAP = {"admin": "owner", "owner": "owner", "manager": "manager",
                     "pharmacist": "pharmacist", "user": "staff", "staff": "staff"}
