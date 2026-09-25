@@ -245,6 +245,13 @@ celery_app.conf.beat_schedule = {
         "task": "app.workers.ingestion.dispatch_reconcile_gaps",
         "schedule": crontab(hour=6, minute=15),
     },
+    # ΒΑΘΥΣ έλεγχος πληρότητας — Κυριακή 04:10. Το `reconcile_gaps` κοιτάζει 40 ημέρες πίσω·
+    # αυτό συγκρίνει το `exec_count` της ΗΔΥΚΑ με όσες εκτελέσεις κρατάμε, ΑΝΕΞΑΡΤΗΤΑ ΗΛΙΚΙΑΣ.
+    # Εβδομαδιαίο: σαρώνει όλο το ιστορικό και πυροδοτεί backfill — δεν έχει νόημα καθημερινά.
+    "deep-gap-scan": {
+        "task": "app.workers.ingestion.dispatch_deep_gap_scan",
+        "schedule": crontab(day_of_week=0, hour=4, minute=10),
+    },
     # GDPR: ΔΙΑΡΡΟΕΣ cross-tenant — εκτελέσεις που ανήκουν στον tenant (scoped feed) αλλά κάθονται σε
     # ΑΛΛΟΝ (raw ΑΜΚΑ σε λάθος φαρμακείο). Καθημερινή σάρωση + ΑΥΤΟΜΑΤΗ μεταφορά στον σωστό.
     "cross-tenant-leaks-daily": {

@@ -355,6 +355,88 @@ def reconcile_gaps_task(self, tenant_id: str, days: int = 40) -> dict:
     return _run_async(_run())
 
 
+@celery_app.task(name="app.workers.ingestion.deep_gap_scan",
+                 bind=True, max_retries=2, autoretry_for=(ConnectionError, TimeoutError),
+                 retry_backoff=True, retry_backoff_max=1800, retry_jitter=True)
+def deep_gap_scan(self, tenant_id: str, max_days: int = 10) -> dict:
+    """ΒΑΘΥΣ ΕΛΕΓΧΟΣ ΠΛΗΡΟΤΗΤΑΣ — εκτελέσεις που λείπουν ΑΝΕΞΑΡΤΗΤΑ ΗΛΙΚΙΑΣ.
+
+    ΓΙΑΤΙ ΔΕΝ ΤΟ ΠΙΑΝΕΙ ΤΟ `reconcile_gaps`: εκείνο συγκρίνει ανά ΗΜΕΡΑ μέσα σε παράθυρο 40
+    ημερών. Ό,τι λείπει από παλαιότερα δεν το ξανακοιτάζει ποτέ. Μετρημένο 24/09/2026: **363
+    συνταγές / 521 εκτελέσεις** σε 10 από 13 φαρμακεία, κυρίως εκτός παραθύρου.
+
+    Η ΗΔΥΚΑ ΜΑΣ ΤΟ ΛΕΕΙ ΗΔΗ: κάθε CDA κουβαλά `details.exec_count` = πόσες εκτελέσεις έχει ΑΥΤΗ
+    η συνταγή. Το αποθηκεύαμε και δεν το διάβαζε κανείς. Όπου `exec_count` > όσες κρατάμε για το
+    barcode, λείπει εκτέλεση — χωρίς να ρωτήσουμε καν την ΗΔΥΚΑ.
+
+    ΔΕΝ ΓΡΑΦΕΙ ΝΕΑ ΛΟΓΙΚΗ ΑΝΤΛΗΣΗΣ: πυροδοτεί το ΙΔΙΟ `hdika_backfill` που χρησιμοποιεί ήδη το
+    `reconcile_gaps`. Η άντληση είναι το πιο εύθραυστο κομμάτι — δεν της προσθέτουμε δεύτερο δρόμο.
+
+    ΜΕ ΦΡΕΝΟ: το πολύ `max_days` ημέρες ανά τρέξιμο, και `attempted` ανά barcode ώστε ένα
+    μη-ανακτήσιμο (π.χ. ακυρωμένο) να μη δοκιμάζεται αιώνια.
+    """
+    async def _run() -> dict:
+        _, db = _fresh_db()
+        if await _hdika_auth_paused(db, tenant_id):
+            return {"tenant_id": tenant_id, "status": "skipped", "note": "auth_paused"}
+        rows = await db["prescription_executions"].aggregate([
+            {"$match": {"tenant_id": tenant_id, "source": "HDIKA",
+                        "status": {"$ne": "cancelled"}, "details.exec_count": {"$gt": 0}}},
+            {"$project": {"bc": {"$arrayElemAt": [{"$split": ["$external_id", ":"]}, 0]},
+                          "ec": "$details.exec_count", "at": "$executed_at"}},
+            {"$group": {"_id": "$bc", "ours": {"$sum": 1}, "hdika": {"$max": "$ec"},
+                        "day": {"$min": "$at"}}},
+            {"$match": {"$expr": {"$gt": ["$hdika", "$ours"]}}},
+        ], allowDiskUse=True).to_list(length=None)
+
+        alerts = db["ingestion_alerts"]
+        prev = await alerts.find_one({"kind": "deep_gap", "tenant_id": tenant_id}) or {}
+        attempted = set(prev.get("attempted", []))
+        todo = [r for r in rows if r["_id"] not in attempted]
+
+        # Μία ημέρα = ένα backfill window. Ομαδοποιούμε ώστε 40 λείποντα της ίδιας μέρας να
+        # κοστίσουν ΕΝΑ πέρασμα, όχι σαράντα.
+        days = sorted({r["day"].date().isoformat() for r in todo if r.get("day")})[:max_days]
+        fired = []
+        for d in days:
+            until = (date.fromisoformat(d) + timedelta(days=1)).isoformat()
+            hdika_backfill.apply_async((tenant_id, d, until), kwargs={"throttle": 0.05},
+                                       queue="backfill")
+            fired.append(d)
+        done = {r["_id"] for r in todo if r.get("day") and r["day"].date().isoformat() in fired}
+        now = datetime.now(tz=timezone.utc)
+        await alerts.update_one(
+            {"kind": "deep_gap", "tenant_id": tenant_id},
+            {"$set": {"kind": "deep_gap", "tenant_id": tenant_id,
+                      "gaps": len(rows), "remaining": max(0, len(todo) - len(done)),
+                      "missing_executions": sum(int(r["hdika"] - r["ours"]) for r in rows),
+                      "barcodes": sorted(r["_id"] for r in rows)[:100],
+                      "resolved": not rows, "updated_at": now,
+                      "last_windows": fired,
+                      "attempted": sorted(attempted | done)[:5000]},
+             "$setOnInsert": {"created_at": now}}, upsert=True)
+        return {"tenant_id": tenant_id, "status": "ok", "gaps": len(rows),
+                "missing_executions": sum(int(r["hdika"] - r["ours"]) for r in rows),
+                "windows": fired}
+    return _run_async(_run())
+
+
+@celery_app.task(name="app.workers.ingestion.dispatch_deep_gap_scan")
+def dispatch_deep_gap_scan() -> int:
+    """Beat (εβδομαδιαίο): βαθύς έλεγχος πληρότητας σε κάθε GR/ΗΔΥΚΑ φαρμακείο.
+
+    Εβδομαδιαίο και ΟΧΙ ημερήσιο: σαρώνει ΟΛΟ το ιστορικό και πυροδοτεί backfill — δεν έχει
+    νόημα κάθε μέρα, και η ουρά `backfill` έχει άλλη δουλειά.
+    """
+    async def _run() -> list[str]:
+        _, db = _fresh_db()
+        return await _gr_hdika_tenant_ids(db)
+    ids = _run_async(_run())
+    for tid in ids:
+        deep_gap_scan.apply_async(args=[tid], queue="backfill")
+    return len(ids)
+
+
 @celery_app.task(name="app.workers.ingestion.dispatch_reconcile_gaps")
 def dispatch_reconcile_gaps() -> int:
     """Beat (daily): για κάθε GR/ΗΔΥΚΑ tenant, εντοπισμός & ανάκτηση εκτελέσεων που λείπουν τοπικά.
