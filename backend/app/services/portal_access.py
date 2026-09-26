@@ -148,6 +148,35 @@ async def viewable_for_account(account_id: Any, *, demo: bool = False) -> list[d
 
 
 # ── διαχείριση εξουσιοδοτήσεων (από τον φαρμακοποιό ή τον ίδιο τον ασθενή) ───────────
+async def list_all(tenant_id: str, *, demo: bool = False, limit: int = 300) -> list[dict]:
+    """ΟΛΕΣ οι ενεργές εξουσιοδοτήσεις του φαρμακείου — ποιος έδωσε πρόσβαση σε ποιον.
+
+    ΓΙΑΤΙ ΧΡΕΙΑΖΕΤΑΙ: η οθόνη ζητούσε να ψάξεις ασφαλισμένο ΠΡΙΝ δεις οτιδήποτε. Άρα ο
+    φαρμακοποιός δεν μπορούσε να απαντήσει στο «ποιοι μου έχουν δώσει συγκατάθεση;» — έπρεπε
+    να τους ξέρει ήδη για να τους βρει.
+
+    ⚠ Η γονική μέριμνα ΔΕΝ είναι εδώ: δεν είναι συγκατάθεση που δόθηκε, είναι αυτόματη από την
+    ηλικία και παύει μόνη της. Αυτή η λίστα δείχνει ό,τι ΔΗΛΩΘΗΚΕ ρητά.
+    """
+    db = shared_db()
+    rows = [a async for a in db[AUTH_COLL].find(
+        {"tenant_id": tenant_id, "revoked_at": None}).sort("granted_at", -1).limit(limit)]
+    if not rows:
+        return []
+    pseudos = list({p for a in rows for p in (a["grantor_pseudo"], a["grantee_pseudo"])})
+    pats = await _patients_by_pseudo(tenant_id, pseudos)
+
+    def who(ps: str) -> dict:
+        p = pats.get(ps) or {}
+        return {"patient_id": str(p["_id"]) if p.get("_id") else None,
+                "name": mask_name(p.get("full_name"), demo) or "—",
+                "deceased": bool(p.get("deceased"))}
+
+    return [{"id": str(a["_id"]), "at": a.get("granted_at"), "note": a.get("note"),
+             "grantor": who(a["grantor_pseudo"]), "grantee": who(a["grantee_pseudo"])}
+            for a in rows]
+
+
 async def grant(tenant_id: str, *, grantor_pseudo: str, grantee_pseudo: str,
                 by: str | None = None, note: str = "") -> dict:
     if grantor_pseudo == grantee_pseudo:

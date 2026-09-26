@@ -21,6 +21,8 @@ import { useT } from "@/store/prefStore";
 type Hit = { patient_id: string; name: string | null; amka: string | null };
 type Auth = { id: string; name: string; at: string; note?: string };
 type Access = { granted_by_me: Auth[]; granted_to_me: Auth[] };
+type Person = { patient_id: string | null; name: string; deceased: boolean };
+type Row = { id: string; at: string; note?: string; grantor: Person; grantee: Person };
 type View = { patient_ref: string; name: string; relation: string; via?: string | null;
               deceased: boolean };
 
@@ -67,6 +69,11 @@ function Inner() {
     return () => clearTimeout(id);
   }, [gTerm, who]);
 
+  // ΟΛΕΣ οι ενεργές εξουσιοδοτήσεις — η λίστα που βλέπεις μόλις ανοίξεις τη σελίδα, χωρίς να
+  // χρειαστεί να ξέρεις ποιον να ψάξεις.
+  const all = useQuery({ queryKey: ["access-all"],
+    queryFn: () => api<{ items: Row[] }>("/patient-access") });
+
   const access = useQuery({
     queryKey: ["access", who?.patient_id],
     queryFn: () => api<Access>(`/patient-access/for-patient/${who!.patient_id}`),
@@ -81,6 +88,7 @@ function Inner() {
   const reload = () => {
     qc.invalidateQueries({ queryKey: ["access"] });
     qc.invalidateQueries({ queryKey: ["views"] });
+    qc.invalidateQueries({ queryKey: ["access-all"] });
   };
 
   async function grantTo(target: Hit) {
@@ -153,13 +161,63 @@ function Inner() {
       </div>
 
       {!who ? (
-        <div className="rounded-2xl border border-dashed border-slate-300 p-8 text-center text-sm text-slate-500 dark:border-slate-700">
-          {t("Βρες έναν ασφαλισμένο για να δεις — και να ρυθμίσεις — ποιος έχει πρόσβαση στην καρτέλα του.",
-             "Find a patient to see and manage who has access to their record.")}
+        <div className="rounded-2xl border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
+          <div className="border-b border-slate-100 px-4 py-2.5 dark:border-slate-800">
+            <div className="flex items-center gap-2 text-sm font-semibold text-slate-700 dark:text-slate-200">
+              <ShieldCheck className="h-4 w-4 text-emerald-500" />
+              {t("Ενεργές εξουσιοδοτήσεις", "Active authorisations")}
+              {!!all.data?.items.length && (
+                <span className="ml-auto rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-500 dark:bg-slate-800">
+                  {all.data.items.length}
+                </span>
+              )}
+            </div>
+            <p className="mt-0.5 text-xs text-slate-400">
+              {t("Όσοι έχουν δώσει ρητή συγκατάθεση. Η γονική μέριμνα σε ανήλικα δεν χρειάζεται δήλωση — ισχύει αυτόματα.",
+                 "Everyone who gave explicit consent. Parental access to minors is automatic and not listed here.")}
+            </p>
+          </div>
+          {all.isLoading ? (
+            <div className="p-8 text-center text-sm text-slate-400">{t("Φόρτωση…", "Loading…")}</div>
+          ) : !all.data?.items.length ? (
+            <div className="p-8 text-center text-sm text-slate-500">
+              {t("Καμία εξουσιοδότηση ακόμη. Βρες έναν ασφαλισμένο από πάνω για να καταχωρήσεις.",
+                 "No authorisations yet. Find a patient above to add one.")}
+            </div>
+          ) : (
+            <ul className="divide-y divide-slate-100 dark:divide-slate-800">
+              {all.data.items.map((r) => (
+                <li key={r.id} className="flex flex-wrap items-center gap-2 px-4 py-3 text-sm">
+                  <button onClick={() => r.grantor.patient_id &&
+                            setWho({ patient_id: r.grantor.patient_id, name: r.grantor.name, amka: null })}
+                    className="font-medium text-slate-800 hover:text-rose-600 dark:text-slate-100">
+                    {r.grantor.name}
+                  </button>
+                  <span className="text-slate-400">{t("έδωσε πρόσβαση σε", "granted access to")}</span>
+                  <button onClick={() => r.grantee.patient_id &&
+                            setWho({ patient_id: r.grantee.patient_id, name: r.grantee.name, amka: null })}
+                    className="font-medium text-slate-800 hover:text-rose-600 dark:text-slate-100">
+                    {r.grantee.name}
+                  </button>
+                  {r.note && <span className="truncate text-slate-500">· {r.note}</span>}
+                  <span className="ml-auto text-xs text-slate-400">{t("από", "since")} {fmt(r.at)}</span>
+                  <button onClick={() => revoke({ id: r.id, name: r.grantee.name, at: r.at })}
+                    title={t("Ανάκληση", "Revoke")}
+                    className="text-slate-300 hover:text-rose-500">
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
       ) : (
         <div className="space-y-3">
           <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
+            <button onClick={() => setWho(null)}
+              className="rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-500 hover:bg-slate-50 dark:border-slate-700">
+              ← {t("Όλες", "All")}
+            </button>
             <UserRound className="h-5 w-5 text-slate-400" />
             <span className="text-lg font-semibold text-slate-800 dark:text-slate-100">{who.name}</span>
             <span className="text-xs text-slate-400">{who.amka}</span>

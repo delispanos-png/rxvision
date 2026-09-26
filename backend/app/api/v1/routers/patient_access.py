@@ -30,6 +30,12 @@ class GrantIn(BaseModel):
     note: str = ""
 
 
+@router.get("")
+async def list_all(ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+    """Όλες οι ενεργές εξουσιοδοτήσεις — η λίστα που ανοίγει πρώτη."""
+    return {"items": await portal_access.list_all(ctx.tenant_id, demo=ctx.demo)}
+
+
 @router.get("/for-patient/{patient_id}")
 async def for_patient(patient_id: str,
                       ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
