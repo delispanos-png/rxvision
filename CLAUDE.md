@@ -89,6 +89,25 @@ deps** — full `pytest`/`next build` could not run locally there. CI
 - Work on a branch, not `main`. Current working branch: **`quick-wins`**.
 - The user prefers **Greek** for conversational replies.
 
+## Production commands: keep them BARE (2026-09-26)
+
+Permission rules match the **whole command string**, not a substring of it. `bash
+infra/scaling/deploy.sh` is pre-approved — but `cd /opt/rxvision && bash
+infra/scaling/deploy.sh > /tmp/x.log 2>&1; tail -25 /tmp/x.log` matches nothing, falls through to
+the auto-mode classifier, and gets denied as "Production Deploy". The same happened to a prod DB
+write: the approved shape is `docker compose -f docker-compose.prod.yml exec -T api python -c
+'...'`, but a heredoc + `cp` into the container + `exec` of the file matched nothing.
+
+So, for anything touching production:
+
+- **One command, one step.** No `&&` chains, no `> log 2>&1`, no `; echo $?; tail`. Read the log
+  with a separate call if you need it.
+- **Prod one-offs go through `python -c` inline**, not a file copied into the container.
+- **Release notes are NOT written from the shell** — `/admin/release-notes` has a full editor
+  (create/edit/publish/delete via `release_notes.admin_router`). Use the product.
+- **Never try to edit the permission list yourself.** That is "Self-Modification" and it is
+  correctly blocked — an agent must not widen its own authority. Hand the owner the change.
+
 ## Key reference docs (created during analysis, repo root)
 
 `architecture-review.md` · `technology-stack.md` · `technical-debt.md` ·

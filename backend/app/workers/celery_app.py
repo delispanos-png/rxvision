@@ -14,6 +14,7 @@ celery_app = Celery(
     include=["app.workers.ingestion", "app.workers.snapshots",
              "app.workers.billing", "app.workers.optical", "app.workers.reminders",
              "app.workers.ops_health", "app.workers.copilot_routines",
+             "app.workers.capacity",
              "app.workers.contacts_backfill", "app.workers.death_sweep",
              "app.workers.area_canonical", "app.workers.supplier_photos",
              "app.workers.catalog_categories",
@@ -43,7 +44,8 @@ _QUEUE_BY_MODULE = {
     "supplier_photos": "maintenance",
     "leads": "maintenance",
     # Ό,τι δεν αναφέρεται εδώ → "fast": comms, reminders, billing, sessions, coach,
-    # copilot_routines, ops_health. Κοινό τους: κάποιος ΑΝΘΡΩΠΟΣ περιμένει.
+    # copilot_routines, ops_health, capacity. Κοινό τους: κάποιος ΑΝΘΡΩΠΟΣ περιμένει
+    # (ο φύλακας διαθεσιμότητας κόμβου είναι ελαφρύς και το παράθυρο αποθέματος στενό).
 }
 
 _QUEUE_BY_TASK = {
@@ -425,6 +427,12 @@ celery_app.conf.beat_schedule = {
     "ops-health-check": {
         "task": "app.workers.ops_health.check",
         "schedule": crontab(minute="*/30"),
+    },
+    # Φύλακας διαθεσιμότητας cx33 — ο τύπος όλου του στόλου είναι ΕΞΑΝΤΛΗΜΕΝΟΣ (8,49 € vs 35,49 €
+    # για την επόμενη x86 επιλογή). Μόλις ξαναβγεί απόθεμα το αρπάζει· αυτο-απενεργοποιείται μετά.
+    "capacity-watch-node-type": {
+        "task": "app.workers.capacity.watch_node_type",
+        "schedule": crontab(minute="*/10"),
     },
     # Ανανέωση Vault token (periodic) — να μη λήξει & σταματήσουν σιωπηλά οι ΗΔΥΚΑ syncs (01:00 UTC)
     "renew-vault-token": {
