@@ -148,7 +148,66 @@ async def update_member(gid: str, pseudo_id: str, body: MemberPatch,
 @router.delete("/{gid}/members/{pseudo_id}")
 async def remove_member(gid: str, pseudo_id: str,
                         ctx: TenantContext = Depends(require(_WRITE, module=_MODULE))):
-    return await _repo(ctx).remove_member(gid, pseudo_id)
+    """Αφαίρεση μέλους — ΚΑΙ ανάκληση των εξουσιοδοτήσεων μέσα σε αυτή την οικογένεια.
+
+    ΓΙΑΤΙ ΜΑΖΙ (διαζύγιο, 26/09/2026): η γονική μέριμνα σταματά μόνη της (υπολογίζεται από τη
+    συμμετοχή), αλλά η ΡΗΤΗ εξουσιοδότηση ζει σε άλλο μηχανισμό. Ο φαρμακοποιός έβγαζε τον
+    έναν από την οικογένεια και νόμιζε ότι τελείωσε — ενώ ο πρώην σύζυγος συνέχιζε να βλέπει
+    την πρώην σύζυγο. Δύο πόρτες, έκλεινε η μία.
+    """
+    from app.services import portal_access
+    out = await _repo(ctx).remove_member(gid, pseudo_id)
+    if out.get("ok"):
+        rev = await portal_access.revoke_between(ctx.tenant_id, pseudo_id,
+                                                 out.get("others") or [], by=ctx.user_id)
+        out["revoked"] = rev.get("revoked", 0)
+    out.pop("others", None)          # εσωτερικό — δεν το χρειάζεται η οθόνη
+    return out
+
+
+@router.get("/family-alerts/{patient_id}")
+async def family_alerts(patient_id: str,
+                        ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+    """Τι τρέχει στους ΥΠΟΛΟΙΠΟΥΣ της οικογένειας — δανεικά και ανεκτέλεστα.
+
+    ΓΙΑΤΙ ΜΕΣΑ ΣΤΗΝ ΕΙΚΟΝΑ ΠΕΛΑΤΗ: ο άνθρωπος είναι ΜΠΡΟΣΤΑ στον φαρμακοποιό. Είναι η μόνη
+    στιγμή που μπορεί να ρωτήσει «ξέρετε ότι ο σύζυγός σας χρωστά δύο δανεικά;» και να πάρει
+    απάντηση. Αν το δει αργότερα στην οθόνη της οικογένειας, ο πελάτης έχει ήδη φύγει.
+
+    ΜΟΝΟ ΟΙ ΑΛΛΟΙ: τα δικά του δανεικά/ανεκτέλεστα τα δείχνει ήδη η ίδια η καρτέλα — η αξία
+    εδώ είναι αποκλειστικά η πληροφορία που ΔΕΝ φαίνεται αλλού.
+    """
+    from app.services import group_lists
+    from app.utils.masking import mask_name
+    repo = _repo(ctx)
+    me = await repo._db["patients_anonymized"].find_one(
+        {"tenant_id": ctx.tenant_id, "_id": __import__("bson").ObjectId(patient_id)},
+        {"pseudo_id": 1}) if patient_id else None
+    if not me or not me.get("pseudo_id"):
+        return {"items": []}
+    out = []
+    async for g in repo._db["patient_groups"].find(
+            {"tenant_id": ctx.tenant_id, "kind": FAMILY, "active": {"$ne": False},
+             "members.pseudo_id": me["pseudo_id"]}).limit(5):
+        others = [m["pseudo_id"] for m in (g.get("members") or [])
+                  if m.get("pseudo_id") and not m.get("left_at")
+                  and m["pseudo_id"] != me["pseudo_id"]]
+        if not others:
+            continue
+        names, ids = {}, []
+        async for p in repo._db["patients_anonymized"].find(
+                {"tenant_id": ctx.tenant_id, "pseudo_id": {"$in": others}},
+                {"pseudo_id": 1, "full_name": 1}):
+            ids.append(p["_id"])
+            names[str(p["_id"])] = mask_name(p.get("full_name"), ctx.demo)
+        if not ids:
+            continue
+        lo = await group_lists.loans(repo._db, ctx.tenant_id, ids, names, limit=50)
+        pe = await group_lists.pending(repo._db, ctx.tenant_id, ids, names, limit=50)
+        if lo or pe:
+            out.append({"group_id": str(g["_id"]), "group_name": g.get("name"),
+                        "loans": lo, "pending": pe})
+    return {"items": out}
 
 
 @router.get("/for-patient/{patient_id}")

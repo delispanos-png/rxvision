@@ -210,6 +210,33 @@ async def revoke(tenant_id: str, auth_id: str, *, by: str | None = None) -> dict
     return {"ok": bool(r.modified_count)}
 
 
+async def revoke_between(tenant_id: str, pseudo: str, others: list[str],
+                         *, by: str | None = None) -> dict:
+    """Ανάκληση ΜΟΝΟ των εξουσιοδοτήσεων που συνδέουν τον `pseudo` με τους `others`.
+
+    ΓΙΑΤΙ ΥΠΑΡΧΕΙ: στο διαζύγιο ο φαρμακοποιός βγάζει τον έναν από την οικογένεια και θεωρεί
+    ότι τελείωσε. Η γονική μέριμνα όντως σταματά μόνη της (υπολογίζεται από τη συμμετοχή).
+    Η ΡΗΤΗ εξουσιοδότηση όμως ζει σε άλλο μηχανισμό και ΔΕΝ επηρεάζεται — ο πρώην σύζυγος
+    έπαυε να βλέπει τα παιδιά και συνέχιζε να βλέπει την πρώην σύζυγο.
+
+    ⚠️ ΓΙΑΤΙ ΟΧΙ «ΟΛΕΣ ΤΟΥ ΤΙΣ ΕΞΟΥΣΙΟΔΟΤΗΣΕΙΣ»: η εξουσιοδότηση είναι ΣΚΟΠΙΜΑ ανεξάρτητη
+    από την οικογένεια (η βασική της χρήση είναι ο ηλικιωμένος ΧΩΡΙΣ παιδιά που εμπιστεύεται
+    κάποιον). Αν ο πατέρας που φεύγει έχει και εξουσιοδότηση από τη ΔΙΚΗ ΤΟΥ μητέρα σε άλλη
+    οικογένεια, αυτή δεν αγγίζεται: το διαζύγιο δεν ακυρώνει τη σχέση με τη μαμά του.
+
+    Και προς τις ΔΥΟ κατευθύνσεις — «αυτός βλέπει εκείνους» και «εκείνοι βλέπουν αυτόν».
+    """
+    others = [o for o in (others or []) if o and o != pseudo]
+    if not pseudo or not others:
+        return {"revoked": 0}
+    r = await shared_db()[AUTH_COLL].update_many(
+        {"tenant_id": tenant_id, "revoked_at": None,
+         "$or": [{"grantor_pseudo": pseudo, "grantee_pseudo": {"$in": others}},
+                 {"grantee_pseudo": pseudo, "grantor_pseudo": {"$in": others}}]},
+        {"$set": {"revoked_at": _now(), "revoked_by": by}})
+    return {"revoked": int(r.modified_count)}
+
+
 async def list_for_patient(tenant_id: str, patient_ref: Any, *, demo: bool = False) -> dict:
     """Και οι δύο κατευθύνσεις: ποιους βλέπω — και **ποιος βλέπει εμένα**.
 

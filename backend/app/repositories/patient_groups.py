@@ -178,11 +178,20 @@ class PatientGroupRepository(BaseRepository):
     async def remove_member(self, gid: str, pseudo_id: str) -> dict:
         """Αφαίρεση ΟΡΙΣΤΙΚΗ. Δεν κρατάμε «πρώην μέλη» — η ομάδα είναι εργαλείο του σήμερα,
         όχι αρχείο συγγένειας· ένα ιστορικό «ποιος ήταν κάποτε στην οικογένεια» θα ήταν
-        δεδομένο που κανείς δεν ζήτησε και κανείς δεν θα συντηρούσε."""
+        δεδομένο που κανείς δεν ζήτησε και κανείς δεν θα συντηρούσε.
+
+        Επιστρέφει και τα ΥΠΟΛΟΙΠΑ μέλη, ώστε ο καλών να ανακαλέσει τις εξουσιοδοτήσεις που
+        συνέδεαν τον αφαιρούμενο μαζί τους (δες `portal_access.revoke_between`). Διαβάζουμε
+        ΠΡΙΝ το $pull — μετά η πληροφορία έχει χαθεί.
+        """
+        g = await self._coll.find_one(self._scope({"_id": _oid(gid)}),
+                                      {"members.pseudo_id": 1})
+        others = [m["pseudo_id"] for m in ((g or {}).get("members") or [])
+                  if m.get("pseudo_id") and m["pseudo_id"] != pseudo_id]
         r = await self.update_one({"_id": _oid(gid)},
                                   {"$pull": {"members": {"pseudo_id": pseudo_id}},
                                    "$set": {"updated_at": _now()}})
-        return {"ok": bool(r.matched_count)}
+        return {"ok": bool(r.matched_count), "others": others}
 
     async def update_member(self, gid: str, pseudo_id: str, *, label: str | None = None,
                             role: str | None = None) -> dict:

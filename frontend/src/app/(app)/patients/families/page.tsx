@@ -162,10 +162,23 @@ function Inner() {
   }
   async function removeMember(m: Member) {
     if (!sel) return;
-    if (!(await appConfirm(t(`Αφαίρεση του μέλους «${m.name}»;`, `Remove ${m.name}?`)))) return;
-    await api(`/patient-groups/${sel}/members/${m.pseudo_id}`, { method: "DELETE" });
+    // Η αφαίρεση κλείνει ΚΑΙ ΤΙΣ ΔΥΟ πόρτες πρόσβασης (διαζύγιο): σταματά η γονική μέριμνα
+    // ΚΑΙ ανακαλούνται οι εξουσιοδοτήσεις μέσα στην οικογένεια. Το λέμε πριν, και
+    // αναφέρουμε τον ακριβή αριθμό μετά — ανάκληση δικαιωμάτων δεν γίνεται σιωπηλά.
+    if (!(await appConfirm(t(
+      `Αφαίρεση του μέλους «${m.name}»;\n\nΘα σταματήσει να βλέπει τα ανήλικα μέλη στην πύλη, `
+      + `και θα ανακληθούν τυχόν εξουσιοδοτήσεις ανάμεσα σε αυτόν και την οικογένεια.`,
+      `Remove ${m.name}?\n\nThey will stop seeing the minors in the portal, and any `
+      + `authorisations between them and this family will be revoked.`), { danger: true }))) return;
+    const r = await api<{ ok?: boolean; revoked?: number }>(
+      `/patient-groups/${sel}/members/${m.pseudo_id}`, { method: "DELETE" });
     if (who === m.patient_id) setWho(null);
     reload();
+    if (r?.revoked) {
+      await appAlert(t(
+        `Ο/Η «${m.name}» αφαιρέθηκε. Ανακλήθηκαν επίσης ${r.revoked} εξουσιοδότηση/εις.`,
+        `${m.name} was removed. ${r.revoked} authorisation(s) were also revoked.`));
+    }
   }
 
   return (

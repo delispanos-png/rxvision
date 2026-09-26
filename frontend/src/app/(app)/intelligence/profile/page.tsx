@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Search, User, Wallet, Repeat, Stethoscope, Pill, Sparkles, AlertTriangle, Salad, Target, Eye, Crown, Syringe, ChevronRight, ScanLine, Calendar, CalendarRange, ShieldAlert } from "lucide-react";
+import { Search, User, Users, Wallet, Repeat, Stethoscope, Pill, Sparkles, AlertTriangle, Salad, Target, Eye, Crown, Syringe, ChevronRight, ScanLine, Calendar, CalendarRange, ShieldAlert } from "lucide-react";
 import { InteractionsModal } from "@/components/clinical/InteractionsModal";
 import { NewMedInteractionCard } from "@/components/clinical/NewMedInteractionCard";
 import { api, ApiError } from "@/lib/apiClient";
@@ -68,6 +68,74 @@ function AdviceList({ icon: Icon, title, items, accent }: { icon: typeof Salad; 
     <div className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
       <h4 className={`mb-2 flex items-center gap-1.5 text-sm font-semibold ${accent}`}><Icon className="h-4 w-4" />{title}</h4>
       <ul className="space-y-1.5">{items.map((x, i) => <li key={i} className="flex gap-2 text-sm text-slate-600 dark:text-slate-300"><span className="text-slate-300">•</span><span>{x}</span></li>)}</ul>
+    </div>
+  );
+}
+
+type FamAlert = {
+  group_id: string; group_name: string | null;
+  loans: { patient_id: string; name: string; expected_at?: string | null; items: string[] }[];
+  pending: { patient_id: string; name: string; barcode: string; valid_until?: string | null;
+             items: { name: string; left: number }[] }[];
+};
+
+/** Τι τρέχει στους ΑΛΛΟΥΣ της οικογένειας — δανεικά & ανεκτέλεστα.
+ *  Εμφανίζεται ΜΟΝΟ όταν υπάρχει κάτι: μια κενή κάρτα «καμία εκκρεμότητα» θα ήταν θόρυβος
+ *  σε μια οθόνη που ο φαρμακοποιός σαρώνει με τον πελάτη μπροστά του. */
+function FamilyAlerts({ patientId }: { patientId: string }) {
+  const t = useT();
+  const q = useQuery({
+    queryKey: ["family-alerts", patientId],
+    queryFn: () => api<{ items: FamAlert[] }>(`/patient-groups/family-alerts/${encodeURIComponent(patientId)}`),
+    enabled: !!patientId, staleTime: 60_000, retry: false,
+  });
+  const items = q.data?.items || [];
+  if (!items.length) return null;
+  const fmtD = (v?: string | null) =>
+    v ? new Date(v).toLocaleDateString("el-GR", { day: "2-digit", month: "2-digit", year: "numeric" }) : "—";
+  return (
+    <div className="rounded-2xl border border-amber-200 bg-amber-50/60 p-4 dark:border-amber-900/50 dark:bg-amber-950/20">
+      {items.map((g) => (
+        <div key={g.group_id} className="space-y-2">
+          <div className="flex items-center gap-2 text-sm font-semibold text-amber-900 dark:text-amber-200">
+            <Users className="h-4 w-4" />
+            {t(`Εκκρεμεί στην οικογένεια «${g.group_name || "—"}»`,
+               `Open in family "${g.group_name || "—"}"`)}
+          </div>
+          <p className="text-xs text-amber-800/80 dark:text-amber-300/70">
+            {t("Αφορά ΑΛΛΑ μέλη — ρώτησέ τον όσο είναι μπροστά σου.",
+               "These concern OTHER members — ask while they are with you.")}
+          </p>
+          {g.loans.map((l, i) => (
+            <div key={`l${i}`} className="rounded-xl bg-white/70 px-3 py-2 text-sm dark:bg-slate-900/40">
+              <span className="font-medium text-slate-800 dark:text-slate-100">{l.name}</span>
+              <span className="mx-1.5 rounded-full bg-orange-100 px-2 py-0.5 text-[11px] text-orange-700">
+                {t("δανεικό", "loan")}
+              </span>
+              <span className="text-slate-600 dark:text-slate-300">{l.items.join(" · ") || "—"}</span>
+              {l.expected_at && (
+                <span className="ml-1.5 text-xs text-slate-400">
+                  {t("επιστροφή", "due")} {fmtD(l.expected_at)}
+                </span>
+              )}
+            </div>
+          ))}
+          {g.pending.map((r, i) => (
+            <div key={`p${i}`} className="rounded-xl bg-white/70 px-3 py-2 text-sm dark:bg-slate-900/40">
+              <span className="font-medium text-slate-800 dark:text-slate-100">{r.name}</span>
+              <span className="mx-1.5 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] text-amber-700">
+                {t("ανεκτέλεστο", "unfilled")}
+              </span>
+              <span className="text-slate-600 dark:text-slate-300">
+                {(r.items || []).map((x) => `${x.name}${x.left > 1 ? ` ×${x.left}` : ""}`).join(" · ") || "—"}
+              </span>
+              <span className="ml-1.5 text-xs text-slate-400">
+                {t("έως", "until")} {fmtD(r.valid_until)}
+              </span>
+            </div>
+          ))}
+        </div>
+      ))}
     </div>
   );
 }
@@ -240,6 +308,8 @@ export default function PatientProfilePage() {
         <>
           {/* Ο Σύμβουλος πρώτος: ό,τι εκκρεμεί γι' ΑΥΤΟΝ τον άνθρωπο, πριν από κάθε ανάλυση. */}
           <CoachStrip patientId={p.patient.id} />
+          {/* Αμέσως μετά: τι τρέχει στους ΑΛΛΟΥΣ της οικογένειας. Ίδια στιγμή, ίδιος άνθρωπος. */}
+          <FamilyAlerts patientId={p.patient.id} />
           {/* header */}
           <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-700 dark:bg-slate-900">
             <div className="flex items-center gap-3">
