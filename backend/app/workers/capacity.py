@@ -29,6 +29,8 @@ from app.workers.celery_app import celery_app
 from app.workers.ingestion import _fresh_db, _run_async
 
 WANT_TYPE = "cx33"
+UPGRADE_TYPE = "cx43"               # η αμέσως επόμενη κλίμακα: 8 vCPU/16 GB/160 GB, 15,99 €
+UPGRADE_NODES = ("RxVisionSRV01", "RxVisionSRV02", "RxVisionSRV03")
 TARGET_NAME = "RxVisionSTAGE01"     # ο κόμβος δοκιμών που περιμένουμε
 TEMPLATE_FROM = "RxVisionSRV03"     # από ποιον αντιγράφουμε image/κλειδί/δίκτυο
 ALLOWED_ZONE = "eu-central"
@@ -57,8 +59,16 @@ async def _notify(db, subject: str, body_html: str) -> None:
 def watch_node_type() -> dict:
     """Ρωτά για διαθεσιμότητα cx33 και αγοράζει μόλις εμφανιστεί."""
     async def _run() -> dict:
+        # ΠΡΟΣΟΧΗ: το _fresh_db() επιστρέφει (client, db) και ο client ΘΕΛΕΙ κλείσιμο — αλλιώς
+        # διαρρέει σύνδεση κάθε 10 λεπτά. Ίδιο μοτίβο με ops_health/ingestion.
+        client, db = _fresh_db()
+        try:
+            return await _check(db)
+        finally:
+            client.close()
+
+    async def _check(db) -> dict:
         import httpx
-        db = _fresh_db()
         tok = await _token(db)
         if not tok:
             return {"ok": False, "reason": "no_hetzner_token"}
@@ -92,7 +102,9 @@ def watch_node_type() -> dict:
                 if want["id"] in ((d.get("server_types") or {}).get("available") or []):
                     hits.append(loc.get("name"))
             if not hits:
-                return {"ok": True, "available": False, "checked": now.isoformat()}
+                # δεν υπάρχει cx33 — κοίτα αν άνοιξε παράθυρο για ΑΝΑΒΑΘΜΙΣΗ σε cx43
+                up = await _watch_upgrade(db, cl, h, types, now)
+                return {"ok": True, "available": False, "checked": now.isoformat(), **up}
 
             # Προτίμηση στο location της παραγωγής (ίδιο ιδιωτικό δίκτυο, μηδενική καθυστέρηση)
             location = PREFERRED_LOCATION if PREFERRED_LOCATION in hits else sorted(hits)[0]
@@ -133,6 +145,44 @@ def watch_node_type() -> dict:
                 f"<li>Χωρίς δημόσια IP — πρόσβαση από MGMT01</li></ul>"
                 f"<p>Ο φύλακας απενεργοποιείται μόνος του από εδώ και πέρα.</p>")
             return {"ok": True, "bought": True, "location": location, "ip": ip}
+
+    async def _watch_upgrade(db, cl, h, types, now) -> dict:
+        """Παρακολούθηση cx43 για ΑΝΑΒΑΘΜΙΣΗ των app nodes — ΕΙΔΟΠΟΙΗΣΗ, όχι αυτόματη εκτέλεση.
+
+        ΓΙΑΤΙ ΟΧΙ ΑΥΤΟΜΑΤΑ: το rescale απαιτεί **σβήσιμο** του μηχανήματος. Αν ανοίξει παράθυρο
+        στις 03:00 και ο κόμβος δεν γυρίσει, δεν κοιτάζει κανείς. Η πρώτη αναβάθμιση γίνεται
+        εποπτευόμενα, έναν κόμβο τη φορά, μέσα στο παράθυρο των 22:30.
+
+        ⚠️ Και το «αναστρέψιμο» είναι υπό όρους: η επιστροφή σε cx33 απαιτεί ΤΟ cx33 να έχει
+        διαθεσιμότητα μετάπτωσης — που σήμερα ΔΕΝ έχει. Άρα η αναβάθμιση αντιμετωπίζεται ως
+        πιθανώς μόνιμη.
+        """
+        up = next((t for t in types if t.get("name") == UPGRADE_TYPE), None)
+        if not up:
+            return {"upgrade_available": False}
+        dcs = (await cl.get(f"{_API}/datacenters", headers=h)).json().get("datacenters", [])
+        where = [d["name"] for d in dcs
+                 if up["id"] in ((d.get("server_types") or {}).get("available_for_migration") or [])]
+        if not where:
+            return {"upgrade_available": False}
+        # μία ειδοποίηση ανά 24ωρο — το απόθεμα μπορεί να μείνει μέρες, δεν θέλουμε σπαμ
+        key = {"_id": "capacity:upgrade_available"}
+        last = await db["ops_alerts"].find_one(key)
+        lt = (last or {}).get("ts")
+        if lt and (now - lt.replace(tzinfo=timezone.utc)).total_seconds() < 86400:
+            return {"upgrade_available": True, "notified": False}
+        await db["ops_alerts"].update_one(key, {"$set": {"ts": now, "dcs": where}}, upsert=True)
+        await _notify(
+            db, f"⬆️ RxVision — διαθέσιμο {UPGRADE_TYPE} για αναβάθμιση των app nodes",
+            f"<h3>Άνοιξε παράθυρο μετάπτωσης σε {UPGRADE_TYPE}</h3>"
+            f"<p>8 vCPU / 16 GB / 160 GB — <b>+7,50 €/κόμβο</b> (από 8,49 σε 15,99 €).</p>"
+            f"<p>Datacenters: {', '.join(where)}</p>"
+            f"<p><b>Δεν έγινε τίποτα αυτόματα.</b> Το rescale σβήνει το μηχάνημα, οπότε γίνεται "
+            f"εποπτευόμενα, <b>έναν κόμβο τη φορά</b>, στο παράθυρο των 22:30, με resize "
+            f"<b>χωρίς δίσκο</b>.</p>"
+            f"<p>⚠️ Η επιστροφή σε cx33 απαιτεί το cx33 να έχει τότε διαθεσιμότητα — σήμερα δεν "
+            f"έχει. Θεώρησέ το μόνιμο.</p>")
+        return {"upgrade_available": True, "notified": True, "dcs": where}
 
     try:
         return _run_async(_run())
