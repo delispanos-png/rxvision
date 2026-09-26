@@ -30,7 +30,10 @@ from app.workers.ingestion import _fresh_db, _run_async
 
 WANT_TYPE = "cx33"
 UPGRADE_TYPE = "cx43"               # η αμέσως επόμενη κλίμακα: 8 vCPU/16 GB/160 GB, 15,99 €
-UPGRADE_NODES = ("RxVisionSRV01", "RxVisionSRV02", "RxVisionSRV03")
+APP_PREFIX = "RxVisionSRV"          # οι κόμβοι εφαρμογής, πίσω από τον LB
+PRESSURE_P95 = 70.0                 # % της συνολικής CPU του κόμβου — πάνω από αυτό «πονάει»
+METRIC_HOURS = 24                   # παράθυρο μέτρησης: p95 ημέρας, όχι στιγμιαίο
+MAX_AUTO_SERVERS = 2                # πλαφόν αυτόματων αγορών — να μη συσσωρεύσει μηχανές
 TARGET_NAME = "RxVisionSTAGE01"     # ο κόμβος δοκιμών που περιμένουμε
 TEMPLATE_FROM = "RxVisionSRV03"     # από ποιον αντιγράφουμε image/κλειδί/δίκτυο
 ALLOWED_ZONE = "eu-central"
@@ -43,6 +46,61 @@ async def _token(db) -> str | None:
     from app.services.platform_secrets import decrypt_doc
     c = decrypt_doc("cloud", await db["platform_settings"].find_one({"_id": "cloud"})) or {}
     return c.get("hetzner_token") or None
+
+
+async def _pressure(cl, h, servers: list[dict]) -> list[dict]:
+    """p95 CPU ανά app node, σε % της ΣΥΝΟΛΙΚΗΣ χωρητικότητας του κόμβου.
+
+    ΓΙΑΤΙ p95 ΚΑΙ ΟΧΙ ΣΤΙΓΜΙΑΙΟ: μια στιγμιαία μέτρηση έδειχνε 15-44% ενώ το p95 24ώρου ήταν
+    52-62% με κορυφές 74%. Το στιγμιαίο λέει ψέματα για το αν ένας κόμβος πονάει.
+    ΓΙΑΤΙ ΟΧΙ ΜΕΣΗ ΤΙΜΗ: η μέση κρύβει τις αιχμές, που είναι ακριβώς η στιγμή που ο πελάτης
+    περιμένει μπροστά στην οθόνη.
+
+    Το Hetzner δίνει CPU ως άθροισμα όλων των πυρήνων (4 πυρήνες → 400% = κορεσμός), οπότε
+    κανονικοποιούμε στο πλήθος πυρήνων του τύπου.
+    """
+    from datetime import timedelta
+    end = datetime.now(timezone.utc)
+    start = end - timedelta(hours=METRIC_HOURS)
+    out = []
+    for s in servers:
+        if not str(s.get("name", "")).startswith(APP_PREFIX):
+            continue
+        cores = ((s.get("server_type") or {}).get("cores") or 1)
+        try:
+            r = await cl.get(f"{_API}/servers/{s['id']}/metrics", headers=h,
+                             params={"type": "cpu", "start": start.isoformat(),
+                                     "end": end.isoformat(), "step": 300})
+            vals = sorted(float(v[1]) for v in
+                          r.json()["metrics"]["time_series"]["cpu"]["values"])
+        except Exception:  # noqa: BLE001 — χωρίς μετρήσεις δεν παίρνουμε αποφάσεις δαπάνης
+            continue
+        if not vals:
+            continue
+        p95 = vals[max(int(len(vals) * 0.95) - 1, 0)] / cores
+        out.append({"name": s["name"], "id": s["id"], "p95": round(p95, 1),
+                    "peak": round(vals[-1] / cores, 1), "type": (s.get("server_type") or {}).get("name")})
+    return sorted(out, key=lambda x: -x["p95"])
+
+
+async def _suggest_app_node(db, hurting: list[dict], where: list[str], now) -> None:
+    """Πρόταση προσθήκης κόμβου — ΔΕΝ αγοράζει. Μία ειδοποίηση ανά 24ωρο."""
+    key = {"_id": "capacity:app_node_suggested"}
+    last = await db["ops_alerts"].find_one(key)
+    lt = (last or {}).get("ts")
+    if lt and (now - lt.replace(tzinfo=timezone.utc)).total_seconds() < 86400:
+        return
+    await db["ops_alerts"].update_one(key, {"$set": {"ts": now, "nodes": hurting}}, upsert=True)
+    rows = "".join(f"<li>{n['name']}: p95 <b>{n['p95']}%</b>, κορυφή {n['peak']}%</li>"
+                   for n in hurting)
+    await _notify(
+        db, f"⚠️ RxVision — κόμβος υπό πίεση, και υπάρχει απόθεμα {WANT_TYPE}",
+        f"<h3>Ξεπέρασαν το {PRESSURE_P95}% σε p95 {METRIC_HOURS}ώρου</h3><ul>{rows}</ul>"
+        f"<p>Υπάρχει απόθεμα <b>{WANT_TYPE}</b> ({', '.join(where)}) για προσθήκη κόμβου.</p>"
+        f"<p><b>Δεν αγοράστηκε τίποτα.</b> Ένας κόμβος χωρίς <code>bootstrap-node.sh</code> + "
+        f"<code>adopt-node.sh</code> δεν σηκώνει κίνηση — θα πλήρωνες μηχάνημα που κάθεται.</p>"
+        f"<p>Προτίμησε πρώτα <b>αναβάθμιση</b> του πιο φορτωμένου αν υπάρχει cx43: δεν "
+        f"προσθέτει κόμβο να συντηρείς.</p>")
 
 
 async def _notify(db, subject: str, body_html: str) -> None:
@@ -101,10 +159,38 @@ def watch_node_type() -> dict:
                     continue
                 if want["id"] in ((d.get("server_types") or {}).get("available") or []):
                     hits.append(loc.get("name"))
-            if not hits:
-                # δεν υπάρχει cx33 — κοίτα αν άνοιξε παράθυρο για ΑΝΑΒΑΘΜΙΣΗ σε cx43
-                up = await _watch_upgrade(db, cl, h, types, now)
-                return {"ok": True, "available": False, "checked": now.isoformat(), **up}
+            # ── ΤΙ ΧΡΕΙΑΖΟΜΑΣΤΕ — μετρημένο, όχι υποτιθέμενο ─────────────────────────────
+            need_staging = not any(s.get("name") == TARGET_NAME for s in servers)
+            load = await _pressure(cl, h, servers)
+            hurting = [n for n in load if n["p95"] >= PRESSURE_P95]
+            status = {"ok": True, "checked": now.isoformat(), "cx33_available": bool(hits),
+                      "load": load, "need_staging": need_staging}
+
+            # ── ΚΛΙΜΑΚΑ ΠΡΟΤΕΡΑΙΟΤΗΤΑΣ ───────────────────────────────────────────────────
+            # ΠΟΙΟΣ ΞΟΔΕΥΕΙ: αυτόματη αγορά γίνεται ΜΟΝΟ για τον έναν κόμβο δοκιμών, που είναι
+            # ρητά εγκεκριμένος και φραγμένος στο ένα μηχάνημα. Κάθε ΑΛΛΗ δαπάνη (επιπλέον app
+            # node, αναβάθμιση) απαιτεί άνθρωπο, για δύο λόγους:
+            #   · ένας αγορασμένος κόμβος εφαρμογής ΔΕΝ δουλεύει μόνος του — θέλει
+            #     bootstrap-node.sh + adopt-node.sh· θα πλήρωνες μηχάνημα που κάθεται.
+            #   · το φορτίο είναι αιχμιακό — ένα βαρύ backfill περνά το κατώφλι για μία ώρα
+            #     και θα αγόραζε υλικό για πρόβλημα που λύνεται μόνο του.
+            # Ο φύλακας ΜΕΤΡΑΕΙ και ΠΡΟΤΕΙΝΕΙ· η δέσμευση χρημάτων μένει στον ιδιοκτήτη.
+
+            # 1) ΔΟΚΙΜΕΣ ΠΡΩΤΑ — δεν υπάρχει κανένα περιβάλλον δοκιμών και κάθε αλλαγή
+            #    δοκιμάζεται πάνω σε πραγματικά φαρμακεία. Προηγείται της χωρητικότητας,
+            #    που έχει ακόμη περιθώριο.
+            if hits and need_staging:
+                pass   # συνεχίζει παρακάτω στην αγορά του κόμβου δοκιμών
+            else:
+                # 2) ΠΟΝΑΕΙ ΚΑΠΟΙΟΣ; Η χωρητικότητα πάει εκεί. Προτιμάμε ΑΝΑΒΑΘΜΙΣΗ του πιο
+                #    φορτωμένου (δεν προσθέτει κόμβο να συντηρείς)· αλλιώς προσθήκη κόμβου.
+                worst = hurting[0] if hurting else (load[0] if load else None)
+                up = await _watch_upgrade(db, cl, h, types, now, worst=worst)
+                if hurting and hits:
+                    await _suggest_app_node(db, hurting, hits, now)
+                    return {**status, **up, "action": "suggest_app_node"}
+                return {**status, **up,
+                        "action": "upgrade_suggested" if up.get("upgrade_available") else "none"}
 
             # Προτίμηση στο location της παραγωγής (ίδιο ιδιωτικό δίκτυο, μηδενική καθυστέρηση)
             location = PREFERRED_LOCATION if PREFERRED_LOCATION in hits else sorted(hits)[0]
@@ -146,7 +232,7 @@ def watch_node_type() -> dict:
                 f"<p>Ο φύλακας απενεργοποιείται μόνος του από εδώ και πέρα.</p>")
             return {"ok": True, "bought": True, "location": location, "ip": ip}
 
-    async def _watch_upgrade(db, cl, h, types, now) -> dict:
+    async def _watch_upgrade(db, cl, h, types, now, worst=None) -> dict:
         """Παρακολούθηση cx43 για ΑΝΑΒΑΘΜΙΣΗ των app nodes — ΕΙΔΟΠΟΙΗΣΗ, όχι αυτόματη εκτέλεση.
 
         ΓΙΑΤΙ ΟΧΙ ΑΥΤΟΜΑΤΑ: το rescale απαιτεί **σβήσιμο** του μηχανήματος. Αν ανοίξει παράθυρο
@@ -172,11 +258,16 @@ def watch_node_type() -> dict:
         if lt and (now - lt.replace(tzinfo=timezone.utc)).total_seconds() < 86400:
             return {"upgrade_available": True, "notified": False}
         await db["ops_alerts"].update_one(key, {"$set": {"ts": now, "dcs": where}}, upsert=True)
+        which = ""
+        if worst:
+            which = (f"<p><b>Ξεκίνα από τον {worst['name']}</b> — είναι ο πιο φορτωμένος: "
+                     f"p95 {worst['p95']}% / κορυφή {worst['peak']}% σε {METRIC_HOURS} ώρες.</p>")
         await _notify(
             db, f"⬆️ RxVision — διαθέσιμο {UPGRADE_TYPE} για αναβάθμιση των app nodes",
             f"<h3>Άνοιξε παράθυρο μετάπτωσης σε {UPGRADE_TYPE}</h3>"
             f"<p>8 vCPU / 16 GB / 160 GB — <b>+7,50 €/κόμβο</b> (από 8,49 σε 15,99 €).</p>"
             f"<p>Datacenters: {', '.join(where)}</p>"
+            f"{which}"
             f"<p><b>Δεν έγινε τίποτα αυτόματα.</b> Το rescale σβήνει το μηχάνημα, οπότε γίνεται "
             f"εποπτευόμενα, <b>έναν κόμβο τη φορά</b>, στο παράθυρο των 22:30, με resize "
             f"<b>χωρίς δίσκο</b>.</p>"
