@@ -34,6 +34,7 @@ APP_PREFIX = "RxVisionSRV"          # οι κόμβοι εφαρμογής, πί
 PRESSURE_P95 = 70.0                 # % της συνολικής CPU του κόμβου — πάνω από αυτό «πονάει»
 METRIC_HOURS = 24                   # παράθυρο μέτρησης: p95 ημέρας, όχι στιγμιαίο
 MAX_AUTO_SERVERS = 2                # πλαφόν αυτόματων αγορών — να μη συσσωρεύσει μηχανές
+FIREWALLS = {"data": 11111994, "app": 11113679}   # rxvision-data-fw / rxvision-app-fw
 TARGET_NAME = "RxVisionSTAGE01"     # ο κόμβος δοκιμών που περιμένουμε
 TEMPLATE_FROM = "RxVisionSRV03"     # από ποιον αντιγράφουμε image/κλειδί/δίκτυο
 ALLOWED_ZONE = "eu-central"
@@ -203,17 +204,41 @@ def watch_node_type() -> dict:
                 "ssh_keys": [k["id"] for k in (await cl.get(f"{_API}/ssh_keys",
                                                             headers=h)).json().get("ssh_keys", [])],
                 "networks": net_ids,
-                # ΦΡΑΓΜΟΣ 3 — κανένα δημόσιο πρόσωπο. Μόνο ιδιωτικό δίκτυο.
-                "public_net": {"enable_ipv4": False, "enable_ipv6": False},
+                # ⚠️ ΔΗΜΟΣΙΑ IP + FIREWALL, ΟΧΙ «μόνο ιδιωτικό».
+                # Λάθος που διορθώθηκε 26/09/2026: το ιδιωτικό δίκτυο **δεν έχει NAT**, οπότε
+                # κόμβος χωρίς δημόσια IP δεν μπορεί να κατεβάσει ούτε Docker ούτε εικόνες —
+                # θα αγοράζαμε άχρηστο κουτί. Η προστασία έρχεται από το FIREWALL, που δένεται
+                # ΤΗ ΣΤΙΓΜΗ ΤΗΣ ΔΗΜΙΟΥΡΓΙΑΣ (όχι μετά): το rxvision-data-fw/app-fw επιτρέπει
+                # θύρα 22 μόνο από 10.0.0.0/16. Δες [[db02-exposed-ssh-incident]]: ο μόνος
+                # κόμβος που στήθηκε χωρίς firewall δεχόταν 16.653 επιθέσεις το 24ωρο.
+                "public_net": {"enable_ipv4": True, "enable_ipv6": False},
+                # Η μόνη αυτόματη αγορά είναι ο κόμβος ΔΟΚΙΜΩΝ → firewall της κατηγορίας data
+                # (θύρα 22 μόνο από 10.0.0.0/16), ίδιο με DB01/DB02.
+                "firewalls": [{"firewall": FIREWALLS["data"]}],
                 "labels": {"role": "staging", "bought_by": "capacity-watcher"},
                 "start_after_create": True,
             }
             r = await cl.post(f"{_API}/servers", headers=h, json=payload)
             if r.status_code not in (200, 201):
-                detail = str(r.text)[:200]
+                detail = str(r.text)[:300]
+                # ΣΙΩΠΗΛΗ ΑΠΟΤΥΧΙΑ = Ο ΧΕΙΡΟΤΕΡΟΣ ΦΥΛΑΚΑΣ. Αν βρεθεί απόθεμα και η αγορά
+                # αποτύχει, πρέπει να το ΜΑΘΕΙ ο άνθρωπος αμέσως — αλλιώς νομίζεις ότι φυλάει
+                # κάποιος και δεν φυλάει κανείς. Διαπιστώθηκε 26/09/2026: το token επιστρέφει
+                # 403 στη δημιουργία server (ενώ γράφει firewall κανονικά), οπότε η αυτόματη
+                # αγορά ΔΕΝ δουλεύει μέχρι να δοθεί token με δικαίωμα δημιουργίας.
+                key = {"_id": "capacity:buy_failed"}
+                last = await db["ops_alerts"].find_one(key)
+                lt = (last or {}).get("ts")
                 await db["ops_alerts"].update_one(
-                    {"_id": "capacity:buy_failed"},
-                    {"$set": {"ts": now, "msg": detail}}, upsert=True)
+                    key, {"$set": {"ts": now, "msg": detail}}, upsert=True)
+                if not (lt and (now - lt.replace(tzinfo=timezone.utc)).total_seconds() < 86400):
+                    await _notify(
+                        db, f"🚨 RxVision — βρέθηκε {WANT_TYPE} αλλά Η ΑΓΟΡΑ ΑΠΕΤΥΧΕ",
+                        f"<h3>Άνοιξε απόθεμα {WANT_TYPE} και δεν μπορέσαμε να το πάρουμε</h3>"
+                        f"<p>Τοποθεσία: {location}</p>"
+                        f"<p>Απάντηση Hetzner: <code>{detail}</code></p>"
+                        f"<p><b>Πάρ' το με το χέρι από το Hetzner console τώρα</b> — το απόθεμα "
+                        f"μπορεί να εξαφανιστεί σε λεπτά.</p>")
                 return {"ok": False, "available": True, "bought": False, "error": detail}
 
             srv = (r.json() or {}).get("server") or {}
