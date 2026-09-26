@@ -18,7 +18,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Users, Plus, Search, Trash2, UserRound, AlertTriangle, HandCoins, CalendarClock,
-         Clock, Baby, Pencil, Pill, ChevronRight } from "lucide-react";
+         Clock, Baby, Pencil, Pill, ChevronRight, UserCog, UserMinus } from "lucide-react";
 import Link from "next/link";
 import { api } from "@/lib/apiClient";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
@@ -336,6 +336,39 @@ function Inner() {
                     )}
                   </div>
                 )}
+
+                {/* Χωρίς αυτό, στο «Όλη η οικογένεια» δεν υπάρχει ΚΑΜΙΑ ένδειξη ότι οι ενέργειες
+                  ανά μέλος υπάρχουν — απλώς δεν φαίνονται. */}
+                {!cur && !!d.members.length && (
+                <p className="mt-3 border-t border-slate-100 pt-3 text-xs text-slate-400 dark:border-slate-800">
+                    {t("Πάτα ένα μέλος παραπάνω για να αλλάξεις ρόλο ή να το αφαιρέσεις από την οικογένεια.",
+                     "Select a member above to change their role or remove them from the family.")}
+                </p>
+              )}
+
+                {cur && (
+                <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3 text-sm text-slate-500 dark:border-slate-800">
+                    {cur.amka && <span>{cur.amka}</span>}
+                    {cur.minor && <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[10px] text-sky-700">
+                      {t(`ενηλικιώνεται ${fmt(cur.adult_on)}`, `turns 18 on ${fmt(cur.adult_on)}`)}</span>}
+                    {/* ΕΝΕΡΓΕΙΕΣ, ΟΧΙ ΨΙΛΑ ΓΡΑΜΜΑΤΑ: ήταν 12px ανοιχτό γκρι και ο ιδιοκτήτης
+                      έψαξε την αφαίρεση και ΔΕΝ τη βρήκε. Ό,τι κάνει κάτι, μοιάζει με κουμπί. */}
+                  <button onClick={() => setRole(cur)}
+                    className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300">
+                    <UserCog className="h-3.5 w-3.5" /> {t("Αλλαγή ρόλου", "Change role")}
+                  </button>
+                  <button onClick={() => removeMember(cur)}
+                    className="inline-flex items-center gap-1 rounded-lg border border-rose-200 px-2 py-1 text-xs font-medium text-rose-600 hover:bg-rose-50 dark:border-rose-900/50 dark:hover:bg-rose-950/30">
+                    <UserMinus className="h-3.5 w-3.5" /> {t("Αφαίρεση από την οικογένεια", "Remove from family")}
+                  </button>
+                    {cur.patient_id && (
+                    <Link href={`/patients/${cur.patient_id}`}
+                      className="ml-auto inline-flex items-center gap-1 text-xs font-medium text-rose-600 hover:underline">
+                        {t("Πλήρης καρτέλα", "Full record")} <ChevronRight className="h-3 w-3" />
+                    </Link>
+                  )}
+                </div>
+              )}
               </div>
 
               {/* ── ΚΑΡΤΑ ΕΠΙΛΕΓΜΕΝΟΥ ── */}
@@ -351,25 +384,6 @@ function Inner() {
                       tone={(cur ? cur.loans : d.totals.loans) > 0 ? "warn" : undefined} />
               </div>
 
-              {cur && (
-                <div className="flex flex-wrap items-center gap-2 text-sm text-slate-500">
-                  {cur.amka && <span>{cur.amka}</span>}
-                  {cur.minor && <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[10px] text-sky-700">
-                    {t(`ενηλικιώνεται ${fmt(cur.adult_on)}`, `turns 18 on ${fmt(cur.adult_on)}`)}</span>}
-                  <button onClick={() => setRole(cur)} className="text-xs text-slate-400 hover:underline">
-                    {t("αλλαγή ρόλου", "change role")}
-                  </button>
-                  <button onClick={() => removeMember(cur)} className="text-xs text-slate-400 hover:text-rose-600 hover:underline">
-                    {t("αφαίρεση από την οικογένεια", "remove from family")}
-                  </button>
-                  {cur.patient_id && (
-                    <Link href={`/patients/${cur.patient_id}`}
-                      className="ml-auto inline-flex items-center gap-1 text-xs font-medium text-rose-600 hover:underline">
-                      {t("Πλήρης καρτέλα", "Full record")} <ChevronRight className="h-3 w-3" />
-                    </Link>
-                  )}
-                </div>
-              )}
 
               {lists.isLoading ? (
                 <div className="rounded-2xl border border-slate-200 p-8 text-center text-sm text-slate-400 dark:border-slate-700">

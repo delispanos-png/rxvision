@@ -196,6 +196,11 @@ export default function PortalHome() {
   // μη χρειάζεται νέο αίτημα — και να μη μείνουν ποτέ ξένα δεδομένα στην οθόνη.
   const [myRx, setMyRx] = useState<Rx[]>([]);
   const [viewable, setViewable] = useState<ViewPerson[]>([]);
+  const [myRepeats, setMyRepeats] = useState<Repeat[]>([]);
+  // ΕΝΑ σημείο για το «για ποιον»: αν το έγραφα σε κάθε κλήση, μία ξεχασμένη θα έδειχνε
+  // σιωπηλά ΤΑ ΔΙΚΑ ΣΟΥ δεδομένα ενώ ο διακόπτης θα έλεγε άλλο όνομα.
+  const forQ = (v: ViewPerson | null) =>
+    v ? `?for=${encodeURIComponent(v.patient_ref)}&tenant_id=${encodeURIComponent(v.tenant_id)}` : "";
   const [viewAs, setViewAs] = useState<ViewPerson | null>(null);
   // Άυλη συνταγογράφηση: PIN μέσω SMS από ΗΔΥΚΑ → λίστα νέων συνταγών → ανάθεση με το ΙΔΙΟ rx-request
   const [nutrition, setNutrition] = useState<NutritionPlan | null>(null);
@@ -298,7 +303,7 @@ export default function PortalHome() {
         patientApi<{ items: Notif[] }>("/patient/notifications"),
       ]);
       setSummary(s); setRx(p.items); setRepeats(r.items); setNotifs(n.items);
-      setMyRx(p.items);
+      setMyRx(p.items); setMyRepeats(r.items);
       // Ποιους άλλους επιτρέπεται να δει: ανήλικα παιδιά (γονική μέριμνα) + όσοι τον
       // εξουσιοδότησαν. Ο έλεγχος γίνεται ΠΑΝΤΑ στον διακομιστή — εδώ μόνο εμφανίζεται.
       patientApi<{ items: ViewPerson[] }>("/patient/viewable")
@@ -312,11 +317,15 @@ export default function PortalHome() {
   // Αλλαγή προσώπου → φέρε ΤΙΣ ΔΙΚΕΣ ΤΟΥ συνταγές (ξεχωριστή διαδρομή: η πρόσβαση σε τρίτον
   // γεννιέται ΑΝΑ ΦΑΡΜΑΚΕΙΟ, ενώ οι δικές μου μαζεύονται από όλα).
   useEffect(() => {
-    if (!viewAs) { setRx(myRx); return; }
+    if (!viewAs) { setRx(myRx); setRepeats(myRepeats); return; }
     patientApi<{ items: Rx[] }>(
       `/patient/prescriptions-for?for=${encodeURIComponent(viewAs.patient_ref)}&tenant_id=${encodeURIComponent(viewAs.tenant_id)}`)
       .then((r) => setRx(r.items)).catch(() => setRx([]));
-  }, [viewAs, myRx]);
+    // Οι επαναλήψεις δέχονται ήδη «για ποιον» στον διακομιστή — αλλιώς ο διακόπτης θα άλλαζε
+    // μόνο τις συνταγές και η καρτέλα δίπλα θα έδειχνε ΤΙΣ ΔΙΚΕΣ ΣΟΥ, σιωπηλά λάθος.
+    patientApi<{ items: Repeat[] }>(`/patient/repeats?for=${encodeURIComponent(viewAs.patient_ref)}`)
+      .then((r) => setRepeats(r.items)).catch(() => setRepeats([]));
+  }, [viewAs, myRx, myRepeats]);
 
   useEffect(() => {
     if (!me) return;
@@ -339,7 +348,7 @@ export default function PortalHome() {
       patientApi<Health>("/patient/health").then(setHealth).catch(() => {});
       patientApi<NutritionPlan>("/patient/nutrition").then(setNutrition).catch(() => {});
     }
-    if (tab === "renewals") patientApi<{ items: Renewal[] }>("/patient/renewals").then((d) => setRenewals(d.items)).catch(() => {});
+    if (tab === "renewals") patientApi<{ items: Renewal[] }>(`/patient/renewals${forQ(viewAs)}`).then((d) => setRenewals(d.items)).catch(() => {});
     if (tab === "wallet") patientApi<Loyalty>("/patient/loyalty").then(setLoyalty).catch(() => {});
     if (tab === "pharmacies" || directory.length === 0) patientApi<{ items: DirPharmacy[] }>("/patient/pharmacies/directory").then((d) => setDirectory(d.items)).catch(() => {});
     if (tab === "assign") patientApi<{ items: RxReq[] }>("/patient/rx-requests").then((d) => setRxReqs(d.items)).catch(() => {});
@@ -348,7 +357,9 @@ export default function PortalHome() {
       if (apptTarget) patientApi<{ items: Service[] }>(`/patient/services?tenant_id=${apptTarget}`).then((d) => setServices(d.items)).catch(() => {});
       patientApi<{ items: Appt[] }>("/patient/appointments").then((d) => setAppts(d.items)).catch(() => {});
     }
-  }, [tab, me, apptTarget]);
+    // `viewAs` στις εξαρτήσεις: χωρίς αυτό, αλλάζεις πρόσωπο και τα Ανεκτέλεστα μένουν τα
+    // ΔΙΚΑ ΣΟΥ ενώ ο διακόπτης δείχνει άλλο όνομα — σιωπηλά λάθος, το χειρότερο είδος.
+  }, [tab, me, apptTarget, viewAs]);
 
   // Live updates: poll every 12s so a pharmacist's answer / status change appears WITHOUT a manual
   // refresh. Pauses while the tab is hidden to save battery/requests.
@@ -715,7 +726,7 @@ export default function PortalHome() {
     if (assignBc.trim().length < 4) return;
     setAssignBusy(true); setAssignMsg(null);
     try {
-      const r = await patientApi<{ id: string; cda?: Cda }>("/patient/rx-request", { method: "POST", body: JSON.stringify({ barcode: assignBc.trim(), note: assignNote || undefined }) });
+      const r = await patientApi<{ id: string; cda?: Cda }>("/patient/rx-request", { method: "POST", body: JSON.stringify({ barcode: assignBc.trim(), note: assignNote || undefined, for_ref: viewAs?.patient_ref, tenant_id: viewAs?.tenant_id }) });
       const c = r.cda;
       setAssignBc(""); setAssignNote("");
       if (c?.found) setAssignMsg(t(`✓ Επιβεβαιώθηκε από ΗΔΙΚΑ${c.medicines?.length ? ` — ${c.medicines.length} φάρμακα` : ""} · στάλθηκε στο φαρμακείο`, `✓ Verified via ΗΔΙΚΑ${c.medicines?.length ? ` — ${c.medicines.length} medicines` : ""} · sent to the pharmacy`));
@@ -766,7 +777,7 @@ export default function PortalHome() {
     setNpBusy(true);
     try {
       // ΙΔΙΑ διαδρομή υποβολής με το barcode — καμία ξεχωριστή ροή
-      await patientApi("/patient/rx-request", { method: "POST", body: JSON.stringify({ barcode: bc }) });
+      await patientApi("/patient/rx-request", { method: "POST", body: JSON.stringify({ barcode: bc, for_ref: viewAs?.patient_ref, tenant_id: viewAs?.tenant_id }) });
       setNpItems((xs) => xs.map((x) => (x.barcode === bc ? { ...x, already_submitted: true } : x)));
       setAssignMsg(t("Στάλθηκε στο φαρμακείο ✓", "Sent to the pharmacy ✓"));
       reloadRxReqs();
@@ -1506,7 +1517,7 @@ export default function PortalHome() {
         </div>}
 
         {/* ── PRESCRIPTIONS ──────────────────────────────────── */}
-        {tab === "rx" && viewable.length > 0 && (
+        {["rx", "repeats", "renewals", "assign"].includes(tab) && viewable.length > 0 && (
           <div className={`mb-3 flex flex-wrap items-center gap-2 rounded-2xl border p-3 ${
             viewAs ? "border-sky-300 bg-sky-50 dark:bg-sky-950/20" : "border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900"}`}>
             <span className="text-sm font-medium text-slate-600 dark:text-slate-300">
@@ -1529,8 +1540,8 @@ export default function PortalHome() {
             ))}
             {viewAs && (
               <span className="w-full text-xs text-sky-700 dark:text-sky-300">
-                {t(`Βλέπεις τις συνταγές του/της ${viewAs.name}. Δεν μπορείς να κάνεις ενέργειες στο όνομά του/της.`,
-                   `Viewing prescriptions for ${viewAs.name}. You cannot act on their behalf.`)}
+                {t(`Βλέπεις τα στοιχεία του/της ${viewAs.name}. Ό,τι αναθέσεις καταγράφεται στο όνομά του/της, με τη δική σου υπογραφή.`,
+                   `Viewing ${viewAs.name}. Anything you submit is recorded in their name, signed by you.`)}
               </span>
             )}
           </div>

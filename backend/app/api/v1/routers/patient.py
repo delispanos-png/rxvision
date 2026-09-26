@@ -536,7 +536,12 @@ async def my_prescriptions(ctx: PatientContext = Depends(get_patient_context)):
 # ── ΠΟΙΟΝ ΒΛΕΠΩ ─────────────────────────────────────────────────────────────────────────
 # Ο έλεγχος γίνεται ΠΑΝΤΑ στο `services/portal_access.py`, ποτέ εδώ. Το `for` έρχεται από τον
 # πελάτη, άρα είναι αναξιόπιστο εξ ορισμού — γι' αυτό κάθε χρήση του περνά από `_target()`.
-async def _target(ctx: PatientContext, for_ref: str | None,
+# ⚠️ ΟΝΟΜΑ ΜΟΝΑΔΙΚΟ ΣΤΟ ΑΡΧΕΙΟ: υπάρχει ΚΑΙ `_target()` παρακάτω (γρ. ~1235) με ΑΛΛΗ υπογραφή
+# (επιστρέφει 4 τιμές). Στην Python ο δεύτερος ορισμός ΣΒΗΝΕΙ τον πρώτο — όταν αυτή η συνάρτηση
+# λεγόταν κι αυτή `_target` (25/09/2026), ΟΛΟΙ οι καλούντες της έπαιρναν την άλλη και έσκαγαν με
+# «too many values to unpack». Αποτέλεσμα: /patient/summary και /patient/repeats σε 500 → η
+# ΑΡΧΙΚΗ ΤΗΣ ΠΥΛΗΣ ΑΔΕΙΑ για κάθε πελάτη, σιωπηλά (το frontend κατάπινε το σφάλμα).
+async def _view_target(ctx: PatientContext, for_ref: str | None,
                   tenant_id: str | None = None) -> tuple[str, str, bool]:
     """(tenant_id, patient_ref, read_only). Χωρίς `for` → ο εαυτός του."""
     from app.services import portal_access
@@ -584,7 +589,7 @@ async def revoke_access(auth_id: str, ctx: PatientContext = Depends(get_patient_
 @router.get("/repeats")
 async def my_repeats(for_ref: str | None = Query(None, alias="for"),
                      ctx: PatientContext = Depends(get_patient_context)):
-    tid, pref, _ = await _target(ctx, for_ref)
+    tid, pref, _ = await _view_target(ctx, for_ref)
     return {"items": await PatientRxRepository(tenant_id=tid).my_repeats(pref)}
 
 
@@ -592,7 +597,7 @@ async def my_repeats(for_ref: str | None = Query(None, alias="for"),
 async def my_summary(for_ref: str | None = Query(None, alias="for"),
                      ctx: PatientContext = Depends(get_patient_context)):
     """KPI snapshot for the portal home (counts, paid, fund-covered, repeats)."""
-    tid, pref, _ = await _target(ctx, for_ref)
+    tid, pref, _ = await _view_target(ctx, for_ref)
     return await PatientRxRepository(tenant_id=tid).summary(pref)
 
 
@@ -606,7 +611,7 @@ async def prescriptions_for(for_ref: str = Query(..., alias="for"),
     λογαριασμού. Η πρόσβαση σε τρίτον όμως γεννιέται ΑΝΑ ΦΑΡΜΑΚΕΙΟ (εκεί δηλώθηκε η οικογένεια
     ή η εξουσιοδότηση) — ένα κοινό endpoint θα έμπλεκε τα δύο και θα διέρρεε.
     """
-    tid, pref, read_only = await _target(ctx, for_ref, tenant_id)
+    tid, pref, read_only = await _view_target(ctx, for_ref, tenant_id)
     items = await PatientRxRepository(tenant_id=tid, demo=ctx.demo).my_prescriptions(pref)
     return {"items": items, "read_only": read_only}
 
@@ -1021,11 +1026,18 @@ async def pharmacy_hours(ctx: PatientContext = Depends(get_patient_context)):
 
 
 @router.get("/renewals")
-async def my_renewals(ctx: PatientContext = Depends(get_patient_context)):
+async def my_renewals(for_ref: str | None = Query(None, alias="for"),
+                      tenant_id: str | None = None,
+                      ctx: PatientContext = Depends(get_patient_context)):
     """Διαθέσιμες ανανεώσεις: χρόνιες επαναλαμβανόμενες συνταγές που μπορούν να εκτελεστούν τώρα
-    στο ενεργό φαρμακείο (ώστε ο ασθενής να μην ξεχάσει την επανάληψη)."""
+    στο ενεργό φαρμακείο (ώστε ο ασθενής να μην ξεχάσει την επανάληψη).
+
+    Με `?for=` δείχνει ΑΛΛΟΥ ανθρώπου — ανήλικο τέκνο ή όποιον τον εξουσιοδότησε. Ο έλεγχος
+    γίνεται στο `_view_target`, ΠΟΤΕ με βάση την παράμετρο σκέτη.
+    """
     from app.utils.masking import mask_row
-    det = await AdvisorRepository(tenant_id=ctx.tenant_id).recall_detail(str(ctx.patient_ref))
+    tid, pref, _ = await _view_target(ctx, for_ref, tenant_id)
+    det = await AdvisorRepository(tenant_id=tid).recall_detail(str(pref))
     items = []
     for c in det.get("chains", []):
         if c.get("available"):
@@ -1074,7 +1086,7 @@ async def prescription_detail(barcode: str, tenant_id: str | None = None,
                               ctx: PatientContext = Depends(get_patient_context)):
     """Λεπτομέρειες ΜΙΑΣ εκτέλεσης. Με `tenant_id` ανοίγει εκτέλεση άλλου φαρμακείου του πελάτη —
     ΜΟΝΟ αν είναι όντως linked εκεί (αλλιώς 403) και μόνο τη ΔΙΚΗ ΤΟΥ καρτέλα (patient_ref του link)."""
-    tid, pref, _ = await _target(ctx, for_ref, tenant_id)
+    tid, pref, _ = await _view_target(ctx, for_ref, tenant_id)
     d = await PatientRxRepository(tenant_id=tid, demo=ctx.demo).my_prescription_detail(pref, barcode)
     if d is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "not_found")
@@ -1320,6 +1332,7 @@ class RxRequestIn(BaseModel):
     barcode: str
     note: str | None = None
     tenant_id: str | None = None
+    for_ref: str | None = None     # ανάθεση ΓΙΑ ΑΛΛΟΝ (ανήλικο τέκνο / εξουσιοδότηση)
 
 
 @router.post("/rx-request", status_code=201)
@@ -1328,6 +1341,20 @@ async def rx_request_barcode(body: RxRequestIn, ctx: PatientContext = Depends(ge
     if len(bc) < 4:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "barcode_required")
     target, pref, name, phone = await _target(ctx, body.tenant_id)
+    # ── ΑΝΑΘΕΣΗ ΓΙΑ ΑΛΛΟΝ ──────────────────────────────────────────────────────────────
+    # Ο έλεγχος γίνεται στο `_view_target` (ΠΟΤΕ με βάση την παράμετρο σκέτη). Επιτρέπεται για
+    # ζωντανούς — `read_only` είναι True ΜΟΝΟ σε θανόντα, όπου καμία ενέργεια δεν έχει νόημα.
+    # Το αίτημα καταγράφεται στο όνομα ΤΟΥ ΑΣΘΕΝΗ, αλλά το `account_id` μένει του αιτούντος:
+    # ο φαρμακοποιός πρέπει να μπορεί να δει ΠΟΙΟΣ το υπέβαλε.
+    if body.for_ref and str(body.for_ref) != str(pref):
+        target, pref, ro = await _view_target(ctx, body.for_ref, body.tenant_id)
+        if ro:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "read_only_for_this_person")
+        from bson import ObjectId
+        who = await shared_db()["patients_anonymized"].find_one(   # tenant-ok: ρητό φίλτρο
+            {"tenant_id": target, "_id": ObjectId(str(pref))}, {"full_name": 1, "phone": 1})
+        name = (who or {}).get("full_name") or name
+        phone = (who or {}).get("phone") or phone
     # live ΗΔΥΚΑ check via the pharmacy's own connection — verify + enrich the barcode
     cda = await lookup_prescription(target, bc)
     rid = await RxRequestRepository(tenant_id=target).create(
