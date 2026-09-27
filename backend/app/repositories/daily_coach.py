@@ -1698,3 +1698,446 @@ class DailyCoachRepository(BaseRepository):
                 async for d in self._db["coach_days"].find(
                     {"tenant_id": self.tenant_id, "day": {"$gte": since}},
                     {"_id": 0, "day": 1, "misses": 1, "wins": 1}).sort("day", 1)]
+
+
+
+def _aware(v) -> datetime:
+    """Το `jsonsafe` μετατρέπει datetime σε ISO string — δέξου και τα δύο."""
+    if isinstance(v, str):
+        v = datetime.fromisoformat(v.replace("Z", "+00:00"))
+    return v if v.tzinfo else v.replace(tzinfo=timezone.utc)
+
+
+def _aware(v) -> datetime:
+    """Το `jsonsafe` μετατρέπει datetime σε ISO string — δέξου και τα δύο."""
+    if isinstance(v, str):
+        v = datetime.fromisoformat(v.replace("Z", "+00:00"))
+    return v if v.tzinfo else v.replace(tzinfo=timezone.utc)
+
+
+# ── Η ΠΡΟΠΟΝΗΣΗ ─────────────────────────────────────────────────────────────────────────────
+# Ο Σύμβουλος στο «Σήμερα» λέει ΤΙ να κάνεις. Εδώ διδάσκει ΠΩΣ ΝΑ ΣΚΕΦΤΕΣΑΙ.
+#
+# ΓΙΑΤΙ ΞΕΧΩΡΙΣΤΑ: μια λίστα ενεργειών λύνει τη σημερινή μέρα και ξεχνιέται. Ένας κανόνας
+# εμπορικής σκέψης μένει — και την επόμενη φορά ο φαρμακοποιός βλέπει μόνος του την ευκαιρία,
+# χωρίς να του τη δείξει κανείς. Γι' αυτό κάθε κάρτα έχει ΤΡΙΑ μέρη με αυτή τη σειρά:
+#   1. Η ΑΡΧΗ      — ο εμπορικός κανόνας, σε μία πρόταση που θυμάσαι
+#   2. ΣΤΑ ΔΙΚΑ ΣΟΥ — ο κανόνας αποδεδειγμένος με τα ΜΕΤΡΗΜΕΝΑ νούμερα ΑΥΤΟΥ του φαρμακείου
+#   3. ΤΙ ΚΑΝΕΙΣ   — η κίνηση, με τη διαδρομή
+#
+# ΚΑΝΟΝΑΣ: κανένα μάθημα δεν εμφανίζεται «γενικά». Αν τα δεδομένα δεν αποδεικνύουν την αρχή
+# σε ΑΥΤΟ το φαρμακείο, το μάθημα δεν γράφεται — αλλιώς γίνεται φυλλάδιο και το αγνοεί.
+
+#: Θεραπείες με μεγάλο, ΣΤΑΘΕΡΟ διάστημα. Ο ασθενής τις ξεχνά ακριβώς επειδή αργούν.
+REPEAT_THERAPY_ATC: list[tuple[str, str, int]] = [
+    ("M05BX04", "Prolia (denosumab)", 180),
+    ("M05BA08", "Ζολεδρονικό οξύ", 365),
+    ("J07BK03", "Shingrix (έρπης ζωστήρ)", 60),
+    ("J07AL", "Πνευμονιοκοκκικό", 365),
+    ("N02CD", "Αντι-CGRP (ημικρανία)", 30),
+    ("L04AB", "Βιολογικοί παράγοντες", 30),
+    ("H05AA02", "Teriparatide", 30),
+    ("B03XA", "Ερυθροποιητίνη", 30),
+]
+
+
+class CoachSchool(BaseRepository):
+    """«Μάθε να βλέπεις» — εμπορική προπόνηση με τα νούμερα του ίδιου του φαρμακείου."""
+
+    collection_name = "prescription_executions"
+
+    # ── 1. Ο τζίρος δεν είναι κέρδος ────────────────────────────────────────────────────
+    async def _base(self) -> tuple[int, int]:
+        """(ενεργοί ασθενείς, μέση αξία εκτέλεσης σε λεπτά) — η βάση κάθε πρότασης."""
+        total = await self._db["patients_anonymized"].count_documents(
+            {"tenant_id": self.tenant_id, "lifecycle": {"$in": ["active", "new"]}})
+        agg = await self.aggregate([
+            {"$match": {"executed_at": {"$gte": _now() - timedelta(days=365)}}},
+            {"$group": {"_id": None, "v": {"$avg": "$amount_total"}}}])
+        avg = int((agg[0].get("v") or 0) if agg else 0)
+        return total, avg
+
+    @staticmethod
+    def _pct(n: int, total: int) -> float:
+        return round(100 * n / total, 1) if total else 0.0
+
+    # ── 1. Θεραπείες με Επανάληψη ───────────────────────────────────────────────────────
+    async def _prop_therapies(self, now: datetime, total: int, avg: int) -> dict | None:
+        rows: list[dict] = []
+        pats: set = set()
+        overdue: set = set()
+        for atc, label, every in REPEAT_THERAPY_ATC:
+            pids = [p["_id"] async for p in self._db["products"].find(
+                {"tenant_id": self.tenant_id, "atc": {"$regex": f"^{atc}"}}, {"_id": 1})]
+            if not pids:
+                continue
+            eids = await self._db["prescription_items"].distinct(
+                "execution_id", {"tenant_id": self.tenant_id, "product_id": {"$in": pids}})
+            if not eids:
+                continue
+            agg = await self.aggregate([
+                {"$match": {"_id": {"$in": eids}}},
+                {"$group": {"_id": "$patient_ref", "last": {"$max": "$executed_at"},
+                            "val": {"$avg": "$amount_total"}}}])
+            last = {r["_id"]: r for r in agg if r.get("_id") and r.get("last")}
+            if not last:
+                continue
+            od = [p for p, r in last.items() if (now - _aware(r["last"])).days > every]
+            pats |= set(last)
+            overdue |= set(od)
+            if od:
+                val = int(sum(int(last[p].get("val") or 0) for p in od) / len(od))
+                rows.append({"label": label, "patients": len(last), "overdue": len(od),
+                             "every_days": every, "value_cents": val * len(od)})
+        if len(overdue) < 5:
+            return None
+        rows.sort(key=lambda r: -r["overdue"])
+        money = sum(r["value_cents"] for r in rows)
+        return {
+            "id": "therapies",
+            "feature": "Θεραπείες με Επανάληψη",
+            "module": "therapy_programs",
+            "headline": (
+                f"Ξέρεις ότι **{len(pats)} από τους πελάτες σου** ({self._pct(len(pats), total)}%) "
+                "παίρνουν αγωγή που επαναλαμβάνεται σε σταθερό διάστημα;"
+            ),
+            "situation": (
+                f"Οι **{len(overdue)}** από αυτούς έχουν ξεπεράσει το διάστημά τους και δεν "
+                f"ξαναήρθαν. Δεν σε άφησαν — το ξέχασαν, γιατί το διάστημα είναι μεγάλο. "
+                f"Το μεγαλύτερο κομμάτι είναι **{rows[0]['label']}**."
+            ),
+            "promise": (
+                f"Με το κύκλωμα **Θεραπείες με Επανάληψη** θα τους πιάνεις **πριν** ξεχαστούν: "
+                f"η λίστα βγαίνει μόνη της κάθε μέρα και τους ειδοποιείς με ένα κλικ."
+            ),
+            "serve_n": len(pats), "serve_pct": self._pct(len(pats), total),
+            "money_cents": money,
+            "setup": [
+                "Μου λες ποιες θεραπείες σε ενδιαφέρουν (π.χ. Prolia, Shingrix, πνευμονιοκοκκικό).",
+                "Ορίζουμε μαζί κάθε πότε επαναλαμβάνεται η καθεμία.",
+                "Το σύστημα βγάζει αμέσως τη λίστα των εκκρεμών — χωρίς να γράψεις κανέναν.",
+                "Ειδοποιείς την πρώτη παρτίδα και βλέπεις ποιοι γυρνούν.",
+            ],
+            "detail": rows[:5],
+            "cta": {"label": "Άνοιξε τις Θεραπείες με Επανάληψη", "href": "/therapies"},
+            "weight": 100,
+        }
+
+    # ── 2. Εμβολιασμοί ──────────────────────────────────────────────────────────────────
+    async def _prop_vaccines(self, now: datetime, total: int, avg: int) -> dict | None:
+        done = await self._db["vaccinations"].count_documents(
+            {"tenant_id": self.tenant_id, "executed_at": {"$gte": now - timedelta(days=730)}})
+        if done < 20:
+            return None
+        progs = await self._db["vaccine_programs"].count_documents({"tenant_id": self.tenant_id})
+        if progs >= 2:
+            return None
+        ly_from = now - timedelta(days=430)
+        ly_to = now - timedelta(days=300)
+        ly = await self._db["vaccinations"].distinct(
+            "patient_ref", {"tenant_id": self.tenant_id,
+                            "executed_at": {"$gte": ly_from, "$lt": ly_to}})
+        this = set(await self._db["vaccinations"].distinct(
+            "patient_ref", {"tenant_id": self.tenant_id,
+                            "executed_at": {"$gte": now - timedelta(days=300)}}))
+        back = [p for p in ly if p not in this]
+        n = len(back) or max(10, done // 4)
+        return {
+            "id": "vaccines",
+            "feature": "Κύκλωμα Εμβολιασμών",
+            "module": "vaccination_programs",
+            "headline": (
+                f"Ξέρεις ότι **{n} άνθρωποι** εμβολιάστηκαν πέρσι σε ΕΣΕΝΑ και δεν έχουν "
+                "ξαναέρθει φέτος;"
+            ),
+            "situation": (
+                f"Έχεις κάνει **{done} εμβολιασμούς** τα τελευταία δύο χρόνια, αλλά "
+                + ("δεν παρακολουθεί κανείς ποιος πρέπει να ξαναέρθει."
+                   if not progs else "δεν έχεις στήσει προγράμματα που να τους πιάνουν όλους.")
+                + " Αυτοί δεν χρειάζεται να πειστούν — σε εμπιστεύτηκαν ήδη μία φορά."
+            ),
+            "promise": (
+                "Με το **Κύκλωμα Εμβολιασμών** η λίστα των εκκρεμών παράγεται μόνη της, "
+                "ξεχωρίζει τους **υψηλού κινδύνου**, και τους ειδοποιείς από την ίδια οθόνη. "
+                "Στο τέλος της σεζόν βλέπεις τι **κάλυψη** έπιασες."
+            ),
+            "serve_n": n, "serve_pct": self._pct(n, total),
+            "money_cents": n * max(avg, 0),
+            "setup": [
+                "Ορίζουμε τη σεζόν σου: πότε ξεκινά και πότε κλείνει.",
+                "Διαλέγουμε ποιες παθήσεις μετράνε ως προτεραιότητας.",
+                "Το σύστημα βγάζει τη λίστα — πρώτα οι υψηλού κινδύνου.",
+                "Ειδοποιείς σε παρτίδες και παρακολουθείς την κάλυψη.",
+            ],
+            "cta": {"label": "Φτιάξε πρόγραμμα εμβολιασμού", "href": "/vaccinations/programs"},
+            "weight": 96,
+        }
+
+    # ── 3. Στοιχεία επικοινωνίας ────────────────────────────────────────────────────────
+    async def _prop_reach(self, now: datetime, total: int, avg: int) -> dict | None:
+        if total < 50:
+            return None
+        reach = await self._db["patient_contacts"].count_documents(
+            {"tenant_id": self.tenant_id,
+             "$or": [{"mobile": {"$nin": [None, ""]}}, {"phone": {"$nin": [None, ""]}},
+                     {"email": {"$nin": [None, ""]}}]})
+        missing = max(0, total - reach)
+        if missing < max(20, total // 10):
+            return None
+        return {
+            "id": "reach",
+            "feature": "Επιβεβαίωση στοιχείων",
+            "module": None,
+            "headline": (
+                f"Ξέρεις ότι **{missing} πελάτες σου** ({self._pct(missing, total)}%) δεν έχουν "
+                "ούτε τηλέφωνο ούτε email;"
+            ),
+            "situation": (
+                "Ό,τι κι αν στήσουμε μαζί — υπενθυμίσεις, εμβόλια, προσφορές, πύλη — "
+                "αυτοί δεν θα το μάθουν ποτέ. Είναι το πρώτο κλειδί: χωρίς αυτό, τα υπόλοιπα "
+                "κυκλώματα δουλεύουν στο μισό φαρμακείο."
+            ),
+            "promise": (
+                "Δεν χρειάζεται να κάτσεις να τα μαζέψεις. Το σύστημα σε ρωτά **μόνο του** στο "
+                "ταμείο: βάζεις ΑΜΚΑ, πετάγεται παράθυρο, ρωτάς, τελείωσε. "
+                "Δύο ερωτήσεις τη μέρα και σε έναν μήνα έχεις αλλάξει εικόνα."
+            ),
+            "serve_n": missing, "serve_pct": self._pct(missing, total),
+            "money_cents": 0,
+            "setup": [
+                "Ανοίγουμε τη λίστα «Επιβεβαίωση στοιχείων» και βλέπουμε ποιοι λείπουν.",
+                "Τρέχουμε μαζική άντληση από την ΗΔΥΚΑ — γεμίζει ό,τι υπάρχει ήδη εκεί.",
+                "Για τους υπόλοιπους, το παράθυρο στο ταμείο κάνει τη δουλειά μόνο του.",
+                "Σε έναν μήνα ξαναμετράμε.",
+            ],
+            "cta": {"label": "Άνοιξε την Επιβεβαίωση στοιχείων", "href": "/patients"},
+            "weight": 98,
+        }
+
+    # ── 4. Επανάκτηση ───────────────────────────────────────────────────────────────────
+    async def _prop_winback(self, now: datetime, total: int, avg: int) -> dict | None:
+        since = now - timedelta(days=540)
+        agg = await self.aggregate([
+            {"$match": {"executed_at": {"$gte": since}}},
+            {"$group": {"_id": "$patient_ref", "n": {"$sum": 1},
+                        "last": {"$max": "$executed_at"}, "val": {"$sum": "$amount_total"}}},
+            {"$match": {"n": {"$gte": 4}}}])
+        if len(agg) < 40:
+            return None
+        lapsed = [r for r in agg if (now - _aware(r["last"])).days > 120]
+        if len(lapsed) < 15:
+            return None
+        lost = sum(int(r.get("val") or 0) for r in lapsed)
+        return {
+            "id": "winback",
+            "feature": "Επανάκτηση (Win-Back)",
+            "module": "patient_analytics",
+            "headline": (
+                f"Ξέρεις ότι **{len(lapsed)} τακτικοί σου πελάτες** "
+                f"({self._pct(len(lapsed), total)}%) έχουν να φανούν πάνω από 4 μήνες;"
+            ),
+            "situation": (
+                f"Δεν είναι περαστικοί: ήρθαν σε εσένα 4+ φορές και άφησαν "
+                f"**{lost/100:,.0f} €**. Κάποια στιγμή σταμάτησαν και κανείς δεν το πρόσεξε."
+                .replace(",", ".")
+            ),
+            "promise": (
+                "Με το **Win-Back** τους βλέπεις ομαδοποιημένους κατά πόσο καιρό λείπουν. "
+                "Ξεκινάς από τη μικρότερη ομάδα — όσο πιο φρέσκια η απώλεια, τόσο πιο εύκολη "
+                "η επιστροφή — και τους παίρνεις τηλέφωνο έναν-έναν."
+            ),
+            "serve_n": len(lapsed), "serve_pct": self._pct(len(lapsed), total),
+            "money_cents": lost,
+            "setup": [
+                "Ανοίγουμε το Win-Back και κοιτάμε τις ομάδες αδράνειας.",
+                "Ξεκινάμε από τη ΜΙΚΡΟΤΕΡΗ — εκεί είναι οι πιο εύκολες επιστροφές.",
+                "Παίρνεις 10 τηλέφωνα, όχι 300.",
+                "Σε δύο εβδομάδες βλέπουμε πόσοι γύρισαν και συνεχίζουμε.",
+            ],
+            "cta": {"label": "Άνοιξε το Win-Back", "href": "/intelligence/winback"},
+            "weight": 94,
+        }
+
+    # ── 5. Πιστότητα ────────────────────────────────────────────────────────────────────
+    async def _prop_loyalty(self, now: datetime, total: int, avg: int) -> dict | None:
+        res = await self.aggregate([
+            {"$match": {"executed_at": {"$gte": now - timedelta(days=365)}}},
+            {"$group": {"_id": "$patient_ref", "n": {"$sum": 1},
+                        "val": {"$sum": "$amount_total"}}},
+            {"$match": {"n": {"$gte": 6}}}])
+        loyal = len(res)
+        if loyal < 40:
+            return None
+        members = await self._db["loyalty_members"].count_documents({"tenant_id": self.tenant_id})
+        if members >= loyal // 4:
+            return None
+        val = sum(int(r.get("val") or 0) for r in res)
+        return {
+            "id": "loyalty",
+            "feature": "Κάρτες Πιστότητας",
+            "module": "loyalty",
+            "headline": (
+                f"Ξέρεις ότι **{loyal} άνθρωποι** ({self._pct(loyal, total)}%) ήρθαν σε εσένα "
+                "6 ή περισσότερες φορές μέσα στον χρόνο;"
+            ),
+            "situation": (
+                f"Αφήνουν **{val/100:,.0f} €** τον χρόνο και "
+                .replace(",", ".")
+                + ("κανένας τους δεν είναι μέλος σε πρόγραμμα επιβράβευσης."
+                   if not members else f"μόνο {members} είναι μέλη στην κάρτα σου.")
+                + " Έχουν ήδη τη συνήθεια — δεν τους έχεις δώσει λόγο να την κρατήσουν."
+            ),
+            "promise": (
+                "Οι **Κάρτες Πιστότητας** δίνουν πόντους με γνώμονα τη **συνέπεια στις "
+                "επαναλήψεις**, όχι το ύψος του λογαριασμού. Ανταμείβεις ακριβώς τη συμπεριφορά "
+                "που θες να κρατήσεις — και ο πελάτης έχει λόγο να μη δοκιμάσει το διπλανό."
+            ),
+            "serve_n": loyal, "serve_pct": self._pct(loyal, total),
+            "money_cents": val,
+            "setup": [
+                "Ορίζουμε 3-4 δώρα που βγάζουν νόημα για το φαρμακείο σου.",
+                "Βάζουμε δώρο εγγραφής, για να έχει λόγο να γραφτεί σήμερα.",
+                "Τυπώνεις το QR εγγραφής και το βάζεις στον πάγκο.",
+                "Γράφεις τους πρώτους 20 — είναι αυτοί που ήδη έρχονται κάθε μήνα.",
+            ],
+            "cta": {"label": "Άνοιξε τις Κάρτες Πιστότητας", "href": "/loyalty"},
+            "weight": 88,
+        }
+
+    # ── 6. Πύλη Πελατών ─────────────────────────────────────────────────────────────────
+    async def _prop_portal(self, now: datetime, total: int, avg: int) -> dict | None:
+        if total < 100:
+            return None
+        reg = await self._db["patient_links"].count_documents({"tenant_id": self.tenant_id})
+        if reg >= total // 10:
+            return None
+        return {
+            "id": "portal",
+            "feature": "Πύλη Πελατών",
+            "module": "patient_portal",
+            "headline": (
+                f"Ξέρεις ότι μόνο **{reg} από τους {total} πελάτες σου** "
+                f"({self._pct(reg, total)}%) έχουν λογαριασμό στην πύλη σου;"
+            ),
+            "situation": (
+                "Οι υπόλοιποι σε παίρνουν τηλέφωνο για ό,τι θα μπορούσαν να δουν μόνοι τους — "
+                "και για να τους θυμίσεις κάτι, πληρώνεις SMS."
+            ),
+            "promise": (
+                "Με την **Πύλη Πελατών** βλέπουν τις συνταγές τους, ζητούν επανάληψη, κλείνουν "
+                "ραντεβού και **διορθώνουν μόνοι τους τα στοιχεία τους**. Οι ειδοποιήσεις στο "
+                "κινητό τους **δεν κοστίζουν τίποτα** — σε αντίθεση με τα SMS."
+            ),
+            "serve_n": max(0, total - reg), "serve_pct": self._pct(max(0, total - reg), total),
+            "money_cents": 0,
+            "setup": [
+                "Ορίζουμε ωράριο και ποιες υπηρεσίες δέχεσαι με ραντεβού.",
+                "Τυπώνεις το QR εγγραφής για τον πάγκο.",
+                "Το δείχνεις σε όποιον ρωτά «πότε ξαναπαίρνω;» — αυτοί γράφονται αμέσως.",
+                "Σε έναν μήνα ξαναμετράμε πόσοι μπήκαν.",
+            ],
+            "cta": {"label": "Δες το QR εγγραφής", "href": "/portal-admin"},
+            "weight": 84,
+        }
+
+    # ── 7. Στοχευμένη Προώθηση ──────────────────────────────────────────────────────────
+    async def _prop_marketing(self, now: datetime, total: int, avg: int) -> dict | None:
+        agg = await self.aggregate([
+            {"$match": {"executed_at": {"$gte": now - timedelta(days=365)}}},
+            {"$unwind": "$icd10"},
+            {"$group": {"_id": "$icd10", "pats": {"$addToSet": "$patient_ref"}}},
+            {"$project": {"n": {"$size": "$pats"}}},
+            {"$sort": {"n": -1}}, {"$limit": 1}])
+        if not agg or agg[0].get("n", 0) < 40:
+            return None
+        camps = await self._db["comms_campaigns"].count_documents({"tenant_id": self.tenant_id})
+        if camps >= 3:
+            return None
+        top = agg[0]
+        icd = await self._db["icd10_codes"].find_one({"_id": top["_id"]}, {"title_el": 1})
+        name = str((icd or {}).get("title_el") or top["_id"])[:44]
+        return {
+            "id": "marketing",
+            "feature": "Στοχευμένη Προώθηση",
+            "module": "marketing",
+            "headline": (
+                f"Ξέρεις ότι έχεις **{top['n']} πελάτες** ({self._pct(top['n'], total)}%) με την "
+                f"ίδια πάθηση — **{name}**;"
+            ),
+            "situation": (
+                "Ξέρεις τι παίρνουν, κάθε πότε και τι τους λείπει. "
+                + ("Και δεν τους έχεις στείλει ποτέ τίποτα."
+                   if not camps else f"Και έχεις στείλει μόλις {camps} καμπάνιες συνολικά.")
+            ),
+            "promise": (
+                "Με τη **Στοχευμένη Προώθηση** τους βλέπεις ομαδοποιημένους ανά θεραπευτική "
+                "κατηγορία, ξέρεις πόσοι είναι **προσεγγίσιμοι**, και στέλνεις με ένα κλικ. "
+                "Ξεκινάς με **push, που είναι δωρεάν**, και μετράς την απόδοση αντί να μαντεύεις."
+            ),
+            "serve_n": top["n"], "serve_pct": self._pct(top["n"], total),
+            "money_cents": 0,
+            "setup": [
+                "Διαλέγουμε ΜΙΑ κατηγορία — αυτή με τους περισσότερους προσεγγίσιμους.",
+                "Γράφουμε ένα σύντομο μήνυμα: μία πρόταση, ένας λόγος να έρθει.",
+                "Στέλνουμε σε push (δωρεάν) και όχι σε όλους μαζί.",
+                "Σε μια εβδομάδα βλέπουμε πόσοι ήρθαν και τι απέδωσε.",
+            ],
+            "cta": {"label": "Θεραπευτικές κατηγορίες", "href": "/marketing/categories"},
+            "weight": 80,
+        }
+
+    async def build(self) -> dict:
+        """Οι προτάσεις, με ΠΡΟΤΕΡΑΙΟΤΗΤΑ σε ό,τι δεν αξιοποιεί.
+
+        ΣΤΟΧΟΣ: όσο περισσότερα κυκλώματα δουλεύει ο φαρμακοποιός, τόσο περισσότερα πετυχαίνει
+        εμπορικά — και τόσο πιο πολύ το RxVision γίνεται ο τρόπος που δουλεύει, όχι ένα ακόμη
+        πρόγραμμα. Γι' αυτό η πρόταση δεν είναι διαφήμιση: είναι **προσφορά βοήθειας** με
+        μετρημένο όφελος και συγκεκριμένα βήματα στησίματος.
+        """
+        now = _now()
+        # ΠΡΟΣΟΧΗ: το `tenants.modules` κρατά ΜΟΝΟ τις υπερισχύσεις. Τα modules του ΠΑΚΕΤΟΥ ζουν
+        # στο `subscriptions.modules_included`. Χωρίς τον resolver, θα προτείναμε στον πελάτη να
+        # αγοράσει ό,τι ήδη πληρώνει.
+        from app.services.auth_service import resolve_tenant_modules
+        mods = await resolve_tenant_modules(self.tenant_id)
+        total, avg = await self._base()
+        out: list[dict] = []
+        props = (self._prop_reach, self._prop_therapies, self._prop_vaccines,
+                 self._prop_winback, self._prop_loyalty, self._prop_portal,
+                 self._prop_marketing)
+        for fn in props:
+            try:
+                card = await fn(now, total, avg)
+            except Exception:  # noqa: BLE001 — μια πρόταση που σκάει δεν ρίχνει τις υπόλοιπες
+                import logging
+                logging.getLogger(__name__).exception("coach proposal failed: %s", fn.__name__)
+                continue
+            if not card:
+                continue
+            m = card.get("module")
+            state = mods.get(m) if m else "enabled"
+            card["locked"] = bool(m) and state not in ("enabled", "trial")
+            card["trialing"] = state == "trial"
+            feat = card.get("feature") or "αυτό"
+            if card["locked"]:
+                card["offer"] = (
+                    f"Δεν έχεις ακόμη «{feat}». **Θες να σε βοηθήσω να το στήσουμε;** "
+                    "Δοκιμάζεται **δωρεάν για 14 ημέρες** — αν δεν σου φανεί χρήσιμο, κλειδώνει "
+                    "μόνο του και δεν χρεώνεσαι τίποτα."
+                )
+                card["cta_secondary"] = {"label": "Ξεκίνα τη δωρεάν δοκιμή",
+                                         "href": "/settings/billing"}
+                card["weight"] = card.get("weight", 0) + 100
+            else:
+                card["offer"] = (
+                    f"Το «{feat}» το έχεις ήδη — απλώς δεν το δουλεύεις ακόμη. "
+                    "**Θες να σε βοηθήσω να το στήσεις σωστά;** Είναι τέσσερα βήματα."
+                )
+                card["weight"] = card.get("weight", 0) + 40
+            out.append(card)
+        out.sort(key=lambda c: -c.get("weight", 0))
+        for i, c in enumerate(out, 1):
+            c["index"] = i
+        money = sum(int(c.get("money_cents") or 0) for c in out)
+        return {"items": out, "total": len(out), "patients": total,
+                "money_cents": money, "at": now}

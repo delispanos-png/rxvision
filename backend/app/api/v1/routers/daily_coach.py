@@ -11,7 +11,7 @@ from pydantic import BaseModel
 
 from app.core.db import shared_db
 from app.core.deps import TenantContext, require
-from app.repositories.daily_coach import DailyCoachRepository
+from app.repositories.daily_coach import CoachSchool, DailyCoachRepository
 
 router = APIRouter()
 _MODULE = "daily_coach"
@@ -48,6 +48,17 @@ async def today(ctx: TenantContext = Depends(require("patients:read", module=_MO
     Ο πάγκος πρέπει να βλέπει τους ασθενείς του· ο τζίρος είναι άλλη κουβέντα.
     """
     return await _repo(ctx).build(user_name=await _who(ctx), business=_sees_business(ctx))
+
+
+@router.get("/opportunities")
+async def opportunities(ctx: TenantContext = Depends(require("patients:read", module=_MODULE))):
+    """«Έλα να φτιάξουμε…» — τι ΔΕΝ αξιοποιεί το φαρμακείο, μετρημένο από τα δικά του δεδομένα.
+
+    ΓΙΑΤΙ ΞΕΧΩΡΙΣΤΑ ΑΠΟ ΤΟ /today: η ημερήσια λίστα είναι ενέργειες ανά ασθενή και πρέπει να
+    αδειάζει. Οι ευκαιρίες είναι σε επίπεδο ΚΥΚΛΩΜΑΤΟΣ, δεν κλείνουν με «Το έκανα», και δεν
+    πρέπει να λερώνουν τη μέτρηση του «καθαρού ταμπλό».
+    """
+    return await CoachSchool(tenant_id=ctx.tenant_id).build()
 
 
 class MarkIn(BaseModel):

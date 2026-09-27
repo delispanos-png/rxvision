@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { Compass, Check, BellOff, ArrowRight, Trophy, Flame, TrendingUp, Phone, PhoneOff, User, IdCard, FileText, ListChecks, Wallet, Droplets, Users2, SlidersHorizontal, CalendarRange, Target, ChevronDown} from "lucide-react";
+import { Compass, Lightbulb, Lock, Check, BellOff, ArrowRight, Trophy, Flame, TrendingUp, Phone, PhoneOff, User, IdCard, FileText, ListChecks, Wallet, Droplets, Users2, SlidersHorizontal, CalendarRange, Target, ChevronDown} from "lucide-react";
 import { api } from "@/lib/apiClient";
 import { appConfirm } from "@/store/dialogStore";
 import { useT } from "@/store/prefStore";
@@ -54,9 +54,29 @@ type Settings = {
   escalate_owner: boolean; signals: Record<string, boolean>; labels: Record<string, string>;
 };
 
-type Tab = "today" | "week" | "value" | "leakage" | "team" | "settings";
+/** Μόνο **έντονα** — το κείμενο των μαθημάτων το γράφουμε εμείς, δεν χρειάζεται renderer. */
+function md(text: string): React.ReactNode[] {
+  return text.split(/(\*\*[^*]+\*\*)/g).map((part, i) =>
+    part.startsWith("**") && part.endsWith("**")
+      ? <strong key={i} className="font-semibold text-slate-900 dark:text-slate-100">{part.slice(2, -2)}</strong>
+      : <span key={i}>{part}</span>);
+}
+
+type Proposal = {
+  id: string; index: number; module: string | null; feature?: string;
+  locked: boolean; trialing: boolean;
+  headline: string; situation: string; promise: string; offer: string;
+  serve_n: number; serve_pct: number; money_cents: number;
+  setup: string[];
+  cta: { label: string; href: string };
+  cta_secondary?: { label: string; href: string };
+  detail?: { label: string; patients: number; overdue: number; every_days: number }[];
+};
+
+type Tab = "today" | "opportunities" | "week" | "value" | "leakage" | "team" | "settings";
 const TABS: { key: Tab; el: string; en: string; icon: typeof Compass }[] = [
   { key: "today", el: "Σήμερα", en: "Today", icon: Compass },
+  { key: "opportunities", el: "Τι άλλο μπορείς", en: "What else you can do", icon: Lightbulb },
   { key: "week", el: "Η εβδομάδα σου", en: "Your week", icon: CalendarRange },
   { key: "value", el: "Τι κέρδισες", en: "What you recovered", icon: Wallet },
   { key: "leakage", el: "Κρυφό κόστος", en: "Hidden cost", icon: Droplets },
@@ -145,6 +165,7 @@ export default function CoachPage() {
   const q = useQuery({ queryKey: ["coach-today"], queryFn: () => api<Today>("/coach/today"), refetchInterval: 600_000 });
   const h = useQuery({ queryKey: ["coach-history"], queryFn: () => api<{ items: Hist[] }>("/coach/history?days=21") });
   // Κάθε καρτέλα φορτώνει ΜΟΝΟ όταν την ανοίξεις — οι αναφορές είναι βαριές (μήνες δεδομένων).
+  const opp = useQuery({ queryKey: ["coach-opportunities"], queryFn: () => api<{ items: Proposal[]; total: number; patients: number; money_cents: number }>("/coach/opportunities"), enabled: tab === "opportunities" });
   const wk = useQuery({ queryKey: ["coach-week"], queryFn: () => api<Week>("/coach/week"), enabled: tab === "week" });
   const val = useQuery({ queryKey: ["coach-value"], queryFn: () => api<Value>("/coach/value?days=90"), enabled: tab === "value" });
   const leak = useQuery({ queryKey: ["coach-leak"], queryFn: () => api<Leak>("/coach/leakage?months=6"), enabled: tab === "leakage" });
@@ -473,6 +494,135 @@ export default function CoachPage() {
         )}
 
         {/* ── Η ΕΒΔΟΜΑΔΑ ΣΟΥ ─────────────────────────────────────────────────────── */}
+        {tab === "opportunities" && (
+          <div className="space-y-4">
+            <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 dark:border-amber-900/50 dark:bg-amber-950/20">
+              <p className="text-sm text-amber-900 dark:text-amber-200">
+                {t("Στο «Σήμερα» σου λέω τι να κάνεις σήμερα. Εδώ σου προτείνω τι ΑΛΛΟ μπορείς να κάνεις — με τα δικά σου νούμερα. Ό,τι σου φανεί χρήσιμο, το στήνουμε μαζί.",
+                   "In “Today” I tell you what to do today. Here I suggest what ELSE you can do — using your own numbers. Whatever looks useful, we set it up together.")}
+              </p>
+              {!!opp.data?.money_cents && (
+                <p className="mt-2 text-sm font-semibold text-amber-900 dark:text-amber-100">
+                  {t(`Συνολικά, τα παρακάτω αφορούν ${new Intl.NumberFormat("el-GR").format(Math.round(opp.data.money_cents / 100))} € σε τζίρο που ήδη περνά από τα χέρια σου.`,
+                     `In total, the items below involve €${new Intl.NumberFormat("en-US").format(Math.round(opp.data.money_cents / 100))} of turnover already passing through your hands.`)}
+                </p>
+              )}
+            </div>
+
+            {opp.isLoading && <p className="text-sm text-slate-500">{t("Υπολογισμός…", "Calculating…")}</p>}
+
+            {opp.data && !opp.data.items.length && (
+              <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-6 text-center dark:border-emerald-900/50 dark:bg-emerald-950/20">
+                <p className="font-semibold text-emerald-900 dark:text-emerald-200">
+                  {t("Δεν έχω κάτι να σου προτείνω αυτή τη στιγμή.", "I have nothing to suggest right now.")}
+                </p>
+                <p className="mt-1 text-sm text-emerald-800 dark:text-emerald-300">
+                  {t("Τα δουλεύεις ήδη. Ξαναπέρασε σε λίγες εβδομάδες — τα νούμερα αλλάζουν.",
+                     "You are already working them. Check back in a few weeks — the numbers change.")}
+                </p>
+              </div>
+            )}
+
+            {opp.data?.items.map((p) => (
+              <article key={p.id} className="overflow-hidden rounded-2xl border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
+                <div className="border-b border-slate-100 bg-slate-50 px-5 py-4 dark:border-slate-800 dark:bg-slate-800/40">
+                  <div className="mb-1.5 flex flex-wrap items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+                    <Lightbulb className="h-3.5 w-3.5" />
+                    <span>{t(`Πρόταση ${p.index} από ${opp.data?.total ?? 0}`, `Suggestion ${p.index} of ${opp.data?.total ?? 0}`)}</span>
+                    {p.feature && (
+                      <span className={`rounded-full px-2 py-0.5 ${p.locked
+                        ? "bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-200"
+                        : "bg-slate-200 text-slate-600 dark:bg-slate-700 dark:text-slate-300"}`}>
+                        {p.locked && "🔒 "}{p.feature}
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-base font-bold leading-snug text-slate-900 dark:text-slate-100">{md(p.headline)}</p>
+                </div>
+
+                <div className="space-y-4 px-5 py-4">
+                  {/* Τι κερδίζει — σε ΠΟΣΟΣΤΟ πελατών και σε ΕΥΡΩ */}
+                  <div className="flex flex-wrap gap-3">
+                    <div className="flex-1 rounded-xl bg-sky-50 px-4 py-3 dark:bg-sky-950/30">
+                      <div className="text-[11px] uppercase tracking-wide text-sky-600 dark:text-sky-400">
+                        {t("Εξυπηρετείς καλύτερα", "You serve better")}
+                      </div>
+                      <div className="text-xl font-bold text-sky-900 dark:text-sky-100">
+                        {p.serve_pct}% <span className="text-sm font-medium">({p.serve_n} {t("πελάτες", "customers")})</span>
+                      </div>
+                    </div>
+                    {!!p.money_cents && (
+                      <div className="flex-1 rounded-xl bg-emerald-50 px-4 py-3 dark:bg-emerald-950/30">
+                        <div className="text-[11px] uppercase tracking-wide text-emerald-600 dark:text-emerald-400">
+                          {t("Τζίρος που αφορά", "Turnover involved")}
+                        </div>
+                        <div className="text-xl font-bold text-emerald-900 dark:text-emerald-100">
+                          {new Intl.NumberFormat("el-GR").format(Math.round(p.money_cents / 100))} €
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  <p className="text-sm leading-relaxed text-slate-700 dark:text-slate-300">{md(p.situation)}</p>
+                  <p className="text-sm leading-relaxed text-slate-700 dark:text-slate-300">{md(p.promise)}</p>
+
+                  {!!p.detail?.length && (
+                    <ul className="space-y-1 rounded-xl bg-slate-50 p-3 dark:bg-slate-800/40">
+                      {p.detail.map((d, i) => (
+                        <li key={i} className="flex flex-wrap items-baseline gap-x-2 text-xs text-slate-600 dark:text-slate-400">
+                          <span className="font-medium text-slate-800 dark:text-slate-200">{d.label}</span>
+                          <span>{t(`${d.overdue} από ${d.patients} πέρασαν τις ${d.every_days} ημέρες`,
+                                   `${d.overdue} of ${d.patients} passed ${d.every_days} days`)}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+
+                  {/* Η ΠΡΟΣΦΟΡΑ + τα βήματα στησίματος */}
+                  <div className={`rounded-xl border p-4 ${p.locked
+                    ? "border-violet-200 bg-violet-50 dark:border-violet-900/50 dark:bg-violet-950/20"
+                    : "border-sky-200 bg-sky-50/60 dark:border-sky-900/50 dark:bg-sky-950/20"}`}>
+                    <p className={`flex items-start gap-2 text-sm ${p.locked
+                      ? "text-violet-900 dark:text-violet-200" : "text-slate-700 dark:text-slate-200"}`}>
+                      {p.locked && <Lock className="mt-0.5 h-4 w-4 shrink-0" />}
+                      <span>{md(p.offer)}</span>
+                    </p>
+
+                    <div className="mt-3">
+                      <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                        {t("Πώς το στήνουμε", "How we set it up")}
+                      </div>
+                      <ol className="space-y-1.5">
+                        {p.setup.map((st, i) => (
+                          <li key={i} className="flex gap-2.5 text-sm text-slate-700 dark:text-slate-300">
+                            <span className="mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-slate-300 text-[11px] font-bold text-slate-700 dark:bg-slate-600 dark:text-slate-100">{i + 1}</span>
+                            <span>{st}</span>
+                          </li>
+                        ))}
+                      </ol>
+                    </div>
+
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      {p.locked && p.cta_secondary && (
+                        <Link href={p.cta_secondary.href}
+                          className="rounded-lg bg-violet-600 px-4 py-2 text-sm font-semibold text-white hover:bg-violet-700">
+                          {p.cta_secondary.label}
+                        </Link>
+                      )}
+                      <Link href={p.cta.href}
+                        className={`inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-semibold ${p.locked
+                          ? "border border-violet-300 text-violet-700 hover:bg-violet-100 dark:border-violet-700 dark:text-violet-300"
+                          : "bg-brand-600 text-white hover:bg-brand-700"}`}>
+                        {t("Ναι, πάμε", "Yes, let's go")} <ArrowRight className="h-4 w-4" />
+                      </Link>
+                    </div>
+                  </div>
+                </div>
+              </article>
+            ))}
+          </div>
+        )}
+
         {tab === "week" && (
           <QueryState isLoading={wk.isLoading} isError={wk.isError} onRetry={() => wk.refetch()}>
             {wk.data && (
