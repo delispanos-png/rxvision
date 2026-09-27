@@ -44,7 +44,7 @@ export default function ReimbursementLayout({ children }: { children: React.Reac
           <input type="month" value={period} max={curMonth()} onChange={(e) => setPeriod(e.target.value)} className="bg-transparent text-sm font-semibold text-slate-800 focus:outline-none dark:text-slate-100" />
         </label>
       </div>
-      <nav className="mb-6 flex gap-1 overflow-x-auto whitespace-nowrap border-b border-slate-200 dark:border-slate-700">
+      <nav className="no-scrollbar mb-6 flex gap-1 overflow-x-auto whitespace-nowrap border-b border-slate-200 dark:border-slate-700">
         {TABS.map((tab) => {
           const active = tab.href === "/reimbursement" ? pathname === tab.href : pathname.startsWith(tab.href);
           return (

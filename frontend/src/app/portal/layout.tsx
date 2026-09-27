@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { ThemeInit } from "@/components/layout/ThemeInit";
+import { ClarityScript } from "@/components/ClarityScript";
 
 export const metadata: Metadata = {
   title: "RxVision — Πύλη Πελατών",
@@ -12,6 +13,7 @@ export default function PortalLayout({ children }: { children: React.ReactNode }
   return (
     <div className="flex h-[100dvh] flex-col overflow-hidden bg-gradient-to-b from-slate-50 via-white to-slate-50 text-slate-900 dark:from-slate-950 dark:via-slate-900 dark:to-slate-950 dark:text-slate-100">
       <ThemeInit />
+      <ClarityScript surface="portal" />
       {children}
     </div>
   );

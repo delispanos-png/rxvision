@@ -136,6 +136,8 @@ export const NAV_GROUPS: Group[] = [
   ] },
   { title: "Λειτουργίες", en: "Operations", icon: SlidersHorizontal, items: [
     // PharmacyOne is a back-office INTEGRATION (data source), not a user-facing capability → not in the menu.
+    // Το εγχειρίδιο ΠΡΩΤΟ: ως τώρα ζούσε μόνο στο repo και ο πελάτης δεν είχε τρόπο να το δει.
+    { label: "Εγχειρίδιο χρήσης", en: "User manual", icon: FileText, href: "/manual" },
     { label: "Οδηγός δεικτών", en: "Indicators guide", icon: BookOpen, href: "/guide" },
     { label: "Όροι Χρήσης", en: "Terms of Use", icon: ScrollText, href: "/terms-of-use" },
     { label: "GDPR", en: "GDPR", icon: Lock, href: "/gdpr" },

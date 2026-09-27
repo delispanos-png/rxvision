@@ -32,7 +32,7 @@ export default function IntelligenceLayout({ children }: { children: React.React
           <p className="text-sm text-slate-500">{t("Από δεδομένα συνταγών → επιχειρηματική γνώση & ενέργειες ανάπτυξης", "From prescription data → business intelligence & growth actions")}</p>
         </div>
       </div>
-      <nav className="mb-6 flex gap-1 overflow-x-auto whitespace-nowrap border-b border-slate-200 dark:border-slate-700">
+      <nav className="no-scrollbar mb-6 flex gap-1 overflow-x-auto whitespace-nowrap border-b border-slate-200 dark:border-slate-700">
         {TABS.map((tab) => {
           const active = tab.href === "/intelligence" ? pathname === tab.href : pathname.startsWith(tab.href);
           return (

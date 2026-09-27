@@ -22,6 +22,7 @@ const TABS: { href: string; el: string; en: string; module?: string }[] = [
   { href: "/settings/communications", el: "Επικοινωνία", en: "Communications" },
   { href: "/settings/ai-usage", el: "Χρήση AI", en: "AI usage" },
   { href: "/settings/billing", el: "Χρέωση", en: "Billing" },
+  { href: "/settings/api-keys", el: "Κλειδιά API", en: "API keys" },
   { href: "/settings/gdpr", el: "GDPR / Απόρρητο", en: "GDPR / Privacy" },
 ];
 
@@ -33,7 +34,7 @@ export default function SettingsLayout({ children }: { children: React.ReactNode
   return (
     <div>
       <h1 className="mb-4 text-xl font-bold text-slate-900 dark:text-slate-100">{tr("Ρυθμίσεις", "Settings")}</h1>
-      <nav className="mb-6 flex gap-1 overflow-x-auto whitespace-nowrap border-b border-slate-200 dark:border-slate-700">
+      <nav className="no-scrollbar mb-6 flex gap-1 overflow-x-auto whitespace-nowrap border-b border-slate-200 dark:border-slate-700">
         {TABS.filter((tab) => visible(tab.module)).map((tab) => {
           const active = pathname === tab.href;
           return (

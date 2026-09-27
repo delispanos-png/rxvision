@@ -73,14 +73,18 @@ export function Sidebar() {
   };
   // A locked circuit stays in the menu (with 🔒 + upsell) ONLY if it's a purchasable add-on offered by
   // this tenant's package. Plain unselected modules (e.g. pharmacyone) just disappear from the menu.
-  const addonsQ = useQuery({ queryKey: ["addons"], queryFn: () => api<{ addons: { _id: string; status: string; offered?: boolean; no_trial?: boolean }[] }>("/addons"), retry: false });
+  const addonsQ = useQuery({ queryKey: ["addons"], queryFn: () => api<{ addons: { _id: string; status: string; offered?: boolean; no_trial?: boolean; can_trial?: boolean }[]; trial_used?: boolean }>("/addons"), retry: false });
   // Ποια πρόσθετα ΔΕΝ έχουν δωρεάν δοκιμή. Χωρίς αυτό, το μενού έδειχνε κουμπί «Δωρεάν δοκιμή»
   // που ήταν βέβαιο ότι θα αποτύχει — ο πελάτης το πατά, τρώει μήνυμα, ξαναπατά, τηλεφωνεί.
   // Πόσες σημειώσεις έκδοσης δεν έχει δει ακόμη — μικρό σήμα δίπλα στην έκδοση.
   const rnQ = useQuery({ queryKey: ["release-notes-badge"], retry: false, staleTime: 300_000,
     queryFn: () => api<{ unseen: number }>("/release-notes") });
   const newCount = rnQ.data?.unseen || 0;
-  const noTrial = (m?: string) => !!addonsQ.data?.addons?.find((a) => a._id === m)?.no_trial;
+  // ΠΟΤΕ δεύτερη 14ήμερη δοκιμή: ο διακομιστής απαντά `can_trial` ανά πρόσθετο (ίδια πηγή με το
+  // start_trial). Η οθόνη ΔΕΝ ξανα-υπολογίζει τον κανόνα — αλλιώς θα πρότεινε δοκιμή που θα
+  // απορριπτόταν, και ο πελάτης θα το μάθαινε πατώντας το κουμπί.
+  const canTrial = (m?: string) => !!addonsQ.data?.addons?.find((a) => a._id === m)?.can_trial;
+  const trialUsed = !!addonsQ.data?.trial_used;
   const upsellable = new Set((addonsQ.data?.addons ?? []).filter((a) => a.status === "available" && a.offered).map((a) => a._id));
   const canUpsell = (m?: string | string[]) => {
     const keys = Array.isArray(m) ? m : m ? [m] : [];
@@ -134,8 +138,12 @@ export function Sidebar() {
         // Τα ΠΑΙΔΙΑ φιλτράρονται ΚΑΙ ως προς το module τους, όχι μόνο ως προς τις
         // προτιμήσεις. Αλλιώς, μόλις η ενότητα ανοίξει για ΕΝΑ πρόσθετο, θα φαίνονταν
         // και οι υπόλοιπες επιλογές της — σελίδες που ο πελάτης δεν έχει αγοράσει.
+        // ⚠️ ΑΛΛΑ κρατάμε όσα είναι ΑΓΟΡΑΣΙΜΑ, ακριβώς όπως τα top-level (γρ. παραπάνω):
+        // αλλιώς οι «Οικογένειες» ΕΞΑΦΑΝΙΖΟΝΤΑΝ, ενώ οι «Δομές Φροντίδας» — που τυχαίνει να
+        // είναι top-level — έδειχναν λουκέτο. Πάγιος κανόνας: πληρωμένο module ΠΟΤΕ αόρατο.
         .map((n) => (n.children
-          ? { ...n, children: n.children.filter((c) => visible(c.href) && allowedMod(c.module)) }
+          ? { ...n, children: n.children.filter(
+              (c) => visible(c.href) && (allowedMod(c.module) || canUpsell(c.module))) }
           : n))
         // γονέας που έμεινε χωρίς παιδιά δεν έχει πού να οδηγήσει → φεύγει
         .filter((n) => (n.children ? n.children.length > 0 : visible(n.href))),
@@ -292,10 +300,10 @@ export function Sidebar() {
               const active = nodeActive(n);
               if (!allowedMod(n.module)) {
                 return (
-                  <button key={g.title} onClick={() => openUpsell(n)} title={collapsed ? t(n.label, n.en) : undefined} className={`${linkCls(false)} w-full opacity-55`}>
+                  <button key={g.title} onClick={() => openUpsell(n)} title={collapsed ? t(n.label, n.en) : undefined} className={`${linkCls(false)} w-full border border-blue-200 bg-blue-50/50 dark:border-blue-900/60 dark:bg-blue-950/20`}>
                     <Icon className={iconCls(false)} strokeWidth={2} />
                     <span className={`flex-1 text-left ${hide}`}>{t(n.label, n.en)}</span>
-                    <Lock className={`h-3.5 w-3.5 shrink-0 text-slate-300 ${hide}`} />
+                    <span className={`ml-auto inline-flex shrink-0 items-center rounded-full bg-blue-100 p-1 text-blue-700 dark:bg-blue-900/60 dark:text-blue-300 ${hide}`}><Lock className="h-3 w-3" /></span>
                   </button>
                 );
               }
@@ -328,10 +336,10 @@ export function Sidebar() {
                     if (!canUpsell(n.module)) return null;
                     return (
                       <button key={n.label} onClick={() => openUpsell(n)} title={collapsed ? t(n.label, n.en) : undefined}
-                        className={`${linkCls(false)} w-full opacity-55`}>
+                        className={`${linkCls(false)} w-full border border-blue-200 bg-blue-50/50 dark:border-blue-900/60 dark:bg-blue-950/20`}>
                         <Icon className={iconCls(false)} strokeWidth={2} />
                         <span className={`flex-1 text-left ${hide}`}>{t(n.label, n.en)}</span>
-                        <Lock className={`h-3.5 w-3.5 shrink-0 text-slate-300 ${hide}`} />
+                        <span className={`ml-auto inline-flex shrink-0 items-center rounded-full bg-blue-100 p-1 text-blue-700 dark:bg-blue-900/60 dark:text-blue-300 ${hide}`}><Lock className="h-3 w-3" /></span>
                       </button>
                     );
                   }
@@ -367,6 +375,16 @@ export function Sidebar() {
                             const cls = `block rounded-lg px-3 py-1.5 text-sm transition-colors ${ca ? "font-semibold text-brand-700 dark:text-brand-300" : "text-slate-500 hover:bg-slate-50 hover:text-slate-800 dark:text-slate-400 dark:hover:bg-slate-800"}`;
                             // hash leaves (#list/#kpi…) use a plain <a>: Next <Link> uses pushState which
                             // does NOT fire `hashchange`, so the page's view toggle would never update.
+                            // κλειδωμένο παιδί: μένει ορατό, θαμπό, με 🔒 — το κλικ ανοίγει προσφορά
+                            if (!allowedMod(c.module)) {
+                              return (
+                                <button key={c.href} onClick={() => openUpsell(c as Node)}
+                                  className={`${cls} flex w-full items-center gap-2 border border-blue-200 bg-blue-50/50 dark:border-blue-900/60 dark:bg-blue-950/20`}>
+                                  <span className="flex-1 text-left">{t(c.label, c.en)}</span>
+                                  <span className="inline-flex shrink-0 items-center rounded-full bg-blue-100 p-1 text-blue-700 dark:bg-blue-900/60 dark:text-blue-300"><Lock className="h-3 w-3" /></span>
+                                </button>
+                              );
+                            }
                             return c.href.includes("#")
                               ? <a key={c.href} href={c.href} className={cls} onClick={() => setOpen(false)}>{t(c.label, c.en)}</a>
                               : <Link key={c.href} href={c.href} className={cls} onClick={() => setOpen(false)}>{t(c.label, c.en)}</Link>;
@@ -401,13 +419,16 @@ export function Sidebar() {
             <div className="mx-auto grid h-12 w-12 place-items-center rounded-2xl bg-gradient-to-br from-violet-500 to-indigo-600 text-white shadow-lg"><Sparkles className="h-6 w-6" /></div>
             <h3 className="mt-3 text-base font-bold text-slate-900 dark:text-slate-100">{t(upsell.label, upsell.en)}</h3>
             <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-              {noTrial(upsell.module)
-                ? t("Δεν περιλαμβάνεται στο πακέτο σου. Ενεργοποιείται απευθείας, χωρίς δοκιμαστική περίοδο.",
-                     "Not included in your plan. It is activated directly, with no trial period.")
-                : t("Δεν περιλαμβάνεται στο πακέτο σου. Δοκίμασέ το δωρεάν για 14 ημέρες ή αναβάθμισε το πλάνο σου.",
-                     "Not included in your plan. Try it free for 14 days or upgrade your plan.")}
+              {canTrial(upsell.module)
+                ? t("Δεν περιλαμβάνεται στο πακέτο σου. Δοκίμασέ το δωρεάν για 14 ημέρες ή αναβάθμισε το πλάνο σου.",
+                     "Not included in your plan. Try it free for 14 days or upgrade your plan.")
+                : trialUsed
+                  ? t("Δεν περιλαμβάνεται στο πακέτο σου. Έχεις ήδη χρησιμοποιήσει τη δωρεάν δοκιμή δυνατοτήτων — ενεργοποιείται απευθείας.",
+                       "Not included in your plan. You have already used your free feature trial — it is activated directly.")
+                  : t("Δεν περιλαμβάνεται στο πακέτο σου. Ενεργοποιείται απευθείας, χωρίς δοκιμαστική περίοδο.",
+                       "Not included in your plan. It is activated directly, with no trial period.")}
             </p>
-            {!noTrial(upsell.module) && (
+            {canTrial(upsell.module) && (
               <button onClick={startTrial} disabled={trialBusy}
                 className="mt-4 w-full rounded-xl bg-violet-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-violet-700 disabled:opacity-50">
                 {trialBusy ? t("Έναρξη…", "Starting…") : t("✨ Δωρεάν δοκιμή 14 ημερών", "✨ Free 14-day trial")}

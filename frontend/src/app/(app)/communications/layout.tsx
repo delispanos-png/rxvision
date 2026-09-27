@@ -60,7 +60,7 @@ export default function CommsLayout({ children }: { children: React.ReactNode })
         </div>
       )}
 
-      <nav className="mb-6 flex gap-1 overflow-x-auto whitespace-nowrap border-b border-slate-200 dark:border-slate-700">
+      <nav className="no-scrollbar mb-6 flex gap-1 overflow-x-auto whitespace-nowrap border-b border-slate-200 dark:border-slate-700">
         {TABS.map((tab) => {
           const active = tab.href === "/communications" ? pathname === tab.href : pathname.startsWith(tab.href);
           return (

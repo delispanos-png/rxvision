@@ -80,6 +80,7 @@ const GROUPS: { label: string; icon: typeof LayoutGrid; items: { label: string; 
       { label: "Ομάδες ταμείων", icon: Layers, href: "/admin/fund-groups", section: "fund_groups:read" },
       { label: "Υποδομή / Cloud", icon: Cloud, href: "/admin/cloud", section: "cloud:read" },
       { label: "Ρυθμίσεις SMTP", icon: Server, href: "/admin/smtp", section: "system:read" },
+      { label: "Ενσωματώσεις", icon: BarChart3, href: "/admin/integrations", section: "integrations:read" },
       { label: "Πύλη Πελατών", icon: Smartphone, href: "/admin/portal", section: "system:read" },
       { label: "Διατήρηση δεδομένων", icon: Database, href: "/admin/data-retention", section: "system:read" },
       { label: "Συντήρηση", icon: Wrench, href: "/admin/maintenance", section: "system:read" },

@@ -8,18 +8,22 @@ import { PageHelp } from "@/components/help/PageHelp";
 import { OnboardingGate } from "@/components/layout/OnboardingGate";
 import { PortalRequestsWatcher } from "@/components/portal/PortalRequestsWatcher";
 import { AnnouncementPopup } from "@/components/layout/AnnouncementPopup";
+import { ClarityScript } from "@/components/ClarityScript";
+import { ModuleTrialBanner } from "@/components/layout/ModuleTrialBanner";
 
 // Backend always enforces permissions/modules; the sidebar is presentational.
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex min-h-screen bg-canvas dark:bg-slate-950">
       <ThemeInit />
+      <ClarityScript surface="app" />
       <OnboardingGate />
       <Sidebar />
       <div className="flex min-w-0 flex-1 flex-col">
         <MaintenanceBanner />
         <HdikaPausedBanner />
         <SubscriptionBanner />
+        <ModuleTrialBanner />
         <Topbar />
         <main className="min-w-0 flex-1 overflow-x-clip px-4 py-4 sm:px-6 sm:py-6">
           {/* Cap content width so charts/tables/KPIs don't stretch on 1440–1920 (R-1). */}

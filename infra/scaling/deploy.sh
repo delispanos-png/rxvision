@@ -29,6 +29,12 @@ SERVICES="${SERVICES:-api web worker}"
 
 cd "$ROOT"
 
+# ΜΙΑ ΠΗΓΗ ΑΛΗΘΕΙΑΣ ΓΙΑ ΤΟ ΕΓΧΕΙΡΙΔΙΟ: το γράφουμε στο docs/USER_MANUAL.md και το διαβάζει ο
+# πελάτης στη σελίδα /manual. Το `docs/` είναι ΕΚΤΟΣ του build context του web (που είναι
+# ./frontend), γι' αυτό αντιγράφεται εδώ — ΠΡΙΝ το build, αλλιώς ανεβαίνει παλιά έκδοση.
+cp docs/USER_MANUAL.md frontend/public/user-manual.md
+echo "   εγχειρίδιο → frontend/public/user-manual.md ($(wc -l < docs/USER_MANUAL.md) γραμμές)"
+
 echo "▶ 1/4  Build on MGMT01 (single source of truth)…"
 # worker/beat build from ./backend too but are SEPARATE images — rebuild them or the
 # beat scheduler / workers on MGMT keep stale task code (incident 2026-06-22: new beat task missing).

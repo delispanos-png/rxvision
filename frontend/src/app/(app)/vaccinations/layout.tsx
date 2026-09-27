@@ -33,7 +33,7 @@ export default function VaccinationsLayout({ children }: { children: React.React
           <p className="text-sm text-slate-500">{t("Παρακολούθηση & πρόσκληση πελατών για εμβολιασμό — προτεραιότητα σε υψηλού κινδύνου και μεγαλύτερες ηλικίες.", "Track & invite customers for vaccination — priority to high-risk and older ages.")}</p>
         </div>
       </div>
-      <nav className="mb-6 flex gap-1 overflow-x-auto whitespace-nowrap border-b border-slate-200 dark:border-slate-700">
+      <nav className="no-scrollbar mb-6 flex gap-1 overflow-x-auto whitespace-nowrap border-b border-slate-200 dark:border-slate-700">
         {TABS.map((tab) => {
           const st = tab.module === "vaccination_programs" ? periodic.state : "on";   // «periodic» = εμβόλια Ή θεραπείες
           if (st === "hide" || st === "unknown") return null;
