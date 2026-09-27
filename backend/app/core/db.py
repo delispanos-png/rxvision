@@ -62,6 +62,20 @@ def shared_db() -> AsyncIOMotorDatabase:
 # (collection_name, index_spec, options)
 INDEXES: list[tuple[str, list[tuple[str, int]], dict]] = [
     ("users", [("tenant_id", 1), ("email", 1)], {"unique": True}),
+    # Partner API — πωλήσεις ταμείου. Το ΜΟΝΑΔΙΚΟ (tenant, external_id) ΕΙΝΑΙ η εγγύηση
+    # ιδεμποτεντικότητας: ο έλεγχος στον κώδικα δεν πιάνει δύο ΤΑΥΤΟΧΡΟΝΑ αιτήματα με το ίδιο
+    # external_id — το ευρετήριο τα πιάνει. Χωρίς αυτό, ένα timeout στον συνεργάτη παράγει
+    # διπλό τζίρο στα νούμερα του φαρμακείου.
+    ("pos_sales", [("tenant_id", 1), ("external_id", 1)], {"unique": True}),
+    ("pos_sales", [("tenant_id", 1), ("sold_at", -1)], {}),
+    ("pos_sales", [("tenant_id", 1), ("lines.barcode", 1)], {}),
+    ("api_keys", [("key_hash", 1)], {"unique": True}),
+    ("api_keys", [("tenant_id", 1)], {}),
+    # γέφυρα «πελάτης εμπορικού ↔ ασθενής»: μοναδική ανά φαρμακείο, + ανάστροφη αναζήτηση
+    ("partner_customers", [("tenant_id", 1), ("customer_ref", 1)], {"unique": True}),
+    ("partner_customers", [("tenant_id", 1), ("patient_ref", 1)], {}),
+    # ιδεμποτεντικές πιστώσεις/εξαργυρώσεις ταμείου (dedup_key) — ο φύλακας του «ποτέ διπλά»
+    ("loyalty_ledger", [("tenant_id", 1), ("dedup_key", 1)], {"sparse": True}),
     ("roles", [("tenant_id", 1), ("key", 1)], {"unique": True}),
     # back-office RBAC: ομάδες δικαιωμάτων + αναζήτηση μελών ανά ομάδα
     ("platform_groups", [("name", 1)], {"unique": True}),

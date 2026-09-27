@@ -232,10 +232,21 @@ class PharmaCatRepository(BaseRepository):
         src = "ενεργή αγωγή ασθενή" + (" + νέο σκεύασμα (χωρίς συνταγή)" if added else "")
         res = await self._ddi(ctx_user, combined, {"πηγή": src})
         if added and isinstance(res, dict) and isinstance(res.get("interactions"), list):
-            low = [a.lower() for a in added]
+            # ΤΑΙΡΙΑΣΜΑ ΜΕ ΛΕΞΕΙΣ, ΟΧΙ ΜΕ ΟΛΟΚΛΗΡΗ ΤΗ ΣΥΜΒΟΛΟΣΕΙΡΑ.
+            # Το `added` μπορεί να είναι «Ιβουπροφαίνη 400mg» ή εμπορική ονομασία, ενώ η απάντηση
+            # μιλά για τη δραστική («Ιβουπροφαίνη»). Ο έλεγχος «όλη η συμβολοσειρά μέσα στο a/b»
+            # δεν πετύχαινε ΠΟΤΕ σε αυτή την περίπτωση, άρα το `involves_new` έμενε πάντα False —
+            # και χανόταν ακριβώς η πληροφορία «αυτό το προκάλεσε το καλάθι». Κρατάμε λέξεις
+            # ≥4 γραμμάτων (κόβει δοσολογίες «400mg», μορφές «tab», συνδέσμους).
+            import re as _re
+
+            def _tokens(x: str) -> set[str]:
+                return {w for w in _re.findall(r"[^\W\d_]{4,}", x.lower())}
+
+            tok = set().union(*(_tokens(a) for a in added)) if added else set()
             for it in res["interactions"]:
                 ab = f"{it.get('a', '')} {it.get('b', '')}".lower()
-                it["involves_new"] = any(s in ab for s in low)
+                it["involves_new"] = any(t in ab for t in tok)
             res["added"] = added
         return res
 

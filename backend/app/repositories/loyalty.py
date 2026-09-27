@@ -76,6 +76,12 @@ DEFAULT_CONFIG = {
     "referral_enabled": False,
     "referral_referrer_cents": 500,     # bonus στον πελάτη που έφερε τον φίλο
     "referral_referred_cents": 300,     # έξτρα welcome στον νέο πελάτη (πάνω από welcome_cents)
+    # ΠΟΝΤΟΙ ΑΠΟ ΤΟ ΤΑΜΕΙΟ (καλάθια που στέλνει το εμπορικό πρόγραμμα μέσω API συνεργατών).
+    # OFF εξ ορισμού: οι πόντοι κοστίζουν πραγματικά € στο φαρμακείο — δεν τους ενεργοποιεί κανείς
+    # άλλος εκτός από τον φαρμακοποιό. Το ποσοστό εφαρμόζεται ΜΟΝΟ στην αξία μη-συνταγογραφούμενων
+    # (ΜΗ.ΣΥ.ΦΑ., παραφάρμακα, υπηρεσίες) — τα συνταγογραφούμενα έχουν κρατική διατίμηση.
+    "pos_earn_enabled": False,
+    "pos_earn_pct": 2,               # 2% της αξίας μη-συνταγογραφούμενων → πορτοφόλι
     # Δώρο γενεθλίων — bonus πόντων τον μήνα των γενεθλίων (από ωμό ΑΜΚΑ λογαριασμού· opt-in).
     "birthday_enabled": False,
     "birthday_bonus_cents": 500,
@@ -124,7 +130,7 @@ class LoyaltyRepository(BaseRepository):
         return out
 
     _BOOL_KEYS = {"enabled", "adherence_points_enabled", "tier_multipliers_enabled",
-                  "referral_enabled", "birthday_enabled"}
+                  "referral_enabled", "birthday_enabled", "pos_earn_enabled"}
     _STR_KEYS = {"adherence_rule", "redeem_cart_policy"}
     _DICT_KEYS = {"tier_multipliers"}
     _LIST_KEYS = {"campaigns"}
@@ -144,6 +150,9 @@ class LoyaltyRepository(BaseRepository):
                                 for _, name in TIERS}
                 elif k in self._LIST_KEYS:
                     clean[k] = self._clean_campaigns(cfg[k])
+                elif k == "pos_earn_pct":
+                    # Φρένο σε λάθος πληκτρολόγηση: «20» αντί «2» είναι ακριβό, «200» καταστροφικό.
+                    clean[k] = max(0, min(100, int(cfg[k])))
                 else:
                     clean[k] = max(0, int(cfg[k]))
         if "terms" in cfg and cfg["terms"] is not None:
@@ -323,6 +332,101 @@ class LoyaltyRepository(BaseRepository):
             elif typ == "adjust":
                 out[pid]["adjust_cents"] += r["cents"]
         return out
+
+    # ── ΚΑΡΤΑ ΤΑΜΕΙΟΥ (API συνεργατών) ──────────────────────────────────────
+    #
+    # ΓΙΑΤΙ ΞΕΧΩΡΙΣΤΟΣ ΔΡΟΜΟΣ ΑΠΟ ΤΟ `member()`: το `member()` περνά από `_chain_analysis()`, που
+    # σαρώνει ΟΛΕΣ τις εκτελέσεις του φαρμακείου. Στην οθόνη πιστότητας (μία φορά) είναι εντάξει·
+    # σε κλήση ΤΑΜΕΙΟΥ, σε κάθε πελάτη, θα γονάτιζε τη βάση. Εδώ σπάμε το υπόλοιπο στα δύο:
+    #
+    #   • πόντοι από ΕΚΤΕΛΕΣΕΙΣ  → βαρύ, αλλά αλλάζει μόνο όταν μπει νέα εκτέλεση → cache 5΄
+    #   • εξαργυρώσεις & bonus    → ΠΑΝΤΑ ΖΩΝΤΑΝΑ, ποτέ από cache
+    #
+    # Η δεύτερη γραμμή δεν είναι βελτιστοποίηση, είναι ΑΣΦΑΛΕΙΑ: με cache στις εξαργυρώσεις, ο
+    # πελάτης θα ξόδευε το ίδιο υπόλοιπο δύο φορές μέσα στο παράθυρο. Το φαρμακείο θα πλήρωνε.
+    _TILL_TTL = 300
+
+    async def _earned_map(self) -> tuple[dict, str | None]:
+        """{patient_ref: base_earned_points} — από cache αν υπάρχει, αλλιώς υπολογισμός."""
+        import json as _json
+        key = f"loy:earn:{self.tenant_id}"
+        try:
+            from app.core.ratelimit import _redis
+            raw = await _redis().get(key)
+            if raw:
+                d = _json.loads(raw)
+                return d.get("m", {}), d.get("at")
+        except Exception:  # noqa: BLE001
+            pass                                  # Redis κάτω → υπολογίζουμε, δεν σπάμε
+        cfg = await self.config()
+        ppr = cfg["points_per_refill"]
+        enrolled = {m["patient_ref"]: m.get("enrolled_at") async for m in
+                    self._db["loyalty_members"].find({"tenant_id": self.tenant_id})}
+        refills = await self._refills_since(enrolled, cfg)
+        m = {r: round(ppr * (v.get("wsum_pct") or 0) / 100) for r, v in refills.items()}
+        at = _now().isoformat()
+        try:
+            from app.core.ratelimit import _redis
+            await _redis().set(key, _json.dumps({"m": m, "at": at}), ex=self._TILL_TTL)
+        except Exception:  # noqa: BLE001
+            pass
+        return m, at
+
+    async def till_card(self, patient_ref: str) -> dict | None:
+        """Υπόλοιπο & βαθμίδα ενός μέλους, φθηνά. None αν δεν είναι εγγεγραμμένο."""
+        rid = str(patient_ref)
+        mdoc = await self.is_enrolled(rid)
+        if not mdoc:
+            return None
+        cfg = await self.config()
+        cpp = cfg["cents_per_point"]
+        earned_map, as_of = await self._earned_map()
+        base_earned = int(earned_map.get(rid, 0))
+        # ΖΩΝΤΑΝΑ: ένα aggregate σε ΕΝΑΝ ασθενή (ευρετήριο tenant_id+patient_ref+at).
+        redeemed = adjust = 0
+        cur = self._coll.aggregate([
+            {"$match": self._scope({"patient_ref": rid, "voided": {"$ne": True}})},
+            {"$group": {"_id": "$type", "cents": {"$sum": "$cents"}}},
+        ])
+        async for r in cur:
+            if r["_id"] == "redeem":
+                redeemed += r["cents"]
+            elif r["_id"] == "adjust":
+                adjust += r["cents"]
+        bonus_cents = adjust + (cfg.get("welcome_cents", 0) or 0)
+        bonus_points = round(bonus_cents / cpp) if cpp else 0
+        redeemed_points = round(redeemed / cpp) if cpp else 0
+        base_points = max(0, base_earned + bonus_points - redeemed_points)
+        ti = _tier_info(base_points)
+        tmult = cfg.get("tier_multipliers") or {}
+        mult = int(tmult.get(ti["tier"], 100)) if cfg.get("tier_multipliers_enabled") else 100
+        points = max(0, round(base_earned * mult / 100) + bonus_points - redeemed_points)
+        return {"enrolled": True, "enrolled_at": mdoc.get("enrolled_at"),
+                "points": points, "balance_cents": points * cpp,
+                "cents_per_point": cpp, "min_redeem_cents": cfg["min_redeem_cents"],
+                "tier": ti["tier"], "next_tier": ti["next_tier"], "to_next_points": ti["to_next"],
+                "tier_multiplier_pct": mult, "refill_points_as_of": as_of}
+
+    async def earn_from_sale(self, patient_ref: str, eligible_cents: int, *,
+                             dedup_key: str, reason: str) -> dict:
+        """Πίστωση πόντων από πώληση ταμείου. Ιδεμποτεντική μέσω `dedup_key`.
+
+        ΓΙΑΤΙ ΜΟΝΟ ΜΗ-ΣΥΝΤΑΓΟΓΡΑΦΟΥΜΕΝΑ (`eligible_cents` το υπολογίζει ο καλών): τα
+        συνταγογραφούμενα έχουν ΚΡΑΤΙΚΗ ΔΙΑΤΙΜΗΣΗ — επιβράβευση πάνω τους είναι, στην πράξη,
+        έκπτωση σε ρυθμιζόμενη τιμή. Ίδιος κανόνας με την έκπτωση καλαθιού στην πύλη."""
+        cfg = await self.config()
+        if not cfg.get("enabled"):
+            return {"credited": False, "reason": "programme_off"}
+        if not cfg.get("pos_earn_enabled"):
+            return {"credited": False, "reason": "pos_earn_off"}
+        pct = int(cfg.get("pos_earn_pct") or 0)
+        if pct <= 0 or eligible_cents <= 0:
+            return {"credited": False, "reason": "nothing_eligible"}
+        cents = round(eligible_cents * pct / 100)
+        ok = await self._credit_once(patient_ref, cents, source="pos",
+                                    dedup_key=dedup_key, reason=reason)
+        return {"credited": ok, "cents": cents if ok else 0,
+                "reason": None if ok else "already_credited"}
 
     async def ledger(self, patient_ref: str, limit: int = 50) -> list[dict]:
         return await self.find({"patient_ref": str(patient_ref)}, sort=[("at", -1)], limit=limit)
@@ -531,19 +635,31 @@ class LoyaltyRepository(BaseRepository):
         return {"ok": True}
 
     # ── redemption + manual adjust (counter) ────────────────────────────────
-    async def redeem(self, patient_ref: str, cents: int, *, reason: str, kind: str) -> dict:
+    async def redeem(self, patient_ref: str, cents: int, *, reason: str, kind: str,
+                     dedup_key: str | None = None) -> dict:
+        """`dedup_key`: ΙΔΕΜΠΟΤΕΝΤΙΑ για εξαργυρώσεις που έρχονται από μηχανή (API ταμείου).
+        Χωρίς αυτό, ένα timeout στο ταμείο και μια επανάληψη θα ΞΟΔΕΥΑΝ ΔΥΟ ΦΟΡΕΣ το πορτοφόλι
+        του πελάτη — σφάλμα που ο πελάτης πληρώνει και που κανείς δεν θα πρόσεχε."""
         cents = int(cents)
         if cents <= 0:
             return {"ok": False, "error": "bad_amount"}
+        if dedup_key:
+            prev = await self._coll.find_one({"tenant_id": self.tenant_id, "dedup_key": dedup_key})
+            if prev:
+                m = await self.member(patient_ref)
+                return {"ok": True, "duplicate": True, "deducted_cents": 0,
+                        "balance_cents": (m or {}).get("balance_cents", 0)}
         m = await self.member(patient_ref)
         if not m:
             return {"ok": False, "error": "not_found"}
         if cents > m["balance_cents"]:
             return {"ok": False, "error": "insufficient", "balance_cents": m["balance_cents"]}
-        await self.insert_one({
-            "patient_ref": str(patient_ref), "type": "redeem", "cents": cents,
-            "kind": kind, "reason": (reason or "")[:160], "at": _now()})
-        return {"ok": True, "balance_cents": m["balance_cents"] - cents}
+        row = {"patient_ref": str(patient_ref), "type": "redeem", "cents": cents,
+               "kind": kind, "reason": (reason or "")[:160], "at": _now()}
+        if dedup_key:
+            row["dedup_key"] = dedup_key
+        await self.insert_one(row)
+        return {"ok": True, "balance_cents": m["balance_cents"] - cents, "deducted_cents": cents}
 
     async def adjust(self, patient_ref: str, cents: int, *, reason: str) -> dict:
         await self.insert_one({
@@ -590,7 +706,16 @@ class LoyaltyRepository(BaseRepository):
         await self._db["loyalty_rewards"].delete_one({"_id": oid, "tenant_id": self.tenant_id})
         return {"ok": True}
 
-    async def redeem_reward(self, patient_ref: str, reward_id: str) -> dict:
+    async def redeem_reward(self, patient_ref: str, reward_id: str,
+                            dedup_key: str | None = None) -> dict:
+        """`dedup_key` → ίδια εγγύηση «ποτέ διπλά» με το `redeem` (βλ. εκεί το γιατί)."""
+        if dedup_key:
+            prev = await self._coll.find_one({"tenant_id": self.tenant_id, "dedup_key": dedup_key})
+            if prev:
+                m = await self.member(patient_ref)
+                return {"ok": True, "duplicate": True, "deducted_cents": 0,
+                        "balance_cents": (m or {}).get("balance_cents", 0),
+                        "reward": prev.get("reason")}
         try:
             oid = ObjectId(reward_id)
         except Exception:  # noqa: BLE001
@@ -605,11 +730,14 @@ class LoyaltyRepository(BaseRepository):
             return {"ok": False, "error": "no_member"}
         if cost_cents > m["balance_cents"]:
             return {"ok": False, "error": "insufficient", "balance_cents": m["balance_cents"]}
-        await self.insert_one({
-            "patient_ref": str(patient_ref), "type": "redeem", "cents": cost_cents,
-            "kind": reward.get("type", "product"), "reward_id": str(oid),
-            "reason": reward.get("title", "Δώρο"), "at": _now()})
-        return {"ok": True, "balance_cents": m["balance_cents"] - cost_cents, "reward": reward.get("title")}
+        row = {"patient_ref": str(patient_ref), "type": "redeem", "cents": cost_cents,
+               "kind": reward.get("type", "product"), "reward_id": str(oid),
+               "reason": reward.get("title", "Δώρο"), "at": _now()}
+        if dedup_key:
+            row["dedup_key"] = dedup_key
+        await self.insert_one(row)
+        return {"ok": True, "balance_cents": m["balance_cents"] - cost_cents,
+                "deducted_cents": cost_cents, "reward": reward.get("title")}
 
     # ── SELF-REDEEM: ο πελάτης δεσμεύει δώρο (pending) → κωδικός → ο φαρμακοποιός επιβεβαιώνει ─────
     _RES_TTL_HOURS = 48

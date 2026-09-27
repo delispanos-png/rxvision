@@ -87,6 +87,13 @@
 			close
 		}
 	}
+	# ΔΙΑΧΩΡΙΣΜΟΣ PARTNER API: το /api/partner σερβίρεται ΜΟΝΟ από api./developers.rxvision.gr.
+	# Χωρίς αυτό, η τεκμηρίωση και τα endpoints συνεργατών θα ήταν προσβάσιμα και από το
+	# app.rxvision.gr — δηλαδή ο διαχωρισμός των δύο κόσμων θα ήταν μόνο στα χαρτιά.
+	handle /api/partner* {
+		header Content-Type application/json
+		respond `{"error":"wrong_host","message":"Το Partner API δεν σερβίρεται από αυτό το domain.","hint":"Χρησιμοποίησε https://api.rxvision.gr/v1/… και δες την τεκμηρίωση στο https://developers.rxvision.gr"}` 404
+	}
 	# API first (same-origin -> no CORS), everything else to the web app.
 	# X-Real-Client-IP is set from Caddy's TRUSTED-PROXY-verified client IP and OVERWRITES any inbound
 	# value → the backend rate-limiter/audit read a non-spoofable client IP (C-2).
@@ -150,6 +157,78 @@ my.rxvision.gr {
 	@root path /
 	rewrite @root /portal
 	import api_and_app
+}
+
+# ── RxVision Partner API ────────────────────────────────────────────────────────────────────
+# ΔΥΟ ΧΩΡΙΣΤΑ HOSTNAMES, ΣΚΟΠΙΜΑ:
+#   api.rxvision.gr          -> ΜΟΝΟ τα endpoints (/v1/*). Καμία τεκμηρίωση, κανένα web.
+#   developers.rxvision.gr   -> ΜΟΝΟ η τεκμηρίωση (Swagger/ReDoc). Κανένα endpoint δεδομένων.
+# Ο διαχωρισμός δεν είναι αισθητικός: αν πέσει ή κακοποιηθεί η τεκμηρίωση, το API δεν αγγίζεται·
+# και ένα λάθος στο routing δεν μπορεί να εκθέσει το ΕΣΩΤΕΡΙΚΟ /api/v1 (admin/GDPR/ingestion),
+# γιατί σε αυτά τα δύο hostnames δεν υπάρχει καν διαδρομή προς τα εκεί.
+
+api.rxvision.gr {
+	tls /data/origin.pem /data/origin.key
+	import security_headers
+
+	# Ο ίδιος φρουρός origin με τα υπόλοιπα hostnames: ό,τι δεν πέρασε από Cloudflare, δεν μπαίνει.
+	@noauth not header X-Origin-Auth {$ORIGIN_AUTH_SECRET}
+	handle @noauth {
+		respond "Forbidden" 403 {
+			close
+		}
+	}
+
+	# ΜΟΝΟ το Partner API. Το /v1/… εδώ αντιστοιχίζεται στο /api/partner/v1/… του FastAPI.
+	handle /v1/* {
+		request_body {
+			max_size 8MB
+		}
+		rewrite * /api/partner{uri}
+		reverse_proxy api:8000 {
+			header_up X-Real-Client-IP {client_ip}
+			header_down Cache-Control "no-store, no-cache, must-revalidate, private"
+		}
+	}
+
+	# Βοηθητική ανακατεύθυνση: όποιος μπει στη ρίζα ψάχνει την τεκμηρίωση.
+	@root path /
+	redir @root https://developers.rxvision.gr 302
+
+	# Οτιδήποτε άλλο ΔΕΝ υπάρχει — και το λέμε με το σχήμα σφάλματος του API.
+	handle {
+		header Content-Type application/json
+		respond `{"error":"not_found","message":"Η διαδρομή δεν υπάρχει σε αυτό το API.","hint":"Όλα τα endpoints ξεκινούν με /v1/. Δες https://developers.rxvision.gr"}` 404
+	}
+}
+
+developers.rxvision.gr {
+	tls /data/origin.pem /data/origin.key
+	import security_headers
+
+	@noauth not header X-Origin-Auth {$ORIGIN_AUTH_SECRET}
+	handle @noauth {
+		respond "Forbidden" 403 {
+			close
+		}
+	}
+
+	# Η ρίζα είναι το Swagger — ο προγραμματιστής δεν πρέπει να ψάχνει διαδρομή.
+	@root path /
+	redir @root /docs 302
+
+	# ΜΟΝΟ τεκμηρίωση: Swagger UI, ReDoc, και το schema. Τίποτε άλλο δεν περνά.
+	@docs path /docs* /redoc* /openapi.json
+	handle @docs {
+		rewrite * /api/partner{uri}
+		reverse_proxy api:8000 {
+			header_up X-Real-Client-IP {client_ip}
+		}
+	}
+
+	handle {
+		redir /docs 302
+	}
 }
 
 # SECURITY (C-1): the plaintext-HTTP preview site on the raw origin IP has been REMOVED. Serving the app

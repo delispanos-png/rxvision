@@ -10,7 +10,7 @@ import { ModuleGuard } from "@/components/layout/ModuleGuard";
 import { PrintCardButton } from "@/components/loyalty/PrintCard";
 import { DateInput } from "@/components/ui/DateInput";
 
-type Cfg = { enabled: boolean; redeem_cart_policy?: "any" | "non_rx_only" | "off"; points_per_refill: number; cents_per_point: number; min_redeem_cents: number; welcome_cents: number; terms?: string; adherence_points_enabled: boolean; adherence_rule: string; points_per_adherence: number; adherence_streak_bonus: number; tier_multipliers_enabled: boolean; tier_multipliers: Record<string, number>; campaigns?: Campaign[]; points_expire_months?: number; referral_enabled?: boolean; referral_referrer_cents?: number; referral_referred_cents?: number; birthday_enabled?: boolean; birthday_bonus_cents?: number };
+type Cfg = { enabled: boolean; redeem_cart_policy?: "any" | "non_rx_only" | "off"; points_per_refill: number; cents_per_point: number; min_redeem_cents: number; welcome_cents: number; terms?: string; adherence_points_enabled: boolean; adherence_rule: string; points_per_adherence: number; adherence_streak_bonus: number; tier_multipliers_enabled: boolean; tier_multipliers: Record<string, number>; campaigns?: Campaign[]; points_expire_months?: number; referral_enabled?: boolean; referral_referrer_cents?: number; referral_referred_cents?: number; birthday_enabled?: boolean; birthday_bonus_cents?: number; pos_earn_enabled?: boolean; pos_earn_pct?: number };
 type Campaign = { name: string; start: string; end: string; multiplier_pct: number };
 type Candidate = { patient_ref: string; name: string; compliance: number | null };
 type Redemption = { _id?: string; id?: string; patient_ref: string; patient_name?: string; cents: number; kind?: string; reason?: string; at: string; voided?: boolean };
@@ -366,6 +366,20 @@ function ConfigCard({ cfg }: { cfg: Cfg }) {
             <label className="text-xs text-slate-500">{t("Έξτρα welcome νέου (λεπτά)", "New-member extra (cents)")}
               <input type="number" value={f.referral_referred_cents ?? 0} onChange={num("referral_referred_cents")} className="mt-1 w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm dark:border-slate-700 dark:bg-slate-800" /></label>
           </div>
+        )}
+      </div>
+      {/* Πόντοι από το ταμείο (καλάθια από εμπορικό πρόγραμμα μέσω API συνεργατών) */}
+      <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50/60 p-3 dark:border-emerald-900/40 dark:bg-emerald-950/20">
+        <label className="inline-flex cursor-pointer items-center gap-2 text-sm font-semibold text-emerald-900 dark:text-emerald-200">
+          <input type="checkbox" checked={!!f.pos_earn_enabled} onChange={(e) => setF({ ...f, pos_earn_enabled: e.target.checked })} />
+          🧾 {t("Πόντοι από αγορές στο ταμείο", "Points from till purchases")}
+        </label>
+        <p className="mt-1 text-[11px] text-emerald-700 dark:text-emerald-300">{t("Όταν το εμπορικό σου πρόγραμμα στέλνει τα καλάθια στο RxVision (μέσω API), κάθε αγορά πιστώνει πόντους αυτόματα. Μετρά ΜΟΝΟ η αξία μη-συνταγογραφούμενων (ΜΗ.ΣΥ.ΦΑ., παραφάρμακα, υπηρεσίες) — τα συνταγογραφούμενα έχουν κρατική διατίμηση.", "When your commercial software sends baskets to RxVision (via the API), every purchase credits points automatically. Only the non-prescription value counts (OTC, parapharmacy, services) — prescription medicines have state-set prices.")}</p>
+        {f.pos_earn_enabled && (
+          <label className="mt-2 block text-xs text-slate-500">{t("Ποσοστό επιστροφής σε πόντους (%)", "Cash-back in points (%)")}
+            <input type="number" value={f.pos_earn_pct ?? 0} onChange={num("pos_earn_pct")} className="mt-1 w-32 rounded-lg border border-slate-300 px-2 py-1.5 text-sm dark:border-slate-700 dark:bg-slate-800" />
+            <span className="mt-1 block text-[11px] text-emerald-700 dark:text-emerald-300">{t(`Αγορά 20 € σε παραφάρμακα → ${eur(Math.round(2000 * (f.pos_earn_pct ?? 0) / 100))} στην κάρτα του πελάτη.`, `A 20 € parapharmacy purchase → ${eur(Math.round(2000 * (f.pos_earn_pct ?? 0) / 100))} on the customer's card.`)}</span>
+          </label>
         )}
       </div>
       {/* Δώρο γενεθλίων */}
