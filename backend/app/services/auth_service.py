@@ -150,9 +150,9 @@ class AuthService:
         sid = await sessions.open_session(tid, str(user["_id"]), ua=user_agent, ip=ip)
         await db["users"].update_one({"_id": user["_id"]},
                                      {"$set": {"last_login_at": _utcnow()}})
-        modules, roles, perms, demo = await self._resolve(user)
+        modules, roles, perms, demo, mtrl = await self._resolve(user)
         # (Η λίστα φαρμακείων του χρήστη δίνεται από το /auth/me — το TokenOut είναι αυστηρό.)
-        return self._issue(user, roles, modules, perms, demo, sid=sid)
+        return self._issue(user, roles, modules, perms, demo, sid=sid, mtrl=mtrl)
 
     async def accessible_pharmacies(self, user: dict) -> list[dict]:
         """Τα φαρμακεία στα οποία επιτρέπεται να συνδεθεί ΑΥΤΟΣ ο χρήστης (για τον επιλογέα).
@@ -189,8 +189,8 @@ class AuthService:
             return {"seat_limit": True, "seats": sessions.tenant_seats(sub)}
         await sessions.close_session(sid)
         new_sid = await sessions.open_session(tid, str(user["_id"]))
-        modules, roles, perms, demo = await self._resolve(user, tid)
-        res = self._issue(user, roles, modules, perms, demo, sid=new_sid, tid=tid)
+        modules, roles, perms, demo, mtrl = await self._resolve(user, tid)
+        res = self._issue(user, roles, modules, perms, demo, sid=new_sid, tid=tid, mtrl=mtrl)
         res["active_tenant"] = tid
         return res
 
@@ -246,8 +246,8 @@ class AuthService:
         # carry no sid → open_session(sid=None) gives them a fresh TRACKED session so they can no
         # longer refresh forever outside the cap (closes the pre-`sid` escape without a mass logout).
         sid = await sessions.open_session(tid, str(user["_id"]), sid=sid)
-        modules, roles, perms, demo = await self._resolve(user, tid)
-        return self._issue(user, roles, modules, perms, demo, sid=sid, tid=tid)
+        modules, roles, perms, demo, mtrl = await self._resolve(user, tid)
+        return self._issue(user, roles, modules, perms, demo, sid=sid, tid=tid, mtrl=mtrl)
 
     async def issue_for_user(self, user: dict) -> dict:
         """Mint tokens for a user WITHOUT a password check or last_login update — used
@@ -259,18 +259,20 @@ class AuthService:
         """
         sid = await sessions.open_session(
             str(user["tenant_id"]), str(user["_id"]), impersonation=True)
-        modules, roles, perms, demo = await self._resolve(user)
+        modules, roles, perms, demo, mtrl = await self._resolve(user)
         ttl = _IMPERSONATION_TTL_SECONDS
         return {
             "access_token": create_access_token(
                 user_id=str(user["_id"]), tenant_id=str(user["tenant_id"]), roles=roles,
-                modules=modules, permissions=perms, demo=demo, sid=sid, imp=True, ttl_seconds=ttl),
+                modules=modules, permissions=perms, demo=demo, sid=sid, imp=True, ttl_seconds=ttl,
+                module_trials=mtrl),
             "refresh_token": "",          # σκόπιμα κενό — η συνεδρία υποστήριξης δεν ανανεώνεται
             "expires_in": ttl,
             "impersonation": True,
         }
 
-    async def _resolve(self, user: dict, tid: str | None = None) -> tuple[dict, list[str], list[str], bool]:
+    async def _resolve(self, user: dict, tid: str | None = None
+                       ) -> tuple[dict, list[str], list[str], bool, dict[str, float]]:
         """tid = ΕΝΕΡΓΟ φαρμακείο (default: το κύριο του χρήστη).
 
         ΠΡΟΣΟΧΗ στα δύο διαφορετικά scopes:
@@ -289,11 +291,20 @@ class AuthService:
         )
         # expire self-service module trials: a "trial" override whose end date has passed → locked
         trials = (tenant or {}).get("module_trials") or {}
+        mtrl: dict[str, float] = {}
         if trials:
             now = _utcnow()
             for m, exp in trials.items():
-                if modules.get(m) == "trial" and exp and exp < now:
+                if modules.get(m) != "trial" or not exp:
+                    continue
+                if exp < now:
                     modules[m] = "locked"
+                else:
+                    # ΜΠΑΙΝΕΙ ΣΤΟ ΔΙΑΚΡΙΤΙΚΟ: χωρίς αυτό, η λήξη ίσχυε μόνο από την επόμενη
+                    # έκδοση token — δηλαδή η δοκιμή δούλευε ως 15΄ μετά το τέλος της. Με την
+                    # ημερομηνία μέσα, ο έλεγχος γίνεται ΣΕ ΚΑΘΕ ΑΙΤΗΜΑ, με το ρολόι.
+                    mtrl[m] = exp.replace(tzinfo=timezone.utc).timestamp() if exp.tzinfo is None \
+                        else exp.timestamp()
 
         # permissions: union of the user's roles. role_ids may be stored as strings
         # (created via the API) — coerce to ObjectId so the $in actually matches.
@@ -311,16 +322,17 @@ class AuthService:
         # specific user is GDPR-restricted (mask_pii) — e.g. a health advisor at the counter who
         # may operate but must not see patients' surname/ΑΜΚΑ/contact details.
         demo = bool((tenant or {}).get("demo")) or bool(user.get("mask_pii"))
-        return modules, roles, sorted(perms), demo
+        return modules, roles, sorted(perms), demo, mtrl
 
     def _issue(self, user: dict, roles: list[str], modules: dict, perms: list[str],
-               demo: bool = False, sid: str | None = None, tid: str | None = None) -> dict:
+               demo: bool = False, sid: str | None = None, tid: str | None = None,
+               mtrl: dict[str, float] | None = None) -> dict:
         uid = str(user["_id"])
         tid = tid or str(user["tenant_id"])   # ΕΝΕΡΓΟ φαρμακείο → μπαίνει στο claim `tid`
         return {
             "access_token": create_access_token(
                 user_id=uid, tenant_id=tid, roles=roles, modules=modules, permissions=perms,
-                demo=demo, sid=sid),
+                demo=demo, sid=sid, module_trials=mtrl),
             "refresh_token": create_refresh_token(
                 user_id=uid, tenant_id=tid, version=user.get("refresh_token_version", 0), sid=sid),
             "expires_in": 900,

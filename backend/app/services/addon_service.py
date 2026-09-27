@@ -214,18 +214,49 @@ async def for_tenant(tenant_id: str) -> dict:
     pkg = await db["packages"].find_one({"_id": sub.get("plan")}) if sub.get("plan") else None
     offered = (set(pkg.get("available_addons") or []) if (pkg and pkg.get("available_addons") is not None)
                else {a["_id"] for a in cat})
+    # Έχει ΗΔΗ χρησιμοποιήσει δοκιμή δυνατότητας; Ίδια πηγή αλήθειας με το `start_trial`
+    # (addon_grants / by="self-service") — αλλιώς η οθόνη θα πρότεινε δοκιμή που ο διακομιστής
+    # θα αρνιόταν, και ο πελάτης θα το μάθαινε πατώντας το κουμπί.
+    used_trial = bool(await db["addon_grants"].find_one({"tenant_id": tenant_id, "by": "self-service"}))
+    # ποια πρόσθετα έχει ΗΔΗ δοκιμάσει, με οποιονδήποτε τρόπο (self/ανακοίνωση/χειροκίνητα)
+    # ΚΑΙ με ΠΟΤΕ ξεκίνησε / πότε λήγει η καθεμία — ώστε η οθόνη να μπορεί να απαντήσει
+    # «τι ακριβώς δοκιμάζω, από πότε, ως πότε» χωρίς δεύτερη κλήση.
+    grants: dict[str, dict] = {}
+    async for g in db["addon_grants"].find({"tenant_id": tenant_id}):
+        m = g.get("module")
+        if not m:
+            continue
+        prev = grants.get(m)
+        # ΠΡΟΣΟΧΗ: κρατάμε την ΠΙΟ ΠΡΟΣΦΑΤΗ χορήγηση (max `at`), ΟΧΙ τη μεγαλύτερη λήξη.
+        # Η ζωντανή λήξη ζει στο `tenants.module_trials` και την έγραψε η ΤΕΛΕΥΤΑΙΑ χορήγηση·
+        # μια παλιότερη μπορεί να έχει μακρύτερο `expires_at` που ΔΕΝ ισχύει πια (πραγματικό
+        # παράδειγμα: therapy_programs με exp 22/10 ενώ ισχύει 03/10).
+        if not prev or (g.get("at") and prev.get("at") and g["at"] > prev["at"]):
+            grants[m] = g
+    tried = set(grants)
     items = []
     for a in cat:
         key = a["_id"]
-        items.append({**a, "offered": key in offered,
-                      "status": _status(key, in_plan=key in included,
-                                        in_addons=key in active, entitled=tenant_has(mods, key))})
+        st = _status(key, in_plan=key in included, in_addons=key in active,
+                     entitled=tenant_has(mods, key))
+        g = grants.get(key) or {}
+        items.append({**a, "offered": key in offered, "status": st,
+                      # ΤΑ ΤΡΙΑ ΠΟΥ ΖΗΤΑ Η ΟΘΟΝΗ: από πότε, ως πότε, πόσων ημερών ήταν η δοκιμή
+                      "trial_started_at": g.get("at"),
+                      "trial_expires_at": g.get("expires_at"),
+                      "trial_days": g.get("days"),
+                      # ΜΟΝΗ πηγή για το «δείξε δοκιμή ή αγορά» — το UI δεν ξανα-υπολογίζει κανόνα
+                      "tried": key in tried,
+                      "can_trial": (st == "available" and key in offered
+                                    and key not in NO_TRIAL and not used_trial
+                                    and key not in tried)})
     from app.services import billing_service
     return {"addons": items, "addons_total": int(sub.get("addons_total", 0) or 0),
             "billing_cycle": "yearly" if yearly else "monthly",
             # Το UI πρέπει να ΞΕΡΕΙ από πριν ότι λείπει κάρτα, αντί να το ανακαλύπτει ο πελάτης
             # πατώντας «Ενεργοποίηση» και τρώγοντας άρνηση.
-            "card_on_file": await billing_service.card_on_file(tenant_id)}
+            "card_on_file": await billing_service.card_on_file(tenant_id),
+            "trial_used": used_trial}
 
 
 def _prorated_addon(price_cents: int, sub: dict, yearly: bool) -> tuple[int, int]:
@@ -260,12 +291,16 @@ async def activation_quote(tenant_id: str, addon_id: str) -> dict:
     pkg = await db["packages"].find_one({"_id": sub.get("plan")}) if sub.get("plan") else None
     inc_vat = bool((pkg or {}).get("price_includes_vat") or sub.get("price_includes_vat"))
     net, remaining = _prorated_addon(price, sub, yearly)
+    # Ίδια πηγή αλήθειας με `for_tenant`/`start_trial`: δοκιμή δυνατότητας δίνεται ΜΙΑ φορά.
+    used_trial = bool(await db["addon_grants"].find_one(
+        {"tenant_id": tenant_id, "by": "self-service"}))
     return {"ok": True, "addon": addon_id, "name": a.get("name"),
             "cycle": "yearly" if yearly else "monthly",
             "full_price_cents": gross_from_price(price, inc_vat, tenant.get("country")),
             "charge_now_cents": gross_from_price(net, inc_vat, tenant.get("country")),
             "remaining_days": remaining,
-            "card_on_file": await billing_service.card_on_file(tenant_id)}
+            "card_on_file": await billing_service.card_on_file(tenant_id),
+            "trial_used": used_trial}
 
 
 async def activate(tenant_id: str, addon_id: str) -> dict:
@@ -357,8 +392,18 @@ async def start_trial(tenant_id: str, module: str) -> dict:
         return {"ok": False, "error": "no_trial",
                 "message": "Αυτό το πρόσθετο δεν έχει δωρεάν δοκιμή — ενεργοποιείται απευθείας."}
     db = shared_db()
-    prior = await db["addon_grants"].find_one({"tenant_id": tenant_id, "by": "self-service"})
-    if prior:
+    # ⚠️ ΔΙΑΡΡΟΗ ΕΣΟΔΩΝ (εντοπίστηκε 27/09/2026): ο έλεγχος κοίταζε ΜΟΝΟ `by="self-service"`, οπότε
+    # δοκιμές που δόθηκαν από ΑΝΑΚΟΙΝΩΣΗ ή ΧΕΙΡΟΚΙΝΗΤΑ από τον ιδιοκτήτη ΔΕΝ έκαιγαν το δικαίωμα.
+    # Πραγματικό παράδειγμα: ένας πελάτης είχε ΔΥΟ δοκιμές σε καθένα από 3 πρόσθετα (μία από
+    # ανακοίνωση, μία χειροκίνητη) και εξακολουθούσε να δικαιούται ΤΡΙΤΗ, δωρεάν.
+    # Τώρα φράζουν ΔΥΟ ανεξάρτητοι λόγοι:
+    #   α) έχει ΞΑΝΑΠΑΡΕΙ δοκιμή ΑΥΤΟΥ του προσθέτου — από οποιονδήποτε (self/ανακοίνωση/admin)
+    #   β) έχει ήδη κάνει self-service δοκιμή — που δίνει ΟΛΟΚΛΗΡΟ το πακέτο, όχι ένα πρόσθετο
+    if await db["addon_grants"].find_one({"tenant_id": tenant_id, "module": module}):
+        return {"ok": False, "error": "trial_used",
+                "message": "Έχεις ήδη δοκιμάσει αυτή τη δυνατότητα — ενεργοποιείται απευθείας, "
+                           "χωρίς νέα δοκιμαστική περίοδο."}
+    if await db["addon_grants"].find_one({"tenant_id": tenant_id, "by": "self-service"}):
         return {"ok": False, "error": "trial_used",
                 "message": "Έχεις ήδη χρησιμοποιήσει τη δωρεάν δοκιμή δυνατοτήτων — οι επιπλέον "
                            "δυνατότητες αγοράζονται απευθείας (χωρίς δοκιμή)."}
@@ -372,8 +417,16 @@ async def start_trial(tenant_id: str, module: str) -> dict:
     exp = datetime.now(tz=timezone.utc) + timedelta(days=_TRIAL_DAYS)
     sets: dict = {}
     granted: list[str] = []
+    # ήδη δοκιμασμένα — ΜΕ ΟΠΟΙΟΝΔΗΠΟΤΕ ΤΡΟΠΟ — δεν ξαναμπαίνουν σε δοκιμή
+    tried = {g["module"] async for g in db["addon_grants"].find(
+        {"tenant_id": tenant_id}, {"module": 1}) if g.get("module")}
     for m in grant:
         if m in NO_TRIAL:               # δεν μπαίνει ούτε «μαζί με το πακέτο» σε δοκιμή
+            continue
+        if m in tried:
+            # ⚠️ Η δοκιμή δίνει ΟΛΟΚΛΗΡΟ το πακέτο, όχι ένα πρόσθετο. Χωρίς αυτόν τον έλεγχο, μια
+            # δοκιμή σε ΑΔΟΚΙΜΑΣΤΟ πρόσθετο ξανα-χάριζε 14 μέρες σε όσα είχε ΗΔΗ δοκιμάσει —
+            # η διαρροή έμπαινε από την πίσω πόρτα, μέσω του πακέτου.
             continue
         if tenant_has(current, m):      # already owned → don't shadow with a trial that would expire
             continue
@@ -408,6 +461,14 @@ async def grant_preview(tenant_id: str, module: str, *, days: int = 30,
     if (t.get("modules") or {}).get(module) == "enabled":
         return {"ok": False, "error": "already_enabled"}
     exp = _now() + timedelta(days=int(days))
+    # ΠΟΤΕ ΔΕΝ ΜΙΚΡΑΙΝΟΥΜΕ ΔΟΚΙΜΗ ΠΟΥ ΤΡΕΧΕΙ. Το σκέτο $set έγραφε πάνω στην προηγούμενη
+    # ημερομηνία: πελάτης που είχε πάρει 30 ημέρες από ανακοίνωση και μετά 10 χειροκίνητα,
+    # έχανε 19 ημέρες — σιωπηλά, χωρίς να το δει ούτε αυτός ούτε εμείς. Κρατάμε τη ΜΕΓΑΛΥΤΕΡΗ.
+    prev = ((t.get("module_trials") or {}).get(module))
+    if prev is not None:
+        prev_aware = prev if getattr(prev, "tzinfo", None) else prev.replace(tzinfo=timezone.utc)
+        if prev_aware > exp:
+            exp = prev_aware
     await db["tenants"].update_one({"_id": tenant_id}, {"$set": {
         f"modules.{module}": "trial", f"module_trials.{module}": exp,
         "updated_at": _now()}})
