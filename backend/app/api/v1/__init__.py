@@ -28,6 +28,7 @@ from app.api.v1.routers import (
     marketing,
     monthly_closing,
     onboarding,
+    public_config,
     orders,
     orders_delivery,
     copilot,
@@ -46,6 +47,7 @@ from app.api.v1.routers import (
     pharmacyone,
     platform,
     prescriptions,
+    api_keys,
     release_notes,
     profitability,
     reimbursement,
@@ -61,6 +63,7 @@ api_router = APIRouter()
 api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
 api_router.include_router(calendar.router, prefix="/calendar", tags=["calendar"])
 api_router.include_router(onboarding.router, prefix="/onboarding", tags=["onboarding"])
+api_router.include_router(public_config.router, prefix="/config", tags=["public"])
 api_router.include_router(feedback.router, prefix="/feedback", tags=["feedback"])
 api_router.include_router(billing.router, prefix="/billing", tags=["billing"])
 api_router.include_router(patient.router, prefix="/patient", tags=["patient-portal"])
@@ -142,6 +145,9 @@ api_router.include_router(addons.router, prefix="/addons", tags=["addons"])
 api_router.include_router(tenants.router, prefix="/tenant", tags=["tenant"])
 # users router declares its own /users, /roles, /permissions paths → mount at root.
 api_router.include_router(users.router, tags=["users"])
+# Κλειδιά API συνεργατών — πλευρά φαρμακοποιού (το ΙΔΙΟ το Partner API ζει χωριστά,
+# mounted στο /api/partner· δες ARCHITECTURE §10δ).
+api_router.include_router(api_keys.router, tags=["api-keys"])
 api_router.include_router(security.router, prefix="/security", tags=["security"])
 # Προσωπικό μενού & μενού ανά ρόλο (ΕΜΦΑΝΙΣΗ — τα δικαιώματα μένουν στον server).
 api_router.include_router(nav.router, prefix="/nav", tags=["nav"])

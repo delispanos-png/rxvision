@@ -129,12 +129,20 @@ async def me(ctx: TenantContext = Depends(get_current_context)):
     from app.services.auth_service import _as_object_id
     u = await shared_db()["users"].find_one({"_id": _as_object_id(ctx.user_id)})
     pharmacies = await AuthService().accessible_pharmacies(u) if u else []
+    # Ημερομηνίες λήξης δοκιμών ΑΝΑ ΔΥΝΑΤΟΤΗΤΑ — μόνο γι' αυτές που είναι ΤΩΡΑ σε δοκιμή.
+    # ΓΙΑΤΙ: χωρίς αυτές ο πελάτης δεν μάθαινε ΠΟΤΕ ότι η δοκιμή του τελειώνει· το ανακάλυπτε
+    # τη μέρα που η δυνατότητα κλείδωνε. Οι αγορασμένες ΔΕΝ μπαίνουν εδώ (δεν λήγουν).
+    t = await shared_db()["tenants"].find_one({"_id": ctx.tenant_id}, {"module_trials": 1}) or {}
+    trials = {m: (d.isoformat() if hasattr(d, "isoformat") else str(d))
+              for m, d in (t.get("module_trials") or {}).items()
+              if ctx.modules.get(m) == "trial" and d}
     return {
         "user_id": ctx.user_id,
         "tenant_id": ctx.tenant_id,
         "pharmacies": pharmacies,
         "roles": ctx.roles,
         "modules": ctx.modules,
+        "module_trials": trials,
         "demo": ctx.demo,                # «πελάτης παρουσίασης» → frontend κλειδώνει εκτυπώσεις ΗΔΥΚΑ/κουπονιών
         **profile,                       # full_name, email, phone, mfa_enabled
     }

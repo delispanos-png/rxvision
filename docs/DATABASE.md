@@ -315,6 +315,103 @@ TTL προαιρετικό (π.χ. retention 24 μήνες) ανάλογα με 
 
 ---
 
+## 20. Συλλογές εβδομάδας 20–27/09/2026
+
+Όλες φέρουν **`tenant_id`** και προσπελαύνονται **μόνο** μέσω repository που επεκτείνει το
+`BaseRepository` (ο ΕΝΑΣ κανόνας). Ελέγχονται από `scripts/ci/check_tenant_isolation.py`.
+
+### `advance_dispensings` — προχορηγήσεις («δανεικά»)
+| πεδίο | τι είναι |
+|---|---|
+| `patient_ref` | **pseudo_id** του πελάτη — επιλέγεται από λίστα, ποτέ ελεύθερο κείμενο |
+| `items[]` | `{barcode, gs1, name, qty}` — **μία φόρμα → πολλά σκευάσματα** |
+| `gs1` | **ΟΛΟΚΛΗΡΟΣ** ο κωδικός GS1, όχι μόνο το σειριακό |
+| `expected_at` | πότε θα φέρει τη συνταγή → τροφοδοτεί τη λίστα ημέρας & το σήμα Συμβούλου |
+| `closed_at`, `closed_by` | κλείσιμο όταν έρθει η συνταγή |
+
+### `patient_groups` — Οικογένειες & Δομές Φροντίδας
+| πεδίο | τι είναι |
+|---|---|
+| `kind` | `"family"` ή `"care"` — **ίδια συλλογή, δύο κυκλώματα** |
+| `members[]` | `{pseudo_id, role, joined_at, left_at, charges_from}` — **ποτέ ΑΜΚΑ** |
+| `members[].role` | `parent` → γονική μέριμνα σε ανήλικα μέλη, **παύει αυτόματα στα 18** |
+| `charges_from` | αφετηρία χρεώσεων της δομής (μέλος που μπήκε Μάιο δεν χρωστά για Μάρτιο) |
+
+### `care_ledger` — καθολικό χρεώσεων δομής
+`group_id` · `at` · `amount_cents` · `month`. Η δομή χρωστά **μόνο τη συμμετοχή** του
+ασφαλισμένου· ό,τι καλύπτει το ταμείο δεν την αφορά.
+⚠ Τα όρια μήνα υπολογίζονται σε **UTC**, όχι ώρα Αθήνας (βλ. `deep-audit-2026-09-27.md` Β4).
+
+### `care_authorizations` — εξουσιοδοτήσεις πύλης
+`patient_ref` (ποιος εξουσιοδοτεί) · `grantee_ref` (ποιος βλέπει) · `reason` · `revoked_at`.
+**Ρητή συγκατάθεση ενήλικα** — ανεξάρτητη από συγγένεια. Η γονική μέριμνα ΔΕΝ γράφεται εδώ:
+προκύπτει από `patient_groups.members[].role="parent"` + ηλικία.
+
+### `connect_policies` + κρατήσεις — RxVision Connect
+`network_id` · `afm` των μελών · `share_stock` · `reservations[]` με λήξη (beat
+`connect.expire_reservations`). ⚠ **`None` ≠ `0`**: άγνωστο απόθεμα δεν εμφανίζεται ως μηδέν.
+
+### `catalog_sync_events` — αποστολές έτοιμου καταλόγου
+`tenant_id` · `at` · `added/updated/skipped` · `by`.
+> ℹ Ορίζεται στο `repositories/catalog_sync_events.py` αλλά **δεν υπάρχει ακόμη στην παραγωγή**
+> (καμία αποστολή δεν έχει τρέξει· η MongoDB δημιουργεί τη συλλογή στο πρώτο insert). Νυχτερινή αποστολή
+(`catalog_categories.sync_catalogs`) — ο φαρμακοποιός διαλέγει, εμείς στέλνουμε.
+
+### `addon_grants` — ΙΣΤΟΡΙΚΟ δοκιμών δυνατοτήτων
+`module` · `days` · `at` (έναρξη) · `expires_at` · `by` (`self-service`/`announcement`/admin).
+
+> ⚠ **ΔΥΟ ΠΗΓΕΣ — μην τις μπερδέψεις.** Η **ζωντανή** λήξη ζει στο
+> **`tenants.module_trials`** (από εκεί χτίζεται το `mtrl` του JWT και γίνεται ο έλεγχος σε
+> κάθε αίτημα). Το `addon_grants` είναι **ιστορικό** με **πολλές** εγγραφές ανά module.
+> Για το «πότε ξεκίνησε η δοκιμή που ισχύει» πάρε **`max(at)`**, ΟΧΙ `max(expires_at)` —
+> πραγματικό παράδειγμα: εγγραφή με `expires_at=22/10` ενώ ίσχυε **03/10**.
+
+### `release_notes` — «Τι νέο υπάρχει»
+`version` · `title` · `date` · `items[]` (`{title, body, where, icon}`) · `published`.
+Το **`where`** είναι υποχρεωτικό: κάθε δυνατότητα λέει **πού θα τη βρει** ο πελάτης.
+⚠ Σειρά εκδόσεων με **`vsort`** (συμβολοσειρά με μηδενικά) — η MongoDB συγκρίνει πίνακες με
+το **μέγιστο στοιχείο**, οπότε `[1,10,0]` δεν ταξινομείται όπως περιμένεις.
+
+### `session_log` — μόνιμο ημερολόγιο συνδέσεων
+`started_at` · `last_seen_at` · `ended_at` · `ended_reason` · `duration_seconds` ·
+`impersonation`. Γράφεται στο **ΑΝΟΙΓΜΑ** (όχι στο κλείσιμο) — αλλιώς κάθε συνεδρία που
+τελειώνει με «έκλεισα τον browser» δεν θα καταγραφόταν ποτέ. Το `user_sessions` απαντά
+«ποιος είναι **τώρα** μέσα» και σβήνεται από TTL 10΄· το `session_log` κρατά το ιστορικό.
+
+### `api_keys` — κλειδιά Partner API (ανά φαρμακείο)
+`{_id, tenant_id, name, prefix, key_hash (SHA-256), scopes[], ip_allowlist[], gdpr_ack,
+created_at, expires_at, created_by, last_used_at, last_used_ip, calls, revoked_at, revoked_by}`
+Ευρετήρια: `key_hash` **unique**, `tenant_id`.
+⚠ Το **ωμό κλειδί δεν αποθηκεύεται ποτέ** — μόνο hash + ορατό πρόθεμα. Χαμένο κλειδί ⇒ ανάκληση
+και νέο, ποτέ ανάκτηση.
+
+### `pos_sales` — πωλήσεις ταμείου από εμπορικό πρόγραμμα
+`{_id, tenant_id, external_id, sold_at, total_cents, computed_cents, total_mismatch,
+payment_method, operator, till, customer_ref, lines[{barcode, quantity, unit_price_cents,
+discount_cents, vat_pct, kind, line_total_cents}], source, api_key_id, received_at}`
+Ευρετήρια: `tenant_id+external_id` **unique** (ιδεμποτεντία), `tenant_id+sold_at`,
+`tenant_id+lines.barcode`.
+`kind`: `rx` | `otc` | `para` | `service`. **Επιστροφή = αρνητικό `quantity`**, όχι άλλος τύπος.
+⚠ Οι ελεύθερες πωλήσεις **δεν αναμειγνύονται** με τα αναλυτικά εκτελέσεων/ΕΟΠΥΥ.
+
+### `partner_customers` — γέφυρα «πελάτης εμπορικού ↔ ασθενής» (27/09/2026)
+`{_id, tenant_id, customer_ref, patient_ref, method (amka|phone), api_key_id, linked_at}`
+Ευρετήρια: `tenant_id+customer_ref` **unique**, `tenant_id+patient_ref`.
+
+Είναι **δείκτης και τίποτα άλλο**: η διαγραφή του δεν αγγίζει κανένα δεδομένο υγείας (GDPR —
+δικαίωμα διαγραφής χωρίς παρενέργειες). Χάρη σ' αυτόν, **κανένα δικό μας id δεν φεύγει ποτέ από
+το API** και το ΑΜΚΑ ταξιδεύει **μία φορά**, στη σύνδεση.
+
+### `loyalty_ledger` — προσθήκη πεδίου `dedup_key` (27/09/2026)
+Νέο **sparse** ευρετήριο `tenant_id+dedup_key`. Κάθε κίνηση αξίας που έρχεται από **μηχανή**
+(ταμείο μέσω API) φέρει κλειδί ιδεμποτεντίας: `pos:earn:{external_id}` για πίστωση,
+`pos:redeem:{external_id}` για εξαργύρωση. Χωρίς αυτό, ένα timeout και μια επανάληψη ξοδεύουν
+δύο φορές το πορτοφόλι του πελάτη.
+
+### `loyalty_config` — νέες ρυθμίσεις πόντων ταμείου
+`pos_earn_enabled` (**false** εξ ορισμού) · `pos_earn_pct` (0–100, clamp στο `save_config`).
+Μετρά **μόνο** η αξία μη-συνταγογραφούμενων — τα rx έχουν κρατική διατίμηση.
+
 ## Index bootstrap
 Όλα τα indexes δημιουργούνται idempotent στο app startup (`core/db.py:ensure_indexes()`),
 ώστε deployment = αυτόματο index sync. Sharding key (Phase 2): `tenant_id` (hashed) στα

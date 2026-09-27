@@ -50,7 +50,8 @@ def verify_totp(secret: str, code: str) -> bool:
 def create_access_token(*, user_id: str, tenant_id: str, roles: list[str],
                         modules: dict[str, str], permissions: list[str] | None = None,
                         demo: bool = False, sid: str | None = None,
-                        imp: bool = False, ttl_seconds: int | None = None) -> str:
+                        imp: bool = False, ttl_seconds: int | None = None,
+                        module_trials: dict[str, float] | None = None) -> str:
     """imp=True → συνεδρία «Σύνδεση ως πελάτης» (υποστήριξη). Σημαίνεται στο token ώστε backend/UI να
     μπορούν να το περιορίσουν & να το εμφανίσουν· συνοδεύεται από ΜΙΚΡΟ ttl_seconds και ΚΑΝΕΝΑ refresh."""
     payload = {
@@ -58,6 +59,9 @@ def create_access_token(*, user_id: str, tenant_id: str, roles: list[str],
         "tid": tenant_id,
         "roles": roles,
         "modules": modules,
+        # Λήξη δοκιμής ΑΝΑ δυνατότητα (epoch). Ο έλεγχος γίνεται σε ΚΑΘΕ αίτημα (core/deps.require)
+        # με το ρολόι — αλλιώς μια δοκιμή που έληξε θα δούλευε ως 15΄ ακόμη, όσο ζει το διακριτικό.
+        "mtrl": module_trials or {},
         "perms": permissions or [],
         "demo": bool(demo),          # «πελάτης παρουσίασης» → απόκρυψη PII (GDPR-safe demo)
         "sid": sid,                  # session id → concurrent-session (seat) tracking

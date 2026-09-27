@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import time as _time
+
 from dataclasses import dataclass, field
 
 from fastapi import Depends, HTTPException, Request, status
@@ -21,6 +23,7 @@ class TenantContext:
     permissions: set[str]            # resolved from roles (filled by middleware/service)
     demo: bool = False               # «πελάτης παρουσίασης» → απόκρυψη PII (επίθετο/ΑΜΚΑ)
     sid: str | None = None           # session id → concurrent-session (seat) heartbeat
+    module_trials: dict[str, float] | None = None   # module -> λήξη δοκιμής (epoch)
 
 
 @dataclass
@@ -161,6 +164,7 @@ async def get_current_context(
         user_id=claims["sub"],
         roles=claims.get("roles", []),
         modules=claims.get("modules", {}),
+        module_trials=claims.get("mtrl") or {},
         permissions=set(claims.get("perms", [])),
         demo=bool(claims.get("demo", False)),
         sid=claims.get("sid"),
@@ -231,6 +235,23 @@ async def _touch_serving(tenant_id: str) -> None:
         pass
 
 
+def _module_locked(ctx: "TenantContext", m: str) -> bool:
+    """Κλειδωμένο; Η ΛΗΞΗ ΔΟΚΙΜΗΣ ΕΛΕΓΧΕΤΑΙ ΕΔΩ, ΣΕ ΚΑΘΕ ΑΙΤΗΜΑ.
+
+    ΓΙΑΤΙ: τα modules ψήνονται στο διακριτικό κατά την έκδοση. Αν η λήξη κρινόταν μόνο εκεί,
+    μια δοκιμή που τελείωσε θα συνέχιζε να δουλεύει όσο ζει το διακριτικό (15΄). Με την
+    ημερομηνία μέσα στο token (`mtrl`), η σύγκριση γίνεται με το ΡΟΛΟΪ της στιγμής.
+    """
+    state = ctx.modules.get(m, "locked")
+    if state == "locked":
+        return True
+    if state == "trial":
+        exp = (ctx.module_trials or {}).get(m)
+        if exp and _time.time() >= float(exp):
+            return True
+    return False
+
+
 def require(permission: str, module: str | list[str] | None = None):
     """Dependency factory: enforce permission AND (optionally) module access.
 
@@ -241,7 +262,7 @@ def require(permission: str, module: str | list[str] | None = None):
     async def _dep(ctx: TenantContext = Depends(get_current_context)) -> TenantContext:
         if module is not None:
             mods = [module] if isinstance(module, str) else list(module)
-            if all(ctx.modules.get(m, "locked") == "locked" for m in mods):
+            if all(_module_locked(ctx, m) for m in mods):
                 raise HTTPException(
                     status.HTTP_403_FORBIDDEN,
                     detail={"error": "module_locked", "module": mods[0] if len(mods) == 1 else mods},

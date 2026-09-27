@@ -7,6 +7,28 @@ Errors: RFC-7807 `application/problem+json`.
 `require(permission, module)`. Λίστες υποστηρίζουν `?page&page_size&sort` + cursor σε
 βαριά endpoints. Φίλτρα χρόνου: `?date_from&date_to` (ISO) ή `?period=2026-05`.
 
+## ⚠ Δύο διαφορετικά API — μην τα μπερδέψεις
+
+| | Εσωτερικό API | Partner API |
+|---|---|---|
+| Ποιον εξυπηρετεί | την εφαρμογή μας (web/PWA) | προγράμματα τρίτων |
+| Διαδρομή | `/api/v1/*` | `/api/partner/v1/*` |
+| Ταυτοποίηση | JWT (15΄) — **άνθρωπος** | `X-API-Key` (μήνες) — **πρόγραμμα** |
+| OpenAPI | **κλειστό** στην παραγωγή | **ανοιχτό** στο `developers.rxvision.gr` |
+| Τεκμηρίωση | αυτό το αρχείο | το ίδιο το Swagger + `ARCHITECTURE.md` §10δ |
+
+**Το Partner API καλύπτει (27/09/2026):** κατάλογο · απόθεμα (ανάγνωση + κινήσεις) · εκτελέσεις
+(χωρίς ταυτότητα ασθενή) · **πωλήσεις ταμείου** (ΜΗ.ΣΥ.ΦΑ./παραφάρμακα/υπηρεσίες) · παραγγελίες
+e-shop · **γέφυρα πελάτη** · **πρόγραμμα επιβράβευσης στο ταμείο** · **PharmaCat** (αλληλεπιδράσεις
++ συμβουλές). 16 endpoints. Πλήρης ανάλυση: `ARCHITECTURE.md` §10δ και το Swagger στο
+`developers.rxvision.gr`.
+
+**Έκδοση Partner API: 1.1.0.** Κάθε αλλαγή ανεβάζει το `API_VERSION` (`app/api/partner/app.py`) και
+γράφει γραμμή στο changelog του Swagger — είναι η μόνη ανακοίνωση που φτάνει στον συνεργάτη. Το
+`GET /v1/ping` επιστρέφει την ίδια τιμή. **Ξεχωριστό** από την έκδοση προϊόντος (1.66.0).
+
+Ό,τι ακολουθεί σε **αυτό** το αρχείο αφορά το **εσωτερικό** API.
+
 ## Auth
 | Method | Path | Permission | Σημείωση |
 |---|---|---|---|
@@ -167,6 +189,129 @@ Marketing · Τεχνική υποστήριξη.
 διαφημίζεται καν στο μοντέλο, και η εκτέλεσή του απορρίπτεται (έλεγχος σε δύο σημεία).
 Το ΑΜΚΑ αφαιρείται πάντα πριν φύγει οτιδήποτε προς το LLM (`_scrub_amka`), και σε tenant
 «παρουσίασης» τα ονόματα ψευδωνυμοποιούνται.
+
+## Κυκλώματα εβδομάδας 20–27/09/2026
+
+Όλα **tenant-scoped** (φρουρός `require(...)` + module gate)· τα πρόσθετα επιστρέφουν **402**
+όταν το module είναι κλειδωμένο. Η ταυτότητα έρχεται **πάντα από το token** — κανένα endpoint
+δεν δέχεται «για ποιον» στο σώμα του αιτήματος.
+
+### Προχορηγήσεις — «δανεικά» *(add-on `advance_dispensings`, 25 €/μήνα)*
+| GET | `/advance-dispensings` | λίστα δανεικών |
+| GET | `/advance-dispensings/patients` · `/advance-dispensings/for-patient` | ανά πελάτη |
+| GET | `/advance-dispensings/due-today` · `/advance-dispensings/overdue` | λίστα ημέρας / εκπρόθεσμα |
+| GET | `/advance-dispensings/matches` | **Β φάση**: προτάσεις ταύτισης με εκτελεσμένη συνταγή |
+| POST | `/advance-dispensings` | νέο — **μία φόρμα → πολλά σκευάσματα** |
+| POST | `/advance-dispensings/{loan_id}/status` | ξεχρέωση / αλλαγή κατάστασης |
+| POST | `/advance-dispensings/{loan_id}/expected` | πότε θα φέρει τη συνταγή |
+
+Ο πελάτης επιλέγεται **από τη λίστα**, ποτέ ελεύθερο κείμενο. Ο κωδικός είναι **ΟΛΟΚΛΗΡΟ το
+GS1**. **Δεν αναρτούμε τίποτα σε ΗΔΥΚΑ/HMVO** — το κάνει το εμπορικό πρόγραμμα· το κύκλωμα
+είναι καθαρά ενημερωτικό.
+
+### Οικογένειες *(add-on `patient_groups`, 15 €/μήνα)*
+| GET | `/patient-groups` · `/patient-groups/{gid}` · `/patient-groups/patients` | λίστα, μία ομάδα, υποψήφιοι |
+| GET | `/patient-groups/for-patient/{patient_id}` | σε ποιες ομάδες ανήκει |
+| GET | `/patient-groups/family-alerts/{patient_id}` | **ειδοποιήσεις μελών** στην Εικόνα Πελάτη |
+| GET | `/patient-groups/{gid}/lists` | φύλλα εργασίας |
+| POST | `/patient-groups` · PATCH `/patient-groups/{gid}` · DELETE `/patient-groups/{gid}` | δημιουργία / μετονομασία / διαγραφή |
+| POST | `/patient-groups/{gid}/members` | προσθήκη μέλους |
+| PATCH | `/patient-groups/{gid}/members/{pseudo_id}` | αλλαγή ρόλου (π.χ. «Γονέας») |
+| DELETE | `/patient-groups/{gid}/members/{pseudo_id}` | **αφαίρεση — κλείνει ΚΑΙ τις δύο πόρτες** |
+
+Μέλος = **`pseudo_id`**, ποτέ ΑΜΚΑ. Μέλος «σε αναμονή» (μπήκε με σκέτο ΑΜΚΑ) συνδέεται μόνο
+του με την πρώτη συνταγή του.
+
+### Δομές Φροντίδας *(add-on `care_structures`, 20 €/μήνα — ΞΕΧΩΡΙΣΤΟ από τις Οικογένειες)*
+| GET | `/care-structures` · `/care-structures/{gid}` · `/care-structures/portfolio` | λίστα / μία δομή / χαρτοφυλάκιο |
+| GET | `/care-structures/{gid}/cycle` | κύκλος ετοιμασίας |
+| GET | `/care-structures/{gid}/owed` | **τι χρωστά** η δομή |
+| GET | `/care-structures/{gid}/statement` | λογαριασμός περιόδου |
+| GET | `/care-structures/{gid}/instructions` | οδηγίες λήψης |
+| POST | `/care-structures/{gid}/owed/send` | αποστολή λογαριασμού στη δομή |
+| POST | `/care-structures/{gid}/instructions/send` | αποστολή οδηγιών λήψης |
+| POST | `/care-structures/{gid}/entries` | χειροκίνητη εγγραφή |
+| DELETE | `/care-structures/{gid}/entries/{eid}` | διαγραφή εγγραφής |
+| PATCH | `/care-structures/{gid}/settings` | `charges_from`, `care_type` κ.λπ. |
+
+⚠ Μοιράζονται τη συλλογή `patient_groups` με τις Οικογένειες, αλλά είναι **χωριστό πρόσθετο**:
+όποιος αγόρασε μόνο τις Δομές δεν πρέπει να πάρει 403 πουθενά. «Δομή» **δεν σημαίνει κτίριο** —
+το `care_type` καλύπτει και κατ' οίκον φροντίδα, ακόμη και ιδιώτη φροντιστή.
+
+### Εξουσιοδοτήσεις φροντίδας — «Ποιος βλέπει ποιον» *(module ΠΥΛΗ ΠΕΛΑΤΩΝ)*
+| GET | `/patient-access` | **όλες** οι ενεργές εξουσιοδοτήσεις (landing list, χωρίς αναζήτηση) |
+| GET | `/patient-access/patients` · `/patient-access/for-patient/{patient_id}` · `/patient-access/viewable/{patient_id}` | υποψήφιοι / ανά ασθενή |
+| POST | `/patient-access/grant` | νέα εξουσιοδότηση |
+| DELETE | `/patient-access/{auth_id}` | ανάκληση |
+
+⚠ **Χωριστός router, σκόπιμα:** η βασική χρήση είναι ο ηλικιωμένος **χωρίς παιδιά**. Αν
+κλειδωνόταν πίσω από τις «Οικογένειες», αυτή η περίπτωση δεν θα καλυπτόταν ποτέ.
+Η **γονική μέριμνα ΔΕΝ περνά από εδώ** — προκύπτει αυτόματα από τον ρόλο «Γονέας» + την ηλικία
+(`services/portal_access.py`) και παύει στα 18.
+
+### RxVision Connect *(add-on `connect`, 30 €/μήνα)*
+Δίκτυα συνεργασίας: αίτημα → προσφορά → **διακίνηση** → επιστροφή/εξόφληση.
+| GET | `/connect/dashboard` · `/connect/groups` · `/connect/inbox` | επισκόπηση, δίκτυα, εισερχόμενα |
+| POST | `/connect/groups` | νέο δίκτυο |
+| DELETE | `/connect/groups/{group_id}` · POST `/connect/groups/{group_id}/leave` | διάλυση / αποχώρηση |
+| POST | `/connect/invites` | πρόσκληση **με ΑΦΜ** |
+| POST | `/connect/invites/{invite_id}` | απάντηση σε πρόσκληση |
+| GET/POST | `/connect/requests` | αιτήματα |
+| POST | `/connect/requests/{request_id}/offer` | προσφορά σε αίτημα |
+| POST | `/connect/requests/{request_id}/decline` | απόρριψη αιτήματος |
+| POST | `/connect/offers/{offer_id}/accept` · `/connect/offers/{offer_id}/reject` · `/connect/offers/{offer_id}/withdraw` | απόφαση στην προσφορά |
+| GET | `/connect/movements` | διακινήσεις |
+| POST | `/connect/movements/{movement_id}/deliver` · `/connect/movements/{movement_id}/return` · `/connect/movements/{movement_id}/cancel` · `/connect/movements/{movement_id}/settle` | παράδοση / επιστροφή / ακύρωση / εξόφληση |
+| POST | `/connect/movements/{movement_id}/dispute` | δήλωση διαφωνίας |
+| POST | `/connect/disputes/{dispute_id}/resolve` | επίλυση |
+| POST | `/connect/returns/{return_id}/respond` · `/connect/returns/{return_id}/complete` | επιστροφές |
+| GET | `/connect/balances` | ποιος χρωστά σε ποιον |
+| GET/PUT | `/connect/policy` | κανόνες συμμετοχής |
+
+**Δικαίωμα: `portal:manage`** — σκόπιμα ΟΧΙ νέο `connect:manage`. Τα δικαιώματα των ρόλων ζουν
+στη βάση κάθε φαρμακείου και **δεν ενημερώνονται αναδρομικά**· ένα νέο κλειδί θα άφηνε όλους
+πλην του ιδιοκτήτη έξω από πληρωμένο κύκλωμα (όπως έγινε με τη δοκιμή δυνατότητας: 14 στα 15).
+⚠ Το απόθεμα **δεν υπάρχει** για τα περισσότερα είδη (13 από 41.127) → **`None` ≠ `0`**.
+
+### Συνομιλία φαρμακείων *(δωρεάν module `pharmacy_chat`, ίδιο δικαίωμα `portal:manage`)*
+| GET/POST | `/pharmacy-chat/groups` · DELETE `/pharmacy-chat/groups/{group_id}` · POST `/pharmacy-chat/groups/{group_id}/leave` |
+| POST | `/pharmacy-chat/invite` · `/pharmacy-chat/invites/{invite_id}` | πρόσκληση με ΑΦΜ — **μόνο σε ενεργή συνδρομή** (όχι trial) |
+| GET/POST | `/pharmacy-chat/messages` |
+
+### «Τι νέο υπάρχει» — σημειώσεις έκδοσης
+| GET | `/release-notes` | `auth` | οι δημοσιευμένες, για ΑΥΤΟΝ τον πελάτη |
+| POST | `/release-notes/seen` | `auth` | σβήνει το σήμα |
+| GET/PUT | `/admin/release-notes` | `padmin:admin` | σύνταξη — **από το προϊόν, ποτέ από το shell** |
+| POST | `/admin/release-notes/{version}/publish` · DELETE `/admin/release-notes/{version}` |
+
+⚠ Σειρά εκδόσεων με **`vsort`**: η MongoDB συγκρίνει πίνακες με το **μέγιστο στοιχείο**, οπότε
+`[major,minor,patch]` δεν ταξινομείται όπως περιμένεις.
+
+### Πρόσθετα & δοκιμές δυνατοτήτων
+| GET | `/addons` | `auth` | κατάλογος με `status`, `tried`, `can_trial`, **`trial_started_at` / `trial_expires_at` / `trial_days`** |
+| GET | `/addons/{id}/quote` | `billing:manage` | **αναλογικό ποσό πριν τη χρέωση** |
+| POST | `/addons/{id}/trial` | έναρξη δοκιμής — **μία φορά ανά πελάτη** (`error: trial_used`) |
+| GET | `/admin/module-trials` | `padmin:admin` | ποιος δοκιμάζει τι & πότε λήγει |
+
+Η **λήξη** δοκιμής μπαίνει στο JWT (claim `mtrl`) και ελέγχεται **σε κάθε αίτημα** — όχι μόνο
+στην έκδοση token. Δες `ARCHITECTURE.md` §10β.
+
+### Ο Σύμβουλος — «Τι άλλο μπορείς» *(module `daily_coach`)*
+| GET | `/coach/opportunities` | `patients:read` | προτάσεις αξιοποίησης, μετρημένες |
+
+Επιστρέφει `{items, total, patients, money_cents}`. Κάθε πρόταση:
+`headline` («Ξέρεις ότι…»), `situation`, `promise`, **`serve_n`/`serve_pct`** (πόσους πελάτες
+και τι ποσοστό αφορά), **`money_cents`** (τζίρος που ήδη περνά από αυτή την ομάδα),
+`offer` («Θες να σε βοηθήσω να το στήσουμε;»), **`setup[]`** (τα βήματα στησίματος),
+`feature`, `module`, `locked`, `cta`, `cta_secondary`.
+
+**Καμία πρόταση δεν παράγεται «γενικά»**: κάθε `_prop_*` επιστρέφει `None` όταν τα δεδομένα δεν
+περνούν το κατώφλι. Τα **κλειδωμένα** modules παίρνουν +100 βάρος, όσα έχει και δεν δουλεύει +40.
+
+⚠ Ο έλεγχος «έχει τη δυνατότητα;» γίνεται με **`resolve_tenant_modules()`**, ΟΧΙ με
+`tenants.modules` — εκείνο κρατά μόνο υπερισχύσεις· τα modules του πακέτου ζουν στο
+`subscriptions.modules_included`. Χωρίς τον resolver, προτείνεις στον πελάτη να αγοράσει ό,τι
+ήδη πληρώνει.
 
 ## Export (cross-cutting)
 Πολλά list/aggregate endpoints δέχονται `?format=csv|xlsx|pdf` → async export job

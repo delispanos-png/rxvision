@@ -335,6 +335,9 @@ _ADMIN: dict[tuple[str, str], str] = {
 
     # διασυνδέσεις
     ("GET", "/integrations"): "integrations:read",
+    # Microsoft Clarity — ΑΔΗΛΩΤΗ διαδρομή = 403 deny-by-default, που μοιάζει με «με πετάει έξω»
+    ("GET", "/analytics/clarity"): "integrations:read",
+    ("PUT", "/analytics/clarity"): "integrations:write",
     ("PUT", "/integrations"): "integrations:write",
     ("POST", "/integrations/softone/test"): "integrations:test",
     ("GET", "/idika"): "integrations:read",

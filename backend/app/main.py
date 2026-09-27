@@ -53,6 +53,13 @@ def create_app() -> FastAPI:
     app.add_middleware(AuditMiddleware)
     app.include_router(api_router, prefix=settings.API_V1_PREFIX)
 
+    # PARTNER API — ΞΕΧΩΡΙΣΤΗ εφαρμογή, δικό της OpenAPI schema.
+    # ΓΙΑΤΙ mount ΚΑΙ ΟΧΙ router: το εσωτερικό schema μένει κλειστό στην παραγωγή (εκθέτει
+    # admin/GDPR/ingestion), ενώ του συνεργάτη πρέπει να είναι ανοιχτό. Με δύο εφαρμογές,
+    # ό,τι δεν είναι ρητά δηλωμένο στο partner app ΔΕΝ μπορεί να εμφανιστεί στα δημόσια docs.
+    from app.api.partner.app import create_partner_app
+    app.mount("/api/partner", create_partner_app())
+
     @app.get("/health")
     async def health():
         # Minimal, non-fingerprinting probe (M-3): no version/uptime (aids targeted CVE matching).

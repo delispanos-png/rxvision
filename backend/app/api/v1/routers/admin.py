@@ -2919,6 +2919,40 @@ async def resend_pending_completion(pending_id: str, _: PlatformContext = Depend
 
 
 # ── SMTP settings + newsletter ─────────────────────────────
+# ── Microsoft Clarity (παρακολούθηση συμπεριφοράς) ────────────────────────────────
+class ClarityIn(BaseModel):
+    app: str | None = None       # app.rxvision.gr — εφαρμογή φαρμακείου
+    portal: str | None = None    # my.rxvision.gr  — πύλη πελατών
+    enabled: bool = True
+
+
+def _clarity_id(v: str | None) -> str:
+    """Μόνο το project id, όχι ολόκληρο script — ο χρήστης συχνά επικολλά το snippet."""
+    t = str(v or "").strip()
+    if "clarity.ms/tag/" in t:                     # έκοψε από το snippet της Microsoft
+        t = t.split("clarity.ms/tag/")[1].split('"')[0].split("'")[0].split("?")[0]
+    t = t.strip().strip('"').strip("'")
+    return t if t.replace("-", "").isalnum() and len(t) <= 40 else ""
+
+
+@router.get("/analytics/clarity")
+async def get_clarity(_: PlatformContext = Depends(get_platform_admin)):
+    d = await shared_db()["platform_settings"].find_one({"_id": "analytics"}) or {}
+    return {"app": d.get("clarity_app") or "", "portal": d.get("clarity_portal") or "",
+            "enabled": bool(d.get("clarity_enabled", True))}
+
+
+@router.put("/analytics/clarity")
+async def put_clarity(body: ClarityIn, _: PlatformContext = Depends(get_platform_admin)):
+    """ΣΚΟΠΙΜΑ ΧΩΡΙΣ adminpanel: ο ιδιοκτήτης παρακολουθεί ΜΟΝΟ app + πύλη."""
+    await shared_db()["platform_settings"].update_one(
+        {"_id": "analytics"},
+        {"$set": {"clarity_app": _clarity_id(body.app),
+                  "clarity_portal": _clarity_id(body.portal),
+                  "clarity_enabled": bool(body.enabled)}}, upsert=True)
+    return {"saved": True}
+
+
 @router.get("/smtp")
 async def get_smtp(_: PlatformContext = Depends(get_platform_admin)):
     cfg = await mailer.get_smtp(masked=True)
