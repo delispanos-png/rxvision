@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException
+from fastapi import status as http_status
 from pydantic import BaseModel
 
 from app.core.deps import TenantContext, require
@@ -101,7 +102,7 @@ async def create_routine(body: RoutineIn,
                          ctx: TenantContext = Depends(require("patients:read", module="ai_assistant"))):
     # Message routines send to patients → require the communications module (patient_analytics) too.
     if body.action == "message" and ctx.modules.get("patient_analytics", "locked") == "locked":
-        raise HTTPException(status.HTTP_403_FORBIDDEN,
+        raise HTTPException(http_status.HTTP_403_FORBIDDEN,
                             detail={"error": "module_locked", "module": "patient_analytics"})
     return await _rrepo(ctx).create(
         user=ctx.user_id, name=body.name, schedule=body.schedule, action=body.action,
@@ -145,7 +146,7 @@ async def approve_routine_run(run_id: str,
                               ctx: TenantContext = Depends(require("patients:read", module="ai_assistant"))):
     """Explicitly authorise sending a queued (draft) message run to patients — then it goes out."""
     if ctx.modules.get("patient_analytics", "locked") == "locked":
-        raise HTTPException(status.HTTP_403_FORBIDDEN,
+        raise HTTPException(http_status.HTTP_403_FORBIDDEN,
                             detail={"error": "module_locked", "module": "patient_analytics"})
     return await _rrepo(ctx).approve_run(run_id)
 

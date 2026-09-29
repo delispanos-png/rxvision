@@ -8,7 +8,7 @@ import { Users, MessageSquare, CalendarClock, Stethoscope, FileText, ZoomIn, Tra
 import { api, apiBlob } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
-import { fmtDateTime } from "@/lib/formatters";
+import { fmtDate, fmtDateTime } from "@/lib/formatters";
 import { CalendarSyncCard } from "@/components/CalendarSyncCard";
 import { toastSuccess, toastError } from "@/store/toastStore";
 import { appConfirm } from "@/store/dialogStore";
@@ -56,7 +56,8 @@ const slotsSummary = (av: Availability | undefined, t: (el: string, en: string) 
   ];
   return parts.length ? parts.join(" · ") : t("Όλο το ωράριο του φαρμακείου", "All pharmacy hours");
 };
-type Cda = { available?: boolean; found?: boolean; doctor?: string | null; medicines?: string[]; issue_date?: string | null; deadline_date?: string | null; intangible?: boolean; exec_count?: number | null };
+type Cda = { available?: boolean; found?: boolean; doctor?: string | null; medicines?: string[]; issue_date?: string | null; deadline_date?: string | null; intangible?: boolean; exec_count?: number | null;
+  open_date?: string | null; valid_until?: string | null; repeat?: string | null };
 type RxReq = { id?: string; _id?: string; kind: string; barcode?: string | null; note?: string | null; status: string; created_at: string; patient_name?: string; patient_phone?: string; image_id?: string | null; cda?: Cda | null; reply?: string | null; available_date?: string | null };
 
 const oid = (x: { id?: string; _id?: string }) => x.id ?? x._id ?? "";
@@ -364,7 +365,7 @@ function RxRequestsTab() {
               {r.kind === "photo" && r.image_id && <RxImage reqId={id} />}
               {c?.found && (
                 <div className="min-w-[220px] flex-1 rounded-lg border border-emerald-200 bg-emerald-50/60 p-3 dark:border-emerald-900 dark:bg-emerald-950/30">
-                  <div className="text-sm font-semibold text-emerald-800 dark:text-emerald-300">✓ {t("Επιβεβαιώθηκε από ΗΔΙΚΑ", "Verified by ΗΔΙΚΑ")}</div>
+                  <div className="text-sm font-semibold text-emerald-800 dark:text-emerald-300">✓ {t("Επιβεβαιώθηκε από ΗΔΥΚΑ", "Verified by ΗΔΥΚΑ")}</div>
                   {!!c.medicines?.length && (
                     <div className="mt-2">
                       <div className="text-[11px] font-semibold uppercase tracking-wide text-emerald-700/70 dark:text-emerald-400/70">{t("Φάρμακα", "Medicines")} ({c.medicines.length})</div>
@@ -379,6 +380,11 @@ function RxRequestsTab() {
                   )}
                   <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-emerald-700 dark:text-emerald-400">
                     {c.doctor && <span className="inline-flex items-center gap-1"><span className="text-slate-400">{t("Ιατρός", "Doctor")}:</span> 👤 {c.doctor}</span>}
+                    {c.open_date && (() => {
+                      // ΠΟΤΕ ανοίγει: μελλοντική = να την περιμένεις (και να έχεις έτοιμα τα φάρμακα)
+                      const future = c.open_date > new Date().toISOString().slice(0, 10);
+                      return <span className={future ? "font-semibold text-amber-700 dark:text-amber-400" : ""}>🔓 {future ? t("Ανοίγει", "Opens") : t("Εκτελείται από", "Open since")} {fmtDate(c.open_date)}{c.repeat ? ` · ${c.repeat}` : ""}</span>;
+                    })()}
                     {c.issue_date && <span>📅 {t("Έκδοση", "Issued")} {c.issue_date}</span>}
                     {c.deadline_date && <span>⏳ {t("Λήξη", "Expires")} {c.deadline_date}</span>}
                     {c.intangible && <span>📲 {t("Άυλη", "Paperless")}</span>}
@@ -386,7 +392,7 @@ function RxRequestsTab() {
                   </div>
                 </div>
               )}
-              {c && c.available && !c.found && <div className="text-xs text-amber-600">{t("Δεν εντοπίστηκε στην ΗΔΙΚΑ — έλεγξε χειροκίνητα.", "Not found in ΗΔΙΚΑ — check manually.")}</div>}
+              {c && c.available && !c.found && <div className="text-xs text-amber-600">{t("Δεν εντοπίστηκε στην ΗΔΥΚΑ — έλεγξε χειροκίνητα.", "Not found in ΗΔΥΚΑ — check manually.")}</div>}
             </div>
             {r.note && <div className="mt-2 text-xs text-slate-500">📝 {r.note}</div>}
             {r.reply ? (

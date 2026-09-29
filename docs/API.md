@@ -135,10 +135,14 @@ Marketing · Τεχνική υποστήριξη.
 | GET | `/icd10/aggregate?metric=count|value|profit` | `icd10:read` |
 
 ## Profitability Engine
-| GET | `/profitability/summary?period=2026-05` | `profitability:read` |
-| GET | `/profitability/by?dim=fund|doctor|icd10|product|category` |
-| GET | `/profitability/low-margin?threshold_pct=10` | είδη χαμηλής κερδοφορίας |
-| GET | `/profitability/unprofitable-categories` |
+Όλα με `profitability:read` και `date_from`/`date_to` (εκτός από το `aging`).
+
+| GET | `/profitability/summary` | κεφαλίδα: κέρδος, περιθώριο, % εκτιμώμενου κόστους, περικοπές, καθαρό |
+| GET | `/profitability/attention` | χάρτης προσοχής: KPIs (απόδοση κεφαλαίου, κέρδος/συνταγή/πελάτη, συγκέντρωση, βάρος ΦΥΚ) + ενότητες σε 4 διαστάσεις (`category`, `kind`, `price_band`, `fund`) με `impact`, `verdict` (pressure/helps/neutral), `reason`, σύγκριση με πέρσι + `focus` |
+| GET | `/profitability/by?dim=fund|doctor|icd10|product|type` | (`category` = παλιό συνώνυμο του `type`) |
+| GET | `/profitability/by-category` | θεραπευτική κατηγορία (ATC) |
+| GET | `/profitability/low-margin?threshold_pct=10` | είδη χαμηλής κερδοφορίας (χωρίς περίοδο → 90 ημέρες) |
+| GET | `/profitability/aging` | ανοιχτά υπόλοιπα ταμείων ανά ηλικία |
 
 ## Future Prescriptions & Orders
 | GET | `/future/upcoming?days=14` | `future:read` | συνταγές που ανοίγουν |

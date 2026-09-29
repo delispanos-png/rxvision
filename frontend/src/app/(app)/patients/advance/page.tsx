@@ -88,6 +88,22 @@ function Inner() {
   });
 
   const open = useQuery({ queryKey: ["adv", "open"], queryFn: () => api<{ items: Loan[] }>("/advance-dispensings?status=open") });
+  // ΑΜΕΣΟΣ ΣΥΝΔΕΣΜΟΣ: `?loan=<id>` (π.χ. από την Εικόνα Πελάτη → «Κλείσ' το δανεικό»). Πάμε ΚΑΤΕΥΘΕΙΑΝ
+  // στη γραμμή του και την τονίζουμε — αλλιώς ο φαρμακοποιός ψάχνει σε λίστα ενώ ο πελάτης περιμένει.
+  // (window.location και όχι useSearchParams: αυτό θα απαιτούσε όριο Suspense στο build.)
+  const [target, setTarget] = useState<string | null>(null);
+  useEffect(() => {
+    const id = new URLSearchParams(window.location.search).get("loan");
+    if (id) setTarget(id);
+  }, []);
+  useEffect(() => {
+    if (!target || !open.data) return;
+    const tm = window.setTimeout(() => {
+      document.querySelector(`[data-loan="${CSS.escape(target)}"]`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, 80);
+    const off = window.setTimeout(() => setTarget(null), 4000);
+    return () => { window.clearTimeout(tm); window.clearTimeout(off); };
+  }, [target, open.data]);
   const due = useQuery({ queryKey: ["adv", "due"], queryFn: () => api<{ items: Loan[]; count: number }>("/advance-dispensings/due-today") });
   const late = useQuery({ queryKey: ["adv", "overdue"], queryFn: () => api<{ items: Loan[]; counts: Record<string, number> }>("/advance-dispensings/overdue") });
   const sugg = useQuery({ queryKey: ["adv", "matches"], queryFn: () => api<{ items: Match[] }>("/advance-dispensings/matches") });
@@ -251,7 +267,10 @@ function Inner() {
   const Row = ({ l }: { l: Loan }) => {
     const d = daysAgo(l.created_at);
     return (
-      <div className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-900">
+      <div data-loan={l._id}
+        className={`rounded-xl border bg-white px-4 py-2.5 text-sm transition-shadow dark:bg-slate-900 ${
+          target === l._id ? "border-orange-400 ring-4 ring-orange-200 dark:ring-orange-900/60"
+                           : "border-slate-200 dark:border-slate-700"}`}>
         <div className="flex flex-wrap items-center gap-2">
           <span className="font-medium text-slate-800 dark:text-slate-100">{l.patient_name}</span>
           <span className={`text-xs ${d >= 30 ? "text-rose-600" : "text-slate-400"}`}>
@@ -310,7 +329,9 @@ function Inner() {
             {due.data.items.map((l) => {
               const late = (l.expected_at || "") < new Date().toISOString().slice(0, 10);
               return (
-                <div key={l._id} className="flex flex-wrap items-center gap-2 rounded-xl bg-white px-4 py-2 text-sm dark:bg-slate-900">
+                <div key={l._id} data-loan={l._id}
+                  className={`flex flex-wrap items-center gap-2 rounded-xl bg-white px-4 py-2 text-sm dark:bg-slate-900 ${
+                    target === l._id ? "ring-4 ring-orange-300 dark:ring-orange-900/60" : ""}`}>
                   <span className="font-medium text-slate-800 dark:text-slate-100">{l.patient_name}</span>
                   <span className="text-slate-500">
                     {(l.items || []).map((i) => i.name || i.strip || i.lot).filter(Boolean).join(", ")}

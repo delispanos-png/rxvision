@@ -98,6 +98,24 @@ async def _batched_delete(coll, query: dict, batch: int = 5000) -> int:
     return total
 
 
+async def _purge_executions(db, tenant_id: str, query: dict, batch: int = 5000) -> int:
+    """Σβήνει εκτελέσεις ΜΑΖΙ με τις προβλέψεις που βγήκαν από αυτές (future_prescriptions).
+    Χωρίς αυτό έμεναν προβλέψεις-φαντάσματα με πηγή που δεν υπάρχει (20.793 στις 28/09/2026)."""
+    total = 0
+    coll = db["prescription_executions"]
+    while True:
+        ids = [d["_id"] async for d in coll.find(query, {"_id": 1}).limit(batch)]
+        if not ids:
+            break
+        await db["future_prescriptions"].delete_many(
+            {"tenant_id": tenant_id, "source_execution_id": {"$in": ids}})
+        res = await coll.delete_many({"_id": {"$in": ids}})
+        total += res.deleted_count
+        if len(ids) < batch:
+            break
+    return total
+
+
 async def storage_by_tenant(db=None) -> list[dict]:
     """Εκτίμηση αποθηκευτικού χώρου ΑΝΑ φαρμακείο (για διαφάνεια κόστους — όχι billing-grade).
 
@@ -169,7 +187,7 @@ async def purge_old(db=None, *, dry_run: bool = False) -> dict:
             else:
                 # items ΠΡΩΤΑ (τα «παιδιά»), μετά οι εκτελέσεις — αν διακοπεί, δεν μένουν ορφανά items
                 await _batched_delete(db["prescription_items"], q)
-                await _batched_delete(db["prescription_executions"], q)
+                await _purge_executions(db, tid, q)
         if n_exec or n_item:
             per.append({"tenant_id": str(tid), "name": t.get("name"), "months": months,
                         "cutoff": cutoff.date().isoformat(), "executions": n_exec, "items": n_item,

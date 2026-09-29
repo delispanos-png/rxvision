@@ -104,42 +104,64 @@ class PatientIntelligenceRepository(BaseRepository):
 
     # ── shared chain analysis (compliance + recall + recoverable) ───────────
     async def _chain_analysis(self) -> dict:
-        """Per patient_ref → {compliance, missed, available, recoverable, chains, value}."""
+        """Per patient_ref → {compliance, executed, expected, missed, available, recoverable, chains,
+        missed_closed: [ημερομηνίες που έκλεισαν οι χαμένες θέσεις]}.
+
+        ΜΟΝΑΔΑ = ΘΕΣΗ της αλυσίδας (1/3, 2/3, 3/3), ΟΧΙ ημερολογιακός μήνας. Κάθε θέση έχει δικό της
+        παράθυρο με την ΠΡΑΓΜΑΤΙΚΗ περίοδο της συνταγής (30/28/60 ημ.). Πριν (έως 29/09/2026) τα
+        παράθυρα ήταν πάντα μηνιαία: μια δίμηνη αλυσίδα έβγαζε «χαμένη» κάθε δεύτερο μήνα, και δύο
+        εκτελέσεις στον ίδιο μήνα άφηναν τον διπλανό «χαμένο» — συνεπής πελάτης έβγαινε ασυνεπής.
+        Μετρούν μόνο εκτελέσεις που μετρούν στα στατιστικά (όχι ακυρωμένες/εξαιρεμένες)."""
+        from app.services.stats_exclusion import COUNTABLE_EXEC
         now = _now()
         chains: dict = defaultdict(list)
         async for e in self._db["prescription_executions"].find(
-                {"tenant_id": self.tenant_id},
-                {"repeat_root": 1, "external_id": 1, "executed_at": 1, "valid_from": 1,
-                 "valid_until": 1, "amount_total": 1, "patient_ref": 1}):
-            chains[e.get("repeat_root")].append(e)
+                {"tenant_id": self.tenant_id, "repeat_total": {"$gt": 1}, **COUNTABLE_EXEC},
+                {"repeat_root": 1, "executed_at": 1, "valid_from": 1, "valid_until": 1,
+                 "amount_total": 1, "patient_ref": 1, "repeat_current": 1, "repeat_total": 1,
+                 "details.repeat_period_days": 1, "details.interval_months": 1}):
+            if e.get("repeat_root"):
+                chains[e["repeat_root"]].append(e)
         per: dict = defaultdict(lambda: {"executed": 0, "expected": 0, "missed": 0,
-                                         "available": 0, "recoverable": 0, "chains": 0})
+                                         "available": 0, "recoverable": 0, "chains": 0,
+                                         "missed_closed": []})
         for exs in chains.values():
-            vf = min((e["valid_from"] for e in exs if e.get("valid_from")), default=None)
-            vu = max((e["valid_until"] for e in exs if e.get("valid_until")), default=None)
-            if not vf or not vu or (vu - vf).days < 40:
-                continue
             pat = exs[0].get("patient_ref")
-            if not pat:
+            total = max(int(e.get("repeat_total") or 1) for e in exs)
+            if not pat or total <= 1:
                 continue
-            avg = sum(e.get("amount_total", 0) for e in exs) / max(len(exs), 1)
+            det = next((e.get("details") or {} for e in exs
+                        if (e.get("details") or {}).get("repeat_period_days")
+                        or (e.get("details") or {}).get("interval_months")), {})
+            period = int(det.get("repeat_period_days") or (det.get("interval_months") or 1) * 30)
+            done = {int(e.get("repeat_current") or 1) for e in exs}
+            # Αφετηρία = `valid_from`, που στην ΗΔΥΚΑ είναι η ΑΡΧΗ ΟΛΗΣ της αλυσίδας (ίδια σε κάθε θέση·
+            # η θέση k λήγει στο αρχή + k×περίοδος — επαληθευμένο 29/09/2026). Χωρίς αυτήν: από την
+            # εκτέλεση, πίσω κατά (θέση−1)×περίοδο.
+            vfs = [e["valid_from"] for e in exs if e.get("valid_from")]
+            anchor = min(vfs) if vfs else min(
+                (e["executed_at"] - timedelta(days=period * (int(e.get("repeat_current") or 1) - 1))
+                 for e in exs if e.get("executed_at")), default=None)
+            if anchor is None:
+                continue
+            length = period + 5          # το παράθυρο της θέσης + λίγες ημέρες ανοχή
+            value = sum(e.get("amount_total", 0) for e in exs) / max(len(done), 1)
             p = per[pat]
             p["chains"] += 1
-            i = 0
-            while i < 18 and _addm(vf, i) <= vu:
-                wopen, wclose = _addm(vf, i), _addm(vf, i + 1)
-                if wclose <= now:  # a window that should have been filled
+            for k in range(1, min(total, 18) + 1):
+                wopen = anchor + timedelta(days=period * (k - 1))
+                wclose = wopen + timedelta(days=length)
+                if k in done:
                     p["expected"] += 1
-                    done = any(e.get("executed_at") and wopen <= e["executed_at"] < wclose for e in exs)
-                    if done:
-                        p["executed"] += 1
-                    else:
-                        p["missed"] += 1
-                        p["recoverable"] += avg
-                elif wopen <= now < wclose:  # open now → available for recall
+                    p["executed"] += 1
+                elif wclose <= now:           # το παράθυρο έκλεισε χωρίς εκτέλεση ΕΔΩ
+                    p["expected"] += 1
+                    p["missed"] += 1
+                    p["recoverable"] += value
+                    p["missed_closed"].append(wclose)
+                elif wopen <= now:            # ανοιχτό τώρα → διαθέσιμο για ανάκληση
                     p["available"] += 1
-                    p["recoverable"] += avg
-                i += 1
+                    p["recoverable"] += value
         for p in per.values():
             p["compliance"] = round(p["executed"] / p["expected"] * 100) if p["expected"] else None
         return per
@@ -869,12 +891,34 @@ class PatientIntelligenceRepository(BaseRepository):
                  ("risk", "Ρίσκο"), ("critical", "Κρίσιμη")]
         return [{"band": k, "label": lbl, "count": counts.get(k, 0)} for k, lbl in order]
 
-    async def compliance(self) -> dict:
+    async def _regular_patients(self, months: int = 6) -> set:
+        """ΤΑΚΤΙΚΟΣ πελάτης = εκτελέσεις σε τουλάχιστον `months` διαφορετικούς μήνες του τελευταίου έτους."""
+        from app.services.stats_exclusion import COUNTABLE_EXEC
+        rows = await self._db["prescription_executions"].aggregate([
+            {"$match": {"tenant_id": self.tenant_id, **COUNTABLE_EXEC,
+                        "executed_at": {"$gte": _now() - timedelta(days=365)}}},
+            {"$group": {"_id": "$patient_ref", "m": {"$addToSet": {
+                "$dateToString": {"format": "%Y-%m", "date": "$executed_at"}}}}},
+            {"$match": {f"m.{months - 1}": {"$exists": True}}},
+            {"$project": {"_id": 1}},
+        ]).to_list(None)
+        return {r["_id"] for r in rows}
+
+    async def compliance(self, *, regular_only: bool = False, lost_days: int = 0) -> dict:
+        """`regular_only` → μόνο τακτικοί πελάτες. `lost_days` > 0 → μόνο όσοι έχουν χαμένη επανάληψη
+        που έκλεισε πριν από τόσες ημέρες (π.χ. 60 = «χάθηκε οριστικά πάνω από δύο μήνες»)."""
         pats = {p["_id"]: p for p in await self._patients()}
         chain = await self._chain_analysis()
+        regular = await self._regular_patients()
+        cutoff = _now() - timedelta(days=lost_days) if lost_days else None
         items = []
         for pref, c in chain.items():
             if c.get("compliance") is None or pref not in pats:   # θανών/εξαιρεθείς → εκτός
+                continue
+            if regular_only and pref not in regular:
+                continue
+            lost = [d for d in c["missed_closed"] if cutoff is None or d <= cutoff]
+            if cutoff is not None and not lost:
                 continue
             band, label = _band(c["compliance"])
             pa = pats.get(pref, {})
@@ -882,10 +926,15 @@ class PatientIntelligenceRepository(BaseRepository):
                 "patient_id": str(pref), "name": pa.get("full_name"), "amka": pa.get("amka"),
                 "compliance": c["compliance"], "band": band, "band_label": label,
                 "executed": c["executed"], "expected": c["expected"], "missed": c["missed"],
+                "last_missed": max(c["missed_closed"]) if c["missed_closed"] else None,
+                "regular": pref in regular,
                 "value": pa.get("rx_value_total", 0),
             })
         items.sort(key=lambda x: x["compliance"])
-        return jsonsafe({"distribution": self._compliance_dist(chain), "items": mask_rows(items[:400], self.demo)})
+        return jsonsafe({"distribution": self._compliance_dist(chain),
+                         "items": mask_rows(items[:400], self.demo),
+                         "filters": {"regular_only": regular_only, "lost_days": lost_days},
+                         "total": len(items)})
 
     # ── TODAY (live daily operations) ───────────────────────────────────────
     async def today(self) -> dict:

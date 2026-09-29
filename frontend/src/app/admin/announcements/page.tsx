@@ -3,7 +3,8 @@
 import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Megaphone, Plus, Save, Trash2, Users, PlayCircle, CalendarClock, Check, Eye, Inbox, Phone, Mail, Sparkles, ArrowUp, ArrowDown } from "lucide-react";
-import { adminApi } from "@/lib/adminClient";
+import { adminApi, ApiError } from "@/lib/adminClient";
+import { fmtDate } from "@/lib/formatters";
 import { DateInput } from "@/components/ui/DateInput";
 import { FeatureAnnouncementModal } from "@/components/announcements/FeatureAnnouncementModal";
 import { appConfirm, appAlert, appPrompt } from "@/store/dialogStore";
@@ -154,6 +155,15 @@ export default function AnnouncementsAdminPage() {
     finally { setFilling(false); }
   }
 
+  /** 409: υπάρχει ήδη ενεργή ανακοίνωση για το ίδιο πρόσθετο — πες ΠΟΙΑ, για να ξέρεις τι να κλείσεις. */
+  function conflictMessage(e: unknown): string | null {
+    if (!(e instanceof ApiError) || e.status !== 409) return null;
+    const d = (e.problem as { detail?: { error?: string; conflict?: { title?: string; to?: string | null } } } | null)?.detail;
+    if (d?.error !== "addon_already_announced") return null;
+    const c = d.conflict ?? {};
+    return `Υπάρχει ήδη ενεργή ανακοίνωση για την ίδια δυνατότητα: «${c.title ?? "—"}»${c.to ? ` (έως ${fmtDate(c.to)})` : ""}.\n\nΚάθε δυνατότητα έχει μία ενεργή ανακοίνωση τη φορά — αλλιώς ο πελάτης βλέπει το ίδιο μήνυμα δύο φορές. Απενεργοποίησε την παλιά ή άλλαξε τις ημερομηνίες ώστε να μην επικαλύπτονται.`;
+  }
+
   async function save() {
     if (!draft) return;
     const payload = { ...draft, _id: undefined };
@@ -161,12 +171,16 @@ export default function AnnouncementsAdminPage() {
       if (draft._id) await adminApi(`/admin/announcements/${draft._id}`, { method: "PUT", body: JSON.stringify(payload) });
       else await adminApi("/admin/announcements", { method: "POST", body: JSON.stringify(payload) });
       setDraft(null); refresh();
-    } catch (e) { appAlert("Αποτυχία αποθήκευσης: " + (e as Error).message); }
+    } catch (e) { appAlert(conflictMessage(e) ?? "Αποτυχία αποθήκευσης: " + (e as Error).message); }
   }
   // Διακόπτης on/off χωρίς επεξεργασία: δεν στέλνουμε ΟΛΟ το draft πίσω (θα πατούσε ρυθμίσεις
   // που ο ιδιοκτήτης άλλαξε από αλλού) — μόνο το `active`.
   async function toggle(a: Ann) {
-    await adminApi(`/admin/announcements/${a._id}/active`, { method: "POST", body: JSON.stringify({ active: !a.active }) });
+    try {
+      await adminApi(`/admin/announcements/${a._id}/active`, { method: "POST", body: JSON.stringify({ active: !a.active }) });
+    } catch (e) {
+      appAlert(conflictMessage(e) ?? "Αποτυχία: " + (e as Error).message);
+    }
     qc.invalidateQueries({ queryKey: ["admin", "announcements"] });
   }
 

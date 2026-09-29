@@ -656,7 +656,8 @@ async def run_campaign(tenant_id: str, *, channel: str, message: str, subject: s
 
 
 # ── ΔΩΡΕΑΝ κανάλι: Push (PWA Web Push) — audience mapping + αποστολή χωρίς χρέωση ─────────────────
-async def push_audience(tenant_id: str, segment: str = "all", value: str | None = None) -> list[dict]:
+async def push_audience(tenant_id: str, segment: str = "all", value: str | None = None,
+                        only_ids: set | None = None) -> list[dict]:
     """Ασθενείς του φαρμακείου (με συναίνεση marketing) που έχουν λογαριασμό πύλης ΜΕ ενεργό push.
     Αλυσίδα: patient_contacts → patients_anonymized.amka → patient_accounts(amka) → patient_push_subs."""
     from app.services import consent

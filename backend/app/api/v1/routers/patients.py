@@ -324,6 +324,15 @@ async def get_med_schedule(patient_id: str,
     return await PatientRxRepository(tenant_id=ctx.tenant_id).medication_schedule(patient_id)
 
 
+@router.get("/{patient_id}/adherence")
+async def get_adherence(patient_id: str,
+                        ctx: TenantContext = Depends(require("patients:read", module=_MODULE))):
+    """Συνέπεια στην αγωγή ανά φάρμακο (κάλυψη ημερών από τις εκτελέσεις + δηλωμένες λήψεις).
+    ΜΟΝΟ για τον φαρμακοποιό — δεν εκτίθεται στην πύλη του ασθενή."""
+    from app.repositories.patient_portal import PatientRxRepository
+    return await PatientRxRepository(tenant_id=ctx.tenant_id).adherence(patient_id)
+
+
 class MedReminderIn(BaseModel):
     med_key: str
     enabled: bool

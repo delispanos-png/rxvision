@@ -36,9 +36,14 @@ export const slug = (s: string) =>
 
 export type Heading = { level: number; text: string; id: string };
 
-/** Καθαρίζει τον τίτλο από emoji & markdown για το ευρετήριο. */
+/** Καθαρίζει τον τίτλο από markdown για το ευρετήριο ΚΑΙ για το #anchor.
+ *
+ * ⚠ Η ΣΕΙΡΑ ΜΕΤΡΑΕΙ: πρώτα κόβεται η ουρά `*(πρόσθετο)*`, ΜΕΤΑ οι αστερίσκοι. Ανάποδα, οι
+ * αστερίσκοι έφευγαν πρώτοι, η ουρά δεν αναγνωριζόταν πια, και το anchor κρατούσε το
+ * «πρόσθετο…» — 22 από τις 69 σελίδες του βοηθού «?» έστελναν στην κορυφή του εγχειριδίου
+ * αντί για την ενότητά τους (όλο το Patient Intelligence, Σύμβουλος, Connect κ.ά.). */
 export const cleanTitle = (s: string) =>
-  s.replace(/[*`]/g, "").replace(/\s*\*\(.*?\)\*\s*$/, "").trim();
+  s.replace(/\s*\*\(.*?\)\*\s*$/, "").replace(/[*`]/g, "").trim();
 
 export function renderMarkdown(md: string): { body: React.ReactNode[]; headings: Heading[] } {
   const lines = md.split("\n");

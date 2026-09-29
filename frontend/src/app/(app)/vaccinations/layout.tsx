@@ -6,6 +6,7 @@ import { Syringe, Lock } from "lucide-react";
 import { useT } from "@/store/prefStore";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
 import { useAddonState } from "@/components/layout/AddonSection";
+import { ScrollTabs } from "@/components/layout/ScrollTabs";
 
 // `module` = προαιρετικό add-on στο οποίο ανήκει η καρτέλα. Χωρίς αυτό, η καρτέλα φαινόταν
 // σε όλους και όποιος την πατούσε έτρωγε οθόνη «κλειδωμένο».
@@ -33,7 +34,7 @@ export default function VaccinationsLayout({ children }: { children: React.React
           <p className="text-sm text-slate-500">{t("Παρακολούθηση & πρόσκληση πελατών για εμβολιασμό — προτεραιότητα σε υψηλού κινδύνου και μεγαλύτερες ηλικίες.", "Track & invite customers for vaccination — priority to high-risk and older ages.")}</p>
         </div>
       </div>
-      <nav className="no-scrollbar mb-6 flex gap-1 overflow-x-auto whitespace-nowrap border-b border-slate-200 dark:border-slate-700">
+      <ScrollTabs className="mb-6">
         {TABS.map((tab) => {
           const st = tab.module === "vaccination_programs" ? periodic.state : "on";   // «periodic» = εμβόλια Ή θεραπείες
           if (st === "hide" || st === "unknown") return null;
@@ -53,7 +54,7 @@ export default function VaccinationsLayout({ children }: { children: React.React
             </Link>
           );
         })}
-      </nav>
+      </ScrollTabs>
       {children}
     </ModuleGuard>
   );

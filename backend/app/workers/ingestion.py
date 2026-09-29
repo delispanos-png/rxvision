@@ -617,7 +617,13 @@ def hdika_incremental_sync(self, tenant_id: str) -> dict:
             creds.setdefault("throttle", 0.1)        # gentle on ΗΔΥΚΑ
             since = await _watermark(db, tenant_id)
             now = datetime.now(tz=timezone.utc)
-            records = HdikaAdapter(creds).fetch(since=since)
+            # ΜΕ ΚΑΤΑΛΟΓΟ. Χωρίς αυτόν (έτσι ήταν από την πρώτη μέρα, 06/06/2026) κάθε νέα εκτέλεση
+            # έπαιρνε barcode = σκέτο ΕΟΦ αντί για EAN `280…` → ΔΕΥΤΕΡΟ προϊόν για κάθε φάρμακο,
+            # χονδρική 100% ΕΚΤΙΜΗΣΗ, 0/875 ναρκωτικά σημειωμένα (μετρημένο 09/2026). Το ιστορικό
+            # (backfill) είχε κατάλογο — γι' αυτό φαινόταν σαν «η ΗΔΥΚΑ άλλαξε κωδικοποίηση».
+            from app.services.ingestion.hdika_catalog import load_catalog_map
+            cat = await load_catalog_map(db)
+            records = HdikaAdapter(creds, catalog=cat).fetch(since=since)
             job = await IngestionEngine(tenant_id, db=db).ingest(
                 source="HDIKA", job_type="incremental", records=records,
                 window=(since, now), task_id=self.request.id)
@@ -715,6 +721,18 @@ def hdika_backfill(self, tenant_id: str, since_iso: str, until_iso: str | None =
                     result["continuing_from"] = nxt_since.date().isoformat()
                 else:
                     result["historical_complete"] = True
+                    # ΑΠΟΘΗΚΕΥΣΕ ΤΟ. Πριν ζούσε ΜΟΝΟ στο αποτέλεσμα του task (χάνεται), οπότε ο
+                    # δρομολογητής των 20΄ έβλεπε «η παλαιότερη εκτέλεση (02/01) είναι μετά το όριο
+                    # (01/01)» και ξανάρχιζε — ΓΙΑ ΠΑΝΤΑ, γιατί την 01/01 δεν εκτελείται τίποτα.
+                    # Μετρημένο: ~500 άσκοπες αντλήσεις/ημέρα προς την ΗΔΥΚΑ (23–28/09/2026).
+                    # Μόνο αν όντως ψάξαμε ΩΣ το όριο (since ≤ floor) — αλλιώς δεν ξέρουμε ότι τελείωσε.
+                    if since.date() <= floor.date():
+                        await db["hdika_history"].update_one(
+                            {"_id": tenant_id},
+                            {"$set": {"tenant_id": tenant_id,
+                                      "complete_floor": floor.date().isoformat(),
+                                      "oldest_found": (new_min.date().isoformat() if new_min else None),
+                                      "at": datetime.now(tz=timezone.utc)}}, upsert=True)
             return result
         except HdikaAuthError as e:   # λάθος/ληγμένος κωδικός → ΠΑΥΣΗ tenant (μη retry/chain)
             return await _pause_hdika_auth(db, tenant_id, str(e))
@@ -788,6 +806,10 @@ def dispatch_historical_continue() -> int:
                 # μη πας πιο πίσω από το retention παράθυρο του φαρμακείου (αλλιώς re-download καθαρισμένων)
                 from app.services.data_retention import tenant_cutoff
                 floor = max(floor, await tenant_cutoff(db, tid))
+                # Ήδη ψαγμένο ΩΣ αυτό το όριο (ή παλαιότερο) → τίποτα άλλο δεν υπάρχει εκεί πίσω.
+                done = await db["hdika_history"].find_one({"_id": tid}, {"complete_floor": 1})
+                if done and str(done.get("complete_floor") or "9999") <= floor.date().isoformat():
+                    continue
                 d = await db["prescription_executions"].find_one(
                     {"tenant_id": tid}, sort=[("executed_at", 1)], projection={"executed_at": 1})
                 oldest = d.get("executed_at") if d else None

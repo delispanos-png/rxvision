@@ -15,7 +15,8 @@ import { Tooltip } from "@/components/ui/Tooltip";
 import { LogoMark } from "@/components/brand/Logo";
 import { patientApi, patientTokens, patientUpload, patientLogout, API_BASE, ApiError } from "@/lib/patientClient";
 import { usePref, useT } from "@/store/prefStore";
-import { nutritionDecor, measurementAdvice } from "@/lib/nutrition";
+import { nutritionDecor, measurementAdvice, type NutritionSection, type NutritionSummary as NutritionSummaryT } from "@/lib/nutrition";
+import { NutritionSummary } from "@/components/nutrition/NutritionSummary";
 import { PharmacyPicker, MedicinePicker, type Medicine } from "@/components/portal/pickers";
 import { RenewalCard, type Renewal } from "@/components/portal/RenewalCard";
 import { ShopTab } from "@/components/portal/ShopTab";
@@ -68,7 +69,7 @@ const pdmy = (iso: string) => { const [y, m, d] = iso.split("-"); return d && m 
 const prange = (r: PRange) => (r.start_date === r.end_date ? pdmy(r.start_date) : `${pdmy(r.start_date)}–${pdmy(r.end_date)}`) + ` ${r.start}–${r.end}`;
 type Appt = { _id?: string; service_name: string; requested_at: string; status: string; tenant_id?: string; pharmacy_name?: string | null };
 type Cda = { available?: boolean; found?: boolean; doctor?: string | null; medicines?: string[]; issue_date?: string | null; deadline_date?: string | null; intangible?: boolean; exec_count?: number | null; is_fyk?: boolean; has_vaccine?: boolean };
-type NutritionPlan = { has: boolean; note?: string | null; assigned_at?: string | null; sections?: { title: string; drugs: string[]; favor: string; avoid: string; why?: string }[] };
+type NutritionPlan = { has: boolean; note?: string | null; assigned_at?: string | null; sections?: NutritionSection[]; summary?: NutritionSummaryT | null };
 type NoPaperRx = { barcode: string; issue_date?: string | null; expiry_date?: string | null; status?: string | null; prescription_type?: string | null; executions?: string | null; already_submitted?: boolean };
 type RxReq = { _id?: string; kind: string; barcode?: string | null; note?: string | null; status: string; created_at: string; cda?: Cda | null; reply?: string | null; available_date?: string | null };
 type LoyaltyMember = { patient_ref: string; name?: string; points: number; balance_cents: number; tier: string; next_tier: string | null; to_next: number; progress_pct: number; compliance: number | null; refills: number; expected: number; open_refills: number; potential_points: number; points_per_refill: number; cents_per_point: number; ledger: { type: string; cents: number; kind?: string; reason?: string; at: string }[] };
@@ -1959,6 +1960,9 @@ export default function PortalHome() {
           // Ίδια εμφάνιση με τη σελίδα «Διατροφή» του φαρμακοποιού (κοινό lib/nutrition.ts)
           const lt = health?.latest ?? {};
           const adv = measurementAdvice({ bp: lt.bp, glucose: lt.glucose, weight: lt.weight, height_cm: health?.height_cm }, t);
+          // Νέες προτάσεις ΠΕΡΙΕΧΟΥΝ ήδη τις μετρήσεις (ενότητες «από μέτρηση»)· η ζωντανή κάρτα μένει
+          // μόνο για παλαιότερες προτάσεις που βγήκαν μόνο από την αγωγή.
+          const hasMeasured = (nutrition.sections || []).some((x) => x.source === "measurement");
           return (
             <div className="mb-4">
               <div className="mb-3 flex items-start gap-3">
@@ -1966,7 +1970,7 @@ export default function PortalHome() {
                 <div className="min-w-0">
                   <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">{t("Η διατροφή σου", "Your nutrition plan")}</h3>
                   <p className="text-xs text-slate-500 dark:text-slate-400">
-                    {t("Οδηγίες από τον φαρμακοποιό σου, με βάση την αγωγή σου.", "Guidance from your pharmacist, based on your medication.")}
+                    {t("Οδηγίες από τον φαρμακοποιό σου, με βάση την αγωγή και τις μετρήσεις σου.", "Guidance from your pharmacist, based on your medication and measurements.")}
                     {nutrition.assigned_at && <> · {dt(nutrition.assigned_at)}</>}
                   </p>
                 </div>
@@ -1979,7 +1983,9 @@ export default function PortalHome() {
                 </div>
               )}
 
-              {adv.hasData && (
+              <NutritionSummary summary={nutrition.summary} />
+
+              {adv.hasData && !hasMeasured && (
                 <div className="mb-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900">
                   <div className="mb-2 text-sm font-bold text-slate-900 dark:text-slate-100">{t("Συμβουλές βάσει των μετρήσεών σου", "Advice from your measurements")}</div>
                   {adv.items.length === 0
@@ -2003,7 +2009,8 @@ export default function PortalHome() {
                         <div className="min-w-0">
                           <div className={`text-base font-bold ${d.text} ${d.darkText}`}>{sec.title}</div>
                           <div className="mt-1 flex flex-wrap gap-1">
-                            {sec.drugs?.length ? sec.drugs.map((dr) => <span key={dr} className="rounded-full bg-white/70 px-2 py-0.5 text-[10px] font-medium text-slate-500 dark:bg-slate-800/70 dark:text-slate-300">{dr}</span>) : <span className="text-[11px] text-slate-400">—</span>}
+                            {sec.drugs?.length ? sec.drugs.map((dr) => <span key={dr} className="rounded-full bg-white/70 px-2 py-0.5 text-[10px] font-medium text-slate-500 dark:bg-slate-800/70 dark:text-slate-300">{dr}</span>)
+                              : <span className="rounded-full bg-white/70 px-2 py-0.5 text-[10px] font-medium text-slate-500 dark:bg-slate-800/70 dark:text-slate-300">📏 {t("από τις μετρήσεις σου", "from your measurements")}</span>}
                           </div>
                         </div>
                       </div>

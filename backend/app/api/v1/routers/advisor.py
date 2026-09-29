@@ -52,7 +52,8 @@ async def nutrition_assign(
     now = datetime.now(tz=timezone.utc)
     await db["patient_nutrition_plans"].update_one(   # tenant-ok: ρητό φίλτρο tenant_id
         {"tenant_id": ctx.tenant_id, "patient_ref": patient_id},
-        {"$set": {"sections": plan.get("sections") or [], "note": (body.note if body else None),
+        {"$set": {"sections": plan.get("sections") or [], "summary": plan.get("summary"),
+                  "note": (body.note if body else None),
                   "assigned_at": now, "assigned_by": getattr(ctx, "user_id", None)},
          "$setOnInsert": {"created_at": now}},
         upsert=True)
@@ -69,7 +70,7 @@ async def nutrition_assign(
         if acc:
             await push_service.send_to_account(
                 str(acc["_id"]), title="🥗 Νέα πρόταση διατροφής",
-                body="Ο φαρμακοποιός σου ετοίμασε διατροφικές οδηγίες για την αγωγή σου.",
+                body="Ο φαρμακοποιός σου ετοίμασε διατροφικές οδηγίες για την αγωγή και τις μετρήσεις σου.",
                 url="/portal")
     except Exception:  # noqa: BLE001
         pass

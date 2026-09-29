@@ -98,6 +98,10 @@ async def reconcile_tenant(tenant_id: str, *, db, days: int = _WINDOW_DAYS,
             [{"$set": {"cancelled_prev_status": "$status", "status": "cancelled", "cancelled_at": now}}])
         await db["prescription_items"].update_many(
             {"execution_id": {"$in": ids}, "tenant_id": tenant_id}, {"$set": {"cancelled": True}})
+        # ακυρωμένη εκτέλεση δεν «περιμένει» επόμενη — αλλιώς ο πελάτης βγαίνει «δεν ήρθε»
+        await db["future_prescriptions"].update_many(
+            {"source_execution_id": {"$in": ids}, "tenant_id": tenant_id, "status": "pending"},
+            {"$set": {"status": "source_cancelled"}})
     if to_restore:
         ids = [d["_id"] for d in to_restore]
         await db["prescription_executions"].update_many(
@@ -105,6 +109,9 @@ async def reconcile_tenant(tenant_id: str, *, db, days: int = _WINDOW_DAYS,
             [{"$set": {"status": {"$ifNull": ["$cancelled_prev_status", "executed"]}, "cancelled_at": None}}])
         await db["prescription_items"].update_many(
             {"execution_id": {"$in": ids}, "tenant_id": tenant_id}, {"$set": {"cancelled": False}})
+        await db["future_prescriptions"].update_many(
+            {"source_execution_id": {"$in": ids}, "tenant_id": tenant_id,
+             "status": "source_cancelled"}, {"$set": {"status": "pending"}})
     return result
 
 

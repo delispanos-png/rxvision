@@ -263,13 +263,30 @@ async def refresh_icd10(db, client) -> int:
     return total
 
 
+#: Cache ανά διεργασία. Ο καθημερινός συγχρονισμός τρέχει ΣΥΧΝΑ και για ΚΑΘΕ φαρμακείο· χωρίς cache θα
+#: διάβαζε ~14.000 φάρμακα κάθε φορά. Ο κατάλογος αλλάζει μία φορά τη μέρα (νυχτερινός συγχρονισμός),
+#: οπότε 15΄ είναι αρκετά φρέσκο.
+_CACHE: dict = {"at": 0.0, "data": None}
+_TTL = 900
+
+
 async def load_catalog_map(db) -> dict:
     """eofCode → {retail_cents, wholesale_cents, name, barcode, narcotic, atc} for fast
-    in-memory lookups during ingestion."""
+    in-memory lookups during ingestion.
+
+    ⚠ ΚΑΘΕ άντληση ΗΔΥΚΑ πρέπει να το περνά στο `HdikaAdapter(creds, catalog=…)`. Χωρίς αυτό η
+    συνταγή δεν «βρίσκει» το φάρμακο: barcode γίνεται ο σκέτος ΕΟΦ αντί για το EAN `280…` (→ ΔΕΥΤΕΡΟ
+    προϊόν για το ίδιο φάρμακο), η χονδρική γίνεται ΕΚΤΙΜΗΣΗ και χάνεται η σήμανση «ναρκωτικό».
+    Έτσι έτρεχε ο καθημερινός συγχρονισμός από 06/06/2026 έως 28/09/2026 (βλ. test_ingestion_catalog)."""
+    import time
+    if _CACHE["data"] is not None and time.monotonic() - _CACHE["at"] < _TTL:
+        return _CACHE["data"]
     out: dict = {}
     cur = db["medicine_catalog"].find({}, {
         "eofCode": 1, "retail_cents": 1, "wholesale_cents": 1, "name": 1, "full_name": 1,
         "barcode": 1, "narcotic": 1, "atc": 1})
     async for d in cur:
         out[str(d["_id"])] = d
+    if out:                        # άδειο (π.χ. πρόσκαιρη αποτυχία) → μην το «κλειδώσεις» για 15΄
+        _CACHE.update(at=time.monotonic(), data=out)
     return out

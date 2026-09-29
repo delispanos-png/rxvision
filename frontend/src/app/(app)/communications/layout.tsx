@@ -7,6 +7,7 @@ import { Megaphone } from "lucide-react";
 import { api } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
+import { ScrollTabs } from "@/components/layout/ScrollTabs";
 
 type Overview = {
   days: number; campaigns: number; messages: number; people: number;
@@ -60,7 +61,7 @@ export default function CommsLayout({ children }: { children: React.ReactNode })
         </div>
       )}
 
-      <nav className="no-scrollbar mb-6 flex gap-1 overflow-x-auto whitespace-nowrap border-b border-slate-200 dark:border-slate-700">
+      <ScrollTabs className="mb-6">
         {TABS.map((tab) => {
           const active = tab.href === "/communications" ? pathname === tab.href : pathname.startsWith(tab.href);
           return (
@@ -70,7 +71,7 @@ export default function CommsLayout({ children }: { children: React.ReactNode })
             </Link>
           );
         })}
-      </nav>
+      </ScrollTabs>
       {children}
     </ModuleGuard>
   );

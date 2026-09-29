@@ -72,9 +72,7 @@ async def create(tenant_id: str, *, channel: str, message: str, subject: str | N
         from app.services import audience as aud
         only = await aud.resolve(tenant_id, audience_rules, purpose=purpose)
     rows = await comms.campaign_audience(tenant_id, channel, segment, value, only_ids=only) \
-        if channel != "push" else await comms.push_audience(tenant_id, segment, value)
-    if only is not None and channel == "push":
-        rows = [r for r in rows if r.get("patient_id") in only]
+        if channel != "push" else await comms.push_audience(tenant_id, segment, value, only_ids=only)
 
     cid = ObjectId()
     field = "email" if channel == "email" else "mobile"

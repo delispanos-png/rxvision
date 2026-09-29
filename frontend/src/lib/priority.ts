@@ -64,6 +64,16 @@ export function riskPriority(r: { compliance?: number | null; gap_days?: number;
 }
 
 /** Ζώνη συμμόρφωσης (υπάρχον backend band) → κοινή κλίμακα. */
+/** Συνέπεια ανά φάρμακο = % ημερών με φάρμακο στα χέρια (κάλυψη από εκτελέσεις).
+ *  80% είναι το διεθνές όριο «συνεπής» στη βιβλιογραφία συμμόρφωσης. */
+export function adherencePriority(pct: number | null | undefined): Priority {
+  if (pct == null) return "low";
+  if (pct >= 80) return "ok";
+  if (pct >= 65) return "medium";
+  if (pct >= 50) return "high";
+  return "critical";
+}
+
 export function compliancePriority(band: string): Priority {
   return ({ critical: "critical", risk: "high", medium: "medium", good: "low", excellent: "ok" } as
     Record<string, Priority>)[band] ?? "medium";

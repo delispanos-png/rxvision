@@ -46,7 +46,9 @@ class ManualDeleteIn(BaseModel):
     batch_id: str
 
 
-class PaymentIn(BaseModel):
+class BatchPaymentIn(BaseModel):
+    """Πληρωμή ΜΙΑΣ παρτίδας υποβολής (οθόνη Συμφωνίας). ΧΩΡΙΣΤΟ όνομα από το `PaymentIn` (δόση
+    απαίτησης): με το ίδιο όνομα η δεύτερη κλάση σκίαζε την πρώτη και κάθε πληρωμή παρτίδας έπαιρνε 422."""
     batch_id: str
     paid_amount: int  # cents
 
@@ -131,7 +133,7 @@ async def set_status(body: StatusIn, period: str = Query(None),
 
 
 @router.post("/submission/payment")
-async def set_payment(body: PaymentIn, period: str = Query(None),
+async def set_payment(body: BatchPaymentIn, period: str = Query(None),
                       ctx: TenantContext = Depends(require("closing:read", module=_MODULE))):
     return await _repo(ctx).set_payment(period or _cur(), body.batch_id, body.paid_amount)
 

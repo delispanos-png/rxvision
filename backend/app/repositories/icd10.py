@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from app.repositories.base import BaseRepository
+from app.services.stats_exclusion import COUNTABLE_EXEC
 from app.services.icd10_meta import chapter_for
 
 
@@ -15,7 +16,7 @@ class Icd10Repository(BaseRepository):
                                date_to: datetime, limit: int = 50) -> list[dict]:
         sort_field = {"count": "rx", "value": "value", "profit": "profit"}.get(metric, "rx")
         pipeline = [
-            {"$match": {"executed_at": {"$gte": date_from, "$lt": date_to}}},
+            {"$match": {**COUNTABLE_EXEC, "executed_at": {"$gte": date_from, "$lt": date_to}}},
             {"$unwind": "$icd10"},
             {"$group": {
                 "_id": "$icd10",
@@ -56,7 +57,7 @@ class Icd10Repository(BaseRepository):
 
         async def _window(a: datetime, b: datetime) -> dict:
             rows = await self.aggregate([
-                {"$match": {"icd10": code, "executed_at": {"$gte": a, "$lt": b}}},
+                {"$match": {**COUNTABLE_EXEC, "icd10": code, "executed_at": {"$gte": a, "$lt": b}}},
                 {"$group": {"_id": None, "rx": {"$sum": 1}, "value": {"$sum": "$amount_total"},
                             "claimed": {"$sum": "$amount_claimed"},
                             "cost": {"$sum": "$wholesale_cost"},
@@ -72,7 +73,7 @@ class Icd10Repository(BaseRepository):
         prev = await _window(date_from - span, date_from)
 
         meds = await self.aggregate([
-            {"$match": {"icd10": code, "executed_at": {"$gte": date_from, "$lt": date_to}}},
+            {"$match": {**COUNTABLE_EXEC, "icd10": code, "executed_at": {"$gte": date_from, "$lt": date_to}}},
             {"$lookup": {"from": "prescription_items", "localField": "_id",
                          "foreignField": "execution_id", "as": "it"}},
             {"$unwind": "$it"},
@@ -109,7 +110,7 @@ class Icd10Repository(BaseRepository):
         level = max(1, min(level, 5))
         sort_field = {"count": "rx", "value": "value", "profit": "profit"}.get(metric, "rx")
         pipeline = [
-            {"$match": {"executed_at": {"$gte": date_from, "$lt": date_to}}},
+            {"$match": {**COUNTABLE_EXEC, "executed_at": {"$gte": date_from, "$lt": date_to}}},
             {"$unwind": "$icd10"},
             {"$set": {"_node": {"$substrCP": [
                 {"$replaceAll": {"input": "$icd10", "find": ".", "replacement": ""}},

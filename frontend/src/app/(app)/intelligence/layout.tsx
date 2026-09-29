@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { Brain } from "lucide-react";
 import { useT } from "@/store/prefStore";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
+import { ScrollTabs } from "@/components/layout/ScrollTabs";
 
 const TABS = [
   { href: "/intelligence", el: "Dashboard", en: "Dashboard" },
@@ -32,7 +33,7 @@ export default function IntelligenceLayout({ children }: { children: React.React
           <p className="text-sm text-slate-500">{t("Από δεδομένα συνταγών → επιχειρηματική γνώση & ενέργειες ανάπτυξης", "From prescription data → business intelligence & growth actions")}</p>
         </div>
       </div>
-      <nav className="no-scrollbar mb-6 flex gap-1 overflow-x-auto whitespace-nowrap border-b border-slate-200 dark:border-slate-700">
+      <ScrollTabs className="mb-6">
         {TABS.map((tab) => {
           const active = tab.href === "/intelligence" ? pathname === tab.href : pathname.startsWith(tab.href);
           return (
@@ -42,7 +43,7 @@ export default function IntelligenceLayout({ children }: { children: React.React
             </Link>
           );
         })}
-      </nav>
+      </ScrollTabs>
       {children}
     </ModuleGuard>
   );

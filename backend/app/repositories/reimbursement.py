@@ -693,10 +693,16 @@ class ReimbursementRepository(BaseRepository):
                 b = batch_map.get(self._batch_id(per, grp)) or {}
                 payments, settled = self._load_payments(b)
                 paid_total = sum(p.get("amount", 0) for p in payments)
-                # OPEN until fully settled; once settled the shortfall becomes the περικοπή (cut)
+                # OPEN until fully settled; once settled the shortfall becomes the περικοπή (cut).
+                # ΕΞΑΙΡΕΣΗ: «εξοφλήθηκε» ΧΩΡΙΣ καμία καταγεγραμμένη είσπραξη = ο φαρμακοποιός έκλεισε
+                # τον μήνα χωρίς να περάσει τις δόσεις — ΟΧΙ περικοπή 100%. Κανένα ταμείο δεν κόβει
+                # ολόκληρο μήνα. Μετρημένο 29/09/2026: 45 τέτοιοι μήνες έβγαζαν π.χ. 84.771€ «περικοπή»
+                # ΕΟΠΥΥ για έναν μόνο μήνα ενός φαρμακείου. Ποσό άγνωστο → ούτε ανοιχτό ούτε περικοπή.
+                unrecorded = settled and paid_total <= 0
                 open_bal = 0 if settled else max(0, expected - paid_total)
-                cut = max(0, expected - paid_total) if settled else 0
-                status = "settled" if settled else ("partial" if paid_total > 0 else "open")
+                cut = max(0, expected - paid_total) if settled and not unrecorded else 0
+                status = ("settled_unrecorded" if unrecorded else "settled" if settled
+                          else ("partial" if paid_total > 0 else "open"))
                 rows.append({
                     "period": per, "batch_id": self._batch_id(per, grp), "fund": grp,
                     "is_eopyy": a["is_eopyy"], "rx": a["rx"], "expected": expected,

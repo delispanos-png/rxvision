@@ -12,6 +12,7 @@ from datetime import datetime
 from bson import ObjectId
 
 from app.repositories.base import BaseRepository
+from app.services.stats_exclusion import COUNTABLE_EXEC
 from app.utils.masking import mask_name, mask_rows
 
 
@@ -52,7 +53,7 @@ class DoctorExecutionsRepository(BaseRepository):
         """One row per doctor for the period: name + specialty (joined from `doctors`) +
         rx_count / value / gross_profit / distinct patients. Powers the Doctors page."""
         pipe: list[dict] = [
-            {"$match": {"executed_at": {"$gte": date_from, "$lte": date_to},
+            {"$match": {**COUNTABLE_EXEC, "executed_at": {"$gte": date_from, "$lte": date_to},
                         "doctor_id": {"$ne": None}}},
             # Χαρακτηρισμός εκτέλεσης ως θανόντος/ζώντος ΠΡΙΝ το group — ώστε το πλήθος ασθενών να
             # μετρά μόνο ζώντες, ΧΩΡΙΣ να πειράξει τα οικονομικά (rx/value/cost = όλες οι εκτελέσεις).
@@ -93,7 +94,7 @@ class DoctorExecutionsRepository(BaseRepository):
         """rx / value / claimed / cost / profit / margin for one doctor in a period."""
         doctor_id = _oid(doctor_id)
         pipeline = [
-            {"$match": {"doctor_id": doctor_id,
+            {"$match": {**COUNTABLE_EXEC, "doctor_id": doctor_id,
                         "executed_at": {"$gte": date_from, "$lt": date_to}}},
             # Θανόντες/ζώντες ανά εκτέλεση ΠΡΙΝ το group → distinct_patients μόνο ζώντες, ΧΩΡΙΣ να
             # αλλάξουν τα οικονομικά (value/claimed/cost/profit = όλες οι πραγματικές εκτελέσεις).
@@ -171,7 +172,7 @@ class DoctorExecutionsRepository(BaseRepository):
                             date_to: datetime, limit: int = 300) -> list[dict]:
         """Prescriptions written by this doctor in the period (patient, fund, amounts)."""
         pipe = [
-            {"$match": {"doctor_id": _oid(doctor_id),
+            {"$match": {**COUNTABLE_EXEC, "doctor_id": _oid(doctor_id),
                         "executed_at": {"$gte": date_from, "$lt": date_to}}},
             {"$sort": {"executed_at": -1}},
             {"$limit": limit},
@@ -192,7 +193,7 @@ class DoctorExecutionsRepository(BaseRepository):
                        date_to: datetime, limit: int = 300) -> list[dict]:
         """Patients this doctor prescribed to in the period (rx count + value)."""
         pipe = [
-            {"$match": {"doctor_id": _oid(doctor_id),
+            {"$match": {**COUNTABLE_EXEC, "doctor_id": _oid(doctor_id),
                         "executed_at": {"$gte": date_from, "$lt": date_to}}},
             {"$group": {"_id": "$patient_ref", "rx": {"$sum": 1},
                         "value": {"$sum": "$amount_total"}, "last": {"$max": "$executed_at"}}},

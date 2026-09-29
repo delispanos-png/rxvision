@@ -615,8 +615,14 @@ class PatientAccountRepository:
         return [f["barcode"] async for f in self.db["shop_favorites"].find(
             {"account_id": oid, "tenant_id": tenant_id}, {"barcode": 1})]
 
-    async def set_favorite(self, account_id, tenant_id: str) -> str | None:
-        """Δήλωση «αγαπημένου» φαρμακείου (toggle) — γίνεται το προεπιλεγμένο active στο login."""
+    async def toggle_favorite(self, account_id, tenant_id: str) -> str | None:
+        """Δήλωση «αγαπημένου» φαρμακείου (toggle) — γίνεται το προεπιλεγμένο active στο login.
+
+        ΠΡΟΣΟΧΗ — ΗΤΑΝ ΟΜΩΝΥΜΗ με το `set_favorite` πιο πάνω. Η Python κρατούσε ΑΥΤΗ, οπότε κάθε
+        «ορισμός» (εγγραφή, δημιουργία λογαριασμού από φαρμακείο, αποσύνδεση) έκανε στην
+        πραγματικότητα ΕΝΑΛΛΑΓΗ. Σήμερα έδινε το ίδιο αποτέλεσμα (νέος λογαριασμός / άλλο
+        φαρμακείο), αλλά ο πρώτος καλών που θα όριζε την ΙΔΙΑ τιμή θα την έσβηνε. Ίδια κατηγορία
+        με τη διακοπή της πύλης ([[portal-target-shadowing-outage]])."""
         oid = _oid(account_id)
         if not oid:
             return None
@@ -1030,12 +1036,13 @@ class PatientRxRepository(BaseRepository):
                 if not active:
                     continue
                 therapies[med_key] = {
-                    "med_key": med_key, "name": name,
+                    "med_key": med_key, "name": name, "eof": d.get("eof_code"),
                     "dose": (str(d.get("dose")).replace("_", " ").strip() if d.get("dose") else None),
                     "dosage_text": _format_dosage(d.get("dose"), d.get("frequency"), d.get("duration")),
                     "plan": plan, "kind": plan["kind"], "per_day": plan["per_day"],
                     "runout": ro, "last_dispensed": ex.get("executed_at"),
                     "days_left": ((ro - now).days if ro else None)}
+        await self._rekey_forked(pid, therapies)
         enabled = set()
         rem_cfg: dict = {}   # med_key → {time, meal} (ανά φάρμακο, ό,τι όρισε ο ασθενής στην ενεργοποίηση)
         async for r in self._db["med_reminders"].find(
@@ -1160,6 +1167,256 @@ class PatientRxRepository(BaseRepository):
         return {"ok": True, "kind": doc["kind"],
                 "summary": ms.plan_summary(plan) or _format_dosage(None, None, None) or None,
                 "start_date": doc["start_date"], "reason": doc.get("reason")}
+
+    async def _eof_of_product(self, product_id: str) -> str:
+        """Κωδικός ΕΟΦ ενός προϊόντος — ΚΑΙ όταν δεν έχει πια κανένα είδος συνταγής.
+
+        Το barcode το λέει μόνο του: EAN `280` + ΕΟΦ(9) + ψηφίο ελέγχου (π.χ. 2801498303011 →
+        149830301), ή σκέτος ΕΟΦ (149830301). ΓΙΑΤΙ ΧΡΕΙΑΖΕΤΑΙ: μετά την επισκευή των εκτελέσεων που
+        μπήκαν χωρίς κατάλογο, τα ΕΟΦ-προϊόντα δεν θα έχουν είδη — και η αναζήτηση μέσω ειδών θα
+        άφηνε 39 υπενθυμίσεις ορφανές. Τα είδη μένουν ως δεύτερη πηγή για ό,τι άλλο."""
+        if not ObjectId.is_valid(product_id):
+            return ""
+        prod = await self._db["products"].find_one(
+            {"tenant_id": self.tenant_id, "_id": ObjectId(product_id)}, {"barcode": 1})
+        bc = "".join(ch for ch in str((prod or {}).get("barcode") or "") if ch.isdigit())
+        if len(bc) == 13 and bc.startswith("280"):
+            return bc[3:12]
+        if 6 <= len(bc) <= 10:
+            return bc
+        it = await self._db["prescription_items"].find_one(
+            {"tenant_id": self.tenant_id, "product_id": ObjectId(product_id)}, {"details.eof_code": 1})
+        return str(((it or {}).get("details") or {}).get("eof_code") or "")
+
+    async def _rekey_forked(self, pid, therapies: dict) -> None:
+        """Υπενθυμίσεις & αλλαγές δοσολογίας κλειδώνονται με το `product_id`. Όταν το ΙΔΙΟ φάρμακο
+        αποκτά νέα εγγραφή προϊόντος, μένουν «ορφανές» στην παλιά — και χάνονται ΣΙΩΠΗΛΑ.
+
+        ΠΡΑΓΜΑΤΙΚΟ (28/09/2026): ο καθημερινός συγχρονισμός έτρεχε ΧΩΡΙΣ κατάλογο φαρμάκων (ΔΙΚΟ ΜΑΣ
+        σφάλμα, από 06/06/2026 — όχι αλλαγή της ΗΔΥΚΑ) → barcode = σκέτος ΕΟΦ αντί για EAN `280…`
+        → κάθε φάρμακο έγινε ΔΕΥΤΕΡΟ προϊόν. Η αποστολή υπενθυμίσεων κοιτάζει το
+        πρόγραμμα, το πρόγραμμα δείχνει το νέο προϊόν χωρίς υπενθύμιση → ΚΑΜΙΑ ειδοποίηση. 3 ασθενείς
+        (2 σε πραγματικό φαρμακείο) έχασαν τις υπενθυμίσεις τους χωρίς να το ξέρει κανείς· ένας
+        σταμάτησε να δηλώνει λήψεις στις 17/09. Ο φαρμακοποιός έβλεπε τον διακόπτη ΚΛΕΙΣΤΟ.
+
+        Διόρθωση: ίδιος ΕΟΦ = ίδιο φάρμακο → η ρύθμιση ΜΕΤΑΚΙΝΕΙΤΑΙ στην τρέχουσα εγγραφή (κρατά το
+        `forked_from` για ίχνος). Αν η τρέχουσα έχει ήδη δική της ρύθμιση, ΔΕΝ πατάμε πάνω της —
+        κάποιος την όρισε ξανά συνειδητά. Idempotent: μετά τη μεταφορά δεν ξαναβρίσκει τίποτα."""
+        cur = {str(t["eof"]): k for k, t in therapies.items() if t.get("eof")}
+        if not cur:
+            return
+        for coll in ("med_reminders", "med_plans"):
+            async for doc in self._db[coll].find(
+                    {"tenant_id": self.tenant_id, "patient_ref": pid,
+                     "med_key": {"$nin": list(therapies)},
+                     "superseded_by": {"$exists": False}}):     # ήδη κλεισμένη παλιά εγγραφή → όχι ξανά
+                old = str(doc.get("med_key") or "")
+                if not ObjectId.is_valid(old):
+                    continue
+                eof = await self._eof_of_product(old)
+                new = cur.get(eof)
+                if not new or new == old:
+                    continue
+                tgt = await self._db[coll].find_one(
+                    {"tenant_id": self.tenant_id, "patient_ref": pid, "med_key": new})
+                now = datetime.now(tz=timezone.utc)
+                if tgt:
+                    # Υπάρχει ΗΔΗ ρύθμιση στη σωστή εγγραφή. ΚΡΙΤΗΡΙΟ = ΤΙ ΕΠΑΙΡΝΕ Ο ΑΣΘΕΝΗΣ, ΟΧΙ Η
+                    # ΗΜΕΡΟΜΗΝΙΑ. Με δύο εγγραφές του ίδιου φαρμάκου, ένα «κλειστό» στη λάθος εγγραφή δεν
+                    # δείχνει πρόθεση — και μια υπενθύμιση που χάνεται σιωπηλά είναι χειρότερη από μία που
+                    # ο ασθενής κλείνει μόνος του στην πύλη. Άρα: αν ΟΠΟΙΑΔΗΠΟΤΕ είναι ανοιχτή, μένει
+                    # ανοιχτή, με τις ρυθμίσεις της ανοιχτής.
+                    #   Ιστορικό (28/09/2026): «μην πατάς ποτέ» κράτησε λάθος κλειστή· «κερδίζει η πιο
+                    #   πρόσφατη» έσβησε ΑΝΟΙΧΤΕΣ υπενθυμίσεις (ENTRESTO/ATROVENT) επειδή μια κλειστή σε
+                    #   άλλη εγγραφή είχε νεότερη ημερομηνία.
+                    # ΠΟΤΕ διαγραφή: η παλιά κλείνει και σημειώνεται (`superseded_by`) — πάντα με ίχνος.
+                    if doc.get("enabled") and not tgt.get("enabled"):
+                        keep = {k: v for k, v in doc.items()
+                                if k not in ("_id", "tenant_id", "patient_ref", "med_key")}
+                        await self._db[coll].update_one(
+                            {"_id": tgt["_id"], "tenant_id": self.tenant_id},
+                            {"$set": {**keep, "forked_from": old, "rekeyed_at": now}})
+                    await self._db[coll].update_one(
+                        {"_id": doc["_id"], "tenant_id": self.tenant_id},
+                        {"$set": {"enabled": False, "superseded_by": new, "rekeyed_at": now}})
+                    continue
+                await self._db[coll].update_one(
+                    {"_id": doc["_id"], "tenant_id": self.tenant_id},
+                    {"$set": {"med_key": new, "forked_from": old, "rekeyed_at": now}})
+
+    async def adherence(self, patient_ref: str, months: int = 12) -> dict:
+        """ΣΥΝΕΠΕΙΑ ΣΤΗΝ ΑΓΩΓΗ, ανά φάρμακο — για τον ΦΑΡΜΑΚΟΠΟΙΟ (ΟΧΙ για την πύλη).
+
+        ΤΙ ΜΕΤΡΑ (κάλυψη ημερών, «PDC» στη διεθνή βιβλιογραφία): από κάθε εκτέλεση ξέρουμε ΠΟΤΕ
+        πήρε το φάρμακο και για ΠΟΣΕΣ ημέρες του φτάνει (η ίδια διάρκεια που δείχνει ήδη η κάρτα
+        «για 60 ημέρες» — να μη διαφωνούν). Αν ανανεώσει νωρίτερα, το περίσσευμα μεταφέρεται. Αν
+        ανανεώσει αργότερα, οι ημέρες ανάμεσα είναι ΚΕΝΟ: δεν είχε φάρμακο στα χέρια του.
+
+        ΤΙ ΔΕΝ ΜΕΤΡΑ: αν το ΠΗΡΕ. Ξέρουμε ότι το παρέλαβε, όχι ότι το κατάπιε. Γι' αυτό η φράση είναι
+        «είχε φάρμακο το Χ% των ημερών» — ο φαρμακοποιός ανοίγει κουβέντα, δεν κατηγορεί.
+
+        ΒΑΘΜΟΛΟΓΟΥΜΕ ΜΟΝΟ ≥2 εκτελέσεις: μία εκτέλεση δεν λέει αν είναι χρόνια αγωγή ή ένα κουτί
+        αντιβίωση. Μερική εκτέλεση → οι ημέρες κάλυψης μειώνονται αναλογικά με τα τεμάχια που
+        ΔΟΘΗΚΑΝ ([[partial-dispensing-executed-qty]]).
+
+        ΔΕΥΤΕΡΟ ΣΗΜΑ, όπου υπάρχει: δηλωμένες λήψεις στην πύλη («✓ Το πήρα»), 30 ημέρες.
+        """
+        from app.services import med_schedule as ms
+        from app.services.stats_exclusion import COUNTABLE_EXEC
+        pid = _oid(patient_ref)
+        if not pid:
+            return {"meds": {}, "summary": None}
+        now = datetime.now(tz=timezone.utc)
+        since = now - timedelta(days=months * 31)
+
+        def _aware(d: datetime) -> datetime:
+            return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
+
+        # ΜΟΝΑΔΑ = Η ΣΥΝΤΑΓΗ, ΟΧΙ Η ΕΓΓΡΑΦΗ. Η ΗΔΥΚΑ δίνει μία συνταγή ως πολλές εγγραφές
+        # (`barcode:1`, `:2`…), και κάθε εγγραφή κουβαλά ΟΛΑ τα είδη με την τελική κατάσταση — μία
+        # συνταγή 60 ημερών μετρούσε ×5 και η κάλυψη «έφτανε ως το 2030». Παίρνουμε ΜΙΑ φορά κάθε
+        # (φάρμακο, συνταγή).
+        #
+        # ΤΑΥΤΟΤΗΤΑ ΦΑΡΜΑΚΟΥ = κωδικός ΕΟΦ. Το ίδιο φάρμακο υπάρχει ως δύο «προϊόντα» (διαφορετικό
+        # barcode) — με το product_id το ιστορικό του έσπαγε στα δύο. Το πάνελ κλειδώνει με
+        # product_id, οπότε επιστρέφουμε και χάρτη `product_id → ταυτότητα`.
+        #
+        # ΠΟΤΕ ΔΟΘΗΚΕ: η χρονοσφραγίδα της ταινίας γνησιότητας (`coupons[].executed_at`) είναι η
+        # πραγματική ώρα παράδοσης του ΣΥΓΚΕΚΡΙΜΕΝΟΥ είδους. Αλλιώς, η πρώτη εγγραφή της συνταγής.
+        execs: dict = {}
+        async for e in self._coll.find(  # tenant-ok: _scope adds tenant_id
+                self._scope({"patient_ref": pid, "executed_at": {"$gte": since}, **COUNTABLE_EXEC}),
+                {"executed_at": 1, "external_id": 1}):
+            if e.get("executed_at"):
+                execs[e["_id"]] = (_aware(e["executed_at"]),
+                                   str(e.get("external_id") or e["_id"]).split(":")[0])
+
+        def _coupon_time(d: dict) -> datetime | None:
+            ts = [str(c.get("executed_at")) for c in (d.get("coupons") or []) if c.get("executed_at")]
+            for t in sorted(ts):
+                try:
+                    return datetime.strptime(t[:14], "%Y%m%d%H%M%S").replace(tzinfo=timezone.utc)
+                except ValueError:
+                    continue
+            return None
+
+        per_rx: dict = {}         # (ταυτότητα, συνταγή) → [ώρα, ημέρες κάλυψης | None]
+        alias: dict = {}          # product_id / ΕΟΦ → ταυτότητα
+        latest_freq: dict = {}
+        if execs:
+            async for it in self._db["prescription_items"].find(
+                    {"tenant_id": self.tenant_id, "execution_id": {"$in": list(execs)},
+                     "executed_qty": {"$gt": 0}},
+                    {"product_id": 1, "details": 1, "executed_qty": 1, "quantity": 1, "execution_id": 1}):
+                d = it.get("details") or {}
+                pid_s = str(it.get("product_id") or "")
+                ident = str(d.get("eof_code") or pid_s)
+                if not ident:
+                    continue
+                if pid_s:
+                    alias[pid_s] = ident
+                alias[ident] = ident
+                rec_at, presc = execs[it["execution_id"]]
+                start = _coupon_time(d) or rec_at
+                ro = ms.runout_date(start, d.get("duration"))
+                days = (_aware(ro) - start).days if ro else None
+                q, eq = int(it.get("quantity") or 0), int(it.get("executed_qty") or 0)
+                if days and q and 0 < eq < q:
+                    days = max(1, round(days * eq / q))
+                k = (ident, presc)
+                if k not in per_rx or start < per_rx[k][0]:
+                    per_rx[k] = [start, days]
+                if ident not in latest_freq or start > latest_freq[ident][0]:
+                    latest_freq[ident] = (start, d.get("frequency"))
+        fills: dict = {}
+        for (ident, _presc), (start, days) in per_rx.items():
+            fills.setdefault(ident, []).append((start, days))
+
+        meds: dict = {}
+        for key, fl in fills.items():
+            fl.sort(key=lambda x: x[0])
+            n = len(fl)
+            # ΕΝΕΡΓΗ = ίδιος κανόνας με το `medication_schedule`: η τελευταία συσκευασία δεν έχει
+            # τελειώσει, ή εκτελέστηκε τις τελευταίες 90 ημέρες. Η σύνοψη αφορά ΜΟΝΟ αυτές — αλλιώς
+            # μετρούσε κάθε φάρμακο του 12μήνου, και αγωγές που έκλεισε ο γιατρός έβγαιναν «κενά».
+            ls, ld = fl[-1]
+            active = bool((ld is not None and ls + timedelta(days=ld) >= now)
+                          or ls >= now - timedelta(days=90))
+            if any(dd is None for _, dd in fl):
+                meds[key] = {"status": "no_duration", "fills": n, "active": active}
+                continue
+            if n < 2:
+                first, dd = fl[0]
+                meds[key] = {"status": "single", "fills": 1, "active": active,
+                             "first_at": first, "covered_until": first + timedelta(days=dd)}
+                continue
+            first = fl[0][0]
+            supply_end = first
+            gaps: list[dict] = []
+            for s, dd in fl:
+                if s > supply_end:
+                    g = (s - supply_end).days
+                    if g > 0:
+                        gaps.append({"from": supply_end, "to": s, "days": g})
+                    supply_end = s
+                supply_end = supply_end + timedelta(days=dd)
+            period = max(1, (now - first).days)
+            ongoing = max(0, (now - supply_end).days)
+            gap_days = sum(g["days"] for g in gaps) + ongoing
+            pct = max(0.0, min(100.0, (period - gap_days) / period * 100))
+            biggest = max(gaps, key=lambda g: g["days"]) if gaps else None
+            meds[key] = {
+                "status": "rated", "fills": n, "active": active, "since": first,
+                "period_days": period,
+                "coverage_pct": round(pct), "gap_days": gap_days, "gaps": len(gaps),
+                "biggest_gap": biggest, "ongoing_gap_days": ongoing,
+                "covered_until": supply_end}
+
+        # ── δεύτερο σήμα: δηλωμένες λήψεις στην πύλη, μόνο για ενεργές υπενθυμίσεις ─────────
+        enabled = {r.get("med_key") async for r in self._db["med_reminders"].find(
+            {"tenant_id": self.tenant_id, "patient_ref": pid, "enabled": True}, {"med_key": 1})}
+        if enabled:
+            cut = (now - timedelta(days=30)).strftime("%Y-%m-%d")
+            logs: dict = {}
+            async for r in self._db["med_intake_log"].find(
+                    {"tenant_id": self.tenant_id, "patient_ref": pid, "date": {"$gte": cut}},
+                    {"med_key": 1, "date": 1}):
+                # Λήψεις γραμμένες σε ΠΑΛΙΑ εγγραφή του ίδιου φαρμάκου μετρούν στο ίδιο φάρμακο.
+                lk = str(r["med_key"])
+                if lk not in alias:
+                    alias[lk] = await self._eof_of_product(lk) or lk
+                logs.setdefault(lk, []).append(r["date"])
+            for key in enabled:
+                ident = alias.get(str(key)) or await self._eof_of_product(str(key)) or str(key)
+                plan = ms.frequency_plan((latest_freq.get(ident) or (None, None))[1])
+                per_day = int(plan.get("per_day") or 0)
+                ds = sorted({d for k2, v in logs.items() if alias.get(k2, k2) == ident for d in v})
+                if plan.get("kind") != "daily" or not per_day or not ds:
+                    continue
+                start = datetime.strptime(min(ds), "%Y-%m-%d").replace(tzinfo=timezone.utc)
+                span = max(1, (now - start).days + 1)
+                pct = min(100, round(len(ds) / (per_day * span) * 100))
+                meds.setdefault(ident, {"status": "none"})["self_report"] = {
+                    "pct": pct, "logged": len(ds), "expected": per_day * span, "days": span}
+
+        # Η ΣΥΝΟΨΗ ΑΦΟΡΑ ΑΚΡΙΒΩΣ ΤΑ ΦΑΡΜΑΚΑ ΤΟΥ ΠΑΝΕΛ. Η μίμηση του κανόνα «ενεργής αγωγής» έδινε
+        # 20 φάρμακα έναντι 11 στην οθόνη, και ασθενή χωρίς ΚΑΜΙΑ ενεργή αγωγή με «συνέπεια 37%».
+        # Ένα νούμερο δίπλα σε λίστα πρέπει να αφορά τη λίστα.
+        shown = {str(t["med_key"]) for t in
+                 (await self.medication_schedule(patient_ref)).get("therapies") or []}
+        shown_ids = {alias.get(k, k) for k in shown}
+        rated = [meds[i] for i in shown_ids if i in meds and meds[i].get("status") == "rated"]
+        summary = None
+        if rated:
+            tot = sum(m["period_days"] for m in rated)
+            summary = {"coverage_pct": round(sum(m["coverage_pct"] * m["period_days"]
+                                                 for m in rated) / tot),
+                       "rated": len(rated),
+                       "with_gaps": sum(1 for m in rated if m["coverage_pct"] < 80),
+                       "ongoing": sum(1 for m in rated if m["ongoing_gap_days"] > 0)}
+        # Το πάνελ ψάχνει με το ΔΙΚΟ του κλειδί (product_id) — δώσε και τον χάρτη.
+        by_key = {a: meds[i] for a, i in alias.items() if i in meds}
+        return jsonsafe({"meds": by_key, "summary": summary, "months": months})
 
     async def _intake_streak(self, pid) -> int:
         dates: set = set()

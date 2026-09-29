@@ -9,6 +9,7 @@ import re
 from datetime import datetime
 
 from app.repositories.base import BaseRepository, jsonsafe
+from app.services.stats_exclusion import COUNTABLE_EXEC
 from app.utils.masking import mask_amka, mask_name
 
 _DIM_FIELD = {
@@ -163,7 +164,7 @@ class PatientExecutionsRepository(BaseRepository):
         f = filters or {}
         sort_field = _PATIENT_SORT.get(sort, "value")
         pipeline: list[dict] = [
-            {"$match": {"executed_at": {"$gte": date_from, "$lt": date_to}}},
+            {"$match": {**COUNTABLE_EXEC, "executed_at": {"$gte": date_from, "$lt": date_to}}},
             {"$group": {
                 "_id": "$patient_ref",
                 "rx": {"$sum": 1},
@@ -305,7 +306,7 @@ class PatientExecutionsRepository(BaseRepository):
             return None
         # ICD-10 frequency across this patient's executions
         icd = await self.aggregate([
-            {"$match": {"patient_ref": oid}},
+            {"$match": {**COUNTABLE_EXEC, "patient_ref": oid}},
             {"$unwind": "$icd10"},
             {"$group": {"_id": "$icd10", "count": {"$sum": 1}}},
             {"$sort": {"count": -1}},
@@ -316,7 +317,7 @@ class PatientExecutionsRepository(BaseRepository):
         ])
         # medicines (therapeutic items) this patient received, with spend
         meds = await self.aggregate([
-            {"$match": {"patient_ref": oid}},
+            {"$match": {**COUNTABLE_EXEC, "patient_ref": oid}},
             {"$lookup": {"from": "prescription_items", "localField": "_id",
                          "foreignField": "execution_id", "as": "it"}},
             {"$unwind": "$it"},
@@ -337,7 +338,7 @@ class PatientExecutionsRepository(BaseRepository):
                           "category": 1, "times": 1, "value": 1}},
         ])
         totals = await self.aggregate([
-            {"$match": {"patient_ref": oid}},
+            {"$match": {**COUNTABLE_EXEC, "patient_ref": oid}},
             {"$group": {"_id": None, "rx": {"$sum": 1}, "value": {"$sum": "$amount_total"},
                         "first": {"$min": "$executed_at"}, "last": {"$max": "$executed_at"}}},
         ])

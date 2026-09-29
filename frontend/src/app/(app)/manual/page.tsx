@@ -37,6 +37,29 @@ export default function ManualPage() {
 
   const { body, headings } = useMemo(() => renderMarkdown(filtered), [filtered]);
 
+  // ΠΗΓΑΙΝΕ ΣΤΗΝ ΕΝΟΤΗΤΑ ΤΟΥ ΣΥΝΔΕΣΜΟΥ. Ο browser ψάχνει το #anchor τη στιγμή που ανοίγει η
+  // σελίδα — όταν το εγχειρίδιο δεν έχει φορτώσει ακόμη, οπότε δεν βρίσκει τίποτα και μένει στην
+  // κορυφή (στον «Σύμβουλο»). Κάνουμε την κύλιση ΕΜΕΙΣ, αφού εμφανιστεί το κείμενο, και ξανά σε
+  // κάθε αλλαγή του # (όταν ο βοηθός «?» στέλνει αλλού ενώ είσαι ήδη εδώ).
+  // Το # φτάνει κωδικοποιημένο (%CE%BA…) για ελληνικά — χωρίς decode δεν βρίσκεται ποτέ.
+  useEffect(() => {
+    if (!md) return;
+    const go = () => {
+      const raw = window.location.hash.slice(1);
+      if (!raw) return;
+      let id = raw;
+      try { id = decodeURIComponent(raw); } catch { /* ήδη αποκωδικοποιημένο */ }
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.scrollIntoView({ behavior: "smooth", block: "start" });
+      el.classList.add("manual-target");
+      window.setTimeout(() => el.classList.remove("manual-target"), 2400);
+    };
+    const tm = window.setTimeout(go, 60);   // ένα καρέ για να μπει το κείμενο στο DOM
+    window.addEventListener("hashchange", go);
+    return () => { window.clearTimeout(tm); window.removeEventListener("hashchange", go); };
+  }, [md, body]);
+
   if (err) {
     return (
       <div className="rounded-2xl border border-amber-200 bg-amber-50 p-6 text-sm text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/20 dark:text-amber-200">
@@ -51,6 +74,7 @@ export default function ManualPage() {
 
   return (
     <div className="w-full">
+      <style>{`.manual-target{background:rgba(14,165,233,.14);border-radius:.5rem;box-shadow:0 0 0 6px rgba(14,165,233,.14);transition:background .6s,box-shadow .6s}`}</style>
       <div className="mb-5 flex flex-wrap items-center gap-3">
         <BookOpen className="h-6 w-6 text-sky-600" />
         <h1 className="text-2xl font-bold text-slate-900 dark:text-slate-100">

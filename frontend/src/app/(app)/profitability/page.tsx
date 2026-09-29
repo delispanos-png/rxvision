@@ -2,7 +2,8 @@
 
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { TrendingUp, Percent, Coins, AlertTriangle, Layers } from "lucide-react";
+import Link from "next/link";
+import { TrendingUp, Percent, Coins, Scissors, Layers, Info } from "lucide-react";
 import { api } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
@@ -17,16 +18,21 @@ import { DateRangeFilter } from "@/components/filters/DateRangeFilter";
 import { DataTable, type Column } from "@/components/tables/DataTable";
 import { BarChart } from "@/components/charts/BarChart";
 import { ExportMenu } from "@/components/export/ExportMenu";
+import { AttentionMap } from "@/components/profitability/AttentionMap";
 
 type Summary = {
   revenue: number; // cents
   cost: number; // cents
   gross_profit: number; // cents
   margin_pct: number;
+  estimated_cost_pct?: number; // % του κόστους που είναι ΕΚΤΙΜΗΣΗ (όχι πραγματική χονδρική)
+  fund_cuts?: number;          // cents — περικοπές ταμείων σε εξοφλημένους μήνες της περιόδου
+  net_profit?: number;         // cents — μεικτό − περικοπές
+  cut_months_settled?: number;
 };
 
-type AgingBucket = { bucket: string; claimed: number; rx: number };
-type Aging = { buckets: AgingBucket[]; total_claimed: number; overdue_claimed: number };
+type AgingBucket = { bucket: string; open: number; months: number };
+type Aging = { buckets: AgingBucket[]; total_open: number; overdue_open: number; payments_recorded: boolean; tracking_from?: string | null; untracked_claimed?: number };
 
 type ByRow = { label: string; gross_profit: number; margin_pct: number };
 type CategoryRow = {
@@ -58,7 +64,9 @@ export default function ProfitabilityPage() {
     { value: "doctor", label: t("Ιατρός", "Doctor") },
     { value: "icd10", label: "ICD-10" },
     { value: "product", label: t("Σκεύασμα", "Product") },
-    { value: "category", label: t("Κατηγορία", "Category") },
+    // ΟΧΙ «Κατηγορία»: αυτό είναι κανονικό/ναρκωτικό/γαληνικό. Η ΘΕΡΑΠΕΥΤΙΚΗ κατηγορία έχει δικό της
+    // πάνελ πιο κάτω — ίδια λέξη για δύο διαφορετικά πράγματα μπέρδευε.
+    { value: "type", label: t("Τύπος σκευάσματος", "Product type") },
   ];
 
   const lowMarginColumns: Column<LowMarginRow>[] = [
@@ -92,8 +100,8 @@ export default function ProfitabilityPage() {
   });
 
   const lowMargin = useQuery({
-    queryKey: ["profitability", "low-margin", 10],
-    queryFn: () => api<{ items: LowMarginRow[] }>(`/profitability/low-margin?threshold_pct=10`),
+    queryKey: ["profitability", "low-margin", 10, q],
+    queryFn: () => api<{ items: LowMarginRow[] }>(`/profitability/low-margin?threshold_pct=10&${q}`),
   });
 
   const aging = useQuery({
@@ -136,7 +144,7 @@ export default function ProfitabilityPage() {
       <div className="space-y-4">
         {/* KPI row */}
         <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-5">
-          <KpiCard label={t("Μεικτό κέρδος", "Gross profit")} help={t("Αιτούμενο/αξία − κόστος χονδρικής των φαρμάκων.", "Claimed/value − wholesale cost.")} value={s ? fmtEur(s.gross_profit) : "—"} sub={t("αιτούμενα − κόστος", "claimed − cost")} icon={TrendingUp} accent="green" trend={pctDelta(s?.gross_profit, p?.gross_profit)} />
+          <KpiCard label={t("Μεικτό κέρδος", "Gross profit")} help={t("Λιανική αξία των φαρμάκων που δόθηκαν − κόστος χονδρικής τους. Ακυρωμένες εκτελέσεις και όσες εξαίρεσες από τα στατιστικά δεν μετρούν.", "Retail value of what was dispensed − its wholesale cost. Cancelled executions and those you excluded from statistics do not count.")} value={s ? fmtEur(s.gross_profit) : "—"} sub={t("λιανική − χονδρική", "retail − wholesale")} icon={TrendingUp} accent="green" trend={pctDelta(s?.gross_profit, p?.gross_profit)} />
           <KpiCard label={t("Περιθώριο", "Margin")} help={t("Περιθώριο κέρδους = μεικτό κέρδος / λιανική αξία.", "Margin = gross profit / retail value.")} value={s ? fmtPct(s.margin_pct) : "—"} sub={t("μεικτό περιθώριο", "gross margin")} icon={Percent} accent="violet" trend={pctDelta(s?.margin_pct, p?.margin_pct)} />
           <KpiCard label={t("Έσοδα", "Revenue")} help={t("Συνολικά έσοδα της περιόδου.", "Total revenue for the period.")} value={s ? fmtEur(s.revenue) : "—"} sub={t("σύνολο περιόδου", "period total")} icon={Coins} accent="amber" trend={pctDelta(s?.revenue, p?.revenue)} />
           <KpiCard
@@ -148,13 +156,28 @@ export default function ProfitabilityPage() {
             accent="sky"
           />
           <KpiCard
-            label={t("Είδη χαμηλής κερδοφορίας", "Low-margin items")}
-            value={fmtNum(lowItems.length)}
-            sub={t("περιθώριο < 10%", "margin < 10%")}
-            icon={AlertTriangle}
+            label={t("Περικοπές ταμείων", "Fund cuts")}
+            help={t("Όσα αιτήθηκες και δεν πληρώθηκαν, στους μήνες της περιόδου που σημείωσες ως εξοφλημένους στην Αποζημίωση. Είναι κέρδος που δεν υπήρξε ποτέ.", "What you claimed and was never paid, in the months of the period you marked as settled under Reimbursement. It is profit that never existed.")}
+            value={s ? fmtEur(s.fund_cuts ?? 0) : "—"}
+            sub={s && (s.fund_cuts ?? 0) > 0
+              ? t(`καθαρό κέρδος ${fmtEur(s.net_profit ?? s.gross_profit)}`, `net profit ${fmtEur(s.net_profit ?? s.gross_profit)}`)
+              : t("κανένας εξοφλημένος μήνας με περικοπή", "no settled month with a cut")}
+            icon={Scissors}
             accent="rose"
           />
         </div>
+
+        {/* ΔΙΑΦΑΝΕΙΑ: πόσο «σκληρό» είναι το κόστος που βλέπεις */}
+        {s && (s.estimated_cost_pct ?? 0) >= 1 && (
+          <p className="flex items-start gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600 dark:border-slate-800 dark:bg-slate-900/50 dark:text-slate-400">
+            <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            {t(`Το ${fmtDec(s.estimated_cost_pct ?? 0, 0)}% του κόστους αυτής της περιόδου είναι εκτίμηση από την κλίμακα διατίμησης, γιατί η ΗΔΥΚΑ δεν έδωσε χονδρική για αυτά τα είδη. Στους πίνακες σημειώνεται με «~».`,
+               `${fmtDec(s.estimated_cost_pct ?? 0, 0)}% of this period's cost is estimated from the markup bands, because ΗΔΥΚΑ gave no wholesale price for those items. Tables mark it with “~”.`)}
+          </p>
+        )}
+
+        {/* χάρτης προσοχής: τι πιέζει / τι βοηθά / τι είναι αδιάφορο — και πού να κοιτάξεις */}
+        <AttentionMap q={q} />
 
         {/* by-dimension chart */}
         <PanelCard
@@ -219,30 +242,50 @@ export default function ProfitabilityPage() {
           </QueryState>
         </PanelCard>
 
-        {/* aging chart */}
+        {/* ανοιχτά υπόλοιπα ταμείων — από την Αποζημίωση, που ξέρει τι πληρώθηκε */}
         <PanelCard
-          title={t("Ταμειακή ροή — αιτούμενα ανά ηλικία απαίτησης (ημέρες)", "Cash flow — claimed by claim age (days)")}
+          title={t("Τι σου χρωστούν τα ταμεία — ανά ηλικία (ημέρες)", "What the funds owe you — by age (days)")}
           action={
-            <div className="flex gap-4 text-sm">
+            <div className="flex flex-wrap gap-4 text-sm">
               <span className="text-slate-500">
-                {t("Σύνολο", "Total")}: <b className="text-slate-800">{ag ? fmtEur(ag.total_claimed) : "—"}</b>
+                {t("Ανοιχτά", "Open")}: <b className="text-slate-800 dark:text-slate-200">{ag ? fmtEur(ag.total_open) : "—"}</b>
               </span>
               <span className="text-slate-500">
-                {t("Ληξιπρόθεσμα (>60ημ)", "Overdue (>60d)")}: <b className="text-amber-600">{ag ? fmtEur(ag.overdue_claimed) : "—"}</b>
+                {t("Πάνω από 60 ημέρες", "Over 60 days")}: <b className="text-amber-600">{ag ? fmtEur(ag.overdue_open) : "—"}</b>
               </span>
             </div>
           }
         >
+          {ag && !ag.payments_recorded && (
+            <p className="mb-3 flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/20 dark:text-amber-200">
+              <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+              <span>
+                {t(`Δεν έχεις σημειώσει ακόμη καμία είσπραξη, οπότε δεν μπορούμε να ξέρουμε τι σου χρωστούν — μόνο τι αιτήθηκες${ag.untracked_claimed ? ` (${fmtEur(ag.untracked_claimed)} τους τελευταίους 24 μήνες)` : ""}. Σημείωσε τι πληρώθηκε και εδώ θα βλέπεις τι είναι πραγματικά ανοιχτό και πόσο παλιό: `,
+                   `You have not recorded any payment yet, so we cannot know what you are owed — only what you claimed${ag.untracked_claimed ? ` (${fmtEur(ag.untracked_claimed)} over the last 24 months)` : ""}. Record what was paid and this will show what is really open, and how old: `)}
+                <Link href="/reimbursement/receivables" className="font-semibold underline">{t("Αποζημίωση → Υπόλοιπα", "Reimbursement → Balances")}</Link>
+              </span>
+            </p>
+          )}
+          {ag?.payments_recorded && ag.tracking_from && (
+            <p className="mb-3 text-xs text-slate-500">
+              {t(`Υπολογίζεται από ${ag.tracking_from.slice(5)}/${ag.tracking_from.slice(0, 4)}, τον πρώτο μήνα που σημείωσες είσπραξη. Οι προηγούμενοι μήνες δεν μετρούν ως οφειλόμενοι — δεν ξέρουμε αν πληρώθηκαν.`,
+                 `Counted from ${ag.tracking_from.slice(5)}/${ag.tracking_from.slice(0, 4)}, the first month you recorded a payment. Earlier months are not counted as owed — we do not know whether they were paid.`)}
+            </p>
+          )}
           <BarChart
             labels={(ag?.buckets ?? []).map((b) => b.bucket)}
-            data={(ag?.buckets ?? []).map((b) => Math.round(b.claimed / 100))}
-            name={t("Αιτούμενα €", "Claimed €")}
+            data={(ag?.buckets ?? []).map((b) => Math.round(b.open / 100))}
+            name={t("Ανοιχτά €", "Open €")}
             height={280}
           />
         </PanelCard>
 
         {/* low-margin table */}
         <PanelCard title={t("Είδη χαμηλής κερδοφορίας (< 10%)", "Low-margin items (< 10%)")} bodyClassName="pt-2">
+          <p className="mb-3 text-xs text-slate-500">
+            {t("Ταξινομημένα κατά τεμάχια που δόθηκαν στην περίοδο. Στα συνταγογραφούμενα το περιθώριο το ορίζει η κρατική διατίμηση και πέφτει όσο ακριβαίνει το φάρμακο — δεν είναι κάτι που διορθώνεις με την τιμή. Σε ενδιαφέρουν γιατί δεσμεύουν πολλά χρήματα σε απόθεμα για λίγο κέρδος: κράτα τα όσο χρειάζεται, όχι παραπάνω.",
+               "Sorted by units dispensed in the period. For prescription medicines the margin is set by state pricing and shrinks as the medicine gets more expensive — not something you fix with price. They matter because they tie up a lot of money in stock for little profit: hold what you need, not more.")}
+          </p>
           <QueryState
             isLoading={lowMargin.isLoading}
             isError={lowMargin.isError}

@@ -189,7 +189,10 @@ export default function ReceivablesPage() {
                       </td>
                       <td className="px-4 py-2.5 text-right text-slate-600 dark:text-slate-300">{fmtEur(r.expected)}</td>
                       <CollectControls r={r} onSaved={refresh} />
-                      <td className="px-4 py-2.5 text-right">{r.cut ? <b className="text-rose-600">{fmtEur(r.cut)}</b> : <span className="text-slate-300">—</span>}</td>
+                      <td className="px-4 py-2.5 text-right">{r.cut ? <b className="text-rose-600">{fmtEur(r.cut)}</b>
+                        : r.status === "settled_unrecorded"
+                          ? <span className="text-xs text-slate-400" title={t("Σημειώθηκε εξοφλημένος χωρίς να καταγραφεί καμία είσπραξη, οπότε η περικοπή δεν μπορεί να υπολογιστεί. Πέρασε τις δόσεις που πληρώθηκαν για να τη δεις.", "Marked settled without any payment recorded, so the cut cannot be computed. Enter the installments that were paid to see it.")}>{t("χωρίς ποσό", "no amount")}</span>
+                          : <span className="text-slate-300">—</span>}</td>
                       <td className="px-4 py-2.5 text-right font-semibold">{r.open ? <span className="text-amber-600">{fmtEur(r.open)}</span> : <span className="text-emerald-600">✓</span>}</td>
                     </tr>
                   ))}

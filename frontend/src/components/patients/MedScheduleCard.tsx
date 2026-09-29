@@ -4,16 +4,37 @@
 // ενεργοποίηση υπενθύμισης ανά αγωγή + ώρα λήψης (24ωρο) ή «κάθε X ώρες» + σχέση με γεύμα.
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Pill, Clock, AlertTriangle, X } from "lucide-react";
+import { Pill, Clock, AlertTriangle, X, Activity, MessageCircle } from "lucide-react";
 import { api } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
 import { PanelCard } from "@/components/ui/Card";
+import { fmtDate } from "@/lib/formatters";
+import { adherencePriority, PRIORITY_CLS } from "@/lib/priority";
 
 type Therapy = { med_key: string; name: string; dosage_text: string | null; per_day: number; days_left: number | null; enabled: boolean; time?: string | null; meal?: string | null; interval_hours?: number | null; plan_summary?: string | null; override?: { by?: string; reason?: string; at?: string; doctor_text?: string } | null };
 type Phase = { days: number; qty: number; per_day: number; times: string[] };
 type Ovr = { med_key: string; name: string; doctor_text: string | null; kind: "custom" | "composite"; per_day: number; phases: Phase[]; maintenance_qty: number; reason: string };
 type Sched = { therapies: Therapy[] };
 type Cfg = { med_key: string; time: string; meal: string; mode: "time" | "interval"; interval: number; per_day: number };
+
+/** Συνέπεια ανά φάρμακο — ΜΟΝΟ για τον φαρμακοποιό (δεν εμφανίζεται στην πύλη). */
+type Gap = { from: string; to: string; days: number };
+type MedAdh = {
+  status: "rated" | "single" | "no_duration" | "none";
+  fills?: number;
+  coverage_pct?: number;
+  gap_days?: number;
+  gaps?: number;
+  biggest_gap?: Gap | null;
+  ongoing_gap_days?: number;
+  covered_until?: string;
+  self_report?: { pct: number; logged: number; expected: number; days: number };
+};
+type Adherence = {
+  meds: Record<string, MedAdh>;
+  summary: { coverage_pct: number; rated: number; with_gaps: number; ongoing: number } | null;
+  months: number;
+};
 
 const HOURS = Array.from({ length: 24 }, (_, h) => String(h).padStart(2, "0"));
 const MINS = ["00", "05", "10", "15", "20", "25", "30", "35", "40", "45", "50", "55"];
@@ -22,6 +43,11 @@ export function MedScheduleCard({ patientId }: { patientId: string }) {
   const t = useT();
   const qc = useQueryClient();
   const { data } = useQuery({ queryKey: ["patient-med-schedule", patientId], queryFn: () => api<Sched>(`/patients/${encodeURIComponent(patientId)}/med-schedule`) });
+  const { data: adh } = useQuery({
+    queryKey: ["patient-adherence", patientId],
+    queryFn: () => api<Adherence>(`/patients/${encodeURIComponent(patientId)}/adherence`),
+    staleTime: 300_000,
+  });
   const [cfg, setCfg] = useState<Cfg | null>(null);
   const [ovr, setOvr] = useState<Ovr | null>(null);          // ΕΞΑΙΡΕΤΙΚΗ αλλαγή οδηγίας γιατρού
   const [ovrErr, setOvrErr] = useState<string | null>(null);
@@ -73,6 +99,55 @@ export function MedScheduleCard({ patientId }: { patientId: string }) {
   return (
     <PanelCard title={t("Πρόγραμμα λήψης φαρμάκων", "Medication schedule")}>
       <p className="mb-2 text-xs text-slate-500">{t("Ενεργοποίησε ποιες αγωγές θα υπενθυμίζονται στον ασθενή & όρισε ώρα/συχνότητα. Εμφανίζεται στην πύλη πελατών.", "Enable which therapies remind the patient & set time/frequency. Shown in the customer portal.")}</p>
+      {adh?.summary && (() => {
+        const sm = adh.summary;
+        const talk = ths
+          .map((th) => ({ th, m: adh.meds[th.med_key] }))
+          .filter((x) => x.m?.status === "rated" && (x.m.coverage_pct ?? 100) < 80)
+          .sort((a, b) => (a.m!.coverage_pct ?? 0) - (b.m!.coverage_pct ?? 0))
+          .slice(0, 3);
+        return (
+          <div className="mb-3 rounded-xl border border-slate-200 bg-slate-50/70 p-3 dark:border-slate-700 dark:bg-slate-800/40">
+            <div className="flex flex-wrap items-center gap-2">
+              <Activity className="h-4 w-4 text-slate-500" />
+              <span className="text-sm font-semibold text-slate-800 dark:text-slate-100">{t("Συνέπεια αγωγής", "Therapy adherence")}</span>
+              <span className="rounded bg-slate-200/70 px-1 py-px text-[10px] font-semibold uppercase tracking-wide text-slate-500 dark:bg-slate-700">ΗΔΥΚΑ</span>
+              <span className={`rounded-full px-2 py-0.5 text-xs font-bold ${PRIORITY_CLS[adherencePriority(sm.coverage_pct)]}`}>{sm.coverage_pct}%</span>
+              <span className="text-xs text-slate-500">
+                {sm.with_gaps
+                  ? t(`${sm.with_gaps} από ${sm.rated} φάρμακα με κενά`, `${sm.with_gaps} of ${sm.rated} medicines with gaps`)
+                  : t(`και τα ${sm.rated} φάρμακα χωρίς ουσιαστικά κενά`, `all ${sm.rated} medicines without real gaps`)}
+                {sm.ongoing ? t(` · ${sm.ongoing} χωρίς φάρμακο τώρα`, ` · ${sm.ongoing} without medicine now`) : ""}
+              </span>
+            </div>
+            <p className="mt-1 text-[11px] text-slate-500">
+              {t(`Από τις εκτελέσεις της ΗΔΥΚΑ των τελευταίων ${adh.months} μηνών: τι ποσοστό των ημερών είχε το φάρμακο στα χέρια του. Ισχύει για ΚΑΘΕ φάρμακο — δεν χρειάζεται η πύλη ούτε ο διακόπτης υπενθύμισης. Δείχνει αν το σήκωνε εγκαίρως, όχι αν το πήρε: αφορμή για κουβέντα, όχι κατηγορία.`,
+                 `From the last ${adh.months} months of ΗΔΥΚΑ dispensings: the share of days the patient had the medicine at hand. It applies to EVERY medicine — no portal or reminder switch needed. It shows whether they collected it on time, not whether they took it: a reason to talk, not an accusation.`)}
+            </p>
+            {talk.length > 0 && (
+              <div className="mt-2 border-t border-slate-200 pt-2 dark:border-slate-700">
+                <div className="mb-1 flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                  <MessageCircle className="h-3.5 w-3.5" /> {t("Για κουβέντα με τον ασθενή", "To discuss with the patient")}
+                </div>
+                <ul className="space-y-0.5">
+                  {talk.map(({ th, m }) => (
+                    <li key={th.med_key} className="text-xs text-slate-700 dark:text-slate-300">
+                      <b>{th.name}</b>{" — "}
+                      {m!.ongoing_gap_days
+                        ? t(`χωρίς φάρμακο εδώ και ${m!.ongoing_gap_days} ημέρες (τελείωσε ${fmtDate(m!.covered_until!)}). Το σταμάτησε ο γιατρός, ή το ξέχασε;`,
+                            `no medicine for ${m!.ongoing_gap_days} days (ran out ${fmtDate(m!.covered_until!)}). Did the doctor stop it, or did they forget?`)
+                        : m!.biggest_gap
+                          ? t(`${m!.biggest_gap.days} ημέρες χωρίς φάρμακο από ${fmtDate(m!.biggest_gap.from)} ως ${fmtDate(m!.biggest_gap.to)}. Τι έγινε τότε;`,
+                              `${m!.biggest_gap.days} days without medicine from ${fmtDate(m!.biggest_gap.from)} to ${fmtDate(m!.biggest_gap.to)}. What happened then?`)
+                          : t(`κάλυψη ${m!.coverage_pct}%`, `coverage ${m!.coverage_pct}%`)}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        );
+      })()}
       {ths.length === 0 && <p className="text-sm text-slate-400">{t("Δεν βρέθηκαν ενεργές αγωγές.", "No active therapies.")}</p>}
       <div className="space-y-2">
         {ths.map((th) => (
@@ -94,6 +169,42 @@ export function MedScheduleCard({ patientId }: { patientId: string }) {
                     </div>
                   </>
                 ) : th.dosage_text ? <div className="mt-0.5 text-xs text-slate-500">{th.dosage_text}</div> : null}
+                {(() => {
+                  const m = adh?.meds[th.med_key];
+                  if (!m) return null;
+                  if (m.status === "rated") {
+                    const pr = adherencePriority(m.coverage_pct);
+                    return (
+                      <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px]">
+                        <span className={`rounded-md px-1.5 py-0.5 font-bold ${PRIORITY_CLS[pr]}`}
+                          title={t("Από τις εκτελέσεις της ΗΔΥΚΑ: τι ποσοστό των ημερών είχε το φάρμακο στα χέρια του. ΔΕΝ εξαρτάται από την πύλη ή τον διακόπτη υπενθύμισης — ισχύει για κάθε φάρμακο.",
+                                   "From ΗΔΥΚΑ dispensings: share of days the patient had the medicine at hand. It does NOT depend on the portal or the reminder switch — it applies to every medicine.")}>
+                          {t("Σήκωνε εγκαίρως", "Collected on time")} {m.coverage_pct}%
+                        </span>
+                        <span className="rounded bg-slate-100 px-1 py-px text-[10px] font-semibold uppercase tracking-wide text-slate-500 dark:bg-slate-800">ΗΔΥΚΑ</span>
+                        <span className="text-slate-500">
+                          {t(`${m.fills} συνταγές`, `${m.fills} prescriptions`)}
+                          {m.biggest_gap && m.biggest_gap.days >= 7
+                            ? t(` · μεγαλύτερο κενό ${m.biggest_gap.days} ημ. (${fmtDate(m.biggest_gap.from)})`, ` · biggest gap ${m.biggest_gap.days} d (${fmtDate(m.biggest_gap.from)})`)
+                            : t(" · ανανεώνει εγκαίρως", " · refills on time")}
+                        </span>
+                        {!!m.ongoing_gap_days && (
+                          <span className="rounded-md bg-rose-50 px-1.5 py-0.5 font-semibold text-rose-700 dark:bg-rose-950/40 dark:text-rose-300">
+                            {t(`χωρίς φάρμακο ${m.ongoing_gap_days} ημ.`, `no medicine ${m.ongoing_gap_days} d`)}
+                          </span>
+                        )}
+                        {m.self_report && (
+                          <span className="text-violet-600 dark:text-violet-300" title={t("Μόνο όταν έχει υπενθύμιση: δόσεις που ο ίδιος σημείωσε «✓ Το πήρα» στην πύλη, από τις αναμενόμενες.", "Only with a reminder on: doses the patient marked “✓ Taken” in the portal, out of those expected.")}>
+                            · {t(`πύλη: σημείωσε «✓ Το πήρα» στο ${m.self_report.pct}% των δόσεων (${m.self_report.days} ημ.)`, `portal: marked “✓ Taken” for ${m.self_report.pct}% of doses (${m.self_report.days} d)`)}
+                          </span>
+                        )}
+                      </div>
+                    );
+                  }
+                  if (m.status === "single") return <div className="mt-1 text-[11px] text-slate-400">{t("1 συνταγή στο 12μηνο — δεν υπάρχει ακόμη ιστορικό συνέπειας", "1 prescription in 12 months — no adherence history yet")}</div>;
+                  if (m.status === "no_duration") return <div className="mt-1 text-[11px] text-slate-400">{t("Η συνταγή δεν γράφει διάρκεια — δεν υπολογίζεται κάλυψη", "The prescription has no duration — coverage cannot be computed")}</div>;
+                  return null;
+                })()}
                 {th.enabled && cfg?.med_key !== th.med_key && (
                   <button onClick={() => edit(th)} className="mt-1 inline-flex items-center gap-1.5 rounded-lg bg-violet-50 px-2 py-0.5 text-[11px] text-violet-700 hover:bg-violet-100 dark:bg-violet-950/40 dark:text-violet-300">
                     <Clock className="h-3 w-3" /> {th.interval_hours ? `κάθε ${th.interval_hours}ω` : (th.time || "—")}{th.meal === "before" ? " · πριν" : th.meal === "after" ? " · μετά" : ""} · {t("αλλαγή", "edit")}

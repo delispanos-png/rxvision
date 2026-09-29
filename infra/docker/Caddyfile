@@ -41,7 +41,7 @@
 }
 
 # Security response headers (defense-in-depth; applied to every site below).
-# NB: no Content-Security-Policy yet — Next.js inline hydration scripts need a nonce
+# NB: η Content-Security-Policy ορίζεται στο frontend/src/middleware.ts (ανά host), ΟΧΙ εδώ.
 # integration first; clickjacking is covered by X-Frame-Options DENY.
 (security_headers) {
 	header {

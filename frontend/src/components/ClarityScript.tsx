@@ -24,6 +24,15 @@ export function ClarityScript({ surface }: { surface: "app" | "portal" }) {
         // δεύτερος έλεγχος: ποτέ δεν εμπιστευόμαστε τιμή που θα γίνει μέρος URL
         if (cancelled || !id || !/^[A-Za-z0-9-]{1,40}$/.test(id)) return;
         if (document.getElementById("ms-clarity")) return;     // idempotent σε navigation
+        // Ο «σταθμός αναμονής» του επίσημου snippet της Microsoft: κλήσεις `clarity(...)` πριν
+        // φορτώσει το script μπαίνουν σε ουρά αντί να χαθούν.
+        const w = window as unknown as { clarity?: ((...a: unknown[]) => void) & { q?: unknown[] } };
+        if (!w.clarity) {
+          const f = ((...a: unknown[]) => { (f.q = f.q || []).push(a); }) as ((...a: unknown[]) => void) & { q?: unknown[] };
+          w.clarity = f;
+        }
+        // ⚠ Η CSP (middleware.ts) πρέπει να επιτρέπει *.clarity.ms — αλλιώς ο browser το κόβει
+        // ΣΙΩΠΗΛΑ (έτσι έμεινε νεκρό μέχρι 28/09/2026: 140 αναφορές CSP, μηδέν επισκέψεις).
         const s = document.createElement("script");
         s.id = "ms-clarity";
         s.async = true;

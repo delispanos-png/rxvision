@@ -57,7 +57,18 @@ def _lookup_sync(creds: dict, barcode: str) -> dict:
         meds = [ln.get("name") for ln in (cda.get("lines") or []) if ln.get("name")]
     doctor = (cda.get("doctor") or {}).get("name")
     found = bool(meds or doctor or details.get("issue_date"))
+
+    def _ymd(v):   # CDA: YYYYMMDD → ISO ημερομηνία
+        v = str(v or "")
+        return f"{v[:4]}-{v[4:6]}-{v[6:8]}" if len(v) == 8 and v.isdigit() else None
+
+    seq, total = cda.get("repeat_seq"), cda.get("repeat_type")
     return {
+        # ΑΠΟ ΠΟΤΕ εκτελείται (επαναλαμβανόμενη: η δική της περίοδος) — ο φαρμακοποιός ξέρει πότε
+        # να την περιμένει στον πάγκο και να έχει έτοιμα τα φάρμακα.
+        "open_date": _ymd(cda.get("valid_from")),
+        "valid_until": _ymd(cda.get("valid_until")),
+        "repeat": (f"{seq}/{total}" if seq and total and str(total) not in ("1", "") else None),
         "found": found,
         "doctor": doctor,
         "medicines": meds[:20],

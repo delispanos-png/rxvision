@@ -27,6 +27,12 @@ FIELD = "excluded_from_stats"
 NOT_EXCLUDED: dict = {FIELD: {"$ne": True}}
 
 
+#: Εκτέλεση που μετρά σε ΤΖΙΡΟ/ΚΕΡΔΟΣ: ούτε εξαιρεμένη από τον φαρμακοποιό, ούτε ακυρωμένη.
+#: Ένας ορισμός για κερδοφορία, σύμβουλο, ιατρούς, διαγνώσεις και αξία ασθενή — ώστε το ίδιο
+#: μέγεθος να μη βγαίνει διαφορετικό σε δύο οθόνες.
+COUNTABLE_EXEC: dict = {**NOT_EXCLUDED, "status": {"$ne": "cancelled"}}
+
+
 def countable(match: dict | None = None) -> dict:
     """`{...φίλτρα σου}` → το ίδιο, χωρίς τις εξαιρεμένες εκτελέσεις."""
     return {**(match or {}), **NOT_EXCLUDED}

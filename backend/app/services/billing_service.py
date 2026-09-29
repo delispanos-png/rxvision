@@ -444,6 +444,47 @@ async def delete_tenant_fully(tenant_id: str) -> dict:
     return removed
 
 
+#: Ώρα της νυχτερινής διαγραφής (celery beat `purge-expired-trials`: 05:45 UTC).
+PURGE_RUN_UTC = (5, 45)
+_TRIAL_PLANS = ("trial", "free_trial", None)
+
+
+def purge_plan(sub: dict | None, cfg: dict, now: datetime | None = None) -> dict | None:
+    """ΠΟΤΕ διαγράφεται αυτός ο λογαριασμός — ή ΤΙ τον προστατεύει. None = δεν είναι δοκιμαστικός.
+
+    ΜΙΑ πηγή αλήθειας: το ίδιο κριτήριο εφαρμόζει και το `purge_expired_trials` (το Mongo ερώτημά
+    του είναι απλώς προ-φίλτρο ταχύτητας). Αλλιώς η λίστα Πελατών θα μπορούσε να δείχνει ημερομηνία
+    που δεν θα συμβεί ποτέ — ή να μη δείχνει μια που θα συμβεί αύριο το πρωί.
+
+    → {"at": ώρα διαγραφής (η πρώτη νυχτερινή εκτέλεση μετά τη λήξη + N ημέρες), "days": ημέρες ως
+       τότε, "protected": λόγος που ΔΕΝ διαγράφεται ή None, "enabled": αν η διαγραφή είναι ενεργή}"""
+    if not sub or sub.get("plan") not in _TRIAL_PLANS:
+        return None
+    now = now or _now()
+    protected = None
+    if sub.get("complimentary") is True:
+        protected = "complimentary"
+    elif sub.get("revolut_customer_id") is not None or sub.get("viva_transaction_id") is not None:
+        protected = "card"
+    elif sub.get("status") not in ("expired", "trial", "trialing"):
+        protected = "status"
+    cpe = sub.get("current_period_end")
+    if not isinstance(cpe, datetime):
+        return {"at": None, "days": None, "protected": protected or "no_end_date",
+                "enabled": cfg["purge_enabled"]}
+    if cpe.tzinfo is None:
+        cpe = cpe.replace(tzinfo=timezone.utc)
+    due = cpe + timedelta(days=cfg["purge_days"])
+    run = due.replace(hour=PURGE_RUN_UTC[0], minute=PURGE_RUN_UTC[1], second=0, microsecond=0)
+    if run < due:
+        run += timedelta(days=1)
+    if run < now:                       # έπρεπε ήδη να έχει γίνει → η ΕΠΟΜΕΝΗ εκτέλεση
+        nxt = now.replace(hour=PURGE_RUN_UTC[0], minute=PURGE_RUN_UTC[1], second=0, microsecond=0)
+        run = nxt if nxt >= now else nxt + timedelta(days=1)
+    return {"at": run, "days": max(0, (run.date() - now.date()).days),
+            "protected": protected, "enabled": cfg["purge_enabled"]}
+
+
 async def purge_expired_trials(*, dry_run: bool = False) -> dict:
     """ΔΟΚΙΜΑΣΤΙΚΕΣ συνδρομές που έληξαν >N ημέρες (default 20) & δεν μετατράπηκαν → αρχειοθέτηση ΑΦΜ/
     επικοινωνίας στη βάση leads και ΔΙΑΓΡΑΦΗ του λογαριασμού. Δεν αγγίζει πληρωμένους/με κάρτα."""
@@ -457,7 +498,9 @@ async def purge_expired_trials(*, dry_run: bool = False) -> dict:
     q = {"plan": {"$in": ["trial", "free_trial", None]},
          "status": {"$in": ["expired", "trial", "trialing"]},
          "current_period_end": {"$lte": cutoff}, **no_card}
-    targets = [s["tenant_id"] async for s in db["subscriptions"].find(q, {"tenant_id": 1})]
+    # Το ερώτημα είναι ΠΡΟ-ΦΙΛΤΡΟ· η απόφαση είναι του `purge_plan` — ίδια με τη λίστα Πελατών.
+    targets = [s["tenant_id"] async for s in db["subscriptions"].find(q)  # tenant-ok: σάρωση πλατφόρμας
+               if (pp := purge_plan(s, cfg)) and not pp["protected"]]
     purged, archived = 0, []
     for tid in targets:
         if dry_run:

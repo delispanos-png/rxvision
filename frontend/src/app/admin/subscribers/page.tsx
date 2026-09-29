@@ -10,7 +10,9 @@ import { DataTable, type Column } from "@/components/tables/DataTable";
 import { Modal } from "@/components/ui/Modal";
 import { Search, X, Users2, Building2, Wallet, KeyRound, PauseCircle, type LucideIcon } from "lucide-react";
 
-type Tenant = { id: string; name: string; afm?: string; plan: string; status: string; users: number; active_now?: number; seats?: number; mrr: number; msg_balance?: number; hdika_paused?: boolean; hdika_error?: string | null; hdika_paused_at?: string | null; sync_stopped?: boolean; sync_stopped_at?: string | null; created_at: string };
+type Tenant = { id: string; name: string; afm?: string; plan: string; status: string; users: number; active_now?: number; seats?: number; mrr: number; msg_balance?: number; hdika_paused?: boolean; hdika_error?: string | null; hdika_paused_at?: string | null; sync_stopped?: boolean; sync_stopped_at?: string | null; created_at: string;
+  /** Πότε διαγράφεται (δοκιμαστικοί) — ίδιος κανόνας με τη νυχτερινή διαγραφή. */
+  purge?: { at: string | null; days: number | null; protected: string | null; enabled: boolean } | null };
 type Package = { _id: string; name: string; price_monthly: number; price_yearly?: number; modules: string[]; seats: number; trial_days: number; sla?: string; active?: boolean; extra_user_price?: number; extra_user_price_yearly?: number };
 type Sla = { _id: string; name?: string; description?: string; active?: boolean; price_monthly?: number; price_yearly?: number };
 type AadeResp = { ok: boolean; name?: string; title?: string; doy?: string; address?: string; postal_code?: string; city?: string };
@@ -144,6 +146,25 @@ export default function SubscribersPage() {
     ) },
     { key: "plan", header: "Πλάνο", render: (r) => <span className="capitalize text-slate-600 dark:text-slate-300">{r.plan}</span> },
     { key: "status", header: "Κατάσταση", render: (r) => <Badge value={r.status} /> },
+    // ΠΟΤΕ ΔΙΑΓΡΑΦΕΤΑΙ — μόνο για τις ληγμένες δοκιμές. Ίδιος κανόνας με τη νυχτερινή διαγραφή
+    // (billing_service.purge_plan), άρα η ημερομηνία εδώ είναι αυτή που θα συμβεί.
+    { key: "purge", header: "Διαγραφή", render: (r) => {
+      const p = r.purge;
+      if (!p || r.status !== "expired") return <span className="text-slate-300">—</span>;
+      if (!p.enabled) return <span className="text-xs text-slate-400" title="Η αυτόματη διαγραφή είναι απενεργοποιημένη (Leads → ρυθμίσεις).">απενεργ.</span>;
+      if (p.protected) {
+        const why: Record<string, string> = { card: "έχει κάρτα", complimentary: "δωρεάν πρόσβαση", status: "κατάσταση", no_end_date: "χωρίς ημ. λήξης" };
+        return <span className="text-xs text-emerald-700" title="Δεν διαγράφεται αυτόματα.">δεν διαγράφεται · {why[p.protected] || p.protected}</span>;
+      }
+      if (!p.at) return <span className="text-slate-300">—</span>;
+      const d = p.days ?? 0;
+      return (
+        <span className={`whitespace-nowrap text-xs font-semibold ${d <= 3 ? "text-rose-600" : d <= 7 ? "text-orange-600" : "text-slate-600"}`}
+          title={`Αυτόματη διαγραφή (αρχειοθέτηση ΑΦΜ + επικοινωνίας στα Leads) στις ${new Date(p.at).toLocaleString("el-GR", { timeZone: "Europe/Athens" })}. Μια ανανέωση πριν από τότε τη σταματά.`}>
+          {fmtDate(p.at)} <span className="font-normal text-slate-400">· {d === 0 ? "σήμερα" : d === 1 ? "αύριο" : `σε ${d} ημ.`}</span>
+        </span>
+      );
+    } },
     { key: "users", header: "Χρήστες", align: "right", render: (r) => fmtNum(r.users) },
     { key: "active_now", header: "Ενεργοί τώρα", align: "right", render: (r) => (
       <span className={r.active_now ? "font-semibold text-emerald-600" : "text-slate-400"}>

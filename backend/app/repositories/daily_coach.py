@@ -27,6 +27,7 @@ from bson.errors import InvalidId
 from app.repositories.base import BaseRepository
 from app.services import recoverable
 from app.services import coach_voice as V
+from app.services.stats_exclusion import COUNTABLE_EXEC
 from app.utils.masking import mask_amka, mask_name, pseudo_email, pseudo_phone
 
 ATHENS = timezone(timedelta(hours=3))          # πρακτικά αρκεί για το «ποια μέρα είναι»
@@ -441,6 +442,18 @@ class DailyCoachRepository(BaseRepository):
         inactive = {c["_id"] async for c in self._db["patient_contacts"].find(
             {"tenant_id": self.tenant_id, "_id": {"$in": list(pats)}, "active": False}, {"_id": 1})}
         cand = [(pid, p) for pid, p in pats.items() if pid not in inactive]
+        # ΔΙΚΛΕΙΔΑ: «σταμάτησε να έρχεται» ΜΟΝΟ αν όντως δεν εκτέλεσε τίποτα εδώ από την αναμενόμενη
+        # ημερομηνία (−7 ημ. ανοχή). Μια πρόβλεψη μπορεί να έχει μείνει ανοιχτή (άλλη αλυσίδα, νέα
+        # συνταγή από άλλον γιατρό) — η ΠΡΑΓΜΑΤΙΚΗ εκτέλεση είναι η αλήθεια. 29/09/2026: σε ένα
+        # φαρμακείο 326 από 379 «χαμένους» είχαν έρθει κανονικά.
+        came = set()
+        for pid, _ in cand:
+            if await self._db["prescription_executions"].find_one(
+                    {"tenant_id": self.tenant_id, "patient_ref": pid, **COUNTABLE_EXEC,
+                     "executed_at": {"$gte": by_pat[pid]["expected_open_date"] - timedelta(days=7)}},
+                    {"_id": 1}):
+                came.add(pid)
+        cand = [(pid, p) for pid, p in cand if pid not in came]
         cand.sort(key=lambda t: t[1].get("rx_value_total") or 0, reverse=True)
         info = await self._patient_info([pid for pid, _ in cand[:6]])
         out = []
@@ -866,7 +879,12 @@ class DailyCoachRepository(BaseRepository):
                 title = f"{subj_full} θα φέρει σήμερα τη συνταγή για {what}"
                 body = ("Το είχε πάρει χωρίς συνταγή και σήμερα είναι η μέρα που συμφωνήσατε. "
                         "Αν δεν εμφανιστεί μέχρι το κλείσιμο, αξίζει μια υπενθύμιση.")
-            return {"title": title, "body": opener + body if opener else body}
+            # ΧΩΡΙΣ `tone`/`action` η ταξινόμηση έσκαγε (KeyError) και ΟΛΟΣ ο Σύμβουλος έβγαζε
+            # «Δεν ήταν δυνατή η φόρτωση» — 28/09/2026, την πρώτη μέρα που μια προχορήγηση είχε
+            # αναμενόμενη επιστροφή «σήμερα». Ίδιο σχήμα με κάθε άλλο σήμα.
+            return {"title": title, "body": opener + body if opener else body,
+                    "action": f"Πάρ' {him} τηλέφωνο" if ex.get("overdue") else "Δες τα δανεικά",
+                    "tone": tone}
 
         if sig == "unexecuted":
             names = [V.product(n) for n in (f.get("items") or [])]
@@ -1059,7 +1077,17 @@ class DailyCoachRepository(BaseRepository):
             st = states.get(f["key"]) or {}
             if st.get("hidden_until") and st["hidden_until"] >= day:
                 continue                                   # «έγινε» σήμερα ή «δεν με αφορά»
-            spoken = self._speak(f, st)
+            # ΜΙΑ κάρτα που δεν «μιλάει» ΔΕΝ ρίχνει τον σύμβουλο. Η εγγύηση υπήρχε για τα σήματα
+            # (try/except πιο πάνω) αλλά όχι για τη φωνή — και μια κάρτα χωρίς `tone` έριξε ΟΛΗ
+            # τη σελίδα. Χάνεται η μία κάρτα (και γράφεται στο log), όχι οι υπόλοιπες.
+            try:
+                spoken = self._speak(f, st)
+                spoken.setdefault("tone", V.TONE_SOFT)
+                spoken.setdefault("action", None)
+            except Exception:                              # noqa: BLE001
+                import logging
+                logging.getLogger(__name__).exception("coach speech failed: %s", f.get("signal"))
+                continue
             who = f.get("who") or {}
             items.append({
                 "key": f["key"], "signal": f["signal"], "name": f.get("name"),

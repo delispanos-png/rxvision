@@ -16,7 +16,7 @@ from datetime import datetime, timedelta, timezone
 from bson import Binary, ObjectId
 
 from app.repositories.base import BaseRepository, jsonsafe
-from app.services.catalog_taxonomy import PRODUCT_TYPES, discount_allowed
+from app.services.catalog_taxonomy import PRODUCT_TYPES, discount_allowed, medicine_category
 
 TYPES = PRODUCT_TYPES   # ("rx_medicine", "otc_medicine", "parapharmacy")
 
@@ -853,7 +853,6 @@ class PharmacyCatalogRepository(BaseRepository):
 
     async def prefill(self, barcode: str) -> dict:
         """Auto-fill a medicine from the shared ΗΔΙΚΑ catalogue by barcode (less typing)."""
-        from app.services.catalog_taxonomy import medicine_category
         m = await self._db["medicine_catalog"].find_one({"barcode": str(barcode)})  # tenant-ok: shared ref
         if not m:
             return {"found": False}

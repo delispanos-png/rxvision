@@ -1217,7 +1217,7 @@ class FavoriteIn(BaseModel):
 @router.post("/pharmacies/favorite")
 async def set_favorite_pharmacy(body: FavoriteIn, ctx: PatientContext = Depends(get_patient_context)):
     """Δήλωση/αναίρεση «αγαπημένου» φαρμακείου (toggle) — γίνεται προεπιλεγμένο active στο login."""
-    return {"favorite": await PatientAccountRepository().set_favorite(ctx.account_id, body.tenant_id)}
+    return {"favorite": await PatientAccountRepository().toggle_favorite(ctx.account_id, body.tenant_id)}
 
 
 @router.get("/medicines/search")
@@ -1373,8 +1373,8 @@ async def my_nutrition(ctx: PatientContext = Depends(get_patient_context)):
         {"_id": 0, "assigned_by": 0})
     if not d:
         return {"has": False}
-    return {"has": True, "sections": d.get("sections") or [], "note": d.get("note"),
-            "assigned_at": d.get("assigned_at")}
+    return {"has": True, "sections": d.get("sections") or [], "summary": d.get("summary"),
+            "note": d.get("note"), "assigned_at": d.get("assigned_at")}
 
 
 # ── Άυλη συνταγογράφηση: ο ασθενής φέρνει ΜΟΝΟΣ του τις ΝΕΕΣ συνταγές του ────────

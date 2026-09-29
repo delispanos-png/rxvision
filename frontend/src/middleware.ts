@@ -10,13 +10,26 @@ const ADMIN_HOST = "adminpanel.rxvision.gr";
 // No external origins: Inter is self-hosted via next/font/google, so the policy is fully same-origin.
 // `report-uri` stays active so any missed resource still surfaces at /api/v1/security/csp-report.
 // (Follow-up hardening: self-host Inter to drop the Google-Fonts exception + the Google IP leak.)
-const CSP = [
+// MICROSOFT CLARITY (παρακολούθηση συμπεριφοράς, adminpanel → Ενσωματώσεις). Χωρίς αυτές τις
+// εξαιρέσεις ο browser ΜΠΛΟΚΑΡΕ σιωπηλά το script: 140 από 151 αναφορές CSP (28/09/2026) ήταν ακριβώς
+// `script-src-elem https://www.clarity.ms/tag/…` — και το Clarity έμενε στο «Almost there!» χωρίς
+// ούτε μία επίσκεψη. Οι origins είναι αυτές που δίνει η Microsoft για CSP: το script από
+// www/scripts.clarity.ms, η αποστολή δεδομένων σε *.clarity.ms και c.bing.com.
+// ΜΟΝΟ σε app/my — ΠΟΤΕ στο adminpanel, που σκόπιμα δεν παρακολουθείται.
+const CLARITY = {
+  script: "https://www.clarity.ms https://*.clarity.ms",
+  connect: "https://*.clarity.ms https://c.bing.com",
+  img: "https://*.clarity.ms https://c.bing.com",
+};
+
+function csp(withClarity: boolean): string {
+  return [
   "default-src 'self'",
-  "script-src 'self' 'unsafe-inline'",
+  `script-src 'self' 'unsafe-inline'${withClarity ? ` ${CLARITY.script}` : ""}`,
   "style-src 'self' 'unsafe-inline'",
-  "img-src 'self' data: blob:",
+  `img-src 'self' data: blob:${withClarity ? ` ${CLARITY.img}` : ""}`,
   "font-src 'self' data:",
-  "connect-src 'self'",
+  `connect-src 'self'${withClarity ? ` ${CLARITY.connect}` : ""}`,
   "manifest-src 'self'",
   "worker-src 'self' blob:",
   "frame-src 'self' blob: https://www.youtube.com https://www.youtube-nocookie.com https://player.vimeo.com",
@@ -26,7 +39,11 @@ const CSP = [
   "frame-ancestors 'none'",
   "upgrade-insecure-requests",
   "report-uri /api/v1/security/csp-report",
-].join("; ");
+  ].join("; ");
+}
+
+const CSP = csp(false);                 // adminpanel & 404
+const CSP_TRACKED = csp(true);          // app.rxvision.gr, my.rxvision.gr
 
 export function middleware(request: NextRequest) {
   const host = request.headers.get("host")?.split(":")[0] ?? "";
@@ -51,7 +68,7 @@ export function middleware(request: NextRequest) {
   }
 
   const response = NextResponse.next();
-  response.headers.set("Content-Security-Policy", CSP);
+  response.headers.set("Content-Security-Policy", host === ADMIN_HOST ? CSP : CSP_TRACKED);
   return response;
 }
 

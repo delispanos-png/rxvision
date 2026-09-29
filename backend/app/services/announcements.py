@@ -308,11 +308,41 @@ def _in_window(frm, to, now) -> bool:
     return (f is None or f <= now) and (t is None or t >= now)
 
 
+async def active_conflict(addon_key: str | None, frm, to, *, exclude=None) -> dict | None:
+    """ΑΛΛΗ ενεργή ανακοίνωση για το ΙΔΙΟ πρόσθετο με περίοδο που επικαλύπτεται (και δεν έχει λήξει).
+
+    ΓΙΑΤΙ: δύο ενεργές ανακοινώσεις για την ίδια δυνατότητα = ο πελάτης βλέπει το ίδιο μήνυμα
+    δύο φορές, με διαφορετικά κείμενα/δοκιμές, και τα στατιστικά μοιράζονται στα δύο. Ανακοινώσεις
+    χωρίς πρόσθετο (νέα/ενημερώσεις) δεν περιορίζονται."""
+    if not addon_key:
+        return None
+    now = _now()
+    f1, t1 = _as_dt(frm), _as_dt(to)
+    q: dict = {"addon_key": addon_key, "active": True}
+    if exclude is not None:
+        q["_id"] = {"$ne": exclude}
+    async for a in shared_db()["announcements"].find(q, {"title": 1, "from": 1, "to": 1}):
+        f2, t2 = _as_dt(a.get("from")), _as_dt(a.get("to"))
+        if t2 is not None and t2 < now:
+            continue                                        # έχει λήξει — δεν «τρέχει»
+        if (t1 is None or f2 is None or f2 <= t1) and (t2 is None or f1 is None or f1 <= t2):
+            return {"id": str(a["_id"]), "title": a.get("title"),
+                    "from": f2.isoformat() if f2 else None, "to": t2.isoformat() if t2 else None}
+    return None
+
+
 async def set_active(ann_id: str, active: bool, *, by: str | None = None) -> dict:
     """Άναψε/σβήσε μια ανακοίνωση χωρίς να την ανοίξεις — τίποτα άλλο δεν αλλάζει."""
     oid = _oid(ann_id)
     if not oid:
         return {"ok": False, "error": "not_found"}
+    if active:
+        cur = await shared_db()["announcements"].find_one({"_id": oid}, {"addon_key": 1, "from": 1, "to": 1})
+        if not cur:
+            return {"ok": False, "error": "not_found"}
+        clash = await active_conflict(cur.get("addon_key"), cur.get("from"), cur.get("to"), exclude=oid)
+        if clash:
+            return {"ok": False, "error": "addon_already_announced", "conflict": clash}
     res = await shared_db()["announcements"].update_one(
         {"_id": oid}, {"$set": {"active": bool(active), "updated_at": _now(), "updated_by": by}})
     if not res.matched_count:
@@ -400,6 +430,10 @@ async def save(data: dict, *, ann_id: str | None = None, by: str | None = None) 
     if not doc["title"]:
         return {"ok": False, "error": "title_required"}
     oid = _oid(ann_id) if ann_id else None
+    if doc["active"]:
+        clash = await active_conflict(doc["addon_key"], doc["from"], doc["to"], exclude=oid)
+        if clash:
+            return {"ok": False, "error": "addon_already_announced", "conflict": clash}
     if oid:
         await db["announcements"].update_one({"_id": oid}, {"$set": doc})
     else:

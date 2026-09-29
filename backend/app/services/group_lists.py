@@ -161,7 +161,8 @@ async def loans(db, tenant_id: str, ids: list, names: dict[str, str], *,
             {"tenant_id": tenant_id, "status": "open",
              "patient_ref": {"$in": list(ids) + strs}}).sort("created_at", 1).limit(limit):
         pid = str(d.get("patient_ref"))
-        out.append({"patient_id": pid, "name": names.get(pid, d.get("patient_name") or "—"),
+        out.append({"id": str(d["_id"]),     # για άμεσο σύνδεσμο στο ΣΥΓΚΕΚΡΙΜΕΝΟ δανεικό
+                    "patient_id": pid, "name": names.get(pid, d.get("patient_name") or "—"),
                     "created_at": d.get("created_at"),
                     "expected_at": d.get("expected_at"),
                     "items": [i.get("name") for i in (d.get("items") or []) if i.get("name")]})

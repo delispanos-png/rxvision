@@ -8,11 +8,14 @@ import { useT } from "@/store/prefStore";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
 import { PanelCard } from "@/components/ui/Card";
 import { appAlert } from "@/store/dialogStore";
-import { nutritionDecor as decor, measurementAdvice, type NutritionSection as Section } from "@/lib/nutrition";
+import { nutritionDecor as decor, type NutritionSection as Section, type NutritionSummary as Summary } from "@/lib/nutrition";
+import { NutritionSummary } from "@/components/nutrition/NutritionSummary";
+import { fmtDate } from "@/lib/formatters";
 
 type Hit = { patient_id: string; name?: string | null; amka?: string | null; birth_year?: number | null; age_group?: string | null; last_seen?: string | null; mobile?: string | null; email?: string | null; consent?: boolean };
 
-type Plan = { patient_id: string; name?: string | null; email?: string | null; mobile?: string | null; sections: Section[] };
+type Plan = { patient_id: string; name?: string | null; email?: string | null; mobile?: string | null; sections: Section[]; summary?: Summary | null;
+  based_on?: { therapies: number; therapies_matched: number; measurements: Record<string, string> } };
 
 export default function NutritionPage() {
   const t = useT();
@@ -44,10 +47,10 @@ export default function NutritionPage() {
       <div className="mb-5 overflow-hidden rounded-2xl bg-gradient-to-br from-emerald-600 via-emerald-600 to-teal-700 p-5 text-white shadow-lg dark:from-emerald-700 dark:to-teal-800 print:hidden">
         <div className="flex items-center gap-2">
           <span className="relative flex h-2.5 w-2.5"><span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-white/70" /><span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-white" /></span>
-          <span className="text-[11px] font-semibold uppercase tracking-[0.15em] text-white/80">{t("AI · Διατροφικές οδηγίες", "AI · Nutrition guidance")}</span>
+          <span className="text-[11px] font-semibold uppercase tracking-[0.15em] text-white/80">{t("Διατροφικές οδηγίες", "Nutrition guidance")}</span>
         </div>
         <h1 className="mt-1.5 flex items-center gap-2 text-2xl font-bold tracking-tight"><Salad className="h-6 w-6" /> {t("Σύμβουλος Διατροφής", "Nutrition Advisor")}</h1>
-        <p className="mt-2 max-w-3xl text-sm leading-relaxed text-white/90">{t("Βρες έναν πελάτη και στείλε του εξατομικευμένες διατροφικές συμβουλές, βασισμένες στα φάρμακα & τις δραστικές που λαμβάνει — για καλύτερα αποτελέσματα στη θεραπεία του.", "Find a customer and send them personalized nutrition advice, based on the medicines & active substances they take — for better treatment outcomes.")}</p>
+        <p className="mt-2 max-w-3xl text-sm leading-relaxed text-white/90">{t("Βρες έναν πελάτη και στείλε του εξατομικευμένη πρόταση διατροφής, με βάση την αγωγή που παίρνει τώρα και τις μετρήσεις του (πίεση, σάκχαρο, βάρος) — για καλύτερα αποτελέσματα στη θεραπεία του.", "Find a customer and send them a personalised nutrition plan, based on the medication they take now and their measurements (blood pressure, glucose, weight) — for better treatment outcomes.")}</p>
       </div>
 
       {/* search */}
@@ -76,7 +79,7 @@ export default function NutritionPage() {
         <div className="mt-10 flex flex-col items-center text-center print:hidden">
           <div className="mb-3 text-5xl">🥗 🍋 🐟 🥦 🫐</div>
           <h3 className="text-lg font-semibold text-slate-700">{t("Αναζήτησε έναν πελάτη για να ξεκινήσεις", "Search for a customer to get started")}</h3>
-          <p className="mt-1 max-w-md text-sm text-slate-400">{t("Μόλις επιλέξεις, ο σύμβουλος συνθέτει εξατομικευμένες διατροφικές οδηγίες με βάση τη φαρμακευτική του αγωγή — έτοιμες για email ή εκτύπωση.", "Once you select one, the advisor composes personalized nutrition guidance based on their medication — ready for email or printing.")}</p>
+          <p className="mt-1 max-w-md text-sm text-slate-400">{t("Μόλις επιλέξεις, συνθέτουμε μία πρόταση διατροφής από την τρέχουσα αγωγή και τις μετρήσεις της καρτέλας του — έτοιμη για την πύλη, το email ή την εκτύπωση.", "Once you select one, we compose one nutrition plan from their current medication and the measurements on file — ready for the portal, email or printing.")}</p>
         </div>
       )}
 
@@ -118,10 +121,11 @@ export default function NutritionPage() {
             </div>
           </div>
 
-          <div className="mb-4"><MeasureAdvice patientId={picked.patient_id} /></div>
+          {plan.data?.based_on && <BasedOn b={plan.data.based_on} />}
+          <NutritionSummary summary={plan.data?.summary} />
 
           {plan.isLoading ? <div className="text-slate-400">{t("Δημιουργία πλάνου…", "Creating plan…")}</div> :
-            (plan.data?.sections?.length ?? 0) === 0 ? <PanelCard title={t("Διατροφικές συμβουλές", "Nutrition advice")}><p className="text-sm text-slate-500">{t("Δεν εντοπίστηκαν ειδικές οδηγίες για την τρέχουσα αγωγή.", "No specific guidance found for the current medication.")}</p></PanelCard> : (
+            (plan.data?.sections?.length ?? 0) === 0 ? <PanelCard title={t("Διατροφικές συμβουλές", "Nutrition advice")}><p className="text-sm text-slate-500">{t("Δεν εντοπίστηκαν ειδικές οδηγίες για την τρέχουσα αγωγή και τις μετρήσεις του.", "No specific guidance found for the current medication and measurements.")}</p></PanelCard> : (
               <div className="grid gap-4 lg:grid-cols-2">
                 {plan.data!.sections.map((s, i) => {
                   const d = decor(s.title);
@@ -132,7 +136,8 @@ export default function NutritionPage() {
                         <div className="min-w-0">
                           <div className={`text-base font-bold ${d.text} ${d.darkText}`}>{s.title}</div>
                           <div className="mt-1 flex flex-wrap gap-1">
-                            {s.drugs.length ? s.drugs.map((dr) => <span key={dr} className="rounded-full bg-white/70 px-2 py-0.5 text-[10px] font-medium text-slate-500">{dr}</span>) : <span className="text-[11px] text-slate-400">—</span>}
+                            {s.drugs.length ? s.drugs.map((dr) => <span key={dr} className="rounded-full bg-white/70 px-2 py-0.5 text-[10px] font-medium text-slate-500">{dr}</span>)
+                              : <span className="rounded-full bg-white/70 px-2 py-0.5 text-[10px] font-medium text-slate-500">📏 {t("από μέτρηση", "from a measurement")}</span>}
                           </div>
                         </div>
                       </div>
@@ -159,24 +164,18 @@ export default function NutritionPage() {
   );
 }
 
-type LM = { systolic?: number; diastolic?: number; value?: number; at: string };
-function MeasureAdvice({ patientId }: { patientId: string }) {
+type BasedOnT = NonNullable<Plan["based_on"]>;
+/** Από τι βγήκε η πρόταση — ο φαρμακοποιός πρέπει να ξέρει αν λείπουν μετρήσεις. */
+function BasedOn({ b }: { b: BasedOnT }) {
   const t = useT();
-  const { data } = useQuery({ queryKey: ["patient-measurements", patientId], queryFn: () => api<{ latest: Record<string, LM> }>(`/patients/${encodeURIComponent(patientId)}/measurements`) });
-  const { data: contact } = useQuery({ queryKey: ["patient-contact", patientId], queryFn: () => api<{ height_cm?: number | null }>(`/patients/${encodeURIComponent(patientId)}/contact`), retry: false });
-  const lt = data?.latest ?? {};
-  const { hasData, items: advice } = measurementAdvice({ bp: lt.bp, glucose: lt.glucose, weight: lt.weight, height_cm: contact?.height_cm }, t);
+  const ms = Object.entries(b.measurements || {});
+  const lbl: Record<string, string> = { bp: t("πίεση", "blood pressure"), glucose: t("σάκχαρο", "glucose"), weight: t("βάρος", "weight") };
   return (
-    <PanelCard title={t("Συμβουλές βάσει μετρήσεων", "Advice from measurements")}>
-      {!hasData ? <p className="text-sm text-slate-500">{t("Δεν υπάρχουν μετρήσεις (πίεση/ζάχαρο/βάρος). Καταχώρησέ τες στην «Εικόνα Πελάτη».", "No measurements yet — add them in the patient profile.")}</p>
-        : advice.length === 0 ? <p className="text-sm font-medium text-emerald-700">✓ {t("Οι μετρήσεις είναι σε φυσιολογικά όρια — συνέχισε ισορροπημένη μεσογειακή διατροφή.", "Measurements within normal range — keep a balanced Mediterranean diet.")}</p>
-        : <div className="space-y-2">{advice.map((a, i) => (
-            <div key={i} className={`rounded-lg border p-3 ${a.sev === "high" ? "border-rose-200 bg-rose-50" : "border-amber-200 bg-amber-50"}`}>
-              <div className={`text-sm font-semibold ${a.sev === "high" ? "text-rose-700" : "text-amber-700"}`}>{a.icon} {a.label}</div>
-              <p className="mt-0.5 text-sm text-slate-600">{a.text}</p>
-            </div>))}
-          </div>}
-      <p className="mt-2 text-[11px] text-slate-400">{t("Γενικές διατροφικές συστάσεις — δεν υποκαθιστούν ιατρική γνωμάτευση.", "General dietary guidance — not a substitute for medical advice.")}</p>
-    </PanelCard>
+    <p className="mb-3 text-xs text-slate-500 print:hidden">
+      {t(`Βασίζεται σε ${b.therapies} φάρμακα της τρέχουσας αγωγής`, `Based on ${b.therapies} medicines in current therapy`)}
+      {ms.length > 0
+        ? <> {t("και στις μετρήσεις", "and the measurements")}: {ms.map(([k, at]) => `${lbl[k] ?? k} ${fmtDate(at)}`).join(" · ")}.</>
+        : <> {t("— δεν υπάρχουν μετρήσεις του τελευταίου έτους. Πρόσθεσε πίεση, σάκχαρο ή βάρος στην «Εικόνα Πελάτη» για πιο στοχευμένη πρόταση.", "— no measurements from the last year. Add blood pressure, glucose or weight in the customer profile for a more targeted plan.")}</>}
+    </p>
   );
 }

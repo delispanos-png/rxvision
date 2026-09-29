@@ -12,6 +12,7 @@ import hashlib
 import logging
 from collections.abc import Iterable
 from datetime import datetime, timedelta, timezone
+from typing import Any
 
 from bson import ObjectId
 from pymongo import ReturnDocument
@@ -26,6 +27,18 @@ from app.utils.anonymization import age_group, pseudonymize
 
 _REPEAT_INTERVAL_DAYS = 30
 log = logging.getLogger(__name__)
+
+# Εξαρτώμενα μιας καρτέλας ασθενή. RELATIONS = κάτι που έκανε ο ίδιος ο άνθρωπος με το φαρμακείο
+# (αν υπάρχει, η καρτέλα ΔΕΝ είναι ορφανή). OWNED = ό,τι έφτιαξε το σύστημα/ο φαρμακοποιός πάνω στην
+# καρτέλα — φεύγει μαζί της. Νέα συλλογή με `patient_ref` → πρόσθεσέ τη σε μία από τις δύο.
+_PATIENT_RELATIONS = (
+    "patient_links", "orders_delivery", "order_subscriptions", "appointments",
+    "availability_requests", "rx_requests", "renewal_intents", "loyalty_members",
+    "loyalty_ledger", "advance_dispensings", "med_intake_log", "patient_measurements",
+    "calendar_feeds", "sent_messages")
+_PATIENT_OWNED = (
+    "future_prescriptions", "med_reminders", "med_settings", "med_plans", "patient_notes",
+    "patient_ai_advice", "coach_findings", "coach_recoveries", "patient_nutrition_plans")
 
 
 def _now() -> datetime:
@@ -60,6 +73,7 @@ class IngestionEngine:
         self._flu_eof_set: set | None = None    # eofCodes αντιγριπικών (lazy, ανά sync)
         self._dose_eof_set: set | None = None    # eofCodes που χρειάζονται οπτικό έλεγχο δοσολογίας
         self._catalog_retail_cache: dict = {}   # barcode/eofCode → ρυθμιζόμενη λιανική (Δελτίο Τιμών)
+        self._ownership: Any = None             # HdikaOwnership (lazy, ανά sync) — βλ. _persist
 
     async def ingest(self, *, source: str, job_type: str,
                      records: Iterable[CanonicalExecution],
@@ -144,11 +158,22 @@ class IngestionEngine:
         return job
 
     # ── per-record persist ─────────────────────────────────
+    async def _note_foreign(self, ex: CanonicalExecution, holder: str, job_id: ObjectId,
+                            owns: bool | None) -> None:
+        """Η ΗΔΥΚΑ μάς έδωσε εκτέλεση που ανήκει σε άλλο φαρμακείο — ΔΕΝ την αγγίζουμε, την
+        καταγράφουμε (μία γραμμή ανά άντληση & κάτοχο, με μετρητή) για να φαίνεται στο adminpanel."""
+        await self.db["ingestion_alerts"].update_one(
+            {"kind": "foreign_execution_ignored", "job_id": job_id, "holder": holder},
+            {"$inc": {"count": 1},
+             "$set": {"tenant_id": self.tenant_id, "last_external_id": ex.external_id,
+                      "verified": owns is True, "at": _now()}},
+            upsert=True)
+
     async def _release_cross_tenant_clash(self, ex: CanonicalExecution, other_tenant: str,
                                           job_id: ObjectId) -> None:
         """Το `ex` ανήκει σε ΕΜΑΣ (scoped feed) αλλά υπάρχει αντίγραφο-διαρροή στον `other_tenant`.
         Το αφαιρούμε ΟΡΙΣΤΙΚΑ από εκεί (με backup) + καθαρίζουμε ορφανό ασθενή (raw ΑΜΚΑ = GDPR) &
-        γιατρό & rx_frequency προϊόντων. Μετά ο caller συνεχίζει να το γράψει στο δικό μας tenant."""
+        γιατρό. Μετά ο caller συνεχίζει να το γράψει στο δικό μας tenant."""
         db = self.db
         victim = await db["prescription_executions"].find_one(
             {"source": ex.source, "external_id": ex.external_id, "tenant_id": other_tenant})
@@ -161,28 +186,48 @@ class IngestionEngine:
         # ορφανός; = καμία ΑΛΛΗ εκτέλεση του other_tenant δεν τον χρησιμοποιεί (αφού βγει αυτή)
         patient_orphan = bool(pref) and await db["prescription_executions"].count_documents(
             {"tenant_id": other_tenant, "patient_ref": pref, "_id": {"$ne": vid}}) == 0
+        # …και ΔΕΝ έχει σχέση που ξεκίνησε ο ίδιος ο άνθρωπος με εκείνο το φαρμακείο (πύλη, παραγγελία,
+        # ραντεβού, πιστότητα). Τότε είναι πραγματικός πελάτης του — φεύγει μόνο η εκτέλεση-διαρροή.
+        if patient_orphan:
+            for c in _PATIENT_RELATIONS:
+                if await db[c].find_one({"tenant_id": other_tenant, "patient_ref": pref}, {"_id": 1}):
+                    patient_orphan = False
+                    break
         doctor_orphan = bool(did) and await db["prescription_executions"].count_documents(
             {"tenant_id": other_tenant, "doctor_id": did, "_id": {"$ne": vid}}) == 0
         pdoc = await db["patients_anonymized"].find_one({"_id": pref}) if patient_orphan else None
         ddoc = await db["doctors"].find_one({"_id": did}) if doctor_orphan else None
+        owned: dict = {}
+        if patient_orphan:
+            contact = await db["patient_contacts"].find_one({"_id": pref, "tenant_id": other_tenant})
+            if contact:
+                owned["patient_contacts"] = [contact]
+            for c in _PATIENT_OWNED:
+                docs = await db[c].find({"tenant_id": other_tenant, "patient_ref": pref}).to_list(None)
+                if docs:
+                    owned[c] = docs
         # BACKUP (αναστρέψιμο) πριν οτιδήποτε σβηστεί
         await db["cleanup_backups"].insert_one({
             "reason": "cross_tenant_transfer", "at": _now(), "job_id": job_id,
             "source": ex.source, "external_id": ex.external_id,
             "from_tenant": other_tenant, "to_tenant": self.tenant_id,
-            "execution": victim, "items": items, "patient": pdoc, "doctor": ddoc})
+            "execution": victim, "items": items, "patient": pdoc, "doctor": ddoc,
+            "patient_owned": owned})
         # ΔΙΑΓΡΑΦΗ από τον λάθος tenant
         await db["prescription_items"].delete_many({"execution_id": vid})
+        # η πρόβλεψη επόμενης εκτέλεσης φεύγει ΜΑΖΙ της — αλλιώς μένει «φάντασμα» στον λάθος tenant
+        # (10.049 τέτοια βρέθηκαν στις 28/09/2026). Ο δικός μας _persist τη δημιουργεί ξανά εδώ.
+        await db["future_prescriptions"].delete_many(
+            {"tenant_id": other_tenant, "source_execution_id": vid})
         await db["prescription_executions"].delete_one({"_id": vid})
         if patient_orphan:               # GDPR: φεύγει το raw ΑΜΚΑ από το λάθος φαρμακείο
             await db["patients_anonymized"].delete_one({"_id": pref})
+            # ό,τι κρεμόταν από την καρτέλα (επαφές = raw τηλέφωνο/email, σημειώσεις, υπενθυμίσεις…)
+            # φεύγει μαζί της· πριν έμενε πίσω ορφανό (58 επαφές βρέθηκαν στις 28/09/2026)
+            for c, docs in owned.items():
+                await db[c].delete_many({"_id": {"$in": [d["_id"] for d in docs]}})
         if doctor_orphan:
             await db["doctors"].delete_one({"_id": did})
-        for it in items:                 # διόρθωσε συχνότητα προϊόντων του λάθος tenant
-            if it.get("product_id"):
-                await db["products"].update_one(
-                    {"_id": it["product_id"], "tenant_id": other_tenant},
-                    {"$inc": {"rx_frequency": -1}})
         # καθάρισε τυχόν παλιό block alert & γράψε ίχνος μεταφοράς (audit)
         await db["ingestion_alerts"].delete_many(
             {"kind": "cross_tenant_barcode", "external_id": ex.external_id})
@@ -192,6 +237,31 @@ class IngestionEngine:
             "patient_removed": patient_orphan, "doctor_removed": doctor_orphan, "at": _now()})
         log.warning("cross_tenant_transfer external_id=%s from=%s to=%s (patient_orphan=%s)",
                     ex.external_id, other_tenant, self.tenant_id, patient_orphan)
+
+    # ── αλυσίδα επαναλήψεων: η εκτέλεση της θέσης n «κλείνει» τις προβλέψεις των θέσεων < n ──────
+    # Πριν (έως 29/09/2026) η πρόβλεψη που γεννούσε η θέση 1/3 έμενε «αναμένεται» ΓΙΑ ΠΑΝΤΑ, ακόμη κι
+    # όταν ο πελάτης εκτελούσε κανονικά την 2/3. Ο Σύμβουλος τον έβγαζε «σταμάτησε να έρχεται»:
+    # μετρημένο σε ένα φαρμακείο, 326 από 379 τέτοιους πελάτες είχαν έρθει κανονικά.
+    async def _later_in_chain(self, ex: CanonicalExecution) -> dict | None:
+        if not ex.repeat_root:
+            return None
+        return await self.db["prescription_executions"].find_one(
+            {"tenant_id": self.tenant_id, "repeat_root": ex.repeat_root,
+             "repeat_current": {"$gt": ex.repeat_current}, "status": {"$ne": "cancelled"}},
+            {"_id": 1, "executed_at": 1}, sort=[("executed_at", 1)])
+
+    async def _fulfil_earlier_in_chain(self, ex: CanonicalExecution, exec_id: ObjectId) -> None:
+        if not ex.repeat_root or ex.repeat_current <= 1:
+            return
+        prior = [d["_id"] async for d in self.db["prescription_executions"].find(
+            {"tenant_id": self.tenant_id, "repeat_root": ex.repeat_root,
+             "repeat_current": {"$lt": ex.repeat_current}}, {"_id": 1})]
+        if prior:
+            await self.db["future_prescriptions"].update_many(
+                {"tenant_id": self.tenant_id, "source_execution_id": {"$in": prior},
+                 "status": "pending"},
+                {"$set": {"status": "fulfilled", "fulfilled_by": exec_id,
+                          "fulfilled_at": ex.executed_at}})
 
     async def _persist(self, ex: CanonicalExecution, job_id: ObjectId) -> str:
         # ── ΦΡΟΥΡΟΣ cross-tenant → AUTO-TRANSFER στον αυθεντικό ιδιοκτήτη ───────────────────────
@@ -207,6 +277,18 @@ class IngestionEngine:
             {"source": ex.source, "external_id": ex.external_id,
              "tenant_id": {"$ne": self.tenant_id}}, {"tenant_id": 1})
         if clash:
+            # Πριν πάρουμε εκτέλεση από άλλο φαρμακείο, ρωτάμε το feed ΤΟΥ ΚΑΤΟΧΟΥ (ownership.py): σε
+            # ημέρες που η ΗΔΥΚΑ αγνοεί το pharmacyId, μας δίνει ξένες εκτελέσεις — και η τυφλή
+            # μεταφορά έφτιαχνε ~20.000 μεταφορές πινγκ-πονγκ (έως 29/09/2026).
+            if ex.source == "HDIKA":
+                if self._ownership is None:
+                    from app.services.ingestion.ownership import HdikaOwnership
+                    self._ownership = HdikaOwnership(self.db)
+                owns = await self._ownership.holder_owns(clash["tenant_id"], ex.external_id,
+                                                         ex.executed_at)
+                if owns is not False:
+                    await self._note_foreign(ex, clash["tenant_id"], job_id, owns)
+                    return "cross_tenant_skip"
             await self._release_cross_tenant_clash(ex, clash["tenant_id"], job_id)
         patient_ref = await self._resolve_patient(ex)
         doctor_id = await self._resolve_doctor(ex)
@@ -459,7 +541,6 @@ class IngestionEngine:
             # π.χ. OPRAZIUM retail 0 ενώ items 14€). margin/margin_pct από την ΤΕΛΙΚΗ (max) λιανική.
             stage1 = {"name": it.name, "category": it.category, "substance": it.substance,
                       "updated_at": _now(), "tenant_id": self.tenant_id, "barcode": it.barcode,
-                      "rx_frequency": {"$ifNull": ["$rx_frequency", 0]},
                       "retail_price": {"$max": [{"$ifNull": ["$retail_price", 0]}, eff_retail]}}
             if wholesale > 0:   # μην clobber γνωστή masterdata wholesale με 0/unknown
                 stage1["wholesale_price"] = wholesale
@@ -500,21 +581,30 @@ class IngestionEngine:
                 {"tenant_id": self.tenant_id, "_id": patient_ref},
                 {"$inc": {"rx_count": 1, "rx_value_total": amount_total},
                  "$set": {"lifecycle": "active"}})
-        for it in item_docs:
-            await self.db["products"].update_one(
-                {"tenant_id": self.tenant_id, "_id": it["product_id"]},
-                {"$inc": {"rx_frequency": 1}})
+        # ΚΑΝΕΝΑΣ μετρητής «συχνότητας» στο προϊόν. Ο παλιός `rx_frequency` αυξανόταν σε ΚΑΘΕ
+        # επανα-άντληση (όχι μόνο στη νέα εκτέλεση) και είχε φουσκώσει στο 71% των προϊόντων, έως
+        # ×932. Η κερδοφορία μετρά πλέον τεμάχια από τα ίδια τα είδη, για την περίοδο που ζητείται.
+        # Κέρδος και στο φορτίο: μία εγγραφή λιγότερη ανά είδος σε κάθε άντληση.
         if next_open:
+            # Η επόμενη θέση της αλυσίδας ΕΧΕΙ ΗΔΗ εκτελεστεί; (η άντληση πάει από τις νεότερες
+            # ημέρες προς τις παλαιότερες, άρα η 2/3 συχνά έρχεται ΠΡΙΝ από την 1/3.)
+            later = await self._later_in_chain(ex)
+            state: dict = ({"status": "fulfilled", "fulfilled_by": later["_id"],
+                            "fulfilled_at": later.get("executed_at")} if later else {})
             await self.db["future_prescriptions"].update_one(
                 {"tenant_id": self.tenant_id, "source_execution_id": exec_id},
-                {"$set": {"expected_open_date": next_open, "status": "pending",
+                {"$set": {"expected_open_date": next_open,
                           "patient_ref": patient_ref,
                           "products": [{"product_id": it["product_id"], "expected_qty": it["quantity"]}
-                                       for it in item_docs]},
+                                       for it in item_docs], **state},
+                 # ΟΧΙ `status` στο $set χωρίς λόγο: ο καθημερινός συγχρονισμός ξαναγράφει όλο τον
+                 # μήνα και θα ξανάνοιγε ως «αναμένεται» ό,τι έχει ήδη εκτελεστεί ή ακυρωθεί.
                  "$setOnInsert": {"tenant_id": self.tenant_id, "source_execution_id": exec_id,
-                                  "confidence": 0.9, "created_at": _now()}},
+                                  "confidence": 0.9, "created_at": _now(),
+                                  **({} if later else {"status": "pending"})}},
                 upsert=True)
         else:
             # καμία επόμενη εκτέλεση (απλή συνταγή) → καθάρισε τυχόν παλιά phantom πρόβλεψη
             await self.db["future_prescriptions"].delete_one(
                 {"tenant_id": self.tenant_id, "source_execution_id": exec_id})
+        await self._fulfil_earlier_in_chain(ex, exec_id)

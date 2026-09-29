@@ -328,6 +328,8 @@ async def tenants(_: PlatformContext = Depends(get_platform_admin)):
     db = shared_db()
     subs = {s["tenant_id"]: s async for s in db["subscriptions"].find({})}
     wallets = {w["_id"]: int(w.get("balance_cents", 0) or 0) async for w in db["message_wallets"].find({})}
+    from app.services import trial_leads
+    purge_cfg = await trial_leads.config(db)          # ίδιες ρυθμίσεις με τη νυχτερινή διαγραφή
     user_counts: dict[str, int] = {}
     async for row in db["users"].aggregate([{"$group": {"_id": "$tenant_id", "n": {"$sum": 1}}}]):
         user_counts[row["_id"]] = row["n"]
@@ -369,6 +371,9 @@ async def tenants(_: PlatformContext = Depends(get_platform_admin)):
             "sync_stopped": bool((_hd.get("sync_stopped") or {}).get("at")),
             "sync_stopped_at": (_hd.get("sync_stopped") or {}).get("at"),
             "created_at": t.get("created_at"),
+            # ΠΟΤΕ διαγράφεται (δοκιμαστικοί) — ΙΔΙΟΣ κανόνας με τη νυχτερινή διαγραφή
+            # (`billing_service.purge_plan`), ώστε η στήλη να μη λέει άλλη μέρα από αυτή που θα γίνει.
+            "purge": billing_service.purge_plan(sub, purge_cfg) if sub else None,
         })
     return {"items": jsonsafe(items)}
 
@@ -1508,8 +1513,8 @@ async def softone_bridge_info(_: PlatformContext = Depends(get_platform_admin)):
     στην R&D και καμία εισερχόμενη κλήση δεν φτάνει στη live.
     """
     from app.api.v1.routers.softone_bridge import ensure_pull_token
-    cfg = await _softone_cfg() if "_softone_cfg" in globals() else (
-        await shared_db()["platform_settings"].find_one({"_id": "softone"}) or {})
+    # (Υπήρχε κλάδος για μια `_softone_cfg` που δεν ορίστηκε ποτέ — έτρεχε ΠΑΝΤΑ αυτός εδώ.)
+    cfg = await shared_db()["platform_settings"].find_one({"_id": "softone"}) or {}
     return {
         "token": await ensure_pull_token(),
         "pull_url": "https://app.rxvision.gr/api/v1/softone/pull",
@@ -4024,14 +4029,14 @@ async def list_announcements(_: PlatformContext = Depends(get_platform_admin)):
 async def create_announcement(body: AnnouncementIn, ctx: PlatformContext = Depends(get_platform_admin)):
     from app.services import announcements as svc
     d = body.model_dump(by_alias=True)
-    return await svc.save(d, by=ctx.email)
+    return _ann_result(await svc.save(d, by=ctx.email))
 
 
 @router.put("/announcements/{ann_id}")
 async def update_announcement(ann_id: str, body: AnnouncementIn,
                               ctx: PlatformContext = Depends(get_platform_admin)):
     from app.services import announcements as svc
-    return await svc.save(body.model_dump(by_alias=True), ann_id=ann_id, by=ctx.email)
+    return _ann_result(await svc.save(body.model_dump(by_alias=True), ann_id=ann_id, by=ctx.email))
 
 
 class AnnActiveIn(BaseModel):
@@ -4044,8 +4049,18 @@ async def set_announcement_active(ann_id: str, body: AnnActiveIn,
     """Διακόπτης on/off χωρίς επεξεργασία — δεν αγγίζει κανένα άλλο πεδίο."""
     from app.services import announcements as svc
     res = await svc.set_active(ann_id, body.active, by=ctx.email)
+    if res.get("error") == "addon_already_announced":
+        _ann_result(res)
     if not res.get("ok"):
-        raise HTTPException(status.HTTP_404_NOT_FOUND, res.get("error", "failed"))
+        raise HTTPException(http_status.HTTP_404_NOT_FOUND, res.get("error", "failed"))
+    return res
+
+
+def _ann_result(res: dict) -> dict:
+    """Δεύτερη ενεργή ανακοίνωση για το ίδιο πρόσθετο → 409 με ΠΟΙΑ τρέχει ήδη (για το μήνυμα)."""
+    if res.get("error") == "addon_already_announced":
+        raise HTTPException(http_status.HTTP_409_CONFLICT,
+                            detail={"error": "addon_already_announced", "conflict": res.get("conflict")})
     return res
 
 
@@ -4056,7 +4071,7 @@ async def move_announcement(ann_id: str, direction: Literal["up", "down"],
     from app.services import announcements as svc
     res = await svc.move(ann_id, direction, by=ctx.email)
     if not res.get("ok"):
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, res.get("error", "failed"))
+        raise HTTPException(http_status.HTTP_400_BAD_REQUEST, res.get("error", "failed"))
     return res
 
 

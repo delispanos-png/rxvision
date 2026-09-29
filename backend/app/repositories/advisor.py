@@ -4,12 +4,14 @@ one screen. Pure read-side aggregation over the existing collections."""
 
 from __future__ import annotations
 
+from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
 from bson import ObjectId
 from bson.errors import InvalidId
 
 from app.repositories.base import BaseRepository, jsonsafe
+from app.services.stats_exclusion import COUNTABLE_EXEC
 from app.utils.format import eur_gr
 from app.utils.masking import mask_name, mask_row, mask_rows
 
@@ -99,6 +101,10 @@ NUTRITION = [
      "favor": "Δίαιτα DASH: λαχανικά, φρούτα, κάλιο (μπανάνα, ντομάτα), χαμηλά λιπαρά",
      "avoid": "Αλάτι/αλμυρά, υποκατάστατα αλατιού με κάλιο, γλυκόριζα",
      "why": "Ρίχνεις την πίεση φυσικά & ενισχύεις τη θεραπεία."},
+    {"atc": "C08", "title": "Ανταγωνιστές ασβεστίου (πίεση)",
+     "favor": "Δίαιτα DASH: λαχανικά, φρούτα, χαμηλά λιπαρά",
+     "avoid": "Γκρέιπφρουτ & χυμός του (αυξάνει τη δράση του φαρμάκου), αλάτι, αλκοόλ",
+     "why": "Αποφεύγεις υπερβολική πτώση πίεσης και ενισχύεις τη θεραπεία."},
     {"atc": "C03", "title": "Διουρητικά",
      "favor": "Τρόφιμα με κάλιο & μαγνήσιο (λαχανικά, ξηροί καρποί), καλή ενυδάτωση",
      "avoid": "Υπερβολικό αλάτι, αφυδάτωση", "why": "Αναπληρώνεις ηλεκτρολύτες που χάνονται."},
@@ -114,7 +120,7 @@ NUTRITION = [
      "favor": "Ασβέστιο (γαλακτοκομικά, σαρδέλες) + βιταμίνη D, καλή πρωτεΐνη",
      "avoid": "Υπερβολική καφεΐνη/αναψυκτικά cola, αλκοόλ, κάπνισμα",
      "why": "Στηρίζεις την οστική πυκνότητα."},
-    {"atc": "J01", "title": "Αντιβιοτικά (τρέχουσα αγωγή)",
+    {"atc": "J01", "title": "Αντιβιοτικά",
      "favor": "Προβιοτικά/γιαούρτι σε διαφορετική ώρα, καλή ενυδάτωση",
      "avoid": "Γαλακτοκομικά κοντά στη δόση (τετρακυκλίνες/κινολόνες), αλκοόλ",
      "why": "Προστατεύεις τη χλωρίδα & την απορρόφηση."},
@@ -129,23 +135,123 @@ NUTRITION = [
 ]
 
 
+def measurement_sections(latest: dict, height_cm: float | None) -> list[dict]:
+    """Ενότητες διατροφής από τις ΜΕΤΡΗΣΕΙΣ. Ίδια όρια με την οθόνη (lib/nutrition.ts)."""
+    out = []
+    bp = latest.get("bp") or {}
+    s, d = bp.get("systolic"), bp.get("diastolic")
+    if s and d:
+        if s >= 140 or d >= 90:
+            out.append({"source": "measurement", "severity": "high", "title": f"Υψηλή πίεση {s}/{d}",
+                        "drugs": [], "why": "Η διατροφή ρίχνει την πίεση και βοηθά τη θεραπεία.",
+                        "favor": "Κάλιο από τρόφιμα (φρούτα, λαχανικά, όσπρια), μεσογειακή διατροφή",
+                        "avoid": "Αλάτι (<5 g/ημέρα), επεξεργασμένα τρόφιμα, αλκοόλ, πολλή καφεΐνη"})
+        elif s >= 130 or d >= 85:
+            out.append({"source": "measurement", "severity": "warn", "title": f"Οριακή πίεση {s}/{d}",
+                        "drugs": [], "why": "Προλαμβάνεις την υπέρταση πριν χρειαστεί φάρμακο.",
+                        "favor": "Τακτική αερόβια άσκηση, υγιές βάρος",
+                        "avoid": "Αλάτι, αλμυρά σνακ"})
+    g = (latest.get("glucose") or {}).get("value")
+    if g:
+        if g >= 126:
+            out.append({"source": "measurement", "severity": "high", "title": f"Υψηλό σάκχαρο {g:g} mg/dL",
+                        "drugs": [], "why": "Σταθεροποιείς το σάκχαρο — χρειάζεται και ιατρική παρακολούθηση.",
+                        "favor": "Χαμηλός γλυκαιμικός δείκτης, φυτικές ίνες, τακτικά μικρά γεύματα",
+                        "avoid": "Ζάχαρη, γλυκά, αναψυκτικά, λευκό ψωμί/ρύζι"})
+        elif g >= 100:
+            out.append({"source": "measurement", "severity": "warn", "title": f"Οριακό σάκχαρο {g:g} mg/dL",
+                        "drugs": [], "why": "Προλαμβάνεις τον διαβήτη.",
+                        "favor": "Φυτικές ίνες, σωματική δραστηριότητα",
+                        "avoid": "Ζάχαρη, εξευγενισμένοι υδατάνθρακες"})
+    w = (latest.get("weight") or {}).get("value")
+    if w and height_cm:
+        bmi = w / ((float(height_cm) / 100) ** 2)
+        if bmi >= 30:
+            out.append({"source": "measurement", "severity": "high", "title": f"ΔΜΣ {bmi:.1f} (παχυσαρκία)",
+                        "drugs": [], "why": "Το βάρος επηρεάζει πίεση, σάκχαρο και αρθρώσεις.",
+                        "favor": "Έλεγχος μερίδων, περισσότερη κίνηση, διαιτολόγος",
+                        "avoid": "Κορεσμένα λιπαρά, ζάχαρη, τσιμπολόγημα"})
+        elif bmi >= 25:
+            out.append({"source": "measurement", "severity": "warn", "title": f"ΔΜΣ {bmi:.1f} (υπέρβαρο)",
+                        "drugs": [], "why": "Μικρή απώλεια βάρους βελτιώνει πίεση και σάκχαρο.",
+                        "favor": "Ελαφρύ θερμιδικό έλλειμμα, περισσότερη κίνηση",
+                        "avoid": "Κορεσμένα λιπαρά, ζάχαρη"})
+        elif bmi < 18.5:
+            out.append({"source": "measurement", "severity": "warn", "title": f"ΔΜΣ {bmi:.1f} (λιποβαρές)",
+                        "drugs": [], "why": "Χρειάζεσαι περισσότερη ενέργεια και πρωτεΐνη.",
+                        "favor": "Θρεπτικά τρόφιμα με πρωτεΐνη, συχνά γεύματα", "avoid": "Παράλειψη γευμάτων"})
+    return out
+
+
+def _items(text: str) -> list[str]:
+    """«Λιπαρά ψάρια, κάλιο (μπανάνα, ντομάτα)» → ["Λιπαρά ψάρια", "κάλιο (μπανάνα, ντομάτα)"].
+    Κόμμα ΜΕΣΑ σε παρένθεση δεν χωρίζει. «Δίαιτα DASH: λαχανικά» → ["Δίαιτα DASH", "λαχανικά"]."""
+    out, cur, depth = [], "", 0
+    for ch in text or "":
+        depth += (ch == "(") - (ch == ")")
+        if ch in ",·;" and depth == 0:
+            out.append(cur)
+            cur = ""
+        else:
+            cur += ch
+    out.append(cur)
+    items: list[str] = []
+    for x in out:
+        head, sep, tail = x.partition(":")
+        items += [head, tail] if sep and "(" not in head else [x]
+    return [i.strip() for i in items if i.strip()]
+
+
+def nutrition_summary(m_sections: list[dict], t_sections: list[dict], atcs: list[str]) -> dict:
+    """ΜΙΑ πρόταση από όλες τις πηγές: τι να προτιμά, τι να αποφεύγει, και πού συγκρούονται.
+    Οι μετρήσεις «high» μπαίνουν πρώτες — είναι το πιο επείγον."""
+    ordered = (sorted(m_sections, key=lambda x: x.get("severity") != "high") + t_sections)
+    favor: list[str] = []
+    avoid: list[str] = []
+    for sec in ordered:
+        for bucket, key in ((favor, "favor"), (avoid, "avoid")):
+            for it in _items(sec.get(key, "")):
+                if it.lower() not in {x.lower() for x in bucket}:
+                    bucket.append(it)
+    conflicts = []
+    has = lambda pref: any(a.startswith(pref) for a in atcs)  # noqa: E731
+    high_bp = any(sec["title"].startswith(("Υψηλή πίεση", "Οριακή πίεση")) for sec in m_sections)
+    if high_bp and (has("C09") or has("C03DA")):
+        conflicts.append("Κάλιο: η πίεση θέλει περισσότερο κάλιο από τρόφιμα, αλλά με την αγωγή του "
+                         "(ΜΕΑ/ARB ή καλιοσυντηρητικό διουρητικό) ΟΧΙ υποκατάστατα αλατιού με κάλιο ή "
+                         "συμπληρώματα καλίου — μόνο από φαγητό, και με τη γνώμη του γιατρού αν έχει νεφρικό.")
+    if has("B01AA") and any("λαχανικ" in f.lower() or "φυλλώδ" in f.lower() for f in favor):
+        conflicts.append("Πράσινα λαχανικά: παίρνει βαρφαρίνη — ναι στα λαχανικά, αλλά σε ΣΤΑΘΕΡΗ "
+                         "ποσότητα κάθε μέρα, χωρίς απότομες αυξομειώσεις.")
+    return {"favor": favor[:14], "avoid": avoid[:14], "conflicts": conflicts,
+            "sources": {"measurements": len(m_sections), "therapies": len(t_sections)}}
+
+
 def nutrition_html(plan: dict, from_name: str | None = None) -> str:
     secs = "".join(
         f"""<div style="margin:0 0 12px;padding:14px 16px;border:1px solid #e2e8f0;border-radius:12px;">
             <div style="font-weight:700;color:#4f46e5;font-size:15px;">{s['title']}</div>
-            <div style="font-size:12px;color:#94a3b8;margin:2px 0 8px;">Σχετικά φάρμακα: {', '.join(s['drugs']) or '—'}</div>
+            <div style="font-size:12px;color:#94a3b8;margin:2px 0 8px;">{('Σχετικά φάρμακα: ' + ', '.join(s['drugs'])) if s.get('drugs') else 'Από τις μετρήσεις σας'}</div>
             <div style="font-size:14px;color:#0f172a;"><b style="color:#16a34a;">🥗 Προτίμησε:</b> {s['favor']}</div>
             <div style="font-size:14px;color:#0f172a;margin-top:4px;"><b style="color:#dc2626;">⛔ Πρόσεξε:</b> {s['avoid']}</div>
             <div style="font-size:13px;color:#64748b;margin-top:6px;">💡 {s['why']}</div></div>"""
         for s in plan.get("sections", []))
+    sm = plan.get("summary") or {}
+    if sm.get("favor") or sm.get("avoid"):
+        notes = "".join(f'<div style="font-size:13px;color:#92400e;margin-top:6px;">⚠️ {c}</div>'
+                        for c in sm.get("conflicts") or [])
+        secs = f"""<div style="margin:0 0 16px;padding:14px 16px;border:2px solid #10b981;border-radius:12px;background:#ecfdf5;">
+            <div style="font-weight:800;color:#047857;font-size:15px;">Η πρότασή μας με μια ματιά</div>
+            <div style="font-size:14px;color:#0f172a;margin-top:6px;"><b style="color:#16a34a;">🥗 Προτίμησε:</b> {', '.join(sm.get('favor') or [])}</div>
+            <div style="font-size:14px;color:#0f172a;margin-top:4px;"><b style="color:#dc2626;">⛔ Απόφυγε:</b> {', '.join(sm.get('avoid') or [])}</div>{notes}</div>""" + secs
     return f"""<div style="background:#f1f5f9;padding:24px;font-family:Arial,Helvetica,sans-serif;">
       <div style="max-width:620px;margin:0 auto;background:#fff;border-radius:14px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.08);">
         <div style="background:#4f46e5;padding:18px 24px;color:#fff;">
           <div style="font-size:18px;font-weight:800;">{from_name or 'Το φαρμακείο σας'}</div>
           <div style="font-size:13px;opacity:.9;">Εξατομικευμένες διατροφικές συμβουλές</div></div>
         <div style="padding:20px 24px;">
-          <p style="font-size:15px;color:#0f172a;line-height:1.6;">Αγαπητέ/ή {plan.get('name') or ''}, με βάση τη φαρμακευτική σας αγωγή ετοιμάσαμε προτάσεις διατροφής για καλύτερα αποτελέσματα:</p>
-          {secs or '<p style="color:#64748b;">Δεν εντοπίστηκαν ειδικές διατροφικές οδηγίες για την τρέχουσα αγωγή.</p>'}
+          <p style="font-size:15px;color:#0f172a;line-height:1.6;">Αγαπητέ/ή {plan.get('name') or ''}, με βάση την τρέχουσα φαρμακευτική σας αγωγή και τις μετρήσεις σας ετοιμάσαμε προτάσεις διατροφής για καλύτερα αποτελέσματα:</p>
+          {secs or '<p style="color:#64748b;">Δεν εντοπίστηκαν ειδικές διατροφικές οδηγίες για την τρέχουσα αγωγή και τις μετρήσεις σας.</p>'}
           <p style="font-size:12px;color:#94a3b8;margin-top:14px;line-height:1.5;">Οι συμβουλές είναι γενικές & ενημερωτικές και δεν υποκαθιστούν ιατρική ή διαιτολογική γνωμάτευση. Συμβουλευτείτε τον φαρμακοποιό σας.</p>
         </div></div></div>"""
 
@@ -156,7 +262,7 @@ class AdvisorRepository(BaseRepository):
     # ── shared period metrics ────────────────────────────────────────────
     async def _period(self, df: datetime, dt: datetime) -> dict:
         rows = await self.aggregate([
-            {"$match": {"executed_at": {"$gte": df, "$lt": dt}}},
+            {"$match": {**COUNTABLE_EXEC, "executed_at": {"$gte": df, "$lt": dt}}},
             {"$group": {"_id": None, "rx": {"$sum": 1},
                         "revenue": {"$sum": "$amount_total"},
                         "claimed": {"$sum": "$amount_claimed"},
@@ -175,7 +281,7 @@ class AdvisorRepository(BaseRepository):
 
     async def _top_dimension(self, df, dt, field) -> tuple:
         rows = await self.aggregate([
-            {"$match": {"executed_at": {"$gte": df, "$lt": dt}}},
+            {"$match": {**COUNTABLE_EXEC, "executed_at": {"$gte": df, "$lt": dt}}},
             {"$group": {"_id": f"${field}", "rev": {"$sum": "$amount_total"}}},
             {"$sort": {"rev": -1}},
         ])
@@ -188,14 +294,21 @@ class AdvisorRepository(BaseRepository):
         d = await self._db[coll].find_one({"_id": _id})
         return (d or {}).get(field)
 
-    async def _aging_overdue(self) -> int:
-        """Claimed amount executed >90 days ago (still owed by funds)."""
-        cutoff = _now() - timedelta(days=90)
-        rows = await self.aggregate([
-            {"$match": {"executed_at": {"$lt": cutoff}}},
-            {"$group": {"_id": None, "claimed": {"$sum": "$amount_claimed"}}},
-        ])
-        return (rows[0]["claimed"] if rows else 0) or 0
+    async def _aging_overdue(self) -> int | None:
+        """ΑΝΟΙΧΤΟ υπόλοιπο ταμείων άνω των 90 ημερών — ή None αν δεν το ξέρουμε.
+
+        Πριν: άθροιζε το αιτούμενο ΚΑΘΕ εκτέλεσης παλαιότερης των 90 ημερών, από την αρχή του
+        ιστορικού, χωρίς κανένα στοιχείο πληρωμής. Κάθε φαρμακείο με ιστορικό έβλεπε ΚΟΚΚΙΝΗ κάρτα
+        «Καθυστερημένες απαιτήσεις» με ποσό = ό,τι είχε αιτηθεί ποτέ. Ψεύτικος συναγερμός που
+        μαθαίνει στον χρήστη να αγνοεί τις κόκκινες κάρτες.
+
+        Τώρα: από το κύκλωμα αποζημίωσης (ξέρει τι πληρώθηκε). Αν ο φαρμακοποιός δεν έχει
+        καταγράψει ΚΑΜΙΑ είσπραξη, δεν ξέρουμε τι χρωστιέται → None, και η κάρτα δεν βγαίνει."""
+        from app.repositories.profitability import ProfitabilityRepository
+        ag = await ProfitabilityRepository(tenant_id=self.tenant_id).open_receivables(now=_now())
+        if not ag.get("payments_recorded"):
+            return None
+        return next((b["open"] for b in ag["buckets"] if b["bucket"] == "90+"), 0)
 
     async def _future_revenue(self, days: int = 30) -> tuple:
         """Expected recurring revenue from pending future prescriptions (count + retail)."""
@@ -231,7 +344,7 @@ class AdvisorRepository(BaseRepository):
         execs = BaseRepository(tenant_id=self.tenant_id)
         execs.collection_name = "prescription_executions"
         rows = await execs.aggregate([
-            {"$match": {"executed_at": {"$gte": df, "$lt": dt},
+            {"$match": {**COUNTABLE_EXEC, "executed_at": {"$gte": df, "$lt": dt},
                         "has_unexecuted_substances": True,
                         "details.execution_case": {"$in": ["0", 0]}}},
             {"$lookup": {"from": "prescription_items", "localField": "_id",
@@ -314,10 +427,10 @@ class AdvisorRepository(BaseRepository):
 
         # 3) receivables overdue
         overdue = await self._aging_overdue()
-        if overdue > 50000:
+        if overdue is not None and overdue > 50000:
             add("critical", "wallet", "Καθυστερημένες απαιτήσεις",
-                f"€{eur_gr(overdue)} αιτούμενα από ταμεία με εκτέλεση πάνω από 90 ημέρες — διεκδίκησε/έλεγξε εκκαθαρίσεις.",
-                f"€{eur_gr(overdue)}", {"label": "Ταμειακή ροή", "href": "/profitability"})
+                f"€{eur_gr(overdue)} από ταμεία, ανοιχτά πάνω από 90 ημέρες, χωρίς σημειωμένη είσπραξη — έλεγξε εκκαθαρίσεις και σημείωσε ό,τι πληρώθηκε.",
+                f"€{eur_gr(overdue)}", {"label": "Υπόλοιπα ταμείων", "href": "/reimbursement/receivables"})
 
         # 4) lost value (unexecuted)
         lost = await self._unexec_lost(df, dt)
@@ -388,7 +501,7 @@ class AdvisorRepository(BaseRepository):
         rows = await items.aggregate([
             # ΟΣΑ ΔΟΘΗΚΑΝ: η μερικώς εκτελεσμένη γραμμή δεν είναι «πλήρως εκτελεσμένη»,
             # αλλά τα τεμάχια που δόθηκαν πουλήθηκαν και πρέπει να μετρήσουν.
-            {"$match": {"executed_at": {"$gte": df, "$lt": dt},
+            {"$match": {**COUNTABLE_EXEC, "executed_at": {"$gte": df, "$lt": dt},
                         "$expr": {"$gt": [{"$ifNull": ["$executed_qty", 0]}, 0]}}},
             {"$lookup": {"from": "products", "localField": "product_id",
                          "foreignField": "_id", "as": "p"}},
@@ -428,7 +541,7 @@ class AdvisorRepository(BaseRepository):
 
     async def cross_sell(self, df, dt) -> list[dict]:
         pairs = await self.aggregate([
-            {"$match": {"executed_at": {"$gte": df, "$lt": dt}}},
+            {"$match": {**COUNTABLE_EXEC, "executed_at": {"$gte": df, "$lt": dt}}},
             {"$lookup": {"from": "prescription_items", "localField": "_id",
                          "foreignField": "execution_id", "as": "it"}},
             {"$unwind": "$it"},
@@ -453,37 +566,61 @@ class AdvisorRepository(BaseRepository):
         return out
 
     async def nutrition_plan(self, patient_id: str) -> dict | None:
-        """Personalised nutrition plan from a patient's medication mix (ATC classes)."""
+        """Πρόταση διατροφής από ΔΥΟ πηγές: την ΕΝΕΡΓΗ αγωγή και τις ΜΕΤΡΗΣΕΙΣ της καρτέλας.
+
+        Ενεργή αγωγή = ο ΙΔΙΟΣ ορισμός με την κάρτα «Πρόγραμμα φαρμάκων» (`medication_schedule`):
+        ό,τι πήρε τους τελευταίους 6 μήνες και δεν έχει τελειώσει. Πριν (έως 29/09/2026) διάβαζε ΟΛΟ το
+        ιστορικό — ένα αντιβιοτικό του περασμένου χειμώνα έβγαινε «τρέχουσα αγωγή» ενώ η στατίνη όχι.
+        Μετρήσεις = τελευταία πίεση/σάκχαρο/ΔΜΣ (όχι παλαιότερες των 12 μηνών). Και οι δύο πηγές
+        ενώνονται σε ΜΙΑ πρόταση (`summary`), με ρητή σημείωση όπου συγκρούονται."""
         oid = _as_oid(patient_id)
         if not oid:
             return None
         pa = await self._db["patients_anonymized"].find_one({"_id": oid, "tenant_id": self.tenant_id})
         if not pa:
             return None
-        rows = await self.aggregate([
-            {"$match": {"patient_ref": oid}},
-            {"$lookup": {"from": "prescription_items", "localField": "_id",
-                         "foreignField": "execution_id", "as": "it"}},
-            {"$unwind": "$it"},
-            {"$lookup": {"from": "products", "localField": "it.product_id",
-                         "foreignField": "_id", "as": "p"}},
-            {"$set": {"atc": {"$toUpper": {"$ifNull": [{"$first": "$p.atc"}, ""]}},
-                      "nm": {"$first": "$p.name"}}},
-            {"$match": {"atc": {"$ne": ""}}},
-            {"$group": {"_id": "$atc", "drugs": {"$addToSet": "$nm"}}},
-        ])
-        atc_drugs = {r["_id"]: [d for d in r["drugs"] if d] for r in rows}
+        from app.repositories.patient_portal import PatientRxRepository
+        sched = await PatientRxRepository(tenant_id=self.tenant_id).medication_schedule(str(oid))
+        therapies = sched.get("therapies") or []
+        pids = [_as_oid(t.get("med_key")) for t in therapies]
+        atc_of = {str(p["_id"]): (p.get("atc") or "").upper() async for p in self._db["products"].find(
+            {"tenant_id": self.tenant_id, "_id": {"$in": [x for x in pids if x]}}, {"atc": 1})}
+        atc_drugs: dict[str, set] = defaultdict(set)
+        for t in therapies:
+            a = atc_of.get(str(t.get("med_key")))
+            if a:
+                atc_drugs[a].add(t.get("name") or "")
         sections = []
         for rule in NUTRITION:
             matched = [a for a in atc_drugs if a.startswith(rule["atc"])]
             if matched:
-                drugs = sorted({d for a in matched for d in atc_drugs[a]})[:6]
-                sections.append({"title": rule["title"], "drugs": drugs,
+                drugs = sorted({d for a in matched for d in atc_drugs[a] if d})[:6]
+                sections.append({"source": "therapy", "title": rule["title"], "drugs": drugs,
                                  "favor": rule["favor"], "avoid": rule["avoid"], "why": rule["why"]})
         ct = await self._db["patient_contacts"].find_one({"_id": oid, "tenant_id": self.tenant_id})
+        latest = await self._latest_measurements(oid)
+        m_sections = measurement_sections(latest, (ct or {}).get("height_cm"))
+        atcs = list(atc_drugs)
         return mask_row({"patient_id": patient_id, "name": pa.get("full_name"),
                          "email": (ct or {}).get("email"), "mobile": (ct or {}).get("mobile"),
-                         "sections": sections}, self.demo)
+                         "sections": m_sections + sections,
+                         "summary": nutrition_summary(m_sections, sections, atcs),
+                         "based_on": {"therapies": len(therapies),
+                                      "therapies_matched": sum(len(s["drugs"]) for s in sections),
+                                      "measurements": {k: v.get("at") for k, v in latest.items()}}},
+                        self.demo)
+
+    async def _latest_measurements(self, oid) -> dict:
+        """Τελευταία μέτρηση ανά είδος, όχι παλαιότερη των 12 μηνών (παλιά πίεση δεν είναι σημερινή)."""
+        cutoff = _now() - timedelta(days=365)
+        out = {}
+        for kind in ("bp", "glucose", "weight"):
+            m = await self._db["patient_measurements"].find_one(
+                {"tenant_id": self.tenant_id, "patient_ref": oid, "kind": kind,
+                 "at": {"$gte": cutoff}}, sort=[("at", -1)])
+            if m:
+                out[kind] = m
+        return out
 
     async def cross_sell_patients(self, atc_prefix: str) -> list[dict]:
         """Patients on a therapeutic class (ATC prefix) — with demographics + contact +
@@ -491,7 +628,7 @@ class AdvisorRepository(BaseRepository):
         cutoff = _now() - timedelta(days=365)
         pref = (atc_prefix or "").upper()
         rows = await self.aggregate([
-            {"$match": {"executed_at": {"$gte": cutoff}}},
+            {"$match": {**COUNTABLE_EXEC, "executed_at": {"$gte": cutoff}}},
             {"$lookup": {"from": "prescription_items", "localField": "_id",
                          "foreignField": "execution_id", "as": "it"}},
             {"$unwind": "$it"},
@@ -526,7 +663,6 @@ class AdvisorRepository(BaseRepository):
         """Patients with a MISSED (window passed, unexecuted) or AVAILABLE-NOW repeat, ranked by
         € at risk — the recall list. Joins demographics + contact for one-click outreach."""
         import calendar
-        from collections import defaultdict
         now = _now()
 
         def addm(d, n):

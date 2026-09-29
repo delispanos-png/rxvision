@@ -43,8 +43,12 @@ async def patients(sort: str = Query("value"),
 
 
 @router.get("/compliance")
-async def compliance(ctx: TenantContext = Depends(require("patients:read", module=_MODULE))):
-    return await _repo(ctx).compliance()
+async def compliance(regular_only: bool = False,
+                     lost_days: int = Query(0, ge=0, le=730),
+                     ctx: TenantContext = Depends(require("patients:read", module=_MODULE))):
+    """`regular_only`: μόνο τακτικοί (εκτελέσεις σε ≥6 μήνες του έτους). `lost_days`: μόνο όσοι
+    έχουν επανάληψη που χάθηκε πριν από τόσες ημέρες (0 = όλοι)."""
+    return await _repo(ctx).compliance(regular_only=regular_only, lost_days=lost_days)
 
 
 @router.get("/recall")

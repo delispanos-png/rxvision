@@ -247,14 +247,33 @@ class PrescriptionRepository(BaseRepository):
             {"name": 1, "barcode": 1, "atc": 1, "substance": 1})
         if not prod:
             return None
+        # ΟΛΟΙ όσοι το πήραν — σε ΑΝΑΚΛΗΣΗ ΠΑΡΤΙΔΑΣ ένας που λείπει από τη λίστα είναι ένας που δεν
+        # ειδοποιείται. Δύο λόγοι που έλειπαν (28/09/2026):
+        #  1. ΙΔΙΟ φάρμακο σε ΔΥΟ προϊόντα (EAN `280…` και σκέτος ΕΟΦ — ο καθημερινός συγχρονισμός
+        #     έτρεχε χωρίς κατάλογο). Ψάχνουμε με τον ΚΩΔΙΚΟ ΕΟΦ, που είναι κοινός.
+        #  2. ΜΙΑ συνταγή = πολλές εγγραφές (`barcode:1…:N`) με ΟΛΑ τα είδη σε καθεμία. Μετράμε κάθε
+        #     συνταγή ΜΙΑ φορά, με τα τεμάχια που ΔΟΘΗΚΑΝ ([[hdika-multi-record-prescription]]).
+        bc = "".join(ch for ch in str(prod.get("barcode") or "") if ch.isdigit())
+        eof = bc[3:12] if (len(bc) == 13 and bc.startswith("280")) else (bc if 6 <= len(bc) <= 10 else "")
+        if not eof:
+            it0 = await db["prescription_items"].find_one(
+                {"tenant_id": self.tenant_id, "product_id": prod["_id"]}, {"details.eof_code": 1})
+            eof = str(((it0 or {}).get("details") or {}).get("eof_code") or "")
+        who = ({"$or": [{"product_id": prod["_id"]}, {"details.eof_code": eof}]} if eof
+               else {"product_id": prod["_id"]})
         rows = await db["prescription_items"].aggregate([
-            {"$match": {"tenant_id": self.tenant_id, "product_id": prod["_id"]}},
+            {"$match": {"tenant_id": self.tenant_id, **who,
+                        "$expr": {"$gt": [{"$ifNull": ["$executed_qty", 0]}, 0]}}},
             {"$lookup": {"from": "prescription_executions", "localField": "execution_id",
                          "foreignField": "_id", "as": "ex"}},
             {"$set": {"ex": {"$first": "$ex"}}},
-            {"$group": {"_id": "$ex.patient_ref", "n": {"$sum": 1},
+            {"$match": {"ex.status": {"$ne": "cancelled"}}},
+            {"$set": {"_rx": {"$arrayElemAt": [{"$split": [{"$ifNull": ["$ex.external_id", ""]}, ":"]}, 0]}}},
+            {"$group": {"_id": {"p": "$ex.patient_ref", "rx": "$_rx"},
                         "last": {"$max": "$executed_at"},
-                        "qty": {"$sum": {"$ifNull": ["$quantity", 1]}}}},
+                        "qty": {"$max": {"$ifNull": ["$executed_qty", 1]}}}},
+            {"$group": {"_id": "$_id.p", "n": {"$sum": 1},
+                        "last": {"$max": "$last"}, "qty": {"$sum": "$qty"}}},
             {"$sort": {"last": -1}},
         ]).to_list(length=None)
         total = len(rows)

@@ -3,7 +3,9 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Search, User, Users, Wallet, Repeat, Stethoscope, Pill, Sparkles, AlertTriangle, Salad, Target, Eye, Crown, Syringe, ChevronRight, ScanLine, Calendar, CalendarRange, ShieldAlert } from "lucide-react";
+import Link from "next/link";
+import { useTrail } from "@/store/trailStore";
+import { Search, User, Users, Wallet, Repeat, Stethoscope, Pill, Sparkles, AlertTriangle, Salad, Target, Eye, Crown, Syringe, ChevronRight, ScanLine, Calendar, CalendarRange, ShieldAlert, ArrowRight } from "lucide-react";
 import { InteractionsModal } from "@/components/clinical/InteractionsModal";
 import { NewMedInteractionCard } from "@/components/clinical/NewMedInteractionCard";
 import { api, ApiError } from "@/lib/apiClient";
@@ -74,7 +76,7 @@ function AdviceList({ icon: Icon, title, items, accent }: { icon: typeof Salad; 
 
 type FamAlert = {
   group_id: string; group_name: string | null;
-  loans: { patient_id: string; name: string; expected_at?: string | null; items: string[] }[];
+  loans: { id?: string; patient_id: string; name: string; expected_at?: string | null; items: string[] }[];
   pending: { patient_id: string; name: string; barcode: string; valid_until?: string | null;
              items: { name: string; left: number }[] }[];
 };
@@ -82,7 +84,7 @@ type FamAlert = {
 /** Τι τρέχει στους ΑΛΛΟΥΣ της οικογένειας — δανεικά & ανεκτέλεστα.
  *  Εμφανίζεται ΜΟΝΟ όταν υπάρχει κάτι: μια κενή κάρτα «καμία εκκρεμότητα» θα ήταν θόρυβος
  *  σε μια οθόνη που ο φαρμακοποιός σαρώνει με τον πελάτη μπροστά του. */
-function FamilyAlerts({ patientId }: { patientId: string }) {
+function FamilyAlerts({ patientId, onOpen, fromLabel }: { patientId: string; onOpen: (identity: string) => void; fromLabel: string }) {
   const t = useT();
   const q = useQuery({
     queryKey: ["family-alerts", patientId],
@@ -107,8 +109,10 @@ function FamilyAlerts({ patientId }: { patientId: string }) {
                "These concern OTHER members — ask while they are with you.")}
           </p>
           {g.loans.map((l, i) => (
-            <div key={`l${i}`} className="rounded-xl bg-white/70 px-3 py-2 text-sm dark:bg-slate-900/40">
-              <span className="font-medium text-slate-800 dark:text-slate-100">{l.name}</span>
+            <div key={`l${i}`} className="flex flex-wrap items-center gap-y-1 rounded-xl bg-white/70 px-3 py-2 text-sm dark:bg-slate-900/40">
+              <button type="button" onClick={() => onOpen(`patient_id=${encodeURIComponent(l.patient_id)}`)}
+                title={t("Άνοιξε την Εικόνα Πελάτη του", "Open their patient picture")}
+                className="font-medium text-slate-800 underline decoration-dotted underline-offset-2 hover:text-brand-600 dark:text-slate-100">{l.name}</button>
               <span className="mx-1.5 rounded-full bg-orange-100 px-2 py-0.5 text-[11px] text-orange-700">
                 {t("δανεικό", "loan")}
               </span>
@@ -118,11 +122,18 @@ function FamilyAlerts({ patientId }: { patientId: string }) {
                   {t("επιστροφή", "due")} {fmtD(l.expected_at)}
                 </span>
               )}
+              <Link href={l.id ? `/patients/advance?loan=${encodeURIComponent(l.id)}` : "/patients/advance"}
+                onClick={() => useTrail.getState().leave(fromLabel)}
+                className="ml-auto inline-flex items-center gap-1 rounded-lg border border-orange-300 px-2 py-0.5 text-[11px] font-semibold text-orange-700 hover:bg-orange-50 dark:border-orange-800 dark:text-orange-300">
+                {t("Κλείσ' το δανεικό", "Settle the loan")} <ArrowRight className="h-3 w-3" />
+              </Link>
             </div>
           ))}
           {g.pending.map((r, i) => (
-            <div key={`p${i}`} className="rounded-xl bg-white/70 px-3 py-2 text-sm dark:bg-slate-900/40">
-              <span className="font-medium text-slate-800 dark:text-slate-100">{r.name}</span>
+            <div key={`p${i}`} className="flex flex-wrap items-center gap-y-1 rounded-xl bg-white/70 px-3 py-2 text-sm dark:bg-slate-900/40">
+              <button type="button" onClick={() => onOpen(`patient_id=${encodeURIComponent(r.patient_id)}`)}
+                title={t("Άνοιξε την Εικόνα Πελάτη του", "Open their patient picture")}
+                className="font-medium text-slate-800 underline decoration-dotted underline-offset-2 hover:text-brand-600 dark:text-slate-100">{r.name}</button>
               <span className="mx-1.5 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] text-amber-700">
                 {t("ανεκτέλεστο", "unfilled")}
               </span>
@@ -132,6 +143,12 @@ function FamilyAlerts({ patientId }: { patientId: string }) {
               <span className="ml-1.5 text-xs text-slate-400">
                 {t("έως", "until")} {fmtD(r.valid_until)}
               </span>
+              {r.barcode && (
+                <button type="button" onClick={() => onOpen(`barcode=${encodeURIComponent(r.barcode)}`)}
+                  className="ml-auto inline-flex items-center gap-1 rounded-lg border border-amber-300 px-2 py-0.5 text-[11px] font-semibold text-amber-800 hover:bg-amber-100 dark:border-amber-800 dark:text-amber-300">
+                  {t("Δες τη συνταγή", "Open the prescription")} <ArrowRight className="h-3 w-3" />
+                </button>
+              )}
             </div>
           ))}
         </div>
@@ -234,12 +251,19 @@ export default function PatientProfilePage() {
   // Deep-link: /intelligence/profile?patient_id=… (ή ?amka=… / ?barcode=…) φορτώνει ΑΜΕΣΩΣ
   // τον πελάτη. Το χρειάζεται ο Σύμβουλος (και κάθε άλλη λίστα): μια προτροπή «δες τον πελάτη»
   // που σε αφήνει σε άδεια φόρμα αναζήτησης δεν βοηθάει κανέναν.
+  // …ΚΑΙ σε κάθε «πίσω»/«μπροστά» του browser ή της μπάρας επιστροφής. Πριν διαβαζόταν μόνο στο
+  // πρώτο άνοιγμα: το «πίσω» άλλαζε τη διεύθυνση αλλά η οθόνη έμενε στον ΙΔΙΟ πελάτη.
   useEffect(() => {
-    const q = new URLSearchParams(window.location.search);
-    const pid = q.get("patient_id"), am = q.get("amka"), bc = q.get("barcode");
-    if (pid) { load(`patient_id=${encodeURIComponent(pid)}`); return; }
-    if (am) { setAmka(am); load(`amka=${encodeURIComponent(am)}`); return; }
-    if (bc) load(`barcode=${encodeURIComponent(bc)}`);
+    const fromUrl = () => {
+      const q = new URLSearchParams(window.location.search);
+      const pid = q.get("patient_id"), am = q.get("amka"), bc = q.get("barcode");
+      if (pid) { load(`patient_id=${encodeURIComponent(pid)}`); return; }
+      if (am) { setAmka(am); load(`amka=${encodeURIComponent(am)}`); return; }
+      if (bc) load(`barcode=${encodeURIComponent(bc)}`);
+    };
+    fromUrl();
+    window.addEventListener("popstate", fromUrl);
+    return () => window.removeEventListener("popstate", fromUrl);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -309,7 +333,21 @@ export default function PatientProfilePage() {
           {/* Ο Σύμβουλος πρώτος: ό,τι εκκρεμεί γι' ΑΥΤΟΝ τον άνθρωπο, πριν από κάθε ανάλυση. */}
           <CoachStrip patientId={p.patient.id} />
           {/* Αμέσως μετά: τι τρέχει στους ΑΛΛΟΥΣ της οικογένειας. Ίδια στιγμή, ίδιος άνθρωπος. */}
-          <FamilyAlerts patientId={p.patient.id} />
+          {(() => {
+            // Τιμές ΕΞΩ από το closure: μέσα του η TypeScript «ξεχνά» ότι το p.patient υπάρχει.
+            const hereLabel = `${t("Εικόνα Πελάτη", "Patient picture")} · ${p.patient?.name || "—"}`;
+            const hereHref = `/intelligence/profile?patient_id=${encodeURIComponent(p.patient?.id || "")}`;
+            return (
+          <FamilyAlerts patientId={p.patient?.id || ""} fromLabel={hereLabel} onOpen={(id) => {
+            // ΜΕΝΕΙΣ ΣΤΗΝ ΕΙΚΟΝΑ ΠΕΛΑΤΗ: το μέλος της οικογένειας ανοίγει εδώ, όχι σε άλλο κύκλωμα.
+            // Αφήνουμε σημείο επιστροφής (μπάρα «↩») ΚΑΙ ενημερώνουμε τη διεύθυνση για το «πίσω».
+            useTrail.getState().leave(hereLabel, hereHref);
+            window.history.pushState(null, "", `/intelligence/profile?${id}`);
+            load(id);
+            window.scrollTo({ top: 0, behavior: "smooth" });
+          }} />
+            );
+          })()}
           {/* header */}
           <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-700 dark:bg-slate-900">
             <div className="flex items-center gap-3">

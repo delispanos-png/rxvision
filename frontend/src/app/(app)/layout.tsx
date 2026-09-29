@@ -10,6 +10,7 @@ import { PortalRequestsWatcher } from "@/components/portal/PortalRequestsWatcher
 import { AnnouncementPopup } from "@/components/layout/AnnouncementPopup";
 import { ClarityScript } from "@/components/ClarityScript";
 import { ModuleTrialBanner } from "@/components/layout/ModuleTrialBanner";
+import { TrailBar } from "@/components/layout/TrailBar";
 
 // Backend always enforces permissions/modules; the sidebar is presentational.
 export default function AppLayout({ children }: { children: React.ReactNode }) {
@@ -27,7 +28,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         <Topbar />
         <main className="min-w-0 flex-1 overflow-x-clip px-4 py-4 sm:px-6 sm:py-6">
           {/* Cap content width so charts/tables/KPIs don't stretch on 1440–1920 (R-1). */}
-          <div className="mx-auto w-full max-w-[1600px]">{children}</div>
+          <div className="mx-auto w-full max-w-[1600px]"><TrailBar />{children}</div>
         </main>
       </div>
       <PageHelp />

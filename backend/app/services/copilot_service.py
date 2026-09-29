@@ -267,13 +267,13 @@ async def _read_tool(name: str, args: dict, tenant_id: str, demo: bool = False) 
         return jsonsafe(await PrescriptionRepository(tenant_id=tenant_id).unexecuted_substances(
             date_from=frm, date_to=to, limit=20))
     if name == "get_profitability":
-        from app.repositories.profitability import ProfitabilitySnapshotRepository
+        from app.repositories.profitability import ProfitabilityRepository
         frm, to = _period(mb)
-        return jsonsafe(await ProfitabilitySnapshotRepository(tenant_id=tenant_id).range_summary(
+        return jsonsafe(await ProfitabilityRepository(tenant_id=tenant_id).range_summary(
             date_from=frm, date_to=to))
     if name == "get_low_margin":
-        from app.repositories.profitability import ProductRepository
-        return jsonsafe({"items": await ProductRepository(tenant_id=tenant_id).low_margin(
+        from app.repositories.profitability import ProfitabilityRepository
+        return jsonsafe({"items": await ProfitabilityRepository(tenant_id=tenant_id).low_margin(
             threshold_pct=_as_float(args.get("threshold_pct"), 15.0), limit=20)})
     if name in ("get_reimbursement", "get_reimbursement_risk"):
         from app.repositories.reimbursement import ReimbursementRepository

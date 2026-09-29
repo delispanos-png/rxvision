@@ -4,7 +4,12 @@
  * και στις δύο όψεις, ώστε ο πελάτης να βλέπει ΑΚΡΙΒΩΣ την ίδια κάρτα που είδε ο φαρμακοποιός.
  */
 
-export type NutritionSection = { title: string; drugs: string[]; favor: string; avoid: string; why?: string };
+export type NutritionSection = { title: string; drugs: string[]; favor: string; avoid: string; why?: string;
+  /** από πού βγήκε: την ενεργή αγωγή ή μια μέτρηση της καρτέλας */
+  source?: "therapy" | "measurement"; severity?: "high" | "warn" };
+
+export type NutritionSummary = { favor: string[]; avoid: string[]; conflicts: string[];
+  sources?: { measurements: number; therapies: number } };
 
 export type Decor = { emoji: string; from: string; to: string; text: string; darkFrom: string; darkTo: string; darkText: string };
 
@@ -12,6 +17,9 @@ export type Decor = { emoji: string; from: string; to: string; text: string; dar
 export function nutritionDecor(title: string): Decor {
   const t = title.toLowerCase();
   if (t.includes("στατίν") || t.includes("χοληστ")) return { emoji: "🫀", from: "from-rose-50", to: "to-orange-50", text: "text-rose-700", darkFrom: "dark:from-rose-900/30", darkTo: "dark:to-orange-900/20", darkText: "dark:text-rose-300" };
+  if (t.includes("σάκχαρ") || t.includes("ζάχαρ")) return { emoji: "🩸", from: "from-red-50", to: "to-pink-50", text: "text-red-700", darkFrom: "dark:from-red-900/30", darkTo: "dark:to-pink-900/20", darkText: "dark:text-red-300" };
+  if (t.includes("πίεσ")) return { emoji: "💓", from: "from-pink-50", to: "to-rose-50", text: "text-pink-700", darkFrom: "dark:from-pink-900/30", darkTo: "dark:to-rose-900/20", darkText: "dark:text-pink-300" };
+  if (t.includes("δμσ")) return { emoji: "⚖️", from: "from-slate-50", to: "to-sky-50", text: "text-slate-700", darkFrom: "dark:from-slate-800/40", darkTo: "dark:to-sky-900/20", darkText: "dark:text-slate-200" };
   if (t.includes("διαβ")) return { emoji: "🩸", from: "from-red-50", to: "to-pink-50", text: "text-red-700", darkFrom: "dark:from-red-900/30", darkTo: "dark:to-pink-900/20", darkText: "dark:text-red-300" };
   if (t.includes("πιεσ") || t.includes("υπερτασ")) return { emoji: "💓", from: "from-pink-50", to: "to-rose-50", text: "text-pink-700", darkFrom: "dark:from-pink-900/30", darkTo: "dark:to-rose-900/20", darkText: "dark:text-pink-300" };
   if (t.includes("διουρητ")) return { emoji: "💧", from: "from-sky-50", to: "to-cyan-50", text: "text-sky-700", darkFrom: "dark:from-sky-900/30", darkTo: "dark:to-cyan-900/20", darkText: "dark:text-sky-300" };

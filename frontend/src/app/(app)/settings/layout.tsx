@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useAddonState } from "@/components/layout/AddonSection";
 import { useT } from "@/store/prefStore";
+import { ScrollTabs } from "@/components/layout/ScrollTabs";
 
 /* `module` = η καρτέλα ανήκει σε ΠΡΟΑΙΡΕΤΙΚΟ πρόσθετο.
    Χωρίς αυτό, οι καρτέλες των Ρυθμίσεων φαίνονταν σε ΟΛΟΥΣ και το λουκέτο το ανακάλυπτε ο
@@ -34,7 +35,7 @@ export default function SettingsLayout({ children }: { children: React.ReactNode
   return (
     <div>
       <h1 className="mb-4 text-xl font-bold text-slate-900 dark:text-slate-100">{tr("Ρυθμίσεις", "Settings")}</h1>
-      <nav className="no-scrollbar mb-6 flex gap-1 overflow-x-auto whitespace-nowrap border-b border-slate-200 dark:border-slate-700">
+      <ScrollTabs className="mb-6">
         {TABS.filter((tab) => visible(tab.module)).map((tab) => {
           const active = pathname === tab.href;
           return (
@@ -51,7 +52,7 @@ export default function SettingsLayout({ children }: { children: React.ReactNode
             </Link>
           );
         })}
-      </nav>
+      </ScrollTabs>
       {children}
     </div>
   );

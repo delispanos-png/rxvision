@@ -240,23 +240,31 @@ async def test_future_upcoming_filters_by_min_history(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_aging_maps_buckets_to_human_labels(monkeypatch):
+async def test_open_receivables_ages_only_tracked_months(monkeypatch):
+    """Ανοιχτά υπόλοιπα = από την αποζημίωση (που ξέρει τι πληρώθηκε), ΟΧΙ άθροισμα αιτηθέντων.
+    Μήνες ΠΡΙΝ από την πρώτη καταγραφή είσπραξης είναι άγνωστοι, όχι οφειλόμενοι (28/09/2026:
+    22,3εκ.€ ψεύτικα «ληξιπρόθεσμα» και 508.000€ για μήνες που απλώς δεν καταγράφηκαν)."""
     from datetime import datetime, timezone
 
-    from app.repositories.profitability import ReceivablesRepository
+    from app.repositories import reimbursement
+    from app.repositories.profitability import ProfitabilityRepository
 
-    # mongo $bucket returns lower-edge ids (0/30/60) and the "90+" default
-    _fake_mongo(monkeypatch, [
-        {"_id": 0, "claimed": 100, "rx": 2},
-        {"_id": 60, "claimed": 50, "rx": 1},
-        {"_id": "90+", "claimed": 25, "rx": 1},
-    ])
-    out = await ReceivablesRepository(tenant_id="t").aging(
-        now=datetime(2026, 6, 1, tzinfo=timezone.utc))
-    labels = {b["bucket"]: b["claimed"] for b in out["buckets"]}
-    assert labels == {"0-30": 100, "31-60": 0, "61-90": 50, "90+": 25}
-    assert out["total_claimed"] == 175
-    assert out["overdue_claimed"] == 75  # 61-90 + 90+
+    async def fake_receivables(self, months_back=24):
+        return {"rows": [
+            {"period": "2026-01", "open": 900},                                  # πριν την καταγραφή
+            {"period": "2026-03", "open": 100, "payments": [{"amount": 50}]},   # πρώτη καταγραφή
+            {"period": "2026-05", "open": 40, "settled": False},
+            {"period": "2026-06", "open": 0},
+        ], "totals": {"cut": 7}}
+
+    monkeypatch.setattr(reimbursement.ReimbursementRepository, "receivables", fake_receivables)
+    out = await ProfitabilityRepository(tenant_id="t").open_receivables(
+        now=datetime(2026, 6, 20, tzinfo=timezone.utc))
+    by = {b["bucket"]: b["open"] for b in out["buckets"]}
+    assert out["tracking_from"] == "2026-03"
+    assert out["untracked_claimed"] == 900                  # ΔΕΝ μετρά ως ληξιπρόθεσμο
+    assert by == {"0-30": 40, "31-60": 0, "61-90": 100, "90+": 0}     # 05→19 ημ., 03→80 ημ.
+    assert out["overdue_open"] == 100 and out["total_open"] == 140 and out["total_cut"] == 7
 
 
 @pytest.mark.asyncio
