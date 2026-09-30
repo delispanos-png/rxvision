@@ -15,6 +15,7 @@ from bson import ObjectId
 
 from app.repositories.base import BaseRepository, jsonsafe
 from app.services import recoverable
+from app.services.stats_exclusion import COUNTABLE_EXEC
 from app.utils.masking import mask_amka, mask_name
 
 _GRAIN_FMT = {"day": "%Y-%m-%d", "month": "%Y-%m"}
@@ -735,9 +736,19 @@ class PrescriptionRepository(BaseRepository):
         return {"executions": execs.deleted_count, "items": items.deleted_count,
                 "future": fut.deleted_count}
 
-    async def dashboard_summary(self, date_from: datetime, date_to: datetime) -> dict:
+    async def dashboard_summary(self, date_from: datetime, date_to: datetime, *,
+                                fund_id: str | None = None, doctor_id: str | None = None,
+                                icd10: str | None = None) -> dict:
+        match: dict = {"executed_at": {"$gte": date_from, "$lt": date_to}, **COUNTABLE_EXEC}
+        # ΙΔΙΑ φίλτρα με τη λίστα `/prescriptions` που ανοίγει κάθε κάρτα
+        if fund_id:
+            match["fund_id"] = fund_id
+        if doctor_id:
+            match["doctor_id"] = doctor_id
+        if icd10:
+            match["icd10"] = icd10
         pipeline = [
-            {"$match": {"executed_at": {"$gte": date_from, "$lt": date_to}, "status": {"$ne": "cancelled"}, "excluded_from_stats": {"$ne": True}}},
+            {"$match": match},
             {"$group": {
                 "_id": None,
                 "executions": {"$sum": 1},

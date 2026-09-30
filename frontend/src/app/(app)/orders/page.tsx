@@ -34,7 +34,13 @@ export default function OrdersPage() {
 
   const { data, isLoading, isError, refetch } = useQuery({
     queryKey: queryKeys.orderSuggestions(),
-    queryFn: () => api<{ items: Suggestion[]; warehouse_stock?: boolean }>(`/orders/suggestions`),
+    queryFn: () => api<{ items: Suggestion[]; warehouse_stock?: boolean; lead_time_days?: number }>(`/orders/suggestions`),
+  });
+  // Ορίζοντας επαναλήψεων: ΜΙΑ ρύθμιση φαρμακείου, ίδια και στον Σύμβουλο Παραγγελίας
+  const horizon = useMutation({
+    mutationFn: (days: number) => api<{ ok: boolean }>(`/orders/settings/horizon`, { method: "PUT", body: JSON.stringify({ days }) }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: queryKeys.orderSuggestions() }); qc.invalidateQueries({ queryKey: ["advisor", "orders"] }); },
+    onError: () => toastError(t("Δεν αποθηκεύτηκε ο ορίζοντας.", "Horizon not saved.")),
   });
 
   const recompute = useMutation({
@@ -98,6 +104,14 @@ export default function OrdersPage() {
               className="ml-1 w-14 rounded border border-slate-300 px-1 py-0.5 text-right text-xs dark:border-slate-600 dark:bg-slate-800" />
             <span className="text-xs text-slate-400">{t("ημέρες", "days")}</span>
           </div>
+          <label className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300"
+            title={t("Επαναλήψεις που ανοίγουν μέσα σε τόσες ημέρες. Ίδιος ορίζοντας και στον Σύμβουλο Παραγγελίας.", "Repeats opening within this many days. Same horizon in the Order Advisor.")}>
+            {t("Επαναλήψεις που ανοίγουν σε:", "Repeats opening within:")}
+            <select value={data?.lead_time_days ?? 7} onChange={(e) => horizon.mutate(Number(e.target.value))}
+              className="rounded border border-slate-300 px-1 py-0.5 text-xs dark:border-slate-600 dark:bg-slate-800">
+              {[3, 7, 14, 30].map((d) => <option key={d} value={d}>{t(`${d} ημέρες`, `${d} days`)}</option>)}
+            </select>
+          </label>
           <button
             type="button"
             onClick={() => recompute.mutate()}

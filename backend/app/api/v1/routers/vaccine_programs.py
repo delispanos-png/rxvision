@@ -126,7 +126,7 @@ async def program_patients(
     program_id: str,
     status: str = Query("all", pattern="^(all|covered|due_soon|expired|incomplete)$"),
     q: str | None = Query(None, description="όνομα ή ΑΜΚΑ"),
-    limit: int = Query(200, ge=1, le=1000),
+    limit: int = Query(200, ge=1, le=5000),   # η λίστα φορτώνει ΟΛΟΥΣ όσους μετρά το «Σύνολο»
     skip: int = Query(0, ge=0),
     ctx: TenantContext = Depends(require(_PERM, module=_MODULE)),
 ):

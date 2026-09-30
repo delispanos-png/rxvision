@@ -225,11 +225,24 @@ class FuturePrescriptionRepository(BaseRepository):
         items = BaseRepository(tenant_id=self.tenant_id)
         items.collection_name = "prescription_items"
         hist_start = today - timedelta(days=history_days)
+        # ΜΟΝΟ τεμάχια που ΔΟΘΗΚΑΝ (`executed_qty`, όχι της συνταγής), από εκτελέσεις που μετρούν,
+        # ΜΙΑ φορά ανά συνταγή: η ΗΔΥΚΑ δίνει μία συνταγή ως πολλές εγγραφές (`barcode:1`, `:2`…) και
+        # ΚΑΘΕ μία κουβαλά όλα τα είδη — πριν μετρούσαν ×N ([[hdika-multi-record-prescription]]).
+        # Κόστος = χονδρική × τεμάχια (πριν αθροιζόταν η τιμή μονάδας ανά γραμμή, χωρίς ποσότητα).
+        from app.services.stats_exclusion import COUNTABLE_EXEC
         hist = await items.aggregate([
-            {"$match": {"executed_at": {"$gte": hist_start}, "is_executed": True}},
-            {"$group": {"_id": "$product_id",
-                        "units": {"$sum": "$quantity"},
-                        "cost": {"$sum": "$wholesale_price"}}},
+            {"$match": {"executed_at": {"$gte": hist_start}, "executed_qty": {"$gt": 0}}},
+            {"$lookup": {"from": "prescription_executions", "localField": "execution_id",
+                         "foreignField": "_id", "as": "e",
+                         "pipeline": [{"$match": COUNTABLE_EXEC},
+                                      {"$project": {"external_id": 1}}]}},
+            {"$unwind": "$e"},
+            {"$group": {"_id": {"rx": {"$arrayElemAt": [{"$split": ["$e.external_id", ":"]}, 0]},
+                                "p": "$product_id"},
+                        "qty": {"$max": "$executed_qty"},
+                        "price": {"$max": {"$ifNull": ["$wholesale_price", 0]}}}},
+            {"$group": {"_id": "$_id.p", "units": {"$sum": "$qty"},
+                        "cost": {"$sum": {"$multiply": ["$qty", "$price"]}}}},
         ])
         hmap = {h["_id"]: h for h in hist}
         # ── ΑΠΟΘΗΚΗ: τρέχον απόθεμα ανά barcode → «καθαρή» πρόταση = πρόταση − απόθεμα ──

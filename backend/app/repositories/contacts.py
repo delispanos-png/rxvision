@@ -4,6 +4,7 @@ The pharmacist is the data controller; `marketing_consent` gates newsletters/SMS
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 
 from bson import ObjectId
@@ -26,6 +27,8 @@ CONTACT_DATA_FIELDS = ("phone", "mobile", "email", "address", "city", "postal_co
 # Προέλευση στοιχείων επικοινωνίας & προτεραιότητα (patient > pharmacist > idyka).
 # ΗΔΥΚΑ = «παγωμένα» στοιχεία εγγραφής (ο ασφαλισμένος δεν μπορεί να τα αλλάξει εκεί) → ανεπιβεβαίωτα.
 CONTACT_SOURCES = ("idyka", "pharmacist", "patient")
+# + "pharmacy_system": εισαγωγή από το εμπορικό πρόγραμμα (import_contacts) — ανεπιβεβαίωτα όπως τα
+# ΗΔΥΚΑ, δεν ορίζεται ποτέ από χειροκίνητη αποθήκευση.
 STALE_MONTHS = 12   # μετά από 12 μήνες, ακόμη κι επιβεβαιωμένα στοιχεία θέλουν επανεπιβεβαίωση
 
 _MEASURE_KINDS = ("bp", "glucose", "weight")
@@ -184,6 +187,39 @@ class PatientContactRepository(BaseRepository):
             "avatar_url": avatar_url,
         }
 
+    async def missing_contact_list(self, *, limit: int = 300, skip: int = 0,
+                                   count_only: bool = False) -> dict:
+        """Ενεργοί ασθενείς (όχι θανόντες) ΧΩΡΙΣ κανένα κανάλι: ούτε κινητό, ούτε σταθερό, ούτε email —
+        και όσοι δεν έχουν καθόλου καρτέλα επικοινωνίας. ΤΟ σύνολο που μετρά η πρόταση του Συμβούλου
+        «Ξέρεις ότι N πελάτες σου δεν έχουν ούτε τηλέφωνο ούτε email» (πριν: ενεργοί − ΟΛΕΣ οι
+        καρτέλες με στοιχεία, άλλος πληθυσμός — και έστελνε σε σελίδα χωρίς αυτή τη λίστα)."""
+        pipeline: list[dict] = [
+            {"$match": {"tenant_id": self.tenant_id, "lifecycle": {"$in": ["active", "new"]},
+                        "deceased": {"$ne": True}}},
+            {"$lookup": {"from": "patient_contacts", "localField": "_id",
+                         "foreignField": "_id", "as": "c"}},
+            {"$set": {"c": {"$first": "$c"}}},
+            {"$match": {"c.active": {"$ne": False},
+                        "c.mobile": {"$in": [None, ""]}, "c.phone": {"$in": [None, ""]},
+                        "c.email": {"$in": [None, ""]}}},
+        ]
+        if count_only:
+            r = await self._db["patients_anonymized"].aggregate(  # tenant-ok: pipeline[0] = $match tenant_id
+                pipeline + [{"$count": "n"}]).to_list(1)
+            return {"total": (r[0]["n"] if r else 0)}
+        res = await self._db["patients_anonymized"].aggregate(pipeline + [  # tenant-ok: pipeline[0] = $match tenant_id
+            {"$sort": {"last_seen_at": -1}},
+            {"$facet": {"items": [{"$skip": skip}, {"$limit": limit},
+                                  {"$project": {"full_name": 1, "amka": 1, "last_seen_at": 1}}],
+                        "total": [{"$count": "n"}]}}]).to_list(1)
+        facet = res[0] if res else {"items": [], "total": []}
+        items = [{"patient_id": str(d["_id"]),
+                  "name": pseudo_name(d.get("full_name") or "—", True) if self.demo else (d.get("full_name") or "—"),
+                  "amka": None if self.demo else d.get("amka"),
+                  "last_seen": d.get("last_seen_at")} for d in facet.get("items", [])]
+        return jsonsafe({"items": items,
+                         "total": facet["total"][0]["n"] if facet.get("total") else 0})
+
     async def needs_confirmation_list(self, *, limit: int = 300, skip: int = 0,
                                       q: str | None = None) -> dict:
         """Λίστα ασθενών που θέλουν (επαν)επιβεβαίωση στοιχείων επικοινωνίας: ανεπιβεβαίωτα,
@@ -240,43 +276,143 @@ class PatientContactRepository(BaseRepository):
             })
         return {"items": items, "total": total, "limit": limit, "skip": skip}
 
-    async def import_insured(self, rows: list[dict]) -> dict:
-        """Ταίριασμα κάθε γραμμής με υπάρχοντα ασθενή βάσει ΑΜΚΑ → ενημέρωση στοιχείων
-        επικοινωνίας (+ ονόματος). Όσοι ΑΜΚΑ δεν αντιστοιχούν παραλείπονται (μόνο ενημέρωση
-        υπαρχόντων — δεν δημιουργούνται νέοι ασθενείς)."""
-        updated = skipped = 0
-        skipped_sample: list[str] = []
+    async def import_contacts(self, records: list[dict], *, overwrite: bool = False,
+                              dry_run: bool = True) -> dict:
+        """Εισαγωγή από το εμπορικό πρόγραμμα (εγγραφές από contacts_import.row_to_record).
+
+        Ταίριασμα: με ΑΜΚΑ· χωρίς ΑΜΚΑ, με ονοματεπώνυμο ΜΟΝΟ όταν είναι μοναδικό στο φαρμακείο
+        (411 συνωνυμίες σε 8.223 ασθενείς ενός φαρμακείου — το όνομα μόνο του δεν είναι ταυτότητα).
+        ΑΜΚΑ που δεν βρέθηκε ΔΕΝ πέφτει σε όνομα (θα έπιανε τον συνονόματο).
+
+        Συγχώνευση ανά πεδίο: κενό → γεμίζει· ίδιο → τίποτα· διαφορετικό → ΠΟΤΕ πάνω σε στοιχεία
+        που επιβεβαίωσε άνθρωπος (φαρμακοποιός/πελάτης)· πάνω σε ΗΔΥΚΑ/προηγούμενη εισαγωγή μόνο με
+        `overwrite`. Ποτέ συγκατάθεση μάρκετινγκ, ποτέ «επιβεβαιωμένο», ποτέ αλλαγή ονόματος.
+
+        `dry_run` → ΙΔΙΟΣ υπολογισμός χωρίς εγγραφή: ό,τι δείχνει ο έλεγχος είναι ό,τι θα γίνει."""
+        from pymongo import UpdateOne
+
+        from app.services.contacts_import import name_key
+
         pa = self._db["patients_anonymized"]
+        by_amka: dict[str, dict] = {}
+        by_name: dict[str, list[dict]] = {}
+        async for p in pa.find({"tenant_id": self.tenant_id},
+                               {"amka": 1, "full_name": 1, "deceased": 1}):
+            a = str(p.get("amka") or "").strip()
+            if a:
+                by_amka.setdefault(a, p)
+            k = name_key(p.get("full_name"))
+            if k:
+                by_name.setdefault(k, []).append(p)
+
+        def show(v):
+            return "***" if self.demo else v
+
+        stats = {"rows": len(records), "matched": 0, "by_amka": 0, "by_name": 0,
+                 "not_found": 0, "ambiguous": 0, "no_key": 0, "deceased": 0,
+                 "duplicate": 0, "no_data": 0, "patients_updated": 0}
+        fields_stats = {f: {"filled": 0, "overwritten": 0, "same": 0, "kept": 0, "protected": 0,
+                            "invalid": 0} for f in CONTACT_DATA_FIELDS}
+        samples: dict[str, list] = {"not_found": [], "ambiguous": [], "conflicts": []}
+
+        # 1) ταίριασμα γραμμή → ασθενής (πρώτη γραμμή ανά ασθενή κερδίζει)
+        matched: dict = {}
+        for rec in records:
+            for f, n in (rec.get("invalid") or {}).items():
+                if f in fields_stats:
+                    fields_stats[f]["invalid"] += n
+            amka, name = rec.get("amka") or "", (rec.get("name") or "").strip()
+            p = None
+            if amka:
+                p = by_amka.get(amka) or (by_amka.get(amka[1:]) if amka.startswith("0") else None)
+                if p:
+                    stats["by_amka"] += 1
+            elif name_key(name):
+                hits = by_name.get(name_key(name), [])
+                if len(hits) == 1:
+                    p = hits[0]
+                    stats["by_name"] += 1
+                elif len(hits) > 1:
+                    stats["ambiguous"] += 1
+                    if len(samples["ambiguous"]) < 50:
+                        samples["ambiguous"].append({"row": rec.get("row"), "name": show(name),
+                                                     "count": len(hits)})
+                    continue
+            else:
+                stats["no_key"] += 1
+                continue
+            if not p:
+                stats["not_found"] += 1
+                if len(samples["not_found"]) < 50:
+                    samples["not_found"].append({"row": rec.get("row"), "name": show(name),
+                                                 "amka": show(amka) if amka else None})
+                continue
+            stats["matched"] += 1
+            if p.get("deceased"):
+                stats["deceased"] += 1           # θανόντες: ποτέ στοιχεία επικοινωνίας
+                continue
+            if not rec.get("fields"):
+                stats["no_data"] += 1
+                continue
+            if p["_id"] in matched:
+                stats["duplicate"] += 1
+                prev = matched[p["_id"]][1]
+                for f, v in rec["fields"].items():
+                    prev.setdefault(f, v)
+                continue
+            matched[p["_id"]] = (p, dict(rec["fields"]), rec.get("row"))
+
+        # 2) συγχώνευση με τα υπάρχοντα στοιχεία
+        existing: dict = {}
+        ids = list(matched)
+        for i in range(0, len(ids), 1000):
+            async for d in self._coll.find({"tenant_id": self.tenant_id, "_id": {"$in": ids[i:i + 1000]}}):
+                existing[d["_id"]] = d
+
+        def same(f, a, b):
+            if f in ("mobile", "phone"):
+                return re.sub(r"\D", "", str(a))[-10:] == re.sub(r"\D", "", str(b))[-10:]
+            return str(a).strip().lower() == str(b).strip().lower()
+
         now = datetime.now(tz=timezone.utc)
-        for row in rows:
-            amka = (row.get("amka") or "").strip()
-            if not amka:
+        ops = []
+        for pid, (p, fields, row) in matched.items():
+            cur = existing.get(pid) or {}
+            human = bool(cur.get("contact_verified")) or cur.get("contact_source") in ("pharmacist", "patient")
+            to_set: dict = {}
+            for f, v in fields.items():
+                old = cur.get(f)
+                old = old.strip() if isinstance(old, str) else old
+                st = fields_stats[f]
+                if not old:
+                    to_set[f] = v
+                    st["filled"] += 1
+                elif same(f, old, v):
+                    st["same"] += 1
+                else:
+                    kind = "protected" if human else ("overwritten" if overwrite else "kept")
+                    st[kind] += 1
+                    if kind == "overwritten":
+                        to_set[f] = v
+                    if len(samples["conflicts"]) < 50:
+                        samples["conflicts"].append({
+                            "row": row, "name": show(p.get("full_name") or "—"), "field": f,
+                            "current": show(old), "file": show(v), "outcome": kind})
+            if not to_set:
                 continue
-            cand = [amka]
-            if len(amka) == 10:                       # Excel μπορεί να έκοψε ένα αρχικό μηδενικό
-                cand.append("0" + amka)
-            patient = await pa.find_one(
-                {"tenant_id": self.tenant_id, "amka": {"$in": cand}}, {"_id": 1})
-            if not patient:
-                skipped += 1
-                if len(skipped_sample) < 20:
-                    skipped_sample.append(amka)
-                continue
-            pid = patient["_id"]
-            contact = {k: row[k] for k in CONTACT_FIELDS if k in row}
-            if contact:
-                contact["tenant_id"] = self.tenant_id
-                contact["updated_at"] = now
-                await self._coll.update_one(
-                    {"_id": pid, "tenant_id": self.tenant_id},
-                    {"$set": contact, "$setOnInsert": {"_id": pid}}, upsert=True)
-            name = (row.get("full_name") or "").strip()
-            if name:
-                await pa.update_one({"_id": pid, "tenant_id": self.tenant_id},
-                                    {"$set": {"full_name": name}})
-            updated += 1
-        return {"updated": updated, "skipped": skipped,
-                "skipped_sample": skipped_sample, "total": len(rows)}
+            stats["patients_updated"] += 1
+            setd = {**to_set, "tenant_id": self.tenant_id, "updated_at": now,
+                    "contact_updated_at": now, "contact_imported_at": now}
+            if not human:
+                setd["contact_source"] = "pharmacy_system"
+            ops.append(UpdateOne({"_id": pid, "tenant_id": self.tenant_id},
+                                 {"$set": setd, "$setOnInsert": {"created_at": now}}, upsert=True))
+
+        if ops and not dry_run:
+            for i in range(0, len(ops), 1000):
+                await self._coll.bulk_write(ops[i:i + 1000], ordered=False)
+        return {**stats, "fields": fields_stats, "samples": samples,
+                "overwrite": overwrite, "applied": bool(ops) and not dry_run}
 
     # ── κλινικές μετρήσεις (πίεση / ζάχαρο / βάρος) με ημερομηνία + ιστορικό ──
     async def add_measurement(self, patient_id: str, kind: str, *, systolic=None,

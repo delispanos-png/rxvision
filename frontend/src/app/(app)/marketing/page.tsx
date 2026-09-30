@@ -9,9 +9,12 @@ import { appAlert } from "@/store/dialogStore";
 import { useT } from "@/store/prefStore";
 import { QueryState } from "@/components/ui/QueryState";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
+import { fmtNum } from "@/lib/formatters";
 
 type Cat = { key: string; label: string; icon: string; offer: string; patients: number; value: number };
-type Card = { id: string; icon: string; urgency: string; title: string; why: string; count: number; cta: string; segment: string; value: string | null };
+type Card = { id: string; icon: string; urgency: string; title: string; why: string; count: number; cta: string; segment: string; value: string | null;
+  /** σε πόσους ΦΤΑΝΕΙ το μήνυμα (συγκατάθεση + στοιχεία επικοινωνίας) */
+  reachable?: number };
 type Campaign = { id: string; channel: string; subject?: string | null; recipients: number; sent: number; created_at: string | null; coupon: string | null; redemptions: number; redeemed_value_cents: number; conversion_pct: number };
 type Dash = {
   performance: { days: number; total: { campaigns: number; recipients: number; sent: number; failed: number }; by_channel: Record<string, { campaigns: number; recipients: number; sent: number; failed: number }> };
@@ -88,6 +91,13 @@ export default function MarketingDashboard() {
                           <div className="min-w-0">
                             <div className="flex items-center gap-2 text-sm font-semibold text-slate-800 dark:text-slate-100"><span className="text-base">{c.icon}</span> {c.title}</div>
                             <div className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">{c.why}</div>
+                            {typeof c.reachable === "number" && (
+                              <div className={`mt-1 text-xs font-semibold ${c.reachable ? "text-emerald-700 dark:text-emerald-400" : "text-amber-700 dark:text-amber-400"}`}>
+                                {c.reachable
+                                  ? t(`→ φτάνει σε ${fmtNum(c.reachable)} (με συγκατάθεση & στοιχεία επικοινωνίας)`, `→ reaches ${fmtNum(c.reachable)} (with consent & contact details)`)
+                                  : t("→ κανένας δεν έχει δώσει συγκατάθεση επικοινωνίας ακόμη", "→ no one has given marketing consent yet")}
+                              </div>
+                            )}
                           </div>
                           <button onClick={() => go(c.segment, c.value)} className="inline-flex shrink-0 items-center gap-1 rounded-lg bg-violet-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-violet-700"><Send className="h-3.5 w-3.5" /> {c.cta}</button>
                         </div>

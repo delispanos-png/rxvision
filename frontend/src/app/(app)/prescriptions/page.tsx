@@ -205,6 +205,8 @@ export default function PrescriptionsPage() {
   const [patientName, setPatientName] = useState("");
   const [status, setStatus] = useState("");           // "" | executed | partial
   const [chars, setChars] = useState<string[]>([]);   // πολλαπλά χαρακτηριστικά (AND)
+  // …&countable=1 → ΜΟΝΟ ό,τι μετρά στα στατιστικά, όπως η κάρτα που μας έστειλε εδώ (όχι εξαιρεμένες)
+  const [countable, setCountable] = useState(false);
   const bc = scanRxBarcode(barcode);   // 16ψήφιο σκαναρισμένο → κράτα τους 13 πρώτους (drop suffix «110»)
   // φίλτρα λίστας (πέρα από το κοινό date/fund/doctor/icd10) — αγνοούν περίοδο όταν ψάχνεις barcode/ΑΜΚΑ/όνομα
   const extra = [
@@ -213,13 +215,16 @@ export default function PrescriptionsPage() {
     patientName.trim() && `patient=${encodeURIComponent(patientName.trim())}`,
     status && `status=${status}`,
     chars.length && `characteristic=${encodeURIComponent(chars.join(","))}`,
+    countable && "countable=true",
   ].filter(Boolean).join("&");
   const listQs = extra ? `${q}&${extra}` : q;
   const anyFilter = !!(bc || amka.trim() || patientName.trim() || status || chars.length);
   // deep-link από τη σελίδα «είδη συνταγών»: /prescriptions?char=chronic,narcotic → προεπιλογή φίλτρων
   useEffect(() => {
-    const c = new URLSearchParams(window.location.search).get("char");
+    const sp = new URLSearchParams(window.location.search);
+    const c = sp.get("char");
     if (c) setChars(c.split(",").filter(Boolean));
+    if (sp.get("countable")) setCountable(true);
   }, []);
   const PAGE_SIZE = 50;
   const [page, setPage] = useState(1);

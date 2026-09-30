@@ -38,8 +38,9 @@ async def today(ctx: TenantContext = Depends(require("patients:read", module=_MO
 
 @router.get("/patients")
 async def patients(sort: str = Query("value"),
+                   active_days: int | None = Query(None, ge=1, le=3650),
                    ctx: TenantContext = Depends(require("patients:read", module=_MODULE))):
-    return await _repo(ctx).patients_table(sort=sort)
+    return await _repo(ctx).patients_table(sort=sort, active_days=active_days)
 
 
 @router.get("/compliance")

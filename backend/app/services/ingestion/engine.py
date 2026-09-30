@@ -242,6 +242,29 @@ class IngestionEngine:
     # Πριν (έως 29/09/2026) η πρόβλεψη που γεννούσε η θέση 1/3 έμενε «αναμένεται» ΓΙΑ ΠΑΝΤΑ, ακόμη κι
     # όταν ο πελάτης εκτελούσε κανονικά την 2/3. Ο Σύμβουλος τον έβγαζε «σταμάτησε να έρχεται»:
     # μετρημένο σε ένα φαρμακείο, 326 από 379 τέτοιους πελάτες είχαν έρθει κανονικά.
+    def _rx_siblings_q(self, ex: CanonicalExecution) -> dict:
+        import re
+        bc = (ex.external_id or "").split(":")[0]
+        return {"tenant_id": self.tenant_id, "source": ex.source,
+                "external_id": {"$regex": "^" + re.escape(bc) + ":"}}
+
+    async def _newer_record_of_same_rx(self, ex: CanonicalExecution) -> bool:
+        """Υπάρχει ΝΕΟΤΕΡΗ εγγραφή της ίδιας συνταγής (ίδιο barcode, άλλο `:N`);"""
+        return bool(await self.db["prescription_executions"].find_one(
+            {**self._rx_siblings_q(ex), "external_id": {**self._rx_siblings_q(ex)["external_id"],
+                                                         "$ne": ex.external_id},
+             "executed_at": {"$gt": ex.executed_at}}, {"_id": 1}))
+
+    async def _retire_sibling_predictions(self, ex: CanonicalExecution, exec_id: ObjectId) -> None:
+        """Οι παλαιότερες εγγραφές της ίδιας συνταγής δεν κρατούν δική τους πρόβλεψη."""
+        sib = [d["_id"] async for d in self.db["prescription_executions"].find(
+            {**self._rx_siblings_q(ex)}, {"_id": 1}) if d["_id"] != exec_id]
+        if sib:
+            await self.db["future_prescriptions"].update_many(
+                {"tenant_id": self.tenant_id, "source_execution_id": {"$in": sib},
+                 "status": "pending"},
+                {"$set": {"status": "superseded", "superseded_by": exec_id}})
+
     async def _later_in_chain(self, ex: CanonicalExecution) -> dict | None:
         if not ex.repeat_root:
             return None
@@ -585,6 +608,14 @@ class IngestionEngine:
         # επανα-άντληση (όχι μόνο στη νέα εκτέλεση) και είχε φουσκώσει στο 71% των προϊόντων, έως
         # ×932. Η κερδοφορία μετρά πλέον τεμάχια από τα ίδια τα είδη, για την περίοδο που ζητείται.
         # Κέρδος και στο φορτίο: μία εγγραφή λιγότερη ανά είδος σε κάθε άντληση.
+        # ΜΙΑ πρόβλεψη ανά ΣΥΝΤΑΓΗ, όχι ανά εγγραφή: η ΗΔΥΚΑ δίνει μια τμηματικά εκτελεσμένη συνταγή
+        # ως `barcode:1`, `:2`… και ΚΑΘΕ εγγραφή γεννούσε δική της πρόβλεψη (30/09/2026: 2.785
+        # συνταγές, 3.041 διπλές → ίδιος ασθενής ×N στις Μελλοντικές, ζήτηση ×N στις Παραγγελίες).
+        # Κρατά την πρόβλεψη μόνο η ΠΙΟ ΠΡΟΣΦΑΤΗ εγγραφή — αυτή έχει την τελική κατάσταση των ειδών.
+        if next_open and await self._newer_record_of_same_rx(ex):
+            next_open = None
+        if next_open:
+            await self._retire_sibling_predictions(ex, exec_id)
         if next_open:
             # Η επόμενη θέση της αλυσίδας ΕΧΕΙ ΗΔΗ εκτελεστεί; (η άντληση πάει από τις νεότερες
             # ημέρες προς τις παλαιότερες, άρα η 2/3 συχνά έρχεται ΠΡΙΝ από την 1/3.)
@@ -595,8 +626,13 @@ class IngestionEngine:
                 {"tenant_id": self.tenant_id, "source_execution_id": exec_id},
                 {"$set": {"expected_open_date": next_open,
                           "patient_ref": patient_ref,
-                          "products": [{"product_id": it["product_id"], "expected_qty": it["quantity"]}
-                                       for it in item_docs], **state},
+                          # ΜΟΝΟ ό,τι ΔΟΘΗΚΕ, με την ποσότητα που δόθηκε: γραμμή της συνταγής που ο
+                          # ασθενής δεν πήρε δεν «αναμένεται» στην επόμενη επανάληψη. Πριν έμπαινε
+                          # όλη η συνταγή → οι Παραγγελίες πρότειναν φάρμακα που δεν δόθηκαν ποτέ (30/09).
+                          "products": [{"product_id": it["product_id"],
+                                        "expected_qty": it.get("executed_qty") or 0}
+                                       for it in item_docs if (it.get("executed_qty") or 0) > 0],
+                          **state},
                  # ΟΧΙ `status` στο $set χωρίς λόγο: ο καθημερινός συγχρονισμός ξαναγράφει όλο τον
                  # μήνα και θα ξανάνοιγε ως «αναμένεται» ό,τι έχει ήδη εκτελεστεί ή ακυρωθεί.
                  "$setOnInsert": {"tenant_id": self.tenant_id, "source_execution_id": exec_id,

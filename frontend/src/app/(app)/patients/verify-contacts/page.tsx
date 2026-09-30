@@ -3,7 +3,8 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { ShieldAlert, Search, DownloadCloud, Loader2, Pencil, Phone, Mail } from "lucide-react";
+import { ShieldAlert, Search, DownloadCloud, Loader2, Pencil, Phone, Mail, FileSpreadsheet } from "lucide-react";
+import { ImportInsuredModal } from "@/components/patients/ImportInsuredModal";
 import { api } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
 import { QueryState } from "@/components/ui/QueryState";
@@ -31,6 +32,7 @@ export default function VerifyContactsPage() {
   const [q, setQ] = useState("");
   const [term, setTerm] = useState("");
   const [skip, setSkip] = useState(0);
+  const [importOpen, setImportOpen] = useState(false);
 
   const query = useQuery({
     queryKey: ["needs-confirmation", term, skip],
@@ -67,6 +69,27 @@ export default function VerifyContactsPage() {
             <p className="text-xs text-slate-500">{t("Πελάτες με στοιχεία μόνο από ΗΔΥΚΑ, ανεπιβεβαίωτα ή παλαιότερα των 12 μηνών.", "Patients with ΗΔΥΚΑ-only, unconfirmed, or 12-month-stale details.")}</p>
           </div>
         </div>
+
+        {/* «Χωρίς κανένα στοιχείο» — ΑΚΡΙΒΩΣ όσους μετρά η πρόταση του Συμβούλου (?missing=1) */}
+        <MissingContacts />
+
+        {/* Εισαγωγή από το εμπορικό πρόγραμμα — Excel/CSV με αντιστοίχιση στηλών */}
+        <div className="rounded-2xl border border-emerald-200 bg-emerald-50/60 p-4 dark:border-emerald-800 dark:bg-emerald-950/30">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-start gap-2.5">
+              <FileSpreadsheet className="mt-0.5 h-5 w-5 text-emerald-600" />
+              <div>
+                <div className="text-sm font-bold text-slate-800 dark:text-slate-100">{t("Εισαγωγή από το εμπορικό πρόγραμμα", "Import from your pharmacy software")}</div>
+                <p className="text-xs text-slate-500">{t("Ανέβασε τη λίστα πελατών (Excel ή CSV), πες ποια στήλη είναι τι και δες τι θα αλλάξει πριν το εφαρμόσεις. Ταίριασμα με ΑΜΚΑ ή μοναδικό ονοματεπώνυμο.", "Upload your customer list (Excel or CSV), say which column is what and review the changes before applying. Matched by ΑΜΚΑ or unique full name.")}</p>
+              </div>
+            </div>
+            <button onClick={() => setImportOpen(true)}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700">
+              <FileSpreadsheet className="h-4 w-4" /> {t("Εισαγωγή", "Import")}
+            </button>
+          </div>
+        </div>
+        <ImportInsuredModal open={importOpen} onClose={() => setImportOpen(false)} />
 
         {/* Μαζική αρχικοποίηση από ΗΔΥΚΑ — μόνο όσοι λείπουν στοιχεία, background & throttled */}
         <div className="rounded-2xl border border-brand-200 bg-brand-50/60 p-4 dark:border-brand-800 dark:bg-brand-950/30">
@@ -155,7 +178,7 @@ export default function VerifyContactsPage() {
                           </td>
                           <td className="px-4 py-2.5">
                             <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${r.source === "idyka" ? "bg-amber-100 text-amber-700" : r.source ? "bg-slate-100 text-slate-600" : "bg-slate-100 text-slate-400"}`}>
-                              {r.source === "idyka" ? t("Μόνο ΗΔΥΚΑ", "ΗΔΥΚΑ-only") : r.source === "pharmacist" ? t("Φαρμακείο", "Pharmacy") : r.source === "patient" ? t("Πελάτης", "Patient") : t("Κανένα", "None")}
+                              {r.source === "idyka" ? t("Μόνο ΗΔΥΚΑ", "ΗΔΥΚΑ-only") : r.source === "pharmacist" ? t("Φαρμακείο", "Pharmacy") : r.source === "patient" ? t("Πελάτης", "Patient") : r.source === "pharmacy_system" ? t("Εμπορικό πρόγραμμα", "Pharmacy software") : t("Κανένα", "None")}
                             </span>
                           </td>
                           <td className="px-4 py-2.5 text-slate-500">{ddmmyyyy(r.contact_updated_at) || "—"}</td>
@@ -184,5 +207,43 @@ export default function VerifyContactsPage() {
         </QueryState>
       </div>
     </ModuleGuard>
+  );
+}
+
+type MissingRes = { items: { patient_id: string; name: string; amka?: string | null; last_seen?: string | null }[]; total: number };
+/** Ενεργοί πελάτες χωρίς κινητό, σταθερό ή email. Ανοίγει ανοιχτό όταν έρχεσαι από τον Σύμβουλο. */
+function MissingContacts() {
+  const t = useT();
+  const [open, setOpen] = useState(() => { try { return new URLSearchParams(window.location.search).get("missing") === "1"; } catch { return false; } });
+  const [skip, setSkip] = useState(0);
+  const d = useQuery({ queryKey: ["contacts-missing", skip], queryFn: () => api<MissingRes>(`/patients/contacts/missing?limit=${PAGE}&skip=${skip}`) });
+  const total = d.data?.total ?? 0;
+  return (
+    <div className="rounded-2xl border border-rose-200 bg-rose-50/60 p-4 dark:border-rose-900/50 dark:bg-rose-950/20">
+      <button onClick={() => setOpen((v) => !v)} className="flex w-full items-center justify-between gap-2 text-left">
+        <span className="text-sm font-semibold text-rose-900 dark:text-rose-200">
+          {t(`${total} ενεργοί πελάτες χωρίς κανένα στοιχείο επικοινωνίας`, `${total} active customers with no contact details`)}
+        </span>
+        <span className="text-xs text-rose-700 dark:text-rose-300">{open ? t("απόκρυψη", "hide") : t("δες τους", "show")}</span>
+      </button>
+      {open && (
+        <div className="mt-3 space-y-1.5">
+          {(d.data?.items ?? []).map((r) => (
+            <a key={r.patient_id} href={`/intelligence/profile?patient_id=${encodeURIComponent(r.patient_id)}`}
+              className="flex items-center justify-between rounded-lg bg-white px-3 py-2 text-sm hover:bg-rose-50 dark:bg-slate-900 dark:hover:bg-slate-800">
+              <span className="font-medium text-slate-800 dark:text-slate-100">{r.name}</span>
+              <span className="text-xs text-slate-400">{r.amka || ""}</span>
+            </a>
+          ))}
+          {total > PAGE && (
+            <div className="flex items-center justify-end gap-2 pt-1 text-xs">
+              <button disabled={skip === 0} onClick={() => setSkip(Math.max(0, skip - PAGE))} className="rounded border px-2 py-1 disabled:opacity-40">‹</button>
+              <span>{skip + 1}–{Math.min(skip + PAGE, total)} / {total}</span>
+              <button disabled={skip + PAGE >= total} onClick={() => setSkip(skip + PAGE)} className="rounded border px-2 py-1 disabled:opacity-40">›</button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
   );
 }

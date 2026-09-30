@@ -198,6 +198,9 @@ async def list_prescriptions(
     patient: str | None = None,
     status: str | None = None,            # "executed" | "partial"
     characteristic: str | None = None,    # χαρακτηριστικό συνταγής (βλ. _CHARACTERISTICS)
+    # Από κάρτα στατιστικών: ΜΟΝΟ ό,τι μετρά στα στατιστικά (όχι εξαιρεμένες) — ίδιος κανόνας με
+    # την κάρτα, ώστε «Ν συνταγές» στην κάρτα = Ν γραμμές στη λίστα.
+    countable: bool = False,
     sort: str = "executed_at",
     dir: int = -1,
     page: int = Query(1, ge=1),
@@ -239,7 +242,8 @@ async def list_prescriptions(
         if tok == "repeat":
             query["repeat_total"] = {"$gt": 1}
         elif tok == "simple":
-            query["repeat_total"] = {"$lte": 1}
+            # όπως η κάρτα: και όσες δεν έχουν καταγεγραμμένο πλήθος επαναλήψεων (null ≤ 1)
+            query["repeat_total"] = {"$not": {"$gt": 1}}
         elif tok in ("3", "4", "5", "6"):
             query["repeat_total"] = int(tok)
         elif tok == "monthly":
@@ -255,6 +259,8 @@ async def list_prescriptions(
     # ακυρωμένες συνταγές εξαιρούνται από προεπιλογή (φαίνονται μόνο με το φίλτρο «cancelled»)
     if query.get("status") != "cancelled":
         query["status"] = {"$ne": "cancelled"}
+    if countable:
+        query["excluded_from_stats"] = {"$ne": True}
     items = await repo.list_executions(query, skip=(page - 1) * page_size, limit=page_size,
                                        sort=sort, direction=dir)
     return {"page": page, "page_size": page_size, "items": items}

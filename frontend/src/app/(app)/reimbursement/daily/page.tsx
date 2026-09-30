@@ -26,11 +26,11 @@ export default function DailyReconciliationPage() {
   const [showReport, setShowReport] = useState(false);
   const groupLabel = (g: string) => g === "all" ? t("Σύνολο (όλα τα ταμεία)", "Total (all funds)") : g;
 
-  // εκτελέσεις της επιλεγμένης ημέρας (UTC όρια, ίδια με τον ημερήσιο έλεγχο) — εξαιρ. ακυρωμένες
-  const nextDay = day ? new Date(new Date(day + "T00:00:00.000Z").getTime() + 864e5).toISOString() : "";
+  // εκτελέσεις της επιλεγμένης ημέρας — ΑΚΡΙΒΩΣ όσες μέτρησε η γραμμή (ίδια ομάδα ταμείου,
+  // χωρίς 100%, χωρίς εξαιρεμένες), όχι μια δεύτερη αναζήτηση με άλλους κανόνες
   const execs = useQuery({
-    queryKey: ["reimb-daily-execs", day],
-    queryFn: () => api<{ items: Exec[] }>(`/prescriptions?date_from=${day}T00:00:00.000Z&date_to=${nextDay}&page_size=300&sort=executed_at&dir=-1`),
+    queryKey: ["reimb-daily-execs", day, group],
+    queryFn: () => api<{ items: Exec[] }>(`/reimbursement/daily/executions?day=${day}&group=${encodeURIComponent(group)}`),
     enabled: !!day,
   });
   const items = (execs.data?.items ?? []).filter((e) => e.status !== "cancelled");

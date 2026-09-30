@@ -12,7 +12,9 @@ import { Tooltip } from "@/components/ui/Tooltip";
 import { DataTable, type Column } from "@/components/tables/DataTable";
 import { ExportMenu } from "@/components/export/ExportMenu";
 
-export type Xsell = { atc: string; class: string; sell: string; why: string; reach: number };
+export type Xsell = { atc: string; class: string; sell: string; why: string; reach: number;
+  /** η περίοδος που μέτρησε η κάρτα — η λίστα ζητά την ΙΔΙΑ, ώστε ο αριθμός να συμφωνεί */
+  date_from?: string; date_to?: string };
 type Pat = {
   patient_id: string; name?: string | null; amka?: string | null; age_group?: string | null;
   sex?: string | null; birth_year?: number | null; times: number; last: string;
@@ -22,13 +24,14 @@ type Pat = {
 export function CrossSellCard({ x }: { x: Xsell }) {
   const t = useT();
   const [open, setOpen] = useState(false);
-  const pats = useQuery({ queryKey: ["xsell-pat", x.atc], queryFn: () => api<{ items: Pat[] }>(`/advisor/cross-sell-patients?atc=${encodeURIComponent(x.atc)}`), enabled: open, retry: false });
+  const period = x.date_from && x.date_to ? `&date_from=${encodeURIComponent(x.date_from)}&date_to=${encodeURIComponent(x.date_to)}` : "";
+  const pats = useQuery({ queryKey: ["xsell-pat", x.atc, x.date_from, x.date_to], queryFn: () => api<{ items: Pat[] }>(`/advisor/cross-sell-patients?atc=${encodeURIComponent(x.atc)}${period}`), enabled: open, retry: false });
   const rows = pats.data?.items ?? [];
 
   const cols: Column<Pat>[] = [
     { key: "name", header: t("Ασθενής", "Patient"), render: (r) => r.name || "—" },
     { key: "age", header: t("Ηλικία", "Age"), hideOnMobile: true, render: (r) => r.birth_year ? `${new Date().getFullYear() - r.birth_year}` : (r.age_group || "—") },
-    { key: "times", header: t("Εκτελ.", "Execs"), align: "right", render: (r) => fmtNum(r.times), sortValue: (r) => r.times },
+    { key: "times", header: t("Συνταγές", "Prescriptions"), align: "right", render: (r) => fmtNum(r.times), sortValue: (r) => r.times },
     { key: "last", header: t("Τελευταία", "Last"), hideOnMobile: true, render: (r) => fmtDate(r.last), sortValue: (r) => r.last },
     { key: "drugs", header: t("Φάρμακα", "Medicines"), hideOnMobile: true, render: (r) => (r.drugs ?? []).filter(Boolean).join(", ") || "—" },
     {

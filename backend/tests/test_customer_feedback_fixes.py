@@ -65,3 +65,11 @@ def test_ownership_never_uses_paused_credentials():
     from app.services.ingestion import ownership
     src = inspect.getsource(ownership.HdikaOwnership._keys)
     assert src.index("auth_paused") < src.index("_effective_hdika_creds(holder)")
+
+
+def test_one_prediction_per_prescription_and_only_dispensed_lines():
+    """30/09/2026: 3.041 διπλές προβλέψεις (μία ανά εγγραφή `barcode:N`) και 23 προτάσεις
+    παραγγελίας για φάρμακα που ο ασθενής δεν πήρε ποτέ."""
+    src = inspect.getsource(engine.IngestionEngine._post_process)
+    assert "_newer_record_of_same_rx(" in src and "_retire_sibling_predictions(" in src
+    assert 'it.get("executed_qty") or 0) > 0' in src

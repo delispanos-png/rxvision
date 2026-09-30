@@ -73,7 +73,7 @@ export function ProgramPatients({ kind }: { kind: "vaccine" | "therapy" }) {
   const { data: pats, isFetching } = useQuery({
     queryKey: ["vaccine-patients", active, status, term],
     queryFn: () => api<PatRes>(
-      `/vaccine-programs/${active}/patients?status=${status}${term ? `&q=${encodeURIComponent(term)}` : ""}`),
+      `/vaccine-programs/${active}/patients?status=${status}&limit=5000${term ? `&q=${encodeURIComponent(term)}` : ""}`),
     enabled: !!active,
   });
 

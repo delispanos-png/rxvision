@@ -309,9 +309,13 @@ class VaccinationCampaignRepository(BaseRepository):
 
         async for p in self._db["patients_anonymized"].find(
                 {"tenant_id": self.tenant_id},
-                {"pseudo_id": 1, "amka": 1, "full_name": 1, "age_group": 1, "last_seen_at": 1}):
+                {"pseudo_id": 1, "amka": 1, "full_name": 1, "age_group": 1, "last_seen_at": 1,
+                 "deceased": 1}):
             c = contacts.get(p["_id"]) or {}
-            if c.get("active") is False:  # deceased / moved / stopped → never target
+            # θανών (επίσημη σημαία — πιάνει και όσους δεν έχουν καρτέλα επικοινωνίας), μετακόμισε,
+            # σταμάτησε → ποτέ στόχος. Πριν ελεγχόταν μόνο η καρτέλα επικοινωνίας, ενώ η λίστα
+            # ανάκλησης (`recall_list`) έλεγχε και τα δύο — άλλοι «εκκρεμείς» σε κάθε οθόνη.
+            if c.get("active") is False or p.get("deceased"):
                 continue
             ag = p.get("age_group") or "unknown"
             done = p.get("pseudo_id") in vacc

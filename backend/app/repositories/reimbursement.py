@@ -1171,7 +1171,8 @@ class ReimbursementRepository(BaseRepository):
         return await self.closing_prefs()
 
     # ── DAILY RECONCILIATION — amounts + execution counts per day (vs the pharmacist's program) ─
-    async def daily_reconciliation(self, period: str, group: str = "all") -> dict:
+    async def daily_reconciliation(self, period: str, group: str = "all",
+                                   day_ids: str | None = None) -> dict:
         """Ανά ημέρα, με δυνατότητα φίλτρου ανά ομάδα/ταμείο («all», «ΕΟΠΥΥ - Φάρμακα»,
         «ΕΟΠΥΥ - Εμβόλια», «ΕΤΥΑΠ», ή οποιοδήποτε ταμείο). Σε ξεχωριστό πεδίο, οι αμιγώς-100%
         συμμετοχής ανά ημέρα (δεν υποβάλλονται). Εξαιρούνται οι ακυρωμένες."""
@@ -1180,6 +1181,7 @@ class ReimbursementRepository(BaseRepository):
         per: dict = defaultdict(lambda: {"barcodes": set(), "executions": 0, "claim": 0,
                                          "retail": 0, "patient": 0, "hundred": 0})
         groups: set = set()
+        picked: list = []          # `day_ids`: ΟΙ εκτελέσεις που μέτρησε η γραμμή της ημέρας
         cur = self._db["prescription_executions"].find(
             {"tenant_id": self.tenant_id, "executed_at": {"$gte": start, "$lt": end},
              "status": {"$ne": "cancelled"}, "excluded_from_stats": {"$ne": True}},
@@ -1211,6 +1213,8 @@ class ReimbursementRepository(BaseRepository):
                 inc = (label == group) and not is_100
                 cval, rval, pval = claim, total, (e.get("patient_share", 0) or 0)
             if inc:
+                if day_ids and day == day_ids:
+                    picked.append(e["_id"])
                 d["barcodes"].add(str(e.get("external_id", "")).split(":")[0])
                 d["executions"] += 1
                 d["claim"] += cval
@@ -1229,6 +1233,8 @@ class ReimbursementRepository(BaseRepository):
         # επιλογές για το dropdown: σύνολο + ομάδες, με ΕΟΠΥΥ/ΕΤΥΑΠ πρώτα
         order = {EOPYY_MED: 0, "ΕΟΠΥΥ - Εμβόλια": 1, "ΕΤΥΑΠ": 2}
         opts = ["all"] + sorted(groups, key=lambda g: (order.get(g, 9), g))
+        if day_ids:
+            return {"ids": picked}
         return jsonsafe({"period": period, "group": group, "groups": opts, "days": days, "totals": tot})
 
     # ── ADVANCED PER-PRESCRIPTION DETAIL — coupons (medicine lines) + submission flags ──────────

@@ -138,9 +138,13 @@ async def business(
 @router.get("/cross-sell-patients")
 async def cross_sell_patients(
     atc: str = Query(..., description="ATC prefix, e.g. C10AA"),
+    date_from: datetime | None = None,
+    date_to: datetime | None = None,
     ctx: TenantContext = Depends(require("patients:read", module="patient_analytics")),
 ):
-    return {"atc": atc, "items": await AdvisorRepository(tenant_id=ctx.tenant_id, demo=ctx.demo).cross_sell_patients(atc)}
+    """Η λίστα της κάρτας — με την ΙΔΙΑ περίοδο που μέτρησε η κάρτα (αλλιώς 12 μήνες)."""
+    return {"atc": atc, "items": await AdvisorRepository(tenant_id=ctx.tenant_id, demo=ctx.demo)
+            .cross_sell_patients(atc, date_from, date_to)}
 
 
 @router.get("/recall")
@@ -162,9 +166,13 @@ async def recall_detail(
 
 @router.get("/orders")
 async def orders(
-    lead_days: int = 7,
+    lead_days: int | None = None,
     safety_pct: float = 15.0,
     ctx: TenantContext = Depends(require("orders:read", module="order_suggestions")),
 ):
+    """Ίδιος ορίζοντας με την οθόνη «Παραγγελίες» (ρύθμιση φαρμακείου, προεπιλογή 7 ημέρες)."""
+    if not lead_days:
+        from app.api.v1.routers.orders import order_horizon
+        lead_days = await order_horizon(ctx.tenant_id)
     return await AdvisorRepository(tenant_id=ctx.tenant_id, demo=ctx.demo).orders(
         lead_days=lead_days, safety_pct=safety_pct)

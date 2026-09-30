@@ -552,8 +552,15 @@ class AdvisorRepository(BaseRepository):
             {"$group": {"_id": {"pt": "$patient_ref", "atc": "$atc"}}},
             {"$project": {"_id": 0, "pt": "$_id.pt", "atc": "$_id.atc"}},
         ])
+        # ΙΔΙΟ σύνολο με τη λίστα ασθενών της κάρτας (`cross_sell_patients`): ίδια περίοδος, χωρίς
+        # θανόντες. Πριν η κάρτα μετρούσε την περίοδο της σελίδας ΜΕ θανόντες και η λίστα πάντα 12
+        # μήνες ΧΩΡΙΣ — «270 ασθενείς» στην κάρτα, 353 στη λίστα (30/09/2026).
+        deceased = {str(d["_id"]) async for d in self._db["patients_anonymized"].find(
+            {"tenant_id": self.tenant_id, "deceased": True}, {"_id": 1})}
         pmap: dict = {}
         for r in pairs:
+            if str(r.get("pt")) in deceased:
+                continue
             pmap.setdefault(str(r.get("pt")), set()).add(r.get("atc") or "")
         out = []
         for rule in CROSS_SELL:
@@ -561,7 +568,9 @@ class AdvisorRepository(BaseRepository):
             reach = sum(1 for atcs in pmap.values() if any(a.startswith(pref) for a in atcs))
             if reach > 0:
                 out.append({"atc": rule["atc"], "class": rule["name"], "sell": rule["sell"],
-                            "why": rule["why"], "reach": reach})
+                            "why": rule["why"], "reach": reach,
+                            # η λίστα της κάρτας ζητά ΑΚΡΙΒΩΣ αυτή την περίοδο
+                            "date_from": df.isoformat(), "date_to": dt.isoformat()})
         out.sort(key=lambda x: -x["reach"])
         return out
 
@@ -622,13 +631,19 @@ class AdvisorRepository(BaseRepository):
                 out[kind] = m
         return out
 
-    async def cross_sell_patients(self, atc_prefix: str) -> list[dict]:
+    async def cross_sell_patients(self, atc_prefix: str, date_from: datetime | None = None,
+                                  date_to: datetime | None = None) -> list[dict]:
         """Patients on a therapeutic class (ATC prefix) — with demographics + contact +
-        quick-reach info, for the cross-sell drill-down. Last 12 months."""
-        cutoff = _now() - timedelta(days=365)
+        quick-reach info, for the cross-sell drill-down. Περίοδος = ΙΔΙΑ με την κάρτα που την
+        άνοιξε (`date_from`/`date_to`)· χωρίς αυτές, οι τελευταίοι 12 μήνες."""
+        if date_to is None:
+            date_to = _now()
+        if date_from is None:
+            date_from = date_to - timedelta(days=365)
         pref = (atc_prefix or "").upper()
+        import re as _re
         rows = await self.aggregate([
-            {"$match": {**COUNTABLE_EXEC, "executed_at": {"$gte": cutoff}}},
+            {"$match": {**COUNTABLE_EXEC, "executed_at": {"$gte": date_from, "$lt": date_to}}},
             {"$lookup": {"from": "prescription_items", "localField": "_id",
                          "foreignField": "execution_id", "as": "it"}},
             {"$unwind": "$it"},
@@ -636,8 +651,11 @@ class AdvisorRepository(BaseRepository):
                          "foreignField": "_id", "as": "p"}},
             {"$set": {"atc": {"$toUpper": {"$ifNull": [{"$first": "$p.atc"}, ""]}},
                       "pname": {"$first": "$p.name"}}},
-            {"$match": {"atc": {"$regex": "^" + pref}}},
-            {"$group": {"_id": "$patient_ref", "times": {"$sum": 1},
+            {"$match": {"atc": {"$regex": "^" + _re.escape(pref)}}},
+            # «Εκτελ.» = ΣΥΝΤΑΓΕΣ, όχι εγγραφές ΗΔΥΚΑ × είδη (μία συνταγή = πολλές `barcode:N`)
+            {"$group": {"_id": "$patient_ref",
+                        "rx": {"$addToSet": {"$arrayElemAt": [
+                            {"$split": [{"$ifNull": ["$external_id", ""]}, ":"]}, 0]}},
                         "last": {"$max": "$executed_at"},
                         "drugs": {"$addToSet": "$pname"}}},
             {"$lookup": {"from": "patients_anonymized", "localField": "_id",
@@ -650,61 +668,27 @@ class AdvisorRepository(BaseRepository):
                 "_id": 0, "patient_id": {"$toString": "$_id"},
                 "name": "$pa.full_name", "amka": "$pa.amka",
                 "age_group": "$pa.age_group", "sex": "$pa.sex", "birth_year": "$pa.birth_year",
-                "times": 1, "last": 1, "drugs": {"$slice": ["$drugs", 4]},
+                "times": {"$size": "$rx"}, "last": 1, "drugs": {"$slice": ["$drugs", 4]},
                 "mobile": "$ct.mobile", "phone": "$ct.phone", "email": "$ct.email",
                 "consent": {"$ifNull": ["$ct.marketing_consent", False]},
             }},
             {"$sort": {"last": -1}},
-            {"$limit": 500},
+            # όχι 500: κάρτα με 954 ασθενείς έδειχνε 500 — και η καμπάνια έχανε τους υπόλοιπους
+            {"$limit": 5000},
         ])
         return mask_rows(rows, self.demo)
 
     async def recall(self) -> dict:
         """Patients with a MISSED (window passed, unexecuted) or AVAILABLE-NOW repeat, ranked by
-        € at risk — the recall list. Joins demographics + contact for one-click outreach."""
-        import calendar
-        now = _now()
+        € at risk — the recall list. Joins demographics + contact for one-click outreach.
 
-        def addm(d, n):
-            y, mo = d.year + (d.month - 1 + n) // 12, (d.month - 1 + n) % 12 + 1
-            return d.replace(year=y, month=mo, day=min(d.day, calendar.monthrange(y, mo)[1]))
-
-        # Όριο κάλυψης δεδομένων: δεν έχουμε ΚΑΘΟΛΟΥ δεδομένα πριν την πρώτη εκτέλεση που κρατάμε.
-        # Επαναλήψεις με παράθυρο πριν από αυτό (π.χ. τρίμηνη που ξεκίνησε το 2024 ενώ κατέβηκε μόνο
-        # 2025+) ΔΕΝ θεωρούνται χαμένες — απλώς δεν έχουμε ορατότητα.
-        coverage_start = await self._coverage_start()
-
-        chains: dict = defaultdict(list)
-        async for e in self._db["prescription_executions"].find(  # tenant-ok: scoped by tenant_id below
-                {"tenant_id": self.tenant_id},
-                {"repeat_root": 1, "external_id": 1, "executed_at": 1, "valid_from": 1,
-                 "valid_until": 1, "amount_total": 1, "patient_ref": 1}):
-            chains[e.get("repeat_root")].append(e)
-
-        per: dict = defaultdict(lambda: {"missed": 0, "available": 0, "value": 0})
-        for exs in chains.values():
-            vf = min((e["valid_from"] for e in exs if e.get("valid_from")), default=None)
-            vu = max((e["valid_until"] for e in exs if e.get("valid_until")), default=None)
-            if not vf or not vu or (vu - vf).days < 40:
-                continue
-            avg = sum(e.get("amount_total", 0) for e in exs) / max(len(exs), 1)
-            pat = exs[0].get("patient_ref")
-            if not pat:
-                continue
-            i = 0
-            while i < 18 and addm(vf, i) <= vu:
-                wopen, wclose = addm(vf, i), addm(vf, i + 1)
-                if coverage_start and wopen < coverage_start:   # παράθυρο πριν την κάλυψη → άγνωστο
-                    i += 1
-                    continue
-                done = any(e.get("executed_at") and wopen <= e["executed_at"] < wclose for e in exs)
-                if not done:
-                    if wclose <= now:
-                        per[pat]["missed"] += 1; per[pat]["value"] += avg
-                    elif wopen <= now < wclose:
-                        per[pat]["available"] += 1; per[pat]["value"] += avg
-                i += 1
-
+        ΤΟ ΙΔΙΟ σύνολο με την κάρτα «Προς Recall» (`PatientIntelligenceRepository.recall_refs`):
+        πριν η λίστα είχε δικά της ημερολογιακά μηνιαία παράθυρα και έβγαζε 1.465 όταν η κάρτα 1.084."""
+        from app.repositories.patient_intelligence import PatientIntelligenceRepository
+        rec = await PatientIntelligenceRepository(tenant_id=self.tenant_id).recall_refs()
+        per = {p: {"missed": c["missed"], "available": c["available"], "value": c["recoverable"]}
+               for p, c in rec.items()}
+        excluded_inactive = 0
         prefs = [p for p, d in per.items() if d["missed"] or d["available"]]
         if not prefs:
             return {"items": [], "total_value": 0, "total_missed": 0, "total_available": 0, "patients": 0}
@@ -713,7 +697,6 @@ class AdvisorRepository(BaseRepository):
         cts = {c["_id"]: c async for c in self._db["patient_contacts"].find(
             {"_id": {"$in": prefs}, "tenant_id": self.tenant_id})}
         items = []
-        excluded_inactive = 0
         for pref in prefs:
             d = per[pref]; pa = pats.get(pref, {}); ct = cts.get(pref, {})
             # Μη τους «κυνηγάμε»: θανόντες (authoritative deceased flag — πιάνει & όσους δεν έχουν
@@ -730,7 +713,7 @@ class AdvisorRepository(BaseRepository):
             })
         items.sort(key=lambda x: x["value"], reverse=True)
         return jsonsafe({
-            "items": mask_rows(items[:500], self.demo), "patients": len(items),
+            "items": mask_rows(items[:5000], self.demo), "patients": len(items),
             "total_value": sum(i["value"] for i in items),
             "total_missed": sum(i["missed"] for i in items),
             "total_available": sum(i["available"] for i in items),
@@ -760,7 +743,6 @@ class AdvisorRepository(BaseRepository):
     async def recall_detail(self, patient_id: str) -> dict:
         """Ανά πελάτη: οι επαναλαμβανόμενες συνταγές με τις χαμένες/διαθέσιμες επαναλήψεις
         (φάρμακο, ημερομηνίες παραθύρων & κατάσταση) — για να ξέρει ο φαρμακοποιός ποια & γιατί."""
-        import calendar
         from collections import defaultdict
 
         from bson import ObjectId
@@ -771,58 +753,45 @@ class AdvisorRepository(BaseRepository):
             return {"found": False}
         now = _now()
 
-        def addm(d, n):
-            y, mo = d.year + (d.month - 1 + n) // 12, (d.month - 1 + n) % 12 + 1
-            return d.replace(year=y, month=mo, day=min(d.day, calendar.monthrange(y, mo)[1]))
-
         coverage_start = await self._coverage_start()
         pa = await self._db["patients_anonymized"].find_one(
             {"_id": pid, "tenant_id": self.tenant_id}) or {}
         intents = {i.get("key"): i async for i in self._db["renewal_intents"].find(
             {"tenant_id": self.tenant_id, "patient_ref": pid})}
 
+        from app.repositories.patient_intelligence import chain_positions
+        from app.services.stats_exclusion import COUNTABLE_EXEC
         chains: dict = defaultdict(list)
         async for e in self._db["prescription_executions"].find(
-                {"tenant_id": self.tenant_id, "patient_ref": pid},
+                {"tenant_id": self.tenant_id, "patient_ref": pid, "repeat_total": {"$gt": 1},
+                 **COUNTABLE_EXEC},
                 {"repeat_root": 1, "executed_at": 1, "valid_from": 1, "valid_until": 1,
-                 "amount_total": 1, "doctor_id": 1, "_id": 1}):
-            chains[e.get("repeat_root")].append(e)
+                 "amount_total": 1, "doctor_id": 1, "_id": 1, "repeat_current": 1,
+                 "repeat_total": 1, "details.repeat_period_days": 1, "details.interval_months": 1}):
+            if e.get("repeat_root"):
+                chains[e["repeat_root"]].append(e)
 
         out_chains = []
         for root, exs in chains.items():
+            # ΙΔΙΟΣ υπολογισμός θέσεων με τη λίστα & την κάρτα Recall (`chain_positions`)
+            cp = chain_positions(exs, now, coverage_start)
+            if not cp:
+                continue
             vf = min((e["valid_from"] for e in exs if e.get("valid_from")), default=None)
             vu = max((e["valid_until"] for e in exs if e.get("valid_until")), default=None)
-            if not vf or not vu or (vu - vf).days < 40:
-                continue
-            avg = sum(e.get("amount_total", 0) for e in exs) / max(len(exs), 1)
+            avg = cp["value_each"]
             med = await self._chain_medicine([e["_id"] for e in exs])
             # γιατρός της πιο πρόσφατης εκτέλεσης της αλυσίδας
             doc = None
             did = next((e.get("doctor_id") for e in sorted(
-                exs, key=lambda x: x.get("executed_at") or vf, reverse=True) if e.get("doctor_id")), None)
+                exs, key=lambda x: x.get("executed_at") or now, reverse=True) if e.get("doctor_id")), None)
             if did:
                 dd = await self._db["doctors"].find_one(
                     {"_id": did, "tenant_id": self.tenant_id}, {"full_name": 1, "specialty": 1, "phone": 1})
                 if dd:
                     doc = {"name": dd.get("full_name"), "specialty": dd.get("specialty"), "phone": dd.get("phone")}
-            windows = []
-            missed = available = 0
-            i = 0
-            while i < 18 and addm(vf, i) <= vu:
-                wopen, wclose = addm(vf, i), addm(vf, i + 1)
-                done = any(e.get("executed_at") and wopen <= e["executed_at"] < wclose for e in exs)
-                if done:
-                    status = "executed"
-                elif coverage_start and wopen < coverage_start:
-                    status = "before_coverage"        # πριν την κάλυψη — δεν μετράει
-                elif wclose <= now:
-                    status = "missed"; missed += 1
-                elif wopen <= now < wclose:
-                    status = "available"; available += 1
-                else:
-                    status = "future"
-                windows.append({"due": wopen, "status": status})
-                i += 1
+            windows = [{"due": w["due"], "status": w["status"]} for w in cp["windows"]]
+            missed, available = cp["missed"], cp["available"]
             if missed or available:
                 key = str(root) if root else None
                 it = intents.get(key) or {}

@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useRouter as useNavRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/apiClient";
@@ -19,7 +20,17 @@ export default function PatientAnalyticsPage() {
   const t = useT();
   const router = useRouter();
   const [sort, setSort] = useState("value");
-  const { data, isLoading } = useQuery({ queryKey: ["pi-patients", sort], queryFn: () => api<{ items: Row[]; total: number }>(`/patient-intelligence/patients?sort=${sort}`) });
+  // ?active=60 από την κάρτα «Ενεργοί (60ημ)» → η λίστα δείχνει ΑΚΡΙΒΩΣ αυτούς που μετρά η κάρτα
+  // (window.location και όχι useSearchParams: αυτό θα απαιτούσε όριο Suspense στο build.)
+  const nav = useNavRouter();
+  const [active, setActive] = useState<number | null>(null);
+  useEffect(() => {
+    const read = () => setActive(Number(new URLSearchParams(window.location.search).get("active")) || null);
+    read();
+    window.addEventListener("popstate", read);
+    return () => window.removeEventListener("popstate", read);
+  }, []);
+  const { data, isLoading } = useQuery({ queryKey: ["pi-patients", sort, active], queryFn: () => api<{ items: Row[]; total: number; shown?: number }>(`/patient-intelligence/patients?sort=${sort}${active ? `&active_days=${active}` : ""}`) });
 
   const cols: Column<Row>[] = [
     { key: "name", header: t("Ασθενής", "Patient"), render: (r) => r.name || r.amka || "—" },
@@ -37,7 +48,11 @@ export default function PatientAnalyticsPage() {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-sm text-slate-500">{fmtNum(data?.total ?? 0)} {t("ασθενείς · ανάλυση αξίας ζωής & συχνότητας", "patients · lifetime value & frequency analysis")}</p>
+        <p className="flex flex-wrap items-center gap-2 text-sm text-slate-500">
+          {fmtNum(data?.total ?? 0)} {active ? t(`ασθενείς ενεργοί τις τελευταίες ${active} ημέρες`, `patients active in the last ${active} days`) : t("ασθενείς · ανάλυση αξίας ζωής & συχνότητας", "patients · lifetime value & frequency analysis")}
+          {data?.shown !== undefined && data.shown < (data.total ?? 0) && <span className="text-xs text-slate-400">{t(`(εμφανίζονται οι ${fmtNum(data.shown)} κορυφαίοι)`, `(top ${fmtNum(data.shown)} shown)`)}</span>}
+          {active && <button onClick={() => { nav.push("/intelligence/patients"); setActive(null); }} className="rounded-full bg-brand-50 px-2 py-0.5 text-xs font-medium text-brand-700 hover:bg-brand-100 dark:bg-brand-900/30 dark:text-brand-300">{t("όλοι οι ασθενείς ×", "all patients ×")}</button>}
+        </p>
         <div className="flex items-center gap-2">
           <select value={sort} onChange={(e) => setSort(e.target.value)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm dark:border-slate-600 dark:bg-slate-800">
             <option value="value">{t("Ταξ.: Αξία ζωής", "Sort: LTV")}</option>

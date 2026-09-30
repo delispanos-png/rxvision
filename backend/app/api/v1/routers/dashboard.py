@@ -22,10 +22,16 @@ router = APIRouter()
 async def summary(
     date_from: datetime = Query(...),
     date_to: datetime = Query(...),
+    fund_id: str | None = None,
+    doctor_id: str | None = None,
+    icd10: str | None = None,
     ctx: TenantContext = Depends(require("dashboard:read", module="dashboard")),
 ):
+    """Τα φίλτρα της σελίδας (ταμείο/γιατρός/διάγνωση) ΙΣΧΥΟΥΝ και εδώ — πριν αγνοούνταν και οι
+    κάρτες έδειχναν όλα τα ταμεία ενώ η λίστα που ανοίγουν ήταν φιλτραρισμένη (30/09/2026)."""
     repo = PrescriptionRepository(tenant_id=ctx.tenant_id)
-    return await repo.dashboard_summary(date_from, date_to)
+    return await repo.dashboard_summary(date_from, date_to, fund_id=fund_id,
+                                        doctor_id=doctor_id, icd10=icd10)
 
 
 @router.get("/timeseries")

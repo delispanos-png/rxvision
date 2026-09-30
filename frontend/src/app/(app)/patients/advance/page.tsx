@@ -20,7 +20,7 @@ import { useT } from "@/store/prefStore";
 
 type Item = { name?: string; gtin?: string; batch?: string; strip?: string; lot?: string;
               expiry?: string; qty?: number; raw?: string };
-type Loan = { _id: string; patient_name: string; items: Item[]; status: string;
+type Loan = { _id: string; patient_name: string; patient_ref?: string; items: Item[]; status: string;
               created_at: string; note?: string; expected_at?: string | null };
 type Hit = { patient_id: string; name: string | null; amka: string | null; last_seen?: string | null };
 type Match = { loan_id: string; patient_name: string; created_at: string; items: string[];
@@ -322,8 +322,13 @@ function Inner() {
         <section className="rounded-2xl border border-sky-300 bg-sky-50/70 p-4 dark:border-sky-900/50 dark:bg-sky-950/20">
           <h2 className="mb-2 flex items-center gap-1.5 text-sm font-semibold text-sky-900 dark:text-sky-200">
             <CalendarClock className="h-4 w-4" />
-            {t(`Σήμερα περιμένεις συνταγή από ${due.data.count} ${due.data.count === 1 ? "πελάτη" : "πελάτες"}`,
-               `Prescriptions expected today from ${due.data.count}`)}
+            {(() => {
+              // ΠΕΛΑΤΕΣ, όχι δάνεια: ένας πελάτης με δύο δάνεια δεν είναι «2 πελάτες»
+              const loans = due.data.count;
+              const people = new Set(due.data.items.map((l) => l.patient_ref || l.patient_name)).size;
+              return t(`Σήμερα περιμένεις συνταγή από ${people} ${people === 1 ? "πελάτη" : "πελάτες"}${loans > people ? ` (${loans} δανεικά)` : ""}`,
+                       `Prescriptions expected today from ${people} ${people === 1 ? "customer" : "customers"}${loans > people ? ` (${loans} loans)` : ""}`);
+            })()}
           </h2>
           <div className="space-y-1.5">
             {due.data.items.map((l) => {

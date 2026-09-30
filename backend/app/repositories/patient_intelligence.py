@@ -99,21 +99,65 @@ def _band(score: float) -> tuple[str, str]:
     return "critical", "Κρίσιμη"
 
 
+def chain_positions(exs: list[dict], now: datetime, coverage_start: datetime | None = None) -> dict | None:
+    """ΟΙ θέσεις μιας αλυσίδας επαναλήψεων (1/N … N/N) και η κατάσταση καθεμιάς — ΕΝΑΣ ορισμός για
+    Συμμόρφωση, κάρτα & λίστα Recall, και ανάλυση ανά ασθενή (πριν: τρεις υλοποιήσεις, η κάρτα «Προς
+    Recall» 1.084 και η λίστα της 1.465 — 30/09/2026).
+
+    Αφετηρία = `valid_from` (η ΑΡΧΗ όλης της αλυσίδας στην ΗΔΥΚΑ)· θέση k ανοίγει αρχή+(k−1)×περίοδος,
+    κλείνει +περίοδος+5 ημ. ανοχή. Θέση ΠΡΙΝ από την παλαιότερη εκτέλεση που κρατάμε = «άγνωστη»,
+    όχι χαμένη (δεν έχουμε ορατότητα)."""
+    total = max(int(e.get("repeat_total") or 1) for e in exs)
+    if total <= 1:
+        return None
+    det = next((e.get("details") or {} for e in exs
+                if (e.get("details") or {}).get("repeat_period_days")
+                or (e.get("details") or {}).get("interval_months")), {})
+    period = int(det.get("repeat_period_days") or (det.get("interval_months") or 1) * 30)
+    done = {int(e.get("repeat_current") or 1) for e in exs}
+    vfs = [e["valid_from"] for e in exs if e.get("valid_from")]
+    anchor = min(vfs) if vfs else min(
+        (e["executed_at"] - timedelta(days=period * (int(e.get("repeat_current") or 1) - 1))
+         for e in exs if e.get("executed_at")), default=None)
+    if anchor is None:
+        return None
+    value = sum(e.get("amount_total", 0) for e in exs) / max(len(done), 1)
+    out = {"windows": [], "missed": 0, "available": 0, "executed": 0, "value_each": value,
+           "missed_closed": []}
+    for k in range(1, min(total, 18) + 1):
+        wopen = anchor + timedelta(days=period * (k - 1))
+        wclose = wopen + timedelta(days=period + 5)
+        if k in done:
+            st = "executed"; out["executed"] += 1
+        elif coverage_start and wopen < coverage_start:
+            st = "before_coverage"
+        elif wclose <= now:
+            st = "missed"; out["missed"] += 1; out["missed_closed"].append(wclose)
+        elif wopen <= now:
+            st = "available"; out["available"] += 1
+        else:
+            st = "future"
+        out["windows"].append({"k": k, "due": wopen, "status": st})
+    return out
+
+
 class PatientIntelligenceRepository(BaseRepository):
     collection_name = "prescription_executions"
 
     # ── shared chain analysis (compliance + recall + recoverable) ───────────
     async def _chain_analysis(self) -> dict:
         """Per patient_ref → {compliance, executed, expected, missed, available, recoverable, chains,
-        missed_closed: [ημερομηνίες που έκλεισαν οι χαμένες θέσεις]}.
-
-        ΜΟΝΑΔΑ = ΘΕΣΗ της αλυσίδας (1/3, 2/3, 3/3), ΟΧΙ ημερολογιακός μήνας. Κάθε θέση έχει δικό της
-        παράθυρο με την ΠΡΑΓΜΑΤΙΚΗ περίοδο της συνταγής (30/28/60 ημ.). Πριν (έως 29/09/2026) τα
-        παράθυρα ήταν πάντα μηνιαία: μια δίμηνη αλυσίδα έβγαζε «χαμένη» κάθε δεύτερο μήνα, και δύο
-        εκτελέσεις στον ίδιο μήνα άφηναν τον διπλανό «χαμένο» — συνεπής πελάτης έβγαινε ασυνεπής.
-        Μετρούν μόνο εκτελέσεις που μετρούν στα στατιστικά (όχι ακυρωμένες/εξαιρεμένες)."""
+        missed_closed}. Μονάδα = ΘΕΣΗ της αλυσίδας (`chain_positions`). Μετρούν μόνο εκτελέσεις που
+        μετρούν στα στατιστικά· θέσεις πριν από την παλαιότερη εκτέλεση που κρατάμε δεν μετρούν."""
         from app.services.stats_exclusion import COUNTABLE_EXEC
         now = _now()
+        first = await self._db["prescription_executions"].find_one(
+            {"tenant_id": self.tenant_id}, {"executed_at": 1}, sort=[("executed_at", 1)])
+        coverage_start = (first or {}).get("executed_at")
+        # Θανόντες ΕΚΤΟΣ εδώ, μία φορά: αλλιώς η κατανομή/το μέσο σκορ Συμμόρφωσης και το «Κρίσιμη
+        # συμμόρφωση» τους μετρούσαν, ενώ ο πίνακας τους έβγαζε έξω (30/09/2026).
+        dead = set(await self._db["patients_anonymized"].distinct(
+            "_id", {"tenant_id": self.tenant_id, "deceased": True}))
         chains: dict = defaultdict(list)
         async for e in self._db["prescription_executions"].find(
                 {"tenant_id": self.tenant_id, "repeat_total": {"$gt": 1}, **COUNTABLE_EXEC},
@@ -127,44 +171,33 @@ class PatientIntelligenceRepository(BaseRepository):
                                          "missed_closed": []})
         for exs in chains.values():
             pat = exs[0].get("patient_ref")
-            total = max(int(e.get("repeat_total") or 1) for e in exs)
-            if not pat or total <= 1:
+            c = chain_positions(exs, now, coverage_start) if pat and pat not in dead else None
+            if not c:
                 continue
-            det = next((e.get("details") or {} for e in exs
-                        if (e.get("details") or {}).get("repeat_period_days")
-                        or (e.get("details") or {}).get("interval_months")), {})
-            period = int(det.get("repeat_period_days") or (det.get("interval_months") or 1) * 30)
-            done = {int(e.get("repeat_current") or 1) for e in exs}
-            # Αφετηρία = `valid_from`, που στην ΗΔΥΚΑ είναι η ΑΡΧΗ ΟΛΗΣ της αλυσίδας (ίδια σε κάθε θέση·
-            # η θέση k λήγει στο αρχή + k×περίοδος — επαληθευμένο 29/09/2026). Χωρίς αυτήν: από την
-            # εκτέλεση, πίσω κατά (θέση−1)×περίοδο.
-            vfs = [e["valid_from"] for e in exs if e.get("valid_from")]
-            anchor = min(vfs) if vfs else min(
-                (e["executed_at"] - timedelta(days=period * (int(e.get("repeat_current") or 1) - 1))
-                 for e in exs if e.get("executed_at")), default=None)
-            if anchor is None:
-                continue
-            length = period + 5          # το παράθυρο της θέσης + λίγες ημέρες ανοχή
-            value = sum(e.get("amount_total", 0) for e in exs) / max(len(done), 1)
             p = per[pat]
             p["chains"] += 1
-            for k in range(1, min(total, 18) + 1):
-                wopen = anchor + timedelta(days=period * (k - 1))
-                wclose = wopen + timedelta(days=length)
-                if k in done:
-                    p["expected"] += 1
-                    p["executed"] += 1
-                elif wclose <= now:           # το παράθυρο έκλεισε χωρίς εκτέλεση ΕΔΩ
-                    p["expected"] += 1
-                    p["missed"] += 1
-                    p["recoverable"] += value
-                    p["missed_closed"].append(wclose)
-                elif wopen <= now:            # ανοιχτό τώρα → διαθέσιμο για ανάκληση
-                    p["available"] += 1
-                    p["recoverable"] += value
+            p["executed"] += c["executed"]
+            p["expected"] += c["executed"] + c["missed"]
+            p["missed"] += c["missed"]
+            p["available"] += c["available"]
+            p["recoverable"] += c["value_each"] * (c["missed"] + c["available"])
+            p["missed_closed"] += c["missed_closed"]
         for p in per.values():
             p["compliance"] = round(p["executed"] / p["expected"] * 100) if p["expected"] else None
         return per
+
+    async def recall_refs(self, chain: dict | None = None) -> dict:
+        """ΟΙ ασθενείς προς ανάκληση (χαμένη ή διαθέσιμη επανάληψη), ΧΩΡΙΣ θανόντες και ανενεργές
+        καρτέλες. ΤΟ σύνολο που μετρά η κάρτα «Προς Recall» ΚΑΙ δείχνει η λίστα Recall."""
+        chain = chain if chain is not None else await self._chain_analysis()
+        cand = [p for p, c in chain.items() if c["missed"] or c["available"]]
+        if not cand:
+            return {}
+        dead = set(await self._db["patients_anonymized"].distinct(
+            "_id", {"tenant_id": self.tenant_id, "_id": {"$in": cand}, "deceased": True}))
+        off = set(await self._db["patient_contacts"].distinct(
+            "_id", {"tenant_id": self.tenant_id, "_id": {"$in": cand}, "active": False}))
+        return {p: chain[p] for p in cand if p not in dead and p not in off}
 
     async def _patients(self) -> list[dict]:
         # Εξαιρούμε θανόντες (deceased) από κάθε patient-level ανάλυση/λίστα — δεν τους «κυνηγάμε».
@@ -258,7 +291,10 @@ class PatientIntelligenceRepository(BaseRepository):
         new_month = sum(1 for evs in tl.values() if evs and evs[0][0] >= mstart)
         new_prev = sum(1 for evs in tl.values() if evs and mstart_y <= evs[0][0] < yago)
         returns_count = len(self._returns_from(tl, now))
-        lost = sum(1 for p in pats if not seen_after(p, now - timedelta(days=120)))
+        # «Χαμένοι» = οι δύο τελευταίες ομάδες της σελίδας Win-back (3–6 & 6–12 μήνες) — ΙΔΙΑ
+        # συνάρτηση, για να βρίσκει ο φαρμακοποιός στη σελίδα τον αριθμό της κάρτας. Πριν: >120 ημ.
+        # ΧΩΡΙΣ άνω όριο (και όσοι λείπουν χρόνια) → 2.564 στην κάρτα, 1.033 στη σελίδα (30/09).
+        lost = sum(b["count"] for b in self._winback_buckets(pats, now) if b["bucket"] in (180, 365))
         total_rev = sum(p.get("rx_value_total", 0) for p in pats)
         rev_per_patient = round(total_rev / len(pats)) if pats else 0
 
@@ -280,8 +316,9 @@ class PatientIntelligenceRepository(BaseRepository):
         avg_compliance = round(sum(comp_scores) / len(comp_scores)) if comp_scores else 0
 
         # recall + win-back recoverable
-        recall_patients = sum(1 for c in chain.values() if c["missed"] or c["available"])
-        recall_recoverable = round(sum(c["recoverable"] for c in chain.values()))
+        rec = await self.recall_refs(chain)          # ΙΔΙΟ σύνολο με τη λίστα Recall
+        recall_patients = len(rec)
+        recall_recoverable = round(sum(c["recoverable"] for c in rec.values()))
         winback = self._winback_buckets(pats, now)
         winback_revenue = sum(b["recoverable"] for b in winback)
 
@@ -354,35 +391,43 @@ class PatientIntelligenceRepository(BaseRepository):
                          "total_lost": sum(b["lost_revenue"] for b in buckets)})
 
     # ── 6. VIP tiers ────────────────────────────────────────────────────────
-    def _vip_tiers(self, pats: list[dict]) -> list[dict]:
+    _VIP_TIERS = (("platinum", "Platinum", 0.05), ("gold", "Gold", 0.15),
+                  ("silver", "Silver", 0.35), ("bronze", "Bronze", 1.0))
+
+    @classmethod
+    def _vip_ranked(cls, pats: list[dict]) -> list[tuple[dict, str]]:
+        """ΜΙΑ ανάθεση βαθμίδας για κάρτες ΚΑΙ λίστα. Πριν: οι κάρτες έκοβαν με `round(n×ποσοστό)`
+        (τραπεζική στρογγυλοποίηση) και η λίστα με `(θέση+1)/n ≤ ποσοστό` — δύο τύποι, άλλα νούμερα."""
         ranked = sorted([p for p in pats if p.get("rx_value_total", 0) > 0],
                         key=lambda p: p.get("rx_value_total", 0), reverse=True)
         n = len(ranked)
-        tiers = [("platinum", "Platinum", 0.05), ("gold", "Gold", 0.15),
-                 ("silver", "Silver", 0.35), ("bronze", "Bronze", 1.0)]
-        out, idx = [], 0
-        for key, label, cum in tiers:
-            end = round(n * cum)
-            grp = ranked[idx:end]
+        ends = [(key, int(n * cum + 0.5)) for key, _, cum in cls._VIP_TIERS]
+        out, t = [], 0
+        for i, p in enumerate(ranked):
+            while t < len(ends) - 1 and i >= ends[t][1]:
+                t += 1
+            out.append((p, ends[t][0]))
+        return out
+
+    def _vip_tiers(self, pats: list[dict]) -> list[dict]:
+        ranked = self._vip_ranked(pats)
+        out = []
+        for key, label, _ in self._VIP_TIERS:
+            grp = [p for p, tier in ranked if tier == key]
             out.append({"tier": key, "label": label, "count": len(grp),
                         "revenue": round(sum(p.get("rx_value_total", 0) for p in grp))})
-            idx = end
         return out
 
     async def vip(self) -> dict:
         pats = await self._patients()
-        ranked = sorted([p for p in pats if p.get("rx_value_total", 0) > 0],
-                        key=lambda p: p.get("rx_value_total", 0), reverse=True)
-        n = len(ranked)
-        def tier_of(i):
-            r = (i + 1) / n
-            return "platinum" if r <= 0.05 else "gold" if r <= 0.15 else "silver" if r <= 0.35 else "bronze"
+        ranked = self._vip_ranked(pats)
         items = [{
             "patient_id": str(p["_id"]), "name": p.get("full_name"), "amka": p.get("amka"),
             "value": p.get("rx_value_total", 0), "rx_count": p.get("rx_count", 0),
-            "last_seen": p.get("last_seen_at"), "tier": tier_of(i),
-        } for i, p in enumerate(ranked[:300])]
-        return jsonsafe({"tiers": self._vip_tiers(pats), "items": mask_rows(items, self.demo)})
+            "last_seen": p.get("last_seen_at"), "tier": tier,
+        } for p, tier in ranked[:25000]]         # όχι 300: κάθε κάρτα βαθμίδας ανοίγει ΟΛΟΥΣ της
+        return jsonsafe({"tiers": self._vip_tiers(pats), "items": mask_rows(items, self.demo),
+                         "total": len(ranked), "shown": len(items)})
 
     # ── 7. RISK detection ───────────────────────────────────────────────────
     async def risk(self) -> dict:
@@ -413,7 +458,8 @@ class PatientIntelligenceRepository(BaseRepository):
                 "recoverable": round(c["recoverable"]),
             })
         items.sort(key=lambda x: x["recoverable"], reverse=True)
-        return jsonsafe({"items": mask_rows(items[:300], self.demo), "count": len(items)})
+        # όχι 300: η κάρτα μετρά ΟΛΟΥΣ (έως 3.849 σε ένα φαρμακείο) — η λίστα τους δείχνει όλους
+        return jsonsafe({"items": mask_rows(items[:10000], self.demo), "count": len(items)})
 
     # ── 360° SINGLE-PATIENT PROFILE («Εικόνα Πελάτη», by ΑΜΚΑ) ───────────────
     async def advice_signature(self, amka: str | None = None, patient_id: str | None = None,
@@ -860,22 +906,13 @@ class PatientIntelligenceRepository(BaseRepository):
 
     # ── 9. SEGMENTATION ─────────────────────────────────────────────────────
     async def segments(self) -> dict:
-        out = []
-        for seg in SEGMENTS:
-            regex = "^(" + "|".join(seg["atc"]) + ")"
-            rows = await self._db["prescription_executions"].aggregate([
-                {"$match": {"tenant_id": self.tenant_id}},
-                {"$lookup": {"from": "prescription_items", "localField": "_id",
-                             "foreignField": "execution_id", "as": "it"}},
-                {"$unwind": "$it"},
-                {"$lookup": {"from": "products", "localField": "it.product_id",
-                             "foreignField": "_id", "as": "p"}},
-                {"$set": {"atc": {"$toUpper": {"$ifNull": [{"$first": "$p.atc"}, ""]}}}},
-                {"$match": {"atc": {"$regex": regex}}},
-                {"$group": {"_id": "$patient_ref", "value": {"$sum": "$amount_total"}}},
-            ]).to_list(None)
-            out.append({"key": seg["key"], "label": seg["label"], "en": seg["en"],
-                        "patients": len(rows), "value": round(sum(r["value"] for r in rows))})
+        """Θεραπευτικά segments — ΚΟΙΝΟΣ υπολογισμός με Στοχευμένη Προώθηση & κοινό καμπάνιας
+        (`marketing.therapy_breakdown`): ΜΙΑ ανάγνωση αντί για 7 πλήρεις σαρώσεις."""
+        from app.services.marketing import therapy_breakdown
+        br = await therapy_breakdown(self.tenant_id)
+        out = [{"key": seg["key"], "label": seg["label"], "en": seg["en"],
+                "patients": len(br.get(seg["key"], {}).get("patients", ())),
+                "value": round(br.get(seg["key"], {}).get("value", 0))} for seg in SEGMENTS]
         out.sort(key=lambda s: s["patients"], reverse=True)
         return jsonsafe({"segments": out})
 
@@ -1011,12 +1048,13 @@ class PatientIntelligenceRepository(BaseRepository):
         ]).to_list(None)
         avg_day = round(sum(r["rx"] for r in d30) / len(d30)) if d30 else 0
 
-        # expected but not arrived: overdue + pending repeats (backlog), and due this week
-        overdue = await db["future_prescriptions"].count_documents(
-            {"tenant_id": self.tenant_id, "status": "pending", "expected_open_date": {"$lte": now}})
-        week = await db["future_prescriptions"].count_documents(
-            {"tenant_id": self.tenant_id, "status": "pending",
-             "expected_open_date": {"$gte": now - timedelta(days=7), "$lte": now}})
+        # «Δεν ήρθαν»: ΤΟ ΙΔΙΟ σύνολο με τη λίστα Recall που ανοίγει η κάρτα (`recall_refs`).
+        # Πριν μετρούσε ΣΥΝΤΑΓΕΣ από τις προβλέψεις (όλο το backlog, και θανόντες) ενώ η λίστα
+        # μετρά ΑΣΘΕΝΕΙΣ — δύο διαφορετικά νούμερα για το ίδιο κλικ (30/09/2026).
+        rec = await self.recall_refs()
+        overdue = len(rec)                                          # = γραμμές της λίστας
+        missed_n = sum(1 for c in rec.values() if c["missed"])
+        week = sum(1 for c in rec.values() if c["available"] and not c["missed"])
 
         # ΗΔΥΚΑ executed_at carries Athens local time → current hour must be Athens too, or the
         # live axis cap would hide today's (afternoon) executions.
@@ -1030,13 +1068,20 @@ class PatientIntelligenceRepository(BaseRepository):
             "rx_yoy": rx_yoy, "value_yoy": value_yoy,
             "vs_yoy_rx": _pct(day_rx, rx_yoy), "vs_yoy_value": _pct(day_value, value_yoy),
             "by_hour": by_hour, "categories": categories, "top_meds": top_meds,
-            "expected_absent": overdue, "expected_week": week,
+            "expected_absent": overdue, "expected_week": week, "expected_missed": missed_n,
         })
 
     # ── 2. PATIENT ANALYTICS ────────────────────────────────────────────────
-    async def patients_table(self, *, sort: str = "value", limit: int = 300) -> dict:
+    async def patients_table(self, *, sort: str = "value", limit: int = 5000,
+                             active_days: int | None = None) -> dict:
+        """`active_days` = μόνο όσοι εξυπηρετήθηκαν τις τελευταίες Ν ημέρες — έτσι η κάρτα «Ενεργοί
+        (60ημ)» ανοίγει ΑΚΡΙΒΩΣ τους ασθενείς που μετρά (πριν άνοιγε ΟΛΟΥΣ: 587 → λίστα 3.510)."""
         pats = await self._patients()
         now = _now()
+        if active_days:
+            since = now - timedelta(days=active_days)
+            pats = [p for p in pats if isinstance(p.get("last_seen_at"), datetime)
+                    and p["last_seen_at"] >= since]
         items = []
         for p in pats:
             fs, ls = p.get("first_seen_at"), p.get("last_seen_at")
@@ -1053,7 +1098,8 @@ class PatientIntelligenceRepository(BaseRepository):
             })
         key = {"value": "value", "rx": "rx_count", "frequency": "frequency", "recent": "gap_days"}.get(sort, "value")
         items.sort(key=lambda x: (x[key] is None, x[key]), reverse=(sort != "recent"))
-        return jsonsafe({"items": mask_rows(items[:limit], self.demo), "total": len(pats)})
+        return jsonsafe({"items": mask_rows(items[:limit], self.demo), "total": len(pats),
+                         "shown": min(len(items), limit), "active_days": active_days})
 
     # ── 10. AI INSIGHTS ─────────────────────────────────────────────────────
     def _ai_insights(self, kpis, recall_patients, recall_recoverable, winback_revenue, chain, pats) -> list[dict]:

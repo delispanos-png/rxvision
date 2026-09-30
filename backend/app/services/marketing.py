@@ -43,44 +43,85 @@ def _now() -> datetime:
     return datetime.now(tz=timezone.utc)
 
 
-async def category_sizes(tenant_id: str) -> list[dict]:
-    """Πλήθος & αξία ασθενών ανά θεραπευτική κατηγορία (τελευταία εκτέλεση ATC). ΜΙΑ aggregation:
-    executions → items → products.atc → group ανά ασθενή με το σετ των ATC prefixes → μέτρηση ανά κατηγορία."""
+_TB_CACHE: dict[str, tuple[float, dict]] = {}
+_TB_TTL = 300.0   # 5′: αρκετό για πλοήγηση Segments ↔ Προώθηση ↔ καμπάνια· ο συγχρονισμός είναι ανά 15′+
+
+
+async def therapy_breakdown(tenant_id: str) -> dict[str, dict]:
+    import time
+    hit = _TB_CACHE.get(tenant_id)
+    if hit and time.monotonic() - hit[0] < _TB_TTL:
+        return hit[1]
+    res = await _therapy_breakdown(tenant_id)
+    _TB_CACHE[tenant_id] = (time.monotonic(), res)
+    return res
+
+
+async def _therapy_breakdown(tenant_id: str) -> dict[str, dict]:
+    """ΕΝΑΣ υπολογισμός θεραπευτικών κατηγοριών για Segments, Στοχευμένη Προώθηση ΚΑΙ κοινό καμπάνιας:
+    {κατηγορία → {"patients": set(patient_ref), "value": λεπτά}}.
+
+    - Ασθενής ανήκει σε κατηγορία αν του ΔΟΘΗΚΕ φάρμακό της (`executed_qty > 0`), σε εκτέλεση που
+      μετρά στα στατιστικά. Θανόντες εκτός.
+    - Αξία = λιανική × τεμάχια των φαρμάκων ΤΗΣ κατηγορίας, ΜΙΑ φορά ανά συνταγή (η ΗΔΥΚΑ δίνει
+      μία συνταγή ως πολλές εγγραφές `barcode:N`, καθεμία με όλα τα είδη).
+
+    Πριν (έως 30/09/2026): 7 πλήρεις σαρώσεις όλου του ιστορικού (εκτελέσεις × είδη × προϊόντα), μία
+    ανά κατηγορία — 11″ έως 21″+ ανά φαρμακείο — και η αξία ήταν ΟΛΟ το ποσό κάθε συνταγής που είχε
+    ένα φάρμακο της κατηγορίας (και μετρούσε σε κάθε κατηγορία της συνταγής, ×N εγγραφές)."""
+    from app.services.stats_exclusion import COUNTABLE_EXEC
     db = shared_db()
-    rows = await db["prescription_executions"].aggregate([
-        {"$match": {"tenant_id": tenant_id, "status": {"$ne": "cancelled"}, "excluded_from_stats": {"$ne": True}}},
-        {"$lookup": {"from": "prescription_items", "localField": "_id",
-                     "foreignField": "execution_id", "as": "it"}},
-        {"$unwind": "$it"},
-        {"$lookup": {"from": "products", "localField": "it.product_id", "foreignField": "_id", "as": "p"}},
-        {"$set": {"atc": {"$toUpper": {"$ifNull": [{"$first": "$p.atc"}, ""]}}}},
-        {"$match": {"atc": {"$ne": ""}}},
-        {"$group": {"_id": {"pt": "$patient_ref", "atc4": {"$substrBytes": ["$atc", 0, 4]}},
-                    "value": {"$sum": "$amount_total"}}},
+    cat_of: dict = {}
+    async for p in db["products"].find(
+            {"tenant_id": tenant_id, "atc": {"$nin": [None, ""]}}, {"atc": 1}):
+        a = str(p.get("atc") or "").upper()
+        for c in THERAPY_CATEGORIES:
+            if any(a.startswith(x) for x in c["atc"]):
+                cat_of[p["_id"]] = c["key"]
+                break
+    out: dict[str, dict] = {c["key"]: {"patients": set(), "value": 0} for c in THERAPY_CATEGORIES}
+    if not cat_of:
+        return out
+    rows = await db["prescription_items"].aggregate([
+        {"$match": {"tenant_id": tenant_id, "product_id": {"$in": list(cat_of)},
+                    "executed_qty": {"$gt": 0}, "cancelled": {"$ne": True}}},
+        {"$project": {"execution_id": 1, "product_id": 1, "executed_qty": 1, "retail_price": 1}},
+        {"$lookup": {"from": "prescription_executions", "localField": "execution_id",
+                     "foreignField": "_id", "as": "e",
+                     "pipeline": [{"$match": COUNTABLE_EXEC},
+                                  {"$project": {"external_id": 1, "patient_ref": 1}}]}},
+        {"$unwind": "$e"},
+        {"$group": {"_id": {"rx": {"$arrayElemAt": [{"$split": ["$e.external_id", ":"]}, 0]},
+                            "p": "$product_id"},
+                    "pt": {"$first": "$e.patient_ref"}, "qty": {"$max": "$executed_qty"},
+                    "price": {"$max": {"$ifNull": ["$retail_price", 0]}}}},
+        {"$group": {"_id": {"p": "$_id.p", "pt": "$pt"},
+                    "v": {"$sum": {"$multiply": ["$qty", "$price"]}}}},
     ], allowDiskUse=True).to_list(length=None)
+    dead = set(await db["patients_anonymized"].distinct(
+        "_id", {"tenant_id": tenant_id, "deceased": True}))
+    for r in rows:
+        pt = r["_id"].get("pt")
+        key = cat_of.get(r["_id"].get("p"))
+        if not pt or not key or pt in dead:
+            continue
+        out[key]["patients"].add(pt)
+        out[key]["value"] += int(r.get("v") or 0)
+    return out
+
+
+async def category_sizes(tenant_id: str) -> list[dict]:
+    """Πλήθος & αξία ασθενών ανά θεραπευτική κατηγορία — από τον ΚΟΙΝΟ `therapy_breakdown`."""
+    db = shared_db()
+    br = await therapy_breakdown(tenant_id)
     # Προσεγγίσιμοι = ασθενείς με συγκατάθεση επικοινωνίας + τουλάχιστον ένα κανάλι (email ή κινητό).
     consented = set(await db["patient_contacts"].distinct("_id", {
         "tenant_id": tenant_id, "marketing_consent": True,
         "$or": [{"email": {"$nin": [None, ""]}}, {"mobile": {"$nin": [None, ""]}}]}))
-    # Θανόντες εκτός κάθε στόχευσης/κοινού — δεν προωθούμε σε νεκρούς (authoritative deceased flag,
-    # πιάνει & όσους δεν έχουν εγγραφή patient_contacts).
-    deceased_ids = set(await db["patients_anonymized"].distinct(
-        "_id", {"tenant_id": tenant_id, "deceased": True}))
-    # ATC4 → κατηγορία (ταιριάζει με το πιο μακρύ prefix)
-    out = {c["key"]: {"key": c["key"], "label": c["label"], "icon": c["icon"], "offer": c["offer"],
-                      "patients": set(), "value": 0} for c in THERAPY_CATEGORIES}
-    for r in rows:
-        pt = r["_id"]["pt"]
-        if pt in deceased_ids:
-            continue
-        atc4 = r["_id"]["atc4"]
-        for c in THERAPY_CATEGORIES:
-            if any(atc4.startswith(pref) for pref in c["atc"]):
-                out[c["key"]]["patients"].add(r["_id"]["pt"])
-                out[c["key"]]["value"] += r["value"]
-                break
-    res = [{**v, "patients": len(v["patients"]), "reachable": len(v["patients"] & consented),
-            "value": round(v["value"])} for v in out.values()]
+    res = [{"key": c["key"], "label": c["label"], "icon": c["icon"], "offer": c["offer"],
+            "patients": len(br[c["key"]]["patients"]),
+            "reachable": len(br[c["key"]]["patients"] & consented),
+            "value": round(br[c["key"]]["value"])} for c in THERAPY_CATEGORIES]
     res.sort(key=lambda x: x["patients"], reverse=True)
     return res
 
@@ -116,18 +157,33 @@ async def dashboard(tenant_id: str, *, demo: bool = False) -> dict:
             return await coro
         except Exception:  # noqa: BLE001
             return default
-    wb = await _safe(pi.winback(), {})
+    from app.services.comms import segment_patient_ids
     risk = await _safe(pi.risk(), {})
-    winback_n = len(wb.get("items", []) or []) if isinstance(wb, dict) else 0
     risk_n = len(risk.get("items", []) or []) if isinstance(risk, dict) else 0
+    deceased_ids = set(await db["patients_anonymized"].distinct(
+        "_id", {"tenant_id": tenant_id, "deceased": True}))
+    # Win-back = ΑΚΡΙΒΩΣ το κοινό που θα πάρει η καμπάνια της κάρτας (segment «inactive», 180 ημ.).
+    # Πριν: `pi.winback()` επιστρέφει `buckets`, όχι `items` → πάντα 0 και η κάρτα δεν φαινόταν ποτέ.
+    wb_ids = (await _safe(segment_patient_ids(tenant_id, "inactive", "180"), set()) or set()) - deceased_ids
+    winback_n = len(wb_ids)
     horizon = _now() + timedelta(days=30)
     upcoming_refs = await db["future_prescriptions"].distinct(
         "patient_ref", {"tenant_id": tenant_id, "status": "pending",
                         "expected_open_date": {"$gte": _now(), "$lt": horizon}})
     # Θανόντες εκτός της κάρτας «υπενθύμιση επανάληψης» — δεν στοχεύουμε νεκρούς.
-    deceased_ids = set(await db["patients_anonymized"].distinct(
-        "_id", {"tenant_id": tenant_id, "deceased": True}))
-    upcoming_n = len([r for r in upcoming_refs if r not in deceased_ids])
+    upcoming_ids = {r for r in upcoming_refs if r not in deceased_ids}
+    upcoming_n = len(upcoming_ids)
+
+    async def _reach(ids: set) -> int:
+        """Σε πόσους ΦΤΑΝΕΙ πραγματικά: συγκατάθεση + email ή κινητό + δεν ζήτησαν να σταματήσουν.
+        Η κάρτα έλεγε «1.244 ασθενείς» όταν το μήνυμα θα έφτανε σε 2 — ο φαρμακοποιός πρέπει να
+        βλέπει και τα δύο νούμερα πριν πατήσει «στείλε»."""
+        if not ids:
+            return 0
+        return await db["patient_contacts"].count_documents({
+            "tenant_id": tenant_id, "_id": {"$in": list(ids)}, "marketing_consent": True,
+            "unsubscribed_at": None,
+            "$or": [{"email": {"$nin": [None, ""]}}, {"mobile": {"$nin": [None, ""]}}]})
 
     # ── ΠΡΟΤΑΣΕΙΣ ΕΝΕΡΓΕΙΩΝ (action cards) — κάθε μία ανοίγει καμπάνια με προ-επιλεγμένο κοινό ──
     cards: list[dict] = []
@@ -135,22 +191,30 @@ async def dashboard(tenant_id: str, *, demo: bool = False) -> dict:
         cards.append({"id": "refill", "icon": "⏰", "urgency": "high",
                       "title": f"{upcoming_n} ασθενείς με επερχόμενη επανάληψη",
                       "why": "Θύμισέ τους πριν τους τελειώσει η αγωγή — καλύτερη συμμόρφωση & σίγουρη πώληση.",
-                      "count": upcoming_n, "cta": "Υπενθύμιση επανάληψης",
+                      "count": upcoming_n, "reachable": await _reach(upcoming_ids),
+                      "cta": "Υπενθύμιση επανάληψης",
                       "segment": "upcoming", "value": "30"})
     for c in cats[:4]:
         if c["patients"] >= 3:
+            seg = (await _safe(segment_patient_ids(tenant_id, "therapy", c["key"]), set()) or set())
             cards.append({"id": f"cat:{c['key']}", "icon": c["icon"], "urgency": "medium",
                           "title": f"{c['patients']} ασθενείς — {c['label']}",
                           "why": f"Στοχευμένη προσφορά: {c['offer']}.",
-                          "count": c["patients"], "cta": "Στοχευμένη προσφορά",
+                          "count": c["patients"], "reachable": await _reach(seg - deceased_ids),
+                          "cta": "Στοχευμένη προσφορά",
                           "segment": "therapy", "value": c["key"]})
     if winback_n:
         cards.append({"id": "winback", "icon": "🔄", "urgency": "medium",
                       "title": f"{winback_n} ανενεργοί πελάτες",
-                      "why": "Χάθηκαν — φέρ' τους πίσω με μια προσφορά win-back.",
-                      "count": winback_n, "cta": "Καμπάνια win-back",
+                      "why": "Δεν έχουν εκτελέσει τίποτα εδώ τους τελευταίους 6 μήνες — φέρ' τους πίσω με μια προσφορά win-back.",
+                      "count": winback_n, "reachable": await _reach(wb_ids),
+                      "cta": "Καμπάνια win-back",
                       "segment": "inactive", "value": "180"})
-    push_reach = await db["patient_push_subs"].estimated_document_count()
+    # Push ΤΟΥ ΦΑΡΜΑΚΕΙΟΥ: λογαριασμοί πύλης συνδεδεμένοι μαζί του που έχουν ενεργό push.
+    # Πριν μετρούσε τις συσκευές ΟΛΗΣ της πλατφόρμας (ίδιος αριθμός σε κάθε φαρμακείο).
+    acc_ids = await db["patient_links"].distinct("account_id", {"tenant_id": tenant_id})
+    push_reach = len(await db["patient_push_subs"].distinct(
+        "account_id", {"account_id": {"$in": acc_ids}})) if acc_ids else 0
 
     return {
         "performance": perf,

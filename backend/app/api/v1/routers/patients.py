@@ -2,17 +2,24 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from typing import Literal
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response, UploadFile, status
 
 from pydantic import BaseModel, Field
 
 from app.core.deps import TenantContext, require
 from app.repositories.contacts import PatientContactRepository
 from app.repositories.patients import PatientExecutionsRepository, PatientRepository
-from app.services.contacts_import import build_template_xlsx, parse_contacts_xlsx
+from app.services.contacts_import import (
+    IMPORT_FIELDS,
+    build_template_xlsx,
+    looks_like_header,
+    row_to_record,
+    suggest_mapping,
+)
 
 router = APIRouter()
 
@@ -163,6 +170,17 @@ async def contacts_needs_confirmation(
         limit=limit, skip=skip, q=q)
 
 
+@router.get("/contacts/missing")
+async def contacts_missing(
+    limit: int = Query(300, ge=1, le=1000),
+    skip: int = Query(0, ge=0),
+    ctx: TenantContext = Depends(require("patients:read", module=_MODULE)),
+):
+    """Ενεργοί πελάτες ΧΩΡΙΣ κανένα στοιχείο επικοινωνίας — η λίστα της πρότασης του Συμβούλου."""
+    return await PatientContactRepository(tenant_id=ctx.tenant_id, demo=ctx.demo).missing_contact_list(
+        limit=limit, skip=skip)
+
+
 @router.get("/contacts/bulk-hdika")
 async def bulk_hdika_status(ctx: TenantContext = Depends(require("patients:read", module=_MODULE))):
     """Κατάσταση/πρόοδος του μαζικού ΗΔΥΚΑ backfill στοιχείων επικοινωνίας."""
@@ -255,20 +273,72 @@ async def import_template(ctx: TenantContext = Depends(require("patients:read", 
     )
 
 
+_IMPORT_MAX = 8_000_000
+
+
+async def _read_import(file: UploadFile) -> list[list[str]]:
+    from app.repositories.pharmacy_catalog import parse_spreadsheet
+    data = await file.read(_IMPORT_MAX + 1)   # read at most cap+1 → no unbounded memory
+    if len(data) > _IMPORT_MAX:
+        raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "Πολύ μεγάλο αρχείο (>8MB).")
+    name = (file.filename or "").lower()
+    if not name.endswith((".xlsx", ".xlsm", ".csv")):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Υποστηρίζονται αρχεία .xlsx ή .csv.")
+    try:
+        return parse_spreadsheet(data, name)
+    except Exception:  # noqa: BLE001
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Το αρχείο δεν διαβάζεται.")
+
+
+@router.post("/import/preview")
+async def import_preview(file: UploadFile = File(...),
+                         ctx: TenantContext = Depends(require("patients:read", module=_MODULE))):
+    """Δείγμα του αρχείου + ΠΡΟΤΕΙΝΟΜΕΝΗ αντιστοίχιση από τις επικεφαλίδες. Ο φαρμακοποιός
+    επιβεβαιώνει/διορθώνει ποια στήλη είναι τι — δεν υποθέτουμε διάταξη."""
+    rows = await _read_import(file)
+    cols = max((len(r) for r in rows[:100]), default=0)
+    first = rows[0] if rows else []
+    header = looks_like_header(first)
+    return {"columns": cols, "total_rows": len(rows), "has_header": header,
+            "suggested": suggest_mapping(first) if header else {},
+            "fields": list(IMPORT_FIELDS),
+            "rows": [(r + [""] * (cols - len(r)))[:cols] for r in rows[:15]]}
+
+
 @router.post("/import")
-async def import_insured(
+async def import_contacts(
     file: UploadFile = File(...),
+    mapping: str = Form(...),
+    start_row: int = Form(1, ge=1),
+    overwrite: bool = Form(False),
+    dry_run: bool = Form(True),
     ctx: TenantContext = Depends(require("patients:read", module=_MODULE)),
 ):
-    data = await file.read(8_000_001)   # read at most cap+1 → no unbounded memory
-    if len(data) > 8_000_000:
-        raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "Πολύ μεγάλο αρχείο (>8MB).")
-    rows, err = parse_contacts_xlsx(data)
-    if err:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, err)
-    if not rows:
-        return {"updated": 0, "skipped": 0, "total": 0, "skipped_sample": []}
-    return await PatientContactRepository(tenant_id=ctx.tenant_id, demo=ctx.demo).import_insured(rows)
+    """Εισαγωγή στοιχείων επικοινωνίας με αντιστοίχιση στηλών ({πεδίο: δείκτης στήλης}).
+    `dry_run` (προεπιλογή) = έλεγχος χωρίς εγγραφή· ίδιος υπολογισμός με την εφαρμογή."""
+    try:
+        m = json.loads(mapping or "{}")
+    except json.JSONDecodeError:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Μη έγκυρη αντιστοίχιση στηλών.")
+    if not isinstance(m, dict):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Μη έγκυρη αντιστοίχιση στηλών.")
+    m = {k: int(v) for k, v in m.items() if k in IMPORT_FIELDS and isinstance(v, int) and v >= 0}
+    if not ({"amka", "full_name"} & m.keys() or {"last_name", "first_name"} <= m.keys()):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                            "Δήλωσε στήλη ΑΜΚΑ ή ονοματεπώνυμο — αλλιώς δεν βρίσκουμε τον πελάτη.")
+    if not ({"mobile", "phone", "email", "address", "city", "postal_code"} & m.keys()):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                            "Δήλωσε τουλάχιστον μία στήλη στοιχείων (κινητό/σταθερό/email/διεύθυνση).")
+    rows = await _read_import(file)
+    records = []
+    for n, r in enumerate(rows[start_row - 1:], start=start_row):
+        if not any((c or "").strip() for c in r):
+            continue
+        rec = row_to_record(r, m)
+        rec["row"] = n
+        records.append(rec)
+    return await PatientContactRepository(tenant_id=ctx.tenant_id, demo=ctx.demo).import_contacts(
+        records, overwrite=overwrite, dry_run=dry_run)
 
 
 class HeightIn(BaseModel):
@@ -420,10 +490,31 @@ async def patient_detail(
 @router.get("/aggregate")
 async def aggregate(
     by: Literal["age_group", "sex", "area", "lifecycle"] = "age_group",
+    date_from: datetime | None = None,
+    date_to: datetime | None = None,
+    fund_id: str | None = None,
+    doctor_id: str | None = None,
+    icd10: str | None = None,
     ctx: TenantContext = Depends(require("patients:read", module=_MODULE)),
 ):
+    """Με περίοδο: ΜΟΝΟ ασθενείς με εκτέλεση στην περίοδο (και στα φίλτρα) — όπως λέει η κάρτα
+    «Ασφαλισμένοι». Πριν η περίοδος αγνοούνταν: έβγαινε ΟΛΟ το ιστορικό και η σύγκριση με πέρσι
+    ήταν πάντα 0% (δύο ίδιοι αριθμοί) — 30/09/2026."""
     repo = PatientRepository(tenant_id=ctx.tenant_id, demo=ctx.demo)
-    buckets = await repo.aggregate_by(by=by)
+    only = None
+    if date_from and date_to:
+        from app.core.db import shared_db
+        from app.services.stats_exclusion import COUNTABLE_EXEC
+        q: dict = {"tenant_id": ctx.tenant_id, "executed_at": {"$gte": date_from, "$lt": date_to},
+                   **COUNTABLE_EXEC}
+        if fund_id:
+            q["fund_id"] = fund_id
+        if doctor_id:
+            q["doctor_id"] = doctor_id
+        if icd10:
+            q["icd10"] = icd10
+        only = [r for r in await shared_db()["prescription_executions"].distinct("patient_ref", q) if r]  # tenant-ok: q έχει tenant_id
+    buckets = await repo.aggregate_by(by=by, only=only)
     # rows: {label, value=patient count} — shape the Ασφαλισμένοι charts expect
     rows = [{"label": b.get("key") or "—", "value": b.get("patients", 0)} for b in buckets]
     return {"by": by, "rows": rows}

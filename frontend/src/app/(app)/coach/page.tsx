@@ -66,7 +66,7 @@ type Proposal = {
   id: string; index: number; module: string | null; feature?: string;
   locked: boolean; trialing: boolean;
   headline: string; situation: string; promise: string; offer: string;
-  serve_n: number; serve_pct: number; money_cents: number;
+  serve_n: number | null; serve_pct: number | null; money_cents: number;
   setup: string[];
   cta: { label: string; href: string };
   cta_secondary?: { label: string; href: string };
@@ -543,6 +543,8 @@ export default function CoachPage() {
                 <div className="space-y-4 px-5 py-4">
                   {/* Τι κερδίζει — σε ΠΟΣΟΣΤΟ πελατών και σε ΕΥΡΩ */}
                   <div className="flex flex-wrap gap-3">
+                    {/* χωρίς αριθμό όταν δεν υπάρχει λίστα που να τον επιβεβαιώνει (π.χ. πριν οριστούν προγράμματα) */}
+                    {p.serve_n != null && (
                     <div className="flex-1 rounded-xl bg-sky-50 px-4 py-3 dark:bg-sky-950/30">
                       <div className="text-[11px] uppercase tracking-wide text-sky-600 dark:text-sky-400">
                         {t("Εξυπηρετείς καλύτερα", "You serve better")}
@@ -551,6 +553,7 @@ export default function CoachPage() {
                         {p.serve_pct}% <span className="text-sm font-medium">({p.serve_n} {t("πελάτες", "customers")})</span>
                       </div>
                     </div>
+                    )}
                     {!!p.money_cents && (
                       <div className="flex-1 rounded-xl bg-emerald-50 px-4 py-3 dark:bg-emerald-950/30">
                         <div className="text-[11px] uppercase tracking-wide text-emerald-600 dark:text-emerald-400">

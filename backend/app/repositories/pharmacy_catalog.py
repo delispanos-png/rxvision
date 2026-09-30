@@ -388,18 +388,46 @@ class PharmacyCatalogRepository(BaseRepository):
     # ── ΑΠΟΘΗΚΗ (πλήρης διαχείριση αποθέματος) ───────────────────────────────
     NEAR_EXPIRY_DAYS = 90
 
+    #: Οι «εστίες» που μετρά ο Σύμβουλος και ανοίγει η Αποθήκη (`?focus=`) — ΕΝΑΣ ορισμός.
+    FOCUS = ("expired", "expiring", "reorder", "dead")
+
+    async def focus_query(self, focus: str | None, now: datetime | None = None) -> dict | None:
+        """Πριν: ο Σύμβουλος μετρούσε με δικούς του κανόνες και έστελνε σε `/warehouse?expiring=…`,
+        παράμετρο που η σελίδα ΑΓΝΟΟΥΣΕ — η κάρτα «12 ληγμένα» άνοιγε όλη την αποθήκη (30/09/2026).
+        `None` = καμία εστία· `{}` με `_impossible` = εστία χωρίς δεδομένα (π.χ. καμία κίνηση)."""
+        if focus not in self.FOCUS:
+            return None
+        now = now or _now()
+        today = now.date().isoformat()
+        if focus == "expired":
+            return {"stock_qty": {"$gt": 0}, "expiry": {"$ne": None, "$gt": "", "$lt": today}}
+        if focus == "expiring":
+            soon = (now + timedelta(days=self.NEAR_EXPIRY_DAYS)).date().isoformat()
+            return {"stock_qty": {"$gt": 0}, "expiry": {"$gte": today, "$lt": soon}}
+        if focus == "reorder":
+            return {"min_stock": {"$gt": 0}, "$expr": {"$lte": ["$stock_qty", "$min_stock"]}}
+        moved = await self._db["pharmacy_stock_movements"].distinct(
+            "product_id", {"tenant_id": self.tenant_id,
+                           "created_at": {"$gte": now - timedelta(days=180)}})
+        if not moved:      # καμία κίνηση καταγεγραμμένη: δεν ξέρουμε τι είναι «ακίνητο»
+            return {"_id": {"$in": []}}
+        return {"stock_qty": {"$gt": 0}, "_id": {"$nin": moved}}
+
     async def warehouse(self, *, q: str = "", ptype: str | None = None, low_stock: bool = False,
                         expiring: bool = False, include_inactive: bool = True,
                         cat1: str | None = None, cat2: str | None = None, cat3: str | None = None,
                         for_sale: bool | None = None, stock: str | None = None,
                         supplier: str | None = None, no_image: bool = False, no_category: bool = False,
-                        page: int = 1, page_size: int = 60) -> dict:
+                        page: int = 1, page_size: int = 60, focus: str | None = None) -> dict:
         """Master inventory: ΟΛΑ τα είδη (ενεργά + ανενεργά) με πλήρη χαρακτηριστικά + πλούσια φίλτρα."""
         query = self.warehouse_query(
             q=q, ptype=ptype, low_stock=low_stock, expiring=expiring,
             include_inactive=include_inactive, cat1=cat1, cat2=cat2, cat3=cat3,
             for_sale=for_sale, stock=stock, supplier=supplier,
             no_image=no_image, no_category=no_category)
+        fq = await self.focus_query(focus)
+        if fq is not None:
+            query = {"$and": [query, fq]} if query else fq
         page = max(1, page); page_size = max(1, min(page_size, 200))
         total = await self.count(query)
         items = await self.find(query, sort=[("name", 1)], skip=(page - 1) * page_size, limit=page_size)

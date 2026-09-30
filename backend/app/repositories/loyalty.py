@@ -495,6 +495,19 @@ class LoyaltyRepository(BaseRepository):
         enrolled = {m["patient_ref"]: m.get("enrolled_at") async for m in
                     self._db["loyalty_members"].find({"tenant_id": self.tenant_id})}
         refills_since = await self._refills_since(enrolled, cfg)
+        # Κάθε ΕΓΓΕΓΡΑΜΜΕΝΟ μέλος μετρά — ακόμη κι αν δεν έχει επαναλαμβανόμενη συνταγή (απλές
+        # συνταγές, πόντοι από το ταμείο/Partner API). Πριν χάνονταν από τον αριθμό «Μέλη» ΚΑΙ τη
+        # λίστα: 2 από 5 σε ένα φαρμακείο (30/09/2026).
+        from bson import ObjectId
+        empty = {"chains": 0, "compliance": None, "expected": 0, "available": 0}
+        by_str = {str(k): k for k in chain if k}
+        if restrict is not None:
+            for rid in restrict:
+                if rid not in by_str:
+                    try:
+                        chain[ObjectId(rid)] = dict(empty)
+                    except Exception:  # noqa: BLE001
+                        chain[rid] = dict(empty)
         refs = [r for r in chain.keys() if r]
         names: dict = {}
         async for p in self._db["patients_anonymized"].find(
@@ -505,10 +518,12 @@ class LoyaltyRepository(BaseRepository):
         tmult_on = bool(cfg.get("tier_multipliers_enabled"))
         rows: list[dict] = []
         for ref, c in chain.items():
-            if not ref or not c.get("chains"):
+            if not ref:
                 continue
             rid = str(ref)
             if restrict is not None and rid not in restrict:
+                continue
+            if restrict is None and not c.get("chains"):   # υποψήφια μέλη: μόνο με αλυσίδα
                 continue
             rs = refills_since.get(rid) or {"n": 0, "wsum_pct": 0}
             executed = int(rs["n"])                      # ← refills (εκτελέσεις) από την εγγραφή

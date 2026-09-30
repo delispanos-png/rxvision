@@ -17,7 +17,7 @@ type Today = {
   by_hour: { hour: number; rx: number; value: number }[];
   categories: { category: string; count: number }[];
   top_meds: { name: string; count: number }[];
-  expected_absent: number; expected_week: number;
+  expected_absent: number; expected_week: number; expected_missed?: number;
 };
 
 const CAT: Record<string, string> = { normal: "Κανονικό", narcotic: "Ναρκωτικό", vaccine: "Εμβόλιο", high_cost: "Υψηλού κόστους", allergen: "Αλλεργιογόνο" };
@@ -64,7 +64,7 @@ export default function TodayPage() {
         <KpiCard label={t("Τζίρος ημέρας", "Day revenue")} help={t("Συνολική λιανική αξία των εκτελέσεων της ημέρας.", "Day's total retail value.")} value={fmtEur(data.value)} icon={Wallet} accent="green" trend={data.vs_yoy_value ?? undefined} sub={t(`πέρσι ${fmtEur(data.value_yoy)}`, `last year ${fmtEur(data.value_yoy)}`)} />
         <KpiCard label={t("Ασθενείς", "Patients")} help={t("Μοναδικοί ασθενείς της περιόδου/ομάδας.", "Unique patients.")} value={fmtNum(data.patients)} icon={Users} accent="violet" />
         <KpiCard label={t("Νέοι σήμερα", "New today")} help={t("Ασθενείς με πρώτη εκτέλεση στην περίοδο.", "Patients with their first execution in the period.")} value={fmtNum(data.new_patients)} icon={UserPlus} accent="sky" />
-        <KpiCard label={t("Δεν ήρθαν (εκκρεμείς)", "No-shows (pending)")} help={t("Ασθενείς που δεν ήρθαν για την επανάληψή τους.", "Patients who didn't return for refills.")} value={fmtNum(data.expected_absent)} icon={PhoneCall} accent="rose" sub={t(`${data.expected_week} αυτή την εβδομάδα`, `${data.expected_week} this week`)} onClick={() => router.push("/intelligence/recall")} />
+        <KpiCard label={t("Προς ανάκληση", "To recall")} help={t("Ασθενείς με επανάληψη που χάθηκε ή που μπορεί να εκτελεστεί τώρα — ακριβώς η λίστα που ανοίγει με το κλικ.", "Patients with a repeat that was missed or can be dispensed now — exactly the list the click opens.")} value={fmtNum(data.expected_absent)} icon={PhoneCall} accent="rose" sub={t(`${fmtNum(data.expected_missed ?? 0)} δεν ήρθαν · ${fmtNum(data.expected_week)} μπορούν τώρα`, `${fmtNum(data.expected_missed ?? 0)} missed · ${fmtNum(data.expected_week)} due now`)} onClick={() => router.push("/intelligence/recall")} />
       </div>
 
       {/* intraday curve */}

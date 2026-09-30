@@ -188,6 +188,20 @@ async def daily(period: str = Query(None), group: str = Query("all"),
     return await _repo(ctx).daily_reconciliation(period or _cur(), group=group)
 
 
+@router.get("/daily/executions")
+async def daily_executions(day: str = Query(..., pattern=r"^\d{4}-\d{2}-\d{2}$"),
+                           group: str = Query("all"),
+                           ctx: TenantContext = Depends(require("closing:read", module=_MODULE))):
+    """Οι εκτελέσεις ΜΙΑΣ γραμμής της ημερήσιας συμφωνίας — ΑΚΡΙΒΩΣ όσες μέτρησε η γραμμή (ίδια
+    ομάδα ταμείου, χωρίς 100%, χωρίς εξαιρεμένες). Πριν η λίστα ήταν ανεξάρτητη αναζήτηση της
+    ημέρας: όλα τα ταμεία, με τις εξαιρεμένες, έως 300 (30/09/2026)."""
+    from app.repositories.prescriptions import PrescriptionRepository
+    ids = (await _repo(ctx).daily_reconciliation(day[:7], group=group, day_ids=day))["ids"]
+    items = await PrescriptionRepository(tenant_id=ctx.tenant_id, demo=ctx.demo).list_executions(
+        {"_id": {"$in": ids}}, skip=0, limit=max(1, len(ids)), sort="executed_at", direction=-1)
+    return {"items": items, "count": len(ids)}
+
+
 @router.get("/prescription")
 async def prescription(barcode: str = Query(...),
                        ctx: TenantContext = Depends(require("closing:read", module=_MODULE))):

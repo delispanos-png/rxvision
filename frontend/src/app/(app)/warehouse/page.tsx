@@ -47,6 +47,8 @@ export default function WarehousePage() {
   const [cat1, setCat1] = useState(""); const [cat2, setCat2] = useState(""); const [cat3, setCat3] = useState("");
   const [forSale, setForSale] = useState(""); const [stock, setStock] = useState(""); const [supplier, setSupplier] = useState("");
   const [noImg, setNoImg] = useState(false); const [noCat, setNoCat] = useState(false);
+  // ?focus=expired|expiring|reorder|dead — από τις κάρτες του Συμβούλου: ΙΔΙΟΣ ορισμός με την κάρτα
+  const [focus, setFocus] = useState(() => { try { return new URLSearchParams(window.location.search).get("focus") ?? ""; } catch { return ""; } });
   const { data: catTree } = useCategoryTree();
   const cats = catTree?.items ?? [];
   const catOpts = (level: number, parent: string) => cats.filter((c) => c.level === level && (level === 1 || c.parent_id === parent));
@@ -56,15 +58,16 @@ export default function WarehousePage() {
   const [imp, setImp] = useState(false);
   const [page, setPage] = useState(1);
   const PAGE = 100;
-  useEffect(() => { setPage(1); }, [q, type, low, exp, inactive, cat1, cat2, cat3, forSale, stock, supplier, noImg, noCat]);
+  useEffect(() => { setPage(1); }, [q, type, low, exp, inactive, cat1, cat2, cat3, forSale, stock, supplier, noImg, noCat, focus]);
 
   const list = useQuery({
-    queryKey: ["warehouse", q, type, low, exp, inactive, cat1, cat2, cat3, forSale, stock, supplier, noImg, noCat, page],
+    queryKey: ["warehouse", q, type, low, exp, inactive, cat1, cat2, cat3, forSale, stock, supplier, noImg, noCat, focus, page],
     queryFn: () => {
       const p = new URLSearchParams({ q, type, low_stock: String(low), expiring: String(exp), include_inactive: String(inactive), page: String(page), page_size: String(PAGE) });
       if (cat1) p.set("cat1", cat1); if (cat2) p.set("cat2", cat2); if (cat3) p.set("cat3", cat3);
       if (forSale) p.set("for_sale", forSale === "yes" ? "true" : "false");
       if (stock) p.set("stock", stock);
+      if (focus) p.set("focus", focus);
       if (supplier) p.set("supplier", supplier);
       if (noImg) p.set("no_image", "true"); if (noCat) p.set("no_category", "true");
       return api<WH>(`/catalog/warehouse?${p.toString()}`);
@@ -205,6 +208,22 @@ export default function WarehousePage() {
       </div>
 
       <SupplierPhotoCard />
+
+      {focus && (() => {
+        const label: Record<string, string> = {
+          expired: t("ληγμένα με απόθεμα", "expired, in stock"),
+          expiring: t("λήγουν μέσα σε 90 ημέρες", "expiring within 90 days"),
+          reorder: t("κάτω από το όριο αναπαραγγελίας", "below reorder point"),
+          dead: t("ακίνητα 6 μήνες", "no movement for 6 months"),
+        };
+        return (
+          <div className="flex flex-wrap items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-100">
+            {t("Εμφανίζονται:", "Showing:")} <b>{label[focus] ?? focus}</b>
+            <span className="text-xs text-amber-700 dark:text-amber-300">{t("— ό,τι μέτρησε ο Σύμβουλος", "— what the Advisor counted")}</span>
+            <button onClick={() => { setFocus(""); window.history.replaceState(null, "", "/warehouse"); }} className="ml-auto rounded-full px-2 text-xs font-semibold hover:bg-amber-100 dark:hover:bg-amber-900/40">{t("όλα τα είδη ×", "all items ×")}</button>
+          </div>
+        );
+      })()}
 
       {/* KPIs */}
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-7">

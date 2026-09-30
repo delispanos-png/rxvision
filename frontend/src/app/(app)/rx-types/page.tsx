@@ -118,7 +118,7 @@ export default function RxTypesPage() {
                       return (
                         <KpiCard key={key} label={label} value={fmtNum(s.count)} sub={sub || undefined}
                           icon={icon} accent={accent} trend={pctDelta(s.count, prev?.items?.[key]?.count)}
-                          onClick={() => router.push(`/prescriptions?char=${token}`)} />
+                          onClick={() => router.push(`/prescriptions?char=${token}&countable=1`)} />
                       );
                     })}
                   </div>

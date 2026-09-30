@@ -90,7 +90,8 @@ class PatientRepository(BaseRepository):
                 upsert=True)
         return {"ok": True, "patient_ref": str(pid), "already_existed": existing is not None}
 
-    async def aggregate_by(self, *, by: str) -> list[dict]:
+    async def aggregate_by(self, *, by: str, only: list | None = None) -> list[dict]:
+        """`only` = περιορισμός σε συγκεκριμένους ασθενείς (π.χ. όσοι εκτέλεσαν στην περίοδο)."""
         field = _DIM_FIELD.get(by, "$lifecycle")
         # Περιοχή: ομαδοποίηση στο ΚΑΝΟΝΙΚΟΠΟΙΗΜΕΝΟ τοπωνύμιο (μία περιοχή = μία γραμμή)· fallback στο
         # raw για ασθενείς που δεν έχουν ακόμη canonical (ο βρόχος refresh τους πιάνει σύντομα).
@@ -98,7 +99,8 @@ class PatientRepository(BaseRepository):
             field = {"$ifNull": ["$residence_area_canonical", "$residence_area"]}
         pipeline = [
             # Θανόντες εκτός κάθε κατανομής/μέτρησης ασθενών (authoritative deceased flag).
-            {"$match": {"deceased": {"$ne": True}}},
+            {"$match": {"deceased": {"$ne": True},
+                        **({"_id": {"$in": only}} if only is not None else {})}},
             {"$group": {
                 "_id": field,
                 "patients": {"$sum": 1},

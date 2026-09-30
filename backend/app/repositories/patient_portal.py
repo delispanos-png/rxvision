@@ -632,17 +632,25 @@ class PatientAccountRepository:
             {"_id": oid}, {"$set": {"favorite_tenant_id": new}})
         return new
 
-    async def portal_customers(self, tenant_id: str, *, limit: int = 300, demo: bool = False) -> dict:
+    async def portal_customers(self, tenant_id: str, *, limit: int = 5000, demo: bool = False) -> dict:
         """Pharmacist view: how many of THIS pharmacy's patients are registered in the portal
         («favourite» customers) vs how many remain to invite. patient_links.patient_ref ==
         patients_anonymized._id."""
         db = self.db
         links = [l async for l in db["patient_links"].find({"tenant_id": tenant_id})]  # tenant-ok: scoped
         by_ref = {l.get("patient_ref"): l for l in links if l.get("patient_ref")}
-        reg_refs = list(by_ref.keys())
-        total = await db["patients_anonymized"].count_documents(
-            {"tenant_id": tenant_id, "lifecycle": {"$in": ["active", "new"]}})
+        # ΕΝΑΣ πληθυσμός για όλους τους μετρητές (30/09/2026): πριν «προς πρόσκληση» = ενεργοί −
+        # ΟΛΟΙ οι εγγεγραμμένοι (και ανενεργοί/θανόντες) και «με στοιχεία» μετρούσε και τους ήδη
+        # εγγεγραμμένους — τρεις αριθμοί από τρεις διαφορετικούς πληθυσμούς.
+        dead = set(await db["patients_anonymized"].distinct(
+            "_id", {"tenant_id": tenant_id, "deceased": True}))
+        reg_refs = [r for r in by_ref if r not in dead]
+        active = set(await db["patients_anonymized"].distinct(
+            "_id", {"tenant_id": tenant_id, "lifecycle": {"$in": ["active", "new"]},
+                    "deceased": {"$ne": True}}))
+        total = len(active)
         registered = len(reg_refs)
+        to_invite_ids = active - set(reg_refs)
         reg_list: list = []
         if reg_refs:
             async for p in db["patients_anonymized"].find(
@@ -655,16 +663,18 @@ class PatientAccountRepository:
         if demo:   # «πελάτης παρουσίασης»: κρύψε τα ονόματα των εγγεγραμμένων πελατών
             from app.utils.masking import mask_rows
             mask_rows(reg_list, True)
-        # patients we could proactively contact (have a mobile/email on file, not yet registered)
+        # από τους «προς πρόσκληση», όσοι έχουν κινητό ή email — σε αυτούς ΜΠΟΡΕΙΣ να στείλεις
         contactable = await db["patient_contacts"].count_documents(
-            {"tenant_id": tenant_id, "active": {"$ne": False},
-             "$or": [{"mobile": {"$nin": [None, ""]}}, {"email": {"$nin": [None, ""]}}]})
+            {"tenant_id": tenant_id, "_id": {"$in": list(to_invite_ids)}, "active": {"$ne": False},
+             "$or": [{"mobile": {"$nin": [None, ""]}}, {"email": {"$nin": [None, ""]}}]}) \
+            if to_invite_ids else 0
         tenant = await db["tenants"].find_one({"_id": tenant_id}, {"name": 1})  # tenant-ok: own tenant
         return jsonsafe({
             "registered": registered,
             "total": total,
-            "to_invite": max(0, total - registered),
-            "adoption_pct": round(registered / total * 100, 1) if total else 0.0,
+            "to_invite": len(to_invite_ids),
+            "registered_active": total - len(to_invite_ids),
+            "adoption_pct": round((total - len(to_invite_ids)) / total * 100, 1) if total else 0.0,
             "contactable": contactable,
             "registered_list": reg_list[:limit],
             "tenant_id": tenant_id,

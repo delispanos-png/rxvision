@@ -57,7 +57,7 @@ export default function OrderAdvisorPage() {
   const upcCols = makeUpcCols(t);
   const { data, isLoading } = useQuery({
     queryKey: ["advisor", "orders"],
-    queryFn: () => api<OrderAdvice>(`/advisor/orders?lead_days=7`),
+    queryFn: () => api<OrderAdvice>(`/advisor/orders`),
   });
 
   const k = data?.kpis;

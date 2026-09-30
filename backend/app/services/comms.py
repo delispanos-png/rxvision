@@ -462,22 +462,9 @@ async def segment_patient_ids(tenant_id: str, segment: str, value: str | None):
         allp = set(await db["prescription_executions"].distinct("patient_ref", {"tenant_id": tenant_id}))
         return allp - recent
     if segment == "therapy":
-        # value = κλειδί θεραπευτικής κατηγορίας → ATC prefixes (Στοχευμένη Προώθηση)
-        from app.services.marketing import THERAPY_ATC
-        prefixes = THERAPY_ATC.get((value or "").strip())
-        if not prefixes:
-            return set()
-        rx = "^(" + "|".join(re.escape(p) for p in prefixes) + ")"
-        rows = await db["prescription_executions"].aggregate([
-            {"$match": {"tenant_id": tenant_id, "status": {"$ne": "cancelled"}, "excluded_from_stats": {"$ne": True}}},
-            {"$lookup": {"from": "prescription_items", "localField": "_id", "foreignField": "execution_id", "as": "it"}},
-            {"$unwind": "$it"},
-            {"$lookup": {"from": "products", "localField": "it.product_id", "foreignField": "_id", "as": "p"}},
-            {"$set": {"atc": {"$toUpper": {"$ifNull": [{"$first": "$p.atc"}, ""]}}}},
-            {"$match": {"atc": {"$regex": rx}}},
-            {"$group": {"_id": "$patient_ref"}},
-        ]).to_list(length=None)
-        return {r["_id"] for r in rows}
+        # ΙΔΙΟΣ υπολογισμός με τα Segments και τη Στοχευμένη Προώθηση (`therapy_breakdown`)
+        from app.services.marketing import therapy_breakdown
+        return set((await therapy_breakdown(tenant_id)).get((value or "").strip(), {}).get("patients", set()))
     if segment == "substance":
         val = re.escape((value or "").upper())
         rows = await db["prescription_executions"].aggregate([
@@ -536,6 +523,20 @@ async def audience_breakdown(tenant_id: str, channel: str, segment: str = "all",
     """
     from app.services import consent
     db = shared_db()
+    if channel == "push":
+        # Push ΔΕΝ πάει σε κινητό αλλά σε ΣΥΣΚΕΥΗ με λογαριασμό πύλης και ενεργό push. Πριν η οθόνη
+        # μετρούσε τα κινητά με συγκατάθεση — υποσχόταν παραλήπτες που δεν υπάρχουν (30/09/2026).
+        rows = await push_audience(tenant_id, segment, value, only_ids=only_ids)
+        seg = await segment_patient_ids(tenant_id, segment, value)
+        if only_ids is not None:
+            seg = only_ids if seg is None else (set(seg) & set(only_ids))
+        total = len(seg) if seg is not None else await db["patient_contacts"].count_documents(
+            {"tenant_id": tenant_id})
+        return {"total": total, "will_receive": len(rows),
+                "excluded": [{"n": max(0, total - len(rows)),
+                              "reason": "δεν έχουν την εφαρμογή με ενεργές ειδοποιήσεις ή συγκατάθεση",
+                              "code": "no_push"}],
+                "cap": await _frequency_cap(tenant_id)}
     field = "email" if channel == "email" else "mobile"
     seg = await segment_patient_ids(tenant_id, segment, value)
     # `only_ids` = αποτέλεσμα του Audience Engine. Τέμνεται με το segment ώστε οι έλεγχοι
@@ -556,12 +557,20 @@ async def audience_breakdown(tenant_id: str, channel: str, segment: str = "all",
 
     withdrawn = set(await consent.withdrawn_patient_ids(tenant_id, channel))
     capped = await frequency_capped_patients(tenant_id)
+    # Θανόντες: ΠΟΤΕ παραλήπτες — ίδιος κανόνας με την αποστολή (`campaign_audience`).
+    deceased = set(await db["patients_anonymized"].distinct(
+        "_id", {"tenant_id": tenant_id, "deceased": True}))
     ids = {d["_id"] async for d in db["patient_contacts"].find(reachable, {"_id": 1})}
+    n_dead = len(ids & deceased)
+    ids -= deceased
+    unsub = {d["_id"] async for d in db["patient_contacts"].find(
+        {**reachable, "unsubscribed_at": {"$ne": None}}, {"_id": 1})} - deceased
     n_withdrawn = len(ids & withdrawn)
     n_capped = len((ids - withdrawn) & capped)
-    n_unsub = await db["patient_contacts"].count_documents(
-        {**reachable, "unsubscribed_at": {"$ne": None}})
-    final = len(ids - withdrawn - capped)
+    n_unsub = len((ids - withdrawn - capped) & unsub)
+    # ΙΔΙΟ σύνολο με όσους θα λάβουν πραγματικά: πριν δεν αφαιρούνταν όσοι πάτησαν «δεν θέλω άλλα»
+    # (η αποστολή σωστά τους παρέλειπε) → η οθόνη υποσχόταν περισσότερους παραλήπτες (30/09/2026).
+    final = len(ids - withdrawn - capped - unsub)
 
     return {
         "total": total, "will_receive": max(0, final),
@@ -571,6 +580,7 @@ async def audience_breakdown(tenant_id: str, channel: str, segment: str = "all",
             {"n": n_capped, "reason": "έλαβαν ήδη τα μηνύματα του μήνα (όριο συχνότητας)", "code": "frequency_cap"},
             {"n": n_unsub, "reason": "ζήτησαν να μη λαμβάνουν προωθητικά", "code": "unsubscribed"},
             {"n": no_contact, "reason": f"δεν έχουν {'email' if channel == 'email' else 'κινητό'}", "code": "no_contact"},
+            {"n": n_dead, "reason": "έχουν αποβιώσει", "code": "deceased"},
         ],
         "cap": await _frequency_cap(tenant_id),
     }
@@ -604,6 +614,7 @@ async def campaign_audience(tenant_id: str, channel: str, segment: str = "all", 
     return await shared_db()["patient_contacts"].aggregate([
         {"$match": q},
         {"$lookup": {"from": "patients_anonymized", "localField": "_id", "foreignField": "_id", "as": "pp"}},
+        {"$match": {"pp.deceased": {"$ne": True}}},   # ΠΟΤΕ μήνυμα σε θανόντα (30/09: 44 θα λάμβαναν)
         {"$set": {"name": {"$first": "$pp.full_name"}, "patient_id": "$_id"}},
         {"$project": {"_id": 0, field: 1, "name": 1, "patient_id": 1}},
     ]).to_list(length=None)
@@ -680,6 +691,7 @@ async def push_audience(tenant_id: str, segment: str = "all", value: str | None 
     rows = await db["patient_contacts"].aggregate([
         {"$match": q},
         {"$lookup": {"from": "patients_anonymized", "localField": "_id", "foreignField": "_id", "as": "pp"}},
+        {"$match": {"pp.deceased": {"$ne": True}}},   # ΠΟΤΕ μήνυμα σε θανόντα (30/09: 44 θα λάμβαναν)
         {"$set": {"amka": {"$first": "$pp.amka"}, "name": {"$first": "$pp.full_name"}}},
         {"$match": {"amka": {"$nin": [None, ""]}}},
         {"$project": {"_id": 0, "patient_id": "$_id", "amka": 1, "name": 1}},

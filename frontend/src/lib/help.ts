@@ -113,12 +113,14 @@ export const HELP: Record<string, Help> = {
       "Άνοιξε την καρτέλα και κοίτα τη σήμανση των στοιχείων επικοινωνίας.",
       "Αν λείπουν, πάτα «Άντληση ΗΔΥΚΑ» — συμπληρώνει μόνο τα κενά, δεν σβήνει δικά σου.",
       "Για μαζική δουλειά: υπο-σελίδα «Επιβεβαίωση στοιχείων» → μαζική άντληση στο παρασκήνιο.",
+      "Έχεις τα τηλέφωνα στο εμπορικό σου πρόγραμμα; «Εισαγωγή από Excel»: ανεβάζεις τη λίστα, λες ποια στήλη είναι τι, βλέπεις έλεγχο και μετά εφαρμόζεις.",
     ],
     how_en: [
       "Search by ΑΜΚΑ, name, phone or email — whatever you have at hand.",
       "Open the profile and look at the contact-details tag.",
       "If details are missing press “Fetch from ΗΔΥΚΑ” — it fills gaps only, never overwrites yours.",
       "For bulk work: the “Confirm details” sub-page → mass fetch in the background.",
+      "Numbers already in your pharmacy software? “Import from Excel”: upload the list, say which column is what, review the check, then apply.",
     ],
     tips: [
       "Χωρίς τηλέφωνο και συγκατάθεση ο πελάτης δεν μπαίνει σε καμία καμπάνια και δεν παίρνει καμία υπενθύμιση.",

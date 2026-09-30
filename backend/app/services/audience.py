@@ -226,6 +226,11 @@ async def resolve(tenant_id: str, rules: dict, *, purpose: str = "commercial") -
                 results.append(_cmp(c.get("op", "eq"), vals.get(f), c.get("value")))
         if (all(results) if match_all else any(results)) if results else True:
             out.add(pid)
+    # Θανόντες ΠΟΤΕ στο κοινό — ίδιος κανόνας με την αποστολή· αλλιώς το «N άνθρωποι» εδώ ήταν
+    # μεγαλύτερο από όσους θα λάμβαναν (30/09/2026).
+    if out:
+        out -= set(await shared_db()["patients_anonymized"].distinct(
+            "_id", {"tenant_id": tenant_id, "_id": {"$in": list(out)}, "deceased": True}))
     return out
 
 
