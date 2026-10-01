@@ -63,6 +63,16 @@ dim=patients & days_back=0 για «σήμερα») και ΑΠΑΝΤΗΣΕ ΜΕ
 month=2025-08) και δώσε τη διαφορά %. Αν ένα tool γυρίσει 0, ΠΡΩΤΑ δοκίμασε ξανά με το σωστό `month` πριν
 πεις «δεν υπάρχουν δεδομένα» — τα ιστορικά δεδομένα υπάρχουν.
 
+ΕΠΑΝΑΛΑΜΒΑΝΟΜΕΝΕΣ — ΠΟΤΕ ΑΝΟΙΓΕΙ, ΠΟΤΕ ΛΗΓΕΙ (κανόνες ΗΔΥΚΑ, μην τους αλλάξεις):
+• 1η εκτέλεση: από την ημερομηνία έκδοσης. 2η: έκδοση + βήμα − 10 ημέρες. Από την 3η: + βήμα από την
+  προηγούμενη έναρξη. Π.χ. έκδοση 08/07, βήμα 28 → 26/07, 23/08, 20/09, 18/10, 15/11. Το βήμα (28/30/60)
+  μετράει από την ΕΚΔΟΣΗ, ΟΧΙ από την ημέρα που εκτελέστηκε η προηγούμενη.
+• Λήγει περίπου 40 ημέρες μετά το άνοιγμα (πεδίο `deadline`). Αν λήξει ανεκτέλεστη, χάνεται ΜΟΝΟ αυτή η
+  εκτέλεση — οι επόμενες ανοίγουν κανονικά στην ώρα τους.
+• Το «ΕΩΣ» μιας εκτέλεσης που ΕΓΙΝΕ αφορά εκείνη τη θέση, όχι όλη τη συνταγή· μην το παρουσιάσεις ως
+  «λήγει η συνταγή». Για «τι ανοίγει / τι λήγει» χρησιμοποίησε get_upcoming (expected_open_date =
+  ανοίγει, deadline = λήγει).
+
 ΜΕΡΙΚΗ ΕΚΤΕΛΕΣΗ — ΝΟΜΙΚΟ ΔΕΔΟΜΕΝΟ (ΚΡΙΣΙΜΟ, μην το μπερδέψεις με τις επαναλήψεις):
 • Το ΥΠΟΛΟΙΠΟ ΜΙΑΣ ΣΥΓΚΕΚΡΙΜΕΝΗΣ ΕΚΤΕΛΕΣΗΣ κλειδώνει στο φαρμακείο που την ξεκίνησε. Αν ο
   ασθενής πήρε μέρος των ειδών εδώ, ΚΑΝΕΝΑ άλλο φαρμακείο δεν μπορεί να δώσει τα υπόλοιπα ΑΥΤΗΣ
@@ -291,9 +301,15 @@ async def _read_tool(name: str, args: dict, tenant_id: str, demo: bool = False) 
             PatientIntelligenceRepository(tenant_id=tenant_id, demo=demo), meth)())
     if name == "get_upcoming":
         from app.repositories.future import FuturePrescriptionRepository
-        today = _now(); horizon = today + timedelta(days=_as_int(args.get("days"), 30))
-        return jsonsafe({"items": await FuturePrescriptionRepository(tenant_id=tenant_id).upcoming_list(
-            today=today, horizon=horizon, limit=40)})
+        from app.services import repeat_windows as rw
+        today = _now(); days = _as_int(args.get("days"), 30)
+        if args.get("expiring"):
+            # ήδη ανοιχτές, ανεκτέλεστες, που ΛΗΓΟΥΝ μέσα στις επόμενες `days` (λήξη = άνοιγμα + 40)
+            frm = today - timedelta(days=rw.DEADLINE_AFTER_OPEN)
+            return jsonsafe({"mode": "expiring", "items": await FuturePrescriptionRepository(
+                tenant_id=tenant_id).upcoming_list(today=frm, horizon=frm + timedelta(days=days), limit=40)})
+        return jsonsafe({"mode": "opening", "items": await FuturePrescriptionRepository(
+            tenant_id=tenant_id).upcoming_list(today=today, horizon=today + timedelta(days=days), limit=40)})
     if name == "get_order_suggestions":
         from app.repositories.future import FuturePrescriptionRepository
         today = _now(); lead = today + timedelta(days=_as_int(args.get("days"), 14))
@@ -466,7 +482,7 @@ _READ_DESC = {
     "get_at_risk": "Ασθενείς σε ρίσκο διακοπής.",
     "get_vip": "VIP ασθενείς (αξία/LTV).",
     "get_compliance": "Συμμόρφωση/πιστότητα θεραπείας.",
-    "get_upcoming": "Μελλοντικές συνταγές που ανοίγουν. params: days.",
+    "get_upcoming": "Επαναλήψεις: που ΑΝΟΙΓΟΥΝ στις επόμενες `days` ημέρες, ή με expiring=true όσες είναι ήδη ανοιχτές, ανεκτέλεστες και ΛΗΓΟΥΝ μέσα σε `days`. Κάθε γραμμή: expected_open_date (ανοίγει), deadline (λήγει). params: days, expiring.",
     "get_order_suggestions": "Προτάσεις παραγγελίας/αναπλήρωσης. params: days.",
     "get_portal_pending": "Εκκρεμή αιτήματα πελατών (διαθεσιμότητες + ραντεβού/παραλαβές) με ids.",
     "get_ingestion_status": "Κατάσταση τελευταίων εργασιών λήψης ΗΔΥΚΑ.",
@@ -565,6 +581,7 @@ def _tools(perms: set[str] | None = None) -> list[dict]:
         "dim": {"type": "string", "enum": ["doctors", "products", "icd10", "patients"]}, "limit": {"type": "integer"},
         "month": {"type": "string", "description": "Συγκεκριμένος ημερολογιακός μήνας «YYYY-MM» (π.χ. «2025-08»). ΧΡΗΣΙΜΟΠΟΙΗΣΕ ΤΟ για έναν ΣΥΓΚΕΚΡΙΜΕΝΟ/ΠΕΡΣΙΝΟ μήνα και για ΣΥΓΚΡΙΣΕΙΣ έτους-με-έτος (κάλεσε το tool 2 φορές, π.χ. month=2026-08 και month=2025-08). Υπερισχύει των months_back/days_back."},
         "days": {"type": "integer"}, "threshold_pct": {"type": "number"},
+        "expiring": {"type": "boolean", "description": "get_upcoming: true = όσες επαναλήψεις είναι ήδη ανοιχτές και ΛΗΓΟΥΝ μέσα σε `days` (αντί για όσες ανοίγουν)."},
         # ── list_prescriptions ──
         "year": {"type": "string", "description": "ΟΛΟΚΛΗΡΟ ημερολογιακό έτος, π.χ. «2025». Για «το 2025» χρησιμοποίησε ΑΥΤΟ, όχι months_back."},
         "date_from": {"type": "string", "description": "«YYYY-MM-DD» — αρχή ρητού εύρους."},

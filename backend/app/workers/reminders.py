@@ -24,7 +24,7 @@ async def _account_for(db, accrepo, patient_ref, tenant_id=None):
     q = {"_id": patient_ref}
     if tenant_id:
         q["tenant_id"] = tenant_id
-    pat = await db["patients_anonymized"].find_one(q, {"amka": 1})
+    pat = await db["patients_anonymized"].find_one(q, {"amka": 1})  # tenant-ok: q έχει tenant_id όταν δοθεί
     amka = (pat or {}).get("amka")
     return await accrepo.get_by_amka(amka) if amka else None
 

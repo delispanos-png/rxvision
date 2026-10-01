@@ -396,7 +396,7 @@ class VaccineProgramRepository(BaseRepository):
             pipeline.append({"$match": {"$or": [{"name": {"$regex": rx, "$options": "i"}},
                                                 {"amka": {"$regex": rx}}]}})
         pipeline.append({"$sort": {"last_at": -1}})
-        rows = await self._db["prescription_items"].aggregate(pipeline).to_list(length=None)
+        rows = await self._db["prescription_items"].aggregate(pipeline).to_list(length=None)  # tenant-ok: pipeline[0] = $match tenant_id
 
         # ΔΟΣΕΙΣ ΠΟΥ ΕΓΙΝΑΝ ΑΛΛΟΥ — μπαίνουν ΠΡΙΝ υπολογιστεί η κάλυψη, αλλιώς ο ασθενής θα
         # έβγαινε εκπρόθεσμος παρότι ο φαρμακοποιός μόλις κατέγραψε ότι έκανε τη δόση.

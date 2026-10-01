@@ -159,7 +159,7 @@ def reconcile_viva_payments() -> dict:
         renewed = signups = 0
         if True:
             # (1) ανανεώσεις: συνδρομή με εκκρεμή ανανέωση + order code
-            async for sub in db["subscriptions"].find({
+            async for sub in db["subscriptions"].find({  # tenant-ok: beat χρεώσεων — όλες οι συνδρομές
                     "pending_renewal": {"$ne": None},
                     "viva_order_code": {"$nin": [None, ""]}}):
                 t = await viva_service.order_paid_transaction(str(sub["viva_order_code"]))

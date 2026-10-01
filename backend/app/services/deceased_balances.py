@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 
 from app.core.db import shared_db
 from app.repositories.base import jsonsafe
+from app.services import recoverable
 from app.utils.masking import mask_amka, mask_name
 
 
@@ -27,10 +28,10 @@ async def deceased_balances(tenant_id: str, *, include_settled: bool = False, de
     # ΑΝΕΚΤΕΛΕΣΤΕΣ συνταγές ανά θανόντα (εκτελέσεις με ανεκτέλεστες ουσίες)
     unexec: dict[str, int] = {}
     async for r in db["prescription_executions"].aggregate([
+        # ΜΟΝΟ ανακτήσιμες (κοινός κανόνας: ανοιχτή ΚΑΙ μέσα στην προθεσμία) — όσες έκλεισε ο ίδιος
+        # ο ασθενής ή έληξαν δεν είναι «ανοιχτό υπόλοιπο»
         {"$match": {"tenant_id": tenant_id, "patient_ref": {"$in": ref_ids},
-                    "has_unexecuted_substances": True,
-                    # ΜΟΝΟ ανοιχτές: όσες έκλεισε ο ίδιος ο ασθενής δεν είναι «ανοιχτό υπόλοιπο»
-                    "details.execution_case": {"$in": ["0", 0]}}},
+                    **recoverable.mongo_filter()}},
         {"$group": {"_id": "$patient_ref", "n": {"$sum": 1}}},
     ]):
         unexec[str(r["_id"])] = r["n"]

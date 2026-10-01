@@ -14,7 +14,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Any
 
 from bson import ObjectId
@@ -46,7 +46,7 @@ FIELDS: dict[str, dict] = {
     "age_group":         {"label": "Ηλικιακή ομάδα", "type": "choice",
                           "options": ["0-17", "18-34", "35-49", "50-64", "65-74", "75+"]},
     "lifecycle":         {"label": "Κατάσταση πελάτη", "type": "choice",
-                          "options": ["new", "active", "at_risk", "lost"]},
+                          "options": ["new", "active", "at_risk", "lost", "inactive"]},
     "has_portal":        {"label": "Έχει την εφαρμογή", "type": "bool"},
     "is_loyalty":        {"label": "Μέλος πιστότητας", "type": "bool"},
     "loyalty_points":    {"label": "Πόντοι πιστότητας", "type": "number"},

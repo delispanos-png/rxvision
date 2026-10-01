@@ -7,7 +7,6 @@ from datetime import datetime, timezone
 from fastapi import (APIRouter, Depends, File, Form, HTTPException, Query, Request,
                      UploadFile, status)
 from fastapi.responses import Response
-from typing import Literal
 
 from pydantic import BaseModel, EmailStr, Field
 
@@ -1446,7 +1445,7 @@ async def _already_submitted(tenant_id: str, account_id, patient_ref, barcodes: 
     q: dict = {"tenant_id": tenant_id, "external_id": {"$in": barcodes}}
     if patient_ref:
         q["patient_ref"] = patient_ref
-    async for r in db["prescription_executions"].find(q, {"external_id": 1}):
+    async for r in db["prescription_executions"].find(q, {"external_id": 1}):  # tenant-ok: q έχει tenant_id
         known.add(str(r.get("external_id")).split(":")[0])
     return known
 

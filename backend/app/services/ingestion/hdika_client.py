@@ -39,7 +39,7 @@ from app.services.ingestion.canonical import (
     CanonicalPatient,
 )
 from app.core.config import settings
-from app.services.ingestion.hdika_cda import parse_cda, parse_cda_full
+from app.services.ingestion.hdika_cda import parse_cda_full
 
 _PAGE_SIZE = 100                  # ΗΔΥΚΑ rejects size>~150 with HTTP 400; 100 is safe
 _MAX_BACKFILL_DAYS = 400          # cap day-by-day backfill (search is per-day)

@@ -46,7 +46,11 @@ def _iso(v):
 
 
 def _seat_price(pkg: dict | None, sub: dict, yearly: bool) -> int:
-    """Καθαρή τιμή ανά επιπλέον χρήστη για τον κύκλο (fallback στο αποθηκευμένο rate της συνδρομής)."""
+    """Καθαρή τιμή ανά επιπλέον χρήστη για τον κύκλο. Σειρά: ΕΙΔΙΚΗ τιμή πελάτη (adminpanel) → πακέτο →
+    αποθηκευμένο rate. Πριν: η ειδική τιμή φαινόταν στο adminpanel αλλά δεν χρεωνόταν ποτέ (01/10/2026)."""
+    own = sub.get("extra_user_price_yearly" if yearly else "extra_user_price")
+    if own is not None:
+        return int(own or 0)
     if pkg:
         v = pkg.get("extra_user_price_yearly") if yearly else pkg.get("extra_user_price")
         if v is not None:
@@ -124,7 +128,7 @@ async def preview(tenant_id: str, new_seats: int) -> dict:
     per_seat = _seat_price(pkg, sub, yearly)
     delta = new_seats - cur
     tenant = await shared_db()["tenants"].find_one({"_id": tenant_id}, {"country": 1}) or {}
-    inc_vat = bool((pkg or {}).get("price_includes_vat") or sub.get("price_includes_vat"))
+    inc_vat = billing_service.includes_vat(pkg, sub)
     result = {"new_seats": new_seats, "current_seats": cur, "delta": delta,
               "per_seat_price_cents": per_seat, "direction": "none",
               "immediate_charge_gross_cents": 0, "recurring_delta_net_cents": 0}
@@ -169,7 +173,7 @@ async def change_seats(tenant_id: str, new_seats: int) -> dict:
             raise CardRequired("seats")
         delta = new_seats - cur
         tenant = await db["tenants"].find_one({"_id": tenant_id}, {"country": 1}) or {}
-        inc_vat = bool((pkg or {}).get("price_includes_vat") or sub.get("price_includes_vat"))
+        inc_vat = billing_service.includes_vat(pkg, sub)
         prorated_net, _ = _prorated_increase(delta, per_seat, sub, yearly)
         gross = gross_from_price(prorated_net, inc_vat, tenant.get("country"))
         if gross > 0:
@@ -209,7 +213,7 @@ async def apply_due_seat_changes() -> dict:
     db = shared_db()
     now = _now()
     applied = 0
-    cur = db["subscriptions"].find({"pending_seats.effective_at": {"$lte": now}})
+    cur = db["subscriptions"].find({"pending_seats.effective_at": {"$lte": now}})  # tenant-ok: beat — όλες οι συνδρομές
     async for sub in cur:
         pend = sub.get("pending_seats") or {}
         pkg = await db["packages"].find_one({"_id": sub.get("plan")}) if sub.get("plan") else None

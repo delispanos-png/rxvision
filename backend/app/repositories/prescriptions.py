@@ -14,8 +14,8 @@ from datetime import datetime, timezone
 from bson import ObjectId
 
 from app.repositories.base import BaseRepository, jsonsafe
-from app.services import recoverable
-from app.services.stats_exclusion import COUNTABLE_EXEC
+from app.services import dispensed, recoverable
+from app.services.stats_exclusion import COUNTABLE_EXEC, NOT_EXCLUDED
 from app.utils.masking import mask_amka, mask_name
 
 _GRAIN_FMT = {"day": "%Y-%m-%d", "month": "%Y-%m"}
@@ -192,7 +192,7 @@ class PrescriptionRepository(BaseRepository):
         q = {"tenant_id": self.tenant_id,
              "$or": [{"details.coupons.strip": {"$in": keys}}, {"details.lot": {"$in": keys}}]}
         execs: list[dict] = []
-        async for it in db["prescription_items"].find(
+        async for it in db["prescription_items"].find(  # tenant-ok: q έχει tenant_id
                 q, {"execution_id": 1, "product_id": 1, "details.eof_code": 1}).limit(limit):
             # Το όνομα ΔΕΝ είναι στη γραμμή της εκτέλεσης — ζει στη συλλογή προϊόντων μέσω
             # `product_id`. Χωρίς αυτό το lookup το αποτέλεσμα έδειχνε κενό σκεύασμα, δηλαδή
@@ -325,13 +325,30 @@ class PrescriptionRepository(BaseRepository):
                 cat = (await db["medicine_catalog"].find_one({"_id": prod["barcode"]})
                        or await db["medicine_catalog"].find_one({"barcode": prod["barcode"]}))
             cat = cat or {}
-            retail = it.get("retail_price", 0)
-            qty = it.get("quantity", 1)
-            line_total = retail * qty
-            participation = cat.get("participation")  # co-pay % (0/10/25…)
-            # per-line split: what the patient pays vs what the fund reimburses
-            pat_share = round(line_total * (participation or 0) / 100) if participation else 0
             d = it.get("details") or {}
+            qty = it.get("quantity", 1)
+            # ΠΟΣΑ ΓΡΑΜΜΗΣ = ΑΥΤΑ ΤΗΣ ΗΔΥΚΑ (01/10/2026, αναφορά πελάτη «λάθη 0,01 € και πάνω»). Πριν:
+            # συμμετοχή = αξία × ποσοστό του (παλιού) καταλόγου, χωρίς τη «διαφορά» που πληρώνει ο ασθενής
+            # και με τα ΣΥΝΤΑΓΟΓΡΑΦΗΜΕΝΑ τεμάχια — σε 352/369 συνταγές οι γραμμές δεν άθροιζαν στη συνταγή.
+            retail = d.get("retail_price") if d.get("retail_price") is not None else it.get("retail_price", 0)
+            eq = it.get("executed_qty")
+            eq = (qty if it.get("is_executed", True) else 0) if eq is None else eq
+            all_cps = d.get("coupons") or []
+            # τεμάχια ΑΥΤΗΣ της εκτέλεσης: σε τμηματική «:N» = κουπόνια της φάσης (επαληθευμένο:
+            # Σ λιανική × κουπόνια φάσης = σύνολο εκτέλεσης σε 296/296)
+            q_here = (len([c for c in all_cps if int(float(c.get("execution_no") or 0)) == seq])
+                      if seq is not None and all_cps else eq)
+            line_total = retail * q_here
+            participation = (d.get("participation_pct") if d.get("participation_pct") is not None
+                             else cat.get("participation"))
+            # ασθενής = συμμετοχή (1.4.20) + διαφορά τιμής (1.4.21) της ΗΔΥΚΑ, για ΟΛΗ τη γραμμή →
+            # σε τμηματική, αναλογία των τεμαχίων αυτής της φάσης
+            if d.get("patient_share") is not None or d.get("difference") is not None:
+                line_pat = int(d.get("patient_share") or 0) + int(d.get("difference") or 0)
+                q_line = len(all_cps) or eq
+                pat_share = round(line_pat * q_here / q_line) if q_line else 0
+            else:
+                pat_share = round(line_total * (participation or 0) / 100) if participation else 0
             if seq is not None:
                 filtered = [c for c in (d.get("coupons") or [])
                             if int(float(c.get("execution_no") or 0)) == seq]
@@ -350,6 +367,8 @@ class PrescriptionRepository(BaseRepository):
                 "narcotic": bool(cat.get("narcotic")),
                 "high_cost": bool(cat.get("high_cost")),
                 "quantity": qty,
+                "quantity_here": q_here,          # τεμάχια που δόθηκαν σε ΑΥΤΗ την εκτέλεση
+                "line_total": line_total,
                 "retail_price": retail,
                 "wholesale_price": it.get("wholesale_price", 0),
                 "margin": it.get("margin", (retail - it.get("wholesale_price", 0))),
@@ -364,8 +383,10 @@ class PrescriptionRepository(BaseRepository):
         # ── Συνοπτικά: άθροισμα ΟΛΩΝ των εκτελέσεων αυτής της συνταγής (ίδιο barcode, κάθε :N
         # ξεχωριστή εκτέλεση) — σύνολο ποσότητας/αξίας ανά προϊόν, για το tab «Συνοπτικά».
         barcode = str(external_id).split(":")[0]
-        sib_ids = [e["_id"] async for e in self._coll.find(
-            self._scope({"external_id": {"$regex": "^" + re.escape(barcode) + "(:|$)"}}), {"_id": 1})]
+        sib_no = {e["_id"]: dispensed.record_no(e.get("external_id")) async for e in self._coll.find(
+            self._scope({"external_id": {"$regex": "^" + re.escape(barcode) + "(:|$)"}}),
+            {"_id": 1, "external_id": 1})}
+        sib_ids = list(sib_no)
         sib_items = await db["prescription_items"].find(
             {"tenant_id": self.tenant_id, "execution_id": {"$in": sib_ids}}).to_list(2000)
         pids = list({it.get("product_id") for it in sib_items if it.get("product_id")})
@@ -383,12 +404,16 @@ class PrescriptionRepository(BaseRepository):
             q = it.get("quantity", 1) or 1
             # ΔΟΘΗΚΑΝ ≠ ΣΥΝΤΑΓΟΓΡΑΦΗΘΗΚΑΝ. Η αξία βγαίνει από ΟΣΑ ΔΟΘΗΚΑΝ — αλλιώς μια
             # συσκευασία 2 τεμαχίων με το 1 δοσμένο εμφανιζόταν ως ×2 με διπλάσιο ποσό.
-            eq = it.get("executed_qty")
-            eq = (q if it.get("is_executed", True) else 0) if eq is None else eq
-            g["quantity"] += q
+            # Κάθε εγγραφή `:N` κουβαλά ΟΛΗ τη συνταγή: συνταγογραφημένα = ΜΙΑ φορά (max), δοσμένα =
+            # τεμάχια ΑΥΤΗΣ της εγγραφής (qty_here) — πριν άθροιζε το σύνολο σε κάθε εγγραφή (×N).
+            eq = it.get("qty_here")
+            if eq is None:
+                eq = dispensed.qty_here((it.get("details") or {}).get("coupons"), it.get("executed_qty"),
+                                        q, it.get("is_executed", True), sib_no.get(it.get("execution_id"), 1))
+            g["quantity"] = max(g["quantity"], q)
             g["executed_qty"] += eq
             g["amount"] += (it.get("retail_price", 0) or 0) * eq
-            g["executions"] += 1
+            g["executions"] += 1 if eq > 0 else 0          # εκτελέσεις όπου ΔΟΘΗΚΕ το είδος
             g["is_executed"] = g["is_executed"] or bool(it.get("is_executed", True))
             agg[pid] = g
         summary = sorted(agg.values(), key=lambda x: -x["amount"])
@@ -396,6 +421,15 @@ class PrescriptionRepository(BaseRepository):
         # ΠΛΗΡΩΤΕΟ ΑΠΟ ΤΑΜΕΙΟ = amount_claimed (fund reimburses); ΑΠΟ ΑΣΦ/ΝΟ = patient_share
         fund_payable = ex.get("amount_claimed", 0)
         patient_payable = ex.get("patient_share", 0)
+        # Γέφυρα γραμμών → συνόλων συνταγής: ό,τι ο ασθενής πληρώνει ΠΕΡΑ από τις γραμμές. Συνήθως
+        # το 1 € ανά συνταγή (ΗΔΥΚΑ fund_surcharge)· ±1–2 λεπτά = στρογγυλοποίηση της ίδιας της ΗΔΥΚΑ.
+        # Δείχνεται ως ξεχωριστή γραμμή ώστε το άθροισμα να είναι ΑΚΡΙΒΩΣ τα ποσά της ΗΔΥΚΑ.
+        extra = patient_payable - sum(i["patient_share"] for i in items)
+        lines_bridge = None
+        if extra:
+            kind = ("fee" if (ex.get("details") or {}).get("fund_surcharge") and 95 <= extra <= 100
+                    else "rounding" if abs(extra) <= 2 else "other")
+            lines_bridge = {"patient": extra, "fund": -extra, "kind": kind}
         out = {
             "external_id": ex.get("external_id"), "executed_at": ex.get("executed_at"),
             "status": ex.get("status"), "source": ex.get("source"),
@@ -404,6 +438,7 @@ class PrescriptionRepository(BaseRepository):
             "amount_total": ex.get("amount_total", 0), "amount_claimed": ex.get("amount_claimed", 0),
             "patient_share": ex.get("patient_share", 0), "wholesale_cost": ex.get("wholesale_cost", 0),
             "fund_payable": fund_payable, "patient_payable": patient_payable,
+            "lines_bridge": lines_bridge,
             "icd10": ex.get("icd10", []),
             "has_unexecuted_substances": ex.get("has_unexecuted_substances", False),
             # ΓΙΑΤΙ έμειναν ανεκτέλεστα — χωρίς αυτό ο φαρμακοποιός βλέπει «ανεκτέλεστο» και
@@ -529,10 +564,20 @@ class PrescriptionRepository(BaseRepository):
         exec_by_seq = {p["seq"]: p for p in periods}
         anchor = periods[0] if periods else None
 
+        # ΚΟΙΝΟΣ κανόνας ΗΔΥΚΑ (services/repeat_windows.py): θέση k ανοίγει «ΑΠΟ» (k=1) ή ΑΠΟ + (k−1)×βήμα − 10.
+        # Πριν (έως 01/10/2026): προβολή από την ημερομηνία ΕΚΤΕΛΕΣΗΣ + ημερολογιακούς μήνες — π.χ. για
+        # τη 2607080987171 έδειχνε 9/11 & 9/12 ενώ η ΗΔΥΚΑ λέει 18/10 & 15/11.
+        from app.services import repeat_windows as rw
+        period = next((rw.period_days(r.get("details")) for r in rows
+                       if (r.get("details") or {}).get("repeat_period_days")
+                       or (r.get("details") or {}).get("interval_months")), (interval or 1) * 30)
+
         def opening_for(seq: int) -> datetime | None:
+            if start:
+                return rw.position_open(start, seq, period)
             if anchor and anchor["executed_at"]:
                 return add_months(anchor["executed_at"], (seq - anchor["seq"]) * (interval or 1))
-            return add_months(start, (seq - 1) * (interval or 1)) if start else None
+            return None
 
         slots: list[dict] = []
         for seq in range(1, total + 1):
@@ -543,7 +588,8 @@ class PrescriptionRepository(BaseRepository):
             if r:
                 state = "executed"
             else:
-                win_end = add_months(opening, interval or 1) if opening else None
+                win_end = (rw.position_lost_after(start, seq, period) if start
+                           else add_months(opening, interval or 1) if opening else None)
                 state = ("lost" if win_end and win_end <= now
                          else "available" if opening and opening <= now else "future")
             slots.append({"index": seq - 1, "opening": opening, "state": state, "repeat": r})
@@ -847,10 +893,11 @@ class PrescriptionRepository(BaseRepository):
         return await items.aggregate([
             # ΟΣΑ ΔΟΘΗΚΑΝ: η μερικώς εκτελεσμένη γραμμή δεν είναι «πλήρως εκτελεσμένη»,
             # αλλά τα τεμάχια που δόθηκαν πουλήθηκαν και πρέπει να μετρήσουν.
-            {"$match": {"executed_at": {"$gte": date_from, "$lt": date_to},
+            {"$match": {**NOT_EXCLUDED, "executed_at": {"$gte": date_from, "$lt": date_to},
                         "$expr": {"$gt": [{"$ifNull": ["$executed_qty", 0]}, 0]}}},
-            {"$group": {"_id": "$product_id",
-                        "qty": {"$sum": {"$ifNull": ["$executed_qty", "$quantity"]}}}},
+            # τεμάχια ΑΥΤΗΣ της εγγραφής — όχι το σύνολο της συνταγής σε κάθε `:N` (×N)
+            {"$group": {"_id": "$product_id", "qty": {"$sum": dispensed.qty_expr()}}},
+            {"$match": {"qty": {"$gt": 0}}},
             {"$sort": {"qty": -1}}, {"$limit": limit},
             {"$lookup": {"from": "products", "localField": "_id",
                          "foreignField": "_id", "as": "p"}},
@@ -864,26 +911,35 @@ class PrescriptionRepository(BaseRepository):
         items = BaseRepository(tenant_id=self.tenant_id)
         items.collection_name = "prescription_items"
         rows = await items.aggregate([
-            {"$match": {"executed_at": {"$gte": date_from, "$lt": date_to},
+            {"$match": {**NOT_EXCLUDED, "executed_at": {"$gte": date_from, "$lt": date_to},
                         "is_executed": False}},
             # which prescription each unexecuted line came from (barcode + patient + date)
             {"$lookup": {"from": "prescription_executions", "localField": "execution_id",
                          "foreignField": "_id", "as": "ex"}},
             {"$set": {"ex": {"$first": "$ex"}}},
+            # χαμένο ΜΟΝΟ ό,τι δεν έκλεισε ο ίδιος ο ασθενής (2) ή η ασυμφωνία δοσολογίας (3) — ίδιος
+            # ορισμός με τον Σύμβουλο (εκεί το 94% των «χαμένων» ήταν τέτοιες περιπτώσεις)
+            {"$match": {"ex.details.execution_case": {"$nin": ["2", "3", 2, 3]}}},
             {"$lookup": {"from": "patients_anonymized", "localField": "ex.patient_ref",
                          "foreignField": "_id", "as": "pt"}},
             {"$set": {"rx": {"barcode": "$ex.external_id",
                              "patient": {"$first": "$pt.full_name"},
                              "date": "$ex.executed_at"}}},
-            {"$set": {"unexec_qty": _UNEXEC_QTY}},
-            {"$group": {"_id": "$product_id",
+            {"$set": {"unexec_qty": _UNEXEC_QTY, "_rx": dispensed.rx_root_expr("$ex.external_id")}},
+            # ΜΙΑ φορά ανά ΣΥΝΤΑΓΗ: κάθε εγγραφή `:N` κουβαλά το ίδιο υπόλοιπο (×N πριν)
+            {"$sort": {"executed_at": -1}},
+            {"$group": {"_id": {"rx": "$_rx", "p": "$product_id"},
+                        "unexec_qty": {"$max": "$unexec_qty"}, "retail_price": {"$first": "$retail_price"},
+                        "category": {"$first": "$category"}, "ext": {"$first": "$ex.external_id"},
+                        "rx": {"$first": "$rx"}}},
+            {"$group": {"_id": "$_id.p",
                         "occurrences": {"$sum": 1},
                         "qty": {"$sum": "$unexec_qty"},
                         # χαμένη αξία = τιμή × ΟΣΑ ΕΜΕΙΝΑΝ. Παλιά μετρούσε όλη τη γραμμή, οπότε
                         # μια συσκευασία 2 τεμαχίων με το 1 δοσμένο χρεωνόταν ως ολόκληρη χαμένη.
                         "lost_value": {"$sum": {"$multiply": ["$retail_price", "$unexec_qty"]}},
                         "category": {"$first": "$category"},
-                        "barcodes": {"$addToSet": "$ex.external_id"},
+                        "barcodes": {"$addToSet": "$ext"},
                         "rxs": {"$addToSet": "$rx"}}},
             {"$sort": {"occurrences": -1}}, {"$limit": limit},
             {"$lookup": {"from": "products", "localField": "_id",

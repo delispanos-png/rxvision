@@ -14,6 +14,7 @@ from datetime import datetime, timedelta, timezone
 from app.core.db import shared_db
 from app.core.security import hash_password
 from app.services.auth_service import AuthService
+from app.services.billing_service import seats_for_package
 from app.services.rbac_seed import seed_rbac
 
 _TRIAL_DAYS = 14
@@ -107,7 +108,6 @@ class OnboardingService:
         price = (pkg or {}).get("price_yearly" if yearly else "price_monthly", 0) if pkg else 0
         # seats & cost breakdown: base package + chosen SLA tier + extra concurrent users
         sla_code = sla or (pkg or {}).get("sla", "basic")
-        max_seats = int((pkg or {}).get("seats", 1) or 1)        # πληροφοριακό «έως N» — ΟΧΙ όριο αγοράς
         extra_rate = int((pkg or {}).get("extra_user_price_yearly" if yearly else "extra_user_price", 0) or 0)
         # ΔΩΡΕΑΝ χρήστες = αυτοί που ΠΕΡΙΛΑΜΒΑΝΕΙ το πακέτο (1/3/6 — όπως τους διαφημίζει η σελίδα
         # τιμών), ΟΧΙ σταθερά 1. Το `included_users` υπάρχει ήδη στα πακέτα και το χρησιμοποιεί σωστά
@@ -117,7 +117,7 @@ class OnboardingService:
         # ΔΟΚΙΜΗ → κλειδωμένα στον 1 χρήστη. ΠΛΗΡΩΜΕΝΟ → ό,τι ζήτησε, με κατώφλι τους
         # περιλαμβανόμενους του πακέτου (δεν γίνεται να αγοράσει ΛΙΓΟΤΕΡΟΥΣ απ' όσους πληρώνει).
         chosen_seats = (_TRIAL_SEATS if not activate
-                        else min(_SEATS_HARD_MAX, max(included_free, int(seats or included_free))))
+                        else seats_for_package(pkg, requested=seats))     # ΚΟΙΝΟΣ κανόνας θέσεων
         extra_users = max(0, chosen_seats - included_free)
         sla_doc = await db["sla_tiers"].find_one({"_id": sla_code}) or {}
         sla_price = int(sla_doc.get("price_yearly" if yearly else "price_monthly", 0) or 0)
@@ -226,11 +226,11 @@ class OnboardingService:
         if not tid:
             return None
         sub = await db["subscriptions"].find_one({"tenant_id": tid})
-        pend = sub.get("current_period_end") if sub else None
-        paid_active = bool(sub and sub.get("status") == "active"
-                           and sub.get("plan") not in (None, "free_trial")
-                           and sub.get("payment_status") not in ("trial", "expired", None)
-                           and (pend is None or pend > _now()))
+        # ΕΝΙΑΙΑ κατάσταση (effective_status): ενεργός Ή σε περιθώριο πληρωμής = υπάρχων πελάτης.
+        # Πριν από ακατέργαστα πεδία → πελάτης σε περιθώριο (past_due) μπορούσε να ξεκινήσει δοκιμή.
+        from app.services import billing_service
+        paid_active = bool(sub and sub.get("plan") not in (None, "free_trial")
+                           and billing_service.effective_status(sub) in billing_service.BILLED_STATES)
         return {"tenant_id": tid, "blocked": paid_active, "had_trial": bool(sub)}
 
     async def get_pending(self, pending_id: str) -> dict | None:
@@ -266,7 +266,7 @@ class OnboardingService:
         included_free = int((pkg or {}).get("included_users") or 1)
         # Δωρεάν πακέτο (μηδενική τιμή) = δοκιμή → ΠΑΝΤΑ 1 χρήστης, ό,τι κι αν ήρθε από τη φόρμα.
         chosen_seats = (_TRIAL_SEATS if price <= 0
-                        else min(_SEATS_HARD_MAX, max(included_free, int(seats or included_free))))
+                        else seats_for_package(pkg, requested=seats))     # ΚΟΙΝΟΣ κανόνας θέσεων
         extra_total = max(0, chosen_seats - included_free) * extra_rate
         sla_code = sla or (pkg or {}).get("sla", "basic")
         sla_doc = await db["sla_tiers"].find_one({"_id": sla_code}) or {}

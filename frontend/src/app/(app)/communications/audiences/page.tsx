@@ -13,6 +13,15 @@ type Smart = { key: string; icon: string; name: string; why: string; count: numb
 type Cond = { field: string; op: string; value: unknown };
 type Rules = { match: "all" | "any"; conditions: Cond[] };
 type Field = { label: string; type: string; options?: string[]; clinical?: boolean };
+
+// Κατάσταση πελάτη — ίδια όρια με την Εικόνα Ασθενών (backend: services/patient_status.py)
+const OPT_LABEL: Record<string, [string, string]> = {
+  new: ["Νέος (πρώτη επίσκεψη ≤60 ημ.)", "New (first visit ≤60 days)"],
+  active: ["Ενεργός (≤60 ημ.)", "Active (≤60 days)"],
+  at_risk: ["Σε κίνδυνο (60–90 ημ.)", "At risk (60–90 days)"],
+  lost: ["Χαμένος (90–365 ημ.)", "Lost (90–365 days)"],
+  inactive: ["Ανενεργός (>1 έτος)", "Inactive (>1 year)"],
+};
 type Saved = { _id: string; name: string; rules: Rules; clinical: boolean; count: number };
 
 const OPS: Record<string, string> = {
@@ -104,7 +113,7 @@ export default function AudiencesPage() {
                 {f?.type === "choice" ? (
                   <select value={String(c.value ?? "")} onChange={(e) => upd(i, { value: e.target.value })} className={inp}>
                     <option value="">—</option>
-                    {(f.options ?? []).map((o) => <option key={o} value={o}>{o}</option>)}
+                    {(f.options ?? []).map((o) => <option key={o} value={o}>{OPT_LABEL[o] ? t(OPT_LABEL[o][0], OPT_LABEL[o][1]) : o}</option>)}
                   </select>
                 ) : f?.type === "bool" ? (
                   <select value={String(c.value)} onChange={(e) => upd(i, { value: e.target.value === "true" })} className={inp}>

@@ -16,7 +16,6 @@ Key locations (verified against the ΗΔΥΚΑ test environment):
 """
 from __future__ import annotations
 
-import xml.etree.ElementTree as ET
 import defusedxml.ElementTree as _DET   # hardened parser (blocks entity-expansion / XXE DoS)
 
 

@@ -20,8 +20,14 @@ jobs:
           cache: pip
       - name: Install
         run: pip install -e ".[dev]"
-      - name: Ruff (lint)
+      # ΦΡΑΓΜΟΣ = πραγματικά λάθη (F: απροσδιόριστα ονόματα/αχρησιμοποίητα, E9: συντακτικά) — 0 από
+      # 01/10/2026. Πριν: `ruff check .` με ΟΛΟΥΣ τους κανόνες στυλ (2.312 ευρήματα) → πάντα κόκκινο →
+      # κανένας φραγμός ([[lint-gate-not-enforced]]). Το στυλ μένει ενημερωτικό.
+      - name: Ruff (errors — gate)
+        run: ruff check --select F,E9 .
+      - name: Ruff (style — advisory)
         run: ruff check .
+        continue-on-error: true
       # ΤΟ ΔΙΧΤΥ ΑΣΦΑΛΕΙΑΣ ΤΟΥ ΕΝΟΣ ΚΑΝΟΝΑ: καμία raw πρόσβαση σε tenant collection χωρίς tenant_id.
       # Το test_invariants καλύπτει το BaseRepository· αυτό καλύπτει τα σημεία που το ΠΑΡΑΚΑΜΠΤΟΥΝ.
       - name: Tenant-isolation lint

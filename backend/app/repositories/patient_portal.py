@@ -21,6 +21,7 @@ from bson import Binary, ObjectId
 
 from app.core.db import shared_db
 from app.repositories.base import BaseRepository, jsonsafe
+from app.services import dispensed
 from app.services.vault_service import vault
 from app.utils.masking import pseudo_name
 from app.utils.anonymization import pseudonymize
@@ -988,8 +989,10 @@ class PatientRxRepository(BaseRepository):
                 "is_executed": it.get("is_executed", True),
                 # πόσα τεμάχια πήρε όντως: 2 συνταγογραφημένα με το 1 δοσμένο ΔΕΝ είναι
                 # «δεν παραλήφθηκε» — ο ασθενής το έχει στα χέρια του και το παίρνει.
-                "executed_qty": it.get("executed_qty",
-                                       it.get("quantity", 1) if it.get("is_executed", True) else 0),
+                # ΑΥΤΗΣ της εκτέλεσης (`:N`), όχι όλης της συνταγής — κάθε εγγραφή κουβαλά όλα τα είδη
+                "executed_qty": (it["qty_here"] if it.get("qty_here") is not None else dispensed.qty_here(
+                    d.get("coupons"), it.get("executed_qty"), it.get("quantity", 1),
+                    it.get("is_executed", True), dispensed.record_no(ex.get("external_id")))),
                 # doctor's posology for this line (dose · frequency · duration), from the ΗΔΥΚΑ CDA
                 "dosage": _format_dosage(d.get("dose"), d.get("frequency"), d.get("duration")),
                 "details": d,

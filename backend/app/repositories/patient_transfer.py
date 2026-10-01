@@ -17,7 +17,7 @@ from bson import ObjectId
 
 from app.core.db import shared_db
 from app.repositories.base import jsonsafe
-from app.utils.masking import mask_row, mask_rows
+from app.utils.masking import mask_rows
 
 _TTL_DAYS = 14          # αίτημα που δεν απαντήθηκε → λήγει
 

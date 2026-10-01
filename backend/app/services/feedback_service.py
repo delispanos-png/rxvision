@@ -41,7 +41,7 @@ async def send_feedback_emails() -> dict:
     db = shared_db()
     cutoff = _now() - timedelta(days=FEEDBACK_DELAY_DAYS)
     sent = 0
-    async for sub in db["subscriptions"].find({
+    async for sub in db["subscriptions"].find({  # tenant-ok: beat — όλες οι συνδρομές
         "status": "expired",
         "$or": [{"plan": "trial"}, {"payment_status": "trial"}],
         "feedback_sent_at": {"$exists": False},

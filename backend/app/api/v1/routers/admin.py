@@ -14,13 +14,14 @@ from datetime import datetime, timedelta, timezone
 from typing import Literal
 
 from bson import ObjectId
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status as http_status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status as http_status
 from pydantic import BaseModel, EmailStr, Field
 
 from app.core.db import shared_db
 from app.core.deps import PlatformContext, get_platform_admin
 from app.core.security import hash_password
 from app.repositories.base import jsonsafe
+from app.services import billing_service
 from app.services import email_template, mailer
 from app.services import platform_rbac as prbac
 from app.services.auth_service import AuthService, resolve_modules
@@ -347,8 +348,7 @@ async def tenants(_: PlatformContext = Depends(get_platform_admin)):
     async for t in db["tenants"].find({}).sort("created_at", -1):
         sub = subs.get(t["_id"], {})
         _hd = ((t.get("ingestion_config") or {}).get("hdika") or {})
-        pharmacies = (sub.get("limits") or {}).get("pharmacies", 1) or 1
-        mrr = 0 if sub.get("complimentary") else (sub.get("price_per_pharmacy") or 0) * pharmacies
+        mrr = billing_service.monthly_value(sub)
         items.append({
             "id": t["_id"],
             "name": t.get("name", t["_id"]),
@@ -357,7 +357,7 @@ async def tenants(_: PlatformContext = Depends(get_platform_admin)):
             "status": billing_service.effective_status(sub) if sub else (t.get("status") or "—"),
             "users": user_counts.get(t["_id"], 0),
             "active_now": active_now.get(t["_id"], 0),
-            "seats": sub.get("seats") or pharmacies,
+            "seats": sub.get("seats") or (sub.get("limits") or {}).get("pharmacies", 1) or 1,
             "mrr": mrr,
             "msg_balance": wallets.get(t["_id"], 0),
             # Παγωμένος συγχρονισμός ΗΔΥΚΑ (λάθος/ληγμένος μηνιαίος κωδικός ή κλειδωμένος λογαριασμός)
@@ -413,10 +413,9 @@ async def overview(_: PlatformContext = Depends(get_platform_admin)):
     new_month = 0
     for t in tenants:
         sub = subs.get(t["_id"], {})
-        st = sub.get("status") or t.get("status") or "—"
+        st = billing_service.effective_status(sub) if sub else (t.get("status") or "—")
         by_status[st] = by_status.get(st, 0) + 1
-        pharm = (sub.get("limits") or {}).get("pharmacies", 1) or 1
-        mrr += 0 if sub.get("complimentary") else (sub.get("price_per_pharmacy") or 0) * pharm
+        mrr += billing_service.monthly_value(sub) if st in billing_service.BILLED_STATES else 0
         plan = sub.get("plan_name") or sub.get("plan") or "—"
         plan_dist[plan] = plan_dist.get(plan, 0) + 1
         ca = _aware(t.get("created_at"))
@@ -588,7 +587,7 @@ async def subscriptions(_: PlatformContext = Depends(get_platform_admin)):
             "billing_cycle": s.get("billing_cycle"),
             "seats": s.get("seats", pharmacies),
             "active_now": active_now.get(s["tenant_id"], 0),
-            "mrr": 0 if s.get("complimentary") else (s.get("price_per_pharmacy") or 0) * pharmacies,
+            "mrr": billing_service.monthly_value(s),
             "started_at": s.get("created_at") or created.get(s["tenant_id"]),
             "current_period_end": s.get("current_period_end"),
             "days_to_expiry": d2e,
@@ -602,13 +601,12 @@ async def subscriptions(_: PlatformContext = Depends(get_platform_admin)):
         "total": len(items),
         "expiring_30d": sum(1 for x in items
                             if x["days_to_expiry"] is not None and 0 <= x["days_to_expiry"] <= 30),
-        "expired": sum(1 for x in items
-                       if x["days_to_expiry"] is not None and x["days_to_expiry"] < 0),
+        "expired": sum(1 for x in items if x["status"] == "expired"),   # ίδια κατάσταση με τη στήλη
         "trials_ending_14d": sum(1 for x in items
                                  if x["status"] == "trial" and x["trial_days_left"] is not None
                                  and 0 <= x["trial_days_left"] <= 14),
         "past_due": sum(1 for x in items if x["status"] == "past_due"),
-        "mrr": sum(x["mrr"] for x in items if x["status"] in ("active", "past_due")),
+        "mrr": sum(x["mrr"] for x in items if x["status"] in billing_service.BILLED_STATES),
     }
     return {"items": jsonsafe(items), "summary": summary}
 
@@ -631,11 +629,11 @@ async def subscription_detail(tenant_id: str, _: PlatformContext = Depends(get_p
     return jsonsafe({
         "tenant_id": tenant_id, "tenant": t.get("name", tenant_id),
         "plan": s.get("plan"), "plan_name": s.get("plan_name") or pkg.get("name"),
-        "status": s.get("status"), "billing_cycle": s.get("billing_cycle") or "monthly",
+        "status": billing_service.effective_status(s), "billing_cycle": s.get("billing_cycle") or "monthly",
         "sla": s.get("sla"), "seats": s.get("seats", pharmacies),
         "users": users, "active_now": active_now,
         "price_per_pharmacy": s.get("price_per_pharmacy"),
-        "mrr": 0 if s.get("complimentary") else (s.get("price_per_pharmacy") or 0) * pharmacies,
+        "mrr": billing_service.monthly_value(s),
         # subscription-level override wins over the package default (admin can edit per-tenant)
         "extra_user_price": s.get("extra_user_price") if "extra_user_price" in s else pkg.get("extra_user_price"),
         "extra_user_price_yearly": s.get("extra_user_price_yearly") if "extra_user_price_yearly" in s else pkg.get("extra_user_price_yearly"),
@@ -1987,7 +1985,6 @@ async def tenant_detail(tenant_id: str, _: PlatformContext = Depends(get_platfor
         "last_active_at": {"$gte": datetime.now(tz=timezone.utc) - timedelta(minutes=5)}})
     jobs = [j async for j in db["sync_jobs"].find({"tenant_id": tenant_id})
             .sort("started_at", -1).limit(5)]
-    pharmacies = (sub.get("limits") or {}).get("pharmacies", 1) or 1
     return jsonsafe({
         "tenant": {"id": t["_id"], "name": t.get("name"), "status": t.get("status"),
                    "country": t.get("country"), "opened_via": t.get("opened_via"),
@@ -2009,7 +2006,7 @@ async def tenant_detail(tenant_id: str, _: PlatformContext = Depends(get_platfor
             "product_code": sub.get("product_code"),
             "features": sub.get("features", {}), "limits": sub.get("limits", {}),
             "billing_cycle": sub.get("billing_cycle"), "seats": sub.get("seats"),
-            "mrr": 0 if sub.get("complimentary") else (sub.get("price_per_pharmacy") or 0) * pharmacies,
+            "mrr": billing_service.monthly_value(sub),
             "trial_ends_at": sub.get("trial_ends_at"),
             "current_period_end": sub.get("current_period_end"),
             "source": sub.get("source")},
@@ -2512,11 +2509,10 @@ async def billing(_: PlatformContext = Depends(get_platform_admin)):
     async for s in db["subscriptions"].find({}):
         if s["tenant_id"] not in names:
             continue  # skip orphan subscriptions (tenant deleted)
-        st = s.get("status", "—")
+        st = billing_service.effective_status(s)          # ΟΧΙ το ακατέργαστο status
         counts[st] = counts.get(st, 0) + 1
-        pharmacies = (s.get("limits") or {}).get("pharmacies", 1) or 1
-        m = 0 if s.get("complimentary") else (s.get("price_per_pharmacy") or 0) * pharmacies
-        billed = st in ("active", "past_due") and not s.get("complimentary")
+        m = billing_service.monthly_value(s)
+        billed = st in billing_service.BILLED_STATES and not s.get("complimentary")
         if billed:
             mrr += m
             d2e = _days_until(s.get("current_period_end"), now)

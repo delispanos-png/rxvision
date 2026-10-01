@@ -182,7 +182,7 @@ async def _apply_to_patients(raws: list[str], amap: dict, tenant_id: str | None 
         q: dict = {"residence_area": raw}
         if tenant_id:
             q["tenant_id"] = tenant_id
-        r = await db["patients_anonymized"].update_many(q, {"$set": {"residence_area_canonical": canon}})
+        r = await db["patients_anonymized"].update_many(q, {"$set": {"residence_area_canonical": canon}})  # tenant-ok: καθολικό λεξικό περιοχών (tenant_id όταν δοθεί)
         updated += r.modified_count
     return updated
 
@@ -193,7 +193,7 @@ async def backfill(*, tenant_id: str | None = None, use_ai: bool = True) -> dict
     match: dict = {"residence_area": {"$nin": [None, ""]}}
     if tenant_id:
         match["tenant_id"] = tenant_id
-    raws = [r for r in await db["patients_anonymized"].distinct("residence_area", match) if r]
+    raws = [r for r in await db["patients_anonymized"].distinct("residence_area", match) if r]  # tenant-ok: καθολικό λεξικό περιοχών (tenant_id όταν δοθεί)
     keys = sorted({mechanical_key(r) for r in raws if mechanical_key(r)})
     amap = await get_alias_map()
     missing = [k for k in keys if k not in amap]
@@ -217,7 +217,7 @@ async def refresh(*, max_new_keys: int = 5000) -> dict:
     db = shared_db()
     # tenant-ok: το λεξικό περιοχών είναι ΚΑΘΟΛΙΚΟ (μία περιοχή = μία γραμμή για όλη την πλατφόρμα)·
     # η κανονικοποίηση εφαρμόζεται σε όλους τους πελάτες σκόπιμα — δεν διαβάζεται/εκτίθεται PII.
-    missing_raws = [r for r in await db["patients_anonymized"].distinct(
+    missing_raws = [r for r in await db["patients_anonymized"].distinct(  # tenant-ok: καθολικό λεξικό περιοχών (tenant_id όταν δοθεί)
         "residence_area", {"residence_area": {"$nin": [None, ""]},
                            "residence_area_canonical": {"$in": [None, ""]}}) if r]
     pending_keys = [d["_id"] async for d in db[_ALIASES].find({"source": "pending"}, {"_id": 1})]
@@ -297,6 +297,6 @@ async def set_override(raw_or_key: str, canonical: str) -> dict:
     # εφάρμοσε σε όλους τους ασθενείς με raw που δίνει αυτό το κλειδί
     db = shared_db()
     # tenant-ok: χειροκίνητη υπερίσχυση στο ΚΑΘΟΛΙΚΟ λεξικό περιοχών (ισχύει για όλους τους πελάτες)
-    raws = [r for r in await db["patients_anonymized"].distinct("residence_area", {}) if mechanical_key(r) == key]
+    raws = [r for r in await db["patients_anonymized"].distinct("residence_area", {}) if mechanical_key(r) == key]  # tenant-ok: καθολικό λεξικό περιοχών (tenant_id όταν δοθεί)
     updated = await _apply_to_patients(raws, {key: canonical.strip()})
     return {"ok": True, "key": key, "canonical": canonical.strip(), "patients_updated": updated}

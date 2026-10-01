@@ -164,7 +164,6 @@ async def delete_lead(lead_id: str) -> dict:
 
 
 def _offer_html(body: str, name: str | None) -> str:
-    greeting = f"Αγαπητό {name}," if name else "Γεια σας,"
     text = body.replace("{name}", name or "").replace("\n", "<br/>")
     return (f'<div style="font-family:Arial,Helvetica,sans-serif;max-width:560px;margin:0 auto;color:#0f172a;">'
             f'<div style="background:#4f46e5;padding:16px 22px;color:#fff;font-size:18px;font-weight:700;">RxVision</div>'

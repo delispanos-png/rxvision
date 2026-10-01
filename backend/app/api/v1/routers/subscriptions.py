@@ -216,7 +216,7 @@ async def alpha_callback(request: Request):
     res = await ab.verify_callback(params)
     order_id = res.get("order_id")
     if res.get("ok") and res.get("paid") and order_id:
-        sub = await shared_db()["subscriptions"].find_one({"pending_change.alpha_order_id": order_id})
+        sub = await shared_db()["subscriptions"].find_one({"pending_change.alpha_order_id": order_id})  # tenant-ok: callback τράπεζας → βρίσκει τη συνδρομή από το order id
         if sub:
             await pcs.apply_change(sub["tenant_id"], source="alphabank")
     return RedirectResponse("https://app.rxvision.gr/settings/modules", status_code=303)

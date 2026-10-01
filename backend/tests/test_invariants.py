@@ -204,7 +204,8 @@ async def test_doctor_stats_counts_distinct_patients(monkeypatch):
     out = await DoctorExecutionsRepository(tenant_id="t").stats(
         doctor_id="d1", date_from=datetime(2026, 1, 1), date_to=datetime(2026, 2, 1))
     group = next(s["$group"] for s in cap["pipelines"][0] if "$group" in s)
-    assert group["patients"] == {"$addToSet": "$patient_ref"}
+    # μοναδικοί ασθενείς ανά ψευδώνυμο, ΧΩΡΙΣ θανόντες (null που φιλτράρεται πριν το $size)
+    assert group["patients"] == {"$addToSet": {"$cond": ["$_alive", "$patient_ref", None]}}
     assert out["distinct_patients"] == 2  # surfaced in the returned stats
 
 
@@ -324,19 +325,23 @@ async def test_get_platform_admin_rejects_tenant_token(monkeypatch):
     from app.core.deps import get_platform_admin
     from app.core.security import create_access_token, create_platform_token
 
+    from types import SimpleNamespace
+
     def creds(tok):
         return HTTPAuthorizationCredentials(scheme="Bearer", credentials=tok)
+
+    req = SimpleNamespace(state=SimpleNamespace())   # το dependency γράφει request.state.admin (audit)
 
     # a tenant OWNER token must NOT open the back-office (the old security hole).
     # With T-04 it is now rejected at the signature/audience layer (401), not 403.
     tenant_tok = create_access_token(user_id="u", tenant_id="t", roles=["owner"],
                                      modules={}, permissions=["*"])
     with pytest.raises(HTTPException) as ei:
-        await get_platform_admin(creds=creds(tenant_tok))
+        await get_platform_admin(req, creds=creds(tenant_tok))
     assert ei.value.status_code in (401, 403)
 
     # a real platform token passes and carries the admin identity
-    ctx = await get_platform_admin(creds=creds(
+    ctx = await get_platform_admin(req, creds=creds(
         create_platform_token(admin_id="a1", email="cloudon@rxvision.gr")))
     assert ctx.admin_id == "a1" and ctx.email == "cloudon@rxvision.gr"
 
@@ -495,6 +500,7 @@ async def test_effective_wholesale_resolution_priority(monkeypatch):
 
     eng = IngestionEngine.__new__(IngestionEngine)  # skip __init__ (no Vault/DB needed)
     eng.tenant_id = "t"
+    eng._bands = [[1_000_000, 25.0]]                # κλιμακωτή διατίμηση: 25% σε κάθε τιμή (για το τεστ)
 
     def item(retail, wholesale):
         return CanonicalItem(barcode="b1", name="x", retail_price=retail, wholesale_price=wholesale)

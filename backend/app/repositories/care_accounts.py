@@ -21,15 +21,15 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Any
 
 from bson import ObjectId
 from bson.errors import InvalidId
 
 from app.repositories.base import BaseRepository
-from app.services import recoverable
 from app.utils.masking import mask_name
+from app.services.stats_exclusion import COUNTABLE_EXEC
 
 RECEIPT, MANUAL, ADJUST = "receipt", "manual", "adjustment"
 
@@ -132,7 +132,7 @@ class CareAccountRepository(BaseRepository):
             return {}
         out: dict[str, int] = {}
         async for r in self._db["prescription_executions"].aggregate([
-                {"$match": {"tenant_id": self.tenant_id, "status": {"$ne": "cancelled"}, **match}},
+                {"$match": {"tenant_id": self.tenant_id, **COUNTABLE_EXEC, **match}},
                 {"$group": {"_id": "$patient_ref", "s": {"$sum": {"$ifNull": ["$patient_share", 0]}},
                             "n": {"$sum": 1}}}]):
             out[str(r["_id"])] = r["s"]

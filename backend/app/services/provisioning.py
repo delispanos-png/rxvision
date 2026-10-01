@@ -117,10 +117,12 @@ class TenantProvisioningService:
         price = package.get("price_yearly", 0) if yearly else package.get("price_monthly", 0)
         # seats & cost breakdown: base package + chosen SLA tier + extra concurrent users
         sla_code = sla or package.get("sla")
-        max_seats = int(package.get("seats", 1) or 1)        # πληροφοριακό «έως N» — ΟΧΙ όριο αγοράς
         extra_rate = int(package.get("extra_user_price_yearly" if yearly else "extra_user_price", 0) or 0)
         included_free = int(package.get("included_users") or 1)  # δωρεάν χρήστες που περιλαμβάνει η τιμή (ανά πακέτο)
-        chosen_seats = min(999, max(1, int(seats or 1)))     # κανένα εμπορικό πλαφόν — μόνο φράχτης input
+        # ΚΟΙΝΟΣ κανόνας θέσεων (billing_service.seats_for_package): ποτέ λιγότεροι από όσους περιλαμβάνει
+        # το πακέτο — πριν εδώ ξεκινούσε από 1, οπότε πακέτο με 6 χρήστες έδινε 1. Δοκιμή = 1 χρήστης.
+        from app.services.billing_service import seats_for_package
+        chosen_seats = 1 if trial_days else seats_for_package(package, requested=seats)
         extra_users = max(0, chosen_seats - included_free)   # extra = πάνω από τη βάση (1) → χρεώσιμα
         sla_doc = await db["sla_tiers"].find_one({"_id": sla_code}) if sla_code else None
         sla_price = int((sla_doc or {}).get("price_yearly" if yearly else "price_monthly", 0) or 0)

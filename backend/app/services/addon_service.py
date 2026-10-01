@@ -168,25 +168,15 @@ async def catalog(active_only: bool = True) -> list[dict]:
 
 
 async def _recompute_total(tenant_id: str) -> int:
-    """Sum the prices of the tenant's active add-ons for its billing cycle → addons_total (cents)."""
+    """addons_total (cents) = πρόσθετα + επέκταση διατήρησης + έξτρα χρήστες για τον κύκλο της συνδρομής —
+    ο ΙΔΙΟΣ υπολογισμός με την αυτόματη χρέωση και την ανανέωση (billing_service.recurring_extras).
+    Το SLA κρατιέται στο δικό του πεδίο (`sla_price`)."""
+    from app.services.billing_service import recurring_extras
     db = shared_db()
-    sub = await db["subscriptions"].find_one({"tenant_id": tenant_id}) or {}
-    yearly = sub.get("billing_cycle") == "yearly"
-    ids = sub.get("addons", []) or []
-    total = 0
-    if ids:
-        async for a in db["addons"].find({"_id": {"$in": ids}}):
-            total += int(a.get("price_yearly" if yearly else "price_monthly", 0) or 0)
-    # extended retention (>36μ) — κλιμακωτή επιβάρυνση στο ίδιο addons_total (billing = base + addons_total).
-    # Το AI ΔΕΝ επιβαρύνει πλέον τη συνδρομή: το included ορίζεται από το πακέτο, το overage = AI credits.
-    # Μηνιαίες τιμές × 12 σε yearly cycle.
-    from app.services.data_retention import retention_surcharge_monthly
-    extra = await retention_surcharge_monthly(db, tenant_id)
-    total += extra * 12 if yearly else extra
-    # επιπλέον χρήστες (seats) — η τιμή/χρήστη είναι ΤΟΥ ΠΑΚΕΤΟΥ του πελάτη & ήδη ανά κύκλο
-    # (ετήσια τιμή ανά έτος), οπότε προστίθεται ΑΠΕΥΘΕΙΑΣ (όχι ×12).
-    from app.services.seats_service import seat_surcharge_for_cycle
-    total += await seat_surcharge_for_cycle(db, tenant_id)
+    sub = await db["subscriptions"].find_one({"tenant_id": tenant_id}) or {"tenant_id": tenant_id}
+    pkg = await db["packages"].find_one({"_id": sub.get("plan")}) if sub.get("plan") else None
+    ex = await recurring_extras(db, sub, pkg, sub.get("billing_cycle") == "yearly")
+    total = ex["addons"] + ex["retention"] + ex["seats"]
     await db["subscriptions"].update_one({"tenant_id": tenant_id}, {"$set": {"addons_total": total}})
     return total
 
@@ -289,7 +279,7 @@ async def activation_quote(tenant_id: str, addon_id: str) -> dict:
     price = int(a.get("price_yearly" if yearly else "price_monthly") or 0)
     tenant = await db["tenants"].find_one({"_id": tenant_id}, {"country": 1}) or {}
     pkg = await db["packages"].find_one({"_id": sub.get("plan")}) if sub.get("plan") else None
-    inc_vat = bool((pkg or {}).get("price_includes_vat") or sub.get("price_includes_vat"))
+    inc_vat = billing_service.includes_vat(pkg, sub)
     net, remaining = _prorated_addon(price, sub, yearly)
     # Ίδια πηγή αλήθειας με `for_tenant`/`start_trial`: δοκιμή δυνατότητας δίνεται ΜΙΑ φορά.
     used_trial = bool(await db["addon_grants"].find_one(
@@ -334,7 +324,7 @@ async def activate(tenant_id: str, addon_id: str) -> dict:
         from app.services.invoice_service import gross_from_price
         tenant = await db["tenants"].find_one({"_id": tenant_id}, {"country": 1}) or {}
         pkg = await db["packages"].find_one({"_id": sub.get("plan")}) if sub.get("plan") else None
-        inc_vat = bool((pkg or {}).get("price_includes_vat") or sub.get("price_includes_vat"))
+        inc_vat = billing_service.includes_vat(pkg, sub)
         net, remaining = _prorated_addon(price, sub, yearly)
         gross = gross_from_price(net, inc_vat, tenant.get("country"))
         if gross > 0:

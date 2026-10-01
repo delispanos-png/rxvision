@@ -56,7 +56,7 @@ type PrescDetails = {
 type Item = {
   name: string | null; barcode: string | null; substance: string | null; category: string | null;
   atc?: string | null; narcotic?: boolean; high_cost?: boolean;
-  quantity: number; retail_price: number; wholesale_price: number; margin: number;
+  quantity: number; quantity_here?: number; line_total?: number; retail_price: number; wholesale_price: number; margin: number;
   participation: number | null; patient_share: number; fund_share: number; is_executed: boolean;
   executed_qty?: number | null;
   details?: LineDetails | null;
@@ -188,6 +188,7 @@ type Detail = {
   amount_total: number; amount_claimed: number; patient_share: number; wholesale_cost: number;
   excluded_from_stats?: boolean; excluded_reason?: string;
   fund_payable: number; patient_payable: number;
+  lines_bridge?: { patient: number; fund: number; kind: "fee" | "rounding" | "other" } | null;
   icd10: string[]; icd10_named?: string[]; has_unexecuted_substances: boolean;
   doctor: { name: string | null; specialty: string | null } | null;
   fund: { name: string | null; code: string | null } | null;
@@ -694,6 +695,7 @@ export default function PrescriptionDetailPage() {
                       <Field label={t("Τιμή λιανικής", "Retail price")} value={ln.retail_price != null ? eur(ln.retail_price) : null} />
                       <Field label={t("Τιμή αναφοράς", "Reference price")} value={ln.reference_price != null ? eur(ln.reference_price) : null} />
                       <Field label={t("Συμμετοχή %", "Co-payment %")} value={ln.participation_pct != null ? `${ln.participation_pct}%` : null} />
+                      <Field label={t("Συμμετοχή (€)", "Co-payment (€)")} value={ln.patient_share != null ? eur(ln.patient_share) : null} />
                       <Field label={t("Διαφορά", "Difference")} value={ln.difference != null ? eur(ln.difference) : null} />
                       <Field label={t("Τύπος κουπονιού", "Coupon type")} value={ln.qr ? "QR" : ln.strip ? t("Ταινία", "Strip") : null} />
                     </div>
@@ -886,12 +888,25 @@ export default function PrescriptionDetailPage() {
                         <div className="font-medium">{it.name || "—"}</div>
                         {it.substance ? <div className="text-[11px] text-slate-500">{it.substance}</div> : null}
                       </td>
-                      <td className="py-1.5 px-1 text-center">{it.quantity}</td>
-                      <td className="py-1.5 px-1 text-right">{eur(it.retail_price)}</td>
+                      <td className="py-1.5 px-1 text-center">{it.quantity_here ?? it.quantity}</td>
+                      <td className="py-1.5 px-1 text-right">{eur(it.line_total ?? it.retail_price)}</td>
                       <td className="py-1.5 px-1 text-right">{eur(it.patient_share)}</td>
                       <td className="py-1.5 pl-1 text-right font-medium">{eur(it.fund_share)}</td>
                     </tr>
                   ))}
+                  {/* ό,τι πληρώνει ο ασθενής ΠΕΡΑ από τις γραμμές (1 € ανά συνταγή / στρογγυλοποίηση ΗΔΥΚΑ) —
+                      ώστε οι γραμμές να αθροίζουν ΑΚΡΙΒΩΣ στα ποσά της συνταγής */}
+                  {d.lines_bridge ? (
+                    <tr className="border-b border-slate-200 text-slate-600">
+                      <td className="py-1.5 pr-2 italic" colSpan={3}>
+                        {d.lines_bridge.kind === "fee" ? t("Χρέωση 1 € ανά συνταγή (ΗΔΥΚΑ)", "€1 per-prescription charge (ΗΔΥΚΑ)")
+                          : d.lines_bridge.kind === "rounding" ? t("Στρογγυλοποίηση ΗΔΥΚΑ", "ΗΔΥΚΑ rounding")
+                          : t("Διαφορά ΗΔΥΚΑ σε επίπεδο συνταγής", "ΗΔΥΚΑ prescription-level difference")}
+                      </td>
+                      <td className="py-1.5 px-1 text-right">{eur(d.lines_bridge.patient)}</td>
+                      <td className="py-1.5 pl-1 text-right">{eur(d.lines_bridge.fund)}</td>
+                    </tr>
+                  ) : null}
                   {executed.length === 0 ? (
                     <tr><td colSpan={5} className="py-3 text-center text-slate-400">{t("Καμία γραμμή εκτέλεσης.", "No executed lines.")}</td></tr>
                   ) : null}

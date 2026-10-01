@@ -11,7 +11,7 @@ from __future__ import annotations
 import pytest
 from fastapi.routing import APIRoute
 
-from app.api.v1.routers import admin, admin_leads, fund_groups, infra_cloud
+from app.api.v1.routers import admin, admin_leads, fund_groups, infra_cloud, release_notes
 from app.services.platform_rbac import (
     ADMIN_GROUP_KEY,
     ALL_PERMISSION_KEYS,
@@ -27,7 +27,8 @@ from app.services.platform_rbac import (
 # scope key → το module που κρατά τον router. Ίδια αντιστοίχιση με αυτήν που
 # χρησιμοποιείται όταν συνδέεται το gate στο app/api/v1/__init__.py.
 ROUTERS = {
-    "admin": admin.router,
+    # ίδιο scope «admin» (require_padmin("admin")) — «Τι νέο υπάρχει» ζει σε δικό του router
+    "admin": [admin.router, release_notes.admin_router],
     "admin_leads": admin_leads.router,
     "cloud": infra_cloud.router,
     "fund_groups": fund_groups.router,
@@ -37,8 +38,9 @@ ROUTERS = {
 def _routes() -> list[tuple[str, str, str]]:
     """(scope, method, template) για κάθε endpoint του back-office."""
     out = []
-    for scope, router in ROUTERS.items():
-        for r in router.routes:
+    for scope, routers in ROUTERS.items():
+        for r in [x for router in (routers if isinstance(routers, list) else [routers])
+                  for x in router.routes]:
             if isinstance(r, APIRoute):
                 for method in sorted(r.methods - {"HEAD", "OPTIONS"}):
                     out.append((scope, method, r.path))

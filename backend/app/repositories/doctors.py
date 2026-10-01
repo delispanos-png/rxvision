@@ -12,6 +12,7 @@ from datetime import datetime
 from bson import ObjectId
 
 from app.repositories.base import BaseRepository
+from app.services import dispensed
 from app.services.stats_exclusion import COUNTABLE_EXEC
 from app.utils.masking import mask_name, mask_rows
 
@@ -217,11 +218,20 @@ class DoctorExecutionsRepository(BaseRepository):
         """Τι συνταγογραφεί ο ιατρός στην περίοδο — ΣΚΕΥΑΣΜΑΤΑ (products.name) & ΔΡΑΣΤΙΚΕΣ
         (products.substance), με πλήθος γραμμών, τεμάχια και αξία. Ένα pass με $facet."""
         base = [
-            {"$match": {"doctor_id": _oid(doctor_id),
+            {"$match": {"doctor_id": _oid(doctor_id), **COUNTABLE_EXEC,
                         "executed_at": {"$gte": date_from, "$lt": date_to}}},
             {"$lookup": {"from": "prescription_items", "localField": "_id",
                          "foreignField": "execution_id", "as": "it"}},
             {"$unwind": "$it"},
+            # ΜΙΑ φορά ανά ΣΥΝΤΑΓΗ: κάθε εγγραφή `:N` κουβαλά όλα τα είδη (πριν: γραμμές & τεμάχια ×N,
+            # και «αξία» = άθροισμα τιμών ΜΟΝΑΔΑΣ χωρίς ποσότητα). Τεμάχια = συνταγογραφημένα· αξία =
+            # λιανική × ΔΟΣΜΕΝΑ (ό,τι έφτασε στο φαρμακείο).
+            {"$group": {"_id": {"rx": dispensed.rx_root_expr("$external_id"), "p": "$it.product_id"},
+                        "q": {"$max": {"$ifNull": ["$it.quantity", 1]}},
+                        "eq": {"$max": {"$ifNull": ["$it.executed_qty", 0]}},
+                        "r": {"$max": {"$ifNull": ["$it.retail_price", 0]}}}},
+            {"$set": {"it": {"product_id": "$_id.p", "quantity": "$q",
+                             "retail_price": {"$multiply": ["$r", "$eq"]}}}},
             {"$lookup": {"from": "products", "localField": "it.product_id",
                          "foreignField": "_id", "as": "pr"}},
             {"$set": {"pr": {"$first": "$pr"}}},

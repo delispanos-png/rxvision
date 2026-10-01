@@ -32,12 +32,19 @@ def test_parse_gesy_xml():
 
 # ── ΗΔΙΚΑ adapter (synthetic) ──────────────────────────────
 def test_hdika_adapter_yields_stable_ids():
-    a = list(HdikaAdapter().fetch(count=10))
-    b = list(HdikaAdapter().fetch(count=10))
+    demo = {"allow_synthetic": True}          # μόνο ρητά επιτρεπτό (demo tenant)
+    a = list(HdikaAdapter(demo).fetch(count=10))
+    b = list(HdikaAdapter(demo).fetch(count=10))
     assert len(a) == 10
     assert [x.external_id for x in a] == [x.external_id for x in b]  # stable → dedup works
     assert all(x.source == "HDIKA" for x in a)
     assert validate_execution(a[0]) == []
+
+
+def test_hdika_adapter_never_invents_data_for_real_tenants():
+    # ελλιπή διαπιστευτήρια ΧΩΡΙΣ ρητό opt-in → τίποτα (ποτέ HDIKA-SYNTH σε πραγματικό φαρμακείο)
+    assert list(HdikaAdapter().fetch(count=10)) == []
+    assert list(HdikaAdapter({"username": "u"}).fetch(count=10)) == []
 
 
 # ── country ↔ source rule ──────────────────────────────────

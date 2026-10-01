@@ -15,7 +15,7 @@ import { appConfirm, appAlert } from "@/store/dialogStore";
 import { toastSuccess } from "@/store/toastStore";
 import { ClosingReportModal } from "@/components/reimbursement/ClosingReportModal";
 
-type Item = { barcode: string; external_id: string; exec_no: string | null; claim: number; kyyap?: number; retail?: number; patient?: number; fund: string; group: string; is_eopyy: boolean; is_vaccine: boolean; is_100: boolean; is_fyk: boolean; is_etyap: boolean; needs_original: boolean; needs_dose_check: boolean; needs_check: boolean; executed_at: string; checked: boolean; visual_checked: boolean; day: string };
+type Item = { barcode: string; external_id: string; exec_no: string | null; claim: number; kyyap?: number; retail?: number; patient?: number; fund: string; group: string; is_eopyy: boolean; is_vaccine: boolean; is_100: boolean; is_fyk: boolean; is_etyap: boolean; needs_original: boolean; needs_dose_check: boolean; dose_items?: { name: string; qty: number }[]; check_items?: { name: string; reason: string }[]; needs_check: boolean; executed_at: string; checked: boolean; visual_checked: boolean; day: string };
 type DayRow = { date: string; total: number; checked: number };
 type Summary = { total: number; needs_check: number; clean: number; dose: number; fyk: number; narcotic: number; needs_original: number; opinion: number; desensitization: number; strips: number; hdika_note: number; vaccine: number };
 type Check = { period: string; group: string; groups: string[]; total: number; checked: number; remaining: number; extra: string[]; summary?: Summary; by_day: DayRow[]; items: Item[] };
@@ -281,7 +281,7 @@ export default function PhysicalCheckPage() {
           {r.needs_original && <span className="shrink-0 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800" title={t("Χρειάζεται πρωτότυπη χάρτινη συνταγή ιατρού", "Needs original paper Rx")}>📄</span>}
           {r.is_fyk && <span className="shrink-0 rounded bg-fuchsia-100 px-1.5 py-0.5 text-[10px] font-semibold text-fuchsia-800">ΦΥΚ</span>}
           {r.is_etyap && <span className="shrink-0 rounded bg-cyan-100 px-1.5 py-0.5 text-[10px] font-semibold text-cyan-800" title="ΕΤΥΑΠ">🛡️</span>}
-          {r.needs_dose_check && <span className="shrink-0 rounded bg-orange-100 px-1.5 py-0.5 text-[10px] font-bold text-orange-700" title={t("Περιέχει σκεύασμα που χρειάζεται έλεγχο δοσολογίας", "Contains an item needing a dosage check")}>E</span>}
+          {r.needs_dose_check && <span className="shrink-0 rounded bg-orange-100 px-1.5 py-0.5 text-[10px] font-bold text-orange-700" title={(r.dose_items || []).length ? t(`Έλεγχος δοσολογίας: ${(r.dose_items || []).map((d) => `${d.name} (${d.qty} τεμ.)`).join(", ")}`, `Dosage check: ${(r.dose_items || []).map((d) => `${d.name} (${d.qty} pcs)`).join(", ")}`) : t("Περιέχει σκεύασμα που χρειάζεται έλεγχο δοσολογίας", "Contains an item needing a dosage check")}>E{(r.dose_items || []).length > 1 ? ` ×${(r.dose_items || []).length}` : ""}</span>}
         </span>
       );
     } },
@@ -406,7 +406,7 @@ export default function PhysicalCheckPage() {
           <span className="rounded bg-slate-100 px-2 py-0.5 text-[11px] font-bold text-slate-700 dark:bg-slate-800 dark:text-slate-200">{fmtEur(vCurrent.claim)}</span>
         </div>
         <div className="mt-2 flex flex-wrap gap-1.5">
-          {vCurrent.needs_dose_check && <span className="rounded bg-orange-100 px-1.5 py-0.5 text-[10px] font-bold text-orange-700">E {t("δοσολογία", "dosage")}</span>}
+          {vCurrent.needs_dose_check && <span className="rounded bg-orange-100 px-1.5 py-0.5 text-[10px] font-bold text-orange-700">E {t("δοσολογία", "dosage")}{(vCurrent.dose_items || []).length ? `: ${(vCurrent.dose_items || []).map((d) => `${d.name} (${d.qty} ${t("τεμ.", "pcs")})`).join(" · ")}` : ""}</span>}
           {vCurrent.is_fyk && <span className="rounded bg-fuchsia-100 px-1.5 py-0.5 text-[10px] font-semibold text-fuchsia-800">ΦΥΚ</span>}
           {vCurrent.needs_original && <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800">📄 {t("πρωτότυπη", "original")}</span>}
         </div>
@@ -414,6 +414,9 @@ export default function PhysicalCheckPage() {
         {(() => {
           const todo: string[] = [];
           if (vCurrent.needs_original) todo.push(t("📄 Επισύναψε την ΠΡΩΤΟΤΥΠΗ χάρτινη συνταγή ιατρού.", "📄 Attach the ORIGINAL paper prescription."));
+          // ΚΑΘΕ σκεύασμα που θέλει έλεγχο δοσολογίας ονομαστικά — αλλιώς βλέπεις το ένα και θεωρείς ότι τελείωσες.
+          for (const d of vCurrent.dose_items || []) todo.push(t(`💊 Έλεγξε τη δοσολογία: ${d.name} — δόθηκαν ${d.qty} τεμ.`, `💊 Check the dosage: ${d.name} — ${d.qty} pcs dispensed.`));
+          for (const c of vCurrent.check_items || []) todo.push(c.reason === "narcotic" ? t(`🔒 Ναρκωτικό: ${c.name} — τήρησε τους κανόνες χορήγησης.`, `🔒 Narcotic: ${c.name} — follow dispensing rules.`) : t(`ℹ️ Σημείωση ΗΔΥΚΑ για ${c.name} — δες την καρτέλα της συνταγής.`, `ℹ️ ΗΔΥΚΑ note for ${c.name} — see the prescription card.`));
           if (wizCoupons?.has_opinion) todo.push(t("📋 Επισύναψε τη ΓΝΩΜΑΤΕΥΣΗ.", "📋 Attach the medical opinion."));
           if (vCurrent.is_fyk) todo.push(t("💊 ΦΥΚ (Ν.3816) — επισύναψε αντίγραφο τιμολογίου/δελτίου ΦΥΚ.", "💊 High-cost (L.3816) — attach the purchase invoice copy."));
           if ((wizCoupons?.coupons || []).some((c) => c.qr === false)) todo.push(t("⚠️ Έλεγξε & κράτησε τις ΤΑΙΝΙΕΣ γνησιότητας (μη-QR).", "⚠️ Verify & keep the authenticity strips (non-QR)."));

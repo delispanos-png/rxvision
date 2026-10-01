@@ -8,7 +8,7 @@ Throttled to at most one email per issue-signature per 3h (state in `ops_alerts`
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 from app.workers.celery_app import celery_app
 from app.workers.ingestion import _fresh_db, _run_async
@@ -74,7 +74,7 @@ def check() -> dict:
             # 3) SECURITY abuse signals from audit_logs (M-7)
             from datetime import timedelta
             sec_cut = now - timedelta(minutes=_SEC_WINDOW_MIN)
-            fails = [d async for d in db["audit_logs"].find(
+            fails = [d async for d in db["audit_logs"].find(  # tenant-ok: φύλακας πλατφόρμας (audit/sync σε όλα)
                 {"action": {"$regex": "/auth/login$"}, "outcome": "error", "at": {"$gte": sec_cut}},
                 {"ip": 1})]
             if len(fails) >= _SEC_FAILED_LOGINS_TOTAL:
@@ -86,7 +86,7 @@ def check() -> dict:
                 if n >= _SEC_FAILED_LOGINS_PER_IP:
                     issues.append((f"sec-login-ip-{ip}",
                                    f"🔐 Η IP {ip} έκανε {n} αποτυχημένες συνδέσεις σε {_SEC_WINDOW_MIN}′ — στοχευμένο brute-force."))
-            n5xx = await db["audit_logs"].count_documents({"status_code": {"$gte": 500}, "at": {"$gte": sec_cut}})
+            n5xx = await db["audit_logs"].count_documents({"status_code": {"$gte": 500}, "at": {"$gte": sec_cut}})  # tenant-ok: φύλακας πλατφόρμας (audit/sync σε όλα)
             if n5xx >= _SEC_5XX_BURST:
                 issues.append(("sec-5xx-burst",
                                f"💥 {n5xx} σφάλματα 5xx σε {_SEC_WINDOW_MIN}′ — πιθανή επίθεση ή βλάβη."))
@@ -117,7 +117,7 @@ def check() -> dict:
             except Exception:  # noqa: BLE001
                 ath_hour = now.hour
             if 9 <= ath_hour <= 21:
-                last_data = await db["sync_jobs"].find_one(
+                last_data = await db["sync_jobs"].find_one(  # tenant-ok: φύλακας πλατφόρμας (audit/sync σε όλα)
                     {"stats.fetched": {"$gt": 0}}, sort=[("started_at", -1)])
                 ld = _as_dt((last_data or {}).get("started_at"))
                 age_h = ((now - ld).total_seconds() / 3600) if ld else 999

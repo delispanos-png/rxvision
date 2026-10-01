@@ -247,7 +247,7 @@ export default function PatientsPage() {
                     </label>
                     <label className="block text-xs font-medium text-slate-500">{t("Κύκλος ζωής (ΗΔΥΚΑ)", "Lifecycle")}
                       <select value={flt.lifecycle} onChange={(e) => setF("lifecycle", e.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 px-2.5 py-2 text-sm text-slate-800 focus:border-brand-500 focus:outline-none">
-                        <option value="">{t("Όλοι", "All")}</option><option value="active">{t("Ενεργοί", "Active")}</option><option value="new">{t("Νέοι", "New")}</option>
+                        <option value="">{t("Όλοι", "All")}</option><option value="new">{t("Νέοι (≤60 ημ.)", "New (≤60 d)")}</option><option value="active">{t("Ενεργοί (≤60 ημ.)", "Active (≤60 d)")}</option><option value="at_risk">{t("Σε κίνδυνο (60–90 ημ.)", "At risk (60–90 d)")}</option><option value="lost">{t("Χαμένοι (90–365 ημ.)", "Lost (90–365 d)")}</option><option value="inactive">{t("Ανενεργοί (>1 έτος)", "Inactive (>1 y)")}</option>
                       </select>
                     </label>
                     <label className="block text-xs font-medium text-slate-500">{t("Κατάσταση επαφής", "Contact status")}

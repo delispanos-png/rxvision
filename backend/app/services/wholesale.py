@@ -14,6 +14,8 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+from app.services import dispensed
+
 # Default κλίμακα Υπουργείου Υγείας — ισχύει μέχρι/εκτός αν ο platform admin την αλλάξει.
 DEFAULT_BANDS: list[list[float]] = [
     [50, 30.0], [100, 20.0], [150, 16.0], [200, 14.0], [300, 12.0],
@@ -86,7 +88,7 @@ async def recompute(db, bands: list[list[float]], tenant_id: str | None = None) 
     item_flt: dict = {"wholesale_source": "estimated", "retail_price": {"$gt": 0}}
     if tenant_id:
         item_flt["tenant_id"] = tenant_id
-    g_items = (await db["prescription_items"].update_many(item_flt, [
+    g_items = (await db["prescription_items"].update_many(item_flt, [  # tenant-ok: rebuild πλατφόρμας· UpdateOne φιλτράρει tenant_id
         {"$set": {"_pct": _markup_switch(bands)}},
         {"$set": {"wholesale_price": {"$round": [{"$divide": [
             {"$multiply": ["$retail_price", 100]}, {"$add": [100, "$_pct"]}]}, 0]}}},
@@ -100,11 +102,14 @@ async def recompute(db, bands: list[list[float]], tenant_id: str | None = None) 
         sums: dict = {}
         async for r in db["prescription_items"].aggregate([
             {"$match": {"tenant_id": tid}},
+            # βάρη = τεμάχια ΑΥΤΗΣ της εγγραφής (qty_here) — όχι η συνταγογραφημένη ποσότητα όλης
+            # της συνταγής, που έδινε λάθος μείγμα κόστους σε τμηματικές εκτελέσεις (01/10/2026)
+            {"$set": {"_q": dispensed.qty_expr()}},
             {"$group": {"_id": "$execution_id",
                         "raw_w": {"$sum": {"$multiply": [
-                            {"$ifNull": ["$wholesale_price", 0]}, {"$ifNull": ["$quantity", 0]}]}},
+                            {"$ifNull": ["$wholesale_price", 0]}, {"$ifNull": ["$_q", 0]}]}},
                         "raw_retail": {"$sum": {"$multiply": [
-                            {"$ifNull": ["$retail_price", 0]}, {"$ifNull": ["$quantity", 0]}]}}}},
+                            {"$ifNull": ["$retail_price", 0]}, {"$ifNull": ["$_q", 0]}]}}}},
         ]):
             sums[r["_id"]] = (r["raw_w"], r["raw_retail"])
         ops: list = []
@@ -112,13 +117,13 @@ async def recompute(db, bands: list[list[float]], tenant_id: str | None = None) 
             rw, rr = sums.get(ex["_id"], (0, 0))
             amt = ex.get("amount_total", 0) or 0
             wc = round(rw * amt / rr) if (amt > 0 and rr > 0) else rw
-            ops.append(UpdateOne({"_id": ex["_id"]}, {"$set": {"wholesale_cost": wc}}))
+            ops.append(UpdateOne({"_id": ex["_id"], "tenant_id": tid}, {"$set": {"wholesale_cost": wc}}))
             if len(ops) >= 2000:
-                await db["prescription_executions"].bulk_write(ops, ordered=False)
+                await db["prescription_executions"].bulk_write(ops, ordered=False)  # tenant-ok: rebuild πλατφόρμας· UpdateOne φιλτράρει tenant_id
                 g_exec += len(ops)
                 ops = []
         if ops:
-            await db["prescription_executions"].bulk_write(ops, ordered=False)
+            await db["prescription_executions"].bulk_write(ops, ordered=False)  # tenant-ok: rebuild πλατφόρμας· UpdateOne φιλτράρει tenant_id
             g_exec += len(ops)
     return {"tenants": len(tenants), "items": g_items,
             "executions": g_exec, "at": datetime.now(tz=timezone.utc).isoformat()}

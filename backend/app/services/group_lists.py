@@ -18,7 +18,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from app.services import recoverable
+from app.services import dispensed, recoverable
 
 
 def _now() -> datetime:
@@ -40,6 +40,7 @@ async def opening(db, tenant_id: str, ids: list, names: dict[str, str], *,
             {"$match": {"tenant_id": tenant_id, "patient_ref": {"$in": ids},
                         "status": {"$ne": "cancelled"},
                         "next_open_date": {"$gte": now, "$lt": now + timedelta(days=max(1, days))}}},
+            *dispensed.one_record_per_rx(),     # μία γραμμή ανά συνταγή, όχι ανά εγγραφή `:N`
             {"$lookup": {"from": "prescription_items", "localField": "_id",
                          "foreignField": "execution_id", "as": "it"}},
             {"$lookup": {"from": "products", "localField": "it.product_id",
@@ -99,6 +100,7 @@ async def to_order(db, tenant_id: str, ids: list, *, days: int = 45,
             {"$match": {"tenant_id": tenant_id, "patient_ref": {"$in": ids},
                         "status": {"$ne": "cancelled"},
                         "next_open_date": {"$gte": now, "$lt": now + timedelta(days=max(1, days))}}},
+            *dispensed.one_record_per_rx(),     # μία γραμμή ανά συνταγή, όχι ανά εγγραφή `:N`
             {"$lookup": {"from": "prescription_items", "localField": "_id",
                          "foreignField": "execution_id", "as": "it"}},
             {"$unwind": "$it"},
@@ -127,6 +129,7 @@ async def pending(db, tenant_id: str, ids: list, names: dict[str, str], *,
     async for r in db["prescription_executions"].aggregate([
             {"$match": {"tenant_id": tenant_id, "patient_ref": {"$in": ids},
                         "status": {"$ne": "cancelled"}, **recoverable.mongo_filter()}},
+            *dispensed.one_record_per_rx(),     # το υπόλοιπο είναι της ΣΥΝΤΑΓΗΣ (ίδιο σε κάθε `:N`)
             {"$lookup": {"from": "prescription_items", "localField": "_id",
                          "foreignField": "execution_id", "as": "it"}},
             {"$unwind": "$it"},
@@ -186,6 +189,9 @@ async def recent(db, tenant_id: str, ids: list, names: dict[str, str], *,
             {"$sort": {"executed_at": -1}}, {"$limit": limit},
             {"$lookup": {"from": "prescription_items", "localField": "_id",
                          "foreignField": "execution_id", "as": "it"}},
+            # μόνο ό,τι δόθηκε σε ΑΥΤΗ την εκτέλεση (κάθε `:N` κουβαλά όλη τη συνταγή)
+            {"$set": {"it": {"$filter": {"input": "$it", "cond": {
+                "$gt": [dispensed.qty_expr("$this."), 0]}}}}},
             {"$lookup": {"from": "products", "localField": "it.product_id",
                          "foreignField": "_id", "as": "pr"}},
             {"$project": {"patient_ref": 1, "external_id": 1, "executed_at": 1,

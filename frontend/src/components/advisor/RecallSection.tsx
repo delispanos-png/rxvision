@@ -25,7 +25,7 @@ type Recall = {
   items: RecallPat[]; patients: number; total_value: number; total_missed: number;
   total_available: number; with_contact: number;
 };
-type Win = { due: string; status: string };
+type Win = { due: string; status: string; deadline?: string };
 type Intent = { decision?: string | null; visit_date?: string | null; reason?: string | null } | null;
 type Chain = { key?: string | null; medicine?: string | null; valid_from: string; valid_until: string; missed: number; available: number; value: number; windows: Win[]; intent?: Intent };
 type RecallDetail = { found: boolean; name?: string | null; amka?: string | null; coverage_start?: string | null; chains: Chain[] };
@@ -148,7 +148,7 @@ export function RecallSection() {
                 <div className="flex flex-wrap gap-1.5">
                   {c.windows.filter((w) => w.status === "missed" || w.status === "available").map((w, j) => (
                     <span key={j} className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-xs font-medium ${w.status === "missed" ? "bg-rose-100 text-rose-700 dark:bg-rose-900/40 dark:text-rose-300" : "bg-sky-100 text-sky-700 dark:bg-sky-900/40 dark:text-sky-300"}`}>
-                      {fmtDate(w.due)} · {w.status === "missed" ? t("χάθηκε", "missed") : t("διαθέσιμη", "available")}
+                      {fmtDate(w.due)} · {w.status === "missed" ? t("χάθηκε", "missed") : w.deadline ? t(`διαθέσιμη, λήγει ~${fmtDate(w.deadline)}`, `available, expires ~${fmtDate(w.deadline)}`) : t("διαθέσιμη", "available")}
                     </span>
                   ))}
                 </div>

@@ -24,7 +24,7 @@ from bson import ObjectId
 from bson.errors import InvalidId
 
 from app.core.db import shared_db
-from app.repositories.base import BaseRepository, jsonsafe
+from app.repositories.base import BaseRepository
 from app.services import pharmacy_directory as directory
 from app.services.connect_availability import DEFAULTS, available_qty
 

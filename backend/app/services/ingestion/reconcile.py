@@ -109,7 +109,7 @@ async def find_missing(db, client, tenant_id: str, start_day: date, end_day: dat
                       "day": {"$substr": [{"$toString": "$executed_at"}, 0, 10]}}},
         {"$match": {"day": {"$gte": start_day.isoformat(), "$lte": end_day.isoformat()}}},
     ]
-    async for r in db["prescription_executions"].aggregate(pipe):
+    async for r in db["prescription_executions"].aggregate(pipe):  # tenant-ok: pipe[0] = $match tenant_id
         if r.get("ext"):
             ours.add(str(r["ext"]))
     missing = {ext: day for ext, day in hd.items() if ext not in ours}

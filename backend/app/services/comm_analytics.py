@@ -18,6 +18,7 @@ from bson import ObjectId
 from bson.errors import InvalidId
 
 from app.core.db import shared_db
+from app.services.stats_exclusion import COUNTABLE_EXEC
 
 ATTRIBUTION_DAYS = 14
 
@@ -93,7 +94,7 @@ async def report(tenant_id: str, campaign_id: str) -> dict:
     came = value = 0
     if refs:
         rows = await db["prescription_executions"].aggregate([
-            {"$match": {"tenant_id": tenant_id, "patient_ref": {"$in": [_oid(r) for r in refs]},
+            {"$match": {"tenant_id": tenant_id, **COUNTABLE_EXEC, "patient_ref": {"$in": [_oid(r) for r in refs]},
                         "executed_at": {"$gte": start, "$lte": start + timedelta(days=ATTRIBUTION_DAYS)}}},
             {"$group": {"_id": "$patient_ref", "v": {"$sum": "$amount_total"}}},
         ]).to_list(length=None)

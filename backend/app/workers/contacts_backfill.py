@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 from app.workers.celery_app import celery_app
 from app.workers.ingestion import _hdika_auth_paused, _pause_hdika_auth, _run_async

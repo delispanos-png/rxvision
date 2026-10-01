@@ -9,7 +9,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 from app.core.db import shared_db
 from app.services.leads import actions, config as cfg, next_action, segments, timeline

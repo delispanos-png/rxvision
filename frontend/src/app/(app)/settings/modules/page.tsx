@@ -6,6 +6,7 @@ import { api, queryKeys, refreshSession, ApiError } from "@/lib/apiClient";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
 import { useT } from "@/store/prefStore";
 import { appAlert, appConfirm } from "@/store/dialogStore";
+import { startRenewal } from "@/lib/renewal";
 import { Check, ArrowUp, ArrowDown, Sparkles, Crown, Loader2, Users, Star, CreditCard, Building2, X, Clock, Plus, RefreshCw } from "lucide-react";
 
 // ── types (defensive: fields may be absent on older docs) ──────────────────────
@@ -222,7 +223,8 @@ export default function ModulesPlanPage() {
     if (!ok) return;
     setBusy(true);
     try {
-      const r = await api<{ checkout_url?: string }>("/billing/renew-now", { method: "POST", body: JSON.stringify({ package_code: current._id, billing_cycle: "yearly" }) });
+      const r = await startRenewal<{ checkout_url?: string }>("/billing/renew-now", { package_code: current._id, billing_cycle: "yearly" }, t);
+      if (!r) return;
       if (r.checkout_url) { window.location.href = r.checkout_url; return; }
       appAlert(t("Δεν ξεκίνησε η πληρωμή — δοκίμασε ξανά.", "Payment didn't start — try again."));
     } catch (e) { appAlert(e instanceof ApiError ? t(`Σφάλμα (${e.status})`, `Error (${e.status})`) : t("Αποτυχία", "Failed")); }

@@ -8,6 +8,8 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 
 from app.repositories.base import BaseRepository
+from app.services import dispensed
+from app.services import repeat_windows as rw
 from app.utils.masking import mask_amka, mask_name
 
 
@@ -100,6 +102,10 @@ class FuturePrescriptionRepository(BaseRepository):
         for r in rows:
             r["patient_name"] = mask_name(r.get("patient_name"), self.demo)
             r["amka"] = mask_amka(r.get("amka"), self.demo)
+            # ανοίγει / λήγει — οι κανόνες της ΗΔΥΚΑ σε ΕΝΑ σημείο
+            opens = r.get("expected_open_date")
+            if isinstance(opens, datetime):
+                r["deadline"] = rw.deadline(opens)
         return rows
 
     async def forecast(self, *, today: datetime, horizon: datetime,
@@ -173,9 +179,12 @@ class FuturePrescriptionRepository(BaseRepository):
             # αλλά τα τεμάχια που δόθηκαν πουλήθηκαν και πρέπει να μετρήσουν.
             {"$match": {"executed_at": {"$gte": hist_start},
                         "$expr": {"$gt": [{"$ifNull": ["$executed_qty", 0]}, 0]}}},
+            # τεμάχια ΑΥΤΗΣ της εγγραφής (όχι ×N) και κόστος = χονδρική × τεμάχια (πριν: Σ τιμής
+            # μονάδας ανά γραμμή, χωρίς ποσότητα) — ίδιος ορισμός με order_suggestions
+            {"$set": {"_q": dispensed.qty_expr()}},
             {"$group": {"_id": "$product_id",
-                        "units": {"$sum": {"$ifNull": ["$executed_qty", "$quantity"]}},
-                        "cost": {"$sum": "$wholesale_price"}}},
+                        "units": {"$sum": "$_q"},
+                        "cost": {"$sum": {"$multiply": [{"$ifNull": ["$wholesale_price", 0]}, "$_q"]}}}},
         ])
         hmap = {h["_id"]: h for h in hist}
         out = []

@@ -53,6 +53,15 @@ class RenewIn(BaseModel):
     package_code: str = Field(..., max_length=40)
     billing_cycle: Literal["monthly", "yearly"] = "yearly"
     coupon_code: str | None = Field(None, max_length=40)
+    accept_extras: bool = False      # ο πελάτης είδε & δέχτηκε τα επαναλαμβανόμενα έξτρα (ανάλυση 409)
+
+
+def _renew_error(res: dict) -> HTTPException:
+    """«extras_confirm» → 409 με την ανάλυση ποσού, ώστε η οθόνη να τη δείξει ΠΡΙΝ την πληρωμή."""
+    if res.get("error") == "extras_confirm":
+        return HTTPException(status.HTTP_409_CONFLICT,
+                             detail={"error": "extras_confirm", "breakdown": res.get("breakdown")})
+    return HTTPException(status.HTTP_400_BAD_REQUEST, detail={"error": res.get("error")})
 
 
 @router.post("/renew")
@@ -66,9 +75,9 @@ async def renew(body: RenewIn):
     if claims.get("scope") != "renew" or not claims.get("tid"):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail={"error": "invalid_scope"})
     res = await billing_service.start_renewal(claims["tid"], body.package_code, body.billing_cycle,
-                                              coupon_code=body.coupon_code)
+                                              coupon_code=body.coupon_code, accept_extras=body.accept_extras)
     if not res.get("ok"):
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail={"error": res.get("error")})
+        raise _renew_error(res)
     return res
 
 
@@ -76,6 +85,7 @@ class RenewNowIn(BaseModel):
     package_code: str = Field(..., max_length=40)
     billing_cycle: Literal["monthly", "yearly"] = "yearly"
     coupon_code: str | None = Field(None, max_length=40)
+    accept_extras: bool = False
 
 
 @router.post("/renew-now")
@@ -83,9 +93,9 @@ async def renew_now(body: RenewNowIn, ctx: TenantContext = Depends(require("bill
     """Προληπτική ανανέωση από ΣΥΝΔΕΔΕΜΕΝΟ (ενεργό) πελάτη — διαλέγει πακέτο (ίδιο/άλλο) & κύκλο →
     Viva checkout. Η επέκταση περιόδου + το παραστατικό γίνονται στο webhook (complete_renewal)."""
     res = await billing_service.start_renewal(ctx.tenant_id, body.package_code, body.billing_cycle,
-                                              coupon_code=body.coupon_code)
+                                              coupon_code=body.coupon_code, accept_extras=body.accept_extras)
     if not res.get("ok"):
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail={"error": res.get("error")})
+        raise _renew_error(res)
     return res
 
 

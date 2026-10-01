@@ -120,6 +120,23 @@ async def put_contact(
         patient_id, body.model_dump(), source="pharmacist", verify=True)
     if saved is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "patient_not_found")
+    # Σήμανση θανόντα ΜΕ ΤΟ ΧΕΡΙ = η ΙΔΙΑ διαδρομή με την ΗΔΥΚΑ (`mark_deceased`): σημαία στον ασθενή,
+    # ακύρωση μελλοντικών. Πριν έμενε μόνο στην επαφή, ενώ σχεδόν κάθε εξαίρεση (SMS, recall, win-back,
+    # καμπάνιες) κοιτάζει τη σημαία του ασθενή (01/10/2026).
+    from app.repositories.patients import PatientRepository
+    if not body.active and body.inactive_reason == "deceased":
+        amka = await PatientRepository(tenant_id=ctx.tenant_id).get_amka(patient_id)
+        if amka:
+            from app.services.patient_lifecycle import mark_deceased
+            await mark_deceased(ctx.tenant_id, amka)
+    elif body.active:
+        # επαναφορά από τον φαρμακοποιό (π.χ. λάθος σήμανση) — η επιλογή του είναι η αυθεντική
+        from app.core.db import shared_db
+        from bson import ObjectId
+        if ObjectId.is_valid(patient_id):
+            await shared_db()["patients_anonymized"].update_one(
+                {"tenant_id": ctx.tenant_id, "_id": ObjectId(patient_id), "deceased": True},
+                {"$unset": {"deceased": "", "deceased_at": ""}})
     return saved
 
 
@@ -542,7 +559,7 @@ async def per_patient(
     sex: str | None = Query(None, description="M|F"),
     age_groups: str | None = Query(None, description="comma-separated age groups"),
     area: str | None = Query(None),
-    lifecycle: str | None = Query(None, description="active|new|inactive"),
+    lifecycle: str | None = Query(None, description="new|active|at_risk|lost|inactive (services/patient_status.py)"),
     rx_min: int | None = Query(None, ge=0),
     value_min: float | None = Query(None, description="euros"),
     profit_min: float | None = Query(None, description="euros"),

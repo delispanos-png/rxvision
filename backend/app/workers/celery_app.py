@@ -22,6 +22,7 @@ celery_app = Celery(
         "app.workers.leads",
         "app.workers.sessions",
         "app.workers.connect",
+        "app.workers.integrity",
     ],
 )
 
@@ -43,6 +44,7 @@ _QUEUE_BY_MODULE = {
     "catalog_categories": "maintenance",
     "supplier_photos": "maintenance",
     "leads": "maintenance",
+    "integrity": "maintenance",     # νυχτερινός αυτοέλεγχος δεδομένων — κανείς δεν περιμένει
     # Ό,τι δεν αναφέρεται εδώ → "fast": comms, reminders, billing, sessions, coach,
     # copilot_routines, ops_health, capacity. Κοινό τους: κάποιος ΑΝΘΡΩΠΟΣ περιμένει
     # (ο φύλακας διαθεσιμότητας κόμβου είναι ελαφρύς και το παράθυρο αποθέματος στενό).
@@ -422,6 +424,18 @@ celery_app.conf.beat_schedule = {
     "copilot-routines": {
         "task": "app.workers.copilot_routines.run_due_routines",
         "schedule": crontab(minute="*/10"),
+    },
+    # Νυχτερινός αυτοέλεγχος συνέπειας δεδομένων — 04:40 Αθήνας (01:40 UTC), ΜΕΤΑ τα νυχτερινά
+    # snapshots/καθαρισμούς, ΠΡΙΝ ανοίξουν τα φαρμακεία. Βρίσκουμε εμείς το λάθος, όχι ο πελάτης.
+    # Κατάσταση πελάτη (νέος/ενεργός/σε κίνδυνο/χαμένος/ανενεργός) από την τελευταία επίσκεψη —
+    # 04:20 Αθήνας, πριν από τον αυτοέλεγχο και τις πρωινές λίστες/καμπάνιες.
+    "patient-lifecycle-refresh": {
+        "task": "app.workers.integrity.refresh_patient_lifecycle",
+        "schedule": crontab(hour=1, minute=20),
+    },
+    "integrity-nightly": {
+        "task": "app.workers.integrity.nightly",
+        "schedule": crontab(hour=1, minute=40),
     },
     # Ops watchdog — email admins on backup-fail / stale-backup / node-down (launch safety net)
     "ops-health-check": {

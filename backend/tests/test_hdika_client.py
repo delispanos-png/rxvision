@@ -126,20 +126,24 @@ def test_repeat_chain_and_recurrence_from_cda():
 
 
 def test_kyyap_three_way_split_matches_idika_printout():
-    """ΚΥΥΑΠ (Ι.Κ.Α. πρώην Ο.Π.Α.Δ.) σε συμβεβλημένο φαρμακείο: τριμερής επιμερισμός — ασφ/νος
-    μισή διαφορά + 1€, ΚΥΥΑΠ συμμετοχή + άλλη μισή, ΕΟΠΥΥ το υπόλοιπο. Επαληθευμένο στο επίσημο
-    έντυπο ΗΔΙΚΑ (2606086725235): ΑΣΦ/ΝΟ 4,68 · ΚΥΥΑΠ 6,83 · ΤΑΜΕΙΟ 8,41 · ΣΥΝΟΛΟ 19,92."""
+    """ΚΥΥΑΠ (Ι.Κ.Α. πρώην Ο.Π.Α.Δ.) σε συμβεβλημένο φαρμακείο: τριμερής επιμερισμός με τα ποσά ΚΥΥΑΠ
+    ΤΗΣ ΗΔΥΚΑ (CDA 1.1.27.1 συμμετοχή που καλύπτει, 1.1.27.2 μέρος διαφοράς που καλύπτει) — όχι το παλιό
+    χειροκίνητο «μισή διαφορά ανά γραμμή», που αγνοούσε τα caps. Επίσημο έντυπο ΗΔΙΚΑ (2606086725235):
+    ΑΣΦ/ΝΟ 4,68 · ΚΥΥΑΠ 6,83 · ΤΑΜΕΙΟ 8,41 · ΣΥΝΟΛΟ 19,92. (Τεστ ενημερώθηκε 01/10/2026 στο μοντέλο ΗΔΥΚΑ.)"""
     c = HdikaClient({"base_url": "x", "username": "u", "password": "p",
                      "api_key": "k", "etyap_contracted": "true"})
     ex = {"prescription": {"barcode": "RX-K",
                            "socialInsuranceDTO": {"name": "Ι.Κ.Α. (πρώην Ο.Π.Α.Δ.) - Κ.Υ.Υ.Α.Π."}},
           "executionDate": "2026-06-09T10:00:00Z", "executionNo": 1,
           "totalValue": 12.56, "totalDifference": 7.36, "socialInsuranceSurcharge": 1.00}
-    cda = {"patient": {"amka": "X"}, "doctor": {"name": "Δ"}, "icd10": [], "lines": [
+    cda = {"patient": {"amka": "X"}, "doctor": {"name": "Δ"}, "icd10": [],
+           "details": {"supplementary_amount": 3.15, "kyyap_difference": 3.68}, "lines": [
         {"eof_code": "E1", "quantity": 2, "retail_price": 5.66, "reference_price": 4.01,
-         "participation_pct": 25, "difference": 3.30, "is_executed": True, "name": "TRIATEC"},
+         "participation_pct": 25, "patient_share": 2.01, "difference": 3.30, "is_executed": True,
+         "name": "TRIATEC"},
         {"eof_code": "E2", "quantity": 2, "retail_price": 4.30, "reference_price": 2.27,
-         "participation_pct": 25, "difference": 4.06, "is_executed": True, "name": "NORVASC"}]}
+         "participation_pct": 25, "patient_share": 1.14, "difference": 4.06, "is_executed": True,
+         "name": "NORVASC"}]}
     e = c._map_full(ex, cda, {})
     c.close()
     assert e.amount_total == 1992                       # ΣΥΝΟΛΟ 19,92

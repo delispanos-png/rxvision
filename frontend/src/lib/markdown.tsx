@@ -95,7 +95,10 @@ export function renderMarkdown(md: string): { body: React.ReactNode[]; headings:
       while (i < lines.length && /^\s*>/.test(lines[i])) { buf.push(lines[i].replace(/^\s*>\s?/, "")); i++; }
       push(
         <blockquote key={`q${k++}`} className="my-4 rounded-r-xl border-l-4 border-sky-400 bg-sky-50/70 px-4 py-3 text-sm text-slate-700 dark:border-sky-600 dark:bg-sky-950/20 dark:text-slate-300">
-          {buf.filter(Boolean).map((b, x) => <p key={x} className={x ? "mt-2" : ""}>{inline(b, `q${k}-${x}`)}</p>)}
+          {/* γραμμές της ίδιας παράγραφου ΕΝΩΝΟΝΤΑΙ (κενή γραμμή = νέα παράγραφος) — αλλιώς τα **έντονα**
+              που αλλάζουν γραμμή έβγαιναν ως σκέτοι αστερίσκοι (01/10/2026) */}
+          {buf.join("\n").split(/\n\s*\n/).map((g) => g.split("\n").join(" ").trim()).filter(Boolean)
+            .map((b, x) => <p key={x} className={x ? "mt-2" : ""}>{inline(b, `q${k}-${x}`)}</p>)}
         </blockquote>,
       );
       continue;
@@ -105,8 +108,14 @@ export function renderMarkdown(md: string): { body: React.ReactNode[]; headings:
     if (/^\s*[-*]\s+/.test(line)) {
       const items: { text: string; sub: boolean }[] = [];
       while (i < lines.length && /^\s*[-*]\s+/.test(lines[i])) {
-        items.push({ text: lines[i].replace(/^\s*[-*]\s+/, ""), sub: /^\s{2,}/.test(lines[i]) });
+        const it = { text: lines[i].replace(/^\s*[-*]\s+/, ""), sub: /^\s{2,}/.test(lines[i]) };
         i++;
+        // γραμμές-συνέχεια του ίδιου στοιχείου (με εσοχή, όχι νέο «-»): ανήκουν σε ΑΥΤΟ το στοιχείο
+        while (i < lines.length && /^\s{2,}\S/.test(lines[i]) && !/^\s*[-*]\s+/.test(lines[i])) {
+          it.text += " " + lines[i].trim();
+          i++;
+        }
+        items.push(it);
       }
       push(
         <ul key={`u${k++}`} className="my-3 space-y-1.5">

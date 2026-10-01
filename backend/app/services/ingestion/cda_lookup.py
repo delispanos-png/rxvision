@@ -9,7 +9,6 @@ from __future__ import annotations
 import asyncio
 
 from app.services.ingestion.hdika_client import HdikaClient
-from app.services.vault_service import vault
 
 
 async def _creds(tenant_id: str, db) -> dict:

@@ -105,7 +105,7 @@ async def start_card_capture(tenant_id: str) -> dict:
 
 
 async def start_renewal(tenant_id: str, package_code: str, billing_cycle: str = "yearly",
-                        coupon_code: str | None = None) -> dict:
+                        coupon_code: str | None = None, accept_extras: bool = False) -> dict:
     """Ανανέωση ΛΗΓΜΕΝΗΣ συνδρομής: ο πελάτης διαλέγει πακέτο (+ προαιρετικό coupon) & πληρώνει μέσω
     Viva. Αποθηκεύει `pending_renewal`· η ενεργοποίηση + εξαργύρωση coupon γίνεται στο webhook."""
     db = shared_db()
@@ -121,9 +121,22 @@ async def start_renewal(tenant_id: str, package_code: str, billing_cycle: str = 
     from app.services import feedback_service
     amount, coupon = await feedback_service.apply_discount(amount, coupon_code, tenant_id)
     tenant = await db["tenants"].find_one({"_id": tenant_id}) or {}
+    # + ό,τι επαναλαμβάνεται (πρόσθετα, έξτρα χρήστες, διατήρηση, SLA) — ΟΧΙ σιωπηλά: αν υπάρχουν,
+    # ο πελάτης βλέπει πρώτα την ανάλυση και επιβεβαιώνει (το coupon αφορά μόνο το πακέτο)
+    sub = await db["subscriptions"].find_one({"tenant_id": tenant_id}) or {"tenant_id": tenant_id}
+    extras = await recurring_extras(db, sub, pkg, yearly)
     # καθαρό → χρεώσιμο ΜΕ ΦΠΑ (αν οι τιμές είναι καθαρές)
     from app.services.invoice_service import gross_from_price
-    amount = gross_from_price(amount, bool(pkg.get("price_includes_vat")), tenant.get("country"))
+    inc_vat = bool(pkg.get("price_includes_vat"))
+    if extras["total"] > 0 and not accept_extras:
+        return {"ok": False, "error": "extras_confirm", "breakdown": {
+            "package": gross_from_price(amount, inc_vat, tenant.get("country")),
+            "addons": gross_from_price(extras["addons"] + extras["retention"], inc_vat, tenant.get("country")),
+            "seats": gross_from_price(extras["seats"], inc_vat, tenant.get("country")),
+            "extra_users": extras["extra_users"],
+            "sla": gross_from_price(extras["sla"], inc_vat, tenant.get("country")),
+            "total": gross_from_price(amount + extras["total"], inc_vat, tenant.get("country"))}}
+    amount = gross_from_price(amount + extras["total"], inc_vat, tenant.get("country"))
     bp = tenant.get("billing_profile") or {}
     email = bp.get("email") or bp.get("billing_email") or ""
     name = bp.get("name") or tenant.get("name") or tenant_id
@@ -158,6 +171,60 @@ def seats_for_package(pkg: dict | None, *, current: int | None = None,
     included = int((pkg or {}).get("included_users") or 1)
     want = requested if requested else (current or included)
     return max(included, min(999, int(want or included)))
+
+
+def includes_vat(pkg: dict | None, sub: dict | None) -> bool:
+    """Η τιμή περιλαμβάνει ήδη ΦΠΑ; ΕΝΑΣ κανόνας για κάθε χρέωση: η σημαία του ΤΡΕΧΟΝΤΟΣ πακέτου·
+    μόνο χωρίς πακέτο, η αποθηκευμένη της συνδρομής. Πριν: χρήστες/πρόσθετα έκαναν «πακέτο Ή συνδρομή»,
+    η ανανέωση «πακέτο αλλιώς συνδρομή» → σε διαφωνία, άλλη χρέωση με ΦΠΑ κι άλλη χωρίς (01/10/2026)."""
+    if pkg:
+        return bool(pkg.get("price_includes_vat"))
+    return bool((sub or {}).get("price_includes_vat"))
+
+
+# Καταστάσεις που ΤΙΜΟΛΟΓΟΥΝΤΑΙ (πραγματικό επαναλαμβανόμενο έσοδο)
+BILLED_STATES = ("active", "past_due")
+
+
+def monthly_value(sub: dict | None) -> int:
+    """Μηνιαίο επαναλαμβανόμενο έσοδο (καθαρό, cents) ΜΙΑΣ συνδρομής — ΕΝΑΣ ορισμός για κάθε MRR του
+    adminpanel. Πριν (6 σημεία): `τιμή × limits.pharmacies` — όπου το `limits.pharmacies` είναι στην πράξη
+    οι ΘΕΣΕΙΣ χρηστών (×4 για πελάτη με 4 χρήστες) και η τιμή ετήσιου πελάτη είναι η ΕΤΗΣΙΑ (×12)."""
+    sub = sub or {}
+    if sub.get("complimentary"):
+        return 0
+    total = (int(sub.get("price_per_pharmacy") or 0) + int(sub.get("addons_total") or 0)
+             + int(sub.get("sla_price") or 0))
+    return round(total / 12) if sub.get("billing_cycle") == "yearly" else total
+
+
+async def recurring_extras(db, sub: dict, pkg: dict | None, yearly: bool) -> dict:
+    """ΤΙ ΕΠΑΝΑΛΑΜΒΑΝΕΤΑΙ πέρα από την τιμή του πακέτου — ΕΝΑΣ υπολογισμός για την αυτόματη χρέωση,
+    τη χειροκίνητη ανανέωση, το `addons_total` και την ένδειξη ποσού (01/10/2026).
+
+    Πριν: η αυτόματη χρέωση διάβαζε ένα `addons_total` που η εγγραφή αποθήκευε ΧΩΡΙΣ τους έξτρα
+    χρήστες, το SLA δεν ξαναχρεωνόταν ποτέ, και η χειροκίνητη ανανέωση χρέωνε ΜΟΝΟ το πακέτο — ενώ
+    η σελίδα χρηστών λέει στον πελάτη «+€/έτος στην ανανέωση».
+
+    Πρόσθετα που ΠΕΡΙΛΑΜΒΑΝΕΙ ήδη το πακέτο δεν χρεώνονται ξανά. Τιμές για τον ζητούμενο κύκλο."""
+    from app.services.data_retention import retention_surcharge_monthly
+    from app.services.seats_service import _included, _seat_price
+    in_plan = set((pkg or {}).get("modules") or [])
+    ids = [a for a in (sub.get("addons") or []) if a not in in_plan]
+    addons = 0
+    if ids:
+        async for a in db["addons"].find({"_id": {"$in": ids}}):
+            addons += int(a.get("price_yearly" if yearly else "price_monthly", 0) or 0)
+    monthly_ret = await retention_surcharge_monthly(db, sub.get("tenant_id"))
+    retention = monthly_ret * 12 if yearly else monthly_ret
+    extra_users = max(0, seats_for_package(pkg, current=sub.get("seats")) - _included(pkg))
+    seats = extra_users * _seat_price(pkg, sub, yearly)
+    sla = 0
+    if sub.get("sla"):
+        tier = await db["sla_tiers"].find_one({"_id": sub["sla"]}) or {}
+        sla = int(tier.get("price_yearly" if yearly else "price_monthly", 0) or 0)
+    return {"addons": addons, "retention": retention, "seats": seats, "extra_users": extra_users,
+            "sla": sla, "total": addons + retention + seats + sla}
 
 
 async def complete_renewal(tenant_id: str, viva_transaction_id: str) -> None:
@@ -231,7 +298,10 @@ def _iso(v):
 
 
 def _days_left(sub: dict) -> int | None:
-    """Μέρες μέχρι τη λήξη (trial → trial_ends_at, αλλιώς current_period_end). <0 = ληγμένη."""
+    """Μέρες μέχρι τη λήξη (trial → trial_ends_at, αλλιώς current_period_end). <0 = ληγμένη.
+    Δωρεάν πελάτης → None (δεν λήγει· αλλιώς το banner έδειχνε αρνητικές μέρες)."""
+    if sub.get("complimentary"):
+        return None
     end = (sub.get("trial_ends_at") if (sub.get("status") in ("trial", "trialing")) else None) \
         or sub.get("current_period_end")
     if not end:
@@ -250,7 +320,8 @@ async def status(tenant_id: str) -> dict:
         "payment_status": sub.get("payment_status", "trial"),
         "trial_ends_at": _iso(sub.get("trial_ends_at")),
         "current_period_end": _iso(sub.get("current_period_end")),
-        "amount": int(sub.get("price_per_pharmacy", 0) or 0) + int(sub.get("addons_total", 0) or 0),
+        "amount": (int(sub.get("price_per_pharmacy", 0) or 0) + int(sub.get("addons_total", 0) or 0)
+                   + int(sub.get("sla_price", 0) or 0)),
         "base_amount": int(sub.get("price_per_pharmacy", 0) or 0),
         "addons_total": int(sub.get("addons_total", 0) or 0),
         "currency": sub.get("currency", CURRENCY),
@@ -296,7 +367,7 @@ async def bill_due() -> dict:
         return {"skipped": "no_provider_configured"}
     now = _now()
     charged = failed = suspended = 0
-    cur = db["subscriptions"].find({"$and": [
+    cur = db["subscriptions"].find({"$and": [  # tenant-ok: beat χρεώσεων — όλες οι συνδρομές
         {"status": {"$in": ["trial", "trialing", "active"]}},
         {"current_period_end": {"$lte": now}},
         {"$or": [{"revolut_customer_id": {"$ne": None}}, {"viva_transaction_id": {"$ne": None}}]},
@@ -309,15 +380,18 @@ async def bill_due() -> dict:
                 "current_period_end": _period_end(sub.get("billing_cycle", "monthly"), now),
                 "payment_status": "complimentary"}})
             continue
-        # full recurring amount = base subscription + active à-la-carte add-ons (καθαρά) → +ΦΠΑ
-        net_total = int(sub.get("price_per_pharmacy", 0) or 0) + int(sub.get("addons_total", 0) or 0)
+        # full recurring amount = πακέτο + ό,τι επαναλαμβάνεται (recurring_extras: πρόσθετα, έξτρα
+        # χρήστες, διατήρηση, SLA) — ΦΡΕΣΚΟ, όχι το αποθηκευμένο addons_total (καθαρά) → +ΦΠΑ
+        _rpkg = await db["packages"].find_one({"_id": sub.get("plan")}) if sub.get("plan") else None
+        _ex = await recurring_extras(db, sub, _rpkg, sub.get("billing_cycle") == "yearly")
+        net_total = int(sub.get("price_per_pharmacy", 0) or 0) + _ex["total"]
         if net_total <= 0:
             continue
         from app.services import invoice_service
         tcountry = (await db["tenants"].find_one({"_id": tid}, {"country": 1}) or {}).get("country")
         # flag από το τρέχον πακέτο (single source)· fallback στο αποθηκευμένο της συνδρομής
         _pkg = await db["packages"].find_one({"_id": sub.get("plan")}, {"price_includes_vat": 1}) if sub.get("plan") else None
-        _inc_vat = bool(_pkg.get("price_includes_vat")) if _pkg else bool(sub.get("price_includes_vat"))
+        _inc_vat = includes_vat(_pkg, sub)
         amount = invoice_service.gross_from_price(net_total, _inc_vat, tcountry)
         res = await _charge_recurring(sub, amount, tid)
         if res.get("ok"):
@@ -370,14 +444,14 @@ async def expire_overdue() -> dict:
                "complimentary": {"$ne": True}}
     expired = graced = 0
     # 1) Δοκιμαστικές → λήξη άμεσα (grace 0 by default)
-    async for sub in db["subscriptions"].find({
+    async for sub in db["subscriptions"].find({  # tenant-ok: beat χρεώσεων — όλες οι συνδρομές
             "status": {"$in": ["trial", "trialing"]},
             "current_period_end": {"$lte": now - timedelta(days=trial_grace)}, **no_card}):
         await db["subscriptions"].update_one({"tenant_id": sub["tenant_id"]}, {"$set": {
             "status": "expired", "payment_status": "expired", "expired_at": now}})
         expired += 1
     # 2) Ενεργές → περιθώριο 10μ (past_due, κρατά πρόσβαση) → μετά expired
-    async for sub in db["subscriptions"].find({
+    async for sub in db["subscriptions"].find({  # tenant-ok: beat χρεώσεων — όλες οι συνδρομές
             "status": {"$in": ["active", "past_due"]},
             "current_period_end": {"$lte": now}, **no_card}):
         days_over = (now - sub["current_period_end"]).days
@@ -608,8 +682,9 @@ async def subscription_reminders() -> dict:
     warn = {int(x) for x in (cfg.get("warn_days") or [])}
     max_after = int(cfg.get("expired_max_days") or 30)
     sent = 0
-    async for sub in db["subscriptions"].find({
+    async for sub in db["subscriptions"].find({  # tenant-ok: beat χρεώσεων — όλες οι συνδρομές
             "status": {"$in": ["trial", "trialing", "active", "past_due", "expired"]},
+            "complimentary": {"$ne": True},       # δωρεάν πελάτης: καμία «λήγει/έληξε» ειδοποίηση
             "current_period_end": {"$ne": None}}):
         pend = sub.get("current_period_end")
         if not pend:

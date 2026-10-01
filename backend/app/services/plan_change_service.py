@@ -302,7 +302,7 @@ async def apply_due_downgrades() -> dict:
     db = shared_db()
     now = _now()
     applied = 0
-    cur = db["subscriptions"].find({"pending_change.kind": "downgrade",
+    cur = db["subscriptions"].find({"pending_change.kind": "downgrade",  # tenant-ok: beat/adminpanel — όλες οι συνδρομές
                                     "pending_change.status": "scheduled",
                                     "pending_change.effective_at": {"$lte": now}})
     async for sub in cur:
@@ -317,7 +317,7 @@ async def list_pending_admin() -> list[dict]:
     plus scheduled downgrades & card payments in flight — read-only context)."""
     db = shared_db()
     out: list[dict] = []
-    cur = db["subscriptions"].find({"pending_change": {"$exists": True}})
+    cur = db["subscriptions"].find({"pending_change": {"$exists": True}})  # tenant-ok: beat/adminpanel — όλες οι συνδρομές
     async for sub in cur:
         pend = sub.get("pending_change") or {}
         tenant = await db["tenants"].find_one({"_id": sub["tenant_id"]}, {"name": 1}) or {}
@@ -356,7 +356,7 @@ async def upcoming() -> dict:
     db = shared_db()
     rows: list[dict] = []
     delta_month = 0
-    async for sub in db["subscriptions"].find({"pending_change": {"$exists": True}}):
+    async for sub in db["subscriptions"].find({"pending_change": {"$exists": True}}):  # tenant-ok: beat/adminpanel — όλες οι συνδρομές
         pend = sub.get("pending_change") or {}
         if not (pend.get("kind") and pend.get("status") and pend.get("requested_at")):
             continue                                    # χαλασμένη — βλ. list_pending_admin

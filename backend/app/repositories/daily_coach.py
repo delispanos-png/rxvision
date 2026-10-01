@@ -27,6 +27,8 @@ from bson.errors import InvalidId
 from app.repositories.base import BaseRepository
 from app.services import recoverable
 from app.services import coach_voice as V
+from app.services import dispensed
+from app.services import repeat_windows as rw
 from app.services.stats_exclusion import COUNTABLE_EXEC
 from app.utils.masking import mask_amka, mask_name, pseudo_email, pseudo_phone
 
@@ -225,16 +227,22 @@ class DailyCoachRepository(BaseRepository):
         return {r["_id"]: int(r.get("max_pos") or 0) for r in rows}
 
     async def _sig_repeat_expiring(self, now: datetime) -> list[dict]:
-        """Επαναλαμβανόμενη συνταγή με δόσεις που δεν πάρθηκαν και λήγει. Χάνει ο ασθενής — και εσύ."""
+        """Η ΕΠΟΜΕΝΗ εκτέλεση μιας επαναλαμβανόμενης έχει ανοίξει, δεν έχει γίνει, και η προθεσμία
+        της (~30 ημ. από το άνοιγμα) λήγει μέσα σε 5 ημέρες. Αν περάσει, χάνεται ΑΥΤΗ η εκτέλεση.
+
+        ⚠ Πριν (έως 01/10/2026) διάβαζε το «ΕΩΣ» της εκτέλεσης που ΗΔΗ έγινε. Εκείνο αφορά τη δική
+        της θέση και πέφτει περίπου όταν ΑΝΟΙΓΕΙ η επόμενη — ο Σύμβουλος έλεγε «λήγει, χάνει Ν
+        δόσεις» ακριβώς τη μέρα που η επόμενη γινόταν διαθέσιμη. Κανόνες: services/repeat_windows.py."""
+        lo = now - timedelta(days=rw.DEADLINE_AFTER_OPEN)          # άνοιγμα ⇒ λήξη ≥ σήμερα
         rows = [e async for e in self._db["prescription_executions"].find(
-            {"tenant_id": self.tenant_id,
+            {"tenant_id": self.tenant_id, **COUNTABLE_EXEC,
              "$expr": {"$lt": ["$repeat_current", "$repeat_total"]},
-             "valid_until": {"$gte": now, "$lt": now + timedelta(days=6)}},
-            {"patient_ref": 1, "valid_until": 1, "repeat_current": 1, "repeat_total": 1,
-             "repeat_root": 1, "amount_total": 1, "external_id": 1}).sort("valid_until", 1).limit(200)]
+             "next_open_date": {"$gte": lo, "$lt": lo + timedelta(days=6)}},
+            {"patient_ref": 1, "next_open_date": 1, "repeat_current": 1, "repeat_total": 1,
+             "repeat_root": 1, "amount_total": 1, "external_id": 1}).sort("next_open_date", 1).limit(400)]
         if not rows:
             return []
-        # κράτα την ΤΕΛΕΥΤΑΙΑ σειρά ανά συνταγή (repeat_root) — μία γραμμή ανά συνταγή
+        # μία γραμμή ανά αλυσίδα: η πιο προχωρημένη θέση που βρήκαμε
         by_root: dict = {}
         for r in rows:
             k = r.get("repeat_root") or str(r["_id"])
@@ -242,26 +250,22 @@ class DailyCoachRepository(BaseRepository):
             if not cur or (r.get("repeat_current") or 0) > (cur.get("repeat_current") or 0):
                 by_root[k] = r
         info = await self._patient_info([r["patient_ref"] for r in by_root.values()])
-        # Πόσο έχει προχωρήσει ΠΡΑΓΜΑΤΙΚΑ κάθε αλυσίδα (όχι μόνο όσες λήγουν τώρα).
         progress = await self._chain_progress([r.get("repeat_root") for r in by_root.values()])
         out = []
         for r in by_root.values():
             pos = int(r.get("repeat_current") or 0)
-            done = max(pos, progress.get(r.get("repeat_root"), 0))
-            # Υπάρχει ΝΕΟΤΕΡΗ συνταγή της αλυσίδας ⇒ ο ασθενής πήρε τη συνέχειά του και αυτή
-            # εδώ απλώς έληξε φυσιολογικά. Δεν είναι απώλεια — δεν βγάζουμε συναγερμό.
-            if done > pos:
+            # η επόμενη θέση έχει ήδη εκτελεστεί εδώ ⇒ τίποτα δεν λήγει
+            if progress.get(r.get("repeat_root"), 0) > pos:
                 continue
-            left = int(r.get("repeat_total") or 0) - done
-            if left <= 0:
-                continue
-            days_left = max(0, (r["valid_until"] - now).days)
+            opens = r["next_open_date"]
+            days_left = rw.days_until(rw.deadline(opens), now)
             who = self._who(info.get(r.get("patient_ref")), r.get("patient_ref"))
             out.append({
                 "signal": "repeat_expiring", "subject": r.get("repeat_root") or str(r["_id"]),
                 "name": who.get("name"), "sex": who.get("sex"), "who": who, "since": None,
-                "money_cents": int(r.get("amount_total") or 0) * left,
-                "extra": {"left": left, "days_left": days_left},
+                "money_cents": int(r.get("amount_total") or 0),        # ΜΙΑ εκτέλεση, όχι όλες
+                "extra": {"position": pos + 1, "total": int(r.get("repeat_total") or 0),
+                          "opens": opens, "days_left": days_left},
                 "severity": 3 if days_left <= 2 else 2,
                 # ΟΧΙ το repeat_root — η καρτέλα συνταγής θέλει external_id (barcode:σειρά)
                 "rx": r.get("external_id"),
@@ -342,7 +346,7 @@ class DailyCoachRepository(BaseRepository):
         """Πέρασαν από το ταμείο και δεν ξέρεις πώς να τους βρεις. Δεν θα τους ξαναδείς με δική σου πρωτοβουλία."""
         since = now - timedelta(days=3)
         rows = await self._db["prescription_executions"].aggregate([
-            {"$match": {"tenant_id": self.tenant_id, "executed_at": {"$gte": since}}},
+            {"$match": {"tenant_id": self.tenant_id, **COUNTABLE_EXEC, "executed_at": {"$gte": since}}},
             {"$group": {"_id": "$patient_ref", "value": {"$sum": "$amount_total"},
                         "last": {"$max": "$executed_at"}}},
         ]).to_list(length=None)
@@ -442,15 +446,15 @@ class DailyCoachRepository(BaseRepository):
         inactive = {c["_id"] async for c in self._db["patient_contacts"].find(
             {"tenant_id": self.tenant_id, "_id": {"$in": list(pats)}, "active": False}, {"_id": 1})}
         cand = [(pid, p) for pid, p in pats.items() if pid not in inactive]
-        # ΔΙΚΛΕΙΔΑ: «σταμάτησε να έρχεται» ΜΟΝΟ αν όντως δεν εκτέλεσε τίποτα εδώ από την αναμενόμενη
-        # ημερομηνία (−7 ημ. ανοχή). Μια πρόβλεψη μπορεί να έχει μείνει ανοιχτή (άλλη αλυσίδα, νέα
+        # ΔΙΚΛΕΙΔΑ: «σταμάτησε να έρχεται» ΜΟΝΟ αν όντως δεν εκτέλεσε τίποτα εδώ από τη στιγμή που
+        # μπορούσε (το άνοιγμα της θέσης — services/repeat_windows.py). Μια πρόβλεψη μπορεί να έχει μείνει ανοιχτή (άλλη αλυσίδα, νέα
         # συνταγή από άλλον γιατρό) — η ΠΡΑΓΜΑΤΙΚΗ εκτέλεση είναι η αλήθεια. 29/09/2026: σε ένα
         # φαρμακείο 326 από 379 «χαμένους» είχαν έρθει κανονικά.
         came = set()
         for pid, _ in cand:
             if await self._db["prescription_executions"].find_one(
                     {"tenant_id": self.tenant_id, "patient_ref": pid, **COUNTABLE_EXEC,
-                     "executed_at": {"$gte": by_pat[pid]["expected_open_date"] - timedelta(days=7)}},
+                     "executed_at": {"$gte": by_pat[pid]["expected_open_date"]}},
                     {"_id": 1}):
                 came.add(pid)
         cand = [(pid, p) for pid, p in cand if pid not in came]
@@ -481,11 +485,11 @@ class DailyCoachRepository(BaseRepository):
 
     async def _totals(self, start: datetime, end: datetime) -> dict:
         """Τζίρος, κόστος και πλήθος εκτελέσεων μιας περιόδου."""
-        agg = [{"$match": {"tenant_id": self.tenant_id, "amount_total": {"$gt": 0},
+        agg = [{"$match": {"tenant_id": self.tenant_id, **COUNTABLE_EXEC, "amount_total": {"$gt": 0},
                            "executed_at": {"$gte": start, "$lt": end}}},
                {"$group": {"_id": None, "rev": {"$sum": "$amount_total"},
                            "cost": {"$sum": "$wholesale_cost"}, "n": {"$sum": 1}}}]
-        async for r in self._db["prescription_executions"].aggregate(agg):
+        async for r in self._db["prescription_executions"].aggregate(agg):  # tenant-ok: agg[0] = $match tenant_id
             return {"rev": int(r.get("rev") or 0), "cost": int(r.get("cost") or 0),
                     "n": int(r.get("n") or 0)}
         return {"rev": 0, "cost": 0, "n": 0}
@@ -853,13 +857,9 @@ class DailyCoachRepository(BaseRepository):
         if sig in BUSINESS_SIGNALS:
             return self._speak_business(f, tone)
         sex = f.get("sex")
-        # Η ΗΔΥΚΑ δίνει «ΕΠΩΝΥΜΟ ΟΝΟΜΑ» (το μικρό είναι τελευταίο)· η πύλη δίνει ό,τι έγραψε ο
-        # ίδιος ο πελάτης. Εκεί ΔΕΝ μαντεύουμε — λέμε το όνομα όπως το έδωσε.
-        who = V.first_name(f.get("name")) if f.get("hdika_name", True) else V.person(f.get("name"))
         art = V.the(sex)                        # «Ο» / «Η»
-        subj = f"{art} {who}"                   # ονομαστική — δουλεύει σε κάθε πρόταση
         # Στον ΤΙΤΛΟ μπαίνει ΟΛΟΚΛΗΡΟ το ονοματεπώνυμο: «ο ΧΑΡΑΛΑΜΠΟΣ» δεν ταυτοποιεί κανέναν
-        # σε φαρμακείο με χιλιάδες πελάτες. Στο κείμενο μένει το μικρό, για να διαβάζεται.
+        # σε φαρμακείο με χιλιάδες πελάτες. Στο κείμενο μιλάμε με αντωνυμίες (του/της).
         subj_full = f"{art} {V.person(f.get('name'))}"
         ago = V.ago_phrase(_days_between(f.get("since"), _now()))
         ex = f.get("extra") or {}
@@ -916,21 +916,21 @@ class DailyCoachRepository(BaseRepository):
             action = f"Πάρ' {him} τηλέφωνο"
 
         elif sig == "repeat_expiring":
-            left, dl = ex.get("left", 1), ex.get("days_left", 0)
+            pos, tot, dl = ex.get("position", 2), ex.get("total", 0), ex.get("days_left", 0)
             when = ("σήμερα" if dl == 0 else "αύριο" if dl == 1
                     else f"σε {V.count_word(dl, feminine=True)} μέρες")
-            title = f"{subj_full} χάνει {V.doses(left)} {when}"
+            opened = ex.get("opens")
+            opened_txt = f" άνοιξε στις {opened.strftime('%d/%m')} και" if opened else ""
+            title = f"{subj_full}: η {pos}η εκτέλεση λήγει {when}"
             # ⚠ ΔΙΑΦΟΡΑ ΑΠΟ ΤΟ «unexecuted»: εδώ ΔΕΝ υπάρχει κλείδωμα. Οι επόμενες εκτελέσεις
             # μιας επαναλαμβανόμενης είναι ΕΛΕΥΘΕΡΕΣ — μπορεί να τις κάνει σε οποιοδήποτε
             # φαρμακείο. Το λέμε ρητά, ώστε να μη συγχέονται τα δύο σήματα.
-            body = (f"Η επαναλαμβανόμενη συνταγή {gen} λήγει {when} και "
-                    f"{'μένει' if left == 1 else 'μένουν'} {V.doses(left)} αχρησιμοποίητ"
-                    f"{'η' if left == 1 else 'ες'}. Αν δεν προλάβει, θα χρειαστεί να ξαναπάει "
-                    f"στον γιατρό για να {'την' if left == 1 else 'τις'} ξαναγράψει — και "
-                    f"{money} δεν θα εκτελεστούν ποτέ, από κανέναν. "
-                    f"{'Αυτή την εκτέλεση μπορεί να την κάνει' if left == 1 else 'Αυτές τις εκτελέσεις μπορεί να τις κάνει'} "
-                    f"σε όποιο φαρμακείο θέλει — γι' αυτό μετράει ποιος θα {gen} το θυμίσει πρώτος. "
-                    f"Μια υπενθύμιση σήμερα το λύνει.")
+            # Χάνεται ΜΟΝΟ αυτή η θέση: οι επόμενες ανοίγουν στην ώρα τους από την αρχή της αλυσίδας.
+            body = (f"Η {pos}η από τις {tot} εκτελέσεις της επαναλαμβανόμενης συνταγής {gen}"
+                    f"{opened_txt} λήγει {when}, χωρίς να έχει γίνει. Αν δεν την εκτελέσει ως τότε, "
+                    f"χάνεται αυτή η εκτέλεση{f' — {money}' if money else ''}. "
+                    f"Μπορεί να την κάνει σε όποιο φαρμακείο θέλει — γι' αυτό μετράει ποιος θα "
+                    f"{gen} το θυμίσει πρώτος. Μια υπενθύμιση σήμερα το λύνει.")
             action = f"Ειδοποίησέ {him} σήμερα"
 
         elif sig == "idle_request":
@@ -1369,27 +1369,43 @@ class DailyCoachRepository(BaseRepository):
         now = _now()
         start = (now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
                  - timedelta(days=31 * (months - 1))).replace(day=1)
-        mfmt = {"$dateToString": {"format": "%Y-%m", "date": "$valid_until",
-                                  "timezone": "Europe/Athens"}}
-        # Το `repeat_current` είναι ΘΕΣΗ στην αλυσίδα, όχι πλήθος εκτελέσεων (βλ. _chain_progress).
-        # Μετράμε μία φορά ανά ΑΛΥΣΙΔΑ, με βάση την πιο προχωρημένη θέση που εκτελέστηκε —
-        # αλλιώς κάθε ενδιάμεση συνταγή που «λήγει» μετριόταν ως χαμένη, ενώ η αλυσίδα συνεχιζόταν.
-        repeats = await self._db["prescription_executions"].aggregate([
-            {"$match": {"tenant_id": self.tenant_id,
-                        "repeat_total": {"$gt": 1},
-                        "valid_until": {"$gte": start, "$lt": now}}},
-            {"$group": {"_id": {"root": {"$ifNull": ["$repeat_root", "$external_id"]}},
-                        "month": {"$last": mfmt},
-                        "total": {"$max": "$repeat_total"},
-                        "done": {"$max": "$repeat_current"},
-                        "amount": {"$last": "$amount_total"},
-                        "wholesale": {"$last": "$wholesale_cost"}}},
-            {"$set": {"left": {"$subtract": ["$total", "$done"]}}},
-            {"$match": {"left": {"$gt": 0}}},
-            {"$group": {"_id": "$month", "n": {"$sum": 1},
-                        "value": {"$sum": {"$multiply": ["$amount", "$left"]}},
-                        "cost": {"$sum": {"$multiply": ["$wholesale", "$left"]}}}},
-        ]).to_list(length=None)
+        # Χαμένη επανάληψη = θέση ΜΕΤΑ την πιο προχωρημένη που εκτελέστηκε, της οποίας το παράθυρο
+        # έκλεισε (άνοιγμα + 44 ημ.) μέσα στην περίοδο — μετρημένη στον μήνα που χάθηκε, μία φορά
+        # ανά θέση. Ίδιος ορισμός θέσεων με Συμμόρφωση/Recall (`chain_positions`).
+        # Πριν (έως 01/10/2026): όλες οι υπόλοιπες θέσεις «χάνονταν» μαζί τη μέρα του «ΕΩΣ» της
+        # τελευταίας εκτέλεσης — δηλαδή τη μέρα που ΑΝΟΙΓΕ η επόμενη.
+        from app.repositories.patient_intelligence import chain_positions
+        chains = await self._db["prescription_executions"].aggregate([
+            {"$match": {"tenant_id": self.tenant_id, **COUNTABLE_EXEC,
+                        "repeat_total": {"$gt": 1}, "repeat_root": {"$nin": [None, ""]},
+                        "valid_from": {"$gte": start - timedelta(days=18 * 60)}}},
+            {"$group": {"_id": "$repeat_root",
+                        "exs": {"$push": {"repeat_total": "$repeat_total",
+                                          "repeat_current": "$repeat_current",
+                                          "valid_from": "$valid_from", "executed_at": "$executed_at",
+                                          "amount_total": "$amount_total",
+                                          "details": {"repeat_period_days": "$details.repeat_period_days",
+                                                      "interval_months": "$details.interval_months"}}},
+                        "wholesale": {"$avg": "$wholesale_cost"}}},
+        ], allowDiskUse=True).to_list(length=None)
+        acc: dict = {}
+        for c in chains:
+            cp = chain_positions(c["exs"], now)
+            if not cp:
+                continue
+            furthest = max(int(e.get("repeat_current") or 1) for e in c["exs"])
+            for w in cp["windows"]:
+                if w["status"] != "missed" or w["k"] <= furthest:
+                    continue
+                closed = rw.lost_after(w["due"])
+                if not (start <= closed < now):
+                    continue
+                m = closed.astimezone(ATHENS).strftime("%Y-%m")
+                r = acc.setdefault(m, {"_id": m, "n": 0, "value": 0, "cost": 0})
+                r["n"] += 1
+                r["value"] += int(cp["value_each"])
+                r["cost"] += int(c.get("wholesale") or 0)
+        repeats = list(acc.values())
         items = await self._db["prescription_items"].aggregate([
             {"$match": {"tenant_id": self.tenant_id, "is_executed": False,
                         "executed_at": {"$gte": start}}},
@@ -1397,6 +1413,16 @@ class DailyCoachRepository(BaseRepository):
             {"$set": {"_left": {"$max": [0, {"$subtract": [
                 "$quantity", {"$ifNull": ["$executed_qty", 0]}]}]}}},
             {"$match": {"_left": {"$gt": 0}}},
+            # ΜΙΑ φορά ανά ΣΥΝΤΑΓΗ: κάθε εγγραφή `:N` κουβαλά το ίδιο υπόλοιπο (×N πριν)
+            {"$lookup": {"from": "prescription_executions", "localField": "execution_id",
+                         "foreignField": "_id", "as": "_ex",
+                         "pipeline": [{"$project": {"external_id": 1, "details.execution_case": 1}}]}},
+            # όχι όσα έκλεισε ο ασθενής (2) ή η ασυμφωνία δοσολογίας (3): δεν είναι χαμένα
+            {"$match": {"_ex.details.execution_case": {"$nin": ["2", "3", 2, 3]}}},
+            {"$group": {"_id": {"rx": dispensed.rx_root_expr({"$first": "$_ex.external_id"}),
+                                "p": "$product_id"},
+                        "executed_at": {"$max": "$executed_at"}, "_left": {"$max": "$_left"},
+                        "retail_price": {"$max": "$retail_price"}, "margin": {"$max": "$margin"}}},
             {"$group": {"_id": {"$dateToString": {"format": "%Y-%m", "date": "$executed_at",
                                                   "timezone": "Europe/Athens"}},
                         "n": {"$sum": 1},
@@ -1614,29 +1640,28 @@ class DailyCoachRepository(BaseRepository):
                         "money_cents": miss.get("retail"),
                         "href": f"/prescriptions/{quote(str(ex.get('external_id') or ''))}"})
 
-        # 2) επανάληψη που λήγει
+        # 2) η ΕΠΟΜΕΝΗ εκτέλεση επαναλαμβανόμενης άνοιξε και λήγει σε ≤15 ημέρες χωρίς να έχει γίνει
+        #    (όχι το «ΕΩΣ» της εκτέλεσης που έγινε — βλ. _sig_repeat_expiring / repeat_windows).
+        lo = now - timedelta(days=rw.DEADLINE_AFTER_OPEN)
         rep = await self._db["prescription_executions"].find_one(
-            {"tenant_id": self.tenant_id, "patient_ref": pid,
+            {"tenant_id": self.tenant_id, "patient_ref": pid, **COUNTABLE_EXEC,
              "$expr": {"$lt": ["$repeat_current", "$repeat_total"]},
-             "valid_until": {"$gte": now, "$lt": now + timedelta(days=15)}},
-            {"valid_until": 1, "repeat_current": 1, "repeat_total": 1, "external_id": 1,
+             "next_open_date": {"$gte": lo, "$lt": lo + timedelta(days=15)}},
+            {"next_open_date": 1, "repeat_current": 1, "repeat_total": 1, "external_id": 1,
              "repeat_root": 1},
-            sort=[("valid_until", 1)])
+            sort=[("next_open_date", 1), ("repeat_current", -1)])
         if rep:
             _prog = await self._chain_progress([rep.get("repeat_root")])
             _pos = int(rep.get("repeat_current") or 0)
-            _done = max(_pos, _prog.get(rep.get("repeat_root"), 0))
-            # νεότερη συνταγή στην αλυσίδα ⇒ δεν χάνεται τίποτα (βλ. _chain_progress)
-            left = 0 if _done > _pos else int(rep.get("repeat_total") or 0) - _done
-            dl = max(0, (rep["valid_until"] - now).days)
-            # left <= 0 ⇒ η αλυσίδα έχει ήδη προχωρήσει πέρα από αυτή τη θέση· δεν χάνεται τίποτα.
-            if left > 0:
+            # η επόμενη θέση έχει ήδη εκτελεστεί ⇒ τίποτα δεν λήγει
+            if _prog.get(rep.get("repeat_root"), 0) <= _pos:
+                dl = rw.days_until(rw.deadline(rep["next_open_date"]), now)
                 notes.append({
                     "kind": "repeat_expiring", "tone": "warn" if dl <= 3 else "info",
-                    "text": (f"Η επαναλαμβανόμενη συνταγή {gen} λήγει "
-                             f"{'σήμερα' if dl == 0 else 'αύριο' if dl == 1 else f'σε {dl} μέρες'} "
-                             f"με {V.doses(left)} αχρησιμοποίητ{'η' if left == 1 else 'ες'}. "
-                             f"Αν δεν την εκτελέσει τώρα, θα ξαναπάει στον γιατρό."),
+                    "text": (f"Η {_pos + 1}η εκτέλεση της επαναλαμβανόμενης συνταγής {gen} "
+                             f"είναι ανοιχτή από {rep['next_open_date'].strftime('%d/%m')} και λήγει "
+                             f"{'σήμερα' if dl == 0 else 'αύριο' if dl == 1 else f'σε {dl} μέρες'}. "
+                             f"Αν δεν την εκτελέσει ως τότε, αυτή η εκτέλεση χάνεται."),
                     "href": f"/prescriptions/{quote(str(rep.get('external_id') or ''))}"})
 
         # 3) εμβόλιο
@@ -1781,7 +1806,7 @@ class CoachSchool(BaseRepository):
         total = await self._db["patients_anonymized"].count_documents(
             {"tenant_id": self.tenant_id, "lifecycle": {"$in": ["active", "new"]}})
         agg = await self.aggregate([
-            {"$match": {"executed_at": {"$gte": _now() - timedelta(days=365)}}},
+            {"$match": {**COUNTABLE_EXEC, "executed_at": {"$gte": _now() - timedelta(days=365)}}},
             {"$group": {"_id": None, "v": {"$avg": "$amount_total"}}}])
         avg = int((agg[0].get("v") or 0) if agg else 0)
         return total, avg
@@ -1983,7 +2008,7 @@ class CoachSchool(BaseRepository):
     # ── 5. Πιστότητα ────────────────────────────────────────────────────────────────────
     async def _prop_loyalty(self, now: datetime, total: int, avg: int) -> dict | None:
         res = await self.aggregate([
-            {"$match": {"executed_at": {"$gte": now - timedelta(days=365)}}},
+            {"$match": {**COUNTABLE_EXEC, "executed_at": {"$gte": now - timedelta(days=365)}}},
             {"$group": {"_id": "$patient_ref", "n": {"$sum": 1},
                         "val": {"$sum": "$amount_total"}}},
             {"$match": {"n": {"$gte": 6}}}])

@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/apiClient";
+import { startRenewal } from "@/lib/renewal";
 import { useT } from "@/store/prefStore";
 import { Modal } from "@/components/ui/Modal";
 import { fmtDate } from "@/lib/formatters";
@@ -80,9 +81,9 @@ function RenewModal({ current, onClose }: { current?: Status; onClose: () => voi
     if (!code) { setErr(t("Επίλεξε πακέτο.", "Select a package.")); return; }
     setBusy(true); setErr(null);
     try {
-      const r = await api<{ checkout_url?: string }>("/billing/renew-now", {
-        method: "POST", body: JSON.stringify({ package_code: code, billing_cycle: effCycle }),
-      });
+      const r = await startRenewal<{ checkout_url?: string }>("/billing/renew-now",
+        { package_code: code, billing_cycle: effCycle }, t);
+      if (!r) return;                                   // ο πελάτης δεν δέχτηκε την ανάλυση
       if (r.checkout_url) { window.location.href = r.checkout_url; return; }
       setErr(t("Δεν ξεκίνησε η πληρωμή. Δοκίμασε ξανά.", "Payment didn't start. Please try again."));
     } catch { setErr(t("Σφάλμα — δοκίμασε ξανά.", "Error — please try again.")); } finally { setBusy(false); }

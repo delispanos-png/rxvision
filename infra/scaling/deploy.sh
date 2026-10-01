@@ -29,6 +29,23 @@ SERVICES="${SERVICES:-api web worker}"
 
 cd "$ROOT"
 
+# ▶ 0/4 ΦΡΑΓΜΟΣ ΠΟΙΟΤΗΤΑΣ — τα ανεβάσματα γίνονται ΑΠΟ ΕΔΩ, όχι από το CI (που τρέχει μόνο στο push),
+# οπότε ο έλεγχος πρέπει να ζει εδώ. Lint πραγματικών λαθών + απομόνωση φαρμακείων + όλα τα τεστ.
+# Κόκκινο → ΔΕΝ ανεβαίνει τίποτα. Έκτακτη ανάγκη (π.χ. διόρθωση σε κατάρρευση): SKIP_GATE=1.
+# Τρέχει στο ΥΠΑΡΧΟΝ image με τον ΝΕΟ κώδικα προσαρτημένο (μόνο ανάγνωση) — δεν αγγίζει παραγωγή.
+if [ "${SKIP_GATE:-0}" != "1" ]; then
+  echo "▶ 0/4  Φραγμός ποιότητας (lint · απομόνωση · τεστ)…"
+  python3 scripts/ci/check_tenant_isolation.py || { echo "✖ Απομόνωση φαρμακείων: ΣΤΑΜΑΤΑ το ανέβασμα."; exit 1; }
+  if ! docker run --rm --user root --entrypoint sh -e PYTHONDONTWRITEBYTECODE=1 \
+        -v "$ROOT/backend:/src:ro" -v "$ROOT/docs:/docs:ro" -v "$ROOT/frontend:/frontend:ro" -w /src \
+        rxvision-api:latest -c 'pip -q install ruff mongomock-motor pytest pytest-asyncio >/dev/null 2>&1 \
+          && ruff check --no-cache --select F,E9 app tests \
+          && { python -m pytest -q -p no:cacheprovider > /tmp/pytest.log 2>&1; rc=$?; tail -15 /tmp/pytest.log; exit $rc; }'; then
+    echo "✖ Ο φραγμός απέτυχε — το ανέβασμα ΣΤΑΜΑΤΑ. (Έκτακτη ανάγκη: SKIP_GATE=1 bash infra/scaling/deploy.sh)"
+    exit 1
+  fi
+fi
+
 # ΜΙΑ ΠΗΓΗ ΑΛΗΘΕΙΑΣ ΓΙΑ ΤΟ ΕΓΧΕΙΡΙΔΙΟ: το γράφουμε στο docs/USER_MANUAL.md και το διαβάζει ο
 # πελάτης στη σελίδα /manual. Το `docs/` είναι ΕΚΤΟΣ του build context του web (που είναι
 # ./frontend), γι' αυτό αντιγράφεται εδώ — ΠΡΙΝ το build, αλλιώς ανεβαίνει παλιά έκδοση.

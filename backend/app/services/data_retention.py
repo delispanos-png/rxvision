@@ -170,7 +170,7 @@ async def purge_old(db=None, *, dry_run: bool = False) -> dict:
         cutoff = cutoff_for(months, now)
         q = {"tenant_id": tid, "executed_at": {"$lt": cutoff}}
         n_exec = await db["prescription_executions"].count_documents(q)   # tenant-ok: scoped by tenant_id
-        n_item = await db["prescription_items"].count_documents(q)
+        n_item = await db["prescription_items"].count_documents(q)  # tenant-ok: q έχει tenant_id
         guarded = False
         if not dry_run and (n_exec or n_item):
             total_ex = await db["prescription_executions"].count_documents({"tenant_id": tid})

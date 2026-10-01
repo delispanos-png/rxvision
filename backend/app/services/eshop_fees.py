@@ -11,7 +11,7 @@ Config: `platform_settings._id="eshop_fees"`. Per-tenant override/exempt: στη
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 from app.core.db import shared_db
 
@@ -167,7 +167,7 @@ async def admin_overview() -> list[dict]:
     from app.services.auth_service import resolve_modules, tenant_has
     from app.services.billing_service import effective_status
     out = []
-    async for sub in db["subscriptions"].find({}):
+    async for sub in db["subscriptions"].find({}):  # tenant-ok: beat χρεώσεων — όλες οι συνδρομές
         tid = sub["tenant_id"]
         if effective_status(sub) != "active":       # ΜΟΝΟ κατάσταση «Ενεργός» — όχι trial/ληγμένη/αναστολή
             continue

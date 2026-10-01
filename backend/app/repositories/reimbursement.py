@@ -18,6 +18,8 @@ from datetime import datetime, timezone
 from bson import ObjectId
 
 from app.repositories.base import BaseRepository, jsonsafe
+from app.services import dispensed
+from app.services import prescription_checks as pc_checks
 from app.services.reimbursement_finance import deductions
 from app.utils.format import eur_gr
 
@@ -74,6 +76,17 @@ _KYYAP_FIRST_PHASE = {"$cond": [
     {"$in": [{"$arrayElemAt": [{"$split": ["$external_id", ":"]}, 1]}, [None, "1"]]},
     {"$ifNull": ["$details.kyyap_covered", 0]}, 0]}
 _KYYAP_EFFECTIVE = {"$ifNull": ["$details.kyyap_share", _KYYAP_FIRST_PHASE]}
+
+
+def kyyap_effective(external_id: str | None, details: dict | None) -> int:
+    """ΙΔΙΟΣ κανόνας με το `_KYYAP_EFFECTIVE`, για κώδικα Python (Ημερήσια συμφωνία, Φυσικός
+    έλεγχος). Πριν: η ημερήσια μετρούσε ΟΛΟ το ΚΥΥΑΠ σε ΚΑΘΕ φάση (ΕΤΥΑΠ ×N) και δεν το αφαιρούσε από
+    το ΕΟΠΥΥ· ο Φυσικός έλεγχος το αφαιρούσε όλο από τη φάση 1 — διαφορετικά από το κλείσιμο."""
+    d = details or {}
+    if d.get("kyyap_share") is not None:
+        return int(d["kyyap_share"] or 0)
+    phase = str(external_id or "").partition(":")[2]
+    return int(d.get("kyyap_covered") or 0) if phase in ("", "1") else 0
 
 
 def _band(score: int) -> str:
@@ -829,6 +842,7 @@ class ReimbursementRepository(BaseRepository):
                         "claim": {"$sum": "$amount_claimed"}, "retail": {"$sum": "$amount_total"},
                         "patient": {"$sum": "$patient_share"},
                         "kyyap": {"$max": {"$ifNull": ["$details.kyyap_covered", 0]}},
+                        "kyyap_share": {"$max": "$details.kyyap_share"},
                         "fund_id": {"$first": "$fund_id"},
                         "vac": {"$first": {"$ifNull": ["$details.vaccines", False]}},
                         "intangible": {"$first": {"$ifNull": ["$details.intangible", False]}},
@@ -836,7 +850,6 @@ class ReimbursementRepository(BaseRepository):
                         "n3816": {"$first": {"$ifNull": ["$details.n3816", False]}},
                         "supp": {"$first": {"$ifNull": ["$details.supplementary_cover", False]}},
                         "full_part": {"$first": {"$ifNull": ["$details.full_participation", False]}},
-                        "dose": {"$max": {"$ifNull": ["$needs_dose_check", False]}},
                         "opinion": {"$first": {"$ifNull": ["$details.opinion", False]}},
                         "desens": {"$first": {"$ifNull": ["$details.desensitization", False]}},
                         "narcotic": {"$first": {"$ifNull": ["$details.narcotic", False]}},
@@ -851,13 +864,10 @@ class ReimbursementRepository(BaseRepository):
         doc_map: dict = {}     # execution _id → row (για 2ο πέρασμα: ταινίες + σημειώσεις ΗΔΥΚΑ)
         for r in rows:
             # ΚΑΝΟΝΙΚΗ ομαδοποίηση εδώ· το «Αμιγώς 100%» ΔΕΝ κρίνεται από claim==0 (αναξιόπιστο — π.χ.
-            # 25% συμμετοχή μπορεί να έχει claim=0) αλλά από τη ΣΥΜΜΕΤΟΧΗ ΑΝΑ ΦΑΡΜΑΚΟ: «Αμιγώς 100%» =
-            # ΟΛΑ τα φάρμακα με participation_pct==100· αν έστω ΕΝΑ <100 → κατατίθεται στον ΕΟΠΥΥ.
-            # Υπολογίζεται στο 2ο πέρασμα (per-item participation_pct) & εφαρμόζεται μετά.
+            # 25% συμμετοχή μπορεί να έχει claim=0) αλλά από τη σημαία της ΗΔΥΚΑ· εφαρμόζεται στο 2ο πέρασμα.
             is_100 = False
             glabel, is_eo = self._grp_label(meta, r["fund_id"], bool(r.get("vac")))
             is_vac = is_eo and bool(r.get("vac"))
-            ec = r.get("exec_count")
             ext = str(r["_id"])
             root = ext.split(":")[0]                       # 13ψήφιο barcode συνταγής
             exno = ext.split(":")[1] if ":" in ext else None  # αριθμός εκτέλεσης/φάσης
@@ -871,7 +881,9 @@ class ReimbursementRepository(BaseRepository):
             # ΤΟ ΚΥΥΑΠ ΕΙΝΑΙ ΑΝΑ ΣΥΝΤΑΓΗ (visit), γραμμένο σε ΚΑΘΕ φάση/εκτέλεση → αποδίδεται ΜΟΝΟ στη
             # ΦΑΣΗ 1 (μία φορά). Αλλιώς σε μερική εκτέλεση (π.χ. φάση 2 με claim 3,29) αφαιρούσε ΟΛΟ το
             # ΚΥΥΑΠ (19,18) → αρνητικό ΕΟΠΥΥ −15,89 και διπλομέτρηση ΕΤΥΑΠ.
-            _kyyap = int(r.get("kyyap") or 0) if first_phase else 0
+            # ίδιο μερίδιο ΚΥΥΑΠ με το μηνιαίο κλείσιμο (kyyap_share ανά φάση· αλλιώς όλο στη φάση 1)
+            _kyyap = kyyap_effective(ext, {"kyyap_share": r.get("kyyap_share"),
+                                           "kyyap_covered": r.get("kyyap")})
             _net_claim = max(0, int(r.get("claim") or 0) - _kyyap)
             allrows.append({
                 "barcode": root, "external_id": ext, "exec_no": exno,
@@ -902,33 +914,22 @@ class ReimbursementRepository(BaseRepository):
                 {"$or": [{"info_popup": {"$ne": None}}, {"pharmacist_popup": {"$ne": None}},
                          {"withdrawn": True}, {"limited_execution": True}, {"hospital_medicine": True},
                          {"ifet": True}, {"is_heparin": True}]}, {"_id": 1})}
-            dose = {str(d["_id"]) async for d in self._db["medicine_catalog"].find(  # σκευάσματα με οπτικό έλεγχο δοσολογίας
-                {"$or": [
-                    {"needs_dose_check": True},
-                    # Αμπούλες/φιαλίδια — πόσιμες (VIOFER PS.OR.SOL) ή ΕΝΕΣΙΜΕΣ (BRIKLIN INJ.SOL): έλεγχος
-                    # δόσης ΑΝΑ αμπούλα ακόμη κι αν omt=="E" — ίδια λογική με prescription_checks (root fix).
-                    {"$and": [{"form_code": {"$regex": r"INJ|OR\.SO|OR\.SUSP|SUSP|POS", "$options": "i"}},
-                              {"package_form": {"$regex": "VIAL|AMP|ΦΙΑΛ", "$options": "i"}},
-                              {"form_code": {"$not": {"$regex": "NEB|INHAL", "$options": "i"}}}]}]},
-                {"_id": 1})}
-            # Πολυδοσικοί περιέκτες (σταγόνες/σιρόπι σε μπουκάλι — π.χ. SIMBRINZA EY.DRO.SUS): 1 τεμάχιο =
-            # πολλές δόσεις → έλεγχος δοσολογίας ΑΚΟΜΗ κι αν το κουπόνι είναι ΕΝΑ (δεν ισχύει το >1).
-            multidose = {str(d["_id"]) async for d in self._db["medicine_catalog"].find(
-                {"form_code": {"$regex": r"DRO|DROP|ΣΤΑΓ|SYR|OR\.SO|OR\.SUSP", "$options": "i"},
-                 "$nor": [{"form_code": {"$regex": "INJ", "$options": "i"}}]}, {"_id": 1})}
-            async for it in self._db["prescription_items"].find(
+            its = [it async for it in self._db["prescription_items"].find(
                     {"tenant_id": self.tenant_id, "execution_id": {"$in": list(doc_map.keys())}},
                     {"execution_id": 1, "details.eof_code": 1, "details.coupons.qr": 1,
-                     "details.coupons.execution_no": 1, "details.participation_pct": 1}):
+                     "details.coupons.execution_no": 1, "executed_qty": 1, "quantity": 1})]
+            # κατάλογος ΜΟΝΟ για τα σκευάσματα που εμφανίζονται — ο έλεγχος δοσολογίας κρίνεται από
+            # την ΙΔΙΑ συνάρτηση με την καρτέλα συνταγής (prescription_checks.needs_visual_dose_check).
+            eofs = list({str((it.get("details") or {}).get("eof_code") or "") for it in its} - {""})
+            cats = {str(c["_id"]): c async for c in self._db["medicine_catalog"].find(  # tenant-ok: shared
+                {"_id": {"$in": eofs}},
+                {"name": 1, "form_code": 1, "package_form": 1, "overdose_message_type": 1})}
+            for it in its:
                 row = doc_map.get(it["execution_id"])
                 if not row:
                     continue
                 d = it.get("details") or {}
                 eof = str(d.get("eof_code") or "")
-                # συμμετοχή ανά φάρμακο: μετράμε items & πόσα είναι 100% → «Αμιγώς 100%» μόνο αν ΟΛΑ 100%
-                row["_nit"] = row.get("_nit", 0) + 1
-                if float(d.get("participation_pct") or 0) == 100.0:
-                    row["_n100"] = row.get("_n100", 0) + 1
                 coupons = d.get("coupons") or []
                 # ΑΝΑ ΕΚΤΕΛΕΣΗ (μερική εκτέλεση): κράτα ΜΟΝΟ τα κουπόνια αυτής της φάσης — η CDA αποθηκεύει
                 # ΟΛΑ τα κουπόνια σε ΚΑΘΕ φάση, οπότε χωρίς φιλτράρισμα μια ΑΥΛΗ (all-QR) φάση φαινόταν
@@ -936,26 +937,36 @@ class ReimbursementRepository(BaseRepository):
                 exno = int(row["exec_no"]) if str(row.get("exec_no") or "").isdigit() else None
                 pc = [c for c in coupons if exno is None
                       or int(float(c.get("execution_no") or 0)) == exno]
+                # Τεμάχια που δόθηκαν ΣΕ ΑΥΤΗ τη φάση. Είδος με κουπόνια μόνο σε άλλη φάση = 0 εδώ — δεν
+                # αφορά αυτή την εκτέλεση (πριν: η φάση 1 του 2608276126652 σημαδευόταν για το SOLUMAG
+                # της φάσης 3). Χωρίς κουπόνια καθόλου → τα δοσμένα τεμάχια της γραμμής.
+                if coupons:
+                    qty = len(pc)
+                else:
+                    qty = int(it.get("executed_qty") if it.get("executed_qty") is not None
+                              else (it.get("quantity") or 0))
+                if qty <= 0:
+                    continue
+                cat = cats.get(eof) or {}
+                name = cat.get("name") or "Φάρμακο"
                 if any(c.get("qr") is False for c in pc):
                     row["has_strip"] = True
                 if eof in narc:
                     row["is_narcotic"] = True
+                    row.setdefault("check_items", []).append({"name": name, "reason": "narcotic"})
                 if eof in note:
                     row["hdika_note"] = True
-                # δοσολογία ΑΝΑ ΕΚΤΕΛΕΣΗ: >1 τεμάχιο ΑΥΤΗΣ της φάσης· ΕΞΑΙΡΕΣΗ πολυδοσικού περιέκτη
-                # (σταγόνες/σιρόπι) → έλεγχος & με 1 τεμάχιο (1 μπουκάλι = πολλές δόσεις).
-                if eof in dose and (len(pc) > 1 or eof in multidose):
+                    row.setdefault("check_items", []).append({"name": name, "reason": "hdika_note"})
+                if pc_checks.needs_visual_dose_check(cat, name, qty):
                     row["needs_dose_check"] = True
+                    row.setdefault("dose_items", []).append({"name": name, "qty": qty})
             for row in doc_map.values():
                 if row.get("has_strip") or row.get("is_narcotic") or row.get("hdika_note") or row.get("needs_dose_check"):
                     row["needs_check"] = True
-                # «Αμιγώς 100%» = retail>0 & ΟΛΑ τα φάρμακα με 100% συμμετοχή (κανένα <100%). Το
-                # `details.full_participation` (από την ΗΔΥΚΑ, στο ingest) είναι ΑUTHORITATIVE — το ίδιο
-                # σήμα με το summary — και υπερισχύει όταν λείπει το per-item participation_pct (π.χ.
-                # εκτέλεση που ανακτήθηκε με degraded item από στιγμιαία αποτυχία CDA).
-                if (row.get("retail", 0) or 0) > 0 and (
-                        row.get("full_participation")
-                        or (row.get("_nit") and row["_nit"] == row.get("_n100", 0))):
+                # «Αμιγώς 100%» = ΜΟΝΟ η σημαία της ΗΔΥΚΑ (`details.full_participation`) — ο ΙΔΙΟΣ κανόνας
+                # με το μηνιαίο κλείσιμο και την ημερήσια συμφωνία (πριν: εδώ και δεύτερη μέτρηση ανά
+                # είδος· 1.580/1.580 ίδιο αποτέλεσμα από 06/2026, αλλά δύο ορισμοί αποκλίνουν κάποτε).
+                if (row.get("retail", 0) or 0) > 0 and row.get("full_participation"):
                     row["is_100"] = True
                     row["fund"] = row["group"] = "Αμιγώς 100%"
                     row["is_eopyy"] = False
@@ -994,7 +1005,7 @@ class ReimbursementRepository(BaseRepository):
             # (α) όσα ανακτήθηκαν στο ΔΙΚΟ μας tenant ΚΑΙ (β) όσα ανήκουν σε ΑΛΛΟ φαρμακείο (μις-
             # σκανάρισμα σε λάθος tenant). Δεν εκτίθεται κανένα δεδομένο άλλου tenant — μόνο ύπαρξη
             # barcode που ο ίδιος ο χρήστης πληκτρολόγησε. Μένει μόνο ό,τι ΔΕΝ υπάρχει πουθενά.
-            async for e in self._db["prescription_executions"].find(
+            async for e in self._db["prescription_executions"].find(  # tenant-ok: μόνο «υπάρχει αλλού;» για barcode που πληκτρολόγησε ο χρήστης
                     {"external_id": {"$regex": rx}, "status": {"$ne": "cancelled"}, "excluded_from_stats": {"$ne": True}}, {"external_id": 1}):
                 present.add(str(e["external_id"]).split(":")[0])
             extra13 = [b for b in extra13 if str(b) not in present]
@@ -1060,7 +1071,7 @@ class ReimbursementRepository(BaseRepository):
         if not all_exs:               # δεν υπάρχει σε ΑΥΤΟ το φαρμακείο
             # μήπως ανήκει σε ΑΛΛΟ φαρμακείο (μις-σκανάρισμα σε λάθος tenant, π.χ. χρήστης δικτύου που
             # έχει επιλέξει λάθος φαρμακείο); → ΜΗ το βάλεις στο «δεν υπάρχουν», ενημέρωσε ξεκάθαρα.
-            other = await self._db["prescription_executions"].count_documents(
+            other = await self._db["prescription_executions"].count_documents(  # tenant-ok: μόνο «υπάρχει αλλού;» για barcode που πληκτρολόγησε ο χρήστης
                 {"external_id": {"$regex": f"^{re.escape(bc)}"}, "status": {"$ne": "cancelled"}, "excluded_from_stats": {"$ne": True}})
             if other > 0:
                 return {"ok": True, "found": False, "other_tenant": True, "barcode": bc, "n_executions": 0}
@@ -1187,7 +1198,7 @@ class ReimbursementRepository(BaseRepository):
              "status": {"$ne": "cancelled"}, "excluded_from_stats": {"$ne": True}},
             {"executed_at": 1, "external_id": 1, "fund_id": 1, "amount_total": 1,
              "amount_claimed": 1, "patient_share": 1, "details.vaccines": 1, "details.kyyap_covered": 1,
-             "details.full_participation": 1})
+             "details.kyyap_share": 1, "details.full_participation": 1})
         async for e in cur:
             day = e["executed_at"].strftime("%Y-%m-%d")
             det = e.get("details") or {}
@@ -1205,13 +1216,15 @@ class ReimbursementRepository(BaseRepository):
             d = per[day]
             if is_100:
                 d["hundred"] += 1
+            keff = kyyap_effective(e.get("external_id"), det)   # μερίδιο ΑΥΤΗΣ της φάσης
             if group == "ΕΤΥΑΠ":
-                inc, cval, rval, pval = kyyap > 0, kyyap, 0, 0
+                inc, cval, rval, pval = keff > 0, keff, 0, 0
             elif group == "all":
                 inc, cval, rval, pval = True, claim, total, (e.get("patient_share", 0) or 0)
             else:                                      # συγκεκριμένη ομάδα ταμείου — μόνο υποβαλλόμενες
                 inc = (label == group) and not is_100
-                cval, rval, pval = claim, total, (e.get("patient_share", 0) or 0)
+                # καθαρό ΕΟΠΥΥ (χωρίς το κομμάτι ΚΥΥΑΠ) — όπως στο μηνιαίο κλείσιμο
+                cval, rval, pval = max(0, claim - keff), total, (e.get("patient_share", 0) or 0)
             if inc:
                 if day_ids and day == day_ids:
                     picked.append(e["_id"])
@@ -1381,6 +1394,9 @@ class ReimbursementRepository(BaseRepository):
             {"tenant_id": self.tenant_id, "external_id": {"$regex": f"^{re.escape(bc)}"}})]  # tenant-ok
         if not exs:
             return {"ok": True, "found": False, "barcode": bc}
+        # σειρά ΦΑΣΗΣ (1, 2, …): χωρίς ρητή φάση οι σημάνσεις βγαίνουν από το scoped[0] — πριν ήταν η
+        # τυχαία πρώτη εγγραφή της βάσης, οπότε το «χρειάζεται πρωτότυπη» (φάση 1) μπορούσε να χαθεί
+        exs.sort(key=lambda e: dispensed.record_no(e.get("external_id")))
         # περιορισμός σε μία φάση (μερική εκτέλεση) αν ζητήθηκε ρητά
         scoped = [e for e in exs if e.get("external_id") == f"{bc}:{scope_exec}"] if scope_exec is not None else exs
         if not scoped:                    # άγνωστη φάση → δείξε όλη τη συνταγή

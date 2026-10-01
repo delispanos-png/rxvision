@@ -22,6 +22,7 @@ from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
 from app.repositories.base import BaseRepository
+from app.services import dispensed
 from app.services.stats_exclusion import COUNTABLE_EXEC
 
 #: Ετικέτα για αξία που δεν μπορεί να αποδοθεί σε σκεύασμα (εκτέλεση χωρίς δοσμένα είδη με
@@ -193,9 +194,10 @@ class ProfitabilityRepository(BaseRepository):
             {"$match": countable(date_from, date_to)},
             {"$lookup": {"from": "prescription_items", "localField": "_id",
                          "foreignField": "execution_id", "as": "l",
-                         "pipeline": [{"$match": {"executed_qty": {"$gt": 0}}},
+                         "pipeline": [{"$set": {"_q": dispensed.qty_expr()}},
+                                      {"$match": {"_q": {"$gt": 0}}},
                                       {"$project": {"wholesale_source": 1, "w": {"$multiply": [
-                                          {"$ifNull": ["$wholesale_price", 0]}, "$executed_qty"]}}}]}},
+                                          {"$ifNull": ["$wholesale_price", 0]}, "$_q"]}}}]}},
             {"$unwind": "$l"},
             {"$group": {"_id": None, "all": {"$sum": "$l.w"}, "est": {"$sum": {"$cond": [
                 {"$eq": ["$l.wholesale_source", "estimated"]}, "$l.w", 0]}}}},
@@ -303,12 +305,16 @@ class ProfitabilityRepository(BaseRepository):
             {"$lookup": {"from": "prescription_items", "localField": "_id",
                          "foreignField": "execution_id", "as": "l",
                          "pipeline": [
-                             {"$match": {"executed_qty": {"$gt": 0}}},
-                             {"$project": {"product_id": 1, "category": 1, "u": "$executed_qty",
+                             # τεμάχια ΑΥΤΗΣ της εγγραφής: σε τμηματική `:N` το σύνολο της εγγραφής
+                             # μοιράζεται ΜΟΝΟ στα είδη που δόθηκαν σε αυτήν (πριν: σε όλη τη συνταγή,
+                             # και τα τεμάχια ×N) — 01/10/2026
+                             {"$set": {"_q": dispensed.qty_expr()}},
+                             {"$match": {"_q": {"$gt": 0}}},
+                             {"$project": {"product_id": 1, "category": 1, "u": "$_q",
                                            "v": {"$multiply": [{"$ifNull": ["$retail_price", 0]},
-                                                               "$executed_qty"]},
+                                                               "$_q"]},
                                            "w": {"$multiply": [{"$ifNull": ["$wholesale_price", 0]},
-                                                               "$executed_qty"]}}}]}},
+                                                               "$_q"]}}}]}},
             {"$set": {"_sv": {"$sum": "$l.v"}, "_sw": {"$sum": "$l.w"}}},
             # Χωρίς αξία γραμμών δεν υπάρχει βάση επιμερισμού: ΟΛΗ η εκτέλεση πάει σε μία γραμμή
             # «χωρίς ανάλυση» — αλλιώς θα μετριόταν ΜΙΑ φορά ανά είδος.

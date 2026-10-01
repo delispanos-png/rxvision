@@ -9,6 +9,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from app.repositories.base import BaseRepository
+from app.services.stats_exclusion import COUNTABLE_EXEC
 
 
 def _period_bounds(period: str) -> tuple[datetime, datetime]:
@@ -30,12 +31,16 @@ class ClosingRepository(BaseRepository):
         start, end = _period_bounds(period)
         pipeline = [
             {"$match": {"executed_at": {"$gte": start, "$lt": end}}},
+            {"$set": {"_ok": {"$and": [{"$ne": ["$status", "cancelled"]},
+                                       {"$ne": ["$excluded_from_stats", True]}]}}},
             {"$group": {
                 "_id": None,
-                "executions": {"$sum": 1},
-                "value": {"$sum": "$amount_total"},
-                "claimed": {"$sum": "$amount_claimed"},
-                "cost": {"$sum": "$wholesale_cost"},
+                # ποσά ΧΩΡΙΣ ακυρωμένες/εξαιρεμένες — ίδιος κανόνας με τις αναφορές αποζημίωσης
+                # (πριν: η αξία & το αιτούμενο εδώ περιείχαν και τις ακυρωμένες, 01/10/2026)
+                "executions": {"$sum": {"$cond": ["$_ok", 1, 0]}},
+                "value": {"$sum": {"$cond": ["$_ok", "$amount_total", 0]}},
+                "claimed": {"$sum": {"$cond": ["$_ok", "$amount_claimed", 0]}},
+                "cost": {"$sum": {"$cond": ["$_ok", "$wholesale_cost", 0]}},
                 "cancelled": {"$sum": {"$cond": [
                     {"$eq": ["$status", "cancelled"]}, 1, 0]}},
                 "partial": {"$sum": {"$cond": [
@@ -79,7 +84,7 @@ class ClosingRepository(BaseRepository):
         """Per-fund summary for the period (the closing settlement view)."""
         start, end = _period_bounds(period)
         pipeline = [
-            {"$match": {"executed_at": {"$gte": start, "$lt": end}}},
+            {"$match": {**COUNTABLE_EXEC, "executed_at": {"$gte": start, "$lt": end}}},
             {"$group": {"_id": "$fund_id",
                         "executions": {"$sum": 1},
                         "value": {"$sum": "$amount_total"},

@@ -78,15 +78,23 @@ def _vial_dose_check(form_code: str | None, package_form: str | None, name: str 
     return liquid and vial and not resp
 
 
-def _multidose_container(form_code: str | None, name: str | None) -> bool:
-    """Πολυδοσικός περιέκτης — 1 τεμάχιο = ΠΟΛΛΕΣ δόσεις (οφθαλμικές/ωτικές/ρινικές ΣΤΑΓΟΝΕΣ, ΣΙΡΟΠΙ,
-    ΠΟΣΙΜΟ διάλυμα/εναιώρημα σε μπουκάλι/φιάλη — π.χ. SIMBRINZA EY.DRO.SUS): ο έλεγχος δόσης-vs-διάρκειας
-    χρειάζεται ΑΚΟΜΗ κι αν qty==1 (η ΗΔΥΚΑ δεν πιάνει πόσες σταγόνες/ml/ημέρα). Τα ενέσιμα/αμπούλες τα
-    πιάνει το _vial_dose_check (ανά τεμάχιο), ΟΧΙ εδώ."""
-    f = (form_code or "").upper()
-    n = (name or "").upper()
-    return ("INJ" not in f) and ("DRO" in f or "DROP" in f or "ΣΤΑΓ" in n
-            or "SYR" in f or "ΣΙΡΟΠ" in n or "OR.SO" in f or "OR.SUSP" in f)
+def needs_visual_dose_check(cat: dict, name: str | None, qty: int) -> bool:
+    """ΕΝΑΣ ορισμός (καρτέλα συνταγής, Φυσικός έλεγχος, ingestion): θέλει ο φαρμακοποιός να ελέγξει
+    οπτικά τη δοσολογία αυτού του είδους, με `qty` = τεμάχια που δόθηκαν ΣΕ ΑΥΤΗ την εκτέλεση;
+
+    • 0 τεμάχια σε αυτή τη φάση → ΟΧΙ (πριν σημαδευόταν φάση για είδος που δόθηκε σε άλλη φάση).
+    • 1 τεμάχιο → ΟΧΙ, για κάθε μορφή — το ελάχιστο δεν είναι υπερδοσολογία. Ισχύει και για
+      κολλύρια/σπρέι/σιρόπια (αναφορά πελάτη 01/10/2026· ανατρέπει τον κανόνα 09/07 «πολυδοσικά
+      και με 1 τεμάχιο»).
+    • >1 τεμάχια → ναι, εκτός αν την ελέγχει η ΗΔΥΚΑ στη συνταγογράφηση (δισκία/κάψουλες/σιρόπι/
+      αναπνευστικές αμπούλες, ή overdoseMessageType «E»). Οι αμπούλες/φιαλίδια/σύριγγες θέλουν
+      έλεγχο ακόμη κι με «E» (η δόση είναι ανά αμπούλα)."""
+    if (qty or 0) <= 1:
+        return False
+    if _form_auto_checked(cat.get("form_code"), cat.get("package_form"), name):
+        return False
+    omt = (cat.get("overdose_message_type") or "").upper()
+    return omt != "E" or _vial_dose_check(cat.get("form_code"), cat.get("package_form"), name)
 
 
 def _overdose_detail(item: dict, cat: dict) -> str:
@@ -132,19 +140,12 @@ def check_item(item: dict, cat: dict, *, ultra_levure_enabled: bool = True,
     """item: {barcode, name, quantity, dose, frequency, duration}; cat: medicine_catalog doc.
     Κάθε check φέρει `category` ∈ {closing, advisory} (βλ. _CHECK_CATEGORY)."""
     checks: list[dict] = []
-    omt = (cat.get("overdose_message_type") or "").upper()
     qty = item.get("quantity") or 1
-    auto = _form_auto_checked(cat.get("form_code"), cat.get("package_form"), item.get("name"))
-    # Αμπούλα/φιαλίδιο (πόσιμη π.χ. VIOFER ή ενέσιμη π.χ. BRIKLIN): οπτικός έλεγχος δόσης ΑΚΟΜΗ κι αν
-    # omt=="E" (η ΗΔΥΚΑ «E» δεν πιάνει τη δόση ανά αμπούλα). Root fix: ΟΛΑ τα διαλύματα σε αμπούλες.
-    vial_dose = _vial_dose_check(cat.get("form_code"), cat.get("package_form"), item.get("name"))
-    # Πολυδοσικός περιέκτης (σταγόνες/σιρόπι σε μπουκάλι): 1 τεμάχιο = πολλές δόσεις → έλεγχος & με qty==1
-    multidose = _multidose_container(cat.get("form_code"), item.get("name"))
 
-    # ── 1. Υπερδοσολογία ── (τεμάχια>1· ΕΞΑΙΡΕΣΗ: πολυδοσικός περιέκτης → έλεγχος & με 1 τεμάχιο)
-    if (omt != "E" or vial_dose) and not auto and (qty > 1 or multidose):
+    # ── 1. Υπερδοσολογία ── (κανόνας: needs_visual_dose_check)
+    if needs_visual_dose_check(cat, item.get("name"), qty):
         checks.append({"type": "overdose", "level": "warning",
-                       "title": "Οπτικός έλεγχος υπερδοσολογίας",
+                       "title": f"Οπτικός έλεγχος υπερδοσολογίας — {item.get('name') or 'σκεύασμα'} ({qty} τεμ.)",
                        "detail": _overdose_detail(item, cat)})
 
     # ── 2. Ειδικά φάρμακα ──

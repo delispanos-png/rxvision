@@ -132,6 +132,6 @@ async def _job(db, tenant_id: str, started: datetime, status: str, stats: dict,
                "updated_at": datetime.now(tz=timezone.utc)}
         if error:
             doc["error"] = error
-        await db["sync_jobs"].insert_one(doc)
+        await db["sync_jobs"].insert_one(doc)  # tenant-ok: insert με tenant_id στο doc
     except Exception:  # noqa: BLE001 — το log δεν πρέπει να σπάσει τον συγχρονισμό
         pass

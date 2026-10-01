@@ -5,6 +5,7 @@ import { useForm } from "react-hook-form";
 import { useRouter } from "next/navigation";
 import { z } from "zod";
 import { api, ApiError } from "@/lib/apiClient";
+import { startRenewal as requestRenewal } from "@/lib/renewal";
 import { Logo } from "@/components/brand/Logo";
 
 const schema = z.object({
@@ -50,10 +51,10 @@ export default function LoginPage() {
     if (!renew || !renew.choice) return;
     setRenew({ ...renew, busy: true });
     try {
-      const r = await api<{ ok: boolean; checkout_url?: string }>("/billing/renew", {
-        method: "POST",
-        body: JSON.stringify({ renew_token: renew.token, package_code: renew.choice, billing_cycle: renew.yearly ? "yearly" : "monthly", coupon_code: renew.coupon.trim() || undefined }),
-      });
+      const r = await requestRenewal<{ ok: boolean; checkout_url?: string }>("/billing/renew",
+        { renew_token: renew.token, package_code: renew.choice, billing_cycle: renew.yearly ? "yearly" : "monthly", coupon_code: renew.coupon.trim() || undefined },
+        (el) => el);                                    // η σελίδα σύνδεσης είναι μόνο στα ελληνικά
+      if (!r) { setRenew({ ...renew, busy: false }); return; }
       if (r.checkout_url) {
         if (typeof window !== "undefined") window.localStorage.setItem("renew_pending", "1");
         window.location.href = r.checkout_url; return;

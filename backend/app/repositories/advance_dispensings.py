@@ -173,7 +173,7 @@ class AdvanceDispensingRepository(BaseRepository):
                            {"details.coupons.strip": {"$in": sorted(strips)}} if strips
                            else {"_id": None},
                            {"details.lot": {"$in": sorted(lots)}} if lots else {"_id": None}]}
-            hit = await self._db["prescription_items"].find_one(
+            hit = await self._db["prescription_items"].find_one(  # tenant-ok: q έχει tenant_id
                 q, {"execution_id": 1, "executed_at": 1})
             if not hit:
                 continue

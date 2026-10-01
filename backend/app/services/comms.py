@@ -546,12 +546,12 @@ async def audience_breakdown(tenant_id: str, channel: str, segment: str = "all",
     base: dict = {"tenant_id": tenant_id}
     if seg is not None:
         base["_id"] = {"$in": list(seg)}
-    total = await db["patient_contacts"].count_documents(base)
+    total = await db["patient_contacts"].count_documents(base)  # tenant-ok: base έχει tenant_id
 
-    no_consent = await db["patient_contacts"].count_documents(
+    no_consent = await db["patient_contacts"].count_documents(  # tenant-ok: base έχει tenant_id
         {**base, "marketing_consent": {"$ne": True}})
     consented = {**base, "marketing_consent": True}
-    no_contact = await db["patient_contacts"].count_documents(
+    no_contact = await db["patient_contacts"].count_documents(  # tenant-ok: base έχει tenant_id
         {**consented, field: {"$in": [None, ""]}})
     reachable = {**consented, field: {"$nin": [None, ""]}}
 

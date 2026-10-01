@@ -9,14 +9,16 @@ recall + win-back-recoverable; patient aggregates feed the rest.
 
 from __future__ import annotations
 
-import calendar
 import re
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
 from app.repositories.base import BaseRepository, jsonsafe
+from app.services import dispensed
+from app.services import repeat_windows as rw
 from app.utils.format import eur_gr
 from app.utils.masking import mask_amka, mask_name, mask_rows
+from app.services.stats_exclusion import COUNTABLE_EXEC
 
 
 def _now() -> datetime:
@@ -55,11 +57,6 @@ def _annotate_medicines(medicines: list[dict]) -> None:
         prev = next((x for x in ordered[1:] if x["name"] != current["name"]), None)
         if prev:
             current["changed_from"] = prev["name"]
-
-
-def _addm(d: datetime, n: int) -> datetime:
-    y, mo = d.year + (d.month - 1 + n) // 12, (d.month - 1 + n) % 12 + 1
-    return d.replace(year=y, month=mo, day=min(d.day, calendar.monthrange(y, mo)[1]))
 
 
 def _yago(d: datetime) -> datetime:
@@ -105,15 +102,16 @@ def chain_positions(exs: list[dict], now: datetime, coverage_start: datetime | N
     Recall» 1.084 και η λίστα της 1.465 — 30/09/2026).
 
     Αφετηρία = `valid_from` (η ΑΡΧΗ όλης της αλυσίδας στην ΗΔΥΚΑ)· θέση k ανοίγει αρχή+(k−1)×περίοδος,
-    κλείνει +περίοδος+5 ημ. ανοχή. Θέση ΠΡΙΝ από την παλαιότερη εκτέλεση που κρατάμε = «άγνωστη»,
-    όχι χαμένη (δεν έχουμε ορατότητα)."""
+    (k ≥ 2: −10 ημ.), χαμένη μόνο μετά το ονομαστικό +44 (κανόνες: services/repeat_windows.py —
+    πριν: +περίοδος+5, που για βήμα 60 κρατούσε «διαθέσιμη» θέση ληγμένη εδώ και ένα μήνα).
+    Θέση ΠΡΙΝ από την παλαιότερη εκτέλεση που κρατάμε = «άγνωστη», όχι χαμένη (δεν έχουμε ορατότητα)."""
     total = max(int(e.get("repeat_total") or 1) for e in exs)
     if total <= 1:
         return None
     det = next((e.get("details") or {} for e in exs
                 if (e.get("details") or {}).get("repeat_period_days")
                 or (e.get("details") or {}).get("interval_months")), {})
-    period = int(det.get("repeat_period_days") or (det.get("interval_months") or 1) * 30)
+    period = rw.period_days(det)
     done = {int(e.get("repeat_current") or 1) for e in exs}
     vfs = [e["valid_from"] for e in exs if e.get("valid_from")]
     anchor = min(vfs) if vfs else min(
@@ -125,8 +123,8 @@ def chain_positions(exs: list[dict], now: datetime, coverage_start: datetime | N
     out = {"windows": [], "missed": 0, "available": 0, "executed": 0, "value_each": value,
            "missed_closed": []}
     for k in range(1, min(total, 18) + 1):
-        wopen = anchor + timedelta(days=period * (k - 1))
-        wclose = wopen + timedelta(days=period + 5)
+        wopen = rw.position_open(anchor, k, period)
+        wclose = rw.position_lost_after(anchor, k, period)
         if k in done:
             st = "executed"; out["executed"] += 1
         elif coverage_start and wopen < coverage_start:
@@ -137,7 +135,8 @@ def chain_positions(exs: list[dict], now: datetime, coverage_start: datetime | N
             st = "available"; out["available"] += 1
         else:
             st = "future"
-        out["windows"].append({"k": k, "due": wopen, "status": st})
+        out["windows"].append({"k": k, "due": wopen, "deadline": rw.position_deadline(anchor, k, period),
+                               "status": st})
     return out
 
 
@@ -284,7 +283,8 @@ class PatientIntelligenceRepository(BaseRepository):
         active60 = sum(1 for p in pats if seen_after(p, d_active))
         # YoY: distinct patients with an execution in the SAME 60-day window last year
         ya = await self._db["prescription_executions"].aggregate([
-            {"$match": {"tenant_id": self.tenant_id, "executed_at": {"$gte": yact_lo, "$lt": yact_hi}}},
+            {"$match": {"tenant_id": self.tenant_id, **COUNTABLE_EXEC,
+                        "executed_at": {"$gte": yact_lo, "$lt": yact_hi}}},
             {"$group": {"_id": "$patient_ref"}}, {"$count": "n"}]).to_list(1)
         active60_prev = ya[0]["n"] if ya else 0
         # NEW = the patient's first-EVER execution falls in the period (never executed before)
@@ -300,13 +300,14 @@ class PatientIntelligenceRepository(BaseRepository):
 
         # prescriptions this month + avg value
         agg = await self._db["prescription_executions"].aggregate([
-            {"$match": {"tenant_id": self.tenant_id, "executed_at": {"$gte": mstart}}},
+            {"$match": {"tenant_id": self.tenant_id, **COUNTABLE_EXEC, "executed_at": {"$gte": mstart}}},
             {"$group": {"_id": None, "n": {"$sum": 1}, "val": {"$sum": "$amount_total"}}},
         ]).to_list(1)
         rx_month = (agg[0]["n"] if agg else 0)
         avg_rx = round((agg[0]["val"] / agg[0]["n"]) if agg and agg[0]["n"] else 0)
         aggp = await self._db["prescription_executions"].aggregate([
-            {"$match": {"tenant_id": self.tenant_id, "executed_at": {"$gte": mstart_y, "$lt": yago}}},
+            {"$match": {"tenant_id": self.tenant_id, **COUNTABLE_EXEC,
+                        "executed_at": {"$gte": mstart_y, "$lt": yago}}},
             {"$group": {"_id": None, "n": {"$sum": 1}}},
         ]).to_list(1)
         rx_prev = (aggp[0]["n"] if aggp else 0)
@@ -355,7 +356,7 @@ class PatientIntelligenceRepository(BaseRepository):
         now = _now()
         async def buckets(fmt, since):
             rows = await self._db["prescription_executions"].aggregate([
-                {"$match": {"tenant_id": self.tenant_id, "executed_at": {"$gte": since}}},
+                {"$match": {"tenant_id": self.tenant_id, **COUNTABLE_EXEC, "executed_at": {"$gte": since}}},
                 {"$group": {"_id": {"$dateToString": {"format": fmt, "date": "$executed_at"}},
                             "rx": {"$sum": 1}, "value": {"$sum": "$amount_total"}}},
                 {"$sort": {"_id": 1}},
@@ -502,7 +503,7 @@ class PatientIntelligenceRepository(BaseRepository):
                 q["executed_at"]["$lte"] = date_to
         codes: set = set()
         exec_ids: list = []
-        async for e in self._db["prescription_executions"].find(q, {"icd10": 1}):
+        async for e in self._db["prescription_executions"].find(q, {"icd10": 1}):  # tenant-ok: q έχει tenant_id
             exec_ids.append(e["_id"])
             for c in (e.get("icd10") or []):
                 codes.add(c)
@@ -565,6 +566,8 @@ class PatientIntelligenceRepository(BaseRepository):
         exs = [e async for e in self._db["prescription_executions"].find(
             {"tenant_id": self.tenant_id, "patient_ref": pid},
             {"repeat_root": 1, "executed_at": 1, "valid_from": 1, "valid_until": 1,
+             "repeat_current": 1, "repeat_total": 1, "details.repeat_period_days": 1,
+             "details.interval_months": 1,
              "amount_total": 1, "amount_claimed": 1, "patient_share": 1, "wholesale_cost": 1,
              "icd10": 1, "doctor_id": 1, "next_open_date": 1})]
         value = sum(e.get("amount_total", 0) for e in exs)
@@ -599,40 +602,34 @@ class PatientIntelligenceRepository(BaseRepository):
         recoverable = 0.0
         missed_items: list = []
         available_items: list = []
+        # ΙΔΙΟΣ ορισμός θέσεων με Συμμόρφωση/Recall (`chain_positions`, κανόνες ΗΔΥΚΑ στο
+        # services/repeat_windows.py). Πριν: τρίτη υλοποίηση με ημερολογιακούς μήνες από το «ΑΠΟ» έως
+        # το μεγαλύτερο «ΕΩΣ» — άλλο αποτέλεσμα από την κάρτα Συμμόρφωσης για τον ίδιο ασθενή.
         for root, cexs in chains.items():
-            vf = min((e["valid_from"] for e in cexs if e.get("valid_from")), default=None)
-            vu = max((e["valid_until"] for e in cexs if e.get("valid_until")), default=None)
-            if not vf or not vu or (vu - vf).days < 40:
+            if not root:
                 continue
-            avg = sum(e.get("amount_total", 0) for e in cexs) / max(len(cexs), 1)
-            cm = ca = 0
-            last_due = avail_until = None
-            i = 0
-            while i < 18 and _addm(vf, i) <= vu:
-                wopen, wclose = _addm(vf, i), _addm(vf, i + 1)
-                if data_floor and wopen < data_floor:  # window before we had any data → unknown, skip
-                    i += 1
-                    continue
-                done = any(e.get("executed_at") and wopen <= e["executed_at"] < wclose for e in cexs)
-                if wclose <= now:
-                    expected += 1
-                    if done:
-                        executed += 1
-                    else:
-                        missed += 1; recoverable += avg; cm += 1; last_due = wopen
-                elif wopen <= now < wclose and not done:  # open & NOT yet dispensed → available now
-                    available += 1; recoverable += avg; ca += 1; avail_until = wclose
-                i += 1
-            if cm or ca:
+            cp = chain_positions(cexs, now, data_floor)
+            if not cp:
+                continue
+            avg = cp["value_each"]
+            miss = [w for w in cp["windows"] if w["status"] == "missed"]
+            avail = [w for w in cp["windows"] if w["status"] == "available"]
+            expected += cp["executed"] + cp["missed"]
+            executed += cp["executed"]
+            missed += len(miss); available += len(avail)
+            recoverable += avg * (len(miss) + len(avail))
+            if miss or avail:
                 meds = root_meds.get(root, [])
                 last_exec = max((e["executed_at"] for e in cexs if e.get("executed_at")), default=None)
-                if cm:
-                    missed_items.append({"root": root, "medicines": meds, "count": cm,
-                                         "value": round(cm * avg), "last_executed": last_exec,
-                                         "due": last_due})
-                if ca:
-                    available_items.append({"root": root, "medicines": meds, "count": ca,
-                                            "value": round(ca * avg), "until": avail_until,
+                if miss:
+                    missed_items.append({"root": root, "medicines": meds, "count": len(miss),
+                                         "value": round(len(miss) * avg), "last_executed": last_exec,
+                                         "due": max(w["due"] for w in miss)})
+                if avail:
+                    missed_until = min(w["deadline"] for w in avail)
+                    available_items.append({"root": root, "medicines": meds, "count": len(avail),
+                                            "value": round(len(avail) * avg), "until": missed_until,
+                                            "opens": min(w["due"] for w in avail),
                                             "last_executed": last_exec})
         missed_items.sort(key=lambda x: x["value"], reverse=True)
         available_items.sort(key=lambda x: x["value"], reverse=True)
@@ -695,12 +692,15 @@ class PatientIntelligenceRepository(BaseRepository):
                          "foreignField": "_id", "as": "p"}},
             {"$set": {"pname": {"$first": "$p.name"}, "subst": {"$first": "$p.substance"},
                       "atc": {"$toUpper": {"$ifNull": [{"$first": "$p.atc"}, ""]}}}},
-            {"$set": {"gkey": {"$cond": [{"$eq": ["$atc", ""]}, "$pname", "$atc"]}}},
+            {"$set": {"gkey": {"$cond": [{"$eq": ["$atc", ""]}, "$pname", "$atc"]},
+                      "_q": dispensed.qty_expr("it.")}},
+            # ΜΟΝΟ όπου δόθηκε σε ΑΥΤΗ την εγγραφή: κάθε `:N` κουβαλά όλη τη συνταγή (πριν: φορές
+            # και αξία ×N, και αξία από τα συνταγογραφημένα αντί για τα δοσμένα) — 01/10/2026
+            {"$match": {"_q": {"$gt": 0}}},
             {"$group": {"_id": {"g": "$gkey", "name": "$pname"},
                         "n": {"$sum": 1}, "last": {"$max": "$executed_at"},
                         "atc": {"$first": "$atc"}, "subst": {"$first": "$subst"},
-                        "value": {"$sum": {"$multiply": ["$it.retail_price",
-                                                         {"$ifNull": ["$it.quantity", 1]}]}}}},
+                        "value": {"$sum": {"$multiply": ["$it.retail_price", "$_q"]}}}},
             {"$sort": {"n": -1}},   # ώστε το ΣΥΧΝΟΤΕΡΟ όνομα να γίνει το $first της ομάδας ATC
             {"$group": {"_id": "$_id.g", "name": {"$first": "$_id.name"},
                         "atc": {"$first": "$atc"}, "subst": {"$first": "$subst"},

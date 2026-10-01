@@ -11,14 +11,15 @@ from __future__ import annotations
 import hashlib
 import logging
 from collections.abc import Iterable
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Any
 
 from bson import ObjectId
 from pymongo import ReturnDocument
 
-from app.core.config import settings
 from app.core.db import shared_db
+from app.services import dispensed
+from app.services.repeat_windows import next_repeat_open
 from app.services.ingestion.canonical import CanonicalExecution, CanonicalItem
 from app.services.ingestion.validate import validate_execution
 from app.services.vault_service import vault
@@ -71,7 +72,6 @@ class IngestionEngine:
         self._doctor_cache: dict = {}
         self._fund_cache: dict = {}
         self._flu_eof_set: set | None = None    # eofCodes αντιγριπικών (lazy, ανά sync)
-        self._dose_eof_set: set | None = None    # eofCodes που χρειάζονται οπτικό έλεγχο δοσολογίας
         self._catalog_retail_cache: dict = {}   # barcode/eofCode → ρυθμιζόμενη λιανική (Δελτίο Τιμών)
         self._ownership: Any = None             # HdikaOwnership (lazy, ανά sync) — βλ. _persist
 
@@ -180,7 +180,8 @@ class IngestionEngine:
         if not victim:
             return
         vid = victim["_id"]
-        items = await db["prescription_items"].find({"execution_id": vid}).to_list(None)
+        items = await db["prescription_items"].find(
+            {"tenant_id": other_tenant, "execution_id": vid}).to_list(None)
         pref = victim.get("patient_ref")
         did = victim.get("doctor_id")
         # ορφανός; = καμία ΑΛΛΗ εκτέλεση του other_tenant δεν τον χρησιμοποιεί (αφού βγει αυτή)
@@ -214,7 +215,7 @@ class IngestionEngine:
             "execution": victim, "items": items, "patient": pdoc, "doctor": ddoc,
             "patient_owned": owned})
         # ΔΙΑΓΡΑΦΗ από τον λάθος tenant
-        await db["prescription_items"].delete_many({"execution_id": vid})
+        await db["prescription_items"].delete_many({"tenant_id": other_tenant, "execution_id": vid})
         # η πρόβλεψη επόμενης εκτέλεσης φεύγει ΜΑΖΙ της — αλλιώς μένει «φάντασμα» στον λάθος tenant
         # (10.049 τέτοια βρέθηκαν στις 28/09/2026). Ο δικός μας _persist τη δημιουργεί ξανά εδώ.
         await db["future_prescriptions"].delete_many(
@@ -250,7 +251,7 @@ class IngestionEngine:
 
     async def _newer_record_of_same_rx(self, ex: CanonicalExecution) -> bool:
         """Υπάρχει ΝΕΟΤΕΡΗ εγγραφή της ίδιας συνταγής (ίδιο barcode, άλλο `:N`);"""
-        return bool(await self.db["prescription_executions"].find_one(
+        return bool(await self.db["prescription_executions"].find_one(  # tenant-ok: _rx_siblings_q έχει tenant_id
             {**self._rx_siblings_q(ex), "external_id": {**self._rx_siblings_q(ex)["external_id"],
                                                          "$ne": ex.external_id},
              "executed_at": {"$gt": ex.executed_at}}, {"_id": 1}))
@@ -341,9 +342,9 @@ class IngestionEngine:
         if ex.repeat_current < ex.repeat_total:           # ΗΔΥΚΑ: υπάρχουν κι άλλες εκτελέσεις
             det = ex.details or {}
             # Πραγματική περίοδος επανάληψης: CDA 1.1.4.4 (30/28/60 ημ.)· αλλιώς μηνιαία/δίμηνη
-            # (interval_months·30)· αλλιώς 30. Βάση = ημ/νία εκτέλεσης αυτής της σειράς.
+            # (interval_months·30)· αλλιώς 30.
             period = det.get("repeat_period_days") or ((det.get("interval_months") or 1) * 30)
-            next_open = ex.executed_at + timedelta(days=int(period))
+            next_open = next_repeat_open(ex.valid_from, ex.executed_at, ex.repeat_current, int(period))
 
         doc = {
             **nat_key, "pharmacy_id": None, "executed_at": ex.executed_at,
@@ -356,7 +357,6 @@ class IngestionEngine:
             "has_unexecuted_substances": any(not i.is_executed for i in ex.items),
             "next_open_date": next_open, "hash": chash, "ingested_at": _now(),
             "sync_job_id": job_id, "details": ex.details or {},
-            "needs_dose_check": await self._needs_dose_check(ex),
         }
         # Content άλλαξε (περάσαμε το hash-equal early-return) → οι τιμές CDA ξαναγράφονται. ΚΑΘΑΡΙΣΕ
         # τα audit flags ώστε ο amount_audit να ΞΑΝΑ-επαληθεύσει vs έντυπο ΕΟΠΥΥ — αλλιώς ένα re-parse
@@ -393,17 +393,6 @@ class IngestionEngine:
             self._flu_eof_set = {str(d["_id"]) async for d in
                                  self.db["medicine_catalog"].find({"flu_vaccine": True}, {"_id": 1})}
         return self._flu_eof_set
-
-    async def _needs_dose_check(self, ex: CanonicalExecution) -> bool:
-        """True αν κάποιο είδος της συνταγής χρειάζεται οπτικό έλεγχο δοσολογίας (catalog flag)."""
-        if self._dose_eof_set is None:
-            self._dose_eof_set = {str(d["_id"]) async for d in
-                                  self.db["medicine_catalog"].find({"needs_dose_check": True}, {"_id": 1})}
-        if not self._dose_eof_set:
-            return False
-        # μόνο αν ποσότητα > 1 (με 1 τεμάχιο δίνουμε το ελάχιστο → δεν χρειάζεται έλεγχος)
-        return any(str((it.details or {}).get("eof_code") or "") in self._dose_eof_set
-                   and (it.quantity or 1) > 1 for it in ex.items)
 
     async def _maybe_record_flu_vaccine(self, ex: CanonicalExecution, patient_ref, status: str) -> None:
         """Αν η συνταγή περιέχει αντιγριπικό εμβόλιο (συνταγογραφημένο από γιατρό), την προσθέτουμε
@@ -541,6 +530,7 @@ class IngestionEngine:
     async def _resolve_items(self, ex: CanonicalExecution) -> tuple[list[dict], int, int]:
         docs: list[dict] = []
         amount_total = wholesale_cost = 0
+        amount_here = cost_here = 0       # μόνο τα τεμάχια ΑΥΤΗΣ της εγγραφής
         # ΠΛΗΡΗΣ λιανική από την ΕΚΤΕΛΕΣΗ: το CDA per-line retail (2.10.11) συχνά υποτιμά — δίνει
         # μόνο τη συμμετοχή ασφαλισμένου (π.χ. SALOSPIR line=1,17€ ενώ πλήρης λιανική 2,08€). Όταν
         # η εκτέλεση έχει ΕΝΑ εκτελεσμένο είδος, όλο το amount_total της είναι η λιανική του (claimed +
@@ -578,8 +568,6 @@ class IngestionEngine:
                                    "$retail_price"]}, 100]}, 2]}, 0]}}}],
                 upsert=True, return_document=ReturnDocument.AFTER)
             product_id = res["_id"]
-            amount_total += eff_retail * it.quantity
-            wholesale_cost += wholesale * it.quantity
             # Τεμάχια που δόθηκαν: η πηγή το ξέρει (υπόλοιπο ΗΔΥΚΑ). Όπου δεν το δίνει, όλα ή
             # τίποτα. ΔΕΝ είναι διπλοεγγραφή του is_executed — μια γραμμή 2 τεμαχίων με ένα
             # δοσμένο είναι ΚΑΙ «όχι πλήρως εκτελεσμένη» ΚΑΙ «δόθηκε το 1».
@@ -587,14 +575,32 @@ class IngestionEngine:
             if exec_qty is None:
                 exec_qty = it.quantity if it.is_executed else 0
             exec_qty = max(0, min(int(it.quantity or 0), int(exec_qty)))
+            # Ποσά γραμμής από την ΗΔΥΚΑ (1.4.20 συμμετοχή + 1.4.21 διαφορά), όχι placeholder
+            # «λιανική × τεμάχια / 0» (01/10/2026). Το 1 € ανά συνταγή ανήκει στη συνταγή, όχι σε γραμμή.
+            _d = it.details or {}
+            qh = dispensed.qty_here(_d.get("coupons"), exec_qty, it.quantity, it.is_executed,
+                                    dispensed.record_no(ex.external_id))
+            # βάρη κόστους/αξίας = τεμάχια ΑΥΤΗΣ της εγγραφής (όχι όλη η συνταγή, ούτε μη δοσμένα)·
+            # σε εγγραφή χωρίς κανένα δοσμένο, πέφτουμε στα συνταγογραφημένα (όπως πριν)
+            amount_here += eff_retail * qh
+            cost_here += wholesale * qh
+            amount_total += eff_retail * it.quantity
+            wholesale_cost += wholesale * it.quantity
+            line_patient = int(_d.get("patient_share") or 0) + int(_d.get("difference") or 0)
+            line_retail = _d.get("retail_price") if _d.get("retail_price") is not None else eff_retail
             docs.append({"product_id": product_id, "active_substance_id": None,
                          "quantity": it.quantity, "retail_price": eff_retail,
                          "wholesale_price": wholesale, "wholesale_source": wsource,
                          "margin": margin,
-                         "amount_claimed": eff_retail * it.quantity, "patient_share": 0,
+                         "amount_claimed": max(0, int(line_retail) * exec_qty - line_patient),
+                         "patient_share": line_patient,
                          "is_executed": it.is_executed, "executed_qty": exec_qty,
+                         # τεμάχια ΑΥΤΗΣ της εγγραφής (όχι όλης της συνταγής) — services/dispensed.py
+                         "qty_here": qh,
                          "category": it.category,
                          "details": it.details or {}})
+        if amount_here > 0:
+            return docs, amount_here, cost_here
         return docs, amount_total, wholesale_cost
 
     async def _post_process(self, ex, exec_id, patient_ref, amount_total, next_open,

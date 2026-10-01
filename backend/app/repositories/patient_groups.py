@@ -26,6 +26,7 @@ from bson import ObjectId
 from bson.errors import InvalidId
 
 from app.repositories.base import BaseRepository
+from app.services import dispensed
 from app.services import recoverable
 from app.utils.amka import is_minor, turns_adult_on
 from app.utils.masking import mask_amka, mask_name
@@ -311,6 +312,7 @@ class PatientGroupRepository(BaseRepository):
         #    τεμαχίων, και μόνο όσο η συνταγή είναι ακόμη σε ισχύ (services/recoverable.py).
         async for r in ex.aggregate([
                 {"$match": {**period, **recoverable.mongo_filter()}},
+                *dispensed.one_record_per_rx(),   # υπόλοιπο ΣΥΝΤΑΓΗΣ — μία φορά, όχι ανά `:N`
                 {"$lookup": {"from": "prescription_items", "localField": "_id",
                              "foreignField": "execution_id", "as": "it"}},
                 {"$unwind": "$it"},

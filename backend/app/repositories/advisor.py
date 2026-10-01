@@ -11,6 +11,7 @@ from bson import ObjectId
 from bson.errors import InvalidId
 
 from app.repositories.base import BaseRepository, jsonsafe
+from app.services import dispensed, recoverable
 from app.services.stats_exclusion import COUNTABLE_EXEC
 from app.utils.format import eur_gr
 from app.utils.masking import mask_name, mask_row, mask_rows
@@ -344,9 +345,10 @@ class AdvisorRepository(BaseRepository):
         execs = BaseRepository(tenant_id=self.tenant_id)
         execs.collection_name = "prescription_executions"
         rows = await execs.aggregate([
+            # ΚΟΙΝΟΣ κανόνας «ανακτήσιμο» (ανοιχτή ΚΑΙ μέσα στην προθεσμία) — πριν: μόνο ανοιχτή,
+            # οπότε ο τίτλος «μπορούν ακόμη να δοθούν» μετρούσε και ληγμένες (01/10/2026)
             {"$match": {**COUNTABLE_EXEC, "executed_at": {"$gte": df, "$lt": dt},
-                        "has_unexecuted_substances": True,
-                        "details.execution_case": {"$in": ["0", 0]}}},
+                        "has_unexecuted_substances": True, **recoverable.mongo_filter()}},
             {"$lookup": {"from": "prescription_items", "localField": "_id",
                          "foreignField": "execution_id", "as": "it"}},
             {"$unwind": "$it"},
@@ -355,8 +357,10 @@ class AdvisorRepository(BaseRepository):
             # χάνει 1. Παλιές γραμμές χωρίς `executed_qty` → 0 δοσμένα (όπως πριν).
             {"$set": {"_left": {"$max": [0, {"$subtract": [
                 "$it.quantity", {"$ifNull": ["$it.executed_qty", 0]}]}]}}},
-            {"$group": {"_id": None, "lost": {"$sum": {
-                "$multiply": ["$it.retail_price", "$_left"]}}}},
+            # ΜΙΑ φορά ανά ΣΥΝΤΑΓΗ: κάθε εγγραφή `:N` κουβαλά το ίδιο υπόλοιπο (×N πριν)
+            {"$group": {"_id": {"rx": dispensed.rx_root_expr("$external_id"), "p": "$it.product_id"},
+                        "v": {"$max": {"$multiply": ["$it.retail_price", "$_left"]}}}},
+            {"$group": {"_id": None, "lost": {"$sum": "$v"}}},
         ])
         return (rows[0]["lost"] if rows else 0) or 0
 
@@ -505,12 +509,14 @@ class AdvisorRepository(BaseRepository):
                         "$expr": {"$gt": [{"$ifNull": ["$executed_qty", 0]}, 0]}}},
             {"$lookup": {"from": "products", "localField": "product_id",
                          "foreignField": "_id", "as": "p"}},
+            # τεμάχια ΑΥΤΗΣ της εγγραφής (qty_here) — όχι το σύνολο της συνταγής σε κάθε `:N` (×N)
             {"$set": {"code": {"$toUpper": {"$substrCP": [{"$ifNull": [{"$first": "$p.atc"}, "?"]}, 0, 1]}},
-                      "_q": {"$ifNull": ["$executed_qty", "$quantity"]}}},
+                      "_q": dispensed.qty_expr()}},
+            {"$match": {"_q": {"$gt": 0}}},
             {"$group": {"_id": "$code",
                         "revenue": {"$sum": {"$multiply": ["$retail_price", "$_q"]}},
                         "cost": {"$sum": {"$multiply": ["$wholesale_price", "$_q"]}},
-                        "units": {"$sum": "$quantity"}, "rx": {"$sum": 1}}},
+                        "units": {"$sum": "$_q"}, "rx": {"$sum": 1}}},
             {"$project": {"_id": 0, "code": "$_id", "revenue": 1, "cost": 1, "units": 1, "rx": 1}},
         ])
         return [r for r in rows if r["code"] in ATC_L1]
@@ -790,7 +796,8 @@ class AdvisorRepository(BaseRepository):
                     {"_id": did, "tenant_id": self.tenant_id}, {"full_name": 1, "specialty": 1, "phone": 1})
                 if dd:
                     doc = {"name": dd.get("full_name"), "specialty": dd.get("specialty"), "phone": dd.get("phone")}
-            windows = [{"due": w["due"], "status": w["status"]} for w in cp["windows"]]
+            windows = [{"due": w["due"], "deadline": w["deadline"], "status": w["status"]}
+                       for w in cp["windows"]]
             missed, available = cp["missed"], cp["available"]
             if missed or available:
                 key = str(root) if root else None

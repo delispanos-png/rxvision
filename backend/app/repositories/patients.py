@@ -323,9 +323,20 @@ class PatientExecutionsRepository(BaseRepository):
             {"$lookup": {"from": "prescription_items", "localField": "_id",
                          "foreignField": "execution_id", "as": "it"}},
             {"$unwind": "$it"},
-            {"$group": {"_id": "$it.product_id", "times": {"$sum": "$it.quantity"},
-                        "value": {"$sum": "$it.amount_claimed"},
+            # ΜΙΑ φορά ανά συνταγή: κάθε εγγραφή `barcode:N` κουβαλά ΟΛΑ τα είδη (αλλιώς ×N), και
+            # αξία = λιανική × ΔΟΣΜΕΝΑ τεμάχια — όχι το `amount_claimed` της γραμμής, που ήταν
+            # «λιανική × συνταγογραφημένα» ακόμη και για ό,τι δεν δόθηκε (01/10/2026).
+            {"$group": {"_id": {"rx": {"$arrayElemAt": [{"$split": ["$external_id", ":"]}, 0]},
+                                "p": "$it.product_id"},
+                        "eq": {"$max": {"$ifNull": ["$it.executed_qty",
+                                                    {"$cond": [{"$eq": ["$it.is_executed", False]}, 0,
+                                                               "$it.quantity"]}]}},
+                        "retail": {"$max": {"$ifNull": ["$it.details.retail_price", "$it.retail_price"]}},
                         "category": {"$first": "$it.category"}}},
+            {"$group": {"_id": "$_id.p", "times": {"$sum": "$eq"},
+                        "value": {"$sum": {"$multiply": ["$eq", {"$ifNull": ["$retail", 0]}]}},
+                        "category": {"$first": "$category"}}},
+            {"$match": {"times": {"$gt": 0}}},
             {"$lookup": {"from": "products", "localField": "_id",
                          "foreignField": "_id", "as": "p"}},
             {"$set": {"name": {"$first": "$p.name"}, "barcode": {"$first": "$p.barcode"},
