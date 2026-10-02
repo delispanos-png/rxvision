@@ -264,7 +264,7 @@ function SubDrawer({ tenantId, onClose }: { tenantId: string; onClose: () => voi
           <div className="mt-6">
             <div className="mb-2 flex items-center justify-between gap-2">
               <div className="text-sm font-semibold text-slate-700">Παραστατικά ({d.invoices.length})</div>
-              <Link href={`/admin/invoices?tenant=${encodeURIComponent(tenantId)}${f.plan ? `&plan=${encodeURIComponent(f.plan)}` : ""}`}
+              <Link href={`/admin/invoices?tenant=${encodeURIComponent(tenantId)}${f.plan ? `&plan=${encodeURIComponent(f.plan)}` : ""}${f.billing_cycle ? `&cycle=${encodeURIComponent(f.billing_cycle)}` : ""}`}
                 className="inline-flex items-center gap-1 rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-700">
                 + Δημιουργία τιμολογίου
               </Link>

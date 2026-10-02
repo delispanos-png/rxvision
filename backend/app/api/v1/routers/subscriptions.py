@@ -44,9 +44,10 @@ async def ai_usage(month: str | None = None,
 
 @router.get("/receipts")
 async def receipts(ctx: TenantContext = Depends(get_current_context)):
-    """Παραστατικά — everything charged through RxVision (subscriptions, upgrades, credit top-ups)."""
-    from app.services import receipts as rc
-    return {"items": await rc.list_for_tenant(ctx.tenant_id)}
+    """Τα παραστατικά του φαρμακείου (ίδια πηγή με το adminpanel): αριθμός ΤΠΥ, ποσά, αν/πώς/πότε πληρώθηκε,
+    σύνδεσμος ΑΑΔΕ. Πριν: ξεχωριστή λίστα χρεώσεων που έγραφαν μόνο 2 από τις ~8 ροές πληρωμής."""
+    from app.services import invoice_service
+    return {"items": await invoice_service.list_for_tenant(ctx.tenant_id)}
 
 
 @router.get("/payment-methods")

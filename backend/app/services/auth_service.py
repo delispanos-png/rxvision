@@ -135,6 +135,7 @@ class AuthService:
             _sub = await db["subscriptions"].find_one({"tenant_id": user["tenant_id"]}) or {}
             return {"access_blocked": True, "reason": "expired",
                     "current_plan": _sub.get("plan"), "current_plan_name": _sub.get("plan_name"),
+                    "message": _sub.get("lock_message"),
                     "renew_token": create_renew_token(tenant_id=str(user["tenant_id"]))}
         # MFA: if enabled, require a valid TOTP code (previously the code was ignored).
         # Distinct signal so the client can prompt for the code after a correct password.

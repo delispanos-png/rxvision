@@ -73,6 +73,7 @@ async def login(body: LoginIn, request: Request):
                             detail={"error": "access_blocked", "reason": result.get("reason"),
                                     "current_plan": result.get("current_plan"),
                                     "current_plan_name": result.get("current_plan_name"),
+                                    "message": result.get("message"),
                                     "renew_token": result.get("renew_token")})
     if result.get("mfa_required"):
         # Password OK but a valid TOTP code is required — client should prompt for it.

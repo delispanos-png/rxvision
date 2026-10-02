@@ -39,6 +39,27 @@ def nightly() -> dict:
             except Exception as e:  # noqa: BLE001
                 errors.append(f"platform: {type(e).__name__}: {e}"[:300])
 
+            # Παραστατικά Viva: η ΙΔΙΑ η Viva πρέπει να επιβεβαιώνει κάθε «Πληρωμένο» (ποσό ≥ σύνολο).
+            # Ό,τι δεν επιβεβαιώνεται γίνεται «Απλήρωτο (Viva)» στην οθόνη και έρχεται εδώ ως εύρημα.
+            try:
+                from app.services import invoice_service
+                bad = await invoice_service.reverify_viva_invoices(db)
+                from app.services import billing_service
+                for b in bad:   # απλήρωτη συνδρομή που φαινόταν πληρωμένη → κλείδωμα + «πληρώστε ξανά»
+                    doc = await db["invoices"].find_one({"_id": __import__("bson").ObjectId(b["invoice"])})
+                    if doc:
+                        await billing_service.lock_for_unverified_invoice(doc)
+                total = await db["invoices"].count_documents(
+                    {"payment.provider": "viva", "payment.transaction_id": {"$nin": [None, ""]}})
+                if bad:
+                    findings.append(ic.Finding(
+                        "viva_invoice_unpaid", "Παραστατικό «πληρωμένο» με Viva που η Viva ΔΕΝ επιβεβαιώνει "
+                        "(ποσό/είδος συναλλαγής) — έλεγξε πριν γίνει ΤΠΥ", len(bad), total, None,
+                        [f"{b['number']} {b['tenant_id']} {(b['paid'] or 0)/100:.2f}/{(b['total'] or 0)/100:.2f}€"
+                         for b in bad][:5]).as_dict())
+            except Exception as e:  # noqa: BLE001
+                errors.append(f"viva invoices: {type(e).__name__}: {e}"[:300])
+
             # τι είναι ΝΕΟ (ή ξαναγύρισε μετά από 7 ημέρες) → email
             fresh: list[dict] = []
             for f in findings:

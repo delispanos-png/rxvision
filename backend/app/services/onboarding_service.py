@@ -315,6 +315,15 @@ class OnboardingService:
         """Καλείται από το Viva webhook (signup:<id>) → η pending γίνεται `paid` (idempotent).
         Στέλνει email με link ολοκλήρωσης — καλύπτει IRIS (ασύγχρονο, έως 20') & τυχόν εγκατάλειψη."""
         db = shared_db()
+        if viva_transaction_id:   # πληρωμή Viva → η ΙΔΙΑ η Viva πρέπει να δείχνει ΑΥΤΗ την εγγραφή & το ποσό της
+            from app.services import viva_service
+            p = await db["pending_registrations"].find_one({"_id": pending_id}) or {}
+            v = await viva_service.verify_payment(viva_transaction_id, merchant_trns=f"signup:{pending_id}",
+                                                  expected_cents=int(p.get("amount_cents") or 0))
+            if not v["ok"]:
+                from app.services.billing_service import payment_rejected
+                await payment_rejected("εγγραφή", str(pending_id), v, int(p.get("amount_cents") or 0))
+                return False
         r = await db["pending_registrations"].update_one(
             {"_id": pending_id, "status": {"$in": ["awaiting_payment", "awaiting_bank_approval"]}},
             # paid → επέκταση παραθύρου (7μέρες) ώστε να ΜΗΝ χαθεί αν ο πελάτης δεν ολοκληρώσει άμεσα

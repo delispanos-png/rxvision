@@ -14,6 +14,7 @@ type Status = {
   current_period_end?: string | null;
   plan?: string | null;
   billing_cycle?: string | null;
+  lock_message?: string | null;
 };
 type Pkg = { code: string; name: string; price_monthly: number; price_yearly: number; billing_cycles: string[] };
 
@@ -41,7 +42,8 @@ export function SubscriptionBanner() {
   const expired = eff === "expired";
   if (!data || (!near && !expired)) return null;
 
-  const msg = expired ? t("Η συνδρομή σας έχει λήξει.", "Your subscription has expired.")
+  const msg = expired && data.lock_message ? t(data.lock_message, "Your payment was not confirmed by the payment provider Viva. Please complete the payment again.")
+    : expired ? t("Η συνδρομή σας έχει λήξει.", "Your subscription has expired.")
     : days === 0 ? t("Η συνδρομή σας λήγει σήμερα.", "Your subscription expires today.")
     : days === 1 ? t("Η συνδρομή σας λήγει αύριο.", "Your subscription expires tomorrow.")
     : t(`Η συνδρομή σας λήγει σε ${days} ημέρες${data.current_period_end ? ` (${fmtDate(data.current_period_end)})` : ""}.`,

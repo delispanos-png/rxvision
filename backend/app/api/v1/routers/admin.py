@@ -22,6 +22,7 @@ from app.core.deps import PlatformContext, get_platform_admin
 from app.core.security import hash_password
 from app.repositories.base import jsonsafe
 from app.services import billing_service
+from app.services import invoice_service
 from app.services import email_template, mailer
 from app.services import platform_rbac as prbac
 from app.services.auth_service import AuthService, resolve_modules
@@ -1547,20 +1548,25 @@ async def softone_items(_: PlatformContext = Depends(get_platform_admin)):
     mm = cfg.get("mtrl_map") or {}
     # price = προτεινόμενη τιμή ΜΕ ΦΠΑ (gross, cents) — το billing χρεώνει gross· 0 = μεταβλητή/χωρίς σταθερή τιμή.
     items: list[dict] = []
+    # Πακέτα & πρόσθετα: ΧΩΡΙΣΤΟ είδος ανά κύκλο (μηνιαία/ετήσια). Το παλιό κλειδί χωρίς κύκλο = μηνιαία.
     async for p in db["packages"].find({}).sort("price_monthly", 1):
-        k = f"pkg:{p['_id']}"
-        items.append({"key": k, "group": "Συνδρομές", "name": p.get("name") or p["_id"], "mtrl": mm.get(k, ""),
-                      "price": int(p.get("price_monthly") or 0), "price_yearly": int(p.get("price_yearly") or 0),
-                      "price_includes_vat": bool(p.get("price_includes_vat"))})
+        base = f"pkg:{p['_id']}"
+        for cyc, lbl, pr in (("monthly", "μηνιαία", p.get("price_monthly")), ("yearly", "ετήσια", p.get("price_yearly"))):
+            k = f"{base}:{cyc}"
+            items.append({"key": k, "group": "Συνδρομές", "name": f"{p.get('name') or p['_id']} — {lbl}",
+                          "mtrl": mm.get(k) or (mm.get(base, "") if cyc == "monthly" else ""),
+                          "price": int(pr or 0), "price_includes_vat": bool(p.get("price_includes_vat"))})
     async for c in db["credit_packages"].find({}).sort("price_cents", 1):
         k = f"credit:{c['_id']}"
         items.append({"key": k, "group": "Credits μηνυμάτων", "name": c.get("name") or c["_id"], "mtrl": mm.get(k, ""),
                       "price": int(c.get("price_cents") or 0), "price_includes_vat": bool(c.get("price_includes_vat"))})
     async for a in db["addons"].find({}):
-        k = f"addon:{a['_id']}"
-        items.append({"key": k, "group": "Add-ons / Modules", "name": a.get("name") or a["_id"], "mtrl": mm.get(k, ""),
-                      "price": int(a.get("price_monthly") or 0), "price_yearly": int(a.get("price_yearly") or 0),
-                      "price_includes_vat": bool(a.get("price_includes_vat"))})
+        base = f"addon:{a['_id']}"
+        for cyc, lbl, pr in (("monthly", "μηνιαία", a.get("price_monthly")), ("yearly", "ετήσια", a.get("price_yearly"))):
+            k = f"{base}:{cyc}"
+            items.append({"key": k, "group": "Add-ons / Modules", "name": f"{a.get('name') or a['_id']} — {lbl}",
+                          "mtrl": mm.get(k) or (mm.get(base, "") if cyc == "monthly" else ""),
+                          "price": int(pr or 0), "price_includes_vat": bool(a.get("price_includes_vat"))})
     for k, nm in (("ai", "Επιπλέον όριο AI"), ("retention", "Επέκταση διατήρησης δεδομένων")):
         items.append({"key": k, "group": "Extras", "name": nm, "mtrl": mm.get(k, ""), "price": 0, "price_includes_vat": False})
     return {"items": items, "default_mtrl": mm.get("default", "")}
@@ -2575,7 +2581,8 @@ async def _open_balances(db) -> list[dict]:
         row["open_cents"] += int(inv.get("total") or 0)
         row["oldest_days"] = max(row["oldest_days"], age or 0)
         row["invoices"].append({
-            "id": str(inv["_id"]), "number": f"{inv.get('series')}-{inv.get('number')}",
+            "id": str(inv["_id"]),
+            "number": _official_number(inv),
             "issue_date": issued, "total": int(inv.get("total") or 0),
             "description": inv.get("description", ""), "days": age,
         })
@@ -2685,12 +2692,30 @@ def _invoice_totals(net: int, vat_rate: float) -> tuple[int, int]:
     return vat, net + vat
 
 
+def _official_number(inv: dict) -> str:
+    """Ο αριθμός που βλέπει ο χρήστης = ΜΟΝΟ αυτός της SoftOne (εκείνη εκδίδει το παραστατικό). Ο δικός μας
+    `number` είναι εσωτερικός και ΔΕΝ εμφανίζεται ως αριθμός παραστατικού (02/10/2026)."""
+    if inv.get("transformed_number"):
+        return str(inv["transformed_number"])                          # τελικό ΤΠΥ (π.χ. ΤΠΥ0000165)
+    if inv.get("softone_number"):
+        return f"{inv['softone_number']} · αναμένεται ΤΠΥ"               # προτιμολόγιο SoftOne
+    if inv.get("softone_findoc"):
+        return f"Προτιμολόγιο SoftOne #{inv['softone_findoc']} · αναμένεται ΤΠΥ"
+    return "αναμένεται από SoftOne"
+
+
+_payment_status = invoice_service.payment_status   # ΕΝΑΣ ορισμός — ίδιος με την οθόνη του πελάτη
+
+
 def _invoice_public(inv: dict, tenant_name: str | None = None) -> dict:
     return {
         "id": str(inv["_id"]), "tenant_id": inv.get("tenant_id"),
         "tenant_name": tenant_name or inv.get("tenant_name"),
         "doc_type": inv.get("doc_type"), "series": inv.get("series"),
-        "number": inv.get("number"), "full_number": f"{inv.get('series')}-{inv.get('number')}",
+        # ο ΕΠΙΣΗΜΟΣ αριθμός τον δίνει η SoftOne (ack)· πριν από την έκδοση ο δικός μας είναι εσωτερικός
+        "number": inv.get("number"),
+        "full_number": _official_number(inv),
+        "softone_number": inv.get("softone_number"),
         "issue_date": inv.get("issue_date"), "description": inv.get("description", ""),
         "comments": inv.get("comments", ""),
         "net_amount": inv.get("net_amount", 0), "vat_rate": inv.get("vat_rate", 0),
@@ -2703,8 +2728,11 @@ def _invoice_public(inv: dict, tenant_name: str | None = None) -> dict:
         "transformed_number": inv.get("transformed_number"), "transformed_findoc": inv.get("transformed_findoc"),
         # Κατάσταση πληρωμής: paid = υπάρχει επιτυχής χρέωση (transaction)· settled = χειροκίνητος
         # χαρακτηρισμός «εξοφλημένο»· αλλιώς unpaid.
-        "payment_status": ("paid" if (inv.get("payment") or {}).get("transaction_id")
-                           else ("settled" if inv.get("settled") else "unpaid")),
+        # Viva: «Πληρωμένο» ΜΟΝΟ αν το επιβεβαίωσε η ίδια η Viva (payment.verified — ποσό ≥ σύνολο)·
+        # συναλλαγή χωρίς επιβεβαίωση = «unverified» (Helthea 29/09/2026: επαλήθευση κάρτας 0,10 € ως «Πληρωμένο»).
+        "payment_status": _payment_status(inv),
+        "payment_verified_amount": (inv.get("payment") or {}).get("verified_amount"),
+        "payment_verify_reason": (inv.get("payment") or {}).get("verify_reason"),
         "payment_method": (inv.get("payment") or {}).get("method"),
         "payment_provider": (inv.get("payment") or {}).get("provider"),
         "settled_at": inv.get("settled_at"),
@@ -2868,8 +2896,10 @@ async def transmit_invoice(invoice_id: str, _: PlatformContext = Depends(get_pla
                 "softone_findoc": inv.get("softone_findoc")}
     r = await invoice_service.issue_invoice_by_id(inv["_id"])
     if not r.get("ok"):
-        raise HTTPException(http_status.HTTP_502_BAD_GATEWAY,
-                            {"error": r.get("error") or "softone_failed"})
+        # 409, ΟΧΙ 502: το Cloudflare αντικαθιστά κάθε 502 με δική του σελίδα, οπότε το μήνυμα της SoftOne
+        # χανόταν και η οθόνη έγραφε «Σφάλμα: Σφάλμα.» (02/10/2026)
+        raise HTTPException(http_status.HTTP_409_CONFLICT,
+                            {"error": "softone_failed", "message": r.get("error") or "Η SoftOne δεν το εξέδωσε."})
     return {"id": invoice_id, "aade_status": "transmitted", "aade_mark": r.get("aade_mark"),
             "softone_findoc": r.get("softone_findoc")}
 

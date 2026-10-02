@@ -369,25 +369,47 @@ class PatientIntelligenceRepository(BaseRepository):
         }
 
     # ── 5. WIN-BACK ─────────────────────────────────────────────────────────
+    _WINBACK_DAYS = (60, 90, 180, 365)
+
+    @classmethod
+    def _winback_bucket_of(cls, p: dict, now: datetime) -> int | None:
+        """ΜΙΑ ανάθεση ομάδας για κάρτες ΚΑΙ λίστα (ίδια όρια με πριν: 30–60, 60–90, 90–180, 180–365)."""
+        ls = p.get("last_seen_at")
+        if not isinstance(ls, datetime):
+            return None
+        prev_cut = 30
+        for days in cls._WINBACK_DAYS:
+            if now - timedelta(days=days) <= ls < now - timedelta(days=prev_cut):
+                return days
+            prev_cut = days
+        return None
+
     def _winback_buckets(self, pats: list[dict], now: datetime) -> list[dict]:
         out = []
-        prev_cut = 30
-        for days in (60, 90, 180, 365):
-            lo, hi = now - timedelta(days=days), now - timedelta(days=prev_cut)
-            grp = [p for p in pats if isinstance(p.get("last_seen_at"), datetime) and lo <= p["last_seen_at"] < hi]
+        for days in self._WINBACK_DAYS:
+            grp = [p for p in pats if self._winback_bucket_of(p, now) == days]
             lost_rev = sum(p.get("rx_value_total", 0) for p in grp)
             # recoverable: a fraction of historical value, decaying with inactivity
             factor = {60: 0.45, 90: 0.35, 180: 0.20, 365: 0.10}[days]
             out.append({"bucket": days, "count": len(grp), "lost_revenue": round(lost_rev),
                         "recoverable": round(lost_rev * factor)})
-            prev_cut = days
         return out
 
     async def winback(self) -> dict:
         pats = await self._patients()
         now = _now()
         buckets = self._winback_buckets(pats, now)
-        return jsonsafe({"buckets": buckets,
+        # οι ασφαλισμένοι κάθε κάρτας (κλικ στην κάρτα → λίστα) — ίδια ανάθεση με το πλήθος της κάρτας
+        items = []
+        for p in pats:
+            b = self._winback_bucket_of(p, now)
+            if b is None:
+                continue
+            items.append({"patient_id": str(p["_id"]), "name": p.get("full_name"), "amka": p.get("amka"),
+                          "last_seen": p.get("last_seen_at"), "days": (now - p["last_seen_at"]).days,
+                          "value": p.get("rx_value_total", 0), "rx_count": p.get("rx_count", 0), "bucket": b})
+        items.sort(key=lambda r: r["value"] or 0, reverse=True)
+        return jsonsafe({"buckets": buckets, "items": mask_rows(items, self.demo),
                          "total_recoverable": sum(b["recoverable"] for b in buckets),
                          "total_lost": sum(b["lost_revenue"] for b in buckets)})
 

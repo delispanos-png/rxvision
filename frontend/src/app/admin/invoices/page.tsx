@@ -17,10 +17,10 @@ type Invoice = {
   net_amount: number; vat_rate: number; vat_amount: number; total: number;
   aade_status: "transmitted" | "not_transmitted" | "transformed"; aade_mark: string | null; aade_transmitted_at: string | null;
   aade_sign?: string | null; aade_qr?: string | null; mydata_uid?: string | null; transformed?: boolean; transformed_number?: string | null;
-  payment_status?: "paid" | "settled" | "unpaid"; payment_method?: string | null; payment_provider?: string | null; settled_at?: string | null;
+  payment_status?: "paid" | "settled" | "unpaid" | "unverified"; payment_verified_amount?: number | null; payment_verify_reason?: string | null; payment_method?: string | null; payment_provider?: string | null; settled_at?: string | null;
   // Φάση 3 — αυτόματο κύκλωμα SoftOne → myDATA
   status?: "pending" | "blocked" | "issued" | "failed"; blocked_reason?: string | null;
-  softone_findoc?: string | null; mydata_aa?: string | null;
+  softone_findoc?: string | null; softone_number?: string | null; mydata_aa?: string | null;
   attempts?: number; last_error?: string | null; auto?: boolean; kind?: string | null;
   customer?: InvCustomer | null; lines?: InvLine[] | null; mtrl?: string | null;
   subtotal_net?: number | null; discount?: InvDiscount | null;
@@ -40,7 +40,7 @@ function SoftoneBadge({ inv }: { inv: Invoice }) {
   if (isSynced(inv))
     return (
       <span className={`${base} bg-emerald-100 text-emerald-700`} title={inv.softone_findoc ? `findoc ${inv.softone_findoc}` : ""}>
-        <CheckCircle2 className="h-3.5 w-3.5" /> Ενημερωμένο{inv.softone_findoc ? ` · ${inv.softone_findoc}` : ""}
+        <CheckCircle2 className="h-3.5 w-3.5" /> Ενημερωμένο{inv.transformed_number || inv.softone_number ? ` · ${inv.transformed_number || inv.softone_number}` : inv.softone_findoc ? ` · ${inv.softone_findoc}` : ""}
       </span>
     );
   if (inv.status === "failed")
@@ -80,7 +80,8 @@ export default function InvoicesPage() {
     const t = q.get("tenant");
     if (!t) return;
     const pl = q.get("plan");
-    setModal({ mode: "create", prefill: { tenant_id: t, item_key: pl ? `pkg:${pl}` : undefined } });
+    // είδος ανά ΚΥΚΛΟ (μηνιαία/ετήσια) — ίδια κλειδιά με τη λίστα ειδών SoftOne
+    setModal({ mode: "create", prefill: { tenant_id: t, item_key: pl ? `pkg:${pl}:${q.get("cycle") === "yearly" ? "yearly" : "monthly"}` : undefined } });
     setAutoOpened(true);
   }, [tenants.data, autoOpened]);
 
@@ -101,7 +102,7 @@ export default function InvoicesPage() {
   const send = async (i: Invoice) => {
     const again = i.status === "failed" || (i.attempts ?? 0) > 0;
     const ok = await appConfirm(
-      `${again ? "Επαναποστολή" : "Αποστολή"} του ${i.doc_type} ${i.full_number} στο SoftOne → myDATA/ΑΑΔΕ;\nΜετά την επιτυχή διαβίβαση κλειδώνει (δεν τροποποιείται/διαγράφεται).`,
+      `${again ? "Επαναποστολή" : "Αποστολή"} του παραστατικού (${i.full_number}) στο SoftOne → myDATA/ΑΑΔΕ;\nΜετά την επιτυχή διαβίβαση κλειδώνει (δεν τροποποιείται/διαγράφεται).`,
       { title: again ? "Επαναποστολή στο SoftOne" : "Αποστολή στο SoftOne", confirmText: again ? "Επαναποστολή" : "Αποστολή" });
     if (!ok) return;
     setBusyId(i.id);
@@ -122,13 +123,14 @@ export default function InvoicesPage() {
   };
 
   const columns: Column<Invoice>[] = [
-    { key: "full_number", header: "Αρ.", render: (r) => <span className="font-medium">{r.doc_type} {r.full_number}</span> },
+    { key: "full_number", header: "Αρ.", render: (r) => <span className="font-medium">{r.full_number}</span> },
     { key: "tenant_name", header: "Πελάτης", render: (r) => r.tenant_name ?? r.tenant_id },
     { key: "issue_date", header: "Ημ/νία", render: (r) => fmtDate(r.issue_date) },
     { key: "total", header: "Σύνολο", align: "right", render: (r) => fmtEur(r.total) },
     { key: "payment", header: "Πληρωμή", render: (r) => {
       const st = r.payment_status ?? "unpaid";
       if (st === "paid") return <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700" title={[r.payment_method, r.payment_provider].filter(Boolean).join(" · ")}>✓ Πληρωμένο</span>;
+      if (st === "unverified") return <span className="inline-flex items-center gap-1 rounded-full bg-rose-100 px-2 py-0.5 text-xs font-medium text-rose-700" title={`Η Viva δεν επιβεβαιώνει την πληρωμή${r.payment_verified_amount != null ? ` (εισπράχθηκαν ${fmtEur(r.payment_verified_amount)})` : ""}`}>⚠ Απλήρωτο (Viva)</span>;
       if (st === "settled") return <span className="inline-flex items-center gap-1 rounded-full bg-sky-100 px-2 py-0.5 text-xs font-medium text-sky-700">Εξοφλημένο</span>;
       return <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">Όχι</span>;
     } },
@@ -361,11 +363,11 @@ function InvoiceModal({ modal, tenants, onClose, onDone }:
   const cell = "rounded-lg border border-slate-300 px-2 py-1.5 text-sm focus:border-indigo-500 focus:outline-none disabled:bg-slate-50 disabled:text-slate-500";
   return (
     <Modal open onClose={onClose} size="4xl"
-      title={mode === "create" ? "Νέο παραστατικό" : mode === "edit" ? `Επεξεργασία ${inv?.doc_type} ${inv?.full_number}` : `Παραστατικό ${inv?.doc_type} ${inv?.full_number}`}>
+      title={mode === "create" ? "Νέο παραστατικό" : mode === "edit" ? `Επεξεργασία — ${inv?.full_number}` : `Παραστατικό — ${inv?.full_number}`}>
       <form onSubmit={submit} className="space-y-4">
         {view && inv && isSynced(inv) && (
           <div className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
-            Ενημερωμένο SoftOne{inv.softone_findoc ? <> · findoc: <code>{inv.softone_findoc}</code></> : null}
+            Ενημερωμένο SoftOne{inv.softone_number ? <> · αρ. <code>{inv.softone_number}</code></> : null}{inv.transformed_number ? <> → <code>{inv.transformed_number}</code></> : null}{inv.softone_findoc ? <> · findoc: <code>{inv.softone_findoc}</code></> : null}
             {inv.aade_mark ? <> · ΑΑΔΕ MARK: <code>{inv.aade_mark}</code></> : null}
           </div>
         )}

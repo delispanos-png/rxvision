@@ -138,14 +138,18 @@ async def ack(body: AckIn):
         return {"ok": True, "recorded": "error"}
     upd = {"status": "issued", "issued_at": inv.get("issued_at") or now,
            "sending_at": None, "last_error": None, "updated_at": now}
+    if not inv.get("softone_findoc"):
+        # ημερομηνία παραστατικού = ημερομηνία ΕΚΔΟΣΗΣ στη SoftOne (εκείνη το εκδίδει), όχι η δημιουργία του αιτήματος
+        upd["issue_date"] = now.date().isoformat()
     for k, v in (("softone_findoc", body.findoc), ("aade_mark", body.mark),
                  ("mydata_uid", body.uid), ("mydata_aa", body.aa)):
         if v:
             upd[k] = v
+    # ο αριθμός της SoftOne σε ΔΙΚΟ του πεδίο — δεν πατάμε τον εσωτερικό μας (`number`)
     if body.series:
-        upd["series"] = body.series
+        upd["softone_series"] = body.series
     if body.number:
-        upd["number"] = body.number
+        upd["softone_number"] = body.number
     # ΑΑΔΕ: «transmitted» ΜΟΝΟ με πραγματικό MARK — αλλιώς το παραστατικό δεν έχει διαβιβαστεί
     # (π.χ. προτιμολόγιο). Ίδιος κανόνας με το invoice-lock: κλειδώνει μόνο το MARK.
     upd["aade_status"] = "transmitted" if body.mark else (inv.get("aade_status") or "not_transmitted")

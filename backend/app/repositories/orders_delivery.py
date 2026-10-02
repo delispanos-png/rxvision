@@ -743,8 +743,9 @@ async def confirm_viva_payment(*, order_code: str, transaction_id: str | None = 
     # πλαστό payload χωρίς TransactionId περνούσε σαν πληρωμένο — payment bypass).
     if not transaction_id:
         return False
-    info = await viva_service.get_transaction(str(transaction_id), creds=creds)
-    if not info or str(info.get("StatusId") or "") != "F":
+    v = await viva_service.verify_payment(str(transaction_id), order_code=str(order_code), creds=creds,
+                                          expected_cents=int(order.get("total_cents") or 0))
+    if not v["ok"]:   # άλλη παραγγελία / μικρότερο ποσό / όχι ολοκληρωμένη → ΟΧΙ «πληρωμένη»
         return False
     await repo.update_one({"_id": order["_id"]}, {"$set": {
         "payment_status": "paid", "viva_transaction_id": transaction_id, "paid_at": _now()}})

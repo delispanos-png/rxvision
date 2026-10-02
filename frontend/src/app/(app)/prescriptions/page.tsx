@@ -167,7 +167,7 @@ const makeColumns = (t: T): Column<Prescription>[] => {
   ];
 };
 
-const makeUnexecutedColumns = (t: T): Column<UnexecutedRow>[] => {
+const makeUnexecutedColumns = (t: T, showAll = false): Column<UnexecutedRow>[] => {
   const CATEGORY_EL = categoryEl(t);
   return [
   { key: "name", header: t("Σκεύασμα", "Product"), render: (r) => r.name ?? r.product_id },
@@ -179,8 +179,9 @@ const makeUnexecutedColumns = (t: T): Column<UnexecutedRow>[] => {
         r.rxs ?? (r.barcodes ?? []).map((b) => ({ barcode: b }));
       return (
         <div className="flex flex-wrap gap-1.5">
-          {rxs.slice(0, 4).map((x) => <BarcodeChip key={x.barcode} bc={x.barcode} patient={x.patient} date={x.date} />)}
-          {rxs.length > 4 && <span className="text-xs text-slate-400">+{rxs.length - 4}</span>}
+          {/* σε αναζήτηση: ΟΛΕΣ οι συνταγές του σκευάσματος· αλλιώς οι 4 πρώτες + «+N» */}
+          {(showAll ? rxs : rxs.slice(0, 4)).map((x) => <BarcodeChip key={x.barcode} bc={x.barcode} patient={x.patient} date={x.date} />)}
+          {!showAll && rxs.length > 4 && <span className="text-xs text-slate-400">+{rxs.length - 4}</span>}
           {!rxs.length && <span className="text-slate-300">—</span>}
         </div>
       );
@@ -195,7 +196,8 @@ export default function PrescriptionsPage() {
   const t = useT();
   const STATUS_EL = statusEl(t);
   const columns = makeColumns(t);
-  const unexecutedColumns = makeUnexecutedColumns(t);
+  const [unSearch, setUnSearch] = useState("");
+  const unexecutedColumns = makeUnexecutedColumns(t, !!unSearch.trim());
   const fundCols = makeFundCols(t);
   const router = useRouter();
   const filters = useUiStore();
@@ -247,7 +249,7 @@ export default function PrescriptionsPage() {
     queryKey: ["prescriptions", "unexecuted", q],
     queryFn: () =>
       api<{ items: UnexecutedRow[]; total_occurrences: number; total_lost_value: number }>(
-        `/prescriptions/unexecuted?${q}`,
+        `/prescriptions/unexecuted?${q}&limit=500`,   // ΟΛΑ τα σκευάσματα (όχι μόνο τα 50 πρώτα)
       ),
   });
 
@@ -270,7 +272,10 @@ export default function PrescriptionsPage() {
 
   const items = list.data?.items ?? [];
   const un = unexecuted.data;
-  const unRows = un?.items ?? [];
+  // αναζήτηση σκευάσματος: χωρίς πεζά/κεφαλαία & τόνους (π.χ. «lasix» → LASIX 40MG/TAB)
+  const fold = (x: string) => x.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  const unAll = un?.items ?? [];                       // γράφημα: όλα (δεν το επηρεάζει η αναζήτηση)
+  const unRows = unAll.filter((r) => !unSearch.trim() || fold(r.name ?? r.product_id ?? "").includes(fold(unSearch.trim())));
 
   // period totals (whole date range), summed across funds — NOT the visible page
   const totalRx = fundData.reduce((a, f) => a + f.rx, 0);
@@ -425,7 +430,7 @@ export default function PrescriptionsPage() {
         </div>
 
         {/* unexecuted chart */}
-        {unRows.length > 0 && (
+        {unAll.length > 0 && (
           <PanelCard
             collapsible
             defaultOpen={false}
@@ -442,23 +447,28 @@ export default function PrescriptionsPage() {
             }
           >
             <BarChart
-              labels={unRows.slice(0, 10).map((r) => r.name ?? r.product_id)}
-              data={unRows.slice(0, 10).map((r) => r.occurrences)}
+              labels={unAll.slice(0, 10).map((r) => r.name ?? r.product_id)}
+              data={unAll.slice(0, 10).map((r) => r.occurrences)}
               name={t("Φορές", "Times")}
               horizontal
-              height={Math.max(220, unRows.slice(0, 10).length * 38)}
+              height={Math.max(220, unAll.slice(0, 10).length * 38)}
             />
           </PanelCard>
         )}
 
         {/* unexecuted table */}
         <PanelCard collapsible defaultOpen={false} title={t("Ανεκτέλεστες δραστικές — αναλυτικά", "Unexecuted substances — details")} bodyClassName="pt-2">
+          <input value={unSearch} onChange={(e) => setUnSearch(e.target.value)} type="search"
+            placeholder={t("Αναζήτηση σκευάσματος (π.χ. Lasix)…", "Search product (e.g. Lasix)…")}
+            className="mb-3 w-full max-w-sm rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800" />
           <DataTable
+            pageSize={20}
             columns={unexecutedColumns}
             rows={unRows}
             rowKey={(r) => r.product_id}
             onRowClick={(r) => setUnexecModal(r)}
-            empty={t("Καμία ανεκτέλεστη δραστική στην περίοδο.", "No unexecuted substances in the period.")}
+            empty={unSearch.trim() ? t("Κανένα σκεύασμα δεν ταιριάζει στην αναζήτηση.", "No product matches the search.")
+              : t("Καμία ανεκτέλεστη δραστική στην περίοδο.", "No unexecuted substances in the period.")}
           />
         </PanelCard>
 

@@ -95,6 +95,94 @@ async def _next_number(db, series: str) -> int:
     return int(doc.get("seq", 1))
 
 
+def payment_status(inv: dict) -> str:
+    """ΕΝΑΣ ορισμός (adminpanel ΚΑΙ πελάτης): paid = επιβεβαιωμένη χρέωση· settled = χειροκίνητο «εξοφλημένο»·
+    unverified = συναλλαγή Viva που η Viva ΔΕΝ επιβεβαιώνει (ποσό/είδος)· αλλιώς unpaid."""
+    pay = inv.get("payment") or {}
+    if inv.get("settled"):
+        return "settled"
+    if pay.get("transaction_id"):
+        if pay.get("provider") != "viva" or pay.get("verified") is True:
+            return "paid"
+        return "unverified"
+    return "unpaid"
+
+
+_METHOD_EL = {"card": "Κάρτα", "iris": "IRIS", "bank": "Τραπεζική κατάθεση", "bank_transfer": "Τραπεζική κατάθεση",
+              "alpha": "Κάρτα (Alpha Bank)", "wallet": "Υπόλοιπο λογαριασμού"}
+_PROVIDER_EL = {"viva": "Viva", "revolut": "Revolut", "alpha": "Alpha Bank"}
+
+
+def customer_view(inv: dict) -> dict:
+    """Το παραστατικό όπως το βλέπει ο ΠΕΛΑΤΗΣ (Ρυθμίσεις → Χρέωση). Μόνο ό,τι τον αφορά: ΚΑΝΕΝΑ εσωτερικό
+    στοιχείο (findoc, σφάλματα, προτιμολόγιο ΠΡΤΙΜ — ο επίσημος αριθμός είναι το ΤΠΥ μετά την έκδοση)."""
+    pay = inv.get("payment") or {}
+    st = payment_status(inv)
+    if st == "settled":
+        method, paid_at = "Εξόφληση με κατάθεση/χειροκίνητα", inv.get("settled_at")
+    elif st == "paid":
+        m = _METHOD_EL.get(str(pay.get("method") or ""), "Κάρτα" if pay.get("transaction_id") else "")
+        prov = _PROVIDER_EL.get(str(pay.get("provider") or ""), "")
+        method = f"{m} ({prov})" if m and prov else (m or prov)
+        paid_at = pay.get("charged_at") or inv.get("created_at")
+    else:
+        method, paid_at = None, None
+    official = inv.get("transformed_number")          # το επίσημο ΤΠΥ της SoftOne (μετά τον μετασχηματισμό)
+    return {
+        "id": str(inv["_id"]), "number": official, "issued": bool(official),
+        "issue_date": inv.get("issue_date"), "description": inv.get("description") or "",
+        "billing_cycle": inv.get("billing_cycle"),
+        "net_amount": int(inv.get("net_amount") or 0), "vat_rate": inv.get("vat_rate"),
+        "vat_amount": int(inv.get("vat_amount") or 0), "total": int(inv.get("total") or 0),
+        "payment_status": st, "payment_method": method, "paid_at": paid_at,
+        "aade_mark": inv.get("aade_mark"), "aade_qr": inv.get("aade_qr"),
+    }
+
+
+async def list_for_tenant(tenant_id: str, limit: int = 200) -> list[dict]:
+    """Τα παραστατικά ΕΝΟΣ φαρμακείου — η ΙΔΙΑ πηγή με το adminpanel (`invoices`), όχι ξεχωριστή λίστα χρεώσεων."""
+    if not tenant_id:
+        return []
+    cur = shared_db()["invoices"].find({"tenant_id": tenant_id}).sort("created_at", -1).limit(limit)
+    return [customer_view(i) async for i in cur]
+
+
+async def viva_proof(ref: str, gross_cents: int) -> dict:
+    """Απόδειξη πληρωμής από την ΙΔΙΑ τη Viva για ένα παραστατικό (viva_service.verify_payment). `ref` είναι
+    TransactionId — ή, στις φορτώσεις μονάδων, ο κωδικός παραγγελίας (OrderCode). «Πληρωμένο» ΜΟΝΟ με
+    verified=True: ολοκληρωμένη συναλλαγή με ποσό ≥ σύνολο παραστατικού."""
+    from app.services import viva_service
+    v = await viva_service.verify_payment(ref, expected_cents=int(gross_cents))
+    if v.get("reason") == "not_found":
+        t = await viva_service.order_paid_transaction(ref)
+        if t and t.get("TransactionId"):
+            v = await viva_service.verify_payment(str(t["TransactionId"]), order_code=ref,
+                                                  expected_cents=int(gross_cents))
+    return {"verified": bool(v.get("ok")), "verified_amount": v.get("amount_cents"),
+            "verify_reason": v.get("reason"), "verified_at": _now()}
+
+
+async def reverify_viva_invoices(db, *, only_unverified: bool = False) -> list[dict]:
+    """Ξαναρωτά τη Viva για κάθε παραστατικό Viva με συναλλαγή και ΑΠΟΘΗΚΕΥΕΙ το αποτέλεσμα. Επιστρέφει
+    όσα ΔΕΝ επιβεβαιώνονται. Καλείται από τον νυχτερινό αυτοέλεγχο (και μία φορά για τα παλιά)."""
+    flt: dict = {"payment.provider": "viva", "payment.transaction_id": {"$nin": [None, ""]}}
+    if only_unverified:
+        flt["payment.verified"] = {"$ne": True}
+    bad = []
+    async for inv in db["invoices"].find(flt):  # tenant-ok: πλατφόρμα — παραστατικά RxVision προς φαρμακεία
+        proof = await viva_proof(str(inv["payment"]["transaction_id"]), int(inv.get("total") or 0))
+        if proof["verify_reason"] == "not_found" and inv.get("payment", {}).get("verified"):
+            continue   # προσωρινό σφάλμα δικτύου/Viva → μην «ξεπληρώνεις» επιβεβαιωμένο
+        await db["invoices"].update_one({"_id": inv["_id"]}, {"$set": {
+            **{f"payment.{k}": v for k, v in proof.items()}}})
+        if not proof["verified"]:
+            bad.append({"invoice": str(inv["_id"]), "tenant_id": inv.get("tenant_id"),
+                        "number": inv.get("softone_number") or inv.get("full_number"),
+                        "total": inv.get("total"), "paid": proof["verified_amount"],
+                        "reason": proof["verify_reason"]})
+    return bad
+
+
 async def create_for_payment(*, tenant_id: str, kind: str, gross_cents: int,
                              description: str | None = None, payment: dict | None = None,
                              series: str | None = None, item_key: str | None = None) -> dict | None:
@@ -140,7 +228,20 @@ async def create_for_payment(*, tenant_id: str, kind: str, gross_cents: int,
         ik = item_key
         if not ik and kind in ("subscription", "renewal", "upgrade") and sub and sub.get("plan"):
             ik = f"pkg:{sub['plan']}"
-        mtrl = mm.get(ik or "") or mm.get("default") or None
+        # ΚΥΚΛΟΣ ΧΡΕΩΣΗΣ: πακέτα & πρόσθετα έχουν ΧΩΡΙΣΤΟ είδος SoftOne για μηνιαία/ετήσια (02/10/2026 —
+        # πριν, ετήσια συνδρομή πήγαινε στο ίδιο είδος με τη μηνιαία). Ετήσια ΧΩΡΙΣ ετήσιο κωδικό → γενικό
+        # είδος (default), ΠΟΤΕ το μηνιαίο. Τα παλιά κλειδιά χωρίς κύκλο ισχύουν μόνο ως μηνιαία.
+        cycle = (sub or {}).get("billing_cycle") or "monthly"
+        mtrl = None
+        if ik and ik.split(":")[0] in ("pkg", "addon") and ik.count(":") == 1:
+            mtrl = mm.get(f"{ik}:{cycle}") or (mm.get(ik) if cycle == "monthly" else None)
+            ik = f"{ik}:{cycle}"
+            description = description or KIND_LABELS.get(kind, "Υπηρεσία RxVision")
+            if "(ετήσια)" not in description and "(μηνιαία)" not in description:
+                description = f"{description} ({'ετήσια' if cycle == 'yearly' else 'μηνιαία'})"
+        else:
+            mtrl = mm.get(ik or "")
+        mtrl = mtrl or mm.get("default") or None
         now = _now()
         number = await _next_number(db, series)
         blocked = None if customer["afm"] else "missing_afm"
@@ -158,10 +259,11 @@ async def create_for_payment(*, tenant_id: str, kind: str, gross_cents: int,
             "description": description or KIND_LABELS.get(kind, "Υπηρεσία RxVision"),
             "comments": comments,
             "net_amount": net, "vat_rate": rate, "vat_amount": vat, "total": gross,
-            "mtrl": mtrl, "item_key": ik,
+            "mtrl": mtrl, "item_key": ik, "billing_cycle": cycle,
             "customer": customer,
             "payment": {"method": pay.get("method"), "provider": pay.get("provider"),
-                        "transaction_id": txn or None},
+                        "transaction_id": txn or None,
+                        **(await viva_proof(txn, gross) if txn and pay.get("provider") == "viva" else {})},
             "source_ref": f"{kind}:{txn}" if txn else f"{kind}:{tenant_id}:{int(now.timestamp())}",
             "status": "blocked" if blocked else "pending", "blocked_reason": blocked,
             "attempts": 0, "last_error": None, "next_attempt_at": now,
@@ -220,9 +322,12 @@ def _build_payload(inv: dict) -> dict:
     return {
         "ref": str(inv["_id"]),
         "kind": inv.get("kind"),
-        "issue_date": inv.get("issue_date"),
+        # ΟΧΙ αριθμός & ΟΧΙ ημερομηνία: το παραστατικό το ΕΚΔΙΔΕΙ η SoftOne — δίνει τον επόμενο διαθέσιμο
+        # αριθμό της σειράς με την ημερομηνία έκδοσης και μας τα επιστρέφει (ack: number/series).
+        # Ο δικός μας `number` είναι εσωτερικός. Στέλνοντάς τα, ένα παραστατικό που έμεινε πίσω
+        # (ΤΠΥ «7002-3», 14/09) απορριπτόταν για πάντα: «Έχει καταχωρηθεί παραστατικό σε μεταγενέστερη
+        # ημερομηνία με μικρότερο αριθμό σειράς» (02/10/2026).
         "series": inv.get("series"),
-        "number": inv.get("number"),
         "doc_type": inv.get("doc_type"),
         "comments": inv.get("comments") or inv.get("description") or "",   # ΑΙΤΙΟΛΟΓΙΑ (π.χ. περίοδος συνδρομής)
         "customer": inv.get("customer") or {},
@@ -338,6 +443,13 @@ async def check_transformations() -> dict:
          "aade_mark": {"$in": [None, ""]}}
     updated = 0
     async for inv in db["invoices"].find(q).sort("issued_at", 1).limit(BATCH):
+        # Ο ΑΡΙΘΜΟΣ που έδωσε η SoftOne στο παραστατικό (π.χ. ΠΡΤΙΜ00008) — αυτόν βλέπει ο χρήστης·
+        # ο δικός μας `number` είναι εσωτερικός (02/10/2026). Τυποποιημένο getData, όχι η γέφυρα JS.
+        if not inv.get("softone_number"):
+            e0 = await softone_service.get_einvoice(inv["softone_findoc"])
+            if e0.get("ok") and e0.get("final_number"):
+                await db["invoices"].update_one({"_id": inv["_id"]}, {"$set": {
+                    "softone_number": e0["final_number"], "updated_at": now}})
         res = await softone_service.call_js({"mode": "status", "ref": str(inv["_id"])})
         if not res.get("success"):
             continue

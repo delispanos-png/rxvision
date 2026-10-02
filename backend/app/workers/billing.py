@@ -162,7 +162,13 @@ def reconcile_viva_payments() -> dict:
             async for sub in db["subscriptions"].find({  # tenant-ok: beat χρεώσεων — όλες οι συνδρομές
                     "pending_renewal": {"$ne": None},
                     "viva_order_code": {"$nin": [None, ""]}}):
-                t = await viva_service.order_paid_transaction(str(sub["viva_order_code"]))
+                # ΜΟΝΟ ο κωδικός παραγγελίας της ανανέωσης — όχι το κοινό `viva_order_code` (το γράφει και η
+                # αποθήκευση κάρτας). Παλιά pending χωρίς order_code → παράλειψη (το complete_renewal
+                # επαληθεύει ούτως ή άλλως ότι η συναλλαγή είναι πράγματι ανανέωση με το σωστό ποσό).
+                code = (sub.get("pending_renewal") or {}).get("order_code")
+                if not code:
+                    continue
+                t = await viva_service.order_paid_transaction(str(code))
                 if t:
                     await billing_service.complete_renewal(sub["tenant_id"], str(t["TransactionId"]))
                     renewed += 1

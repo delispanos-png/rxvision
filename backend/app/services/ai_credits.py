@@ -101,10 +101,20 @@ async def record_pending_topup(tenant_id: str, pack: dict, order_id: str) -> Non
         "status": "pending", "created_at": _now()})
 
 
-async def complete_topup(order_id: str) -> bool:
+async def complete_topup(order_id: str, paid_cents: int | None = None) -> bool:
     """Καλείται από τα webhooks (Viva/Revolut) σε ολοκλήρωση. Πιστώνει ΜΙΑ φορά (idempotent).
     Returns True αν το order_id ήταν δικό μας (pending) AI top-up."""
     db = shared_db()
+    # Viva: `paid_cents` = ποσό που ΕΠΙΒΕΒΑΙΩΣΕ η Viva (verify_payment). Λιγότερο από την τιμή → ΚΑΜΙΑ
+    # πίστωση/παραστατικό (επιστρέφει True: η παραγγελία είναι δική μας, απλώς δεν πληρώθηκε).
+    if paid_cents is not None:
+        pend = await db["ai_credit_topups"].find_one({"order_id": order_id, "status": "pending"})
+        if pend and int(paid_cents) < int(pend.get("price_cents") or 0):
+            from app.services.billing_service import payment_rejected
+            await payment_rejected("φόρτωση μονάδων", pend["tenant_id"],
+                                   {"reason": "amount_short", "amount_cents": paid_cents, "transaction_id": order_id},
+                                   int(pend.get("price_cents") or 0))
+            return True
     doc = await db["ai_credit_topups"].find_one_and_update(
         {"order_id": order_id, "status": "pending"},
         {"$set": {"status": "completed", "completed_at": _now()}},

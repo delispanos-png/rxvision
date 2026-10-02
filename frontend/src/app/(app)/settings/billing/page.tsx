@@ -42,9 +42,12 @@ type Usage = {
   items: { metric: string; label: string; used: number; limit: number }[];
 };
 
+// Παραστατικό όπως το βλέπει ο πελάτης (invoice_service.customer_view) — ίδια πηγή με το adminpanel
 type Receipt = {
-  id: string; kind: string; kind_label?: { el: string; en: string }; description?: string;
-  amount_cents: number; status: string; method?: string | null; provider?: string | null; created_at: string | null;
+  id: string; number?: string | null; issued: boolean; issue_date?: string | null; description?: string;
+  billing_cycle?: string | null; net_amount: number; vat_rate?: number | null; vat_amount: number; total: number;
+  payment_status: "paid" | "settled" | "unverified" | "unpaid"; payment_method?: string | null; paid_at?: string | null;
+  aade_mark?: string | null; aade_qr?: string | null;
 };
 
 type Extras = {
@@ -203,8 +206,9 @@ export default function BillingSettingsPage() {
       : t("Δεν ήταν δυνατή η αλλαγή της διατήρησης.", "Could not change retention.")),
   });
 
-  const KIND_ICON: Record<string, string> = { subscription: "🔄", upgrade: "⬆️", addon: "✨", topup: "💬" };
-  const STCLS: Record<string, string> = { paid: "bg-emerald-100 text-emerald-700", pending: "bg-amber-100 text-amber-700", failed: "bg-rose-100 text-rose-700" };
+  const PAYCLS: Record<string, string> = { paid: "bg-emerald-100 text-emerald-700", settled: "bg-emerald-100 text-emerald-700", unverified: "bg-amber-100 text-amber-700", unpaid: "bg-amber-100 text-amber-700" };
+  const payLabel = (st: string) => st === "paid" || st === "settled" ? t("Πληρώθηκε", "Paid")
+    : st === "unverified" ? t("Αναμένεται επιβεβαίωση", "Awaiting confirmation") : t("Ανεξόφλητο", "Unpaid");
 
   // helper τιμής (τοπικά) για ζωντανή προεπισκόπηση στο dropdown διατήρησης
   const retSurcharge = (m: number) => x ? Math.max(0, Math.ceil((m - x.retention.default) / 12)) * x.retention.price_per_year_cents : 0;
@@ -380,23 +384,37 @@ export default function BillingSettingsPage() {
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead><tr className="border-b border-slate-100 text-left text-xs uppercase tracking-wide text-slate-400">
-              <th className="py-2">{t("Ημ/νία", "Date")}</th>
-              <th>{t("Τύπος", "Type")}</th>
+              <th className="py-2">{t("Αριθμός", "Number")}</th>
+              <th>{t("Ημ/νία", "Date")}</th>
               <th>{t("Περιγραφή", "Description")}</th>
               <th className="text-right">{t("Ποσό", "Amount")}</th>
-              <th className="text-right">{t("Κατάσταση", "Status")}</th>
+              <th>{t("Πληρωμή", "Payment")}</th>
+              <th className="text-right">{t("Παραστατικό", "Document")}</th>
             </tr></thead>
             <tbody className="divide-y divide-slate-50">
               {(receipts.data?.items ?? []).map((r) => (
-                <tr key={r.id}>
-                  <td className="whitespace-nowrap py-2 text-slate-500">{r.created_at ? new Date(r.created_at).toLocaleDateString("el-GR", { day: "2-digit", month: "2-digit", year: "numeric" }) : "—"}</td>
-                  <td className="text-slate-700">{KIND_ICON[r.kind] ?? "•"} {r.kind_label ? t(r.kind_label.el, r.kind_label.en) : r.kind}</td>
-                  <td className="text-slate-500">{r.description}{r.provider ? <span className="ml-1 text-xs text-slate-400">· {r.provider}</span> : ""}</td>
-                  <td className="text-right font-medium text-slate-800">{fmtEur(r.amount_cents)}</td>
-                  <td className="text-right"><span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${STCLS[r.status] ?? "bg-slate-100 text-slate-600"}`}>{r.status === "paid" ? t("Πληρώθηκε", "Paid") : r.status === "pending" ? t("Εκκρεμεί", "Pending") : t("Απέτυχε", "Failed")}</span></td>
+                <tr key={r.id} className="align-top">
+                  <td className="whitespace-nowrap py-2 font-medium text-slate-800">{r.number || <span className="font-normal text-slate-400">{t("Σε έκδοση", "Being issued")}</span>}</td>
+                  <td className="whitespace-nowrap py-2 text-slate-500">{r.issue_date ? fmtDate(r.issue_date) : "—"}</td>
+                  <td className="py-2 text-slate-600">{r.description}</td>
+                  <td className="whitespace-nowrap py-2 text-right">
+                    <div className="font-medium text-slate-800">{fmtEur(r.total)}</div>
+                    <div className="text-[11px] text-slate-400">{t("καθαρό", "net")} {fmtEur(r.net_amount)} + {t("ΦΠΑ", "VAT")} {fmtEur(r.vat_amount)}</div>
+                  </td>
+                  <td className="py-2">
+                    <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${PAYCLS[r.payment_status] ?? "bg-slate-100 text-slate-600"}`}>{payLabel(r.payment_status)}</span>
+                    {(r.payment_method || r.paid_at) && (
+                      <div className="mt-1 text-[11px] text-slate-500">{r.payment_method}{r.payment_method && r.paid_at ? " · " : ""}{r.paid_at ? fmtDate(r.paid_at) : ""}</div>
+                    )}
+                  </td>
+                  <td className="whitespace-nowrap py-2 text-right">
+                    {r.aade_qr ? <a href={r.aade_qr} target="_blank" rel="noopener noreferrer" className="text-xs font-medium text-brand-600 hover:underline">{t("Προβολή / λήψη ↗", "View / download ↗")}</a>
+                      : <span className="text-xs text-slate-300">—</span>}
+                    {r.aade_mark && <div className="mt-0.5 text-[10px] text-slate-400" title={r.aade_mark}>MARK {r.aade_mark.slice(0, 10)}…</div>}
+                  </td>
                 </tr>
               ))}
-              {!receipts.data?.items?.length && <tr><td colSpan={5} className="py-6 text-center text-slate-400">{receipts.isLoading ? t("Φόρτωση…", "Loading…") : t("Δεν υπάρχουν παραστατικά ακόμη.", "No receipts yet.")}</td></tr>}
+              {!receipts.data?.items?.length && <tr><td colSpan={6} className="py-6 text-center text-slate-400">{receipts.isLoading ? t("Φόρτωση…", "Loading…") : t("Δεν υπάρχουν παραστατικά ακόμη.", "No receipts yet.")}</td></tr>}
             </tbody>
           </table>
         </div>

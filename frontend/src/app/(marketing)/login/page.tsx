@@ -22,7 +22,7 @@ type LoginResponse = {
 };
 
 type RenewPkg = { _id: string; name?: string; price_monthly?: number; price_yearly?: number; modules?: string[]; seats?: number; sla?: string; billing_cycles?: string[] };
-type RenewState = { token: string; pkgs: RenewPkg[]; choice: string; yearly: boolean; busy: boolean; coupon: string; currentPlan?: string; currentPlanName?: string };
+type RenewState = { token: string; pkgs: RenewPkg[]; choice: string; yearly: boolean; busy: boolean; coupon: string; currentPlan?: string; currentPlanName?: string; message?: string | null };
 const eur = (c?: number) => new Intl.NumberFormat("el-GR", { style: "currency", currency: "EUR", maximumFractionDigits: 0 }).format((c || 0) / 100);
 
 const MODULE_LABELS: Record<string, string> = {
@@ -110,7 +110,7 @@ export default function LoginPage() {
       }
       router.push("/dashboard");
     } catch (e) {
-      const detail = (e instanceof ApiError ? (e.problem as { detail?: { error?: string; seats?: number; reason?: string; renew_token?: string; current_plan?: string; current_plan_name?: string } })?.detail : null) || {};
+      const detail = (e instanceof ApiError ? (e.problem as { detail?: { error?: string; seats?: number; reason?: string; renew_token?: string; current_plan?: string; current_plan_name?: string; message?: string | null } })?.detail : null) || {};
       if (e instanceof ApiError && e.status === 403 && detail.error === "seat_limit") {
         setServerError(
           `Συμπληρώθηκε το όριο ταυτόχρονων χρηστών${detail.seats ? ` (${detail.seats})` : ""} της συνδρομής σας. ` +
@@ -124,9 +124,9 @@ export default function LoginPage() {
           const hasYearly = paid.some((p) => (p.billing_cycles ? p.billing_cycles.includes("yearly") : (p.price_yearly || 0) > 0));
           const preferred = paid.find((p) => p._id === detail.current_plan) || paid[0];   // preselect το τρέχον
           setRenew({ token: detail.renew_token, pkgs: paid, choice: preferred?._id || "", yearly: hasYearly, busy: false, coupon: "",
-                     currentPlan: detail.current_plan, currentPlanName: detail.current_plan_name });
+                     currentPlan: detail.current_plan, currentPlanName: detail.current_plan_name, message: detail.message || null });
         } catch {
-          setRenew({ token: detail.renew_token, pkgs: [], choice: "", yearly: true, busy: false, coupon: "" });
+          setRenew({ token: detail.renew_token, pkgs: [], choice: "", yearly: true, busy: false, coupon: "", message: detail.message || null });
         }
       } else if (e instanceof ApiError && e.status === 403 && detail.error === "access_blocked") {
         setServerError(
@@ -155,8 +155,10 @@ export default function LoginPage() {
     return (
       <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
         <div className="mb-4 flex justify-center"><Logo markClassName="h-10 w-10" subtitle={false} /></div>
-        <h1 className="mb-1 text-lg font-bold text-slate-900">Η συνδρομή σου έληξε</h1>
-        <p className="mb-3 text-sm text-slate-500">Διάλεξε πακέτο και ανανέωσε για να συνεχίσεις. Ο κωδικός σου παραμένει ο ίδιος.</p>
+        <h1 className="mb-1 text-lg font-bold text-slate-900">{renew.message ? "Η πληρωμή σας δεν επιβεβαιώθηκε" : "Η συνδρομή σου έληξε"}</h1>
+        {renew.message
+          ? <p className="mb-3 rounded-lg bg-rose-50 px-3 py-2 text-sm font-medium text-rose-700">{renew.message}</p>
+          : <p className="mb-3 text-sm text-slate-500">Διάλεξε πακέτο και ανανέωσε για να συνεχίσεις. Ο κωδικός σου παραμένει ο ίδιος.</p>}
         {renew.currentPlan && (
           <div className="mb-3 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">Το πακέτο σου μέχρι τώρα: <b>{renew.currentPlanName || curPkg?.name || renew.currentPlan}</b></div>
         )}
