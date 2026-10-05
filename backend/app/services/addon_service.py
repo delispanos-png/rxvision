@@ -343,7 +343,9 @@ async def activate(tenant_id: str, addon_id: str) -> dict:
                                   provider_order_id=res.get("order_id"))
             await invoice_service.create_for_payment(
                 tenant_id=tenant_id, kind="extra", gross_cents=gross,
-                description=f"Πρόσθετο RxVision: {label}",
+                description=(f"Πρόσθετη δυνατότητα RxVision «{a.get('name') or addon_id}» — αναλογική "
+                             f"χρέωση {remaining} ημερών, έως τη λήξη της περιόδου "
+                             f"{invoice_service.fmt_d(sub.get('current_period_end'))}"),
                 payment={"method": "card", "provider": res.get("provider", "viva"),
                          "transaction_id": res.get("order_id")},
                 item_key=f"addon:{addon_id}")

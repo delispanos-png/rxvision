@@ -126,7 +126,9 @@ async def complete_topup(order_id: str, paid_cents: int | None = None) -> bool:
         from app.services import invoice_service
         await invoice_service.create_for_payment(
             tenant_id=doc["tenant_id"], kind="ai_credits", gross_cents=int(doc.get("price_cents", 0) or 0),
-            description=f"Αγορά AI credits RxVision ({doc['credit_cents']/100:.2f}€)",
+            description=(f"Πακέτο επιπλέον ερωτήσεων AI (Σύμβουλος/Copilot/PharmaCat) "
+                         f"{invoice_service.eur(int(doc.get('price_cents') or 0))} — πίστωση "
+                         f"{invoice_service.eur(int(doc['credit_cents']))} στο υπόλοιπο AI"),
             item_key=f"ai_credit:{doc.get('pack_id')}",
             payment={"method": "card", "provider": doc.get("provider"), "transaction_id": order_id})
     except Exception:  # noqa: BLE001 — η πίστωση έγινε· το παραστατικό είναι best-effort

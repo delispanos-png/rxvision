@@ -264,7 +264,8 @@ function InvoiceModal({ modal, tenants, onClose, onDone }:
       // match παλιών γραμμών (edit) χωρίς item_key, με βάση MTRL/όνομα
       if (!l.item_key && (l.mtrl || l.description)) {
         const m = catalog.find((c) => (l.mtrl && c.mtrl === l.mtrl) || c.name === l.description);
-        if (m) return { ...l, item_key: m.key, description: m.name, mtrl: m.mtrl };
+        // ΚΡΑΤΑ την περιγραφή του παραστατικού (τι ακριβώς αγοράστηκε)· το όνομα του καταλόγου είναι σύντομο (π.χ. «25€»)
+        if (m) return { ...l, item_key: m.key, description: l.description || m.name, mtrl: m.mtrl };
       }
       return l;
     }));

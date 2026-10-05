@@ -45,6 +45,21 @@ def _now() -> datetime:
     return datetime.now(tz=timezone.utc)
 
 
+def fmt_d(d) -> str:
+    """Ημερομηνία παραστατικού: ΗΗ/ΜΜ/ΕΕΕΕ."""
+    return d.strftime("%d/%m/%Y") if hasattr(d, "strftime") else ""
+
+
+def eur(cents: int) -> str:
+    """Ποσό σε κείμενο παραστατικού: 25 € / 110,36 €."""
+    v = int(cents or 0) / 100
+    return (f"{v:.0f} €" if v == int(v) else f"{v:.2f} €".replace(".", ","))
+
+
+def cycle_el(cycle: str | None) -> str:
+    return "ετήσια" if cycle == "yearly" else "μηνιαία"
+
+
 def _split_gross(gross_cents: int, rate: float) -> tuple[int, int]:
     """gross (ΦΠΑ-inclusive) → (net_cents, vat_cents). Το total παραμένει ΠΑΝΤΑ == gross (η χρέωση)."""
     net = round(gross_cents / (1 + rate / 100))

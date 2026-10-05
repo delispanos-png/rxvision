@@ -113,7 +113,10 @@ async def _try_auto_recharge(tenant_id: str, ar: dict) -> bool:
         from app.services import invoice_service
         await invoice_service.create_for_payment(
             tenant_id=tenant_id, kind="topup", gross_cents=int(pkg["price_cents"]),
-            description="Αυτόματη αναπλήρωση credits μηνυμάτων RxVision",
+            # Ο πελάτης ΠΡΕΠΕΙ να καταλαβαίνει τι αγόρασε (οδηγία ιδιοκτήτη 05/10/2026)
+            description=(f"Αυτόματη αναπλήρωση υπολοίπου μηνυμάτων (SMS/Viber/email) — πακέτο "
+                         f"{invoice_service.eur(pkg['price_cents'])}, πίστωση "
+                         f"{invoice_service.eur(pkg.get('credits_cents') or pkg['price_cents'])} στο υπόλοιπο μηνυμάτων"),
             item_key=f"credit:{pkg['_id']}",
             payment={"method": "card", "provider": res.get("provider"),
                      "transaction_id": res.get("order_id")})
@@ -305,7 +308,10 @@ async def complete_topup(order_id: str, paid_cents: int | None = None) -> bool:
     from app.services import invoice_service
     await invoice_service.create_for_payment(
         tenant_id=doc["tenant_id"], kind="topup", gross_cents=int(doc.get("price_cents", 0) or 0),
-        description="Αγορά credits μηνυμάτων RxVision",
+        description=(f"Πακέτο μονάδων μηνυμάτων (SMS/Viber/email) "
+                     f"{invoice_service.eur(int(doc.get('price_cents') or 0))} — πίστωση "
+                     f"{invoice_service.eur(int(doc.get('credits_cents') or doc.get('price_cents') or 0))} "
+                     f"στο υπόλοιπο μηνυμάτων"),
         item_key=f"credit:{doc.get('package_id')}",
         payment={"method": "card", "provider": doc.get("provider"), "transaction_id": order_id})
     return True

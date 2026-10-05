@@ -449,7 +449,8 @@ class OnboardingService:
             from app.services import invoice_service
             await invoice_service.create_for_payment(
                 tenant_id=res["tenant_id"], kind="subscription", gross_cents=int(p["amount_cents"]),
-                description="Συνδρομή RxVision (πρώτη περίοδος)",
+                description=(f"Συνδρομή RxVision «{(await db['packages'].find_one({'_id': p.get('package_code')}, {'name': 1}) or {}).get('name') or p.get('package_code') or ''}» "
+                             f"({invoice_service.cycle_el(p.get('billing_cycle'))}) — πρώτη περίοδος"),
                 payment={"method": p.get("payment_method") or "card", "provider": "viva",
                          "transaction_id": p.get("viva_transaction_id")})
         return res

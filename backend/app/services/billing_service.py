@@ -281,7 +281,9 @@ async def complete_renewal(tenant_id: str, viva_transaction_id: str) -> None:
     await invoice_service.create_for_payment(
         tenant_id=tenant_id, kind="renewal",
         gross_cents=int(pr.get("amount") or price or 0),
-        description=f"Ανανέωση συνδρομής RxVision — {pkg.get('name') or plan}",
+        description=(f"Συνδρομή RxVision «{pkg.get('name') or plan}» ({invoice_service.cycle_el(cycle)}) — "
+                     f"περίοδος {invoice_service.fmt_d(base)} έως "
+                     f"{invoice_service.fmt_d(base + (timedelta(days=365) if yearly else timedelta(days=30)))}"),
         payment={"method": "card", "provider": "viva", "transaction_id": viva_transaction_id})
 
 
@@ -528,8 +530,10 @@ async def bill_due() -> dict:
             from app.services import invoice_service
             await invoice_service.create_for_payment(
                 tenant_id=tid, kind="renewal", gross_cents=amount,
-                description=f"Ανανέωση συνδρομής RxVision {sub.get('plan', '')} "
-                            f"({sub.get('billing_cycle', 'monthly')})",
+                description=(f"Συνδρομή RxVision «{sub.get('plan_name') or (_rpkg or {}).get('name') or sub.get('plan', '')}» "
+                             f"({invoice_service.cycle_el(sub.get('billing_cycle'))}) — περίοδος "
+                             f"{invoice_service.fmt_d(now)} έως "
+                             f"{invoice_service.fmt_d(_period_end(sub.get('billing_cycle', 'monthly'), now))}"),
                 payment={"method": "card", "provider": res.get("provider", "revolut"),
                          "transaction_id": res.get("order_id")})
             charged += 1

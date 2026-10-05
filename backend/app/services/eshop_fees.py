@@ -211,7 +211,8 @@ async def charge_tenant(tenant_id: str, *, force: bool = False) -> dict:
     t = await db["tenants"].find_one({"_id": tenant_id}, {"company.country": 1})
     country = ((t or {}).get("company") or {}).get("country") or "GR"
     gross = invoice_service.gross_from_price(net, False, country)   # net → +ΦΠΑ
-    desc = f"RxVision e-shop transaction fees × {n_un}"
+    desc = (f"Προμήθεια παραγγελιών e-shop RxVision — {n_un} "
+            f"{'παραγγελία' if n_un == 1 else 'παραγγελίες'} (χρέωση ανά ολοκληρωμένη online παραγγελία)")
     res = await billing_service._charge_recurring(sub, gross, tenant_id)
     now = _now()
     rec = {"tenant_id": tenant_id, "count": n_un, "net_cents": net, "gross_cents": gross,

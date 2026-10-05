@@ -291,7 +291,10 @@ async def apply_change(tenant_id: str, *, source: str = "system") -> dict:
         from app.services import invoice_service
         await invoice_service.create_for_payment(
             tenant_id=tenant_id, kind="upgrade", gross_cents=_charged,
-            description=f"Αναβάθμιση σε {pend.get('plan_name') or pend['plan']}",
+            description=(f"Αναβάθμιση πακέτου RxVision σε «{pend.get('plan_name') or pend['plan']}» "
+                         f"({invoice_service.cycle_el(pend.get('billing_cycle') or sub.get('billing_cycle'))}) — "
+                         f"αναλογική διαφορά τιμής έως τη λήξη της περιόδου "
+                         f"{invoice_service.fmt_d(sub.get('current_period_end'))}"),
             payment={"method": method, "provider": provider,
                      "transaction_id": pend.get("revolut_order_id")})
     return {"ok": True, "plan": pend["plan"], "kind": pend.get("kind")}

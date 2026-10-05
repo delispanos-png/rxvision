@@ -187,7 +187,9 @@ async def change_seats(tenant_id: str, new_seats: int) -> dict:
                 provider_order_id=res.get("order_id"))
             await invoice_service.create_for_payment(
                 tenant_id=tenant_id, kind="extra", gross_cents=gross,
-                description=f"Επιπλέον χρήστες RxVision (+{delta}) — αναλογική χρέωση περιόδου",
+                description=(f"Επιπλέον {delta} {'χρήστης' if delta == 1 else 'χρήστες'} ταυτόχρονης σύνδεσης "
+                             f"RxVision (σύνολο {new_seats}) — αναλογική χρέωση έως τη λήξη της περιόδου "
+                             f"{invoice_service.fmt_d(sub.get('current_period_end'))}"),
                 payment={"method": "card", "provider": res.get("provider", "viva"),
                          "transaction_id": res.get("order_id")},
                 item_key="seats")
