@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 from bson import ObjectId
 from bson.errors import InvalidId
 
+from app.services import vat
 from app.repositories.base import BaseRepository, jsonsafe
 from app.services import dispensed, recoverable
 from app.services.stats_exclusion import COUNTABLE_EXEC
@@ -274,10 +275,12 @@ class AdvisorRepository(BaseRepository):
         ])
         r = rows[0] if rows else {}
         rev, cost = r.get("revenue", 0) or 0, r.get("cost", 0) or 0
-        gp = rev - cost
+        # κέρδος/περιθώριο επί λιανικής ΧΩΡΙΣ ΦΠΑ (services/vat.py)· ο τζίρος μένει με ΦΠΑ
+        pct = await vat.pct_for(self.tenant_id, self._db)
+        gp = round(vat.gross_profit(rev, cost, pct))
         return {"rx": r.get("rx", 0) or 0, "revenue": rev, "claimed": r.get("claimed", 0) or 0,
                 "cost": cost, "gross_profit": gp, "patient_share": r.get("patient_share", 0) or 0,
-                "margin_pct": (gp / rev * 100) if rev else 0,
+                "margin_pct": vat.margin_pct(rev, cost, pct),
                 "patients": len(r.get("patients", []) or []), "unexec": r.get("unexec", 0) or 0}
 
     async def _top_dimension(self, df, dt, field) -> tuple:
@@ -418,9 +421,11 @@ class AdvisorRepository(BaseRepository):
                 f"+{d_pat:.0f}% ασθενείς vs πέρσι — η πελατειακή βάση μεγαλώνει.", f"{d_pat:+.0f}%")
 
         # 2) margin
-        if cur["margin_pct"] < 18 and cur["revenue"] > 0:
+        # όριο σε ΚΑΘΑΡΟ περιθώριο: 13% χωρίς ΦΠΑ ≡ το παλιό 18% με ΦΠΑ (1 − 1,06 × 0,82)·
+        # συνηθισμένο στα συνταγογραφούμενα 21–23% χωρίς ΦΠΑ (μετρημένο 05/10/2026, 11 φαρμακεία)
+        if cur["margin_pct"] < 13 and cur["revenue"] > 0:
             add("warning", "percent", "Χαμηλό περιθώριο",
-                f"Το μεικτό περιθώριο είναι {cur['margin_pct']:.1f}% — κάτω από το υγιές ~20%. Στα Rx η τιμή είναι διατιμημένη· οι μοχλοί είναι γενόσημα, έκπτωση χονδρικής & ΜΗΣΥΦΑ/παραφάρμακα (ελεύθερη τιμή). Δες ποια σκευάσματα το πιέζουν.",
+                f"Το μεικτό περιθώριο (χωρίς ΦΠΑ) είναι {cur['margin_pct']:.1f}% — πολύ κάτω από το συνηθισμένο 21–23% των συνταγογραφούμενων. Στα Rx η τιμή είναι διατιμημένη· οι μοχλοί είναι γενόσημα, έκπτωση χονδρικής & ΜΗΣΥΦΑ/παραφάρμακα (ελεύθερη τιμή). Δες ποια σκευάσματα το πιέζουν.",
                 f"{cur['margin_pct']:.1f}%", {"label": "Κερδοφορία", "href": "/profitability"})
         else:
             d_m = (cur["margin_pct"] - prev["margin_pct"])

@@ -34,7 +34,9 @@ const typeElMap = (t: (a: string, b: string) => string): Record<string, string> 
 const kindElMap = (t: (a: string, b: string) => string): Record<string, string> => ({ in: t("Παραλαβή", "Receipt"), out: t("Πώληση/Έξοδος", "Sale/Out"), adjust: t("Απογραφή", "Stock count"), waste: t("Απόσυρση", "Write-off") });
 const daysTo = (iso?: string | null) => iso ? Math.round((new Date(iso).getTime() - Date.now()) / 86400000) : null;
 const dmy = (iso?: string | null) => iso ? iso.split("-").reverse().join("/") : "—";
-const margin = (p: Item) => (p.wholesale_cents && p.price_cents) ? Math.round((p.price_cents - p.wholesale_cents) / p.price_cents * 100) : null;
+// περιθώριο επί τιμής ΧΩΡΙΣ ΦΠΑ (η χονδρική είναι χωρίς ΦΠΑ) — ΦΠΑ του είδους (24/13/6%)
+const netPrice = (p: Item) => (p.price_includes_vat ?? true) ? p.price_cents / (1 + (p.vat_rate ?? 6) / 100) : p.price_cents;
+const margin = (p: Item) => (p.wholesale_cents && p.price_cents) ? Math.round((netPrice(p) - p.wholesale_cents) / netPrice(p) * 100) : null;
 
 export default function WarehousePage() {
   const t = useT();

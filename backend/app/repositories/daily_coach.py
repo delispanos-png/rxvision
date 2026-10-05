@@ -24,6 +24,7 @@ from urllib.parse import quote
 from bson import ObjectId
 from bson.errors import InvalidId
 
+from app.services import vat
 from app.repositories.base import BaseRepository
 from app.services import recoverable
 from app.services import coach_voice as V
@@ -513,14 +514,15 @@ class DailyCoachRepository(BaseRepository):
     async def _sig_loss_execution(self, now: datetime) -> list[dict]:
         """Εκτέλεση που κόστισε περισσότερα απ' όσα έφερε. Σπάνιο — άρα αληθινό όταν συμβαίνει."""
         out = []
+        pct = await vat.pct_for(self.tenant_id, self._db)   # ζημιά = κόστος > λιανική ΧΩΡΙΣ ΦΠΑ (services/vat.py)
         async for e in self._db["prescription_executions"].find(
                 {"tenant_id": self.tenant_id, "amount_total": {"$gt": 0},
                  "wholesale_cost": {"$gt": 0},
                  "executed_at": {"$gte": now - timedelta(days=30)},
-                 "$expr": {"$gt": ["$wholesale_cost", "$amount_total"]}},
+                 "$expr": {"$gt": ["$wholesale_cost", vat.net_expr("$amount_total", pct)]}},
                 {"external_id": 1, "executed_at": 1, "amount_total": 1, "wholesale_cost": 1}
         ).sort("executed_at", -1).limit(20):
-            loss = int(e["wholesale_cost"]) - int(e["amount_total"])
+            loss = int(e["wholesale_cost"]) - round(vat.net(e["amount_total"], pct))
             if loss < 100:
                 continue                       # κάτω από 1€: στρογγυλοποίηση, όχι πρόβλημα
             out.append({"signal": "loss_execution",
@@ -542,13 +544,14 @@ class DailyCoachRepository(BaseRepository):
         base = await self._totals(now - timedelta(days=120), now - timedelta(days=30))
         if cur["n"] < _MIN_EXECS or base["n"] < _MIN_EXECS or not cur["rev"] or not base["rev"]:
             return []                          # λίγα δεδομένα: καμία γνώμη
-        cur_pct = (cur["rev"] - cur["cost"]) * 100 / cur["rev"]
-        base_pct = (base["rev"] - base["cost"]) * 100 / base["rev"]
+        pct = await vat.pct_for(self.tenant_id, self._db)   # περιθώριο επί ΚΑΘΑΡΗΣ λιανικής (services/vat.py)
+        cur_pct = vat.margin_pct(cur["rev"], cur["cost"], pct)
+        base_pct = vat.margin_pct(base["rev"], base["cost"], pct)
         gap = base_pct - cur_pct
         if gap < 2:
             return []
         return [{"signal": "margin_drop", "subject": "period", "since": now - timedelta(days=30),
-                 "money_cents": int(cur["rev"] * gap / 100), "inbox": "/analytics", "severity": 3,
+                 "money_cents": int(vat.net(cur["rev"], pct) * gap / 100), "inbox": "/analytics", "severity": 3,
                  "extra": {"cur": round(cur_pct, 1), "base": round(base_pct, 1),
                            "gap": round(gap, 1)}}]
 

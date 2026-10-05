@@ -23,7 +23,8 @@ from app.services.repeat_windows import next_repeat_open
 from app.services.ingestion.canonical import CanonicalExecution, CanonicalItem
 from app.services.ingestion.validate import validate_execution
 from app.services.vault_service import vault
-from app.services.wholesale import load_bands, markup_pct
+from app.services import vat
+from app.services.wholesale import catalog_wholesale, estimate_wholesale, load_bands
 from app.utils.anonymization import age_group, pseudonymize
 
 _REPEAT_INTERVAL_DAYS = 30
@@ -505,12 +506,22 @@ class IngestionEngine:
         # Ν/Α (εξαιρούνται τελείως από κόστος/κέρδος αντί να φαβρικάρουμε νούμερο).
         if (it.details or {}).get("galenic"):
             return 0, "unavailable"
-        # Εκτίμηση από την κλιμακωτή διατίμηση (platform-global, ρυθμιζόμενη από το admin).
+        # ΕΠΙΣΗΜΗ χονδρική του Δελτίου Τιμών (κατάλογος ΗΔΥΚΑ) — πραγματική, όχι εκτίμηση
+        if it.barcode:
+            cw = (await catalog_wholesale(self.db, [it.barcode])).get(it.barcode)
+            if cw:
+                return cw, "catalog"
+        # Εκτίμηση από την κλιμακωτή διατίμηση — ΕΝΑΣ τύπος με τον επανυπολογισμό (services/wholesale.py)
         if it.retail_price > 0:
             if self._bands is None:
                 self._bands = await load_bands(self.db)
-            return round(it.retail_price * (1 - markup_pct(it.retail_price, self._bands) / 100)), "estimated"
+            return estimate_wholesale(it.retail_price, self._bands, await self._vat()), "estimated"
         return 0, "unknown"
+
+    async def _vat(self) -> float:
+        if getattr(self, "_vat_pct", None) is None:
+            self._vat_pct = await vat.pct_for(self.tenant_id, self.db)
+        return self._vat_pct
 
     async def _catalog_retail(self, barcode: str | None) -> int:
         """Ρυθμιζόμενη λιανική (Δελτίο Τιμών ΗΔΥΚΑ) από το global medicine_catalog, ανά barcode ή
@@ -548,7 +559,7 @@ class IngestionEngine:
             # line 2,70€ ενώ ρυθμιζόμενη 12,35€). Ποτέ δεν χαμηλώνει (max) → σέβεται υψηλότερη πραγματική.
             eff_retail = max(eff_retail, await self._catalog_retail(it.barcode))
             wholesale, wsource = await self._effective_wholesale(it)
-            margin = eff_retail - wholesale
+            margin = round(vat.net(eff_retail, await self._vat())) - wholesale   # χωρίς ΦΠΑ (services/vat.py)
             # Product aggregate: ΚΡΑΤΑ τη ΜΕΓΙΣΤΗ γνωστή λιανική — ΠΟΤΕ clobber σε 0/χαμηλότερη από
             # μη-εκτελεσμένη/μερική γραμμή (αλλιώς το retail_price μηδενιζόταν → ψευδο-αρνητικό περιθώριο,
             # π.χ. OPRAZIUM retail 0 ενώ items 14€). margin/margin_pct από την ΤΕΛΙΚΗ (max) λιανική.
@@ -558,14 +569,15 @@ class IngestionEngine:
             if wholesale > 0:   # μην clobber γνωστή masterdata wholesale με 0/unknown
                 stage1["wholesale_price"] = wholesale
                 stage1["wholesale_source"] = wsource
+            _n = vat.net_expr("$retail_price", await self._vat())   # λιανική χωρίς ΦΠΑ
             res = await self.db["products"].find_one_and_update(
                 {"tenant_id": self.tenant_id, "barcode": it.barcode},
                 [{"$set": stage1},
-                 {"$set": {"margin": {"$subtract": ["$retail_price", {"$ifNull": ["$wholesale_price", 0]}]},
+                 {"$set": {"margin": {"$subtract": [_n, {"$ifNull": ["$wholesale_price", 0]}]},
                            "margin_pct": {"$cond": [{"$gt": ["$retail_price", 0]},
                                {"$round": [{"$multiply": [{"$divide": [
-                                   {"$subtract": ["$retail_price", {"$ifNull": ["$wholesale_price", 0]}]},
-                                   "$retail_price"]}, 100]}, 2]}, 0]}}}],
+                                   {"$subtract": [_n, {"$ifNull": ["$wholesale_price", 0]}]},
+                                   _n]}, 100]}, 2]}, 0]}}}],
                 upsert=True, return_document=ReturnDocument.AFTER)
             product_id = res["_id"]
             # Τεμάχια που δόθηκαν: η πηγή το ξέρει (υπόλοιπο ΗΔΥΚΑ). Όπου δεν το δίνει, όλα ή

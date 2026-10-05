@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
+from app.services import vat
 from app.repositories.base import BaseRepository
 from app.services.stats_exclusion import COUNTABLE_EXEC
 from app.services.icd10_meta import chapter_for
@@ -26,7 +27,7 @@ class Icd10Repository(BaseRepository):
                 "cost": {"$sum": "$wholesale_cost"},
                 "patients": {"$addToSet": "$patient_ref"},
             }},
-            {"$set": {"profit": {"$subtract": ["$value", "$cost"]},   # retail − wholesale
+            {"$set": {"profit": vat.profit_expr("$value", "$cost", await vat.pct_for(self.tenant_id, self._db)),   # λιανική χωρίς ΦΠΑ − χονδρική
                       "patients": {"$size": "$patients"}}},
             {"$sort": {sort_field: -1}},
             {"$limit": limit},
@@ -62,7 +63,7 @@ class Icd10Repository(BaseRepository):
                             "claimed": {"$sum": "$amount_claimed"},
                             "cost": {"$sum": "$wholesale_cost"},
                             "patients": {"$addToSet": "$patient_ref"}}},
-                {"$set": {"profit": {"$subtract": ["$value", "$cost"]},
+                {"$set": {"profit": vat.profit_expr("$value", "$cost", await vat.pct_for(self.tenant_id, self._db)),
                           "patients": {"$size": "$patients"}}},
                 {"$project": {"_id": 0}},
             ])
@@ -124,7 +125,7 @@ class Icd10Repository(BaseRepository):
                 "cost": {"$sum": "$wholesale_cost"},
                 "codes": {"$addToSet": "$icd10"},
             }},
-            {"$set": {"profit": {"$subtract": ["$value", "$cost"]},  # retail − wholesale
+            {"$set": {"profit": vat.profit_expr("$value", "$cost", await vat.pct_for(self.tenant_id, self._db)),  # λιανική χωρίς ΦΠΑ − χονδρική
                       "code_count": {"$size": "$codes"}}},
             {"$sort": {sort_field: -1}},
             {"$limit": limit},

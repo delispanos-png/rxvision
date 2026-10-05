@@ -8,6 +8,7 @@ from __future__ import annotations
 import re
 from datetime import datetime
 
+from app.services import vat
 from app.repositories.base import BaseRepository, jsonsafe
 from app.services.stats_exclusion import COUNTABLE_EXEC
 from app.utils.masking import mask_amka, mask_name
@@ -176,7 +177,7 @@ class PatientExecutionsRepository(BaseRepository):
                 "active_since": {"$min": "$executed_at"},
                 "last_seen": {"$max": "$executed_at"},
             }},
-            {"$set": {"profit": {"$subtract": ["$value", "$cost"]}}},  # retail − wholesale
+            {"$set": {"profit": vat.profit_expr("$value", "$cost", await vat.pct_for(self.tenant_id, self._db))}},  # λιανική χωρίς ΦΠΑ − χονδρική
         ]
         # numeric filters on the grouped totals (cheap, before the demographics/contact lookups)
         num: dict = {}

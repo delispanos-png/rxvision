@@ -98,6 +98,17 @@ export function AttentionMap({ q }: { q: string }) {
   };
 
   const signed = (c: number) => `${c > 0 ? "+" : c < 0 ? "−" : ""}${fmtEur(Math.abs(c))}`;
+  // Η «επίδραση» ΔΕΝ είναι ζημιά: είναι η διαφορά από το κέρδος που θα έφερνε η ενότητα με το μέσο
+  // περιθώριο. Κόκκινο ΜΟΝΟ για πραγματική ζημιά (κόστος > έσοδα)· αλλιώς πορτοκαλί/πράσινο.
+  const impactTone = (impact: number, reason?: Reason) =>
+    reason === "loss" ? "text-rose-600 dark:text-rose-400"
+      : impact < 0 ? "text-amber-600 dark:text-amber-400" : impact > 0 ? "text-emerald-600 dark:text-emerald-400" : "text-slate-500";
+  // μέσο περιθώριο ΚΑΘΕ διάστασης (ίδιος τύπος με τον server: Σ κέρδος / Σ έσοδα)
+  const avgOf = (key: DimKey) => {
+    const ss = d?.dimensions.find((x) => x.key === key)?.segments ?? [];
+    const v = ss.reduce((a, x) => a + x.value, 0);
+    return v ? (ss.reduce((a, x) => a + x.profit, 0) / v) * 100 : 0;
+  };
   const segs = d?.dimensions.find((x) => x.key === dim)?.segments ?? [];
   const tv = segs.reduce((a, s) => a + s.value, 0);
   const avg = tv ? (segs.reduce((a, s) => a + s.profit, 0) / tv) * 100 : 0;
@@ -111,16 +122,16 @@ export function AttentionMap({ q }: { q: string }) {
   // Συναρτήσεις, ΟΧΙ components: component ορισμένο μέσα στο render ξαναστήνεται σε κάθε ανανέωση.
   const row = (s: Segment) => {
     const w = `${Math.max(4, (Math.abs(s.impact) / maxImpact) * 100)}%`;
-    const tone = s.verdict === "pressure" ? "bg-rose-400" : s.verdict === "helps" ? "bg-emerald-400" : "bg-slate-300 dark:bg-slate-600";
+    const tone = s.reason === "loss" ? "bg-rose-400" : s.verdict === "pressure" ? "bg-amber-400" : s.verdict === "helps" ? "bg-emerald-400" : "bg-slate-300 dark:bg-slate-600";
     return (
       <li key={s.label} className="py-2">
         <div className="flex items-baseline justify-between gap-2">
           <span className="min-w-0 break-words text-sm font-medium text-slate-800 dark:text-slate-100">{s.label}</span>
-          <span className={`shrink-0 text-sm font-semibold tabular-nums ${s.impact < 0 ? "text-rose-600 dark:text-rose-400" : s.impact > 0 ? "text-emerald-600 dark:text-emerald-400" : "text-slate-500"}`}>{signed(s.impact)}</span>
+          <span className={`shrink-0 text-sm font-semibold tabular-nums ${impactTone(s.impact, s.reason)}`}>{s.reason === "loss" ? t(`ζημιά ${fmtEur(Math.abs(s.profit))}`, `loss ${fmtEur(Math.abs(s.profit))}`) : signed(s.impact)}</span>
         </div>
         <div className="mt-1 h-1.5 w-full rounded-full bg-slate-100 dark:bg-slate-800"><div className={`h-1.5 rounded-full ${tone}`} style={{ width: w }} /></div>
         <p className="mt-1 text-xs text-slate-500">
-          {t("περιθώριο", "margin")} {fmtPct(s.margin_pct)} · {fmtDec(s.revenue_share_pct, 1)}% {t("των εσόδων", "of revenue")}
+          {t("περιθώριο", "margin")} {fmtPct(s.margin_pct)} {t(`έναντι μέσου ${fmtPct(avg)}`, `vs average ${fmtPct(avg)}`)} · {fmtDec(s.revenue_share_pct, 1)}% {t("των εσόδων", "of revenue")}
           {s.cuts > 0 && <> · {t("περικοπές", "cuts")} {fmtEur(s.cuts)}</>}
           {s.delta_profit !== null && s.prev_profit !== null && s.prev_profit !== 0 && <> · {t("πέρσι", "last year")} {signed(s.delta_profit)}</>}
         </p>
@@ -140,9 +151,9 @@ export function AttentionMap({ q }: { q: string }) {
   );
 
   const FOCUS_STYLE = {
-    pressure: { label: t("Πιέζει", "Pressure"), cls: "border-l-rose-500", badge: "bg-rose-50 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300", Icon: AlertTriangle },
+    pressure: { label: t("Κάτω από τον μέσο όρο", "Below average"), cls: "border-l-amber-500", badge: "bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300", Icon: AlertTriangle },
     decline: { label: t("Πτώση έναντι πέρσι", "Down vs last year"), cls: "border-l-amber-500", badge: "bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300", Icon: TrendingDown },
-    helps: { label: t("Βοηθά", "Helps"), cls: "border-l-emerald-500", badge: "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300", Icon: TrendingUp },
+    helps: { label: t("Πάνω από τον μέσο όρο", "Above average"), cls: "border-l-emerald-500", badge: "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300", Icon: TrendingUp },
   } as const;
 
   return (
@@ -189,13 +200,17 @@ export function AttentionMap({ q }: { q: string }) {
                       </div>
                       <div className="flex items-baseline justify-between gap-2">
                         <b className="min-w-0 break-words text-slate-900 dark:text-slate-100">{f.label}</b>
-                        <span className={`shrink-0 text-lg font-bold tabular-nums ${big < 0 ? "text-rose-600 dark:text-rose-400" : "text-emerald-600 dark:text-emerald-400"}`}>{signed(big)}</span>
+                        <span className={`shrink-0 text-right tabular-nums ${impactTone(big, f.type === "decline" ? undefined : f.reason)}`}>
+                          <span className="block text-lg font-bold">{f.type !== "decline" && f.reason === "loss" ? t(`ζημιά ${fmtEur(Math.abs(f.profit))}`, `loss ${fmtEur(Math.abs(f.profit))}`) : signed(big)}</span>
+                          {f.type !== "decline" && f.reason !== "loss" && <span className="block text-[11px] font-normal text-slate-400">{t("έναντι μέσου όρου", "vs average")}</span>}
+                          {f.type === "decline" && <span className="block text-[11px] font-normal text-slate-400">{t("κέρδος έναντι πέρσι", "profit vs last year")}</span>}
+                        </span>
                       </div>
                       <p className="mt-0.5 text-xs text-slate-500">
                         {f.type === "decline"
                           ? t(`κέρδος ${fmtEur(f.profit)} έναντι ${fmtEur(f.prev_profit ?? 0)} πέρσι`, `profit ${fmtEur(f.profit)} vs ${fmtEur(f.prev_profit ?? 0)} last year`)
-                          : t(`περιθώριο ${fmtPct(f.margin_pct)} · ${fmtDec(f.revenue_share_pct, 1)}% των εσόδων · ${fmtDec(f.cost / Math.max(1, k.capital) * 100, 1)}% του κεφαλαίου`,
-                              `margin ${fmtPct(f.margin_pct)} · ${fmtDec(f.revenue_share_pct, 1)}% of revenue · ${fmtDec(f.cost / Math.max(1, k.capital) * 100, 1)}% of capital`)}
+                          : t(`περιθώριο ${fmtPct(f.margin_pct)} έναντι μέσου ${fmtPct(avgOf(f.dim))} · ${fmtDec(f.revenue_share_pct, 1)}% των εσόδων · ${fmtDec(f.cost / Math.max(1, k.capital) * 100, 1)}% του κεφαλαίου`,
+                              `margin ${fmtPct(f.margin_pct)} vs average ${fmtPct(avgOf(f.dim))} · ${fmtDec(f.revenue_share_pct, 1)}% of revenue · ${fmtDec(f.cost / Math.max(1, k.capital) * 100, 1)}% of capital`)}
                       </p>
                       <p className="mt-2 text-sm text-slate-700 dark:text-slate-300">{hint(f)}</p>
                     </div>
@@ -204,8 +219,8 @@ export function AttentionMap({ q }: { q: string }) {
               </div>
             )}
             <p className="mt-3 text-xs text-slate-400">
-              {t("Ο αριθμός δίπλα σε κάθε ενότητα είναι η επίδρασή της: πόσο περισσότερο (+) ή λιγότερο (−) κέρδος έφερε από όσο θα έφερνε με το μέσο περιθώριό σου. «Πτώση» = σύγκριση με την ίδια περίοδο πέρσι.",
-                 "The number next to each item is its impact: how much more (+) or less (−) profit it brought than it would at your average margin. “Down” compares with the same period last year.")}
+              {t("Ο αριθμός δίπλα σε κάθε ενότητα ΔΕΝ είναι ζημιά: είναι πόσο περισσότερο (+) ή λιγότερο (−) κέρδος έφερε απ' όσο θα έφερνε με το μέσο περιθώριό σου. Στα συνταγογραφούμενα το περιθώριο το ορίζει η διατίμηση — τα ακριβά φάρμακα έχουν μικρότερο ποσοστό από τον νόμο. «Πτώση» = πραγματική διαφορά κέρδους από την ίδια περίοδο πέρσι.",
+                 "The number next to each item is NOT a loss: it is how much more (+) or less (−) profit it brought than it would at your average margin. For prescription medicines the margin is set by state pricing — expensive medicines carry a smaller percentage by law. “Down” = actual profit difference from the same period last year.")}
             </p>
           </PanelCard>
 
@@ -223,13 +238,13 @@ export function AttentionMap({ q }: { q: string }) {
             }
           >
             <p className="mb-3 text-xs text-slate-500">
-              {DIM_HELP[dim]} {t(`Μέσο περιθώριο: ${fmtPct(avg)}. «Πιέζει» = τουλάχιστον 10% κάτω από αυτό, «βοηθά» = τουλάχιστον 10% πάνω· κάτω από 2% των εσόδων μια ενότητα δεν αλλάζει την εικόνα.`,
-                                  `Average margin: ${fmtPct(avg)}. “Pressure” = at least 10% below it, “helps” = at least 10% above; below 2% of revenue an item does not change the picture.`)}
+              {DIM_HELP[dim]} {t(`Μέσο περιθώριο: ${fmtPct(avg)}. «Κάτω από τον μέσο όρο» = τουλάχιστον 10% χαμηλότερο περιθώριο, «πάνω» = τουλάχιστον 10% υψηλότερο· ο αριθμός είναι η διαφορά από τον μέσο όρο, όχι ζημιά. Κάτω από 2% των εσόδων μια ενότητα δεν αλλάζει την εικόνα.`,
+                                  `Average margin: ${fmtPct(avg)}. “Below average” = margin at least 10% lower, “above” = at least 10% higher; the number is the difference from average, not a loss. Below 2% of revenue an item does not change the picture.`)}
             </p>
             <div className="grid gap-3 lg:grid-cols-3">
-              {column(t("Πιέζουν", "Pressure"), TrendingDown, "text-rose-600 dark:text-rose-400", pressure,
-                t("Τίποτα δεν πιέζει σε αυτή τη διάσταση.", "Nothing is under pressure in this dimension."))}
-              {column(t("Βοηθούν", "Help"), TrendingUp, "text-emerald-600 dark:text-emerald-400", helps,
+              {column(t("Κάτω από τον μέσο όρο", "Below average"), TrendingDown, "text-amber-600 dark:text-amber-400", pressure,
+                t("Καμία ενότητα δεν υστερεί σημαντικά σε αυτή τη διάσταση.", "Nothing is notably below average in this dimension."))}
+              {column(t("Πάνω από τον μέσο όρο", "Above average"), TrendingUp, "text-emerald-600 dark:text-emerald-400", helps,
                 t("Καμία ενότητα δεν ξεχωρίζει προς τα πάνω.", "Nothing stands out upwards."))}
               <div className="rounded-xl border border-slate-200 p-3 dark:border-slate-800">
                 <div className="mb-1 text-sm font-semibold text-slate-500">

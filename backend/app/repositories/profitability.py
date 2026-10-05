@@ -1,6 +1,8 @@
 """Κερδοφορία — ΕΝΑΣ ορισμός κέρδους για κάθε πάνελ της σελίδας.
 
-ΜΕΙΚΤΟ ΚΕΡΔΟΣ = λιανική αξία − κόστος χονδρικής (δες [[product-profitability-spec]]).
+ΜΕΙΚΤΟ ΚΕΡΔΟΣ = λιανική αξία ΧΩΡΙΣ ΦΠΑ − κόστος χονδρικής (δες [[product-profitability-spec]]).
+Η χονδρική είναι χωρίς ΦΠΑ, η λιανική της ΗΔΥΚΑ με ΦΠΑ → ΟΛΑ τα έσοδα της σελίδας είναι ΚΑΘΑΡΑ
+(services/vat.py, 05/10/2026). Πριν: λιανική με ΦΠΑ − χονδρική → κέρδος +~5,7% των πωλήσεων.
 
 Η ΑΡΧΗ ΠΟΥ ΚΡΑΤΑ ΤΑ ΝΟΥΜΕΡΑ ΣΥΜΦΩΝΑ: το σύνολο ΚΑΘΕ ΕΚΤΕΛΕΣΗΣ (`amount_total`, από την ΗΔΥΚΑ) και
 το κόστος της (`wholesale_cost`) είναι η αλήθεια. Τα είδη της συνταγής ΔΕΝ έχουν δικά τους
@@ -22,7 +24,7 @@ from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
 from app.repositories.base import BaseRepository
-from app.services import dispensed
+from app.services import dispensed, vat
 from app.services.stats_exclusion import COUNTABLE_EXEC
 
 #: Ετικέτα για αξία που δεν μπορεί να αποδοθεί σε σκεύασμα (εκτέλεση χωρίς δοσμένα είδη με
@@ -165,6 +167,12 @@ def _focus(dims: list[dict], total_net: float, limit: int = 6) -> list[dict]:
 class ProfitabilityRepository(BaseRepository):
     collection_name = "prescription_executions"
 
+    async def _div(self) -> float:
+        """Λιανική με ΦΠΑ ÷ αυτό = καθαρή. Ο συντελεστής του φαρμακείου (services/vat.py)."""
+        if getattr(self, "_vat_div", None) is None:
+            self._vat_div = vat.divisor(await vat.pct_for(self.tenant_id, self._db))
+        return self._vat_div
+
     # ── κεφαλίδα ────────────────────────────────────────────────────────────────
     async def range_summary(self, *, date_from: datetime, date_to: datetime) -> dict:
         rows = await self.aggregate([
@@ -177,12 +185,14 @@ class ProfitabilityRepository(BaseRepository):
         ])
         r = rows[0] if rows else {}
         total = r.get("amount_total", 0) or 0
+        revenue = total / await self._div()          # ΚΑΘΑΡΕΣ πωλήσεις (χωρίς ΦΠΑ)
         cost = r.get("wholesale_cost", 0) or 0
-        gp = total - cost
-        out = {"rx_count": r.get("rx_count", 0), "revenue": total, "cost": cost,
+        gp = revenue - cost
+        out = {"rx_count": r.get("rx_count", 0), "revenue": round(revenue), "cost": cost,
+               "vat": round(total - revenue), "vat_pct": round((await self._div() - 1) * 100, 2),
                "amount_total": total, "amount_claimed": r.get("amount_claimed", 0) or 0,
                "patient_share": r.get("patient_share", 0) or 0, "wholesale_cost": cost,
-               "gross_profit": gp, "margin_pct": _pct(gp, total)}
+               "gross_profit": round(gp), "margin_pct": _pct(gp, revenue)}
         out["estimated_cost_pct"] = await self._estimated_cost_pct(date_from, date_to)
         out.update(await self._fund_cuts(date_from, date_to, gp))
         return out
@@ -220,7 +230,7 @@ class ProfitabilityRepository(BaseRepository):
             months_back=min(months, 36))
         lo, hi = date_from.strftime("%Y-%m"), (date_to - timedelta(seconds=1)).strftime("%Y-%m")
         rows = [r for r in rec.get("rows", []) if lo <= r["period"] <= hi]
-        cuts = sum(r.get("cut", 0) for r in rows)
+        cuts = round(sum(r.get("cut", 0) for r in rows) / await self._div())   # περικοπή χωρίς ΦΠΑ
         return {"fund_cuts": cuts, "net_profit": gross - cuts,
                 "cut_months_settled": sum(1 for r in rows if r.get("settled"))}
 
@@ -243,7 +253,8 @@ class ProfitabilityRepository(BaseRepository):
                 {"$project": {"_id": 0, "value": 1, "cost": 1,
                               "label": {"$ifNull": [{"$first": "$_d.full_name"}, "—"]}}},
             ])
-            return _top([_row(r["label"], r["value"], r["cost"]) for r in rows], limit)
+            d = await self._div()
+            return _top([_row(r["label"], r["value"] / d, r["cost"]) for r in rows], limit)
         if dim == "icd10":
             # Μία συνταγή με ΔΥΟ διαγνώσεις μετρούσε ΔΥΟ φορές → τα μέρη ξεπερνούσαν το σύνολο.
             # Μοιράζουμε ισόποσα. Συνταγή χωρίς διάγνωση δεν χάνεται — πάει στο «Χωρίς διάγνωση».
@@ -260,8 +271,9 @@ class ProfitabilityRepository(BaseRepository):
                              "foreignField": "_id", "as": "_d"}},
                 {"$project": {"value": 1, "cost": 1, "title": {"$first": "$_d.title_el"}}},
             ])
+            d = await self._div()
             return _top([_row((f"{r['_id']} {r.get('title') or ''}".strip()
-                               if r["_id"] else NO_DIAGNOSIS), r["value"], r["cost"])
+                               if r["_id"] else NO_DIAGNOSIS), r["value"] / d, r["cost"])
                          for r in rows], limit)
         raise ValueError(f"unknown dimension: {dim}")
 
@@ -281,9 +293,10 @@ class ProfitabilityRepository(BaseRepository):
         cfg = await shared_db()["fund_groups"].find().to_list(length=None)
         code2group = {c: g["name"] for g in cfg for c in g.get("codes", [])}
         groups: dict[str, list[float]] = defaultdict(lambda: [0, 0])
+        d = await self._div()
         for r in rows:
             g = groups[code2group.get(r.get("code")) or r["name"]]
-            g[0] += r.get("value") or 0
+            g[0] += (r.get("value") or 0) / d                   # καθαρή αξία
             g[1] += r.get("cost") or 0
         return dict(groups)
 
@@ -299,7 +312,7 @@ class ProfitabilityRepository(BaseRepository):
         Μόνο ΔΟΣΜΕΝΑ τεμάχια (`executed_qty`). Τα τεμάχια της ΣΥΝΤΑΓΗΣ φούσκωναν τις «πωλήσεις»
         κατά 1,1εκ.€ σε όλο το σύστημα ([[partial-dispensing-executed-qty]])."""
         field = {"product": "$l.product_id", "type": "$l.category"}[key]
-        return await self.aggregate([
+        rows = await self.aggregate([
             {"$match": countable(date_from, date_to)},
             {"$project": {"amount_total": 1, "wholesale_cost": 1}},
             {"$lookup": {"from": "prescription_items", "localField": "_id",
@@ -342,6 +355,11 @@ class ProfitabilityRepository(BaseRepository):
             {"$group": {"_id": field, "value": {"$sum": "$_rev"}, "cost": {"$sum": "$_cost"},
                         "units": {"$sum": "$_u"}}},
         ])
+        d = await self._div()
+        for r in rows:          # ΚΑΘΑΡΗ αξία γραμμής (χωρίς ΦΠΑ)· η μικτή κρατιέται για το κλιμάκιο τιμής
+            r["value_gross"] = r["value"]
+            r["value"] = r["value"] / d
+        return rows
 
     async def _products(self, ids: list) -> dict:
         """{id-ως-κείμενο → προϊόν}. ΠΡΟΣΟΧΗ: το `aggregate()` του BaseRepository επιστρέφει τα
@@ -471,7 +489,8 @@ class ProfitabilityRepository(BaseRepository):
                 per_product.append(v - c)
                 keys = {"category": medicine_category(p.get("atc")),
                         "kind": _kind(p, flags.get(p.get("barcode"))),
-                        "price_band": _price_band(v / u if u else None)}
+                        # κλιμάκιο = λιανική ΜΕ ΦΠΑ ανά συσκευασία (όπως τη βλέπει ο φαρμακοποιός)
+                        "price_band": _price_band(r.get("value_gross", v) / u if u else None)}
             for k, lab in keys.items():
                 g = dims[k][lab]
                 g[0] += v
@@ -525,9 +544,10 @@ class ProfitabilityRepository(BaseRepository):
             months_back=min(months, 36))
         lo, hi = date_from.strftime("%Y-%m"), (date_to - timedelta(seconds=1)).strftime("%Y-%m")
         out: dict[str, float] = defaultdict(float)
+        d = await self._div()
         for r in rec.get("rows", []):
             if lo <= r["period"] <= hi and r.get("cut"):
-                out[r["fund"]] += r["cut"]
+                out[r["fund"]] += r["cut"] / d          # περικοπή χωρίς ΦΠΑ
         return dict(out)
 
     # ── ταμειακή ροή ──────────────────────────────────────────────────────────────

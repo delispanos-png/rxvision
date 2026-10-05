@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 
 from bson import ObjectId
 
+from app.services import vat
 from app.repositories.base import BaseRepository, jsonsafe
 from app.services import dispensed
 from app.services import prescription_checks as pc_checks
@@ -272,7 +273,7 @@ class ReimbursementRepository(BaseRepository):
         return jsonsafe({
             "period": period,
             "totals": {**cur, "net_claim": cur["claim"], "eopyy_claim": eopyy_claim,
-                       "other_claim": other_claim, "gross_profit": cur["retail"] - cur["cost"],
+                       "other_claim": other_claim, "gross_profit": round(vat.gross_profit(cur["retail"], cur["cost"], await vat.pct_for(self.tenant_id, self._db))),
                        "rebate": fin["rebate"], "discount": fin["discount"], "etyap": etyap_claim,
                        "rebate_base": fin["base"], "hundred_rx": hundred["rx"], "hundred_retail": hundred["retail"],
                        # cur["claim"] (=Σ amount_claimed) ΠΕΡΙΕΧΕΙ ήδη το ΚΥΥΑΠ → ΔΕΝ ξαναπροσθέτουμε etyap

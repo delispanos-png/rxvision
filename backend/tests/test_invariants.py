@@ -486,21 +486,34 @@ async def test_effective_wholesale_resolution_priority(monkeypatch):
 
     monkeypatch.setattr(cfg, "WHOLESALE_FALLBACK_MARGIN_PCT", 25.0)
 
+    class _Cur:
+        def __init__(self, docs):
+            self._docs = list(docs)
+        def __aiter__(self):
+            return self
+        async def __anext__(self):
+            if not self._docs:
+                raise StopAsyncIteration
+            return self._docs.pop(0)
+
     class _Coll:
-        def __init__(self, doc):
-            self._doc = doc
+        def __init__(self, doc, catalog=()):
+            self._doc, self._catalog = doc, catalog
         async def find_one(self, *a, **k):
             return self._doc
+        def find(self, *a, **k):              # κατάλογος ΗΔΥΚΑ (επίσημη χονδρική)
+            return _Cur(self._catalog)
 
     class _DB:
-        def __init__(self, doc):
-            self._coll = _Coll(doc)
+        def __init__(self, doc, catalog=()):
+            self._coll = _Coll(doc, catalog)
         def __getitem__(self, _name):
             return self._coll
 
     eng = IngestionEngine.__new__(IngestionEngine)  # skip __init__ (no Vault/DB needed)
     eng.tenant_id = "t"
     eng._bands = [[1_000_000, 25.0]]                # κλιμακωτή διατίμηση: 25% σε κάθε τιμή (για το τεστ)
+    eng._vat_pct = 6.0
 
     def item(retail, wholesale):
         return CanonicalItem(barcode="b1", name="x", retail_price=retail, wholesale_price=wholesale)
@@ -511,12 +524,28 @@ async def test_effective_wholesale_resolution_priority(monkeypatch):
     # 2) known real masterdata used when the source omits it
     eng.db = _DB({"wholesale_price": 650, "wholesale_source": "source"})
     assert await eng._effective_wholesale(item(1000, 0)) == (650, "masterdata")
-    # 3) a prior *estimate* is NOT treated as authoritative → re-estimate
+    # 3) ΕΠΙΣΗΜΗ χονδρική του καταλόγου ΗΔΥΚΑ (Δελτίο Τιμών) πριν από κάθε εκτίμηση
+    eng.db = _DB(None, [{"_id": "eof1", "barcode": "b1", "wholesale_cents": 701}])
+    assert await eng._effective_wholesale(item(1000, 0)) == (701, "catalog")
+    # 4) a prior *estimate* is NOT treated as authoritative → re-estimate
     eng.db = _DB({"wholesale_price": 999, "wholesale_source": "estimated"})
-    assert await eng._effective_wholesale(item(1000, 0)) == (750, "estimated")
-    # 4) unknown → estimate from retail (1000 * (1 - 0.25) = 750); never 0/100%-margin
+    # εκτίμηση (05/10/2026): ΦΠΑ έξω, μετά το περιθώριο ΠΑΝΩ στη χονδρική: 1000 ÷ 1,06 ÷ 1,25 = 755
+    # (πριν: 1000 × (1 − 25%) = 750 — λάθος τύπος, και με ΦΠΑ μέσα)
+    assert await eng._effective_wholesale(item(1000, 0)) == (755, "estimated")
+    # 5) unknown → estimate from retail; never 0/100%-margin
     eng.db = _DB(None)
-    assert await eng._effective_wholesale(item(1000, 0)) == (750, "estimated")
+    assert await eng._effective_wholesale(item(1000, 0)) == (755, "estimated")
+
+
+async def test_estimate_wholesale_band_is_chosen_by_wholesale_and_vat_removed():
+    """Μετρημένο στον κατάλογο: λιανική = χονδρική × (1+περιθώριο) × 1,06, κλιμάκιο από τη ΧΟΝΔΡΙΚΗ."""
+    from app.services.wholesale import DEFAULT_BANDS, estimate_wholesale
+    # χονδρική 58,00 € (≤ 50 € ΟΧΙ → 20%): λιανική = 58 × 1,20 × 1,06 = 73,78 €
+    assert estimate_wholesale(7378, DEFAULT_BANDS) == 5800
+    # χονδρική 40,00 € (κλιμάκιο ≤ 50 € → 30%): λιανική = 40 × 1,30 × 1,06 = 55,12 € (λιανική > 50 €!)
+    assert estimate_wholesale(5512, DEFAULT_BANDS) == 4000
+    from app.services import vat
+    assert round(vat.gross_profit(5512, 4000)) == 1200 and round(vat.margin_pct(5512, 4000), 2) == 23.08
 
 
 # ── M2: SSRF guard for outbound (ΗΔΙΚΑ base_url) ───────────

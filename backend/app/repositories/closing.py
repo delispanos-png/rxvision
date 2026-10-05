@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+from app.services import vat
 from app.repositories.base import BaseRepository
 from app.services.stats_exclusion import COUNTABLE_EXEC
 
@@ -50,7 +51,7 @@ class ClosingRepository(BaseRepository):
             }},
             {"$project": {"_id": 0, "executions": 1, "value": 1, "claimed": 1,
                           "cost": 1, "cancelled": 1, "partial": 1, "with_unexecuted": 1,
-                          "gross_profit": {"$subtract": ["$value", "$cost"]}}},  # retail − wholesale
+                          "gross_profit": vat.profit_expr("$value", "$cost", await vat.pct_for(self.tenant_id, self._db))}},  # λιανική χωρίς ΦΠΑ − χονδρική
         ]
         rows = await self.aggregate(pipeline)
         result = rows[0] if rows else {

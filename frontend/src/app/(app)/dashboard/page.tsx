@@ -132,8 +132,8 @@ export default function DashboardPage() {
         <KpiCard label={t("Αιτούμενα ταμείων", "Funds claimed")} value={eur(s?.claimed ?? 0)} sub={t("προς ασφ. φορείς · δες λίστα", "to insurance funds · see list")} icon={Wallet} accent="amber" trend={delta(s?.claimed, prev?.claimed)}
           help={t("Άθροισμα του αιτούμενου ποσού προς τα ασφαλιστικά ταμεία.", "Sum of amount claimed to insurance funds.")}
           onClick={() => setModal({ title: t("Συνταγές κατά αιτούμενο ταμείου", "Prescriptions by fund claimed"), kind: "rx", qs: `${qs}&countable=true&page_size=300&sort=amount_claimed&dir=-1`, total: s?.executions })} />
-        <KpiCard label={t("Μεικτό κέρδος", "Gross profit")} value={eur(s?.gross_profit ?? 0)} sub={t("αιτούμενο − χονδρική", "claimed − wholesale")} icon={TrendingUp} accent="green" trend={delta(s?.gross_profit, prev?.gross_profit)}
-          help={t("Αιτούμενο − κόστος χονδρικής των φαρμάκων που εκτελέστηκαν.", "Claimed − wholesale cost of dispensed medicines.")} />
+        <KpiCard label={t("Μεικτό κέρδος", "Gross profit")} value={eur(s?.gross_profit ?? 0)} sub={t("λιανική χωρίς ΦΠΑ − χονδρική", "retail excl. VAT − wholesale")} icon={TrendingUp} accent="green" trend={delta(s?.gross_profit, prev?.gross_profit)}
+          help={t("Λιανική αξία των φαρμάκων που εκτελέστηκαν ΧΩΡΙΣ ΦΠΑ − κόστος χονδρικής τους. Ίδιος υπολογισμός με τη σελίδα Κερδοφορία.", "Retail value of dispensed medicines EXCLUDING VAT − their wholesale cost. Same calculation as the Profitability page.")} />
         <KpiCard label={t("Ασφαλισμένοι", "Patients")} value={num(s?.patient_count ?? 0)} sub={t("μοναδικοί · δες λίστα", "unique · see list")} icon={Users} accent="sky" trend={delta(s?.patient_count, prev?.patient_count)}
           help={t("Μοναδικοί ασθενείς με τουλάχιστον μία εκτέλεση στην περίοδο.", "Unique patients with at least one execution in the period.")}
           onClick={() => setModal({ title: t("Ασφαλισμένοι περιόδου", "Patients in period"), kind: "patients", qs: `${qs}&sort=value&limit=300`, total: s?.patient_count })} />

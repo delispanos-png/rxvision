@@ -210,7 +210,7 @@ export default function PatientsPage() {
         <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
           <KpiCard label={t("Ασφαλισμένοι", "Patients")} help={t("Μοναδικοί ασθενείς με ≥1 εκτέλεση στην περίοδο.", "Unique patients with ≥1 execution.")} value={fmtNum(totalInsured)} sub={t("σύνολο κατανομών", "total across distributions")} icon={Users} accent="indigo" trend={hasPrev ? pctDelta(totalInsured, pInsured) : undefined} />
           <KpiCard label={t("Αξία (top 100)", "Value (top 100)")} help={t("Άθροισμα λιανικής αξίας των εκτελέσεων της περιόδου.", "Sum of retail value of executions.")} value={fmtEur(totalValue)} sub={t("κορυφαίοι ασφαλισμένοι", "top patients")} icon={Wallet} accent="violet" trend={hasPrev ? pctDelta(totalValue, pValue) : undefined} />
-          <KpiCard label={t("Κερδοφορία (top 100)", "Profitability (top 100)")} help={t("Μεικτό κέρδος = αιτούμενο − κόστος χονδρικής.", "Gross profit = claimed − wholesale cost.")} value={fmtEur(totalProfit)} sub={t("μεικτό κέρδος", "gross profit")} icon={TrendingUp} accent="green" />
+          <KpiCard label={t("Κερδοφορία (top 100)", "Profitability (top 100)")} help={t("Μεικτό κέρδος = λιανική αξία χωρίς ΦΠΑ − κόστος χονδρικής.", "Gross profit = retail value excl. VAT − wholesale cost.")} value={fmtEur(totalProfit)} sub={t("μεικτό κέρδος", "gross profit")} icon={TrendingUp} accent="green" />
           <KpiCard
             label={t("Διατήρηση (12μ)", "Retention (12m)")}
             help={t("% ασθενών που παρέμειναν ενεργοί 12 μήνες μετά την πρώτη τους εμφάνιση (μόνο όσοι είχαν 12μ χρόνο).", "% of patients still active 12 months after first visit (only those with ≥12m of history).")}

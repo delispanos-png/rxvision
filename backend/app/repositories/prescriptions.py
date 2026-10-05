@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 
 from bson import ObjectId
 
+from app.services import vat
 from app.repositories.base import BaseRepository, jsonsafe
 from app.services import dispensed, recoverable
 from app.services.stats_exclusion import COUNTABLE_EXEC, NOT_EXCLUDED
@@ -371,7 +372,9 @@ class PrescriptionRepository(BaseRepository):
                 "line_total": line_total,
                 "retail_price": retail,
                 "wholesale_price": it.get("wholesale_price", 0),
-                "margin": it.get("margin", (retail - it.get("wholesale_price", 0))),
+                # κέρδος γραμμής = λιανική ΧΩΡΙΣ ΦΠΑ − χονδρική (services/vat.py) — υπολογισμένο εδώ,
+                # όχι το αποθηκευμένο `margin` (σε παλιές γραμμές ήταν με ΦΠΑ)
+                "margin": round(vat.net(retail, await vat.pct_for(self.tenant_id, self._db))) - (it.get("wholesale_price", 0) or 0),
                 "participation": participation,
                 "patient_share": pat_share,
                 "fund_share": line_total - pat_share,
@@ -437,6 +440,9 @@ class PrescriptionRepository(BaseRepository):
             "repeat_root": ex.get("repeat_root"), "next_open_date": ex.get("next_open_date"),
             "amount_total": ex.get("amount_total", 0), "amount_claimed": ex.get("amount_claimed", 0),
             "patient_share": ex.get("patient_share", 0), "wholesale_cost": ex.get("wholesale_cost", 0),
+            # μεικτό κέρδος = λιανική ΧΩΡΙΣ ΦΠΑ − χονδρική (services/vat.py) — η οθόνη ΔΕΝ το υπολογίζει μόνη της
+            "gross_profit": round(vat.gross_profit(ex.get("amount_total", 0), ex.get("wholesale_cost", 0),
+                                                   await vat.pct_for(self.tenant_id, self._db))),
             "fund_payable": fund_payable, "patient_payable": patient_payable,
             "lines_bridge": lines_bridge,
             "icd10": ex.get("icd10", []),
@@ -805,9 +811,8 @@ class PrescriptionRepository(BaseRepository):
             }},
             {"$project": {
                 "_id": 0, "executions": 1, "value": 1, "claimed": 1,
-                # gross margin = retail − wholesale (the pharmacy collects full retail
-                # from patient+fund); NOT claimed−cost (claimed is only the fund share).
-                "gross_profit": {"$subtract": ["$value", "$cost"]},
+                # μεικτό κέρδος = λιανική ΧΩΡΙΣ ΦΠΑ − χονδρική (services/vat.py)· ΟΧΙ claimed−cost
+                "gross_profit": vat.profit_expr("$value", "$cost", await vat.pct_for(self.tenant_id, self._db)),
                 "patient_count": {"$size": "$patients"},
             }},
         ]

@@ -13,6 +13,7 @@ import re
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
+from app.services import vat
 from app.repositories.base import BaseRepository, jsonsafe
 from app.services import dispensed
 from app.services import repeat_windows as rw
@@ -863,7 +864,7 @@ class PatientIntelligenceRepository(BaseRepository):
                         "active": ct.get("active", True),
                         "has_contact": (not self.demo) and bool(ct.get("mobile") or ct.get("phone") or ct.get("email"))},
             "financials": {"rx_count": rx_count, "value": value, "claimed": claimed, "paid": paid,
-                           "profit": value - cost,
+                           "profit": round(vat.gross_profit(value, cost, await vat.pct_for(self.tenant_id, self._db))),
                            "avg_per_visit": round(value / rx_count) if rx_count else 0},
             "vip": {"tier": tier, "rank": rank, "of": total_pat,
                     "percentile": round((1 - r) * 100), "value": pa.get("rx_value_total", 0)},

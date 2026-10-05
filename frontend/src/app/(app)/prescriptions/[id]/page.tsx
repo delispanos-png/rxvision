@@ -185,7 +185,7 @@ function RxCharacteristics({ d }: { d?: PrescDetails | null }) {
 type Detail = {
   external_id: string; executed_at: string; status: string | null; source: string;
   repeat_current: number; repeat_total: number; repeat_root: string | null; next_open_date: string | null;
-  amount_total: number; amount_claimed: number; patient_share: number; wholesale_cost: number;
+  amount_total: number; amount_claimed: number; patient_share: number; wholesale_cost: number; gross_profit?: number;
   excluded_from_stats?: boolean; excluded_reason?: string;
   fund_payable: number; patient_payable: number;
   lines_bridge?: { patient: number; fund: number; kind: "fee" | "rounding" | "other" } | null;
@@ -355,7 +355,8 @@ export default function PrescriptionDetailPage() {
 
   const d = data;
   const age = d.patient?.birth_year ? new Date().getFullYear() - d.patient.birth_year : null;
-  const profit = d.amount_total - d.wholesale_cost;
+  // από τον server: λιανική ΧΩΡΙΣ ΦΠΑ − χονδρική (ένας ορισμός — services/vat.py)
+  const profit = d.gross_profit ?? 0;
   // repeat_current/repeat_total now come straight from the ΗΔΥΚΑ CDA (1.1.4 = planned count,
   // 1.1.4.1 = position), so "X/Y" is authoritative even when sibling barcodes aren't synced.
   const recurring = d.repeat_total > 1;

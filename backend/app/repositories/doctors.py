@@ -11,6 +11,7 @@ from datetime import datetime
 
 from bson import ObjectId
 
+from app.services import vat
 from app.repositories.base import BaseRepository
 from app.services import dispensed
 from app.services.stats_exclusion import COUNTABLE_EXEC
@@ -78,7 +79,7 @@ class DoctorExecutionsRepository(BaseRepository):
         pipe += [
             {"$project": {"_id": 0, "id": {"$toString": "$_id"}, "name": 1, "specialty": 1,
                           "rx_count": 1, "value": 1,
-                          "gross_profit": {"$subtract": ["$value", "$cost"]},
+                          "gross_profit": vat.profit_expr("$value", "$cost", await vat.pct_for(self.tenant_id, self._db)),  # χωρίς ΦΠΑ
                           "new_patients": {"$size": {"$filter": {
                               "input": "$patients", "cond": {"$ne": ["$$this", None]}}}}}},
             {"$sort": {self._SORT_FIELDS.get(sort, "value"): (1 if sort == "name" else -1)}},
@@ -110,12 +111,14 @@ class DoctorExecutionsRepository(BaseRepository):
                 "cost": {"$sum": "$wholesale_cost"},
                 "patients": {"$addToSet": {"$cond": ["$_alive", "$patient_ref", None]}},
             }},
-            {"$set": {"profit": {"$subtract": ["$value", "$cost"]},  # retail − wholesale
+            {"$set": {"profit": vat.profit_expr("$value", "$cost", await vat.pct_for(self.tenant_id, self._db)),  # λιανική χωρίς ΦΠΑ − χονδρική
                       "distinct_patients": {"$size": {"$filter": {
                           "input": "$patients", "cond": {"$ne": ["$$this", None]}}}}}},
+            # περιθώριο = κέρδος ÷ ΚΑΘΑΡΗ λιανική (πριν: ÷ ποσό ταμείου — λάθος βάση)
+            {"$set": {"_net": vat.net_expr("$value", await vat.pct_for(self.tenant_id, self._db))}},
             {"$set": {"margin_pct": {"$cond": [
-                {"$gt": ["$claimed", 0]},
-                {"$multiply": [{"$divide": ["$profit", "$claimed"]}, 100]},
+                {"$gt": ["$_net", 0]},
+                {"$multiply": [{"$divide": ["$profit", "$_net"]}, 100]},
                 0,
             ]}}},
             {"$project": {"_id": 0, "rx": 1, "value": 1, "claimed": 1,

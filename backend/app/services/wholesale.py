@@ -1,20 +1,22 @@
-"""Pharmacy gross-profit (διατίμηση) markup scale — PLATFORM-GLOBAL, editable in the admin panel
-(`platform_settings._id="markup"`), applied to ALL tenants.
+"""Χονδρική τιμή γραμμής — ΕΝΑΣ ορισμός για συγχρονισμό ΚΑΙ επανυπολογισμό (05/10/2026).
 
-Bands = list of [upper_euro, pct]; for a unit retail price, profit% = first band whose upper ≥ price.
-The pct is the pharmacy gross-profit MARKUP on the χονδρική (wholesale), i.e. retail = wholesale × (1 + pct/100),
-so wholesale = retail / (1 + pct/100) and profit = retail − wholesale. (NOT retail × (1 − pct/100): that would
-treat the markup as a discount off retail and overstate the profit — e.g. 30% band → 30% of retail instead of
-23.08%. Plavix proof: 12.77 / 1.30 = 9.82 → profit 2.95, exactly the real διατίμηση.)
-Galenic/compounded preparations are excluded (Ν/Α) by the
-ingestion engine separately. Falls back to the Ministry-of-Health default until an admin overrides it.
+ΣΕΙΡΑ: (1) χονδρική της πηγής (ΗΔΥΚΑ) · (2) γνωστή πραγματική στα προϊόντα · (3) ΕΠΙΣΗΜΗ χονδρική του
+Δελτίου Τιμών (`medicine_catalog.wholesale_cents` — ταυτίζεται 100% με της ΗΔΥΚΑ σε 3.000 δείγματα) ·
+(4) ΕΚΤΙΜΗΣΗ από τη λιανική με την κλίμακα διατίμησης.
+
+ΕΚΤΙΜΗΣΗ — μετρημένο σε 12.729 φάρμακα: λιανική = χονδρική × (1 + περιθώριο) × (1 + ΦΠΑ), και το
+κλιμάκιο του περιθωρίου επιλέγεται από τη ΧΟΝΔΡΙΚΗ (≤50 € → 30%, ≤100 € → 20%, ≤150 € → 16% …).
+Άρα: χονδρική = (λιανική ÷ (1+ΦΠΑ)) ÷ (1 + περιθώριο του κλιμακίου όπου πέφτει η χονδρική).
+Πριν υπήρχαν ΤΡΙΑ λάθη: ο ΦΠΑ δεν αφαιρούνταν (+6%), το κλιμάκιο διαλεγόταν από τη λιανική (φάρμακο
+80 € έπαιρνε 20% αντί 30%), και ο συγχρονισμός έγραφε λιανική × (1 − %) ενώ ο επανυπολογισμός
+λιανική ÷ (1 + %) — δύο τύποι για το ίδιο. Οι γαληνικές εξαιρούνται (Ν/Α) στον συγχρονισμό.
 """
 
 from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from app.services import dispensed
+from app.services import dispensed, vat
 
 # Default κλίμακα Υπουργείου Υγείας — ισχύει μέχρι/εκτός αν ο platform admin την αλλάξει.
 DEFAULT_BANDS: list[list[float]] = [
@@ -44,59 +46,98 @@ async def load_bands(db) -> list[list[float]]:
     return bands or [list(b) for b in DEFAULT_BANDS]
 
 
-def markup_pct(retail_cents: int, bands: list[list[float]]) -> float:
-    """Μεικτό κέρδος φαρμακείου (%) βάσει της μοναδιαίας λιανικής τιμής."""
-    euro = retail_cents / 100
+def _band_pct(net_cents: float, bands: list[list[float]]) -> float:
+    """Περιθώριο του κλιμακίου όπου πέφτει η ΧΟΝΔΡΙΚΗ που προκύπτει από την καθαρή λιανική."""
     for hi, pct in bands:
-        if euro <= hi:
+        if net_cents / (1 + pct / 100) / 100 <= hi:
             return pct
-    return bands[-1][1] if bands else 2.25     # πάνω από το τελευταίο band → χαμηλότερο ποσοστό
+    return bands[-1][1] if bands else 2.25
 
 
-def item_wholesale(it: dict, bands: list[list[float]]) -> tuple[int, str]:
-    """(wholesale_cents, source) for a stored prescription_item-like dict."""
-    src = it.get("wholesale_source")
-    if src in ("source", "masterdata"):
-        return it.get("wholesale_price", 0) or 0, src          # πραγματική τιμή → ως έχει
-    if (it.get("details") or {}).get("galenic"):
-        return 0, "unavailable"                                # γαληνικά → Ν/Α
-    retail = it.get("retail_price", 0) or 0
-    if retail > 0:
-        # Το ποσοστό είναι μεικτό κέρδος ΠΑΝΩ στη χονδρική: λιανική = χονδρική × (1 + pct%)
-        # → χονδρική = λιανική / (1 + pct%). (Όχι λιανική × (1 − pct%) — αυτό φουσκώνει το κέρδος.)
-        return round(retail / (1 + markup_pct(retail, bands) / 100)), "estimated"
-    return 0, "unknown"
+def estimate_wholesale(retail_cents: int, bands: list[list[float]], vat_pct: float = vat.DEFAULT_PCT) -> int:
+    """Εκτιμώμενη χονδρική (χωρίς ΦΠΑ) από λιανική ΜΕ ΦΠΑ — βλ. αρχή αρχείου."""
+    if not retail_cents or retail_cents <= 0:
+        return 0
+    n = retail_cents / vat.divisor(vat_pct)
+    return round(n / (1 + _band_pct(n, bands) / 100))
 
 
-def _markup_switch(bands: list[list[float]]) -> dict:
-    """$switch that replicates markup_pct() server-side (pct by unit retail €)."""
-    branches = [{"case": {"$lte": [{"$divide": ["$retail_price", 100]}, hi]}, "then": pct}
-                for hi, pct in bands]
-    return {"$switch": {"branches": branches, "default": (bands[-1][1] if bands else 2.25)}}
+def _estimate_expr(bands: list[list[float]], vat_pct: float) -> dict:
+    """Mongo: ίδιος υπολογισμός με estimate_wholesale (κλιμάκιο από τη χονδρική)."""
+    n = {"$divide": ["$retail_price", vat.divisor(vat_pct)]}
+    branches = [{"case": {"$lte": [{"$divide": [n, (1 + pct / 100) * 100]}, hi]},
+                 "then": {"$divide": [n, 1 + pct / 100]}} for hi, pct in bands]
+    last = bands[-1][1] if bands else 2.25
+    return {"$round": [{"$switch": {"branches": branches, "default": {"$divide": [n, 1 + last / 100]}}}, 0]}
+
+
+async def catalog_wholesale(db, barcodes: list) -> dict:
+    """{barcode → επίσημη χονδρική Δελτίου Τιμών} (κατάλογος ΗΔΥΚΑ)."""
+    out: dict = {}
+    bcs = [b for b in set(barcodes) if b]
+    for i in range(0, len(bcs), 5000):
+        async for c in db["medicine_catalog"].find(
+                {"$or": [{"barcode": {"$in": bcs[i:i + 5000]}}, {"_id": {"$in": bcs[i:i + 5000]}}],
+                 "wholesale_cents": {"$gt": 0}}, {"barcode": 1, "wholesale_cents": 1}):
+            for k in (c.get("barcode"), c["_id"]):     # το προϊόν μπορεί να κρατά barcode ή κωδικό ΕΟΦ
+                if k:
+                    out[k] = int(c["wholesale_cents"])
+    return out
 
 
 async def recompute(db, bands: list[list[float]], tenant_id: str | None = None) -> dict:
-    """Re-apply the scale to stored items + executions (all tenants if tenant_id is None).
+    """Επανυπολογισμός χονδρικής + κόστους εκτελέσεων (όλα τα φαρμακεία αν tenant_id=None). Idempotent.
 
-    Idempotent & server-side: estimated items are recomputed straight from retail via the band
-    switch (wholesale = retail / (1 + pct/100)); each execution's wholesale_cost is rebuilt from the
-    per-execution item sums. Real prices (source/masterdata) and galenic (Ν/Α) items are left as-is.
-    Uses bulk ops so a full-history recompute runs in seconds, not hours.
+    Εκτιμώμενα είδη: πρώτα η ΕΠΙΣΗΜΗ χονδρική του καταλόγου (→ «catalog»), αλλιώς σωστή εκτίμηση
+    (estimate_wholesale). Κέρδος γραμμής/προϊόντος = λιανική χωρίς ΦΠΑ − χονδρική. Το wholesale_cost
+    κάθε εκτέλεσης ξαναχτίζεται από τα είδη. Πραγματικές τιμές (source/masterdata/catalog) μένουν ως έχουν.
     """
     from pymongo import UpdateOne
 
-    item_flt: dict = {"wholesale_source": "estimated", "retail_price": {"$gt": 0}}
-    if tenant_id:
-        item_flt["tenant_id"] = tenant_id
-    g_items = (await db["prescription_items"].update_many(item_flt, [  # tenant-ok: rebuild πλατφόρμας· UpdateOne φιλτράρει tenant_id
-        {"$set": {"_pct": _markup_switch(bands)}},
-        {"$set": {"wholesale_price": {"$round": [{"$divide": [
-            {"$multiply": ["$retail_price", 100]}, {"$add": [100, "$_pct"]}]}, 0]}}},
-        {"$set": {"margin": {"$subtract": ["$retail_price", "$wholesale_price"]}}},
-        {"$unset": "_pct"},
-    ])).modified_count
-
     tenants = [tenant_id] if tenant_id else await db["prescription_executions"].distinct("tenant_id")
+    g_items = g_catalog = 0
+    for tid in tenants:
+        pct = vat.tenant_pct(await db["tenants"].find_one({"_id": tid}, {"medicine_vat_pct": 1, "country": 1}))
+        # (α) εκτιμώμενα με ΕΠΙΣΗΜΗ χονδρική στον κατάλογο → η πραγματική (πηγή «catalog»)
+        prods = {p["_id"]: p.get("barcode") async for p in db["products"].find(
+            {"tenant_id": tid, "wholesale_source": "estimated"}, {"barcode": 1})}
+        cat = await catalog_wholesale(db, list(prods.values()))
+        p_ops, i_ops = [], []
+        for pid, bc in prods.items():
+            w = cat.get(bc)
+            if not w:
+                continue
+            p_ops.append(UpdateOne({"_id": pid, "tenant_id": tid}, [
+                {"$set": {"wholesale_price": w, "wholesale_source": "catalog"}},
+                {"$set": {"margin": {"$subtract": [vat.net_expr("$retail_price", pct), w]}}}]))
+            i_ops.append(UpdateOne({"tenant_id": tid, "product_id": pid, "wholesale_source": "estimated"}, [
+                {"$set": {"wholesale_price": w, "wholesale_source": "catalog"}},
+                {"$set": {"margin": {"$subtract": [vat.net_expr("$retail_price", pct), w]}}}]))
+        for coll, ops in (("products", p_ops), ("prescription_items", i_ops)):
+            for i in range(0, len(ops), 2000):
+                r = await db[coll].bulk_write(ops[i:i + 2000], ordered=False)  # tenant-ok: rebuild· κάθε UpdateOne φιλτράρει tenant_id
+                if coll == "prescription_items":
+                    g_catalog += r.modified_count
+        # (β) τα υπόλοιπα εκτιμώμενα → σωστή εκτίμηση (ΦΠΑ έξω, κλιμάκιο από τη χονδρική)
+        g_items += (await db["prescription_items"].update_many(
+            {"tenant_id": tid, "wholesale_source": "estimated", "retail_price": {"$gt": 0}}, [
+                {"$set": {"wholesale_price": _estimate_expr(bands, pct)}},
+                {"$set": {"margin": {"$subtract": [vat.net_expr("$retail_price", pct), "$wholesale_price"]}}},
+            ])).modified_count
+        await db["products"].update_many(
+            {"tenant_id": tid, "wholesale_source": "estimated", "retail_price": {"$gt": 0}}, [
+                {"$set": {"wholesale_price": _estimate_expr(bands, pct)}}])
+        # κέρδος γραμμής & προϊόντος: λιανική ΧΩΡΙΣ ΦΠΑ − χονδρική (ένας ορισμός — services/vat.py)
+        await db["prescription_items"].update_many({"tenant_id": tid}, [
+            {"$set": {"margin": {"$subtract": [vat.net_expr("$retail_price", pct),
+                                               {"$ifNull": ["$wholesale_price", 0]}]}}}])
+        await db["products"].update_many({"tenant_id": tid}, [
+            {"$set": {"_n": vat.net_expr("$retail_price", pct)}},
+            {"$set": {"margin": {"$subtract": ["$_n", {"$ifNull": ["$wholesale_price", 0]}]},
+                      "margin_pct": {"$cond": [{"$gt": ["$_n", 0]}, {"$round": [{"$multiply": [{"$divide": [
+                          {"$subtract": ["$_n", {"$ifNull": ["$wholesale_price", 0]}]}, "$_n"]}, 100]}, 2]}, 0]}}},
+            {"$unset": "_n"}])
+
     g_exec = 0
     for tid in tenants:
         sums: dict = {}
@@ -125,5 +166,5 @@ async def recompute(db, bands: list[list[float]], tenant_id: str | None = None) 
         if ops:
             await db["prescription_executions"].bulk_write(ops, ordered=False)  # tenant-ok: rebuild πλατφόρμας· UpdateOne φιλτράρει tenant_id
             g_exec += len(ops)
-    return {"tenants": len(tenants), "items": g_items,
+    return {"tenants": len(tenants), "items": g_items, "items_from_catalog": g_catalog,
             "executions": g_exec, "at": datetime.now(tz=timezone.utc).isoformat()}

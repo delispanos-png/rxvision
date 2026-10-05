@@ -21,7 +21,8 @@ import { ExportMenu } from "@/components/export/ExportMenu";
 import { AttentionMap } from "@/components/profitability/AttentionMap";
 
 type Summary = {
-  revenue: number; // cents
+  revenue: number; // cents — ΧΩΡΙΣ ΦΠΑ (services/vat.py)
+  amount_total?: number; // cents — με ΦΠΑ
   cost: number; // cents
   gross_profit: number; // cents
   margin_pct: number;
@@ -120,7 +121,7 @@ export default function ProfitabilityPage() {
   const categoryColumns: Column<CategoryRow>[] = [
     { key: "label", header: t("Κατηγορία", "Category") },
     { key: "units", header: t("Τεμάχια", "Units"), align: "right", render: (r) => fmtNum(r.units) },
-    { key: "value", header: t("Έσοδα", "Revenue"), align: "right", render: (r) => fmtEur(r.value) },
+    { key: "value", header: t("Έσοδα χωρίς ΦΠΑ", "Revenue excl. VAT"), align: "right", render: (r) => fmtEur(r.value) },
     { key: "gross_profit", header: t("Κέρδος", "Profit"), align: "right", render: (r) => fmtEur(r.gross_profit) },
     { key: "margin_pct", header: t("Περιθώριο", "Margin"), align: "right", render: (r) => fmtPct(r.margin_pct) },
   ];
@@ -144,9 +145,9 @@ export default function ProfitabilityPage() {
       <div className="space-y-4">
         {/* KPI row */}
         <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-5">
-          <KpiCard label={t("Μεικτό κέρδος", "Gross profit")} help={t("Λιανική αξία των φαρμάκων που δόθηκαν − κόστος χονδρικής τους. Ακυρωμένες εκτελέσεις και όσες εξαίρεσες από τα στατιστικά δεν μετρούν.", "Retail value of what was dispensed − its wholesale cost. Cancelled executions and those you excluded from statistics do not count.")} value={s ? fmtEur(s.gross_profit) : "—"} sub={t("λιανική − χονδρική", "retail − wholesale")} icon={TrendingUp} accent="green" trend={pctDelta(s?.gross_profit, p?.gross_profit)} />
-          <KpiCard label={t("Περιθώριο", "Margin")} help={t("Περιθώριο κέρδους = μεικτό κέρδος / λιανική αξία.", "Margin = gross profit / retail value.")} value={s ? fmtPct(s.margin_pct) : "—"} sub={t("μεικτό περιθώριο", "gross margin")} icon={Percent} accent="violet" trend={pctDelta(s?.margin_pct, p?.margin_pct)} />
-          <KpiCard label={t("Έσοδα", "Revenue")} help={t("Συνολικά έσοδα της περιόδου.", "Total revenue for the period.")} value={s ? fmtEur(s.revenue) : "—"} sub={t("σύνολο περιόδου", "period total")} icon={Coins} accent="amber" trend={pctDelta(s?.revenue, p?.revenue)} />
+          <KpiCard label={t("Μεικτό κέρδος", "Gross profit")} help={t("Λιανική αξία των φαρμάκων που δόθηκαν ΧΩΡΙΣ ΦΠΑ − κόστος χονδρικής τους (η χονδρική είναι ήδη χωρίς ΦΠΑ, ο ΦΠΑ της λιανικής αποδίδεται στο κράτος). Ακυρωμένες εκτελέσεις και όσες εξαίρεσες από τα στατιστικά δεν μετρούν.", "Retail value of what was dispensed EXCLUDING VAT − its wholesale cost (wholesale is already excl. VAT; retail VAT goes to the state). Cancelled executions and those you excluded from statistics do not count.")} value={s ? fmtEur(s.gross_profit) : "—"} sub={t("λιανική χωρίς ΦΠΑ − χονδρική", "retail excl. VAT − wholesale")} icon={TrendingUp} accent="green" trend={pctDelta(s?.gross_profit, p?.gross_profit)} />
+          <KpiCard label={t("Περιθώριο", "Margin")} help={t("Περιθώριο κέρδους = μεικτό κέρδος / λιανική αξία χωρίς ΦΠΑ.", "Margin = gross profit / retail value excl. VAT.")} value={s ? fmtPct(s.margin_pct) : "—"} sub={t("μεικτό περιθώριο", "gross margin")} icon={Percent} accent="violet" trend={pctDelta(s?.margin_pct, p?.margin_pct)} />
+          <KpiCard label={t("Έσοδα χωρίς ΦΠΑ", "Revenue excl. VAT")} help={t("Λιανική αξία των φαρμάκων που δόθηκαν, χωρίς τον ΦΠΑ (φάρμακα 6%). Η αξία με ΦΠΑ φαίνεται από κάτω.", "Retail value of what was dispensed, excluding VAT (medicines 6%). The value incl. VAT is shown below.")} value={s ? fmtEur(s.revenue) : "—"} sub={s?.amount_total != null ? t(`με ΦΠΑ ${fmtEur(s.amount_total)}`, `incl. VAT ${fmtEur(s.amount_total)}`) : t("σύνολο περιόδου", "period total")} icon={Coins} accent="amber" trend={pctDelta(s?.revenue, p?.revenue)} />
           <KpiCard
             label={t("Κορυφαία κατηγορία", "Top category")}
             help={t("Θεραπευτική κατηγορία (βάσει ATC) με το μεγαλύτερο μεικτό κέρδος στην περίοδο.", "Therapeutic category (by ATC) with the highest gross profit in the period.")}
@@ -216,7 +217,7 @@ export default function ProfitabilityPage() {
               <ExportMenu filename="kerdos-ana-katigoria" title={t("Κέρδος ανά κατηγορία", "Profit by category")} rows={catRows} columns={[
                 { key: "label", header: t("Κατηγορία", "Category") },
                 { key: "units", header: t("Τεμάχια", "Units"), value: (r) => fmtNum(r.units) },
-                { key: "value", header: t("Έσοδα (€)", "Revenue (€)"), value: (r) => fmtMoney(r.value || 0) },
+                { key: "value", header: t("Έσοδα χωρίς ΦΠΑ (€)", "Revenue excl. VAT (€)"), value: (r) => fmtMoney(r.value || 0) },
                 { key: "gross_profit", header: t("Κέρδος (€)", "Profit (€)"), value: (r) => fmtMoney(r.gross_profit || 0) },
                 { key: "margin_pct", header: t("Περιθώριο %", "Margin %"), value: (r) => fmtDec(r.margin_pct ?? 0, 1) },
               ]} />
