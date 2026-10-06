@@ -311,14 +311,16 @@ async def aggregate(
 
 @router.get("/unexecuted")
 async def unexecuted(
-    limit: int = Query(50, ge=1, le=500),
+    limit: int = Query(50, ge=1, le=2000),
     date_from: datetime = Query(...),
     date_to: datetime = Query(...),
+    open_only: bool = Query(False, description="μόνο συνταγές που μπορούν ακόμη να εκτελεστούν"),
     ctx: TenantContext = Depends(require("prescriptions:read", module="prescription_analytics")),
 ):
     """Concept doc §9 — ανεκτέλεστες δραστικές: μη-εκτελεσμένες γραμμές + χαμένη αξία."""
     repo = PrescriptionRepository(tenant_id=ctx.tenant_id, demo=ctx.demo)
-    return await repo.unexecuted_substances(date_from=date_from, date_to=date_to, limit=limit)
+    return await repo.unexecuted_substances(date_from=date_from, date_to=date_to, limit=limit,
+                                            open_only=open_only)
 
 
 # ── Εξαίρεση από τα στατιστικά ───────────────────────────────────────────────────────────────

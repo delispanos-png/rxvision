@@ -9,7 +9,7 @@ from __future__ import annotations
 import calendar
 import re
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from bson import ObjectId
 
@@ -909,27 +909,47 @@ class PrescriptionRepository(BaseRepository):
             {"$set": {"name": {"$first": "$p.name"}}}, {"$project": {"p": 0}},
         ])
 
+    OPEN_WINDOW_DAYS = 30   # «προς εκτέλεση»: μόνο εκτελέσεις των τελευταίων 30 ημερών
+
     async def unexecuted_substances(self, *, date_from: datetime, date_to: datetime,
-                                    limit: int = 50) -> dict:
+                                    limit: int = 50, open_only: bool = False) -> dict:
         """Concept doc §9 — ανεκτέλεστες δραστικές: prescription lines that were NOT
-        dispensed (is_executed=False), grouped by product, with lost retail value."""
+        dispensed (is_executed=False), grouped by product, with lost retail value.
+
+        `open_only` (πίνακας «αναλυτικά», 06/10/2026): ΜΟΝΟ συνταγές που μπορούν ΑΚΟΜΗ να εκτελεστούν —
+        ο ΙΔΙΟΣ ορισμός με τον Σύμβουλο (`services/recoverable.py`: έμεινε ανοιχτή ΚΑΙ δεν πέρασε η
+        προθεσμία) — ΚΑΙ εκτελέστηκαν τις τελευταίες `OPEN_WINDOW_DAYS` ημέρες (απόφαση ιδιοκτήτη: ό,τι
+        παλαιότερο δεν το χρειάζεται κανείς), ανεξάρτητα από την περίοδο της σελίδας.
+        Χωρίς αυτό = ιστορικό «τι χάθηκε» (γράφημα/κεφαλίδα)."""
+        from app.services import recoverable
         items = BaseRepository(tenant_id=self.tenant_id)
         items.collection_name = "prescription_items"
+        first: dict = {**NOT_EXCLUDED, "is_executed": False}
+        if not open_only:
+            first["executed_at"] = {"$gte": date_from, "$lt": date_to}
+        else:
+            first["executed_at"] = {"$gte": datetime.now(timezone.utc) - timedelta(days=self.OPEN_WINDOW_DAYS)}
+        open_match = {f"ex.{k}": v for k, v in recoverable.mongo_filter().items()}
         rows = await items.aggregate([
-            {"$match": {**NOT_EXCLUDED, "executed_at": {"$gte": date_from, "$lt": date_to},
-                        "is_executed": False}},
+            {"$match": first},
             # which prescription each unexecuted line came from (barcode + patient + date)
             {"$lookup": {"from": "prescription_executions", "localField": "execution_id",
                          "foreignField": "_id", "as": "ex"}},
             {"$set": {"ex": {"$first": "$ex"}}},
             # χαμένο ΜΟΝΟ ό,τι δεν έκλεισε ο ίδιος ο ασθενής (2) ή η ασυμφωνία δοσολογίας (3) — ίδιος
             # ορισμός με τον Σύμβουλο (εκεί το 94% των «χαμένων» ήταν τέτοιες περιπτώσεις)
-            {"$match": {"ex.details.execution_case": {"$nin": ["2", "3", 2, 3]}}},
+            {"$match": {"ex.details.execution_case": {"$nin": ["2", "3", 2, 3]},
+                        **(open_match if open_only else {})}},
             {"$lookup": {"from": "patients_anonymized", "localField": "ex.patient_ref",
                          "foreignField": "_id", "as": "pt"}},
             {"$set": {"rx": {"barcode": "$ex.external_id",
                              "patient": {"$first": "$pt.full_name"},
-                             "date": "$ex.executed_at"}}},
+                             "date": "$ex.executed_at",
+                             # άυλη (true) / έντυπη (false) / άγνωστο (null) — ΠΟΤΕ υπόθεση
+                             "intangible": "$ex.details.intangible",
+                             # συμμετοχή ασφαλισμένου ΓΙΑ ΑΥΤΟ το φάρμακο σε αυτή τη συνταγή
+                             "pct": "$details.participation_pct",
+                             "valid_until": "$ex.valid_until"}}},
             {"$set": {"unexec_qty": _UNEXEC_QTY, "_rx": dispensed.rx_root_expr("$ex.external_id")}},
             # ΜΙΑ φορά ανά ΣΥΝΤΑΓΗ: κάθε εγγραφή `:N` κουβαλά το ίδιο υπόλοιπο (×N πριν)
             {"$sort": {"executed_at": -1}},

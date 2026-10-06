@@ -59,8 +59,12 @@ type UnexecutedRow = {
   qty: number;
   lost_value: number; // cents
   barcodes?: string[];
-  rxs?: { barcode: string; patient?: string | null; date?: string | null }[];
+  rxs?: UnRx[];
 };
+// μία συνταγή με ανεκτέλεστο αυτό το φάρμακο: άυλη/έντυπη + συμμετοχή ασφαλισμένου γι' αυτό το φάρμακο
+type UnRx = { barcode: string; patient?: string | null; date?: string | null; intangible?: boolean | null; pct?: number | null; valid_until?: string | null };
+// πρώτα 0% (όλη η αξία από το ταμείο), και στο ίδιο ποσοστό πρώτα οι έντυπες
+const sortRx = (a: UnRx, b: UnRx) => (a.pct ?? 999) - (b.pct ?? 999) || Number(a.intangible === true) - Number(b.intangible === true);
 
 type FundRow = { fund_name: string; rx: number; value: number; claimed: number; unexecuted: number; is_group?: boolean; funds?: { fund_name: string }[] };
 type FundMetric = "rx" | "value" | "claimed" | "unexecuted";
@@ -80,12 +84,18 @@ const makeFundCols = (t: T): Column<FundRow>[] => [
   { key: "unexecuted", header: t("Ανεκτέλεστες", "Unexecuted"), align: "right", render: (r) => fmtNum(r.unexecuted), sortValue: (r) => r.unexecuted },
 ];
 
-function BarcodeChip({ bc, patient, date }: { bc: string; patient?: string | null; date?: string | null }) {
-  const info = [patient || "", date ? fmtDateTime(date) : ""].filter(Boolean).join(" · ");
+function BarcodeChip({ bc, patient, date, intangible, pct, validUntil }: { bc: string; patient?: string | null; date?: string | null; intangible?: boolean | null; pct?: number | null; validUntil?: string | null }) {
+  const kind = intangible === true ? "Άυλη" : intangible === false ? "Έντυπη" : "";
+  const info = [patient || "", date ? fmtDateTime(date) : "", kind,
+                pct != null ? `συμμετοχή ${pct}%` : "", validUntil ? `εκτελείται έως ${fmtDate(validUntil)}` : ""].filter(Boolean).join(" · ");
   return (
     <Tooltip label={info}>
-      <span className="cursor-default rounded bg-slate-100 px-1.5 py-0.5 text-xs font-medium text-brand-700 hover:bg-brand-200">
+      <span className="inline-flex cursor-default items-center gap-1 rounded bg-slate-100 px-1.5 py-0.5 text-xs font-medium text-brand-700 hover:bg-brand-200">
         {bc}
+        {/* -Α- άυλη / -Ε- έντυπη (άγνωστο → τίποτα, ποτέ υπόθεση) */}
+        {intangible === true && <span className="rounded bg-sky-100 px-1 text-[10px] font-bold text-sky-700">Α</span>}
+        {intangible === false && <span className="rounded bg-amber-100 px-1 text-[10px] font-bold text-amber-700">Ε</span>}
+        {pct != null && <span className={`text-[10px] font-semibold ${pct === 0 ? "text-emerald-700" : "text-slate-500"}`}>({pct}%)</span>}
       </span>
     </Tooltip>
   );
@@ -167,28 +177,44 @@ const makeColumns = (t: T): Column<Prescription>[] => {
   ];
 };
 
-const makeUnexecutedColumns = (t: T, showAll = false): Column<UnexecutedRow>[] => {
+const makeUnexecutedColumns = (t: T, showAll = false, openOnly = false): Column<UnexecutedRow>[] => {
   const CATEGORY_EL = categoryEl(t);
   return [
-  { key: "name", header: t("Σκεύασμα", "Product"), render: (r) => r.name ?? r.product_id },
+  { key: "name", header: t("Σκεύασμα", "Product"), render: (r) => {
+    // σύνοψη ανά ποσοστό συμμετοχής + άυλες/έντυπες για ΑΥΤΟ το φάρμακο
+    const rxs = r.rxs ?? [];
+    const byPct = new Map<number, number>();
+    rxs.forEach((x) => { if (x.pct != null) byPct.set(x.pct, (byPct.get(x.pct) ?? 0) + 1); });
+    const nA = rxs.filter((x) => x.intangible === true).length, nE = rxs.filter((x) => x.intangible === false).length;
+    return (
+      <div>
+        <div>{r.name ?? r.product_id}</div>
+        {rxs.length > 0 && (
+          <div className="mt-0.5 text-[11px] text-slate-500">
+            {[...byPct.entries()].sort((a, b) => a[0] - b[0]).map(([p, n]) => `${p}%: ${n}`).join(" · ")}
+            {(nA || nE) ? <> · <span className="text-amber-700">Ε {nE}</span> / <span className="text-sky-700">Α {nA}</span></> : null}
+          </div>
+        )}
+      </div>
+    );
+  } },
   { key: "category", header: t("Κατηγορία", "Category"), hideOnMobile: true, render: (r) => CATEGORY_EL[r.category] || r.category || "—" },
   {
     key: "barcodes", header: t("Από συνταγή", "From prescription"),
     render: (r) => {
-      const rxs: { barcode: string; patient?: string | null; date?: string | null }[] =
-        r.rxs ?? (r.barcodes ?? []).map((b) => ({ barcode: b }));
+      const rxs: UnRx[] = [...(r.rxs ?? (r.barcodes ?? []).map((b) => ({ barcode: b })))].sort(sortRx);
       return (
         <div className="flex flex-wrap gap-1.5">
           {/* σε αναζήτηση: ΟΛΕΣ οι συνταγές του σκευάσματος· αλλιώς οι 4 πρώτες + «+N» */}
-          {(showAll ? rxs : rxs.slice(0, 4)).map((x) => <BarcodeChip key={x.barcode} bc={x.barcode} patient={x.patient} date={x.date} />)}
+          {(showAll ? rxs : rxs.slice(0, 4)).map((x) => <BarcodeChip key={x.barcode} bc={x.barcode} patient={x.patient} date={x.date} intangible={x.intangible} pct={x.pct} validUntil={x.valid_until} />)}
           {!showAll && rxs.length > 4 && <span className="text-xs text-slate-400">+{rxs.length - 4}</span>}
           {!rxs.length && <span className="text-slate-300">—</span>}
         </div>
       );
     },
   },
-  { key: "occurrences", header: t("Φορές", "Times"), align: "right", render: (r) => fmtNum(r.occurrences) },
-  { key: "lost_value", header: t("Χαμένη αξία", "Lost value"), align: "right", render: (r) => fmtEur(r.lost_value) },
+  { key: "occurrences", header: openOnly ? t("Συνταγές", "Prescriptions") : t("Φορές", "Times"), align: "right", render: (r) => fmtNum(r.rxs?.length ?? r.occurrences) },
+  { key: "lost_value", header: openOnly ? t("Αξία προς εκτέλεση", "Value to dispense") : t("Χαμένη αξία", "Lost value"), align: "right", render: (r) => fmtEur(r.lost_value) },
   ];
 };
 
@@ -197,7 +223,8 @@ export default function PrescriptionsPage() {
   const STATUS_EL = statusEl(t);
   const columns = makeColumns(t);
   const [unSearch, setUnSearch] = useState("");
-  const unexecutedColumns = makeUnexecutedColumns(t, !!unSearch.trim());
+  const [unPct, setUnPct] = useState<number | null>(null);
+  const unexecutedColumns = makeUnexecutedColumns(t, !!unSearch.trim() || unPct !== null, true);
   const fundCols = makeFundCols(t);
   const router = useRouter();
   const filters = useUiStore();
@@ -252,6 +279,13 @@ export default function PrescriptionsPage() {
         `/prescriptions/unexecuted?${q}&limit=500`,   // ΟΛΑ τα σκευάσματα (όχι μόνο τα 50 πρώτα)
       ),
   });
+  // πίνακας «αναλυτικά»: ΜΟΝΟ προς εκτέλεση, τελευταίες 30 ημέρες (απόφαση ιδιοκτήτη 06/10/2026)·
+  // ξεχωριστό ερώτημα — το γράφημα/κεφαλίδα μένουν ιστορικό (τι χάθηκε)
+  const unexecTable = useQuery({
+    queryKey: ["prescriptions", "unexecuted", "table", q],
+    queryFn: () =>
+      api<{ items: UnexecutedRow[] }>(`/prescriptions/unexecuted?${q}&limit=2000&open_only=true`),
+  });
 
   const [fundModal, setFundModal] = useState<{ title: string; metric: FundMetric } | null>(null);
   const [unexecModal, setUnexecModal] = useState<UnexecutedRow | null>(null);
@@ -275,7 +309,11 @@ export default function PrescriptionsPage() {
   // αναζήτηση σκευάσματος: χωρίς πεζά/κεφαλαία & τόνους (π.χ. «lasix» → LASIX 40MG/TAB)
   const fold = (x: string) => x.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
   const unAll = un?.items ?? [];                       // γράφημα: όλα (δεν το επηρεάζει η αναζήτηση)
-  const unRows = unAll.filter((r) => !unSearch.trim() || fold(r.name ?? r.product_id ?? "").includes(fold(unSearch.trim())));
+  const unRows = (unexecTable.data?.items ?? [])
+    .filter((r) => !unSearch.trim() || fold(r.name ?? r.product_id ?? "").includes(fold(unSearch.trim())))
+    // φίλτρο συμμετοχής: κρατά ΜΟΝΟ τις συνταγές με αυτό το ποσοστό για το φάρμακο
+    .map((r) => unPct === null ? r : { ...r, rxs: (r.rxs ?? []).filter((x) => x.pct === unPct) })
+    .filter((r) => unPct === null || (r.rxs?.length ?? 0) > 0);
 
   // period totals (whole date range), summed across funds — NOT the visible page
   const totalRx = fundData.reduce((a, f) => a + f.rx, 0);
@@ -458,9 +496,24 @@ export default function PrescriptionsPage() {
 
         {/* unexecuted table */}
         <PanelCard collapsible defaultOpen={false} title={t("Ανεκτέλεστες δραστικές — αναλυτικά", "Unexecuted substances — details")} bodyClassName="pt-2">
-          <input value={unSearch} onChange={(e) => setUnSearch(e.target.value)} type="search"
-            placeholder={t("Αναζήτηση σκευάσματος (π.χ. Lasix)…", "Search product (e.g. Lasix)…")}
-            className="mb-3 w-full max-w-sm rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800" />
+          <div className="mb-3 flex flex-wrap items-center gap-2">
+            <input value={unSearch} onChange={(e) => setUnSearch(e.target.value)} type="search"
+              placeholder={t("Αναζήτηση σκευάσματος (π.χ. Lasix)…", "Search product (e.g. Lasix)…")}
+              className="w-full max-w-sm rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800" />
+            <div className="inline-flex items-center gap-1 text-xs">
+              <span className="text-slate-500">{t("Συμμετοχή:", "Co-payment:")}</span>
+              {([null, 0, 10, 25] as const).map((p) => (
+                <button key={String(p)} type="button" onClick={() => setUnPct(p)}
+                  className={`rounded-full px-2.5 py-1 font-medium ${unPct === p ? "bg-brand-600 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300"}`}>
+                  {p === null ? t("Όλες", "All") : `${p}%`}
+                </button>
+              ))}
+            </div>
+          </div>
+          <p className="mb-2 text-[11px] text-slate-400">
+            {t("Συνταγές των τελευταίων 30 ημερών που μπορούν ακόμη να εκτελεστούν (ανοιχτές στην ΗΔΥΚΑ και εντός προθεσμίας), ανεξάρτητα από την περίοδο της σελίδας. Α = άυλη, Ε = έντυπη, (%) = συμμετοχή ασφαλισμένου για το φάρμακο — πρώτα οι έντυπες με 0%.",
+               "Prescriptions from the last 30 days that can still be dispensed (open in ΗΔΥΚΑ and within deadline), regardless of the page period. Α = electronic, Ε = paper, (%) = patient co-payment for the medicine — paper 0% first.")}
+          </p>
           <DataTable
             pageSize={20}
             columns={unexecutedColumns}
