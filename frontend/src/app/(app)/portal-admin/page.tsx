@@ -66,7 +66,7 @@ const RX_STATUS: Record<string, string> = { new: "Νέα", in_progress: "Σε ε
 const RX_STATUS_EN: Record<string, string> = { new: "New", in_progress: "In progress", answered: "Answered", done: "Done", rejected: "Rejected" };
 const rxStatusCls = (s: string) => ["answered", "done"].includes(s) ? "bg-emerald-100 text-emerald-700" : s === "rejected" ? "bg-rose-100 text-rose-700" : s === "in_progress" ? "bg-amber-100 text-amber-700" : "bg-sky-100 text-sky-700";
 
-type PortalCustomers = { registered: number; total: number; to_invite: number; adoption_pct: number; contactable: number; registered_list: { name: string; since?: string | null; last_seen?: string | null }[]; tenant_id?: string; pharmacy_name?: string | null; register_url?: string };
+type PortalCustomers = { registered: number; total: number; to_invite: number; adoption_pct: number; contactable: number; registered_list: { name: string; account_id?: string; since?: string | null; last_seen?: string | null }[]; tenant_id?: string; pharmacy_name?: string | null; register_url?: string };
 
 function Kpi({ label, value, sub, tint }: { label: string; value: string; sub?: string; tint: string }) {
   return (
@@ -81,15 +81,38 @@ function Kpi({ label, value, sub, tint }: { label: string; value: string; sub?: 
 function PortalCustomersTab() {
   const t = useT();
   const { data: d } = useQuery({ queryKey: ["portal-customers"], queryFn: () => api<PortalCustomers>("/portal/portal-customers") });
+  const qcCust = useQueryClient();
+  // διαγραφή πελάτη από την πύλη: μόνο από ΑΥΤΟ το φαρμακείο αν έχει κι άλλα, αλλιώς όλος ο λογαριασμός πύλης
+  const removeCustomer = async (p: { name: string; account_id?: string }) => {
+    if (!p.account_id) return;
+    const ok = await appConfirm(
+      t(`Να διαγραφεί ο/η ${p.name} από την πύλη;\n\nΑν είναι συνδεδεμένος/η και με άλλο φαρμακείο, αφαιρείται μόνο από το δικό σας. Αλλιώς διαγράφεται ο λογαριασμός πύλης και μπορεί να ξαναγραφτεί (π.χ. με σωστό email) ή να του στείλετε νέα πρόσκληση.\n\nΗ καρτέλα, οι συνταγές και το ιστορικό του στο φαρμακείο ΔΕΝ διαγράφονται.`,
+        `Remove ${p.name} from the portal?\n\nIf also linked to another pharmacy, only your link is removed. Otherwise the portal account is deleted and they can register again or be re-invited.\n\nTheir card, prescriptions and history at the pharmacy are NOT deleted.`),
+      { title: t("Διαγραφή πελάτη από την πύλη", "Remove customer from portal"), danger: true, confirmText: t("Διαγραφή", "Remove") });
+    if (!ok) return;
+    try {
+      const r = await api<{ ok: boolean; mode?: string; error?: string }>(`/portal/portal-customers/${encodeURIComponent(p.account_id)}`, { method: "DELETE" });
+      if (r.ok) {
+        toastSuccess(r.mode === "unlinked"
+          ? t("Αφαιρέθηκε από την πύλη του φαρμακείου σας (ο λογαριασμός του μένει για τα άλλα φαρμακεία).", "Removed from your pharmacy's portal.")
+          : t("Ο λογαριασμός πύλης διαγράφηκε — μπορεί να ξαναγραφτεί ή να του στείλετε νέα πρόσκληση.", "Portal account deleted."));
+        qcCust.invalidateQueries({ queryKey: ["portal-customers"] });
+      } else {
+        toastError(t("Δεν ήταν δυνατή η διαγραφή.", "Could not remove."));
+      }
+    } catch { toastError(t("Κάτι πήγε στραβά.", "Something went wrong.")); }
+  };
   const [copied, setCopied] = useState(false);
   const [resendId, setResendId] = useState("");
   const resend = useMutation({
-    mutationFn: (identifier: string) => api<{ ok: boolean; sent?: { type: string; hint: string }[]; error?: string }>(
+    mutationFn: (identifier: string) => api<{ ok: boolean; sent?: { type: string; hint: string }[]; error?: string; corrected?: string[] }>(
       "/portal/portal-customers/resend-set-password", { method: "POST", body: JSON.stringify({ identifier }) }),
     onSuccess: (r) => {
       if (r.ok && r.sent?.length) {
-        toastSuccess(t(`✓ Στάλθηκε σύνδεσμος κωδικού (${r.sent.map((s) => s.type === "email" ? "email" : "SMS").join(" + ")}).`,
-          `✓ Password link sent (${r.sent.map((s) => s.type).join(" + ")}).`));
+        // διορθώθηκε ο λογαριασμός από την καρτέλα (λάθος email εγγραφής / κενό κινητό)
+        const fixed = (r.corrected ?? []).map((k) => k === "email" ? "email" : t("κινητό", "mobile")).join(" & ");
+        toastSuccess(t(`✓ Στάλθηκε σύνδεσμος κωδικού (${r.sent.map((s) => `${s.type === "email" ? "email" : "SMS"} ${s.hint}`).join(" + ")}).${fixed ? ` Διορθώθηκε το ${fixed} του λογαριασμού από την καρτέλα.` : ""}`,
+          `✓ Password link sent (${r.sent.map((s) => `${s.type} ${s.hint}`).join(" + ")}).${fixed ? ` Account ${fixed} corrected from the card.` : ""}`));
         setResendId("");
       } else {
         toastError(
@@ -169,7 +192,15 @@ function PortalCustomersTab() {
         ) : d.registered_list.map((p, i) => (
           <div key={i} className="mb-2 flex items-center justify-between rx-card p-3">
             <span className="inline-flex items-center gap-2 text-sm font-medium text-slate-800 dark:text-slate-200"><Heart className="h-4 w-4 text-rose-400" /> {p.name}</span>
-            {p.since && <span className="text-xs text-slate-400">{t("Εγγραφή", "Joined")}: {dtl(p.since)}</span>}
+            <span className="inline-flex items-center gap-3">
+              {p.since && <span className="text-xs text-slate-400">{t("Εγγραφή", "Joined")}: {dtl(p.since)}</span>}
+              {p.account_id && (
+                <button type="button" onClick={() => removeCustomer(p)} title={t("Διαγραφή από την πύλη", "Remove from portal")}
+                  className="rounded-md p-1 text-slate-400 hover:bg-rose-50 hover:text-rose-600">
+                  <Trash2 className="h-4 w-4" />
+                </button>
+              )}
+            </span>
           </div>
         ))}
       </div>

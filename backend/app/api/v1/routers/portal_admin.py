@@ -93,20 +93,53 @@ async def resend_set_password(body: ResendSetPwIn,
     """Ξεκλείδωμα πελάτη: στέλνει ΦΡΕΣΚΟ σύνδεσμο «ορισμού κωδικού» (email + SMS) σε ΥΠΑΡΧΟΝΤΑ
     πελάτη — μόνο αν είναι συνδεδεμένος με ΑΥΤΟ το φαρμακείο. Λύνει «δεν έλαβα email ανάκτησης»
     ό,τι κι αν φταίει (λάθος/διαφορετικό email που θυμάται ο πελάτης)."""
+    import re
+
     from app.services.patient_auth_service import PatientAuthService
     ident = (body.identifier or "").strip()
     if not ident:
         return {"ok": False, "error": "no_identifier"}
+    db = shared_db()
     repo = PatientAccountRepository()
-    acc = await repo.get_by_email(ident) if "@" in ident else await repo.get_by_amka(ident)
+    digits = re.sub(r"\D", "", ident)
+    acc = (await repo.get_by_email(ident) if "@" in ident
+           else await repo.get_by_amka(digits) if len(digits) == 11 else None)   # ΑΜΚΑ χωρίς κενά/παύλες
+    if not acc:
+        # Μέσω της ΚΑΡΤΕΛΑΣ του φαρμακείου: ο πελάτης γράφτηκε με λάθος email (π.χ. «koylaspano» αντί
+        # «koulaspano», 15/10/2026) — ο φαρμακοποιός ψάχνει με τα ΣΩΣΤΑ στοιχεία που έχει στην καρτέλα.
+        by_card: dict = {}
+        if "@" in ident:
+            by_card = {"email": {"$regex": f"^{re.escape(ident)}$", "$options": "i"}}
+        elif digits:
+            by_card = {"$or": [{"mobile": {"$regex": f"{re.escape(digits[-10:])}$"}},
+                               {"phone": {"$regex": f"{re.escape(digits[-10:])}$"}}]}
+        card = (await db["patient_contacts"].find_one({"tenant_id": ctx.tenant_id, **by_card})
+                if by_card else None)
+        lk = (await db["patient_links"].find_one({"tenant_id": ctx.tenant_id, "patient_ref": card["_id"]})
+              if card else None)
+        acc = await repo.get(lk["account_id"]) if lk else None
     if not acc:
         return {"ok": False, "error": "not_found"}
     # scoping: ο πελάτης πρέπει να ανήκει σε ΑΥΤΟ το φαρμακείο (patient_links account↔tenant)
-    link = await shared_db()["patient_links"].find_one(
+    link = await db["patient_links"].find_one(
         {"account_id": acc["_id"], "tenant_id": ctx.tenant_id})
     if not link:
         return {"ok": False, "error": "not_your_customer"}
-    return await PatientAuthService().resend_set_password_link(str(acc["_id"]))
+    # Τα στοιχεία της ΚΑΡΤΕΛΑΣ του φαρμακείου (email/κινητό που πέρασε ο φαρμακοποιός) — ο σύνδεσμος
+    # πηγαίνει ΚΑΙ εκεί, και διορθώνουν τον λογαριασμό όπου είναι λάθος/κενός (με δικλίδες, βλ. service).
+    card = await db["patient_contacts"].find_one(
+        {"tenant_id": ctx.tenant_id, "_id": link.get("patient_ref")}, {"email": 1, "mobile": 1}) or {}
+    return await PatientAuthService().resend_set_password_link(
+        str(acc["_id"]), card_email=card.get("email"), card_mobile=card.get("mobile"),
+        tenant_id=ctx.tenant_id, by=ctx.user_id)
+
+
+@router.delete("/portal-customers/{account_id}")
+async def remove_portal_customer(account_id: str,
+                                 ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+    """Διαγραφή πελάτη από την πύλη του φαρμακείου (βλ. remove_by_pharmacy): μόνο από αυτό το φαρμακείο
+    αν έχει κι άλλα, αλλιώς ολόκληρος ο λογαριασμός πύλης. Τα δεδομένα του φαρμακείου μένουν."""
+    return await PatientAccountRepository().remove_by_pharmacy(account_id, ctx.tenant_id, by=ctx.user_id)
 
 
 # ── live "pending" feed (polled by the panel to pop up new requests) ──

@@ -41,4 +41,8 @@ async def test_recurring_extras_include_seats_sla_and_skip_addons_in_plan(monkey
     sub = {"tenant_id": "t", "addons": ["ai_assistant", "eshop"], "seats": 4, "sla": "pro"}
     ex = await bs.recurring_extras(db, sub, pkg, yearly=False)
     # eshop περιλαμβάνεται στο πακέτο → δεν χρεώνεται· 2 έξτρα χρήστες × 10 €· SLA 15 €
+    lines = ex.pop("lines")
     assert ex == {"addons": 3000, "retention": 0, "seats": 2000, "extra_users": 2, "sla": 1500, "total": 6500}
+    # αναλυτικές γραμμές (καρτέλα πελάτη) = ΙΔΙΑ ποσά με τα σύνολα
+    assert sum(l["amount"] for l in lines) == ex["total"]
+    assert {l["kind"] for l in lines} == {"addon", "seats", "sla"}

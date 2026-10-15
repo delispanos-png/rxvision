@@ -245,13 +245,18 @@ class PatientAuthService:
                 logger.warning("set-password SMS failed: %s: %s", type(exc).__name__, exc)
         return sent
 
-    async def resend_set_password_link(self, account_id: str) -> dict:
+    async def resend_set_password_link(self, account_id: str, *, card_email: str | None = None,
+                                       card_mobile: str | None = None, tenant_id: str | None = None,
+                                       by: str | None = None) -> dict:
         """Φαρμακοποιός-assisted ξεκλείδωμα: δημιουργεί ΦΡΕΣΚΟ set-password token για υπάρχοντα
         πελάτη & στέλνει τον σύνδεσμο (email + SMS). Λύνει «δεν έλαβα email» ό,τι κι αν φταίει
         (λάθος email που θυμάται ο πελάτης κ.λπ.) — ο φαρμακοποιός ξέρει τα σωστά στοιχεία."""
         acc = await self.repo.get(account_id)
         if not acc:
             return {"ok": False, "error": "not_found"}
+        corrected = await self._correct_from_card(acc, card_email, card_mobile, tenant_id, by)
+        if corrected:
+            acc = await self.repo.get(account_id) or acc
         token = await self.repo.create_set_password_token(acc["_id"])
         if not token:
             return {"ok": False, "error": "token_failed"}
@@ -259,10 +264,53 @@ class PatientAuthService:
         sent = await self._send_set_password_link(acc.get("email"), acc.get("phone"), link)
         logger.info("pharmacist resent set-password link for %s → %s",
                     _mask_email(acc.get("email")), [s["type"] for s in sent])
-        return {"ok": bool(sent), "sent": sent,
+        return {"ok": bool(sent), "sent": sent, "corrected": corrected,
                 "email": _mask_email(acc.get("email")),
                 "phone": _mask_phone(acc.get("phone")) if acc.get("phone") else None,
                 "error": None if sent else "no_channel_delivered"}
+
+    async def _correct_from_card(self, acc: dict, card_email: str | None, card_mobile: str | None,
+                                 tenant_id: str | None, by: str | None) -> list[str]:
+        """Λογαριασμός πύλης με ΛΑΘΟΣ/κενό email ή κινητό → διόρθωση από την καρτέλα του φαρμακείου.
+
+        ΔΙΚΛΙΔΕΣ (η αλλαγή email = αλλαγή «κλειδιού» του λογαριασμού): μόνο αν ο πελάτης είναι
+        συνδεδεμένος ΜΟΝΟ με αυτό το φαρμακείο· email που χρησιμοποιεί άλλος λογαριασμός δεν παίρνεται·
+        το παλιό email ενημερώνεται· κάθε αλλαγή καταγράφεται (ποιος/πότε/από τι σε τι)."""
+        import re as _re
+        from datetime import datetime, timezone
+        db = self.repo.db
+        if not tenant_id:
+            return []
+        links = await db["patient_links"].count_documents({"account_id": acc["_id"]})  # tenant-ok: global account
+        if links != 1:
+            return []
+        sets: dict = {}
+        new_email = (card_email or "").strip().lower()
+        if (new_email and "@" in new_email and new_email != (acc.get("email") or "").lower()
+                and not await db["patient_accounts"].find_one(  # tenant-ok: global unique email
+                    {"email": new_email, "_id": {"$ne": acc["_id"]}})):
+            sets["email"] = new_email
+        mob = _re.sub(r"\D", "", card_mobile or "")
+        if len(mob) >= 10 and not _re.sub(r"\D", "", acc.get("phone") or ""):
+            sets["phone"] = mob
+        if not sets:
+            return []
+        now = datetime.now(timezone.utc)
+        await db["patient_accounts"].update_one({"_id": acc["_id"]}, {  # tenant-ok: global account
+            "$set": sets, "$push": {"contact_corrections": {
+                "at": now, "by": by, "tenant_id": tenant_id, "source": "pharmacy_card",
+                "old": {k: acc.get(k) for k in sets}, "new": sets}}})
+        if "email" in sets and acc.get("email"):
+            try:   # ενημέρωση του ΠΑΛΙΟΥ email (αν υπάρχει πραγματικά, μαθαίνει την αλλαγή)
+                from app.services import mailer
+                await mailer.send_email(acc["email"], "RxVision — Αλλαγή email λογαριασμού",
+                                        "<p>Το email του λογαριασμού σας στην Πύλη Πελατών RxVision "
+                                        "ενημερώθηκε από το φαρμακείο σας με τα στοιχεία της καρτέλας σας. "
+                                        "Αν δεν το ζητήσατε, επικοινωνήστε με το φαρμακείο.</p>")
+            except Exception:  # noqa: BLE001
+                pass
+        logger.info("portal account %s corrected from pharmacy card: %s", acc["_id"], sorted(sets))
+        return sorted(sets)
 
     async def request_password_reset(self, email: str) -> dict:
         """Self-service «ξέχασα κωδικό»: αν υπάρχει λογαριασμός με αυτό το email, στέλνει σύνδεσμο

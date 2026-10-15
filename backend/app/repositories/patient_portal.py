@@ -387,6 +387,44 @@ class PatientAccountRepository:
                         "last_seen_at": pat.get("last_seen_at")})
         return out
 
+    # Ό,τι κρατά ο ΛΟΓΑΡΙΑΣΜΟΣ πύλης (όχι το φαρμακείο): φεύγει μαζί του σε πλήρη διαγραφή.
+    _ACCOUNT_COLLS = ("patient_links", "shop_favorites", "shop_carts", "patient_push_subs",
+                      "patient_notif_dismissed")
+
+    async def remove_by_pharmacy(self, account_id, tenant_id: str, *, by: str | None = None) -> dict:
+        """Ο ΦΑΡΜΑΚΟΠΟΙΟΣ αφαιρεί πελάτη από την πύλη του (15/10/2026 — π.χ. εγγραφή με λάθος email).
+
+        • Συνδεδεμένος ΚΑΙ με άλλα φαρμακεία → φεύγει ΜΟΝΟ από αυτό (ίδια λογική με την αποσύνδεση του
+          πελάτη)· ο λογαριασμός του στα άλλα μένει ανέγγιχτος.
+        • ΜΟΝΟ σε αυτό → διαγράφεται ΟΛΟΣ ο λογαριασμός πύλης (email/ΑΜΚΑ ελευθερώνονται για νέα εγγραφή).
+        Τα δεδομένα του ΦΑΡΜΑΚΕΙΟΥ (καρτέλα, συνταγές, παραγγελίες) ΔΕΝ αγγίζονται. Καταγραφή χωρίς PII."""
+        oid = _oid(account_id)
+        if not oid:
+            return {"ok": False, "error": "bad_account"}
+        links = [l async for l in self.db["patient_links"].find({"account_id": oid})]  # tenant-ok: global account
+        link = next((l for l in links if l["tenant_id"] == tenant_id), None)
+        if not link:
+            return {"ok": False, "error": "not_linked"}
+        if len(links) > 1:
+            res = await self.unlink(oid, tenant_id)
+            mode = "unlinked"
+        else:
+            pref = link.get("patient_ref")
+            if pref:   # καρτέλα που έφτιαξε ΜΟΝΟ η πύλη, χωρίς καμία κίνηση → φεύγει (όπως στην αποσύνδεση)
+                pat = await self.db["patients_anonymized"].find_one(
+                    {"tenant_id": tenant_id, "_id": pref}, {"rx_count": 1, "source": 1})
+                if pat and pat.get("source") == "portal_selected" and not int(pat.get("rx_count") or 0):
+                    await self.db["patients_anonymized"].delete_one({"tenant_id": tenant_id, "_id": pref})
+                    await self.db["patient_contacts"].delete_one({"tenant_id": tenant_id, "_id": pref})
+            for c in self._ACCOUNT_COLLS:
+                await self.db[c].delete_many({"account_id": oid})  # tenant-ok: δεδομένα του λογαριασμού
+            await self.db["patient_accounts"].delete_one({"_id": oid})  # tenant-ok: global account
+            res, mode = {"ok": True}, "deleted"
+        if res.get("ok"):
+            await self.db["portal_account_removals"].insert_one({
+                "tenant_id": tenant_id, "account_id": oid, "mode": mode, "by": by, "at": _now()})
+        return {**res, "mode": mode}
+
     async def unlink(self, account_id, tenant_id: str) -> dict:
         """Ο πελάτης αποσυνδέει ένα φαρμακείο από την πύλη του.
 
@@ -658,7 +696,7 @@ class PatientAccountRepository:
                     {"tenant_id": tenant_id, "_id": {"$in": reg_refs}},
                     {"full_name": 1, "last_seen_at": 1}):
                 lk = by_ref.get(p["_id"]) or {}
-                reg_list.append({"name": p.get("full_name") or "—",
+                reg_list.append({"name": p.get("full_name") or "—", "account_id": str(lk.get("account_id") or ""),
                                  "since": lk.get("created_at"), "last_seen": p.get("last_seen_at")})
         reg_list.sort(key=lambda x: str(x.get("since") or ""), reverse=True)
         if demo:   # «πελάτης παρουσίασης»: κρύψε τα ονόματα των εγγεγραμμένων πελατών

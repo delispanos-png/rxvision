@@ -26,6 +26,9 @@ from app.utils.format import eur_gr
 
 # ΕΟΠΥΥ splits into two distinct submissions (φάρμακα vs εμβόλια), per CDA root 1.1.24.
 EOPYY_MED = "ΕΟΠΥΥ - Φάρμακα"
+#: Συνταγές εμβολίων που εκδίδει/εκτελεί το ΙΔΙΟ το φαρμακείο (Μητρώο Εμβολιασμών ΗΔΥΚΑ) — ξεχωριστή ομάδα
+#: στον φυσικό έλεγχο, ώστε να μην ανακατεύονται με τις συνταγές ιατρού (ούτε με τα «ΕΟΠΥΥ - Εμβόλια»).
+PHARMACY_VACC = "ΕΟΠΥΥ - Εμβολιασμοί φαρμακείου"
 EOPYY_VAC = "ΕΟΠΥΥ - Εμβόλια"
 
 
@@ -972,6 +975,26 @@ class ReimbursementRepository(BaseRepository):
                     row["fund"] = row["group"] = "Αμιγώς 100%"
                     row["is_eopyy"] = False
                     row["is_vaccine"] = False
+        # ΣΥΝΤΑΓΕΣ ΕΜΒΟΛΙΩΝ ΤΟΥ ΦΑΡΜΑΚΕΙΟΥ (Μητρώο Εμβολιασμών ΗΔΥΚΑ — ζουν στο `vaccinations`, όχι στις
+        # εκτελέσεις): μπαίνουν στον έλεγχο/σκανάρισμα σε ΔΙΚΗ τους ομάδα (14/10/2026). Δεν αγγίζουν
+        # τα σύνολα κλεισίματος/υποβολής — μόνο τον φυσικό έλεγχο.
+        async for v in self._db["vaccinations"].find(
+                {"tenant_id": self.tenant_id, "source": "INFLUENZA", "cancelled": {"$ne": True},
+                 "executed_at": {"$gte": start, "$lt": end}, "barcode": {"$nin": [None, ""]}},
+                {"barcode": 1, "executed_at": 1, "insurance_part": 1, "total_price": 1, "patient_part": 1,
+                 "vaccine_name": 1}):
+            bc = str(v["barcode"])
+            allrows.append({
+                "barcode": bc, "external_id": bc, "exec_no": None,
+                "claim": int(v.get("insurance_part") or 0), "kyyap": 0,
+                "retail": int(v.get("total_price") or 0), "patient": int(v.get("patient_part") or 0),
+                "executed_at": v.get("executed_at"),
+                "day": v["executed_at"].strftime("%Y-%m-%d") if v.get("executed_at") else None,
+                "fund": PHARMACY_VACC, "group": PHARMACY_VACC, "is_eopyy": True, "is_vaccine": True,
+                "is_pharmacy_vaccination": True, "vaccine_name": v.get("vaccine_name"),
+                "is_100": False, "is_fyk": False, "is_etyap": False, "full_participation": False,
+                "needs_original": False, "needs_dose_check": False, "has_opinion": False, "has_desens": False,
+                "needs_check": False, "checked": bc in checked, "visual_checked": bc in vchecked})
         # Αναλυτική ενημέρωση μήνα (πριν το φίλτρο ομάδας → όλος ο μήνας)
         def _cnt(f):
             return sum(1 for r in allrows if r.get(f))
@@ -983,7 +1006,7 @@ class ReimbursementRepository(BaseRepository):
             "desensitization": _cnt("has_desens"), "strips": _cnt("has_strip"),
             "hdika_note": _cnt("hdika_note"), "vaccine": _cnt("is_vaccine"),
         }
-        order = {EOPYY_MED: 0, "ΕΟΠΥΥ - Εμβόλια": 1, "Αμιγώς 100%": 8}
+        order = {EOPYY_MED: 0, "ΕΟΠΥΥ - Εμβόλια": 1, PHARMACY_VACC: 2, "Αμιγώς 100%": 8}
         groups = ["all"] + sorted({a["group"] for a in allrows}, key=lambda g: (order.get(g, 5), g))
         if group != "all":
             allrows = [a for a in allrows if a["group"] == group]
@@ -1009,6 +1032,9 @@ class ReimbursementRepository(BaseRepository):
             async for e in self._db["prescription_executions"].find(  # tenant-ok: μόνο «υπάρχει αλλού;» για barcode που πληκτρολόγησε ο χρήστης
                     {"external_id": {"$regex": rx}, "status": {"$ne": "cancelled"}, "excluded_from_stats": {"$ne": True}}, {"external_id": 1}):
                 present.add(str(e["external_id"]).split(":")[0])
+            async for v in self._db["vaccinations"].find(  # tenant-ok: ίδιο «υπάρχει;» για συνταγές εμβολίων
+                    {"barcode": {"$in": [str(b) for b in extra13]}}, {"barcode": 1}):
+                present.add(str(v["barcode"]))
             extra13 = [b for b in extra13 if str(b) not in present]
         return jsonsafe({
             "period": period, "day": day, "group": group, "groups": groups,
@@ -1069,6 +1095,11 @@ class ReimbursementRepository(BaseRepository):
         all_exs = [e async for e in self._db["prescription_executions"].find(  # tenant-ok
             {"tenant_id": self.tenant_id, "status": {"$ne": "cancelled"}, "excluded_from_stats": {"$ne": True},
              "external_id": {"$regex": f"^{re.escape(bc)}"}})]
+        if not all_exs:               # συνταγή ΕΜΒΟΛΙΟΥ του φαρμακείου; (ζει στο `vaccinations`)
+            vac = await self._db["vaccinations"].find_one(
+                {"tenant_id": self.tenant_id, "barcode": bc, "source": "INFLUENZA", "cancelled": {"$ne": True}})
+            if vac:
+                return await self._scan_vaccination(period, bc, vac, day)
         if not all_exs:               # δεν υπάρχει σε ΑΥΤΟ το φαρμακείο
             # μήπως ανήκει σε ΑΛΛΟ φαρμακείο (μις-σκανάρισμα σε λάθος tenant, π.χ. χρήστης δικτύου που
             # έχει επιλέξει λάθος φαρμακείο); → ΜΗ το βάλεις στο «δεν υπάρχουν», ενημέρωσε ξεκάθαρα.
@@ -1130,6 +1161,24 @@ class ReimbursementRepository(BaseRepository):
                 res["exec_no"] = targets[0]["external_id"].split(":")[1]
         return res
 
+    async def _scan_vaccination(self, period: str, bc: str, vac: dict, day: str | None) -> dict:
+        """Σκανάρισμα συνταγής εμβολίου του φαρμακείου: ίδια ροή με τις συνταγές (λάθος μέρα/μήνας → ειδοποίηση)."""
+        start, end = _month_bounds(period)
+        at = vac.get("executed_at")
+        vday = at.strftime("%Y-%m-%d") if at else None
+        if not at or not (start <= at < end) or (day and vday != day):
+            return {"ok": True, "found": True, "wrong_day": True, "barcode": bc,
+                    "actual_days": [vday] if vday else [], "n_executions": 1}
+        await self._db["barcode_check"].update_one(
+            {"tenant_id": self.tenant_id, "period": period},
+            {"$addToSet": {"checked": bc}, "$set": {"updated_at": _now()}}, upsert=True)
+        flags = {k: False for k in ("is_intangible", "is_full_participation", "needs_original", "is_fyk",
+                                    "has_desensitization", "has_opinion", "is_etyap")}
+        flags.update({"has_vaccine": True, "is_pharmacy_vaccination": True, "exec_count": 1,
+                      "vaccine_name": vac.get("vaccine_name"),
+                      "is_eopyy": True, "fund": PHARMACY_VACC, "fund_name": "ΕΟΠΥΥ"})
+        return {"ok": True, "found": True, "barcode": bc, "n_executions": 1, "flags": flags}
+
     async def physical_reset(self, period: str, day: str | None = None) -> dict:
         if not day:                       # μηδενισμός ΟΛΟΥ του μήνα
             await self._db["barcode_check"].delete_one({"tenant_id": self.tenant_id, "period": period})
@@ -1140,6 +1189,10 @@ class ReimbursementRepository(BaseRepository):
             {"tenant_id": self.tenant_id, "executed_at": {"$gte": start, "$lt": end},
              "status": {"$ne": "cancelled"}, "excluded_from_stats": {"$ne": True}}, {"external_id": 1, "executed_at": 1})
             if e["executed_at"].strftime("%Y-%m-%d") == day]
+        ids += [str(v["barcode"]) async for v in self._db["vaccinations"].find(
+            {"tenant_id": self.tenant_id, "executed_at": {"$gte": start, "$lt": end},
+             "barcode": {"$nin": [None, ""]}}, {"barcode": 1, "executed_at": 1})
+            if v.get("executed_at") and v["executed_at"].strftime("%Y-%m-%d") == day]
         if ids:
             roots = list({i.split(":")[0] for i in ids})   # + παλιό state ανά barcode-root
             await self._db["barcode_check"].update_one(

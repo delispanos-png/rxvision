@@ -17,7 +17,8 @@ from app.repositories.prescriptions import PrescriptionRepository
 router = APIRouter()
 
 
-async def _flu_vaccination_rows(tenant_id: str, date_from, date_to, barcode, page, page_size):
+async def _flu_vaccination_rows(tenant_id: str, date_from, date_to, barcode, page, page_size,
+                                demo: bool = False):
     """Flu vaccinations mapped into the prescriptions-list row shape (separate `vaccinations` coll)."""
     from app.core.db import shared_db
     from app.repositories.base import jsonsafe
@@ -30,24 +31,55 @@ async def _flu_vaccination_rows(tenant_id: str, date_from, date_to, barcode, pag
     rows = []
     async for v in (db["vaccinations"].find(q).sort("executed_at", -1)
                     .skip((page - 1) * page_size).limit(page_size)):
-        rows.append({
-            "external_id": v.get("barcode") or v.get("external_id"),
-            "executed_at": v.get("executed_at"), "source": "INFLUENZA",
-            "patient_name": v.get("patient_name"), "amka": v.get("amka"),
-            "fund_name": v.get("vaccine_name") or "Εμβόλιο Γρίπης",     # vaccine shown in the fund column
-            "fund_general": v.get("vaccine_name") or "Εμβόλιο Γρίπης",
-            "status": "cancelled" if v.get("cancelled") else "executed",
-            "has_unexecuted_substances": False,
-            "amount_total": v.get("total_price") or v.get("payable") or 0,
-            "amount_claimed": v.get("insurance_part") or 0,
-            "patient_share": v.get("patient_part") or 0,
-            "icd10": [v["icd10_code"]] if v.get("icd10_code") else [],
-            "icd10_named": ([f"{v['icd10_code']} — {v['icd10_title']}"] if v.get("icd10_code") and v.get("icd10_title")
-                            else ([v["icd10_code"]] if v.get("icd10_code") else [])),
-            "details": {"vaccine": v.get("vaccine_name"), "age": v.get("patient_age_group"),
-                        "risk": v.get("high_risk_group"), "lot": v.get("lot")},
-        })
+        rows.append(_vacc_row(v, demo))
     return {"page": page, "page_size": page_size, "items": jsonsafe(rows)}
+
+
+def _vacc_row(v: dict, demo: bool = False) -> dict:
+    """Συνταγή εμβολίου του φαρμακείου (Μητρώο Εμβολιασμών ΗΔΥΚΑ) σε μορφή γραμμής της λίστας Συνταγών."""
+    from app.utils.masking import mask_amka, mask_name
+    return {
+        "external_id": v.get("barcode") or v.get("external_id"), "is_vaccination": True,
+        "executed_at": v.get("executed_at"), "source": "INFLUENZA",
+        "patient_name": v.get("patient_name"), "amka": v.get("amka"),
+        "fund_name": v.get("vaccine_name") or "Εμβόλιο Γρίπης",     # vaccine shown in the fund column
+        "fund_general": v.get("vaccine_name") or "Εμβόλιο Γρίπης",
+        "status": "cancelled" if v.get("cancelled") else "executed",
+        "has_unexecuted_substances": False,
+        "amount_total": v.get("total_price") or v.get("payable") or 0,
+        "amount_claimed": v.get("insurance_part") or 0,
+        "patient_share": v.get("patient_part") or 0,
+        "icd10": [v["icd10_code"]] if v.get("icd10_code") else [],
+        "icd10_named": ([f"{v['icd10_code']} — {v['icd10_title']}"] if v.get("icd10_code") and v.get("icd10_title")
+                        else ([v["icd10_code"]] if v.get("icd10_code") else [])),
+        "details": {"vaccine": v.get("vaccine_name"), "age": v.get("patient_age_group"),
+                    "risk": v.get("high_risk_group"), "lot": v.get("lot")},
+    } | ({"patient_name": mask_name(v.get("patient_name"), True), "amka": mask_amka(v.get("amka"), True)}
+         if demo else {})
+
+
+async def _vaccination_rows_for_list(tenant_id: str, *, date_from, date_to, barcode, amka, patient,
+                                     icd10, limit: int, sort: str, direction: int, demo: bool) -> list[dict]:
+    """Συνταγές εμβολίων για την ΚΑΝΟΝΙΚΗ λίστα (14/10/2026): ίδια λογική φίλτρων με τις εκτελέσεις —
+    αριθμός/ΑΜΚΑ/όνομα αγνοούν την περίοδο, αλλιώς περίοδος. Ακυρωμένες εκτός."""
+    from app.core.db import shared_db
+    q: dict = {"tenant_id": tenant_id, "source": "INFLUENZA", "cancelled": {"$ne": True}}
+    if barcode and barcode.strip():
+        rx = {"$regex": "^" + re.escape(barcode.strip())}
+        q["$or"] = [{"barcode": rx}, {"external_id": rx}]
+    elif (amka and amka.strip()) or (patient and patient.strip()):
+        if amka and amka.strip():
+            q["amka"] = amka.strip()
+        if patient and patient.strip():
+            q["patient_name"] = {"$regex": re.escape(patient.strip()), "$options": "i"}
+    else:
+        q["executed_at"] = {"$gte": date_from, "$lt": date_to}
+    if icd10:
+        q["icd10_code"] = icd10
+    field = {"executed_at": "executed_at", "amount_total": "total_price",
+             "amount_claimed": "insurance_part", "external_id": "barcode"}[sort]
+    return [_vacc_row(v, demo) async for v in shared_db()["vaccinations"].find(q)
+            .sort(field, 1 if direction >= 0 else -1).limit(limit)]
 
 
 @router.get("/by-coupon")
@@ -211,7 +243,8 @@ async def list_prescriptions(
     # Special category: flu vaccinations live in the separate `vaccinations` collection — when the
     # «Εμβολιασμοί Γρίπης» characteristic is picked, return those mapped into the same list row shape.
     if "flu_vaccination" in {x.strip() for x in (characteristic or "").split(",")}:
-        return await _flu_vaccination_rows(ctx.tenant_id, date_from, date_to, barcode, page, page_size)
+        return await _flu_vaccination_rows(ctx.tenant_id, date_from, date_to, barcode, page, page_size,
+                                           demo=ctx.demo)
     query: dict = {"executed_at": {"$gte": date_from, "$lt": date_to}}
     if fund_id:
         query["fund_id"] = fund_id
@@ -261,9 +294,27 @@ async def list_prescriptions(
         query["status"] = {"$ne": "cancelled"}
     if countable:
         query["excluded_from_stats"] = {"$ne": True}
-    items = await repo.list_executions(query, skip=(page - 1) * page_size, limit=page_size,
-                                       sort=sort, direction=dir)
-    return {"page": page, "page_size": page_size, "items": items}
+    # Συνταγές ΕΜΒΟΛΙΩΝ του φαρμακείου (ζουν στο `vaccinations`) ΜΕΣΑ στην κανονική λίστα — εκτός αν
+    # τα φίλτρα δεν τις αφορούν (ταμείο/ιατρός/χαρακτηριστικό/μερικές/κάρτα στατιστικών).
+    vacc_ok = (not fund_id and not doctor_id and not countable and status != "partial"
+               and not (characteristic or "").strip() and sort in _MERGE_SORTS)
+    if not vacc_ok:
+        items = await repo.list_executions(query, skip=(page - 1) * page_size, limit=page_size,
+                                           sort=sort, direction=dir)
+        return {"page": page, "page_size": page_size, "items": items}
+    upto = page * page_size     # συγχώνευση: οι πρώτες `upto` από κάθε πηγή, ταξινόμηση, κομμάτι σελίδας
+    ex_rows = await repo.list_executions(query, skip=0, limit=upto, sort=sort, direction=dir)
+    from app.repositories.base import jsonsafe
+    vac_rows = jsonsafe(await _vaccination_rows_for_list(
+        ctx.tenant_id, date_from=date_from, date_to=date_to, barcode=barcode, amka=amka,
+        patient=patient, icd10=icd10, limit=upto, sort=sort, direction=dir, demo=ctx.demo))
+    merged = sorted(ex_rows + vac_rows, key=lambda r: (r.get(sort) is None, r.get(sort) or 0)
+                    if sort != "executed_at" else str(r.get("executed_at") or ""),
+                    reverse=dir < 0)
+    return {"page": page, "page_size": page_size, "items": merged[(page - 1) * page_size: upto]}
+
+
+_MERGE_SORTS = {"executed_at", "amount_total", "amount_claimed", "external_id"}
 
 
 # Επιτρεπτά χαρακτηριστικά συνταγής για φιλτράρισμα (πεδία στο details, βλ. hdika_cda).

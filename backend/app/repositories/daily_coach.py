@@ -297,13 +297,15 @@ class DailyCoachRepository(BaseRepository):
         info = await self._patient_info([_oid(d.get("patient_ref")) for *_, d in rows])
         for coll, field, what, href, d in rows:
             pid = _oid(d.get("patient_ref"))
+            # όνομα από την ΚΑΡΤΕΛΑ όπου υπάρχει (κρύβεται μόνο στην προβολή, σε παρουσίαση)
+            name = (info.get(pid) or {}).get("name") or d.get("patient_name")
             who = self._who(info.get(pid), pid, extra={
-                "name": d.get("patient_name"),
+                "name": name,
                 "mobile": pseudo_phone(d.get("patient_phone"), self.demo)
                 or (info.get(pid) or {}).get("mobile")})
             out.append({
                 "signal": "idle_request", "subject": f"{coll}:{d['_id']}",
-                "name": d.get("patient_name"), "hdika_name": False, "since": d.get(field),
+                "name": name, "hdika_name": False, "since": d.get(field),
                 "sex": who.get("sex"), "who": who,
                 "money_cents": int(d.get("total_cents") or 0) or None,
                 "extra": {"what": what, "detail": (d.get("query") or d.get("medicine_name")
@@ -322,22 +324,48 @@ class DailyCoachRepository(BaseRepository):
         rows = [d async for d in self._db["advance_dispensings"].find(
             {"tenant_id": self.tenant_id, "status": "open",
              "expected_at": {"$ne": None, "$lte": today}}).sort("expected_at", 1).limit(40)]
+        # ΚΑΙ τα χωρίς ημερομηνία δανεικά ΘΑΝΟΝΤΩΝ: δεν θα «επιστραφούν» ποτέ από τον ίδιο — αλλιώς
+        # μένουν αόρατα για πάντα (14/10/2026: ΤΣΟΥΛΟΥΒΗΣ, 2ο δανεικό χωρίς ημερομηνία)
+        undated = [d async for d in self._db["advance_dispensings"].find(
+            {"tenant_id": self.tenant_id, "status": "open", "expected_at": None}).limit(200)]
+        if undated:
+            gone = {p["_id"] async for p in self._db["patients_anonymized"].find(
+                {"tenant_id": self.tenant_id, "deceased": True,
+                 "_id": {"$in": [x for x in {_oid(d.get("patient_ref")) for d in undated} if x]}}, {"_id": 1})}
+            rows += [d for d in undated if _oid(d.get("patient_ref")) in gone]
         if not rows:
             return []
-        info = await self._patient_info([_oid(d.get("patient_ref")) for d in rows])
+        pids = [_oid(d.get("patient_ref")) for d in rows]
+        info = await self._patient_info(pids)
+        # ΘΑΝΩΝ (ΗΔΥΚΑ) → όχι «πάρ' τον τηλέφωνο»· σε ποια οικογένεια/δομή ανήκει για να τακτοποιηθεί
+        dead: dict = {}
+        async for p in self._db["patients_anonymized"].find(
+                {"tenant_id": self.tenant_id, "_id": {"$in": [p for p in pids if p]}, "deceased": True},
+                {"pseudo_id": 1}):
+            dead[p["_id"]] = {"family": [], "care": []}
+            if p.get("pseudo_id"):
+                async for g in self._db["patient_groups"].find(
+                        {"tenant_id": self.tenant_id, "members.pseudo_id": p["pseudo_id"],
+                         "active": {"$ne": False}}, {"kind": 1, "name": 1}):
+                    if g.get("kind") in ("family", "care"):
+                        dead[p["_id"]][g["kind"]].append(g.get("name") or "")
         out: list[dict] = []
         for d in rows:
             pid = _oid(d.get("patient_ref"))
-            who = self._who(info.get(pid), pid, extra={"name": d.get("patient_name")})
+            # όνομα από την ΚΑΡΤΕΛΑ: το αποθηκευμένο στο δανεικό μπορεί να είναι ήδη κρυμμένο (παρουσίαση)
+            name = (info.get(pid) or {}).get("name") or d.get("patient_name")
+            who = self._who(info.get(pid), pid, extra={"name": name})
             names = [n for n in ((i.get("name") or i.get("strip") or i.get("lot"))
                                  for i in (d.get("items") or [])) if n]
             overdue = (d.get("expected_at") or today) < today
             out.append({
                 "signal": "advance_due", "subject": f"advance:{d['_id']}",
-                "name": d.get("patient_name"), "hdika_name": True,
+                "name": name, "hdika_name": True,
                 "since": d.get("created_at"), "sex": who.get("sex"), "who": who,
                 "extra": {"items": names[:3], "expected_at": d.get("expected_at"),
-                          "overdue": overdue},
+                          "overdue": overdue, "deceased": pid in dead,
+                          "families": (dead.get(pid) or {}).get("family", []),
+                          "cares": (dead.get(pid) or {}).get("care", [])},
                 "severity": 4 if overdue else 3,
                 "href": "/patients/advance", "inbox": "/patients/advance",
             })
@@ -874,6 +902,24 @@ class DailyCoachRepository(BaseRepository):
             names = [V.product(n) for n in (ex.get("items") or [])]
             rest = f" και άλλα {len(names) - 2}" if len(names) > 2 else ""
             what = f"το {names[0]}" if len(names) == 1 else ", ".join(names[:2]) + rest
+            if ex.get("deceased"):
+                # Οδηγία ιδιοκτήτη 14/10/2026: θανών → ΟΧΙ «πάρ' τον τηλέφωνο», αλλά ποιος μπορεί να το τακτοποιήσει
+                fam, care = ex.get("families") or [], ex.get("cares") or []
+                title = (f"Σύμφωνα με την ΗΔΥΚΑ, {subj_full[0].lower() + subj_full[1:]} απεβίωσε, "
+                         f"αλλά δεν έχει τακτοποιηθεί ένα δανεικό που είχε ({what})")
+                parts = []
+                if fam:
+                    parts.append(f"Εμφανίζεται ως μέλος της οικογένειας «{fam[0]}». Μπορείτε να "
+                                 f"επικοινωνήσετε με κάποιο μέλος της οικογένειάς {gen}, για να το τακτοποιήσετε.")
+                if care:
+                    parts.append(f"Ήταν μέλος της δομής φροντίδας «{care[0]}». Μπορείτε να επικοινωνήσετε "
+                                 "με τη δομή, για να το τακτοποιήσετε.")
+                if not parts:
+                    parts.append("Δεν ανήκει σε οικογένεια ή δομή φροντίδας στο RxVision. Αν δεν μπορεί να "
+                                 "τακτοποιηθεί μέσω των οικείων του, κλείστε το από τα δανεικά.")
+                return {"title": title, "body": " ".join(parts),
+                        "action": ("Δες την οικογένεια" if fam else "Δες τη δομή" if care else "Δες τα δανεικά"),
+                        "tone": tone}
             if ex.get("overdue"):
                 title = f"{subj_full} δεν έφερε ακόμη τη συνταγή για {what}"
                 body = ("Είχε πει ότι θα την έφερνε και η μέρα πέρασε. "

@@ -642,6 +642,9 @@ async def subscription_detail(tenant_id: str, _: PlatformContext = Depends(get_p
         "current_period_end": s.get("current_period_end"),
         "trial_ends_at": s.get("trial_ends_at"),
         "complimentary": bool(s.get("complimentary")),
+        # ΕΠΟΜΕΝΗ ΧΡΕΩΣΗ αναλυτικά (πακέτο, πρόσθετα, επιπλέον χρήστες, διατήρηση, SLA) — ίδιος υπολογισμός
+        # με την αυτόματη χρέωση· πριν η καρτέλα έδειχνε μόνο πακέτο & MRR, όχι τα πρόσθετα (12/10/2026)
+        "next_charge": await billing_service.next_charge(db, {**s, "tenant_id": tenant_id}) if s else None,
         "invoices": invoices,
     })
 
@@ -683,11 +686,15 @@ async def edit_subscription(tenant_id: str, body: SubEditIn,
                 upd["modules_included"] = pkg.get("modules", [])
                 upd.setdefault("plan_name", pkg.get("name"))
                 from app.services.billing_service import seats_for_package   # και οι χρήστες του νέου πλάνου
-                upd.setdefault("seats", seats_for_package(pkg, current=cur.get("seats")))
+                upd.setdefault("seats", seats_for_package(
+                    pkg, current=cur.get("seats"),
+                    prev_pkg=await db["packages"].find_one({"_id": cur.get("plan")}) if cur.get("plan") else None))
                 if pkg.get("available_addons") is not None:
                     upd["available_addons"] = pkg.get("available_addons")
                 sync_pkg = pkg
         await db["subscriptions"].update_one({"tenant_id": tenant_id}, {"$set": upd})
+        from app.services import addon_service   # MRR/επόμενη χρέωση = ίδιος υπολογισμός με τη χρέωση
+        await addon_service._recompute_total(tenant_id)
         if sync_pkg is not None:
             # τα per-tenant overrides «πέφτουν» στο νέο πλάνο — κράτα μόνο τυχόν αγορασμένα add-ons
             keep = {a: "enabled" for a in (cur.get("addons") or [])}
@@ -2112,7 +2119,8 @@ async def assign_package(tenant_id: str, body: AssignPackageIn,
     yearly = cycle == "yearly"
     price = int(pkg.get("price_yearly" if yearly else "price_monthly", 0) or 0)
     from app.services.billing_service import seats_for_package
-    seats = seats_for_package(pkg, current=sub.get("seats"), requested=body.seats)
+    seats = seats_for_package(pkg, current=sub.get("seats"), requested=body.seats,
+                              prev_pkg=await db["packages"].find_one({"_id": sub.get("plan")}) if sub.get("plan") else None)
     upd = {
         "plan": body.package_code, "plan_name": pkg.get("name"),
         "modules_included": pkg.get("modules", []),
@@ -2122,6 +2130,8 @@ async def assign_package(tenant_id: str, body: AssignPackageIn,
         "updated_at": datetime.now(tz=timezone.utc),
     }
     await db["subscriptions"].update_one({"tenant_id": tenant_id}, {"$set": upd}, upsert=True)
+    from app.services import addon_service   # MRR/επόμενη χρέωση = ίδιος υπολογισμός με τη χρέωση
+    await addon_service._recompute_total(tenant_id)
     # Adapt the per-tenant capabilities to the package: clear leftover overrides so the tenant matches
     # the package EXACTLY — but keep entitlement for any à-la-carte add-ons it has actually purchased.
     keep = {a: "enabled" for a in (sub.get("addons") or [])}

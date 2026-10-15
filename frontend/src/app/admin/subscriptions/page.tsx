@@ -26,6 +26,9 @@ type SubDetail = {
   price_per_pharmacy?: number; mrr: number; extra_user_price?: number; extra_user_price_yearly?: number;
   started_at?: string | null; current_period_end?: string | null; trial_ends_at?: string | null;
   complimentary?: boolean;
+  // επόμενη χρέωση αναλυτικά — ίδιος υπολογισμός με την αυτόματη χρέωση (billing_service.next_charge)
+  next_charge?: { lines: { kind: string; label: string; amount: number }[]; net: number; vat: number; gross: number;
+                  includes_vat: boolean; complimentary: boolean; billing_cycle: string; date?: string | null } | null;
   invoices: Invoice[];
 };
 
@@ -196,6 +199,40 @@ function SubDrawer({ tenantId, onClose }: { tenantId: string; onClose: () => voi
             <div><div className="text-xs text-slate-500">SLA</div><div className="font-medium">{d.sla || "—"}</div></div>
             <div><div className="text-xs text-slate-500">Trial λήξη</div><div className="font-medium">{d.trial_ends_at ? fmtDate(d.trial_ends_at) : "—"}</div></div>
           </div>
+
+          {/* επόμενη χρέωση: πακέτο + κάθε πρόσθετο/επιπλέον — ό,τι θα χρεωθεί πραγματικά */}
+          {d.next_charge && (
+            <div className="mb-5 rounded-xl border border-slate-200 p-4 text-sm">
+              <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
+                <div className="font-semibold text-slate-700">Επόμενη χρέωση</div>
+                <div className="text-xs text-slate-500">
+                  {d.next_charge.complimentary ? "δωρεάν πελάτης — δεν χρεώνεται"
+                    : `${d.next_charge.date ? fmtDate(d.next_charge.date) : "—"} · ${d.next_charge.billing_cycle === "yearly" ? "ετήσια" : "μηνιαία"}`}
+                </div>
+              </div>
+              <table className="w-full">
+                <tbody className="divide-y divide-slate-100">
+                  {d.next_charge.lines.map((l, i) => (
+                    <tr key={i}>
+                      <td className={`py-1.5 ${l.kind === "package" ? "font-medium text-slate-800" : "text-slate-600"}`}>{l.label}</td>
+                      <td className="py-1.5 text-right tabular-nums">{fmtEur(l.amount)}</td>
+                    </tr>
+                  ))}
+                  {d.next_charge.lines.length === 1 && (
+                    <tr><td colSpan={2} className="py-1.5 text-xs text-slate-400">Κανένα πρόσθετο ή επιπλέον χρέωση.</td></tr>
+                  )}
+                  <tr className="text-slate-600"><td className="py-1.5">Καθαρό</td><td className="py-1.5 text-right tabular-nums">{fmtEur(d.next_charge.net)}</td></tr>
+                  {!d.next_charge.includes_vat && !d.next_charge.complimentary && (
+                    <tr className="text-slate-600"><td className="py-1.5">ΦΠΑ</td><td className="py-1.5 text-right tabular-nums">{fmtEur(d.next_charge.vat)}</td></tr>
+                  )}
+                  <tr className="font-semibold text-slate-900">
+                    <td className="py-1.5">Σύνολο χρέωσης{d.next_charge.includes_vat ? " (περιλαμβάνει ΦΠΑ)" : ""}</td>
+                    <td className="py-1.5 text-right tabular-nums">{fmtEur(d.next_charge.gross)}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          )}
 
           {/* edit — όλα τα πεδία είναι επεξεργάσιμα (admin) */}
           <div className="mb-3 text-sm font-semibold text-slate-700">Επεξεργασία</div>

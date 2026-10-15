@@ -127,6 +127,8 @@ async def _lock_db(monkeypatch):
     db = AsyncMongoMockClient(tz_aware=True)["viva_lock"]
     monkeypatch.setattr(bs, "shared_db", lambda: db)
     monkeypatch.setattr(inv, "shared_db", lambda: db)
+    import app.services.addon_service as addon_service     # η ανανέωση ξαναϋπολογίζει τις επιπλέον χρεώσεις
+    monkeypatch.setattr(addon_service, "shared_db", lambda: db)
 
     async def no_email(*a, **k):
         return None

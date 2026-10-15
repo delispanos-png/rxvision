@@ -249,7 +249,8 @@ async def apply_change(tenant_id: str, *, source: str = "system") -> dict:
     upd: dict = {"plan": pend["plan"], "price_per_pharmacy": _price(pkg, yearly),
                  # ΝΕΟ πακέτο → και οι χρήστες του νέου πακέτου. Χωρίς αυτό, όποιος αναβάθμιζε από
                  # Essential (1) σε Advanced (6) πλήρωνε 6 και κρατούσε 1.
-                 "seats": seats_for_package(pkg, current=sub.get("seats")),
+                 "seats": seats_for_package(pkg, current=sub.get("seats"),
+                                            prev_pkg=await _pkg(sub.get("plan")) if sub.get("plan") else None),
                  "price_includes_vat": bool(pkg.get("price_includes_vat")),
                  "modules_included": pkg.get("modules", []), "updated_at": _now(),
                  "last_plan_change": {"kind": pend.get("kind"), "at": _now(), "source": source,
@@ -264,6 +265,8 @@ async def apply_change(tenant_id: str, *, source: str = "system") -> dict:
         upd["payment_status"] = "active"
     await db["subscriptions"].update_one({"tenant_id": tenant_id},
                                          {"$set": upd, "$unset": {"pending_change": ""}})
+    from app.services import addon_service   # επιπλέον χρεώσεις/MRR με τις ΝΕΕΣ θέσεις & πακέτο
+    await addon_service._recompute_total(tenant_id)
     # ΜΟΝΙΜΟ ΙΣΤΟΡΙΚΟ: το `last_plan_change` κρατά μόνο την τελευταία αλλαγή και χάνεται στην
     # επόμενη. Χωρίς αυτό δεν μπορείς να απαντήσεις «ποιοι άλλαξαν πακέτο φέτος και προς τα πού».
     old_price = int(sub.get("price_per_pharmacy", 0) or 0)

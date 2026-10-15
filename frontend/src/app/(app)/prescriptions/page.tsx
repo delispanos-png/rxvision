@@ -31,6 +31,7 @@ type Prescription = {
   external_id: string;
   executed_at: string;
   source: string;
+  is_vaccination?: boolean;   // συνταγή εμβολίου του φαρμακείου (Μητρώο Εμβολιασμών ΗΔΥΚΑ)
   icd10: string[];
   amount_total: number; // cents
   amount_claimed: number; // cents
@@ -121,6 +122,7 @@ const makeColumns = (t: T): Column<Prescription>[] => {
     <span className="inline-flex items-center gap-1.5 font-mono tabular-nums">
       {r.chronic ? <Tooltip label={t("Χρόνια αγωγή", "Chronic therapy")}><HeartPulse className="h-3.5 w-3.5 shrink-0 text-amber-500" aria-label={t("Χρόνια αγωγή", "Chronic therapy")} /></Tooltip> : null}
       {r.external_id.split(":")[0]}
+      {r.is_vaccination && <span className="rounded bg-sky-100 px-1.5 py-0.5 font-sans text-[10px] font-semibold text-sky-700">💉 {t("Εμβόλιο", "Vaccine")}</span>}
     </span>
   ) },
   { key: "execno", header: t("Εκτ.", "Exec"), align: "right", sortable: false, render: (r) => r.external_id.split(":")[1] || "1" },
@@ -538,7 +540,7 @@ export default function PrescriptionsPage() {
               serverSort={{ key: sort.key, dir: sort.dir === 1 ? "asc" : "desc" }}
               onServerSort={onServerSort}
               onRowClick={(r) => router.push(r.source === "INFLUENZA"
-                ? `/vaccinations?barcode=${encodeURIComponent(r.external_id)}`
+                ? `/vaccinations/registry?barcode=${encodeURIComponent(r.external_id)}`
                 : `/prescriptions/${encodeURIComponent(r.external_id)}`)} />
           </QueryState>
           {/* pagination */}

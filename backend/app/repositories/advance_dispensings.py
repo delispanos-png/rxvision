@@ -79,6 +79,17 @@ class AdvanceDispensingRepository(BaseRepository):
             })
         if not clean_items:
             raise ValueError("items_required")
+        # Όνομα & ΑΜΚΑ από την ΚΑΡΤΕΛΑ του ασθενή, όχι από την οθόνη: σε λειτουργία παρουσίασης η οθόνη
+        # δείχνει ήδη κρυμμένο επώνυμο («Τ**** ΠΑΝΑΓΙΩΤΗΣ») και αυτό αποθηκευόταν μόνιμα (14/10/2026).
+        from bson import ObjectId
+        try:
+            card = await self._db["patients_anonymized"].find_one(
+                {"tenant_id": self.tenant_id, "_id": ObjectId(str(patient_ref))}, {"full_name": 1, "amka": 1})
+        except Exception:  # noqa: BLE001 — άκυρο id → κρατάμε ό,τι ήρθε
+            card = None
+        if card and card.get("full_name"):
+            patient_name = card["full_name"]
+            amka = card.get("amka") or amka
         doc = {"tenant_id": self.tenant_id, "patient_name": patient_name.strip()[:160],
                "patient_ref": patient_ref, "amka": (amka or "").strip() or None,
                "items": clean_items, "status": OPEN, "note": (note or "").strip()[:500],

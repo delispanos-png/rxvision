@@ -159,7 +159,7 @@ async def start_renewal(tenant_id: str, package_code: str, billing_cycle: str = 
 
 
 def seats_for_package(pkg: dict | None, *, current: int | None = None,
-                      requested: int | None = None) -> int:
+                      requested: int | None = None, prev_pkg: dict | None = None) -> int:
     """Πόσους ταυτόχρονους χρήστες δικαιούται μια συνδρομή σε ΑΥΤΟ το πακέτο.
 
     ΜΙΑ πηγή αλήθειας για ΟΛΕΣ τις διαδρομές (εγγραφή, ανανέωση, αναβάθμιση, ανάθεση από
@@ -170,9 +170,19 @@ def seats_for_package(pkg: dict | None, *, current: int | None = None,
     Κανόνας: **ποτέ λιγότεροι από όσους περιλαμβάνει το πακέτο** (τους πληρώνει μέσα στην τιμή),
     και ό,τι παραπάνω έχει ζητήσει/είχε ήδη διατηρείται. Κανένα εμπορικό πλαφόν — μόνο φράχτης
     κατά παραλόγου input.
+
+    ΑΛΛΑΓΗ ΠΑΚΕΤΟΥ (`prev_pkg` = το παλιό): μεταφέρονται ΜΟΝΟ οι θέσεις που ο πελάτης ΑΓΟΡΑΣΕ πέρα από
+    όσες περιλάμβανε το παλιό πακέτο — όχι όσες ήταν μέσα στην τιμή του. Πριν (12/10/2026): Κολέλης
+    Advanced (6 μέσα) → Growth (3 μέσα) κράτησε 6 και πλήρωνε 3 «επιπλέον» που δεν ζήτησε ποτέ.
     """
     included = int((pkg or {}).get("included_users") or 1)
-    want = requested if requested else (current or included)
+    if requested:
+        want = requested
+    elif prev_pkg is not None and (prev_pkg or {}).get("_id") != (pkg or {}).get("_id"):
+        bought = max(0, int(current or 0) - int((prev_pkg or {}).get("included_users") or 1))
+        want = included + bought
+    else:
+        want = current or included
     return max(included, min(999, int(want or included)))
 
 
@@ -215,19 +225,51 @@ async def recurring_extras(db, sub: dict, pkg: dict | None, yearly: bool) -> dic
     in_plan = set((pkg or {}).get("modules") or [])
     ids = [a for a in (sub.get("addons") or []) if a not in in_plan]
     addons = 0
+    lines: list[dict] = []          # αναλυτικά (ίδια ποσά) — για την καρτέλα πελάτη στο adminpanel
     if ids:
         async for a in db["addons"].find({"_id": {"$in": ids}}):
-            addons += int(a.get("price_yearly" if yearly else "price_monthly", 0) or 0)
+            amt = int(a.get("price_yearly" if yearly else "price_monthly", 0) or 0)
+            addons += amt
+            lines.append({"kind": "addon", "label": f"Πρόσθετο: {a.get('name') or a['_id']}", "amount": amt})
     monthly_ret = await retention_surcharge_monthly(db, sub.get("tenant_id"))
     retention = monthly_ret * 12 if yearly else monthly_ret
-    extra_users = max(0, seats_for_package(pkg, current=sub.get("seats")) - _included(pkg))
+    if retention:
+        lines.append({"kind": "retention", "label": "Επέκταση διατήρησης δεδομένων", "amount": retention})
+    # προεπισκόπηση ΑΛΛΟΥ πακέτου (ανανέωση με αλλαγή): ίδιος κανόνας μεταφοράς θέσεων με την εφαρμογή
+    prev = (await db["packages"].find_one({"_id": sub.get("plan")})
+            if sub.get("plan") and pkg and sub.get("plan") != pkg.get("_id") else None)
+    extra_users = max(0, seats_for_package(pkg, current=sub.get("seats"), prev_pkg=prev) - _included(pkg))
     seats = extra_users * _seat_price(pkg, sub, yearly)
+    if extra_users:
+        lines.append({"kind": "seats", "label": f"Επιπλέον χρήστες: {extra_users} × {_seat_price(pkg, sub, yearly) / 100:.2f} €"
+                      f" (το πακέτο περιλαμβάνει {_included(pkg)})", "amount": seats})
     sla = 0
     if sub.get("sla"):
         tier = await db["sla_tiers"].find_one({"_id": sub["sla"]}) or {}
         sla = int(tier.get("price_yearly" if yearly else "price_monthly", 0) or 0)
+        if sla:
+            lines.append({"kind": "sla", "label": f"SLA: {tier.get('name') or sub['sla']}", "amount": sla})
     return {"addons": addons, "retention": retention, "seats": seats, "extra_users": extra_users,
-            "sla": sla, "total": addons + retention + seats + sla}
+            "sla": sla, "total": addons + retention + seats + sla, "lines": lines}
+
+
+async def next_charge(db, sub: dict) -> dict:
+    """Η ΕΠΟΜΕΝΗ χρέωση μιας συνδρομής, αναλυτικά — ΑΚΡΙΒΩΣ όπως θα τη χρεώσει το `bill_due`
+    (τιμή πακέτου της συνδρομής + recurring_extras, ΦΠΑ με includes_vat). Για την καρτέλα πελάτη."""
+    from app.services.invoice_service import gross_from_price
+    pkg = await db["packages"].find_one({"_id": sub.get("plan")}) if sub.get("plan") else None
+    yearly = sub.get("billing_cycle") == "yearly"
+    ex = await recurring_extras(db, sub, pkg, yearly)
+    base = int(sub.get("price_per_pharmacy", 0) or 0)
+    lines = [{"kind": "package", "label": f"Πακέτο {(pkg or {}).get('name') or sub.get('plan_name') or sub.get('plan') or ''}"
+              f" ({'ετήσια' if yearly else 'μηνιαία'})", "amount": base}] + ex["lines"]
+    net = base + ex["total"]
+    country = ((await db["tenants"].find_one({"_id": sub.get("tenant_id")}, {"country": 1})) or {}).get("country")
+    gross = 0 if sub.get("complimentary") else gross_from_price(net, includes_vat(pkg, sub), country)
+    return {"lines": lines, "net": net, "vat": max(0, gross - net) if gross else 0, "gross": gross,
+            "includes_vat": includes_vat(pkg, sub),
+            "complimentary": bool(sub.get("complimentary")), "billing_cycle": "yearly" if yearly else "monthly",
+            "date": sub.get("current_period_end"), "addons": sub.get("addons") or []}
 
 
 async def complete_renewal(tenant_id: str, viva_transaction_id: str) -> None:
@@ -248,6 +290,7 @@ async def complete_renewal(tenant_id: str, viva_transaction_id: str) -> None:
     plan = pr.get("plan") or sub.get("plan")
     cycle = pr.get("billing_cycle") or sub.get("billing_cycle") or "yearly"
     pkg = await db["packages"].find_one({"_id": plan}) or {}
+    prev_pkg = (await db["packages"].find_one({"_id": sub.get("plan")}) or {}) if sub.get("plan") else None
     yearly = cycle == "yearly"
     price = int(pkg.get("price_yearly" if yearly else "price_monthly", 0) or 0)
     now = _now()
@@ -263,7 +306,7 @@ async def complete_renewal(tenant_id: str, viva_transaction_id: str) -> None:
                  # Οι χρήστες του ΝΕΟΥ πακέτου: τουλάχιστον όσους περιλαμβάνει (ο πελάτης τους πληρώνει
                  # μέσα στην τιμή), ή όσους είχε ήδη αν ήταν περισσότεροι. Χωρίς αυτό, όποιος ερχόταν
                  # από δοκιμή έμενε με 1 χρήστη ενώ πλήρωνε πακέτο με 6.
-                 "seats": seats_for_package(pkg, current=sub.get("seats")),
+                 "seats": seats_for_package(pkg, current=sub.get("seats"), prev_pkg=prev_pkg),
                  "billing_cycle": cycle, "price_per_pharmacy": price,
                  "price_includes_vat": bool(pkg.get("price_includes_vat")),
                  "modules_included": pkg.get("modules", sub.get("modules_included", [])),
@@ -273,6 +316,8 @@ async def complete_renewal(tenant_id: str, viva_transaction_id: str) -> None:
         "$unset": {"pending_renewal": "", "unpaid_since": "", "unpaid_amount": "", "unpaid_reason": "",
                    "lock_message": ""}})
     await db["tenants"].update_one({"_id": tenant_id}, {"$set": {"status": "active"}})
+    from app.services import addon_service     # MRR/επόμενη χρέωση = ίδιος υπολογισμός με τη χρέωση
+    await addon_service._recompute_total(tenant_id)
     if pr.get("coupon"):     # εξαργύρωσε το coupon (single-use)
         from app.services import feedback_service
         await feedback_service.redeem_coupon(pr["coupon"])
