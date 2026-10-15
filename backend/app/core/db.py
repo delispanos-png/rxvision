@@ -115,6 +115,8 @@ INDEXES: list[tuple[str, list[tuple[str, int]], dict]] = [
     ("prescription_items", [("tenant_id", 1), ("category", 1), ("executed_at", -1)], {}),
     ("prescription_items", [("tenant_id", 1), ("executed_at", -1)], {}),
     ("prescription_items", [("tenant_id", 1), ("is_executed", 1)], {}),
+    # GTIN κουπονιού QR → φάρμακο (όνομα δανεικού από το QR, ταύτιση δανεικού με συνταγή)
+    ("prescription_items", [("details.coupons.qr_product_code", 1)], {}),
     ("doctors", [("tenant_id", 1), ("full_name", 1)], {}),
     ("patients_anonymized", [("tenant_id", 1), ("pseudo_id", 1)], {"unique": True}),
     ("patients_anonymized", [("tenant_id", 1), ("lifecycle", 1)], {}),

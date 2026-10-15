@@ -8,11 +8,15 @@
 
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 
 from app.core.deps import TenantContext, require
 from app.repositories.advance_dispensings import AdvanceDispensingRepository
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 _MODULE = "advance_dispensing"
@@ -32,6 +36,7 @@ class ItemIn(BaseModel):
     lot: str | None = None           # για σκευάσματα χωρίς QR
     expiry: str | None = None
     qty: int = 1
+    raw: str | None = None           # το ακατέργαστο σκανάρισμα (ξαναδιαβάζεται στον server)
 
 
 class LoanIn(BaseModel):
@@ -59,6 +64,26 @@ async def list_loans(status_f: str = Query("open", alias="status"),
     for it in items:
         it["_id"] = str(it["_id"])
     return {"items": items}
+
+
+@router.get("/history")
+async def history(kind: str = Query("all", pattern="^(all|cleared|written_off)$"),
+                  q: str | None = None, product: str | None = None, code: str | None = None,
+                  date_from: str | None = Query(None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
+                  date_to: str | None = Query(None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
+                  by: str | None = None,
+                  via: str | None = Query(None, pattern="^(prescription|manual|write_off)$"),
+                  ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+    """Ιστορικό ξεχρεώσεων ανά σκεύασμα, με φίλτρα (πελάτης/ΑΜΚΑ, σκεύασμα, κωδικός QR/ταινίας,
+    ξεχρέωση ή διαγραφή χρέους, περίοδος κλεισίματος, χρήστης)."""
+    from app.repositories.base import jsonsafe
+    res = await _repo(ctx).history(kind=kind, q=q, product=product, code=code,
+                                   date_from=date_from, date_to=date_to, by=by, via=via)
+    if ctx.demo:
+        from app.utils.masking import mask_amka, mask_name
+        for r in res["items"]:
+            r["patient_name"], r["amka"] = mask_name(r.get("patient_name"), True), mask_amka(r.get("amka"), True)
+    return jsonsafe(res)
 
 
 @router.get("/patients")
@@ -121,9 +146,95 @@ async def create_loan(body: LoanIn,
             expected_at=body.expected_at)
     except ValueError as e:
         msg = {"patient_ref_required": "Διάλεξε πελάτη από τη λίστα.",
-               "items_required": "Σάρωσε ή γράψε τουλάχιστον ένα σκεύασμα."}.get(str(e), "")
+               "items_required": "Σάρωσε ή γράψε τουλάχιστον ένα σκεύασμα.",
+               "corrupt_scan": "Ένα σκανάρισμα ήρθε κομμένο — αφαίρεσέ το και σκάναρε ξανά το κουτί."}.get(str(e), "")
         raise HTTPException(status.HTTP_400_BAD_REQUEST,
                             detail={"error": str(e), "message": msg}) from e
+
+
+class ScanIn(BaseModel):
+    raw: str
+    typed: str | None = None     # ό,τι έφτασε στο κουτάκι κειμένου (για διάγνωση: ο browser χάνει πλήκτρα;)
+    check: bool = False          # από τον «Έλεγχο σαρωτή»
+
+
+@router.post("/parse-scan")
+async def parse_scan(body: ScanIn, ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+    """ΕΝΑΣ αναγνώστης QR φαρμάκου (services/gs1_scan): πεδία + όνομα από το GTIN + τι σαρωτή έχει το
+    φαρμακείο (διαχωριστής/πληκτρολόγιο). Πλήρες σκανάρισμα → η εφαρμογή «μαθαίνει» τον σαρωτή."""
+    from app.services import gs1_scan
+    p = gs1_scan.parse(body.raw)
+    if body.check or (body.typed and body.typed.strip() != body.raw.strip()):
+        # η σελίδα έπιασε στο keydown ΑΛΛΟ από ό,τι έφτασε στο πεδίο → εδώ φαίνεται αν «σώσαμε» το σκανάρισμα
+        logger.warning("parse-scan capture tenant=%s check=%s ok=%s raw=%r typed=%r", ctx.tenant_id,
+                       body.check, bool(p and not p.get("corrupt")), body.raw[:200], (body.typed or "")[:200])
+    if not p:
+        return {"ok": False, "kind": "strip"}       # όχι GS1 → ταινία ΕΟΦ / απλός κωδικός
+    if p.get("corrupt"):
+        # το ακατέργαστο κείμενο στο log: «κομμένο» σκανάρισμα δεν αποθηκεύεται πουθενά αλλού
+        logger.warning("parse-scan corrupt tenant=%s raw=%r", ctx.tenant_id, body.raw[:200])
+        return {"ok": False, "kind": "corrupt"}     # κομμένο σκανάρισμα → «σκάναρε ξανά»
+    repo = _repo(ctx)
+    named = await repo.name_for_gtin(p["gtin"]) if p.get("gtin") else None
+    if p.get("complete"):
+        await repo.learn_scanner(p["scanner"])
+    return {"ok": True, "kind": "gs1", "item": {
+        "gtin": p["gtin"], "expiry": p.get("expiry"), "batch": p.get("batch"),
+        "strip": p.get("serial"), "lot": p.get("serial"), "raw": body.raw[:200],
+        "name": (named or {}).get("name") or "", "eof_code": (named or {}).get("eof_code")},
+        "complete": p.get("complete"), "scanner": p["scanner"]}
+
+
+class ItemStatusIn(BaseModel):
+    status: str                      # cleared | open
+
+
+@router.post("/{loan_id}/items/{idx}/status")
+async def set_item_status(loan_id: str, idx: int, body: ItemStatusIn,
+                          ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+    """Ξεχρέωση ΑΝΑ ΣΚΕΥΑΣΜΑ (όταν ξεχρεωθούν όλα, κλείνει και το δανεικό)."""
+    if body.status not in ("cleared", "open"):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail={"error": "bad_status"})
+    r = await _repo(ctx).set_item_status(loan_id, idx, body.status, by=ctx.user_id)
+    if not r.get("ok"):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail={"error": "not_found"})
+    return r
+
+
+@router.post("/{loan_id}/items/{idx}/rescan")
+async def rescan_item(loan_id: str, idx: int, body: ScanIn,
+                      ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+    """Ξανασκανάρισμα κουτιού με ελλιπή ανάγνωση — μόνο για το ΙΔΙΟ φάρμακο (ίδιο GTIN)."""
+    return await _repo(ctx).rescan_item(loan_id, idx, body.raw)
+
+
+class ClearFromRxIn(BaseModel):
+    idxs: list[int]
+    execution_id: str | None = None
+    external_id: str | None = None
+
+
+@router.post("/{loan_id}/items/clear-from-prescription")
+async def clear_from_prescription(loan_id: str, body: ClearFromRxIn,
+                                  ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+    """Επιβεβαίωση πρότασης: ξεχρεώνει ΜΟΝΟ τα σκευάσματα που ταίριαξαν με τη συνταγή."""
+    r = await _repo(ctx).clear_items_from_prescription(
+        loan_id, body.idxs, by=ctx.user_id, execution_id=body.execution_id, external_id=body.external_id)
+    if not r.get("ok"):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail={"error": "not_found"})
+    return r
+
+
+class ItemNameIn(BaseModel):
+    name: str
+
+
+@router.post("/{loan_id}/items/{idx}/name")
+async def set_item_name(loan_id: str, idx: int, body: ItemNameIn,
+                        ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+    if not await _repo(ctx).set_item_name(loan_id, idx, body.name):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail={"error": "not_found"})
+    return {"ok": True}
 
 
 class ExpectedIn(BaseModel):
@@ -143,7 +254,8 @@ async def set_expected(loan_id: str, body: ExpectedIn,
 class StatusIn(BaseModel):
     status: str                      # cleared | written_off | open
     reason: str = ""
-    execution_id: str | None = None
+    execution_id: str | None = None   # ξεχρέωση ΑΠΟ ΣΥΝΤΑΓΗ (πρόταση) → καταγράφεται ποια
+    external_id: str | None = None
 
 
 @router.post("/{loan_id}/status")
@@ -156,7 +268,8 @@ async def set_status(loan_id: str, body: StatusIn,
         raise HTTPException(status.HTTP_400_BAD_REQUEST,
                             detail={"error": "reason_required",
                                     "message": "Γράψε γιατί διαγράφεται το χρέος."})
-    n = await _repo(ctx).set_status(loan_id, body.status, by=ctx.user_id, reason=body.reason)
+    n = await _repo(ctx).set_status(loan_id, body.status, by=ctx.user_id, reason=body.reason,
+                                    execution_id=body.execution_id or None, external_id=body.external_id or None)
     if not n:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail={"error": "not_found"})
     return {"ok": True, "status": body.status}
