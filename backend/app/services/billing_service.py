@@ -6,6 +6,7 @@ success advances the period; repeated failure suspends the tenant (auto-deactiva
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 
@@ -16,7 +17,6 @@ from app.services import viva_service
 logger = logging.getLogger(__name__)
 
 CURRENCY = "EUR"
-MAX_ATTEMPTS = 3
 
 
 async def active_provider() -> str:
@@ -29,6 +29,11 @@ async def active_provider() -> str:
 
 async def any_provider_configured() -> bool:
     return await rv.is_configured() or await viva_service.is_configured()
+
+
+# Επιστροφή μετά την πληρωμή ανανέωσης στη Revolut. Η σελίδα εισόδου δουλεύει και για τον κλειδωμένο
+# (χωρίς σύνδεση) και για τον συνδεδεμένο πελάτη.
+RENEWAL_RETURN_URL = "https://app.rxvision.gr/login?renewed=1"
 
 
 def _now() -> datetime:
@@ -84,21 +89,19 @@ async def start_card_capture(tenant_id: str) -> dict:
         res = await viva_service.create_checkout_order(
             amount=amount, ref=tenant_id, description="RxVision — αποθήκευση κάρτας (επαλήθευση)",
             email=email, full_name=name, allow_recurring=True)
+        # ΜΟΝΟ ο κωδικός παραγγελίας. Πάροχος/κατάσταση κάρτας αλλάζουν ΟΤΑΝ η κάρτα αποθηκευτεί (webhook):
+        # μισή αλλαγή κάρτας δεν πρέπει να «χαλάει» την κάρτα που ήδη δουλεύει (18/10/2026).
         if res.get("ok"):
             await db["subscriptions"].update_one({"tenant_id": tenant_id}, {"$set": {
-                "payment_provider": "viva", "viva_order_code": res.get("order_code"),
-                "payment_status": "card_pending"}})
+                "viva_order_code": res.get("order_code")}})
         res["provider"] = "viva"
         return res
     res = await rv.create_save_card_order(
         amount=amount, currency=sub.get("currency", CURRENCY), email=email, name=name,
         tenant_id=tenant_id, description=f"RxVision {sub.get('billing_cycle', 'monthly')} — card setup")
-    if res.get("ok"):
+    if res.get("ok"):   # όπως στη Viva: πάροχος + πελάτης Revolut γράφονται ΜΟΝΟ στο webhook επιτυχίας
         await db["subscriptions"].update_one({"tenant_id": tenant_id}, {"$set": {
-            "payment_provider": "revolut",
-            "revolut_order_id": res.get("order_id"),
-            "revolut_customer_id": res.get("customer_id"),
-            "payment_status": "card_pending"}})
+            "revolut_order_id": res.get("order_id")}})
         res["mode"] = (await rv.config()).get("mode", "sandbox")
     res["provider"] = "revolut"
     return res
@@ -107,7 +110,8 @@ async def start_card_capture(tenant_id: str) -> dict:
 async def start_renewal(tenant_id: str, package_code: str, billing_cycle: str = "yearly",
                         coupon_code: str | None = None, accept_extras: bool = False) -> dict:
     """Ανανέωση ΛΗΓΜΕΝΗΣ συνδρομής: ο πελάτης διαλέγει πακέτο (+ προαιρετικό coupon) & πληρώνει μέσω
-    Viva. Αποθηκεύει `pending_renewal`· η ενεργοποίηση + εξαργύρωση coupon γίνεται στο webhook."""
+    τον ΕΝΕΡΓΟ πάροχο (Viva ή Revolut). Αποθηκεύει `pending_renewal`· η ενεργοποίηση + εξαργύρωση coupon
+    γίνεται στο webhook (ή στο reconcile, αν το webhook δεν φτάσει) — ΠΑΝΤΑ με επαλήθευση από τον πάροχο."""
     db = shared_db()
     pkg = await db["packages"].find_one({"_id": package_code})
     if not pkg:
@@ -116,8 +120,7 @@ async def start_renewal(tenant_id: str, package_code: str, billing_cycle: str = 
     amount = int(pkg.get("price_yearly" if yearly else "price_monthly", 0) or 0)
     if amount <= 0:
         return {"ok": False, "error": "invalid_amount"}
-    if await active_provider() != "viva":
-        return {"ok": False, "error": "provider_not_viva"}
+    provider = await active_provider()
     from app.services import feedback_service
     amount, coupon = await feedback_service.apply_discount(amount, coupon_code, tenant_id)
     tenant = await db["tenants"].find_one({"_id": tenant_id}) or {}
@@ -140,6 +143,21 @@ async def start_renewal(tenant_id: str, package_code: str, billing_cycle: str = 
     bp = tenant.get("billing_profile") or {}
     email = bp.get("email") or bp.get("billing_email") or ""
     name = bp.get("name") or tenant.get("name") or tenant_id
+    pending = {"plan": package_code, "billing_cycle": billing_cycle, "amount": amount, "provider": provider}
+    if coupon:
+        pending["coupon"] = coupon["code"]
+    if provider == "revolut":
+        # ίδια εμπειρία με τη Viva: ανακατεύθυνση σε σελίδα πληρωμής → επιστροφή στην εφαρμογή
+        order = await rv.create_renewal_order(
+            amount=amount, currency=sub.get("currency", CURRENCY), email=email, name=name,
+            tenant_id=tenant_id, description=f"RxVision ανανέωση {billing_cycle} — {name}"[:1024],
+            redirect_url=RENEWAL_RETURN_URL)
+        if not order.get("ok"):
+            return {"ok": False, "error": order.get("error", "revolut_error")}
+        pending["order_id"] = order["order_id"]
+        await db["subscriptions"].update_one({"tenant_id": tenant_id}, {"$set": {"pending_renewal": pending}})
+        return {"ok": True, "checkout_url": order["checkout_url"], "amount_cents": amount,
+                "discount_pct": (coupon or {}).get("discount_pct"), "provider": "revolut"}
     order = await viva_service.create_checkout_order(
         amount=amount, ref=f"renew:{tenant_id}",
         description=f"RxVision ανανέωση {billing_cycle} — {name}"[:2048],
@@ -148,10 +166,7 @@ async def start_renewal(tenant_id: str, package_code: str, billing_cycle: str = 
         return {"ok": False, "error": order.get("error", "viva_error")}
     # ο κωδικός παραγγελίας της ΑΝΑΝΕΩΣΗΣ ζει ΜΕΣΑ στο pending_renewal: το `viva_order_code` της συνδρομής
     # το γράφει και η αποθήκευση κάρτας (0,10 €) — έτσι μια επαλήθευση κάρτας περάστηκε ως ανανέωση (02/10/2026)
-    pending = {"plan": package_code, "billing_cycle": billing_cycle, "amount": amount,
-               "order_code": order.get("order_code")}
-    if coupon:
-        pending["coupon"] = coupon["code"]
+    pending["order_code"] = order.get("order_code")
     await db["subscriptions"].update_one({"tenant_id": tenant_id}, {"$set": {
         "pending_renewal": pending, "viva_order_code": order.get("order_code")}})
     return {"ok": True, "checkout_url": order["checkout_url"], "amount_cents": amount,
@@ -272,8 +287,9 @@ async def next_charge(db, sub: dict) -> dict:
             "date": sub.get("current_period_end"), "addons": sub.get("addons") or []}
 
 
-async def complete_renewal(tenant_id: str, viva_transaction_id: str) -> None:
-    """Viva webhook (renew:<tid>) → ενεργοποιεί τη συνδρομή με το επιλεγμένο πακέτο (idempotent)."""
+async def complete_renewal(tenant_id: str, viva_transaction_id: str, provider: str = "viva") -> None:
+    """Webhook/reconcile ανανέωσης → ενεργοποιεί τη συνδρομή με το επιλεγμένο πακέτο (idempotent).
+    `viva_transaction_id` = η αναφορά πληρωμής του παρόχου (Viva TransactionId ή Revolut order id)."""
     db = shared_db()
     sub = await db["subscriptions"].find_one({"tenant_id": tenant_id})
     if not sub:
@@ -282,10 +298,17 @@ async def complete_renewal(tenant_id: str, viva_transaction_id: str) -> None:
     # FAIL-CLOSED: η συναλλαγή ΠΡΕΠΕΙ να είναι ολοκληρωμένη ανανέωση ΑΥΤΟΥ του φαρμακείου, με τουλάχιστον το
     # ποσό της ανανέωσης (viva_service.verify_payment). Αλλιώς ΤΙΠΟΤΑ — ούτε επέκταση ούτε παραστατικό.
     # Περιστατικό 29/09/2026: επαλήθευση κάρτας 0,10 € έγινε «ανανέωση 110,36 €» + παραστατικό + μήνας δωρεάν.
-    v = await viva_service.verify_payment(str(viva_transaction_id), merchant_trns=f"renew:{tenant_id}",
-                                          expected_cents=int(pr.get("amount") or 1))
+    if provider == "revolut":
+        # ΜΟΝΟ η παραγγελία ΑΥΤΗΣ της ανανέωσης (όχι π.χ. αποθήκευση κάρτας του ίδιου φαρμακείου)
+        if not pr or pr.get("provider") != "revolut" or str(pr.get("order_id")) != str(viva_transaction_id):
+            return
+        v = await rv.verify_payment(str(viva_transaction_id), reference=tenant_id,
+                                    expected_cents=int(pr.get("amount") or 1))
+    else:
+        v = await viva_service.verify_payment(str(viva_transaction_id), merchant_trns=f"renew:{tenant_id}",
+                                              expected_cents=int(pr.get("amount") or 1))
     if not v["ok"]:
-        await payment_rejected("ανανέωση", tenant_id, v, int(pr.get("amount") or 0))
+        await payment_rejected("ανανέωση", tenant_id, v, int(pr.get("amount") or 0), provider=provider)
         return
     plan = pr.get("plan") or sub.get("plan")
     cycle = pr.get("billing_cycle") or sub.get("billing_cycle") or "yearly"
@@ -311,8 +334,11 @@ async def complete_renewal(tenant_id: str, viva_transaction_id: str) -> None:
                  "price_includes_vat": bool(pkg.get("price_includes_vat")),
                  "modules_included": pkg.get("modules", sub.get("modules_included", [])),
                  "current_period_end": base + (timedelta(days=365) if yearly else timedelta(days=30)),
-                 "started_at": base, "payment_provider": "viva", "payment_status": "card_saved",
-                 "viva_transaction_id": viva_transaction_id, "failed_attempts": 0},
+                 "started_at": base, "payment_provider": provider, "payment_status": "card_saved",
+                 # η πληρωμή αποθήκευσε και την κάρτα → από εδώ και πέρα αυτόματες χρεώσεις στον ίδιο πάροχο
+                 **({"revolut_customer_id": v["customer_id"]} if provider == "revolut" and v.get("customer_id")
+                    else {} if provider == "revolut" else {"viva_transaction_id": viva_transaction_id}),
+                 "failed_attempts": 0},
         "$unset": {"pending_renewal": "", "unpaid_since": "", "unpaid_amount": "", "unpaid_reason": "",
                    "lock_message": ""}})
     await db["tenants"].update_one({"_id": tenant_id}, {"$set": {"status": "active"}})
@@ -329,7 +355,7 @@ async def complete_renewal(tenant_id: str, viva_transaction_id: str) -> None:
         description=(f"Συνδρομή RxVision «{pkg.get('name') or plan}» ({invoice_service.cycle_el(cycle)}) — "
                      f"περίοδος {invoice_service.fmt_d(base)} έως "
                      f"{invoice_service.fmt_d(base + (timedelta(days=365) if yearly else timedelta(days=30)))}"),
-        payment={"method": "card", "provider": "viva", "transaction_id": viva_transaction_id})
+        payment={"method": "card", "provider": provider, "transaction_id": viva_transaction_id})
 
 
 # Καταστάσεις πληρωμής που σημαίνουν «υπάρχει αποθηκευμένη κάρτα που μπορούμε να χρεώσουμε off-session».
@@ -346,13 +372,6 @@ async def card_on_file(tenant_id: str) -> bool:
         {"payment_status": 1, "revolut_customer_id": 1, "viva_transaction_id": 1}) or {}
     return (sub.get("payment_status") in CARD_ON_FILE_STATES
             and bool(sub.get("revolut_customer_id") or sub.get("viva_transaction_id")))
-
-
-async def mark_card_saved(tenant_id: str, customer_id: str | None = None) -> None:
-    upd = {"payment_status": "card_saved", "failed_attempts": 0}
-    if customer_id:
-        upd["revolut_customer_id"] = customer_id
-    await shared_db()["subscriptions"].update_one({"tenant_id": tenant_id}, {"$set": upd})
 
 
 def _iso(v):
@@ -397,16 +416,9 @@ async def status(tenant_id: str) -> dict:
     }
 
 
-async def _suspend(tenant_id: str, reason: str) -> None:
-    db = shared_db()
-    await db["tenants"].update_one({"_id": tenant_id}, {"$set": {
-        "status": "suspended", "suspended_reason": reason, "updated_at": _now()}})
-    await db["subscriptions"].update_one({"tenant_id": tenant_id}, {"$set": {
-        "status": "suspended", "payment_status": "failed"}})
-
-
-UNPAID_MESSAGE = ("Η πληρωμή σας δεν επιβεβαιώθηκε από τον πάροχο πληρωμών Viva. "
+UNPAID_MESSAGE = ("Η πληρωμή σας δεν επιβεβαιώθηκε από τον πάροχο πληρωμών {provider}. "
                   "Παρακαλώ, κάντε ξανά τη διαδικασία πληρωμής.")
+_PROVIDER_NAME = {"viva": "Viva", "revolut": "Revolut"}
 
 
 def unpaid_message(sub: dict, due_from: datetime, amount: int = 0) -> str:
@@ -419,7 +431,7 @@ def unpaid_message(sub: dict, due_from: datetime, amount: int = 0) -> str:
     return (f"Κάτι πήγε στραβά με την πληρωμή της συνδρομής σας για την περίοδο "
             f"{due_from.strftime('%d/%m/%Y')} – {end.strftime('%d/%m/%Y')} ({what}), "
             f"που ήταν προγραμματισμένη για {due_from.strftime('%d/%m/%Y')}. "
-            f"{UNPAID_MESSAGE} Δεν χρειάζεται να ανησυχείτε: μόλις ολοκληρωθεί, η συνδρομή σας συνεχίζει "
+            f"{UNPAID_MESSAGE.format(provider=_PROVIDER_NAME.get(sub.get('payment_provider') or 'viva', 'Viva'))} Δεν χρειάζεται να ανησυχείτε: μόλις ολοκληρωθεί, η συνδρομή σας συνεχίζει "
             f"κανονικά από {due_from.strftime('%d/%m/%Y')}, χωρίς να χάσετε καμία ημέρα ή κανένα δεδομένο.")
 
 
@@ -485,16 +497,18 @@ async def lock_for_unverified_invoice(inv: dict) -> bool:
                              reason=f"Η Viva δεν επιβεβαιώνει την πληρωμή του {inv.get('softone_number') or inv.get('full_number') or ''}")
 
 
-async def payment_rejected(what: str, tenant_id: str, v: dict, expected: int = 0) -> None:
-    """Η Viva ΔΕΝ επιβεβαίωσε την πληρωμή → log + ειδοποίηση ιδιοκτήτη (καμία ενέργεια δεν εκτελέστηκε)."""
-    _why = {"not_found": "δεν βρέθηκε στη Viva", "not_finished": "δεν ολοκληρώθηκε",
+async def payment_rejected(what: str, tenant_id: str, v: dict, expected: int = 0,
+                           provider: str = "viva") -> None:
+    """Ο πάροχος (Viva/Revolut) ΔΕΝ επιβεβαίωσε την πληρωμή → log + ειδοποίηση ιδιοκτήτη (καμία ενέργεια)."""
+    name = _PROVIDER_NAME.get(provider, provider)
+    _why = {"not_found": f"δεν βρέθηκε στη {name}", "not_finished": "δεν ολοκληρώθηκε",
             "other_payment": "αφορά άλλη πληρωμή", "other_order": "αφορά άλλη παραγγελία",
-            "amount_short": "μικρότερο ποσό", "no_transaction": "χωρίς συναλλαγή"}
-    logger.warning("Viva πληρωμή ΑΠΟΡΡΙΦΘΗΚΕ (%s) %s: %s", what, tenant_id, v)
+            "amount_short": "μικρότερο ποσό", "no_transaction": "χωρίς συναλλαγή", "failed": "απορρίφθηκε"}
+    logger.warning("%s πληρωμή ΑΠΟΡΡΙΦΘΗΚΕ (%s) %s: %s", name, what, tenant_id, v)
     try:
         from app.services.comms import admin_alert
         await admin_alert(
-            f"⚠️ RxVision: απορρίφθηκε {what} για {tenant_id} — η Viva δεν επιβεβαιώνει πληρωμή "
+            f"⚠️ RxVision: απορρίφθηκε {what} για {tenant_id} — η {name} δεν επιβεβαιώνει πληρωμή "
             f"({_why.get(v.get('reason') or '', v.get('reason'))}· πληρώθηκαν {int(v.get('amount_cents') or 0)/100:.2f} €"
             f"{f', αναμενόμενα {expected/100:.2f} €' if expected else ''}· συναλλαγή {v.get('transaction_id') or '—'}).")
     except Exception:  # noqa: BLE001
@@ -525,11 +539,37 @@ async def _charge_recurring(sub: dict, amount: int, tid: str) -> dict:
     r = await rv.charge_off_session(
         amount=amount, currency=sub.get("currency", CURRENCY),
         customer_id=sub["revolut_customer_id"], tenant_id=tid, description=desc)
-    return {"ok": r.get("ok"), "order_id": r.get("order_id"), "provider": "revolut"}
+    if not r.get("order_id"):
+        return {"ok": False, "error": r.get("error") or f"revolut_{r.get('state') or 'error'}", "provider": "revolut"}
+    # ΠΛΗΡΩΜΕΝΟ = ό,τι επιβεβαιώνει η ΙΔΙΑ η Revolut (ολοκληρωμένη, αυτό το ποσό, αυτό το φαρμακείο).
+    # Πριν: «pending»/«authorised» μετρούσε ως επιτυχία → επέκταση + παραστατικό χωρίς είσπραξη.
+    v = await settle_revolut_charge(r["order_id"], amount, tid)
+    if v["ok"]:
+        return {"ok": True, "order_id": r["order_id"], "provider": "revolut"}
+    if v.get("reason") == "not_finished":
+        return {"ok": False, "pending": True, "order_id": r["order_id"], "provider": "revolut",
+                "error": "revolut_pending"}
+    await payment_rejected("αυτόματη χρέωση", tid, v, amount, provider="revolut")
+    return {"ok": False, "order_id": r["order_id"], "provider": "revolut",
+            "error": f"revolut_unverified:{v.get('reason')}"}
+
+
+async def settle_revolut_charge(order_id: str, amount: int, tid: str, *, tries: int = 6,
+                                wait: float = 2.0) -> dict:
+    """Ρωτά τη Revolut μέχρι η χρέωση να ΟΛΟΚΛΗΡΩΘΕΙ ή να ΑΠΟΤΥΧΕΙ (συνήθως σε δευτερόλεπτα).
+    Αν μείνει σε εξέλιξη → reason=not_finished· ο καλών ΔΕΝ την ξαναχρεώνει (διπλή χρέωση)."""
+    v: dict = {"ok": False, "reason": "not_finished"}
+    for i in range(max(1, tries)):
+        v = await rv.verify_payment(order_id, expected_cents=amount, reference=tid)
+        if v.get("reason") != "not_finished":
+            return v
+        if i < tries - 1:
+            await asyncio.sleep(wait)
+    return v
 
 
 async def bill_due() -> dict:
-    """Charge subscriptions whose trial/period has ended. Auto-suspend after MAX_ATTEMPTS."""
+    """Χρεώνει τις συνδρομές που έληξαν. Αποτυχία (επιβεβαιωμένη από τον πάροχο) → ΑΜΕΣΟ κλείδωμα."""
     db = shared_db()
     if not await any_provider_configured():
         return {"skipped": "no_provider_configured"}
@@ -543,6 +583,22 @@ async def bill_due() -> dict:
     ]})
     async for sub in cur:
         tid = sub["tenant_id"]
+        pc = sub.get("pending_charge") or {}
+        if pc.get("order_id"):
+            # Χρέωση Revolut που έμεινε «σε εξέλιξη»: ΔΕΝ ξαναχρεώνουμε — ρωτάμε πώς κατέληξε.
+            v = await settle_revolut_charge(pc["order_id"], int(pc.get("amount") or 0), tid, tries=1)
+            if v.get("reason") == "not_finished":
+                continue
+            await db["subscriptions"].update_one({"tenant_id": tid}, {"$unset": {"pending_charge": ""}})
+            if v["ok"]:
+                await _renewal_charged(db, sub, int(pc["amount"]), now,
+                                       {"ok": True, "order_id": pc["order_id"], "provider": "revolut"})
+                charged += 1
+            else:
+                await lock_unpaid(tid, due_from=sub["current_period_end"], amount=int(pc.get("amount") or 0),
+                                  reason=f"Αποτυχία αυτόματης χρέωσης: revolut {v.get('reason')}")
+                failed += 1
+            continue
         if sub.get("complimentary"):     # δωρεάν πελάτης → καμία χρέωση/παραστατικό· κράτα ζωντανή την περίοδο
             await db["subscriptions"].update_one({"tenant_id": tid}, {"$set": {
                 "current_period_end": _period_end(sub.get("billing_cycle", "monthly"), now),
@@ -563,25 +619,12 @@ async def bill_due() -> dict:
         amount = invoice_service.gross_from_price(net_total, _inc_vat, tcountry)
         res = await _charge_recurring(sub, amount, tid)
         if res.get("ok"):
-            await db["subscriptions"].update_one({"tenant_id": tid}, {"$set": {
-                "status": "active", "payment_status": "active", "failed_attempts": 0,
-                "current_period_end": _period_end(sub.get("billing_cycle", "monthly"), now),
-                "last_charged_at": now}})
-            from app.services import receipts
-            await receipts.record(tid, "subscription",
-                                  f"Συνδρομή {sub.get('plan', '')} ({sub.get('billing_cycle', 'monthly')})",
-                                  amount, method="card", provider=res.get("provider", "revolut"),
-                                  provider_order_id=res.get("order_id"))
-            from app.services import invoice_service
-            await invoice_service.create_for_payment(
-                tenant_id=tid, kind="renewal", gross_cents=amount,
-                description=(f"Συνδρομή RxVision «{sub.get('plan_name') or (_rpkg or {}).get('name') or sub.get('plan', '')}» "
-                             f"({invoice_service.cycle_el(sub.get('billing_cycle'))}) — περίοδος "
-                             f"{invoice_service.fmt_d(now)} έως "
-                             f"{invoice_service.fmt_d(_period_end(sub.get('billing_cycle', 'monthly'), now))}"),
-                payment={"method": "card", "provider": res.get("provider", "revolut"),
-                         "transaction_id": res.get("order_id")})
+            await _renewal_charged(db, sub, amount, now, res)
             charged += 1
+        elif res.get("pending"):
+            # η Revolut δεν έχει αποφανθεί ακόμη: ούτε επέκταση ούτε κλείδωμα — το επόμενο πέρασμα ρωτά ξανά
+            await db["subscriptions"].update_one({"tenant_id": tid}, {"$set": {"pending_charge": {
+                "provider": "revolut", "order_id": res["order_id"], "amount": amount, "at": now}}})
         else:
             # Απόφαση ιδιοκτήτη 02/10/2026: επιτυχία = σιωπή· αποτυχία = ΑΜΕΣΟ κλείδωμα + «πληρώστε ξανά»
             # (χωρίς περιθώριο/επαναπροσπάθειες). Η νέα περίοδος θα ξεκινήσει από τη λήξη που δεν πληρώθηκε.
@@ -589,6 +632,27 @@ async def bill_due() -> dict:
                               reason=f"Αποτυχία αυτόματης χρέωσης: {res.get('error') or 'άγνωστο'}")
             failed += 1
     return {"charged": charged, "failed": failed, "suspended": suspended}
+
+
+async def _renewal_charged(db, sub: dict, amount: int, now: datetime, res: dict) -> None:
+    """ΕΠΙΒΕΒΑΙΩΜΕΝΗ αυτόματη χρέωση ανανέωσης → νέα περίοδος + απόδειξη + παραστατικό."""
+    tid = sub["tenant_id"]
+    cycle = sub.get("billing_cycle", "monthly")
+    await db["subscriptions"].update_one({"tenant_id": tid}, {"$set": {
+        "status": "active", "payment_status": "active", "failed_attempts": 0,
+        "current_period_end": _period_end(cycle, now), "last_charged_at": now}})
+    from app.services import invoice_service, receipts
+    await receipts.record(tid, "subscription", f"Συνδρομή {sub.get('plan', '')} ({cycle})",
+                          amount, method="card", provider=res.get("provider", "revolut"),
+                          provider_order_id=res.get("order_id"))
+    pkg = await db["packages"].find_one({"_id": sub.get("plan")}, {"name": 1}) if sub.get("plan") else None
+    await invoice_service.create_for_payment(
+        tenant_id=tid, kind="renewal", gross_cents=amount,
+        description=(f"Συνδρομή RxVision «{sub.get('plan_name') or (pkg or {}).get('name') or sub.get('plan', '')}» "
+                     f"({invoice_service.cycle_el(cycle)}) — περίοδος "
+                     f"{invoice_service.fmt_d(now)} έως {invoice_service.fmt_d(_period_end(cycle, now))}"),
+        payment={"method": "card", "provider": res.get("provider", "revolut"),
+                 "transaction_id": res.get("order_id")})
 
 
 async def _grace_cfg() -> tuple[int, int]:
@@ -962,28 +1026,49 @@ async def handle_webhook(event: str, order: dict) -> None:
     # Wallet top-up orders: credit the message wallet (idempotent) and stop — not a subscription event.
     if event == "ORDER_COMPLETED" and order.get("id"):
         from app.services import ai_credits, message_wallet
-        if await ai_credits.complete_topup(order["id"]):
+        # πίστωση ΜΟΝΟ για ολοκληρωμένη παραγγελία και με το ποσό που λέει η ΙΔΙΑ η Revolut (όπως στη Viva)
+        if str(order.get("state") or "").lower() != "completed":
             return
-        if await message_wallet.complete_topup(order["id"]):
+        paid = rv.order_amount_cents(order)
+        if await ai_credits.complete_topup(order["id"], paid_cents=paid):
+            return
+        if await message_wallet.complete_topup(order["id"], paid_cents=paid):
+            return
+        sub = await db["subscriptions"].find_one({"tenant_id": tid}) or {}
+        # Ανανέωση πληρωμένη στη Revolut → complete_renewal (επαληθεύει ξανά από τη Revolut, ποσό & παραγγελία)
+        pr = sub.get("pending_renewal") or {}
+        if pr.get("provider") == "revolut" and str(pr.get("order_id")) == str(order["id"]):
+            await complete_renewal(tid, str(order["id"]), provider="revolut")
+            return
+        # Δική μας αυτόματη χρέωση: την αποφασίζει ΜΟΝΟ το bill_due (με επαλήθευση) — όχι το webhook
+        if str((sub.get("pending_charge") or {}).get("order_id")) == str(order["id"]):
             return
         # Plan-upgrade paid by card: apply the pending change when its Revolut order completes.
-        sub = await db["subscriptions"].find_one({"tenant_id": tid}) or {}
         pend = sub.get("pending_change") or {}
         if (pend.get("method") == "card" and pend.get("status") == "awaiting_payment"
                 and pend.get("revolut_order_id") == order["id"]):
-            from app.services import plan_change_service
-            await plan_change_service.apply_change(tid, source="revolut")
+            # ίδιος κανόνας με τη Viva: εφαρμόζεται ΜΟΝΟ αν πληρώθηκε το ποσό της αναβάθμισης
+            need = int(pend.get("charge_amount", pend.get("new_price", 0)) or 0)
+            if paid >= need > 0:
+                from app.services import plan_change_service
+                await plan_change_service.apply_change(tid, source="revolut")
+            else:
+                await payment_rejected("αναβάθμιση πακέτου", tid, {"reason": "amount_short", "amount_cents": paid,
+                                                                    "transaction_id": order["id"]}, need,
+                                       provider="revolut")
             return
     cust = (order.get("customer") or {}).get("id")
     if event in ("ORDER_COMPLETED", "ORDER_AUTHORISED"):
-        upd = {"payment_status": "card_saved", "failed_attempts": 0}
-        if cust:
-            upd["revolut_customer_id"] = cust
-        await db["subscriptions"].update_one({"tenant_id": tid}, {"$set": upd})
-    elif event in ("ORDER_PAYMENT_FAILED", "ORDER_CANCELLED"):
+        # Αποθήκευση κάρτας: ΜΟΝΟ η παραγγελία που ξεκίνησε το start_card_capture, ξαναδιαβασμένη από τη
+        # Revolut (get_order στο router). ΤΟΤΕ μόνο αλλάζει ο πάροχος της συνδρομής σε Revolut.
         sub = await db["subscriptions"].find_one({"tenant_id": tid}) or {}
-        attempts = sub.get("failed_attempts", 0) + 1
+        if str(sub.get("revolut_order_id") or "") != str(order.get("id") or "") or not cust:
+            return
+        if str(order.get("state") or "").lower() not in ("completed", "authorised"):
+            return
         await db["subscriptions"].update_one({"tenant_id": tid}, {"$set": {
-            "payment_status": "past_due", "failed_attempts": attempts}})
-        if attempts >= MAX_ATTEMPTS:
-            await _suspend(tid, "payment_failed")
+            "payment_provider": "revolut", "revolut_customer_id": cust,
+            "payment_status": "card_saved", "failed_attempts": 0}})
+    # ORDER_PAYMENT_FAILED / ORDER_CANCELLED: τίποτα. Εγκαταλελειμμένη αλλαγή κάρτας ή ανανέωσης ΔΕΝ είναι
+    # απλήρωτη συνδρομή (πριν: past_due + αναστολή μετά από 3). Την αποτυχία αυτόματης χρέωσης την
+    # αποφασίζει το bill_due (επαλήθευση → κλείδωμα), όπως στη Viva.

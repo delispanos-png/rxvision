@@ -112,12 +112,12 @@ async def _next_number(db, series: str) -> int:
 
 def payment_status(inv: dict) -> str:
     """ΕΝΑΣ ορισμός (adminpanel ΚΑΙ πελάτης): paid = επιβεβαιωμένη χρέωση· settled = χειροκίνητο «εξοφλημένο»·
-    unverified = συναλλαγή Viva που η Viva ΔΕΝ επιβεβαιώνει (ποσό/είδος)· αλλιώς unpaid."""
+    unverified = συναλλαγή που ο πάροχος (Viva/Revolut) ΔΕΝ επιβεβαιώνει (ποσό/είδος)· αλλιώς unpaid."""
     pay = inv.get("payment") or {}
     if inv.get("settled"):
         return "settled"
     if pay.get("transaction_id"):
-        if pay.get("provider") != "viva" or pay.get("verified") is True:
+        if pay.get("provider") not in _VERIFIED_PROVIDERS or pay.get("verified") is True:
             return "paid"
         return "unverified"
     return "unpaid"
@@ -162,6 +162,21 @@ async def list_for_tenant(tenant_id: str, limit: int = 200) -> list[dict]:
     return [customer_view(i) async for i in cur]
 
 
+_VERIFIED_PROVIDERS = ("viva", "revolut")    # πάροχοι που ρωτάμε για κάθε «πληρωμένο»
+
+
+async def payment_proof(provider: str | None, ref: str, gross_cents: int) -> dict:
+    """Απόδειξη πληρωμής από τον ΙΔΙΟ τον πάροχο — ΕΝΑ σημείο για Viva και Revolut. Άλλοι → {}."""
+    if provider == "viva":
+        return await viva_proof(ref, gross_cents)
+    if provider == "revolut":
+        from app.services import revolut_service
+        v = await revolut_service.verify_payment(ref, expected_cents=int(gross_cents))
+        return {"verified": bool(v.get("ok")), "verified_amount": v.get("amount_cents"),
+                "verify_reason": v.get("reason"), "verified_at": _now()}
+    return {}
+
+
 async def viva_proof(ref: str, gross_cents: int) -> dict:
     """Απόδειξη πληρωμής από την ΙΔΙΑ τη Viva για ένα παραστατικό (viva_service.verify_payment). `ref` είναι
     TransactionId — ή, στις φορτώσεις μονάδων, ο κωδικός παραγγελίας (OrderCode). «Πληρωμένο» ΜΟΝΟ με
@@ -177,17 +192,19 @@ async def viva_proof(ref: str, gross_cents: int) -> dict:
             "verify_reason": v.get("reason"), "verified_at": _now()}
 
 
-async def reverify_viva_invoices(db, *, only_unverified: bool = False) -> list[dict]:
-    """Ξαναρωτά τη Viva για κάθε παραστατικό Viva με συναλλαγή και ΑΠΟΘΗΚΕΥΕΙ το αποτέλεσμα. Επιστρέφει
-    όσα ΔΕΝ επιβεβαιώνονται. Καλείται από τον νυχτερινό αυτοέλεγχο (και μία φορά για τα παλιά)."""
-    flt: dict = {"payment.provider": "viva", "payment.transaction_id": {"$nin": [None, ""]}}
+async def reverify_card_invoices(db, *, only_unverified: bool = False) -> list[dict]:
+    """Ξαναρωτά τον πάροχο (Viva/Revolut) για κάθε παραστατικό με συναλλαγή και ΑΠΟΘΗΚΕΥΕΙ το αποτέλεσμα.
+    Επιστρέφει όσα ΔΕΝ επιβεβαιώνονται. Καλείται από τον νυχτερινό αυτοέλεγχο (και μία φορά για τα παλιά)."""
+    flt: dict = {"payment.provider": {"$in": list(_VERIFIED_PROVIDERS)},
+                 "payment.transaction_id": {"$nin": [None, ""]}}
     if only_unverified:
         flt["payment.verified"] = {"$ne": True}
     bad = []
     async for inv in db["invoices"].find(flt):  # tenant-ok: πλατφόρμα — παραστατικά RxVision προς φαρμακεία
-        proof = await viva_proof(str(inv["payment"]["transaction_id"]), int(inv.get("total") or 0))
-        if proof["verify_reason"] == "not_found" and inv.get("payment", {}).get("verified"):
-            continue   # προσωρινό σφάλμα δικτύου/Viva → μην «ξεπληρώνεις» επιβεβαιωμένο
+        proof = await payment_proof(inv["payment"].get("provider"), str(inv["payment"]["transaction_id"]),
+                                    int(inv.get("total") or 0))
+        if proof["verify_reason"] in ("not_found", "not_finished") and inv.get("payment", {}).get("verified"):
+            continue   # προσωρινό σφάλμα δικτύου/παρόχου → μην «ξεπληρώνεις» επιβεβαιωμένο
         await db["invoices"].update_one({"_id": inv["_id"]}, {"$set": {
             **{f"payment.{k}": v for k, v in proof.items()}}})
         if not proof["verified"]:
@@ -278,7 +295,7 @@ async def create_for_payment(*, tenant_id: str, kind: str, gross_cents: int,
             "customer": customer,
             "payment": {"method": pay.get("method"), "provider": pay.get("provider"),
                         "transaction_id": txn or None,
-                        **(await viva_proof(txn, gross) if txn and pay.get("provider") == "viva" else {})},
+                        **(await payment_proof(pay.get("provider"), txn, gross) if txn else {})},
             "source_ref": f"{kind}:{txn}" if txn else f"{kind}:{tenant_id}:{int(now.timestamp())}",
             "status": "blocked" if blocked else "pending", "blocked_reason": blocked,
             "attempts": 0, "last_error": None, "next_attempt_at": now,

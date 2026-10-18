@@ -130,7 +130,7 @@ export default function InvoicesPage() {
     { key: "payment", header: "Πληρωμή", render: (r) => {
       const st = r.payment_status ?? "unpaid";
       if (st === "paid") return <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700" title={[r.payment_method, r.payment_provider].filter(Boolean).join(" · ")}>✓ Πληρωμένο</span>;
-      if (st === "unverified") return <span className="inline-flex items-center gap-1 rounded-full bg-rose-100 px-2 py-0.5 text-xs font-medium text-rose-700" title={`Η Viva δεν επιβεβαιώνει την πληρωμή${r.payment_verified_amount != null ? ` (εισπράχθηκαν ${fmtEur(r.payment_verified_amount)})` : ""}`}>⚠ Απλήρωτο (Viva)</span>;
+      if (st === "unverified") return <span className="inline-flex items-center gap-1 rounded-full bg-rose-100 px-2 py-0.5 text-xs font-medium text-rose-700" title={`Η ${r.payment_provider === "revolut" ? "Revolut" : "Viva"} δεν επιβεβαιώνει την πληρωμή${r.payment_verified_amount != null ? ` (εισπράχθηκαν ${fmtEur(r.payment_verified_amount)})` : ""}`}>⚠ Απλήρωτο ({r.payment_provider === "revolut" ? "Revolut" : "Viva"})</span>;
       if (st === "settled") return <span className="inline-flex items-center gap-1 rounded-full bg-sky-100 px-2 py-0.5 text-xs font-medium text-sky-700">Εξοφλημένο</span>;
       return <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">Όχι</span>;
     } },

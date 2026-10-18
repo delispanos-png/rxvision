@@ -152,7 +152,7 @@ def reconcile_viva_payments() -> dict:
     Καλύπτει και τις δύο ροές: ανανέωση (`pending_renewal`) και νέα εγγραφή (`pending_registrations`).
     """
     async def _run() -> dict:
-        from app.services import billing_service, viva_service
+        from app.services import billing_service, revolut_service, viva_service
         from app.services.onboarding_service import OnboardingService
         from app.core.db import shared_db
         db = shared_db()
@@ -160,12 +160,21 @@ def reconcile_viva_payments() -> dict:
         if True:
             # (1) ανανεώσεις: συνδρομή με εκκρεμή ανανέωση + order code
             async for sub in db["subscriptions"].find({  # tenant-ok: beat χρεώσεων — όλες οι συνδρομές
-                    "pending_renewal": {"$ne": None},
-                    "viva_order_code": {"$nin": [None, ""]}}):
+                    "pending_renewal": {"$ne": None}}):
+                pr = sub.get("pending_renewal") or {}
+                if pr.get("provider") == "revolut":
+                    # ίδιο δίχτυ για τη Revolut: η παραγγελία ΑΥΤΗΣ της ανανέωσης ολοκληρώθηκε;
+                    if pr.get("order_id"):
+                        v = await revolut_service.verify_payment(str(pr["order_id"]), reference=sub["tenant_id"])
+                        if v.get("state") == "completed":
+                            await billing_service.complete_renewal(sub["tenant_id"], str(pr["order_id"]),
+                                                                   provider="revolut")
+                            renewed += 1
+                    continue
                 # ΜΟΝΟ ο κωδικός παραγγελίας της ανανέωσης — όχι το κοινό `viva_order_code` (το γράφει και η
                 # αποθήκευση κάρτας). Παλιά pending χωρίς order_code → παράλειψη (το complete_renewal
                 # επαληθεύει ούτως ή άλλως ότι η συναλλαγή είναι πράγματι ανανέωση με το σωστό ποσό).
-                code = (sub.get("pending_renewal") or {}).get("order_code")
+                code = pr.get("order_code")
                 if not code:
                     continue
                 t = await viva_service.order_paid_transaction(str(code))
@@ -185,7 +194,7 @@ def reconcile_viva_payments() -> dict:
         if renewed or signups:
             try:   # ο ιδιοκτήτης ΠΡΕΠΕΙ να μάθει ότι το webhook δεν δούλεψε
                 from app.services.comms import admin_alert
-                await admin_alert(f"⚠️ RxVision: {renewed + signups} πληρωμή/ές Viva εντοπίστηκαν από "
+                await admin_alert(f"⚠️ RxVision: {renewed + signups} πληρωμή/ές (Viva/Revolut) εντοπίστηκαν από "
                                   f"το reconcile (το webhook ΔΕΝ έφτασε). Έλεγξε τη ρύθμιση webhook.")
             except Exception:  # noqa: BLE001
                 pass

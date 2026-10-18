@@ -83,7 +83,7 @@ async def test_invoice_paid_only_when_viva_confirms_amount(monkeypatch):
 
     from app.api.v1.routers.admin import _payment_status
     assert _payment_status(bad) == "unverified" and _payment_status(good) == "paid"
-    unpaid = await inv.reverify_viva_invoices(db)
+    unpaid = await inv.reverify_card_invoices(db)
     assert [u["paid"] for u in unpaid] == [10]
 
 
@@ -144,7 +144,7 @@ async def test_failed_charge_locks_and_renewal_starts_from_due_date(monkeypatch)
                                           "status": "active", "current_period_end": due})
     assert await bs.lock_unpaid(TID, due_from=due, amount=11036, reason="test")
     sub = await db["subscriptions"].find_one({"tenant_id": TID})
-    assert bs.effective_status(sub) == "expired" and bs.UNPAID_MESSAGE in sub["lock_message"] and "30/09/2026 – 30/10/2026" in sub["lock_message"]
+    assert bs.effective_status(sub) == "expired" and bs.UNPAID_MESSAGE.format(provider="Viva") in sub["lock_message"] and "30/09/2026 – 30/10/2026" in sub["lock_message"]
     assert not await bs.lock_unpaid(TID, due_from=due)                         # idempotent
 
     _viva(monkeypatch, {"ren": RENEWAL})

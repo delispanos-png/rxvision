@@ -132,6 +132,71 @@ async def get_order(order_id: str) -> dict | None:
         return None
 
 
+async def create_renewal_order(*, amount: int, currency: str, email: str, name: str,
+                               tenant_id: str, description: str, redirect_url: str | None = None) -> dict:
+    """Πληρωμή ΑΝΑΝΕΩΣΗΣ στη φιλοξενούμενη σελίδα της Revolut (checkout_url — ίδια ροή «ανακατεύθυνση»
+    με τη Viva). Χρεώνει ΚΑΙ αποθηκεύει την κάρτα για τις επόμενες αυτόματες χρεώσεις."""
+    base, key = await _client()
+    if not base:
+        return {"ok": False, "error": "revolut_not_configured"}
+    payload = {
+        "amount": int(amount), "currency": currency, "capture_mode": "automatic",
+        "description": description,
+        "merchant_order_data": {"reference": tenant_id},
+        "customer": {"email": email, "full_name": name},
+        "save_payment_method_for": "merchant",
+    }
+    if redirect_url:
+        payload["redirect_url"] = redirect_url
+    try:
+        async with httpx.AsyncClient(timeout=20) as cl:
+            r = await cl.post(f"{base}/orders", headers=_headers(key), json=payload)
+            r.raise_for_status()
+            d = r.json()
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "error": f"revolut_error:{type(e).__name__}"}
+    if not d.get("checkout_url"):
+        return {"ok": False, "error": "revolut_no_checkout_url"}
+    return {"ok": True, "order_id": d.get("id"), "checkout_url": d["checkout_url"]}
+
+
+def order_amount_cents(order: dict) -> int:
+    """Ποσό παραγγελίας σε cents (API 2024: `amount` σε μικρές μονάδες· παλιό: order_amount.value)."""
+    v = order.get("amount")
+    if v is None:
+        v = (order.get("order_amount") or {}).get("value")
+    try:
+        return int(v or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+async def verify_payment(order_id: str | None, *, expected_cents: int | None = None,
+                         reference: str | None = None) -> dict:
+    """ΕΝΑΣ ορισμός για το «πληρώθηκε;» στη Revolut — ο δίδυμος του viva_service.verify_payment.
+    Ρωτά την ΙΔΙΑ τη Revolut: ολοκληρωμένη (state=completed) · ΠΟΙΟΥ (reference = φαρμακείο) · ΠΟΣΑ
+    (≥ αναμενόμενο). FAIL-CLOSED: οτιδήποτε ασαφές → ok=False με `reason`. «pending»/«processing»/
+    «authorised» = ΔΕΝ πληρώθηκε ακόμη (reason=not_finished, ο καλών αποφασίζει αν θα ξαναρωτήσει)."""
+    if not order_id:
+        return {"ok": False, "reason": "no_transaction"}
+    d = await get_order(str(order_id))
+    if not d:
+        return {"ok": False, "reason": "not_found", "transaction_id": str(order_id)}
+    state = str(d.get("state") or "").lower()
+    res = {"transaction_id": str(order_id), "state": state, "amount_cents": order_amount_cents(d),
+           "reference": str((d.get("merchant_order_data") or {}).get("reference") or ""),
+           "customer_id": (d.get("customer") or {}).get("id")}
+    if state in ("failed", "cancelled", "declined"):
+        return {**res, "ok": False, "reason": "failed"}
+    if state != "completed":
+        return {**res, "ok": False, "reason": "not_finished"}
+    if reference is not None and res["reference"] != reference:
+        return {**res, "ok": False, "reason": "other_payment"}
+    if expected_cents is not None and res["amount_cents"] < int(expected_cents):
+        return {**res, "ok": False, "reason": "amount_short"}
+    return {**res, "ok": True, "reason": None}
+
+
 def verify_webhook(secret: str | None, payload: bytes, signature: str | None, timestamp: str | None) -> bool:
     """Revolut webhook HMAC-SHA256 over `v1.{timestamp}.{raw-body}` → `v1=<hex>`."""
     if not secret or not signature or not timestamp:
