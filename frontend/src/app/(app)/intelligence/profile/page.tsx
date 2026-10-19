@@ -197,6 +197,25 @@ export default function PatientProfilePage() {
   const g6pdMut = useMutation({
     mutationFn: (v: boolean) => api("/patient-intelligence/profile/g6pd", { method: "POST", body: JSON.stringify({ amka: search.data?.patient?.amka, g6pd_deficiency: v }) }),
   });
+  // ΠΡΩΤΑ: έχει ήδη λογαριασμό; → καθαρό μήνυμα + «στείλε ξανά σύνδεσμο» (όχι «αποτυχία — ίσως…»)
+  const portalAmka = search.data?.patient?.amka;
+  const portalSt = useQuery({
+    queryKey: ["portal-account-status", portalAmka],
+    queryFn: () => api<{ exists: boolean; linked?: boolean; email?: string; since?: string }>(
+      `/patient-intelligence/profile/portal-account?amka=${encodeURIComponent(portalAmka || "")}`),
+    enabled: showPortal && !!portalAmka,
+  });
+  const resendPortal = useMutation({
+    mutationFn: () => api<{ ok: boolean; sent?: { type: string; hint: string }[]; error?: string }>(
+      "/portal/portal-customers/resend-set-password", { method: "POST", body: JSON.stringify({ identifier: portalAmka }) }),
+  });
+  const createErr = () => {
+    const det = (createAcc.error as { problem?: { detail?: string } } | null)?.problem?.detail;
+    return det === "email_exists" ? t("Αυτό το email το χρησιμοποιεί ήδη άλλος λογαριασμός πύλης. Γράψε άλλο email του πελάτη.", "This email is already used by another portal account. Use a different email.")
+      : det === "amka_exists" ? t("Ο πελάτης έχει ήδη λογαριασμό στην πύλη.", "This customer already has a portal account.")
+      : det === "bad_email" ? t("Το email δεν είναι έγκυρο.", "Invalid email.")
+      : t("Δεν δημιουργήθηκε ο λογαριασμός — δοκίμασε ξανά.", "The account was not created — try again.");
+  };
   const createAcc = useMutation({
     mutationFn: () => api<{ email: string; temp_password: string; link_sent?: { type: string; hint: string }[] }>("/patient-intelligence/profile/portal-account", { method: "POST", body: JSON.stringify({ amka: search.data?.patient?.amka, email: portalEmail.trim() }) }),
     onSuccess: (d) => setPortalResult(d),
@@ -636,7 +655,7 @@ export default function PatientProfilePage() {
           {/* contact — κλειστή σύνοψη· το κουμπί λογαριασμού my.rxvision ζει στο header της κάρτας */}
           <div id="contact-card-anchor">
           <ContactCard patientId={p.patient.id} collapsible openEditSignal={editSignal} extraAction={
-            <button onClick={() => { setPortalEmail(p.contact?.email || ""); setPortalResult(null); setShowPortal(true); }}
+            <button onClick={() => { setPortalEmail(p.contact?.email || ""); setPortalResult(null); resendPortal.reset(); createAcc.reset(); setShowPortal(true); }}
               className="inline-flex items-center gap-1.5 rounded-lg border border-brand-300 bg-brand-50 px-2.5 py-1.5 text-xs font-medium text-brand-700 hover:bg-brand-100 dark:border-brand-800 dark:bg-brand-950/30">
               <User className="h-3.5 w-3.5" /> {t("Λογαριασμός my.rxvision", "my.rxvision account")}
             </button>
@@ -782,7 +801,37 @@ export default function PatientProfilePage() {
                   <button onClick={() => setShowPortal(false)} className="text-slate-400 hover:text-slate-600">✕</button>
                 </div>
                 <div className="mb-3 text-sm text-slate-600 dark:text-slate-300">{p.patient.name} · <span className="font-mono text-xs">{p.patient.amka}</span></div>
-                {portalResult ? (
+                {portalSt.isLoading ? (
+                  <div className="py-4 text-center text-sm text-slate-400">{t("Έλεγχος…", "Checking…")}</div>
+                ) : portalSt.data?.exists && !portalResult ? (
+                  <div className="space-y-3">
+                    {portalSt.data.linked ? (
+                      <div className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-200">
+                        ✓ {t("Ο πελάτης είναι ήδη εγγεγραμμένος στην πύλη", "This customer is already registered in the portal")}
+                        {portalSt.data.email ? <> ({t("email", "email")} <b>{portalSt.data.email}</b>)</> : null}
+                        {portalSt.data.since ? <> {t("από", "since")} {fmtDate(portalSt.data.since)}</> : null}.
+                        <div className="mt-1 text-xs">{t("Δεν χρειάζεται νέος λογαριασμός. Αν δεν θυμάται τον κωδικό ή δεν μπορεί να μπει, στείλε του νέο σύνδεσμο κωδικού (στο email/κινητό του λογαριασμού και της καρτέλας).", "No new account needed. If they forgot the password or can't log in, send a new password link.")}</div>
+                      </div>
+                    ) : (
+                      <div className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:bg-amber-900/30 dark:text-amber-200">
+                        {t("Ο πελάτης έχει ήδη λογαριασμό στην πύλη, αλλά δεν έχει επιλέξει το φαρμακείο σου. Πες του να μπει στην πύλη και να προσθέσει το φαρμακείο σου από «Φαρμακεία».", "The customer already has a portal account but hasn't added your pharmacy. Ask them to add it from «Pharmacies» in the portal.")}
+                      </div>
+                    )}
+                    {portalSt.data.linked && (resendPortal.data?.ok ? (
+                      <div className="rounded-lg bg-indigo-50 px-3 py-2 text-sm text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300">
+                        📩 {t("Στάλθηκε νέος σύνδεσμος κωδικού", "New password link sent")}: <b>{(resendPortal.data.sent ?? []).map((c) => `${c.type === "sms" ? "SMS" : "email"} ${c.hint}`).join(" · ")}</b>
+                      </div>
+                    ) : (
+                      <>
+                        {resendPortal.data && !resendPortal.data.ok && <div className="text-sm text-rose-600">{t("Δεν στάλθηκε — ο λογαριασμός δεν έχει έγκυρο email/κινητό. Διόρθωσε τα στοιχεία στην καρτέλα και ξαναδοκίμασε.", "Not sent — no valid email/mobile. Fix the card's contact details and retry.")}</div>}
+                        <button onClick={() => resendPortal.mutate()} disabled={resendPortal.isPending}
+                          className="w-full rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-50">
+                          {resendPortal.isPending ? t("Αποστολή…", "Sending…") : t("Στείλε ξανά σύνδεσμο κωδικού", "Resend password link")}
+                        </button>
+                      </>
+                    ))}
+                  </div>
+                ) : portalResult ? (
                   <div className="space-y-3">
                     <div className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{t("Ο λογαριασμός δημιουργήθηκε!", "Account created!")}</div>
                     {portalResult.link_sent && portalResult.link_sent.length > 0 ? (
@@ -808,7 +857,7 @@ export default function PatientProfilePage() {
                       <input type="email" value={portalEmail} onChange={(e) => setPortalEmail(e.target.value)} placeholder="patient@email.gr"
                         className="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-800" />
                     </label>
-                    {createAcc.isError && <div className="text-sm text-rose-600">{t("Αποτυχία — ίσως υπάρχει ήδη λογαριασμός με αυτό το ΑΜΚΑ ή email.", "Failed — an account with this ΑΜΚΑ or email may already exist.")}</div>}
+                    {createAcc.isError && <div className="text-sm text-rose-600">{createErr()}</div>}
                     <button onClick={() => portalEmail.includes("@") && createAcc.mutate()} disabled={createAcc.isPending || !portalEmail.includes("@")}
                       className="w-full rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-50">
                       {createAcc.isPending ? t("Δημιουργία…", "Creating…") : t("Δημιουργία λογαριασμού", "Create account")}

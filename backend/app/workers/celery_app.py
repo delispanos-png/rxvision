@@ -442,6 +442,11 @@ celery_app.conf.beat_schedule = {
         "task": "app.workers.ops_health.check",
         "schedule": crontab(minute="*/30"),
     },
+    # Αποστολή email: δοκιμή σύνδεσης SMTP — αποτυχία = κόκκινη μπάρα στο adminpanel (19/10/2026)
+    "ops-smtp-check": {
+        "task": "app.workers.ops_health.smtp_check",
+        "schedule": crontab(minute="*/10"),
+    },
     # Φύλακας διαθεσιμότητας cx33 — ο τύπος όλου του στόλου είναι ΕΞΑΝΤΛΗΜΕΝΟΣ (8,49 € vs 35,49 €
     # για την επόμενη x86 επιλογή). Μόλις ξαναβγεί απόθεμα το αρπάζει· αυτο-απενεργοποιείται μετά.
     "capacity-watch-node-type": {

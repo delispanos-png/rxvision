@@ -106,6 +106,18 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
   useEffect(() => { setMobileOpen(false); }, [pathname]);  // close drawer on navigate
 
+  // ΑΠΟΣΤΟΛΗ EMAIL: αν δεν λειτουργεί, κόκκινη μπάρα σε ΚΑΘΕ σελίδα μόλις συνδεθείς (19/10/2026 —
+  // 12 ημέρες χωρίς κανένα email, χωρίς να το ξέρει κανείς). Ξαναρωτά σε κάθε αλλαγή σελίδας + κάθε 5΄.
+  const [mailHealth, setMailHealth] = useState<{ ok: boolean | null; error?: string; failing_since?: string } | null>(null);
+  useEffect(() => {
+    if (isLogin) return;
+    const load = () => adminApi<{ ok: boolean | null; error?: string; failing_since?: string }>("/admin/smtp/health")
+      .then(setMailHealth).catch(() => {});
+    load();
+    const h = setInterval(load, 300_000);
+    return () => clearInterval(h);
+  }, [isLogin, pathname]);
+
   if (isLogin) return <div className="min-h-screen bg-slate-900">{children}</div>;
 
   // `section` είναι πλέον κλειδί δικαιώματος (π.χ. "billing:read"). Όσο δεν έχει
@@ -195,6 +207,18 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
           </span>
         </div>
         <main className="min-w-0 flex-1 p-4 md:p-6">
+          {mailHealth?.ok === false && (
+            <div className="mx-auto mb-4 w-full max-w-[1600px] rounded-xl border border-rose-300 bg-rose-50 px-4 py-3 text-sm text-rose-800 dark:border-rose-800 dark:bg-rose-950/40 dark:text-rose-200">
+              <div className="font-semibold">
+                🔴 Η αποστολή email ΔΕΝ λειτουργεί
+                {mailHealth.failing_since ? ` από ${new Date(mailHealth.failing_since).toLocaleString("el-GR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" })}` : ""}
+              </div>
+              <div className="mt-0.5 text-xs">
+                Δεν φτάνουν επαναφορές κωδικού, προσκλήσεις πύλης, email χρέωσης και ειδοποιήσεις. Σφάλμα: <span className="font-mono">{mailHealth.error || "—"}</span>
+              </div>
+              <Link href="/admin/smtp" className="mt-1.5 inline-block text-xs font-semibold underline">Άνοιξε τις Ρυθμίσεις SMTP →</Link>
+            </div>
+          )}
           <div className="mx-auto w-full max-w-[1600px]">{children}</div>
         </main>
       </div>

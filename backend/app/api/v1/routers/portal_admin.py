@@ -134,6 +134,42 @@ async def resend_set_password(body: ResendSetPwIn,
         tenant_id=ctx.tenant_id, by=ctx.user_id)
 
 
+class InviteIn(BaseModel):
+    email: str
+    amka: str
+    last_name: str | None = None
+    first_name: str | None = None
+
+
+@router.post("/portal-customers/invite")
+async def invite_customer(body: InviteIn, ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+    """ΠΡΟΣΚΛΗΣΗ ΜΕ EMAIL (εξ αποστάσεως): λογαριασμός πύλης + email «το φαρμακείο σάς προσκαλεί» με
+    σύνδεσμο ορισμού κωδικού. ΔΕΝ απαιτεί συνταγές στο φαρμακείο. Αν ο πελάτης υπάρχει ήδη στις
+    καρτέλες, το όνομα έρχεται από εκεί (ο φαρμακοποιός γράφει μόνο email + ΑΜΚΑ)."""
+    import re
+
+    from app.services.patient_auth_service import PatientAuthService
+    amka = re.sub(r"\D", "", body.amka or "")
+    if len(amka) != 11:
+        return {"ok": False, "error": "bad_amka"}
+    email = (body.email or "").strip().lower()
+    if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
+        return {"ok": False, "error": "bad_email"}
+    last, first = (body.last_name or "").strip(), (body.first_name or "").strip()
+    db = shared_db()
+    if not (last or first):
+        pa = await db["patients_anonymized"].find_one({"tenant_id": ctx.tenant_id, "amka": amka},
+                                                      {"full_name": 1})
+        parts = ((pa or {}).get("full_name") or "").split()
+        last, first = (parts[0] if parts else ""), " ".join(parts[1:])
+    if not (last or first):
+        return {"ok": False, "error": "name_required"}
+    t = await db["tenants"].find_one({"_id": ctx.tenant_id}, {"name": 1, "company": 1}) or {}  # tenant-ok: own tenant
+    ph = (t.get("company") or {}).get("name") or t.get("name")
+    return await PatientAuthService().invite(first_name=first, last_name=last, email=email, amka=amka,
+                                             tenant_id=ctx.tenant_id, pharmacy_name=ph)
+
+
 @router.delete("/portal-customers/{account_id}")
 async def remove_portal_customer(account_id: str,
                                  ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):

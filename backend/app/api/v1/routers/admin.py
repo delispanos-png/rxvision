@@ -3003,7 +3003,15 @@ async def get_smtp(_: PlatformContext = Depends(get_platform_admin)):
 @router.put("/smtp")
 async def put_smtp(body: SmtpIn, _: PlatformContext = Depends(get_platform_admin)):
     await mailer.save_smtp(body.model_dump())
-    return {"saved": True}
+    # αμέσως ξανά δοκιμή σύνδεσης → η κόκκινη μπάρα σβήνει (ή ανάβει) χωρίς να περιμένεις τα 10΄
+    check = await mailer.check_login()
+    return {"saved": True, "login_ok": check["ok"], "error": check.get("error")}
+
+
+@router.get("/smtp/health")
+async def smtp_health(_: PlatformContext = Depends(get_platform_admin)):
+    """Κατάσταση αποστολής email για την μπάρα του adminpanel (κάθε σελίδα, κάθε σύνδεση)."""
+    return jsonsafe(await mailer.health())
 
 
 @router.post("/smtp/test")

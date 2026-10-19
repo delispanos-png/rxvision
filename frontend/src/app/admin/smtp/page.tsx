@@ -23,8 +23,11 @@ export default function SmtpPage() {
     e.preventDefault();
     setBusy(true); setNotice(null);
     try {
-      await adminApi("/admin/smtp", { method: "PUT", body: JSON.stringify({ ...form, ...(password ? { password } : {}) }) });
-      setNotice("Αποθηκεύτηκε ✓"); setPassword("");
+      const r = await adminApi<{ saved: boolean; login_ok?: boolean; error?: string }>("/admin/smtp", { method: "PUT", body: JSON.stringify({ ...form, ...(password ? { password } : {}) }) });
+      // μετά την αποθήκευση γίνεται ΑΜΕΣΩΣ δοκιμή σύνδεσης στον server (κωδικός/θύρα/TLS)
+      setNotice(r.login_ok ? "Αποθηκεύτηκε ✓ — η σύνδεση στον server email πέτυχε."
+        : `Αποθηκεύτηκε, αλλά ο server email ΑΠΟΡΡΙΠΤΕΙ τη σύνδεση: ${r.error || "άγνωστο σφάλμα"}`);
+      setPassword("");
     } catch (e) { setNotice(errMsg(e, "Σφάλμα αποθήκευσης")); }
     finally { setBusy(false); }
   }

@@ -22,9 +22,10 @@ def _now() -> datetime:
     return datetime.now(tz=timezone.utc)
 
 
-async def get_smtp(*, masked: bool = True) -> dict | None:
+async def get_smtp(*, masked: bool = True, db=None) -> dict | None:
     from app.services.platform_secrets import decrypt_doc
-    doc = decrypt_doc("smtp", await shared_db()["platform_settings"].find_one({"_id": "smtp"}))
+    db = db if db is not None else shared_db()
+    doc = decrypt_doc("smtp", await db["platform_settings"].find_one({"_id": "smtp"}))
     if not doc:
         return None
     if masked:
@@ -98,11 +99,92 @@ def _send_one(cfg: dict, to: str, subject: str, html: str, reply_to: str | None 
             pass
 
 
+# ── ΥΓΕΙΑ ΑΠΟΣΤΟΛΗΣ EMAIL (19/10/2026) ───────────────────────────────────────────────────────────────
+# Από 07/10 ως 19/10/2026 ο κωδικός του noreply@ ήταν λάθος και ΚΑΝΕΝΑ email δεν έφευγε — χωρίς να το
+# μάθει κανείς (οι ειδοποιήσεις λειτουργίας στέλνονται... με email). Τώρα κάθε αποστολή γράφει την
+# κατάσταση εδώ, μια περιοδική δοκιμή σύνδεσης (ops_health.smtp_check) την ελέγχει ακόμη κι όταν δεν
+# στέλνει κανείς, και το adminpanel δείχνει κόκκινη μπάρα μόλις συνδεθείς.
+_HEALTH_ID = "smtp_health"
+
+
+async def record_health(ok: bool, error: str | None = None, *, source: str = "send", db=None) -> None:
+    """Κατάσταση αποστολής email (platform_settings/smtp_health). Ποτέ δεν σπάει την αποστολή."""
+    try:
+        db = db if db is not None else shared_db()
+        now = _now()
+        if ok:
+            await db["platform_settings"].update_one(
+                {"_id": _HEALTH_ID},
+                {"$set": {"ok": True, "last_ok_at": now, "last_source": source},
+                 "$unset": {"error": "", "failing_since": "", "failures": ""}}, upsert=True)
+            return
+        cur = await db["platform_settings"].find_one({"_id": _HEALTH_ID}) or {}
+        since = cur.get("failing_since") if cur.get("ok") is False and cur.get("failing_since") else now
+        await db["platform_settings"].update_one(
+            {"_id": _HEALTH_ID},
+            {"$set": {"ok": False, "error": (error or "άγνωστο σφάλμα")[:300], "failing_since": since,
+                      "last_failure_at": now, "last_source": source},
+             "$inc": {"failures": 1}}, upsert=True)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+async def health(db=None) -> dict:
+    db = db if db is not None else shared_db()
+    return await db["platform_settings"].find_one({"_id": _HEALTH_ID}) or {"ok": None}
+
+
+def _login_only(cfg: dict) -> None:
+    """Σύνδεση + έλεγχος κωδικού στον SMTP, ΧΩΡΙΣ αποστολή (ίδιοι κανόνες TLS με το _send_one)."""
+    port = int(cfg.get("port", 587))
+    ctx = ssl.create_default_context()
+    if cfg.get("insecure_tls"):
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+    if port == 465:
+        server = smtplib.SMTP_SSL(cfg["host"], port, timeout=20, context=ctx)
+    else:
+        server = smtplib.SMTP(cfg["host"], port, timeout=20)
+        if cfg.get("use_tls", True):
+            server.ehlo()
+            server.starttls(context=ctx)
+            server.ehlo()
+    try:
+        if cfg.get("username"):
+            _smtp_login(server, cfg["username"], cfg.get("password", ""))
+    finally:
+        try:
+            server.quit()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+async def check_login(db=None) -> dict:
+    """Περιοδική δοκιμή: μπορούμε να συνδεθούμε στον SMTP; Γράφει την κατάσταση και την επιστρέφει."""
+    cfg = await get_smtp(masked=False, db=db)
+    try:
+        if not cfg or not cfg.get("host"):
+            raise RuntimeError("smtp_not_configured")
+        await asyncio.to_thread(_login_only, cfg)
+    except Exception as e:  # noqa: BLE001
+        await record_health(False, f"{type(e).__name__}: {e}", source="check", db=db)
+        return {"ok": False, "error": f"{type(e).__name__}: {e}"[:300]}
+    await record_health(True, source="check", db=db)
+    return {"ok": True}
+
+
 async def send_email(to: str, subject: str, html: str) -> None:
     cfg = await get_smtp(masked=False)
-    if not cfg or not cfg.get("host"):
-        raise RuntimeError("smtp_not_configured")
-    await asyncio.to_thread(_send_one, cfg, to, subject, html)
+    try:
+        if not cfg or not cfg.get("host"):
+            raise RuntimeError("smtp_not_configured")
+        await asyncio.to_thread(_send_one, cfg, to, subject, html)
+    except Exception as e:
+        # ο παραλήπτης μπορεί να φταίει (λάθος διεύθυνση) — αλλά σύνδεση/κωδικός/ρύθμιση = ΟΛΑ πέφτουν
+        if not isinstance(e, smtplib.SMTPRecipientsRefused):
+            await record_health(False, f"{type(e).__name__}: {e}")
+        raise
+    await record_health(True)
 
 
 async def send_bulk(recipients: list[str], subject: str, html: str) -> dict:
@@ -111,12 +193,16 @@ async def send_bulk(recipients: list[str], subject: str, html: str) -> dict:
     if not cfg or not cfg.get("host"):
         raise RuntimeError("smtp_not_configured")
     sent = failed = 0
+    last_err = None
     for to in recipients:
         try:
             await asyncio.to_thread(_send_one, cfg, to, subject, html)
             sent += 1
-        except Exception:  # noqa: BLE001
+        except Exception as e:  # noqa: BLE001
             failed += 1
+            last_err = f"{type(e).__name__}: {e}"
+    if sent or failed:
+        await record_health(bool(sent), None if sent else last_err, source="bulk")
     return {"sent": sent, "failed": failed}
 
 
@@ -126,10 +212,14 @@ async def send_messages(messages: list[dict]) -> dict:
     if not cfg or not cfg.get("host"):
         raise RuntimeError("smtp_not_configured")
     sent = failed = 0
+    last_err = None
     for m in messages:
         try:
             await asyncio.to_thread(_send_one, cfg, m["to"], m["subject"], m["html"])
             sent += 1
-        except Exception:  # noqa: BLE001
+        except Exception as e:  # noqa: BLE001
             failed += 1
+            last_err = f"{type(e).__name__}: {e}"
+    if sent or failed:
+        await record_health(bool(sent), None if sent else last_err, source="bulk")
     return {"sent": sent, "failed": failed}

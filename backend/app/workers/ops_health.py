@@ -242,3 +242,18 @@ def check() -> dict:
             client.close()
 
     return _run_async(_run())
+
+
+@celery_app.task(name="app.workers.ops_health.smtp_check")
+def smtp_check() -> dict:
+    """Κάθε 10΄: συνδέεται στον SMTP (ΧΩΡΙΣ αποστολή) και γράφει την κατάσταση (mailer.check_login).
+    Λάθος κωδικός/server πεσμένος → κόκκινη μπάρα στο adminpanel ακόμη κι αν δεν στάλθηκε κανένα email."""
+    async def _run() -> dict:
+        from app.services import mailer
+        client, db = _fresh_db()
+        try:
+            return await mailer.check_login(db=db)
+        finally:
+            client.close()
+
+    return _run_async(_run())

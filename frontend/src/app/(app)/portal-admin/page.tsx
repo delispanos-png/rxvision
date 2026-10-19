@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from "react";
 import { DateInput } from "@/components/ui/DateInput";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { QRCodeCanvas } from "qrcode.react";
-import { Users, MessageSquare, CalendarClock, Stethoscope, FileText, ZoomIn, Trash2, Heart, Copy, Printer, KeyRound, Loader2, Send } from "lucide-react";
+import { Users, MessageSquare, CalendarClock, Stethoscope, FileText, ZoomIn, Trash2, Heart, Copy, Printer, KeyRound, Loader2, Send, Mail } from "lucide-react";
 import { api, apiBlob } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
@@ -116,11 +116,34 @@ function PortalCustomersTab() {
         setResendId("");
       } else {
         toastError(
-          r.error === "not_found" ? t("Δεν βρέθηκε πελάτης με αυτό το στοιχείο.", "No customer found with that detail.")
+          r.error === "not_found" ? t("Δεν υπάρχει λογαριασμός πύλης με αυτό το στοιχείο. Για νέο πελάτη χρησιμοποίησε την «Πρόσκληση με email» παραπάνω.", "No portal account with that detail. For a new customer use «Invite by email» above.")
           : r.error === "not_your_customer" ? t("Ο πελάτης δεν ανήκει στο φαρμακείο σου.", "This customer isn't linked to your pharmacy.")
           : r.error === "no_channel_delivered" ? t("Ο πελάτης δεν έχει έγκυρο email/κινητό στο σύστημα.", "No valid email/mobile on file for this customer.")
           : t("Δεν ήταν δυνατή η αποστολή — δοκίμασε ξανά.", "Could not send — try again."));
       }
+    },
+    onError: () => toastError(t("Κάτι πήγε στραβά.", "Something went wrong.")),
+  });
+  // ΠΡΟΣΚΛΗΣΗ ΜΕ EMAIL: ο πελάτης γράφεται από το σπίτι του — ορίζει μόνο κωδικό. Χωρίς συνταγές/SMS.
+  const [inv, setInv] = useState({ email: "", amka: "", last_name: "", first_name: "" });
+  const invite = useMutation({
+    mutationFn: () => api<{ ok: boolean; email?: string; error?: string }>(
+      "/portal/portal-customers/invite", { method: "POST", body: JSON.stringify(inv) }),
+    onSuccess: (r) => {
+      if (r.ok) {
+        toastSuccess(t(`✓ Στάλθηκε πρόσκληση στο ${r.email}. Ο πελάτης ορίζει κωδικό από τον σύνδεσμο (ισχύει 7 ημέρες).`,
+                       `✓ Invitation sent to ${r.email}. The customer sets a password from the link (valid 7 days).`));
+        setInv({ email: "", amka: "", last_name: "", first_name: "" });
+        qcCust.invalidateQueries({ queryKey: ["portal-customers"] });
+        return;
+      }
+      toastError(
+        r.error === "amka_exists" ? t("Υπάρχει ήδη λογαριασμός πύλης με αυτό το ΑΜΚΑ — στείλε του νέο σύνδεσμο από το «Ξεκλείδωμα».", "An account with this ΑΜΚΑ already exists — use «Unlock».")
+        : r.error === "email_exists" ? t("Αυτό το email χρησιμοποιείται ήδη σε λογαριασμό πύλης — δοκίμασε το «Ξεκλείδωμα».", "This email is already used — try «Unlock».")
+        : r.error === "bad_amka" ? t("Το ΑΜΚΑ πρέπει να έχει 11 ψηφία.", "ΑΜΚΑ must have 11 digits.")
+        : r.error === "bad_email" ? t("Το email δεν είναι έγκυρο.", "Invalid email.")
+        : r.error === "name_required" ? t("Γράψε επώνυμο/όνομα — ο πελάτης δεν υπάρχει στις καρτέλες σου.", "Enter the name — not in your records.")
+        : t("Δεν ήταν δυνατή η αποστολή του email — δοκίμασε ξανά.", "Could not send the email — try again."));
     },
     onError: () => toastError(t("Κάτι πήγε στραβά.", "Something went wrong.")),
   });
@@ -168,6 +191,27 @@ function PortalCustomersTab() {
               className="inline-flex items-center gap-1 rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700"><Copy className="h-4 w-4" /> {copied ? t("Αντιγράφηκε!", "Copied!") : t("Αντιγραφή συνδέσμου", "Copy link")}</button>
           </div>
         </div>
+      </div>
+
+      <div className="rx-card p-4">
+        <div className="flex items-center gap-2 text-sm font-semibold text-slate-800 dark:text-slate-200">
+          <Mail className="h-4 w-4 text-emerald-600" /> {t("Πρόσκληση πελάτη με email — εγγραφή από το σπίτι", "Invite a customer by email — sign up from home")}
+        </div>
+        <p className="mt-0.5 text-xs text-slate-500">{t("Γράψε email και ΑΜΚΑ. Ο πελάτης παίρνει email από το φαρμακείο σου και ορίζει μόνο κωδικό — χωρίς φόρμα. Δεν χρειάζεται να έχει συνταγές στο φαρμακείο. Αν είναι ήδη πελάτης σου, το όνομα συμπληρώνεται από την καρτέλα.", "Enter email and ΑΜΚΑ. The customer gets an email from your pharmacy and only sets a password. No prescriptions needed. Existing customers: the name comes from the card.")}</p>
+        <form onSubmit={(e) => { e.preventDefault(); if (inv.email.trim() && inv.amka.trim()) invite.mutate(); }} className="mt-2 grid gap-2 sm:grid-cols-[1.4fr_1fr_1fr_1fr_auto]">
+          <input type="email" value={inv.email} onChange={(e) => setInv({ ...inv, email: e.target.value })} placeholder={t("email πελάτη", "customer email")}
+            className="min-w-0 rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800" />
+          <input value={inv.amka} inputMode="numeric" onChange={(e) => setInv({ ...inv, amka: e.target.value })} placeholder={t("ΑΜΚΑ", "ΑΜΚΑ")}
+            className="min-w-0 rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800" />
+          <input value={inv.last_name} onChange={(e) => setInv({ ...inv, last_name: e.target.value })} placeholder={t("επώνυμο (αν νέος)", "last name (if new)")}
+            className="min-w-0 rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800" />
+          <input value={inv.first_name} onChange={(e) => setInv({ ...inv, first_name: e.target.value })} placeholder={t("όνομα (αν νέος)", "first name (if new)")}
+            className="min-w-0 rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800" />
+          <button type="submit" disabled={invite.isPending || !inv.email.trim() || !inv.amka.trim()}
+            className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-50">
+            {invite.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />} {t("Αποστολή πρόσκλησης", "Send invitation")}
+          </button>
+        </form>
       </div>
 
       <div className="rx-card p-4">

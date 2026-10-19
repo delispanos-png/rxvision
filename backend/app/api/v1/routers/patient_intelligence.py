@@ -14,6 +14,7 @@ from pydantic import BaseModel
 from app.core.config import settings
 from app.core.deps import TenantContext, require
 from app.repositories.advisor import AdvisorRepository
+from app.repositories.base import jsonsafe
 from app.repositories.patient_intelligence import PatientIntelligenceRepository
 from app.services import patient_advice
 from app.utils.anonymization import pseudonymize
@@ -213,6 +214,24 @@ class PortalAccountIn(BaseModel):
     amka: str
     email: str
     phone: str | None = None
+
+
+@router.get("/profile/portal-account")
+async def portal_account_status(amka: str, ctx: TenantContext = Depends(require("patients:read", module=_MODULE))):
+    """Έχει ήδη λογαριασμό πύλης αυτός ο πελάτης; Το παράθυρο «Λογαριασμός my.rxvision» το ρωτά ΠΡΩΤΑ,
+    ώστε να λέει καθαρά «είναι ήδη εγγεγραμμένος → στείλε ξανά σύνδεσμο» αντί για «αποτυχία — ίσως…»."""
+    if not await _repo(ctx)._patient_by_amka(amka):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "patient_not_found")
+    from app.repositories.patient_portal import PatientAccountRepository
+    from app.services.patient_auth_service import _mask_email
+    repo = PatientAccountRepository()
+    acc = await repo.get_by_amka((amka or "").strip())
+    if not acc:
+        return {"exists": False}
+    link = await repo.db["patient_links"].find_one(  # tenant-ok: explicit tenant_id
+        {"account_id": acc["_id"], "tenant_id": ctx.tenant_id}, {"created_at": 1})
+    return jsonsafe({"exists": True, "linked": bool(link), "email": _mask_email(acc.get("email")),
+                     "since": (link or {}).get("created_at") or acc.get("created_at")})
 
 
 @router.post("/profile/portal-account")

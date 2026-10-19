@@ -7,6 +7,7 @@ minted for that pharmacy (tenant + pseudonymised patient ref).
 from __future__ import annotations
 
 import hashlib
+import html
 import hmac
 import logging
 import secrets
@@ -14,6 +15,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 import pyotp
+from bson import ObjectId
 
 from app.core.config import settings
 from app.utils.signed_media import avatar_url as _avatar_url
@@ -190,7 +192,8 @@ class PatientAuthService:
         return await self._start_session(acc, links, meta)
 
     async def admin_create(self, *, first_name: str, last_name: str, email: str,
-                           phone: str | None, amka: str, tenant_id: str | None = None) -> dict:
+                           phone: str | None, amka: str, tenant_id: str | None = None,
+                           invite_from: str | None = None) -> dict:
         """Pharmacist-initiated account creation (my.rxvision.gr). Στέλνει στον πελάτη link «όρισε
         κωδικό» (email + SMS) ώστε να βάλει δικό του κωδικό, ΚΑΙ επιστρέφει έναν εύκολο προσωρινό
         κωδικό (χωρίς σύμβολα) ως εφεδρεία + υποχρεωτική αλλαγή στο 1ο login. Συνδέεται ΜΟΝΟ με το
@@ -214,18 +217,49 @@ class PatientAuthService:
             await self.repo.set_favorite(acc["_id"], tenant_id)
         token = await self.repo.create_set_password_token(acc["_id"])
         link = f"{_PORTAL_BASE}/portal/set-password?token={token}" if token else None
-        sent = await self._send_set_password_link(email, phone, link) if link else []
-        return {"ok": True, "email": email, "temp_password": pw, "link_sent": sent}
+        sent = await self._send_set_password_link(email, phone, link, invite_from=invite_from) if link else []
+        return {"ok": True, "email": email, "temp_password": pw, "link_sent": sent,
+                "account_id": str(acc["_id"])}
 
-    async def _send_set_password_link(self, email: str, phone: str | None, link: str) -> list[dict]:
-        """Στέλνει το link «όρισε κωδικό» σε email (δωρεάν SMTP) + SMS (κεντρικό Apifon). Best-effort."""
+    async def invite(self, *, first_name: str, last_name: str, email: str, amka: str,
+                     tenant_id: str, pharmacy_name: str | None) -> dict:
+        """ΠΡΟΣΚΛΗΣΗ ΜΕ EMAIL (19/10/2026): ο φαρμακοποιός γράφει email + ΑΜΚΑ + όνομα και ο πελάτης παίρνει
+        email «το φαρμακείο Χ σάς προσκαλεί» με σύνδεσμο ορισμού κωδικού — από το σπίτι του, χωρίς φόρμα,
+        χωρίς 6ψήφιο κωδικό, χωρίς SMS (κόστος). ΔΕΝ χρειάζεται συνταγές στο φαρμακείο: ο λογαριασμός
+        δένεται με «καρτέλα χωρίς κίνηση». Την ταυτότητα (ΑΜΚΑ↔πρόσωπο) την εγγυάται ο φαρμακοποιός,
+        όπως στο admin_create — γι' αυτό συνδέεται ΜΟΝΟ με αυτό το φαρμακείο."""
+        res = await self.admin_create(first_name=first_name, last_name=last_name, email=email,
+                                      phone=None, amka=amka, tenant_id=tenant_id,
+                                      invite_from=pharmacy_name or "το φαρμακείο σας")
+        if not res.get("ok"):
+            return res
+        # καρτέλα χωρίς κίνηση (νέος πελάτης): να φαίνεται με όνομα στη λίστα του φαρμακείου
+        link = await self.repo.db["patient_links"].find_one(  # tenant-ok: explicit tenant_id
+            {"account_id": ObjectId(res["account_id"]), "tenant_id": tenant_id}, {"patient_ref": 1})
+        if link:
+            full = f"{last_name} {first_name}".strip()
+            await self.repo.db["patients_anonymized"].update_one(  # tenant-ok: explicit tenant_id
+                {"tenant_id": tenant_id, "_id": link["patient_ref"], "full_name": {"$in": [None, ""]}},
+                {"$set": {"full_name": full, "amka": amka}})
+        return {"ok": bool(res.get("link_sent")), "email": _mask_email(res["email"]),
+                "error": None if res.get("link_sent") else "email_failed"}
+
+    async def _send_set_password_link(self, email: str, phone: str | None, link: str,
+                                      invite_from: str | None = None) -> list[dict]:
+        """Στέλνει το link «όρισε κωδικό» σε email (δωρεάν SMTP) + SMS (κεντρικό Apifon). Best-effort.
+        `invite_from` = όνομα φαρμακείου → κείμενο ΠΡΟΣΚΛΗΣΗΣ αντί για «δημιουργήθηκε λογαριασμός»."""
         sent: list[dict] = []
         if email:
             try:
                 from app.services import mailer
+                intro = (f"<p><b>{html.escape(invite_from)}</b> σάς προσκαλεί στην ψηφιακή του πύλη: δείτε τις "
+                         f"συνταγές σας, τι ανοίγει και πότε, ρωτήστε για διαθεσιμότητα και κλείστε ραντεβού.</p>"
+                         if invite_from else
+                         "<p>Δημιουργήθηκε ο λογαριασμός σας στην Πύλη Πελατών RxVision.</p>")
                 await mailer.send_email(
-                    email, "RxVision — Ορισμός κωδικού πρόσβασης",
-                    f"<p>Δημιουργήθηκε ο λογαριασμός σας στην Πύλη Πελατών RxVision.</p>"
+                    email, (f"{invite_from} — πρόσκληση στην Πύλη Πελατών" if invite_from
+                            else "RxVision — Ορισμός κωδικού πρόσβασης"),
+                    f"{intro}"
                     f"<p>Πατήστε για να ορίσετε τον δικό σας κωδικό πρόσβασης:</p>"
                     f"<p><a href='{link}' style='display:inline-block;padding:11px 20px;background:#4f46e5;"
                     f"color:#fff;text-decoration:none;border-radius:8px;font-weight:bold'>Ορισμός κωδικού</a></p>"

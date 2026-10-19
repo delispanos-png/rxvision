@@ -379,6 +379,7 @@ _ADMIN: dict[tuple[str, str], str] = {
     ("DELETE", "/groups/{group_id}"): "staff:manage",
     ("GET", "/smtp"): "system:read",
     ("PUT", "/smtp"): "system:smtp",
+    ("GET", "/smtp/health"): "system:read",   # κόκκινη μπάρα «δεν φεύγουν email» στο adminpanel
     ("POST", "/smtp/test"): "system:smtp",
     ("GET", "/maintenance"): "system:read",
     ("PUT", "/maintenance"): "system:maintenance",
