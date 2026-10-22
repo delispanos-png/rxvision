@@ -124,15 +124,15 @@ function PortalCustomersTab() {
     },
     onError: () => toastError(t("Κάτι πήγε στραβά.", "Something went wrong.")),
   });
-  // ΠΡΟΣΚΛΗΣΗ ΜΕ EMAIL: ο πελάτης γράφεται από το σπίτι του — ορίζει μόνο κωδικό. Χωρίς συνταγές/SMS.
+  // ΠΡΟΣΚΛΗΣΗ ΜΕ EMAIL: ο πελάτης παίρνει έτοιμα στοιχεία σύνδεσης (διεύθυνση/χρήστης/κωδικός). Χωρίς συνταγές/SMS.
   const [inv, setInv] = useState({ email: "", amka: "", last_name: "", first_name: "" });
   const invite = useMutation({
     mutationFn: () => api<{ ok: boolean; email?: string; error?: string }>(
       "/portal/portal-customers/invite", { method: "POST", body: JSON.stringify(inv) }),
     onSuccess: (r) => {
       if (r.ok) {
-        toastSuccess(t(`✓ Στάλθηκε πρόσκληση στο ${r.email}. Ο πελάτης ορίζει κωδικό από τον σύνδεσμο (ισχύει 7 ημέρες).`,
-                       `✓ Invitation sent to ${r.email}. The customer sets a password from the link (valid 7 days).`));
+        toastSuccess(t(`✓ Στάλθηκε πρόσκληση στο ${r.email} με τη διεύθυνση, το όνομα χρήστη και τον κωδικό. Ο πελάτης μπαίνει κατευθείαν.`,
+                       `✓ Invitation sent to ${r.email} with the address, username and password. The customer logs in straight away.`));
         setInv({ email: "", amka: "", last_name: "", first_name: "" });
         qcCust.invalidateQueries({ queryKey: ["portal-customers"] });
         return;
@@ -197,7 +197,7 @@ function PortalCustomersTab() {
         <div className="flex items-center gap-2 text-sm font-semibold text-slate-800 dark:text-slate-200">
           <Mail className="h-4 w-4 text-emerald-600" /> {t("Πρόσκληση πελάτη με email — εγγραφή από το σπίτι", "Invite a customer by email — sign up from home")}
         </div>
-        <p className="mt-0.5 text-xs text-slate-500">{t("Γράψε email και ΑΜΚΑ. Ο πελάτης παίρνει email από το φαρμακείο σου και ορίζει μόνο κωδικό — χωρίς φόρμα. Δεν χρειάζεται να έχει συνταγές στο φαρμακείο. Αν είναι ήδη πελάτης σου, το όνομα συμπληρώνεται από την καρτέλα.", "Enter email and ΑΜΚΑ. The customer gets an email from your pharmacy and only sets a password. No prescriptions needed. Existing customers: the name comes from the card.")}</p>
+        <p className="mt-0.5 text-xs text-slate-500">{t("Γράψε email και ΑΜΚΑ. Ο πελάτης παίρνει email από το φαρμακείο σου με διεύθυνση, όνομα χρήστη και κωδικό — μπαίνει κατευθείαν. Δεν χρειάζεται να έχει συνταγές στο φαρμακείο. Αν είναι ήδη πελάτης σου, το όνομα συμπληρώνεται από την καρτέλα.", "Enter email and ΑΜΚΑ. The customer gets an email from your pharmacy with the address, username and password — they log in straight away. No prescriptions needed. Existing customers: the name comes from the card.")}</p>
         <form onSubmit={(e) => { e.preventDefault(); if (inv.email.trim() && inv.amka.trim()) invite.mutate(); }} className="mt-2 grid gap-2 sm:grid-cols-[1.4fr_1fr_1fr_1fr_auto]">
           <input type="email" value={inv.email} onChange={(e) => setInv({ ...inv, email: e.target.value })} placeholder={t("email πελάτη", "customer email")}
             className="min-w-0 rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800" />

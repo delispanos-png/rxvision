@@ -48,7 +48,15 @@ async def test_invite_new_person_without_prescriptions(monkeypatch):
     card = await db["patients_anonymized"].find_one({"_id": link["patient_ref"]})
     assert card["rx_count"] == 0 and card["full_name"] == "ΔΗΛΗΣ ΠΑΝΑΓΙΩΤΗΣ"   # καρτέλα χωρίς κίνηση, με όνομα
     to, subject, body = mails[-1]
-    assert to == "new@mail.gr" and "ΦΑΡΜΑΚΕΙΟ ΔΟΚΙΜΗΣ" in subject and "set-password?token=" in body
+    assert to == "new@mail.gr" and "ΦΑΡΜΑΚΕΙΟ ΔΟΚΙΜΗΣ" in subject
+    # 22/10/2026: ΟΛΑ τα στοιχεία σύνδεσης στο email — διεύθυνση, όνομα χρήστη, κωδικός — και
+    # ΚΑΜΙΑ υποχρεωτική αλλαγή κωδικού στην 1η σύνδεση.
+    assert "https://my.rxvision.gr/portal/login" in body and "new@mail.gr" in body
+    assert "set-password?token=" not in body and acc["must_change_password"] is False
+    import re
+    from app.core.security import verify_password
+    pw = re.search(r"Κωδικός</td><td[^>]*><b[^>]*>([^<]+)</b>", body).group(1)
+    assert verify_password(pw, acc["password_hash"])        # ο κωδικός του email ΔΟΥΛΕΥΕΙ
 
 
 async def test_invite_takes_name_from_existing_card(monkeypatch):

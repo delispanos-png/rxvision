@@ -40,6 +40,7 @@ def _mask_email(email: str | None) -> str:
 _OTP_TTL_MIN = 10
 _OTP_MAX_ATTEMPTS = 5
 _PORTAL_BASE = "https://my.rxvision.gr"
+LOGIN_URL = f"{_PORTAL_BASE}/portal/login"
 
 
 class PatientError(Exception):
@@ -194,10 +195,13 @@ class PatientAuthService:
     async def admin_create(self, *, first_name: str, last_name: str, email: str,
                            phone: str | None, amka: str, tenant_id: str | None = None,
                            invite_from: str | None = None) -> dict:
-        """Pharmacist-initiated account creation (my.rxvision.gr). Στέλνει στον πελάτη link «όρισε
-        κωδικό» (email + SMS) ώστε να βάλει δικό του κωδικό, ΚΑΙ επιστρέφει έναν εύκολο προσωρινό
-        κωδικό (χωρίς σύμβολα) ως εφεδρεία + υποχρεωτική αλλαγή στο 1ο login. Συνδέεται ΜΟΝΟ με το
-        φαρμακείο που τον δημιούργησε."""
+        """Pharmacist-initiated account creation (my.rxvision.gr). Συνδέεται ΜΟΝΟ με το φαρμακείο
+        που τον δημιούργησε.
+
+        ΑΠΟΦΑΣΗ ΙΔΙΟΚΤΗΤΗ (22/10/2026): ο πελάτης παίρνει email με ΟΛΑ τα στοιχεία σύνδεσης —
+        διεύθυνση, όνομα χρήστη (email), κωδικό — ίδια με το παράθυρο που βλέπει ο φαρμακοποιός,
+        και μπαίνει ΚΑΤΕΥΘΕΙΑΝ με αυτά: ΚΑΜΙΑ υποχρεωτική αλλαγή κωδικού στην 1η σύνδεση. Αν θέλει,
+        τον αλλάζει μετά από το Προφίλ (`change_password`)."""
         email = (email or "").strip().lower()
         amka = (amka or "").strip()
         if not email or "@" not in email:
@@ -210,16 +214,14 @@ class PatientAuthService:
         acc = await self.repo.create(
             first_name=first_name, last_name=last_name, email=email,
             phone=phone, amka=amka, password_hash=hash_password(pw),
-            must_change_password=True)
+            must_change_password=False)
         # ΜΟΝΟ το φαρμακείο που δημιούργησε τον λογαριασμό — όχι κάθε φαρμακείο με το ίδιο ΑΜΚΑ.
         if tenant_id:
             await self.repo.link_or_create(acc["_id"], tenant_id)
             await self.repo.set_favorite(acc["_id"], tenant_id)
-        token = await self.repo.create_set_password_token(acc["_id"])
-        link = f"{_PORTAL_BASE}/portal/set-password?token={token}" if token else None
-        sent = await self._send_set_password_link(email, phone, link, invite_from=invite_from) if link else []
-        return {"ok": True, "email": email, "temp_password": pw, "link_sent": sent,
-                "account_id": str(acc["_id"])}
+        sent = await self._send_credentials(email, phone, pw, invite_from=invite_from)
+        return {"ok": True, "email": email, "temp_password": pw, "login_url": LOGIN_URL,
+                "credentials_sent": sent, "account_id": str(acc["_id"])}
 
     async def invite(self, *, first_name: str, last_name: str, email: str, amka: str,
                      tenant_id: str, pharmacy_name: str | None) -> dict:
@@ -241,24 +243,67 @@ class PatientAuthService:
             await self.repo.db["patients_anonymized"].update_one(  # tenant-ok: explicit tenant_id
                 {"tenant_id": tenant_id, "_id": link["patient_ref"], "full_name": {"$in": [None, ""]}},
                 {"$set": {"full_name": full, "amka": amka}})
-        return {"ok": bool(res.get("link_sent")), "email": _mask_email(res["email"]),
-                "error": None if res.get("link_sent") else "email_failed"}
+        return {"ok": bool(res.get("credentials_sent")), "email": _mask_email(res["email"]),
+                "error": None if res.get("credentials_sent") else "email_failed"}
 
-    async def _send_set_password_link(self, email: str, phone: str | None, link: str,
-                                      invite_from: str | None = None) -> list[dict]:
-        """Στέλνει το link «όρισε κωδικό» σε email (δωρεάν SMTP) + SMS (κεντρικό Apifon). Best-effort.
-        `invite_from` = όνομα φαρμακείου → κείμενο ΠΡΟΣΚΛΗΣΗΣ αντί για «δημιουργήθηκε λογαριασμός»."""
+    async def _send_credentials(self, email: str, phone: str | None, password: str,
+                                invite_from: str | None = None) -> list[dict]:
+        """Στοιχεία σύνδεσης στον πελάτη — ΤΑ ΙΔΙΑ με το παράθυρο του φαρμακοποιού (διεύθυνση,
+        όνομα χρήστη, κωδικός), ώστε να μπει αμέσως. Email (δωρεάν SMTP) + SMS αν υπάρχει κινητό."""
         sent: list[dict] = []
         if email:
             try:
                 from app.services import mailer
+                e, pw, url = html.escape(email), html.escape(password), html.escape(LOGIN_URL)
                 intro = (f"<p><b>{html.escape(invite_from)}</b> σάς προσκαλεί στην ψηφιακή του πύλη: δείτε τις "
                          f"συνταγές σας, τι ανοίγει και πότε, ρωτήστε για διαθεσιμότητα και κλείστε ραντεβού.</p>"
                          if invite_from else
                          "<p>Δημιουργήθηκε ο λογαριασμός σας στην Πύλη Πελατών RxVision.</p>")
+                row = "padding:4px 12px 4px 0;color:#64748b"
                 await mailer.send_email(
-                    email, (f"{invite_from} — πρόσκληση στην Πύλη Πελατών" if invite_from
-                            else "RxVision — Ορισμός κωδικού πρόσβασης"),
+                    email, (f"{invite_from} — τα στοιχεία σας για την Πύλη Πελατών" if invite_from
+                            else "RxVision — Στοιχεία σύνδεσης στην Πύλη Πελατών"),
+                    f"{intro}"
+                    f"<p>Τα στοιχεία σύνδεσής σας:</p>"
+                    f"<table style='border-collapse:collapse;font-size:15px;background:#f8fafc;"
+                    f"border:1px solid #e2e8f0;border-radius:8px'><tbody>"
+                    f"<tr><td style='{row};padding-left:12px'>Διεύθυνση</td><td style='padding:4px 12px'>"
+                    f"<a href='{url}'>{url}</a></td></tr>"
+                    f"<tr><td style='{row};padding-left:12px'>Όνομα χρήστη</td><td style='padding:4px 12px'>"
+                    f"<b style='font-family:monospace'>{e}</b></td></tr>"
+                    f"<tr><td style='{row};padding-left:12px'>Κωδικός</td><td style='padding:4px 12px'>"
+                    f"<b style='font-family:monospace'>{pw}</b></td></tr>"
+                    f"</tbody></table>"
+                    f"<p><a href='{url}' style='display:inline-block;padding:11px 20px;background:#4f46e5;"
+                    f"color:#fff;text-decoration:none;border-radius:8px;font-weight:bold'>Σύνδεση</a></p>"
+                    f"<p style='font-size:12px;color:#64748b'>Μπορείτε να συνδεθείτε αμέσως με αυτά τα στοιχεία. "
+                    f"Αν θέλετε, αλλάζετε τον κωδικό σας οποιαδήποτε στιγμή από το «Προφίλ → Αλλαγή κωδικού».</p>"
+                    f"<p style='font-size:12px;color:#64748b'>Κρατήστε αυτό το μήνυμα ιδιωτικό — δίνει πρόσβαση "
+                    f"στις συνταγές σας.</p>")
+                sent.append({"type": "email", "hint": _mask_email(email)})
+            except Exception as exc:  # noqa: BLE001 — best-effort αλλά logged (διαγνώσιμο)
+                logger.warning("credentials EMAIL failed for %s: %s: %s",
+                               _mask_email(email), type(exc).__name__, exc)
+        if phone:
+            try:
+                from app.services import comms
+                await comms.send_otp_sms(
+                    phone, f"RxVision Πύλη: {LOGIN_URL} · Χρήστης: {email} · Κωδικός: {password}")
+                sent.append({"type": "sms", "hint": _mask_phone(phone)})
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("credentials SMS failed: %s: %s", type(exc).__name__, exc)
+        return sent
+
+    async def _send_set_password_link(self, email: str, phone: str | None, link: str) -> list[dict]:
+        """Στέλνει το link «όρισε κωδικό» σε email (δωρεάν SMTP) + SMS (κεντρικό Apifon). Best-effort.
+        Μόνο για το «ξαναστείλε» του φαρμακοποιού (ο πελάτης δεν βρίσκει/ξέχασε τα στοιχεία του)."""
+        sent: list[dict] = []
+        if email:
+            try:
+                from app.services import mailer
+                intro = "<p>Ο λογαριασμός σας στην Πύλη Πελατών RxVision.</p>"
+                await mailer.send_email(
+                    email, "RxVision — Ορισμός κωδικού πρόσβασης",
                     f"{intro}"
                     f"<p>Πατήστε για να ορίσετε τον δικό σας κωδικό πρόσβασης:</p>"
                     f"<p><a href='{link}' style='display:inline-block;padding:11px 20px;background:#4f46e5;"
