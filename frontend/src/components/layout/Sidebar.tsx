@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -31,7 +31,29 @@ export function Sidebar() {
   const { collapsed } = usePref();
   const t = useT();
   const [loc, setLoc] = useState("");   // current search + hash (for active highlighting of #/​? leaves)
+  // Κλειδί ανά ΟΜΑΔΑ: το ίδιο όνομα («Ρυθμίσεις») υπάρχει σε πολλές ομάδες και δεν πρέπει
+  // να ανοιγοκλείνουν μαζί.
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const nodeKey = (group: string, label: string) => `${group}|${label}`;
+  const sectionKey = (group: string, label: string) => `§${group}|${label}`;
+  // Κλειστό μενού (μόνο εικονίδια, desktop): ΕΝΑ εικονίδιο ανά κύκλωμα· με hover/κλικ ανοίγει
+  // πάνελ δίπλα με όλες τις επιλογές του. Πριν φαίνονταν ~40 εικονίδια χωρίς διαχωρισμό.
+  const [fly, setFly] = useState<{ title: string; top: number } | null>(null);
+  const flyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const flyKeep = () => { if (flyTimer.current) { clearTimeout(flyTimer.current); flyTimer.current = null; } };
+  const flyClose = () => { flyKeep(); flyTimer.current = setTimeout(() => setFly(null), 180); };
+  const flyOpen = (title: string, el: HTMLElement) => {
+    flyKeep();
+    const r = el.getBoundingClientRect();
+    setFly({ title, top: r.top });
+  };
+  useEffect(() => { setFly(null); }, [pathname]);
+  useEffect(() => {
+    if (!fly) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setFly(null); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [fly]);
   useEffect(() => { setOpen(false); }, [pathname, setOpen]);
   useEffect(() => {
     const read = () => setLoc(window.location.search + window.location.hash);
@@ -177,11 +199,16 @@ export function Sidebar() {
   useEffect(() => {
     setExpanded((prev) => {
       const next = new Set(prev);
+      const onPath = (href?: string) => {
+        if (!href) return false;
+        const base = href.split(/[?#]/)[0];
+        return pathname === base || pathname.startsWith(base + "/");
+      };
       for (const g of GROUPS) for (const n of g.items) {
-        if (n.children && n.children.some((c) => {
-          const base = c.href.split(/[?#]/)[0];
-          return pathname === base || pathname.startsWith(base + "/");
-        })) next.add(n.label);
+        const here = onPath(n.href) || !!n.children?.some((c) => onPath(c.href));
+        if (!here) continue;
+        if (n.children) next.add(nodeKey(g.title, n.label));
+        if (n.section) next.add(sectionKey(g.title, n.section.label));
       }
       return next;
     });
@@ -222,7 +249,7 @@ export function Sidebar() {
   return (
     <>
       {open && <div className="fixed inset-0 z-30 bg-black/40 md:hidden" onClick={() => setOpen(false)} />}
-      <aside className={`fixed inset-y-0 left-0 z-40 flex w-[min(16rem,85vw)] shrink-0 flex-col border-r border-slate-200/70 bg-white transition-all duration-200 dark:border-slate-800 dark:bg-slate-900 md:sticky md:top-0 md:h-screen md:self-start md:w-64 md:translate-x-0 ${collapsed ? "md:w-[72px]" : "md:w-64"} ${open ? "translate-x-0" : "-translate-x-full"}`}>
+      <aside className={`fixed inset-y-0 left-0 z-40 flex w-[min(18rem,85vw)] shrink-0 flex-col border-r border-slate-200/70 bg-white transition-all duration-200 dark:border-slate-800 dark:bg-slate-900 md:sticky md:top-0 md:h-screen md:self-start md:w-72 md:translate-x-0 ${collapsed ? "md:w-[72px]" : "md:w-72"} ${open ? "translate-x-0" : "-translate-x-full"}`}>
         <div className={`flex h-16 items-center px-5 ${collapsed ? "md:justify-center md:px-0" : ""}`}>
           {/* logo → marketing site (rxvision.gr) */}
           <a href="https://rxvision.gr" title="rxvision.gr" className="transition hover:opacity-80">
@@ -252,11 +279,11 @@ export function Sidebar() {
           )}
         </div>
 
-        <nav className="flex-1 space-y-6 overflow-y-auto px-3 py-4">
+        <nav className={`flex-1 overflow-y-auto px-3 py-4 ${mode === "personal" ? "space-y-6" : "space-y-1"}`}>
           {/* ΔΙΑΚΟΠΤΗΣ: ή το κεντρικό μενού (όπως το ορίζει ο ρόλος του) ή ΜΟΝΟ τα δικά του.
               Όχι και τα δύο μαζί — αυτό ήταν το αρχικό λάθος: το «προσωπικό» απλώς πρόσθετε
               άλλη μια ενότητα σε ένα μενού που ήταν ήδη μεγάλο. */}
-          <div className={`flex items-center gap-1.5 ${hide}`}>
+          <div className={`flex items-center gap-1.5 ${mode === "personal" ? "" : "!mb-4"} ${hide}`}>
           <div className="flex flex-1 rounded-xl bg-slate-100 p-0.5 dark:bg-slate-800">
             <button onClick={() => setMode("central")}
               className={`flex-1 rounded-lg px-2 py-1.5 text-xs font-bold transition ${mode === "central" ? "bg-white text-slate-800 shadow-sm dark:bg-slate-700 dark:text-slate-100" : "text-slate-500 hover:text-slate-700 dark:text-slate-400"}`}>
@@ -323,20 +350,30 @@ export function Sidebar() {
             }
             const gCollapsed = collapsedGroups.has(g.title);
             const GroupIcon = g.icon;
+            // κλειστή ομάδα που περιέχει την τρέχουσα σελίδα → τονίζεται, για να ξέρεις πού είσαι
+            const gActive = gCollapsed && g.items.some(nodeActive);
             return (
             <div key={g.title}>
-              {/* Επικεφαλίδα ομάδας = κουμπί πτύξης (κρύβεται όταν το sidebar είναι σε λειτουργία εικονιδίων) */}
-              <button onClick={() => toggleGroup(g.title)}
-                className={`flex w-full items-center justify-between px-3 pb-2 text-[13px] font-bold uppercase tracking-wide text-slate-500 transition-colors hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 ${hide}`}>
-                <span className="flex items-center gap-2">
-                  <GroupIcon className="h-4 w-4 shrink-0 text-brand-500" strokeWidth={2} />
-                  {t(g.title, g.en)}
-                </span>
-                <ChevronRight className={`h-3.5 w-3.5 shrink-0 transition-transform ${gCollapsed ? "" : "rotate-90"}`} />
+              {/* Επικεφαλίδα ομάδας = κουμπί πτύξης, ΙΔΙΑ εμφάνιση με τις απλές επιλογές πρώτου
+                  επιπέδου (PharmaCat/Ρυθμίσεις/Chat) ώστε το μενού να διαβάζεται ως μία λίστα.
+                  Κρύβεται όταν το sidebar είναι σε λειτουργία εικονιδίων. */}
+              <button onClick={() => toggleGroup(g.title)} className={`${linkCls(gActive)} w-full font-semibold ${hide}`}>
+                <GroupIcon className={iconCls(gActive)} strokeWidth={2} />
+                <span className="flex-1 text-left leading-snug">{t(g.title, g.en)}</span>
+                <ChevronRight className={`h-4 w-4 shrink-0 text-slate-400 transition-transform ${gCollapsed ? "" : "rotate-90"}`} />
               </button>
-              {(collapsed || !gCollapsed) && (
-              <div className="space-y-1">
-                {g.items.map((n) => {
+              {collapsed && (
+                <button onClick={(e) => (fly?.title === g.title ? setFly(null) : flyOpen(g.title, e.currentTarget))}
+                  onMouseEnter={(e) => flyOpen(g.title, e.currentTarget)} onMouseLeave={flyClose}
+                  aria-label={t(g.title, g.en)}
+                  className={`${linkCls(g.items.some(nodeActive) || fly?.title === g.title)} hidden w-full md:flex`}>
+                  <GroupIcon className={iconCls(g.items.some(nodeActive) || fly?.title === g.title)} strokeWidth={2} />
+                </button>
+              )}
+              {!gCollapsed && (
+              <div className={`mb-1 ml-5 mt-0.5 space-y-0.5 border-l border-slate-200 pl-2 dark:border-slate-700 ${collapsed ? "md:hidden" : ""}`}>
+                {(() => {
+                const renderNode = (n: Node) => {
                   const Icon = n.icon;
                   const active = nodeActive(n);
                   // locked circuit: keep in menu (dimmed + 🔒 + upsell) ONLY if it's a purchasable
@@ -360,19 +397,12 @@ export function Sidebar() {
                       ? <a key={n.label} href={n.href!} title={tip(n.href!, t(n.label, n.en))} className={linkCls(active)} onClick={() => setOpen(false)}>{inner}</a>
                       : <Link key={n.label} href={n.href!} title={tip(n.href!, t(n.label, n.en))} className={linkCls(active)}>{inner}</Link>;
                   }
-                  // collapsed desktop → parent acts as a link to its first child (no nesting)
-                  if (collapsed) {
-                    const cls = `${linkCls(active)} md:justify-center md:px-0`;
-                    const inner = (<><Icon className={iconCls(active)} strokeWidth={2} /><span className="md:hidden">{t(n.label, n.en)}</span></>);
-                    return n.children[0].href.includes("#")
-                      ? <a key={n.label} href={n.children[0].href} title={tip(n.children[0].href, t(n.label, n.en), true)} className={cls} onClick={() => setOpen(false)}>{inner}</a>
-                      : <Link key={n.label} href={n.children[0].href} title={tip(n.children[0].href, t(n.label, n.en), true)} className={cls}>{inner}</Link>;
-                  }
                   // expandable parent
-                  const isOpen = expanded.has(n.label);
+                  const nk = nodeKey(g.title, n.label);
+                  const isOpen = expanded.has(nk);
                   return (
                     <div key={n.label}>
-                      <button onClick={() => toggle(n.label)} className={`${linkCls(active)} w-full`}>
+                      <button onClick={() => toggle(nk)} className={`${linkCls(active)} w-full`}>
                         <Icon className={iconCls(active)} strokeWidth={2} />
                         <span className="flex-1 text-left">{t(n.label, n.en)}</span>
                         <ChevronRight className={`h-4 w-4 shrink-0 text-slate-400 transition-transform ${isOpen ? "rotate-90" : ""}`} />
@@ -402,7 +432,35 @@ export function Sidebar() {
                       )}
                     </div>
                   );
-                })}
+                };
+                // Ενδιάμεσο επίπεδο (π.χ. «Ανάλυση εκτελέσεων»): συνεχόμενοι κόμβοι με την ίδια
+                // `section` μπαίνουν κάτω από μια πτυσσόμενη υπο-επικεφαλίδα.
+                const out: (JSX.Element | null)[] = [];
+                for (let i = 0; i < g.items.length;) {
+                  const sec = g.items[i].section;
+                  if (!sec) { out.push(renderNode(g.items[i++])); continue; }
+                  const members: Node[] = [];
+                  while (i < g.items.length && g.items[i].section?.label === sec.label) members.push(g.items[i++]);
+                  const sk = sectionKey(g.title, sec.label);
+                  const sOpen = expanded.has(sk);
+                  const sActive = members.some(nodeActive);
+                  out.push(
+                    <div key={sk}>
+                      <button onClick={() => toggle(sk)} className={`${linkCls(sActive && !sOpen)} w-full`}>
+                        <BarChart3 className={iconCls(sActive && !sOpen)} strokeWidth={2} />
+                        <span className="flex-1 text-left">{t(sec.label, sec.en)}</span>
+                        <ChevronRight className={`h-4 w-4 shrink-0 text-slate-400 transition-transform ${sOpen ? "rotate-90" : ""}`} />
+                      </button>
+                      {sOpen && (
+                        <div className="mt-1 ml-4 space-y-1 border-l border-slate-200 pl-2 dark:border-slate-700">
+                          {members.map(renderNode)}
+                        </div>
+                      )}
+                    </div>,
+                  );
+                }
+                return out;
+                })()}
               </div>
               )}
             </div>
@@ -420,6 +478,60 @@ export function Sidebar() {
         </Tooltip>
 
       </aside>
+
+      {/* Πάνελ κυκλώματος του κλειστού μενού — ΕΞΩ από το <aside>: το aside έχει transform και
+          θα «έπιανε» το position:fixed. Ίδιο φιλτράρισμα (modules/ρόλος) με το ανοιχτό μενού. */}
+      {collapsed && fly && (() => {
+        const g = groups.find((x) => x.title === fly.title);
+        if (!g) return null;
+        const rowCls = (a: boolean) => `block rounded-lg px-3 py-1.5 text-sm transition-colors ${a
+          ? "bg-brand-50 font-semibold text-brand-700 dark:bg-brand-600/15 dark:text-brand-300"
+          : "text-slate-600 hover:bg-slate-50 hover:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"}`;
+        const lockCls = "flex w-full items-center gap-2 rounded-lg border border-blue-200 bg-blue-50/50 px-3 py-1.5 text-left text-sm text-slate-500 dark:border-blue-900/60 dark:bg-blue-950/20";
+        const go = (href: string, label: string, en: string, key: string) =>
+          href.includes("#")
+            ? <a key={key} href={href} title={tip(href, t(label, en))} className={rowCls(leafActive(href))} onClick={() => setFly(null)}>{t(label, en)}</a>
+            : <Link key={key} href={href} title={tip(href, t(label, en))} className={rowCls(leafActive(href))} onClick={() => setFly(null)}>{t(label, en)}</Link>;
+        const locked = (n: Node, key: string) => (
+          <button key={key} onClick={() => { setFly(null); openUpsell(n); }} className={lockCls}>
+            <span className="flex-1">{t(n.label, n.en)}</span><Lock className="h-3 w-3 text-blue-700 dark:text-blue-300" />
+          </button>
+        );
+        const rows: JSX.Element[] = [];
+        let lastSec: string | undefined;
+        for (const n of g.items) {
+          if (n.section?.label !== lastSec) {
+            lastSec = n.section?.label;
+            if (n.section) rows.push(<div key={`§${n.section.label}`} className="px-3 pb-0.5 pt-2 text-[11px] font-bold uppercase tracking-wide text-slate-400">{t(n.section.label, n.section.en)}</div>);
+          }
+          if (!allowedMod(n.module)) { if (canUpsell(n.module)) rows.push(locked(n, n.label)); continue; }
+          if (!n.children) { rows.push(go(n.href!, n.label, n.en, n.label)); continue; }
+          rows.push(
+            <div key={n.label}>
+              <div className="px-3 pb-0.5 pt-1.5 text-sm font-semibold text-slate-700 dark:text-slate-200">{t(n.label, n.en)}</div>
+              <div className="ml-3 space-y-0.5 border-l border-slate-200 pl-2 dark:border-slate-700">
+                {n.children.map((c) => (allowedMod(c.module) ? go(c.href, c.label, c.en, c.href)
+                  : locked({ ...c, icon: n.icon } as Node, c.href)))}
+              </div>
+            </div>,
+          );
+        }
+        return (
+          // Ξεκινά στο ύψος του εικονιδίου· αν δεν χωρά από κάτω, ανεβαίνει ώστε να φαίνεται ΟΛΟ.
+          <div onMouseEnter={flyKeep} onMouseLeave={flyClose} style={{ top: fly.top }}
+            ref={(el) => {
+              if (!el) return;
+              const room = window.innerHeight - el.offsetHeight - 8;
+              el.style.top = `${Math.max(8, Math.min(fly.top, room))}px`;
+            }}
+            className="fixed left-[76px] z-50 hidden max-h-[calc(100vh-16px)] w-64 overflow-y-auto rounded-xl border border-slate-200 bg-white p-2 shadow-lg dark:border-slate-700 dark:bg-slate-900 md:block">
+            <div className="flex items-center gap-2 border-b border-slate-100 px-3 pb-2 pt-1 text-sm font-bold text-slate-800 dark:border-slate-800 dark:text-slate-100">
+              <g.icon className="h-4 w-4 text-brand-600" strokeWidth={2} />{t(g.title, g.en)}
+            </div>
+            <div className="mt-1 space-y-0.5">{rows}</div>
+          </div>
+        );
+      })()}
 
       {upsell && (
         <div className="fixed inset-0 z-[60] grid place-items-center bg-black/50 p-4" onClick={() => setUpsell(null)}>
