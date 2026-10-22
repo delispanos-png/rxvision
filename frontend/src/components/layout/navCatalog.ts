@@ -82,8 +82,13 @@ export const NAV_GROUPS: Group[] = [
     { label: "Κερδοφορία", en: "Profitability", icon: TrendingUp, href: "/profitability", module: "profitability" },
   ] },
   // eShop — όλα τα κυκλώματα του ηλεκτρονικού καταστήματος (κατάλογος, παραγγελίες, προσφορές, πιστότητα, πύλη).
+  // ΑΠΟΘΗΚΗ = βασική για όλους (21/10/2026), ΧΩΡΙΣΤΑ από το e-shop: τα δεδομένα των ειδών (τιμές,
+  // απόθεμα, κατηγορίες, έτοιμος κατάλογος) δεν εξαρτώνται από την πώληση online. «ή order_delivery» →
+  // όσοι είναι ήδη συνδεδεμένοι με παλιό token τη βλέπουν χωρίς διακοπή.
+  { title: "Αποθήκη", en: "Warehouse", icon: Boxes, items: [
+    { label: "Αποθήκη", en: "Warehouse", icon: Boxes, href: "/warehouse", module: ["warehouse", "order_delivery"] },
+  ] },
   { title: "eShop", en: "eShop", icon: PackageSearch, items: [
-    { label: "Προϊόντα", en: "Products", icon: Boxes, href: "/warehouse", module: "order_delivery" },
     { label: "Κατηγορίες e-shop", en: "e-shop Categories", icon: Layers, href: "/eshop-categories", module: "order_delivery" },
     { label: "Προσφορές", en: "Promotions", icon: Tags, href: "/eshop-offers", module: "order_delivery" },
     { label: "Ενεργές παραγγελίες", en: "Active orders", icon: Truck, href: "/orders-delivery#orders", module: "order_delivery" },

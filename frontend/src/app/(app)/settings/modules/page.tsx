@@ -24,7 +24,9 @@ type AddonLite = {
   _id: string; name: string; icon?: string; description?: string;
   price_monthly: number; price_yearly: number;
   status: "included" | "active" | "granted" | "available"; offered?: boolean;
+  removal_at?: string | null;   // αφαιρέθηκε: ενεργό ως τότε, δεν ανανεώνεται
 };
+const dmy = (iso?: string | null) => (iso ? new Date(iso).toLocaleDateString("el-GR", { day: "2-digit", month: "2-digit", year: "numeric" }) : "");
 type Bank = { beneficiary?: string; bank_name?: string; iban?: string; swift?: string; notes?: string };
 type Pending = {
   plan?: string; plan_name?: string; kind?: "upgrade" | "downgrade"; method?: "card" | "bank";
@@ -121,8 +123,13 @@ export default function ModulesPlanPage() {
     },
   });
   const deactAddon = useMutation({
-    mutationFn: (id: string) => api(`/addons/${id}/deactivate`, { method: "POST" }),
-    onSuccess: refreshAddons,
+    mutationFn: (id: string) => api<{ scheduled?: boolean; effective_at?: string }>(`/addons/${id}/deactivate`, { method: "POST" }),
+    onSuccess: (r) => {
+      refreshAddons();
+      if (r?.scheduled && r.effective_at)
+        appAlert(t(`Έγινε. Το πρόσθετο μένει ενεργό έως ${dmy(r.effective_at)} και δεν θα ανανεωθεί — δεν θα χρεωθείς γι' αυτό.`,
+                   `Done. The add-on stays active until ${dmy(r.effective_at)} and will not renew — you won't be charged for it.`));
+    },
   });
   const addonBusy = actAddon.isPending || deactAddon.isPending;
   async function activateAddon(a: AddonLite) {
@@ -150,8 +157,24 @@ export default function ModulesPlanPage() {
            `Activate «${a.name}» for ${eur(price)}/${per}? You will be charged pro-rata for the remaining days.`);
     if (await appConfirm(msg)) actAddon.mutate(a._id);
   }
+  /* ΑΦΑΙΡΕΣΗ ΣΤΗ ΛΗΞΗ (20/10/2026): το πρόσθετο είναι πληρωμένο ως τη λήξη — μένει ενεργό ως τότε και
+     δεν ανανεώνεται. Για τον Έτοιμο κατάλογο ο πελάτης βλέπει ΠΡΙΝ πόσα είδη σβήνονται/κλειδώνουν. */
   async function deactivateAddon(a: AddonLite) {
-    if (await appConfirm(t(`Απενεργοποίηση «${a.name}»;`, `Deactivate «${a.name}»?`), { danger: true })) deactAddon.mutate(a._id);
+    let pv: { effective_at?: string; catalog?: { delete: number; lock: number } } = {};
+    try { pv = await api(`/addons/${a._id}/removal-preview`); } catch { /* δείχνουμε τουλάχιστον το γενικό μήνυμα */ }
+    const when = pv.effective_at ? dmy(pv.effective_at) : "";
+    let msg = when
+      ? t(`Αφαίρεση «${a.name}»;\n\nΤο έχεις ήδη πληρώσει: μένει ενεργό έως ${when} και μετά κλείνει. Δεν θα χρεωθείς στην ανανέωση.`,
+          `Remove «${a.name}»?\n\nAlready paid: it stays active until ${when}, then turns off. You won't be charged at renewal.`)
+      : t(`Αφαίρεση «${a.name}»;`, `Remove «${a.name}»?`);
+    if (pv.catalog)
+      msg += t(`\n\n⚠ Στις ${when || "τη λήξη"}:\n• θα διαγραφούν ${pv.catalog.delete.toLocaleString("el-GR")} είδη του έτοιμου καταλόγου που δεν έχεις χρησιμοποιήσει\n• θα κλειδώσουν ${pv.catalog.lock.toLocaleString("el-GR")} είδη που χρησιμοποιείς: θα τα βλέπεις στην Αποθήκη, αλλά δεν θα μπορείς να τα χρησιμοποιήσεις πουθενά μέχρι να ενεργοποιήσεις ξανά το πρόσθετο.\n\nΤα είδη που έφτιαξες εσύ δεν επηρεάζονται.`,
+               `\n\n⚠ On ${when || "expiry"}:\n• ${pv.catalog.delete} unused ready-catalog items will be deleted\n• ${pv.catalog.lock} items you use will be locked (visible, not usable) until you re-activate.\n\nItems you created are not affected.`);
+    if (await appConfirm(msg, { danger: true })) deactAddon.mutate(a._id);
+  }
+  async function keepAddon(a: AddonLite) {
+    if (await appConfirm(t(`Να κρατήσουμε το «${a.name}»; Θα ανανεωθεί κανονικά στην επόμενη χρέωση.`, `Keep «${a.name}»? It will renew normally.`)))
+      actAddon.mutate(a._id);   // ήδη ενεργό → ακύρωση αφαίρεσης, ΧΩΡΙΣ νέα χρέωση
   }
   const priceOf = (p?: Pkg) => (yearly ? p?.price_yearly ?? p?.price_monthly : p?.price_monthly) ?? 0;
 
@@ -414,7 +437,13 @@ export default function ModulesPlanPage() {
                       <div className="text-sm font-semibold text-slate-800 dark:text-slate-100">{price === 0 ? t("Δωρεάν", "Free") : `${eur(price)}/${per}`}</div>
                       {a.status === "granted" && <span className="text-[10px] font-semibold text-emerald-600">{t("Παραχωρημένο", "Granted")}</span>}
                       {a.status === "available" && <button disabled={addonBusy} onClick={() => activateAddon(a)} className="inline-flex items-center gap-1 rounded-lg bg-violet-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-violet-700 disabled:opacity-50"><Plus className="h-3.5 w-3.5" /> {t("Ενεργοποίηση", "Activate")}</button>}
-                      {a.status === "active" && <button disabled={addonBusy} onClick={() => deactivateAddon(a)} className="inline-flex items-center gap-1 rounded-lg border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-500 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-600"><X className="h-3.5 w-3.5" /> {t("Απενεργοποίηση", "Deactivate")}</button>}
+                      {a.status === "active" && a.removal_at && (
+                        <>
+                          <span className="text-[10px] font-semibold text-amber-600">{t(`Λήγει ${dmy(a.removal_at)} — δεν ανανεώνεται`, `Ends ${dmy(a.removal_at)} — won't renew`)}</span>
+                          <button disabled={addonBusy} onClick={() => keepAddon(a)} className="inline-flex items-center gap-1 rounded-lg bg-violet-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-violet-700 disabled:opacity-50">{t("Κράτησέ το", "Keep it")}</button>
+                        </>
+                      )}
+                      {a.status === "active" && !a.removal_at && <button disabled={addonBusy} onClick={() => deactivateAddon(a)} className="inline-flex items-center gap-1 rounded-lg border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-500 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-600"><X className="h-3.5 w-3.5" /> {t("Απενεργοποίηση", "Deactivate")}</button>}
                     </div>
                   </div>
                 );

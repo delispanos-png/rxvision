@@ -71,7 +71,7 @@ function CategorizedChecks({ res, t }: { res: ClosingChecksRes | null; t: (el: s
     </div>
   );
 }
-type ScanFlags = { is_intangible: boolean; is_full_participation?: boolean; needs_original: boolean; is_fyk: boolean; has_desensitization: boolean; has_opinion: boolean; has_vaccine: boolean; is_etyap: boolean; exec_count: number | null; is_eopyy?: boolean; fund?: string; fund_name?: string };
+type ScanFlags = { is_intangible: boolean; is_pharmacy_vaccination?: boolean; is_full_participation?: boolean; needs_original: boolean; is_fyk: boolean; has_desensitization: boolean; has_opinion: boolean; has_vaccine: boolean; is_etyap: boolean; exec_count: number | null; is_eopyy?: boolean; fund?: string; fund_name?: string };
 type ScanRes = { ok: boolean; found: boolean; barcode: string; external_id?: string; exec_no?: string; n_executions?: number; wrong_day?: boolean; actual_days?: string[]; invalid_length?: boolean; digits?: number; other_tenant?: boolean; flags?: ScanFlags };
 const grDate = (d: string) => d.split("-").reverse().join("/");
 
@@ -771,9 +771,16 @@ export default function PhysicalCheckPage() {
                 {chk(t("Ταμείο", "Fund"), last.flags?.fund || detail?.fund || "ΕΟΠΥΥ",
                      (last.flags?.has_vaccine || detail?.has_vaccine) ? t("Εμβόλια", "Vaccines") : t("Φάρμακα", "Medicines"),
                      last.flags?.is_eopyy === false ? "warning" : "neutral")}
+                {/* Το «χρειάζεται πρωτότυπη» το αποφασίζει ΜΙΑ συνάρτηση στον server (needs_doctor_original):
+                    συνταγές «92…» τις φτιάχνει ο φαρμακοποιός (εμβολιασμός χωρίς ιατρική συνταγή) → καμία
+                    πρωτότυπη ιατρού (22/10/2026). Πριν, αυτό το κουτί έκρινε ΜΟΝΟ από το «άυλη» → «ΜΗ ΑΫΛΗ». */}
                 {last.flags?.is_intangible
                   ? chk(t("Τύπος συνταγής", "Rx type"), t("Άυλη", "Paperless"), t("Δεν χρειάζεται χάρτινη — άυλη συνταγή.", "No paper needed — paperless Rx."), "ok")
-                  : chk(t("Τύπος συνταγής", "Rx type"), t("ΜΗ ΑΫΛΗ", "NOT paperless"), t("Επισύναψε τη συνταγή με τη σφραγίδα και την υπογραφή του γιατρού.", "Attach the prescription with the doctor's stamp and signature."), "danger")}
+                  : (last.flags?.is_pharmacy_vaccination || last.barcode?.startsWith("92"))
+                    ? chk(t("Τύπος συνταγής", "Rx type"), t("Εμβολιασμός φαρμακείου", "Pharmacy vaccination"), t("Τη δημιούργησε το φαρμακείο χωρίς ιατρική συνταγή — δεν υπάρχει πρωτότυπη ιατρού να επισυνάψεις.", "Created by the pharmacy without a doctor's prescription — no doctor original to attach."), "ok")
+                    : !last.flags?.needs_original
+                      ? chk(t("Τύπος συνταγής", "Rx type"), t("ΜΗ ΑΫΛΗ", "NOT paperless"), t("Η πρωτότυπη κατατέθηκε στην 1η εκτέλεση — δεν χρειάζεται ξανά.", "The original was filed with the 1st execution — not needed again."), "ok")
+                      : chk(t("Τύπος συνταγής", "Rx type"), t("ΜΗ ΑΫΛΗ", "NOT paperless"), t("Επισύναψε τη συνταγή με τη σφραγίδα και την υπογραφή του γιατρού.", "Attach the prescription with the doctor's stamp and signature."), "danger")}
                 {opticalChk
                   ? chk(t("Οπτικός έλεγχος", "Optical check"), opticalChk.title, opticalChk.detail, "warning")
                   : chk(t("Οπτικός έλεγχος", "Optical check"), t("Δεν χρειάζεται", "Not needed"), t("Καμία ιδιαιτερότητα δόσης/ποσότητας.", "No dose/quantity specialness."), "ok")}

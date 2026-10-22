@@ -280,7 +280,7 @@ class ConnectRepository:
         if not policy.get("auto_offer", True):
             return 0
         prod = await PharmacyCatalogRepository(tenant_id=tenant_id).find_one({"barcode": barcode})
-        if not prod:
+        if not prod or prod.get("catalog_locked"):   # κλειδωμένο είδος έτοιμου καταλόγου → δεν διατίθεται
             return 0
         reserved = await self._reserved_qty(tenant_id, barcode)
         return available_qty(prod.get("stock_qty"), policy,

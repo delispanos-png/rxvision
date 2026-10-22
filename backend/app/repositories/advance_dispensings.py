@@ -76,12 +76,18 @@ class AdvanceDispensingRepository(BaseRepository):
                       "strip": p.get("serial") or it.get("strip"), "lot": p.get("serial") or it.get("lot")}
             gtin, batch = _clean(it.get("gtin")), _clean(it.get("batch"))
             strip = _clean(it.get("strip"))
-            plain = _clean(it.get("lot")) or (it.get("name") or "").strip()
+            # LOT ταινίας (12ψήφιο) ΥΠΟΧΡΕΩΤΙΚΑ μαζί με το κουπόνι ΕΟΦ (κανόνας ιδιοκτήτη 22/10/2026)
+            if (not gtin and not _clean(it.get("barcode"))
+                    and gs1_scan.classify(strip or _clean(it.get("lot")))["kind"] == "eof_lot"):
+                raise ValueError("lot_needs_eof_coupon")
+            plain = (_clean(it.get("lot")) or _clean(it.get("barcode"))
+                     or (it.get("name") or "").strip())
             if not (gtin or batch or strip or plain):
                 continue          # γραμμή χωρίς κανένα αναγνωριστικό δεν χρησιμεύει
             clean_items.append({
                 "name": (it.get("name") or "").strip()[:160],
                 "eof_code": _clean(it.get("eof_code")) or None,
+                "barcode": _clean(it.get("barcode")) or None,      # κουπόνι ΕΟΦ «280…» / barcode προϊόντος
                 "gtin": gtin or None, "batch": batch or None, "strip": strip or None,
                 "lot": _clean(it.get("lot")) or None,
                 "expiry": _clean(it.get("expiry")) or None,
@@ -94,6 +100,10 @@ class AdvanceDispensingRepository(BaseRepository):
         # ΟΝΟΜΑ από το GTIN του QR (HMVS): ο κατάλογος ΗΔΥΚΑ έχει κωδικούς ΕΟΦ, όχι GTIN → «(χωρίς όνομα)»
         # (15/10/2026, Μπινίκος). Τα κουπόνια QR των εκτελέσεων δίνουν GTIN ↔ φάρμακο.
         for ci in clean_items:
+            if ci.get("barcode") and not ci.get("name"):
+                found = await self.name_for_barcode(ci["barcode"])
+                if found:
+                    ci["name"], ci["eof_code"] = found["name"], ci.get("eof_code") or found.get("eof_code")
             if ci.get("gtin") and not ci.get("name"):
                 found = await self.name_for_gtin(ci["gtin"])
                 if found:
@@ -366,6 +376,23 @@ class AdvanceDispensingRepository(BaseRepository):
         name = (cat or prod or {}).get("name")
         return {"name": name, "eof_code": eof} if name else None
 
+    async def name_for_barcode(self, barcode: str) -> dict | None:
+        """Barcode προϊόντος (κουπόνι ΕΟΦ «280…» ή άλλο) → {name, eof_code}: πρώτα ο κατάλογος ΗΔΥΚΑ, μετά
+        τα προϊόντα των εκτελέσεων, τέλος η αποθήκη του φαρμακείου (παραφάρμακα/ΜΗ.ΣΥ.ΦΑ.)."""
+        bc = _clean(barcode)
+        if not bc:
+            return None
+        cat = await self._db["medicine_catalog"].find_one(  # tenant-ok: κοινός κατάλογος ΗΔΥΚΑ
+            {"barcode": bc}, {"full_name": 1, "name": 1})
+        if cat:
+            return {"name": cat.get("full_name") or cat.get("name"), "eof_code": cat.get("_id")}
+        prod = await self._db["products"].find_one({"barcode": bc}, {"name": 1})  # tenant-ok: όνομα προϊόντος
+        if prod and prod.get("name"):
+            return {"name": prod["name"], "eof_code": None}
+        mine = await self._db["pharmacy_products"].find_one(
+            {"tenant_id": self.tenant_id, "$or": [{"barcode": bc}, {"barcodes": bc}]}, {"name": 1})
+        return {"name": mine["name"], "eof_code": None} if mine and mine.get("name") else None
+
     async def matches(self, *, days: int = 45, limit: int = 50) -> list[dict]:
         """Ανοιχτά δανεικά που ΜΟΙΑΖΟΥΝ με πρόσφατη εκτέλεση — προτάσεις προς επιβεβαίωση.
 
@@ -414,6 +441,24 @@ class AdvanceDispensingRepository(BaseRepository):
                         if str(e.get("patient_ref") or "") == str(loan["patient_ref"]):
                             hit, how = cand, "gtin"
                             break
+                if not hit and loan.get("patient_ref"):
+                    # ίδιο ΦΑΡΜΑΚΟ από το barcode του κουτιού (κουπόνι ΕΟΦ «280…» ή GTIN του QR χωρίς το
+                    # αρχικό 0) — η συνταγή μπορεί να εκτελέστηκε με ΑΛΛΟ κουτί (ταινία αντί QR ή ανάποδα)
+                    eans = {_clean(it.get("barcode"))} if it.get("barcode") else set()
+                    g14 = _clean(it.get("gtin"))
+                    if len(g14) == 14 and g14.startswith("0"):
+                        eans.add(g14[1:])
+                    eans.discard("")
+                    pids = [p["_id"] async for p in self._db["products"].find(  # tenant-ok: ταυτότητα προϊόντος
+                        {"barcode": {"$in": sorted(eans)}}, {"_id": 1})] if eans else []
+                    if pids:
+                        async for cand in self._db["prescription_items"].find(  # tenant-ok: tenant_id στο φίλτρο
+                                {"tenant_id": self.tenant_id, "executed_at": {"$gte": after},
+                                 "product_id": {"$in": pids}}, {"execution_id": 1}).limit(20):
+                            e = await _ex(cand.get("execution_id"))
+                            if str(e.get("patient_ref") or "") == str(loan["patient_ref"]):
+                                hit, how = cand, "gtin"
+                                break
                 if not hit:
                     continue
                 g = groups.setdefault(hit.get("execution_id"), {"idxs": [], "names": [], "how": set()})

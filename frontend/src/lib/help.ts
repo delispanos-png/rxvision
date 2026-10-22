@@ -820,8 +820,8 @@ export const HELP: Record<string, Help> = {
     logic_en: "Warehouse and Catalogue are two different things about the SAME product: the Warehouse holds data and stock, the Catalogue is only about selling. An item can exist in the Warehouse without being sold online. Every movement (receipt, sale, stocktake, withdrawal) changes stock and is logged.",
     how: ["Βρες το είδος με barcode ή όνομα.", "Κατάγραψε την κίνηση: Παραλαβή, Πώληση/Έξοδος, Απογραφή ή Απόσυρση.", "Η Απογραφή διορθώνει το απόθεμα στον πραγματικό αριθμό.", "Για να πουληθεί online, βγάλ' το προς πώληση από τον Κατάλογο.", ],
     how_en: ["Find the item by barcode or name.", "Record the movement: Receipt, Sale/Outflow, Stocktake or Withdrawal.", "Stocktake corrects stock to the real number.", "To sell it online, list it for sale from the Catalogue.", ],
-    tips: ["Το Connect μοιράζεται απόθεμα μόνο για είδη που ΕΧΟΥΝ απόθεμα εδώ. Χωρίς αυτό, ρωτάει εσένα κάθε φορά.", ],
-    tips_en: ["Connect shares stock only for items that HAVE stock here. Without it, it asks you every time.", ],
+    tips: ["Η Αποθήκη υπάρχει σε ΟΛΑ τα πακέτα — δεν χρειάζεται e-shop. Με το πρόσθετο e-shop εμφανίζονται και τα στοιχεία πώλησης (διακόπτης «e-shop», «προς πώληση»).", "Το Connect μοιράζεται απόθεμα μόνο για είδη που ΕΧΟΥΝ απόθεμα εδώ. Χωρίς αυτό, ρωτάει εσένα κάθε φορά.", ],
+    tips_en: ["The Warehouse is in EVERY plan — no e-shop needed. With the e-shop add-on, selling controls also appear («e-shop» toggle, «for sale»).", "Connect shares stock only for items that HAVE stock here. Without it, it asks you every time.", ],
     manual: "📦 Κατάλογος ειδών",
   },
   "/eshop-categories": {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
 import Link from "next/link";
 import { HelpCircle, X, Lightbulb, Cog, ListChecks, BookOpen } from "lucide-react";
@@ -16,15 +16,55 @@ export function PageHelp() {
   const t = useT();
   const en = usePref((s) => s.locale) === "en";
   const help = helpFor(pathname);
+  /* ΜΕΤΑΚΙΝΗΣΙΜΟ (22/10/2026, παρατήρηση Παπαγιαννόπουλου): σε κάποιες οθόνες το «?» έπεφτε πάνω σε
+     κουμπί. Σύρε το όπου βολεύει — η θέση θυμάται σε αυτόν τον browser· απλό κλικ = άνοιγμα βοήθειας. */
+  const SIZE = 48;
+  const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
+  const drag = useRef<{ sx: number; sy: number; ox: number; oy: number; moved: boolean } | null>(null);
+  const clamp = (x: number, y: number) => ({
+    x: Math.min(Math.max(8, x), window.innerWidth - SIZE - 8),
+    y: Math.min(Math.max(8, y), window.innerHeight - SIZE - 8),
+  });
+  useEffect(() => {
+    try {
+      const v = JSON.parse(localStorage.getItem("rx-help-pos") || "null");
+      if (v && typeof v.x === "number" && typeof v.y === "number") setPos(clamp(v.x, v.y));
+    } catch { /* χωρίς αποθήκευση → προεπιλεγμένη θέση */ }
+    const onResize = () => setPos((p) => (p ? clamp(p.x, p.y) : p));
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+  function onPointerDown(e: React.PointerEvent<HTMLButtonElement>) {
+    const r = e.currentTarget.getBoundingClientRect();
+    drag.current = { sx: e.clientX, sy: e.clientY, ox: r.left, oy: r.top, moved: false };
+    e.currentTarget.setPointerCapture(e.pointerId);
+  }
+  function onPointerMove(e: React.PointerEvent<HTMLButtonElement>) {
+    const d = drag.current;
+    if (!d) return;
+    const dx = e.clientX - d.sx, dy = e.clientY - d.sy;
+    if (!d.moved && Math.abs(dx) + Math.abs(dy) < 6) return;
+    d.moved = true;
+    setPos(clamp(d.ox + dx, d.oy + dy));
+  }
+  function onPointerUp() {
+    const d = drag.current;
+    drag.current = null;
+    if (!d) return;
+    if (!d.moved) { setOpen(true); return; }
+    try { if (pos) localStorage.setItem("rx-help-pos", JSON.stringify(pos)); } catch { /* ok */ }
+  }
   if (!help) return null;
 
   return (
     <>
-      <Tooltip label={t("Βοήθεια — τι βλέπω εδώ;", "Help — what am I looking at?")}>
+      <Tooltip label={t("Βοήθεια — τι βλέπω εδώ; (σύρε το αν σε εμποδίζει)", "Help — what am I looking at? (drag it if it is in the way)")}>
         <button
-          onClick={() => setOpen(true)}
-          aria-label={t("Βοήθεια", "Help")}
-          className="fixed bottom-5 right-5 z-40 inline-flex h-12 w-12 items-center justify-center rounded-full bg-brand-600 text-white shadow-lg transition hover:scale-105 hover:bg-brand-700"
+          onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp}
+          onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setOpen(true); } }}
+          aria-label={t("Βοήθεια (σύρε για να το μετακινήσεις)", "Help (drag to move)")}
+          style={pos ? { left: pos.x, top: pos.y } : undefined}
+          className={`fixed z-40 inline-flex h-12 w-12 touch-none cursor-grab items-center justify-center rounded-full bg-brand-600 text-white shadow-lg transition-transform hover:scale-105 hover:bg-brand-700 active:cursor-grabbing ${pos ? "" : "bottom-5 right-5"}`}
         >
           <HelpCircle className="h-6 w-6" />
         </button>

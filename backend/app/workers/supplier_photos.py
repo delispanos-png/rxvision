@@ -111,3 +111,24 @@ def profarm_import_tick() -> dict:
                 out[str(t)] = {"error": str(e)[:100], **agg}
         return out
     return _run_async(_run())
+
+
+@celery_app.task(name="app.workers.supplier_photos.profarm_price_refresh_tick")
+def profarm_price_refresh_tick() -> dict:
+    """Πλήρης ενημέρωση τιμών Profarm (μία φορά, μετά τη διόρθωση 20/10/2026) — λίγα είδη ανά λεπτό, ΜΟΝΟ
+    στο παράθυρο ημέρας. Χωρίς ενεργή εργασία (status=running) δεν κάνει τίποτα."""
+    async def _run() -> dict:
+        from app.core.db import shared_db
+        from app.services import profarm_service
+        if not _in_download_window():
+            return {"skipped": "out_of_window"}
+        tids = await shared_db()["supplier_settings"].distinct(
+            "tenant_id", {"key": "profarm_price_refresh", "status": "running"})
+        out: dict = {}
+        for t in tids:
+            try:
+                out[str(t)] = await profarm_service.price_refresh_chunk(str(t), chunk=20)
+            except Exception as e:  # noqa: BLE001
+                out[str(t)] = {"error": str(e)[:100]}
+        return out
+    return _run_async(_run())

@@ -188,6 +188,17 @@ celery_app.conf.beat_schedule = {
     # ΓΙΑΤΙ ΟΧΙ ΚΑΘΕ 2΄ (ως 24/09/2026): ο importer έχει ΔΙΚΟ του κύκλο 6 ωρών ανά κατηγορία και
     # παραλείπει ό,τι συγχρονίστηκε πρόσφατα — άρα τα 720 περάσματα/μέρα δεν έφερναν τίποτα
     # νωρίτερα· έπιαναν θέση εργάτη και χτυπούσαν τον προμηθευτή χωρίς λόγο.
+    # Κατάλογος φαρμάκων ΗΔΥΚΑ + τιμές συνταγογραφούμενων σε όλες τις αποθήκες — ΚΑΘΗΜΕΡΙΝΑ 04:30 Αθήνας
+    # (ως 20/10/2026 είχε τρέξει ΜΙΑ φορά, 26/06· κανείς δεν το καλούσε)
+    "hdika-medicine-catalog-daily": {
+        "task": "app.workers.ingestion.refresh_medicine_catalog",
+        "schedule": crontab(hour=1, minute=30),
+    },
+    # Πλήρης ενημέρωση τιμών Profarm (μία φορά· ενεργή μόνο όσο υπάρχει εργασία status=running)
+    "profarm-price-refresh": {
+        "task": "app.workers.supplier_photos.profarm_price_refresh_tick",
+        "schedule": crontab(minute="*"),
+    },
     "profarm-import": {
         "task": "app.workers.supplier_photos.profarm_import_tick",
         "schedule": crontab(minute="*/15"),
@@ -441,6 +452,11 @@ celery_app.conf.beat_schedule = {
     "ops-health-check": {
         "task": "app.workers.ops_health.check",
         "schedule": crontab(minute="*/30"),
+    },
+    # Πρόσθετα που αφαίρεσε ο πελάτης → κλείνουν στη λήξη της περιόδου που πλήρωσε (20/10/2026)
+    "billing-apply-addon-removals": {
+        "task": "app.workers.billing.apply_addon_removals",
+        "schedule": crontab(minute=7),
     },
     # Αποστολή email: δοκιμή σύνδεσης SMTP — αποτυχία = κόκκινη μπάρα στο adminpanel (19/10/2026)
     "ops-smtp-check": {

@@ -107,3 +107,37 @@ def test_truncated_scan_is_corrupt_not_strip():
                 "0104032129104X01 172901312177430166686137"):
         assert gs1_scan.parse(bad)["corrupt"], bad
     assert gs1_scan.parse("2803120000123") is None          # ταινία ΕΟΦ μένει ταινία
+
+
+def test_owner_barcode_rule_22_10_2026():
+    """Κανόνας ιδιοκτήτη: κουπόνι ΕΟΦ 13ψήφιο «280…» · LOT ταινίας 12ψήφιο · άυλο 20ψήφιο «00…» ·
+    QR με πεδία 01/17/10/21 σε ΟΠΟΙΑΔΗΠΟΤΕ σειρά · οτιδήποτε άλλο = άλλος κωδικός."""
+    from app.services.gs1_scan import classify
+    assert classify("2801960303013") == {"kind": "eof_code", "code": "2801960303013"}
+    assert classify("250093253638") == {"kind": "eof_lot", "code": "250093253638"}
+    assert classify("21009325363")["kind"] == "other"                 # 11 ψηφία: ούτε LOT ούτε QR
+    assert classify("00000055646536565123") == {"kind": "intangible", "code": "00000055646536565123"}
+    q = classify("010403212910497610195Y01 172901312177430166686137")
+    assert q["kind"] == "qr" and q["qr"]["gtin"] == "04032129104976"
+    # ίδιο κουτί, πεδία σε άλλη σειρά: σειριακός πρώτα, μετά λήξη, κωδικός, παρτίδα
+    r = classify("2177430166686137 1729013101040321291049761095Y01")
+    assert r["kind"] == "qr" and r["qr"]["gtin"] == "04032129104976" and r["qr"]["expiry"] == "290131"
+    assert classify("5201234567890")["kind"] == "other"               # παραφάρμακο / ΜΗ.ΣΥ.ΦΑ.
+    assert classify("0104032129104X01 172810312110623731217451")["kind"] == "corrupt"
+
+
+async def test_lone_lot_needs_the_eof_coupon(monkeypatch):
+    from app.repositories.advance_dispensings import AdvanceDispensingRepository
+    from mongomock_motor import AsyncMongoMockClient
+    import app.core.db as core_db
+    db = AsyncMongoMockClient()["adv_lot"]
+    monkeypatch.setattr(core_db.db_resolver, "resolve", lambda **k: db)
+    repo = AdvanceDispensingRepository(tenant_id="T")
+    import pytest
+    with pytest.raises(ValueError, match="lot_needs_eof_coupon"):
+        await repo.create(patient_name="Π", patient_ref="p1", items=[{"lot": "250093253638", "strip": "250093253638"}])
+    await db["medicine_catalog"].insert_one({"_id": "304100202", "barcode": "2801960303013", "full_name": "REGAINE 5%"})
+    loan = await repo.create(patient_name="Π", patient_ref="p1",
+                             items=[{"barcode": "2801960303013", "lot": "250093253638", "strip": "250093253638"}])
+    it = loan["items"][0] if isinstance(loan, dict) and loan.get("items") else (await db["advance_dispensings"].find_one({}))["items"][0]
+    assert it["barcode"] == "2801960303013" and it["lot"] == "250093253638" and it["name"] == "REGAINE 5%"

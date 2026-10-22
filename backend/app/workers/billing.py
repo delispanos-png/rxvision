@@ -200,3 +200,12 @@ def reconcile_viva_payments() -> dict:
                 pass
         return {"renewed": renewed, "signups": signups, "abandoned": expired}
     return asyncio.run(_run())
+
+
+@celery_app.task(name="app.workers.billing.apply_addon_removals")
+def apply_addon_removals() -> dict:
+    """Πρόσθετα που ο πελάτης αφαίρεσε: κλείνουν ΣΤΗ λήξη της πληρωμένης περιόδου (κάθε ώρα)."""
+    async def _run() -> dict:
+        from app.services import addon_service
+        return {"closed": await addon_service.apply_due_removals()}
+    return asyncio.run(_run())

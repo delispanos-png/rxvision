@@ -234,9 +234,19 @@ def parse_product(html: str) -> dict:
     barcodes = [b for b in barcodes if len(b) >= 8]
     vat = g(r"Συντελεστής ΦΠΑ:\s*</span>\s*<span[^>]*>\s*(\d+)\s*%")
     retail = g(r"Προτεινόμενη Λιανική Τιμή:\s*</span>\s*<span[^>]*>([^<]+)</span>")
-    price = g(r'id="price\d+">([^<]+)</span>')          # τρέχουσα (εκπτωτική) καθαρή χονδρική
-    disc = g(r"Έκπτωση\s*([0-9]+(?:[.,][0-9]+)?)\s*%")   # «τιμολογιακή πολιτική» %
+    # Πραγματική δομή σελίδας (επιβεβαιωμένη 20/10/2026, REGAINE):
+    #   <div class="first_price"><span id="price_notax29891">16,07</span> €</div>   ← ΔΙΑΓΡΑΜΜΕΝΗ = χονδρική
+    #   <span class="sale_price" id="sale_price_notax29891">15,59</span> €          ← τιμολογιακή (δική μας έκπτωση)
+    first = g(r'id="price_notax\d+"[^>]*>([^<]+)<')
+    price = g(r'id="(?:sale_)?price(?:_notax)?\d+"[^>]*>([^<]+)<')   # παλιά/εναλλακτική δομή
+    # «Έκπτωση 3% από το 1ο τεμάχιο (τιμολογιακή πολιτική)»: ΜΟΝΟ αυτή μειώνει τη δεξιά τιμή (15,59)·
+    # η διαγραμμένη (16,07) = τιμή ÷ (1 − 3%). Έκπτωση από το 2ο/3ο τεμάχιο ΔΕΝ αγγίζει την τιμή μονάδας.
+    plain = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", html))
+    md = re.search(r"Έκπτωση\s*([0-9]+(?:[.,][0-9]+)?)\s*%\s*από\s+το\s+1", plain, re.I)
+    disc = md.group(1) if md else ""
     wholesale = _cents(price)
+    if first:                          # η διαγραμμένη τιμή υπάρχει ρητά → αυτή είναι η χονδρική
+        wholesale, disc = _cents(first), ""
     if disc:
         try:
             d = float(disc.replace(",", ".")) / 100
@@ -298,7 +308,8 @@ async def list_category_items(cl: httpx.AsyncClient, cat_id, page: int, rows: in
 async def _upsert_profarm_product(cl, col, repo, tenant_id: str, pid: str, ptype: str,
                                   category_name: str | None = None,
                                   list_price_cents: int | None = None,
-                                  in_stock: bool | None = None) -> tuple[str, bool, bool]:
+                                  in_stock: bool | None = None,
+                                  force: bool = False) -> tuple[str, bool, bool]:
     """Fetch detail → parse → create/enrich ΕΝΑ προϊόν. Returns (result, had_photo, reclassified).
     ΕΛΕΓΧΟΣ τύπου: ο τύπος παίρνεται από την ΕΠΙΣΗΜΗ κατηγορία Profarm (ΜΗΣΥΦΑ=OTC, παραφάρμακα=
     parapharmacy)· η εισαγωγή ΔΕΝ σαρώνει ποτέ «Φάρμακα» (συνταγογραφούμενα), άρα δεν αγγίζει rx.
@@ -317,18 +328,14 @@ async def _upsert_profarm_product(cl, col, repo, tenant_id: str, pid: str, ptype
         stored_lp = pidd.get("profarm_list_price")   # τελευταία γνωστή χονδρική λίστας
         wh_changed = list_price_cents is not None and stored_lp != list_price_cents
         deep_due = (not sc) or (_now() - sc) >= _DEEP_RESYNC
-        if pidd.get("image_id") and not deep_due:
-            cheap: dict = {}
+        # Η τιμή της ΛΙΣΤΑΣ είναι μόνο ΣΗΜΑ αλλαγής: αν άλλαξε → ανοίγουμε τη σελίδα του προϊόντος (εκεί
+        # ζουν η διαγραμμένη χονδρική, ο ΦΠΑ και η προτεινόμενη λιανική). Πριν (ως 20/10/2026) γραφόταν
+        # ΑΥΤΟΥΣΙΑ ως χονδρική → REGAINE 15,02 € αντί 16,07 € (διαγραμμένη τιμή της σελίδας).
+        if pidd.get("image_id") and not deep_due and not wh_changed and not force:
             if in_stock is not None:
-                cheap["profarm_in_stock"] = bool(in_stock)
-            if wh_changed:                      # η χονδρική άλλαξε → ενημέρωσε ΑΠΕΥΘΕΙΑΣ από τη λίστα
-                cheap["wholesale_cents"] = list_price_cents
-                cheap["profarm_list_price"] = list_price_cents
-                cheap["profarm_synced_at"] = _now()
-                cheap["updated_at"] = _now()
-            if cheap:
-                await col.update_one({"tenant_id": tenant_id, "profarm_pid": pid}, {"$set": cheap})
-            return ("enriched" if wh_changed else "skip"), False, False
+                await col.update_one({"tenant_id": tenant_id, "profarm_pid": pid},
+                                     {"$set": {"profarm_in_stock": bool(in_stock)}})
+            return "skip", False, False
     try:
         b = (await asyncio.wait_for(cl.get(f"{BASE}/farmaka-1/product_id/{pid}"), timeout=18)).text
     except (TimeoutError, Exception):  # noqa: BLE001
@@ -338,8 +345,9 @@ async def _upsert_profarm_product(cl, col, repo, tenant_id: str, pid: str, ptype
         return "skip", False, False
     bc = d["barcodes"][0]
     existing = await col.find_one({"tenant_id": tenant_id, "barcode": bc},
-                                  {"image_id": 1, "type": 1, "profarm_pid": 1,
-                                   "wholesale_cents": 1, "description_long": 1, "vat_rate": 1})
+                                  {"image_id": 1, "type": 1, "profarm_pid": 1, "source": 1,
+                                   "wholesale_cents": 1, "description_long": 1, "vat_rate": 1,
+                                   "price_cents": 1, "profarm_retail_cents": 1, "user_edited_at": 1})
     image_id = None
     # Κατέβασε εικόνα ΜΟΝΟ αν το υπάρχον δεν έχει ήδη (αλλιώς άσκοπο 18s fetch που πετιέται).
     if d.get("image_url") and not (existing and existing.get("image_id")):
@@ -352,22 +360,35 @@ async def _upsert_profarm_product(cl, col, repo, tenant_id: str, pid: str, ptype
     reclassified = bool(existing) and existing.get("type") != ptype
     if existing:
         # Ο τύπος από την ΚΑΤΗΓΟΡΙΑ Profarm είναι authoritative — διορθώνει το λάθος default (rx) του ΗΔΥΚΑ.
-        # first_link = πρώτη φορά που δένεται στο Profarm· στα ΕΠΟΜΕΝΑ re-sync ΔΕΝ πατάμε τη λιανική τιμή
-        # (μπορεί ο φαρμακοποιός να την έχει ορίσει χειροκίνητα — OTC/παραφάρμακα = ελεύθερη τιμή).
-        first_link = existing.get("profarm_pid") != pid
         s = {"type": ptype, "vat_rate": d["vat_rate"], "price_includes_vat": True, "profarm_pid": pid,
-             "profarm_synced_at": _now(), "updated_at": _now()}
+             "profarm_synced_at": _now(), "profarm_price_checked_at": _now(), "updated_at": _now()}
         if list_price_cents is not None:
             s["profarm_list_price"] = list_price_cents   # για φθηνό change-detection στο επόμενο πέρασμα
         if in_stock is not None:
             s["profarm_in_stock"] = bool(in_stock)
         changed = reclassified
-        # ΧΟΝΔΡΙΚΗ: η struck τιμή της ΛΙΣΤΑΣ (12,29) είναι authoritative· fallback το detail αν λείπει.
-        wh = list_price_cents if list_price_cents is not None else d["wholesale_cents"]
+        # ΚΑΝΟΝΑΣ ΙΔΙΟΚΤΗΤΗ (20/10/2026): ΜΗ.ΣΥ.ΦΑ./παραφάρμακα/καλλυντικά → τιμές από Profarm·
+        # ΣΥΝΤΑΓΟΓΡΑΦΟΥΜΕΝΑ → ΜΟΝΟ από ΗΔΥΚΑ (κρατική διατίμηση). Ένα rx που δέθηκε με Profarm (παλιά λήψη
+        # φωτο) παίρνει το πολύ φωτογραφία — ποτέ τιμή, ΦΠΑ ή τύπο από τον προμηθευτή.
+        if existing.get("type") == "rx_medicine":
+            keep = {"profarm_pid": pid, "profarm_synced_at": _now(), "profarm_price_checked_at": _now()}
+            if image_id and not existing.get("image_id"):
+                keep.update({"image_id": image_id, "photo_source": "profarm", "updated_at": _now()})
+            await col.update_one({"_id": existing["_id"]}, {"$set": keep})
+            return ("enriched" if "image_id" in keep else "skip"), bool(image_id), False
+        # ΧΟΝΔΡΙΚΗ = η ΔΙΑΓΡΑΜΜΕΝΗ τιμή της σελίδας προϊόντος (π.χ. 16,07 €)· fallback η λίστα μόνο αν λείπει.
+        wh = d["wholesale_cents"] or list_price_cents
         if wh and wh != existing.get("wholesale_cents"):
             s["wholesale_cents"] = wh; changed = True
-        if first_link and d["retail_cents"]:     # προτεινόμενη λιανική Profarm ΜΟΝΟ στο 1ο link
-            s["price_cents"] = d["retail_cents"]; changed = True
+        # ΛΙΑΝΙΚΗ = η «Προτεινόμενη Λιανική» του προμηθευτή σε ΚΑΘΕ ενημέρωση (όχι μόνο στο 1ο link) —
+        # ΕΚΤΟΣ αν ο φαρμακοποιός έβαλε δική του: δική του = την άλλαξε από την οθόνη (user_edited_at /
+        # χειροκίνητο είδος) ΚΑΙ διαφέρει από ό,τι του δώσαμε τελευταία φορά (profarm_retail_cents).
+        own_price = ((existing.get("user_edited_at") or existing.get("source") == "manual")
+                     and existing.get("price_cents") != existing.get("profarm_retail_cents"))
+        if d["retail_cents"] and not own_price:
+            s["profarm_retail_cents"] = d["retail_cents"]
+            if d["retail_cents"] != existing.get("price_cents"):
+                s["price_cents"] = d["retail_cents"]; changed = True
         if image_id and not existing.get("image_id"):
             s["image_id"] = image_id; s["photo_source"] = "profarm"; changed = True
         if d.get("description") and d["description"] != existing.get("description_long"):
@@ -381,8 +402,9 @@ async def _upsert_profarm_product(cl, col, repo, tenant_id: str, pid: str, ptype
            "name": d["name"][:200] or bc, "type": ptype, "vat_rate": d["vat_rate"],
            "category": category_name or None,   # ειδική Profarm κατηγορία (αλλιώς None → AI/χειροκίνητα)
            "price_includes_vat": True, "price_cents": d["retail_cents"],
-           # ΧΟΝΔΡΙΚΗ = struck τιμή λίστας (authoritative)· fallback το detail
-           "wholesale_cents": list_price_cents if list_price_cents is not None else d["wholesale_cents"],
+           # ΧΟΝΔΡΙΚΗ = διαγραμμένη τιμή της σελίδας προϊόντος· fallback η λίστα
+           "wholesale_cents": d["wholesale_cents"] or list_price_cents,
+           "profarm_retail_cents": d["retail_cents"] or None, "profarm_price_checked_at": _now(),
            "description_long": d.get("description"),
            "active": True, "for_sale": False, "stock_qty": 0,
            "image_id": image_id, "photo_source": "profarm" if image_id else None,
@@ -391,6 +413,74 @@ async def _upsert_profarm_product(cl, col, repo, tenant_id: str, pid: str, ptype
            "created_at": _now(), "updated_at": _now()}
     await col.insert_one(doc)
     return "created", bool(image_id), False
+
+
+# ── ΠΛΗΡΗΣ ΕΝΗΜΕΡΩΣΗ ΤΙΜΩΝ (20/10/2026) ──────────────────────────────────────────────────────────────
+# Μετά τη διόρθωση της χονδρικής (διαγραμμένη τιμή σελίδας, όχι λίστα) και της λιανικής (προτεινόμενη σε
+# κάθε ενημέρωση): ξαναδιαβάζει ΜΙΑ φορά τη σελίδα ΚΑΘΕ είδους που είναι δεμένο με Profarm. Ήπια
+# (λίγα είδη/λεπτό, μόνο στο παράθυρο ημέρας), resumable: «έγινε» = profarm_price_checked_at ≥ started_at.
+
+async def start_price_refresh(tenant_id: str) -> dict:
+    from app.repositories.supplier_settings import SupplierSettingsRepository
+    sup = SupplierSettingsRepository(tenant_id=tenant_id)
+    await sup.update_one({"key": "profarm_price_refresh"}, {"$set": {
+        "key": "profarm_price_refresh", "status": "running", "started_at": _now(),
+        "done": 0, "errors": 0}}, upsert=True)
+    return {"ok": True}
+
+
+async def price_refresh_chunk(tenant_id: str, *, chunk: int = 20) -> dict:
+    from app.repositories.pharmacy_catalog import PharmacyCatalogRepository
+    from app.repositories.supplier_settings import SupplierSettingsRepository
+    sup = SupplierSettingsRepository(tenant_id=tenant_id)
+    # ΕΝΑ πέρασμα τη φορά (το tick είναι ανά λεπτό, ένα πέρασμα μπορεί να κρατήσει ~1΄): κλείδωμα 3΄
+    job = await sup._db["supplier_settings"].find_one_and_update(
+        {"tenant_id": tenant_id, "key": "profarm_price_refresh", "status": "running",
+         "$or": [{"lock_until": {"$exists": False}}, {"lock_until": {"$lt": _now()}}]},
+        {"$set": {"lock_until": _now() + timedelta(minutes=3)}})
+    if not job:
+        return {"ok": True, "idle": True}
+    started = job["started_at"]
+    if getattr(started, "tzinfo", None) is None:
+        started = started.replace(tzinfo=timezone.utc)
+    repo = PharmacyCatalogRepository(tenant_id=tenant_id)
+    col = repo._db["pharmacy_products"]
+    todo_q = {"tenant_id": tenant_id, "profarm_pid": {"$nin": [None, ""]},
+              "type": {"$ne": "rx_medicine"},      # συνταγογραφούμενα: τιμές ΜΟΝΟ από ΗΔΥΚΑ
+              "$or": [{"profarm_price_checked_at": {"$exists": False}},
+                      {"profarm_price_checked_at": {"$lt": started}}]}
+    batch = [p async for p in col.find(todo_q, {"profarm_pid": 1, "type": 1}).limit(chunk)]
+    unlock = {"$unset": {"lock_until": ""}}
+    if not batch:
+        await sup.update_one({"key": "profarm_price_refresh"},
+                             {"$set": {"status": "done", "finished_at": _now()}, **unlock})
+        return {"ok": True, "finished": True}
+    creds = await sup.profarm_creds()
+    cl = await login(creds["username"], creds["password"]) if creds else None
+    if not cl:
+        await sup.update_one({"key": "profarm_price_refresh"}, unlock)
+        return {"ok": False, "error": "login_failed" if creds else "not_configured"}
+    done = errors = 0
+    try:
+        for p in batch:
+            res, _, _ = await _upsert_profarm_product(cl, col, repo, tenant_id, str(p["profarm_pid"]),
+                                                      p.get("type") or "parapharmacy", force=True)
+            if res == "error":
+                errors += 1
+                if errors >= 4:          # πιθανό throttling → σταμάτα, συνέχεια στο επόμενο tick
+                    break
+                continue
+            if res == "skip":            # σελίδα χωρίς barcode/αφαιρέθηκε → μη ξαναδοκιμάζεις επ' άπειρον
+                await col.update_one({"tenant_id": tenant_id, "_id": p["_id"]},
+                                     {"$set": {"profarm_price_checked_at": _now()}})
+            done += 1
+            await asyncio.sleep(0.7)
+    finally:
+        await cl.aclose()
+    await sup.update_one({"key": "profarm_price_refresh"},
+                         {"$inc": {"done": done, "errors": errors}, "$unset": {"lock_until": ""}})
+    return {"ok": True, "done": done, "errors": errors,
+            "remaining": await col.count_documents(todo_q)}
 
 
 # Πόσες φορές ρωτάμε το AI για ένα είδος που δεν κατατάσσεται (βλ. classify_new_products).

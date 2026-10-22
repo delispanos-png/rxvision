@@ -224,6 +224,7 @@ async def for_tenant(tenant_id: str) -> dict:
         if not prev or (g.get("at") and prev.get("at") and g["at"] > prev["at"]):
             grants[m] = g
     tried = set(grants)
+    removals = pending_removals(sub)
     items = []
     for a in cat:
         key = a["_id"]
@@ -237,6 +238,8 @@ async def for_tenant(tenant_id: str) -> dict:
                       "trial_days": g.get("days"),
                       # ΜΟΝΗ πηγή για το «δείξε δοκιμή ή αγορά» — το UI δεν ξανα-υπολογίζει κανόνα
                       "tried": key in tried,
+                      # αφαιρέθηκε από τον πελάτη: ενεργό ΩΣ αυτή την ημερομηνία, δεν ανανεώνεται
+                      "removal_at": (removals.get(key) or {}).get("at"),
                       "can_trial": (st == "available" and key in offered
                                     and key not in NO_TRIAL and not used_trial
                                     and key not in tried)})
@@ -309,6 +312,12 @@ async def activate(tenant_id: str, addon_id: str) -> dict:
     sub = await db["subscriptions"].find_one({"tenant_id": tenant_id}) or {}
     if addon_id in set(sub.get("modules_included", []) or []):
         return {"ok": False, "error": "included_in_plan"}
+    if addon_id in set(sub.get("addons", []) or []):
+        # ΗΔΗ ενεργό (και πληρωμένο ως τη λήξη): «Κράτησέ το» = ακύρωση προγραμματισμένης αφαίρεσης,
+        # ΧΩΡΙΣ νέα χρέωση. Πριν: ξαναπατημένο «ενεργοποίηση» θα ξαναχρέωνε την ίδια περίοδο.
+        await cancel_removal(tenant_id, addon_id)
+        return {"ok": True, "addon": addon_id, "addons_total": int(sub.get("addons_total") or 0),
+                "charged_now": 0, "kept": True}
     # Δωρεάν πρόσθετα δεν χρειάζονται κάρτα — δεν χρεώνονται ποτέ.
     yearly = sub.get("billing_cycle") == "yearly"
     price = int(a.get("price_yearly" if yearly else "price_monthly") or 0)
@@ -355,7 +364,90 @@ async def activate(tenant_id: str, addon_id: str) -> dict:
     await db["subscriptions"].update_one({"tenant_id": tenant_id},
                                          {"$addToSet": {"addons": addon_id}}, upsert=True)
     total = await _recompute_total(tenant_id)
+    await _on_addon_change(tenant_id, addon_id, active=True)
     return {"ok": True, "addon": addon_id, "addons_total": total, "charged_now": charged}
+
+
+# ── ΑΦΑΙΡΕΣΗ ΣΤΗ ΛΗΞΗ (απόφαση ιδιοκτήτη 20/10/2026) ────────────────────────────────────────────────
+# Ο πελάτης που αφαιρεί πρόσθετο ΤΟ ΕΧΕΙ ΗΔΗ ΠΛΗΡΩΣΕΙ ως τη λήξη της περιόδου: μένει ενεργό μέχρι
+# τότε και ΔΕΝ ξαναχρεώνεται στην ανανέωση. Πριν: έκλεινε αμέσως και έχανε τις μέρες που πλήρωσε.
+# `subscriptions.addon_removals` = [{addon, at, requested_at, by}]· το `recurring_extras` τα εξαιρεί
+# ήδη από την επόμενη χρέωση, και `apply_due_removals` (bill_due + beat) τα κλείνει στην ώρα τους.
+
+def pending_removals(sub: dict | None) -> dict[str, dict]:
+    """addon_id → {at, …} για όσα πρόσθετα έχουν προγραμματισμένη αφαίρεση."""
+    return {r["addon"]: r for r in ((sub or {}).get("addon_removals") or []) if r.get("addon")}
+
+
+async def schedule_removal(tenant_id: str, addon_id: str, by: str | None = None) -> dict:
+    """Ο ΠΕΛΑΤΗΣ αφαιρεί πρόσθετο: ισχύει στη λήξη της πληρωμένης περιόδου. Χωρίς μελλοντική λήξη
+    (δοκιμή/χωρίς περίοδο) → αμέσως, γιατί δεν υπάρχει πληρωμένο διάστημα να «κρατήσει»."""
+    db = shared_db()
+    sub = await db["subscriptions"].find_one({"tenant_id": tenant_id}) or {}
+    if addon_id not in set(sub.get("addons", []) or []):
+        return await deactivate(tenant_id, addon_id)
+    end = sub.get("current_period_end")
+    if end is not None and end.tzinfo is None:
+        end = end.replace(tzinfo=timezone.utc)
+    if not end or end <= _now():
+        return await deactivate(tenant_id, addon_id)
+    await db["subscriptions"].update_one({"tenant_id": tenant_id},
+                                         {"$pull": {"addon_removals": {"addon": addon_id}}})
+    await db["subscriptions"].update_one({"tenant_id": tenant_id}, {"$push": {"addon_removals": {
+        "addon": addon_id, "at": end, "requested_at": _now(), "by": by}}})
+    total = await _recompute_total(tenant_id)
+    return {"ok": True, "addon": addon_id, "scheduled": True, "effective_at": end,
+            "addons_total": total, **(await removal_preview(tenant_id, addon_id))}
+
+
+async def cancel_removal(tenant_id: str, addon_id: str) -> bool:
+    db = shared_db()
+    res = await db["subscriptions"].update_one({"tenant_id": tenant_id},
+                                               {"$pull": {"addon_removals": {"addon": addon_id}}})
+    if getattr(res, "modified_count", 0):
+        await _recompute_total(tenant_id)
+        return True
+    return False
+
+
+async def apply_due_removals(tenant_id: str | None = None, *, now: datetime | None = None) -> int:
+    """Κλείνει όσα πρόσθετα έφτασαν στη λήξη τους. Καλείται ΠΡΙΝ από κάθε χρέωση ανανέωσης (bill_due)
+    και περιοδικά (beat) — ώστε να κλείνουν στην ώρα τους και όσοι δεν ανανεώνουν αυτόματα."""
+    db = shared_db()
+    now = now or _now()
+    flt: dict = {"addon_removals.at": {"$lte": now}}
+    if tenant_id:
+        flt["tenant_id"] = tenant_id
+    done = 0
+    async for sub in db["subscriptions"].find(flt, {"tenant_id": 1, "addon_removals": 1}):  # tenant-ok: beat
+        for r in sub.get("addon_removals") or []:
+            at = r.get("at")
+            if at is not None and at.tzinfo is None:
+                at = at.replace(tzinfo=timezone.utc)
+            if at and at <= now:
+                await deactivate(sub["tenant_id"], r["addon"])
+                done += 1
+    return done
+
+
+async def removal_preview(tenant_id: str, addon_id: str) -> dict:
+    """Τι θα συμβεί στη λήξη — για να το δει ο πελάτης ΠΡΙΝ αφαιρέσει (π.χ. είδη έτοιμου καταλόγου)."""
+    if addon_id != "catalog_seed":
+        return {}
+    from app.repositories.pharmacy_catalog import PharmacyCatalogRepository
+    return {"catalog": await PharmacyCatalogRepository(tenant_id=tenant_id).seed_release_preview()}
+
+
+async def _on_addon_change(tenant_id: str, addon_id: str, *, active: bool) -> None:
+    """Ό,τι πρέπει να γίνει όταν ένα πρόσθετο ΚΛΕΙΝΕΙ ή ΞΑΝΑΝΟΙΓΕΙ πέρα από τη χρέωση."""
+    if addon_id != "catalog_seed":
+        return
+    from app.repositories.pharmacy_catalog import PharmacyCatalogRepository
+    repo = PharmacyCatalogRepository(tenant_id=tenant_id)
+    if active:
+        await repo.seed_unlock()
+    else:
+        await repo.seed_release()
 
 
 #: Πρόσθετα ΕΚΤΟΣ δωρεάν δοκιμής — αγοράζονται απευθείας.
@@ -474,6 +566,8 @@ async def deactivate(tenant_id: str, addon_id: str) -> dict:
     """Turn an add-on OFF: remove the module override + the billing record, recompute total."""
     db = shared_db()
     await db["tenants"].update_one({"_id": tenant_id}, {"$unset": {f"modules.{addon_id}": ""}})
-    await db["subscriptions"].update_one({"tenant_id": tenant_id}, {"$pull": {"addons": addon_id}})
+    await db["subscriptions"].update_one({"tenant_id": tenant_id},
+                                         {"$pull": {"addons": addon_id, "addon_removals": {"addon": addon_id}}})
     total = await _recompute_total(tenant_id)
+    await _on_addon_change(tenant_id, addon_id, active=False)
     return {"ok": True, "addon": addon_id, "addons_total": total}

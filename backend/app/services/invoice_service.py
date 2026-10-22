@@ -366,12 +366,30 @@ def _build_payload(inv: dict) -> dict:
         "lines": out_lines,
         "totals": {"net": c(inv.get("net_amount")), "vat": c(inv.get("vat_amount")),
                    "total": c(inv.get("total")), "discount": c((inv.get("discount") or {}).get("amount"))},
-        "payment": inv.get("payment") or {},
+        # ΜΟΝΟ ό,τι χρειάζεται η SoftOne. Τα πεδία επαλήθευσης Viva (verified_at = ημερομηνία) έσπαγαν
+        # τη μετατροπή σε JSON → «connect_error:TypeError» σε ΚΑΘΕ αποστολή από 06/10/2026.
+        "payment": {k: (inv.get("payment") or {}).get(k) for k in ("method", "provider", "transaction_id")},
     }
+
+
+async def ensure_mtrl(db, inv: dict) -> dict:
+    """Παραστατικό ΧΩΡΙΣ είδος SoftOne (MTRL) — γιατί το είδος δεν είχε αντιστοιχιστεί όταν δημιουργήθηκε —
+    ξαναψάχνει την ΤΡΕΧΟΥΣΑ αντιστοίχιση πριν σταλεί. Χωρίς αυτό, η συμπλήρωση του MTRL στο adminpanel δεν
+    βοηθούσε τα ήδη εκκρεμή: η SoftOne συνέχιζε «Δεν υπάρχει το πεδίο Υλικό» (21/10/2026)."""
+    ik = inv.get("item_key") or ""
+    if inv.get("mtrl") or not ik:
+        return inv
+    mm = (await softone_service.platform_config()).get("mtrl_map") or {}
+    mtrl = mm.get(ik) or (mm.get(ik.rsplit(":", 1)[0]) if ik.endswith(":monthly") else None)
+    if mtrl:
+        await db["invoices"].update_one({"_id": inv["_id"]}, {"$set": {"mtrl": mtrl}})
+        inv = {**inv, "mtrl": mtrl}
+    return inv
 
 
 async def _issue_one(db, inv: dict) -> bool:
     """Στέλνει ΕΝΑ invoice στο SoftOne· ενημερώνει την εγγραφή (issued ή retry/backoff)."""
+    inv = await ensure_mtrl(db, inv)
     payload = _build_payload(inv)
     now = _now()
     # IDEMPOTENCY (ΞΕΧΩΡΙΣΤΗ κλήση): ρώτα πρώτα αν υπάρχει ΗΔΗ doc με αυτό το ref (POSGUID). Αυτό ΠΡΕΠΕΙ

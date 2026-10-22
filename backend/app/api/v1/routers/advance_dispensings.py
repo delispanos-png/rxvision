@@ -30,6 +30,7 @@ def _repo(ctx: TenantContext) -> AdvanceDispensingRepository:
 class ItemIn(BaseModel):
     name: str | None = None
     eof_code: str | None = None
+    barcode: str | None = None       # κουπόνι ΕΟΦ (13ψήφιο «280…») ή κανονικό barcode προϊόντος
     gtin: str | None = None          # από το 2D barcode του κουτιού
     batch: str | None = None         # παρτίδα του 2D
     strip: str | None = None         # ταινία γνησιότητας / σειριακό
@@ -147,7 +148,9 @@ async def create_loan(body: LoanIn,
     except ValueError as e:
         msg = {"patient_ref_required": "Διάλεξε πελάτη από τη λίστα.",
                "items_required": "Σάρωσε ή γράψε τουλάχιστον ένα σκεύασμα.",
-               "corrupt_scan": "Ένα σκανάρισμα ήρθε κομμένο — αφαίρεσέ το και σκάναρε ξανά το κουτί."}.get(str(e), "")
+               "corrupt_scan": "Ένα σκανάρισμα ήρθε κομμένο — αφαίρεσέ το και σκάναρε ξανά το κουτί.",
+               "lot_needs_eof_coupon": "Σκάναρες LOT ταινίας χωρίς το κουπόνι ΕΟΦ (13ψήφιο, 280…). "
+                                       "Σκάναρε και το κουπόνι του ίδιου κουτιού."}.get(str(e), "")
         raise HTTPException(status.HTTP_400_BAD_REQUEST,
                             detail={"error": str(e), "message": msg}) from e
 
@@ -163,13 +166,25 @@ async def parse_scan(body: ScanIn, ctx: TenantContext = Depends(require(_PERM, m
     """ΕΝΑΣ αναγνώστης QR φαρμάκου (services/gs1_scan): πεδία + όνομα από το GTIN + τι σαρωτή έχει το
     φαρμακείο (διαχωριστής/πληκτρολόγιο). Πλήρες σκανάρισμα → η εφαρμογή «μαθαίνει» τον σαρωτή."""
     from app.services import gs1_scan
-    p = gs1_scan.parse(body.raw)
+    c = gs1_scan.classify(body.raw)
+    p = c.get("qr") or ({"corrupt": True} if c["kind"] == "corrupt" else None)
     if body.check or (body.typed and body.typed.strip() != body.raw.strip()):
         # η σελίδα έπιασε στο keydown ΑΛΛΟ από ό,τι έφτασε στο πεδίο → εδώ φαίνεται αν «σώσαμε» το σκανάρισμα
-        logger.warning("parse-scan capture tenant=%s check=%s ok=%s raw=%r typed=%r", ctx.tenant_id,
-                       body.check, bool(p and not p.get("corrupt")), body.raw[:200], (body.typed or "")[:200])
-    if not p:
-        return {"ok": False, "kind": "strip"}       # όχι GS1 → ταινία ΕΟΦ / απλός κωδικός
+        logger.warning("parse-scan capture tenant=%s check=%s kind=%s raw=%r typed=%r", ctx.tenant_id,
+                       body.check, c["kind"], body.raw[:200], (body.typed or "")[:200])
+    if c["kind"] in ("eof_code", "eof_lot", "intangible", "other"):
+        # ΟΧΙ QR (κανόνας ιδιοκτήτη 22/10/2026): κουπόνι ΕΟΦ, LOT ταινίας, άυλο ΕΔΑΠΥ ή άλλος κωδικός.
+        # Το ζευγάρωμα κουπονιού↔LOT (με οποιαδήποτε σειρά) το κάνει η οθόνη· εδώ: ΤΙ είναι + όνομα.
+        code = c["code"]
+        item: dict = {"raw": body.raw[:200], "name": ""}
+        if c["kind"] in ("eof_code", "other"):
+            item["barcode"] = code
+            named = await _repo(ctx).name_for_barcode(code)
+            if named:
+                item["name"], item["eof_code"] = named["name"], named.get("eof_code")
+        else:                                        # LOT ταινίας / άυλο: μοναδικό ανά κουτί
+            item["strip"] = item["lot"] = code
+        return {"ok": True, "kind": c["kind"], "item": item}
     if p.get("corrupt"):
         # το ακατέργαστο κείμενο στο log: «κομμένο» σκανάρισμα δεν αποθηκεύεται πουθενά αλλού
         logger.warning("parse-scan corrupt tenant=%s raw=%r", ctx.tenant_id, body.raw[:200])

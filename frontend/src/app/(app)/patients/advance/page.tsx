@@ -23,7 +23,30 @@ import { Modal } from "@/components/ui/Modal";
 
 type Item = { name?: string; gtin?: string; batch?: string; strip?: string; lot?: string;
               expiry?: string; qty?: number; raw?: string; eof_code?: string | null;
-              status?: string };   // ξεχρέωση ΑΝΑ σκεύασμα: open | cleared
+              barcode?: string | null;   // κουπόνι ΕΟΦ «280…» ή κανονικό barcode προϊόντος
+              kind?: string;             // eof_code | eof_lot | intangible | gs1 | other (μόνο στην οθόνη)
+              status?: string };
+/** Τι είναι κάθε κωδικός — ο ΙΔΙΟΣ κανόνας με τον server (gs1_scan.classify, κανόνας ιδιοκτήτη 22/10/2026). */
+const KIND_EL: Record<string, [string, string, string]> = {
+  gs1: ["QR (HMVS)", "QR (HMVS)", "bg-sky-100 text-sky-700"],
+  eof_code: ["Κουπόνι ΕΟΦ", "ΕΟΦ coupon", "bg-amber-100 text-amber-800"],
+  eof_lot: ["LOT ταινίας", "Strip LOT", "bg-amber-100 text-amber-800"],
+  intangible: ["Άυλο κουπόνι", "Paperless coupon", "bg-violet-100 text-violet-700"],
+  other: ["Άλλος κωδικός", "Other code", "bg-slate-200 text-slate-700"],
+};
+/** Κουπόνι ΕΟΦ ↔ LOT του ΙΔΙΟΥ κουτιού, με όποια σειρά κι αν σκαναριστούν· άυλο ↔ κανονικό barcode. */
+function pairScan(list: Item[], it: Item): Item[] {
+  const last = list[list.length - 1];
+  if (last && it.kind === "eof_lot" && last.kind === "eof_code" && !last.lot)
+    return [...list.slice(0, -1), { ...last, lot: it.lot, strip: it.strip }];
+  if (last && it.kind === "eof_code" && last.kind === "eof_lot" && !last.barcode)
+    return [...list.slice(0, -1), { ...last, kind: "eof_code", barcode: it.barcode, name: last.name || it.name, eof_code: it.eof_code }];
+  if (last && it.kind === "other" && last.kind === "intangible" && !last.barcode)
+    return [...list.slice(0, -1), { ...last, barcode: it.barcode, name: last.name || it.name }];
+  return [...list, it];
+}
+// LOT ταινίας (12ψήφιο) χωρίς κουπόνι ΕΟΦ → δεν καταχωρείται (ο κανόνας ζητά υποχρεωτικά και το κουπόνι)
+const needsCoupon = (i: Item) => !i.gtin && !i.barcode && !!(i.lot || i.strip) && /^\d{12}$/.test(i.lot || i.strip || "");
 // YYMMDD → ΗΗ/ΜΜ/ΕΕΕΕ· άκυρη ημερομηνία (π.χ. «073453» από λάθος ανάγνωση) → null
 const fmtExpiry = (e?: string) => (e && /^\d{6}$/.test(e) && +e.slice(2, 4) >= 1 && +e.slice(2, 4) <= 12 && +e.slice(4, 6) <= 31)
   ? `${e.slice(4, 6) === "00" ? "" : e.slice(4, 6) + "/"}${e.slice(2, 4)}/20${e.slice(0, 2)}` : null;
@@ -139,7 +162,13 @@ function ScannerCheck() {
           )}
         </div>
       )}
-      {res && (res.ok && it ? (
+      {res && res.ok && it && res.kind !== "gs1" ? (
+        <div className="mt-2 space-y-0.5">
+          <div className="font-semibold text-emerald-700">✓ {t(KIND_EL[res.kind]?.[0] ?? "Κωδικός", KIND_EL[res.kind]?.[1] ?? "Code")}</div>
+          <div>{it.name ? <b>{it.name}</b> : "—"} · <span className="font-mono">{it.barcode || it.lot || it.strip}</span></div>
+          {res.kind === "eof_lot" && <div className="text-amber-700">{t("Σκάναρε και το κουπόνι ΕΟΦ (280…) του ίδιου κουτιού.", "Also scan the box's ΕΟΦ coupon (280…).")}</div>}
+        </div>
+      ) : res && (res.ok && it ? (
         <div className="mt-2 space-y-0.5">
           <div className={res.complete ? "font-semibold text-emerald-700" : "font-semibold text-amber-700"}>
             {res.complete ? t("✓ Διαβάστηκε σωστά", "✓ Read correctly") : t("⚠ Διαβάστηκε μερικώς", "⚠ Partially read")}
@@ -388,14 +417,20 @@ function Inner() {
         return;
       }
       // Μη-GS1 = γραμμικός παλιού κουπονιού → είναι ΤΑΙΝΙΑ, όχι παρτίδα. Στα δύο πεδία.
-      if (r.ok && r.item) item = { ...r.item, raw: key };
+      if (r.ok && r.item) item = { ...r.item, raw: key, kind: r.kind };
     } catch { /* εκτός σύνδεσης → κρατάμε το σκανάρισμα ως κωδικό· ο server το ξαναδιαβάζει στην αποθήκευση */ }
-    setItems((x) => [...x, item]);
+    setItems((x) => pairScan(x, item));
   }
 
   async function save() {
     if (!patient) { appAlert(t("Διάλεξε πελάτη από τη λίστα.", "Pick a customer from the list.")); return; }
     if (!items.length) { appAlert(t("Σάρωσε ή γράψε τουλάχιστον ένα σκεύασμα.", "Add at least one product.")); return; }
+    const lone = items.filter(needsCoupon);
+    if (lone.length) {
+      appAlert(t(`Σκάναρες LOT ταινίας χωρίς το κουπόνι ΕΟΦ του κουτιού (${lone.map((i) => i.lot || i.strip).join(", ")}). Σκάναρε και το κουπόνι ΕΟΦ (13ψήφιο, ξεκινά από 280) — αμέσως πριν ή μετά το LOT.`,
+                 `You scanned a strip LOT without the box's ΕΟΦ coupon. Scan the ΕΟΦ coupon too (13 digits, starts with 280).`));
+      return;
+    }
     setBusy(true);
     try {
       // ΜΙΑ κίνηση = ένας πελάτης + ΟΛΑ όσα του δόθηκαν τώρα. Ο φαρμακοποιός δεν καταχωρεί
@@ -790,8 +825,8 @@ function Inner() {
             <div className="relative flex-1">
               <ScanLine className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-teal-500" />
               <input ref={scanRef} defaultValue="" autoComplete="off" autoCorrect="off" spellCheck={false}
-                placeholder={t("σάρωσε QR ή ταινία ΕΟΦ — το ένα μετά το άλλο, δεν πατάς τίποτα",
-                               "scan QR or ΕΟΦ strip — one after another, press nothing")}
+                placeholder={t("σάρωσε QR, κουπόνι ΕΟΦ + LOT ή άυλο κουπόνι — το ένα μετά το άλλο, δεν πατάς τίποτα",
+                               "scan QR, ΕΟΦ coupon + LOT or paperless coupon — one after another, press nothing")}
                 className="block w-full rounded-lg border-2 border-teal-300 bg-teal-50/40 py-2 pl-9 pr-3 text-sm outline-none focus:border-teal-500 dark:border-teal-800 dark:bg-slate-800" />
             </div>
             {/* Μόνο για χειροκίνητη πληκτρολόγηση — η σάρωση δεν το χρειάζεται ποτέ. */}
@@ -829,13 +864,21 @@ function Inner() {
                     onChange={(e) => setItems((x) => x.map((y, k) => k === n ? { ...y, qty: Math.max(1, Number(e.target.value) || 1) } : y))}
                     className="w-14 rounded border border-slate-200 px-2 py-1 dark:border-slate-600 dark:bg-slate-900" />
                 </label>
-                <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${i.gtin ? "bg-sky-100 text-sky-700" : "bg-amber-100 text-amber-700"}`}>
-                  {i.gtin ? "QR (HMVS)" : t("Ταινία ΕΟΦ", "ΕΟΦ strip")}
-                </span>
+                {(() => {
+                  const k = KIND_EL[i.kind || (i.gtin ? "gs1" : i.barcode ? "eof_code" : "eof_lot")] ?? KIND_EL.other;
+                  return <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${k[2]}`}>{t(k[0], k[1])}</span>;
+                })()}
                 <span className="font-mono text-slate-500">
-                  {i.strip || i.lot}
-                  {i.gtin ? ` · GTIN ${i.gtin}` : ""}
+                  {[i.barcode, i.lot || i.strip, i.gtin ? `GTIN ${i.gtin}` : ""].filter(Boolean).join(" · ")}
                 </span>
+                {needsCoupon(i) && (
+                  <span className="rounded bg-rose-100 px-1.5 py-0.5 text-[10px] font-semibold text-rose-700">
+                    ⚠ {t("σκάναρε και το κουπόνι ΕΟΦ (280…)", "scan the ΕΟΦ coupon too (280…)")}
+                  </span>
+                )}
+                {i.kind === "eof_code" && !i.lot && (
+                  <span className="text-[10px] text-slate-400">{t("+ LOT ταινίας (προαιρετικό)", "+ strip LOT (optional)")}</span>
+                )}
                 <button onClick={() => setItems((x) => x.filter((_, k) => k !== n))} className="ml-auto text-slate-400 hover:text-rose-600">
                   <X className="h-3.5 w-3.5" />
                 </button>

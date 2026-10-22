@@ -29,6 +29,15 @@ EOPYY_MED = "ΕΟΠΥΥ - Φάρμακα"
 #: Συνταγές εμβολίων που εκδίδει/εκτελεί το ΙΔΙΟ το φαρμακείο (Μητρώο Εμβολιασμών ΗΔΥΚΑ) — ξεχωριστή ομάδα
 #: στον φυσικό έλεγχο, ώστε να μην ανακατεύονται με τις συνταγές ιατρού (ούτε με τα «ΕΟΠΥΥ - Εμβόλια»).
 PHARMACY_VACC = "ΕΟΠΥΥ - Εμβολιασμοί φαρμακείου"
+
+
+def needs_doctor_original(barcode: str, intangible: bool, first_phase: bool) -> bool:
+    """ΕΝΑΣ ορισμός: θέλει η συνταγή την ΠΡΩΤΟΤΥΠΗ χάρτινη του ιατρού; Μη άυλη + 1η εκτέλεση — ΕΚΤΟΣ από
+    συνταγές με barcode «92…»: τις δημιουργεί ο ΦΑΡΜΑΚΟΠΟΙΟΣ (π.χ. αντιγριπικός εμβολιασμός ΧΩΡΙΣ ιατρική
+    συνταγή), άρα δεν υπάρχει πρωτότυπο ιατρού (παρατήρηση Παπαγιαννόπουλου, 22/10/2026)."""
+    if str(barcode or "").split(":")[0].startswith("92"):
+        return False
+    return (not intangible) and first_phase
 EOPYY_VAC = "ΕΟΠΥΥ - Εμβόλια"
 
 
@@ -879,7 +888,7 @@ class ReimbursementRepository(BaseRepository):
             # (πρώτη εκτέλεση) — ΟΧΙ μόνο όταν είναι μονή. Σε επαναλαμβανόμενη έντυπη, η πρωτότυπη
             # κατατίθεται μία φορά (στη φάση 1)· οι επόμενες φάσες την αναφέρουν. (ec δεν κρίνει πλέον.)
             first_phase = (exno is None) or (str(exno) == "1")
-            needs_orig = (not bool(r.get("intangible"))) and first_phase
+            needs_orig = needs_doctor_original(root, bool(r.get("intangible")), first_phase)
             # ΕΟΠΥΥ claim = ΚΑΘΑΡΟ πρωτεύον = amount_claimed − ΚΥΥΑΠ κάλυψη. Το ΚΥΥΑΠ κομμάτι ανήκει
             # στο ΕΤΥΑΠ (συμπληρωματική υποβολή) — ΟΧΙ στον ΕΟΠΥΥ (αλλιώς διπλομετριέται στα σύνολα).
             # ΤΟ ΚΥΥΑΠ ΕΙΝΑΙ ΑΝΑ ΣΥΝΤΑΓΗ (visit), γραμμένο σε ΚΑΘΕ φάση/εκτέλεση → αποδίδεται ΜΟΝΟ στη
@@ -1060,7 +1069,7 @@ class ReimbursementRepository(BaseRepository):
             "is_full_participation": bool(d.get("full_participation")),
             # α) μη άυλη + ΦΑΣΗ 1 (πρώτη εκτέλεση) → χρειάζεται η πρωτότυπη χάρτινη συνταγή ιατρού. Σε
             # επαναλαμβανόμενη έντυπη η πρωτότυπη κατατίθεται ΜΙΑ φορά (φάση 1)· ΟΧΙ μόνο όταν είναι μονή.
-            "needs_original": (not intangible) and first_phase,
+            "needs_original": needs_doctor_original(ext, intangible, first_phase),
             "is_fyk": bool(d.get("n3816")),               # β) ΦΥΚ Ν.3816/10 (1.1.14)
             "has_desensitization": bool(d.get("desensitization")),  # γ) εμβόλιο απευαισθητοποίησης (1.1.8)
             "has_opinion": bool(d.get("opinion")),        # δ) γνωμάτευση (1.1.23)

@@ -18,6 +18,11 @@ from bson import Binary, ObjectId
 from app.repositories.base import BaseRepository, jsonsafe
 from app.services.catalog_taxonomy import PRODUCT_TYPES, discount_allowed, medicine_category
 
+#: Είδος που ήρθε από ΕΜΑΣ (έτοιμος κατάλογος / νυχτερινή ενημέρωση / δείγμα). Γράφεται ΜΟΝΟ στη
+#: δημιουργία και δεν αλλάζει ποτέ — ό,τι κι αν κάνει μετά ο φαρμακοποιός στο είδος.
+SEED_ORIGIN = "rxvision"
+#: Πεδία ανά φαρμακείο που ΔΕΝ αντιγράφονται ποτέ από την πηγή καταλόγου.
+SEED_PRIVATE = {"origin", "catalog_locked", "locked_at", "lock_prev", "user_edited_at", "seed_price_cents"}
 TYPES = PRODUCT_TYPES   # ("rx_medicine", "otc_medicine", "parapharmacy")
 
 # Accent-insensitive αναζήτηση: κάθε ελληνικό φωνήεν ταιριάζει με ΟΛΕΣ τις τονισμένες παραλλαγές του,
@@ -375,6 +380,11 @@ class PharmacyCatalogRepository(BaseRepository):
                   "related_barcodes", "points_multiplier", "vat_rate", "price_includes_vat", "brand"):
             if k not in data:
                 doc.pop(k, None)
+        if await self.find_one({"barcode": bc, "catalog_locked": True}):
+            # κλειδωμένο είδος έτοιμου καταλόγου: φαίνεται, αλλά δεν ξαναμπαίνει σε χρήση με επεξεργασία
+            doc["active"], doc["for_sale"] = False, False
+        if doc.get("source") == "manual":   # αλλαγή από τον ΙΔΙΟ τον φαρμακοποιό = «κίνηση» του είδους
+            doc["user_edited_at"] = _now()
         await self.update_one({"barcode": bc},
                               {"$set": doc, "$setOnInsert": {"barcode": bc, "created_at": _now()}},
                               upsert=True)
@@ -418,13 +428,14 @@ class PharmacyCatalogRepository(BaseRepository):
                         cat1: str | None = None, cat2: str | None = None, cat3: str | None = None,
                         for_sale: bool | None = None, stock: str | None = None,
                         supplier: str | None = None, no_image: bool = False, no_category: bool = False,
-                        page: int = 1, page_size: int = 60, focus: str | None = None) -> dict:
+                        page: int = 1, page_size: int = 60, focus: str | None = None,
+                        origin: str | None = None) -> dict:
         """Master inventory: ΟΛΑ τα είδη (ενεργά + ανενεργά) με πλήρη χαρακτηριστικά + πλούσια φίλτρα."""
         query = self.warehouse_query(
             q=q, ptype=ptype, low_stock=low_stock, expiring=expiring,
             include_inactive=include_inactive, cat1=cat1, cat2=cat2, cat3=cat3,
             for_sale=for_sale, stock=stock, supplier=supplier,
-            no_image=no_image, no_category=no_category)
+            no_image=no_image, no_category=no_category, origin=origin)
         fq = await self.focus_query(focus)
         if fq is not None:
             query = {"$and": [query, fq]} if query else fq
@@ -438,7 +449,7 @@ class PharmacyCatalogRepository(BaseRepository):
                         cat1: str | None = None, cat2: str | None = None, cat3: str | None = None,
                         for_sale: bool | None = None, stock: str | None = None,
                         supplier: str | None = None, no_image: bool = False,
-                        no_category: bool = False) -> dict:
+                        no_category: bool = False, origin: str | None = None) -> dict:
         """Τα ΙΔΙΑ φίλτρα που βλέπει ο φαρμακοποιός στην οθόνη — ΜΙΑ φορά γραμμένα.
 
         Το χρησιμοποιούν και η λίστα και οι μαζικές ενέργειες, ώστε «ό,τι βλέπω, αυτό αλλάζω».
@@ -480,6 +491,10 @@ class PharmacyCatalogRepository(BaseRepository):
                 {"$or": [{"photo_url": {"$in": [None, ""]}}, {"photo_url": {"$exists": False}}]}]
         if no_category:
             query["cat1_id"] = {"$in": [None, ""]}
+        if origin == SEED_ORIGIN:            # από τον έτοιμο κατάλογο RxVision
+            query["origin"] = SEED_ORIGIN
+        elif origin == "own":                # όσα έφτιαξε ο ίδιος
+            query["origin"] = {"$ne": SEED_ORIGIN}
         # Κατάσταση αποθέματος: σε απόθεμα / εξαντλημένο / χαμηλό (min_stock)
         if stock == "out":
             query["stock_qty"] = {"$lte": 0}
@@ -515,6 +530,7 @@ class PharmacyCatalogRepository(BaseRepository):
         if for_sale:
             # Δεν βάζουμε σε πώληση είδη χωρίς κατηγορία — ο κατάλογος θα τα έκρυβε ούτως ή άλλως.
             query = {**query, "cat1_id": {"$nin": [None, ""]}}
+        query = {**query, "catalog_locked": {"$ne": True}}
         res = await self.update_many(query, {"$set": {"for_sale": bool(for_sale),
                                                       "updated_at": _now()}})
         return {"ok": True, "changed": getattr(res, "modified_count", 0),
@@ -571,7 +587,7 @@ class PharmacyCatalogRepository(BaseRepository):
         existing = set(await col.distinct("barcode", {"tenant_id": self.tenant_id}))
         # πεδία που ΔΕΝ μεταφέρονται (tenant-specific): markers/ιστορικό/ταυτότητα εγγραφής
         drop = {"_id", "tenant_id", "created_at", "updated_at", "profarm_tried", "profarm_tried_at",
-                "profarm_synced_at", "profarm_pid", "photo_source", "source"}
+                "profarm_synced_at", "profarm_pid", "photo_source", "source", *SEED_PRIVATE}
         copied = skipped = updated = 0
         buf: list = []
         async for p in col.find(q):
@@ -579,16 +595,19 @@ class PharmacyCatalogRepository(BaseRepository):
             if not bc:
                 continue
             doc = {k: v for k, v in p.items() if k not in drop}
-            doc.update({"tenant_id": self.tenant_id, "stock_qty": 0,
-                        "source": "copy", "created_at": _now(), "updated_at": _now()})
             if bc in existing:
                 if not overwrite:
                     skipped += 1
                     continue
-                doc.pop("stock_qty", None)          # μη μηδενίζεις το απόθεμα υπάρχοντος
+                # ΥΠΑΡΧΟΝ είδος του φαρμακοποιού: ενημερώνουμε στοιχεία, αλλά ΜΕΝΕΙ δικό του — ούτε
+                # προέλευση, ούτε ημερομηνία δημιουργίας, ούτε απόθεμα αλλάζουν.
+                doc["updated_at"] = _now()
                 await col.update_one({"tenant_id": self.tenant_id, "barcode": bc}, {"$set": doc})
                 updated += 1
                 continue
+            doc.update({"tenant_id": self.tenant_id, "stock_qty": 0, "source": "copy",
+                        "origin": SEED_ORIGIN, "seed_price_cents": p.get("price_cents"),
+                        "created_at": _now(), "updated_at": _now()})
             buf.append(doc)
             if len(buf) >= 1000:
                 await col.insert_many(buf); copied += len(buf); buf = []
@@ -631,7 +650,8 @@ class PharmacyCatalogRepository(BaseRepository):
                 existing.add(bc)
                 buf.append({**{k: v for k, v in d.items() if k not in drop},
                             "tenant_id": self.tenant_id, "stock_qty": 0,
-                            "source": self.SAMPLE_SOURCE, "sample": True,
+                            "source": self.SAMPLE_SOURCE, "sample": True, "origin": SEED_ORIGIN,
+                            "seed_price_cents": d.get("price_cents"),
                             "created_at": _now(), "updated_at": _now()})
         for i in range(0, len(buf), 1000):
             await col.insert_many(buf[i:i + 1000])
@@ -653,6 +673,63 @@ class PharmacyCatalogRepository(BaseRepository):
         res = await col.delete_many(q)
         return {"ok": True, "deleted": res.deleted_count,
                 "kept_touched": kept - res.deleted_count}
+
+    # ── ΕΤΟΙΜΟΣ ΚΑΤΑΛΟΓΟΣ: τι γίνεται όταν λήξει το πρόσθετο (απόφαση ιδιοκτήτη 20/10/2026) ──────────
+    # «Δικό μας» = origin RxVision (μπήκε από φόρτωση/νυχτερινή ενημέρωση/δείγμα — μόνιμο, δεν αλλάζει).
+    # Χωρίς κίνηση → σβήνεται. Με κίνηση → ΚΛΕΙΔΩΝΕΙ: φαίνεται στην Αποθήκη, δεν επιλέγεται πουθενά.
+    # Ό,τι έφτιαξε ο ίδιος (χωρίς origin) δεν αγγίζεται ποτέ. Ξεκλείδωμα ΜΟΝΟ με επανενεργοποίηση.
+    async def _seed_split(self) -> tuple[list, list]:
+        """(χωρίς κίνηση, με κίνηση) — barcodes των ειδών έτοιμου καταλόγου."""
+        col = self._db["pharmacy_products"]
+        moved = set(await self._db["pharmacy_stock_movements"].distinct(
+            "barcode", {"tenant_id": self.tenant_id}))
+        ordered = set(await self._db["orders_delivery"].distinct(
+            "items.barcode", {"tenant_id": self.tenant_id}))
+        idle, used = [], []
+        async for p in col.find({"tenant_id": self.tenant_id, "origin": SEED_ORIGIN},
+                                {"barcode": 1, "stock_qty": 1, "for_sale": 1, "user_edited_at": 1,
+                                 "price_cents": 1, "seed_price_cents": 1, "catalog_locked": 1}):
+            bc = p.get("barcode")
+            own_price = (p.get("seed_price_cents") is not None
+                         and p.get("price_cents") != p.get("seed_price_cents"))
+            if (int(p.get("stock_qty") or 0) > 0 or p.get("for_sale") or p.get("user_edited_at")
+                    or own_price or p.get("catalog_locked") or bc in moved or bc in ordered):
+                used.append(bc)
+            else:
+                idle.append(bc)
+        return idle, used
+
+    async def seed_release_preview(self) -> dict:
+        idle, used = await self._seed_split()
+        return {"delete": len(idle), "lock": len(used)}
+
+    async def seed_release(self) -> dict:
+        col = self._db["pharmacy_products"]
+        idle, used = await self._seed_split()
+        deleted = locked = 0
+        for i in range(0, len(idle), 2000):
+            res = await col.delete_many({"tenant_id": self.tenant_id, "origin": SEED_ORIGIN,
+                                         "barcode": {"$in": idle[i:i + 2000]}})
+            deleted += res.deleted_count
+        async for p in col.find({"tenant_id": self.tenant_id, "origin": SEED_ORIGIN,
+                                 "barcode": {"$in": used}, "catalog_locked": {"$ne": True}},
+                                {"active": 1, "for_sale": 1}):
+            await col.update_one({"tenant_id": self.tenant_id, "_id": p["_id"]}, {"$set": {
+                "catalog_locked": True, "locked_at": _now(), "active": False, "for_sale": False,
+                "lock_prev": {"active": p.get("active", True) is not False, "for_sale": bool(p.get("for_sale"))}}})
+            locked += 1
+        return {"ok": True, "deleted": deleted, "locked": locked}
+
+    async def seed_unlock(self) -> dict:
+        col = self._db["pharmacy_products"]
+        n = 0
+        async for p in col.find({"tenant_id": self.tenant_id, "catalog_locked": True}, {"lock_prev": 1}):
+            prev = p.get("lock_prev") or {}
+            await col.update_one({"tenant_id": self.tenant_id, "_id": p["_id"]}, {
+                "$set": {"active": prev.get("active", True), "for_sale": bool(prev.get("for_sale"))},
+                "$unset": {"catalog_locked": "", "locked_at": "", "lock_prev": ""}})
+            n += 1
+        return {"ok": True, "unlocked": n}
 
     async def delete_all_items(self) -> dict:
         """Διαγραφή ΟΛΩΝ των ειδών αποθήκης του φαρμακείου + κινήσεις αποθέματος (admin-only, destructive).
@@ -688,6 +765,10 @@ class PharmacyCatalogRepository(BaseRepository):
     async def set_flags(self, barcode: str, *, for_sale: bool | None = None, active: bool | None = None) -> dict:
         """Toggle ανεξάρτητα flags: ενεργό/ανενεργό (active) & πωλείται στο e-shop (for_sale)."""
         upd: dict = {"updated_at": _now()}
+        if (for_sale or active) and await self.find_one({"barcode": str(barcode), "catalog_locked": True}):
+            return {"ok": False, "error": "catalog_locked",
+                    "message": "Το είδος ανήκει στον Έτοιμο κατάλογο, που έληξε. Ενεργοποίησε ξανά το "
+                               "πρόσθετο για να το χρησιμοποιήσεις."}
         if for_sale is not None:
             if for_sale:   # ΚΑΝΟΝΑΣ: για «προς πώληση» ΠΡΕΠΕΙ να έχει Κατηγορία 1
                 p = await self.find_one({"barcode": str(barcode)}) or {}
@@ -706,7 +787,7 @@ class PharmacyCatalogRepository(BaseRepository):
                           cost_cents: int | None = None) -> int | None:
         """Εφαρμόζει κίνηση αποθέματος στο είδος & επιστρέφει το ΝΕΟ stock_qty (None αν δεν υπάρχει)."""
         p = await self.find_one({"barcode": str(barcode)})
-        if not p:
+        if not p or p.get("catalog_locked"):
             return None
         cur = int(p.get("stock_qty") or 0)
         new = max(0, int(set_to) if set_to is not None else cur + int(delta or 0))

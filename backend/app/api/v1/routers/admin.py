@@ -3008,6 +3008,12 @@ async def put_smtp(body: SmtpIn, _: PlatformContext = Depends(get_platform_admin
     return {"saved": True, "login_ok": check["ok"], "error": check.get("error")}
 
 
+@router.get("/hdika-catalog/health")
+async def hdika_catalog_health(_: PlatformContext = Depends(get_platform_admin)):
+    """Καθημερινή ενημέρωση καταλόγου ΗΔΥΚΑ (τιμές συνταγογραφούμενων) — για τη μπάρα του adminpanel."""
+    return jsonsafe(await shared_db()["platform_settings"].find_one({"_id": "hdika_catalog_health"}) or {"ok": None})
+
+
 @router.get("/smtp/health")
 async def smtp_health(_: PlatformContext = Depends(get_platform_admin)):
     """Κατάσταση αποστολής email για την μπάρα του adminpanel (κάθε σελίδα, κάθε σύνδεση)."""

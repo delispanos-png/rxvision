@@ -4,7 +4,7 @@ import { useState, useEffect, useRef, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { useQuery } from "@tanstack/react-query";
 import { Warehouse, Plus, ArrowUpDown, History, Pencil, AlertTriangle, CalendarClock, X, PackageX, FileSpreadsheet, Upload, ImagePlus, ZoomIn, ShoppingCart, Ban, Loader2 } from "lucide-react";
-import { api, apiUpload, apiBlob, API_BASE } from "@/lib/apiClient";
+import { api, apiUpload, apiBlob, API_BASE, queryKeys } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
 import { appAlert, appConfirm } from "@/store/dialogStore";
 import { fmtEur, fmtNum } from "@/lib/formatters";
@@ -13,11 +13,22 @@ import { DateInput } from "@/components/ui/DateInput";
 import { CategoryPicker, useCategoryTree } from "@/components/catalog/CategoryPicker";
 import { SupplierPhotoCard } from "@/components/catalog/SupplierPhotoCard";
 
+/** Η ΑΠΟΘΗΚΗ είναι βασική για όλους (21/10/2026)· τα στοιχεία ΠΩΛΗΣΗΣ (e-shop) φαίνονται μόνο σε όσους
+ *  έχουν το πρόσθετο e-shop (`order_delivery`). Ίδιο /auth/me με το μενού (κοινή cache). */
+function useHasShop(): boolean {
+  const me = useQuery({ queryKey: queryKeys.me(), queryFn: () => api<{ modules?: Record<string, string> }>("/auth/me") });
+  const st = me.data?.modules?.order_delivery;
+  return st === "enabled" || st === "trial";
+}
+
+const dmyhm = (iso?: string | null) => (iso ? new Date(iso).toLocaleString("el-GR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "");
 type Item = {
   barcode: string; name: string; type: string; category?: string | null;
   stock_qty: number; min_stock?: number; wholesale_cents?: number; price_cents: number;
   supplier?: string | null; location?: string | null; batch?: string | null; expiry?: string | null;
   active?: boolean; for_sale?: boolean; image_id?: string | null; photo_url?: string | null;
+  origin?: string | null; catalog_locked?: boolean;
+  updated_at?: string | null;   // πότε ενημερώθηκε το είδος (οποιαδήποτε πηγή / προμηθευτής)   // από τον έτοιμο κατάλογο RxVision / κλειδωμένο (έληξε)
   barcodes?: string[]; variants?: Variant[];
   cat1_id?: string | null; cat2_id?: string | null; cat3_id?: string | null;
   vat_rate?: number; price_includes_vat?: boolean; usage_video_url?: string | null;
@@ -39,6 +50,7 @@ const netPrice = (p: Item) => (p.price_includes_vat ?? true) ? p.price_cents / (
 const margin = (p: Item) => (p.wholesale_cents && p.price_cents) ? Math.round((netPrice(p) - p.wholesale_cents) / netPrice(p) * 100) : null;
 
 export default function WarehousePage() {
+  const hasShop = useHasShop();
   const t = useT();
   const TYPE_EL = typeElMap(t);
   const [q, setQ] = useState(() => { try { return new URLSearchParams(window.location.search).get("q") ?? ""; } catch { return ""; } });
@@ -49,6 +61,7 @@ export default function WarehousePage() {
   const [cat1, setCat1] = useState(""); const [cat2, setCat2] = useState(""); const [cat3, setCat3] = useState("");
   const [forSale, setForSale] = useState(""); const [stock, setStock] = useState(""); const [supplier, setSupplier] = useState("");
   const [noImg, setNoImg] = useState(false); const [noCat, setNoCat] = useState(false);
+  const [origin, setOrigin] = useState("");   // "" | rxvision | own
   // ?focus=expired|expiring|reorder|dead — από τις κάρτες του Συμβούλου: ΙΔΙΟΣ ορισμός με την κάρτα
   const [focus, setFocus] = useState(() => { try { return new URLSearchParams(window.location.search).get("focus") ?? ""; } catch { return ""; } });
   const { data: catTree } = useCategoryTree();
@@ -60,10 +73,10 @@ export default function WarehousePage() {
   const [imp, setImp] = useState(false);
   const [page, setPage] = useState(1);
   const PAGE = 100;
-  useEffect(() => { setPage(1); }, [q, type, low, exp, inactive, cat1, cat2, cat3, forSale, stock, supplier, noImg, noCat, focus]);
+  useEffect(() => { setPage(1); }, [q, type, low, exp, inactive, cat1, cat2, cat3, forSale, stock, supplier, noImg, noCat, focus, origin]);
 
   const list = useQuery({
-    queryKey: ["warehouse", q, type, low, exp, inactive, cat1, cat2, cat3, forSale, stock, supplier, noImg, noCat, focus, page],
+    queryKey: ["warehouse", q, type, low, exp, inactive, cat1, cat2, cat3, forSale, stock, supplier, noImg, noCat, focus, origin, page],
     queryFn: () => {
       const p = new URLSearchParams({ q, type, low_stock: String(low), expiring: String(exp), include_inactive: String(inactive), page: String(page), page_size: String(PAGE) });
       if (cat1) p.set("cat1", cat1); if (cat2) p.set("cat2", cat2); if (cat3) p.set("cat3", cat3);
@@ -72,6 +85,7 @@ export default function WarehousePage() {
       if (focus) p.set("focus", focus);
       if (supplier) p.set("supplier", supplier);
       if (noImg) p.set("no_image", "true"); if (noCat) p.set("no_category", "true");
+      if (origin) p.set("origin", origin);
       return api<WH>(`/catalog/warehouse?${p.toString()}`);
     },
     retry: false,
@@ -85,7 +99,7 @@ export default function WarehousePage() {
   const filterBody = () => ({
     q, type: type || null, cat1: cat1 || null, cat2: cat2 || null, cat3: cat3 || null,
     for_sale: forSale ? forSale === "yes" : null, stock: stock || null,
-    supplier: supplier || null, no_image: noImg, no_category: noCat,
+    supplier: supplier || null, no_image: noImg, no_category: noCat, origin: origin || null,
     low_stock: low, expiring: exp, include_inactive: inactive,
   });
 
@@ -125,7 +139,8 @@ export default function WarehousePage() {
   }
 
   async function toggle(bc: string, patch: { for_sale?: boolean; active?: boolean }) {
-    const r = await api<{ ok: boolean; need_category?: boolean }>("/catalog/warehouse/flags", { method: "POST", body: JSON.stringify({ barcode: bc, ...patch }) }).catch(() => ({ ok: false, need_category: false }));
+    const r = await api<{ ok: boolean; need_category?: boolean; error?: string; message?: string }>("/catalog/warehouse/flags", { method: "POST", body: JSON.stringify({ barcode: bc, ...patch }) }).catch(() => ({ ok: false, need_category: false } as { ok: boolean; need_category?: boolean; error?: string; message?: string }));
+    if (!r.ok && r.error === "catalog_locked") { await appAlert(r.message || t("Κλειδωμένο είδος έτοιμου καταλόγου.", "Locked ready-catalog item.")); return; }
     if (!r.ok && r.need_category) { await appAlert(t("Όρισε πρώτα Κατηγορία 1 (Επεξεργασία είδους) για να το βάλεις προς πώληση.", "Set Category 1 first (Edit item) to put it on sale.")); return; }
     list.refetch();
   }
@@ -153,6 +168,9 @@ export default function WarehousePage() {
           <div className="font-mono text-[10px] text-slate-400">{r.barcode}{r.category ? ` · ${r.category}` : ""} · {TYPE_EL[r.type] ?? r.type}
             {(r.barcodes?.length ?? 0) > 0 && <span className="ml-1 rounded bg-slate-100 px-1 text-slate-500 dark:bg-slate-800">+{r.barcodes!.length} bc</span>}
             {(r.variants?.length ?? 0) > 0 && <span className="ml-1 rounded bg-violet-100 px-1 text-violet-600 dark:bg-violet-950/40">{r.variants!.length} {t("εκδοχές", "variants")}</span>}
+            {r.catalog_locked
+              ? <span className="ml-1 rounded bg-slate-200 px-1 font-sans font-semibold text-slate-600 dark:bg-slate-700 dark:text-slate-300" title={t("Ανήκει στον Έτοιμο κατάλογο, που έληξε. Ενεργοποίησε ξανά το πρόσθετο για να το χρησιμοποιήσεις.", "Belongs to the expired ready catalog. Re-activate the add-on to use it.")}>🔒 {t("Κλειδωμένο", "Locked")}</span>
+              : r.origin === "rxvision" && <span className="ml-1 rounded bg-sky-100 px-1 font-sans text-sky-700 dark:bg-sky-950/40 dark:text-sky-300" title={t("Από τον Έτοιμο κατάλογο RxVision", "From the RxVision ready catalog")}>RxVision</span>}
           </div>
         </div>
       </div>
@@ -174,7 +192,7 @@ export default function WarehousePage() {
     { key: "flags", header: t("Κατάσταση", "Status"), render: (r) => (
       <div className="flex flex-col gap-1">
         <Toggle on={r.active !== false} label={t("Ενεργό", "Active")} tone="bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300" onClick={() => toggle(r.barcode, { active: r.active === false })} />
-        <Toggle on={!!r.for_sale} label={t("e-shop", "e-shop")} tone="bg-brand-100 text-brand-700 dark:bg-brand-900/50 dark:text-brand-300" onClick={() => toggle(r.barcode, { for_sale: !r.for_sale })} />
+        {hasShop && <Toggle on={!!r.for_sale} label={t("e-shop", "e-shop")} tone="bg-brand-100 text-brand-700 dark:bg-brand-900/50 dark:text-brand-300" onClick={() => toggle(r.barcode, { for_sale: !r.for_sale })} />}
       </div>
     ) },
     { key: "act", header: "", render: (r) => (
@@ -189,7 +207,7 @@ export default function WarehousePage() {
   const kpis = s ? [
     { v: fmtNum(s.skus), l: t("Είδη (SKU)", "SKUs") },
     { v: fmtNum(s.active), l: t("Ενεργά", "Active"), c: "text-emerald-600" },
-    { v: fmtNum(s.for_sale), l: t("Στο e-shop", "In e-shop"), c: "text-brand-600" },
+    ...(hasShop ? [{ v: fmtNum(s.for_sale), l: t("Στο e-shop", "In e-shop"), c: "text-brand-600" }] : []),
     { v: fmtNum(s.units), l: t("Τεμάχια", "Units") },
     { v: fmtEur(s.value_cents), l: t("Αξία αποθέματος", "Inventory value"), c: "text-slate-800 dark:text-slate-100" },
     { v: fmtNum(s.low), l: t("Χαμηλό απόθεμα", "Low stock"), c: s.low ? "text-amber-600" : "text-slate-400" },
@@ -201,7 +219,9 @@ export default function WarehousePage() {
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <div className="flex items-center gap-2 text-xl font-semibold text-slate-800 dark:text-slate-100"><Warehouse className="h-6 w-6 text-brand-600" /> {t("Προϊόντα", "Products")}</div>
-          <p className="text-sm text-slate-500">{t("Όλα τα προϊόντα του φαρμακείου (αποθήκη + e-shop σε μία ενότητα). Φίλτραρε ανά απόθεμα, κατάσταση e-shop, κατηγορία. Όσα βάλεις «στο e-shop» πωλούνται online.", "All pharmacy products (warehouse + e-shop in one section). Filter by stock, e-shop status, category. Those marked «in e-shop» sell online.")}</p>
+          <p className="text-sm text-slate-500">{hasShop
+            ? t("Όλα τα προϊόντα του φαρμακείου (αποθήκη + e-shop σε μία ενότητα). Φίλτραρε ανά απόθεμα, κατάσταση e-shop, κατηγορία. Όσα βάλεις «στο e-shop» πωλούνται online.", "All pharmacy products (warehouse + e-shop in one section). Filter by stock, e-shop status, category. Those marked «in e-shop» sell online.")
+            : t("Όλα τα προϊόντα του φαρμακείου: τιμές, απόθεμα, κινήσεις, κατηγορίες. Φίλτραρε ανά απόθεμα, κατηγορία, προμηθευτή.", "All pharmacy products: prices, stock, movements, categories. Filter by stock, category, supplier.")}</p>
         </div>
         <div className="flex items-center gap-2">
           <button onClick={() => setImp(true)} className="inline-flex items-center gap-1.5 rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200"><FileSpreadsheet className="h-4 w-4 text-emerald-600" /> {t("Εισαγωγή Excel/CSV", "Import Excel/CSV")}</button>
@@ -265,17 +285,24 @@ export default function WarehousePage() {
             {catOpts(3, cat2).map((c) => <option key={c.id} value={c.id}>{c.icon ? `${c.icon} ` : ""}{c.name}</option>)}
           </select>
         </>)}
+        <select value={origin} onChange={(e) => setOrigin(e.target.value)} className="rounded-lg border border-slate-300 px-2 py-1.5 text-sm dark:border-slate-600 dark:bg-slate-800">
+          <option value="">{t("Προέλευση: όλα", "Origin: all")}</option>
+          <option value="own">{t("Δικά μου", "Mine")}</option>
+          <option value="rxvision">{t("Από τον κατάλογο RxVision", "From RxVision catalog")}</option>
+        </select>
         <select value={stock} onChange={(e) => setStock(e.target.value)} className="rounded-lg border border-slate-300 px-2 py-1.5 text-sm dark:border-slate-600 dark:bg-slate-800">
           <option value="">{t("Απόθεμα: όλα", "Stock: all")}</option>
           <option value="in">{t("Σε απόθεμα", "In stock")}</option>
           <option value="out">{t("Εξαντλημένα", "Out of stock")}</option>
           <option value="low">{t("Χαμηλό", "Low")}</option>
         </select>
+        {hasShop && (
         <select value={forSale} onChange={(e) => setForSale(e.target.value)} className="rounded-lg border border-slate-300 px-2 py-1.5 text-sm dark:border-slate-600 dark:bg-slate-800">
           <option value="">{t("Πώληση: όλα", "Sale: all")}</option>
           <option value="yes">{t("Προς πώληση", "For sale")}</option>
           <option value="no">{t("Όχι στο e-shop", "Not in e-shop")}</option>
         </select>
+        )}
         {!!(list.data?.suppliers?.length) && (
           <select value={supplier} onChange={(e) => setSupplier(e.target.value)} className="max-w-[12rem] rounded-lg border border-slate-300 px-2 py-1.5 text-sm dark:border-slate-600 dark:bg-slate-800">
             <option value="">{t("Προμηθευτής: όλοι", "Supplier: all")}</option>
@@ -285,7 +312,7 @@ export default function WarehousePage() {
         <button onClick={() => setNoImg((v) => !v)} className={`rounded-lg px-3 py-1.5 text-sm font-medium ${noImg ? "bg-indigo-100 text-indigo-700" : "border border-slate-300 text-slate-600 dark:border-slate-600"}`}>📷 {t("Χωρίς φωτο", "No photo")}</button>
         <button onClick={() => setNoCat((v) => !v)} className={`rounded-lg px-3 py-1.5 text-sm font-medium ${noCat ? "bg-indigo-100 text-indigo-700" : "border border-slate-300 text-slate-600 dark:border-slate-600"}`}>🗂️ {t("Χωρίς κατηγορία", "No category")}</button>
         {(q || type || low || exp || cat1 || forSale || stock || supplier || noImg || noCat) && (
-          <button onClick={() => { setQ(""); setType(""); setLow(false); setExp(false); setCat1(""); setCat2(""); setCat3(""); setForSale(""); setStock(""); setSupplier(""); setNoImg(false); setNoCat(false); }} className="ml-auto rounded-lg px-3 py-1.5 text-sm font-medium text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/30">✕ {t("Καθαρισμός", "Clear")}</button>
+          <button onClick={() => { setQ(""); setType(""); setLow(false); setExp(false); setCat1(""); setCat2(""); setCat3(""); setForSale(""); setStock(""); setSupplier(""); setNoImg(false); setNoCat(false); setOrigin(""); }} className="ml-auto rounded-lg px-3 py-1.5 text-sm font-medium text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/30">✕ {t("Καθαρισμός", "Clear")}</button>
         )}
       </div>
 
@@ -297,6 +324,7 @@ export default function WarehousePage() {
           <span className="text-sm text-slate-700 dark:text-slate-200">
             {t("Αυτό το φίλτρο πιάνει", "This filter matches")} <b>{fmtNum(total)}</b> {t("είδη.", "items.")}
           </span>
+          {hasShop && <>
           <button onClick={() => bulk(true)} disabled={bulkBusy}
             className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-50">
             {bulkBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ShoppingCart className="h-3.5 w-3.5" />}
@@ -306,11 +334,12 @@ export default function WarehousePage() {
             className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200">
             <Ban className="h-3.5 w-3.5" />{t("Βγάλ' τα όλα από το e-shop", "Remove all from e-shop")}
           </button>
+          </>}
         </div>
       )}
 
       <div className="rounded-2xl border border-slate-200 bg-white p-2 dark:border-slate-700 dark:bg-slate-900">
-        <DataTable pageSize={PAGE} columns={cols} rows={list.data?.items ?? []} rowKey={(r) => r.barcode} empty={list.isError ? t("Το κύκλωμα e-shop δεν είναι ενεργό για το φαρμακείο.", "The e-shop module is not enabled.") : t("Κανένα είδος.", "No items.")} />
+        <DataTable pageSize={PAGE} columns={cols} rows={list.data?.items ?? []} rowKey={(r) => r.barcode} empty={list.isError ? t("Δεν ήταν δυνατή η φόρτωση της αποθήκης.", "Could not load the warehouse.") : t("Κανένα είδος.", "No items.")} />
         {/* Server pagination — 12k+ είδη: σελιδοποίηση από τον server (100/σελίδα) */}
         {total > PAGE && (
           <div className="flex items-center justify-between border-t border-slate-100 px-2 py-2 text-sm dark:border-slate-800">
@@ -439,6 +468,7 @@ function PhotoZoom({ src, alt, onClose }: { src: string; alt: string; onClose: (
 }
 
 function EditModal({ item, t, onClose, onDone }: { item: Item; t: (a: string, b: string) => string; onClose: () => void; onDone: () => void }) {
+  const hasShop = useHasShop();
   const isNew = !item.barcode;
   const TYPE_EL = typeElMap(t);
   const [f, setF] = useState<Item & { price_eur: number; cost_eur: number }>({ ...item, price_eur: item.price_cents / 100, cost_eur: (item.wholesale_cents ?? 0) / 100 });
@@ -508,6 +538,11 @@ function EditModal({ item, t, onClose, onDone }: { item: Item; t: (a: string, b:
             </label>
             {img && <button onClick={() => { set("image_id", null); setImg(null); }} className="ml-2 text-xs text-rose-500 underline">{t("Αφαίρεση", "Remove")}</button>}
             <p className="mt-1 text-[11px] text-slate-400">{t("Εμφανίζεται στον Κατάλογο & στην πύλη πελατών.", "Shown in the Catalog & customer portal.")}</p>
+            {!isNew && item.updated_at && (
+              <p className="mt-1 text-[11px] text-slate-500">
+                🕒 {t("Τελευταία ενημέρωση", "Last updated")}: <b>{dmyhm(item.updated_at)}</b>
+              </p>
+            )}
           </div>
         </div>
         <label className="col-span-full block text-sm"><span className="mb-1 block text-xs font-medium text-slate-500">Barcode</span>
@@ -577,14 +612,14 @@ function EditModal({ item, t, onClose, onDone }: { item: Item; t: (a: string, b:
 
         <div className="col-span-full mt-1 flex flex-wrap gap-5 rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800/40">
           <label className="inline-flex items-center gap-2 text-sm"><input type="checkbox" checked={f.active !== false} onChange={(e) => set("active", e.target.checked)} className="h-4 w-4" /> {t("Ενεργό είδος", "Active item")}</label>
-          <label className={`inline-flex items-center gap-2 text-sm ${!f.cat1_id ? "text-slate-400" : ""}`} title={!f.cat1_id ? t("Χρειάζεται τουλάχιστον Κατηγορία 1", "Needs at least Category 1") : undefined}>
+          {hasShop && <label className={`inline-flex items-center gap-2 text-sm ${!f.cat1_id ? "text-slate-400" : ""}`} title={!f.cat1_id ? t("Χρειάζεται τουλάχιστον Κατηγορία 1", "Needs at least Category 1") : undefined}>
             <input type="checkbox" checked={!!f.for_sale && !!f.cat1_id} disabled={!f.cat1_id} onChange={(e) => set("for_sale", e.target.checked)} className="h-4 w-4" /> {t("Προς πώληση στο e-shop", "For sale in e-shop")}
             {!f.cat1_id && <span className="text-[11px] text-amber-600">— {t("όρισε Κατηγορία 1", "set Category 1")}</span>}
-          </label>
+          </label>}
         </div>
 
         {/* ── Worksheet: Πωλησιακά χαρακτηριστικά e-shop (inline, όταν «στο e-shop») ── */}
-        {!!f.for_sale && (
+        {hasShop && !!f.for_sale && (
           <div className="col-span-full space-y-3 rounded-xl border border-brand-200 bg-brand-50/40 p-4 dark:border-brand-900 dark:bg-brand-950/20">
             <div className="flex items-center gap-1.5 text-sm font-semibold text-brand-800 dark:text-brand-200">🛒 {t("Πωλησιακά χαρακτηριστικά e-shop", "e-shop selling attributes")}</div>
             <label className="block text-sm"><span className="mb-1 block text-xs text-slate-500">{t("Περιγραφή e-shop (marketing)", "e-shop description (marketing)")}</span>
@@ -663,6 +698,7 @@ const GUESS: Record<string, string[]> = {
 };
 
 function ImportModal({ t, onClose, onDone }: { t: (a: string, b: string) => string; onClose: () => void; onDone: () => void }) {
+  const hasShop = useHasShop();
   const TYPE_EL = typeElMap(t);
   const IMPORT_FIELDS = importFields(t);
   const [file, setFile] = useState<File | null>(null);
@@ -763,7 +799,7 @@ function ImportModal({ t, onClose, onDone }: { t: (a: string, b: string) => stri
               <select value={dtype} onChange={(e) => setDtype(e.target.value)} className="rounded-lg border border-slate-300 px-2 py-1 dark:border-slate-600 dark:bg-slate-800">
                 <option value="parapharmacy">{TYPE_EL.parapharmacy}</option><option value="otc_medicine">{TYPE_EL.otc_medicine}</option><option value="rx_medicine">{TYPE_EL.rx_medicine}</option>
               </select></label>
-            <label className="flex items-center gap-1.5"><input type="checkbox" checked={forSale} onChange={(e) => setForSale(e.target.checked)} className="h-4 w-4" /> {t("Εισαγωγή απευθείας «προς πώληση» (Κατάλογος)", "Import directly as «for sale» (Catalog)")}</label>
+            {hasShop && <label className="flex items-center gap-1.5"><input type="checkbox" checked={forSale} onChange={(e) => setForSale(e.target.checked)} className="h-4 w-4" /> {t("Εισαγωγή απευθείας «προς πώληση» (Κατάλογος)", "Import directly as «for sale» (Catalog)")}</label>}
           </div>
 
           <div className="flex items-center justify-between">

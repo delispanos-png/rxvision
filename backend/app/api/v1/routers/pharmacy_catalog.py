@@ -9,7 +9,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response, UploadFile, status
 from pydantic import BaseModel, Field
 
-from app.core.deps import TenantContext, require
+from app.core.deps import TenantContext, _module_locked, require
 from app.core.ratelimit import rate_limit
 from app.repositories.pharmacy_catalog import PharmacyCatalogRepository, StockMovementRepository
 from app.repositories.pharmacy_categories import PharmacyCategoryRepository
@@ -24,7 +24,11 @@ _XML_CTYPES = {"application/xml", "text/xml", "application/octet-stream", ""}
 _MAX_IMG = 8 * 1024 * 1024   # 8 MB cap on a product photo upload
 
 router = APIRouter()
-_MODULE = "order_delivery"      # opt-in module — ενεργοποιείται ανά φαρμακείο
+_MODULE = "order_delivery"      # opt-in module — ενεργοποιείται ανά φαρμακείο (e-shop: ΠΩΛΗΣΗ)
+# ΑΠΟΘΗΚΗ = βασική δυνατότητα για ΟΛΑ τα πακέτα (21/10/2026): τα ΔΕΔΟΜΕΝΑ των ειδών (είδη, τιμές, απόθεμα,
+# κινήσεις, εισαγωγές, κατηγορίες, προμηθευτής) δεν εξαρτώνται πια από το e-shop. Το «ή order_delivery»
+# κρατά ανοιχτή την πρόσβαση σε όσους είναι ήδη συνδεδεμένοι με παλιό token (χωρίς «warehouse»).
+_WH = ["warehouse", "order_delivery"]
 _PERM = "portal:manage"
 
 
@@ -36,13 +40,13 @@ def _repo(ctx: TenantContext) -> PharmacyCatalogRepository:
 async def list_products(q: str = "", category: str | None = None, type: str | None = None,
                         tag: str | None = None, sort: str = "featured", in_stock: bool = False,
                         for_sale: bool = False, page: int = 1,
-                        ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+                        ctx: TenantContext = Depends(require(_PERM, module=_WH))):
     return await _repo(ctx).list(q=q, category=category, ptype=type, tag=tag, sort=sort,
                                  in_stock_only=in_stock, for_sale_only=for_sale, page=page)
 
 
 @router.get("/categories")
-async def categories(ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+async def categories(ctx: TenantContext = Depends(require(_PERM, module=_WH))):
     return {"categories": await _repo(ctx).categories(), "tags": await _repo(ctx).tags()}
 
 
@@ -52,7 +56,7 @@ def _catrepo(ctx: TenantContext) -> PharmacyCategoryRepository:
 
 
 @router.get("/category-tree")
-async def category_tree(ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+async def category_tree(ctx: TenantContext = Depends(require(_PERM, module=_WH))):
     return {"items": await _catrepo(ctx).tree()}
 
 
@@ -62,12 +66,12 @@ class CategoryIn(BaseModel):
 
 
 @router.post("/category")
-async def add_category(body: CategoryIn, ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+async def add_category(body: CategoryIn, ctx: TenantContext = Depends(require(_PERM, module=_WH))):
     return await _catrepo(ctx).add(body.name, body.parent_id)
 
 
 @router.post("/category/seed-from-products")
-async def seed_categories(ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+async def seed_categories(ctx: TenantContext = Depends(require(_PERM, module=_WH))):
     """Μεταφορά των υπαρχουσών κατηγοριών ειδών στο δέντρο ως Κατηγορία 1 + ανάθεση στα είδη."""
     return await _catrepo(ctx).seed_from_products()
 
@@ -78,7 +82,7 @@ class CategoryRenameIn(BaseModel):
 
 @router.put("/category/{cat_id}")
 async def rename_category(cat_id: str, body: CategoryRenameIn,
-                          ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+                          ctx: TenantContext = Depends(require(_PERM, module=_WH))):
     return await _catrepo(ctx).rename(cat_id, body.name)
 
 
@@ -88,18 +92,18 @@ class CategoryIconIn(BaseModel):
 
 @router.post("/category/{cat_id}/icon")
 async def set_category_icon(cat_id: str, body: CategoryIconIn,
-                            ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+                            ctx: TenantContext = Depends(require(_PERM, module=_WH))):
     return await _catrepo(ctx).set_icon(cat_id, body.icon)
 
 
 @router.delete("/category/{cat_id}")
-async def delete_category(cat_id: str, ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+async def delete_category(cat_id: str, ctx: TenantContext = Depends(require(_PERM, module=_WH))):
     return await _catrepo(ctx).delete(cat_id)
 
 
 @router.post("/category/{cat_id}/image")
 async def category_image(cat_id: str, file: UploadFile = File(...),
-                         ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+                         ctx: TenantContext = Depends(require(_PERM, module=_WH))):
     """Φωτογραφία κατηγορίας (για το μενού-πλακίδια της πύλης). Reuse του image storage/serve των ειδών."""
     content = await file.read(_MAX_IMG + 1)
     if len(content) > _MAX_IMG:
@@ -112,7 +116,7 @@ async def category_image(cat_id: str, file: UploadFile = File(...),
 
 
 @router.delete("/category/{cat_id}/image")
-async def category_image_remove(cat_id: str, ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+async def category_image_remove(cat_id: str, ctx: TenantContext = Depends(require(_PERM, module=_WH))):
     return await _catrepo(ctx).set_image(cat_id, None)
 
 
@@ -136,7 +140,7 @@ def _read_grid(content: bytes, filename: str) -> list[list]:
 
 @router.post("/category/import/preview")
 async def category_import_preview(file: UploadFile = File(...),
-                                  ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+                                  ctx: TenantContext = Depends(require(_PERM, module=_WH))):
     """Επιστρέφει τις πρώτες γραμμές ώστε ο χρήστης να διαλέξει γραμμή-έναρξης & στήλες Κατ.1/2/3."""
     content = await file.read(_MAX_XML + 1)
     if len(content) > _MAX_XML:
@@ -153,7 +157,7 @@ async def category_import_preview(file: UploadFile = File(...),
 @router.post("/category/import")
 async def category_import(file: UploadFile = File(...), start_row: int = Form(1),
                           col1: int = Form(0), col2: int = Form(-1), col3: int = Form(-1),
-                          ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+                          ctx: TenantContext = Depends(require(_PERM, module=_WH))):
     content = await file.read(_MAX_XML + 1)
     if len(content) > _MAX_XML:
         raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail={"error": "file_too_large"})
@@ -168,7 +172,7 @@ async def category_import(file: UploadFile = File(...), start_row: int = Form(1)
 
 
 @router.get("/taxonomy")
-async def taxonomy(ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+async def taxonomy(ctx: TenantContext = Depends(require(_PERM, module=_WH))):
     """Ενιαία ταξινομία (3 κλάσεις + κατηγορίες) — κοινή για όλα τα φαρμακεία."""
     from app.services.catalog_taxonomy import TAXONOMY
     return TAXONOMY
@@ -176,7 +180,7 @@ async def taxonomy(ctx: TenantContext = Depends(require(_PERM, module=_MODULE)))
 
 @router.get("/registry")
 async def registry(q: str = "", category: str | None = None, page: int = 1,
-                   ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+                   ctx: TenantContext = Depends(require(_PERM, module=_WH))):
     """Μητρώο φαρμάκων ΗΔΥΚΑ (search/πλοήγηση ανά κατηγορία) — για ενεργοποίηση «προς πώληση»."""
     return await _repo(ctx).registry(q=q, category=category, page=page)
 
@@ -189,14 +193,14 @@ class ActivateIn(BaseModel):
 
 
 @router.post("/activate")
-async def activate(body: ActivateIn, ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+async def activate(body: ActivateIn, ctx: TenantContext = Depends(require(_PERM, module=_WH))):
     return await _repo(ctx).activate(barcodes=body.barcodes, category=body.category,
                                      ptype=body.type, stock_qty=body.stock_qty)
 
 
 @router.post("/image")
 async def upload_image(file: UploadFile = File(...),
-                       ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+                       ctx: TenantContext = Depends(require(_PERM, module=_WH))):
     """Ανέβασμα φωτογραφίας προϊόντος → resize + αποθήκευση στη shared DB. Επιστρέφει image_id."""
     if not (file.content_type or "").lower().startswith("image/"):
         raise HTTPException(status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail={"error": "not_an_image"})
@@ -222,7 +226,7 @@ async def get_image(image_id: str):
 
 @router.get("/prefill")
 async def prefill(barcode: str = Query(...),
-                  ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+                  ctx: TenantContext = Depends(require(_PERM, module=_WH))):
     return await _repo(ctx).prefill(barcode)
 
 
@@ -268,12 +272,12 @@ class ProductIn(BaseModel):
 
 
 @router.post("")
-async def upsert_product(body: ProductIn, ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+async def upsert_product(body: ProductIn, ctx: TenantContext = Depends(require(_PERM, module=_WH))):
     return await _repo(ctx).upsert(body.model_dump())
 
 
 @router.delete("/{barcode}")
-async def delete_product(barcode: str, ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+async def delete_product(barcode: str, ctx: TenantContext = Depends(require(_PERM, module=_WH))):
     return await _repo(ctx).delete(barcode)
 
 
@@ -289,13 +293,13 @@ async def warehouse(q: str = "", type: str | None = None, low_stock: bool = Fals
                     cat1: str | None = None, cat2: str | None = None, cat3: str | None = None,
                     for_sale: bool | None = None, stock: str | None = None,
                     supplier: str | None = None, no_image: bool = False, no_category: bool = False,
-                    focus: str | None = None,
-                    ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+                    focus: str | None = None, origin: str | None = None,
+                    ctx: TenantContext = Depends(require(_PERM, module=_WH))):
     repo = _repo(ctx)
     return {**await repo.warehouse(q=q, ptype=type, low_stock=low_stock, expiring=expiring,
                                    include_inactive=include_inactive, cat1=cat1, cat2=cat2, cat3=cat3,
                                    for_sale=for_sale, stock=stock, supplier=supplier,
-                                   no_image=no_image, no_category=no_category,
+                                   no_image=no_image, no_category=no_category, origin=origin,
                                    page=page, page_size=page_size, focus=focus),
             "summary": await repo.warehouse_summary(),
             "suppliers": await repo.warehouse_suppliers()}
@@ -308,7 +312,10 @@ class FlagsIn(BaseModel):
 
 
 @router.post("/warehouse/flags")
-async def set_flags(body: FlagsIn, ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+async def set_flags(body: FlagsIn, ctx: TenantContext = Depends(require(_PERM, module=_WH))):
+    # «Προς πώληση» = e-shop· ενεργό/ανενεργό είδος = αποθήκη (όλοι)
+    if body.for_sale and _module_locked(ctx, _MODULE):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail={"error": "module_locked", "module": _MODULE})
     return await _repo(ctx).set_flags(body.barcode, for_sale=body.for_sale, active=body.active)
 
 
@@ -324,6 +331,7 @@ class BulkIn(BaseModel):
     supplier: str | None = None
     no_image: bool = False
     no_category: bool = False
+    origin: str | None = None          # rxvision (από τον έτοιμο κατάλογο) | own (δικά μου)
     low_stock: bool = False
     expiring: bool = False
     include_inactive: bool = True
@@ -335,7 +343,7 @@ class BulkIn(BaseModel):
 
 
 @router.post("/warehouse/bulk/preview")
-async def bulk_preview(body: BulkIn, ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+async def bulk_preview(body: BulkIn, ctx: TenantContext = Depends(require(_PERM, module=_WH))):
     """Πόσα είδη πιάνει το φίλτρο — ΠΡΙΝ αλλάξει οτιδήποτε."""
     return await _repo(ctx).bulk_preview(body.as_filters())
 
@@ -367,7 +375,7 @@ class MoveIn(BaseModel):
 
 
 @router.post("/warehouse/move")
-async def stock_move(body: MoveIn, ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+async def stock_move(body: MoveIn, ctx: TenantContext = Depends(require(_PERM, module=_WH))):
     """Κίνηση αποθέματος: εφαρμόζει στο είδος + καταγράφει στο ledger (audit trail)."""
     repo = _repo(ctx)
     delta = None
@@ -384,7 +392,7 @@ async def stock_move(body: MoveIn, ctx: TenantContext = Depends(require(_PERM, m
 
 
 @router.get("/warehouse/{barcode}/movements")
-async def stock_history(barcode: str, ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+async def stock_history(barcode: str, ctx: TenantContext = Depends(require(_PERM, module=_WH))):
     return {"items": await _mrepo(ctx).history(barcode)}
 
 
@@ -399,7 +407,7 @@ async def _read_capped(file: UploadFile) -> bytes:
 
 @router.post("/import/preview")
 async def import_preview(file: UploadFile = File(...),
-                         ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+                         ctx: TenantContext = Depends(require(_PERM, module=_WH))):
     """Διαβάζει το αρχείο & επιστρέφει ΔΕΙΓΜΑ (πρώτες γραμμές × στήλες) — ο χρήστης βλέπει τι έχει πού
     και ορίζει mapping. Δεν υποθέτουμε επικεφαλίδες/θέσεις (ο καθένας έχει διαφορετικό Excel)."""
     from app.repositories.pharmacy_catalog import parse_spreadsheet
@@ -413,7 +421,7 @@ async def import_preview(file: UploadFile = File(...),
 async def import_commit(file: UploadFile = File(...), mapping: str = Form(...),
                         start_row: int = Form(1), default_type: str = Form("parapharmacy"),
                         for_sale: bool = Form(False),
-                        ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+                        ctx: TenantContext = Depends(require(_PERM, module=_WH))):
     """Εισάγει με βάση το mapping ({field: col_index}) & την αρχική γραμμή που όρισε ο χρήστης."""
     from app.repositories.pharmacy_catalog import parse_spreadsheet
     try:
@@ -431,7 +439,7 @@ async def import_commit(file: UploadFile = File(...), mapping: str = Form(...),
 @router.post("/import-xml")
 async def import_xml(file: UploadFile = File(...), row_tag: str = Form(...),
                      mapping: str = Form(...), default_type: str = Form("parapharmacy"),
-                     ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+                     ctx: TenantContext = Depends(require(_PERM, module=_WH))):
     """Upload the commercial program's XML + a field mapping (JSON) → upsert products by barcode."""
     try:
         m = json.loads(mapping)
@@ -533,23 +541,23 @@ def _sup(ctx: TenantContext) -> SupplierSettingsRepository:
 
 
 @router.get("/supplier/profarm")
-async def profarm_status(ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+async def profarm_status(ctx: TenantContext = Depends(require(_PERM, module=_WH))):
     return await _sup(ctx).get_profarm()
 
 
 @router.post("/supplier/profarm")
-async def profarm_save(body: ProfarmCredsIn, ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+async def profarm_save(body: ProfarmCredsIn, ctx: TenantContext = Depends(require(_PERM, module=_WH))):
     return await _sup(ctx).save_profarm(body.username, body.password)
 
 
 @router.delete("/supplier/profarm")
-async def profarm_delete(ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+async def profarm_delete(ctx: TenantContext = Depends(require(_PERM, module=_WH))):
     return await _sup(ctx).delete_profarm()
 
 
 @router.post("/supplier/profarm/test",
              dependencies=[Depends(rate_limit("profarm_test", limit=10, window_seconds=60))])
-async def profarm_test(ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+async def profarm_test(ctx: TenantContext = Depends(require(_PERM, module=_WH))):
     from app.services import profarm_service
     creds = await _sup(ctx).profarm_creds()
     if not creds:
@@ -558,7 +566,7 @@ async def profarm_test(ctx: TenantContext = Depends(require(_PERM, module=_MODUL
 
 
 @router.get("/supplier/profarm/sync-status")
-async def profarm_sync_status(ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+async def profarm_sync_status(ctx: TenantContext = Depends(require(_PERM, module=_WH))):
     from app.services import profarm_service
     return await profarm_service.sync_status(ctx.tenant_id)
 
@@ -566,7 +574,7 @@ async def profarm_sync_status(ctx: TenantContext = Depends(require(_PERM, module
 @router.post("/supplier/profarm/sync",
              dependencies=[Depends(rate_limit("profarm_sync", limit=60, window_seconds=60))])
 async def profarm_sync(batch: int = 25, only_for_sale: bool = False,
-                       ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+                       ctx: TenantContext = Depends(require(_PERM, module=_WH))):
     """Μία παρτίδα harvest (ο frontend καλεί επαναληπτικά μέχρι remaining=0 δείχνοντας πρόοδο)."""
     from app.services import profarm_service
     return await profarm_service.sync_batch(ctx.tenant_id, batch=max(1, min(50, batch)), only_for_sale=only_for_sale)
@@ -574,7 +582,7 @@ async def profarm_sync(batch: int = 25, only_for_sale: bool = False,
 
 @router.post("/supplier/profarm/sync-stop")
 async def profarm_sync_stop(stopped: bool = True,
-                            ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+                            ctx: TenantContext = Depends(require(_PERM, module=_WH))):
     """Οριστική διακοπή (stopped=true) ή επανενεργοποίηση (stopped=false) της φωτο-σάρωσης."""
     from app.services import profarm_service
     return await profarm_service.set_sync_stopped(ctx.tenant_id, stopped)
@@ -582,28 +590,28 @@ async def profarm_sync_stop(stopped: bool = True,
 
 # ── Εισαγωγή ΟΛΟΚΛΗΡΩΝ προϊόντων OTC/παραφαρμάκων από Profarm (δημιουργία νέων + update υπαρχόντων) ──
 @router.get("/supplier/profarm/import-status")
-async def profarm_import_status(ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+async def profarm_import_status(ctx: TenantContext = Depends(require(_PERM, module=_WH))):
     from app.services import profarm_service
     return await profarm_service.import_status(ctx.tenant_id)
 
 
 @router.post("/supplier/profarm/import",
              dependencies=[Depends(rate_limit("profarm_import", limit=20, window_seconds=60))])
-async def profarm_import_start(ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+async def profarm_import_start(ctx: TenantContext = Depends(require(_PERM, module=_WH))):
     """Ξεκινά την εισαγωγή (το Celery beat συνεχίζει ήπια στο παρασκήνιο)."""
     from app.services import profarm_service
     return await profarm_service.import_chunk(ctx.tenant_id)
 
 
 @router.delete("/supplier/profarm/import")
-async def profarm_import_reset(ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+async def profarm_import_reset(ctx: TenantContext = Depends(require(_PERM, module=_WH))):
     from app.services import profarm_service
     return await profarm_service.import_reset(ctx.tenant_id)
 
 
 @router.post("/supplier/profarm/classify",
              dependencies=[Depends(rate_limit("profarm_classify", limit=10, window_seconds=60))])
-async def profarm_classify(limit: int = 300, ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+async def profarm_classify(limit: int = 300, ctx: TenantContext = Depends(require(_PERM, module=_WH))):
     """AI-ταξινόμηση (haiku) εισαγμένων Profarm προϊόντων χωρίς κατηγορία, από το όνομα."""
     from app.services import profarm_service
     return await profarm_service.classify_new_products(ctx.tenant_id, limit=max(1, min(500, limit)))

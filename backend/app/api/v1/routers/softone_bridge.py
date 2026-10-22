@@ -88,7 +88,7 @@ async def pull(limit: int = Query(10, ge=1, le=50)):
     «Κρατά» ό,τι δίνει (status=sending + sending_at) ώστε δύο διαδοχικές εκτελέσεις να μην
     στείλουν το ίδιο δύο φορές. Αν η SoftOne δεν απαντήσει σε `_CLAIM_MINUTES`, ξαναδίδεται.
     """
-    from app.services.invoice_service import _build_payload
+    from app.services.invoice_service import _build_payload, ensure_mtrl
     db = shared_db()
     stale = _now() - timedelta(minutes=_CLAIM_MINUTES)
     q = {"status": {"$in": ["pending", "sending", "error"]},
@@ -99,7 +99,7 @@ async def pull(limit: int = Query(10, ge=1, le=50)):
     async for inv in db["invoices"].find(q).sort("created_at", 1).limit(limit):
         await db["invoices"].update_one({"_id": inv["_id"]}, {"$set": {
             "status": "sending", "sending_at": _now(), "updated_at": _now()}})
-        out.append(_build_payload(inv))
+        out.append(_build_payload(await ensure_mtrl(db, inv)))
     if out:
         log.info("softone bridge: δόθηκαν %d παραστατικά", len(out))
     return {"items": jsonsafe(out), "count": len(out)}

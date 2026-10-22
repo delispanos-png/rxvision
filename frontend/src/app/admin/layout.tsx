@@ -109,10 +109,16 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   // ΑΠΟΣΤΟΛΗ EMAIL: αν δεν λειτουργεί, κόκκινη μπάρα σε ΚΑΘΕ σελίδα μόλις συνδεθείς (19/10/2026 —
   // 12 ημέρες χωρίς κανένα email, χωρίς να το ξέρει κανείς). Ξαναρωτά σε κάθε αλλαγή σελίδας + κάθε 5΄.
   const [mailHealth, setMailHealth] = useState<{ ok: boolean | null; error?: string; failing_since?: string } | null>(null);
+  // Κατάλογος ΗΔΥΚΑ (τιμές συνταγογραφούμενων): καθημερινά· αποτυχία Ή >2 ημέρες χωρίς επιτυχία = μπάρα
+  const [rxCat, setRxCat] = useState<{ ok: boolean | null; error?: string; last_ok_at?: string; failing_since?: string } | null>(null);
   useEffect(() => {
     if (isLogin) return;
-    const load = () => adminApi<{ ok: boolean | null; error?: string; failing_since?: string }>("/admin/smtp/health")
-      .then(setMailHealth).catch(() => {});
+    const load = () => {
+      adminApi<{ ok: boolean | null; error?: string; failing_since?: string }>("/admin/smtp/health")
+        .then(setMailHealth).catch(() => {});
+      adminApi<{ ok: boolean | null; error?: string; last_ok_at?: string; failing_since?: string }>("/admin/hdika-catalog/health")
+        .then(setRxCat).catch(() => {});
+    };
     load();
     const h = setInterval(load, 300_000);
     return () => clearInterval(h);
@@ -217,6 +223,17 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                 Δεν φτάνουν επαναφορές κωδικού, προσκλήσεις πύλης, email χρέωσης και ειδοποιήσεις. Σφάλμα: <span className="font-mono">{mailHealth.error || "—"}</span>
               </div>
               <Link href="/admin/smtp" className="mt-1.5 inline-block text-xs font-semibold underline">Άνοιξε τις Ρυθμίσεις SMTP →</Link>
+            </div>
+          )}
+          {rxCat && (rxCat.ok === false || (rxCat.last_ok_at && Date.now() - +new Date(rxCat.last_ok_at) > 2 * 86_400_000)) && (
+            <div className="mx-auto mb-4 w-full max-w-[1600px] rounded-xl border border-rose-300 bg-rose-50 px-4 py-3 text-sm text-rose-800 dark:border-rose-800 dark:bg-rose-950/40 dark:text-rose-200">
+              <div className="font-semibold">
+                🔴 Ο κατάλογος φαρμάκων ΗΔΥΚΑ δεν ενημερώνεται
+                {rxCat.last_ok_at ? ` — τελευταία επιτυχία ${new Date(rxCat.last_ok_at).toLocaleString("el-GR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" })}` : ""}
+              </div>
+              <div className="mt-0.5 text-xs">
+                Οι τιμές των συνταγογραφούμενων στις αποθήκες δεν ακολουθούν τη διατίμηση. Σφάλμα: <span className="font-mono">{rxCat.error || "—"}</span>
+              </div>
             </div>
           )}
           <div className="mx-auto w-full max-w-[1600px]">{children}</div>

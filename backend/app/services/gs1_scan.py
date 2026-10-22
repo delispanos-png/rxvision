@@ -42,6 +42,35 @@ def gtin_ok(g: str) -> bool:
     return (10 - tot % 10) % 10 == int(g[13])
 
 
+def classify(raw: str) -> dict:
+    """ΤΙ σκανάρισε ο φαρμακοποιός — ΕΝΑΣ κανόνας για όλη την εφαρμογή (κανόνας ιδιοκτήτη 22/10/2026,
+    επιβεβαιωμένος σε πραγματικά δεδομένα: 4.996/5.000 barcodes φαρμάκων «280» είναι 13ψήφια· ΟΛΕΣ οι
+    ταινίες της ΗΔΥΚΑ 12ψήφιες):
+      • eof_code   — κουπόνι ΕΟΦ (barcode φαρμάκου): 13 ψηφία, ξεκινά «280»· προαιρετικά + LOT
+      • eof_lot    — LOT αυτοκόλλητης ταινίας: 12 ψηφία, μοναδικό ανά κουτί· ΥΠΟΧΡΕΩΤΙΚΑ + κουπόνι ΕΟΦ
+      • intangible — άυλο κουπόνι (ΕΔΑΠΥ: αναλώσιμα διαβήτη, ορθοπεδικά, διατροφή): 20 ψηφία, ≥2 μηδενικά
+                     μπροστά· μοναδικό ανά κουτί· προαιρετικά + κανονικό barcode
+      • qr         — QR φαρμάκου (HMVS): πεδία 01/17/10/21 με οποιαδήποτε σειρά (βλ. parse)
+      • corrupt    — QR που ήρθε κομμένο
+      • other      — οτιδήποτε άλλο: παραφάρμακο, ΜΗ.ΣΥ.ΦΑ. ή λάθος σκανάρισμα
+    Το LOT και το κουπόνι ΕΟΦ μπορεί να σκαναριστούν με οποιαδήποτε σειρά — το ζευγάρωμα γίνεται στην οθόνη."""
+    s, scanner = normalize(raw)
+    plain = s.replace(GS, "")
+    if plain.isdigit():
+        if len(plain) == 13 and plain.startswith("280"):
+            return {"kind": "eof_code", "code": plain}
+        if len(plain) == 12:
+            return {"kind": "eof_lot", "code": plain}
+        if len(plain) == 20 and plain.startswith("00"):
+            return {"kind": "intangible", "code": plain}
+    p = parse(raw)
+    if p and p.get("corrupt"):
+        return {"kind": "corrupt", "scanner": scanner}
+    if p and p.get("gtin"):
+        return {"kind": "qr", "qr": p}
+    return {"kind": "other", "code": plain or (raw or "").strip()}
+
+
 def normalize(raw: str) -> tuple[str, dict]:
     """Ακατέργαστο σκανάρισμα → συμβολοσειρά με GS ως διαχωριστή + τι ανιχνεύθηκε για τον σαρωτή."""
     s = re.sub(r"^\](d2|C1|Q3|e0)", "", (raw or "").strip())
@@ -68,12 +97,15 @@ def parse(raw: str) -> dict | None:
     {"corrupt": True, ...}: μοιάζει με QR κουτιού (01… μακρύ) αλλά το GTIN είναι χαλασμένο — χάθηκαν
     χαρακτήρες στη διαδρομή σαρωτής→υπολογιστής. Ποτέ δεν αποθηκεύεται· ζητάμε ξανά σκανάρισμα."""
     s, scanner = normalize(raw)
-    if not re.match(r"^01\d{14}", s) or not gtin_ok(s[2:16]):
-        # Ταινία ΕΟΦ / κωδικός = σύντομος. QR κουτιού ≥ 01+14+17+6 = 24 χαρακτήρες.
-        if s.startswith("01") and len(s) >= 24:
-            return {"gtin": None, "expiry": None, "batch": None, "serial": None, "scanner": scanner,
-                    "complete": False, "corrupt": True}
+    corrupt = {"gtin": None, "expiry": None, "batch": None, "serial": None, "scanner": scanner,
+               "complete": False, "corrupt": True}
+    # Τα πεδία του QR έρχονται με ΟΠΟΙΑΔΗΠΟΤΕ σειρά (κανόνας ιδιοκτήτη 22/10/2026): μπορεί να ξεκινά από
+    # 01 (κωδικός προϊόντος), 10 (παρτίδα), 17 (λήξη) ή 21 (σειριακός). QR ≥ 24 χαρακτήρες.
+    if s[:2] not in ("01", "10", "17", "21") or len(s) < 24:
         return None
+    starts01 = s.startswith("01")
+    if starts01 and (not re.match(r"^01\d{14}", s) or not gtin_ok(s[2:16])):
+        return corrupt                      # QR με χαλασμένο κωδικό προϊόντος → χάθηκαν χαρακτήρες
     results: list[dict] = []
 
     def go(pos: int, acc: dict) -> None:
@@ -103,6 +135,10 @@ def parse(raw: str) -> dict | None:
                 go(end, {**acc, ai: s[start:end]})
 
     go(0, {})
+    # ΜΟΝΟ ερμηνείες με έγκυρο κωδικό προϊόντος (01 + ψηφίο ελέγχου) — αλλιώς δεν είναι QR φαρμάκου
+    results = [r for r in results if gtin_ok(r.get("01") or "")]
+    if not results and not starts01:
+        return None
     if not results:
         # Σωστό GTIN αλλά ό,τι ακολουθεί δεν διαβάζεται με ΚΑΝΕΝΑ τρόπο (π.χ. «…4976Y01 17…»: χάθηκε
         # το «10195» της παρτίδας) → πάλι κομμένο· καλύτερα ξανά σκανάρισμα τώρα παρά ελλιπές χρέος.

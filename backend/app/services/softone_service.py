@@ -65,8 +65,11 @@ def _parse(r: httpx.Response) -> dict:
 
 async def _post(url: str, payload: dict, timeout: int = 30) -> dict:
     """POST JSON στο SoftOne WS endpoint. Επιστρέφει το JSON (ή {success:False,error:...})."""
+    import json as _json
+    # default=str: ημερομηνίες/ObjectId γίνονται κείμενο αντί να ρίχνουν ΟΛΗ την αποστολή (TypeError)
+    body = _json.dumps(payload, default=str, ensure_ascii=False).encode("utf-8")
     async with httpx.AsyncClient(timeout=timeout) as cl:
-        r = await cl.post(url, json=payload,
+        r = await cl.post(url, content=body,
                           headers={"Content-Type": "application/json; charset=utf-8"})
         r.raise_for_status()
         return _parse(r)

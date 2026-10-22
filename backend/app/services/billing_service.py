@@ -238,7 +238,10 @@ async def recurring_extras(db, sub: dict, pkg: dict | None, yearly: bool) -> dic
     from app.services.data_retention import retention_surcharge_monthly
     from app.services.seats_service import _included, _seat_price
     in_plan = set((pkg or {}).get("modules") or [])
-    ids = [a for a in (sub.get("addons") or []) if a not in in_plan]
+    # πρόσθετα με προγραμματισμένη αφαίρεση ΔΕΝ ανανεώνονται (μένουν ενεργά μόνο ως τη λήξη)
+    from app.services.addon_service import pending_removals
+    leaving = set(pending_removals(sub))
+    ids = [a for a in (sub.get("addons") or []) if a not in in_plan and a not in leaving]
     addons = 0
     lines: list[dict] = []          # αναλυτικά (ίδια ποσά) — για την καρτέλα πελάτη στο adminpanel
     if ids:
@@ -583,6 +586,10 @@ async def bill_due() -> dict:
     ]})
     async for sub in cur:
         tid = sub["tenant_id"]
+        # πρόσθετα που ο πελάτης αφαίρεσε κλείνουν ΤΩΡΑ, πριν από τη χρέωση της νέας περιόδου
+        from app.services import addon_service
+        if await addon_service.apply_due_removals(tid, now=now):
+            sub = await db["subscriptions"].find_one({"tenant_id": tid}) or sub
         pc = sub.get("pending_charge") or {}
         if pc.get("order_id"):
             # Χρέωση Revolut που έμεινε «σε εξέλιξη»: ΔΕΝ ξαναχρεώνουμε — ρωτάμε πώς κατέληξε.

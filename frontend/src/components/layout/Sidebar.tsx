@@ -11,6 +11,7 @@ import { usePref, useT } from "@/store/prefStore";
 import { Logo, LogoMark } from "@/components/brand/Logo";
 import { CLOUDON_LOGO_DATA_URI } from "@/components/brand/cloudonLogo";
 import { APP_VERSION } from "@/lib/version";
+import { helpFor } from "@/lib/help";
 import { Tooltip } from "@/components/ui/Tooltip";
 import {
   Activity, BarChart3, Boxes, Warehouse, Layers, CalendarClock, ChevronRight, LayoutDashboard,
@@ -203,6 +204,14 @@ export function Sidebar() {
   });
 
   const hide = collapsed ? "md:hidden" : "";
+  /** Tooltip μενού = η ίδια εξήγηση με τη βοήθεια «?» της σελίδας (μία πηγή: lib/help.ts). Μαζεμένο μενού →
+   *  και το όνομα (αλλιώς δεν φαίνεται). `withName` για ομάδες όπου το όνομα κρύβεται πίσω από εικονίδιο. */
+  const tip = (href: string, name: string, withName = false): string | undefined => {
+    const h = helpFor(href.split(/[?#]/)[0]);
+    const intro = h ? t(h.intro, h.intro_en || h.intro) : "";
+    if (collapsed || withName) return intro ? `${name} — ${intro}` : name;
+    return intro || undefined;
+  };
   const linkCls = (active: boolean) =>
     `group flex items-center gap-3 rounded-xl px-3 py-2 text-sm font-medium transition-colors ${collapsed ? "md:justify-center md:px-0" : ""} ${
       active ? "bg-brand-50 text-brand-700 dark:bg-brand-600/15 dark:text-brand-300"
@@ -280,8 +289,8 @@ export function Sidebar() {
                       const active = leafActive(l.href);
                       const inner = (<><l.icon className={iconCls(active)} strokeWidth={2} /><span className={hide}>{t(l.label, l.en)}</span></>);
                       return l.href.includes("#")
-                        ? <a key={l.href} href={l.href} title={collapsed ? l.label : undefined} className={linkCls(active)} onClick={() => setOpen(false)}>{inner}</a>
-                        : <Link key={l.href} href={l.href} title={collapsed ? l.label : undefined} className={linkCls(active)}>{inner}</Link>;
+                        ? <a key={l.href} href={l.href} title={tip(l.href, t(l.label, l.en))} className={linkCls(active)} onClick={() => setOpen(false)}>{inner}</a>
+                        : <Link key={l.href} href={l.href} title={tip(l.href, t(l.label, l.en))} className={linkCls(active)}>{inner}</Link>;
                     })}
                   </div>
                 </div>
@@ -309,8 +318,8 @@ export function Sidebar() {
               }
               const inner = (<><Icon className={iconCls(active)} strokeWidth={2} /><span className={hide}>{t(n.label, n.en)}</span></>);
               return n.href!.includes("#")
-                ? <a key={g.title} href={n.href!} title={collapsed ? t(n.label, n.en) : undefined} className={linkCls(active)} onClick={() => setOpen(false)}>{inner}</a>
-                : <Link key={g.title} href={n.href!} title={collapsed ? t(n.label, n.en) : undefined} className={linkCls(active)}>{inner}</Link>;
+                ? <a key={g.title} href={n.href!} title={tip(n.href!, t(n.label, n.en))} className={linkCls(active)} onClick={() => setOpen(false)}>{inner}</a>
+                : <Link key={g.title} href={n.href!} title={tip(n.href!, t(n.label, n.en))} className={linkCls(active)}>{inner}</Link>;
             }
             const gCollapsed = collapsedGroups.has(g.title);
             const GroupIcon = g.icon;
@@ -348,16 +357,16 @@ export function Sidebar() {
                   if (!n.children) {
                     const inner = (<><Icon className={iconCls(active)} strokeWidth={2} /><span className={hide}>{t(n.label, n.en)}</span></>);
                     return n.href!.includes("#")
-                      ? <a key={n.label} href={n.href!} title={collapsed ? t(n.label, n.en) : undefined} className={linkCls(active)} onClick={() => setOpen(false)}>{inner}</a>
-                      : <Link key={n.label} href={n.href!} title={collapsed ? t(n.label, n.en) : undefined} className={linkCls(active)}>{inner}</Link>;
+                      ? <a key={n.label} href={n.href!} title={tip(n.href!, t(n.label, n.en))} className={linkCls(active)} onClick={() => setOpen(false)}>{inner}</a>
+                      : <Link key={n.label} href={n.href!} title={tip(n.href!, t(n.label, n.en))} className={linkCls(active)}>{inner}</Link>;
                   }
                   // collapsed desktop → parent acts as a link to its first child (no nesting)
                   if (collapsed) {
                     const cls = `${linkCls(active)} md:justify-center md:px-0`;
                     const inner = (<><Icon className={iconCls(active)} strokeWidth={2} /><span className="md:hidden">{t(n.label, n.en)}</span></>);
                     return n.children[0].href.includes("#")
-                      ? <a key={n.label} href={n.children[0].href} title={t(n.label, n.en)} className={cls} onClick={() => setOpen(false)}>{inner}</a>
-                      : <Link key={n.label} href={n.children[0].href} title={t(n.label, n.en)} className={cls}>{inner}</Link>;
+                      ? <a key={n.label} href={n.children[0].href} title={tip(n.children[0].href, t(n.label, n.en), true)} className={cls} onClick={() => setOpen(false)}>{inner}</a>
+                      : <Link key={n.label} href={n.children[0].href} title={tip(n.children[0].href, t(n.label, n.en), true)} className={cls}>{inner}</Link>;
                   }
                   // expandable parent
                   const isOpen = expanded.has(n.label);
@@ -386,8 +395,8 @@ export function Sidebar() {
                               );
                             }
                             return c.href.includes("#")
-                              ? <a key={c.href} href={c.href} className={cls} onClick={() => setOpen(false)}>{t(c.label, c.en)}</a>
-                              : <Link key={c.href} href={c.href} className={cls} onClick={() => setOpen(false)}>{t(c.label, c.en)}</Link>;
+                              ? <a key={c.href} href={c.href} title={tip(c.href, t(c.label, c.en))} className={cls} onClick={() => setOpen(false)}>{t(c.label, c.en)}</a>
+                              : <Link key={c.href} href={c.href} title={tip(c.href, t(c.label, c.en))} className={cls} onClick={() => setOpen(false)}>{t(c.label, c.en)}</Link>;
                           })}
                         </div>
                       )}

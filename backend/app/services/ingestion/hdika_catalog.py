@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from pymongo import UpdateOne
 
 from app.services.catalog_taxonomy import medicine_category
-from app.services.ingestion.hdika_client import _to_dict
+from app.services.ingestion.hdika_client import HdikaAuthError, _to_dict
 
 _PAGE = 150
 
@@ -79,6 +79,8 @@ async def refresh_catalog(db, client) -> int:
     while True:
         try:
             data = _to_dict(client._get_xml("/api/v1/masterdata/medicines", {"size": _PAGE, "page": page}))
+        except HdikaAuthError:
+            raise                      # λάθος/ληγμένος κωδικός → ο καλών ΠΑΥΕΙ το φαρμακείο (όχι σιωπηλό «0 φάρμακα»)
         except Exception:  # noqa: BLE001
             break
         rows = client._rows(data)
@@ -272,3 +274,57 @@ async def load_catalog_map(db) -> dict:
     if out:                        # άδειο (π.χ. πρόσκαιρη αποτυχία) → μην το «κλειδώσεις» για 15΄
         _CACHE.update(at=time.monotonic(), data=out)
     return out
+
+
+# ── ΚΑΘΗΜΕΡΙΝΗ ΕΝΗΜΕΡΩΣΗ ΣΥΝΤΑΓΟΓΡΑΦΟΥΜΕΝΩΝ (απόφαση ιδιοκτήτη 20/10/2026) ───────────────────────────
+# Ως τότε ο κατάλογος είχε ανανεωθεί ΜΙΑ φορά (26/06/2026) — κανείς δεν καλούσε το refresh_catalog.
+# Κανόνας: συνταγογραφούμενα → τιμές ΜΟΝΟ από ΗΔΥΚΑ (κρατική διατίμηση)· ΜΗ.ΣΥ.ΦΑ./παραφάρμακα → Profarm.
+_MIN_EXPECTED = 10_000      # ο κατάλογος έχει ~14.000· λιγότερα = μισή/αποτυχημένη λήψη, ΟΧΙ «επιτυχία»
+
+
+async def apply_rx_prices(db) -> int:
+    """Κρατική λιανική + χονδρική από τον κατάλογο ΗΔΥΚΑ σε ΚΑΘΕ αποθήκη, μόνο σε συνταγογραφούμενα
+    (rx_medicine)· η τιμή τους δεν είναι επιλογή του φαρμακείου. Επιστρέφει πόσα είδη άλλαξαν."""
+    prices = {d["barcode"]: (int(d.get("retail_cents") or 0), int(d.get("wholesale_cents") or 0))
+              async for d in db["medicine_catalog"].find(
+                  {"barcode": {"$nin": [None, ""]}}, {"barcode": 1, "retail_cents": 1, "wholesale_cents": 1})}
+    now = datetime.now(tz=timezone.utc)
+    changed = 0
+    tids = await db["pharmacy_products"].distinct("tenant_id", {"type": "rx_medicine"})  # tenant-ok: όλες οι αποθήκες
+    for tid in tids:
+        ops: list[tuple] = []
+        async for p in db["pharmacy_products"].find(
+                {"tenant_id": tid, "type": "rx_medicine"},
+                {"barcode": 1, "price_cents": 1, "wholesale_cents": 1}):
+            retail, wholesale = prices.get(p.get("barcode"), (0, 0))
+            if retail <= 0:
+                continue
+            upd = {}
+            if p.get("price_cents") != retail:
+                upd["price_cents"] = retail
+            if wholesale > 0 and p.get("wholesale_cents") != wholesale:
+                upd["wholesale_cents"] = wholesale
+            if upd:
+                upd.update({"updated_at": now, "hdika_price_at": now})
+                ops.append((p["_id"], upd))
+        for _id, upd in ops:   # λίγες αλλαγές τη μέρα· ένα-ένα (τη νύχτα, χωρίς βιασύνη)
+            await db["pharmacy_products"].update_one({"tenant_id": tid, "_id": _id}, {"$set": upd})
+        changed += len(ops)
+    return changed
+
+
+async def record_catalog_health(db, *, ok: bool, total: int = 0, changed: int = 0,
+                                error: str | None = None, source_tenant: str | None = None) -> None:
+    """Κατάσταση καθημερινής ενημέρωσης (platform_settings/hdika_catalog_health) → μπάρα adminpanel."""
+    now = datetime.now(tz=timezone.utc)
+    if ok:
+        await db["platform_settings"].update_one({"_id": "hdika_catalog_health"}, {
+            "$set": {"ok": True, "last_ok_at": now, "total": total, "changed": changed,
+                     "source_tenant": source_tenant},
+            "$unset": {"error": "", "failing_since": ""}}, upsert=True)
+        return
+    cur = await db["platform_settings"].find_one({"_id": "hdika_catalog_health"}) or {}
+    since = cur.get("failing_since") if cur.get("ok") is False and cur.get("failing_since") else now
+    await db["platform_settings"].update_one({"_id": "hdika_catalog_health"}, {"$set": {
+        "ok": False, "error": (error or "άγνωστο σφάλμα")[:300], "failing_since": since,
+        "last_failure_at": now}}, upsert=True)

@@ -37,9 +37,20 @@ async def activate(addon_id: str, ctx: TenantContext = Depends(require("billing:
     return res
 
 
+@router.get("/{addon_id}/removal-preview")
+async def removal_preview(addon_id: str, ctx: TenantContext = Depends(require("billing:manage"))):
+    """Τι θα γίνει αν το αφαιρέσει: πότε κλείνει + (έτοιμος κατάλογος) πόσα είδη σβήνονται/κλειδώνουν."""
+    from app.core.db import shared_db
+    sub = await shared_db()["subscriptions"].find_one({"tenant_id": ctx.tenant_id},
+                                                      {"current_period_end": 1}) or {}
+    return {"effective_at": sub.get("current_period_end"),
+            **(await addon_service.removal_preview(ctx.tenant_id, addon_id))}
+
+
 @router.post("/{addon_id}/deactivate")
 async def deactivate(addon_id: str, ctx: TenantContext = Depends(require("billing:manage"))):
-    res = await addon_service.deactivate(ctx.tenant_id, addon_id)
+    """Αφαίρεση από τον ΠΕΛΑΤΗ: ισχύει στη λήξη της περιόδου που πλήρωσε (όχι αμέσως)."""
+    res = await addon_service.schedule_removal(ctx.tenant_id, addon_id, by=ctx.user_id)
     if not res.get("ok"):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=res)
     return res

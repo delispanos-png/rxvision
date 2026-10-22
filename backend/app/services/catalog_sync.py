@@ -29,7 +29,9 @@ _SYNC_FIELDS = ("name", "description_short", "description_long", "image_id", "im
 #: Ποτέ δεν αντιγράφονται — ταυτότητα εγγραφής ή δεδομένα του ΠΗΓΑΙΟΥ φαρμακείου.
 _NEVER = {"_id", "tenant_id", "created_at", "updated_at", "stock_qty", "for_sale", "discount_pct",
           "min_stock", "source", "profarm_tried", "profarm_tried_at", "profarm_synced_at",
-          "profarm_pid", "photo_source", "sale_starts_at", "sale_ends_at"}
+          "profarm_pid", "photo_source", "sale_starts_at", "sale_ends_at",
+          # ανά φαρμακείο (προέλευση/κλείδωμα/επεξεργασία) — ποτέ από την πηγή
+          "origin", "catalog_locked", "locked_at", "lock_prev", "user_edited_at", "seed_price_cents"}
 
 
 def _now() -> datetime:
@@ -96,6 +98,7 @@ async def run_for_tenant(tenant_id: str, *, dry_run: bool = False) -> dict:
                 added += 1
                 continue
             buf.append({**src, "tenant_id": tenant_id, "stock_qty": 0, "source": "catalog_sync",
+                        "origin": "rxvision",
                         "seed_price_cents": p.get("price_cents"),
                         "created_at": _now(), "updated_at": _now()})
             events.append({"tenant_id": tenant_id, "run_at": run_at, "kind": "added",

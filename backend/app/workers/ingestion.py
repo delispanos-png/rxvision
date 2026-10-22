@@ -1060,3 +1060,53 @@ def remind_monthly_hdika_password() -> int:
             client.close()
         return n
     return _run_async(_run())
+
+
+#: Από ποιο φαρμακείο διαβάζεται ο ΚΟΙΝΟΣ κατάλογος ΗΔΥΚΑ (πρώτη επιλογή = δοκιμαστικός πελάτης).
+_CATALOG_SOURCES = ("T-C838D2E4",)
+
+
+@celery_app.task(name="app.workers.ingestion.refresh_medicine_catalog")
+def refresh_medicine_catalog() -> dict:
+    """ΚΑΘΗΜΕΡΙΝΑ: κατάλογος φαρμάκων ΗΔΥΚΑ (Δελτίο Τιμών) → medicine_catalog → τιμές συνταγογραφούμενων
+    σε όλες τις αποθήκες. Χρησιμοποιεί τα στοιχεία ΗΔΥΚΑ ενός ενεργού φαρμακείου ΧΩΡΙΣ παύση· λάθος
+    κωδικός → παύση εκείνου (ποτέ δεύτερη αποτυχημένη σύνδεση) και δοκιμή στο επόμενο."""
+    async def _run() -> dict:
+        _, db = _fresh_db()
+        from app.api.v1.routers.ingestion import _effective_hdika_creds
+        from app.services.ingestion import hdika_catalog
+        from app.services.ingestion.hdika_client import HdikaClient
+        others = [t["_id"] async for t in db["tenants"].find(
+            {"status": "active", "ingestion_config.hdika.auth_paused": {"$ne": True}}, {"_id": 1}).limit(20)]
+        tried, last_err = 0, None
+        for tid in list(dict.fromkeys([*_CATALOG_SOURCES, *others])):
+            if tried >= 3:
+                break
+            if await _hdika_auth_paused(db, tid):
+                continue
+            creds = await _effective_hdika_creds(tid)
+            if not creds or not creds.get("api_key"):
+                continue
+            tried += 1
+            client = HdikaClient(dict(creds, throttle=0.05))
+            try:
+                total = await hdika_catalog.refresh_catalog(db, client)
+            except HdikaAuthError as e:
+                await _pause_hdika_auth(db, tid, str(e))
+                last_err = f"{tid}: λάθος/ληγμένος κωδικός ΗΔΥΚΑ"
+                continue
+            except Exception as e:  # noqa: BLE001
+                last_err = f"{tid}: {type(e).__name__}: {e}"
+                continue
+            finally:
+                client.close()
+            if total < hdika_catalog._MIN_EXPECTED:
+                last_err = f"{tid}: ήρθαν μόνο {total} φάρμακα (αναμένονται ~14.000)"
+                continue
+            changed = await hdika_catalog.apply_rx_prices(db)
+            await hdika_catalog.record_catalog_health(db, ok=True, total=total, changed=changed,
+                                                      source_tenant=tid)
+            return {"ok": True, "source": tid, "medicines": total, "rx_prices_changed": changed}
+        await hdika_catalog.record_catalog_health(db, ok=False, error=last_err or "κανένα φαρμακείο με ενεργή σύνδεση ΗΔΥΚΑ")
+        return {"ok": False, "error": last_err}
+    return _run_async(_run())
