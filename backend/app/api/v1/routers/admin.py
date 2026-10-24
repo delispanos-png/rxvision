@@ -2180,7 +2180,11 @@ async def tenant_credentials(tenant_id: str, _: PlatformContext = Depends(get_pl
              "pharmacy_name": c.get("pharmacy_name"), "environment": c.get("environment"),
              "base_url": c.get("base_url"), "has_password": bool(c.get("password")),
              "has_api_key": bool(c.get("api_key"))}
-    return jsonsafe({"users": users, "hdika": hdika})
+    # Τελευταίες προσπάθειες σύνδεσης ΗΔΥΚΑ με την αιτία αποτυχίας (καταγράφονται από 24/10/2026)
+    attempts = [{"at": e.get("at"), "ok": e.get("ok"), "step": e.get("step"), "error": e.get("error")}
+                async for e in db["sync_events"].find({"tenant_id": tenant_id, "kind": "hdika_connect"})
+                .sort("at", -1).limit(8)]
+    return jsonsafe({"users": users, "hdika": hdika, "hdika_attempts": attempts})
 
 
 @router.post("/tenants/{tenant_id}/impersonate")

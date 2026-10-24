@@ -144,6 +144,24 @@ def chain_positions(exs: list[dict], now: datetime, coverage_start: datetime | N
 class PatientIntelligenceRepository(BaseRepository):
     collection_name = "prescription_executions"
 
+    # ── ΚΟΙΝΗ ΑΠΟΘΗΚΕΥΣΗ (Redis) των βαριών οθονών — 22/10/2026 ─────────────────────────────
+    # Χρόνος ζωής ανά οθόνη (δευτ.). Τα δεδομένα αλλάζουν μόνο με συγχρονισμό ΗΔΥΚΑ, και μετά από
+    # κάθε συγχρονισμό με νέες συνταγές ο `workers.intelligence_warm` τα ξαναγράφει (≤1/30′).
+    # Το «Σήμερα» δείχνει και την ώρα του τελευταίου συγχρονισμού → σύντομη ζωή.
+    CACHED_VIEWS = {"overview": 3600, "segments": 3600, "today": 300}
+
+    async def cached_view(self, name: str, *, refresh: bool = False):
+        from zoneinfo import ZoneInfo
+
+        from app.core import shared_cache
+        ttl = self.CACHED_VIEWS[name]
+        # Η ημέρα (Αθήνα) στο κλειδί: «σήμερα», «αυτός ο μήνας», «60 ημέρες» αλλάζουν τα μεσάνυχτα.
+        day = datetime.now(ZoneInfo("Europe/Athens")).date().isoformat()
+        k = shared_cache.key(self.tenant_id, "pi", name, int(bool(self.demo)), day)
+        if refresh:
+            return await shared_cache.put(k, await getattr(self, name)(), ttl)
+        return await shared_cache.cached(k, ttl, getattr(self, name))
+
     # ── shared chain analysis (compliance + recall + recoverable) ───────────
     async def _chain_analysis(self) -> dict:
         """Per patient_ref → {compliance, executed, expected, missed, available, recoverable, chains,

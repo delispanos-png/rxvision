@@ -115,7 +115,11 @@ def _parse_printout_split(pdf_bytes: bytes) -> tuple[int, int] | None:
 # failure) γράφει «secured by an Application Gateway» → θα ταξινομούνταν λάθος ως transient (κίνδυνος
 # lockout από επαναλαμβανόμενα retries με λάθος κωδικό). Δες [[hdika-auth-autopause]].
 _GATEWAY_TRANSIENT = ("could not complete", "unexpected error", "server error",
-                      "bad gateway", "service unavailable", "gateway timeout")
+                      "bad gateway", "service unavailable", "gateway timeout",
+                      # 23/10/2026 18:30: διακοπή ΗΔΥΚΑ «Third-party server not responding» → ως άγνωστη
+                      # σελίδα πάγωσε ΛΑΘΟΣ 5 φαρμακεία (σαν «άλλαξε ο κωδικός»). Είναι υποδομή, όχι κωδικός.
+                      "not responding", "third-party server", "timed out", "temporarily unavailable",
+                      "maintenance", "συντήρηση")
 # Σελίδες που ΣΗΜΑΙΝΟΥΝ ότι χρειάζεται (ξανα)σύνδεση = auth failure (λάθος/ληγμένος κωδικός) → παύση.
 _GATEWAY_AUTH = ("login required", "you must login", "log in with a valid account",
                  "hpdia0306w", "locked out", "κλειδ")

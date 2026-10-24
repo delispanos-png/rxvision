@@ -29,12 +29,12 @@ def _repo(ctx: TenantContext) -> PatientIntelligenceRepository:
 
 @router.get("/overview")
 async def overview(ctx: TenantContext = Depends(require("patients:read", module=_MODULE))):
-    return await _repo(ctx).overview()
+    return await _repo(ctx).cached_view("overview")
 
 
 @router.get("/today")
 async def today(ctx: TenantContext = Depends(require("patients:read", module=_MODULE))):
-    return await _repo(ctx).today()
+    return await _repo(ctx).cached_view("today")
 
 
 @router.get("/patients")
@@ -80,7 +80,7 @@ async def risk(ctx: TenantContext = Depends(require("patients:read", module=_MOD
 
 @router.get("/segments")
 async def segments(ctx: TenantContext = Depends(require("patients:read", module=_MODULE))):
-    return await _repo(ctx).segments()
+    return await _repo(ctx).cached_view("segments")
 
 
 # ── 360° single-patient profile («Εικόνα Πελάτη», by ΑΜΚΑ) ──────────────────

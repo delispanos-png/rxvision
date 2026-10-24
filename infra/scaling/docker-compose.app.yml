@@ -33,6 +33,9 @@ services:
     env_file: .env
     # ΜΟΝΟ «fast»: κάποιος άνθρωπος περιμένει — δεν επιτρέπεται να μπλοκάρεται από τίποτα.
     command: celery -A app.workers.celery_app worker -l info --concurrency 3 --max-tasks-per-child 200 -Q fast -n fast@%h
+    # Ομαλό σταμάτημα στο deploy (24/10/2026): το Celery τελειώνει ό,τι τρέχει (warm shutdown) αντί
+    # να σκοτωθεί στα 10″ — αλλιώς ένα deploy κόβει email/SMS/συγχρονισμούς στη μέση.
+    stop_grace_period: 3m
     healthcheck:
       test: ["CMD-SHELL", "celery -A app.workers.celery_app inspect ping -d fast@$$(hostname) --timeout 8 >/dev/null 2>&1 || exit 1"]
       interval: 60s
@@ -48,6 +51,9 @@ services:
     restart: unless-stopped
     env_file: .env
     command: celery -A app.workers.celery_app worker -l info --concurrency 2 --max-tasks-per-child 200 -Q sync -n sync@%h
+    # Ένας συγχρονισμός ΗΔΥΚΑ κρατά ~2–3′· με 10″ το deploy τον έκοβε → «stalled» (24/10/2026:
+    # ΑΡΧΟΝΤΑΚΗΣ + 2 φαρμακεία). 3′ = προλαβαίνει να τελειώσει.
+    stop_grace_period: 3m
     healthcheck:
       test: ["CMD-SHELL", "celery -A app.workers.celery_app inspect ping -d sync@$$(hostname) --timeout 8 >/dev/null 2>&1 || exit 1"]
       interval: 60s

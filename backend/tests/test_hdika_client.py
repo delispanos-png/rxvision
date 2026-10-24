@@ -178,3 +178,15 @@ def test_unexecuted_substance_flagged():
                          "totalPrice": "3.00"})
     assert it.is_executed is False
     assert it.retail_price == 300
+
+
+def test_gateway_outage_pages_are_transient_not_auth():
+    """23/10/2026: «Third-party server not responding» πάγωσε 5 φαρμακεία σαν να άλλαξε ο κωδικός."""
+    from app.services.ingestion.hdika_client import _gateway_message
+    page = ("<html><head><title>Third-party server not responding</title></head><body>"
+            "<h1>Third-party server not responding</h1><p>The resource you have requested is located on a "
+            "third-party server. The Application Gateway could not reach it.</p></body></html>")
+    msg, is_auth = _gateway_message(page)
+    assert is_auth is False
+    login = "<html><body>Login required — you must login. Secured by an Application Gateway</body></html>"
+    assert _gateway_message(login)[1] is True          # ο ληγμένος κωδικός ΣΥΝΕΧΙΖΕΙ να παγώνει

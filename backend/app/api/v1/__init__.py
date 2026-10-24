@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends
 
 from app.core.deps import require_padmin
 from app.api.v1.routers import (
+    hdika_link,
     addons,
     admin,
     admin_leads,
@@ -64,6 +65,8 @@ api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
 api_router.include_router(calendar.router, prefix="/calendar", tags=["calendar"])
 api_router.include_router(onboarding.router, prefix="/onboarding", tags=["onboarding"])
 api_router.include_router(public_config.router, prefix="/config", tags=["public"])
+# Δημόσιος σύνδεσμος «νέος κωδικός ΗΔΥΚΑ» από SMS/email (χωρίς σύνδεση· token μίας χρήσης)
+api_router.include_router(hdika_link.router, prefix="/hdika-link", tags=["public"])
 api_router.include_router(feedback.router, prefix="/feedback", tags=["feedback"])
 api_router.include_router(billing.router, prefix="/billing", tags=["billing"])
 api_router.include_router(patient.router, prefix="/patient", tags=["patient-portal"])

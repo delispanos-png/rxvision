@@ -23,11 +23,31 @@ APP_COMPOSE=/opt/rxvision/docker-compose.app.yml
 # Live app nodes behind the LB — PRIVATE IPs only (public is firewalled to MGMT-only SSH).
 # Keep in sync with the LB targets: SRV01=10.0.0.5, SRV02=10.0.0.6, SRV03=10.0.0.7 (adopted 2026-07-15).
 # ALL app nodes must get the SAME web image in one run, or clients hit cross-node chunk-hash 404s.
-APP_NODES=(10.0.0.5 10.0.0.6 10.0.0.7)
+# ΔΥΝΑΜΙΚΗ ΛΙΣΤΑ (24/10/2026): η αυτόματη κλιμάκωση προσθέτει/αφαιρεί κόμβους και τους γράφει στο
+# /etc/rxvision/app-nodes.list (provision-app-node.sh / remove-app-node.sh). Σταθερή λίστα = ένας
+# αυτόματα προστιθέμενος κόμβος δεν θα έπαιρνε ποτέ deploy (παλιός κώδικας + chunk 404).
+NODES_LIST=${NODES_LIST:-/etc/rxvision/app-nodes.list}
+if [ -s "$NODES_LIST" ]; then
+  mapfile -t APP_NODES < <(grep -oE '^10\.0\.0\.[0-9]+' "$NODES_LIST")
+else
+  APP_NODES=(10.0.0.5 10.0.0.6 10.0.0.7)
+fi
+[ "${#APP_NODES[@]}" -gt 0 ] || { echo "✖ Κενή λίστα app nodes ($NODES_LIST)"; exit 1; }
 # Which tiers to push. api image is shared by api+worker on the app node.
 SERVICES="${SERVICES:-api web worker}"
 
 cd "$ROOT"
+
+# ▶ ΦΡΑΓΜΟΣ ΒΑΣΗΣ (24/10/2026) — αν τρέχει η αυτόματη μεταφορά της DB01 (`workers/db_move`), η DB01
+# μπορεί να είναι ΣΒΗΣΤΗ· ένα deploy θα σκότωνε τη διεργασία που θα την ξανάναβε. Περιμένουμε.
+# Παράκαμψη μόνο αν ξέρεις τι κάνεις: SKIP_DBMOVE_GUARD=1.
+if [ "${SKIP_DBMOVE_GUARD:-0}" != "1" ]; then
+  MV=$(docker compose -f docker-compose.prod.yml run --rm --no-deps -T api python -c 'exec("import asyncio\nfrom datetime import datetime, timedelta, timezone\nfrom app.core.db import shared_db\nasync def m():\n    d = await shared_db()[\"ops_alerts\"].find_one({\"_id\": \"capacity:db_move\"}) or {}\n    u = d.get(\"updated_at\")\n    fresh = u and datetime.now(timezone.utc) - u.replace(tzinfo=timezone.utc) < timedelta(hours=1)\n    print(\"running\" if d.get(\"status\") == \"running\" and fresh else \"ok\")\nasyncio.run(m())")' 2>/dev/null | tail -1 || true)
+  if [ "$MV" = "running" ]; then
+    echo "✖ Τρέχει αυτόματη μεταφορά της βάσης DB01 — το ανέβασμα ΣΤΑΜΑΤΑ. Ξαναδοκίμασε σε λίγα λεπτά."
+    exit 1
+  fi
+fi
 
 # ▶ 0/4 ΦΡΑΓΜΟΣ ΠΟΙΟΤΗΤΑΣ — τα ανεβάσματα γίνονται ΑΠΟ ΕΔΩ, όχι από το CI (που τρέχει μόνο στο push),
 # οπότε ο έλεγχος πρέπει να ζει εδώ. Lint πραγματικών λαθών + απομόνωση φαρμακείων + όλα τα τεστ.

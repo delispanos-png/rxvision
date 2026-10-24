@@ -149,6 +149,12 @@ class IngestionEngine:
             except Exception:  # noqa: BLE001
                 pass
 
+        # Νέες συνταγές → ξαναγράψε έτοιμα τα Patient Intelligence (≤1/30′ ανά φαρμακείο),
+        # ώστε το Dashboard/Segments/Σήμερα να ανοίγουν αμέσως. Best-effort.
+        if not cancelled and (stats.get("inserted") or stats.get("updated")):
+            from app.workers.intelligence_warm import schedule_after_ingest
+            await schedule_after_ingest(self.tenant_id)
+
         status = "cancelled" if cancelled else ("success" if not errors else "partial")
         final = {"status": status, "stats": stats, "errors": errors[:200], "finished_at": _now()}
         if not cancelled:

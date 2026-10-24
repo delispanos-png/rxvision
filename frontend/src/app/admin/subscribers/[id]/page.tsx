@@ -7,7 +7,7 @@ import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { adminApi, ApiError } from "@/lib/adminClient";
-import { fmtEur, fmtNum, fmtDate } from "@/lib/formatters";
+import { fmtEur, fmtNum, fmtDate, fmtDateTime } from "@/lib/formatters";
 import { KpiCard } from "@/components/kpi/KpiCard";
 import { DataTable, type Column } from "@/components/tables/DataTable";
 
@@ -54,6 +54,7 @@ const MODULE_LABELS: [string, string][] = [
 type Creds = {
   users: User[];
   hdika: { configured: boolean; username: string | null; pharmacy_id: string | null; pharmacy_name: string | null; environment: string | null; base_url: string | null; has_password: boolean; has_api_key: boolean };
+  hdika_attempts?: { at: string | null; ok: boolean; step?: string; error?: string | null }[];
 };
 
 const STATUS_STYLE: Record<string, string> = {
@@ -431,6 +432,18 @@ export default function TenantCardPage() {
                 <div className="text-xs text-slate-400">Κωδικός: {creds.data.hdika.has_password ? "✓ ορισμένος" : "—"} · API key: {creds.data.hdika.has_api_key ? "✓" : "—"}</div>
               </div>
             ) : <div className="text-slate-400">Δεν έχει ρυθμιστεί.</div>}
+            {(creds.data?.hdika_attempts?.length ?? 0) > 0 && (
+              <div className="mt-2 border-t border-slate-100 pt-2">
+                <div className="mb-1 text-xs font-medium text-slate-500">Προσπάθειες σύνδεσης</div>
+                <ul className="space-y-0.5 text-xs">
+                  {creds.data!.hdika_attempts!.map((a, i) => (
+                    <li key={i} className={a.ok ? "text-emerald-700" : "text-rose-700"}>
+                      {a.ok ? "✓" : "✖"} {a.at ? fmtDateTime(a.at) : "—"}{a.ok ? " — συνδέθηκε" : ` — ${a.error ?? "αποτυχία"}`}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </div>
         </div>
       </div>

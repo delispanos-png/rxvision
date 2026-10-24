@@ -53,6 +53,15 @@ const N = STEPS.length;
 // Ο κωδικός (credentials) μπαίνει ΤΕΛΕΥΤΑΙΟΣ, μετά την πληρωμή (βλ. completion mode).
 const STEP = { COMPANY: 0, PACKAGE: 1, OWNER: 2, PAYMENT: 3 } as const;
 
+/** Ελληνικό ΑΦΜ: 9 ψηφία, 8 πρώτα × 2^(8..1), άθροισμα mod 11 mod 10 = 9ο. Ίδιο με backend `utils/afm.py`. */
+function validAfm(v: string): boolean {
+  const a = (v || "").replace(/\D/g, "");
+  if (a.length !== 9 || a === "000000000") return false;
+  let s = 0;
+  for (let i = 0; i < 8; i++) s += Number(a[i]) * 2 ** (8 - i);
+  return (s % 11) % 10 === Number(a[8]);
+}
+
 export default function RegisterWizard() {
   const router = useRouter();
   const [step, setStep] = useState(0);
@@ -221,7 +230,10 @@ export default function RegisterWizard() {
     } catch { setAade({ loading: false, msg: "Αποτυχία σύνδεσης — συμπλήρωσε χειροκίνητα." }); }
   }
 
-  const step0ok = company.name.trim().length > 1 && company.email.includes("@");
+  // ΑΦΜ ΥΠΟΧΡΕΩΤΙΚΟ (24/10/2026): χωρίς αυτό δεν τιμολογείται ο πελάτης αν συνεχίσει μετά τη δοκιμή.
+  // Ελλάδα: 9 ψηφία + ψηφίο ελέγχου ΑΑΔΕ (ίδιο με `utils/afm.py`)· Κύπρος: απλώς συμπληρωμένο.
+  const afmOk = company.country === "CY" ? company.afm.trim().length > 0 : validAfm(company.afm);
+  const step0ok = company.name.trim().length > 1 && company.email.includes("@") && afmOk;
   const step1ok = !!pkgCode;
   const ownerInfoOk = !!admin.full_name.trim() && admin.email.includes("@");   // κωδικός ΟΧΙ εδώ
   const canNext = step === STEP.COMPANY ? (step0ok && acceptedTerms) : step === STEP.PACKAGE ? step1ok : step === STEP.OWNER ? ownerInfoOk : true;
@@ -419,7 +431,7 @@ export default function RegisterWizard() {
                 </div>
                 <div className="grid gap-4 sm:grid-cols-3">
                   <div className="sm:col-span-1">
-                    <label className={label}>ΑΦΜ / VAT</label>
+                    <label className={label}>ΑΦΜ / VAT *</label>
                     <div className="flex gap-1.5">
                       <input className={input} {...C("afm")} placeholder="999999999" inputMode="numeric" />
                       <Tooltip label="Αναζήτηση ΑΑΔΕ"><button type="button" onClick={lookupAade} disabled={aade.loading} className="shrink-0 rounded-lg border border-slate-300 px-2.5 text-slate-600 hover:bg-slate-50">{aade.loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}</button></Tooltip>
@@ -429,6 +441,9 @@ export default function RegisterWizard() {
                   <div><label className={label}>Χώρα *</label><select className={input} {...C("country")}><option value="GR">Ελλάδα</option><option value="CY">Κύπρος</option></select></div>
                 </div>
                 {aade.msg && <p className="text-xs text-slate-500">{aade.msg}</p>}
+                {company.afm.trim() && !afmOk && (
+                  <p className="text-xs text-rose-600">Το ΑΦΜ δεν είναι έγκυρο — έλεγξε τα 9 ψηφία.</p>
+                )}
                 {afmErr && (
                   <div role="alert" className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">
                     {afmErr} <a href="/login" className="font-semibold underline">Σύνδεση</a> · <a href="/forgot-password" className="font-semibold underline">Ξέχασα τον κωδικό</a>

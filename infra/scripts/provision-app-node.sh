@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
-# Provision a NEW RxVision app node and attach it to the Hetzner LB. Runs on SRV01 (has the deploy
-# key, repo, .env and Hetzner token). Triggered semi-automatically from the admin panel via the
-# ops-agent (type:add_node). Writes step-by-step progress to the ops_commands doc (NODE_CMD_ID).
+# Provision a NEW RxVision app node and attach it to the Hetzner LB. Runs on MGMT01 (build host: has
+# the deploy key, repo, .env, Hetzner token and the current images). Triggered via the ops-agent
+# (type:add_node) — from the admin panel OR from the autoscaler (`workers/capacity.py`).
+# Writes step-by-step progress to the ops_commands doc (NODE_CMD_ID).
 # DRY_RUN=1 validates everything but does NOT create a server.
+# SKIP_LB=1 creates & starts the node but does NOT attach it to the LB (end-to-end test).
+# On success the private IP is appended to $NODES_LIST, which deploy.sh reads — otherwise the new
+# node would never receive later deploys (stale code + cross-node chunk 404s).
 set -uo pipefail
 cd "$(dirname "$0")/../.."
 
@@ -11,6 +15,7 @@ SSHO=(-i "$KEY" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o C
 NET_ID=12315100; LB_ID=6614941; SSHKEY_ID=113542635; FW_APP_ID=11113679
 SRV_TYPE=${SRV_TYPE:-ccx13}; LOCATION=${LOCATION:-hel1}; IMAGE=${IMAGE:-ubuntu-22.04}
 CMD_ID="${NODE_CMD_ID:-}"
+NODES_LIST=${NODES_LIST:-/etc/rxvision/app-nodes.list}
 
 strip(){ sed -E 's/^["'"'"']//; s/["'"'"']$//'; }
 URI=$(grep -E '^MONGODB_URI=' .env | cut -d= -f2- | strip)
@@ -74,9 +79,27 @@ scp "${SSHO[@]}" .env root@$PIP:/opt/rxvision/.env >/dev/null 2>&1
 # (infra/docker/vault/tls/vault.crt); the app.yml mounts it into every backend service.
 ssh "${SSHO[@]}" root@$PIP "sed -i 's#^VAULT_ADDR=.*#VAULT_ADDR=https://10.0.0.2:8200#' /opt/rxvision/.env; grep -qE '^VAULT_CACERT=' /opt/rxvision/.env && sed -i 's#^VAULT_CACERT=.*#VAULT_CACERT=/vault/tls/vault.crt#' /opt/rxvision/.env || echo 'VAULT_CACERT=/vault/tls/vault.crt' >> /opt/rxvision/.env; sed -i 's#^NODE_NAME=.*#NODE_NAME=$NAME#' /opt/rxvision/.env; cp /opt/rxvision/infra/scaling/docker-compose.app.yml /opt/rxvision/docker-compose.app.yml" 2>/dev/null
 
-# 6) build api/worker on node + ship the IDENTICAL web image from SRV01, then start
-progress "Build api/worker + αποστολή web image (ίδιο build)…"
-ssh "${SSHO[@]}" root@$PIP 'cd /opt/rxvision && docker compose -f docker-compose.app.yml build api worker' >/dev/null 2>&1
+# 5b) Cloudflare ORIGIN certificate: ζει στον τόμο δεδομένων του Caddy κάθε κόμβου (/data/origin.*),
+#     ΟΧΙ στο repo. Χωρίς αυτό ο Caddy δεν ξεκινά (`open /data/origin.pem`) — βρέθηκε στη δοκιμή
+#     24/10/2026. Αντιγραφή από υπάρχοντα app node, απευθείας μέσω ιδιωτικού δικτύου (tar stream).
+CERT_SRC=${CERT_SRC:-10.0.0.5}
+progress "Αντιγραφή πιστοποιητικού Cloudflare Origin από $CERT_SRC…"
+# 3 προσπάθειες: ο docker του νέου κόμβου μόλις έκανε restart (βήμα 4b) — 1η δοκιμή 24/10 απέτυχε εκεί.
+CERT_OK=0
+for _ in 1 2 3; do
+  sleep 10
+  ssh "${SSHO[@]}" root@$CERT_SRC 'docker exec rxvision-app-caddy-1 tar -C /data -cf - origin.pem origin.key' 2>/dev/null \
+    | ssh "${SSHO[@]}" root@$PIP 'docker volume create rxvision-app_caddy_data >/dev/null && tar -C /var/lib/docker/volumes/rxvision-app_caddy_data/_data -xf - && chmod 600 /var/lib/docker/volumes/rxvision-app_caddy_data/_data/origin.key' 2>/dev/null
+  ssh "${SSHO[@]}" root@$PIP 'test -s /var/lib/docker/volumes/rxvision-app_caddy_data/_data/origin.pem && test -s /var/lib/docker/volumes/rxvision-app_caddy_data/_data/origin.key' 2>/dev/null && { CERT_OK=1; break; }
+done
+[ "$CERT_OK" = 1 ] || { progress "ΣΦΑΛΜΑ: δεν αντιγράφηκε το πιστοποιητικό Origin από $CERT_SRC"; echo "nocert $NAME id=$SID priv=$PIP"; exit 1; }
+
+# 6) ship the IDENTICAL images that deploy.sh ships (built once on MGMT) — NOT a local build: a
+#    node-built image differs from the others (code drift, different web chunk hashes). Same tags
+#    as deploy.sh so every backend service runs the same image.
+progress "Αποστολή εικόνων api/web (ίδιο build με τους άλλους κόμβους)…"
+docker save rxvision-api:latest | gzip -1 | ssh "${SSHO[@]}" root@$PIP \
+  'gunzip | docker load && for t in api worker worker-backfill worker-sync worker-maint optical; do docker tag rxvision-api:latest rxvision-app-$t:latest; done' >/dev/null 2>&1
 docker save rxvision-web:latest | gzip -1 | ssh "${SSHO[@]}" root@$PIP 'gunzip | docker load && docker tag rxvision-web:latest rxvision-app-web:latest' >/dev/null 2>&1
 ssh "${SSHO[@]}" root@$PIP 'cd /opt/rxvision && docker compose -f docker-compose.app.yml up -d --no-build' >/dev/null 2>&1
 
@@ -95,12 +118,30 @@ WantedBy=multi-user.target
 U
 systemctl daemon-reload && systemctl enable --now rxvision-ops.service" 2>/dev/null
 
-# 8) attach to the Load Balancer (private IP)
+# 8) verify the app answers BEFORE it gets customer traffic
+HOK=""
+for _ in $(seq 1 30); do
+  HOK=$(ssh "${SSHO[@]}" root@$PIP 'docker exec rxvision-app-caddy-1 wget -qO- http://api:8000/health 2>/dev/null | head -c 200' 2>/dev/null || true)
+  printf '%s' "$HOK" | grep -q '"status":"ok"' && break
+  sleep 10
+done
+if ! printf '%s' "$HOK" | grep -q '"status":"ok"'; then
+  progress "ΣΦΑΛΜΑ: $NAME δεν απαντά στο /health — ΔΕΝ μπήκε στον LB (id=$SID, priv=$PIP)"
+  echo "unhealthy $NAME id=$SID priv=$PIP"; exit 1
+fi
+
+# 9) register for deploy.sh (so later deploys reach it) — before the LB, so no window exists where
+#    it serves traffic but would be skipped by a deploy
+mkdir -p "$(dirname "$NODES_LIST")"
+[ -f "$NODES_LIST" ] || printf '10.0.0.5  # RxVisionSRV01\n10.0.0.6  # RxVisionSRV02\n10.0.0.7  # RxVisionSRV03\n' > "$NODES_LIST"
+grep -q "^$PIP " "$NODES_LIST" || printf '%s  # %s\n' "$PIP" "$NAME" >> "$NODES_LIST"
+
+# 10) attach to the Load Balancer (private IP) — unless this is an end-to-end test
+if [ "${SKIP_LB:-0}" = 1 ]; then
+  progress "✅ $NAME έτοιμος (SKIP_LB: εκτός Load Balancer) priv=$PIP"
+  echo "done $NAME priv=$PIP id=$SID nolb"; exit 0
+fi
 progress "Σύνδεση $NAME στον Load Balancer…"
 api POST /load_balancers/$LB_ID/actions/add_target "{\"type\":\"server\",\"server\":{\"id\":$SID},\"use_private_ip\":true}" >/dev/null 2>&1
-
-# 9) verify
-sleep 10
-HOK=$(ssh "${SSHO[@]}" root@$PIP 'docker exec rxvision-app-caddy-1 wget -qO- http://api:8000/api/v1/health 2>/dev/null | head -c 3' 2>/dev/null || echo "?")
 progress "✅ $NAME έτοιμος & συνδεδεμένος στον LB (pub=$PUB, priv=$PIP)"
-echo "done $NAME priv=$PIP"
+echo "done $NAME priv=$PIP id=$SID"

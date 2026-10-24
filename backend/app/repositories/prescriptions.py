@@ -720,8 +720,10 @@ class PrescriptionRepository(BaseRepository):
         ]).to_list(length=None)
         g = gal[0] if gal else {}
         items["galenic"] = {"count": int(g.get("count", 0) or 0), "value": int(g.get("value", 0) or 0)}
-        return {"total": int(raw.get("total", 0) or 0), "value": int(raw.get("value", 0) or 0),
-                "items": items}
+        pv = await self.pharmacy_vaccinations(date_from, date_to)
+        items["pharmacy_vaccination"] = {"count": pv["count"], "value": pv["value"]}
+        return {"total": int(raw.get("total", 0) or 0) + pv["count"],
+                "value": int(raw.get("value", 0) or 0) + pv["value"], "items": items}
 
     async def galenic_exec_ids(self, date_from: datetime, date_to: datetime) -> list:
         """Execution _ids that contain a γαληνικό line in the period (for the «Γαληνικά» filter)."""
@@ -788,6 +790,43 @@ class PrescriptionRepository(BaseRepository):
         return {"executions": execs.deleted_count, "items": items.deleted_count,
                 "future": fut.deleted_count}
 
+    # ── ΕΜΒΟΛΙΑΣΜΟΙ ΦΑΡΜΑΚΕΙΟΥ («92…») ΩΣ ΣΥΝΤΑΓΕΣ — 23/10/2026 ───────────────────────────────
+    # Ζουν ΜΟΝΟ στο `vaccinations` (Μητρώο Εμβολιασμών ΗΔΥΚΑ, source INFLUENZA), όχι στις εκτελέσεις.
+    # Ο φαρμακοποιός τις υποβάλλει στον ΕΟΠΥΥ μαζί με τις άλλες και τις μετρά το εμπορικό του
+    # (Μπινίκος 19/10: RxVision 105, SoftOne 121). Απόφαση ιδιοκτήτη: μετρούν ως συνταγές, τύπος
+    # «Εμβολιασμός φαρμακείου». ΔΕΝ αντιγράφονται στις εκτελέσεις (θα έμπαιναν σε κλείσιμο μήνα,
+    # αλυσίδες, Partner API και θα μετρούσαν διπλά στη λίστα, που ήδη τις συγχωνεύει).
+    # ΕΝΑΣ ορισμός για Dashboard / γράφημα / Δείκτες: αυτή η συνάρτηση.
+    _PV_MATCH = {"source": "INFLUENZA", "cancelled": {"$ne": True}}
+    _PV_FIELD = {"executions": None, "value": "$total_price", "claimed": "$insurance_part"}
+
+    async def pharmacy_vaccinations(self, date_from: datetime, date_to: datetime, *,
+                                    grain: str | None = None, metric: str = "executions") -> dict | list:
+        """Χωρίς `grain` → {count, value, claimed, patient_refs}. Με `grain` → [{bucket, value}]
+        στη μορφή του `timeseries` (ζώνη Αθήνας)."""
+        match = {"tenant_id": self.tenant_id, **self._PV_MATCH,
+                 "executed_at": {"$gte": date_from, "$lt": date_to}}
+        coll = self._db["vaccinations"]
+        if grain:
+            field = self._PV_FIELD[metric]
+            rows = await coll.aggregate([
+                {"$match": match},
+                {"$group": {"_id": {"$dateToString": {"format": _GRAIN_FMT[grain], "date": "$executed_at",
+                                                      "timezone": "Europe/Athens"}},
+                            "value": {"$sum": 1} if field is None else {"$sum": {"$ifNull": [field, 0]}}}},
+            ]).to_list(None)
+            return [{"bucket": r["_id"], "value": r["value"]} for r in rows]
+        rows = await coll.aggregate([
+            {"$match": match},
+            {"$group": {"_id": None, "count": {"$sum": 1},
+                        "value": {"$sum": {"$ifNull": ["$total_price", {"$ifNull": ["$payable", 0]}]}},
+                        "claimed": {"$sum": {"$ifNull": ["$insurance_part", 0]}},
+                        "refs": {"$addToSet": "$patient_ref"}}},
+        ]).to_list(1)
+        r = rows[0] if rows else {}
+        return {"count": int(r.get("count", 0)), "value": int(r.get("value", 0)),
+                "claimed": int(r.get("claimed", 0)), "patient_refs": [x for x in r.get("refs", []) if x]}
+
     async def dashboard_summary(self, date_from: datetime, date_to: datetime, *,
                                 fund_id: str | None = None, doctor_id: str | None = None,
                                 icd10: str | None = None) -> dict:
@@ -813,13 +852,30 @@ class PrescriptionRepository(BaseRepository):
                 "_id": 0, "executions": 1, "value": 1, "claimed": 1,
                 # μεικτό κέρδος = λιανική ΧΩΡΙΣ ΦΠΑ − χονδρική (services/vat.py)· ΟΧΙ claimed−cost
                 "gross_profit": vat.profit_expr("$value", "$cost", await vat.pct_for(self.tenant_id, self._db)),
-                "patient_count": {"$size": "$patients"},
+                "patients": 1,
             }},
         ]
         rows = await self.aggregate(pipeline)
-        return rows[0] if rows else {
-            "executions": 0, "value": 0, "claimed": 0, "gross_profit": 0, "patient_count": 0,
-        }
+        out = rows[0] if rows else {"executions": 0, "value": 0, "claimed": 0, "gross_profit": 0,
+                                    "patients": []}
+        # str(): το `aggregate` περνά από jsonsafe (ObjectId → str) — ίδια μορφή και για τις καρτέλες
+        # των εμβολιασμών, αλλιώς ο ίδιος ασθενής μετρά δύο φορές.
+        patients = {str(x) for x in (out.pop("patients", []) or [])}
+        pv = {"count": 0}
+        # Τα φίλτρα ταμείου/γιατρού/ICD-10 δεν αφορούν εμβολιασμούς φαρμακείου (χωρίς ταμείο/γιατρό
+        # στο Μητρώο) — με φίλτρο η κάρτα δείχνει ό,τι και η φιλτραρισμένη λίστα.
+        if not (fund_id or doctor_id or icd10):
+            pv = await self.pharmacy_vaccinations(date_from, date_to)
+            out["executions"] += pv["count"]
+            out["value"] += pv["value"]
+            out["claimed"] += pv["claimed"]
+            if pv["patient_refs"]:   # vaccinations.patient_ref = pseudo_id → _id καρτέλας
+                async for p in self._db["patients_anonymized"].find(
+                        {"tenant_id": self.tenant_id, "pseudo_id": {"$in": pv["patient_refs"]}}, {"_id": 1}):
+                    patients.add(str(p["_id"]))
+        out["patient_count"] = len(patients)
+        out["pharmacy_vaccinations"] = pv["count"]
+        return out
 
     async def timeseries(self, *, metric: str, grain: str, date_from: datetime,
                          date_to: datetime) -> list[dict]:
@@ -835,7 +891,14 @@ class PrescriptionRepository(BaseRepository):
             {"$sort": {"_id": 1}},
             {"$project": {"_id": 0, "bucket": "$_id", "value": 1}},
         ]
-        return await self.aggregate(pipeline)
+        rows = await self.aggregate(pipeline)
+        pv = await self.pharmacy_vaccinations(date_from, date_to, grain=grain, metric=metric)
+        if not pv:
+            return rows
+        by = {r["bucket"]: r["value"] for r in rows}
+        for r in pv:
+            by[r["bucket"]] = by.get(r["bucket"], 0) + r["value"]
+        return [{"bucket": b, "value": by[b]} for b in sorted(by)]
 
     async def hourly_heatmap(self, *, metric: str, date_from: datetime,
                              date_to: datetime) -> list[dict]:

@@ -23,10 +23,13 @@ async def _flu_vaccination_rows(tenant_id: str, date_from, date_to, barcode, pag
     from app.core.db import shared_db
     from app.repositories.base import jsonsafe
     db = shared_db()
+    # Ακυρωμένοι ΕΚΤΟΣ — ίδιος ορισμός με τον αριθμό των Δεικτών/Dashboard
+    # (`PrescriptionRepository.pharmacy_vaccinations`), αλλιώς η κάρτα και η λίστα της διαφωνούν.
     if barcode and barcode.strip():
-        q = {"tenant_id": tenant_id, "source": "INFLUENZA", "barcode": barcode.strip()}
+        q = {"tenant_id": tenant_id, "source": "INFLUENZA", "cancelled": {"$ne": True},
+             "barcode": barcode.strip()}
     else:
-        q = {"tenant_id": tenant_id, "source": "INFLUENZA",
+        q = {"tenant_id": tenant_id, "source": "INFLUENZA", "cancelled": {"$ne": True},
              "executed_at": {"$gte": date_from, "$lt": date_to}}
     rows = []
     async for v in (db["vaccinations"].find(q).sort("executed_at", -1)

@@ -20,7 +20,15 @@ jget() { python3 -c "import sys,json; d=sys.stdin.read().strip(); print(json.loa
 # 100-190% CPU σε τρεις servers χωρίς να είναι κανείς συνδεδεμένος.
 # Τώρα το ίδιο ερώτημα γίνεται με `docker exec` μέσα στο API container που ΗΔΗ τρέχει και έχει
 # και τη σύνδεση και τα credentials. Καμία δημιουργία container.
-API_CT="${API_CT:-rxvision-app-api-1}"
+# Όνομα του API container: στους app nodes `rxvision-app-api-1`, στο MGMT01 `rxvision-api-1`.
+# Ως 24/10/2026 ήταν σταθερό το πρώτο → στο MGMT ο νέος agent δεν θα έβρισκε ΠΟΤΕ container και
+# δεν θα εκτελούσε καμία εντολή (κρυβόταν γιατί έτρεχε ακόμη η έκδοση της 11/09).
+if [ -z "${API_CT:-}" ]; then
+  for c in rxvision-app-api-1 rxvision-api-1; do
+    docker inspect "$c" >/dev/null 2>&1 && { API_CT=$c; break; }
+  done
+  API_CT="${API_CT:-rxvision-app-api-1}"
+fi
 
 POLL() {
   docker exec -i -e OPS_NODE="$NODE" "$API_CT" python - <<'PYEOF' 2>/dev/null
@@ -34,7 +42,8 @@ c = db.ops_commands.find_one_and_update(
     {"$set": {"status": "running", "started_at": datetime.now(tz=timezone.utc)}},
     return_document=ReturnDocument.AFTER)
 print(json.dumps({"id": str(c["_id"]), "type": c.get("type", ""), "file": c.get("file", ""),
-                  "server_type": c.get("server_type", ""), "location": c.get("location", "")})
+                  "server_type": c.get("server_type", ""), "location": c.get("location", ""),
+                  "name": c.get("name", "")})
       if c else "")
 PYEOF
 }
@@ -115,6 +124,7 @@ while true; do
   CMD=$(POLL | tail -1)
   ID=$(printf '%s' "$CMD" | jget id); TYPE=$(printf '%s' "$CMD" | jget type); FILE=$(printf '%s' "$CMD" | jget file)
   STY=$(printf '%s' "$CMD" | jget server_type); LOC=$(printf '%s' "$CMD" | jget location)
+  SNAME=$(printf '%s' "$CMD" | jget name)
   if [ -n "$ID" ]; then
     case "$TYPE" in
       prune)    OUT=$( {
@@ -129,6 +139,8 @@ while true; do
                 } 2>&1 | grep -iE 'reclaimed|freed|cleared' | paste -sd'; ' );;
       backup)   OUT=$(bash infra/scripts/mongo-backup.sh 2>&1 | tail -1);;
       add_node) OUT=$(NODE_CMD_ID="$ID" SRV_TYPE="${STY:-ccx13}" LOCATION="${LOC:-hel1}" bash infra/scripts/provision-app-node.sh 2>&1 | tail -1);;
+      # Αφαίρεση app node (αυτόματη κλιμάκωση). Το script ΑΡΝΕΙΤΑΙ τους αρχικούς SRV01-03.
+      remove_node) OUT=$(NODE_CMD_ID="$ID" NAME="$SNAME" bash infra/scripts/remove-app-node.sh 2>&1 | tail -1);;
       restore)
         if [[ "$FILE" =~ ^rxvision-[A-Za-z0-9._-]+\.archive\.gz$ ]]; then
           dl=false

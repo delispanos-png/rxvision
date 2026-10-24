@@ -12,6 +12,7 @@ type Srv = {
   public_ip: string | null; private_ip: string | null; location: string | null;
   cpu: number | null; ram_pct: number | null; load: number | null;
   disk_pct: number | null; disk_total_gb: number | null; metrics_live: boolean;
+  eur_month?: number | null;   // μηνιαίο κόστος (server + IPv4, με ΦΠΑ)
   health?: { dockerd_cpu?: number | null; churn?: number | null; zombies?: number | null;
              orphans_killed?: number | null; at?: string } | null;
 };
@@ -85,6 +86,12 @@ function ServerCard({ s, onPrune, pruning }: { s: Srv; onPrune?: (node: string) 
         {s.memory_gb != null && <span className="rounded bg-slate-100 px-1.5 py-0.5 text-slate-500 dark:bg-slate-800 dark:text-slate-400">{s.memory_gb} GB</span>}
         {s.disk_gb != null && <span className="rounded bg-slate-100 px-1.5 py-0.5 text-slate-500 dark:bg-slate-800 dark:text-slate-400">{s.disk_gb} GB δίσκος</span>}
         {s.location && <span className="rounded bg-slate-100 px-1.5 py-0.5 text-slate-500 dark:bg-slate-800 dark:text-slate-400">{s.location}</span>}
+        {s.eur_month != null && (
+          <span title="Μηνιαίο κόστος Hetzner: server + δημόσια IPv4, με ΦΠΑ"
+            className="rounded bg-emerald-50 px-1.5 py-0.5 font-semibold text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">
+            €{s.eur_month.toFixed(2).replace(".", ",")}/μήνα
+          </span>
+        )}
       </div>
       <div className="space-y-2">
         <Metric icon={<Cpu className="h-3 w-3" />} label="CPU" pct={s.cpu} />
@@ -332,7 +339,14 @@ export function InfraDashboard() {
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between">
-        <h2 className="flex items-center gap-2 text-lg font-bold text-slate-900 dark:text-slate-100"><Server className="h-5 w-5 text-brand-600" /> Servers</h2>
+        <h2 className="flex items-center gap-2 text-lg font-bold text-slate-900 dark:text-slate-100"><Server className="h-5 w-5 text-brand-600" /> Servers
+          {infra.servers.some((s) => s.eur_month != null) && (
+            <span title="Σύνολο servers (+ IPv4), με ΦΠΑ — χωρίς Load Balancer/backups"
+              className="rounded-lg bg-emerald-50 px-2 py-0.5 text-sm font-semibold text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">
+              €{infra.servers.reduce((a, s) => a + (s.eur_month ?? 0), 0).toFixed(2).replace(".", ",")}/μήνα
+            </span>
+          )}
+        </h2>
         <span className="inline-flex items-center gap-1 text-xs text-slate-400"><RefreshCw className={`h-3 w-3 ${q.isFetching ? "animate-spin" : ""}`} /> live · κάθε 12s</span>
       </div>
 

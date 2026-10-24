@@ -947,6 +947,37 @@ def _pharmacy_email(t: dict) -> str | None:
     return (bill.get("email") or comp.get("email") or bill.get("billing_email") or "").strip() or None
 
 
+def _is_mobile(num: str | None) -> bool:
+    d = "".join(ch for ch in str(num or "") if ch.isdigit())
+    if d.startswith("0030"):
+        d = d[4:]
+    elif d.startswith("30") and len(d) == 12:
+        d = d[2:]
+    return len(d) == 10 and d.startswith("69")
+
+
+async def _pharmacy_mobile(db, t: dict) -> str | None:
+    """ΚΙΝΗΤΟ του φαρμακείου για SMS: τιμολόγηση → εταιρεία → επαφή → χρήστης. Σταθερό (210…) δεν
+    παίρνει SMS — γι' αυτό ψάχνουμε το πρώτο που είναι κινητό, όχι απλώς το πρώτο τηλέφωνο."""
+    comp, bill = t.get("company") or {}, t.get("billing_profile") or {}
+    for n in (bill.get("phone"), comp.get("phone"), t.get("contact_phone")):
+        if _is_mobile(n):
+            return str(n).strip()
+    async for u in db["users"].find({"tenant_id": t["_id"], "phone": {"$nin": [None, ""]}}, {"phone": 1}):
+        if _is_mobile(u.get("phone")):
+            return str(u["phone"]).strip()
+    return None
+
+
+def _auth_pause_sms(err: str | None, name: str, link: str) -> str:
+    low = str(err or "").lower()
+    if "κλειδ" in low or "lock" in low:
+        return (f"RxVision: ο λογαριασμός ΗΔΥΚΑ του φαρμακείου {name} κλειδώθηκε και ο συγχρονισμός "
+                f"σταμάτησε. Ξεκλειδώστε τον στην ΗΔΥΚΑ και μετά βάλτε τον κωδικό εδώ: {link}")
+    return (f"RxVision: ο συγχρονισμός του φαρμακείου {name} με την ΗΔΥΚΑ σταμάτησε γιατί άλλαξε ο "
+            f"κωδικός ΗΔΥΚΑ. Βάλτε τον νέο εδώ (ισχύει 48 ώρες): {link}")
+
+
 def _auth_pause_copy(err: str | None) -> tuple[str, str]:
     """(αιτία, οδηγία) ανάλογα με το ΓΙΑΤΙ πάγωσε. Το να πεις «πέρασε τον κωδικό» σε κάποιον με
     ΚΛΕΙΔΩΜΕΝΟ λογαριασμό τον στέλνει να χτυπάει σε τοίχο — γι' αυτό ξεχωρίζουμε τις περιπτώσεις."""
@@ -956,6 +987,83 @@ def _auth_pause_copy(err: str | None) -> tuple[str, str]:
                 "Ξεκλείδωσέ τον πρώτα από την πύλη της ΗΔΥΚΑ και μετά καταχώρισε τον κωδικό σου στο RxVision.")
     return ("Άλλαξε ο μηνιαίος κωδικός σου στην ΗΔΥΚΑ.",
             "Καταχώρισε τον νέο κωδικό στο RxVision για να ξαναρχίσει ο συγχρονισμός.")
+
+
+_GATEWAY_PAUSE_PREFIX = "Η πύλη ΗΔΥΚΑ επέστρεψε σελίδα σφάλματος"
+_RECHECK_EVERY_MIN = 30
+
+
+async def _unpause_hdika(db, tenant_id: str, reason: str) -> None:
+    """Ίδιο αποτέλεσμα με την καταχώριση νέου κωδικού: ο dispatcher ξαναπαίρνει το φαρμακείο."""
+    await db["tenants"].update_one({"_id": tenant_id}, {
+        "$set": {"ingestion_config.hdika.auth_paused": False},
+        "$unset": {"ingestion_config.hdika.auth_error_at": "", "ingestion_config.hdika.auth_error_msg": "",
+                   "ingestion_config.hdika.auth_notify_count": "",
+                   "ingestion_config.hdika.auth_notify_last_at": "",
+                   "ingestion_config.hdika.auth_recheck_at": "",
+                   "ingestion_config.hdika.auth_sms_at": ""}})
+    await db["sync_events"].insert_one({"tenant_id": tenant_id, "kind": "hdika_auto_resume",
+                                        "reason": reason, "at": datetime.now(tz=timezone.utc)})
+
+
+@celery_app.task(name="app.workers.ingestion.recheck_gateway_paused")
+def recheck_gateway_paused() -> dict:
+    """ΔΙΧΤΥ ΑΣΦΑΛΕΙΑΣ (24/10/2026): φαρμακεία που πάγωσαν από ΑΓΝΩΣΤΗ σελίδα σφάλματος της πύλης
+    (όχι 401 / login-required / lockout) ξαναδοκιμάζονται με ΜΙΑ σύνδεση ανά 30′.
+
+    ΓΙΑΤΙ: 23/10/2026 18:30 η ΗΔΥΚΑ έπεσε («Third-party server not responding») και 5 από τα 7 ενεργά
+    φαρμακεία πάγωσαν σαν να είχε αλλάξει ο κωδικός τους — κανείς δεν θα το διόρθωνε, γιατί δεν
+    υπήρχε τίποτα να διορθώσει ο φαρμακοποιός. Η άγνωστη σελίδα παγώνει συντηρητικά (μπορεί να
+    είναι κλείδωμα)· εδώ ελέγχουμε αν ήταν τελικά παροδικό.
+    Σύνδεση OK → συνέχεια αυτόματα. 401/login → γίνεται κανονική παύση «άλλαξε ο κωδικός» και ΔΕΝ
+    ξαναδοκιμάζεται (το πολύ ΜΙΑ αποτυχημένη σύνδεση → κανένας κίνδυνος κλειδώματος)."""
+    async def _run() -> dict:
+        import asyncio as _aio
+
+        from app.api.v1.routers.ingestion import _effective_hdika_creds
+        from app.services.ingestion.hdika_client import HdikaAuthError, HdikaClient
+        client, db = _fresh_db()
+        out = {"resumed": [], "still_down": [], "auth": []}
+        now = datetime.now(tz=timezone.utc)
+        try:
+            async for t in db["tenants"].find(
+                    {"ingestion_config.hdika.auth_paused": True,
+                     "ingestion_config.hdika.auth_error_msg": {"$regex": "^" + _GATEWAY_PAUSE_PREFIX}},
+                    {"ingestion_config.hdika.auth_recheck_at": 1}):
+                tid = str(t["_id"])
+                last = (((t.get("ingestion_config") or {}).get("hdika") or {}).get("auth_recheck_at"))
+                if last and (now - last.replace(tzinfo=timezone.utc)).total_seconds() < _RECHECK_EVERY_MIN * 60:
+                    continue
+                creds = dict(await _effective_hdika_creds(tid))
+
+                def _try() -> None:
+                    cl = HdikaClient(creds)
+                    try:
+                        cl.authenticate()
+                    finally:
+                        cl.close()
+                try:
+                    await _aio.to_thread(_try)
+                except HdikaAuthError as exc:
+                    if _GATEWAY_PAUSE_PREFIX in str(exc):          # πάλι άγνωστη σελίδα → ξανά σε 30′
+                        await db["tenants"].update_one({"_id": tid}, {"$set": {
+                            "ingestion_config.hdika.auth_recheck_at": now}})
+                        out["still_down"].append(tid)
+                    else:                                          # γνήσιο πρόβλημα κωδικού → κανονική παύση
+                        await _pause_hdika_auth(db, tid, str(exc))
+                        out["auth"].append(tid)
+                    continue
+                except Exception:  # noqa: BLE001 — ΗΔΥΚΑ ακόμη κάτω (δίκτυο/5xx) → ξανά σε 30′
+                    await db["tenants"].update_one({"_id": tid}, {"$set": {
+                        "ingestion_config.hdika.auth_recheck_at": now}})
+                    out["still_down"].append(tid)
+                    continue
+                await _unpause_hdika(db, tid, "gateway_page_recovered")
+                out["resumed"].append(tid)
+        finally:
+            client.close()
+        return out
+    return _run_async(_run())
 
 
 @celery_app.task(name="app.workers.ingestion.notify_hdika_auth_paused")
@@ -984,6 +1092,25 @@ def notify_hdika_auth_paused() -> dict:
                 if await _should_stop(db, str(t["_id"])):
                     continue
                 h = (t.get("ingestion_config") or {}).get("hdika") or {}
+                # Παύση από ΑΓΝΩΣΤΗ σελίδα σφάλματος = μάλλον διακοπή ΗΔΥΚΑ, όχι κωδικός: ΚΑΝΕΝΑ
+                # «άλλαξε τον κωδικό σου» (23/10/2026 έφυγαν 3 λανθασμένα email). Το χειρίζεται το
+                # `recheck_gateway_paused`· αν αποδειχθεί πρόβλημα κωδικού, γίνεται κανονική παύση.
+                if str(h.get("auth_error_msg") or "").startswith(_GATEWAY_PAUSE_PREFIX):
+                    continue
+                # SMS ΜΙΑ φορά ανά παύση (απόφαση ιδιοκτήτη 24/10/2026), κεντρικός λογαριασμός, χωρίς
+                # χρέωση φαρμακείου — ανεξάρτητα από το αν έχει email.
+                if not h.get("auth_sms_at"):
+                    mobile = await _pharmacy_mobile(db, t)
+                    if mobile:
+                        try:
+                            from app.services import comms
+                            from app.services.hdika_password_link import create_link
+                            await comms.send_otp_sms(mobile, _auth_pause_sms(
+                                h.get("auth_error_msg"), t.get("name") or "", await create_link(str(t["_id"]))))
+                            await db["tenants"].update_one({"_id": t["_id"]}, {"$set": {
+                                "ingestion_config.hdika.auth_sms_at": now}})
+                        except Exception:  # noqa: BLE001 — το SMS δεν σταματά το email
+                            pass
                 count = int(h.get("auth_notify_count") or 0)
                 if count >= _AUTH_NOTIFY_MAX_DAYS:
                     continue                      # σιωπή μετά την 5η ημέρα
@@ -996,11 +1123,17 @@ def notify_hdika_auth_paused() -> dict:
                     continue
                 cause, action = _auth_pause_copy(h.get("auth_error_msg"))
                 day, name = count + 1, t.get("name") or ""
+                # Σύνδεσμος «ένα κλικ» (48ω, μίας χρήσης) αντί για «μπες στις Ρυθμίσεις»
+                try:
+                    from app.services.hdika_password_link import create_link
+                    url = await create_link(str(t["_id"]))
+                except Exception:  # noqa: BLE001 — χωρίς σύνδεσμο, η σελίδα ρυθμίσεων
+                    url = _SETTINGS_URL
                 try:
                     await mailer.send_email(
                         email, "RxVision — σταμάτησε ο συγχρονισμός με την ΗΔΥΚΑ",
                         f"<p>Γεια σου,</p><p><b>{cause}</b></p><p>{action}</p>"
-                        f'<p><a href="{_SETTINGS_URL}" style="background:#1d4ed8;color:#fff;'
+                        f'<p><a href="{url}" style="background:#1d4ed8;color:#fff;'
                         f'padding:10px 18px;border-radius:8px;text-decoration:none;display:inline-block">'
                         f"Καταχώριση κωδικού</a></p>"
                         f"<p style='color:#64748b;font-size:13px'>Μέχρι να γίνει αυτό δεν κατεβαίνουν νέες "

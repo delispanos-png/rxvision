@@ -48,6 +48,8 @@ const GROUPS = (t: T): { title: string; rows: Row[] }[] => [
     ["home_delivery", t("Κατ' οίκον", "Home delivery"), "home_delivery", Truck, "green"],
     ["intangible", t("Άυλη", "Intangible"), "intangible", Smartphone, "sky"],
     ["galenic", t("Γαληνικά", "Galenic"), "galenic", FlaskConical, "violet"],
+    // Συνταγές «92…» του Μητρώου Εμβολιασμών — μετρούν στο σύνολο (όπως στο εμπορικό του φαρμακείου)
+    ["pharmacy_vaccination", t("Εμβολιασμός φαρμακείου", "Pharmacy vaccination"), "flu_vaccination", Syringe, "sky"],
   ] },
   { title: t("Διάρκεια", "Duration"), rows: [
     ["monthly", t("Μηνιαία", "Monthly"), "monthly", Calendar, "indigo"],

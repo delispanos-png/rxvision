@@ -19,7 +19,7 @@ from datetime import datetime, timezone
 
 from app.core.db import shared_db
 
-DEFAULT_PURGE_DAYS = 20
+DEFAULT_PURGE_DAYS = 7   # απόφαση ιδιοκτήτη 24/10/2026 (ήταν 20)
 LEADS = "leads"        # βλ. docstring — παλαιό όνομα: trial_leads
 
 

@@ -14,6 +14,20 @@ from app.services.onboarding_service import OnboardingError, OnboardingService
 router = APIRouter()
 
 
+def _require_afm(company, country: str | None = "GR") -> None:
+    """ΑΦΜ ΥΠΟΧΡΕΩΤΙΚΟ στην αυτοεγγραφή (24/10/2026): χωρίς αυτό δεν τιμολογείται ο πελάτης αν
+    συνεχίσει, και ο φραγμός επανα-δοκιμής πέφτει μόνο στο email. Η δημιουργία από το adminpanel
+    δεν περνά από εδώ."""
+    from app.utils import afm as afm_util
+    raw = (company.afm if company else None) or ""
+    if not str(raw).strip():
+        raise HTTPException(422, detail={"error": "afm_required"})
+    if (country or "GR") == "GR":          # Κύπρος: άλλη μορφή VAT (8 ψηφία + γράμμα) — μόνο υποχρεωτικό
+        if not afm_util.is_valid(raw):
+            raise HTTPException(422, detail={"error": "afm_invalid"})
+        company.afm = afm_util.normalize(raw)
+
+
 class CompanyIn(BaseModel):
     name: str = Field(..., min_length=2, max_length=200)        # επωνυμία
     title: str | None = Field(None, max_length=200)             # διακριτικός τίτλος
@@ -48,6 +62,7 @@ class RegisterIn(BaseModel):
 @router.post("/register", status_code=201,
              dependencies=[Depends(rate_limit("onboarding_register", limit=5, window_seconds=600))])
 async def register(body: RegisterIn):
+    _require_afm(body.company, body.country)
     try:
         return await OnboardingService().register(
             pharmacy_name=body.pharmacy_name, country=body.country,
@@ -109,6 +124,7 @@ async def check_afm(afm: str):
              dependencies=[Depends(rate_limit("onboarding_intent", limit=10, window_seconds=600))])
 async def register_intent(body: IntentIn):
     """Δημιουργεί προσωρινή εγγραφή (ΧΩΡΙΣ λογαριασμό) & ξεκινά την πληρωμή. Κάρτα → Viva checkout_url."""
+    _require_afm(body.company, body.country)
     svc = OnboardingService()
     try:
         pending = await svc.create_pending(

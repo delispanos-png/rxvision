@@ -139,8 +139,10 @@ async def verify(ctx: PlatformContext = Depends(get_platform_admin)):
 @router.get("/server-options")
 async def server_options(ctx: PlatformContext = Depends(get_platform_admin)):
     """ΔΙΑΘΕΣΙΜΟΙ τύποι/τοποθεσίες για νέο app server — ζωντανά από το Hetzner, όχι σταθερή λίστα.
-    Δείχνει μόνο ό,τι παραγγέλνεται ΤΩΡΑ ανά τοποθεσία (datacenters.available), με πραγματική τιμή,
-    χωρίς deprecated τύπους. Έτσι ο διαχειριστής δεν διαλέγει κάτι μη-διαθέσιμο."""
+    Δείχνει μόνο ό,τι παραγγέλνεται ΤΩΡΑ ανά τοποθεσία (`hetzner_catalog` — το /datacenters
+    καταργήθηκε), με πραγματική τιμή, χωρίς deprecated τύπους. Έτσι ο διαχειριστής δεν διαλέγει
+    κάτι μη-διαθέσιμο."""
+    from app.services import hetzner_catalog as hc
     c = await _cfg()
     tok = c.get("hetzner_token")
     if not tok:
@@ -148,24 +150,16 @@ async def server_options(ctx: PlatformContext = Depends(get_platform_admin)):
     h = {"Authorization": f"Bearer {tok}"}
     try:
         async with httpx.AsyncClient(timeout=15) as cl:
-            dc_r, st_r = await asyncio.gather(
-                cl.get("https://api.hetzner.cloud/v1/datacenters", headers=h),
-                cl.get("https://api.hetzner.cloud/v1/server_types", headers=h))
-    except Exception:  # noqa: BLE001
+            type_list, loc_map = await hc.fetch(cl, h)
+    except Exception:  # noqa: BLE001 — HetznerUnavailable ή δίκτυο
         return {"locations": [], "types_by_location": {}}
-    if dc_r.status_code != 200 or st_r.status_code != 200:
-        return {"locations": [], "types_by_location": {}}
-    types = {t["id"]: t for t in st_r.json().get("server_types", [])}
+    types = {t["id"]: t for t in type_list}
     avail: dict[str, set[int]] = {}   # location name → orderable type ids
     locs: dict[str, str] = {}         # location name → label
-    for dc in dc_r.json().get("datacenters", []):
-        loc = dc.get("location", {}) or {}
-        ln = loc.get("name")
-        if not ln:
-            continue
-        locs[ln] = f"{loc.get('city', ln)} ({ln})"
-        for tid in (dc.get("server_types", {}) or {}).get("available", []):
-            avail.setdefault(ln, set()).add(tid)
+    for t in type_list:
+        for ln in hc.available_in(t):
+            avail.setdefault(ln, set()).add(t["id"])
+            locs[ln] = f"{(loc_map.get(ln) or {}).get('city', ln)} ({ln})"
     types_by_location: dict[str, list] = {}
     for ln, tids in avail.items():
         rows = []
@@ -211,16 +205,28 @@ async def _hetzner_cpu(cl: httpx.AsyncClient, h: dict, sid: int) -> float | None
         return None
 
 
+def _srv_cost(st: dict, s: dict, ipv4: dict, gross) -> float | None:
+    loc = ((s.get("location") or {}).get("name")
+           or ((s.get("datacenter") or {}).get("location") or {}).get("name"))
+    base = gross(st.get("prices"), loc)
+    if base is None:
+        return None
+    has_v4 = bool((s.get("public_net") or {}).get("ipv4"))
+    v4 = (gross(ipv4.get("prices"), loc) or 0.0) if has_v4 else 0.0
+    return round(base + v4, 2)
+
+
 async def _hetzner_topology(token: str, live: dict) -> tuple[list, list, list]:
     """Build (servers, load_balancers, networks) from the Hetzner API. Raises on an
     invalid token / non-200 so the caller can fall back to the live-metrics view."""
     h = {"Authorization": f"Bearer {token}"}
     async with httpx.AsyncClient(timeout=20) as cl:
-        srv_r, lb_r, net_r, st_r = await asyncio.gather(
+        srv_r, lb_r, net_r, st_r, pr_r = await asyncio.gather(
             cl.get("https://api.hetzner.cloud/v1/servers", headers=h),
             cl.get("https://api.hetzner.cloud/v1/load_balancers", headers=h),
             cl.get("https://api.hetzner.cloud/v1/networks", headers=h),
             cl.get("https://api.hetzner.cloud/v1/server_types", headers=h),
+            cl.get("https://api.hetzner.cloud/v1/pricing", headers=h),
         )
         if srv_r.status_code != 200:
             raise RuntimeError(f"hetzner {srv_r.status_code}")  # e.g. 401 invalid token
@@ -228,6 +234,19 @@ async def _hetzner_topology(token: str, live: dict) -> tuple[list, list, list]:
         types = {t["id"]: t for t in (st_r.json().get("server_types", []) if st_r.status_code == 200 else [])}
         # CPU per server (parallel, best-effort)
         cpus = await asyncio.gather(*[_hetzner_cpu(cl, h, s["id"]) for s in servers_raw])
+
+        # ΚΟΣΤΟΣ ανά server (24/10/2026): τιμή τύπου στο location του + δημόσια IPv4 (χρεώνεται
+        # χωριστά, όπως στον λογαριασμό Hetzner). Τελικές τιμές με ΦΠΑ (gross).
+        def _gross(prices, loc):
+            for p in prices or []:
+                if p.get("location") == loc:
+                    try:
+                        return float((p.get("price_monthly") or {}).get("gross"))
+                    except (TypeError, ValueError):
+                        return None
+            return None
+        pricing = (pr_r.json().get("pricing") or {}) if pr_r.status_code == 200 else {}
+        ipv4 = next((x for x in pricing.get("primary_ips") or [] if x.get("type") == "ipv4"), {})
 
         servers = []
         for s, hz_cpu in zip(servers_raw, cpus):
@@ -241,7 +260,9 @@ async def _hetzner_topology(token: str, live: dict) -> tuple[list, list, list]:
                 "memory_gb": st.get("memory"), "disk_gb": st.get("disk"),
                 "public_ip": (s.get("public_net", {}).get("ipv4") or {}).get("ip"),
                 "private_ip": priv[0] if priv else None,
-                "location": (s.get("datacenter", {}).get("location", {}) or {}).get("name"),
+                # `datacenter` καταργήθηκε από τη Hetzner (06/2026) → το location ζει στο `location`
+                "location": ((s.get("location") or {}).get("name")
+                             or ((s.get("datacenter") or {}).get("location") or {}).get("name")),
                 "cpu": lm.get("cpu") if lm.get("fresh") else hz_cpu,
                 "ram_pct": lm.get("ram_pct") if lm.get("fresh") else None,
                 "load": lm.get("load") if lm.get("fresh") else None,
@@ -249,6 +270,7 @@ async def _hetzner_topology(token: str, live: dict) -> tuple[list, list, list]:
                 "disk_total_gb": lm.get("disk_total_gb") if lm.get("fresh") else st.get("disk"),
                 "metrics_live": bool(lm.get("fresh")),
                 "health": lm.get("health"),
+                "eur_month": _srv_cost(st, s, ipv4, _gross),
             })
 
         lbs = []

@@ -23,6 +23,7 @@ celery_app = Celery(
         "app.workers.sessions",
         "app.workers.connect",
         "app.workers.integrity",
+        "app.workers.intelligence_warm",
     ],
 )
 
@@ -45,6 +46,7 @@ _QUEUE_BY_MODULE = {
     "supplier_photos": "maintenance",
     "leads": "maintenance",
     "integrity": "maintenance",     # νυχτερινός αυτοέλεγχος δεδομένων — κανείς δεν περιμένει
+    "intelligence_warm": "maintenance",   # προετοιμασία Patient Intelligence — κανείς δεν περιμένει
     # Ό,τι δεν αναφέρεται εδώ → "fast": comms, reminders, billing, sessions, coach,
     # copilot_routines, ops_health, capacity. Κοινό τους: κάποιος ΑΝΘΡΩΠΟΣ περιμένει
     # (ο φύλακας διαθεσιμότητας κόμβου είναι ελαφρύς και το παράθυρο αποθέματος στενό).
@@ -59,6 +61,7 @@ _QUEUE_BY_TASK = {
     # επιτρέπεται να περιμένει πίσω από αυτό που φυλάει.
     "app.workers.ingestion.reap_stalled_sync": "fast",
     "app.workers.ingestion.notify_hdika_auth_paused": "fast",
+    "app.workers.ingestion.recheck_gateway_paused": "fast",   # μία γρήγορη σύνδεση — όχι πίσω από συγχρονισμούς
     "app.workers.ingestion.remind_monthly_hdika_password": "fast",
     # Νυχτερινά καθαρίσματα — δεν δικαιούνται θέση «γρήγορου».
     "app.workers.billing.purge_orphan_data": "maintenance",
@@ -285,6 +288,12 @@ celery_app.conf.beat_schedule = {
     "hdika-auth-paused-notify": {
         "task": "app.workers.ingestion.notify_hdika_auth_paused",
         "schedule": crontab(minute=5),
+    },
+    # ΔΙΧΤΥ: παύση από ΑΓΝΩΣΤΗ σελίδα σφάλματος πύλης → μία δοκιμαστική σύνδεση/30′ (23/10/2026: διακοπή
+    # ΗΔΥΚΑ πάγωσε λάθος 5 φαρμακεία).
+    "hdika-recheck-gateway-paused": {
+        "task": "app.workers.ingestion.recheck_gateway_paused",
+        "schedule": crontab(minute="*/10"),
     },
     # ΠΡΟΛΗΨΗ: ο κωδικός ΗΔΥΚΑ αλλάζει μηνιαίως σε όλους — υπενθύμιση την 1η, πριν σπάσει.
     "hdika-monthly-password-reminder": {

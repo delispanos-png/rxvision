@@ -31,6 +31,10 @@ BASE_FILTER: dict = {
     "credentials_ref.hdika": {"$ne": None},
     "ingestion_config.hdika.sync_enabled": {"$ne": False},
     "ingestion_config.hdika.auth_paused": {"$ne": True},
+    # ΜΟΝΟ μετά την ολοκλήρωση της σύνδεσης (24/10/2026): το /hdika/setup γράφει πρώτα τους κωδικούς
+    # και ΜΕΤΑ ανακαλύπτει το pharmacy_id· ένας συγχρονισμός ανάμεσα έπεφτε στον φύλακα GDPR και
+    # έβγαινε «αποτυχία» (ΑΡΧΟΝΤΑΚΗΣ 10:55). Χωρίς pharmacy_id δεν υπάρχει τίποτα να συγχρονιστεί.
+    "ingestion_config.hdika.pharmacy_id": {"$nin": [None, ""]},
 }
 
 

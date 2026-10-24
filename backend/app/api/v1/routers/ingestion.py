@@ -177,7 +177,7 @@ async def set_hdika_credentials(
     await repo.patch_ingestion_config("hdika", {
         "auth_paused": False, "auth_error_msg": None, "auth_error_at": None,
         # μηδένισε τις σφραγίδες ειδοποίησης, ώστε σε ΕΠΟΜΕΝΗ παύση να ξαναειδοποιηθεί κανονικά
-        "auth_notify_count": 0, "auth_notify_last_at": None})
+        "auth_notify_count": 0, "auth_notify_last_at": None, "auth_sms_at": None, "auth_recheck_at": None})
     return CredentialsStatusOut(source="hdika", configured=True, credentials_ref=ref)
 
 
@@ -288,7 +288,23 @@ async def _discover_and_store(tenant_id: str) -> dict:
         merged["pharmacy_id"] = merged["pharmacy_code"]
     vault.set_tenant_credentials(tenant_id, "hdika", merged)
     await TenantRepository(tenant_id=tenant_id).set_ingestion_config("hdika", _public_config(merged))
+    # ΑΦΜ της ΗΔΥΚΑ → στοιχεία τιμολόγησης, αν ο πελάτης δεν τα έδωσε (μόνο κενά πεδία)
+    from app.services.billing_identity import fill_from_hdika
+    await fill_from_hdika(tenant_id, merged)
     return discovered
+
+
+async def _record_connect(tenant_id: str, ok: bool, error: str | None = None, step: str = "setup") -> None:
+    """Κάθε προσπάθεια σύνδεσης ΗΔΥΚΑ ΚΑΤΑΓΡΑΦΕΤΑΙ με την αιτία (24/10/2026): ο ΑΡΧΟΝΤΑΚΗΣ έκανε 4
+    προσπάθειες σε 2′ και δεν μπορούσαμε να δούμε γιατί απέτυχαν οι 3 — τα logs των containers
+    χάνονται σε κάθε deploy. Φαίνεται στο adminpanel → καρτέλα φαρμακείου → Διασύνδεση ΗΔΥΚΑ."""
+    from app.core.db import shared_db
+    try:
+        await shared_db()["sync_events"].insert_one({
+            "tenant_id": tenant_id, "kind": "hdika_connect", "ok": ok, "step": step,
+            "error": (error or None) and str(error)[:400], "at": datetime.now(tz=timezone.utc)})
+    except Exception:  # noqa: BLE001 — η καταγραφή δεν ρίχνει ποτέ τη σύνδεση
+        pass
 
 
 @router.post("/hdika/setup", status_code=202)
@@ -311,9 +327,12 @@ async def hdika_setup(
     try:
         discovered = await _discover_and_store(ctx.tenant_id)
     except Exception as exc:  # noqa: BLE001 — λάθος κωδικοί: πες το καθαρά, μη ξεκινήσεις άντληση
+        await _record_connect(ctx.tenant_id, False, f"{type(exc).__name__}: {exc}")
         raise HTTPException(400, f"Δεν έγινε σύνδεση με την ΗΔΥΚΑ: {exc}")
     if not discovered.get("pharmacy_id"):
+        await _record_connect(ctx.tenant_id, False, "η ΗΔΥΚΑ δεν επέστρεψε κωδικό φαρμακείου")
         raise HTTPException(400, "Η ΗΔΥΚΑ δεν επέστρεψε κωδικό φαρμακείου — έλεγξε τους κωδικούς σου.")
+    await _record_connect(ctx.tenant_id, True)
 
     date_from, date_to = _auto_history_window()
     # Μη πας πιο πίσω από την έναρξη σύμβασης που δηλώνει η ΗΔΥΚΑ (δεν υπάρχουν δεδομένα εκεί).
@@ -348,6 +367,7 @@ async def discover_hdika_pharmacy(
         discovered = client.fetch_user_info()
         client.close()
     except Exception as exc:  # noqa: BLE001 — surface the ΗΔΥΚΑ error to the operator
+        await _record_connect(ctx.tenant_id, False, f"{type(exc).__name__}: {exc}", step="discover")
         raise HTTPException(400, f"Αποτυχία άντλησης: {exc}")
     # save discovered into the TENANT's own creds (not the platform key)
     tenant_creds = vault.get_secret(f"tenants/{ctx.tenant_id}/hdika") or {}
@@ -355,6 +375,8 @@ async def discover_hdika_pharmacy(
     repo = TenantRepository(tenant_id=ctx.tenant_id)
     vault.set_tenant_credentials(ctx.tenant_id, "hdika", merged)
     await repo.set_ingestion_config("hdika", _public_config(merged))
+    from app.services.billing_identity import fill_from_hdika
+    await fill_from_hdika(ctx.tenant_id, merged)
     return {"ok": True, "discovered": discovered}
 
 
