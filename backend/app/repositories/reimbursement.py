@@ -28,7 +28,6 @@ from app.utils.format import eur_gr
 EOPYY_MED = "ΕΟΠΥΥ - Φάρμακα"
 #: Συνταγές εμβολίων που εκδίδει/εκτελεί το ΙΔΙΟ το φαρμακείο (Μητρώο Εμβολιασμών ΗΔΥΚΑ) — ξεχωριστή ομάδα
 #: στον φυσικό έλεγχο, ώστε να μην ανακατεύονται με τις συνταγές ιατρού (ούτε με τα «ΕΟΠΥΥ - Εμβόλια»).
-PHARMACY_VACC = "ΕΟΠΥΥ - Εμβολιασμοί φαρμακείου"
 
 
 def needs_doctor_original(barcode: str, intangible: bool, first_phase: bool) -> bool:
@@ -38,7 +37,7 @@ def needs_doctor_original(barcode: str, intangible: bool, first_phase: bool) -> 
     if str(barcode or "").split(":")[0].startswith("92"):
         return False
     return (not intangible) and first_phase
-EOPYY_VAC = "ΕΟΠΥΥ - Εμβόλια"
+EOPYY_VAC = "ΕΟΠΥΥ - Εμβόλια"   # ΜΙΑ υποβολή: εκτελέσεις-εμβόλια + εμβολιασμοί φαρμακείου (92…)
 
 
 def _now() -> datetime:
@@ -131,6 +130,25 @@ class ReimbursementRepository(BaseRepository):
             out[f["_id"]] = {"name": name, "group": grp, "is_eopyy": is_eo}
         return out
 
+    async def _pharmacy_vacc(self, start: datetime, end: datetime) -> list[dict]:
+        """Συνταγές εμβολίων ΤΟΥ ΦΑΡΜΑΚΕΙΟΥ (92…, Μητρώο Εμβολιασμών ΗΔΥΚΑ) του διαστήματος — ζουν στο
+        `vaccinations`, ΠΟΤΕ στις εκτελέσεις. ΜΙΑ πηγή για έλεγχο barcode, ημερήσια συμφωνία, κλείσιμο
+        και αναλυτική κατάθεση (27/10/2026: έλειπαν από τα δύο τελευταία). Ίδιο φίλτρο με το Dashboard
+        (`PrescriptionRepository._PV_MATCH`)."""
+        from app.repositories.prescriptions import PrescriptionRepository
+        out = []
+        async for v in self._db["vaccinations"].find(
+                {"tenant_id": self.tenant_id, **PrescriptionRepository._PV_MATCH,
+                 "executed_at": {"$gte": start, "$lt": end}},
+                {"barcode": 1, "executed_at": 1, "insurance_part": 1, "total_price": 1, "patient_part": 1,
+                 "vaccine_name": 1, "patient_name": 1}):
+            at = v["executed_at"]
+            out.append({"_id": v["_id"], "barcode": str(v.get("barcode") or ""), "executed_at": at,
+                        "day": at.strftime("%Y-%m-%d"), "claim": int(v.get("insurance_part") or 0),
+                        "retail": int(v.get("total_price") or 0), "patient": int(v.get("patient_part") or 0),
+                        "vaccine_name": v.get("vaccine_name"), "patient_name": v.get("patient_name")})
+        return out
+
     # ── 1. MONTHLY CLOSING ──────────────────────────────────────────────────
     async def _period_money(self, period: str) -> dict:
         start, end = _month_bounds(period)
@@ -141,8 +159,10 @@ class ReimbursementRepository(BaseRepository):
                         "patient": {"$sum": "$patient_share"}, "cost": {"$sum": "$wholesale_cost"}}},
         ]).to_list(1)
         r = rows[0] if rows else {}
-        return {"rx": r.get("rx", 0), "retail": r.get("retail", 0), "claim": r.get("claim", 0),
-                "patient": r.get("patient", 0), "cost": r.get("cost", 0)}
+        pv = await self._pharmacy_vacc(start, end)      # εμβολιασμοί φαρμακείου = συνταγές ΕΟΠΥΥ
+        return {"rx": r.get("rx", 0) + len(pv), "retail": r.get("retail", 0) + sum(v["retail"] for v in pv),
+                "claim": r.get("claim", 0) + sum(v["claim"] for v in pv),
+                "patient": r.get("patient", 0) + sum(v["patient"] for v in pv), "cost": r.get("cost", 0)}
 
     def _grp_label(self, meta: dict, fund_id, is_vaccine: bool) -> tuple[str, bool]:
         """Fold a (fund, vaccine?) into a display group. ΕΟΠΥΥ splits φάρμακα/εμβόλια; others keep
@@ -247,6 +267,27 @@ class ReimbursementRepository(BaseRepository):
                             "rx": hundred["rx"], "retail": hundred["retail"], "claim": 0,
                             "patient": hundred["patient"], "rebate": 0, "discount": 0, "receipt": 0})
 
+        # Εμβολιασμοί φαρμακείου (92…) → ΙΔΙΑ υποβολή με «ΕΟΠΥΥ - Εμβόλια» (ιδιοκτήτης 27/10/2026)
+        pv = await self._pharmacy_vacc(start, end)
+        if pv:
+            row = next((b for b in by_fund if b["fund"] == EOPYY_VAC), None)
+            if row is None:
+                row = {"fund": EOPYY_VAC, "is_eopyy": True, "is_vaccine": True, "rx": 0, "retail": 0,
+                       "claim": 0, "patient": 0, "rebate": 0, "discount": 0, "receipt": 0}
+                by_fund.append(row)
+            for v in pv:
+                row["rx"] += 1
+                row["retail"] += v["retail"]
+                row["claim"] += v["claim"]
+                row["patient"] += v["patient"]
+                row["receipt"] += v["claim"]
+            bd = {d["day"]: d for d in by_day}
+            for v in pv:
+                d = bd.setdefault(v["day"], {"day": v["day"], "rx": 0, "claim": 0})
+                d["rx"] += 1
+                d["claim"] += v["claim"]
+            by_day = sorted(bd.values(), key=lambda d: d["day"])
+
         by_fund.sort(key=lambda x: x["claim"], reverse=True)
         eopyy_claim = sum(b["claim"] for b in by_fund if b["is_eopyy"])
         other_claim = sum(b["claim"] for b in by_fund if not b["is_eopyy"])
@@ -265,6 +306,9 @@ class ReimbursementRepository(BaseRepository):
             label, _ = self._grp_label(meta, r["_id"]["fund"], bool(r["_id"]["vac"]))
             day_map[r["_id"]["day"]][label] += r["rx"]
             fund_tot[label] += r["rx"]
+        for v in pv:
+            day_map[v["day"][8:]][EOPYY_VAC] += 1
+            fund_tot[EOPYY_VAC] += 1
         top = [f for f, _ in sorted(fund_tot.items(), key=lambda x: -x[1])][:6]
         fd_rows = []
         spilled = False
@@ -367,6 +411,9 @@ class ReimbursementRepository(BaseRepository):
         ]).to_list(None):
             e = perfund["Αμιγώς 100% (δεν υποβάλλονται)"][r["_id"]]
             e["rx"] += r["rx"]; e["retail"] += r["retail"]; e["patient"] += r["patient"]
+        for v in await self._pharmacy_vacc(start, end):
+            e = perfund[EOPYY_VAC][v["day"]]
+            e["rx"] += 1; e["claim"] += v["claim"]; e["retail"] += v["retail"]; e["patient"] += v["patient"]
         funds_out = []
         for row in closing["by_fund"]:
             days = sorted(perfund.get(row["fund"], {}).items())
@@ -985,21 +1032,17 @@ class ReimbursementRepository(BaseRepository):
                     row["is_eopyy"] = False
                     row["is_vaccine"] = False
         # ΣΥΝΤΑΓΕΣ ΕΜΒΟΛΙΩΝ ΤΟΥ ΦΑΡΜΑΚΕΙΟΥ (Μητρώο Εμβολιασμών ΗΔΥΚΑ — ζουν στο `vaccinations`, όχι στις
-        # εκτελέσεις): μπαίνουν στον έλεγχο/σκανάρισμα σε ΔΙΚΗ τους ομάδα (14/10/2026). Δεν αγγίζουν
-        # τα σύνολα κλεισίματος/υποβολής — μόνο τον φυσικό έλεγχο.
-        async for v in self._db["vaccinations"].find(
-                {"tenant_id": self.tenant_id, "source": "INFLUENZA", "cancelled": {"$ne": True},
-                 "executed_at": {"$gte": start, "$lt": end}, "barcode": {"$nin": [None, ""]}},
-                {"barcode": 1, "executed_at": 1, "insurance_part": 1, "total_price": 1, "patient_part": 1,
-                 "vaccine_name": 1}):
+        # εκτελέσεις): μπαίνουν στον έλεγχο/σκανάρισμα σε ΔΙΚΗ τους ομάδα (14/10/2026)· από 27/10/2026
+        # και στο κλείσιμο/ημερήσια/αναλυτική κατάθεση (`_pharmacy_vacc`).
+        for v in await self._pharmacy_vacc(start, end):
+            if not v["barcode"]:
+                continue                                   # χωρίς barcode δεν σκανάρεται
             bc = str(v["barcode"])
             allrows.append({
                 "barcode": bc, "external_id": bc, "exec_no": None,
-                "claim": int(v.get("insurance_part") or 0), "kyyap": 0,
-                "retail": int(v.get("total_price") or 0), "patient": int(v.get("patient_part") or 0),
-                "executed_at": v.get("executed_at"),
-                "day": v["executed_at"].strftime("%Y-%m-%d") if v.get("executed_at") else None,
-                "fund": PHARMACY_VACC, "group": PHARMACY_VACC, "is_eopyy": True, "is_vaccine": True,
+                "claim": v["claim"], "kyyap": 0, "retail": v["retail"], "patient": v["patient"],
+                "executed_at": v["executed_at"], "day": v["day"],
+                "fund": EOPYY_VAC, "group": EOPYY_VAC, "is_eopyy": True, "is_vaccine": True,
                 "is_pharmacy_vaccination": True, "vaccine_name": v.get("vaccine_name"),
                 "is_100": False, "is_fyk": False, "is_etyap": False, "full_participation": False,
                 "needs_original": False, "needs_dose_check": False, "has_opinion": False, "has_desens": False,
@@ -1015,7 +1058,7 @@ class ReimbursementRepository(BaseRepository):
             "desensitization": _cnt("has_desens"), "strips": _cnt("has_strip"),
             "hdika_note": _cnt("hdika_note"), "vaccine": _cnt("is_vaccine"),
         }
-        order = {EOPYY_MED: 0, "ΕΟΠΥΥ - Εμβόλια": 1, PHARMACY_VACC: 2, "Αμιγώς 100%": 8}
+        order = {EOPYY_MED: 0, EOPYY_VAC: 1, "Αμιγώς 100%": 8}
         groups = ["all"] + sorted({a["group"] for a in allrows}, key=lambda g: (order.get(g, 5), g))
         if group != "all":
             allrows = [a for a in allrows if a["group"] == group]
@@ -1185,7 +1228,7 @@ class ReimbursementRepository(BaseRepository):
                                     "has_desensitization", "has_opinion", "is_etyap")}
         flags.update({"has_vaccine": True, "is_pharmacy_vaccination": True, "exec_count": 1,
                       "vaccine_name": vac.get("vaccine_name"),
-                      "is_eopyy": True, "fund": PHARMACY_VACC, "fund_name": "ΕΟΠΥΥ"})
+                      "is_eopyy": True, "fund": EOPYY_VAC, "fund_name": "ΕΟΠΥΥ"})
         return {"ok": True, "found": True, "barcode": bc, "n_executions": 1, "flags": flags}
 
     async def physical_reset(self, period: str, day: str | None = None) -> dict:
@@ -1296,6 +1339,20 @@ class ReimbursementRepository(BaseRepository):
                 d["claim"] += cval
                 d["retail"] += rval
                 d["patient"] += pval
+        # εμβολιασμοί φαρμακείου (92…): μέσα στο «ΕΟΠΥΥ - Εμβόλια» (μία υποβολή) και στο «all»
+        picked_vacc: list = []
+        pv = await self._pharmacy_vacc(start, end)
+        if pv:
+            groups.add(EOPYY_VAC)
+        for v in pv if group in ("all", EOPYY_VAC) else []:
+            if day_ids and v["day"] == day_ids:
+                picked_vacc.append(v)
+            d = per[v["day"]]
+            d["barcodes"].add(v["barcode"] or str(v["_id"]))
+            d["executions"] += 1
+            d["claim"] += v["claim"]
+            d["retail"] += v["retail"]
+            d["patient"] += v["patient"]
         days = []
         for day in sorted(per):
             d = per[day]
@@ -1310,7 +1367,7 @@ class ReimbursementRepository(BaseRepository):
         order = {EOPYY_MED: 0, "ΕΟΠΥΥ - Εμβόλια": 1, "ΕΤΥΑΠ": 2}
         opts = ["all"] + sorted(groups, key=lambda g: (order.get(g, 9), g))
         if day_ids:
-            return {"ids": picked}
+            return {"ids": picked, "vaccinations": picked_vacc}
         return jsonsafe({"period": period, "group": group, "groups": opts, "days": days, "totals": tot})
 
     # ── ADVANCED PER-PRESCRIPTION DETAIL — coupons (medicine lines) + submission flags ──────────

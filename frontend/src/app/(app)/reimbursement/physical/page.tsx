@@ -274,7 +274,7 @@ export default function PhysicalCheckPage() {
     ) },
     { key: "group", header: t("Ταμείο", "Fund"), render: (r) => {
       const badge = r.is_100 ? "bg-amber-100 text-amber-800" : r.is_vaccine ? "bg-sky-100 text-sky-700" : r.is_eopyy ? "bg-emerald-100 text-emerald-700" : "bg-violet-100 text-violet-700";
-      const lbl = r.group === "ΕΟΠΥΥ - Φάρμακα" ? t("ΕΟΠΥΥ Φάρμ.", "ΕΟΠΥΥ Meds") : r.group === "ΕΟΠΥΥ - Εμβόλια" ? t("Εμβόλια", "Vaccines") : r.group === "ΕΟΠΥΥ - Εμβολιασμοί φαρμακείου" ? t("💉 Εμβολ. φαρμακείου", "💉 Pharmacy vacc.") : r.group === "Αμιγώς 100%" ? "100%" : r.group;
+      const lbl = r.group === "ΕΟΠΥΥ - Φάρμακα" ? t("ΕΟΠΥΥ Φάρμ.", "ΕΟΠΥΥ Meds") : r.group === "ΕΟΠΥΥ - Εμβόλια" ? t("Εμβόλια", "Vaccines") : r.group === "Αμιγώς 100%" ? "100%" : r.group;
       return (
         <span className="inline-flex flex-nowrap items-center gap-1 whitespace-nowrap">
           <span className={`shrink-0 whitespace-nowrap rounded px-1.5 py-0.5 text-[10px] font-bold ${badge}`} title={r.group}>{lbl}</span>
@@ -509,7 +509,7 @@ export default function PhysicalCheckPage() {
                 const grp: Record<string, { tot: number; chk: number }> = {};
                 (data?.items ?? []).forEach((i) => { const g = (grp[i.group] ||= { tot: 0, chk: 0 }); g.tot++; if (i.checked) g.chk++; });
                 const rows = Object.entries(grp).sort((a, b) => b[1].tot - a[1].tot);
-                const lbl = (g: string) => g === "ΕΟΠΥΥ - Φάρμακα" ? t("ΕΟΠΥΥ Φάρμακα", "EOPYY Meds") : g === "ΕΟΠΥΥ - Εμβόλια" ? t("Εμβόλια", "Vaccines") : g === "ΕΟΠΥΥ - Εμβολιασμοί φαρμακείου" ? t("💉 Εμβολιασμοί φαρμακείου", "💉 Pharmacy vaccinations") : g === "Αμιγώς 100%" ? t("Αμιγώς 100%", "Full 100%") : g;
+                const lbl = (g: string) => g === "ΕΟΠΥΥ - Φάρμακα" ? t("ΕΟΠΥΥ Φάρμακα", "EOPYY Meds") : g === "ΕΟΠΥΥ - Εμβόλια" ? t("Εμβόλια", "Vaccines") : g === "Αμιγώς 100%" ? t("Αμιγώς 100%", "Full 100%") : g;
                 const col = (g: string) => g.includes("Εμβόλ") ? "bg-sky-500" : g.includes("100%") ? "bg-amber-500" : g.includes("ΕΤΥΑΠ") ? "bg-cyan-500" : g.includes("ΕΟΠΥΥ") || g.includes("Φάρμακα") ? "bg-emerald-500" : "bg-violet-500";
                 return rows.length > 1 ? (
                   <details className="mt-2 border-t border-violet-100 pt-2 dark:border-violet-900/40">
@@ -840,7 +840,7 @@ export default function PhysicalCheckPage() {
         const bmap: Record<string, DayRow> = {}; byDay.forEach((d) => { bmap[d.date] = d; });
         const idxOf: Record<string, number> = {}; byDay.forEach((d, i) => { idxOf[d.date] = i; });
         const cells: (string | null)[] = [...Array(lead).fill(null), ...Array.from({ length: dim }, (_, i) => `${period}-${String(i + 1).padStart(2, "0")}`)];
-        const lbl = (g: string) => g === "ΕΟΠΥΥ - Φάρμακα" ? t("ΕΟΠΥΥ Φάρμ.", "ΕΟΠΥΥ Meds") : g === "ΕΟΠΥΥ - Εμβόλια" ? t("Εμβόλια", "Vaccines") : g === "ΕΟΠΥΥ - Εμβολιασμοί φαρμακείου" ? t("💉 Εμβολιασμοί φαρμακείου", "💉 Pharmacy vaccinations") : g === "Αμιγώς 100%" ? t("Αμιγώς 100%", "Full 100%") : g;
+        const lbl = (g: string) => g === "ΕΟΠΥΥ - Φάρμακα" ? t("ΕΟΠΥΥ Φάρμ.", "ΕΟΠΥΥ Meds") : g === "ΕΟΠΥΥ - Εμβόλια" ? t("Εμβόλια", "Vaccines") : g === "Αμιγώς 100%" ? t("Αμιγώς 100%", "Full 100%") : g;
         return (
           <div className="rounded-xl border border-slate-200 bg-white p-2 dark:border-slate-700 dark:bg-slate-900">
             <div className="grid grid-cols-7 gap-0.5 text-center text-[9px] font-medium text-slate-400">{[t("Δε", "Mo"), t("Τρ", "Tu"), t("Τε", "We"), t("Πέ", "Th"), t("Πα", "Fr"), t("Σά", "Sa"), t("Κυ", "Su")].map((w) => <div key={w}>{w}</div>)}</div>

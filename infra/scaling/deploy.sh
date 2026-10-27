@@ -81,7 +81,27 @@ docker compose -f docker-compose.prod.yml build api web worker beat
 # keep MGMT's own containers current (build/rollback origin + the beat scheduler lives here).
 docker compose -f docker-compose.prod.yml up -d api web worker beat
 
+# ΧΩΡΙΣ 502 (26/10/2026): κάθε κόμβος βγαίνει από τον Load Balancer ΠΡΙΝ ξαναστηθεί και μπαίνει ξανά
+# ΜΟΝΟ όταν είναι υγιής. Πριν, ο LB συνέχιζε να του στέλνει ~1/3 της κίνησης για ~30″ → 502 στους
+# πελάτες σε κάθε deploy. `lb_target` αρνείται να βγάλει τον τελευταίο υγιή κόμβο. SKIP_LB_DRAIN=1 = παλιά συμπεριφορά.
+LB() { docker compose -f docker-compose.prod.yml run --rm --no-deps -T -v "$ROOT/backend/app:/app/app:ro" \
+         api python -m app.workers.lb_target "$@" 2>&1 | grep -v -E '^ ?Container ' ; return "${PIPESTATUS[0]}"; }
+
 for NODE in "${APP_NODES[@]}"; do
+  # ΕΞΩ ΑΠΟ ΤΟΝ LB ΠΡΙΝ ΑΠΟ ΟΤΙΔΗΠΟΤΕ: το `docker load` (~600MB) μπλοκάρει το DNS του Docker
+  # («lookup web: server misbehaving» → 502) και το caddy reload δίνει στιγμιαίο 525 — μετρημένο
+  # 26/10/2026 (70×502 + 6×525 όταν η έξοδος γινόταν μετά την αποστολή εικόνων).
+  if [ "${SKIP_LB_DRAIN:-0}" != "1" ]; then
+    echo "▶ 1b/4  Έξοδος $NODE από τον Load Balancer + 20″ να τελειώσουν τα ανοιχτά αιτήματα…"
+    LB remove "$NODE" || { echo "✖ Δεν βγήκε από τον LB (κανένας άλλος υγιής;) — ΣΤΑΜΑΤΑ το deploy για να μη γίνει διακοπή."; exit 1; }
+    sleep 5
+    # Ο LB κόβει μόνο ΝΕΕΣ συνδέσεις· η Cloudflare κρατά ανοιχτές (keep-alive) και ΣΥΝΕΧΙΖΕΙ να στέλνει
+    # σε αυτόν τον κόμβο για λεπτά (μετρημένο 26/10: 66×502 μετά από «επιτυχή» αφαίρεση). Ομαλό σταμάτημα
+    # του Caddy: τελειώνει ό,τι τρέχει και κλείνει τις συνδέσεις (GOAWAY) → η Cloudflare ξανασυνδέεται
+    # μέσω LB στους υγιείς. Ξεκινά ξανά πριν τον έλεγχο υγείας (βήμα 4b).
+    "${SSH[@]}" "root@$NODE" 'docker stop -t 30 rxvision-app-caddy-1 >/dev/null' || true
+  fi
+
   echo "▶ 2/4  Ship images → $NODE (private net)…"
   # api image is shared by ALL backend services: api, worker, AND the app-node-only
   # worker-backfill + optical (docker-compose.app.yml). Tag them ALL or those extra workers
@@ -107,7 +127,7 @@ for NODE in "${APP_NODES[@]}"; do
   # ανανεωθεί ο beat στο MGMT, που άρχισε να στέλνει σε ουρές που δεν άκουγε κανείς.
   scp -i "$KEY" -o StrictHostKeyChecking=no infra/scaling/docker-compose.app.yml "root@$NODE:$APP_COMPOSE"
   "${SSH[@]}" "root@$NODE" \
-    'docker exec rxvision-app-caddy-1 caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null 2>&1 \
+    '[ "$(docker inspect -f "{{.State.Running}}" rxvision-app-caddy-1 2>/dev/null)" != true ] && { echo "   caddy σταματημένος (drain) — η νέα ρύθμιση φορτώνει στην εκκίνηση"; exit 0; }; docker exec rxvision-app-caddy-1 caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null 2>&1 \
        && docker exec rxvision-app-caddy-1 caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null 2>&1 \
        && echo "   caddy reloaded" || echo "   ⚠️ caddy validate/reload failed — check config"'
 
@@ -124,8 +144,18 @@ for NODE in "${APP_NODES[@]}"; do
   B=$("${SSH[@]}" "root@$NODE" 'docker exec rxvision-app-web-1 cat /app/.next/BUILD_ID')
   echo "   MGMT BUILD_ID=$A"
   echo "   $NODE BUILD_ID=$B"
-  [ "$A" = "$B" ] || { echo "❌ BUILD_ID MISMATCH on $NODE — clients would crash. Abort." >&2; exit 1; }
+  [ "$A" = "$B" ] || { echo "❌ BUILD_ID MISMATCH on $NODE — clients would crash. Abort (ο κόμβος ΜΕΝΕΙ εκτός LB)." >&2; exit 1; }
   echo "✅ $NODE on build $A."
+
+  if [ "${SKIP_LB_DRAIN:-0}" != "1" ]; then
+    echo "▶ 4b/4  Εκκίνηση Caddy, αναμονή υγείας $NODE και επιστροφή στον Load Balancer…"
+    "${SSH[@]}" "root@$NODE" 'docker start rxvision-app-caddy-1 >/dev/null' || true
+    for _ in $(seq 1 40); do
+      curl -sk -m 5 -o /dev/null -w '%{http_code}' --resolve "app.rxvision.gr:443:$NODE" https://app.rxvision.gr/lb-health | grep -q 200 && break
+      sleep 3
+    done
+    LB add "$NODE" || { echo "✖ $NODE δεν έγινε υγιής στον LB — ΣΤΑΜΑΤΑ (οι υπόλοιποι εξυπηρετούν). Έλεγξέ τον."; exit 1; }
+  fi
 done
 echo "✅ Deploy complete to: ${APP_NODES[*]}"
 

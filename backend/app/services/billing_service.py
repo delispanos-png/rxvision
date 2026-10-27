@@ -762,7 +762,14 @@ PURGE_RUN_UTC = (5, 45)
 _TRIAL_PLANS = ("trial", "free_trial", None)
 
 
-def purge_plan(sub: dict | None, cfg: dict, now: datetime | None = None) -> dict | None:
+def _next_run(at: datetime) -> datetime:
+    """Η πρώτη νυχτερινή εκτέλεση (05:45 UTC) τη στιγμή `at` ή μετά."""
+    run = at.replace(hour=PURGE_RUN_UTC[0], minute=PURGE_RUN_UTC[1], second=0, microsecond=0)
+    return run if run >= at else run + timedelta(days=1)
+
+
+def purge_plan(sub: dict | None, cfg: dict, now: datetime | None = None, *,
+               final_at: datetime | None = None, final_notice_days: int | None = None) -> dict | None:
     """ΠΟΤΕ διαγράφεται αυτός ο λογαριασμός — ή ΤΙ τον προστατεύει. None = δεν είναι δοκιμαστικός.
 
     ΜΙΑ πηγή αλήθειας: το ίδιο κριτήριο εφαρμόζει και το `purge_expired_trials` (το Mongo ερώτημά
@@ -788,12 +795,21 @@ def purge_plan(sub: dict | None, cfg: dict, now: datetime | None = None) -> dict
     if cpe.tzinfo is None:
         cpe = cpe.replace(tzinfo=timezone.utc)
     due = cpe + timedelta(days=cfg["purge_days"])
-    run = due.replace(hour=PURGE_RUN_UTC[0], minute=PURGE_RUN_UTC[1], second=0, microsecond=0)
-    if run < due:
-        run += timedelta(days=1)
-    if run < now:                       # έπρεπε ήδη να έχει γίνει → η ΕΠΟΜΕΝΗ εκτέλεση
-        nxt = now.replace(hour=PURGE_RUN_UTC[0], minute=PURGE_RUN_UTC[1], second=0, microsecond=0)
-        run = nxt if nxt >= now else nxt + timedelta(days=1)
+    if final_notice_days is not None:
+        # ΙΔΙΟΣ ΚΑΝΟΝΑΣ ΜΕ ΤΟ `lifecycle.plan_for` (αυτό διαγράφει): ημέρα λήξης+N ΚΑΙ τελική
+        # προειδοποίηση σταλμένη ≥ max(1, final_notice_days−1) ΠΛΗΡΕΙΣ ημέρες νωρίτερα. Ως 26/10/2026
+        # η λίστα αγνοούσε την προειδοποίηση → έδειχνε «25/10 αύριο» για διαγραφές που έγιναν 27/10.
+        grace = timedelta(days=max(1, int(final_notice_days) - 1))
+        due_day = due.replace(hour=0, minute=0, second=0, microsecond=0)
+        if final_at is None:   # θα σταλεί στην πρώτη εκτέλεση μέσα στο παράθυρο τελικής προειδοποίησης
+            final_at = _next_run(max(due_day - timedelta(days=int(final_notice_days)), now)) + timedelta(seconds=1)
+        elif final_at.tzinfo is None:
+            final_at = final_at.replace(tzinfo=timezone.utc)
+        run = _next_run(max(due_day, final_at + grace, now))
+    else:
+        run = _next_run(due)
+        if run < now:                   # έπρεπε ήδη να έχει γίνει → η ΕΠΟΜΕΝΗ εκτέλεση
+            run = _next_run(now)
     return {"at": run, "days": max(0, (run.date() - now.date()).days),
             "protected": protected, "enabled": cfg["purge_enabled"]}
 

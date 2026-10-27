@@ -34,7 +34,10 @@ export default function PortalLogin() {
       patientTokens.set(s.access_token ?? null, s.refresh_token ?? "");
       router.replace(s.must_change_password ? "/portal/set-password" : "/portal");
     } catch (e) {
-      setErr(e instanceof ApiError && e.status === 401 ? t("Λάθος email ή κωδικός.", "Wrong email or password.") : t("Κάτι πήγε στραβά.", "Something went wrong."));
+      setErr(e instanceof ApiError && e.status === 401 ? t("Λάθος email ή κωδικός.", "Wrong email or password.")
+        : e instanceof ApiError && e.status === 429
+          ? t("Πολλές προσπάθειες σύνδεσης. Περιμένετε λίγα λεπτά και δοκιμάστε ξανά.", "Too many attempts. Wait a few minutes and try again.")
+          : t("Κάτι πήγε στραβά.", "Something went wrong."));
     } finally {
       setBusy(false);
     }

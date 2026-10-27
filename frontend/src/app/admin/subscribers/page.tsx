@@ -120,6 +120,28 @@ export default function SubscribersPage() {
   }
 
   const columns: Column<Tenant>[] = [
+    {
+      key: "actions", header: "", fullWidthOnMobile: true,
+      render: (r) => (
+        <div className="flex flex-nowrap items-center gap-1.5 whitespace-nowrap">
+          {/* ΠΡΩΤΗ στήλη (26/10/2026, ιδιοκτήτης): οι ενέργειες είναι αυτό που πατάς — δεν κρύβονται
+              πια δεξιά πίσω από οριζόντια κύλιση. Εικονίδιο, όχι κείμενο: με τρία κουμπιά με λεκτικό η στήλη τυλίγεται σε τρεις
+              γραμμές και ψηλώνει κάθε σειρά του πίνακα. */}
+          <button onClick={(e) => { e.stopPropagation(); impersonate(r); }} disabled={impBusy === r.id}
+            aria-label={`Σύνδεση ως ${r.name}`}
+            title="Σύνδεση ως πελάτης (υποστήριξη) — δεν δεσμεύει άδεια, δεν χρειάζεται κωδικός"
+            className="grid h-[26px] w-[26px] place-items-center rounded-md bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-60">
+            {impBusy === r.id ? <span className="text-[10px]">…</span> : <KeyRound className="h-3.5 w-3.5" />}
+          </button>
+          <button onClick={(e) => { e.stopPropagation(); router.push(`/admin/subscribers/${encodeURIComponent(r.id)}`); }}
+            className="rounded-md border border-slate-300 px-2 py-1 text-xs hover:bg-slate-50 dark:border-slate-600 dark:hover:bg-slate-800">Καρτέλα</button>
+          <button onClick={(e) => { e.stopPropagation(); toggleStatus(r); }}
+            className="rounded-md border border-slate-300 px-2 py-1 text-xs hover:bg-slate-50 dark:border-slate-600 dark:hover:bg-slate-800">
+            {r.status === "suspended" ? "Ενεργοποίηση" : "Αναστολή"}
+          </button>
+        </div>
+      ),
+    },
     { key: "name", header: "Tenant", render: (r) => (
       <div className="flex items-center gap-2.5">
         <Avatar name={r.name} />
@@ -174,27 +196,6 @@ export default function SubscribersPage() {
     { key: "mrr", header: "MRR", align: "right", render: (r) => <span className="font-medium text-slate-800 dark:text-slate-100">{fmtEur(r.mrr)}</span> },
     { key: "msg_balance", header: "Credits", align: "right", render: (r) => <span className={(r.msg_balance ?? 0) < 200 ? "text-amber-600" : "text-slate-700 dark:text-slate-300"}>{fmtEur(r.msg_balance ?? 0)}</span> },
     { key: "created_at", header: "Εγγραφή", render: (r) => fmtDate(r.created_at) },
-    {
-      key: "actions", header: "", align: "right", fullWidthOnMobile: true,
-      render: (r) => (
-        <div className="flex flex-nowrap items-center justify-end gap-1.5 whitespace-nowrap">
-          {/* Εικονίδιο, όχι κείμενο: με τρία κουμπιά με λεκτικό η στήλη τυλίγεται σε τρεις
-              γραμμές και ψηλώνει κάθε σειρά του πίνακα. */}
-          <button onClick={(e) => { e.stopPropagation(); impersonate(r); }} disabled={impBusy === r.id}
-            aria-label={`Σύνδεση ως ${r.name}`}
-            title="Σύνδεση ως πελάτης (υποστήριξη) — δεν δεσμεύει άδεια, δεν χρειάζεται κωδικός"
-            className="grid h-[26px] w-[26px] place-items-center rounded-md bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-60">
-            {impBusy === r.id ? <span className="text-[10px]">…</span> : <KeyRound className="h-3.5 w-3.5" />}
-          </button>
-          <button onClick={(e) => { e.stopPropagation(); router.push(`/admin/subscribers/${encodeURIComponent(r.id)}`); }}
-            className="rounded-md border border-slate-300 px-2 py-1 text-xs hover:bg-slate-50 dark:border-slate-600 dark:hover:bg-slate-800">Καρτέλα</button>
-          <button onClick={(e) => { e.stopPropagation(); toggleStatus(r); }}
-            className="rounded-md border border-slate-300 px-2 py-1 text-xs hover:bg-slate-50 dark:border-slate-600 dark:hover:bg-slate-800">
-            {r.status === "suspended" ? "Ενεργοποίηση" : "Αναστολή"}
-          </button>
-        </div>
-      ),
-    },
   ];
 
   return (

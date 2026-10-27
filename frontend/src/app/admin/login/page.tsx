@@ -25,6 +25,13 @@ export default function AdminLoginPage() {
         body: JSON.stringify({ email, password }),
       });
       if (!res.ok) {
+        // 429 = φρένο προσπαθειών (10/5′ ανά IP) — ΟΧΙ λάθος κωδικός. Ως 26/10/2026 έλεγε «λάθος
+        // στοιχεία» και ο διαχειριστής νόμιζε ότι ο σωστός κωδικός του ήταν λάθος (και ξαναπροσπαθούσε).
+        if (res.status === 429) {
+          const secs = Number(res.headers.get("Retry-After")) || 300;
+          setError(`Πολλές προσπάθειες σύνδεσης. Ο κωδικός σας δεν ελέγχθηκε — δοκιμάστε ξανά σε ${Math.max(1, Math.ceil(secs / 60))} λεπτά.`);
+          return;
+        }
         setError("Λάθος στοιχεία ή χωρίς δικαίωμα platform admin.");
         return;
       }

@@ -332,6 +332,10 @@ async def tenants(_: PlatformContext = Depends(get_platform_admin)):
     wallets = {w["_id"]: int(w.get("balance_cents", 0) or 0) async for w in db["message_wallets"].find({})}
     from app.services import trial_leads
     purge_cfg = await trial_leads.config(db)          # ίδιες ρυθμίσεις με τη νυχτερινή διαγραφή
+    # Ο κανόνας της τελικής προειδοποίησης ζει στο lifecycle (αυτό διαγράφει) → και η λίστα τον ακολουθεί
+    from app.services import lifecycle
+    _fnd = (await lifecycle.config()).get("final_notice_days")
+    final_at = {n["tenant_id"]: n.get("at") async for n in db[lifecycle.COLL].find({"kind": "final"})}
     user_counts: dict[str, int] = {}
     async for row in db["users"].aggregate([{"$group": {"_id": "$tenant_id", "n": {"$sum": 1}}}]):
         user_counts[row["_id"]] = row["n"]
@@ -374,7 +378,8 @@ async def tenants(_: PlatformContext = Depends(get_platform_admin)):
             "created_at": t.get("created_at"),
             # ΠΟΤΕ διαγράφεται (δοκιμαστικοί) — ΙΔΙΟΣ κανόνας με τη νυχτερινή διαγραφή
             # (`billing_service.purge_plan`), ώστε η στήλη να μη λέει άλλη μέρα από αυτή που θα γίνει.
-            "purge": billing_service.purge_plan(sub, purge_cfg) if sub else None,
+            "purge": billing_service.purge_plan(sub, purge_cfg, final_at=final_at.get(t["_id"]),
+                                                final_notice_days=_fnd) if sub else None,
         })
     return {"items": jsonsafe(items)}
 

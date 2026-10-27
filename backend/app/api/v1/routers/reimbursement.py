@@ -10,8 +10,10 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 
 from app.core.deps import TenantContext, require
-from app.repositories.reimbursement import ReimbursementRepository
+from app.repositories.base import jsonsafe
+from app.repositories.reimbursement import EOPYY_VAC, ReimbursementRepository
 from app.repositories.scans import ScanRepository
+from app.utils.masking import mask_name
 
 router = APIRouter()
 _MODULE = "monthly_closing"
@@ -196,10 +198,17 @@ async def daily_executions(day: str = Query(..., pattern=r"^\d{4}-\d{2}-\d{2}$")
     ομάδα ταμείου, χωρίς 100%, χωρίς εξαιρεμένες). Πριν η λίστα ήταν ανεξάρτητη αναζήτηση της
     ημέρας: όλα τα ταμεία, με τις εξαιρεμένες, έως 300 (30/09/2026)."""
     from app.repositories.prescriptions import PrescriptionRepository
-    ids = (await _repo(ctx).daily_reconciliation(day[:7], group=group, day_ids=day))["ids"]
+    picked = await _repo(ctx).daily_reconciliation(day[:7], group=group, day_ids=day)
+    ids = picked["ids"]
     items = await PrescriptionRepository(tenant_id=ctx.tenant_id, demo=ctx.demo).list_executions(
-        {"_id": {"$in": ids}}, skip=0, limit=max(1, len(ids)), sort="executed_at", direction=-1)
-    return {"items": items, "count": len(ids)}
+        {"_id": {"$in": ids}}, skip=0, limit=max(1, len(ids)), sort="executed_at", direction=-1) if ids else []
+    # εμβολιασμοί φαρμακείου (92…) της ημέρας — ίδιο σχήμα γραμμής με τις εκτελέσεις
+    vacc = [{"external_id": v["barcode"] or str(v["_id"]), "executed_at": v["executed_at"],
+             "patient_name": mask_name(v.get("patient_name"), ctx.demo), "fund_general": EOPYY_VAC,
+             "amount_total": v["retail"], "amount_claimed": v["claim"], "status": "executed"}
+            for v in picked.get("vaccinations", [])]
+    items = sorted([*items, *vacc], key=lambda r: str(r.get("executed_at") or "").replace(" ", "T")[:19], reverse=True)
+    return jsonsafe({"items": items, "count": len(items)})
 
 
 @router.get("/prescription")
