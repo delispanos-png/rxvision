@@ -123,6 +123,15 @@ export default function SupportLivePage() {
     }
   };
 
+  // Από τη λίστα «Συνδεδεμένοι»: ανοίγει κατευθείαν στον πελάτη της γραμμής.
+  useEffect(() => {
+    const login = new URLSearchParams(window.location.search).get("login");
+    if (!login) return;
+    window.history.replaceState(null, "", window.location.pathname);
+    connect(login);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const join = async () => {
     setError("");
     setEnded(false);
@@ -197,11 +206,13 @@ export default function SupportLivePage() {
         <div className="mb-3 mt-2 flex flex-wrap items-center gap-3 text-sm text-slate-600">
           <span><b>{info?.tenant_name}</b> · {info?.user_label}</span>
           <span className="inline-flex items-center gap-1 text-slate-400"><MousePointerClick className="h-4 w-4" /> Κλικ στην εικόνα: δείχνει το σημείο στον πελάτη</span>
-          {idle > IDLE_WARNING_S && <span className="font-medium text-amber-600">Ο πελάτης δεν ανταποκρίνεται εδώ και {idle}″</span>}
+          {idle > IDLE_WARNING_S && hasScreen && <span className="font-medium text-amber-600">Ο πελάτης δεν ανταποκρίνεται εδώ και {idle}″</span>}
           <button type="button" onClick={end} className="ml-auto rounded-lg border border-rose-300 px-3 py-1.5 text-sm font-medium text-rose-700 hover:bg-rose-50">Τερματισμός</button>
         </div>
       )}
-      {sid && !hasScreen && <p className="text-sm text-slate-500">Αναμονή για την οθόνη του πελάτη… Έρχεται σε 10″ αν έχει ανοιχτή την εφαρμογή μπροστά του.</p>}
+      {sid && !hasScreen && (idle > IDLE_WARNING_S
+        ? <p className="text-sm font-medium text-amber-700">Δεν απαντά η εφαρμογή του πελάτη. Ζητήστε του να πατήσει F5 και να έχει το RxVision μπροστά του στην οθόνη.</p>
+        : <p className="text-sm text-slate-500">Αναμονή για την οθόνη του πελάτη…</p>)}
       <div className={`relative w-full overflow-hidden rounded-lg border border-slate-200 bg-slate-100 ${sid ? "" : "hidden"}`}>
         <div ref={stage} className="relative w-full" />
         {hasScreen && <div onClick={point} className="absolute inset-0 z-10 cursor-crosshair" />}

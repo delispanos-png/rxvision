@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { appConfirm } from "@/store/dialogStore";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { adminApi } from "@/lib/adminClient";
@@ -29,6 +30,13 @@ function device(ua: string) {
 
 export default function SessionsPage() {
   const qc = useQueryClient();
+  const me = useQuery({
+    queryKey: ["admin", "me"],
+    queryFn: () => adminApi<{ super_admin: boolean; permissions: string[] }>("/platform/auth/me"),
+    retry: false,
+  });
+  const canView = !!me.data && (me.data.super_admin || me.data.permissions.includes("*")
+    || me.data.permissions.includes("support:live"));
   const [busy, setBusy] = useState<string | null>(null);
   const q = useQuery({ queryKey: ["admin", "sessions"], queryFn: () => adminApi<{ items: Session[] }>("/admin/sessions"), retry: false, refetchInterval: 15000 });
   const revoke = useMutation({
@@ -75,7 +83,13 @@ export default function SessionsPage() {
                 <td className="px-4 py-3 font-mono text-xs text-slate-600">{s.ip}</td>
                 <td className="px-4 py-3 text-xs text-slate-500">{device(s.ua)}</td>
                 <td className="px-4 py-3 text-slate-500">{fmtAgo(s.last_active_at)}</td>
-                <td className="px-4 py-3 text-right">
+                <td className="space-x-2 whitespace-nowrap px-4 py-3 text-right">
+                  {canView && !s.impersonation && (
+                    <Link href={`/admin/support-live?login=${encodeURIComponent(s.sid)}`}
+                      className="rounded-lg border border-brand-300 px-3 py-1.5 text-xs font-semibold text-brand-700 hover:bg-brand-50">
+                      Σύνδεση
+                    </Link>
+                  )}
                   <button onClick={() => kick(s)} disabled={busy === s.sid}
                     className="rounded-lg border border-rose-300 px-3 py-1.5 text-xs font-semibold text-rose-600 hover:bg-rose-50 disabled:opacity-50">
                     {busy === s.sid ? "Αποσύνδεση…" : "Αποσύνδεση"}
