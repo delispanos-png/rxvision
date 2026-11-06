@@ -8,7 +8,7 @@ import {
   LogOut, PlugZap, Menu, X, Layers, Cloud, ScrollText, Boxes, Settings, ChevronDown,
   ChevronRight, Percent, Brain, Bell, Sparkles, MessageSquare, Activity, ArrowUpCircle,
   Landmark, Bot, Wallet, Smartphone, Network, Database, Clock, FileText, Megaphone,
-  ShieldCheck, FlaskConical } from "lucide-react";
+  ShieldCheck, FlaskConical, Headset } from "lucide-react";
 import { adminApi, adminTokens, ApiError } from "@/lib/adminClient";
 import { PoweredBy } from "@/components/brand/PoweredBy";
 import { LogoMark } from "@/components/brand/Logo";
@@ -23,6 +23,7 @@ const GROUPS: { label: string; icon: typeof LayoutGrid; items: { label: string; 
   {
     label: "Πελάτες & Συνδρομές", icon: Users, items: [
       { label: "Συνδρομητές", icon: Users, href: "/admin/subscribers", section: "tenants:read" },
+      { label: "Ζωντανή υποστήριξη", icon: Headset, href: "/admin/support-live", section: "support:live" },
       { label: "Δίκτυο φαρμακείων", icon: Network, href: "/admin/network", section: "tenants:read" },
       { label: "Συνδρομές", icon: CreditCard, href: "/admin/subscriptions", section: "subscriptions:read" },
       { label: "Πακέτα & SLA", icon: Boxes, href: "/admin/packages", section: "packages:read" },

@@ -174,6 +174,55 @@ def _sync_lock(key: str, ttl: int):
     return got, _release
 
 
+# ΕΝΑΣ συγχρονισμός ανά φαρμακείο στην ουρά (02/11/2026). Πριν, το beat των 5′ έβαζε νέο ακόμη κι αν ο
+# προηγούμενος περίμενε ακόμη → ~710 συγχρονισμοί/φαρμακείο/ημέρα αντί για 288, ουρά «sync» ως 3.300,
+# και ο φύλακας των workers τη νόμιζε κολλημένη (ψεύτικα SMS «κόλλησε / επανήλθε»).
+# Η σημαία ζει από τη στιγμή που μπαίνει στην ουρά ΜΕΧΡΙ να τελειώσει η εκτέλεση· TTL > time_limit
+# ώστε ένας SIGKILL να μην κλειδώσει ποτέ το φαρμακείο για πάντα.
+_QUEUED_KEY = "hdika:sync:queued:{}"
+_QUEUED_TTL = 2400
+
+
+def enqueue_incremental_sync(tenant_id: str) -> bool:
+    """ΜΟΝΗ είσοδος για νέο incremental συγχρονισμό (beat, κουμπί, Copilot). False = υπάρχει ήδη
+    ένας στην ουρά ή σε εξέλιξη → δεν μπαίνει δεύτερος. Χωρίς Redis → fail-open (όπως το lock)."""
+    import uuid
+    token = uuid.uuid4().hex
+    try:
+        r = _redis.from_url(settings.REDIS_URL)
+        try:
+            if r.exists(f"hdika:sync:lock:{tenant_id}"):
+                return False                                     # τρέχει ήδη
+            if not r.set(_QUEUED_KEY.format(tenant_id), token, nx=True, ex=_QUEUED_TTL):
+                return False                                     # περιμένει ήδη στην ουρά
+        finally:
+            r.close()
+    except Exception:  # noqa: BLE001
+        token = None
+    try:
+        hdika_incremental_sync.apply_async((tenant_id,), kwargs={"queued_token": token})
+    except Exception:
+        _clear_queued(tenant_id, token)   # δεν μπήκε στην ουρά → η σημαία δεν κρατά το φαρμακείο 40′
+        raise
+    return True
+
+
+def _clear_queued(tenant_id: str, token: str | None) -> None:
+    """Σβήνει τη σημαία ΜΟΝΟ αν είναι η δική μας (παλιά εργασία χωρίς token δεν αγγίζει τη νέα)."""
+    if not token:
+        return
+    try:
+        r = _redis.from_url(settings.REDIS_URL)
+        try:
+            cur = r.get(_QUEUED_KEY.format(tenant_id))
+            if cur is not None and (cur.decode() if isinstance(cur, bytes) else cur) == token:
+                r.delete(_QUEUED_KEY.format(tenant_id))
+        finally:
+            r.close()
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def _history_floor(creds: dict):
     """«Άντληση ιστορικού από» (per-tenant ρύθμιση) — parsed ή None."""
     s = (creds or {}).get("history_from")
@@ -211,9 +260,7 @@ def dispatch_incremental_sync() -> int:
             client.close()
 
     tenant_ids = _run_async(_run())
-    for tid in tenant_ids:
-        hdika_incremental_sync.delay(tid)
-    return len(tenant_ids)
+    return sum(1 for tid in tenant_ids if enqueue_incremental_sync(tid))
 
 
 @celery_app.task(name="app.workers.ingestion.dispatch_cancellation_reconcile")
@@ -244,7 +291,14 @@ def reconcile_cancellations_task(self, tenant_id: str) -> dict:
             if await _hdika_auth_paused(db, tenant_id):   # παύση λόγω λάθους κωδικού → skip
                 return {"tenant_id": tenant_id, "status": "skipped", "note": "auth_paused"}
             from app.services.ingestion.cancellations import reconcile_tenant
-            return await reconcile_tenant(tenant_id, db=db, dry_run=False)
+            res = await reconcile_tenant(tenant_id, db=db, dry_run=False)
+            # ΚΑΤΑΓΡΑΦΗ κάθε εκτέλεσης (02/11/2026): ως τότε δεν ήξερε κανείς αν/πότε έτρεξε — 28/10→02/11
+            # έτρεχε έως 19 ώρες αργά πίσω από φουσκωμένη ουρά. Ο νυχτερινός αυτοέλεγχος το ελέγχει.
+            await db["cancellation_runs"].insert_one({  # tenant-ok: εγγραφή με tenant_id
+                "tenant_id": tenant_id, "at": datetime.now(tz=timezone.utc), "ok": bool(res.get("ok", True)),
+                "reason": res.get("reason"), "days_ok": res.get("days_ok"),
+                "cancelled": res.get("cancel"), "restored": res.get("restore")})
+            return res
         except HdikaAuthError as e:   # λάθος/ληγμένος κωδικός → ΠΑΥΣΗ tenant (μη retry)
             return await _pause_hdika_auth(db, tenant_id, str(e))
         finally:
@@ -596,8 +650,16 @@ def influenza_sync_task(self, tenant_id: str) -> dict:
     # έχουν αυτό το όριο (τρέχουν στο δικό τους task/queue).
     soft_time_limit=1800, time_limit=2100,
 )
-def hdika_incremental_sync(self, tenant_id: str) -> dict:
-    """Pull new ΗΔΥΚΑ executions since the last watermark; idempotent."""
+def hdika_incremental_sync(self, tenant_id: str, queued_token: str | None = None) -> dict:
+    """Pull new ΗΔΥΚΑ executions since the last watermark; idempotent. Μπαίνει στην ουρά ΜΟΝΟ μέσω
+    `enqueue_incremental_sync`· η σημαία «στην ουρά» σβήνει όταν τελειώσει (όποιος κι αν είναι ο δρόμος)."""
+    try:
+        return _incremental_sync(self, tenant_id, queued_token)
+    finally:
+        _clear_queued(tenant_id, queued_token)
+
+
+def _incremental_sync(self, tenant_id: str, queued_token: str | None) -> dict:
     # Per-tenant lock: if a previous sync for this tenant is still running (slow ΗΔΥΚΑ / big
     # window), SKIP this beat instead of stacking a duplicate concurrent sync.
     acquired, _release_lock = _sync_lock(f"hdika:sync:lock:{tenant_id}", ttl=7200)
@@ -609,6 +671,13 @@ def hdika_incremental_sync(self, tenant_id: str) -> dict:
         try:
             if await _hdika_auth_paused(db, tenant_id):   # μπήκε σε παύση από άλλο task → μη ξαναδοκιμάσεις
                 return {"tenant_id": tenant_id, "status": "skipped", "note": "auth_paused"}
+            # Παλιές εργασίες χωρίς σημαία (στοιβαγμένες πριν τις 02/11/2026): αν μόλις έγινε επιτυχής
+            # συγχρονισμός, κλείνουν χωρίς κλήση στην ΗΔΥΚΑ — η ουρά αδειάζει μόνη της.
+            if queued_token is None and await db["sync_jobs"].find_one(  # tenant-ok: φίλτρο tenant_id
+                    {"tenant_id": tenant_id, "type": "incremental", "status": "success",
+                     "finished_at": {"$gte": datetime.now(tz=timezone.utc) - timedelta(minutes=4)}},
+                    {"_id": 1}):
+                return {"tenant_id": tenant_id, "status": "skipped", "note": "synced moments ago"}
             from app.api.v1.routers.ingestion import _effective_hdika_creds
             # FULL effective creds — production ΚΛΗΡΟΝΟΜΕΙ platform api_key/integrator (test→sandbox).
             # ΚΡΙΣΙΜΟ (2026-07-02): το παλιό inline building ΔΕΝ κληρονομούσε το production api_key →
@@ -855,7 +924,7 @@ def reap_stalled_sync(stall_minutes: int = 10) -> dict:
                 if ten:
                     try:
                         rr = _redis.from_url(settings.REDIS_URL)
-                        rr.delete(f"hdika:sync:lock:{ten}")
+                        rr.delete(f"hdika:sync:lock:{ten}", _QUEUED_KEY.format(ten))
                         rr.close()
                     except Exception:  # noqa: BLE001
                         pass

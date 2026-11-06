@@ -474,7 +474,7 @@ export default function PrescriptionsPage() {
           <PanelCard
             collapsible
             defaultOpen={false}
-            title={t("Ανεκτέλεστες δραστικές", "Unexecuted substances")}
+            title={t("Πίνακας top 10 ανεκτέλεστων σκευασμάτων", "Top 10 unexecuted products")}
             action={
               <div className="flex gap-4 text-sm">
                 <span className="text-slate-500">
@@ -497,7 +497,7 @@ export default function PrescriptionsPage() {
         )}
 
         {/* unexecuted table */}
-        <PanelCard collapsible defaultOpen={false} title={t("Ανεκτέλεστες δραστικές — αναλυτικά", "Unexecuted substances — details")} bodyClassName="pt-2">
+        <PanelCard collapsible defaultOpen={false} title={t("Ανεκτέλεστα σκευάσματα — αναλυτικά", "Unexecuted products — details")} bodyClassName="pt-2">
           <div className="mb-3 flex flex-wrap items-center gap-2">
             <input value={unSearch} onChange={(e) => setUnSearch(e.target.value)} type="search"
               placeholder={t("Αναζήτηση σκευάσματος (π.χ. Lasix)…", "Search product (e.g. Lasix)…")}

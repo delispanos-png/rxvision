@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Building2, Package, UserCog, Search, Check, ArrowRight, ArrowLeft, Eye, EyeOff, Loader2, CreditCard, Landmark, Printer } from "lucide-react";
 import { api, ApiError } from "@/lib/apiClient";
+import { saveCardWithRevolut } from "@/lib/revolutCheckout";
 import { Tooltip } from "@/components/ui/Tooltip";
 import { Logo } from "@/components/brand/Logo";
 import { PoweredBy } from "@/components/brand/PoweredBy";
@@ -88,7 +89,6 @@ export default function RegisterWizard() {
   // «πληρωμή-πρώτα»: μετά την επιστροφή από Viva μπαίνουμε σε completion mode (?pending=<id>)
   const [pendingId, setPendingId] = useState<string>("");   // completion mode αν != ""
   const [pendingStatus, setPendingStatus] = useState<string>("");
-  const [pendingTrial, setPendingTrial] = useState(false);   // completion για δωρεάν trial (χωρίς πληρωμή)
   const [bankSubmitted, setBankSubmitted] = useState(false); // τράπεζα → αναμονή έγκρισης
   const [afmErr, setAfmErr] = useState<string | null>(null); // διπλότυπο ΑΦΜ (ενεργή συνδρομή)
   const [reactivation, setReactivation] = useState(false);   // υπάρχων λογαριασμός με ληγμένο/trial → αγορά κανονικού πακέτου
@@ -144,7 +144,6 @@ export default function RegisterWizard() {
   const addonsTotal = availAddons.filter((a) => selAddons.includes(a._id))
     .reduce((s, a) => s + ((yearly ? a.price_yearly : a.price_monthly) ?? 0), 0);
   const price = basePrice + slaPrice + extraTotal + addonsTotal;   // καθαρό σύνολο (αν οι τιμές είναι καθαρές)
-  const isTrial = price === 0;   // δωρεάν trial πακέτο (μηδενικό κόστος) → καμία πληρωμή
   // ΦΠΑ: οι τιμές πακέτων είναι καθαρές → προσθέτουμε ΦΠΑ χώρας· η ΤΕΛΙΚΗ τιμή (gross) χρεώνεται στην κάρτα
   const vatRate = company.country === "CY" ? 19 : 24;
   const incVat = !!pkg?.price_includes_vat;
@@ -244,9 +243,9 @@ export default function RegisterWizard() {
     let stop = false;
     const poll = async () => {
       try {
-        const s = await api<{ status: string; owner_email?: string; owner_name?: string; is_trial?: boolean }>(`/onboarding/register-status/${pendingId}`);
+        const s = await api<{ status: string; owner_email?: string; owner_name?: string; }>(`/onboarding/register-status/${pendingId}`);
         if (stop) return;
-        setPendingStatus(s.status); setPendingTrial(!!s.is_trial);
+        setPendingStatus(s.status);
         if (s.owner_email) setAdmin((a) => ({ ...a, email: s.owner_email!, full_name: a.full_name || s.owner_name || "" }));
         if (s.status !== "paid" && s.status !== "approved" && s.status !== "completed") setTimeout(poll, 2500);
       } catch { if (!stop) setTimeout(poll, 3000); }
@@ -299,13 +298,14 @@ export default function RegisterWizard() {
   async function startPayment() {
     setErr(null); setBusy(true);
     try {
-      const r = await api<{ pending_id: string; checkout_url?: string; status?: string; trial?: boolean; reactivation?: boolean }>("/onboarding/register-intent", {
+      const r = await api<{ pending_id: string; checkout_url?: string; token?: string; mode?: string; status?: string; reactivation?: boolean }>("/onboarding/register-intent", {
         method: "POST",
         body: JSON.stringify({
           pharmacy_name: company.title || company.name, country: company.country,
           owner_email: admin.email, owner_name: admin.full_name,
           company, package_code: pkgCode || "standard", billing_cycle: billing, sla: sla || undefined,
           seats, payment_method: payMethod, addons: selAddons,
+          card_provider: payChoice === "card_revolut" ? "revolut" : payChoice === "card_viva" ? "viva" : undefined,
           accepted_terms: acceptedTerms, terms_version: TERMS_VERSION,
         }),
       });
@@ -314,13 +314,19 @@ export default function RegisterWizard() {
         if (typeof window !== "undefined" && r.pending_id) window.localStorage.setItem("signup_pending", r.pending_id);
         window.location.href = r.checkout_url; return;
       }
-      if (r.pending_id && (r.trial || r.status === "paid")) {                  // δωρεάν trial → κατευθείαν κωδικός
-        setPendingTrial(!!r.trial); setPendingStatus("paid"); setPendingId(r.pending_id); setBusy(false); return;
+      if (r.token) {                                                           // κάρτα → παράθυρο Revolut
+        const res = await saveCardWithRevolut(r.token, r.mode || "sandbox");
+        if (res !== "success") {
+          setErr(res === "cancel" ? "Η πληρωμή ακυρώθηκε. Δεν χρεώθηκες. Μπορείς να δοκιμάσεις ξανά." : "Η πληρωμή δεν ολοκληρώθηκε. Δοκίμασε ξανά.");
+          setBusy(false); return;
+        }
+        window.localStorage.setItem("signup_pending", r.pending_id);
+        setPendingId(r.pending_id); setBusy(false); return;                    // → αναμονή επιβεβαίωσης & κωδικός
       }
       setBankSubmitted(true); setBusy(false);                                  // (bank fallback — ανενεργό)
     } catch (e) {
       const detail = e instanceof ApiError ? ((e.problem as { detail?: { error?: string } })?.detail?.error) : "";
-      setErr(detail === "already_had_trial" ? "Έχεις ήδη χρησιμοποιήσει τη δωρεάν δοκιμή — επίλεξε ένα πληρωμένο πακέτο για να συνεχίσεις."
+      setErr(detail === "already_had_trial" || detail === "trial_by_invitation" ? "Έχεις ήδη χρησιμοποιήσει τη δωρεάν δοκιμή — επίλεξε ένα πληρωμένο πακέτο για να συνεχίσεις."
         : detail === "afm_already_registered" ? "Υπάρχει ήδη ενεργή συνδρομή για αυτό το ΑΦΜ."
         : detail === "email_already_registered" ? "Υπάρχει ήδη ενεργή συνδρομή με αυτό το email. Συνδέσου στον λογαριασμό σου."
         : "Δεν ξεκίνησε η πληρωμή. Δοκίμασε ξανά.");
@@ -373,8 +379,8 @@ export default function RegisterWizard() {
           <div className="mx-auto max-w-lg rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
             {(pendingStatus === "paid" || pendingStatus === "approved") ? (
               <div className="space-y-4">
-                <div className="flex items-center gap-2 text-emerald-700"><Check className="h-5 w-5" /><h2 className="text-xl font-bold">{pendingTrial ? "Σχεδόν έτοιμα!" : "Η πληρωμή ολοκληρώθηκε ✓"}</h2></div>
-                <p className="text-sm text-slate-500">Όρισε τον κωδικό σου για να {pendingTrial ? "ξεκινήσει η δωρεάν δοκιμή" : "ενεργοποιηθεί ο λογαριασμός"}. Θα συνδέεσαι με το email <b>{admin.email || "—"}</b>.</p>
+                <div className="flex items-center gap-2 text-emerald-700"><Check className="h-5 w-5" /><h2 className="text-xl font-bold">Η πληρωμή ολοκληρώθηκε ✓</h2></div>
+                <p className="text-sm text-slate-500">Όρισε τον κωδικό σου για να ενεργοποιηθεί ο λογαριασμός. Θα συνδέεσαι με το email <b>{admin.email || "—"}</b>.</p>
                 {!admin.full_name && <div><label className={label}>Ονοματεπώνυμο *</label><input className={input} {...A("full_name")} autoComplete="name" /></div>}
                 <div>
                   <div className="flex items-center justify-between"><label className={label}>Κωδικός *</label><button type="button" onClick={genPassword} className="mb-1 text-[11px] font-medium text-brand-600 hover:underline">Αυτόματη δημιουργία</button></div>
@@ -529,8 +535,7 @@ export default function RegisterWizard() {
                             <div className="flex items-center justify-between"><div className="font-semibold text-slate-900">{p.name || p._id}</div>{sel && <Check className="h-4 w-4 text-brand-600" />}</div>
                             {p.description && <div className="mt-0.5 text-xs text-slate-500">{p.description}</div>}
                             <div className="mt-2 text-xl font-bold text-brand-700">{eur(pp)}<span className="text-xs font-normal text-slate-400">/{billing === "yearly" ? "έτος" : "μήνα"}{p.price_includes_vat ? "" : " + ΦΠΑ"}</span></div>
-                            {(p.trial_days ?? 0) > 0 && <div className="mt-1 text-[11px] text-emerald-600">✓ {p.trial_days} ημέρες δωρεάν δοκιμή</div>}
-                          </button>
+                                                      </button>
                         );
                       })}
                     </div>
@@ -584,21 +589,8 @@ export default function RegisterWizard() {
                     </div>
                   </div>
                 )}
-                {/* Χρήστες. ΔΟΚΙΜΗ: κλειδωμένο στον 1 — καμία επιλογή, καμία παρεξήγηση.
-                    ΠΛΗΡΩΜΕΝΟ: ΡΗΤΗ ερώτηση αν θέλει έξτρα· το stepper εμφανίζεται μόνο αν πει «ναι»,
+                {/* Χρήστες: ΡΗΤΗ ερώτηση αν θέλει έξτρα· το stepper εμφανίζεται μόνο αν πει «ναι»,
                     ώστε να μη χρεωθεί ποτέ από άθελη κίνηση. */}
-                {isTrial ? (
-                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-                    <label className={label}>Χρήστες</label>
-                    <p className="mt-1 text-sm text-slate-700">
-                      Η δωρεάν δοκιμή περιλαμβάνει <b>1 χρήστη για 14 ημέρες</b>.
-                    </p>
-                    <p className="mt-1 text-xs text-slate-500">
-                      Όταν επιλέξεις πακέτο για να συνεχίσεις, παίρνεις τους χρήστες που περιλαμβάνει —
-                      και τότε θα σε ρωτήσουμε αν θέλεις επιπλέον.
-                    </p>
-                  </div>
-                ) : (
                   <div>
                     <label className={label}>Χρήστες</label>
                     <p className="mt-1 text-sm text-slate-700">
@@ -629,23 +621,20 @@ export default function RegisterWizard() {
                       </div>
                     )}
                   </div>
-                )}
                 <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
                   <div className="mb-2 text-xs font-semibold text-slate-500">Ανάλυση κόστους ({yearly ? "ετήσια" : "μηνιαία"})</div>
                   <dl className="space-y-1.5 text-sm">
                     <div className="flex justify-between"><dt className="text-slate-600">{pkg?.name || "Πακέτο"}</dt><dd className="shrink-0 pl-3 font-medium text-slate-800">{eur(basePrice)}</dd></div>
                     <div className="flex justify-between"><dt className="text-slate-600">SLA{slaObj?.name ? ` · ${slaObj.name}` : ""}</dt><dd className="shrink-0 pl-3 font-medium text-slate-800">{slaPrice ? eur(slaPrice) : "—"}</dd></div>
-                    <div className="flex justify-between"><dt className="text-slate-600">Έξτρα χρήστες {extraUsers > 0 ? `(${extraUsers} × ${eur(extraRate)})` : ""}</dt><dd className="shrink-0 pl-3 font-medium text-slate-800">{extraTotal ? eur(extraTotal) : "—"}</dd></div>
+                    <div className="flex justify-between"><dt className="text-slate-600">Επιπλέον χρήστες {extraUsers > 0 ? `(${extraUsers} × ${eur(extraRate)})` : ""}</dt><dd className="shrink-0 pl-3 font-medium text-slate-800">{extraTotal ? eur(extraTotal) : "—"}</dd></div>
                     {availAddons.filter((a) => selAddons.includes(a._id)).map((a) => (
                       <div key={a._id} className="flex justify-between"><dt className="text-slate-600">{a.icon} {a.name}</dt><dd className="shrink-0 pl-3 font-medium text-slate-800">{eur((yearly ? a.price_yearly : a.price_monthly) ?? 0)}</dd></div>
                     ))}
-                    {!isTrial && (
                       <>
                         <div className="flex justify-between border-t border-slate-200 pt-2"><dt className="text-slate-600">Καθαρή αξία</dt><dd className="shrink-0 pl-3 font-medium text-slate-800">{eur2(netPrice)}</dd></div>
                         <div className="flex justify-between"><dt className="text-slate-600">Φ.Π.Α {vatRate}%</dt><dd className="shrink-0 pl-3 font-medium text-slate-800">{eur2(vatAmount)}</dd></div>
                       </>
-                    )}
-                    <div className="mt-1 flex justify-between border-t border-slate-200 pt-2 text-base"><dt className="font-semibold text-slate-900">Τελική τιμή</dt><dd className="font-bold text-brand-700">{eur2(isTrial ? 0 : grossPrice)}<span className="text-xs font-normal text-slate-400">/{per}</span></dd></div>
+                    <div className="mt-1 flex justify-between border-t border-slate-200 pt-2 text-base"><dt className="font-semibold text-slate-900">Τελική τιμή</dt><dd className="font-bold text-brand-700">{eur2(grossPrice)}<span className="text-xs font-normal text-slate-400">/{per}</span></dd></div>
                   </dl>
                 </div>
               </div>
@@ -660,17 +649,7 @@ export default function RegisterWizard() {
               </div>
             )}
 
-            {step === STEP.PAYMENT && isTrial && (
-              <div className="space-y-4">
-                <h2 className="text-xl font-bold text-slate-900">Δωρεάν δοκιμή</h2>
-                <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800">
-                  Το πακέτο <b>{pkg?.name || "δοκιμής"}</b> είναι <b>δωρεάν</b> — καμία πληρωμή, καμία κάρτα. Έχεις <b>πλήρη πρόσβαση</b> σε όλο το πρόγραμμα. Στο επόμενο βήμα ορίζεις τον κωδικό σου και ξεκινάς.
-                </div>
-                {err && <div role="alert" className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{err}</div>}
-              </div>
-            )}
-
-            {step === STEP.PAYMENT && !isTrial && (
+            {step === STEP.PAYMENT && (
               <div className="space-y-4">
                 <h2 className="text-xl font-bold text-slate-900">Πληρωμή</h2>
                 <p className="text-sm text-slate-500">Ο λογαριασμός <b>ενεργοποιείται μόλις ολοκληρωθεί η πληρωμή</b>. Ο κωδικός σύνδεσης ορίζεται αμέσως μετά.</p>
@@ -689,7 +668,7 @@ export default function RegisterWizard() {
                   <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-700">Δεν υπάρχει διαθέσιμος τρόπος πληρωμής αυτή τη στιγμή — επικοινώνησε μαζί μας.</div>
                 )}
                 <div className="rounded-xl bg-brand-50/60 p-3 text-xs text-brand-800">
-                  <b>Σύνοψη:</b> {company.title || company.name || "—"} · {pkg?.name || pkgCode} · {yearly ? "ετήσια" : "μηνιαία"} · {seats} χρήστες · SLA: {slaObj?.name || sla || "—"} · <b>Πληρωτέο τώρα: {eur2(isTrial ? 0 : grossPrice)}</b> (με ΦΠΑ)
+                  <b>Σύνοψη:</b> {company.title || company.name || "—"} · {pkg?.name || pkgCode} · {yearly ? "ετήσια" : "μηνιαία"} · {seats} χρήστες · SLA: {slaObj?.name || sla || "—"} · <b>Πληρωτέο τώρα: {eur2(grossPrice)}</b> (με ΦΠΑ)
                 </div>
                 {payMethod === "card" && payChoice && (
                   <div className="rounded-xl border border-slate-200 p-3 text-xs text-slate-500">Θα μεταφερθείς σε ασφαλές περιβάλλον {cardProviderName} για την πληρωμή <b>{eur(price)}</b>. Μόλις ολοκληρωθεί, επιστρέφεις για να ορίσεις τον κωδικό σου.</div>
@@ -709,7 +688,7 @@ export default function RegisterWizard() {
               {step < N - 1 ? (
                 <button type="button" disabled={!canNext} onClick={goNext} className="inline-flex items-center gap-1.5 rounded-lg bg-brand-700 px-5 py-2.5 text-sm font-medium text-white hover:bg-brand-800 disabled:opacity-50">Επόμενο <ArrowRight className="h-4 w-4" /></button>
               ) : (
-                <button type="button" disabled={(!isTrial && !payChoice) || busy || !acceptedTerms} onClick={startPayment} className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50">{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <CreditCard className="h-4 w-4" />} {isTrial ? "Ξεκίνα δωρεάν δοκιμή" : payMethod === "card" ? `Πλήρωσε ${eur(price)}` : "Καταχώρηση αιτήματος"}</button>
+                <button type="button" disabled={!payChoice || busy || !acceptedTerms} onClick={startPayment} className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50">{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <CreditCard className="h-4 w-4" />} {payMethod === "card" ? `Πλήρωσε ${eur(price)}` : "Καταχώρηση αιτήματος"}</button>
               )}
             </div>
             )}

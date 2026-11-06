@@ -128,6 +128,8 @@ celery_app.conf.update(
         "app.workers.snapshots.compute_nightly":   {"soft_time_limit": 5400, "time_limit": 6000},
         "app.workers.snapshots.apply_retention":   {"soft_time_limit": 3600, "time_limit": 4200},
         "app.workers.ingestion.dispatch_deep_reconcile_weekly": {"soft_time_limit": 3600, "time_limit": 4200},
+        # βραδινός έλεγχος ακυρώσεων: 40 ημέρες × αναζήτηση ΗΔΥΚΑ ανά ημέρα (02/11/2026, ως τότε 15)
+        "app.workers.ingestion.reconcile_cancellations": {"soft_time_limit": 1800, "time_limit": 2100},  # 30′/35′
     },
 )
 

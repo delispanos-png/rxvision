@@ -128,17 +128,36 @@ async def request_change(tenant_id: str, plan: str, *, method: str | None = None
                 "plan": plan, "plan_name": plan_name, "new_price": new_price, "billing_cycle": cycle}
 
     # ── UPGRADE — payment required (only via an ENABLED method) ──
-    from app.services import payment_methods
-    _method_key = {"card": "card_revolut", "alpha": "card_alpha", "bank": "bank_transfer"}.get(method or "")
+    from app.services import billing_service, payment_methods, viva_service
+    # η κάρτα πληρώνεται στον επιλεγμένο πάροχο: ένας κανόνας με την εγγραφή και την ανανέωση
+    card_provider = await billing_service.provider_for(tenant_id)
+    _method_key = {"card": f"card_{card_provider}", "alpha": "card_alpha", "bank": "bank_transfer"}.get(method or "")
     if not _method_key or not await payment_methods.is_enabled(_method_key):
         await notify_upgrade_blocked(tenant_id, plan_name)
         raise PlanChangeError("method_disabled")
 
+    if method == "card" and card_provider == "viva":
+        bp = tenant.get("billing_profile") or {}
+        # allow_recurring: το webhook κρατά αυτή τη συναλλαγή ως κάρτα για τις αυτόματες χρεώσεις
+        res = await viva_service.create_checkout_order(
+            amount=charge_amount, ref=tenant_id, description=f"RxVision αναβάθμιση σε {plan_name}",
+            email=await billing_service._billing_email(db, tenant_id, tenant) or "",
+            full_name=bp.get("name") or tenant.get("name") or tenant_id, allow_recurring=True)
+        if not res.get("ok"):
+            raise PlanChangeError(res.get("error", "viva_error"))
+        pend = {**base, "status": "awaiting_payment", "method": "viva",
+                "order_code": res.get("order_code"), "effective_at": None}
+        await db["subscriptions"].update_one({"tenant_id": tenant_id}, {"$set": {
+            "pending_change": pend, "viva_order_code": res.get("order_code")}})
+        return {"kind": "upgrade", "method": "card", "status": "awaiting_payment",
+                "checkout_url": res["checkout_url"], "amount": charge_amount, "plan": plan, "plan_name": plan_name}
+
     if method == "card":   # Revolut hosted checkout (instant)
         bp = tenant.get("billing_profile") or {}
+        from app.services.billing_service import _billing_email
         res = await rv.create_topup_order(
             amount=charge_amount, currency=CURRENCY,
-            email=bp.get("email") or bp.get("billing_email") or "",
+            email=await _billing_email(db, tenant_id, tenant) or "",
             name=bp.get("name") or tenant.get("name") or tenant_id,
             tenant_id=tenant_id, description=f"RxVision αναβάθμιση σε {plan_name}")
         if not res.get("ok"):
@@ -284,13 +303,13 @@ async def apply_change(tenant_id: str, *, source: str = "system") -> dict:
     # Παραστατικό αναβάθμισης (η υποβάθμιση δεν έχει πληρωμή).
     if pend.get("kind") == "upgrade":
         from app.services import receipts
-        method = {"card": "card", "bank": "bank_transfer"}.get(pend.get("method"), pend.get("method"))
-        provider = {"card": "revolut", "alpha": "alphabank"}.get(pend.get("method"))
+        method = {"card": "card", "viva": "card", "bank": "bank_transfer"}.get(pend.get("method"), pend.get("method"))
+        provider = {"card": "revolut", "viva": "viva", "alpha": "alphabank"}.get(pend.get("method"))
+        paid_ref = pend.get("revolut_order_id") or pend.get("viva_transaction_id")
         _charged = int(pend.get("charge_amount", pend.get("new_price", 0)) or 0)   # gross (με ΦΠΑ)
         await receipts.record(tenant_id, "upgrade",
                               f"Αναβάθμιση σε {pend.get('plan_name') or pend['plan']}",
-                              _charged, method=method, provider=provider,
-                              provider_order_id=pend.get("revolut_order_id"))
+                              _charged, method=method, provider=provider, provider_order_id=paid_ref)
         from app.services import invoice_service
         await invoice_service.create_for_payment(
             tenant_id=tenant_id, kind="upgrade", gross_cents=_charged,
@@ -298,8 +317,7 @@ async def apply_change(tenant_id: str, *, source: str = "system") -> dict:
                          f"({invoice_service.cycle_el(pend.get('billing_cycle') or sub.get('billing_cycle'))}) — "
                          f"αναλογική διαφορά τιμής έως τη λήξη της περιόδου "
                          f"{invoice_service.fmt_d(sub.get('current_period_end'))}"),
-            payment={"method": method, "provider": provider,
-                     "transaction_id": pend.get("revolut_order_id")})
+            payment={"method": method, "provider": provider, "transaction_id": paid_ref})
     return {"ok": True, "plan": pend["plan"], "kind": pend.get("kind")}
 
 

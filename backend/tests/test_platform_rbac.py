@@ -11,7 +11,14 @@ from __future__ import annotations
 import pytest
 from fastapi.routing import APIRoute
 
-from app.api.v1.routers import admin, admin_leads, fund_groups, infra_cloud, release_notes
+from app.api.v1.routers import (
+    admin,
+    admin_leads,
+    fund_groups,
+    infra_cloud,
+    release_notes,
+    support_live,
+)
 from app.services.platform_rbac import (
     ADMIN_GROUP_KEY,
     ALL_PERMISSION_KEYS,
@@ -28,7 +35,7 @@ from app.services.platform_rbac import (
 # χρησιμοποιείται όταν συνδέεται το gate στο app/api/v1/__init__.py.
 ROUTERS = {
     # ίδιο scope «admin» (require_padmin("admin")) — «Τι νέο υπάρχει» ζει σε δικό του router
-    "admin": [admin.router, release_notes.admin_router],
+    "admin": [admin.router, release_notes.admin_router, support_live.admin_router],
     "admin_leads": admin_leads.router,
     "cloud": infra_cloud.router,
     "fund_groups": fund_groups.router,

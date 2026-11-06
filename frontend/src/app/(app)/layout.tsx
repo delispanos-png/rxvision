@@ -11,6 +11,7 @@ import { AnnouncementPopup } from "@/components/layout/AnnouncementPopup";
 import { ClarityScript } from "@/components/ClarityScript";
 import { ModuleTrialBanner } from "@/components/layout/ModuleTrialBanner";
 import { TrailBar } from "@/components/layout/TrailBar";
+import { SupportLiveHost } from "@/components/support/SupportLiveHost";
 
 // Backend always enforces permissions/modules; the sidebar is presentational.
 export default function AppLayout({ children }: { children: React.ReactNode }) {
@@ -34,6 +35,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       <PageHelp />
       <PortalRequestsWatcher />
       <AnnouncementPopup />
+      <SupportLiveHost />
     </div>
   );
 }

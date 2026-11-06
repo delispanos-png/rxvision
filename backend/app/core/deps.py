@@ -141,6 +141,11 @@ async def get_patient_context(
                           session_id=claims.get("sid"), demo=bool((tdoc or {}).get("demo")))
 
 
+# Έλεγχος στο παρασκήνιο κάθε 10″: δεν είναι κίνηση χρήστη, αλλιώς ένα ξεχασμένο παράθυρο θα κρατούσε
+# πιασμένη τη θέση για πάντα.
+NO_SEAT_TOUCH = "/support-live/incoming"
+
+
 async def get_current_context(
     request: Request,
     creds: HTTPAuthorizationCredentials = Depends(_bearer),
@@ -175,8 +180,9 @@ async def get_current_context(
         from app.services import session_service as sessions
         if await sessions.is_revoked(ctx.sid):
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "session_revoked")
-    await _touch_activity(ctx.user_id, ctx.sid)
-    await _touch_serving(ctx.tenant_id)
+    if not request.url.path.endswith(NO_SEAT_TOUCH):
+        await _touch_activity(ctx.user_id, ctx.sid)
+        await _touch_serving(ctx.tenant_id)
     return ctx
 
 

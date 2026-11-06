@@ -203,7 +203,7 @@ async def daily_executions(day: str = Query(..., pattern=r"^\d{4}-\d{2}-\d{2}$")
     items = await PrescriptionRepository(tenant_id=ctx.tenant_id, demo=ctx.demo).list_executions(
         {"_id": {"$in": ids}}, skip=0, limit=max(1, len(ids)), sort="executed_at", direction=-1) if ids else []
     # εμβολιασμοί φαρμακείου (92…) της ημέρας — ίδιο σχήμα γραμμής με τις εκτελέσεις
-    vacc = [{"external_id": v["barcode"] or str(v["_id"]), "executed_at": v["executed_at"],
+    vacc = [{"external_id": v["barcode"], "executed_at": v["executed_at"],
              "patient_name": mask_name(v.get("patient_name"), ctx.demo), "fund_general": EOPYY_VAC,
              "amount_total": v["retail"], "amount_claimed": v["claim"], "status": "executed"}
             for v in picked.get("vaccinations", [])]

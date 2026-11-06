@@ -54,6 +54,7 @@ from app.api.v1.routers import (
     reimbursement,
     security,
     subscriptions,
+    support_live,
     vaccinations,
     vaccine_programs,
     tenants,
@@ -81,6 +82,7 @@ api_router.include_router(pharmacy_catalog.router, prefix="/catalog", tags=["cat
 api_router.include_router(pharmacy_chat.router, prefix="/pharmacy-chat", tags=["pharmacy-chat"])
 api_router.include_router(connect.router, prefix="/connect", tags=["connect"])
 api_router.include_router(release_notes.router, prefix="/release-notes", tags=["release-notes"])
+api_router.include_router(support_live.router, prefix="/support-live", tags=["support-live"])
 api_router.include_router(orders_delivery.router, prefix="/orders/delivery", tags=["orders-delivery"])
 api_router.include_router(dashboard.router, prefix="/dashboard", tags=["dashboard"])
 api_router.include_router(advisor.router, prefix="/advisor", tags=["advisor"])
@@ -135,6 +137,8 @@ api_router.include_router(admin.router, prefix="/admin", tags=["admin"],
                           dependencies=[Depends(require_padmin("admin"))])
 # «Τι νέο υπάρχει» — διαχείριση από το back-office, ίδιος φρουρός με τον admin router.
 api_router.include_router(release_notes.admin_router, prefix="/admin", tags=["admin"],
+                          dependencies=[Depends(require_padmin("admin"))])
+api_router.include_router(support_live.admin_router, prefix="/admin", tags=["admin"],
                           dependencies=[Depends(require_padmin("admin"))])
 # Lead Engine — δικός του router (ο admin.py είναι ήδη 3.700+ γραμμές). Ο prefix είναι
 # δηλωμένος ΜΕΣΑ στο module, γι' αυτό οι διαδρομές του στον χάρτη δικαιωμάτων γράφονται

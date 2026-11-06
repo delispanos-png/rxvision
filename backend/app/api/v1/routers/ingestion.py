@@ -387,9 +387,9 @@ async def trigger_hdika_sync(
     """Queue an ΗΔΥΚΑ incremental sync on the worker (non-blocking) so the UI can poll
     /ingestion/jobs for live progress. Idempotent via natural key + hash."""
     assert_source_allowed(await _tenant_country(ctx.tenant_id), "HDIKA")
-    from app.workers.ingestion import hdika_incremental_sync
-    hdika_incremental_sync.delay(ctx.tenant_id)
-    return {"status": "queued"}
+    from app.workers.ingestion import enqueue_incremental_sync
+    # ήδη στην ουρά / σε εξέλιξη → δεν μπαίνει δεύτερος· το UI βλέπει την πρόοδο του τρέχοντος
+    return {"status": "queued" if enqueue_incremental_sync(ctx.tenant_id) else "already_queued"}
 
 
 @router.post("/hdika/reconcile-cancellations")

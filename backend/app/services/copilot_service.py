@@ -336,8 +336,9 @@ async def _read_tool(name: str, args: dict, tenant_id: str, demo: bool = False) 
 
 # ── server actions whitelist (Level 3) ────────────────────────
 async def _a_start_sync(tenant_id, p):
-    from app.workers.ingestion import hdika_incremental_sync
-    hdika_incremental_sync.delay(tenant_id)
+    from app.workers.ingestion import enqueue_incremental_sync
+    if not enqueue_incremental_sync(tenant_id):
+        return "Ο συγχρονισμός ΗΔΥΚΑ είναι ήδη σε εξέλιξη. Δες πρόοδο στο «Λήψη ΗΔΥΚΑ»."
     return "Ξεκίνησε ο συγχρονισμός ΗΔΥΚΑ. Δες πρόοδο στο «Λήψη ΗΔΥΚΑ»."
 
 

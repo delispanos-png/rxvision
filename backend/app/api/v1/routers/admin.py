@@ -55,6 +55,8 @@ class OpenTenantIn(BaseModel):
     modules: list[str] | None = None   # capabilities to grant (overrides the package's base set)
     seats: int | None = None           # ταυτόχρονοι χρήστες (≥ package included seats)
     payment_method: str | None = None  # card | bank
+    trial_start: str | None = None     # YYYY-MM-DD· μόνο στο δοκιμαστικό πακέτο
+    trial_end: str | None = None
 
 
 class StatusIn(BaseModel):
@@ -1110,6 +1112,7 @@ class IntegrationsIn(BaseModel):
     softone_issuer_email: str | None = None
     softone_auto_invoicing: bool | None = None   # master switch: αυτόματη έκδοση παραστατικών
     subscription_provider: str | None = None  # revolut | viva — ποιος χρεώνει τις συνδρομές
+    revolut_pilot_tenants: list[str] | None = None   # δοκιμή Revolut σε συγκεκριμένα φαρμακεία πριν το γύρισμα
     # Alpha Bank (Alpha e-Commerce) card gateway — alternative to Revolut
     alphabank_merchant_id: str | None = None
     alphabank_shared_secret: str | None = None
@@ -1233,6 +1236,14 @@ async def get_integrations(_: PlatformContext = Depends(get_platform_admin)):
                     "configured": bool(softone.get("base_url") and softone.get("username")
                                        and softone.get("password") and softone.get("app_id"))},
         "subscription_provider": billing_cfg.get("active_provider") or "revolut",
+        "revolut_pilot_tenants": billing_cfg.get("revolut_pilot_tenants") or [],
+        # πόσοι χρεώνονται από πού: η μεταφορά από Viva ολοκληρώνεται όταν το viva μηδενιστεί
+        "card_providers": {
+            r["_id"]: r["n"] async for r in db["subscriptions"].aggregate([
+                {"$match": {"status": {"$in": ["active", "past_due"]}, "complimentary": {"$ne": True},
+                            "$or": [{"viva_transaction_id": {"$nin": [None, ""]}},
+                                    {"revolut_customer_id": {"$nin": [None, ""]}}]}},
+                {"$group": {"_id": "$payment_provider", "n": {"$sum": 1}}}]) if r["_id"]},
         "alphabank": {"mode": (decrypt_doc("alphabank", await db["platform_settings"].find_one({"_id": "alphabank"})) or {}).get("mode", "test"),
                       "merchant_id_set": bool((decrypt_doc("alphabank", await db["platform_settings"].find_one({"_id": "alphabank"})) or {}).get("merchant_id")),
                       "shared_secret_set": bool((decrypt_doc("alphabank", await db["platform_settings"].find_one({"_id": "alphabank"})) or {}).get("shared_secret"))},
@@ -1329,7 +1340,20 @@ async def set_integrations(body: IntegrationsIn,
     if s1:
         await db["platform_settings"].update_one(
             {"_id": "softone"}, {"$set": encrypt_fields("softone", s1)}, upsert=True)
+    if body.revolut_pilot_tenants is not None:
+        pilot = [t.strip() for t in body.revolut_pilot_tenants if t.strip()]
+        known = await db["tenants"].count_documents({"_id": {"$in": pilot}})
+        if known != len(set(pilot)):     # λάθος κωδικός δεν πρέπει να μοιάζει με επιτυχημένη δοκιμή
+            raise HTTPException(http_status.HTTP_400_BAD_REQUEST, "unknown_pilot_tenant")
+        await db["platform_settings"].update_one(
+            {"_id": "billing"}, {"$set": {"revolut_pilot_tenants": list(dict.fromkeys(pilot))}}, upsert=True)
     if body.subscription_provider in ("revolut", "viva"):
+        if body.subscription_provider == "revolut":
+            # ΦΡΕΝΟ: χωρίς live κλειδί κάθε νέα εγγραφή/κάρτα θα έπεφτε σε δοκιμαστικό λογαριασμό ή θα απέτυχε
+            from app.services.platform_secrets import decrypt_doc
+            rc = decrypt_doc("revolut", await db["platform_settings"].find_one({"_id": "revolut"})) or {}
+            if not (rc.get("api_key") and rc.get("webhook_secret") and rc.get("mode") == "live"):
+                raise HTTPException(http_status.HTTP_400_BAD_REQUEST, "revolut_not_live")
         await db["platform_settings"].update_one(
             {"_id": "billing"}, {"$set": {"active_provider": body.subscription_provider}}, upsert=True)
     if body.alphabank_merchant_id is not None or body.alphabank_shared_secret or body.alphabank_mode:
@@ -1762,7 +1786,8 @@ async def open_tenant(body: OpenTenantIn, _: PlatformContext = Depends(get_platf
             name=body.name, owner_email=body.owner_email, package_code=body.package_code,
             owner_name=body.owner_name, owner_password=body.owner_password, source="admin",
             billing_cycle=body.billing_cycle, sla=body.sla, company=body.company,
-            modules=body.modules, seats=body.seats, payment_method=body.payment_method)
+            modules=body.modules, seats=body.seats, payment_method=body.payment_method,
+            trial_start=body.trial_start, trial_end=body.trial_end)
     except ProvisioningError as e:
         raise HTTPException(http_status.HTTP_400_BAD_REQUEST, str(e))
     return result

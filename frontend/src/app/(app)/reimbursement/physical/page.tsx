@@ -775,12 +775,12 @@ export default function PhysicalCheckPage() {
                     συνταγές «92…» τις φτιάχνει ο φαρμακοποιός (εμβολιασμός χωρίς ιατρική συνταγή) → καμία
                     πρωτότυπη ιατρού (22/10/2026). Πριν, αυτό το κουτί έκρινε ΜΟΝΟ από το «άυλη» → «ΜΗ ΑΫΛΗ». */}
                 {last.flags?.is_intangible
-                  ? chk(t("Τύπος συνταγής", "Rx type"), t("Άυλη", "Paperless"), t("Δεν χρειάζεται χάρτινη — άυλη συνταγή.", "No paper needed — paperless Rx."), "ok")
+                  ? chk(t("Τύπος συνταγής", "Rx type"), t("Άυλη", "Paperless"), t("Δε χρειάζεται την χάρτινη πρωτότυπη συνταγή.", "The paper original prescription is not needed."), "ok")
                   : (last.flags?.is_pharmacy_vaccination || last.barcode?.startsWith("92"))
                     ? chk(t("Τύπος συνταγής", "Rx type"), t("Εμβολιασμός φαρμακείου", "Pharmacy vaccination"), t("Τη δημιούργησε το φαρμακείο χωρίς ιατρική συνταγή — δεν υπάρχει πρωτότυπη ιατρού να επισυνάψεις.", "Created by the pharmacy without a doctor's prescription — no doctor original to attach."), "ok")
                     : !last.flags?.needs_original
                       ? chk(t("Τύπος συνταγής", "Rx type"), t("ΜΗ ΑΫΛΗ", "NOT paperless"), t("Η πρωτότυπη κατατέθηκε στην 1η εκτέλεση — δεν χρειάζεται ξανά.", "The original was filed with the 1st execution — not needed again."), "ok")
-                      : chk(t("Τύπος συνταγής", "Rx type"), t("ΜΗ ΑΫΛΗ", "NOT paperless"), t("Επισύναψε τη συνταγή με τη σφραγίδα και την υπογραφή του γιατρού.", "Attach the prescription with the doctor's stamp and signature."), "danger")}
+                      : chk(t("Τύπος συνταγής", "Rx type"), t("ΜΗ ΑΫΛΗ", "NOT paperless"), t("Επισύναψε την πρωτότυπη συνταγή με τη σφραγίδα και την υπογραφή του γιατρού.", "Attach the original prescription with the doctor's stamp and signature."), "danger")}
                 {opticalChk
                   ? chk(t("Οπτικός έλεγχος", "Optical check"), opticalChk.title, opticalChk.detail, "warning")
                   : chk(t("Οπτικός έλεγχος", "Optical check"), t("Δεν χρειάζεται", "Not needed"), t("Καμία ιδιαιτερότητα δόσης/ποσότητας.", "No dose/quantity specialness."), "ok")}

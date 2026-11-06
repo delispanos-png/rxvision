@@ -207,12 +207,13 @@ export default function ModulesPlanPage() {
     finally { setBusy(false); }
   }
 
-  // ── upgrade: card (Revolut) · alpha (Alpha Bank redirect) · bank transfer (admin request) ──
+  // ── upgrade: card (ο επιλεγμένος πάροχος) · alpha (Alpha Bank redirect) · bank transfer (admin request) ──
   async function doUpgrade(p: Pkg, method: "card" | "alpha" | "bank") {
     setBusy(true);
     try {
-      const r = await api<{ token?: string; mode?: string; action?: string; fields?: Record<string, string> }>("/subscription/plan-change", { method: "POST", body: JSON.stringify({ plan: p._id, method }) });
+      const r = await api<{ token?: string; mode?: string; checkout_url?: string; action?: string; fields?: Record<string, string> }>("/subscription/plan-change", { method: "POST", body: JSON.stringify({ plan: p._id, method }) });
       if (method === "card") {
+        if (r.checkout_url) { window.location.href = r.checkout_url; return; }   // Viva → σελίδα πληρωμής
         if (r.token) await payWithRevolut(r.token, r.mode || "sandbox");
         await refreshSession();
         qc.invalidateQueries({ queryKey: ["me"] });
@@ -471,10 +472,11 @@ export default function ModulesPlanPage() {
             </div>
             <div className="mt-4 space-y-2">
               {enabledMethods.map((m) => {
-                if (m.id === "card_revolut") return (
+                // μία επιλογή κάρτας ακόμη κι αν είναι ανοιχτοί δύο πάροχοι: πρώτη στη λίστα = ο επιλεγμένος
+                if (m.id === enabledMethods.find((x) => x.id === "card_revolut" || x.id === "card_viva")?.id) return (
                   <button key={m.id} disabled={busy} onClick={() => doUpgrade(upgradeFor, "card")} className="flex w-full items-center gap-3 rounded-xl border border-brand-300 bg-brand-50 px-4 py-3 text-left hover:bg-brand-100 disabled:opacity-50 dark:border-brand-700 dark:bg-brand-950/30">
                     <CreditCard className="h-5 w-5 text-brand-600" />
-                    <div className="flex-1"><div className="text-sm font-semibold text-slate-900 dark:text-slate-100">{t("Κάρτα / IRIS — Viva (άμεση ενεργοποίηση)", "Card / IRIS — Viva (instant)")}</div><div className="text-xs text-slate-500">{t("Ασφαλής πληρωμή — η αναβάθμιση ισχύει αμέσως.", "Secure payment — upgrade applies immediately.")}</div></div>
+                    <div className="flex-1"><div className="text-sm font-semibold text-slate-900 dark:text-slate-100">{t("Κάρτα (άμεση ενεργοποίηση)", "Card (instant activation)")}</div><div className="text-xs text-slate-500">{t("Ασφαλής πληρωμή — η αναβάθμιση ισχύει αμέσως.", "Secure payment — upgrade applies immediately.")}</div></div>
                     {busy && <Loader2 className="h-4 w-4 animate-spin text-brand-600" />}
                   </button>
                 );

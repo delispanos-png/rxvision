@@ -10,7 +10,8 @@ from __future__ import annotations
 import logging
 import secrets
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from app.core.db import shared_db
 from app.core.security import hash_password
@@ -35,6 +36,26 @@ _NOETON_ROLE_MAP = {"admin": "owner", "owner": "owner", "manager": "manager",
 
 
 
+_ATHENS = ZoneInfo("Europe/Athens")
+MAX_TRIAL_DAYS = 365       # πιάνει λάθος έτος στην ημερομηνία, δεν είναι επιχειρηματικό όριο
+
+
+def trial_window(start: str | None, end: str | None, default_days: int,
+                 now: datetime | None = None) -> tuple[datetime, datetime]:
+    """Η δοκιμή που ορίζει το εξουσιοδοτημένο άτομο: από την αρχή της πρώτης έως το τέλος της τελευταίας
+    ημέρας, ώρα Ελλάδας. Χωρίς ημερομηνίες: από σήμερα, για όσες ημέρες λέει το πακέτο."""
+    today = (now or _now()).astimezone(_ATHENS).date()
+    try:
+        first = date.fromisoformat(start) if start else today
+        last = date.fromisoformat(end) if end else first + timedelta(days=default_days)
+    except ValueError as exc:
+        raise ProvisioningError("trial_dates_invalid") from exc
+    if last <= first or last < today or (last - first).days > MAX_TRIAL_DAYS:
+        raise ProvisioningError("trial_dates_invalid")
+    return (datetime.combine(first, time.min, _ATHENS).astimezone(timezone.utc),
+            datetime.combine(last, time(23, 59, 59), _ATHENS).astimezone(timezone.utc))
+
+
 def _now() -> datetime:
     return datetime.now(tz=timezone.utc)
 
@@ -55,12 +76,16 @@ class TenantProvisioningService:
                           source: str = "admin", billing_cycle: str | None = None,
                           sla: str | None = None, company: dict | None = None,
                           modules: list[str] | None = None, seats: int | None = None,
-                          payment_method: str | None = None) -> dict:
+                          payment_method: str | None = None, trial_start: str | None = None,
+                          trial_end: str | None = None) -> dict:
         db = shared_db()
 
         package = await db["packages"].find_one({"_id": package_code})
         if not package:
             raise ProvisioningError(f"unknown_package:{package_code}")
+        trial_days = int(package.get("trial_days") or 0)
+        # ΠΡΙΝ δημιουργηθεί οτιδήποτε: λάθος ημερομηνία δεν αφήνει μισό φαρμακείο
+        trial_from, trial_to = trial_window(trial_start, trial_end, trial_days) if trial_days else (None, None)
         if await db["users"].find_one({"email": owner_email}):
             raise ProvisioningError("email_in_use")
 
@@ -111,7 +136,6 @@ class TenantProvisioningService:
             "created_at": _now(), "updated_at": _now()})
 
         # subscription from the package (billing cycle drives the price; SLA is admin-chosen)
-        trial_days = package.get("trial_days", 0)
         cycle = billing_cycle or "monthly"
         yearly = cycle == "yearly"
         price = package.get("price_yearly", 0) if yearly else package.get("price_monthly", 0)
@@ -139,8 +163,8 @@ class TenantProvisioningService:
             "payment_method": payment_method or "card",
             "modules_included": package.get("modules", []),
             "limits": {"pharmacies": chosen_seats},
-            "trial_ends_at": (_now() + timedelta(days=trial_days)) if trial_days else None,
-            "current_period_end": _now() + timedelta(days=trial_days or 30),
+            "trial_starts_at": trial_from, "trial_ends_at": trial_to,
+            "current_period_end": trial_to or _now() + timedelta(days=30),
             "external_ref": external_ref, "created_at": _now(), "updated_at": _now()})
 
         # Ειδοποίηση ιδιοκτήτη (SMS) για ΚΑΘΕ νέα εγγραφή — δοκιμαστική ή πληρωμένη. Best-effort.

@@ -1,5 +1,6 @@
 "use client";
 
+import { DateInput } from "@/components/ui/DateInput";
 import { appAlert, appConfirm, appPrompt } from "@/store/dialogStore";
 import { useState, useMemo } from "react";
 import { useRouter } from "next/navigation";
@@ -13,7 +14,10 @@ import { Search, X, Users2, Building2, Wallet, KeyRound, PauseCircle, type Lucid
 type Tenant = { id: string; name: string; afm?: string; plan: string; status: string; users: number; active_now?: number; seats?: number; mrr: number; msg_balance?: number; hdika_paused?: boolean; hdika_error?: string | null; hdika_paused_at?: string | null; sync_stopped?: boolean; sync_stopped_at?: string | null; created_at: string;
   /** Πότε διαγράφεται (δοκιμαστικοί) — ίδιος κανόνας με τη νυχτερινή διαγραφή. */
   purge?: { at: string | null; days: number | null; protected: string | null; enabled: boolean } | null };
-type Package = { _id: string; name: string; price_monthly: number; price_yearly?: number; modules: string[]; seats: number; trial_days: number; sla?: string; active?: boolean; extra_user_price?: number; extra_user_price_yearly?: number };
+const isoDay = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+const fmtDay = (v: string) => (v ? `${v.slice(8, 10)}/${v.slice(5, 7)}/${v.slice(0, 4)}` : "—");
+
+type Package = { _id: string; name: string; price_monthly: number; price_yearly?: number; modules: string[]; seats: number; trial_days: number; sla?: string; active?: boolean; included_users?: number; extra_user_price?: number; extra_user_price_yearly?: number };
 type Sla = { _id: string; name?: string; description?: string; active?: boolean; price_monthly?: number; price_yearly?: number };
 type AadeResp = { ok: boolean; name?: string; title?: string; doy?: string; address?: string; postal_code?: string; city?: string };
 
@@ -285,7 +289,9 @@ function OpenTenantModal({ onClose, onDone }: { onClose: () => void; onDone: () 
   const [pkgCode, setPkgCode] = useState("");
   const [billing, setBilling] = useState<"monthly" | "yearly">("monthly");
   const [sla, setSla] = useState("");
-  const [seats, setSeats] = useState(1);
+  const [extra, setExtra] = useState(0);                 // ΜΟΝΟ όσοι ΠΑΝΩ από τους χρήστες του πακέτου
+  const [trialStart, setTrialStart] = useState(() => isoDay(new Date()));
+  const [trialEnd, setTrialEnd] = useState("");          // κενό = διάρκεια πακέτου από την έναρξη
   const [owner, setOwner] = useState({ full_name: "", email: "", password: "" });
   const [payMethod, setPayMethod] = useState<"card" | "bank">("card");
   const [busy, setBusy] = useState(false);
@@ -293,11 +299,16 @@ function OpenTenantModal({ onClose, onDone }: { onClose: () => void; onDone: () 
   const [result, setResult] = useState<{ tenant_id: string; owner_email: string; temp_password: string | null } | null>(null);
 
   const pkg = pkgs.find((p) => p._id === pkgCode) || pkgs[0];
+  const isTrial = (pkg?.trial_days ?? 0) > 0;            // μόνο το δοκιμαστικό: ημερομηνίες αντί για χρέωση
+  const includedFree = Math.max(1, pkg?.included_users ?? 1);   // όσους περιλαμβάνει η τιμή του πακέτου
+  const seats = isTrial ? 1 : includedFree + extra;
+  const trialEndOn = trialEnd || (trialStart ? isoDay(new Date(new Date(trialStart).getTime() + (pkg?.trial_days ?? 0) * 86400000)) : "");
+  const trialOk = !isTrial || (!!trialStart && !!trialEndOn && trialEndOn > trialStart && trialEndOn >= isoDay(new Date()));
   // when a package is chosen, prefill its modules + default SLA
   function choosePkg(code: string) {
     setPkgCode(code);
     const p = pkgs.find((x) => x._id === code);
-    if (p) { if (p.sla) setSla(p.sla); setSeats(1); }   // ΒΑΣΗ: 1 χρήστης· έξτρα ο admin τους προσθέτει χειροκίνητα
+    if (p) { if (p.sla) setSla(p.sla); setExtra(0); setTrialEnd(""); }   // επιπλέον χρήστες: μόνο αν τους ζητήσει ο admin
   }
   function genPassword() {
     const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789!@#$%";
@@ -318,7 +329,7 @@ function OpenTenantModal({ onClose, onDone }: { onClose: () => void; onDone: () 
   }
 
   const step0ok = company.name.trim().length > 1;
-  const step1ok = !!(pkg && pkg._id);
+  const step1ok = !!(pkg && pkg._id) && trialOk;
   const ownerOk = /.+@.+\..+/.test(owner.email);
 
   async function activate() {
@@ -329,12 +340,16 @@ function OpenTenantModal({ onClose, onDone }: { onClose: () => void; onDone: () 
         "/admin/tenants", { method: "POST", body: JSON.stringify({
           name: company.name, owner_email: owner.email, owner_name: owner.full_name || undefined,
           owner_password: owner.password || undefined, package_code: pkg._id,
-          billing_cycle: billing, sla: sla || undefined, seats, payment_method: payMethod,
+          billing_cycle: isTrial ? undefined : billing, sla: sla || undefined, seats, payment_method: payMethod,
+          ...(isTrial ? { trial_start: trialStart, trial_end: trialEndOn } : {}),
           company: { afm: company.afm, name: company.name, title: company.title, doy: company.doy, address: company.address, postal_code: company.postal_code, city: company.city, phone: company.phone, email: company.email },
         }) });
       setResult(r); onDone();
     } catch (e) {
-      setError(e instanceof ApiError && (e.problem as { detail?: string })?.detail === "email_in_use" ? "Το email χρησιμοποιείται ήδη." : "Σφάλμα — δοκιμάστε ξανά.");
+      const detail = e instanceof ApiError ? (e.problem as { detail?: string })?.detail : "";
+      setError(detail === "email_in_use" ? "Το email χρησιμοποιείται ήδη."
+        : detail === "trial_dates_invalid" ? "Έλεγξε τις ημερομηνίες δοκιμής: η λήξη πρέπει να είναι μετά την έναρξη, όχι στο παρελθόν, και μέσα σε ένα έτος."
+        : "Σφάλμα — δοκιμάστε ξανά.");
     } finally { setBusy(false); }
   }
 
@@ -343,13 +358,15 @@ function OpenTenantModal({ onClose, onDone }: { onClose: () => void; onDone: () 
   const yearly = billing === "yearly";
   const per = yearly ? "έτος" : "μήνα";
   const basePrice = pkg ? (yearly ? (pkg.price_yearly ?? 0) : pkg.price_monthly) : 0;
-  const includedFree = 1;                             // ΒΑΣΗ: 1 δωρεάν ταυτόχρονος χρήστης σε ΚΑΘΕ πλάνο
-  const maxSeats = Math.max(1, pkg?.seats ?? 1);      // ΜΕΓΙΣΤΟ όριο πλάνου («έως N»)
-  const extraUsers = Math.max(0, seats - includedFree);   // έξτρα πάνω από τη βάση (1) → χρεώσιμα
+  const maxExtra = Math.max(0, (pkg?.seats ?? includedFree) - includedFree);   // ανώτατο όριο πλάνου
+  const extraUsers = isTrial ? 0 : extra;
   const extraRate = (yearly ? pkg?.extra_user_price_yearly : pkg?.extra_user_price) ?? 0;
   const extraTotal = extraUsers * extraRate;
   const slaPrice = (yearly ? slaObj?.price_yearly : slaObj?.price_monthly) ?? 0;
   const price = basePrice + slaPrice + extraTotal;
+  const summary = isTrial
+    ? <>{company.name} · {pkg?.name} · {fmtDay(trialStart)} έως {fmtDay(trialEndOn)} · 1 χρήστης · <b>Χωρίς χρέωση</b></>
+    : <>{company.name} · {pkg?.name} · {yearly ? "ετήσια" : "μηνιαία"} · {seats} χρήστες ({includedFree} του πακέτου{extraUsers ? ` + ${extraUsers} επιπλέον` : ""}) · <b>{fmtEur(price)}/{per}</b> · SLA: {slaObj?.name || sla || pkg?.sla || "—"}</>;
 
   return (
     <Modal open onClose={onClose} size="2xl">
@@ -397,12 +414,19 @@ function OpenTenantModal({ onClose, onDone }: { onClose: () => void; onDone: () 
                   {pkgs.map((p) => (
                     <button key={p._id} type="button" onClick={() => choosePkg(p._id)} className={`rounded-xl border-2 p-3 text-left ${(pkg?._id === p._id) ? "border-indigo-400 bg-indigo-50/50" : "border-slate-200"}`}>
                       <div className="font-semibold text-slate-900">{p.name}</div>
-                      <div className="text-sm text-indigo-700">{p.price_monthly ? fmtEur(p.price_monthly) + "/μήνα" : "δωρεάν"}{p.trial_days ? ` · trial ${p.trial_days}ημ` : ""}</div>
+                      <div className="text-sm text-indigo-700">{p.price_monthly ? fmtEur(p.price_monthly) + "/μήνα" : "Χωρίς χρέωση · ορίζεις διάρκεια"}{!p.trial_days ? ` · ${Math.max(1, p.included_users ?? 1)} χρήστες` : ""}</div>
                     </button>
                   ))}
                 </div>
               </div>
-              <div>
+              {isTrial ? (
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div><div className={lblc}>Έναρξη δοκιμής *</div><DateInput value={trialStart} onChange={(v) => setTrialStart(v)} className={inpc} /></div>
+                  <div><div className={lblc}>Λήξη δοκιμής *</div><DateInput value={trialEndOn} onChange={(v) => setTrialEnd(v)} className={inpc} /></div>
+                  <p className={`text-xs sm:col-span-2 ${trialOk ? "text-slate-500" : "text-rose-600"}`}>{trialOk ? "Χωρίς χρέωση. Ο πελάτης μπαίνει αμέσως και η πρόσβαση κλείνει στο τέλος της ημέρας λήξης." : "Η λήξη πρέπει να είναι μετά την έναρξη και όχι στο παρελθόν."}</p>
+                </div>
+              ) : (
+                <div>
                 <div className={lblc}>Κύκλος Τιμολόγησης</div>
                 <div className="grid grid-cols-2 gap-2">
                   {(["monthly", "yearly"] as const).map((bc) => (
@@ -410,6 +434,7 @@ function OpenTenantModal({ onClose, onDone }: { onClose: () => void; onDone: () 
                   ))}
                 </div>
               </div>
+              )}
               <div>
                 <div className={lblc}>SLA / Υποστήριξη</div>
                 <select value={sla} onChange={(e) => setSla(e.target.value)} className={inpc}>
@@ -417,24 +442,31 @@ function OpenTenantModal({ onClose, onDone }: { onClose: () => void; onDone: () 
                   {slaTiers.map((s) => <option key={s._id} value={s._id}>{s.name || s._id}{s.description ? ` — ${s.description}` : ""}</option>)}
                 </select>
               </div>
-              <div>
-                <div className={lblc}>Ταυτόχρονοι χρήστες</div>
-                <div className="flex items-center gap-3">
-                  <button type="button" onClick={() => setSeats((n) => Math.max(1, n - 1))} className="grid h-9 w-9 place-items-center rounded-lg border border-slate-300 text-lg text-slate-600 hover:bg-slate-50">−</button>
-                  <input type="number" min={1} max={maxSeats} value={seats} onChange={(e) => setSeats(Math.min(maxSeats, Math.max(1, parseInt(e.target.value) || 1)))} className={`${inpc} w-20 text-center`} />
-                  <button type="button" disabled={seats >= maxSeats} onClick={() => setSeats((n) => Math.min(maxSeats, n + 1))} className="grid h-9 w-9 place-items-center rounded-lg border border-slate-300 text-lg text-slate-600 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40">+</button>
-                  <span className="text-xs text-slate-400">{extraUsers > 0 ? `1 βάση + ${extraUsers} έξτρα (έως ${maxSeats})` : `1 χρήστης (έως ${maxSeats} στο πακέτο)`}</span>
+              {isTrial ? (
+                <p className="rounded-lg bg-slate-50 p-3 text-sm text-slate-600">Η δοκιμή περιλαμβάνει <b>1 χρήστη</b>.</p>
+              ) : (
+                <div>
+                  <div className={lblc}>Επιπλέον χρήστες</div>
+                  <p className="mb-2 text-xs text-slate-500">Το πακέτο περιλαμβάνει ήδη <b>{includedFree} {includedFree === 1 ? "χρήστη" : "χρήστες"}</b>. Βάλε εδώ μόνο όσους θέλει ο πελάτης <b>πάνω από αυτούς</b>{extraRate ? `, με ${fmtEur(extraRate)} ο καθένας ανά ${per}` : ""}.</p>
+                  <div className="flex items-center gap-3">
+                    <button type="button" disabled={extra <= 0} onClick={() => setExtra((n) => Math.max(0, n - 1))} className="grid h-9 w-9 place-items-center rounded-lg border border-slate-300 text-lg text-slate-600 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40">−</button>
+                    <input type="number" min={0} max={maxExtra} value={extra} onChange={(e) => setExtra(Math.min(maxExtra, Math.max(0, parseInt(e.target.value) || 0)))} className={`${inpc} w-20 text-center`} />
+                    <button type="button" disabled={extra >= maxExtra} onClick={() => setExtra((n) => Math.min(maxExtra, n + 1))} className="grid h-9 w-9 place-items-center rounded-lg border border-slate-300 text-lg text-slate-600 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40">+</button>
+                    <span className="text-xs text-slate-500">Σύνολο: <b>{seats}</b> {seats === 1 ? "χρήστης" : "χρήστες"} (μέγιστο {pkg?.seats ?? includedFree})</span>
+                  </div>
                 </div>
-              </div>
+              )}
+              {!isTrial && (
               <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
                 <div className="mb-2 text-xs font-semibold text-slate-500">Ανάλυση κόστους ({yearly ? "ετήσια" : "μηνιαία"})</div>
                 <dl className="space-y-1.5 text-sm">
                   <div className="flex justify-between"><dt className="text-slate-600">{pkg?.name || "Πακέτο"}</dt><dd className="font-medium text-slate-800">{fmtEur(basePrice)}</dd></div>
                   <div className="flex justify-between"><dt className="text-slate-600">SLA{slaObj?.name ? ` · ${slaObj.name}` : ""}</dt><dd className="font-medium text-slate-800">{slaPrice ? fmtEur(slaPrice) : "—"}</dd></div>
-                  <div className="flex justify-between"><dt className="text-slate-600">Έξτρα χρήστες {extraUsers > 0 ? `(${extraUsers} × ${fmtEur(extraRate)})` : ""}</dt><dd className="font-medium text-slate-800">{extraTotal ? fmtEur(extraTotal) : "—"}</dd></div>
+                  <div className="flex justify-between"><dt className="text-slate-600">Επιπλέον χρήστες {extraUsers > 0 ? `(${extraUsers} × ${fmtEur(extraRate)})` : ""}</dt><dd className="font-medium text-slate-800">{extraTotal ? fmtEur(extraTotal) : "—"}</dd></div>
                   <div className="mt-1 flex justify-between border-t border-slate-200 pt-2 text-base"><dt className="font-semibold text-slate-900">Σύνολο</dt><dd className="font-bold text-indigo-700">{fmtEur(price)}<span className="text-xs font-normal text-slate-400">/{per}</span></dd></div>
                 </dl>
               </div>
+              )}
             </div>
           )}
 
@@ -451,7 +483,7 @@ function OpenTenantModal({ onClose, onDone }: { onClose: () => void; onDone: () 
                   <div className="mt-1 text-xs text-slate-500">Τιμολόγιο με IBAN στο email τιμολόγησης πριν τη λήξη της δοκιμής.</div>
                 </button>
               </div>
-              <div className="rounded-lg bg-slate-50 p-3 text-xs text-slate-600">{company.name} · {pkg?.name} · {yearly ? "ετήσια" : "μηνιαία"} · {seats} χρήστες · <b>{fmtEur(price)}/{per}</b> · SLA: {slaObj?.name || sla || pkg?.sla || "—"}</div>
+              <div className="rounded-lg bg-slate-50 p-3 text-xs text-slate-600">{summary}</div>
             </div>
           )}
 
@@ -466,7 +498,7 @@ function OpenTenantModal({ onClose, onDone }: { onClose: () => void; onDone: () 
                   <input value={owner.password} onChange={(e) => setOwner({ ...owner, password: e.target.value })} className={inpc} />
                 </label>
               </div>
-              <div className="rounded-lg bg-slate-50 p-3 text-xs text-slate-600">{company.name} · {pkg?.name} · {yearly ? "ετήσια" : "μηνιαία"} · {seats} χρήστες · <b>{fmtEur(price)}/{per}</b> · SLA: {slaObj?.name || sla || pkg?.sla || "—"} · Πληρωμή: {payMethod === "card" ? "κάρτα" : "τράπεζα"}</div>
+              <div className="rounded-lg bg-slate-50 p-3 text-xs text-slate-600">{summary}</div>
               {error && <div role="alert" className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}
             </div>
           )}

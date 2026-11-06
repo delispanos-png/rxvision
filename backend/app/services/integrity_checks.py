@@ -20,6 +20,7 @@ from app.services.stats_exclusion import COUNTABLE_EXEC
 
 WINDOW_DAYS = 35          # πόσο πίσω κοιτάμε τις εκτελέσεις κάθε νύχτα
 CATALOG_MAX_AGE_DAYS = 14
+SYNC_MAX_PER_DAY = 400   # beat ανά 5′ = 288· περιθώριο για χειροκίνητους
 
 
 @dataclass
@@ -174,4 +175,37 @@ async def check_platform(db, now: datetime | None = None) -> list[Finding]:
         {"$limit": 50}], allowDiskUse=True).to_list(length=None)
     out.append(_f("cross_tenant_duplicate", "Η ίδια εκτέλεση υπάρχει σε δύο φαρμακεία",
                   len(rows), len(rows), None, [r["_id"] for r in rows]))
+    # στοιβαγμένοι συγχρονισμοί: beat 5′ = 288/ημέρα. Πάνω από SYNC_MAX_PER_DAY → κάποια είσοδος
+    # παρακάμπτει το `enqueue_incremental_sync` (02/11/2026: ~710/φαρμακείο, ουρά 3.300, ψεύτικα SMS)
+    over = await db["sync_jobs"].aggregate([   # tenant-ok: πλατφόρμα, πλήθος ανά φαρμακείο
+        {"$match": {"type": "incremental", "started_at": {"$gte": now - timedelta(days=1)}}},
+        {"$group": {"_id": "$tenant_id", "n": {"$sum": 1}}},
+        {"$match": {"n": {"$gt": SYNC_MAX_PER_DAY}}}]).to_list(length=None)
+    out.append(_f("sync_stacking", f"Φαρμακεία με πάνω από {SYNC_MAX_PER_DAY} συγχρονισμούς το 24ωρο "
+                                   "(στοιβάζονται στην ουρά)", len(over), len(over), None,
+                  [f"{r['_id']}: {r['n']}" for r in over]))
+    # βραδινός έλεγχος ακυρώσεων (30 ημέρες): ΚΑΘΕ φαρμακείο που συγχρονίζεται πρέπει να έχει επιτυχή
+    # εκτέλεση το τελευταίο 26ωρο (02/11/2026: έτρεχε έως 19 ώρες αργά και δεν το ήξερε κανείς)
+    from app.services.ingestion_gate import eligible_tenant_ids
+    missing: list[str] = []
+    failed: list[str] = []
+    elig = await eligible_tenant_ids(db)
+    for tid in elig:
+        last = await db["cancellation_runs"].find_one(  # tenant-ok: φίλτρο tenant_id
+            {"tenant_id": tid, "at": {"$gte": now - timedelta(hours=26)}}, sort=[("at", -1)])
+        if not last:
+            missing.append(tid)
+        elif not last.get("ok"):
+            failed.append(f"{tid}: {last.get('reason')}")
+    out.append(_f("cancellation_check_missing", "Φαρμακεία χωρίς βραδινό έλεγχο ακυρώσεων το τελευταίο 26ωρο",
+                  len(missing), len(elig), None, missing))
+    out.append(_f("cancellation_check_failed", "Ο βραδινός έλεγχος ακυρώσεων δεν ολοκληρώθηκε (ΗΔΥΚΑ/φρένο ασφαλείας)",
+                  len(failed), len(elig), None, failed))
+    # συνδρομή Revolut χωρίς πελάτη Revolut = αυτόματη χρέωση που δεν θα γίνει ποτέ
+    rev = await db["subscriptions"].find(  # tenant-ok: πλατφόρμα, έλεγχος χρεώσεων
+        {"payment_provider": "revolut", "status": "active", "complimentary": {"$ne": True}},
+        {"tenant_id": 1, "revolut_customer_id": 1}).to_list(length=None)
+    no_card = [s["tenant_id"] for s in rev if not s.get("revolut_customer_id")]
+    out.append(_f("revolut_card_missing", "Συνδρομή Revolut χωρίς αποθηκευμένη κάρτα", len(no_card), len(rev),
+                  None, no_card))
     return [f for f in out if f]

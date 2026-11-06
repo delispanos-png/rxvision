@@ -10,6 +10,7 @@ import { KpiCard } from "@/components/kpi/KpiCard";
 import { useT } from "@/store/prefStore";
 import { CreditCard, Sparkles, Database, Check, Loader2, Lock, Users, RefreshCw } from "lucide-react";
 import { appConfirm, appAlert } from "@/store/dialogStore";
+import { saveCardWithRevolut } from "@/lib/revolutCheckout";
 
 /** Άνοιγμα του Revolut Checkout popup για ένα order token (φορτώνει το embed.js on demand). */
 function payWithRevolut(token: string, mode: string): Promise<void> {
@@ -120,7 +121,12 @@ export default function BillingSettingsPage() {
     } finally { setBuyingAi(null); }
   }
 
-  const refresh = () => { qc.invalidateQueries({ queryKey: ["subscription", "extras"] }); qc.invalidateQueries({ queryKey: ["subscription", "seats"] }); qc.invalidateQueries({ queryKey: queryKeys.subscription() }); };
+  const billing = useQuery({
+    queryKey: ["billing-status", "provider"],
+    queryFn: () => api<{ active_provider?: string; card_move_suggested?: boolean }>("/billing/status"),
+    retry: false,
+  });
+  const refresh = () => { qc.invalidateQueries({ queryKey: ["billing-status"] }); qc.invalidateQueries({ queryKey: ["subscription", "extras"] }); qc.invalidateQueries({ queryKey: ["subscription", "seats"] }); qc.invalidateQueries({ queryKey: queryKeys.subscription() }); };
 
   // Αλλαγή αριθμού χρηστών: αύξηση → προεπισκόπηση αναλογικής χρέωσης + επιβεβαίωση· μείωση → στην ανανέωση.
   const [seatBusy, setSeatBusy] = useState(false);
@@ -161,24 +167,6 @@ export default function BillingSettingsPage() {
     } finally { setSeatBusy(false); }
   }
 
-  // Revolut save-card popup (ίδιο pattern με την εγγραφή)
-  async function payWithRevolut(token: string, mode: string): Promise<void> {
-    return new Promise<void>((resolve) => {
-      const w = window as unknown as { RevolutCheckout?: (t: string, m: string) => Promise<{ payWithPopup: (o: Record<string, () => void>) => void }> };
-      const run = () => {
-        if (!w.RevolutCheckout) return resolve();
-        w.RevolutCheckout(token, mode === "live" ? "prod" : "sandbox")
-          .then((rc) => rc.payWithPopup({ onSuccess: resolve, onError: resolve, onCancel: resolve }))
-          .catch(() => resolve());
-      };
-      if (w.RevolutCheckout) return run();
-      const el = document.createElement("script");
-      el.src = mode === "live" ? "https://merchant.revolut.com/embed.js" : "https://sandbox-merchant.revolut.com/embed.js";
-      el.onload = run; el.onerror = () => resolve();
-      document.body.appendChild(el);
-    });
-  }
-
   async function addCard() {
     setCardBusy(true); setNotice(null);
     try {
@@ -188,11 +176,23 @@ export default function BillingSettingsPage() {
         return;
       }
       if (cc.ok && cc.token) {
-        await payWithRevolut(cc.token, cc.mode || "sandbox");
-        setNotice(t("Η κάρτα αποθηκεύτηκε ✓ — η συνδρομή σου ανανεώνεται πλέον αυτόματα & ξεκλείδωσες τις επιπλέον δυνατότητες.", "Card saved ✓ — your subscription now auto-renews & extras are unlocked."));
+        const res = await saveCardWithRevolut(cc.token, cc.mode || "sandbox");
+        if (res !== "success") {
+          setNotice(t("Η κάρτα δεν αποθηκεύτηκε. Η υπάρχουσα κάρτα σου, αν έχεις, συνεχίζει να χρεώνεται κανονικά.", "The card was not saved. Your existing card, if any, keeps being charged as usual."));
+          return;
+        }
+        const saved = await api<{ ok: boolean }>("/billing/card-capture/confirm", { method: "POST" });
+        setNotice(saved.ok
+          ? t("Η κάρτα αποθηκεύτηκε ✓ — η συνδρομή σου ανανεώνεται πλέον αυτόματα & ξεκλείδωσες τις επιπλέον δυνατότητες.", "Card saved ✓ — your subscription now renews automatically and the extras are unlocked.")
+          : t("Η επιβεβαίωση της κάρτας καθυστερεί. Θα ενημερωθεί μόνη της σε λίγα λεπτά. Μέχρι τότε ισχύει η προηγούμενη κάρτα.", "Card confirmation is taking longer. It will update by itself in a few minutes. Until then your previous card stays in use."));
         refresh();
       } else {
-        setNotice(t("Η χρέωση με κάρτα δεν είναι διαθέσιμη αυτή τη στιγμή. Δοκίμασε αργότερα ή επικοίνωσε μαζί μας.", "Card payment is not available right now."));
+        const err = cc.error || "";
+        setNotice(err === "no_billing_email"
+          ? t("Λείπει το email χρέωσης του λογαριασμού σας, γι' αυτό δεν μπορεί να ανοίξει η καταχώρηση κάρτας. Επικοινωνήστε μαζί μας για να το συμπληρώσουμε.", "Your account has no billing email, so card entry cannot open. Contact us and we will add it.")
+          : err.endsWith("_not_configured")
+            ? t("Η καταχώρηση κάρτας δεν έχει ενεργοποιηθεί ακόμη. Επικοινωνήστε μαζί μας.", "Card entry is not enabled yet. Please contact us.")
+            : t("Ο πάροχος πληρωμών δεν απάντησε. Δοκιμάστε ξανά σε λίγα λεπτά. Η τωρινή σας κάρτα, αν έχετε, δεν επηρεάζεται.", "The payment provider did not respond. Try again in a few minutes. Your current card, if any, is not affected."));
       }
     } catch { setNotice(t("Κάτι πήγε στραβά με την κάρτα. Δοκίμασε ξανά.", "Something went wrong with the card.")); }
     finally { setCardBusy(false); }
@@ -224,6 +224,16 @@ export default function BillingSettingsPage() {
 
       {notice && <div className="mb-4 rounded-lg bg-slate-100 px-4 py-2 text-sm text-slate-700">{notice}</div>}
 
+      {billing.data?.card_move_suggested && (
+        <div className="mb-4 rounded-xl border border-amber-300 bg-amber-50/60 p-4 text-sm text-amber-900">
+          <p className="font-semibold">{t("Ενημέρωσε την κάρτα σου, όποτε σε βολεύει", "Update your card, whenever it suits you")}</p>
+          <p className="mt-1">{t("Περνάμε τις πληρωμές μας σε νέο πάροχο, τη Revolut. Αν θέλεις, καταχώρησε την κάρτα σου εκεί, μία μόνο φορά. Δεν υπάρχει προθεσμία: μέχρι τότε η συνδρομή σου συνεχίζει κανονικά με την τωρινή σου κάρτα.", "We are moving our payments to a new provider, Revolut. If you like, enter your card there, one time only. There is no deadline: until then your subscription continues as usual with your current card.")}</p>
+          <button onClick={addCard} disabled={cardBusy} className="mt-3 inline-flex items-center gap-1.5 rounded-lg bg-amber-600 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-700 disabled:opacity-50">
+            {cardBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <CreditCard className="h-4 w-4" />} {t("Ενημέρωση κάρτας", "Update card")}
+          </button>
+        </div>
+      )}
+
       {/* ── Τρόπος πληρωμής (κάρτα) ── */}
       <div className={`mb-6 rounded-xl border p-5 shadow-sm ${x?.card_on_file ? "border-emerald-200 bg-emerald-50/50" : "border-amber-300 bg-amber-50/60"}`}>
         <h2 className="mb-1 flex items-center gap-2 text-sm font-semibold text-slate-800"><CreditCard className="h-4 w-4" /> {t("Τρόπος πληρωμής", "Payment method")}</h2>
@@ -246,7 +256,9 @@ export default function BillingSettingsPage() {
           <div className="space-y-2 text-sm text-amber-900">
             <p className="flex items-start gap-1.5 font-semibold"><RefreshCw className="mt-0.5 h-4 w-4 shrink-0" /> {t(`Πρόσθεσε κάρτα → η συνδρομή σου ανανεώνεται ΑΥΤΟΜΑΤΑ κάθε ${perLabel} στο ίδιο πλάνο. Τέλος στη χειροκίνητη αγορά — δεν χρειάζεται να θυμάσαι τίποτα.`, `Add a card → your subscription auto-renews every ${perLabel} on the same plan. No more manual purchase — nothing to remember.`)}</p>
             <p>{t("Ξεκλειδώνεις επίσης τις επιπλέον δυνατότητες: top-up μηνυμάτων (SMS / Viber / email), περισσότερα AI ερωτήματα, μεγαλύτερη διατήρηση δεδομένων, επιπλέον χρήστες και ό,τι νέο προστεθεί.", "You also unlock extras: message top-up (SMS / Viber / email), more AI questions, longer data retention, extra users, and anything new.")}</p>
-            <p className="text-xs text-amber-700">{t("Ασφαλής αποθήκευση κάρτας μέσω Viva (κάρτα ή IRIS). Μπορείς να κάνεις upgrade/downgrade ή να αφαιρέσεις την κάρτα όποτε θες.", "Secure card storage via Viva (card or IRIS). You can upgrade/downgrade or remove the card anytime.")}</p>
+            <p className="text-xs text-amber-700">{billing.data?.active_provider === "revolut"
+              ? t("Ασφαλής αποθήκευση κάρτας μέσω Revolut. Μπορείς να κάνεις upgrade/downgrade ή να αφαιρέσεις την κάρτα όποτε θες.", "Secure card storage via Revolut. You can upgrade/downgrade or remove the card anytime.")
+              : t("Ασφαλής αποθήκευση κάρτας μέσω Viva (κάρτα ή IRIS). Μπορείς να κάνεις upgrade/downgrade ή να αφαιρέσεις την κάρτα όποτε θες.", "Secure card storage via Viva (card or IRIS). You can upgrade/downgrade or remove the card anytime.")}</p>
             <button onClick={addCard} disabled={cardBusy} className="inline-flex items-center gap-1.5 rounded-lg bg-amber-600 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-700 disabled:opacity-50">
               {cardBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <CreditCard className="h-4 w-4" />} {t("Πρόσθεσε κάρτα & ενεργοποίησε αυτόματη ανανέωση", "Add card & enable auto-renewal")}
             </button>

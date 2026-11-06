@@ -62,6 +62,8 @@ class OnboardingService:
                        addons: list[str] | None = None,
                        activate: bool = False,
                        viva_transaction_id: str | None = None,
+                       card_provider: str | None = None,
+                       revolut_customer_id: str | None = None,
                        reactivate_tenant_id: str | None = None,
                        accepted_terms: bool | None = None,
                        terms_version: str | None = None) -> dict:
@@ -154,8 +156,9 @@ class OnboardingService:
             "modules_included": (pkg or {}).get("modules") or _MODULES,
             "limits": {"pharmacies": 1, "history_months": 36, "api_sync": True},
             "current_period_end": _now() + timedelta(days=period_days),
-            # paid activation → κάρτα αποθηκευμένη στη Viva (recurring seed = viva_transaction_id)
-            "payment_provider": "viva" if activate else None,
+            # paid activation → κάρτα στον πάροχο της εγγραφής (viva_transaction_id ή revolut_customer_id)
+            "payment_provider": (card_provider or "viva") if activate else None,
+            "revolut_customer_id": revolut_customer_id if activate else None,
             "payment_status": "card_saved" if activate else "trial",
             "viva_transaction_id": viva_transaction_id if activate else None,
             "started_at": _now(),
@@ -163,7 +166,7 @@ class OnboardingService:
             "accepted_terms": bool(accepted_terms),
             "terms_version": terms_version,
             "terms_accepted_at": _now() if accepted_terms else None,
-            # how the customer chose to pay at signup: "card" (Viva) or "bank" (manual transfer)
+            # how the customer chose to pay at signup: "card" (Viva/Revolut) or "bank" (manual transfer)
             "payment_method": payment_method or "card",
         }
         if reactivating:
@@ -283,17 +286,10 @@ class OnboardingService:
         from app.services.invoice_service import gross_from_price
         amount = gross_from_price(int(price) + sla_price + extra_total + addons_total,
                                   bool((pkg or {}).get("price_includes_vat")), country)
-        # Δωρεάν trial πακέτο (μηδενικό κόστος): καμία πληρωμή → pending «paid» κατευθείαν (→ credentials).
-        is_trial = amount <= 0
-        # Reactivation ΔΕΝ ξαναδίνει δωρεάν trial — ο πελάτης πρέπει να επιλέξει ΠΛΗΡΩΜΕΝΟ πακέτο.
-        if reactivate_tid and is_trial:
-            raise OnboardingError("already_had_trial")
-        # Το ΙΔΙΟ ΑΦΜ/email δεν ξαναπαίρνει ΔΩΡΕΑΝ trial ακόμη κι αν ο παλιός (ληγμένος) λογαριασμός
-        # διαγράφηκε — κρατάμε το ΑΦΜ στη βάση leads. Μπορεί όμως να αγοράσει ΠΛΗΡΩΜΕΝΟ πακέτο.
-        if is_trial and not reactivate_tid:
-            from app.services import trial_leads
-            if await trial_leads.afm_had_trial(afm, owner_email):
-                raise OnboardingError("already_had_trial")
+        # Η δοκιμή δίνεται ΜΟΝΟ από εξουσιοδοτημένο άτομο (adminpanel), ΠΟΤΕ από δημόσια εγγραφή
+        is_trial = False
+        if amount <= 0 or int((pkg or {}).get("trial_days") or 0) > 0:
+            raise OnboardingError("trial_by_invitation")
         status = "paid" if is_trial else ("awaiting_payment" if payment_method == "card" else "awaiting_bank_approval")
         pid = uuid.uuid4().hex
         await db["pending_registrations"].insert_one({
@@ -311,8 +307,9 @@ class OnboardingService:
         return {"pending_id": pid, "amount_cents": amount, "is_trial": is_trial,
                 "reactivation": bool(reactivate_tid)}
 
-    async def mark_pending_paid(self, pending_id: str, viva_transaction_id: str | None = None) -> bool:
-        """Καλείται από το Viva webhook (signup:<id>) → η pending γίνεται `paid` (idempotent).
+    async def mark_pending_paid(self, pending_id: str, viva_transaction_id: str | None = None,
+                                revolut_order_id: str | None = None) -> bool:
+        """Καλείται από τα webhooks (signup:<id>) → η pending γίνεται `paid` (idempotent).
         Στέλνει email με link ολοκλήρωσης — καλύπτει IRIS (ασύγχρονο, έως 20') & τυχόν εγκατάλειψη."""
         db = shared_db()
         if viva_transaction_id:   # πληρωμή Viva → η ΙΔΙΑ η Viva πρέπει να δείχνει ΑΥΤΗ την εγγραφή & το ποσό της
@@ -324,11 +321,27 @@ class OnboardingService:
                 from app.services.billing_service import payment_rejected
                 await payment_rejected("εγγραφή", str(pending_id), v, int(p.get("amount_cents") or 0))
                 return False
+        extra: dict = {}
+        if revolut_order_id:      # ίδιος κανόνας: η ΙΔΙΑ η Revolut δείχνει ΑΥΤΗ την εγγραφή & το ποσό της
+            from app.services import revolut_service
+            from app.services.billing_service import payment_rejected
+            p = await db["pending_registrations"].find_one({"_id": pending_id}) or {}
+            v = await revolut_service.verify_payment(revolut_order_id, reference=f"signup:{pending_id}",
+                                                     expected_cents=int(p.get("amount_cents") or 0))
+            if not v["ok"]:
+                if v.get("reason") != "not_finished":
+                    await payment_rejected("εγγραφή", str(pending_id), v, int(p.get("amount_cents") or 0),
+                                           provider="revolut")
+                return False
+            # πληρωμένη εγγραφή χωρίς σωσμένη κάρτα: κανονικός πελάτης, αλλά φαίνεται ως «Χωρίς κάρτα»
+            cust = v.get("customer_id")
+            extra = {"card_provider": "revolut",
+                     "revolut_customer_id": cust if await revolut_service.merchant_method(cust) else None}
         r = await db["pending_registrations"].update_one(
             {"_id": pending_id, "status": {"$in": ["awaiting_payment", "awaiting_bank_approval"]}},
             # paid → επέκταση παραθύρου (7μέρες) ώστε να ΜΗΝ χαθεί αν ο πελάτης δεν ολοκληρώσει άμεσα
             {"$set": {"status": "paid", "viva_transaction_id": viva_transaction_id, "paid_at": _now(),
-                      "expires_at": _now() + timedelta(days=7)}})
+                      "expires_at": _now() + timedelta(days=7), **extra}})
         if r.modified_count > 0:
             await self._send_completion_email(await db["pending_registrations"].find_one({"_id": pending_id}))
         return r.modified_count > 0
@@ -439,6 +452,7 @@ class OnboardingService:
             # trial πακέτο → trialing (activate=False)· paid → active με αποθηκευμένη κάρτα
             activate=not p.get("is_trial"),
             viva_transaction_id=p.get("viva_transaction_id"),
+            card_provider=p.get("card_provider"), revolut_customer_id=p.get("revolut_customer_id"),
             reactivate_tenant_id=p.get("reactivate_tenant_id"),
             accepted_terms=p.get("accepted_terms"), terms_version=p.get("terms_version"))
         await db["pending_registrations"].update_one(
@@ -451,6 +465,6 @@ class OnboardingService:
                 tenant_id=res["tenant_id"], kind="subscription", gross_cents=int(p["amount_cents"]),
                 description=(f"Συνδρομή RxVision «{(await db['packages'].find_one({'_id': p.get('package_code')}, {'name': 1}) or {}).get('name') or p.get('package_code') or ''}» "
                              f"({invoice_service.cycle_el(p.get('billing_cycle'))}) — πρώτη περίοδος"),
-                payment={"method": p.get("payment_method") or "card", "provider": "viva",
-                         "transaction_id": p.get("viva_transaction_id")})
+                payment={"method": p.get("payment_method") or "card", "provider": p.get("card_provider") or "viva",
+                         "transaction_id": p.get("revolut_order_id") or p.get("viva_transaction_id")})
         return res

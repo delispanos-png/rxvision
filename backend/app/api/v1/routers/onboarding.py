@@ -43,38 +43,7 @@ class CompanyIn(BaseModel):
     region: str | None = Field(None, max_length=120)
 
 
-class RegisterIn(BaseModel):
-    pharmacy_name: str = Field(..., min_length=2, max_length=120)
-    country: Literal["GR", "CY"] = "GR"
-    email: EmailStr
-    password: str = Field(..., min_length=8, max_length=128)
-    full_name: str = Field(..., min_length=2, max_length=120)
-    # wizard extensions (all optional → legacy register still works)
-    company: CompanyIn | None = None
-    package_code: str | None = Field(None, max_length=40)
-    billing_cycle: Literal["monthly", "yearly"] | None = None
-    sla: str | None = Field(None, max_length=40)
-    seats: int | None = Field(None, ge=1, le=999)        # ταυτόχρονοι χρήστες
-    payment_method: Literal["card", "bank"] | None = None
-    addons: list[str] | None = None                      # à-la-carte add-on ids chosen at signup
-
-
-@router.post("/register", status_code=201,
-             dependencies=[Depends(rate_limit("onboarding_register", limit=5, window_seconds=600))])
-async def register(body: RegisterIn):
-    _require_afm(body.company, body.country)
-    try:
-        return await OnboardingService().register(
-            pharmacy_name=body.pharmacy_name, country=body.country,
-            email=body.email, password=body.password, full_name=body.full_name,
-            company=body.company.model_dump() if body.company else None,
-            package_code=body.package_code, billing_cycle=body.billing_cycle, sla=body.sla,
-            seats=body.seats, payment_method=body.payment_method, addons=body.addons)
-    except OnboardingError as exc:
-        raise HTTPException(status.HTTP_409_CONFLICT, detail={"error": str(exc)})
-
-
-# ── Φάση 1: πληρωμή-πρώτα (pending → Viva → materialize) ────────────────────────────────
+# ── Φάση 1: πληρωμή-πρώτα (pending → Viva/Revolut → materialize) ────────────────────────────────
 class IntentIn(BaseModel):
     pharmacy_name: str = Field(..., min_length=2, max_length=120)
     country: Literal["GR", "CY"] = "GR"
@@ -86,6 +55,7 @@ class IntentIn(BaseModel):
     sla: str | None = Field(None, max_length=40)
     seats: int | None = Field(None, ge=1, le=999)
     payment_method: Literal["card", "bank"] = "card"
+    card_provider: Literal["viva", "revolut"] | None = None   # η επιλογή του πελάτη· ελέγχεται στον server
     addons: list[str] | None = None
     accepted_terms: bool = False               # αποδοχή Όρων Χρήσης (υποχρεωτική στο frontend)
     terms_version: str | None = Field(None, max_length=40)
@@ -123,7 +93,8 @@ async def check_afm(afm: str):
 @router.post("/register-intent", status_code=201,
              dependencies=[Depends(rate_limit("onboarding_intent", limit=10, window_seconds=600))])
 async def register_intent(body: IntentIn):
-    """Δημιουργεί προσωρινή εγγραφή (ΧΩΡΙΣ λογαριασμό) & ξεκινά την πληρωμή. Κάρτα → Viva checkout_url."""
+    """Δημιουργεί προσωρινή εγγραφή (ΧΩΡΙΣ λογαριασμό) & ξεκινά την πληρωμή.
+    Κάρτα → Viva checkout_url ή Revolut token (παράθυρο πληρωμής), κατά τον πάροχο."""
     _require_afm(body.company, body.country)
     svc = OnboardingService()
     try:
@@ -138,11 +109,21 @@ async def register_intent(body: IntentIn):
     except OnboardingError as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, detail={"error": str(exc)})
     pid = pending["pending_id"]
-    if pending.get("is_trial"):     # δωρεάν trial → καμία πληρωμή, κατευθείαν στο βήμα κωδικού
-        return {"pending_id": pid, "status": "paid", "trial": True, "amount_cents": 0}
     if body.payment_method == "card":
         from app.core.db import shared_db
-        from app.services import viva_service
+        from app.services import billing_service, revolut_service, viva_service
+        if await billing_service.signup_provider(body.card_provider) == "revolut":
+            order = await revolut_service.create_topup_order(
+                amount=pending["amount_cents"], currency="EUR", email=body.owner_email, name=body.owner_name,
+                tenant_id=f"signup:{pid}",
+                description=f"RxVision {body.billing_cycle or 'monthly'} — {body.pharmacy_name}")
+            if not order.get("ok"):
+                raise HTTPException(status.HTTP_502_BAD_GATEWAY, detail={"error": order.get("error", "revolut_error")})
+            await shared_db()["pending_registrations"].update_one(
+                {"_id": pid}, {"$set": {"revolut_order_id": order["order_id"], "card_provider": "revolut"}})
+            return {"pending_id": pid, "provider": "revolut", "token": order["token"],
+                    "mode": (await revolut_service.config()).get("mode", "sandbox"),
+                    "amount_cents": pending["amount_cents"]}
         order = await viva_service.create_checkout_order(
             amount=pending["amount_cents"], ref=f"signup:{pid}",
             description=f"RxVision {body.billing_cycle or 'monthly'} — {body.pharmacy_name}",
@@ -159,10 +140,18 @@ async def register_intent(body: IntentIn):
 @router.get("/register-status/{pending_id}",
             dependencies=[Depends(rate_limit("onboarding_status", limit=120, window_seconds=600))])
 async def register_status(pending_id: str):
-    """Poll κατάστασης προσωρινής εγγραφής μετά την επιστροφή από Viva."""
-    p = await OnboardingService().get_pending(pending_id)
+    """Poll κατάστασης προσωρινής εγγραφής μετά την επιστροφή από τον πάροχο."""
+    svc = OnboardingService()
+    p = await svc.get_pending(pending_id)
     if not p:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail={"error": "not_found"})
+    if p.get("status") == "awaiting_payment" and p.get("revolut_order_id"):
+        # ρωτάμε ΕΜΕΙΣ τη Revolut: ο πελάτης δεν περιμένει το webhook
+        from app.services import revolut_service
+        order_id = str(p["revolut_order_id"])
+        if (await revolut_service.verify_payment(order_id, reference=f"signup:{pending_id}")).get("ok"):
+            await svc.mark_pending_paid(pending_id, revolut_order_id=order_id)
+            p = await svc.get_pending(pending_id) or p
     return {"status": p.get("status"), "payment_method": p.get("payment_method"),
             "is_trial": bool(p.get("is_trial")),
             "owner_email": p.get("owner_email"), "owner_name": p.get("owner_name")}
@@ -192,7 +181,9 @@ async def public_packages():
     from app.core.db import shared_db
     from app.repositories.base import jsonsafe
     db = shared_db()
-    flt = {"$or": [{"active": {"$ne": False}}, {"active": {"$exists": False}}]}
+    # η δοκιμή δίνεται ΜΟΝΟ από εξουσιοδοτημένο άτομο (adminpanel): δεν υπάρχει στη δημόσια εγγραφή
+    flt = {"$and": [{"$or": [{"active": {"$ne": False}}, {"active": {"$exists": False}}]},
+                    {"trial_days": {"$in": [0, None]}}]}
 
     def _public_pkg(p: dict) -> dict:
         cycles = [c for c in (p.get("billing_cycles") or ["monthly", "yearly"]) if c in ("monthly", "yearly")] or ["monthly", "yearly"]

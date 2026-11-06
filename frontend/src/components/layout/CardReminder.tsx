@@ -6,7 +6,7 @@ import { api } from "@/lib/apiClient";
 import { CreditCard } from "lucide-react";
 import { useT } from "@/store/prefStore";
 
-type Status = { card_on_file?: boolean; complimentary?: boolean; viva_configured?: boolean; revolut_configured?: boolean };
+type Status = { card_on_file?: boolean; complimentary?: boolean; viva_configured?: boolean; revolut_configured?: boolean; card_move_suggested?: boolean };
 
 /**
  * Διακριτική ένδειξη στο Topbar: όσο ο φαρμακοποιός ΔΕΝ έχει καταχωρήσει κάρτα, εμφανίζεται pill
@@ -20,7 +20,17 @@ export function CardReminder() {
     queryFn: () => api<Status>("/billing/status"),
     retry: false, refetchInterval: 300_000,
   });
-  if (!data || data.card_on_file) return null;
+  if (!data) return null;
+  if (data.card_move_suggested) {
+    return (
+      <Link href="/settings/billing" title={t("Η κάρτα σου χρεώνεται κανονικά, αλλά αλλάζουμε πάροχο πληρωμών. Πάτησε για να την ενημερώσεις.", "Your card keeps being charged, but we are changing payment provider. Click to update it.")}
+        className="inline-flex items-center gap-1.5 rounded-full border border-amber-400 bg-amber-100 px-2.5 py-1 text-[11px] font-bold text-amber-800 shadow-sm hover:bg-amber-200 dark:border-amber-500/50 dark:bg-amber-500/15 dark:text-amber-300">
+        <CreditCard className="h-3.5 w-3.5" />
+        <span>{t("Ενημέρωση κάρτας", "Update card")}</span>
+      </Link>
+    );
+  }
+  if (data.card_on_file) return null;
   if (!(data.viva_configured || data.revolut_configured)) return null;
   return (
     <>

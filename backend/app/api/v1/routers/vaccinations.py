@@ -34,6 +34,7 @@ async def summary(
 ):
     db = shared_db()
     # Αντιγριπικά: χορηγημένα από φαρμακοποιό (INFLUENZA) + συνταγογραφημένα από γιατρό (PRESCRIPTION).
+    # Εδώ μετρούν ΚΑΙ οι εγγραφές χωρίς barcode: το ερώτημα είναι ποιος εμβολιάστηκε, όχι πόσες συνταγές.
     base = {"tenant_id": ctx.tenant_id, "source": {"$in": ["INFLUENZA", "PRESCRIPTION"]},
             "executed_at": {"$gte": date_from, "$lt": date_to}}
     active = {**base, "cancelled": {"$ne": True}}

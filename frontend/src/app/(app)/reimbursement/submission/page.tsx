@@ -152,7 +152,7 @@ export default function SubmissionPage() {
       )}
       {/* χειροκίνητο τιμολόγιο — π.χ. Αναλώσιμα e-dapy (εκτός εκτελέσεων) */}
       <div className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
-        <h4 className="mb-2 inline-flex items-center gap-1.5 text-sm font-semibold text-slate-700 dark:text-slate-200"><Plus className="h-4 w-4 text-amber-600" /> {t("Προσθήκη χειροκίνητου τιμολογίου", "Add manual invoice")}</h4>
+        <h4 className="mb-2 inline-flex items-center gap-1.5 text-sm font-semibold text-slate-700 dark:text-slate-200"><Plus className="h-4 w-4 text-amber-600" /> {t("Προσθήκη τιμολογίου χειροκίνητα", "Add invoice manually")}</h4>
         <p className="mb-3 text-xs text-slate-400">{t("Για υποβολές εκτός εκτελέσεων — π.χ. Αναλώσιμα e-dapy. Παρακολουθείται μαζί με τις υπόλοιπες (κατάσταση/πληρωμή).", "For submissions outside executions — e.g. consumables e-dapy. Tracked alongside the rest.")}</p>
         <div className="flex flex-wrap items-end gap-2">
           <div className="flex-1 min-w-[160px]">

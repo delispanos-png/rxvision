@@ -14,13 +14,18 @@ from app.core.ratelimit import client_ip
 _AUDITED_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 
 
+def _is_live_stream(path: str) -> bool:
+    """Η ζωντανή υποστήριξη στέλνει κάθε 1,5″: η έναρξη και το τέλος καταγράφονται χωριστά."""
+    return "/support-live/" in path and path.endswith(("/events", "/pointer"))
+
+
 class AuditMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         request_id = request.headers.get("x-request-id", str(uuid.uuid4()))
         request.state.request_id = request_id
         response = await call_next(request)
 
-        if request.method in _AUDITED_METHODS:
+        if request.method in _AUDITED_METHODS and not _is_live_stream(request.url.path):
             ctx = getattr(request.state, "tenant", None)
             admin = getattr(request.state, "admin", None)
             path = request.url.path

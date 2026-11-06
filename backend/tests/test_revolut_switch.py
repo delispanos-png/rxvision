@@ -41,7 +41,10 @@ async def _db(monkeypatch, active="revolut"):
 
     async def quiet(*a, **k):
         return None
-    monkeypatch.setattr(bs, "_billing_email", quiet)
+
+    async def billing_email(*a):
+        return "a@b.gr"
+    monkeypatch.setattr(bs, "_billing_email", billing_email)
     monkeypatch.setattr(bs, "payment_rejected", quiet)
     import app.services.comms as comms
     import app.services.receipts as receipts
@@ -51,6 +54,10 @@ async def _db(monkeypatch, active="revolut"):
     async def configured():
         return True
     monkeypatch.setattr(bs, "any_provider_configured", configured)
+
+    async def merchant_method(_):
+        return {"id": "m-1", "type": "card"}
+    monkeypatch.setattr(rv, "merchant_method", merchant_method)
 
     async def no_sleep(_):
         return None

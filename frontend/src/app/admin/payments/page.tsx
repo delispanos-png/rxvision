@@ -10,6 +10,8 @@ type Integrations = {
   viva?: { mode: string; client_id_set: boolean; client_secret_set: boolean; merchant_id_set: boolean; api_key_set: boolean; source_code: string; checkout_ready: boolean; recurring_ready: boolean };
   alphabank?: { mode: string; merchant_id_set: boolean; shared_secret_set: boolean };
   subscription_provider?: string;
+  card_providers?: Record<string, number>;
+  revolut_pilot_tenants?: string[];
 };
 type PayMethods = { methods: Record<string, { enabled: boolean; label: { el: string; en: string } }>; alphabank_configured: boolean };
 type Bank = { beneficiary?: string; bank_name?: string; iban?: string; swift?: string; notes?: string };
@@ -25,6 +27,7 @@ export default function PaymentsSettingsPage() {
 
   const [revKey, setRevKey] = useState("");
   const [revMode, setRevMode] = useState("sandbox");
+  const [pilot, setPilot] = useState("");
   const [revSecret, setRevSecret] = useState("");
   const [vivaCid, setVivaCid] = useState("");
   const [vivaCsec, setVivaCsec] = useState("");
@@ -38,7 +41,7 @@ export default function PaymentsSettingsPage() {
   const [subProvider, setSubProvider] = useState("revolut");
   const [bank, setBank] = useState<Bank>({});
 
-  useEffect(() => { if (status.data?.alphabank) setAbMode(status.data.alphabank.mode || "test"); if (status.data?.viva) { setVivaMode(status.data.viva.mode || "demo"); setVivaSrc(status.data.viva.source_code || ""); } if (status.data?.subscription_provider) setSubProvider(status.data.subscription_provider); }, [status.data]);
+  useEffect(() => { if (status.data?.revolut) setRevMode(status.data.revolut.mode || "sandbox"); if (status.data) setPilot((status.data.revolut_pilot_tenants ?? []).join(", ")); if (status.data?.alphabank) setAbMode(status.data.alphabank.mode || "test"); if (status.data?.viva) { setVivaMode(status.data.viva.mode || "demo"); setVivaSrc(status.data.viva.source_code || ""); } if (status.data?.subscription_provider) setSubProvider(status.data.subscription_provider); }, [status.data]);
   useEffect(() => { if (bankQ.data) setBank(bankQ.data); }, [bankQ.data]);
 
   const togglePm = useMutation({
@@ -51,6 +54,7 @@ export default function PaymentsSettingsPage() {
       viva_client_id: vivaCid || null, viva_client_secret: vivaCsec || null, viva_merchant_id: vivaMid || null,
       viva_api_key: vivaKey || null, viva_source_code: vivaSrc || null, viva_mode: vivaMode || null,
       subscription_provider: subProvider || null,
+      revolut_pilot_tenants: pilot.split(",").map((t) => t.trim()).filter(Boolean),
       alphabank_merchant_id: abMid || null, alphabank_shared_secret: abSecret || null, alphabank_mode: abMode || null,
     }) }),
     onSuccess: () => { setRevKey(""); setRevSecret(""); setVivaCid(""); setVivaCsec(""); setVivaMid(""); setVivaKey(""); setAbMid(""); setAbSecret(""); qc.invalidateQueries({ queryKey: ["integrations"] }); qc.invalidateQueries({ queryKey: ["admin", "payment-methods"] }); },
@@ -79,6 +83,11 @@ export default function PaymentsSettingsPage() {
           </select>
           <span className="text-[11px] text-slate-500">{subProvider === "viva" ? (s?.viva?.recurring_ready ? "✓ Viva recurring έτοιμο" : "⚠️ Χρειάζεται Merchant ID + API key παρακάτω") : (s?.revolut?.api_key_set ? "✓ Revolut ρυθμισμένο" : "⚠️ Revolut μη ρυθμισμένο")}</span>
         </div>
+        <p className="mt-2 text-xs text-slate-600">Κάρτες που χρεώνονται σήμερα: Viva <b>{s?.card_providers?.viva ?? 0}</b> · Revolut <b>{s?.card_providers?.revolut ?? 0}</b>. Οι πελάτες της Viva συνεχίζουν στη Viva μέχρι να καταχωρήσουν κάρτα στη Revolut. Για γύρισμα σε Revolut χρειάζονται live κλειδί και webhook secret.</p>
+        <label className="mt-3 block text-xs text-slate-500">Δοκιμή Revolut μόνο σε αυτά τα φαρμακεία (κωδικοί χωρισμένοι με κόμμα, π.χ. T-C838D2E4)
+          <input value={pilot} onChange={(e) => setPilot(e.target.value)} placeholder="Κανένα" className={`${inp} mt-1 max-w-md`} />
+        </label>
+        <p className="mt-2 text-xs text-slate-600">Πώς γίνεται: για <b>γενικό γύρισμα</b> διάλεξε πάροχο, άνοιξε την «Κάρτα (Revolut)» και κλείσε την «Κάρτα / IRIS (Viva)» στους ενεργούς τρόπους, μετά πάτα «Αποθήκευση διαπιστευτηρίων» πιο κάτω. Για <b>επιστροφή</b> κάνε το αντίστροφο. Οι πελάτες με κάρτα μένουν πάντα στον πάροχό τους.</p>
       </div>
 
       {/* Ενεργοί τρόποι πληρωμής */}
@@ -159,9 +168,16 @@ export default function PaymentsSettingsPage() {
         <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700">⚠️ Απαιτείται επιβεβαίωση Alpha Bank: gateway URL & σειρά πεδίων digest (docs/alphabank-api-requirements.md). Callback: <code className="break-all">https://app.rxvision.gr/api/v1/subscription/alpha-callback</code></p>
       </div>
 
-      <button onClick={() => saveCreds.mutate()} disabled={saveCreds.isPending} className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50">
+      <button onClick={() => saveCreds.mutate()} disabled={!s || saveCreds.isPending} className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50">
         {saveCreds.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : saveCreds.isSuccess ? <Check className="h-4 w-4" /> : <Save className="h-4 w-4" />} Αποθήκευση διαπιστευτηρίων καρτών
       </button>
+      {saveCreds.isError && (
+        <p className="mt-2 text-xs text-rose-600">{JSON.stringify((saveCreds.error as { problem?: unknown })?.problem ?? "").includes("revolut_not_live")
+          ? "Δεν έγινε γύρισμα σε Revolut: χρειάζονται live κλειδί, webhook secret και περιβάλλον Live."
+          : JSON.stringify((saveCreds.error as { problem?: unknown })?.problem ?? "").includes("unknown_pilot_tenant")
+            ? "Κάποιος κωδικός φαρμακείου στη δοκιμή Revolut δεν υπάρχει."
+            : "Η αποθήκευση απέτυχε. Δοκίμασε ξανά."}</p>
+      )}
 
       {/* Τραπεζικός λογαριασμός κατάθεσης */}
       <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">

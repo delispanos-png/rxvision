@@ -24,6 +24,7 @@ type Suggestion = {
   avg_daily: number;
   suggested_qty: number;
   est_cost: number; // cents
+  unit_cost?: number; // cents per unit
   supplier?: string | null;
 };
 
@@ -34,7 +35,7 @@ export default function OrdersPage() {
 
   const { data, isLoading, isError, refetch } = useQuery({
     queryKey: queryKeys.orderSuggestions(),
-    queryFn: () => api<{ items: Suggestion[]; warehouse_stock?: boolean; lead_time_days?: number }>(`/orders/suggestions`),
+    queryFn: () => api<{ items: Suggestion[]; warehouse_stock?: boolean; lead_time_days?: number; repeats_included?: boolean }>(`/orders/suggestions`),
   });
   // Ορίζοντας επαναλήψεων: ΜΙΑ ρύθμιση φαρμακείου, ίδια και στον Σύμβουλο Παραγγελίας
   const horizon = useMutation({
@@ -60,7 +61,7 @@ export default function OrdersPage() {
   // απόθεμα: χειροκίνητο override αν υπάρχει, αλλιώς ΑΥΤΟΜΑΤΑ το τρέχον απόθεμα ΑΠΟΘΗΚΗΣ (on_hand)
   const stockOf = (r: Suggestion) => stock[r.product_id] ?? (r.on_hand ?? 0);
   const adj = (r: Suggestion) => Math.max(0, need(r) - stockOf(r));                   // παράγγειλε = ανάγκη − απόθεμα
-  const unitCost = (r: Suggestion) => (r.suggested_qty ? (r.est_cost || 0) / r.suggested_qty : 0);
+  const unitCost = (r: Suggestion) => r.unit_cost ?? 0;
   const adjCost = (r: Suggestion) => Math.round(unitCost(r) * adj(r));
 
   const cols = useMemo<Column<Suggestion>[]>(() => [
@@ -105,11 +106,12 @@ export default function OrdersPage() {
             <span className="text-xs text-slate-400">{t("ημέρες", "days")}</span>
           </div>
           <label className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300"
-            title={t("Επαναλήψεις που ανοίγουν μέσα σε τόσες ημέρες. Ίδιος ορίζοντας και στον Σύμβουλο Παραγγελίας.", "Repeats opening within this many days. Same horizon in the Order Advisor.")}>
+            title={t("Επαναλήψεις που ανοίγουν μέσα σε τόσες ημέρες. Ίδιος ορίζοντας και στον Σύμβουλο Παραγγελίας. Με «Να μη συμμετέχουν» η λίστα βγαίνει μόνο από τις εκτελέσεις των τελευταίων 90 ημερών.", "Repeats opening within this many days. Same horizon in the Order Advisor. With “Do not include” the list comes only from the executions of the last 90 days.")}>
             {t("Επαναλήψεις που ανοίγουν σε:", "Repeats opening within:")}
-            <select value={data?.lead_time_days ?? 7} onChange={(e) => horizon.mutate(Number(e.target.value))}
+            <select value={data?.repeats_included === false ? 0 : (data?.lead_time_days ?? 7)} onChange={(e) => horizon.mutate(Number(e.target.value))}
               className="rounded border border-slate-300 px-1 py-0.5 text-xs dark:border-slate-600 dark:bg-slate-800">
               {[3, 7, 14, 30].map((d) => <option key={d} value={d}>{t(`${d} ημέρες`, `${d} days`)}</option>)}
+              <option value={0}>{t("Να μη συμμετέχουν", "Do not include")}</option>
             </select>
           </label>
           <button

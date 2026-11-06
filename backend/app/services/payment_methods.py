@@ -54,9 +54,12 @@ async def is_enabled(method: str) -> bool:
 
 
 async def public_methods() -> list[dict]:
-    """Enabled methods for the tenant/registration UI (id + label)."""
+    """Enabled methods for the tenant/registration UI (id + label). Πρώτη η κάρτα του επιλεγμένου παρόχου:
+    η πρώτη είναι και η προεπιλογή στην εγγραφή, άρα μία ρύθμιση αποφασίζει, ακόμη κι αν είναι ανοιχτές δύο."""
     en = await enabled()
-    return [{"id": m, "label": _LABELS[m]} for m in METHODS if en.get(m)]
+    billing = await shared_db()["platform_settings"].find_one({"_id": "billing"}) or {}
+    first = f"card_{billing.get('active_provider') or 'revolut'}"
+    return [{"id": m, "label": _LABELS[m]} for m in sorted(METHODS, key=lambda m: m != first) if en.get(m)]
 
 
 async def set_config(updates: dict[str, bool]) -> dict:

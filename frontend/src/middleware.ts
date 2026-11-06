@@ -22,17 +22,25 @@ const CLARITY = {
   img: "https://*.clarity.ms https://c.bing.com",
 };
 
+// ΖΩΝΤΑΝΗ ΥΠΟΣΤΗΡΙΞΗ: η οθόνη του πελάτη που βλέπει ο supporter φορτώνει εικόνες και γραμματοσειρές
+// από την εφαρμογή. Μόνο στο adminpanel, και μόνο εικόνες/γραμματοσειρές.
+const APP_ASSETS = "https://app.rxvision.gr";
+
+// REVOLUT: το παράθυρο πληρωμής φορτώνει script και iframe από τη Revolut. Χωρίς αυτές τις εξαιρέσεις ο
+// browser το μπλοκάρει σιωπηλά. Μόνο σε app/my, το adminpanel δεν πληρώνει.
+const REVOLUT = "https://merchant.revolut.com https://sandbox-merchant.revolut.com";
+
 function csp(withClarity: boolean): string {
   return [
   "default-src 'self'",
-  `script-src 'self' 'unsafe-inline'${withClarity ? ` ${CLARITY.script}` : ""}`,
+  `script-src 'self' 'unsafe-inline'${withClarity ? ` ${CLARITY.script} ${REVOLUT}` : ""}`,
   "style-src 'self' 'unsafe-inline'",
-  `img-src 'self' data: blob:${withClarity ? ` ${CLARITY.img}` : ""}`,
-  "font-src 'self' data:",
-  `connect-src 'self'${withClarity ? ` ${CLARITY.connect}` : ""}`,
+  `img-src 'self' data: blob: ${withClarity ? CLARITY.img : APP_ASSETS}`,
+  `font-src 'self' data:${withClarity ? "" : ` ${APP_ASSETS}`}`,
+  `connect-src 'self'${withClarity ? ` ${CLARITY.connect} ${REVOLUT}` : ""}`,
   "manifest-src 'self'",
   "worker-src 'self' blob:",
-  "frame-src 'self' blob: https://www.youtube.com https://www.youtube-nocookie.com https://player.vimeo.com",
+  `frame-src 'self' blob: https://www.youtube.com https://www.youtube-nocookie.com https://player.vimeo.com${withClarity ? ` ${REVOLUT}` : ""}`,
   "object-src 'none'",
   "base-uri 'self'",
   "form-action 'self'",

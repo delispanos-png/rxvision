@@ -11,7 +11,6 @@
   },
   "dependencies": {
     "@tanstack/react-query": "^5.51.0",
-    "bwip-js": "^4.0.0",
     "@tiptap/extension-image": "^2.6.6",
     "@tiptap/extension-link": "^2.6.6",
     "@tiptap/extension-text-align": "^2.6.6",
@@ -19,6 +18,7 @@
     "@tiptap/pm": "^2.6.6",
     "@tiptap/react": "^2.6.6",
     "@tiptap/starter-kit": "^2.6.6",
+    "bwip-js": "^4.0.0",
     "echarts": "^5.5.1",
     "echarts-for-react": "^3.0.2",
     "html2canvas": "^1.4.1",
@@ -30,6 +30,7 @@
     "react": "18.3.1",
     "react-dom": "18.3.1",
     "react-hook-form": "^7.52.1",
+    "rrweb": "2.2.0",
     "xlsx": "^0.18.5",
     "zod": "^3.23.8",
     "zustand": "^4.5.4"

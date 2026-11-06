@@ -11,7 +11,7 @@ import { usePref, useT } from "@/store/prefStore";
 import { Logo, LogoMark } from "@/components/brand/Logo";
 import { CLOUDON_LOGO_DATA_URI } from "@/components/brand/cloudonLogo";
 import { APP_VERSION } from "@/lib/version";
-import { helpFor } from "@/lib/help";
+import { HELP } from "@/lib/help";
 import { Tooltip } from "@/components/ui/Tooltip";
 import {
   Activity, BarChart3, Boxes, Warehouse, Layers, CalendarClock, ChevronRight, LayoutDashboard,
@@ -20,6 +20,13 @@ import {
 } from "lucide-react";
 
 import { NAV_GROUPS as GROUPS, type Group, type Node, type Me } from "./navCatalog";
+
+// href → εξήγηση μενού του ίδιου του στοιχείου (κόμβοι και φύλλα)
+const TIPS = new Map<string, { tip: string; tip_en?: string }>();
+for (const g of GROUPS) for (const n of g.items) {
+  if (n.href && n.tip) TIPS.set(n.href, { tip: n.tip, tip_en: n.tip_en });
+  for (const c of n.children ?? []) if (c.tip) TIPS.set(c.href, { tip: c.tip, tip_en: c.tip_en });
+}
 
 /** Συντόμευση του χειριστή. Ζει εδώ (όχι στον κατάλογο): είναι επιλογή ανθρώπου, όχι μενού. */
 type Pin = { href: string; label?: string; en?: string };
@@ -234,8 +241,13 @@ export function Sidebar() {
   /** Tooltip μενού = η ίδια εξήγηση με τη βοήθεια «?» της σελίδας (μία πηγή: lib/help.ts). Μαζεμένο μενού →
    *  και το όνομα (αλλιώς δεν φαίνεται). `withName` για ομάδες όπου το όνομα κρύβεται πίσω από εικονίδιο. */
   const tip = (href: string, name: string, withName = false): string | undefined => {
-    const h = helpFor(href.split(/[?#]/)[0]);
-    const intro = h ? t(h.intro, h.intro_en || h.intro) : "";
+    // 1) η εξήγηση του ΙΔΙΟΥ του στοιχείου (navCatalog `tip`) · 2) η βοήθεια της σελίδας ΜΟΝΟ αν είναι
+    // ακριβώς αυτή η σελίδα. ΠΟΤΕ της γονικής (04/11/2026: οι «Προχορηγήσεις» έδειχναν την εξήγηση των
+    // «Ασφαλισμένων» και κάθε καρτέλα #… τη γενική εξήγηση της σελίδας της).
+    const own = TIPS.get(href);
+    const path = href.split(/[?#]/)[0];
+    const h = !own && path === href ? HELP[path] : undefined;
+    const intro = own ? t(own.tip, own.tip_en || own.tip) : h ? t(h.intro, h.intro_en || h.intro) : "";
     if (collapsed || withName) return intro ? `${name} — ${intro}` : name;
     return intro || undefined;
   };

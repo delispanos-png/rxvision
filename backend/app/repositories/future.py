@@ -5,6 +5,7 @@ ANALYTICS.md §9 (upcoming per day) and Bonus (order suggestions with safety sto
 
 from __future__ import annotations
 
+import math
 from datetime import datetime, timedelta
 
 from app.repositories.base import BaseRepository
@@ -205,14 +206,18 @@ class FuturePrescriptionRepository(BaseRepository):
 
     async def order_suggestions(self, *, today: datetime, lead_horizon: datetime,
                                 safety_stock_pct: float = 15.0,
-                                history_days: int = 90, use_warehouse: bool = True) -> list[dict]:
+                                history_days: int = 90, use_warehouse: bool = True,
+                                include_repeats: bool = True) -> list[dict]:
         """ANALYTICS.md Bonus — expected demand + safety stock → suggested qty.
 
         Enriched with the REAL trailing-window daily consumption (Μ.Ο./ημέρα) and the
         REAL unit wholesale cost (from executed lines), so Εκτ. κόστος is meaningful.
-        on_hand/supplier stay None — RxVision has no inventory/supplier feed."""
+        on_hand/supplier stay None — RxVision has no inventory/supplier feed.
+
+        `include_repeats=False`: τα είδη και η ζήτηση έρχονται ΜΟΝΟ από τις εκτελέσεις της περιόδου,
+        χωρίς καμία επανάληψη που ανοίγει. Ίδια στήλη Μ.Ο./ημέρα, ίδιο κόστος, ίδιο απόθεμα."""
         factor = 1 + safety_stock_pct / 100.0
-        demand = await self.aggregate([
+        demand = [] if not include_repeats else await self.aggregate([
             {"$match": {"status": "pending",
                         "expected_open_date": {"$gte": today, "$lt": lead_horizon}}},
             {"$unwind": "$products"},
@@ -252,8 +257,27 @@ class FuturePrescriptionRepository(BaseRepository):
                         "price": {"$max": {"$ifNull": ["$wholesale_price", 0]}}}},
             {"$group": {"_id": "$_id.p", "units": {"$sum": "$qty"},
                         "cost": {"$sum": {"$multiply": ["$qty", "$price"]}}}},
+            *([] if include_repeats else [
+                {"$lookup": {"from": "products", "localField": "_id",
+                             "foreignField": "_id", "as": "p"}},
+                {"$set": {"product_name": {"$first": "$p.name"},
+                          "substance": {"$first": "$p.substance"},
+                          "category": {"$first": "$p.category"},
+                          "barcode": {"$first": "$p.barcode"}}},
+                {"$project": {"p": 0}},
+            ]),
         ])
         hmap = {h["_id"]: h for h in hist}
+        if not include_repeats:
+            days = max(1, (lead_horizon - today).days)
+            for h in hist:
+                if not h["_id"]:
+                    continue
+                expected = math.ceil(h["units"] / history_days * days)
+                demand.append({"product_id": h["_id"], "expected_demand": expected,
+                               "suggested_qty": math.ceil(expected * factor),
+                               **{k: h.get(k) for k in ("product_name", "substance",
+                                                        "category", "barcode")}})
         # ── ΑΠΟΘΗΚΗ: τρέχον απόθεμα ανά barcode → «καθαρή» πρόταση = πρόταση − απόθεμα ──
         # ΜΟΝΟ αν η συνδρομή περιλαμβάνει το e-shop/αποθήκη (use_warehouse). Αλλιώς on_hand=None
         # (καμία αναφορά αποθέματος) → ο φαρμακοποιός βάζει χειροκίνητα, όπως πριν.
@@ -281,6 +305,7 @@ class FuturePrescriptionRepository(BaseRepository):
                 "barcode": d.get("barcode"),
                 "substance": None if sub in (None, "None", "") else sub,
                 "avg_daily": round(units / history_days, 2),
+                "unit_cost": round(unit_cost, 2),      # λεπτά ανά τεμάχιο, ανεξάρτητα από το απόθεμα
                 "on_hand": on_hand,                    # τρέχον απόθεμα αποθήκης
                 "net_suggested_qty": net,              # ΚΑΘΑΡΗ πρόταση (μετά την αφαίρεση αποθέματος)
                 "est_cost": int(round(net * unit_cost)),

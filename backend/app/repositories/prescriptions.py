@@ -797,7 +797,10 @@ class PrescriptionRepository(BaseRepository):
     # «Εμβολιασμός φαρμακείου». ΔΕΝ αντιγράφονται στις εκτελέσεις (θα έμπαιναν σε κλείσιμο μήνα,
     # αλυσίδες, Partner API και θα μετρούσαν διπλά στη λίστα, που ήδη τις συγχωνεύει).
     # ΕΝΑΣ ορισμός για Dashboard / γράφημα / Δείκτες: αυτή η συνάρτηση.
-    _PV_MATCH = {"source": "INFLUENZA", "cancelled": {"$ne": True}}
+    # ΣΥΝΤΑΓΗ εμβολίου του φαρμακείου = εγγραφή Μητρώου ΜΕ barcode «92…» (05/11/2026). Χωρίς barcode (4.495
+    # από 12.519, ΟΛΕΣ με μηδενικά ποσά) είναι απλή «διενέργεια εμβολιασμού» πάνω σε συνταγή γιατρού, που
+    # μετρά ήδη ως εκτέλεση — μέτρημά της = διπλή συνταγή. Για το ΠΟΙΟΣ εμβολιάστηκε μετρούν κανονικά.
+    _PV_MATCH = {"source": "INFLUENZA", "cancelled": {"$ne": True}, "barcode": {"$nin": [None, ""]}}
     _PV_FIELD = {"executions": None, "value": "$total_price", "claimed": "$insurance_part"}
 
     async def pharmacy_vaccinations(self, date_from: datetime, date_to: datetime, *,

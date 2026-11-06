@@ -22,15 +22,14 @@ async def _flu_vaccination_rows(tenant_id: str, date_from, date_to, barcode, pag
     """Flu vaccinations mapped into the prescriptions-list row shape (separate `vaccinations` coll)."""
     from app.core.db import shared_db
     from app.repositories.base import jsonsafe
+    from app.repositories.prescriptions import PrescriptionRepository
     db = shared_db()
-    # Ακυρωμένοι ΕΚΤΟΣ — ίδιος ορισμός με τον αριθμό των Δεικτών/Dashboard
-    # (`PrescriptionRepository.pharmacy_vaccinations`), αλλιώς η κάρτα και η λίστα της διαφωνούν.
+    # Ίδιος ορισμός με τον αριθμό των Δεικτών/Dashboard (`_PV_MATCH`), αλλιώς η κάρτα και η λίστα διαφωνούν.
+    q = {"tenant_id": tenant_id, **PrescriptionRepository._PV_MATCH}
     if barcode and barcode.strip():
-        q = {"tenant_id": tenant_id, "source": "INFLUENZA", "cancelled": {"$ne": True},
-             "barcode": barcode.strip()}
+        q["barcode"] = barcode.strip()
     else:
-        q = {"tenant_id": tenant_id, "source": "INFLUENZA", "cancelled": {"$ne": True},
-             "executed_at": {"$gte": date_from, "$lt": date_to}}
+        q["executed_at"] = {"$gte": date_from, "$lt": date_to}
     rows = []
     async for v in (db["vaccinations"].find(q).sort("executed_at", -1)
                     .skip((page - 1) * page_size).limit(page_size)):
@@ -66,7 +65,8 @@ async def _vaccination_rows_for_list(tenant_id: str, *, date_from, date_to, barc
     """Συνταγές εμβολίων για την ΚΑΝΟΝΙΚΗ λίστα (14/10/2026): ίδια λογική φίλτρων με τις εκτελέσεις —
     αριθμός/ΑΜΚΑ/όνομα αγνοούν την περίοδο, αλλιώς περίοδος. Ακυρωμένες εκτός."""
     from app.core.db import shared_db
-    q: dict = {"tenant_id": tenant_id, "source": "INFLUENZA", "cancelled": {"$ne": True}}
+    from app.repositories.prescriptions import PrescriptionRepository
+    q: dict = {"tenant_id": tenant_id, **PrescriptionRepository._PV_MATCH}
     if barcode and barcode.strip():
         rx = {"$regex": "^" + re.escape(barcode.strip())}
         q["$or"] = [{"barcode": rx}, {"external_id": rx}]

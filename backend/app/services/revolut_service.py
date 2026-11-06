@@ -47,8 +47,42 @@ async def is_configured() -> bool:
     return bool(base and key)
 
 
+def _customer(email: str, name: str, customer_id: str | None = None) -> dict:
+    """Υπάρχων πελάτης Revolut → μόνο το id, ώστε η νέα κάρτα να μπει στον ΙΔΙΟ πελάτη."""
+    return {"id": customer_id} if customer_id else {"email": email, "full_name": name}
+
+
+async def _with_location(payload: dict) -> dict:
+    """Ο λογαριασμός Merchant είναι κοινός με το Findora: κάθε παραγγελία δηλώνει ότι ανήκει στο RxVision."""
+    loc = (await config()).get("location_id")
+    return {**payload, "location_id": loc} if loc else payload
+
+
+async def merchant_method(customer_id: str | None) -> dict | None:
+    """Η πιο πρόσφατη κάρτα που ο πελάτης άφησε για ΑΥΤΟΜΑΤΕΣ χρεώσεις μας ({id, type}) ή None.
+
+    ΕΝΑΣ ορισμός για το «έχουμε κάρτα που χρεώνεται χωρίς τον πελάτη». Κανείς δεν γίνεται πελάτης
+    Revolut χωρίς αυτή: ολοκληρωμένη πληρωμή ΔΕΝ σημαίνει ότι αποθηκεύτηκε κάρτα."""
+    base, key = await _client()
+    if not base or not customer_id:
+        return None
+    try:
+        async with httpx.AsyncClient(timeout=15) as cl:
+            r = await cl.get(f"{base}/customers/{customer_id}/payment-methods", headers=_headers(key))
+            r.raise_for_status()
+            d = r.json()
+    except Exception:  # noqa: BLE001
+        return None
+    rows = d if isinstance(d, list) else (d or {}).get("payment_methods") or []
+    usable = [m for m in rows if str(m.get("saved_for") or "").lower() == "merchant" and m.get("id")]
+    if not usable:
+        return None
+    best = max(usable, key=lambda m: str(m.get("created_at") or ""))
+    return {"id": best["id"], "type": str(best.get("type") or "card").lower()}
+
+
 async def create_save_card_order(*, amount: int, currency: str, email: str, name: str,
-                                 tenant_id: str, description: str) -> dict:
+                                 tenant_id: str, description: str, customer_id: str | None = None) -> dict:
     """Create an order that tokenizes the customer's card for future off-session charges.
     Returns {ok, token, order_id} (token → Revolut Checkout widget) or {ok: False, error}."""
     base, key = await _client()
@@ -58,12 +92,12 @@ async def create_save_card_order(*, amount: int, currency: str, email: str, name
         "amount": int(amount), "currency": currency, "capture_mode": "manual",
         "description": description,
         "merchant_order_data": {"reference": tenant_id},
-        "customer": {"email": email, "full_name": name},
+        "customer": _customer(email, name, customer_id),
         "save_payment_method_for": "merchant",
     }
     try:
         async with httpx.AsyncClient(timeout=20) as cl:
-            r = await cl.post(f"{base}/orders", headers=_headers(key), json=payload)
+            r = await cl.post(f"{base}/orders", headers=_headers(key), json=await _with_location(payload))
             r.raise_for_status()
             d = r.json()
     except Exception as e:  # noqa: BLE001
@@ -88,7 +122,7 @@ async def create_topup_order(*, amount: int, currency: str, email: str, name: st
     }
     try:
         async with httpx.AsyncClient(timeout=20) as cl:
-            r = await cl.post(f"{base}/orders", headers=_headers(key), json=payload)
+            r = await cl.post(f"{base}/orders", headers=_headers(key), json=await _with_location(payload))
             r.raise_for_status()
             d = r.json()
     except Exception as e:  # noqa: BLE001
@@ -98,25 +132,49 @@ async def create_topup_order(*, amount: int, currency: str, email: str, name: st
 
 async def charge_off_session(*, amount: int, currency: str, customer_id: str,
                              tenant_id: str, description: str) -> dict:
-    """Charge a saved customer off-session (renewal). Returns {ok, order_id, state} / {ok: False}."""
+    """Αυτόματη χρέωση αποθηκευμένης κάρτας: παραγγελία ΚΑΙ μετά πληρωμή της με την κάρτα
+    (POST /orders/{id}/payments, initiator=merchant). Μόνη της η παραγγελία ΔΕΝ χρεώνει τίποτα.
+
+    Επιστροφές: {ok, order_id, state} · {ok: False, order_id, unknown: True} αν δεν ξέρουμε τι έγινε
+    (ΠΟΤΕ ξαναχρέωση, ο καλών ρωτά τη Revolut) · {ok: False, retry: True} αν δεν ξεκίνησε τίποτα.
+    """
     base, key = await _client()
     if not base:
-        return {"ok": False, "error": "revolut_not_configured"}
+        return {"ok": False, "retry": True, "error": "revolut_not_configured"}
+    method = await merchant_method(customer_id)
+    if not method:
+        return {"ok": False, "error": "revolut_no_saved_card"}
     payload = {
         "amount": int(amount), "currency": currency, "capture_mode": "automatic",
-        "customer": {"id": customer_id}, "off_session": True,
+        "customer": {"id": customer_id},
         "merchant_order_data": {"reference": tenant_id},
         "description": description,
     }
     try:
         async with httpx.AsyncClient(timeout=25) as cl:
-            r = await cl.post(f"{base}/orders", headers=_headers(key), json=payload)
+            r = await cl.post(f"{base}/orders", headers=_headers(key), json=await _with_location(payload))
             r.raise_for_status()
-            d = r.json()
-    except Exception as e:  # noqa: BLE001
-        return {"ok": False, "error": f"revolut_error:{type(e).__name__}"}
-    state = d.get("state")
-    return {"ok": state in ("completed", "authorised", "pending"), "order_id": d.get("id"), "state": state}
+            order_id = r.json().get("id")
+    except httpx.HTTPStatusError as e:
+        return {"ok": False, "retry": e.response.status_code >= 500,
+                "error": f"revolut_error:{e.response.status_code}"}
+    except Exception as e:  # noqa: BLE001  δίκτυο, πριν υπάρξει παραγγελία: δεν χρεώθηκε τίποτα
+        return {"ok": False, "retry": True, "error": f"revolut_error:{type(e).__name__}"}
+    pay = {"saved_payment_method": {"type": method["type"], "id": method["id"], "initiator": "merchant"}}
+    try:
+        async with httpx.AsyncClient(timeout=25) as cl:
+            r = await cl.post(f"{base}/orders/{order_id}/payments", headers=_headers(key), json=pay)
+            r.raise_for_status()
+            state = str(r.json().get("state") or "").lower()
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code < 500:      # απορρίφθηκε: καμία χρέωση
+            return {"ok": False, "error": f"revolut_declined:{e.response.status_code}"}
+        return {"ok": False, "order_id": order_id, "unknown": True, "state": "unknown"}
+    except Exception:  # noqa: BLE001  η αίτηση μπορεί να πέρασε: ΟΧΙ ξαναχρέωση
+        return {"ok": False, "order_id": order_id, "unknown": True, "state": "unknown"}
+    if state in ("declined", "failed", "cancelled"):
+        return {"ok": False, "error": f"revolut_{state}", "order_id": order_id, "state": state}
+    return {"ok": True, "order_id": order_id, "state": state}
 
 
 async def get_order(order_id: str) -> dict | None:
@@ -150,7 +208,7 @@ async def create_renewal_order(*, amount: int, currency: str, email: str, name: 
         payload["redirect_url"] = redirect_url
     try:
         async with httpx.AsyncClient(timeout=20) as cl:
-            r = await cl.post(f"{base}/orders", headers=_headers(key), json=payload)
+            r = await cl.post(f"{base}/orders", headers=_headers(key), json=await _with_location(payload))
             r.raise_for_status()
             d = r.json()
     except Exception as e:  # noqa: BLE001
@@ -186,7 +244,10 @@ async def verify_payment(order_id: str | None, *, expected_cents: int | None = N
     res = {"transaction_id": str(order_id), "state": state, "amount_cents": order_amount_cents(d),
            "reference": str((d.get("merchant_order_data") or {}).get("reference") or ""),
            "customer_id": (d.get("customer") or {}).get("id")}
-    if state in ("failed", "cancelled", "declined"):
+    last = ((d.get("payments") or [{}])[-1].get("state") or "").lower()
+    if state in ("failed", "cancelled", "declined") or (
+            state == "pending" and last in ("failed", "cancelled", "declined")):
+        # απορριφθείσα πληρωμή αφήνει την παραγγελία «pending»: αλλιώς θα περιμέναμε για πάντα
         return {**res, "ok": False, "reason": "failed"}
     if state != "completed":
         return {**res, "ok": False, "reason": "not_finished"}

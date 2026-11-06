@@ -136,7 +136,7 @@ export default function ReceivablesPage() {
           <>
             <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
               <KpiCard label={t("Αναμενόμενο σύνολο", "Total expected")} help={t("Αναμενόμενο ποσό/όγκος της περιόδου με βάση τις ανοιχτές επαναλήψεις.", "Expected amount/volume for the period.")} value={fmtEur(d.totals.expected)} icon={Landmark} accent="indigo" />
-              <KpiCard label={t("Εισπραγμένο", "Collected")} help={t("Ποσά που έχουν ήδη εισπραχθεί από τα ταμεία.", "Amounts already collected.")} value={fmtEur(d.totals.paid)} icon={Wallet} accent="green" />
+              <KpiCard label={t("Εισπράξεις", "Collections")} help={t("Ποσά που έχουν ήδη εισπραχθεί από τα ταμεία.", "Amounts already collected.")} value={fmtEur(d.totals.paid)} icon={Wallet} accent="green" />
               <KpiCard label={t("Ανοιχτό υπόλοιπο", "Open balance")} value={fmtEur(d.totals.open)} icon={AlertCircle} accent="amber"
                 sub={t(`${d.totals.open_count} εκκρεμή`, `${d.totals.open_count} open`)}
                 help={t("Όσα δεν έχουν σημειωθεί ως εισπραγμένα — αυτά οφείλουν ακόμη τα ταμεία.", "Receivables not yet marked collected — still owed by the funds.")} />
@@ -173,7 +173,7 @@ export default function ReceivablesPage() {
                     <SortTh k="period" label={t("Μήνας", "Month")} />
                     <SortTh k="fund" label={t("Ταμείο", "Fund")} />
                     <SortTh k="expected" label={t("Αναμενόμενο", "Expected")} align="right" />
-                    <th className="px-3 py-3 text-right">{t("Εισπραγμένο", "Collected")}</th>
+                    <th className="px-3 py-3 text-right">{t("Εισπράξεις", "Collections")}</th>
                     <th className="px-3 py-3 text-right">{t("Νέα δόση", "New installment")}</th>
                     <th className="px-3 py-3 text-center">{t("Εξόφληση", "Settle")}</th>
                     <SortTh k="cut" label={t("Περικοπή", "Cut")} align="right" />

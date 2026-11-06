@@ -26,6 +26,9 @@ async def _repo(monkeypatch):
         {**base, "tenant_id": "t1", "barcode": "9210190000001"},
         {**base, "tenant_id": "t1", "barcode": "9210190000002", "cancelled": True},   # ακυρωμένος
         {**base, "tenant_id": "t2", "barcode": "9210190000003"},                       # άλλο φαρμακείο
+        # «διενέργεια εμβολιασμού» πάνω σε συνταγή γιατρού: χωρίς barcode, μηδενικά ποσά → ΔΕΝ είναι συνταγή
+        {"tenant_id": "t1", "source": "INFLUENZA", "executed_at": AT, "barcode": None, "total_price": None,
+         "insurance_part": None, "patient_part": None, "vaccine_name": "VAXIGRIP"},
     ])
     return ReimbursementRepository(tenant_id="t1")
 

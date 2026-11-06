@@ -143,7 +143,7 @@ class ReimbursementRepository(BaseRepository):
                 {"barcode": 1, "executed_at": 1, "insurance_part": 1, "total_price": 1, "patient_part": 1,
                  "vaccine_name": 1, "patient_name": 1}):
             at = v["executed_at"]
-            out.append({"_id": v["_id"], "barcode": str(v.get("barcode") or ""), "executed_at": at,
+            out.append({"_id": v["_id"], "barcode": str(v["barcode"]), "executed_at": at,
                         "day": at.strftime("%Y-%m-%d"), "claim": int(v.get("insurance_part") or 0),
                         "retail": int(v.get("total_price") or 0), "patient": int(v.get("patient_part") or 0),
                         "vaccine_name": v.get("vaccine_name"), "patient_name": v.get("patient_name")})
@@ -1035,9 +1035,7 @@ class ReimbursementRepository(BaseRepository):
         # εκτελέσεις): μπαίνουν στον έλεγχο/σκανάρισμα σε ΔΙΚΗ τους ομάδα (14/10/2026)· από 27/10/2026
         # και στο κλείσιμο/ημερήσια/αναλυτική κατάθεση (`_pharmacy_vacc`).
         for v in await self._pharmacy_vacc(start, end):
-            if not v["barcode"]:
-                continue                                   # χωρίς barcode δεν σκανάρεται
-            bc = str(v["barcode"])
+            bc = v["barcode"]
             allrows.append({
                 "barcode": bc, "external_id": bc, "exec_no": None,
                 "claim": v["claim"], "kyyap": 0, "retail": v["retail"], "patient": v["patient"],
@@ -1348,7 +1346,7 @@ class ReimbursementRepository(BaseRepository):
             if day_ids and v["day"] == day_ids:
                 picked_vacc.append(v)
             d = per[v["day"]]
-            d["barcodes"].add(v["barcode"] or str(v["_id"]))
+            d["barcodes"].add(v["barcode"])
             d["executions"] += 1
             d["claim"] += v["claim"]
             d["retail"] += v["retail"]

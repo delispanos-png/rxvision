@@ -34,16 +34,29 @@ async def order_horizon(tenant_id: str) -> int:
         return DEFAULT_HORIZON_DAYS
 
 
+async def repeats_excluded(tenant_id: str) -> bool:
+    """Το φαρμακείο διάλεξε οι «Παραγγελίες» να μη λαμβάνουν υπόψη τις επαναλήψεις που ανοίγουν.
+    Ο Σύμβουλος Παραγγελίας ΔΕΝ το διαβάζει: η πρόβλεψή του στηρίζεται σε αυτές."""
+    from app.core.db import shared_db
+    t = await shared_db()["tenants"].find_one({"_id": tenant_id}, {"order_exclude_repeats": 1})
+    return bool((t or {}).get("order_exclude_repeats"))
+
+
 class HorizonIn(BaseModel):
-    days: int
+    days: int  # 0 = να μη συμμετέχουν οι επαναλήψεις (ο ορίζοντας μένει ως έχει για τον Σύμβουλο)
 
 
 @router.put("/settings/horizon")
 async def set_horizon(body: HorizonIn,
                       ctx: TenantContext = Depends(require("orders:run", module=_MODULE))):
     from app.core.db import shared_db
-    days = max(1, min(60, int(body.days)))
-    await shared_db()["tenants"].update_one({"_id": ctx.tenant_id}, {"$set": {"order_horizon_days": days}})
+    if body.days <= 0:
+        await shared_db()["tenants"].update_one({"_id": ctx.tenant_id},
+                                                {"$set": {"order_exclude_repeats": True}})
+        return {"ok": True, "days": 0}
+    days = min(60, int(body.days))
+    await shared_db()["tenants"].update_one(
+        {"_id": ctx.tenant_id}, {"$set": {"order_horizon_days": days, "order_exclude_repeats": False}})
     return {"ok": True, "days": days}
 
 
@@ -60,10 +73,12 @@ async def suggestions(
     lead_horizon = today + timedelta(days=lead_time_days)
     # Το απόθεμα αποθήκης λαμβάνεται υπόψη ΜΟΝΟ αν η συνδρομή περιλαμβάνει το e-shop/αποθήκη.
     use_warehouse = ctx.modules.get("order_delivery", "locked") != "locked"
+    include_repeats = not await repeats_excluded(ctx.tenant_id)
     items = await repo.order_suggestions(today=today, lead_horizon=lead_horizon,
-                                         safety_stock_pct=safety_stock_pct, use_warehouse=use_warehouse)
+                                         safety_stock_pct=safety_stock_pct, use_warehouse=use_warehouse,
+                                         include_repeats=include_repeats)
     return {"lead_time_days": lead_time_days, "safety_stock_pct": safety_stock_pct,
-            "warehouse_stock": use_warehouse, "items": items}
+            "repeats_included": include_repeats, "warehouse_stock": use_warehouse, "items": items}
 
 
 @router.post("/suggestions/recompute", status_code=202)

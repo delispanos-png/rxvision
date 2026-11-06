@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
+import logging
 from datetime import datetime, timezone
 
 from typing import Literal
@@ -17,6 +19,8 @@ from fastapi.responses import JSONResponse
 from app.core.db import shared_db
 from app.core.deps import TenantContext, get_current_context, require
 from app.services import billing_service, revolut_service, viva_service
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -45,7 +49,21 @@ async def viva_webhook(request: Request):
 @router.post("/card-capture")
 async def card_capture(ctx: TenantContext = Depends(require("billing:manage"))):
     """Start Revolut card capture for the current tenant → {ok, token} for the checkout widget."""
-    return await billing_service.start_card_capture(ctx.tenant_id)
+    res = await billing_service.start_card_capture(ctx.tenant_id)
+    if not res.get("ok"):   # να φαίνεται τι έπαθε ο πελάτης χωρίς να πρέπει να μας το πει
+        logger.warning("Αποθήκευση κάρτας απέτυχε %s: %s", ctx.tenant_id, res.get("error"))
+    return res
+
+
+@router.post("/card-capture/confirm")
+async def card_capture_confirm(ctx: TenantContext = Depends(require("billing:manage"))):
+    """Μετά το παράθυρο της Revolut: σώθηκε όντως η κάρτα; Η οθόνη λέει ό,τι απαντά η ίδια η Revolut."""
+    for attempt in range(4):
+        if await billing_service.complete_card_save(ctx.tenant_id):
+            return {"ok": True}
+        if attempt < 3:
+            await asyncio.sleep(1.5)
+    return {"ok": False}
 
 
 class RenewIn(BaseModel):

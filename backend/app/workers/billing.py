@@ -4,6 +4,7 @@ auto-suspend tenants after repeated payment failure. No-op until Revolut is conf
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timedelta, timezone
 
 from app.workers.celery_app import celery_app
 
@@ -188,6 +189,27 @@ def reconcile_viva_payments() -> dict:
                 if t:
                     await OnboardingService().mark_pending_paid(str(p["_id"]), str(t["TransactionId"]))
                     signups += 1
+            async for p in db["pending_registrations"].find({
+                    "status": "awaiting_payment", "revolut_order_id": {"$nin": [None, ""]}}):
+                if await OnboardingService().mark_pending_paid(str(p["_id"]), revolut_order_id=str(p["revolut_order_id"])):
+                    signups += 1
+            # (2β) αναβαθμίσεις πληρωμένες στη Viva: ίδιο δίχτυ, περνούν από τον ίδιο έλεγχο με το webhook
+            async for sub in db["subscriptions"].find({  # tenant-ok: beat χρεώσεων — όλες οι συνδρομές
+                    "pending_change.method": "viva", "pending_change.status": "awaiting_payment"}):
+                code = (sub.get("pending_change") or {}).get("order_code")
+                t = await viva_service.order_paid_transaction(str(code)) if code else None
+                if t:
+                    await billing_service.handle_viva_webhook({"TransactionId": t["TransactionId"], "OrderCode": code})
+                    renewed += 1
+            # (3) κάρτες Revolut που δεν γράφτηκαν: ο πελάτης ΔΕΝ μένει χωρίς νέα κάρτα επειδή χάθηκε ένα webhook
+            cutoff = datetime.now(tz=timezone.utc) - timedelta(days=2)
+            async for sub in db["subscriptions"].find({  # tenant-ok: beat χρεώσεων — όλες οι συνδρομές
+                    "revolut_order_id": {"$nin": [None, ""]}}):
+                if await billing_service.complete_card_save(sub["tenant_id"]):
+                    renewed += 1
+                elif (at := sub.get("revolut_order_at")) is None or billing_service._aware(at) < cutoff:
+                    await db["subscriptions"].update_one(   # εγκαταλελειμμένη προσπάθεια
+                        {"tenant_id": sub["tenant_id"]}, {"$unset": {"revolut_order_id": "", "revolut_order_at": ""}})
         # Αφού ρωτήσαμε την ίδια τη Viva, ό,τι έμεινε απλήρωτο πέρα από το παράθυρό του είναι
         # όντως εγκαταλελειμμένο ταμείο — όχι «εκκρεμής εγγραφή».
         expired = await OnboardingService().expire_stale()
