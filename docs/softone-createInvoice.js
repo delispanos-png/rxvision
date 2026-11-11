@@ -1,6 +1,7 @@
 /* ============================================================================
  * RxVision → SoftOne — Custom Web Service (Advanced JavaScript)  [SoftOne BlackBook ver.3.5]
- * ★ ΤΕΛΕΥΤΑΙΑ ΕΝΗΜΕΡΩΣΗ: 2026-08-04 23:10 (EEST)  ← + mode "status" (παρακολούθηση ΜΕΤΑΣΧΗΜΑΤΙΣΜΟΥ: FULLYTRANSF + τελικό findoc/MARK μέσω MTRLINES.FINDOCS). Σειρά 7002 (έγκυρη) = δουλεύει.
+ * ★ ΤΕΛΕΥΤΑΙΑ ΕΝΗΜΕΡΩΣΗ: 2026-11-10 (EET)  ← νέος πελάτης με ΚΩΔΙΚΟ = ΑΦΜ (πριν: «Δεν έχετε συμπληρώσει το πεδίο 'Κωδικός'»)
+ * Προηγούμενη: 2026-08-04 23:10 (EEST)  ← + mode "status" (παρακολούθηση ΜΕΤΑΣΧΗΜΑΤΙΣΜΟΥ: FULLYTRANSF + τελικό findoc/MARK μέσω MTRLINES.FINDOCS). Σειρά 7002 (έγκυρη) = δουλεύει.
  *
  * ΣΕΙΡΑ (SERIES): το adminpanel param πρέπει να είναι το internal SERIES id (ΟΧΙ FPRMS/φόρμα!).
  *   π.χ. Τ.Π.Υ.=7767 (φόρμα 7067), Τ.Π.Υ. Ε.Ε.=7069. Κενό/άκυρο → default 7002 (Προτιμολόγιο).
@@ -56,8 +57,10 @@ function _findOrCreateCustomer(c) {
   // Διάγνωση: ποια εταιρεία «βλέπει» το session.
   try { diag.push("comp=" + X.SQL("SELECT :X.SYS.COMPANY", null)); } catch (e) { diag.push("compEx=" + e.message); }
   // Γ) ΔΗΜΙΟΥΡΓΙΑ νέου πελάτη (αν χρειάζεται «Κωδικός», ενεργοποιήστε ΑΥΤΟΜΑΤΗ ΑΡΙΘΜΗΣΗ στον πελάτη).
+  // ΚΩΔΙΚΟΣ πελάτη = ΑΦΜ: η εγκατάσταση δεν έχει αυτόματη αρίθμηση πελατών, οπότε χωρίς CODE η
+  // δημιουργία απορριπτόταν και το παραστατικό έμενε «Απέτυχε» (Λάγγης, 07/10 & 07/11/2026).
   var cust = {
-    SODTYPE: CFG.SODTYPE_CUSTOMER, NAME: c.name || "", AFM: afm, IRSDATA: c.doy || "",
+    SODTYPE: CFG.SODTYPE_CUSTOMER, CODE: afm, NAME: c.name || "", AFM: afm, IRSDATA: c.doy || "",
     ADDRESS: c.address || "", CITY: c.city || "", ZIP: c.zip || "",
     PHONE01: c.phone || "", EMAIL: c.email || "", COUNTRY: CFG.COUNTRY_CODE
   };
@@ -83,7 +86,7 @@ function _getMyData(findoc) {
 
 /* ── Το custom web service (κλήση: /s1services/JS/RXVISION/createInvoice) ── */
 function createInvoice(obj) {
-  var resp = { success: false, v: "2310" };   // δείκτης έκδοσης γέφυρας (επιβεβαιώνει ΟΤΙ τρέχει η σωστή)
+  var resp = { success: false, v: "261110" };   // δείκτης έκδοσης γέφυρας (επιβεβαιώνει ΟΤΙ τρέχει η σωστή)
   if (!obj || !obj.clientID || obj.clientID === "") { resp.error = "Authenticate failed: missing clientID"; return resp; }
 
   // ⛔ IDEMPOTENCY — mode "find": ΜΟΝΟ X.SQL lookup (POSGUID), ΚΑΜΙΑ δημιουργία. Το backend το καλεί

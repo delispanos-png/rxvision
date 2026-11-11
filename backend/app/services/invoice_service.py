@@ -29,6 +29,9 @@ log = logging.getLogger(__name__)
 VAT_BY_COUNTRY = {"GR": 24.0, "CY": 19.0}
 DEFAULT_VAT = 24.0
 MAX_ATTEMPTS = 6           # μετά → status "failed" (χειροκίνητο retry από admin)
+UNMAPPED_RETRY_MIN = 10    # παραστατικό χωρίς είδος SoftOne: ξαναελέγχεται, ΧΩΡΙΣ να μετρά ως προσπάθεια
+# Χρεώσεις χωρίς δικό τους item_key → σταθερό κλειδί στη λίστα «Είδη SoftOne»
+_FIXED_KEYS = {"eshop_fees": "eshop_fees", "seats": "seats"}
 BATCH = 25                 # πόσα pending ανά τρέξιμο worker
 
 KIND_LABELS = {
@@ -272,6 +275,7 @@ async def create_for_payment(*, tenant_id: str, kind: str, gross_cents: int,
             if "(ετήσια)" not in description and "(μηνιαία)" not in description:
                 description = f"{description} ({'ετήσια' if cycle == 'yearly' else 'μηνιαία'})"
         else:
+            ik = ik or _FIXED_KEYS.get(kind)
             mtrl = mm.get(ik or "")
         mtrl = mtrl or mm.get("default") or None
         now = _now()
@@ -377,10 +381,11 @@ async def ensure_mtrl(db, inv: dict) -> dict:
     ξαναψάχνει την ΤΡΕΧΟΥΣΑ αντιστοίχιση πριν σταλεί. Χωρίς αυτό, η συμπλήρωση του MTRL στο adminpanel δεν
     βοηθούσε τα ήδη εκκρεμή: η SoftOne συνέχιζε «Δεν υπάρχει το πεδίο Υλικό» (21/10/2026)."""
     ik = inv.get("item_key") or ""
-    if inv.get("mtrl") or not ik:
+    if inv.get("mtrl"):
         return inv
     mm = (await softone_service.platform_config()).get("mtrl_map") or {}
-    mtrl = mm.get(ik) or (mm.get(ik.rsplit(":", 1)[0]) if ik.endswith(":monthly") else None)
+    mtrl = ((mm.get(ik) or (mm.get(ik.rsplit(":", 1)[0]) if ik.endswith(":monthly") else None)) if ik else None) \
+        or mm.get(_FIXED_KEYS.get(inv.get("kind") or "", "")) or mm.get("default")
     if mtrl:
         await db["invoices"].update_one({"_id": inv["_id"]}, {"$set": {"mtrl": mtrl}})
         inv = {**inv, "mtrl": mtrl}
@@ -390,8 +395,18 @@ async def ensure_mtrl(db, inv: dict) -> dict:
 async def _issue_one(db, inv: dict) -> bool:
     """Στέλνει ΕΝΑ invoice στο SoftOne· ενημερώνει την εγγραφή (issued ή retry/backoff)."""
     inv = await ensure_mtrl(db, inv)
-    payload = _build_payload(inv)
     now = _now()
+    if not inv.get("mtrl"):
+        # ΧΩΡΙΣ είδος SoftOne η αποστολή αποτυγχάνει ΠΑΝΤΑ («Δεν υπάρχει το πεδίο Υλικό») και έκαιγε τις
+        # προσπάθειες ως «Απέτυχε». Τώρα: περιμένει χωρίς να χρεώνει προσπάθεια, με σαφές μήνυμα, και
+        # φεύγει ΜΟΝΟ του μόλις γίνει η αντιστοίχιση (10/11/2026).
+        await db["invoices"].update_one({"_id": inv["_id"]}, {"$set": {
+            "status": "pending", "next_attempt_at": now + timedelta(minutes=UNMAPPED_RETRY_MIN),
+            "last_error": f"Λείπει είδος SoftOne για «{inv.get('item_key') or inv.get('kind')}»: "
+                          "adminpanel → SoftOne → Είδη (ή Γενικό είδος). Θα σταλεί μόνο του.",
+            "updated_at": now}})
+        return False
+    payload = _build_payload(inv)
     # IDEMPOTENCY (ΞΕΧΩΡΙΣΤΗ κλήση): ρώτα πρώτα αν υπάρχει ΗΔΗ doc με αυτό το ref (POSGUID). Αυτό ΠΡΕΠΕΙ
     # να γίνεται σε άλλη κλήση από την έκδοση — το X.SQL στο ίδιο context με το CreateObj χαλάει το MTRL.
     # Έτσι, μετά από timeout όπου το SoftOne είχε ήδη φτιάξει το doc, το retry το ΒΡΙΣΚΕΙ → κανένα διπλό.

@@ -11,6 +11,7 @@ import { useT } from "@/store/prefStore";
 import { CreditCard, Sparkles, Database, Check, Loader2, Lock, Users, RefreshCw } from "lucide-react";
 import { appConfirm, appAlert } from "@/store/dialogStore";
 import { saveCardWithRevolut } from "@/lib/revolutCheckout";
+import { ReferralCard } from "@/components/billing/ReferralCard";
 
 /** Άνοιγμα του Revolut Checkout popup για ένα order token (φορτώνει το embed.js on demand). */
 function payWithRevolut(token: string, mode: string): Promise<void> {
@@ -123,7 +124,7 @@ export default function BillingSettingsPage() {
 
   const billing = useQuery({
     queryKey: ["billing-status", "provider"],
-    queryFn: () => api<{ active_provider?: string; card_move_suggested?: boolean }>("/billing/status"),
+    queryFn: () => api<{ active_provider?: string; card_move_suggested?: boolean; price_lock_until?: string | null }>("/billing/status"),
     retry: false,
   });
   const refresh = () => { qc.invalidateQueries({ queryKey: ["billing-status"] }); qc.invalidateQueries({ queryKey: ["subscription", "extras"] }); qc.invalidateQueries({ queryKey: ["subscription", "seats"] }); qc.invalidateQueries({ queryKey: queryKeys.subscription() }); };
@@ -223,6 +224,15 @@ export default function BillingSettingsPage() {
       </div>
 
       {notice && <div className="mb-4 rounded-lg bg-slate-100 px-4 py-2 text-sm text-slate-700">{notice}</div>}
+
+      {billing.data?.price_lock_until && (
+        <div className="mb-4 rounded-xl border border-emerald-200 bg-emerald-50/60 p-3 text-sm text-emerald-900">
+          {t(`Η τιμή του πακέτου σου είναι κλειδωμένη από προσφορά έως ${fmtDate(billing.data.price_lock_until)}. Ως τότε οι ανανεώσεις χρεώνονται με αυτήν.`,
+             `Your plan price is locked by an offer until ${fmtDate(billing.data.price_lock_until)}. Renewals until then are charged at that price.`)}
+        </div>
+      )}
+
+      <ReferralCard />
 
       {billing.data?.card_move_suggested && (
         <div className="mb-4 rounded-xl border border-amber-300 bg-amber-50/60 p-4 text-sm text-amber-900">

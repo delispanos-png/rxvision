@@ -146,13 +146,14 @@ export default function ModulesPlanPage() {
     }
     /* ΠΟΤΕ δεν χρεώνουμε κάρτα με ποσό που ο πελάτης δεν έχει δει γραμμένο. Ζητάμε το ακριβές
        αναλογικό ποσό από τον server και το δείχνουμε στο confirm. */
-    let q: { charge_now_cents: number; remaining_days: number } | null = null;
+    let q: { charge_now_cents: number; remaining_days: number; promo_pct?: number } | null = null;
     try {
-      q = await api<{ charge_now_cents: number; remaining_days: number }>(`/addons/${a._id}/quote`);
+      q = await api<{ charge_now_cents: number; remaining_days: number; promo_pct?: number }>(`/addons/${a._id}/quote`);
     } catch { /* αν δεν βγει το quote, δείχνουμε τουλάχιστον την πλήρη τιμή */ }
+    const promo = q?.promo_pct ? t(`\nΜε έκπτωση ${q.promo_pct}% από προσφορά, όσο αυτή ισχύει.`, `\nWith a ${q.promo_pct}% offer discount, while it lasts.`) : "";
     const msg = q
-      ? t(`Ενεργοποίηση «${a.name}»;\n\nΧρεώνεται ΤΩΡΑ ${eur(q.charge_now_cents)} για τις ${q.remaining_days} ημέρες που απομένουν στην περίοδό σου.\nΑπό την επόμενη ανανέωση: ${eur(price)}/${per}.\n\nΜπορείς να το απενεργοποιήσεις όποτε θες.`,
-           `Activate «${a.name}»?\n\nCharged NOW: ${eur(q.charge_now_cents)} for the ${q.remaining_days} days left in your period.\nFrom next renewal: ${eur(price)}/${per}.\n\nYou can turn it off anytime.`)
+      ? t(`Ενεργοποίηση «${a.name}»;\n\nΧρεώνεται ΤΩΡΑ ${eur(q.charge_now_cents)} για τις ${q.remaining_days} ημέρες που απομένουν στην περίοδό σου.${promo}\nΑπό την επόμενη ανανέωση: ${eur(price)}/${per}${q.promo_pct ? " (με την έκπτωση, όσο ισχύει)" : ""}.\n\nΜπορείς να το απενεργοποιήσεις όποτε θες.`,
+           `Activate «${a.name}»?\n\nCharged NOW: ${eur(q.charge_now_cents)} for the ${q.remaining_days} days left in your period.${promo}\nFrom next renewal: ${eur(price)}/${per}${q.promo_pct ? " (discounted while the offer lasts)" : ""}.\n\nYou can turn it off anytime.`)
       : t(`Ενεργοποίηση «${a.name}» με ${eur(price)}/${per}; Θα χρεωθεί αναλογικά για τις ημέρες που απομένουν.`,
            `Activate «${a.name}» for ${eur(price)}/${per}? You will be charged pro-rata for the remaining days.`);
     if (await appConfirm(msg)) actAddon.mutate(a._id);

@@ -283,7 +283,7 @@ async def apply_change(tenant_id: str, *, source: str = "system") -> dict:
         upd["status"] = "active"
         upd["payment_status"] = "active"
     await db["subscriptions"].update_one({"tenant_id": tenant_id},
-                                         {"$set": upd, "$unset": {"pending_change": ""}})
+                                         {"$set": upd, "$unset": {"pending_change": "", "price_lock": ""}})
     from app.services import addon_service   # επιπλέον χρεώσεις/MRR με τις ΝΕΕΣ θέσεις & πακέτο
     await addon_service._recompute_total(tenant_id)
     # ΜΟΝΙΜΟ ΙΣΤΟΡΙΚΟ: το `last_plan_change` κρατά μόνο την τελευταία αλλαγή και χάνεται στην

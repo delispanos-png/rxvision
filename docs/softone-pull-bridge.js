@@ -56,7 +56,7 @@ function findOrCreateCustomer(cus) {
   }
   // Δεν υπάρχει → δημιουργία με setData (εσωτερικά)
   var ws = { SERVICE: "setData", OBJECT: "CUSTOMER", appId: CFG.APPID, KEY: "",
-             DATA: { CUSTOMER: [{ NAME: cus.name || cus.title || "Πελάτης",
+             DATA: { CUSTOMER: [{ CODE: afm, NAME: cus.name || cus.title || "Πελάτης",
                                   AFM: afm, ADDRESS: cus.address || "", CITY: cus.city || "",
                                   ZIP: cus.postal_code || "", PHONE01: cus.phone || "",
                                   EMAIL: cus.email || "" }] } };

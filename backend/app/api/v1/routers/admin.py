@@ -1603,9 +1603,18 @@ async def softone_items(_: PlatformContext = Depends(get_platform_admin)):
             items.append({"key": k, "group": "Add-ons / Modules", "name": f"{a.get('name') or a['_id']} — {lbl}",
                           "mtrl": mm.get(k) or (mm.get(base, "") if cyc == "monthly" else ""),
                           "price": int(pr or 0), "price_includes_vat": bool(a.get("price_includes_vat"))})
-    for k, nm in (("ai", "Επιπλέον όριο AI"), ("retention", "Επέκταση διατήρησης δεδομένων")):
+    async for k, nm in _softone_extra_items(db):
         items.append({"key": k, "group": "Extras", "name": nm, "mtrl": mm.get(k, ""), "price": 0, "price_includes_vat": False})
     return {"items": items, "default_mtrl": mm.get("default", "")}
+
+
+async def _softone_extra_items(db):
+    """Χρεώσεις εκτός πακέτων/προσθέτων/credits — ΟΛΕΣ, ώστε καμία να μη φτάνει στη SoftOne χωρίς είδος."""
+    for k, nm in (("ai", "Επιπλέον όριο AI"), ("retention", "Επέκταση διατήρησης δεδομένων"),
+                  ("seats", "Επιπλέον χρήστες"), ("eshop_fees", "Προμήθειες e-shop")):
+        yield k, nm
+    async for pk in db["ai_credit_packs"].find({}, {"name": 1}):
+        yield f"ai_credit:{pk['_id']}", f"Πακέτο AI: {pk.get('name') or pk['_id']}"
 
 
 @router.put("/softone/items")

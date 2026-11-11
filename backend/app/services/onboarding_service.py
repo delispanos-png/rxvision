@@ -239,11 +239,66 @@ class OnboardingService:
     async def get_pending(self, pending_id: str) -> dict | None:
         return await shared_db()["pending_registrations"].find_one({"_id": pending_id})
 
+    async def price_parts(self, *, package_code: str | None, billing_cycle: str | None,
+                          sla: str | None, seats: int | None, addons: list[str] | None) -> dict:
+        """ΕΝΑΣ υπολογισμός τιμής νέας συνδρομής (καθαρά ποσά) — για τη χρέωση ΚΑΙ για την
+        προεπισκόπηση προσφοράς, ώστε ό,τι βλέπει ο πελάτης να είναι ό,τι πληρώνει."""
+        db = shared_db()
+        pkg = await db["packages"].find_one({"_id": package_code}) if package_code else None
+        yearly = (billing_cycle == "yearly")
+        price = int((pkg or {}).get("price_yearly" if yearly else "price_monthly", 0) or 0)
+        extra_rate = int((pkg or {}).get("extra_user_price_yearly" if yearly else "extra_user_price", 0) or 0)
+        # ίδιος κανόνας με το open_tenant/provisioning: χρεώνονται ΜΟΝΟ οι χρήστες πάνω από όσους
+        # περιλαμβάνει το πακέτο (βλ. included_users) — όχι όλοι πλην ενός.
+        included_free = int((pkg or {}).get("included_users") or 1)
+        # Δωρεάν πακέτο (μηδενική τιμή) = δοκιμή → ΠΑΝΤΑ 1 χρήστης, ό,τι κι αν ήρθε από τη φόρμα.
+        chosen_seats = (_TRIAL_SEATS if price <= 0
+                        else seats_for_package(pkg, requested=seats))     # ΚΟΙΝΟΣ κανόνας θέσεων
+        extra_total = max(0, chosen_seats - included_free) * extra_rate
+        sla_code = sla or (pkg or {}).get("sla", "basic")
+        sla_doc = await db["sla_tiers"].find_one({"_id": sla_code}) or {}
+        sla_price = int(sla_doc.get("price_yearly" if yearly else "price_monthly", 0) or 0)
+        addons_total = 0
+        addon_prices: dict[str, int] = {}
+        if addons:
+            from app.services import addon_service
+            cat = {a["_id"]: a for a in await addon_service.catalog()}
+            for aid in addons:
+                a = cat.get(aid)
+                if a:
+                    addon_prices[aid] = int(a.get("price_yearly" if yearly else "price_monthly", 0) or 0)
+                    addons_total += addon_prices[aid]
+        return {"pkg": pkg, "package_net": price, "total_net": price + sla_price + extra_total + addons_total,
+                "seats": chosen_seats, "sla": sla_code, "addon_prices": addon_prices,
+                "includes_vat": bool((pkg or {}).get("price_includes_vat"))}
+
+    async def offer(self, *, package_code: str | None, billing_cycle: str | None, sla: str | None,
+                    seats: int | None, addons: list[str] | None, country: str, afm: str,
+                    owner_email: str, promo_code: str | None, referral_code: str | None) -> dict:
+        """Ποιες προσφορές ισχύουν για αυτή την εγγραφή και πόσο κάνει τελικά (με ΦΠΑ)."""
+        from app.services import promotions
+        from app.services.invoice_service import gross_from_price
+        parts = await self.price_parts(package_code=package_code, billing_cycle=billing_cycle,
+                                       sla=sla, seats=seats, addons=addons)
+        existing = await self.reactivation_target(owner_email, afm) if (owner_email or afm) else None
+        reactivate_tid = existing["tenant_id"] if existing and not existing["blocked"] else None
+        q = await promotions.quote_signup(
+            package=package_code, cycle=billing_cycle or "monthly", returning=bool(reactivate_tid),
+            promo_code=promo_code, referral_code=referral_code, buyer_afm=afm,
+            buyer_tenant=reactivate_tid, package_net=parts["package_net"], total_net=parts["total_net"],
+            addon_prices=parts["addon_prices"])
+        gross_before = gross_from_price(parts["total_net"], parts["includes_vat"], country)
+        gross_after = gross_from_price(parts["total_net"] - q["discount_net"], parts["includes_vat"], country)
+        return {**q, "parts": parts, "reactivate_tenant_id": reactivate_tid,
+                "gross_before": gross_before, "gross_after": gross_after,
+                "discount_gross": gross_before - gross_after}
+
     async def create_pending(self, *, pharmacy_name: str, country: str, owner_email: str,
                              owner_name: str, company: dict, package_code: str | None,
                              billing_cycle: str | None, sla: str | None, seats: int | None,
                              addons: list[str] | None, payment_method: str,
-                             accepted_terms: bool = False, terms_version: str | None = None) -> dict:
+                             accepted_terms: bool = False, terms_version: str | None = None,
+                             promo_code: str | None = None, referral_code: str | None = None) -> dict:
         """Προσωρινή εγγραφή ΠΡΙΝ την πληρωμή — ΔΕΝ δημιουργεί λογαριασμό. Επιστρέφει {pending_id,
         amount_cents}. Ο λογαριασμός υλοποιείται με `materialize()` μετά την επιβεβαίωση πληρωμής."""
         country = (country or "GR").upper()
@@ -260,36 +315,28 @@ class OnboardingService:
             if existing["blocked"]:
                 raise OnboardingError("email_already_registered")
             reactivate_tid = existing["tenant_id"]
-        pkg = await db["packages"].find_one({"_id": package_code}) if package_code else None
-        yearly = (billing_cycle == "yearly")
-        price = int((pkg or {}).get("price_yearly" if yearly else "price_monthly", 0) or 0)
-        extra_rate = int((pkg or {}).get("extra_user_price_yearly" if yearly else "extra_user_price", 0) or 0)
-        # ίδιος κανόνας με το open_tenant/provisioning: χρεώνονται ΜΟΝΟ οι χρήστες πάνω από όσους
-        # περιλαμβάνει το πακέτο (βλ. included_users) — όχι όλοι πλην ενός.
-        included_free = int((pkg or {}).get("included_users") or 1)
-        # Δωρεάν πακέτο (μηδενική τιμή) = δοκιμή → ΠΑΝΤΑ 1 χρήστης, ό,τι κι αν ήρθε από τη φόρμα.
-        chosen_seats = (_TRIAL_SEATS if price <= 0
-                        else seats_for_package(pkg, requested=seats))     # ΚΟΙΝΟΣ κανόνας θέσεων
-        extra_total = max(0, chosen_seats - included_free) * extra_rate
-        sla_code = sla or (pkg or {}).get("sla", "basic")
-        sla_doc = await db["sla_tiers"].find_one({"_id": sla_code}) or {}
-        sla_price = int(sla_doc.get("price_yearly" if yearly else "price_monthly", 0) or 0)
-        addons_total = 0
-        if addons:
-            from app.services import addon_service
-            cat = {a["_id"]: a for a in await addon_service.catalog()}
-            for aid in addons:
-                a = cat.get(aid)
-                if a:
-                    addons_total += int(a.get("price_yearly" if yearly else "price_monthly", 0) or 0)
-        # Καθαρό σύνολο → χρεώσιμο ΜΕ ΦΠΑ (αν οι τιμές είναι καθαρές). create_for_payment αφαιρεί ΦΠΑ στο παραστατικό.
-        from app.services.invoice_service import gross_from_price
-        amount = gross_from_price(int(price) + sla_price + extra_total + addons_total,
-                                  bool((pkg or {}).get("price_includes_vat")), country)
+        parts = await self.price_parts(package_code=package_code, billing_cycle=billing_cycle,
+                                       sla=sla, seats=seats, addons=addons)
+        pkg, chosen_seats, sla_code = parts["pkg"], parts["seats"], parts["sla"]
         # Η δοκιμή δίνεται ΜΟΝΟ από εξουσιοδοτημένο άτομο (adminpanel), ΠΟΤΕ από δημόσια εγγραφή
         is_trial = False
-        if amount <= 0 or int((pkg or {}).get("trial_days") or 0) > 0:
+        if parts["total_net"] <= 0 or int((pkg or {}).get("trial_days") or 0) > 0:
             raise OnboardingError("trial_by_invitation")
+        # Προωθητικές ενέργειες: ΜΙΑ πηγή (services/promotions.py). Κωδικός που δεν ισχύει = λάθος
+        # που βλέπει ο πελάτης, όχι σιωπηλή χρέωση χωρίς την έκπτωση που περίμενε.
+        from app.services import promotions
+        q = await promotions.quote_signup(
+            package=package_code, cycle=billing_cycle or "monthly", returning=bool(reactivate_tid),
+            promo_code=promo_code, referral_code=referral_code, buyer_afm=afm,
+            buyer_tenant=reactivate_tid, package_net=parts["package_net"], total_net=parts["total_net"],
+            addon_prices=parts["addon_prices"])
+        if q["promo_code_valid"] is False:
+            raise OnboardingError("promo_code_invalid")
+        if q["referral_valid"] is False:
+            raise OnboardingError("referral_code_invalid")
+        # Καθαρό σύνολο → χρεώσιμο ΜΕ ΦΠΑ (αν οι τιμές είναι καθαρές). create_for_payment αφαιρεί ΦΠΑ στο παραστατικό.
+        from app.services.invoice_service import gross_from_price
+        amount = gross_from_price(parts["total_net"] - q["discount_net"], parts["includes_vat"], country)
         status = "paid" if is_trial else ("awaiting_payment" if payment_method == "card" else "awaiting_bank_approval")
         pid = uuid.uuid4().hex
         await db["pending_registrations"].insert_one({
@@ -302,9 +349,13 @@ class OnboardingService:
             "accepted_terms": bool(accepted_terms), "terms_version": terms_version,
             "terms_accepted_at": _now() if accepted_terms else None,
             "reactivate_tenant_id": reactivate_tid,   # → materialize επαναφέρει τον ΥΠΑΡΧΟΝΤΑ tenant
+            "promotions": q["promotions"], "discount_net": q["discount_net"],
+            "promo_code": q["promo_code"], "referrer_tenant_id": q["referrer_tenant_id"],
+            "price_lock": q["price_lock"],
             "expires_at": _now() + timedelta(hours=2),
         })
         return {"pending_id": pid, "amount_cents": amount, "is_trial": is_trial,
+                "promotions": q["promotions"],
                 "reactivation": bool(reactivate_tid)}
 
     async def mark_pending_paid(self, pending_id: str, viva_transaction_id: str | None = None,
@@ -464,7 +515,12 @@ class OnboardingService:
             await invoice_service.create_for_payment(
                 tenant_id=res["tenant_id"], kind="subscription", gross_cents=int(p["amount_cents"]),
                 description=(f"Συνδρομή RxVision «{(await db['packages'].find_one({'_id': p.get('package_code')}, {'name': 1}) or {}).get('name') or p.get('package_code') or ''}» "
-                             f"({invoice_service.cycle_el(p.get('billing_cycle'))}) — πρώτη περίοδος"),
+                             f"({invoice_service.cycle_el(p.get('billing_cycle'))}) — πρώτη περίοδος"
+                             + "".join(f" · Προσφορά «{x.get('name')}»" for x in p.get("promotions") or []
+                                       if x.get("discount_net"))),
                 payment={"method": p.get("payment_method") or "card", "provider": p.get("card_provider") or "viva",
                          "transaction_id": p.get("revolut_order_id") or p.get("viva_transaction_id")})
+        if p.get("promotions") or p.get("price_lock"):
+            from app.services import promotions
+            await promotions.redeem_signup(p, res["tenant_id"])
         return res

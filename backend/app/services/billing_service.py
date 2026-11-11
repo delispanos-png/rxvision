@@ -135,7 +135,9 @@ async def start_renewal(tenant_id: str, package_code: str, billing_cycle: str = 
     if not pkg:
         return {"ok": False, "error": "package_not_found"}
     yearly = billing_cycle == "yearly"
-    amount = int(pkg.get("price_yearly" if yearly else "price_monthly", 0) or 0)
+    _sub0 = await db["subscriptions"].find_one({"tenant_id": tenant_id}) or {}
+    amount = package_price(_sub0, pkg, billing_cycle, _now()) if _sub0.get("price_lock") \
+        else int(pkg.get("price_yearly" if yearly else "price_monthly", 0) or 0)
     if amount <= 0:
         return {"ok": False, "error": "invalid_amount"}
     provider = await provider_for(tenant_id)
@@ -244,7 +246,26 @@ def monthly_value(sub: dict | None) -> int:
     return round(total / 12) if sub.get("billing_cycle") == "yearly" else total
 
 
-async def recurring_extras(db, sub: dict, pkg: dict | None, yearly: bool) -> dict:
+def package_price(sub: dict, pkg: dict | None, cycle: str, at: datetime) -> int:
+    """Η τιμή ΠΑΚΕΤΟΥ που χρεώνεται σε ανανέωση στις `at` — ΜΙΑ πηγή για αυτόματη χρέωση, χειροκίνητη
+    ανανέωση και ένδειξη επόμενης χρέωσης.
+
+    Κλείδωμα από προωθητική ενέργεια (services/promotions.py): όσο ισχύει, για το ΙΔΙΟ πακέτο και κύκλο,
+    χρεώνεται η κλειδωμένη τιμή. Μετά τη λήξη του ή σε άλλο πακέτο/κύκλο: ο τιμοκατάλογος. Χωρίς
+    κλείδωμα ισχύει ό,τι ίσχυε πάντα: η τιμή που είναι αποθηκευμένη στη συνδρομή."""
+    lock = sub.get("price_lock") or {}
+    until = lock.get("until")
+    if until is not None and until.tzinfo is None:
+        until = until.replace(tzinfo=timezone.utc)
+    same = lock.get("package") == (pkg or {}).get("_id", sub.get("plan")) and lock.get("cycle") == cycle
+    if lock and same and until and at < until:
+        return int(lock.get("package_net") or 0)
+    if lock or (pkg and pkg.get("_id") != sub.get("plan")) or cycle != sub.get("billing_cycle"):
+        return int((pkg or {}).get("price_yearly" if cycle == "yearly" else "price_monthly", 0) or 0)
+    return int(sub.get("price_per_pharmacy", 0) or 0)
+
+
+async def recurring_extras(db, sub: dict, pkg: dict | None, yearly: bool, at: datetime | None = None) -> dict:
     """ΤΙ ΕΠΑΝΑΛΑΜΒΑΝΕΤΑΙ πέρα από την τιμή του πακέτου — ΕΝΑΣ υπολογισμός για την αυτόματη χρέωση,
     τη χειροκίνητη ανανέωση, το `addons_total` και την ένδειξη ποσού (01/10/2026).
 
@@ -255,6 +276,8 @@ async def recurring_extras(db, sub: dict, pkg: dict | None, yearly: bool) -> dic
     Πρόσθετα που ΠΕΡΙΛΑΜΒΑΝΕΙ ήδη το πακέτο δεν χρεώνονται ξανά. Τιμές για τον ζητούμενο κύκλο."""
     from app.services.data_retention import retention_surcharge_monthly
     from app.services.seats_service import _included, _seat_price
+    from app.services.promotions import addon_discount_pct
+    at = at or _now()                      # πότε γίνεται η χρέωση (η ανανέωση) — για εκπτώσεις προωθητικών ενεργειών
     in_plan = set((pkg or {}).get("modules") or [])
     # πρόσθετα με προγραμματισμένη αφαίρεση ΔΕΝ ανανεώνονται (μένουν ενεργά μόνο ως τη λήξη)
     from app.services.addon_service import pending_removals
@@ -265,8 +288,11 @@ async def recurring_extras(db, sub: dict, pkg: dict | None, yearly: bool) -> dic
     if ids:
         async for a in db["addons"].find({"_id": {"$in": ids}}):
             amt = int(a.get("price_yearly" if yearly else "price_monthly", 0) or 0)
+            pct = addon_discount_pct(sub, a["_id"], at, 365 if yearly else 30)   # αναλογικά (services/promotions.py)
+            amt -= round(amt * pct / 100)
             addons += amt
-            lines.append({"kind": "addon", "label": f"Πρόσθετο: {a.get('name') or a['_id']}", "amount": amt})
+            lines.append({"kind": "addon", "label": f"Πρόσθετο: {a.get('name') or a['_id']}"
+                          + (f" (−{pct}% προσφορά)" if pct else ""), "amount": amt})
     monthly_ret = await retention_surcharge_monthly(db, sub.get("tenant_id"))
     retention = monthly_ret * 12 if yearly else monthly_ret
     if retention:
@@ -295,8 +321,8 @@ async def next_charge(db, sub: dict) -> dict:
     from app.services.invoice_service import gross_from_price
     pkg = await db["packages"].find_one({"_id": sub.get("plan")}) if sub.get("plan") else None
     yearly = sub.get("billing_cycle") == "yearly"
-    ex = await recurring_extras(db, sub, pkg, yearly)
-    base = int(sub.get("price_per_pharmacy", 0) or 0)
+    ex = await recurring_extras(db, sub, pkg, yearly, at=_aware(sub.get("current_period_end") or _now()))
+    base = package_price(sub, pkg, "yearly" if yearly else "monthly", _aware(sub.get("current_period_end") or _now()))
     lines = [{"kind": "package", "label": f"Πακέτο {(pkg or {}).get('name') or sub.get('plan_name') or sub.get('plan') or ''}"
               f" ({'ετήσια' if yearly else 'μηνιαία'})", "amount": base}] + ex["lines"]
     net = base + ex["total"]
@@ -336,8 +362,9 @@ async def complete_renewal(tenant_id: str, viva_transaction_id: str, provider: s
     pkg = await db["packages"].find_one({"_id": plan}) or {}
     prev_pkg = (await db["packages"].find_one({"_id": sub.get("plan")}) or {}) if sub.get("plan") else None
     yearly = cycle == "yearly"
-    price = int(pkg.get("price_yearly" if yearly else "price_monthly", 0) or 0)
     now = _now()
+    price = package_price(sub, pkg, cycle, now) if sub.get("price_lock") \
+        else int(pkg.get("price_yearly" if yearly else "price_monthly", 0) or 0)
     # Επέκταση: αν η τρέχουσα λήξη είναι ΜΕΛΛΟΝΤΙΚΗ (προληπτική ανανέωση), συνεχίζουμε ΑΠΟ ΕΚΕΙ ώστε ο
     # πελάτης να ΜΗ χάσει τις υπόλοιπες μέρες· αν έχει λήξει, ξεκινά από τώρα.
     cur_end = sub.get("current_period_end")
@@ -441,6 +468,8 @@ async def status(tenant_id: str) -> dict:
         "currency": sub.get("currency", CURRENCY),
         "card_on_file": on_file,
         "complimentary": bool(sub.get("complimentary")),   # δωρεάν πελάτης → δεν χρειάζεται κάρτα
+        # τιμή κλειδωμένη από προωθητική ενέργεια (βλ. package_price)
+        "price_lock_until": _iso((sub.get("price_lock") or {}).get("until")),
         "active_provider": active,                         # πού θα πάει μια ΝΕΑ κάρτα
         # κάρτα σε παλιό πάροχο: χρεώνεται κανονικά εκεί, αλλά ζητάμε να μεταφερθεί
         "card_move_suggested": bool(on_file and active == "revolut" and not sub.get("complimentary")
@@ -663,7 +692,12 @@ async def bill_due() -> dict:
         # χρήστες, διατήρηση, SLA) — ΦΡΕΣΚΟ, όχι το αποθηκευμένο addons_total (καθαρά) → +ΦΠΑ
         _rpkg = await db["packages"].find_one({"_id": sub.get("plan")}) if sub.get("plan") else None
         _ex = await recurring_extras(db, sub, _rpkg, sub.get("billing_cycle") == "yearly")
-        net_total = int(sub.get("price_per_pharmacy", 0) or 0) + _ex["total"]
+        _base = package_price(sub, _rpkg, sub.get("billing_cycle") or "monthly", now)
+        if sub.get("price_lock") and _base != int(sub.get("price_per_pharmacy", 0) or 0):
+            # το κλείδωμα τιμής έληξε → από εδώ και πέρα ο τιμοκατάλογος
+            await db["subscriptions"].update_one({"tenant_id": tid}, {
+                "$set": {"price_per_pharmacy": _base}, "$unset": {"price_lock": ""}})
+        net_total = _base + _ex["total"]
         if net_total <= 0:
             continue
         from app.services import invoice_service

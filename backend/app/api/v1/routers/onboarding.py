@@ -59,6 +59,21 @@ class IntentIn(BaseModel):
     addons: list[str] | None = None
     accepted_terms: bool = False               # αποδοχή Όρων Χρήσης (υποχρεωτική στο frontend)
     terms_version: str | None = Field(None, max_length=40)
+    promo_code: str | None = Field(None, max_length=24)
+    referral_code: str | None = Field(None, max_length=24)
+
+
+class OfferIn(BaseModel):
+    package_code: str | None = Field(None, max_length=40)
+    billing_cycle: Literal["monthly", "yearly"] | None = None
+    country: Literal["GR", "CY"] = "GR"
+    sla: str | None = Field(None, max_length=40)
+    seats: int | None = Field(None, ge=1, le=999)
+    addons: list[str] | None = None
+    afm: str | None = Field(None, max_length=12)
+    owner_email: str | None = Field(None, max_length=200)
+    promo_code: str | None = Field(None, max_length=24)
+    referral_code: str | None = Field(None, max_length=24)
 
 
 class CompleteIn(BaseModel):
@@ -90,6 +105,30 @@ async def check_afm(afm: str):
             "pharmacy_name": (t or {}).get("name")}
 
 
+@router.post("/offers", dependencies=[Depends(rate_limit("onboarding_offers", limit=120, window_seconds=600))])
+async def offers(body: OfferIn):
+    """Ποιες προσφορές ισχύουν για αυτή την επιλογή και πόσο κάνει τελικά. Δεν επιστρέφει ποιο
+    φαρμακείο έδωσε τον κωδικό σύστασης: μόνο αν ισχύει."""
+    res = await OnboardingService().offer(
+        package_code=body.package_code, billing_cycle=body.billing_cycle, sla=body.sla, seats=body.seats,
+        addons=body.addons, country=body.country, afm=(body.afm or "").strip(),
+        owner_email=(body.owner_email or "").strip(), promo_code=body.promo_code,
+        referral_code=body.referral_code)
+    from app.services import promotions
+    names = await promotions._module_names()
+    return {"promotions": [{"name": p["name"], "public_text": p["public_text"],
+                            "discount_net": p["discount_net"],
+                            "gifts": [{**g, "module_name": names.get(g["module"], g["module"]),
+                                       "text": promotions.gift_text(g, names.get(g["module"], g["module"]))}
+                                      for g in p["gifts"] if g["to"] in ("buyer", "both")]}
+                           for p in res["promotions"]],
+            "referral_valid": res["referral_valid"], "promo_code_valid": res["promo_code_valid"],
+            "lock_text": res["lock_text"],
+            "lock_until": res["price_lock"]["until"] if res.get("price_lock") else None,
+            "gross_before": res["gross_before"], "gross_after": res["gross_after"],
+            "discount_gross": res["discount_gross"]}
+
+
 @router.post("/register-intent", status_code=201,
              dependencies=[Depends(rate_limit("onboarding_intent", limit=10, window_seconds=600))])
 async def register_intent(body: IntentIn):
@@ -105,7 +144,8 @@ async def register_intent(body: IntentIn):
             package_code=body.package_code, billing_cycle=body.billing_cycle,
             sla=body.sla, seats=body.seats, addons=body.addons,
             payment_method=body.payment_method,
-            accepted_terms=body.accepted_terms, terms_version=body.terms_version)
+            accepted_terms=body.accepted_terms, terms_version=body.terms_version,
+            promo_code=body.promo_code, referral_code=body.referral_code)
     except OnboardingError as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, detail={"error": str(exc)})
     pid = pending["pending_id"]

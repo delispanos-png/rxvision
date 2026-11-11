@@ -193,6 +193,9 @@ INDEXES: list[tuple[str, list[tuple[str, int]], dict]] = [
     ("module_settings", [("tenant_id", 1), ("module", 1)], {"unique": True}),
     ("subscriptions", [("tenant_id", 1)], {"unique": True}),
     ("tenants", [("slug", 1)], {"unique": True}),
+    ("tenants", [("referral_code", 1)], {"unique": True, "sparse": True}),
+    ("promotions", [("code", 1)], {"unique": True, "partialFilterExpression": {"code": {"$type": "string"}}}),
+    ("promotion_redemptions", [("promotion_id", 1), ("at", -1)], {}),
     # concurrent-session tracking (seat cap): fast live-count per tenant + TTL reaper so a
     # closed/idle browser frees its seat (delete 15′ after last activity — well past the 10′ live window).
     ("user_sessions", [("tenant_id", 1), ("last_active_at", -1)], {}),

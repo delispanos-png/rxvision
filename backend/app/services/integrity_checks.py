@@ -168,6 +168,26 @@ async def check_platform(db, now: datetime | None = None) -> list[Finding]:
                                             "(τιμές, αποσύρσεις, μηνύματα ΗΔΥΚΑ παλιά)", age, CATALOG_MAX_AGE_DAYS))
     # η ίδια εκτέλεση σε δύο φαρμακεία (πινγκ-πονγκ / λάθος μεταφορά)
     since = now - timedelta(days=WINDOW_DAYS)
+    # χρεώσιμο είδος χωρίς αντιστοίχιση SoftOne (και χωρίς Γενικό είδος): το παραστατικό του θα περιμένει
+    # (10/11/2026: 6 πρόσθετα, ανάμεσά τους το Connect, χωρίς είδος — 2 παραστατικά «Απέτυχε»)
+    sconf = await db["platform_settings"].find_one({"_id": "softone"}, {"mtrl_map": 1}) or {}
+    mm = sconf.get("mtrl_map") or {}
+    if mm and not mm.get("default"):
+        missing = [f"{a.get('name') or a['_id']}" async for a in db["addons"].find({"active": True}, {"name": 1})
+                   if not (mm.get(f"addon:{a['_id']}:monthly") or mm.get(f"addon:{a['_id']}"))]
+        missing += [f"{p.get('name') or p['_id']}" async for p in db["packages"].find({"active": True}, {"name": 1})
+                    if not (mm.get(f"pkg:{p['_id']}:monthly") or mm.get(f"pkg:{p['_id']}"))]
+        if missing:
+            out.append(Finding("softone_unmapped_items",
+                               f"{len(missing)} χρεώσιμα είδη χωρίς είδος SoftOne: τα παραστατικά τους θα περιμένουν "
+                               "(adminpanel → SoftOne → Είδη)", len(missing), len(missing), sample=missing[:5]))
+    # δώρο προωθητικής ενέργειας που υποσχεθήκαμε και δεν δόθηκε (ο πελάτης το περιμένει)
+    missed = [g async for r in db["promotion_redemptions"].find({"at": {"$gte": since}})
+              for g in r.get("grants") or [] if g.get("status") not in ("ok", "banked", "already_enabled", "included_in_plan")]
+    if missed:
+        out.append(Finding("promotion_gift_missing",
+                           f"{len(missed)} δώρα προωθητικών ενεργειών δεν δόθηκαν (adminpanel → Προωθητικές ενέργειες)",
+                           len(missed), len(missed)))
     rows = await db["prescription_executions"].aggregate([   # tenant-ok: πλατφόρμα, ανά external_id
         {"$match": {"executed_at": {"$gte": since}}},
         {"$group": {"_id": "$external_id", "t": {"$addToSet": "$tenant_id"}}},

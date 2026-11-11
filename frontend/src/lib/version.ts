@@ -13,4 +13,4 @@
  *
  * Εμφανίζεται στο footer του sidebar (app + admin).
  */
-export const APP_VERSION = "1.69.0";
+export const APP_VERSION = "1.70.0";

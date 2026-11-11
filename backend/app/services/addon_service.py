@@ -279,7 +279,10 @@ async def activation_quote(tenant_id: str, addon_id: str) -> dict:
         return {"ok": False, "error": "unknown_addon"}
     sub = await db["subscriptions"].find_one({"tenant_id": tenant_id}) or {}
     yearly = sub.get("billing_cycle") == "yearly"
-    price = int(a.get("price_yearly" if yearly else "price_monthly") or 0)
+    from app.services.promotions import addon_discount_pct
+    list_price = int(a.get("price_yearly" if yearly else "price_monthly") or 0)
+    promo_pct = addon_discount_pct(sub, addon_id, _now(), max(1, _prorated_addon(list_price, sub, yearly)[1]))
+    price = list_price - round(list_price * promo_pct / 100)
     tenant = await db["tenants"].find_one({"_id": tenant_id}, {"country": 1}) or {}
     pkg = await db["packages"].find_one({"_id": sub.get("plan")}) if sub.get("plan") else None
     inc_vat = billing_service.includes_vat(pkg, sub)
@@ -290,6 +293,8 @@ async def activation_quote(tenant_id: str, addon_id: str) -> dict:
     return {"ok": True, "addon": addon_id, "name": a.get("name"),
             "cycle": "yearly" if yearly else "monthly",
             "full_price_cents": gross_from_price(price, inc_vat, tenant.get("country")),
+            "list_price_cents": gross_from_price(list_price, inc_vat, tenant.get("country")),
+            "promo_pct": promo_pct,
             "charge_now_cents": gross_from_price(net, inc_vat, tenant.get("country")),
             "remaining_days": remaining,
             "card_on_file": await billing_service.card_on_file(tenant_id),
@@ -320,8 +325,13 @@ async def activate(tenant_id: str, addon_id: str) -> dict:
                 "charged_now": 0, "kept": True}
     # Δωρεάν πρόσθετα δεν χρειάζονται κάρτα — δεν χρεώνονται ποτέ.
     yearly = sub.get("billing_cycle") == "yearly"
-    price = int(a.get("price_yearly" if yearly else "price_monthly") or 0)
-    if price > 0:
+    list_price = int(a.get("price_yearly" if yearly else "price_monthly") or 0)
+    # Έκπτωση από προωθητική ενέργεια: ΜΕΙΩΝΕΙ τη χρέωση, ΔΕΝ καταργεί την κάρτα. Ακόμη και με 100%
+    # ζητάμε κάρτα (με βάση την κανονική τιμή), αλλιώς όταν λήξει η έκπτωση δεν θα πληρωνόταν.
+    from app.services.promotions import addon_discount_pct
+    price = list_price - round(list_price * addon_discount_pct(
+        sub, addon_id, _now(), max(1, _prorated_addon(list_price, sub, yearly)[1])) / 100)
+    if list_price > 0:
         from app.services import billable_gate
         reason = await billable_gate.blocked_reason(tenant_id, "addons")
         if reason:

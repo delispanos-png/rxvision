@@ -16,6 +16,7 @@ from app.api.v1.routers import (
     admin_leads,
     fund_groups,
     infra_cloud,
+    promotions,
     release_notes,
     support_live,
 )
@@ -35,7 +36,8 @@ from app.services.platform_rbac import (
 # χρησιμοποιείται όταν συνδέεται το gate στο app/api/v1/__init__.py.
 ROUTERS = {
     # ίδιο scope «admin» (require_padmin("admin")) — «Τι νέο υπάρχει» ζει σε δικό του router
-    "admin": [admin.router, release_notes.admin_router, support_live.admin_router],
+    "admin": [admin.router, release_notes.admin_router, support_live.admin_router,
+              promotions.admin_router],
     "admin_leads": admin_leads.router,
     "cloud": infra_cloud.router,
     "fund_groups": fund_groups.router,
