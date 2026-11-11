@@ -137,6 +137,11 @@ async def me(ctx: TenantContext = Depends(get_current_context)):
     trials = {m: (d.isoformat() if hasattr(d, "isoformat") else str(d))
               for m, d in (t.get("module_trials") or {}).items()
               if ctx.modules.get(m) == "trial" and d}
+    # Δοκιμαστική ΣΥΝΔΡΟΜΗ → οι εξαγωγές (Excel/PDF/CSV) κλειδώνουν σε όλα τα κυκλώματα.
+    from app.services.billing_service import effective_status
+    sub = await shared_db()["subscriptions"].find_one({"tenant_id": ctx.tenant_id},
+                                                      {"status": 1, "complimentary": 1,
+                                                       "trial_ends_at": 1, "current_period_end": 1})
     return {
         "user_id": ctx.user_id,
         "tenant_id": ctx.tenant_id,
@@ -144,7 +149,8 @@ async def me(ctx: TenantContext = Depends(get_current_context)):
         "roles": ctx.roles,
         "modules": ctx.modules,
         "module_trials": trials,
-        "demo": ctx.demo,                # «πελάτης παρουσίασης» → frontend κλειδώνει εκτυπώσεις ΗΔΥΚΑ/κουπονιών
+        "demo": ctx.demo,
+        "exports_locked": effective_status(sub) == "trial",                # «πελάτης παρουσίασης» → frontend κλειδώνει εκτυπώσεις ΗΔΥΚΑ/κουπονιών
         **profile,                       # full_name, email, phone, mfa_enabled
     }
 

@@ -3,6 +3,7 @@
 // libs are dynamically imported so they never bloat the main bundle.
 
 import { fmtDate } from "./formatters";
+import { exportBlocked } from "./exportGate";
 
 export type ExportCol<T> = { key: string; header: string; value?: (row: T) => unknown };
 
@@ -15,6 +16,7 @@ const esc = (s: string) =>
   s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
 export async function downloadXlsx<T>(filename: string, columns: ExportCol<T>[], rows: T[]): Promise<void> {
+  if (exportBlocked()) return;
   const XLSX = await import("xlsx");
   const aoa = [columns.map((c) => c.header), ...rows.map((r) => columns.map((c) => cell(c, r)))];
   const ws = XLSX.utils.aoa_to_sheet(aoa);
@@ -25,6 +27,7 @@ export async function downloadXlsx<T>(filename: string, columns: ExportCol<T>[],
 }
 
 export async function downloadPdf<T>(filename: string, title: string, columns: ExportCol<T>[], rows: T[]): Promise<void> {
+  if (exportBlocked()) return;
   const [{ jsPDF }, html2canvas] = await Promise.all([
     import("jspdf"),
     import("html2canvas").then((m) => m.default),

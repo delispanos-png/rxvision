@@ -1,3 +1,5 @@
+import { exportBlocked } from "./exportGate";
+
 /** Client-side CSV export — builds a UTF-8 (BOM) file from rows and triggers a
  *  download. No backend needed; works on whatever list is already on screen.
  *  Excel opens it directly (the BOM makes Greek render correctly). */
@@ -6,6 +8,7 @@ export function downloadCsv<T>(
   columns: { key: string; header: string; value?: (row: T) => unknown }[],
   rows: T[],
 ): void {
+  if (exportBlocked()) return;
   const esc = (v: unknown) => {
     const s = v == null ? "" : String(v);
     return /[",\n;]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
