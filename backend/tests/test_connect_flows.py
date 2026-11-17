@@ -25,7 +25,7 @@ BARCODE = "9999999999999"
 async def _cleanup(db, mod):
     ids = [A, B, C_]
     for coll in (mod.GROUPS, mod.INVITES, mod.REQUESTS, mod.OFFERS, mod.RESERVATIONS,
-                 mod.MOVEMENTS, mod.RETURNS, mod.SETTLEMENTS, mod.DISPUTES):
+                 mod.MOVEMENTS, mod.RETURNS, mod.SETTLEMENTS, mod.DISPUTES, mod.EVENTS):
         await db[coll].delete_many({"$or": [
             {"owner_tenant_id": {"$in": ids}}, {"members": {"$in": ids}},
             {"from_tenant_id": {"$in": ids}}, {"to_tenant_id": {"$in": ids}},
@@ -38,12 +38,18 @@ async def _cleanup(db, mod):
 @pytest.fixture
 async def net(monkeypatch):
     """Τρία φαρμακεία σε καθαρή βάση, με δοκιμαστικό κατάλογο φαρμακείων."""
+    from app.core import db as core_db
     try:
-        from app.core.db import shared_db
-        db = shared_db()
+        db = core_db.shared_db()
         await asyncio.wait_for(db.command("ping"), timeout=3)
-    except Exception:  # noqa: BLE001
-        pytest.skip("Δεν υπάρχει MongoDB — τα σενάρια συνεργασίας παρακάμπτονται")
+    except Exception:  # noqa: BLE001 — χωρίς MongoDB → βάση στη μνήμη (τρέχουν και στο CI/deploy)
+        try:
+            from mongomock_motor import AsyncMongoMockClient
+        except ImportError:
+            pytest.skip("Ούτε MongoDB ούτε mongomock — τα σενάρια συνεργασίας παρακάμπτονται")
+        mock = AsyncMongoMockClient(tz_aware=True)
+        monkeypatch.setattr(core_db, "get_client", lambda: mock)
+        db = core_db.shared_db()
 
     from app.repositories import connect as mod
     from app.services import pharmacy_directory as directory
@@ -182,3 +188,126 @@ async def test_outsider_can_neither_see_nor_act(net):
     assert not (await net["r"][C_].make_offer(req["id"], 1))["ok"]
     assert not (await net["r"][C_].accept_offer(offer["id"]))["ok"]
     assert not (await net["r"][C_].cancel_request(req["id"]))["ok"]
+
+
+# ── 12/11/2026: βάση τιμής δικτύου, όροι προσφοράς, ειδοποιήσεις, πολλαπλή επιστροφή ──────────
+async def _deliver(net, g, qty=2, *, barcode="5555555555555", name="ΕΙΔΟΣ", mode="return",
+                   price=None, can_return=False, return_by=""):
+    req = await net["r"][A].create_request(barcode=barcode, name=name, qty=qty,
+                                           group_ids=[g["id"]], can_return=can_return,
+                                           return_by=return_by)
+    off = await net["r"][B].make_offer(req["id"], qty, settle_mode=mode, unit_price_cents=price)
+    assert off["ok"], off
+    offer = next(o for r in await net["r"][A].my_requests() if r["id"] == req["id"]
+                 for o in r["offers"])
+    acc = await net["r"][A].accept_offer(offer["id"])
+    assert (await net["r"][B].complete_movement(acc["movement_id"], scan_code="QR-123"))["ok"]
+    return acc["movement_id"], offer
+
+
+async def test_network_price_basis_owner_only(net):
+    g = await net["r"][A].create_group("Δ", "acquisition")
+    assert (await net["r"][A].groups())[0]["price_basis"] == "acquisition"
+    await _join_existing(net, A, B, g)
+    assert not (await net["r"][B].set_price_basis(g["id"], "retail"))["ok"], "μόνο ο δημιουργός"
+    assert (await net["r"][A].set_price_basis(g["id"], "retail"))["ok"]
+    assert not (await net["r"][A].set_price_basis(g["id"], "κάτι"))["ok"]
+
+
+async def _join_existing(net, owner, guest, g):
+    await net["r"][owner].invite(g["id"], {A: "1", B: "2", C_: "3"}[guest])
+    inv = await net["r"][guest].my_invites()
+    await net["r"][guest].respond(inv[0]["id"], True)
+
+
+async def test_acquisition_price_must_be_typed_by_hand(net):
+    g = await net["r"][A].create_group("Δ", "acquisition")
+    await _join_existing(net, A, B, g)
+    await net["db"]["medicine_catalog"].insert_one(
+        {"_id": "X1", "barcode": "1111111111111", "retail_cents": 1500, "wholesale_cents": 1000})
+    req = await net["r"][A].create_request(barcode="1111111111111", name="Χ", qty=1,
+                                           group_ids=[g["id"]])
+    row = (await net["r"][B].inbox())[0]
+    assert row["price_basis"] == "acquisition" and row["price_hint_cents"] is None, \
+        "η τιμή κτήσης ΔΕΝ προσυμπληρώνεται"
+    r = await net["r"][B].make_offer(req["id"], 1, settle_mode="value")
+    assert r["error"] == "price_required"
+    assert (await net["r"][B].make_offer(req["id"], 1, settle_mode="value",
+                                         unit_price_cents=870))["ok"]
+
+
+async def test_wholesale_is_prefilled_and_editable_and_travels_to_balance(net):
+    g = await net["r"][A].create_group("Δ", "wholesale")
+    await _join_existing(net, A, B, g)
+    await net["db"]["medicine_catalog"].insert_one(
+        {"_id": "X2", "barcode": "2222222222222", "retail_cents": 1500, "wholesale_cents": 1000})
+    await net["r"][A].create_request(barcode="2222222222222", name="Υ", qty=3,
+                                     group_ids=[g["id"]])
+    assert (await net["r"][B].inbox())[0]["price_hint_cents"] == 1000
+    mov, offer = await _deliver(net, g, 3, barcode="2222222222222", name="Υ2", mode="value")
+    assert offer["settle_mode"] == "value" and offer["unit_price_cents"] == 1000, \
+        "χωρίς τιμή → παίρνει την προτεινόμενη"
+    bal = await net["r"][A].balances()
+    row = next(b for b in bal if b["name"] == "Υ2")
+    assert row["direction"] == "i_owe" and row["value_cents"] == 3000
+    assert (await net["r"][A].dashboard())["i_owe_cents"] == 3000
+    m = next(x for x in await net["r"][A].movements() if x["id"] == mov)
+    assert m["scan_code"] == "QR-123" and m["open_value_cents"] == 3000
+    _, off2 = await _deliver(net, g, 1, barcode="2222222222222", name="Υ3", mode="value",
+                             price=1234)
+    assert off2["unit_price_cents"] == 1234, "ο Β μπορεί να αλλάξει την προσυμπληρωμένη τιμή"
+
+
+async def test_request_carries_can_return_and_date(net):
+    g = await _join(net, A, B, "Δ")
+    await net["r"][A].create_request(barcode="", name="Ζ", qty=1, group_ids=[g["id"]],
+                                     can_return=True, return_by="20/12/2026")
+    row = (await net["r"][B].inbox())[0]
+    assert row["can_return"] is True and row["return_by"] == "2026-12-20"
+
+
+async def test_every_status_change_notifies_the_other_side(net):
+    g = await _join(net, A, B, "Δ")
+    mov, _ = await _deliver(net, g, 2)
+    a = [e["text"] for e in await net["r"][A].events()]
+    b = [e["text"] for e in await net["r"][B].events()]
+    assert any("Νέο αίτημα" in t for t in b)
+    assert any("μπορεί να καλύψει" in t for t in a)
+    assert any("δέχτηκε την προσφορά" in t for t in b)
+    assert any("σου παρέδωσε" in t and "οφείλεις" in t for t in a)
+    ret = await net["r"][A].request_return(mov, 2)
+    assert any("επιστρέψει" in e["text"] for e in await net["r"][B].events())
+    await net["r"][B].respond_return(ret["id"], True)
+    assert any("δέχτηκε την επιστροφή" in e["text"] for e in await net["r"][A].events())
+    await net["r"][A].complete_return(ret["id"])
+    assert any("σου επέστρεψε" in e["text"] for e in await net["r"][B].events())
+    # τα «info» μετράνε στην ειδοποίηση μέχρι να τα δει
+    d = await net["r"][A].dashboard()
+    assert d["unseen"] >= 1 and d["notify"] >= d["unseen"]
+    await net["r"][A].mark_seen()
+    assert (await net["r"][A].dashboard())["unseen"] == 0
+    assert all(e["text"] for e in await net["r"][C_].events()) and \
+        await net["r"][C_].events() == [], "τρίτος δεν βλέπει τίποτα"
+
+
+async def test_bulk_return_all_to_partner_is_one_package(net):
+    g = await _join(net, A, B, "Δ")
+    m1, _ = await _deliver(net, g, 2, barcode="3333333333333", name="Π1")
+    m2, _ = await _deliver(net, g, 1, barcode="4444444444444", name="Π2")
+    r = await net["r"][A].request_returns(partner_id=B)
+    assert r["ok"] and r["returns"] == 2
+    assert not (await net["r"][A].request_return(m1, 1))["ok"], \
+        "ό,τι ζητήθηκε ήδη για επιστροφή δεν ξαναζητιέται"
+    movs = {m["id"]: m for m in await net["r"][B].movements()}
+    first = movs[m1]["returns"][0]["id"]
+    assert (await net["r"][B].respond_return(first, True))["returns"] == 2, "απάντηση για όλο το πακέτο"
+    assert (await net["r"][A].complete_return(first))["returns"] == 2
+    assert await net["r"][A].balances() == []
+
+
+async def test_dashboard_inbox_excludes_already_answered(net):
+    g = await _join(net, A, B, "Δ")
+    req = await net["r"][A].create_request(barcode="", name="Ω", qty=1, group_ids=[g["id"]])
+    assert (await net["r"][B].dashboard())["inbox"] == 1
+    await net["r"][B].decline_request(req["id"])
+    assert (await net["r"][B].dashboard())["inbox"] == 0

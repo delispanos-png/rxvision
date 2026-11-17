@@ -68,6 +68,9 @@ INDEXES: list[tuple[str, list[tuple[str, int]], dict]] = [
     # διπλό τζίρο στα νούμερα του φαρμακείου.
     ("pos_sales", [("tenant_id", 1), ("external_id", 1)], {"unique": True}),
     ("pos_sales", [("tenant_id", 1), ("sold_at", -1)], {}),
+    # Connect — ειδοποιήσεις αλλαγής κατάστασης (ανάγνωση ανά φαρμακείο· σβήνονται μετά από 90 ημέρες)
+    ("connect_events", [("tenant_id", 1), ("seen_at", 1), ("created_at", -1)], {}),
+    ("connect_events", [("created_at", 1)], {"expireAfterSeconds": 90 * 86400}),
     ("pos_sales", [("tenant_id", 1), ("lines.barcode", 1)], {}),
     ("api_keys", [("key_hash", 1)], {"unique": True}),
     ("api_keys", [("tenant_id", 1)], {}),

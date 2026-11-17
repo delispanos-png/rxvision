@@ -44,8 +44,9 @@ export function Topbar() {
   const connectOn = ["enabled", "trial"].includes(data?.modules?.connect ?? "locked");
   const connectQ = useQuery({ queryKey: ["connect", "topbar"], retry: false, refetchInterval: 60000,
     enabled: connectOn,
-    queryFn: () => api<{ inbox: number; offers_waiting: number }>("/connect/dashboard") });
-  const connectTodo = (connectQ.data?.inbox ?? 0) + (connectQ.data?.offers_waiting ?? 0);
+    queryFn: () => api<{ notify?: number }>("/connect/dashboard") });
+  // ΕΝΑ νούμερο από τον server: εκκρεμότητες μου + αλλαγές κατάστασης που δεν έχω δει (12/11/2026)
+  const connectTodo = connectQ.data?.notify ?? 0;
 
   const [open, setOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);

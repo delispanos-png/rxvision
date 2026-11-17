@@ -50,5 +50,8 @@ progress "Διαγραφή server $NAME…"
 RES=$(api DELETE /servers/$SID)
 ST=$(printf '%s' "$RES" | python3 -c "import sys,json; print((json.load(sys.stdin).get('action') or {}).get('status',''))" 2>/dev/null)
 if [ -z "$ST" ]; then progress "ΣΦΑΛΜΑ διαγραφής: $(printf '%s' "$RES" | tr -d '\n' | cut -c1-150)"; echo "delete_failed $NAME"; exit 1; fi
+# 5) καθάρισμα της «ταυτότητας» του κόμβου στη βάση — αλλιώς η τελευταία του εγγραφή μένει και ο
+#    έλεγχος υγείας στέλνει «πιθανό down» για πάντα (SRV04, 24/10–12/11/2026)
+M "db.node_metrics.deleteMany({\$or:[{node:'$NAME'},{_id:'$NAME'}]}); db.node_health.deleteMany({\$or:[{node:'$NAME'},{_id:'$NAME'}]}); db.ops_alerts.deleteOne({_id:'alert:node-down-$NAME'})" >/dev/null 2>&1 || true
 progress "✅ $NAME αφαιρέθηκε (εκτός LB, σταματημένος, διαγραμμένος)"
 echo "removed $NAME"

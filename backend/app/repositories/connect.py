@@ -37,6 +37,7 @@ MOVEMENTS = "connect_movements"
 RETURNS = "connect_returns"
 SETTLEMENTS = "connect_settlements"
 DISPUTES = "connect_disputes"
+EVENTS = "connect_events"
 
 MODULE = "connect"
 
@@ -53,6 +54,21 @@ RET_REQUESTED, RET_ACCEPTED, RET_COMPLETED, RET_REJECTED = ("requested", "accept
 
 URGENCIES = ("normal", "today", "urgent")
 
+# Βάση τιμής ΑΝΑ ΔΙΚΤΥΟ (απόφαση ιδιοκτήτη 12/11/2026): σε ποιες τιμές καταγράφονται/υπολογίζονται
+# οι αξίες. Λιανική & χονδρική ΠΡΟΣΥΜΠΛΗΡΩΝΟΝΤΑΙ (Δελτίο Τιμών → κατάλογος φαρμακείου)· την τιμή
+# ΚΤΗΣΗΣ τη γράφει πάντα ο φαρμακοποιός με το χέρι — μόνο αυτός ξέρει πόσο το αγόρασε.
+PRICE_BASES = ("retail", "wholesale", "acquisition")
+DEFAULT_BASIS = "wholesale"
+BASIS_LABEL = {"retail": "λιανικής", "wholesale": "χονδρικής", "acquisition": "κτήσης"}
+
+# Πώς τακτοποιείται μια κίνηση — το διαλέγει όποιος ΔΙΝΕΙ (φαρμακείο Β) στην προσφορά του.
+SETTLE_RETURN, SETTLE_VALUE = "return", "value"     # «το θέλω πίσω» · «με τιμή / είδος με είδος»
+SETTLE_MODES = (SETTLE_RETURN, SETTLE_VALUE)
+
+# Ειδοποιήσεις: «action» = περιμένει ΚΑΤΙ από τον παραλήπτη (μετριέται ήδη ως εκκρεμότητα)·
+# «info» = απλή ενημέρωση αλλαγής κατάστασης (μετριέται μέχρι να τη δει).
+EV_ACTION, EV_INFO = "action", "info"
+
 
 def _now() -> datetime:
     return datetime.now(tz=timezone.utc)
@@ -63,6 +79,29 @@ def _oid(v: Any) -> ObjectId | None:
         return ObjectId(str(v))
     except (InvalidId, TypeError):
         return None
+
+
+def _basis(v: Any) -> str:
+    return v if v in PRICE_BASES else DEFAULT_BASIS
+
+
+def _cents(v: Any) -> int | None:
+    try:
+        n = int(v)
+    except (TypeError, ValueError):
+        return None
+    return n if n > 0 else None
+
+
+def _date(v: Any) -> str | None:
+    """ΗΗ/ΜΜ/ΕΕΕΕ ή ΕΕΕΕ-ΜΜ-ΗΗ → ΕΕΕΕ-ΜΜ-ΗΗ· οτιδήποτε άλλο → None."""
+    s = (str(v or "")).strip()
+    for fmt in ("%Y-%m-%d", "%d/%m/%Y"):
+        try:
+            return datetime.strptime(s, fmt).strftime("%Y-%m-%d")
+        except ValueError:
+            continue
+    return None
 
 
 def _qty(v: Any, *, lo: int = 1, hi: int = 9999) -> int:
@@ -121,16 +160,30 @@ class ConnectRepository:
         async for g in self._db[GROUPS].find({"members": self.me}).sort("created_at", 1):
             names = await directory.names_of(g.get("members") or [])
             out.append({"id": str(g["_id"]), "name": g.get("name"),
+                        "price_basis": _basis(g.get("price_basis")),
                         "owner": g.get("owner_tenant_id") == self.me,
                         "members": [{"tenant_id": m, "name": names.get(m, m)}
                                     for m in (g.get("members") or [])]})
         return out
 
-    async def create_group(self, name: str) -> dict:
+    async def create_group(self, name: str, price_basis: str = DEFAULT_BASIS) -> dict:
         doc = {"name": (name or "").strip()[:80] or "Το δίκτυό μου",
+               "price_basis": _basis(price_basis),
                "owner_tenant_id": self.me, "members": [self.me], "created_at": _now()}
         res = await self._db[GROUPS].insert_one(doc)
         return {"ok": True, "id": str(res.inserted_id), "name": doc["name"]}
+
+    async def set_price_basis(self, group_id: str, price_basis: str) -> dict:
+        """Αλλαγή βάσης τιμής — μόνο ο δημιουργός. Ισχύει για ΝΕΕΣ προσφορές· όσες έχουν ήδη
+        συμφωνηθεί κρατούν την τιμή τους (συμφωνία είναι συμφωνία)."""
+        if price_basis not in PRICE_BASES:
+            return {"ok": False, "error": "bad_basis", "message": "Άγνωστη βάση τιμής."}
+        res = await self._db[GROUPS].update_one({"_id": _oid(group_id), "owner_tenant_id": self.me},
+                                                {"$set": {"price_basis": price_basis}})
+        if not res.matched_count:
+            return {"ok": False, "error": "not_owner",
+                    "message": "Μόνο ο δημιουργός του δικτύου αλλάζει τη βάση τιμής."}
+        return {"ok": True, "price_basis": price_basis}
 
     async def delete_group(self, group_id: str) -> dict:
         """Διαγραφή — μόνο από τον δημιουργό, και ΜΟΝΟ αν δεν μένει τίποτα ανοιχτό.
@@ -225,7 +278,8 @@ class ConnectRepository:
 
     async def create_request(self, *, barcode: str, name: str, qty: int, group_ids: list[str],
                              urgency: str = "normal", notes: str = "",
-                             hours: int = 48) -> dict:
+                             hours: int = 48, can_return: bool = False,
+                             return_by: str = "") -> dict:
         mine = {str(g) for g in await self._my_groups()}
         gids = [_oid(g) for g in (group_ids or []) if str(g) in mine]
         if not gids:
@@ -237,9 +291,17 @@ class ConnectRepository:
                "qty": _qty(qty), "qty_covered": 0,
                "urgency": urgency if urgency in URGENCIES else "normal",
                "notes": (notes or "").strip()[:400] or None,
+               "can_return": bool(can_return),
+               "return_by": _date(return_by) if can_return else None,
                "status": REQ_OPEN, "created_at": _now(),
                "expires_at": _now() + timedelta(hours=max(1, min(168, int(hours or 48))))}
         res = await self._db[REQUESTS].insert_one(doc)
+        members: set[str] = set()
+        async for g in self._db[GROUPS].find({"_id": {"$in": gids}}, {"members": 1}):
+            members.update(g.get("members") or [])
+        members.discard(self.me)
+        await self._notify(members, EV_ACTION, "inbox",
+                           f"Νέο αίτημα από {await self._my_name()}: {doc['name']} × {doc['qty']}")
         auto = await self._auto_offers(res.inserted_id, doc)
         return {"ok": True, "id": str(res.inserted_id), "auto_offers": auto}
 
@@ -265,10 +327,20 @@ class ConnectRepository:
                 if not qty:
                     continue
                 qty = min(qty, remaining)
+                basis = _basis(g.get("price_basis"))
+                # Αυτόματοι όροι: αν ο αιτών μπορεί να το επιστρέψει → «το θέλω πίσω»· αλλιώς
+                # χρέωση με την τιμή του δικτύου (σε τιμή κτήσης μένει κενή — τη γράφει ο Β).
+                price = await price_hint(member, req["barcode"], basis)
+                mode = SETTLE_RETURN if req.get("can_return") else SETTLE_VALUE
                 await self._db[OFFERS].insert_one({
                     "request_id": request_id, "group_id": g["_id"], "from_tenant_id": member,
                     "to_tenant_id": self.me, "qty": qty, "mode": "auto",
+                    "settle_mode": mode, "price_basis": basis,
+                    "unit_price_cents": price if mode == SETTLE_VALUE else None,
                     "status": OFF_PENDING, "created_at": _now()})
+                await self._notify([self.me], EV_ACTION, "requests",
+                                   f"Το {await directory.tenant_name(member)} μπορεί να καλύψει "
+                                   f"{qty} τεμ. «{req['name']}» (αυτόματα)")
                 made += 1
                 remaining -= qty
         return made
@@ -313,11 +385,12 @@ class ConnectRepository:
             v = await self._request_view(r, with_offers=False)
             mine = await self._db[OFFERS].find_one({"request_id": r["_id"],
                                                     "from_tenant_id": self.me})
-            v["my_offer"] = ({"id": str(mine["_id"]), "qty": mine["qty"],
-                              "status": mine["status"], "mode": mine.get("mode")}
-                             if mine else None)
-            v["suggested"] = await self._auto_qty(self.me, r.get("barcode") or "",
-                                                  str((r.get("group_ids") or [None])[0]))
+            v["my_offer"] = self._offer_terms(mine) if mine else None
+            g = next((x for x in (r.get("group_ids") or []) if x in gids), None)
+            v["suggested"] = await self._auto_qty(self.me, r.get("barcode") or "", str(g))
+            basis = await self._group_basis(g)
+            v["price_basis"] = basis
+            v["price_hint_cents"] = await price_hint(self.me, r.get("barcode") or "", basis)
             out.append(v)
         return out
 
@@ -325,14 +398,14 @@ class ConnectRepository:
         v = {"id": str(r["_id"]), "barcode": r.get("barcode"), "name": r.get("name"),
              "qty": r.get("qty"), "qty_covered": r.get("qty_covered", 0),
              "urgency": r.get("urgency"), "notes": r.get("notes"), "status": r.get("status"),
+             "can_return": bool(r.get("can_return")), "return_by": r.get("return_by"),
              "created_at": r.get("created_at"), "expires_at": r.get("expires_at"),
              "mine": r.get("from_tenant_id") == self.me,
              "from": await directory.tenant_name(r["from_tenant_id"])}
         if with_offers:
             offers = []
             async for o in self._db[OFFERS].find({"request_id": r["_id"]}).sort("created_at", 1):
-                offers.append({"id": str(o["_id"]), "qty": o.get("qty"),
-                               "status": o.get("status"), "mode": o.get("mode"),
+                offers.append({**self._offer_terms(o),
                                "from": await directory.tenant_name(o["from_tenant_id"])})
             v["offers"] = offers
         return v
@@ -350,8 +423,13 @@ class ConnectRepository:
         return {"ok": True}
 
     # ── προσφορές ────────────────────────────────────────────────────────────────────────────
-    async def make_offer(self, request_id: str, qty: int) -> dict:
-        """Χειροκίνητη προσφορά — η «αποδοχή» του §8 για είδη χωρίς γνωστό απόθεμα."""
+    async def make_offer(self, request_id: str, qty: int, *, settle_mode: str = SETTLE_RETURN,
+                         unit_price_cents: int | None = None) -> dict:
+        """Χειροκίνητη προσφορά — η «αποδοχή» του §8 για είδη χωρίς γνωστό απόθεμα.
+
+        ΟΡΟΙ (12/11/2026): ο Β δηλώνει αν θέλει πίσω το ίδιο είδος ή χρέωση με τιμή. Η τιμή
+        προσυμπληρώνεται από τη βάση του δικτύου και ο Β μπορεί να την αλλάξει· σε τιμή ΚΤΗΣΗΣ
+        είναι υποχρεωτικό να τη γράψει ο ίδιος."""
         rid = _oid(request_id)
         gids = await self._my_groups()
         r = await self._db[REQUESTS].find_one({"_id": rid, "status": REQ_OPEN,
@@ -372,11 +450,24 @@ class ConnectRepository:
                                "κίνηση αν θέλεις να αλλάξεις ποσότητα."}
         n = min(_qty(qty), remaining)
         gid = next((g for g in (r.get("group_ids") or []) if g in gids), None)
+        basis = await self._group_basis(gid)
+        mode = settle_mode if settle_mode in SETTLE_MODES else SETTLE_RETURN
+        price = _cents(unit_price_cents)
+        if mode == SETTLE_VALUE and price is None:
+            price = (None if basis == "acquisition"
+                     else await price_hint(self.me, r.get("barcode") or "", basis))
+            if price is None:
+                return {"ok": False, "error": "price_required",
+                        "message": f"Γράψε την τιμή {BASIS_LABEL[basis]} ανά τεμάχιο."}
         await self._db[OFFERS].update_one(
             {"request_id": rid, "from_tenant_id": self.me},
             {"$set": {"qty": n, "status": OFF_PENDING, "mode": "manual", "group_id": gid,
+                      "settle_mode": mode, "price_basis": basis,
+                      "unit_price_cents": price if mode == SETTLE_VALUE else None,
                       "to_tenant_id": r["from_tenant_id"], "created_at": _now()}},
             upsert=True)
+        await self._notify([r["from_tenant_id"]], EV_ACTION, "requests",
+                           f"Το {await self._my_name()} μπορεί να καλύψει {n} τεμ. «{r.get('name')}»")
         return {"ok": True, "qty": n}
 
     async def withdraw_offer(self, offer_id: str) -> dict:
@@ -404,6 +495,10 @@ class ConnectRepository:
             {"request_id": rid, "from_tenant_id": self.me},
             {"$set": {"qty": 0, "status": OFF_REJECTED, "mode": "manual",
                       "created_at": _now()}}, upsert=True)
+        r = await self._db[REQUESTS].find_one({"_id": rid}, {"from_tenant_id": 1, "name": 1})
+        if r:
+            await self._notify([r["from_tenant_id"]], EV_INFO, "requests",
+                               f"Το {await self._my_name()} δεν μπορεί να καλύψει «{r.get('name')}»")
         return {"ok": True}
 
     # ── αποδοχή → κράτηση → κίνηση ───────────────────────────────────────────────────────────
@@ -438,13 +533,20 @@ class ConnectRepository:
             "request_id": r["_id"], "offer_id": oid, "reservation_id": res.inserted_id,
             "group_id": o.get("group_id"), "source_tenant_id": source,
             "dest_tenant_id": self.me, "barcode": r.get("barcode"), "name": r.get("name"),
-            "qty": qty, "status": MOV_PENDING, "created_at": _now()})
+            "qty": qty, "status": MOV_PENDING, "created_at": _now(),
+            # οι ΣΥΜΦΩΝΗΜΕΝΟΙ όροι ταξιδεύουν με την κίνηση — δεν ξαναδιαβάζονται από το δίκτυο
+            "settle_mode": o.get("settle_mode") or SETTLE_RETURN,
+            "price_basis": o.get("price_basis"), "unit_price_cents": o.get("unit_price_cents"),
+            "can_return": bool(r.get("can_return")), "return_by": r.get("return_by")})
         await self._db[OFFERS].update_one({"_id": oid}, {"$set": {"status": OFF_ACCEPTED,
                                                                   "accepted_qty": qty}})
         covered = int(r.get("qty_covered") or 0) + qty
         await self._db[REQUESTS].update_one({"_id": r["_id"]}, {"$set": {
             "qty_covered": covered,
             "status": REQ_COVERED if covered >= int(r["qty"]) else REQ_OPEN}})
+        await self._notify([source], EV_ACTION, "movements",
+                           f"Το {await self._my_name()} δέχτηκε την προσφορά σου — να παραδώσεις "
+                           f"{qty} τεμ. «{r.get('name')}»")
         return {"ok": True, "movement_id": str(mov.inserted_id), "qty": qty,
                 "expires_in_minutes": minutes}
 
@@ -455,10 +557,12 @@ class ConnectRepository:
         if not o:
             return {"ok": False, "error": "not_found"}
         await self._db[OFFERS].update_one({"_id": oid}, {"$set": {"status": OFF_REJECTED}})
+        await self._notify([o["from_tenant_id"]], EV_INFO, "inbox",
+                           f"Το {await self._my_name()} δεν δέχτηκε την προσφορά σου")
         return {"ok": True}
 
     async def complete_movement(self, movement_id: str, *, doc_ref: str = "", batch: str = "",
-                                expiry: str = "") -> dict:
+                                expiry: str = "", scan_code: str = "") -> dict:
         """«Παρέδωσα» — το δηλώνει η ΑΦΕΤΗΡΙΑ, γιατί αυτή δίνει το κουτί από το χέρι της."""
         mid = _oid(movement_id)
         m = await self._db[MOVEMENTS].find_one({"_id": mid, "source_tenant_id": self.me,
@@ -474,12 +578,18 @@ class ConnectRepository:
         # μόλις δήλωσε ο φαρμακοποιός δεν θα έφτανε ποτέ στην εγγραφή της κίνησης.
         fields = {"doc_ref": (doc_ref or "").strip()[:60] or None,
                   "batch": (batch or "").strip()[:60] or None,
-                  "expiry": (expiry or "").strip()[:10] or None}
+                  "expiry": (expiry or "").strip()[:10] or None,
+                  # σάρωση QR/ταινίας — ΜΟΝΟ καταγραφή, για την περίπτωση που χαθεί το κουτί
+                  "scan_code": (scan_code or "").strip()[:200] or None}
         await self._apply_stock({**m, **fields}, direction=-1)
         await self._db[MOVEMENTS].update_one({"_id": mid}, {"$set": {
             **fields, "status": MOV_COMPLETED, "completed_at": _now()}})
         await self._db[RESERVATIONS].update_one({"_id": m.get("reservation_id")},
                                                 {"$set": {"status": RES_CONSUMED}})
+        terms = _terms_text(m, int(m.get("qty") or 0))
+        await self._notify([m["dest_tenant_id"]], EV_INFO, "movements",
+                           f"Το {await self._my_name()} σου παρέδωσε {m.get('qty')} τεμ. "
+                           f"«{m.get('name')}» — οφείλεις {terms}")
         return {"ok": True}
 
     async def _apply_stock(self, m: dict, *, direction: int) -> None:
@@ -519,6 +629,9 @@ class ConnectRepository:
         if not m:
             return {"ok": False, "error": "not_found"}
         await self._release(m, MOV_CANCELLED)
+        other = m["dest_tenant_id"] if m["source_tenant_id"] == self.me else m["source_tenant_id"]
+        await self._notify([other], EV_INFO, "movements",
+                           f"Το {await self._my_name()} ακύρωσε την κίνηση «{m.get('name')}»")
         return {"ok": True}
 
     async def _release(self, m: dict, status: str) -> None:
@@ -558,19 +671,31 @@ class ConnectRepository:
         setts = [s async for s in self._db[SETTLEMENTS].find({"movement_id": m["_id"]})]
         disp = await self._db[DISPUTES].find_one({"movement_id": m["_id"], "status": "open"})
         returned = sum(int(r.get("qty") or 0) for r in rets if r.get("status") == RET_COMPLETED)
+        returning = sum(int(r.get("qty") or 0) for r in rets
+                        if r.get("status") in (RET_REQUESTED, RET_ACCEPTED))
         settled = sum(int(s.get("qty") or 0) for s in setts)
+        open_qty = max(0, int(m.get("qty") or 0) - returned - settled)
+        unit = m.get("unit_price_cents")
         return {"id": str(m["_id"]), "direction": "out" if outgoing else "in",
                 "partner": await directory.tenant_name(partner), "partner_id": partner,
                 "barcode": m.get("barcode"), "name": m.get("name"), "qty": m.get("qty"),
                 "status": m.get("status"), "doc_ref": m.get("doc_ref"),
                 "batch": m.get("batch"), "expiry": m.get("expiry"),
                 "created_at": m.get("created_at"), "completed_at": m.get("completed_at"),
-                "returned": returned, "settled": settled,
-                "open_qty": max(0, int(m.get("qty") or 0) - returned - settled),
+                "returned": returned, "settled": settled, "open_qty": open_qty,
+                # ό,τι δεν έχει ήδη ζητηθεί για επιστροφή — ΑΥΤΟ μπορεί να ζητηθεί ξανά
+                "returnable_qty": max(0, open_qty - returning),
+                "settle_mode": m.get("settle_mode") or SETTLE_RETURN,
+                "price_basis": m.get("price_basis"), "unit_price_cents": unit,
+                "open_value_cents": (open_qty * int(unit)
+                                     if unit and m.get("settle_mode") == SETTLE_VALUE else None),
+                "can_return": bool(m.get("can_return")), "return_by": m.get("return_by"),
+                "scan_code": m.get("scan_code"),
                 "dispute": ({"id": str(disp["_id"]), "reason": disp.get("reason")}
                             if disp else None),
                 "returns": [{"id": str(r["_id"]), "qty": r.get("qty"),
-                             "status": r.get("status")} for r in rets]}
+                             "status": r.get("status"), "batch_id": r.get("batch_id")}
+                            for r in rets]}
 
     async def balances(self) -> list[dict]:
         """Ανοιχτό υπόλοιπο ανά συνεργάτη & είδος — ΠΑΡΑΓΩΓΟ από τις κινήσεις.
@@ -587,7 +712,8 @@ class ConnectRepository:
             partner = m["dest_tenant_id"] if outgoing else m["source_tenant_id"]
             key = (partner, m.get("barcode") or m.get("name") or "—")
             row = agg.setdefault(key, {"partner_id": partner, "barcode": m.get("barcode"),
-                                       "name": m.get("name"), "net": 0, "movements": 0})
+                                       "name": m.get("name"), "net": 0, "movements": 0,
+                                       "value_cents": 0, "in_kind_qty": 0})
             qty = int(m.get("qty") or 0)
             returned = 0
             async for r in self._db[RETURNS].find({"movement_id": m["_id"],
@@ -599,6 +725,10 @@ class ConnectRepository:
             net = max(0, qty - returned - settled)
             row["net"] += net if outgoing else -net
             row["movements"] += 1
+            if m.get("settle_mode") == SETTLE_VALUE and m.get("unit_price_cents"):
+                row["value_cents"] += net * int(m["unit_price_cents"])
+            else:
+                row["in_kind_qty"] += net
         out = []
         for (partner, _), row in agg.items():
             if not row["net"]:
@@ -616,7 +746,9 @@ class ConnectRepository:
         if not m:
             return {"ok": False, "error": "not_found"}
         view = await self._movement_view(m)
-        n = min(_qty(qty), view["open_qty"])
+        # ΡΙΖΑ (12/11/2026): πριν μετρούσε το open_qty χωρίς τις επιστροφές που ΗΔΗ ζητήθηκαν,
+        # οπότε δύο κλικ ζητούσαν διπλή επιστροφή του ίδιου τεμαχίου.
+        n = min(_qty(qty), view["returnable_qty"])
         if n <= 0:
             return {"ok": False, "error": "nothing_open",
                     "message": "Δεν υπάρχει ανοιχτή ποσότητα σε αυτή την κίνηση."}
@@ -624,7 +756,54 @@ class ConnectRepository:
             "movement_id": mid, "from_tenant_id": self.me,
             "to_tenant_id": m["source_tenant_id"], "qty": n, "status": RET_REQUESTED,
             "note": (note or "").strip()[:300] or None, "created_at": _now()})
+        await self._notify([m["source_tenant_id"]], EV_ACTION, "movements",
+                           f"Το {await self._my_name()} θέλει να σου επιστρέψει {n} τεμ. "
+                           f"«{m.get('name')}»")
         return {"ok": True, "id": str(res.inserted_id), "qty": n}
+
+    async def request_returns(self, *, movement_ids: list[str] | None = None,
+                              partner_id: str | None = None, note: str = "") -> dict:
+        """ΠΟΛΛΑΠΛΗ επιστροφή σε είδος — επιλεγμένες κινήσεις ή ΟΛΑ προς έναν συνεργάτη.
+
+        Όλες οι επιστροφές παίρνουν ΚΟΙΝΟ `batch_id`: ο συνεργάτης απαντά και ολοκληρώνεται
+        μία φορά για όλο το πακέτο, όχι κουτί-κουτί. ΜΙΑ ειδοποίηση ανά συνεργάτη."""
+        q: dict = {"dest_tenant_id": self.me, "status": MOV_COMPLETED}
+        if movement_ids:
+            q["_id"] = {"$in": [x for x in (_oid(i) for i in movement_ids) if x]}
+        elif partner_id:
+            q["source_tenant_id"] = partner_id
+        else:
+            return {"ok": False, "error": "nothing_selected", "message": "Διάλεξε τι επιστρέφεις."}
+        batch = ObjectId()
+        per_partner: dict[str, list[str]] = {}
+        made = 0
+        async for m in self._db[MOVEMENTS].find(q):
+            view = await self._movement_view(m)
+            n = view["returnable_qty"]
+            if n <= 0:
+                continue
+            await self._db[RETURNS].insert_one({
+                "movement_id": m["_id"], "from_tenant_id": self.me,
+                "to_tenant_id": m["source_tenant_id"], "qty": n, "status": RET_REQUESTED,
+                "batch_id": batch, "note": (note or "").strip()[:300] or None,
+                "created_at": _now()})
+            per_partner.setdefault(m["source_tenant_id"], []).append(f"{n}× {m.get('name')}")
+            made += 1
+        if not made:
+            return {"ok": False, "error": "nothing_open",
+                    "message": "Δεν υπάρχει ανοιχτή ποσότητα για επιστροφή."}
+        for partner, items in per_partner.items():
+            await self._notify([partner], EV_ACTION, "movements",
+                               f"Το {await self._my_name()} θέλει να σου επιστρέψει "
+                               f"{len(items)} είδη: {', '.join(items)[:300]}")
+        return {"ok": True, "returns": made, "batch_id": str(batch)}
+
+    async def _batch(self, r: dict, status: str, party: str) -> list[dict]:
+        """Η επιστροφή + όσες είναι στο ΙΔΙΟ πακέτο, στην ίδια κατάσταση, για την ίδια πλευρά."""
+        if not r.get("batch_id"):
+            return [r]
+        return [x async for x in self._db[RETURNS].find(
+            {"batch_id": r["batch_id"], "status": status, party: self.me})]
 
     async def respond_return(self, return_id: str, accept: bool) -> dict:
         """Απαντά η ΑΦΕΤΗΡΙΑ (αυτή που θα πάρει πίσω το είδος)."""
@@ -633,9 +812,15 @@ class ConnectRepository:
                                               "status": RET_REQUESTED})
         if not r:
             return {"ok": False, "error": "not_found"}
-        await self._db[RETURNS].update_one({"_id": rid}, {"$set": {
+        group = await self._batch(r, RET_REQUESTED, "to_tenant_id")
+        await self._db[RETURNS].update_many({"_id": {"$in": [x["_id"] for x in group]}}, {"$set": {
             "status": RET_ACCEPTED if accept else RET_REJECTED, "responded_at": _now()}})
-        return {"ok": True, "accepted": accept}
+        await self._notify([r["from_tenant_id"]], EV_ACTION if accept else EV_INFO, "movements",
+                           f"Το {await self._my_name()} "
+                           f"{'δέχτηκε' if accept else 'δεν δέχτηκε'} την επιστροφή "
+                           f"({len(group)} {'είδος' if len(group) == 1 else 'είδη'})"
+                           + (" — παράδωσέ τα και πάτα «Το επέστρεψα»" if accept else ""))
+        return {"ok": True, "accepted": accept, "returns": len(group)}
 
     async def complete_return(self, return_id: str) -> dict:
         """Ολοκλήρωση — το είδος γύρισε πίσω. Το δηλώνει όποιος το παρέδωσε πίσω."""
@@ -644,12 +829,17 @@ class ConnectRepository:
                                               "status": RET_ACCEPTED})
         if not r:
             return {"ok": False, "error": "not_found"}
-        m = await self._db[MOVEMENTS].find_one({"_id": r["movement_id"]})
-        if m:
-            await self._apply_stock({**m, "qty": r["qty"]}, direction=+1)
-        await self._db[RETURNS].update_one({"_id": rid}, {"$set": {"status": RET_COMPLETED,
-                                                                   "completed_at": _now()}})
-        return {"ok": True}
+        group = await self._batch(r, RET_ACCEPTED, "from_tenant_id")
+        for x in group:
+            m = await self._db[MOVEMENTS].find_one({"_id": x["movement_id"]})
+            if m:
+                await self._apply_stock({**m, "qty": x["qty"]}, direction=+1)
+            await self._db[RETURNS].update_one({"_id": x["_id"]}, {"$set": {
+                "status": RET_COMPLETED, "completed_at": _now()}})
+        await self._notify([r["to_tenant_id"]], EV_INFO, "movements",
+                           f"Το {await self._my_name()} σου επέστρεψε "
+                           f"{len(group)} {'είδος' if len(group) == 1 else 'είδη'}")
+        return {"ok": True, "returns": len(group)}
 
     async def settle(self, movement_id: str, *, amount_cents: int = 0, qty: int = 0,
                      note: str = "") -> dict:
@@ -671,6 +861,9 @@ class ConnectRepository:
             "movement_id": mid, "kind": "value", "qty": n,
             "amount_cents": max(0, int(amount_cents or 0)), "by": self.me,
             "note": (note or "").strip()[:300] or None, "at": _now()})
+        other = m["dest_tenant_id"] if m["source_tenant_id"] == self.me else m["source_tenant_id"]
+        await self._notify([other], EV_INFO, "movements",
+                           f"Το {await self._my_name()} τακτοποίησε {n} τεμ. «{m.get('name')}»")
         return {"ok": True, "qty": n}
 
     async def open_dispute(self, movement_id: str, reason: str, note: str = "") -> dict:
@@ -683,6 +876,9 @@ class ConnectRepository:
             "note": (note or "").strip()[:500] or None, "status": "open", "at": _now(),
             "history": [{"at": _now(), "by": self.me, "what": "opened"}]})
         await self._db[MOVEMENTS].update_one({"_id": mid}, {"$set": {"status": MOV_REVIEW}})
+        other = m["dest_tenant_id"] if m["source_tenant_id"] == self.me else m["source_tenant_id"]
+        await self._notify([other], EV_ACTION, "movements",
+                           f"Το {await self._my_name()} δήλωσε πρόβλημα στην κίνηση «{m.get('name')}»")
         return {"ok": True}
 
     async def resolve_dispute(self, dispute_id: str, note: str = "") -> dict:
@@ -698,14 +894,23 @@ class ConnectRepository:
                                   "note": (note or "")[:300] or None}}})
         await self._db[MOVEMENTS].update_one({"_id": m["_id"]},
                                              {"$set": {"status": MOV_COMPLETED}})
+        other = m["dest_tenant_id"] if m["source_tenant_id"] == self.me else m["source_tenant_id"]
+        await self._notify([other], EV_INFO, "movements",
+                           f"Το {await self._my_name()} σημείωσε ως λυμένο το πρόβλημα «{m.get('name')}»")
         return {"ok": True}
 
     # ── πίνακας ──────────────────────────────────────────────────────────────────────────────
     async def dashboard(self) -> dict:
         gids = await self._my_groups()
-        inbox = await self._db[REQUESTS].count_documents(
-            {"group_ids": {"$in": gids}, "from_tenant_id": {"$ne": self.me},
-             "status": REQ_OPEN}) if gids else 0
+        # Αιτήματα που περιμένουν ΑΚΟΜΗ τη δική μου απάντηση (όχι όσα έχω ήδη απαντήσει).
+        inbox = 0
+        if gids:
+            answered = {o["request_id"] async for o in self._db[OFFERS].find(
+                {"from_tenant_id": self.me, "status": {"$ne": OFF_WITHDRAWN}}, {"request_id": 1})}
+            async for r in self._db[REQUESTS].find(
+                    {"group_ids": {"$in": gids}, "from_tenant_id": {"$ne": self.me},
+                     "status": REQ_OPEN}, {"_id": 1}):
+                inbox += r["_id"] not in answered
         waiting = await self._db[OFFERS].count_documents(
             {"to_tenant_id": self.me, "status": OFF_PENDING})
         pending_out = await self._db[MOVEMENTS].count_documents(
@@ -715,6 +920,10 @@ class ConnectRepository:
         bal = await self.balances()
         returns_todo = await self._db[RETURNS].count_documents(
             {"to_tenant_id": self.me, "status": RET_REQUESTED})
+        returns_to_hand = await self._db[RETURNS].count_documents(
+            {"from_tenant_id": self.me, "status": RET_ACCEPTED})
+        unseen_info = await self._db[EVENTS].count_documents(
+            {"tenant_id": self.me, "kind": EV_INFO, "seen_at": None})
         disputes = await self._db[DISPUTES].count_documents({"status": "open"})
         members = set()
         async for g in self._db[GROUPS].find({"members": self.me}, {"members": 1}):
@@ -725,11 +934,91 @@ class ConnectRepository:
             "to_deliver": pending_out, "to_receive": pending_in,
             "they_owe": sum(b["qty"] for b in bal if b["direction"] == "they_owe"),
             "i_owe": sum(b["qty"] for b in bal if b["direction"] == "i_owe"),
-            "returns_todo": returns_todo, "disputes": disputes,
+            "they_owe_cents": sum(b["value_cents"] for b in bal if b["direction"] == "they_owe"),
+            "i_owe_cents": sum(b["value_cents"] for b in bal if b["direction"] == "i_owe"),
+            "returns_todo": returns_todo, "returns_to_hand": returns_to_hand,
+            "disputes": disputes, "unseen": unseen_info,
+            # ΤΟ νούμερο της ειδοποίησης: ό,τι περιμένει ενέργειά μου + αλλαγές που δεν έχω δει
+            "notify": inbox + waiting + pending_out + returns_todo + returns_to_hand + unseen_info,
             "partners": len(members), "groups": len(gids),
             "reservations": await self._db[RESERVATIONS].count_documents(
                 {"tenant_id": self.me, "status": RES_ACTIVE, "expires_at": {"$gt": _now()}}),
         }
+
+    # ── ειδοποιήσεις ─────────────────────────────────────────────────────────────────────────
+    async def _my_name(self) -> str:
+        return await directory.tenant_name(self.me)
+
+    async def _notify(self, tenants, kind: str, tab: str, text: str) -> None:
+        """ΜΙΑ ειδοποίηση ανά αλλαγή κατάστασης, προς την ΑΛΛΗ πλευρά — ποτέ προς εμένα.
+        ΓΙΑΤΙ ΕΔΩ ΚΑΙ ΟΧΙ ΣΤΟ FRONTEND: πριν, η «ειδοποίηση» ήταν μόνο ο μετρητής αιτημάτων/
+        προσφορών, οπότε μετά την αποδοχή καμία αλλαγή (παράδοση, επιστροφή) δεν ειδοποιούσε."""
+        await notify(self._db, tenants, kind, tab, text, sender=self.me)
+
+    async def events(self, *, limit: int = 30) -> list[dict]:
+        return [{"id": str(e["_id"]), "kind": e.get("kind"), "tab": e.get("tab"),
+                 "text": e.get("text"), "created_at": e.get("created_at"),
+                 "seen": e.get("seen_at") is not None}
+                async for e in self._db[EVENTS].find({"tenant_id": self.me})
+                .sort("created_at", -1).limit(limit)]
+
+    async def mark_seen(self) -> dict:
+        res = await self._db[EVENTS].update_many({"tenant_id": self.me, "seen_at": None},
+                                                 {"$set": {"seen_at": _now()}})
+        return {"ok": True, "seen": res.modified_count}
+
+    @staticmethod
+    def _offer_terms(o: dict) -> dict:
+        return {"id": str(o["_id"]), "qty": o.get("qty"), "status": o.get("status"),
+                "mode": o.get("mode"), "settle_mode": o.get("settle_mode") or SETTLE_RETURN,
+                "price_basis": o.get("price_basis"),
+                "unit_price_cents": o.get("unit_price_cents")}
+
+    async def _group_basis(self, gid) -> str:
+        g = await self._db[GROUPS].find_one({"_id": gid}, {"price_basis": 1}) if gid else None
+        return _basis((g or {}).get("price_basis"))
+
+
+async def notify(db, tenants, kind: str, tab: str, text: str, *, sender: str | None) -> None:
+    """Γράφει ειδοποίηση Connect — ποτέ προς τον αποστολέα."""
+    docs = [{"tenant_id": t, "kind": kind, "tab": tab, "text": text[:400],
+             "from_tenant_id": sender, "created_at": _now(), "seen_at": None}
+            for t in {t for t in tenants if t and t != sender}]
+    if docs:
+        await db[EVENTS].insert_many(docs)
+
+
+def _eur(cents: int) -> str:
+    return f"{cents / 100:,.2f} €".replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+def _terms_text(m: dict, qty: int) -> str:
+    """«2 τεμ. σε είδος» ή «24,60 € (τιμή χονδρικής)» — για ειδοποιήσεις."""
+    unit = m.get("unit_price_cents")
+    if m.get("settle_mode") == SETTLE_VALUE and unit:
+        return f"{_eur(qty * int(unit))} (τιμή {BASIS_LABEL.get(m.get('price_basis') or '', '')})"
+    return f"{qty} τεμ. σε είδος"
+
+
+async def price_hint(tenant_id: str, barcode: str, basis: str) -> int | None:
+    """Προτεινόμενη τιμή ανά τεμάχιο για τη βάση του δικτύου — ΜΙΑ πηγή για όλες τις οθόνες.
+
+    Λιανική: Δελτίο Τιμών (`medicine_catalog.retail_cents`) → τιμή του καταλόγου του φαρμακείου.
+    Χονδρική: Δελτίο Τιμών (`wholesale_cents`) → χονδρική του καταλόγου του φαρμακείου.
+    Κτήση: ΠΟΤΕ προσυμπλήρωση — τη γράφει ο φαρμακοποιός (μόνο αυτός ξέρει πόσο το αγόρασε).
+    """
+    if not barcode or basis == "acquisition":
+        return None
+    db = shared_db()
+    field, own = (("retail_cents", "price_cents") if basis == "retail"
+                  else ("wholesale_cents", "wholesale_cents"))
+    c = await db["medicine_catalog"].find_one(
+        {"$or": [{"barcode": barcode}, {"_id": barcode}], field: {"$gt": 0}}, {field: 1})
+    if c:
+        return int(c[field])
+    from app.repositories.pharmacy_catalog import PharmacyCatalogRepository
+    p = await PharmacyCatalogRepository(tenant_id=tenant_id).find_one({"barcode": barcode})
+    return _cents((p or {}).get(own))
 
 
 async def expire_reservations() -> dict:
@@ -748,5 +1037,8 @@ async def expire_reservations() -> dict:
             continue
         repo = ConnectRepository(tenant_id=m["dest_tenant_id"])
         await repo._release(m, MOV_CANCELLED)
+        # ο `me` εδώ είναι ο αιτών → ειδοποιούμε ρητά και τις ΔΥΟ πλευρές
+        await notify(db, [m["dest_tenant_id"], m["source_tenant_id"]], EV_INFO, "movements",
+                     f"Η κράτηση για «{m.get('name')}» έληξε χωρίς παράδοση", sender=None)
         n += 1
     return {"expired": n}

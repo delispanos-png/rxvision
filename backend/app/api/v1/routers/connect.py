@@ -34,6 +34,11 @@ def _policy(ctx: TenantContext) -> ConnectPolicyRepository:
 # ── σχήματα ──────────────────────────────────────────────────────────────────────────────────
 class GroupIn(BaseModel):
     name: str = ""
+    price_basis: str = "wholesale"
+
+
+class BasisIn(BaseModel):
+    price_basis: str
 
 
 class InviteIn(BaseModel):
@@ -53,16 +58,27 @@ class RequestIn(BaseModel):
     urgency: str = "normal"
     notes: str = ""
     hours: int = 48
+    can_return: bool = False
+    return_by: str = ""
 
 
 class OfferIn(BaseModel):
     qty: int = 1
+    settle_mode: str = "return"
+    unit_price_cents: int | None = None
 
 
 class DeliverIn(BaseModel):
     doc_ref: str = ""
     batch: str = ""
     expiry: str = ""
+    scan_code: str = ""
+
+
+class BulkReturnIn(BaseModel):
+    movement_ids: list[str] = []
+    partner_id: str | None = None
+    note: str = ""
 
 
 class ReturnIn(BaseModel):
@@ -105,7 +121,13 @@ async def groups(ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
 @router.post("/groups")
 async def create_group(body: GroupIn,
                        ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
-    return await _repo(ctx).create_group(body.name)
+    return await _repo(ctx).create_group(body.name, body.price_basis)
+
+
+@router.put("/groups/{group_id}/price-basis")
+async def set_price_basis(group_id: str, body: BasisIn,
+                          ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+    return await _repo(ctx).set_price_basis(group_id, body.price_basis)
 
 
 @router.delete("/groups/{group_id}")
@@ -143,7 +165,8 @@ async def create_request(body: RequestIn,
                          ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
     return await _repo(ctx).create_request(
         barcode=body.barcode, name=body.name, qty=body.qty, group_ids=body.group_ids,
-        urgency=body.urgency, notes=body.notes, hours=body.hours)
+        urgency=body.urgency, notes=body.notes, hours=body.hours,
+        can_return=body.can_return, return_by=body.return_by)
 
 
 @router.delete("/requests/{request_id}")
@@ -161,7 +184,8 @@ async def inbox(limit: int = Query(60, ge=1, le=200),
 @router.post("/requests/{request_id}/offer")
 async def make_offer(request_id: str, body: OfferIn,
                      ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
-    return await _repo(ctx).make_offer(request_id, body.qty)
+    return await _repo(ctx).make_offer(request_id, body.qty, settle_mode=body.settle_mode,
+                                       unit_price_cents=body.unit_price_cents)
 
 
 @router.post("/requests/{request_id}/decline")
@@ -199,7 +223,8 @@ async def movements(status: str | None = None, limit: int = Query(80, ge=1, le=2
 async def deliver(movement_id: str, body: DeliverIn,
                   ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
     return await _repo(ctx).complete_movement(movement_id, doc_ref=body.doc_ref,
-                                              batch=body.batch, expiry=body.expiry)
+                                              batch=body.batch, expiry=body.expiry,
+                                              scan_code=body.scan_code)
 
 
 @router.post("/movements/{movement_id}/cancel")
@@ -217,6 +242,13 @@ async def balances(ctx: TenantContext = Depends(require(_PERM, module=_MODULE)))
 async def request_return(movement_id: str, body: ReturnIn,
                          ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
     return await _repo(ctx).request_return(movement_id, body.qty, body.note)
+
+
+@router.post("/returns/bulk")
+async def request_returns(body: BulkReturnIn,
+                          ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+    return await _repo(ctx).request_returns(movement_ids=body.movement_ids,
+                                            partner_id=body.partner_id, note=body.note)
 
 
 @router.post("/returns/{return_id}/respond")
@@ -248,6 +280,18 @@ async def dispute(movement_id: str, body: DisputeIn,
 async def resolve_dispute(dispute_id: str, body: DisputeIn,
                           ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
     return await _repo(ctx).resolve_dispute(dispute_id, body.note)
+
+
+# ── ειδοποιήσεις ─────────────────────────────────────────────────────────────────────────────
+@router.get("/events")
+async def events(limit: int = Query(30, ge=1, le=100),
+                 ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+    return await _repo(ctx).events(limit=limit)
+
+
+@router.post("/events/seen")
+async def events_seen(ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+    return await _repo(ctx).mark_seen()
 
 
 # ── πολιτική διαθεσιμότητας ──────────────────────────────────────────────────────────────────

@@ -1037,10 +1037,16 @@ export const HELP: Record<string, Help> = {
     tips: [
       "Για να δώσεις εσύ χωρίς να σε ρωτάνε κάθε φορά: στο «Πόσο διαθέτω» ορίζεις ποσοστό αποθέματος και απόθεμα ασφαλείας — το σύστημα απαντά αυτόματα μέσα σε αυτά τα όρια.",
       "«Άγνωστο» απόθεμα ΔΕΝ σημαίνει «μηδέν». Για τα περισσότερα είδη το σύστημα δεν ξέρει — γι' αυτό ρωτάει τον συνάδελφο αντί να απαντήσει μόνο του.",
+      "Κάθε δίκτυο μετράει σε τιμές λιανικής, χονδρικής ή κτήσης. Λιανική και χονδρική συμπληρώνονται μόνες τους· την τιμή κτήσης τη γράφει όποιος δίνει το είδος.",
+      "Όταν δίνεις, διαλέγεις «Το θέλω πίσω» ή «Με τιμή». Ο συνάδελφος βλέπει τους όρους πριν δεχτεί.",
+      "Πολλά είδη στον ίδιο συνάδελφο; «Επιστροφή όλων» — απαντά μία φορά για όλα.",
     ],
     tips_en: [
       "To give without being asked every time: in “How much I share” set a stock percentage and a safety stock — the system answers automatically within those limits.",
       "“Unknown” stock does NOT mean “zero”. For most items the system does not know — that is why it asks your colleague instead of answering itself.",
+      "Each network counts in retail, wholesale or acquisition prices. Retail and wholesale fill in by themselves; the acquisition price is typed by whoever gives the item.",
+      "When you give, choose “I want it back” or “At a price”. Your colleague sees the terms before accepting.",
+      "Several items with the same colleague? “Return all” — they answer once for everything.",
     ],
       manual: "🤝 RxVision Connect — τα συνεργαζόμενα φαρμακεία σου",
   },

@@ -9,7 +9,7 @@ import { useEffect, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Handshake, Inbox, Send, ArrowRightLeft, Users, SlidersHorizontal, Clock,
-  PackageCheck, RotateCcw, AlertTriangle, Trash2, Plus,
+  PackageCheck, RotateCcw, AlertTriangle, Trash2, Plus, Bell, QrCode,
 } from "lucide-react";
 import { api } from "@/lib/apiClient";
 import { appAlert, appConfirm, appPrompt } from "@/store/dialogStore";
@@ -17,29 +17,41 @@ import { ModuleGuard } from "@/components/layout/ModuleGuard";
 import { DateInput } from "@/components/ui/DateInput";
 
 type Member = { tenant_id: string; name: string };
-type Group = { id: string; name: string; owner: boolean; members: Member[] };
+type Basis = "retail" | "wholesale" | "acquisition";
+type Group = { id: string; name: string; owner: boolean; members: Member[]; price_basis: Basis };
 type Invite = { id: string; group: string; from: string; created_at: string };
-type Offer = { id: string; qty: number; status: string; mode: string; from: string };
+type Offer = {
+  id: string; qty: number; status: string; mode: string; from?: string;
+  settle_mode: "return" | "value"; price_basis: Basis | null; unit_price_cents: number | null;
+};
 type Req = {
   id: string; barcode: string | null; name: string; qty: number; qty_covered: number;
   urgency: string; notes: string | null; status: string; created_at: string; mine: boolean;
   from: string; offers?: Offer[]; my_offer?: Offer | null; suggested?: number | null;
+  can_return: boolean; return_by: string | null;
+  price_basis?: Basis; price_hint_cents?: number | null;
 };
-type Ret = { id: string; qty: number; status: string };
+type Ret = { id: string; qty: number; status: string; batch_id: string | null };
 type Mov = {
   id: string; direction: "in" | "out"; partner: string; partner_id: string;
   barcode: string | null; name: string; qty: number; status: string; doc_ref: string | null;
   batch: string | null; expiry: string | null; created_at: string; completed_at: string | null;
-  returned: number; settled: number; open_qty: number;
+  returned: number; settled: number; open_qty: number; returnable_qty: number;
   dispute: { id: string; reason: string } | null; returns: Ret[];
+  settle_mode: "return" | "value"; price_basis: Basis | null; unit_price_cents: number | null;
+  open_value_cents: number | null; can_return: boolean; return_by: string | null;
+  scan_code: string | null;
 };
 type Bal = { partner: string; partner_id: string; barcode: string | null; name: string;
-             qty: number; direction: "they_owe" | "i_owe"; movements: number };
+             qty: number; direction: "they_owe" | "i_owe"; movements: number;
+             value_cents: number; in_kind_qty: number };
 type Dash = {
   inbox: number; offers_waiting: number; to_deliver: number; to_receive: number;
   they_owe: number; i_owe: number; returns_todo: number; disputes: number;
   partners: number; groups: number; reservations: number;
+  they_owe_cents: number; i_owe_cents: number; returns_to_hand: number; unseen: number;
 };
+type Ev = { id: string; kind: string; tab: string; text: string; created_at: string; seen: boolean };
 type Policy = {
   global_pct: number; safety_qty: number; reservation_minutes: number;
   auto_offer: boolean; require_doc_ref: boolean; per_group: Record<string, number>;
@@ -61,6 +73,26 @@ const MOV_STATUS: Record<string, { label: string; cls: string }> = {
   cancelled: { label: "Ακυρώθηκε", cls: "bg-slate-100 text-slate-500" },
   under_review: { label: "Σε έλεγχο", cls: "bg-rose-100 text-rose-700" },
 };
+const BASIS: Record<Basis, string> = { retail: "Λιανικής", wholesale: "Χονδρικής", acquisition: "Κτήσης" };
+const BASIS_HINT: Record<Basis, string> = {
+  retail: "προσυμπληρώνεται από το Δελτίο Τιμών, αλλάζει",
+  wholesale: "προσυμπληρώνεται από το Δελτίο Τιμών, αλλάζει",
+  acquisition: "τη γράφει ο φαρμακοποιός που δίνει",
+};
+const eur = (c?: number | null) =>
+  c == null ? "—" : (c / 100).toLocaleString("el-GR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " €";
+const toCents = (v: string) => {
+  const n = Number(String(v).replace(/\./g, "").replace(",", "."));
+  return Number.isFinite(n) && n > 0 ? Math.round(n * 100) : null;
+};
+/** Οι όροι μιας προσφοράς/κίνησης σε μία φράση — ίδια διατύπωση σε όλες τις καρτέλες. */
+function termsText(t: { settle_mode: string; unit_price_cents: number | null; price_basis: Basis | null }, qty: number) {
+  if (t.settle_mode === "value") {
+    if (!t.unit_price_cents) return "Χρέωση με τιμή — δεν έχει οριστεί ακόμη τιμή";
+    return `Χρέωση ${eur(t.unit_price_cents)}/τεμ. (τιμή ${(BASIS[t.price_basis || "wholesale"] || "").toLowerCase()}) — σύνολο ${eur(t.unit_price_cents * qty)}`;
+  }
+  return "Το θέλει πίσω σε είδος (ίδιο σκεύασμα)";
+}
 const dt = (s?: string | null) =>
   s ? new Date(s).toLocaleDateString("el-GR", { day: "2-digit", month: "2-digit", year: "numeric" }) : "—";
 
@@ -112,8 +144,25 @@ export default function ConnectPage() {
   const movs = useQuery({ queryKey: ["connect", "movements"], queryFn: () => api<Mov[]>("/connect/movements") });
   const bals = useQuery({ queryKey: ["connect", "balances"], queryFn: () => api<Bal[]>("/connect/balances") });
   const pol = useQuery({ queryKey: ["connect", "policy"], queryFn: () => api<Policy>("/connect/policy") });
+  const evs = useQuery({ queryKey: ["connect", "events"], queryFn: () => api<Ev[]>("/connect/events") });
+
+  // Μόλις ανοίξει η σελίδα, οι αλλαγές θεωρούνται «ειδωμένες» (σβήνει η ειδοποίηση πάνω δεξιά).
+  // Η λίστα κρατά την επισήμανση «νέο» μέχρι την επόμενη ανανέωση, για να τη διαβάσει.
+  const unseenCount = (evs.data || []).filter((e) => !e.seen).length;
+  useEffect(() => {
+    if (!unseenCount) return;
+    api("/connect/events/seen", { method: "POST" })
+      .then(() => qc.invalidateQueries({ queryKey: ["connect", "topbar"] }))
+      .catch(() => {});
+  }, [unseenCount, qc]);
 
   const refresh = () => qc.invalidateQueries({ queryKey: ["connect"] });
+  const [offerMode, setOfferMode] = useState<Record<string, "return" | "value">>({});
+  const [offerPrice, setOfferPrice] = useState<Record<string, string>>({});
+  const [scan, setScan] = useState<Record<string, string>>({});
+  const [picked, setPicked] = useState<string[]>([]);
+  const [gName, setGName] = useState("");
+  const [gBasis, setGBasis] = useState<Basis>("wholesale");
 
   /** Κάθε ενέργεια περνά από εδώ: ο server απαντά πάντα {ok, message} — αν δεν είναι ok, ο
    *  λόγος λέγεται στον άνθρωπο αντί να «μη γίνεται τίποτα». */
@@ -137,6 +186,8 @@ export default function ConnectPage() {
   const [nUrg, setNUrg] = useState("normal");
   const [nGroups, setNGroups] = useState<string[]>([]);
   const [nNotes, setNNotes] = useState("");
+  const [nCanReturn, setNCanReturn] = useState(false);
+  const [nReturnBy, setNReturnBy] = useState("");
 
   const submitRequest = async () => {
     if (!nName.trim() && !nBarcode.trim()) { await appAlert("Γράψε τουλάχιστον όνομα ή barcode."); return; }
@@ -144,10 +195,11 @@ export default function ConnectPage() {
     const r = await api<{ ok: boolean; auto_offers?: number; message?: string }>("/connect/requests", {
       method: "POST",
       body: JSON.stringify({ barcode: nBarcode.trim(), name: nName.trim(), qty: nQty,
-                             group_ids: nGroups, urgency: nUrg, notes: nNotes.trim() }),
+                             group_ids: nGroups, urgency: nUrg, notes: nNotes.trim(),
+                             can_return: nCanReturn, return_by: nCanReturn ? nReturnBy : "" }),
     });
     if (!r.ok) { await appAlert(r.message || "Το αίτημα δεν στάλθηκε."); return; }
-    setNBarcode(""); setNName(""); setNQty(1); setNNotes("");
+    setNBarcode(""); setNName(""); setNQty(1); setNNotes(""); setNCanReturn(false); setNReturnBy("");
     if (r.auto_offers) {
       await appAlert(`Το αίτημα στάλθηκε — ${r.auto_offers} ${r.auto_offers === 1 ? "φαρμακείο απάντησε" : "φαρμακεία απάντησαν"} ήδη από το απόθεμά τους.`);
     }
@@ -165,9 +217,34 @@ export default function ConnectPage() {
   };
 
   const newGroup = async () => {
-    const name = await appPrompt("Όνομα δικτύου (π.χ. «Συνεργαζόμενα Φαρμακεία Παπάγου»):");
-    if (!name) return;
-    run("/connect/groups", { name });
+    if (!gName.trim()) { await appAlert("Γράψε ένα όνομα για το δίκτυο."); return; }
+    run("/connect/groups", { name: gName.trim(), price_basis: gBasis });
+    setGName("");
+  };
+
+  const sendOffer = async (r: Req) => {
+    const max = r.qty - r.qty_covered;
+    const qty = offerQty[r.id] ?? Math.min(r.suggested || 1, max);
+    const mode = offerMode[r.id] ?? (r.can_return ? "return" : "value");
+    let price: number | null = null;
+    if (mode === "value") {
+      const typed = offerPrice[r.id];
+      price = typed != null && typed !== "" ? toCents(typed) : (r.price_hint_cents ?? null);
+      if (!price) {
+        await appAlert(`Γράψε την τιμή ${(BASIS[r.price_basis || "wholesale"]).toLowerCase()} ανά τεμάχιο.`);
+        return;
+      }
+    }
+    run(`/connect/requests/${r.id}/offer`, { qty, settle_mode: mode, unit_price_cents: price });
+  };
+
+  const returnPicked = async (ids: string[], partner?: Bal) => {
+    const yes = await appConfirm(partner
+      ? `Επιστροφή ΟΛΩΝ των ανοιχτών ειδών στο «${partner.partner}»; Ο συνεργάτης απαντά μία φορά για όλα.`
+      : `Επιστροφή ${ids.length} ${ids.length === 1 ? "είδους" : "ειδών"}; Ο συνεργάτης απαντά μία φορά για όλα.`);
+    if (!yes) return;
+    run("/connect/returns/bulk", partner ? { partner_id: partner.partner_id } : { movement_ids: ids });
+    setPicked([]);
   };
 
   const removeGroup = async (g: Group) => {
@@ -182,22 +259,22 @@ export default function ConnectPage() {
   const deliver = async (m: Mov) => {
     const doc = await appPrompt(`Παράδοση ${m.qty} τεμ. «${m.name}» στο «${m.partner}». Αριθμός παραστατικού διακίνησης (προαιρετικό):`);
     if (doc === null) return;
-    run(`/connect/movements/${m.id}/deliver`, { doc_ref: doc, batch: batch[m.id] || "", expiry: expiry[m.id] || "" });
+    run(`/connect/movements/${m.id}/deliver`, { doc_ref: doc, batch: batch[m.id] || "",
+                                                expiry: expiry[m.id] || "", scan_code: scan[m.id] || "" });
   };
 
   const askReturn = async (m: Mov) => {
-    const q = await appPrompt(`Πόσα τεμάχια επιστρέφεις στο «${m.partner}»; (ανοιχτά: ${m.open_qty})`,
-      { defaultValue: String(m.open_qty) });
+    const q = await appPrompt(`Πόσα τεμάχια επιστρέφεις στο «${m.partner}»; (ανοιχτά: ${m.returnable_qty})`,
+      { defaultValue: String(m.returnable_qty) });
     if (!q) return;
-    run(`/connect/movements/${m.id}/return`, { qty: Number(q) || 1 });
+    run(`/connect/movements/${m.id}/return`, { qty: Math.min(Number(q) || 1, m.returnable_qty) });
   };
 
   const askSettle = async (m: Mov) => {
-    const amount = await appPrompt(`Τακτοποίηση αξίας για ${m.open_qty} τεμ. «${m.name}». Ποσό σε ευρώ (προαιρετικό):`);
+    const amount = await appPrompt(`Τακτοποίηση αξίας για ${m.open_qty} τεμ. «${m.name}». Ποσό σε ευρώ:`,
+      { defaultValue: m.open_value_cents ? (m.open_value_cents / 100).toFixed(2).replace(".", ",") : "" });
     if (amount === null) return;
-    run(`/connect/movements/${m.id}/settle`, {
-      qty: m.open_qty, amount_cents: Math.round((Number(amount) || 0) * 100),
-    });
+    run(`/connect/movements/${m.id}/settle`, { qty: m.open_qty, amount_cents: toCents(amount) ?? 0 });
   };
 
   const askDispute = async (m: Mov) => {
@@ -243,6 +320,29 @@ export default function ConnectPage() {
 
         {tab === "dashboard" && (
           <div className="space-y-4">
+            <div className="flex flex-wrap gap-2">
+              <button type="button" onClick={() => go("requests")} disabled={!groups.length}
+                className="flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50">
+                <Plus className="h-4 w-4" /> Νέο αίτημα
+              </button>
+            </div>
+            {(evs.data || []).length > 0 && (
+              <div className="rx-card space-y-2 p-4">
+                <h2 className="flex items-center gap-2 font-semibold text-slate-800 dark:text-slate-100">
+                  <Bell className="h-4 w-4 text-indigo-600" /> Τι άλλαξε
+                </h2>
+                {(evs.data || []).slice(0, 8).map((e) => (
+                  <button key={e.id} type="button" onClick={() => go(e.tab)}
+                    className={`flex w-full flex-wrap items-center gap-2 rounded-lg px-3 py-2 text-left text-sm ${
+                      e.seen ? "bg-slate-50 text-slate-600 dark:bg-slate-800/60 dark:text-slate-300"
+                             : "bg-indigo-50 font-medium text-indigo-800 dark:bg-indigo-900/30 dark:text-indigo-200"}`}>
+                    {!e.seen && <span className="rounded-full bg-indigo-600 px-1.5 text-[10px] text-white">νέο</span>}
+                    <span className="min-w-0 flex-1">{e.text}</span>
+                    <span className="text-xs text-slate-400">{dt(e.created_at)}</span>
+                  </button>
+                ))}
+              </div>
+            )}
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
               <Kpi icon={Inbox} label="Αιτήματα δικτύου" value={d?.inbox ?? 0}
                 tint="bg-indigo-100 text-indigo-700" onClick={() => go("inbox")} />
@@ -252,11 +352,13 @@ export default function ConnectPage() {
                 tint="bg-sky-100 text-sky-700" onClick={() => go("movements")} />
               <Kpi icon={ArrowRightLeft} label="Να παραλάβω" value={d?.to_receive ?? 0}
                 tint="bg-sky-100 text-sky-700" onClick={() => go("movements")} />
-              <Kpi icon={Handshake} label="Μου οφείλουν (τεμ.)" value={d?.they_owe ?? 0}
+              <Kpi icon={Handshake} label="Μου οφείλουν (τεμ.)"
+                value={d?.they_owe_cents ? `${d.they_owe} · ${eur(d.they_owe_cents)}` : (d?.they_owe ?? 0)}
                 tint="bg-emerald-100 text-emerald-700" onClick={() => go("movements")} />
-              <Kpi icon={Handshake} label="Οφείλω (τεμ.)" value={d?.i_owe ?? 0}
+              <Kpi icon={Handshake} label="Οφείλω (τεμ.)"
+                value={d?.i_owe_cents ? `${d.i_owe} · ${eur(d.i_owe_cents)}` : (d?.i_owe ?? 0)}
                 tint="bg-rose-100 text-rose-700" onClick={() => go("movements")} />
-              <Kpi icon={RotateCcw} label="Προς επιστροφή" value={d?.returns_todo ?? 0}
+              <Kpi icon={RotateCcw} label="Προς επιστροφή" value={(d?.returns_todo ?? 0) + (d?.returns_to_hand ?? 0)}
                 tint="bg-amber-100 text-amber-700" onClick={() => go("movements")} />
               <Kpi icon={Clock} label="Προσωρινές κρατήσεις" value={d?.reservations ?? 0}
                 tint="bg-slate-100 text-slate-600" />
@@ -292,12 +394,17 @@ export default function ConnectPage() {
                 </div>
                 {r.barcode && <div className="font-mono text-xs text-slate-400">{r.barcode}</div>}
                 {r.notes && <div className="text-sm text-slate-600 dark:text-slate-300">{r.notes}</div>}
+                <div className={`text-sm ${r.can_return ? "text-emerald-700" : "text-slate-500"}`}>
+                  {r.can_return
+                    ? `↩ Μπορεί να το επιστρέψει${r.return_by ? ` έως ${dt(r.return_by)}` : ""}`
+                    : "Δεν δήλωσε ότι μπορεί να το επιστρέψει"}
+                </div>
                 {r.my_offer && r.my_offer.status !== "withdrawn" ? (
                   <div className="flex flex-wrap items-center gap-2 text-sm">
                     <span className="text-slate-600 dark:text-slate-300">
                       {r.my_offer.status === "rejected" && !r.my_offer.qty
                         ? "Απάντησες ότι δεν μπορείς να καλύψεις."
-                        : `Προσφέρεις ${r.my_offer.qty} τεμ.${r.my_offer.mode === "auto" ? " (αυτόματα, από το απόθεμά σου)" : ""}`}
+                        : `Προσφέρεις ${r.my_offer.qty} τεμ.${r.my_offer.mode === "auto" ? " (αυτόματα, από το απόθεμά σου)" : ""} · ${termsText(r.my_offer, r.my_offer.qty)}`}
                     </span>
                     {r.my_offer.status === "pending" && (
                       <button type="button" onClick={() => run(`/connect/offers/${r.my_offer!.id}/withdraw`)}
@@ -307,6 +414,32 @@ export default function ConnectPage() {
                     )}
                   </div>
                 ) : (
+                  <div className="space-y-2">
+                  <div className="flex flex-wrap items-center gap-3 text-sm">
+                    <span className="text-slate-500">Πώς θα τακτοποιηθεί:</span>
+                    <label className="flex items-center gap-1.5">
+                      <input type="radio" name={`mode-${r.id}`}
+                        checked={(offerMode[r.id] ?? (r.can_return ? "return" : "value")) === "return"}
+                        onChange={() => setOfferMode({ ...offerMode, [r.id]: "return" })} />
+                      Το θέλω πίσω (ίδιο σκεύασμα)
+                    </label>
+                    <label className="flex items-center gap-1.5">
+                      <input type="radio" name={`mode-${r.id}`}
+                        checked={(offerMode[r.id] ?? (r.can_return ? "return" : "value")) === "value"}
+                        onChange={() => setOfferMode({ ...offerMode, [r.id]: "value" })} />
+                      Με τιμή {BASIS[r.price_basis || "wholesale"].toLowerCase()} (ή είδος με είδος αυτής της αξίας)
+                    </label>
+                    {(offerMode[r.id] ?? (r.can_return ? "return" : "value")) === "value" && (
+                      <span className="flex items-center gap-1.5">
+                        <input inputMode="decimal"
+                          value={offerPrice[r.id] ?? (r.price_hint_cents ? (r.price_hint_cents / 100).toFixed(2).replace(".", ",") : "")}
+                          onChange={(e) => setOfferPrice({ ...offerPrice, [r.id]: e.target.value })}
+                          placeholder={r.price_basis === "acquisition" ? "τιμή κτήσης" : "τιμή"}
+                          className="w-24 rounded-lg border border-slate-300 px-2 py-1 text-right text-sm dark:bg-slate-800" />
+                        <span className="text-xs text-slate-500">€/τεμ. · {BASIS_HINT[r.price_basis || "wholesale"]}</span>
+                      </span>
+                    )}
+                  </div>
                   <div className="flex flex-wrap items-center gap-2">
                     {r.suggested ? (
                       <span className="rounded-lg bg-emerald-50 px-2 py-1 text-xs text-emerald-700">
@@ -319,9 +452,7 @@ export default function ConnectPage() {
                       value={offerQty[r.id] ?? Math.min(r.suggested || 1, r.qty - r.qty_covered)}
                       onChange={(e) => setOfferQty({ ...offerQty, [r.id]: Number(e.target.value) })}
                       className="w-20 rounded-lg border border-slate-300 px-2 py-1 text-sm dark:bg-slate-800" />
-                    <button type="button"
-                      onClick={() => run(`/connect/requests/${r.id}/offer`, {
-                        qty: offerQty[r.id] ?? Math.min(r.suggested || 1, r.qty - r.qty_covered) })}
+                    <button type="button" onClick={() => sendOffer(r)}
                       className="rounded-lg bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-700">
                       Μπορώ να καλύψω
                     </button>
@@ -329,6 +460,7 @@ export default function ConnectPage() {
                       className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm hover:bg-slate-50">
                       Δεν μπορώ
                     </button>
+                  </div>
                   </div>
                 )}
               </div>
@@ -358,6 +490,18 @@ export default function ConnectPage() {
               <input value={nNotes} onChange={(e) => setNNotes(e.target.value)}
                 placeholder="Σημείωση (προαιρετικά)"
                 className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm dark:bg-slate-800" />
+              <div className="flex flex-wrap items-center gap-3 text-sm">
+                <label className="flex items-center gap-2">
+                  <input type="checkbox" checked={nCanReturn} onChange={(e) => setNCanReturn(e.target.checked)} />
+                  <span className="text-slate-700 dark:text-slate-200">Μπορώ να το επιστρέψω</span>
+                </label>
+                {nCanReturn && (
+                  <span className="flex items-center gap-2">
+                    <span className="text-slate-500">Ημερομηνία επιστροφής (προαιρετικά):</span>
+                    <DateInput value={nReturnBy} onChange={setNReturnBy} />
+                  </span>
+                )}
+              </div>
               <div className="flex flex-wrap items-center gap-2">
                 <span className="text-sm text-slate-500">Σε ποια δίκτυα:</span>
                 {groups.map((g) => (
@@ -385,6 +529,7 @@ export default function ConnectPage() {
                   <Pill {...URGENCY[r.urgency] || URGENCY.normal} />
                   <span className="text-sm text-slate-500">
                     {r.qty_covered}/{r.qty} καλυμμένα · {dt(r.created_at)}
+                    {r.can_return ? ` · μπορώ να το επιστρέψω${r.return_by ? ` έως ${dt(r.return_by)}` : ""}` : ""}
                   </span>
                   {r.status === "open" && (
                     <button type="button" onClick={() => run(`/connect/requests/${r.id}`, undefined, "DELETE")}
@@ -399,6 +544,11 @@ export default function ConnectPage() {
                         {o.qty ? `${o.qty} τεμ.` : "δεν μπορεί να καλύψει"}
                         {o.mode === "auto" && o.qty ? " (αυτόματα)" : ""}
                       </span>
+                      {o.qty > 0 && (
+                        <span className={`w-full text-xs ${o.settle_mode === "value" ? "text-indigo-700" : "text-emerald-700"}`}>
+                          {termsText(o, o.qty)}
+                        </span>
+                      )}
                       {o.status === "pending" && o.qty > 0 && (
                         <span className="ml-auto flex gap-2">
                           <button type="button" onClick={() => run(`/connect/offers/${o.id}/accept`)}
@@ -428,7 +578,22 @@ export default function ConnectPage() {
         {tab === "movements" && (
           <div className="space-y-4">
             <div className="rx-card p-4">
-              <h2 className="mb-3 font-semibold text-slate-800 dark:text-slate-100">Ανοιχτά υπόλοιπα</h2>
+              <div className="mb-3 flex flex-wrap items-center gap-2">
+                <h2 className="font-semibold text-slate-800 dark:text-slate-100">Ανοιχτά υπόλοιπα</h2>
+                {picked.length > 0 && (
+                  <button type="button" onClick={() => returnPicked(picked)}
+                    className="ml-auto flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-700">
+                    <RotateCcw className="h-4 w-4" /> Επιστροφή επιλεγμένων ({picked.length})
+                  </button>
+                )}
+              </div>
+              {Array.from(new Map((bals.data || []).filter((b) => b.direction === "i_owe")
+                .map((b) => [b.partner_id, b])).values()).map((b) => (
+                <button key={`all-${b.partner_id}`} type="button" onClick={() => returnPicked([], b)}
+                  className="mb-2 mr-2 inline-flex items-center gap-1.5 rounded-lg border border-indigo-200 px-3 py-1 text-xs font-medium text-indigo-700 hover:bg-indigo-50">
+                  <RotateCcw className="h-3.5 w-3.5" /> Επιστροφή όλων στο {b.partner}
+                </button>
+              ))}
               {!bals.data?.length && <div className="text-sm text-slate-500">Κανένα ανοιχτό υπόλοιπο.</div>}
               <div className="space-y-2">
                 {(bals.data || []).map((b, i) => (
@@ -438,6 +603,8 @@ export default function ConnectPage() {
                     <span className="text-slate-600 dark:text-slate-300">{b.name}</span>
                     <span className={`ml-auto font-semibold ${b.direction === "they_owe" ? "text-emerald-700" : "text-rose-700"}`}>
                       {b.direction === "they_owe" ? `Μου οφείλουν ${b.qty}` : `Οφείλω ${b.qty}`} τεμ.
+                      {b.value_cents ? ` · ${eur(b.value_cents)}` : ""}
+                      {b.value_cents && b.in_kind_qty ? ` + ${b.in_kind_qty} σε είδος` : ""}
                     </span>
                   </div>
                 ))}
@@ -448,6 +615,10 @@ export default function ConnectPage() {
             {(movs.data || []).map((m) => (
               <div key={m.id} className="rx-card space-y-3 p-4">
                 <div className="flex flex-wrap items-center gap-2">
+                  {m.direction === "in" && m.status === "completed" && m.returnable_qty > 0 && (
+                    <input type="checkbox" aria-label="Επιλογή για επιστροφή" checked={picked.includes(m.id)}
+                      onChange={(e) => setPicked(e.target.checked ? [...picked, m.id] : picked.filter((x) => x !== m.id))} />
+                  )}
                   <span className="font-semibold text-slate-800 dark:text-slate-100">{m.name}</span>
                   <span className="text-sm text-slate-600 dark:text-slate-300">
                     {m.direction === "out" ? `Διέθεσα σε ${m.partner}` : `Έλαβα από ${m.partner}`} · {m.qty} τεμ.
@@ -455,11 +626,17 @@ export default function ConnectPage() {
                   <Pill {...MOV_STATUS[m.status] || MOV_STATUS.pending} />
                   <span className="ml-auto text-xs text-slate-400">{dt(m.completed_at || m.created_at)}</span>
                 </div>
-                {(m.doc_ref || m.batch || m.expiry) && (
+                <div className={`text-sm ${m.settle_mode === "value" ? "text-indigo-700" : "text-emerald-700"}`}>
+                  {termsText(m, m.qty)}
+                  {m.status === "completed" && m.open_value_cents ? ` · ανοιχτά ${eur(m.open_value_cents)}` : ""}
+                  {m.can_return && m.return_by ? ` · επιστροφή έως ${dt(m.return_by)}` : ""}
+                </div>
+                {(m.doc_ref || m.batch || m.expiry || m.scan_code) && (
                   <div className="text-xs text-slate-500">
                     {m.doc_ref && <>Παραστατικό {m.doc_ref} · </>}
                     {m.batch && <>Παρτίδα {m.batch} · </>}
-                    {m.expiry && <>Λήξη {m.expiry}</>}
+                    {m.expiry && <>Λήξη {m.expiry} · </>}
+                    {m.scan_code && <>Σάρωση <span className="font-mono">{m.scan_code}</span></>}
                   </div>
                 )}
                 {m.status === "pending" && m.direction === "out" && (
@@ -467,6 +644,12 @@ export default function ConnectPage() {
                     <input value={batch[m.id] || ""} onChange={(e) => setBatch({ ...batch, [m.id]: e.target.value })}
                       placeholder="Παρτίδα" className="w-32 rounded-lg border border-slate-300 px-2 py-1 text-sm dark:bg-slate-800" />
                     <DateInput value={expiry[m.id] || ""} onChange={(v) => setExpiry({ ...expiry, [m.id]: v })} />
+                    <span className="flex items-center gap-1">
+                      <QrCode className="h-4 w-4 text-slate-400" />
+                      <input value={scan[m.id] || ""} onChange={(e) => setScan({ ...scan, [m.id]: e.target.value })}
+                        placeholder="Σάρωση QR (προαιρετικά)"
+                        className="w-48 rounded-lg border border-slate-300 px-2 py-1 font-mono text-sm dark:bg-slate-800" />
+                    </span>
                     <button type="button" onClick={() => deliver(m)}
                       className="rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700">
                       Παρέδωσα
@@ -487,7 +670,7 @@ export default function ConnectPage() {
                     <span className="text-sm text-slate-600 dark:text-slate-300">
                       Ανοιχτά {m.open_qty} τεμ.
                     </span>
-                    {m.direction === "in" && (
+                    {m.direction === "in" && m.returnable_qty > 0 && (
                       <button type="button" onClick={() => askReturn(m)}
                         className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm hover:bg-slate-50">
                         Επιστροφή σε είδος
@@ -506,11 +689,11 @@ export default function ConnectPage() {
                 {m.returns.filter((r) => r.status !== "completed").map((r) => (
                   <div key={r.id} className="flex flex-wrap items-center gap-2 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">
                     <RotateCcw className="h-4 w-4" />
-                    Επιστροφή {r.qty} τεμ. — {r.status === "requested" ? "περιμένει απάντηση" : "εγκρίθηκε"}
+                    Επιστροφή {r.qty} τεμ.{r.batch_id ? " (μαζί με άλλα είδη)" : ""} — {r.status === "requested" ? "περιμένει απάντηση" : "εγκρίθηκε"}
                     {r.status === "requested" && m.direction === "out" && (
                       <span className="ml-auto flex gap-2">
                         <button type="button" onClick={() => run(`/connect/returns/${r.id}/respond`, { accept: true })}
-                          className="rounded-lg bg-emerald-600 px-3 py-1 text-xs text-white">Δέχομαι</button>
+                          className="rounded-lg bg-emerald-600 px-3 py-1 text-xs text-white">{r.batch_id ? "Δέχομαι όλα" : "Δέχομαι"}</button>
                         <button type="button" onClick={() => run(`/connect/returns/${r.id}/respond`, { accept: false })}
                           className="rounded-lg border border-slate-300 px-3 py-1 text-xs">Όχι</button>
                       </span>
@@ -518,7 +701,7 @@ export default function ConnectPage() {
                     {r.status === "accepted" && m.direction === "in" && (
                       <button type="button" onClick={() => run(`/connect/returns/${r.id}/complete`)}
                         className="ml-auto rounded-lg bg-emerald-600 px-3 py-1 text-xs text-white">
-                        Το επέστρεψα
+                        {r.batch_id ? "Τα επέστρεψα όλα" : "Το επέστρεψα"}
                       </button>
                     )}
                   </div>
@@ -554,10 +737,31 @@ export default function ConnectPage() {
               </div>
             )}
 
-            <button type="button" onClick={newGroup}
-              className="flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700">
-              <Plus className="h-4 w-4" /> Νέο δίκτυο
-            </button>
+            <div className="rx-card space-y-3 p-4">
+              <h2 className="flex items-center gap-2 font-semibold text-slate-800 dark:text-slate-100">
+                <Plus className="h-4 w-4" /> Νέο δίκτυο
+              </h2>
+              <div className="flex flex-wrap items-center gap-2">
+                <input value={gName} onChange={(e) => setGName(e.target.value)}
+                  placeholder="π.χ. Συνεργαζόμενα Φαρμακεία Παπάγου"
+                  className="min-w-[16rem] flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm dark:bg-slate-800" />
+                <label className="flex items-center gap-2 text-sm">
+                  <span className="text-slate-500">Καταγραφή σε τιμές</span>
+                  <select value={gBasis} onChange={(e) => setGBasis(e.target.value as Basis)}
+                    className="rounded-lg border border-slate-300 px-3 py-2 text-sm dark:bg-slate-800">
+                    {(Object.keys(BASIS) as Basis[]).map((k) => <option key={k} value={k}>{BASIS[k]}</option>)}
+                  </select>
+                </label>
+                <button type="button" onClick={newGroup}
+                  className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700">
+                  Δημιουργία
+                </button>
+              </div>
+              <p className="text-xs text-slate-500">
+                Λιανικής και χονδρικής: η τιμή προσυμπληρώνεται από το Δελτίο Τιμών και ο φαρμακοποιός
+                μπορεί να την αλλάξει. Κτήσης: τη γράφει ο φαρμακοποιός που δίνει το είδος.
+              </p>
+            </div>
 
             {!groups.length && <Empty text="Δεν ανήκεις σε κανένα δίκτυο ακόμη." />}
             {groups.map((g) => (
@@ -569,6 +773,17 @@ export default function ConnectPage() {
                     {g.members.length} {g.members.length === 1 ? "φαρμακείο" : "φαρμακεία"}
                     {g.owner ? " · το δημιούργησες εσύ" : ""}
                   </span>
+                  {g.owner ? (
+                    <select value={g.price_basis} aria-label="Τιμές καταγραφής"
+                      onChange={(e) => run(`/connect/groups/${g.id}/price-basis`, { price_basis: e.target.value }, "PUT")}
+                      className="rounded-lg border border-slate-300 px-2 py-1 text-xs dark:bg-slate-800">
+                      {(Object.keys(BASIS) as Basis[]).map((k) => <option key={k} value={k}>Τιμές {BASIS[k].toLowerCase()}</option>)}
+                    </select>
+                  ) : (
+                    <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                      Τιμές {BASIS[g.price_basis].toLowerCase()}
+                    </span>
+                  )}
                   <span className="ml-auto flex gap-2">
                     {g.owner ? (
                       <>

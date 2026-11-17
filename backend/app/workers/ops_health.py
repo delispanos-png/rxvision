@@ -39,6 +39,28 @@ def _as_dt(v):
     return None
 
 
+async def _decommissioned(db, node: str) -> bool:
+    """True ΜΟΝΟ όταν το Hetzner επιβεβαιώνει ρητά ότι δεν υπάρχει server με αυτό το όνομα.
+    Χωρίς token, σφάλμα δικτύου ή μη-200 απάντηση → False (καλύτερα ένα email παραπάνω παρά
+    ένας πραγματικά πεσμένος κόμβος που δεν ειδοποιεί)."""
+    try:
+        import httpx
+
+        from app.workers.capacity import _API, _token
+        tok = await _token(db)
+        if not tok:
+            return False
+        async with httpx.AsyncClient(timeout=15) as cl:
+            r = await cl.get(f"{_API}/servers", params={"name": node},
+                             headers={"Authorization": f"Bearer {tok}"})
+        if r.status_code != 200:
+            return False
+        servers = r.json().get("servers")
+        return isinstance(servers, list) and not servers
+    except Exception:  # noqa: BLE001
+        return False
+
+
 @celery_app.task(name="app.workers.ops_health.check")
 def check() -> dict:
     async def _run() -> dict:
@@ -69,6 +91,15 @@ def check() -> dict:
                     latest[node] = t
             for node, t in latest.items():
                 if (now - t).total_seconds() > _NODE_STALE_S:
+                    # ΚΟΜΒΟΣ ΠΟΥ ΔΕΝ ΥΠΑΡΧΕΙ ΠΙΑ ≠ ΠΕΣΜΕΝΟΣ. Ο SRV04 (δοκιμή αυτόματης κλιμάκωσης,
+                    # διαγράφηκε 24/10/2026) άφησε την τελευταία του εγγραφή και έστελνε «πιθανό
+                    # down» ανά 3 ώρες για 19 ημέρες. Ρωτάμε το Hetzner: ΜΟΝΟ αν επιβεβαιώσει ότι
+                    # ο server δεν υπάρχει, καθαρίζουμε σιωπηλά. Αν δεν απαντά → ειδοποίηση κανονικά.
+                    if await _decommissioned(db, node):
+                        for coll in ("node_metrics", "node_health"):
+                            await db[coll].delete_many({"$or": [{"node": node}, {"_id": node}]})
+                        await db["ops_alerts"].delete_one({"_id": f"alert:node-down-{node}"})
+                        continue
                     issues.append((f"node-down-{node}", f"Ο κόμβος {node} σταμάτησε να στέλνει metrics (>15') — πιθανό down."))
 
             # 3) SECURITY abuse signals from audit_logs (M-7)
