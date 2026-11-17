@@ -97,6 +97,11 @@ async def search_subjects(tenant_id: str, q: str, *, limit: int = 20) -> list[di
     for p in await _repo(tenant_id, "patients_anonymized").find({"full_name": rx}, limit=limit):
         by_id[p["_id"]] = {"id": p["_id"], "name": p.get("full_name"),
                            "age_group": p.get("age_group"), "erased": bool(p.get("erased"))}
+    # Κύπρος (ΓεΣΥ): οι πελάτες ζουν στο cy_patients — αλλιώς δικαίωμα πρόσβασης/διαγραφής
+    # Κύπριου πελάτη δεν θα έβρισκε ποτέ τίποτα (id «cy:<ψευδώνυμο>», βλ. services/cy/gdpr.py)
+    from app.services.cy import gdpr as cy_gdpr
+    for e in await cy_gdpr.search(tenant_id, q, limit=limit):
+        by_id[e["id"]] = e
     for c in await _repo(tenant_id, "patient_contacts").find(
             {"$or": [{"phone": rx}, {"mobile": rx}, {"email": rx}]}, limit=limit):
         e = by_id.setdefault(c["_id"], {"id": c["_id"], "name": None})
@@ -108,6 +113,12 @@ async def search_subjects(tenant_id: str, q: str, *, limit: int = 20) -> list[di
 async def export_subject(tenant_id: str, patient_id: str, *, actor_user_id: str | None = None) -> dict:
     """Art.15 (access) + Art.20 (portability): everything RxVision holds about one patient,
     as a structured dict. Tenant-scoped; returns jsonsafe values."""
+    from app.services.cy import gdpr as cy_gdpr
+    if cy_gdpr.is_cy(patient_id):
+        bundle = await cy_gdpr.export(tenant_id, patient_id)
+        await audit(tenant_id, actor_user_id=actor_user_id, action="gdpr.export",
+                    subject_id=patient_id, executions=bundle["counts"]["dispensings"])
+        return bundle
     oid = _oid(patient_id)
     if not oid:
         raise ValueError("invalid patient_id")
@@ -151,6 +162,12 @@ async def erase_subject(tenant_id: str, patient_id: str, *, actor_user_id: str |
                         reason: str | None = None) -> dict:
     """Art.17 (erasure) with LEGAL HOLD. Strips direct identifiers and contact PII; keeps
     the pseudonymous, statutorily-retained prescription record. Idempotent."""
+    from app.services.cy import gdpr as cy_gdpr
+    if cy_gdpr.is_cy(patient_id):
+        result = await cy_gdpr.erase(tenant_id, patient_id)
+        await audit(tenant_id, actor_user_id=actor_user_id, action="gdpr.erase",
+                    subject_id=patient_id, reason=reason)
+        return result
     oid = _oid(patient_id)
     if not oid:
         raise ValueError("invalid patient_id")

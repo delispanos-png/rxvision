@@ -206,7 +206,7 @@ class PatientAuthService:
         amka = (amka or "").strip()
         if not email or "@" not in email:
             return {"ok": False, "error": "bad_email"}
-        if await self.repo.get_by_amka(amka):
+        if amka and await self.repo.get_by_amka(amka):
             return {"ok": False, "error": "amka_exists"}
         if await self.repo.get_by_email(email):
             return {"ok": False, "error": "email_exists"}
@@ -245,6 +245,30 @@ class PatientAuthService:
                 {"$set": {"full_name": full, "amka": amka}})
         return {"ok": bool(res.get("credentials_sent")), "email": _mask_email(res["email"]),
                 "error": None if res.get("credentials_sent") else "email_failed"}
+
+    async def cy_invite(self, *, tenant_id: str, cy_pseudo: str, first_name: str, last_name: str,
+                        email: str, phone: str | None, pharmacy_name: str | None) -> dict:
+        """ΚΥΠΡΟΣ: ο φαρμακοποιός προσκαλεί πελάτη ΓεΣΥ από την Καρτέλα πελάτη (απόφαση ιδιοκτήτη
+        17/11/2026: ΜΟΝΟ πρόσκληση — το XML δεν έχει στοιχεία επικοινωνίας για να αποδείξει ο πελάτης
+        μόνος του ποιος είναι· την ταυτότητα την εγγυάται ο φαρμακοποιός, που τον έχει μπροστά του).
+        Λογαριασμός ΧΩΡΙΣ ΑΜΚΑ, `country: "CY"`, συνδεδεμένος ΜΟΝΟ με αυτό το φαρμακείο."""
+        email = (email or "").strip().lower()
+        if not email or "@" not in email:
+            return {"ok": False, "error": "bad_email"}
+        if await self.repo.cy_account_for(tenant_id, cy_pseudo):
+            return {"ok": False, "error": "already_invited"}
+        if await self.repo.get_by_email(email):
+            return {"ok": False, "error": "email_exists"}
+        pw = _friendly_password()
+        acc = await self.repo.create(
+            first_name=first_name, last_name=last_name, email=email, phone=phone, amka="",
+            password_hash=hash_password(pw), must_change_password=False, extra={"country": "CY"})
+        await self.repo.link_cy_shell(acc["_id"], tenant_id, cy_pseudo,
+                                      f"{last_name} {first_name}".strip() or None)
+        await self.repo.set_favorite(acc["_id"], tenant_id)
+        sent = await self._send_credentials(email, phone, pw, invite_from=pharmacy_name or "το φαρμακείο σας")
+        return {"ok": bool(sent), "email": _mask_email(email), "credentials_sent": sent,
+                "error": None if sent else "email_failed"}
 
     async def _send_credentials(self, email: str, phone: str | None, password: str,
                                 invite_from: str | None = None) -> list[dict]:

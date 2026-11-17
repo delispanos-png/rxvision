@@ -19,14 +19,21 @@ import {
   Brain, ShieldCheck, Tags, Syringe, Bot, Gift, BookOpen, ScrollText, Truck, Lock, X, UserPlus, Ticket, SlidersHorizontal, Heart, FileText, MessageSquare, PackageCheck, Receipt, ArrowRightLeft, Compass, Star, Pencil, Check, type LucideIcon,
 } from "lucide-react";
 
-import { NAV_GROUPS as GROUPS, type Group, type Node, type Me } from "./navCatalog";
+import { CY_SHARED_HELP, HELP_CY } from "@/lib/helpCy";
+import { NAV_GROUPS, CY_NAV_GROUPS, type Group, type Node, type Me } from "./navCatalog";
 
 // href → εξήγηση μενού του ίδιου του στοιχείου (κόμβοι και φύλλα)
-const TIPS = new Map<string, { tip: string; tip_en?: string }>();
-for (const g of GROUPS) for (const n of g.items) {
-  if (n.href && n.tip) TIPS.set(n.href, { tip: n.tip, tip_en: n.tip_en });
-  for (const c of n.children ?? []) if (c.tip) TIPS.set(c.href, { tip: c.tip, tip_en: c.tip_en });
-}
+type Tip = { tip: string; tip_en?: string };
+const tipsOf = (groups: Group[]) => {
+  const m = new Map<string, Tip>();
+  for (const g of groups) for (const n of g.items) {
+    if (n.href && n.tip) m.set(n.href, { tip: n.tip, tip_en: n.tip_en });
+    for (const c of n.children ?? []) if (c.tip) m.set(c.href, { tip: c.tip, tip_en: c.tip_en });
+  }
+  return m;
+};
+// Ξεχωριστά ανά χώρα: ίδιο href (π.χ. /settings/users) έχει άλλη εξήγηση στην Κύπρο
+const TIPS_BY_COUNTRY = { GR: tipsOf(NAV_GROUPS), CY: tipsOf(CY_NAV_GROUPS) };
 
 /** Συντόμευση του χειριστή. Ζει εδώ (όχι στον κατάλογο): είναι επιλογή ανθρώπου, όχι μενού. */
 type Pin = { href: string; label?: string; en?: string };
@@ -96,6 +103,8 @@ export function Sidebar() {
 
   const { data: me } = useQuery({ queryKey: queryKeys.me(), queryFn: () => api<Me>("/auth/me"), retry: false });
   const modules = me?.modules;
+  // Η χώρα του φαρμακείου διαλέγει ΠΟΙΟ μενού (ελληνικό / κυπριακό) — βλ. CountryGate.
+  const GROUPS = me?.country === "CY" ? CY_NAV_GROUPS : NAV_GROUPS;
   const allowedMod = (m?: string | string[]) => {
     if (!m || !modules) return true;
     const keys = Array.isArray(m) ? m : [m];
@@ -219,7 +228,7 @@ export function Sidebar() {
       }
       return next;
     });
-  }, [pathname]);
+  }, [pathname, GROUPS]);   // GROUPS = σταθερός κατάλογος ανά χώρα (αλλάζει μόνο όταν φορτώσει το /auth/me)
 
   const toggle = (label: string) => setExpanded((prev) => {
     const next = new Set(prev); next.has(label) ? next.delete(label) : next.add(label); return next;
@@ -227,7 +236,7 @@ export function Sidebar() {
 
   // Πτυσσόμενες ΟΜΑΔΕΣ (Ανάλυση/Σύμβουλοι/eShop/Λειτουργίες…) — άνοιγμα/κλείσιμο & μνήμη ανά χρήστη.
   // Οι ενότητες ξεκινούν ΟΛΕΣ ΚΛΕΙΣΤΕΣ σε κάθε άνοιγμα — ο χρήστης ανοίγει όποια θέλει.
-  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => new Set(GROUPS.map((g) => g.title)));
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => new Set([...NAV_GROUPS, ...CY_NAV_GROUPS].map((g) => g.title)));
   useEffect(() => {
     try { const raw = localStorage.getItem("rxv-nav-groups"); if (raw) setCollapsedGroups(new Set(JSON.parse(raw) as string[])); } catch { /* ignore */ }
   }, []);
@@ -244,9 +253,11 @@ export function Sidebar() {
     // 1) η εξήγηση του ΙΔΙΟΥ του στοιχείου (navCatalog `tip`) · 2) η βοήθεια της σελίδας ΜΟΝΟ αν είναι
     // ακριβώς αυτή η σελίδα. ΠΟΤΕ της γονικής (04/11/2026: οι «Προχορηγήσεις» έδειχναν την εξήγηση των
     // «Ασφαλισμένων» και κάθε καρτέλα #… τη γενική εξήγηση της σελίδας της).
-    const own = TIPS.get(href);
+    const own = TIPS_BY_COUNTRY[me?.country === "CY" ? "CY" : "GR"].get(href);
     const path = href.split(/[?#]/)[0];
-    const h = !own && path === href ? HELP[path] : undefined;
+    const h = !own && path === href
+      ? (me?.country === "CY" ? (HELP_CY[path] ?? (CY_SHARED_HELP.has(path) ? HELP[path] : undefined)) : HELP[path])
+      : undefined;
     const intro = own ? t(own.tip, own.tip_en || own.tip) : h ? t(h.intro, h.intro_en || h.intro) : "";
     if (collapsed || withName) return intro ? `${name} — ${intro}` : name;
     return intro || undefined;

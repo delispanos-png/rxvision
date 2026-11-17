@@ -13,6 +13,7 @@ import { ModuleTrialBanner } from "@/components/layout/ModuleTrialBanner";
 import { TrailBar } from "@/components/layout/TrailBar";
 import { SupportLiveHost } from "@/components/support/SupportLiveHost";
 import { ExportGateSync } from "@/components/export/ExportGateSync";
+import { CountryGate } from "@/components/layout/CountryGate";
 
 // Backend always enforces permissions/modules; the sidebar is presentational.
 export default function AppLayout({ children }: { children: React.ReactNode }) {
@@ -20,6 +21,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     <div className="flex min-h-screen bg-canvas dark:bg-slate-950">
       <ThemeInit />
       <ClarityScript surface="app" />
+      <CountryGate />
       <OnboardingGate />
       <Sidebar />
       <div className="flex min-w-0 flex-1 flex-col">

@@ -294,7 +294,7 @@ async def me(ctx: PatientContext = Depends(get_patient_context)):
         loy_on = False
     mode = await portal_mode()
     links = await repo.links(ctx.account_id)
-    if mode == "single":   # κλείδωμα στο ενεργό (φαρμακείο εγγραφής) — κρύβεται εναλλαγή/κατάλογος
+    if mode == "single" or _acc_country(acc) == "CY":   # κλείδωμα στο ενεργό φαρμακείο
         links = [l for l in links if l.get("tenant_id") == ctx.tenant_id]
     profile = {"first_name": acc.get("first_name"), "last_name": acc.get("last_name"),
                "email": acc.get("email"), "phone": acc.get("phone"),
@@ -317,6 +317,8 @@ async def me(ctx: PatientContext = Depends(get_patient_context)):
         "pharmacies": links,
         "portal_mode": mode,
         "caps": {"shop": tenant_has(mods, "order_delivery"), "loyalty": loy_on},
+        # Κύπρος: η πύλη κρύβει ό,τι είναι ελληνικό (ΗΔΥΚΑ/ΑΜΚΑ) και δείχνει «Οι συνταγές μου (ΓεΣΥ)»
+        "country": _acc_country(acc),
     }
 
 
@@ -1190,8 +1192,19 @@ def _mask_pharmacy_names(items: list[dict], demo: bool) -> list[dict]:
     return items
 
 
+def _acc_country(acc: dict | None) -> str:
+    """Χώρα λογαριασμού πύλης: «CY» μόνο για όσους δημιούργησε κυπριακό φαρμακείο· αλλιώς ελληνικός."""
+    return "CY" if (acc or {}).get("country") == "CY" else "GR"
+
+
+async def _is_cy(ctx: PatientContext) -> bool:
+    return _acc_country(await PatientAccountRepository().get(ctx.account_id)) == "CY"
+
+
 @router.get("/pharmacies/nearby")
 async def nearby(lat: float, lon: float, ctx: PatientContext = Depends(get_patient_context)):
+    if await _is_cy(ctx):   # κυπριακός λογαριασμός: ΠΟΤΕ ελληνικά φαρμακεία
+        return {"items": []}
     items = await PatientAccountRepository().nearby_pharmacies(lat, lon)
     return {"items": _mask_pharmacy_names(items, ctx.demo)}
 
@@ -1203,6 +1216,10 @@ async def pharmacies_directory(ctx: PatientContext = Depends(get_patient_context
     linked = {l["tenant_id"] for l in await repo.links(ctx.account_id)}
     acc = await repo.get(ctx.account_id)
     fav = (acc or {}).get("favorite_tenant_id")
+    if _acc_country(acc) == "CY":   # κυπριακός λογαριασμός: μόνο το/τα φαρμακεία του, ποτέ ο ελληνικός κατάλογος
+        own = [{"tenant_id": l["tenant_id"], "name": l.get("pharmacy_name"), "mine": True,
+                "favorite": l["tenant_id"] == fav, "status": None} for l in await repo.links(ctx.account_id)]
+        return {"items": _mask_pharmacy_names(own, ctx.demo), "favorite": fav, "active_tenant": ctx.tenant_id}
     items = await repo.directory(linked_ids=linked, favorite_id=fav)
     if await portal_mode() == "single":   # single: μόνο το φαρμακείο εγγραφής (κλειδώνει PharmacyPicker)
         items = [p for p in items if p.get("tenant_id") == ctx.tenant_id]
@@ -1248,9 +1265,12 @@ async def _target(ctx: PatientContext, body_tenant: str | None):
     (may be a nearby one where the patient has no history → patient_ref is None, contact is used)."""
     repo = PatientAccountRepository()
     target = body_tenant or ctx.tenant_id
+    acc = await repo.get(ctx.account_id) or {}
+    # κυπριακός λογαριασμός: αιτήματα ΜΟΝΟ στο δικό του φαρμακείο (όνομα+τηλέφωνο δεν φεύγουν αλλού)
+    if _acc_country(acc) == "CY" and target != ctx.tenant_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "pharmacy_unavailable")
     if body_tenant and body_tenant != ctx.tenant_id and not await repo.pharmacy_has_portal(target):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "pharmacy_unavailable")
-    acc = await repo.get(ctx.account_id) or {}
     link = await repo.link_for(ctx.account_id, target)
     pref = str(link["patient_ref"]) if link and link.get("patient_ref") else None
     name = f"{acc.get('first_name', '')} {acc.get('last_name', '')}".strip()
@@ -1550,3 +1570,39 @@ async def loyalty_cancel_request(body: LoyaltyCancelIn, ctx: PatientContext = De
     """Ακύρωση δέσμευσης δώρου από τον πελάτη → επιστροφή πόντων."""
     from app.repositories.loyalty import LoyaltyRepository
     return await LoyaltyRepository(tenant_id=ctx.tenant_id).cancel_request(body.code, ctx.patient_ref)
+
+
+
+# ── Κύπρος: «Οι συνταγές μου (ΓεΣΥ)» ─────────────────────────────────────────
+
+@router.get("/cy/prescriptions")
+async def cy_prescriptions(ctx: PatientContext = Depends(get_patient_context)):
+    """Οι εκτελέσεις ΓεΣΥ του πελάτη σε ΑΥΤΟ το φαρμακείο + ανοιχτές συνταγές με επόμενη επίσκεψη.
+    Ίδιος ορισμός αλυσίδων με την πλευρά του φαρμακείου (services/cy/chains.py). Ελληνικός
+    λογαριασμός → 404 (ποτέ 403: η πύλη το ερμηνεύει ως αποσύνδεση)."""
+    from app.repositories.cy import CyDispensingRepository
+    from app.services.cy import chains
+    from app.services.cy.gate import cy_enabled
+    repo = PatientAccountRepository()
+    if not await _is_cy(ctx) or not await cy_enabled():
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "not_available")
+    pseudo = await repo.cy_pseudo_of(ctx.tenant_id, ctx.patient_ref)
+    if not pseudo:
+        return {"open": [], "history": []}
+    cs = await chains.chains(ctx.tenant_id, match={"patient_ref": pseudo})
+    disp = await CyDispensingRepository(tenant_id=ctx.tenant_id).find(
+        {"patient_ref": pseudo}, sort=[("dispensed_at", -1)], limit=100)
+    return {
+        "open": [{"prescription_id": c["prescription_id"], "kind": c["kind"], "items": c["items"],
+                  "instance": c["instance"], "instances": c["instances"], "next_due": c["next_due"],
+                  "days_to_due": c["days_to_due"], "status": c["status"], "doctor": c["doctor"]}
+                 for c in sorted(cs, key=lambda c: c["days_to_due"]) if c["status"] != "closed"],
+        "history": [{"dispensed_at": d["dispensed_at"], "kind": d["kind"], "doctor": (d.get("doctor") or {}).get("name"),
+                     "instance": d.get("instance"), "instances": d.get("instances"),
+                     "paid_cents": (d.get("totals") or {}).get("beneficiary", 0),
+                     "lines": [{"description": ln.get("description"), "qty_disp": ln.get("qty_disp"),
+                                "qty_presc": ln.get("qty_presc"),
+                                "dosage": ((ln.get("dosage") or {}).get("raw_amount"), (ln.get("dosage") or {}).get("raw_frequency"),
+                                           (ln.get("dosage") or {}).get("timing"))}
+                               for ln in d.get("lines") or []]} for d in disp],
+    }

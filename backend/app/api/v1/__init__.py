@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends
 from app.core.deps import require_padmin
 from app.api.v1.routers import (
     hdika_link,
+    cy,
     addons,
     admin,
     admin_leads,
@@ -82,6 +83,8 @@ api_router.include_router(loyalty.router, prefix="/loyalty", tags=["loyalty"])
 api_router.include_router(pharmacy_catalog.router, prefix="/catalog", tags=["catalog"])
 api_router.include_router(pharmacy_chat.router, prefix="/pharmacy-chat", tags=["pharmacy-chat"])
 api_router.include_router(connect.router, prefix="/connect", tags=["connect"])
+# Κύπρος (ΓεΣΥ): κάθε endpoint κλειδώνεται από require_cy (χώρα CY + διακόπτης) → 404 αλλιώς
+api_router.include_router(cy.router, prefix="/cy", tags=["cyprus"])
 api_router.include_router(release_notes.router, prefix="/release-notes", tags=["release-notes"])
 api_router.include_router(support_live.router, prefix="/support-live", tags=["support-live"])
 api_router.include_router(promotions.router, prefix="/promotions", tags=["promotions"])

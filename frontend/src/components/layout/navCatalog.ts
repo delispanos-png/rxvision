@@ -21,7 +21,7 @@ export type Node = { label: string; en: string; icon: LucideIcon; href?: string;
   tip?: string; tip_en?: string;
   children?: Leaf[]; section?: { label: string; en: string } };
 export type Group = { title: string; en: string; icon: LucideIcon; items: Node[] };
-export type Me = { modules?: Record<string, "enabled" | "trial" | "locked"> };
+export type Me = { modules?: Record<string, "enabled" | "trial" | "locked">; country?: string };
 
 const EXEC = { label: "Ανάλυση εκτελέσεων", en: "Execution analysis" };
 
@@ -151,4 +151,52 @@ export const NAV_GROUPS: Group[] = [
     { label: "Όροι χρήσης", en: "Terms of Use", icon: ScrollText, href: "/terms-of-use" },
     { label: "GDPR", en: "GDPR", icon: Lock, href: "/gdpr" },
   ] },
+];
+
+/** ΜΕΝΟΥ ΚΥΠΡΙΑΚΟΥ ΦΑΡΜΑΚΕΙΟΥ (`/auth/me` → country "CY").
+ *  Κανόνας: εμφανίζεται ΜΟΝΟ ό,τι δουλεύει πλήρως με τα δεδομένα ΓεΣΥ. Τα κοινά κυκλώματα της
+ *  πλατφόρμας μπαίνουν αυτούσια (ίδια αντικείμενα — όχι αντίγραφα που αποκλίνουν), ένα-ένα,
+ *  όταν επιβεβαιωθεί ότι δουλεύουν χωρίς ελληνικά δεδομένα. Οι επιτρεπτές διαδρομές ζουν στο
+ *  CountryGate (`CY_ALLOWED`) — κράτα τα δύο συγχρονισμένα. */
+const SHARED_FOR_CY = new Set(["Connect", "Ρυθμίσεις", "Βοήθεια"]);
+/** Μεμονωμένες επιλογές ελληνικών ομάδων που δουλεύουν ΑΥΤΟΥΣΙΕΣ στην Κύπρο (δεν θέλουν δεδομένα ΗΔΥΚΑ).
+ *  Έλεγχος 17/11/2026: κουπόνια, e-shop (προσφορές/κατηγορίες/προμήθειες), αποθήκη (ΦΠΑ ανά χώρα). */
+const CY_PICK = new Set(["/marketing/coupons", "/eshop-offers", "/eshop-categories", "/eshop-fees", "/warehouse"]);
+const pickFrom = (titles: string[]): Node[] => NAV_GROUPS
+  .filter((g) => titles.includes(g.title))
+  .flatMap((g) => g.items.flatMap((n): Node[] => {
+    if (n.href && CY_PICK.has(n.href)) return [n];
+    const kids = (n.children ?? []).filter((c) => CY_PICK.has(c.href));
+    return kids.length ? [{ ...n, children: kids }] : [];
+  }));
+export const CY_NAV_GROUPS: Group[] = [
+  // ΙΔΙΕΣ ομάδες με το ελληνικό μενού (ίδιοι τίτλοι → ο φαρμακοποιός που ξέρει το ένα βρίσκει το άλλο)
+  { title: "Εξυπηρέτηση πάγκου", en: "Counter service", icon: Store, items: [
+    { label: "Ανοιχτές συνταγές", en: "Open prescriptions", icon: CalendarClock, href: "/cy/open", tip: "Ποιος πρέπει να έρθει για την επόμενη φάση της συνταγής του και πότε.", tip_en: "Who should come for the next step of their prescription, and when." },
+    { label: "Χαμένοι πελάτες", en: "Lost customers", icon: UserPlus, href: "/cy/lost", tip: "Πελάτες που δεν ήρθαν για συνταγή που έπρεπε να συνεχιστεί, και πόσο αξίζουν.", tip_en: "Customers who did not come back for a prescription that should have continued, and what they are worth." },
+    { label: "Αναλώσιμα & διαβητικοί", en: "Consumables & diabetics", icon: Activity, href: "/cy/consumables", tip: "Ποιοι παίρνουν ταινίες/σκαρφιστήρες και ποιοι άργησαν για τα επόμενα.", tip_en: "Who receives strips/lancets and who is late for the next supply." },
+  ] },
+  { title: "Έλεγχος συνταγών", en: "Prescription control", icon: ShieldCheck, items: [
+    { label: "Εκτελέσεις", en: "Dispensings", icon: BarChart3, href: "/cy/dispensings", tip: "Όλες οι εκτελέσεις ΓεΣΥ της περιόδου, με αναζήτηση και λεπτομέρεια ανά εκτέλεση.", tip_en: "All GHS dispensings in the period, with search and per-dispensing detail." },
+    { label: "Είδη που δεν δόθηκαν", en: "Items not dispensed", icon: PackageSearch, href: "/cy/not-dispensed", tip: "Σκευάσματα της συνταγής που δεν δόθηκαν: πιθανή έλλειψη ή χαμένη πώληση.", tip_en: "Prescribed products that were not given: likely stock-out or lost sale." },
+    { label: "Διαφορά τιμής (PC2)", en: "Price difference (PC2)", icon: Tags, href: "/cy/pc2", tip: "Όσα πληρώνουν οι πελάτες πάνω από την τιμή αναφοράς του ΟΑΥ.", tip_en: "What customers pay above the HIO reference price." },
+    { label: "Ανάκληση παρτίδας", en: "Batch recall", icon: ShieldCheck, href: "/cy/recall", tip: "Ποιοι πελάτες πήραν μια συγκεκριμένη παρτίδα.", tip_en: "Which customers received a specific batch." },
+    { label: "Εισαγωγή XML", en: "XML import", icon: Inbox, href: "/cy/import", tip: "Ανέβασε τα XML εκτελέσεων από την πύλη ΓεΣΥ (ένα-ένα ή σε ZIP).", tip_en: "Upload dispensing XML files from the GHS portal (one by one or as a ZIP)." },
+  ] },
+  { title: "Διαχείριση φαρμακείου", en: "Pharmacy management", icon: Building2, items: [
+    { section: EXEC, label: "Dashboard", en: "Dashboard", icon: LayoutDashboard, href: "/cy", tip: "Η εικόνα του φαρμακείου: εκτελέσεις, αξία, ΟΑΥ, πελάτες, ώρες αιχμής, με σύγκριση με πέρσι.", tip_en: "Your pharmacy at a glance: dispensings, value, HIO, customers, peak hours, compared with last year." },
+    { section: EXEC, label: "Πελάτες", en: "Customers", icon: Users, href: "/cy/patients", tip: "Αναζήτηση πελάτη και άνοιγμα της καρτέλας του.", tip_en: "Find a customer and open their card." },
+    { section: EXEC, label: "Ιατροί", en: "Doctors", icon: Stethoscope, href: "/cy/doctors", tip: "Ποιοι γιατροί συνταγογραφούν στους πελάτες σου και τι αξία φέρνουν.", tip_en: "Which doctors prescribe for your customers and what value they bring." },
+    { section: EXEC, label: "Υπάλληλοι", en: "Staff", icon: Users, href: "/cy/staff", tip: "Εκτελέσεις ανά χρήστη της πύλης ΓεΣΥ.", tip_en: "Dispensings per GHS portal user." },
+    ...pickFrom(["Διαχείριση φαρμακείου"]),
+  ] },
+  { title: "Ηλεκτρονικό κατάστημα", en: "e-shop", icon: ShoppingBag,
+    items: pickFrom(["Ηλεκτρονικό κατάστημα", "Marketing"]) },
+  ...NAV_GROUPS.filter((g) => SHARED_FOR_CY.has(g.title)).map((g) => g.title === "Βοήθεια"
+    // ο «Οδηγός δεικτών» εξηγεί ελληνικούς δείκτες (ΕΟΠΥΥ) → όχι στην Κύπρο
+    ? { ...g, items: g.items.filter((n) => n.href !== "/guide") }
+    : g.title !== "Ρυθμίσεις" ? g : {
+    ...g, items: g.items.map((n) => ({ ...n,
+      tip: "Χρήστες, ρόλοι, ωράριο, μηνύματα, χρέωση και GDPR.",
+      tip_en: "Users, roles, opening hours, messaging, billing and GDPR." })) }),
 ];

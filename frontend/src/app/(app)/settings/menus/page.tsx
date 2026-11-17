@@ -14,7 +14,8 @@ import { Fragment, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
-import { NAV_GROUPS } from "@/components/layout/navCatalog";
+import { NAV_GROUPS as GR_GROUPS, CY_NAV_GROUPS } from "@/components/layout/navCatalog";
+import { useCountry } from "@/lib/cy";
 import { Eye, EyeOff, ShieldAlert, Loader2, ChevronRight } from "lucide-react";
 
 type Menu = { groups: string[]; items: string[] };
@@ -24,13 +25,15 @@ const ROLE_EL: Record<string, string> = {
 };
 
 /** Κάθε ενότητα → η λίστα των προορισμών της (τα υπο-στοιχεία ξεδιπλώνονται). */
-function leavesOf(g: (typeof NAV_GROUPS)[number]): { href: string; label: string; en: string }[] {
+function leavesOf(g: (typeof GR_GROUPS)[number]): { href: string; label: string; en: string }[] {
   return g.items.flatMap((n) => n.children
     ? n.children.map((c) => ({ href: c.href, label: `${n.label} · ${c.label}`, en: `${n.en} · ${c.en}` }))
     : n.href ? [{ href: n.href, label: n.label, en: n.en }] : []);
 }
 
 export default function MenusPage() {
+  // Μενού ΤΗΣ ΧΩΡΑΣ του φαρμακείου — το ίδιο που δείχνει το Sidebar
+  const NAV_GROUPS = useCountry() === "CY" ? CY_NAV_GROUPS : GR_GROUPS;
   const t = useT();
   const qc = useQueryClient();
   const [busy, setBusy] = useState<string | null>(null);
@@ -50,7 +53,7 @@ export default function MenusPage() {
   const menu = (r: string): Menu => q.data!.menus[r] ?? { groups: [], items: [] };
 
   /** Μια ενότητα είναι κρυφή είτε ρητά είτε επειδή κρύφτηκαν ΟΛΕΣ οι επιλογές της. */
-  const groupState = (role: string, g: (typeof NAV_GROUPS)[number]): "on" | "off" | "some" => {
+  const groupState = (role: string, g: (typeof GR_GROUPS)[number]): "on" | "off" | "some" => {
     const m = menu(role);
     if (m.groups.includes(g.title)) return "off";
     const ls = leavesOf(g);
@@ -58,7 +61,7 @@ export default function MenusPage() {
     return hidden === 0 ? "on" : hidden === ls.length ? "off" : "some";
   };
 
-  async function toggleGroup(role: string, g: (typeof NAV_GROUPS)[number]) {
+  async function toggleGroup(role: string, g: (typeof GR_GROUPS)[number]) {
     const m = menu(role);
     const state = groupState(role, g);
     const hrefs = leavesOf(g).map((l) => l.href);
@@ -71,7 +74,7 @@ export default function MenusPage() {
     finally { setBusy(null); }
   }
 
-  async function toggleItem(role: string, g: (typeof NAV_GROUPS)[number], href: string) {
+  async function toggleItem(role: string, g: (typeof GR_GROUPS)[number], href: string) {
     const m = menu(role);
     const items = new Set(m.items);
     items.has(href) ? items.delete(href) : items.add(href);

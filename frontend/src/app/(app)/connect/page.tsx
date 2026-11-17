@@ -5,6 +5,7 @@
  *  Όλα τα βοηθητικά components είναι σε ΕΠΙΠΕΔΟ ΑΡΧΕΙΟΥ: component ορισμένο μέσα σε render
  *  ξαναγεννιέται σε κάθε πληκτρολόγηση και το πεδίο χάνει το focus ανά χαρακτήρα. */
 
+import { useCountry } from "@/lib/cy";
 import { useEffect, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
@@ -122,6 +123,7 @@ function Pill({ label, cls }: { label: string; cls: string }) {
 }
 
 export default function ConnectPage() {
+  const cy = useCountry() === "CY";   // κείμενα ανά χώρα (Κύπρος: χωρίς ΑΜΚΑ/ΗΔΥΚΑ/ΕΟΠΥΥ)
   const qc = useQueryClient();
   const [tab, setTab] = useState<string>("dashboard");
   useEffect(() => {
@@ -436,7 +438,7 @@ export default function ConnectPage() {
                           onChange={(e) => setOfferPrice({ ...offerPrice, [r.id]: e.target.value })}
                           placeholder={r.price_basis === "acquisition" ? "τιμή κτήσης" : "τιμή"}
                           className="w-24 rounded-lg border border-slate-300 px-2 py-1 text-right text-sm dark:bg-slate-800" />
-                        <span className="text-xs text-slate-500">€/τεμ. · {BASIS_HINT[r.price_basis || "wholesale"]}</span>
+                        <span className="text-xs text-slate-500">€/τεμ. · {cy ? BASIS_HINT[r.price_basis || "wholesale"].replace("το Δελτίο Τιμών", "τον κατάλογό σου") : BASIS_HINT[r.price_basis || "wholesale"]}</span>
                       </span>
                     )}
                   </div>
@@ -758,7 +760,7 @@ export default function ConnectPage() {
                 </button>
               </div>
               <p className="text-xs text-slate-500">
-                Λιανικής και χονδρικής: η τιμή προσυμπληρώνεται από το Δελτίο Τιμών και ο φαρμακοποιός
+                Λιανικής και χονδρικής: η τιμή προσυμπληρώνεται από {cy ? "τον κατάλογο του φαρμακείου (Αποθήκη)" : "το Δελτίο Τιμών"} και ο φαρμακοποιός
                 μπορεί να την αλλάξει. Κτήσης: τη γράφει ο φαρμακοποιός που δίνει το είδος.
               </p>
             </div>

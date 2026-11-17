@@ -1,5 +1,6 @@
 "use client";
 
+import { useCountry } from "@/lib/cy";
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, queryKeys, ApiError } from "@/lib/apiClient";
@@ -38,6 +39,7 @@ function errText(e: unknown, fallback: string, t: Translate): string {
 }
 
 export default function UsersSettingsPage() {
+  const cy = useCountry() === "CY";   // κείμενα ανά χώρα (Κύπρος: χωρίς ΑΜΚΑ/ΗΔΥΚΑ/ΕΟΠΥΥ)
   const t = useT();
   const qc = useQueryClient();
   const [email, setEmail] = useState("");
@@ -141,7 +143,7 @@ export default function UsersSettingsPage() {
       render: (r) => (
         <button
           onClick={() => setMask.mutate({ id: r.id, mask_pii: !r.mask_pii })}
-          title={t("Εναλλαγή πρόσβασης σε ευαίσθητα προσωπικά δεδομένα πελατών (επίθετο/ΑΜΚΑ/επικοινωνία)", "Toggle access to patients' sensitive data")}
+          title={t(cy ? "Εναλλαγή πρόσβασης σε ευαίσθητα προσωπικά δεδομένα πελατών (επίθετο/ημ. γέννησης)" : "Εναλλαγή πρόσβασης σε ευαίσθητα προσωπικά δεδομένα πελατών (επίθετο/ΑΜΚΑ/επικοινωνία)", "Toggle access to patients' sensitive data")}
           className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs font-semibold transition hover:ring-2 hover:ring-brand-200 ${r.mask_pii ? "border-amber-300 bg-amber-100 text-amber-700" : "border-emerald-300 bg-emerald-100 text-emerald-700"}`}>
           {r.mask_pii ? t("🔒 Μασκαρισμένα", "🔒 Masked") : t("Πλήρης πρόσβαση", "Full access")} <span className="opacity-50">⇄</span>
         </button>
@@ -240,6 +242,7 @@ function EditUserModal({
   onCancel: () => void;
   onSave: (full_name: string, role_ids: string[], mask_pii: boolean) => void;
 }) {
+  const cy = useCountry() === "CY";
   const t = useT();
   const [name, setName] = useState(user.full_name);
   const [rid, setRid] = useState(user.role_ids?.[0] ?? "");
@@ -269,7 +272,7 @@ function EditUserModal({
         {/* GDPR — πρόσβαση σε ευαίσθητα προσωπικά δεδομένα πελατών */}
         <div className="rounded-lg border border-slate-200 p-3 dark:border-slate-700">
           <div className="text-sm font-medium text-slate-700 dark:text-slate-200">{t("Πρόσβαση σε προσωπικά δεδομένα πελατών (GDPR)", "Access to patient personal data (GDPR)")}</div>
-          <p className="mt-0.5 text-xs text-slate-500">{t("Ο εγκεκριμένος φαρμακοποιός βλέπει τα πάντα. Ο σύμβουλος υγείας στον πάγκο να βλέπει μασκαρισμένα (επίθετο/ΑΜΚΑ/τηλέφωνο).", "Licensed pharmacist sees everything; a counter advisor sees masked PII.")}</p>
+          <p className="mt-0.5 text-xs text-slate-500">{t(cy ? "Ο εγκεκριμένος φαρμακοποιός βλέπει τα πάντα. Ο σύμβουλος υγείας στον πάγκο να βλέπει μασκαρισμένα (επίθετο/ημ. γέννησης)." : "Ο εγκεκριμένος φαρμακοποιός βλέπει τα πάντα. Ο σύμβουλος υγείας στον πάγκο να βλέπει μασκαρισμένα (επίθετο/ΑΜΚΑ/τηλέφωνο).", "Licensed pharmacist sees everything; a counter advisor sees masked PII.")}</p>
           <div className="mt-2 flex gap-2">
             <button type="button" onClick={() => setMask(false)} className={`flex-1 rounded-lg px-3 py-1.5 text-sm font-semibold ${!mask ? "bg-emerald-100 text-emerald-700" : "border border-slate-300 text-slate-500 hover:bg-slate-50"}`}>{t("Πλήρης πρόσβαση", "Full access")}</button>
             <button type="button" onClick={() => setMask(true)} className={`flex-1 rounded-lg px-3 py-1.5 text-sm font-semibold ${mask ? "bg-amber-100 text-amber-700" : "border border-slate-300 text-slate-500 hover:bg-slate-50"}`}>🔒 {t("Μασκαρισμένα", "Masked")}</button>

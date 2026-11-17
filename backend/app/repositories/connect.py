@@ -1012,10 +1012,14 @@ async def price_hint(tenant_id: str, barcode: str, basis: str) -> int | None:
     db = shared_db()
     field, own = (("retail_cents", "price_cents") if basis == "retail"
                   else ("wholesale_cents", "wholesale_cents"))
-    c = await db["medicine_catalog"].find_one(
-        {"$or": [{"barcode": barcode}, {"_id": barcode}], field: {"$gt": 0}}, {field: 1})
-    if c:
-        return int(c[field])
+    # Κύπρος: το Δελτίο Τιμών είναι ΕΛΛΗΝΙΚΟ — ίδιο barcode θα έδινε ελληνική τιμή σε κυπριακό
+    # φαρμακείο. Εκεί η τιμή έρχεται ΜΟΝΟ από τον κατάλογο του φαρμακείου.
+    t = await db["tenants"].find_one({"_id": tenant_id}, {"country": 1}) or {}
+    if (t.get("country") or "GR").upper() != "CY":
+        c = await db["medicine_catalog"].find_one(
+            {"$or": [{"barcode": barcode}, {"_id": barcode}], field: {"$gt": 0}}, {field: 1})
+        if c:
+            return int(c[field])
     from app.repositories.pharmacy_catalog import PharmacyCatalogRepository
     p = await PharmacyCatalogRepository(tenant_id=tenant_id).find_one({"barcode": barcode})
     return _cents((p or {}).get(own))

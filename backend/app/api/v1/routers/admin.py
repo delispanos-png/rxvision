@@ -57,6 +57,7 @@ class OpenTenantIn(BaseModel):
     payment_method: str | None = None  # card | bank
     trial_start: str | None = None     # YYYY-MM-DD· μόνο στο δοκιμαστικό πακέτο
     trial_end: str | None = None
+    country: str = "GR"                # GR | CY — αποφασίζει μενού & πηγή δεδομένων
 
 
 class StatusIn(BaseModel):
@@ -360,6 +361,7 @@ async def tenants(_: PlatformContext = Depends(get_platform_admin)):
             "id": t["_id"],
             "name": t.get("name", t["_id"]),
             "afm": (t.get("company") or {}).get("afm") or (t.get("billing_profile") or {}).get("afm"),
+            "country": t.get("country") or "GR",
             "plan": sub.get("plan", "—"),
             "status": billing_service.effective_status(sub) if sub else (t.get("status") or "—"),
             "users": user_counts.get(t["_id"], 0),
@@ -1796,10 +1798,28 @@ async def open_tenant(body: OpenTenantIn, _: PlatformContext = Depends(get_platf
             owner_name=body.owner_name, owner_password=body.owner_password, source="admin",
             billing_cycle=body.billing_cycle, sla=body.sla, company=body.company,
             modules=body.modules, seats=body.seats, payment_method=body.payment_method,
-            trial_start=body.trial_start, trial_end=body.trial_end)
+            trial_start=body.trial_start, trial_end=body.trial_end, country=body.country)
     except ProvisioningError as e:
         raise HTTPException(http_status.HTTP_400_BAD_REQUEST, str(e))
     return result
+
+
+class CyToggleIn(BaseModel):
+    enabled: bool
+
+
+@router.get("/cy")
+async def cy_settings(_: PlatformContext = Depends(get_platform_admin)):
+    """Διακόπτης κυπριακού κομματιού + πόσα κυπριακά φαρμακεία υπάρχουν."""
+    from app.services.cy.gate import cy_enabled
+    n = await shared_db()["tenants"].count_documents({"country": "CY"})
+    return {"enabled": await cy_enabled(), "tenants": n}
+
+
+@router.put("/cy")
+async def cy_toggle(body: CyToggleIn, _: PlatformContext = Depends(get_platform_admin)):
+    from app.services.cy.gate import set_cy_enabled
+    return {"enabled": await set_cy_enabled(body.enabled)}
 
 
 @router.patch("/tenants/{tenant_id}/status")

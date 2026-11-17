@@ -26,6 +26,16 @@ from app.services.vault_service import vault
 from app.utils.masking import pseudo_name
 from app.utils.anonymization import pseudonymize
 
+# Η πύλη πελατών (my.rxvision.gr) είναι ΕΛΛΗΝΙΚΗ: ταυτότητα ΑΜΚΑ, κατάλογος φαρμακείων με ΑΜΚΑ-ταίριασμα.
+# Κυπριακό φαρμακείο (tenants.country == "CY") δεν εμφανίζεται ΠΟΥΘΕΝΑ σε αυτήν μέχρι να υπάρξει η
+# κυπριακή πύλη με δική της ταυτότητα (ΓεΣΥ). Χωρίς αυτό, το «RxVision Κύπρος Demo» φαινόταν στον
+# δημόσιο κατάλογο των Ελλήνων πελατών (εντοπίστηκε 17/11/2026). Χώρα που λείπει = ελληνικό.
+GREEK_PORTAL: dict = {"country": {"$ne": "CY"}}
+
+# «Καρτέλες χωρίς κίνηση» που φτιάχνει η πύλη (όχι η ΗΔΥΚΑ) — σβήνονται με την αποσύνδεση.
+# `cy_portal`: κυπριακός πελάτης· τα δεδομένα του είναι στο cy_patients/cy_dispensings, εδώ μόνο ο σύνδεσμος.
+SHELL_SOURCES = ("portal_selected", "cy_portal")
+
 
 def _now() -> datetime:
     return datetime.now(tz=timezone.utc)
@@ -138,7 +148,12 @@ class PatientAccountRepository:
             {"email": (email or "").strip().lower()})
 
     async def get_by_amka(self, amka: str) -> dict | None:
-        return await self.db["patient_accounts"].find_one({"amka": (amka or "").strip()})  # tenant-ok
+        # ΚΕΝΟ ΑΜΚΑ ≠ ταίριασμα: οι κυπριακοί λογαριασμοί δεν έχουν ΑΜΚΑ — χωρίς αυτόν τον φύλακα κάθε
+        # δεύτερος θα έβγαινε «υπάρχει ήδη» και κάθε αναζήτηση με κενό θα έβρισκε τυχαίο λογαριασμό.
+        amka = (amka or "").strip()
+        if not amka:
+            return None
+        return await self.db["patient_accounts"].find_one({"amka": amka})  # tenant-ok
 
     async def get(self, account_id) -> dict | None:
         oid = _oid(account_id)
@@ -146,7 +161,7 @@ class PatientAccountRepository:
 
     async def create(self, *, first_name: str, last_name: str, email: str,
                      phone: str | None, amka: str, password_hash: str,
-                     must_change_password: bool = False) -> dict:
+                     must_change_password: bool = False, extra: dict | None = None) -> dict:
         # NB: raw ΑΜΚΑ stored — it is the universal matching key and is needed to (re)derive each
         # pharmacy's pseudonym when the patient is served at a new pharmacy. Encrypt-at-rest is a
         # follow-up (consistent with the existing controller AMKA-at-rest decision).
@@ -155,7 +170,7 @@ class PatientAccountRepository:
             "email": (email or "").strip().lower(), "phone": (phone or "").strip(),
             "amka": (amka or "").strip(), "password_hash": password_hash,
             "must_change_password": bool(must_change_password),
-            "refresh_token_version": 0, "created_at": _now(),
+            "refresh_token_version": 0, "created_at": _now(), **(extra or {}),
         }
         res = await self.db["patient_accounts"].insert_one(doc)  # tenant-ok
         doc["_id"] = res.inserted_id
@@ -367,7 +382,7 @@ class PatientAccountRepository:
         from app.services.auth_service import resolve_tenant_modules, tenant_has
         out: list[dict] = []
         async for t in self.db["tenants"].find(  # tenant-ok: cross-tenant discovery by design
-                {"status": {"$in": ["active", "trial"]}}, {"_id": 1, "name": 1, "company": 1}):
+                {"status": {"$in": ["active", "trial"]}, **GREEK_PORTAL}, {"_id": 1, "name": 1, "company": 1}):
             tid = str(t["_id"])
             if tid in linked:
                 continue
@@ -413,7 +428,7 @@ class PatientAccountRepository:
             if pref:   # καρτέλα που έφτιαξε ΜΟΝΟ η πύλη, χωρίς καμία κίνηση → φεύγει (όπως στην αποσύνδεση)
                 pat = await self.db["patients_anonymized"].find_one(
                     {"tenant_id": tenant_id, "_id": pref}, {"rx_count": 1, "source": 1})
-                if pat and pat.get("source") == "portal_selected" and not int(pat.get("rx_count") or 0):
+                if pat and pat.get("source") in SHELL_SOURCES and not int(pat.get("rx_count") or 0):
                     await self.db["patients_anonymized"].delete_one({"tenant_id": tenant_id, "_id": pref})
                     await self.db["patient_contacts"].delete_one({"tenant_id": tenant_id, "_id": pref})
             for c in self._ACCOUNT_COLLS:
@@ -447,7 +462,7 @@ class PatientAccountRepository:
         if pref:
             pat = await self.db["patients_anonymized"].find_one(
                 {"tenant_id": tenant_id, "_id": pref}, {"rx_count": 1, "source": 1})
-            if pat and (pat.get("source") == "portal_selected") and not int(pat.get("rx_count") or 0):
+            if pat and (pat.get("source") in SHELL_SOURCES) and not int(pat.get("rx_count") or 0):
                 await self.db["patients_anonymized"].delete_one({"tenant_id": tenant_id, "_id": pref})
                 await self.db["patient_contacts"].delete_one({"tenant_id": tenant_id, "_id": pref})
         acc = await self.get(account_id)
@@ -465,7 +480,7 @@ class PatientAccountRepository:
         out: list[dict] = []
         if not amka:
             return out
-        async for t in self.db["tenants"].find({}, {"_id": 1}):  # tenant-ok: cross-tenant discovery
+        async for t in self.db["tenants"].find(GREEK_PORTAL, {"_id": 1}):  # tenant-ok: cross-tenant discovery
             tid = str(t["_id"])
             if not tenant_has(await resolve_tenant_modules(tid), "patient_portal"):
                 continue
@@ -588,6 +603,8 @@ class PatientAccountRepository:
         amka = ((acc or {}).get("amka") or "").strip()
         if not oid or not amka or not tenant_has(await resolve_tenant_modules(tenant_id), "patient_portal"):
             return None
+        if not await self._greek_tenant(tenant_id):   # ποτέ ελληνικός λογαριασμός σε κυπριακό φαρμακείο
+            return None
         try:
             pseudo = pseudonymize(amka, tenant_pepper=vault.tenant_pepper(tenant_id))
         except Exception:  # noqa: BLE001
@@ -609,6 +626,52 @@ class PatientAccountRepository:
             {"$set": {"patient_ref": pat["_id"], "pharmacy_name": name, "updated_at": now},
              "$setOnInsert": {"created_at": now}}, upsert=True)
         return {"tenant_id": tenant_id, "patient_ref": str(pat["_id"]), "pharmacy_name": name}
+
+    async def link_cy_shell(self, account_id, tenant_id: str, cy_pseudo: str,
+                            full_name: str | None) -> dict | None:
+        """ΚΥΠΡΟΣ: σύνδεσμος λογαριασμού ↔ πελάτη ΓεΣΥ (cy_patients.pseudo_id) σε ΑΥΤΟ το φαρμακείο.
+
+        Η πύλη περιμένει `patient_ref` = ObjectId καρτέλας → φτιάχνουμε «καρτέλα χωρίς κίνηση» (`cy_portal`)
+        που ΜΟΝΟ δείχνει στον κυπριακό πελάτη (`cy_pseudo_id`). Κανένα ΑΜΚΑ, καμία ελληνική ροή."""
+        oid = _oid(account_id)
+        if not oid or not cy_pseudo:
+            return None
+        now = _now()
+        shell_pseudo = f"cy:{cy_pseudo}"
+        await self.db["patients_anonymized"].update_one(  # tenant-ok: explicit tenant_id
+            {"tenant_id": tenant_id, "pseudo_id": shell_pseudo},
+            {"$set": {"full_name": full_name, "cy_pseudo_id": cy_pseudo},
+             "$setOnInsert": {"tenant_id": tenant_id, "pseudo_id": shell_pseudo, "rx_count": 0,
+                              "rx_value_total": 0, "lifecycle": "new", "source": "cy_portal",
+                              "created_at": now}}, upsert=True)
+        pat = await self.db["patients_anonymized"].find_one(  # tenant-ok: explicit tenant_id
+            {"tenant_id": tenant_id, "pseudo_id": shell_pseudo}, {"_id": 1})
+        t = await self.db["tenants"].find_one({"_id": tenant_id}, {"name": 1, "company": 1})
+        name = ((t or {}).get("company") or {}).get("name") or (t or {}).get("name") or tenant_id
+        await self.db["patient_links"].update_one(  # tenant-ok: global link doc
+            {"account_id": oid, "tenant_id": tenant_id},
+            {"$set": {"patient_ref": pat["_id"], "pharmacy_name": name, "updated_at": now},
+             "$setOnInsert": {"created_at": now}}, upsert=True)
+        return {"tenant_id": tenant_id, "patient_ref": str(pat["_id"]), "pharmacy_name": name}
+
+    async def cy_account_for(self, tenant_id: str, cy_pseudo: str) -> dict | None:
+        """Ο λογαριασμός πύλης (αν υπάρχει) του κυπριακού πελάτη σε αυτό το φαρμακείο."""
+        shell = await self.db["patients_anonymized"].find_one(  # tenant-ok: explicit tenant_id
+            {"tenant_id": tenant_id, "pseudo_id": f"cy:{cy_pseudo}"}, {"_id": 1})
+        if not shell:
+            return None
+        link = await self.db["patient_links"].find_one(  # tenant-ok: explicit tenant_id
+            {"tenant_id": tenant_id, "patient_ref": shell["_id"]}, {"account_id": 1})
+        return await self.get(link["account_id"]) if link else None
+
+    async def cy_pseudo_of(self, tenant_id: str, patient_ref) -> str | None:
+        """Από τον σύνδεσμο της πύλης (καρτέλα `cy_portal`) → ο πελάτης ΓεΣΥ (cy_patients.pseudo_id)."""
+        oid = _oid(patient_ref)
+        if not oid:
+            return None
+        shell = await self.db["patients_anonymized"].find_one(  # tenant-ok: explicit tenant_id
+            {"tenant_id": tenant_id, "_id": oid, "source": "cy_portal"}, {"cy_pseudo_id": 1})
+        return (shell or {}).get("cy_pseudo_id")
 
     async def toggle_shop_favorite(self, account_id, tenant_id: str, barcode: str) -> bool:
         """Αγαπημένο ΠΡΟΪΟΝ e-shop (toggle). Κρατά την τιμή/απόθεμα τη στιγμή που το πρόσθεσε ώστε
@@ -729,7 +792,7 @@ class PatientAccountRepository:
         from app.services.auth_service import resolve_tenant_modules, tenant_has
         out: list[dict] = []
         async for t in self.db["tenants"].find(  # tenant-ok: public pharmacy directory
-                {"status": {"$in": ["active", "trial"]}},
+                {"status": {"$in": ["active", "trial"]}, **GREEK_PORTAL},
                 {"_id": 1, "name": 1, "company": 1, "contact_phone": 1, "location": 1}):
             loc = t.get("location") or {}
             la, lo = loc.get("lat"), loc.get("lon")
@@ -760,7 +823,7 @@ class PatientAccountRepository:
         linked = linked_ids or set()
         out: list[dict] = []
         async for t in self.db["tenants"].find(  # tenant-ok: public pharmacy directory (no PII)
-                {"status": {"$in": ["active", "trial"]}},
+                {"status": {"$in": ["active", "trial"]}, **GREEK_PORTAL},
                 {"_id": 1, "name": 1, "company": 1, "contact_phone": 1, "location": 1}):
             tid = str(t["_id"])
             # portal ΕΝΕΡΓΟ effective (plan modules_included OR override) — όχι μόνο το per-tenant override.
@@ -794,8 +857,15 @@ class PatientAccountRepository:
     async def pharmacy_has_portal(self, tenant_id: str) -> bool:
         # effective module resolution (plan modules_included OR override) — το raw tenants.modules
         # κρατά ΜΟΝΟ overrides, οπότε το patient_portal (που έρχεται από το πλάνο) έλειπε.
+        # Κυπριακό φαρμακείο: ΟΧΙ στην (ελληνική) πύλη — βλ. GREEK_PORTAL.
+        if not await self._greek_tenant(tenant_id):
+            return False
         from app.services.auth_service import resolve_tenant_modules, tenant_has
         return tenant_has(await resolve_tenant_modules(tenant_id), "patient_portal")
+
+    async def _greek_tenant(self, tenant_id: str) -> bool:
+        t = await self.db["tenants"].find_one({"_id": tenant_id}, {"country": 1})
+        return ((t or {}).get("country") or "GR").upper() != "CY"
 
     # ── medicine catalogue (shared) ───────────────────────────
     async def search_medicines(self, q: str, *, limit: int = 15) -> list[dict]:

@@ -6,6 +6,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Warehouse, Plus, ArrowUpDown, History, Pencil, AlertTriangle, CalendarClock, X, PackageX, FileSpreadsheet, Upload, ImagePlus, ZoomIn, ShoppingCart, Ban, Loader2 } from "lucide-react";
 import { api, apiUpload, apiBlob, API_BASE, queryKeys } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
+import { useCountry, VAT_OPTIONS } from "@/lib/cy";
 import { appAlert, appConfirm } from "@/store/dialogStore";
 import { fmtEur, fmtNum } from "@/lib/formatters";
 import { DataTable, type Column } from "@/components/tables/DataTable";
@@ -50,6 +51,7 @@ const netPrice = (p: Item) => (p.price_includes_vat ?? true) ? p.price_cents / (
 const margin = (p: Item) => (p.wholesale_cents && p.price_cents) ? Math.round((netPrice(p) - p.wholesale_cents) / netPrice(p) * 100) : null;
 
 export default function WarehousePage() {
+  const isCy = useCountry() === "CY";   // Profarm = Έλληνας προμηθευτής → όχι στην Κύπρο
   const hasShop = useHasShop();
   const t = useT();
   const TYPE_EL = typeElMap(t);
@@ -229,7 +231,7 @@ export default function WarehousePage() {
         </div>
       </div>
 
-      <SupplierPhotoCard />
+      {!isCy && <SupplierPhotoCard />}
 
       {focus && (() => {
         const label: Record<string, string> = {
@@ -472,6 +474,9 @@ function EditModal({ item, t, onClose, onDone }: { item: Item; t: (a: string, b:
   const isNew = !item.barcode;
   const TYPE_EL = typeElMap(t);
   const [f, setF] = useState<Item & { price_eur: number; cost_eur: number }>({ ...item, price_eur: item.price_cents / 100, cost_eur: (item.wholesale_cents ?? 0) / 100 });
+  // ΦΠΑ ανά χώρα φαρμακείου (Κύπρος 5/9/19/0 — Ελλάδα 6/13/24/0)
+  const vatCfg = VAT_OPTIONS[useCountry() === "CY" ? "CY" : "GR"];
+  const defVat = vatCfg.def;
   const [busy, setBusy] = useState(false);
   const [bcText, setBcText] = useState((item.barcodes ?? []).join(", "));
   const set = (k: string, v: unknown) => setF((s) => ({ ...s, [k]: v }) as typeof s);
@@ -500,7 +505,8 @@ function EditModal({ item, t, onClose, onDone }: { item: Item; t: (a: string, b:
     setBusy(true);
     try {
       await api("/catalog", { method: "POST", body: JSON.stringify({
-        ...f, price_cents: Math.round(f.price_eur * 100) || 0, wholesale_cents: Math.round(f.cost_eur * 100) || 0,
+        ...f, vat_rate: f.vat_rate ?? defVat,   // ό,τι δείχνει η φόρμα = ό,τι αποθηκεύεται (όχι το 6% του backend)
+        price_cents: Math.round(f.price_eur * 100) || 0, wholesale_cents: Math.round(f.cost_eur * 100) || 0,
         barcodes: bcText.split(/[,\s]+/).map((x) => x.trim()).filter(Boolean),
       }) });
       onDone();
@@ -555,16 +561,16 @@ function EditModal({ item, t, onClose, onDone }: { item: Item; t: (a: string, b:
         {Fld({ k: "price_eur", label: t("Λιανική (€)", "Retail (€)"), type: "number" })}
         {Fld({ k: "cost_eur", label: t("Χονδρική/κόστος (€)", "Cost (€)"), type: "number" })}
         <label className="block text-sm"><span className="mb-1 block text-xs text-slate-500">{t("ΦΠΑ %", "VAT %")}</span>
-          <select value={f.vat_rate ?? 6} onChange={(e) => set("vat_rate", +e.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-800">
-            <option value={6}>6%</option><option value={13}>13%</option><option value={24}>24%</option><option value={0}>{t("0% / Απαλλ.", "0% / Exempt")}</option>
+          <select value={f.vat_rate ?? defVat} onChange={(e) => set("vat_rate", +e.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-800">
+            {vatCfg.rates.map((r) => <option key={r} value={r}>{r === 0 ? t("0% / Απαλλ.", "0% / Exempt") : `${r}%`}</option>)}
           </select></label>
         <label className="flex items-center gap-2 self-end rounded-lg border border-slate-200 px-3 py-2 text-sm dark:border-slate-600">
           <input type="checkbox" checked={f.price_includes_vat ?? true} onChange={(e) => set("price_includes_vat", e.target.checked)} className="h-4 w-4" />
           <span className="text-xs text-slate-600 dark:text-slate-300">{t("Η λιανική περιλαμβάνει ΦΠΑ", "Retail includes VAT")}</span>
         </label>
-        {(f.price_eur > 0) && (f.vat_rate ?? 6) > 0 && (
+        {(f.price_eur > 0) && (f.vat_rate ?? defVat) > 0 && (
           <p className="col-span-full rounded-lg bg-slate-50 px-3 py-1.5 text-[11px] text-slate-600 dark:bg-slate-800 dark:text-slate-300">
-            {(() => { const v = (f.vat_rate ?? 6) / 100; const net = (f.price_includes_vat ?? true) ? f.price_eur / (1 + v) : f.price_eur; const gross = (f.price_includes_vat ?? true) ? f.price_eur : f.price_eur * (1 + v); return t(`Καθαρή: ${net.toFixed(2)}€ · ΦΠΑ ${(f.vat_rate ?? 6)}%: ${(gross - net).toFixed(2)}€ · Μικτή: ${gross.toFixed(2)}€`, `Net: ${net.toFixed(2)}€ · VAT: ${(gross - net).toFixed(2)}€ · Gross: ${gross.toFixed(2)}€`); })()}
+            {(() => { const v = (f.vat_rate ?? defVat) / 100; const net = (f.price_includes_vat ?? true) ? f.price_eur / (1 + v) : f.price_eur; const gross = (f.price_includes_vat ?? true) ? f.price_eur : f.price_eur * (1 + v); return t(`Καθαρή: ${net.toFixed(2)}€ · ΦΠΑ ${(f.vat_rate ?? defVat)}%: ${(gross - net).toFixed(2)}€ · Μικτή: ${gross.toFixed(2)}€`, `Net: ${net.toFixed(2)}€ · VAT: ${(gross - net).toFixed(2)}€ · Gross: ${gross.toFixed(2)}€`); })()}
           </p>
         )}
         {Fld({ k: "stock_qty", label: t("Απόθεμα (τεμ)", "Stock (units)"), type: "number" })}

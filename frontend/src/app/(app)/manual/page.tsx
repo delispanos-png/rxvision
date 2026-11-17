@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { BookOpen, Search, X } from "lucide-react";
 import { renderMarkdown } from "@/lib/markdown";
 import { useT } from "@/store/prefStore";
+import { useCountry } from "@/lib/cy";
 
 /** Εγχειρίδιο χρήσης — ΜΕΣΑ στην εφαρμογή.
  *
@@ -17,12 +18,15 @@ export default function ManualPage() {
   const [err, setErr] = useState(false);
   const [q, setQ] = useState("");
 
+  // Κυπριακό φαρμακείο → κυπριακό εγχειρίδιο (ΠΟΤΕ το ελληνικό με ΗΔΥΚΑ/ΕΟΠΥΥ)
+  const country = useCountry();
   useEffect(() => {
-    fetch("/user-manual.md")
+    if (!country) return;   // περίμενε τη χώρα — αλλιώς θα φόρτωνε στιγμιαία το λάθος
+    fetch(country === "CY" ? "/user-manual-cy.md" : "/user-manual.md")
       .then((r) => (r.ok ? r.text() : Promise.reject(new Error("not found"))))
       .then(setMd)
       .catch(() => setErr(true));
-  }, []);
+  }, [country]);
 
   // Φιλτράρισμα ΑΝΑ ΕΝΟΤΗΤΑ (##): κρατάμε όποια ενότητα περιέχει τον όρο — έτσι το αποτέλεσμα
   // παραμένει διαβάσιμο κείμενο, όχι σκόρπιες γραμμές χωρίς συμφραζόμενα.

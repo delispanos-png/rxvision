@@ -71,6 +71,14 @@ INDEXES: list[tuple[str, list[tuple[str, int]], dict]] = [
     # Connect — ειδοποιήσεις αλλαγής κατάστασης (ανάγνωση ανά φαρμακείο· σβήνονται μετά από 90 ημέρες)
     ("connect_events", [("tenant_id", 1), ("seen_at", 1), ("created_at", -1)], {}),
     ("connect_events", [("created_at", 1)], {"expireAfterSeconds": 90 * 86400}),
+    # Κύπρος (ΓεΣΥ): μία εγγραφή ανά εκτέλεση — το unique κάνει το ξανά-ανέβασμα ακίνδυνο
+    ("cy_dispensings", [("tenant_id", 1), ("dispensing_id", 1)], {"unique": True}),
+    ("cy_dispensings", [("tenant_id", 1), ("dispensed_at", -1)], {}),
+    ("cy_dispensings", [("tenant_id", 1), ("prescription_id", 1)], {}),
+    ("cy_dispensings", [("tenant_id", 1), ("patient_ref", 1)], {}),
+    ("cy_patients", [("tenant_id", 1), ("pseudo_id", 1)], {"unique": True}),
+    # ανάκληση παρτίδας: αναζήτηση στο EMVS των γραμμών
+    ("cy_dispensings", [("tenant_id", 1), ("lines.emvs.lot", 1)], {}),
     ("pos_sales", [("tenant_id", 1), ("lines.barcode", 1)], {}),
     ("api_keys", [("key_hash", 1)], {"unique": True}),
     ("api_keys", [("tenant_id", 1)], {}),

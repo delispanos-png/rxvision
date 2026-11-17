@@ -1,5 +1,6 @@
 "use client";
 
+import { useCountry } from "@/lib/cy";
 import { ScrollText, ShieldAlert, Sparkles } from "lucide-react";
 import { useT } from "@/store/prefStore";
 
@@ -8,6 +9,7 @@ import { useT } from "@/store/prefStore";
  * χρήσης & οι τελικές αποφάσεις — ιδίως η κατάθεση/υποβολή στα ταμεία — ανήκουν στον φαρμακοποιό.
  */
 export default function TermsOfUsePage() {
+  const cy = useCountry() === "CY";   // κείμενα ανά χώρα (Κύπρος: χωρίς ΑΜΚΑ/ΗΔΥΚΑ/ΕΟΠΥΥ)
   const t = useT();
   return (
     <div className="w-full max-w-4xl">
@@ -60,8 +62,8 @@ export default function TermsOfUsePage() {
                    "The prescription-check, daily/barcode-check, monthly-closing, forecast and submission features are ")}
                 <b>{t("αποκλειστικά υποβοηθητικές", "strictly assistive")}</b>
                 {t(". Η ", ". The ")}
-                <b>{t("τελική απόφαση για την κατάθεση/υποβολή των συνταγών στα ταμεία (ΕΟΠΥΥ κ.λπ.) ανήκει αποκλειστικά στον φαρμακοποιό",
-                      "final decision to submit prescriptions to the funds (ΕΟΠΥΥ etc.) rests solely with the pharmacist")}</b>
+                <b>{t(cy ? "τελική απόφαση για την κατάθεση/υποβολή των συνταγών στον ΟΑΥ ανήκει αποκλειστικά στον φαρμακοποιό" : "τελική απόφαση για την κατάθεση/υποβολή των συνταγών στα ταμεία (ΕΟΠΥΥ κ.λπ.) ανήκει αποκλειστικά στον φαρμακοποιό",
+                      cy ? "final decision to submit prescriptions to the HIO rests solely with the pharmacist" : "final decision to submit prescriptions to the funds (ΕΟΠΥΥ etc.) rests solely with the pharmacist")}</b>
                 {t(", ο οποίος οφείλει να ελέγχει και να επιβεβαιώνει τα δεδομένα πριν από κάθε υποβολή. Το RxVision δεν φέρει ευθύνη για περικοπές, απορρίψεις ή διαφορές που προκύπτουν από την υποβολή.",
                    ", who must review and confirm the data before each submission. RxVision bears no responsibility for cuts, rejections or discrepancies arising from the submission.")}
               </p>
@@ -92,8 +94,8 @@ export default function TermsOfUsePage() {
         </div>
 
         <Section n="5" title={t("Ακρίβεια δεδομένων", "Data accuracy")}>
-          {t("Τα δεδομένα αντλούνται από εξωτερικές πηγές (π.χ. ΗΔΥΚΑ) και ενδέχεται να περιέχουν ελλείψεις, καθυστερήσεις ή σφάλματα εκτός του ελέγχου μας. Οι υπολογισμοί (π.χ. εκτιμήσεις κόστους/κέρδους) είναι ενδεικτικοί.",
-             "Data is sourced from external systems (e.g. ΗΔΥΚΑ) and may contain gaps, delays or errors beyond our control. Calculations (e.g. cost/profit estimates) are indicative.")}
+          {t(cy ? "Τα δεδομένα προέρχονται από τα αρχεία της πύλης ΓεΣΥ που ανεβάζει το φαρμακείο και ενδέχεται να περιέχουν ελλείψεις, καθυστερήσεις ή σφάλματα εκτός του ελέγχου μας. Οι υπολογισμοί (π.χ. εκτιμήσεις κόστους/κέρδους) είναι ενδεικτικοί." : "Τα δεδομένα αντλούνται από εξωτερικές πηγές (π.χ. ΗΔΥΚΑ) και ενδέχεται να περιέχουν ελλείψεις, καθυστερήσεις ή σφάλματα εκτός του ελέγχου μας. Οι υπολογισμοί (π.χ. εκτιμήσεις κόστους/κέρδους) είναι ενδεικτικοί.",
+             cy ? "Data comes from the GHS portal files uploaded by the pharmacy and may contain gaps, delays or errors beyond our control. Calculations (e.g. cost/profit estimates) are indicative." : "Data is sourced from external systems (e.g. ΗΔΥΚΑ) and may contain gaps, delays or errors beyond our control. Calculations (e.g. cost/profit estimates) are indicative.")}
         </Section>
 
         <Section n="6" title={t("Προστασία δεδομένων (GDPR)", "Data protection (GDPR)")}>

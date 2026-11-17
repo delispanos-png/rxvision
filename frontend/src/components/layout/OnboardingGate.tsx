@@ -3,7 +3,7 @@
 import { useEffect } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
-import { api } from "@/lib/apiClient";
+import { api, queryKeys } from "@/lib/apiClient";
 
 /**
  * First-login gate: if the pharmacy hasn't connected ΗΔΥΚΑ yet, send the user to the
@@ -13,7 +13,10 @@ import { api } from "@/lib/apiClient";
 export function OnboardingGate() {
   const pathname = usePathname();
   const router = useRouter();
-  const skip = !!pathname && (pathname.startsWith("/onboarding") || pathname.startsWith("/settings"));
+  // Κυπριακό φαρμακείο: ΔΕΝ έχει ΗΔΥΚΑ → ποτέ η ελληνική οθόνη εγκατάστασης.
+  const meQ = useQuery({ queryKey: queryKeys.me(), queryFn: () => api<{ country?: string }>("/auth/me"), retry: false });
+  const skip = (!!pathname && (pathname.startsWith("/onboarding") || pathname.startsWith("/settings")))
+    || !meQ.data || meQ.data.country === "CY";
 
   const q = useQuery({
     queryKey: ["hdika-config-gate"],

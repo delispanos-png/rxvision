@@ -422,6 +422,8 @@ def _normalize(num: str) -> str:
         n = "+" + n[2:]
     if not n.startswith("+") and n.startswith("69"):
         n = "+30" + n  # Greek mobile
+    elif not n.startswith("+") and len(n) == 8 and n[:2] in ("94", "95", "96", "97", "99"):
+        n = "+357" + n  # Cypriot mobile (8 ψηφία, 94–99)
     return n.lstrip("+")
 
 

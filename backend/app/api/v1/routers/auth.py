@@ -133,7 +133,8 @@ async def me(ctx: TenantContext = Depends(get_current_context)):
     # Ημερομηνίες λήξης δοκιμών ΑΝΑ ΔΥΝΑΤΟΤΗΤΑ — μόνο γι' αυτές που είναι ΤΩΡΑ σε δοκιμή.
     # ΓΙΑΤΙ: χωρίς αυτές ο πελάτης δεν μάθαινε ΠΟΤΕ ότι η δοκιμή του τελειώνει· το ανακάλυπτε
     # τη μέρα που η δυνατότητα κλείδωνε. Οι αγορασμένες ΔΕΝ μπαίνουν εδώ (δεν λήγουν).
-    t = await shared_db()["tenants"].find_one({"_id": ctx.tenant_id}, {"module_trials": 1}) or {}
+    t = await shared_db()["tenants"].find_one({"_id": ctx.tenant_id},
+                                           {"module_trials": 1, "country": 1}) or {}
     trials = {m: (d.isoformat() if hasattr(d, "isoformat") else str(d))
               for m, d in (t.get("module_trials") or {}).items()
               if ctx.modules.get(m) == "trial" and d}
@@ -150,6 +151,8 @@ async def me(ctx: TenantContext = Depends(get_current_context)):
         "modules": ctx.modules,
         "module_trials": trials,
         "demo": ctx.demo,
+        # Χώρα φαρμακείου: «CY» → κυπριακό μενού (βλ. services/cy/gate.py)· ό,τι άλλο = ελληνικό
+        "country": (t.get("country") or "GR").upper(),
         "exports_locked": effective_status(sub) == "trial",                # «πελάτης παρουσίασης» → frontend κλειδώνει εκτυπώσεις ΗΔΥΚΑ/κουπονιών
         **profile,                       # full_name, email, phone, mfa_enabled
     }

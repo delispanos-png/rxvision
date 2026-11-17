@@ -74,6 +74,8 @@ async def export_subject(patient_id: str,
         return await gdpr_service.export_subject(ctx.tenant_id, patient_id, actor_user_id=ctx.user_id)
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+    except LookupError:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "subject_not_found")
 
 
 @router.post("/erase/{patient_id}")

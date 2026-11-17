@@ -1,6 +1,8 @@
 // Contextual help per circuit (page). Shown by the floating "?" button (PageHelp) and
 // mirrored in docs/USER_MANUAL.md. Keep entries short, practical and in Greek.
 
+import { CY_SHARED_HELP, HELP_CY } from "./helpCy";
+
 export type Help = {
   title: string;
   title_en?: string;
@@ -1221,8 +1223,12 @@ export const HELP: Record<string, Help> = {
   },
 };
 
-export function helpFor(pathname: string): Help | null {
-  const keys = Object.keys(HELP).sort((a, b) => b.length - a.length);
+export function helpFor(pathname: string, country?: string): Help | null {
+  // Κύπρος: ΜΟΝΟ κυπριακές εξηγήσεις + ελληνικές ελεγμένες καθαρές (χωρίς ΗΔΥΚΑ/ΕΟΠΥΥ/ΑΜΚΑ)
+  const src: Record<string, Help> = country === "CY"
+    ? { ...Object.fromEntries(Object.entries(HELP).filter(([k]) => CY_SHARED_HELP.has(k))), ...HELP_CY }
+    : HELP;
+  const keys = Object.keys(src).sort((a, b) => b.length - a.length);
   const k = keys.find((key) => pathname === key || pathname.startsWith(key + "/"));
-  return k ? HELP[k] : null;
+  return k ? src[k] : null;
 }

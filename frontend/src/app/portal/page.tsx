@@ -22,6 +22,7 @@ import { RenewalCard, type Renewal } from "@/components/portal/RenewalCard";
 import { ShopTab } from "@/components/portal/ShopTab";
 import { Toaster, toast, confirmDialog } from "@/components/portal/Toaster";
 import { TransferCard } from "@/components/portal/TransferCard";
+import { CyPrescriptions } from "@/components/portal/CyPrescriptions";
 import { CalendarSyncCard } from "@/components/CalendarSyncCard";
 import { pushSupported, isPushSubscribed, enablePush } from "@/lib/push";
 import { BellRing, Unlink as LinkIcon2 } from "lucide-react";
@@ -32,7 +33,7 @@ type Pharm = { status: { isOpen: boolean; isOnDuty: boolean; isOvernightDuty: bo
 type Consent = { granted: boolean; at?: string | null };
 type NotifyPrefs = { sms: boolean; viber: boolean; email: boolean; push: boolean };
 const NOTIFY_CHANNELS = ["sms", "viber", "email", "push"] as const;
-type Me = { profile: { first_name: string; last_name: string; email?: string; phone?: string; amka?: string; phone_verified?: boolean; email_verified?: boolean; twofa_enabled?: boolean; consents?: { health_data?: Consent; marketing?: Consent }; notify_prefs?: NotifyPrefs; address?: string; city?: string; postal_code?: string; theme?: "light" | "dark" | null; avatar_url?: string | null }; active_tenant: string | null; pharmacies: Pharmacy[]; portal_mode?: "network" | "single"; caps?: { shop: boolean; loyalty: boolean } };
+type Me = { profile: { first_name: string; last_name: string; email?: string; phone?: string; amka?: string; phone_verified?: boolean; email_verified?: boolean; twofa_enabled?: boolean; consents?: { health_data?: Consent; marketing?: Consent }; notify_prefs?: NotifyPrefs; address?: string; city?: string; postal_code?: string; theme?: "light" | "dark" | null; avatar_url?: string | null }; active_tenant: string | null; pharmacies: Pharmacy[]; portal_mode?: "network" | "single"; caps?: { shop: boolean; loyalty: boolean }; country?: "GR" | "CY" };
 const PF_INP = "mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 dark:text-slate-100 focus:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100";
 type Sess = { id: string; current: boolean; user_agent?: string | null; ip?: string | null; created_at?: string | null; last_seen?: string | null };
 function deviceLabel(ua: string | null | undefined, t: (el: string, en: string) => string): string {
@@ -105,7 +106,9 @@ function videoEmbed(url?: string | null): string | null {
   return null;
 }
 
-const TABS = [["home", "Αρχική", "Home"], ["rx", "Συνταγές", "Prescriptions"], ["shop", "e-Κατάστημα", "e-Store"], ["meds", "Πρόγραμμα λήψης", "Medication schedule"], ["health", "Υγεία", "Health"], ["wallet", "Επιβράβευση", "Rewards"], ["repeats", "Επαναλήψεις", "Refills"], ["renewals", "Ανεκτέλεστα", "Unexecuted"], ["assign", "Ανάθεση συνταγής", "Assign prescription"], ["availability", "Διαθεσιμότητα", "Availability"], ["appointments", "Ραντεβού", "Appointments"], ["pharmacies", "Φαρμακεία", "Pharmacies"]] as const;
+const TABS = [["home", "Αρχική", "Home"], ["rx", "Συνταγές", "Prescriptions"], ["shop", "e-Κατάστημα", "e-Store"], ["meds", "Πρόγραμμα λήψης", "Medication schedule"], ["health", "Υγεία", "Health"], ["wallet", "Επιβράβευση", "Rewards"], ["repeats", "Επαναλήψεις", "Refills"], ["renewals", "Ανεκτέλεστα", "Unexecuted"], ["assign", "Ανάθεση συνταγής", "Assign prescription"], ["availability", "Διαθεσιμότητα", "Availability"], ["appointments", "Ραντεβού", "Appointments"], ["pharmacies", "Φαρμακεία", "Pharmacies"], ["cyrx", "Οι συνταγές μου", "My prescriptions"]] as const;
+// ΚΥΠΡΟΣ: μόνο ό,τι δεν είναι ελληνικό (ΗΔΥΚΑ/ΑΜΚΑ). Οι συνταγές έρχονται από το ΓεΣΥ (cyrx).
+const CY_TABS = new Set(["cyrx", "shop", "wallet", "availability", "appointments"]);
 // Σύντομες ετικέτες για τη στενή κάτω μπάρα (mobile) — αλλιώς κόβονται άσχημα.
 const NAV_SHORT: Record<string, [string, string]> = { shop: ["Κατάστημα", "Store"], meds: ["Πρόγραμμα", "Schedule"] };
 
@@ -114,7 +117,7 @@ const NAV_SHORT: Record<string, [string, string]> = { shop: ["Κατάστημα
 const TAB_ICON: Record<string, LucideIcon> = {
   home: Home, rx: FileText, shop: ShoppingBag, meds: Pill, health: HeartPulse, wallet: Gift,
   repeats: RefreshCw, renewals: AlertCircle, assign: FilePlus, availability: Search, appointments: CalendarPlus,
-  pharmacies: MapPin,
+  pharmacies: MapPin, cyrx: FileText,
 };
 const TAB_LABEL: Record<string, [string, string]> = Object.fromEntries(TABS.map(([k, l, en]) => [k, [l, en]]));
 
@@ -330,6 +333,7 @@ export default function PortalHome() {
 
   useEffect(() => {
     if (!me) return;
+    if (me.country === "CY" && !CY_TABS.has(tab)) { setTab("cyrx"); return; }   // Κύπρος: ποτέ ελληνική καρτέλα
     const c = me.caps ?? { shop: true, loyalty: true };   // αν η ενεργή καρτέλα δεν προσφέρεται πια → Αρχική
     if ((tab === "shop" && !c.shop) || (tab === "wallet" && !c.loyalty)) { setTab("home"); return; }
     if (tab === "home") {   // KPI της Αρχικής χρειάζονται renewals (διαθέσιμες τώρα) + loyalty (πόντοι)
@@ -864,7 +868,8 @@ export default function PortalHome() {
   const caps = me.caps ?? { shop: true, loyalty: true };
   // Καθολική λειτουργία «μεμονωμένο φαρμακείο» → κρύψε τον κατάλογο δικτύου + τον επιλογέα εναλλαγής.
   const single = me.portal_mode === "single";
-  const visibleTabs = TABS.filter(([k]) => (k !== "shop" || caps.shop) && (k !== "wallet" || caps.loyalty) && (k !== "pharmacies" || !single));
+  const isCy = me.country === "CY";
+  const visibleTabs = TABS.filter(([k]) => (isCy ? CY_TABS.has(k) : k !== "cyrx") && (k !== "shop" || caps.shop) && (k !== "wallet" || caps.loyalty) && (k !== "pharmacies" || !single));
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -1092,9 +1097,9 @@ export default function PortalHome() {
                   )}
                 </>); })()}
               </div>
-              <label className="block text-xs font-medium text-slate-500 dark:text-slate-400">ΑΜΚΑ <span className="font-normal text-slate-400">{t("· κλειδί ηλεκτρονικής συνταγογράφησης", "· e-prescription key")}</span>
+              {me.country !== "CY" && <label className="block text-xs font-medium text-slate-500 dark:text-slate-400">ΑΜΚΑ <span className="font-normal text-slate-400">{t("· κλειδί ηλεκτρονικής συνταγογράφησης", "· e-prescription key")}</span>
                 <input value={me.profile.amka || ""} readOnly className={`${PF_INP} cursor-not-allowed font-mono opacity-70`} />
-              </label>
+              </label>}
               <div>
                 {(() => { const verified = !!me.profile.phone_verified && pf.phone === me.profile.phone; return (<>
                   <label className="block text-xs font-medium text-slate-500 dark:text-slate-400">{t("Τηλέφωνο", "Phone")} {verified ? <span className="text-emerald-600">{t("✓ επιβεβαιωμένο", "✓ verified")}</span> : pf.phone && <span className="text-amber-600">{t("ανεπιβεβαίωτο", "unverified")}</span>}</label>
@@ -2463,6 +2468,7 @@ export default function PortalHome() {
         )}
 
         {/* ── APPOINTMENTS ───────────────────────────────────── */}
+        {tab === "cyrx" && isCy && <CyPrescriptions />}
         {tab === "appointments" && (
           <div className="space-y-4">
             <CalendarSyncCard feedPath={calFeed}

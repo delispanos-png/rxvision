@@ -11,7 +11,7 @@ import { DataTable, type Column } from "@/components/tables/DataTable";
 import { Modal } from "@/components/ui/Modal";
 import { Search, X, Users2, Building2, Wallet, KeyRound, PauseCircle, type LucideIcon } from "lucide-react";
 
-type Tenant = { id: string; name: string; afm?: string; plan: string; status: string; users: number; active_now?: number; seats?: number; mrr: number; msg_balance?: number; hdika_paused?: boolean; hdika_error?: string | null; hdika_paused_at?: string | null; sync_stopped?: boolean; sync_stopped_at?: string | null; created_at: string;
+type Tenant = { id: string; name: string; afm?: string; country?: string; plan: string; status: string; users: number; active_now?: number; seats?: number; mrr: number; msg_balance?: number; hdika_paused?: boolean; hdika_error?: string | null; hdika_paused_at?: string | null; sync_stopped?: boolean; sync_stopped_at?: string | null; created_at: string;
   /** Πότε διαγράφεται (δοκιμαστικοί) — ίδιος κανόνας με τη νυχτερινή διαγραφή. */
   purge?: { at: string | null; days: number | null; protected: string | null; enabled: boolean } | null };
 const isoDay = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -152,6 +152,9 @@ export default function SubscribersPage() {
         <div className="min-w-0">
           <div className="flex items-center gap-1.5">
             <span className="truncate font-medium text-slate-800 dark:text-slate-100">{r.name}</span>
+            {r.country === "CY" && (
+              <span title="Κυπριακό φαρμακείο (ΓεΣΥ)" className="inline-flex shrink-0 items-center rounded-full bg-sky-100 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700 dark:bg-sky-900/40 dark:text-sky-300">CY</span>
+            )}
             {r.sync_stopped && !r.hdika_paused && (
               <span title={`Ο συγχρονισμός ΗΔΥΚΑ σταμάτησε επειδή έληξε η συνδρομή${r.sync_stopped_at ? ` (${new Date(r.sync_stopped_at).toLocaleDateString("el-GR", { timeZone: "Europe/Athens" })})` : ""}. Θα συνεχίσει μόνος του από εκείνη την ημέρα μόλις ανανεώσει.`}
                 className="inline-flex shrink-0 items-center gap-1 rounded-full bg-slate-200 px-1.5 py-0.5 text-[10px] font-semibold text-slate-600 dark:bg-slate-700 dark:text-slate-300">
@@ -209,9 +212,12 @@ export default function SubscribersPage() {
           <h1 className="text-xl font-bold text-slate-900 dark:text-slate-100">Συνδρομητές</h1>
           <p className="text-sm text-slate-400">Διαχείριση πελατών & συνδρομών</p>
         </div>
-        <button onClick={() => setOpen(true)} className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-indigo-700">
-          + Άνοιγμα tenant
-        </button>
+        <div className="flex items-center gap-2">
+          <CyToggle />
+          <button onClick={() => setOpen(true)} className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-indigo-700">
+            + Άνοιγμα tenant
+          </button>
+        </div>
       </div>
 
       {/* summary chips — πατώμενα: φιλτράρουν τη λίστα από κάτω */}
@@ -284,6 +290,7 @@ function OpenTenantModal({ onClose, onDone }: { onClose: () => void; onDone: () 
   const slaTiers = (slaQ.data?.items ?? []).filter((s) => s.active ?? true);
 
   const [step, setStep] = useState(0);
+  const [country, setCountry] = useState<"GR" | "CY">("GR");
   const [company, setCompany] = useState({ afm: "", name: "", title: "", doy: "", address: "", postal_code: "", city: "", phone: "", email: "" });
   const [aade, setAade] = useState({ loading: false, msg: "" });
   const [pkgCode, setPkgCode] = useState("");
@@ -338,7 +345,7 @@ function OpenTenantModal({ onClose, onDone }: { onClose: () => void; onDone: () 
     try {
       const r = await adminApi<{ tenant_id: string; owner_email: string; temp_password: string | null }>(
         "/admin/tenants", { method: "POST", body: JSON.stringify({
-          name: company.name, owner_email: owner.email, owner_name: owner.full_name || undefined,
+          name: company.name, country, owner_email: owner.email, owner_name: owner.full_name || undefined,
           owner_password: owner.password || undefined, package_code: pkg._id,
           billing_cycle: isTrial ? undefined : billing, sla: sla || undefined, seats, payment_method: payMethod,
           ...(isTrial ? { trial_start: trialStart, trial_end: trialEndOn } : {}),
@@ -388,6 +395,13 @@ function OpenTenantModal({ onClose, onDone }: { onClose: () => void; onDone: () 
 
           {step === 0 && (
             <div className="space-y-3">
+              <label className="block text-sm"><span className={lblc}>Χώρα φαρμακείου</span>
+                <select value={country} onChange={(e) => setCountry(e.target.value as "GR" | "CY")} className={inpc}>
+                  <option value="GR">Ελλάδα (ΗΔΥΚΑ)</option>
+                  <option value="CY">Κύπρος (ΓεΣΥ)</option>
+                </select>
+                {country === "CY" && <span className="mt-1 block text-xs text-sky-700">Βλέπει το κυπριακό μενού. Ενεργό μόνο όταν είναι ανοιχτός ο διακόπτης «Κύπρος».</span>}
+              </label>
               <div className="flex items-end gap-2">
                 <label className="flex-1 text-sm"><span className={lblc}>ΑΦΜ</span>
                   <input value={company.afm} onChange={(e) => setCompany({ ...company, afm: e.target.value })} placeholder="123456789" className={inpc} /></label>
@@ -515,5 +529,31 @@ function OpenTenantModal({ onClose, onDone }: { onClose: () => void; onDone: () 
         </div>
       )}
     </Modal>
+  );
+}
+
+/** Διακόπτης κυπριακού κομματιού (platform_settings/cy). Κλειστός → κάθε κυπριακό endpoint
+ *  απαντά 404, για όλα τα φαρμακεία. Ένα κλικ, χωρίς deploy. */
+function CyToggle() {
+  const qc = useQueryClient();
+  const q = useQuery({ queryKey: ["admin", "cy"], queryFn: () => adminApi<{ enabled: boolean; tenants: number }>("/admin/cy"), retry: false });
+  const on = !!q.data?.enabled;
+  async function flip() {
+    const ok = await appConfirm(on
+      ? "Κλείσιμο του κυπριακού κομματιού; Τα κυπριακά φαρμακεία δεν θα βλέπουν δεδομένα μέχρι να ανοίξει ξανά. Η Ελλάδα δεν επηρεάζεται."
+      : "Άνοιγμα του κυπριακού κομματιού για τα κυπριακά φαρμακεία; Η Ελλάδα δεν επηρεάζεται.",
+      { title: "Κύπρος", confirmText: on ? "Κλείσιμο" : "Άνοιγμα" });
+    if (!ok) return;
+    await adminApi("/admin/cy", { method: "PUT", body: JSON.stringify({ enabled: !on }) });
+    qc.invalidateQueries({ queryKey: ["admin", "cy"] });
+  }
+  if (!q.data) return null;
+  return (
+    <button type="button" onClick={flip} title={`${q.data.tenants} κυπριακά φαρμακεία`}
+      className={`rounded-lg border px-3 py-2 text-sm font-medium ${on
+        ? "border-sky-300 bg-sky-50 text-sky-700 hover:bg-sky-100"
+        : "border-slate-300 bg-white text-slate-500 hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-900"}`}>
+      Κύπρος: {on ? "ενεργό" : "ανενεργό"}
+    </button>
   );
 }

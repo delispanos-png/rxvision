@@ -40,6 +40,14 @@ _ATHENS = ZoneInfo("Europe/Athens")
 MAX_TRIAL_DAYS = 365       # πιάνει λάθος έτος στην ημερομηνία, δεν είναι επιχειρηματικό όριο
 
 
+# Χώρα φαρμακείου → γλώσσα/ζώνη ώρας. Η χώρα αποφασίζει ΤΙ βλέπει το φαρμακείο (μενού, πηγή
+# δεδομένων) — βλ. services/cy/gate.py. Προεπιλογή ΠΑΝΤΑ «GR»: ό,τι δεν δηλώνει χώρα μένει ελληνικό.
+COUNTRY_SETTINGS: dict[str, dict[str, str]] = {
+    "GR": {"locale": "el-GR", "timezone": "Europe/Athens"},
+    "CY": {"locale": "el-CY", "timezone": "Asia/Nicosia"},
+}
+
+
 def trial_window(start: str | None, end: str | None, default_days: int,
                  now: datetime | None = None) -> tuple[datetime, datetime]:
     """Η δοκιμή που ορίζει το εξουσιοδοτημένο άτομο: από την αρχή της πρώτης έως το τέλος της τελευταίας
@@ -77,8 +85,11 @@ class TenantProvisioningService:
                           sla: str | None = None, company: dict | None = None,
                           modules: list[str] | None = None, seats: int | None = None,
                           payment_method: str | None = None, trial_start: str | None = None,
-                          trial_end: str | None = None) -> dict:
+                          trial_end: str | None = None, country: str = "GR") -> dict:
         db = shared_db()
+        country = (country or "GR").upper()
+        if country not in COUNTRY_SETTINGS:
+            raise ProvisioningError("unknown_country")
 
         package = await db["packages"].find_one({"_id": package_code})
         if not package:
@@ -104,9 +115,9 @@ class TenantProvisioningService:
 
         # tenant
         await db["tenants"].insert_one({
-            "_id": tid, "name": name, "slug": tid, "country": "GR", "status": "active",
+            "_id": tid, "name": name, "slug": tid, "country": country, "status": "active",
             "isolation_tier": "shared",
-            "settings": {"locale": "el-GR", "timezone": "Europe/Athens", "currency": "EUR"},
+            "settings": {**COUNTRY_SETTINGS[country], "currency": "EUR"},
             "modules": mod_overrides, "credentials_ref": {"hdika": None, "gesy": None},
             "billing_profile": company or {},
             "external_ref": external_ref, "opened_via": source,

@@ -9,6 +9,7 @@
    ΓΙΑΤΙ ΔΥΟ ΕΙΔΗ ΜΗΝΥΜΑΤΟΣ: η ερώτηση «ποιος έχει AJOVY;» έχει νόημα μόνο αν φύγει σε όλους
    ταυτόχρονα· η συνέχεια («κράτησέ το, περνάω το απόγευμα») δεν αφορά κανέναν άλλον. */
 
+import { useCountry } from "@/lib/cy";
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { MessageSquare, Users, Plus, Send, LogOut, Check, X, ShieldAlert, Trash2} from "lucide-react";
@@ -36,6 +37,7 @@ export default function PharmacyChatPage() {
 }
 
 function Inner() {
+  const cy = useCountry() === "CY";   // κείμενα ανά χώρα (Κύπρος: χωρίς ΑΜΚΑ/ΗΔΥΚΑ/ΕΟΠΥΥ)
   const t = useT();
   const qc = useQueryClient();
   const [gid, setGid] = useState("");
@@ -259,8 +261,8 @@ function Inner() {
                     ό,τι γράψει ο φαρμακοποιός φεύγει όντως σε άλλο φαρμακείο. */}
                 <p className="mt-1.5 flex items-center gap-1 text-[11px] text-slate-400">
                   <ShieldAlert className="h-3 w-3" />
-                  {t("Μη γράφεις ονόματα ή ΑΜΚΑ ασθενών — μιλάς σε άλλο φαρμακείο.",
-                     "Do not write patient names or ΑΜΚΑ — you are talking to another pharmacy.")}
+                  {t(cy ? "Μη γράφεις ονόματα ή ταυτότητες πελατών — μιλάς σε άλλο φαρμακείο." : "Μη γράφεις ονόματα ή ΑΜΚΑ ασθενών — μιλάς σε άλλο φαρμακείο.",
+                     cy ? "Do not write customer names or IDs — you are talking to another pharmacy." : "Do not write patient names or ΑΜΚΑ — you are talking to another pharmacy.")}
                 </p>
               </div>
             </section>

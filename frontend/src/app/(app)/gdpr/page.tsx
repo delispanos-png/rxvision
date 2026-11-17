@@ -1,5 +1,6 @@
 "use client";
 
+import { useCountry } from "@/lib/cy";
 import Link from "next/link";
 import { ShieldCheck, Lock } from "lucide-react";
 import { useT } from "@/store/prefStore";
@@ -9,6 +10,7 @@ import { useT } from "@/store/prefStore";
  * ΕΠΕΞΕΡΓΑΣΙΑΣ: ρόλοι, δεδομένα υγείας, ψευδωνυμοποίηση, απομόνωση, δικαιώματα ασφαλισμένων & υποχρεώσεις.
  */
 export default function GdprPage() {
+  const cy = useCountry() === "CY";   // κείμενα ανά χώρα (Κύπρος: χωρίς ΑΜΚΑ/ΗΔΥΚΑ/ΕΟΠΥΥ)
   const t = useT();
   return (
     <div className="w-full max-w-4xl">
@@ -27,8 +29,8 @@ export default function GdprPage() {
           <div className="text-sm text-emerald-900 dark:text-emerald-200">
             <div className="text-base font-bold">{t("Τα δεδομένα υγείας προστατεύονται με τον σχεδιασμό.", "Health data is protected by design.")}</div>
             <p className="mt-1 leading-relaxed">
-              {t("Τα δεδομένα συνταγών/εκτελέσεων είναι ειδική κατηγορία (Άρθρο 9 ΓΚΠΔ). Ο ΑΜΚΑ ",
-                 "Prescription/execution data is a special category (Art. 9 GDPR). The national ID (ΑΜΚΑ) is ")}
+              {t(cy ? "Τα δεδομένα συνταγών/εκτελέσεων είναι ειδική κατηγορία (Άρθρο 9 ΓΚΠΔ). Η ταυτότητα του δικαιούχου " : "Τα δεδομένα συνταγών/εκτελέσεων είναι ειδική κατηγορία (Άρθρο 9 ΓΚΠΔ). Ο ΑΜΚΑ ",
+                 cy ? "Prescription/execution data is a special category (Art. 9 GDPR). The beneficiary ID is " : "Prescription/execution data is a special category (Art. 9 GDPR). The national ID (ΑΜΚΑ) is ")}
               <b>{t("ψευδωνυμοποιείται (HMAC-SHA256) πριν αποθηκευτεί", "pseudonymized (HMAC-SHA256) before storage")}</b>
               {t(", τα δεδομένα κάθε φαρμακείου είναι πλήρως ", ", each pharmacy's data is fully ")}
               <b>{t("απομονωμένα", "isolated")}</b>
@@ -46,8 +48,8 @@ export default function GdprPage() {
         </Section>
 
         <Section n="2" title={t("Ποια δεδομένα επεξεργαζόμαστε", "What data we process")}>
-          {t("• Ψευδωνυμοποιημένη ταυτότητα ασφαλισμένου (ΑΜΚΑ με HMAC-SHA256). • Δεδομένα συνταγών/εκτελέσεων (φάρμακα, ICD-10, ποσά, ημερομηνίες) — δεδομένα υγείας. • Στοιχεία επικοινωνίας που καταχωρεί το φαρμακείο. • Συγκαταθέσεις επικοινωνίας & αρχείο ενεργειών (audit).",
-             "• Pseudonymized insured-person identity (ΑΜΚΑ via HMAC-SHA256). • Prescription/execution data (medicines, ICD-10, amounts, dates) — health data. • Contact details entered by the pharmacy. • Communication consents & audit log.")}
+          {t(cy ? "• Ψευδωνυμοποιημένη ταυτότητα δικαιούχου (HMAC-SHA256 — η ίδια η ταυτότητα δεν αποθηκεύεται). • Ονοματεπώνυμο, φύλο, ημερομηνία γέννησης, κωδικός ΟΑΥ. • Δεδομένα εκτελέσεων ΓεΣΥ (φάρμακα, αναλώσιμα, δοσολογία, ποσά, ημερομηνίες) — δεδομένα υγείας. • Αρχείο ενεργειών (audit)." : "• Ψευδωνυμοποιημένη ταυτότητα ασφαλισμένου (ΑΜΚΑ με HMAC-SHA256). • Δεδομένα συνταγών/εκτελέσεων (φάρμακα, ICD-10, ποσά, ημερομηνίες) — δεδομένα υγείας. • Στοιχεία επικοινωνίας που καταχωρεί το φαρμακείο. • Συγκαταθέσεις επικοινωνίας & αρχείο ενεργειών (audit).",
+             cy ? "• Pseudonymized beneficiary identity (HMAC-SHA256 — the ID itself is not stored). • Name, sex, date of birth, HIO code. • GHS dispensing data (medicines, consumables, dosage, amounts, dates) — health data. • Audit log." : "• Pseudonymized insured-person identity (ΑΜΚΑ via HMAC-SHA256). • Prescription/execution data (medicines, ICD-10, amounts, dates) — health data. • Contact details entered by the pharmacy. • Communication consents & audit log.")}
         </Section>
 
         <Section n="3" title={t("Ποιος βλέπει τα δεδομένα", "Who sees the data")}>

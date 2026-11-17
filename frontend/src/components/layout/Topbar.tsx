@@ -1,5 +1,6 @@
 "use client";
 
+import { useCountry } from "@/lib/cy";
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
@@ -31,6 +32,8 @@ function initials(name: string): string {
 }
 
 export function Topbar() {
+  // Κύπρος: Copilot/PharmaCat στηρίζονται σε ελληνικά δεδομένα (ΗΔΥΚΑ/κατάλογος) → κρυφά μέχρι να αποκτήσουν κυπριακά εργαλεία
+  const isCy = useCountry() === "CY";
   const router = useRouter();
   // Αδιάβαστα μηνύματα φαρμακείων — ελαφρύ ερώτημα, ανανεώνεται μόνο του.
   const chatQ = useQuery({ queryKey: ["pchat", "unread"], retry: false, refetchInterval: 60000,
@@ -111,7 +114,7 @@ export function Topbar() {
       </div>
       {/* PharmaCat: σε ≥lg απόλυτα ΚΕΝΤΡΑΡΙΣΜΕΝΟ (πλατύ topbar)· σε tablet/στενό είναι IN-FLOW ώστε
           να ΜΗΝ πέφτει πάνω στα δεξιά κουμπιά (καμπανάκι/Βοηθός). Ένα instance — αλλάζει μόνο θέση. */}
-      {(["enabled", "trial"].includes(data?.modules?.ai_assistant ?? "") || ["enabled", "trial"].includes(data?.modules?.pharmacat ?? "")) && (
+      {!isCy && (["enabled", "trial"].includes(data?.modules?.ai_assistant ?? "") || ["enabled", "trial"].includes(data?.modules?.pharmacat ?? "")) && (
         <div className="z-20 hidden shrink-0 sm:block xl:pointer-events-none xl:absolute xl:left-1/2 xl:top-1/2 xl:-translate-x-1/2 xl:-translate-y-1/2">
           <div className="xl:pointer-events-auto"><PharmaCatLauncher /></div>
         </div>
@@ -167,7 +170,7 @@ export function Topbar() {
           </button>
         </Tooltip>
       )}
-      <Tooltip label={t("Copilot — Βοηθός προγράμματος", "Copilot — App assistant")}>
+      {!isCy && <Tooltip label={t("Copilot — Βοηθός προγράμματος", "Copilot — App assistant")}>
         <button
           onClick={() => router.push("/copilot")}
           aria-label="Copilot"
@@ -175,7 +178,7 @@ export function Topbar() {
         >
           <Sparkles className="h-4 w-4" /> <span className="hidden xl:inline">{t("Βοηθός", "Copilot")}</span>
         </button>
-      </Tooltip>
+      </Tooltip>}
       <InstallButton />
       <div className="mx-1 h-6 w-px bg-slate-200 dark:bg-slate-700" />
 

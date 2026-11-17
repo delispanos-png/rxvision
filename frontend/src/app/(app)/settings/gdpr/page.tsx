@@ -1,5 +1,6 @@
 "use client";
 
+import { useCountry } from "@/lib/cy";
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/apiClient";
@@ -12,13 +13,14 @@ import { useT } from "@/store/prefStore";
 type DataCat = {
   category: string; fields: string; purpose: string; legal_basis: string; retention: string;
 };
-type Subject = { id: string; name?: string | null; age_group?: string; phone?: string; email?: string; erased?: boolean };
+type Subject = { id: string; name?: string | null; age_group?: string; phone?: string; email?: string; erased?: boolean; source?: string };
 type ConsentEvent = { channel: string; status: string; at?: string; source?: string };
 
 const inp = "w-full rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800";
 const btn = "rounded-lg px-3 py-1.5 text-sm font-medium";
 
 export default function GdprPage() {
+  const cy = useCountry() === "CY";   // κείμενα ανά χώρα (Κύπρος: χωρίς ΑΜΚΑ/ΗΔΥΚΑ/ΕΟΠΥΥ)
   const t = useT();
   const qc = useQueryClient();
   const [q, setQ] = useState("");
@@ -86,8 +88,8 @@ export default function GdprPage() {
     if (!sel) return;
     const ok = await appConfirm(
       t(
-        "Διαγραφή/ανωνυμοποίηση των προσωπικών στοιχείων του υποκειμένου; Αφαιρούνται όνομα/ΑΜΚΑ & στοιχεία επικοινωνίας· τα κλινικά αρχεία συνταγών διατηρούνται κατά νόμο (νόμιμη διατήρηση).",
-        "Delete/anonymize the subject's personal details? Name/ΑΜΚΑ & contact details are removed; clinical prescription records are kept by law (legal retention)."
+        cy ? "Διαγραφή/ανωνυμοποίηση των προσωπικών στοιχείων του υποκειμένου; Αφαιρούνται ονοματεπώνυμο, ημερομηνία γέννησης και κωδικός ΟΑΥ· οι εκτελέσεις διατηρούνται κατά νόμο (νόμιμη διατήρηση)." : "Διαγραφή/ανωνυμοποίηση των προσωπικών στοιχείων του υποκειμένου; Αφαιρούνται όνομα/ΑΜΚΑ & στοιχεία επικοινωνίας· τα κλινικά αρχεία συνταγών διατηρούνται κατά νόμο (νόμιμη διατήρηση).",
+        cy ? "Delete/anonymize the subject's personal details? Name, date of birth and HIO code are removed; dispensing records are kept by law (legal retention)." : "Delete/anonymize the subject's personal details? Name/ΑΜΚΑ & contact details are removed; clinical prescription records are kept by law (legal retention)."
       ),
       { title: t("Δικαίωμα στη λήθη (Άρθρο 17)", "Right to erasure (Article 17)"), danger: true, confirmText: t("Διαγραφή", "Delete") },
     );
@@ -175,7 +177,7 @@ export default function GdprPage() {
               {search.data.results.map((r) => (
                 <li key={r.id}>
                   <button onClick={() => { setSel(r); setForm({}); }} className="flex w-full items-center justify-between px-3 py-2 text-left text-sm hover:bg-slate-50 dark:hover:bg-slate-800">
-                    <span>{r.name || t("(χωρίς όνομα)", "(no name)")} {r.erased && <em className="text-amber-600">{t("— διεγραμμένο", "— erased")}</em>}</span>
+                    <span>{r.name || t("(χωρίς όνομα)", "(no name)")} {r.source && <span className="ml-1 rounded bg-sky-100 px-1 text-[10px] font-semibold text-sky-700">{r.source}</span>} {r.erased && <em className="text-amber-600">{t("— διεγραμμένο", "— erased")}</em>}</span>
                     <span className="text-slate-400">{r.phone || r.email || r.id}</span>
                   </button>
                 </li>
@@ -242,7 +244,7 @@ export default function GdprPage() {
               {/* Erasure */}
               <section className="rounded-lg border border-red-200 bg-red-50/50 p-3 dark:border-red-900/50 dark:bg-red-950/20">
                 <h4 className="mb-1 text-sm font-semibold text-red-700 dark:text-red-400">{t("Δικαίωμα στη λήθη (Άρθρο 17)", "Right to erasure (Article 17)")}</h4>
-                <p className="mb-2 text-xs text-slate-500">{t("Αφαιρεί όνομα/ΑΜΚΑ & στοιχεία επικοινωνίας. Τα κλινικά αρχεία διατηρούνται κατά τη φαρμακευτική νομοθεσία.", "Removes name/ΑΜΚΑ & contact details. Clinical records are kept under pharmaceutical law.")}</p>
+                <p className="mb-2 text-xs text-slate-500">{cy ? t("Αφαιρεί ονοματεπώνυμο, ημερομηνία γέννησης και κωδικό ΟΑΥ. Οι εκτελέσεις διατηρούνται κατά τη φαρμακευτική νομοθεσία.", "Removes name, date of birth and HIO code. Dispensing records are kept under pharmaceutical law.") : t("Αφαιρεί όνομα/ΑΜΚΑ & στοιχεία επικοινωνίας. Τα κλινικά αρχεία διατηρούνται κατά τη φαρμακευτική νομοθεσία.", "Removes name/ΑΜΚΑ & contact details. Clinical records are kept under pharmaceutical law.")}</p>
                 <input className={`${inp} mb-2`} placeholder={t("Αιτιολογία (προαιρετικό)", "Reason (optional)")} value={reason} onChange={(e) => setReason(e.target.value)} />
                 <button onClick={doErase} className={`${btn} bg-red-600 text-white hover:bg-red-700`}>{t("Διαγραφή / ανωνυμοποίηση", "Delete / anonymize")}</button>
               </section>

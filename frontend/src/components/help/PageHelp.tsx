@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useCountry } from "@/lib/cy";
 import { usePathname } from "next/navigation";
 import Link from "next/link";
 import { HelpCircle, X, Lightbulb, Cog, ListChecks, BookOpen } from "lucide-react";
@@ -15,7 +16,8 @@ export function PageHelp() {
   const [open, setOpen] = useState(false);
   const t = useT();
   const en = usePref((s) => s.locale) === "en";
-  const help = helpFor(pathname);
+  const country = useCountry();
+  const help = helpFor(pathname, country);
   /* ΜΕΤΑΚΙΝΗΣΙΜΟ (22/10/2026, παρατήρηση Παπαγιαννόπουλου): σε κάποιες οθόνες το «?» έπεφτε πάνω σε
      κουμπί. Σύρε το όπου βολεύει — η θέση θυμάται σε αυτόν τον browser· απλό κλικ = άνοιγμα βοήθειας. */
   const SIZE = 48;

@@ -70,6 +70,8 @@ fi
 # πελάτης στη σελίδα /manual. Το `docs/` είναι ΕΚΤΟΣ του build context του web (που είναι
 # ./frontend), γι' αυτό αντιγράφεται εδώ — ΠΡΙΝ το build, αλλιώς ανεβαίνει παλιά έκδοση.
 cp docs/USER_MANUAL.md frontend/public/user-manual.md
+# Κύπρος: ΧΩΡΙΣΤΟ εγχειρίδιο (χωρίς ΗΔΥΚΑ/ΕΟΠΥΥ) — η σελίδα /manual διαλέγει ανά χώρα φαρμακείου
+cp docs/USER_MANUAL_CY.md frontend/public/user-manual-cy.md
 echo "   εγχειρίδιο → frontend/public/user-manual.md ($(wc -l < docs/USER_MANUAL.md) γραμμές)"
 
 echo "▶ 1/4  Build on MGMT01 (single source of truth)…"

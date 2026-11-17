@@ -402,6 +402,9 @@ _ADMIN: dict[tuple[str, str], str] = {
     ("PUT", "/maintenance"): "system:maintenance",
     ("GET", "/portal-mode"): "system:read",
     ("PUT", "/portal-mode"): "system:write",
+    # Κύπρος: διακόπτης κυπριακού κομματιού (κλειστό → 404 σε κάθε κυπριακό endpoint)
+    ("GET", "/cy"): "system:read",
+    ("PUT", "/cy"): "system:write",
     ("GET", "/data-retention"): "system:read",
     ("PUT", "/data-retention/pricing"): "system:write",
     ("POST", "/data-retention/purge"): "system:purge",

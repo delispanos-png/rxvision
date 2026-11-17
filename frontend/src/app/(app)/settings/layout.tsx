@@ -5,19 +5,20 @@ import { usePathname } from "next/navigation";
 import { useAddonState } from "@/components/layout/AddonSection";
 import { useT } from "@/store/prefStore";
 import { ScrollTabs } from "@/components/layout/ScrollTabs";
+import { useCountry } from "@/lib/cy";
 
 /* `module` = η καρτέλα ανήκει σε ΠΡΟΑΙΡΕΤΙΚΟ πρόσθετο.
    Χωρίς αυτό, οι καρτέλες των Ρυθμίσεων φαίνονταν σε ΟΛΟΥΣ και το λουκέτο το ανακάλυπτε ο
    πελάτης αφού πατούσε — ενώ τα κυκλώματα του κύριου μενού κρύβονται σωστά. Ακολουθεί τον ίδιο
    κανόνα: ενεργό ή αγοράσιμο → φαίνεται· μη προσφερόμενο → εξαφανίζεται. */
-const TABS: { href: string; el: string; en: string; module?: string }[] = [
+const TABS: { href: string; el: string; en: string; module?: string; grOnly?: boolean }[] = [
   { href: "/settings/users", el: "Χρήστες & Ρόλοι", en: "Users & Roles" },
   { href: "/settings/modules", el: "Modules / Πλάνο", en: "Modules / Plan" },
   { href: "/settings/roles", el: "Ρόλοι & Δικαιώματα", en: "Roles & Permissions" },
   { href: "/settings/menus", el: "Μενού ανά ρόλο", en: "Menu per role" },
-  { href: "/settings/ingestion", el: "Διασύνδεση ΗΔΥΚΑ", en: "ΗΔΥΚΑ Connection" },
-  { href: "/settings/closing", el: "Κλείσιμο Μήνα", en: "Month Closing" },
-  { href: "/settings/catalog", el: "Ενημέρωση καταλόγου", en: "Catalog updates", module: "catalog_seed" },
+  { href: "/settings/ingestion", el: "Διασύνδεση ΗΔΥΚΑ", en: "ΗΔΥΚΑ Connection" , grOnly: true },
+  { href: "/settings/closing", el: "Κλείσιμο Μήνα", en: "Month Closing" , grOnly: true },
+  { href: "/settings/catalog", el: "Ενημέρωση καταλόγου", en: "Catalog updates", module: "catalog_seed" , grOnly: true },
   { href: "/settings/pharmacy-chat", el: "Συνεργαζόμενα φαρμακεία", en: "Partner pharmacies" },
   { href: "/settings/availability", el: "Ωράριο & Διαθεσιμότητα", en: "Hours & Availability" },
   { href: "/settings/communications", el: "Επικοινωνία", en: "Communications" },
@@ -31,12 +32,14 @@ export default function SettingsLayout({ children }: { children: React.ReactNode
   const pathname = usePathname();
   const tr = useT();
   const catalog = useAddonState("catalog_seed");
-  const visible = (m?: string) => !m || ["on", "offer"].includes(catalog.state);
+  // Κύπρος: όχι ΗΔΥΚΑ, όχι Κλείσιμο Μήνα (η Κύπρος λειτουργεί αλλιώς), όχι ελληνικός κατάλογος
+  const cy = useCountry() === "CY";
+  const visible = (m?: string, grOnly?: boolean) => !(cy && grOnly) && (!m || ["on", "offer"].includes(catalog.state));
   return (
     <div>
       <h1 className="mb-4 text-xl font-bold text-slate-900 dark:text-slate-100">{tr("Ρυθμίσεις", "Settings")}</h1>
       <ScrollTabs className="mb-6">
-        {TABS.filter((tab) => visible(tab.module)).map((tab) => {
+        {TABS.filter((tab) => visible(tab.module, tab.grOnly)).map((tab) => {
           const active = pathname === tab.href;
           return (
             <Link
